@@ -3,9 +3,9 @@ import { ref, watch, reactive, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import ZList from '@/components/utils/ZList.vue'
 import ZActivityDisplay from '@/components/activity/ZActivityDisplay.vue'
-import { Plus, ArrowRight } from '@element-plus/icons-vue'
+import { Plus, ArrowRight, Upload } from '@element-plus/icons-vue'
 import { useUserStore, useState } from '@/stores'
-import { ElPageHeader, ElTabs, ElTabPane, ElButton, ElDialog, ElForm, ElFormItem, ElSelect, ElOption, ElInput, ElIcon } from 'element-plus'
+import { ElPageHeader, ElTabs, ElTabPane, ElButton, ElDialog, ElForm, ElFormItem, ElSelect, ElOption, ElInput, ElIcon, ElMessage } from 'element-plus'
 
 const state = useState()
 
@@ -149,6 +149,39 @@ const doCreate = async () => {
 watch(create, x => state.set('unsaved', x))
 onUnmounted(() => state.set('unsaved', false))
 
+const importExcel = ref(false)
+const importing = ref(false)
+const iName = ref('')
+const iDesc = ref('')
+const iFileName = ref('')
+const pickedFile = ref(null)
+const fileInput = ref(null)
+
+const onFileChange = (e) => {
+    pickedFile.value = e.target.files?.[0] ?? null
+    iFileName.value = pickedFile.value?.name ?? ''
+}
+
+const resetImportForm = () => {
+    iName.value = ''
+    iDesc.value = ''
+    pickedFile.value = null
+    iFileName.value = ''
+    if (fileInput.value) fileInput.value.value = ''
+}
+
+const doImport = async () => {
+    try {
+        importing.value = true
+        const api = await import('@/api')
+        await api.exports.importActivityExcel(iName.value, iDesc.value, pickedFile.value)
+        ElMessage({ message: '导入完成', type: 'success', plain: true, grouping: true })
+        importExcel.value = false
+    } finally {
+        importing.value = false
+    }
+}
+
 </script>
 
 <template>
@@ -194,6 +227,50 @@ onUnmounted(() => state.set('unsaved', false))
                 </ElButton>
             </template>
         </ElDialog>
+        <ElDialog
+            v-model="importExcel"
+            @open="resetImportForm()"
+            :close-on-click-modal="false"
+            align-center
+            :show-close="!importing"
+            :close-on-press-escape="!importing"
+        >
+            <template #header>
+                导入义工
+            </template>
+            <ElForm v-loading="importing">
+                <ElFormItem label="名称">
+                    <ElInput placeholder="请输入" v-model="iName"></ElInput>
+                </ElFormItem>
+                <ElFormItem label="描述">
+                    <ElInput placeholder="可以为空" type="textarea" v-model="iDesc"></ElInput>
+                </ElFormItem>
+                <ElFormItem label="Excel 文件">
+                    <div class="flex flex-row" style="gap:.5rem;align-items:center;flex-grow:1;">
+                        <ElInput placeholder="选择 .xlsx / .xls 文件" readonly v-model="iFileName"></ElInput>
+                        <ElButton text bg :icon="Upload" @click="fileInput?.click()">选择文件</ElButton>
+                        <input
+                            ref="fileInput"
+                            type="file"
+                            accept=".xlsx,.xls"
+                            style="display:none"
+                            @change="onFileChange"
+                        />
+                    </div>
+                </ElFormItem>
+            </ElForm>
+            <template #footer>
+                <ElButton
+                    text bg
+                    type="primary"
+                    @click="doImport()"
+                    :disabled="importing||!iName||!pickedFile"
+                >
+                    导入
+                    <ElIcon class="el-icon--right"><ArrowRight></ArrowRight></ElIcon>
+                </ElButton>
+            </template>
+        </ElDialog>
         <ElPageHeader class="activities-panel-header flex-shrink-0 noback" @back="$router.back()">
             <template #content>
                 义工列表
@@ -207,6 +284,16 @@ onUnmounted(() => state.set('unsaved', false))
                     @click="/*$router.push('/activity/create')*/create=true"
                 >
                     创建义工
+                </ElButton>
+                <ElButton
+                    v-if="user.position.includes('admin') || user.position.includes('department')"
+                    type="warning"
+                    :icon="Upload"
+                    text bg
+                    :disabled="importing"
+                    @click="importExcel = true"
+                >
+                    导入义工
                 </ElButton>
             </template>
         </ElPageHeader>

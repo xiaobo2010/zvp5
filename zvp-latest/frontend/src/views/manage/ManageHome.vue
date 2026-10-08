@@ -223,6 +223,34 @@ const doCreate = async () => {
 }
 
 const devNotice = () => alert('功能开发中')
+
+const exporting = ref(false)
+
+const pollExport = async (taskId) => {
+    const api = await import('@/api')
+    for (let i = 0; i < 60; i++) {
+        const task = await api.exports.get(taskId)
+        if (task?.status !== 'pending' && task?.status !== 'processing') return task
+        await new Promise(r => setTimeout(r, 1000))
+    }
+    return null
+}
+
+const doExport = async (variant) => {
+    try {
+        exporting.value = true
+        const api = await import('@/api')
+        const taskId = variant === 'users'
+            ? await api.exports.users()
+            : await api.exports.time({})
+        const task = await pollExport(taskId)
+        if (!task) return
+        const blob = await api.exports.file(taskId)
+        api.exports.save(blob, `zvms-export-${taskId}.xlsx`)
+    } finally {
+        exporting.value = false
+    }
+}
 </script>
 
 <template>
@@ -237,6 +265,12 @@ const devNotice = () => alert('功能开发中')
                 </ElButton>
                 <ElButton :icon="Plus" text bg type="success" v-if="isAdmin && pane == 'users'" @click="devNotice()">
                     创建用户
+                </ElButton>
+                <ElButton text bg type="primary" v-if="isAdmin" :disabled="exporting" @click="doExport('users')">
+                    导出用户表
+                </ElButton>
+                <ElButton text bg type="primary" v-if="isAdmin" :disabled="exporting" @click="doExport('time')">
+                    导出时长表
                 </ElButton>
                 <ElButton :icon="Key" text bg type="danger" v-if="isAdmin" @click="gotoAdmin">
                     前往管理后台

@@ -75,6 +75,19 @@ const doAdd = async () => {
 
 const removing = ref(false)
 
+const exportTemplate = async () => {
+    try {
+        exporting.value = true
+        const api = await import('@/api')
+        const blob = await api.exports.template(group.value)
+        api.exports.save(blob, `${groupObj.value?.name ?? group.value}-template.xlsx`)
+    } finally {
+        exporting.value = false
+    }
+}
+
+const exporting = ref(false)
+
 const removeUser = async (u) => {
     removing.value = true
     try {
@@ -141,6 +154,14 @@ onMounted(load)
                     @click="add = true"
                 >
                     添加成员
+                </ElButton>
+                <ElButton
+                    v-if="hasPerm"
+                    text bg type="primary"
+                    :disabled="exporting"
+                    @click="exportTemplate()"
+                >
+                    导出模板
                 </ElButton>
             </template>
         </ElPageHeader>
