@@ -10,7 +10,7 @@
 
 - 后端接口分为两半：**读取类基本可用**；写入类中 **v1 旧路由仍大面积硬编码 503 停写**，但 **v3 已补齐班级写入（建/改名/删班、用户入班/移出班）与角色修改端点**（见 §1.2a）；登录旧接口 410 不变。
 - 前端页面骨架齐全：**活动添加成员、班级改名/删除/创建、班级成员管理、修改用户角色已全部接线 v3 端点**；仅剩「创建用户」按钮仍为 `alert('功能开发中')` 占位。
-- **导出（Exports）/导入（Imports）整块后端有实现，前端零接入**——这是最大缺口。
+- **导出（Exports）/导入（Imports）后端有实现，前端已接线（2026-10-08）**：用户表/时长表导出（任务轮询+下载）、班级模板导出、Excel 导入义工。
 - 后端 `activity_statistics_router`、`mcp_router`、`times_router` **只剩 `.pyc`，源码缺失**。
 
 ---
@@ -23,8 +23,8 @@
 |---|---|---|
 | `routers/users_router.py` | `/api/users` | 部分可用，写入多条 503 |
 | `routers/groups_router.py` | `/api/groups` | 读取可用，写入 503 |
-| `routers/exports_router.py` | `/api/exports` | **可用，前端未接入** |
-| `routers/imports_router.py` | `/api/imports` | **可用，前端未接入** |
+| `routers/exports_router.py` | `/api/exports` | 可用，**前端已接线（2026-10-08）** |
+| `routers/imports_router.py` | `/api/imports` | 可用，**前端已接线（2026-10-08）** |
 | `routers/logs_router.py` | `/api/logs` | 可用 |
 | `routers/activities_v2_router.py` | `/api/v2/activities` | 可用（个别 bug） |
 | `routers/users_v2_router.py` | `/api/v2/users` | 部分可用，2 条 deprecated |
@@ -162,10 +162,10 @@ XH：`/xh/api`（`api/xh.js`）
 
 | 后端能力 | 端点 | 前端证据 |
 |---|---|---|
-| **报表导出** | `/api/exports/users`、`/time`、`/reports`、`/reports/download`、`/{task_id}`、`/{task_id}/file`、`GET /api/exports` | 全仓无 `/exports` 引用；`api/export.ts` 只是 barrel，非导出接口 |
-| **Excel 导入活动** | `POST /api/imports/activities` | 全仓无 `/imports`、`upload_activity` 引用 |
-| **班级模板导出** | `GET /api/groups/{id}/template` | 无引用 |
-| **班级时长统计** | `GET /api/groups/{id}/time`（v1）、`/api/v2/groups/{id}/time` | `api/group/*` 无 time；无引用 |
+| **报表导出** | `/api/exports/users`、`/time`、`/{task_id}`、`/{task_id}/file`、`/reports`、`/reports/download`、`GET /api/exports` | **已接线（2026-10-08）**：ManageHome「导出用户表/导出时长表」→ `api/exports.ts`（POST 建任务 → 轮询 `/{task_id}` → blob 下载 `/{task_id}/file`）；`/reports` 打包下载仍未接 |
+| **Excel 导入活动** | `POST /api/imports/activities` | **已接线（2026-10-08）**：ActivityList「导入义工」弹窗（名称/描述/文件）→ `api/exports.ts` `importActivityExcel` |
+| **班级模板导出** | `GET /api/groups/{id}/template` | **已接线（2026-10-08）**：ManageGroup「导出模板」→ blob 下载 |
+| **班级时长统计** | `GET /api/groups/{id}/time`（v1）、`/api/v2/groups/{id}/time` | `api/group/*` 无 time；无引用（**仍未接**） |
 | **添加活动成员** | `POST /api/v2|v3/activities/{aid}/members` | **已接线（2026-10-08）**：ActivityPage「添加成员」弹窗 → `member.insertMany`（v3） |
 
 ### 4.2 前端页面/交互未完成
@@ -204,7 +204,7 @@ XH：`/xh/api`（`api/xh.js`）
 
 ## 6. 建议优先级
 
-1. **P0 — 接线导出/导入**：前端补报表导出、Excel 导入入口（后端 `/api/exports`、`/api/imports` 已可用）。价值最高、后端零成本。（**仍未做**）
+1. ~~**P0 — 接线导出/导入**~~ **已完成（2026-10-08）**：用户表/时长表导出（任务轮询+下载）、班级模板导出、Excel 导入义工全部接线（`api/exports.ts` + ManageHome/ManageGroup/ActivityList 入口）；余 `/api/exports/reports` 打包下载与班级时长统计未接。
 2. ~~**P0 — 打通管理写入**~~ **已完成（2026-10-08）**：班级写入/角色修改/活动加成员走 v3 新端点（§1.2a）+ 前端接线；唯「创建用户」仍双端占位（后端无 v3 建用户端点）。
 3. **P1 — 收尾部分实现页面**：~~ActivityPage 添加成员 / 组/成员占位按钮~~ **已接线**；剩 `ManageHome` 仪表盘空 pane、ActivityPage `doEdit` TODO WIP、创建用户占位。
 4. **P1 — 清理死代码**：删除未注册 `activities_router.py`、不可达 `v1/users.py`、0 字节 `v1/activities.py`/`v1/groups.py`；决定 `UserPageNew.vue` 是接线还是删除；可顺带清 `ZActivityMemberDisplay.vue:38` 死 `devNotice`。
@@ -226,3 +226,4 @@ XH：`/xh/api`（`api/xh.js`）
 ## 更新记录
 
 - **2026-10-08（实施）**：打通「活动添加成员」链路（前端 ActivityPage 弹窗 → `POST /api/v3/activities/{aid}/members`，body 改用 `NewActivityMember`，修 `social-practice` 连字符）；新增 v3 班级写入（建/改名/删班、用户入班/移出班）与 `PUT /api/v3/users/{uid}/roles` 角色修改端点，前端 ZClassDisplay / ManageHome / ManageGroup / ManageRole 全部接线；修 `groups_v3` HTTPException 未导入、`main.py` 三行非法 `lazy import`、ManageHome `x<script>` 脏字符。验证：后端 `py_compile` 通过、前端 `vite build` 通过。
+- **2026-10-08（P0 导出/导入接线）**：新增 `frontend/src/api/exports.ts`（导出任务创建/轮询/文件下载、班级模板、Excel 导入、blob 保存，经 `api/export.ts` barrel 挂为 `exports` 命名空间）；ManageHome 头部新增「导出用户表/导出时长表」（POST 建任务 → 轮询至完成 → 自动下载）；ManageGroup 新增「导出模板」；ActivityList 新增「导入义工」弹窗（名称/描述/Excel 文件 → `POST /api/imports/activities`）。验证：`vite build` 通过。
