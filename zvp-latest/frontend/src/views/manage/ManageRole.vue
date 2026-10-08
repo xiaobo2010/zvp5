@@ -4,8 +4,15 @@ import { useUserStore, useState } from '@/stores'
 import { ref, watch, computed, reactive } from 'vue'
 import ZList from '@/components/utils/ZList.vue'
 import ZUserDisplay from '@/components/user/ZUserDisplay.vue'
+import { Edit } from '@element-plus/icons-vue'
 import {
-    ElPageHeader
+    ElPageHeader,
+    ElButton,
+    ElDialog,
+    ElForm,
+    ElFormItem,
+    ElCheckboxGroup,
+    ElCheckbox
 } from 'element-plus'
 
 const state = useState()
@@ -53,6 +60,29 @@ watch(() => route.query?.page,     v => { usersTab.page       = Number(v ?? 1)})
 watch(() => route.query?.pagesize, v => { usersTab.pageSize   = Number(v ?? 10)})
 watch(() => route.query?.query,    v => { usersTab.query      = v        ?? ''})
 
+const editRole = ref(false)
+const editing = ref(false)
+const target = ref(null)
+const checkedRoles = ref([])
+const usersVersion = ref(0)
+
+const openRoleEdit = (u) => {
+    target.value = u
+    checkedRoles.value = (u.roles ?? []).filter(r => roleNames[r])
+    editRole.value = true
+}
+
+const doEditRole = async () => {
+    try {
+        editing.value = true
+        await (await import('@/api')).user.updateRoles(target.value._id, checkedRoles.value)
+        editRole.value = false
+        usersVersion.value++
+    } finally {
+        editing.value = false
+    }
+}
+
 </script>
 
 <template>
@@ -62,6 +92,41 @@ watch(() => route.query?.query,    v => { usersTab.query      = v        ?? ''})
                 {{roleNames[role] ?? `未知权限：${role}`}}
             </template>
         </ElPageHeader>
+        <ElDialog
+            v-model="editRole"
+            :close-on-click-modal="false"
+            align-center
+            :show-close="!editing"
+            :close-on-press-escape="!editing"
+        >
+            <template #header>
+                修改角色{{target ? `：${target.name}` : ''}}
+            </template>
+            <ElForm v-loading="editing">
+                <ElFormItem label="角色">
+                    <ElCheckboxGroup v-model="checkedRoles">
+                        <ElCheckbox
+                            v-for="(name, value) in roleNames"
+                            :key="value"
+                            :value="value"
+                        >{{name}}</ElCheckbox>
+                    </ElCheckboxGroup>
+                </ElFormItem>
+                <ElFormItem>
+                    <span style="color: var(--el-text-color-secondary); font-size: small;">不勾选任何角色则为普通学生</span>
+                </ElFormItem>
+            </ElForm>
+            <template #footer>
+                <ElButton
+                    text bg
+                    type="primary"
+                    @click="doEditRole()"
+                    :disabled="editing"
+                >
+                    修改
+                </ElButton>
+            </template>
+        </ElDialog>
                 <ZList
                     v-if="isAdmin"
                     :remote-method="getUsers"
@@ -70,9 +135,18 @@ watch(() => route.query?.query,    v => { usersTab.query      = v        ?? ''})
                     v-model:query="usersTab.query"
                     search-button
                     v-slot="{ item }"
-                    :key="role"
+                    :key="role + '-' + usersVersion"
                 >
                     <ZUserDisplay :user="item"></ZUserDisplay>
+                    <ElButton
+                        v-if="isAdmin"
+                        class="flex-shrink-0"
+                        :icon="Edit"
+                        text bg type="warning"
+                        @click="openRoleEdit(item)"
+                    >
+                        修改角色
+                    </ElButton>
                 </ZList>
         <span v-else style="color: var(--el-color-danger)">
             您没有权限查看此页面

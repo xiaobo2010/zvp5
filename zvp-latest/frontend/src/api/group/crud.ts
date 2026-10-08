@@ -65,3 +65,41 @@ export async function deleteGroup(uid: string, gid: string) {
 export const updateMethods = {
   name: editGroupName,
 }
+
+export async function createGroupV3(name: string, enrollYear?: number) {
+  return (
+    await axios('/v3/groups', {
+      method: 'post',
+      data: { name, enrollYear }
+    })
+  ).data as { id: string }
+}
+
+export async function renameGroupV3(gid: string, name: string) {
+  await axios(`/v3/groups/${gid}/name`, {
+    method: 'put',
+    data: { name }
+  })
+  return true
+}
+
+export async function deleteGroupV3(gid: string) {
+  await axios(`/v3/groups/${gid}`, {
+    method: 'delete'
+  })
+  return true
+}
+
+export async function addGroupUserV3(gid: string, uid: string) {
+  await axios(`/v3/groups/${gid}/users/${uid}`, {
+    method: 'post'
+  })
+  return true
+}
+
+export async function removeGroupUserV3(gid: string, uid: string) {
+  await axios(`/v3/groups/${gid}/users/${uid}`, {
+    method: 'delete'
+  })
+  return true
+}

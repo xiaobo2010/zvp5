@@ -1,7 +1,7 @@
 import axios from '@/plugins/axios'
 import { temporaryToken } from '@/api/user/temp-token'
 import type { Response } from '@/types'
-import type { ActivityMember } from '@/types/v2'
+import type { ActivityMember, NewActivityMember } from '@/types/v2'
 
 export async function insert(aid: string, member: ActivityMember) {
   const result = (
@@ -13,14 +13,11 @@ export async function insert(aid: string, member: ActivityMember) {
     return result.data
 }
 
-export async function insertMany(aid: string, members: ActivityMember[]) {
-  const result = (
-    await axios(`/v3/activities/${aid}/members`, {
-      method: 'post',
-      data: members
-    })
-  ).data as Response<ActivityMember[]>
-    return result.data
+export async function insertMany(aid: string, members: NewActivityMember[]) {
+  await axios(`/v3/activities/${aid}/members`, {
+    method: 'post',
+    data: members
+  })
 }
 
 export async function remove(id: string, aid: string, uid: string) {

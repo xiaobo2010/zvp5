@@ -1,7 +1,6 @@
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Body, Query
 from database import db
-from typings.activity_v2 import Activity, ActivityMember
 from typings.log import inject_log
 from typings.user import User as UserV1
 from util.object_id import get_current_user
@@ -313,14 +312,14 @@ async def get_activity_members_v3(
 
 class NewActivityMember(BaseModel):
     member: str
-    mode: Literal['on-campus', 'off-campus', 'social_practice']
+    mode: Literal['on-campus', 'off-campus', 'social-practice']
     duration: float = Field(gt=0)
 
 
 @router.post("/{activity_id}/members", status_code=204)
 async def add_activity_member_v3(
     activity_id: str,
-    members: list[ActivityMember] = Body(),
+    members: list[NewActivityMember] = Body(),
     user=Depends(get_user),
     log=Depends(inject_log),
 ):

@@ -31,3 +31,12 @@ export interface ActivityMember {
   mode: 'on-campus' | 'off-campus' | 'social-practice'
   duration: number
 }
+
+/**
+ * @description Payload for batch-adding activity members (V3).
+ */
+export interface NewActivityMember {
+  member: string
+  mode: 'on-campus' | 'off-campus' | 'social-practice'
+  duration: number
+}

@@ -123,4 +123,12 @@ async function deleteUser(user: string, target: string) {
   return true
 }
 
-export { getUser as readOne, getUsers as read, getUsersV2 as read_v2, putUser as update, deleteUser as removeOne }
+async function putUserRoles(uid: string, roles: string[]) {
+  await axios(`/v3/users/${uid}/roles`, {
+    method: 'put',
+    data: { roles }
+  })
+  return true
+}
+
+export { getUser as readOne, getUsers as read, getUsersV2 as read_v2, putUser as update, deleteUser as removeOne, putUserRoles as updateRoles }
