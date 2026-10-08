@@ -1,0 +1,338 @@
+import re
+from fastapi import APIRouter, Depends, HTTPException, Query
+from database import db
+from pydantic import BaseModel
+from util.calculate import calculate_user_time, find_percentile_threshold
+from util.get_class import get_user_class
+from util.object_id import get_current_user
+from util.permission.user import validate_read_user_permission
+from utils import validate_object_id
+from asyncio import gather
+from util.get_user import get_user, get_authz_user
+from util.log import APILogger
+from util.cert import rsa_decrypt, hash_password
+
+router = APIRouter()
+
+
+@router.get("")
+async def get_users_v2(
+    page: int = Query(1, ge=1, description="Page number"),
+    size: int = Query(1, ge=1, le=1000, description="Page size"),
+    query: str = Query('', description="Search keyword"),
+    role: str = Query(''),
+    user=Depends(get_user)
+):
+    if not user.require('admin' if role else 'department', 'admin'):
+        raise HTTPException(
+            status_code=403, detail='权限不足'
+        )
+    
+    escaped = re.escape(query)
+    
+    pipeline = [
+        {
+            "$match": {
+                **(
+                    {
+                        "roles": role
+                    } if role else {}
+                ),
+                **(
+                    {
+                        "$or": [
+                            {
+                                "name": {
+                                    "$regex": escaped,
+                                    "$options": "i"
+                                }
+                            },
+                            {
+                                "id": {
+                                    "$regex": escaped,
+                                    "$options": "i"
+                                }
+                            }
+                        ]
+                    } if query else {}
+                )
+            }
+        },
+        {
+            "$sort": {
+                "id": 1
+            }
+        },
+        {
+            "$skip": (page - 1) * size
+        },
+        {
+            "$limit": size
+        },
+        {
+            "$lookup": {
+                "from": "groups",
+                "localField": "class_id",
+                "foreignField": "_id",
+                "as": "class_obj"
+            }
+        },
+        {
+            "$unwind": {
+                "path": "$class_obj",
+                "preserveNullAndEmptyArrays": True
+            }
+        },
+        {
+            "$set": {
+                "class_obj": {
+                    "$ifNull": [
+                        "$class_obj",
+                        {
+                            "name": "未知班级"
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "$project": {
+                "_id": {
+                    "$toString": "$_id"
+                },
+                "id": "$id",
+                "name": "$name",
+                "roles": "$roles",
+                "class_id": {
+                    "$convert": {
+                        "input": "$class_id",
+                        "to": "string",
+                        "onNull": "",
+                        "onError": ""
+                    }
+                },
+                "class_name": "$class_obj.name"
+            }
+        }
+    ]
+    
+    count_pipeline = [
+        pipeline[0],
+        {
+            "$count": "total"
+        }
+    ]
+    
+    total, result = await gather(
+        db.zvms_new.users.aggregate(count_pipeline).to_list(length=1),
+        db.zvms_new.users.aggregate(pipeline).to_list(None)
+    )
+    
+    return {
+        "data": result,
+        "total": total[0]["total"] if total else 0
+    }
+
+
+class PutPasswordRequest(BaseModel):
+    password: str
+
+
+@router.put("/{user_id}/password", status_code=204)
+async def modify_password_v2(
+    user_id: str,
+    payload: PutPasswordRequest,
+    user=Depends(get_authz_user),
+    logger=Depends(APILogger.with_authz_user)
+):
+    if user_id != str(user._id):
+        raise HTTPException(status_code=403, detail='禁止修改他人密码')
+    
+    password = rsa_decrypt(payload.password)
+    
+    await db.zvms_new.users.update_one(
+        {
+            "_id": user._id
+        },
+        {
+            "$set": {
+                "password": hash_password(password).decode('utf-8')
+            }
+        }
+    )
+    
+    await logger.log(
+        f'用户 {user.name} 修改了密码',
+        level='info',
+        type='passwd_change'
+    )
+    
+    return
+
+
+@router.delete('/{user_id}/password', status_code=204)
+async def reset_password(
+    user_id: str,
+    user=Depends(get_authz_user),
+    logger=Depends(APILogger.with_authz_user)
+):
+    oid = validate_object_id(user_id)
+    
+    target = await db.zvms_new.users.find_one({
+        "_id": oid
+    })
+    
+    if not target:
+        raise HTTPException(
+            status_code=404,
+            detail='用户不存在'
+        )
+    
+    if not user.require('admin', 'department') and not (user.require('secretary') and str(target['class_id']) == str(user.class_id)):
+        raise HTTPException(
+            status_code=403,
+            detail='权限不足'
+        )
+    
+    await db.zvms_new.users.update_one(
+        {
+            "_id": oid
+        },
+        {
+            "$set": {
+                "password": None
+            }
+        }
+    )
+    
+    await logger.log(
+        f'用户 {user.name} 重置了 {target["name"]} 的密码',
+        level='info',
+        type='passwd_change'
+    )
+    
+    return
+
+
+@router.get("/{user_id}/activities")
+async def get_user_activities_v2(
+    user_id: str,
+    page: int = Query(1, ge=1, description="Page number for pagination"),
+    perpage: int = Query(10, ge=1, le=1000, description="Number of items per page"),
+    search: str = Query("", description="Search keyword"),
+    sort: str = Query("_id", description="Sort by field"),
+    regex: bool = Query(True, description="Use regex for search"),
+    asc: bool = Query(False, description="Sort in ascending order"),
+    user=Depends(get_current_user),
+):
+    """
+    Get user activities (slow, deprecated)
+    
+    :param user_id: User ID
+    :param page: The page number
+    :param perpage: Items per page
+    :param search: Search keyword
+    :param sort: Sort by field
+    :param regex: Use regex for search
+    :param asc: Sort in ascending order
+    :param user: Current user
+    """
+    await validate_read_user_permission(user, user_id, "volunteer")
+
+    # Check if the user has permission to view the activities
+    # skipped right now
+
+    if not regex:
+        search = re.escape(search) if search else ""
+
+    # Get the user activities
+    activities_filter = (
+        {
+            "$or": [
+                {"name": {"$regex": search, "$options": "i"}},
+                {"description": {"$regex": search, "$options": "i"}},
+            ]
+        }
+        if search
+        else {}
+    )
+
+    selected_activities = (
+        await db.zvms_new.get_collection("activities")
+        .find(activities_filter)
+        .to_list(None)
+    )
+
+    members_record_filter = {
+        "member": user_id,
+        "activity": {"$in": [str(activity["_id"]) for activity in selected_activities]},
+    }
+
+    count = await db.zvms_new.get_collection("activity_members").count_documents(
+        members_record_filter
+    )
+
+    pipeline = [
+        {"$match": members_record_filter},
+        {
+            "$addFields": {
+                "activity_id_obj": {"$toObjectId": "$activity"},
+            }
+        },
+        {
+            "$lookup": {
+                "from": "activities",
+                "localField": "activity_id_obj",
+                "foreignField": "_id",
+                "as": "activity",
+            }
+        },
+        {"$unwind": "$activity"},
+        {"$project": {"activity_id_obj": 0}},
+        {"$sort": {sort: 1 if asc else -1}},
+        {"$skip": (page - 1) * perpage},
+        {"$limit": perpage},
+    ]
+
+    members = (
+        await db.zvms_new.get_collection("activity_members")
+        .aggregate(pipeline)
+        .to_list(None)
+    )
+    activities = []
+
+    for member in members:
+        # make the `activity` as the top level field, and let `member` to be `mine` field
+        activity = member.pop("activity")
+        member["_id"] = str(member["_id"])
+        activity["mine"] = member
+        activity["_id"] = str(activity["_id"])
+        activities.append(activity)
+
+    return {
+        "page": page,
+        "perpage": perpage,
+        "total": count,
+        "activities": activities,
+    }
+
+
+@router.get("/{user_id}/time")
+async def get_user_time_v2(
+    user_id: str, user=Depends(get_current_user), allow_cache: bool = False
+):
+    """
+    Get user time (slow, deprecated)
+
+    :param user_id: User ID
+    :param user: Current user
+    :param allow_cache: If True, do not use cached data
+
+    :return: User time
+    """
+    await validate_read_user_permission(user, user_id, "volunteer")
+
+    result = await calculate_user_time(user_id, allow_cache=allow_cache)
+
+    return result
+

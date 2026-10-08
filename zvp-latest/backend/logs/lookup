@@ -1,0 +1,17 @@
+#! /usr/local/bin/python3.15
+import re
+import urllib.parse
+lazy import traceback as tb
+with open('zvms4.out.log') as file:
+    lines = file.readlines()
+    search = input('\033[33mInput regex: \033[0m')
+    while search:
+        try:
+            regex = re.compile(search)
+            data = list(filter(regex.search, map(urllib.parse.unquote,lines)))
+            print(''.join(data))
+            print('\033[3%smfound'%'12'[bool(len(data))], len(data), 'result(s)\033[0m')
+        except BaseException as ex:
+            print('\033[31m',*tb.format_exception_only(ex),'\033[0m',end='',sep='')
+        search = input('\033[33mInput regex: \033[0m')
+    print('\033[34mLeaving...\033[0m')
