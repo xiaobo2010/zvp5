@@ -1,6 +1,11 @@
 import re
+from typing import Literal
+
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
+
 from database import db
+from typings.log import inject_log
 from util.object_id import get_current_user
 from util.permission.user import validate_read_user_permission
 from utils import validate_object_id
@@ -254,4 +259,53 @@ async def get_user_time_v3(
         "social-practice": result_dict.get("social-practice", 0),
         "raw": result_dict
     }
+
+
+AllowedRole = Literal['student', 'secretary', 'department', 'admin', 'teacher']
+
+
+class PutRolesRequest(BaseModel):
+    roles: list[AllowedRole]
+
+
+@router.put('/{user_id}/roles', status_code=204)
+async def modify_user_roles_v3(
+    user_id: str,
+    payload: PutRolesRequest,
+    user=Depends(get_user),
+    log=Depends(inject_log),
+):
+    if not user.require('admin'):
+        raise HTTPException(
+            status_code=403, detail='权限不足'
+        )
+
+    oid = validate_object_id(user_id)
+
+    target = await db.zvms_new.users.find_one({
+        "_id": oid
+    })
+
+    if not target:
+        raise HTTPException(
+            status_code=404, detail='用户不存在'
+        )
+
+    await db.zvms_new.users.update_one(
+        {
+            "_id": oid
+        },
+        {
+            "$set": {
+                "roles": payload.roles
+            }
+        }
+    )
+
+    log.with_text(
+        f'User {user.name} updated roles of {target["name"]} to {payload.roles}'
+    )
+    await log.insert_log()
+
+    return
 

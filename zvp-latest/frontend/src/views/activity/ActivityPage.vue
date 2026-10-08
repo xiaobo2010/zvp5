@@ -15,7 +15,10 @@ import {
     ElDialog,
     ElForm,
     ElInput,
+    ElInputNumber,
     ElFormItem,
+    ElSelect,
+    ElOption,
     ElIcon
 } from 'element-plus'
 import dayjs from '@/plugins/dayjs'
@@ -58,8 +61,6 @@ const getMembers = async ({ page, pageSize, query}) => {
     const { members, total } = await (await import('@/api')).activity.member.reads_v3(id.value, page, pageSize, query)
     return { data: members, total }
 }
-
-const devMsg = () => alert('新界面功能开发中，开发进度请咨询高二5班翁振轩')
 
 const deleteActivity = async () => {
     await (await import('@/api')).activity.deleteOne(id.value, user._id)
@@ -178,6 +179,55 @@ const doEdit = async () => {
     // TODO WIP
 }
 
+const add = ref(false)
+const adding = ref(false)
+const rows = ref([])
+const userOptions = ref([])
+const userLoading = ref(false)
+const membersVersion = ref(0)
+
+const newRow = () => ({
+    user: '',
+    mode: activity.value?.type === 'hybrid' ? '' : (activity.value?.type ?? ''),
+    duration: 1
+})
+
+const resetAddForm = () => {
+    rows.value = [newRow()]
+    userOptions.value = []
+}
+
+const addFormValid = computed(
+    () => rows.value.length && rows.value.every(r => r.user && r.mode && r.duration > 0)
+)
+
+const searchUsers = async (query) => {
+    userLoading.value = true
+    try {
+        const { data } = await (await import('@/api')).user.read_v2({ page: 1, pageSize: 20, query })
+        userOptions.value = data
+    } finally {
+        userLoading.value = false
+    }
+}
+
+const addRow = () => { rows.value.push(newRow()) }
+const removeRow = (i) => { rows.value.splice(i, 1) }
+
+const doAdd = async () => {
+    try {
+        adding.value = true
+        await (await import('@/api')).activity.member.insertMany(
+            id.value,
+            rows.value.map(r => ({ member: r.user, mode: r.mode, duration: Number(r.duration) }))
+        )
+        add.value = false
+        membersVersion.value++
+    } finally {
+        adding.value = false
+    }
+}
+
 watch(id, getActivity)
 onMounted(getActivity)
 
@@ -219,6 +269,83 @@ onUnmounted(() => state.set('unsaved', false))
                 </ElButton>
             </template>
         </ElDialog>
+        <ElDialog
+            v-model="add"
+            @open="resetAddForm()"
+            :close-on-click-modal="false"
+            align-center
+            :show-close="!adding"
+            :close-on-press-escape="!adding"
+        >
+            <template #header>
+                添加成员
+            </template>
+            <ElForm v-loading="adding" label-position="top">
+                <ElFormItem
+                    v-for="(row, i) in rows"
+                    :key="i"
+                    :label="`成员 ${i + 1}`"
+                >
+                    <div class="add-row flex flex-row">
+                        <ElSelect
+                            class="flex-grow"
+                            v-model="row.user"
+                            filterable remote
+                            :remote-method="searchUsers"
+                            :loading="userLoading"
+                            placeholder="搜索用户"
+                        >
+                            <ElOption
+                                v-for="u in userOptions"
+                                :key="u._id"
+                                :label="`${u.name} (${u.id})`"
+                                :value="u._id"
+                            ></ElOption>
+                        </ElSelect>
+                        <ElSelect
+                            class="flex-shrink-0"
+                            v-model="row.mode"
+                            :disabled="activity?.type !== 'hybrid'"
+                            placeholder="类型"
+                        >
+                            <ElOption
+                                v-for="(name, value) in modeNames"
+                                :key="value"
+                                :label="name"
+                                :value="value"
+                            ></ElOption>
+                        </ElSelect>
+                        <ElInputNumber
+                            class="flex-shrink-0"
+                            v-model="row.duration"
+                            :min="0.5"
+                            :step="0.5"
+                        ></ElInputNumber>
+                        <ElButton
+                            class="flex-shrink-0"
+                            text bg type="danger"
+                            :icon="Delete"
+                            :disabled="adding"
+                            @click="removeRow(i)"
+                        ></ElButton>
+                    </div>
+                </ElFormItem>
+                <ElFormItem>
+                    <ElButton text bg :icon="Plus" :disabled="adding" @click="addRow()">添加一行</ElButton>
+                </ElFormItem>
+            </ElForm>
+            <template #footer>
+                <ElButton
+                    text bg
+                    type="primary"
+                    @click="doAdd()"
+                    :disabled="adding || !addFormValid"
+                >
+                    添加
+                    <ElIcon class="el-icon--right"><ArrowRight></ArrowRight></ElIcon>
+                </ElButton>
+            </template>
+        </ElDialog>
         <ElPageHeader style="margin-bottom:1.5rem" @back="$router.back()">
             <template #content>
                 义工详情
@@ -229,7 +356,7 @@ onUnmounted(() => state.set('unsaved', false))
                     text bg
                     :icon="Plus"
                     type="success"
-                    @click="devMsg()"
+                    @click="add = true"
                 >
                     添加成员
                 </ElButton>
@@ -288,7 +415,7 @@ onUnmounted(() => state.set('unsaved', false))
             <span class="section-title">成员列表</span>
         </ElDivider>
         <ZList
-            :key="id"
+            :key="id + '-' + membersVersion"
             :remote-method="getMembers"
             v-model:page="page"
             v-model:page-size="pageSize"
@@ -317,6 +444,12 @@ onUnmounted(() => state.set('unsaved', false))
 .section-title {
     font-size: large;
     font-weight: bold;
+}
+
+.add-row {
+    gap: .5rem;
+    align-items: center;
+    flex-grow: 1;
 }
 
 .notice {

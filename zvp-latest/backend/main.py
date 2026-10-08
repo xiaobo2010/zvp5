@@ -4,15 +4,15 @@ import datetime as dt
 ts = dt.datetime.now().timestamp()
 logfile = sys.stderr = open(f'./logs/zvms.{ts}.err.log', 'a')
 
-lazy import traceback as tb
+import traceback as tb
 from fastapi import Request, FastAPI, HTTPException
 from fastapi.exceptions import RequestValidationError
 from pydantic import ValidationError
 from fastapi.responses import JSONResponse, RedirectResponse, FileResponse
 from pymongo.errors import OperationFailure
-lazy import signal
+import signal
 from fastapi.staticfiles import StaticFiles
-lazy import os
+import os
 from routers import (
     users_router,
     groups_router,

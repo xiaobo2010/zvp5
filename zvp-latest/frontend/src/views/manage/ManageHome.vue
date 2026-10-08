@@ -1,4 +1,4 @@
-x<script setup>
+<script setup>
 import { useRoute, useRouter } from 'vue-router'
 import { useUserStore, useState } from '@/stores'
 import { ref, watch, computed, reactive } from 'vue'
@@ -18,7 +18,11 @@ import {
     ElSelect,
     ElOption,
     ElIcon,
-    ElInput
+    ElInput,
+    ElInputNumber,
+    ElDialog,
+    ElForm,
+    ElFormItem
 } from 'element-plus'
 import { CircleClose, Key, Plus } from '@element-plus/icons-vue'
 import { logTypes, logLevels } from '@/utils/constants'
@@ -196,6 +200,28 @@ const gotoAdmin = () => {
     confirm('确定离开此页面吗？') && (window.location = 'https://zvp.xiaobopisces.top:54188/zvp5bt')
 }
 
+const create = ref(false)
+const creating = ref(false)
+const cName = ref('')
+const cYear = ref(undefined)
+const classesVersion = ref(0)
+
+const resetCreateForm = () => {
+    cName.value = ''
+    cYear.value = undefined
+}
+
+const doCreate = async () => {
+    try {
+        creating.value = true
+        await (await import('@/api')).group.create_v3(cName.value, cYear.value)
+        create.value = false
+        classesVersion.value++
+    } finally {
+        creating.value = false
+    }
+}
+
 const devNotice = () => alert('功能开发中')
 </script>
 
@@ -206,7 +232,7 @@ const devNotice = () => alert('功能开发中')
                 管理
             </template>
             <template #extra>
-                <ElButton :icon="Plus" text bg type="success" v-if="isAdmin && pane == 'classes'" @click="devNotice()">
+                <ElButton :icon="Plus" text bg type="success" v-if="isAdmin && pane == 'classes'" @click="create = true">
                     创建班级
                 </ElButton>
                 <ElButton :icon="Plus" text bg type="success" v-if="isAdmin && pane == 'users'" @click="devNotice()">
@@ -217,6 +243,36 @@ const devNotice = () => alert('功能开发中')
                 </ElButton>
             </template>
         </ElPageHeader>
+        <ElDialog
+            v-model="create"
+            @open="resetCreateForm()"
+            :close-on-click-modal="false"
+            align-center
+            :show-close="!creating"
+            :close-on-press-escape="!creating"
+        >
+            <template #header>
+                创建班级
+            </template>
+            <ElForm v-loading="creating">
+                <ElFormItem label="班级名">
+                    <ElInput placeholder="请输入" v-model="cName"></ElInput>
+                </ElFormItem>
+                <ElFormItem label="入学年份">
+                    <ElInputNumber placeholder="可以为空" v-model="cYear" :min="2000" :max="2100"></ElInputNumber>
+                </ElFormItem>
+            </ElForm>
+            <template #footer>
+                <ElButton
+                    text bg
+                    type="primary"
+                    @click="doCreate()"
+                    :disabled="creating||!cName"
+                >
+                    创建
+                </ElButton>
+            </template>
+        </ElDialog>
         <ElTabs
             v-if="canView" type="card" class="manage-tabs el-tabs--flex-pane" :default-value="pane" v-model="pane"
         >
@@ -234,14 +290,15 @@ const devNotice = () => alert('功能开发中')
             <ElTabPane label="班级" name="classes" class="flex flex-col pane" v-if="!isRestricted">
                 <ZList
                     v-if="tabVisibility.classes"
+                    :key="'classes-' + classesVersion"
                     :remote-method="getClasses"
                     v-model:page="classesTab.page"
                     v-model:page-size="classesTab.pageSize"
                     v-model:query="classesTab.query"
                     search-button
-                    v-slot="{ item }"
+                    v-slot="{ item, refresh }"
                 >
-                    <ZClassDisplay :group="item"></ZClassDisplay>
+                    <ZClassDisplay :group="item" @updated="refresh()"></ZClassDisplay>
                 </ZList>
             </ElTabPane>
             <ElTabPane label="用户" name="users" class="flex flex-col pane">
