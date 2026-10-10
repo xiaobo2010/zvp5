@@ -127,7 +127,7 @@ def jwt_encode(
     type: Optional[str] = "long",
 ):
     if type == "long":
-        duration = datetime.timedelta(days=15)
+        duration = datetime.timedelta(days=10)
         scope = "access_token"
     elif type == "otp":
         # Dynamic-code logins get a shorter-lived session than password logins.
