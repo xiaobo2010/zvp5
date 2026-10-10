@@ -117,12 +117,6 @@ if (security.value < 4) {
   router.replace('/user/login')
 }
 
-let sid = localStorage.getItem('deviceId')
-if (!sid) {
-  sid = Math.random().toString(36).substring(2, 11)
-  localStorage.setItem('deviceId', sid)
-}
-
 const dark = useDark()
 
 watch(

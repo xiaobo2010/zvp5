@@ -9,14 +9,13 @@ export async function read(
   query: string = '',
   user: string = ''
 ) {
-  const url = user ? `/users/${user}/logs` : '/logs'
   const result = (
-    await axios(url, {
+    await axios('/logs', {
       params: {
-        mode: 'campus',
         page,
         perpage,
-        query
+        query,
+        performer: user || undefined
       }
     })
   ).data as Response<Log[]> & {

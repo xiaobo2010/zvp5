@@ -16,16 +16,8 @@ export const getUA = () => result.ua
 
 export const getCPU = () => result.cpu
 
-export function getXuehaiId(): number {
-  return window.xhBrowserJava && window.xhBrowserJava?.getUserId() || 0
-}
-
 export const pad = () => {
-  if (result.device.vendor === 'Samsung' && result.os.name === 'Android' || getXuehaiId()) {
-    return true
-  } else {
-    return false
-  }
+  return result.device.vendor === 'Samsung' && result.os.name === 'Android'
 }
 
 export function getTabletType(): 'p615' | 'p620' | 'p200' | 'p355' {

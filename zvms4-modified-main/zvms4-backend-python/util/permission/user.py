@@ -1,42 +1,63 @@
-from typing import Literal
-from util.get_class import get_user_class
+from typing import Literal, Optional
+
+from fastapi import HTTPException
+
 from database import db
 from util.object_id import validate_object_id
 
 
+async def get_zvms_new_user(oid: str) -> Optional[dict]:
+    """
+    Fetch a user document from the live `zvms_new.users` collection.
+    """
+    return await db.zvms_new.users.find_one({"_id": validate_object_id(oid)})
+
+
 async def validate_read_user_permission(
-    user: dict, target_user: str, applied: Literal["volunteer", "club"]
+    user: dict, target_user: str, applied: Literal["volunteer", "club"] = "volunteer"
 ):
     """
-    Validate if the user has permission to read the target user's information.
+    Validate that the current user may read the target user's information.
+
+    Permission vocabulary is the raw JWT `per` list (student/secretary/
+    department/admin, issued from `zvms_new.users.roles`):
+    - self / admin / department: allowed
+    - secretary: allowed only when in the same class as the target
     """
     if user["id"] == target_user:
         return True
-    if "admin" in user.get("perm") or applied in user.get("perm"):
+    per = user.get("per") or []
+    if "admin" in per or "department" in per:
         return True
-    if "monitor" in user.get("perm"):
-        # If the user is a monitor, it should be in the same class
-        # user_class_id = await get_user_class(user["id"])
-        # target_classes = await db.zvms.users.find_one(
-        #     {"_id": validate_object_id(target_user)}
-        # )["group"]
-        # if user_class_id in target_classes:
-        #     return True
-        return True
-    return False
+    if "secretary" in per:
+        current = await get_zvms_new_user(user["id"])
+        target = await get_zvms_new_user(target_user)
+        if (
+            current is not None
+            and target is not None
+            and str(current.get("class_id")) == str(target.get("class_id"))
+        ):
+            return True
+    raise HTTPException(status_code=403, detail="权限不足")
 
 
 async def validate_read_group_permission(
-    user: dict, target_group: str, applied: Literal["volunteer", "club"]
+    user: dict, target_group: str, applied: Literal["volunteer", "club"] = "volunteer"
 ):
     """
-    Validate if the user has permission to read the target group's information.
+    Validate that the current user may read the target group's information.
+
+    admin/department always; secretary only for their own class.
     """
-    if "admin" in user.get("perm") or applied in user.get("perm"):
+    per = user.get("per") or []
+    if "admin" in per or "department" in per:
         return True
-    if "monitor" in user.get("perm"):
-        # If the user is a monitor, it should be in the same class
-        user_class_id = await get_user_class(user["id"])
-        if user_class_id == target_group:
+    if "secretary" in per:
+        current = await get_zvms_new_user(user["id"])
+        if (
+            current is not None
+            and current.get("class_id") is not None
+            and str(current["class_id"]) == target_group
+        ):
             return True
-    return False
+    raise HTTPException(status_code=403, detail="权限不足")

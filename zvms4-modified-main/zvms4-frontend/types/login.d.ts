@@ -1,4 +1,14 @@
+export interface UserProfile {
+  _id: string
+  id: string
+  name: string
+  roles: string[]
+  class_id: string
+  group?: string[]
+}
+
 export interface LoginResult {
   token: string // JSON Web Token
   _id: string // MongoDB ObjectID
+  profile?: UserProfile
 }

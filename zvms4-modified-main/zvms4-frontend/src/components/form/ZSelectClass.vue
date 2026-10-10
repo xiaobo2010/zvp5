@@ -3,6 +3,7 @@ import { ElSelect, ElOption } from 'element-plus'
 import { ref, toRefs, watch } from 'vue'
 import api from '@/api'
 import type { Group } from '@/../types'
+import { useUserStore } from '@/stores/user'
 
 const props = withDefaults(
   defineProps<{
@@ -32,23 +33,26 @@ const classes = ref<Group[]>([])
 
 const load = ref(false)
 
+const userStore = useUserStore()
+
 async function remoteFetchClass(search: string) {
-  if (search) {
-    const classesSet = await api.group.read('class', 1, 5, search)
-    if (classesSet) {
-      classes.value = classesSet.groups
+  const position = userStore.position
+  if (position.includes('admin') || position.includes('department')) {
+    if (search) {
+      const classesSet = await api.group.read_v2(1, 50, search)
+      classes.value = classesSet ? classesSet.groups : []
+    } else if (classGroupID.value) {
+      const group = await api.group.readOne(classGroupID.value)
+      classes.value = group ? [group] : []
     } else {
       classes.value = []
     }
-  } else if (classGroupID.value) {
-    const group = await api.group.readOne(classGroupID.value)
-    if (group) {
-      classes.value = [group]
-    } else {
-      classes.value = []
-    }
+  } else if (position.includes('secretary') && userStore.class_id) {
+    const group = await api.group.readOne(userStore.class_id)
+    classes.value = group ? [group] : []
   } else {
-    classes.value = []
+    const classesSet = await api.group.read('class', 1, 5, search)
+    classes.value = classesSet ? classesSet.groups : []
   }
 }
 </script>

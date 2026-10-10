@@ -20,12 +20,16 @@ from util.object_id import (
     get_current_user,
     validate_object_id,
 )
+from typings.log import inject_log
+from util.user import get_user_display_name
 
 router = APIRouter()
 
 
 @router.post("")
-async def create_group(payload: Group, user=Depends(get_current_user)):
+async def create_group(
+    payload: Group, user=Depends(get_current_user), log=Depends(inject_log)
+):
     """
     Create a user group
     """
@@ -38,6 +42,12 @@ async def create_group(payload: Group, user=Depends(get_current_user)):
     result = await db.zvms.groups.insert_one(group)
 
     id = str(result.inserted_id)
+
+    log.with_text(
+        f"管理员 {await get_user_display_name(user['id'])} 创建了用户组 {payload.name}",
+        type="group_create",
+    )
+    await log.insert_log()
 
     return {
         "status": "ok",
@@ -115,7 +125,10 @@ class PutGroupName(BaseModel):
 
 @router.put("/{group_id}/name")
 async def update_group_name(
-    group_id: str, payload: PutGroupName, user=Depends(get_current_user)
+    group_id: str,
+    payload: PutGroupName,
+    user=Depends(get_current_user),
+    log=Depends(inject_log),
 ):
     """
     Update group name
@@ -124,9 +137,19 @@ async def update_group_name(
     if "admin" not in user["per"]:
         raise HTTPException(status_code=403, detail="Permission denied")
 
+    target = await db.zvms.groups.find_one({"_id": validate_object_id(group_id)})
+    if target is None:
+        raise HTTPException(status_code=404, detail="Group not found")
+
     await db.zvms.groups.update_one(
         {"_id": validate_object_id(group_id)}, {"$set": {"name": payload.name}}
     )
+
+    log.with_text(
+        f"管理员 {await get_user_display_name(user['id'])} 将用户组 {target['name']} 改名为 {payload.name}",
+        type="group_update",
+    )
+    await log.insert_log()
 
     return {
         "status": "ok",
@@ -312,7 +335,10 @@ class PutGroupDescription(BaseModel):
 
 @router.put("/{group_id}/description")
 async def update_group_description(
-    group_id: str, payload: PutGroupDescription, user=Depends(get_current_user)
+    group_id: str,
+    payload: PutGroupDescription,
+    user=Depends(get_current_user),
+    log=Depends(inject_log),
 ):
     """
     Update group description
@@ -325,6 +351,12 @@ async def update_group_description(
         {"_id": ObjectId(group_id)}, {"$set": {"description": payload.description}}
     )
 
+    log.with_text(
+        f"管理员 {await get_user_display_name(user['id'])} 修改了用户组描述（ID: {group_id}）",
+        type="group_update",
+    )
+    await log.insert_log()
+
     return {
         "status": "ok",
         "code": 200,
@@ -332,7 +364,9 @@ async def update_group_description(
 
 
 @router.delete("/{group_id}")
-async def delete_group(group_id: str, user=Depends(compulsory_temporary_token)):
+async def delete_group(
+    group_id: str, user=Depends(compulsory_temporary_token), log=Depends(inject_log)
+):
     """
     Remove group
     """
@@ -340,7 +374,17 @@ async def delete_group(group_id: str, user=Depends(compulsory_temporary_token)):
     if "admin" not in user["per"]:
         raise HTTPException(status_code=403, detail="Permission denied")
 
+    target = await db.zvms.groups.find_one({"_id": ObjectId(group_id)})
+    if target is None:
+        raise HTTPException(status_code=404, detail="Group not found")
+
     await db.zvms.groups.delete_one({"_id": ObjectId(group_id)})
+
+    log.with_text(
+        f"管理员 {await get_user_display_name(user['id'])} 删除了用户组 {target['name']}",
+        type="group_delete",
+    )
+    await log.insert_log()
 
     return {
         "status": "ok",

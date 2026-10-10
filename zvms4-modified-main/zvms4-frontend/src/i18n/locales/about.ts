@@ -26,7 +26,7 @@ export const zhCN = {
   privacy: {
     title: '隐私政策',
     content:
-      '本站与 Microsoft Clarity 和 Microsoft Advertising 合作，通过行为指标、热图和会话重播来捕获您使用本站的方式以及与本站的互动，从而改进本站的浏览体验。我们使用第一和第三方 Cookie 及其他跟踪技术获取网站使用数据，以确定本站的受欢迎程度和在线活动。此外，我们还将此信息用于政教处管理与审查、网站优化和安全目的。有关 Microsoft 如何收集和使用您的数据的详细信息，请访问 Microsoft 隐私声明 (https://privacy.microsoft.com/privacystatement)。'
+      '本站不使用任何第三方行为分析、热图或会话重播工具，不采集用户设备指纹，也不与外部网站共享您的数据。平台仅记录必要的业务操作日志（如登录、数据变更），用于安全审计与问题排查，日志不包含设备信息。'
   },
   bio: '一个历史悠久的开源项目。',
   alternative: '镇海中学义工管理系统'

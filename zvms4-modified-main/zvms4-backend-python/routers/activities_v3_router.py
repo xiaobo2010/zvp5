@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException, Body, Query
 from database import db
 from typings.log import inject_log
 from util.object_id import get_current_user
-from util.user import get_user_name
+from util.user import get_user_display_name
 from utils import validate_object_id
 from typing import Literal
 from asyncio import gather
@@ -185,7 +185,8 @@ async def create_activity_v3(
     })
 
     log.with_text(
-        f'用户 {await get_user_name(user["id"])} 创建了义工 {payload.name} ({oid})'
+        f'用户 {await get_user_display_name(user["id"])} 创建了义工活动《{payload.name}》（ID: {oid}）',
+        type="activity_create",
     )
     await log.insert_log()
 
@@ -348,6 +349,7 @@ async def add_activity_member_v3(
     results = []
 
     log_text = ''
+    has_update = False
 
     for member in members:
         if target_activity["type"] != "hybrid" and target_activity["type"] != member.mode:
@@ -376,7 +378,8 @@ async def add_activity_member_v3(
                 {"$set": updated_data},
             )
 
-            log_text += f'User {await get_user_name(user["id"])} updated member {await get_user_name(member.member)} in activity {target_activity["name"]}\n'
+            has_update = True
+            log_text += f'用户 {await get_user_display_name(user["id"])} 更新了义工活动《{target_activity["name"]}》中成员 {await get_user_display_name(member.member)} 的时长记录\n'
 
             continue
 
@@ -387,10 +390,13 @@ async def add_activity_member_v3(
             "status": "effective",
         })
 
-        log_text += f'User {await get_user_name(user["id"])} added member {await get_user_name(member.member)} to activity {target_activity["name"]}\n'
+        log_text += f'用户 {await get_user_display_name(user["id"])} 将成员 {await get_user_display_name(member.member)} 加入义工活动《{target_activity["name"]}》\n'
 
     if len(log_text):
-        log.with_text(log_text[:-1])
+        log.with_text(
+            log_text[:-1],
+            type="activity_member_update" if has_update else "activity_member_add",
+        )
         await log.insert_log()
 
     result = await db.zvms_new.get_collection("activities").update_one(
