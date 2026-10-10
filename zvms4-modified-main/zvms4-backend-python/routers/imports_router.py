@@ -5,7 +5,7 @@ from bson import Binary
 from typings.activity_v2 import Activity, ActivityMember
 from fastapi import APIRouter, File, HTTPException, Depends, UploadFile
 from typings.log import inject_log
-from util.user import get_user_name
+from util.user import get_user_display_name
 from util.object_id import get_current_user
 from datetime import datetime
 from database import db
@@ -82,7 +82,10 @@ async def upload_activity_excel(
         df.fillna(0.0)
         accepted_modes = ["On Campus", "Off Campus", "Social Practice"]
 
-        log.with_text(f"User {await get_user_name(user['id'])} uploaded activity excel")
+        log.with_text(
+            f"用户 {await get_user_display_name(user['id'])} 导入了义工活动 Excel",
+            type="import_excel",
+        )
         await log.insert_log()
 
         info = Activity(

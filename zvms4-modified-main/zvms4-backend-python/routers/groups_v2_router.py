@@ -3,7 +3,7 @@ from collections import defaultdict
 from typing import Optional
 
 from bson import ObjectId
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from config import (
     BASE_OFF_CAMPUS,
@@ -21,7 +21,86 @@ from util.object_id import get_current_user, validate_object_id
 from util.permission.user import validate_read_group_permission
 from util.cert import check_password
 
+from asyncio import gather
+
 router = APIRouter()
+
+
+@router.get("")
+async def get_groups_v2(
+    page: int = Query(1),
+    size: int = Query(10),
+    query: str = Query(""),
+    user=Depends(get_current_user),
+):
+    """
+    List the live classes (`zvms_new.groups`).
+
+    Permission: admin/department.
+    """
+    per = user.get("per") or []
+    if not ("admin" in per or "department" in per):
+        raise HTTPException(status_code=403, detail="权限不足")
+
+    pipeline = [
+        {"$match": {"name": {"$regex": re.escape(query), "$options": "i"}}},
+        {"$sort": {"_id": 1}},
+        {"$skip": (page - 1) * size},
+        {"$limit": size},
+        {"$project": {"_id": {"$toString": "$_id"}, "name": "$name"}},
+    ]
+
+    count_pipeline = [
+        pipeline[0],
+        {"$count": "total"},
+    ]
+
+    total, result = await gather(
+        db.zvms_new.groups.aggregate(count_pipeline).to_list(length=1),
+        db.zvms_new.groups.aggregate(pipeline).to_list(None),
+    )
+
+    return {
+        "data": result,
+        "total": total[0]["total"] if total else 0,
+    }
+
+
+@router.get("/{group_id}")
+async def get_group_v2(
+    group_id: str,
+    user=Depends(get_current_user),
+):
+    """
+    Read a single live class (`zvms_new.groups`).
+
+    Permission: admin/department, or the requester's own class.
+    """
+    per = user.get("per") or []
+    if not ("admin" in per or "department" in per):
+        current = await db.zvms_new.users.find_one(
+            {"_id": validate_object_id(user["id"])}, {"class_id": 1}
+        )
+        if not (
+            current is not None
+            and current.get("class_id") is not None
+            and str(current["class_id"]) == group_id
+        ):
+            raise HTTPException(status_code=403, detail="权限不足")
+
+    result = await db.zvms_new.groups.find_one({"_id": validate_object_id(group_id)})
+    if result is None:
+        raise HTTPException(status_code=404, detail="班级不存在")
+
+    return {
+        "status": "ok",
+        "code": 200,
+        "data": {
+            "_id": str(result["_id"]),
+            "name": result["name"],
+            "type": "class",
+        },
+    }
 
 
 @router.get("/{group_id}/activities")
@@ -284,7 +363,7 @@ async def get_group_users_v2(
 @router.get("/{group_id}/statistics/compliance")
 async def stat_group_compliance(
     group_id: str,
-    # user=Depends(get_current_user),
+    user=Depends(get_current_user),
 ):
     """
     Get group compliance statistics
@@ -292,7 +371,7 @@ async def stat_group_compliance(
     :param user: Current user
     """
 
-    # await validate_read_group_permission(user, group_id, "volunteer")
+    await validate_read_group_permission(user, group_id, "volunteer")
 
     # Get members from the group
     members = (

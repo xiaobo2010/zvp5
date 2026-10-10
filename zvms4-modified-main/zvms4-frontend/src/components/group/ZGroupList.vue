@@ -30,7 +30,7 @@ watch(height, () => {
 
 function refresh() {
   loading.value = true
-  api.group.read('all', page.value, perpage.value, search.value).then((res) => {
+  api.group.read_v2(page.value, perpage.value, search.value).then((res) => {
     groups.value = []
     if (!res) return
     groups.value.push(...res.groups)

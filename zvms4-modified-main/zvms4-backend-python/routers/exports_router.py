@@ -12,7 +12,9 @@ from config import (
     OFF_TO_ON_RATE,
 )
 from typings.export import ExportFormat, ExportTask, ExportStatus, ExportVariant
+from typings.log import inject_log, ZVMSLog
 from util.calculate import calculate_user_time
+from util.user import get_user_display_name
 from fastapi.responses import FileResponse
 from io import BytesIO
 import base64
@@ -178,7 +180,9 @@ async def process_task(task_id: str):
 
 @router.post("/users")
 async def export_users(
-    background_tasks: BackgroundTasks, user=Depends(get_current_user)
+    background_tasks: BackgroundTasks,
+    user=Depends(get_current_user),
+    log=Depends(inject_log),
 ):
     if "admin" not in user["per"]:
         raise HTTPException(status_code=403, detail="Permission denied")
@@ -199,6 +203,11 @@ async def export_users(
     document["format"] = document["format"].value
     document["status"] = document["status"].value
     await db.zvms.tasks.insert_one(document)
+    log.with_text(
+        f"用户 {await get_user_display_name(user['id'])} 发起了用户列表导出（任务 ID: {task_id}）",
+        type="export",
+    )
+    await log.insert_log()
     background_tasks.add_task(process_task, str(task_id))
     return {"code": 201, "status": "ok", "data": str(task_id)}
 
@@ -208,6 +217,7 @@ async def export_time(
     properties: CreateExport,
     background_tasks: BackgroundTasks,
     user=Depends(get_current_user),
+    log=Depends(inject_log),
 ):
     if "admin" not in user["per"]:
         raise HTTPException(status_code=403, detail="Permission denied")
@@ -234,6 +244,11 @@ async def export_time(
     document["format"] = document["format"].value
     document["status"] = document["status"].value
     await db.zvms.tasks.insert_one(document)
+    log.with_text(
+        f"用户 {await get_user_display_name(user['id'])} 发起了时长报表导出（任务 ID: {task_id}）",
+        type="export",
+    )
+    await log.insert_log()
     background_tasks.add_task(process_task, str(task_id))
     return {"code": 201, "status": "ok", "data": str(task_id)}
 
@@ -251,6 +266,7 @@ async def get_export(task_id: str):
 @router.post("/reports")
 async def request_download_reports(
     user=Depends(compulsory_temporary_token),
+    log=Depends(inject_log),
 ):
     if "admin" not in user["per"]:
         raise HTTPException(status_code=403, detail="Permission denied")
@@ -262,6 +278,11 @@ async def request_download_reports(
     }
     token_data_encoded = base64.b64encode(json.dumps(token_data).encode()).decode()
     tokens.append(token_data)
+    log.with_text(
+        f"用户 {await get_user_display_name(user['id'])} 请求了报告打包下载授权",
+        type="export",
+    )
+    await log.insert_log()
     return token_data_encoded
 
 
@@ -285,6 +306,15 @@ async def download_reports(
     # Remove the token after use
     tokens = [t for t in tokens if t["token"] != token_data["token"]]
 
+    log = ZVMSLog(
+        str(request.url),
+        str(token_data["granted_to"]),
+        f"用户 {await get_user_display_name(token_data['granted_to'])} 下载了报告文件",
+        datetime.timestamp(datetime.now()),
+        type="export",
+    )
+    await log.insert_log()
+
     # response to `export.tar.gz`, which is a tar.gz file containing all reports and already exists in the server
     file_path = "./data/export.tar.gz"
     if not os.path.exists(file_path):
@@ -298,7 +328,14 @@ async def download_reports(
 
 
 @router.get("/{task_id}/file")
-async def get_export_file(task_id: str, language: str = "en"):
+async def get_export_file(
+    task_id: str,
+    language: str = "en",
+    user=Depends(get_current_user),
+    log=Depends(inject_log),
+):
+    if "admin" not in user["per"]:
+        raise HTTPException(status_code=403, detail="Permission denied")
     task = await db.zvms.tasks.find_one({"id": uuid.UUID(task_id)})
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
@@ -337,6 +374,11 @@ async def get_export_file(task_id: str, language: str = "en"):
             raise HTTPException(status_code=400, detail="Invalid format")
         buffer.write(tmp.read())
         await db.zvms.tasks.delete_one({"id": uuid.UUID(task_id)})
+    log.with_text(
+        f"用户 {await get_user_display_name(user['id'])} 下载了导出文件（任务 ID: {task_id}，格式 {task['format']}）",
+        type="export",
+    )
+    await log.insert_log()
     return FileResponse(tmp.name, media_type=ExportFormat(task["format"]).mime())
 
 

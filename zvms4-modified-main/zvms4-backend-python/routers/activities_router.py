@@ -2,7 +2,7 @@ import re
 from fastapi import APIRouter, HTTPException, Depends, Request
 from fastapi.responses import RedirectResponse
 from typings.log import inject_log
-from util.user import get_user_name
+from util.user import get_user_display_name
 from util.object_id import (
     get_current_user,
     validate_object_id,
@@ -54,8 +54,9 @@ async def change_activity_description(
         },
     )
 
-    log = log.with_text(
-        f"User {await get_user_name(user['id'])} changed activity description to {payload.description}"
+    log.with_text(
+        f"用户 {await get_user_display_name(user['id'])} 修改了义工活动 {activity_oid} 的描述",
+        type="activity_update",
     )
     await log.insert_log()
 
@@ -96,7 +97,8 @@ async def change_activity_title(
     )
 
     log.with_text(
-        f"User {await get_user_name(user['id'])} changed activity title to {name}"
+        f"用户 {await get_user_display_name(user['id'])} 将义工活动 {activity_oid} 的名称修改为 {name}",
+        type="activity_update",
     )
     await log.insert_log()
 
@@ -148,8 +150,10 @@ async def change_activity_status(
         {"$set": {"status": status, "updatedAt": int(datetime.now().timestamp())}},
     )
 
+    status_labels = {"effective": "生效", "pending": "待审核", "refused": "已驳回"}
     log.with_text(
-        f"User {await get_user_name(user['id'])} changed activity status to {payload.status}"
+        f"用户 {await get_user_display_name(user['id'])} 将义工活动 {activity_oid} 的状态修改为 {status_labels.get(payload.status, payload.status)}",
+        type="activity_update",
     )
     await log.insert_log()
 
@@ -443,7 +447,8 @@ async def update_activity_member_duration(
     )
 
     log.with_text(
-        f"User {await get_user_name(user['id'])} updated activity member {await get_user_name(uid)}'s duration to {payload.duration} in activity {activity_oid}"
+        f"用户 {await get_user_display_name(user['id'])} 修改了义工活动 {activity_oid} 中成员 {await get_user_display_name(uid)} 的时长为 {payload.duration}",
+        type="activity_member_update",
     )
     await log.insert_log()
 

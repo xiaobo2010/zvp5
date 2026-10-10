@@ -12,7 +12,7 @@ from typings.log import inject_log
 from typings.user import User as UserV1
 from util.object_id import get_current_user, compulsory_temporary_token
 from util.permission import volunteer, volunteer_member
-from util.user import get_user_name
+from util.user import get_user_display_name
 from util.validation import validate_activity_name
 from utils import validate_object_id
 
@@ -48,7 +48,8 @@ async def create_activity_v2(
     result = await db.zvms_new.get_collection("activities").insert_one(activity_)
 
     log.with_text(
-        f'User {await get_user_name(user['id'])} (ID: {user['id']}) created activity {activity_["name"]} at {datetime.now().isoformat()} (ID: {result.inserted_id}).'
+        f'用户 {await get_user_display_name(user["id"])} 创建了义工活动《{activity_["name"]}》（ID: {result.inserted_id}）',
+        type="activity_create",
     )
     await log.insert_log()
 
@@ -181,7 +182,8 @@ async def delete_activity_v2(
         raise HTTPException(status_code=404, detail="Activity not found")
 
     log.with_text(
-        f'User {await get_user_name(user["id"])} deleted activity {target_activity["name"]} at {datetime.now().isoformat()}. The ID of the activity is {activity_id}.'
+        f'用户 {await get_user_display_name(user["id"])} 删除了义工活动《{target_activity["name"]}》（ID: {activity_id}）',
+        type="activity_delete",
     )
     await log.insert_log()
 
@@ -345,7 +347,8 @@ async def add_activity_member_v2(
     result = await db.zvms_new.get_collection("activity_members").insert_one(member_)
     
     log.with_text(
-        f'User {await get_user_name(user["id"])} added member {target_user.name} to activity {target_activity.name} at {datetime.now().isoformat()}.'
+        f'用户 {await get_user_display_name(user["id"])} 将成员 {target_user.name} 加入义工活动《{target_activity.name}》',
+        type="activity_member_add",
     )
     await log.insert_log()
 
@@ -359,7 +362,10 @@ async def add_activity_member_v2(
 
 @router.delete("/{activity_id}/members/{session_id}")
 async def delete_activity_member_v2(
-    activity_id: str, session_id: str, user=Depends(get_current_user)
+    activity_id: str,
+    session_id: str,
+    user=Depends(get_current_user),
+    log=Depends(inject_log),
 ):
     """
     :param activity_id: ID of the activity to be retrieved
@@ -370,12 +376,22 @@ async def delete_activity_member_v2(
     """
     await volunteer_member.validate_update_permission(user)
 
+    target_member = await db.zvms_new.get_collection("activity_members").find_one(
+        {"_id": validate_object_id(session_id), "activity": activity_id}
+    )
+
     result = await db.zvms_new.get_collection("activity_members").delete_one(
         {"_id": validate_object_id(session_id), "activity": activity_id}
     )
 
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Activity member not found")
+
+    log.with_text(
+        f'用户 {await get_user_display_name(user["id"])} 将成员 {await get_user_display_name(target_member["member"])} 移出义工活动（ID: {activity_id}）',
+        type="activity_member_remove",
+    )
+    await log.insert_log()
 
     return {"detail": "Activity member deleted successfully"}
 
@@ -440,8 +456,10 @@ async def modify_activity_status_v2(
     if result.modified_count == 0:
         raise HTTPException(status_code=404, detail="Activity not found")
 
+    status_labels = {"effective": "生效", "pending": "待审核", "refused": "已驳回"}
     log.with_text(
-        f'User {await get_user_name(user["id"])} updated activity {target_activity.name} at {datetime.now().isoformat()}. The ID of the activity is {activity_id}.'
+        f'用户 {await get_user_display_name(user["id"])} 审核了义工活动《{target_activity.name}》，状态改为 {status_labels.get(status.status, status.status)}',
+        type="activity_update",
     )
     await log.insert_log()
 
@@ -499,6 +517,7 @@ async def update_user_duration_v2(
     document_id: str,
     updated: UpdateUserRecord,
     user=Depends(get_current_user),
+    log=Depends(inject_log),
 ):
     """
     Update the duration of a user's record in an activity.
@@ -539,6 +558,12 @@ async def update_user_duration_v2(
     if result.modified_count == 0:
         raise HTTPException(status_code=404, detail="Activity member not found")
 
+    log.with_text(
+        f'用户 {await get_user_display_name(user["id"])} 修改了义工活动《{target_activity["name"]}》中成员 {await get_user_display_name(target_member["member"])} 的记录（时长 {updated.duration}，模式 {updated.mode}）',
+        type="activity_member_update",
+    )
+    await log.insert_log()
+
     return JSONResponse({"detail": "Activity member updated successfully"})
 
 
@@ -549,7 +574,10 @@ class UpdateActivityInfo(BaseModel):
 
 @router.put("/{activity_id}/info")
 async def update_activity_info(
-    payload: UpdateActivityInfo, activity_id: str, user=Depends(get_current_user)
+    payload: UpdateActivityInfo,
+    activity_id: str,
+    user=Depends(get_current_user),
+    log=Depends(inject_log),
 ):
     """
     Update the name of an activity.
@@ -581,5 +609,11 @@ async def update_activity_info(
 
     if result.modified_count == 0:
         raise HTTPException(status_code=404, detail="Activity not found")
+
+    log.with_text(
+        f'用户 {await get_user_display_name(user["id"])} 修改了义工活动《{target_activity["name"]}》的信息（名称改为 {payload.name}）',
+        type="activity_update",
+    )
+    await log.insert_log()
 
     return JSONResponse({"detail": "Activity name updated successfully"})

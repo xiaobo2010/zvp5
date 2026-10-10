@@ -22,7 +22,7 @@ export async function createGroup(group: Group) {
 }
 
 export async function getGroup(gid: string) {
-  const response = await axios('/groups/' + gid)
+  const response = await axios('/v2/groups/' + gid)
   const data = response.data as Response<Group>
   if (data.status === 'ok') {
     return data.data
@@ -71,13 +71,72 @@ export async function deleteGroup(uid: string, gid: string) {
   const token = await temporaryToken(uid)
   const response = await axios({
     method: 'delete',
-    url: `/groups/${gid}`,
+    url: `/v3/groups/${gid}`,
     headers: {
       Authorization: `Bearer ${token}`
     }
   })
-  const data = response.data as Response<null>
-  return data.status === 'ok'
+  return response?.status === 204
+}
+
+export async function getGroupsV2(
+  page: number = 1,
+  size: number = 10,
+  query: string = ''
+) {
+  const response = (
+    await axios('/v2/groups', {
+      params: { page, size, query }
+    })
+  ).data as { data: Group[]; total: number }
+  return {
+    groups: response.data,
+    size: response.total
+  }
+}
+
+export async function createGroupV3(name: string) {
+  const response = (
+    await axios({
+      method: 'post',
+      url: '/v3/groups',
+      data: { name }
+    })
+  ).data as { id: string }
+  if (response?.id) {
+    ElNotification({
+      title: 'Success',
+      message: 'Group created successfully: ' + response.id,
+      type: 'success'
+    })
+    return response.id
+  }
+  return false
+}
+
+export async function renameGroupV3(gid: string, name: string) {
+  const response = await axios({
+    method: 'put',
+    url: `/v3/groups/${gid}/name`,
+    data: { name }
+  })
+  return response?.status === 204
+}
+
+export async function addGroupUserV3(gid: string, uid: string) {
+  const response = await axios({
+    method: 'post',
+    url: `/v3/groups/${gid}/users/${uid}`
+  })
+  return response?.status === 204
+}
+
+export async function removeGroupUserV3(gid: string, uid: string) {
+  const response = await axios({
+    method: 'delete',
+    url: `/v3/groups/${gid}/users/${uid}`
+  })
+  return response?.status === 204
 }
 
 export const updateMethods = {

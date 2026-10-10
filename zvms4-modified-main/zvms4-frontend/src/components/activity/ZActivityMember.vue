@@ -75,24 +75,20 @@ refresh()
 
 async function resetMemberPassword() {
   loading2.value = true
-  const user = person.value
-  const password = user?.id?.toString()
-  if (password) {
-    const token = await temporaryToken(userStore._id).catch(() => {
-      loading2.value = false
-    })
-    if (!token) {
-      return
-    }
-    await api.user.password.put(id.value, password, token, true).then(() => {
-      ElNotification({
-        title: '密码重置成功',
-        type: 'success'
-      })
-    }).catch(() => {
-      loading2.value = false
-    })
+  const token = await temporaryToken(userStore._id).catch(() => {
+    loading2.value = false
+  })
+  if (!token) {
+    return
   }
+  await api.user.password.reset(id.value, token).then(() => {
+    ElNotification({
+      title: '密码重置成功',
+      type: 'success'
+    })
+  }).catch(() => {
+    loading2.value = false
+  })
   loading2.value = false
 }
 

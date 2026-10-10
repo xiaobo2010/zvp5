@@ -28,8 +28,7 @@ export async function getRSAPublicCert(): Promise<string> {
 export async function resetPassword(
   user: string,
   password: string,
-  token: string,
-  reset: boolean = false
+  token: string
 ) {
   const payload = JSON.stringify({
     password: password,
@@ -55,8 +54,23 @@ export async function resetPassword(
     })
     return
   }
-  if (!reset) {
-    localStorage.setItem('token', result.data.token)
+  return result.data
+}
+
+export async function resetToInitial(user: string, token: string) {
+  const result = (await axios(`/v3/users/${user}/password`, {
+    method: 'DELETE',
+    headers: {
+      Authorization: `Bearer ${token}`
+    }
+  })) as Response<null>
+  if (result.status === 'error') {
+    ElNotification({
+      title: 'Error when resetting password',
+      message: result.message,
+      type: 'error'
+    })
+    return
   }
   return result.data
 }

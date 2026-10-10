@@ -1,5 +1,5 @@
 import api from '@/api'
-import type { User, UserPosition } from '@/../types'
+import type { User, UserPosition, UserProfile } from '@/../types'
 import { defineStore } from 'pinia'
 import { ElNotification } from 'element-plus'
 import { useRouter } from 'vue-router'
@@ -7,7 +7,7 @@ import { getUserPositions } from '@/utils/groupPosition'
 
 export const useUserStore = defineStore('user', {
   state: () => ({
-    id: 0,
+    id: 0 as number | string,
     _id: '',
     name: '',
     position: [] as UserPosition[],
@@ -30,18 +30,26 @@ export const useUserStore = defineStore('user', {
         this.class_id = group._id
       }
     },
-    async setUserInformation(user: User) {
+    async setUserInformation(user: User | UserProfile) {
       this._id = user._id
       this.id = user.id
       this.name = user.name
-      this.groups = user.group
-      await this.getUserClassId(user.group)
-      this.position = await getUserPositions(user)
+      if (Array.isArray(user.roles)) {
+        this.groups = user.group ?? []
+        this.class_id = user.class_id || ''
+        this.position = user.roles as UserPosition[]
+      } else {
+        const legacy = user as User
+        this.groups = legacy.group
+        await this.getUserClassId(legacy.group)
+        this.position = await getUserPositions(legacy)
+      }
     },
     async setUser(user: string, password: string) {
       const result = await api.user.auth.useLongTermAuth(user, password)
       if (result) {
-        const information = (await api.user.readOne(result._id)) as User
+        const information: User | UserProfile =
+          result.profile ?? ((await api.user.readOne(result._id)) as User)
         await this.setUserInformation(information)
         if (!this.validatePasswordStrength(password)) {
           this.shouldResetPassword = true
@@ -50,7 +58,7 @@ export const useUserStore = defineStore('user', {
       }
     },
     async refreshUser() {
-      const result = (await api.user.readOne(this._id)) as User
+      const result = (await api.user.readOne_v3(this._id)) as User
       await this.setUserInformation(result)
     },
     getUser() {
@@ -60,10 +68,13 @@ export const useUserStore = defineStore('user', {
       }
     },
     async removeUser() {
+      localStorage.removeItem('token')
       this._id = ''
       this.id = 0
       this.name = ''
       this.groups = []
+      this.position = []
+      this.class_id = ''
       this.isLogin = false
       this.shouldResetPassword = false
     },

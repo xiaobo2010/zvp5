@@ -78,7 +78,7 @@ const refresh = () => {
   loading.value = true
   if (id.value) {
     api.group.reads
-      .users(id.value, page.value, perpage.value, search.value, pwdm.value)
+      .users_v3(id.value, page.value, perpage.value, search.value, pwdm.value)
       .then((res) => {
         users.value = []
         users.value.push(...res.users)
@@ -88,7 +88,7 @@ const refresh = () => {
         loading.value = false
       })
   } else {
-    api.user.read(search.value, page.value, perpage.value).then((res) => {
+    api.user.read_v2(page.value, perpage.value, search.value).then((res) => {
       if (res) {
         users.value = []
         users.value.push(...res.users)
@@ -140,7 +140,7 @@ function handleSelectionChange(val: string[]) {
     v-if="
       userStore.position.includes('admin') ||
       userStore.position.includes('department') ||
-      userStore.groups.includes(id) ||
+      userStore.relatedGroup(id) ||
       selectable
     "
   >

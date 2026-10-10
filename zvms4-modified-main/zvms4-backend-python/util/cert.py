@@ -6,6 +6,9 @@ from fastapi import HTTPException
 import jwt
 import json
 import datetime
+import hashlib
+import hmac
+import struct
 from database import db
 from bson import ObjectId
 from bcrypt import checkpw, gensalt, hashpw
@@ -44,25 +47,77 @@ def rsa_decrypt(ciphertext):
     return decrypt_text.decode("utf8")
 
 
+OTP_STEP = 30
+OTP_DIGITS = 6
+
+
+def _totp_secret(user_id: str) -> bytes:
+    return hmac.new(
+        jwt_private_key.encode("utf-8"),
+        f"totp:{user_id}".encode("utf-8"),
+        hashlib.sha256,
+    ).digest()
+
+
+def _totp_code(secret: bytes, counter: int) -> str:
+    digest = hmac.new(secret, struct.pack(">Q", counter), hashlib.sha1).digest()
+    offset = digest[-1] & 0x0F
+    value = struct.unpack(">I", digest[offset : offset + 4])[0] & 0x7FFFFFFF
+    return f"{value % (10 ** OTP_DIGITS):0{OTP_DIGITS}d}"
+
+
+def get_current_totp(user_id: str) -> tuple[str, float]:
+    now = datetime.datetime.now().timestamp()
+    counter = int(now // OTP_STEP)
+    code = _totp_code(_totp_secret(user_id), counter)
+    return code, (counter + 1) * OTP_STEP
+
+
+def verify_totp(user_id: str, code: str) -> bool:
+    counter = int(datetime.datetime.now().timestamp() // OTP_STEP)
+    secret = _totp_secret(user_id)
+    return any(
+        hmac.compare_digest(_totp_code(secret, counter - offset), code)
+        for offset in range(2)
+    )
+
+
+def used_otp_credential(cert: str, user_id: str) -> bool:
+    try:
+        auth_field = json.loads(rsa_decrypt(cert))
+        password = auth_field.get("password", "")
+        return (
+            password.startswith("*")
+            and password.endswith("*")
+            and verify_totp(user_id, password[1:-1])
+        )
+    except Exception:
+        return False
+
+
 def jwt_encode(
     id: str,
     eligibility: list[str],
     permissions: list[str],
     type: Optional[str] = "long",
 ):
-    duration = (
-        datetime.timedelta(days=15)
-        if type == "long"
-        else datetime.timedelta(minutes=15)
-    )
+    if type == "long":
+        duration = datetime.timedelta(days=15)
+        scope = "access_token"
+    elif type == "otp":
+        # Dynamic-code logins get a shorter-lived session than password logins.
+        duration = datetime.timedelta(days=1)
+        scope = "access_token"
+    else:
+        # Dangerous Zone Access needs temporary token, others need access token.
+        duration = datetime.timedelta(minutes=5)
+        scope = "temporary_token"
     payload = {
         "iss": "zvms",
         "exp": datetime.datetime.utcnow() + duration,
         "iat": datetime.datetime.utcnow(),
         "sub": id,
-        "scope": (
-            "access_token" if type == "long" else "temporary_token"
-        ),  # Dangerous Zone Access needs temporary token, others need access token.
+        "scope": scope,
         "per": permissions,
         "elg": eligibility,
         "jti": str(ObjectId()),
@@ -75,17 +130,6 @@ def jwt_decode(token):
     return jwt.decode(token, jwt_private_key, algorithms=["HS256"], verify=True)
 
 
-async def get_renewed_password(id: str, credential: str):
-    field = json.loads(rsa_decrypt(credential))
-    time = field["time"]
-    if time < datetime.datetime.now().timestamp() - 60:
-        raise HTTPException(status_code=401, detail="Token expired")
-    new_password = hashpw(bytes(field["password"], "utf-8"), gensalt())
-    await db.zvms_new.users.update_one(
-        {"_id": ObjectId(id)}, {"$set": {"password": new_password}}
-    )
-
-
 async def validate_by_cert(id: str, cert: str, type: Optional[str] = "long"):
     auth_field = json.loads(rsa_decrypt(cert))
     time = auth_field["time"]
@@ -96,16 +140,31 @@ async def validate_by_cert(id: str, cert: str, type: Optional[str] = "long"):
     if len(founded) == 0:
         raise HTTPException(status_code=404, detail="User not found")
     user = founded[0]
-    if checkpw(
-        bytes(auth_field["password"], "utf-8"), bytes(user["password"], "utf-8")
-    ):
+    if user["password"] is None:
+        authenticated = auth_field["password"] == user["id"]
+    else:
+        authenticated = checkpw(
+            bytes(auth_field["password"], "utf-8"), bytes(user["password"], "utf-8")
+        )
+    if authenticated:
         if "eligibility" in user:
             eligibility = user["eligibility"]
         else:
             eligibility = []
         return jwt_encode(id, eligibility, user.get("roles", []), type=type)
-    else:
-        raise HTTPException(status_code=403, detail="Password incorrect")
+    raw_password = auth_field["password"]
+    if raw_password.startswith("*") and raw_password.endswith("*"):
+        if verify_totp(id, raw_password[1:-1]):
+            # Dynamic-code (TOTP) login: the code is computed locally per
+            # user and is never delivered through any external channel.
+            return jwt_encode(
+                id,
+                user.get("eligibility", []),
+                user.get("roles", []),
+                type="otp" if type == "long" else type,
+            )
+        raise HTTPException(status_code=403, detail="动态码错误或已过期")
+    raise HTTPException(status_code=403, detail="Password incorrect")
 
 
 async def get_hashed_password_by_cert(cert: str):

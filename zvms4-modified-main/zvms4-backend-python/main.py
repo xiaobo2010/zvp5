@@ -17,6 +17,8 @@ from routers import (
     times_router,
     mcp_router,
     activities_v3_router,
+    users_v3_router,
+    groups_v3_router,
 )
 from database import close_mongo_connection, connect_to_mongo
 import socketio
@@ -131,6 +133,8 @@ app.include_router(
 )
 app.include_router(mcp_router.router, prefix="/api/v2/mcp")
 app.include_router(activities_v3_router.router, prefix="/api/v3/activities")
+app.include_router(users_v3_router.router, prefix="/api/v3/users")
+app.include_router(groups_v3_router.router, prefix="/api/v3/groups")
 
 
 @app.get("/api/")

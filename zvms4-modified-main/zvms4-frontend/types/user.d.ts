@@ -5,9 +5,11 @@ export interface User {
   sex?: 'male' | 'female' | 'unknown'
   group: string[]
   past: string[]
+  roles?: string[]
+  class_id?: string
 }
 
-export type UserPosition = 'system' | 'admin' | 'auditor' | 'department' | 'secretary' | 'student'
+export type UserPosition = 'system' | 'admin' | 'auditor' | 'department' | 'secretary' | 'student' | 'teacher'
 
 export type WithPassword<T> = {
   password: string

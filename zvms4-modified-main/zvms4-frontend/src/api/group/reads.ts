@@ -27,6 +27,32 @@ export async function users(
   }
 }
 
+export async function users_v3(
+  gid: string,
+  page: number = 1,
+  size: number = 10,
+  query: string = '',
+  pwdm: boolean = false
+) {
+  const response = (
+    await axios(`/v3/groups/${gid}/users`, {
+      params: {
+        page,
+        size,
+        query,
+        pwdm
+      }
+    })
+  ).data as {
+    data: User[]
+    total: number
+  }
+  return {
+    users: response.data,
+    size: response.total
+  }
+}
+
 export async function time(
   gid: string,
   page: number = 1,

@@ -158,4 +158,54 @@ async function deleteUser(user: string, target: string) {
   return true
 }
 
-export { getUser as readOne, getUsers as read, putUser as update, deleteUser as removeOne }
+async function getUsersV2(
+  page: number = 1,
+  size: number = 10,
+  query: string = '',
+  role: string = ''
+) {
+  const result = (
+    await axios('/v2/users', {
+      params: { page, size, query, role }
+    })
+  ).data as { data: User[]; total: number }
+  return {
+    users: result.data,
+    size: result.total
+  }
+}
+
+async function getUserV3(id: string) {
+  const result = (await axios(`/v3/users/${id}`)).data as Response<User>
+  if (result.status === 'error') {
+    throw result
+  }
+  return result.data as User
+}
+
+async function putUserRoles(uid: string, roles: string[]) {
+  const response = await axios({
+    method: 'put',
+    url: `/v3/users/${uid}/roles`,
+    data: { roles }
+  })
+  return response?.status === 204
+}
+
+async function createUserV3(
+  id: string,
+  name: string,
+  class_id: string = '',
+  roles: string[] = ['student']
+) {
+  const result = (
+    await axios({
+      method: 'post',
+      url: '/v3/users',
+      data: { id, name, roles, class_id: class_id || undefined }
+    })
+  ).data as { id: string }
+  return result?.id ?? false
+}
+
+export { getUser as readOne, getUsers as read, putUser as update, deleteUser as removeOne, getUserV3 as readOne_v3, getUsersV2 as read_v2, putUserRoles as updateRoles, createUserV3 as create_v3 }

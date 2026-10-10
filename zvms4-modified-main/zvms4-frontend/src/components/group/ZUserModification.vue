@@ -61,29 +61,22 @@ if (cid.value.length === 24) {
   classGroupID.value = cid.value
 }
 
+const originalClassID = ref('')
+
 function refresh() {
   const loading = ElLoading.service({ fullscreen: true })
   if (id.value && mode.value === 'modify')
     api.user
-      .readOne(id.value)
+      .readOne_v3(id.value)
       .then((res) => {
         person.value = res as User
         if (res) {
-          userGroups.value = res.group
+          userGroups.value = res.group ?? []
           modification.name = res.name
-          modification.id = res.id
-          return Promise.all(res.group.map((groupId) => api.group.readOne(groupId)))
+          modification.id = Number(res.id)
+          classGroupID.value = res.class_id || ''
+          originalClassID.value = res.class_id || ''
         }
-      })
-      .then((groups) => {
-        if (!groups) return
-        const classGroup = groups.find((group) => group?.type === 'class')
-        if (classGroup) classGroupID.value = classGroup?._id
-        const permissionsGroup = groups.filter((group) => group?.type === 'permission')
-        if (permissionsGroup.length)
-          permissionsID.value = permissionsGroup
-            .map((group) => group?._id)
-            .filter(Boolean) as string[]
         loading.close()
       })
       .catch(() => {
@@ -94,7 +87,7 @@ function refresh() {
 
 async function refreshClasses() {
   loadingClasses.value = true
-  const classesSet = await api.group.read('class', -1)
+  const classesSet = await api.group.read_v2(1, 1000, '')
   if (classesSet) {
     classes.value = classesSet.groups
   }
@@ -141,14 +134,22 @@ async function submit() {
     return
   }
   try {
-    await api.user.update(
-      userStore._id,
-      modification._id,
-      modification.name,
-      modification.id.toString(),
-      [classGroupID.value, ...permissionsID.value],
-      mode.value === 'create'
-    )
+    if (mode.value === 'create') {
+      await api.user.create_v3(
+        modification.id.toString(),
+        modification.name,
+        classGroupID.value
+      )
+    } else {
+      if (classGroupID.value !== originalClassID.value) {
+        if (!classGroupID.value && originalClassID.value) {
+          await api.group.removeGroupUserV3(originalClassID.value, id.value)
+        } else {
+          await api.group.addGroupUserV3(classGroupID.value, id.value)
+        }
+        originalClassID.value = classGroupID.value
+      }
+    }
   } catch (_) {
     submission.value = false
     return
@@ -162,7 +163,7 @@ async function submit() {
 
 async function remoteFetchClass(search: string) {
   if (search) {
-    const classesSet = await api.group.read('class', 1, 5, search)
+    const classesSet = await api.group.read_v2(1, 50, search)
     if (classesSet) {
       classes.value = classesSet.groups
     } else {
