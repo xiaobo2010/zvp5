@@ -21,7 +21,7 @@
 |---|---|---|
 | `zvms4-modified-main/` | **开发主线（我们开发的版本）** | 基于 **zvms4 正式版**（上游 `zvms/zvms4-backend-python` + `zvms/zvms4-frontend`）修改。数据库层向现役 zvp 的 MongoDB Atlas 真实结构对齐，并**逐模块从 zvp-latest 迁移功能与数据结构**（义工管理、用户管理 / 登录、日志、鉴权），每个移植面均经安全审计。见 §二。 |
 | `zvp-latest/` | **存在后门的 beta 测试版（只迁移，不整体采用）** | zvms4 前端 4.2.0-1005-beta 的前后端快照。**只提取其功能与数据结构，绝不整体采用其代码。** 其后门包括但不限于：生成外链、让设备访问非 zvp 平台的网页、创建 / 提供代理等。见 §五。 |
-| `zvp5-gitlab/` | **原定 zvp5 后端（未正式完成）** | zzj 在 GitLab 被封禁前的开发中代码，从未正式完成。见 §六。 |
+| `zvp5-gitlab/` | **原定 zvp5 后端（另起实现，未完成）** | zzj 在 GitLab 被封禁前的开发中代码，从未正式完成；是**独立于主线的第二套后端**（SQLAlchemy / 关系库路线）。进度对账见 §六。 |
 
 ### 安全声明（重要）
 
@@ -43,7 +43,7 @@
 - §三 数据库对齐（Ground Truth）—— 现役两库真实结构 + 逐条对齐改动清单
 - §四 模块移植与安全审计记录 —— Part 1 义工管理 / Part 2 用户管理与登录 / Part 3 日志 / Part 4 登录与鉴权 / Part 5 全量 API 盘点 / Part 6 弱密码强制改密 / Part 7 token 有效期
 - §五 zvp-latest 开发状态 —— 后端 API 与前端页面完成度对账（P0-P2 已清零）
-- §六 zvp5-gitlab
+- §六 zvp5-gitlab 开发进度对齐 —— 目录清单 / 完成度 / 不可运行性证据 / 与主线功能面照
 
 
 ---
@@ -900,9 +900,109 @@ XH：`/xh/api`（`api/xh.js`）
 
 ---
 
-## 六、zvp5-gitlab（原定 zvp5 后端，未完成）
+## 六、zvp5-gitlab 开发进度对齐（原定 zvp5 后端）
 
-原定 zvp5 后端的开发中代码，作者 zzj 在 GitLab 账号被封禁前留存的快照，**从未正式完成**。
+> 原定 zvp5 后端的开发中代码，作者 zzj 在 GitLab 账号被封禁前留存的快照，**从未正式完成**。
+> 本章为 **2026-10-10 静态对账**结果：目录清单、逐模块完成度、不可运行性的硬证据、与主线 §二 的功能面照。结论一句话：**这是一次彻底的后端重写（v5 架构），设计与数据模型基本成形，但实现层几近空白且不可运行**。
 
-- 目录内为未完成的 Python 后端骨架（`app.py` 为空、`models.py.bak` / `dtypes.py.bak` 为备份、`routers/` 等），不具备可运行性。
-- 仅作历史留档，不参与构建；开发主线为 §二的 `zvms4-modified-main/`。
+### 6.0 与主线的关系（先定性）
+
+`zvp5-gitlab/` 与 §二 的 `zvms4-modified-main/` **不是同一份代码的两个版本，而是两套并行实现**：
+
+| 维度 | 主线 `zvms4-modified-main`（§二） | 本目录 `zvp5-gitlab` |
+|---|---|---|
+| 数据层 | FastAPI + **Motor（异步 MongoDB）** 双库 `zvms`/`zvms_new` | FastAPI + **SQLAlchemy 2.0 async（关系型库，`create_async_engine`）** |
+| 缓存/推送 | 可选 socket.io / APScheduler | **Redis（asyncio）+ WebSocket（PushService）** |
+| 鉴权 | JWT + bcrypt + TOTP（已落地） | JWT + bcrypt + 自研 TOTP（**仅设计/半实现**） |
+| 域模型 | 用户/班级/活动/成员/日志/导出（依托现役库结构） | 额外引入 **多学校 `School`、审核流程 `Workflow`、FAQ `Help`、资源 `Resource`** 等更"平台化"的表 |
+
+因此二者**无法直接合并**；下文只做「进度对账」，不改动本目录代码。
+
+### 6.1 目录清单与逐模块完成度
+
+共 31 个 `.py`（约 2,183 行）+ 2 个 `.bak` + `README.md` / `LICENSE` / `.gitignore` / `config.example.py`。完成度分档：**D 设计/骨架** · **P 部分实现** · **S 桩（`pass`/空）** · **✗ 语法不过** · **缺失**。
+
+| 路径 | 行数 | 状态 | 说明 |
+|---|---|---|---|
+| `app.py` | 0 | **S** | **空文件**——无 FastAPI 实例、无路由注册、无入口 |
+| `routers/misc.py` | 0 | **S** | **空文件** |
+| `routers/v1/users.py` | 97 | **P/S** | `GET/POST/DELETE ''` 三端点全为 `pass`；仅 `batch-query` 有实现，但 `@post` 未写成 `@router.post`、导入未定义名 |
+| `routers/v1/platform.py` | 132 | **✗** | 仅 `POST /login`（六类登录分支已写）；**编译失败** |
+| `routers/v1/activities.py` | 427 | **✗** | 列表/详情/成员/创建/批量删除五端点已铺开（本目录最大文件），但**编译失败**且含大量拼写错位 |
+| `models/__init__.py` | 9 | D | 汇总导入（导入了**不存在的** `relations`） |
+| `models/shared.py` | 39 | D | `_col`/`_foreigncol`/`_ienumcol`/`_jsoncol`/`_rel` 等列简写 |
+| `models/users.py` | 118 | D | `User`（upload/short/full 三档 schema）+ `Token` + `Token.SYSTEM` |
+| `models/groups.py` | 101 | D | `School` / `Class` / `Group` |
+| `models/activities.py` | 126 | D | `ActivityTemplate` / `Activity` / `ActivityMember` |
+| `models/workflows.py` | 47 | D | `Workflow` / `WorkflowItem` |
+| `models/tasks.py` | 31 | D | `SavedTask`（导出/长任务） |
+| `models/push.py` | 64 | D | `Notification` / `Notice` |
+| `models/mgmt.py` | 53 | **S** | `Device` 为空壳（仅 TODO 占位）；`Log` 引用了不存在的 `LogType.GENERIC` |
+| `models/rsrc.py` | 50 | D | `Help`（FAQ）/ `Resource`；`import` 了不存在的顶层 `typings` |
+| `dtypes/`（6×） | 216 | D | 枚举与数据类型（见 6.2） |
+| `database.py` | 92 | P | async engine、`Json`/`ObjectId`/`Hashed`/`IntegralEnum` 装饰器、`Model`/`Schema`、`RelationTable`、`session` |
+| `cache.py` | 4 | P | Redis 客户端 |
+| `crypto.py` | 69 | P | bcrypt 校验/哈希、JWT 创建与 `token`/`authz_token` 依赖；**`decode_credentials` 为 `NotImplementedError`**，且引用了未导入的 `db`/`Token`/`errors`/`JWTError` |
+| `errors.py` | 154 | P | 完整业务错误码表（32 条，含 4xx/401/403/404/5xx）；`raise_` 依赖未定义的 `utils.module_init` |
+| `schemas.py` | 92 | P | 登录判别联合、密保、Workflow 更新请求；引用拼写错误的 `UpdatedMember` |
+| `serializer.py` | 60 | P | 自研 `dump`/`dumps`/`make_response`（含 `__ser_keys__` 协议） |
+| `tasking.py` | 90 | P | `TaskManager`（后台任务+进度回调）、`PushService`（WebSocket 通知）骨架；引用了未定义的 `NotifyTasks`/`TaskStatus`/`db.session_factory` |
+| `utils.py` | 109 | **✗** | `object_id`/`timestamp`/请求元数据/`generate_totp`/`paginate`/`escape_str`/i-enum 校验器；**编译失败**（`operators.or`） |
+| `models.py.bak` | — | 备份 | 早期**单文件版**模型（重构中途拆包前的版本） |
+| `dtypes.py.bak` | — | 备份 | 旧 dtypes，含拆分时**丢失**的 `ActivityMode`/`WorkflowItemType`/`MemberModificationType`/`DeviceInfo`/`SystemUser` |
+| `config.example.py` | 3 | D | `DATABASE_URI` / `REDIS_URI` 样例；`config.py` 本身缺失，需自行复制 |
+
+### 6.2 已定义的数据类型与域模型（设计层，完成度高）
+
+- **枚举/类型**：`UserRole`（IntFlag：SECRETARY/STU_UNION/ADMIN/SYSTEM）、`SchoolType`（学制位标志）、`WorkflowStatus`（=别名 `ActivityStatus`）、`LogType`（70 个业务码）/`LogLevel`、`FaqCategory`、`ActivityTime`（校内/校外/社会实践三轴时长，支持 `+`/`+=`）。
+- **域模型**：用户与令牌、学校/班级/组、活动模板/活动/活动成员、审核流程与流程项、保存任务、通知与公告、设备与日志、FAQ 与资源。
+- **请求 schema**：登录判别联合（`password_authz` / `password_authr` / `xhbrowser` / `xhdatacenter` / `token` / `recovery`）、`DecodedCredentials`、密保问答、Workflow 多动作更新。
+
+### 6.3 不可运行性的硬证据（2026-10-10 核对）
+
+用 Python 3.12 `compileall` 与静态检索逐条核对，本目录**当前不具备可运行性**：
+
+1. **连语法都不通过（3 个文件）**：
+   - `routers/v1/activities.py:144` —— `SyntaxError: invalid syntax. Perhaps you forgot a comma?`（返回字典漏逗号）
+   - `routers/v1/platform.py:78` —— `SyntaxError: cannot use assignment expressions with expression`（`and registered := True` 误用海象运算符）
+   - `utils.py:106` —— `SyntaxError: invalid syntax`（`operators.or`，模块名/关键字误写）
+2. **关键模块缺失**：`models/relations.py`（被 `models/__init__.py` 与 users/groups/activities/rsrc 导入）、`models/relation.py`（push/workflows 的错拼）、`dtypes/activities.py`（实际文件名错拼为 `activitities.py`）、顶层 `typings`（`models/rsrc.py` 引用）、`config.py`（仅有 example）。
+3. **包结构不完整**：根目录、`routers/`、`routers/v1/` 均**无 `__init__.py`**。
+4. **大量被引用却未定义的名字**（导入即 `NameError`/`ImportError`）：`utils`（`export`/`module_init`/`Token`/`DecodedCredentials`/`db`/`assert_`/`one_value_only`/`xand`/`coerce_ienum_raw`）、`tasking`（`NotifyTasks`/`TaskCallback`）、`database`（`OrmSchema`/`session_factory`）、`dtypes`（`ObjectId`/`ConversionRule`/`DeviceType`/`TaskType`/`TaskStatus`）、`models`（`UserDeviceTable`/`WorkflowItemType`）。
+5. **`activities.py` 内的实现级错误**（即便语法修好也无法运行）：`acitivity_oid`/`AcitivityTime`/`Activiy`/`activiy`/`resulr`/`shere` 等拼写错位、`x.user_id` 引用未定义变量、`payload.members` 上未定义的 `all(...)`、`utils.object_id` 漏调用、`TaskManager.run_task` 调用签名不符、`PushService.notify_all` 以类调用等。
+
+### 6.4 已有 / 未有的能力（对照）
+
+| 能力 | 现状 |
+|---|---|
+| 数据模型与 schema | **已有**（设计层基本齐全，见 6.2） |
+| 基础设施（DB/Redis/序列化/错误码/后台任务/WebSocket） | **骨架已有**，多处依赖缺失、不可导入 |
+| 应用入口与路由注册 | **没有**（`app.py` 为空） |
+| 业务端点 | **极少**：全树仅 **10 个 handler**（`users` 4 个，其中 3 个是 `pass` 空桩；`platform` 1 个 `POST /login`；`activities` 5 个），而 `activities`/`platform` 两文件编译不过 → 真正可用者仅 1–2 个 |
+| 鉴权闭环 | **未闭环**：`crypto.decode_credentials` 未实现，登录流程无法真正解密凭证 |
+| 设备识别 | `Device` 模型为空壳，`DeviceInfo.from_ua` 仅在旧 `.bak` 里且是 STUB |
+
+### 6.5 与主线功能面对照
+
+| 功能面 | 主线 §二（zvms4-modified-main） | zvp5-gitlab |
+|---|---|---|
+| 用户 / 班级 / 组 | ✅ 已移植（v2/v3） | 模型已定义，路由基本未写 |
+| 活动 / 成员 | ✅ 已移植（v2/v3 + 加成员） | 模型 + 部分路由（编译不过） |
+| 审核流程 | ⚠️ 以 `activities.status`/`approver`/`appointee` 表达，无独立流程表 | **设计了独立 `Workflow`/`WorkflowItem`/审核请求表**（主线无） |
+| 多学校 | ⚠️ 单校（隐含） | **设计了 `School`/多校 `Class` 模型**（主线无） |
+| 日志 | ✅ 已移植（type/level + 35 站点） | 模型 + `LogType` 枚举（未接线） |
+| 通知 / 推送 | ✅ socket.io / notifications | 设计有 `Notification`/`Notice` + WebSocket `PushService` |
+| 导出 / 长任务 | ✅ exports 已接线 | 设计有 `SavedTask` + `TaskManager` |
+| FAQ / 资源 | 无 | 设计有 `Help`/`Resource` |
+| 登录 / 鉴权 | ✅ JWT+bcrypt+TOTP 已落地 | 设计有、实现未完成 |
+
+### 6.6 进度评估与结论
+
+- **大体量级**：架构与数据模型完成度高（设计层约八成），**实现层约一成**，入口为 0。整体约 **15%–20%**，且**不可运行**。
+- **性质**：这是**另起炉灶的第二套后端**（关系库 + 独立审核流程 + 多学校），不是主线的分支或补丁。
+- **"与主线对齐"若要落地，需先定向**：是**续写本目录**（补 `app.py`/`relations.py`/`config.py`、修语法与未定义名、逐步实现端点），还是**以主线为准**（本目录仅作历史留档）。两者数据层根本不同，方向不同则后续工作完全不同。
+- 当前处置：**保持原状，仅作历史留档，不参与构建**；开发主线仍为 §二 的 `zvms4-modified-main/`。
+
+### 更新记录
+
+- **2026-10-10（进度对齐）**：对 `zvp5-gitlab/` 做静态对账并落档本章——31 个 `.py`（约 2,183 行）+ 2 个 `.bak`；`compileall` 证得 `routers/v1/{activities,platform}.py` 与 `utils.py` 三处语法错误；核对出 `models/relations.py`、`dtypes/activities.py`、`config.py`、顶层 `typings`、包 `__init__.py` 等缺失面与被引用未定义名清单；确认 `app.py`/`routers/misc.py` 为空、全树仅 10 个 handler（可用者 1–2 个）。结论：设计层约八成、实现层约一成，整体 15%–20%，不具备可运行性；与主线为两套并行实现，需定向后方可续写。
