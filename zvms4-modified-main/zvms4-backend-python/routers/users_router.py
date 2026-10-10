@@ -57,17 +57,21 @@ async def auth_user(auth: AuthUser, request: Request):
                 )
             id = str(users[0]["_id"])
 
-    result = await validate_by_cert(id, credential, mode)
+    result, weak_password = await validate_by_cert(id, credential, mode)
 
     user_doc = await db.zvms_new.users.find_one({"_id": validate_object_id(id)})
     log_name = user_doc["name"] if user_doc else await get_user_name(id)
     is_otp = used_otp_credential(credential, id)
+    if is_otp:
+        log_text = f"用户 {log_name} 使用动态码登录了系统"
+    elif weak_password and mode == "long":
+        log_text = f"用户 {log_name} 登录了系统（密码强度不足，仅发放临时授权）"
+    else:
+        log_text = f"用户 {log_name} 登录了系统"
     log = ZVMSLog(
         str(request.url),
         id,
-        f"用户 {log_name} 使用动态码登录了系统"
-        if is_otp
-        else f"用户 {log_name} 登录了系统",
+        log_text,
         datetime.timestamp(datetime.now()),
         type="user_login",
     )
@@ -89,6 +93,7 @@ async def auth_user(auth: AuthUser, request: Request):
         "token": result,
         "_id": id,
         "profile": profile,
+        "weak_password": weak_password,
     }
 
 

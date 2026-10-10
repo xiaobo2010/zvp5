@@ -30,6 +30,31 @@ def check_password(password: str, hashed: str):
     return bcrypt.checkpw(password.encode("utf-8"), hashed.encode("utf-8"))
 
 
+def pwd_strength(password: str) -> int:
+    """
+    Mirror of the frontend strength rule (stores/user.ts
+    `validatePasswordStrength`): 8-14 printable ASCII characters with at
+    least 3 of the 4 character classes (lower / upper / digit / symbol).
+    """
+    if not (8 <= len(password) <= 14):
+        return 0
+    if any(ord(ch) < 32 or ord(ch) > 126 for ch in password):
+        return 0
+    strength = 0
+    if any("a" <= ch <= "z" for ch in password):
+        strength += 1
+    if any("A" <= ch <= "Z" for ch in password):
+        strength += 1
+    if any(ch.isdigit() for ch in password):
+        strength += 1
+    if any(
+        not ("a" <= ch <= "z" or "A" <= ch <= "Z" or ch.isdigit())
+        for ch in password
+    ):
+        strength += 1
+    return strength
+
+
 public_key = RSA.import_key(open("rsa_public_key.pem", "rb").read())
 private_key = RSA.import_key(open("rsa_private_key.pem", "rb").read())
 jwt_private_key = open("aes_key.txt", "r").read()
@@ -130,7 +155,20 @@ def jwt_decode(token):
     return jwt.decode(token, jwt_private_key, algorithms=["HS256"], verify=True)
 
 
-async def validate_by_cert(id: str, cert: str, type: Optional[str] = "long"):
+async def validate_by_cert(
+    id: str, cert: str, type: Optional[str] = "long"
+) -> tuple[str, bool]:
+    """
+    Authenticate a login credential.
+
+    Returns `(token, weak_password)`. When the proven password is weak
+    (initial state, or failing the strength rule) and a long-term token is
+    requested, only a 5-minute temporary token is issued so the client is
+    forced through the password-change loop; the `weak_password` flag lets
+    the frontend react accordingly. Short-term requests stay allowed so
+    the change loop itself is never blocked. TOTP logins are not affected
+    (no password is involved).
+    """
     auth_field = json.loads(rsa_decrypt(cert))
     time = auth_field["time"]
     # in a minute
@@ -151,17 +189,26 @@ async def validate_by_cert(id: str, cert: str, type: Optional[str] = "long"):
             eligibility = user["eligibility"]
         else:
             eligibility = []
-        return jwt_encode(id, eligibility, user.get("roles", []), type=type)
+        weak = user["password"] is None or pwd_strength(auth_field["password"]) < 3
+        if weak and type == "long":
+            return (
+                jwt_encode(id, eligibility, user.get("roles", []), "short"),
+                True,
+            )
+        return jwt_encode(id, eligibility, user.get("roles", []), type=type), weak
     raw_password = auth_field["password"]
     if raw_password.startswith("*") and raw_password.endswith("*"):
         if verify_totp(id, raw_password[1:-1]):
             # Dynamic-code (TOTP) login: the code is computed locally per
             # user and is never delivered through any external channel.
-            return jwt_encode(
-                id,
-                user.get("eligibility", []),
-                user.get("roles", []),
-                type="otp" if type == "long" else type,
+            return (
+                jwt_encode(
+                    id,
+                    user.get("eligibility", []),
+                    user.get("roles", []),
+                    type="otp" if type == "long" else type,
+                ),
+                False,
             )
         raise HTTPException(status_code=403, detail="动态码错误或已过期")
     raise HTTPException(status_code=403, detail="Password incorrect")
