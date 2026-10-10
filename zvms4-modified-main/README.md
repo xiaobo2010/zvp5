@@ -15,7 +15,7 @@
 ```
 zvp-modified-v4/
 ├── README.md                 # 本文件
-├── STATUS.md                 # 模块移植：Part 1 义工管理（10-09）/ Part 2 用户管理与登录（10-10）/ Part 3 日志 API（10-10）/ Part 4 登录与身份验证（10-10）/ Part 5 全量 API 盘点（10-10）/ Part 6 弱密码强制改密（10-10）：端点对齐 / 禁止面处置 / 验证记录
+├── STATUS.md                 # 模块移植：Part 1 义工管理（10-09）/ Part 2 用户管理与登录（10-10）/ Part 3 日志 API（10-10）/ Part 4 登录与身份验证（10-10）/ Part 5 全量 API 盘点（10-10）/ Part 6 弱密码强制改密（10-10）/ Part 7 token 有效期调整（10-10）：端点对齐 / 禁止面处置 / 验证记录
 ├── DB_ALIGNMENT.md           # 现役数据库真实结构（Ground Truth）+ 对齐改动清单
 ├── zvms4-backend-python/     # FastAPI 后端（上游 zvms4，DB 层已对齐；义工管理 v3 已按 zvp 移植）
 │   ├── README.md
