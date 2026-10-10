@@ -22,7 +22,11 @@ import {
     ElInputNumber,
     ElDialog,
     ElForm,
-    ElFormItem
+    ElFormItem,
+    ElRow,
+    ElCol,
+    ElCard,
+    ElStatistic
 } from 'element-plus'
 import { CircleClose, Key, Plus } from '@element-plus/icons-vue'
 import { logTypes, logLevels } from '@/utils/constants'
@@ -130,6 +134,34 @@ const tabVisibility = reactive({
 
 tabVisibility[pane.value] = true
 
+const stats = reactive({
+    classes:    { total: 0, loading: false },
+    users:      { total: 0, loading: false },
+    activities: { total: 0, loading: false },
+})
+
+const loadStats = async () => {
+    const doLoad = async (key, fetcher) => {
+        stats[key].loading = true
+        try {
+            const res = await fetcher()
+            stats[key].total = Number(res?.total ?? 0)
+        } catch {
+            stats[key].total = 0
+        } finally {
+            stats[key].loading = false
+        }
+    }
+
+    const api = await import('@/api')
+    await Promise.all([
+        doLoad('classes',    () => api.group.read_v2(1, 1, '')),
+        doLoad('users',      () => api.user.read_v2({ page: 1, pageSize: 1, query: '' })),
+        doLoad('activities', () => api.activity.read.campus_v3(1, 1, ''))
+    ])
+}
+
+watch(() => tabVisibility.dashboard, v => { if (v) loadStats() }, { immediate: true })
 
 const updateRoute = () => {
     tabVisibility[pane.value] = true
@@ -222,14 +254,82 @@ const doCreate = async () => {
     }
 }
 
-const devNotice = () => alert('功能开发中')
+const createUser = ref(false)
+const creatingUser = ref(false)
+const userId = ref('')
+const userName = ref('')
+const userRoles = ref(['student'])
+const userClassId = ref('')
+const classOptions = ref([])
+const classOptionsLoading = ref(false)
+const usersVersion = ref(0)
+
+const roleOptions = [
+    { value: 'student', label: '学生' },
+    { value: 'secretary', label: roleNames.secretary },
+    { value: 'department', label: roleNames.department },
+    { value: 'admin', label: roleNames.admin },
+    { value: 'teacher', label: roleNames.teacher },
+]
+
+const resetCreateUserForm = () => {
+    userId.value = ''
+    userName.value = ''
+    userRoles.value = ['student']
+    userClassId.value = ''
+}
+
+const loadClassOptions = async () => {
+    classOptionsLoading.value = true
+    try {
+        const { data } = await (await import('@/api')).group.read_v2(1, 50, '')
+        classOptions.value = data
+    } finally {
+        classOptionsLoading.value = false
+    }
+}
+
+const onCreateUserOpen = () => {
+    resetCreateUserForm()
+    loadClassOptions()
+}
+
+const doCreateUser = async () => {
+    try {
+        creatingUser.value = true
+        await (await import('@/api')).user.create_v3({
+            id: userId.value,
+            name: userName.value,
+            roles: userRoles.value,
+            class_id: userClassId.value || undefined
+        })
+        createUser.value = false
+        usersVersion.value++
+    } finally {
+        creatingUser.value = false
+    }
+}
+
+const reportsLoading = ref(false)
+
+const downloadReports = async () => {
+    try {
+        reportsLoading.value = true
+        const api = await import('@/api')
+        const token = await api.exports.requestReports()
+        const blob = await api.exports.downloadReports(token)
+        api.exports.saveBlob(blob, 'export.tar.gz')
+    } finally {
+        reportsLoading.value = false
+    }
+}
 
 const exporting = ref(false)
 
 const pollExport = async (taskId) => {
     const api = await import('@/api')
     for (let i = 0; i < 60; i++) {
-        const task = await api.exports.get(taskId)
+        const task = await api.exports.getExport(taskId)
         if (task?.status !== 'pending' && task?.status !== 'processing') return task
         await new Promise(r => setTimeout(r, 1000))
     }
@@ -241,12 +341,12 @@ const doExport = async (variant) => {
         exporting.value = true
         const api = await import('@/api')
         const taskId = variant === 'users'
-            ? await api.exports.users()
-            : await api.exports.time({})
+            ? await api.exports.exportUsers()
+            : await api.exports.exportTime({})
         const task = await pollExport(taskId)
         if (!task) return
-        const blob = await api.exports.file(taskId)
-        api.exports.save(blob, `zvms-export-${taskId}.xlsx`)
+        const blob = await api.exports.getExportFile(taskId)
+        api.exports.saveBlob(blob, `zvms-export-${taskId}.xlsx`)
     } finally {
         exporting.value = false
     }
@@ -263,7 +363,7 @@ const doExport = async (variant) => {
                 <ElButton :icon="Plus" text bg type="success" v-if="isAdmin && pane == 'classes'" @click="create = true">
                     创建班级
                 </ElButton>
-                <ElButton :icon="Plus" text bg type="success" v-if="isAdmin && pane == 'users'" @click="devNotice()">
+                <ElButton :icon="Plus" text bg type="success" v-if="isAdmin && pane == 'users'" @click="createUser = true">
                     创建用户
                 </ElButton>
                 <ElButton text bg type="primary" v-if="isAdmin" :disabled="exporting" @click="doExport('users')">
@@ -271,6 +371,9 @@ const doExport = async (variant) => {
                 </ElButton>
                 <ElButton text bg type="primary" v-if="isAdmin" :disabled="exporting" @click="doExport('time')">
                     导出时长表
+                </ElButton>
+                <ElButton text bg type="primary" v-if="isAdmin" :disabled="reportsLoading" @click="downloadReports()">
+                    下载报表
                 </ElButton>
                 <ElButton :icon="Key" text bg type="danger" v-if="isAdmin" @click="gotoAdmin">
                     前往管理后台
@@ -307,18 +410,93 @@ const doExport = async (variant) => {
                 </ElButton>
             </template>
         </ElDialog>
+        <ElDialog
+            v-model="createUser"
+            @open="onCreateUserOpen()"
+            :close-on-click-modal="false"
+            align-center
+            :show-close="!creatingUser"
+            :close-on-press-escape="!creatingUser"
+        >
+            <template #header>
+                创建用户
+            </template>
+            <ElForm v-loading="creatingUser">
+                <ElFormItem label="学号">
+                    <ElInput placeholder="请输入" v-model="userId"></ElInput>
+                </ElFormItem>
+                <ElFormItem label="姓名">
+                    <ElInput placeholder="请输入" v-model="userName"></ElInput>
+                </ElFormItem>
+                <ElFormItem label="角色">
+                    <ElSelect multiple placeholder="请选择" v-model="userRoles">
+                        <ElOption
+                            v-for="r in roleOptions"
+                            :key="r.value"
+                            :label="r.label"
+                            :value="r.value"
+                        ></ElOption>
+                    </ElSelect>
+                </ElFormItem>
+                <ElFormItem label="班级">
+                    <ElSelect
+                        clearable
+                        placeholder="可以为空"
+                        v-model="userClassId"
+                        :loading="classOptionsLoading"
+                    >
+                        <ElOption
+                            v-for="c in classOptions"
+                            :key="c._id"
+                            :label="c.name"
+                            :value="c._id"
+                        ></ElOption>
+                    </ElSelect>
+                </ElFormItem>
+            </ElForm>
+            <template #footer>
+                <ElButton
+                    text bg
+                    type="primary"
+                    @click="doCreateUser()"
+                    :disabled="creatingUser||!userId||!userName"
+                >
+                    创建
+                </ElButton>
+            </template>
+        </ElDialog>
         <ElTabs
             v-if="canView" type="card" class="manage-tabs el-tabs--flex-pane" :default-value="pane" v-model="pane"
         >
             <ElTabPane label="总览" name="dashboard" class="flex flex-col pane dashboard-pane" v-if="isAdmin">
                 <template v-if="pane=='dashboard'">
                     <ElDivider content-position="left">
+                        <span class="section-title">数据概览</span>
+                    </ElDivider>
+                    <ElRow :gutter="16" class="stats-row">
+                        <ElCol :span="8" :xs="24">
+                            <ElCard shadow="never" v-loading="stats.classes.loading" class="stat-card">
+                                <ElStatistic title="班级总数" :value="stats.classes.total" />
+                            </ElCard>
+                        </ElCol>
+                        <ElCol :span="8" :xs="24">
+                            <ElCard shadow="never" v-loading="stats.users.loading" class="stat-card">
+                                <ElStatistic title="用户总数" :value="stats.users.total" />
+                            </ElCard>
+                        </ElCol>
+                        <ElCol :span="8" :xs="24">
+                            <ElCard shadow="never" v-loading="stats.activities.loading" class="stat-card">
+                                <ElStatistic title="活动总数" :value="stats.activities.total" />
+                            </ElCard>
+                        </ElCol>
+                    </ElRow>
+                    <ElDivider content-position="left">
                         <span class="section-title">动态登录码</span>
                     </ElDivider>
                     <ZDisplayTOTP></ZDisplayTOTP>
                 </template>
                 <template v-if="tabVisibility.dashboard">
-                    
+
                 </template>
             </ElTabPane>
             <ElTabPane label="班级" name="classes" class="flex flex-col pane" v-if="!isRestricted">
@@ -338,6 +516,7 @@ const doExport = async (variant) => {
             <ElTabPane label="用户" name="users" class="flex flex-col pane">
                 <ZList
                     v-if="tabVisibility.users"
+                    :key="'users-' + usersVersion"
                     :remote-method="isRestricted ? restrictedGetUsers : getUsers"
                     v-model:page="usersTab.page"
                     v-model:page-size="usersTab.pageSize"
@@ -447,5 +626,13 @@ const doExport = async (variant) => {
 .section-title {
     font-size: large;
     font-weight: bold;
+}
+
+.stats-row {
+    width: 100%;
+}
+
+.stat-card {
+    margin-bottom: 1rem;
 }
 </style>

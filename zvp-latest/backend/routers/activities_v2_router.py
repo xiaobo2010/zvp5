@@ -417,7 +417,7 @@ async def modify_activity_status_v2(
         )
     elif 'admin' not in user['per'] and 'department' not in user['per']:
         raise HTTPException(
-            status_cod=403,
+            status_code=403,
             detail='权限不足'
         )
 
