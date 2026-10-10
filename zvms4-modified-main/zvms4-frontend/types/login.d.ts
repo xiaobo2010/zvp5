@@ -11,4 +11,5 @@ export interface LoginResult {
   token: string // JSON Web Token
   _id: string // MongoDB ObjectID
   profile?: UserProfile
+  weak_password?: boolean // set when the server only issued a temporary token due to a weak password
 }

@@ -51,7 +51,7 @@ export const useUserStore = defineStore('user', {
         const information: User | UserProfile =
           result.profile ?? ((await api.user.readOne(result._id)) as User)
         await this.setUserInformation(information)
-        if (!this.validatePasswordStrength(password)) {
+        if (result.weak_password || !this.validatePasswordStrength(password)) {
           this.shouldResetPassword = true
         }
         this.isLogin = true
