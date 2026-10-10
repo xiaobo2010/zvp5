@@ -269,7 +269,7 @@
   - **按用户派生 secret**：`HMAC-SHA256(aes_key, "totp:{user_id}")`——无状态、无新字段、消除全站共享码风险
   - 登录口令 `*<6位码>*`，30s 步进，接受当前+上一窗口
   - **密码优先、OTP 兜底**（zvp 同款语义）：密码校验通过绝不进 OTP 分支——真实密码形如 `*Abc12345*` 的用户不受影响
-  - OTP 登录 token 有效期 1 天（zvp 语义；普通登录 15 天、临时 5 分钟不变）
+  - OTP 登录 token 有效期 1 天（zvp 语义；普通登录 15 天（Part 7 起调整为 10 天）、临时 5 分钟不变）
   - 60s 凭据时间窗仍前置强制（防重放）
 - 新端点 `GET /api/v3/users/{id}/totp`（users_v3_router）：admin 取某用户当前动态码（zvp platform totp 的移植落点）；**超出 zvp 的加固：查看即写 `totp_view` warning 日志**（zvp 不记——凭据接触必须可审计）
 - 前端入口：暂无 UI（zvp 的 ZDisplayTOTP 未移植），后端+日志已就绪，同 updateRoles 模式记录待接
@@ -370,7 +370,7 @@ xh_router 任意 URL 代理（:159 urlopen + :46 硬编码签名 KEY）、登录
 - **强度规则逐字镜像前端**（`util/cert.py pwd_strength` ↔ `stores/user.ts validatePasswordStrength`）：8-14 位可打印 ASCII（0x20-0x7E），小写/大写/数字/符号四类字符 ≥3；独立测试 10/10 用例与前端语义一致（含 15 位超限、非 ASCII、纯数字等边界）
 - **判定位置**：`validate_by_cert` 返回 `(token, weak_password)`（全仓唯一调用方 `/api/users/auth` 已同步适配）：
   - 弱密码 = 初始态（`password is None`）或 `pwd_strength(明文口令) < 3`
-  - **弱 + long**：只签发 5 分钟 `temporary_token`（不给 15 天 access token）+ 响应新增 `weak_password: true`
+  - **弱 + long**：只签发 5 分钟 `temporary_token`（不给正式 access token）+ 响应新增 `weak_password: true`
   - **弱 + short**：照常放行——改密流程本身不能被堵死
   - **OTP 动态码**：`weak_password` 恒 false（管理员代登不涉及口令，不受影响）
 - **前端最小承接**：`LoginResult` 类型加 `weak_password?: boolean`；`store.setUser` 改为「服务端标记 || 前端本地校验」双保险置 `shouldResetPassword`；既有弱密码 UI 闭环（UserLogin 弱密码分支 → 短 token → 强制改密 → 重登）无需改动
@@ -384,4 +384,10 @@ xh_router 任意 URL 代理（:159 urlopen + :46 硬编码签名 KEY）、登录
 - 前端 `vue-tsc`：改动文件（login.d.ts / stores/user.ts）**0 错误**，存量 3 处上游遗留不变
 - `validate_by_cert` 调用方 grep 确认全仓唯一（users_router），返回签名变更无遗漏适配
 - 写后自审：short 改密流程不被堵、OTP 不受影响、初始密码用户 long 直连仅得 5 分钟临时 token、规则镜像与前端无分歧口径——**未发现漏洞**
-- 仍属静态验证：运行时冒烟（弱密码 long 登录应得临时 token + weak_password 标记 → UI 强制改密 → 强密码重登得 15 天 token）待 Atlas 环境执行
+- 仍属静态验证：运行时冒烟（弱密码 long 登录应得临时 token + weak_password 标记 → UI 强制改密 → 强密码重登得正式 token）待 Atlas 环境执行
+
+---
+
+# Part 7 — 登录 token 有效期调整（2026-10-10）
+
+> 用户指令：长期登录 token 有效期 15 天 → **10 天**。唯一改动点 `util/cert.py jwt_encode`（long 分支）；临时 token（5 分钟）与 OTP 登录 token（1 天）不变。前述小节中的历史性"15 天"表述（如 Part 6 背景中"原先照发 15 天"）为当时事实，保留不动；当前行为以本节为准。
