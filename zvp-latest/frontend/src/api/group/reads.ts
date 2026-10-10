@@ -45,3 +45,33 @@ export async function users_v3(
     ).data
 }
 
+export async function time(
+    gid: string,
+    params: {
+        page?: number
+        perpage?: number
+        query?: string
+        sort?: string
+        asc?: boolean
+    } = {}
+) {
+    return (
+        await axios(`/v2/groups/${gid}/time`, {
+            method: 'GET',
+            params
+        })
+    ).data as {
+        data: Array<{
+            _id: string
+            id: string
+            name: string
+            'on-campus': number
+            'off-campus': number
+            'social-practice': number
+        }>
+        metadata: {
+            size: number
+        }
+    }
+}
+

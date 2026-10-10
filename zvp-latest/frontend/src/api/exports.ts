@@ -54,3 +54,16 @@ export async function importActivityExcel(name: string, desc: string, file: File
     data: form
   })
 }
+
+export async function requestReports() {
+  return (await axios('/exports/reports', { method: 'post' })).data as string
+}
+
+export async function downloadReports(token: string) {
+  return (
+    await axios('/exports/reports/download', {
+      params: { token },
+      responseType: 'blob'
+    })
+  ).data as Blob
+}

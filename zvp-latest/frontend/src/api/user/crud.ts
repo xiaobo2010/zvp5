@@ -131,4 +131,18 @@ async function putUserRoles(uid: string, roles: string[]) {
   return true
 }
 
-export { getUser as readOne, getUsers as read, getUsersV2 as read_v2, putUser as update, deleteUser as removeOne, putUserRoles as updateRoles }
+async function createUserV3(payload: {
+  id: string
+  name: string
+  roles?: string[]
+  class_id?: string
+}) {
+  return (
+    await axios('/v3/users', {
+      method: 'post',
+      data: payload
+    })
+  ).data as { id: string }
+}
+
+export { getUser as readOne, getUsers as read, getUsersV2 as read_v2, createUserV3 as create_v3, putUser as update, deleteUser as removeOne, putUserRoles as updateRoles }
