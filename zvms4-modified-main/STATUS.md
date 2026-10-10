@@ -344,7 +344,7 @@
 
 | # | 项 | zvp 参照 | 评估 |
 |---|---|---|---|
-| 1 | **服务端弱密码强制改密**：登录时 `pwd_strength<3` 不发正式 token，走强制改密闭环 | platform.py:119-197 | **首要移植候选**：本仓仅前端校验强度（stores/user.ts:117-135），服务端对弱/初始密码照发 15 天 access token——初始密码（=学号）用户可长期绕过改密（zvp 在服务端拒绝）。建议并入 `/api/users/auth` 增强（弱密码签发 5 分钟临时 token + 前端既有 shouldResetPassword 闭环承接），不新建平行端点 |
+| 1 | **服务端弱密码强制改密**：登录时 `pwd_strength<3` 不发正式 token，走强制改密闭环 | platform.py:119-197 | **已于 Part 6 移植**：`/api/users/auth` 弱密码 long 请求仅发 5 分钟临时 token + `weak_password` 标记，强度规则与前端逐字镜像；short 模式不拦（改密流程不受阻），OTP 路径不受影响；见 §30 |
 | 2 | shield_middleware 路径黑名单 + UA 门禁（418 拦截） | main.py:76-119 | 可选加固面；其中 `zvp_session` cookie 分支（:79-81/:110-118）属红线不随迁 |
 | 3 | 日志 request_methods / search_props 过滤增强 | platform.py:296-329 | 可选（Part 3 §19-5 已记录：API 能力就绪未接 UI）；session/net_session/xuehai_id 维持红线拒绝 |
 | 4 | 前端整页：UserProfile（/me 个人资料页）、ManageRole（按角色管理页） | frontend/src/views | UI 面缺失，需要时另立任务 |
@@ -358,3 +358,30 @@
 ## 29. 红线拒绝面复核（全量第 5 次确认）
 
 xh_router 任意 URL 代理（:159 urlopen + :46 硬编码签名 KEY）、登录设备绑定（platform.py:143-154）、`zvp_session` 设备会话（main.py:79-118）、clarity/xuehai 采集链、日志设备过滤参数、`_1.py` 日志删除脚本——全部维持拒绝，本仓从未引入。
+
+---
+
+# Part 6 — 服务端弱密码强制改密（2026-10-10）
+
+> 任务：移植总账 #1（Part 5 §27）。zvp 在登录时以 `pwd_strength<3` 拒发正式 token（platform.py:174-195），本仓原先仅前端校验强度——服务端对弱/初始密码照发 15 天 access token，直接调 API 可长期绕过改密。本次在服务端补上强制闭环。
+
+## 30. 实现设计
+
+- **强度规则逐字镜像前端**（`util/cert.py pwd_strength` ↔ `stores/user.ts validatePasswordStrength`）：8-14 位可打印 ASCII（0x20-0x7E），小写/大写/数字/符号四类字符 ≥3；独立测试 10/10 用例与前端语义一致（含 15 位超限、非 ASCII、纯数字等边界）
+- **判定位置**：`validate_by_cert` 返回 `(token, weak_password)`（全仓唯一调用方 `/api/users/auth` 已同步适配）：
+  - 弱密码 = 初始态（`password is None`）或 `pwd_strength(明文口令) < 3`
+  - **弱 + long**：只签发 5 分钟 `temporary_token`（不给 15 天 access token）+ 响应新增 `weak_password: true`
+  - **弱 + short**：照常放行——改密流程本身不能被堵死
+  - **OTP 动态码**：`weak_password` 恒 false（管理员代登不涉及口令，不受影响）
+- **前端最小承接**：`LoginResult` 类型加 `weak_password?: boolean`；`store.setUser` 改为「服务端标记 || 前端本地校验」双保险置 `shouldResetPassword`；既有弱密码 UI 闭环（UserLogin 弱密码分支 → 短 token → 强制改密 → 重登）无需改动
+- **日志**：弱密码 long 登录写区分文本「用户 X 登录了系统（密码强度不足，仅发放临时授权）」（`user_login` 类型），管理端可审计强制降权发生
+- **有意不做**（zvp 同款行为）：改密端点（`PUT /users/{oid}/password`）不校验新密码强度——UI 端已有客户端校验，直连 API 可设弱密码但下次 long 登录会再次强制；闭环自洽
+
+## 31. 验证记录（2026-10-10）
+
+- 后端 `compileall` **exit 0**
+- `pwd_strength` 规则镜像独立测试 **10/10 全过**（强弱判定与强度计数均符合前端语义）
+- 前端 `vue-tsc`：改动文件（login.d.ts / stores/user.ts）**0 错误**，存量 3 处上游遗留不变
+- `validate_by_cert` 调用方 grep 确认全仓唯一（users_router），返回签名变更无遗漏适配
+- 写后自审：short 改密流程不被堵、OTP 不受影响、初始密码用户 long 直连仅得 5 分钟临时 token、规则镜像与前端无分歧口径——**未发现漏洞**
+- 仍属静态验证：运行时冒烟（弱密码 long 登录应得临时 token + weak_password 标记 → UI 强制改密 → 强密码重登得 15 天 token）待 Atlas 环境执行

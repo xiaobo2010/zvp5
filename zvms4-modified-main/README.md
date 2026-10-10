@@ -15,7 +15,7 @@
 ```
 zvp-modified-v4/
 ├── README.md                 # 本文件
-├── STATUS.md                 # 模块移植：Part 1 义工管理（10-09）/ Part 2 用户管理与登录（10-10）/ Part 3 日志 API（10-10）/ Part 4 登录与身份验证（10-10）/ Part 5 全量 API 盘点（10-10）：端点对齐 / 禁止面处置 / 验证记录
+├── STATUS.md                 # 模块移植：Part 1 义工管理（10-09）/ Part 2 用户管理与登录（10-10）/ Part 3 日志 API（10-10）/ Part 4 登录与身份验证（10-10）/ Part 5 全量 API 盘点（10-10）/ Part 6 弱密码强制改密（10-10）：端点对齐 / 禁止面处置 / 验证记录
 ├── DB_ALIGNMENT.md           # 现役数据库真实结构（Ground Truth）+ 对齐改动清单
 ├── zvms4-backend-python/     # FastAPI 后端（上游 zvms4，DB 层已对齐；义工管理 v3 已按 zvp 移植）
 │   ├── README.md
@@ -108,6 +108,7 @@ uvicorn main:app --host 0.0.0.0 --port 8000
 - **日志 API 已审计移植（2026-10-10）**：`GET /api/logs` 重写（query/type/level/performer/时间过滤 + user_name），schema 加 `type/level`，35 站点全中文 + 13 处补埋点（成员移除/记录修改/活动信息/v1 用户组/导出全套）；zvp 的设备筛选参数与 `_1.py` 删库脚本拒绝移植；复查清掉 6 处历史残面（含 `get_export_file` 无鉴权下载修复）。
 - **登录与身份验证已审计移植（2026-10-10）**：TOTP 动态码登录（密码优先/OTP 兜底、按用户派生 secret、RFC6238 官方向量 6/6 验证）+ `DELETE /v3/users/{id}/password` 重置为初始密码（临时 token 重新验证）+ admin 动态码查看端点（`totp_view` warning 日志）+ 登出清 token / 改密死期望两处语义修复；zvp 的设备绑定、`zvp_session` 指纹、`sid` claim、recovery 问答、`/v1/platform/*` 平行端点拒绝移植（见 `STATUS.md` Part 4）。
 - **zvp 全量 API 面盘点落档（2026-10-10）**：13 router ~75 端点穷举对照——已移植/等价占绝大多数，未移植总账五项（**服务端弱密码强制改密为首要候选**），四个勘察盲区模块（通知/邮件/推送/socket.io/定时任务等）确认 zvp 零实现，反向确认本仓能力更全（socket.io / apscheduler / notifications / statistics / mcp 独有）；红线拒绝面第 5 次全量复核维持（见 `STATUS.md` Part 5）。
+- **服务端弱密码强制改密（2026-10-10，总账 #1 已闭）**：`/api/users/auth` 弱密码 long 请求仅发 5 分钟临时 token + `weak_password` 标记，强度规则与前端逐字镜像（独立测试 10/10）；short 改密流程与 OTP 路径不受影响（见 `STATUS.md` Part 6）。
 - **`categories` / `debug_descriptions`**：`conversion/groups.py`、`tasks/categorize.py` 会用到，但现役库中不存在、zvp 也无对应代码。属 zvms4 独有的一次性/调试集合，首次写入 MongoDB 会自动创建；如需正式支持需另行建表。
 - **`groups_v2_router.py` 成员读取、`times_router.py`**：仍用遗留 `zvms.users`，与现役 zvp 行为一致，故保留。
 - **索引**：现役两库除 `_id_` 外无任何自定义索引；本 fork 未新增索引，性能问题按需另行评估。
