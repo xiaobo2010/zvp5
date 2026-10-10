@@ -2,8 +2,11 @@
 
 > 基于上游 **zvms4**（`zvms/zvms4-backend-python` + `zvms/zvms4-frontend`）的定制版本。
 > **改动方向一：数据库层向现役 zvp 平台的真实结构对齐。**
-> **改动方向二（2026-10-09 起）：义工管理模块（创建义工 / 添加修改义工成员）按指令从现役 zvp 移植，经逐文件安全审计放行，见 `STATUS.md`。**
-> 其余前端 UI 与后端业务逻辑仍以上游 zvms4 为基准，不采用 zvp 的代码（zvp 代码经检查存在漏洞与后门，仅提取其数据结构；义工管理移植面经扫描确认无外链 / 外呼 / 越权代码，范围外危险代码一律未引入）。
+> **改动方向二（2026-10-09 起）：义工管理模块（创建义工 / 添加修改义工成员）按指令从现役 zvp 移植，经逐文件安全审计放行，见 `STATUS.md` Part 1。**
+> **改动方向三（2026-10-10 起）：用户管理与登录（登录语义补齐 / 用户·班级 v2/v3 API / 设备-绑定-外链三类禁止面清除）按指令从现役 zvp 移植，经全树终局 grep + 写后自审放行，见 `STATUS.md` Part 2。**
+> **改动方向四（2026-10-10 起）：日志 API 移植与汉化（type/level 业务语义 + 35 站点全面行为记录 + 管理端过滤），日志端点 GET-only 防篡改，并复查清除历史残面，见 `STATUS.md` Part 3。**
+> **改动方向五（2026-10-10 起）：登录与身份验证 API 移植（TOTP 动态码按用户派生 / 重置为初始密码 v3 / 登出与改密语义修复），登录/鉴权路径零外呼，见 `STATUS.md` Part 4。**
+> 其余前端 UI 与后端业务逻辑仍以上游 zvms4 为基准，不采用 zvp 的代码（zvp 代码经检查存在漏洞与后门，仅提取其数据结构；义工管理与用户管理移植面经扫描确认无外链 / 外呼 / 越权代码，范围外危险代码一律未引入，上游自带的设备采集 / 外呼代码已在用户管理面上清除）。
 
 ---
 
@@ -12,7 +15,7 @@
 ```
 zvp-modified-v4/
 ├── README.md                 # 本文件
-├── STATUS.md                 # 义工管理移植：端点对齐 / 安全审计 / 验证记录（2026-10-09）
+├── STATUS.md                 # 模块移植：Part 1 义工管理（10-09）/ Part 2 用户管理与登录（10-10）/ Part 3 日志 API（10-10）/ Part 4 登录与身份验证（10-10）/ Part 5 全量 API 盘点（10-10）：端点对齐 / 禁止面处置 / 验证记录
 ├── DB_ALIGNMENT.md           # 现役数据库真实结构（Ground Truth）+ 对齐改动清单
 ├── zvms4-backend-python/     # FastAPI 后端（上游 zvms4，DB 层已对齐；义工管理 v3 已按 zvp 移植）
 │   ├── README.md
@@ -28,9 +31,12 @@ zvp-modified-v4/
 
 | 部分 | 来源 | 说明 |
 |---|---|---|
-| 前端 | 上游 zvms4 为基准 + zvp 接线 | 仅义工管理 API 接线改动（`member.ts` / `read.ts` / `getActivity.ts` / `ZActivityMemberList.vue`），UI 与模板未动 |
-| 后端逻辑 | 上游 zvms4 为基准 | 除下述义工管理移植面外，业务逻辑、路由、权限均保持 zvms4 |
-| 义工管理 v3 层 | **现役 zvp**（2026-10-09 移植） | `routers/activities_v3_router.py` 四端点 + 权限修复，逐文件安全审计后放行，见 `STATUS.md` |
+| 前端 | 上游 zvms4 为基准 + zvp 接线 | 仅义工管理与用户管理 API 接线改动（见 `STATUS.md` §2 / §9），UI 与模板未动 |
+| 后端逻辑 | 上游 zvms4 为基准 | 除下述义工管理与用户管理移植面外，业务逻辑、路由、权限均保持 zvms4 |
+| 义工管理 v3 层 | **现役 zvp**（2026-10-09 移植） | `routers/activities_v3_router.py` 四端点 + 权限修复，逐文件安全审计后放行，见 `STATUS.md` Part 1 |
+| 用户管理与登录 v2/v3 层 | **现役 zvp**（2026-10-10 移植） | users/groups v2 列表·详情 + v3 建/改角色/建班/成员进出 + 登录默认密码与 profile，见 `STATUS.md` Part 2；设备 / 绑定 / 外链三类禁止面未迁移，上游同源残留已清除 |
+| 日志系统 | **现役 zvp**（2026-10-10 移植） | logs API 业务面（过滤/分页/user_name 联查）+ type/level 语义 + 35 站点汉化与补埋点 + GET-only 防篡改，见 `STATUS.md` Part 3 |
+| 登录与身份验证 | **现役 zvp**（2026-10-10 移植） | TOTP 动态码登录（按用户派生，RFC6238 本地自实现）+ 重置为初始密码 v3 端点 + 登出/改密语义修复；设备绑定 / 会话指纹 / 外呼投递 / recovery 问答拒绝移植，见 `STATUS.md` Part 4 |
 | 后端数据库层 | 向**现役 zvp** 对齐 | 改动见 §4 |
 
 **zvp（现役平台）贡献「数据在库里长什么样」**：包名、集合名、字段名 / 类型。除经安全审计放行的义工管理移植面外，它的代码（含后门）一律不引入。
@@ -98,6 +104,10 @@ uvicorn main:app --host 0.0.0.0 --port 8000
 ## 6. 已知事项 / 待办
 
 - ~~**zvp 代码待审核**：本次只吸收了 zvp 的数据结构，未采用其任何业务代码。~~ → **义工管理面已审计并移植（2026-10-09）**：v3 四端点 + 权限修复，逐文件扫描确认无外链 / 外呼 / 越权代码，范围外危险代码（学海代理 `xh_router` / `api/xh.js`、平台登录 `platform.py`、ManageHome 外站跳转、外部图标 URL）均未引入，审计记录见 `STATUS.md`。其余 zvp 模块（安全中间件、其他 v3 路由等）若要参考仍需单独安全审计。
+- **用户管理与登录已审计移植（2026-10-10）**：登录语义补齐（默认密码 / profile / 5min 临时 token）+ users/groups v2/v3 端点 + 前端接线；zvp 的 platform 登录（TOTP / sid / 设备核验）与 `xh_router` 全部拒绝移植；上游自带的设备采集（`binding_user_credentials` / 三请求头 / `deviceId` 生成）已从用户管理面清除。roles 编辑后端端点已就绪、前端入口待接（见 `STATUS.md` Part 2 §14-3）。
+- **日志 API 已审计移植（2026-10-10）**：`GET /api/logs` 重写（query/type/level/performer/时间过滤 + user_name），schema 加 `type/level`，35 站点全中文 + 13 处补埋点（成员移除/记录修改/活动信息/v1 用户组/导出全套）；zvp 的设备筛选参数与 `_1.py` 删库脚本拒绝移植；复查清掉 6 处历史残面（含 `get_export_file` 无鉴权下载修复）。
+- **登录与身份验证已审计移植（2026-10-10）**：TOTP 动态码登录（密码优先/OTP 兜底、按用户派生 secret、RFC6238 官方向量 6/6 验证）+ `DELETE /v3/users/{id}/password` 重置为初始密码（临时 token 重新验证）+ admin 动态码查看端点（`totp_view` warning 日志）+ 登出清 token / 改密死期望两处语义修复；zvp 的设备绑定、`zvp_session` 指纹、`sid` claim、recovery 问答、`/v1/platform/*` 平行端点拒绝移植（见 `STATUS.md` Part 4）。
+- **zvp 全量 API 面盘点落档（2026-10-10）**：13 router ~75 端点穷举对照——已移植/等价占绝大多数，未移植总账五项（**服务端弱密码强制改密为首要候选**），四个勘察盲区模块（通知/邮件/推送/socket.io/定时任务等）确认 zvp 零实现，反向确认本仓能力更全（socket.io / apscheduler / notifications / statistics / mcp 独有）；红线拒绝面第 5 次全量复核维持（见 `STATUS.md` Part 5）。
 - **`categories` / `debug_descriptions`**：`conversion/groups.py`、`tasks/categorize.py` 会用到，但现役库中不存在、zvp 也无对应代码。属 zvms4 独有的一次性/调试集合，首次写入 MongoDB 会自动创建；如需正式支持需另行建表。
 - **`groups_v2_router.py` 成员读取、`times_router.py`**：仍用遗留 `zvms.users`，与现役 zvp 行为一致，故保留。
 - **索引**：现役两库除 `_id_` 外无任何自定义索引；本 fork 未新增索引，性能问题按需另行评估。
