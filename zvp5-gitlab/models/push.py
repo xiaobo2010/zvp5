@@ -32,8 +32,8 @@ class Notice(db.Model):
     object_id: db.Mapped[str] = _primarycol()
     school_id: db.Mapped[Optional[str]] = _foreigncol('schools')
     title: db.Mapped[str] = _col()
-    description: db.Mapped[str] = _col()
-    link: db.Mapped[Optional[str]] = _col()
+    description: db.Mapped[str] = _col(db.Text)
+    link: db.Mapped[Optional[str]] = _col(db.Text)
     shows_on: db.Mapped[int] = _ctimecol()
     expires_on: db.Mapped[int] = _col()
     total_users: db.Mapped[int] = _col() # internal, for stats

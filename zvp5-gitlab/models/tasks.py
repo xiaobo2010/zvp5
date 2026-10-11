@@ -20,7 +20,7 @@ class SavedTask(db.Model):
     status: db.Mapped[TaskStatus] = _ienumcol(
         TaskStatus, default=TaskStatus.PENDING
     )
-    result: db.Mapped[Optional[str]] = _col()
+    result: db.Mapped[Optional[str]] = _col(db.Text)
     start_time: db.Mapped[int] = _ctimecol()
 
     # schemas #
