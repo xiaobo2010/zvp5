@@ -36,7 +36,7 @@ class Log(db.Model):
     level: db.Mapped[LogLevel] = _ienumcol(
         LogLevel, default=LogLevel.INFO
     )
-    summary: db.Mapped[str] = _col()
+    summary: db.Mapped[str] = _col(db.Text)
     data: db.Mapped[dict] = _jsoncol() # hmm... NoSQL style
     token: db.Mapped[dict] = _jsoncol()
     timestamp: db.Mapped[int] = _ctimecol()
