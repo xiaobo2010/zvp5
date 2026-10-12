@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { ElResult, ElButton, ElCard } from 'element-plus'
+import { ElResult, ElButton, ElCard, ElPageHeader } from 'element-plus'
+import { ArrowLeft } from '@element-plus/icons-vue'
 import { useHeaderStore } from '@/stores/header'
 import { useI18n } from 'vue-i18n'
 import router from '@/router'
@@ -12,6 +13,11 @@ header.setHeader(t('nav.about'))
 
 <template>
   <div class="p-4">
+    <ElPageHeader :icon="ArrowLeft" @back="router.back()" class="py-4">
+      <template #content>
+        <h1 class="text-xl">{{ t('nav.about') }}</h1>
+      </template>
+    </ElPageHeader>
     <ElCard shadow="never">
       <ElResult
         icon="info"

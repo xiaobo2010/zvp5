@@ -1,8 +1,10 @@
+import type { UserPosition } from './user'
+
 export interface UserProfile {
   _id: string
   id: string
   name: string
-  roles: string[]
+  roles: UserPosition[]
   class_id: string
   group?: string[]
 }

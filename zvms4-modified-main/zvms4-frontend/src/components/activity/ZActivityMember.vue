@@ -8,6 +8,7 @@ import api from '@/api'
 import { ElButton, ElDescriptions, ElDescriptionsItem, ElNotification, ElTag } from 'element-plus'
 import { useI18n } from 'vue-i18n'
 import ZUserGroup from '../tags/ZUserGroup.vue'
+import ZUserPosition from '../tags/ZUserPosition.vue'
 import { useUserStore } from '@/stores/user'
 import { temporaryToken } from '@/plugins/short-token'
 import { useWindowSize } from '@vueuse/core'
@@ -167,13 +168,10 @@ async function insertUserPast() {
             :group="group"
             :grouping="false"
           />
-          <ElTag
+          <ZUserPosition
             v-if="person && ((person.roles ?? []).find((role) => role !== 'student') || !person.group.length)"
-            size="small"
-            type="primary"
-          >
-            {{ t('home.positions.' + ((person.roles ?? []).find((role) => role !== 'student') ?? 'student')) }}
-          </ElTag>
+            :position="person.roles ?? []"
+          />
         </ElDescriptionsItem>
         <ElDescriptionsItem
           :label="t('home.labels.past')"
