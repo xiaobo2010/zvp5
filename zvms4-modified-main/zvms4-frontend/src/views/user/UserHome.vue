@@ -5,8 +5,7 @@ import {
   ElDescriptionsItem,
   ElButton,
   ElCard,
-  ElSkeleton,
-  ElTag
+  ElSkeleton
 } from 'element-plus'
 import { Refresh } from '@element-plus/icons-vue'
 import dayjs from '@/plugins/dayjs'
@@ -15,6 +14,7 @@ import { useHeaderStore } from '@/stores/header'
 import { useI18n } from 'vue-i18n'
 import { reactive, watch } from 'vue'
 import ZUserGroup from '@/components/tags/ZUserGroup.vue'
+import ZUserPosition from '@/components/tags/ZUserPosition.vue'
 import ZUserTimeJudge from '@/components/activity/ZUserTimeJudge.vue'
 import { useWindowSize } from '@vueuse/core'
 import { useRouter } from 'vue-router'
@@ -97,13 +97,10 @@ watch(
               :group="group"
               :grouping="false"
             />
-            <ElTag
+            <ZUserPosition
               v-if="user.position.find((role) => role !== 'student') || !user.groups.length"
-              size="small"
-              type="primary"
-            >
-              {{ t('home.positions.' + (user.position.find((role) => role !== 'student') ?? 'student')) }}
-            </ElTag>
+              :position="user.position"
+            />
           </ElDescriptionsItem>
         </ElDescriptions>
         <div v-if="user.position.includes('secretary')" class="py-4">

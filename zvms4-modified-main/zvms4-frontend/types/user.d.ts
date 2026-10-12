@@ -5,7 +5,7 @@ export interface User {
   sex?: 'male' | 'female' | 'unknown'
   group: string[]
   past: string[]
-  roles?: string[]
+  roles?: UserPosition[]
   class_id?: string
 }
 

@@ -37,7 +37,7 @@ export const useUserStore = defineStore('user', {
       if (Array.isArray(user.roles)) {
         this.groups = user.group ?? []
         this.class_id = user.class_id || ''
-        this.position = user.roles as UserPosition[]
+        this.position = user.roles
       } else {
         const legacy = user as User
         this.groups = legacy.group
