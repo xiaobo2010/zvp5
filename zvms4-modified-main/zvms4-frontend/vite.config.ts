@@ -85,7 +85,7 @@ export default defineConfig({
             if (resp?.status === 200) {
               await r.update()
             }
-          }, 36000000)
+          }, 1800000)
       }
     }),
     Icons({}),

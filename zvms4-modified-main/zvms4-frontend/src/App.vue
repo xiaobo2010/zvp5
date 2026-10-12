@@ -36,6 +36,16 @@ const { needRefresh, offlineReady, updateServiceWorker } = useRegisterSW()
 const online = useOnline()
 const cached = ref(localStorage.getItem('cached'))
 
+// reload once when a NEW service worker takes control (skip first install)
+if ('serviceWorker' in navigator) {
+  const hadController = !!navigator.serviceWorker.controller
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (hadController) {
+      window.location.reload()
+    }
+  })
+}
+
 window.onbeforeunload = (e) => {
   if (location.pathname.startsWith('/activity/create/') || location.pathname.endsWith('/modify')) {
     e.preventDefault()
@@ -136,7 +146,12 @@ watch(
     if (!location.pathname.startsWith('/activities/')) {
       headerStore.resetHeader()
     }
-    if (!userStore.isLogin && !route.fullPath.endsWith('login') && !route.fullPath.endsWith('about')) {
+    if (
+      !userStore.isLogin &&
+      !route.fullPath.endsWith('login') &&
+      !route.fullPath.endsWith('about') &&
+      !route.fullPath.endsWith('changelog')
+    ) {
       router.replace('/user/login')
     }
   }

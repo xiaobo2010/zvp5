@@ -1,9 +1,11 @@
 import axios, { AxiosError } from 'axios'
+import type { AxiosResponse, InternalAxiosRequestConfig } from 'axios'
 import { ElMessage } from 'element-plus'
 import nprogress from 'nprogress'
 import 'nprogress/nprogress.css'
 import router from '@/router'
 import { useUserStore } from '@/stores/user'
+import { cacheGet, cacheSet } from '@/utils/idbCache'
 
 const apiBase = import.meta.env.VITE_API_BASE ?? '/api'
 
@@ -17,6 +19,34 @@ const axiosInstance = axios.create({
     'Content-type': 'application/json'
   }
 })
+
+function isCacheableGet(config?: InternalAxiosRequestConfig) {
+  if (!config || config.method !== 'get') {
+    return false
+  }
+  const responseType = config.responseType
+  return responseType === undefined || responseType === 'json'
+}
+
+function cacheKey(config: InternalAxiosRequestConfig) {
+  const params = config.params ? JSON.stringify(config.params) : ''
+  return `${config.baseURL ?? ''}${config.url ?? ''}${params}`
+}
+
+let lastStaleNotice = 0
+function noticeStaleCache() {
+  const now = Date.now()
+  if (now - lastStaleNotice < 10000) {
+    return
+  }
+  lastStaleNotice = now
+  ElMessage({
+    message: '网络不稳定，已显示本地缓存数据',
+    type: 'warning',
+    grouping: true,
+    plain: true
+  })
+}
 
 // Request Interceptor
 
@@ -40,10 +70,32 @@ axiosInstance.interceptors.request.use(
 axiosInstance.interceptors.response.use(
   (response) => {
     nprogress.done()
+    if (isCacheableGet(response.config)) {
+      void cacheSet(cacheKey(response.config), response.data)
+    }
     return response
   },
-  (error: Error | AxiosError) => {
+  async (error: Error | AxiosError) => {
     nprogress.done()
+    if (axios.isAxiosError(error)) {
+      const config = error.config
+      const status = error.response?.status
+      const transportFailed = error.response === undefined
+      if (config && isCacheableGet(config) && (transportFailed || status === 502 || status === 503 || status === 504)) {
+        const cached = await cacheGet(cacheKey(config))
+        if (cached) {
+          noticeStaleCache()
+          const stale: AxiosResponse = {
+            data: cached.data,
+            status: 200,
+            statusText: 'OK',
+            headers: { 'x-zvms-local-cache': String(cached.t) },
+            config
+          }
+          return stale
+        }
+      }
+    }
     let errorDisplayed = false
     if (axios.isAxiosError(error)) {
       if (error.response?.status === 401) {
