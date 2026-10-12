@@ -2,7 +2,7 @@ from typing import Literal, Optional
 
 from fastapi import HTTPException
 
-from database import db
+from db import backends
 from util.object_id import validate_object_id
 
 
@@ -10,7 +10,7 @@ async def get_zvms_new_user(oid: str) -> Optional[dict]:
     """
     Fetch a user document from the live `zvms_new.users` collection.
     """
-    return await db.zvms_new.users.find_one({"_id": validate_object_id(oid)})
+    return await backends.get_users_repo().get_by_oid(str(validate_object_id(oid)))
 
 
 async def validate_read_user_permission(

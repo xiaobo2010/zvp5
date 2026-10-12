@@ -46,10 +46,10 @@ router = APIRouter()
 
 
 async def process_task(task_id: str):
-    task = await db.zvms.tasks.find_one({"id": uuid.UUID(task_id)})
+    task = await db.zvms_new.tasks.find_one({"id": uuid.UUID(task_id)})
     if not task:
         return
-    await db.zvms.tasks.update_one(
+    await db.zvms_new.tasks.update_one(
         {"id": uuid.UUID(task_id)},
         {"$set": {"status": ExportStatus.processing, "task_start": datetime.now()}},
     )
@@ -104,7 +104,7 @@ async def process_task(task_id: str):
             result.append(doc)
             task["percentage"] = (idx + 1) / len(users) * 100
             if idx % 20 == 19:
-                await db.zvms.tasks.update_one(
+                await db.zvms_new.tasks.update_one(
                     {"id": uuid.UUID(task_id)},
                     {
                         "$set": {
@@ -115,7 +115,7 @@ async def process_task(task_id: str):
                 )
                 result = []
                 sleep(0.01)
-        await db.zvms.tasks.update_one(
+        await db.zvms_new.tasks.update_one(
             {"id": uuid.UUID(task_id)},
             {
                 "$set": {
@@ -143,7 +143,7 @@ async def process_task(task_id: str):
             result.append(doc)
             task["percentage"] = (idx + 1) / len(users) * 100
             if idx % 20 == 19:
-                await db.zvms.tasks.update_one(
+                await db.zvms_new.tasks.update_one(
                     {"id": uuid.UUID(task_id)},
                     {
                         "$set": {
@@ -154,7 +154,7 @@ async def process_task(task_id: str):
                 )
                 result = []
                 sleep(0.01)
-        await db.zvms.tasks.update_one(
+        await db.zvms_new.tasks.update_one(
             {"id": uuid.UUID(task_id)},
             {
                 "$set": {
@@ -166,7 +166,7 @@ async def process_task(task_id: str):
             },
         )
     else:
-        await db.zvms.tasks.update_one(
+        await db.zvms_new.tasks.update_one(
             {"id": uuid.UUID(task_id)},
             {
                 "$set": {
@@ -202,7 +202,7 @@ async def export_users(
     document["variant"] = ExportVariant.users.value
     document["format"] = document["format"].value
     document["status"] = document["status"].value
-    await db.zvms.tasks.insert_one(document)
+    await db.zvms_new.tasks.insert_one(document)
     log.with_text(
         f"用户 {await get_user_display_name(user['id'])} 发起了用户列表导出（任务 ID: {task_id}）",
         type="export",
@@ -243,7 +243,7 @@ async def export_time(
     document["variant"] = ExportVariant.time.value
     document["format"] = document["format"].value
     document["status"] = document["status"].value
-    await db.zvms.tasks.insert_one(document)
+    await db.zvms_new.tasks.insert_one(document)
     log.with_text(
         f"用户 {await get_user_display_name(user['id'])} 发起了时长报表导出（任务 ID: {task_id}）",
         type="export",
@@ -255,7 +255,7 @@ async def export_time(
 
 @router.get("/{task_id}")
 async def get_export(task_id: str):
-    task = await db.zvms.tasks.find_one({"id": uuid.UUID(task_id)})
+    task = await db.zvms_new.tasks.find_one({"id": uuid.UUID(task_id)})
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
     del task["result"]
@@ -336,7 +336,7 @@ async def get_export_file(
 ):
     if "admin" not in user["per"]:
         raise HTTPException(status_code=403, detail="Permission denied")
-    task = await db.zvms.tasks.find_one({"id": uuid.UUID(task_id)})
+    task = await db.zvms_new.tasks.find_one({"id": uuid.UUID(task_id)})
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
     if task["status"] != "completed":
@@ -373,7 +373,7 @@ async def get_export_file(
         else:
             raise HTTPException(status_code=400, detail="Invalid format")
         buffer.write(tmp.read())
-        await db.zvms.tasks.delete_one({"id": uuid.UUID(task_id)})
+        await db.zvms_new.tasks.delete_one({"id": uuid.UUID(task_id)})
     log.with_text(
         f"用户 {await get_user_display_name(user['id'])} 下载了导出文件（任务 ID: {task_id}，格式 {task['format']}）",
         type="export",
@@ -385,7 +385,7 @@ async def get_export_file(
 @router.get("")
 async def get_export_list():
     result = []
-    for task_id, task in enumerate(await db.zvms.tasks.find({}).to_list(None)):
+    for task_id, task in enumerate(await db.zvms_new.tasks.find({}).to_list(None)):
         result.append(
             {
                 "_id": str(task["_id"]),

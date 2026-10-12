@@ -42,7 +42,7 @@ async def get_user(oid: str):
     """
     Get user by oid
     """
-    user = await db.zvms.users.find_one({"_id": validate_object_id(oid)})
+    user = await db.zvms_new.users.find_one({"_id": validate_object_id(oid)})
     if user:
         return user
     return None

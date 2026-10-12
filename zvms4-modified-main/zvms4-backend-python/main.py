@@ -109,7 +109,7 @@ async def disconnect(sid):
 
 
 async def mark_all_tasks_failed():
-    await db.zvms.tasks.update_many(
+    await db.zvms_new.tasks.update_many(
         {"status": {"$ne": "completed"}},
         {"$set": {"status": "failed", "errmsg": "Program interrupted unexpectedly"}},
     )
@@ -247,7 +247,7 @@ async def health_check():
     """Health check endpoint."""
     try:
         # Check MongoDB connection
-        await db.zvms.command("ping")
+        await db.zvms_new.command("ping")
         return {"status": "ok", "code": 200, "data": "OK"}
     except Exception as e:
         return {"status": "error", "code": 500, "data": str(e)}
