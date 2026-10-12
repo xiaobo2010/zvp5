@@ -2,7 +2,7 @@
 import ZActivityMember from '@/components/activity/ZActivityMember.vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user.ts'
-import { ref, watch } from 'vue'
+import { ref, watch, type Component } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ElPageHeader, ElSegmented, ElLoading, ElIcon } from 'element-plus'
 import { ZActivityList } from '@/components'
@@ -12,6 +12,13 @@ import api from '@/api'
 import ZUserModification from '@/components/group/ZUserModification.vue'
 import { Info, Log, ViewList } from '@icon-park/vue-next'
 import ZLogList from '@/components/log/ZLogList.vue'
+
+interface SegmentedTab {
+  label: string
+  value: string
+  icon: Component
+  display?: boolean
+}
 
 const route = useRoute()
 const router = useRouter()
@@ -49,7 +56,7 @@ const curPage = route.params.action?.toString()
 
 const current = ref(curPage && curPage !== '' ? curPage : 'info')
 
-const tabs = ref(
+const tabs = ref<SegmentedTab[]>(
   [
     {
       label: 'Info',
@@ -101,9 +108,9 @@ watch(
           <template #default="props">
             <div class="flex flex-col items-center gap-2 p-2">
               <ElIcon :size="18" class="mt-2">
-                <Component :is="props.item.icon" />
+                <Component :is="(props.item as SegmentedTab).icon" />
               </ElIcon>
-              {{ t(('manage.personalPanel.tabs.' + props.item.value) as string) }}
+              {{ t(('manage.personalPanel.tabs.' + (props.item as SegmentedTab).value) as string) }}
             </div>
           </template>
         </ElSegmented>

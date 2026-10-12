@@ -24,6 +24,7 @@ import { useHeaderStore } from './stores/header'
 import { useWindowSize, useDark, useOnline } from '@vueuse/core'
 import { useI18n } from 'vue-i18n'
 import { watch, ref, onMounted, h, reactive } from 'vue'
+import type { WatermarkFontType } from 'element-plus'
 import { zhCn } from 'element-plus/es/locale/index.mjs'
 import ZVerticalNav from '@/components/form/ZVerticalNav.vue'
 import { useRegisterSW } from 'virtual:pwa-register/vue'
@@ -55,6 +56,16 @@ const route = useRoute()
 const router = useRouter()
 const userStore = useUserStore()
 const headerStore = useHeaderStore()
+
+const watermark: WatermarkFontType = {
+  color: 'rgba(0,0,0,.15)',
+  fontSize: 16,
+  fontWeight: 'normal',
+  fontStyle: 'normal',
+  fontFamily: 'sans-serif',
+  textAlign: 'center',
+  textBaseline: 'hanging'
+}
 
 async function resetPassword() {
   if (userStore.shouldResetPassword) {

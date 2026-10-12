@@ -5,7 +5,7 @@ import type { Component as VueComponent } from 'vue'
 import { Plus, Refresh, User as UserIcon } from '@element-plus/icons-vue'
 import { ZButtonOrCard, ZUserTimeJudge } from '@/components'
 import api from '@/api'
-import { ElButton, ElDescriptions, ElDescriptionsItem, ElNotification } from 'element-plus'
+import { ElButton, ElDescriptions, ElDescriptionsItem, ElNotification, ElTag } from 'element-plus'
 import { useI18n } from 'vue-i18n'
 import ZUserGroup from '../tags/ZUserGroup.vue'
 import { useUserStore } from '@/stores/user'
@@ -167,6 +167,9 @@ async function insertUserPast() {
             :group="group"
             :grouping="false"
           />
+          <ElTag v-if="person && !person.group.length" size="small" type="primary">
+            {{ t('home.positions.' + ((person.roles ?? []).find((role) => role !== 'student') ?? 'student')) }}
+          </ElTag>
         </ElDescriptionsItem>
         <ElDescriptionsItem
           :label="t('home.labels.past')"

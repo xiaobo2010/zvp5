@@ -244,10 +244,25 @@ async def read_user(user_oid: str, user=Depends(get_current_user)):
     user_info = await db.zvms.users.find_one({"_id": validate_object_id(user_oid)})
 
     if user_info is None:
+        new_user = await db.zvms_new.users.find_one({"_id": validate_object_id(user_oid)})
+        if new_user is not None:
+            class_id = str(new_user["class_id"]) if new_user.get("class_id") else ""
+            user_info = {
+                "_id": new_user["_id"],
+                "id": new_user["id"],
+                "name": new_user["name"],
+                "sex": new_user.get("sex", "unknown"),
+                "roles": new_user.get("roles", []),
+                "class_id": class_id,
+                "group": [class_id] if class_id else [],
+                "past": new_user.get("past", []),
+            }
+
+    if user_info is None:
         raise HTTPException(status_code=404, detail="User not found")
 
     user_info["_id"] = str(user_info["_id"])
-    del user_info["password"]
+    user_info.pop("password", None)
     return {
         "status": "ok",
         "code": 200,

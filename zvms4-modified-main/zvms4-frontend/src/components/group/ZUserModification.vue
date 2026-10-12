@@ -1,5 +1,4 @@
 <script lang="ts" setup>
-import { useRouter } from 'vue-router'
 import {
   ElCard,
   ElInput,
@@ -15,14 +14,11 @@ import {
 } from 'element-plus'
 import { ref, onMounted, toRefs, watch } from 'vue'
 import api from '@/api'
-import { useUserStore } from '@/stores/user'
 import type { Group, User } from '@/../types'
 import { reactive } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ArrowRight, Delete } from '@element-plus/icons-vue'
+import { ArrowRight } from '@element-plus/icons-vue'
 
-const userStore = useUserStore()
-const router = useRouter()
 const { t } = useI18n()
 
 const props = withDefaults(
@@ -98,7 +94,7 @@ async function refreshPermissions() {
   loadingPermissions.value = true
   const permissionsSet = await api.group.read('permission', -1)
   if (permissionsSet) {
-    permissions.value = permissionsSet.groups
+    permissions.value = permissionsSet.groups.filter((group) => group.type === 'permission')
   }
   loadingPermissions.value = false
 }
@@ -108,22 +104,6 @@ onMounted(refreshClasses)
 onMounted(refreshPermissions)
 
 watch(id, refresh)
-
-async function remove() {
-  submission.value = true
-  try {
-    await api.user.removeOne(userStore._id, id.value)
-  } catch (_) {
-    submission.value = false
-    return
-  }
-  ElNotification({
-    title: '用户已删除',
-    type: 'success'
-  })
-  submission.value = false
-  await router.back()
-}
 
 async function submit() {
   submission.value = true
@@ -187,7 +167,7 @@ async function remoteFetchClass(search: string) {
     <ElCard shadow="hover">
       <ElForm :model="modification" label-position="right" label-width="96px">
         <ElFormItem :label="t('manage.groupDetails.userList.columns.name')" required>
-          <ElInput v-model="modification.name" />
+          <ElInput v-model="modification.name" :disabled="mode === 'modify'" />
         </ElFormItem>
         <ElFormItem :label="t('manage.groupDetails.userList.columns.id')" required>
           <ElInput v-model.number="modification.id" />
@@ -219,17 +199,6 @@ async function remoteFetchClass(search: string) {
           </ElCheckboxGroup>
         </ElFormItem>
         <div style="text-align: right">
-          <ElButton
-            class="px-4"
-            v-if="mode === 'modify' && userStore.position.includes('admin') && id !== userStore._id"
-            :icon="Delete"
-            type="danger"
-            @click="remove"
-            text
-            bg
-            :loading="submission"
-            >{{ t('manage.groupDetails.userList.columns.remove') }}</ElButton
-          >
           <ElButton
             class="px-4"
             :icon="ArrowRight"

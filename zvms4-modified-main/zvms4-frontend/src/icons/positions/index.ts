@@ -22,10 +22,12 @@ export const positions = {
     icon: AdminIcon,
     color: 'danger'
   }
-} as Record<
-  UserPosition,
-  {
-    icon: Component
-    color: 'primary' | 'info' | 'warning' | 'success' | 'danger'
-  }
+} as Partial<
+  Record<
+    UserPosition,
+    {
+      icon: Component
+      color: 'primary' | 'info' | 'warning' | 'success' | 'danger'
+    }
+  >
 >

@@ -37,24 +37,26 @@ export async function resetPassword(
   const publicKey = await importPublicKey(await getRSAPublicCert())
   const credential = await encryptData(publicKey, payload)
   const hex = byteArrayToHex(new Uint8Array(credential))
-  const result = (await axios(`/users/${user}/password`, {
-    method: 'PUT',
-    data: {
-      credential: hex
-    },
-    headers: {
-      Authorization: `Bearer ${token}`
-    }
-  })) as Response<LoginResult>
+  const result = (
+    await axios(`/users/${user}/password`, {
+      method: 'PUT',
+      data: {
+        credential: hex
+      },
+      headers: {
+        Authorization: `Bearer ${token}`
+      }
+    })
+  ).data as Response<LoginResult>
   if (result.status === 'error') {
     ElNotification({
       title: 'Error when resetting password',
       message: result.message,
       type: 'error'
     })
-    return
+    return false
   }
-  return result.data
+  return result.status === 'ok'
 }
 
 export async function resetToInitial(user: string, token: string) {

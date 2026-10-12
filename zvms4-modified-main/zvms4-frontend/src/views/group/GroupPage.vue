@@ -2,7 +2,7 @@
 import ZGroupUserList from '@/components/group/ZGroupUserList.vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElPageHeader, ElSegmented, ElIcon, ElText } from 'element-plus'
-import { ref, onMounted, watch } from 'vue'
+import { ref, onMounted, watch, type Component } from 'vue'
 import api from '@/api'
 import type { Group } from '@/../types'
 import { useWindowSize } from '@vueuse/core'
@@ -16,6 +16,12 @@ import { AddUser, User, ViewList } from '@icon-park/vue-next'
 import { TablerSum } from '@/icons'
 import UilStatistics from '@/icons/UilStatistics.vue'
 import ZGroupTimeStatistics from '@/components/group/ZGroupTimeStatistics.vue'
+
+interface SegmentedTab {
+  label: string
+  value: string
+  icon: Component
+}
 
 const { height } = useWindowSize()
 const userStore = useUserStore()
@@ -71,7 +77,7 @@ if (
   router.replace('/not-found')
 }
 
-const tabs = ref([
+const tabs = ref<SegmentedTab[]>([
   {
     label: 'Users',
     value: 'users',
@@ -114,7 +120,7 @@ if (group.value?.type !== 'class') {
 }
 */
 
-const tabs2 = ref([
+const tabs2 = ref<SegmentedTab[]>([
   {
     label: 'Users',
     value: 'users',
@@ -142,9 +148,9 @@ watch(tab, () => {
           <template #default="props">
             <div class="flex flex-col items-center gap-2 p-2">
               <ElIcon :size="18" class="mt-2">
-                <Component :is="props.item.icon" />
+                <Component :is="(props.item as SegmentedTab).icon" />
               </ElIcon>
-              {{ t(('manage.groupDetails.tabs.' + props.item.value) as string) }}
+              {{ t(('manage.groupDetails.tabs.' + (props.item as SegmentedTab).value) as string) }}
             </div>
           </template>
         </ElSegmented>

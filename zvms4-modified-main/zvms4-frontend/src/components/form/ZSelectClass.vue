@@ -52,7 +52,9 @@ async function remoteFetchClass(search: string) {
     classes.value = group ? [group] : []
   } else {
     const classesSet = await api.group.read('class', 1, 5, search)
-    classes.value = classesSet ? classesSet.groups : []
+    classes.value = classesSet
+      ? classesSet.groups.filter((group) => group.type === 'class')
+      : []
   }
 }
 </script>

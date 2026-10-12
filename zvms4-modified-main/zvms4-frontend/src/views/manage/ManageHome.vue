@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { useRoute, useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user.ts'
-import { ref, watch } from 'vue'
+import { ref, watch, type Component } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ElPageHeader, ElSegmented, ElIcon } from 'element-plus'
 import { ArrowLeft, Upload } from '@element-plus/icons-vue'
@@ -11,6 +11,12 @@ import ZGroupList from '@/components/group/ZGroupList.vue'
 import ZLogList from '@/components/log/ZLogList.vue'
 import TablerSum from '@/icons/TablerSum.vue'
 import ZGroupUserTimeList from '@/components/group/ZGroupUserTimeList.vue'
+
+interface SegmentedTab {
+  label: string
+  value: string
+  icon: Component
+}
 
 const route = useRoute()
 const router = useRouter()
@@ -32,7 +38,7 @@ const curPage = route.params.action?.toString()
 
 const current = ref(curPage && curPage !== '' ? curPage : 'groups')
 
-const tabs = ref([
+const tabs = ref<SegmentedTab[]>([
   {
     label: 'Groups',
     value: 'groups',
@@ -83,9 +89,9 @@ watch(
           <template #default="props">
             <div class="flex flex-col items-center gap-2 p-2">
               <ElIcon :size="18" class="mt-2">
-                <Component :is="props.item.icon" />
+                <Component :is="(props.item as SegmentedTab).icon" />
               </ElIcon>
-              {{ t(('manage.manage.tabs.' + props.item.value) as string) }}
+              {{ t(('manage.manage.tabs.' + (props.item as SegmentedTab).value) as string) }}
             </div>
           </template>
         </ElSegmented>

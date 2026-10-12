@@ -31,7 +31,7 @@ const modes = ['on-campus', 'off-campus', 'social-practice'] as ActivityMode[]
 const modes_with_hybrid = ['on-campus', 'off-campus', 'social-practice', 'hybrid'] as ActivityMode[]
 const shown_modes = showHybrid.value ? modes_with_hybrid : modes
 
-const icons: Record<ActivityMode, VueComponent> = {
+const icons: Partial<Record<ActivityMode, VueComponent>> = {
   'on-campus': School,
   'off-campus': CityGate,
   'social-practice': Vacation,

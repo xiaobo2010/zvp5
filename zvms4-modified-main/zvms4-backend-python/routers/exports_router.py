@@ -135,7 +135,7 @@ async def process_task(task_id: str):
                 "_id": str(user["_id"]),
                 "Name": user["name"],
                 "ID": str(user["id"]),
-                "Group": group["name"],
+                "Group": group["name"] if group else "",
                 "On Campus": None,
                 "Off Campus": None,
                 "Social Practice": None,

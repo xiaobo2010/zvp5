@@ -22,7 +22,7 @@ export async function createGroup(group: Group) {
 }
 
 export async function getGroup(gid: string) {
-  const response = await axios('/v2/groups/' + gid)
+  const response = await axios('/groups/' + gid)
   const data = response.data as Response<Group>
   if (data.status === 'ok') {
     return data.data

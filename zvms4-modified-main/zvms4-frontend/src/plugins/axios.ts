@@ -5,7 +5,9 @@ import 'nprogress/nprogress.css'
 import router from '@/router'
 import { useUserStore } from '@/stores/user'
 
-export const baseURL = 'https://zvp.xiaobopisces.top/api/'
+const apiBase = import.meta.env.VITE_API_BASE ?? '/api'
+
+export const baseURL = apiBase.replace(/\/+$/, '')
 
 const axiosInstance = axios.create({
   baseURL,
