@@ -1,8 +1,9 @@
 import re
-from typing import Literal
+from typing import Literal, Optional
 
+from bcrypt import hashpw, gensalt
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from database import db
 from typings.log import inject_log
@@ -10,6 +11,7 @@ from util.object_id import get_current_user
 from util.permission.user import validate_read_user_permission
 from utils import validate_object_id
 from util.get_user import get_user
+from util.validation import validate_number, validate_student_name
 from asyncio import gather
 from util.log import APILogger
 
@@ -308,4 +310,61 @@ async def modify_user_roles_v3(
     await log.insert_log()
 
     return
+
+
+class NewUserRequest(BaseModel):
+    id: str
+    name: str
+    roles: list[str] = Field(default_factory=lambda: ['student'])
+    class_id: Optional[str] = None
+
+
+@router.post('', status_code=201)
+async def create_user_v3(
+    payload: NewUserRequest,
+    user=Depends(get_user),
+    log=Depends(inject_log),
+):
+    if not user.require('admin'):
+        raise HTTPException(status_code=403, detail='权限不足')
+
+    allowed_roles = {'student', 'secretary', 'department', 'admin', 'teacher'}
+    for role in payload.roles:
+        if role not in allowed_roles:
+            raise HTTPException(status_code=400, detail=f'无效角色：{role}')
+
+    valid, message = validate_number(payload.id)
+    if not valid:
+        raise HTTPException(status_code=400, detail=message)
+
+    valid, message = validate_student_name(payload.name)
+    if not valid:
+        raise HTTPException(status_code=400, detail=message)
+
+    if await db.zvms_new.users.find_one({"id": payload.id}):
+        raise HTTPException(status_code=409, detail='学号已存在')
+
+    class_oid = None
+    if payload.class_id is not None:
+        class_oid = validate_object_id(payload.class_id)
+        if not await db.zvms_new.groups.find_one({"_id": class_oid}):
+            raise HTTPException(status_code=404, detail='班级不存在')
+
+    password = hashpw(payload.id.encode('utf-8'), gensalt()).decode('utf-8')
+
+    document = {
+        "id": payload.id,
+        "name": payload.name,
+        "password": password,
+        "roles": payload.roles,
+    }
+    if class_oid is not None:
+        document["class_id"] = class_oid
+
+    result = await db.zvms_new.users.insert_one(document)
+
+    log.with_text(f'User {user.name} created user {payload.name} ({payload.id})')
+    await log.insert_log()
+
+    return {"id": str(result.inserted_id)}
 

@@ -13,6 +13,9 @@ import {
     ElFormItem,
     ElSelect,
     ElOption,
+    ElTable,
+    ElTableColumn,
+    ElMessage,
     ElMessageBox
 } from 'element-plus'
 
@@ -79,14 +82,39 @@ const exportTemplate = async () => {
     try {
         exporting.value = true
         const api = await import('@/api')
-        const blob = await api.exports.template(group.value)
-        api.exports.save(blob, `${groupObj.value?.name ?? group.value}-template.xlsx`)
+        const blob = await api.exports.getGroupTemplate(group.value)
+        api.exports.saveBlob(blob, `${groupObj.value?.name ?? group.value}-template.xlsx`)
     } finally {
         exporting.value = false
     }
 }
 
 const exporting = ref(false)
+
+const timeDialog = ref(false)
+const timeLoading = ref(false)
+const timeRows = ref([])
+
+const openTime = async () => {
+    timeDialog.value = true
+    timeLoading.value = true
+    try {
+        const res = await (await import('@/api')).group.reads.time(group.value, { perpage: 100 })
+        timeRows.value = res.data ?? []
+    } catch (e) {
+        const detail = e?.response?.data?.detail
+        ElMessage({
+            message: detail
+                ? '' + (typeof detail === 'string' ? detail : JSON.stringify(detail))
+                : '获取时长统计失败',
+            type: 'error',
+            grouping: true,
+            plain: true
+        })
+    } finally {
+        timeLoading.value = false
+    }
+}
 
 const removeUser = async (u) => {
     removing.value = true
@@ -163,6 +191,13 @@ onMounted(load)
                 >
                     导出模板
                 </ElButton>
+                <ElButton
+                    v-if="hasPerm"
+                    text bg type="primary"
+                    @click="openTime()"
+                >
+                    时长统计
+                </ElButton>
             </template>
         </ElPageHeader>
         <ElDialog
@@ -204,6 +239,22 @@ onMounted(load)
                     添加
                 </ElButton>
             </template>
+        </ElDialog>
+        <ElDialog
+            v-model="timeDialog"
+            :close-on-click-modal="false"
+            align-center
+        >
+            <template #header>
+                时长统计
+            </template>
+            <ElTable v-loading="timeLoading" :data="timeRows" style="width:100%">
+                <ElTableColumn prop="id" label="学号"></ElTableColumn>
+                <ElTableColumn prop="name" label="姓名"></ElTableColumn>
+                <ElTableColumn prop="on-campus" label="校内"></ElTableColumn>
+                <ElTableColumn prop="off-campus" label="校外(h)"></ElTableColumn>
+                <ElTableColumn prop="social-practice" label="社会实践"></ElTableColumn>
+            </ElTable>
         </ElDialog>
                 <ZList
                     v-if="hasPerm"
