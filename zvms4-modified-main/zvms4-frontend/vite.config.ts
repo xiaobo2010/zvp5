@@ -57,7 +57,9 @@ export default defineConfig({
         ]
       },
       workbox: {
-        cleanupOutdatedCaches: false,
+        skipWaiting: true,
+        clientsClaim: true,
+        cleanupOutdatedCaches: true,
         sourcemap: true,
         maximumFileSizeToCacheInBytes: 5 * 1024 * 1024
       },

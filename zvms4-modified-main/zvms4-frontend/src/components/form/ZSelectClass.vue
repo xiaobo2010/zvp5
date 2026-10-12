@@ -40,7 +40,7 @@ async function remoteFetchClass(search: string) {
   if (position.includes('admin') || position.includes('department')) {
     if (search) {
       const classesSet = await api.group.read_v2(1, 50, search)
-      classes.value = classesSet ? classesSet.groups : []
+      classes.value = classesSet ? classesSet.groups.filter((g) => g.type !== 'permission') : []
     } else if (classGroupID.value) {
       const group = await api.group.readOne(classGroupID.value)
       classes.value = group ? [group] : []
@@ -51,7 +51,7 @@ async function remoteFetchClass(search: string) {
     const group = await api.group.readOne(userStore.class_id)
     classes.value = group ? [group] : []
   } else {
-    const classesSet = await api.group.read('class', 1, 5, search)
+    const classesSet = await api.group.read('class', 1, 50, search)
     classes.value = classesSet
       ? classesSet.groups.filter((group) => group.type === 'class')
       : []
