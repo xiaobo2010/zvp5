@@ -1,22 +1,19 @@
-"""Repository protocols for the Mongo → Oracle (ADB) migration.
+"""Repository protocols for the data access layer.
 
 These are pure :class:`typing.Protocol` interfaces: no I/O, no implementations.
-Every domain has exactly one protocol, and **both** backends must satisfy it:
-
-* the Mongo adapters (``db.repos.mongo.*``) — a mechanical lift of the existing
-  ``motor`` queries, and
-* the Oracle implementations (``db.repos.oracle.*``) — SQLAlchemy Core over ADB.
+Every domain has exactly one protocol, satisfied by the MongoDB adapters in
+``db.repos.mongo.*`` (a mechanical lift of the existing ``motor`` queries).
 
 Row shape contract
 ------------------
-Mongo rows are plain ``dict``s keyed by the original document field names
-(``_id``, ``id``, ``class_id``, ``on-campus`` …). Oracle implementations must
-return **the same dict shape** (``_id`` normalised to a lowercase hex string)
-so callers in ``routers/`` and ``util/`` are drop-in compatible. Returning
-ORM/Row objects is a contract violation — the adapters translate.
+Rows are plain ``dict``s keyed by the original document field names
+(``_id``, ``id``, ``class_id``, ``on-campus`` …), with ``_id`` normalised to a
+lowercase hex string, so callers in ``routers/`` and ``util/`` are drop-in
+compatible. Returning ORM/Row objects is a contract violation — the adapters
+translate.
 
-DB-specific values (``ObjectId``, ``datetime``, ``None`` for NULL) are likewise
-the adapters' responsibility to normalise; this file only pins the *interfaces*.
+DB-specific values (``ObjectId``, ``datetime``, ``None`` for NULL) are the
+adapters' responsibility to normalise; this file only pins the *interfaces*.
 """
 
 from __future__ import annotations
@@ -30,7 +27,7 @@ Row = dict[str, Any]
 class UsersRepo(Protocol):
     """Data access for ``zvms_new.users``.
 
-    Satisfied by both the Mongo adapter and the Oracle implementation.
+    Satisfied by the MongoDB adapter.
     """
 
     async def get_by_oid(self, oid: str) -> Row | None:
@@ -94,7 +91,7 @@ class UsersRepo(Protocol):
 class GroupsRepo(Protocol):
     """Data access for ``zvms_new.groups`` (class groups only).
 
-    Satisfied by both the Mongo adapter and the Oracle implementation.
+    Satisfied by the MongoDB adapter.
     """
 
     async def get(self, oid: str) -> Row | None:
@@ -129,7 +126,7 @@ class GroupsRepo(Protocol):
 class ActivitiesRepo(Protocol):
     """Data access for ``zvms_new.activities``.
 
-    Satisfied by both the Mongo adapter and the Oracle implementation.
+    Satisfied by the MongoDB adapter.
     """
 
     async def get(self, oid: str) -> Row | None:
@@ -182,7 +179,7 @@ class ActivitiesRepo(Protocol):
 class MembersRepo(Protocol):
     """Data access for ``zvms_new.activity_members``.
 
-    Satisfied by both the Mongo adapter and the Oracle implementation.
+    Satisfied by the MongoDB adapter.
     """
 
     async def list_for_activity(
@@ -232,7 +229,7 @@ class MembersRepo(Protocol):
 class TimeRepo(Protocol):
     """Data access for ``zvms_new.time`` / ``time_academic_year`` / ``time_with_origin``.
 
-    Satisfied by both the Mongo adapter and the Oracle implementation.
+    Satisfied by the MongoDB adapter.
     """
 
     async def get_for_user(self, user_oid: str) -> Row | None:
@@ -269,7 +266,7 @@ class StatsCacheRepo(Protocol):
     """Data access for the derived cache collections.
 
     Covers ``indicators`` (global, single row) and ``group_indicators`` (one row
-    per group). Satisfied by both the Mongo adapter and the Oracle implementation.
+    per group). Satisfied by the MongoDB adapter.
     """
 
     async def get_indicators(self) -> Row | None:
@@ -294,7 +291,7 @@ class StatsCacheRepo(Protocol):
 class ChangelogRepo(Protocol):
     """Data access for ``zvms_new.changelog`` (release version + notes).
 
-    Satisfied by both the Mongo adapter and the Oracle implementation. Every
+    Satisfied by the MongoDB adapter. Every
     row uses the shape ``{"_id": <24-char lowercase hex str>, "version": str,
     "date": str, "items": list[str], "updated_at": datetime}``.
     """

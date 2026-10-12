@@ -1044,3 +1044,16 @@ XH：`/xh/api`（`api/xh.js`）
 
 - `zvms4-modified-main/README.md`、`STATUS.md`：zzj 线删除 / `zvp5-dev` 线修改 → **保留修改**（不丢 Part 8-11 增量）。
 - `zvms4-modified-main/DB_ALIGNMENT.md`、`zvp-latest/DEV_STATUS.md`：**随 zzj 线删除**（内容已并入本文件 §三 / §五）。
+
+### 7.4 第二批合并：单库收敛 + CHANGELOG 数据库化（2026-10-12，剥离 ADB）
+
+**背景**：生产 `zvp-frontend` 实测运行的是 `zvms4-adb-migration` 线的 **v4.2.2-1**（含 `ffc5ae2` 仓储层+双库收敛、`8fb1e82` CHANGELOG 数据库化）。为让主干与生产功能面对齐，同时保持「主干无 ADB」，这两个提交已按 **Mongo-only** 方式并入主干：
+
+| 提交 | 内容 | 处置 |
+|---|---|---|
+| `ffc5ae2` 仓储层落地与双库收敛 | `db/` 仓储层（protocols + Mongo 适配器）、routers/util/tasks/conversion 接入仓储层、`database.py` 收敛为单库 `zvms_new`、`misc/migrate_legacy_to_new.py` | **并入**（Mongo 部分） |
+| `8fb1e82` CHANGELOG 数据库化 (v4.2.2-1) | `/api/changelog` 路由 + `changelog` 仓储 + `misc/seed_changelog.py` + 前端 `/changelog` 读库、`/about` 版本读库 | **并入**（无 ADB 面） |
+
+**剥离的 Oracle/ADB 面**（不进入主干）：`db/oracle/*`、`db/repos/oracle/*`、`db/models.py`（ADB schema 的 SQLAlchemy Core 镜像）、`db/ddl_check.py`、`docs/ADB_MIGRATION.md`、`docs/ADB_SCHEMA_SPEC.md`、`requirements.txt` 的 `sqlalchemy[asyncio]` / `oracledb`、`settings.example.py` 的 `ORACLE_*`；`db/backends.py` 精简为 Mongo-only 工厂（`get_users_repo` / `get_groups_repo` / `get_changelog_repo`）。ADB 线**完整保留在 `zvms4-adb-migration` 分支**，与主干互不影响。
+
+**校验**：主干全树无 `oracle` / `oracledb` / `sqlalchemy` / `db.zvms` 代码引用（仅 `STATUS.md` / 本文件的历史记述文字）；后端 `compileall` exit 0；`import main` 通过且 `/api/changelog`、`/api/version` 路由在位；工厂返回 `MongoUsersRepo` / `MongoGroupsRepo` / `MongoChangelogRepo`。

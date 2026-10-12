@@ -6,9 +6,9 @@ Mechanical lift of the existing motor queries:
 * the class-only listing block from ``routers/groups_v2_router.py``
   (the legacy ``type:"permission"`` paths are intentionally skipped).
 
-Row shapes must match ``db/repos/oracle/groups.py`` exactly: ``_id`` is a
-lowercase-hex string, never a ``bson.ObjectId``. No DB I/O happens at import
-time; the motor handles are read from :mod:`database` on each call.
+Row shape: ``_id`` is a lowercase-hex string, never a ``bson.ObjectId``. No DB
+I/O happens at import time; the motor handles are read from :mod:`database` on
+each call.
 """
 from __future__ import annotations
 
