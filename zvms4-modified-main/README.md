@@ -6,6 +6,7 @@
 > **改动方向三（2026-10-10 起）：用户管理与登录（登录语义补齐 / 用户·班级 v2/v3 API / 设备-绑定-外链三类禁止面清除）按指令从现役 zvp 移植，经全树终局 grep + 写后自审放行，见 `STATUS.md` Part 2。**
 > **改动方向四（2026-10-10 起）：日志 API 移植与汉化（type/level 业务语义 + 35 站点全面行为记录 + 管理端过滤），日志端点 GET-only 防篡改，并复查清除历史残面，见 `STATUS.md` Part 3。**
 > **改动方向五（2026-10-10 起）：登录与身份验证 API 移植（TOTP 动态码按用户派生 / 重置为初始密码 v3 / 登出与改密语义修复），登录/鉴权路径零外呼，见 `STATUS.md` Part 4。**
+> **改动方向六（2026-10-11 起）：后端可用状态落地——shield 请求加固中间件按 zvp 语义改写移植（剥离设备会话/学海面），运行缺口修复（依赖缺失 / example 配置字段缺失 / RSA 1024 / 关停竞态），并完成真实运行时端到端验证（41/41 断言），见 `STATUS.md` Part 8。**
 > 其余前端 UI 与后端业务逻辑仍以上游 zvms4 为基准，不采用 zvp 的代码（zvp 代码经检查存在漏洞与后门，仅提取其数据结构；义工管理与用户管理移植面经扫描确认无外链 / 外呼 / 越权代码，范围外危险代码一律未引入，上游自带的设备采集 / 外呼代码已在用户管理面上清除）。
 
 ---
@@ -15,9 +16,9 @@
 ```
 zvp-modified-v4/
 ├── README.md                 # 本文件
-├── STATUS.md                 # 模块移植：Part 1 义工管理（10-09）/ Part 2 用户管理与登录（10-10）/ Part 3 日志 API（10-10）/ Part 4 登录与身份验证（10-10）/ Part 5 全量 API 盘点（10-10）/ Part 6 弱密码强制改密（10-10）/ Part 7 token 有效期调整（10-10）：端点对齐 / 禁止面处置 / 验证记录
+├── STATUS.md                 # 模块移植：Part 1 义工管理（10-09）/ Part 2-4 用户·日志·登录（10-10）/ Part 5 全量 API 盘点（10-10）/ Part 6 弱密码强制改密（10-10）/ Part 7 token 有效期调整（10-10）/ Part 8 可用状态落地：运行时验证 + shield 加固 + 运行缺口修复（10-11）
 ├── DB_ALIGNMENT.md           # 现役数据库真实结构（Ground Truth）+ 对齐改动清单
-├── zvms4-backend-python/     # FastAPI 后端（上游 zvms4，DB 层已对齐；义工管理 v3 已按 zvp 移植）
+├── zvms4-backend-python/     # FastAPI 后端（上游 zvms4，DB 层已对齐；义工/用户/日志/登录 v2-v3 已移植；shield 加固就位，已通过 41 项运行时冒烟）
 │   ├── README.md
 │   ├── requirements.txt
 │   ├── config/               # supervisor.conf / nginx 样例
@@ -37,6 +38,7 @@ zvp-modified-v4/
 | 用户管理与登录 v2/v3 层 | **现役 zvp**（2026-10-10 移植） | users/groups v2 列表·详情 + v3 建/改角色/建班/成员进出 + 登录默认密码与 profile，见 `STATUS.md` Part 2；设备 / 绑定 / 外链三类禁止面未迁移，上游同源残留已清除 |
 | 日志系统 | **现役 zvp**（2026-10-10 移植） | logs API 业务面（过滤/分页/user_name 联查）+ type/level 语义 + 35 站点汉化与补埋点 + GET-only 防篡改，见 `STATUS.md` Part 3 |
 | 登录与身份验证 | **现役 zvp**（2026-10-10 移植） | TOTP 动态码登录（按用户派生，RFC6238 本地自实现）+ 重置为初始密码 v3 端点 + 登出/改密语义修复；设备绑定 / 会话指纹 / 外呼投递 / recovery 问答拒绝移植，见 `STATUS.md` Part 4 |
+| shield 请求加固 + 可用状态 | **现役 zvp**（2026-10-11 移植/改写） | 路径黑名单 + HTTP 方法白名单 + UA 门禁（418 + security_alert 日志）；设备会话 cookie、学海 UA 分支、调试路由、全量请求头落盘一律剥离；伴随运行缺口修复与 41 项端到端冒烟验证，见 `STATUS.md` Part 8 |
 | 后端数据库层 | 向**现役 zvp** 对齐 | 改动见 §4 |
 
 **zvp（现役平台）贡献「数据在库里长什么样」**：包名、集合名、字段名 / 类型。除经安全审计放行的义工管理移植面外，它的代码（含后门）一律不引入。
@@ -68,6 +70,8 @@ zvp-modified-v4/
 
 ## 5. 配置与运行
 
+> 本节在 2026-10-11 已按真实部署流程走通（Python 3.14.4 + venv + 本地/容器 MongoDB，端到端冒烟 41/41，见 `STATUS.md` Part 8）。
+
 ### 5.1 配置
 
 ```bash
@@ -78,12 +82,14 @@ cp zvms4-backend-python/settings.example.py zvms4-backend-python/settings.py
 
 - `MONGODB_URI`：指向现役数据所在的 MongoDB（当前为 Atlas 集群）。
 - `MONGODB_DB`：按上游约定留空即可；`database.py` 固定连接 `zvms` 与 `zvms_new` 两个库。
+- `LANGUAGE`：`util/calculate.py` 时长描述文案语言（`zh-CN` / 其他）。
+- `CHINESE_FONT`：`util/statement.py` 导出 PDF 的中文字体路径（代码内置 fallback 链，路径不存在时自动尝试系统常见 CJK 字体）。
 
-此外后端启动依赖同目录下的密钥文件（上游生成脚本）：
+此外后端启动依赖同目录下的密钥文件（上游生成脚本，已升级为 2048 位）：
 
-- `generate_key.sh` → 生成 `rsa_public_key.pem` / `rsa_private_key.pem` / `aes_key.txt`。
+- `generate_key.sh` → 生成 `rsa_public_key.pem` / `rsa_private_key.pem`（2048 位） / `aes_key.txt`。
 
-> 以上文件均属敏感凭证，禁止提交进版本库。
+> 以上文件均属敏感凭证，禁止提交进版本库（`.gitignore` 已覆盖）。
 
 ### 5.2 运行后端
 
@@ -94,6 +100,10 @@ pip install -r requirements.txt
 # 生成密钥后
 uvicorn main:app --host 0.0.0.0 --port 8000
 ```
+
+依赖说明：`requirements.txt` 已在 2026-10-11 清理（移除 Python 3.13+ 不可安装的开发期工具 pipreqs 系与零引用的 requests，补齐 `to_excel` 必需的 openpyxl），在 Python 3.14 实测全量安装通过。
+
+**shield 请求门禁（2026-10-11 起）**：所有请求须携带含 `Mozilla` 的 User-Agent 且路径不命中安全黑名单，否则返回 418 并写 `security_alert` 日志。浏览器前端不受影响；**外部健康检查器 / 监控探针请携带浏览器式 UA 或只做 TCP 探活**。
 
 `config/` 内含 `supervisor.conf` 与 `nginx` 样例，可用于生产托管（路径按实际部署调整）。
 
@@ -112,3 +122,8 @@ uvicorn main:app --host 0.0.0.0 --port 8000
 - **`categories` / `debug_descriptions`**：`conversion/groups.py`、`tasks/categorize.py` 会用到，但现役库中不存在、zvp 也无对应代码。属 zvms4 独有的一次性/调试集合，首次写入 MongoDB 会自动创建；如需正式支持需另行建表。
 - **`groups_v2_router.py` 成员读取、`times_router.py`**：仍用遗留 `zvms.users`，与现役 zvp 行为一致，故保留。
 - **索引**：现役两库除 `_id_` 外无任何自定义索引；本 fork 未新增索引，性能问题按需另行评估。
+- **后端已通过真实运行时验证（2026-10-11）**：本地 MongoDB 容器 + uvicorn 启动 + 41 项端到端断言全过（登录/弱密码强制改密/用户班级增改/义工活动与成员/TOTP/重置初始密码/日志过滤与 11 类 type/导出任务与 xlsx 下载/越权 403/shield 418 门禁），详见 `STATUS.md` Part 8。修复的运行缺口：requirements 依赖清理与 openpyxl 补齐、settings.example 缺字段（LANGUAGE/CHINESE_FONT）、RSA 1024→2048、SIGTERM 双路关停竞态。
+- **shield 门禁的部署注意**：非浏览器客户端（监控探针等）会被 418 拦截，探活请带浏览器式 UA 或走 TCP 层；被拦请求写 `security_alert` 日志（admin 可在日志页审计）。
+- **退出行为**：MongoDB 不可达时服务退出会阻塞至 serverSelectionTimeout（默认 30s）后才放弃——正常部署（mongo 在线）为瞬时操作。
+- **版本发布规范（2026-10-11 定，同日已实现）**：每次发版，**前后端版本号同步更新**——后端 `/api/version` 与 `/api/` root 响应、前端 `package.json`；`/about` 页显示与 favicon 缓存参数经 `src/data/changelog.ts` 的 `APP_VERSION` 自动引用，发版只需改 changelog.ts（新增版本条目）+ package.json + 后端两处。**CHANGELOG 页面**已上线：`/changelog` 公共路由（About 页有「查看更新日志」入口），逐版记录 bug 修复，条目从 `STATUS.md` 对应 Part 提取（v4.2.0-3 见 Part 9 §40，v4.2.0-2 见 §36/§37）。当前版本 **v4.2.0-3**。
+- **用户线上报告 4 个 bug（2026-10-11 存档，未修）**：用户身份栏空白 / 用户详情"班级不存在" / 日志未登录请求显示"无此用户" / 删除义工后应跳转 `/activities`——根因分析与修复方向见 `STATUS.md` Part 9 §38；按指令**仅本地修复、不部署 zgovps-la**，部署同步另行指令。
