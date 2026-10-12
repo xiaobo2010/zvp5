@@ -2,7 +2,9 @@ from fastapi import Request, FastAPI
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, RedirectResponse
 from pymongo.errors import OperationFailure
-import signal
+import re
+from datetime import datetime
+from typings.log import ZVMSLog
 from routers import (
     users_router,
     activities_router,
@@ -25,7 +27,6 @@ import socketio
 from fastapi.middleware.cors import CORSMiddleware
 from database import db
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-import asyncio
 from tasks.compute_time import compute_tasks, generate_reports
 
 scheduler = AsyncIOScheduler()
@@ -47,6 +48,52 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+SEC_PATTERN = re.compile(
+    "|".join(
+        [
+            r"[^\w]env",
+            r"\.\.",
+            r"/\.",
+            r"\.sql",
+            r"\.bak",
+            r"api/chat",
+            r"api/network",
+            r"api/file",
+            r"assets/%",
+            r"swagger",
+            r"doc",
+            r"php",
+            r"\.py",
+            r"openapi",
+        ]
+    )
+)
+
+allowed_methods = ["GET", "POST", "DELETE", "PUT", "PATCH", "HEAD", "OPTIONS"]
+
+
+@app.middleware("http")
+async def shield_middleware(request: Request, call_next):
+    if (
+        SEC_PATTERN.search(request.url.path)
+        or "Mozilla" not in request.headers.get("User-Agent", "")
+        or str(request.method).upper() not in allowed_methods
+    ):
+        try:
+            await ZVMSLog(
+                url=str(request.url),
+                user="",
+                data="系统检测到异常请求",
+                timestamp=datetime.now().timestamp(),
+                type="security_alert",
+                level="warning",
+            ).insert_log()
+        except Exception as e:
+            print(f"Failed to write security log: {e}")
+        return JSONResponse(status_code=418, content="请求已被拦截")
+    return await call_next(request)
+
 
 app.mount("/socket.io", socket)
 
@@ -97,8 +144,6 @@ async def startup_event():
     )
 
     print("Application started.")
-    signal.signal(signal.SIGINT, lambda s, f: asyncio.create_task(shutdown_event()))
-    signal.signal(signal.SIGTERM, lambda s, f: asyncio.create_task(shutdown_event()))
 
 
 async def shutdown_event():
@@ -144,7 +189,7 @@ async def home():
         "code": 200,
         "data": {
             "message": "Welcome to ZVMS API",
-            "version": "4.1",
+            "version": "v4.2.0-3",
             "author": "ZZDev",
             "license": "MIT",
             "source": "https://github.com/zvms/zvms4-backend-python.git",
@@ -248,7 +293,7 @@ async def operation_failure_exception_handler(_: Request, exc: OperationFailure)
 
 @app.get("/api/version")
 async def get_version():
-    return {"status": "ok", "code": 200, "data": "4.1"}
+    return {"status": "ok", "code": 200, "data": "v4.2.0-3"}
 
 
 if __name__ == "__main__":
