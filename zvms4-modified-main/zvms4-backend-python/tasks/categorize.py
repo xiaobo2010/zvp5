@@ -10,7 +10,7 @@ from tqdm import tqdm
 async def describe_person(
     id: str
 ):
-    demographics = await db.zvms.get_collection('users').find_one({'_id': validate_object_id(id)})
+    demographics = await db.zvms_new.get_collection('users').find_one({'_id': validate_object_id(id)})
     time = await db.zvms_new.get_collection('time').find_one({'user': id})
     validated_time = UserActivityTime(
         on_campus_raw=time["on_campus_raw"],
@@ -35,7 +35,7 @@ async def describe_person(
 
 
 async def describe_all(target: str):
-    users = await db.zvms.get_collection("users").find({}).to_list(None)
+    users = await db.zvms_new.get_collection("users").find({}).to_list(None)
     await db.zvms_new.get_collection('debug_descriptions').delete_many({})
     for user in tqdm(users):
         if not user['id'].startswith('2022'):

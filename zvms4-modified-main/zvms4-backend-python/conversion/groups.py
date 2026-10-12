@@ -62,7 +62,7 @@ def get_grade_type(grade_name: str):
 
 async def trans_group(id: str, group: GroupV1) -> GroupV2:
     new_type = "class" if group.type.value == "class" else "organization"
-    charge = await db.zvms.get_collection("users").find_one({"group": id})
+    charge = await db.zvms_new.get_collection("users").find_one({"class_id": ObjectId(id)})
     charge = charge["_id"] if group.type.value == "class" else ""
     categs = []
     if new_type == "class":

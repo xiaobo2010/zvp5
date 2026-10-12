@@ -39,7 +39,7 @@ async def create_group(
 
     group = payload.model_dump()
 
-    result = await db.zvms.groups.insert_one(group)
+    result = await db.zvms_new.groups.insert_one(group)
 
     id = str(result.inserted_id)
 
@@ -70,39 +70,24 @@ async def get_groups(
 
     regex = {"$regex": search, "$options": "i"}
 
+    if type == "permission":
+        match = {"type": "permission", "name": regex}
+    elif type == "class":
+        match = {"type": {"$ne": "permission"}, "name": regex}
+    else:
+        match = {"name": regex}
+
     rows = []
-
-    legacy_groups = await db.zvms.groups.find(
-        {"name": regex},
-        {"description": 0},
-    ).to_list(None)
-    for group in legacy_groups:
-        rows.append(
-            {
-                "_id": str(group["_id"]),
-                "name": group["name"],
-                "type": group.get("type", "class"),
-                "permissions": group.get("permissions", []),
-            }
-        )
-
-    new_groups = await db.zvms_new.groups.find(
-        {"name": regex},
-        {"name": True},
-    ).to_list(None)
-    for group in new_groups:
-        rows.append(
-            {
-                "_id": str(group["_id"]),
-                "name": group["name"],
-                "type": "class",
-            }
-        )
-
-    if type == "class":
-        rows = [group for group in rows if group["type"] == "class"]
-    elif type == "permission":
-        rows = [group for group in rows if group["type"] == "permission"]
+    groups = await db.zvms_new.groups.find(match, {"description": 0}).to_list(None)
+    for group in groups:
+        row = {
+            "_id": str(group["_id"]),
+            "name": group["name"],
+            "type": group.get("type", "class"),
+        }
+        if row["type"] == "permission":
+            row["permissions"] = group.get("permissions", [])
+        rows.append(row)
 
     rows.sort(key=lambda group: group["name"])
 
@@ -128,26 +113,23 @@ async def get_group(group_id: str):
     Get a group
     """
 
-    result = await db.zvms.groups.find_one({"_id": ObjectId(group_id)})
-
-    if result is None:
-        new_result = await db.zvms_new.groups.find_one({"_id": ObjectId(group_id)})
-        if new_result is not None:
-            result = {
-                "_id": new_result["_id"],
-                "name": new_result["name"],
-                "type": "class",
-            }
+    result = await db.zvms_new.groups.find_one({"_id": ObjectId(group_id)})
 
     if result is None:
         raise HTTPException(status_code=404, detail="Group not found")
 
-    result["_id"] = str(result["_id"])
+    data = {
+        "_id": str(result["_id"]),
+        "name": result["name"],
+        "type": result.get("type", "class"),
+    }
+    if data["type"] == "permission":
+        data["permissions"] = result.get("permissions", [])
 
     return {
         "status": "ok",
         "code": 200,
-        "data": result,
+        "data": data,
     }
 
 
@@ -169,11 +151,11 @@ async def update_group_name(
     if "admin" not in user["per"]:
         raise HTTPException(status_code=403, detail="Permission denied")
 
-    target = await db.zvms.groups.find_one({"_id": validate_object_id(group_id)})
+    target = await db.zvms_new.groups.find_one({"_id": validate_object_id(group_id)})
     if target is None:
         raise HTTPException(status_code=404, detail="Group not found")
 
-    await db.zvms.groups.update_one(
+    await db.zvms_new.groups.update_one(
         {"_id": validate_object_id(group_id)}, {"$set": {"name": payload.name}}
     )
 
@@ -205,10 +187,10 @@ async def get_class_activities(
 
     same_class = False
     if "secretary" in user["per"]:
-        target = await db.zvms.users.find_one({"_id": ObjectId(user["id"])})
+        target = await db.zvms_new.users.find_one({"_id": ObjectId(user["id"])})
         if target is None:
             raise HTTPException(status_code=404, detail="User not found")
-        classid = target["group"]
+        classid = str(target["class_id"]) if target.get("class_id") else None
         if classid == group_id:
             same_class = True
     if user is None:
@@ -245,10 +227,10 @@ async def get_users_in_class(
     """
     same_class = False
     if "secretary" in user["per"]:
-        target = await db.zvms.users.find_one({"_id": ObjectId(user["id"])})
+        target = await db.zvms_new.users.find_one({"_id": ObjectId(user["id"])})
         if target is None:
             raise HTTPException(status_code=404, detail="User not found")
-        classid = target["group"]
+        classid = str(target["class_id"]) if target.get("class_id") else None
         if classid == group_id:
             same_class = True
     if user is None:
@@ -260,20 +242,27 @@ async def get_users_in_class(
         and ("secretary" not in user["per"] and not same_class)
     ):
         raise HTTPException(status_code=403, detail="Permission denied")
-    count = await db.zvms.users.count_documents(
-        {"group": group_id, "name": {"$regex": search, "$options": "i"}}
+    class_oid = validate_object_id(group_id)
+    count = await db.zvms_new.users.count_documents(
+        {"class_id": class_oid, "name": {"$regex": search, "$options": "i"}}
     )
     pipeline = [
-        {"$match": {"group": group_id, "name": {"$regex": search, "$options": "i"}}},
+        {"$match": {"class_id": class_oid, "name": {"$regex": search, "$options": "i"}}},
         {"$sort": {"id": 1}},
         {"$skip": (page - 1) * perpage},
         {"$limit": perpage},
     ]
-    result = await db.zvms.users.aggregate(pipeline).to_list(None)
+    result = await db.zvms_new.users.aggregate(pipeline).to_list(None)
     for user in result:
         user["_id"] = str(user["_id"])
+        class_id = str(user["class_id"]) if user.get("class_id") else ""
+        user["class_id"] = class_id
+        user["group"] = [class_id] if class_id else []
         if pwdm:
-            user["password"] = not check_password(user["id"], user["password"])
+            stored = user.get("password")
+            user["password"] = (
+                stored is not None and not check_password(user["id"], stored)
+            )
         else:
             user["password"] = None
     return {"status": "ok", "code": 200, "data": result, "metadata": {"size": count}}
@@ -297,10 +286,10 @@ async def get_user_times_in_class(
     """
     same_class = False
     if "secretary" in user["per"]:
-        target = await db.zvms.users.find_one({"_id": ObjectId(user["id"])})
+        target = await db.zvms_new.users.find_one({"_id": ObjectId(user["id"])})
         if target is None:
             raise HTTPException(status_code=404, detail="User not found")
-        classid = target["group"]
+        classid = str(target["class_id"]) if target.get("class_id") else None
         if classid == group_id:
             same_class = True
     if user is None:
@@ -312,16 +301,17 @@ async def get_user_times_in_class(
         and ("secretary" not in user["per"] and not same_class)
     ):
         raise HTTPException(status_code=403, detail="Permission denied")
-    count = await db.zvms.users.count_documents(
-        {"group": group_id, "name": {"$regex": search, "$options": "i"}}
+    class_oid = validate_object_id(group_id)
+    count = await db.zvms_new.users.count_documents(
+        {"class_id": class_oid, "name": {"$regex": search, "$options": "i"}}
     )
     pipeline = [
-        {"$match": {"group": group_id, "name": {"$regex": search, "$options": "i"}}},
+        {"$match": {"class_id": class_oid, "name": {"$regex": search, "$options": "i"}}},
         {"$sort": {"id": 1}},
         {"$skip": (page - 1) * perpage},
         {"$limit": perpage},
     ]
-    result = await db.zvms.users.aggregate(pipeline).to_list(None)
+    result = await db.zvms_new.users.aggregate(pipeline).to_list(None)
     time = []
     for user in result:
         user_time = await calculate_user_time(
@@ -340,19 +330,19 @@ async def get_user_times_in_class(
             user_time["on-campus"] = max(25 - user_time["on-campus"], 0)
             user_time["off-campus"] = max(15 - user_time["off-campus"], 0)
             user_time["social-practice"] = max(18 - user_time["social-practice"], 0)
-        group = await db.zvms.groups.find_one(
-            {
-                "_id": {"$in": list(map(lambda x: ObjectId(x), user["group"]))},
-                "type": "class",
-            }
+        class_id = user.get("class_id")
+        if class_id is None:
+            continue
+        class_group = await db.zvms_new.groups.find_one(
+            {"_id": class_id, "type": {"$ne": "permission"}}
         )
-        if group is None:
+        if class_group is None:
             continue
         doc = {
             "_id": str(user["_id"]),
             "name": user["name"],
             "id": str(user["id"]),
-            "group": group["name"],
+            "group": class_group["name"],
             "on-campus": user_time["on-campus"],
             "off-campus": user_time["off-campus"],
             "social-practice": user_time["social-practice"],
@@ -379,7 +369,7 @@ async def update_group_description(
     if "admin" not in user["per"]:
         raise HTTPException(status_code=403, detail="Permission denied")
 
-    await db.zvms.groups.update_one(
+    await db.zvms_new.groups.update_one(
         {"_id": ObjectId(group_id)}, {"$set": {"description": payload.description}}
     )
 
@@ -406,11 +396,11 @@ async def delete_group(
     if "admin" not in user["per"]:
         raise HTTPException(status_code=403, detail="Permission denied")
 
-    target = await db.zvms.groups.find_one({"_id": ObjectId(group_id)})
+    target = await db.zvms_new.groups.find_one({"_id": ObjectId(group_id)})
     if target is None:
         raise HTTPException(status_code=404, detail="Group not found")
 
-    await db.zvms.groups.delete_one({"_id": ObjectId(group_id)})
+    await db.zvms_new.groups.delete_one({"_id": ObjectId(group_id)})
 
     log.with_text(
         f"管理员 {await get_user_display_name(user['id'])} 删除了用户组 {target['name']}",
@@ -430,10 +420,10 @@ async def get_group_template(
 ):
     same_class = False
     if "secretary" in user["per"]:
-        target = await db.zvms.users.find_one({"_id": ObjectId(user["id"])})
+        target = await db.zvms_new.users.find_one({"_id": ObjectId(user["id"])})
         if target is None:
             raise HTTPException(status_code=404, detail="User not found")
-        classid = target["group"]
+        classid = str(target["class_id"]) if target.get("class_id") else None
         if classid == group_id:
             same_class = True
     if user is None:
@@ -446,9 +436,14 @@ async def get_group_template(
     ):
         raise HTTPException(status_code=403, detail="Permission denied")
 
-    db_users = await db.zvms.users.find({"group": group_id}).to_list(None)
+    class_oid = validate_object_id(group_id)
+    db_users = await db.zvms_new.users.find({"class_id": class_oid}).to_list(None)
 
-    group_name = (await db.zvms.groups.find_one({"_id": ObjectId(group_id)}))["name"]
+    group_name = (
+        await db.zvms_new.groups.find_one(
+            {"_id": class_oid, "type": {"$ne": "permission"}}
+        )
+    )["name"]
 
     users = []
 

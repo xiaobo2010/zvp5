@@ -30,7 +30,7 @@ async def read_times(
         "off-campus": "off_campus_raw",
         "social-practice": "social_practice",
     }
-    count = await db.zvms.users.count_documents(
+    count = await db.zvms_new.get_collection("users").count_documents(
         {
             "$or": [
                 {"name": {"$regex": query, "$options": "i"}},
@@ -45,7 +45,7 @@ async def read_times(
         }
     )
     result = (
-        await db.zvms["users"]
+        await db.zvms_new.get_collection("users")
         .find(
             {
                 "$or": [
@@ -63,7 +63,7 @@ async def read_times(
                 "_id": True,
                 "name": True,
                 "id": True,
-                "group": True,
+                "class_id": True,
             },
         )
         .to_list(None)
@@ -83,7 +83,7 @@ async def read_times(
     results = []
 
     for user in user_times:
-        user_info = await db.zvms.get_collection("users").find_one(
+        user_info = await db.zvms_new.get_collection("users").find_one(
             {"_id": validate_object_id(user["user"])}
         )
         time_struct = UserActivityTime.model_validate(user, strict=False)
