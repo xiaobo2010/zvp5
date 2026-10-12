@@ -9,6 +9,8 @@
 > **改动方向六（2026-10-11 起）：后端可用状态落地——shield 请求加固中间件按 zvp 语义改写移植（剥离设备会话/学海面），运行缺口修复（依赖缺失 / example 配置字段缺失 / RSA 1024 / 关停竞态），并完成真实运行时端到端验证（41/41 断言），见 `STATUS.md` Part 8。**
 > **改动方向七（2026-10-12 起）：双库断裂面系统性收敛——群组与用户读取全面双库合并（权限组列表与成员、用户搜索去重、roles 合并、班级选择器修复），PWA SW 即时接管修复旧客户端首页 404，见 `STATUS.md` Part 10。**
 > 其余前端 UI 与后端业务逻辑仍以上游 zvms4 为基准，不采用 zvp 的代码（zvp 代码经检查存在漏洞与后门，仅提取其数据结构；义工管理与用户管理移植面经扫描确认无外链 / 外呼 / 越权代码，范围外危险代码一律未引入，上游自带的设备采集 / 外呼代码已在用户管理面上清除）。
+>
+> **文件位置变更（2026-10-12）**：本目录原 `DB_ALIGNMENT.md`（数据库对齐 Ground Truth）已并入**仓库根 `README.md` §三**，本目录不再有该文件。下文出现的 `DB_ALIGNMENT.md` / `DB_ALIGNMENT §N` 一律对应**根 README §三 / §三.N**。
 
 ---
 
@@ -18,7 +20,7 @@
 zvp-modified-v4/
 ├── README.md                 # 本文件
 ├── STATUS.md                 # 模块移植：Part 1 义工管理（10-09）/ Part 2-4 用户·日志·登录（10-10）/ Part 5 全量 API 盘点（10-10）/ Part 6 弱密码强制改密（10-10）/ Part 7 token 有效期调整（10-10）/ Part 8 可用状态落地：运行时验证 + shield 加固 + 运行缺口修复（10-11）/ Part 9 部署切换·logo·四 bug 修复·CHANGELOG 页面（10-11）/ Part 10 双库收敛与 PWA 接管（10-12）
-├── DB_ALIGNMENT.md           # 现役数据库真实结构（Ground Truth）+ 对齐改动清单
+├── DB_ALIGNMENT.md           # 已并入仓库根 README §三（数据库对齐 Ground Truth），本目录不再有该文件
 ├── zvms4-backend-python/     # FastAPI 后端（上游 zvms4，DB 层已对齐；义工/用户/日志/登录 v2-v3 已移植；shield 加固就位，已通过 41 项运行时冒烟）
 │   ├── README.md
 │   ├── requirements.txt
@@ -52,20 +54,20 @@ zvp-modified-v4/
 - **`zvms`**（遗留库）：`users`(`id,name,sex,group[],password,past`)、`groups`(`name,description,permissions[],type`)、`tasks`、`logs`、`imports`、`notifications`；`activities` 为空。
 - **`zvms_new`**（现役主库）：`users`(`id,name,roles[],class_id,password,session_id`)、`groups`(`name`)、`activities`、`activity_members`、`time`、`time_academic_year`、`time_with_origin`、`time_with_origin_stat`、`indicators`、`group_indicators`、`daily_exports`、`logs`。
 
-完整字段 / 类型 / 文档数、以及「哪些端点用哪个库」的规律，见 **`DB_ALIGNMENT.md`**（由 SSH 只读 dump 建立，是目前唯一权威依据）。
+完整字段 / 类型 / 文档数、以及「哪些端点用哪个库」的规律，见 **仓库根 `README.md` §三 数据库对齐（Ground Truth）**（由 SSH 只读 dump 建立，是目前唯一权威依据）。
 
 ## 4. 本次对齐做了什么
 
 **规则**：v2 / v3 与 exports / imports、登录鉴权路径统一改用 `zvms_new` 的新 schema；v1（用户列表、班级 v1）与 `util/*` 保持遗留 `zvms.*` —— 与现役 zvp 的集合归属完全一致。
 
-- **查询层**：5 个文件 11 处集合目标切换，含字段映射（旧 `user["group"]/sex/past` → 新 `roles/class_id`）。逐条见 `DB_ALIGNMENT.md` §5。
+- **查询层**：5 个文件 11 处集合目标切换，含字段映射（旧 `user["group"]/sex/past` → 新 `roles/class_id`）。逐条见根 README §三.5。
   - `util/cert.py`（登录鉴权读/写切到 `zvms_new.users`，权限取 `roles`）
   - `routers/users_router.py`（改密端点）
   - `routers/users_v2_router.py`
   - `routers/exports_router.py`（用户/班级来源切换，班级按 `class_id`）
   - `routers/imports_router.py`
 - **模型层**：`typings/group.py` 的 `UserPosition` 枚举删去实库与 zvp 均不存在的 `auditor/system/inspector`。
-  - `typings/activity_v2.py` **保持上游严格版本**（`datetime` + 非空）：实库 `activities` 的日期为 BSON `Date` 且零 null，若改用 zvp 的 `int`/可空版本会让 `Activity.model_validate` 直接失败。见 `DB_ALIGNMENT.md` §6。
+  - `typings/activity_v2.py` **保持上游严格版本**（`datetime` + 非空）：实库 `activities` 的日期为 BSON `Date` 且零 null，若改用 zvp 的 `int`/可空版本会让 `Activity.model_validate` 直接失败。见根 README §三.6。
 - **未改动**：`database.py`（与 zvp 逐字节相同，已连两库）、其余业务逻辑。前端本次改动仅为义工管理 API 接线（见 `STATUS.md` §2），模板 / 样式未动。
 
 验证：`python3 -m compileall zvms4-backend-python` 通过；改动集中在上述 6 个文件。
