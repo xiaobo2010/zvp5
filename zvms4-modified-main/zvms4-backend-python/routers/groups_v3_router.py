@@ -55,72 +55,129 @@ async def get_group_users_v3(
 
     escaped = re.escape(query)
 
-    pipeline = [
-        {
-            "$match": {
-                "class_id": validate_object_id(group_id),
-                "$or": [
-                    {"name": {"$regex": escaped, "$options": "i"}},
-                    {"id": {"$regex": escaped, "$options": "i"}},
-                ],
-            }
-        },
-        {"$sort": {"id": 1}},
-        {"$skip": (page - 1) * size},
-        {"$limit": size},
-        {
-            "$lookup": {
-                "from": "groups",
-                "localField": "class_id",
-                "foreignField": "_id",
-                "as": "class_obj",
-            }
-        },
-        {"$unwind": {"path": "$class_obj", "preserveNullAndEmptyArrays": True}},
-        {
-            "$set": {
-                "class_obj": {
-                    "$ifNull": ["$class_obj", {"name": "未知班级"}]
+    group = await db.zvms_new.groups.find_one({"_id": validate_object_id(group_id)})
+
+    if group is not None:
+        pipeline = [
+            {
+                "$match": {
+                    "class_id": validate_object_id(group_id),
+                    "$or": [
+                        {"name": {"$regex": escaped, "$options": "i"}},
+                        {"id": {"$regex": escaped, "$options": "i"}},
+                    ],
                 }
-            }
-        },
-        {
-            "$project": {
-                "_id": {"$toString": "$_id"},
-                "id": "$id",
-                "name": "$name",
-                "roles": "$roles",
-                "class_id": {
-                    "$convert": {
-                        "input": "$class_id",
-                        "to": "string",
-                        "onError": "",
-                        "onNull": "",
+            },
+            {"$sort": {"id": 1}},
+            {"$skip": (page - 1) * size},
+            {"$limit": size},
+            {
+                "$lookup": {
+                    "from": "groups",
+                    "localField": "class_id",
+                    "foreignField": "_id",
+                    "as": "class_obj",
+                }
+            },
+            {"$unwind": {"path": "$class_obj", "preserveNullAndEmptyArrays": True}},
+            {
+                "$set": {
+                    "class_obj": {
+                        "$ifNull": ["$class_obj", {"name": "未知班级"}]
                     }
-                },
-                "class_name": "$class_obj.name",
-                "password": "$password",
-            }
-        },
-    ]
+                }
+            },
+            {
+                "$project": {
+                    "_id": {"$toString": "$_id"},
+                    "id": "$id",
+                    "name": "$name",
+                    "roles": "$roles",
+                    "class_id": {
+                        "$convert": {
+                            "input": "$class_id",
+                            "to": "string",
+                            "onError": "",
+                            "onNull": "",
+                        }
+                    },
+                    "class_name": "$class_obj.name",
+                    "password": "$password",
+                }
+            },
+        ]
 
-    count_pipeline = [
-        pipeline[0],
-        {"$count": "total"},
-    ]
+        count_pipeline = [
+            pipeline[0],
+            {"$count": "total"},
+        ]
 
-    total, result = await gather(
-        db.zvms_new.users.aggregate(count_pipeline).to_list(length=1),
-        db.zvms_new.users.aggregate(pipeline).to_list(None),
+        total, result = await gather(
+            db.zvms_new.users.aggregate(count_pipeline).to_list(length=1),
+            db.zvms_new.users.aggregate(pipeline).to_list(None),
+        )
+
+        for row in result:
+            row["group"] = [row["class_id"]] if row["class_id"] else []
+            row["password"] = row.pop("password", None) is not None if pwdm else None
+
+        return {
+            "data": result,
+            "total": total[0]["total"] if len(total) else 0,
+        }
+
+    legacy_filter = {
+        "group": group_id,
+        "$or": [
+            {"name": {"$regex": escaped, "$options": "i"}},
+            {"id": {"$regex": escaped, "$options": "i"}},
+        ],
+    }
+
+    total = await db.zvms.users.count_documents(legacy_filter)
+    members = (
+        await db.zvms.users.find(legacy_filter)
+        .sort({"id": 1})
+        .skip((page - 1) * size)
+        .limit(size)
+        .to_list(None)
     )
 
-    for row in result:
-        row["group"] = [row["class_id"]] if row["class_id"] else []
-        row["password"] = row.pop("password", None) is not None if pwdm else None
+    class_name_cache: dict[str, str] = {}
+    result = []
+    for member in members:
+        new_user = await db.zvms_new.users.find_one({"id": member["id"]})
+        if new_user is not None:
+            class_id = str(new_user["class_id"]) if new_user.get("class_id") else ""
+            roles = new_user.get("roles", [])
+            oid = str(new_user["_id"])
+        else:
+            class_id = ""
+            roles = []
+            oid = str(member["_id"])
+        class_name = ""
+        if class_id:
+            if class_id not in class_name_cache:
+                class_group = await db.zvms_new.groups.find_one(
+                    {"_id": validate_object_id(class_id)}, {"name": True}
+                )
+                class_name_cache[class_id] = class_group["name"] if class_group else ""
+            class_name = class_name_cache[class_id]
+        row = {
+            "_id": oid,
+            "id": member["id"],
+            "name": member["name"],
+            "roles": roles,
+            "class_id": class_id,
+            "class_name": class_name,
+            "group": [class_id] if class_id else [],
+        }
+        row["password"] = member.get("password") is not None if pwdm else None
+        result.append(row)
 
     return {
         "data": result,
-        "total": total[0]["total"] if len(total) else 0,
+        "total": total,
     }
 
 
