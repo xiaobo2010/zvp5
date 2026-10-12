@@ -391,3 +391,117 @@ xh_router 任意 URL 代理（:159 urlopen + :46 硬编码签名 KEY）、登录
 # Part 7 — 登录 token 有效期调整（2026-10-10）
 
 > 用户指令：长期登录 token 有效期 15 天 → **10 天**。唯一改动点 `util/cert.py jwt_encode`（long 分支）；临时 token（5 分钟）与 OTP 登录 token（1 天）不变。前述小节中的历史性"15 天"表述（如 Part 6 背景中"原先照发 15 天"）为当时事实，保留不动；当前行为以本节为准。
+
+---
+
+# Part 8 — 后端可用状态落地：运行时验证 + 运行缺口修复 + shield 加固移植（2026-10-11）
+
+> 任务：把 `zvms4-backend-python` 从「静态编译通过」做到**运行时可用**——后端能真实启动、连库、全 API 面闭环可用；可参考 zvp-latest 后端，但其后门/外站跳转/设备面红线不变；最后更新 README。
+> 方式：fixer 泳道移植 shield 中间件（规格先行）∥ 编排者搭运行环境（venv/密钥/临时 MongoDB Docker）→ 端到端冒烟脚本三轮迭代 → 全部缺口修复 → 41/41 断言通过。本机 Python 3.14.4 + mongo:7 临时容器（127.0.0.1:27018，验证后已删）。
+
+## 32. shield_middleware 移植（zvp-latest `main.py:55-119` 语义改写，非照抄）
+
+- **引入**（`main.py` `@app.middleware("http") shield_middleware`）：`SEC_PATTERN` 14 词路径黑名单（`[^\w]env` / `..` / `/.` / `.sql` / `.bak` / `api/chat` / `api/network` / `api/file` / `assets/%` / `swagger` / `doc` / `php` / `.py` / `openapi`，与 zvp 同表）+ HTTP 方法白名单（GET/POST/DELETE/PUT/PATCH/HEAD/OPTIONS）+ UA 门禁（User-Agent 须含 "Mozilla"）→ 违规一律 418 `请求已被拦截`，并写固定文案日志 `系统检测到异常请求`（`type=security_alert`，`level=warning`，ZVMSLog 手工构造，try/except 保护不影响响应）。
+- **红线剥离（未引入面）**：`zvp_session` cookie / `request.state` 会话指纹（set_cookie 零调用）、`com.xh` 学海 UA 分支与"平板"文案、`APILogger`、全量请求头/body 落盘（zvp 把请求头写进 err.log 的面）、`/dev` 与 `/stats0.html` 调试路由、`sys.stderr` 重定向、zvp 的脏话响应文案。
+- **误拦核对**：本仓 19 个路由前缀（`/api/users`、`/api/v2|v3/*`、`/api/health`、`/api/cert`、`/api/version`、`/socket.io`）逐一比对黑名单词，零误拦；冒烟实测正常路径 200。
+- **部署注意**：UA 门禁会拦非浏览器客户端——外部健康检查器（uptime 探针等）须携带含 `Mozilla` 的 UA，或只探测 TCP 端口。418 而非 403/404 是与 zvp 一致的故意姿态（对扫描器暴露假象）。
+
+## 33. 运行缺口修复（冒烟实测暴露，全部为本仓/上游真实缺陷）
+
+| # | 问题 | 根因 | 修复 |
+|---|---|---|---|
+| 1 | `pip install -r requirements.txt` 在 Python 3.14 直接失败 | `pipreqs==0.5.0` requires-python <3.13（pipreqs/yarg/docopt 是生成 requirements 的开发工具，非运行时依赖） | requirements.txt 删 `pipreqs`/`yarg`/`docopt` 三行 |
+| 2 | 全后端零出站能力但依赖面含 requests | Part 2 已删全部 `import requests`，requirements 残留 | requirements.txt 删 `requests==2.32.5` |
+| 3 | 导出任务 `/api/exports/{id}/file` 500 | `pandas.to_excel` 需要 `openpyxl`，上游 requirements 遗漏该运行时依赖 | requirements.txt 补 `openpyxl==3.1.5`，实测下载 200（合法 xlsx，PK 魔数） |
+| 4 | 新部署按 example 配置即启动崩溃 | `settings.example.py` 缺 `LANGUAGE`（`util/calculate.py:6`）与 `CHINESE_FONT`（`util/statement.py:24`） | example 补两字段（zh-CN / NotoSansCJK 路径，后者有内置 fallback 链） |
+| 5 | RSA-1024 弱密钥 | `generate_key.sh` 上游 1024 位 | 升 2048（PKCS1_OAEP-SHA256 加密登录凭据，实测登录链正常） |
+| 6 | SIGTERM 时 "Cannot use MongoClient after close" 竞态 | `startup_event` 手动 `signal.signal(SIGINT/SIGTERM)` 创建 shutdown task，与 FastAPI `add_event_handler("shutdown")` **双路并发执行** `shutdown_event`，先到者 close 连接后到者炸 | 删手动 signal 注册（uvicorn 本就会在 SIGINT/SIGTERM 触发 FastAPI shutdown handler）+ 删死 import（`signal`/`asyncio` 零引用）；实测 SIGTERM 退出 "Shutting down" 仅 1 次、零竞态 |
+| 7 | `get_export_file` 死代码 | `buffer = BytesIO()` 写入后从未使用（上游遗留） | **未动**（行为无影响，属清理面，非本次范围） |
+
+## 34. 运行时验证记录（2026-10-11，41/41 PASS）
+
+- **环境**：`.venv`（Python 3.14.4）+ 过滤后 requirements 全量安装成功；`generate_key.sh` 生成 2048 位密钥；`settings.py` 指向本地 mongo:7 容器；`uvicorn main:app` 启动、107 路由注册。
+- **冒烟脚本**（三轮迭代至全绿）：drop+reseed 两库（admin/学生/班级/legacy 兜底），覆盖：
+  1. `/api/health`、`/api/cert`（PEM 公钥）
+  2. **弱密码强制改密闭环**：初始密码（=学号）long 登录 → 仅 5 分钟临时 token + `weak_password=true` + profile；short 模式不拦；临时 token `PUT /password` 改密 → 强密码重登 `weak_password=false` + 10 天正式 token
+  3. 用户与班级：`GET /api/v2/users`（admin，联表 total）、`POST /api/v3/users`（8 位学号校验）、`PUT roles`、`GET profile`、建班/改名、成员列表 `pwdm` 布尔化
+  4. 义工：`POST /api/v3/activities`、批量加成员 204、活动列表 `creator_name` 联表、成员列表 `member_name` 联表
+  5. **TOTP 闭环**：admin 查码（6 位）→ `*code*` 动态码登录 200
+  6. **重置初始密码闭环**：admin（短 token 重新验证）给学生设强密码 → 学生强密码登录 → admin `DELETE /v3/users/{id}/password` → DB `password=None` → 学生初始密码重登
+  7. 日志：query/type/level 过滤 + 11 类 type 全覆盖（user_login / passwd_change / role_change / group_create / group_update / user_create / activity_create / activity_member_add / totp_view / security_alert / export）
+  8. **导出闭环**：建任务 → 后台完成 → 下载 xlsx（200，合法 PK 文件）
+  9. 越权门：学生 token 打 `/api/v2/users`、totp 端点、`/api/logs` 全 403
+  10. **shield**：非 Mozilla UA → 418、缺 UA → 418、路径穿越 `/api/../etc/passwd` → 418、正常浏览器 UA → 200 不误拦，且 418 全部落 security_alert 日志
+- **退出验证**：SIGTERM 单一 shutdown 路径（见 §33-6）。
+
+## 35. 已知遗留（Part 8）
+
+1. `mark_all_tasks_failed` 在 MongoDB 不可达时会把退出阻塞到 serverSelectionTimeout（默认 30s）——pymongo 默认行为，mongo 在线的正常部署为瞬时操作，未动。
+2. 冒烟脚本未入库（依赖运行中的服务与数据库，CI 的 pytest 面另行规划）；本次脚本在 `/tmp/opencode/zvms4-smoke.py`，覆盖清单见 §34。
+3. zvp-latest 的 `/dev` 调试页、`/stats0.html`、静态挂载、stderr 落盘维持 Part 5 §27-5 决策不移植。
+4. `get_export_file` 的 `buffer` 死代码（§33-7）待后续清理面统一处理。
+
+---
+
+# Part 9 — 生产部署切换 + logo 替换 + 用户报告 bug 存档（2026-10-11）
+
+> 本节为部署与交接记录。§38 的 4 个 bug 为**用户线上报告**，按用户指示**仅存档、本轮不修**，留待新 session 处理；届时**只改本地仓、不部署 zvp-frontend**，同步部署等用户指令。
+
+## 36. 部署切换记录（zvp-frontend，域名不变 zvp.xiaobopisces.top）
+
+- 形态：nginx（宝塔）静态服务 `/www/zvms4/frontend-dist` + `/api/`、`/socket.io/` 反代 → systemd `zvms4`（uvicorn 127.0.0.1:8018，www 用户）+ mongo:7 容器 `zvms4-mongo`（127.0.0.1:27017，数据 `/www/zvms4/mongo-data`）
+- 数据：停旧后端后零丢失捕获 Atlas（128591 docs：zvms 1781/40/97138，zvms_new 2566/54/380/13076/7968）；Atlas 原库未动（冻结备份），`/www/zvms4/dump-final` 为切换快照
+- 验证：端到端冒烟 21/21（`/tmp/opencode/zvms4-deploy-smoke.py`，生产数据副本上插临时用户→全链路→清理→计数回归基线）；切换后真实用户 HTTPS 实测在线（访问日志 91×200）
+- 部署期代码修复（前后端对齐）：baseURL 环境变量化（`VITE_API_BASE`，默认 `/api`）、删除用户死按钮移除、分组 type 过滤、自助改密返回值、9 处存量类型错误清零（`pnpm build` 全绿）、**导出 users 变体 null class_id 崩溃**（exports_router.py:138，真实库 5 个无班级用户必崩，改为 `if group else ""`）
+- 注意：JWT/RSA 密钥全新生成 → **全体用户需重新登录一次**（旧 token 一律 401 → 前端自动跳登录，属预期）
+- 部署前置发现：真实库 roles 语义 = 学生缺省 `[]`（2466/2566 空数组，56 department/41 secretary/6 admin 显式），zvp 现役同款（backend platform.py:204-210 原样返回、frontend stores/user.ts:42 position=user.roles）——zvms4-modified 行为与之一致，未改动
+
+## 37. logo 替换记录（本地 + zvp-frontend 同步）
+
+- 源：旧 zvp **线上部署版**图标（zvp-frontend:/www/zvp/frontend/public.1，母本 favicon.png 2480×2480 RGBA；注意与本地 zvp-latest 快照 md5 不同，以线上为准）
+- 目标：zvms4-frontend/public/ 15 文件——直接映射 zvp 现成图标（favicon.png、apple-touch-icon(-180x180)、maskable-512、pwa-64/192/512）+ 从母本生成（favicon.ico 多尺寸、favicon-16/32、android-chrome-192/256、mstile-150、brand.jpeg 200×200、safari-pinned-tab.svg 自包含内嵌）
+- `brand.jpeg` 在源码中零引用（死资产），仍一并替换保持一致；`generate-pwa-assets` 的源（public/favicon.png）随之更新
+- 脚本：`/tmp/opencode/swap-logo.py`
+- 补记（同日 23:05）：版本号 bump **v4.2.0-2**——前端 `AboutView.vue` sub-title `v4.1.12`→`v4.2.0-2`、`package.json` `0.1.0-beta.1`→`4.2.0-2`、后端 `/api/version` 与 `/api/` root 的 `"4.1"`→`"v4.2.0-2"`；`/about` 的 logo img 加 `?v=4.2.0-2` 缓存参数强制取新图（服务器字节本已新，旧观感来自客户端 SW/HTTP 缓存，重载一次即激活新 SW）
+
+## 38. 用户报告 bug 存档（已于 2026-10-11 修复，仅本地仓、未部署，见 §40）
+
+| # | 现象（用户原话摘要） | 已查事实 / 候选根因 | 修复方向 |
+|---|---|---|---|
+| 1 | **用户身份一栏空白** | 真实库 2466/2566 用户 `roles=[]`（学生身份靠缺省）；登录 profile.roles=[] → `stores/user.ts:37-46` `Array.isArray([])` 为 true → `position=[]` → 身份徽标无内容。zvp 现役同语义但需查其 UI 对空 position 的渲染差异 | 前端 store 对空 roles 兜底 `['student']`；或后端 profile 归一化。**先对照 zvp 线上 UI 行为**（zvp-latest frontend）避免引入新差异 |
+| 2 | **用户详细信息显示"班级不存在"，用户判断群组读取不对** | 候选 A：两库班级主键断裂——`zvms.groups`（40 个，legacy 独立 _id）vs `zvms_new.groups`（54 个，独立 _id，DB_ALIGNMENT §1/§2），详情链路若把 legacy `user.group` 的组 id 传给 v2/v3 班级端点必 404；候选 B：class_id=null 的 5 个用户被当"应有班级"查询 | 先定位具体视图与 404 的 API（浏览器复现/nginx 日志），再理顺班级解析链（详情应走 profile.class_id 直取，不经 legacy group） |
+| 3 | **logs 中未登录请求被记录成"无此用户"** | shield 写 security_alert 日志 `user=""`（main.py:83-94）；logs_router 行内 user_name 解析（zvms_new→legacy→"未知用户"）对空 user 落入"用户不存在"文案 | 后端对 `user==""` 返回"未登录"（区别于"未知用户"），或前端 ZLogCard 空 user 渲染"未登录" |
+| 4 | **删除完义工后应跳转回 /activities** | 删除成功后停留在已删除活动的详情页（delete 调用点 ZActivityDetails.vue:99 / api/activity/delete.ts:9） | 删除成功回调补 `router.push('/activities')` |
+
+## 39. 旧 zvp 停用宣告（zvp-frontend）
+
+- `supervisorctl stop zvms4`（旧程序名即"zvms4"，与 systemd 新服务同名）+ conf 改名 `/etc/supervisor/conf.d/zvp-old.conf.disabled` + `reread/update`（程序组已移除，重启机器不会复活）
+- 标记文件：`/www/zvp/DEPRECATED-20261011.md`（含回滚步骤：conf 改回 + supervisor start + nginx vhost 备份恢复）
+- `/www/zvp` 目录与 Atlas 原库均未删除/未改动
+
+## 40. §38 四 bug 修复记录（2026-10-11，仅本地仓，未部署 zvp-frontend）
+
+> 根因比 §38 存档假设更深一层：**bug1 与 bug2 是同一条身份渲染链的两面**。侦察证据链（两路：zvms4 现场 + zvp-latest 现役参照）：用户卡走 v1 `/api/users/{id}` 读 `zvms.users`（返回 legacy group id）→ 前端 `api.group.readOne`（getGroup）打 `/v2/groups/{id}` 只查 `zvms_new.groups` → 404「班级不存在」（axios 拦截器弹 toast）；即便命中，新库班级只有 `{_id,name}` 无 `permissions` → `ZUserPosition` 按 `position.includes(...)` 过滤后零渲染 → 身份栏空白。上游 zvms4 设计意图是班级组带 `permissions:['student']`，迁移后新库丢失该字段。
+
+| # | 根因 | 修复（9 文件，+46/-8） | 验证 |
+|---|---|---|---|
+| 1 | 身份徽标源自 `group.permissions`，新库班级无该字段 → 零渲染无兜底 | `ZUserGroup.vue`：permissions 空兜底 `['student']`（渲染班级名+学生图标徽标）；error 态分出「未知」不再假 Loading；`UserHome.vue`/`ZActivityMember.vue`：零组时渲染首要角色标签（学生→「学生」，有角色→角色名） | type-check+build 全绿；渲染为模板逻辑，未做浏览器实测 |
+| 2 | 两库 `_id` 命名空间断裂：v1 读回 legacy group id 打到 v2 端点必 404 | 后端 `groups_router.get_group` 双库解析（zvms.groups→zvms_new.groups 回退，新库构造 `{_id,name,type:'class'}`）；后端 `users_router.read_user` 双库解析（zvms.users 优先→zvms_new.users 回退，映射 v1 兼容形状，`pop("password",None)` 防 KeyError）——顺带修复 ~785 个纯新库用户卡「无此用户」；前端 `api/group/crud.ts getGroup` 切到 `/groups/{id}` 单次调用 | 本地 e2e 15/15（mongo:7@27018 种子复现双库断裂，legacy/new/orphan 三态全过） |
+| 3 | shield 写日志 `user=""`，logs 路由把空 user 落入「未知用户」；前端 ZLogCard 用 ZActivityMember 渲染空 id →「无此用户」 | 后端 `logs_router`：空 user → `user_name="未登录"`（非空仍「未知用户」）；前端 `ZLogCard.vue`：空 user 渲染「未登录」ElTag | e2e 4 态全过（未登录/legacy 命中/新库命中/未知用户保持原样） |
+| 4 | 删除回调只 `emits('refresh')` 无导航 | `ZActivityDetails.vue`：删除成功后 `router.push('/activities')`（失败 throw 不跳转） | build 通过 |
+
+- 验证证据：后端 `compileall` 通过；本地起 uvicorn:8019 + mongo:7 种子库，`/tmp/opencode/zvms4-e2e/smoke.py` 15/15 PASS（admin RSA 登录→全链路）；前端 `pnpm type-check` 0 错误、`pnpm build` EXIT=0
+- e2e 脚本留存：`/tmp/opencode/zvms4-e2e/`（seed.py/smoke.py/ids.json；mongo 容器 zvms4-e2e-mongo 已删，部署同步验证时可重建复用）
+- 语义对照（zvp-latest 现役参照）：bug3 文案对齐旧系统新版日志「未登录」；bug4 为用户明确要求的有意改进（旧系统是 `router.back()`）；bug1 班级名徽标即上游设计意图的代码层兜底（数据层 permissions 缺失不改库）
+- 有意未动：`stores/user.ts` position 派生（roles=[] 保持 []，避免影响权限门控语义）、`/v2/groups/{id}` 端点行为（其 403/404 守卫语义保留）、shield 写日志 `user=""` 标记、生产数据
+- 部署状态：**未部署**，等用户指令后同步 zvp-frontend（前端 dist 重建 + 后端 3 文件同步 + systemd 重启）
+
+## 41. 版本发布规范落地 + CHANGELOG 页面（2026-10-11，仅本地仓，未部署）
+
+- 版本升 v4.2.0-2 → **v4.2.0-3**（承载 §40 四 bug 修复，随下次部署发布）
+- 版本串同步 5 处：后端 `main.py:192`（`/api/` root）与 `main.py:296`（`/api/version`）、前端 `package.json`、`/about` 页显示与 favicon 缓存参数（后两者经 `APP_VERSION` 自动引用，不再硬编码）
+- 新增：`src/data/changelog.ts`（版本记录唯一数据源，导出 `changelog` 条目数组 + `APP_VERSION`）、`src/views/ChangelogView.vue`（ElTimeline 渲染）；新增 `/changelog` 公共路由、About 页「查看更新日志」入口、`nav.ts` 的 `changelog: '更新日志'` 键
+- CHANGELOG 首两版条目：v4.2.0-3（§40 四 bug 修复）、v4.2.0-2（§36/§37 部署切换 + logo 替换 + 部署期修复）
+- 发版流程（今后）：changelog.ts 加新版本条目 + package.json 升版本 + 后端 main.py 两处版本串
+- 验证：`pnpm type-check` 0 错误、`pnpm build` EXIT=0、后端 `compileall` 通过、全仓版本串扫描仅余 v4.2.0-3（changelog.ts 内 v4.2.0-2 为历史条目属预期）
+- 部署状态：未部署，随 §40 一并等用户指令同步 zvp-frontend
