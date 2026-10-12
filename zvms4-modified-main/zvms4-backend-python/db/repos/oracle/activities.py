@@ -1,0 +1,266 @@
+"""Oracle implementation of :class:`db.repos.protocols.ActivitiesRepo`.
+
+SQLAlchemy 2.0 async Core over the ``ACTIVITIES`` table (``zvms_new.activities``).
+Column names follow the rename map in ``docs/ADB_SCHEMA_SPEC.md`` §3
+(``_id``→``OID``, ``type``→``ATYPE``, ``date``→``ACTIVITY_DATE``,
+``creator``→``CREATOR_OID``, ``appointee``→``APPOINTEE_OID``,
+``createdAt``/``updatedAt``→``CREATED_AT``/``UPDATED_AT``); returned rows are
+translated back to the Mongo document shape.
+
+Session ownership
+-----------------
+``__init__`` takes an optional ``AsyncSession``:
+
+* ``session is None`` (default): each method opens its own session through
+  :func:`db.oracle.session.session_scope`, and **writes commit once** (one write
+  = one transaction); the session is closed by ``session_scope``.
+* ``session`` supplied: the repo uses it as-is and **never commits or closes**
+  it — the caller owns the unit of work.
+
+Nothing here opens a connection at import time.
+"""
+
+from __future__ import annotations
+
+import re
+from contextlib import asynccontextmanager
+from datetime import datetime
+from typing import Any, AsyncIterator
+
+from sqlalchemy import delete, func, insert, select, update
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from db.ids import new_oid, normalize_oid
+from db.models import activities as activities_tbl
+from db.oracle.session import session_scope
+
+Row = dict[str, Any]
+
+# Mongo field name → Oracle column attribute name (spec §3).
+_FIELD_COLUMNS: dict[str, str] = {
+    "name": "name",
+    "description": "description",
+    "type": "atype",
+    "creator": "creator_oid",
+    "status": "status",
+    "date": "activity_date",
+    "createdAt": "created_at",
+    "updatedAt": "updated_at",
+    "appointee": "appointee_oid",
+    "approver": "approver",
+    "place": "place",
+    "origin": "origin",
+}
+
+
+@asynccontextmanager
+async def _session_for(
+    session: AsyncSession | None,
+) -> AsyncIterator[tuple[AsyncSession, bool]]:
+    """Yield ``(session, owns)``; ``owns`` is True only for repo-created ones."""
+    if session is not None:
+        yield session, False
+        return
+    async with session_scope() as owned:
+        yield owned, True
+
+
+def _activity_columns() -> tuple[Any, ...]:
+    """The full ACTIVITIES projection shared by get/list_page."""
+    return (
+        activities_tbl.c.oid,
+        activities_tbl.c.name,
+        activities_tbl.c.description,
+        activities_tbl.c.atype,
+        activities_tbl.c.creator_oid,
+        activities_tbl.c.status,
+        activities_tbl.c.activity_date,
+        activities_tbl.c.created_at,
+        activities_tbl.c.updated_at,
+        activities_tbl.c.appointee_oid,
+        activities_tbl.c.approver,
+        activities_tbl.c.place,
+        activities_tbl.c.origin,
+    )
+
+
+def _activity_filter(query: str, atypes: list[str] | None, status: str | None) -> list[Any]:
+    """Replicate the Mongo ``$match`` shared by the page/count queries.
+
+    * non-empty ``query`` → case-insensitive ``contains`` on ``name`` only,
+      with the keyword ``re.escape``d exactly like the current pipelines.
+    * non-empty ``atypes`` → ``type IN (...)`` (an OR-list).
+    * truthy ``status`` → equality filter (empty/``None`` = no filter).
+    """
+    conds: list[Any] = []
+    if query:
+        conds.append(
+            func.regexp_like(activities_tbl.c.name, re.escape(query), "i")
+        )
+    if atypes:
+        conds.append(activities_tbl.c.atype.in_(list(atypes)))
+    if status:
+        conds.append(activities_tbl.c.status == status)
+    return conds
+
+
+def _page_stmt(query: str, atypes: list[str] | None, status: str | None, page: int, size: int):
+    """``list_page`` select: ordered (``oid DESC``) + paginated."""
+    stmt = select(*_activity_columns())
+    conds = _activity_filter(query, atypes, status)
+    if conds:
+        stmt = stmt.where(*conds)
+    return stmt.order_by(activities_tbl.c.oid.desc()).offset((page - 1) * size).limit(size)
+
+
+def _count_stmt(query: str, atypes: list[str] | None, status: str | None):
+    """``list_page`` count: same filter, no pagination."""
+    stmt = select(func.count()).select_from(activities_tbl)
+    conds = _activity_filter(query, atypes, status)
+    if conds:
+        stmt = stmt.where(*conds)
+    return stmt
+
+
+def _get_stmt(oid: str):
+    return select(*_activity_columns()).where(activities_tbl.c.oid == oid)
+
+
+def _insert_stmt(
+    oid: str,
+    name: str,
+    description: str,
+    atype: str,
+    creator_oid: str,
+    appointee_oid: str,
+    origin: str,
+    activity_date: Any,
+    created_at: datetime,
+    updated_at: datetime,
+):
+    return insert(activities_tbl).values(
+        oid=oid,
+        name=name,
+        description=description,
+        atype=atype,
+        creator_oid=creator_oid,
+        status="pending",
+        activity_date=activity_date,
+        created_at=created_at,
+        updated_at=updated_at,
+        appointee_oid=appointee_oid,
+        approver="",
+        place="",
+        origin=origin,
+    )
+
+
+def _update_stmt(oid: str, values: Row):
+    return update(activities_tbl).where(activities_tbl.c.oid == oid).values(**values)
+
+
+def _delete_stmt(oid: str):
+    return delete(activities_tbl).where(activities_tbl.c.oid == oid)
+
+
+def _activity_doc(mapping: Any) -> Row:
+    """Canonical activity row (matches ``mongo/activities._activity_doc``)."""
+    return {
+        "_id": mapping["oid"],
+        "name": mapping["name"],
+        "description": mapping["description"],
+        "type": mapping["atype"],
+        "creator": mapping["creator_oid"],
+        "status": mapping["status"],
+        "date": mapping["activity_date"],
+        "createdAt": mapping["created_at"],
+        "updatedAt": mapping["updated_at"],
+        "appointee": mapping["appointee_oid"],
+        "approver": mapping["approver"],
+        "place": mapping["place"],
+        "origin": mapping["origin"],
+    }
+
+
+class OracleActivitiesRepo:
+    """``ActivitiesRepo`` over Oracle ADB (``zvms_new.activities``)."""
+
+    def __init__(self, session: AsyncSession | None = None) -> None:
+        self._session = session
+
+    async def get(self, oid: str) -> Row | None:
+        stmt = _get_stmt(normalize_oid(oid))
+        async with _session_for(self._session) as (session, _owns):
+            row = (await session.execute(stmt)).first()
+        if row is None:
+            return None
+        return _activity_doc(row._mapping)
+
+    async def list_page(
+        self,
+        query: str,
+        atypes: list[str] | None,
+        status: str | None,
+        page: int,
+        size: int,
+    ) -> tuple[list[Row], int]:
+        page_stmt = _page_stmt(query, atypes, status, page, size)
+        count_stmt = _count_stmt(query, atypes, status)
+        async with _session_for(self._session) as (session, _owns):
+            total = (await session.execute(count_stmt)).scalar_one()
+            rows = (await session.execute(page_stmt)).all()
+        return [_activity_doc(row._mapping) for row in rows], int(total)
+
+    async def create(
+        self,
+        name: str,
+        description: str,
+        atype: str,
+        creator_oid: str,
+        appointee_oid: str,
+        origin: str,
+        activity_date: Any,
+    ) -> str:
+        oid = new_oid()
+        now = datetime.now()
+        stmt = _insert_stmt(
+            oid,
+            name,
+            description,
+            atype,
+            normalize_oid(creator_oid),
+            normalize_oid(appointee_oid),
+            origin,
+            activity_date,
+            now,
+            now,
+        )
+        async with _session_for(self._session) as (session, owns):
+            await session.execute(stmt)
+            if owns:
+                await session.commit()
+        return oid
+
+    async def update(self, oid: str, fields: Row) -> None:
+        values = {
+            _FIELD_COLUMNS[key]: value
+            for key, value in fields.items()
+            if key in _FIELD_COLUMNS
+        }
+        if not values:
+            return
+        stmt = _update_stmt(normalize_oid(oid), values)
+        async with _session_for(self._session) as (session, owns):
+            await session.execute(stmt)
+            if owns:
+                await session.commit()
+
+    async def delete(self, oid: str) -> None:
+        stmt = _delete_stmt(normalize_oid(oid))
+        async with _session_for(self._session) as (session, owns):
+            await session.execute(stmt)
+            if owns:
+                await session.commit()
+
+
+__all__ = ["OracleActivitiesRepo"]

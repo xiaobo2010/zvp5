@@ -1,12 +1,12 @@
 import re
 from fastapi import APIRouter, Depends, HTTPException, Query
 from database import db
+from db import backends
 from util.calculate import calculate_user_time, find_percentile_threshold
 from util.get_class import get_user_class
 from util.object_id import get_current_user
 from util.permission.user import validate_read_user_permission
 from utils import validate_object_id
-from asyncio import gather
 
 router = APIRouter()
 
@@ -31,76 +31,15 @@ async def get_users_v2(
     elif not ("admin" in per or "department" in per):
         raise HTTPException(status_code=403, detail="权限不足")
 
-    escaped = re.escape(query)
+    repo = backends.get_users_repo()
+    rows, total = await repo.list_page(query, role, page, size)
 
-    pipeline = [
-        {
-            "$match": {
-                **({"roles": role} if role else {}),
-                **(
-                    {
-                        "$or": [
-                            {"name": {"$regex": escaped, "$options": "i"}},
-                            {"id": {"$regex": escaped, "$options": "i"}},
-                        ]
-                    }
-                    if query
-                    else {}
-                ),
-            }
-        },
-        {"$sort": {"id": 1}},
-        {"$skip": (page - 1) * size},
-        {"$limit": size},
-        {
-            "$lookup": {
-                "from": "groups",
-                "localField": "class_id",
-                "foreignField": "_id",
-                "as": "class_obj",
-            }
-        },
-        {"$unwind": {"path": "$class_obj", "preserveNullAndEmptyArrays": True}},
-        {
-            "$set": {
-                "class_obj": {"$ifNull": ["$class_obj", {"name": "未知班级"}]}
-            }
-        },
-        {
-            "$project": {
-                "_id": {"$toString": "$_id"},
-                "id": "$id",
-                "name": "$name",
-                "roles": "$roles",
-                "class_id": {
-                    "$convert": {
-                        "input": "$class_id",
-                        "to": "string",
-                        "onNull": "",
-                        "onError": "",
-                    }
-                },
-                "class_name": "$class_obj.name",
-            }
-        },
-    ]
-
-    count_pipeline = [
-        pipeline[0],
-        {"$count": "total"},
-    ]
-
-    total, result = await gather(
-        db.zvms_new.users.aggregate(count_pipeline).to_list(length=1),
-        db.zvms_new.users.aggregate(pipeline).to_list(None),
-    )
-
-    for row in result:
+    for row in rows:
         row["group"] = [row["class_id"]] if row["class_id"] else []
 
     return {
-        "data": result,
-        "total": total[0]["total"] if total else 0,
+        "data": rows,
+        "total": total,
     }
 
 
@@ -247,7 +186,9 @@ async def get_user_time_statistics_v2(
         raise HTTPException(
             status_code=400, detail="Function temporarily unaccessible."
         )
-    user_document = await db.zvms_new.users.find_one({"_id": validate_object_id(user_id)})
+    user_document = await backends.get_users_repo().get_by_oid(
+        str(validate_object_id(user_id))
+    )
     grade_indicators = indicators[0]["percentiles"][user_document["id"][:4]]
     user_time = await calculate_user_time(user_id, allow_cache=True)
     group_indicators = group_indicators["percentiles"]

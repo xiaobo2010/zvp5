@@ -14,6 +14,7 @@ from config import (
     BASE_SOCIAL_PRACTICE,
 )
 from database import db
+from db import backends
 from typings.time import UserActivityTime
 from util.calculate import calculate_user_time
 from util.get_class import get_user_class
@@ -32,7 +33,7 @@ async def get_groups_v2(
     user=Depends(get_current_user),
 ):
     """
-    List the live classes (`zvms_new.groups`) plus legacy permission groups.
+    List the live classes (`zvms_new.groups`) plus permission groups.
 
     Permission: admin/department.
     """
@@ -42,21 +43,20 @@ async def get_groups_v2(
 
     escaped = re.escape(query)
 
-    class_pipeline = [
-        {"$match": {"name": {"$regex": escaped, "$options": "i"}}},
-        {"$sort": {"_id": 1}},
-        {"$project": {"_id": {"$toString": "$_id"}, "name": "$name"}},
-    ]
+    repo = backends.get_groups_repo()
+    _, class_total = await repo.list_classes(query, 1, 1)
+    class_rows, _ = await repo.list_classes(query, 1, class_total or 1)
 
-    class_rows = await db.zvms_new.groups.aggregate(class_pipeline).to_list(None)
-
-    permission_rows = await db.zvms.groups.find(
+    permission_rows = await db.zvms_new.groups.find(
         {
             "type": "permission",
             "name": {"$regex": escaped, "$options": "i"},
         },
         {"name": True, "permissions": True},
     ).to_list(None)
+
+    permission_ids = {str(group["_id"]) for group in permission_rows}
+    class_rows = [row for row in class_rows if str(row["_id"]) not in permission_ids]
 
     permission_rows = [
         {
@@ -93,9 +93,8 @@ async def get_group_v2(
     """
     per = user.get("per") or []
     if not ("admin" in per or "department" in per):
-        current = await db.zvms_new.users.find_one(
-            {"_id": validate_object_id(user["id"])}, {"class_id": 1}
-        )
+        validate_object_id(user["id"])
+        current = await backends.get_users_repo().get_by_oid(user["id"])
         if not (
             current is not None
             and current.get("class_id") is not None
@@ -103,7 +102,7 @@ async def get_group_v2(
         ):
             raise HTTPException(status_code=403, detail="权限不足")
 
-    result = await db.zvms_new.groups.find_one({"_id": validate_object_id(group_id)})
+    result = await backends.get_groups_repo().get(str(validate_object_id(group_id)))
     if result is None:
         raise HTTPException(status_code=404, detail="班级不存在")
 
@@ -111,7 +110,7 @@ async def get_group_v2(
         "status": "ok",
         "code": 200,
         "data": {
-            "_id": str(result["_id"]),
+            "_id": result["_id"],
             "name": result["name"],
             "type": "class",
         },
@@ -145,12 +144,8 @@ async def get_group_activities_v2(
 
     # Get members from the group
     members = (
-        await db.zvms.get_collection("users")
-        .find(
-            {
-                "group": group_id  # TODO should be `groups` in the new structure
-            }
-        )
+        await db.zvms_new.get_collection("users")
+        .find({"class_id": validate_object_id(group_id)})
         .to_list(None)
     )
 
@@ -231,31 +226,22 @@ async def read_users(
         "off-campus": "off_campus_raw",
         "social-practice": "social_practice",
     }
-    count = await db.zvms.users.count_documents(
-        {
-            "$or": [
-                {"name": {"$regex": query, "$options": "i"}},
-                {"id": {"$regex": query, "$options": "i"}},
-                {"past": {"$elemMatch": {"$regex": query, "$options": "i"}}},
-            ],
-            "group": group_id,
-        }
-    )
+    class_oid = validate_object_id(group_id)
+    member_filter = {
+        "$or": [
+            {"name": {"$regex": query, "$options": "i"}},
+            {"id": {"$regex": query, "$options": "i"}},
+        ],
+        "class_id": class_oid,
+    }
+    count = await db.zvms_new.users.count_documents(member_filter)
     result = (
-        await db.zvms["users"]
-        .find(
-            {
-                "$or": [
-                    {"name": {"$regex": query, "$options": "i"}},
-                    {"id": {"$regex": query, "$options": "i"}},
-                    {"past": {"$elemMatch": {"$regex": query, "$options": "i"}}},
-                ],
-                "group": group_id,
-            },
+        await db.zvms_new.users.find(
+            member_filter,
             {
                 "name": True,
                 "id": True,
-                "group": True,
+                "class_id": True,
             },
         )
         .to_list(None)
@@ -275,7 +261,7 @@ async def read_users(
     results = []
 
     for user in user_times:
-        user_info = await db.zvms.get_collection("users").find_one(
+        user_info = await db.zvms_new.get_collection("users").find_one(
             {"_id": validate_object_id(user["user"])}
         )
         time_struct = UserActivityTime.model_validate(user, strict=False)
@@ -327,20 +313,19 @@ async def get_group_users_v2(
     """
 
     # Get members from the group
+    class_oid = validate_object_id(group_id)
+    member_filter = {
+        "$or": [
+            {"name": {"$regex": search, "$options": "i"}},
+            {"id": {"$regex": search, "$options": "i"}},
+        ],
+        "class_id": class_oid,
+    }
     members = (
-        await db.zvms.get_collection("users")
+        await db.zvms_new.get_collection("users")
         .aggregate(
             [
-                {
-                    "$match": {
-                        "$or": [
-                            {"name": {"$regex": search, "$options": "i"}},
-                            {"id": {"$regex": search, "$options": "i"}},
-                            {"past": {"$elemMatch": {"$regex": search, "$options": "i"}}},
-                        ],
-                        "group": group_id  # TODO should be `groups` in the new structure
-                    }
-                },
+                {"$match": member_filter},
                 {"$sort": {sort: 1 if asc else -1}},
                 {"$skip": (page - 1) * perpage},
                 {"$limit": perpage},
@@ -349,21 +334,18 @@ async def get_group_users_v2(
         .to_list(None)
     )
 
-    count = await db.zvms.get_collection("users").count_documents(
-        {
-            "$or": [
-                {"name": {"$regex": search, "$options": "i"}},
-                {"id": {"$regex": search, "$options": "i"}},
-                {"past": {"$elemMatch": {"$regex": search, "$options": "i"}}},
-            ],
-            "group": group_id  # TODO should be `groups` in the new structure
-        }
-    )
+    count = await db.zvms_new.get_collection("users").count_documents(member_filter)
 
     for member in members:
         member["_id"] = str(member["_id"])
+        class_id = str(member["class_id"]) if member.get("class_id") else ""
+        member["class_id"] = class_id
+        member["group"] = [class_id] if class_id else []
         if pwdm:
-            member["password"] = not check_password(member["id"], member["password"])
+            stored = member.get("password")
+            member["password"] = (
+                stored is not None and not check_password(member["id"], stored)
+            )
         else:
             member["password"] = None
 
@@ -390,8 +372,8 @@ async def stat_group_compliance(
 
     # Get members from the group
     members = (
-        await db.zvms.get_collection("users")
-        .find({"group": group_id})  # TODO should be `groups` in the new structure
+        await db.zvms_new.get_collection("users")
+        .find({"class_id": validate_object_id(group_id)})
         .to_list(None)
     )
 

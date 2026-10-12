@@ -4,26 +4,16 @@ from utils import validate_object_id
 
 
 async def get_user_class(user_oid: str) -> str:
-    user = await db.zvms.users.find_one({"_id": validate_object_id(user_oid)})
+    user = await db.zvms_new.users.find_one({"_id": validate_object_id(user_oid)})
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    user_group = user["group"]
-    class_id = None
-
-    grouping = await db.zvms.groups.find_one(
-        {
-            "_id": {"$in": [validate_object_id(group) for group in user_group]},
-            "type": "class",
-        }
-    )
-
-    if grouping is None:
+    class_id = user.get("class_id")
+    if not class_id:
         raise HTTPException(status_code=404, detail="User not in any class")
 
-    class_id = grouping["_id"]
-
-    if not class_id:
+    grouping = await db.zvms_new.groups.find_one({"_id": class_id})
+    if grouping is None:
         raise HTTPException(status_code=404, detail="User not in any class")
 
     return class_id
@@ -34,98 +24,83 @@ async def get_activities_related_to_user(
 ):
     if not target:
         target = await get_user_class(user_oid)
+    class_oid = validate_object_id(str(target))
 
-    users = await db.zvms.users.find({"group": str(target)}).to_list(None)
+    members = (
+        await db.zvms_new.users.find({"class_id": class_oid}, {"_id": 1}).to_list(None)
+    )
+    member_ids = [str(member["_id"]) for member in members]
 
-    count = await db.zvms.activities.count_documents(
-        {
-            "members._id": {"$in": [str(user["_id"]) for user in users]},
-            "name": {"$regex": query, "$options": "i"},
-        }
+    memberships = (
+        await db.zvms_new.activity_members.find(
+            {"member": {"$in": member_ids}},
+            {"activity": 1, "member": 1, "status": 1, "mode": 1},
+        ).to_list(None)
     )
 
-    pipeline = [
-        {
-            "$match": {
-                "members._id": {"$in": [str(user["_id"]) for user in users]},
-                "name": {"$regex": query, "$options": "i"},
-            }
-        },
-        {
-            "$project": {
-                "name": True,
-                "members": {
-                    "$filter": {
-                        "input": "$members",
-                        "as": "member",
-                        "cond": {
-                            "$in": [
-                                "$$member._id",
-                                [str(user["_id"]) for user in users],
-                            ]
-                        },
-                    }
-                },
-                "status": True,
-                "date": True,
-                "type": True,
-                "special": True,
-            }
-        },
-        {
-            "$project": {
-                "name": True,
-                "status": True,
-                "date": True,
-                "type": True,
-                "special": True,
-                "members._id": True,
-                "members.status": True,
-                "members.mode": True,
-            }
-        },
-        {"$sort": {"_id": -1}},
-        {"$skip": 0 if page == -1 else (page - 1) * perpage},
-        {"$limit": 0 if page == -1 else perpage},
-    ]
+    activity_ids = list({membership["activity"] for membership in memberships})
+    activity_oids = [validate_object_id(activity_id) for activity_id in activity_ids]
 
-    activities = await db.zvms.activities.aggregate(pipeline).to_list(None)
+    activity_filter = {
+        "_id": {"$in": activity_oids},
+        "name": {"$regex": query, "$options": "i"},
+    }
+
+    count = await db.zvms_new.activities.count_documents(activity_filter)
+
+    cursor = db.zvms_new.activities.find(activity_filter).sort("_id", -1)
+    if page != -1:
+        cursor = cursor.skip((page - 1) * perpage).limit(perpage)
+
+    activities = await cursor.to_list(None)
+
+    members_by_activity: dict[str, list] = {}
+    for membership in memberships:
+        members_by_activity.setdefault(str(membership["activity"]), []).append(
+            {
+                "_id": str(membership["member"]),
+                "status": membership.get("status"),
+                "mode": membership.get("mode"),
+            }
+        )
 
     for activity in activities:
         activity["_id"] = str(activity["_id"])
+        activity["members"] = members_by_activity.get(activity["_id"], [])
 
     return activities, count
 
 
 async def get_user_classname(user_id: str):
-    user = await db.zvms.users.find_one({"_id": validate_object_id(user_id)})
+    user = await db.zvms_new.users.find_one({"_id": validate_object_id(user_id)})
     if not user:
         return HTTPException(status_code=404, detail="User not found")
 
-    user_group = user["group"]
-    class_id = None
-
-    for group in user_group:
-        group = await db.zvms.groups.find_one({"_id": validate_object_id(group)})
-        if group["type"] == "class":
-            class_id = group["_id"]
-            break
-
+    class_id = user.get("class_id")
     if not class_id:
         return HTTPException(status_code=404, detail="User not in any class")
 
-    class_name = await db.zvms.groups.find_one({"_id": class_id})
+    class_name = await db.zvms_new.groups.find_one({"_id": class_id})
+    if not class_name:
+        return HTTPException(status_code=404, detail="User not in any class")
+
     return class_name["name"]
 
 
 async def get_classname(user: dict, groups: list[dict]):
-    if groups is None:
-        groups = await db.zvms.groups.find().to_list(None)
     if user is None:
         return None
 
+    class_id = user.get("class_id")
+    if not class_id:
+        return None
+
+    if groups is None:
+        groups = await db.zvms_new.groups.find().to_list(None)
+
+    class_id = str(class_id)
     for group in groups:
-        if str(group["_id"]) in user["group"] and group["type"] == "class":
+        if str(group["_id"]) == class_id:
             return group["name"]
 
     return None
