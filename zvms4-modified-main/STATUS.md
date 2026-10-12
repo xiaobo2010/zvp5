@@ -3,6 +3,8 @@
 > **Part 1 · 义工管理** | 日期：2026-10-09
 > 任务：把现役 zvp（`~/zvp-build-test`，zvp-latest）的**义工管理**（创建义工 / 添加、修改义工成员）移植进本仓库，并对移植面做「外链 / 翻出平台」危险代码审计。
 > 审计方式：静态扫描（grep / AST）+ 全量人工读码 + 独立安全复核；未运行服务、未连接数据库。
+>
+> **文件位置变更（2026-10-12）**：本目录原 `DB_ALIGNMENT.md`（数据库对齐 Ground Truth）已并入**仓库根 `README.md` §三**，下文出现的 `DB_ALIGNMENT` / `DB_ALIGNMENT §N` 一律对应**根 README §三 / §三.N**。
 
 ---
 
@@ -35,7 +37,7 @@
 
 | # | zvp 原样 | 本仓适配 | 原因 |
 |---|---|---|---|
-| 1 | `date/createdAt/updatedAt` 写 **int 毫秒时间戳** | 写 `datetime.now()`（BSON Date） | 实库 `activities` 日期为 BSON `Date` 且零 null（DB_ALIGNMENT §2/§6），严格 typing `Activity.model_validate` 要求 |
+| 1 | `date/createdAt/updatedAt` 写 **int 毫秒时间戳** | 写 `datetime.now()`（BSON Date） | 实库 `activities` 日期为 BSON `Date` 且零 null（根 README §三.2/§三.6），严格 typing `Activity.model_validate` 要求 |
 | 2 | v3 创建只插 7 个字段 | 补齐 `appointee=creator`、`approver=""`、`place=""`、`origin="activities"` | 实库全字段非空，缺字段会让 v2 读取路径 `model_validate` 崩 |
 | 3 | `user.require('admin','department')`（CurrentUser 对象） | `"admin"/"department" in user.get("per", [])`（本仓 dict 风格） | 两侧鉴权层不同，语义等价 |
 | 4 | `db.zvms_new.activities` 属性访问 | `db.zvms_new.get_collection("activities")` | 本仓集合访问惯例 |
@@ -100,7 +102,7 @@
 | `GET /api/v3/users/{user_id}` | zvp 无对应端点（其登录即返 profile） | 新增（`routers/users_v3_router.py`）：`zvms_new` 用户 profile（本人 / admin / department / secretary 同班可读），服务前端刷新与用户详情 | 新增适配端点 |
 | `PUT /api/v3/users/{user_id}/roles` | admin 改角色，`AllowedRole` 白名单，204 | 新增 | 已移植 |
 | `POST /api/v3/users` | 建用户：默认密码=学号(bcrypt)、roles 白名单、学号查重 409、班级存在性校验 | 新增；不写 `session_id`（zvp 同款写法） | 已移植 |
-| `GET /api/v2/groups` | 班级列表（admin/department） | 新增（`routers/groups_v2_router.py`）；**不投影 enrollYear**（实库 `zvms_new.groups` 仅 `name`，DB_ALIGNMENT §2） | 已移植（适配） |
+| `GET /api/v2/groups` | 班级列表（admin/department） | 新增（`routers/groups_v2_router.py`）；**不投影 enrollYear**（实库 `zvms_new.groups` 仅 `name`，根 README §三.2） | 已移植（适配） |
 | `GET /api/v2/groups/{group_id}` | 单班级（本人班级或 admin/department） | 新增；响应补合成字段 `type:"class"`（保前端既有判断语义） | 已移植（适配） |
 | `GET /api/v3/groups/{group_id}/users` | 班级成员分页（`zvms_new.users` by `class_id`） | 新增（`routers/groups_v3_router.py`）；扩展 `pwdm` 仅返回布尔（哈希经 pop 永不出响应） | 已移植（扩展） |
 | `POST /api/v3/groups` | 建班（admin） | 新增；**剔除 enrollYear**（实库无此字段） | 已移植（适配） |
@@ -110,7 +112,7 @@
 | v1 用户写端点（`POST ""`、`DELETE /{target}`、`PUT /{user_oid}`、`POST|DELETE /{user_oid}/group`） | zvp 全部 503 封堵（`_raise_exc`） | **同款 503 封堵**，杜绝前端静默写 legacy 库 | 已封堵（zvp parity） |
 | `GET /api/users/{user_oid}`（v1 详情） | zvp 同样无鉴权 | **加登录门**（偏离 zvp，收紧） | 已收紧 |
 | `GET /api/v2/groups/{id}/statistics/compliance` | — | 上游鉴权被注释 → **恢复**（admin/department/secretary 同班） | 已修复 |
-| v1 `PUT /api/users/{oid}/password` | zvp 改密走 `PUT /v2/users/{id}/password` | 上游端点保留（已切 `zvms_new`，DB_ALIGNMENT §5），为改密主路径；zvp 的 `DELETE /v2/users/{id}/password`（重置为初始密码）**未移植**——目标前端无对应入口，需要时再补 v3 端点 | 已存在 |
+| v1 `PUT /api/users/{oid}/password` | zvp 改密走 `PUT /v2/users/{id}/password` | 上游端点保留（已切 `zvms_new`，根 README §三.5），为改密主路径；zvp 的 `DELETE /v2/users/{id}/password`（重置为初始密码）**未移植**——目标前端无对应入口，需要时再补 v3 端点 | 已存在 |
 
 ## 9. 前端接线（最小改动，UI 与模板未动）
 
@@ -469,7 +471,7 @@ xh_router 任意 URL 代理（:159 urlopen + :46 硬编码签名 KEY）、登录
 | # | 现象（用户原话摘要） | 已查事实 / 候选根因 | 修复方向 |
 |---|---|---|---|
 | 1 | **用户身份一栏空白** | 真实库 2466/2566 用户 `roles=[]`（学生身份靠缺省）；登录 profile.roles=[] → `stores/user.ts:37-46` `Array.isArray([])` 为 true → `position=[]` → 身份徽标无内容。zvp 现役同语义但需查其 UI 对空 position 的渲染差异 | 前端 store 对空 roles 兜底 `['student']`；或后端 profile 归一化。**先对照 zvp 线上 UI 行为**（zvp-latest frontend）避免引入新差异 |
-| 2 | **用户详细信息显示"班级不存在"，用户判断群组读取不对** | 候选 A：两库班级主键断裂——`zvms.groups`（40 个，legacy 独立 _id）vs `zvms_new.groups`（54 个，独立 _id，DB_ALIGNMENT §1/§2），详情链路若把 legacy `user.group` 的组 id 传给 v2/v3 班级端点必 404；候选 B：class_id=null 的 5 个用户被当"应有班级"查询 | 先定位具体视图与 404 的 API（浏览器复现/nginx 日志），再理顺班级解析链（详情应走 profile.class_id 直取，不经 legacy group） |
+| 2 | **用户详细信息显示"班级不存在"，用户判断群组读取不对** | 候选 A：两库班级主键断裂——`zvms.groups`（40 个，legacy 独立 _id）vs `zvms_new.groups`（54 个，独立 _id，根 README §三.1/§三.2），详情链路若把 legacy `user.group` 的组 id 传给 v2/v3 班级端点必 404；候选 B：class_id=null 的 5 个用户被当"应有班级"查询 | 先定位具体视图与 404 的 API（浏览器复现/nginx 日志），再理顺班级解析链（详情应走 profile.class_id 直取，不经 legacy group） |
 | 3 | **logs 中未登录请求被记录成"无此用户"** | shield 写 security_alert 日志 `user=""`（main.py:83-94）；logs_router 行内 user_name 解析（zvms_new→legacy→"未知用户"）对空 user 落入"用户不存在"文案 | 后端对 `user==""` 返回"未登录"（区别于"未知用户"），或前端 ZLogCard 空 user 渲染"未登录" |
 | 4 | **删除完义工后应跳转回 /activities** | 删除成功后停留在已删除活动的详情页（delete 调用点 ZActivityDetails.vue:99 / api/activity/delete.ts:9） | 删除成功回调补 `router.push('/activities')` |
 
