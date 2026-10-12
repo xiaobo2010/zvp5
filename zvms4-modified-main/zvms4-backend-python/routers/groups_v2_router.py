@@ -21,8 +21,6 @@ from util.object_id import get_current_user, validate_object_id
 from util.permission.user import validate_read_group_permission
 from util.cert import check_password
 
-from asyncio import gather
-
 router = APIRouter()
 
 
@@ -34,7 +32,7 @@ async def get_groups_v2(
     user=Depends(get_current_user),
 ):
     """
-    List the live classes (`zvms_new.groups`).
+    List the live classes (`zvms_new.groups`) plus legacy permission groups.
 
     Permission: admin/department.
     """
@@ -42,27 +40,44 @@ async def get_groups_v2(
     if not ("admin" in per or "department" in per):
         raise HTTPException(status_code=403, detail="权限不足")
 
-    pipeline = [
-        {"$match": {"name": {"$regex": re.escape(query), "$options": "i"}}},
+    escaped = re.escape(query)
+
+    class_pipeline = [
+        {"$match": {"name": {"$regex": escaped, "$options": "i"}}},
         {"$sort": {"_id": 1}},
-        {"$skip": (page - 1) * size},
-        {"$limit": size},
         {"$project": {"_id": {"$toString": "$_id"}, "name": "$name"}},
     ]
 
-    count_pipeline = [
-        pipeline[0],
-        {"$count": "total"},
-    ]
+    class_rows = await db.zvms_new.groups.aggregate(class_pipeline).to_list(None)
 
-    total, result = await gather(
-        db.zvms_new.groups.aggregate(count_pipeline).to_list(length=1),
-        db.zvms_new.groups.aggregate(pipeline).to_list(None),
-    )
+    permission_rows = await db.zvms.groups.find(
+        {
+            "type": "permission",
+            "name": {"$regex": escaped, "$options": "i"},
+        },
+        {"name": True, "permissions": True},
+    ).to_list(None)
+
+    permission_rows = [
+        {
+            "_id": str(group["_id"]),
+            "name": group["name"],
+            "type": "permission",
+            "permissions": group.get("permissions", []),
+        }
+        for group in permission_rows
+    ]
+    permission_rows.sort(key=lambda group: group["name"])
+
+    merged = class_rows + permission_rows
+    total = len(merged)
+
+    start = (page - 1) * size
+    result = merged[start : start + size]
 
     return {
         "data": result,
-        "total": total[0]["total"] if total else 0,
+        "total": total,
     }
 
 

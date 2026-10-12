@@ -188,35 +188,28 @@ async def read_users(
         selected = []
         for group in groups:
             selected.append(str(group["_id"]))
-    count = await db.zvms.users.count_documents(
-        {
+
+    if user is not None:
+        legacy_filter = {
             "$or": [
                 {"name": {"$regex": query, "$options": "i"}},
                 {"id": {"$regex": query, "$options": "i"}},
                 {"past": {"$elemMatch": {"$regex": query, "$options": "i"}}},
             ]
-            if user is not None
-            else [
-                # should not search if not login.
-                {"id": query}
-            ],
         }
-    )
-    result = (
-        await db.zvms["users"]
-        .find(
-            {
-                "$or": [
-                    {"name": {"$regex": query, "$options": "i"}},
-                    {"id": {"$regex": query, "$options": "i"}},
-                    {"past": {"$elemMatch": {"$regex": query, "$options": "i"}}},
-                ]
-                if user is not None
-                else [
-                    # should not search if not login.
-                    {"id": query}
-                ],
-            },
+        new_filter = {
+            "$or": [
+                {"name": {"$regex": query, "$options": "i"}},
+                {"id": {"$regex": query, "$options": "i"}},
+            ]
+        }
+    else:
+        legacy_filter = {"id": query}
+        new_filter = {"id": query}
+
+    legacy_users = (
+        await db.zvms.users.find(
+            legacy_filter,
             {
                 "name": True,
                 "id": True,
@@ -224,13 +217,47 @@ async def read_users(
             },
         )
         .sort({"id": 1})
-        .skip(0 if page == -1 else (page - 1) * perpage)
-        .limit(perpage if page == -1 else perpage)
-        .to_list(0 if page == -1 else perpage)
+        .to_list(None)
     )
 
-    for user in result:
-        user["_id"] = str(user["_id"])
+    new_users = (
+        await db.zvms_new.users.find(
+            new_filter,
+            {
+                "name": True,
+                "id": True,
+                "class_id": True,
+            },
+        )
+        .sort({"id": 1})
+        .to_list(None)
+    )
+
+    merged: dict[str, dict] = {}
+    for doc in legacy_users:
+        merged[doc["id"]] = {
+            "_id": str(doc["_id"]),
+            "id": doc["id"],
+            "name": doc["name"],
+            "group": doc.get("group", []),
+        }
+    for doc in new_users:
+        class_id = doc.get("class_id")
+        merged[doc["id"]] = {
+            "_id": str(doc["_id"]),
+            "id": doc["id"],
+            "name": doc["name"],
+            "group": [str(class_id)] if class_id else [],
+        }
+
+    rows = sorted(merged.values(), key=lambda row: row["id"])
+    count = len(rows)
+
+    if page == -1:
+        result = rows
+    else:
+        start = (page - 1) * perpage
+        result = rows[start : start + perpage]
 
     return {"status": "ok", "code": 200, "data": result, "metadata": {"size": count}}
 
@@ -257,6 +284,10 @@ async def read_user(user_oid: str, user=Depends(get_current_user)):
                 "group": [class_id] if class_id else [],
                 "past": new_user.get("past", []),
             }
+    else:
+        new_user = await db.zvms_new.users.find_one({"id": user_info["id"]})
+        if new_user is not None:
+            user_info["roles"] = new_user.get("roles", [])
 
     if user_info is None:
         raise HTTPException(status_code=404, detail="User not found")

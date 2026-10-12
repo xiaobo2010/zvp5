@@ -61,35 +61,58 @@ async def get_groups(
     page: int = Query(1, ge=-1, description="Page number for pagination"),
     perpage: int = Query(10, ge=1, le=100, description="Number of items per page"),
     search: str = Query("", description="Search term for group names"),
+    type: str = Query("all", description="Group type filter: all/class/permission"),
     user=Depends(get_current_user),
 ):
     """
     Get all groups
     """
 
-    if len(user["per"]) == 0:
-        raise HTTPException(status_code=403, detail="Permission denied")
+    regex = {"$regex": search, "$options": "i"}
 
-    count = await db.zvms.groups.count_documents(
-        {"name": {"$regex": search, "$options": "i"}}
-    )
+    rows = []
 
-    pipeline = [
-        {
-            "$match": {
-                "name": {"$regex": search, "$options": "i"},
-            },
-        },
-        {"$project": {"description": 0}},
-        {"$sort": {"name": 1}},
-        {"$skip": 0 if page < 1 else (page - 1) * perpage},
-        {"$limit": count if page < 1 else perpage},
-    ]
+    legacy_groups = await db.zvms.groups.find(
+        {"name": regex},
+        {"description": 0},
+    ).to_list(None)
+    for group in legacy_groups:
+        rows.append(
+            {
+                "_id": str(group["_id"]),
+                "name": group["name"],
+                "type": group.get("type", "class"),
+                "permissions": group.get("permissions", []),
+            }
+        )
 
-    result = await db.zvms.groups.aggregate(pipeline).to_list(None)
+    new_groups = await db.zvms_new.groups.find(
+        {"name": regex},
+        {"name": True},
+    ).to_list(None)
+    for group in new_groups:
+        rows.append(
+            {
+                "_id": str(group["_id"]),
+                "name": group["name"],
+                "type": "class",
+            }
+        )
 
-    for group in result:
-        group["_id"] = str(group["_id"])
+    if type == "class":
+        rows = [group for group in rows if group["type"] == "class"]
+    elif type == "permission":
+        rows = [group for group in rows if group["type"] == "permission"]
+
+    rows.sort(key=lambda group: group["name"])
+
+    count = len(rows)
+
+    if page < 1:
+        result = rows
+    else:
+        start = (page - 1) * perpage
+        result = rows[start : start + perpage]
 
     return {
         "status": "ok",
