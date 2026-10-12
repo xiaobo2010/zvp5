@@ -93,7 +93,7 @@ class Activity(db.Model):
     # columns #
     object_id: db.Mapped[str] = _primarycol()
     name: db.Mapped[str] = _col()
-    description: db.Mapped[Optional[str]] = _col(db.String(4000), default=None)
+    description: db.Mapped[str] = _col(default='')
     status: db.Mapped[ActivityStatus] = _ienumcol(
         ActivityStatus, default=ActivityStatus.PENDING
     )
@@ -136,7 +136,7 @@ class Activity(db.Model):
     class schema(db.OrmSchema):
         object_id: str
         name: str
-        description: Optional[str]
+        description: str
         template_id: str
         school_id: str
         parent_activity_id: str

@@ -86,7 +86,7 @@ class Model(DeclarativeBase):
     type_annotation_map: Mapping[Any, Type[TypeEngine[Any]] | TypeEngine[Any]] = {
         dict: Json,
         list: Json,
-        str: String(255),
+        str: Text,
     }
 
 async def create_all() -> None:
