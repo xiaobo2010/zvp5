@@ -18,6 +18,7 @@ from util.object_id import (
     optional_current_user,
 )
 from database import db
+from db import backends
 from util.cert import (
     get_hashed_password_by_cert,
     used_otp_credential,
@@ -49,13 +50,10 @@ async def auth_user(auth: AuthUser, request: Request):
         if user_doc:
             id = str(user_doc["_id"])
         else:
-            users = await db.zvms.users.find({"id": id}).to_list(None)
-            if len(users) != 1:
-                raise HTTPException(
-                    status_code=404,
-                    detail="User not found",
-                )
-            id = str(users[0]["_id"])
+            raise HTTPException(
+                status_code=404,
+                detail="User not found",
+            )
 
     result, weak_password = await validate_by_cert(id, credential, mode)
 
@@ -143,14 +141,14 @@ async def change_password(
 
     password = await get_hashed_password_by_cert(credential.credential)
 
-    target = await db.zvms_new.users.find_one({"_id": validate_object_id(user_oid)})
+    repo = backends.get_users_repo()
+    oid = str(validate_object_id(user_oid))
+    target = await repo.get_by_oid(oid)
     if target is None:
         raise HTTPException(status_code=404, detail="User not found")
 
     # Change user's password
-    await db.zvms_new.users.update_one(
-        {"_id": validate_object_id(user_oid)}, {"$set": {"password": str(password)}}
-    )
+    await repo.set_password(oid, str(password))
 
     if modification:
         log.with_text(
@@ -182,47 +180,26 @@ async def read_users(
     Query users
     """
     if privilege:
-        groups = await db.zvms["groups"].find(
-            {"permissions": {"$in": ["admin", "department"]}}
+        groups = await db.zvms_new.groups.find(
+            {"type": "permission", "permissions": {"$in": ["admin", "department"]}}
         )
         selected = []
         for group in groups:
             selected.append(str(group["_id"]))
 
     if user is not None:
-        legacy_filter = {
-            "$or": [
-                {"name": {"$regex": query, "$options": "i"}},
-                {"id": {"$regex": query, "$options": "i"}},
-                {"past": {"$elemMatch": {"$regex": query, "$options": "i"}}},
-            ]
-        }
-        new_filter = {
+        query_filter = {
             "$or": [
                 {"name": {"$regex": query, "$options": "i"}},
                 {"id": {"$regex": query, "$options": "i"}},
             ]
         }
     else:
-        legacy_filter = {"id": query}
-        new_filter = {"id": query}
+        query_filter = {"id": query}
 
-    legacy_users = (
-        await db.zvms.users.find(
-            legacy_filter,
-            {
-                "name": True,
-                "id": True,
-                "group": True,
-            },
-        )
-        .sort({"id": 1})
-        .to_list(None)
-    )
-
-    new_users = (
+    users = (
         await db.zvms_new.users.find(
-            new_filter,
+            query_filter,
             {
                 "name": True,
                 "id": True,
@@ -233,24 +210,19 @@ async def read_users(
         .to_list(None)
     )
 
-    merged: dict[str, dict] = {}
-    for doc in legacy_users:
-        merged[doc["id"]] = {
-            "_id": str(doc["_id"]),
-            "id": doc["id"],
-            "name": doc["name"],
-            "group": doc.get("group", []),
-        }
-    for doc in new_users:
+    rows = []
+    for doc in users:
         class_id = doc.get("class_id")
-        merged[doc["id"]] = {
-            "_id": str(doc["_id"]),
-            "id": doc["id"],
-            "name": doc["name"],
-            "group": [str(class_id)] if class_id else [],
-        }
+        rows.append(
+            {
+                "_id": str(doc["_id"]),
+                "id": doc["id"],
+                "name": doc["name"],
+                "group": [str(class_id)] if class_id else [],
+            }
+        )
 
-    rows = sorted(merged.values(), key=lambda row: row["id"])
+    rows.sort(key=lambda row: row["id"])
     count = len(rows)
 
     if page == -1:
@@ -268,31 +240,21 @@ async def read_user(user_oid: str, user=Depends(get_current_user)):
     Return user's information
     """
     # Read user's information
-    user_info = await db.zvms.users.find_one({"_id": validate_object_id(user_oid)})
-
-    if user_info is None:
-        new_user = await db.zvms_new.users.find_one({"_id": validate_object_id(user_oid)})
-        if new_user is not None:
-            class_id = str(new_user["class_id"]) if new_user.get("class_id") else ""
-            user_info = {
-                "_id": new_user["_id"],
-                "id": new_user["id"],
-                "name": new_user["name"],
-                "sex": new_user.get("sex", "unknown"),
-                "roles": new_user.get("roles", []),
-                "class_id": class_id,
-                "group": [class_id] if class_id else [],
-                "past": new_user.get("past", []),
-            }
-    else:
-        new_user = await db.zvms_new.users.find_one({"id": user_info["id"]})
-        if new_user is not None:
-            user_info["roles"] = new_user.get("roles", [])
-
-    if user_info is None:
+    new_user = await db.zvms_new.users.find_one({"_id": validate_object_id(user_oid)})
+    if new_user is None:
         raise HTTPException(status_code=404, detail="User not found")
 
-    user_info["_id"] = str(user_info["_id"])
+    class_id = str(new_user["class_id"]) if new_user.get("class_id") else ""
+    user_info = {
+        "_id": str(new_user["_id"]),
+        "id": new_user["id"],
+        "name": new_user["name"],
+        "sex": new_user.get("sex", "unknown"),
+        "roles": new_user.get("roles", []),
+        "class_id": class_id,
+        "group": [class_id] if class_id else [],
+        "past": new_user.get("past", []),
+    }
     user_info.pop("password", None)
     return {
         "status": "ok",
@@ -357,7 +319,7 @@ async def read_user_activity(
     if query != "" and "admin" not in user["per"]:
         query = re.escape(query)
 
-    count = await db.zvms.activities.count_documents(
+    count = await db.zvms_new.activities.count_documents(
         {"members._id": str(validate_object_id(user_oid))},
         # {"name": {"$regex": query}},
     )
@@ -392,7 +354,7 @@ async def read_user_activity(
     if page != -1:
         pipeline.append({"$limit": perpage})
 
-    all_activities = await db.zvms.activities.aggregate(pipeline).to_list(
+    all_activities = await db.zvms_new.activities.aggregate(pipeline).to_list(
         None if page == -1 else perpage
     )
 
@@ -475,7 +437,7 @@ async def read_logs(
         }
     )
 
-    count = await db.zvms.logs.count_documents(query)
+    count = await db.zvms_new.app_logs.count_documents(query)
 
     pipeline = [
         {"$match": query},
@@ -484,7 +446,7 @@ async def read_logs(
         {"$limit": perpage},
     ]
 
-    logs = await db.zvms.logs.aggregate(pipeline).to_list(None)
+    logs = await db.zvms_new.app_logs.aggregate(pipeline).to_list(None)
 
     for log in logs:
         log["_id"] = str(log["_id"])
@@ -509,11 +471,12 @@ async def delete_past(
     if "admin" not in user["per"]:
         raise HTTPException(status_code=403, detail="Permission denied")
     # Remove by index
-    name = (await db.zvms.users.find_one({"_id": validate_object_id(user_oid)}))["past"]
+    user_doc = await db.zvms_new.users.find_one({"_id": validate_object_id(user_oid)})
+    name = (user_doc or {}).get("past", [])
     idx = int(past_identity_idx)
     if idx < 0 or idx >= len(name):
         raise HTTPException(status_code=404, detail="Past identity not found.")
-    await db.zvms.users.update_one(
+    await db.zvms_new.users.update_one(
         {"_id": validate_object_id(user_oid)}, {"$pull": {"past": name[idx]}}
     )
     log.with_text(
@@ -539,13 +502,9 @@ async def add_past(
         raise HTTPException(status_code=400, detail="Invalid past identity.")
     if "admin" not in user["per"]:
         raise HTTPException(status_code=403, detail="Permission denied")
-    if (
-        await db.zvms.users.count_documents(
-            {"$or": [{"id": past.past}, {"past": {"$elemMatch": {"$eq": past.past}}}]}
-        )
-    ) > 0:
+    if (await db.zvms_new.users.count_documents({"id": past.past})) > 0:
         raise HTTPException(status_code=409, detail="The past identity already exists.")
-    await db.zvms.users.update_one(
+    await db.zvms_new.users.update_one(
         {"_id": validate_object_id(user_oid)}, {"$push": {"past": past.past}}
     )
     log.with_text(
@@ -564,7 +523,7 @@ async def read_notifications(
     Get Notifications
     """
     # Get a notification list
-    count = await db.zvms.notifications.count_documents(
+    count = await db.zvms_new.notifications.count_documents(
         {
             "$or": [
                 {"receivers": str(user_oid)},
@@ -573,7 +532,7 @@ async def read_notifications(
         }
     )
     notifications = (
-        await db.zvms.notifications.find(
+        await db.zvms_new.notifications.find(
             {
                 "$or": [
                     {"receivers": str(user_oid)},

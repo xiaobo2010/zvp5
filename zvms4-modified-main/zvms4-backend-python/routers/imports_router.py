@@ -55,7 +55,7 @@ async def upload_activity_excel(
     try:
         contents = await payload.read()
 
-        await db.zvms.imports.insert_one(
+        await db.zvms_new.get_collection("imports").insert_one(
             {
                 "name": name,
                 "filename": payload.filename,

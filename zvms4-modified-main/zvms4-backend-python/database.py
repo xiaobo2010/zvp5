@@ -5,7 +5,6 @@ import logging
 
 class DataBase:
     client: AsyncIOMotorClient = None  # type: ignore
-    zvms: AsyncIOMotorDatabase = None  # type: ignore
     zvms_new: AsyncIOMotorDatabase = None
 
 
@@ -20,9 +19,8 @@ async def connect_to_mongo():
         minPoolSize=10,
         uuidRepresentation="standard",
     )
-    db.zvms = db.client["zvms"]
     db.zvms_new = db.client["zvms_new"]
-    logging.info("connected to zvms...")
+    logging.info("connected to zvms_new...")
 
 
 async def close_mongo_connection():

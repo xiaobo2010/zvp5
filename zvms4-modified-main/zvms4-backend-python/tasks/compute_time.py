@@ -25,7 +25,7 @@ async def compute_time():
     It should be implemented to remove specific data as needed.
     """
     await db.zvms_new.get_collection("time").delete_many({})
-    users = await db.zvms.get_collection("users").find({}).to_list(None)
+    users = await db.zvms_new.get_collection("users").find({}).to_list(None)
     for user in users:
         user_id = str(user["_id"])
         await calculate_user_time(user_id, allow_cache=False)
@@ -33,7 +33,7 @@ async def compute_time():
 
 async def compute_ay_time():
     await db.zvms_new.get_collection("time_academic_year").delete_many({})
-    users = await db.zvms.get_collection("users").find({}).to_list(None)
+    users = await db.zvms_new.get_collection("users").find({}).to_list(None)
     now = datetime.now()
     ay = now.year if now.month >= 9 else now.year - 1
     soy = datetime.now().replace(
@@ -65,7 +65,7 @@ async def compute_ay_time():
 
 async def generate_reports():
     classes = (
-        await db.zvms.get_collection("groups").find({"type": "class"}).to_list(None)
+        await db.zvms_new.get_collection("groups").find({"type": {"$ne": "permission"}}).to_list(None)
     )
     await db.zvms_new.get_collection("daily_exports").delete_many({})
     db_data = await db.zvms_new.get_collection("daily_exports").insert_one(
@@ -85,8 +85,8 @@ async def generate_reports():
                 os.rmdir(item_path)
     for class_id in classes:
         users = (
-            await db.zvms.get_collection("users")
-            .find({"group": str(class_id["_id"])})
+            await db.zvms_new.get_collection("users")
+            .find({"class_id": class_id["_id"]})
             .to_list(None)
         )
         os.makedirs(f'./export/{class_id["name"]}', exist_ok=True)
@@ -266,11 +266,11 @@ async def compute_batch_origins():
         }
     ]
     grades = (
-        await db.zvms.get_collection("users").aggregate(users_pipeline).to_list(None)
+        await db.zvms_new.get_collection("users").aggregate(users_pipeline).to_list(None)
     )
     await db.zvms_new.get_collection("time_with_origin").delete_many({})
     await db.zvms_new.get_collection("time_with_origin_stat").delete_many({})
-    groups = await db.zvms.get_collection("groups").find({"type": "class"}).to_list(None)
+    groups = await db.zvms_new.get_collection("groups").find({"type": {"$ne": "permission"}}).to_list(None)
     for grade in grades:
         await time_with_origin("grade", grade["_id"])
         await time_with_origin("grade", grade["_id"], 20)
@@ -288,13 +288,13 @@ async def compute_group_indicators():
     """
 
     groups = (
-        await db.zvms.get_collection("groups").find({"type": "class"}).to_list(None)
+        await db.zvms_new.get_collection("groups").find({"type": {"$ne": "permission"}}).to_list(None)
     )
 
     for group in groups:
         users = (
-            await db.zvms.get_collection("users")
-            .find({"group": str(group["_id"])})
+            await db.zvms_new.get_collection("users")
+            .find({"class_id": group["_id"]})
             .to_list(None)
         )
         time_graph = (
@@ -346,7 +346,7 @@ async def compute_indicators():
     ]
 
     result = (
-        await db.zvms.get_collection("users").aggregate(users_pipeline).to_list(None)
+        await db.zvms_new.get_collection("users").aggregate(users_pipeline).to_list(None)
     )
     percentiles = {}  # Record<grade (str), dict<percentiles_name (str), value (float)>>
     indicators = {}  # Record<grade (str), dict<indicator_name (str), value (float)>>

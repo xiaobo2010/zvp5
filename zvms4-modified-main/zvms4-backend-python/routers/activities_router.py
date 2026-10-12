@@ -10,6 +10,8 @@ from util.object_id import (
 from datetime import datetime
 from database import db
 from pydantic import BaseModel
+from typings.activity_v2 import Activity
+from util.permission import volunteer
 from util.validation import validate_activity_name
 
 router = APIRouter()
@@ -44,12 +46,12 @@ async def change_activity_description(
         raise HTTPException(status_code=403, detail="Permission denied")
 
     # Edit activity description
-    await db.zvms.activities.update_one(
+    await db.zvms_new.get_collection("activities").update_one(
         {"_id": validate_object_id(activity_oid)},
         {
             "$set": {
                 "description": description,
-                "updatedAt": int(datetime.now().timestamp()),
+                "updatedAt": datetime.now(),
             }
         },
     )
@@ -91,9 +93,9 @@ async def change_activity_title(
         raise HTTPException(status_code=403, detail="Permission denied")
 
     # Edit activity title
-    await db.zvms.activities.update_one(
+    await db.zvms_new.get_collection("activities").update_one(
         {"_id": validate_object_id(activity_oid)},
-        {"$set": {"name": name, "updatedAt": int(datetime.now().timestamp())}},
+        {"$set": {"name": name, "updatedAt": datetime.now()}},
     )
 
     log.with_text(
@@ -125,29 +127,21 @@ async def change_activity_status(
 
     status = payload.status
 
-    target_activity = await db.zvms.activities.find_one(
+    target_activity = await db.zvms_new.get_collection("activities").find_one(
         {"_id": validate_object_id(activity_oid)}
     )
 
     if not target_activity:
         raise HTTPException(status_code=404, detail="Activity not found")
 
-    # Check user permission
-    if (
-        "department" not in user["per"]
-        and "admin" not in user["per"]
-        and (
-            target_activity["type"] == "social"
-            or target_activity["type"] == "scale"
-            or target_activity["type"] == "specified"
-        )
-    ):
-        raise HTTPException(status_code=403, detail="Permission denied")
+    # Check user permission (mirrors /api/v2/activities/{id}/status semantics)
+    activity = Activity.model_validate(target_activity, strict=False)
+    await volunteer.validate_check_permission(user, activity, strict=True)
 
     # Update activity status
-    await db.zvms.activities.update_one(
+    await db.zvms_new.get_collection("activities").update_one(
         {"_id": validate_object_id(activity_oid)},
-        {"$set": {"status": status, "updatedAt": int(datetime.now().timestamp())}},
+        {"$set": {"status": status, "updatedAt": datetime.now()}},
     )
 
     status_labels = {"effective": "生效", "pending": "待审核", "refused": "已驳回"}
@@ -252,10 +246,12 @@ async def read_activities(
         {"$limit": 0 if page == -1 else perpage},
     ]
 
-    count = await db.zvms.activities.count_documents(
+    count = await db.zvms_new.get_collection("activities").count_documents(
         {"name": {"$regex": query, "$options": "i"}, "type": {"$in": target_types}}
     )
-    activities = await db.zvms.activities.aggregate(pipeline).to_list(None)
+    activities = (
+        await db.zvms_new.get_collection("activities").aggregate(pipeline).to_list(None)
+    )
     for activity in activities:
         activity["_id"] = str(activity["_id"])
     return {
@@ -381,7 +377,9 @@ async def read_activity(activity_oid: str, user=Depends(get_current_user)):
             }
         },
     ]
-    activity = await db.zvms.activities.aggregate(pipeline).to_list(None)
+    activity = (
+        await db.zvms_new.get_collection("activities").aggregate(pipeline).to_list(None)
+    )
     activity = activity[0]
 
     if not activity:
@@ -407,7 +405,7 @@ async def update_activity_member_duration(
     Update activity member duration
     """
 
-    activity = await db.zvms.activities.find_one(
+    activity = await db.zvms_new.get_collection("activities").find_one(
         {"_id": validate_object_id(activity_oid)}
     )
 
@@ -417,33 +415,9 @@ async def update_activity_member_duration(
     if "admin" not in user["per"] and "department" not in user["per"]:
         raise HTTPException(status_code=403, detail="Permission denied")
 
-    pipeline = [
-        {
-            "$set": {
-                "members": {
-                    "$map": {
-                        "input": "$members",
-                        "as": "member",
-                        "in": {
-                            "$cond": [
-                                {"$eq": ["$$member._id", uid]},
-                                {
-                                    "$mergeObjects": [
-                                        "$$member",
-                                        {"duration": payload.duration},
-                                    ]
-                                },
-                                "$$member",
-                            ]
-                        },
-                    }
-                }
-            }
-        }
-    ]
-
-    await db.zvms.activities.update_one(
-        {"_id": validate_object_id(activity_oid)}, pipeline
+    await db.zvms_new.get_collection("activity_members").update_one(
+        {"activity": activity_oid, "member": uid},
+        {"$set": {"duration": payload.duration}},
     )
 
     log.with_text(

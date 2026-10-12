@@ -119,7 +119,7 @@ async def time_with_origin(
     print(f"Calculating time for scope {scope} with id {scope_id}.")
     if scope == "grade":
         users = (
-            await db.zvms.get_collection("users")
+            await db.zvms_new.get_collection("users")
             .find(
                 {
                     # id starts with scope_id
@@ -130,10 +130,10 @@ async def time_with_origin(
         )
     elif scope == "group":
         users = (
-            await db.zvms.get_collection("users")
+            await db.zvms_new.get_collection("users")
             .find(
                 {
-                    "group": scope_id,
+                    "class_id": validate_object_id(scope_id),
                 }
             )
             .to_list(None)
