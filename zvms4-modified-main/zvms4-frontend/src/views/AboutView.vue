@@ -5,9 +5,20 @@ import { useHeaderStore } from '@/stores/header'
 import { useI18n } from 'vue-i18n'
 import router from '@/router'
 import { APP_VERSION } from '@/data/changelog'
+import api from '@/api'
+import { ref, onMounted } from 'vue'
 
 const { t } = useI18n()
 const header = useHeaderStore()
+const version = ref(APP_VERSION)
+
+onMounted(async () => {
+  const entries = await api.changelog.getChangelog()
+  if (entries && entries.length > 0) {
+    version.value = entries[0].version
+  }
+})
+
 header.setHeader(t('nav.about'))
 </script>
 
@@ -22,10 +33,10 @@ header.setHeader(t('nav.about'))
       <ElResult
         icon="info"
         title="义工平台 v4"
-        :sub-title="APP_VERSION"
+        :sub-title="version"
       >
         <template #icon>
-            <img :src="`/favicon.png?v=${APP_VERSION}`" alt="logo" style="width: 128px; height: 128px; border-radius: .75rem;"/>
+            <img :src="`/favicon.png?v=${version}`" alt="logo" style="width: 128px; height: 128px; border-radius: .75rem;"/>
         </template>
         <template #extra>
           <div class="flex flex-col items-center gap-3">
