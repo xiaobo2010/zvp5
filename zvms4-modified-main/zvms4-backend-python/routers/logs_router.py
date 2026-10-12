@@ -47,7 +47,7 @@ async def read_logs(
     if timestamp_filter:
         match["timestamp"] = timestamp_filter
 
-    count = await db.zvms.logs.count_documents(match)
+    count = await db.zvms_new.get_collection("app_logs").count_documents(match)
 
     pipeline = [
         {"$match": match},
@@ -56,7 +56,9 @@ async def read_logs(
         {"$limit": perpage},
     ]
 
-    logs = await db.zvms.logs.aggregate(pipeline).to_list(None)
+    logs = (
+        await db.zvms_new.get_collection("app_logs").aggregate(pipeline).to_list(None)
+    )
 
     names = await get_user_display_names(
         [log["user"] for log in logs if log.get("user")]

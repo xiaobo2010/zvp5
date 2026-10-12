@@ -48,7 +48,7 @@ class ZVMSLog:
         return self
 
     async def insert_log(self):
-        return await db.zvms.logs.insert_one(self.model_dump())
+        return await db.zvms_new.get_collection("app_logs").insert_one(self.model_dump())
 
 
 def inject_log(

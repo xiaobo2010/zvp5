@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from database import db
+from db import backends
 from typings.log import inject_log
 from util.cert import get_current_totp
 from util.object_id import compulsory_temporary_token, get_current_user
@@ -16,7 +17,8 @@ router = APIRouter()
 
 
 async def _get_zvms_new_user(oid: str) -> Optional[dict]:
-    return await db.zvms_new.users.find_one({"_id": validate_object_id(oid)})
+    validate_object_id(oid)
+    return await backends.get_users_repo().get_by_oid(oid)
 
 
 @router.get("/{user_id}")
@@ -83,15 +85,13 @@ async def modify_user_roles_v3(
         raise HTTPException(status_code=403, detail="权限不足")
 
     oid = validate_object_id(user_id)
+    repo = backends.get_users_repo()
 
-    target = await db.zvms_new.users.find_one({"_id": oid})
+    target = await repo.get_by_oid(str(oid))
     if target is None:
         raise HTTPException(status_code=404, detail="用户不存在")
 
-    await db.zvms_new.users.update_one(
-        {"_id": oid},
-        {"$set": {"roles": list(payload.roles)}},
-    )
+    await repo.set_roles(str(oid), list(payload.roles))
 
     log.with_text(
         f"管理员 {await get_user_display_name(user['id'])} 将用户 {target['name']} 的角色修改为 {list(payload.roles)}",
@@ -132,27 +132,27 @@ async def create_user_v3(
     if not valid:
         raise HTTPException(status_code=400, detail=message)
 
-    if await db.zvms_new.users.find_one({"id": payload.id}):
+    repo = backends.get_users_repo()
+    if await repo.find_by_business_id(payload.id):
         raise HTTPException(status_code=409, detail="学号已存在")
 
     class_oid = None
     if payload.class_id:
         class_oid = validate_object_id(payload.class_id)
-        if not await db.zvms_new.groups.find_one({"_id": class_oid}):
+        if not await db.zvms_new.groups.find_one(
+            {"_id": class_oid, "type": {"$ne": "permission"}}
+        ):
             raise HTTPException(status_code=404, detail="班级不存在")
 
     password = hashpw(payload.id.encode("utf-8"), gensalt()).decode("utf-8")
 
-    document = {
-        "id": payload.id,
-        "name": payload.name,
-        "password": password,
-        "roles": list(payload.roles),
-    }
-    if class_oid is not None:
-        document["class_id"] = class_oid
-
-    result = await db.zvms_new.users.insert_one(document)
+    new_id = await repo.create(
+        payload.id,
+        payload.name,
+        list(payload.roles),
+        password,
+        str(class_oid) if class_oid is not None else None,
+    )
 
     log.with_text(
         f"管理员 {await get_user_display_name(user['id'])} 创建了用户 {payload.name}（学号 {payload.id}）",
@@ -160,7 +160,7 @@ async def create_user_v3(
     )
     await log.insert_log()
 
-    return {"id": str(result.inserted_id)}
+    return {"id": new_id}
 
 
 async def _is_same_class(a_id: str, b_id: str) -> bool:
@@ -196,9 +196,7 @@ async def reset_user_password_v3(
         if "secretary" not in per or not await _is_same_class(user["id"], user_id):
             raise HTTPException(status_code=403, detail="权限不足")
 
-    await db.zvms_new.users.update_one(
-        {"_id": validate_object_id(user_id)}, {"$set": {"password": None}}
-    )
+    await backends.get_users_repo().set_password(user_id, None)
 
     log.with_text(
         f"用户 {await get_user_display_name(user['id'])} 将用户 {target['name']} 的密码重置为初始密码（学号）",

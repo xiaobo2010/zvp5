@@ -9,11 +9,11 @@ import datetime
 import hashlib
 import hmac
 import struct
-from database import db
 from bson import ObjectId
 from bcrypt import checkpw, gensalt, hashpw
 from Crypto.Hash import SHA256
 
+from db import backends
 from util.group import get_user_permissions
 
 
@@ -174,10 +174,9 @@ async def validate_by_cert(
     # in a minute
     if time < datetime.datetime.now().timestamp() - 60:
         raise HTTPException(status_code=401, detail="Token expired")
-    founded = await db.zvms_new.users.find({"_id": ObjectId(id)}).to_list(None)
-    if len(founded) == 0:
+    user = await backends.get_users_repo().get_by_oid(id)
+    if user is None:
         raise HTTPException(status_code=404, detail="User not found")
-    user = founded[0]
     if user["password"] is None:
         authenticated = auth_field["password"] == user["id"]
     else:
@@ -192,10 +191,10 @@ async def validate_by_cert(
         weak = user["password"] is None or pwd_strength(auth_field["password"]) < 3
         if weak and type == "long":
             return (
-                jwt_encode(id, eligibility, user.get("roles", []), "short"),
+                jwt_encode(id, eligibility, await get_user_permissions(user), "short"),
                 True,
             )
-        return jwt_encode(id, eligibility, user.get("roles", []), type=type), weak
+        return jwt_encode(id, eligibility, await get_user_permissions(user), type=type), weak
     raw_password = auth_field["password"]
     if raw_password.startswith("*") and raw_password.endswith("*"):
         if verify_totp(id, raw_password[1:-1]):
@@ -205,7 +204,7 @@ async def validate_by_cert(
                 jwt_encode(
                     id,
                     user.get("eligibility", []),
-                    user.get("roles", []),
+                    await get_user_permissions(user),
                     type="otp" if type == "long" else type,
                 ),
                 False,
@@ -225,7 +224,7 @@ async def get_hashed_password_by_cert(cert: str):
 
 
 async def checkpwd(id: str, pwd: str):
-    user = await db.zvms_new.users.find_one({"_id": ObjectId(id)})
+    user = await backends.get_users_repo().get_by_oid(id)
     if checkpw(bytes(pwd, "utf-8"), bytes(user["password"], "utf-8")):
         return True
     return False

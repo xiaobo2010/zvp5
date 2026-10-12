@@ -602,7 +602,7 @@ async def create_statement_from_kernel_data(
         language: Language for the statement ("zh" for Chinese, "en" for English)
     """
 
-    user = await db.zvms.get_collection("users").find_one(
+    user = await db.zvms_new.get_collection("users").find_one(
         {"_id": validate_object_id(id)}
     )
     user_name = user.get("name", "Unknown User")
@@ -677,7 +677,7 @@ async def create_statement_from_kernel_data(
         )
         assignee = activity.get("approver", "Unknown")
         if ObjectId.is_valid(assignee):
-            assignee_data = await db.zvms.get_collection("users").find_one(
+            assignee_data = await db.zvms_new.get_collection("users").find_one(
                 {"_id": ObjectId(assignee)}
             )
         else:

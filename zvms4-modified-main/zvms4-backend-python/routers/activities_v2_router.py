@@ -9,7 +9,6 @@ from pydantic import BaseModel
 from database import db
 from typings.activity_v2 import Activity, ActivityMember
 from typings.log import inject_log
-from typings.user import User as UserV1
 from util.object_id import get_current_user, compulsory_temporary_token
 from util.permission import volunteer, volunteer_member
 from util.user import get_user_display_name
@@ -224,7 +223,7 @@ async def get_activity_members_v2(
         search = re.escape(search) if search else ""
 
     searched_users = (
-        await db.zvms.get_collection("users")
+        await db.zvms_new.get_collection("users")
         .find(
             {
                 "$or": [
@@ -317,11 +316,12 @@ async def add_activity_member_v2(
     target_activity = await db.zvms_new.get_collection("activities").find_one(
         {"_id": validate_object_id(activity_id)}
     )
-    target_user = await db.zvms.get_collection("users").find_one(
+    target_user = await db.zvms_new.get_collection("users").find_one(
         {"_id": validate_object_id(member.member)}
     )
     target_activity = Activity.model_validate(target_activity, strict=False)
-    target_user = UserV1.model_validate(target_user, strict=False)
+    if not target_user:
+        raise HTTPException(status_code=404, detail="User not found")
     await volunteer_member.validate_create_permission(
         user, target_user, target_activity
     )
@@ -347,7 +347,7 @@ async def add_activity_member_v2(
     result = await db.zvms_new.get_collection("activity_members").insert_one(member_)
     
     log.with_text(
-        f'用户 {await get_user_display_name(user["id"])} 将成员 {target_user.name} 加入义工活动《{target_activity.name}》',
+        f'用户 {await get_user_display_name(user["id"])} 将成员 {target_user["name"]} 加入义工活动《{target_activity.name}》',
         type="activity_member_add",
     )
     await log.insert_log()
