@@ -97,7 +97,11 @@ watch(
               :group="group"
               :grouping="false"
             />
-            <ElTag v-if="!user.groups.length" size="small" type="primary">
+            <ElTag
+              v-if="user.position.find((role) => role !== 'student') || !user.groups.length"
+              size="small"
+              type="primary"
+            >
               {{ t('home.positions.' + (user.position.find((role) => role !== 'student') ?? 'student')) }}
             </ElTag>
           </ElDescriptionsItem>

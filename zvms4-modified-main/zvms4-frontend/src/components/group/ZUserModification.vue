@@ -85,7 +85,7 @@ async function refreshClasses() {
   loadingClasses.value = true
   const classesSet = await api.group.read_v2(1, 1000, '')
   if (classesSet) {
-    classes.value = classesSet.groups
+    classes.value = classesSet.groups.filter((g) => g.type !== 'permission')
   }
   loadingClasses.value = false
 }
@@ -145,7 +145,7 @@ async function remoteFetchClass(search: string) {
   if (search) {
     const classesSet = await api.group.read_v2(1, 50, search)
     if (classesSet) {
-      classes.value = classesSet.groups
+      classes.value = classesSet.groups.filter((g) => g.type !== 'permission')
     } else {
       classes.value = []
     }

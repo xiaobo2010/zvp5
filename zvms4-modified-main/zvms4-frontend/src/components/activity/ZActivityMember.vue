@@ -167,7 +167,11 @@ async function insertUserPast() {
             :group="group"
             :grouping="false"
           />
-          <ElTag v-if="person && !person.group.length" size="small" type="primary">
+          <ElTag
+            v-if="person && ((person.roles ?? []).find((role) => role !== 'student') || !person.group.length)"
+            size="small"
+            type="primary"
+          >
             {{ t('home.positions.' + ((person.roles ?? []).find((role) => role !== 'student') ?? 'student')) }}
           </ElTag>
         </ElDescriptionsItem>
