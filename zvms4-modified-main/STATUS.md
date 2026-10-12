@@ -505,3 +505,43 @@ xh_router 任意 URL 代理（:159 urlopen + :46 硬编码签名 KEY）、登录
 - 发版流程（今后）：changelog.ts 加新版本条目 + package.json 升版本 + 后端 main.py 两处版本串
 - 验证：`pnpm type-check` 0 错误、`pnpm build` EXIT=0、后端 `compileall` 通过、全仓版本串扫描仅余 v4.2.0-3（changelog.ts 内 v4.2.0-2 为历史条目属预期）
 - 部署状态：未部署，随 §40 一并等用户指令同步 zgovps-la
+
+# Part 10 — 第二批用户报告 bug：权限组/高一2026级/旧 PWA 首页 404（2026-10-12）
+
+## 42. 现象存档（用户原话摘要）+ 生产取证
+
+1. **群组**：团支书、学生会、管理员权限组没有正确显示在管理页的群组中，也没有在个人身份中显示；查看管理员群组的用户根本没用户，其他权限组也一样。
+2. **高一2026级**：添加义工和日志时显示「无此用户」；在用户页获取用户列表时查看高一账号返回 `Group not found`。
+3. **首页**：访问平台第一页报告 404 错误。
+
+生产取证（zgovps-la 只读，2026-10-12，`/www/wwwlogs/zvp.xiaobopisces.top.log` + mongosh）：
+
+- 404 响应体二分：**27 字节 = `{"detail":"User not found"}`**（v1 用户链，§40 已修未部署）；**22 字节 = `{"detail":"Not Found"}`**（路由不存在）。
+- **旧 PWA 铁证**：GET `/api/v1/platform/totp` ×1145、POST `/api/v1/platform/login` ×498、GET `/api/v3/users/{id}/time` ×1072、`/api/v3/users/{id}/activities` ×845 全部 404，referer 均为 `/index.html`（PWA 壳）——大量学生手机仍运行旧 zvp 前端（其 SW 缓存未被新版接管：旧 SW 无 skipWaiting 释放、新 SW 此前无 clientsClaim/主动接管）。当前前端首页实际调用 `/api/v2/users/{id}/time`（存在），旧端点不属于新前端调用面。
+- **DB 真相**：权限组（团支书/学生会/管理员）仅存在于 `zvms.groups`（`type:"permission"`，permissions 分别 secretary/department/admin）；高一/蛟一 17 个班级仅存在于 `zvms_new.groups`；高一用户（如 20260101 暴墨涵）legacy 库零命中；权限组成员靠 legacy `user.group` 数组关联（管理员 8 / 团支书 41 / 学生会 41），新库无此关联、角色在 `roles`。
+- 登录面：POST `/api/users/auth` 200×184 / 403×197（口令错误与弱密码临时授权）/ 404×22（库内无此学号），未见系统性登录故障。
+
+## 43. 根因与修复（前后端 11 文件 + e2e）
+
+| # | 根因 | 修复 |
+|---|---|---|
+| 1 | 管理页群组列表 `ZGroupList`→`/v2/groups` 只查 `zvms_new.groups`，权限组在 legacy | 后端 `get_groups_v2` 追加 legacy `type:'permission'` 行（`{_id,name,type,permissions}`），total 合并；班级在前按 _id 升序、权限组在后按 name |
+| 2 | `/v3/groups/{gid}/users` 按 `class_id` 查新库，权限组成员关联在 legacy `group` 数组 → 恒空 | 后端 `get_group_users_v3`：gid 不在 `zvms_new.groups` 时按 legacy 组解析成员，逐成员按学生 id 映射新库 `roles/class_id/class_name`（新库 `_id` 优先，无对应留空） |
+| 3 | 角色标签仅在零组时渲染（§40）；且 v1 `read_user` legacy 主路径文档无 `roles` 字段 | 前端 `UserHome.vue`/`ZActivityMember.vue`：存在非 student 角色即常显标签，零组保持 student 兜底；后端 `read_user` legacy 命中后按学生 id 合并新库 `roles` |
+| 4 | 添加义工/日志选人走 v1 `/users` 仅查 legacy → 纯新库用户搜不到 →「无此用户」 | 后端 `read_users` 双库合并搜索（name/id + legacy past），按学生 id 去重、新库 `_id` 优先，id 升序，分页语义不变（page=-1 全量） |
+| 5 | 生产版 v1 `get_group` 无 zvms_new 回退 → 高一账号 `Group not found` | 已在 §40 修复，本次随部署生效 |
+| 6 | 旧 PWA 404：旧 SW 不被新 SW 接管 | `vite.config.ts` workbox 加 `skipWaiting`+`clientsClaim`、`cleanupOutdatedCaches` 开——旧客户端一次导航即被新 SW 接管，旧 workbox 缓存随 activation 清理 |
+| 7 | 学生班级选择器走 v1 `/groups`：原 `per==[]` 直接 403，且仅 legacy 37 班、缺高一/蛟一 | 后端 `get_groups` 双库合并 + `type` 参数（class/permission/all）+ 删除空 per 403 门禁（登录即可）；前端 `ZSelectClass` 学生分支 perpage 5→50 |
+| 8 | v2 合并副作用：班级指派/选择列表可能混入权限组 | `ZSelectClass` admin 分支、`ZUserModification` 两处 read_v2 数据源过滤 `type!=='permission'`；`ZGroupList` permissions 迭代兜底；`types/group.d.ts` `type`/`permissions` 转可选 |
+
+版本：v4.2.0-3 → **v4.2.0-4**（按 §41 规范：changelog.ts 新条目 + package.json + main.py 两处版本串）。
+
+## 44. 验证（2026-10-12）
+
+- 后端：`compileall` 通过；e2e 扩展后 **34/34 PASS**（seed 补种：3 权限组、legacy 班级、6 legacy 用户、双库同 id 不同 `_id` 用户、纯新库高一班级+用户；断言覆盖 fix1~fix5 全部行为，§40 原有断言保留全过）；orchestrator 复核：重启 uvicorn（磁盘对齐）后独立复跑 **34/34**。
+- 前端：`pnpm type-check` 0 错误；`pnpm build` EXIT=0；`dist/sw.js` skipWaiting/clientsClaim/cleanupOutdatedCaches 三标记均命中。
+- 红线：diff 新增行 `zvp_session|com.xh|xuehai|APILogger|set_cookie|request.state|stats0|clarity` 零命中；无新依赖。
+- 版本串全仓扫描：代码面仅余 v4.2.0-4（changelog.ts 内 v4.2.0-2/-3 为历史条目，属预期）。
+- e2e 环境：uvicorn 停止、mongo 容器删除、端口释放；脚本留存 `/tmp/opencode/zvms4-e2e/`（seed/smoke/ids.json），部署同步验证可复用。
+- 有意保留：v3 权限组成员 `pwdm` 读 legacy 成员密码位（与 v1 `get_users_in_class` 同语义）；`get_groups` 的 `type` 参数名在局部作用域遮蔽内置名（无害）。
+- 部署提示（等下一条指令执行）：前端 dist 重建 + 后端 5 文件同步 + systemd 重启；上线后观察 `/api/v1/platform/*` 调用是否归零（SW 接管生效信号），旧客户端最迟一次导航后切换到新版。
