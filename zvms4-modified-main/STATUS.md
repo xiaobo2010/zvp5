@@ -556,3 +556,16 @@ xh_router 任意 URL 代理（:159 urlopen + :46 硬编码签名 KEY）、登录
 - **部署验证（全过）**：shield 无 Mozilla UA → **418**（拦截生效）；Mozilla UA → /api/health OK、/api/version 与 /api/ root 均 **v4.2.0-3**；路由活性 v2/groups=401、v1/users=200（无 5xx，DB 连接正常）；nginx 全链路 index=200 且引用新资产 `index-Bj9m3RwP.js`、/sw.js `skipWaiting=1`、dist assets 含 v4.2.0-3。
 - **上线观察项**：`/api/v1/platform/*` 调用应随旧 PWA 客户端打开应用逐步归零（skipWaiting SW 一次导航即接管）；如长期不归零，需进一步排查该客户端 SW 更新链路。
 - 回滚路径：恢复备份包后 `systemctl restart zvms4` 即可整体回退。
+
+## 46. Part 11：前端体验批次——changelog 免登录 / 版本自动接管 / IDB 本地缓存 / UI 徽标（2026-10-12）
+
+- **changelog 与 about 免登录**：登录白名单（App.vue route watch）补 `endsWith('changelog')`，入口链登录页「关于」→「查看更新日志」本来就在；AboutView/ChangelogView 加项目标准返回按钮（ElPageHeader + ArrowLeft + router.back()，与 ManageHome/UserPage 同款）。
+- **PWA 版本自动接管强化**：vite.config onRegisteredSW 轮询 10h→30min（cache:'no-store'）；App.vue 监听 controllerchange（hadController 首装守卫）自动 reload——新版 SW 一接管，打开中的页面立即拉新代码，旧客户端无需重装/手动刷新。
+- **IndexedDB 本地缓存（网络抖动兜底）**：取证确认 zvp-latest **无手写 IDB 代码**（全树 indexedDB/createObjectStore 零命中，DevTools 所见为 workbox 内部存储）——故为自建 `src/utils/idbCache.ts`（89 行，原生 IndexedDB，零依赖零网络零外部引用，300 条按时间淘汰）；axios 拦截器：GET 2xx fire-and-forget 写缓存，网络失败/502/503/504 回读缓存返回（限频 10s 提示「已显示本地缓存数据」），POST/写操作/blob 下载不缓存。
+- **UI**：UserHome/ZActivityMember 身份 ElTag→ZUserPosition（管理员红色盾牌 logo / 团支书 info / 学生会 warning，与群组管理页 ZGroupList 同源）；根因修 `User.roles`/`UserProfile.roles` 类型错标 string[]→UserPosition[]，移除 stores/user.ts 的 `as` 强转。
+- **changelog 文案**：「学生手机」→「学海平板」。
+- **生产 404 定案（零代码改动）**：platform 风暴部署后 0 次；`/api/groups/{id}` 6 次全在 restart（16:20:23）前的旧进程，实弹复测 200（高一5班，双库回退）；`/api/v3/users/{id}/time|activities` ×10（16:22-16:31）为学海平板 WebView 里古老 PWA 愈合窗口残留（referer 恒 `/index.html`，本仓前后端均不调此路由），16:31:11 后 522 请求零 404。
+- **红线审计**：本批 diff 新增行全量扫描零命中（zvp_session/com.xh/xuehai/APILogger/set_cookie/request.state/stats0/clarity/外链）；zvp-latest 缓存层取证亦零红线，ManageHome 外站跳转确认未引入。
+- **验证**：type-check 0 错误、build EXIT=0（dist 含 v4.2.1-1）、main.py COMPILE_OK、sw.js skipWaiting=1。
+- **版本**：v4.2.0-3 → **v4.2.1-1**（功能批次，用户指定）；改动 12 文件（11 改 + idbCache.ts 新增）。
+- **范围外注记**：工作区另有 `zvms4-adb-migration` 分支本命的 Oracle ADB 迁移脚手架（db/oracle/、docs/ADB_*.md、requirements sqlalchemy/oracledb、settings.example ORACLE_*）——独立工作线，**未混入本批提交**。
