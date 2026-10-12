@@ -42,4 +42,4 @@ export const changelog: ChangelogEntry[] = [
   }
 ]
 
-export const APP_VERSION = changelog[0].version
+export const APP_VERSION = 'v4.2.2-1'
