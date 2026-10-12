@@ -1,15 +1,17 @@
 # ZVP5 · 项目总览与开发状态
 
-> 本文件是 `xiaobo2010/zvp5` 仓库的**唯一权威文档**，由以下四份原零散文档合并而成（源文件已删除，内容**全文保留**于对应章节）：
+> 本文件是 `xiaobo2010/zvp5` 仓库的**权威文档**，由以下四份原零散文档合并而成（内容**全文保留**于对应章节）：
 >
-> | 原文件 | 并入章节 |
-> |---|---|
-> | `zvms4-modified-main/README.md` | §二 开发主线：zvms4-modified-main |
-> | `zvms4-modified-main/DB_ALIGNMENT.md` | §三 数据库对齐（Ground Truth） |
-> | `zvms4-modified-main/STATUS.md` | §四 模块移植与安全审计记录（Part 1-7） |
-> | `zvp-latest/DEV_STATUS.md` | §五 zvp-latest 开发状态 |
+> | 原文件 | 并入章节 | 原文件去向 |
+> |---|---|---|
+> | `zvms4-modified-main/README.md` | §二 开发主线：zvms4-modified-main | zzj 整合时删除；**2026-10-12 主干合并后保留**（见 §七） |
+> | `zvms4-modified-main/DB_ALIGNMENT.md` | §三 数据库对齐（Ground Truth） | 已删除（内容即本节） |
+> | `zvms4-modified-main/STATUS.md` | §四 模块移植与安全审计记录（Part 1-7） | zzj 整合时删除；**2026-10-12 主干合并后保留**（Part 1-11 全文，见 §七） |
+> | `zvp-latest/DEV_STATUS.md` | §五 zvp-latest 开发状态 | 已删除（内容即本节） |
 >
 > 正文中出现的 `STATUS.md` / `DB_ALIGNMENT.md` 等文件名，即指上述对应章节；「本文件」等自称亦相应指本章节。
+>
+> **注意**：本文件 §四 仅覆盖到 **Part 7**；主干 2026-10-12 合并 `zvp5-dev` 后带入的 **Part 8-11** 全文见保留的 `zvms4-modified-main/STATUS.md`（概览见 §七）。
 
 ---
 
@@ -41,9 +43,10 @@
 
 - §二 开发主线：zvms4-modified-main —— 目录结构、代码来源、DB 对齐、配置运行、已知事项
 - §三 数据库对齐（Ground Truth）—— 现役两库真实结构 + 逐条对齐改动清单
-- §四 模块移植与安全审计记录 —— Part 1 义工管理 / Part 2 用户管理与登录 / Part 3 日志 / Part 4 登录与鉴权 / Part 5 全量 API 盘点 / Part 6 弱密码强制改密 / Part 7 token 有效期
+- §四 模块移植与安全审计记录 —— Part 1 义工管理 / Part 2 用户管理与登录 / Part 3 日志 / Part 4 登录与鉴权 / Part 5 全量 API 盘点 / Part 6 弱密码强制改密 / Part 7 token 有效期（**Part 8-11 见保留的 `zvms4-modified-main/STATUS.md`**）
 - §五 zvp-latest 开发状态 —— 后端 API 与前端页面完成度对账（P0-P2 已清零）
 - §六 zvp5-gitlab 开发进度对齐 —— 目录清单 / 完成度 / 不可运行性证据 / 与主线功能面照
+- §七 主干合并与 ADB 处置记录 —— `zvp5-dev` 并入主干（Part 8-11）/ Oracle ADB 适配排除 / 与 zzj 文档整合线合流
 
 
 ---
@@ -56,6 +59,8 @@
 > **改动方向三（2026-10-10 起）：用户管理与登录（登录语义补齐 / 用户·班级 v2/v3 API / 设备-绑定-外链三类禁止面清除）按指令从现役 zvp 移植，经全树终局 grep + 写后自审放行，见 `STATUS.md` Part 2。**
 > **改动方向四（2026-10-10 起）：日志 API 移植与汉化（type/level 业务语义 + 35 站点全面行为记录 + 管理端过滤），日志端点 GET-only 防篡改，并复查清除历史残面，见 `STATUS.md` Part 3。**
 > **改动方向五（2026-10-10 起）：登录与身份验证 API 移植（TOTP 动态码按用户派生 / 重置为初始密码 v3 / 登出与改密语义修复），登录/鉴权路径零外呼，见 `STATUS.md` Part 4。**
+> **改动方向六（2026-10-11 起，2026-10-12 主干合并带入）：后端可用状态落地——shield 请求加固中间件按 zvp 语义改写移植（剥离设备会话/学海面），运行缺口修复（依赖缺失 / example 配置字段缺失 / RSA 1024 / 关停竞态），并完成真实运行时端到端验证（41/41 断言），见 `STATUS.md` Part 8。**
+> **改动方向七（2026-10-12 起，2026-10-12 主干合并带入）：双库断裂面系统性收敛——群组与用户读取全面双库合并（权限组列表与成员、用户搜索去重、roles 合并、班级选择器修复），PWA SW 即时接管修复旧客户端首页 404，见 `STATUS.md` Part 10。**
 > 其余前端 UI 与后端业务逻辑仍以上游 zvms4 为基准，不采用 zvp 的代码（zvp 代码经检查存在漏洞与后门，仅提取其数据结构；义工管理与用户管理移植面经扫描确认无外链 / 外呼 / 越权代码，范围外危险代码一律未引入，上游自带的设备采集 / 外呼代码已在用户管理面上清除）。
 
 ---
@@ -1006,3 +1011,36 @@ XH：`/xh/api`（`api/xh.js`）
 ### 更新记录
 
 - **2026-10-10（进度对齐）**：对 `zvp5-gitlab/` 做静态对账并落档本章——31 个 `.py`（约 2,183 行）+ 2 个 `.bak`；`compileall` 证得 `routers/v1/{activities,platform}.py` 与 `utils.py` 三处语法错误；核对出 `models/relations.py`、`dtypes/activities.py`、`config.py`、顶层 `typings`、包 `__init__.py` 等缺失面与被引用未定义名清单；确认 `app.py`/`routers/misc.py` 为空、全树仅 10 个 handler（可用者 1–2 个）。结论：设计层约八成、实现层约一成，整体 15%–20%，不具备可运行性；与主线为两套并行实现，需定向后方可续写。
+
+---
+
+## 七、主干合并与 ADB 处置记录（2026-10-12）
+
+> 本次操作：将 `zvp5-dev` 分支的**非 ADB** 内容并入主干 `main`，并按稳健性要求排除 Oracle ADB 适配；同时回填 zzj 的 `origin/main` 文档整合线。
+
+### 7.1 合并内容（`zvp5-dev` → `main`）
+
+`zvp5-dev` 相对原 `main` 共 **13** 个提交，其中 **12** 个（`16eb170…28c939f`，即 Part 8-11 全部改进）已并入主干，仅 `cdf85ad` 被排除（见 7.2）。改动全部落在 `zvms4-modified-main/`，概览：
+
+| 批次 | 内容 | 版本 |
+|---|---|---|
+| Part 8 | 后端可用状态落地——shield 请求加固中间件按 zvp 语义改写移植（剥离设备会话 / 学海面），运行缺口修复（依赖缺失 / example 字段 / RSA 2048 / 关停竞态），41 项运行时端到端冒烟 | — |
+| Part 9 | 四用户报告 bug 修复（双库断裂 / 未登录日志 / 删除跳转）+ CHANGELOG 页面 + logo 替换 | v4.2.0-3 |
+| Part 10 | 群组与用户读取双库收敛（权限组列表与成员、搜索去重、roles 合成、班级选择器）+ 身份徽标常显 + PWA SW 即时接管 | v4.2.0-4 |
+| Part 11 | changelog 免登录 + PWA 版本自动接管（SW 轮询 30min + controllerchange 自动 reload）+ IndexedDB 本地缓存 + 关于 / 更新日志返回按钮 | v4.2.1-1 |
+
+**主干当前版本：v4.2.1-1**；Part 1-11 全文见保留的 `zvms4-modified-main/STATUS.md`（本文件 §四 仅覆盖至 Part 7）。
+
+### 7.2 ADB 处置（排除）
+
+- **排除提交**：`cdf85ad feat(zvp5-gitlab): 适配 Oracle Autonomous Database (ADB)`
+- **处置方式**：快进至 `zvp5-dev` 顶点后，在主干上 `revert` 该提交——`zvp5-gitlab/` 全量还原为 ex-GitLab 快照（`d86cbb6`）状态：`database.py` 的 `String(255)`、models 的 CLOB 化、`config.example.py` 的 ADB 连接示例、README 的 ADB 选型记录**一律不进入主干**。
+- **理由**：ADB（甲骨文自治数据库）适配线与主干基准（MongoDB 双库 `zvms` / `zvms_new`）无关，剥离后主干更稳健；独立的 `zvms4-adb-migration` 工作线保持不动、另行处置。
+- **校验**：主干全树仅剩 `zvms4-modified-main/STATUS.md` 一处**文字注记**提及 ADB（说明其为独立工作线），无任何 ADB 代码或依赖残留。
+
+### 7.3 与 zzj 文档整合线的合流
+
+主干合并同时回填了 `origin/main` 上 zzj 的 5 个提交（`24cbb15…d00226e`，含「零散文档并入根 README」）。冲突处置：
+
+- `zvms4-modified-main/README.md`、`STATUS.md`：zzj 线删除 / `zvp5-dev` 线修改 → **保留修改**（不丢 Part 8-11 增量）。
+- `zvms4-modified-main/DB_ALIGNMENT.md`、`zvp-latest/DEV_STATUS.md`：**随 zzj 线删除**（内容已并入本文件 §三 / §五）。
