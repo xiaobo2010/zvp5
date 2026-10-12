@@ -19,7 +19,7 @@
 ```
 zvp-modified-v4/
 ├── README.md                 # 本文件
-├── STATUS.md                 # 模块移植：Part 1 义工管理（10-09）/ Part 2-4 用户·日志·登录（10-10）/ Part 5 全量 API 盘点（10-10）/ Part 6 弱密码强制改密（10-10）/ Part 7 token 有效期调整（10-10）/ Part 8 可用状态落地：运行时验证 + shield 加固 + 运行缺口修复（10-11）/ Part 9 部署切换·logo·四 bug 修复·CHANGELOG 页面（10-11）/ Part 10 双库收敛与 PWA 接管（10-12）
+├── STATUS.md                 # 模块移植：Part 1 义工管理（10-09）/ Part 2-4 用户·日志·登录（10-10）/ Part 5 全量 API 盘点（10-10）/ Part 6 弱密码强制改密（10-10）/ Part 7 token 有效期调整（10-10）/ Part 8 可用状态落地：运行时验证 + shield 加固 + 运行缺口修复（10-11）/ Part 9 部署切换·logo·四 bug 修复·CHANGELOG 页面（10-11）/ Part 10 双库收敛与 PWA 接管（10-12）/ Part 11 前端体验批次（10-12）/ Part 12 CHANGELOG 数据库化·管理员可编辑（10-12）
 ├── DB_ALIGNMENT.md           # 已并入仓库根 README §三（数据库对齐 Ground Truth），本目录不再有该文件
 ├── zvms4-backend-python/     # FastAPI 后端（上游 zvms4，DB 层已对齐；义工/用户/日志/登录 v2-v3 已移植；shield 加固就位，已通过 41 项运行时冒烟）
 │   ├── README.md
@@ -129,6 +129,6 @@ uvicorn main:app --host 0.0.0.0 --port 8000
 - **后端已通过真实运行时验证（2026-10-11）**：本地 MongoDB 容器 + uvicorn 启动 + 41 项端到端断言全过（登录/弱密码强制改密/用户班级增改/义工活动与成员/TOTP/重置初始密码/日志过滤与 11 类 type/导出任务与 xlsx 下载/越权 403/shield 418 门禁），详见 `STATUS.md` Part 8。修复的运行缺口：requirements 依赖清理与 openpyxl 补齐、settings.example 缺字段（LANGUAGE/CHINESE_FONT）、RSA 1024→2048、SIGTERM 双路关停竞态。
 - **shield 门禁的部署注意**：非浏览器客户端（监控探针等）会被 418 拦截，探活请带浏览器式 UA 或走 TCP 层；被拦请求写 `security_alert` 日志（admin 可在日志页审计）。
 - **退出行为**：MongoDB 不可达时服务退出会阻塞至 serverSelectionTimeout（默认 30s）后才放弃——正常部署（mongo 在线）为瞬时操作。
-- **版本发布规范（2026-10-11 定，同日已实现）**：每次发版，**前后端版本号同步更新**——后端 `/api/version` 与 `/api/` root 响应、前端 `package.json`；`/about` 页显示与 favicon 缓存参数经 `src/data/changelog.ts` 的 `APP_VERSION` 自动引用，发版只需改 changelog.ts（新增版本条目）+ package.json + 后端两处。**CHANGELOG 页面**已上线：`/changelog` 公共路由（About 页有「查看更新日志」入口），逐版记录 bug 修复，条目从 `STATUS.md` 对应 Part 提取（v4.2.1-1 见 Part 11 §46，v4.2.0-3 见 Part 9 §40，v4.2.0-2 见 §36/§37）。当前版本 **v4.2.1-1**。
+- **版本发布规范（2026-10-11 定，同日已实现）**：每次发版，**前后端版本号同步更新**——后端 `/api/version` 与 `/api/` root 响应、前端 `package.json`；`/about` 页显示的版本号优先读库（最新 changelog 条目），失败回退 `src/data/changelog.ts` 的 `APP_VERSION` 兜底；发版仍需手工改 `package.json` + 后端 `main.py` 两处版本串 + `src/data/changelog.ts` 的 `APP_VERSION` 兜底常量。**CHANGELOG 页面**：`/changelog` 公共路由（About 页有「查看更新日志」入口），数据已入库（`zvms_new.changelog`，见 Part 12 §47），管理员可在页面新增/编辑/删除历史版本。当前版本 **v4.2.2-1**。
 - **用户线上报告 4 个 bug（2026-10-11 存档，已修复部署）**：用户身份栏空白 / 用户详情"班级不存在" / 日志未登录请求显示"无此用户" / 删除义工后应跳转 `/activities`——根因分析与修复方向见 `STATUS.md` Part 9 §38，四 bug 已随 v4.2.0-3 于 2026-10-12 部署上线（§45）。
 - **前端体验批次（2026-10-12，v4.2.1-1）**：changelog/about 免登录可见并新增返回按钮；PWA 版本自动接管强化（SW 轮询 10h→30min + controllerchange 自动 reload）；IndexedDB 本地缓存层（取证确认 zvp-latest 无手写 IDB 代码，系自建——零依赖零网络，网络失败/网关错误时回读缓存兜底）；身份徽标升级为与群组管理页同源的彩色 logo（管理员红色）；生产 404 三类残留定案消除。详见 `STATUS.md` Part 11 §46。

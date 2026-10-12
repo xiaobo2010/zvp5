@@ -21,6 +21,7 @@ from routers import (
     activities_v3_router,
     users_v3_router,
     groups_v3_router,
+    changelog_router,
 )
 from database import close_mongo_connection, connect_to_mongo
 import socketio
@@ -180,6 +181,9 @@ app.include_router(mcp_router.router, prefix="/api/v2/mcp")
 app.include_router(activities_v3_router.router, prefix="/api/v3/activities")
 app.include_router(users_v3_router.router, prefix="/api/v3/users")
 app.include_router(groups_v3_router.router, prefix="/api/v3/groups")
+app.include_router(
+    changelog_router.router, prefix="/api/changelog", tags=["changelog"]
+)
 
 
 @app.get("/api/")
@@ -189,7 +193,7 @@ async def home():
         "code": 200,
         "data": {
             "message": "Welcome to ZVMS API",
-            "version": "v4.2.1-1",
+            "version": "v4.2.2-1",
             "author": "ZZDev",
             "license": "MIT",
             "source": "https://github.com/zvms/zvms4-backend-python.git",
@@ -293,7 +297,7 @@ async def operation_failure_exception_handler(_: Request, exc: OperationFailure)
 
 @app.get("/api/version")
 async def get_version():
-    return {"status": "ok", "code": 200, "data": "v4.2.1-1"}
+    return {"status": "ok", "code": 200, "data": "v4.2.2-1"}
 
 
 if __name__ == "__main__":
