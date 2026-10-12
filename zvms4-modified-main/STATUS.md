@@ -545,3 +545,14 @@ xh_router 任意 URL 代理（:159 urlopen + :46 硬编码签名 KEY）、登录
 - e2e 环境：uvicorn 停止、mongo 容器删除、端口释放；脚本留存 `/tmp/opencode/zvms4-e2e/`（seed/smoke/ids.json），部署同步验证可复用。
 - 有意保留：v3 权限组成员 `pwdm` 读 legacy 成员密码位（与 v1 `get_users_in_class` 同语义）；`get_groups` 的 `type` 参数名在局部作用域遮蔽内置名（无害）。
 - 部署提示（等下一条指令执行）：前端 dist 重建 + 后端 5 文件同步 + systemd 重启；上线后观察 `/api/v1/platform/*` 调用是否归零（SW 接管生效信号），旧客户端最迟一次导航后切换到新版。
+
+## 45. 版本回收与生产部署执行（2026-10-12）
+
+- **版本回收（用户指令）**：生产仍在 v4.2.0-2（-3/-4 均从未上线），两批修复（§40 + Part 10）合并为一次发布——删除 v4.2.0-4 条目，changelog.ts 合并为单条 **v4.2.0-3**（2026-10-12，8 项，含 Part 8 加固的用户面表述），版本串四处回落（changelog.ts / package.json / main.py×2）；全仓扫描 4.2.0-4 零残留，type-check/build 全绿后重建 dist。
+- **部署（zgovps-la）**：
+  - 预检：config.py 两端 md5 一致（`5a0879bf…`）；备份 `/www/zvms4/backups/pre-deploy-20261012-1618.tar.gz`（125M，backend + frontend-dist 整包）
+  - 同步：后端 rsync 增量（main.py + routers×5，排除 settings.py / 密钥 / .venv / __pycache__）+ 服务器 venv `pip install -r requirements.txt`（openpyxl 3.1.5 就位）+ 前端 dist rsync `--delete` + `chown -R www:www`
+  - 重启：`systemctl restart zvms4`，journal 启动干净（Application startup complete，无异常）
+- **部署验证（全过）**：shield 无 Mozilla UA → **418**（拦截生效）；Mozilla UA → /api/health OK、/api/version 与 /api/ root 均 **v4.2.0-3**；路由活性 v2/groups=401、v1/users=200（无 5xx，DB 连接正常）；nginx 全链路 index=200 且引用新资产 `index-Bj9m3RwP.js`、/sw.js `skipWaiting=1`、dist assets 含 v4.2.0-3。
+- **上线观察项**：`/api/v1/platform/*` 调用应随旧 PWA 客户端打开应用逐步归零（skipWaiting SW 一次导航即接管）；如长期不归零，需进一步排查该客户端 SW 更新链路。
+- 回滚路径：恢复备份包后 `systemctl restart zvms4` 即可整体回退。
