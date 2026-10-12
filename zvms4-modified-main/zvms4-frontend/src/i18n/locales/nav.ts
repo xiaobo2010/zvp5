@@ -4,6 +4,7 @@ export const zhCN = {
   manage: '管理',
   create: '创建义工',
   about: '关于',
+  changelog: '更新日志',
   logout: '退出登录',
   reset: '密码修改',
   language: '',

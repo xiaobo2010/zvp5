@@ -25,6 +25,7 @@ import {
 } from '@/components'
 import { useI18n } from 'vue-i18n'
 import api from '@/api'
+import router from '@/router'
 import { StreamlineInterfaceUserEditActionsCloseEditGeometricHumanPencilPersonSingleUpUserWrite } from '@/icons'
 import UilStatistics from '@/icons/UilStatistics.vue'
 import { Doughnut } from 'vue-chartjs'
@@ -97,6 +98,7 @@ async function submitInfo() {
 
 async function deleteActivity(id: string) {
   await api.activity.deleteOne(id, user._id)
+  router.push('/activities')
   emits('refresh')
 }
 

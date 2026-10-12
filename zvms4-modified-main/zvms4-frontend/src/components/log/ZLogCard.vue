@@ -58,7 +58,8 @@ const levelLabels: Record<string, string> = {
           </ElTag>
         </ElFormItem>
         <ElFormItem label="用户">
-          <ZActivityMember :id="log.user" />
+          <ZActivityMember v-if="log.user" :id="log.user" />
+          <ElTag v-else size="small" type="info">未登录</ElTag>
         </ElFormItem>
         <ElFormItem label="用户 ID">
           {{ log.user }}

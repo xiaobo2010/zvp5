@@ -5,7 +5,8 @@ import {
   ElDescriptionsItem,
   ElButton,
   ElCard,
-  ElSkeleton
+  ElSkeleton,
+  ElTag
 } from 'element-plus'
 import { Refresh } from '@element-plus/icons-vue'
 import dayjs from '@/plugins/dayjs'
@@ -96,6 +97,9 @@ watch(
               :group="group"
               :grouping="false"
             />
+            <ElTag v-if="!user.groups.length" size="small" type="primary">
+              {{ t('home.positions.' + (user.position.find((role) => role !== 'student') ?? 'student')) }}
+            </ElTag>
           </ElDescriptionsItem>
         </ElDescriptions>
         <div v-if="user.position.includes('secretary')" class="py-4">

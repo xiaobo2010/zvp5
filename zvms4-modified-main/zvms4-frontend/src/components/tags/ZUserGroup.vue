@@ -43,10 +43,11 @@ function openGroup() {
 <template>
   <ZUserPosition
     v-if="!loading && !error"
-    :position="groupData?.permissions ?? []"
+    :position="groupData?.permissions?.length ? groupData.permissions : ['student']"
     :group="grouping"
     :text="groupData?.name"
     @dblclick="openGroup"
   />
-  <ElButton v-else loading text bg round size="small" type="info">Loading...</ElButton>
+  <ElButton v-else-if="loading" loading text bg round size="small" type="info">Loading...</ElButton>
+  <ElButton v-else text bg round size="small" type="info">未知</ElButton>
 </template>

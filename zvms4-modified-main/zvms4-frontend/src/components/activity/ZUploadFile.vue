@@ -75,7 +75,7 @@ async function handleError(err: Error) {
                 drag
                 :disabled="activity.name === ''"
                 :action="
-                  baseURL + `imports/activities?name=${activity.name}&desc=${activity.description}`
+                  baseURL + `/imports/activities?name=${activity.name}&desc=${activity.description}`
                 "
                 multiple
                 :headers="{

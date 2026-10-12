@@ -135,29 +135,6 @@ export const past = {
   }
 }
 
-async function deleteUser(user: string, target: string) {
-  const token = await temporaryToken(user)
-  const result = (
-    await axios({
-      method: 'delete',
-      url: `/users/${target}`,
-      data: { target },
-      headers: {
-        Authorization: 'Bearer ' + token
-      }
-    })
-  ).data as Response<null>
-  if (result.status === 'error') {
-    ElNotification({
-      title: 'Error when updating user: ' + result.message,
-      message: result.message,
-      type: 'error'
-    })
-    return false
-  }
-  return true
-}
-
 async function getUsersV2(
   page: number = 1,
   size: number = 10,
@@ -208,4 +185,4 @@ async function createUserV3(
   return result?.id ?? false
 }
 
-export { getUser as readOne, getUsers as read, putUser as update, deleteUser as removeOne, getUserV3 as readOne_v3, getUsersV2 as read_v2, putUserRoles as updateRoles, createUserV3 as create_v3 }
+export { getUser as readOne, getUsers as read, putUser as update, getUserV3 as readOne_v3, getUsersV2 as read_v2, putUserRoles as updateRoles, createUserV3 as create_v3 }

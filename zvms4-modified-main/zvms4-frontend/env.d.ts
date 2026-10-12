@@ -1,5 +1,13 @@
 /// <reference types="vite/client" />
 
+interface ImportMetaEnv {
+  readonly VITE_API_BASE?: string
+}
+
+interface ImportMeta {
+  readonly env: ImportMetaEnv
+}
+
 declare module 'virtual:pwa-register/vue' {
   // eslint-disable-next-line @typescript-eslint/prefer-ts-expect-error
   // @ts-expect-error ignore when vue is not installed

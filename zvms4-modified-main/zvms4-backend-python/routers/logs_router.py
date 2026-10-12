@@ -64,7 +64,10 @@ async def read_logs(
 
     for log in logs:
         log["_id"] = str(log["_id"])
-        log["user_name"] = names.get(log.get("user"), "未知用户")
+        if log.get("user"):
+            log["user_name"] = names.get(log.get("user"), "未知用户")
+        else:
+            log["user_name"] = "未登录"
 
     return {
         "code": 200,

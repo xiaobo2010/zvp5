@@ -108,6 +108,15 @@ async def get_group(group_id: str):
     result = await db.zvms.groups.find_one({"_id": ObjectId(group_id)})
 
     if result is None:
+        new_result = await db.zvms_new.groups.find_one({"_id": ObjectId(group_id)})
+        if new_result is not None:
+            result = {
+                "_id": new_result["_id"],
+                "name": new_result["name"],
+                "type": "class",
+            }
+
+    if result is None:
         raise HTTPException(status_code=404, detail="Group not found")
 
     result["_id"] = str(result["_id"])
