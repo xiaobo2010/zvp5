@@ -1,8 +1,8 @@
 """MongoDB implementation of :class:`db.repos.protocols.UsersRepo`.
 
 A mechanical lift of the live ``motor`` queries against ``zvms_new.users``.
-The row shapes are translated to exactly match ``db/repos/oracle/users.py``
-(``_page_row`` / ``_user_doc``): ``_id`` becomes a lowercase hex string, the
+The row shapes are the canonical repository shapes (``_page_row`` /
+``_user_doc``): ``_id`` becomes a lowercase hex string, the
 aggregation's ``未知班级`` / ``""`` sentinels are preserved, and optional fields
 are omitted when absent so ``"class_id" in user`` keeps its meaning.
 

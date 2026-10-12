@@ -1,9 +1,8 @@
 """MongoDB implementation of :class:`db.repos.protocols.ActivitiesRepo`.
 
 A mechanical lift of the live ``motor`` queries against ``zvms_new.activities``.
-The row shape is the Mongo document shape itself (``_id`` normalised to a
-lowercase hex string) and matches ``db/repos/oracle/activities.py`` field for
-field, so the two backends are drop-in compatible.
+The row shape is the Mongo document shape itself, with ``_id`` normalised to a
+lowercase hex string.
 
 Sources lifted verbatim
 -----------------------
@@ -38,7 +37,7 @@ _COLLECTION = "activities"
 
 
 def _activity_doc(doc: Row) -> Row:
-    """Canonical activity row (matches ``oracle/activities._activity_doc``)."""
+    """Canonical activity row."""
     return {
         "_id": str(doc["_id"]),
         "name": doc.get("name"),
