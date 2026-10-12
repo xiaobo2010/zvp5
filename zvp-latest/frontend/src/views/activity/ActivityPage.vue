@@ -176,7 +176,6 @@ const doEdit = async () => {
     } finally {
         editing.value = false
     }
-    // TODO WIP
 }
 
 const add = ref(false)

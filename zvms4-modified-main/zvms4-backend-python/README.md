@@ -2,7 +2,7 @@
 
 > 上游 **zvms4-backend-python**（`zvms/zvms4-backend-python`）的定制版本。
 > 业务逻辑与路由以上游为基准；**数据库层已向现役 zvp 平台真实结构对齐**。
-> 顶层说明与对齐总览见 `../README.md`，数据库真实结构与逐条改动见 `../DB_ALIGNMENT.md`。
+> 顶层说明与对齐总览见仓库根 `../../README.md`（§二 / §三），数据库真实结构与逐条改动见其中「§三 数据库对齐（Ground Truth）」。
 
 ## 技术栈
 
@@ -22,7 +22,7 @@ FastAPI + Motor(async MongoDB) + Pydantic；可选 socket.io / APScheduler（上
 - **v2 / v3、exports / imports、登录鉴权** → `zvms_new.*`
 - **v1（用户列表、班级 v1）与 `util/*`** → 遗留 `zvms.*`
 
-完整字段/类型与本次对齐的 11 处改动，见 `../DB_ALIGNMENT.md`。
+完整字段/类型与本次对齐的 11 处改动，见仓库根 `../../README.md` §三。
 
 ## 配置
 

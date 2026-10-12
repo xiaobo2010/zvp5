@@ -87,7 +87,12 @@ export const useUserStore = defineStore('user', {
         await this.setUserInformation(information)
         this.isLogin = true
       } else {
-          // TODO 登录失败提示
+          ElMessage({
+            type: 'error',
+            message: '用户名或密码错误',
+            plain: true,
+            grouping: true,
+          })
       }
     },
     getUser() {
