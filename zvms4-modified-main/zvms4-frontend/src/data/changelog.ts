@@ -6,6 +6,16 @@ export interface ChangelogEntry {
 
 export const changelog: ChangelogEntry[] = [
   {
+    version: 'v4.2.1-1',
+    date: '2026-10-12',
+    items: [
+      '「更新日志」与「关于」页面无需登录即可查看，并新增返回按钮',
+      '新版本发布后应用自动更新，无需重装或手动刷新',
+      '网络不稳定时，常用页面数据自动改用本地缓存显示',
+      '个人主页与成员详情的身份标识升级为彩色图标：管理员（红色）、团支书、学生会，与群组管理页一致'
+    ]
+  },
+  {
     version: 'v4.2.0-3',
     date: '2026-10-12',
     items: [
