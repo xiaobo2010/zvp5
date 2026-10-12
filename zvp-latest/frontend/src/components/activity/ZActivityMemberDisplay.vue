@@ -35,8 +35,6 @@ const { activityId, member, statusOverride } = toRefs(props)
 
 const hasPermission = computed(() => user.position.includes('admin') || user.position.includes('department'))
 
-const devNotice = () => alert('功能开发中')
-
 const loading = ref(false)
 
 const modifyMember = async () => {
