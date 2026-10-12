@@ -1,8 +1,7 @@
-"""ObjectId <-> lowercase hex helpers for the Oracle ADB layer.
+"""ObjectId <-> lowercase hex helpers for the repository layer.
 
-Mongo ``_id`` values are stored in Oracle as ``VARCHAR2(24)`` **lowercase hex**
-(spec §1). These helpers are the single conversion boundary used by the
-repository layer:
+Repository rows expose ``_id`` as a **lowercase hex** string. These helpers are
+the single conversion boundary used by the adapters:
 
 * :func:`new_oid` - generate a fresh 24-char lowercase hex id.
 * :func:`normalize_oid` - accept mixed-case hex (or a ``bson.ObjectId``) and

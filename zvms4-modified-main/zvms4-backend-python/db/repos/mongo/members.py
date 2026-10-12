@@ -17,7 +17,7 @@ A mechanical lift of the live ``motor`` queries against
 * ``routers/activity_statistics_router.py`` / ``routers/groups_v2_router.py``
   — the ``find({"activity": ...})`` / ``find({"member": ...})`` reads.
 
-Row shape (identical to ``db/repos/oracle/members.py``): plain ``dict`` rows
+Row shape: plain ``dict`` rows
 keyed by the **original Mongo field names**, ``_id`` normalised to a lowercase
 hex string::
 
