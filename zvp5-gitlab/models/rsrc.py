@@ -53,7 +53,7 @@ class Resource(db.Model):
     object_id: db.Mapped[str] = _primarycol()
     name: db.Mapped[str] = _col()
     size: db.Mapped[str] = _col()
-    url: db.Mapped[str] = _col(db.Text)
+    url: db.Mapped[str] = _col()
     create_time: db.Mapped[int] = _ctimecol()
 
     # relationships #

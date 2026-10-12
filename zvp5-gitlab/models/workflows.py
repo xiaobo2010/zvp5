@@ -21,7 +21,7 @@ class Workflow(db.Model):
     status: db.Mapped[WorkflowStatus] = _ienumcol(WorkflowStatus)
     is_initial: db.Mapped[bool] = _col(default=False) # internal
     title: db.Mapped[str] = _col()
-    description: db.Mapped[str] = _col(db.Text)
+    description: db.Mapped[str] = _col()
     create_time: db.Mapped[int] = _ctimecol()
     update_time: db.Mapped[int] = _utimecol()
 
