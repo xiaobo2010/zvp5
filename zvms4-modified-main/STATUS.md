@@ -569,3 +569,23 @@ xh_router 任意 URL 代理（:159 urlopen + :46 硬编码签名 KEY）、登录
 - **验证**：type-check 0 错误、build EXIT=0（dist 含 v4.2.1-1）、main.py COMPILE_OK、sw.js skipWaiting=1。
 - **版本**：v4.2.0-3 → **v4.2.1-1**（功能批次，用户指定）；改动 12 文件（11 改 + idbCache.ts 新增）。
 - **范围外注记**：工作区另有 `zvms4-adb-migration` 分支本命的 Oracle ADB 迁移脚手架（db/oracle/、docs/ADB_*.md、requirements sqlalchemy/oracledb、settings.example ORACLE_*）——独立工作线，**未混入本批提交**。
+
+## 47. Part 12：CHANGELOG 数据库化——管理员可编辑历史版本（2026-10-12）
+
+- **目标**：`/changelog` 由前端硬编码（`src/data/changelog.ts`）改为数据库驱动；管理员可在页面新增版本、编辑任意历史版本、删除版本；版本号与发行注记入库，不再硬编码。
+- **数据结构**：新增 `zvms_new.changelog`——`version`（发布版本号，如 `v4.2.1-1`）、`release_date`（`YYYY-MM-DD` 字符串）、`items`（发行注记数组）、`updated_at`。Mongo + Oracle 双实现（`ORACLE_ENABLED=False` 时走 Mongo）。
+- **后端（9 文件）**：
+  - 仓储：`db/repos/protocols.py` 加 `ChangelogRepo`（`list_all` / `get_by_oid` / `create` / `update` / `delete`）；`db/repos/mongo/changelog.py`、`db/repos/oracle/changelog.py` 双实现（Oracle 沿用模块级 `_*_stmt` 构造器 + `_session_for`，仅 `owns` 时提交）。
+  - 模型 / DDL：`db/models.py` 加 `changelog` Table；`db/oracle/ddl/V001__initial_schema.sql` 加幂等建表块（吞 ORA-00955）。
+  - 接线：`db/backends.py` 加 `changelog` 模块与 `get_changelog_repo()`；`routers/changelog_router.py`（`GET ""` 公开；`POST ""` 201 / `PUT "/{oid}"` 204 / `DELETE "/{oid}"` 204 均 admin 门禁，`per` 无 `admin` → 403，坏 oid → 400）；`main.py` 挂载 `prefix="/api/changelog"`。
+  - 迁移：`misc/seed_changelog.py` 把现有 3 条（v4.2.1-1 / v4.2.0-3 / v4.2.0-2）按 `version` 幂等入库。
+- **接口契约**：`GET /api/changelog` → `{"status":"ok","data":[{id,version,date,items}]}`（按日期、版本倒序）；写操作 admin only。
+- **前端（5 文件）**：`src/api/changelog.ts`（经 `export.ts` 聚合为 `api.changelog.*`）；`src/i18n/locales/changelog.ts` 命名空间；`src/views/ChangelogView.vue` 重写——mount 拉库、失败回退静态 `changelog.ts` 兜底、admin 显示「新增版本」＋逐条编辑/删除（ElDialog 表单，items 每行一条）、删除 ElMessageBox 确认；`src/views/AboutView.vue` 版本号改为读库最新条目（失败回退静态 `APP_VERSION`），favicon 缓存参数同源。
+- **验证**：
+  - 后端 `compileall` 通过；`ddl_check` → 13 表 7 索引无漂移；Oracle 5 条语句离线编译全通过。
+  - Mongo 功能：seed 幂等、排序、create/get/update/delete 断言全过。
+  - HTTP 端到端（管理员 token）：基线 3 → `POST` 201 置顶 → `PUT` 204 生效 → 坏 id 400 → `DELETE` 204 → 回到 3；未授权写 401；公开 `GET` 200。
+  - 前端 `pnpm type-check` 0 错误；`pnpm build` EXIT=0。
+- **交付后自查修复（2 处）**：`db/repos/oracle/changelog.py` 的 `changelog_tbl.c.items` 被 SQLAlchemy `ColumnCollection.items` 方法遮蔽（Oracle 运行时关闭故未暴露）→ 改 `.c["items"]`；`misc/seed_changelog.py` 补 `sys.path`，使文档写的 `python misc/seed_changelog.py` 直接可跑（既有 migrate 脚本同款缺陷本批未动）。
+- **发版流程变更**：changelog 条目改由管理界面入库（不再改 `changelog.ts` 新增条目）；发版仍需手工升 `package.json` + 后端 `main.py` 两处版本串 + `changelog.ts` 的 `APP_VERSION` 兜底常量。
+- **版本**：v4.2.1-1 → **v4.2.2-1**（功能批次）。
