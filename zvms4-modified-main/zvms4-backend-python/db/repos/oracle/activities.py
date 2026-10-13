@@ -222,7 +222,7 @@ def _activity_doc(mapping: Any) -> Row:
     return {
         "_id": mapping["oid"],
         "name": mapping["name"],
-        "description": mapping["description"],
+        "description": mapping["description"] or "",
         "type": mapping["atype"],
         "creator": mapping["creator_oid"],
         "status": mapping["status"],
@@ -230,8 +230,8 @@ def _activity_doc(mapping: Any) -> Row:
         "createdAt": mapping["created_at"],
         "updatedAt": mapping["updated_at"],
         "appointee": mapping["appointee_oid"],
-        "approver": mapping["approver"],
-        "place": mapping["place"],
+        "approver": mapping["approver"] or "",
+        "place": mapping["place"] or "",
         "origin": mapping["origin"],
     }
 
