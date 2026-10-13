@@ -134,6 +134,7 @@ def _user_columns() -> tuple[Any, ...]:
         users_tbl.c.sex,
         users_tbl.c.eligibility,
         users_tbl.c.past,
+        users_tbl.c.banned,
     )
 
 
@@ -319,6 +320,8 @@ def _user_doc(mapping: Any) -> Row:
         doc["eligibility"] = mapping["eligibility"]
     if mapping["past"] is not None:
         doc["past"] = mapping["past"]
+    if mapping["banned"]:
+        doc["banned"] = True
     return doc
 
 

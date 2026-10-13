@@ -46,11 +46,13 @@ CREATE TABLE users (
   sex VARCHAR2(16 CHAR),
   eligibility CLOB,
   past CLOB,
+  banned NUMBER(1) DEFAULT 0 NOT NULL,
   PRIMARY KEY (oid),
   CONSTRAINT ck_users_oid CHECK (REGEXP_LIKE(oid,''^[0-9a-f]{24}$'')),
   CONSTRAINT ck_users_roles_json CHECK (roles IS JSON),
   CONSTRAINT ck_users_eligibility_json CHECK (eligibility IS JSON),
   CONSTRAINT ck_users_past_json CHECK (past IS JSON),
+  CONSTRAINT ck_users_banned CHECK (banned IN (0,1)),
   CONSTRAINT uq_users_business_id UNIQUE (business_id),
   CONSTRAINT fk_users_class_oid FOREIGN KEY(class_oid) REFERENCES groups (oid)
 )';

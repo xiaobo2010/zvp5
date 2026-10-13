@@ -177,6 +177,8 @@ async def validate_by_cert(
     user = await backends.get_users_repo().get_by_oid(id)
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
+    if user.get("banned"):
+        raise HTTPException(status_code=403, detail="User is banned")
     if user["password"] is None:
         authenticated = auth_field["password"] == user["id"]
     else:

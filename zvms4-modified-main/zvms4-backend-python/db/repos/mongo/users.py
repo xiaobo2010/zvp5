@@ -69,6 +69,8 @@ def _user_doc(doc: Row) -> Row:
         out["eligibility"] = doc["eligibility"]
     if doc.get("past") is not None:
         out["past"] = doc["past"]
+    if doc.get("banned"):
+        out["banned"] = True
     return out
 
 
