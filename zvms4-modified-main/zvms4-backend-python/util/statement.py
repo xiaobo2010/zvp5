@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field
 
 from config import BASE_ON_CAMPUS, BASE_OFF_CAMPUS, BASE_SOCIAL_PRACTICE
 from database import db, connect_to_mongo
+from db import backends
 from bson import ObjectId
 from settings import CHINESE_FONT
 from typings.time import UserTimeStat, UserActivityTime
@@ -665,16 +666,10 @@ async def create_statement_from_kernel_data(
 
     statement_records = []
 
-    items = (
-        await db.zvms_new.get_collection("activity_members")
-        .find({"member": id})
-        .to_list(None)
-    )
+    items = await backends.get_members_repo().list_for_member(id)
     type_map = {"on-campus": "on", "off-campus": "off", "social-practice": "social"}
     for item in items:
-        activity = await db.zvms_new.get_collection("activities").find_one(
-            {"_id": validate_object_id(item["activity"])}
-        )
+        activity = await backends.get_activities_repo().get(item["activity"])
         assignee = activity.get("approver", "Unknown")
         if ObjectId.is_valid(assignee):
             assignee_data = await db.zvms_new.get_collection("users").find_one(

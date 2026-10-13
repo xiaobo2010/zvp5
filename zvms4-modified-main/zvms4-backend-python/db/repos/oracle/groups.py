@@ -47,6 +47,10 @@ def _get_stmt(oid: str):
     )
 
 
+def _list_all_stmt():
+    return select(groups_tbl.c.oid, groups_tbl.c.name).order_by(groups_tbl.c.oid.asc())
+
+
 def _list_classes_stmt(query: str, page: int, size: int):
     stmt = select(groups_tbl.c.oid, groups_tbl.c.name)
     if query:
@@ -214,6 +218,12 @@ class OracleGroupsRepo:
             total = (await session.execute(count_stmt)).scalar_one()
             rows = (await session.execute(page_stmt)).all()
         return [_member_row(row._mapping) for row in rows], int(total)
+
+    async def list_all(self) -> list[Row]:
+        stmt = _list_all_stmt()
+        async with _session_for(self._session) as (session, _owns):
+            rows = (await session.execute(stmt)).all()
+        return [_class_row(row._mapping) for row in rows]
 
 
 __all__ = ["OracleGroupsRepo"]

@@ -166,6 +166,110 @@ def _set_mode_stmt(oid: str, mode: str):
     )
 
 
+# Mongo field name → Oracle column attribute name (spec §3).
+_FIELD_COLUMNS: dict[str, str] = {
+    "status": "member_status",
+    "mode": "member_mode",
+    "duration": "duration_hours",
+}
+
+
+def _get_by_oid_stmt(oid: str):
+    return select(*_member_columns()).where(members_tbl.c.oid == oid)
+
+
+def _get_by_triple_stmt(activity_oid: str, member_oid: str, mode: str):
+    return select(*_member_columns()).where(
+        members_tbl.c.member_oid == member_oid,
+        members_tbl.c.activity_oid == activity_oid,
+        members_tbl.c.member_mode == mode,
+    )
+
+
+def _list_by_activity_stmt(activity_oid: str):
+    return select(*_member_columns()).where(
+        members_tbl.c.activity_oid == activity_oid
+    )
+
+
+def _list_for_member_stmt(
+    member_oid: str, status: str | None, activity_oids: list[str] | None
+):
+    stmt = select(*_member_columns()).where(members_tbl.c.member_oid == member_oid)
+    if status:
+        stmt = stmt.where(members_tbl.c.member_status == status)
+    if activity_oids is not None:
+        stmt = stmt.where(members_tbl.c.activity_oid.in_(activity_oids))
+    return stmt
+
+
+def _list_by_members_stmt(member_oids: list[str]):
+    return select(*_member_columns()).where(
+        members_tbl.c.member_oid.in_(member_oids)
+    )
+
+
+def _count_for_activity_stmt(
+    activity_oid: str, status: str | None, member_oids: list[str] | None
+):
+    stmt = select(func.count()).select_from(members_tbl).where(
+        members_tbl.c.activity_oid == activity_oid
+    )
+    if status:
+        stmt = stmt.where(members_tbl.c.member_status == status)
+    if member_oids is not None:
+        stmt = stmt.where(members_tbl.c.member_oid.in_(member_oids))
+    return stmt
+
+
+def _remove_for_activity_stmt(activity_oid: str):
+    return delete(members_tbl).where(members_tbl.c.activity_oid == activity_oid)
+
+
+def _update_fields_stmt(oid: str, values: Row):
+    return update(members_tbl).where(members_tbl.c.oid == oid).values(**values)
+
+
+def _set_duration_for_member_stmt(activity_oid: str, member_oid: str, duration: float):
+    return (
+        update(members_tbl)
+        .where(
+            members_tbl.c.activity_oid == activity_oid,
+            members_tbl.c.member_oid == member_oid,
+        )
+        .values(duration_hours=duration)
+    )
+
+
+_RAW_SORT_COLUMNS = {
+    **_FIELD_COLUMNS,
+    "_id": "oid",
+    "activity": "activity_oid",
+    "member": "member_oid",
+}
+
+
+def _list_raw_stmt(
+    activity_oid: str,
+    member_oids: list[str] | None,
+    sort: str | None,
+    asc: bool,
+    page: int | None,
+    size: int,
+):
+    stmt = select(*_member_columns()).where(
+        members_tbl.c.activity_oid == activity_oid
+    )
+    if member_oids is not None:
+        stmt = stmt.where(members_tbl.c.member_oid.in_(member_oids))
+    if sort:
+        column = getattr(members_tbl.c, _RAW_SORT_COLUMNS.get(sort, "oid"))
+        stmt = stmt.order_by(column.asc() if asc else column.desc())
+    if page is not None:
+        stmt = stmt.offset((page - 1) * size).limit(size)
+    return stmt
+
+
 def _member_row(mapping: Any) -> Row:
     """Translate an ACTIVITY_MEMBERS row to the Mongo document shape."""
     return {
@@ -249,6 +353,121 @@ class OracleMembersRepo:
             await session.execute(stmt)
             if owns:
                 await session.commit()
+
+    async def get_by_oid(self, oid: str) -> Row | None:
+        stmt = _get_by_oid_stmt(normalize_oid(oid))
+        async with _session_for(self._session) as (session, _owns):
+            row = (await session.execute(stmt)).first()
+        if row is None:
+            return None
+        return _member_row(row._mapping)
+
+    async def get_by_triple(
+        self, activity_oid: str, member_oid: str, mode: str
+    ) -> Row | None:
+        stmt = _get_by_triple_stmt(
+            normalize_oid(activity_oid), normalize_oid(member_oid), mode
+        )
+        async with _session_for(self._session) as (session, _owns):
+            row = (await session.execute(stmt)).first()
+        if row is None:
+            return None
+        return _member_row(row._mapping)
+
+    async def list_by_activity(self, activity_oid: str) -> list[Row]:
+        stmt = _list_by_activity_stmt(normalize_oid(activity_oid))
+        async with _session_for(self._session) as (session, _owns):
+            rows = (await session.execute(stmt)).all()
+        return [_member_row(row._mapping) for row in rows]
+
+    async def list_for_member(
+        self,
+        member_oid: str,
+        status: str | None = None,
+        activity_oids: list[str] | None = None,
+    ) -> list[Row]:
+        normalized = (
+            [normalize_oid(o) for o in activity_oids] if activity_oids else None
+        )
+        stmt = _list_for_member_stmt(normalize_oid(member_oid), status, normalized)
+        async with _session_for(self._session) as (session, _owns):
+            rows = (await session.execute(stmt)).all()
+        return [_member_row(row._mapping) for row in rows]
+
+    async def list_by_members(self, member_oids: list[str]) -> list[Row]:
+        if not member_oids:
+            return []
+        stmt = _list_by_members_stmt([normalize_oid(o) for o in member_oids])
+        async with _session_for(self._session) as (session, _owns):
+            rows = (await session.execute(stmt)).all()
+        return [_member_row(row._mapping) for row in rows]
+
+    async def count_for_activity(
+        self,
+        activity_oid: str,
+        status: str | None = None,
+        member_oids: list[str] | None = None,
+    ) -> int:
+        normalized = (
+            [normalize_oid(o) for o in member_oids] if member_oids is not None else None
+        )
+        stmt = _count_for_activity_stmt(
+            normalize_oid(activity_oid), status, normalized
+        )
+        async with _session_for(self._session) as (session, _owns):
+            return int((await session.execute(stmt)).scalar_one())
+
+    async def remove_for_activity(self, activity_oid: str) -> None:
+        stmt = _remove_for_activity_stmt(normalize_oid(activity_oid))
+        async with _session_for(self._session) as (session, owns):
+            await session.execute(stmt)
+            if owns:
+                await session.commit()
+
+    async def update_fields(self, oid: str, fields: Row) -> None:
+        values = {
+            _FIELD_COLUMNS[key]: value
+            for key, value in fields.items()
+            if key in _FIELD_COLUMNS
+        }
+        if not values:
+            return
+        stmt = _update_fields_stmt(normalize_oid(oid), values)
+        async with _session_for(self._session) as (session, owns):
+            await session.execute(stmt)
+            if owns:
+                await session.commit()
+
+    async def set_duration_for_member(
+        self, activity_oid: str, member_oid: str, duration: float
+    ) -> None:
+        stmt = _set_duration_for_member_stmt(
+            normalize_oid(activity_oid), normalize_oid(member_oid), duration
+        )
+        async with _session_for(self._session) as (session, owns):
+            await session.execute(stmt)
+            if owns:
+                await session.commit()
+
+    async def list_raw(
+        self,
+        activity_oid: str,
+        member_oids: list[str] | None = None,
+        sort: str | None = None,
+        asc: bool = True,
+        page: int | None = None,
+        size: int = 10,
+    ) -> tuple[list[Row], int]:
+        normalized = (
+            [normalize_oid(o) for o in member_oids] if member_oids is not None else None
+        )
+        activity = normalize_oid(activity_oid)
+        page_stmt = _list_raw_stmt(activity, normalized, sort, asc, page, size)
+        count_stmt = _count_for_activity_stmt(activity, None, normalized)
+        async with _session_for(self._session) as (session, _owns):
+            total = (await session.execute(count_stmt)).scalar_one()
+            rows = (await session.execute(page_stmt)).all()
+        return [_member_row(row._mapping) for row in rows], int(total)
 
 
 __all__ = ["OracleMembersRepo"]

@@ -177,6 +177,21 @@ db/
   5. 行形状 = 聚合 `$project` 形状：`list_page` → `{_id,id,name,roles,class_id,class_name}`（不含 `group`，由 router 补）；`members_page` 额外含 `password`；`list_classes` → `{_id,name}`。
 - **验证门槛**：flag 关闭时 `smoke.py` 必须 **34/34**；`compileall` + import 全绿；逐端点人工比对 repo 路径与原 inline 代码。
 
+## 10. 收敛后单库模型的差异（2026-10-12 记录，待对齐）
+
+对方会话已完成 `zvms` 遗留库 phase-out，世界收敛为**单库 `zvms_new`**（依据其 e2e seed 的 world model 注释，production-verified）。这相对本规格的 V001 有以下差异，**待共享 schema 文件（`models.py`/`V001`）空闲时对齐**（当前它们正被对方编辑，避免并发覆盖）：
+
+| 差异 | 现状 V001 | 收敛后需要 |
+|---|---|---|
+| `groups` | 仅 `OID,NAME`（class only） | 增加 `TYPE`（class 为 NULL / `permission`）与 `PERMISSIONS`（JSON 数组：secretary/department/admin） |
+| `app_logs` | 无（原 `zvms.logs` 在遗留库） | **新增表** `APP_LOGS(url,user,data,timestamp,type,level)` —— 运行期日志集合 |
+| `zvms_new.logs`（设备 schema） | V001 有 `LOGS` 表 | 标为死集合（对方 seed 明示「never used」）→ 可保留为归档或删除 |
+| `tasks`/`imports`/`notifications` | 原在遗留 `zvms`，未建模 | 移入 `zvms_new`，**需新增表** |
+| `changelog` | 无 | 对方已加入 `models.py`/`V001`（`ChangelogRepo` 域） |
+
+> 影响：`GROUPS` 若承载 permission 组，则 `GroupsRepo` 的 `list_classes` 需按 `type` 过滤；`USERS.CLASS_OID` 的 FK 只能指向 class 组。
+> 行动：待对方 schema 编辑停止后，(a) 把上述增量并入 `V001`/`models.py` 并跑 `ddl_check`，(b) 若采用版本化，则新开 `V002__single_db_converged.sql`。
+
 ## 8. 风险（按严重度）
 
 1. **ID 命名空间重映射**（遗留 id 混入目标集合）—— 见 §7。

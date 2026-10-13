@@ -151,5 +151,9 @@ class MongoGroupsRepo:
         )
         return [_member_row(doc) for doc in docs], int(total)
 
+    async def list_all(self) -> list[Row]:
+        docs = await db.zvms_new.groups.find({}).to_list(None)
+        return [{"_id": str(doc["_id"]), "name": doc.get("name")} for doc in docs]
+
 
 __all__ = ["MongoGroupsRepo"]

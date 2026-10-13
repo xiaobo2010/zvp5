@@ -218,4 +218,79 @@ class MongoUsersRepo:
         return {str(doc["_id"]): doc.get("name") for doc in docs}
 
 
+    async def list_all(self) -> list[Row]:
+        docs = await db.zvms_new.users.find({}).to_list(None)
+        return [_user_doc(doc) for doc in docs]
+
+    async def list_by_id_prefix(self, prefix: str) -> list[Row]:
+        docs = (
+            await db.zvms_new.users.find({"id": {"$regex": f"^{prefix}"}}).to_list(None)
+        )
+        return [_user_doc(doc) for doc in docs]
+
+    async def list_by_class(self, class_oid: str) -> list[Row]:
+        docs = (
+            await db.zvms_new.users.find(
+                {"class_id": ObjectId(normalize_oid(class_oid))}
+            ).to_list(None)
+        )
+        return [_user_doc(doc) for doc in docs]
+
+    async def search(self, query: str, logged_in: bool) -> tuple[list[Row], int]:
+        match: Row = (
+            {
+                "$or": [
+                    {"name": {"$regex": query, "$options": "i"}},
+                    {"id": {"$regex": query, "$options": "i"}},
+                    {"past": {"$elemMatch": {"$regex": query, "$options": "i"}}},
+                ]
+            }
+            if logged_in
+            else {"$or": [{"id": query}]}
+        )
+        projection = {"_id": True, "name": True, "id": True, "class_id": True}
+        total = await db.zvms_new.users.count_documents(match)
+        docs = await db.zvms_new.users.find(match, projection).to_list(None)
+        rows = [
+            {
+                "_id": str(doc["_id"]),
+                "name": doc.get("name"),
+                "id": doc.get("id"),
+                "class_id": (
+                    str(doc["class_id"]) if doc.get("class_id") is not None else None
+                ),
+            }
+            for doc in docs
+        ]
+        return rows, int(total)
+
+    async def list_by_name_or_id(self, pattern: str) -> list[Row]:
+        if pattern:
+            match: Row = {
+                "$or": [
+                    {"name": {"$regex": pattern, "$options": "i"}},
+                    {"id": {"$regex": pattern, "$options": "i"}},
+                ]
+            }
+        else:
+            match = {}
+        docs = await db.zvms_new.users.find(match).to_list(None)
+        return [_user_doc(doc) for doc in docs]
+
+    async def group_oids_by_id_prefix(self) -> list[Row]:
+        pipeline = [
+            {
+                "$group": {
+                    "_id": {"$substrCP": ["$id", 0, 4]},
+                    "originalIds": {"$push": "$_id"},
+                }
+            }
+        ]
+        docs = await db.zvms_new.users.aggregate(pipeline).to_list(None)
+        return [
+            {"_id": doc["_id"], "originalIds": [str(x) for x in doc["originalIds"]]}
+            for doc in docs
+        ]
+
+
 __all__ = ["MongoUsersRepo"]

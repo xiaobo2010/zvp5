@@ -71,6 +71,28 @@ def get_groups_repo(session: Any = None) -> Any:
     return MongoGroupsRepo()
 
 
+def get_activities_repo(session: Any = None) -> Any:
+    """Return the ``ActivitiesRepo`` for the active backend."""
+    if oracle_enabled_for("activities"):
+        from db.repos.oracle.activities import OracleActivitiesRepo
+
+        return OracleActivitiesRepo(session)
+    from db.repos.mongo.activities import MongoActivitiesRepo
+
+    return MongoActivitiesRepo()
+
+
+def get_members_repo(session: Any = None) -> Any:
+    """Return the ``MembersRepo`` for the active backend."""
+    if oracle_enabled_for("activity_members"):
+        from db.repos.oracle.members import OracleMembersRepo
+
+        return OracleMembersRepo(session)
+    from db.repos.mongo.members import MongoMembersRepo
+
+    return MongoMembersRepo()
+
+
 def get_changelog_repo(session: Any = None) -> Any:
     """Return the ``ChangelogRepo`` for the active backend."""
     if oracle_enabled_for("changelog"):
@@ -82,10 +104,36 @@ def get_changelog_repo(session: Any = None) -> Any:
     return MongoChangelogRepo()
 
 
+def get_time_repo(session: Any = None) -> Any:
+    """Return the ``TimeRepo`` for the active backend."""
+    if oracle_enabled_for("time"):
+        from db.repos.oracle.times import OracleTimeRepo
+
+        return OracleTimeRepo(session)
+    from db.repos.mongo.times import MongoTimeRepo
+
+    return MongoTimeRepo()
+
+
+def get_stats_repo(session: Any = None) -> Any:
+    """Return the ``StatsCacheRepo`` for the active backend."""
+    if oracle_enabled_for("stats"):
+        from db.repos.oracle.stats import OracleStatsCacheRepo
+
+        return OracleStatsCacheRepo(session)
+    from db.repos.mongo.stats import MongoStatsCacheRepo
+
+    return MongoStatsCacheRepo()
+
+
 __all__ = [
     "MODULES",
     "oracle_enabled_for",
     "get_users_repo",
     "get_groups_repo",
+    "get_activities_repo",
+    "get_members_repo",
     "get_changelog_repo",
+    "get_time_repo",
+    "get_stats_repo",
 ]

@@ -136,5 +136,60 @@ class MongoActivitiesRepo:
             {"_id": ObjectId(normalize_oid(oid))}
         )
 
+    async def list_effective(
+        self, date_start: Any = None, date_end: Any = None
+    ) -> list[Row]:
+        match: Row = {"status": "effective"}
+        if date_start is not None and date_end is not None:
+            match["date"] = {"$gte": date_start, "$lte": date_end}
+        docs = (
+            await db.zvms_new.get_collection(_COLLECTION)
+            .find(match)
+            .to_list(None)
+        )
+        return [_activity_doc(doc) for doc in docs]
+
+    async def list_by_oids(
+        self, oids: list[str], query: str, page: int = -1, size: int = 10
+    ) -> tuple[list[Row], int]:
+        activity_oids = [ObjectId(normalize_oid(oid)) for oid in oids]
+        match: Row = {"_id": {"$in": activity_oids}}
+        if query:
+            match["name"] = {"$regex": query, "$options": "i"}
+        collection = db.zvms_new.get_collection(_COLLECTION)
+        total = await collection.count_documents(match)
+        cursor = collection.find(match).sort("_id", -1)
+        if page != -1:
+            cursor = cursor.skip((page - 1) * size).limit(size)
+        docs = await cursor.to_list(None)
+        return [_activity_doc(doc) for doc in docs], int(total)
+
+    async def list_raw(
+        self,
+        search: str = "",
+        atypes: list[str] | None = None,
+        status: str | None = None,
+        sort: str | None = None,
+        asc: bool = False,
+        page: int | None = None,
+        size: int = 10,
+    ) -> tuple[list[Row], int]:
+        match: Row = {}
+        if search:
+            match["name"] = {"$regex": search, "$options": "i"}
+        if atypes:
+            match["type"] = {"$in": list(atypes)}
+        if status:
+            match["status"] = status
+        collection = db.zvms_new.get_collection(_COLLECTION)
+        total = await collection.count_documents(match)
+        cursor = collection.find(match)
+        if sort:
+            cursor = cursor.sort(sort, 1 if asc else -1)
+        if page is not None:
+            cursor = cursor.skip((page - 1) * size).limit(size)
+        docs = await cursor.to_list(None)
+        return [{**doc, "_id": str(doc["_id"])} for doc in docs], int(total)
+
 
 __all__ = ["MongoActivitiesRepo"]

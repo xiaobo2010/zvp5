@@ -26,6 +26,7 @@ from util.object_id import (
 )
 from datetime import datetime
 from database import db
+from db import backends
 import pandas as pd
 from fastapi import BackgroundTasks
 from pydantic import BaseModel
@@ -56,7 +57,7 @@ async def process_task(task_id: str):
     include_description = task.get("include_description", False)
     if task["variant"] == "time":
         result = []
-        users = await db.zvms_new.users.find({}).to_list(None)
+        users = await backends.get_users_repo().list_all()
         for idx, user in enumerate(users):
             if task["export_start"] is not None and task["export_start"] is not None:
                 user_time = await calculate_user_time(
@@ -86,7 +87,10 @@ async def process_task(task_id: str):
             )
             user_time["on-campus"] += more_on_campus
             user_time["off-campus"] += more_off_campus
-            group = await db.zvms_new.groups.find_one({"_id": user.get("class_id")})
+            class_oid = user.get("class_id")
+            group = (
+                await backends.get_groups_repo().get(class_oid) if class_oid else None
+            )
             if group is None:
                 continue
             doc = {
@@ -128,9 +132,12 @@ async def process_task(task_id: str):
         )
     elif task["variant"] == "users":
         result = []
-        users = await db.zvms_new.users.find({}).to_list(None)
+        users = await backends.get_users_repo().list_all()
         for idx, user in enumerate(users):
-            group = await db.zvms_new.groups.find_one({"_id": user.get("class_id")})
+            class_oid = user.get("class_id")
+            group = (
+                await backends.get_groups_repo().get(class_oid) if class_oid else None
+            )
             doc = {
                 "_id": str(user["_id"]),
                 "Name": user["name"],

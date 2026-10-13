@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException, Depends, Query
 from typing import Dict, Any
 from database import db
+from db import backends
 from util.object_id import get_current_user, validate_object_id
 import re
 
@@ -39,44 +40,32 @@ async def mcp_get_activities(
     # Escape search term for safety
     search = re.escape(search) if search else ""
 
-    document_filter = {
-        "$and": [
-            {"name": {"$regex": search, "$options": "i"}},
-            {"type": {"$in": target_types}},
-        ]
-    }
-
-    # Get total count
-    count = await db.zvms_new.get_collection("activities").count_documents(
-        document_filter
+    activities, count = await backends.get_activities_repo().list_raw(
+        search=search,
+        atypes=target_types,
+        sort=sort,
+        asc=asc,
+        page=page,
+        size=perpage,
     )
 
-    # Build aggregation pipeline
-    pipeline = [
-        {"$match": document_filter},
-        {"$sort": {sort: 1 if asc else -1}},
-        {"$skip": (page - 1) * perpage},
-        {"$limit": perpage},
-        {
-            "$project": {
-                "_id": {"$toString": "$_id"},
-                "name": 1,
-                "description": 1,
-                "type": 1,
-                "date": 1,
-                "location": 1,
-                "duration": 1,
-                "status": 1,
-                "creator": 1,
-                "createdAt": 1,
-                "updatedAt": 1,
-            }
-        },
+    projected_keys = [
+        "_id",
+        "name",
+        "description",
+        "type",
+        "date",
+        "location",
+        "duration",
+        "status",
+        "creator",
+        "createdAt",
+        "updatedAt",
     ]
-
-    activities = (
-        await db.zvms_new.get_collection("activities").aggregate(pipeline).to_list(None)
-    )
+    activities = [
+        {key: activity[key] for key in projected_keys if key in activity}
+        for activity in activities
+    ]
 
     return {
         "success": True,
@@ -106,35 +95,31 @@ async def mcp_get_activity_details(
     except:
         raise HTTPException(status_code=400, detail="Invalid activity ID format")
 
-    activity = await db.zvms_new.get_collection("activities").find_one(
-        {"_id": activity_oid},
-        {
-            "_id": 0,
-            "name": 1,
-            "description": 1,
-            "type": 1,
-            "date": 1,
-            "location": 1,
-            "duration": 1,
-            "status": 1,
-            "creator": 1,
-            "createdAt": 1,
-            "updatedAt": 1,
-        },
-    )
+    activity = await backends.get_activities_repo().get(activity_id)
 
     if not activity:
         raise HTTPException(status_code=404, detail="Activity not found")
 
     # Get member count
-    members_count = await db.zvms_new.get_collection(
-        "activity_members"
-    ).count_documents({"activity": activity_id})
+    members_count = await backends.get_members_repo().count_for_activity(activity_id)
 
-    activity["id"] = activity_id
-    activity["members_count"] = members_count
+    projected_keys = [
+        "name",
+        "description",
+        "type",
+        "date",
+        "location",
+        "duration",
+        "status",
+        "creator",
+        "createdAt",
+        "updatedAt",
+    ]
+    data = {key: activity[key] for key in projected_keys if key in activity}
+    data["id"] = activity_id
+    data["members_count"] = members_count
 
-    return {"success": True, "data": activity}
+    return {"success": True, "data": data}
 
 
 @router.get("/activities/{activity_id}/statistics")
@@ -152,19 +137,13 @@ async def mcp_get_activity_statistics(
         raise HTTPException(status_code=400, detail="Invalid activity ID format")
 
     # Check if activity exists
-    activity_exists = await db.zvms_new.get_collection("activities").find_one(
-        {"_id": validate_object_id(activity_id)}, {"_id": 1}
-    )
+    activity_exists = await backends.get_activities_repo().get(activity_id)
 
     if not activity_exists:
         raise HTTPException(status_code=404, detail="Activity not found")
 
     # Get activity member durations for statistics
-    members = (
-        await db.zvms_new.get_collection("activity_members")
-        .find({"activity": activity_id}, {"duration": 1, "_id": 0})
-        .to_list(None)
-    )
+    members = await backends.get_members_repo().list_by_activity(activity_id)
 
     if not members:
         return {"success": True, "data": {"total_members": 0, "statistics": None}}
@@ -289,14 +268,15 @@ async def mcp_get_activity_search_suggestions(
     # Escape the query for regex safety
     escaped_query = re.escape(query)
 
-    pipeline = [
-        {"$match": {"name": {"$regex": escaped_query, "$options": "i"}}},
-        {"$project": {"_id": {"$toString": "$_id"}, "name": 1, "type": 1}},
-        {"$limit": limit},
-    ]
-
-    suggestions = (
-        await db.zvms_new.get_collection("activities").aggregate(pipeline).to_list(None)
+    raw_suggestions, _total = await backends.get_activities_repo().list_raw(
+        search=escaped_query,
+        sort=None,
+        page=1,
+        size=limit,
     )
+    suggestions = [
+        {key: row[key] for key in ("_id", "name", "type") if key in row}
+        for row in raw_suggestions
+    ]
 
     return {"success": True, "data": {"query": query, "suggestions": suggestions}}
