@@ -20,6 +20,14 @@ export const pad = () => {
   return result.device.vendor === 'Samsung' && result.os.name === 'Android'
 }
 
+export function getXuehaiId(): number {
+  const raw = window.xhBrowserJava?.getUserId?.()
+  const n = Number(raw)
+  return Number.isFinite(n) && n > 0 ? n : 0
+}
+
+export const isXuehaiAvailable = () => getXuehaiId() > 0
+
 export function getTabletType(): 'p615' | 'p620' | 'p200' | 'p355' {
   const model = result.device.model
   if (!pad()) return 'p620'
