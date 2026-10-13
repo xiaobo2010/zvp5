@@ -1,10 +1,8 @@
-"""Repository protocols for the Mongo → Oracle (ADB) migration.
+"""Repository protocols for the ADB data layer.
 
 These are pure :class:`typing.Protocol` interfaces: no I/O, no implementations.
-Every domain has exactly one protocol, and **both** backends must satisfy it:
+Every domain has exactly one protocol, satisfied by the Oracle implementation:
 
-* the Mongo adapters (``db.repos.mongo.*``) — a mechanical lift of the existing
-  ``motor`` queries, and
 * the Oracle implementations (``db.repos.oracle.*``) — SQLAlchemy Core over ADB.
 
 Row shape contract
@@ -142,11 +140,33 @@ class UsersRepo(Protocol):
         """
         ...
 
+    async def add_past(self, oid: str, value: str) -> None:
+        """Append ``value`` to the user's ``past`` identity list (``$push``).
+
+        Lifts ``routers/users_router.py.add_past``. The list is created when the
+        field is currently absent/NULL.
+        """
+        ...
+
+    async def remove_past(self, oid: str, value: str) -> None:
+        """Remove **every** ``past`` entry equal to ``value`` (``$pull``).
+
+        Lifts ``routers/users_router.py.delete_past`` (which resolves the index
+        to a value and then ``$pull``s it, removing all matching entries while
+        preserving the order of the survivors).
+        """
+        ...
+
 
 class GroupsRepo(Protocol):
     """Data access for ``zvms_new.groups`` (class groups only).
 
-    Satisfied by both the Mongo adapter and the Oracle implementation.
+    Satisfied by both the Mongo adapter and the Oracle implementation. The row
+    shapes returned by :meth:`get` / :meth:`list_classes` /
+    :meth:`list_non_permission` are ``{_id, name, description}`` and those from
+    :meth:`list_permission_groups` / :meth:`get_permission_group` are
+    ``{_id, name, type: "permission", permissions, description}``. ``description``
+    is always present and normalised to ``""`` when absent/NULL.
     """
 
     async def get(self, oid: str) -> Row | None:
@@ -183,6 +203,50 @@ class GroupsRepo(Protocol):
         Lifts ``util/get_class.py::get_classname``'s unfiltered ``find()``. The
         Oracle ``GROUPS`` table only models class columns, so the permission
         columns (``type``/``permissions``) are not carried here.
+        """
+        ...
+
+    async def list_non_permission(self) -> list[Row]:
+        """Return every non-permission group as ``{_id, name}`` rows.
+
+        Lifts ``tasks/compute_time.py``'s ``find({"type": {"$ne":
+        "permission"}})`` (``generate_reports`` / ``compute_batch_origins`` /
+        ``compute_group_indicators``). Class rows carry no ``type`` in Mongo and
+        a NULL ``TYPE`` in Oracle, so the Oracle filter is ``type IS NULL``.
+        """
+        ...
+
+    async def list_permission_groups(
+        self, query: str = "", permissions: list[str] | None = None
+    ) -> list[Row]:
+        """Return the permission groups (``type == "permission"``).
+
+        Rows use the shape ``{"_id": <hex str>, "name": str,
+        "type": "permission", "permissions": list[str]}``. ``query`` is applied
+        as a case-insensitive *contains* on ``name`` (``re.escape``d, empty = no
+        filter); ``permissions`` restricts to groups whose ``permissions`` array
+        intersects the given values (empty/``None`` = no filter).
+
+        Lifts ``routers/users_router.py`` (``permissions $in`` lookup) and
+        ``routers/groups_v2_router.py`` (name ``$regex`` lookup).
+        """
+        ...
+
+    async def get_permission_group(self, oid: str) -> Row | None:
+        """Return the permission group with ``_id == oid``, or ``None``.
+
+        Same ``{_id, name, type: "permission", permissions, description}`` shape
+        as :meth:`list_permission_groups`. Lifts
+        ``routers/groups_v3_router.py``'s
+        ``find_one({"_id": ..., "type": "permission"})``.
+        """
+        ...
+
+    async def set_description(self, oid: str, value: str) -> None:
+        """Set a group's ``description`` (``$set`` / ``UPDATE ... SET description``).
+
+        Lifts ``routers/groups_router.py``'s
+        ``PUT /groups/{gid}/description``.
         """
         ...
 
@@ -281,6 +345,18 @@ class ActivitiesRepo(Protocol):
         pagination). ``search`` is applied as a case-insensitive ``contains``
         on ``name`` **verbatim** (callers ``re.escape`` it themselves; empty =
         no name filter); ``atypes`` is an OR-list; ``status`` equality.
+        """
+        ...
+
+    async def types_summary(self) -> list[Row]:
+        """Return per-type activity counts with a status breakdown.
+
+        Each row is ``{"type": <activity type>, "count": <total int>,
+        "status_breakdown": {<status>: <count int>}}``. When several docs share
+        a type, their counts are summed and their statuses merged; one row per
+        distinct type. Lifts ``routers/mcp_router.mcp_get_activity_types_summary``
+        (the upstream ``$group``+``$project`` aggregation, which the Mongo driver
+        rejects).
         """
         ...
 
@@ -578,4 +654,195 @@ class ChangelogRepo(Protocol):
 
     async def delete(self, oid: str) -> int:
         """Delete an entry and return the number of deleted rows."""
+        ...
+
+
+class AppLogsRepo(Protocol):
+    """Data access for ``zvms_new.app_logs`` (runtime application logs).
+
+    Satisfied by both the Mongo adapter and the Oracle implementation. Rows use
+    the Mongo document shape ``{"_id": <hex str>, "url": str, "user": str,
+    "data": str, "timestamp": float, "type": str, "level": str,
+    "xuehai_id": str}`` (``timestamp`` is the raw float epoch seconds). The
+    Oracle table renames these to ``APP_USER``/``LTYPE``/``LOG_LEVEL``/
+    ``TS_AT``/``TS_RAW``/``XUEHAI_ID``; the adapters translate.
+    """
+
+    async def insert(
+        self,
+        url: str,
+        user: str,
+        data: str,
+        timestamp: float,
+        ltype: str,
+        level: str,
+        xuehai_id: str,
+    ) -> None:
+        """Insert one application log entry (``typings/log.py``'s write path)."""
+        ...
+
+    async def list_page(
+        self,
+        query: str = "",
+        performer: str = "",
+        types: list[str] | None = None,
+        levels: list[str] | None = None,
+        time_start: int | None = None,
+        time_end: int | None = None,
+        page: int = -1,
+        size: int = 10,
+    ) -> tuple[list[Row], int]:
+        """Return ``(rows, total)`` for the admin log browser.
+
+        Lifts ``routers/logs_router.py.read_logs``: ``query`` is a case-sensitive
+        *contains* on ``url``/``data`` (``re.escape``d; empty = no filter),
+        ``performer`` an ``user`` equality, ``types``/``levels`` OR-lists on
+        ``type``/``level``, and ``time_start``/``time_end`` are **exclusive**
+        bounds on the ``timestamp`` float. Ordered by ``timestamp`` desc;
+        ``page == -1`` means "no offset".
+        """
+        ...
+
+    async def list_for_user(
+        self, user_oid: str, query: str = "", page: int = -1, size: int = 10
+    ) -> tuple[list[Row], int]:
+        """Return ``(rows, total)`` for one user's log history.
+
+        Lifts ``routers/users_router.py.read_logs`` (``/{user_oid}/logs``):
+        ``user`` equality plus an optional *raw* (not escaped) ``url``/``data``
+        contains, ordered by ``timestamp`` desc; ``page == -1`` = no offset.
+        """
+        ...
+
+
+class TasksRepo(Protocol):
+    """Data access for ``zvms_new.tasks`` (runtime export queue).
+
+    Satisfied by both the Mongo adapter and the Oracle implementation. Rows use
+    the Mongo document shape ``{"_id": <hex str>, "id": <uuid.UUID>,
+    "status": str, "format": str, "variant": str, "export_start": datetime,
+    "export_end": datetime, "task_start": datetime, "task_end": datetime,
+    "percentage": float, "errmsg": str, "result": list, "allow_cache": bool,
+    "include_description": bool}``. ``id`` is accepted/returned as a
+    :class:`uuid.UUID`; the Oracle ``TASK_UUID`` column stores its canonical
+    string form.
+    """
+
+    async def create(self, document: Row) -> str:
+        """Insert a task from its Mongo-shaped ``document``; return the new ``_id``.
+
+        Lifts the ``insert_one(document)`` writes in ``routers/exports_router.py``.
+        """
+        ...
+
+    async def get_by_uuid(self, task_uuid: Any) -> Row | None:
+        """Return the task with ``id == task_uuid`` (UUID), or ``None``.
+
+        Lifts the ``find_one({"id": UUID(...)})`` lookups in
+        ``routers/exports_router.py``.
+        """
+        ...
+
+    async def get(self, oid: str) -> Row | None:
+        """Return the task with the given ``_id`` (hex string), or ``None``."""
+        ...
+
+    async def list_all(self) -> list[Row]:
+        """Return every task (``tasks.find({})``) as full rows.
+
+        Lifts ``routers/exports_router.py.get_export_list``.
+        """
+        ...
+
+    async def update_fields(self, task_uuid: Any, fields: Row) -> None:
+        """Apply a partial ``$set`` of Mongo-keyed ``fields`` to the task.
+
+        Lifts the ``$set`` half of the ``update_one`` calls in
+        ``routers/exports_router.py.process_task``.
+        """
+        ...
+
+    async def push_result(
+        self, task_uuid: Any, rows: list[Row], fields: Row | None = None
+    ) -> None:
+        """Append ``rows`` to the task's ``result`` list (``$push $each``).
+
+        Optionally also applies a ``$set`` of Mongo-keyed ``fields`` in the same
+        update, mirroring the combined ``{"$set": ..., "$push": {"result":
+        {"$each": ...}}}`` writes in ``routers/exports_router.py.process_task``.
+        """
+        ...
+
+    async def delete(self, task_uuid: Any) -> None:
+        """Delete the task with ``id == task_uuid`` (``delete_one``)."""
+        ...
+
+    async def fail_pending(self, reason: str) -> int:
+        """Mark every non-``completed`` task ``failed``; return the row count.
+
+        Lifts ``main.py::mark_all_tasks_failed``.
+        """
+        ...
+
+
+class ImportsRepo(Protocol):
+    """Data access for ``zvms_new.imports`` (import job records).
+
+    The Oracle ``CONTENT`` column is a ``BLOB``; ``content`` is accepted as
+    plain ``bytes``.
+    """
+
+    async def create(
+        self,
+        name: str,
+        filename: str,
+        description: str,
+        user: str,
+        date: str,
+        content: Any,
+    ) -> str:
+        """Insert an import record and return its new ``_id`` as a hex string.
+
+        Lifts ``routers/imports_router.py.upload_activity_excel``'s
+        ``insert_one`` (``date`` is an ISO string, ``content`` the uploaded
+        bytes)."""
+        ...
+
+
+class DailyExportsRepo(Protocol):
+    """Data access for ``zvms_new.daily_exports`` (statement export cache).
+
+    Satisfied by both the Mongo adapter and the Oracle implementation. Rows use
+    the Mongo document shape ``{"_id": <hex str>, "created_at": datetime,
+    "status": str, "data": list}`` (``data`` is a JSON array of spreadsheet
+    rows).
+    """
+
+    async def delete_all(self) -> int:
+        """Delete every row (``delete_many({})``); return the deleted row count.
+
+        Lifts ``tasks/compute_time.py::generate_reports``.
+        """
+        ...
+
+    async def insert(self, document: Row) -> str:
+        """Insert one document and return its new ``_id`` as a hex string.
+
+        ``document`` carries ``created_at`` / ``status`` / ``data``.
+        """
+        ...
+
+    async def update_fields(self, oid: str, fields: Row) -> None:
+        """Apply a partial ``$set`` of ``fields`` to the row."""
+        ...
+
+    async def push_data(self, oid: str, item: Row) -> None:
+        """Append ``item`` to the row's ``data`` array (``$push``).
+
+        Lifts ``tasks/compute_time.py``'s per-statement ``update_one``.
+        """
+        ...
+
+    async def find_one(self, oid: str) -> Row | None:
+        """Return the row with ``_id == oid`` (``find_one({"_id": ...})``), or ``None``."""
         ...

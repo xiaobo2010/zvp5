@@ -78,8 +78,12 @@ BEGIN
 CREATE TABLE groups (
   oid VARCHAR2(24 CHAR) NOT NULL,
   name VARCHAR2(128 CHAR) NOT NULL,
+  type VARCHAR2(16 CHAR),
+  permissions CLOB,
+  description VARCHAR2(1000 CHAR),
   PRIMARY KEY (oid),
-  CONSTRAINT ck_groups_oid CHECK (REGEXP_LIKE(oid,''^[0-9a-f]{24}$''))
+  CONSTRAINT ck_groups_oid CHECK (REGEXP_LIKE(oid,''^[0-9a-f]{24}$'')),
+  CONSTRAINT ck_groups_permissions_json CHECK (permissions IS JSON)
 )';
 EXCEPTION
   WHEN OTHERS THEN
@@ -406,6 +410,102 @@ CREATE TABLE changelog (
   PRIMARY KEY (oid),
   CONSTRAINT ck_changelog_oid CHECK (REGEXP_LIKE(oid,''^[0-9a-f]{24}$'')),
   CONSTRAINT ck_changelog_items_json CHECK (items IS JSON)
+)';
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE != -955 THEN RAISE; END IF;
+END;
+/
+
+-- ----------------------------------------------------------------------------
+-- APP_LOGS  ← zvms_new.app_logs   (runtime app logs; written by typings/log.py)
+--   `user`/`type`/`level` are Oracle-awkward keys -> renamed APP_USER /
+--   LTYPE / LOG_LEVEL, mirroring the LOGS table.
+-- ----------------------------------------------------------------------------
+BEGIN
+  EXECUTE IMMEDIATE '
+CREATE TABLE app_logs (
+  oid VARCHAR2(24 CHAR) NOT NULL,
+  url VARCHAR2(512 CHAR),
+  app_user VARCHAR2(64 CHAR),
+  data VARCHAR2(2000 CHAR),
+  ts_at TIMESTAMP,
+  ts_raw BINARY_DOUBLE,
+  ltype VARCHAR2(64 CHAR),
+  log_level VARCHAR2(32 CHAR),
+  xuehai_id VARCHAR2(32 CHAR),
+  PRIMARY KEY (oid),
+  CONSTRAINT ck_app_logs_oid CHECK (REGEXP_LIKE(oid,''^[0-9a-f]{24}$''))
+)';
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE != -955 THEN RAISE; END IF;
+END;
+/
+
+BEGIN
+  EXECUTE IMMEDIATE 'CREATE INDEX ix_app_logs_ts_at ON app_logs (ts_at)';
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE NOT IN (-955, -1408) THEN RAISE; END IF;
+END;
+/
+
+-- ----------------------------------------------------------------------------
+-- EXPORT_TASKS  ← zvms_new.tasks   (runtime export queue; `id` is a BSON UUID)
+-- ----------------------------------------------------------------------------
+BEGIN
+  EXECUTE IMMEDIATE '
+CREATE TABLE export_tasks (
+  oid VARCHAR2(24 CHAR) NOT NULL,
+  task_uuid VARCHAR2(36 CHAR) NOT NULL,
+  status VARCHAR2(16 CHAR) NOT NULL,
+  percentage BINARY_DOUBLE,
+  variant VARCHAR2(32 CHAR),
+  export_format VARCHAR2(16 CHAR),
+  allow_cache NUMBER(1) DEFAULT 0 NOT NULL,
+  include_description NUMBER(1) DEFAULT 0 NOT NULL,
+  errmsg VARCHAR2(1000 CHAR),
+  export_start TIMESTAMP,
+  export_end TIMESTAMP,
+  task_start TIMESTAMP,
+  task_end TIMESTAMP,
+  result CLOB DEFAULT ''[]'' NOT NULL,
+  PRIMARY KEY (oid),
+  CONSTRAINT ck_export_tasks_oid CHECK (REGEXP_LIKE(oid,''^[0-9a-f]{24}$'')),
+  CONSTRAINT ck_export_tasks_result_json CHECK (result IS JSON),
+  CONSTRAINT uq_export_tasks_uuid UNIQUE (task_uuid)
+)';
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE != -955 THEN RAISE; END IF;
+END;
+/
+
+BEGIN
+  EXECUTE IMMEDIATE 'CREATE INDEX ix_export_tasks_status ON export_tasks (status)';
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE NOT IN (-955, -1408) THEN RAISE; END IF;
+END;
+/
+
+-- ----------------------------------------------------------------------------
+-- IMPORTS  ← zvms_new.imports   (written by routers/imports_router.py)
+--   `date` (an ISO string in Mongo) -> IMPORT_DATE; `content` is BSON Binary.
+-- ----------------------------------------------------------------------------
+BEGIN
+  EXECUTE IMMEDIATE '
+CREATE TABLE imports (
+  oid VARCHAR2(24 CHAR) NOT NULL,
+  import_date TIMESTAMP,
+  description VARCHAR2(1000 CHAR),
+  filename VARCHAR2(256 CHAR),
+  name VARCHAR2(256 CHAR),
+  user_oid VARCHAR2(24 CHAR),
+  content BLOB,
+  PRIMARY KEY (oid),
+  CONSTRAINT ck_imports_oid CHECK (REGEXP_LIKE(oid,''^[0-9a-f]{24}$''))
 )';
 EXCEPTION
   WHEN OTHERS THEN
