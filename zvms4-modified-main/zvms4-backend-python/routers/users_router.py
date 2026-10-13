@@ -6,7 +6,7 @@ from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 from bcrypt import hashpw, gensalt
 from routers.activities_router import user_activity_signoff
-from typings.log import inject_log, ZVMSLog
+from typings.log import inject_log, ZVMSLog, xuehai_id_from
 from typings.user import User
 from util.calculate import calculate_user_time
 from util.group import is_in_a_same_class
@@ -72,6 +72,7 @@ async def auth_user(auth: AuthUser, request: Request):
         log_text,
         datetime.timestamp(datetime.now()),
         type="user_login",
+        xuehai_id=xuehai_id_from(request),
     )
 
     await log.insert_log()
