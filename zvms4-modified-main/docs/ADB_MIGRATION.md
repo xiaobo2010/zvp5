@@ -48,7 +48,8 @@
 - Wallet：`~/.oci/adb-wallet-zvp5`、`~/.oci/adb-wallet-zvp5adb2`。
 - 管理员凭证：`~/.config/opencode/credentials/adb-zvp5-admin`（不入库、不入代码）。
 - 驱动：`oracledb` 已装入后端 venv（thin mode）。
-- **连通性缺口**：本机 DNS 走 fake-ip 代理（`198.18.0.110`），TCP 1522 通，但 oracledb TLS 握手挂起 → 本机直连实库暂不通。本轮不依赖实库。
+- **连通性（已解，2026-10-13）**：本机 DNS 走 fake-ip 代理（`198.18.0.110`），本机直连实库不可用；改由 `zgovps-la`（正常 DNS/TLS）实测打通。根因：thin 模式**必须同时传 `config_dir` 与 `wallet_location`** 才加载 mTLS 客户端证书，仅传 `config_dir` 报 `ORA-12506`；`db/oracle/engine.py` 本就是两者都传。
+- Wallet 口令口径：prod wallet（`adb-wallet-zvp5`）用 `~/.config/opencode/credentials/adb-zvp5-admin`；test wallet（`adb-wallet-zvp5adb2`）用 `~/.oci/adb-zvp5adb2-admin.pass`。`~/.oci/adb-zvp5-admin` 为**同名但非匹配**文件，勿用。
 
 ## 4. 执行计划（分阶段）
 
@@ -210,10 +211,65 @@
 6. **exports `tasks` 队列 / `daily_exports`** 与 **`logs` 域**：维持原样（不在本轮范围）。
 7. **malformed id 的错误码**：仓库边界 `normalize_oid` 抛 `ValueError`（→500）而原 `validate_object_id` 抛 400；本轮在改写点**保留**了 `validate_object_id` 前置校验以维持 400 语义，但这是迁移的既存属性（历史已接线端点同样如此），记录备查。
 
+## 6.6 上线轮（实库落地 + 生产切换，2026-10-13）
+
+> 分支 `zvms4-adb-migration` · 生产 `zgovps-la` 已切至 ADB · 首次实库端到端验证。
+
+### 实库落地（`zvp5adb2` 测试 → `zvp5adb` 生产）
+
+- 两实例均以 `config_dir`+`wallet_location` 连通（见 §3）。
+- DDL 落库：`V001`（**前向 FK 致单遍失败，幂等重跑第 2 遍收敛 20/20、0 error**）→ `V002`（users.banned 增量）→ `V003`（activities 文本列改可空增量）。测试库与生产库均达 13 业务表 + `KEEPALIVE_HEARTBEAT`。
+- ETL 全量（`--execute`，batch=500）双侧一致，最终写 21919 行；FK 父行缺失等隔离 1765 行（见下表）。
+
+| 表 | Mongo | ADB | 差异 | 原因 |
+|---|---|---|---|---|
+| users | 2562 | 2562 | 0 | — |
+| groups | 57 | 54 | −3 | 3 个 legacy 权限组被过滤（预期） |
+| activities | 395 | 354 | −41 | FK 父行缺失隔离 |
+| activity_members | 13254 | 11542 | −1712 | FK 父行缺失隔离 |
+| user_time | 2566 | 2562 | −4 | FK 父行缺失隔离 |
+| time_academic_year | 2566 | 2562 | −4 | 同上 |
+| time_with_origin | 2075 | 2071 | −4 | 同上 |
+| time_with_origin_stat / indicators / group_indicators / daily_exports | 138/1/72/1 | 138/1/72/1 | 0 | — |
+
+### 生产切换（`zgovps-la`）
+
+- 部署：后端整包 rsync（排除 `settings.py`/`.venv`/密钥/`*.pyc`）→ `v4.2.2-2`；前端 `pnpm build` 后 rsync `dist/` → `index-BQIsDUD_.js`。
+- 配置：wallet 落 `/www/zvms4/adb-wallet`（`www:www 700`）；`settings.py` 增 `ORACLE_ENABLED=True`、`ORACLE_ACTIVE="prod"`、`ORACLE_DSN="zvp5adb_medium"`、`ORACLE_MODULES=["users","groups","activities","activity_members","time","stats"]`。
+- 备份：整包 `/www/zvms4/backups/pre-adb-20261013-2251.tar.gz`；旧关键文件 `/root/zvms4-backup-20261013/`。
+
+### 本轮发现并修复的问题
+
+1. **`ORA-12506`**：thin 模式仅传 `config_dir` → 无 mTLS 客户端证书；须 `config_dir`+`wallet_location` 同传（`db/oracle/engine.py` 已正确）。
+2. **V001 前向 FK**：`users` 引用其后创建的 `groups` → 首遍部分失败；DDL 幂等，重跑收敛。
+3. **`UQ_USERS_BUSINESS_ID` 冲突**：源 Mongo `users.id` 有 3 个重复值（`20251240`/`20252559`/`20251316`；2566 总、2563 唯一）→ 数据修复：删 2 条「屏蔽」占位 + 2 条废弃 `20252559`，保留 2 条真实班级记录。
+4. **`DEFAULT '' NOT NULL` 自相矛盾**：Oracle 中 `''` 即 `NULL`，`activities.description/approver/place` 三列致 `ORA-01400`（生产 `place` 395/395、`description` 355、`approver` 41 为空串）→ `V001` 改可空 + 新增 `V003` 增量 + `db/models.py` + Oracle activities 读取侧 `None→''` 归一。
+5. **oracledb JSON 自动解码**：带 `IS JSON` 约束的 CLOB 被驱动直接返回已解码 `list/dict`，`JSONText.process_result_value` 再 `json.loads` 抛 `TypeError`（真实库上表现为登录 500）→ 改为仅对 `str` 解析。
+
+### 用户封禁状态（本轮新增能力）
+
+- Mongo `users.banned`（缺失即未封禁）→ ADB `USERS.BANNED NUMBER(1) DEFAULT 0 NOT NULL` + `ck_users_banned`（`V001` + `V002` 增量）。
+- 拦截点：`util/cert.py::validate_by_cert` 在 404 检查后早退，`banned=true` → `403 User is banned`，覆盖口令/弱口令短令牌/TOTP 全模式。
+- ETL 新增 `BOOL_KIND`，`users.banned` → `0/1`（缺省 0）。
+
+### 验证证据（原始关键行）
+
+- `python -m db.ddl_check` → `OK 13 tables, 7 indexes - no drift`。
+- ETL → `ETL_EXIT 0`（测试库、生产库各一次）。
+- 鉴权差分：`20251240`/`20251316` → `403 {"detail":"User is banned"}`；未封禁用户 → `403 {"detail":"Password incorrect"}`（过封禁门后进凭据校验）。
+- 仓储对拍（Oracle 读出 vs Mongo 原始）：users/activities/groups 字段一致（含 `place/description` 由 NULL 归一为 `''`、`roles` 列表、`banned`）。
+- 切换后 5 分钟：`84×200 / 1×401 / 0 traceback`。
+
+### 回退语义（**非无损**）
+
+- 回退 = `settings.py` 置 `ORACLE_ENABLED=False` + `systemctl restart zvms4` → 回 Mongo；或还原整包备份。
+- **注意**：切换后 6 个模块的写入只落 ADB，Mongo 对应集合停写；回退到 Mongo 会丢失 ADB 窗口内写入，故仅作故障应急，不做数据往返。
+
 ## 7. 待决（不阻塞本轮）
 
-- **logs 双重性**：`zvms_new.logs` 是设备 schema 死集合（本仓零引用），运行期日志走遗留 `zvms.logs`。logs 模块迁移前需拍板：是否 ETL 这批设备数据 / 是否新建 `APP_LOGS`。
+- **logs 双重性**：`zvms_new.logs` 是设备 schema 死集合（本仓零引用），运行期日志走遗留 `zvms.logs`；`app_logs` 在 `db/models.py` 无表，运行期仍写 Mongo。logs 模块迁移前需拍板：是否 ETL 设备数据 / 是否新建 `APP_LOGS`。
+- **changelog**：本轮已接入 ETL（Mongo `zvms_new.changelog` → `CHANGELOG`）；落库 + 开模块后即可切换。
 - **遗留 id 重映射**：`group_indicators.group`、`time_with_origin_stat.scope_id(group)` 仍持遗留 group id；倾向不 ETL、由移植后的夜间重算重建。
-- **实库连通**：本机 TLS 握手问题（fake-ip 代理）解决后，方可对 `zvp5adb2` 做 DDL 落地与端到端验证。
+- **仍留 Mongo 的路径**（见 §6.4/§6.5 待决项）：v1 内嵌 `members`、v2 raw 写入、mcp `types/summary`、`GroupsRepo.list_non_permission`（缺 `TYPE` 列）、`tasks`/`imports`/`notifications`（无表）。
 
 _本文档随各 lane 产出持续更新。_
