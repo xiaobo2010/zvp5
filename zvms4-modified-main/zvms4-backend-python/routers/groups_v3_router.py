@@ -1,10 +1,6 @@
-import re
-
-from bson import ObjectId
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from database import db
 from db import backends
 from typings.log import inject_log
 from util.object_id import get_current_user
@@ -43,22 +39,8 @@ async def _list_permission_group_members(
     if not permissions:
         return {"data": [], "total": 0}
 
-    match: dict = {"roles": permissions[0]}
-    if query:
-        escaped = re.escape(query)
-        match["$or"] = [
-            {"name": {"$regex": escaped, "$options": "i"}},
-            {"id": {"$regex": escaped, "$options": "i"}},
-        ]
-
-    total = await db.zvms_new.users.count_documents(match)
-    members = (
-        await db.zvms_new.users.find(match)
-        .sort({"id": 1})
-        .skip((page - 1) * size)
-        .limit(size)
-        .to_list(None)
-    )
+    users_repo = backends.get_users_repo()
+    members, total = await users_repo.list_page(query, permissions[0], page, size)
 
     groups_repo = backends.get_groups_repo()
     class_name_cache: dict[str, str] = {}
@@ -80,8 +62,13 @@ async def _list_permission_group_members(
             "class_name": class_name,
             "group": [class_id] if class_id else [],
         }
-        row["password"] = member.get("password") is not None if pwdm else None
+        row["password"] = None
         result.append(row)
+
+    if pwdm:
+        for row in result:
+            user = await users_repo.get_by_oid(row["_id"])
+            row["password"] = user is not None and user.get("password") is not None
 
     return {"data": result, "total": total}
 
@@ -105,9 +92,7 @@ async def get_group_users_v3(
     validate_object_id(group_id)
     groups_repo = backends.get_groups_repo()
 
-    permission_group = await db.zvms_new.groups.find_one(
-        {"_id": ObjectId(group_id), "type": "permission"}
-    )
+    permission_group = await groups_repo.get_permission_group(group_id)
     if permission_group is not None:
         return await _list_permission_group_members(
             permission_group, query, page, size, pwdm

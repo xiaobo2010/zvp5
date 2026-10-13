@@ -1,13 +1,11 @@
 from fastapi import Request, FastAPI
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, RedirectResponse
-from pymongo.errors import OperationFailure
 import re
 from datetime import datetime
 from typings.log import ZVMSLog, xuehai_id_from
 from routers import (
     users_router,
-    activities_router,
     groups_router,
     exports_router,
     imports_router,
@@ -23,10 +21,11 @@ from routers import (
     groups_v3_router,
     changelog_router,
 )
-from database import close_mongo_connection, connect_to_mongo
 import socketio
 from fastapi.middleware.cors import CORSMiddleware
-from database import db
+from db import backends
+from db.ids import InvalidOid
+from db.oracle.engine import ping as oracle_ping
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from tasks.compute_time import compute_tasks, generate_reports
 
@@ -111,16 +110,12 @@ async def disconnect(sid):
 
 
 async def mark_all_tasks_failed():
-    await db.zvms_new.tasks.update_many(
-        {"status": {"$ne": "completed"}},
-        {"$set": {"status": "failed", "errmsg": "Program interrupted unexpectedly"}},
-    )
+    await backends.get_tasks_repo().fail_pending("Program interrupted unexpectedly")
 
 
 async def startup_event():
     """Startup event handler to initialize the application."""
     print("Starting up...")
-    await connect_to_mongo()
     scheduler.start()
 
     # Schedule compute_time to run daily at 00:00 HKT (UTC+8)
@@ -153,7 +148,6 @@ async def shutdown_event():
     print("Shutting down...")
     await mark_all_tasks_failed()
     scheduler.shutdown()
-    await close_mongo_connection()
     print("Application shut down.")
 
 
@@ -163,9 +157,6 @@ app.add_event_handler("shutdown", shutdown_event)
 
 # Register routes
 app.include_router(users_router.router, prefix="/api/users", tags=["users"])
-app.include_router(
-    activities_router.router, prefix="/api/activities", tags=["activities"]
-)
 app.include_router(groups_router.router, prefix="/api/groups", tags=["groups"])
 app.include_router(exports_router.router, prefix="/api/exports", tags=["exports"])
 app.include_router(imports_router.router, prefix="/api/imports", tags=["imports"])
@@ -251,8 +242,8 @@ async def redirect_log(request: Request, path: str):
 async def health_check():
     """Health check endpoint."""
     try:
-        # Check MongoDB connection
-        await db.zvms_new.command("ping")
+        # ADB is the only backend: always verify DB connectivity.
+        await oracle_ping()
         return {"status": "ok", "code": 200, "data": "OK"}
     except Exception as e:
         return {"status": "error", "code": 500, "data": str(e)}
@@ -282,18 +273,23 @@ async def validation_exception_handler(_: Request, exc: RequestValidationError):
     return JSONResponse(content={"detail": error_string}, status_code=422)
 
 
+@app.exception_handler(InvalidOid)
+async def invalid_oid_exception_handler(_: Request, exc: InvalidOid):
+    """Map a malformed id caught at the data boundary to HTTP 400.
+
+    Repositories normalize ids via ``db.ids`` at the data boundary; without
+    this handler an ``InvalidOid`` escaping a route (e.g. a business id where
+    an object id was expected) would fall through to the generic 500 handler.
+    """
+    return JSONResponse(content={"detail": "Invalid Object ID"}, status_code=400)
+
+
 @app.exception_handler(Exception)
 async def generic_exception_handler(_: Request, exc: Exception):
     """Catch-all exception handler to return a generic error message."""
     return JSONResponse(
         content={"detail": "An internal server error occurred: %s" % type(exc).__name__}, status_code=500
     )
-
-
-@app.exception_handler(OperationFailure)
-async def operation_failure_exception_handler(_: Request, exc: OperationFailure):
-    """Catch-all exception handler to return a generic error message."""
-    return JSONResponse(content={"detail": exc.details["errmsg"]}, status_code=400)
 
 
 @app.get("/api/version")

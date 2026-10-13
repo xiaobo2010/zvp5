@@ -43,6 +43,8 @@ declare module 'vue' {
     ZInputDuration: typeof import('./src/components/form/ZInputDuration.vue')['default']
     ZLogCard: typeof import('./src/components/log/ZLogCard.vue')['default']
     ZLogList: typeof import('./src/components/log/ZLogList.vue')['default']
+    ZMarkdown: typeof import('./src/components/markdown/ZMarkdown.vue')['default']
+    ZMarkdownEditor: typeof import('./src/components/markdown/ZMarkdownEditor.vue')['default']
     ZSelectActivityMode: typeof import('./src/components/form/ZSelectActivityMode.vue')['default']
     ZSelectClass: typeof import('./src/components/form/ZSelectClass.vue')['default']
     ZSelectPerson: typeof import('./src/components/form/ZSelectPerson.vue')['default']

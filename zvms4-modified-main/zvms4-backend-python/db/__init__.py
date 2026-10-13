@@ -1,6 +1,7 @@
 """Database access layer.
 
-Repository layer for the application. The application persists to MongoDB
-(see ``database.py``); the ``db.repos`` package holds the backend adapters and
-``db.backends`` is the per-module factory.
+This package is intentionally self-contained and is not wired into the
+application yet. The current application uses MongoDB (see ``database.py``);
+the ``db.oracle`` subpackage only provides Oracle Autonomous Database (ADB)
+connection/config scaffolding and performs no I/O at import time.
 """

@@ -1,6 +1,5 @@
 import re
 from fastapi import APIRouter, Depends, HTTPException, Query
-from database import db
 from db import backends
 from util.calculate import calculate_user_time, find_percentile_threshold
 from util.get_class import get_user_class
@@ -73,67 +72,46 @@ async def get_user_activities_v2(
     if not regex:
         search = re.escape(search) if search else ""
 
-    # Get the user activities
-    activities_filter = (
-        {
-            "$or": [
-                {"name": {"$regex": search, "$options": "i"}},
-                {"description": {"$regex": search, "$options": "i"}},
-            ]
-        }
-        if search
-        else {}
-    )
+    activities_repo = backends.get_activities_repo()
+    members_repo = backends.get_members_repo()
 
-    selected_activities = (
-        await db.zvms_new.get_collection("activities")
-        .find(activities_filter)
-        .to_list(None)
-    )
+    # Enumerate the activities matching the search, then keep only the
+    # requester's memberships pointing at them (mirrors the Mongo pipeline).
+    selected_activities, _ = await activities_repo.list_raw(search="", page=None)
+    if search:
+        pattern = re.compile(search, re.IGNORECASE)
+        selected_activities = [
+            activity
+            for activity in selected_activities
+            if pattern.search(activity.get("name") or "")
+            or pattern.search(activity.get("description") or "")
+        ]
+    activity_ids = [str(activity["_id"]) for activity in selected_activities]
 
-    members_record_filter = {
-        "member": user_id,
-        "activity": {"$in": [str(activity["_id"]) for activity in selected_activities]},
-    }
+    memberships = await members_repo.list_for_member(user_id, None, activity_ids)
+    if sort:
+        memberships.sort(
+            key=lambda membership: (
+                membership.get(sort) is None,
+                membership.get(sort),
+            ),
+            reverse=not asc,
+        )
 
-    count = await db.zvms_new.get_collection("activity_members").count_documents(
-        members_record_filter
-    )
+    count = len(memberships)
 
-    pipeline = [
-        {"$match": members_record_filter},
-        {
-            "$addFields": {
-                "activity_id_obj": {"$toObjectId": "$activity"},
-            }
-        },
-        {
-            "$lookup": {
-                "from": "activities",
-                "localField": "activity_id_obj",
-                "foreignField": "_id",
-                "as": "activity",
-            }
-        },
-        {"$unwind": "$activity"},
-        {"$project": {"activity_id_obj": 0}},
-        {"$sort": {sort: 1 if asc else -1}},
-        {"$skip": (page - 1) * perpage},
-        {"$limit": perpage},
-    ]
+    start = (page - 1) * perpage
+    memberships = memberships[start : start + perpage]
 
-    members = (
-        await db.zvms_new.get_collection("activity_members")
-        .aggregate(pipeline)
-        .to_list(None)
-    )
     activities = []
 
-    for member in members:
-        # make the `activity` as the top level field, and let `member` to be `mine` field
-        activity = member.pop("activity")
-        member["_id"] = str(member["_id"])
-        activity["mine"] = member
+    for membership in memberships:
+        activity = await activities_repo.get(membership["activity"])
+        if activity is None:
+            continue
+        mine = {key: value for key, value in membership.items() if key != "activity"}
+        mine["_id"] = str(mine["_id"])
+        activity["mine"] = mine
         activity["_id"] = str(activity["_id"])
         activities.append(activity)
 
@@ -178,20 +156,23 @@ async def get_user_time_statistics_v2(
     :return: User time statistics
     """
     group_id = await get_user_class(user_id)
-    group_indicators = await db.zvms_new.get_collection("group_indicators").find_one(
-        {"group": str(group_id)}
+    stats_repo = backends.get_stats_repo()
+    indicators = await stats_repo.get_indicators()
+    group_rows = await stats_repo.list_group_indicators()
+    group_row = next(
+        (row for row in group_rows if str(row.get("group")) == str(group_id)),
+        None,
     )
-    indicators = await db.zvms_new.get_collection("indicators").find({}).to_list(None)
-    if len(indicators) == 0 or group_indicators is None:
+    if indicators is None or group_row is None:
         raise HTTPException(
             status_code=400, detail="Function temporarily unaccessible."
         )
     user_document = await backends.get_users_repo().get_by_oid(
         str(validate_object_id(user_id))
     )
-    grade_indicators = indicators[0]["percentiles"][user_document["id"][:4]]
+    grade_indicators = indicators["percentiles"][user_document["id"][:4]]
     user_time = await calculate_user_time(user_id, allow_cache=True)
-    group_indicators = group_indicators["percentiles"]
+    group_indicators = group_row["percentiles"]
     return {
         "on-campus": {
             "value": user_time["on-campus"],

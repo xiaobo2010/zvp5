@@ -13,10 +13,9 @@ from config import (
     ON_TO_OFF_RATE,
     BASE_SOCIAL_PRACTICE,
 )
-from database import db
+from db import backends
 from util.calculate import calculate_user_time, time_with_origin
 from util.statement import create_statement_from_kernel_data, TRANSLATIONS
-from utils import validate_object_id
 
 
 async def compute_time():
@@ -24,16 +23,16 @@ async def compute_time():
     This function is a placeholder for removing data from the database.
     It should be implemented to remove specific data as needed.
     """
-    await db.zvms_new.get_collection("time").delete_many({})
-    users = await db.zvms_new.get_collection("users").find({}).to_list(None)
+    await backends.get_time_repo().clear_for_all()
+    users = await backends.get_users_repo().list_all()
     for user in users:
         user_id = str(user["_id"])
         await calculate_user_time(user_id, allow_cache=False)
 
 
 async def compute_ay_time():
-    await db.zvms_new.get_collection("time_academic_year").delete_many({})
-    users = await db.zvms_new.get_collection("users").find({}).to_list(None)
+    await backends.get_time_repo().clear_academic_years()
+    users = await backends.get_users_repo().list_all()
     now = datetime.now()
     ay = now.year if now.month >= 9 else now.year - 1
     soy = datetime.now().replace(
@@ -48,30 +47,24 @@ async def compute_ay_time():
         result = await calculate_user_time(
             user_id, date_start=soy, date_end=eoy, allow_cache=False
         )
-        await db.zvms_new.get_collection("time_academic_year").delete_many(
-            {"user": user_id}
-        )
-        await db.zvms_new.get_collection("time_academic_year").insert_one(
-            {
-                "user": user_id,
-                "entry": entry,
-                "academic_year": ay,
-                "start_of_year": soy,
-                "end_of_year": eoy,
-                **result,
-            }
+        await backends.get_time_repo().upsert_academic_year(
+            user_id,
+            entry,
+            ay,
+            soy,
+            eoy,
+            result["on-campus"],
+            result["off-campus"],
+            result["social-practice"],
         )
 
 
 async def generate_reports():
-    classes = (
-        await db.zvms_new.get_collection("groups").find({"type": {"$ne": "permission"}}).to_list(None)
-    )
-    await db.zvms_new.get_collection("daily_exports").delete_many({})
-    db_data = await db.zvms_new.get_collection("daily_exports").insert_one(
+    classes = await backends.get_groups_repo().list_non_permission()
+    await backends.get_daily_exports_repo().delete_all()
+    db_id = await backends.get_daily_exports_repo().insert(
         {"created_at": datetime.now(), "status": "processing", "data": []}
     )
-    db_id = validate_object_id(db_data.inserted_id)
     if not os.path.exists("./export"):
         os.makedirs("./export")
     else:
@@ -84,11 +77,7 @@ async def generate_reports():
                         os.remove(file_path)
                 os.rmdir(item_path)
     for class_id in classes:
-        users = (
-            await db.zvms_new.get_collection("users")
-            .find({"class_id": class_id["_id"]})
-            .to_list(None)
-        )
+        users = await backends.get_users_repo().list_by_class(class_id["_id"])
         os.makedirs(f'./export/{class_id["name"]}', exist_ok=True)
         for user in users:
             user_id = str(user["id"])
@@ -111,15 +100,11 @@ async def generate_reports():
                 filename=f'./export/{class_id['name']}/{user['id']}_{user["name"]}.pdf',
                 language="zh",
             )
-            await db.zvms_new.get_collection("daily_exports").update_one(
-                {"_id": db_id},
+            await backends.get_daily_exports_repo().push_data(
+                db_id,
                 {
-                    "$push": {
-                        "data": {
-                            **spreadsheet,
-                            "filename": filename,
-                        }
-                    }
+                    **spreadsheet,
+                    "filename": filename,
                 },
             )
             print(
@@ -127,9 +112,7 @@ async def generate_reports():
             )
         print(f"Exported statements for class {class_id['name']}.")
     # Create a tar.gz archive of the export directory
-    spreadsheet_items = await db.zvms_new.get_collection("daily_exports").find_one(
-        {"_id": db_id}
-    )
+    spreadsheet_items = await backends.get_daily_exports_repo().find_one(db_id)
     spreadsheet_items = spreadsheet_items.get("data", [])
     df = pd.DataFrame(spreadsheet_items)
     df.rename(columns=TRANSLATIONS["zh"]["spreadsheet"], inplace=True)
@@ -257,20 +240,10 @@ def describe_df_statistical_indicators(
 
 
 async def compute_batch_origins():
-    users_pipeline = [
-        {
-            "$group": {
-                "_id": {"$substrCP": ["$id", 0, 4]},
-                "originalIds": {"$push": "$_id"},
-            }
-        }
-    ]
-    grades = (
-        await db.zvms_new.get_collection("users").aggregate(users_pipeline).to_list(None)
-    )
-    await db.zvms_new.get_collection("time_with_origin").delete_many({})
-    await db.zvms_new.get_collection("time_with_origin_stat").delete_many({})
-    groups = await db.zvms_new.get_collection("groups").find({"type": {"$ne": "permission"}}).to_list(None)
+    grades = await backends.get_users_repo().group_oids_by_id_prefix()
+    await backends.get_time_repo().clear_with_origin()
+    await backends.get_time_repo().clear_with_origin_stats()
+    groups = await backends.get_groups_repo().list_non_permission()
     for grade in grades:
         await time_with_origin("grade", grade["_id"])
         await time_with_origin("grade", grade["_id"], 20)
@@ -287,20 +260,12 @@ async def compute_group_indicators():
     This function computes group indicators based on the time data of users.
     """
 
-    groups = (
-        await db.zvms_new.get_collection("groups").find({"type": {"$ne": "permission"}}).to_list(None)
-    )
+    groups = await backends.get_groups_repo().list_non_permission()
 
     for group in groups:
-        users = (
-            await db.zvms_new.get_collection("users")
-            .find({"class_id": group["_id"]})
-            .to_list(None)
-        )
-        time_graph = (
-            await db.zvms_new.get_collection("time")
-            .find({"user": {"$in": [str(user["_id"]) for user in users]}})
-            .to_list(None)
+        users = await backends.get_users_repo().list_by_class(group["_id"])
+        time_graph = await backends.get_time_repo().list_by_users(
+            [str(user["_id"]) for user in users]
         )
         time_df = pd.DataFrame(time_graph)
         df = process_time_data(time_df)
@@ -316,16 +281,8 @@ async def compute_group_indicators():
         indicators = describe_df_statistical_indicators(
             df, ["on-campus", "off-campus", "social-practice"]
         )
-        await db.zvms_new.get_collection("group_indicators").delete_many(
-            {"group": str(group["_id"])}
-        )
-        await db.zvms_new.get_collection("group_indicators").insert_one(
-            {
-                "group": str(group["_id"]),
-                "percentiles": percentiles,
-                "indicators": indicators,
-                "updated_at": datetime.now(),
-            }
+        await backends.get_stats_repo().upsert_group_indicators(
+            str(group["_id"]), percentiles, indicators
         )
 
 
@@ -336,29 +293,13 @@ async def compute_indicators():
     Indicators include percentiles, compliance, and statistical indicators including mean, median, and mode.
     """
     await compute_group_indicators()
-    users_pipeline = [
-        {
-            "$group": {
-                "_id": {"$substrCP": ["$id", 0, 4]},
-                "originalIds": {"$push": "$_id"},
-            }
-        }
-    ]
-
-    result = (
-        await db.zvms_new.get_collection("users").aggregate(users_pipeline).to_list(None)
-    )
+    result = await backends.get_users_repo().group_oids_by_id_prefix()
     percentiles = {}  # Record<grade (str), dict<percentiles_name (str), value (float)>>
     indicators = {}  # Record<grade (str), dict<indicator_name (str), value (float)>>
     for item in result:
         grade = item["_id"]
-        members = (
-            await db.zvms_new.get_collection("time")
-            .find(
-                {"user": {"$in": [str(member) for member in item["originalIds"]]}},
-                {"on_campus_raw": 1, "off_campus_raw": 1, "social_practice": 1},
-            )
-            .to_list(None)
+        members = await backends.get_time_repo().list_by_users(
+            [str(member) for member in item["originalIds"]]
         )
         df = pd.DataFrame(members)
         df = process_time_data(df)
@@ -375,15 +316,7 @@ async def compute_indicators():
             df, ["on-campus", "off-campus", "social-practice"]
         )
 
-    await db.zvms_new.get_collection("indicators").delete_many({})
-
-    await db.zvms_new.get_collection("indicators").insert_one(
-        {
-            "percentiles": percentiles,
-            "indicators": indicators,
-            "updated_at": datetime.now(),
-        }
-    )
+    await backends.get_stats_repo().upsert_indicators(percentiles, indicators)
 
 
 async def compute_tasks():

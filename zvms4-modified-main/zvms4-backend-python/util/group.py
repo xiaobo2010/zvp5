@@ -1,5 +1,4 @@
-from bson import ObjectId
-from database import db
+from db import backends
 
 
 async def get_user_permissions(user: dict):
@@ -17,12 +16,8 @@ async def is_in_a_same_class(user: str, another_user: str):
     Check if two users are in the same class
     """
     # Get each user's class via `class_id`
-    user_doc = await db.zvms_new.users.find_one(
-        {"_id": ObjectId(user)}, {"class_id": 1}
-    )
-    another_doc = await db.zvms_new.users.find_one(
-        {"_id": ObjectId(another_user)}, {"class_id": 1}
-    )
+    user_doc = await backends.get_users_repo().get_by_oid(user)
+    another_doc = await backends.get_users_repo().get_by_oid(another_user)
 
     user_class = user_doc.get("class_id") if user_doc else None
     another_class = another_doc.get("class_id") if another_doc else None

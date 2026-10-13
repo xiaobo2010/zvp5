@@ -25,7 +25,7 @@ from util.object_id import (
     compulsory_temporary_token,
 )
 from datetime import datetime
-from database import db
+from db import backends
 import pandas as pd
 from fastapi import BackgroundTasks
 from pydantic import BaseModel
@@ -46,17 +46,18 @@ router = APIRouter()
 
 
 async def process_task(task_id: str):
-    task = await db.zvms_new.tasks.find_one({"id": uuid.UUID(task_id)})
+    tasks_repo = backends.get_tasks_repo()
+    task = await tasks_repo.get_by_uuid(uuid.UUID(task_id))
     if not task:
         return
-    await db.zvms_new.tasks.update_one(
-        {"id": uuid.UUID(task_id)},
-        {"$set": {"status": ExportStatus.processing, "task_start": datetime.now()}},
+    await tasks_repo.update_fields(
+        uuid.UUID(task_id),
+        {"status": ExportStatus.processing, "task_start": datetime.now()},
     )
     include_description = task.get("include_description", False)
     if task["variant"] == "time":
         result = []
-        users = await db.zvms_new.users.find({}).to_list(None)
+        users = await backends.get_users_repo().list_all()
         for idx, user in enumerate(users):
             if task["export_start"] is not None and task["export_start"] is not None:
                 user_time = await calculate_user_time(
@@ -86,7 +87,10 @@ async def process_task(task_id: str):
             )
             user_time["on-campus"] += more_on_campus
             user_time["off-campus"] += more_off_campus
-            group = await db.zvms_new.groups.find_one({"_id": user.get("class_id")})
+            class_oid = user.get("class_id")
+            group = (
+                await backends.get_groups_repo().get(class_oid) if class_oid else None
+            )
             if group is None:
                 continue
             doc = {
@@ -104,33 +108,30 @@ async def process_task(task_id: str):
             result.append(doc)
             task["percentage"] = (idx + 1) / len(users) * 100
             if idx % 20 == 19:
-                await db.zvms_new.tasks.update_one(
-                    {"id": uuid.UUID(task_id)},
-                    {
-                        "$set": {
-                            "percentage": task["percentage"],
-                        },
-                        "$push": {"result": {"$each": result}},
-                    },
+                await tasks_repo.push_result(
+                    uuid.UUID(task_id),
+                    result,
+                    {"percentage": task["percentage"]},
                 )
                 result = []
                 sleep(0.01)
-        await db.zvms_new.tasks.update_one(
-            {"id": uuid.UUID(task_id)},
+        await tasks_repo.push_result(
+            uuid.UUID(task_id),
+            result,
             {
-                "$set": {
-                    "percentage": 100,
-                    "status": ExportStatus.completed,
-                    "task_end": datetime.now(),
-                },
-                "$push": {"result": {"$each": result}},
+                "percentage": 100,
+                "status": ExportStatus.completed,
+                "task_end": datetime.now(),
             },
         )
     elif task["variant"] == "users":
         result = []
-        users = await db.zvms_new.users.find({}).to_list(None)
+        users = await backends.get_users_repo().list_all()
         for idx, user in enumerate(users):
-            group = await db.zvms_new.groups.find_one({"_id": user.get("class_id")})
+            class_oid = user.get("class_id")
+            group = (
+                await backends.get_groups_repo().get(class_oid) if class_oid else None
+            )
             doc = {
                 "_id": str(user["_id"]),
                 "Name": user["name"],
@@ -143,37 +144,29 @@ async def process_task(task_id: str):
             result.append(doc)
             task["percentage"] = (idx + 1) / len(users) * 100
             if idx % 20 == 19:
-                await db.zvms_new.tasks.update_one(
-                    {"id": uuid.UUID(task_id)},
-                    {
-                        "$set": {
-                            "percentage": task["percentage"],
-                        },
-                        "$push": {"result": {"$each": result}},
-                    },
+                await tasks_repo.push_result(
+                    uuid.UUID(task_id),
+                    result,
+                    {"percentage": task["percentage"]},
                 )
                 result = []
                 sleep(0.01)
-        await db.zvms_new.tasks.update_one(
-            {"id": uuid.UUID(task_id)},
+        await tasks_repo.push_result(
+            uuid.UUID(task_id),
+            result,
             {
-                "$set": {
-                    "percentage": 100,
-                    "status": ExportStatus.completed,
-                    "task_end": datetime.now(),
-                },
-                "$push": {"result": {"$each": result}},
+                "percentage": 100,
+                "status": ExportStatus.completed,
+                "task_end": datetime.now(),
             },
         )
     else:
-        await db.zvms_new.tasks.update_one(
-            {"id": uuid.UUID(task_id)},
+        await tasks_repo.update_fields(
+            uuid.UUID(task_id),
             {
-                "$set": {
-                    "status": ExportStatus.failed,
-                    "task_end": datetime.now(),
-                    "errmsg": "Invalid variant",
-                }
+                "status": ExportStatus.failed,
+                "task_end": datetime.now(),
+                "errmsg": "Invalid variant",
             },
         )
 
@@ -202,7 +195,7 @@ async def export_users(
     document["variant"] = ExportVariant.users.value
     document["format"] = document["format"].value
     document["status"] = document["status"].value
-    await db.zvms_new.tasks.insert_one(document)
+    await backends.get_tasks_repo().create(document)
     log.with_text(
         f"用户 {await get_user_display_name(user['id'])} 发起了用户列表导出（任务 ID: {task_id}）",
         type="export",
@@ -243,7 +236,7 @@ async def export_time(
     document["variant"] = ExportVariant.time.value
     document["format"] = document["format"].value
     document["status"] = document["status"].value
-    await db.zvms_new.tasks.insert_one(document)
+    await backends.get_tasks_repo().create(document)
     log.with_text(
         f"用户 {await get_user_display_name(user['id'])} 发起了时长报表导出（任务 ID: {task_id}）",
         type="export",
@@ -255,7 +248,7 @@ async def export_time(
 
 @router.get("/{task_id}")
 async def get_export(task_id: str):
-    task = await db.zvms_new.tasks.find_one({"id": uuid.UUID(task_id)})
+    task = await backends.get_tasks_repo().get_by_uuid(uuid.UUID(task_id))
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
     del task["result"]
@@ -337,7 +330,7 @@ async def get_export_file(
 ):
     if "admin" not in user["per"]:
         raise HTTPException(status_code=403, detail="Permission denied")
-    task = await db.zvms_new.tasks.find_one({"id": uuid.UUID(task_id)})
+    task = await backends.get_tasks_repo().get_by_uuid(uuid.UUID(task_id))
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
     if task["status"] != "completed":
@@ -374,7 +367,7 @@ async def get_export_file(
         else:
             raise HTTPException(status_code=400, detail="Invalid format")
         buffer.write(tmp.read())
-        await db.zvms_new.tasks.delete_one({"id": uuid.UUID(task_id)})
+        await backends.get_tasks_repo().delete(uuid.UUID(task_id))
     log.with_text(
         f"用户 {await get_user_display_name(user['id'])} 下载了导出文件（任务 ID: {task_id}，格式 {task['format']}）",
         type="export",
@@ -386,7 +379,7 @@ async def get_export_file(
 @router.get("")
 async def get_export_list():
     result = []
-    for task_id, task in enumerate(await db.zvms_new.tasks.find({}).to_list(None)):
+    for task_id, task in enumerate(await backends.get_tasks_repo().list_all()):
         result.append(
             {
                 "_id": str(task["_id"]),

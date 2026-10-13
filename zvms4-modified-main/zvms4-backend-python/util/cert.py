@@ -9,11 +9,11 @@ import datetime
 import hashlib
 import hmac
 import struct
-from bson import ObjectId
 from bcrypt import checkpw, gensalt, hashpw
 from Crypto.Hash import SHA256
 
 from db import backends
+from db.ids import new_oid
 from util.group import get_user_permissions
 
 
@@ -145,7 +145,7 @@ def jwt_encode(
         "scope": scope,
         "per": permissions,
         "elg": eligibility,
-        "jti": str(ObjectId()),
+        "jti": new_oid(),
     }
     result = jwt.encode(payload, jwt_private_key, algorithm="HS256")
     return result
@@ -177,6 +177,8 @@ async def validate_by_cert(
     user = await backends.get_users_repo().get_by_oid(id)
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
+    if user.get("banned"):
+        raise HTTPException(status_code=403, detail="User is banned")
     if user["password"] is None:
         authenticated = auth_field["password"] == user["id"]
     else:

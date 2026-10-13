@@ -1,10 +1,9 @@
-import re
-from typing import Any, Optional
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from config import MAX_QUERY_COUNT
-from database import db
+from db import backends
 from util.object_id import get_current_user
 from util.user import get_user_display_names
 
@@ -29,35 +28,18 @@ async def read_logs(
     if len(query) > MAX_QUERY_COUNT:
         raise HTTPException(status_code=400, detail="Query too long")
 
-    match: dict[str, Any] = {}
-    if query != "":
-        escaped = re.escape(query)
-        match["$or"] = [{"url": {"$regex": escaped}}, {"data": {"$regex": escaped}}]
-    if performer != "":
-        match["user"] = performer
-    if type != "":
-        match["type"] = {"$in": [t.strip() for t in type.split(",") if t.strip()]}
-    if level != "":
-        match["level"] = {"$in": [l.strip() for l in level.split(",") if l.strip()]}
-    timestamp_filter: dict[str, Any] = {}
-    if time_start is not None:
-        timestamp_filter["$gt"] = time_start
-    if time_end is not None:
-        timestamp_filter["$lt"] = time_end
-    if timestamp_filter:
-        match["timestamp"] = timestamp_filter
+    types = [t.strip() for t in type.split(",") if t.strip()]
+    levels = [l.strip() for l in level.split(",") if l.strip()]
 
-    count = await db.zvms_new.get_collection("app_logs").count_documents(match)
-
-    pipeline = [
-        {"$match": match},
-        {"$sort": {"timestamp": -1}},
-        {"$skip": 0 if page == -1 else (page - 1) * perpage},
-        {"$limit": perpage},
-    ]
-
-    logs = (
-        await db.zvms_new.get_collection("app_logs").aggregate(pipeline).to_list(None)
+    logs, count = await backends.get_applogs_repo().list_page(
+        query=query,
+        performer=performer,
+        types=types,
+        levels=levels,
+        time_start=time_start,
+        time_end=time_end,
+        page=page,
+        size=perpage,
     )
 
     names = await get_user_display_names(
