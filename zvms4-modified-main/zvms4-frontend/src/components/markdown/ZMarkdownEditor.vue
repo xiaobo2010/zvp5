@@ -1,0 +1,347 @@
+<script setup lang="ts">
+import { computed, nextTick, ref } from 'vue'
+import { ElButton, ElButtonGroup, ElInput } from 'element-plus'
+import {
+  TextBold,
+  TextItalic,
+  Strikethrough,
+  Link,
+  Code,
+  UnorderedList,
+  OrderedList,
+  Quote,
+  TitleLevel,
+  FileCodeOne
+} from '@icon-park/vue-next'
+import { useI18n } from 'vue-i18n'
+import ZMarkdown from './ZMarkdown.vue'
+
+const props = defineProps<{
+  modelValue: string
+  placeholder?: string
+}>()
+
+const emit = defineEmits<{
+  (e: 'update:modelValue', value: string): void
+}>()
+
+const { t } = useI18n()
+
+const textareaRef = ref<InstanceType<typeof ElInput>>()
+const mode = ref<'edit' | 'preview'>('edit')
+
+const currentValue = computed({
+  get: () => props.modelValue,
+  set: (val) => emit('update:modelValue', val)
+})
+
+const rawTextarea = computed(() => {
+  const el = textareaRef.value?.$el as HTMLElement | undefined
+  return el?.querySelector('textarea') as HTMLTextAreaElement | undefined
+})
+
+function getSelection() {
+  const ta = rawTextarea.value
+  if (!ta) return { start: 0, end: 0, text: '' }
+  return {
+    start: ta.selectionStart,
+    end: ta.selectionEnd,
+    text: ta.value.slice(ta.selectionStart, ta.selectionEnd)
+  }
+}
+
+function replaceSelection(replacement: string, cursorOffset?: number) {
+  const ta = rawTextarea.value
+  if (!ta) return
+  const start = ta.selectionStart
+  const end = ta.selectionEnd
+  const before = ta.value.slice(0, start)
+  const after = ta.value.slice(end)
+  const newValue = before + replacement + after
+  const cursor = start + (cursorOffset ?? replacement.length)
+  currentValue.value = newValue
+  nextTick(() => {
+    ta.focus()
+    ta.setSelectionRange(cursor, cursor)
+  })
+}
+
+function wrapSelection(before: string, after: string) {
+  const { start, text } = getSelection()
+  const replacement = text.length ? before + text + after : before + after
+  const cursor = text.length ? start + replacement.length : start + before.length
+  replaceSelection(replacement, cursor)
+}
+
+function prefixLines(prefix: string) {
+  const ta = rawTextarea.value
+  if (!ta) return
+  const value = ta.value
+  const start = ta.selectionStart
+  const end = ta.selectionEnd
+  const lineStart = value.lastIndexOf('\n', start - 1) + 1
+  const lineEndIndex = value.indexOf('\n', end)
+  const blockEnd = lineEndIndex === -1 ? value.length : lineEndIndex
+  const block = value.slice(lineStart, blockEnd)
+  const lines = block.split('\n')
+  const already = lines.filter((l) => l.trim().length > 0).every((l) => l.startsWith(prefix))
+  const newBlock = already
+    ? lines.map((l) => (l.startsWith(prefix) ? l.slice(prefix.length) : l)).join('\n')
+    : lines.map((l) => (l.trim().length > 0 ? prefix + l : l)).join('\n')
+  const newValue = value.slice(0, lineStart) + newBlock + value.slice(blockEnd)
+  currentValue.value = newValue
+  nextTick(() => {
+    ta.focus()
+    ta.setSelectionRange(lineStart, lineStart + newBlock.length)
+  })
+}
+
+function orderedList() {
+  const ta = rawTextarea.value
+  if (!ta) return
+  const value = ta.value
+  const start = ta.selectionStart
+  const end = ta.selectionEnd
+  const lineStart = value.lastIndexOf('\n', start - 1) + 1
+  const lineEndIndex = value.indexOf('\n', end)
+  const blockEnd = lineEndIndex === -1 ? value.length : lineEndIndex
+  const block = value.slice(lineStart, blockEnd)
+  const lines = block.split('\n')
+  const olRegex = /^\d+\.\s+/
+  const already = lines.filter((l) => l.trim().length > 0).every((l) => olRegex.test(l))
+  let number = 1
+  const newBlock = lines
+    .map((l) => {
+      if (l.trim().length === 0) return l
+      if (already) return l.replace(olRegex, '')
+      const result = `${number}. ${l}`
+      number++
+      return result
+    })
+    .join('\n')
+  const newValue = value.slice(0, lineStart) + newBlock + value.slice(blockEnd)
+  currentValue.value = newValue
+  nextTick(() => {
+    ta.focus()
+    ta.setSelectionRange(lineStart, lineStart + newBlock.length)
+  })
+}
+
+function heading() {
+  const ta = rawTextarea.value
+  if (!ta) return
+  const value = ta.value
+  const start = ta.selectionStart
+  const lineStart = value.lastIndexOf('\n', start - 1) + 1
+  const lineEndIndex = value.indexOf('\n', start)
+  const blockEnd = lineEndIndex === -1 ? value.length : lineEndIndex
+  const line = value.slice(lineStart, blockEnd)
+  const match = /^(#{1,6})\s+(.*)$/.exec(line)
+  const newLine = match ? match[2] : `### ${line}`
+  const newValue = value.slice(0, lineStart) + newLine + value.slice(blockEnd)
+  currentValue.value = newValue
+  nextTick(() => {
+    ta.focus()
+    ta.setSelectionRange(lineStart, lineStart + newLine.length)
+  })
+}
+
+function link() {
+  const { start, text } = getSelection()
+  const label = text.length ? text : t('markdown.editor.linkLabel')
+  const replacement = `[${label}]()`
+  const cursor = start + (text.length ? label.length + 3 : 1)
+  replaceSelection(replacement, cursor)
+}
+
+function codeBlock() {
+  const { start, text } = getSelection()
+  const before = '```\n'
+  const after = '\n```'
+  const replacement = text.length ? before + text + after : before + after
+  const cursor = start + (text.length ? replacement.length : before.length)
+  replaceSelection(replacement, cursor)
+}
+
+const actions = [
+  {
+    id: 'bold',
+    icon: TextBold,
+    titleKey: 'markdown.editor.bold',
+    handler: () => wrapSelection('**', '**')
+  },
+  {
+    id: 'italic',
+    icon: TextItalic,
+    titleKey: 'markdown.editor.italic',
+    handler: () => wrapSelection('*', '*')
+  },
+  {
+    id: 'strikethrough',
+    icon: Strikethrough,
+    titleKey: 'markdown.editor.strikethrough',
+    handler: () => wrapSelection('~~', '~~')
+  },
+  {
+    id: 'inlineCode',
+    icon: Code,
+    titleKey: 'markdown.editor.inlineCode',
+    handler: () => wrapSelection('`', '`')
+  },
+  { id: 'link', icon: Link, titleKey: 'markdown.editor.link', handler: link },
+  {
+    id: 'bulletList',
+    icon: UnorderedList,
+    titleKey: 'markdown.editor.bulletList',
+    handler: () => prefixLines('- ')
+  },
+  {
+    id: 'orderedList',
+    icon: OrderedList,
+    titleKey: 'markdown.editor.orderedList',
+    handler: orderedList
+  },
+  { id: 'quote', icon: Quote, titleKey: 'markdown.editor.quote', handler: () => prefixLines('> ') },
+  { id: 'heading', icon: TitleLevel, titleKey: 'markdown.editor.heading', handler: heading },
+  { id: 'codeBlock', icon: FileCodeOne, titleKey: 'markdown.editor.codeBlock', handler: codeBlock }
+]
+</script>
+
+<template>
+  <div class="markdown-editor">
+    <div class="markdown-editor__toolbar">
+      <ElButton
+        v-for="action in actions"
+        :key="action.id"
+        size="small"
+        text
+        :icon="action.icon"
+        :title="t(action.titleKey)"
+        @click="action.handler"
+      />
+    </div>
+
+    <div class="markdown-editor__body">
+      <div class="markdown-editor__toggle">
+        <ElButtonGroup>
+          <ElButton
+            :type="mode === 'edit' ? 'primary' : 'default'"
+            size="small"
+            @click="mode = 'edit'"
+          >
+            {{ t('markdown.editor.edit') }}
+          </ElButton>
+          <ElButton
+            :type="mode === 'preview' ? 'primary' : 'default'"
+            size="small"
+            @click="mode = 'preview'"
+          >
+            {{ t('markdown.editor.preview') }}
+          </ElButton>
+        </ElButtonGroup>
+      </div>
+
+      <div class="markdown-editor__panes">
+        <div
+          class="markdown-editor__pane markdown-editor__edit"
+          :class="{ 'is-active': mode === 'edit' }"
+        >
+          <ElInput
+            ref="textareaRef"
+            v-model="currentValue"
+            type="textarea"
+            resize="none"
+            :placeholder="placeholder ?? t('markdown.editor.placeholder')"
+            class="markdown-editor__textarea"
+          />
+        </div>
+
+        <div
+          class="markdown-editor__pane markdown-editor__preview"
+          :class="{ 'is-active': mode === 'preview' }"
+        >
+          <ZMarkdown :source="currentValue" class="h-full w-full" />
+        </div>
+      </div>
+    </div>
+  </div>
+</template>
+
+<style scoped>
+.markdown-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.markdown-editor__toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  align-items: center;
+}
+
+.markdown-editor__body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.markdown-editor__toggle {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.markdown-editor__panes {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.markdown-editor__pane {
+  display: none;
+  flex: 1 1 0;
+  min-height: 220px;
+  border: 1px solid var(--el-border-color);
+  border-radius: var(--el-border-radius-base);
+  overflow: auto;
+}
+
+.markdown-editor__pane.is-active {
+  display: flex;
+}
+
+.markdown-editor__edit {
+  flex-direction: column;
+}
+
+.markdown-editor__preview {
+  padding: 0.75rem;
+}
+
+.markdown-editor__textarea {
+  flex: 1;
+}
+
+.markdown-editor__textarea :deep(.el-textarea__inner) {
+  height: 100%;
+  min-height: 220px;
+  border: none;
+  box-shadow: none;
+}
+
+@media (min-width: 640px) {
+  .markdown-editor__toggle {
+    display: none;
+  }
+
+  .markdown-editor__panes {
+    flex-direction: row;
+  }
+
+  .markdown-editor__pane {
+    display: flex;
+    width: 50%;
+  }
+}
+</style>
