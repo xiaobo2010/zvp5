@@ -1,13 +1,11 @@
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Body, Query
-from database import db
+from db import backends
 from typings.log import inject_log
 from util.object_id import get_current_user
 from util.user import get_user_display_name
 from utils import validate_object_id
 from typing import Literal
-from asyncio import gather
-import re
 from pydantic import BaseModel, Field
 from bson import ObjectId
 
@@ -34,117 +32,38 @@ async def get_activities_v3(
             detail='权限不足'
         )
 
-    escaped = re.escape(query)
+    repo = backends.get_activities_repo()
+    atypes = [type] if type else None
+    rows, total = await repo.list_page(query, atypes, status or None, page, size)
 
-    filters = []
-
-    if query:
-        filters.append({
-            "name": {
-                "$regex": escaped,
-                "$options": "i"
-            }
-        })
-
-    if type:
-        filters.append({
-            "type": type
-        })
-
-    if status:
-        filters.append({
-            "status": status
-        })
-
-    pipeline = [
-        {
-            "$match": {
-                "$and": filters
-            } if len(filters) else {}
-        },
-        {
-            "$sort": {
-                "_id": -1
-            }
-        },
-        {
-            "$skip": (page - 1) * size
-        },
-        {
-            "$limit": size
-        },
-        {
-            "$addFields": {
-                "creator_obj_id": {
-                    "$convert": {
-                        "input": "$creator",
-                        "to": "objectId",
-                        "onError": None,
-                        "onNull": None
-                    }
-                }
-            }
-        },
-        {
-            "$lookup": {
-                "from": "users",
-                "localField": "creator_obj_id",
-                "foreignField": "_id",
-                "as": "creator_obj"
-            }
-        },
-        {
-            "$unwind": {
-                "path": "$creator_obj",
-                "preserveNullAndEmptyArrays": True
-            }
-        },
-        {
-            "$set": {
-                "creator_obj": {
-                    "$ifNull": [
-                        "$creator_obj",
-                        {
-                            "name": "未知用户"
-                        }
-                    ]
-                }
-            }
-        },
-        {
-            "$project": {
-                "_id": {
-                    "$toString": "$_id"
-                },
-                "type": "$type",
-                "name": "$name",
-                "description": "$description",
-                "status": "$status",
-                "date": "$date",
-                "createdAt": "$createdAt",
-                "updatedAt": "$updatedAt",
-                "creator": "$creator",
-                "creator_name": "$creator_obj.name"
-            }
-        }
+    creator_oids = [
+        row["creator"]
+        for row in rows
+        if row.get("creator") and ObjectId.is_valid(row["creator"])
     ]
-
-    count_pipeline = [
-        pipeline[0],
-        {
-            "$count": "total"
-        }
-    ]
-
-    total, result = await gather(
-        db.zvms_new.get_collection("activities").aggregate(count_pipeline).to_list(length=1),
-        db.zvms_new.get_collection("activities").aggregate(pipeline).to_list(None)
+    names = (
+        await backends.get_users_repo().get_names(creator_oids)
+        if creator_oids
+        else {}
     )
 
-    return {
-        "total": total[0]["total"] if len(total) else 0,
-        "activities": result
-    }
+    activities = [
+        {
+            "_id": row["_id"],
+            "type": row["type"],
+            "name": row["name"],
+            "description": row["description"],
+            "status": row["status"],
+            "date": row["date"],
+            "createdAt": row["createdAt"],
+            "updatedAt": row["updatedAt"],
+            "creator": row["creator"],
+            "creator_name": names.get(row["creator"]) or "未知用户",
+        }
+        for row in rows
+    ]
+
+    return {"total": total, "activities": activities}
 
 
 class CreateActivityRequest(BaseModel):
@@ -165,24 +84,15 @@ async def create_activity_v3(
             detail='权限不足'
         )
 
-    oid = ObjectId()
-    now = datetime.now()
-
-    await db.zvms_new.get_collection("activities").insert_one({
-        "_id": oid,
-        "name": payload.name,
-        "description": payload.description,
-        "type": payload.type,
-        "creator": user["id"],
-        "status": "pending",
-        "date": now,
-        "createdAt": now,
-        "updatedAt": now,
-        "appointee": user["id"],
-        "approver": "",
-        "place": "",
-        "origin": "activities",
-    })
+    oid = await backends.get_activities_repo().create(
+        payload.name,
+        payload.description,
+        payload.type,
+        user["id"],
+        user["id"],
+        "activities",
+        datetime.now(),
+    )
 
     log.with_text(
         f'用户 {await get_user_display_name(user["id"])} 创建了义工活动《{payload.name}》（ID: {oid}）',
@@ -207,111 +117,39 @@ async def get_activity_members_v3(
     Get activity members (ULTRA FAST impl)
     """
 
-    escaped = re.escape(query)
-
     validate_object_id(activity_id)
 
-    pipeline = [
-        {
-            "$match": {
-                "activity": activity_id
-            }
-        },
-        {
-            "$addFields": {
-                "member_id": {
-                    "$convert": {
-                        "input": "$member",
-                        "to": "objectId",
-                        "onError": None,
-                        "onNull": None
-                    }
-                }
-            }
-        },
-        {
-            "$lookup": {
-                "from": "users",
-                "localField": "member_id",
-                "foreignField": "_id",
-                "as": "member_obj"
-            }
-        },
-        {
-            "$unwind": {
-                "path": "$member_obj",
-                "preserveNullAndEmptyArrays": True
-            }
-        },
-        {
-            "$match": {
-                "$and": [
-                    {
-                        "member_obj": {
-                            "$ne": None
-                        }
-                    },
-                    {
-                        "member_obj.name": {
-                            "$regex": escaped,
-                            "$options": "i"
-                        }
-                    }
-                ]
-            } if query else {}
-        },
-        {
-            "$sort": {
-                "_id": 1
-            }
-        },
-        {
-            "$skip": (page - 1) * size
-        },
-        {
-            "$limit": size
-        },
-        {
-            "$set": {
-                "member_obj": {
-                    "$ifNull": [
-                        "$member_obj",
-                        {
-                            "name": "未知用户"
-                        }
-                    ]
-                }
-            }
-        },
-        {
-            "$project": {
-                "_id": {
-                    "$toString": "$_id"
-                },
-                "activity": "$activity",
-                "member": "$member",
-                "member_name": "$member_obj.name",
-                "mode": "$mode",
-                "status": "$status",
-                "duration": "$duration"
-            }
-        }
-    ]
-
-    count_pipeline = pipeline[:5] + [
-        {
-            "$count": "total"
-        }
-    ]
-
-    total, result = await gather(
-        db.zvms_new.get_collection("activity_members").aggregate(count_pipeline).to_list(length=1),
-        db.zvms_new.get_collection("activity_members").aggregate(pipeline).to_list(None)
+    rows, total = await backends.get_members_repo().list_for_activity(
+        activity_id, query, page, size
     )
 
+    member_oids = [
+        row["member"]
+        for row in rows
+        if row.get("member") and ObjectId.is_valid(row["member"])
+    ]
+    names = (
+        await backends.get_users_repo().get_names(member_oids)
+        if member_oids
+        else {}
+    )
+
+    members = [
+        {
+            "_id": row["_id"],
+            "activity": row["activity"],
+            "member": row["member"],
+            "member_name": names.get(row["member"]) or "未知用户",
+            "mode": row["mode"],
+            "status": row["status"],
+            "duration": row["duration"],
+        }
+        for row in rows
+    ]
+
     return {
-        "members": result,
-        "total": total[0]["total"] if len(total) else 0
+        "members": members,
+        "total": total,
     }
 
 
@@ -339,14 +177,13 @@ async def add_activity_member_v3(
     if not _is_volunteer_manager(user):
         raise HTTPException(status_code=403, detail="权限不足")
 
-    target_activity = await db.zvms_new.get_collection("activities").find_one(
-        {"_id": validate_object_id(activity_id)}
-    )
+    members_repo = backends.get_members_repo()
+    activities_repo = backends.get_activities_repo()
+
+    target_activity = await activities_repo.get(activity_id)
 
     if not target_activity:
         raise HTTPException(status_code=404, detail="Activity not found")
-
-    results = []
 
     log_text = ''
     has_update = False
@@ -359,12 +196,8 @@ async def add_activity_member_v3(
 
     for member in members:
 
-        existing: dict = await db.zvms_new.get_collection("activity_members").find_one(
-            {
-                "member": str(member.member),
-                "activity": str(activity_id),
-                "mode": member.mode,
-            }
+        existing: dict = await members_repo.get_by_triple(
+            activity_id, member.member, member.mode
         )
 
         if existing:
@@ -373,22 +206,16 @@ async def add_activity_member_v3(
                 "duration": existing["duration"] + member.duration
             }
 
-            result = await db.zvms_new.get_collection("activity_members").update_one(
-                {"_id": existing["_id"]},
-                {"$set": updated_data},
-            )
+            await members_repo.update_fields(existing["_id"], updated_data)
 
             has_update = True
             log_text += f'用户 {await get_user_display_name(user["id"])} 更新了义工活动《{target_activity["name"]}》中成员 {await get_user_display_name(member.member)} 的时长记录\n'
 
             continue
 
-        member_ = member.model_dump()
-
-        result = await db.zvms_new.get_collection("activity_members").insert_one(member_ | {
-            "activity": activity_id,
-            "status": "effective",
-        })
+        await members_repo.add(
+            activity_id, member.member, member.mode, member.duration, "effective"
+        )
 
         log_text += f'用户 {await get_user_display_name(user["id"])} 将成员 {await get_user_display_name(member.member)} 加入义工活动《{target_activity["name"]}》\n'
 
@@ -399,12 +226,10 @@ async def add_activity_member_v3(
         )
         await log.insert_log()
 
-    result = await db.zvms_new.get_collection("activities").update_one(
-        {"_id": validate_object_id(activity_id)},
+    await activities_repo.update(
+        activity_id,
         {
-            "$set": {
-                "status": "pending",
-                "updatedAt": datetime.now(),
-            }
+            "status": "pending",
+            "updatedAt": datetime.now(),
         },
     )

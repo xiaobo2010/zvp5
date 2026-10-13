@@ -163,6 +163,60 @@ def _delete_stmt(oid: str):
     return delete(activities_tbl).where(activities_tbl.c.oid == oid)
 
 
+def _list_effective_stmt(date_start: Any, date_end: Any):
+    stmt = select(*_activity_columns()).where(activities_tbl.c.status == "effective")
+    if date_start is not None and date_end is not None:
+        stmt = stmt.where(
+            activities_tbl.c.activity_date >= date_start,
+            activities_tbl.c.activity_date <= date_end,
+        )
+    return stmt
+
+
+def _list_by_oids_stmt(oids: list[str], query: str, page: int, size: int):
+    stmt = select(*_activity_columns()).where(activities_tbl.c.oid.in_(oids))
+    if query:
+        stmt = stmt.where(func.regexp_like(activities_tbl.c.name, query, "i"))
+    stmt = stmt.order_by(activities_tbl.c.oid.desc())
+    if page != -1:
+        stmt = stmt.offset((page - 1) * size).limit(size)
+    return stmt
+
+
+def _count_by_oids_stmt(oids: list[str], query: str):
+    stmt = select(func.count()).select_from(activities_tbl).where(
+        activities_tbl.c.oid.in_(oids)
+    )
+    if query:
+        stmt = stmt.where(func.regexp_like(activities_tbl.c.name, query, "i"))
+    return stmt
+
+
+# ``list_raw`` accepts an arbitrary Mongo sort key; map the known ones to columns.
+_RAW_SORT_COLUMNS = {**_FIELD_COLUMNS, "_id": "oid"}
+
+
+def _list_raw_stmt(
+    search: str,
+    atypes: list[str] | None,
+    status: str | None,
+    sort: str | None,
+    asc: bool,
+    page: int | None,
+    size: int,
+):
+    stmt = select(*_activity_columns())
+    conds = _activity_filter(search, atypes, status)
+    if conds:
+        stmt = stmt.where(*conds)
+    if sort:
+        column = getattr(activities_tbl.c, _RAW_SORT_COLUMNS.get(sort, "oid"))
+        stmt = stmt.order_by(column.asc() if asc else column.desc())
+    if page is not None:
+        stmt = stmt.offset((page - 1) * size).limit(size)
+    return stmt
+
+
 def _activity_doc(mapping: Any) -> Row:
     """Canonical activity row (matches ``mongo/activities._activity_doc``)."""
     return {
@@ -261,6 +315,42 @@ class OracleActivitiesRepo:
             await session.execute(stmt)
             if owns:
                 await session.commit()
+
+    async def list_effective(
+        self, date_start: Any = None, date_end: Any = None
+    ) -> list[Row]:
+        stmt = _list_effective_stmt(date_start, date_end)
+        async with _session_for(self._session) as (session, _owns):
+            rows = (await session.execute(stmt)).all()
+        return [_activity_doc(row._mapping) for row in rows]
+
+    async def list_by_oids(
+        self, oids: list[str], query: str, page: int = -1, size: int = 10
+    ) -> tuple[list[Row], int]:
+        normalized = [normalize_oid(oid) for oid in oids]
+        page_stmt = _list_by_oids_stmt(normalized, query, page, size)
+        count_stmt = _count_by_oids_stmt(normalized, query)
+        async with _session_for(self._session) as (session, _owns):
+            total = (await session.execute(count_stmt)).scalar_one()
+            rows = (await session.execute(page_stmt)).all()
+        return [_activity_doc(row._mapping) for row in rows], int(total)
+
+    async def list_raw(
+        self,
+        search: str = "",
+        atypes: list[str] | None = None,
+        status: str | None = None,
+        sort: str | None = None,
+        asc: bool = False,
+        page: int | None = None,
+        size: int = 10,
+    ) -> tuple[list[Row], int]:
+        page_stmt = _list_raw_stmt(search, atypes, status, sort, asc, page, size)
+        count_stmt = _count_stmt(search, atypes, status)
+        async with _session_for(self._session) as (session, _owns):
+            total = (await session.execute(count_stmt)).scalar_one()
+            rows = (await session.execute(page_stmt)).all()
+        return [_activity_doc(row._mapping) for row in rows], int(total)
 
 
 __all__ = ["OracleActivitiesRepo"]

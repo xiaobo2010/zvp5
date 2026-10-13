@@ -9,6 +9,7 @@ from util.object_id import (
 )
 from datetime import datetime
 from database import db
+from db import backends
 from pydantic import BaseModel
 from typings.activity_v2 import Activity
 from util.permission import volunteer
@@ -46,13 +47,11 @@ async def change_activity_description(
         raise HTTPException(status_code=403, detail="Permission denied")
 
     # Edit activity description
-    await db.zvms_new.get_collection("activities").update_one(
-        {"_id": validate_object_id(activity_oid)},
+    await backends.get_activities_repo().update(
+        activity_oid,
         {
-            "$set": {
-                "description": description,
-                "updatedAt": datetime.now(),
-            }
+            "description": description,
+            "updatedAt": datetime.now(),
         },
     )
 
@@ -93,9 +92,8 @@ async def change_activity_title(
         raise HTTPException(status_code=403, detail="Permission denied")
 
     # Edit activity title
-    await db.zvms_new.get_collection("activities").update_one(
-        {"_id": validate_object_id(activity_oid)},
-        {"$set": {"name": name, "updatedAt": datetime.now()}},
+    await backends.get_activities_repo().update(
+        activity_oid, {"name": name, "updatedAt": datetime.now()}
     )
 
     log.with_text(
@@ -127,9 +125,7 @@ async def change_activity_status(
 
     status = payload.status
 
-    target_activity = await db.zvms_new.get_collection("activities").find_one(
-        {"_id": validate_object_id(activity_oid)}
-    )
+    target_activity = await backends.get_activities_repo().get(activity_oid)
 
     if not target_activity:
         raise HTTPException(status_code=404, detail="Activity not found")
@@ -139,9 +135,8 @@ async def change_activity_status(
     await volunteer.validate_check_permission(user, activity, strict=True)
 
     # Update activity status
-    await db.zvms_new.get_collection("activities").update_one(
-        {"_id": validate_object_id(activity_oid)},
-        {"$set": {"status": status, "updatedAt": datetime.now()}},
+    await backends.get_activities_repo().update(
+        activity_oid, {"status": status, "updatedAt": datetime.now()}
     )
 
     status_labels = {"effective": "生效", "pending": "待审核", "refused": "已驳回"}
@@ -405,9 +400,7 @@ async def update_activity_member_duration(
     Update activity member duration
     """
 
-    activity = await db.zvms_new.get_collection("activities").find_one(
-        {"_id": validate_object_id(activity_oid)}
-    )
+    activity = await backends.get_activities_repo().get(activity_oid)
 
     if not activity:
         raise HTTPException(status_code=404, detail="Activity not found")
@@ -415,9 +408,8 @@ async def update_activity_member_duration(
     if "admin" not in user["per"] and "department" not in user["per"]:
         raise HTTPException(status_code=403, detail="Permission denied")
 
-    await db.zvms_new.get_collection("activity_members").update_one(
-        {"activity": activity_oid, "member": uid},
-        {"$set": {"duration": payload.duration}},
+    await backends.get_members_repo().set_duration_for_member(
+        activity_oid, uid, payload.duration
     )
 
     log.with_text(

@@ -57,6 +57,18 @@ _PROJECTION = {
 }
 
 
+def _member_doc(doc: Row) -> Row:
+    """Canonical membership row (matches ``oracle/members._member_row``)."""
+    return {
+        "_id": str(doc["_id"]),
+        "activity": doc.get("activity"),
+        "member": doc.get("member"),
+        "status": doc.get("status"),
+        "mode": doc.get("mode"),
+        "duration": doc.get("duration"),
+    }
+
+
 def _activity_members_pipeline(
     activity_oid: str, query: str, page: int, size: int
 ) -> list[Row]:
@@ -208,6 +220,123 @@ class MongoMembersRepo:
             {"_id": ObjectId(normalize_oid(oid))},
             {"$set": {"mode": mode}},
         )
+
+    async def get_by_oid(self, oid: str) -> Row | None:
+        doc = await db.zvms_new.get_collection(_COLLECTION).find_one(
+            {"_id": ObjectId(normalize_oid(oid))}
+        )
+        if doc is None:
+            return None
+        return _member_doc(doc)
+
+    async def get_by_triple(
+        self, activity_oid: str, member_oid: str, mode: str
+    ) -> Row | None:
+        doc = await db.zvms_new.get_collection(_COLLECTION).find_one(
+            {
+                "member": normalize_oid(member_oid),
+                "activity": normalize_oid(activity_oid),
+                "mode": mode,
+            }
+        )
+        if doc is None:
+            return None
+        return _member_doc(doc)
+
+    async def list_by_activity(self, activity_oid: str) -> list[Row]:
+        docs = (
+            await db.zvms_new.get_collection(_COLLECTION)
+            .find({"activity": normalize_oid(activity_oid)})
+            .to_list(None)
+        )
+        return [_member_doc(doc) for doc in docs]
+
+    async def list_for_member(
+        self,
+        member_oid: str,
+        status: str | None = None,
+        activity_oids: list[str] | None = None,
+    ) -> list[Row]:
+        match: Row = {"member": normalize_oid(member_oid)}
+        if status:
+            match["status"] = status
+        if activity_oids is not None:
+            match["activity"] = {"$in": [normalize_oid(o) for o in activity_oids]}
+        docs = (
+            await db.zvms_new.get_collection(_COLLECTION)
+            .find(match)
+            .to_list(None)
+        )
+        return [_member_doc(doc) for doc in docs]
+
+    async def list_by_members(self, member_oids: list[str]) -> list[Row]:
+        if not member_oids:
+            return []
+        docs = (
+            await db.zvms_new.get_collection(_COLLECTION)
+            .find({"member": {"$in": [normalize_oid(o) for o in member_oids]}})
+            .to_list(None)
+        )
+        return [_member_doc(doc) for doc in docs]
+
+    async def count_for_activity(
+        self,
+        activity_oid: str,
+        status: str | None = None,
+        member_oids: list[str] | None = None,
+    ) -> int:
+        match: Row = {"activity": normalize_oid(activity_oid)}
+        if status:
+            match["status"] = status
+        if member_oids is not None:
+            match["member"] = {"$in": [normalize_oid(o) for o in member_oids]}
+        return int(
+            await db.zvms_new.get_collection(_COLLECTION).count_documents(match)
+        )
+
+    async def remove_for_activity(self, activity_oid: str) -> None:
+        await db.zvms_new.get_collection(_COLLECTION).delete_many(
+            {"activity": normalize_oid(activity_oid)}
+        )
+
+    async def update_fields(self, oid: str, fields: Row) -> None:
+        await db.zvms_new.get_collection(_COLLECTION).update_one(
+            {"_id": ObjectId(normalize_oid(oid))},
+            {"$set": dict(fields)},
+        )
+
+    async def set_duration_for_member(
+        self, activity_oid: str, member_oid: str, duration: float
+    ) -> None:
+        await db.zvms_new.get_collection(_COLLECTION).update_one(
+            {
+                "activity": normalize_oid(activity_oid),
+                "member": normalize_oid(member_oid),
+            },
+            {"$set": {"duration": duration}},
+        )
+
+    async def list_raw(
+        self,
+        activity_oid: str,
+        member_oids: list[str] | None = None,
+        sort: str | None = None,
+        asc: bool = True,
+        page: int | None = None,
+        size: int = 10,
+    ) -> tuple[list[Row], int]:
+        match: Row = {"activity": str(activity_oid)}
+        if member_oids is not None:
+            match["member"] = {"$in": [str(o) for o in member_oids]}
+        coll = db.zvms_new.get_collection(_COLLECTION)
+        total = await coll.count_documents(match)
+        cursor = coll.find(match)
+        if sort:
+            cursor = cursor.sort(sort, 1 if asc else -1)
+        if page is not None:
+            cursor = cursor.skip((page - 1) * size).limit(size)
+        docs = await cursor.to_list(None)
+        return [{**doc, "_id": str(doc["_id"])} for doc in docs], int(total)
 
 
 __all__ = ["MongoMembersRepo"]

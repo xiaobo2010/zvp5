@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from database import db
+from db import backends
 from typings.activity_v2 import Activity, ActivityMember
 from typings.log import inject_log
 from util.object_id import get_current_user, compulsory_temporary_token
@@ -89,30 +90,14 @@ async def get_activities_v2(
     if not regex:
         search = re.escape(search) if search else ""
 
-    document_filter = {
-        "$and": [
-            {"name": {"$regex": search, "$options": "i"}},
-            {"type": {"$in": target_types}},
-        ]
-    }
-
-    count = await db.zvms_new.get_collection("activities").count_documents(
-        document_filter
+    activities, count = await backends.get_activities_repo().list_raw(
+        search=search,
+        atypes=target_types,
+        sort=sort,
+        asc=asc,
+        page=page,
+        size=perpage,
     )
-
-    pipeline = [
-        {"$match": document_filter},
-        {"$sort": {sort: 1 if asc else -1}},
-        {"$skip": (page - 1) * perpage},
-        {"$limit": perpage},
-    ]
-
-    activities = (
-        await db.zvms_new.get_collection("activities").aggregate(pipeline).to_list(None)
-    )
-
-    for activity in activities:
-        activity["_id"] = str(activity["_id"])
 
     return {
         "activities": activities,
@@ -130,17 +115,12 @@ async def get_activity_v2(activity_id: str, user=Depends(get_current_user)):
     :return: Activity object
     """
 
-    activity = await db.zvms_new.get_collection("activities").find_one(
-        {"_id": validate_object_id(activity_id)}
-    )
-    members = await db.zvms_new.get_collection("activity_members").count_documents(
-        {"activity": str(activity_id)}
-    )
+    validate_object_id(activity_id)
+    activity = await backends.get_activities_repo().get(activity_id)
+    members = await backends.get_members_repo().count_for_activity(activity_id)
 
     if not activity:
         raise HTTPException(status_code=404, detail="Activity not found")
-
-    activity["_id"] = str(activity["_id"])
 
     return {"activity": activity, "members_count": members}
 
@@ -158,9 +138,7 @@ async def delete_activity_v2(
     :return: Deletion status
     """
 
-    target_activity = await db.zvms_new.get_collection("activities").find_one(
-        {"_id": validate_object_id(activity_id)}
-    )
+    target_activity = await backends.get_activities_repo().get(activity_id)
 
     if not target_activity:
         raise HTTPException(status_code=404, detail="Activity not found")
@@ -169,16 +147,9 @@ async def delete_activity_v2(
         user, Activity.model_validate(target_activity, strict=False)
     )
 
-    await db.zvms_new.get_collection("activity_members").delete_many(
-        {"activity": str(activity_id)}
-    )
+    await backends.get_members_repo().remove_for_activity(activity_id)
 
-    result = await db.zvms_new.get_collection("activities").delete_one(
-        {"_id": validate_object_id(activity_id)}
-    )
-
-    if result.deleted_count == 0:
-        raise HTTPException(status_code=404, detail="Activity not found")
+    await backends.get_activities_repo().delete(activity_id)
 
     log.with_text(
         f'用户 {await get_user_display_name(user["id"])} 删除了义工活动《{target_activity["name"]}》（ID: {activity_id}）',
@@ -212,9 +183,7 @@ async def get_activity_members_v2(
 
     :return: List of activity members
     """
-    activity = await db.zvms_new.get_collection("activities").find_one(
-        {"_id": validate_object_id(activity_id)}
-    )
+    activity = await backends.get_activities_repo().get(activity_id)
 
     if not activity:
         raise HTTPException(status_code=404, detail="Activity not found")
@@ -222,45 +191,17 @@ async def get_activity_members_v2(
     if not regex:
         search = re.escape(search) if search else ""
 
-    searched_users = (
-        await db.zvms_new.get_collection("users")
-        .find(
-            {
-                "$or": [
-                    {"name": {"$regex": search, "$options": "i"}},
-                    {"id": {"$regex": search, "$options": "i"}},
-                ],
-            }
-            if search != ""
-            else {}
-        )
-        .to_list(None)
+    searched_users = await backends.get_users_repo().list_by_name_or_id(search)
+    member_ids = [str(user["_id"]) for user in searched_users]
+
+    members, count = await backends.get_members_repo().list_raw(
+        str(activity_id),
+        member_oids=member_ids,
+        sort=sort,
+        asc=asc,
+        page=page,
+        size=perpage,
     )
-
-    document_filter = {
-        "activity": str(activity_id),
-        "member": {"$in": [str(user["_id"]) for user in searched_users]},
-    }
-
-    count = await db.zvms_new.get_collection("activity_members").count_documents(
-        document_filter
-    )
-
-    pipeline = [
-        {"$match": document_filter},
-        {"$sort": {sort: 1 if asc else -1}},
-        {"$skip": (page - 1) * perpage},
-        {"$limit": perpage},
-    ]
-
-    members = (
-        await db.zvms_new.get_collection("activity_members")
-        .aggregate(pipeline)
-        .to_list(None)
-    )
-
-    for member in members:
-        member["_id"] = str(member["_id"])
 
     return {
         "members": members,
@@ -283,17 +224,10 @@ async def get_activity_member_v2(
     :return: ActivityMember object
     """
 
-    target_member = await db.zvms_new.get_collection("activity_members").find_one(
-        {
-            "_id": validate_object_id(session_id),
-            "activity": str(activity_id),
-        }
-    )
+    target_member = await backends.get_members_repo().get_by_oid(session_id)
 
     if not target_member:
         raise HTTPException(status_code=404, detail="Activity member not found")
-
-    target_member["_id"] = str(target_member["_id"])
 
     return target_member
 
@@ -313,11 +247,9 @@ async def add_activity_member_v2(
     :return: Activity object
     """
 
-    target_activity = await db.zvms_new.get_collection("activities").find_one(
-        {"_id": validate_object_id(activity_id)}
-    )
-    target_user = await db.zvms_new.get_collection("users").find_one(
-        {"_id": validate_object_id(member.member)}
+    target_activity = await backends.get_activities_repo().get(activity_id)
+    target_user = await backends.get_users_repo().get_by_oid(
+        validate_object_id(member.member)
     )
     target_activity = Activity.model_validate(target_activity, strict=False)
     if not target_user:
@@ -331,12 +263,8 @@ async def add_activity_member_v2(
             status_code=400, detail="Activity type and member mode do not match"
         )
 
-    if await db.zvms_new.get_collection("activity_members").find_one(
-        {
-            "member": str(member.member),
-            "activity": str(activity_id),
-            "mode": member.mode,
-        }
+    if await backends.get_members_repo().get_by_triple(
+        activity_id, member.member, member.mode
     ):
         raise HTTPException(
             status_code=400, detail="User already in activity with same counting mode"
@@ -354,9 +282,7 @@ async def add_activity_member_v2(
 
     return {
         "id": str(result.inserted_id),
-        "count": await db.zvms_new.get_collection("activity_members").count_documents(
-            {"activity": str(activity_id)}
-        ),
+        "count": await backends.get_members_repo().count_for_activity(activity_id),
     }
 
 
@@ -376,16 +302,12 @@ async def delete_activity_member_v2(
     """
     await volunteer_member.validate_update_permission(user)
 
-    target_member = await db.zvms_new.get_collection("activity_members").find_one(
-        {"_id": validate_object_id(session_id), "activity": activity_id}
-    )
+    target_member = await backends.get_members_repo().get_by_oid(session_id)
 
-    result = await db.zvms_new.get_collection("activity_members").delete_one(
-        {"_id": validate_object_id(session_id), "activity": activity_id}
-    )
-
-    if result.deleted_count == 0:
+    if not target_member:
         raise HTTPException(status_code=404, detail="Activity member not found")
+
+    await backends.get_members_repo().remove(session_id)
 
     log.with_text(
         f'用户 {await get_user_display_name(user["id"])} 将成员 {await get_user_display_name(target_member["member"])} 移出义工活动（ID: {activity_id}）',
@@ -416,9 +338,7 @@ async def modify_activity_status_v2(
     :return: None
     """
 
-    target_activity = await db.zvms_new.get_collection("activities").find_one(
-        {"_id": validate_object_id(activity_id)}
-    )
+    target_activity = await backends.get_activities_repo().get(activity_id)
 
     if not target_activity:
         raise HTTPException(status_code=404, detail="Activity not found")
@@ -448,13 +368,7 @@ async def modify_activity_status_v2(
     if target_activity.status != "pending":
         del update_content["approver"] # The activity is not being approved
 
-    result = await db.zvms_new.get_collection("activities").update_one(
-        {"_id": validate_object_id(activity_id)},
-        {"$set": update_content},
-    )
-
-    if result.modified_count == 0:
-        raise HTTPException(status_code=404, detail="Activity not found")
+    await backends.get_activities_repo().update(activity_id, update_content)
 
     status_labels = {"effective": "生效", "pending": "待审核", "refused": "已驳回"}
     log.with_text(
@@ -528,19 +442,12 @@ async def update_user_duration_v2(
     :param user: Current user
     :return: Updated activity member document
     """
-    target_activity = await db.zvms_new.get_collection("activities").find_one(
-        {"_id": validate_object_id(activity_id)}
-    )
+    target_activity = await backends.get_activities_repo().get(activity_id)
 
     if not target_activity:
         raise HTTPException(status_code=404, detail="Activity not found")
 
-    target_member = await db.zvms_new.get_collection("activity_members").find_one(
-        {
-            "_id": validate_object_id(document_id),
-            "activity": str(activity_id),
-        }
-    )
+    target_member = await backends.get_members_repo().get_by_oid(document_id)
 
     if not target_member:
         raise HTTPException(status_code=404, detail="Activity member not found")
@@ -550,13 +457,7 @@ async def update_user_duration_v2(
     updated_data = updated.model_dump()
     updated_data["duration"] = float(updated_data["duration"])
 
-    result = await db.zvms_new.get_collection("activity_members").update_one(
-        {"_id": validate_object_id(document_id)},
-        {"$set": updated_data},
-    )
-
-    if result.modified_count == 0:
-        raise HTTPException(status_code=404, detail="Activity member not found")
+    await backends.get_members_repo().update_fields(document_id, updated_data)
 
     log.with_text(
         f'用户 {await get_user_display_name(user["id"])} 修改了义工活动《{target_activity["name"]}》中成员 {await get_user_display_name(target_member["member"])} 的记录（时长 {updated.duration}，模式 {updated.mode}）',
@@ -587,9 +488,7 @@ async def update_activity_info(
     :param user: Current user
     :return: Updated activity document
     """
-    target_activity = await db.zvms_new.get_collection("activities").find_one(
-        {"_id": validate_object_id(activity_id)}
-    )
+    target_activity = await backends.get_activities_repo().get(activity_id)
 
     if not target_activity:
         raise HTTPException(status_code=404, detail="Activity not found")
@@ -602,13 +501,10 @@ async def update_activity_info(
     if not validated:
         raise HTTPException(status_code=400, detail=reason)
 
-    result = await db.zvms_new.get_collection("activities").update_one(
-        {"_id": validate_object_id(activity_id)},
-        {"$set": {"name": payload.name, "description": payload.description, "updatedAt": datetime.now()}},
+    await backends.get_activities_repo().update(
+        activity_id,
+        {"name": payload.name, "description": payload.description, "updatedAt": datetime.now()},
     )
-
-    if result.modified_count == 0:
-        raise HTTPException(status_code=404, detail="Activity not found")
 
     log.with_text(
         f'用户 {await get_user_display_name(user["id"])} 修改了义工活动《{target_activity["name"]}》的信息（名称改为 {payload.name}）',

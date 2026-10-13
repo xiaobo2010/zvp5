@@ -20,6 +20,7 @@ Nothing here opens a connection at import time.
 
 from __future__ import annotations
 
+import json
 import re
 from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator
@@ -198,6 +199,87 @@ def _get_names_stmt(oids: list[str]):
     )
 
 
+# Mongo ``{"past": {"$elemMatch": {"$regex": q, "$options": "i"}}}``: test each
+# element of the ``past`` JSON array against a case-insensitive regex.
+_PAST_MATCH = (
+    "JSON_EXISTS(users.past, '$[*]?(@ like_regex $pat flag \"i\")' "
+    'PASSING :past_value AS "pat")'
+)
+
+
+def _all_users_stmt():
+    return select(*_user_columns()).order_by(users_tbl.c.oid.asc())
+
+
+def _list_by_id_prefix_stmt(prefix: str):
+    return (
+        select(*_user_columns())
+        .where(func.regexp_like(users_tbl.c.business_id, "^" + prefix))
+        .order_by(users_tbl.c.oid.asc())
+    )
+
+
+def _list_by_class_stmt(class_oid: str):
+    return (
+        select(*_user_columns())
+        .where(users_tbl.c.class_oid == class_oid)
+        .order_by(users_tbl.c.oid.asc())
+    )
+
+
+def _search_filter(query: str, logged_in: bool):
+    if not logged_in:
+        return [users_tbl.c.business_id == query]
+    return [
+        or_(
+            func.regexp_like(users_tbl.c.name, query, "i"),
+            func.regexp_like(users_tbl.c.business_id, query, "i"),
+            text(_PAST_MATCH).bindparams(past_value=query),
+        )
+    ]
+
+
+def _search_stmt(query: str, logged_in: bool):
+    stmt = select(
+        users_tbl.c.oid,
+        users_tbl.c.name,
+        users_tbl.c.business_id,
+        users_tbl.c.class_oid,
+    )
+    conds = _search_filter(query, logged_in)
+    if conds:
+        stmt = stmt.where(*conds)
+    return stmt.order_by(users_tbl.c.oid.asc())
+
+
+def _search_count_stmt(query: str, logged_in: bool):
+    stmt = select(func.count()).select_from(users_tbl)
+    conds = _search_filter(query, logged_in)
+    if conds:
+        stmt = stmt.where(*conds)
+    return stmt
+
+
+def _list_by_name_or_id_stmt(pattern: str):
+    stmt = select(*_user_columns())
+    if pattern:
+        stmt = stmt.where(
+            or_(
+                func.regexp_like(users_tbl.c.name, pattern, "i"),
+                func.regexp_like(users_tbl.c.business_id, pattern, "i"),
+            )
+        )
+    return stmt.order_by(users_tbl.c.oid.asc())
+
+
+def _group_by_id_prefix_stmt():
+    prefix = func.substr(users_tbl.c.business_id, 1, 4)
+    return (
+        select(prefix.label("prefix"), func.json_arrayagg(users_tbl.c.oid).label("original_ids"))
+        .group_by(prefix)
+    )
+
+
 def _page_row(mapping: Any) -> Row:
     """Aggregation-shaped row for ``list_page`` (matches users_v2 pipeline)."""
     class_oid = mapping["class_oid"]
@@ -331,6 +413,64 @@ class OracleUsersRepo:
         async with _session_for(self._session) as (session, _owns):
             rows = (await session.execute(stmt)).all()
         return {row._mapping["oid"]: row._mapping["name"] for row in rows}
+
+    async def list_all(self) -> list[Row]:
+        stmt = _all_users_stmt()
+        async with _session_for(self._session) as (session, _owns):
+            rows = (await session.execute(stmt)).all()
+        return [_user_doc(row._mapping) for row in rows]
+
+    async def list_by_id_prefix(self, prefix: str) -> list[Row]:
+        stmt = _list_by_id_prefix_stmt(prefix)
+        async with _session_for(self._session) as (session, _owns):
+            rows = (await session.execute(stmt)).all()
+        return [_user_doc(row._mapping) for row in rows]
+
+    async def list_by_class(self, class_oid: str) -> list[Row]:
+        stmt = _list_by_class_stmt(normalize_oid(class_oid))
+        async with _session_for(self._session) as (session, _owns):
+            rows = (await session.execute(stmt)).all()
+        return [_user_doc(row._mapping) for row in rows]
+
+    async def search(self, query: str, logged_in: bool) -> tuple[list[Row], int]:
+        page_stmt = _search_stmt(query, logged_in)
+        count_stmt = _search_count_stmt(query, logged_in)
+        async with _session_for(self._session) as (session, _owns):
+            total = (await session.execute(count_stmt)).scalar_one()
+            rows = (await session.execute(page_stmt)).all()
+        out: list[Row] = []
+        for row in rows:
+            m = row._mapping
+            out.append(
+                {
+                    "_id": m["oid"],
+                    "name": m["name"],
+                    "id": m["business_id"],
+                    "class_id": m["class_oid"] if m["class_oid"] is not None else None,
+                }
+            )
+        return out, int(total)
+
+    async def list_by_name_or_id(self, pattern: str) -> list[Row]:
+        stmt = _list_by_name_or_id_stmt(pattern)
+        async with _session_for(self._session) as (session, _owns):
+            rows = (await session.execute(stmt)).all()
+        return [_user_doc(row._mapping) for row in rows]
+
+    async def group_oids_by_id_prefix(self) -> list[Row]:
+        stmt = _group_by_id_prefix_stmt()
+        async with _session_for(self._session) as (session, _owns):
+            rows = (await session.execute(stmt)).all()
+        out: list[Row] = []
+        for row in rows:
+            m = row._mapping
+            raw = m["original_ids"]
+            if isinstance(raw, str):
+                ids = json.loads(raw)
+            else:
+                ids = list(raw) if raw is not None else []
+            out.append({"_id": m["prefix"], "originalIds": [str(x) for x in ids]})
+        return out
 
 
 __all__ = ["OracleUsersRepo"]

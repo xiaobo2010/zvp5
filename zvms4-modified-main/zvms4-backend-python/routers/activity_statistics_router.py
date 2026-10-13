@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends
-from database import db
+from db import backends
 import numpy as np
 from scipy.stats import mode
 
@@ -16,11 +16,7 @@ async def activity_issuance_description(activity_id: str, _=Depends(get_current_
     :param activity_id: The ID of the activity
     :param _: Current user, used for authentication
     """
-    distribution = (
-        await db.zvms_new.get_collection("activity_members")
-        .find({"activity": activity_id})
-        .to_list(None)
-    )
+    distribution = await backends.get_members_repo().list_by_activity(activity_id)
     if not distribution:
         return {"code": 404, "status": "not found", "data": None}
     distribution = [float(item["duration"]) for item in distribution]
@@ -57,16 +53,7 @@ async def activity_issuance_layers(activity_id: str, _=Depends(get_current_user)
     :param activity_id: The ID of the activity
     :param _: Current user, used for authentication
     """
-    layers = (
-        await db.zvms_new.get_collection("activity_members")
-        .find({"activity": activity_id})
-        .to_list(None)
-    )
-    distribution = (
-        await db.zvms_new.get_collection("activity_members")
-        .find({"activity": activity_id})
-        .to_list(None)
-    )
+    distribution = await backends.get_members_repo().list_by_activity(activity_id)
     if not distribution:
         return {"code": 404, "status": "not found", "data": None}
     distribution = [item["duration"] for item in distribution]
@@ -89,10 +76,10 @@ async def get_time_percentiles(grade: str, _=Depends(get_current_user)):
     :param grade: The grade to get percentiles for
     :param _: Current user, used for authentication
     """
-    if await db.zvms_new.get_collection("indicators").find({}).count() == 0:
+    result = await backends.get_stats_repo().get_indicators()
+    if result is None:
         # If there are no indicators, return an empty dictionary
         return {}
-    result = await db.zvms_new.get_collection("indicators").find({}).to_list(1)[0]
     return result["percentiles"][grade]
 
 
@@ -103,8 +90,8 @@ async def get_time_indicators(grade: str, _=Depends(get_current_user)):
     :param grade: The grade to get indicators for
     :param _: Current user, used for authentication
     """
-    if await db.zvms_new.get_collection("indicators").find({}).count() == 0:
+    result = await backends.get_stats_repo().get_indicators()
+    if result is None:
         # If there are no indicators, return an empty dictionary
         return {}
-    result = await db.zvms_new.get_collection("indicators").find({}).to_list(1)[0]
     return result["indicators"][grade]

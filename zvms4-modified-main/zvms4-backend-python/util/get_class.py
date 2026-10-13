@@ -1,10 +1,11 @@
 from fastapi import HTTPException
-from database import db
+from db import backends
 from utils import validate_object_id
 
 
 async def get_user_class(user_oid: str) -> str:
-    user = await db.zvms_new.users.find_one({"_id": validate_object_id(user_oid)})
+    validate_object_id(user_oid)
+    user = await backends.get_users_repo().get_by_oid(user_oid)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
@@ -12,7 +13,7 @@ async def get_user_class(user_oid: str) -> str:
     if not class_id:
         raise HTTPException(status_code=404, detail="User not in any class")
 
-    grouping = await db.zvms_new.groups.find_one({"_id": class_id})
+    grouping = await backends.get_groups_repo().get(class_id)
     if grouping is None:
         raise HTTPException(status_code=404, detail="User not in any class")
 
@@ -26,33 +27,16 @@ async def get_activities_related_to_user(
         target = await get_user_class(user_oid)
     class_oid = validate_object_id(str(target))
 
-    members = (
-        await db.zvms_new.users.find({"class_id": class_oid}, {"_id": 1}).to_list(None)
-    )
+    members = await backends.get_users_repo().list_by_class(class_oid)
     member_ids = [str(member["_id"]) for member in members]
 
-    memberships = (
-        await db.zvms_new.activity_members.find(
-            {"member": {"$in": member_ids}},
-            {"activity": 1, "member": 1, "status": 1, "mode": 1},
-        ).to_list(None)
-    )
+    memberships = await backends.get_members_repo().list_by_members(member_ids)
 
     activity_ids = list({membership["activity"] for membership in memberships})
-    activity_oids = [validate_object_id(activity_id) for activity_id in activity_ids]
 
-    activity_filter = {
-        "_id": {"$in": activity_oids},
-        "name": {"$regex": query, "$options": "i"},
-    }
-
-    count = await db.zvms_new.activities.count_documents(activity_filter)
-
-    cursor = db.zvms_new.activities.find(activity_filter).sort("_id", -1)
-    if page != -1:
-        cursor = cursor.skip((page - 1) * perpage).limit(perpage)
-
-    activities = await cursor.to_list(None)
+    activities, count = await backends.get_activities_repo().list_by_oids(
+        activity_ids, query, page, perpage
+    )
 
     members_by_activity: dict[str, list] = {}
     for membership in memberships:
@@ -72,7 +56,8 @@ async def get_activities_related_to_user(
 
 
 async def get_user_classname(user_id: str):
-    user = await db.zvms_new.users.find_one({"_id": validate_object_id(user_id)})
+    validate_object_id(user_id)
+    user = await backends.get_users_repo().get_by_oid(user_id)
     if not user:
         return HTTPException(status_code=404, detail="User not found")
 
@@ -80,7 +65,7 @@ async def get_user_classname(user_id: str):
     if not class_id:
         return HTTPException(status_code=404, detail="User not in any class")
 
-    class_name = await db.zvms_new.groups.find_one({"_id": class_id})
+    class_name = await backends.get_groups_repo().get(class_id)
     if not class_name:
         return HTTPException(status_code=404, detail="User not in any class")
 
@@ -96,7 +81,7 @@ async def get_classname(user: dict, groups: list[dict]):
         return None
 
     if groups is None:
-        groups = await db.zvms_new.groups.find().to_list(None)
+        groups = await backends.get_groups_repo().list_all()
 
     class_id = str(class_id)
     for group in groups:

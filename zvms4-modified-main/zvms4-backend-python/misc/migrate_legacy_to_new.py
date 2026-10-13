@@ -21,9 +21,12 @@ Idempotent: every write is an upsert keyed on _id, so re-running is safe.
 """
 
 import asyncio
+import os
 import sys
 
 from motor.motor_asyncio import AsyncIOMotorClient
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import settings
 
