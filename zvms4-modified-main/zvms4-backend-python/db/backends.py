@@ -1,134 +1,96 @@
-"""Per-module backend switch + repository factory for the Mongo → Oracle (ADB) migration.
+"""Repository factory for the data access layer.
 
-Policy helper: :func:`oracle_enabled_for` answers "should module X use Oracle?"
-by reading ``settings.ORACLE_ENABLED`` (master switch) and
-``settings.ORACLE_MODULES`` (the migrated module list). It performs no DB I/O.
+The application runs exclusively on Oracle Autonomous Database (ADB): every
+factory here returns the Oracle implementation of the matching
+:mod:`db.repos.protocols` interface.
 
-A module is only ever on **one** backend at a time — the switch flips reads and
-writes together, so there is never dual-write drift.
-
-The factory functions return a concrete repository honouring the matching
-``db.repos.protocols`` interface. Implementations are imported lazily so that
-importing this module never creates an engine, a session, or a connection.
+Implementations are imported lazily so that importing this module never
+creates an engine, a session, or a connection.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-import settings
-
-# Modules the switch recognises. Kept in sync with settings.ORACLE_MODULES docs.
-MODULES: frozenset[str] = frozenset(
-    {
-        "users",
-        "groups",
-        "activities",
-        "activity_members",
-        "time",
-        "stats",
-        "logs",
-        "changelog",
-    }
-)
-
-
-def oracle_enabled_for(module: str) -> bool:
-    """Return whether ``module`` should be served by the Oracle backend.
-
-    ``False`` when Oracle is globally disabled (``ORACLE_ENABLED`` is falsy) or
-    when ``module`` is not listed in ``ORACLE_MODULES``. Unknown module names
-    simply resolve to ``False``.
-    """
-    if not getattr(settings, "ORACLE_ENABLED", False):
-        return False
-    return module in getattr(settings, "ORACLE_MODULES", [])
-
 
 def get_users_repo(session: Any = None) -> Any:
-    """Return the ``UsersRepo`` for the active backend.
+    """Return the ``UsersRepo`` implementation."""
+    from db.repos.oracle.users import OracleUsersRepo
 
-    ``session`` is only meaningful for the Oracle backend; the Mongo adapter
-    ignores it and uses the process-wide motor handle.
-    """
-    if oracle_enabled_for("users"):
-        from db.repos.oracle.users import OracleUsersRepo
-
-        return OracleUsersRepo(session)
-    from db.repos.mongo.users import MongoUsersRepo
-
-    return MongoUsersRepo()
+    return OracleUsersRepo(session)
 
 
 def get_groups_repo(session: Any = None) -> Any:
-    """Return the ``GroupsRepo`` for the active backend (class side)."""
-    if oracle_enabled_for("groups"):
-        from db.repos.oracle.groups import OracleGroupsRepo
+    """Return the ``GroupsRepo`` implementation (class side)."""
+    from db.repos.oracle.groups import OracleGroupsRepo
 
-        return OracleGroupsRepo(session)
-    from db.repos.mongo.groups import MongoGroupsRepo
-
-    return MongoGroupsRepo()
+    return OracleGroupsRepo(session)
 
 
 def get_activities_repo(session: Any = None) -> Any:
-    """Return the ``ActivitiesRepo`` for the active backend."""
-    if oracle_enabled_for("activities"):
-        from db.repos.oracle.activities import OracleActivitiesRepo
+    """Return the ``ActivitiesRepo`` implementation."""
+    from db.repos.oracle.activities import OracleActivitiesRepo
 
-        return OracleActivitiesRepo(session)
-    from db.repos.mongo.activities import MongoActivitiesRepo
-
-    return MongoActivitiesRepo()
+    return OracleActivitiesRepo(session)
 
 
 def get_members_repo(session: Any = None) -> Any:
-    """Return the ``MembersRepo`` for the active backend."""
-    if oracle_enabled_for("activity_members"):
-        from db.repos.oracle.members import OracleMembersRepo
+    """Return the ``MembersRepo`` implementation."""
+    from db.repos.oracle.members import OracleMembersRepo
 
-        return OracleMembersRepo(session)
-    from db.repos.mongo.members import MongoMembersRepo
-
-    return MongoMembersRepo()
+    return OracleMembersRepo(session)
 
 
 def get_changelog_repo(session: Any = None) -> Any:
-    """Return the ``ChangelogRepo`` for the active backend."""
-    if oracle_enabled_for("changelog"):
-        from db.repos.oracle.changelog import OracleChangelogRepo
+    """Return the ``ChangelogRepo`` implementation."""
+    from db.repos.oracle.changelog import OracleChangelogRepo
 
-        return OracleChangelogRepo(session)
-    from db.repos.mongo.changelog import MongoChangelogRepo
-
-    return MongoChangelogRepo()
+    return OracleChangelogRepo(session)
 
 
 def get_time_repo(session: Any = None) -> Any:
-    """Return the ``TimeRepo`` for the active backend."""
-    if oracle_enabled_for("time"):
-        from db.repos.oracle.times import OracleTimeRepo
+    """Return the ``TimeRepo`` implementation."""
+    from db.repos.oracle.times import OracleTimeRepo
 
-        return OracleTimeRepo(session)
-    from db.repos.mongo.times import MongoTimeRepo
-
-    return MongoTimeRepo()
+    return OracleTimeRepo(session)
 
 
 def get_stats_repo(session: Any = None) -> Any:
-    """Return the ``StatsCacheRepo`` for the active backend."""
-    if oracle_enabled_for("stats"):
-        from db.repos.oracle.stats import OracleStatsCacheRepo
+    """Return the ``StatsCacheRepo`` implementation."""
+    from db.repos.oracle.stats import OracleStatsCacheRepo
 
-        return OracleStatsCacheRepo(session)
-    from db.repos.mongo.stats import MongoStatsCacheRepo
+    return OracleStatsCacheRepo(session)
 
-    return MongoStatsCacheRepo()
+
+def get_applogs_repo(session: Any = None) -> Any:
+    """Return the ``AppLogsRepo`` implementation."""
+    from db.repos.oracle.app_logs import OracleAppLogsRepo
+
+    return OracleAppLogsRepo(session)
+
+
+def get_tasks_repo(session: Any = None) -> Any:
+    """Return the ``TasksRepo`` implementation."""
+    from db.repos.oracle.tasks import OracleTasksRepo
+
+    return OracleTasksRepo(session)
+
+
+def get_imports_repo(session: Any = None) -> Any:
+    """Return the ``ImportsRepo`` implementation."""
+    from db.repos.oracle.imports import OracleImportsRepo
+
+    return OracleImportsRepo(session)
+
+
+def get_daily_exports_repo(session: Any = None) -> Any:
+    """Return the ``DailyExportsRepo`` implementation."""
+    from db.repos.oracle.daily_exports import OracleDailyExportsRepo
+
+    return OracleDailyExportsRepo(session)
 
 
 __all__ = [
-    "MODULES",
-    "oracle_enabled_for",
     "get_users_repo",
     "get_groups_repo",
     "get_activities_repo",
@@ -136,4 +98,8 @@ __all__ = [
     "get_changelog_repo",
     "get_time_repo",
     "get_stats_repo",
+    "get_applogs_repo",
+    "get_tasks_repo",
+    "get_imports_repo",
+    "get_daily_exports_repo",
 ]

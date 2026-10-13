@@ -1,15 +1,14 @@
-from bson.errors import InvalidId
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 
-from conversion.groups import trans_permissions
+from util.positions import trans_permissions
 from typings.user import UserPosition as UserPositionV1
 from typings.user_v2 import UserPosition as UserPositionV2
 import jwt
 from typing import Optional
 from datetime import datetime, timezone
-from database import db
-from bson import ObjectId
+from db import backends
+from db.ids import normalize_oid, is_valid_oid
 from util.cert import jwt_decode
 
 # Secret key and algorithm for JWT
@@ -20,18 +19,15 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token", auto_error=False)
 
 def validate_object_id(id: str):
     try:
-        _id = ObjectId(id)
-    except Exception:
+        return normalize_oid(id)
+    except ValueError:
         raise HTTPException(status_code=400, detail="Invalid Object ID")
-    return _id
 
 
 def string_to_option_object_id(id: str):
-    try:
-        _id = ObjectId(id)
-    except InvalidId:
-        return None
-    return _id
+    if is_valid_oid(id):
+        return normalize_oid(id)
+    return None
 
 
 def upgrade_user_positions(positions: list[UserPositionV1]) -> list[UserPositionV2]:
@@ -42,10 +38,8 @@ async def get_user(oid: str):
     """
     Get user by oid
     """
-    user = await db.zvms_new.users.find_one({"_id": validate_object_id(oid)})
-    if user:
-        return user
-    return None
+    validate_object_id(oid)
+    return await backends.get_users_repo().get_by_oid(oid)
 
 
 async def compulsory_temporary_token(token: str = Depends(oauth2_scheme)):
