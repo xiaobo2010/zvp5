@@ -12,6 +12,7 @@ class ZVMSLog:
     timestamp: float
     type: str
     level: str
+    xuehai_id: str
 
     def __init__(
         self,
@@ -21,6 +22,7 @@ class ZVMSLog:
         timestamp: float = datetime.now().timestamp(),
         type: str = "",
         level: str = "info",
+        xuehai_id: str = "",
     ):
         self.url = url
         self.user = user
@@ -28,6 +30,7 @@ class ZVMSLog:
         self.timestamp = timestamp
         self.type = type
         self.level = level
+        self.xuehai_id = xuehai_id
 
     def model_dump(self) -> dict:
         return {
@@ -37,6 +40,7 @@ class ZVMSLog:
             "timestamp": self.timestamp,
             "type": self.type,
             "level": self.level,
+            "xuehai_id": self.xuehai_id,
         }
 
     def with_text(self, text: str, type: str = "", level: str = "") -> "ZVMSLog":
@@ -51,6 +55,10 @@ class ZVMSLog:
         return await db.zvms_new.get_collection("app_logs").insert_one(self.model_dump())
 
 
+def xuehai_id_from(request: Request) -> str:
+    return (request.headers.get("Xuehai-Id") or "").strip()
+
+
 def inject_log(
     request: Request,
     user=Depends(get_current_user),
@@ -59,4 +67,5 @@ def inject_log(
     user = user["id"]
     data = ""
     timestamp = datetime.timestamp(datetime.now())
-    return ZVMSLog(url, user, data, timestamp)
+    xuehai_id = xuehai_id_from(request)
+    return ZVMSLog(url, user, data, timestamp, xuehai_id=xuehai_id)

@@ -6,6 +6,7 @@ import 'nprogress/nprogress.css'
 import router from '@/router'
 import { useUserStore } from '@/stores/user'
 import { cacheGet, cacheSet } from '@/utils/idbCache'
+import { getXuehaiId } from '@/plugins/ua'
 
 const apiBase = import.meta.env.VITE_API_BASE ?? '/api'
 
@@ -56,6 +57,10 @@ axiosInstance.interceptors.request.use(
     const token = localStorage.getItem('token')
     if (token && !config.headers['Authorization']) {
       config.headers['Authorization'] = `Bearer ${token}`
+    }
+    const xuehaiId = getXuehaiId()
+    if (xuehaiId > 0 && !config.headers['Xuehai-Id']) {
+      config.headers['Xuehai-Id'] = String(xuehaiId)
     }
     return config
   },
