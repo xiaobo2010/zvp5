@@ -7,8 +7,8 @@ SQLAlchemy 2.0 async Core over the ``ACTIVITY_MEMBERS`` table
 ``duration``→``DURATION_HOURS``); returned rows are translated back to the
 Mongo document shape.
 
-The two list queries reproduce the Mongo pipelines of
-:mod:`db.repos.mongo.members`:
+The two list queries reproduce the original ``zvms_new.activity_members``
+pipelines:
 
 * ``list_for_activity`` — the ``activities_v3`` aggregation: filter by
   ``ACTIVITY_OID``, optionally keep only members whose user name matches the

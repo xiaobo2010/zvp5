@@ -217,6 +217,17 @@ def _list_raw_stmt(
     return stmt
 
 
+def _types_summary_stmt():
+    return (
+        select(
+            activities_tbl.c.atype,
+            activities_tbl.c.status,
+            func.count().label("count"),
+        )
+        .group_by(activities_tbl.c.atype, activities_tbl.c.status)
+    )
+
+
 def _activity_doc(mapping: Any) -> Row:
     """Canonical activity row (matches ``mongo/activities._activity_doc``)."""
     return {
@@ -351,6 +362,27 @@ class OracleActivitiesRepo:
             total = (await session.execute(count_stmt)).scalar_one()
             rows = (await session.execute(page_stmt)).all()
         return [_activity_doc(row._mapping) for row in rows], int(total)
+
+    async def types_summary(self) -> list[Row]:
+        stmt = _types_summary_stmt()
+        async with _session_for(self._session) as (session, _owns):
+            rows = (await session.execute(stmt)).all()
+
+        summary: dict[Any, Row] = {}
+        order: list[Any] = []
+        for row in rows:
+            mapping = row._mapping
+            atype = mapping["atype"]
+            status = mapping["status"]
+            count = int(mapping["count"])
+            if atype not in summary:
+                summary[atype] = {"type": atype, "count": 0, "status_breakdown": {}}
+                order.append(atype)
+            summary[atype]["count"] += count
+            if status is not None:
+                breakdown = summary[atype]["status_breakdown"]
+                breakdown[status] = breakdown.get(status, 0) + count
+        return [summary[atype] for atype in order]
 
 
 __all__ = ["OracleActivitiesRepo"]
