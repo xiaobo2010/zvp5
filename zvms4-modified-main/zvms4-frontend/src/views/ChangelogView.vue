@@ -22,6 +22,7 @@ import { ref, computed, onMounted } from 'vue'
 import api from '@/api'
 import { changelog, type ChangelogEntry as StaticChangelogEntry } from '@/data/changelog'
 import type { ChangelogEntry } from '@/api/changelog'
+import { ZMarkdown, ZMarkdownEditor } from '@/components/markdown'
 
 const { t } = useI18n()
 const router = useRouter()
@@ -150,13 +151,7 @@ header.setHeader(t('nav.changelog'))
         <h1 class="text-xl">{{ t('nav.changelog') }}</h1>
       </template>
       <template #extra>
-        <ElButton
-          v-if="isAdmin"
-          type="primary"
-          text
-          bg
-          @click="startCreate"
-        >
+        <ElButton v-if="isAdmin" type="primary" text bg @click="startCreate">
           {{ t('changelog.actions.create') }}
         </ElButton>
       </template>
@@ -173,26 +168,16 @@ header.setHeader(t('nav.changelog'))
             <div>
               <h3 class="text-lg font-bold mb-2">{{ entry.version }}</h3>
               <ul class="list-disc pl-5 text-sm space-y-1">
-                <li v-for="(item, idx) in entry.items" :key="idx">{{ item }}</li>
+                <li v-for="(item, idx) in entry.items" :key="idx">
+                  <ZMarkdown inline :source="item" />
+                </li>
               </ul>
             </div>
             <div v-if="isAdmin && hasId(entry)" class="flex-shrink-0 space-x-2">
-              <ElButton
-                type="primary"
-                size="small"
-                text
-                bg
-                @click="startEdit(entry)"
-              >
+              <ElButton type="primary" size="small" text bg @click="startEdit(entry)">
                 {{ t('changelog.actions.edit') }}
               </ElButton>
-              <ElButton
-                type="danger"
-                size="small"
-                text
-                bg
-                @click="remove(entry)"
-              >
+              <ElButton type="danger" size="small" text bg @click="remove(entry)">
                 {{ t('changelog.actions.delete') }}
               </ElButton>
             </div>
@@ -201,26 +186,16 @@ header.setHeader(t('nav.changelog'))
       </ElTimeline>
     </ElCard>
 
-    <ElDialog v-model="dialogVisible" :title="dialogTitle" width="520px">
+    <ElDialog v-model="dialogVisible" :title="dialogTitle" width="min(760px, 92vw)">
       <ElForm label-position="right" label-width="96px">
         <ElFormItem :label="t('changelog.fields.version')" required>
           <ElInput v-model="form.version" />
         </ElFormItem>
         <ElFormItem :label="t('changelog.fields.date')" required>
-          <ElDatePicker
-            v-model="form.date"
-            type="date"
-            value-format="YYYY-MM-DD"
-            class="w-full"
-          />
+          <ElDatePicker v-model="form.date" type="date" value-format="YYYY-MM-DD" class="w-full" />
         </ElFormItem>
         <ElFormItem :label="t('changelog.fields.items')">
-          <ElInput
-            v-model="form.items"
-            type="textarea"
-            :rows="6"
-            :placeholder="t('changelog.fields.itemsHint')"
-          />
+          <ZMarkdownEditor v-model="form.items" :placeholder="t('changelog.fields.itemsHint')" />
         </ElFormItem>
       </ElForm>
       <template #footer>
