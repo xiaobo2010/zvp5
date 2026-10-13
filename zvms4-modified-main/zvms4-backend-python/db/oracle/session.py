@@ -5,10 +5,11 @@ Three entry points are provided:
 
 * :func:`get_session` - a FastAPI dependency that yields a session and closes
   it afterwards.
-* :func:`get_oracle_session` - a FastAPI dependency that yields a session only
-  when Oracle is enabled globally, otherwise ``None`` (so unmigrated modules'
-  Mongo code is unaffected).
+* :func:`get_oracle_session` - a FastAPI dependency that yields a session
+  (kept as a named alias for call sites expecting the Oracle-specific name).
 * :func:`session_scope` - an async context manager for non-FastAPI callers.
+
+ADB is the only backend, so no session entry point is conditional.
 """
 
 from __future__ import annotations
@@ -17,8 +18,6 @@ from contextlib import asynccontextmanager
 from typing import AsyncIterator, Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
-
-import settings
 
 from . import engine as oracle_engine
 
@@ -42,16 +41,13 @@ async def get_session() -> AsyncIterator[AsyncSession]:
         await session.close()
 
 
-async def get_oracle_session() -> AsyncIterator[Optional[AsyncSession]]:
-    """FastAPI dependency: yield an Oracle session when enabled, else ``None``.
+async def get_oracle_session() -> AsyncIterator[AsyncSession]:
+    """FastAPI dependency: yield a session and always close it.
 
-    Reuses the shared sessionmaker, so a session is only ever created when the
-    master switch is on. When Oracle is disabled this yields ``None`` without
-    touching the engine or the network, keeping unmigrated modules on Mongo.
+    Alias of :func:`get_session`; kept under the Oracle-specific name for
+    call sites that expect it. ADB is the only backend, so a session is
+    always created.
     """
-    if not getattr(settings, "ORACLE_ENABLED", False):
-        yield None
-        return
     session = get_sessionmaker()()
     try:
         yield session

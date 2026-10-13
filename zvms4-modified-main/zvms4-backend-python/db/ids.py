@@ -6,13 +6,18 @@ repository layer and the HTTP layer:
 
 * :func:`new_oid` - generate a fresh 24-char lowercase hex id.
 * :func:`normalize_oid` / :func:`validate_oid` - accept a 24-hex string (mixed
-  case is fine) and return its lowercase form, raising :class:`ValueError`
+  case is fine) and return its lowercase form, raising :class:`InvalidOid`
   for anything else.
 * :func:`is_valid_oid` - non-raising predicate for the same shape.
 
-Semantics match ``utils.validate_object_id`` (which raises ``HTTPException``);
-this module raises plain ``ValueError`` so it stays framework-agnostic and does
-**no** database I/O. It has no third-party dependencies.
+:class:`InvalidOid` subclasses :class:`ValueError`, so the existing
+``except ValueError`` guards in ``utils.validate_object_id`` /
+``util.object_id.validate_object_id`` keep their explicit ``HTTP 400``
+contract, while a global FastAPI handler in ``main`` maps any that escape to
+``HTTP 400`` instead of the generic ``500``.
+
+This module stays framework-agnostic and does **no** database I/O. It has no
+third-party dependencies.
 """
 
 from __future__ import annotations
@@ -26,11 +31,21 @@ OID_HEX_LENGTH = 24
 
 _OID_HEX_RE = re.compile(r"[0-9a-fA-F]{24}")
 
+
+class InvalidOid(ValueError):
+    """Raised when a value is not a 24-character hex object id.
+
+    Subclasses :class:`ValueError` so existing ``except ValueError`` guards
+    (which translate to ``HTTP 400``) keep working unchanged.
+    """
+
+
 __all__ = [
     "new_oid",
     "normalize_oid",
     "validate_oid",
     "is_valid_oid",
+    "InvalidOid",
     "OID_HEX_LENGTH",
 ]
 
@@ -55,15 +70,16 @@ def is_valid_oid(value: Any) -> bool:
 def normalize_oid(value: Union[str, Any]) -> str:
     """Return ``value`` as a lowercase 24-char hex string.
 
-    Accepts any 24-hex string (mixed case is fine). Raises :class:`ValueError`
-    for anything else (this includes the ``activities.approver`` sentinels
-    ``""`` and ``"authority"``, which are intentionally NOT valid ids).
+    Accepts any 24-hex string (mixed case is fine). Raises
+    :class:`InvalidOid` for anything else (this includes the
+    ``activities.approver`` sentinels ``""`` and ``"authority"``, which are
+    intentionally NOT valid ids).
     """
     if not is_valid_oid(value):
-        raise ValueError(f"Invalid ObjectId: {value!r}")
+        raise InvalidOid(f"Invalid ObjectId: {value!r}")
     return value.lower()
 
 
 def validate_oid(value: Union[str, Any]) -> str:
-    """Return the lowercased 24-hex id, raising :class:`ValueError` otherwise."""
+    """Return the lowercased 24-hex id, raising :class:`InvalidOid` otherwise."""
     return normalize_oid(value)

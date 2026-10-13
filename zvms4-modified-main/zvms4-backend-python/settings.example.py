@@ -6,7 +6,6 @@ LANGUAGE = "zh-CN"  # util/calculate.py generate_description language
 CHINESE_FONT = "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"  # util/statement.py PDF font (has built-in fallbacks)
 
 # Oracle Autonomous Database (ADB) - see db/oracle/README.md.
-ORACLE_ENABLED = False  # Master switch for the Oracle connection layer
 ORACLE_ACTIVE = "prod"  # "prod" | "test" - which instance the config resolves to
 ORACLE_USER = ""  # Shared ADB username (both instances)
 ORACLE_PASSWORD = ""  # Shared ADB password (both instances)

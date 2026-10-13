@@ -30,7 +30,6 @@ VALID_ACTIVE = ("prod", "test")
 class OracleConfig(NamedTuple):
     """Fully resolved configuration for one Oracle instance."""
 
-    enabled: bool
     active: str
     user: str
     password: str
@@ -67,7 +66,6 @@ def load_config(active: Optional[str] = None) -> OracleConfig:
         wallet_password = _get("ORACLE_WALLET_PASSWORD", "")
 
     return OracleConfig(
-        enabled=bool(_get("ORACLE_ENABLED", False)),
         active=instance,
         user=str(_get("ORACLE_USER", "") or ""),
         password=str(_get("ORACLE_PASSWORD", "") or ""),

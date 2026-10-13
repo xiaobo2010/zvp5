@@ -23,8 +23,8 @@ from routers import (
 )
 import socketio
 from fastapi.middleware.cors import CORSMiddleware
-import settings
 from db import backends
+from db.ids import InvalidOid
 from db.oracle.engine import ping as oracle_ping
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from tasks.compute_time import compute_tasks, generate_reports
@@ -242,10 +242,8 @@ async def redirect_log(request: Request, path: str):
 async def health_check():
     """Health check endpoint."""
     try:
-        # When Oracle is enabled, verify DB connectivity with SELECT 1 FROM DUAL.
-        # Otherwise report health without a Mongo ping.
-        if getattr(settings, "ORACLE_ENABLED", False):
-            await oracle_ping()
+        # ADB is the only backend: always verify DB connectivity.
+        await oracle_ping()
         return {"status": "ok", "code": 200, "data": "OK"}
     except Exception as e:
         return {"status": "error", "code": 500, "data": str(e)}
@@ -273,6 +271,17 @@ async def validation_exception_handler(_: Request, exc: RequestValidationError):
 
     error_string = "\n".join(formatted_errors)  # Combine into a single string
     return JSONResponse(content={"detail": error_string}, status_code=422)
+
+
+@app.exception_handler(InvalidOid)
+async def invalid_oid_exception_handler(_: Request, exc: InvalidOid):
+    """Map a malformed id caught at the data boundary to HTTP 400.
+
+    Repositories normalize ids via ``db.ids`` at the data boundary; without
+    this handler an ``InvalidOid`` escaping a route (e.g. a business id where
+    an object id was expected) would fall through to the generic 500 handler.
+    """
+    return JSONResponse(content={"detail": "Invalid Object ID"}, status_code=400)
 
 
 @app.exception_handler(Exception)
