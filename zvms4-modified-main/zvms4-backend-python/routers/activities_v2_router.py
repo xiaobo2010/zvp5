@@ -2,11 +2,9 @@ import re
 from collections import defaultdict
 from datetime import datetime
 from typing import Literal, cast
-from bson import ObjectId
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
-from database import db
 from db import backends
 from typings.activity_v2 import Activity, ActivityMember
 from typings.log import inject_log
@@ -43,17 +41,36 @@ async def create_activity_v2(
 
     activity.creator = str(user["id"])
 
-    activity_ = activity.model_dump()
+    activities_repo = backends.get_activities_repo()
 
-    result = await db.zvms_new.get_collection("activities").insert_one(activity_)
+    oid = await activities_repo.create(
+        activity.name,
+        activity.description,
+        activity.type,
+        activity.creator,
+        activity.appointee,
+        activity.origin,
+        activity.date,
+    )
+
+    extra = {
+        key: value
+        for key, value in {
+            "place": activity.place,
+            "approver": activity.approver,
+        }.items()
+        if value
+    }
+    if extra:
+        await activities_repo.update(oid, extra)
 
     log.with_text(
-        f'用户 {await get_user_display_name(user["id"])} 创建了义工活动《{activity_["name"]}》（ID: {result.inserted_id}）',
+        f'用户 {await get_user_display_name(user["id"])} 创建了义工活动《{activity.name}》（ID: {oid}）',
         type="activity_create",
     )
     await log.insert_log()
 
-    return JSONResponse({"id": str(result.inserted_id)}, status_code=201)
+    return JSONResponse({"id": str(oid)}, status_code=201)
 
 
 @router.get("")
@@ -270,9 +287,13 @@ async def add_activity_member_v2(
             status_code=400, detail="User already in activity with same counting mode"
         )
 
-    member_ = member.model_dump()
-
-    result = await db.zvms_new.get_collection("activity_members").insert_one(member_)
+    new_id = await backends.get_members_repo().add(
+        activity_id,
+        member.member,
+        member.mode,
+        member.duration,
+        member.status,
+    )
     
     log.with_text(
         f'用户 {await get_user_display_name(user["id"])} 将成员 {target_user["name"]} 加入义工活动《{target_activity.name}》',
@@ -281,7 +302,7 @@ async def add_activity_member_v2(
     await log.insert_log()
 
     return {
-        "id": str(result.inserted_id),
+        "id": new_id,
         "count": await backends.get_members_repo().count_for_activity(activity_id),
     }
 

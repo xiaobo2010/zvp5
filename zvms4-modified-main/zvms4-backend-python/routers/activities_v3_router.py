@@ -7,7 +7,7 @@ from util.user import get_user_display_name
 from utils import validate_object_id
 from typing import Literal
 from pydantic import BaseModel, Field
-from bson import ObjectId
+from db.ids import is_valid_oid
 
 router = APIRouter()
 
@@ -39,7 +39,7 @@ async def get_activities_v3(
     creator_oids = [
         row["creator"]
         for row in rows
-        if row.get("creator") and ObjectId.is_valid(row["creator"])
+        if row.get("creator") and is_valid_oid(row["creator"])
     ]
     names = (
         await backends.get_users_repo().get_names(creator_oids)
@@ -126,7 +126,7 @@ async def get_activity_members_v3(
     member_oids = [
         row["member"]
         for row in rows
-        if row.get("member") and ObjectId.is_valid(row["member"])
+        if row.get("member") and is_valid_oid(row["member"])
     ]
     names = (
         await backends.get_users_repo().get_names(member_oids)

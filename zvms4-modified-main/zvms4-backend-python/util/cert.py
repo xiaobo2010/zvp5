@@ -9,11 +9,11 @@ import datetime
 import hashlib
 import hmac
 import struct
-from bson import ObjectId
 from bcrypt import checkpw, gensalt, hashpw
 from Crypto.Hash import SHA256
 
 from db import backends
+from db.ids import new_oid
 from util.group import get_user_permissions
 
 
@@ -145,7 +145,7 @@ def jwt_encode(
         "scope": scope,
         "per": permissions,
         "elg": eligibility,
-        "jti": str(ObjectId()),
+        "jti": new_oid(),
     }
     result = jwt.encode(payload, jwt_private_key, algorithm="HS256")
     return result
