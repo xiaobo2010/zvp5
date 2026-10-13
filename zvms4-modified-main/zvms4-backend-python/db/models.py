@@ -127,10 +127,12 @@ users = Table(
     Column("sex", VARCHAR2(16), nullable=True),
     _json("users", "eligibility", nullable=True),
     _json("users", "past", nullable=True),
+    Column("banned", NUMBER(1), nullable=False, server_default=text("0")),
     _oid_check("users"),
     _json_check("users", "roles"),
     _json_check("users", "eligibility"),
     _json_check("users", "past"),
+    CheckConstraint("banned IN (0,1)", name="ck_users_banned"),
     UniqueConstraint("business_id", name="uq_users_business_id"),
     ForeignKeyConstraint(["class_oid"], ["groups.oid"], name="fk_users_class_oid"),
 )

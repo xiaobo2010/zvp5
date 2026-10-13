@@ -99,6 +99,7 @@ INT = "int"        # NUMBER(k)
 FLOAT = "float"    # BINARY_DOUBLE
 TS = "ts"          # naive TIMESTAMP
 JSON_KIND = "json"  # CLOB + IS JSON (bound as a Python object)
+BOOL_KIND = "bool"  # Mongo truthiness -> NUMBER(1) 0/1
 
 _MISSING = object()
 
@@ -175,6 +176,7 @@ def build_specs(include_permission_groups: bool = False) -> list[TableSpec]:
                 C("sex", "sex", STR),
                 C("eligibility", "eligibility", JSON_KIND),
                 C("past", "past", JSON_KIND),
+                C("banned", "banned", BOOL_KIND, default=False),
             ),
         ),
         # activities -> ACTIVITIES : MERGE.
@@ -440,6 +442,9 @@ def _convert(
             reasons.append(f"unserializable_json:{cs.column}")
             return None
         return value
+
+    if kind == BOOL_KIND:
+        return 1 if value else 0
 
     reasons.append(f"unknown_kind:{cs.column}={kind}")
     return None

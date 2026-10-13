@@ -5,8 +5,13 @@ Versioned, hand-written Oracle DDL for the `zvms_new` → Oracle ADB migration.
 | File | Purpose |
 | ---- | ------- |
 | `V001__initial_schema.sql` | 12 tables + 7 indexes for all of `zvms_new`. Idempotent. |
+| `V002__add_users_banned.sql` | Adds `USERS.BANNED NUMBER(1)` + `ck_users_banned` to an existing instance. Idempotent. |
 | `../models.py` (`db/models.py`) | SQLAlchemy 2.0 Core `MetaData` mirror of V001. |
 | `../ddl_check.py` (`db/ddl_check.py`) | Offline drift check between the two. |
+
+`USERS.BANNED` is the login gate (`banned = 1` → the user cannot log in;
+absent/`0` → not banned). It is declared in `V001` for fresh instances and
+added by `V002` for instances where `V001` was already applied.
 
 Design conventions (JSON→CLOB+`IS JSON`, ObjectId→`VARCHAR2(24)` lowercase hex,
 naive `TIMESTAMP`, deferred `GROUP_INDICATORS` FK) are documented in the header
