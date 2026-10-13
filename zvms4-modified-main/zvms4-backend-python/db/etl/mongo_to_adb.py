@@ -31,9 +31,9 @@ FK-safe order
 -------------
 ``groups -> users -> activities -> activity_members -> user_time ->
 time_academic_year -> time_with_origin -> time_with_origin_stat -> indicators
--> group_indicators -> daily_exports``. Parents are fully transformed before
-children, so the FK gate validates against the set of parent rows that will
-actually be written.
+-> group_indicators -> daily_exports -> changelog``. Parents are fully
+transformed before children, so the FK gate validates against the set of parent
+rows that will actually be written.
 
 Importing this module performs **no I/O**.
 """
@@ -317,6 +317,21 @@ def build_specs(include_permission_groups: bool = False) -> list[TableSpec]:
                 C("data", "data", JSON_KIND, default=[]),
             ),
         ),
+        # changelog -> CHANGELOG : MERGE.
+        #   Release metadata (`items` is a JSON list); nothing FKs to it and the
+        #   set is small, so the row upsert by PK keeps it idempotent.
+        TableSpec(
+            "changelog",
+            "changelog",
+            "merge",
+            (
+                C("oid", "_id", OID, required=True),
+                C("version", "version", STR, required=True),
+                C("release_date", "date", STR, required=True),
+                C("items", "items", JSON_KIND, default=[]),
+                C("updated_at", "updated_at", TS, required=True),
+            ),
+        ),
     ]
 
 
@@ -324,7 +339,6 @@ def build_specs(include_permission_groups: bool = False) -> list[TableSpec]:
 # this round, each with a clear reason (spec §2/§7/§10).
 SKIPPED_COLLECTIONS: dict[str, str] = {
     "logs": "table modelled but ETL deferred - dead device schema (spec §2/§7)",
-    "changelog": "table modelled but out of scope - release metadata, not domain data",
     "app_logs": "no table in db/models.py - runtime app logs (spec §10, pending)",
     "tasks": "no table in db/models.py",
     "imports": "no table in db/models.py",
