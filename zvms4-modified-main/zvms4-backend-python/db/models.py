@@ -37,7 +37,7 @@ from sqlalchemy import (
     text,
 )
 from sqlalchemy.dialects import oracle
-from sqlalchemy.dialects.oracle import BINARY_DOUBLE, NUMBER, VARCHAR2
+from sqlalchemy.dialects.oracle import BINARY_DOUBLE, BLOB, NUMBER, VARCHAR2
 from sqlalchemy.types import TypeDecorator
 
 __all__ = ["metadata", "JSONText", "get_table", "table_names"]
@@ -150,7 +150,11 @@ groups = Table(
     metadata,
     _oid_pk(),
     Column("name", VARCHAR2(128), nullable=False),
+    Column("type", VARCHAR2(16), nullable=True),
+    _json("groups", "permissions", nullable=True),
+    Column("description", VARCHAR2(1000), nullable=True),
     _oid_check("groups"),
+    _json_check("groups", "permissions"),
 )
 
 
@@ -430,6 +434,73 @@ changelog = Table(
     Column("updated_at", oracle.TIMESTAMP, nullable=False),
     _oid_check("changelog"),
     _json_check("changelog", "items"),
+)
+
+
+# ---------------------------------------------------------------------------
+# APP_LOGS  ← zvms_new.app_logs  (runtime app logs; written by typings/log.py)
+# ---------------------------------------------------------------------------
+
+app_logs = Table(
+    "app_logs",
+    metadata,
+    _oid_pk(),
+    Column("url", VARCHAR2(512), nullable=True),
+    Column("app_user", VARCHAR2(64), nullable=True),
+    Column("data", VARCHAR2(2000), nullable=True),
+    Column("ts_at", oracle.TIMESTAMP, nullable=True),
+    Column("ts_raw", BINARY_DOUBLE, nullable=True),
+    Column("ltype", VARCHAR2(64), nullable=True),
+    Column("log_level", VARCHAR2(32), nullable=True),
+    Column("xuehai_id", VARCHAR2(32), nullable=True),
+    _oid_check("app_logs"),
+)
+Index("ix_app_logs_ts_at", app_logs.c.ts_at)
+
+
+# ---------------------------------------------------------------------------
+# EXPORT_TASKS  ← zvms_new.tasks  (runtime export queue; `id` is a BSON UUID)
+# ---------------------------------------------------------------------------
+
+export_tasks = Table(
+    "export_tasks",
+    metadata,
+    _oid_pk(),
+    Column("task_uuid", VARCHAR2(36), nullable=False),
+    Column("status", VARCHAR2(16), nullable=False),
+    Column("percentage", BINARY_DOUBLE, nullable=True),
+    Column("variant", VARCHAR2(32), nullable=True),
+    Column("export_format", VARCHAR2(16), nullable=True),
+    Column("allow_cache", NUMBER(1), nullable=False, server_default=text("0")),
+    Column("include_description", NUMBER(1), nullable=False, server_default=text("0")),
+    Column("errmsg", VARCHAR2(1000), nullable=True),
+    Column("export_start", oracle.TIMESTAMP, nullable=True),
+    Column("export_end", oracle.TIMESTAMP, nullable=True),
+    Column("task_start", oracle.TIMESTAMP, nullable=True),
+    Column("task_end", oracle.TIMESTAMP, nullable=True),
+    _json("export_tasks", "result", nullable=False, default="'[]'"),
+    _oid_check("export_tasks"),
+    _json_check("export_tasks", "result"),
+    UniqueConstraint("task_uuid", name="uq_export_tasks_uuid"),
+)
+Index("ix_export_tasks_status", export_tasks.c.status)
+
+
+# ---------------------------------------------------------------------------
+# IMPORTS  ← zvms_new.imports  (written by routers/imports_router.py)
+# ---------------------------------------------------------------------------
+
+imports = Table(
+    "imports",
+    metadata,
+    _oid_pk(),
+    Column("import_date", oracle.TIMESTAMP, nullable=True),
+    Column("description", VARCHAR2(1000), nullable=True),
+    Column("filename", VARCHAR2(256), nullable=True),
+    Column("name", VARCHAR2(256), nullable=True),
+    Column("user_oid", VARCHAR2(24), nullable=True),
+    Column("content", BLOB, nullable=True),
+    _oid_check("imports"),
 )
 
 

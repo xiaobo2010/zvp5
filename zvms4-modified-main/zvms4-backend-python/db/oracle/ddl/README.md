@@ -4,9 +4,11 @@ Versioned, hand-written Oracle DDL for the `zvms_new` → Oracle ADB migration.
 
 | File | Purpose |
 | ---- | ------- |
-| `V001__initial_schema.sql` | 12 tables + 7 indexes for all of `zvms_new`. Idempotent. |
+| `V001__initial_schema.sql` | 16 tables + 9 indexes for all of `zvms_new`. Idempotent. |
 | `V002__add_users_banned.sql` | Adds `USERS.BANNED NUMBER(1)` + `ck_users_banned` to an existing instance. Idempotent. |
 | `V003__relax_activities_text_null.sql` | Relaxes `ACTIVITIES.DESCRIPTION/APPROVER/PLACE` to nullable (Mongo `''` → Oracle NULL). Idempotent. |
+| `V004__retire_mongo_tables.sql` | Adds `APP_LOGS`/`EXPORT_TASKS`/`IMPORTS` and extends `GROUPS` with `TYPE`/`PERMISSIONS` on an existing instance. Idempotent. |
+| `V005__add_groups_description.sql` | Adds `GROUPS.DESCRIPTION VARCHAR2(1000)` on an existing instance. Idempotent. |
 | `../models.py` (`db/models.py`) | SQLAlchemy 2.0 Core `MetaData` mirror of V001. |
 | `../ddl_check.py` (`db/ddl_check.py`) | Offline drift check between the two. |
 
@@ -19,6 +21,15 @@ empty string as NULL, so V001's original `DEFAULT '' NOT NULL` was
 unsatisfiable for the `''` values production Mongo stores there. Fresh
 instances get the nullable form from `V001`; existing instances are relaxed by
 `V003`.
+
+`APP_LOGS`, `EXPORT_TASKS` and `IMPORTS` are the last three retired Mongo
+collections (`zvms_new.app_logs` / `tasks` / `imports`), and `GROUPS` gains the
+permission-group columns `TYPE` and `PERMISSIONS`. Fresh instances get them from
+`V001`; existing instances are extended by `V004`.
+
+`GROUPS.DESCRIPTION` backs the group-description endpoint (currently no group
+carries one). Fresh instances get it from `V001`; existing instances are
+extended by `V005`.
 
 Design conventions (JSON→CLOB+`IS JSON`, ObjectId→`VARCHAR2(24)` lowercase hex,
 naive `TIMESTAMP`, deferred `GROUP_INDICATORS` FK) are documented in the header

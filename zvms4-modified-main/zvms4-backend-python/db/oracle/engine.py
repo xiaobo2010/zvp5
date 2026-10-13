@@ -13,6 +13,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 
 from . import config as oracle_config
+from .clob import install_lob_binds
 
 _engine: Optional[AsyncEngine] = None
 
@@ -38,7 +39,12 @@ def _connect_args(cfg: oracle_config.OracleConfig) -> dict:
 
 
 def get_engine() -> AsyncEngine:
-    """Return the process-wide async engine, creating it on first use."""
+    """Return the process-wide async engine, creating it on first use.
+
+    Also installs the shared "large ``str`` -> CLOB LOB" bind hook (see
+    :mod:`db.oracle.clob`) so both the runtime repos and the ETL bind long
+    JSON/CLOB values correctly.
+    """
     global _engine
     if _engine is None:
         cfg = oracle_config.load_config()
@@ -50,6 +56,7 @@ def get_engine() -> AsyncEngine:
             pool_pre_ping=True,
             pool_recycle=1800,
         )
+        install_lob_binds(_engine)
     return _engine
 
 
