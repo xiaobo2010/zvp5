@@ -71,7 +71,9 @@ class JSONText(TypeDecorator):
     def process_result_value(self, value: Any, dialect) -> Any:
         if value is None:
             return None
-        return json.loads(value)
+        if isinstance(value, str):
+            return json.loads(value)
+        return value
 
 
 metadata = MetaData()
