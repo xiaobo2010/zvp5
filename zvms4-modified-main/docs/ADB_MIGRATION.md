@@ -265,11 +265,37 @@
 - 回退 = `settings.py` 置 `ORACLE_ENABLED=False` + `systemctl restart zvms4` → 回 Mongo；或还原整包备份。
 - **注意**：切换后 6 个模块的写入只落 ADB，Mongo 对应集合停写；回退到 Mongo 会丢失 ADB 窗口内写入，故仅作故障应急，不做数据往返。
 
+## 6.7 MongoDB 退役完成（2026-10-14）
+
+> ADB 成为**唯一**数据后端；MongoDB 已从代码、依赖与生产运行中彻底移除。
+
+- **删除**：`database.py`；`db/repos/mongo/**`（12 模块）；`db/etl/**`（Mongo 源 ETL，数据已迁毕）。
+- **重写**：`db/backends.py` 11 个工厂无条件返回 Oracle 仓储（去掉 `ORACLE_MODULES` 开关与 Mongo 分支）；`main.py` 去掉 motor/`connect_to_mongo`/`close_mongo_connection` 与 `pymongo.errors.OperationFailure` 处理器。
+- **依赖**：`requirements.txt` 去 `motor`/`pymongo`（生产 venv 已卸载）；`settings.example.py`/生产 `settings.py` 去 `MONGODB_URI`。
+- **`bson` 清零**：`db/ids.py` 增设 `is_valid_oid`/`validate_oid`，`new_oid()` 改为「时间前缀 + 随机」（维持 `ORDER BY oid DESC` = 最新在前）；8 文件约 49 处 `ObjectId(` 全部替换。
+- **生产切全模块**：`ORACLE_MODULES` = users/groups/activities/activity_members/time/stats/changelog/logs/tasks/imports/daily_exports；数据同步 groups 57 / app_logs 294 / export_tasks 1 / imports 1。
+- **验收**：health/version/changelog/activities/users/times/groups/logs/exports 全 200；封禁用户 403。
+
+### 两个 ADB 专有陷阱（本轮发现并修复）
+
+1. **大文本 CLOB 绑定**：python-oracledb thin 对 `>4000` 字符的 `str` 一律 `ORA-01461`，且 `setinputsizes(DB_TYPE_CLOB)` **无效**；必须绑定 LOB 对象（`connection.createlob(DB_TYPE_CLOB)` + `write`）。已做成通用机制 `db/oracle/clob.py::install_lob_binds`（注册于 `db/oracle/engine.py`），同时覆盖运行期 `OracleTasksRepo` 写大 `result`。
+2. **`like_regex` 的 `flag` 子句**：ADB 当前为 Oracle **19.33**，SQL/JSON 路径不支持 `like_regex … flag "i"`（21c+ 才有）→ `ORA-40597`。`db/repos/oracle/users.py::_PAST_MATCH` 改为 `regexp_like(json_serialize(past), :pat, 'i')`（保留大小写不敏感、未转义正则语义）。
+
+### 仍待办（不阻塞）
+
+- `ORACLE_ENABLED` 开关残留（`db/oracle/session.py`/`config.py`/`main.py` 仍读取，实为恒真）；可后续移除。
+- `zvms4-mongo` 容器与历史数据是否退休（破坏性操作，需显式确认）。
+- 既存属性：`normalize_oid` 对非 16 进制输入抛 `ValueError`（→500），原 `validate_object_id` 为 400。
+
 ## 7. 待决（不阻塞本轮）
 
 - **logs 双重性**：`zvms_new.logs` 是设备 schema 死集合（本仓零引用），运行期日志走遗留 `zvms.logs`；`app_logs` 在 `db/models.py` 无表，运行期仍写 Mongo。logs 模块迁移前需拍板：是否 ETL 设备数据 / 是否新建 `APP_LOGS`。
 - **changelog**：本轮已接入 ETL（Mongo `zvms_new.changelog` → `CHANGELOG`）；落库 + 开模块后即可切换。
 - **遗留 id 重映射**：`group_indicators.group`、`time_with_origin_stat.scope_id(group)` 仍持遗留 group id；倾向不 ETL、由移植后的夜间重算重建。
 - **仍留 Mongo 的路径**（见 §6.4/§6.5 待决项）：v1 内嵌 `members`、v2 raw 写入、mcp `types/summary`、`GroupsRepo.list_non_permission`（缺 `TYPE` 列）、`tasks`/`imports`/`notifications`（无表）。
+- **notification API（暂废弃，待重构）**：`/api/users/{oid}/notification`（`routers/users_router.py`）与 `notifications` 集合前端零调用（仅 UI 库 `ElNotification`，非该 API）、集合计数 0 → 随 Mongo 退役移除端点；**后续按新设计重构该 API**，不复刻旧 Mongo 形状。
+- **Mongo 退役决策（2026-10-13）**：彻底移除 Mongo 依赖（含遗留 `zvms` 库；实测该库已不存在，双库合并为死路径）。新增表 `APP_LOGS`/`EXPORT_TASKS`/`IMPORTS`，`GROUPS` 补 `TYPE`+`PERMISSIONS`（承载 3 个权限组）。设备 `logs`（7968 行、本仓零引用）保留 ADB 空表不迁。死代码（`conversion/*`、`tasks/categorize.py`、`misc/` 一次性脚本）删除。v1 `activities_router` 废弃（前端未调用、内嵌 `members` 全库为 0）。
+  **执行方式（2026-10-13 追加定调）**：**完全去除** Mongo 兼容与代码，**不保留过渡适配器与开关**——不保留 `db/repos/mongo/*`、`db/backends.py` 的 Mongo 分支、`database.py`/motor/`MONGODB_URI`，所有 router/util/task 直连 Oracle 仓储。顺序：先补全 Oracle 仓储与接线 → 把剩余数据（`app_logs`/`tasks`/`imports`/权限组）ETL 同步进 `zvp5adb` → prod 验证 → 最后物理删除 Mongo 代码/依赖并停用 Mongo 容器（ETL 工具届时一并移除或归档）。
+- **已修生产缺陷（2026-10-13）**：`routers/activities_v2_router.py` 创建活动 / 添加成员原为 raw Mongo 写入，与已切 Oracle 的读路径不一致 → 报 `404 Activity not found`；已改为 `backends.get_activities_repo().create(...)` + `get_members_repo().add(...)`，并移除该文件未使用的 `database.db` 导入。
 
 _本文档随各 lane 产出持续更新。_
