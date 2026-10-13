@@ -6,9 +6,8 @@ import pandas as pd
 from fastapi.responses import FileResponse
 from typings.export import ExportFormat
 from typings.group import Group
-from bson import ObjectId
 from fastapi import APIRouter, HTTPException, Depends, Query
-from database import db
+from db import backends
 from pydantic import BaseModel
 
 from util.calculate import calculate_user_time
@@ -37,11 +36,7 @@ async def create_group(
     if "admin" not in user["per"]:
         raise HTTPException(status_code=403, detail="Permission denied")
 
-    group = payload.model_dump()
-
-    result = await db.zvms_new.groups.insert_one(group)
-
-    id = str(result.inserted_id)
+    id = await backends.get_groups_repo().create(payload.name)
 
     log.with_text(
         f"管理员 {await get_user_display_name(user['id'])} 创建了用户组 {payload.name}",
@@ -68,26 +63,35 @@ async def get_groups(
     Get all groups
     """
 
-    regex = {"$regex": search, "$options": "i"}
-
-    if type == "permission":
-        match = {"type": "permission", "name": regex}
-    elif type == "class":
-        match = {"type": {"$ne": "permission"}, "name": regex}
-    else:
-        match = {"name": regex}
-
     rows = []
-    groups = await db.zvms_new.groups.find(match, {"description": 0}).to_list(None)
-    for group in groups:
-        row = {
-            "_id": str(group["_id"]),
-            "name": group["name"],
-            "type": group.get("type", "class"),
-        }
-        if row["type"] == "permission":
-            row["permissions"] = group.get("permissions", [])
-        rows.append(row)
+    groups_repo = backends.get_groups_repo()
+    permission_groups = await groups_repo.list_permission_groups(search)
+    permission_ids = {str(group["_id"]) for group in permission_groups}
+
+    if type != "permission":
+        _, class_total = await groups_repo.list_classes(search, 1, 1)
+        class_groups, _ = await groups_repo.list_classes(search, 1, class_total or 1)
+        for group in class_groups:
+            if str(group["_id"]) in permission_ids:
+                continue
+            rows.append(
+                {
+                    "_id": str(group["_id"]),
+                    "name": group["name"],
+                    "type": "class",
+                }
+            )
+
+    if type != "class":
+        for group in permission_groups:
+            rows.append(
+                {
+                    "_id": str(group["_id"]),
+                    "name": group["name"],
+                    "type": "permission",
+                    "permissions": group.get("permissions", []),
+                }
+            )
 
     rows.sort(key=lambda group: group["name"])
 
@@ -113,18 +117,24 @@ async def get_group(group_id: str):
     Get a group
     """
 
-    result = await db.zvms_new.groups.find_one({"_id": ObjectId(group_id)})
+    result = await backends.get_groups_repo().get_permission_group(group_id)
 
-    if result is None:
-        raise HTTPException(status_code=404, detail="Group not found")
-
-    data = {
-        "_id": str(result["_id"]),
-        "name": result["name"],
-        "type": result.get("type", "class"),
-    }
-    if data["type"] == "permission":
-        data["permissions"] = result.get("permissions", [])
+    if result is not None:
+        data = {
+            "_id": str(result["_id"]),
+            "name": result["name"],
+            "type": "permission",
+            "permissions": result.get("permissions", []),
+        }
+    else:
+        result = await backends.get_groups_repo().get(group_id)
+        if result is None:
+            raise HTTPException(status_code=404, detail="Group not found")
+        data = {
+            "_id": str(result["_id"]),
+            "name": result["name"],
+            "type": "class",
+        }
 
     return {
         "status": "ok",
@@ -151,13 +161,14 @@ async def update_group_name(
     if "admin" not in user["per"]:
         raise HTTPException(status_code=403, detail="Permission denied")
 
-    target = await db.zvms_new.groups.find_one({"_id": validate_object_id(group_id)})
+    oid = str(validate_object_id(group_id))
+    groups_repo = backends.get_groups_repo()
+
+    target = await groups_repo.get(oid)
     if target is None:
         raise HTTPException(status_code=404, detail="Group not found")
 
-    await db.zvms_new.groups.update_one(
-        {"_id": validate_object_id(group_id)}, {"$set": {"name": payload.name}}
-    )
+    await groups_repo.rename(oid, payload.name)
 
     log.with_text(
         f"管理员 {await get_user_display_name(user['id'])} 将用户组 {target['name']} 改名为 {payload.name}",
@@ -187,7 +198,7 @@ async def get_class_activities(
 
     same_class = False
     if "secretary" in user["per"]:
-        target = await db.zvms_new.users.find_one({"_id": ObjectId(user["id"])})
+        target = await backends.get_users_repo().get_by_oid(user["id"])
         if target is None:
             raise HTTPException(status_code=404, detail="User not found")
         classid = str(target["class_id"]) if target.get("class_id") else None
@@ -227,7 +238,7 @@ async def get_users_in_class(
     """
     same_class = False
     if "secretary" in user["per"]:
-        target = await db.zvms_new.users.find_one({"_id": ObjectId(user["id"])})
+        target = await backends.get_users_repo().get_by_oid(user["id"])
         if target is None:
             raise HTTPException(status_code=404, detail="User not found")
         classid = str(target["class_id"]) if target.get("class_id") else None
@@ -243,16 +254,13 @@ async def get_users_in_class(
     ):
         raise HTTPException(status_code=403, detail="Permission denied")
     class_oid = validate_object_id(group_id)
-    count = await db.zvms_new.users.count_documents(
-        {"class_id": class_oid, "name": {"$regex": search, "$options": "i"}}
-    )
-    pipeline = [
-        {"$match": {"class_id": class_oid, "name": {"$regex": search, "$options": "i"}}},
-        {"$sort": {"id": 1}},
-        {"$skip": (page - 1) * perpage},
-        {"$limit": perpage},
-    ]
-    result = await db.zvms_new.users.aggregate(pipeline).to_list(None)
+    result = await backends.get_users_repo().list_by_class(str(class_oid))
+    if search:
+        pattern = re.compile(search, re.IGNORECASE)
+        result = [user for user in result if pattern.search(user.get("name") or "")]
+    count = len(result)
+    result.sort(key=lambda user: user.get("id") or "")
+    result = result[(page - 1) * perpage : (page - 1) * perpage + perpage]
     for user in result:
         user["_id"] = str(user["_id"])
         class_id = str(user["class_id"]) if user.get("class_id") else ""
@@ -286,7 +294,7 @@ async def get_user_times_in_class(
     """
     same_class = False
     if "secretary" in user["per"]:
-        target = await db.zvms_new.users.find_one({"_id": ObjectId(user["id"])})
+        target = await backends.get_users_repo().get_by_oid(user["id"])
         if target is None:
             raise HTTPException(status_code=404, detail="User not found")
         classid = str(target["class_id"]) if target.get("class_id") else None
@@ -302,16 +310,13 @@ async def get_user_times_in_class(
     ):
         raise HTTPException(status_code=403, detail="Permission denied")
     class_oid = validate_object_id(group_id)
-    count = await db.zvms_new.users.count_documents(
-        {"class_id": class_oid, "name": {"$regex": search, "$options": "i"}}
-    )
-    pipeline = [
-        {"$match": {"class_id": class_oid, "name": {"$regex": search, "$options": "i"}}},
-        {"$sort": {"id": 1}},
-        {"$skip": (page - 1) * perpage},
-        {"$limit": perpage},
-    ]
-    result = await db.zvms_new.users.aggregate(pipeline).to_list(None)
+    result = await backends.get_users_repo().list_by_class(str(class_oid))
+    if search:
+        pattern = re.compile(search, re.IGNORECASE)
+        result = [user for user in result if pattern.search(user.get("name") or "")]
+    count = len(result)
+    result.sort(key=lambda user: user.get("id") or "")
+    result = result[(page - 1) * perpage : (page - 1) * perpage + perpage]
     time = []
     for user in result:
         user_time = await calculate_user_time(
@@ -333,9 +338,7 @@ async def get_user_times_in_class(
         class_id = user.get("class_id")
         if class_id is None:
             continue
-        class_group = await db.zvms_new.groups.find_one(
-            {"_id": class_id, "type": {"$ne": "permission"}}
-        )
+        class_group = await backends.get_groups_repo().get(str(class_id))
         if class_group is None:
             continue
         doc = {
@@ -369,9 +372,7 @@ async def update_group_description(
     if "admin" not in user["per"]:
         raise HTTPException(status_code=403, detail="Permission denied")
 
-    await db.zvms_new.groups.update_one(
-        {"_id": ObjectId(group_id)}, {"$set": {"description": payload.description}}
-    )
+    await backends.get_groups_repo().set_description(group_id, payload.description)
 
     log.with_text(
         f"管理员 {await get_user_display_name(user['id'])} 修改了用户组描述（ID: {group_id}）",
@@ -396,11 +397,12 @@ async def delete_group(
     if "admin" not in user["per"]:
         raise HTTPException(status_code=403, detail="Permission denied")
 
-    target = await db.zvms_new.groups.find_one({"_id": ObjectId(group_id)})
+    groups_repo = backends.get_groups_repo()
+    target = await groups_repo.get(group_id)
     if target is None:
         raise HTTPException(status_code=404, detail="Group not found")
 
-    await db.zvms_new.groups.delete_one({"_id": ObjectId(group_id)})
+    await groups_repo.delete(group_id)
 
     log.with_text(
         f"管理员 {await get_user_display_name(user['id'])} 删除了用户组 {target['name']}",
@@ -420,7 +422,7 @@ async def get_group_template(
 ):
     same_class = False
     if "secretary" in user["per"]:
-        target = await db.zvms_new.users.find_one({"_id": ObjectId(user["id"])})
+        target = await backends.get_users_repo().get_by_oid(user["id"])
         if target is None:
             raise HTTPException(status_code=404, detail="User not found")
         classid = str(target["class_id"]) if target.get("class_id") else None
@@ -437,13 +439,10 @@ async def get_group_template(
         raise HTTPException(status_code=403, detail="Permission denied")
 
     class_oid = validate_object_id(group_id)
-    db_users = await db.zvms_new.users.find({"class_id": class_oid}).to_list(None)
+    db_users = await backends.get_users_repo().list_by_class(str(class_oid))
 
-    group_name = (
-        await db.zvms_new.groups.find_one(
-            {"_id": class_oid, "type": {"$ne": "permission"}}
-        )
-    )["name"]
+    class_group = await backends.get_groups_repo().get(str(class_oid))
+    group_name = class_group["name"]
 
     users = []
 

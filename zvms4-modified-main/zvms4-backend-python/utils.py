@@ -1,12 +1,10 @@
-from bson import ObjectId
 from fastapi import HTTPException
+
+from db.ids import normalize_oid
 
 
 def validate_object_id(id: str):
-    if isinstance(id, ObjectId):
-        return id
     try:
-        _id = ObjectId(id)
-    except Exception:
+        return normalize_oid(id)
+    except ValueError:
         raise HTTPException(status_code=400, detail="Invalid Object ID")
-    return _id

@@ -1058,6 +1058,17 @@ XH：`/xh/api`（`api/xh.js`）
 
 **校验**：主干全树无 `oracle` / `oracledb` / `sqlalchemy` / `db.zvms` 代码引用（仅 `STATUS.md` / 本文件的历史记述文字）；后端 `compileall` exit 0；`import main` 通过且 `/api/changelog`、`/api/version` 路由在位；工厂返回 `MongoUsersRepo` / `MongoGroupsRepo` / `MongoChangelogRepo`。
 
+### 7.5 第三批合并：ADB 统一（2026-10-14，撤销 7.2 / 7.4 的 ADB 排除）
+
+> 本次操作：将 `zvms4-adb-migration` 分支**整体并入** `main`，撤销 7.2 / 7.4 的「无 ADB」剥离。**ADB 成为唯一数据后端**。
+
+- **代码统一**：主干取得 `db/models.py`、`db/oracle/*`（含 `clob.py`、增量 DDL V001–V005）、`db/repos/oracle/*`、`docs/ADB_*.md`；同时清除 Mongo 一侧的 `database.py`、`db/repos/mongo/*`、`db/etl/*`、`misc/*` 一次性脚本与 `conversion/*`、v1 `routers/activities_router.py`。
+- **数据库开关移除**：`ORACLE_ENABLED` 已删除（`settings.example.py`、`OracleConfig`、`db/oracle/session.py`、`main.py` 健康检查改为无条件 Oracle ping），**不存在非 ADB 回退路径**；`ORACLE_ACTIVE` 保留，仅用于在 ADB 实例间选择 prod / test。
+- **生产状态**：11 个模块全部走 ADB，带鉴权端到端全 200；`zvms4-mongo` 与历史数据按决策**保留归档**（已无任何代码引用）。
+- **附带修正**：数据边界的非法 id 由 500 修正为 400（`db/ids.py::InvalidOid` + 全局异常处理）。
+
+---
+
 ## 八、学海（XueHai / 云作业）API 调用调查报告
 
 > 调查对象：本仓库各代码线对**学海生态 API**的调用。结论一句话：**真正发起学海 API 调用的是 `zvp-latest`（参考 zvp 线）与 `zvp5-gitlab`（学海登录体系）；`zvms4-modified-main`（移植主线）已红线剥离，零调用**。
