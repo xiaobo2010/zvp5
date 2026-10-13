@@ -18,8 +18,9 @@ Two logical instances. The DB **user/password may be shared**, but the
 | `test`   | `ORACLE_TEST_DSN`     | `ORACLE_TEST_WALLET_DIR` | `ORACLE_TEST_WALLET_PASSWORD` |
 
 Selection is driven by `ORACLE_ACTIVE` (`"prod"` or `"test"`, default `"prod"`).
-`ORACLE_ENABLED` (default `False`) is a master switch — callers should check
-`config.enabled` before using the engine.
+ADB is the **only** backend — there is no on/off master switch and no
+non-ADB fallback: the Oracle engine, session and repositories construct
+unconditionally.
 
 ## Thin-mode wallet
 
@@ -35,7 +36,7 @@ It is **not** `ORACLE_PASSWORD`, which is the DB user password.
 ## Config keys to fill
 
 Add these to `settings.py` (placeholders are in `settings.example.py`):
-`ORACLE_ENABLED`, `ORACLE_ACTIVE`, `ORACLE_USER`, `ORACLE_PASSWORD`,
+`ORACLE_ACTIVE`, `ORACLE_USER`, `ORACLE_PASSWORD`,
 `ORACLE_DSN`, `ORACLE_WALLET_DIR`, `ORACLE_WALLET_PASSWORD`,
 `ORACLE_TEST_DSN`, `ORACLE_TEST_WALLET_DIR`, `ORACLE_TEST_WALLET_PASSWORD`.
 
