@@ -13,11 +13,9 @@ from config import (
     ON_TO_OFF_RATE,
     BASE_SOCIAL_PRACTICE,
 )
-from database import db
 from db import backends
 from util.calculate import calculate_user_time, time_with_origin
 from util.statement import create_statement_from_kernel_data, TRANSLATIONS
-from utils import validate_object_id
 
 
 async def compute_time():
@@ -62,14 +60,11 @@ async def compute_ay_time():
 
 
 async def generate_reports():
-    classes = (
-        await db.zvms_new.get_collection("groups").find({"type": {"$ne": "permission"}}).to_list(None)
-    )
-    await db.zvms_new.get_collection("daily_exports").delete_many({})
-    db_data = await db.zvms_new.get_collection("daily_exports").insert_one(
+    classes = await backends.get_groups_repo().list_non_permission()
+    await backends.get_daily_exports_repo().delete_all()
+    db_id = await backends.get_daily_exports_repo().insert(
         {"created_at": datetime.now(), "status": "processing", "data": []}
     )
-    db_id = validate_object_id(db_data.inserted_id)
     if not os.path.exists("./export"):
         os.makedirs("./export")
     else:
@@ -105,15 +100,11 @@ async def generate_reports():
                 filename=f'./export/{class_id['name']}/{user['id']}_{user["name"]}.pdf',
                 language="zh",
             )
-            await db.zvms_new.get_collection("daily_exports").update_one(
-                {"_id": db_id},
+            await backends.get_daily_exports_repo().push_data(
+                db_id,
                 {
-                    "$push": {
-                        "data": {
-                            **spreadsheet,
-                            "filename": filename,
-                        }
-                    }
+                    **spreadsheet,
+                    "filename": filename,
                 },
             )
             print(
@@ -121,9 +112,7 @@ async def generate_reports():
             )
         print(f"Exported statements for class {class_id['name']}.")
     # Create a tar.gz archive of the export directory
-    spreadsheet_items = await db.zvms_new.get_collection("daily_exports").find_one(
-        {"_id": db_id}
-    )
+    spreadsheet_items = await backends.get_daily_exports_repo().find_one(db_id)
     spreadsheet_items = spreadsheet_items.get("data", [])
     df = pd.DataFrame(spreadsheet_items)
     df.rename(columns=TRANSLATIONS["zh"]["spreadsheet"], inplace=True)
@@ -254,7 +243,7 @@ async def compute_batch_origins():
     grades = await backends.get_users_repo().group_oids_by_id_prefix()
     await backends.get_time_repo().clear_with_origin()
     await backends.get_time_repo().clear_with_origin_stats()
-    groups = await db.zvms_new.get_collection("groups").find({"type": {"$ne": "permission"}}).to_list(None)
+    groups = await backends.get_groups_repo().list_non_permission()
     for grade in grades:
         await time_with_origin("grade", grade["_id"])
         await time_with_origin("grade", grade["_id"], 20)
@@ -271,9 +260,7 @@ async def compute_group_indicators():
     This function computes group indicators based on the time data of users.
     """
 
-    groups = (
-        await db.zvms_new.get_collection("groups").find({"type": {"$ne": "permission"}}).to_list(None)
-    )
+    groups = await backends.get_groups_repo().list_non_permission()
 
     for group in groups:
         users = await backends.get_users_repo().list_by_class(group["_id"])

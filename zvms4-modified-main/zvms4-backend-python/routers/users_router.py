@@ -1,11 +1,11 @@
 import re
 from datetime import datetime
-from typing import Optional, Any
+from typing import Optional
 from fastapi import APIRouter, HTTPException, Depends, Request
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 from bcrypt import hashpw, gensalt
-from routers.activities_router import user_activity_signoff
+from util.activity_signoff import user_activity_signoff
 from typings.log import inject_log, ZVMSLog, xuehai_id_from
 from typings.user import User
 from util.calculate import calculate_user_time
@@ -17,7 +17,6 @@ from util.object_id import (
     string_to_option_object_id,
     optional_current_user,
 )
-from database import db
 from db import backends
 from util.cert import (
     get_hashed_password_by_cert,
@@ -46,7 +45,7 @@ async def auth_user(auth: AuthUser, request: Request):
     credential = auth.credential
 
     if string_to_option_object_id(id) is None:
-        user_doc = await db.zvms_new.users.find_one({"id": id})
+        user_doc = await backends.get_users_repo().find_by_business_id(id)
         if user_doc:
             id = str(user_doc["_id"])
         else:
@@ -57,7 +56,9 @@ async def auth_user(auth: AuthUser, request: Request):
 
     result, weak_password = await validate_by_cert(id, credential, mode)
 
-    user_doc = await db.zvms_new.users.find_one({"_id": validate_object_id(id)})
+    user_doc = await backends.get_users_repo().get_by_oid(
+        str(validate_object_id(id))
+    )
     log_name = user_doc["name"] if user_doc else await get_user_name(id)
     is_otp = used_otp_credential(credential, id)
     if is_otp:
@@ -181,35 +182,14 @@ async def read_users(
     Query users
     """
     if privilege:
-        groups = await db.zvms_new.groups.find(
-            {"type": "permission", "permissions": {"$in": ["admin", "department"]}}
+        groups = await backends.get_groups_repo().list_permission_groups(
+            permissions=["admin", "department"]
         )
         selected = []
         for group in groups:
             selected.append(str(group["_id"]))
 
-    if user is not None:
-        query_filter = {
-            "$or": [
-                {"name": {"$regex": query, "$options": "i"}},
-                {"id": {"$regex": query, "$options": "i"}},
-            ]
-        }
-    else:
-        query_filter = {"id": query}
-
-    users = (
-        await db.zvms_new.users.find(
-            query_filter,
-            {
-                "name": True,
-                "id": True,
-                "class_id": True,
-            },
-        )
-        .sort({"id": 1})
-        .to_list(None)
-    )
+    users, _ = await backends.get_users_repo().search(query, user is not None)
 
     rows = []
     for doc in users:
@@ -241,7 +221,9 @@ async def read_user(user_oid: str, user=Depends(get_current_user)):
     Return user's information
     """
     # Read user's information
-    new_user = await db.zvms_new.users.find_one({"_id": validate_object_id(user_oid)})
+    new_user = await backends.get_users_repo().get_by_oid(
+        str(validate_object_id(user_oid))
+    )
     if new_user is None:
         raise HTTPException(status_code=404, detail="User not found")
 
@@ -320,52 +302,67 @@ async def read_user_activity(
     if query != "" and "admin" not in user["per"]:
         query = re.escape(query)
 
-    count = await db.zvms_new.activities.count_documents(
-        {"members._id": str(validate_object_id(user_oid))},
-        # {"name": {"$regex": query}},
-    )
-    # Read user's activities
-    pipeline = [
-        {
-            "$match": {
-                "members._id": user_oid,
-                "name": {"$regex": query, "$options": "i"},
-            }
-        },
-        {
-            "$project": {
-                "name": 1,
-                "date": 1,
-                "_id": 1,
-                "status": 1,
-                "type": 1,
-                "special": 1,
-                "members": {
-                    "$filter": {
-                        "input": "$members",
-                        "as": "member",
-                        "cond": {"$eq": ["$$member._id", user_oid]},
-                    }
-                },
-            }
-        },
-        {"$sort": {"_id": -1}},
-        {"$skip": 0 if page == -1 else (page - 1) * perpage},
-    ]
-    if page != -1:
-        pipeline.append({"$limit": perpage})
+    user_key = str(validate_object_id(user_oid))
 
-    all_activities = await db.zvms_new.activities.aggregate(pipeline).to_list(
-        None if page == -1 else perpage
+    # The legacy embedded `activities.members` array does not exist in the
+    # normalized schema; rebuild the same view from ACTIVITY_MEMBERS.
+    memberships = await backends.get_members_repo().list_for_member(user_key)
+
+    members_by_activity: dict[str, list] = {}
+    for membership in memberships:
+        members_by_activity.setdefault(str(membership["activity"]), []).append(
+            {
+                "_id": str(membership["member"]),
+                "status": membership.get("status"),
+                "duration": membership.get("duration"),
+                "mode": membership.get("mode"),
+            }
+        )
+
+    activities, _ = await backends.get_activities_repo().list_by_oids(
+        list(members_by_activity), "", -1
     )
 
-    for activity in all_activities:
-        activity["_id"] = str(activity["_id"])
+    # `metadata.size` counts the member's activities regardless of the name
+    # query (the original count omitted the name filter, cf. the commented-out
+    # `# {"name": {"$regex": query}}`).
+    count = len(activities)
+
+    if query:
+        pattern = re.compile(query, re.IGNORECASE)
+        activities = [
+            activity
+            for activity in activities
+            if pattern.search(activity.get("name") or "")
+        ]
+
+    activities.sort(key=lambda activity: activity["_id"], reverse=True)
+
+    if page == -1:
+        page_activities = activities
+    else:
+        start = (page - 1) * perpage
+        page_activities = activities[start : start + perpage]
+
+    data = []
+    for activity in page_activities:
+        activity_id = str(activity["_id"])
+        data.append(
+            {
+                "_id": activity_id,
+                "name": activity.get("name"),
+                "date": activity.get("date"),
+                "status": activity.get("status"),
+                "type": activity.get("type"),
+                "special": activity.get("special"),
+                "members": members_by_activity.get(activity_id, []),
+            }
+        )
 
     return {
         "status": "ok",
         "code": 200,
-        "data": all_activities,
+        "data": data,
         "metadata": {
             "size": count,
         },
@@ -429,28 +426,9 @@ async def read_logs(
     if "admin" not in user["per"]:
         raise HTTPException(status_code=403, detail="Permission denied")
 
-    query: dict[str, Any] = (
-        {"user": user_oid}
-        if query == ""
-        else {
-            "$or": [{"url": {"$regex": query}}, {"data": {"$regex": query}}],
-            "user": user_oid,
-        }
+    logs, count = await backends.get_applogs_repo().list_for_user(
+        user_oid, query, page, perpage
     )
-
-    count = await db.zvms_new.app_logs.count_documents(query)
-
-    pipeline = [
-        {"$match": query},
-        {"$sort": {"timestamp": -1}},
-        {"$skip": 0 if page == -1 else (page - 1) * perpage},
-        {"$limit": perpage},
-    ]
-
-    logs = await db.zvms_new.app_logs.aggregate(pipeline).to_list(None)
-
-    for log in logs:
-        log["_id"] = str(log["_id"])
 
     return {
         "code": 200,
@@ -471,15 +449,15 @@ async def delete_past(
 ):
     if "admin" not in user["per"]:
         raise HTTPException(status_code=403, detail="Permission denied")
+    users_repo = backends.get_users_repo()
+    oid = str(validate_object_id(user_oid))
     # Remove by index
-    user_doc = await db.zvms_new.users.find_one({"_id": validate_object_id(user_oid)})
+    user_doc = await users_repo.get_by_oid(oid)
     name = (user_doc or {}).get("past", [])
     idx = int(past_identity_idx)
     if idx < 0 or idx >= len(name):
         raise HTTPException(status_code=404, detail="Past identity not found.")
-    await db.zvms_new.users.update_one(
-        {"_id": validate_object_id(user_oid)}, {"$pull": {"past": name[idx]}}
-    )
+    await users_repo.remove_past(oid, name[idx])
     log.with_text(
         f"管理员 {await get_user_display_name(user['id'])} 删除了用户 {await get_user_display_name(user_oid)} 的历史身份 {name[idx]}",
         type="past_change",
@@ -503,11 +481,10 @@ async def add_past(
         raise HTTPException(status_code=400, detail="Invalid past identity.")
     if "admin" not in user["per"]:
         raise HTTPException(status_code=403, detail="Permission denied")
-    if (await db.zvms_new.users.count_documents({"id": past.past})) > 0:
+    users_repo = backends.get_users_repo()
+    if await users_repo.find_by_business_id(past.past) is not None:
         raise HTTPException(status_code=409, detail="The past identity already exists.")
-    await db.zvms_new.users.update_one(
-        {"_id": validate_object_id(user_oid)}, {"$push": {"past": past.past}}
-    )
+    await users_repo.add_past(str(validate_object_id(user_oid)), past.past)
     log.with_text(
         f"管理员 {await get_user_display_name(user['id'])} 添加了用户 {await get_user_display_name(user_oid)} 的历史身份 {past.past}",
         type="past_change",
@@ -515,49 +492,3 @@ async def add_past(
     await log.insert_log()
     return {"code": 200, "status": "ok"}
 
-
-@router.get("/{user_oid}/notification")
-async def read_notifications(
-    user_oid: str, page: int = 1, perpage: int = 10, user=Depends(get_current_user)
-):
-    """
-    Get Notifications
-    """
-    # Get a notification list
-    count = await db.zvms_new.notifications.count_documents(
-        {
-            "$or": [
-                {"receivers": str(user_oid)},
-                {"global": True},
-            ],
-        }
-    )
-    notifications = (
-        await db.zvms_new.notifications.find(
-            {
-                "$or": [
-                    {"receivers": str(user_oid)},
-                    {"global": True},
-                    {"publisher": str(user_oid)},
-                ],
-            }
-        )
-        .sort("_id", -1)
-        .skip(0 if page == -1 else (page - 1) * perpage)
-        .limit(0 if page == -1 else perpage)
-        .to_list(None if page == -1 else perpage)
-    )
-
-    if user_oid != user["id"]:
-        raise HTTPException(status_code=403, detail="Permission denied")
-
-    for notification in notifications:
-        notification["_id"] = str(notification["_id"])
-    return {
-        "status": "ok",
-        "code": 200,
-        "data": notifications,
-        "metadata": {
-            "size": count,
-        },
-    }
