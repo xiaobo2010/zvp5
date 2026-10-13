@@ -4,7 +4,7 @@ from fastapi.responses import JSONResponse, RedirectResponse
 from pymongo.errors import OperationFailure
 import re
 from datetime import datetime
-from typings.log import ZVMSLog
+from typings.log import ZVMSLog, xuehai_id_from
 from routers import (
     users_router,
     activities_router,
@@ -89,6 +89,7 @@ async def shield_middleware(request: Request, call_next):
                 timestamp=datetime.now().timestamp(),
                 type="security_alert",
                 level="warning",
+                xuehai_id=xuehai_id_from(request),
             ).insert_log()
         except Exception as e:
             print(f"Failed to write security log: {e}")
