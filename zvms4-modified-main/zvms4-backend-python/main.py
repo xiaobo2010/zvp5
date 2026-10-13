@@ -193,7 +193,7 @@ async def home():
         "code": 200,
         "data": {
             "message": "Welcome to ZVMS API",
-            "version": "v4.2.2-1",
+            "version": "v4.2.2-2",
             "author": "ZZDev",
             "license": "MIT",
             "source": "https://github.com/zvms/zvms4-backend-python.git",
@@ -297,7 +297,7 @@ async def operation_failure_exception_handler(_: Request, exc: OperationFailure)
 
 @app.get("/api/version")
 async def get_version():
-    return {"status": "ok", "code": 200, "data": "v4.2.2-1"}
+    return {"status": "ok", "code": 200, "data": "v4.2.2-2"}
 
 
 if __name__ == "__main__":
