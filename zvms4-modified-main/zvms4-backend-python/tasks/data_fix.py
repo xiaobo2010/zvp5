@@ -1,4 +1,3 @@
-from database import db
 from db import backends
 from util.title_modify import modify_title_automatically
 
@@ -30,10 +29,8 @@ async def remove_activities_with_zero_participants():
         await backends.get_members_repo().remove_for_activity(str(activity["_id"]))
         await backends.get_activities_repo().delete(activity["_id"])
 
-    tests = (
-        await db.zvms_new.get_collection("activities")
-        .find({"title": {"$regex": "(调试|测试|Test|Debug)"}})
-        .to_list(None)
+    tests, _ = await backends.get_activities_repo().list_raw(
+        search="(调试|测试|Test|Debug)"
     )
 
     for activity in tests:

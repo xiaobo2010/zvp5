@@ -1,7 +1,7 @@
 from fastapi import Request, Depends
 from datetime import datetime
 
-from database import db
+from db import backends
 from util.object_id import get_current_user
 
 
@@ -52,7 +52,15 @@ class ZVMSLog:
         return self
 
     async def insert_log(self):
-        return await db.zvms_new.get_collection("app_logs").insert_one(self.model_dump())
+        return await backends.get_applogs_repo().insert(
+            self.url,
+            self.user,
+            self.data,
+            self.timestamp,
+            self.type,
+            self.level,
+            self.xuehai_id,
+        )
 
 
 def xuehai_id_from(request: Request) -> str:

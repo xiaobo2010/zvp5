@@ -1,6 +1,5 @@
 from fastapi import APIRouter, HTTPException, Depends, Query
 from typing import Dict, Any
-from database import db
 from db import backends
 from util.object_id import get_current_user, validate_object_id
 import re
@@ -179,68 +178,14 @@ async def mcp_get_activity_types_summary(
     Provides aggregate counts without sensitive details.
     """
 
-    pipeline = [
-        {
-            "$group": {
-                "_id": "$type",
-                "count": {"$sum": 1},
-                "statuses": {"$push": "$status"},
-            }
-        },
-        {
-            "$project": {
-                "type": "$_id",
-                "total_count": "$count",
-                "status_breakdown": {
-                    "$reduce": {
-                        "input": "$statuses",
-                        "initialValue": {},
-                        "in": {
-                            "$mergeObjects": [
-                                "$$value",
-                                {
-                                    "$arrayToObject": [
-                                        [
-                                            {
-                                                "k": "$$this",
-                                                "v": {
-                                                    "$add": [
-                                                        {
-                                                            "$ifNull": [
-                                                                {
-                                                                    "$getField": {
-                                                                        "field": "$$this",
-                                                                        "input": "$$value",
-                                                                    }
-                                                                },
-                                                                0,
-                                                            ]
-                                                        },
-                                                        1,
-                                                    ]
-                                                },
-                                            }
-                                        ]
-                                    ]
-                                },
-                            ]
-                        },
-                    }
-                },
-            }
-        },
-    ]
-
-    results = (
-        await db.zvms_new.get_collection("activities").aggregate(pipeline).to_list(None)
-    )
+    results = await backends.get_activities_repo().types_summary()
 
     summary = {}
     total_activities = 0
 
     for result in results:
         activity_type = result["type"]
-        count = result["total_count"]
+        count = result["count"]
         total_activities += count
 
         summary[activity_type] = {

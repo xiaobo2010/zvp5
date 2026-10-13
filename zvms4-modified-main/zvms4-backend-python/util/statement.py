@@ -19,9 +19,8 @@ from typing import List, Optional, Literal
 from pydantic import BaseModel, Field
 
 from config import BASE_ON_CAMPUS, BASE_OFF_CAMPUS, BASE_SOCIAL_PRACTICE
-from database import db, connect_to_mongo
 from db import backends
-from bson import ObjectId
+from db.ids import is_valid_oid
 from settings import CHINESE_FONT
 from typings.time import UserTimeStat, UserActivityTime
 from typings.user_v2 import UserActivityTimeSums
@@ -603,9 +602,8 @@ async def create_statement_from_kernel_data(
         language: Language for the statement ("zh" for Chinese, "en" for English)
     """
 
-    user = await db.zvms_new.get_collection("users").find_one(
-        {"_id": validate_object_id(id)}
-    )
+    validate_object_id(id)
+    user = await backends.get_users_repo().get_by_oid(id)
     user_name = user.get("name", "Unknown User")
     student_id = user.get("id", "Unknown ID")
     class_id = await get_user_classname(id)
@@ -671,10 +669,8 @@ async def create_statement_from_kernel_data(
     for item in items:
         activity = await backends.get_activities_repo().get(item["activity"])
         assignee = activity.get("approver", "Unknown")
-        if ObjectId.is_valid(assignee):
-            assignee_data = await db.zvms_new.get_collection("users").find_one(
-                {"_id": ObjectId(assignee)}
-            )
+        if is_valid_oid(assignee):
+            assignee_data = await backends.get_users_repo().get_by_oid(assignee)
         else:
             assignee_data = {
                 "name": "学校团委" if language == "zh" else "Authority",
@@ -732,19 +728,3 @@ async def create_statement_from_kernel_data(
     }
 
     return filename, spreadsheet_data
-
-
-if __name__ == "__main__":
-
-    async def main():
-        await connect_to_mongo()
-        # Generate both Chinese and English versions
-        id = "65e6fa210edc81d012ec46d9"
-        period = (datetime(2020, 1, 1), datetime(2026, 6, 30))
-        await create_statement_from_kernel_data(
-            id, period, filename=f"volunteer_statement_{id}.pdf", language="zh"
-        )
-
-    import asyncio
-
-    asyncio.run(main())
