@@ -2,7 +2,6 @@ import re
 from collections import defaultdict
 from typing import Optional
 
-from bson import ObjectId
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from config import (
@@ -13,7 +12,6 @@ from config import (
     MAX_EXCEED_DISCOUNT,
     BASE_SOCIAL_PRACTICE,
 )
-from database import db
 from db import backends
 from typings.time import UserActivityTime
 from util.calculate import calculate_user_time
@@ -41,19 +39,11 @@ async def get_groups_v2(
     if not ("admin" in per or "department" in per):
         raise HTTPException(status_code=403, detail="权限不足")
 
-    escaped = re.escape(query)
-
     repo = backends.get_groups_repo()
     _, class_total = await repo.list_classes(query, 1, 1)
     class_rows, _ = await repo.list_classes(query, 1, class_total or 1)
 
-    permission_rows = await db.zvms_new.groups.find(
-        {
-            "type": "permission",
-            "name": {"$regex": escaped, "$options": "i"},
-        },
-        {"name": True, "permissions": True},
-    ).to_list(None)
+    permission_rows = await repo.list_permission_groups(query)
 
     permission_ids = {str(group["_id"]) for group in permission_rows}
     class_rows = [row for row in class_rows if str(row["_id"]) not in permission_ids]
@@ -142,60 +132,41 @@ async def get_group_activities_v2(
 
     await validate_read_group_permission(user, group_id, "volunteer")
 
-    # Get members from the group
-    members = (
-        await db.zvms_new.get_collection("users")
-        .find({"class_id": validate_object_id(group_id)})
-        .to_list(None)
-    )
+    # Collect the activity ids that any member of this class belongs to.
+    class_oid = validate_object_id(group_id)
+    members = await backends.get_users_repo().list_by_class(str(class_oid))
+    member_ids = [str(member["_id"]) for member in members]
 
-    members = [str(member["_id"]) for member in members]
-
-    activity_members = (
-        await db.zvms_new.get_collection("activity_members")
-        .find({"member": {"$in": members}})
-        .to_list(None)
-    )
-
-    activity_members = [
-        ObjectId(activity_member["activity"]) for activity_member in activity_members
-    ]
+    memberships = await backends.get_members_repo().list_by_members(member_ids)
+    activity_ids = list({str(membership["activity"]) for membership in memberships})
 
     if not regex:
         search = re.escape(search) if search else ""
 
-    activities_filter = (
-        {
-            "$and": [
-                {
-                    "$or": [
-                        {"name": {"$regex": search, "$options": "i"}},
-                        {"description": {"$regex": search, "$options": "i"}},
-                    ]
-                },
-                {"_id": {"$in": activity_members}},
-            ]
-        }
-        if search
-        else {"_id": {"$in": activity_members}}
+    activities, _ = await backends.get_activities_repo().list_by_oids(
+        activity_ids, "", -1
     )
 
-    count = await db.zvms_new.get_collection("activities").count_documents(
-        activities_filter
-    )
+    if search:
+        pattern = re.compile(search, re.IGNORECASE)
+        activities = [
+            activity
+            for activity in activities
+            if pattern.search(activity.get("name") or "")
+            or pattern.search(activity.get("description") or "")
+        ]
 
-    pipeline = [
-        {"$match": activities_filter},
-        {"$sort": {sort: 1 if asc else -1}},
-        {"$skip": (page - 1) * perpage},
-        {"$limit": perpage},
-    ]
+    if sort:
+        activities.sort(
+            key=lambda activity: (activity.get(sort) is None, activity.get(sort)),
+            reverse=not asc,
+        )
 
-    activities = (
-        await db.zvms_new.get_collection("activities").aggregate(pipeline).to_list(None)
-    )
+    count = len(activities)
 
-    # Convert ObjectId to string
+    start = (page - 1) * perpage
+    activities = activities[start : start + perpage]
+
     for activity in activities:
         activity["_id"] = str(activity["_id"])
 
@@ -227,43 +198,32 @@ async def read_users(
         "social-practice": "social_practice",
     }
     class_oid = validate_object_id(group_id)
-    member_filter = {
-        "$or": [
-            {"name": {"$regex": query, "$options": "i"}},
-            {"id": {"$regex": query, "$options": "i"}},
-        ],
-        "class_id": class_oid,
-    }
-    count = await db.zvms_new.users.count_documents(member_filter)
-    result = (
-        await db.zvms_new.users.find(
-            member_filter,
-            {
-                "name": True,
-                "id": True,
-                "class_id": True,
-            },
-        )
-        .to_list(None)
-    )
+    users_repo = backends.get_users_repo()
+    result = await users_repo.list_by_class(str(class_oid))
+    if query:
+        pattern = re.compile(query, re.IGNORECASE)
+        result = [
+            user
+            for user in result
+            if pattern.search(user.get("name") or "")
+            or pattern.search(user.get("id") or "")
+        ]
+    count = len(result)
     if sort == "id":
         result = sorted(result, key=lambda x: x["id"], reverse=not asc)
     selected_students = [str(user["_id"]) for user in result]
 
-    user_times = (
-        await db.zvms_new.get_collection("time")
-        .find({"user": {"$in": selected_students}})
-        .sort({sortkey.get(sort, sort): -1 if not asc else 1} if sort else None)
-        .skip((page - 1) * perpage)
-        .limit(perpage)
-        .to_list(None)
+    user_times = await backends.get_time_repo().list_by_users(
+        selected_students,
+        sort_field=sortkey.get(sort, sort) if sort else None,
+        descending=not asc,
+        page=page,
+        size=perpage,
     )
     results = []
 
     for user in user_times:
-        user_info = await db.zvms_new.get_collection("users").find_one(
-            {"_id": validate_object_id(user["user"])}
-        )
+        user_info = await users_repo.get_by_oid(user["user"])
         time_struct = UserActivityTime.model_validate(user, strict=False)
         results.append(
             {
@@ -314,27 +274,23 @@ async def get_group_users_v2(
 
     # Get members from the group
     class_oid = validate_object_id(group_id)
-    member_filter = {
-        "$or": [
-            {"name": {"$regex": search, "$options": "i"}},
-            {"id": {"$regex": search, "$options": "i"}},
-        ],
-        "class_id": class_oid,
-    }
-    members = (
-        await db.zvms_new.get_collection("users")
-        .aggregate(
-            [
-                {"$match": member_filter},
-                {"$sort": {sort: 1 if asc else -1}},
-                {"$skip": (page - 1) * perpage},
-                {"$limit": perpage},
-            ]
+    members = await backends.get_users_repo().list_by_class(str(class_oid))
+    if search:
+        pattern = re.compile(search, re.IGNORECASE)
+        members = [
+            member
+            for member in members
+            if pattern.search(member.get("name") or "")
+            or pattern.search(member.get("id") or "")
+        ]
+    count = len(members)
+    if sort:
+        members.sort(
+            key=lambda member: (member.get(sort) is None, member.get(sort)),
+            reverse=not asc,
         )
-        .to_list(None)
-    )
-
-    count = await db.zvms_new.get_collection("users").count_documents(member_filter)
+    start = (page - 1) * perpage
+    members = members[start : start + perpage]
 
     for member in members:
         member["_id"] = str(member["_id"])
@@ -371,10 +327,8 @@ async def stat_group_compliance(
     await validate_read_group_permission(user, group_id, "volunteer")
 
     # Get members from the group
-    members = (
-        await db.zvms_new.get_collection("users")
-        .find({"class_id": validate_object_id(group_id)})
-        .to_list(None)
+    members = await backends.get_users_repo().list_by_class(
+        str(validate_object_id(group_id))
     )
 
     members = [str(member["_id"]) for member in members]

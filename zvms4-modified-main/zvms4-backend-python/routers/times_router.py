@@ -8,7 +8,7 @@ from util.object_id import (
     validate_object_id,
     get_current_user,
 )
-from database import db
+from db import backends
 
 router = APIRouter()
 
@@ -30,61 +30,23 @@ async def read_times(
         "off-campus": "off_campus_raw",
         "social-practice": "social_practice",
     }
-    count = await db.zvms_new.get_collection("users").count_documents(
-        {
-            "$or": [
-                {"name": {"$regex": query, "$options": "i"}},
-                {"id": {"$regex": query, "$options": "i"}},
-                {"past": {"$elemMatch": {"$regex": query, "$options": "i"}}},
-            ]
-            if user is not None
-            else [
-                # should not search if not login.
-                {"id": query}
-            ],
-        }
-    )
-    result = (
-        await db.zvms_new.get_collection("users")
-        .find(
-            {
-                "$or": [
-                    {"name": {"$regex": query, "$options": "i"}},
-                    {"id": {"$regex": query, "$options": "i"}},
-                    {"past": {"$elemMatch": {"$regex": query, "$options": "i"}}},
-                ]
-                if user is not None
-                else [
-                    # should not search if not login.
-                    {"id": query}
-                ],
-            },
-            {
-                "_id": True,
-                "name": True,
-                "id": True,
-                "class_id": True,
-            },
-        )
-        .to_list(None)
-    )
+    result, count = await backends.get_users_repo().search(query, user is not None)
     if sort == "id":
         result = sorted(result, key=lambda x: x["id"], reverse=not asc)
     selected_students = [str(user["_id"]) for user in result]
 
-    user_times = (
-        await db.zvms_new.get_collection("time")
-        .find({"user": {"$in": selected_students}})
-        .sort({sortkey.get(sort, sort): -1 if not asc else 1} if sort else None)
-        .skip((page - 1) * perpage)
-        .limit(perpage)
-        .to_list(None)
+    user_times = await backends.get_time_repo().list_by_users(
+        selected_students,
+        sort_field=sortkey.get(sort, sort),
+        descending=not asc,
+        page=page,
+        size=perpage,
     )
     results = []
 
     for user in user_times:
-        user_info = await db.zvms_new.get_collection("users").find_one(
-            {"_id": validate_object_id(user["user"])}
+        user_info = await backends.get_users_repo().get_by_oid(
+            validate_object_id(user["user"])
         )
         time_struct = UserActivityTime.model_validate(user, strict=False)
         results.append(

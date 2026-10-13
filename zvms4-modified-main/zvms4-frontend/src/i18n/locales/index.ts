@@ -5,6 +5,7 @@ import * as nav from './nav'
 import * as validation from './validation'
 import * as manage from './manage'
 import * as changelog from './changelog'
+import * as markdown from './markdown'
 
 export const zhCN = {
   about: about.zhCN,
@@ -13,5 +14,6 @@ export const zhCN = {
   nav: nav.zhCN,
   validation: validation.zhCN,
   manage: manage.zhCN,
-  changelog: changelog.zhCN
+  changelog: changelog.zhCN,
+  markdown: markdown.zhCN
 }

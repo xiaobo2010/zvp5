@@ -1,8 +1,8 @@
 from collections import defaultdict
 from datetime import datetime
-from typing import Any, Literal
+from typing import Literal
 from config import BASE_ON_CAMPUS, BASE_OFF_CAMPUS, BASE_SOCIAL_PRACTICE
-from database import db
+from db import backends
 from settings import LANGUAGE
 from typings.time import UserActivityTime
 from utils import validate_object_id
@@ -10,21 +10,12 @@ import pandas as pd
 
 
 async def generate_description(user_id: str):
-    collections = (
-        await db.zvms_new.get_collection("activity_members")
-        .find(
-            {
-                "member": user_id,
-                "status": "effective",
-            }
-        )
-        .to_list(None)
+    collections = await backends.get_members_repo().list_for_member(
+        user_id, status="effective"
     )
     desc = []
     for collection in collections:
-        activity = await db.zvms_new.get_collection("activities").find_one(
-            {"_id": validate_object_id(collection["activity"])}
-        )
+        activity = await backends.get_activities_repo().get(collection["activity"])
         if LANGUAGE == "zh-CN":
             modes = {
                 "on-campus": "校内",
@@ -66,15 +57,13 @@ async def calculate_user_time_with_origin(
     :return: User time with origin data
     """
     print(f"Calculating time for user {user_id}.")
-    cache_data = await db.zvms_new.get_collection("time_with_origin").find_one({"user": user_id}) if allow_cache else None
+    cache_data = await backends.get_time_repo().get_with_origin(user_id) if allow_cache else None
     if cache_data:
         return cache_data['data']
-    db_data = await db.zvms_new.get_collection("activity_members").find({"member": user_id}).to_list(None)
+    db_data = await backends.get_members_repo().list_for_member(user_id)
     categorize_by_origin = {} # (certain origin) -> { 'on-campus': float, 'off-campus': float, 'social-practice': float }
     for data in db_data:
-        activity = await db.zvms_new.get_collection("activities").find_one(
-            {"_id": validate_object_id(data["activity"])}
-        )
+        activity = await backends.get_activities_repo().get(data["activity"])
         origin = activity.get('origin', 'unknown')
         if origin not in categorize_by_origin:
             categorize_by_origin[origin] = {
@@ -93,14 +82,7 @@ async def calculate_user_time_with_origin(
         "percentage_by_origin": percentage.to_dict()
     }
     if load_cache:
-        db.zvms_new.get_collection("time_with_origin").delete_many({"user": str(user_id)})
-        db.zvms_new.get_collection("time_with_origin").insert_one(
-            {
-                "user": str(user_id),
-                "data": result,
-                "updated_at": datetime.now(),
-            },
-        )
+        await backends.get_time_repo().upsert_with_origin(str(user_id), result)
     return result
 
 
@@ -118,25 +100,10 @@ async def time_with_origin(
     """
     print(f"Calculating time for scope {scope} with id {scope_id}.")
     if scope == "grade":
-        users = (
-            await db.zvms_new.get_collection("users")
-            .find(
-                {
-                    # id starts with scope_id
-                    "id": {"$regex": f"^{scope_id}"},
-                }
-            )
-            .to_list(None)
-        )
+        users = await backends.get_users_repo().list_by_id_prefix(scope_id)
     elif scope == "group":
-        users = (
-            await db.zvms_new.get_collection("users")
-            .find(
-                {
-                    "class_id": validate_object_id(scope_id),
-                }
-            )
-            .to_list(None)
+        users = await backends.get_users_repo().list_by_class(
+            validate_object_id(scope_id)
         )
     for user in users:
         await calculate_user_time_with_origin(str(user["_id"]), allow_cache=require_percentage == 0, load_cache=require_percentage == 0)
@@ -153,9 +120,9 @@ async def time_with_origin(
             if validated.percentage < require_percentage:
                 users.remove(user)
                 continue
-    data = await db.zvms_new.get_collection("time_with_origin").find({
-        "user": {"$in": [str(user["_id"]) for user in users]}
-    }).to_list(None)
+    data = await backends.get_time_repo().list_with_origin(
+        [str(user["_id"]) for user in users]
+    )
     df_list = []
     for item in data:
         df = pd.DataFrame.from_dict(item['data']['by_origin'], orient='index').fillna(0)
@@ -173,16 +140,9 @@ async def time_with_origin(
         "by_origin": combined_df.to_dict(orient='index'),
         "percentage_by_origin": percentage.to_dict()
     }
-    db.zvms_new.get_collection("time_with_origin_stat").delete_many({"id": f"{scope}_{scope_id}_{require_percentage}"})
-    db.zvms_new.get_collection("time_with_origin_stat").insert_one(
-        {
-            "id": f"{scope}_{scope_id}_{require_percentage}",
-            "scope": scope,
-            "scope_id": scope_id,
-            "require_percentage": require_percentage,
-            "data": result,
-            "updated_at": datetime.now(),
-        },
+    stat_key = f"{scope}_{scope_id}_{require_percentage}"
+    await backends.get_time_repo().upsert_with_origin_stat(
+        stat_key, scope, scope_id, require_percentage, result
     )
     return result
 
@@ -209,7 +169,7 @@ async def calculate_user_time(
         f"Calculating time for user {user_id} with date range {date_start} to {date_end}, allow_cache={allow_cache}, attach_description={attach_description}"
     )
     if allow_cache and date_start is None and date_end is None:
-        db_data = await db.zvms_new.get_collection("time").find_one({"user": user_id})
+        db_data = await backends.get_time_repo().get_for_user(user_id)
         if db_data:
             return {
                 "on-campus": db_data["on_campus_raw"],
@@ -217,26 +177,15 @@ async def calculate_user_time(
                 "social-practice": db_data["social_practice"],
             }
 
-    pipeline: Any = {"status": "effective"}
-
-    if date_start and date_end:
-        pipeline["date"] = {"$gte": date_start, "$lte": date_end}
-
-    accepted_activities = (
-        await db.zvms_new.get_collection("activities").find(pipeline).to_list(None)
+    accepted_activities = await backends.get_activities_repo().list_effective(
+        date_start, date_end
     )
     accepted_activities = [str(activity["_id"]) for activity in accepted_activities]
 
-    collections = (
-        await db.zvms_new.get_collection("activity_members")
-        .find(
-            {
-                "member": user_id,
-                "status": "effective",
-                "activity": {"$in": accepted_activities},
-            }
-        )
-        .to_list(None)
+    collections = await backends.get_members_repo().list_for_member(
+        user_id,
+        status="effective",
+        activity_oids=accepted_activities,
     )
 
     result = defaultdict(float)
@@ -251,16 +200,11 @@ async def calculate_user_time(
         result["description"] = description
 
     if not allow_cache and date_start is None and date_end is None:
-        await db.zvms_new.get_collection("time").delete_many({"user": user_id})
-
-        await db.zvms_new.get_collection("time").insert_one(
-            {
-                "user": user_id,
-                "on_campus_raw": result["on-campus"],
-                "off_campus_raw": result["off-campus"],
-                "social_practice": result["social-practice"],
-                "updated_at": datetime.now(),
-            },
+        await backends.get_time_repo().upsert_for_user(
+            user_id,
+            result["on-campus"],
+            result["off-campus"],
+            result["social-practice"],
         )
 
     return result

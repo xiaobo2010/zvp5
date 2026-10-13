@@ -4,7 +4,6 @@ from bcrypt import hashpw, gensalt
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from database import db
 from db import backends
 from typings.log import inject_log
 from util.cert import get_current_totp
@@ -139,8 +138,10 @@ async def create_user_v3(
     class_oid = None
     if payload.class_id:
         class_oid = validate_object_id(payload.class_id)
-        if not await db.zvms_new.groups.find_one(
-            {"_id": class_oid, "type": {"$ne": "permission"}}
+        groups_repo = backends.get_groups_repo()
+        if (
+            await groups_repo.get_permission_group(str(class_oid)) is not None
+            or await groups_repo.get(str(class_oid)) is None
         ):
             raise HTTPException(status_code=404, detail="班级不存在")
 

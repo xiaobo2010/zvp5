@@ -575,6 +575,8 @@ xh_router 任意 URL 代理（:159 urlopen + :46 硬编码签名 KEY）、登录
 ## 47. Part 12：CHANGELOG 数据库化——管理员可编辑历史版本（2026-10-12）
 
 > **主干剥离说明（2026-10-12）**：本节记录的是该提交在 `zvms4-adb-migration` 分支的原始形态。主干 `main` 合并时按「无 ADB」原则剥离了 Oracle 部分——`db/models.py`、`db/ddl_check.py`、`db/oracle/*`、`db/repos/oracle/*`、`docs/ADB_*.md` 以及 requirements / settings.example 的 ADB 项均**不进入主干**，`db/backends.py` 精简为 Mongo-only 工厂；changelog 功能本体（路由 / 仓储 / 前端）完整保留。详见根 `README.md` §7.4 与本节后的提交记录。
+>
+> **更新（2026-10-14）**：上述「无 ADB」剥离**已撤销**——`zvms4-adb-migration` 已整体并入 `main`，ADB 成为唯一数据后端，MongoDB 全量退役（`database.py`、`db/repos/mongo/*`、db/etl、bson/motor/pymongo 依赖与 `ORACLE_ENABLED` 开关均已移除）。本节数据结构的描述以 ADB 形态为准（`zvms_new.changelog` → ADB `CHANGELOG` 表，经 ETL 迁移）。见根 `README.md` §7.5 与 `docs/ADB_MIGRATION.md` §6.7。
 
 - **目标**：`/changelog` 由前端硬编码（`src/data/changelog.ts`）改为数据库驱动；管理员可在页面新增版本、编辑任意历史版本、删除版本；版本号与发行注记入库，不再硬编码。
 - **数据结构**：新增 `zvms_new.changelog`——`version`（发布版本号，如 `v4.2.1-1`）、`release_date`（`YYYY-MM-DD` 字符串）、`items`（发行注记数组）、`updated_at`。Mongo + Oracle 双实现（`ORACLE_ENABLED=False` 时走 Mongo）。
