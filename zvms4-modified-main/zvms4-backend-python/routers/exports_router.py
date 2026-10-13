@@ -12,7 +12,7 @@ from config import (
     OFF_TO_ON_RATE,
 )
 from typings.export import ExportFormat, ExportTask, ExportStatus, ExportVariant
-from typings.log import inject_log, ZVMSLog
+from typings.log import inject_log, ZVMSLog, xuehai_id_from
 from util.calculate import calculate_user_time
 from util.user import get_user_display_name
 from fastapi.responses import FileResponse
@@ -312,6 +312,7 @@ async def download_reports(
         f"用户 {await get_user_display_name(token_data['granted_to'])} 下载了报告文件",
         datetime.timestamp(datetime.now()),
         type="export",
+        xuehai_id=xuehai_id_from(request),
     )
     await log.insert_log()
 
