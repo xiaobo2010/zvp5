@@ -186,6 +186,14 @@ def _set_class_stmt(user_oid: str, class_oid: str | None):
     )
 
 
+def _get_past_stmt(oid: str):
+    return select(users_tbl.c.past).where(users_tbl.c.oid == oid)
+
+
+def _set_past_stmt(oid: str, past: list[str]):
+    return update(users_tbl).where(users_tbl.c.oid == oid).values(past=past)
+
+
 def _detach_class_stmt(class_oid: str):
     return (
         update(users_tbl)
@@ -200,12 +208,12 @@ def _get_names_stmt(oids: list[str]):
     )
 
 
-# Mongo ``{"past": {"$elemMatch": {"$regex": q, "$options": "i"}}}``: test each
-# element of the ``past`` JSON array against a case-insensitive regex.
-_PAST_MATCH = (
-    "JSON_EXISTS(users.past, '$[*]?(@ like_regex $pat flag \"i\")' "
-    'PASSING :past_value AS "pat")'
-)
+# Mongo ``{"past": {"$elemMatch": {"$regex": q, "$options": "i"}}}``: a
+# case-insensitive regex over the ``past`` JSON array. Oracle 19c's SQL/JSON
+# path does not support the ``like_regex ... flag "i"`` clause (21c+), so the
+# array is serialised and matched with ``REGEXP_LIKE`` instead — same
+# unescaped-regex, case-insensitive semantics.
+_PAST_MATCH = "regexp_like(json_serialize(users.past), :past_value, 'i')"
 
 
 def _all_users_stmt():
@@ -407,6 +415,33 @@ class OracleUsersRepo:
             if owns:
                 await session.commit()
         return int(result.rowcount)
+
+    async def add_past(self, oid: str, value: str) -> None:
+        target = normalize_oid(oid)
+        async with _session_for(self._session) as (session, owns):
+            current = (
+                await session.execute(_get_past_stmt(target))
+            ).scalar_one_or_none()
+            merged = list(current) if current is not None else []
+            merged.append(value)
+            await session.execute(_set_past_stmt(target, merged))
+            if owns:
+                await session.commit()
+
+    async def remove_past(self, oid: str, value: str) -> None:
+        target = normalize_oid(oid)
+        async with _session_for(self._session) as (session, owns):
+            current = (
+                await session.execute(_get_past_stmt(target))
+            ).scalar_one_or_none()
+            if current is None:
+                return
+            remaining = [item for item in current if item != value]
+            if remaining == list(current):
+                return
+            await session.execute(_set_past_stmt(target, remaining))
+            if owns:
+                await session.commit()
 
     async def get_names(self, oids: list[str]) -> dict[str, str]:
         unique = list(dict.fromkeys(normalize_oid(oid) for oid in oids))
