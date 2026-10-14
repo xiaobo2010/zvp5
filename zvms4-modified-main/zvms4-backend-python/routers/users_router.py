@@ -237,6 +237,7 @@ async def read_user(user_oid: str, user=Depends(get_current_user)):
         "class_id": class_id,
         "group": [class_id] if class_id else [],
         "past": new_user.get("past", []),
+        "banned": bool(new_user.get("banned")),
     }
     user_info.pop("password", None)
     return {

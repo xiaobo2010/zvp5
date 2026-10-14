@@ -162,6 +162,13 @@ function handleSelectionChange(val: string[]) {
         <ElTableColumn v-if="selectable" type="selection" reserve-selection />
         <ElTableColumn prop="name" :label="t('manage.groupDetails.userList.columns.name')" />
         <ElTableColumn prop="id" :label="t('manage.groupDetails.userList.columns.id')" />
+        <ElTableColumn prop="banned" :label="t('manage.groupDetails.userList.columns.status')">
+          <template #default="{ row }">
+            <span :class="row.banned ? 'color-red' : 'color-green'">
+              {{ row.banned ? t('home.status.banned') : t('home.status.normal') }}
+            </span>
+          </template>
+        </ElTableColumn>
         <ElTableColumn prop="group" :label="t('manage.groupDetails.userList.columns.group')">
           <template #default="{ row }">
             <ZUserGroup v-for="group in row.group" :key="group" :group="group" class="px-1" />

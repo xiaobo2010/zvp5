@@ -43,6 +43,7 @@ export const zhCN = {
         permission: '权限',
         pwdm: '密码修改情况',
         details: '详细信息',
+        status: '状态',
         pwdmStatus: {
           true: '已修改',
           false: '未修改'
@@ -67,7 +68,14 @@ export const zhCN = {
     },
     resetPassword: '重置该用户密码为学号',
     resetConfirm: '请确认您的操作。',
-    notFound: '无此用户'
+    notFound: '无此用户',
+    bannedTag: '已封禁',
+    ban: '封禁账号',
+    unban: '解封账号',
+    banConfirm: '确定要封禁用户 {name} 吗？封禁后该用户将无法登录。',
+    unbanConfirm: '确定要解封用户 {name} 吗？',
+    bannedNotification: '已封禁用户 {name}',
+    unbannedNotification: '已解封用户 {name}'
   },
   upload: {
     label: '上传',

@@ -72,6 +72,10 @@ class UsersRepo(Protocol):
         """Replace a user's ``roles`` whitelist."""
         ...
 
+    async def set_banned(self, oid: str, banned: int) -> None:
+        """Set a user's ``banned`` flag (``1`` to ban, ``0`` to unban)."""
+        ...
+
     async def set_class(self, user_oid: str, class_oid: str | None) -> None:
         """Point a user at ``class_oid`` (a group id), or detach with ``None``."""
         ...

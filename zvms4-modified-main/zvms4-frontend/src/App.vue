@@ -219,8 +219,11 @@ watch(offlineReady, () => {
   localStorage.setItem('cached','true')
 })
 
-onMounted(() => {
-  userStore.isLogin && resetPassword()
+onMounted(async () => {
+  if (userStore.isLogin) {
+    await userStore.refreshUser().catch(() => {})
+    resetPassword()
+  }
 })
 </script>
 
@@ -246,6 +249,14 @@ onMounted(() => {
           <span class="text-sm px-1">{{ locales[locale].disconnected.message }}</span>
         </template>
       </ElAlert>
+      <ElAlert
+        type="error"
+        center
+        :closable="true"
+        v-if="userStore.isLogin && userStore.banned"
+        class="hidden-print"
+        title="您的账号已被封禁，请联系管理员"
+      />
       <ElContainer
         @contextmenu.prevent
         class="bg-slate-100 dark:bg-gray-900"

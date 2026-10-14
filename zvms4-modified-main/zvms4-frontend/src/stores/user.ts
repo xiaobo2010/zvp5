@@ -15,6 +15,7 @@ export const useUserStore = defineStore('user', {
     class_id: '',
     isLogin: false,
     shouldResetPassword: false,
+    banned: false,
     time: {
       socialPractice: 0,
       onCampus: 0,
@@ -34,6 +35,7 @@ export const useUserStore = defineStore('user', {
       this._id = user._id
       this.id = user.id
       this.name = user.name
+      this.banned = Boolean((user as User).banned)
       if (Array.isArray(user.roles)) {
         this.groups = user.group ?? []
         this.class_id = user.class_id || ''
@@ -77,6 +79,7 @@ export const useUserStore = defineStore('user', {
       this.class_id = ''
       this.isLogin = false
       this.shouldResetPassword = false
+      this.banned = false
     },
     async getUserActivityTime() {
       const result = (await api.user.time.read(this._id)) as unknown as {
