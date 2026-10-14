@@ -4,18 +4,17 @@ import { ArrowLeft } from '@element-plus/icons-vue'
 import { useHeaderStore } from '@/stores/header'
 import { useI18n } from 'vue-i18n'
 import router from '@/router'
-import { APP_VERSION } from '@/data/changelog'
 import api from '@/api'
 import { ref, onMounted } from 'vue'
 
 const { t } = useI18n()
 const header = useHeaderStore()
-const version = ref(APP_VERSION)
+const version = ref('—')
 
 onMounted(async () => {
-  const entries = await api.changelog.getChangelog()
-  if (entries && entries.length > 0) {
-    version.value = entries[0].version
+  const value = await api.version.getVersion()
+  if (value) {
+    version.value = value
   }
 })
 

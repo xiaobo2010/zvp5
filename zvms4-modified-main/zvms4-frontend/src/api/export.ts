@@ -9,6 +9,7 @@ export * as group from './group'
 export * as exports from './exports'
 export * as logs from './logs'
 export * as changelog from './changelog'
+export * as version from './version'
 export const time = {
   async reads(
     search: string = '',
