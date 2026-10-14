@@ -168,8 +168,8 @@ header.setHeader(t('nav.changelog'))
             <div>
               <h3 class="text-lg font-bold mb-2">{{ entry.version }}</h3>
               <ul class="list-disc pl-5 text-sm space-y-1">
-                <li v-for="(item, idx) in entry.items" :key="idx">
-                  <ZMarkdown inline :source="item" />
+                <li v-for="(item, idx) in entry.items" :key="idx" class="changelog-item">
+                  <ZMarkdown :source="item" />
                 </li>
               </ul>
             </div>
@@ -212,3 +212,19 @@ header.setHeader(t('nav.changelog'))
     </ElDialog>
   </div>
 </template>
+
+<style scoped>
+.changelog-item :deep(p),
+.changelog-item :deep(ul),
+.changelog-item :deep(ol) {
+  margin: 0;
+}
+
+.changelog-item :deep(pre) {
+  margin: 0.25rem 0;
+  padding: 0.5rem 0.75rem;
+  overflow-x: auto;
+  border-radius: var(--el-border-radius-base);
+  background: var(--el-fill-color-light);
+}
+</style>
