@@ -9,7 +9,7 @@ from datetime import datetime
 from db import backends
 import pandas as pd
 
-from util.validation import validate_activity_name
+from util.validation import validate_activity_description, validate_activity_name
 
 router = APIRouter()
 
@@ -26,8 +26,13 @@ async def upload_activity_excel(
     Upload activity excel
     """
 
-    if not validate_activity_name(name):
-        raise HTTPException(status_code=400, detail="Invalid activity name.")
+    validated, reason = validate_activity_name(name)
+    if not validated:
+        raise HTTPException(status_code=400, detail=reason)
+
+    validated, reason = validate_activity_description(desc)
+    if not validated:
+        raise HTTPException(status_code=400, detail=reason)
 
     if (
         payload.content_type

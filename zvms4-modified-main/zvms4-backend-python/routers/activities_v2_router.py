@@ -11,7 +11,7 @@ from typings.log import inject_log
 from util.object_id import get_current_user, compulsory_temporary_token
 from util.permission import volunteer, volunteer_member
 from util.user import get_user_display_name
-from util.validation import validate_activity_name
+from util.validation import validate_activity_description, validate_activity_name
 from utils import validate_object_id
 
 router = APIRouter()
@@ -35,6 +35,11 @@ async def create_activity_v2(
     activity.status = "pending"
 
     validated, reason = validate_activity_name(activity.name)
+
+    if not validated:
+        raise HTTPException(status_code=400, detail=reason)
+
+    validated, reason = validate_activity_description(activity.description)
 
     if not validated:
         raise HTTPException(status_code=400, detail=reason)
@@ -519,6 +524,10 @@ async def update_activity_info(
     )
 
     validated, reason = validate_activity_name(payload.name)
+    if not validated:
+        raise HTTPException(status_code=400, detail=reason)
+
+    validated, reason = validate_activity_description(payload.description)
     if not validated:
         raise HTTPException(status_code=400, detail=reason)
 
