@@ -6,7 +6,7 @@ const router = createRouter({
     {
       path: '/',
       name: 'home',
-      redirect: '/user/login'
+      redirect: () => (localStorage.getItem('token') ? '/user' : '/user/login')
     },
     {
       path: '/about',
@@ -96,6 +96,14 @@ const router = createRouter({
       component: () => import('../views/NotFound.vue')
     },
   ]
+})
+
+// 学海平板 / 资料中心以 `/index.html` 作为应用入口 URL（旧版 hash 路由会忽略该路径，
+// 切换到 history 路由后它会命中 `/:pathMatch(.*)*` 渲染 404 页）。统一归一化到 SPA 根。
+router.beforeEach((to) => {
+  if (to.path === '/index.html' || to.path.endsWith('/index.html')) {
+    return { path: '/', replace: true }
+  }
 })
 
 export default router
