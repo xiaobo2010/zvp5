@@ -18,7 +18,8 @@ import {
   ElRow,
   ElScrollbar,
   ElSelect,
-  ElCascader
+  ElCascader,
+  ElMessage
 } from 'element-plus'
 import { useWindowSize } from '@vueuse/core'
 import { ArrowLeft, ArrowRight, Location } from '@element-plus/icons-vue'
@@ -161,14 +162,18 @@ async function nextStep() {
   load.value = true
   if (activePage.value === 'info') {
     activity.origin = 'other'
-    createdId.value = await api.activity.insert(activity).catch(() => {
+    const result = await api.activity.insert(activity).catch(() => undefined)
+    if (typeof result === 'string' && result) {
+      createdId.value = result
+      activity._id = result
+      activePage.value = 'member'
+    } else {
       load.value = false
-    })
-    if (!createdId.value) {
+      if (result && typeof result !== 'string') {
+        ElMessage.error(result.message || t('activity.form.saveFailed'))
+      }
       return
     }
-    activity._id = createdId.value
-    activePage.value = 'member'
   } else if (activePage.value === 'member') {
   /*  activePage.value = 'review'
   } else if (activePage.value === 'review') {
