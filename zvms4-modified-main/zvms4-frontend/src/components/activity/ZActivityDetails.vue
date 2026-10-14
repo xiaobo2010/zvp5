@@ -23,6 +23,7 @@ import {
   ZButtonOrCard,
   ZActivityMemberList
 } from '@/components'
+import { ZMarkdown, ZMarkdownEditor } from '@/components/markdown'
 import { useI18n } from 'vue-i18n'
 import api from '@/api'
 import router from '@/router'
@@ -193,10 +194,10 @@ const activeStatistic = ref(statTable[0])
       class="text-sm text-gray-500 pl-4"
       @dblclick="editDescription = true"
     >
-      <p style="white-space: pre-wrap">{{ activity.description }}</p>
+      <ZMarkdown :source="activity.description" />
     </div>
     <div v-else class="pt-2 pl-4">
-      <ElInput v-model="description" type="textarea" :autosize="{ minRows: 2 }" />
+      <ZMarkdownEditor v-model="description" :maxlength="1000" />
       <div style="text-align: right" class="py-2">
         <ElButton
           text

@@ -19,6 +19,8 @@ import ZMarkdown from './ZMarkdown.vue'
 const props = defineProps<{
   modelValue: string
   placeholder?: string
+  maxlength?: number
+  showCount?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -30,9 +32,24 @@ const { t } = useI18n()
 const textareaRef = ref<InstanceType<typeof ElInput>>()
 const mode = ref<'edit' | 'preview'>('edit')
 
+const showLengthCount = computed(() => props.maxlength != null && props.showCount !== false)
+const isOverLimit = computed(
+  () => props.maxlength != null && props.modelValue.length > props.maxlength
+)
+const isNearLimit = computed(
+  () => props.maxlength != null && props.modelValue.length >= props.maxlength * 0.9
+)
+
+function clampToLimit(value: string): string {
+  if (props.maxlength != null && value.length > props.maxlength) {
+    return value.slice(0, props.maxlength)
+  }
+  return value
+}
+
 const currentValue = computed({
   get: () => props.modelValue,
-  set: (val) => emit('update:modelValue', val)
+  set: (val) => emit('update:modelValue', clampToLimit(val))
 })
 
 const rawTextarea = computed(() => {
@@ -50,6 +67,13 @@ function getSelection() {
   }
 }
 
+function setEditorValue(value: string, cursor?: number) {
+  const clamped = clampToLimit(value)
+  const safeCursor = cursor == null ? clamped.length : Math.min(cursor, clamped.length)
+  currentValue.value = clamped
+  return safeCursor
+}
+
 function replaceSelection(replacement: string, cursorOffset?: number) {
   const ta = rawTextarea.value
   if (!ta) return
@@ -57,12 +81,12 @@ function replaceSelection(replacement: string, cursorOffset?: number) {
   const end = ta.selectionEnd
   const before = ta.value.slice(0, start)
   const after = ta.value.slice(end)
-  const newValue = before + replacement + after
-  const cursor = start + (cursorOffset ?? replacement.length)
-  currentValue.value = newValue
+  const nextValue = before + replacement + after
+  const nextCursor = start + (cursorOffset ?? replacement.length)
+  const safeCursor = setEditorValue(nextValue, nextCursor)
   nextTick(() => {
     ta.focus()
-    ta.setSelectionRange(cursor, cursor)
+    ta.setSelectionRange(safeCursor, safeCursor)
   })
 }
 
@@ -88,11 +112,12 @@ function prefixLines(prefix: string) {
   const newBlock = already
     ? lines.map((l) => (l.startsWith(prefix) ? l.slice(prefix.length) : l)).join('\n')
     : lines.map((l) => (l.trim().length > 0 ? prefix + l : l)).join('\n')
-  const newValue = value.slice(0, lineStart) + newBlock + value.slice(blockEnd)
-  currentValue.value = newValue
+  const nextValue = value.slice(0, lineStart) + newBlock + value.slice(blockEnd)
+  const nextCursor = lineStart + newBlock.length
+  const safeCursor = setEditorValue(nextValue, nextCursor)
   nextTick(() => {
     ta.focus()
-    ta.setSelectionRange(lineStart, lineStart + newBlock.length)
+    ta.setSelectionRange(safeCursor, safeCursor)
   })
 }
 
@@ -119,11 +144,12 @@ function orderedList() {
       return result
     })
     .join('\n')
-  const newValue = value.slice(0, lineStart) + newBlock + value.slice(blockEnd)
-  currentValue.value = newValue
+  const nextValue = value.slice(0, lineStart) + newBlock + value.slice(blockEnd)
+  const nextCursor = lineStart + newBlock.length
+  const safeCursor = setEditorValue(nextValue, nextCursor)
   nextTick(() => {
     ta.focus()
-    ta.setSelectionRange(lineStart, lineStart + newBlock.length)
+    ta.setSelectionRange(safeCursor, safeCursor)
   })
 }
 
@@ -138,11 +164,12 @@ function heading() {
   const line = value.slice(lineStart, blockEnd)
   const match = /^(#{1,6})\s+(.*)$/.exec(line)
   const newLine = match ? match[2] : `### ${line}`
-  const newValue = value.slice(0, lineStart) + newLine + value.slice(blockEnd)
-  currentValue.value = newValue
+  const nextValue = value.slice(0, lineStart) + newLine + value.slice(blockEnd)
+  const nextCursor = lineStart + newLine.length
+  const safeCursor = setEditorValue(nextValue, nextCursor)
   nextTick(() => {
     ta.focus()
-    ta.setSelectionRange(lineStart, lineStart + newLine.length)
+    ta.setSelectionRange(safeCursor, safeCursor)
   })
 }
 
@@ -219,6 +246,14 @@ const actions = [
         :title="t(action.titleKey)"
         @click="action.handler"
       />
+      <div
+        v-if="showLengthCount"
+        class="markdown-editor__count"
+        :class="{ 'is-over-limit': isOverLimit, 'is-near-limit': isNearLimit && !isOverLimit }"
+        :title="isOverLimit ? t('markdown.editor.overLimit') : ''"
+      >
+        {{ t('markdown.editor.count', { current: modelValue.length, max: maxlength }) }}
+      </div>
     </div>
 
     <div class="markdown-editor__body">
@@ -252,6 +287,7 @@ const actions = [
             type="textarea"
             resize="none"
             :placeholder="placeholder ?? t('markdown.editor.placeholder')"
+            :maxlength="maxlength"
             class="markdown-editor__textarea"
           />
         </div>
@@ -279,6 +315,22 @@ const actions = [
   flex-wrap: wrap;
   gap: 0.25rem;
   align-items: center;
+}
+
+.markdown-editor__count {
+  margin-left: auto;
+  font-size: 0.75rem;
+  line-height: 1;
+  color: var(--el-text-color-secondary);
+  white-space: nowrap;
+}
+
+.markdown-editor__count.is-near-limit {
+  color: var(--el-color-warning);
+}
+
+.markdown-editor__count.is-over-limit {
+  color: var(--el-color-danger);
 }
 
 .markdown-editor__body {
