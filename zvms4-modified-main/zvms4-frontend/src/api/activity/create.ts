@@ -1,5 +1,6 @@
 import axios from '@/plugins/axios'
 import type { Activity } from '@/../types/v2'
+import type { ErrorResponseInstance } from '@/../types'
 import { dayjs } from 'element-plus'
 
 export async function createActivity(activity: Activity) {
@@ -11,8 +12,9 @@ export async function createActivity(activity: Activity) {
       method: 'post',
       data: activity
     })
-  ).data as {
-    id: string
+  ).data as { id: string } | ErrorResponseInstance
+  if ('status' in result) {
+    return result
   }
   return result.id
 }

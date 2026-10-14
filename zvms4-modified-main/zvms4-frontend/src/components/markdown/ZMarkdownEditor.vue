@@ -236,7 +236,7 @@ const actions = [
 
 <template>
   <div class="markdown-editor">
-    <div class="markdown-editor__toolbar">
+    <div class="markdown-editor__toolbar" @pointerdown.prevent @mousedown.prevent>
       <ElButton
         v-for="action in actions"
         :key="action.id"
