@@ -6,4 +6,5 @@ dist/
 *.pem
 aes_key.txt
 settings.py
+settings.py.*
 .env
