@@ -115,9 +115,7 @@ CREATE TABLE activities (
   CONSTRAINT ck_activities_oid CHECK (REGEXP_LIKE(oid,''^[0-9a-f]{24}$'')),
   CONSTRAINT ck_activities_atype CHECK (atype IN (''on-campus'',''off-campus'',''social-practice'',''hybrid'')),
   CONSTRAINT ck_activities_status CHECK (status IN (''pending'',''effective'',''refused'')),
-  CONSTRAINT ck_activities_origin CHECK (origin IN (''labor'',''organization'',''tasks'',''occasions'',''import'',''activities'',''practice'',''club'',''prize'',''other'',''unknown'')),
-  CONSTRAINT fk_activities_appointee_oid FOREIGN KEY(appointee_oid) REFERENCES users (oid),
-  CONSTRAINT fk_activities_creator_oid FOREIGN KEY(creator_oid) REFERENCES users (oid)
+  CONSTRAINT ck_activities_origin CHECK (origin IN (''labor'',''organization'',''tasks'',''occasions'',''import'',''activities'',''practice'',''club'',''prize'',''other'',''unknown''))
 )';
 EXCEPTION
   WHEN OTHERS THEN
@@ -166,8 +164,7 @@ CREATE TABLE activity_members (
   CONSTRAINT ck_activity_members_member_status CHECK (member_status IN (''effective'',''pending'',''refused'')),
   CONSTRAINT ck_activity_members_member_mode CHECK (member_mode IN (''on-campus'',''off-campus'',''social-practice'')),
   CONSTRAINT uq_activity_members_dedup UNIQUE (member_oid, activity_oid, member_mode),
-  CONSTRAINT fk_activity_members_activity_oid FOREIGN KEY(activity_oid) REFERENCES activities (oid),
-  CONSTRAINT fk_activity_members_member_oid FOREIGN KEY(member_oid) REFERENCES users (oid)
+  CONSTRAINT fk_activity_members_activity_oid FOREIGN KEY(activity_oid) REFERENCES activities (oid)
 )';
 EXCEPTION
   WHEN OTHERS THEN
