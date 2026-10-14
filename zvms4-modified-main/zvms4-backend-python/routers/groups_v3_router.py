@@ -61,6 +61,7 @@ async def _list_permission_group_members(
             "class_id": class_id,
             "class_name": class_name,
             "group": [class_id] if class_id else [],
+            "banned": bool(member.get("banned")),
         }
         row["password"] = None
         result.append(row)

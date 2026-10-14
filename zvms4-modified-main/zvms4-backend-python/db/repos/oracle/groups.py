@@ -126,6 +126,7 @@ def _members_page_stmt(group_oid: str, query: str, page: int, size: int):
             users_tbl.c.class_oid,
             groups_tbl.c.name.label("class_name"),
             users_tbl.c.password_hash,
+            users_tbl.c.banned,
         )
         .select_from(
             users_tbl.outerjoin(
@@ -240,6 +241,7 @@ def _member_row(mapping: Any) -> Row:
         "class_id": class_oid if class_oid is not None else "",
         "class_name": class_name if class_name is not None else _UNKNOWN_CLASS,
         "password": mapping["password_hash"],
+        "banned": bool(mapping["banned"]),
     }
 
 

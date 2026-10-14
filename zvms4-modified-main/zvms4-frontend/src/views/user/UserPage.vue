@@ -4,7 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user.ts'
 import { ref, watch, type Component } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ElPageHeader, ElSegmented, ElLoading, ElIcon } from 'element-plus'
+import { ElPageHeader, ElSegmented, ElLoading, ElIcon, ElButton, ElTag, ElMessageBox, ElNotification } from 'element-plus'
 import { ZActivityList } from '@/components'
 import { ArrowLeft, Edit } from '@element-plus/icons-vue'
 import type { User } from '@/../types'
@@ -44,6 +44,27 @@ async function getUser() {
     user.value = result
   }
   loading.close()
+}
+
+async function toggleBanned() {
+  if (!user.value) return
+  const isBanned = user.value.banned
+  try {
+    await ElMessageBox.confirm(
+      t(isBanned ? 'manage.personalPanel.unbanConfirm' : 'manage.personalPanel.banConfirm', { name: user.value.name }),
+      { type: 'warning' }
+    )
+  } catch {
+    return
+  }
+  const result = await api.user.updateBanned(id.value, !isBanned)
+  if (result) {
+    ElNotification({
+      title: t(isBanned ? 'manage.personalPanel.unbannedNotification' : 'manage.personalPanel.bannedNotification', { name: user.value.name }),
+      type: 'success'
+    })
+    await getUser()
+  }
 }
 
 getUser().then(() => {
@@ -102,6 +123,9 @@ watch(
     <ElPageHeader v-if="id" :icon="ArrowLeft" @back="router.back()" class="py-4">
       <template #content>
         {{ user?.name }}
+        <ElTag v-if="user?.banned" type="danger" class="ml-2">
+          {{ t('manage.personalPanel.bannedTag') }}
+        </ElTag>
       </template>
       <template #extra>
         <ElSegmented v-model="current" :options="tabs">
@@ -114,6 +138,16 @@ watch(
             </div>
           </template>
         </ElSegmented>
+        <ElButton
+          v-if="userStore.position.includes('admin') && user"
+          type="danger"
+          text
+          bg
+          class="ml-4"
+          @click="toggleBanned"
+        >
+          {{ user.banned ? t('manage.personalPanel.unban') : t('manage.personalPanel.ban') }}
+        </ElButton>
       </template>
     </ElPageHeader>
     <div v-if="user && current === 'info'">

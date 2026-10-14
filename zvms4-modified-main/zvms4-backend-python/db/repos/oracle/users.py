@@ -94,6 +94,7 @@ def _user_page_stmt(query: str, role: str, page: int, size: int):
             users_tbl.c.name,
             users_tbl.c.roles,
             users_tbl.c.class_oid,
+            users_tbl.c.banned,
             groups_tbl.c.name.label("class_name"),
         )
         .select_from(
@@ -176,6 +177,14 @@ def _set_password_stmt(oid: str, password_hash: str | None):
 
 def _set_roles_stmt(oid: str, roles: list[str]):
     return update(users_tbl).where(users_tbl.c.oid == oid).values(roles=roles)
+
+
+def _set_banned_stmt(oid: str, banned: int):
+    return (
+        update(users_tbl)
+        .where(users_tbl.c.oid == oid)
+        .values(banned=banned)
+    )
 
 
 def _set_class_stmt(user_oid: str, class_oid: str | None):
@@ -301,6 +310,7 @@ def _page_row(mapping: Any) -> Row:
         "roles": roles if roles is not None else [],
         "class_id": class_oid if class_oid is not None else "",
         "class_name": class_name if class_name is not None else _UNKNOWN_CLASS,
+        "banned": bool(mapping["banned"]),
     }
 
 
@@ -395,6 +405,13 @@ class OracleUsersRepo:
 
     async def set_roles(self, oid: str, roles: list[str]) -> None:
         stmt = _set_roles_stmt(normalize_oid(oid), list(roles))
+        async with _session_for(self._session) as (session, owns):
+            await session.execute(stmt)
+            if owns:
+                await session.commit()
+
+    async def set_banned(self, oid: str, banned: int) -> None:
+        stmt = _set_banned_stmt(normalize_oid(oid), banned)
         async with _session_for(self._session) as (session, owns):
             await session.execute(stmt)
             if owns:
