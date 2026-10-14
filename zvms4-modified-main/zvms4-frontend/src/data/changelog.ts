@@ -6,6 +6,34 @@ export interface ChangelogEntry {
 
 export const changelog: ChangelogEntry[] = [
   {
+    version: 'v4.2.2-3',
+    date: '2026-10-14',
+    items: [
+      '义工描述支持 Markdown：加粗、列表、引用、标题、链接，并可切换编辑 / 预览',
+      '「更新日志」编辑同样使用 Markdown 编辑器',
+      '义工描述展示改为 Markdown 渲染（此前只显示纯文本）',
+      '描述上限 1000 字符，编辑时显示字数，超长会明确提示（不再出现服务器错误）',
+      '修复导入活动表格时名称校验未生效的问题',
+      '补录迁移中遗漏的 41 个义工活动与 1712 条成员记录'
+    ]
+  },
+  {
+    version: 'v4.2.2-2',
+    date: '2026-10-13',
+    items: [
+      '修复「更新日志」页面部分文字显示为键名的问题',
+      '系统日志新增学海ID 记录，便于定位平板端的使用者（为平板加固做准备）'
+    ]
+  },
+  {
+    version: 'v4.2.2-1',
+    date: '2026-10-12',
+    items: [
+      '「更新日志」改为数据库驱动，内容不再写死在应用里',
+      '管理员可直接在页面新增版本、编辑任意历史版本、删除版本'
+    ]
+  },
+  {
     version: 'v4.2.1-1',
     date: '2026-10-12',
     items: [
@@ -42,4 +70,3 @@ export const changelog: ChangelogEntry[] = [
   }
 ]
 
-export const APP_VERSION = 'v4.2.2-2'
