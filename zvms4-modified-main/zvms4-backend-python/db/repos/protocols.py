@@ -693,6 +693,7 @@ class AppLogsRepo(Protocol):
         levels: list[str] | None = None,
         time_start: int | None = None,
         time_end: int | None = None,
+        xuehai_id: str = "",
         page: int = -1,
         size: int = 10,
     ) -> tuple[list[Row], int]:
@@ -701,8 +702,9 @@ class AppLogsRepo(Protocol):
         Lifts ``routers/logs_router.py.read_logs``: ``query`` is a case-sensitive
         *contains* on ``url``/``data`` (``re.escape``d; empty = no filter),
         ``performer`` an ``user`` equality, ``types``/``levels`` OR-lists on
-        ``type``/``level``, and ``time_start``/``time_end`` are **exclusive**
-        bounds on the ``timestamp`` float. Ordered by ``timestamp`` desc;
+        ``type``/``level``, ``time_start``/``time_end`` are **exclusive** bounds
+        on the ``timestamp`` float, and ``xuehai_id`` an equality on the captured
+        device 学海 ID (empty = no filter). Ordered by ``timestamp`` desc;
         ``page == -1`` means "no offset".
         """
         ...
