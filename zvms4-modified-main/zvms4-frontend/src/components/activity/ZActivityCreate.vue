@@ -28,6 +28,7 @@ import {
   ZSelectActivityMode,
   ZSelectPerson
 } from '@/components'
+import { ZMarkdownEditor } from '@/components/markdown'
 import api from '@/api'
 import { validateActivity } from './validation'
 import { useRouter } from 'vue-router'
@@ -226,7 +227,11 @@ function checkReviewAllowed() {
               <ElInput v-model="activity.name" />
             </ElFormItem>
             <ElFormItem :label="t('activity.form.description')" v-if="activePage === 'info'">
-              <ElInput v-model="activity.description" type="textarea" :autosize="{ minRows: 2 }" />
+              <ZMarkdownEditor
+                v-model="activity.description"
+                :maxlength="1000"
+                :placeholder="t('activity.form.descriptionPlaceholder')"
+              />
             </ElFormItem>
             <ElFormItem
               v-if="activePage === 'info'"

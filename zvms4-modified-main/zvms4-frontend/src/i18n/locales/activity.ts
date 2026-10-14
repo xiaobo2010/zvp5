@@ -38,6 +38,7 @@ export const zhCN = {
     title: '{create} {type}',
     name: '名称',
     description: '描述',
+    descriptionPlaceholder: '请输入义工描述，支持 Markdown 语法',
     date: '日期',
     mode: '模式',
     person: '成员',
