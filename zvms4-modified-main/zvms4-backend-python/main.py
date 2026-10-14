@@ -20,6 +20,7 @@ from routers import (
     users_v3_router,
     groups_v3_router,
     changelog_router,
+    attachments_router,
 )
 import socketio
 from fastapi.middleware.cors import CORSMiddleware
@@ -201,6 +202,9 @@ app.include_router(users_v3_router.router, prefix="/api/v3/users")
 app.include_router(groups_v3_router.router, prefix="/api/v3/groups")
 app.include_router(
     changelog_router.router, prefix="/api/changelog", tags=["changelog"]
+)
+app.include_router(
+    attachments_router.router, prefix="/api/attachments", tags=["attachments"]
 )
 
 
