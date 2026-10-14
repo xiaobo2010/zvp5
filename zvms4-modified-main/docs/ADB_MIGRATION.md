@@ -298,4 +298,51 @@
   **执行方式（2026-10-13 追加定调）**：**完全去除** Mongo 兼容与代码，**不保留过渡适配器与开关**——不保留 `db/repos/mongo/*`、`db/backends.py` 的 Mongo 分支、`database.py`/motor/`MONGODB_URI`，所有 router/util/task 直连 Oracle 仓储。顺序：先补全 Oracle 仓储与接线 → 把剩余数据（`app_logs`/`tasks`/`imports`/权限组）ETL 同步进 `zvp5adb` → prod 验证 → 最后物理删除 Mongo 代码/依赖并停用 Mongo 容器（ETL 工具届时一并移除或归档）。
 - **已修生产缺陷（2026-10-13）**：`routers/activities_v2_router.py` 创建活动 / 添加成员原为 raw Mongo 写入，与已切 Oracle 的读路径不一致 → 报 `404 Activity not found`；已改为 `backends.get_activities_repo().create(...)` + `get_members_repo().add(...)`，并移除该文件未使用的 `database.db` 导入。
 
+## 6.8 义工数据补录（2026-10-14）
+
+> 生产反馈「迁移后少了很多义工」。只读对账 `zvms4-mongo`（`zvms_new`）↔ `zvp5adb`（生产）后定位并补齐。
+
+### 缺口
+
+| 集合 | Mongo | ADB（补录前） | 差 | 补录后 ADB |
+|---|---|---|---|---|
+| activities | 396 | 354 | −42 | **395** |
+| activity_members | 13254 | 11575 | −1679 | **13287** |
+
+（ADB 侧另有 33 条迁移后新增成员、3 个迁移后新增用户，均保留；反向差异为零 → 补录为纯追加。）
+
+### 42 个缺失义工的根因（ETL 完整性护栏隔离，非数据丢失）
+
+1. **FK 悬空（26 个）**：`creator`/`appointee` 指向 **9 个已删除账号**（`65e6fa21…` 同批，2024-03 建号，Sep 25 及更早的 dump、以及原始 Atlas 库中均已不存在，无任何名字/学号残留）→ ETL 的 `missing_fk_parent` 门隔离。
+2. **description 超长（20 个）**：ETL 文本护栏按模型 `VARCHAR2(1000)` 卡；实际最长 **54968** 字符（多为开发笔记）。
+3. **时间戳类型异常（1 个，「校合唱队」）**：`updatedAt` 存的是 Int64 毫秒（`1791718430715`）→ ETL 的 `TS` 校验拒绝。
+4. **迁移后测试写入（1 个，「TestDB」）**：2026-10-13 23:21 建，在 ETL 之后 → 判为测试数据。
+
+**1712 条缺失成员**：1708 条属于上面被隔离的义工；4 条 `member` 指向已删除账号（其中 `68c3e31e…` = 周金开颜/学号 20252559，于 10-13 学号去重时删除，其 `time` 缓存行一并悬空）。
+
+### 处置（用户拍板，2026-10-14）
+
+- **悬空账号**：**保持删除，允许出现「无此用户」** —— 保留原始 oid 引用，放开对应 FK（不建占位、不置 NULL、不恢复账号）。
+- **超长 description**：**直接置空**（不改 CLOB）。
+- **范围**：纳入「校合唱队」（修正时间戳），排除「TestDB」。
+
+### 变更
+
+- **DDL `V006__relax_activity_user_fks.sql`**（幂等）：DROP `fk_activities_creator_oid`、`fk_activities_appointee_oid`、`fk_activity_members_member_oid`；**保留** `fk_activity_members_activity_oid`（被引用活动均已补录，完整性保留）。
+- **`db/models.py` / `V001`** 同步移除上述 3 个 FK（`python -m db.ddl_check` → `OK 16 tables, 9 indexes - no drift`）。
+- **补录脚本**：幂等 `MERGE … WHEN NOT MATCHED`（只增不改），先在 `zvp5adb2` 演练再上 `zvp5adb`。脚本路径 `/root/backfill_missing_volunteers.py`（服务器），副本 `/tmp/opencode/backfill_missing_volunteers.py`。
+
+### 验证证据
+
+- `zvp5adb2`：activities 354→395、members 11542→13254；`zvp5adb`：354→395、11575→13287。
+- FK 现状：`ACTIVITIES`/`ACTIVITY_MEMBERS` 仅剩 `FK_ACTIVITY_MEMBERS_ACTIVITY_OID`。
+- 抽样：`校合唱队.updated_at = 2026-10-11 11:33:50`（Int64 已转）；`布置考场`（悬空 creator）oid 原样保留、description 已置空；`TestDB` 不存在；周金开颜名下 2 条成员已补回。
+- 走真实读路径 `OracleActivitiesRepo.list_page` → `total = 395`；线上 `/api/health`、`/api/version`（v4.2.2-2）200，日志无新错误。
+- 复跑缺口报告：Mongo→ADB 缺失 activities = 1（仅 TestDB，决策排除）、缺失 members = 0。
+
+### 发现（本轮顺带，未处理）
+
+- **ADB 每日备份同步失败**：`/root/adb-backup/sync_adb.py`（prod→adb2，cron 03:30）于 2026-10-14 03:30 报 `ORA-02292: FK_ACTIVITY_MEMBERS_ACTIVITY_OID violated` —— 其「整表 DELETE 后重灌」的顺序在父表先删、子表仍引用时违反 FK。属既存缺陷，需按子表优先或临时禁用约束修正。
+- **`user_time` 派生缓存**：Mongo 2566 vs ADB 2565（悬空账号的行），由夜间 `compute_time` 重算自愈，未纳入本次补录。
+
 _本文档随各 lane 产出持续更新。_
