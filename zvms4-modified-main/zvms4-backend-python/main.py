@@ -35,6 +35,32 @@ socket = socketio.ASGIApp(sio)
 
 app = FastAPI(default_response_class=JSONResponse, docs_url=None)
 
+# Neutral value returned when the version cannot be resolved from the database.
+# Deliberately not a version literal: the CHANGELOG table is the only source of
+# truth for the current version, so there is nothing here that can drift.
+VERSION_UNKNOWN = "unknown"
+
+
+async def current_version() -> str:
+    """Return the current version, read from the ``CHANGELOG`` table.
+
+    ``ChangelogRepo.list_all()`` is ordered by ``date`` desc, ``version`` desc,
+    so the first entry is the latest release and thus the current version.
+
+    Never raises: an empty table or a failing lookup yields
+    :data:`VERSION_UNKNOWN`, keeping ``/api/`` and ``/api/version`` at 200.
+    """
+    try:
+        entries = await backends.get_changelog_repo().list_all()
+    except Exception as e:
+        print(f"Failed to read version from changelog: {e}")
+        return VERSION_UNKNOWN
+    if not entries:
+        return VERSION_UNKNOWN
+    version = entries[0].get("version")
+    return str(version) if version else VERSION_UNKNOWN
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -185,7 +211,7 @@ async def home():
         "code": 200,
         "data": {
             "message": "Welcome to ZVMS API",
-            "version": "v4.2.2-2",
+            "version": await current_version(),
             "author": "ZZDev",
             "license": "MIT",
             "source": "https://github.com/zvms/zvms4-backend-python.git",
@@ -294,7 +320,7 @@ async def generic_exception_handler(_: Request, exc: Exception):
 
 @app.get("/api/version")
 async def get_version():
-    return {"status": "ok", "code": 200, "data": "v4.2.2-2"}
+    return {"status": "ok", "code": 200, "data": await current_version()}
 
 
 if __name__ == "__main__":
