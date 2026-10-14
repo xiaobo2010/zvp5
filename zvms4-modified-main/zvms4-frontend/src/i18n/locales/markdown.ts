@@ -13,6 +13,8 @@ export const zhCN = {
     linkLabel: '链接文字',
     preview: '预览',
     edit: '编辑',
-    placeholder: '支持 Markdown 语法'
+    placeholder: '支持 Markdown 语法',
+    count: '{current} / {max}',
+    overLimit: '内容已超出最大长度，超出部分已被截断。'
   }
 }
