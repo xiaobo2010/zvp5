@@ -1,5 +1,8 @@
 import re
 from datetime import datetime
+from typing import Optional
+
+from config import MAX_ACTIVITY_DESCRIPTION_LENGTH
 
 
 def validate_activity_name(name: str):
@@ -8,6 +11,25 @@ def validate_activity_name(name: str):
 
     if name[0] == " " or name[-1] == " ":
         return False, "Should not have space before or after the string"
+
+    return True, ""
+
+
+def validate_activity_description(description: Optional[str]):
+    """
+    Validate an activity description against the ACTIVITIES.DESCRIPTION column
+    (``VARCHAR2(1000 CHAR)``).  ``None``/empty are allowed (the column is
+    nullable); anything longer than the limit is rejected so the write cannot
+    hit ORA-12899 and surface as a 500.
+    """
+    if description is None:
+        return True, ""
+
+    if len(description) > MAX_ACTIVITY_DESCRIPTION_LENGTH:
+        return (
+            False,
+            f"Should be at most {MAX_ACTIVITY_DESCRIPTION_LENGTH} characters",
+        )
 
     return True, ""
 
