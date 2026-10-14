@@ -8,6 +8,7 @@ from utils import validate_object_id
 from typing import Literal
 from pydantic import BaseModel, Field
 from db.ids import is_valid_oid
+from util.validation import validate_activity_description
 
 router = APIRouter()
 
@@ -83,6 +84,10 @@ async def create_activity_v3(
             status_code=403,
             detail='权限不足'
         )
+
+    validated, reason = validate_activity_description(payload.description)
+    if not validated:
+        raise HTTPException(status_code=400, detail=reason)
 
     oid = await backends.get_activities_repo().create(
         payload.name,
