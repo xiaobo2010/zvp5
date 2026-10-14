@@ -205,12 +205,10 @@ activities = Table(
         f"origin IN ({_ORIGIN_IN})",
         name="ck_activities_origin",
     ),
-    ForeignKeyConstraint(
-        ["appointee_oid"], ["users.oid"], name="fk_activities_appointee_oid"
-    ),
-    ForeignKeyConstraint(
-        ["creator_oid"], ["users.oid"], name="fk_activities_creator_oid"
-    ),
+    # NOTE: no FK on appointee_oid / creator_oid.  Production carries activities
+    # whose creator/appointee account was deleted (dangling ObjectId), matching
+    # Mongo semantics where a missing user simply resolves to "未知用户".
+    # V006 drops these two constraints on already-deployed instances.
 )
 Index("ix_activities_status", activities.c.status)
 Index("ix_activities_atype", activities.c.atype)
@@ -248,9 +246,9 @@ activity_members = Table(
     ForeignKeyConstraint(
         ["activity_oid"], ["activities.oid"], name="fk_activity_members_activity_oid"
     ),
-    ForeignKeyConstraint(
-        ["member_oid"], ["users.oid"], name="fk_activity_members_member_oid"
-    ),
+    # NOTE: no FK on member_oid - a few member rows reference a since-deleted
+    # account (dangling ObjectId), same "未知用户" semantics as activities.
+    # V006 drops this constraint on already-deployed instances.
 )
 Index("ix_activity_members_activity_oid", activity_members.c.activity_oid)
 Index("ix_activity_members_member_oid", activity_members.c.member_oid)

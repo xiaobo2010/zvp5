@@ -1066,6 +1066,7 @@ XH：`/xh/api`（`api/xh.js`）
 - **数据库开关移除**：`ORACLE_ENABLED` 已删除（`settings.example.py`、`OracleConfig`、`db/oracle/session.py`、`main.py` 健康检查改为无条件 Oracle ping），**不存在非 ADB 回退路径**；`ORACLE_ACTIVE` 保留，仅用于在 ADB 实例间选择 prod / test。
 - **生产状态**：11 个模块全部走 ADB，带鉴权端到端全 200；`zvms4-mongo` 与历史数据按决策**保留归档**（已无任何代码引用）。
 - **附带修正**：数据边界的非法 id 由 500 修正为 400（`db/ids.py::InvalidOid` + 全局异常处理）。
+- **义工数据补录（2026-10-14）**：ADB 全量上线后发现生产「少了很多义工」——ETL 完整性护栏隔离了 **42 个 activities + 1712 个 activity_members**（悬空 creator/appointee FK、超长 description、Int64 时间戳、迁移后测试数据）。已按决策补录 41 个（排除测试数据 TestDB）+ 1712 条成员，并新增 `V006__relax_activity_user_fks.sql` 放开 3 个指向已删除账号的 FK。详见 `zvms4-modified-main/docs/ADB_MIGRATION.md` §6.8。
 
 ---
 
