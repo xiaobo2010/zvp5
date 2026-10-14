@@ -9,11 +9,12 @@ import {
   ElPopconfirm,
   ElButtonGroup,
   ElStatistic,
-  ElSegmented
+  ElSegmented,
+  ElMessage
 } from 'element-plus'
 import categories from './categories.json'
 import { useWindowSize } from '@vueuse/core'
-import { Calendar, ArrowRight, Delete, Plus } from '@element-plus/icons-vue'
+import { Calendar, ArrowRight, Delete, Plus, Edit } from '@element-plus/icons-vue'
 import dayjs from '@/plugins/dayjs'
 import { useUserStore } from '@/stores/user'
 import {
@@ -89,11 +90,19 @@ const editDescription = ref(false)
 const description = ref(activity.value.description)
 
 async function submitInfo() {
+  try {
+    const result = await api.activity.update.info(activity.value._id, name.value, description.value)
+    if (result?.status === 'error') {
+      ElMessage.error(result.message || t('activity.form.saveFailed'))
+      return
+    }
+  } catch {
+    return
+  }
   editDescription.value = false
   editName.value = false
   activity.value.description = description.value
   activity.value.name = name.value
-  await api.activity.update.info(activity.value._id, name.value, description.value)
   emits('refresh')
 }
 
@@ -189,12 +198,20 @@ const activeStatistic = ref(statTable[0])
         />
       </ElButtonGroup>
     </p>
-    <div
-      v-if="!editDescription"
-      class="text-sm text-gray-500 pl-4"
-      @dblclick="editDescription = true"
-    >
-      <ZMarkdown :source="activity.description" />
+    <div v-if="!editDescription" class="flex items-start justify-between gap-2 pl-4">
+      <div class="text-sm text-gray-500" @dblclick="editDescription = true">
+        <ZMarkdown :source="activity.description" />
+      </div>
+      <ElButton
+        class="flex-shrink-0"
+        size="small"
+        text
+        bg
+        circle
+        :icon="Edit"
+        :title="t('activity.form.actions.modify')"
+        @click="editDescription = true"
+      />
     </div>
     <div v-else class="pt-2 pl-4">
       <ZMarkdownEditor v-model="description" :maxlength="1000" />

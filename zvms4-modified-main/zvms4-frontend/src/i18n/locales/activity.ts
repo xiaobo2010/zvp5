@@ -72,7 +72,8 @@ export const zhCN = {
       prompt: '点击或拖拽文件到此区域上传',
       allow: '仅允许 {type} 文件'
     },
-    details: '详情'
+    details: '详情',
+    saveFailed: '保存失败，请重试'
   },
   units: {
     item: '项',
