@@ -448,6 +448,14 @@ EXCEPTION
 END;
 /
 
+BEGIN
+  EXECUTE IMMEDIATE 'CREATE INDEX ix_app_logs_xuehai_id ON app_logs (xuehai_id)';
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE NOT IN (-955, -1408) THEN RAISE; END IF;
+END;
+/
+
 -- ----------------------------------------------------------------------------
 -- EXPORT_TASKS  ← zvms_new.tasks   (runtime export queue; `id` is a BSON UUID)
 -- ----------------------------------------------------------------------------

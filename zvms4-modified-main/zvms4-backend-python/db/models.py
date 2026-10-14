@@ -454,6 +454,7 @@ app_logs = Table(
     _oid_check("app_logs"),
 )
 Index("ix_app_logs_ts_at", app_logs.c.ts_at)
+Index("ix_app_logs_xuehai_id", app_logs.c.xuehai_id)
 
 
 # ---------------------------------------------------------------------------

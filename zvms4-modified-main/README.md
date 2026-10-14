@@ -8,7 +8,8 @@
 > **改动方向五（2026-10-10 起）：登录与身份验证 API 移植（TOTP 动态码按用户派生 / 重置为初始密码 v3 / 登出与改密语义修复），登录/鉴权路径零外呼，见 `STATUS.md` Part 4。**
 > **改动方向六（2026-10-11 起）：后端可用状态落地——shield 请求加固中间件按 zvp 语义改写移植（剥离设备会话/学海面），运行缺口修复（依赖缺失 / example 配置字段缺失 / RSA 1024 / 关停竞态），并完成真实运行时端到端验证（41/41 断言），见 `STATUS.md` Part 8。**
 > **改动方向七（2026-10-12 起）：双库断裂面系统性收敛——群组与用户读取全面双库合并（权限组列表与成员、用户搜索去重、roles 合并、班级选择器修复），PWA SW 即时接管修复旧客户端首页 404，见 `STATUS.md` Part 10。**
-> 其余前端 UI 与后端业务逻辑仍以上游 zvms4 为基准，不采用 zvp 的代码（zvp 代码经检查存在漏洞与后门，仅提取其数据结构；义工管理与用户管理移植面经扫描确认无外链 / 外呼 / 越权代码，范围外危险代码一律未引入，上游自带的设备采集 / 外呼代码已在用户管理面上清除）。
+> **改动方向八（2026-10-14 起）：设备追踪——`APP_LOGS` 记录请求设备的学海 ID（前端 `Xuehai-Id` 头 → `xuehai_id` 列），`GET /api/logs` 新增 `xuehai_id` 过滤 + `ix_app_logs_xuehai_id` 索引；设计见 `docs/DEVICE_TRACKING_DESIGN.md`。**
+> 其余前端 UI 与后端业务逻辑仍以上游 zvms4 为基准，不采用 zvp 的代码（zvp 代码经检查存在漏洞与后门，仅提取其数据结构；义工管理与用户管理移植面经扫描确认无外链 / 外呼 / 越权代码，范围外危险代码一律未引入，上游自带的设备采集 / 外呼代码已在用户管理面上清除）。**学海 ID 设备采集为 2026-10-13 起另行设计并落地的独立能力**（仅将请求头写入 `APP_LOGS.XUEHAI_ID`，不恢复 zvp 的设备会话 / 登录绑定 / 外呼面），见 `docs/DEVICE_TRACKING_DESIGN.md`。
 >
 > **文件位置变更（2026-10-12）**：本目录原 `DB_ALIGNMENT.md`（数据库对齐 Ground Truth）已并入**仓库根 `README.md` §三**，本目录不再有该文件。下文出现的 `DB_ALIGNMENT.md` / `DB_ALIGNMENT §N` 一律对应**根 README §三 / §三.N**。
 
@@ -21,6 +22,7 @@ zvp-modified-v4/
 ├── README.md                 # 本文件
 ├── STATUS.md                 # 模块移植：Part 1 义工管理（10-09）/ Part 2-4 用户·日志·登录（10-10）/ Part 5 全量 API 盘点（10-10）/ Part 6 弱密码强制改密（10-10）/ Part 7 token 有效期调整（10-10）/ Part 8 可用状态落地：运行时验证 + shield 加固 + 运行缺口修复（10-11）/ Part 9 部署切换·logo·四 bug 修复·CHANGELOG 页面（10-11）/ Part 10 双库收敛与 PWA 接管（10-12）/ Part 11 前端体验批次（10-12）/ Part 12 CHANGELOG 数据库化·管理员可编辑（10-12）
 ├── DB_ALIGNMENT.md           # 已并入仓库根 README §三（数据库对齐 Ground Truth），本目录不再有该文件
+├── docs/                     # 设计稿（ADB 迁移/规范、FILES_API_DESIGN.md、DEVICE_TRACKING_DESIGN.md 等）
 ├── zvms4-backend-python/     # FastAPI 后端（上游 zvms4，DB 层已对齐；义工/用户/日志/登录 v2-v3 已移植；shield 加固就位，已通过 41 项运行时冒烟）
 │   ├── README.md
 │   ├── requirements.txt
@@ -38,7 +40,7 @@ zvp-modified-v4/
 | 前端 | 上游 zvms4 为基准 + zvp 接线 | 仅义工管理与用户管理 API 接线改动（见 `STATUS.md` §2 / §9），UI 与模板未动 |
 | 后端逻辑 | 上游 zvms4 为基准 | 除下述义工管理与用户管理移植面外，业务逻辑、路由、权限均保持 zvms4 |
 | 义工管理 v3 层 | **现役 zvp**（2026-10-09 移植） | `routers/activities_v3_router.py` 四端点 + 权限修复，逐文件安全审计后放行，见 `STATUS.md` Part 1 |
-| 用户管理与登录 v2/v3 层 | **现役 zvp**（2026-10-10 移植） | users/groups v2 列表·详情 + v3 建/改角色/建班/成员进出 + 登录默认密码与 profile，见 `STATUS.md` Part 2；设备 / 绑定 / 外链三类禁止面未迁移，上游同源残留已清除 |
+| 用户管理与登录 v2/v3 层 | **现役 zvp**（2026-10-10 移植） | users/groups v2 列表·详情 + v3 建/改角色/建班/成员进出 + 登录默认密码与 profile，见 `STATUS.md` Part 2；设备 / 绑定 / 外链三类禁止面未迁移，上游同源残留已清除（学海 ID 日志采集为后置独立能力，见改动方向八） |
 | 日志系统 | **现役 zvp**（2026-10-10 移植） | logs API 业务面（过滤/分页/user_name 联查）+ type/level 语义 + 35 站点汉化与补埋点 + GET-only 防篡改，见 `STATUS.md` Part 3 |
 | 登录与身份验证 | **现役 zvp**（2026-10-10 移植） | TOTP 动态码登录（按用户派生，RFC6238 本地自实现）+ 重置为初始密码 v3 端点 + 登出/改密语义修复；设备绑定 / 会话指纹 / 外呼投递 / recovery 问答拒绝移植，见 `STATUS.md` Part 4 |
 | shield 请求加固 + 可用状态 | **现役 zvp**（2026-10-11 移植/改写） | 路径黑名单 + HTTP 方法白名单 + UA 门禁（418 + security_alert 日志）；设备会话 cookie、学海 UA 分支、调试路由、全量请求头落盘一律剥离；伴随运行缺口修复与 41 项端到端冒烟验证，见 `STATUS.md` Part 8 |
@@ -120,6 +122,7 @@ uvicorn main:app --host 0.0.0.0 --port 8000
 - ~~**zvp 代码待审核**：本次只吸收了 zvp 的数据结构，未采用其任何业务代码。~~ → **义工管理面已审计并移植（2026-10-09）**：v3 四端点 + 权限修复，逐文件扫描确认无外链 / 外呼 / 越权代码，范围外危险代码（学海代理 `xh_router` / `api/xh.js`、平台登录 `platform.py`、ManageHome 外站跳转、外部图标 URL）均未引入，审计记录见 `STATUS.md`。其余 zvp 模块（安全中间件、其他 v3 路由等）若要参考仍需单独安全审计。
 - **用户管理与登录已审计移植（2026-10-10）**：登录语义补齐（默认密码 / profile / 5min 临时 token）+ users/groups v2/v3 端点 + 前端接线；zvp 的 platform 登录（TOTP / sid / 设备核验）与 `xh_router` 全部拒绝移植；上游自带的设备采集（`binding_user_credentials` / 三请求头 / `deviceId` 生成）已从用户管理面清除。roles 编辑后端端点已就绪、前端入口待接（见 `STATUS.md` Part 2 §14-3）。
 - **日志 API 已审计移植（2026-10-10）**：`GET /api/logs` 重写（query/type/level/performer/时间过滤 + user_name），schema 加 `type/level`，35 站点全中文 + 13 处补埋点（成员移除/记录修改/活动信息/v1 用户组/导出全套）；zvp 的设备筛选参数与 `_1.py` 删库脚本拒绝移植；复查清掉 6 处历史残面（含 `get_export_file` 无鉴权下载修复）。
+- **设备追踪 / 学海 ID 日志落地（2026-10-14，改动方向八）**：`APP_LOGS` 记录请求设备的学海 ID（前端 `ua.ts:getXuehaiId` + `axios.ts` 注入 `Xuehai-Id` 头 → 后端 `typings/log.py:xuehai_id_from` → `xuehai_id` 列），管理端 `GET /api/logs` 新增 `xuehai_id` 等值过滤与 `ix_app_logs_xuehai_id` 索引（`V001` fresh + `V008` 存量，`ddl_check` 无漂移），管理员可按一台平板反查用过它的平台账号。仅取 zvp 的「学海 ID 头采集」一点；设备会话 / 登录绑定 / Clarity-ID / 黑名单 / 出站代理一律不采用。完整契约、信任边界与后续项见 **`docs/DEVICE_TRACKING_DESIGN.md`**。
 - **登录与身份验证已审计移植（2026-10-10）**：TOTP 动态码登录（密码优先/OTP 兜底、按用户派生 secret、RFC6238 官方向量 6/6 验证）+ `DELETE /v3/users/{id}/password` 重置为初始密码（临时 token 重新验证）+ admin 动态码查看端点（`totp_view` warning 日志）+ 登出清 token / 改密死期望两处语义修复；zvp 的设备绑定、`zvp_session` 指纹、`sid` claim、recovery 问答、`/v1/platform/*` 平行端点拒绝移植（见 `STATUS.md` Part 4）。
 - **zvp 全量 API 面盘点落档（2026-10-10）**：13 router ~75 端点穷举对照——已移植/等价占绝大多数，未移植总账五项（**服务端弱密码强制改密为首要候选**），四个勘察盲区模块（通知/邮件/推送/socket.io/定时任务等）确认 zvp 零实现，反向确认本仓能力更全（socket.io / apscheduler / notifications / statistics / mcp 独有）；红线拒绝面第 5 次全量复核维持（见 `STATUS.md` Part 5）。
 - **服务端弱密码强制改密（2026-10-10，总账 #1 已闭）**：`/api/users/auth` 弱密码 long 请求仅发 5 分钟临时 token + `weak_password` 标记，强度规则与前端逐字镜像（独立测试 10/10）；short 改密流程与 OTP 路径不受影响（见 `STATUS.md` Part 6）。
