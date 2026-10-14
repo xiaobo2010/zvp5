@@ -7,6 +7,7 @@ export interface User {
   past: string[]
   roles?: UserPosition[]
   class_id?: string
+  banned?: boolean
 }
 
 export type UserPosition = 'system' | 'admin' | 'auditor' | 'department' | 'secretary' | 'student' | 'teacher'

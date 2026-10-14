@@ -169,6 +169,15 @@ async function putUserRoles(uid: string, roles: string[]) {
   return response?.status === 204
 }
 
+async function putUserBanned(uid: string, banned: boolean) {
+  const response = await axios({
+    method: 'put',
+    url: `/v3/users/${uid}/banned`,
+    data: { banned }
+  })
+  return response?.status === 204
+}
+
 async function createUserV3(
   id: string,
   name: string,
@@ -185,4 +194,4 @@ async function createUserV3(
   return result?.id ?? false
 }
 
-export { getUser as readOne, getUsers as read, putUser as update, getUserV3 as readOne_v3, getUsersV2 as read_v2, putUserRoles as updateRoles, createUserV3 as create_v3 }
+export { getUser as readOne, getUsers as read, putUser as update, getUserV3 as readOne_v3, getUsersV2 as read_v2, putUserRoles as updateRoles, putUserBanned as updateBanned, createUserV3 as create_v3 }

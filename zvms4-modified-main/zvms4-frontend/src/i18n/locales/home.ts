@@ -16,8 +16,13 @@ export const zhCN = {
     number: '学号',
     class: '班级',
     identify: '身份',
+    status: '账号状态',
     past: '过往身份',
     nonPast: '无'
+  },
+  status: {
+    normal: '正常',
+    banned: '已封禁'
   },
   panels: {
     information: {

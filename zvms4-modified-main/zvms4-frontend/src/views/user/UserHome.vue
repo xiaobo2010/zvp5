@@ -5,7 +5,8 @@ import {
   ElDescriptionsItem,
   ElButton,
   ElCard,
-  ElSkeleton
+  ElSkeleton,
+  ElTag
 } from 'element-plus'
 import { Refresh } from '@element-plus/icons-vue'
 import dayjs from '@/plugins/dayjs'
@@ -101,6 +102,10 @@ watch(
               v-if="user.position.find((role) => role !== 'student') || !user.groups.length"
               :position="user.position"
             />
+          </ElDescriptionsItem>
+          <ElDescriptionsItem v-if="!loading" :label="t('home.labels.status')">
+            <span v-if="!user.banned">{{ t('home.status.normal') }}</span>
+            <ElTag v-else type="danger" size="small">{{ t('home.status.banned') }}</ElTag>
           </ElDescriptionsItem>
         </ElDescriptions>
         <div v-if="user.position.includes('secretary')" class="py-4">

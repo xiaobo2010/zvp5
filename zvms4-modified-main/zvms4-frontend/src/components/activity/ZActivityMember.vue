@@ -173,6 +173,10 @@ async function insertUserPast() {
             :position="person.roles ?? []"
           />
         </ElDescriptionsItem>
+        <ElDescriptionsItem :label="t('home.labels.status')">
+          <span v-if="!person?.banned">{{ t('home.status.normal') }}</span>
+          <ElTag v-else type="danger" size="small">{{ t('home.status.banned') }}</ElTag>
+        </ElDescriptionsItem>
         <ElDescriptionsItem
           :label="t('home.labels.past')"
           v-if="(userStore.position.includes('admin') || userStore.position.includes('department')) && past.length"

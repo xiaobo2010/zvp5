@@ -60,6 +60,7 @@ async def get_user_v3(
         "roles": target.get("roles", []),
         "class_id": class_id,
         "group": [class_id] if class_id else [],
+        "banned": bool(target.get("banned")),
     }
 
     return {"status": "ok", "code": 200, "data": profile}
@@ -70,6 +71,10 @@ AllowedRole = Literal["student", "secretary", "department", "admin", "teacher"]
 
 class PutRolesRequest(BaseModel):
     roles: list[AllowedRole]
+
+
+class PutBannedRequest(BaseModel):
+    banned: bool
 
 
 @router.put("/{user_id}/roles", status_code=204)
@@ -95,6 +100,36 @@ async def modify_user_roles_v3(
     log.with_text(
         f"管理员 {await get_user_display_name(user['id'])} 将用户 {target['name']} 的角色修改为 {list(payload.roles)}",
         type="role_change",
+    )
+    await log.insert_log()
+
+    return
+
+
+@router.put("/{user_id}/banned", status_code=204)
+async def set_user_banned_v3(
+    user_id: str,
+    payload: PutBannedRequest,
+    user=Depends(get_current_user),
+    log=Depends(inject_log),
+):
+    per = user.get("per") or []
+    if "admin" not in per:
+        raise HTTPException(status_code=403, detail="权限不足")
+
+    oid = validate_object_id(user_id)
+    repo = backends.get_users_repo()
+
+    target = await repo.get_by_oid(str(oid))
+    if target is None:
+        raise HTTPException(status_code=404, detail="用户不存在")
+
+    await repo.set_banned(str(oid), 1 if payload.banned else 0)
+
+    log.with_text(
+        f"管理员 {await get_user_display_name(user['id'])} {'封禁' if payload.banned else '解封'}了用户 {target['name']}",
+        type="ban_change",
+        level="warning",
     )
     await log.insert_log()
 
