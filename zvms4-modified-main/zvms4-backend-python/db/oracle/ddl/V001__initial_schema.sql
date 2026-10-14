@@ -509,3 +509,162 @@ EXCEPTION
     IF SQLCODE != -955 THEN RAISE; END IF;
 END;
 /
+
+-- ----------------------------------------------------------------------------
+-- FILES  ← new (Files/attachments API; docs/FILES_API_DESIGN.md §3.1)
+--   Photo/attachment metadata + normalised bytes.  `content` is the first BLOB
+--   *read* in the codebase (IMPORTS only ever wrote one); see
+--   db/repos/oracle/files.py.  `status` is the single source of truth (the
+--   file_events rows are an audit copy only).  owner_oid carries NO FK (same
+--   relaxation as V006).  Also added by V007 for already-deployed instances.
+-- ----------------------------------------------------------------------------
+BEGIN
+  EXECUTE IMMEDIATE '
+CREATE TABLE files (
+  oid VARCHAR2(24 CHAR) NOT NULL,
+  owner_oid VARCHAR2(24 CHAR),
+  kind VARCHAR2(16 CHAR) NOT NULL,
+  parent_oid VARCHAR2(24 CHAR),
+  mime VARCHAR2(64 CHAR) NOT NULL,
+  size_bytes NUMBER(19) NOT NULL,
+  width NUMBER(10),
+  height NUMBER(10),
+  sha256 VARCHAR2(64 CHAR) NOT NULL,
+  content BLOB,
+  original_name VARCHAR2(255 CHAR),
+  purpose VARCHAR2(32 CHAR),
+  entity_type VARCHAR2(32 CHAR),
+  entity_oid VARCHAR2(24 CHAR),
+  status VARCHAR2(16 CHAR) NOT NULL,
+  ocr_status VARCHAR2(16 CHAR) NOT NULL,
+  ocr_retry NUMBER(3) DEFAULT 0 NOT NULL,
+  created_at TIMESTAMP NOT NULL,
+  updated_at TIMESTAMP,
+  deleted_at TIMESTAMP,
+  PRIMARY KEY (oid),
+  CONSTRAINT ck_files_oid CHECK (REGEXP_LIKE(oid,''^[0-9a-f]{24}$'')),
+  CONSTRAINT ck_files_kind CHECK (kind IN (''original'',''thumb'',''derived'')),
+  CONSTRAINT ck_files_status CHECK (status IN (''stored'',''processing'',''ready'',''verified'',''rejected'',''quarantined'',''deleted'')),
+  CONSTRAINT ck_files_ocr_status CHECK (ocr_status IN (''pending'',''processing'',''done'',''failed''))
+)';
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE != -955 THEN RAISE; END IF;
+END;
+/
+
+BEGIN
+  EXECUTE IMMEDIATE 'CREATE INDEX ix_files_owner ON files (owner_oid, created_at)';
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE NOT IN (-955, -1408) THEN RAISE; END IF;
+END;
+/
+
+BEGIN
+  EXECUTE IMMEDIATE 'CREATE INDEX ix_files_entity ON files (entity_type, entity_oid)';
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE NOT IN (-955, -1408) THEN RAISE; END IF;
+END;
+/
+
+BEGIN
+  EXECUTE IMMEDIATE 'CREATE INDEX ix_files_sha256 ON files (owner_oid, sha256)';
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE NOT IN (-955, -1408) THEN RAISE; END IF;
+END;
+/
+
+BEGIN
+  EXECUTE IMMEDIATE 'CREATE INDEX ix_files_parent ON files (parent_oid)';
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE NOT IN (-955, -1408) THEN RAISE; END IF;
+END;
+/
+
+BEGIN
+  EXECUTE IMMEDIATE 'CREATE INDEX ix_files_cleanup ON files (status, deleted_at)';
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE NOT IN (-955, -1408) THEN RAISE; END IF;
+END;
+/
+
+BEGIN
+  EXECUTE IMMEDIATE 'CREATE INDEX ix_files_ocr ON files (ocr_status)';
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE NOT IN (-955, -1408) THEN RAISE; END IF;
+END;
+/
+
+-- ----------------------------------------------------------------------------
+-- FILE_OCR  ← new (per-file OCR results; docs/FILES_API_DESIGN.md §3.1/§7)
+--   raw_json / confidence are written by the (pluggable) OCR engine; ocr_text
+--   is the extracted text.  Also added by V007.
+-- ----------------------------------------------------------------------------
+BEGIN
+  EXECUTE IMMEDIATE '
+CREATE TABLE file_ocr (
+  oid VARCHAR2(24 CHAR) NOT NULL,
+  file_oid VARCHAR2(24 CHAR) NOT NULL,
+  engine VARCHAR2(64 CHAR),
+  engine_version VARCHAR2(64 CHAR),
+  ocr_text CLOB,
+  confidence BINARY_DOUBLE,
+  raw_json CLOB,
+  created_at TIMESTAMP NOT NULL,
+  PRIMARY KEY (oid),
+  CONSTRAINT ck_file_ocr_oid CHECK (REGEXP_LIKE(oid,''^[0-9a-f]{24}$'')),
+  CONSTRAINT ck_file_ocr_raw_json CHECK (raw_json IS JSON)
+)';
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE != -955 THEN RAISE; END IF;
+END;
+/
+
+BEGIN
+  EXECUTE IMMEDIATE 'CREATE INDEX ix_file_ocr_file ON file_ocr (file_oid)';
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE NOT IN (-955, -1408) THEN RAISE; END IF;
+END;
+/
+
+-- ----------------------------------------------------------------------------
+-- FILE_EVENTS  ← new (audit trail; insert + list only, docs/FILES_API_DESIGN.md
+--   §8.5).  An append-only copy of every state transition; the `files.status`
+--   column remains the source of truth for gating.  Also added by V007.
+-- ----------------------------------------------------------------------------
+BEGIN
+  EXECUTE IMMEDIATE '
+CREATE TABLE file_events (
+  oid VARCHAR2(24 CHAR) NOT NULL,
+  file_oid VARCHAR2(24 CHAR) NOT NULL,
+  actor_oid VARCHAR2(24 CHAR),
+  action VARCHAR2(24 CHAR) NOT NULL,
+  from_status VARCHAR2(16 CHAR),
+  to_status VARCHAR2(16 CHAR),
+  detail CLOB,
+  created_at TIMESTAMP NOT NULL,
+  PRIMARY KEY (oid),
+  CONSTRAINT ck_file_events_oid CHECK (REGEXP_LIKE(oid,''^[0-9a-f]{24}$'')),
+  CONSTRAINT ck_file_events_detail CHECK (detail IS JSON)
+)';
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE != -955 THEN RAISE; END IF;
+END;
+/
+
+BEGIN
+  EXECUTE IMMEDIATE 'CREATE INDEX ix_file_events_file ON file_events (file_oid, created_at)';
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE NOT IN (-955, -1408) THEN RAISE; END IF;
+END;
+/
