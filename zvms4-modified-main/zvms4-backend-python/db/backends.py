@@ -90,6 +90,13 @@ def get_daily_exports_repo(session: Any = None) -> Any:
     return OracleDailyExportsRepo(session)
 
 
+def get_files_repo(session: Any = None) -> Any:
+    """Return the ``FilesRepo`` implementation."""
+    from db.repos.oracle.files import OracleFilesRepo
+
+    return OracleFilesRepo(session)
+
+
 __all__ = [
     "get_users_repo",
     "get_groups_repo",
@@ -102,4 +109,5 @@ __all__ = [
     "get_tasks_repo",
     "get_imports_repo",
     "get_daily_exports_repo",
+    "get_files_repo",
 ]

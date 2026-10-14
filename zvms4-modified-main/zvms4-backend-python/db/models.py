@@ -37,7 +37,7 @@ from sqlalchemy import (
     text,
 )
 from sqlalchemy.dialects import oracle
-from sqlalchemy.dialects.oracle import BINARY_DOUBLE, BLOB, NUMBER, VARCHAR2
+from sqlalchemy.dialects.oracle import BINARY_DOUBLE, BLOB, CLOB, NUMBER, VARCHAR2
 from sqlalchemy.types import TypeDecorator
 
 __all__ = ["metadata", "JSONText", "get_table", "table_names"]
@@ -500,6 +500,100 @@ imports = Table(
     Column("content", BLOB, nullable=True),
     _oid_check("imports"),
 )
+
+
+# ---------------------------------------------------------------------------
+# FILES  ← new (Files/attachments API; docs/FILES_API_DESIGN.md §3.1, V007)
+#   `content` is a BLOB read back by db/repos/oracle/files.py; `owner_oid` has
+#   NO foreign key (same relaxation as V006).
+# ---------------------------------------------------------------------------
+
+files = Table(
+    "files",
+    metadata,
+    _oid_pk(),
+    Column("owner_oid", VARCHAR2(24), nullable=True),
+    Column("kind", VARCHAR2(16), nullable=False),
+    Column("parent_oid", VARCHAR2(24), nullable=True),
+    Column("mime", VARCHAR2(64), nullable=False),
+    Column("size_bytes", NUMBER(19), nullable=False),
+    Column("width", NUMBER(10), nullable=True),
+    Column("height", NUMBER(10), nullable=True),
+    Column("sha256", VARCHAR2(64), nullable=False),
+    Column("content", BLOB, nullable=True),
+    Column("original_name", VARCHAR2(255), nullable=True),
+    Column("purpose", VARCHAR2(32), nullable=True),
+    Column("entity_type", VARCHAR2(32), nullable=True),
+    Column("entity_oid", VARCHAR2(24), nullable=True),
+    Column("status", VARCHAR2(16), nullable=False),
+    Column("ocr_status", VARCHAR2(16), nullable=False),
+    Column("ocr_retry", NUMBER(3), nullable=False, server_default=text("0")),
+    Column("created_at", oracle.TIMESTAMP, nullable=False),
+    Column("updated_at", oracle.TIMESTAMP, nullable=True),
+    Column("deleted_at", oracle.TIMESTAMP, nullable=True),
+    _oid_check("files"),
+    CheckConstraint(
+        "kind IN ('original','thumb','derived')",
+        name="ck_files_kind",
+    ),
+    CheckConstraint(
+        "status IN ('stored','processing','ready','verified','rejected',"
+        "'quarantined','deleted')",
+        name="ck_files_status",
+    ),
+    CheckConstraint(
+        "ocr_status IN ('pending','processing','done','failed')",
+        name="ck_files_ocr_status",
+    ),
+)
+Index("ix_files_owner", files.c.owner_oid, files.c.created_at)
+Index("ix_files_entity", files.c.entity_type, files.c.entity_oid)
+Index("ix_files_sha256", files.c.owner_oid, files.c.sha256)
+Index("ix_files_parent", files.c.parent_oid)
+Index("ix_files_cleanup", files.c.status, files.c.deleted_at)
+Index("ix_files_ocr", files.c.ocr_status)
+
+
+# ---------------------------------------------------------------------------
+# FILE_OCR  ← new (per-file OCR results; docs/FILES_API_DESIGN.md §3.1/§7)
+# ---------------------------------------------------------------------------
+
+file_ocr = Table(
+    "file_ocr",
+    metadata,
+    _oid_pk(),
+    Column("file_oid", VARCHAR2(24), nullable=False),
+    Column("engine", VARCHAR2(64), nullable=True),
+    Column("engine_version", VARCHAR2(64), nullable=True),
+    Column("ocr_text", CLOB, nullable=True),
+    Column("confidence", BINARY_DOUBLE, nullable=True),
+    _json("file_ocr", "raw_json", nullable=True),
+    Column("created_at", oracle.TIMESTAMP, nullable=False),
+    _oid_check("file_ocr"),
+    _json_check("file_ocr", "raw_json"),
+)
+Index("ix_file_ocr_file", file_ocr.c.file_oid)
+
+
+# ---------------------------------------------------------------------------
+# FILE_EVENTS  ← new (append-only audit trail; docs/FILES_API_DESIGN.md §8.5)
+# ---------------------------------------------------------------------------
+
+file_events = Table(
+    "file_events",
+    metadata,
+    _oid_pk(),
+    Column("file_oid", VARCHAR2(24), nullable=False),
+    Column("actor_oid", VARCHAR2(24), nullable=True),
+    Column("action", VARCHAR2(24), nullable=False),
+    Column("from_status", VARCHAR2(16), nullable=True),
+    Column("to_status", VARCHAR2(16), nullable=True),
+    _json("file_events", "detail", nullable=True),
+    Column("created_at", oracle.TIMESTAMP, nullable=False),
+    _oid_check("file_events"),
+    _json_check("file_events", "detail"),
+)
+Index("ix_file_events_file", file_events.c.file_oid, file_events.c.created_at)
 
 
 # ---------------------------------------------------------------------------

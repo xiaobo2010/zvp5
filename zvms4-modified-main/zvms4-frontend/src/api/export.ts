@@ -10,6 +10,7 @@ export * as exports from './exports'
 export * as logs from './logs'
 export * as changelog from './changelog'
 export * as version from './version'
+export * as attachment from './attachment'
 export const time = {
   async reads(
     search: string = '',

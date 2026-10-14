@@ -1,4 +1,5 @@
 export * from './activity'
+export * from './attachment'
 export * from './class'
 export * from './feedback'
 export * from './login'

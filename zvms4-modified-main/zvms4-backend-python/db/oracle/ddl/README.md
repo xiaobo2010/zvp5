@@ -9,6 +9,7 @@ Versioned, hand-written Oracle DDL for the `zvms_new` → Oracle ADB migration.
 | `V003__relax_activities_text_null.sql` | Relaxes `ACTIVITIES.DESCRIPTION/APPROVER/PLACE` to nullable (Mongo `''` → Oracle NULL). Idempotent. |
 | `V004__retire_mongo_tables.sql` | Adds `APP_LOGS`/`EXPORT_TASKS`/`IMPORTS` and extends `GROUPS` with `TYPE`/`PERMISSIONS` on an existing instance. Idempotent. |
 | `V005__add_groups_description.sql` | Adds `GROUPS.DESCRIPTION VARCHAR2(1000)` on an existing instance. Idempotent. |
+| `V007__add_files.sql` | Adds `FILES`/`FILE_OCR`/`FILE_EVENTS` + 8 indexes (Files/attachments API) on an existing instance. Idempotent. |
 | `../models.py` (`db/models.py`) | SQLAlchemy 2.0 Core `MetaData` mirror of V001. |
 | `../ddl_check.py` (`db/ddl_check.py`) | Offline drift check between the two. |
 
@@ -30,6 +31,14 @@ permission-group columns `TYPE` and `PERMISSIONS`. Fresh instances get them from
 `GROUPS.DESCRIPTION` backs the group-description endpoint (currently no group
 carries one). Fresh instances get it from `V001`; existing instances are
 extended by `V005`.
+
+`FILES` / `FILE_OCR` / `FILE_EVENTS` back the Files/attachments API
+(`docs/FILES_API_DESIGN.md` §3): attachment metadata plus normalised bytes in a
+`BLOB` (continuing the `IMPORTS.CONTENT` precedent), per-file OCR results, and an
+append-only audit trail. `FILES.STATUS` is the single source of truth for the
+serve gate; `OWNER_OID` carries no foreign key (same relaxation as `V006`).
+Fresh instances get the three tables from `V001`; existing instances are
+extended by `V007`.
 
 Design conventions (JSON→CLOB+`IS JSON`, ObjectId→`VARCHAR2(24)` lowercase hex,
 naive `TIMESTAMP`, deferred `GROUP_INDICATORS` FK) are documented in the header
