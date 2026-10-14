@@ -333,10 +333,15 @@ async def delete_activity_member_v2(
     if not target_member:
         raise HTTPException(status_code=404, detail="Activity member not found")
 
+    target_activity = await backends.get_activities_repo().get(activity_id)
+    activity_name = (
+        target_activity.get("name") if target_activity else "未知活动"
+    ) or "未知活动"
+
     await backends.get_members_repo().remove(session_id)
 
     log.with_text(
-        f'用户 {await get_user_display_name(user["id"])} 将成员 {await get_user_display_name(target_member["member"])} 移出义工活动（ID: {activity_id}）',
+        f'用户 {await get_user_display_name(user["id"])} 将成员 {await get_user_display_name(target_member["member"])} 移出义工活动《{activity_name}》（类型: {target_member.get("mode")}，时长: {target_member.get("duration")} 小时，ID: {activity_id}）',
         type="activity_member_remove",
     )
     await log.insert_log()
