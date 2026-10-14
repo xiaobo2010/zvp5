@@ -20,6 +20,7 @@ async def read_logs(
     level: str = Query("", description="Comma-separated log levels"),
     time_start: Optional[int] = Query(None, description="Start timestamp (seconds)"),
     time_end: Optional[int] = Query(None, description="End timestamp (seconds)"),
+    xuehai_id: str = Query("", description="Filter by 学海设备 ID (Xuehai-Id header)"),
     user=Depends(get_current_user),
 ):
     if "admin" not in user["per"]:
@@ -38,6 +39,7 @@ async def read_logs(
         levels=levels,
         time_start=time_start,
         time_end=time_end,
+        xuehai_id=xuehai_id,
         page=page,
         size=perpage,
     )

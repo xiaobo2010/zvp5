@@ -89,6 +89,7 @@ def _filter(
     levels: list[str] | None,
     time_start: int | None,
     time_end: int | None,
+    xuehai_id: str = "",
 ) -> list[Any]:
     """Admin-browser ``$match`` (``logs_router``): escaped url/data contains etc."""
     conds: list[Any] = []
@@ -110,6 +111,8 @@ def _filter(
         conds.append(app_logs_tbl.c.ts_raw > time_start)
     if time_end is not None:
         conds.append(app_logs_tbl.c.ts_raw < time_end)
+    if xuehai_id:
+        conds.append(app_logs_tbl.c.xuehai_id == xuehai_id)
     return conds
 
 
@@ -122,9 +125,10 @@ def _list_stmt(
     time_end: int | None,
     page: int,
     size: int,
+    xuehai_id: str = "",
 ):
     stmt = select(*_log_columns())
-    conds = _filter(query, performer, types, levels, time_start, time_end)
+    conds = _filter(query, performer, types, levels, time_start, time_end, xuehai_id)
     if conds:
         stmt = stmt.where(*conds)
     return (
@@ -141,9 +145,10 @@ def _count_stmt(
     levels: list[str] | None,
     time_start: int | None,
     time_end: int | None,
+    xuehai_id: str = "",
 ):
     stmt = select(func.count()).select_from(app_logs_tbl)
-    conds = _filter(query, performer, types, levels, time_start, time_end)
+    conds = _filter(query, performer, types, levels, time_start, time_end, xuehai_id)
     if conds:
         stmt = stmt.where(*conds)
     return stmt
@@ -230,13 +235,16 @@ class OracleAppLogsRepo:
         levels: list[str] | None = None,
         time_start: int | None = None,
         time_end: int | None = None,
+        xuehai_id: str = "",
         page: int = -1,
         size: int = 10,
     ) -> tuple[list[Row], int]:
         page_stmt = _list_stmt(
-            query, performer, types, levels, time_start, time_end, page, size
+            query, performer, types, levels, time_start, time_end, page, size, xuehai_id
         )
-        count_stmt = _count_stmt(query, performer, types, levels, time_start, time_end)
+        count_stmt = _count_stmt(
+            query, performer, types, levels, time_start, time_end, xuehai_id
+        )
         async with _session_for(self._session) as (session, _owns):
             total = (await session.execute(count_stmt)).scalar_one()
             rows = (await session.execute(page_stmt)).all()
