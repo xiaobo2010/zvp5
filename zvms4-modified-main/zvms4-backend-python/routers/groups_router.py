@@ -10,7 +10,7 @@ from fastapi import APIRouter, HTTPException, Depends, Query
 from db import backends
 from pydantic import BaseModel
 
-from util.calculate import calculate_user_time
+from util.calculate import calculate_user_time_bulk
 from util.cert import check_password
 from util.get_class import get_activities_related_to_user
 
@@ -317,11 +317,22 @@ async def get_user_times_in_class(
     count = len(result)
     result.sort(key=lambda user: user.get("id") or "")
     result = result[(page - 1) * perpage : (page - 1) * perpage + perpage]
+    selected_students = [str(user["_id"]) for user in result]
+    user_times = await calculate_user_time_bulk(
+        selected_students, start, end, allow_cache=allow_cache
+    )
+    if not allow_cache and start is None and end is None:
+        for student in selected_students:
+            await backends.get_time_repo().upsert_for_user(
+                student,
+                user_times[student]["on-campus"],
+                user_times[student]["off-campus"],
+                user_times[student]["social-practice"],
+            )
     time = []
+    class_groups: dict[str, Optional[dict]] = {}
     for user in result:
-        user_time = await calculate_user_time(
-            str(user["_id"]), start, end, allow_cache=allow_cache
-        )
+        user_time = user_times[str(user["_id"])]
         if exceeding or shortage:
             more_on_campus = min(
                 round(max(user_time["off-campus"] - 15, 1) / 2, 0), 6.0
@@ -338,7 +349,10 @@ async def get_user_times_in_class(
         class_id = user.get("class_id")
         if class_id is None:
             continue
-        class_group = await backends.get_groups_repo().get(str(class_id))
+        class_key = str(class_id)
+        if class_key not in class_groups:
+            class_groups[class_key] = await backends.get_groups_repo().get(class_key)
+        class_group = class_groups[class_key]
         if class_group is None:
             continue
         doc = {

@@ -3,6 +3,7 @@ from datetime import datetime
 from typing import Literal
 from config import BASE_ON_CAMPUS, BASE_OFF_CAMPUS, BASE_SOCIAL_PRACTICE
 from db import backends
+from db.ids import normalize_oid
 from settings import LANGUAGE
 from typings.time import UserActivityTime
 from utils import validate_object_id
@@ -208,6 +209,65 @@ async def calculate_user_time(
         )
 
     return result
+
+
+async def calculate_user_time_bulk(
+    user_ids: list[str],
+    date_start: datetime | None = None,
+    date_end: datetime | None = None,
+    allow_cache: bool = True,
+):
+    ids = [str(user_id) for user_id in user_ids]
+    results: dict[str, dict] = {}
+    pending: list[str] = []
+
+    if allow_cache and date_start is None and date_end is None:
+        cached = await backends.get_time_repo().list_by_users(ids)
+        cached_index = {normalize_oid(row["user"]): row for row in cached}
+        for user_id in ids:
+            row = cached_index.get(normalize_oid(user_id))
+            if row is None:
+                pending.append(user_id)
+            else:
+                results[user_id] = {
+                    "on-campus": row["on_campus_raw"],
+                    "off-campus": row["off_campus_raw"],
+                    "social-practice": row["social_practice"],
+                }
+    else:
+        pending = list(ids)
+
+    if pending:
+        accepted_activities = await backends.get_activities_repo().list_effective(
+            date_start, date_end
+        )
+        accepted_ids = [str(activity["_id"]) for activity in accepted_activities]
+        accepted_set = set(accepted_ids) if accepted_ids else None
+
+        collections = await backends.get_members_repo().list_by_members(pending)
+
+        aggregates: dict[str, dict] = {}
+        for user_id in pending:
+            bucket = defaultdict(float)
+            bucket["on-campus"] = 0
+            bucket["off-campus"] = 0
+            bucket["social-practice"] = 0
+            aggregates[normalize_oid(user_id)] = bucket
+
+        for collection in collections:
+            if collection["status"] != "effective":
+                continue
+            if accepted_set is not None and collection["activity"] not in accepted_set:
+                continue
+            bucket = aggregates.get(normalize_oid(collection["member"]))
+            if bucket is None:
+                continue
+            bucket[collection["mode"]] += collection["duration"]
+
+        for user_id in pending:
+            results[user_id] = dict(aggregates[normalize_oid(user_id)])
+
+    return results
 
 
 def find_percentile_threshold(
