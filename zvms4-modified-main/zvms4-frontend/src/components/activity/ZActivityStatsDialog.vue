@@ -166,7 +166,7 @@ watch(
     <template #default>
       <div v-loading="loading">
         <div style="text-align: center">
-          <ElSegmented v-model="activeStatistic" :options="statTable" />
+          <ElSegmented v-model="activeStatistic" :options="statTable" aria-label="统计维度切换" />
           <ElButton
             class="px-2"
             type="success"
@@ -175,13 +175,15 @@ watch(
             text
             bg
             circle
+            title="强制刷新统计"
+            aria-label="强制刷新统计"
             @click="reload"
           />
         </div>
         <ElResult v-if="error && !loading" icon="error" :title="error" />
-        <ElEmpty v-else-if="!loading && !hasData" description="暂无统计数据" />
+        <ElEmpty v-else-if="!loading && !hasData" description="暂无统计数据" :image-size="120" />
         <template v-else>
-          <ElRow v-if="activeStatistic === '概览'">
+          <ElRow v-if="activeStatistic === '概览'" class="stats-grid">
             <ElCol :span="4" :sm="6" :xs="8">
               <ElStatistic title="平均值" :value="statistics.description.mean" :precision="1" />
             </ElCol>
@@ -222,14 +224,54 @@ watch(
               />
             </ElCol>
           </ElRow>
-          <Doughnut
-            v-else-if="activeStatistic === '时长分布'"
-            :data="statistics.layersChart"
-            :options="{ responsive: true }"
-          />
+          <div v-else-if="activeStatistic === '时长分布'" class="relative mx-auto max-w-96">
+            <Doughnut
+              role="img"
+              aria-label="活动参与时长分布环形图"
+              :data="statistics.layersChart"
+              :options="{
+                responsive: true,
+                plugins: {
+                  legend: { position: 'bottom', labels: { boxWidth: 12, boxHeight: 12 } },
+                  tooltip: {
+                    callbacks: {
+                      label: (ctx) => `${ctx.label}：${ctx.parsed} 人`
+                    },
+                    padding: 10
+                  }
+                }
+              }"
+            />
+            <div
+              v-if="statistics.description.total"
+              class="pointer-events-none absolute inset-0 grid place-items-center"
+              aria-hidden="true"
+            >
+              <span class="text-center">
+                <span class="block text-2xl font-semibold text-gray-700">
+                  {{ statistics.description.total }}
+                </span>
+                <span class="block text-xs text-gray-400">参与人数</span>
+              </span>
+            </div>
+          </div>
         </template>
       </div>
     </template>
     <template #text> 统计 </template>
   </ZButtonOrCard>
 </template>
+
+<style scoped>
+.stats-grid :deep(.el-statistic__number) {
+  font-variant-numeric: tabular-nums;
+}
+
+.stats-grid :deep(.el-statistic__head) {
+  color: var(--el-text-color-secondary);
+}
+
+.stats-grid .el-col {
+  margin-bottom: 8px;
+}
+</style>

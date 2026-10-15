@@ -140,17 +140,29 @@ const reportPage = ref(false)
           <span class="text-lg">{{ t('home.panels.time.title') }}</span>
         </ElCol>
         <ElCol :span="12" style="text-align: right">
-          <ElButton :icon="TableReport" text bg circle @click="reportPage = true"> </ElButton>
+          <ElTooltip content="查看时长明细" placement="top">
+            <ElButton
+              :icon="TableReport"
+              text
+              bg
+              circle
+              aria-label="查看时长明细"
+              @click="reportPage = true"
+            />
+          </ElTooltip>
           <ElDivider v-if="user === userStore._id" direction="vertical" />
-          <ElButton
-            type="success"
-            :disabled="loading"
-            :icon="Refresh"
-            text
-            bg
-            circle
-            @click="getTime"
-          />
+          <ElTooltip content="刷新时长" placement="top">
+            <ElButton
+              type="success"
+              :disabled="loading"
+              :icon="Refresh"
+              text
+              bg
+              circle
+              aria-label="刷新时长"
+              @click="getTime"
+            />
+          </ElTooltip>
         </ElCol>
       </ElRow>
       <ElResult v-if="error && !loading" icon="error" :title="error" />
@@ -180,12 +192,12 @@ const reportPage = ref(false)
         <ElCol :span="width < height ? 8 : 4">
           <ElSpace direction="vertical">
             <span>{{ t('home.panels.time.discount') }}</span>
-            <ElSwitch v-model="exceed" />
+            <ElSwitch v-model="exceed" aria-label="校内校外时长互补" />
           </ElSpace>
         </ElCol>
-        <ElCol v-if="width > height" :span="2" />
+        <ElCol v-if="width > height" :span="1" />
       </ElRow>
-      <ElSkeleton v-else :throttle="200" :rows="4" animated />
+      <ElSkeleton v-else :throttle="200" :rows="4" animated class="py-2" />
     </ElCard>
   </div>
 </template>

@@ -105,15 +105,18 @@ const totalDuration = computed(() => sums.value?.[activeMode.value] ?? 0)
 <template>
   <ElCard shadow="never" v-loading="loading">
     <ElRow class="py-2" align="middle">
-      <ElCol :span="16">
-        <ElSegmented v-model="activeMode" :options="modes">
+      <ElCol :span="16" :xs="24">
+        <ElSegmented v-model="activeMode" :options="modes" aria-label="义工类型切换">
           <template #default="option">
             {{ t('activity.mode.' + option.item + '.name') }}
           </template>
         </ElSegmented>
       </ElCol>
-      <ElCol :span="8" style="text-align: right">
-        <span class="text-sm text-gray-500">共 {{ totalCount }} 项 · 累计 {{ totalDuration.toFixed(1) }} 小时</span>
+      <ElCol :span="8" :xs="24" class="summary-col" style="text-align: right">
+        <span class="text-sm text-gray-500">
+          共 <span class="summary-number">{{ totalCount }}</span> 项 · 累计
+          <span class="summary-number">{{ totalDuration.toFixed(1) }}</span> 小时
+        </span>
         <ElButton
           type="success"
           :disabled="loading"
@@ -121,6 +124,8 @@ const totalDuration = computed(() => sums.value?.[activeMode.value] ?? 0)
           text
           bg
           circle
+          title="刷新明细"
+          aria-label="刷新明细"
           @click="fetchRecords"
         />
       </ElCol>
@@ -130,7 +135,11 @@ const totalDuration = computed(() => sums.value?.[activeMode.value] ?? 0)
       icon="error"
       :title="error"
     />
-    <ElTable v-else-if="hasRecords || loading" :data="filtered" stripe>
+    <ElTable
+      v-else-if="hasRecords || loading"
+      :data="filtered"
+      stripe
+    >
       <ElTableColumn prop="name" :label="t('activity.form.name')" show-overflow-tooltip />
       <ElTableColumn prop="date" :label="t('activity.form.date')" width="128">
         <template #default="{ row }">
@@ -151,11 +160,14 @@ const totalDuration = computed(() => sums.value?.[activeMode.value] ?? 0)
           <ZActivityStatus :type="row.mine?.status ?? 'effective'" size="small" />
         </template>
       </ElTableColumn>
+      <template #empty>
+        <ElEmpty :description="t('activity.mode.' + activeMode + '.name') + '暂无记录'" :image-size="100" />
+      </template>
     </ElTable>
-    <ElEmpty v-else description="暂无数据" />
+    <ElEmpty v-else description="当前类型暂无记录" :image-size="120" />
     <ElPagination
       v-if="!error"
-      class="py-4"
+      class="detail-pagination py-4"
       v-model:current-page="page"
       v-model:page-size="perpage"
       :total="totalCount"
@@ -165,3 +177,29 @@ const totalDuration = computed(() => sums.value?.[activeMode.value] ?? 0)
     />
   </ElCard>
 </template>
+
+<style scoped>
+.summary-col {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.summary-number {
+  color: var(--el-text-color-primary);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.detail-pagination {
+  flex-wrap: wrap;
+  row-gap: 8px;
+}
+
+.detail-pagination :deep(.el-pagination) {
+  flex-wrap: wrap;
+  row-gap: 8px;
+}
+</style>

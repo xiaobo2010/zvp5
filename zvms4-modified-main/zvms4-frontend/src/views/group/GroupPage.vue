@@ -134,7 +134,7 @@ watch(tab, () => {
 </script>
 
 <template>
-  <div class="px-16 py-8">
+  <div class="page-container px-6 lg:px-16 py-8">
     <ElPageHeader v-if="id" :icon="ArrowLeft" @back="() => router.back()" class="py-4">
       <template #content>
         {{ group?.name }}
@@ -159,3 +159,14 @@ watch(tab, () => {
     <ZGroupTimeStatistics v-else-if="tab === 'statistics'" :group-id="id" />
   </div>
 </template>
+
+<style scoped>
+.page-container :deep(.el-page-header) {
+  flex-wrap: wrap;
+  row-gap: 8px;
+}
+
+.page-container :deep(.el-page-header__content) {
+  font-weight: 600;
+}
+</style>
