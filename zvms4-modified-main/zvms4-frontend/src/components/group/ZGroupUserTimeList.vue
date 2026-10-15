@@ -8,9 +8,11 @@ import {
   ElInput,
   ElButton,
   ElSwitch,
-  ElFormItem
+  ElFormItem,
+  ElEmpty,
+  ElResult
 } from 'element-plus'
-import { ref, onMounted, toRefs, watch } from 'vue'
+import { ref, toRefs, watch } from 'vue'
 import api from '@/api'
 import { useI18n } from 'vue-i18n'
 import { useUserStore } from '@/stores/user'
@@ -36,6 +38,7 @@ const time = ref<ActivityTimeRecord[]>([])
 const page = ref(1)
 const perpage = ref(10)
 const loading = ref(false)
+const error = ref('')
 const search = ref('')
 const total = ref(0)
 const diff = ref(false)
@@ -50,52 +53,70 @@ watch(height, () => {
   tableHeight.value = height.value * 0.6
 })
 
-onMounted(() => {
-  api.group.readOne(id.value).then((res) => {
-    group.value = res
-  })
-})
+async function loadGroup() {
+  if (!id.value) {
+    group.value = undefined
+    return
+  }
+  try {
+    group.value = await api.group.readOne(id.value)
+  } catch {
+    group.value = undefined
+  }
+}
 
-watch(id, () => {
-  api.group.readOne(id.value).then((res) => {
-    group.value = res
-  })
-})
+watch(id, loadGroup, { immediate: true })
 
 const refresh = async () => {
+  error.value = ''
   loading.value = true
-  const res =
-    id.value === ''
-      ? await api.time.reads(search.value, page.value, perpage.value, sort.value, asc.value)
-      : await api.group.reads.time(
-          id.value,
-          page.value,
-          perpage.value,
-          search.value,
-          false,
-          diff.value,
-          sort.value,
-          asc.value
-        )
-  if (res) {
+  try {
+    const res =
+      id.value === ''
+        ? await api.time.reads(search.value, page.value, perpage.value, sort.value, asc.value)
+        : await api.group.reads.time(
+            id.value,
+            page.value,
+            perpage.value,
+            search.value,
+            false,
+            diff.value,
+            sort.value,
+            asc.value
+          )
+    if (res) {
+      time.value = []
+      time.value.push(...res.time)
+      total.value = res.size
+    } else {
+      time.value = []
+      total.value = 0
+    }
+  } catch {
     time.value = []
-    time.value.push(...res.time)
-    total.value = res.size
+    total.value = 0
+    error.value = '时长列表加载失败，请稍后重试'
+  } finally {
+    loading.value = false
   }
-  loading.value = false
 }
-onMounted(refresh)
-watch(id, refresh)
-watch(page, refresh)
-watch(diff, refresh)
+
+watch([id, page, diff], refresh, { immediate: true })
+
 watch(perpage, () => {
-  page.value = 1
-  refresh()
+  if (page.value !== 1) {
+    page.value = 1
+  } else {
+    refresh()
+  }
 })
 
 function handleSearch() {
-  page.value = 1
-  refresh()
+  if (page.value !== 1) {
+    page.value = 1
+  } else {
+    refresh()
+  }
 }
 
 async function onSortChange(data: {
@@ -128,7 +149,8 @@ async function onSortChange(data: {
           <ElSwitch v-model="diff"></ElSwitch>
         </ElFormItem>
       </div>
-      <ElTable :data="time" stripe :max-height="tableHeight" @sort-change="onSortChange">
+      <ElResult v-if="error && !loading" icon="error" :title="error" />
+      <ElTable v-else :data="time" stripe :max-height="tableHeight" @sort-change="onSortChange">
         <ElTableColumn prop="name" :label="t('manage.groupDetails.userList.columns.name')" />
         <ElTableColumn prop="id" sortable :label="t('manage.groupDetails.userList.columns.id')" />
         <ElTableColumn prop="on-campus" :label="t('activity.mode.on-campus.short')" v-if="diff">
@@ -227,6 +249,7 @@ async function onSortChange(data: {
           </template>
         </ElTableColumn>
       </ElTable>
+      <ElEmpty v-if="!loading && !error && time.length === 0" description="暂无数据" />
       <ElPagination
         class="py-1 pt-4"
         v-model:current-page="page"
