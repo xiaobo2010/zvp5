@@ -129,6 +129,8 @@ async def get_user_time_statistics_v2(
 
     :return: User time statistics
     """
+    await validate_read_user_permission(user, user_id, "volunteer")
+
     user_oid = str(validate_object_id(user_id))
     user_document = await backends.get_users_repo().get_by_oid(user_oid)
     if user_document is None:
