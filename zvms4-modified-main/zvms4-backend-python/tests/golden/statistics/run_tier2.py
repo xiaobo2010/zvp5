@@ -487,7 +487,7 @@ async def run(args: argparse.Namespace) -> int:
 
         cfg = oracle_config.load_config()
         scratch_user = "ZVMS_GS_" + secrets.token_hex(4).upper()
-        password = "Zs" + secrets.token_hex(16)
+        password = "Zs" + secrets.token_hex(12)
 
         if await _user_exists(admin, scratch_user):
             if not args.force_drop:
