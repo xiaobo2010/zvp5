@@ -1,0 +1,8 @@
+# Captured slices and dumps carry real ObjectIds (and, before desensitisation,
+# would carry real 学号); never commit them.
+fixtures/
+dump*.json
+dump_*.json
+*.dump.json
+scratch_conn*.json
+__pycache__/

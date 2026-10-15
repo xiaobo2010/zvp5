@@ -1,6 +1,7 @@
 import os
+import re
 from collections import defaultdict
-from typing import cast
+from typing import Any, cast
 import tarfile
 import numpy as np
 import pandas as pd
@@ -14,49 +15,8 @@ from config import (
     BASE_SOCIAL_PRACTICE,
 )
 from db import backends
-from util.calculate import calculate_user_time, time_with_origin
+from db.oracle.session import session_scope
 from util.statement import create_statement_from_kernel_data, TRANSLATIONS
-
-
-async def compute_time():
-    """
-    This function is a placeholder for removing data from the database.
-    It should be implemented to remove specific data as needed.
-    """
-    await backends.get_time_repo().clear_for_all()
-    users = await backends.get_users_repo().list_all()
-    for user in users:
-        user_id = str(user["_id"])
-        await calculate_user_time(user_id, allow_cache=False)
-
-
-async def compute_ay_time():
-    await backends.get_time_repo().clear_academic_years()
-    users = await backends.get_users_repo().list_all()
-    now = datetime.now()
-    ay = now.year if now.month >= 9 else now.year - 1
-    soy = datetime.now().replace(
-        month=8, day=1, year=ay, hour=0, minute=0, second=0, microsecond=0
-    )
-    eoy = datetime.now().replace(
-        month=7, day=31, year=ay + 1, hour=23, minute=59, second=59, microsecond=999999
-    )
-    for user in users:
-        user_id = str(user["_id"])
-        entry = user_id[:4]
-        result = await calculate_user_time(
-            user_id, date_start=soy, date_end=eoy, allow_cache=False
-        )
-        await backends.get_time_repo().upsert_academic_year(
-            user_id,
-            entry,
-            ay,
-            soy,
-            eoy,
-            result["on-campus"],
-            result["off-campus"],
-            result["social-practice"],
-        )
 
 
 async def generate_reports():
@@ -138,7 +98,8 @@ def describe_percentile(items: np.ndarray, step: int, bound: float) -> dict[str,
     percentiles = {}
     for i in range(100, -1, -step):
         percentiles[f"{i}%"] = round(min(np.percentile(items, i).item(), bound), 1)
-    # Deduplicate. If the value is the same, we only keep the last one (i.e., the biggest percentile).
+    # Deduplicate. If the value is the same, only the smallest percentile key is
+    # kept (we iterate from 100% down, so later/smaller keys overwrite earlier ones).
     dictionary = defaultdict(float)
     for key, value in percentiles.items():
         dictionary[value] = key
@@ -239,89 +200,231 @@ def describe_df_statistical_indicators(
     return result
 
 
-async def compute_batch_origins():
-    grades = await backends.get_users_repo().group_oids_by_id_prefix()
-    await backends.get_time_repo().clear_with_origin()
-    await backends.get_time_repo().clear_with_origin_stats()
-    groups = await backends.get_groups_repo().list_non_permission()
-    for grade in grades:
-        await time_with_origin("grade", grade["_id"])
-        await time_with_origin("grade", grade["_id"], 20)
-        await time_with_origin("grade", grade["_id"], 60)
-        await time_with_origin("grade", grade["_id"], 80)
-    for group in groups:
-        await time_with_origin("group", str(group["_id"]))
-        await time_with_origin("group", str(group["_id"]), 20)
-        await time_with_origin("group", str(group["_id"]), 60)
-        await time_with_origin("group", str(group["_id"]), 80)
+_MODES = ("on-campus", "off-campus", "social-practice")
+_BASE_TOTAL = BASE_ON_CAMPUS + BASE_OFF_CAMPUS + BASE_SOCIAL_PRACTICE
+_REQUIRE_PERCENTAGES = (0, 20, 60, 80)
 
-async def compute_group_indicators():
+
+def _adjusted_frame(df: pd.DataFrame) -> pd.DataFrame:
+    """Fold raw hours into the on/off/social columns and add ``percentage``.
+
+    Reuses :func:`process_time_data` (the ``np.round(..., 1)`` on the transferred
+    hours stays in Python on purpose, so it never diverges from Oracle's
+    half-away-from-zero ``ROUND``).
+
+    ``percentage`` mirrors ``UserActivityTime.percentage`` (``typings/time.py``):
+    it folds from the *raw* columns (no ``np.round``) and clamps the shortfall
+    per mode, so a surplus in one mode never offsets a deficit in another and
+    the result cannot exceed 100%. This is the exact filter the old
+    ``time_with_origin`` applied via ``require_percentage``.
     """
-    This function computes group indicators based on the time data of users.
-    """
+    columns = [
+        "user_oid",
+        "grade",
+        "class_oid",
+        "on-campus",
+        "off-campus",
+        "social-practice",
+        "percentage",
+    ]
+    if df is None or df.empty:
+        return pd.DataFrame(columns=columns)
+    # ``process_time_data`` fills NaN in place, which would coerce a NULL
+    # ``class_oid`` to 0; keep the original so class-less users stay NULL.
+    class_oid = df["class_oid"].copy()
+    process_time_data(df)
+    df["class_oid"] = class_oid
+    # Folded hours as deployed, but recomputed from the raw columns without
+    # ``np.round`` so ``percentage`` matches ``UserActivityTime`` exactly.
+    folded_on = df["on_campus_raw"] + (
+        (df["off_campus_raw"] - BASE_OFF_CAMPUS).clip(lower=0) * OFF_TO_ON_RATE
+    ).clip(lower=0, upper=MAX_EXCEED_DISCOUNT)
+    folded_off = df["off_campus_raw"] + (
+        (df["on_campus_raw"] - BASE_ON_CAMPUS).clip(lower=0) * ON_TO_OFF_RATE
+    ).clip(lower=0, upper=MAX_EXCEED_DISCOUNT)
+    deficit = (
+        (BASE_ON_CAMPUS - folded_on).clip(lower=0)
+        + (BASE_OFF_CAMPUS - folded_off).clip(lower=0)
+        + (BASE_SOCIAL_PRACTICE - df["social_practice"]).clip(lower=0)
+    )
+    df["percentage"] = (_BASE_TOTAL - deficit) / _BASE_TOTAL * 100
+    return df
 
-    groups = await backends.get_groups_repo().list_non_permission()
 
-    for group in groups:
-        users = await backends.get_users_repo().list_by_class(group["_id"])
-        time_graph = await backends.get_time_repo().list_by_users(
-            [str(user["_id"]) for user in users]
-        )
-        time_df = pd.DataFrame(time_graph)
-        df = process_time_data(time_df)
-        if df.empty:
+def _grade_rollups(adjusted: pd.DataFrame) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Per-grade percentiles/indicators keyed by grade (empty groups skipped)."""
+    percentiles: dict[str, Any] = {}
+    indicators: dict[str, Any] = {}
+    if adjusted is None or adjusted.empty:
+        return percentiles, indicators
+    for grade, group in adjusted.groupby("grade"):
+        if group.empty:
             continue
-        # Calculate percentiles and indicators
-        percentiles = describe_df_percentile(
-            df,
-            ["on-campus", "off-campus", "social-practice"],
+        percentiles[str(grade)] = describe_df_percentile(
+            group,
+            list(_MODES),
             step=1,
             bounds=[BASE_ON_CAMPUS, BASE_OFF_CAMPUS, BASE_SOCIAL_PRACTICE],
         )
-        indicators = describe_df_statistical_indicators(
-            df, ["on-campus", "off-campus", "social-practice"]
-        )
-        await backends.get_stats_repo().upsert_group_indicators(
-            str(group["_id"]), percentiles, indicators
-        )
+        indicators[str(grade)] = describe_df_statistical_indicators(group, list(_MODES))
+    return percentiles, indicators
 
 
-async def compute_indicators():
-    """
-    We categorize users by their ID's starting 4 numbers (which indicate the registration year)
-    Then we compute the time indicators for each grade, and classify them.
-    Indicators include percentiles, compliance, and statistical indicators including mean, median, and mode.
-    """
-    await compute_group_indicators()
-    result = await backends.get_users_repo().group_oids_by_id_prefix()
-    percentiles = {}  # Record<grade (str), dict<percentiles_name (str), value (float)>>
-    indicators = {}  # Record<grade (str), dict<indicator_name (str), value (float)>>
-    for item in result:
-        grade = item["_id"]
-        members = await backends.get_time_repo().list_by_users(
-            [str(member) for member in item["originalIds"]]
-        )
-        df = pd.DataFrame(members)
-        df = process_time_data(df)
-        if df.empty:
+def _group_rollup_rows(adjusted: pd.DataFrame) -> list[dict[str, Any]]:
+    """Per-class percentiles/indicators rows (users without a class produce none)."""
+    rows: list[dict[str, Any]] = []
+    if adjusted is None or adjusted.empty:
+        return rows
+    for class_oid, group in adjusted.groupby("class_oid"):
+        if class_oid is None or (isinstance(class_oid, float) and pd.isna(class_oid)):
             continue
-        # Calculate percentiles and indicators
-        percentiles[grade] = describe_df_percentile(
-            df,
-            ["on-campus", "off-campus", "social-practice"],
-            step=1,
-            bounds=[BASE_ON_CAMPUS, BASE_OFF_CAMPUS, BASE_SOCIAL_PRACTICE],
+        if group.empty:
+            continue
+        rows.append(
+            {
+                "group_oid": str(class_oid),
+                "percentiles": describe_df_percentile(
+                    group,
+                    list(_MODES),
+                    step=1,
+                    bounds=[BASE_ON_CAMPUS, BASE_OFF_CAMPUS, BASE_SOCIAL_PRACTICE],
+                ),
+                "indicators": describe_df_statistical_indicators(group, list(_MODES)),
+            }
         )
-        indicators[grade] = describe_df_statistical_indicators(
-            df, ["on-campus", "off-campus", "social-practice"]
+    return rows
+
+
+def _per_user_origins(origins: list[Any]) -> dict[str, dict[str, dict[str, float]]]:
+    """``user_oid -> {origin: {mode: hours}}`` with all three modes initialised."""
+    per_user: dict[str, dict[str, dict[str, float]]] = {}
+    for row in origins:
+        user = str(row["user_oid"])
+        by_origin = per_user.setdefault(user, {})
+        bucket = by_origin.setdefault(row["origin"], {mode: 0.0 for mode in _MODES})
+        if row["mode"] in bucket:
+            bucket[row["mode"]] += float(row["total"])
+    return per_user
+
+
+def _sum_origins(
+    users: list[str], per_user: dict[str, dict[str, dict[str, float]]]
+) -> tuple[dict[str, dict[str, float]], dict[str, float]]:
+    """Sum several users' per-origin breakdowns and recompute the percentage map."""
+    by_origin: dict[str, dict[str, float]] = {}
+    for user in users:
+        for origin, bucket in per_user.get(user, {}).items():
+            target = by_origin.setdefault(origin, {mode: 0.0 for mode in _MODES})
+            for mode in _MODES:
+                target[mode] += bucket.get(mode, 0.0)
+    total = sum(sum(bucket.values()) for bucket in by_origin.values())
+    if total > 0:
+        percentage = {
+            origin: sum(bucket.values()) / total * 100
+            for origin, bucket in by_origin.items()
+        }
+    else:
+        percentage = {}
+    return by_origin, percentage
+
+
+def _origin_user_rows(totals: list[Any], origins: list[Any]) -> list[dict[str, Any]]:
+    """One ``time_with_origin`` row per user (zero/origin-less users included)."""
+    per_user = _per_user_origins(origins)
+    rows: list[dict[str, Any]] = []
+    for total in totals:
+        user = str(total["user_oid"])
+        by_origin, percentage = _sum_origins([user], per_user)
+        rows.append(
+            {
+                "user_oid": user,
+                "data": {"by_origin": by_origin, "percentage_by_origin": percentage},
+            }
         )
+    return rows
 
-    await backends.get_stats_repo().upsert_indicators(percentiles, indicators)
+
+def _origin_stat_rows(
+    totals: list[Any], origins: list[Any], adjusted: pd.DataFrame
+) -> list[dict[str, Any]]:
+    """One ``time_with_origin_stat`` row per scope × ``require_percentage``.
+
+    Grade scope is keyed by the 4-digit grade; group scope by ``class_oid`` (the
+    groups.oid the caller passes through). ``require_percentage > 0`` keeps only
+    users whose folded ``percentage`` meets the threshold.
+    """
+    per_user = _per_user_origins(origins)
+    percentages: dict[str, float] = {}
+    if adjusted is not None and not adjusted.empty:
+        percentages = {
+            str(u): float(p)
+            for u, p in zip(adjusted["user_oid"], adjusted["percentage"])
+        }
+    grades: dict[str, list[str]] = defaultdict(list)
+    groups: dict[str, list[str]] = defaultdict(list)
+    for total in totals:
+        user = str(total["user_oid"])
+        grades[str(total["grade"])].append(user)
+        if total["class_oid"]:
+            groups[str(total["class_oid"])].append(user)
+
+    rows: list[dict[str, Any]] = []
+    for rq in _REQUIRE_PERCENTAGES:
+        for scope, scope_map in (("grade", grades), ("group", groups)):
+            for scope_id, users in scope_map.items():
+                selected = (
+                    users
+                    if rq == 0
+                    else [u for u in users if percentages.get(u, 0.0) >= rq]
+                )
+                by_origin, percentage = _sum_origins(selected, per_user)
+                rows.append(
+                    {
+                        "stat_key": f"{scope}_{scope_id}_{rq}",
+                        "scope": scope,
+                        "scope_id": scope_id,
+                        "require_percentage": rq,
+                        "data": {
+                            "by_origin": by_origin,
+                            "percentage_by_origin": percentage,
+                        },
+                    }
+                )
+    return rows
 
 
-async def compute_tasks():
-    await compute_time()
-    await compute_ay_time()
-    await compute_indicators()
-    await compute_group_indicators()
-    await compute_batch_origins()
+async def rebuild_statistics() -> dict[str, int]:
+    """Rebuild every derived volunteer-time table in a single transaction.
+
+    SQL does the aggregation (``rebuild_*`` / ``aggregate_*`` on the repos),
+    Python does row assembly and JSON serialisation, and there is exactly one
+    ``commit`` here (any failure rolls the whole unit of work back).
+    """
+    now = datetime.now()
+    async with session_scope() as session:
+        try:
+            time_repo = backends.get_time_repo(session)
+            stats_repo = backends.get_stats_repo(session)
+            counts: dict[str, int] = {}
+            counts["user_time"] = await time_repo.rebuild_user_time(now)
+            counts["time_academic_year"] = await time_repo.rebuild_academic_years(now)
+            totals = await time_repo.aggregate_totals_by_user()
+            origins = await time_repo.aggregate_time_by_origin()
+            adjusted = _adjusted_frame(pd.DataFrame(totals))
+            pct, ind = _grade_rollups(adjusted)
+            await stats_repo.rebuild_indicators(pct, ind, now)
+            counts["group_indicators"] = await stats_repo.rebuild_group_indicators(
+                _group_rollup_rows(adjusted), now
+            )
+            counts["time_with_origin"] = await time_repo.rebuild_with_origin(
+                _origin_user_rows(totals, origins), now
+            )
+            counts["time_with_origin_stat"] = await time_repo.rebuild_with_origin_stat(
+                _origin_stat_rows(totals, origins, adjusted), now
+            )
+            await session.commit()
+            print(f"rebuild_statistics done: {counts}")
+            return counts
+        except BaseException:
+            await session.rollback()
+            raise

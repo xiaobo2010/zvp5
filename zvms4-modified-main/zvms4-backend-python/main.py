@@ -28,7 +28,7 @@ from db import backends
 from db.ids import InvalidOid
 from db.oracle.engine import ping as oracle_ping
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from tasks.compute_time import compute_tasks, generate_reports
+from tasks.compute_time import rebuild_statistics, generate_reports
 
 scheduler = AsyncIOScheduler()
 sio = socketio.AsyncServer(async_mode="asgi")
@@ -145,15 +145,18 @@ async def startup_event():
     print("Starting up...")
     scheduler.start()
 
-    # Schedule compute_time to run daily at 00:00 HKT (UTC+8)
+    # Rebuild the derived volunteer-time statistics daily at 01:00 HKT (UTC+8).
     scheduler.add_job(
-        compute_tasks,
+        rebuild_statistics,
         "cron",
         hour=1,
         minute=0,
         second=0,
         timezone="Asia/Hong_Kong",
         id="daily_compute_time",
+        coalesce=True,
+        max_instances=1,
+        misfire_grace_time=3600,
     )
 
     # Schedule compute_time to run daily at 00:00 HKT (UTC+8)
