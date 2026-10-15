@@ -25,6 +25,8 @@ async def mcp_get_activities(
     MCP endpoint to retrieve activities with pagination and filtering.
     Read-only access to activity data for AI agents.
     """
+    if "admin" not in user["per"]:
+        raise HTTPException(status_code=403, detail="权限不足")
 
     # Validate activity types
     if activity_type == "all" or activity_type == "":
@@ -89,6 +91,9 @@ async def mcp_get_activity_details(
     Read-only access for AI agents.
     """
 
+    if "admin" not in user["per"]:
+        raise HTTPException(status_code=403, detail="权限不足")
+
     try:
         activity_oid = validate_object_id(activity_id)
     except:
@@ -129,6 +134,9 @@ async def mcp_get_activity_statistics(
     MCP endpoint to retrieve statistical data for an activity.
     Provides aggregated statistics without exposing individual member data.
     """
+
+    if "admin" not in user["per"]:
+        raise HTTPException(status_code=403, detail="权限不足")
 
     try:
         validate_object_id(activity_id)
@@ -178,6 +186,9 @@ async def mcp_get_activity_types_summary(
     Provides aggregate counts without sensitive details.
     """
 
+    if "admin" not in user["per"]:
+        raise HTTPException(status_code=403, detail="权限不足")
+
     results = await backends.get_activities_repo().types_summary()
 
     summary = {}
@@ -209,6 +220,9 @@ async def mcp_get_activity_search_suggestions(
     MCP endpoint to get activity name suggestions for search functionality.
     Helps AI agents provide better search assistance.
     """
+
+    if "admin" not in user["per"]:
+        raise HTTPException(status_code=403, detail="权限不足")
 
     # Escape the query for regex safety
     escaped_query = re.escape(query)

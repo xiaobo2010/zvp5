@@ -19,6 +19,7 @@ from util.object_id import (
     string_to_option_object_id,
     optional_current_user,
 )
+from util.permission.user import validate_read_user_permission
 from db import backends
 from util.cert import (
     get_hashed_password_by_cert,
@@ -164,9 +165,11 @@ async def auth_user(auth: AuthUser, request: Request):
             id = str(user_doc["_id"])
         else:
             await _log_login_failure(request, submitted_id, xuehai_id, "用户不存在")
+            # Indistinguishable from a wrong password: same status and, below,
+            # the same body, so a probe cannot tell whether the 学号 exists.
             raise HTTPException(
-                status_code=404,
-                detail="User not found",
+                status_code=403,
+                detail="用户名或密码错误",
             )
 
     try:
@@ -175,6 +178,10 @@ async def auth_user(auth: AuthUser, request: Request):
         await _log_login_failure(
             request, submitted_id, xuehai_id, _auth_failure_label(exc)
         )
+        # Normalize the credential failure to the same body as "user not found",
+        # keeping the two paths byte-identical.
+        if exc.detail == "Password incorrect":
+            raise HTTPException(status_code=403, detail="用户名或密码错误")
         raise
 
     user_doc = await backends.get_users_repo().get_by_oid(
@@ -345,6 +352,9 @@ async def read_user(user_oid: str, user=Depends(get_current_user)):
     """
     Return user's information
     """
+    # Check user's permission
+    await validate_read_user_permission(user, user_oid, "volunteer")
+
     # Read user's information
     new_user = await backends.get_users_repo().get_by_oid(
         str(validate_object_id(user_oid))

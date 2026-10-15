@@ -247,7 +247,9 @@ async def export_time(
 
 
 @router.get("/{task_id}")
-async def get_export(task_id: str):
+async def get_export(task_id: str, user=Depends(get_current_user)):
+    if "admin" not in user["per"]:
+        raise HTTPException(status_code=403, detail="权限不足")
     task = await backends.get_tasks_repo().get_by_uuid(uuid.UUID(task_id))
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
@@ -377,7 +379,9 @@ async def get_export_file(
 
 
 @router.get("")
-async def get_export_list():
+async def get_export_list(user=Depends(get_current_user)):
+    if "admin" not in user["per"]:
+        raise HTTPException(status_code=403, detail="权限不足")
     result = []
     for task_id, task in enumerate(await backends.get_tasks_repo().list_all()):
         result.append(
