@@ -33,14 +33,45 @@ async def read_times(
     if not query:
         return {"status": "ok", "code": 200, "data": [], "metadata": {"size": 0}}
 
-    user_times, count = await backends.get_time_repo().list_by_search(
-        query,
-        user is not None,
-        sortkey.get(sort, sort),
-        not asc,
-        page,
-        perpage,
-    )
+    # Narrow the searchable population by role: admin/department see everyone,
+    # a secretary only their own class, a student only themselves.
+    per = user.get("per") or []
+    sort_field = sortkey.get(sort, sort)
+    time_repo = backends.get_time_repo()
+
+    if "admin" in per or "department" in per:
+        user_times, count = await time_repo.list_by_search(
+            query,
+            user is not None,
+            sort_field,
+            not asc,
+            page,
+            perpage,
+        )
+    else:
+        caller = await backends.get_users_repo().get_by_oid(user["id"])
+        if caller is None:
+            return {"status": "ok", "code": 200, "data": [], "metadata": {"size": 0}}
+        if "secretary" in per and caller.get("class_id") is not None:
+            user_times, count = await time_repo.list_by_class(
+                str(caller["class_id"]),
+                query,
+                sort_field,
+                not asc,
+                page,
+                perpage,
+            )
+        else:
+            # Students (and a secretary with no class) are pinned to their own
+            # business ID; `logged_in=False` matches `id` exactly.
+            user_times, count = await time_repo.list_by_search(
+                str(caller["id"]),
+                False,
+                sort_field,
+                not asc,
+                page,
+                perpage,
+            )
     results = []
 
     for user in user_times:

@@ -19,6 +19,7 @@ from util.object_id import (
     get_current_user,
     validate_object_id,
 )
+from util.permission.user import validate_read_group_permission
 from typings.log import inject_log
 from util.user import get_user_display_name
 
@@ -112,10 +113,11 @@ async def get_groups(
 
 
 @router.get("/{group_id}")
-async def get_group(group_id: str):
+async def get_group(group_id: str, user=Depends(get_current_user)):
     """
     Get a group
     """
+    await validate_read_group_permission(user, group_id, "volunteer")
 
     result = await backends.get_groups_repo().get_permission_group(group_id)
 
