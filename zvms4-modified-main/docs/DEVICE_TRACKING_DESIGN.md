@@ -1,6 +1,7 @@
 # 设备追踪 / 学海 ID 日志设计（APP_LOGS.XUEHAI_ID）
 
 > **v1（2026-10-14）**：采集链已在主干落地（`f74b0bc` / `66a593f`「采集学海ID——为平板加固做准备」）；本设计稿固化其**契约**，并补上本轮新增的 **按学海 ID 查询 + 索引**。状态：**采集与查询已实施**；设备↔用户强绑定为**未实施**的后续项。
+> **v2（2026-10-15）**：修复「一条都采不到」——初版 `getXuehaiId()` 只读学海浏览器桥 `window.xhBrowserJava`，而**资料中心 App 无此桥**，导致其请求头恒不发送。现改为**双源**：桥优先，UA（资料中心 `userId/<id>`）兜底（§2、§7.1）。
 > 基线仓库：`zvms4-modified-main/`，后端 `zvms4-backend-python/`。
 > 来源：zvp 旧代码（`zvp5-repo/zvp-latest`）学海 API 只读排查 + 本仓 LOGS/APP_LOGS schema 与日志链核实。
 
@@ -8,7 +9,7 @@
 
 ## 0. TL;DR
 
-1. **要记什么**：每条应用日志（`APP_LOGS`）记录**发起该请求的设备的学海用户 ID**（`XUEHAI_ID` 列），取值来自前端注入的 `Xuehai-Id` 请求头，源头是学海浏览器 / 资料中心的 `window.xhBrowserJava.getUserId()`。
+1. **要记什么**：每条应用日志（`APP_LOGS`）记录**发起该请求的设备的学海用户 ID**（`XUEHAI_ID` 列），取值来自前端注入的 `Xuehai-Id` 请求头。**两个客户端两种来源**：学海浏览器走原生桥 `window.xhBrowserJava.getUserId()`，资料中心 App 走 UA 里的 `userId/<id>`（§2）。
 2. **不记什么**：不落会话指纹 cookie、不落 Clarity-ID、不做登录期设备绑定、不引入学海签名代理——zvp-latest 那套「设备会话 + 绑定 + 外呼」在本仓一律不采用（详见 §6）。
 3. **读**：`GET /api/logs`（admin）现已支持 `xuehai_id` 等值过滤，配合 `APP_LOGS` 行返回的 `xuehai_id`，管理员可**按一台平板反查用过它的平台账号**。
 4. **索引**：新增 `ix_app_logs_xuehai_id`（`V001` fresh + `V008` 存量，`models.py` 同步镜像），`python -m db.ddl_check` 无漂移。
@@ -20,7 +21,7 @@
 
 | # | 事实 | 出处 |
 |---|---|---|
-| D1 | 前端桥接函数 `getXuehaiId()` 取 `window.xhBrowserJava?.getUserId?.()`，非有限正整数归一为 `0` | `zvms4-frontend/src/plugins/ua.ts:23-27` |
+| D1 | 前端 `getXuehaiId()` **双源**：① 原生桥 `window.xhBrowserJava?.getUserId?.()`（学海浏览器 xhbrowser）；② 兜底解析 `navigator.userAgent` 的 `userId/(\w+)`（资料中心 App xhdatacenter，UA 形如 `deviceId/<x> userId/<y>`）。两者都归一等价性为正整数，否则 `0` | `zvms4-frontend/src/plugins/ua.ts:23-33`；来源 `义工平台代码笔记整理.md:1240-1249` |
 | D2 | 请求拦截器按需注入 `Xuehai-Id` 头：仅当 `getXuehaiId() > 0` 且未显式设置时写入 | `zvms4-frontend/src/plugins/axios.ts:61-64` |
 | D3 | `window.xhBrowserJava` 的 TS 声明存在（可选属性） | `zvms4-frontend/src/types/xuehai.d.ts:5` |
 | D4 | 后端读取头 `Xuehai-Id` 并 `.strip()`；头名大小写不敏感由 Starlette 保证 | `zvms4-backend-python/typings/log.py:66-67` |
@@ -42,20 +43,25 @@
 ## 2. 采集链（前端 → 后端 → 库）
 
 ```
-学海浏览器/资料中心 (注入 window.xhBrowserJava)
-        │  getUserId()
-        ▼
-ua.ts:getXuehaiId()  ──►  axios 拦截器注入头  Xuehai-Id: <int>      (D1–D3)
+两个客户端，一个出口
+────────────────────
+学海浏览器 (xhbrowser)              资料中心 App (xhdatacenter)
+  window.xhBrowserJava                 UA: … deviceId/<x> userId/<id> …
+  .getUserId()  ─► 原始 id            （无 xhBrowserJava 桥）
+        │                                    │
+        └────────────► ua.ts:getXuehaiId() ◄─┘   （桥优先，UA 兜底）      (D1)
+                              │
+                              ▼  axios 拦截器注入头  Xuehai-Id: <id>          (D2–D3)
+                              │
+                              ▼  HTTP
+后端 xuehai_id_from(request) = header("Xuehai-Id") or ""                    (D4)
         │
-        ▼  HTTP
-后端 xuehai_id_from(request) = header("Xuehai-Id") or ""            (D4)
-        │
-        ├─ inject_log 依赖  ──► ZVMSLog.xuehai_id                     (D5,D6)
-        ├─ 显式 ZVMSLog(...) ──► （登录/导出/附件）                    (D8)
-        └─ shield 中间件      ──► security_alert 日志                  (D7)
+        ├─ inject_log 依赖  ──► ZVMSLog.xuehai_id                              (D5,D6)
+        ├─ 显式 ZVMSLog(...) ──► （登录/导出/附件）                            (D8)
+        └─ shield 中间件      ──► security_alert 日志                          (D7)
         │
         ▼  AppLogsRepo.insert(url,user,data,ts,type,level,xuehai_id)
-APP_LOGS.XUEHAI_ID  ──►  GET /api/logs?xuehai_id=…（admin 反查）       (D9–D12)
+APP_LOGS.XUEHAI_ID  ──►  GET /api/logs?xuehai_id=…（admin 反查）              (D9–D12)
 ```
 
 **归一语义**：前端非学海设备（`getXuehaiId()` 返回 `0`）**不注入**该头，后端落库为空串 `""`——即「非平板请求」与「未采集」在库中同一表示。
@@ -151,6 +157,11 @@ APP_LOGS.XUEHAI_ID  ──►  GET /api/logs?xuehai_id=…（admin 反查）    
 1. **可伪造**：`Xuehai-Id` 由客户端自报，非学海侧签名校验；不能单独作为封禁/鉴权唯一依据（与 D1–D2 的信任边界一致）。
 2. **PII 边界**：学海 ID 关联到自然人设备，属敏感标识；读端已限 `admin`，且**不写入 URL / 不落 query**，避免经代理 access_log 二次泄漏（见 `docs/FILES_API_DESIGN.md` C10/C14 的同类关注）。
 3. **空值二义**：非平板请求与采集失败均记为 `""`；如需区分，后续可加显式标志（本轮不做）。
+4. **UA 兜底的取值假设**：资料中心 App 分支假定 UA 的 `userId/<y>` 是**原始数字 id**。若实际为 MD5（32 位十六进制）等非数字串，`Number()` 归零 → 仍采集不到；届时需换取 `window.webView.getUserId()`（返回 MD5）并放宽列语义（`VARCHAR2(32)` 可容纳）。**首次上线需用真机 UA 复核。**
+
+**已修复（v2）**
+
+- **资料中心 App 采不到**：初版只读 `window.xhBrowserJava`（学海浏览器桥），资料中心无此桥 → 头恒不发。根因见 §2 双源图；修复 `zvms4-frontend/src/plugins/ua.ts:23-33`。
 
 **后续（未实施，逐项评审后另开）**
 
@@ -165,3 +176,4 @@ APP_LOGS.XUEHAI_ID  ──►  GET /api/logs?xuehai_id=…（admin 反查）    
 - 采集链：`typings/log.py:66-79`、`main.py:111-119`、`frontend/plugins/axios.ts:61-64`（静态核实）。
 - 本轮改动：`routers/logs_router.py`（+`xuehai_id` 参数与下推）、`db/repos/protocols.py`、`db/repos/oracle/app_logs.py`、`db/models.py`、`V001`、`V008`。
 - `python -m compileall` 通过；`python -m db.ddl_check` → `OK 19 tables, 18 indexes - no drift`；`import main` 成功且 `/api/logs` 路由在册。
+- v2 双源：`npm run type-check`（vue-tsc）EXIT=0；逻辑用例——普通浏览器 → `0`、资料中心 UA → `1024321`、学海浏览器桥 → `998877`、异常 `userId/abc` → `0`。

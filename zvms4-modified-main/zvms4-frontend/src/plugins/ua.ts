@@ -21,9 +21,15 @@ export const pad = () => {
 }
 
 export function getXuehaiId(): number {
+  // 学海浏览器（xhbrowser）：原生桥返回原始用户 id
   const raw = window.xhBrowserJava?.getUserId?.()
   const n = Number(raw)
-  return Number.isFinite(n) && n > 0 ? n : 0
+  if (Number.isFinite(n) && n > 0) return n
+  // 资料中心 App（xhdatacenter）：无 xhBrowserJava，UA 形如
+  // `deviceId/<devid> userId/<id>`（userId 为原始用户 id）
+  const m = /userId\/(\w+)/.exec(navigator.userAgent)
+  const u = m ? Number(m[1]) : NaN
+  return Number.isFinite(u) && u > 0 ? u : 0
 }
 
 export const isXuehaiAvailable = () => getXuehaiId() > 0
