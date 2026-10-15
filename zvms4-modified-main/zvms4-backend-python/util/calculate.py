@@ -69,7 +69,11 @@ async def calculate_user_time_with_origin(
     cache_data = await backends.get_time_repo().get_with_origin(user_id) if allow_cache else None
     if cache_data:
         return cache_data['data']
-    db_data = await backends.get_members_repo().list_for_member(user_id, status="effective")
+    accepted = await backends.get_activities_repo().list_effective()
+    accepted_ids = [str(activity["_id"]) for activity in accepted]
+    db_data = await backends.get_members_repo().list_for_member(
+        user_id, status="effective", activity_oids=accepted_ids
+    )
     categorize_by_origin = {} # (certain origin) -> { 'on-campus': float, 'off-campus': float, 'social-practice': float }
     for data in db_data:
         activity = await backends.get_activities_repo().get(data["activity"])

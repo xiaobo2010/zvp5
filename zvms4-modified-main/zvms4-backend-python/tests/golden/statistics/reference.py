@@ -185,6 +185,8 @@ async def _build(session: Any, *, now: datetime | None, log: Any) -> dict[str, i
         for rq in REQUIRE_PERCENTAGES:
             await time_with_origin("group", group_oid, rq)
 
+    await session.commit()
+
     summary = {
         "user_time": len(user_ids),
         "time_academic_year": ay_rows,

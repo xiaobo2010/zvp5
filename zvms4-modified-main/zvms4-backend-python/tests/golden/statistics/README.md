@@ -187,17 +187,29 @@ the old one — the difference is registered here:
 
 | Id | Where | Change | Effect on the differential |
 | --- | --- | --- | --- |
-| **F1** | `util/calculate.py::calculate_user_time_with_origin` | now filters `member_status == "effective"` (the original counted every status) | reference and rebuild agree on `time_with_origin`; the *old deployed* path would have counted pending/refused members |
+| **F1** | `util/calculate.py::calculate_user_time_with_origin` | now filters `member_status == "effective"` **and** the activity's own `status == "effective"` (the original counted every membership status and every activity), keeping the origin breakdown consistent with the `user_time` recompute | reference and rebuild agree on `time_with_origin`; the *old deployed* path would have counted pending/refused members and pending activities |
 | **F2** | `util/calculate.py::time_with_origin` | collects into `kept` instead of `users.remove(...)` while iterating | reference no longer skips elements; old deployed path could |
 | **F4** | `reference.py::_build` (step 2) | `entry = business_id[:4]` instead of the legacy `oid[:4]` (ObjectId's first 4 hex chars — meaningless) | makes the reference's `entry_year` match the new SQL's grade prefix |
 | **group-indicators once** | `reference.py` (step 3) | legacy `compute_tasks` ran `compute_group_indicators` **twice** (directly and via `compute_indicators`); the reference runs it once | no double-write |
 | **academic-year superset** | `tasks/compute_time.py` / `reference.py` | the rebuild writes the **entry** and the capped **graduation** 学年; the legacy loop wrote only the current 学年 | Gate A tolerates `only_right` rows for `time_academic_year`; every overlapping row and any `only_left`/value diff is still fatal |
+| **stat empty scope×rq superset** | `tasks/compute_time.py` / `reference.py` | the rebuild materialises an *empty* `time_with_origin_stat` row (both `by_origin` and `percentage_by_origin` empty) for a scope×require-percentage with no qualifying users; the legacy `time_with_origin` loop skips the upsert for an empty scope | Gate A tolerates `only_right` rows for `time_with_origin_stat` **only** when the extra row is empty; any non-empty extra row, and every `only_left`/value diff, is still fatal |
 
-The last row is the one structural divergence Gate A cannot make disappear: the
-rebuild's `time_academic_year` row set is a strict **superset** of the legacy
-one. `run_tier2.py::_partition_a` therefore treats *extra* academic-year rows as a
-reported known divergence and keeps everything else strict (a legacy row missing
-from the rebuild, or a mismatched value, still fails the gate). See "Risks" below.
+The `academic-year superset` row is the one structural divergence Gate A cannot make
+disappear: the rebuild's `time_academic_year` row set is a strict **superset** of the
+legacy one. The `stat empty scope×rq superset` row is the same class of superset one
+table over. `run_tier2.py::_partition_a` therefore treats *extra* academic-year rows
+and *empty* extra `time_with_origin_stat` rows as reported known divergences and
+keeps everything else strict (a legacy row missing from the rebuild, or a mismatched
+value, still fails the gate).
+
+> **Known gap — academic-year whitelist has no upper bound.** The `only_right`
+> tolerance for `time_academic_year` accepts *any* number of extra rows. A
+> submission-error rollback that left the `time_academic_year` write path partially
+> committed once inflated this count and was only caught by inspecting the gate
+> output by hand (see RC-2 in the fix report). Recommendation for a follow-up: add a
+> threshold warning (e.g. fail when known `only_right` rows exceed a fixture-derived
+> bound) so a real regression cannot hide inside an unbounded superset. **Not
+> implemented here — note only.**
 
 ---
 
