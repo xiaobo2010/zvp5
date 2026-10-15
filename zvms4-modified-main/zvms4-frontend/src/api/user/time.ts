@@ -1,14 +1,9 @@
 import axios from '@/plugins/axios'
-import type { Response, UserActivityTimeSums } from '@/../types'
-import { ElNotification } from 'element-plus'
-import type { ActivityMember } from 'types/activity.v2'
+import type { UserActivityTimeSums } from '@/../types'
+import type { ActivityMember } from '@/../types/activity.v2'
 
 async function getUserTime(user: string) {
-  return (await axios(`/v2/users/${user}/time`)).data as {
-    'on-campus': number
-    'off-campus': number
-    'social-practice': number
-  }
+  return (await axios(`/v2/users/${user}/time`)).data as UserActivityTimeSums
 }
 
 export interface UserActivityTimePercentile {

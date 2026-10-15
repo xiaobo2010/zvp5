@@ -1,4 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router'
+import { cancelInFlightRequests } from '@/plugins/inflight'
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -101,6 +102,7 @@ const router = createRouter({
 // 学海平板 / 资料中心以 `/index.html` 作为应用入口 URL（旧版 hash 路由会忽略该路径，
 // 切换到 history 路由后它会命中 `/:pathMatch(.*)*` 渲染 404 页）。统一归一化到 SPA 根。
 router.beforeEach((to) => {
+  cancelInFlightRequests()
   if (to.path === '/index.html' || to.path.endsWith('/index.html')) {
     return { path: '/', replace: true }
   }

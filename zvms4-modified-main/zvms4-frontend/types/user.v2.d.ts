@@ -16,9 +16,3 @@ export interface UserLogin {
   id: number
   password: string
 }
-
-export interface UserActivityTimeSums {
-  onCampus: number
-  offCampus: number
-  socialPractice: number
-}

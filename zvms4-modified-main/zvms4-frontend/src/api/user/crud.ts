@@ -1,38 +1,12 @@
 import { temporaryToken } from '@/plugins/short-token'
 import type { User, Response } from '@/../types'
 import { ElNotification } from 'element-plus'
-import nprogress from 'nprogress'
-import axiosExported, { AxiosError } from 'axios'
-import { baseURL, default as axios } from '@/plugins/axios.ts'
+import axios from '@/plugins/axios.ts'
 
 async function getUser(id: string, overrideAxios: boolean = true) {
-  const instance = axiosExported.create({
-    baseURL,
-    withCredentials: true,
-    timeout: 24000,
-    headers: {
-      'Content-type': 'application/json',
-      Authorization: localStorage.getItem('token') ? `Bearer ${localStorage.getItem('token')}` : ''
-    }
-  })
-  instance.interceptors.response.clear()
-  instance.interceptors.response.use(
-    (response) => {
-      nprogress.done()
-      return response.data
-    },
-    (error: Error | AxiosError) => {
-      nprogress.done()
-      console.log(error, 'error')
-      return {
-        status: 'error',
-        code: (error instanceof AxiosError ? error.response?.status : 500) ?? 500,
-        message: error.message
-      }
-    }
-  )
-  const axiosInstance = overrideAxios ? instance : axios
-  const result = (await axiosInstance(`/users/${id}`)) as Response<User>
+  const result = (
+    await axios(`/users/${id}`, overrideAxios ? { timeout: 24000 } : undefined)
+  ).data as Response<User>
   if (result.status === 'error') {
     throw result
   }

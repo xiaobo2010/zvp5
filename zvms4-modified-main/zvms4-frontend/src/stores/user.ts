@@ -1,9 +1,27 @@
 import api from '@/api'
-import type { User, UserPosition, UserProfile } from '@/../types'
+import type { User, UserPosition, UserProfile, UserActivityTimeSums } from '@/../types'
 import { defineStore } from 'pinia'
 import { ElNotification } from 'element-plus'
 import { useRouter } from 'vue-router'
 import { getUserPositions } from '@/utils/groupPosition'
+
+interface UserTime {
+  onCampus: number
+  offCampus: number
+  socialPractice: number
+}
+
+/**
+ * @description Normalize the backend kebab-case duration payload into the
+ * camelCase shape kept inside the store.
+ */
+function normalizeUserTime(sums: UserActivityTimeSums): UserTime {
+  return {
+    onCampus: sums['on-campus'],
+    offCampus: sums['off-campus'],
+    socialPractice: sums['social-practice']
+  }
+}
 
 export const useUserStore = defineStore('user', {
   state: () => ({
@@ -82,11 +100,7 @@ export const useUserStore = defineStore('user', {
       this.banned = false
     },
     async getUserActivityTime() {
-      const result = (await api.user.time.read(this._id)) as unknown as {
-        offCampus: number
-        onCampus: number
-        socialPractice: number
-      }
+      const result = normalizeUserTime(await api.user.time.read(this._id))
       this.time.offCampus = result.offCampus
       this.time.onCampus = result.onCampus
       this.time.socialPractice = result.socialPractice
@@ -106,10 +120,11 @@ export const useUserStore = defineStore('user', {
       })
       await this.removeUser()
     },
-    setTime(time: { onCampus: number; offCampus: number; socialPractice: number }) {
-      this.time.onCampus = time.onCampus
-      this.time.offCampus = time.offCampus
-      this.time.socialPractice = time.socialPractice
+    setTime(time: UserActivityTimeSums) {
+      const normalized = normalizeUserTime(time)
+      this.time.onCampus = normalized.onCampus
+      this.time.offCampus = normalized.offCampus
+      this.time.socialPractice = normalized.socialPractice
     },
     relatedGroup(group: string): boolean {
       if (this.position.includes('admin') || this.position.includes('department')) {
