@@ -116,7 +116,6 @@ async function deleteActivity(id: string) {
 }
 
 const refresh = () => emits('refresh')
-/*
 const statistics = ref<{
   description: Record<string, number>
   layers: Array<{ value: number; count: number }>
@@ -142,23 +141,20 @@ async function fetchStatistics() {
     try {
       const description = await api.activity.stats.description(activity.value._id)
       const layers = await api.activity.stats.layers(activity.value._id)
-      // @ts-ignore
       statistics.value.description = description
       statistics.value.layers = layers
-      console.log(statistics.value)
       if (layers && layers.length > 0) {
-        statistics.value.layersChart.labels = layers.map(
-          (layer) =>
-            `${layer.value.toFixed(1)} Hours (${((layer.count / description.total) * 100).toFixed(1)}%)`
-        )
+        const total = description.total ?? 0
+        statistics.value.layersChart.labels = layers.map((layer) => {
+          const percent = total > 0 ? ((layer.count / total) * 100).toFixed(1) : '0.0'
+          return `${layer.value.toFixed(1)} 小时 (${percent}%)`
+        })
         statistics.value.layersChart.datasets = [
           {
             data: layers.map((layer) => layer.count)
           }
         ]
       }
-
-      console.log(statistics.value)
     } catch (error) {
       console.error('Failed to fetch statistics:', error)
     }
@@ -171,9 +167,8 @@ watch(openStatistics, () => {
   }
 })
 
-const statTable = ['Description', 'Layers']
+const statTable = ['概览', '时长分布']
 const activeStatistic = ref(statTable[0])
-*/
 </script>
 
 <template>
@@ -258,7 +253,7 @@ const activeStatistic = ref(statTable[0])
         :activity="activity"
         @refresh="refresh"
       />
-      <!--<ZButtonOrCard
+      <ZButtonOrCard
         class="px-2"
         v-model:open="openStatistics"
         mode="button"
@@ -271,55 +266,55 @@ const activeStatistic = ref(statTable[0])
           <div style="text-align: center">
             <ElSegmented v-model="activeStatistic" :options="statTable" />
           </div>
-          <ElRow v-if="activeStatistic === 'Description'">
+          <ElRow v-if="activeStatistic === '概览'">
             <ElCol :span="4" :sm="6" :xs="8">
-              <ElStatistic title="Mean" :value="statistics.description.mean" :precision="1" />
+              <ElStatistic title="平均值" :value="statistics.description.mean" :precision="1" />
             </ElCol>
             <ElCol :span="4" :sm="6" :xs="8">
-              <ElStatistic title="Median" :value="statistics.description.median" :precision="1" />
+              <ElStatistic title="中位数" :value="statistics.description.median" :precision="1" />
             </ElCol>
             <ElCol :span="4" :sm="6" :xs="8">
-              <ElStatistic title="Mode" :value="statistics.description.mode" :precision="1" />
+              <ElStatistic title="众数" :value="statistics.description.mode" :precision="1" />
             </ElCol>
             <ElCol :span="4" :sm="6" :xs="8">
-              <ElStatistic title="Min" :value="statistics.description.min" :precision="1" />
+              <ElStatistic title="最小值" :value="statistics.description.min" :precision="1" />
             </ElCol>
             <ElCol :span="4" :sm="6" :xs="8">
-              <ElStatistic title="Max" :value="statistics.description.max" :precision="1" />
+              <ElStatistic title="最大值" :value="statistics.description.max" :precision="1" />
             </ElCol>
             <ElCol :span="4" :sm="6" :xs="8">
               <ElStatistic
-                title="Standard variance"
+                title="标准差"
                 :value="statistics.description.std"
                 :precision="1"
               />
             </ElCol>
             <ElCol :span="4" :sm="6" :xs="8">
-              <ElStatistic title="Variance" :value="statistics.description.var" :precision="1" />
+              <ElStatistic title="方差" :value="statistics.description.var" :precision="1" />
             </ElCol>
             <ElCol :span="4" :sm="6" :xs="8">
               <ElStatistic
-                title="25% Percentile"
+                title="25% 分位数"
                 :value="statistics.description['25_percentile']"
                 :precision="1"
               />
             </ElCol>
             <ElCol :span="4" :sm="6" :xs="8">
               <ElStatistic
-                title="75% Percentile"
+                title="75% 分位数"
                 :value="statistics.description['75_percentile']"
                 :precision="1"
               />
             </ElCol>
           </ElRow>
           <Doughnut
-            v-else-if="activeStatistic === 'Layers'"
+            v-else-if="activeStatistic === '时长分布'"
             :data="statistics.layersChart"
             :options="{ responsive: true }"
           />
         </template>
-        <template #text> Statistics </template>
-      </ZButtonOrCard>-->
+        <template #text> 统计 </template>
+      </ZButtonOrCard>
     </div>
     <ElRow>
       <ElCol :span="6">

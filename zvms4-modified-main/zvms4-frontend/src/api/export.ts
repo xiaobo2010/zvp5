@@ -36,7 +36,7 @@ export const time = {
       'on-campus': number
       'off-campus': number
       'social-practice': number
-    }> & {
+    }[]> & {
       metadata: {
         size: number
       }
