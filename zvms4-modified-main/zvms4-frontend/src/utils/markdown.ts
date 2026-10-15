@@ -1,5 +1,6 @@
 import MarkdownIt from 'markdown-it'
 import DOMPurify, { type Config } from 'dompurify'
+import { isXuehaiAvailable } from '@/plugins/ua.ts'
 
 const md = new MarkdownIt({
   html: false,
@@ -41,12 +42,44 @@ const purifyConfig: Config = {
   ALLOW_DATA_ATTR: false
 }
 
+export function isExternalUrl(raw: string): boolean {
+  try {
+    const url = new URL(raw, window.location.href)
+    return (
+      (url.protocol === 'http:' || url.protocol === 'https:') &&
+      url.origin !== window.location.origin
+    )
+  } catch {
+    return false
+  }
+}
+
+function stripExternalImagesOnXuehai(html: string): string {
+  if (!html.includes('<img')) return html
+  const doc = new DOMParser().parseFromString(html, 'text/html')
+  let changed = false
+  for (const img of Array.from(doc.body.querySelectorAll('img[src]'))) {
+    const src = img.getAttribute('src')
+    if (src && isExternalUrl(src)) {
+      img.removeAttribute('src')
+      changed = true
+    }
+  }
+  return changed ? doc.body.innerHTML : html
+}
+
+function sanitizeForRender(html: string): string {
+  const clean = DOMPurify.sanitize(html, purifyConfig) as string
+  if (!isXuehaiAvailable()) return clean
+  return stripExternalImagesOnXuehai(clean)
+}
+
 export function renderMarkdown(src: string | undefined | null): string {
   if (!src || src.trim().length === 0) return ''
-  return DOMPurify.sanitize(md.render(src), purifyConfig) as string
+  return sanitizeForRender(md.render(src))
 }
 
 export function renderMarkdownInline(src: string | undefined | null): string {
   if (!src || src.trim().length === 0) return ''
-  return DOMPurify.sanitize(md.renderInline(src), purifyConfig) as string
+  return sanitizeForRender(md.renderInline(src))
 }
