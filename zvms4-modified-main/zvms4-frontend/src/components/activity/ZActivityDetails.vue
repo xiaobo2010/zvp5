@@ -1,6 +1,6 @@
 <script lang="ts" setup>
 import type { Activity, ActivityMember } from '@/../types/v2'
-import { toRefs, ref, watch } from 'vue'
+import { toRefs, ref, watch, computed } from 'vue'
 import {
   ElButton,
   ElInput,
@@ -88,6 +88,9 @@ const editName = ref(false)
 const name = ref(activity.value.name)
 const editDescription = ref(false)
 const description = ref(activity.value.description)
+const canModify = computed(
+  () => user.position.includes('admin') || user.position.includes('department')
+)
 
 async function submitInfo() {
   try {
@@ -181,7 +184,9 @@ const activeStatistic = ref(statTable[0])
     style="width: 100%"
   >
     <p class="text-xl pl-4" style="width: 100%">
-      <span v-if="!editDescription" @dblclick="editDescription = true">{{ activity.name }}</span>
+      <span v-if="!editDescription" @dblclick="canModify && (editDescription = true)">{{
+        activity.name
+      }}</span>
       <ElInput v-else v-model="name" style="width: 328px" required @keydown.enter="submitInfo">
         <!--<template #append>
           <ElButton class="px-2" type="success" :icon="ArrowRight" @click="submitInfo" />
@@ -199,10 +204,11 @@ const activeStatistic = ref(statTable[0])
       </ElButtonGroup>
     </p>
     <div v-if="!editDescription" class="flex items-start justify-between gap-2 pl-4">
-      <div class="text-sm text-gray-500" @dblclick="editDescription = true">
+      <div class="text-sm text-gray-500" @dblclick="canModify && (editDescription = true)">
         <ZMarkdown :source="activity.description" />
       </div>
       <ElButton
+        v-if="canModify"
         class="flex-shrink-0"
         size="small"
         text
