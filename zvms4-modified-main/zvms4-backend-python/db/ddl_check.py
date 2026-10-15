@@ -240,6 +240,38 @@ def parse_models() -> Dict:
 
 
 # ---------------------------------------------------------------------------
+# known intentional drift
+# ---------------------------------------------------------------------------
+
+# FKs that models.py (the source of truth) declares but V001 deliberately does
+# *not* carry, keyed by ``(table, fk)`` using the parser's canonical FK form
+# ``(local_cols, (referred_table, referred_cols))``.
+#
+# This is a narrow, explicitly enumerated excuse list - NOT a general "a FK may
+# be missing" relaxation. Only the exact ``(table, fk)`` pairs named here are
+# tolerated, on the models->V001 side only; every other missing/extra column,
+# PK, UQ, FK, CHECK or index still fails the check.
+#
+#   group_indicators :: (('group_oid',), ('groups', ('oid',)))
+#     GROUP_INDICATORS.GROUP_OID -> GROUPS(OID) cannot live in V001: a fresh
+#     V001-only instance loads legacy ``zvms.groups`` ids via the ETL, so a
+#     validated FK would fail with ORA-02298. It is supplied instead by
+#     ``V009__statistics_rework.sql`` (see its ORDERING WARNING): the nightly
+#     set-based rebuild rewrites GROUP_OID into the current GROUPS.OID, after
+#     which the FK is satisfiable and V009 adds it. Retire this entry (folding
+#     the FK back into V001) once the Mongo/ETL ingestion path is gone and
+#     legacy group ids can no longer reach a V001-built instance.
+MODELS_ONLY_FKS = {
+    ("group_indicators", (("group_oid",), ("groups", ("oid",)))),
+}
+
+
+def _models_only_fks(table: str) -> set:
+    """Return the FK definitions excused for ``table`` (see MODELS_ONLY_FKS)."""
+    return {fk for tbl, fk in MODELS_ONLY_FKS if tbl == table}
+
+
+# ---------------------------------------------------------------------------
 # reporting
 # ---------------------------------------------------------------------------
 
@@ -263,6 +295,11 @@ def _diff_table(name: str, expected: Dict, actual: Dict) -> List[str]:
             act_set = {actual["pk"]} if actual["pk"] is not None else set()
         else:
             exp_set, act_set = expected[key], actual[key]
+        if key == "fk":
+            # Excuse only the explicitly enumerated remap-gated FKs that V001
+            # deliberately omits (carried by later migrations); see
+            # MODELS_ONLY_FKS. This does not relax any other FK anywhere.
+            exp_set = exp_set - _models_only_fks(name)
         for item in sorted(exp_set - act_set, key=repr):
             problems.append(f"    missing {key.upper()}: {item}")
         for item in sorted(act_set - exp_set, key=repr):

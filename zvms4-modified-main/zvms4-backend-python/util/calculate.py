@@ -43,6 +43,10 @@ async def generate_description(user_id: str):
     return description
 
 
+# NOTE: ``calculate_user_time_with_origin`` and ``time_with_origin`` now have no
+# caller (the set-based ``tasks/compute_time.rebuild_statistics`` replaced them).
+# Kept as part of the read-path/compat surface; the historical per-user write path
+# they fed is no longer used by the recompute.
 async def calculate_user_time_with_origin(
     user_id: str,
     allow_cache: bool = False,
@@ -55,13 +59,17 @@ async def calculate_user_time_with_origin(
     :param allow_cache: If True, do not use cached data
     :param load_cache: If True, load the calculated data into cache
 
+    effective-only: only ``member_status == "effective"`` memberships are counted,
+    matching the ``user_time`` recompute so both read paths agree (the original
+    implementation did not filter ``status``, which was a defect).
+
     :return: User time with origin data
     """
     print(f"Calculating time for user {user_id}.")
     cache_data = await backends.get_time_repo().get_with_origin(user_id) if allow_cache else None
     if cache_data:
         return cache_data['data']
-    db_data = await backends.get_members_repo().list_for_member(user_id)
+    db_data = await backends.get_members_repo().list_for_member(user_id, status="effective")
     categorize_by_origin = {} # (certain origin) -> { 'on-campus': float, 'off-campus': float, 'social-practice': float }
     for data in db_data:
         activity = await backends.get_activities_repo().get(data["activity"])
@@ -106,6 +114,7 @@ async def time_with_origin(
         users = await backends.get_users_repo().list_by_class(
             validate_object_id(scope_id)
         )
+    kept = []
     for user in users:
         await calculate_user_time_with_origin(str(user["_id"]), allow_cache=require_percentage == 0, load_cache=require_percentage == 0)
         if require_percentage > 0:
@@ -119,8 +128,9 @@ async def time_with_origin(
                 _id=''
             )
             if validated.percentage < require_percentage:
-                users.remove(user)
                 continue
+        kept.append(user)
+    users = kept
     data = await backends.get_time_repo().list_with_origin(
         [str(user["_id"]) for user in users]
     )
