@@ -31,7 +31,7 @@ header.setHeader(t('nav.about'))
     <ElCard shadow="never">
       <ElResult
         icon="info"
-        title="义工平台 v4"
+        title="镇海中学义工平台"
         :sub-title="version"
       >
         <template #icon>
