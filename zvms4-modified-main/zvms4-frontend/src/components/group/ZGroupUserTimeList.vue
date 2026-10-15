@@ -143,22 +143,32 @@ async function onSortChange(data: {
       userStore.groups.includes(id)
     "
   >
-    <ElCard shadow="never" v-loading="loading">
+    <ElCard shadow="never" v-loading="loading" class="time-list-card">
       <div style="text-align: right" class="my-2">
         <ElFormItem :label="t('manage.groupDetails.timeList.diff')" style="text-align: right">
-          <ElSwitch v-model="diff"></ElSwitch>
+          <ElSwitch v-model="diff" aria-label="仅显示时长不符的成员" />
         </ElFormItem>
       </div>
-      <ElResult v-if="error && !loading" icon="error" :title="error" />
-      <ElTable v-else :data="time" stripe :max-height="tableHeight" @sort-change="onSortChange">
+      <ElResult v-if="error && !loading" icon="error" :title="error">
+        <template #extra>
+          <ElButton type="primary" text bg @click="refresh">重试</ElButton>
+        </template>
+      </ElResult>
+      <ElTable
+        v-else
+        :data="time"
+        stripe
+        :max-height="tableHeight"
+        @sort-change="onSortChange"
+      >
         <ElTableColumn prop="name" :label="t('manage.groupDetails.userList.columns.name')" />
         <ElTableColumn prop="id" sortable :label="t('manage.groupDetails.userList.columns.id')" />
         <ElTableColumn prop="on-campus" :label="t('activity.mode.on-campus.short')" v-if="diff">
           <template #default="{ row }">
-            <span class="color-green" v-if="row['on-campus'] <= 0">{{
+            <span class="cell-ok" v-if="row['on-campus'] <= 0">{{
               t('manage.groupDetails.timeList.filled')
             }}</span>
-            <span class="color-red" v-else>
+            <span class="cell-low" v-else>
               {{
                 t('manage.groupDetails.timeList.diffed', { time: row['on-campus'].toFixed(1) })
               }}</span
@@ -167,20 +177,20 @@ async function onSortChange(data: {
         </ElTableColumn>
         <ElTableColumn prop="on-campus" sortable :label="t('activity.mode.on-campus.short')" v-else>
           <template #default="{ row }">
-            <span class="color-green" v-if="row['on-campus'] >= 25">{{
+            <span class="cell-ok" v-if="row['on-campus'] >= 25">{{
               row['on-campus'].toFixed(1)
             }}</span>
-            <span class="color-red" v-else>
+            <span class="cell-low" v-else>
               {{ row['on-campus'].toFixed(1) }}
             </span>
           </template>
         </ElTableColumn>
         <ElTableColumn prop="off-campus" :label="t('activity.mode.off-campus.short')" v-if="diff">
           <template #default="{ row }">
-            <span class="color-green" v-if="row['off-campus'] <= 0">{{
+            <span class="cell-ok" v-if="row['off-campus'] <= 0">{{
               t('manage.groupDetails.timeList.filled')
             }}</span>
-            <span class="color-red" v-else>
+            <span class="cell-low" v-else>
               {{
                 t('manage.groupDetails.timeList.diffed', { time: row['off-campus'].toFixed(1) })
               }}</span
@@ -194,10 +204,10 @@ async function onSortChange(data: {
           v-else
         >
           <template #default="{ row }">
-            <span class="color-green" v-if="row['off-campus'] >= 15">{{
+            <span class="cell-ok" v-if="row['off-campus'] >= 15">{{
               row['off-campus'].toFixed(1)
             }}</span>
-            <span class="color-red" v-else>{{ row['off-campus'].toFixed(1) }}</span>
+            <span class="cell-low" v-else>{{ row['off-campus'].toFixed(1) }}</span>
           </template>
         </ElTableColumn>
         <ElTableColumn
@@ -206,10 +216,10 @@ async function onSortChange(data: {
           v-if="diff"
         >
           <template #default="{ row }">
-            <span class="color-green" v-if="row['social-practice'] <= 0">{{
+            <span class="cell-ok" v-if="row['social-practice'] <= 0">{{
               t('manage.groupDetails.timeList.filled')
             }}</span>
-            <span class="color-red" v-else>
+            <span class="cell-low" v-else>
               {{
                 t('manage.groupDetails.timeList.diffed', {
                   time: row['social-practice'].toFixed(1)
@@ -225,10 +235,10 @@ async function onSortChange(data: {
           v-else
         >
           <template #default="{ row }">
-            <span class="color-green" v-if="row['social-practice'] >= 18">{{
+            <span class="cell-ok" v-if="row['social-practice'] >= 18">{{
               row['social-practice'].toFixed(1)
             }}</span>
-            <span class="color-red" v-else>{{ row['social-practice'].toFixed(1) }}</span>
+            <span class="cell-low" v-else>{{ row['social-practice'].toFixed(1) }}</span>
           </template>
         </ElTableColumn>
         <ElTableColumn fixed="right">
@@ -248,10 +258,12 @@ async function onSortChange(data: {
             </ElButton>
           </template>
         </ElTableColumn>
+        <template #empty>
+          <ElEmpty description="暂无数据" :image-size="100" />
+        </template>
       </ElTable>
-      <ElEmpty v-if="!loading && !error && time.length === 0" description="暂无数据" />
       <ElPagination
-        class="py-1 pt-4"
+        class="time-list-pagination py-1 pt-4"
         v-model:current-page="page"
         v-model:page-size="perpage"
         :total="total"
@@ -263,3 +275,20 @@ async function onSortChange(data: {
     </ElCard>
   </div>
 </template>
+
+<style scoped>
+.time-list-card :deep(.cell-ok) {
+  color: var(--el-color-success);
+  font-variant-numeric: tabular-nums;
+}
+
+.time-list-card :deep(.cell-low) {
+  color: var(--el-color-error);
+  font-variant-numeric: tabular-nums;
+}
+
+.time-list-pagination {
+  flex-wrap: wrap;
+  row-gap: 8px;
+}
+</style>
