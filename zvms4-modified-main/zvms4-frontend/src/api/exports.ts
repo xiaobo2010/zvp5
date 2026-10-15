@@ -1,5 +1,6 @@
 import type { Dayjs } from 'dayjs'
 import { axios } from '@/plugins'
+import { downloadBlob } from '@/utils/download'
 
 async function createExportTask(
   type: 'time' | 'users' | 'activities',
@@ -55,15 +56,8 @@ async function downloadTaskFile(
       latex: 'application/octet-stream'
     } as { [key: string]: string }
   )[format]
-  // Use `blob` style to download it
-  const file = new Blob([result.data], { type: mime })
-  const url = URL.createObjectURL(file)
-  const a = document.createElement('a')
-  a.href = url
   const extension = format === 'excel' ? 'xlsx' : format === 'latex' ? 'tex' : format
-  a.download = `${name}.${extension}`
-  a.click()
-  URL.revokeObjectURL(url)
+  downloadBlob(result.data, mime, `${name}.${extension}`)
 }
 
 export { createExportTask as create, queryTaskStatus as query, downloadTaskFile as download }

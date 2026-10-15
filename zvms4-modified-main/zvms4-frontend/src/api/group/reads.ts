@@ -1,5 +1,5 @@
 import axios from '@/plugins/axios'
-import type { Response, User } from '@/../types'
+import type { User, GroupUsersPage, ActivityTimePage } from '@/../types'
 
 export async function users(
   gid: string,
@@ -17,10 +17,7 @@ export async function users(
         pwdm
       }
     })
-  ).data as {
-    members: User[]
-    total: number
-  }
+  ).data as GroupUsersPage
   return {
     users: response.members,
     size: response.total
@@ -75,17 +72,7 @@ export async function time(
         asc
       }
     })
-  ).data as {
-    data: {
-      _id: string
-      name: string
-      id: string
-      'on-campus': number
-      'off-campus': number
-      'social-practice': number
-    }[]
-    metadata: { size: number }
-  }
+  ).data as ActivityTimePage
   return {
     time: response.data,
     size: response.metadata.size

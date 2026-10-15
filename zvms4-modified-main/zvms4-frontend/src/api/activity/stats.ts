@@ -1,4 +1,8 @@
 import axios from '@/plugins/axios'
+import type {
+  ActivityStatisticsDescription,
+  ActivityStatisticsLayer
+} from '@/../types'
 
 async function getActivityStats(aid: string) {
   const response = await axios({
@@ -6,7 +10,7 @@ async function getActivityStats(aid: string) {
     method: 'get'
   })
 
-  return response.data as Record<string, number>
+  return response.data as ActivityStatisticsDescription
 }
 
 async function getActivityDistributionLayers(aid: string) {
@@ -15,7 +19,7 @@ async function getActivityDistributionLayers(aid: string) {
     method: 'get'
   })
 
-  return response.data as Array<{ value: number; count: number }>
+  return response.data as ActivityStatisticsLayer[]
 }
 
 export { getActivityStats as description, getActivityDistributionLayers as layers }

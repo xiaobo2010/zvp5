@@ -7,6 +7,7 @@ import router from '@/router'
 import { useUserStore } from '@/stores/user'
 import { cacheGet, cacheSet } from '@/utils/idbCache'
 import { getXuehaiId } from '@/plugins/ua'
+import { trackRequest, releaseRequest, type TrackedRequestConfig } from '@/plugins/inflight'
 
 const apiBase = import.meta.env.VITE_API_BASE ?? '/api'
 
@@ -29,9 +30,28 @@ function isCacheableGet(config?: InternalAxiosRequestConfig) {
   return responseType === undefined || responseType === 'json'
 }
 
+function isIdempotentGet(config?: InternalAxiosRequestConfig) {
+  return config?.method === 'get'
+}
+
 function cacheKey(config: InternalAxiosRequestConfig) {
   const params = config.params ? JSON.stringify(config.params) : ''
   return `${config.baseURL ?? ''}${config.url ?? ''}${params}`
+}
+
+const RETRYABLE_STATUS = new Set([502, 503, 504])
+const RETRY_BACKOFF_MS = 300
+
+function isRetryableFailure(config: InternalAxiosRequestConfig, error: AxiosError) {
+  if (!isIdempotentGet(config)) {
+    return false
+  }
+  const status = error.response?.status
+  return error.response === undefined || (status !== undefined && RETRYABLE_STATUS.has(status))
+}
+
+function backoff() {
+  return new Promise((resolve) => setTimeout(resolve, RETRY_BACKOFF_MS))
 }
 
 let lastStaleNotice = 0
@@ -62,6 +82,7 @@ axiosInstance.interceptors.request.use(
     if (xuehaiId > 0 && !config.headers['Xuehai-Id']) {
       config.headers['Xuehai-Id'] = String(xuehaiId)
     }
+    trackRequest(config)
     return config
   },
   (error) => {
@@ -74,6 +95,7 @@ axiosInstance.interceptors.request.use(
 
 axiosInstance.interceptors.response.use(
   (response) => {
+    releaseRequest(response.config)
     nprogress.done()
     if (isCacheableGet(response.config)) {
       void cacheSet(cacheKey(response.config), response.data)
@@ -84,20 +106,32 @@ axiosInstance.interceptors.response.use(
     nprogress.done()
     if (axios.isAxiosError(error)) {
       const config = error.config
-      const status = error.response?.status
-      const transportFailed = error.response === undefined
-      if (config && isCacheableGet(config) && (transportFailed || status === 502 || status === 503 || status === 504)) {
-        const cached = await cacheGet(cacheKey(config))
-        if (cached) {
-          noticeStaleCache()
-          const stale: AxiosResponse = {
-            data: cached.data,
-            status: 200,
-            statusText: 'OK',
-            headers: { 'x-zvms-local-cache': String(cached.t) },
-            config
+      releaseRequest(config)
+      if (axios.isCancel(error) || config?.signal?.aborted) {
+        return Promise.reject(error)
+      }
+      if (config && isRetryableFailure(config, error)) {
+        // Offline / server-unavailable: prefer local cache before retrying so the
+        // two recovery paths never fire for the same failure.
+        if (isCacheableGet(config)) {
+          const cached = await cacheGet(cacheKey(config))
+          if (cached) {
+            noticeStaleCache()
+            const stale: AxiosResponse = {
+              data: cached.data,
+              status: 200,
+              statusText: 'OK',
+              headers: { 'x-zvms-local-cache': String(cached.t) },
+              config
+            }
+            return stale
           }
-          return stale
+        }
+        const retryConfig = config as TrackedRequestConfig
+        if (!retryConfig.__retried) {
+          retryConfig.__retried = true
+          await backoff()
+          return axiosInstance(config)
         }
       }
     }
