@@ -35,6 +35,9 @@ importers:
       async-validator:
         specifier: ^4.2.5
         version: 4.2.5
+      axios:
+        specifier: ^1.18.1
+        version: 1.18.1(debug@4.4.1)
       bson-objectid:
         specifier: ^2.0.4
         version: 2.0.4
@@ -168,9 +171,6 @@ importers:
       autoprefixer:
         specifier: ^10.4.21
         version: 10.4.21(postcss@8.5.16)
-      axios:
-        specifier: ^1.18.1
-        version: 1.18.1(debug@4.4.1)
       cypress:
         specifier: ^15.18.0
         version: 15.18.0

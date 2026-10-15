@@ -14,7 +14,7 @@ import { ref, onMounted, toRefs, watch } from 'vue'
 import api from '@/api'
 import { useI18n } from 'vue-i18n'
 import { useUserStore } from '@/stores/user'
-import type { Group } from '@/../types'
+import type { Group, ActivityTimeRecord } from '@/../types'
 import { useWindowSize } from '@vueuse/core'
 import { Search } from '@element-plus/icons-vue'
 
@@ -32,16 +32,7 @@ const props = withDefaults(
   }
 )
 const group = ref<Group>()
-const time = ref<
-  {
-    _id: string
-    name: string
-    id: string
-    'on-campus': number
-    'off-campus': number
-    'social-practice': number
-  }[]
->([])
+const time = ref<ActivityTimeRecord[]>([])
 const page = ref(1)
 const perpage = ref(10)
 const loading = ref(false)

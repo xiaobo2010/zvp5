@@ -1,6 +1,5 @@
-import type { Response } from '@/../types'
+import type { Response, ActivityTimeRecord } from '@/../types'
 import { ElNotification } from 'element-plus'
-import type { UserActivityTimeSums } from 'types/user.v2'
 import axios from '@/plugins/axios.ts'
 
 export * as activity from './activity'
@@ -29,14 +28,7 @@ export const time = {
           asc
         }
       })
-    ).data as Response<{
-      _id: string
-      name: string
-      id: string
-      'on-campus': number
-      'off-campus': number
-      'social-practice': number
-    }[]> & {
+    ).data as Response<ActivityTimeRecord[]> & {
       metadata: {
         size: number
       }
