@@ -5,7 +5,7 @@ import dayjs from '@/plugins/dayjs'
 import { useI18n } from 'vue-i18n'
 import { ElFormItem, ElForm, ElInput, ElScrollbar, ElCard, ElUpload, ElMessage } from 'element-plus'
 import { useWindowSize } from '@vueuse/core'
-import { watch, ref } from 'vue'
+import { computed, watch, ref } from 'vue'
 import { UploadFilled } from '@element-plus/icons-vue'
 import { useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user'
@@ -50,6 +50,15 @@ async function handleError(err: Error) {
     message: JSON.parse(err.message)?.detail
   })
 }
+
+const DESCRIPTION_MAX_LENGTH = 1000
+
+const isDescriptionNearLimit = computed(
+  () => activity.description.length >= DESCRIPTION_MAX_LENGTH * 0.9
+)
+const isDescriptionOverLimit = computed(
+  () => activity.description.length > DESCRIPTION_MAX_LENGTH
+)
 </script>
 
 <template>
@@ -67,7 +76,28 @@ async function handleError(err: Error) {
               <ElInput v-model="activity.name" />
             </ElFormItem>
             <ElFormItem :label="t('activity.form.description')">
-              <ElInput v-model="activity.description" type="textarea" :autosize="{ minRows: 2 }" />
+              <div class="description-field">
+                <ElInput
+                  v-model="activity.description"
+                  type="textarea"
+                  :autosize="{ minRows: 2 }"
+                  :maxlength="DESCRIPTION_MAX_LENGTH"
+                />
+                <div
+                  class="description-count"
+                  :class="{
+                    'is-near-limit': isDescriptionNearLimit && !isDescriptionOverLimit,
+                    'is-over-limit': isDescriptionOverLimit
+                  }"
+                >
+                  {{
+                    t('markdown.editor.count', {
+                      current: activity.description.length,
+                      max: DESCRIPTION_MAX_LENGTH
+                    })
+                  }}
+                </div>
+              </div>
             </ElFormItem>
             <ElFormItem :label="t('manage.upload.label')" required class="w-full">
               <ElUpload
@@ -114,6 +144,27 @@ async function handleError(err: Error) {
 <style scoped>
 .full {
   width: 100%;
+}
+
+.description-field {
+  width: 100%;
+}
+
+.description-count {
+  margin-top: 0.25rem;
+  text-align: right;
+  font-size: 0.75rem;
+  line-height: 1;
+  color: var(--el-text-color-secondary);
+  white-space: nowrap;
+}
+
+.description-count.is-near-limit {
+  color: var(--el-color-warning);
+}
+
+.description-count.is-over-limit {
+  color: var(--el-color-danger);
 }
 
 .actions {
