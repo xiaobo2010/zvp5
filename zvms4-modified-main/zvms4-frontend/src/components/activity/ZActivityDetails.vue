@@ -1,6 +1,6 @@
 <script lang="ts" setup>
 import type { Activity, ActivityMember } from '@/../types/v2'
-import { toRefs, ref, watch, computed } from 'vue'
+import { toRefs, ref, computed } from 'vue'
 import {
   ElButton,
   ElInput,
@@ -8,12 +8,9 @@ import {
   ElCol,
   ElPopconfirm,
   ElButtonGroup,
-  ElStatistic,
-  ElSegmented,
   ElMessage
 } from 'element-plus'
 import categories from './categories.json'
-import { useWindowSize } from '@vueuse/core'
 import { Calendar, ArrowRight, Delete, Plus, Edit } from '@element-plus/icons-vue'
 import dayjs from '@/plugins/dayjs'
 import { useUserStore } from '@/stores/user'
@@ -22,30 +19,14 @@ import {
   ZActivityMember,
   ZActivityType,
   ZButtonOrCard,
-  ZActivityMemberList
+  ZActivityMemberList,
+  ZActivityStatsDialog
 } from '@/components'
 import { ZMarkdown, ZMarkdownEditor } from '@/components/markdown'
 import { useI18n } from 'vue-i18n'
 import api from '@/api'
 import router from '@/router'
 import { StreamlineInterfaceUserEditActionsCloseEditGeometricHumanPencilPersonSingleUpUserWrite } from '@/icons'
-import UilStatistics from '@/icons/UilStatistics.vue'
-import { Doughnut } from 'vue-chartjs'
-import {
-  Chart as ChartJS,
-  Title,
-  Tooltip,
-  Legend,
-  BarElement,
-  CategoryScale,
-  LinearScale,
-  ArcElement,
-  Colors
-} from 'chart.js'
-
-ChartJS.register(Colors, Title, Tooltip, Legend, BarElement, CategoryScale, LinearScale, ArcElement)
-
-const { width, height } = useWindowSize()
 
 const props = withDefaults(
   defineProps<{
@@ -74,7 +55,6 @@ const { t, locale } = useI18n()
 const { activity, mode, membersCount, showDetails, local, memberDetails } = toRefs(props)
 
 const hovered = ref(false)
-const openStatistics = ref(false)
 
 function getDateStatusColor(date: string) {
   const now = dayjs()
@@ -116,59 +96,6 @@ async function deleteActivity(id: string) {
 }
 
 const refresh = () => emits('refresh')
-const statistics = ref<{
-  description: Record<string, number>
-  layers: Array<{ value: number; count: number }>
-  layersChart: {
-    labels: string[]
-    datasets: {
-      label?: string
-      data: number[]
-      backgroundColor?: string[]
-    }[]
-  }
-}>({
-  description: {},
-  layers: [],
-  layersChart: {
-    labels: [],
-    datasets: []
-  }
-})
-
-async function fetchStatistics() {
-  if (activity.value._id) {
-    try {
-      const description = await api.activity.stats.description(activity.value._id)
-      const layers = await api.activity.stats.layers(activity.value._id)
-      statistics.value.description = description
-      statistics.value.layers = layers
-      if (layers && layers.length > 0) {
-        const total = description.total ?? 0
-        statistics.value.layersChart.labels = layers.map((layer) => {
-          const percent = total > 0 ? ((layer.count / total) * 100).toFixed(1) : '0.0'
-          return `${layer.value.toFixed(1)} 小时 (${percent}%)`
-        })
-        statistics.value.layersChart.datasets = [
-          {
-            data: layers.map((layer) => layer.count)
-          }
-        ]
-      }
-    } catch (error) {
-      console.error('Failed to fetch statistics:', error)
-    }
-  }
-}
-
-watch(openStatistics, () => {
-  if (openStatistics.value) {
-    fetchStatistics()
-  }
-})
-
-const statTable = ['概览', '时长分布']
-const activeStatistic = ref(statTable[0])
 </script>
 
 <template>
@@ -253,68 +180,7 @@ const activeStatistic = ref(statTable[0])
         :activity="activity"
         @refresh="refresh"
       />
-      <ZButtonOrCard
-        class="px-2"
-        v-model:open="openStatistics"
-        mode="button"
-        pop-type="dialog"
-        :width="width < height ? '60%' : '30%'"
-        type="warning"
-        :icon="UilStatistics"
-      >
-        <template #default>
-          <div style="text-align: center">
-            <ElSegmented v-model="activeStatistic" :options="statTable" />
-          </div>
-          <ElRow v-if="activeStatistic === '概览'">
-            <ElCol :span="4" :sm="6" :xs="8">
-              <ElStatistic title="平均值" :value="statistics.description.mean" :precision="1" />
-            </ElCol>
-            <ElCol :span="4" :sm="6" :xs="8">
-              <ElStatistic title="中位数" :value="statistics.description.median" :precision="1" />
-            </ElCol>
-            <ElCol :span="4" :sm="6" :xs="8">
-              <ElStatistic title="众数" :value="statistics.description.mode" :precision="1" />
-            </ElCol>
-            <ElCol :span="4" :sm="6" :xs="8">
-              <ElStatistic title="最小值" :value="statistics.description.min" :precision="1" />
-            </ElCol>
-            <ElCol :span="4" :sm="6" :xs="8">
-              <ElStatistic title="最大值" :value="statistics.description.max" :precision="1" />
-            </ElCol>
-            <ElCol :span="4" :sm="6" :xs="8">
-              <ElStatistic
-                title="标准差"
-                :value="statistics.description.std"
-                :precision="1"
-              />
-            </ElCol>
-            <ElCol :span="4" :sm="6" :xs="8">
-              <ElStatistic title="方差" :value="statistics.description.var" :precision="1" />
-            </ElCol>
-            <ElCol :span="4" :sm="6" :xs="8">
-              <ElStatistic
-                title="25% 分位数"
-                :value="statistics.description['25_percentile']"
-                :precision="1"
-              />
-            </ElCol>
-            <ElCol :span="4" :sm="6" :xs="8">
-              <ElStatistic
-                title="75% 分位数"
-                :value="statistics.description['75_percentile']"
-                :precision="1"
-              />
-            </ElCol>
-          </ElRow>
-          <Doughnut
-            v-else-if="activeStatistic === '时长分布'"
-            :data="statistics.layersChart"
-            :options="{ responsive: true }"
-          />
-        </template>
-        <template #text> 统计 </template>
-      </ZButtonOrCard>
+      <ZActivityStatsDialog :aid="activity._id" @refresh="refresh" />
     </div>
     <ElRow>
       <ElCol :span="6">

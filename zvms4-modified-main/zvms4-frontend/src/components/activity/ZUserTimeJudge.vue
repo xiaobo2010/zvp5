@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, toRefs, reactive, watch } from 'vue'
+import { ref, toRefs, reactive, watch, computed } from 'vue'
 import {
   ElCard,
   ElRow,
@@ -21,11 +21,13 @@ import { Refresh } from '@element-plus/icons-vue'
 import api from '@/api'
 import { Certificate, TableReport } from '@icon-park/vue-next'
 import { pad } from '@/plugins/ua.ts'
+import type { UserActivityTimeSums } from '@/../types'
 
 const { width, height } = useWindowSize()
 const userStore = useUserStore()
 const { t } = useI18n()
 const loading = ref(false)
+const error = ref('')
 
 const props = withDefaults(
   defineProps<{
@@ -64,20 +66,48 @@ base.onCampus = onCampus.value
 base.offCampus = offCampus.value
 base.socialPractice = socialPractice.value
 
+// `/v2/users/{id}/time` is readable by the user itself, or by a secretary and
+// above. Pre-judge only for UX; the backend remains the source of truth.
+const canRead = computed(
+  () =>
+    user.value === userStore._id ||
+    userStore.position.includes('admin') ||
+    userStore.position.includes('department') ||
+    userStore.position.includes('secretary')
+)
+
+const sums = computed<UserActivityTimeSums>(() => ({
+  'on-campus': base.onCampus,
+  'off-campus': base.offCampus,
+  'social-practice': base.socialPractice
+}))
+
 async function getTime() {
-  loading.value = true
-  const result = await api.user.time.read(user.value)
-  if (result) {
-    base.onCampus = result['on-campus']
-    base.offCampus = result['off-campus']
-    base.socialPractice = result['social-practice']
-    off.value = base.offCampus + (exceed.value ? getDiscount(base.onCampus, 25, 3) : 0)
-    on.value = base.onCampus + (exceed.value ? getDiscount(base.offCampus, 15, 2) : 0)
-    if (user.value === userStore._id) {
-      userStore.setTime(result)
-    }
+  if (!user.value) return
+  if (!canRead.value) {
+    error.value = '无权限查看该用户时长'
+    loading.value = false
+    return
   }
-  loading.value = false
+  loading.value = true
+  error.value = ''
+  try {
+    const result = await api.user.time.read(user.value)
+    if (result) {
+      base.onCampus = result['on-campus']
+      base.offCampus = result['off-campus']
+      base.socialPractice = result['social-practice']
+      off.value = base.offCampus + (exceed.value ? getDiscount(base.onCampus, 25, 3) : 0)
+      on.value = base.onCampus + (exceed.value ? getDiscount(base.offCampus, 15, 2) : 0)
+      if (user.value === userStore._id) {
+        userStore.setTime(result)
+      }
+    }
+  } catch {
+    error.value = '时长数据加载失败，请稍后重试'
+  } finally {
+    loading.value = false
+  }
 }
 
 getTime()
@@ -100,7 +130,7 @@ const reportPage = ref(false)
 <template>
   <div>
     <ElDialog fullscreen destroy-on-close title="义工时长明细" v-model="reportPage">
-      <ZDetailedAnalysis :id="user" mode="on-campus" />
+      <ZDetailedAnalysis :id="user" mode="on-campus" :sums="sums" />
     </ElDialog>
     <ElCard
       shadow="hover"
@@ -123,7 +153,8 @@ const reportPage = ref(false)
           />
         </ElCol>
       </ElRow>
-      <ElRow class="fill py-2 statistic" v-if="!loading">
+      <ElResult v-if="error && !loading" icon="error" :title="error" />
+      <ElRow v-else-if="!loading" class="fill py-2 statistic">
         <ElCol v-if="width > height" :span="2" />
         <ElCol :span="width < height ? 10 : 4">
           <ZActivityMemberTimeJudge type="on-campus" :realTime="on" />

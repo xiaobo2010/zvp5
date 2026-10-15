@@ -3,7 +3,9 @@ import {
   ElButton,
   ElCard,
   ElCol,
+  ElEmpty,
   ElPagination,
+  ElResult,
   ElRow,
   ElSegmented,
   ElTable,
@@ -15,6 +17,7 @@ import { useI18n } from 'vue-i18n'
 import api from '@/api'
 import dayjs from '@/plugins/dayjs'
 import type { Activity, ActivityMember } from '@/../types/v2'
+import type { UserActivityTimeSums } from '@/../types'
 import { ZActivityDuration, ZActivityStatus } from '@/components'
 
 type UserActivityMine = {
@@ -31,6 +34,7 @@ const props = withDefaults(
   defineProps<{
     id: string
     mode?: ActivityMember['mode']
+    sums?: UserActivityTimeSums
   }>(),
   {
     id: '',
@@ -38,7 +42,7 @@ const props = withDefaults(
   }
 )
 
-const { id } = toRefs(props)
+const { id, sums } = toRefs(props)
 
 const { t } = useI18n()
 
@@ -47,47 +51,55 @@ const activeMode = ref<ActivityMember['mode']>(props.mode)
 
 const records = ref<UserActivity[]>([])
 const loading = ref(false)
+const error = ref('')
+const total = ref(0)
+
+const page = ref(1)
+const perpage = ref(10)
 
 async function fetchRecords() {
-  loading.value = true
-  const collected: UserActivity[] = []
-  const perpage = 100
-  for (let page = 1; page <= 20; page++) {
-    const result = await api.user.activity.read(id.value, page, perpage)
-    if (!result) break
-    collected.push(...result.activities)
-    if (collected.length >= result.total || result.activities.length === 0) break
+  if (!id.value) {
+    records.value = []
+    total.value = 0
+    loading.value = false
+    return
   }
-  records.value = collected
-  loading.value = false
+  loading.value = true
+  error.value = ''
+  try {
+    const result = await api.user.activity.read(id.value, page.value, perpage.value)
+    records.value = result?.activities ?? []
+    total.value = result?.total ?? records.value.length
+  } catch {
+    records.value = []
+    total.value = 0
+    error.value = '明细加载失败，请稍后重试'
+  } finally {
+    loading.value = false
+  }
 }
 
-fetchRecords()
+watch([id, page], fetchRecords, { immediate: true })
 
-watch(id, fetchRecords)
+watch(perpage, () => {
+  if (page.value !== 1) {
+    page.value = 1
+  } else {
+    fetchRecords()
+  }
+})
 
 const filtered = computed(() =>
   records.value.filter((record) => record.mine?.mode === activeMode.value)
 )
 
-const totalCount = computed(() => filtered.value.length)
-const totalDuration = computed(() =>
-  filtered.value.reduce((sum, record) => sum + (record.mine?.duration ?? 0), 0)
-)
+const hasRecords = computed(() => filtered.value.length > 0)
 
-const page = ref(1)
-const perpage = ref(10)
+// Backend does not support server-side mode filtering, so the current page is
+// filtered on the client while the total reflects the whole unfiltered set.
+const totalCount = computed(() => total.value)
 
-const paged = computed(() =>
-  filtered.value.slice((page.value - 1) * perpage.value, page.value * perpage.value)
-)
-
-watch(
-  () => filtered.value.length,
-  () => {
-    if ((page.value - 1) * perpage.value >= filtered.value.length) page.value = 1
-  }
-)
+const totalDuration = computed(() => sums.value?.[activeMode.value] ?? 0)
 </script>
 
 <template>
@@ -113,7 +125,12 @@ watch(
         />
       </ElCol>
     </ElRow>
-    <ElTable :data="paged" stripe>
+    <ElResult
+      v-if="error && !loading"
+      icon="error"
+      :title="error"
+    />
+    <ElTable v-else-if="hasRecords || loading" :data="filtered" stripe>
       <ElTableColumn prop="name" :label="t('activity.form.name')" show-overflow-tooltip />
       <ElTableColumn prop="date" :label="t('activity.form.date')" width="128">
         <template #default="{ row }">
@@ -135,7 +152,9 @@ watch(
         </template>
       </ElTableColumn>
     </ElTable>
+    <ElEmpty v-else description="暂无数据" />
     <ElPagination
+      v-if="!error"
       class="py-4"
       v-model:current-page="page"
       v-model:page-size="perpage"
