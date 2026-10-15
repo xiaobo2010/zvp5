@@ -259,10 +259,9 @@ async def _user_exists(engine: Any, user: str) -> bool:
 
 
 async def _create_scratch_user(engine: Any, user: str, password: str) -> None:
-    quote = '"' if any(c in password for c in "@#$") else ""
     async with engine.begin() as conn:
         await conn.exec_driver_sql(
-            f"CREATE USER {user} IDENTIFIED BY {quote}{password}{quote} "
+            f'CREATE USER {user} IDENTIFIED BY "{password}" '
             f"QUOTA UNLIMITED ON DATA"
         )
     grants = (
@@ -488,7 +487,7 @@ async def run(args: argparse.Namespace) -> int:
 
         cfg = oracle_config.load_config()
         scratch_user = "ZVMS_GS_" + secrets.token_hex(4).upper()
-        password = "Zs" + secrets.token_urlsafe(18)
+        password = "Zs" + secrets.token_hex(16)
 
         if await _user_exists(admin, scratch_user):
             if not args.force_drop:
