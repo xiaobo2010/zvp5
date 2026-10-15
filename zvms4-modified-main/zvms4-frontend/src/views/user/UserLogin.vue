@@ -11,9 +11,6 @@ import {
   ElMessageBox,
   ElMessage,
 } from 'element-plus'
-import {
-  InfoFilled
-} from '@element-plus/icons-vue'
 import { ArrowRight } from '@element-plus/icons-vue'
 import { useUserStore } from '@/stores/user'
 import { useHeaderStore } from '@/stores/header'
@@ -148,12 +145,7 @@ watch(user, async () => {
         </ElFormItem>
       </ElForm>
       <ElRow>
-        <ElCol :span="9" style="text-align: left">
-          <ElButton type="info" text bg :icon="InfoFilled" @click="router.push('/about')">
-            {{ t('nav.about') }}
-          </ElButton>
-        </ElCol>
-        <ElCol :span="15" class="actions">
+        <ElCol :span="24" class="actions">
           <!--<ElButton type="warning" @click="refresh" text bg :icon="Refresh">
             {{ t('nav.login.actions.reset') }}
           </ElButton>-->
