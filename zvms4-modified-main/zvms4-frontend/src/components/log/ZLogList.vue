@@ -22,10 +22,18 @@ const page = ref(1)
 const perpage = ref(10)
 const query = ref('')
 const query2 = ref('')
+const xuehai_id = ref('')
+const xuehai_id2 = ref('')
 const amount = ref(0)
 
 async function refresh() {
-  const result = await api.logs.read(page.value, perpage.value, query.value, user.value)
+  const result = await api.logs.read(
+    page.value,
+    perpage.value,
+    query.value,
+    user.value,
+    xuehai_id.value
+  )
   logs.value = result?.data ?? []
   amount.value = result?.size ?? 0
 }
@@ -34,11 +42,21 @@ refresh()
 watch(page, refresh)
 watch(perpage, refresh)
 watch(query2, refresh)
+watch(xuehai_id2, refresh)
 </script>
 
 <template>
   <div>
-    <ElInput v-model.lazy="query" @keydown.enter="query2 = query" @blur="query2 = query"></ElInput>
+    <div class="flex gap-2">
+      <ElInput v-model.lazy="query" @keydown.enter="query2 = query" @blur="query2 = query"></ElInput>
+      <ElInput
+        v-model.lazy="xuehai_id"
+        class="w-40 shrink-0"
+        placeholder="学海 ID"
+        @keydown.enter="xuehai_id2 = xuehai_id"
+        @blur="xuehai_id2 = xuehai_id"
+      ></ElInput>
+    </div>
     <ZLogCard v-loading="loading" :log="log" v-for="log in logs" :key="log._id" />
     <div class="py-2">
       <ElPagination

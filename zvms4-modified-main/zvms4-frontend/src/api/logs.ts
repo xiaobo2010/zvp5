@@ -7,7 +7,8 @@ export async function read(
   page: number = 1,
   perpage: number = 10,
   query: string = '',
-  user: string = ''
+  user: string = '',
+  xuehai_id: string = ''
 ) {
   const result = (
     await axios('/logs', {
@@ -15,7 +16,8 @@ export async function read(
         page,
         perpage,
         query,
-        performer: user || undefined
+        performer: user || undefined,
+        xuehai_id: xuehai_id || undefined
       }
     })
   ).data as Response<Log[]> & {
