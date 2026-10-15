@@ -602,6 +602,34 @@ Index("ix_file_events_file", file_events.c.file_oid, file_events.c.created_at)
 
 
 # ---------------------------------------------------------------------------
+# USER_DEVICE_BINDINGS  ← new (学海 ID 身份追溯 MVP; observe-only, V010)
+#   user_oid -> USERS(OID) is a real FK (new, empty table - no legacy ids).
+#   A revoked row is kept (status='revoked') rather than deleted; the
+#   (user_oid, xuehai_id) pair is unique so a re-bind reactivates in place.
+# ---------------------------------------------------------------------------
+
+user_device_bindings = Table(
+    "user_device_bindings",
+    metadata,
+    _oid_pk(),
+    Column("user_oid", VARCHAR2(24), nullable=False),
+    Column("xuehai_id", VARCHAR2(32), nullable=False),
+    Column("device_id", VARCHAR2(64), nullable=True),
+    Column("source", VARCHAR2(16), nullable=False, server_default=text("'auto'")),
+    Column("status", VARCHAR2(16), nullable=False, server_default=text("'active'")),
+    Column("note", VARCHAR2(256), nullable=True),
+    Column("created_at", oracle.TIMESTAMP, nullable=False),
+    Column("updated_at", oracle.TIMESTAMP, nullable=False),
+    CheckConstraint(f"REGEXP_LIKE(oid,'{OID_REGEX}')", name="ck_udb_oid"),
+    CheckConstraint("source IN ('auto','admin')", name="ck_udb_source"),
+    CheckConstraint("status IN ('active','revoked')", name="ck_udb_status"),
+    UniqueConstraint("user_oid", "xuehai_id", name="uq_udb_user_xuehai"),
+    ForeignKeyConstraint(["user_oid"], ["users.oid"], name="fk_udb_user"),
+)
+Index("ix_udb_xuehai_id", user_device_bindings.c.xuehai_id)
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 

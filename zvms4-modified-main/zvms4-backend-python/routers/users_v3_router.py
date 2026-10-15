@@ -273,3 +273,111 @@ async def get_user_totp_v3(
     await log.insert_log()
 
     return {"status": "ok", "code": 200, "data": {"otp": code, "exp": exp}}
+
+
+class PutBindingRequest(BaseModel):
+    xuehai_id: str
+    note: Optional[str] = None
+
+
+@router.get("/{user_id}/bindings")
+async def list_user_bindings_v3(
+    user_id: str,
+    user=Depends(get_current_user),
+):
+    """
+    List a user's 学海 device bindings, including revoked ones.
+
+    Permission: admin only.
+    """
+    per = user.get("per") or []
+    if "admin" not in per:
+        raise HTTPException(status_code=403, detail="权限不足")
+
+    oid = validate_object_id(user_id)
+    target = await backends.get_users_repo().get_by_oid(str(oid))
+    if target is None:
+        raise HTTPException(status_code=404, detail="用户不存在")
+
+    rows = await backends.get_bindings_repo().list_for_user(str(oid))
+    data = [
+        {
+            "xuehai_id": row["xuehai_id"],
+            "source": row["source"],
+            "status": row["status"],
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+            "note": row["note"],
+        }
+        for row in rows
+    ]
+    return {"data": data}
+
+
+@router.put("/{user_id}/bindings", status_code=204)
+async def set_user_binding_v3(
+    user_id: str,
+    payload: PutBindingRequest,
+    user=Depends(get_current_user),
+    log=Depends(inject_log),
+):
+    """
+    Bind a user to a 学海 device id. Re-binding revokes the previous active
+    binding(s) and activates the new one.
+
+    Permission: admin only.
+    """
+    per = user.get("per") or []
+    if "admin" not in per:
+        raise HTTPException(status_code=403, detail="权限不足")
+
+    oid = validate_object_id(user_id)
+    target = await backends.get_users_repo().get_by_oid(str(oid))
+    if target is None:
+        raise HTTPException(status_code=404, detail="用户不存在")
+
+    bindings = backends.get_bindings_repo()
+    for row in await bindings.list_for_user(str(oid)):
+        if row["status"] == "active" and row["xuehai_id"] != payload.xuehai_id:
+            await bindings.revoke(str(oid), row["xuehai_id"])
+    await bindings.upsert(str(oid), payload.xuehai_id, "admin", payload.note)
+
+    log.with_text(
+        f"管理员 {await get_user_display_name(user['id'])} 为用户 {target['name']} 绑定了学海设备 {payload.xuehai_id}",
+        type="device_bind",
+    )
+    await log.insert_log()
+
+    return
+
+
+@router.delete("/{user_id}/bindings/{xuehai_id}", status_code=204)
+async def delete_user_binding_v3(
+    user_id: str,
+    xuehai_id: str,
+    user=Depends(get_current_user),
+    log=Depends(inject_log),
+):
+    """
+    Revoke a user's 学海 device binding. The row is kept (status='revoked').
+
+    Permission: admin only.
+    """
+    per = user.get("per") or []
+    if "admin" not in per:
+        raise HTTPException(status_code=403, detail="权限不足")
+
+    oid = validate_object_id(user_id)
+    target = await backends.get_users_repo().get_by_oid(str(oid))
+    if target is None:
+        raise HTTPException(status_code=404, detail="用户不存在")
+
+    await backends.get_bindings_repo().revoke(str(oid), xuehai_id)
+
+    log.with_text(
+        f"管理员 {await get_user_display_name(user['id'])} 为用户 {target['name']} 解绑了学海设备 {xuehai_id}",
+        type="device_unbind",
+    )
+    await log.insert_log()
+
+    return
