@@ -27,14 +27,17 @@ Nothing here opens a connection at import time.
 
 from __future__ import annotations
 
+import re
 from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Any, AsyncIterator
 
-from sqlalchemy import delete, func, insert, or_, select
+from sqlalchemy import case, delete, func, insert, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.ids import new_oid, normalize_oid
+from db.models import activities as activities_tbl
+from db.models import activity_members as members_tbl
 from db.models import time_academic_year as ay_tbl
 from db.models import time_with_origin as origin_tbl
 from db.models import time_with_origin_stat as stat_tbl
@@ -289,8 +292,125 @@ def _insert_with_origin_stat_stmt(
     )
 
 
-def _delete_all_stmt(table: Any):
-    return delete(table)
+_MODES = ("on-campus", "off-campus", "social-practice")
+
+
+def _mode_sum(mode: str):
+    """``SUM(CASE WHEN member_mode = <mode> THEN duration_hours ELSE 0.0 END)``."""
+    return func.sum(case((members_tbl.c.member_mode == mode, members_tbl.c.duration_hours), else_=0.0))
+
+
+def _effective_member_agg():
+    """Per-member per-mode sums over approved members of effective activities.
+
+    ``activity_members am JOIN activities a ON a.oid = am.activity_oid AND
+    a.status = 'effective' WHERE am.member_status = 'effective'`` grouped by
+    ``am.member_oid``. The three mode sums are always present (``COALESCE`` to
+    ``0.0``); the subquery is reused by the user-time / academic-year / totals
+    rebuilds so the aggregation lives in SQL, not Python.
+    """
+    return (
+        select(
+            members_tbl.c.member_oid.label("member_oid"),
+            func.coalesce(_mode_sum("on-campus"), 0.0).label("on_campus_raw"),
+            func.coalesce(_mode_sum("off-campus"), 0.0).label("off_campus_raw"),
+            func.coalesce(_mode_sum("social-practice"), 0.0).label("social_practice"),
+        )
+        .select_from(
+            members_tbl.join(
+                activities_tbl, activities_tbl.c.oid == members_tbl.c.activity_oid
+            )
+        )
+        .where(activities_tbl.c.status == "effective")
+        .where(members_tbl.c.member_status == "effective")
+        .group_by(members_tbl.c.member_oid)
+    )
+
+
+def _rebuild_user_time_stmt():
+    """One row per user (zero-time users included), ascending by oid."""
+    agg = _effective_member_agg().subquery("agg")
+    return (
+        select(
+            users_tbl.c.oid.label("user_oid"),
+            func.coalesce(agg.c.on_campus_raw, 0.0).label("on_campus_raw"),
+            func.coalesce(agg.c.off_campus_raw, 0.0).label("off_campus_raw"),
+            func.coalesce(agg.c.social_practice, 0.0).label("social_practice"),
+        )
+        .select_from(users_tbl.outerjoin(agg, agg.c.member_oid == users_tbl.c.oid))
+        .order_by(users_tbl.c.oid.asc())
+    )
+
+
+def _academic_year_expr():
+    """学年 = year(date) - (month(date) >= 8 ? 0 : 1)."""
+    return func.extract("YEAR", activities_tbl.c.activity_date) - case(
+        (func.extract("MONTH", activities_tbl.c.activity_date) >= 8, 0),
+        else_=1,
+    )
+
+
+def _academic_year_agg_stmt():
+    """Per ``(member_oid, 学年)`` mode sums over double-effective memberships."""
+    ay_expr = _academic_year_expr()
+    return (
+        select(
+            members_tbl.c.member_oid.label("member_oid"),
+            ay_expr.label("academic_year"),
+            func.coalesce(_mode_sum("on-campus"), 0.0).label("on_campus"),
+            func.coalesce(_mode_sum("off-campus"), 0.0).label("off_campus"),
+            func.coalesce(_mode_sum("social-practice"), 0.0).label("social_practice"),
+        )
+        .select_from(
+            members_tbl.join(
+                activities_tbl, activities_tbl.c.oid == members_tbl.c.activity_oid
+            )
+        )
+        .where(activities_tbl.c.status == "effective")
+        .where(members_tbl.c.member_status == "effective")
+        .group_by(members_tbl.c.member_oid, ay_expr)
+    )
+
+
+def _all_users_stmt():
+    return select(users_tbl.c.oid, users_tbl.c.business_id)
+
+
+def _totals_by_user_stmt():
+    """Per-user totals + grade (``substr(business_id,1,4)``) + class, one row each."""
+    agg = _effective_member_agg().subquery("agg")
+    return select(
+        users_tbl.c.oid.label("user_oid"),
+        func.substr(users_tbl.c.business_id, 1, 4).label("grade"),
+        users_tbl.c.class_oid.label("class_oid"),
+        func.coalesce(agg.c.on_campus_raw, 0.0).label("on_campus_raw"),
+        func.coalesce(agg.c.off_campus_raw, 0.0).label("off_campus_raw"),
+        func.coalesce(agg.c.social_practice, 0.0).label("social_practice"),
+    ).select_from(users_tbl.outerjoin(agg, agg.c.member_oid == users_tbl.c.oid))
+
+
+def _time_by_origin_stmt():
+    """Per ``(member_oid, origin, mode)`` duration sums, double-effective only."""
+    return (
+        select(
+            members_tbl.c.member_oid.label("user_oid"),
+            activities_tbl.c.origin.label("origin"),
+            members_tbl.c.member_mode.label("mode"),
+            func.sum(members_tbl.c.duration_hours).label("total"),
+        )
+        .select_from(
+            members_tbl.join(
+                activities_tbl, activities_tbl.c.oid == members_tbl.c.activity_oid
+            )
+        )
+        .where(activities_tbl.c.status == "effective")
+        .where(members_tbl.c.member_status == "effective")
+        .group_by(
+            members_tbl.c.member_oid,
+            activities_tbl.c.origin,
+            members_tbl.c.member_mode,
+        )
+    )
 
 
 def _time_row(mapping: Any) -> Row:
@@ -489,12 +609,172 @@ class OracleTimeRepo:
             if owns:
                 await session.commit()
 
-    async def clear_for_all(self) -> None:
-        stmt = _delete_all_stmt(time_tbl)
-        async with _session_for(self._session) as (session, owns):
-            await session.execute(stmt)
-            if owns:
-                await session.commit()
+    def _require_session(self) -> AsyncSession:
+        if self._session is None:
+            raise RuntimeError(
+                "rebuild_* requires a caller-owned session (single-transaction recompute)"
+            )
+        return self._session
+
+    async def rebuild_user_time(self, now: datetime | None = None) -> int:
+        """Single-transaction replacement of every ``user_time`` row.
+
+        ``DELETE FROM user_time`` then one array-bound ``INSERT`` built from the
+        per-user aggregation (one row per user, zero-time users included). Never
+        commits — the caller owns the unit of work.
+        """
+        session = self._require_session()
+        await session.execute(delete(time_tbl))
+        rows = (await session.execute(_rebuild_user_time_stmt())).all()
+        ts = now or datetime.now()
+        payload = [
+            {
+                "oid": new_oid(),
+                "user_oid": str(row._mapping["user_oid"]),
+                "on_campus_raw": float(row._mapping["on_campus_raw"]),
+                "off_campus_raw": float(row._mapping["off_campus_raw"]),
+                "social_practice": float(row._mapping["social_practice"]),
+                "updated_at": ts,
+            }
+            for row in rows
+        ]
+        if payload:
+            await session.execute(insert(time_tbl), payload)
+        return len(payload)
+
+    async def rebuild_academic_years(self, now: datetime | None = None) -> int:
+        """Single-transaction replacement of every ``time_academic_year`` row.
+
+        Full history: for each user with a 4-digit 学号 prefix, one row for the
+        entry 学年 and one for the (capped) graduation 学年, sourced from the
+        per-``(user, 学年)`` aggregation. Non-numeric prefixes are skipped and
+        counted. Never commits.
+        """
+        session = self._require_session()
+        await session.execute(delete(ay_tbl))
+        agg_rows = (await session.execute(_academic_year_agg_stmt())).all()
+        agg_map = {
+            (str(row._mapping["member_oid"]), int(row._mapping["academic_year"])): row._mapping
+            for row in agg_rows
+        }
+        users = (await session.execute(_all_users_stmt())).all()
+        ts = now or datetime.now()
+        cur_ay = ts.year if ts.month >= 9 else ts.year - 1
+        payload: list[dict[str, Any]] = []
+        skipped = 0
+        for user in users:
+            user_oid = str(user.oid)
+            entry = (user.business_id or "")[:4]
+            if re.fullmatch(r"\d{4}", entry) is None:
+                skipped += 1
+                continue
+            entry_int = int(entry)
+            for ay in {entry_int, min(entry_int + 2, cur_ay)}:
+                agg = agg_map.get((user_oid, ay))
+                payload.append(
+                    {
+                        "oid": new_oid(),
+                        "user_oid": user_oid,
+                        "entry_year": entry,
+                        "academic_year": ay,
+                        "start_of_year": datetime(ay, 8, 1),
+                        "end_of_year": datetime(ay + 1, 7, 31, 23, 59, 59, 999999),
+                        "on_campus": float(agg["on_campus"]) if agg else 0.0,
+                        "off_campus": float(agg["off_campus"]) if agg else 0.0,
+                        "social_practice": float(agg["social_practice"]) if agg else 0.0,
+                    }
+                )
+        if payload:
+            await session.execute(insert(ay_tbl), payload)
+        if skipped:
+            print(f"rebuild_academic_years: skipped {skipped} users with non-numeric id")
+        return len(payload)
+
+    async def aggregate_totals_by_user(self) -> list[Row]:
+        """Per-user totals + ``grade``/``class_oid``, one row per user (zero incl.).
+
+        Replaces the ``indicators`` domain's N+1 read: grade is
+        ``substr(business_id,1,4)`` (no numeric filtering, matching the old
+        ``compute_indicators`` behaviour) and ``class_oid`` may be ``None``.
+        """
+        session = self._require_session()
+        rows = (await session.execute(_totals_by_user_stmt())).all()
+        return [
+            {
+                "user_oid": str(row._mapping["user_oid"]),
+                "grade": row._mapping["grade"],
+                "class_oid": row._mapping["class_oid"],
+                "on_campus_raw": float(row._mapping["on_campus_raw"]),
+                "off_campus_raw": float(row._mapping["off_campus_raw"]),
+                "social_practice": float(row._mapping["social_practice"]),
+            }
+            for row in rows
+        ]
+
+    async def aggregate_time_by_origin(self) -> list[Row]:
+        """Per ``(user, origin, mode)`` duration sums over double-effective rows."""
+        session = self._require_session()
+        rows = (await session.execute(_time_by_origin_stmt())).all()
+        return [
+            {
+                "user_oid": str(row._mapping["user_oid"]),
+                "origin": row._mapping["origin"],
+                "mode": row._mapping["mode"],
+                "total": float(row._mapping["total"]),
+            }
+            for row in rows
+        ]
+
+    async def rebuild_with_origin(self, rows: list[Row], now: datetime | None = None) -> int:
+        """Single-transaction replacement of every ``time_with_origin`` row.
+
+        ``rows`` carry ``user_oid`` and the JSON ``data`` dict; oids and
+        ``updated_at`` are minted here. Never commits.
+        """
+        session = self._require_session()
+        await session.execute(delete(origin_tbl))
+        ts = now or datetime.now()
+        payload = [
+            {
+                "oid": new_oid(),
+                "user_oid": str(row["user_oid"]),
+                "data": row["data"],
+                "updated_at": ts,
+            }
+            for row in rows
+        ]
+        if payload:
+            await session.execute(insert(origin_tbl), payload)
+        return len(payload)
+
+    async def rebuild_with_origin_stat(
+        self, rows: list[Row], now: datetime | None = None
+    ) -> int:
+        """Single-transaction replacement of every ``time_with_origin_stat`` row.
+
+        ``rows`` carry ``stat_key``/``scope``/``scope_id``/``require_percentage``
+        and the JSON ``data`` dict; oids and ``updated_at`` are minted here. The
+        orchestrator supplies the (new) ``scope_id`` for group scope. Never
+        commits.
+        """
+        session = self._require_session()
+        await session.execute(delete(stat_tbl))
+        ts = now or datetime.now()
+        payload = [
+            {
+                "oid": new_oid(),
+                "stat_key": row["stat_key"],
+                "scope": row["scope"],
+                "scope_id": str(row["scope_id"]),
+                "require_percentage": int(row["require_percentage"]),
+                "data": row["data"],
+                "updated_at": ts,
+            }
+            for row in rows
+        ]
+        if payload:
+            await session.execute(insert(stat_tbl), payload)
+        return len(payload)
 
     async def upsert_academic_year(
         self,
@@ -523,27 +803,6 @@ class OracleTimeRepo:
         async with _session_for(self._session) as (session, owns):
             await session.execute(delete_stmt)
             await session.execute(insert_stmt)
-            if owns:
-                await session.commit()
-
-    async def clear_academic_years(self) -> None:
-        stmt = _delete_all_stmt(ay_tbl)
-        async with _session_for(self._session) as (session, owns):
-            await session.execute(stmt)
-            if owns:
-                await session.commit()
-
-    async def clear_with_origin(self) -> None:
-        stmt = _delete_all_stmt(origin_tbl)
-        async with _session_for(self._session) as (session, owns):
-            await session.execute(stmt)
-            if owns:
-                await session.commit()
-
-    async def clear_with_origin_stats(self) -> None:
-        stmt = _delete_all_stmt(stat_tbl)
-        async with _session_for(self._session) as (session, owns):
-            await session.execute(stmt)
             if owns:
                 await session.commit()
 

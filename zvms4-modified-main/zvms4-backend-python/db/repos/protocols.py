@@ -21,6 +21,8 @@ from __future__ import annotations
 
 from typing import Any, Protocol
 
+from datetime import datetime
+
 # A row as seen by callers: the Mongo document shape, backend-independent.
 Row = dict[str, Any]
 
@@ -237,9 +239,9 @@ class GroupsRepo(Protocol):
         """Return every non-permission group as ``{_id, name}`` rows.
 
         Lifts ``tasks/compute_time.py``'s ``find({"type": {"$ne":
-        "permission"}})`` (``generate_reports`` / ``compute_batch_origins`` /
-        ``compute_group_indicators``). Class rows carry no ``type`` in Mongo and
-        a NULL ``TYPE`` in Oracle, so the Oracle filter is ``type IS NULL``.
+        "permission"}})`` (``generate_reports``). Class rows carry no ``type`` in
+        Mongo and a NULL ``TYPE`` in Oracle, so the Oracle filter is
+        ``type IS NULL``.
         """
         ...
 
@@ -652,8 +654,53 @@ class TimeRepo(Protocol):
         """Create or replace a ``time_with_origin_stat`` row keyed by ``stat_key``."""
         ...
 
-    async def clear_for_all(self) -> None:
-        """Delete every total-time row (``tasks/compute_time.compute_time``)."""
+    async def rebuild_user_time(self, now: datetime | None = None) -> int:
+        """Single-transaction replacement of every total-time row; returns the count.
+
+        ``tasks/compute_time.rebuild_statistics``: delete-all + one array-bound
+        insert built from the per-user aggregation (zero-time users included).
+        Never commits — the caller owns the unit of work.
+        """
+        ...
+
+    async def rebuild_academic_years(self, now: datetime | None = None) -> int:
+        """Single-transaction replacement of every per-academic-year row; returns the count.
+
+        Full history: one row per user per relevant 学年 (entry + capped
+        graduation year), sourced from the per-``(user, 学年)`` SQL aggregation.
+        Never commits.
+        """
+        ...
+
+    async def aggregate_totals_by_user(self) -> list[Row]:
+        """Return one ``{user_oid, grade, class_oid, on_campus_raw, ...}`` row per user.
+
+        ``grade`` is ``substr(business_id,1,4)`` (no numeric filtering, matching
+        the old ``compute_indicators``); zero-time users are included.
+        """
+        ...
+
+    async def aggregate_time_by_origin(self) -> list[Row]:
+        """Return ``{user_oid, origin, mode, total}`` sums over double-effective rows."""
+        ...
+
+    async def rebuild_with_origin(self, rows: list[Row], now: datetime | None = None) -> int:
+        """Single-transaction replacement of every per-origin row; returns the count.
+
+        ``rows`` carry ``user_oid`` and the JSON ``data`` dict; oids and
+        ``updated_at`` are minted by the implementation. Never commits.
+        """
+        ...
+
+    async def rebuild_with_origin_stat(
+        self, rows: list[Row], now: datetime | None = None
+    ) -> int:
+        """Single-transaction replacement of every ``time_with_origin_stat`` row; returns the count.
+
+        ``rows`` carry ``stat_key``/``scope``/``scope_id``/``require_percentage``
+        plus the JSON ``data`` dict. The caller supplies the (new) ``scope_id``
+        for group scope. Never commits.
+        """
         ...
 
     async def upsert_academic_year(
@@ -667,22 +714,11 @@ class TimeRepo(Protocol):
         off_campus: float,
         social_practice: float,
     ) -> None:
-        """Create or replace a user's per-academic-year row.
+        """Create or replace a user's per-academic-year row (whole-row replace).
 
-        Lifts ``tasks/compute_time.compute_ay_time`` (whole-row replace).
+        Retained for the read/compat surface; the nightly recompute now writes
+        ``time_academic_year`` in bulk via :meth:`rebuild_academic_years`.
         """
-        ...
-
-    async def clear_academic_years(self) -> None:
-        """Delete every per-academic-year row (``compute_ay_time``)."""
-        ...
-
-    async def clear_with_origin(self) -> None:
-        """Delete every per-origin breakdown row (``compute_batch_origins``)."""
-        ...
-
-    async def clear_with_origin_stats(self) -> None:
-        """Delete every ``time_with_origin_stat`` row (``compute_batch_origins``)."""
         ...
 
 
@@ -709,6 +745,28 @@ class StatsCacheRepo(Protocol):
         self, group_oid: str, percentiles: Row, indicators: Row
     ) -> None:
         """Create or replace the indicators row for one group."""
+        ...
+
+    async def rebuild_indicators(
+        self, percentiles: Row, indicators: Row, now: datetime | None = None
+    ) -> None:
+        """Single-transaction replacement of the single global indicators row.
+
+        ``tasks/compute_time.rebuild_statistics``: delete-then-insert (the table
+        is single-row by contract). Never commits — the caller owns the unit of
+        work.
+        """
+        ...
+
+    async def rebuild_group_indicators(
+        self, rows: list[Row], now: datetime | None = None
+    ) -> int:
+        """Single-transaction replacement of every global group-indicators row; returns the count.
+
+        ``rows`` carry ``group_oid`` plus the ``percentiles``/``indicators`` JSON
+        dicts; oids and ``updated_at`` are minted by the implementation. Never
+        commits.
+        """
         ...
 
 

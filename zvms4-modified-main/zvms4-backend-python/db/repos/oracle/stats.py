@@ -81,12 +81,14 @@ def _delete_indicators_stmt():
     return delete(indicators_tbl)
 
 
-def _insert_indicators_stmt(oid: str, percentiles: Any, indicators: Any):
+def _insert_indicators_stmt(
+    oid: str, percentiles: Any, indicators: Any, updated_at: datetime | None = None
+):
     return insert(indicators_tbl).values(
         oid=oid,
         percentiles=percentiles,
         indicators=indicators,
-        updated_at=datetime.now(),
+        updated_at=updated_at or datetime.now(),
     )
 
 
@@ -153,6 +155,52 @@ class OracleStatsCacheRepo:
             await session.execute(insert_stmt)
             if owns:
                 await session.commit()
+
+    def _require_session(self) -> AsyncSession:
+        if self._session is None:
+            raise RuntimeError(
+                "rebuild_* requires a caller-owned session (single-transaction recompute)"
+            )
+        return self._session
+
+    async def rebuild_indicators(
+        self, percentiles: Row, indicators: Row, now: datetime | None = None
+    ) -> None:
+        """Single-transaction replacement of the single global ``indicators`` row.
+
+        Delete-then-insert (the table is single-row by contract); never commits —
+        the caller owns the unit of work.
+        """
+        session = self._require_session()
+        await session.execute(_delete_indicators_stmt())
+        await session.execute(
+            _insert_indicators_stmt(new_oid(), percentiles, indicators, now)
+        )
+
+    async def rebuild_group_indicators(
+        self, rows: list[Row], now: datetime | None = None
+    ) -> int:
+        """Single-transaction replacement of every ``group_indicators`` row.
+
+        ``rows`` carry ``group_oid`` plus the ``percentiles``/``indicators`` JSON
+        dicts; oids and ``updated_at`` are minted here. Never commits.
+        """
+        session = self._require_session()
+        await session.execute(delete(group_tbl))
+        ts = now or datetime.now()
+        payload = [
+            {
+                "oid": new_oid(),
+                "group_oid": str(row["group_oid"]),
+                "percentiles": row["percentiles"],
+                "indicators": row["indicators"],
+                "updated_at": ts,
+            }
+            for row in rows
+        ]
+        if payload:
+            await session.execute(insert(group_tbl), payload)
+        return len(payload)
 
     async def list_group_indicators(self) -> list[Row]:
         stmt = _list_group_indicators_stmt()

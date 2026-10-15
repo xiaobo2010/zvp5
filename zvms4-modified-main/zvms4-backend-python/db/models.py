@@ -342,7 +342,8 @@ time_with_origin_stat = Table(
 
 
 # ---------------------------------------------------------------------------
-# GROUP_INDICATORS  (FK to groups intentionally deferred — see V001 header)
+# GROUP_INDICATORS  (FK to groups is remap-gated: declared here + in V009, not
+# V001 — see the V001 header and V009's ORDERING WARNING)
 # ---------------------------------------------------------------------------
 
 group_indicators = Table(
@@ -357,6 +358,9 @@ group_indicators = Table(
     _json_check("group_indicators", "percentiles"),
     _json_check("group_indicators", "indicators"),
     UniqueConstraint("group_oid", name="uq_group_indicators_group_oid"),
+    ForeignKeyConstraint(
+        ["group_oid"], ["groups.oid"], name="fk_group_indicators_group_oid"
+    ),
 )
 
 

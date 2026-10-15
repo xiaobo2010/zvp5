@@ -99,14 +99,14 @@ async def get_user_activities_v2(
 
 @router.get("/{user_id}/time")
 async def get_user_time_v2(
-    user_id: str, user=Depends(get_current_user), allow_cache: bool = False
+    user_id: str, user=Depends(get_current_user), allow_cache: bool = True
 ):
     """
     Get user time
 
     :param user_id: User ID
     :param user: Current user
-    :param allow_cache: If True, do not use cached data
+    :param allow_cache: If False, recompute and refresh the cache instead of reading it
 
     :return: User time
     """
