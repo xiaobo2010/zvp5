@@ -12,9 +12,9 @@
 --   * PLACE       VARCHAR2(256),  NULL allowed, no default
 --
 -- Idempotency:
---   Oracle treats MODIFY-to-NULL on an already-nullable column as a success,
---   so re-running is naturally a no-op.  The wrapper still re-raises any
---   unexpected error (missing column etc.) so genuine failures are not hidden.
+--   MODIFY-to-NULL on an already-nullable column raises ORA-01451, which the
+--   wrapper swallows so re-running is a no-op.  Any other error (missing
+--   column etc.) still re-raises so genuine failures are not hidden.
 --
 -- This file is mirrored by db/models.py / V001; run `python -m db.ddl_check`
 -- to verify the two stay in sync (offline, no DB access).
@@ -24,7 +24,7 @@ BEGIN
   EXECUTE IMMEDIATE 'ALTER TABLE activities MODIFY (description NULL)';
 EXCEPTION
   WHEN OTHERS THEN
-    RAISE;
+    IF SQLCODE != -1451 THEN RAISE; END IF;
 END;
 /
 
@@ -32,7 +32,7 @@ BEGIN
   EXECUTE IMMEDIATE 'ALTER TABLE activities MODIFY (approver NULL)';
 EXCEPTION
   WHEN OTHERS THEN
-    RAISE;
+    IF SQLCODE != -1451 THEN RAISE; END IF;
 END;
 /
 
@@ -40,6 +40,6 @@ BEGIN
   EXECUTE IMMEDIATE 'ALTER TABLE activities MODIFY (place NULL)';
 EXCEPTION
   WHEN OTHERS THEN
-    RAISE;
+    IF SQLCODE != -1451 THEN RAISE; END IF;
 END;
 /
