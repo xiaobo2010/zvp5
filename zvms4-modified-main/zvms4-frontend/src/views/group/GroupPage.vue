@@ -2,7 +2,7 @@
 import ZGroupUserList from '@/components/group/ZGroupUserList.vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElPageHeader, ElSegmented, ElIcon, ElText } from 'element-plus'
-import { ref, onMounted, watch, type Component } from 'vue'
+import { ref, watch, type Component } from 'vue'
 import api from '@/api'
 import type { Group } from '@/../types'
 import { useWindowSize } from '@vueuse/core'
@@ -29,7 +29,7 @@ const route = useRoute()
 const router = useRouter()
 const { t } = useI18n()
 
-const id = ref<string>('')
+const id = ref<string>((route.params.id as string) ?? '')
 
 const group = ref<Group>()
 
@@ -47,10 +47,6 @@ async function refresh() {
   }
 }
 
-onMounted(refresh)
-
-watch(id, refresh)
-
 watch(
   () => route.params.id,
   (value) => {
@@ -58,14 +54,14 @@ watch(
   }
 )
 
+watch(id, refresh, { immediate: true })
+
 watch(
   () => route.params.action,
   (value) => {
     tab.value = value.toString() ?? ('users' as string)
   }
 )
-
-id.value = route.params.id as string
 
 if (
   !(

@@ -3,6 +3,7 @@ import { pad } from '@/plugins/ua.ts'
 
 export { default as ZActivityCreate } from './ZActivityCreate.vue'
 export { default as ZActivityDetails } from './ZActivityDetails.vue'
+export { default as ZActivityStatsDialog } from './ZActivityStatsDialog.vue'
 export { default as ZActivityList } from './ZActivityList.vue'
 export { default as ZActivityMember } from './ZActivityMember.vue'
 export { default as ZActivityMemberTimeJudge } from './ZTimeJudge.vue'

@@ -36,8 +36,6 @@ watch(
   { immediate: true }
 )
 
-refreshStandardTime()
-
 function calculateLoss() {
   const loss = standard.value - real.value
   if (loss > 0) {
