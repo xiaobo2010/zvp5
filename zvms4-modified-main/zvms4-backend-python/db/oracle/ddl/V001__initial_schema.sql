@@ -676,3 +676,45 @@ EXCEPTION
     IF SQLCODE NOT IN (-955, -1408) THEN RAISE; END IF;
 END;
 /
+
+-- ----------------------------------------------------------------------------
+-- USER_DEVICE_BINDINGS  ← new (学海 ID 身份追溯 MVP; observe-only)
+--   Records which 学海 device id a user logs in from.  Added for login-time
+--   observation only (no login is ever blocked); also added by
+--   V010__add_user_device_bindings.sql for already-deployed instances.
+--   user_oid -> USERS(OID) is a real FK: the table starts empty, so no legacy
+--   id can violate it.  A revoked row is kept (status='revoked'); the
+--   (user_oid, xuehai_id) pair is unique so a re-bind reactivates in place.
+-- ----------------------------------------------------------------------------
+BEGIN
+  EXECUTE IMMEDIATE '
+CREATE TABLE user_device_bindings (
+  oid VARCHAR2(24 CHAR) NOT NULL,
+  user_oid VARCHAR2(24 CHAR) NOT NULL,
+  xuehai_id VARCHAR2(32 CHAR) NOT NULL,
+  device_id VARCHAR2(64 CHAR),
+  source VARCHAR2(16 CHAR) DEFAULT ''auto'' NOT NULL,
+  status VARCHAR2(16 CHAR) DEFAULT ''active'' NOT NULL,
+  note VARCHAR2(256 CHAR),
+  created_at TIMESTAMP NOT NULL,
+  updated_at TIMESTAMP NOT NULL,
+  PRIMARY KEY (oid),
+  CONSTRAINT ck_udb_oid CHECK (REGEXP_LIKE(oid,''^[0-9a-f]{24}$'')),
+  CONSTRAINT ck_udb_source CHECK (source IN (''auto'',''admin'')),
+  CONSTRAINT ck_udb_status CHECK (status IN (''active'',''revoked'')),
+  CONSTRAINT uq_udb_user_xuehai UNIQUE (user_oid, xuehai_id),
+  CONSTRAINT fk_udb_user FOREIGN KEY (user_oid) REFERENCES users (oid)
+)';
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE != -955 THEN RAISE; END IF;
+END;
+/
+
+BEGIN
+  EXECUTE IMMEDIATE 'CREATE INDEX ix_udb_xuehai_id ON user_device_bindings (xuehai_id)';
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE NOT IN (-955, -1408) THEN RAISE; END IF;
+END;
+/

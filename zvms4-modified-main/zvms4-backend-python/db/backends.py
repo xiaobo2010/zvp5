@@ -97,6 +97,13 @@ def get_files_repo(session: Any = None) -> Any:
     return OracleFilesRepo(session)
 
 
+def get_bindings_repo(session: Any = None) -> Any:
+    """Return the ``BindingsRepo`` implementation."""
+    from db.repos.oracle.bindings import OracleBindingsRepo
+
+    return OracleBindingsRepo(session)
+
+
 __all__ = [
     "get_users_repo",
     "get_groups_repo",
@@ -110,4 +117,5 @@ __all__ = [
     "get_imports_repo",
     "get_daily_exports_repo",
     "get_files_repo",
+    "get_bindings_repo",
 ]
