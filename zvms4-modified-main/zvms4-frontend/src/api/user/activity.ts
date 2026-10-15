@@ -1,7 +1,7 @@
 import axios from '@/plugins/axios'
 import type { ActivityInstance, Response } from '@/../types'
 import { ElNotification } from 'element-plus'
-import type { Activity } from '../../../types/activity.v2'
+import type { ActivityMember, Activity } from '../../../types/activity.v2'
 
 async function getUserActivities(
   id: string,
@@ -23,7 +23,15 @@ async function getUserActivities(
       }
     })
   ).data as {
-    activities: Activity[]
+    activities: (Activity & {
+      mine?: {
+        _id: string
+        member: string
+        status: ActivityMember['status']
+        mode: ActivityMember['mode']
+        duration: number
+      }
+    })[]
     total: number
   }
 }
