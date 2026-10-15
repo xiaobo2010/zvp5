@@ -12,6 +12,7 @@ Versioned, hand-written Oracle DDL for the `zvms_new` → Oracle ADB migration.
 | `V007__add_files.sql` | Adds `FILES`/`FILE_OCR`/`FILE_EVENTS` + 8 indexes (Files/attachments API) on an existing instance. Idempotent. |
 | `V008__add_app_logs_xuehai_index.sql` | Adds `ix_app_logs_xuehai_id` (APP_LOGS device 学海 ID filter) on an existing instance. Idempotent. |
 | `V009__statistics_rework.sql` | Adds the deferred `GROUP_INDICATORS.GROUP_OID` → `GROUPS.OID` FK (`fk_group_indicators_group_oid`). Apply **after** the first `rebuild_statistics` (else ORA-02298 on legacy ids). Idempotent. |
+| `V010__add_user_device_bindings.sql` | Adds `USER_DEVICE_BINDINGS` + `uq_udb_user_xuehai` UNIQUE + `ix_udb_xuehai_id` (学海 ID 身份追溯 MVP, observe-only) on an existing instance. Idempotent. |
 | `../models.py` (`db/models.py`) | SQLAlchemy 2.0 Core `MetaData` mirror of V001. |
 | `../ddl_check.py` (`db/ddl_check.py`) | Offline drift check between the two. |
 
@@ -41,6 +42,15 @@ append-only audit trail. `FILES.STATUS` is the single source of truth for the
 serve gate; `OWNER_OID` carries no foreign key (same relaxation as `V006`).
 Fresh instances get the three tables from `V001`; existing instances are
 extended by `V007`.
+
+`USER_DEVICE_BINDINGS` backs the 学海 ID 身份追溯 MVP: which 学海 device id a
+user logs in from. It is **observe-only** — no login is ever blocked; the rows
+feed the admin binding endpoints (`GET`/`PUT`/`DELETE /api/v3/users/{id}/bindings`)
+and the login-time `device_bind` / `binding_mismatch` audit logs. `USER_OID`
+carries a real FK to `USERS(OID)` (the table starts empty, so no legacy id can
+violate it). A revoked row is kept (`status='revoked'`); the
+`(user_oid, xuehai_id)` pair is unique so a re-bind reactivates in place. Fresh
+instances get the table from `V001`; existing instances are extended by `V010`.
 
 Design conventions (JSON→CLOB+`IS JSON`, ObjectId→`VARCHAR2(24)` lowercase hex,
 naive `TIMESTAMP`, deferred `GROUP_INDICATORS` FK) are documented in the header

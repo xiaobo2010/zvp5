@@ -1094,3 +1094,37 @@ class FilesRepo(Protocol):
     async def list_events(self, file_oid: str) -> list[Row]:
         """Return ``file_oid``'s audit events in chronological order."""
         ...
+
+
+class BindingsRepo(Protocol):
+    """Data access for ``USER_DEVICE_BINDINGS`` (学海 ID 设备绑定, observe-only).
+
+    Satisfied by ``db.repos.oracle.bindings.OracleBindingsRepo``. Rows use the
+    Mongo document shape ``{"_id": <hex str>, "user_oid": str, "xuehai_id": str,
+    "device_id": str | None, "source": str, "status": str, "note": str | None,
+    "created_at": datetime, "updated_at": datetime}``. ``source`` is
+    ``auto``/``admin`` and ``status`` is ``active``/``revoked``.
+    """
+
+    async def list_for_user(self, user_oid: str) -> list[Row]:
+        """Return every binding of a user, **including** ``revoked`` rows."""
+        ...
+
+    async def get_active_for_user(self, user_oid: str) -> list[Row]:
+        """Return only the user's ``active`` bindings."""
+        ...
+
+    async def upsert(
+        self, user_oid: str, xuehai_id: str, source: str, note: str | None
+    ) -> None:
+        """Create a binding, or reactivate the existing ``(user, xuehai)`` row.
+
+        When a row already exists for the pair its ``status`` is flipped back to
+        ``active`` and ``updated_at`` refreshed — no new row is inserted, so the
+        ``(user_oid, xuehai_id)`` uniqueness holds.
+        """
+        ...
+
+    async def revoke(self, user_oid: str, xuehai_id: str) -> None:
+        """Mark the ``(user, xuehai)`` binding ``revoked`` (no-op if absent)."""
+        ...

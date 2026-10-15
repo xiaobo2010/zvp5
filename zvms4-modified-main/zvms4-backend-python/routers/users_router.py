@@ -1,4 +1,6 @@
+import logging
 import re
+import time
 from datetime import datetime
 from typing import Optional
 from fastapi import APIRouter, HTTPException, Depends, Request
@@ -31,6 +33,116 @@ from util.validation import (
 
 router = APIRouter()
 
+_logger = logging.getLogger(__name__)
+
+# Failed-login flood guard, process-local and dependency-free: failed attempts
+# are counted per (submitted 学号, wall-clock minute). This is log hygiene only —
+# it never gates or alters a login response.
+_AUTH_ATTEMPT_WINDOW: dict[tuple[str, int], int] = {}
+_AUTH_FLOOD_THRESHOLD = 10
+
+# Map the auth layer's failure detail onto the single category we are willing to
+# persist. Never a credential — only 学号 + category.
+_AUTH_FAILURE_LABELS = {
+    "User not found": "用户不存在",
+    "User is banned": "用户已封禁",
+    "Password incorrect": "密码错误",
+    "动态码错误或已过期": "动态码错误",
+    "Token expired": "凭证过期",
+}
+
+
+def _auth_failure_label(exc: HTTPException) -> str:
+    detail = exc.detail if isinstance(exc.detail, str) else ""
+    return _AUTH_FAILURE_LABELS.get(detail, "登录失败")
+
+
+def _bump_auth_attempt(submitted_id: str) -> int:
+    """Return this minute's failed-attempt count for ``submitted_id`` (incremented)."""
+    minute = int(time.monotonic() // 60)
+    for stale in [key for key in _AUTH_ATTEMPT_WINDOW if key[1] != minute]:
+        _AUTH_ATTEMPT_WINDOW.pop(stale, None)
+    key = (submitted_id, minute)
+    count = _AUTH_ATTEMPT_WINDOW.get(key, 0) + 1
+    _AUTH_ATTEMPT_WINDOW[key] = count
+    return count
+
+
+async def _log_login_failure(
+    request: Request, submitted_id: str, xuehai_id: str, label: str
+) -> None:
+    """Record a failed login attempt. Never raises, never carries a credential.
+
+    ``data`` holds only the 学号 and the failure category. Once a 学号 exceeds
+    ``_AUTH_FLOOD_THRESHOLD`` failures in a minute the per-attempt rows stop and
+    a single aggregated ``auth_flood`` row is written instead.
+    """
+    try:
+        count = _bump_auth_attempt(submitted_id)
+        if count > _AUTH_FLOOD_THRESHOLD:
+            if count != _AUTH_FLOOD_THRESHOLD + 1:
+                return
+            log_type = "auth_flood"
+            text = f"{submitted_id} 登录失败：{count}"
+        else:
+            log_type = "user_login_failed"
+            text = f"{submitted_id} 登录失败：{label}"
+        await ZVMSLog(
+            str(request.url),
+            submitted_id,
+            text,
+            datetime.timestamp(datetime.now()),
+            type=log_type,
+            level="warning",
+            xuehai_id=xuehai_id,
+        ).insert_log()
+    except Exception:
+        _logger.exception("failed to record a login failure")
+
+
+async def _observe_binding(
+    request: Request, user_oid: str, log_name: str, xuehai_id: str
+) -> bool:
+    """Observe-only 学海 device-binding hook; never raises, never blocks login.
+
+    Returns ``True`` only when the presented 学海 ID is not among the user's
+    active bindings; every error degrades to ``False`` so a binding problem can
+    never fail an otherwise successful login.
+    """
+    if not xuehai_id:
+        return False
+    try:
+        bindings = backends.get_bindings_repo()
+        active = await bindings.get_active_for_user(user_oid)
+        if not active:
+            await bindings.upsert(user_oid, xuehai_id, "auto", None)
+            await ZVMSLog(
+                str(request.url),
+                user_oid,
+                f"用户 {log_name} 首次绑定了学海设备 {xuehai_id}",
+                datetime.timestamp(datetime.now()),
+                type="device_bind",
+                level="info",
+                xuehai_id=xuehai_id,
+            ).insert_log()
+            return False
+        if all(row.get("xuehai_id") != xuehai_id for row in active):
+            bound = ",".join(sorted({str(row.get("xuehai_id")) for row in active}))
+            await ZVMSLog(
+                str(request.url),
+                user_oid,
+                f"用户 {log_name} 登录设备 {xuehai_id} 与已绑定设备 {bound} 不一致",
+                datetime.timestamp(datetime.now()),
+                type="binding_mismatch",
+                level="warning",
+                xuehai_id=xuehai_id,
+            ).insert_log()
+            return True
+        return False
+    except Exception:
+        _logger.exception("device-binding observe hook failed")
+        return False
+
 
 class AuthUser(BaseModel):
     id: str
@@ -41,20 +153,29 @@ class AuthUser(BaseModel):
 @router.post("/auth")
 async def auth_user(auth: AuthUser, request: Request):
     id = auth.id
+    submitted_id = auth.id
     mode = auth.mode or "long"
     credential = auth.credential
+    xuehai_id = xuehai_id_from(request)
 
     if string_to_option_object_id(id) is None:
         user_doc = await backends.get_users_repo().find_by_business_id(id)
         if user_doc:
             id = str(user_doc["_id"])
         else:
+            await _log_login_failure(request, submitted_id, xuehai_id, "用户不存在")
             raise HTTPException(
                 status_code=404,
                 detail="User not found",
             )
 
-    result, weak_password = await validate_by_cert(id, credential, mode)
+    try:
+        result, weak_password = await validate_by_cert(id, credential, mode)
+    except HTTPException as exc:
+        await _log_login_failure(
+            request, submitted_id, xuehai_id, _auth_failure_label(exc)
+        )
+        raise
 
     user_doc = await backends.get_users_repo().get_by_oid(
         str(validate_object_id(id))
@@ -73,10 +194,13 @@ async def auth_user(auth: AuthUser, request: Request):
         log_text,
         datetime.timestamp(datetime.now()),
         type="user_login",
-        xuehai_id=xuehai_id_from(request),
+        xuehai_id=xuehai_id,
     )
 
     await log.insert_log()
+
+    user_oid = str(validate_object_id(id))
+    binding_mismatch = await _observe_binding(request, user_oid, log_name, xuehai_id)
 
     profile = None
     if user_doc:
@@ -94,6 +218,7 @@ async def auth_user(auth: AuthUser, request: Request):
         "_id": id,
         "profile": profile,
         "weak_password": weak_password,
+        "binding_mismatch": binding_mismatch,
     }
 
 
