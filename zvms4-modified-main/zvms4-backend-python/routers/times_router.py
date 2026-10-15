@@ -30,30 +30,26 @@ async def read_times(
         "off-campus": "off_campus_raw",
         "social-practice": "social_practice",
     }
-    result, count = await backends.get_users_repo().search(query, user is not None)
-    if sort == "id":
-        result = sorted(result, key=lambda x: x["id"], reverse=not asc)
-    selected_students = [str(user["_id"]) for user in result]
+    if not query:
+        return {"status": "ok", "code": 200, "data": [], "metadata": {"size": 0}}
 
-    user_times = await backends.get_time_repo().list_by_users(
-        selected_students,
-        sort_field=sortkey.get(sort, sort),
-        descending=not asc,
-        page=page,
-        size=perpage,
+    user_times, count = await backends.get_time_repo().list_by_search(
+        query,
+        user is not None,
+        sortkey.get(sort, sort),
+        not asc,
+        page,
+        perpage,
     )
     results = []
 
     for user in user_times:
-        user_info = await backends.get_users_repo().get_by_oid(
-            validate_object_id(user["user"])
-        )
         time_struct = UserActivityTime.model_validate(user, strict=False)
         results.append(
             {
                 "_id": str(user["user"]),
-                "name": user_info["name"],
-                "id": user_info["id"],
+                "name": user["name"],
+                "id": user["id"],
                 "on-campus": time_struct.on_campus,
                 "off-campus": time_struct.off_campus,
                 "social-practice": time_struct.social_practice,

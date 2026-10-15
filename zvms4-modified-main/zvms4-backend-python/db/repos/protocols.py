@@ -201,6 +201,29 @@ class GroupsRepo(Protocol):
         """Return ``(rows, total)`` for one page of the group's members."""
         ...
 
+    async def activities_page(
+        self,
+        group_oid: str,
+        search: str,
+        sort: str,
+        asc: bool,
+        page: int,
+        size: int,
+    ) -> tuple[list[Row], int]:
+        """Return ``(activities, total)`` for one page of a class's activities.
+
+        Rows are the canonical activity documents (same shape as
+        :meth:`ActivitiesRepo.get`): every activity that at least one member of
+        ``group_oid``'s class belongs to. ``search`` is a case-insensitive
+        regex over ``name``/``description`` (empty = no filter), ``sort``/
+        ``asc`` order the rows (unknown/empty ``sort`` falls back to
+        ``_id`` descending). ``total`` counts the matching activities, i.e.
+        every distinct activity of the class, not ``memberships``.
+
+        Lifts ``routers/groups_v2_router.py::get_group_activities_v2``.
+        """
+        ...
+
     async def list_all(self) -> list[Row]:
         """Return every group (``groups.find()``) as ``{_id, name}`` rows.
 
@@ -456,6 +479,26 @@ class MembersRepo(Protocol):
         """
         ...
 
+    async def list_for_user_activities(
+        self,
+        user_oid: str,
+        search: str,
+        sort: str,
+        asc: bool,
+        page: int,
+        size: int,
+    ) -> tuple[list[Row], int]:
+        """Return ``(rows, total)`` for one page of a user's activity memberships.
+
+        Each row is ``{"member": <membership doc>, "activity": <activity doc or
+        None>}``: the membership is joined to its activity, and a membership
+        whose activity is gone is reported with ``activity=None`` while still
+        counting towards ``total``. ``search`` is an optional keyword predicate
+        on the activity's ``name``/``description``; ``sort``/``asc`` order the
+        rows. Lifts ``routers/users_v2_router.py::get_user_activities_v2``.
+        """
+        ...
+
     async def count_for_activity(
         self,
         activity_oid: str,
@@ -549,6 +592,45 @@ class TimeRepo(Protocol):
 
         Lifts ``times_router.read_times`` (optional sort field/direction +
         pagination) and ``tasks/compute_time``'s bare ``user IN`` reads.
+        """
+        ...
+
+    async def list_by_search(
+        self,
+        query: str,
+        logged_in: bool,
+        sort_field: str | None = None,
+        descending: bool = False,
+        page: int | None = None,
+        size: int | None = None,
+    ) -> tuple[list[Row], int]:
+        """Return ``(rows, total)`` for one page of total-time rows, joined to users.
+
+        Rows are the total-time documents widened with the owner's ``name`` and
+        ``id`` (``business_id``). ``query`` is the same user predicate as
+        :meth:`UsersRepo.search` (``logged_in=False`` matches ``id`` exactly,
+        ``logged_in=True`` matches ``name``/``id``/``past`` case-insensitively),
+        ``sort_field`` maps onto the raw time columns (anything unrecognised
+        keeps ``_id`` ascending), and ``total`` counts the **matching users**,
+        not the returned rows. Lifts ``routers/times_router.py::read_times``.
+        """
+        ...
+
+    async def list_by_class(
+        self,
+        class_oid: str,
+        query: str = "",
+        sort_field: str | None = None,
+        descending: bool = False,
+        page: int | None = None,
+        size: int | None = None,
+    ) -> tuple[list[Row], int]:
+        """Return ``(rows, total)`` for one page of a class's total-time rows.
+
+        Same row shape and ``total`` semantics as :meth:`list_by_search`, with
+        the user filter pinned to ``class_oid`` and an optional case-insensitive
+        ``query`` regex over ``name``/``id``. Lifts
+        ``routers/groups_v2_router.py::read_users``.
         """
         ...
 

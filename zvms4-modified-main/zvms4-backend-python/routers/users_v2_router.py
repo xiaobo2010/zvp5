@@ -1,8 +1,7 @@
-import re
 from fastapi import APIRouter, Depends, HTTPException, Query
 from db import backends
+from db.repos.oracle.members import escape_oracle_regex
 from util.calculate import calculate_user_time, find_percentile_threshold
-from util.get_class import get_user_class
 from util.object_id import get_current_user
 from util.permission.user import validate_read_user_permission
 from utils import validate_object_id
@@ -34,6 +33,7 @@ async def get_users_v2(
     rows, total = await repo.list_page(query, role, page, size)
 
     for row in rows:
+        row.pop("has_password", None)
         row["group"] = [row["class_id"]] if row["class_id"] else []
 
     return {
@@ -70,46 +70,20 @@ async def get_user_activities_v2(
     # skipped right now
 
     if not regex:
-        search = re.escape(search) if search else ""
+        search = escape_oracle_regex(search) if search else ""
 
-    activities_repo = backends.get_activities_repo()
-    members_repo = backends.get_members_repo()
-
-    # Enumerate the activities matching the search, then keep only the
-    # requester's memberships pointing at them (mirrors the Mongo pipeline).
-    selected_activities, _ = await activities_repo.list_raw(search="", page=None)
-    if search:
-        pattern = re.compile(search, re.IGNORECASE)
-        selected_activities = [
-            activity
-            for activity in selected_activities
-            if pattern.search(activity.get("name") or "")
-            or pattern.search(activity.get("description") or "")
-        ]
-    activity_ids = [str(activity["_id"]) for activity in selected_activities]
-
-    memberships = await members_repo.list_for_member(user_id, None, activity_ids)
-    if sort:
-        memberships.sort(
-            key=lambda membership: (
-                membership.get(sort) is None,
-                membership.get(sort),
-            ),
-            reverse=not asc,
-        )
-
-    count = len(memberships)
-
-    start = (page - 1) * perpage
-    memberships = memberships[start : start + perpage]
+    rows, total = await backends.get_members_repo().list_for_user_activities(
+        user_id, search, sort, asc, page, perpage
+    )
 
     activities = []
 
-    for membership in memberships:
-        activity = await activities_repo.get(membership["activity"])
+    for row in rows:
+        activity = row["activity"]
         if activity is None:
             continue
-        mine = {key: value for key, value in membership.items() if key != "activity"}
+        mine = row["member"]
+        mine.pop("activity")
         mine["_id"] = str(mine["_id"])
         activity["mine"] = mine
         activity["_id"] = str(activity["_id"])
@@ -118,7 +92,7 @@ async def get_user_activities_v2(
     return {
         "page": page,
         "perpage": perpage,
-        "total": count,
+        "total": total,
         "activities": activities,
     }
 
@@ -155,7 +129,15 @@ async def get_user_time_statistics_v2(
 
     :return: User time statistics
     """
-    group_id = await get_user_class(user_id)
+    user_oid = str(validate_object_id(user_id))
+    user_document = await backends.get_users_repo().get_by_oid(user_oid)
+    if user_document is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    group_id = user_document.get("class_id")
+    if not group_id:
+        raise HTTPException(status_code=404, detail="User not in any class")
+    if await backends.get_groups_repo().get(group_id) is None:
+        raise HTTPException(status_code=404, detail="User not in any class")
     stats_repo = backends.get_stats_repo()
     indicators = await stats_repo.get_indicators()
     group_rows = await stats_repo.list_group_indicators()
@@ -167,9 +149,6 @@ async def get_user_time_statistics_v2(
         raise HTTPException(
             status_code=400, detail="Function temporarily unaccessible."
         )
-    user_document = await backends.get_users_repo().get_by_oid(
-        str(validate_object_id(user_id))
-    )
     grade_indicators = indicators["percentiles"][user_document["id"][:4]]
     user_time = await calculate_user_time(user_id, allow_cache=True)
     group_indicators = group_row["percentiles"]

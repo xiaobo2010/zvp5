@@ -18,6 +18,10 @@ pipelines:
 * ``list_for_user`` — the ``users_v2`` per-user pipeline: filter by
   ``MEMBER_OID`` (+ optional ``MEMBER_STATUS``), JOIN to ``ACTIVITIES`` to
   mirror the non-preserving ``$unwind``, ordered by ``OID``.
+* ``list_for_user_activities`` — the ``users_v2`` per-user activity page in a
+  single statement: ``ACTIVITY_MEMBERS`` LEFT JOIN ``ACTIVITIES`` (a missing
+  activity is reported as ``None`` while still counting towards the total),
+  optional keyword predicate, ``COUNT(*) OVER ()`` for the total.
 
 Session ownership mirrors :mod:`db.repos.oracle.users`: with no injected session
 each method opens its own through :func:`db.oracle.session.session_scope`, and
@@ -32,14 +36,16 @@ import re
 from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator
 
-from sqlalchemy import delete, func, insert, select, update
+from sqlalchemy import delete, exists, func, insert, literal_column, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from db.ids import new_oid, normalize_oid
 from db.models import activities as activities_tbl
 from db.models import activity_members as members_tbl
 from db.models import users as users_tbl
 from db.oracle.session import session_scope
+from db.repos.oracle.activities import _activity_doc
 
 Row = dict[str, Any]
 
@@ -68,15 +74,161 @@ def _member_columns() -> tuple[Any, ...]:
     )
 
 
+_ORACLE_REGEX_METACHARS = "\\^$.*+?()[]{}|"
+
+
+def escape_oracle_regex(value: str) -> str:
+    """Escape the characters ``REGEXP_LIKE`` reads as operators."""
+    return "".join(
+        "\\" + char if char in _ORACLE_REGEX_METACHARS else char for char in value
+    )
+
+
+_JOINED_ACTIVITY_COLUMNS = (
+    ("oid", activities_tbl.c.oid),
+    ("name", activities_tbl.c.name),
+    ("description", activities_tbl.c.description),
+    ("atype", activities_tbl.c.atype),
+    ("creator_oid", activities_tbl.c.creator_oid),
+    ("status", activities_tbl.c.status),
+    ("activity_date", activities_tbl.c.activity_date),
+    ("created_at", activities_tbl.c.created_at),
+    ("updated_at", activities_tbl.c.updated_at),
+    ("appointee_oid", activities_tbl.c.appointee_oid),
+    ("approver", activities_tbl.c.approver),
+    ("place", activities_tbl.c.place),
+    ("origin", activities_tbl.c.origin),
+)
+
+_JOINED_ACTIVITY_PREFIX = "a_"
+
+
+def _joined_activity_columns() -> tuple[Any, ...]:
+    """The ACTIVITIES projection of the members/activities join, prefixed."""
+    return tuple(
+        column.label(_JOINED_ACTIVITY_PREFIX + name)
+        for name, column in _JOINED_ACTIVITY_COLUMNS
+    )
+
+
+def _joined_activity_row(mapping: Any) -> Row | None:
+    """The joined activity document, or ``None`` when the activity is gone."""
+    if mapping[_JOINED_ACTIVITY_PREFIX + "oid"] is None:
+        return None
+    return _activity_doc(
+        {
+            name: mapping[_JOINED_ACTIVITY_PREFIX + name]
+            for name, _column in _JOINED_ACTIVITY_COLUMNS
+        }
+    )
+
+
+def _user_activity_search_filter(pattern: str) -> Any:
+    """The keyword predicate of the per-user activity page.
+
+    Mirrors the current handler: an activity matches on ``name``/``description``
+    (case-insensitive), and when **no** activity in the table matches the whole
+    filter degenerates to "no filter" — the empty activity-id list is treated as
+    "do not filter" downstream. The ``NOT EXISTS`` probe is uncorrelated, so
+    Oracle evaluates it once.
+    """
+    probe = aliased(activities_tbl)
+    return or_(
+        or_(
+            func.regexp_like(activities_tbl.c.name, pattern, "i"),
+            func.regexp_like(activities_tbl.c.description, pattern, "i"),
+        ),
+        ~exists(
+            select(1)
+            .select_from(probe)
+            .where(
+                or_(
+                    func.regexp_like(probe.c.name, pattern, "i"),
+                    func.regexp_like(probe.c.description, pattern, "i"),
+                )
+            )
+        ),
+    )
+
+
+def _list_for_user_activities_query(user_oid: str, pattern: str):
+    """The ``FROM``/``WHERE`` shared by the page and count statements."""
+    stmt = (
+        select(*_member_columns())
+        .select_from(
+            members_tbl.outerjoin(
+                activities_tbl, members_tbl.c.activity_oid == activities_tbl.c.oid
+            )
+        )
+        .where(members_tbl.c.member_oid == user_oid)
+    )
+    if pattern:
+        stmt = stmt.where(_user_activity_search_filter(pattern))
+    return stmt
+
+
+def _list_for_user_activities_stmt(
+    user_oid: str,
+    pattern: str,
+    sort: str,
+    asc: bool,
+    page: int,
+    size: int,
+):
+    """The per-user activity page: one statement, total via ``COUNT(*) OVER()``.
+
+    Ties follow ``ACTIVITY_MEMBERS.ROWID`` — the physical order the original
+    unpaginated ``WHERE member_oid = ...`` scan returned, which the handler's
+    stable ``list.sort`` preserved (golden ``01f`` shows ties are **not** in
+    ``_id`` order).
+    """
+    stmt = _list_for_user_activities_query(user_oid, pattern).add_columns(
+        *_joined_activity_columns(),
+        func.count().over().label("total_count"),
+    )
+    column = getattr(members_tbl.c, _RAW_SORT_COLUMNS.get(sort, "oid"))
+    return (
+        stmt.order_by(
+            column.asc() if asc else column.desc(),
+            literal_column("activity_members.rowid").asc(),
+        )
+        .offset((page - 1) * size)
+        .limit(size)
+    )
+
+
+def _list_for_user_activities_count_stmt(user_oid: str, pattern: str):
+    """The count companion of :func:`_list_for_user_activities_stmt`.
+
+    Built from the very same query, so the predicates (including the
+    no-hit-means-no-filter probe) cannot drift apart.
+    """
+    return select(func.count()).select_from(
+        _list_for_user_activities_query(user_oid, pattern).subquery()
+    )
+
+
 def _list_for_activity_stmt(
     activity_oid: str, query: str, page: int, size: int
 ):
-    """``list_for_activity`` select: members of an activity, name-filtered."""
-    stmt = select(*_member_columns()).select_from(
-        members_tbl.outerjoin(
-            users_tbl, members_tbl.c.member_oid == users_tbl.c.oid
+    """``list_for_activity`` select: members of an activity, name-filtered.
+
+    The member name comes from the LEFT JOIN and the total from
+    ``COUNT(*) OVER()`` (evaluated over the filtered set, before the row limit).
+    """
+    stmt = (
+        select(
+            *_member_columns(),
+            users_tbl.c.name.label("member_name"),
+            func.count().over().label("total_count"),
         )
-    ).where(members_tbl.c.activity_oid == activity_oid)
+        .select_from(
+            members_tbl.outerjoin(
+                users_tbl, members_tbl.c.member_oid == users_tbl.c.oid
+            )
+        )
+        .where(members_tbl.c.activity_oid == activity_oid)
+    )
     if query:
         stmt = stmt.where(
             func.regexp_like(users_tbl.c.name, re.escape(query), "i")
@@ -270,6 +422,18 @@ def _list_raw_stmt(
     return stmt
 
 
+def _total_of(rows: Any) -> int | None:
+    """The ``COUNT(*) OVER()`` value carried by a merged count+page result.
+
+    ``None`` for an empty page: the window count is not observable then, and the
+    caller decides whether the page is simply empty (``page == 1`` → ``0``) or
+    out of range (a dedicated count statement is issued).
+    """
+    if not rows:
+        return None
+    return int(rows[0]._mapping["total_count"])
+
+
 def _member_row(mapping: Any) -> Row:
     """Translate an ACTIVITY_MEMBERS row to the Mongo document shape."""
     return {
@@ -292,12 +456,53 @@ class OracleMembersRepo:
         self, activity_oid: str, query: str, page: int, size: int
     ) -> tuple[list[Row], int]:
         activity = normalize_oid(activity_oid)
-        page_stmt = _list_for_activity_stmt(activity, query, page, size)
+        stmt = _list_for_activity_stmt(activity, query, page, size)
         count_stmt = _list_for_activity_count_stmt(activity, query)
         async with _session_for(self._session) as (session, _owns):
-            total = (await session.execute(count_stmt)).scalar_one()
-            rows = (await session.execute(page_stmt)).all()
-        return [_member_row(row._mapping) for row in rows], int(total)
+            rows = (await session.execute(stmt)).all()
+            total = _total_of(rows)
+            if total is None:
+                total = (
+                    0
+                    if page == 1
+                    else int((await session.execute(count_stmt)).scalar_one())
+                )
+        return [
+            {
+                **_member_row(row._mapping),
+                "member_name": row._mapping["member_name"] or "未知用户",
+            }
+            for row in rows
+        ], total
+
+    async def list_for_user_activities(
+        self,
+        user_oid: str,
+        search: str,
+        sort: str,
+        asc: bool,
+        page: int,
+        size: int,
+    ) -> tuple[list[Row], int]:
+        member = normalize_oid(user_oid)
+        stmt = _list_for_user_activities_stmt(member, search, sort, asc, page, size)
+        count_stmt = _list_for_user_activities_count_stmt(member, search)
+        async with _session_for(self._session) as (session, _owns):
+            rows = (await session.execute(stmt)).all()
+            total = _total_of(rows)
+            if total is None:
+                total = (
+                    0
+                    if page == 1
+                    else int((await session.execute(count_stmt)).scalar_one())
+                )
+        return [
+            {
+                "member": _member_row(row._mapping),
+                "activity": _joined_activity_row(row._mapping),
+            }
+            for row in rows
+        ], total
 
     async def list_for_user(
         self, user_oid: str, status: str | None, page: int, size: int
@@ -470,4 +675,4 @@ class OracleMembersRepo:
         return [_member_row(row._mapping) for row in rows], int(total)
 
 
-__all__ = ["OracleMembersRepo"]
+__all__ = ["OracleMembersRepo", "escape_oracle_regex"]
