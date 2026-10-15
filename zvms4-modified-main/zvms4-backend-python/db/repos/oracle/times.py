@@ -31,7 +31,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Any, AsyncIterator
 
-from sqlalchemy import delete, insert, select
+from sqlalchemy import delete, func, insert, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.ids import new_oid, normalize_oid
@@ -39,7 +39,9 @@ from db.models import time_academic_year as ay_tbl
 from db.models import time_with_origin as origin_tbl
 from db.models import time_with_origin_stat as stat_tbl
 from db.models import user_time as time_tbl
+from db.models import users as users_tbl
 from db.oracle.session import session_scope
+from db.repos.oracle.users import _search_filter
 
 Row = dict[str, Any]
 
@@ -169,6 +171,97 @@ def _list_by_users_stmt(
     return stmt
 
 
+def _joined_time_columns() -> tuple[Any, ...]:
+    return (*_time_columns(), users_tbl.c.name, users_tbl.c.business_id)
+
+
+def _user_count_stmt(conds: list[Any]):
+    stmt = select(func.count()).select_from(users_tbl)
+    if conds:
+        stmt = stmt.where(*conds)
+    return stmt
+
+
+def _scalar_user_count(conds: list[Any]):
+    return _user_count_stmt(conds).correlate(None).scalar_subquery()
+
+
+def _list_joined_stmt(
+    conds: list[Any],
+    count_conds: list[Any],
+    sort_field: str | None,
+    descending: bool,
+    page: int | None,
+    size: int | None,
+):
+    stmt = select(
+        *_joined_time_columns(),
+        _scalar_user_count(count_conds).label("total_count"),
+    ).select_from(time_tbl.join(users_tbl, users_tbl.c.oid == time_tbl.c.user_oid))
+    if conds:
+        stmt = stmt.where(*conds)
+    column = _TIME_SORT_COLUMNS.get(sort_field) if sort_field else None
+    if column is not None:
+        stmt = stmt.order_by(column.desc() if descending else column.asc())
+    else:
+        stmt = stmt.order_by(time_tbl.c.oid.asc())
+    if page is not None:
+        stmt = stmt.offset((page - 1) * size).limit(size)
+    return stmt
+
+
+def _search_conds(query: str, logged_in: bool) -> list[Any]:
+    return _search_filter(query, logged_in)
+
+
+def _class_conds(class_oid: str, query: str) -> list[Any]:
+    conds: list[Any] = [users_tbl.c.class_oid == class_oid]
+    if query:
+        conds.append(
+            or_(
+                func.regexp_like(users_tbl.c.name, query, "i"),
+                func.regexp_like(users_tbl.c.business_id, query, "i"),
+            )
+        )
+    return conds
+
+
+def _list_joined_by_search_stmt(
+    query: str,
+    logged_in: bool,
+    sort_field: str | None,
+    descending: bool,
+    page: int | None,
+    size: int | None,
+):
+    return _list_joined_stmt(
+        _search_conds(query, logged_in),
+        _search_conds(query, logged_in),
+        sort_field,
+        descending,
+        page,
+        size,
+    )
+
+
+def _list_joined_by_class_stmt(
+    class_oid: str,
+    query: str,
+    sort_field: str | None,
+    descending: bool,
+    page: int | None,
+    size: int | None,
+):
+    return _list_joined_stmt(
+        _class_conds(class_oid, query),
+        _class_conds(class_oid, query),
+        sort_field,
+        descending,
+        page,
+        size,
+    )
+
+
 def _list_with_origin_stmt(user_oids: list[str]):
     return select(*_origin_columns()).where(origin_tbl.c.user_oid.in_(user_oids))
 
@@ -210,6 +303,13 @@ def _time_row(mapping: Any) -> Row:
         "social_practice": mapping["social_practice"],
         "updated_at": mapping["updated_at"],
     }
+
+
+def _time_user_row(mapping: Any) -> Row:
+    row = _time_row(mapping)
+    row["name"] = mapping["name"]
+    row["id"] = mapping["business_id"]
+    return row
 
 
 def _academic_year_row(mapping: Any) -> Row:
@@ -312,6 +412,55 @@ class OracleTimeRepo:
         async with _session_for(self._session) as (session, _owns):
             rows = (await session.execute(stmt)).all()
         return [_time_row(row._mapping) for row in rows]
+
+    async def list_by_search(
+        self,
+        query: str,
+        logged_in: bool,
+        sort_field: str | None = None,
+        descending: bool = False,
+        page: int | None = None,
+        size: int | None = None,
+    ) -> tuple[list[Row], int]:
+        stmt = _list_joined_by_search_stmt(
+            query, logged_in, sort_field, descending, page, size
+        )
+        async with _session_for(self._session) as (session, _owns):
+            rows = (await session.execute(stmt)).all()
+        if rows:
+            return (
+                [_time_user_row(row._mapping) for row in rows],
+                int(rows[0]._mapping["total_count"]),
+            )
+        count_stmt = _user_count_stmt(_search_conds(query, logged_in))
+        async with _session_for(self._session) as (session, _owns):
+            total = (await session.execute(count_stmt)).scalar_one()
+        return [], int(total)
+
+    async def list_by_class(
+        self,
+        class_oid: str,
+        query: str = "",
+        sort_field: str | None = None,
+        descending: bool = False,
+        page: int | None = None,
+        size: int | None = None,
+    ) -> tuple[list[Row], int]:
+        target = normalize_oid(class_oid)
+        stmt = _list_joined_by_class_stmt(
+            target, query, sort_field, descending, page, size
+        )
+        async with _session_for(self._session) as (session, _owns):
+            rows = (await session.execute(stmt)).all()
+        if rows:
+            return (
+                [_time_user_row(row._mapping) for row in rows],
+                int(rows[0]._mapping["total_count"]),
+            )
+        count_stmt = _user_count_stmt(_class_conds(target, query))
+        async with _session_for(self._session) as (session, _owns):
+            total = (await session.execute(count_stmt)).scalar_one()
+        return [], int(total)
 
     async def list_with_origin(self, user_oids: list[str]) -> list[Row]:
         if not user_oids:

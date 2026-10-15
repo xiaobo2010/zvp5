@@ -39,37 +39,26 @@ async def _list_permission_group_members(
     if not permissions:
         return {"data": [], "total": 0}
 
-    users_repo = backends.get_users_repo()
-    members, total = await users_repo.list_page(query, permissions[0], page, size)
+    members, total = await backends.get_users_repo().list_page(
+        query, permissions[0], page, size
+    )
 
-    groups_repo = backends.get_groups_repo()
-    class_name_cache: dict[str, str] = {}
     result = []
     for member in members:
         class_id = str(member["class_id"]) if member.get("class_id") else ""
-        class_name = ""
-        if class_id:
-            if class_id not in class_name_cache:
-                class_group = await groups_repo.get(class_id)
-                class_name_cache[class_id] = class_group["name"] if class_group else ""
-            class_name = class_name_cache[class_id]
-        row = {
-            "_id": str(member["_id"]),
-            "id": member["id"],
-            "name": member["name"],
-            "roles": member.get("roles", []),
-            "class_id": class_id,
-            "class_name": class_name,
-            "group": [class_id] if class_id else [],
-            "banned": bool(member.get("banned")),
-        }
-        row["password"] = None
-        result.append(row)
-
-    if pwdm:
-        for row in result:
-            user = await users_repo.get_by_oid(row["_id"])
-            row["password"] = user is not None and user.get("password") is not None
+        result.append(
+            {
+                "_id": str(member["_id"]),
+                "id": member["id"],
+                "name": member["name"],
+                "roles": member.get("roles", []),
+                "class_id": class_id,
+                "class_name": member["class_name"] if class_id else "",
+                "group": [class_id] if class_id else [],
+                "banned": bool(member.get("banned")),
+                "password": bool(member["has_password"]) if pwdm else None,
+            }
+        )
 
     return {"data": result, "total": total}
 

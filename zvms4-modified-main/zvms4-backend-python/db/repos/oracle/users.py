@@ -86,7 +86,11 @@ def _user_filter(
 
 
 def _user_page_stmt(query: str, role: str, page: int, size: int):
-    """``list_page`` select: users LEFT JOIN groups, ordered + paginated."""
+    """``list_page`` select: users LEFT JOIN groups, ordered + paginated.
+
+    Carries the password presence flag and the ``COUNT(*) OVER()`` total, so a
+    page needs a single statement (the ``USERS``↔``GROUPS`` join is 1:1).
+    """
     stmt = (
         select(
             users_tbl.c.oid,
@@ -96,6 +100,8 @@ def _user_page_stmt(query: str, role: str, page: int, size: int):
             users_tbl.c.class_oid,
             users_tbl.c.banned,
             groups_tbl.c.name.label("class_name"),
+            users_tbl.c.password_hash,
+            func.count().over().label("total_count"),
         )
         .select_from(
             users_tbl.outerjoin(
@@ -299,7 +305,12 @@ def _group_by_id_prefix_stmt():
 
 
 def _page_row(mapping: Any) -> Row:
-    """Aggregation-shaped row for ``list_page`` (matches users_v2 pipeline)."""
+    """Aggregation-shaped row for ``list_page`` (matches users_v2 pipeline).
+
+    ``has_password`` is an internal flag (``password_hash IS NOT NULL``): the
+    ``pv``-less list endpoints must drop it, callers that only report password
+    presence use it instead of re-fetching every row.
+    """
     class_oid = mapping["class_oid"]
     class_name = mapping["class_name"]
     roles = mapping["roles"]
@@ -311,7 +322,20 @@ def _page_row(mapping: Any) -> Row:
         "class_id": class_oid if class_oid is not None else "",
         "class_name": class_name if class_name is not None else _UNKNOWN_CLASS,
         "banned": bool(mapping["banned"]),
+        "has_password": mapping["password_hash"] is not None,
     }
+
+
+def _total_of(rows: Any) -> int | None:
+    """The ``COUNT(*) OVER()`` value carried by a merged count+page result.
+
+    ``None`` for an empty page: the window count is not observable then, and the
+    caller decides whether the page is simply empty (``page == 1`` → ``0``) or
+    out of range (a dedicated count statement is issued).
+    """
+    if not rows:
+        return None
+    return int(rows[0]._mapping["total_count"])
 
 
 def _user_doc(mapping: Any) -> Row:
@@ -373,9 +397,15 @@ class OracleUsersRepo:
         page_stmt = _user_page_stmt(query, role, page, size)
         count_stmt = _user_count_stmt(query, role)
         async with _session_for(self._session) as (session, _owns):
-            total = (await session.execute(count_stmt)).scalar_one()
             rows = (await session.execute(page_stmt)).all()
-        return [_page_row(row._mapping) for row in rows], int(total)
+            total = _total_of(rows)
+            if total is None:
+                total = (
+                    0
+                    if page == 1
+                    else int((await session.execute(count_stmt)).scalar_one())
+                )
+        return [_page_row(row._mapping) for row in rows], total
 
     async def create(
         self,

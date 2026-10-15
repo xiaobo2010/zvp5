@@ -7,7 +7,6 @@ from util.user import get_user_display_name
 from utils import validate_object_id
 from typing import Literal
 from pydantic import BaseModel, Field
-from db.ids import is_valid_oid
 from util.validation import validate_activity_description
 
 router = APIRouter()
@@ -37,17 +36,6 @@ async def get_activities_v3(
     atypes = [type] if type else None
     rows, total = await repo.list_page(query, atypes, status or None, page, size)
 
-    creator_oids = [
-        row["creator"]
-        for row in rows
-        if row.get("creator") and is_valid_oid(row["creator"])
-    ]
-    names = (
-        await backends.get_users_repo().get_names(creator_oids)
-        if creator_oids
-        else {}
-    )
-
     activities = [
         {
             "_id": row["_id"],
@@ -59,7 +47,7 @@ async def get_activities_v3(
             "createdAt": row["createdAt"],
             "updatedAt": row["updatedAt"],
             "creator": row["creator"],
-            "creator_name": names.get(row["creator"]) or "未知用户",
+            "creator_name": row["creator_name"],
         }
         for row in rows
     ]
@@ -128,23 +116,12 @@ async def get_activity_members_v3(
         activity_id, query, page, size
     )
 
-    member_oids = [
-        row["member"]
-        for row in rows
-        if row.get("member") and is_valid_oid(row["member"])
-    ]
-    names = (
-        await backends.get_users_repo().get_names(member_oids)
-        if member_oids
-        else {}
-    )
-
     members = [
         {
             "_id": row["_id"],
             "activity": row["activity"],
             "member": row["member"],
-            "member_name": names.get(row["member"]) or "未知用户",
+            "member_name": row["member_name"],
             "mode": row["mode"],
             "status": row["status"],
             "duration": row["duration"],

@@ -14,7 +14,7 @@ from config import (
 )
 from db import backends
 from typings.time import UserActivityTime
-from util.calculate import calculate_user_time
+from util.calculate import calculate_user_time_bulk
 from util.get_class import get_user_class
 from util.object_id import get_current_user, validate_object_id
 from util.permission.user import validate_read_group_permission
@@ -132,40 +132,14 @@ async def get_group_activities_v2(
 
     await validate_read_group_permission(user, group_id, "volunteer")
 
-    # Collect the activity ids that any member of this class belongs to.
     class_oid = validate_object_id(group_id)
-    members = await backends.get_users_repo().list_by_class(str(class_oid))
-    member_ids = [str(member["_id"]) for member in members]
-
-    memberships = await backends.get_members_repo().list_by_members(member_ids)
-    activity_ids = list({str(membership["activity"]) for membership in memberships})
 
     if not regex:
         search = re.escape(search) if search else ""
 
-    activities, _ = await backends.get_activities_repo().list_by_oids(
-        activity_ids, "", -1
+    activities, count = await backends.get_groups_repo().activities_page(
+        str(class_oid), search, sort, asc, page, perpage
     )
-
-    if search:
-        pattern = re.compile(search, re.IGNORECASE)
-        activities = [
-            activity
-            for activity in activities
-            if pattern.search(activity.get("name") or "")
-            or pattern.search(activity.get("description") or "")
-        ]
-
-    if sort:
-        activities.sort(
-            key=lambda activity: (activity.get(sort) is None, activity.get(sort)),
-            reverse=not asc,
-        )
-
-    count = len(activities)
-
-    start = (page - 1) * perpage
-    activities = activities[start : start + perpage]
 
     for activity in activities:
         activity["_id"] = str(activity["_id"])
@@ -198,38 +172,23 @@ async def read_users(
         "social-practice": "social_practice",
     }
     class_oid = validate_object_id(group_id)
-    users_repo = backends.get_users_repo()
-    result = await users_repo.list_by_class(str(class_oid))
-    if query:
-        pattern = re.compile(query, re.IGNORECASE)
-        result = [
-            user
-            for user in result
-            if pattern.search(user.get("name") or "")
-            or pattern.search(user.get("id") or "")
-        ]
-    count = len(result)
-    if sort == "id":
-        result = sorted(result, key=lambda x: x["id"], reverse=not asc)
-    selected_students = [str(user["_id"]) for user in result]
-
-    user_times = await backends.get_time_repo().list_by_users(
-        selected_students,
-        sort_field=sortkey.get(sort, sort) if sort else None,
-        descending=not asc,
-        page=page,
-        size=perpage,
+    user_times, count = await backends.get_time_repo().list_by_class(
+        str(class_oid),
+        query,
+        sortkey.get(sort, sort) if sort else None,
+        not asc,
+        page,
+        perpage,
     )
     results = []
 
     for user in user_times:
-        user_info = await users_repo.get_by_oid(user["user"])
         time_struct = UserActivityTime.model_validate(user, strict=False)
         results.append(
             {
                 "_id": str(user["user"]),
-                "name": user_info["name"],
-                "id": user_info["id"],
+                "name": user["name"],
+                "id": user["id"],
                 "on-campus": time_struct.on_campus,
                 "off-campus": time_struct.off_campus,
                 "social-practice": time_struct.social_practice,
@@ -333,6 +292,8 @@ async def stat_group_compliance(
 
     members = [str(member["_id"]) for member in members]
 
+    user_times = await calculate_user_time_bulk(members, allow_cache=True)
+
     member_time_counts = []
 
     on_campus = defaultdict(int)
@@ -342,7 +303,7 @@ async def stat_group_compliance(
     # Percentage of compliance, 0%–20%, 20%–40%, 40%–60%, 60%–80%, 80%–100%, completed.
 
     for member in members:
-        user_time = await calculate_user_time(member, allow_cache=True)
+        user_time = user_times[member]
         on_campus_range = min(
             int(user_time["on-campus"] / BASE_ON_CAMPUS * 100 // 20), 5
         )

@@ -16,13 +16,16 @@ import re
 from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator
 
-from sqlalchemy import delete, func, insert, or_, select, text, update
+from sqlalchemy import delete, exists, func, insert, or_, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.ids import new_oid, normalize_oid
+from db.models import activities as activities_tbl
+from db.models import activity_members as members_tbl
 from db.models import groups as groups_tbl
 from db.models import users as users_tbl
 from db.oracle.session import session_scope
+from db.repos.oracle.activities import _activity_doc
 
 Row = dict[str, Any]
 
@@ -165,6 +168,84 @@ def _members_count_stmt(group_oid: str, query: str):
             )
         )
     return stmt
+
+
+_ACTIVITY_COLUMNS = (
+    activities_tbl.c.oid,
+    activities_tbl.c.name,
+    activities_tbl.c.description,
+    activities_tbl.c.atype,
+    activities_tbl.c.creator_oid,
+    activities_tbl.c.status,
+    activities_tbl.c.activity_date,
+    activities_tbl.c.created_at,
+    activities_tbl.c.updated_at,
+    activities_tbl.c.appointee_oid,
+    activities_tbl.c.approver,
+    activities_tbl.c.place,
+    activities_tbl.c.origin,
+)
+
+_ACTIVITY_SORT_COLUMNS = {
+    "name": activities_tbl.c.name,
+    "description": activities_tbl.c.description,
+    "type": activities_tbl.c.atype,
+    "creator": activities_tbl.c.creator_oid,
+    "status": activities_tbl.c.status,
+    "date": activities_tbl.c.activity_date,
+    "createdAt": activities_tbl.c.created_at,
+    "updatedAt": activities_tbl.c.updated_at,
+    "appointee": activities_tbl.c.appointee_oid,
+    "approver": activities_tbl.c.approver,
+    "place": activities_tbl.c.place,
+    "origin": activities_tbl.c.origin,
+    "_id": activities_tbl.c.oid,
+}
+
+
+def _group_activities_stmt(
+    group_oid: str,
+    search: str,
+    sort: str,
+    asc: bool,
+    page: int,
+    size: int,
+):
+    member_exists = (
+        select(1)
+        .select_from(
+            members_tbl.join(
+                users_tbl, members_tbl.c.member_oid == users_tbl.c.oid
+            )
+        )
+        .where(
+            members_tbl.c.activity_oid == activities_tbl.c.oid,
+            users_tbl.c.class_oid == group_oid,
+        )
+    )
+    stmt = select(
+        *_ACTIVITY_COLUMNS,
+        func.count().over().label("total_count"),
+    ).where(exists(member_exists))
+    if search:
+        stmt = stmt.where(
+            or_(
+                func.regexp_like(activities_tbl.c.name, search, "i"),
+                func.regexp_like(activities_tbl.c.description, search, "i"),
+            )
+        )
+    column = _ACTIVITY_SORT_COLUMNS.get(sort) if sort else None
+    if column is not None:
+        stmt = stmt.order_by(column.asc() if asc else column.desc())
+    else:
+        stmt = stmt.order_by(activities_tbl.c.oid.desc())
+    return stmt.offset((page - 1) * size).limit(size)
+
+
+def _merged_total(rows: Any) -> int:
+    if not rows:
+        return 0
+    return int(rows[0]._mapping["total_count"])
 
 
 def _permission_columns() -> tuple[Any, ...]:
@@ -315,6 +396,22 @@ class OracleGroupsRepo:
         async with _session_for(self._session) as (session, _owns):
             rows = (await session.execute(stmt)).all()
         return [_class_row(row._mapping) for row in rows]
+
+    async def activities_page(
+        self,
+        group_oid: str,
+        search: str,
+        sort: str,
+        asc: bool,
+        page: int,
+        size: int,
+    ) -> tuple[list[Row], int]:
+        stmt = _group_activities_stmt(
+            normalize_oid(group_oid), search, sort, asc, page, size
+        )
+        async with _session_for(self._session) as (session, _owns):
+            rows = (await session.execute(stmt)).all()
+        return [_activity_doc(row._mapping) for row in rows], _merged_total(rows)
 
     async def list_non_permission(self) -> list[Row]:
         stmt = _list_non_permission_stmt()

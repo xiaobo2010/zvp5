@@ -32,6 +32,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.ids import new_oid, normalize_oid
 from db.models import activities as activities_tbl
+from db.models import users as users_tbl
 from db.oracle.session import session_scope
 
 Row = dict[str, Any]
@@ -105,8 +106,24 @@ def _activity_filter(query: str, atypes: list[str] | None, status: str | None) -
 
 
 def _page_stmt(query: str, atypes: list[str] | None, status: str | None, page: int, size: int):
-    """``list_page`` select: ordered (``oid DESC``) + paginated."""
-    stmt = select(*_activity_columns())
+    """``list_page`` select: creator name joined, total via ``COUNT(*) OVER()``.
+
+    The LEFT JOIN resolves ``creator_name`` (a missing creator keeps the row —
+    the ``USERS`` side is the optional one); the analytic total is evaluated
+    over the filtered set, before the row limit.
+    """
+    stmt = (
+        select(
+            *_activity_columns(),
+            users_tbl.c.name.label("creator_name"),
+            func.count().over().label("total_count"),
+        )
+        .select_from(
+            activities_tbl.outerjoin(
+                users_tbl, activities_tbl.c.creator_oid == users_tbl.c.oid
+            )
+        )
+    )
     conds = _activity_filter(query, atypes, status)
     if conds:
         stmt = stmt.where(*conds)
@@ -228,6 +245,18 @@ def _types_summary_stmt():
     )
 
 
+def _total_of(rows: Any) -> int | None:
+    """The ``COUNT(*) OVER()`` value carried by a merged count+page result.
+
+    ``None`` for an empty page: the window count is not observable then, and the
+    caller decides whether the page is simply empty (``page == 1`` → ``0``) or
+    out of range (a dedicated count statement is issued).
+    """
+    if not rows:
+        return None
+    return int(rows[0]._mapping["total_count"])
+
+
 def _activity_doc(mapping: Any) -> Row:
     """Canonical activity row (matches ``mongo/activities._activity_doc``)."""
     return {
@@ -269,12 +298,24 @@ class OracleActivitiesRepo:
         page: int,
         size: int,
     ) -> tuple[list[Row], int]:
-        page_stmt = _page_stmt(query, atypes, status, page, size)
+        stmt = _page_stmt(query, atypes, status, page, size)
         count_stmt = _count_stmt(query, atypes, status)
         async with _session_for(self._session) as (session, _owns):
-            total = (await session.execute(count_stmt)).scalar_one()
-            rows = (await session.execute(page_stmt)).all()
-        return [_activity_doc(row._mapping) for row in rows], int(total)
+            rows = (await session.execute(stmt)).all()
+            total = _total_of(rows)
+            if total is None:
+                total = (
+                    0
+                    if page == 1
+                    else int((await session.execute(count_stmt)).scalar_one())
+                )
+        return [
+            {
+                **_activity_doc(row._mapping),
+                "creator_name": row._mapping["creator_name"] or "未知用户",
+            }
+            for row in rows
+        ], total
 
     async def create(
         self,
