@@ -6,7 +6,6 @@ import {
   ElCard,
   ElPagination,
   ElInput,
-  ElResult,
   ElButton,
   ElSwitch,
   ElFormItem
@@ -60,7 +59,6 @@ watch(height, () => {
   tableHeight.value = height.value * 0.6
 })
 
-/*
 onMounted(() => {
   api.group.readOne(id.value).then((res) => {
     group.value = res
@@ -78,7 +76,7 @@ const refresh = async () => {
   const res =
     id.value === ''
       ? await api.time.reads(search.value, page.value, perpage.value, sort.value, asc.value)
-      : ((await api.group.reads.time(
+      : await api.group.reads.time(
           id.value,
           page.value,
           perpage.value,
@@ -87,20 +85,12 @@ const refresh = async () => {
           diff.value,
           sort.value,
           asc.value
-        )) as {
-          time: {
-            _id: string
-            name: string
-            id: string
-            'on-campus': number
-            'off-campus': number
-            'social-practice': number
-          }[]
-          size: number
-        })
-  time.value = []
-  time.value.push(...res.time)
-  total.value = res.size
+        )
+  if (res) {
+    time.value = []
+    time.value.push(...res.time)
+    total.value = res.size
+  }
   loading.value = false
 }
 onMounted(refresh)
@@ -131,11 +121,10 @@ async function onSortChange(data: {
   }
   refresh()
 }
-*/
 </script>
 
 <template>
-  <!--<div
+  <div
     v-if="
       userStore.position.includes('admin') ||
       userStore.position.includes('department') ||
@@ -258,13 +247,5 @@ async function onSortChange(data: {
         :page-sizes="[3, 5, 8, 10, 15, 20]"
       />
     </ElCard>
-  </div>-->
-  <ElCard shadow="never">
-    <ElResult
-      icon="error"
-      title="维护中"
-      sub-title="该功能暂停开放"
-    >
-    </ElResult>
-  </ElCard>
+  </div>
 </template>

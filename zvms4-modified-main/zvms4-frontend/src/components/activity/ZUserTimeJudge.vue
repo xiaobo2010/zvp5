@@ -16,9 +16,8 @@ import {
 import { useWindowSize } from '@vueuse/core'
 import { useUserStore } from '@/stores/user'
 import { useI18n } from 'vue-i18n'
-import { ZActivityMemberTimeJudge } from '..'
+import { ZActivityMemberTimeJudge, ZDetailedAnalysis } from '..'
 import { Refresh } from '@element-plus/icons-vue'
-import { TablerSum } from '@/icons'
 import api from '@/api'
 import { Certificate, TableReport } from '@icon-park/vue-next'
 import { pad } from '@/plugins/ua.ts'
@@ -106,9 +105,9 @@ const reportPage = ref(false)
 
 <template>
   <div>
-    <!--<ElDialog fullscreen title="User Activity Time Report" v-model="reportPage">
+    <ElDialog fullscreen destroy-on-close title="义工时长明细" v-model="reportPage">
       <ZDetailedAnalysis :id="user" mode="on-campus" />
-    </ElDialog>-->
+    </ElDialog>
     <ElCard
       shadow="hover"
     >
@@ -117,8 +116,8 @@ const reportPage = ref(false)
           <span class="text-lg">{{ t('home.panels.time.title') }}</span>
         </ElCol>
         <ElCol :span="12" style="text-align: right">
-          <!--<ElButton :icon="TableReport" text bg circle @click="reportPage = true"> </ElButton>
-          <ElDivider v-if="user === userStore._id" direction="vertical" />-->
+          <ElButton :icon="TableReport" text bg circle @click="reportPage = true"> </ElButton>
+          <ElDivider v-if="user === userStore._id" direction="vertical" />
           <ElButton
             type="success"
             :disabled="loading"
@@ -128,8 +127,6 @@ const reportPage = ref(false)
             circle
             @click="getTime"
           />
-          <!--<ElDivider direction="vertical" />
-          <ElButton type="info" :icon="TablerSum" text bg circle />-->
         </ElCol>
       </ElRow>
       <ElRow class="fill py-2 statistic" v-if="!loading">

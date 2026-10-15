@@ -12,7 +12,7 @@ import {
 } from 'chart.js'
 import { Bar, Doughnut } from 'vue-chartjs'
 import { ElSegmented, ElSwitch } from 'element-plus'
-import { ref, toRefs, computed, watch } from 'vue'
+import { ref, toRefs, watch } from 'vue'
 import api from '@/api'
 import type { ActivityMember } from 'types/activity.v2'
 import { useI18n } from 'vue-i18n'
@@ -27,7 +27,6 @@ const props = withDefaults(
     groupId: ''
   }
 )
-/*
 ChartJS.register(Colors, Title, Tooltip, Legend, BarElement, CategoryScale, LinearScale, ArcElement)
 
 const { groupId } = toRefs(props)
@@ -56,6 +55,12 @@ const modes = ref<ActivityMember['mode'][]>(['on-campus', 'off-campus', 'social-
 
 const barChart = ref(false)
 
+// The backend's compliance buckets are numeric ranges ("0%–20%") except the
+// terminal one, which comes back as the English literal "Completed".
+function formatBucketLabel(label: string) {
+  return label === 'Completed' ? '已达标' : label
+}
+
 // Chart data computed properties
 function computeBarChartData() {
   if (Object.keys(statistics.value).length === 0) return { labels: [], datasets: [] }
@@ -66,15 +71,15 @@ function computeBarChartData() {
     // kebab-case to Title Case
     Object.keys(modeData).forEach((label) => allLabels.add(label))
   })
-  const labels = Array.from(allLabels)
+  const labelKeys = Array.from(allLabels)
 
   const datasets = Object.keys(statistics.value).map((mode) => ({
-    label: mode.replace(/-/g, ' ').replace(/\b\w/g, (char) => char.toUpperCase()),
-    data: labels.map((label) => statistics.value[mode]?.[label] || 0)
+    label: t(`activity.mode.${mode}.name`),
+    data: labelKeys.map((label) => statistics.value[mode]?.[label] || 0)
   }))
 
   return {
-    labels,
+    labels: labelKeys.map(formatBucketLabel),
     datasets
   }
 }
@@ -89,7 +94,7 @@ function computeDoughnutChartData() {
   const data = Object.values(modeData)
 
   return {
-    labels,
+    labels: labels.map(formatBucketLabel),
     datasets: [{ data }]
   }
 }
@@ -100,13 +105,12 @@ watch(
     doughnutChartData.value = computeDoughnutChartData()
   }
 )
-*/
 </script>
 
 <template>
-  <!--<div class="mx-4 text-center" v-loading="loading">
+  <div class="mx-4 text-center" v-loading="loading">
     <div class="text-center">
-      <ElSwitch v-model="barChart" active-text="Bar Chart" inactive-text="Ring Chart" />
+      <ElSwitch v-model="barChart" active-text="柱状图" inactive-text="环形图" />
     </div>
     <div class="text-center">
       <ElSegmented :options="modes" v-model="activeMode" v-if="!barChart">
@@ -123,13 +127,5 @@ watch(
         style="width: 384px; height: auto; text-align: center"
       />
     </div>
-  </div>-->
-  <ElCard shadow="never">
-    <ElResult
-      icon="error"
-      title="维护中"
-      sub-title="该功能暂停开放"
-    >
-    </ElResult>
-  </ElCard>
+  </div>
 </template>
