@@ -73,8 +73,21 @@ async def build_reference(
     ``db.oracle.session.session_scope`` (which tier-2 points at the scratch schema).
     """
     if session is None:
-        async with session_scope() as owned:
-            return await _build(owned, now=now, log=log)
+        ctx = session_scope()
+        owned = await ctx.__aenter__()
+        try:
+            summary = await _build(owned, now=now, log=log)
+        except BaseException:
+            try:
+                await ctx.__aexit__(None, None, None)
+            except Exception:
+                pass
+            raise
+        try:
+            await ctx.__aexit__(None, None, None)
+        except Exception as exc:
+            log(f"warn: reference session close failed after successful build: {exc}")
+        return summary
     return await _build(session, now=now, log=log)
 
 
