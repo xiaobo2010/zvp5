@@ -64,6 +64,9 @@ const levelLabels: Record<string, string> = {
         <ElFormItem label="用户 ID">
           {{ log.user }}
         </ElFormItem>
+        <ElFormItem v-if="log.xuehai_id" label="学海 ID">
+          {{ log.xuehai_id }}
+        </ElFormItem>
         <ElFormItem label="日期">
           {{ dayjs.unix(log.timestamp).format('YYYY-MM-DD HH:mm:ss') }}
         </ElFormItem>
