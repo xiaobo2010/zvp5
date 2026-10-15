@@ -105,8 +105,8 @@ const refresh = () => emits('refresh')
     @mouseleave="hovered = false"
     style="width: 100%"
   >
-    <p class="text-xl pl-4" style="width: 100%">
-      <span v-if="!editDescription" @dblclick="canModify && (editDescription = true)">{{
+    <p class="flex flex-wrap items-center gap-x-2 gap-y-1 text-xl pl-4" style="width: 100%">
+      <span v-if="!editDescription" @dblclick="canModify && (editDescription = true)" class="break-words">{{
         activity.name
       }}</span>
       <ElInput v-else v-model="name" style="width: 328px" required @keydown.enter="submitInfo">

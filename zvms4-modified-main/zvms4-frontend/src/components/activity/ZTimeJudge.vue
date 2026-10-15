@@ -69,15 +69,21 @@ function calculateLoss() {
               least: standard
             })
           "
-          ><ElButton text bg circle size="small" :icon="Warning"
-        /></ElTooltip>
+          ><ElButton
+            text
+            bg
+            circle
+            size="small"
+            :icon="Warning"
+            :aria-label="t('home.panels.time.least', { type: t(`activity.mode.${type}.name`), least: standard })"
+          /></ElTooltip>
       </span>
     </template>
     <template #suffix>
       <div class="footer-item">
-        <span style="font-family: 12px">{{ t('home.panels.time.unit', real) }}</span
-        >&nbsp;
-        <span :class="calculateLoss().class">
+        <span>{{ t('home.panels.time.unit', real) }}</span>
+        &nbsp;
+        <span :class="calculateLoss().class" :aria-label="calculateLoss().text + calculateLoss().loss.toFixed(1) + ' 小时'">
           <span>{{ calculateLoss().loss.toFixed(1) }}</span>
           <ElIcon style="font-size: 9px"><Component :is="calculateLoss().icon" /></ElIcon>
         </span>
@@ -109,14 +115,12 @@ function calculateLoss() {
 
 .footer-item {
   font-size: 12px !important;
+  display: flex;
   justify-content: space-between;
   align-items: center;
   flex-wrap: wrap;
   color: var(--el-text-color-regular);
   margin-top: 16px;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
 }
 
 .statistic-footer .footer-item span:first-child {
