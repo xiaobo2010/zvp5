@@ -351,6 +351,16 @@ def _partition_a(diffs: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], lis
     for diff in diffs:
         if diff["table"] in KNOWN_SUPERSET_TABLES and diff["kind"] == "only_right":
             known.append(diff)
+        elif (
+            diff["table"] == "time_with_origin_stat"
+            and diff["kind"] == "only_right"
+            and (diff["right"].get("data") or {}).get("by_origin") == {}
+            and (diff["right"].get("data") or {}).get("percentage_by_origin") == {}
+        ):
+            # rebuild materialises an empty scope×rq row (by_origin == {}); the
+            # legacy loop skips the upsert for an empty scope. Same class of
+            # superset as the academic-year whitelist.
+            known.append(diff)
         else:
             fatal.append(diff)
     return fatal, known
