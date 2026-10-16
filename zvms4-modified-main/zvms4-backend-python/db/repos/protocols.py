@@ -453,11 +453,15 @@ class MembersRepo(Protocol):
         """
         ...
 
-    async def list_by_activity(self, activity_oid: str) -> list[Row]:
+    async def list_by_activity(
+        self, activity_oid: str, status: str | None = None
+    ) -> list[Row]:
         """Return every membership of an activity (no join, no pagination).
 
         Lifts ``activity_statistics_router`` / ``mcp_router``'s
         ``find({"activity": ...})`` reads; callers use ``duration`` for stats.
+        ``status`` optionally keeps only memberships in that approval state
+        (``None`` = every state, the original behaviour).
         """
         ...
 

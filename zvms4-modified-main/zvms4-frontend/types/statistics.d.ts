@@ -30,15 +30,61 @@ export interface GroupUsersPage {
 
 /**
  * @description Payload shape of `/v2/statistics/activities/:id/description`.
+ * The keys mirror the backend `util/activity_statistics.describe_durations`
+ * output verbatim, so a typo in a consumer becomes a type error.
  */
 export interface ActivityStatisticsDescription {
-  [key: string]: number
+  mean: number
+  median: number
+  mode: number
+  std: number
+  min: number
+  max: number
+  var: number
+  sum: number
+  '25_percentile': number
+  '75_percentile': number
+  total: number
 }
 
 /**
- * @description Payload shape of `/v2/statistics/activities/:id/layers`.
+ * @description A single duration bucket of the duration histogram, `[from, to)`.
  */
-export interface ActivityStatisticsLayer {
-  value: number
+export interface ActivityStatisticsBin {
+  from: number
+  to: number
   count: number
+}
+
+/**
+ * @description Per-mode aggregate row of the activity analysis payload.
+ */
+export interface ActivityStatisticsModeGroup {
+  mode: string
+  count: number
+  sum: number
+  mean: number
+}
+
+/**
+ * @description Per-class aggregate row of the activity analysis payload.
+ */
+export interface ActivityStatisticsClassGroup {
+  group_oid: string
+  group_name: string
+  count: number
+  sum: number
+  mean: number
+}
+
+/**
+ * @description Payload shape of `/v2/statistics/activities/:id/analysis`.
+ */
+export interface ActivityStatistics {
+  total: number
+  bin_width: number
+  description: ActivityStatisticsDescription | null
+  bins: ActivityStatisticsBin[]
+  modes: ActivityStatisticsModeGroup[]
+  classes: ActivityStatisticsClassGroup[]
 }
