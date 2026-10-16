@@ -26,6 +26,8 @@ import { ZMarkdown, ZMarkdownEditor } from '@/components/markdown'
 import { useI18n } from 'vue-i18n'
 import api from '@/api'
 import router from '@/router'
+import { getXuehaiId } from '@/plugins/ua'
+import ZActivityAttachmentsDialog from './ZActivityAttachmentsDialog.vue'
 import { StreamlineInterfaceUserEditActionsCloseEditGeometricHumanPencilPersonSingleUpUserWrite } from '@/icons'
 
 const props = withDefaults(
@@ -71,6 +73,7 @@ const description = ref(activity.value.description)
 const canModify = computed(
   () => user.position.includes('admin') || user.position.includes('department')
 )
+const isXuehaiDevice = computed(() => getXuehaiId() > 0)
 
 async function submitInfo() {
   try {
@@ -181,6 +184,11 @@ const refresh = () => emits('refresh')
         @refresh="refresh"
       />
       <ZActivityStatsDialog :aid="activity._id" @refresh="refresh" />
+      <ZActivityAttachmentsDialog
+        v-if="canModify && !isXuehaiDevice"
+        class="px-2"
+        :activity-id="activity._id"
+      />
     </div>
     <ElRow>
       <ElCol :span="6">

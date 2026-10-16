@@ -44,7 +44,25 @@ from util.attachment import (
 from util.attachment_ocr import OCR_PROCESSING, process_ocr
 from util.object_id import get_current_user, optional_current_user, validate_object_id
 
-router = APIRouter()
+# ---------------------------------------------------------------------------
+# Device gate
+# ---------------------------------------------------------------------------
+
+
+async def reject_xuehai_device(request: Request) -> None:
+    """Policy gate: Xuehai devices may not touch the media library at all.
+
+    A request whose ``Xuehai-Id`` header parses to a positive integer is
+    treated as coming from a Xuehai device (the frontend only injects this
+    header when it self-identifies as one). Missing / empty / non-positive or
+    non-integer values pass through unchanged.
+    """
+    raw = xuehai_id_from(request)
+    if raw.isdecimal() and int(raw) > 0:
+        raise HTTPException(status_code=403, detail="学海设备不支持访问媒体库")
+
+
+router = APIRouter(dependencies=[Depends(reject_xuehai_device)])
 
 # Only these statuses are ever served; deleted/quarantined/rejected are 410 even
 # with a valid signature (design §4 #2 / §6.2).
@@ -631,10 +649,12 @@ async def delete_attachment(
         raise HTTPException(status_code=404, detail="Attachment not found")
 
     owner = str(row.get("owner_oid") or "") == user["id"]
-    if not owner and not _is_admin(user):
+    if not owner and not _is_manager(user):
         raise HTTPException(status_code=403, detail="Permission denied")
-    # An owner may delete only unverified material (design §4 #11).
-    if owner and not _is_admin(user) and str(row.get("status") or "") in (
+    # An owner or a manager (admin | department) may delete only unverified
+    # material (design §4 #11); verified/rejected stay undeletable for both,
+    # admins only keep their override.
+    if not _is_admin(user) and str(row.get("status") or "") in (
         "verified",
         "rejected",
     ):
