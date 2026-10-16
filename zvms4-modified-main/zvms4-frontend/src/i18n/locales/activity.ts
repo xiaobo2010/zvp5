@@ -82,6 +82,50 @@ export const zhCN = {
       loadFailed: '义工单加载失败，请重试'
     }
   },
+  statistics: {
+    name: '统计',
+    refresh: '强制刷新统计',
+    export: '导出统计',
+    exportDone: '已导出',
+    empty: '暂无统计数据',
+    loadFailed: '统计数据加载失败，请稍后重试',
+    retry: '重试',
+    tabs: { overview: '概览', distribution: '时长分布', groups: '分组对比' },
+    metrics: {
+      total: '有效参与人数',
+      sum: '总时长',
+      mean: '平均值',
+      median: '中位数',
+      min: '最小值',
+      max: '最大值',
+      p25: '25% 分位数',
+      p75: '75% 分位数'
+    },
+    distribution: {
+      title: '时长分布',
+      axisPerson: '人数',
+      axisHours: '时长（小时）',
+      percentile: '25% / 50% / 75% 分位：{p25} / {p50} / {p75} 小时'
+    },
+    groups: {
+      mode: '参与模式',
+      class: '班级',
+      other: '其他',
+      unnamedClass: '未分班',
+      count: '人数',
+      sum: '总时长',
+      axisSum: '总时长（小时）'
+    },
+    csv: {
+      overview: '概览',
+      metric: '指标',
+      value: '数值',
+      distribution: '时长分布',
+      range: '区间',
+      modeGroup: '分组-模式',
+      classGroup: '分组-班级'
+    }
+  },
   units: {
     item: '项',
     hour: '小时',

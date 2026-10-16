@@ -1,8 +1,12 @@
 from fastapi import APIRouter, Depends, HTTPException
 from db import backends
 import numpy as np
-from scipy.stats import mode
 
+from util.activity_statistics import (
+    build_analysis_payload,
+    describe_durations,
+    empty_analysis_payload,
+)
 from util.object_id import get_current_user
 
 router = APIRouter()
@@ -21,49 +25,33 @@ async def activity_issuance_description(
     """
     Get the data description of an activity by its ID.
     It consists: mean, median, mode, standard deviation, min, max, and variance.
+    Only memberships with status ``effective`` are counted, and the maths come
+    from :func:`util.activity_statistics.describe_durations`.
     :param activity_id: The ID of the activity
     :param user: Current user, used for authentication
     """
     _require_statistics_reader(user)
-    distribution = await backends.get_members_repo().list_by_activity(activity_id)
+    distribution = await backends.get_members_repo().list_by_activity(
+        activity_id, status="effective"
+    )
     if not distribution:
         return {"code": 404, "status": "not found", "data": None}
     distribution = [float(item["duration"]) for item in distribution]
-    distribution = np.array(distribution, dtype=np.float64)
-    mean = np.mean(distribution).item()
-    median = float(np.median(distribution))
-    std_dev = np.std(distribution).item()
-    min_val = np.min(distribution).item()
-    max_val = np.max(distribution).item()
-    variance = np.var(distribution).item()
-    sum_val = np.sum(distribution).item()
-    twenty_fifth = np.percentile(distribution, 25).item()
-    seventy_fifth = np.percentile(distribution, 75).item()
-    total = len(distribution)
-    return {
-        "mean": mean,
-        "median": median,
-        "mode": mode(distribution).mode,
-        "std": std_dev,
-        "min": min_val,
-        "max": max_val,
-        "var": variance,
-        "sum": sum_val,
-        "25_percentile": twenty_fifth,
-        "75_percentile": seventy_fifth,
-        "total": total,
-    }
+    return describe_durations(distribution)
 
 
 @router.get("/{activity_id}/layers")
 async def activity_issuance_layers(activity_id: str, user=Depends(get_current_user)):
     """
     Get the layers of an activity by its ID.
+    Only memberships with status ``effective`` are counted.
     :param activity_id: The ID of the activity
     :param user: Current user, used for authentication
     """
     _require_statistics_reader(user)
-    distribution = await backends.get_members_repo().list_by_activity(activity_id)
+    distribution = await backends.get_members_repo().list_by_activity(
+        activity_id, status="effective"
+    )
     if not distribution:
         return {"code": 404, "status": "not found", "data": None}
     distribution = [item["duration"] for item in distribution]
@@ -77,6 +65,38 @@ async def activity_issuance_layers(activity_id: str, user=Depends(get_current_us
     ]
     layers.sort(key=lambda x: x["count"])
     return layers[::-1]
+
+
+@router.get("/{activity_id}/analysis")
+async def activity_issuance_analysis(activity_id: str, user=Depends(get_current_user)):
+    """
+    Get the histogram, grouped and descriptive statistics of an activity by its ID.
+    Only memberships with status ``effective`` are counted: the same population
+    as the time rebuild uses, so the numbers agree with the rest of the system.
+    The payload is a superset of the description/layers endpoints, which are kept
+    as fallbacks.
+
+    Members are mapped to their class with two full reads (``list_all`` for the
+    users, then the groups repo's ``list_all`` class listing) instead of a
+    dedicated batch protocol method: the tables are small, this needs no new
+    repository surface, and it keeps the endpoint to two queries — the paginated
+    ``list_classes`` would cost a third count query just to learn the total.
+    An activity with no effective member answers the empty payload without those
+    reads at all. The assembly itself lives in
+    :func:`util.activity_statistics.build_analysis_payload`.
+
+    :param activity_id: The ID of the activity
+    :param user: Current user, used for authentication
+    """
+    _require_statistics_reader(user)
+    members = await backends.get_members_repo().list_by_activity(
+        activity_id, status="effective"
+    )
+    if not members:
+        return empty_analysis_payload()
+    users = await backends.get_users_repo().list_all()
+    classes = await backends.get_groups_repo().list_all()
+    return build_analysis_payload(members, users, classes)
 
 
 @router.get("/grades/{grade}/percentiles")
