@@ -47,6 +47,14 @@ const asc = ref(true)
 
 const { id } = toRefs(props)
 
+const standards = { 'on-campus': 25, 'off-campus': 15, 'social-practice': 18 } as const
+
+type TimeMode = keyof typeof standards
+
+function shortage(mode: TimeMode, value: number) {
+  return (standards[mode] - value).toFixed(1)
+}
+
 const tableHeight = ref(height.value * 0.6)
 
 watch(height, () => {
@@ -165,12 +173,14 @@ async function onSortChange(data: {
         <ElTableColumn prop="id" sortable :label="t('manage.groupDetails.userList.columns.id')" />
         <ElTableColumn prop="on-campus" :label="t('activity.mode.on-campus.short')" v-if="diff">
           <template #default="{ row }">
-            <span class="cell-ok" v-if="row['on-campus'] <= 0">{{
+            <span class="cell-ok" v-if="row['on-campus'] >= standards['on-campus']">{{
               t('manage.groupDetails.timeList.filled')
             }}</span>
             <span class="cell-low" v-else>
               {{
-                t('manage.groupDetails.timeList.diffed', { time: row['on-campus'].toFixed(1) })
+                t('manage.groupDetails.timeList.diffed', {
+                  time: shortage('on-campus', row['on-campus'])
+                })
               }}</span
             >
           </template>
@@ -187,12 +197,14 @@ async function onSortChange(data: {
         </ElTableColumn>
         <ElTableColumn prop="off-campus" :label="t('activity.mode.off-campus.short')" v-if="diff">
           <template #default="{ row }">
-            <span class="cell-ok" v-if="row['off-campus'] <= 0">{{
+            <span class="cell-ok" v-if="row['off-campus'] >= standards['off-campus']">{{
               t('manage.groupDetails.timeList.filled')
             }}</span>
             <span class="cell-low" v-else>
               {{
-                t('manage.groupDetails.timeList.diffed', { time: row['off-campus'].toFixed(1) })
+                t('manage.groupDetails.timeList.diffed', {
+                  time: shortage('off-campus', row['off-campus'])
+                })
               }}</span
             >
           </template>
@@ -216,13 +228,13 @@ async function onSortChange(data: {
           v-if="diff"
         >
           <template #default="{ row }">
-            <span class="cell-ok" v-if="row['social-practice'] <= 0">{{
+            <span class="cell-ok" v-if="row['social-practice'] >= standards['social-practice']">{{
               t('manage.groupDetails.timeList.filled')
             }}</span>
             <span class="cell-low" v-else>
               {{
                 t('manage.groupDetails.timeList.diffed', {
-                  time: row['social-practice'].toFixed(1)
+                  time: shortage('social-practice', row['social-practice'])
                 })
               }}</span
             >
