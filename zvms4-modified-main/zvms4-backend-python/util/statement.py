@@ -664,7 +664,7 @@ async def create_statement_from_kernel_data(
 
     statement_records = []
 
-    items = await backends.get_members_repo().list_for_member(id)
+    items = await backends.get_members_repo().list_for_member(id, status="effective")
     type_map = {"on-campus": "on", "off-campus": "off", "social-practice": "social"}
     for item in items:
         activity = await backends.get_activities_repo().get(item["activity"])
