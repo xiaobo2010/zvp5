@@ -73,7 +73,14 @@ export const zhCN = {
       allow: '仅允许 {type} 文件'
     },
     details: '详情',
-    saveFailed: '保存失败，请重试'
+    saveFailed: '保存失败，请重试',
+    volunteerOrder: {
+      name: '义工单',
+      needCreateInfo: '请先完成基本信息，再上传义工单',
+      noPermission: '您没有管理义工单的权限',
+      deviceUnsupported: '学海设备不支持管理义工单，请使用其他设备操作',
+      loadFailed: '义工单加载失败，请重试'
+    }
   },
   units: {
     item: '项',

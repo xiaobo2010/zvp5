@@ -1,7 +1,7 @@
 <script lang="ts" setup>
 import type { CreateActivityType } from '@/../types'
 import type { Activity, ActivityMember } from '@/../types/v2'
-import { reactive, ref, toRefs, watch } from 'vue'
+import { reactive, ref, toRefs, watch, computed } from 'vue'
 import dayjs from '@/plugins/dayjs'
 import { useI18n } from 'vue-i18n'
 import {
@@ -36,6 +36,8 @@ import { useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user'
 import categories from './categories.json'
 import { composeDurationRecommendation } from './activityCategory'
+import ZAttachmentUpload from '@/components/attachment/ZAttachmentUpload.vue'
+import { getXuehaiId } from '@/plugins/ua'
 
 const { t, locale } = useI18n()
 const { height } = useWindowSize()
@@ -49,7 +51,12 @@ const props = defineProps<{
 
 const { type } = toRefs(props)
 
-const activePage = ref<'info' | 'member' | 'review'>('info')
+const activePage = ref<'info' | 'member' | 'volunteer_order' | 'review'>('info')
+
+const isXuehaiDevice = computed(() => getXuehaiId() > 0)
+const canManageAttachments = computed(
+  () => userStore.position.includes('admin') || userStore.position.includes('department')
+)
 
 const activity = reactive<Activity>({
   _id: '',
@@ -175,6 +182,8 @@ async function nextStep() {
       return
     }
   } else if (activePage.value === 'member') {
+    activePage.value = 'volunteer_order'
+  } else if (activePage.value === 'volunteer_order') {
   /*  activePage.value = 'review'
   } else if (activePage.value === 'review') {
     if (checkReviewAllowed()) {
@@ -186,7 +195,9 @@ async function nextStep() {
 }
 
 function prevStep() {
-  if (activePage.value === 'review') {
+  if (activePage.value === 'volunteer_order') {
+    activePage.value = 'member'
+  } else if (activePage.value === 'review') {
     activePage.value = 'member'
   }
 }
@@ -196,7 +207,10 @@ const validated = ref(false)
 watch(
   () => activity,
   () => {
-    validated.value = validateActivity(activity, activePage.value)
+    validated.value = validateActivity(
+      activity,
+      activePage.value === 'volunteer_order' ? 'review' : activePage.value
+    )
   },
   { deep: true, immediate: true }
 )
@@ -309,6 +323,37 @@ function checkReviewAllowed() {
                 <ZActivityMemberList mode="card" :activity="activity as unknown as Activity" />
               </div>
             </ElFormItem>
+            <ElFormItem
+              :label="t('activity.form.volunteerOrder.name')"
+              v-if="activePage === 'volunteer_order'"
+              style="width: 100%"
+            >
+              <div class="w-full" style="flex-grow: 1">
+                <ElAlert
+                  v-if="!activity._id"
+                  :title="t('activity.form.volunteerOrder.needCreateInfo')"
+                  type="warning"
+                  :closable="false"
+                />
+                <ElAlert
+                  v-else-if="!canManageAttachments"
+                  :title="t('activity.form.volunteerOrder.noPermission')"
+                  type="warning"
+                  :closable="false"
+                />
+                <ElAlert
+                  v-else-if="isXuehaiDevice"
+                  :title="t('activity.form.volunteerOrder.deviceUnsupported')"
+                  type="warning"
+                  :closable="false"
+                />
+                <ZAttachmentUpload
+                  v-else
+                  entity-type="activity"
+                  :entity-oid="activity._id"
+                />
+              </div>
+            </ElFormItem>
             <ElFormItem label="Preview" v-if="activePage === 'review'" style="width: 100%">
               <p class="text-center text-xl py-6">
                 {{ t('activity.creating_guide.check.created') }}
@@ -350,7 +395,7 @@ function checkReviewAllowed() {
               bg
               @click="nextStep"
             >
-              {{ activePage === 'member' ? '完成' : t('activity.batch.steps.next') }}
+              {{ activePage === 'member' || activePage === 'volunteer_order' ? '完成' : t('activity.batch.steps.next') }}
             </ElButton>
           </div>
         </ElForm>

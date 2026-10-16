@@ -38,6 +38,8 @@ export async function list(
     status?: string
     page?: number
     size?: number
+    entityType?: string
+    entityOid?: string
   } = {}
 ) {
   const result = (
@@ -47,7 +49,9 @@ export async function list(
         purpose: filters.purpose,
         status: filters.status,
         page: filters.page,
-        size: filters.size
+        size: filters.size,
+        entity_type: filters.entityType,
+        entity_oid: filters.entityOid
       }
     })
   ).data as Response<AttachmentListItem[]> & {
