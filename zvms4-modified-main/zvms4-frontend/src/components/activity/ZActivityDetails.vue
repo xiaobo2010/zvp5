@@ -73,6 +73,12 @@ const description = ref(activity.value.description)
 const canModify = computed(
   () => user.position.includes('admin') || user.position.includes('department')
 )
+const canViewStats = computed(
+  () =>
+    user.position.includes('admin') ||
+    user.position.includes('department') ||
+    user.position.includes('secretary')
+)
 const isXuehaiDevice = computed(() => getXuehaiId() > 0)
 
 async function submitInfo() {
@@ -183,7 +189,7 @@ const refresh = () => emits('refresh')
         :activity="activity"
         @refresh="refresh"
       />
-      <ZActivityStatsDialog :aid="activity._id" @refresh="refresh" />
+      <ZActivityStatsDialog v-if="canViewStats" :aid="activity._id" @refresh="refresh" />
       <ZActivityAttachmentsDialog
         v-if="canModify && !isXuehaiDevice"
         class="px-2"

@@ -338,10 +338,13 @@ def _get_by_triple_stmt(activity_oid: str, member_oid: str, mode: str):
     )
 
 
-def _list_by_activity_stmt(activity_oid: str):
-    return select(*_member_columns()).where(
+def _list_by_activity_stmt(activity_oid: str, status: str | None = None):
+    stmt = select(*_member_columns()).where(
         members_tbl.c.activity_oid == activity_oid
     )
+    if status is not None:
+        stmt = stmt.where(members_tbl.c.member_status == status)
+    return stmt
 
 
 def _list_for_member_stmt(
@@ -579,8 +582,16 @@ class OracleMembersRepo:
             return None
         return _member_row(row._mapping)
 
-    async def list_by_activity(self, activity_oid: str) -> list[Row]:
-        stmt = _list_by_activity_stmt(normalize_oid(activity_oid))
+    async def list_by_activity(
+        self, activity_oid: str, status: str | None = None
+    ) -> list[Row]:
+        """Return every membership of an activity (no join, no pagination).
+
+        ``status`` optionally keeps only memberships in that approval state;
+        ``None`` returns every state (the original behaviour). Stats callers pass
+        ``"effective"`` so they match the time rebuild's population.
+        """
+        stmt = _list_by_activity_stmt(normalize_oid(activity_oid), status)
         async with _session_for(self._session) as (session, _owns):
             rows = (await session.execute(stmt)).all()
         return [_member_row(row._mapping) for row in rows]

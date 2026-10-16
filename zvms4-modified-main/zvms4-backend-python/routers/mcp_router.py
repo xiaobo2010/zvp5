@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException, Depends, Query
 from typing import Dict, Any
 from db import backends
+from util.activity_statistics import describe_durations, to_mcp_statistics
 from util.object_id import get_current_user, validate_object_id
 import re
 
@@ -149,32 +150,21 @@ async def mcp_get_activity_statistics(
     if not activity_exists:
         raise HTTPException(status_code=404, detail="Activity not found")
 
-    # Get activity member durations for statistics
-    members = await backends.get_members_repo().list_by_activity(activity_id)
+    # Get the effective members' durations for statistics (same population as
+    # the reconstruction: pending/refused memberships are not counted)
+    members = await backends.get_members_repo().list_by_activity(
+        activity_id, status="effective"
+    )
 
     if not members:
         return {"success": True, "data": {"total_members": 0, "statistics": None}}
 
-    import numpy as np
-    from scipy.stats import mode
-
     durations = [float(member["duration"]) for member in members]
-    durations_array = np.array(durations, dtype=np.float64)
+    distribution = describe_durations(durations)
+    if distribution is None:
+        return {"success": True, "data": {"total_members": 0, "statistics": None}}
 
-    statistics = {
-        "total_members": len(durations),
-        "mean_duration": float(np.mean(durations_array)),
-        "median_duration": float(np.median(durations_array)),
-        "std_deviation": float(np.std(durations_array)),
-        "min_duration": float(np.min(durations_array)),
-        "max_duration": float(np.max(durations_array)),
-        "total_duration": float(np.sum(durations_array)),
-        "variance": float(np.var(durations_array)),
-        "percentile_25": float(np.percentile(durations_array, 25)),
-        "percentile_75": float(np.percentile(durations_array, 75)),
-    }
-
-    return {"success": True, "data": statistics}
+    return {"success": True, "data": to_mcp_statistics(distribution)}
 
 
 @router.get("/activities/types/summary")
