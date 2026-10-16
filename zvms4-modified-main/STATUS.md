@@ -595,3 +595,24 @@ xh_router 任意 URL 代理（:159 urlopen + :46 硬编码签名 KEY）、登录
 - **交付后自查修复（2 处）**：`db/repos/oracle/changelog.py` 的 `changelog_tbl.c.items` 被 SQLAlchemy `ColumnCollection.items` 方法遮蔽（Oracle 运行时关闭故未暴露）→ 改 `.c["items"]`；`misc/seed_changelog.py` 补 `sys.path`，使文档写的 `python misc/seed_changelog.py` 直接可跑（既有 migrate 脚本同款缺陷本批未动）。
 - **发版流程变更**：changelog 条目改由管理界面入库（不再改 `changelog.ts` 新增条目）；发版仍需手工升 `package.json` + 后端 `main.py` 两处版本串 + `changelog.ts` 的 `APP_VERSION` 兜底常量。
 - **版本**：v4.2.1-1 → **v4.2.2-1**（功能批次）。
+## 48. Part 13：统计重做 + 登录失败日志停止 + 身份/权限修复（2026-10-16，已部署 zgovps-la）
+
+> 本批为一次完整发布：本地六提交 → GitHub 推送 → 生产部署 → 历史日志清理。版本 **v4.2.3-3**。
+
+- **统计重做（P0 口径根因）**：`routers/activity_statistics_router.py` 新增 `GET /api/v2/statistics/activities/{id}/analysis`，一次取回描述统计 + 分箱 + 参与模式 + 班级分组；计算抽为 `util/activity_statistics.py` 纯函数（`pick_bin_width` / `build_bins` / `describe_durations` / `group_durations` / `build_analysis_payload` / `to_mcp_statistics`）。
+  - **口径统一**：统计此前读 `list_by_activity` 不带 status，把 pending/refused 成员一起算进图表；而仓库其它时长统计只算 effective（`db/repos/oracle/times.py`、`util/calculate.py`）。`list_by_activity` 新增可选 `status`，四处消费面（`/description`、`/layers`、`/analysis`、MCP）统一为 effective-only。旧两端点保留为回退路径，响应形状逐字未变。
+  - **两个真实缺陷**：`build_bins` 索引只封顶不封底 → 负时长被 Python 负索引记进**末桶**（实测 `[-0.5,1.0,2.0]` 的 −0.5 落 `[2.0,2.5)`）；`n = floor(max/width)+1` 无上界 → v2 路径 `duration` 是裸 float，脏数据 1e9 直接请求十亿个桶。改为双向钳位 + `MAX_BINS=1000`（宽度倍增，首个放宽点 = 1000.0h，远超真实义工时长）。
+  - **图表选型**：时长是连续量，「每个唯一时长值一个扇区」的环形图在真实数据上退化为若干 1 人扇区 → 改分箱柱状图（<=10h 用 0.5h 桶）；参与模式（3 个离散类别）保留环形图；班级用横向柱（总时长 top-12 + 其他合并）。概览撤下众数（连续量上恒等于最小值）与方差，改有效参与人数/总时长/均值/中位数/极值/25%/75% 分位并补单位。
+  - **前端**：统计入口加 `canViewStats` 角色门（此前非团支书点开只吃 403）；修空态（旧接口 in-band 404 让 `hasData` 恒真 → 永远显示 9 个空白卡片）；缓存加 5 分钟 TTL + 上限 20；新增 CSV 导出；`ActivityStatisticsDescription` 由索引签名收紧为显式 11 键（正是 `description.p25` / `25_percentile` 键名漂移的根因）；删掉零调用方的旧 wrapper。
+- **证明单口径（行为变更）**：`util/statement.py:667` 明细 `list_for_member(id)` 不带 status，会把待审/被拒条目连时长印进正式证明单，而同一份单子的合计本就是 effective-only（明细之和 > 合计）。改为 `status="effective"`。
+- **停止记录登录失败日志**：删净 `_log_login_failure` / `_bump_auth_attempt` / 失败计数窗口 / 失败分类标签 / `import time`（`routers/users_router.py` 净删 70 行）。失败登录不再落库；登录响应体与状态码逐字不变；成功登录 `user_login` 与学海 `device_bind`/`binding_mismatch` 保持不变。
+- **身份显示与组读权限**：普通学生看不到自己的「身份」——身份标签 `ZUserGroup` 走 `GET /api/groups/{gid}` 解析组名，而授权收口后该端点只放行 admin/department 或本班团支书。`validate_read_group_permission` 新增显式 opt-in `allow_class`（默认 False），仅组详情端点传 True；**`groups_v2_router` 的四个班级列表/统计端点保持原限制**（否则学生可列任意班级成员名单与时长）。班级组判定走 `get_permission_group is None`（`get()` 不带 type 过滤，不能用），畸形 oid 先过 `is_valid_oid` 保持 403。
+  - 顺带堵既有漏洞：v1 `GET /api/groups` 列表原本无任何权限校验，任何登录用户带 `type=all` 即可取走所有 permission 组的 `permissions` 清单。现 `type=permission` 对非特权用户 403，`type=all` 静默降级为只返回班级组，admin/department 行为不变。
+  - 前端 `ZUserGroup` 补失败分支降级为「未知」（原本请求一失败即未处理 rejection + 永远 Loading）。
+- **离线钉子**：后端 `pytest tests/golden` **79 passed**（统计纯函数 + 路由级 403/effective 透传/空名单六键/in-band 404；权限矩阵 11 + 路由 200/403 + 列表 6；登录失败零日志写入含 canary）；前端 `vitest` 12 passed、`vue-tsc` 0 错误、`pnpm build` 成功。
+- **部署执行（zgovps-la）**：备份 `backups/pre-deploy-20261016-2229.tar.gz`(138M) → 前端 `dist` `rsync --delete` + `chown www:www` → 后端 `rsync`（排除 `settings.py`/`.venv`/`__pycache__`/`*.pyc`/`aes_key.txt`/`rsa_*.pem`）→ 9 个改动文件 md5 与本地逐一比对一致 → **未跑 `pip install`**（本批零新增依赖，且移除了一个 scipy 导入）→ `systemctl restart zvms4`。
+- **部署验证（全过）**：`journalctl` 仅 `Application startup complete` 无异常；shield 无 UA → **418**、带 UA → 200；`/api/version`、`/api/changelog` 首条均为 **v4.2.3-3**；nginx 全链路（生产本机 `--resolve`）index=200、入口资源 `index-HwM7k9xc.js` 与本地构建一致且 200、`/api/version` 经公网路径同值；实弹伪造学号登录 → 403「用户名或密码错误」，随后 `app_logs` 失败类计数仍为 **0**（端到端证明不再落库）。
+- **版本号机制注记**：`/api/version`、`/api/`、About 页与 logo 缓存参数同源于 ADB `CHANGELOG` 表（`main.py:39-61` 读最新条目，无版本字面量）。故发版三处一致 = **DB 插一条**（本次 `6ad23655e85ba0a4a512c153`）+ `package.json` + `src/data/changelog.ts` 兜底条目；§47 提到的 `main.py` 两处版本串与 `APP_VERSION` 常量**已不存在**，该条流程说明作废。
+- **历史日志清理（用户指令）**：`app_logs` 中 `user_login_failed` **27 行**（`auth_flood` 一条也无——每分钟 10 次的聚合门槛从未触发）；先导出 CSV 备份 `/www/zvms4/backups/app-logs-removed-login-failed-20261016-223633.csv`（脚本无备份文件即拒绝删除），再 `DELETE` 27 行 → 复核剩余 0。其余类型（`user_login` 797 / `passwd_change` 109 / `security_alert` 24 …）一律未动。
+- **回滚路径**：恢复 `backups/pre-deploy-20261016-2229.tar.gz` 后 `systemctl restart zvms4`（本批无 schema 变更；DB 侧仅新增一条 changelog 记录与删除 27 行失败日志）。
+- **残留缺口**：无连库冒烟以外的运行时验证——SQL 层正确性依赖协议签名、编译期 SQL 对照与假仓储行为测试，未在真实数据上跑回归。
