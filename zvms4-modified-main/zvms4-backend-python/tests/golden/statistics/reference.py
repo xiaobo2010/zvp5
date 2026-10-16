@@ -134,6 +134,7 @@ async def _build(session: Any, *, now: datetime | None, log: Any) -> dict[str, i
             result["off-campus"],
             result["social-practice"],
         )
+        await session.commit()
         ay_rows += 1
 
     # --- 3. group_indicators  (legacy ``compute_group_indicators``, once) ---
@@ -153,6 +154,7 @@ async def _build(session: Any, *, now: datetime | None, log: Any) -> dict[str, i
         percentiles = describe_df_percentile(df, list(MODES), step=1, bounds=BOUNDS)
         indicators = describe_df_statistical_indicators(df, list(MODES))
         await stats_repo.upsert_group_indicators(group_oid, percentiles, indicators)
+        await session.commit()
         group_rows += 1
 
     # --- 4. indicators  (legacy ``compute_indicators`` global half) ------
@@ -174,6 +176,7 @@ async def _build(session: Any, *, now: datetime | None, log: Any) -> dict[str, i
         )
         indicators[str(grade)] = describe_df_statistical_indicators(df, list(MODES))
     await stats_repo.upsert_indicators(percentiles, indicators)
+    await session.commit()
 
     # --- 5+6. time_with_origin / _stat  (legacy ``compute_batch_origins``) ---
     for item in grades:
