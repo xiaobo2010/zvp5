@@ -24,14 +24,20 @@ const groupData = ref<Group>()
 const error = ref(false)
 const loading = ref(true)
 
-groups.fetchGroup(group.value).then((result) => {
-  if (!result) {
+groups
+  .fetchGroup(group.value)
+  .then((result) => {
+    if (!result) {
+      error.value = true
+    } else {
+      groupData.value = result
+    }
+    loading.value = false
+  })
+  .catch(() => {
     error.value = true
-  } else {
-    groupData.value = result
-  }
-  loading.value = false
-})
+    loading.value = false
+  })
 
 function openGroup() {
   if (user.relatedGroup(groupData.value?._id ?? '')) {
