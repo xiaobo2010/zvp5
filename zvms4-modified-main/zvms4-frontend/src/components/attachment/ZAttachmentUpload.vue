@@ -58,6 +58,10 @@ const props = withDefaults(
     disabled?: boolean
     // 仅展示，不显示上传/删除按钮
     readonly?: boolean
+    // 上传时绑定到的实体类型（如 activity）
+    entityType?: string
+    // 上传时绑定到的实体 oid；两者需同时提供才会随上传提交
+    entityOid?: string
   }>(),
   {
     modelValue: () => [],
@@ -212,8 +216,8 @@ async function uploadSingle(file: File, replaceIndex?: number) {
     const results = await attachmentApi.upload(
       [file],
       props.purpose,
-      undefined,
-      undefined,
+      props.entityType,
+      props.entityOid,
       pushProgress
     )
     const result = results[0]
