@@ -64,6 +64,17 @@ async def get_groups(
     Get all groups
     """
 
+    per = user.get("per") or []
+    privileged = "admin" in per or "department" in per
+    if type == "permission" and not privileged:
+        raise HTTPException(status_code=403, detail="权限不足")
+
+    # ``all`` degrades silently to the class side for unprivileged callers
+    # instead of 403: the class-name lookup stays usable, while the permission
+    # manifest is simply omitted (no 403 that would break that use). An explicit
+    # ``permission`` request is refused above, matching the v2 list endpoint.
+    include_permission = privileged
+
     rows = []
     groups_repo = backends.get_groups_repo()
     permission_groups = await groups_repo.list_permission_groups(search)
@@ -83,7 +94,7 @@ async def get_groups(
                 }
             )
 
-    if type != "class":
+    if type != "class" and include_permission:
         for group in permission_groups:
             rows.append(
                 {
@@ -117,7 +128,9 @@ async def get_group(group_id: str, user=Depends(get_current_user)):
     """
     Get a group
     """
-    await validate_read_group_permission(user, group_id, "volunteer")
+    await validate_read_group_permission(
+        user, group_id, "volunteer", allow_class=True
+    )
 
     result = await backends.get_groups_repo().get_permission_group(group_id)
 
