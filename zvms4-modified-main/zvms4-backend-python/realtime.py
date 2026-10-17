@@ -11,16 +11,74 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, Optional
 from urllib.parse import parse_qs
 
 from db.system_state import is_enabled_fresh
+from util.object_id import bearer_token, is_admin_token
 
 # nginx 把 ``/socket.io`` 反代到同一个后端进程，FastAPI 侧 ``main`` 用
 # ``app.mount("/socket.io", socketio.ASGIApp(sio))`` 挂载。
 SOCKET_PATH_PREFIX = "/socket.io"
 
+# 握手阶段能看到的 token 来源：``Authorization`` 头与 query。socket.io 客户端的
+# ``auth`` 载荷在 CONNECT 包内，握手这一层读不到（见 connect_token）。
+_TOKEN_QUERY_KEYS = ("auth", "token", "access_token")
+
 _server: Any = None
+
+
+def _token_from(headers, query_string) -> Optional[str]:
+    """从 header 列表 / query string 取 token；任何解析失败都返回 ``None``。"""
+    try:
+        for key, value in headers or []:
+            if bytes(key).lower() == b"authorization":
+                token = bearer_token(value)
+                if token:
+                    return token
+        query = parse_qs(bytes(query_string or b"").decode("latin-1"))
+        for name in _TOKEN_QUERY_KEYS:
+            token = bearer_token(query.get(name, [None])[0])
+            if token:
+                return token
+    except Exception:
+        return None
+    return None
+
+
+def handshake_token(scope) -> Optional[str]:
+    """握手（Engine.IO open / upgrade）阶段的 token，取不到即 ``None``。"""
+    return _token_from(scope.get("headers"), scope.get("query_string"))
+
+
+def connect_token(environ, auth=None) -> Optional[str]:
+    """CONNECT 包阶段的 token：优先 socket.io ``auth`` 载荷，其次同握手来源。"""
+    try:
+        if isinstance(auth, dict):
+            for name in ("token", "access_token", "Authorization", "authorization"):
+                token = bearer_token(auth.get(name))
+                if token:
+                    return token
+        environ = environ or {}
+        token = bearer_token(environ.get("HTTP_AUTHORIZATION"))
+        if token:
+            return token
+        query = parse_qs(str(environ.get("QUERY_STRING") or ""))
+        for name in _TOKEN_QUERY_KEYS:
+            token = bearer_token(query.get(name, [None])[0])
+            if token:
+                return token
+    except Exception:
+        return None
+    return None
+
+
+def is_admin_conn(scope) -> bool:
+    """握手 scope 是否属于 admin（token 无效 / 缺失一律 ``False``）。"""
+    try:
+        return is_admin_token(handshake_token(scope))
+    except Exception:
+        return False
 
 
 def register_server(server: Any) -> None:
@@ -80,6 +138,9 @@ class MaintenanceSocketGuard:
     只拦「握手」（query 里没有 ``sid``）：带 sid 的请求属于已建立的会话，放行
     它们才能把 ``disconnect_all_clients()`` 入队的 DISCONNECT 包送到客户端手里
     —— 已连接的断开是 enable 那一刻主动做的，不在准入这一层。
+
+    握手带有效 admin token 时放行：维护期间管理员要能照常连实时通道。token
+    取不到或解析失败一律按原样拒绝（见 :func:`handshake_token`）。
     """
 
     def __init__(self, app: Any, path_prefix: str = SOCKET_PATH_PREFIX) -> None:
@@ -91,6 +152,7 @@ class MaintenanceSocketGuard:
             scope["type"] in ("http", "websocket")
             and self._is_handshake(scope)
             and is_enabled_fresh()  # 绕过 ~2s TTL 缓存，读最新状态
+            and not is_admin_conn(scope)
         ):
             await self._reject(scope, send)
             return
