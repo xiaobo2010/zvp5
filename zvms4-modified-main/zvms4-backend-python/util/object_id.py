@@ -146,20 +146,22 @@ def bearer_token(raw) -> Optional[str]:
     return value or None
 
 
-def is_admin_token(raw) -> bool:
+async def is_admin_token(raw) -> bool:
     """
-    Maintenance-mode admission: the token must decode (same path as
-    :func:`get_current_user`) and carry ``admin`` in ``per``.
+    Maintenance-mode admission: the token goes through the same path as
+    :func:`get_current_user` (``_authenticate`` with the ``long`` scope), so it
+    enforces signature, expiry, scope/purpose, a valid oid, the user existing
+    and being unbanned, and the ``sid`` ↔ ``session_id`` match; ``per`` is then
+    derived from the *current* roles, not from the JWT snapshot.
 
     Never raises: a missing token, a bad signature, an expired token or any
     other failure all mean "not admin", so middleware callers can stay total.
     """
     try:
-        payload = jwt_decode(bearer_token(raw))
-        per = payload.get("per")
-        return isinstance(per, list) and "admin" in per
+        user = await _authenticate(bearer_token(raw), "long", False)
     except Exception:
         return False
+    return bool(user) and "admin" in (user.get("per") or [])
 
 
 def timestamp_change(date_string: str):

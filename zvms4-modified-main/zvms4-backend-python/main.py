@@ -137,7 +137,8 @@ MAINTENANCE_EXEMPT_PREFIXES = ("/api/system",)
 # shield_middleware 之前，保证盾牌仍在最外层（非 Mozilla UA 仍先吃 418）。
 #
 # 维护开启期间 admin 全域放行：从 ``Authorization: Bearer`` 取 token，走
-# ``util.object_id.is_admin_token``（与 get_current_user 同一套解码）。
+# ``util.object_id.is_admin_token``（与 get_current_user 同一条认证路径，含
+# banned / session 校验，``per`` 取库里的当前 roles）。
 # 门控是「缓存 + fresh」两级：缓存快路径挡住绝大多数请求，免掉每请求一次
 # SQLite 读；本进程 enable/disable 经 set_state → invalidate_cache() 缓存即刻
 # 准确，fresh 复核只兜「缓存陈旧」的窗口（跨进程 enable 最多 2s 陈旧放行，
@@ -152,7 +153,7 @@ async def maintenance_middleware(request: Request, call_next):
         and not path.startswith(MAINTENANCE_EXEMPT_PREFIXES)
         and maintenance_enabled()
         and maintenance_enabled_fresh()
-        and not is_admin_token(request.headers.get("Authorization"))
+        and not await is_admin_token(request.headers.get("Authorization"))
     ):
         return JSONResponse(
             status_code=503,
@@ -192,7 +193,7 @@ async def connect(sid, environ, auth=None):
     # 兜底：正常路径上 MaintenanceSocketGuard 已在握手阶段拒掉新连接（并且
     # GET /api/system/maintenance 已放行），这里再查一次**绕过缓存**的最新状态，
     # 万一有入口绕过那层中间件也不会漏进连接。admin 在维护期间照常连接。
-    if maintenance_enabled_fresh() and not is_admin_token(
+    if maintenance_enabled_fresh() and not await is_admin_token(
         realtime.connect_token(environ, auth)
     ):
         print(f"refuse connect {sid} (maintenance)")
