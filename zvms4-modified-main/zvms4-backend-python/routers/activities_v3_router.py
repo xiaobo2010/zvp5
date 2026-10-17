@@ -26,12 +26,6 @@ async def get_activities_v3(
     status: Literal['effective', 'refused', 'pending', 'draft', ''] = Query(''),
     user=Depends(get_current_user)
 ):
-    if not _is_volunteer_manager(user):
-        raise HTTPException(
-            status_code=403,
-            detail='权限不足'
-        )
-
     repo = backends.get_activities_repo()
     atypes = [type] if type else None
     rows, total = await repo.list_page(query, atypes, status or None, page, size)

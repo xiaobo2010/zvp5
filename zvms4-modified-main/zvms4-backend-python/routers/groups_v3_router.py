@@ -15,23 +15,6 @@ def _is_group_manager(user: dict) -> bool:
     return "admin" in per or "department" in per
 
 
-async def _current_class_id(user: dict):
-    validate_object_id(user["id"])
-    current = await backends.get_users_repo().get_by_oid(user["id"])
-    if current is None or current.get("class_id") is None:
-        return None
-    return str(current["class_id"])
-
-
-async def _require_group_read_access(user: dict, group_id: str):
-    if _is_group_manager(user):
-        return
-    per = user.get("per") or []
-    if "secretary" in per and await _current_class_id(user) == group_id:
-        return
-    raise HTTPException(status_code=403, detail="权限不足")
-
-
 async def _list_permission_group_members(
     permission_group: dict, query: str, page: int, size: int, pwdm: bool
 ):
@@ -75,9 +58,9 @@ async def get_group_users_v3(
     """
     List the live members of a class (`zvms_new.users` by `class_id`).
 
-    Permission: admin/department, or secretary for their own class.
+    Permission: any authenticated user (class and permission groups alike);
+    ``get_current_user`` already enforces the login.
     """
-    await _require_group_read_access(user, group_id)
 
     validate_object_id(group_id)
     groups_repo = backends.get_groups_repo()
