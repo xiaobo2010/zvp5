@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 
 from db import backends
 from db.system_state import get_state, set_state
+from realtime import disconnect_all_clients
 from typings.log import inject_log
 from util.group import get_user_permissions
 from util.object_id import get_current_user
@@ -74,6 +75,12 @@ async def enable_maintenance(
     await _require_system_admin(user)
 
     state = set_state(True, payload.reason, payload.announcement, user["id"])
+
+    # 状态已落库 ⇒ 新连接由 realtime.MaintenanceSocketGuard 在握手阶段挡掉；
+    # 已建立的连接必须在这里立刻断开（前端不会自己掉线）。断开失败不能影响
+    # enable 的返回，所以逐个 try/except 由 disconnect_all_clients 内部兜住。
+    disconnected = await disconnect_all_clients()
+    print(f"Maintenance enabled: disconnected {disconnected} socket.io client(s)")
 
     log.with_text(
         f"管理员 {await get_user_display_name(user['id'])} 开启了系统维护模式：{payload.reason}",
