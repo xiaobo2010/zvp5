@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ArrowDown, User, SwitchButton } from '@element-plus/icons-vue'
+import { ArrowDown, User, SwitchButton, CircleCloseFilled } from '@element-plus/icons-vue'
 import {
   ElContainer,
   ElHeader,
@@ -23,7 +23,7 @@ import UserNav from '@/views/user/UserNav.vue'
 import { useHeaderStore } from './stores/header'
 import { useWindowSize, useDark, useOnline } from '@vueuse/core'
 import { useI18n } from 'vue-i18n'
-import { watch, ref, onMounted, h, reactive } from 'vue'
+import { watch, ref, onMounted, onUnmounted, h, reactive } from 'vue'
 import type { WatermarkFontType } from 'element-plus'
 import { zhCn } from 'element-plus/es/locale/index.mjs'
 import ZVerticalNav from '@/components/form/ZVerticalNav.vue'
@@ -137,6 +137,38 @@ if (security.value < 4) {
   localStorage.setItem('security', '' + security.value)
   userStore.removeUser()
   router.replace('/user/login')
+}
+
+// 封禁账号全屏锁。触发标记用组件内 ref，不依赖 store：removeUser() 会把
+// store.banned 置回 false，若用 store 驱动渲染，强制退出完成瞬间警告就会消失。
+const bannedLock = ref(false)
+
+watch(
+  () => userStore.isLogin && userStore.banned,
+  (bannedSession) => {
+    if (!bannedSession || bannedLock.value) {
+      return
+    }
+    bannedLock.value = true
+    // 失焦当前元素，防止键盘焦点残留在下层可滚动区域继续翻页
+    ;(document.activeElement as HTMLElement | null)?.blur()
+    userStore.removeUser().catch(() => {})
+  },
+  { immediate: true }
+)
+
+watch(bannedLock, (locked) => {
+  document.body.style.overflow = locked ? 'hidden' : ''
+})
+
+onUnmounted(() => {
+  document.body.style.overflow = ''
+})
+
+async function exitBanned() {
+  await userStore.removeUser().catch(() => {})
+  await router.replace('/user/login')
+  bannedLock.value = false
 }
 
 const dark = useDark()
@@ -263,16 +295,32 @@ onMounted(async () => {
           <span class="text-sm px-1">{{ locales[locale].disconnected.message }}</span>
         </template>
       </ElAlert>
-      <ElAlert
-        type="error"
-        center
-        :closable="true"
-        v-if="userStore.isLogin && userStore.banned"
-        class="hidden-print"
-        title="您的账号已被封禁，请联系管理员"
-      />
+      <div
+        v-if="bannedLock"
+        class="banned-shield hidden-print fixed inset-0 flex items-center justify-center"
+        style="z-index: 9999"
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby="banned-title"
+        @wheel.prevent
+        @touchmove.prevent
+        @contextmenu.prevent
+      >
+        <div class="banned-card flex flex-col items-center text-center px-6">
+          <ElIcon class="banned-icon" :size="88">
+            <CircleCloseFilled />
+          </ElIcon>
+          <h2 id="banned-title" class="banned-title">{{ t('nav.banned.title') }}</h2>
+          <p class="banned-message">{{ t('nav.banned.message') }}</p>
+          <p class="banned-appeal">{{ t('nav.banned.appeal') }}</p>
+          <button type="button" class="banned-exit" @click="exitBanned">
+            {{ t('nav.banned.exit') }}
+          </button>
+        </div>
+      </div>
       <ElContainer
         @contextmenu.prevent
+        :inert="bannedLock"
         class="bg-slate-100 dark:bg-gray-900"
         direction="vertical"
         :style="{ width: width + 'px', height: height + 'px' }"
@@ -385,6 +433,80 @@ onMounted(async () => {
 .user {
   position: absolute;
   right: 0;
+}
+
+.banned-shield {
+  background:
+    radial-gradient(900px 600px at 50% 30%, rgba(255, 255, 255, 0.08), transparent 70%),
+    #7f1d1d;
+  color: #fff;
+  animation: banned-shield-in 0.2s ease-out;
+}
+
+.banned-card {
+  max-width: 32rem;
+  padding: 3rem 2rem;
+}
+
+.banned-icon {
+  color: #fecaca;
+  margin-bottom: 1.5rem;
+}
+
+.banned-title {
+  font-size: 2.25rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  margin: 0 0 1rem;
+}
+
+.banned-message {
+  font-size: 1.125rem;
+  opacity: 0.95;
+  margin: 0;
+}
+
+.banned-appeal {
+  font-size: 1rem;
+  opacity: 0.75;
+  margin: 0.5rem 0 0;
+}
+
+.banned-exit {
+  margin-top: 2.5rem;
+  padding: 0.75rem 2.5rem;
+  border: none;
+  border-radius: 9999px;
+  background: #fff;
+  color: #7f1d1d;
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.35);
+  transition: background-color 0.2s;
+}
+
+.banned-exit:hover {
+  background: #fee2e2;
+}
+
+.banned-exit:active {
+  background: #fecaca;
+}
+
+@keyframes banned-shield-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .banned-shield {
+    animation: none;
+  }
 }
 </style>
 
