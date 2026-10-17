@@ -255,8 +255,9 @@ async def calculate_user_time_bulk(
         accepted_activities = await backends.get_activities_repo().list_effective(
             date_start, date_end
         )
-        accepted_ids = [str(activity["_id"]) for activity in accepted_activities]
-        accepted_set = set(accepted_ids) if accepted_ids else None
+        accepted_set = {
+            normalize_oid(str(activity["_id"])) for activity in accepted_activities
+        }
 
         collections = await backends.get_members_repo().list_by_members(pending)
 
@@ -271,7 +272,7 @@ async def calculate_user_time_bulk(
         for collection in collections:
             if collection["status"] != "effective":
                 continue
-            if accepted_set is not None and collection["activity"] not in accepted_set:
+            if normalize_oid(str(collection["activity"])) not in accepted_set:
                 continue
             bucket = aggregates.get(normalize_oid(collection["member"]))
             if bucket is None:

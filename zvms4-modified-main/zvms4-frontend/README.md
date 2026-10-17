@@ -14,4 +14,19 @@ It checks if you are using XueHai pad with UA (Samsung pad, Android Webkit), in 
 
 The most feature of v4 is the data structure. We use `mongodb` instead of `sqlite`, which can make us manage data more convenient and effective.
 
-V4 最大的更新是对于数据结构。我们使用了 `mongodb`，这种非关系型数据库可以帮助你更好地管理义工数据。
+以上 MongoDB 描述为上游历史背景；当前配套后端运行于 Oracle Autonomous Database，前端通过 HTTP API 访问。
+
+## 本地运行与验证
+
+使用 `pnpm-lock.yaml` 安装，避免旧 `package-lock.json` 中的历史依赖差异。本轮本地验收使用 Node.js 24.19.0、pnpm 11.25.0。
+
+```sh
+pnpm install --frozen-lockfile
+pnpm dev
+pnpm exec vitest run
+pnpm build
+```
+
+`build` 包含类型检查和生产/PWA 打包。`pnpm preview` 使用 4173 端口，与端到端测试入口一致。
+`pnpm-workspace.yaml` 记录依赖构建许可；默认未安装 Cypress 浏览器测试二进制，本轮不包含浏览器端到端验收。
+现有 `lint` 仍使用旧 ESLint 配置，需要单独迁移后再作为验收项。

@@ -2,7 +2,7 @@ from fastapi import Request, Depends
 from datetime import datetime
 
 from db import backends
-from util.object_id import get_current_user
+from util.object_id import authenticated_log_user
 
 
 class ZVMSLog:
@@ -19,7 +19,7 @@ class ZVMSLog:
         url: str = "",
         user: str = "",
         data: str = "",
-        timestamp: float = datetime.now().timestamp(),
+        timestamp: float | None = None,
         type: str = "",
         level: str = "info",
         xuehai_id: str = "",
@@ -27,7 +27,7 @@ class ZVMSLog:
         self.url = url
         self.user = user
         self.data = data
-        self.timestamp = timestamp
+        self.timestamp = datetime.now().timestamp() if timestamp is None else timestamp
         self.type = type
         self.level = level
         self.xuehai_id = xuehai_id
@@ -51,8 +51,9 @@ class ZVMSLog:
             self.level = level
         return self
 
-    async def insert_log(self):
-        return await backends.get_applogs_repo().insert(
+    async def insert_log(self, session=None):
+        repo = backends.get_applogs_repo(session) if session is not None else backends.get_applogs_repo()
+        return await repo.insert(
             self.url,
             self.user,
             self.data,
@@ -64,12 +65,13 @@ class ZVMSLog:
 
 
 def xuehai_id_from(request: Request) -> str:
-    return (request.headers.get("Xuehai-Id") or "").strip()
+    value = (request.headers.get("Xuehai-Id") or "").strip()
+    return value if value.isascii() and value.isdecimal() and len(value) <= 32 else ""
 
 
 def inject_log(
     request: Request,
-    user=Depends(get_current_user),
+    user=Depends(authenticated_log_user),
 ):
     url = str(request.url)
     user = user["id"]

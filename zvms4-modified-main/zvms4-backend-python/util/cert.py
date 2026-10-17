@@ -5,6 +5,7 @@ from Crypto.Cipher import PKCS1_OAEP
 from fastapi import HTTPException
 import jwt
 import json
+import math
 import datetime
 import hashlib
 import hmac
@@ -29,7 +30,12 @@ def hash_password(password):
 
 
 def check_password(password: str, hashed: str):
-    return bcrypt.checkpw(password.encode("utf-8"), hashed.encode("utf-8"))
+    try:
+        return bcrypt.checkpw(password.encode("utf-8"), hashed.encode("utf-8"))
+    except (ValueError, TypeError, AttributeError):
+        # bcrypt rejects inputs longer than its 72-byte limit. A malformed
+        # credential is a failed check, never an internal server error.
+        return False
 
 
 def pwd_strength(password: str) -> int:
@@ -147,6 +153,9 @@ def jwt_encode(
     eligibility: list[str],
     permissions: list[str],
     type: Optional[str] = "long",
+    *,
+    session_id: str = "",
+    purpose: str = "verify",
 ):
     if type == "long":
         duration = datetime.timedelta(days=10)
@@ -161,20 +170,56 @@ def jwt_encode(
         scope = "temporary_token"
     payload = {
         "iss": "zvms",
-        "exp": datetime.datetime.utcnow() + duration,
-        "iat": datetime.datetime.utcnow(),
+        "exp": datetime.datetime.now(datetime.timezone.utc) + duration,
+        "iat": datetime.datetime.now(datetime.timezone.utc),
         "sub": id,
         "scope": scope,
         "per": permissions,
         "elg": eligibility,
         "jti": new_oid(),
+        "sid": session_id,
+        "purpose": purpose,
     }
     result = jwt.encode(payload, jwt_private_key, algorithm="HS256")
     return result
 
 
 def jwt_decode(token):
-    return jwt.decode(token, jwt_private_key, algorithms=["HS256"], verify=True)
+    return jwt.decode(
+        token,
+        jwt_private_key,
+        algorithms=["HS256"],
+        issuer="zvms",
+        options={"require": ["iss", "exp", "iat", "sub", "scope", "per", "jti", "sid"]},
+    )
+
+
+def _credential_timestamp(value) -> float:
+    """Normalize frontend milliseconds and legacy seconds to UTC seconds."""
+    try:
+        timestamp = float(value)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="Invalid credential timestamp")
+    # JavaScript Date.now() is milliseconds; older clients sent seconds.
+    if not math.isfinite(timestamp) or isinstance(value, bool):
+        raise HTTPException(status_code=400, detail="Invalid credential timestamp")
+    if timestamp > 10_000_000_000:
+        timestamp /= 1000
+    now = datetime.datetime.now(datetime.timezone.utc).timestamp()
+    if timestamp < now - 60 or timestamp > now + 60:
+        raise HTTPException(status_code=401, detail="Token expired")
+    return timestamp
+
+
+def _read_credential(cert: str) -> dict:
+    try:
+        credential = json.loads(rsa_decrypt(cert))
+        if not isinstance(credential, dict) or not isinstance(credential.get("password"), str):
+            raise ValueError("Malformed credential")
+    except (ValueError, TypeError, UnicodeError):
+        raise HTTPException(status_code=400, detail="Invalid credential")
+    _credential_timestamp(credential.get("time"))
+    return credential
 
 
 async def validate_by_cert(
@@ -191,11 +236,7 @@ async def validate_by_cert(
     the change loop itself is never blocked. TOTP logins are not affected
     (no password is involved).
     """
-    auth_field = json.loads(rsa_decrypt(cert))
-    time = auth_field["time"]
-    # in a minute
-    if time < datetime.datetime.now().timestamp() - 60:
-        raise HTTPException(status_code=401, detail="Token expired")
+    auth_field = _read_credential(cert)
     user = await backends.get_users_repo().get_by_oid(id)
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
@@ -209,21 +250,21 @@ async def validate_by_cert(
     if user["password"] is None:
         authenticated = False
     else:
-        authenticated = checkpw(
-            bytes(auth_field["password"], "utf-8"), bytes(user["password"], "utf-8")
-        )
+        authenticated = check_password(auth_field["password"], user["password"])
     if authenticated:
         if "eligibility" in user:
             eligibility = user["eligibility"]
         else:
             eligibility = []
         weak = user["password"] is None or pwd_strength(auth_field["password"]) < 3
-        if weak and type == "long":
+        if weak:
             return (
-                jwt_encode(id, eligibility, await get_user_permissions(user), "short"),
+                jwt_encode(id, eligibility, await get_user_permissions(user), "short",
+                           session_id=user.get("session_id", ""), purpose="password_change"),
                 True,
             )
-        return jwt_encode(id, eligibility, await get_user_permissions(user), type=type), weak
+        return jwt_encode(id, eligibility, await get_user_permissions(user), type=type,
+                          session_id=user.get("session_id", "")), weak
     raw_password = auth_field["password"]
     if raw_password.startswith("*") and raw_password.endswith("*"):
         if verify_totp(id, raw_password[1:-1]):
@@ -235,6 +276,7 @@ async def validate_by_cert(
                     user.get("eligibility", []),
                     await get_user_permissions(user),
                     type="otp" if type == "long" else type,
+                    session_id=user.get("session_id", ""),
                 ),
                 False,
             )
@@ -243,17 +285,17 @@ async def validate_by_cert(
 
 
 async def get_hashed_password_by_cert(cert: str):
-    auth_field = json.loads(rsa_decrypt(cert))
-    time = auth_field["time"]
-    # in a minute
-    if time < datetime.datetime.now().timestamp() - 60:
-        raise HTTPException(status_code=401, detail="Token expired")
+    auth_field = _read_credential(cert)
     password = auth_field["password"]
+    if pwd_strength(password) < 3:
+        raise HTTPException(status_code=400, detail="密码强度不足")
     return hashpw(bytes(password, "utf-8"), gensalt()).decode("utf-8")
 
 
 async def checkpwd(id: str, pwd: str):
     user = await backends.get_users_repo().get_by_oid(id)
-    if checkpw(bytes(pwd, "utf-8"), bytes(user["password"], "utf-8")):
+    if user is not None and user.get("password") and check_password(
+        pwd, user["password"]
+    ):
         return True
     return False

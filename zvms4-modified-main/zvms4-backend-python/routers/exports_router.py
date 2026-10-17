@@ -1,8 +1,9 @@
 import os
 import uuid
-from time import sleep
+import asyncio
+import logging
 from fastapi import APIRouter, HTTPException, Depends, Request
-import tempfile
+
 
 from config import (
     BASE_ON_CAMPUS,
@@ -15,7 +16,7 @@ from typings.export import ExportFormat, ExportTask, ExportStatus, ExportVariant
 from typings.log import inject_log, ZVMSLog, xuehai_id_from
 from util.calculate import calculate_user_time
 from util.user import get_user_display_name
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from io import BytesIO
 import base64
 import json
@@ -39,6 +40,22 @@ class CreateExport(BaseModel):
     include_description: bool = False
 
 
+def _task_uuid(value: str) -> uuid.UUID:
+    try:
+        return uuid.UUID(str(value))
+    except (ValueError, AttributeError, TypeError):
+        raise HTTPException(status_code=400, detail="Invalid task ID")
+
+
+def _export_date(value: str):
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value)
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="Invalid export date")
+
+
 tokens = []
 
 
@@ -46,12 +63,24 @@ router = APIRouter()
 
 
 async def process_task(task_id: str):
+    try:
+        await _process_task(task_id)
+    except Exception:
+        logging.getLogger(__name__).exception("Export task %s failed", task_id)
+        await backends.get_tasks_repo().update_fields(
+            _task_uuid(task_id),
+            {"status": ExportStatus.failed, "task_end": datetime.now(),
+             "errmsg": "导出失败，请联系管理员查看服务日志"},
+        )
+
+
+async def _process_task(task_id: str):
     tasks_repo = backends.get_tasks_repo()
-    task = await tasks_repo.get_by_uuid(uuid.UUID(task_id))
+    task = await tasks_repo.get_by_uuid(_task_uuid(task_id))
     if not task:
         return
     await tasks_repo.update_fields(
-        uuid.UUID(task_id),
+        _task_uuid(task_id),
         {"status": ExportStatus.processing, "task_start": datetime.now()},
     )
     include_description = task.get("include_description", False)
@@ -59,7 +88,7 @@ async def process_task(task_id: str):
         result = []
         users = await backends.get_users_repo().list_all()
         for idx, user in enumerate(users):
-            if task["export_start"] is not None and task["export_start"] is not None:
+            if task["export_start"] is not None or task["export_end"] is not None:
                 user_time = await calculate_user_time(
                     str(user["_id"]),
                     task["export_start"],
@@ -109,14 +138,14 @@ async def process_task(task_id: str):
             task["percentage"] = (idx + 1) / len(users) * 100
             if idx % 20 == 19:
                 await tasks_repo.push_result(
-                    uuid.UUID(task_id),
+                    _task_uuid(task_id),
                     result,
                     {"percentage": task["percentage"]},
                 )
                 result = []
-                sleep(0.01)
+                await asyncio.sleep(0.01)
         await tasks_repo.push_result(
-            uuid.UUID(task_id),
+            _task_uuid(task_id),
             result,
             {
                 "percentage": 100,
@@ -145,14 +174,14 @@ async def process_task(task_id: str):
             task["percentage"] = (idx + 1) / len(users) * 100
             if idx % 20 == 19:
                 await tasks_repo.push_result(
-                    uuid.UUID(task_id),
+                    _task_uuid(task_id),
                     result,
                     {"percentage": task["percentage"]},
                 )
                 result = []
-                sleep(0.01)
+                await asyncio.sleep(0.01)
         await tasks_repo.push_result(
-            uuid.UUID(task_id),
+            _task_uuid(task_id),
             result,
             {
                 "percentage": 100,
@@ -162,7 +191,7 @@ async def process_task(task_id: str):
         )
     else:
         await tasks_repo.update_fields(
-            uuid.UUID(task_id),
+            _task_uuid(task_id),
             {
                 "status": ExportStatus.failed,
                 "task_end": datetime.now(),
@@ -214,18 +243,22 @@ async def export_time(
 ):
     if "admin" not in user["per"]:
         raise HTTPException(status_code=403, detail="Permission denied")
+    start, end = _export_date(properties.start), _export_date(properties.end)
+    if start is not None and end is not None:
+        try:
+            invalid_range = start > end
+        except TypeError:
+            raise HTTPException(status_code=400, detail="Inconsistent date timezones")
+        if invalid_range:
+            raise HTTPException(status_code=400, detail="Start date must precede end date")
     task_id = uuid.uuid4()
     task = ExportTask(
         id=task_id,
         status=ExportStatus.pending,
         format=properties.format,
         variant=ExportVariant.time,
-        export_start=datetime.fromisoformat(properties.start)
-        if properties.start != ""
-        else None,
-        export_end=datetime.fromisoformat(properties.end)
-        if properties.end != ""
-        else None,
+        export_start=start,
+        export_end=end,
         task_start=datetime.now(),
         task_end=None,
         result=[],
@@ -250,7 +283,7 @@ async def export_time(
 async def get_export(task_id: str, user=Depends(get_current_user)):
     if "admin" not in user["per"]:
         raise HTTPException(status_code=403, detail="权限不足")
-    task = await backends.get_tasks_repo().get_by_uuid(uuid.UUID(task_id))
+    task = await backends.get_tasks_repo().get_by_uuid(_task_uuid(task_id))
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
     del task["result"]
@@ -272,6 +305,8 @@ async def request_download_reports(
         "expires_at": datetime.now().timestamp() + 300,  # 5 minutes
     }
     token_data_encoded = base64.b64encode(json.dumps(token_data).encode()).decode()
+    now = datetime.now().timestamp()
+    tokens = [item for item in tokens if item["expires_at"] > now]
     tokens.append(token_data)
     log.with_text(
         f"用户 {await get_user_display_name(user['id'])} 请求了报告打包下载授权",
@@ -292,14 +327,17 @@ async def download_reports(
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid token format")
 
-    if not any(t["token"] == token_data["token"] for t in tokens):
+    if not isinstance(token_data, dict) or not isinstance(token_data.get("token"), str):
+        raise HTTPException(status_code=400, detail="Invalid token format")
+    now = datetime.now().timestamp()
+    # No await between lookup and removal: consume once within this process.
+    # The client supplies only a lookup key; expiry and actor are authoritative
+    # server-side fields, even if the base64 JSON was edited by the caller.
+    stored = next((item for item in tokens if item["token"] == token_data["token"]), None)
+    tokens = [item for item in tokens if item["expires_at"] > now and item is not stored]
+    if stored is None or stored["expires_at"] <= now:
         raise HTTPException(status_code=403, detail="Invalid or expired token")
-
-    if datetime.now().timestamp() > token_data["expires_at"]:
-        raise HTTPException(status_code=403, detail="Token expired")
-
-    # Remove the token after use
-    tokens = [t for t in tokens if t["token"] != token_data["token"]]
+    token_data = stored
 
     log = ZVMSLog(
         str(request.url),
@@ -332,50 +370,44 @@ async def get_export_file(
 ):
     if "admin" not in user["per"]:
         raise HTTPException(status_code=403, detail="Permission denied")
-    task = await backends.get_tasks_repo().get_by_uuid(uuid.UUID(task_id))
+    task = await backends.get_tasks_repo().get_by_uuid(_task_uuid(task_id))
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
     if task["status"] != "completed":
         raise HTTPException(status_code=400, detail="Task not completed")
-    buffer = BytesIO()
-    with tempfile.NamedTemporaryFile(
-        suffix=f'.{ExportFormat(task['format']).suffix()}', delete=False
-    ) as tmp:
-        result = pd.DataFrame(task["result"]).sort_values("_id")
+    export_format = ExportFormat(task["format"])
+
+    def render():
+        result = pd.DataFrame(task["result"] or [])
+        if "_id" in result.columns:
+            result.sort_values("_id", inplace=True)
         if language == "zh-CN":
-            result.rename(
-                columns={
-                    "_id": "数据库 ID",
-                    "Name": "姓名",
-                    "ID": "学号",
-                    "Group": "班级",
-                    "On Campus": "校内义工时长",
-                    "Off Campus": "校外义工时长",
-                    "Social Practice": "社会实践时长",
-                    "Description": "描述",
-                },
-                inplace=True,
-            )
-        if task["format"] == "excel":
-            result.to_excel(tmp.name, index=False)
-        elif task["format"] == "csv":
-            result.to_csv(tmp.name, index=False)
-        elif task["format"] == "json":
-            result.to_json(tmp.name)
-        elif task["format"] == "latex":
-            result.to_latex(tmp.name)
-        elif task["format"] == "html":
-            result.to_html(tmp.name)
-        else:
-            raise HTTPException(status_code=400, detail="Invalid format")
-        buffer.write(tmp.read())
-        await backends.get_tasks_repo().delete(uuid.UUID(task_id))
+            result.rename(columns={
+                "_id": "数据库 ID", "Name": "姓名", "ID": "学号", "Group": "班级",
+                "On Campus": "校内义工时长", "Off Campus": "校外义工时长",
+                "Social Practice": "社会实践时长", "Description": "描述",
+            }, inplace=True)
+        if export_format == ExportFormat.excel:
+            buffer = BytesIO()
+            result.to_excel(buffer, index=False)
+            return buffer.getvalue()
+        if export_format == ExportFormat.csv:
+            return result.to_csv(index=False).encode("utf-8-sig")
+        if export_format == ExportFormat.json:
+            return result.to_json().encode("utf-8")
+        if export_format == ExportFormat.latex:
+            return result.to_latex().encode("utf-8")
+        return result.to_html().encode("utf-8")
+
+    content = await asyncio.to_thread(render)
     log.with_text(
         f"用户 {await get_user_display_name(user['id'])} 下载了导出文件（任务 ID: {task_id}，格式 {task['format']}）",
         type="export",
     )
     await log.insert_log()
-    return FileResponse(tmp.name, media_type=ExportFormat(task["format"]).mime())
+    return Response(content, media_type=export_format.mime(), headers={
+        "Content-Disposition": f'attachment; filename="export.{export_format.suffix()}"'
+    })
 
 
 @router.get("")

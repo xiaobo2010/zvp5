@@ -603,7 +603,9 @@ class OracleMembersRepo:
         activity_oids: list[str] | None = None,
     ) -> list[Row]:
         normalized = (
-            [normalize_oid(o) for o in activity_oids] if activity_oids else None
+            [normalize_oid(o) for o in activity_oids]
+            if activity_oids is not None
+            else None
         )
         stmt = _list_for_member_stmt(normalize_oid(member_oid), status, normalized)
         async with _session_for(self._session) as (session, _owns):

@@ -177,7 +177,7 @@ def _set_password_stmt(oid: str, password_hash: str | None):
     return (
         update(users_tbl)
         .where(users_tbl.c.oid == oid)
-        .values(password_hash=password_hash)
+        .values(password_hash=password_hash, session_id=new_oid())
     )
 
 
@@ -198,19 +198,19 @@ def _set_password_guarded_stmt(
     return (
         update(users_tbl)
         .where(users_tbl.c.oid == oid, guard)
-        .values(password_hash=password_hash)
+        .values(password_hash=password_hash, session_id=new_oid())
     )
 
 
 def _set_roles_stmt(oid: str, roles: list[str]):
-    return update(users_tbl).where(users_tbl.c.oid == oid).values(roles=roles)
+    return update(users_tbl).where(users_tbl.c.oid == oid).values(roles=roles, session_id=new_oid())
 
 
 def _set_banned_stmt(oid: str, banned: int):
     return (
         update(users_tbl)
         .where(users_tbl.c.oid == oid)
-        .values(banned=banned)
+        .values(banned=banned, session_id=new_oid())
     )
 
 
@@ -218,7 +218,7 @@ def _set_class_stmt(user_oid: str, class_oid: str | None):
     return (
         update(users_tbl)
         .where(users_tbl.c.oid == user_oid)
-        .values(class_oid=class_oid)
+        .values(class_oid=class_oid, session_id=new_oid())
     )
 
 

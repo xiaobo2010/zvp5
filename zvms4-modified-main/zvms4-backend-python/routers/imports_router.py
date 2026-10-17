@@ -1,17 +1,66 @@
-from io import BytesIO
-from typing import Literal, cast
-
-from fastapi import APIRouter, File, HTTPException, Depends, UploadFile
-from typings.log import inject_log
-from util.user import get_user_display_name
-from util.object_id import get_current_user
+import asyncio
+import math
 from datetime import datetime
-from db import backends
-import pandas as pd
+from io import BytesIO
+from zipfile import BadZipFile, ZipFile
 
+import pandas as pd
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+
+from db import backends
+from db.ids import normalize_oid
+from db.oracle.session import session_scope
+from typings.log import inject_log
+from util.object_id import get_current_user
 from util.validation import validate_activity_description, validate_activity_name
 
 router = APIRouter()
+
+_MAX_BYTES = 10 * 1024 * 1024
+_MAX_ROWS = 10_000
+_COLUMNS = ["_id", "Name", "ID", "Group", "On Campus", "Off Campus", "Social Practice"]
+_MODES = {"On Campus": "on-campus", "Off Campus": "off-campus", "Social Practice": "social-practice"}
+
+
+def _parse_import(contents: bytes) -> dict[tuple[str, str], float]:
+    if contents.startswith(b"PK"):
+        with ZipFile(BytesIO(contents)) as archive:
+            entries = archive.infolist()
+            if len(entries) > 2000 or sum(item.file_size for item in entries) > 100 * 1024 * 1024:
+                raise ValueError("Expanded workbook too large")
+    records = {}
+    total_rows = 0
+    with pd.ExcelFile(BytesIO(contents)) as workbook:
+        if not 1 <= len(workbook.sheet_names) <= 20:
+            raise ValueError("Too many sheets")
+        for sheet in workbook.sheet_names:
+            frame = pd.read_excel(workbook, sheet_name=sheet, nrows=_MAX_ROWS + 1,
+                                  dtype={"_id": str}, keep_default_na=False)
+            frame.rename(columns={"Class": "Group"}, inplace=True)
+            if frame.columns.to_list() != _COLUMNS:
+                raise ValueError("Invalid columns")
+            total_rows += len(frame)
+            if total_rows > _MAX_ROWS:
+                raise ValueError("Too many rows")
+            for row in frame.to_dict("records"):
+                oid = normalize_oid(row["_id"])
+                for column, mode in _MODES.items():
+                    raw = row[column]
+                    if raw is None or raw == "":
+                        continue
+                    if isinstance(raw, bool):
+                        raise ValueError("Invalid duration")
+                    duration = float(raw)
+                    if not math.isfinite(duration) or duration < 0:
+                        raise ValueError("Invalid duration")
+                    if duration:
+                        key = (oid, mode)
+                        records[key] = records.get(key, 0.0) + duration
+                        if not math.isfinite(records[key]):
+                            raise ValueError("Duration overflow")
+    if not records:
+        raise ValueError("No nonzero durations")
+    return records
 
 
 @router.post("/activities")
@@ -22,123 +71,51 @@ async def upload_activity_excel(
     user=Depends(get_current_user),
     log=Depends(inject_log),
 ):
-    """
-    Upload activity excel
-    """
-
-    validated, reason = validate_activity_name(name)
-    if not validated:
-        raise HTTPException(status_code=400, detail=reason)
-
-    validated, reason = validate_activity_description(desc)
-    if not validated:
-        raise HTTPException(status_code=400, detail=reason)
-
-    if (
-        payload.content_type
-        != "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        and payload.content_type != "application/vnd.ms-excel"
+    if "admin" not in (user.get("per") or []):
+        raise HTTPException(status_code=403, detail="权限不足")
+    for validator, value in ((validate_activity_name, name), (validate_activity_description, desc)):
+        valid, reason = validator(value)
+        if not valid:
+            raise HTTPException(status_code=400, detail=reason)
+    if payload.content_type not in (
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/vnd.ms-excel"
     ):
-        raise HTTPException(
-            status_code=400,
-            detail="Invalid file format. You should upload an excel file",
-        )
-
-    expected_columns = [
-        "_id",
-        "Name",
-        "ID",
-        "Group",
-        "On Campus",
-        "Off Campus",
-        "Social Practice",
-    ]
-
+        raise HTTPException(status_code=400, detail="Invalid Excel file format")
     try:
-        contents = await payload.read()
+        contents = await payload.read(_MAX_BYTES + 1)
+    finally:
+        await payload.close()
+    if len(contents) > _MAX_BYTES:
+        raise HTTPException(status_code=413, detail="Excel file exceeds 10 MiB")
+    try:
+        records = await asyncio.to_thread(_parse_import, contents)
+    except (ValueError, TypeError, KeyError, BadZipFile, OSError):
+        raise HTTPException(status_code=400, detail="Invalid workbook: check columns, user IDs and finite nonnegative durations")
 
-        await backends.get_imports_repo().create(
-            name,
-            payload.filename,
-            desc,
-            user["id"],
-            datetime.now().isoformat(),
-            contents,
-        )
-
-        filename = BytesIO(contents)
-
-        sheet_names = pd.ExcelFile(filename).sheet_names
-
-        # Read all sheets into a list of DataFrames
-        dfs = [pd.read_excel(filename, sheet_name=sheet) for sheet in sheet_names]
-
-        # Concatenate all DataFrames into one
-        df = pd.concat(dfs, ignore_index=True)
-
-        if df.columns.to_list() != expected_columns:
-            raise HTTPException(status_code=400, detail="Invalid excel format")
-
-        df.fillna(0.0)
-        accepted_modes = ["On Campus", "Off Campus", "Social Practice"]
-
-        log.with_text(
-            f"用户 {await get_user_display_name(user['id'])} 导入了义工活动 Excel",
-            type="import_excel",
-        )
-        await log.insert_log()
-
-        activities_repo = backends.get_activities_repo()
-        activity_id = await activities_repo.create(
-            name,
-            desc,
-            "hybrid",
-            user["id"],
-            user["id"],
-            "import",
-            datetime.now(),
-        )
-        await activities_repo.update(
-            activity_id,
-            {
-                "status": "effective",
-                "approver": "authority",
-                "place": "",
-                "updatedAt": datetime.now(),
-            },
-        )
-
-        users_repo = backends.get_users_repo()
-        members_repo = backends.get_members_repo()
-
-        for mode in accepted_modes:
-            for idx, row in df.iterrows():
-                if row[mode] != 0.0 and not pd.isna(row[mode]):
-                    users = await users_repo.get_by_oid(row["_id"])
-                    record_mode = mode.lower().replace(" ", "-")
-                    if record_mode not in [
-                        "on-campus",
-                        "off-campus",
-                        "social-practice",
-                    ]:
-                        raise HTTPException(
-                            status_code=400,
-                            detail=f"Invalid mode: {mode}. Expected one of {accepted_modes}.",
-                        )
-                    record_mode = cast(
-                        Literal["on-campus", "off-campus", "social-practice"],
-                        record_mode,
-                    )
-                    if users is not None:
-                        await members_repo.add(
-                            str(activity_id),
-                            str(users["_id"]),
-                            record_mode,
-                            row[mode],
-                            "effective",
-                        )
-
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    # Every validation and write uses one transaction. An invalid user or a
+    # later insert failure rolls back the uploaded file, activity and members.
+    async with session_scope() as session:
+        async with session.begin():
+            users_repo = backends.get_users_repo(session)
+            for oid in sorted({key[0] for key in records}):
+                if await users_repo.get_by_oid(oid) is None:
+                    raise HTTPException(status_code=400, detail="Workbook contains an unknown user")
+            now = datetime.now()
+            await backends.get_imports_repo(session).create(
+                name, (payload.filename or "import.xlsx").encode("utf-8")[:256].decode("utf-8", "ignore"),
+                desc, user["id"], now.isoformat(), contents
+            )
+            activities_repo = backends.get_activities_repo(session)
+            activity_id = await activities_repo.create(
+                name, desc, "hybrid", user["id"], user["id"], "import", now
+            )
+            await activities_repo.update(activity_id, {
+                "status": "effective", "approver": "authority", "place": "", "updatedAt": now
+            })
+            members_repo = backends.get_members_repo(session)
+            for (oid, mode), duration in records.items():
+                await members_repo.add(str(activity_id), oid, mode, duration, "effective")
+            log.with_text(f"用户 {user['id']} 导入义工活动 Excel，活动 {activity_id}，记录 {len(records)} 条", type="import_excel")
+            await log.insert_log(session)
 
     return {"status": "ok", "code": 201}
