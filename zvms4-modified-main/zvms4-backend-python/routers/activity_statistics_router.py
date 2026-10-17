@@ -76,11 +76,11 @@ async def activity_issuance_analysis(activity_id: str, user=Depends(get_current_
     The payload is a superset of the description/layers endpoints, which are kept
     as fallbacks.
 
-    Members are mapped to their class with two full reads (``list_all`` for the
-    users, then the groups repo's ``list_all`` class listing) instead of a
-    dedicated batch protocol method: the tables are small, this needs no new
-    repository surface, and it keeps the endpoint to two queries — the paginated
-    ``list_classes`` would cost a third count query just to learn the total.
+    Members are mapped to their class with a single users read restricted to the
+    oids the memberships actually reference (plus the groups repo's ``list_all``
+    class listing): the tables are small, this needs no new repository surface,
+    and it keeps the endpoint to two queries — the paginated ``list_classes``
+    would cost a third count query just to learn the total.
     An activity with no effective member answers the empty payload without those
     reads at all. The assembly itself lives in
     :func:`util.activity_statistics.build_analysis_payload`.
@@ -94,9 +94,11 @@ async def activity_issuance_analysis(activity_id: str, user=Depends(get_current_
     )
     if not members:
         return empty_analysis_payload()
-    users = await backends.get_users_repo().list_all()
+    users = await backends.get_users_repo().get_many_by_oids(
+        [member["member"] for member in members]
+    )
     classes = await backends.get_groups_repo().list_all()
-    return build_analysis_payload(members, users, classes)
+    return build_analysis_payload(members, list(users.values()), classes)
 
 
 @router.get("/grades/{grade}/percentiles")

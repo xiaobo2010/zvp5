@@ -16,6 +16,7 @@ import { ref, onMounted, toRefs, watch } from 'vue'
 import api from '@/api'
 import { useI18n } from 'vue-i18n'
 import { useUserStore } from '@/stores/user'
+import { useGroupsStore } from '@/stores/groups'
 import type { User, Group } from '@/../types'
 import { ZUserGroup } from '@/components'
 import { useWindowSize } from '@vueuse/core'
@@ -27,6 +28,7 @@ const router = useRouter()
 const { height } = useWindowSize()
 const { t, locale } = useI18n()
 const userStore = useUserStore()
+const groupsStore = useGroupsStore()
 
 const props = withDefaults(
   defineProps<{
@@ -59,7 +61,7 @@ watch(height, () => {
 
 onMounted(() => {
   if (id.value) {
-    api.group.readOne(id.value).then((res) => {
+    groupsStore.fetchGroup(id.value).then((res) => {
       group.value = res
     })
   }
@@ -67,7 +69,7 @@ onMounted(() => {
 
 watch(id, () => {
   if (id.value) {
-    api.group.readOne(id.value).then((res) => {
+    groupsStore.fetchGroup(id.value).then((res) => {
       group.value = res
     })
   }

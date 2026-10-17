@@ -23,6 +23,25 @@ def public_user(user: dict) -> dict:
     return result
 
 
+def user_profile(user: dict) -> dict:
+    """用户摘要，与 v1 ``read_user`` 的 ``user_info`` 逐字段同形。
+
+    ``password`` / ``session_id`` 这类仅存储层字段不在白名单里，绝不外泄。
+    """
+    class_id = str(user["class_id"]) if user.get("class_id") else ""
+    return {
+        "_id": str(user["_id"]),
+        "id": user["id"],
+        "name": user["name"],
+        "sex": user.get("sex", "unknown"),
+        "roles": user.get("roles", []),
+        "class_id": class_id,
+        "group": [class_id] if class_id else [],
+        "past": user.get("past", []),
+        "banned": bool(user.get("banned")),
+    }
+
+
 async def get_user_name(id: str):
     try:
         oid = str(validate_object_id(id))

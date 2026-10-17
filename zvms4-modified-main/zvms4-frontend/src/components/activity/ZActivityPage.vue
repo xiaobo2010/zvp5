@@ -58,13 +58,17 @@ const activity = ref<Activity>()
 const membersCount = ref(0)
 
 async function getInfo() {
-  if (session.value) {
-    mine.value = await api.activity.member.read(id.value, session.value)
-  }
-  const response = await api.activity.read.single(id.value)
-  activity.value = response.activity
-  membersCount.value = response.members_count
-  console.log(response)
+  const memberTask = session.value
+    ? api.activity.member.read(id.value, session.value).then((res) => {
+        mine.value = res
+      })
+    : Promise.resolve()
+  const activityTask = api.activity.read.single(id.value).then((response) => {
+    activity.value = response.activity
+    membersCount.value = response.members_count
+    console.log(response)
+  })
+  await Promise.all([memberTask, activityTask])
   loading.value = false
 }
 

@@ -6,7 +6,7 @@ from db.ids import normalize_oid
 from db.oracle.session import session_scope
 from typings.log import inject_log
 from util.object_id import get_current_user
-from util.user import get_user_display_name
+from util.user import get_user_display_name, user_profile
 from utils import validate_object_id
 from typing import Literal
 from pydantic import BaseModel, Field, field_validator
@@ -109,9 +109,15 @@ async def get_activity_members_v3(
 
     validate_object_id(activity_id)
 
-    rows, total = await backends.get_members_repo().list_for_activity(
-        activity_id, query, page, size
-    )
+    # 成员行内嵌用户摘要（形状同 v1 read_user），一页行只批量取一次用户，
+    # 避免前端每张成员卡再回打 GET /api/users/{id}。
+    async with session_scope() as session:
+        rows, total = await backends.get_members_repo(session).list_for_activity(
+            activity_id, query, page, size
+        )
+        users = await backends.get_users_repo(session).get_many_by_oids(
+            [row["member"] for row in rows]
+        )
 
     members = [
         {
@@ -122,6 +128,11 @@ async def get_activity_members_v3(
             "mode": row["mode"],
             "status": row["status"],
             "duration": row["duration"],
+            "user": (
+                user_profile(users[row["member"]])
+                if row["member"] in users
+                else None
+            ),
         }
         for row in rows
     ]
@@ -180,14 +191,24 @@ async def add_activity_member_v3(
             if not target_activity:
                 raise HTTPException(status_code=404, detail="Activity not found")
             users_repo = backends.get_users_repo(session)
+            known_users = await users_repo.get_many_by_oids(
+                [oid for oid, _mode in additions]
+            )
             for oid, mode in additions:
                 if target_activity["type"] not in ("hybrid", mode):
                     raise HTTPException(status_code=400, detail="义工类型不匹配")
-                if await users_repo.get_by_oid(oid) is None:
+                if oid not in known_users:
                     raise HTTPException(status_code=400, detail="成员不存在")
             members_repo = backends.get_members_repo(session)
+            # 既有三元组一次查回，循环里内存判定 upsert：导入 N 个成员不再 N 次查库。
+            existing_by_key = {
+                (str(row["member"]), row["mode"]): row
+                for row in await members_repo.list_by_activity_and_members(
+                    activity_id, [oid for oid, _mode in additions]
+                )
+            }
             for (oid, mode), duration in additions.items():
-                existing = await members_repo.get_by_triple(activity_id, oid, mode)
+                existing = existing_by_key.get((oid, mode))
                 if existing:
                     total = existing["duration"] + duration
                     if not math.isfinite(total):

@@ -364,6 +364,15 @@ def _list_by_members_stmt(member_oids: list[str]):
     )
 
 
+def _list_by_activity_and_members_stmt(
+    activity_oid: str, member_oids: list[str]
+):
+    return select(*_member_columns()).where(
+        members_tbl.c.activity_oid == activity_oid,
+        members_tbl.c.member_oid.in_(member_oids),
+    )
+
+
 def _count_for_activity_stmt(
     activity_oid: str, status: str | None, member_oids: list[str] | None
 ):
@@ -616,6 +625,25 @@ class OracleMembersRepo:
         if not member_oids:
             return []
         stmt = _list_by_members_stmt([normalize_oid(o) for o in member_oids])
+        async with _session_for(self._session) as (session, _owns):
+            rows = (await session.execute(stmt)).all()
+        return [_member_row(row._mapping) for row in rows]
+
+    async def list_by_activity_and_members(
+        self, activity_oid: str, member_oids: list[str]
+    ) -> list[Row]:
+        """Batch form of :meth:`get_by_triple` for one activity.
+
+        Lets a bulk import read every existing ``(member, mode)`` row in one
+        statement instead of one lookup per member; the returned rows share
+        ``get_by_triple``'s key space, so the caller can decide update-vs-insert
+        in memory.
+        """
+        if not member_oids:
+            return []
+        stmt = _list_by_activity_and_members_stmt(
+            normalize_oid(activity_oid), [normalize_oid(o) for o in member_oids]
+        )
         async with _session_for(self._session) as (session, _owns):
             rows = (await session.execute(stmt)).all()
         return [_member_row(row._mapping) for row in rows]

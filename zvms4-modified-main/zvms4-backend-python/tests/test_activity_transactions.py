@@ -53,11 +53,36 @@ class Repos:
     async def get_by_oid(self, oid):
         return {"_id": oid}
 
+    async def get_many_by_oids(self, oids):
+        # 批量用户查询：与 get_by_triple 一样必须在事务内（activity 行锁之后）。
+        assert self.session.locked
+        await asyncio.sleep(0)
+        return {oid: {"_id": oid} for oid in dict.fromkeys(oids)}
+
     async def get_by_triple(self, activity, oid, mode):
         assert self.session.locked
         await asyncio.sleep(0)
         value = self.session.data["members"].get((oid, mode))
         return {"_id": (oid, mode), "duration": value} if value is not None else None
+
+    async def list_by_activity_and_members(self, activity, member_oids):
+        # 批量版 get_by_triple：同样在事务内读，供 handler 内存判定 upsert。
+        assert self.session.locked
+        await asyncio.sleep(0)
+        rows = []
+        for oid in dict.fromkeys(member_oids):
+            for mode in ("on-campus", "off-campus", "social-practice"):
+                value = self.session.data["members"].get((oid, mode))
+                if value is not None:
+                    rows.append(
+                        {
+                            "_id": (oid, mode),
+                            "member": oid,
+                            "mode": mode,
+                            "duration": value,
+                        }
+                    )
+        return rows
 
     async def add(self, activity, oid, mode, duration, status):
         if oid == self.session.store.fail_on:
