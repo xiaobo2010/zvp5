@@ -28,25 +28,9 @@ async def get_user_v3(
     """
     Read a user's live profile from `zvms_new.users`.
 
-    Permission: self, or admin/department, or secretary in the same class.
+    Permission: any authenticated user.
     """
     validate_object_id(user_id)
-
-    if user_id != user["id"]:
-        per = user.get("per") or []
-        if "admin" in per or "department" in per:
-            pass
-        elif "secretary" in per:
-            current = await _get_zvms_new_user(user["id"])
-            target = await _get_zvms_new_user(user_id)
-            if not (
-                current is not None
-                and target is not None
-                and str(current.get("class_id")) == str(target.get("class_id"))
-            ):
-                raise HTTPException(status_code=403, detail="权限不足")
-        else:
-            raise HTTPException(status_code=403, detail="权限不足")
 
     target = await _get_zvms_new_user(user_id)
     if target is None:

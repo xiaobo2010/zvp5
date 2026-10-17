@@ -20,26 +20,19 @@ async def validate_read_user_permission(
     """
     Validate that the current user may read the target user's information.
 
-    Permission vocabulary is the raw JWT `per` list (student/secretary/
-    department/admin, issued from `zvms_new.users.roles`):
-    - self / admin / department: allowed
-    - secretary: allowed only when in the same class as the target
+    The class/team domain is readable by any authenticated user: profiles,
+    time and activity reads are open to every logged-in account (students
+    included). Authentication itself is already enforced by
+    ``get_current_user`` before this helper runs, and ``admin`` /
+    ``department`` / ``secretary`` keep every ability they had — this helper
+    only ever loosened, it never restricts.
+
+    Callers: ``users_router.read_user``, ``users_v2_router``
+    ``get_user_activities_v2`` / ``get_user_time_v2`` /
+    ``get_user_time_statistics_v2`` — all read-only endpoints. No write or
+    observer-only endpoint reuses it.
     """
-    if user["id"] == target_user:
-        return True
-    per = user.get("per") or []
-    if "admin" in per or "department" in per:
-        return True
-    if "secretary" in per:
-        current = await get_zvms_new_user(user["id"])
-        target = await get_zvms_new_user(target_user)
-        if (
-            current is not None
-            and target is not None
-            and str(current.get("class_id")) == str(target.get("class_id"))
-        ):
-            return True
-    raise HTTPException(status_code=403, detail="权限不足")
+    return True
 
 
 async def validate_read_group_permission(

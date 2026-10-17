@@ -130,8 +130,6 @@ async def get_group_activities_v2(
     :param user: Current user
     """
 
-    await validate_read_group_permission(user, group_id, "volunteer")
-
     class_oid = validate_object_id(group_id)
 
     if not regex:
@@ -166,8 +164,6 @@ async def read_users(
     """
     Query users
     """
-    await validate_read_group_permission(user, group_id, "volunteer")
-
     sortkey = {
         "on-campus": "on_campus_raw",
         "off-campus": "off_campus_raw",
@@ -232,8 +228,6 @@ async def get_group_users_v2(
     :param start: Start date
     :param end: End date
     """
-
-    await validate_read_group_permission(user, group_id, "volunteer")
 
     # Get members from the group
     class_oid = validate_object_id(group_id)
