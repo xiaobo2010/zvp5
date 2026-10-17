@@ -90,6 +90,6 @@ export const zhCN = {
     noteSelfOnly: '只展示你自己的动态码；后端仅允许查看本人动态码，无法查看他人。',
     noteUsage: '动态码可用于换取登录令牌，请勿展示给他人。',
     noteLog: '每次查看都会记录到系统操作日志（totp_view）。',
-    refreshInterval: '动态码每 30 秒更换一次'
+    refreshInterval: '动态码每 60 秒更换一次'
   }
 }
