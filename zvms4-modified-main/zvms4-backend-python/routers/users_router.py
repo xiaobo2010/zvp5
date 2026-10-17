@@ -1,8 +1,8 @@
 import logging
 import re
 from datetime import datetime
-from typing import Optional
-from fastapi import APIRouter, HTTPException, Depends, Request
+from typing import Literal, Optional
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 from bcrypt import hashpw, gensalt
@@ -86,13 +86,13 @@ async def _observe_binding(
 
 class AuthUser(BaseModel):
     id: str
-    mode: str
+    mode: Literal["long", "short"] = "long"
     credential: str
     purpose: str = "login"
 
 
 @router.post("/auth")
-async def auth_user(auth: AuthUser, request: Request):
+async def auth_user(auth: AuthUser, request: Request, response: Response):
     id = auth.id
     mode = auth.mode or "long"
     credential = auth.credential
@@ -173,6 +173,7 @@ async def auth_user(auth: AuthUser, request: Request):
             "group": [str(user_doc["class_id"])] if user_doc.get("class_id") else [],
         }
 
+    response.headers["Cache-Control"] = "no-store"
     return {
         "token": result,
         "_id": id,
@@ -269,9 +270,9 @@ async def change_password(
 
 @router.get("")
 async def read_users(
-    query: str = "",
-    page: int = 1,
-    perpage: int = 5,
+    query: str = Query("", max_length=128),
+    page: int = Query(1, ge=-1),
+    perpage: int = Query(5, ge=1, le=100),
     privilege: bool = False,
     user: Optional[str] = Depends(optional_current_user),
 ):
@@ -384,9 +385,9 @@ async def remove_user_from_group(user_oid: str, group_id: str):
 async def read_user_activity(
     user_oid: str,
     user=Depends(get_current_user),
-    page: int = -1,
-    perpage: int = 10,
-    query: str = "",
+    page: int = Query(-1, ge=-1),
+    perpage: int = Query(10, ge=1, le=100),
+    query: str = Query("", max_length=128),
 ):
     """
     Return user's activities
@@ -519,9 +520,9 @@ async def read_user_time(
 @router.get("/{user_oid}/logs")
 async def read_logs(
     user_oid: str,
-    page: int = -1,
-    perpage: int = 10,
-    query: str = "",
+    page: int = Query(-1, ge=-1),
+    perpage: int = Query(10, ge=1, le=100),
+    query: str = Query("", max_length=128),
     user=Depends(get_current_user),
 ):
     if "admin" not in user["per"]:

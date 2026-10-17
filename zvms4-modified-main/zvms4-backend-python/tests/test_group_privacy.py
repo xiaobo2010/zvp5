@@ -18,6 +18,9 @@ USER = "000000000000000000000001"
 def test_public_projection_drops_raw_hash_even_without_prior_masking():
     assert public_user({"password": "secret-hash", "session_id": "secret"}) == {"password": None}
     assert public_user({"password": False}) == {"password": False}
+    assert public_user(
+        {"id": "1", "eligibility": ["admin"], "past": ["20230001"]}
+    ) == {"id": "1"}
 
 
 @pytest.fixture
