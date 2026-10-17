@@ -10,9 +10,9 @@ export const zhCN = {
   reset: '密码修改',
   banned: {
     title: '账号已被封禁',
-    message: '您的账号已被封禁，已强制退出登录。',
+    message: '由于明确的违规使用，您的账号已被封禁，稍后您将自动退出登录。',
     appeal: '如需申诉，请联系管理员。',
-    exit: '返回登录页'
+    autoLogoutIn: '将在 {seconds} 秒后自动退出登录'
   },
   language: '',
   dark: '夜间模式',

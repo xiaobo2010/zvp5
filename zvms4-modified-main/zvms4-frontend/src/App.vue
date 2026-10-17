@@ -23,7 +23,7 @@ import UserNav from '@/views/user/UserNav.vue'
 import { useHeaderStore } from './stores/header'
 import { useWindowSize, useDark, useOnline } from '@vueuse/core'
 import { useI18n } from 'vue-i18n'
-import { watch, ref, onMounted, onUnmounted, h, reactive } from 'vue'
+import { computed, watch, ref, onMounted, onUnmounted, h, reactive } from 'vue'
 import type { WatermarkFontType } from 'element-plus'
 import { zhCn } from 'element-plus/es/locale/index.mjs'
 import ZVerticalNav from '@/components/form/ZVerticalNav.vue'
@@ -139,37 +139,79 @@ if (security.value < 4) {
   router.replace('/user/login')
 }
 
-// 封禁账号全屏锁。触发标记用组件内 ref，不依赖 store：removeUser() 会把
-// store.banned 置回 false，若用 store 驱动渲染，强制退出完成瞬间警告就会消失。
-const bannedLock = ref(false)
+// 封禁全屏锁:由 axios 拦截器识别 403 + USER_BANNED 后写入的首次检测时间戳驱动
+// (userStore.bannedNoticeAt, unix ms, 0=无)。时间戳随 store 持久化,刷新页面
+// 恢复剩余倒计时而非重新计时;到点前不可关闭、不可跳过,到点自动登出。
+const BAN_NOTICE_SECONDS = 30
+const banCountdown = ref(0)
+const banLocked = computed(() => userStore.bannedNoticeAt > 0)
+const banFinalizing = ref(false)
+
+let banTimer: ReturnType<typeof setInterval> | undefined
+
+async function finalizeBan() {
+  if (banFinalizing.value) {
+    return
+  }
+  banFinalizing.value = true
+  await userStore.removeUser().catch(() => {})
+  try {
+    await router.replace('/user/login')
+    userStore.bannedNoticeAt = 0
+  } catch {
+    // 跳转失败保持遮罩(fail-closed),由倒计时 tick 自动重试
+  }
+  banFinalizing.value = false
+}
+
+function updateBanCountdown() {
+  if (userStore.bannedNoticeAt <= 0) {
+    return
+  }
+  const left = BAN_NOTICE_SECONDS - (Date.now() - userStore.bannedNoticeAt) / 1000
+  banCountdown.value = Math.max(0, Math.ceil(left))
+  if (left <= 0) {
+    void finalizeBan()
+  }
+}
 
 watch(
-  () => userStore.isLogin && userStore.banned,
-  (bannedSession) => {
-    if (!bannedSession || bannedLock.value) {
-      return
+  () => userStore.bannedNoticeAt,
+  (at) => {
+    if (at > 0) {
+      updateBanCountdown()
+      if (!banTimer) {
+        banTimer = setInterval(updateBanCountdown, 250)
+      }
+    } else if (banTimer) {
+      clearInterval(banTimer)
+      banTimer = undefined
+      banCountdown.value = 0
+      banFinalizing.value = false
     }
-    bannedLock.value = true
-    // 失焦当前元素，防止键盘焦点残留在下层可滚动区域继续翻页
-    ;(document.activeElement as HTMLElement | null)?.blur()
-    userStore.removeUser().catch(() => {})
   },
   { immediate: true }
 )
 
-watch(bannedLock, (locked) => {
-  document.body.style.overflow = locked ? 'hidden' : ''
-})
+watch(
+  banLocked,
+  (locked) => {
+    document.body.style.overflow = locked ? 'hidden' : ''
+    if (locked) {
+      // 失焦当前元素,防止键盘焦点残留在下层可滚动区域继续翻页
+      ;(document.activeElement as HTMLElement | null)?.blur()
+    }
+  },
+  { immediate: true }
+)
 
 onUnmounted(() => {
+  if (banTimer) {
+    clearInterval(banTimer)
+    banTimer = undefined
+  }
   document.body.style.overflow = ''
 })
-
-async function exitBanned() {
-  await userStore.removeUser().catch(() => {})
-  await router.replace('/user/login')
-  bannedLock.value = false
-}
 
 const dark = useDark()
 
@@ -296,7 +338,7 @@ onMounted(async () => {
         </template>
       </ElAlert>
       <div
-        v-if="bannedLock"
+        v-if="banLocked"
         class="banned-shield hidden-print fixed inset-0 flex items-center justify-center"
         style="z-index: 9999"
         role="alertdialog"
@@ -313,14 +355,14 @@ onMounted(async () => {
           <h2 id="banned-title" class="banned-title">{{ t('nav.banned.title') }}</h2>
           <p class="banned-message">{{ t('nav.banned.message') }}</p>
           <p class="banned-appeal">{{ t('nav.banned.appeal') }}</p>
-          <button type="button" class="banned-exit" @click="exitBanned">
-            {{ t('nav.banned.exit') }}
-          </button>
+          <p v-show="banCountdown > 0" class="banned-countdown">
+            {{ t('nav.banned.autoLogoutIn', { seconds: banCountdown }) }}
+          </p>
         </div>
       </div>
       <ElContainer
         @contextmenu.prevent
-        :inert="bannedLock"
+        :inert="banLocked"
         class="bg-slate-100 dark:bg-gray-900"
         direction="vertical"
         :style="{ width: width + 'px', height: height + 'px' }"
@@ -472,26 +514,11 @@ onMounted(async () => {
   margin: 0.5rem 0 0;
 }
 
-.banned-exit {
-  margin-top: 2.5rem;
-  padding: 0.75rem 2.5rem;
-  border: none;
-  border-radius: 9999px;
-  background: #fff;
-  color: #7f1d1d;
+.banned-countdown {
+  margin: 2.5rem 0 0;
   font-size: 1rem;
-  font-weight: 600;
-  cursor: pointer;
-  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.35);
-  transition: background-color 0.2s;
-}
-
-.banned-exit:hover {
-  background: #fee2e2;
-}
-
-.banned-exit:active {
-  background: #fecaca;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.9;
 }
 
 @keyframes banned-shield-in {
