@@ -38,6 +38,11 @@ const tablespaces = computed(() => storage.value?.tablespaces ?? null)
 const load = computed(() => dbStatus.value?.load ?? null)
 const pool = computed(() => load.value?.connection_pool ?? null)
 
+// 容量视图仅展示承载平台数据的表空间,Oracle 自有表空间(SYSTEM/SYSAUX/TEMP/UNDO 等)不渲染
+const applicationTablespaces = computed(() => {
+  return (tablespaces.value?.items ?? []).filter((ts) => ts.is_application === true)
+})
+
 // 从后端错误里提取 detail 用于展示
 function detailOf(err: unknown): string {
   if (isAxiosError(err)) {
@@ -146,7 +151,8 @@ const sortedTableItems = computed(() => {
 })
 
 const tablespaceTotals = computed(() => {
-  const items = tablespaces.value?.items ?? []
+  // 仅统计承载平台数据的表空间(is_application),Oracle 系统表空间不参与容量视图与合计
+  const items = applicationTablespaces.value
   let used = 0
   let max = 0
   let anyNull = false
@@ -235,7 +241,7 @@ if (isAdmin) {
       </div>
     </ElCard>
 
-    <!-- 容量配额:每表空间 used/max + 进度条,合计行 -->
+    <!-- 容量配额:仅展示承载平台数据的表空间,每项 used/max + 进度条,合计行 -->
     <ElCard shadow="never">
       <template #header>
         <span class="font-medium">{{ t(M + 'tablespacesTitle') }}</span>
@@ -250,7 +256,13 @@ if (isAdmin) {
           :description="degradeText(tablespaces.reason, tablespaces.message)"
         />
         <template v-else-if="tablespaces">
-          <div v-for="ts in tablespaces.items" :key="ts.name" class="flex flex-col gap-1">
+          <div
+            v-if="applicationTablespaces.length === 0"
+            class="text-sm text-gray-500 dark:text-gray-400"
+          >
+            {{ t(M + 'tablespacesEmpty') }}
+          </div>
+          <div v-for="ts in applicationTablespaces" :key="ts.name" class="flex flex-col gap-1">
             <div class="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
               <span class="font-medium">{{ ts.name }}</span>
               <span class="text-sm text-gray-600 dark:text-gray-300">
@@ -265,10 +277,7 @@ if (isAdmin) {
               :show-text="false"
             />
           </div>
-          <div
-            v-if="tablespaces.items.length > 1"
-            class="flex flex-wrap items-baseline justify-between gap-x-3 border-t border-gray-200/70 pt-2 text-sm dark:border-gray-700/70"
-          >
+          <div v-if="applicationTablespaces.length > 1" class="flex flex-wrap items-baseline justify-between gap-x-3 border-t border-gray-200/70 pt-2 text-sm dark:border-gray-700/70">
             <span class="text-gray-500 dark:text-gray-400">{{ t(M + 'tablespacesTotal') }}</span>
             <span>
               {{ formatBytes(tablespaceTotals.used) }} / {{ formatBytes(tablespaceTotals.max) }}
@@ -279,6 +288,7 @@ if (isAdmin) {
             </span>
           </div>
           <div class="text-sm text-gray-500 dark:text-gray-400">{{ t(M + 'maxBytesNote') }}</div>
+          <div class="text-sm text-gray-500 dark:text-gray-400">{{ t(M + 'tablespacesScopeNote') }}</div>
         </template>
       </div>
     </ElCard>
@@ -343,12 +353,13 @@ if (isAdmin) {
         </div>
       </template>
       <div class="flex flex-col gap-4">
+        <!-- V$SYSMETRIC 在部分 ADB 实例不产生采样:属已知口径而非故障,措辞用中性说明 -->
         <ElAlert
           v-if="load && !load.available"
           type="info"
           show-icon
           :closable="false"
-          :title="t(M + 'degraded')"
+          :title="t(M + 'loadNoSamplesTitle')"
           :description="degradeText(load.reason, undefined)"
         />
         <template v-else-if="load">

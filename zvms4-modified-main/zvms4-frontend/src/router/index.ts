@@ -95,6 +95,11 @@ const router = createRouter({
           path: 'database',
           name: 'server-database',
           component: () => import('../views/server/ServerDatabase.vue')
+        },
+        {
+          path: 'totp',
+          name: 'server-totp',
+          component: () => import('../views/server/ServerTotp.vue')
         }
       ]
     },
