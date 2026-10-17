@@ -221,8 +221,11 @@ async def change_password(
     if credential_change_forbidden(user["id"], target_per, oid):
         raise HTTPException(status_code=403, detail="不能修改管理员账号的凭据")
 
-    # Change user's password
-    await repo.set_password(oid, str(password))
+    # Change user's password（条件写：前置判定放行后，若目标在此期间被并发
+    # 改成 admin，数据库层的守卫仍会拒绝，返回 0 行）。
+    affected = await repo.set_password_guarded(oid, str(password), user["id"])
+    if affected == 0:
+        raise HTTPException(status_code=403, detail="不能修改管理员账号的凭据")
 
     if modification:
         log.with_text(
