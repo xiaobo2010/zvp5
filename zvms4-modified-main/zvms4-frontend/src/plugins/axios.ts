@@ -184,6 +184,17 @@ axiosInstance.interceptors.response.use(
               router.replace('/user/login')
             })
         }
+      } else if (
+        error.response?.status === 403 &&
+        error.response?.data?.detail === 'USER_BANNED'
+      ) {
+        // 封禁信号:仅首次命中写入检测时间戳(userStore.bannedNoticeAt),供 App.vue
+        // 全屏封禁警告与倒计时使用;isLogin 守卫防止登出后 in-flight 响应复活遮罩;
+        // 重复命中幂等跳过,不弹原始串、不重置倒计时、不触发任何跳转。
+        const bannedStore = useUserStore()
+        if (bannedStore.isLogin && !bannedStore.bannedNoticeAt) {
+          bannedStore.bannedNoticeAt = Date.now()
+        }
       } else {
         if (!errorDisplayed) {
           errorDisplayed = true
