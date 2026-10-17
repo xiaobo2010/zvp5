@@ -65,7 +65,7 @@ export async function resetToInitial(user: string, token: string) {
     headers: {
       Authorization: `Bearer ${token}`
     }
-  })) as Response<null>
+  })) as Response<{ initial_password: string }>
   if (result.status === 'error') {
     ElNotification({
       title: 'Error when resetting password',
@@ -74,7 +74,8 @@ export async function resetToInitial(user: string, token: string) {
     })
     return
   }
-  return result.data
+  // 一次性初始密码只在本次响应中出现，后端不落库、不写日志
+  return result.data.initial_password
 }
 
 async function UserLogin(user: string, password: string, term: 'long' | 'short' = 'long') {
