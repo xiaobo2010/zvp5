@@ -211,23 +211,8 @@ async def get_class_activities(
     if query != "" and "admin" not in user["per"]:
         query = re.escape(query)
 
-    same_class = False
-    if "secretary" in user["per"]:
-        target = await backends.get_users_repo().get_by_oid(user["id"])
-        if target is None:
-            raise HTTPException(status_code=404, detail="User not found")
-        classid = str(target["class_id"]) if target.get("class_id") else None
-        if classid == group_id:
-            same_class = True
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
-    if (
-        "admin" not in user["per"]
-        and "auditor" not in user["per"]
-        and "department" not in user["per"]
-        and ("secretary" not in user["per"] and not same_class)
-    ):
-        raise HTTPException(status_code=403, detail="Permission denied")
     result, count = await get_activities_related_to_user(
         user["id"], page, perpage, query, group_id
     )
@@ -251,23 +236,8 @@ async def get_users_in_class(
     """
     Get users in a class
     """
-    same_class = False
-    if "secretary" in user["per"]:
-        target = await backends.get_users_repo().get_by_oid(user["id"])
-        if target is None:
-            raise HTTPException(status_code=404, detail="User not found")
-        classid = str(target["class_id"]) if target.get("class_id") else None
-        if classid == group_id:
-            same_class = True
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
-    if (
-        "admin" not in user["per"]
-        and "auditor" not in user["per"]
-        and "department" not in user["per"]
-        and ("secretary" not in user["per"] and not same_class)
-    ):
-        raise HTTPException(status_code=403, detail="Permission denied")
     class_oid = validate_object_id(group_id)
     result = await backends.get_users_repo().list_by_class(str(class_oid))
     if search:
@@ -307,23 +277,8 @@ async def get_user_times_in_class(
     """
     Get users in a class
     """
-    same_class = False
-    if "secretary" in user["per"]:
-        target = await backends.get_users_repo().get_by_oid(user["id"])
-        if target is None:
-            raise HTTPException(status_code=404, detail="User not found")
-        classid = str(target["class_id"]) if target.get("class_id") else None
-        if classid == group_id:
-            same_class = True
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
-    if (
-        "admin" not in user["per"]
-        and "auditor" not in user["per"]
-        and "department" not in user["per"]
-        and ("secretary" not in user["per"] and not same_class)
-    ):
-        raise HTTPException(status_code=403, detail="Permission denied")
     class_oid = validate_object_id(group_id)
     result = await backends.get_users_repo().list_by_class(str(class_oid))
     if search:
