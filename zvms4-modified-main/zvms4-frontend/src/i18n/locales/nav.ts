@@ -8,6 +8,12 @@ export const zhCN = {
   changelog: '更新日志',
   logout: '退出登录',
   reset: '密码修改',
+  banned: {
+    title: '账号已被封禁',
+    message: '您的账号已被封禁，已强制退出登录。',
+    appeal: '如需申诉，请联系管理员。',
+    exit: '返回登录页'
+  },
   language: '',
   dark: '夜间模式',
   languages: {
