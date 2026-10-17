@@ -78,7 +78,12 @@ export async function resetToInitial(user: string, token: string) {
   return result.data.initial_password
 }
 
-async function UserLogin(user: string, password: string, term: 'long' | 'short' = 'long') {
+async function UserLogin(
+  user: string,
+  password: string,
+  term: 'long' | 'short' = 'long',
+  purpose: 'login' | 'verify' = 'login'
+) {
   const payload = JSON.stringify({
     password: password,
     time: Date.now()
@@ -91,7 +96,8 @@ async function UserLogin(user: string, password: string, term: 'long' | 'short' 
     data: {
       id: user.toString(),
       credential: hex,
-      mode: term
+      mode: term,
+      purpose: purpose
     }
   })) as Response<LoginResult>
   if (result.status === 'error') {

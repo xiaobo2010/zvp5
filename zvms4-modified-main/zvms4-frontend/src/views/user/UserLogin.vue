@@ -46,7 +46,7 @@ async function login() {
     loading.value = true
     
     const id = user.value
-    const { token, _id } = (await api.user.auth.useLongTermAuth(id, password.value, 'short').catch(() => {
+    const { token, _id } = (await api.user.auth.useLongTermAuth(id, password.value, 'short', 'login').catch(() => {
       loading.value = false
     })) || {
       token: '',

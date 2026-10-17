@@ -13,6 +13,7 @@ const { log } = toRefs(props)
 
 const typeLabels: Record<string, string> = {
   user_login: '登录',
+  user_verify: '身份验证',
   passwd_change: '密码修改',
   totp_view: '动态码查看',
   user_create: '用户创建',
