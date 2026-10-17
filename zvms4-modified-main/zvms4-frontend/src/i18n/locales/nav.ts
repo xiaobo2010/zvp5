@@ -1,7 +1,8 @@
 export const zhCN = {
   home: '首页',
   activity: '义工列表',
-  manage: '管理',
+  manage: '平台管理',
+  server: '服务器管理',
   create: '创建义工',
   about: '关于',
   changelog: '更新日志',
@@ -57,6 +58,6 @@ export const zhCN = {
       profile: '个人资料',
       logout: '登出',
     },
-    manage: '管理',
+    manage: '平台管理',
   },
 }

@@ -81,6 +81,16 @@ const router = createRouter({
       component: () => import('../views/manage/ManageHome.vue')
     },
     {
+      path: '/server',
+      name: 'server',
+      component: () => import('../views/server/ServerHome.vue')
+    },
+    {
+      path: '/server/:action',
+      name: 'server-action',
+      component: () => import('../views/server/ServerHome.vue')
+    },
+    {
       path: '/group/:id',
       name: 'group-user',
       component: () => import('../views/group/GroupPage.vue')
