@@ -190,6 +190,15 @@ def is_enabled() -> bool:
     return value
 
 
+def is_enabled_fresh() -> bool:
+    """绕过 TTL 缓存，直读 SQLite 的当前状态。
+
+    给「准入类」判断用：缓存窗口（:data:`CACHE_TTL` 秒）内刚开启的维护模式
+    不能被放进来，所以这里刻意不走 :func:`is_enabled` 的缓存分支。
+    """
+    return bool(get_state()["enabled"])
+
+
 def invalidate_cache() -> None:
     """供测试或外部直接改库后手动失效缓存。"""
     with _cache_lock:

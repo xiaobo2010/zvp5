@@ -23,10 +23,13 @@ from routers import (
     attachments_router,
 )
 import socketio
+from socketio.exceptions import ConnectionRefusedError as SocketIOConnectionRefusedError
 from fastapi.middleware.cors import CORSMiddleware
 from db import backends
 from db.ids import InvalidOid
 from db.system_state import is_enabled as maintenance_enabled
+from db.system_state import is_enabled_fresh as maintenance_enabled_fresh
+import realtime
 from routers.system_router import router as system_router
 from db.oracle.engine import ping as oracle_ping
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -35,6 +38,10 @@ from tasks.compute_time import rebuild_statistics, generate_reports
 scheduler = AsyncIOScheduler()
 sio = socketio.AsyncServer(async_mode="asgi")
 socket = socketio.ASGIApp(sio)
+
+# 登记给 routers 用（开启维护模式时要断开所有实时连接），避免 router 反向
+# import main 造成循环导入。
+realtime.register_server(sio)
 
 app = FastAPI(default_response_class=JSONResponse, docs_url=None)
 
@@ -63,6 +70,14 @@ async def current_version() -> str:
     version = entries[0].get("version")
     return str(version) if version else VERSION_UNKNOWN
 
+
+# 维护模式对 socket.io 的准入：socket.io 挂在与本中间件栈不同的 ASGI 子应用上
+# （见文件末尾的 app.mount("/socket.io", socket)），/api/ 那层中间件管不到它，
+# 所以单独加一层纯 ASGI 中间件在握手阶段拒绝新连接。
+# 注册顺序：本行在 CORSMiddleware 之前注册 ⇒ 中间件栈里它在 CORS 内侧（503 会
+# 被 CORS 补上响应头）；shield_middleware 最后注册，仍在最外层（非 Mozilla UA
+# 先吃 418）。
+app.add_middleware(realtime.MaintenanceSocketGuard)
 
 app.add_middleware(
     CORSMiddleware,
@@ -161,6 +176,12 @@ app.mount("/socket.io", socket)
 
 @sio.event
 async def connect(sid, environ):
+    # 兜底：正常路径上 MaintenanceSocketGuard 已在握手阶段拒掉新连接（并且
+    # GET /api/system/maintenance 已放行），这里再查一次**绕过缓存**的最新状态，
+    # 万一有入口绕过那层中间件也不会漏进连接。
+    if maintenance_enabled_fresh():
+        print(f"refuse connect {sid} (maintenance)")
+        raise SocketIOConnectionRefusedError("系统维护中，请稍后再试")
     print(f"connect {sid}")
 
 
