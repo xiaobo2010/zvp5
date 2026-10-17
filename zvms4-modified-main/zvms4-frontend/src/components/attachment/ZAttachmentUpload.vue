@@ -232,7 +232,7 @@ async function uploadSingle(file: File, replaceIndex?: number) {
     if (!result) {
       throw new Error('服务端未返回上传结果')
     }
-    items.value[index].oid = result.id
+    items.value[index].oid = result._id
     items.value[index].meta = result
     items.value[index].isLocal = false
     items.value[index].status = 'done'
@@ -241,12 +241,8 @@ async function uploadSingle(file: File, replaceIndex?: number) {
   } catch (err) {
     items.value[index].status = 'error'
     items.value[index].progress = 0
-    ElMessage({
-      message: '上传失败：' + (err instanceof Error ? err.message : '未知错误'),
-      type: 'error',
-      plain: true,
-      grouping: true
-    })
+    // 不在此弹出 toast:axios 错误已由响应拦截器统一提示(401/后端 detail/未知错误),
+    // 组件侧保留内联 error 状态与 emit,避免同一 detail 弹两次。
     emit('error', err)
   }
 }
