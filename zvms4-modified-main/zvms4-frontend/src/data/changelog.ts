@@ -6,6 +6,15 @@ export interface ChangelogEntry {
 
 export const changelog: ChangelogEntry[] = [
   {
+    version: 'v4.2.3-4',
+    date: '2026-10-17',
+    items: [
+      '修复附件上传无反应：选完文件后不再静默失败（Chromium 下先清空输入框会连带清空已取到的文件列表）',
+      '班级/团队域只读接口对已登录用户放行：班级成员名单、班级活动清单、成员时长与成员资料不再报权限不足',
+      '管理类数据权限不变：用户管理列表、系统日志、导出、统计与媒体库仍限管理员及以上'
+    ]
+  },
+  {
     version: 'v4.2.3-3',
     date: '2026-10-16',
     items: [
