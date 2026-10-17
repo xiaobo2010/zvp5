@@ -222,11 +222,11 @@ watch(offlineReady, () => {
 })
 
 onMounted(async () => {
-  // 启动时检查一次维护状态(公开接口):维护中跳公告页并略过注定 503 的用户刷新
+  // 启动时检查一次维护状态(公开接口):维护中跳公告页并略过注定 503 的用户刷新;admin 放行
   try {
     const res = await getMaintenanceStatus()
     if (res.data.data.enabled) {
-      if (route.path !== '/maintenance') {
+      if (!userStore.position.includes('admin') && route.path !== '/maintenance') {
         router.replace('/maintenance')
       }
       return

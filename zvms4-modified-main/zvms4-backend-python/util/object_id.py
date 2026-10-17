@@ -131,6 +131,37 @@ async def _authenticate(
         return raise_exception()
 
 
+def bearer_token(raw) -> Optional[str]:
+    """
+    Pull the token out of an ``Authorization`` value (``Bearer <token>``) or a
+    bare token. Anything unusable yields ``None``; never raises.
+    """
+    if not raw:
+        return None
+    if isinstance(raw, bytes):
+        raw = raw.decode("latin-1", "ignore")
+    value = str(raw).strip()
+    if value[:7].lower() == "bearer ":
+        value = value[7:].strip()
+    return value or None
+
+
+def is_admin_token(raw) -> bool:
+    """
+    Maintenance-mode admission: the token must decode (same path as
+    :func:`get_current_user`) and carry ``admin`` in ``per``.
+
+    Never raises: a missing token, a bad signature, an expired token or any
+    other failure all mean "not admin", so middleware callers can stay total.
+    """
+    try:
+        payload = jwt_decode(bearer_token(raw))
+        per = payload.get("per")
+        return isinstance(per, list) and "admin" in per
+    except Exception:
+        return False
+
+
 def timestamp_change(date_string: str):
     """
     Change ISO-8601 to timestamp
