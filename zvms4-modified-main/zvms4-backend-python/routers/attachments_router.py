@@ -378,8 +378,8 @@ async def list_attachments(
     status: str | None = Query(None),
     entity_type: str | None = Query(None),
     entity_oid: str | None = Query(None),
-    page: int = Query(1),
-    size: int = Query(20),
+    page: int = Query(1, ge=1),
+    size: int = Query(20, ge=1, le=100),
 ):
     if scope == "all":
         # Never trust the client param: gate `all` server-side (design §4 #4).

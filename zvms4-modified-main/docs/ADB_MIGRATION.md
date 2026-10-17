@@ -1,7 +1,8 @@
 # ADB 迁移计划（MongoDB → Oracle Autonomous Database）
 
-> 分支：`zvms4-adb-migration`（基于 `zvp5-dev`）
-> 状态：进行中 · 阶段 P0（代码与 Schema，不含实库 I/O）
+> 分支：迁移工作已合入 `main`
+> 状态：**已完成（历史迁移记录）**。Oracle ADB 是唯一运行时数据库，MongoDB 代码与依赖已移除。
+> 本文保留下方各阶段证据；其中“进行中/待接线/待验证”只描述当时阶段。
 
 ## 1. 目标与范围
 
