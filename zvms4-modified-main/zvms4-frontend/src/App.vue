@@ -403,20 +403,7 @@ body {
   transition-duration: 1s !important;
 }
 
-.el-pagination {
-  overflow-x: scroll;
-  height: 34px;
-}
-
-.el-pagination .el-pagination__sizes {
-  -moz-flex-grow: 1;
-  -webkit-flex-grow: 1;
-  flex-grow: 1;
-}
-
-.el-pagination .el-pagination__sizes .el-select {
-  width: 100% !important;
-}
+/* 翻页样式统一由 ZPagination 组件负责（响应式换行，无需横向滚动） */
 
 input::-webkit-outer-spin-button,
 input::-webkit-inner-spin-button {
