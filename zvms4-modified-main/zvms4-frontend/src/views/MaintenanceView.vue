@@ -126,7 +126,7 @@ onBeforeUnmount(() => {
               {{ manualChecking ? t('maintenance.checking') : t('maintenance.recheck') }}
             </ElButton>
             <!-- 低调的管理员入口:始终显示,不携带任何角色/登录态信息 -->
-            <ElButton text size="small" type="info" class="mt-2" @click="router.push('/manage')">
+            <ElButton text size="small" type="info" class="mt-2" @click="router.push('/server')">
               {{ t('maintenance.adminEntry') }}
             </ElButton>
           </div>
