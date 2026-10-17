@@ -101,7 +101,7 @@
 | `GET /api/v2/users` | 用户列表：分页 / 关键词 / 角色过滤 + 班级联表 | 新增（`routers/users_v2_router.py`，admin/department，带 role 时仅 admin） | 已移植 |
 | `GET /api/v3/users/{user_id}` | zvp 无对应端点（其登录即返 profile） | 新增（`routers/users_v3_router.py`）：`zvms_new` 用户 profile（本人 / admin / department / secretary 同班可读），服务前端刷新与用户详情 | 新增适配端点 |
 | `PUT /api/v3/users/{user_id}/roles` | admin 改角色，`AllowedRole` 白名单，204 | 新增 | 已移植 |
-| `POST /api/v3/users` | 建用户：默认密码=学号(bcrypt)、roles 白名单、学号查重 409、班级存在性校验 | 新增；不写 `session_id`（zvp 同款写法） | 已移植 |
+| `POST /api/v3/users` | 建用户：由服务端生成 12 位随机一次性初始密码（只存 bcrypt 哈希，明文仅在响应体返回一次）、roles 白名单、学号查重 409、班级存在性校验 | 新增；不写 `session_id`（zvp 同款写法） | 已移植 |
 | `GET /api/v2/groups` | 班级列表（admin/department） | 新增（`routers/groups_v2_router.py`）；**不投影 enrollYear**（实库 `zvms_new.groups` 仅 `name`，根 README §三.2） | 已移植（适配） |
 | `GET /api/v2/groups/{group_id}` | 单班级（本人班级或 admin/department） | 新增；响应补合成字段 `type:"class"`（保前端既有判断语义） | 已移植（适配） |
 | `GET /api/v3/groups/{group_id}/users` | 班级成员分页（`zvms_new.users` by `class_id`） | 新增（`routers/groups_v3_router.py`）；扩展 `pwdm` 仅返回布尔（哈希经 pop 永不出响应） | 已移植（扩展） |
@@ -128,7 +128,7 @@
 | `src/api/group/crud.ts` | `readOne` 切 `GET /v2/groups/{id}`；`delete` 切 v3（沿用临时 token 弹窗）；新增 `read_v2` / `createGroupV3` / `renameGroupV3` / `addGroupUserV3` / `removeGroupUserV3` |
 | `src/api/group/reads.ts` + `index.ts` | 新增 `users_v3`（GET /v3/groups/{id}/users，支持 pwdm）并导出 |
 | `src/stores/user.ts` | 登录直取 `profile`：`position = roles`（现役词汇直达，不再经 legacy group/permissions 推导）、`class_id` 直取；`refreshUser` 切 `readOne_v3`；`removeUser` 补清 `position` / `class_id`（原登出残留 bug）；无 profile 时保留 legacy 兜底路径 |
-| `src/components/group/ZUserModification.vue` | 创建 → `create_v3`（默认密码=学号）；修改 → 班级变更走 v3 加/移成员（改名/删除在 zvp live 同为 503）；班级下拉数据切 `read_v2` |
+| `src/components/group/ZUserModification.vue` | 创建 → `create_v3`（服务端返回 12 位随机一次性初始密码，前端弹窗当场转交用户）；修改 → 班级变更走 v3 加/移成员（改名/删除在 zvp live 同为 503）；班级下拉数据切 `read_v2` |
 | `src/components/group/ZGroupList.vue` | 列表切 `read_v2`（`zvms_new.groups`）；删除按钮走 v3 |
 | `src/components/group/ZGroupUserList.vue` | 成员列表切 `users_v3`（by `class_id` + pwdm）；全校模式切 `read_v2`；可见性判断 `groups.includes(id)` → `relatedGroup(id)`（profile 登录后 groups 不再承载班级关系） |
 | `src/components/form/ZSelectClass.vue` | 班级搜索按角色条件切换：admin/department → `read_v2`；secretary → 本人班级 `readOne`；其余保留 v1 兜底 |
@@ -139,7 +139,7 @@
 | # | zvp 行为 | 本仓落地 |
 |---|---|---|
 | 1 | 学号直查 `zvms_new.users` | 登录先按学号查 `zvms_new`，legacy 仅兜底（`users_router.py:43-54`） |
-| 2 | `password=None` → 明文与学号比对（初始密码） | `validate_by_cert` 补同款分支（`util/cert.py`）。**原实现对 `password=None` 直接 TypeError→500，初始密码用户全部无法登录——本次移植修复的关键缺陷** |
+| 2 | `password=None` → 明文与学号比对（初始密码，zvp 历史行为） | **本仓已移除该回落**：`password_hash` 为 NULL 的账号无法用密码登录（`validate_by_cert` 直接 `authenticated=False`），需管理员重置出一次性初始密码。原实现对 `password=None` 直接 TypeError→500 曾于移植期修复 |
 | 3 | `password_authz` 临时 token 5 分钟 | `jwt_encode` temporary 时长 15min → **5min** |
 | 4 | 登录响应含 `profile`（去 password、`_id`/`class_id` 字符串化） | 同款加入响应（`users_router.py:69-84`） |
 | 5 | 登录写日志（含全量请求头 / IP / xuehai / net_session） | **仅写业务日志**（url / user / 文本 / 时间），零设备字段，且仅在登录成功后写 |
@@ -280,9 +280,11 @@
 - 新端点 `DELETE /api/v3/users/{id}/password`（users_v3_router）：
   - 鉴权 **compulsory_temporary_token**（zvp `get_authz_user` 同款——凭据类操作先重新验证身份）
   - 权限 admin/department/secretary 同班（zvp 同款；同班校验基于 zvms_new `class_id` 比对且要求双方非空）
-  - 置 `password=None` → 恢复真初始态（下次登录走默认密码=学号分支）
+  - 由服务端生成 12 位随机一次性初始密码（只存 bcrypt 哈希；明文仅在本次响应体返回一次，前端须当场转交用户）
   - 写 `passwd_change` 日志（操作者+目标）
-- **前端接线（替换既有客户端实现）**：`ZActivityMember.vue` 重置按钮原为客户端方案（临时 token → 把成员密码 PUT 成学号的 bcrypt——**永久丢失 password=None 初始态**，且「初始密码=学号」语义散落前端）；现改为直调 v3 DELETE，语义归服务端，重新验证身份的弹窗流程不变
+- **前端接线（替换既有客户端实现）**：`ZActivityMember.vue` 重置按钮原为客户端方案（临时 token → 把成员密码 PUT 成学号 bcrypt——**永久丢失初始态**，且「初始密码=学号」语义散落前端）；现改为直调 v3 DELETE，一次性明文密码由响应体回传、前端弹窗当场转交用户，重新验证身份的弹窗流程不变
+
+> 变更说明（2026-10-17）：初始凭据改为服务端生成的 12 位随机一次性密码（明文仅响应体返回一次，刻意不达强度规则，用户首次登录只拿 5 分钟临时令牌并被强制改密）；登录侧不再回落「密码==学号」；admin 级账号的凭据只有本人可改动（他人一律 403），并落到数据库层条件写（消除读角色与写密码之间的 TOCTOU 窗口）。
 
 ### 21.3 登录/登出语义修复（勘察发现的真问题）
 - **登出清 token**：zvp 的 `removeUser` 清 `localStorage.token`，本仓漏了（登出后 token 残留至下次访问登录页才兜底清除）→ `stores/user.ts` 补 `removeItem`

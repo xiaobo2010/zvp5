@@ -228,9 +228,16 @@ async def reset_user_password_v3(
         raise HTTPException(status_code=403, detail="不能修改管理员账号的凭据")
 
     initial_password = generate_initial_password()
-    await backends.get_users_repo().set_password(
-        user_id, hashpw(initial_password.encode("utf-8"), gensalt()).decode("utf-8")
+    target_oid = str(target["_id"])
+    affected = await backends.get_users_repo().set_password_guarded(
+        target_oid,
+        hashpw(initial_password.encode("utf-8"), gensalt()).decode("utf-8"),
+        user["id"],
     )
+    if affected == 0:
+        # 纵深：前置判定被绕过，或目标在两次读写之间被并发改成 admin 时，
+        # 条件写会拒绝（0 行），这里按同样的文案报错。
+        raise HTTPException(status_code=403, detail="不能修改管理员账号的凭据")
 
     log.with_text(
         f"用户 {await get_user_display_name(user['id'])} 将用户 {target['name']} 的密码重置为一次性初始密码",

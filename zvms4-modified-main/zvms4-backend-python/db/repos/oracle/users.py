@@ -181,6 +181,27 @@ def _set_password_stmt(oid: str, password_hash: str | None):
     )
 
 
+def _set_password_guarded_stmt(
+    oid: str, password_hash: str, actor_oid: str
+):
+    """``set_password`` as one atomic guarded UPDATE.
+
+    The write only lands when the actor is the user themself
+    (``:actor_oid = users.oid``) or the target carries no ``admin`` role
+    (``NOT JSON_EXISTS(...)``). Both the role test and the 学号/oid values stay
+    bound parameters — nothing is string-concatenated.
+    """
+    guard = or_(
+        text(":actor_oid = users.oid").bindparams(actor_oid=actor_oid),
+        text("NOT (" + _ROLE_EXISTS + ")").bindparams(role_value="admin"),
+    )
+    return (
+        update(users_tbl)
+        .where(users_tbl.c.oid == oid, guard)
+        .values(password_hash=password_hash)
+    )
+
+
 def _set_roles_stmt(oid: str, roles: list[str]):
     return update(users_tbl).where(users_tbl.c.oid == oid).values(roles=roles)
 
@@ -432,6 +453,26 @@ class OracleUsersRepo:
             await session.execute(stmt)
             if owns:
                 await session.commit()
+
+    async def set_password_guarded(
+        self, oid: str, password_hash: str, actor_oid: str
+    ) -> int:
+        """写密码的原子守卫版本：仅当「操作者即本人」或「目标非 admin」才落库。
+
+        为什么用条件写：读角色与写密码分为两步时，目标可能在两步之间被并发
+        改成 admin，于是前置判定放行了、写却落在了一个 admin 账号上。把角色
+        判定与写入合成一条 SQL，数据库在一次原子执行里完成两者，窗口即消失。
+
+        返回受影响行数：``0`` 表示守卫拒绝（未写入）。
+        """
+        stmt = _set_password_guarded_stmt(
+            normalize_oid(oid), password_hash, normalize_oid(actor_oid)
+        )
+        async with _session_for(self._session) as (session, owns):
+            result = await session.execute(stmt)
+            if owns:
+                await session.commit()
+        return int(result.rowcount)
 
     async def set_roles(self, oid: str, roles: list[str]) -> None:
         stmt = _set_roles_stmt(normalize_oid(oid), list(roles))
