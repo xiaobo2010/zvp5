@@ -26,6 +26,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 _logger = logging.getLogger(__name__)
 
 _QUERY_TIMEOUT_SECONDS = 3.0
+# USER_* dictionary views are cheap once ADB has compiled their plan, but the
+# first execution on a cold dictionary cache measured ~9s in production; the
+# shared 3s budget cancelled it and left the section degraded after restarts.
+_TABLES_TIMEOUT_SECONDS = 20.0
 _CACHE_TTL_SECONDS = 15.0
 
 _TABLES_SQL = text(
@@ -147,18 +151,21 @@ def _row_value(row: Any, key: str) -> Any:
     return row._mapping[key]
 
 
-async def _execute(session: AsyncSession, statement) -> list[Any]:
-    result = await asyncio.wait_for(
-        session.execute(statement), timeout=_QUERY_TIMEOUT_SECONDS
-    )
+async def _execute(
+    session: AsyncSession, statement, timeout: float = _QUERY_TIMEOUT_SECONDS
+) -> list[Any]:
+    result = await asyncio.wait_for(session.execute(statement), timeout=timeout)
     return list(result.fetchall())
 
 
 async def _component(
-    session: AsyncSession, name: str, statement
+    session: AsyncSession,
+    name: str,
+    statement,
+    timeout: float = _QUERY_TIMEOUT_SECONDS,
 ) -> tuple[list[Any] | None, dict[str, Any] | None]:
     try:
-        return await _execute(session, statement), None
+        return await _execute(session, statement, timeout), None
     except Exception as exc:  # dictionary/performance privileges vary by ADB user
         code = None
         if isinstance(exc, DBAPIError) and exc.orig.args:
@@ -215,7 +222,9 @@ def _pool_status() -> dict[str, Any]:
 
 async def _collect(session: AsyncSession) -> dict[str, Any]:
     await _execute(session, text("SELECT 1 FROM DUAL"))
-    tables, tables_error = await _component(session, "tables", _TABLES_SQL)
+    tables, tables_error = await _component(
+        session, "tables", _TABLES_SQL, _TABLES_TIMEOUT_SECONDS
+    )
     tablespaces, tablespaces_error = await _component(
         session, "tablespaces", _TABLESPACES_SQL
     )
