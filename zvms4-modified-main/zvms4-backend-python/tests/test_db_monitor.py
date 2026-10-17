@@ -55,7 +55,7 @@ def reset_cache(monkeypatch):
 async def test_partial_privileges_and_cache_are_isolated():
     session = Session([
         [],  # connectivity
-        [Row(table_name="USERS", num_rows=None, last_analyzed=None,
+        [Row(table_name="USERS", tablespace_name="DATA", num_rows=None, last_analyzed=None,
              table_bytes=100, index_bytes=20, lob_bytes=5, lob_index_bytes=2)],
         denied(), [],  # rollback then recovery ping
         denied(), [],
@@ -94,10 +94,43 @@ async def test_disconnect_and_sql_errors_are_not_hidden():
 
 
 @pytest.mark.asyncio
-async def test_no_samples_is_degraded():
+async def test_no_samples_does_not_degrade_storage_status():
+    # V$SYSMETRIC yields no rows on some ADB instances; storage stays readable,
+    # so the overall verdict must remain ok while the load section self-reports.
     data = await db_monitor.get_database_status(Session([[], [], [], []]))
-    assert data["status"] == "degraded"
+    assert data["status"] == "ok"
+    assert data["load"]["available"] is False
     assert data["load"]["reason"] == "no_samples"
+
+
+@pytest.mark.asyncio
+async def test_operational_tables_hidden_and_tablespaces_flagged():
+    session = Session([
+        [],  # connectivity
+        [
+            Row(table_name="USERS", tablespace_name="DATA", num_rows=1, last_analyzed=None,
+                table_bytes=10, index_bytes=0, lob_bytes=0, lob_index_bytes=0),
+            Row(table_name="KEEPALIVE_HEARTBEAT", tablespace_name="DATA", num_rows=1,
+                last_analyzed=None, table_bytes=99, index_bytes=0, lob_bytes=0,
+                lob_index_bytes=0),
+        ],
+        [
+            Row(tablespace_name="DATA", used_bytes=1, max_bytes=2, used_percent=50.0),
+            Row(tablespace_name="SYSTEM", used_bytes=1, max_bytes=2, used_percent=50.0),
+        ],
+        [],
+    ])
+    data = await db_monitor.get_database_status(session)
+    tables = data["storage"]["tables"]
+    assert [item["name"] for item in tables["items"]] == ["USERS"]
+    assert tables["count"] == 1
+    assert tables["total_bytes"] == 10
+    flags = {
+        item["name"]: item["is_application"]
+        for item in data["storage"]["tablespaces"]["items"]
+    }
+    assert flags == {"DATA": True, "SYSTEM": False}
+    assert any("KEEPALIVE_HEARTBEAT" in warning for warning in data["warnings"])
 
 
 @pytest.mark.asyncio
@@ -139,11 +172,14 @@ def test_storage_sql_aggregates_partition_names_and_lob_indexes():
     db = sqlite3.connect(":memory:")
     db.create_function("NVL", 2, lambda value, fallback: fallback if value is None else value)
     db.executescript("""
-        CREATE TABLE user_tables(table_name TEXT, num_rows INTEGER, last_analyzed TEXT);
+        CREATE TABLE user_tables(table_name TEXT, tablespace_name TEXT, num_rows INTEGER, last_analyzed TEXT);
         CREATE TABLE user_segments(segment_name TEXT, partition_name TEXT, segment_type TEXT, bytes INTEGER);
         CREATE TABLE user_indexes(table_name TEXT, index_name TEXT, index_type TEXT);
         CREATE TABLE user_lobs(table_name TEXT, segment_name TEXT, index_name TEXT);
-        INSERT INTO user_tables VALUES ('PLAIN', NULL, NULL), ('PART', 8, NULL), ('EMPTY', 0, NULL);
+        INSERT INTO user_tables VALUES
+          ('PLAIN', 'DATA', NULL, NULL),
+          ('PART', 'DATA', 8, NULL),
+          ('EMPTY', 'DATA', 0, NULL);
         INSERT INTO user_indexes VALUES ('PART','PART_I','NORMAL'),('PART','LOB_I','LOB');
         INSERT INTO user_lobs VALUES ('PART','LOB_DATA','LOB_I');
         INSERT INTO user_segments VALUES

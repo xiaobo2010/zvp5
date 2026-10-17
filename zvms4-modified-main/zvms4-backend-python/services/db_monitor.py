@@ -32,6 +32,10 @@ _QUERY_TIMEOUT_SECONDS = 3.0
 _TABLES_TIMEOUT_SECONDS = 20.0
 _CACHE_TTL_SECONDS = 15.0
 
+# Operational tables that hold no application data; hidden from the table list
+# and its totals so the view reflects the platform's own data only.
+_EXCLUDED_TABLES = frozenset({"KEEPALIVE_HEARTBEAT"})
+
 _TABLES_SQL = text(
     """
     WITH
@@ -66,6 +70,7 @@ _TABLES_SQL = text(
     )
     SELECT
         t.table_name,
+        t.tablespace_name,
         t.num_rows,
         t.last_analyzed,
         NVL(ts.table_bytes, 0) AS table_bytes,
@@ -230,16 +235,25 @@ async def _collect(session: AsyncSession) -> dict[str, Any]:
     )
     metrics, metrics_error = await _component(session, "load", _LOAD_SQL)
 
+    application_tablespaces: set[str] = set()
+    excluded_seen: set[str] = set()
     table_items: list[dict[str, Any]] = []
     if tables is not None:
         for row in tables:
+            tablespace_name = _row_value(row, "tablespace_name")
+            if tablespace_name:
+                application_tablespaces.add(tablespace_name)
+            name = _row_value(row, "table_name")
+            if name in _EXCLUDED_TABLES:
+                excluded_seen.add(name)
+                continue
             table_bytes = _number(_row_value(row, "table_bytes"), integer=True) or 0
             index_bytes = _number(_row_value(row, "index_bytes"), integer=True) or 0
             lob_bytes = _number(_row_value(row, "lob_bytes"), integer=True) or 0
             lob_index_bytes = _number(_row_value(row, "lob_index_bytes"), integer=True) or 0
             table_items.append(
                 {
-                    "name": _row_value(row, "table_name"),
+                    "name": name,
                     "estimated_rows": _number(
                         _row_value(row, "num_rows"), integer=True
                     ),
@@ -261,6 +275,11 @@ async def _collect(session: AsyncSession) -> dict[str, Any]:
                     "used_bytes": _number(_row_value(row, "used_bytes"), integer=True),
                     "max_bytes": _number(_row_value(row, "max_bytes"), integer=True),
                     "used_percent": _number(_row_value(row, "used_percent")),
+                    # Tablespaces that actually host the platform's tables, so
+                    # callers can show our data without Oracle's SYSTEM/SYSAUX/
+                    # TEMP/UNDO internal tablespaces.
+                    "is_application": _row_value(row, "tablespace_name")
+                    in application_tablespaces,
                 }
             )
 
@@ -295,6 +314,14 @@ async def _collect(session: AsyncSession) -> dict[str, Any]:
     if load_items:
         warnings.append(
             "V$SYSMETRIC 负载为当前连接可见的实例/容器最近约 60 秒采样；connection_pool 仅代表当前 API 进程。"
+        )
+    elif metrics_error is not None:
+        warnings.append(
+            "负载指标取自 V$SYSMETRIC；该视图在此 ADB 实例不产生采样，缺失不影响存储数据的可用性。"
+        )
+    if excluded_seen:
+        warnings.append(
+            "运维表（" + "、".join(sorted(excluded_seen)) + "）不计入表清单与合计。"
         )
 
     return {
@@ -353,11 +380,14 @@ async def get_database_status(session: AsyncSession) -> dict[str, Any]:
 
         data = await _collect(session)
         data["observed_at"] = datetime.now(timezone.utc).isoformat()
+        # Storage drives the overall verdict: a load view that yields no samples
+        # (V$SYSMETRIC is empty on some ADB instances) must not keep the whole
+        # page reading "degraded" while capacity and tables are fully readable.
+        # The load section still reports its own availability and reason.
         data["status"] = (
             "ok"
             if (data["storage"]["tables"]["available"]
-                and data["storage"]["tablespaces"]["available"]
-                and data["load"]["available"])
+                and data["storage"]["tablespaces"]["available"])
             else "degraded"
         )
         _cache = _CacheEntry(time.monotonic(), data)
