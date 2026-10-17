@@ -14,16 +14,11 @@ import {
 import { ArrowRight } from '@element-plus/icons-vue'
 import { useUserStore } from '@/stores/user'
 import { useHeaderStore } from '@/stores/header'
-import { useRouter } from 'vue-router'
+import { useRouter, useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { modifyPasswordDialogs } from '@/views'
 import api from '@/api'
-
-if (useUserStore().isLogin) {
-  useRouter().replace('/user')
-} else {
-  localStorage.removeItem('token')
-}
+import { getMaintenanceStatus } from '@/api/system/maintenance.ts'
 
 const header = useHeaderStore()
 
@@ -34,9 +29,38 @@ const password = ref<string>('')
 const loginfield = ref()
 const userStore = useUserStore()
 const router = useRouter()
+const route = useRoute()
 const loading = ref(false)
 
 header.setHeader(t('nav.login.actions.login'))
+
+// 站内回跳目标,仅接受以 / 开头的 query,避免外链注入
+function redirectTarget(): string {
+  const target = route.query.redirect
+  return typeof target === 'string' && target.startsWith('/') ? target : ''
+}
+
+// 登录后按角色分流:普通用户维护中一律回维护暂停页;redirect 参数仅在站内路径生效,缺省 /user
+async function postLoginTarget(): Promise<string> {
+  if (userStore.position.includes('admin')) {
+    return redirectTarget() || '/user'
+  }
+  try {
+    const res = await getMaintenanceStatus()
+    if (res.data.data.enabled) {
+      return '/maintenance'
+    }
+  } catch {
+    // 状态接口不可达时按未维护处理
+  }
+  return redirectTarget() || '/user'
+}
+
+if (userStore.isLogin) {
+  void postLoginTarget().then((target) => router.replace(target))
+} else {
+  localStorage.removeItem('token')
+}
 
 async function login() {
   if (loading.value || password.value === '' || String(user.value).length !== 8) {
@@ -81,7 +105,7 @@ async function login() {
   const id = user.value
   await userStore
     .setUser(id, password.value as string)
-    .then(() => router.replace('/user'))
+    .then(async () => router.replace(await postLoginTarget()))
     .catch(() => {
       loading.value = false
     })
@@ -94,7 +118,7 @@ async function reset_and_login(id: string, token: string) {
     })
     await userStore
       .setUser(id, new_password)
-      .then(() => router.replace('/user'))
+      .then(async () => router.replace(await postLoginTarget()))
       .catch(() => {
         loading.value = false
       })

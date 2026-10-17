@@ -130,7 +130,10 @@ axiosInstance.interceptors.response.use(
         error.response?.status === 503 &&
         (error.response?.data as { maintenance?: boolean } | undefined)?.maintenance === true
       if (maintenance503) {
-        if (router.currentRoute.value.path !== '/maintenance') {
+        if (
+          !useUserStore().position.includes('admin') &&
+          router.currentRoute.value.path !== '/maintenance'
+        ) {
           router.push('/maintenance')
         }
         return Promise.reject(error)

@@ -83,12 +83,22 @@ const router = createRouter({
     {
       path: '/server',
       name: 'server',
-      component: () => import('../views/server/ServerHome.vue')
+      component: () => import('../views/server/ServerHome.vue'),
+      redirect: '/server/maintenance',
+      children: [
+        {
+          path: 'maintenance',
+          name: 'server-maintenance',
+          component: () => import('../views/server/ServerMaintenance.vue')
+        }
+        // 后续服务端子页(如 oracle-db)在此追加
+      ]
     },
     {
+      // 兼容旧 /server/:action 深链:已知子页由静态子路由优先生效,其余统一归到维护页
       path: '/server/:action',
-      name: 'server-action',
-      component: () => import('../views/server/ServerHome.vue')
+      name: 'server-legacy-redirect',
+      redirect: '/server/maintenance'
     },
     {
       path: '/group/:id',
