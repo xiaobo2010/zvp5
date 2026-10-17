@@ -115,22 +115,32 @@ onUnmounted(() => {
 })
 
 async function loadStored(oid: string) {
-  const item: DisplayItem = {
-    oid,
-    url: '',
-    status: 'uploading',
-    progress: 0
-  }
-  items.value.push(item)
+  const index =
+    items.value.push({
+      oid,
+      url: '',
+      status: 'uploading',
+      progress: 0
+    }) - 1
   try {
     const meta = await attachmentApi.read.getMeta(oid)
     const blob = await attachmentApi.read.getThumb(oid)
-    item.url = URL.createObjectURL(blob)
-    item.meta = meta
-    item.status = 'done'
+    const url = URL.createObjectURL(blob)
+    // 等待期间 modelValue 变化会触发 watch 重排数组，槽位可能已不是本项
+    const target = items.value[index]
+    if (!target || target.oid !== oid) {
+      URL.revokeObjectURL(url)
+      return
+    }
+    target.url = url
+    target.meta = meta
+    target.status = 'done'
   } catch (err) {
-    item.status = 'error'
-    item.url = ''
+    const target = items.value[index]
+    if (target && target.oid === oid) {
+      target.status = 'error'
+      target.url = ''
+    }
     emit('error', err)
   }
 }
