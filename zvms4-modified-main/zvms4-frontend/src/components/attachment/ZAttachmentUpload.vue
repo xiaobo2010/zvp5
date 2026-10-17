@@ -161,13 +161,21 @@ function triggerGallery() {
 
 async function onInputChange(evt: Event, source: 'camera' | 'gallery') {
   const target = evt.target as HTMLInputElement
-  const selected = target.files
+  const selected = Array.from(target.files ?? [])
   target.value = ''
-  if (!selected?.length) return
+  if (selected.length === 0) {
+    ElMessage({
+      message: '未选择文件',
+      type: 'warning',
+      plain: true,
+      grouping: true
+    })
+    return
+  }
   await uploadFiles(selected)
 }
 
-async function uploadFiles(fileList: FileList) {
+async function uploadFiles(fileList: FileList | File[]) {
   const available = Math.max(0, props.max - items.value.length)
   if (available === 0) {
     ElMessage({
