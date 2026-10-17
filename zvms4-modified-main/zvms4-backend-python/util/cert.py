@@ -80,7 +80,7 @@ def rsa_decrypt(ciphertext):
     return decrypt_text.decode("utf8")
 
 
-OTP_STEP = 30
+OTP_STEP = 60
 OTP_DIGITS = 6
 
 

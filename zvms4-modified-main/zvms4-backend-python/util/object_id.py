@@ -114,8 +114,19 @@ async def _authenticate(
         if not is_valid_oid(oid):
             return raise_exception()
         current = await backends.get_users_repo().get_by_oid(oid)
-        if current is None or current.get("banned"):
+        if current is None:
             return raise_exception()
+        # 封禁是与「凭据过期/被撤销」不同的事实，客户端必须能分辨：封禁会把
+        # session_id 轮换掉，若这里统一返回 401，前端只能当成登录过期并立刻
+        # 退到登录页，用户永远看不到封禁警告。故在 sid 校验之前用 403 + 稳定
+        # 标记返回；detail 是机器可读契约，前端不得直接展示。
+        if current.get("banned"):
+            if exception:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="USER_BANNED",
+                )
+            return None
         if payload.get("sid") != current.get("session_id", ""):
             return raise_exception()
         permissions = await get_user_permissions(current)
