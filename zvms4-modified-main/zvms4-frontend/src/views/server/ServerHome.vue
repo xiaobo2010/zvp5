@@ -4,7 +4,7 @@ import { useUserStore } from '@/stores/user.ts'
 import { ref, watch, type Component } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ElPageHeader, ElSegmented, ElIcon } from 'element-plus'
-import { ArrowLeft, Setting, DataLine } from '@element-plus/icons-vue'
+import { ArrowLeft, Setting, DataLine, Key } from '@element-plus/icons-vue'
 
 interface SegmentedTab {
   label: string
@@ -33,6 +33,11 @@ const tabs = ref<SegmentedTab[]>([
     label: 'Database',
     value: 'database',
     icon: DataLine
+  },
+  {
+    label: 'Totp',
+    value: 'totp',
+    icon: Key
   },
 ])
 

@@ -16,11 +16,14 @@ export interface DbTableItem {
 }
 
 // 表空间容量:used_percent 为已用空间占 max_bytes 的百分比
+// is_application 标记该表空间是否承载平台业务表(生产上仅 DATA 为 true,
+// SYSTEM/SYSAUX/TEMP/UNDO/DBFS_DATA 等 Oracle 自有表空间为 false)
 export interface DbTablespaceItem {
   name: string
   used_bytes: number | null
   max_bytes: number | null
   used_percent: number | null
+  is_application: boolean
 }
 
 // 监控项部分降级时的附加字段
