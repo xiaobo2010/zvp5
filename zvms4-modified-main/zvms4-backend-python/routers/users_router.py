@@ -10,7 +10,7 @@ from util.activity_signoff import user_activity_signoff
 from typings.log import inject_log, ZVMSLog, xuehai_id_from
 from typings.user import User
 from util.calculate import calculate_user_time
-from util.group import is_in_a_same_class
+from util.group import get_user_permissions, is_in_a_same_class
 from util.object_id import (
     compulsory_temporary_token,
     get_current_user,
@@ -18,7 +18,10 @@ from util.object_id import (
     string_to_option_object_id,
     optional_current_user,
 )
-from util.permission.user import validate_read_user_permission
+from util.permission.user import (
+    credential_change_forbidden,
+    validate_read_user_permission,
+)
 from db import backends
 from util.cert import (
     get_hashed_password_by_cert,
@@ -210,6 +213,13 @@ async def change_password(
     target = await repo.get_by_oid(oid)
     if target is None:
         raise HTTPException(status_code=404, detail="User not found")
+
+    # admin 级账号的凭据只有本人能动：否则某管理员可改掉同级账号的密码，
+    # 再以对方身份登录「批准」自己的危险操作，双人授权即被冒充击穿。本人
+    # 自助改密（actor oid == target oid）不受影响。
+    target_per = await get_user_permissions(target)
+    if credential_change_forbidden(user["id"], target_per, oid):
+        raise HTTPException(status_code=403, detail="不能修改管理员账号的凭据")
 
     # Change user's password
     await repo.set_password(oid, str(password))
