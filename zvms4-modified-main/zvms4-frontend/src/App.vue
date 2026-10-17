@@ -30,6 +30,7 @@ import ZVerticalNav from '@/components/form/ZVerticalNav.vue'
 import { useRegisterSW } from 'virtual:pwa-register/vue'
 import { CarbonCloudOffline } from '@/icons'
 import { modifyPasswordDialogs } from '@/views'
+import { getMaintenanceStatus } from '@/api/system/maintenance.ts'
 
 const { needRefresh, offlineReady, updateServiceWorker } = useRegisterSW()
 
@@ -150,7 +151,8 @@ watch(
       !userStore.isLogin &&
       !route.fullPath.endsWith('login') &&
       !route.fullPath.endsWith('about') &&
-      !route.fullPath.endsWith('changelog')
+      !route.fullPath.endsWith('changelog') &&
+      !route.fullPath.endsWith('maintenance')
     ) {
       router.replace('/user/login')
     }
@@ -220,6 +222,18 @@ watch(offlineReady, () => {
 })
 
 onMounted(async () => {
+  // 启动时检查一次维护状态(公开接口):维护中跳公告页并略过注定 503 的用户刷新
+  try {
+    const res = await getMaintenanceStatus()
+    if (res.data.data.enabled) {
+      if (route.path !== '/maintenance') {
+        router.replace('/maintenance')
+      }
+      return
+    }
+  } catch {
+    // 状态接口不可达时静默,不阻塞正常启动
+  }
   if (userStore.isLogin) {
     await userStore.refreshUser().catch(() => {})
     resetPassword()

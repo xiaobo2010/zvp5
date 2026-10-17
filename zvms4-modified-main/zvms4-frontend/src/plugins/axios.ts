@@ -110,6 +110,18 @@ axiosInstance.interceptors.response.use(
       if (axios.isCancel(error) || config?.signal?.aborted) {
         return Promise.reject(error)
       }
+      // 维护模式 503(响应体带 maintenance=true):跳维护页统一呈现。
+      // 必须在重试/缓存回落之前拦截,避免维护期间对业务接口放大请求。
+      // 注意:503 不代表登录态失效,不得走下方 401 的清 token / 跳登录分支。
+      const maintenance503 =
+        error.response?.status === 503 &&
+        (error.response?.data as { maintenance?: boolean } | undefined)?.maintenance === true
+      if (maintenance503) {
+        if (router.currentRoute.value.path !== '/maintenance') {
+          router.push('/maintenance')
+        }
+        return Promise.reject(error)
+      }
       if (config && isRetryableFailure(config, error)) {
         // Offline / server-unavailable: prefer local cache before retrying so the
         // two recovery paths never fire for the same failure.
