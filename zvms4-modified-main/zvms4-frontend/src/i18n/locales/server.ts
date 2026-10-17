@@ -1,7 +1,8 @@
 export const zhCN = {
   tabs: {
     maintenance: '维护模式',
-    database: '数据库状态'
+    database: '数据库状态',
+    totp: '登录动态码'
   },
   maintenance: {
     title: '系统维护模式',
@@ -39,6 +40,8 @@ export const zhCN = {
     tablespacesTitle: '表空间容量',
     tablespacesTotal: '合计',
     totalsPartial: '部分表空间数值缺失，合计仅供参考',
+    tablespacesEmpty: '当前没有承载平台数据的表空间',
+    tablespacesScopeNote: '仅显示承载平台数据的表空间，其余为 Oracle 系统表空间。',
     maxBytesNote: 'max_bytes 为 Oracle 数据文件自动扩展的可用上限，不等于 OCI 套餐总容量。',
     tablesTitle: '表占用与数据量',
     tablesCaption:
@@ -55,6 +58,7 @@ export const zhCN = {
     loadTitle: '数据库负载',
     source: '数据来源',
     assessmentNote: '负载指标反映实例近期（约 60 秒）活动，不能据此推断容量余量。',
+    loadNoSamplesTitle: '负载指标暂无采样',
     colMetric: '指标',
     colValue: '数值',
     colWindow: '采样区间',
@@ -72,5 +76,20 @@ export const zhCN = {
     reasonNoSamples: '暂无采样数据',
     reasonPoolUnavailable: '连接池指标读取失败',
     reasonUnknown: '未知原因'
+  },
+  totp: {
+    title: '登录动态码',
+    refresh: '刷新',
+    show: '显示',
+    hide: '隐藏',
+    loading: '加载中…',
+    loadFailed: '动态码读取失败',
+    notFound: '动态码对应的用户不存在',
+    expired: '已过期，请刷新获取新的动态码',
+    expiresIn: '剩余 {seconds} 秒',
+    noteSelfOnly: '只展示你自己的动态码；后端仅允许查看本人动态码，无法查看他人。',
+    noteUsage: '动态码可用于换取登录令牌，请勿展示给他人。',
+    noteLog: '每次查看都会记录到系统操作日志（totp_view）。',
+    refreshInterval: '动态码每 30 秒更换一次'
   }
 }
