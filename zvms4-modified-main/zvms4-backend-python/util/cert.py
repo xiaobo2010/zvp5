@@ -8,6 +8,8 @@ import json
 import datetime
 import hashlib
 import hmac
+import secrets
+import string
 import struct
 from bcrypt import checkpw, gensalt, hashpw
 from Crypto.Hash import SHA256
@@ -74,6 +76,26 @@ def rsa_decrypt(ciphertext):
 
 OTP_STEP = 30
 OTP_DIGITS = 6
+
+
+def generate_initial_password() -> str:
+    """
+    生成一个**一次性初始密码**（12 位小写字母 + 数字，约 62 bit 熵）。
+
+    刻意让它不达 ``pwd_strength`` 的强度规则：这样新建/重置后的凭据走
+    ``validate_by_cert`` 既有的「弱密码 → 只发 5 分钟临时 token → 前端强制改密」
+    闭环，用户必须自己设定强密码。随机性保证它不可猜测——与旧的「初始密码 ==
+    学号」有本质区别：学号公开可枚举，等于人人可登录。
+
+    若将来强度规则变化导致它意外达标，这里直接抛错（而不是静默失去强制改密）。
+    """
+    alphabet = string.ascii_lowercase + string.digits
+    password = "".join(secrets.choice(alphabet) for _ in range(12))
+    if pwd_strength(password) >= 3:
+        raise RuntimeError(
+            "一次性初始密码意外达到了强度要求，会跳过强制改密闭环"
+        )
+    return password
 
 
 def _totp_secret(user_id: str) -> bytes:
@@ -179,8 +201,13 @@ async def validate_by_cert(
         raise HTTPException(status_code=404, detail="User not found")
     if user.get("banned"):
         raise HTTPException(status_code=403, detail="User is banned")
+    # 旧行为：``password`` 为 NULL 时把「初始密码 == 用户自己的学号」当作凭据
+    # 比对。学号是公开可枚举的，任何能清空他人密码的人都能据此冒充对方登录
+    # （双人授权被人格冒用击穿）。删除此回落后，未设置密码的账号无法用密码
+    # 登录，只能走下方 TOTP 分支；最终 ``403 "Password incorrect"`` 的行为
+    # 保持不变，登录端点仍维持「用户不存在」与「密码错误」不可区分。
     if user["password"] is None:
-        authenticated = auth_field["password"] == user["id"]
+        authenticated = False
     else:
         authenticated = checkpw(
             bytes(auth_field["password"], "utf-8"), bytes(user["password"], "utf-8")
