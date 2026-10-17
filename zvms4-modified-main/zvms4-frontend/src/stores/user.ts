@@ -35,6 +35,7 @@ export const useUserStore = defineStore('user', {
     isLogin: false,
     shouldResetPassword: false,
     banned: false,
+    bannedNoticeAt: 0,
     time: {
       socialPractice: 0,
       onCampus: 0,
