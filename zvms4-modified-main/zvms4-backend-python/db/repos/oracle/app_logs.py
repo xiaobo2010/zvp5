@@ -32,6 +32,20 @@ from db.oracle.session import session_scope
 Row = dict[str, Any]
 
 
+def _fit_utf8(value: str, limit: int) -> str:
+    return value.encode("utf-8")[:limit].decode("utf-8", errors="ignore")
+
+
+def _chunks_utf8(value: str, limit: int = 2000):
+    remaining = value.encode("utf-8")
+    if not remaining:
+        yield ""
+    while remaining:
+        chunk = remaining[:limit].decode("utf-8", errors="ignore")
+        yield chunk
+        remaining = remaining[len(chunk.encode("utf-8")):]
+
+
 @asynccontextmanager
 async def _session_for(
     session: AsyncSession | None,
@@ -219,11 +233,14 @@ class OracleAppLogsRepo:
     ) -> None:
         ts_raw = float(timestamp) if timestamp is not None else None
         ts_at = datetime.fromtimestamp(ts_raw) if ts_raw is not None else None
-        stmt = _insert_stmt(
-            new_oid(), url, user, data, ts_at, ts_raw, ltype, level, xuehai_id
-        )
         async with _session_for(self._session) as (session, owns):
-            await session.execute(stmt)
+            for chunk in _chunks_utf8(data):
+                stmt = _insert_stmt(
+                    new_oid(), _fit_utf8(url, 512), _fit_utf8(user, 64), chunk,
+                    ts_at, ts_raw, _fit_utf8(ltype, 64), _fit_utf8(level, 32),
+                    _fit_utf8(xuehai_id, 32),
+                )
+                await session.execute(stmt)
             if owns:
                 await session.commit()
 

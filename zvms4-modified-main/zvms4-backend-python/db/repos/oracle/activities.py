@@ -290,6 +290,14 @@ class OracleActivitiesRepo:
             return None
         return _activity_doc(row._mapping)
 
+    async def get_for_update(self, oid: str) -> Row | None:
+        """Serialize member changes until the caller commits its transaction."""
+        if self._session is None:
+            raise RuntimeError("get_for_update requires a caller-owned transaction")
+        statement = _get_stmt(normalize_oid(oid)).with_for_update()
+        row = (await self._session.execute(statement)).first()
+        return _activity_doc(row._mapping) if row is not None else None
+
     async def list_page(
         self,
         query: str,

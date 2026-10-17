@@ -19,6 +19,7 @@ from util.get_class import get_user_class
 from util.object_id import get_current_user, validate_object_id
 from util.permission.user import validate_read_group_permission
 from util.cert import check_password
+from util.user import public_user
 
 router = APIRouter()
 
@@ -203,7 +204,7 @@ async def get_group_users_v2(
     perpage: int = Query(10, ge=1, le=100, description="Number of items per page"),
     search: str = Query("", description="Search keyword"),
     sort: str = Query("id", description="Sort by field"),
-    regex: bool = Query(True, description="Use regex for search"),
+    regex: bool = Query(False, description="Use simple regex for search"),
     asc: bool = Query(True, description="Sort in ascending order"),
     exceeding: bool = Query(True, description="Include exceeding time"),
     shortage: bool = Query(False, description="Include shortage time"),
@@ -233,7 +234,15 @@ async def get_group_users_v2(
     class_oid = validate_object_id(group_id)
     members = await backends.get_users_repo().list_by_class(str(class_oid))
     if search:
-        pattern = re.compile(search, re.IGNORECASE)
+        # Restrict regex to literals, anchors, character classes and at most
+        # one simple quantifier. No nested/ambiguous repetition or backrefs.
+        if regex and (len(search) > 128 or any(ch in search for ch in "(){}|\\")
+                      or sum(search.count(ch) for ch in "*+?") > 1):
+            raise HTTPException(status_code=400, detail="Unsupported search expression")
+        try:
+            pattern = re.compile(search if regex else re.escape(search), re.IGNORECASE)
+        except re.error:
+            raise HTTPException(status_code=400, detail="Invalid search expression")
         members = [
             member
             for member in members
@@ -241,6 +250,8 @@ async def get_group_users_v2(
             or pattern.search(member.get("id") or "")
         ]
     count = len(members)
+    if sort not in ("", "_id", "id", "name", "class_id"):
+        raise HTTPException(status_code=400, detail="Invalid sort field")
     if sort:
         members.sort(
             key=lambda member: (member.get(sort) is None, member.get(sort)),
@@ -266,7 +277,7 @@ async def get_group_users_v2(
         "total": count,
         "page": page,
         "perpage": perpage,
-        "members": members,
+        "members": [public_user(row) for row in members],
     }
 
 

@@ -1,12 +1,15 @@
 from datetime import datetime
+import math
 from fastapi import APIRouter, Depends, HTTPException, Body, Query
 from db import backends
+from db.ids import normalize_oid
+from db.oracle.session import session_scope
 from typings.log import inject_log
 from util.object_id import get_current_user
 from util.user import get_user_display_name
 from utils import validate_object_id
 from typing import Literal
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from util.validation import validate_activity_description
 
 router = APIRouter()
@@ -134,11 +137,18 @@ class NewActivityMember(BaseModel):
     mode: Literal['on-campus', 'off-campus', 'social-practice']
     duration: float = Field(gt=0)
 
+    @field_validator("duration")
+    @classmethod
+    def validate_finite_duration(cls, value: float) -> float:
+        if not math.isfinite(value):
+            raise ValueError("duration must be finite")
+        return value
+
 
 @router.post("/{activity_id}/members", status_code=204)
 async def add_activity_member_v3(
     activity_id: str,
-    members: list[NewActivityMember] = Body(),
+    members: list[NewActivityMember] = Body(min_length=1, max_length=1000),
     user=Depends(get_current_user),
     log=Depends(inject_log),
 ):
@@ -153,59 +163,42 @@ async def add_activity_member_v3(
     if not _is_volunteer_manager(user):
         raise HTTPException(status_code=403, detail="权限不足")
 
-    members_repo = backends.get_members_repo()
-    activities_repo = backends.get_activities_repo()
-
-    target_activity = await activities_repo.get(activity_id)
-
-    if not target_activity:
-        raise HTTPException(status_code=404, detail="Activity not found")
-
-    log_text = ''
-    has_update = False
-
+    activity_id = str(validate_object_id(activity_id))
+    if not members:
+        raise HTTPException(status_code=400, detail="成员列表不能为空")
+    additions: dict[tuple[str, str], float] = {}
     for member in members:
-        if target_activity["type"] != "hybrid" and target_activity["type"] != member.mode:
-            raise HTTPException(
-                status_code=400, detail="义工类型不匹配"
+        key = (str(validate_object_id(member.member)), member.mode)
+        additions[key] = additions.get(key, 0.0) + member.duration
+        if not math.isfinite(additions[key]):
+            raise HTTPException(status_code=400, detail="时长超出范围")
+
+    async with session_scope() as session:
+        async with session.begin():
+            activities_repo = backends.get_activities_repo(session)
+            target_activity = await activities_repo.get_for_update(activity_id)
+            if not target_activity:
+                raise HTTPException(status_code=404, detail="Activity not found")
+            users_repo = backends.get_users_repo(session)
+            for oid, mode in additions:
+                if target_activity["type"] not in ("hybrid", mode):
+                    raise HTTPException(status_code=400, detail="义工类型不匹配")
+                if await users_repo.get_by_oid(oid) is None:
+                    raise HTTPException(status_code=400, detail="成员不存在")
+            members_repo = backends.get_members_repo(session)
+            for (oid, mode), duration in additions.items():
+                existing = await members_repo.get_by_triple(activity_id, oid, mode)
+                if existing:
+                    total = existing["duration"] + duration
+                    if not math.isfinite(total):
+                        raise HTTPException(status_code=400, detail="时长超出范围")
+                    await members_repo.update_fields(existing["_id"], {"duration": total})
+                else:
+                    await members_repo.add(activity_id, oid, mode, duration, "effective")
+            await activities_repo.update(activity_id, {"status": "pending", "updatedAt": datetime.now()})
+            log.with_text(
+                f"用户 {user['id']} 为活动 {activity_id} 增加时长：" +
+                "; ".join(f"{oid} {mode} +{duration}" for (oid, mode), duration in additions.items()),
+                type="activity_member_update",
             )
-
-    for member in members:
-
-        existing: dict = await members_repo.get_by_triple(
-            activity_id, member.member, member.mode
-        )
-
-        if existing:
-
-            updated_data = {
-                "duration": existing["duration"] + member.duration
-            }
-
-            await members_repo.update_fields(existing["_id"], updated_data)
-
-            has_update = True
-            log_text += f'用户 {await get_user_display_name(user["id"])} 更新了义工活动《{target_activity["name"]}》中成员 {await get_user_display_name(member.member)} 的时长记录\n'
-
-            continue
-
-        await members_repo.add(
-            activity_id, member.member, member.mode, member.duration, "effective"
-        )
-
-        log_text += f'用户 {await get_user_display_name(user["id"])} 将成员 {await get_user_display_name(member.member)} 加入义工活动《{target_activity["name"]}》\n'
-
-    if len(log_text):
-        log.with_text(
-            log_text[:-1],
-            type="activity_member_update" if has_update else "activity_member_add",
-        )
-        await log.insert_log()
-
-    await activities_repo.update(
-        activity_id,
-        {
-            "status": "pending",
-            "updatedAt": datetime.now(),
-        },
-    )
+            await log.insert_log(session)

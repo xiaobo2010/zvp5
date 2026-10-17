@@ -4,6 +4,7 @@ import { defineStore } from 'pinia'
 import { ElNotification } from 'element-plus'
 import { useRouter } from 'vue-router'
 import { getUserPositions } from '@/utils/groupPosition'
+import { clearCache } from '@/utils/idbCache'
 
 interface UserTime {
   onCampus: number
@@ -71,9 +72,7 @@ export const useUserStore = defineStore('user', {
         const information: User | UserProfile =
           result.profile ?? ((await api.user.readOne(result._id)) as User)
         await this.setUserInformation(information)
-        if (result.weak_password || !this.validatePasswordStrength(password)) {
-          this.shouldResetPassword = true
-        }
+        this.shouldResetPassword = Boolean(result.weak_password)
         this.isLogin = true
       }
     },
@@ -98,6 +97,8 @@ export const useUserStore = defineStore('user', {
       this.isLogin = false
       this.shouldResetPassword = false
       this.banned = false
+      this.time = { socialPractice: 0, onCampus: 0, offCampus: 0 }
+      await clearCache()
     },
     async getUserActivityTime() {
       const result = normalizeUserTime(await api.user.time.read(this._id))

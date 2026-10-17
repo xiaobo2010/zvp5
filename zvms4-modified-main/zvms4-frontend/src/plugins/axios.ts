@@ -27,7 +27,20 @@ function isCacheableGet(config?: InternalAxiosRequestConfig) {
     return false
   }
   const responseType = config.responseType
-  return responseType === undefined || responseType === 'json'
+  if (responseType !== undefined && responseType !== 'json') {
+    return false
+  }
+  const authorization = config.headers?.get?.('Authorization') ?? config.headers?.Authorization
+  if (authorization) {
+    return false
+  }
+  const path = `${config.baseURL ?? ''}${config.url ?? ''}`.toLowerCase()
+  return !(
+    path.includes('/auth') ||
+    path.includes('/totp') ||
+    path.includes('/password') ||
+    path.includes('/system/')
+  )
 }
 
 function isIdempotentGet(config?: InternalAxiosRequestConfig) {
