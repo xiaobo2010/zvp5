@@ -73,10 +73,10 @@ def connect_token(environ, auth=None) -> Optional[str]:
     return None
 
 
-def is_admin_conn(scope) -> bool:
+async def is_admin_conn(scope) -> bool:
     """握手 scope 是否属于 admin（token 无效 / 缺失一律 ``False``）。"""
     try:
-        return is_admin_token(handshake_token(scope))
+        return await is_admin_token(handshake_token(scope))
     except Exception:
         return False
 
@@ -152,7 +152,7 @@ class MaintenanceSocketGuard:
             scope["type"] in ("http", "websocket")
             and self._is_handshake(scope)
             and is_enabled_fresh()  # 绕过 ~2s TTL 缓存，读最新状态
-            and not is_admin_conn(scope)
+            and not await is_admin_conn(scope)
         ):
             await self._reject(scope, send)
             return
