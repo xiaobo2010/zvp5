@@ -35,6 +35,26 @@ async def validate_read_user_permission(
     return True
 
 
+def credential_change_forbidden(
+    actor_oid: str, target_per: list[str], target_oid: str
+) -> bool:
+    """
+    判断一次凭据变更是否被「等级闸」拦下。
+
+    为什么要这条闸：双人授权（危险操作须两名不同管理员批准）的前提，是
+    一个人的身份不能被另一个人冒充。若某管理员能改掉同级账号的密码、或把
+    它重置成一个已知/可推导的初始密码，他就能以对方身份登录并「批准」自己
+    的危险操作——发起人与审批人其实是同一个人，双人授权被彻底击穿。
+
+    因此：**admin 级账号的凭据只有本人能动**，其他任何账号（含其他 admin）
+    一律拒绝；其余等级（department / secretary / student）维持现状，不做
+    额外收紧。纯判定、不查库：目标账号的权限由调用方查库后传入，便于单测。
+    """
+    if str(actor_oid) == str(target_oid):
+        return False
+    return "admin" in (target_per or [])
+
+
 async def validate_read_group_permission(
     user: dict,
     target_group: str,

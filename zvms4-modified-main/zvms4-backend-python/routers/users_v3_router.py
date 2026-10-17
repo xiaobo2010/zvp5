@@ -6,8 +6,10 @@ from pydantic import BaseModel, Field
 
 from db import backends
 from typings.log import inject_log
-from util.cert import get_current_totp
+from util.cert import generate_initial_password, get_current_totp
+from util.group import get_user_permissions
 from util.object_id import compulsory_temporary_token, get_current_user
+from util.permission.user import credential_change_forbidden
 from util.user import get_user_display_name
 from utils import validate_object_id
 from util.validation import validate_number, validate_student_name
@@ -164,7 +166,8 @@ async def create_user_v3(
         ):
             raise HTTPException(status_code=404, detail="班级不存在")
 
-    password = hashpw(payload.id.encode("utf-8"), gensalt()).decode("utf-8")
+    initial_password = generate_initial_password()
+    password = hashpw(initial_password.encode("utf-8"), gensalt()).decode("utf-8")
 
     new_id = await repo.create(
         payload.id,
@@ -175,12 +178,12 @@ async def create_user_v3(
     )
 
     log.with_text(
-        f"管理员 {await get_user_display_name(user['id'])} 创建了用户 {payload.name}（学号 {payload.id}）",
+        f"管理员 {await get_user_display_name(user['id'])} 创建了用户 {payload.name}（学号 {payload.id}），已生成一次性初始密码",
         type="user_create",
     )
     await log.insert_log()
 
-    return {"id": new_id}
+    return {"id": new_id, "initial_password": initial_password}
 
 
 async def _is_same_class(a_id: str, b_id: str) -> bool:
@@ -201,11 +204,15 @@ async def reset_user_password_v3(
     log=Depends(inject_log),
 ):
     """
-    Reset a user's password to the initial one (the student number).
+    为用户生成一个新的**一次性初始密码**（重置凭据）。
 
     Permission: admin/department, or secretary in the same class.
     Requires a temporary token (re-verification), mirroring zvp's
     `get_authz_user` posture for credential-affecting operations.
+
+    另外：目标账号是 admin 级时，只有本人能重置其凭据（见
+    ``credential_change_forbidden``）。明文只在本次响应里回一次，日志里
+    绝不出现。
     """
     per = user.get("per") or []
     target = await _get_zvms_new_user(user_id)
@@ -216,15 +223,22 @@ async def reset_user_password_v3(
         if "secretary" not in per or not await _is_same_class(user["id"], user_id):
             raise HTTPException(status_code=403, detail="权限不足")
 
-    await backends.get_users_repo().set_password(user_id, None)
+    target_per = await get_user_permissions(target)
+    if credential_change_forbidden(user["id"], target_per, str(target["_id"])):
+        raise HTTPException(status_code=403, detail="不能修改管理员账号的凭据")
+
+    initial_password = generate_initial_password()
+    await backends.get_users_repo().set_password(
+        user_id, hashpw(initial_password.encode("utf-8"), gensalt()).decode("utf-8")
+    )
 
     log.with_text(
-        f"用户 {await get_user_display_name(user['id'])} 将用户 {target['name']} 的密码重置为初始密码（学号）",
+        f"用户 {await get_user_display_name(user['id'])} 将用户 {target['name']} 的密码重置为一次性初始密码",
         type="passwd_change",
     )
     await log.insert_log()
 
-    return {"status": "ok", "code": 200}
+    return {"status": "ok", "code": 200, "data": {"initial_password": initial_password}}
 
 
 @router.get("/{user_id}/totp")
@@ -234,25 +248,29 @@ async def get_user_totp_v3(
     log=Depends(inject_log),
 ):
     """
-    Read the current login dynamic code (TOTP) of a user.
+    Read the caller's own current login dynamic code (TOTP).
 
-    Permission: admin only. The code is computed locally per user and is
-    never delivered through any external channel.
+    Permission: any authenticated user, but **only their own** code. A dynamic
+    code can be exchanged for a login token, so reading someone else's code is
+    equivalent to impersonating them——this endpoint is therefore narrowed to
+    self only.
     """
-    per = user.get("per") or []
-    if "admin" not in per:
-        raise HTTPException(status_code=403, detail="权限不足")
-
     target = await _get_zvms_new_user(user_id)
     if target is None:
         raise HTTPException(status_code=404, detail="用户不存在")
 
-    code, exp = get_current_totp(user_id)
+    if str(target["_id"]) != str(user["id"]):
+        raise HTTPException(status_code=403, detail="只能查看自己的动态码")
+
+    # Compute with the caller's own oid: login derives the code from the oid
+    # (routers/users_router.py), so feeding the path parameter through would
+    # produce a different code whenever a business id (student number) is used.
+    code, exp = get_current_totp(user["id"])
 
     log.with_text(
-        f"管理员 {await get_user_display_name(user['id'])} 查看了用户 {target['name']} 的登录动态码",
+        f"用户 {await get_user_display_name(user['id'])} 查看了自己的登录动态码",
         type="totp_view",
-        level="warning",
+        level="info",
     )
     await log.insert_log()
 
