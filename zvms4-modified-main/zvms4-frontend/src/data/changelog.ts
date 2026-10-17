@@ -6,6 +6,15 @@ export interface ChangelogEntry {
 
 export const changelog: ChangelogEntry[] = [
   {
+    version: 'v4.2.3-6',
+    date: '2026-10-17',
+    items: [
+      '新增「服务器管理 → 数据库状态」页面（仅管理员）：展示 Oracle 表空间容量与已用占比、每张表的存储占用（数据 / 索引 / LOB）与估算行数、数据库近期负载与连接池',
+      '数据库状态为只读观测：不执行逐表精确计数，行数来自优化器估算（USER_TABLES.NUM_ROWS），需结合最近分析时间判断新鲜度；表空间上限为数据文件自动扩展上限，不代表套餐总容量',
+      '权限不足的监控项逐项降级显示，不影响其余数据；页面 15 秒内读取后端缓存'
+    ]
+  },
+  {
     version: 'v4.2.3-5',
     date: '2026-10-17',
     items: [
