@@ -188,16 +188,15 @@ axiosInstance.interceptors.response.use(
       if (!errorDisplayed) {
         errorDisplayed = true
         ElMessage({
-          message:
-            '错误: ' + error.message
-              ? 'data: ' + JSON.stringify(error.message)
-              : '未知错误',
+          message: error.message ? '错误: ' + error.message : '未知错误',
           type: 'error',
           grouping: true,
           plain: true
         })
       }
     }
+    // 统一出口:错误分支必须 reject,否则调用方拿到的 resolve 值是 undefined。
+    return Promise.reject(error)
   }
 )
 
