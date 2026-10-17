@@ -259,6 +259,11 @@ async def upload_attachment(
     if me is not None and me.get("banned"):
         raise HTTPException(status_code=403, detail="User is banned")
 
+    # Uploading is a student-union-or-above action. Both frontend entry points
+    # (the activity-creation form and the attachment dialog) are manager-only,
+    # so enforce the same rule here instead of relying on the UI alone.
+    _require_manager(user)
+
     declared = request.headers.get("content-length")
     if declared is not None:
         try:
