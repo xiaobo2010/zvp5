@@ -81,6 +81,7 @@ export const zhCN = {
     bannedTag: '已封禁',
     ban: '封禁账号',
     unban: '解封账号',
+    banSelfForbidden: '不能封禁自己',
     banConfirm: '确定要封禁用户 {name} 吗？封禁后该用户将无法登录。',
     unbanConfirm: '确定要解封用户 {name} 吗？',
     bannedNotification: '已封禁用户 {name}',

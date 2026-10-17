@@ -2,9 +2,9 @@
 import ZActivityMember from '@/components/activity/ZActivityMember.vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user.ts'
-import { ref, watch, type Component } from 'vue'
+import { computed, ref, watch, type Component } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ElPageHeader, ElSegmented, ElLoading, ElIcon, ElButton, ElTag, ElMessageBox, ElNotification } from 'element-plus'
+import { ElPageHeader, ElSegmented, ElLoading, ElIcon, ElButton, ElTag, ElMessageBox, ElNotification, ElTooltip } from 'element-plus'
 import { ZActivityList } from '@/components'
 import { ArrowLeft, Edit } from '@element-plus/icons-vue'
 import type { User } from '@/../types'
@@ -46,8 +46,12 @@ async function getUser() {
   loading.close()
 }
 
+const isSelf = computed(() => !!userStore._id && userStore._id === id.value)
+const banSelfBlocked = computed(() => isSelf.value && !user.value?.banned)
+
 async function toggleBanned() {
   if (!user.value) return
+  if (banSelfBlocked.value) return
   const isBanned = user.value.banned
   try {
     await ElMessageBox.confirm(
@@ -138,16 +142,18 @@ watch(
             </div>
           </template>
         </ElSegmented>
-        <ElButton
+        <ElTooltip
           v-if="userStore.position.includes('admin') && user"
-          type="danger"
-          text
-          bg
-          class="ml-4"
-          @click="toggleBanned"
+          :content="t('manage.personalPanel.banSelfForbidden')"
+          :disabled="!banSelfBlocked"
+          placement="bottom"
         >
-          {{ user.banned ? t('manage.personalPanel.unban') : t('manage.personalPanel.ban') }}
-        </ElButton>
+          <span class="ml-4 inline-flex">
+            <ElButton type="danger" text bg :disabled="banSelfBlocked" @click="toggleBanned">
+              {{ user.banned ? t('manage.personalPanel.unban') : t('manage.personalPanel.ban') }}
+            </ElButton>
+          </span>
+        </ElTooltip>
       </template>
     </ElPageHeader>
     <div v-if="user && current === 'info'">
