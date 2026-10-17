@@ -18,7 +18,6 @@ import {
   ElTableColumn,
   ElButton,
   ElPopconfirm,
-  ElPagination,
   ElPopover,
   ElDivider,
   ElMessage,
@@ -554,14 +553,10 @@ watch(search, refreshMembers)
         </ElTable>
       </div>
       <div class="py-2 text-center" v-if="size !== 0">
-        <ElPagination
+        <ZPagination
           v-model:current-page="page"
           v-model:page-size="perpage"
-          :pager-count="3"
           :total="size"
-          layout="total, prev, pager, next, sizes, jumper"
-          background
-          :page-sizes="[3, 5, 8, 10]"
         />
       </div>
     </template>

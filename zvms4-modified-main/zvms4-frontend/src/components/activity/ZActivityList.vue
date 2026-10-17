@@ -5,7 +5,6 @@ import {
   ElTable,
   ElTableColumn,
   ElButton,
-  ElPagination,
   ElCard,
   ElInput,
   ElDivider
@@ -324,14 +323,10 @@ watch(isPointerSwiping, (swiping) => {
         </ElTableColumn>
       </ElTable>
       <div class="py-2" v-if="activities.length !== 0">
-        <ElPagination
+        <ZPagination
           v-model:current-page="activePage"
           v-model:page-size="pageSize"
-          :pager-count="3"
           :total="size"
-          layout="total, prev, pager, next, sizes, jumper"
-          background
-          :page-sizes="[3, 5, 8, 10, 15, 20]"
         />
       </div>
     </ElCard>

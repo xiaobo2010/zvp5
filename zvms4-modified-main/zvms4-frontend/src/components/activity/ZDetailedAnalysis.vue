@@ -4,7 +4,6 @@ import {
   ElCard,
   ElCol,
   ElEmpty,
-  ElPagination,
   ElResult,
   ElRow,
   ElSegmented,
@@ -165,14 +164,12 @@ const totalDuration = computed(() => sums.value?.[activeMode.value] ?? 0)
       </template>
     </ElTable>
     <ElEmpty v-else description="当前类型暂无记录" :image-size="120" />
-    <ElPagination
+    <ZPagination
       v-if="!error"
-      class="detail-pagination py-4"
+      class="detail-pagination"
       v-model:current-page="page"
       v-model:page-size="perpage"
       :total="totalCount"
-      layout="total, prev, pager, next, sizes"
-      background
       :page-sizes="[10, 20, 50]"
     />
   </ElCard>
