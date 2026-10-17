@@ -98,8 +98,8 @@ async def create_activity_v3(
 @router.get('/{activity_id}/members')
 async def get_activity_members_v3(
     activity_id: str,
-    page: int = Query(1),
-    size: int = Query(10),
+    page: int = Query(1, ge=1),
+    size: int = Query(10, ge=1, le=100),
     query: str = Query(''),
     user=Depends(get_current_user)
 ):

@@ -151,9 +151,20 @@ async def get_user_time_statistics_v2(
         raise HTTPException(
             status_code=400, detail="Function temporarily unaccessible."
         )
-    grade_indicators = indicators["percentiles"][user_document["id"][:4]]
+    percentiles = indicators.get("percentiles")
+    grade_indicators = (
+        percentiles.get(user_document["id"][:4])
+        if isinstance(percentiles, dict)
+        else None
+    )
+    group_indicators = group_row.get("percentiles")
+    if not isinstance(grade_indicators, dict) or not isinstance(
+        group_indicators, dict
+    ):
+        raise HTTPException(
+            status_code=400, detail="Statistics are not available for this cohort."
+        )
     user_time = await calculate_user_time(user_id, allow_cache=True)
-    group_indicators = group_row["percentiles"]
     return {
         "on-campus": {
             "value": user_time["on-campus"],

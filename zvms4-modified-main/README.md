@@ -1,5 +1,10 @@
 # ZVP Modified v4
 
+> **当前运行状态（2026-10-17）**：Oracle Autonomous Database 是唯一运行时数据库，
+> MongoDB 代码与依赖已移除。本文保留早期移植与双库阶段的工程记录；部署、配置和
+> 数据库口径以 `zvms4-backend-python/README.md`、`db/oracle/` 与
+> `docs/ADB_SCHEMA_SPEC.md` 为准。
+
 > 基于上游 **zvms4**（`zvms/zvms4-backend-python` + `zvms/zvms4-frontend`）的定制版本。
 > **改动方向一：数据库层向现役 zvp 平台的真实结构对齐。**
 > **改动方向二（2026-10-09 起）：义工管理模块（创建义工 / 添加修改义工成员）按指令从现役 zvp 移植，经逐文件安全审计放行，见 `STATUS.md` Part 1。**

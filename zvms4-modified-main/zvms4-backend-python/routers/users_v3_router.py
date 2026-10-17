@@ -1,7 +1,7 @@
 from typing import Literal, Optional
 
 from bcrypt import hashpw, gensalt
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel, Field
 
 from db import backends
@@ -132,6 +132,7 @@ class NewUserRequest(BaseModel):
 @router.post("", status_code=201)
 async def create_user_v3(
     payload: NewUserRequest,
+    response: Response,
     user=Depends(get_current_user),
     log=Depends(inject_log),
 ):
@@ -183,6 +184,7 @@ async def create_user_v3(
     )
     await log.insert_log()
 
+    response.headers["Cache-Control"] = "no-store"
     return {"id": new_id, "initial_password": initial_password}
 
 
@@ -200,6 +202,7 @@ async def _is_same_class(a_id: str, b_id: str) -> bool:
 @router.delete("/{user_id}/password")
 async def reset_user_password_v3(
     user_id: str,
+    response: Response,
     user=Depends(compulsory_temporary_token),
     log=Depends(inject_log),
 ):
@@ -245,12 +248,14 @@ async def reset_user_password_v3(
     )
     await log.insert_log()
 
+    response.headers["Cache-Control"] = "no-store"
     return {"status": "ok", "code": 200, "data": {"initial_password": initial_password}}
 
 
 @router.get("/{user_id}/totp")
 async def get_user_totp_v3(
     user_id: str,
+    response: Response,
     user=Depends(get_current_user),
     log=Depends(inject_log),
 ):
@@ -281,6 +286,7 @@ async def get_user_totp_v3(
     )
     await log.insert_log()
 
+    response.headers["Cache-Control"] = "no-store"
     return {"status": "ok", "code": 200, "data": {"otp": code, "exp": exp}}
 
 

@@ -18,7 +18,8 @@ The most feature of v4 is the data structure. We use `mongodb` instead of `sqlit
 
 ## 本地运行与验证
 
-使用 `pnpm-lock.yaml` 安装，避免旧 `package-lock.json` 中的历史依赖差异。本轮本地验收使用 Node.js 24.19.0、pnpm 11.25.0。
+仓库只保留 `pnpm-lock.yaml` 作为依赖锁文件，并由 `package.json#packageManager`
+固定 pnpm 版本。本轮本地验收使用 Node.js 24.19.0、pnpm 10.34.4。
 
 ```sh
 pnpm install --frozen-lockfile
@@ -28,5 +29,6 @@ pnpm build
 ```
 
 `build` 包含类型检查和生产/PWA 打包。`pnpm preview` 使用 4173 端口，与端到端测试入口一致。
-`pnpm-workspace.yaml` 记录依赖构建许可；默认未安装 Cypress 浏览器测试二进制，本轮不包含浏览器端到端验收。
-现有 `lint` 仍使用旧 ESLint 配置，需要单独迁移后再作为验收项。
+`pnpm lint` 使用 ESLint 9 flat config；`pnpm lint:fix` 才会写入修复。
+`pnpm-workspace.yaml` 默认未安装 Cypress 浏览器二进制；需要运行
+`pnpm exec cypress install` 后再执行 `pnpm test:e2e`。

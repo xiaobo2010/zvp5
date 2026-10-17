@@ -49,8 +49,8 @@ async def _list_permission_group_members(
 @router.get("/{group_id}/users")
 async def get_group_users_v3(
     group_id: str,
-    page: int = Query(1),
-    size: int = Query(10),
+    page: int = Query(1, ge=1),
+    size: int = Query(10, ge=1, le=100),
     query: str = Query(""),
     pwdm: bool = Query(False),
     user=Depends(get_current_user),
