@@ -90,8 +90,12 @@ const router = createRouter({
           path: 'maintenance',
           name: 'server-maintenance',
           component: () => import('../views/server/ServerMaintenance.vue')
+        },
+        {
+          path: 'database',
+          name: 'server-database',
+          component: () => import('../views/server/ServerDatabase.vue')
         }
-        // 后续服务端子页(如 oracle-db)在此追加
       ]
     },
     {

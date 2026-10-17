@@ -1,6 +1,7 @@
 export const zhCN = {
   tabs: {
-    maintenance: '维护模式'
+    maintenance: '维护模式',
+    database: '数据库状态'
   },
   maintenance: {
     title: '系统维护模式',
@@ -20,5 +21,56 @@ export const zhCN = {
     statusFailed: '维护状态读取失败',
     reasonRequired: '请输入维护原因',
     announcementTooLong: '公告不能超过 300 字'
+  },
+  database: {
+    title: '数据库状态',
+    refresh: '刷新',
+    loading: '加载中…',
+    loadFailed: '数据库状态读取失败',
+    cacheHint: '后端缓存 15 秒：15 秒内刷新将返回缓存数据',
+    cacheFresh: '实时数据',
+    cacheCached: '缓存数据（{age} 秒前生成，有效期 15 秒）',
+    observedAt: '观测时间',
+    statusOk: '运行正常',
+    statusDegraded: '部分降级',
+    totalTables: '总表数',
+    totalBytes: '全部表合计',
+    warningsTitle: '口径说明',
+    tablespacesTitle: '表空间容量',
+    tablespacesTotal: '合计',
+    totalsPartial: '部分表空间数值缺失，合计仅供参考',
+    maxBytesNote: 'max_bytes 为 Oracle 数据文件自动扩展的可用上限，不等于 OCI 套餐总容量。',
+    tablesTitle: '表占用与数据量',
+    tablesCaption:
+      'estimated_rows 为优化器估算值（USER_TABLES.NUM_ROWS），并非精确行数；请结合最近分析时间判断新鲜度，分析时间超过 30 天或为空时数据可能过期。',
+    colTable: '表名',
+    colTotal: '合计占用',
+    colTableBytes: '表数据',
+    colIndexBytes: '索引',
+    colLobBytes: 'LOB',
+    colLobIndexBytes: 'LOB 索引',
+    colRows: '估算行数',
+    colAnalyzed: '最近分析',
+    neverAnalyzed: '未分析',
+    loadTitle: '数据库负载',
+    source: '数据来源',
+    assessmentNote: '负载指标反映实例近期（约 60 秒）活动，不能据此推断容量余量。',
+    colMetric: '指标',
+    colValue: '数值',
+    colWindow: '采样区间',
+    poolTitle: '连接池',
+    poolSize: '常驻连接',
+    poolCheckedOut: '使用中',
+    poolOverflow: '溢出',
+    poolCapacity: '总容量',
+    poolUtilization: '利用率',
+    poolScopeNote: '连接池指标仅代表当前 API 进程，不代表数据库全局。',
+    summary: '合计',
+    degraded: '该监控项暂不可用',
+    reasonInsufficientPrivileges: '当前数据库账号权限不足',
+    reasonQueryTimeout: '查询超时',
+    reasonNoSamples: '暂无采样数据',
+    reasonPoolUnavailable: '连接池指标读取失败',
+    reasonUnknown: '未知原因'
   }
 }
