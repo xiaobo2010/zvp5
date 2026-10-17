@@ -164,8 +164,10 @@ async function createUserV3(
       url: '/v3/users',
       data: { id, name, roles, class_id: class_id || undefined }
     })
-  ).data as { id: string }
-  return result?.id ?? false
+  ).data as { id: string; initial_password?: string }
+  if (!result?.id) return false
+  // 一次性初始密码只在本次响应中出现；旧契约尚无该字段时为空串
+  return { id: result.id, initial_password: result.initial_password ?? '' }
 }
 
 export { getUser as readOne, getUsers as read, putUser as update, getUserV3 as readOne_v3, getUsersV2 as read_v2, putUserRoles as updateRoles, putUserBanned as updateBanned, createUserV3 as create_v3 }

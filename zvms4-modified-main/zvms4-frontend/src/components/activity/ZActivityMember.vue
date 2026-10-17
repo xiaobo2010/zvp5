@@ -5,13 +5,13 @@ import type { Component as VueComponent } from 'vue'
 import { Plus, Refresh, User as UserIcon } from '@element-plus/icons-vue'
 import { ZButtonOrCard, ZUserTimeJudge } from '@/components'
 import api from '@/api'
-import { ElButton, ElDescriptions, ElDescriptionsItem, ElNotification, ElTag } from 'element-plus'
+import { ElButton, ElDescriptions, ElDescriptionsItem, ElDialog, ElNotification, ElTag } from 'element-plus'
 import { useI18n } from 'vue-i18n'
 import ZUserGroup from '../tags/ZUserGroup.vue'
 import ZUserPosition from '../tags/ZUserPosition.vue'
 import { useUserStore } from '@/stores/user'
 import { temporaryToken } from '@/plugins/short-token'
-import { useWindowSize } from '@vueuse/core'
+import { useClipboard, useWindowSize } from '@vueuse/core'
 import router from '@/router'
 
 const { width, height } = useWindowSize()
@@ -74,6 +74,13 @@ function refresh() {
 
 refresh()
 
+// 重置成功后的一次性初始密码弹窗：明文只在此响应中出现，关闭后无法再查看
+const initialPasswordVisible = ref(false)
+const initialPassword = ref('')
+const { copy: copyToClipboard, copied: passwordCopied } = useClipboard({
+  copiedDuring: 2000
+})
+
 async function resetMemberPassword() {
   loading2.value = true
   const token = await temporaryToken(userStore._id).catch(() => {
@@ -82,15 +89,25 @@ async function resetMemberPassword() {
   if (!token) {
     return
   }
-  await api.user.password.reset(id.value, token).then(() => {
+  const password = await api.user.password.reset(id.value, token).catch(() => {
+    loading2.value = false
+  })
+  loading2.value = false
+  if (password) {
+    initialPassword.value = password
+    initialPasswordVisible.value = true
+  } else {
+    // 兼容未返回一次性密码的旧契约：仅提示重置成功
     ElNotification({
       title: '密码重置成功',
       type: 'success'
     })
-  }).catch(() => {
-    loading2.value = false
-  })
-  loading2.value = false
+  }
+}
+
+async function copyInitialPassword() {
+  if (!initialPassword.value) return
+  await copyToClipboard(initialPassword.value).catch(() => {})
 }
 
 const vert = ref(width.value < height.value * 1.2)
@@ -257,4 +274,41 @@ async function insertUserPast() {
       {{ person?.name }}
     </template>
   </ZButtonOrCard>
+  <!-- 一次性初始密码弹窗：密码明文只显示这一次，必须点「我已记下」关闭 -->
+  <ElDialog
+    v-model="initialPasswordVisible"
+    :title="t('manage.personalPanel.initialPasswordDialog.title')"
+    width="420px"
+    align-center
+    :close-on-click-modal="false"
+  >
+    <p class="text-sm leading-6 opacity-80">
+      {{ t('manage.personalPanel.initialPasswordDialog.notice') }}
+    </p>
+    <div class="mt-4 flex items-center gap-2">
+      <code
+        class="min-w-0 flex-1 select-all break-all rounded bg-gray-100 px-3 py-2 font-mono text-base font-bold tracking-wider dark:bg-gray-800"
+        >{{ initialPassword }}</code
+      >
+      <ElButton
+        class="flex-none"
+        :type="passwordCopied ? 'success' : 'primary'"
+        @click="copyInitialPassword"
+      >
+        {{
+          passwordCopied
+            ? t('manage.personalPanel.initialPasswordDialog.copied')
+            : t('manage.personalPanel.initialPasswordDialog.copy')
+        }}
+      </ElButton>
+    </div>
+    <template #footer>
+      <ElButton
+        type="primary"
+        @click="initialPasswordVisible = false"
+      >
+        {{ t('manage.personalPanel.initialPasswordDialog.acknowledge') }}
+      </ElButton>
+    </template>
+  </ElDialog>
 </template>
