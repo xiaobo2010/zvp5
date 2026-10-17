@@ -12,7 +12,7 @@ export type AttachmentStatus =
 export type OcrStatus = 'pending' | 'processing' | 'done' | 'failed'
 
 export interface AttachmentUploadResult {
-  id: string
+  _id: string
   mime: string
   size: number
   width?: number
