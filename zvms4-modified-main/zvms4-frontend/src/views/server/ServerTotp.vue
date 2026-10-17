@@ -20,8 +20,8 @@ const isAdmin = userStore.position.includes('admin')
 
 const M = 'server.totp.'
 
-// 认证窗口 30 秒,与后端 OTP_STEP 一致(util/cert.py: OTP_STEP = 30)
-const OTP_STEP_SECONDS = 30
+// 认证窗口 60 秒,与后端 OTP_STEP 一致(util/cert.py: OTP_STEP = 60)
+const OTP_STEP_SECONDS = 60
 
 const otp = ref<string | null>(null)
 const expSeconds = ref<number | null>(null)
@@ -40,10 +40,13 @@ function detailOf(err: unknown): string {
   return ''
 }
 
+// 时间以响应式值推进:timer 更新 now,依赖它的 computed 随之失效重算(computed 内不直接取 Date.now())
+const now = ref(Date.now())
+
 // exp 为 Unix 秒(util/cert.py get_current_totp: (counter + 1) * OTP_STEP)
 const remainingMs = computed(() => {
   if (expSeconds.value === null) return null
-  return expSeconds.value * 1000 - Date.now()
+  return expSeconds.value * 1000 - now.value
 })
 
 const expired = computed(() => {
@@ -51,16 +54,18 @@ const expired = computed(() => {
   return ms !== null && ms <= 0
 })
 
-// 剩余秒数以 30 秒窗口归一,供进度条与配色使用
+// 进度条用连续剩余毫秒归一(而非取整后的整数秒),配合 200ms 定时器才真的平滑递减;
+// 配色与「剩余 N 秒」文本仍用整数秒(见 countdownColor / remainsText)
 const remainingPct = computed(() => {
-  if (remaining.value <= 0) return 0
-  return Math.min(100, (remaining.value / OTP_STEP_SECONDS) * 100)
+  const ms = remainingMs.value
+  if (ms === null || ms <= 0) return 0
+  return Math.min(100, (ms / (OTP_STEP_SECONDS * 1000)) * 100)
 })
 
-// 临近过期转暖色:≤5 秒红,≤12 秒橙
+// 临近过期转暖色:≤10 秒红,≤24 秒橙(约 17%/40% 窗口,与旧 30 秒窗口阈值等比换算)
 function countdownColor(seconds: number): string {
-  if (seconds <= 5) return '#f56c6c'
-  if (seconds <= 12) return '#e6a23c'
+  if (seconds <= 10) return '#f56c6c'
+  if (seconds <= 24) return '#e6a23c'
   return '#409eff'
 }
 
@@ -82,6 +87,7 @@ function stopTimer() {
 }
 
 function tick() {
+  now.value = Date.now()
   const ms = remainingMs.value
   if (ms === null) return
   remaining.value = ms > 0 ? Math.ceil(ms / 1000) : 0
@@ -96,7 +102,8 @@ function tick() {
 function startTimer() {
   stopTimer()
   tick()
-  timer = setInterval(tick, 1000)
+  // 200ms 粒度驱动 now,进度条平滑递减;仅作本地倒计时,不发起请求、不写审计日志
+  timer = setInterval(tick, 200)
 }
 
 async function refresh() {
@@ -109,9 +116,14 @@ async function refresh() {
     showCode.value = false
     startTimer()
   } catch (err) {
-    // 403:登录账号与查询目标不一致;页面守卫之下仅作兜底
+    // 403:封禁时后端返回 403 + detail='USER_BANNED'(机器可读协议,不直接展示),
+    // 由全局遮罩接管,页面级不跳转、不落错误态;其余 403 = 非本人,兜底跳 404 页
     if (isAxiosError(err) && err.response?.status === 403) {
-      router.replace('/not-found')
+      if (detailOf(err) === 'USER_BANNED') {
+        stopTimer()
+      } else {
+        router.replace('/not-found')
+      }
       return
     }
     if (isAxiosError(err) && err.response?.status === 404) {
