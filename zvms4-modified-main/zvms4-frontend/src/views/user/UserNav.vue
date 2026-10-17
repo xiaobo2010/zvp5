@@ -5,7 +5,8 @@ import {
   InfoFilled,
   Sunny,
   Moon,
-  Management
+  Management,
+  Monitor
 } from '@element-plus/icons-vue'
 import { ElButton, ElTooltip, ElSpace } from 'element-plus'
 import { ref } from 'vue'
@@ -76,6 +77,13 @@ const navs: Array<{
     path: '/about',
     show: true,
     judge: (path) => path.startsWith('/about')
+  },
+  {
+    icon: Monitor,
+    name: 'server',
+    path: '/server',
+    show: user.position.includes('admin'),
+    judge: (path) => path.startsWith('/server')
   }
 ]
 
