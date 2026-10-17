@@ -66,8 +66,17 @@ export const zhCN = {
       modify: '修改',
       logs: '日志'
     },
-    resetPassword: '重置该用户密码为学号',
+    resetPassword: '重置该用户密码',
     resetConfirm: '请确认您的操作。',
+    initialPasswordDialog: {
+      title: '一次性初始密码',
+      notice:
+        '请立即复制并转交给该用户。此密码只显示这一次，用户首次登录后必须修改密码。',
+      copy: '复制',
+      copied: '已复制',
+      acknowledge: '我已记下'
+    },
+    userCreatedTitle: '用户已创建',
     notFound: '无此用户',
     bannedTag: '已封禁',
     ban: '封禁账号',
