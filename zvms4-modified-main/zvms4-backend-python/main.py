@@ -26,6 +26,8 @@ import socketio
 from fastapi.middleware.cors import CORSMiddleware
 from db import backends
 from db.ids import InvalidOid
+from db.system_state import is_enabled as maintenance_enabled
+from routers.system_router import router as system_router
 from db.oracle.engine import ping as oracle_ping
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from tasks.compute_time import rebuild_statistics, generate_reports
@@ -98,6 +100,37 @@ SEC_PATTERN = re.compile(
 )
 
 allowed_methods = ["GET", "POST", "DELETE", "PUT", "PATCH", "HEAD", "OPTIONS"]
+
+# 维护模式放行清单：登录、证书、版本、健康检查、首页，以及整个 /api/system
+# 前缀（管理员必须能在维护期间关掉维护模式）。
+MAINTENANCE_EXEMPT_PATHS = {
+    "/api",
+    "/api/",
+    "/api/users/auth",
+    "/api/cert",
+    "/api/version",
+    "/api/health",
+}
+MAINTENANCE_EXEMPT_PREFIXES = ("/api/system",)
+
+
+# 顺序至关重要：add_middleware 是「后注册的更外层」，本中间件定义在
+# shield_middleware 之前，保证盾牌仍在最外层（非 Mozilla UA 仍先吃 418）。
+@app.middleware("http")
+async def maintenance_middleware(request: Request, call_next):
+    path = request.url.path
+    if (
+        path.startswith("/api/")
+        and str(request.method).upper() != "OPTIONS"  # 放行 CORS 预检
+        and path not in MAINTENANCE_EXEMPT_PATHS
+        and not path.startswith(MAINTENANCE_EXEMPT_PREFIXES)
+        and maintenance_enabled()
+    ):
+        return JSONResponse(
+            status_code=503,
+            content={"detail": "系统维护中，请稍后再试", "maintenance": True},
+        )
+    return await call_next(request)
 
 
 @app.middleware("http")
@@ -209,6 +242,7 @@ app.include_router(
 app.include_router(
     attachments_router.router, prefix="/api/attachments", tags=["attachments"]
 )
+app.include_router(system_router, prefix="/api/system/maintenance", tags=["System"])
 
 
 @app.get("/api/")
