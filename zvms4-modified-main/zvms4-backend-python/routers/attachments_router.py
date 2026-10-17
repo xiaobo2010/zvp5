@@ -22,9 +22,9 @@ from fastapi import (
     Query,
     Request,
     Response,
-    UploadFile,
 )
 from pydantic import BaseModel
+from starlette.datastructures import UploadFile
 
 from db import backends
 from typings.log import ZVMSLog, inject_log, xuehai_id_from
@@ -280,6 +280,11 @@ async def upload_attachment(
         raise HTTPException(status_code=400, detail="Invalid multipart payload")
 
     upload = form.get("file")
+    # `fastapi.UploadFile` is a *subclass* of the Starlette one, but a form read
+    # by hand through `request.form()` always yields the Starlette base class:
+    # FastAPI only rewraps on the declarative `File(...)` injection path. Testing
+    # against the base class accepts both, so a real file part gets through
+    # (`isinstance(upload, fastapi.UploadFile)` is always False here).
     if not isinstance(upload, UploadFile):
         raise HTTPException(status_code=400, detail="Missing file part")
 
