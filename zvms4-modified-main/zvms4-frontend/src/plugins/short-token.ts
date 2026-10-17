@@ -32,7 +32,7 @@ export function temporaryToken(userid: string): Promise<string> {
     })
       .then(({ value }) => {
         api.user.auth
-          .useLongTermAuth(userid, value, 'short')
+          .useLongTermAuth(userid, value, 'short', 'verify')
           .then((result) => {
             if (result) {
               resolve(result.token)

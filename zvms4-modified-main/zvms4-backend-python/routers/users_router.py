@@ -87,6 +87,7 @@ class AuthUser(BaseModel):
     id: str
     mode: str
     credential: str
+    purpose: str = "login"
 
 
 @router.post("/auth")
@@ -94,6 +95,10 @@ async def auth_user(auth: AuthUser, request: Request):
     id = auth.id
     mode = auth.mode or "long"
     credential = auth.credential
+    # Fail-safe: only an exact "login" gets login semantics. Any other value
+    # (empty, misspelled, unknown) is treated as identity verification, so a
+    # typo can never mint a long-lived session token.
+    is_login = auth.purpose == "login"
     xuehai_id = xuehai_id_from(request)
 
     if string_to_option_object_id(id) is None:
@@ -108,8 +113,16 @@ async def auth_user(auth: AuthUser, request: Request):
                 detail="用户名或密码错误",
             )
 
+    # Server-side clamp: a verification request must never issue a session
+    # token, whatever ``mode`` says. Routing it through the short-token path
+    # keeps ``validate_by_cert`` (and thus the login path) untouched, while
+    # TOTP credentials remain accepted and yield a 5-minute temporary token.
+    validation_mode = mode if is_login else "short"
+
     try:
-        result, weak_password = await validate_by_cert(id, credential, mode)
+        result, weak_password = await validate_by_cert(
+            id, credential, validation_mode
+        )
     except HTTPException as exc:
         # Normalize the credential failure to the same body as "user not found",
         # keeping the two paths byte-identical.
@@ -122,18 +135,24 @@ async def auth_user(auth: AuthUser, request: Request):
     )
     log_name = user_doc["name"] if user_doc else await get_user_name(id)
     is_otp = used_otp_credential(credential, id)
-    if is_otp:
-        log_text = f"用户 {log_name} 使用动态码登录了系统"
-    elif weak_password and mode == "long":
-        log_text = f"用户 {log_name} 登录了系统（密码强度不足，仅发放临时授权）"
+    if is_login:
+        if is_otp:
+            log_text = f"用户 {log_name} 使用动态码登录了系统"
+        elif weak_password and mode == "long":
+            log_text = f"用户 {log_name} 登录了系统（密码强度不足，仅发放临时授权）"
+        else:
+            log_text = f"用户 {log_name} 登录了系统"
+        log_type = "user_login"
     else:
-        log_text = f"用户 {log_name} 登录了系统"
+        credential_kind = "动态码" if is_otp else "密码"
+        log_text = f"用户 {log_name} 完成了身份验证（{credential_kind}）"
+        log_type = "user_verify"
     log = ZVMSLog(
         str(request.url),
         id,
         log_text,
         datetime.timestamp(datetime.now()),
-        type="user_login",
+        type=log_type,
         xuehai_id=xuehai_id,
     )
 
