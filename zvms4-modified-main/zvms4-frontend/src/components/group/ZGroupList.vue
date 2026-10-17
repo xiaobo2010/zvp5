@@ -1,6 +1,6 @@
 <script lang="ts" setup>
 import { useRouter } from 'vue-router'
-import { ElTable, ElTableColumn, ElCard, ElPagination, ElButton, ElInput } from 'element-plus'
+import { ElTable, ElTableColumn, ElCard, ElButton, ElInput } from 'element-plus'
 import { ref, onMounted, watch } from 'vue'
 import api from '@/api'
 import type { Group } from '@/../types'
@@ -94,15 +94,11 @@ async function remove(id: string) {
           </template>
         </ElTableColumn>
       </ElTable>
-      <ElPagination
+      <ZPagination
         class="py-2"
         v-model:currentPage="page"
         v-model:pageSize="perpage"
         :total="total"
-        :page-sizes="[3, 5, 8, 10, 15, 20]"
-        :pager-count="3"
-        background
-        layout="total, prev, pager, next, sizes, jumper"
       />
     </ElCard>
   </div>

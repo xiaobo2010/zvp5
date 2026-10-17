@@ -3,7 +3,7 @@ import type { Log } from '@/../types/log'
 import { ref, watch, toRefs } from 'vue'
 import api from '@/api'
 import ZLogCard from '@/components/log/ZLogCard.vue'
-import { ElPagination, ElInput } from 'element-plus'
+import { ElInput } from 'element-plus'
 
 const props = withDefaults(
   defineProps<{
@@ -59,14 +59,10 @@ watch(xuehai_id2, refresh)
     </div>
     <ZLogCard v-loading="loading" :log="log" v-for="log in logs" :key="log._id" />
     <div class="py-2">
-      <ElPagination
+      <ZPagination
         v-model:current-page="page"
         v-model:page-size="perpage"
-        :pager-count="3"
         :total="amount"
-        layout="total, prev, pager, next, sizes, jumper"
-        background
-        :page-sizes="[3, 5, 8, 10, 15, 20]"
       />
     </div>
   </div>

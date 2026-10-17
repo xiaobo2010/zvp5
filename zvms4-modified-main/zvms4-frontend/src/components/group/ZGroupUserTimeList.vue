@@ -4,7 +4,6 @@ import {
   ElTable,
   ElTableColumn,
   ElCard,
-  ElPagination,
   ElInput,
   ElButton,
   ElSwitch,
@@ -274,15 +273,11 @@ async function onSortChange(data: {
           <ElEmpty description="暂无数据" :image-size="100" />
         </template>
       </ElTable>
-      <ElPagination
+      <ZPagination
         class="time-list-pagination py-1 pt-4"
         v-model:current-page="page"
         v-model:page-size="perpage"
         :total="total"
-        :pager-count="3"
-        layout="total, prev, pager, next, sizes, jumper"
-        background
-        :page-sizes="[3, 5, 8, 10, 15, 20]"
       />
     </ElCard>
   </div>

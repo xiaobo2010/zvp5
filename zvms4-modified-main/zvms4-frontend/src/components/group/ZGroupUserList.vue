@@ -6,7 +6,6 @@ import {
   ElTable,
   ElTableColumn,
   ElCard,
-  ElPagination,
   ElInput,
   ElButton,
   ElCol,
@@ -261,15 +260,11 @@ function handleSelectionChange(val: string[]) {
           </template>
         </ElTableColumn>
       </ElTable>
-      <ElPagination
+      <ZPagination
         class="py-1 pt-4"
         v-model:current-page="page"
         v-model:page-size="perpage"
         :total="total"
-        :pager-count="3"
-        layout="total, prev, pager, next, sizes, jumper"
-        background
-        :page-sizes="[3, 5, 8, 10, 15, 20]"
       />
     </ElCard>
   </div>
