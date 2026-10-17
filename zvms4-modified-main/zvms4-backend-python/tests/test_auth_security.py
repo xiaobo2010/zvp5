@@ -41,6 +41,30 @@ async def test_auth_uses_current_roles_and_rejects_revoked_and_banned(account):
     assert await object_id.optional_current_user(signed) is None
 
 
+@pytest.mark.asyncio
+async def test_banned_account_is_403_user_banned_not_401(account):
+    """封禁必须与「凭据过期/被撤销」可分辨。
+
+    封禁会把 session_id 轮换掉，若这里统一返回 401，前端只能当成登录过期并
+    立即退到登录页，用户永远看不到封禁警告。故封禁走 403 + 稳定标记
+    ``USER_BANNED``，且必须在 sid 校验之前命中（此处故意同时把 sid 改成 v2
+    模拟真实封禁现场）。
+    """
+    signed = token()
+    account["session_id"] = "v2"
+    account["banned"] = True
+
+    with pytest.raises(HTTPException) as failure:
+        await object_id.get_current_user(signed)
+    assert failure.value.status_code == 403
+    assert failure.value.detail == "USER_BANNED"
+
+    # exception=False 的探测路径必须保持「不抛错、只返回 None」，
+    # 否则维护模式中间件 is_admin_token 会炸。
+    assert await object_id.optional_current_user(signed) is None
+    assert await object_id.is_admin_token(f"Bearer {signed}") is False
+
+
 def test_query_parameters_cannot_bypass_access_scope(account):
     app = FastAPI()
 
