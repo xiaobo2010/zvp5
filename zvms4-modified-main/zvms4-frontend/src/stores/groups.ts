@@ -10,12 +10,19 @@ const FAILURE_TTL = 30_000
 export const useGroupsStore = defineStore('group', {
   state: () => ({
     groups: {} as Record<string, Group>,
-    failedAt: {} as Record<string, number>
+    failedAt: {} as Record<string, number>,
+    pending: {} as Record<string, Promise<Group | undefined>>
   }),
   actions: {
     async fetchGroup(id: string) {
       if (id in this.groups) {
         return this.groups[id]
+      }
+
+      // 同 id 的并发请求合并为一次（in-flight 去重），落地后由缓存接管
+      const inflight = this.pending[id]
+      if (inflight) {
+        return inflight
       }
 
       const failedAt = this.failedAt[id]
@@ -26,21 +33,30 @@ export const useGroupsStore = defineStore('group', {
         delete this.failedAt[id]
       }
 
-      let group: Group | undefined
-      try {
-        group = await api.group.readOne(id)
-      } catch {
+      const load = (async () => {
+        let group: Group | undefined
+        try {
+          group = await api.group.readOne(id)
+        } catch {
+          this.failedAt[id] = Date.now()
+          return undefined
+        }
+
+        if (group) {
+          this.groups[id] = group
+          return group
+        }
+
         this.failedAt[id] = Date.now()
         return undefined
-      }
+      })()
 
-      if (group) {
-        this.groups[id] = group
-        return group
+      this.pending[id] = load
+      try {
+        return await load
+      } finally {
+        delete this.pending[id]
       }
-
-      this.failedAt[id] = Date.now()
-      return undefined
     }
   }
 })

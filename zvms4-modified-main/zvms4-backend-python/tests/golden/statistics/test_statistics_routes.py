@@ -66,13 +66,23 @@ class _SpyMembersRepo:
 
 
 class _ListRepo:
-    """Users / groups stand-in returning a fixed list."""
+    """Users / groups stand-in returning a fixed list.
+
+    ``get_many_by_oids`` mirrors the batch users read: only the referenced oids
+    come back (the route no longer pulls the whole table).
+    """
 
     def __init__(self, rows: list[dict]) -> None:
         self.rows = rows
 
     async def list_all(self):
         return list(self.rows)
+
+    async def get_many_by_oids(self, oids: list[str]):
+        wanted = list(dict.fromkeys(oids))
+        return {
+            row["_id"]: row for row in self.rows if row["_id"] in set(wanted)
+        }
 
 
 class _ForbiddenRepo:
@@ -82,6 +92,9 @@ class _ForbiddenRepo:
         self.name = name
 
     async def list_all(self):
+        raise AssertionError(f"the route must not read {self.name} here")
+
+    async def get_many_by_oids(self, oids: list[str]):
         raise AssertionError(f"the route must not read {self.name} here")
 
 

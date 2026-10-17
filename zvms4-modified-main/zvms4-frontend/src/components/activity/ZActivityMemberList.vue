@@ -370,7 +370,7 @@ watch(search, refreshMembers)
           <ElTableColumn v-if="selectable" type="selection" width="55" reserve-selection />
           <ElTableColumn prop="_id" :label="t('activity.member.name')">
             <template #default="scope">
-              <ZActivityMember :id="scope.row.member" />
+              <ZActivityMember :id="scope.row.member" :person="scope.row.user" />
             </template>
           </ElTableColumn>
           <ElTableColumn prop="duration" :label="t('activity.form.duration')">

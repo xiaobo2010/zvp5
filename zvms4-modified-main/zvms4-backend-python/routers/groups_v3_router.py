@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from db import backends
+from db.oracle.session import session_scope
 from typings.log import inject_log
 from util.object_id import get_current_user
 from util.user import get_user_display_name
@@ -16,13 +17,13 @@ def _is_group_manager(user: dict) -> bool:
 
 
 async def _list_permission_group_members(
-    permission_group: dict, query: str, page: int, size: int, pwdm: bool
+    permission_group: dict, query: str, page: int, size: int, pwdm: bool, session
 ):
     permissions = permission_group.get("permissions") or []
     if not permissions:
         return {"data": [], "total": 0}
 
-    members, total = await backends.get_users_repo().list_page(
+    members, total = await backends.get_users_repo(session).list_page(
         query, permissions[0], page, size
     )
 
@@ -63,19 +64,22 @@ async def get_group_users_v3(
     """
 
     validate_object_id(group_id)
-    groups_repo = backends.get_groups_repo()
 
-    permission_group = await groups_repo.get_permission_group(group_id)
-    if permission_group is not None:
-        return await _list_permission_group_members(
-            permission_group, query, page, size, pwdm
-        )
+    # 一个 session_scope 装下全部读取：权限组判定 / 班级 / 成员页共享一次 checkout。
+    async with session_scope() as session:
+        groups_repo = backends.get_groups_repo(session)
 
-    group = await groups_repo.get(group_id)
-    if group is None:
-        return {"data": [], "total": 0}
+        permission_group = await groups_repo.get_permission_group(group_id)
+        if permission_group is not None:
+            return await _list_permission_group_members(
+                permission_group, query, page, size, pwdm, session
+            )
 
-    rows, total = await groups_repo.members_page(group_id, query, page, size)
+        group = await groups_repo.get(group_id)
+        if group is None:
+            return {"data": [], "total": 0}
+
+        rows, total = await groups_repo.members_page(group_id, query, page, size)
 
     for row in rows:
         row["group"] = [row["class_id"]] if row["class_id"] else []

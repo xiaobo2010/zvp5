@@ -5,6 +5,7 @@ import { ElNotification } from 'element-plus'
 import { useRouter } from 'vue-router'
 import { getUserPositions } from '@/utils/groupPosition'
 import { clearCache } from '@/utils/idbCache'
+import { useGroupsStore } from '@/stores/groups'
 
 interface UserTime {
   onCampus: number
@@ -45,7 +46,8 @@ export const useUserStore = defineStore('user', {
   }),
   actions: {
     async getUserClassId(groups: string[]) {
-      const result = await Promise.all(groups.map((group) => api.group.readOne(group)))
+      const groupsStore = useGroupsStore()
+      const result = await Promise.all(groups.map((group) => groupsStore.fetchGroup(group)))
       const group = result.find((group) => group?.type === 'class')
       if (group) {
         this.class_id = group._id

@@ -17,9 +17,16 @@ import router from '@/router'
 const { width, height } = useWindowSize()
 const { t } = useI18n()
 
+type PersonLike = Pick<User, '_id' | 'id' | 'name' | 'group' | 'roles' | 'banned'> & {
+  sex?: string
+  class_id?: string
+  past?: string[]
+}
+
 const props = withDefaults(
   defineProps<{
     id: string
+    person?: PersonLike
     mode?: 'card' | 'button'
     icon?: VueComponent
     color?: 'primary' | 'success' | 'danger' | 'warning' | 'info'
@@ -30,8 +37,8 @@ const props = withDefaults(
     mode: 'button'
   }
 )
-const { id, icon, color, mode } = toRefs(props)
-const person = ref<User>()
+const { id, person: personProp, icon, color, mode } = toRefs(props)
+const personData = ref<PersonLike>()
 const loading = ref(true)
 const loading2 = ref(false)
 const error = ref(false)
@@ -39,9 +46,21 @@ const userStore = useUserStore()
 const past = ref<string[]>([])
 const notFound = ref(false)
 
-watch(id, () => {
-  refresh()
+watch([id, personProp], () => {
+  syncPerson()
 })
+
+function syncPerson() {
+  if (personProp.value) {
+    personData.value = personProp.value
+    past.value = personProp.value.past ?? []
+    error.value = false
+    notFound.value = false
+    loading.value = false
+    return
+  }
+  refresh()
+}
 
 function refresh() {
   loading.value = true
@@ -52,8 +71,8 @@ function refresh() {
       .then((res) => {
         if (!res) error.value = true
         else {
-          person.value = res as User
-          past.value = person.value.past
+          personData.value = res
+          past.value = res.past ?? []
         }
         loading.value = false
       })
@@ -66,13 +85,13 @@ function refresh() {
         loading.value = false
       })
   else {
-    person.value = undefined
+    personData.value = undefined
     notFound.value = true
     loading.value = false
   }
 }
 
-refresh()
+syncPerson()
 
 // 重置成功后的一次性初始密码弹窗：明文只在此响应中出现，关闭后无法再查看
 const initialPasswordVisible = ref(false)
@@ -157,7 +176,7 @@ async function insertUserPast() {
     round
     :loading="loading"
     :icon="icon"
-    :title="person?.name"
+    :title="personData?.name"
     pop-type="dialog"
     width="50%"
     v-bind="$attrs"
@@ -175,23 +194,23 @@ async function insertUserPast() {
         <template #extra>
           <slot name="extra" />
         </template>
-        <ElDescriptionsItem :label="t('home.labels.name')">{{ person?.name }}</ElDescriptionsItem>
-        <ElDescriptionsItem :label="t('home.labels.number')">{{ person?.id }}</ElDescriptionsItem>
+        <ElDescriptionsItem :label="t('home.labels.name')">{{ personData?.name }}</ElDescriptionsItem>
+        <ElDescriptionsItem :label="t('home.labels.number')">{{ personData?.id }}</ElDescriptionsItem>
         <ElDescriptionsItem :label="t('home.labels.identify')">
           <ZUserGroup
-            v-for="group in person?.group"
+            v-for="group in personData?.group"
             :key="group"
             class="px-1"
             :group="group"
             :grouping="false"
           />
           <ZUserPosition
-            v-if="person && ((person.roles ?? []).find((role) => role !== 'student') || !person.group.length)"
-            :position="person.roles ?? []"
+            v-if="personData && ((personData.roles ?? []).find((role) => role !== 'student') || !personData.group.length)"
+            :position="personData.roles ?? []"
           />
         </ElDescriptionsItem>
         <ElDescriptionsItem :label="t('home.labels.status')">
-          <span v-if="!person?.banned">{{ t('home.status.normal') }}</span>
+          <span v-if="!personData?.banned">{{ t('home.status.normal') }}</span>
           <ElTag v-else type="danger" size="small">{{ t('home.status.banned') }}</ElTag>
         </ElDescriptionsItem>
         <ElDescriptionsItem
@@ -235,14 +254,14 @@ async function insertUserPast() {
       </ElDescriptions>
       <ZUserTimeJudge
         class="py-2"
-        v-if="userStore.position.includes('department') || userStore.position.includes('admin') || userStore.position.includes('secretary') && person?.group[0] === userStore.class_id"
+        v-if="userStore.position.includes('department') || userStore.position.includes('admin') || userStore.position.includes('secretary') && personData?.group[0] === userStore.class_id"
         :user="id"
         discount
       />
       <ElButton
         v-if="
           mode === 'button' &&
-          (userStore.position.includes('admin') || userStore.position.includes('department') || userStore.position.includes('secretary') && person?.group[0] === userStore.class_id)
+          (userStore.position.includes('admin') || userStore.position.includes('department') || userStore.position.includes('secretary') && personData?.group[0] === userStore.class_id)
         "
         text
         bg
@@ -254,7 +273,7 @@ async function insertUserPast() {
       </ElButton>
       <ElButton
         v-if="
-          (userStore.position.includes('admin') || userStore.position.includes('department') || userStore.position.includes('secretary') && person?.group[0] === userStore.class_id) &&
+          (userStore.position.includes('admin') || userStore.position.includes('department') || userStore.position.includes('secretary') && personData?.group[0] === userStore.class_id) &&
           id &&
           id !== userStore._id &&
           mode === 'card'
@@ -271,7 +290,7 @@ async function insertUserPast() {
       </ElButton>
     </template>
     <template #text>
-      {{ person?.name }}
+      {{ personData?.name }}
     </template>
   </ZButtonOrCard>
   <!-- 一次性初始密码弹窗：密码明文只显示这一次，必须点「我已记下」关闭 -->
