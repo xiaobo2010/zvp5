@@ -110,6 +110,11 @@ async def set_user_banned_v3(
     if target is None:
         raise HTTPException(status_code=404, detail="用户不存在")
 
+    # 管理员不得封禁自己：一旦生效，唯一的管理入口会被自己关闭，需要人工介入
+    # 才能恢复（无自助解封路径）。仅拦截"封禁"方向，解封自己无风险不额外限制。
+    if payload.banned and str(oid) == str(user["id"]):
+        raise HTTPException(status_code=403, detail="不能封禁自己")
+
     await repo.set_banned(str(oid), 1 if payload.banned else 0)
 
     log.with_text(
