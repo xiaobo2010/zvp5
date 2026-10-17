@@ -1,11 +1,9 @@
 # db.oracle
 
-Self-contained scaffolding for an **Oracle Autonomous Database (ADB)** connection,
-built on SQLAlchemy 2.0 async + `python-oracledb` (thin mode).
-
-This package is **not wired into the application**. The app still uses MongoDB
-via `database.py`; nothing here imports or modifies it. No schema or tables
-exist yet — this round adds **code only** and performs **no database I/O**.
+Runtime **Oracle Autonomous Database (ADB)** connection layer, built on
+SQLAlchemy 2.0 async + `python-oracledb` (thin mode). All application repositories
+are selected through `db/backends.py`. Schema definitions and versioned migration
+scripts are in [`ddl/`](ddl/README.md); the application does not apply them at startup.
 
 ## Instances: prod vs test
 
@@ -43,8 +41,8 @@ Add these to `settings.py` (placeholders are in `settings.example.py`):
 ## Recorded decision: JSON columns
 
 The stack is locked to **SQLAlchemy 2.0.x**, which has no Oracle JSON DDL
-type. JSON data will therefore be modelled as **`CLOB` + an `IS JSON` check
-constraint**. No JSON column is added in this round.
+type. JSON data is modelled as **`CLOB` + an `IS JSON` check constraint**.
+`db/oracle/clob.py` installs the shared large-value bind hook.
 
 ## How a caller obtains a session
 
@@ -73,4 +71,14 @@ lazily on first use — importing any module here never connects.
   `connect_args` for thin mode, only when a wallet dir is configured.
 - `wallet_password` is forwarded only when non-empty; it is the OCI wallet
   password (decrypts `ewallet.pem`), not the DB user password.
-- Pool tuning is a placeholder (5/5, `pool_pre_ping`, 1800s recycle).
+- Pool configuration is 5 persistent connections plus up to 5 overflow
+  connections per API process, with `pool_pre_ping` and 1800s recycle.
+
+## Read-only monitoring
+
+[`GET /api/system/db/status`](../../docs/database-status.md) uses the same active
+instance and engine. It does not need OCI SDK credentials. Schema storage comes
+from `USER_*` views; optional tablespace and performance observations use
+`DBA_TABLESPACE_USAGE_METRICS`, `DBA_TABLESPACES` and `V$SYSMETRIC`. Missing read
+privileges degrade the affected component rather than reporting zero usage.
+No grants or configuration changes are performed by the endpoint.

@@ -2,6 +2,18 @@ from db import backends
 from utils import validate_object_id
 
 
+def public_user(user: dict) -> dict:
+    """Explicit API projection; repository-only credentials never cross it."""
+    fields = {"_id", "id", "name", "roles", "class_id", "group", "sex",
+              "eligibility", "past", "banned", "password"}
+    result = {key: value for key, value in user.items() if key in fields}
+    # Callers may deliberately expose a password-state boolean. Never let an
+    # unprojected repository hash survive this final response boundary.
+    if "password" in result and not isinstance(result["password"], bool):
+        result["password"] = None
+    return result
+
+
 async def get_user_name(id: str):
     try:
         oid = str(validate_object_id(id))

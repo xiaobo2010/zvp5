@@ -10,10 +10,8 @@ from datetime import datetime, timezone
 from db import backends
 from db.ids import normalize_oid, is_valid_oid
 from util.cert import jwt_decode
+from util.group import get_user_permissions
 
-# Secret key and algorithm for JWT
-SECRET_KEY = open("aes_key.txt", "r").read()
-ALGORITHM = "HS256"
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token", auto_error=False)
 
 
@@ -43,18 +41,32 @@ async def get_user(oid: str):
 
 
 async def compulsory_temporary_token(token: str = Depends(oauth2_scheme)):
-    result = await get_current_user(token, "short", True)
+    result = await _authenticate(token, "short", True)
     return result
+
+
+async def password_change_token(token: str = Depends(oauth2_scheme)):
+    return await _authenticate(token, "password_change", True)
+
+
+async def authenticated_log_user(token: str = Depends(oauth2_scheme)):
+    # Route dependencies enforce the required scope; logging accepts either
+    # credential so a second auth dependency cannot break verification routes.
+    return await _authenticate(token, "any", True)
 
 
 async def optional_current_user(token: str = Depends(oauth2_scheme)):
-    result = await get_current_user(token, "long", False)
+    result = await _authenticate(token, "long", False)
     return result
 
 
-async def get_current_user(
-    token: Optional[str] = Depends(oauth2_scheme),
-    scope: Optional[str] = "long",
+async def get_current_user(token: Optional[str] = Depends(oauth2_scheme)):
+    return await _authenticate(token, "long", True)
+
+
+async def _authenticate(
+    token: Optional[str],
+    scope: str,
     exception: bool = True,
 ):
     """
@@ -73,7 +85,7 @@ async def get_current_user(
 
     try:
         if token is None:
-            raise_exception()
+            return raise_exception()
         # Decode JWT
         payload = jwt_decode(token)
         oid: str = payload.get("sub", None)
@@ -82,24 +94,41 @@ async def get_current_user(
 
         # Check if the token is valid
         if oid is None or exp is None or jti is None:
-            raise_exception()
+            return raise_exception()
 
         # Check if the token is expired
-        if exp is not None and datetime.utcnow() >= datetime.fromtimestamp(exp):
-            raise_exception()
-        if scope == "short" and payload["scope"] == "access_token":
-            raise_exception()
+        if exp is not None and datetime.now(timezone.utc).timestamp() >= exp:
+            return raise_exception()
+        # A short/temporary credential is the explicit proof-of-identity gate.
+        # Do not allow a missing or unknown scope to pass this stricter path.
+        token_scope = payload.get("scope")
+        if token_scope not in ("access_token", "temporary_token"):
+            return raise_exception()
+        if scope == "long" and token_scope != "access_token":
+            return raise_exception()
+        if scope in ("short", "password_change") and token_scope != "temporary_token":
+            return raise_exception()
+        purpose = payload.get("purpose")
+        if purpose == "password_change" and scope not in ("password_change", "any"):
+            return raise_exception()
+        if not is_valid_oid(oid):
+            return raise_exception()
+        current = await backends.get_users_repo().get_by_oid(oid)
+        if current is None or current.get("banned"):
+            return raise_exception()
+        if payload.get("sid") != current.get("session_id", ""):
+            return raise_exception()
+        permissions = await get_user_permissions(current)
         user = {
             "id": oid,
-            "perm": upgrade_user_positions(payload.get("per", None)),
-            "per": payload.get("per", None),
-            "scope": payload.get("scope", None),
+            "perm": upgrade_user_positions(permissions),
+            "per": permissions,
+            "scope": token_scope,
+            "purpose": purpose,
         }
-        if user is None:
-            raise_exception()
         return user
-    except jwt.PyJWTError:
-        raise_exception()
+    except (jwt.PyJWTError, TypeError, ValueError):
+        return raise_exception()
 
 
 def timestamp_change(date_string: str):

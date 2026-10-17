@@ -60,12 +60,14 @@ export async function resetPassword(
 }
 
 export async function resetToInitial(user: string, token: string) {
-  const result = (await axios(`/v3/users/${user}/password`, {
-    method: 'DELETE',
-    headers: {
-      Authorization: `Bearer ${token}`
-    }
-  })) as Response<{ initial_password: string }>
+  const result = (
+    await axios(`/v3/users/${user}/password`, {
+      method: 'DELETE',
+      headers: {
+        Authorization: `Bearer ${token}`
+      }
+    })
+  ).data as Response<{ initial_password: string }>
   if (result.status === 'error') {
     ElNotification({
       title: 'Error when resetting password',
@@ -91,7 +93,7 @@ async function UserLogin(
   const publicKey = await importPublicKey(await getRSAPublicCert())
   const credential = await encryptData(publicKey, payload)
   const hex = byteArrayToHex(new Uint8Array(credential))
-  const result = (await axios('/users/auth', {
+  const result = (await axios<LoginResult>('/users/auth', {
     method: 'POST',
     data: {
       id: user.toString(),
@@ -99,19 +101,11 @@ async function UserLogin(
       mode: term,
       purpose: purpose
     }
-  })) as Response<LoginResult>
-  if (result.status === 'error') {
-    ElNotification({
-      title: 'Login failed (' + result.code + ')',
-      message: result.message,
-      type: 'error'
-    })
-    return
+  })).data
+  if (term === 'long' && purpose === 'login') {
+    localStorage.setItem('token', result.token)
   }
-  if (term === 'long') {
-    localStorage.setItem('token', result.data.token)
-  }
-  return result.data
+  return result
 }
 
 export { UserLogin as useLongTermAuth }

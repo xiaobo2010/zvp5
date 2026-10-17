@@ -1,6 +1,7 @@
 from fastapi import Request, FastAPI
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, RedirectResponse
+import logging
 import re
 from datetime import datetime
 from typings.log import ZVMSLog, xuehai_id_from
@@ -21,6 +22,7 @@ from routers import (
     groups_v3_router,
     changelog_router,
     attachments_router,
+    db_system_router,
 )
 import socketio
 from socketio.exceptions import ConnectionRefusedError as SocketIOConnectionRefusedError
@@ -36,6 +38,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from tasks.compute_time import rebuild_statistics, generate_reports
 
 scheduler = AsyncIOScheduler()
+_logger = logging.getLogger(__name__)
 sio = socketio.AsyncServer(async_mode="asgi")
 socket = socketio.ASGIApp(sio)
 
@@ -264,6 +267,7 @@ app.include_router(
     attachments_router.router, prefix="/api/attachments", tags=["attachments"]
 )
 app.include_router(system_router, prefix="/api/system/maintenance", tags=["System"])
+app.include_router(db_system_router.router, prefix="/api/system/db", tags=["System"])
 
 
 @app.get("/api/")
@@ -331,10 +335,15 @@ async def health_check():
     """Health check endpoint."""
     try:
         # ADB is the only backend: always verify DB connectivity.
-        await oracle_ping()
+        if not await oracle_ping():
+            raise RuntimeError("database ping returned false")
         return {"status": "ok", "code": 200, "data": "OK"}
-    except Exception as e:
-        return {"status": "error", "code": 500, "data": str(e)}
+    except Exception:
+        _logger.exception("Health check failed")
+        return JSONResponse(
+            status_code=503,
+            content={"status": "error", "code": 503, "data": "Service unavailable"},
+        )
 
 
 @app.get("/api/cert")
@@ -375,8 +384,9 @@ async def invalid_oid_exception_handler(_: Request, exc: InvalidOid):
 @app.exception_handler(Exception)
 async def generic_exception_handler(_: Request, exc: Exception):
     """Catch-all exception handler to return a generic error message."""
+    _logger.exception("Unhandled request exception", exc_info=exc)
     return JSONResponse(
-        content={"detail": "An internal server error occurred: %s" % type(exc).__name__}, status_code=500
+        content={"detail": "An internal server error occurred"}, status_code=500
     )
 
 

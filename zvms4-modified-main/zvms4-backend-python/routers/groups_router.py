@@ -1,9 +1,9 @@
 import re
-import tempfile
+import asyncio
 from io import BytesIO
 from typing import Optional
 import pandas as pd
-from fastapi.responses import FileResponse
+from fastapi.responses import Response
 from typings.export import ExportFormat
 from typings.group import Group
 from fastapi import APIRouter, HTTPException, Depends, Query
@@ -21,7 +21,7 @@ from util.object_id import (
 )
 from util.permission.user import validate_read_group_permission
 from typings.log import inject_log
-from util.user import get_user_display_name
+from util.user import get_user_display_name, public_user
 
 router = APIRouter()
 
@@ -241,7 +241,7 @@ async def get_users_in_class(
     class_oid = validate_object_id(group_id)
     result = await backends.get_users_repo().list_by_class(str(class_oid))
     if search:
-        pattern = re.compile(search, re.IGNORECASE)
+        pattern = re.compile(re.escape(search), re.IGNORECASE)
         result = [user for user in result if pattern.search(user.get("name") or "")]
     count = len(result)
     result.sort(key=lambda user: user.get("id") or "")
@@ -258,7 +258,7 @@ async def get_users_in_class(
             )
         else:
             user["password"] = None
-    return {"status": "ok", "code": 200, "data": result, "metadata": {"size": count}}
+    return {"status": "ok", "code": 200, "data": [public_user(row) for row in result], "metadata": {"size": count}}
 
 
 @router.get("/{group_id}/time")
@@ -282,7 +282,7 @@ async def get_user_times_in_class(
     class_oid = validate_object_id(group_id)
     result = await backends.get_users_repo().list_by_class(str(class_oid))
     if search:
-        pattern = re.compile(search, re.IGNORECASE)
+        pattern = re.compile(re.escape(search), re.IGNORECASE)
         result = [user for user in result if pattern.search(user.get("name") or "")]
     count = len(result)
     result.sort(key=lambda user: user.get("id") or "")
@@ -418,7 +418,7 @@ async def get_group_template(
         "admin" not in user["per"]
         and "auditor" not in user["per"]
         and "department" not in user["per"]
-        and ("secretary" not in user["per"] and not same_class)
+        and ("secretary" not in user["per"] or not same_class)
     ):
         raise HTTPException(status_code=403, detail="Permission denied")
 
@@ -426,6 +426,8 @@ async def get_group_template(
     db_users = await backends.get_users_repo().list_by_class(str(class_oid))
 
     class_group = await backends.get_groups_repo().get(str(class_oid))
+    if class_group is None:
+        raise HTTPException(status_code=404, detail="Group not found")
     group_name = class_group["name"]
 
     users = []
@@ -434,28 +436,26 @@ async def get_group_template(
         users.append(
             {
                 "_id": str(user["_id"]),
-                "ID": user["id"],
                 "Name": user["name"],
-                "Class": group_name,
+                "ID": user["id"],
+                "Group": group_name,
                 "On Campus": None,
                 "Off Campus": None,
                 "Social Practice": None,
             }
         )
 
-    table = pd.DataFrame(users).sort_values("ID")
+    table = pd.DataFrame(users, columns=["_id", "Name", "ID", "Group", "On Campus", "Off Campus", "Social Practice"]).sort_values("ID")
 
-    buffer = BytesIO()
-    with tempfile.NamedTemporaryFile(
-        suffix=f".{export_format.suffix()}", delete=False
-    ) as tmp:
+    def render():
+        buffer = BytesIO()
         if export_format == ExportFormat.excel:
-            table.to_excel(tmp.name, index=False)
+            table.to_excel(buffer, index=False)
         elif export_format == ExportFormat.csv:
-            table.to_csv(tmp.name, index=False)
+            buffer.write(table.to_csv(index=False).encode("utf-8-sig"))
         else:
             raise HTTPException(status_code=400, detail="Unsupported format")
-        tmp.seek(0)
-        buffer.write(tmp.read())
+        return buffer.getvalue()
 
-    return FileResponse(tmp.name, media_type=export_format.mime())
+    return Response(await asyncio.to_thread(render), media_type=export_format.mime(),
+                    headers={"Content-Disposition": f'attachment; filename="template.{export_format.suffix()}"'})
