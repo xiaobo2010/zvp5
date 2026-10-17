@@ -70,6 +70,20 @@ class UsersRepo(Protocol):
         """Set (or clear, with ``None``) a user's ``password`` hash."""
         ...
 
+    async def set_password_guarded(
+        self, oid: str, password_hash: str, actor_oid: str
+    ) -> int:
+        """Atomically set a password, guarded by the target's role.
+
+        A single ``UPDATE ... WHERE oid = :oid AND (actor = oid OR the target
+        has no admin role)``: the write lands only when ``actor_oid``
+        is the target themself or the target is not an admin-level account. The
+        role test and the write share one statement so a concurrent promotion of
+        the target to ``admin`` cannot slip through between check and write.
+        Returns the affected row count (``0`` = rejected by the guard).
+        """
+        ...
+
     async def set_roles(self, oid: str, roles: list[str]) -> None:
         """Replace a user's ``roles`` whitelist."""
         ...
