@@ -108,6 +108,15 @@ class UsersRepo(Protocol):
         """Map each existing ``oid`` to its display ``name``; unknown ids omitted."""
         ...
 
+    async def get_many_by_oids(self, oids: list[str]) -> dict[str, Row]:
+        """Map each existing ``oid`` to its **full** user document.
+
+        Batch form of :meth:`get_by_oid` for list endpoints (member/statistics
+        fan-out); unknown ids are omitted. Dependencies are de-duplicated and
+        looked up in <=1000-element ``IN`` chunks.
+        """
+        ...
+
     async def list_all(self) -> list[Row]:
         """Return every user document (``users.find({})``).
 
@@ -496,6 +505,17 @@ class MembersRepo(Protocol):
         """Return memberships whose ``member`` is in ``member_oids`` (no pagination).
 
         Lifts ``util/calculate.py::get_activities_related_to_user``.
+        """
+        ...
+
+    async def list_by_activity_and_members(
+        self, activity_oid: str, member_oids: list[str]
+    ) -> list[Row]:
+        """Return an activity's memberships for the given ``member_oids``.
+
+        Batch form of :meth:`get_by_triple` (same ``(member, mode)`` key space) so
+        a bulk import can decide "update vs insert" in memory instead of issuing
+        one lookup per member.
         """
         ...
 

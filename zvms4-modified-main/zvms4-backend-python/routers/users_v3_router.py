@@ -10,7 +10,7 @@ from util.cert import generate_initial_password, get_current_totp
 from util.group import get_user_permissions
 from util.object_id import compulsory_temporary_token, get_current_user
 from util.permission.user import credential_change_forbidden
-from util.user import get_user_display_name
+from util.user import get_user_display_name, user_profile
 from utils import validate_object_id
 from util.validation import validate_number, validate_student_name
 
@@ -38,18 +38,7 @@ async def get_user_v3(
     if target is None:
         raise HTTPException(status_code=404, detail="用户不存在")
 
-    class_id = str(target["class_id"]) if target.get("class_id") else ""
-    profile = {
-        "_id": str(target["_id"]),
-        "id": target["id"],
-        "name": target["name"],
-        "roles": target.get("roles", []),
-        "class_id": class_id,
-        "group": [class_id] if class_id else [],
-        "banned": bool(target.get("banned")),
-    }
-
-    return {"status": "ok", "code": 200, "data": profile}
+    return {"status": "ok", "code": 200, "data": user_profile(target)}
 
 
 AllowedRole = Literal["student", "secretary", "department", "admin", "teacher"]

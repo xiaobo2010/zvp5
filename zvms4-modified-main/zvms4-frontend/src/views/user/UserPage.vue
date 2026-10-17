@@ -157,7 +157,7 @@ watch(
       </template>
     </ElPageHeader>
     <div v-if="user && current === 'info'">
-      <ZActivityMember :id="id" mode="card" />
+      <ZActivityMember :id="id" mode="card" :person="user ?? undefined" />
     </div>
     <div v-else-if="user && current === 'activity'">
       <ZActivityList :perspective="id" role="mine" :key="id" />

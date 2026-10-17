@@ -46,6 +46,9 @@ _ROLE_EXISTS = (
 # ``class_name`` to this literal when the group lookup misses.
 _UNKNOWN_CLASS = "未知班级"
 
+# Oracle refuses more than 1000 elements in a single ``IN`` (ORA-01795).
+_OID_CHUNK = 1000
+
 
 @asynccontextmanager
 async def _session_for(
@@ -242,6 +245,10 @@ def _get_names_stmt(oids: list[str]):
     return select(users_tbl.c.oid, users_tbl.c.name).where(
         users_tbl.c.oid.in_(oids)
     )
+
+
+def _get_many_by_oids_stmt(oids: list[str]):
+    return select(*_user_columns()).where(users_tbl.c.oid.in_(oids))
 
 
 # Mongo ``{"past": {"$elemMatch": {"$regex": q, "$options": "i"}}}``: a
@@ -539,6 +546,27 @@ class OracleUsersRepo:
         async with _session_for(self._session) as (session, _owns):
             rows = (await session.execute(stmt)).all()
         return {row._mapping["oid"]: row._mapping["name"] for row in rows}
+
+    async def get_many_by_oids(self, oids: list[str]) -> dict[str, Row]:
+        """Full user documents for many oids in one round trip.
+
+        ``get_by_oid`` in a loop is the N+1 of every member/statistics list; this
+        is the batch form. Unknown ids are simply absent from the result. The
+        ``IN`` list is split into :data:`_OID_CHUNK`-sized statements because
+        Oracle rejects more than 1000 elements in one ``IN`` (ORA-01795).
+        """
+        unique = list(dict.fromkeys(normalize_oid(oid) for oid in oids))
+        if not unique:
+            return {}
+        found: dict[str, Row] = {}
+        async with _session_for(self._session) as (session, _owns):
+            for start in range(0, len(unique), _OID_CHUNK):
+                chunk = unique[start : start + _OID_CHUNK]
+                rows = (await session.execute(_get_many_by_oids_stmt(chunk))).all()
+                for row in rows:
+                    doc = _user_doc(row._mapping)
+                    found[str(doc["_id"])] = doc
+        return found
 
     async def list_all(self) -> list[Row]:
         stmt = _all_users_stmt()
