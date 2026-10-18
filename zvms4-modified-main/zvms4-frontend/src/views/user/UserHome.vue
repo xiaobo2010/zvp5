@@ -60,12 +60,12 @@ watch(
 </script>
 
 <template>
-  <div class="px-20 fill" style="width: 100%" v-if="user.isLogin">
-    <p class="text-2xl py-8">
+  <div class="px-6 fill" style="width: 100%" v-if="user.isLogin">
+    <p class="text-xl py-4 semibold">
       {{ t('home.greeting', { greet: t('home.greetings.' + greeting), name: user.name }) }}
     </p>
-    <div class="py-4">
-      <ElCard shadow="hover">
+    <div class="py-2">
+      <ElCard shadow="never">
         <ElDescriptions class="fill" border :column="width < height * 1.2 ? 2 : 3">
           <template #title>
             <p class="text-xl">{{ t('home.panels.information.title') }}</p>
@@ -111,7 +111,7 @@ watch(
         </div>
       </ElCard>
     </div>
-    <div :class="['py-4', user.shouldResetPassword ? 'z-blur' : '']">
+    <div :class="['py-2', user.shouldResetPassword ? 'z-blur' : '']">
       <ZUserTimeJudge
         :user="user._id"
         :on-campus="user.time.onCampus"
