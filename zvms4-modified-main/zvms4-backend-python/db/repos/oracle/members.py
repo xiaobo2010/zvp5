@@ -76,6 +76,9 @@ def _member_columns() -> tuple[Any, ...]:
 
 _ORACLE_REGEX_METACHARS = "\\^$.*+?()[]{}|"
 
+# Oracle refuses more than 1000 elements in a single ``IN`` (ORA-01795).
+_OID_CHUNK = 1000
+
 
 def escape_oracle_regex(value: str) -> str:
     """Escape the characters ``REGEXP_LIKE`` reads as operators."""
@@ -637,15 +640,22 @@ class OracleMembersRepo:
         Lets a bulk import read every existing ``(member, mode)`` row in one
         statement instead of one lookup per member; the returned rows share
         ``get_by_triple``'s key space, so the caller can decide update-vs-insert
-        in memory.
+        in memory. The ``IN`` list is split into :data:`_OID_CHUNK`-sized
+        statements because Oracle rejects more than 1000 elements in one ``IN``
+        (ORA-01795); every chunk runs on the same session.
         """
-        if not member_oids:
+        unique = list(dict.fromkeys(normalize_oid(o) for o in member_oids))
+        if not unique:
             return []
-        stmt = _list_by_activity_and_members_stmt(
-            normalize_oid(activity_oid), [normalize_oid(o) for o in member_oids]
-        )
+        activity = normalize_oid(activity_oid)
+        rows: list[Any] = []
         async with _session_for(self._session) as (session, _owns):
-            rows = (await session.execute(stmt)).all()
+            for start in range(0, len(unique), _OID_CHUNK):
+                chunk = unique[start : start + _OID_CHUNK]
+                result = await session.execute(
+                    _list_by_activity_and_members_stmt(activity, chunk)
+                )
+                rows.extend(result.all())
         return [_member_row(row._mapping) for row in rows]
 
     async def count_for_activity(
