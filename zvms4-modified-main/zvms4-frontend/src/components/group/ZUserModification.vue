@@ -11,11 +11,13 @@ import {
   ElCheckbox,
   ElCheckboxGroup,
   ElDialog,
+  ElMessage,
   ElNotification
 } from 'element-plus'
 import { ref, onMounted, toRefs, watch } from 'vue'
 import api from '@/api'
-import type { Group, User } from '@/../types'
+import type { Group, User, UserPosition } from '@/../types'
+import { useUserStore } from '@/stores/user.ts'
 import { reactive } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ArrowRight } from '@element-plus/icons-vue'
@@ -37,13 +39,17 @@ const props = withDefaults(
 )
 
 const { id, mode, cid } = toRefs(props)
+const userStore = useUserStore()
 const userGroups = ref<string[]>([])
 const classGroupID = ref<string>('')
-const permissionsID = ref<string[]>([])
+const permissionsID = ref<UserPosition[]>([])
 const classes = ref<Group[]>([])
 const loadingClasses = ref(false)
-const permissions = ref<Group[]>([])
-const loadingPermissions = ref(false)
+const allowedRoles: UserPosition[] = ['student', 'secretary', 'department', 'admin', 'teacher']
+// UI 未列出的既有角色（如 system/auditor）：提交时原样保留，避免被意外清除
+const extraRoles = ref<UserPosition[]>([])
+const originalRoles = ref('')
+const originalStudentId = ref('')
 const person = ref<User>()
 const submission = ref(false)
 const modification = reactive<User>({
@@ -86,6 +92,11 @@ function refresh() {
           modification.id = Number(res.id)
           classGroupID.value = res.class_id || ''
           originalClassID.value = res.class_id || ''
+          originalStudentId.value = String(res.id ?? '')
+          const rawRoles = (res.roles ?? []) as UserPosition[]
+          permissionsID.value = rawRoles.filter((role) => allowedRoles.includes(role))
+          extraRoles.value = rawRoles.filter((role) => !allowedRoles.includes(role))
+          originalRoles.value = [...rawRoles].sort().join(',')
         }
         loading.close()
       })
@@ -109,27 +120,19 @@ async function refreshClasses() {
   }
 }
 
-async function refreshPermissions() {
-  loadingPermissions.value = true
-  const permissionsSet = await api.group.read('permission', -1)
-  if (permissionsSet) {
-    permissions.value = permissionsSet.groups.filter((group) => group.type === 'permission')
-  }
-  loadingPermissions.value = false
-}
-
 onMounted(refresh)
 onMounted(refreshClasses)
-onMounted(refreshPermissions)
 
 watch(id, refresh)
 
 async function submit() {
   submission.value = true
   if (modification.name === '') {
+    submission.value = false
     return
   }
   if (classGroupID.value === '') {
+    submission.value = false
     return
   }
   try {
@@ -147,6 +150,39 @@ async function submit() {
         return
       }
     } else {
+      // 零改动不提交、不提示"已修改"（v4.2.4-2 R3）
+      let changed = false
+      const nextStudentId = String(modification.id ?? '').trim()
+      if (nextStudentId !== originalStudentId.value) {
+        if (!/^\d{8}$/.test(nextStudentId)) {
+          ElMessage({
+            message: t('manage.personalPanel.studentIdInvalid'),
+            type: 'warning',
+            plain: true,
+            grouping: true
+          })
+          submission.value = false
+          return
+        }
+        await api.user.updateStudentId(id.value, nextStudentId)
+        originalStudentId.value = nextStudentId
+        changed = true
+      }
+      const nextRoles = [...extraRoles.value, ...permissionsID.value]
+      const rolesKey = [...nextRoles].sort().join(',')
+      if (rolesKey !== originalRoles.value) {
+        await api.user.updateRoles(id.value, nextRoles)
+        originalRoles.value = rolesKey
+        changed = true
+        // set_roles 会轮换 session_id：目标用户旧 token 立即失效
+        if (userStore._id === id.value) {
+          await userStore.refreshUser().catch(() => {})
+        }
+        ElNotification({
+          title: t('manage.personalPanel.reloginNotice'),
+          type: 'warning'
+        })
+      }
       if (classGroupID.value !== originalClassID.value) {
         if (!classGroupID.value && originalClassID.value) {
           await api.group.removeGroupUserV3(originalClassID.value, id.value)
@@ -154,15 +190,25 @@ async function submit() {
           await api.group.addGroupUserV3(classGroupID.value, id.value)
         }
         originalClassID.value = classGroupID.value
+        changed = true
+      }
+      if (!changed) {
+        submission.value = false
+        return
       }
     }
   } catch (_) {
+    // 失败原因由 axios 全局拦截器按响应 detail 展示，这里只中止流程、不弹成功
     submission.value = false
     return
   }
   // 兼容未返回一次性密码的旧契约：维持原有成功通知
   ElNotification({
-    title: `用户${mode.value === 'create' ? '创建成功' : '已修改'}`,
+    title: t(
+      mode.value === 'create'
+        ? 'manage.personalPanel.createdNotification'
+        : 'manage.personalPanel.modifiedNotification'
+    ),
     type: 'success'
   })
   submission.value = false
@@ -216,12 +262,12 @@ async function remoteFetchClass(search: string) {
         </ElFormItem>
         <ElFormItem
           v-if="mode === 'modify'"
-          :label="t('manage.groupDetails.userList.columns.permission')"
+          :label="t('manage.personalPanel.roles.title')"
           required
         >
           <ElCheckboxGroup v-model="permissionsID">
-            <ElCheckbox v-for="group in permissions" :key="group._id" :label="group._id" border>
-              {{ group.name }}
+            <ElCheckbox v-for="role in allowedRoles" :key="role" :label="role" border>
+              {{ t(('manage.personalPanel.roles.' + role) as string) }}
             </ElCheckbox>
           </ElCheckboxGroup>
         </ElFormItem>

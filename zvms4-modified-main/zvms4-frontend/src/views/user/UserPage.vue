@@ -71,6 +71,28 @@ async function toggleBanned() {
   }
 }
 
+async function deleteUser() {
+  if (!user.value) return
+  if (isSelf.value) return
+  try {
+    await ElMessageBox.confirm(
+      t('manage.personalPanel.deleteConfirm', { name: user.value.name }),
+      { type: 'warning' }
+    )
+  } catch {
+    return
+  }
+  const result = await api.user.deleteUser(id.value)
+  if (result) {
+    ElNotification({
+      title: t('manage.personalPanel.deletedNotification', { name: user.value.name }),
+      type: 'success'
+    })
+    // 用户已不存在，留在详情页只会拿到 404：返回来源页（列表会在挂载时重新拉取）
+    router.back()
+  }
+}
+
 getUser().then(() => {
   if (!(userStore.position.includes('admin') || userStore.position.includes('department') || userStore.position.includes('secretary') && user.value?.group[0] === userStore.class_id)) {
     router.replace('/not-found')
@@ -151,6 +173,18 @@ watch(
           <span class="ml-4 inline-flex">
             <ElButton type="danger" text bg :disabled="banSelfBlocked" @click="toggleBanned">
               {{ user.banned ? t('manage.personalPanel.unban') : t('manage.personalPanel.ban') }}
+            </ElButton>
+          </span>
+        </ElTooltip>
+        <ElTooltip
+          v-if="userStore.position.includes('admin') && user"
+          :content="t('manage.personalPanel.deleteSelfForbidden')"
+          :disabled="!isSelf"
+          placement="bottom"
+        >
+          <span class="ml-2 inline-flex">
+            <ElButton type="danger" text bg :disabled="isSelf" @click="deleteUser">
+              {{ t('manage.groupDetails.userList.columns.remove') }}
             </ElButton>
           </span>
         </ElTooltip>

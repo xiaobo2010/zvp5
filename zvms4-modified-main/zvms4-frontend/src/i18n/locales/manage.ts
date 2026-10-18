@@ -100,6 +100,23 @@ export const zhCN = {
       acknowledge: '我已记下'
     },
     userCreatedTitle: '用户已创建',
+    createdNotification: '用户创建成功',
+    modifiedNotification: '用户已修改',
+    reloginNotice: '身份已修改：该用户需重新登录才能继续使用。',
+    studentIdInvalid: '学号格式不正确：必须为 8 位数字',
+    roles: {
+      title: '身份',
+      student: '学生',
+      secretary: '团支书',
+      department: '学生会',
+      admin: '管理员',
+      teacher: '教师'
+    },
+    deleteUser: '删除用户',
+    deleteSelfForbidden: '不能删除自己',
+    deleteConfirm:
+      '确定要删除用户 {name} 吗？此操作不可恢复，删除后 30 天内可由管理员从回收站恢复。',
+    deletedNotification: '已删除用户 {name}，30 天内可从回收站恢复',
     notFound: '无此用户',
     bannedTag: '已封禁',
     ban: '封禁账号',
