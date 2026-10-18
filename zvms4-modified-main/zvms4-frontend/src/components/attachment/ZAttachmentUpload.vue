@@ -468,7 +468,7 @@ function statusText(item: DisplayItem): string {
           v-else-if="item.status === 'done'"
           class="absolute inset-x-0 bottom-0 bg-black/40 px-1 py-0.5 flex items-center justify-between"
         >
-          <span class="text-white text-[10px] truncate">{{ statusText(item) }}</span>
+          <span class="text-white text-[12px] truncate">{{ statusText(item) }}</span>
           <div class="flex items-center">
             <button
               v-if="item.url"

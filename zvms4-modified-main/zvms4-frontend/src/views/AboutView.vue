@@ -25,7 +25,7 @@ header.setHeader(t('nav.about'))
   <div class="p-4">
     <ElPageHeader :icon="ArrowLeft" @back="router.back()" class="py-4">
       <template #content>
-        <h1 class="text-xl">{{ t('nav.about') }}</h1>
+        <h1 class="text-[22px]">{{ t('nav.about') }}</h1>
       </template>
     </ElPageHeader>
     <ElCard shadow="never">
