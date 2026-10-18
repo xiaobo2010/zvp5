@@ -272,8 +272,22 @@ const panelButtons = [
   {
     icon: SwitchButton,
     async click() {
-      await userStore.removeUser()
-      router.replace('/user/login')
+      try {
+        await ElMessageBox.confirm(
+          t('nav.logoutConfirm', '退出登录后需要重新验证身份，确定要退出吗？'),
+          t('nav.logout', '退出登录'),
+          {
+            confirmButtonText: t('nav.logout', '退出登录'),
+            cancelButtonText: t('action.cancel', '取消'),
+            type: 'warning',
+            confirmButtonClass: 'el-button--danger'
+          }
+        )
+        await userStore.removeUser()
+        router.replace('/user/login')
+      } catch {
+        /* 用户取消 */
+      }
     },
     text: 'logout'
   }
