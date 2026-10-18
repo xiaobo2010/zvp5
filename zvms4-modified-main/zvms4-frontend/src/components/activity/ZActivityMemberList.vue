@@ -22,6 +22,8 @@ import {
   ElDivider,
   ElMessage,
   ElLoading,
+  ElIcon,
+  ElEmpty,
   type TableInstance
 } from 'element-plus'
 import { useWindowSize, useClipboard } from '@vueuse/core'
@@ -68,7 +70,7 @@ const props = withDefaults(
   defineProps<{
     activity: Activity
     membersCount?: number
-    mode?: 'button' | 'card'
+    mode?: 'button' | 'card' | 'inline'
     wholesale?: boolean
     modelValue?: ActivityMember[]
     selectable?: boolean
@@ -179,6 +181,10 @@ async function refreshMembers() {
   members.value = membersResult
   size.value = total
   pageLoading.value = false
+  if (mode.value === 'inline' && modified.value) {
+    modified.value = false
+    emits('refresh')
+  }
 }
 
 refreshMembers()
@@ -347,7 +353,7 @@ watch(search, refreshMembers)
 <template>
   <ZButtonOrCard
     v-model:open="open"
-    :mode="mode"
+    :mode="mode === 'inline' ? 'card' : mode"
     pop-type="dialog"
     width="80%"
     size="small"
@@ -359,11 +365,23 @@ watch(search, refreshMembers)
   >
     <template #text> {{ size }} {{ t('activity.units.person', membersCount) }} </template>
     <template #default>
+      <div
+        v-if="mode === 'inline'"
+        class="pb-2 flex items-center justify-between flex-wrap gap-y-1"
+      >
+        <p class="flex items-center gap-1 font-medium">
+          <ElIcon><IconUser /></ElIcon>
+          {{ t('activity.member.inline.title') }}
+        </p>
+        <span class="text-sm text-gray-500" style="font-variant-numeric: tabular-nums">
+          {{ t('activity.member.inline.count', { count: size }) }}
+        </span>
+      </div>
       <div v-if="show" v-loading="pageLoading">
         <ElTable
           :data="members"
           stripe
-          :height="max"
+          :height="mode === 'inline' ? undefined : max"
           row-key="member"
           @selection-change="handleSelectionChange"
         >
@@ -550,6 +568,9 @@ watch(search, refreshMembers)
               </ElPopconfirm>
             </template>
           </ElTableColumn>
+          <template #empty v-if="mode === 'inline'">
+            <ElEmpty :description="t('activity.member.inline.empty')" :image-size="80" />
+          </template>
         </ElTable>
       </div>
       <div class="py-2 text-center" v-if="size !== 0">

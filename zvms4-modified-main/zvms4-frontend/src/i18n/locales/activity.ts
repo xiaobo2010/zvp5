@@ -191,6 +191,11 @@ export const zhCN = {
         confirm: '移除后将不可恢复，确定移除？',
         title: '添加成员至{activity}'
       }
+    },
+    inline: {
+      title: '成员列表',
+      count: '共 {count} 人',
+      empty: '暂无成员'
     }
   },
   view: {

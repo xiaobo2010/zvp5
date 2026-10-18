@@ -39,12 +39,14 @@ const props = withDefaults(
     perspective?: string // `mine` with other's user ObjectId
     showDetails?: boolean
     local?: boolean
+    showMembersInline?: boolean
   }>(),
   {
     mode: 'mine',
     perspective: 'mine',
     showDetails: false,
     local: false,
+    showMembersInline: false,
     membersCount: 0
   }
 )
@@ -184,6 +186,7 @@ const refresh = () => emits('refresh')
         force="full"
       />
       <ZActivityMemberList
+        v-if="!showMembersInline"
         :members-count="membersCount"
         class="px-2"
         :activity="activity"
