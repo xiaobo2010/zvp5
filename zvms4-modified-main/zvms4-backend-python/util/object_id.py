@@ -136,6 +136,14 @@ async def _authenticate(
             "per": permissions,
             "scope": token_scope,
             "purpose": purpose,
+            # Additive: the very document this request was authenticated
+            # against already carries ``class_id``. Read paths that would
+            # otherwise re-fetch the same user (e.g. the secretary branch of
+            # ``validate_read_group_permission``) can reuse it. The key is
+            # always present — ``None`` means "no class" — so consumers can
+            # tell "already known" from "not supplied" (a hand-built dict in a
+            # test or a direct call still falls back to a fresh read).
+            "class_id": current.get("class_id"),
         }
         return user
     except (jwt.PyJWTError, TypeError, ValueError):

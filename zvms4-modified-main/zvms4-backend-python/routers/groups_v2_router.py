@@ -17,6 +17,7 @@ from typings.time import UserActivityTime
 from util.calculate import calculate_user_time_bulk
 from util.get_class import get_user_class
 from util.object_id import get_current_user, validate_object_id
+from db.oracle.session import session_scope
 from util.permission.user import validate_read_group_permission
 from util.cert import check_password
 from util.user import public_user
@@ -294,25 +295,35 @@ async def stat_group_compliance(
 
     await validate_read_group_permission(user, group_id, "volunteer")
 
-    # Get members from the group
-    members = await backends.get_users_repo().list_by_class(
-        str(validate_object_id(group_id))
-    )
+    # One session for the whole read: the class roster and the (cached) bulk
+    # time lookup then share a single connection, so the request pays one
+    # checkout and one teardown instead of two.
+    class_oid = str(validate_object_id(group_id))
+    async with session_scope() as session:
+        roster_rows = await backends.get_users_repo(session).list_by_class(class_oid)
 
-    members = [str(member["_id"]) for member in members]
+        members = [str(member["_id"]) for member in roster_rows]
 
-    user_times = await calculate_user_time_bulk(members, allow_cache=True)
+        user_times = await calculate_user_time_bulk(
+            members, allow_cache=True, session=session
+        )
 
     member_time_counts = []
 
     on_campus = defaultdict(int)
     off_campus = defaultdict(int)
     social_practice = defaultdict(int)
+    # The member roster behind every bucket, filled in the very same loop as the
+    # counts: no second pass, and no member is ever counted twice in one mode.
+    on_campus_members = defaultdict(list)
+    off_campus_members = defaultdict(list)
+    social_practice_members = defaultdict(list)
 
     # Percentage of compliance, 0%–20%, 20%–40%, 40%–60%, 60%–80%, 80%–100%, completed.
 
-    for member in members:
-        user_time = user_times[member]
+    for member in roster_rows:
+        member_oid = str(member["_id"])
+        user_time = user_times[member_oid]
         on_campus_range = min(
             int(user_time["on-campus"] / BASE_ON_CAMPUS * 100 // 20), 5
         )
@@ -325,6 +336,22 @@ async def stat_group_compliance(
         on_campus[on_campus_range] += 1
         off_campus[off_campus_range] += 1
         social_practice[social_practice_range] += 1
+        # Explicit projection: only the whitelisted identity fields leave the
+        # repository row, so a password hash can never ride along in a roster.
+        identity = {
+            "_id": member_oid,
+            "id": str(member["id"]) if member.get("id") else "",
+            "name": member.get("name") or "",
+        }
+        on_campus_members[on_campus_range].append(
+            {**identity, "duration": float(user_time["on-campus"])}
+        )
+        off_campus_members[off_campus_range].append(
+            {**identity, "duration": float(user_time["off-campus"])}
+        )
+        social_practice_members[social_practice_range].append(
+            {**identity, "duration": float(user_time["social-practice"])}
+        )
 
     def convert_key_name(key: int) -> str:
         if key == 5:
@@ -351,8 +378,32 @@ async def stat_group_compliance(
         )
     )
 
-    return {
+    def bucket_rosters(counts, members_by_range):
+        """Mirror the bucket keys of one mode onto its member lists.
+
+        Iterating ``sorted(counts)`` guarantees an exact, per-character key match
+        with the aggregate dict built just above (both go through
+        ``convert_key_name``), so the frontend can join the two by label.
+        """
+        return {
+            convert_key_name(key): members_by_range[key] for key in sorted(counts)
+        }
+
+    member_rosters = {
+        "on-campus": bucket_rosters(on_campus, on_campus_members),
+        "off-campus": bucket_rosters(off_campus, off_campus_members),
+        "social-practice": bucket_rosters(
+            social_practice, social_practice_members
+        ),
+    }
+
+    response = {
         "on-campus": sorted_on_campus,
         "off-campus": sorted_off_campus,
         "social-practice": sorted_social_practice,
+        # Additive field: the per-bucket member rosters assembled from the rows
+        # the handler already read (zero extra queries). Emitted unconditionally
+        # so the response shape never depends on the data it carries.
+        "member_rosters": member_rosters,
     }
+    return response

@@ -174,3 +174,84 @@ async def test_malformed_group_id_is_a_plain_403_not_an_invalid_oid(groups) -> N
     assert excinfo.value.status_code == 403
     # is_valid_oid short-circuits the class rule before any repo access.
     assert groups.permission_calls == []
+
+
+class _CountingUsersRepo:
+    """Users repo stand-in that records every ``get_by_oid`` (the re-read)."""
+
+    def __init__(self, users: dict[str, dict]) -> None:
+        self.users = users
+        self.calls: list[str] = []
+
+    async def get_by_oid(self, oid: str):
+        self.calls.append(oid)
+        return self.users.get(oid)
+
+
+@pytest.fixture()
+def counted_users(monkeypatch) -> _CountingUsersRepo:
+    """Groups repo faked as before, users repo replaced by a counting spy."""
+    repo = _FakeGroupsRepo(permission_oids={PERMISSION_OID})
+    users = _CountingUsersRepo(
+        {SECRETARY_OID: {"_id": SECRETARY_OID, "class_id": CLASS_OID}}
+    )
+    monkeypatch.setattr(backends, "get_groups_repo", lambda *a, **k: repo)
+    monkeypatch.setattr(backends, "get_users_repo", lambda *a, **k: users)
+    return users
+
+
+def _secretary_with_class(class_id) -> dict:
+    """The auth-dict shape ``util.object_id._authenticate`` returns (key always
+    present, ``None`` when the account has no class)."""
+    return {
+        "_id": SECRETARY_OID,
+        "id": SECRETARY_OID,
+        "per": ["secretary"],
+        "class_id": class_id,
+    }
+
+
+@pytest.mark.asyncio
+async def test_secretary_class_id_from_the_auth_dict_skips_the_reread(
+    counted_users,
+) -> None:
+    assert (
+        await validate_read_group_permission(
+            _secretary_with_class(CLASS_OID), CLASS_OID, "volunteer", allow_class=False
+        )
+        is True
+    )
+    # Authentication already loaded this document: no second read.
+    assert counted_users.calls == []
+
+
+@pytest.mark.asyncio
+async def test_auth_dict_class_id_still_rejects_another_class(counted_users) -> None:
+    await _forbidden(_secretary_with_class(OTHER_CLASS_OID), CLASS_OID, allow_class=False)
+    assert counted_users.calls == []
+
+
+@pytest.mark.asyncio
+async def test_auth_dict_without_a_class_is_rejected_without_a_reread(
+    counted_users,
+) -> None:
+    await _forbidden(_secretary_with_class(None), CLASS_OID, allow_class=False)
+    assert counted_users.calls == []
+
+
+@pytest.mark.asyncio
+async def test_dropping_the_key_falls_back_to_the_users_read(counted_users) -> None:
+    # A hand-built dict (tests, direct calls) has no ``class_id`` key: the old
+    # re-read must still happen and produce the same verdict.
+    legacy = {"_id": SECRETARY_OID, "id": SECRETARY_OID, "per": ["secretary"]}
+    assert (
+        await validate_read_group_permission(
+            legacy, CLASS_OID, "volunteer", allow_class=False
+        )
+        is True
+    )
+    assert counted_users.calls == [SECRETARY_OID]
+
+    counted_users.calls.clear()
+    await _forbidden(legacy, OTHER_CLASS_OID, allow_class=False)
+    assert counted_users.calls == [SECRETARY_OID]

@@ -1,8 +1,11 @@
 from fastapi import APIRouter, Depends, HTTPException
 from db import backends
+from db.oracle.session import session_scope
+import asyncio
 import numpy as np
 
 from util.activity_statistics import (
+    MODE_ORDER,
     build_analysis_payload,
     describe_durations,
     empty_analysis_payload,
@@ -10,6 +13,39 @@ from util.activity_statistics import (
 from util.object_id import get_current_user
 
 router = APIRouter()
+
+
+def _mode_members(members: list[dict], users: dict[str, dict]) -> dict[str, list[dict]]:
+    """Roster per participation mode, assembled from rows already in memory.
+
+    ``users`` is the ``get_many_by_oids`` map the handler just read, so this adds
+    no query. A membership whose profile is unknown is skipped rather than
+    invented. Modes that carry no entry are omitted; the handler adds the field
+    to every non-empty payload regardless, so the response shape never depends
+    on the data it carries.
+    """
+    by_mode: dict[str, list[dict]] = {}
+    for member in members:
+        profile = users.get(str(member["member"]))
+        if profile is None:
+            continue
+        name = profile.get("name")
+        business_id = profile.get("id")
+        # Explicit projection: the repository row also carries the password
+        # hash and the session id, which must never leave this boundary.
+        by_mode.setdefault(member["mode"], []).append(
+            {
+                "_id": str(profile["_id"]),
+                "id": str(business_id) if business_id else "",
+                "name": name or "",
+                "duration": float(member["duration"]),
+            }
+        )
+    order = {mode: index for index, mode in enumerate(MODE_ORDER)}
+    return {
+        mode: by_mode[mode]
+        for mode in sorted(by_mode, key=lambda mode: (order.get(mode, len(order)), mode))
+    }
 
 
 def _require_statistics_reader(user: dict) -> None:
@@ -89,16 +125,37 @@ async def activity_issuance_analysis(activity_id: str, user=Depends(get_current_
     :param user: Current user, used for authentication
     """
     _require_statistics_reader(user)
-    members = await backends.get_members_repo().list_by_activity(
-        activity_id, status="effective"
-    )
-    if not members:
-        return empty_analysis_payload()
-    users = await backends.get_users_repo().get_many_by_oids(
-        [member["member"] for member in members]
-    )
-    classes = await backends.get_groups_repo().list_all()
-    return build_analysis_payload(members, list(users.values()), classes)
+    # The members read gates everything below: an activity with no effective
+    # member still answers the empty payload without touching users/groups.
+    # Once the population is known, the two remaining reads are independent of
+    # each other and run concurrently — the class listing on its own session
+    # (a session cannot run two statements at once), the member profiles on the
+    # session that already read the memberships.
+    async with session_scope() as session:
+        members = await backends.get_members_repo(session).list_by_activity(
+            activity_id, status="effective"
+        )
+        if not members:
+            return empty_analysis_payload()
+        users, classes = await asyncio.gather(
+            backends.get_users_repo(session).get_many_by_oids(
+                [member["member"] for member in members]
+            ),
+            _all_classes(),
+        )
+    payload = build_analysis_payload(members, list(users.values()), classes)
+    # Additive field, assembled from the memberships and profiles read above: no
+    # extra query, and the six historical keys are untouched. Emitted on every
+    # non-empty payload so the shape never depends on the data — the empty
+    # activity keeps `empty_analysis_payload()` exactly as before.
+    payload["mode_members"] = _mode_members(members, users)
+    return payload
+
+
+async def _all_classes() -> list[dict]:
+    """``groups.list_all`` on its own session, for the concurrent read above."""
+    async with session_scope() as session:
+        return await backends.get_groups_repo(session).list_all()
 
 
 @router.get("/grades/{grade}/percentiles")

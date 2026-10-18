@@ -90,7 +90,12 @@ export const zhCN = {
     empty: '暂无统计数据',
     loadFailed: '统计数据加载失败，请稍后重试',
     retry: '重试',
-    tabs: { overview: '概览', distribution: '时长分布', groups: '分组对比' },
+    sections: {
+      overview: '概览',
+      distribution: '时长分布',
+      mode: '参与模式',
+      classes: '班级对比'
+    },
     metrics: {
       total: '有效参与人数',
       sum: '总时长',
@@ -99,22 +104,32 @@ export const zhCN = {
       min: '最小值',
       max: '最大值',
       p25: '25% 分位数',
-      p75: '75% 分位数'
+      p75: '75% 分位数',
+      mode: '众数',
+      std: '标准差'
     },
     distribution: {
       title: '时长分布',
+      aria: '活动参与时长分布柱状图',
       axisPerson: '人数',
       axisHours: '时长（小时）',
-      percentile: '25% / 50% / 75% 分位：{p25} / {p50} / {p75} 小时'
+      percentile: '25% / 50% / 75% 分位：{p25} / {p50} / {p75} 小时',
+      binLine: '分箱宽度 {width} 小时 · 峰值区间 {range}（{count} 人）'
     },
     groups: {
       mode: '参与模式',
       class: '班级',
+      ariaMode: '活动参与模式占比环形图',
+      ariaClass: '活动班级总时长对比横向柱状图（按总时长从少到多，未分班与其他垫底）',
       other: '其他',
       unnamedClass: '未分班',
       count: '人数',
       sum: '总时长',
-      axisSum: '总时长（小时）'
+      mean: '人均时长',
+      axisSum: '总时长（小时）',
+      sortedAsc: '班级已按总时长从少到多排列，未分班与其他固定在末尾',
+      rosterToggle: '展开成员名单',
+      rosterUnavailable: '成员名单暂未开放'
     },
     csv: {
       overview: '概览',
