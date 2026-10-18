@@ -14,6 +14,7 @@ import {
   type FileEntry
 } from '@/api/system/files.ts'
 import ZSystemAuthDialog from '@/components/system/ZSystemAuthDialog.vue'
+import { Refresh, FolderAdd, Upload, Delete, Download, EditPen, Key, FolderOpened, CaretRight } from '@element-plus/icons-vue'
 
 const { t } = useI18n()
 
@@ -32,6 +33,17 @@ const uploadInput = ref<HTMLInputElement>()
 const authRef = ref<InstanceType<typeof ZSystemAuthDialog>>()
 
 const pages = computed(() => Math.max(1, Math.ceil(total.value / PAGE_SIZE)))
+
+const crumbs = computed(() => {
+  const parts = currentPath.value.split('/').filter(Boolean)
+  const acc: { name: string; path: string }[] = [{ name: '/', path: '/' }]
+  let prefix = ''
+  for (const part of parts) {
+    prefix += '/' + part
+    acc.push({ name: part, path: prefix })
+  }
+  return acc
+})
 
 function errorMessageOf(error: unknown): string {
   const err = error as AxiosError<{ detail?: unknown }>
@@ -94,6 +106,17 @@ async function load() {
   }
 }
 
+async function refresh() {
+  await load()
+}
+
+function rowDblClick(entry: FileEntry) {
+  if (entry.type === 'dir' || entry.type === 'symlink') {
+    pathInput.value = entryPath(entry.name)
+    void jumpPath()
+  }
+}
+
 async function jumpPath() {
   let raw = pathInput.value.trim()
   if (!raw) raw = '/'
@@ -112,27 +135,16 @@ function goQuick(dir: string) {
   void jumpPath()
 }
 
+function goCrumb(path: string) {
+  pathInput.value = path
+  void jumpPath()
+}
+
 function goParent() {
   const stripped = currentPath.value.replace(/\/+$/, '') || '/'
   const parent = stripped.slice(0, stripped.lastIndexOf('/')) || '/'
   pathInput.value = parent
   void jumpPath()
-}
-
-async function refresh() {
-  await load()
-}
-
-function rowDblClick(row: FileEntry) {
-  if (row.type === 'dir' || row.type === 'symlink') {
-    const joined = currentPath.value === '/' ? `/${row.name}` : `${currentPath.value}/${row.name}`
-    pathInput.value = joined
-    void jumpPath()
-  }
-}
-
-function rowClick(row: FileEntry) {
-  selected.value = row
 }
 
 function entryPath(name: string): string {
@@ -361,169 +373,232 @@ void load()
 </script>
 
 <template>
-  <div class="flex h-[calc(100vh-220px)] min-h-[420px] gap-2">
-    <aside class="flex w-44 shrink-0 flex-col gap-3 border border-[var(--zv-hairline)] bg-[var(--zv-surface)] p-2">
-      <div>
-        <div class="z-label mb-1">{{ t('server.files.quickDirs') }}</div>
-        <button
-          v-for="dir in QUICK_DIRS"
-          :key="dir"
-          class="block w-full truncate border-0 bg-transparent px-1 py-1 text-left text-[12px] text-[var(--zv-text-sub)] hover:bg-[var(--zv-surface-alt)] hover:text-[var(--zv-text)]"
-          @click="goQuick(dir)"
-        >
-          {{ dir }}
-        </button>
-      </div>
-      <div class="mt-auto border-t border-[var(--zv-hairline)] pt-2 text-[11px] leading-4 text-[var(--zv-label)]">
-        {{ t('server.files.protectedNote') }}
-      </div>
-    </aside>
-
-    <div class="flex min-w-0 flex-1 flex-col gap-2">
-      <div class="flex flex-wrap items-center gap-2 border border-[var(--zv-hairline)] bg-[var(--zv-surface)] px-2 py-1.5">
-        <button
-          class="border border-[var(--zv-hairline-strong)] bg-[var(--zv-surface)] px-2 py-1 text-[12px] text-[var(--zv-text)] hover:bg-[var(--zv-surface-alt)]"
-          @click="goParent"
-        >
-          ..
-        </button>
-        <input
-          v-model="pathInput"
-          class="min-w-[220px] flex-1 border border-[var(--zv-hairline)] bg-[var(--zv-surface-alt)] px-2 py-1 text-[13px] text-[var(--zv-text)] outline-none focus:border-[var(--zv-hairline-strong)]"
-          @keyup.enter="jumpPath"
-        />
-        <button
-          class="border border-[var(--zv-hairline-strong)] bg-[var(--zv-surface)] px-2 py-1 text-[12px] text-[var(--zv-text)] hover:bg-[var(--zv-surface-alt)]"
-          @click="jumpPath"
-        >
-          {{ t('server.files.go') }}
-        </button>
-        <button
-          class="border border-[var(--zv-hairline-strong)] bg-[var(--zv-surface)] px-2 py-1 text-[12px] text-[var(--zv-text)] hover:bg-[var(--zv-surface-alt)]"
-          @click="refresh"
-        >
-          {{ t('server.files.refresh') }}
-        </button>
-        <span class="h-4 w-px bg-[var(--zv-hairline)]"></span>
-        <button
-          class="border border-[var(--zv-hairline-strong)] bg-[var(--zv-surface)] px-2 py-1 text-[12px] text-[var(--zv-text)] hover:bg-[var(--zv-surface-alt)]"
-          @click="doMkdir"
-        >
-          {{ t('server.files.mkdir') }}
-        </button>
-        <button
-          class="border border-[var(--zv-hairline-strong)] bg-[var(--zv-surface)] px-2 py-1 text-[12px] text-[var(--zv-text)] hover:bg-[var(--zv-surface-alt)]"
-          @click="pickUploadFile"
-        >
-          {{ t('server.files.upload') }}
-        </button>
-        <input ref="uploadInput" type="file" class="hidden" @change="onUploadChange" />
-        <span class="text-[11px] text-[var(--zv-label)]">{{ t('server.files.uploadLimit') }}</span>
-        <span class="h-4 w-px bg-[var(--zv-hairline)]"></span>
-        <template v-if="selected">
-          <button
-            class="border border-[var(--zv-hairline-strong)] bg-[var(--zv-surface)] px-2 py-1 text-[12px] text-[var(--zv-text)] hover:bg-[var(--zv-surface-alt)]"
-            @click="doRename"
-          >
-            {{ t('server.files.rename') }}
-          </button>
-          <button
-            class="border border-[var(--zv-hairline-strong)] bg-[var(--zv-surface)] px-2 py-1 text-[12px] text-[var(--zv-text)] hover:bg-[var(--zv-surface-alt)]"
-            @click="doChmod"
-          >
-            {{ t('server.files.chmod') }}
-          </button>
-          <button
-            v-if="selected.type === 'file'"
-            class="border border-[var(--zv-hairline-strong)] bg-[var(--zv-surface)] px-2 py-1 text-[12px] text-[var(--zv-text)] hover:bg-[var(--zv-surface-alt)]"
-            @click="doDownload"
-          >
-            {{ t('server.files.download') }}
-          </button>
-          <button
-            class="border border-[var(--zv-hairline-strong)] bg-[var(--zv-surface)] px-2 py-1 text-[12px] text-[#b42318] hover:bg-[var(--zv-surface-alt)] dark:text-[#ff8a7a]"
-            @click="onDeleteClick"
-          >
-            {{ t('server.files.delete') }}
-          </button>
-        </template>
-        <span v-else class="text-[11px] text-[var(--zv-label)]">{{ t('server.files.noSelection') }}</span>
-      </div>
-
-      <span v-if="selected" class="text-[11px] text-[var(--zv-label)]">
-        {{ t('server.files.selection', { name: selected.name }) }}
-        <template v-if="selected.is_symlink && selected.target">
-          · {{ t('server.files.symlinkTarget', { target: selected.target }) }}
-        </template>
-      </span>
-
-      <div class="min-h-0 flex-1 overflow-auto border border-[var(--zv-hairline)] bg-[var(--zv-surface)]">
-        <table class="w-full border-collapse text-[13px]">
-          <thead class="sticky top-0 z-10 bg-[var(--zv-surface-alt)]">
-            <tr class="border-b border-[var(--zv-hairline-strong)]">
-              <th class="z-label px-2 py-1 text-left font-normal">{{ t('server.files.colName') }}</th>
-              <th class="z-label px-2 py-1 text-left font-normal">{{ t('server.files.colType') }}</th>
-              <th class="z-label px-2 py-1 text-right font-normal">{{ t('server.files.colSize') }}</th>
-              <th class="z-label px-2 py-1 text-left font-normal">{{ t('server.files.colMode') }}</th>
-              <th class="z-label px-2 py-1 text-left font-normal">{{ t('server.files.colMtime') }}</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr
-              v-if="currentPath !== '/'"
-              class="cursor-pointer border-b border-[var(--zv-hairline)] hover:bg-[var(--zv-surface-alt)]"
-              @click="goParent"
-            >
-              <td class="px-2 py-1" colspan="5">..</td>
-            </tr>
-            <tr
-              v-for="entry in entries"
-              :key="entry.name"
-              class="cursor-pointer border-b border-[var(--zv-hairline)] hover:bg-[var(--zv-surface-alt)]"
-              :class="selected?.name === entry.name ? 'bg-[var(--zv-surface-alt)]' : ''"
-              @click="rowClick(entry)"
-              @dblclick="rowDblClick(entry)"
-            >
-              <td class="px-2 py-1 text-[var(--zv-text)]">
-                <span :class="entry.type === 'dir' ? 'font-medium' : ''">{{ entry.name }}</span>
-                <span v-if="entry.type === 'dir'" class="ml-1 text-[var(--zv-label)]">/</span>
-              </td>
-              <td class="px-2 py-1 text-[12px] text-[var(--zv-text-sub)]">{{ typeLabel(entry) }}</td>
-              <td class="px-2 py-1 text-right tabular-nums text-[var(--zv-text-sub)]">
-                {{ fmtSize(entry.size, entry.type === 'dir') }}
-              </td>
-              <td class="px-2 py-1 tabular-nums text-[12px] text-[var(--zv-text-sub)]">{{ fmtMode(entry.mode) }}</td>
-              <td class="px-2 py-1 tabular-nums text-[12px] text-[var(--zv-text-sub)]">{{ fmtTime(entry.mtime) }}</td>
-            </tr>
-            <tr v-if="!loading && entries.length === 0">
-              <td class="px-2 py-3 text-center text-[12px] text-[var(--zv-label)]" colspan="5">—</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-
-      <div class="flex items-center justify-between border border-[var(--zv-hairline)] bg-[var(--zv-surface)] px-2 py-1 text-[12px] text-[var(--zv-label)]">
-        <span>{{ t('server.files.totalEntries', { count: total }) }}</span>
-        <span>{{ t('server.files.pageInfo', { page, pages }) }}</span>
-        <div class="flex gap-1">
-          <button
-            class="border border-[var(--zv-hairline-strong)] bg-[var(--zv-surface)] px-2 py-0.5 text-[12px] text-[var(--zv-text)] disabled:opacity-40 hover:bg-[var(--zv-surface-alt)]"
-            :disabled="page <= 1 || loading"
-            @click="pageChange(page - 1)"
-          >
-            {{ t('server.files.pagePrev') }}
-          </button>
-          <button
-            class="border border-[var(--zv-hairline-strong)] bg-[var(--zv-surface)] px-2 py-0.5 text-[12px] text-[var(--zv-text)] disabled:opacity-40 hover:bg-[var(--zv-surface-alt)]"
-            :disabled="page >= pages || loading"
-            @click="pageChange(page + 1)"
-          >
-            {{ t('server.files.pageNext') }}
-          </button>
-        </div>
+  <div class="flex flex-col gap-3 pb-2">
+    <!-- 页面标题行 -->
+    <div class="flex flex-wrap items-end justify-between gap-2 px-1">
+      <div class="flex flex-col gap-0.5">
+        <h2 class="m-0 text-[22px] font-semibold leading-7 text-[var(--zv-text)]">{{ t('server.files.title') }}</h2>
+        <span class="text-[12px] text-[var(--zv-label)]">{{ t('server.files.protectedNote') }}</span>
       </div>
     </div>
 
+    <div class="flex h-[calc(100vh-330px)] min-h-[440px] gap-3">
+      <!-- 左:快捷目录 + 面包屑 -->
+      <aside class="flex w-64 shrink-0 flex-col gap-3 border border-[var(--zv-hairline)] bg-[var(--zv-surface)] p-4">
+        <div>
+          <div class="d-label mb-2">{{ t('server.files.quickDirs') }}</div>
+          <button
+            v-for="dir in QUICK_DIRS"
+            :key="dir"
+            class="block w-full truncate border-0 bg-transparent px-1 py-2 text-left text-[14px] text-[var(--zv-text-sub)] transition-colors hover:bg-[var(--zv-surface-alt)] hover:text-[var(--zv-text)]"
+            @click="goQuick(dir)"
+          >
+            <ElIcon :size="18" class="mr-1.5 -mt-0.5 align-middle"><FolderOpened /></ElIcon>{{ dir }}
+          </button>
+        </div>
+      </aside>
+
+      <div class="flex min-w-0 flex-1 flex-col gap-2">
+        <!-- 工具栏 -->
+        <div class="flex flex-wrap items-center gap-2 border border-[var(--zv-hairline)] bg-[var(--zv-surface)] px-4 py-2">
+          <button
+            class="flex items-center gap-1 border border-[var(--zv-hairline-strong)] bg-[var(--zv-surface)] px-3 text-[14px] text-[var(--zv-text)] hover:bg-[var(--zv-surface-alt)]"
+            style="height: 34px"
+            @click="goParent"
+          >
+            ..
+          </button>
+          <input
+            v-model="pathInput"
+            class="min-w-[240px] flex-1 border border-[var(--zv-hairline)] bg-[var(--zv-surface-alt)] px-3 text-[14px] text-[var(--zv-text)] outline-none focus:border-[var(--zv-hairline-strong)]"
+            style="height: 34px"
+            @keyup.enter="jumpPath"
+          />
+          <button
+            class="flex items-center gap-1.5 border border-[var(--zv-hairline-strong)] bg-[var(--zv-surface)] px-3 text-[14px] text-[var(--zv-text)] hover:bg-[var(--zv-surface-alt)]"
+            style="height: 34px"
+            @click="jumpPath"
+          >
+            <ElIcon :size="18" class="-ml-1"><CaretRight /></ElIcon>
+            {{ t('server.files.go') }}
+          </button>
+          <button
+            class="flex items-center gap-1.5 border border-[var(--zv-hairline-strong)] bg-[var(--zv-surface)] px-3 text-[14px] text-[var(--zv-text)] hover:bg-[var(--zv-surface-alt)]"
+            style="height: 34px"
+            @click="refresh"
+          >
+            <ElIcon :size="18" class="-ml-1"><Refresh /></ElIcon>
+            {{ t('server.files.refresh') }}
+          </button>
+          <span class="h-5 w-px bg-[var(--zv-hairline)]"></span>
+          <button
+            class="flex items-center gap-1.5 border border-[var(--zv-hairline-strong)] bg-[var(--zv-surface)] px-3 text-[14px] text-[var(--zv-text)] hover:bg-[var(--zv-surface-alt)]"
+            style="height: 34px"
+            @click="doMkdir"
+          >
+            <ElIcon :size="18" class="-ml-1"><FolderAdd /></ElIcon>
+            {{ t('server.files.mkdir') }}
+          </button>
+          <button
+            class="flex items-center gap-1.5 border border-[var(--zv-hairline-strong)] bg-[var(--zv-surface)] px-3 text-[14px] text-[var(--zv-text)] hover:bg-[var(--zv-surface-alt)]"
+            style="height: 34px"
+            @click="pickUploadFile"
+          >
+            <ElIcon :size="18" class="-ml-1"><Upload /></ElIcon>
+            {{ t('server.files.upload') }}
+          </button>
+          <input ref="uploadInput" type="file" class="hidden" @change="onUploadChange" />
+          <span class="text-[12px] text-[var(--zv-label)]">{{ t('server.files.uploadLimit') }}</span>
+          <span class="h-5 w-px bg-[var(--zv-hairline)]"></span>
+          <template v-if="selected">
+            <button
+              class="flex items-center gap-1.5 border border-[var(--zv-hairline-strong)] bg-[var(--zv-surface)] px-3 text-[14px] text-[var(--zv-text)] hover:bg-[var(--zv-surface-alt)]"
+              style="height: 34px"
+              @click="doRename"
+            >
+              <ElIcon :size="18" class="-ml-1"><EditPen /></ElIcon>
+              {{ t('server.files.rename') }}
+            </button>
+            <button
+              class="flex items-center gap-1.5 border border-[var(--zv-hairline-strong)] bg-[var(--zv-surface)] px-3 text-[14px] text-[var(--zv-text)] hover:bg-[var(--zv-surface-alt)]"
+              style="height: 34px"
+              @click="doChmod"
+            >
+              <ElIcon :size="18" class="-ml-1"><Key /></ElIcon>
+              {{ t('server.files.chmod') }}
+            </button>
+            <button
+              v-if="selected.type === 'file'"
+              class="flex items-center gap-1.5 border border-[var(--zv-hairline-strong)] bg-[var(--zv-surface)] px-3 text-[14px] text-[var(--zv-text)] hover:bg-[var(--zv-surface-alt)]"
+              style="height: 34px"
+              @click="doDownload"
+            >
+              <ElIcon :size="18" class="-ml-1"><Download /></ElIcon>
+              {{ t('server.files.download') }}
+            </button>
+            <button
+              class="flex items-center gap-1.5 border border-[#b42318] bg-[var(--zv-surface)] px-3 text-[14px] text-[#b42318] hover:bg-[var(--zv-surface-alt)] dark:text-[#ff8a7a]"
+              style="height: 34px"
+              @click="onDeleteClick"
+            >
+              <ElIcon :size="18" class="-ml-1"><Delete /></ElIcon>
+              {{ t('server.files.delete') }}
+            </button>
+          </template>
+          <span v-else class="text-[12px] text-[var(--zv-label)]">{{ t('server.files.noSelection') }}</span>
+        </div>
+
+        <!-- 面包屑 -->
+        <div class="flex flex-wrap items-center gap-1 px-1 text-[14px]">
+          <button
+            v-for="(crumb, index) in crumbs"
+            :key="crumb.path"
+            class="border-0 bg-transparent py-1 text-[14px] hover:underline"
+            :class="index === crumbs.length - 1 ? 'font-medium text-[var(--zv-text)]' : 'text-[var(--zv-text-sub)]'"
+            @click="goCrumb(crumb.path)"
+          >
+            {{ crumb.name }}
+          </button>
+          <span v-if="selected" class="ml-3 text-[12px] text-[var(--zv-label)]">
+            {{ t('server.files.selection', { name: selected.name }) }}
+            <template v-if="selected.is_symlink && selected.target">
+              · {{ t('server.files.symlinkTarget', { target: selected.target }) }}
+            </template>
+          </span>
+        </div>
+
+        <!-- 条目表 -->
+        <div class="min-h-0 flex-1 overflow-auto border border-[var(--zv-hairline)] bg-[var(--zv-surface)]">
+          <table class="f-table w-full border-collapse text-[14px] tabular-nums">
+            <thead class="sticky top-0 z-10 bg-[var(--zv-surface-alt)]">
+              <tr class="border-b border-[var(--zv-hairline-strong)]">
+                <th class="d-label px-4 py-2 text-left font-normal">{{ t('server.files.colName') }}</th>
+                <th class="d-label px-4 py-2 text-left font-normal">{{ t('server.files.colType') }}</th>
+                <th class="d-label px-4 py-2 text-right font-normal">{{ t('server.files.colSize') }}</th>
+                <th class="d-label px-4 py-2 text-left font-normal">{{ t('server.files.colMode') }}</th>
+                <th class="d-label px-4 py-2 text-left font-normal">{{ t('server.files.colMtime') }}</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr
+                v-if="currentPath !== '/'"
+                class="cursor-pointer border-b border-[var(--zv-hairline)] hover:bg-[var(--zv-surface-alt)]"
+                @click="goParent"
+              >
+                <td class="px-4" colspan="5">..</td>
+              </tr>
+              <tr
+                v-for="entry in entries"
+                :key="entry.name"
+                class="cursor-pointer border-b border-[var(--zv-hairline)] hover:bg-[var(--zv-surface-alt)]"
+                :class="selected?.name === entry.name ? 'bg-[var(--zv-surface-alt)]' : ''"
+                @click="selected = entry"
+                @dblclick="rowDblClick(entry)"
+              >
+                <td class="px-4 py-2 text-[var(--zv-text)]">
+                  <span :class="entry.type === 'dir' ? 'font-medium' : ''">{{ entry.name }}</span>
+                  <span v-if="entry.type === 'dir'" class="ml-1 text-[var(--zv-label)]">/</span>
+                </td>
+                <td class="px-4 py-2 text-[13px] text-[var(--zv-text-sub)]">{{ typeLabel(entry) }}</td>
+                <td class="px-4 py-2 text-right text-[13px] tabular-nums text-[var(--zv-text-sub)]">
+                  {{ fmtSize(entry.size, entry.type === 'dir') }}
+                </td>
+                <td class="px-4 py-2 text-[13px] tabular-nums text-[var(--zv-text-sub)]">{{ fmtMode(entry.mode) }}</td>
+                <td class="px-4 py-2 text-[13px] tabular-nums text-[var(--zv-text-sub)]">{{ fmtTime(entry.mtime) }}</td>
+              </tr>
+              <tr v-if="!loading && entries.length === 0">
+                <td class="px-4 py-6 text-center text-[13px] text-[var(--zv-label)]" colspan="5">
+                  {{ t('server.files.loadFailed') }}
+                </td>
+              </tr>
+              <tr v-if="loading">
+                <td class="px-4 py-6 text-center text-[13px] text-[var(--zv-label)]" colspan="5">…</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- 分页 -->
+        <div class="flex items-center justify-between border border-[var(--zv-hairline)] bg-[var(--zv-surface)] px-4 py-2 text-[13px] text-[var(--zv-label)]">
+          <span>{{ t('server.files.totalEntries', { count: total }) }}</span>
+          <span class="tabular-nums">{{ t('server.files.pageInfo', { page, pages }) }}</span>
+          <div class="flex gap-2">
+            <button
+              class="border border-[var(--zv-hairline-strong)] bg-[var(--zv-surface)] px-3 py-1 text-[13px] tabular-nums text-[var(--zv-text)] disabled:opacity-40 hover:bg-[var(--zv-surface-alt)]"
+              :disabled="page <= 1 || loading"
+              @click="pageChange(page - 1)"
+            >
+              {{ t('server.files.pagePrev') }}
+            </button>
+            <button
+              class="border border-[var(--zv-hairline-strong)] bg-[var(--zv-surface)] px-3 py-1 text-[13px] tabular-nums text-[var(--zv-text)] disabled:opacity-40 hover:bg-[var(--zv-surface-alt)]"
+              :disabled="page >= pages || loading"
+              @click="pageChange(page + 1)"
+            >
+              {{ t('server.files.pageNext') }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
     <ZSystemAuthDialog ref="authRef" />
   </div>
 </template>
+
+<style scoped>
+/* 本页局部 token:建议后续由 flat.css 统一收口 */
+.d-label {
+  font-size: 12px;
+  line-height: 1.35;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--zv-label);
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+
+.f-table tbody tr:hover td,
+.f-table tbody tr:hover {
+  background: var(--zv-surface-alt);
+}
+</style>
