@@ -24,6 +24,9 @@ from routers import (
     attachments_router,
     db_system_router,
     db_metrics_router,
+    system_ssh_router,
+    system_files_router,
+    system_db_content_router,
 )
 import socketio
 from socketio.exceptions import ConnectionRefusedError as SocketIOConnectionRefusedError
@@ -389,6 +392,17 @@ app.include_router(system_router, prefix="/api/system/maintenance", tags=["Syste
 app.include_router(db_system_router.router, prefix="/api/system/db", tags=["System"])
 app.include_router(
     db_metrics_router.router, prefix="/api/system/db/metrics", tags=["System"]
+)
+app.include_router(
+    system_ssh_router.router, prefix="/api/system/ssh", tags=["System"]
+)
+app.include_router(
+    system_files_router.router, prefix="/api/system/files", tags=["System"]
+)
+app.include_router(
+    system_db_content_router.router,
+    prefix="/api/system/db/content",
+    tags=["System"],
 )
 
 
