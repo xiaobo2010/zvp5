@@ -13,11 +13,12 @@ import dayjs from '@/plugins/dayjs'
 import { isAxiosError } from 'axios'
 import {
   getDatabaseStatus, previewRetention, runRetention, getRetentionProgress,
-  getMetricsRealtime, getMetricsHistory, getMetricsTopSql, getMetricsEndpoints,
+  getMetricsRealtime, getMetricsHost, getMetricsHistory, getMetricsTopSql, getMetricsEndpoints,
   isRetentionJobStart,
   type DbStatusData, type DbTableItem, type RetentionPreviewData, type RetentionRunData,
   type RetentionProgressData, type DbMetricsRealtimeData, type DbMetricsHistoryData,
-  type DbMetricsRange, type DbMetricsTopSqlData, type DbMetricsEndpointsData
+  type DbMetricsRange, type DbMetricsTopSqlData, type DbMetricsEndpointsData,
+  type DbMetricsHostData
 } from '@/api/system/db.ts'
 import DbPerfTrendChart from '@/components/server/DbPerfTrendChart.vue'
 
@@ -32,6 +33,13 @@ if (!userStore.position.includes('admin')) {
 const isAdmin = userStore.position.includes('admin')
 
 const M = 'server.database.'
+
+// R6:页内两分区 —— 数据库(远端 Oracle) / 本地服务器(主机资源 + 进程池,独立端点)
+const activeView = ref<'database' | 'host'>('database')
+const viewOptions = computed(() => [
+  { label: t(M + 'viewDatabase'), value: 'database' },
+  { label: t(M + 'viewHost'), value: 'host' }
+])
 
 // —— 数据库监控:仅 admin 可见,与后端严格 admin 校验一致 ——
 const dbStatus = ref<DbStatusData | null>(null)
@@ -299,14 +307,24 @@ let realtimeTimer: number | undefined
 let slowTimer: number | undefined
 let probeTimer: number | undefined
 
-const rtHost = computed(() => metricsRealtime.value?.host ?? null)
 const rtLoad = computed(() => metricsRealtime.value?.load ?? null)
 const rtPool = computed(() => metricsRealtime.value?.pool ?? null)
 const rtSessions = computed(() => metricsRealtime.value?.sessions ?? null)
 const rtObservedText = computed(() => formatTime(metricsRealtime.value?.observed_at))
 
-const memUsedPct = computed(() => {
-  const mem = rtHost.value?.mem
+// —— 本地服务器快照:独立端点 /system/db/metrics/host(host/pool 字段与 /realtime 一致,零 Oracle 往返) ——
+const hostSnapshot = ref<DbMetricsHostData | null>(null)
+const hostRes = computed(() => hostSnapshot.value?.host ?? null)
+const hostPool = computed(() => hostSnapshot.value?.pool ?? null)
+const hostObservedText = computed(() => formatTime(hostSnapshot.value?.observed_at))
+const hostAvailable = ref<boolean | null>(null)
+const hostLoading = ref(false)
+const hostError = ref(false)
+let hostTimer: number | undefined
+let hostProbeTimer: number | undefined
+
+const hostMemUsedPct = computed(() => {
+  const mem = hostRes.value?.mem
   if (!mem || mem.total_mb <= 0) return null
   return (mem.used_mb / mem.total_mb) * 100
 })
@@ -642,10 +660,88 @@ function stopMetricsPolling() {
   }
 }
 
-// 维护开启/解除时停启实时与趋势轮询
+// —— 本地服务器端点(零 Oracle):仅本地面板激活时轮询,节奏与实时面板一致(15 秒) ——
+
+function startHostPolling() {
+  stopHostPolling()
+  // 维护/清理期间与实时面板同口径暂停,结束后由 watcher 恢复
+  if (maintenanceActive.value) return
+  hostTimer = window.setInterval(() => void hostTick(), REALTIME_INTERVAL_MS)
+}
+
+function stopHostPolling() {
+  if (hostTimer !== undefined) {
+    window.clearInterval(hostTimer)
+    hostTimer = undefined
+  }
+}
+
+async function refreshHostSnapshot() {
+  if (hostProbeTimer !== undefined) {
+    window.clearTimeout(hostProbeTimer)
+    hostProbeTimer = undefined
+  }
+  hostLoading.value = true
+  try {
+    const res = await getMetricsHost()
+    hostSnapshot.value = res.data.data
+    hostError.value = false
+    const wasUnavailable = hostAvailable.value !== true
+    hostAvailable.value = true
+    if (wasUnavailable && activeView.value === 'host') startHostPolling()
+  } catch (err) {
+    if (redirectIfForbidden(err)) return
+    if (isAxiosError(err) && err.response?.status === 404) {
+      // 后端尚未上线:整区降级,低频重试等待上线
+      hostAvailable.value = false
+      stopHostPolling()
+      scheduleHostProbeRetry()
+      return
+    }
+    // 503 等瞬时故障:保留上一次成功数据,轮询继续
+    hostError.value = true
+  } finally {
+    hostLoading.value = false
+  }
+}
+
+function hostTick() {
+  if (hostLoading.value) return
+  void refreshHostSnapshot()
+}
+
+function scheduleHostProbeRetry() {
+  if (hostProbeTimer !== undefined) return
+  hostProbeTimer = window.setTimeout(() => {
+    void refreshHostSnapshot()
+  }, PROBE_RETRY_MS)
+}
+
+// 分区切换:L4 事实 —— /realtime 与 /host 的速率计算共享 host_metrics 模块级 _previous 状态,
+// 两个端点同时轮询会互相扰动速率窗口。因此轮询互斥:只允许激活 tab 轮询自己的端点。
+watch(activeView, (view) => {
+  if (view === 'host') {
+    // 停掉数据库侧 /realtime + 趋势/慢档轮询,再启动本地轮询
+    stopMetricsPolling()
+    void refreshHostSnapshot()
+    if (hostAvailable.value === true) startHostPolling()
+  } else {
+    stopHostPolling()
+    if (metricsAvailable.value === true) {
+      // 回到数据库分区:先即时刷一轮实时面板(轮询暂停期间数据已过期),再恢复既有轮询节奏
+      void realtimeTick()
+      startMetricsPolling()
+    }
+  }
+})
+
+// 维护开启/解除时停启轮询;解除后只恢复当前激活分区的轮询(两侧端点互斥,L4 事实)
 watch(maintenanceActive, (active) => {
   if (active) {
     stopMetricsPolling()
+    stopHostPolling()
+  } else if (activeView.value === 'host') {
+    if (hostAvailable.value === true) startHostPolling()
   } else if (metricsAvailable.value === true) {
     startMetricsPolling()
   }
@@ -823,22 +919,209 @@ if (isAdmin) {
     void refresh()
     void refreshProgress()
     void probeMetrics()
+    // 注意:初始分区是「数据库」,不预拉 /metrics/host —— 该请求同样推进 host_metrics
+    // 的模块级 _previous 状态,会扰动 /realtime 的速率计算(L4 事实)
   })
 }
 
 onBeforeUnmount(() => {
   stopProgressPolling()
   stopMetricsPolling()
+  stopHostPolling()
   if (probeTimer !== undefined) {
     window.clearTimeout(probeTimer)
     probeTimer = undefined
+  }
+  if (hostProbeTimer !== undefined) {
+    window.clearTimeout(hostProbeTimer)
+    hostProbeTimer = undefined
   }
 })
 </script>
 
 <template>
-  <!-- 数据库监控:仅 admin 可见 -->
-  <div v-if="dbStatus" class="mt-8 flex flex-col gap-6">
+  <!-- 数据库监控:仅 admin 可见;页内 ElSegmented 分区(数据库 / 本地服务器) -->
+  <div class="mt-8 flex flex-col gap-6">
+    <div>
+      <ElSegmented v-model="activeView" :options="viewOptions" />
+    </div>
+
+    <!-- 本地服务器:仅依赖独立 host 端点,首屏不等待 Oracle -->
+    <template v-if="activeView === 'host'">
+      <ElCard shadow="never">
+        <template #header>
+          <div class="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
+            <span class="font-medium">{{ t(M + 'hostCardTitle') }}</span>
+            <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-gray-500 dark:text-gray-400">
+              <span v-if="hostSnapshot && hostObservedText !== '—'">
+                {{ t(M + 'perfRefreshedAt', { time: hostObservedText }) }}
+              </span>
+              <ElButton text bg size="small" :icon="Refresh" :loading="hostLoading" @click="refreshHostSnapshot">
+                {{ t(M + 'refresh') }}
+              </ElButton>
+            </div>
+          </div>
+        </template>
+        <div class="flex flex-col gap-4">
+          <ElAlert
+            v-if="hostAvailable === false"
+            type="info"
+            show-icon
+            :closable="false"
+            :title="t(M + 'hostUnavailable')"
+          />
+          <template v-else-if="hostRes">
+            <div v-if="hostError" class="text-sm text-gray-500 dark:text-gray-400">
+              {{ t(M + 'hostRefreshFailed') }}
+            </div>
+
+            <!-- 主机资源:/proc 即时读,按指标域分瓦片 -->
+            <section class="flex flex-col gap-2">
+              <div class="text-sm font-medium">{{ t(M + 'hostTitle') }}</div>
+              <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                <!-- CPU -->
+                <div class="flex flex-col gap-1.5 rounded-lg bg-gray-50/80 p-3 dark:bg-gray-800/40">
+                  <span class="text-xs text-gray-500 dark:text-gray-400">{{ t(M + 'hostCpu') }}</span>
+                  <div class="flex h-2 w-full overflow-hidden rounded-full bg-gray-200/80 dark:bg-gray-700/60">
+                    <div class="h-full" :style="{ width: `${Math.max(0, hostRes.cpu.user_pct)}%`, background: '#409eff' }"></div>
+                    <div class="h-full" :style="{ width: `${Math.max(0, hostRes.cpu.system_pct)}%`, background: '#e6a23c' }"></div>
+                    <div class="h-full" :style="{ width: `${Math.max(0, hostRes.cpu.iowait_pct)}%`, background: '#f56c6c' }"></div>
+                    <div class="h-full" :style="{ width: `${Math.max(0, hostRes.cpu.idle_pct)}%`, background: 'rgba(144, 147, 153, 0.35)' }"></div>
+                  </div>
+                  <div class="flex flex-wrap gap-x-2.5 gap-y-0.5 text-xs text-gray-500 dark:text-gray-400">
+                    <span>{{ t(M + 'hostCpuUser') }} {{ pctText(hostRes.cpu.user_pct) }}</span>
+                    <span>{{ t(M + 'hostCpuSystem') }} {{ pctText(hostRes.cpu.system_pct) }}</span>
+                    <span>{{ t(M + 'hostCpuIowait') }} {{ pctText(hostRes.cpu.iowait_pct) }}</span>
+                    <span>{{ t(M + 'hostCpuIdle') }} {{ pctText(hostRes.cpu.idle_pct) }}</span>
+                  </div>
+                </div>
+                <!-- 内存 -->
+                <div class="flex flex-col gap-1.5 rounded-lg bg-gray-50/80 p-3 dark:bg-gray-800/40">
+                  <span class="text-xs text-gray-500 dark:text-gray-400">{{ t(M + 'hostMem') }}</span>
+                  <span class="font-medium tabular-nums">
+                    {{ formatMb(hostRes.mem.used_mb) }}
+                    <span class="text-xs text-gray-500 dark:text-gray-400">/ {{ formatMb(hostRes.mem.total_mb) }}</span>
+                  </span>
+                  <ElProgress
+                    v-if="hostMemUsedPct !== null"
+                    :percentage="clampPct(hostMemUsedPct)"
+                    :color="percentColor"
+                    :show-text="false"
+                  />
+                  <span class="text-xs text-gray-500 dark:text-gray-400">
+                    {{ t(M + 'hostMemAvailable') }} {{ formatMb(hostRes.mem.available_mb) }}
+                  </span>
+                </div>
+                <!-- 系统负载 -->
+                <div class="flex flex-col gap-1.5 rounded-lg bg-gray-50/80 p-3 dark:bg-gray-800/40">
+                  <span class="text-xs text-gray-500 dark:text-gray-400">{{ t(M + 'hostLoad') }}</span>
+                  <div class="flex flex-col gap-0.5 text-sm tabular-nums">
+                    <span>{{ t(M + 'hostLoad1m') }} <span class="font-medium">{{ formatMetric(hostRes.load['1m']) }}</span></span>
+                    <span>{{ t(M + 'hostLoad5m') }} <span class="font-medium">{{ formatMetric(hostRes.load['5m']) }}</span></span>
+                    <span>{{ t(M + 'hostLoad15m') }} <span class="font-medium">{{ formatMetric(hostRes.load['15m']) }}</span></span>
+                  </div>
+                </div>
+                <!-- 磁盘 -->
+                <div class="flex flex-col gap-1.5 rounded-lg bg-gray-50/80 p-3 dark:bg-gray-800/40">
+                  <span class="text-xs text-gray-500 dark:text-gray-400">
+                    {{ t(M + 'hostDiskMount', { mount: hostRes.disk.mount }) }}
+                  </span>
+                  <span class="font-medium tabular-nums">{{ pctText(hostRes.disk.used_pct) }}</span>
+                  <ElProgress
+                    :percentage="clampPct(hostRes.disk.used_pct)"
+                    :color="percentColor"
+                    :show-text="false"
+                  />
+                  <span class="text-xs text-gray-500 dark:text-gray-400">
+                    {{ t(M + 'hostDiskFree') }} {{ formatGb(hostRes.disk.free_gb) }}
+                  </span>
+                </div>
+                <!-- 网络 -->
+                <div class="flex flex-col gap-1.5 rounded-lg bg-gray-50/80 p-3 dark:bg-gray-800/40">
+                  <span class="text-xs text-gray-500 dark:text-gray-400">{{ t(M + 'hostNet') }}</span>
+                  <div class="flex flex-col gap-0.5 text-sm tabular-nums">
+                    <span>
+                      <span class="text-gray-500 dark:text-gray-400">{{ t(M + 'hostNetRx') }}</span>
+                      {{ formatKbps(hostRes.net.rx_kbps) }}
+                    </span>
+                    <span>
+                      <span class="text-gray-500 dark:text-gray-400">{{ t(M + 'hostNetTx') }}</span>
+                      {{ formatKbps(hostRes.net.tx_kbps) }}
+                    </span>
+                  </div>
+                </div>
+                <!-- 磁盘 IO -->
+                <div class="flex flex-col gap-1.5 rounded-lg bg-gray-50/80 p-3 dark:bg-gray-800/40">
+                  <span class="text-xs text-gray-500 dark:text-gray-400">{{ t(M + 'hostDiskIo') }}</span>
+                  <div class="flex flex-col gap-0.5 text-sm tabular-nums">
+                    <span>
+                      <span class="text-gray-500 dark:text-gray-400">{{ t(M + 'hostDiskIoRead') }}</span>
+                      {{ formatKbps(hostRes.diskio.read_kbps) }}
+                    </span>
+                    <span>
+                      <span class="text-gray-500 dark:text-gray-400">{{ t(M + 'hostDiskIoWrite') }}</span>
+                      {{ formatKbps(hostRes.diskio.write_kbps) }}
+                    </span>
+                  </div>
+                </div>
+                <!-- 后端进程 -->
+                <div class="flex flex-col gap-1.5 rounded-lg bg-gray-50/80 p-3 dark:bg-gray-800/40">
+                  <span class="text-xs text-gray-500 dark:text-gray-400">{{ t(M + 'hostProc') }}</span>
+                  <div class="flex flex-col gap-0.5 text-sm tabular-nums">
+                    <span>
+                      <span class="text-gray-500 dark:text-gray-400">{{ t(M + 'hostProcRss') }}</span>
+                      {{ formatMb(hostRes.proc.rss_mb) }}
+                    </span>
+                    <span>
+                      <span class="text-gray-500 dark:text-gray-400">{{ t(M + 'hostProcUptime') }}</span>
+                      {{ formatHours(hostRes.proc.uptime_hours) }}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            <!-- 进程池(host/pool 口径与实时面板一致) -->
+            <section v-if="hostPool" class="flex flex-col gap-2">
+              <div class="text-sm font-medium">{{ t(M + 'poolTitle') }}</div>
+              <div class="flex flex-wrap gap-x-8 gap-y-2 text-sm tabular-nums">
+                <span>
+                  <span class="text-gray-500 dark:text-gray-400">{{ t(M + 'poolSize') }}</span>
+                  {{ hostPool.size }}
+                </span>
+                <span>
+                  <span class="text-gray-500 dark:text-gray-400">{{ t(M + 'poolCheckedOut') }}</span>
+                  {{ hostPool.checkedout }}
+                </span>
+                <span>
+                  <span class="text-gray-500 dark:text-gray-400">{{ t(M + 'poolOverflow') }}</span>
+                  {{ hostPool.overflow }}
+                </span>
+                <span>
+                  <span class="text-gray-500 dark:text-gray-400">{{ t(M + 'poolCapacity') }}</span>
+                  {{ hostPool.capacity }}
+                </span>
+                <span>
+                  <span class="text-gray-500 dark:text-gray-400">{{ t(M + 'poolWaited') }}</span>
+                  {{ hostPool.waited }}
+                </span>
+                <span>
+                  <span class="text-gray-500 dark:text-gray-400">{{ t(M + 'poolUtilization') }}</span>
+                  {{ pctText(hostPool.utilization_percent) }}
+                </span>
+              </div>
+              <ElProgress :percentage="clampPct(hostPool.utilization_percent)" :color="percentColor" :show-text="false" />
+              <div class="text-sm text-gray-500 dark:text-gray-400">{{ t(M + 'poolScopeNote') }}</div>
+            </section>
+          </template>
+          <div v-else class="flex min-h-24 items-center text-sm text-gray-500 dark:text-gray-400">
+            {{ t(M + 'loading') }}
+          </div>
+        </div>
+      </ElCard>
+    </template>
+
+    <template v-else-if="dbStatus">
     <!-- 总览:状态 / 观测时间 / 缓存口径 / 合计 / warnings -->
     <ElCard shadow="never">
       <template #header>
@@ -1100,112 +1383,6 @@ onBeforeUnmount(() => {
           <div v-if="maintenanceActive" class="text-sm text-gray-500 dark:text-gray-400">
             {{ t(M + 'perfPausedMaintenance') }}
           </div>
-
-          <!-- 主机资源:/proc 即时读,按指标域分瓦片 -->
-          <section v-if="rtHost" class="flex flex-col gap-2">
-            <div class="text-sm font-medium">{{ t(M + 'hostTitle') }}</div>
-            <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
-              <!-- CPU -->
-              <div class="flex flex-col gap-1.5 rounded-lg bg-gray-50/80 p-3 dark:bg-gray-800/40">
-                <span class="text-xs text-gray-500 dark:text-gray-400">{{ t(M + 'hostCpu') }}</span>
-                <div class="flex h-2 w-full overflow-hidden rounded-full bg-gray-200/80 dark:bg-gray-700/60">
-                  <div class="h-full" :style="{ width: `${Math.max(0, rtHost.cpu.user_pct)}%`, background: '#409eff' }"></div>
-                  <div class="h-full" :style="{ width: `${Math.max(0, rtHost.cpu.system_pct)}%`, background: '#e6a23c' }"></div>
-                  <div class="h-full" :style="{ width: `${Math.max(0, rtHost.cpu.iowait_pct)}%`, background: '#f56c6c' }"></div>
-                  <div class="h-full" :style="{ width: `${Math.max(0, rtHost.cpu.idle_pct)}%`, background: 'rgba(144, 147, 153, 0.35)' }"></div>
-                </div>
-                <div class="flex flex-wrap gap-x-2.5 gap-y-0.5 text-xs text-gray-500 dark:text-gray-400">
-                  <span>{{ t(M + 'hostCpuUser') }} {{ pctText(rtHost.cpu.user_pct) }}</span>
-                  <span>{{ t(M + 'hostCpuSystem') }} {{ pctText(rtHost.cpu.system_pct) }}</span>
-                  <span>{{ t(M + 'hostCpuIowait') }} {{ pctText(rtHost.cpu.iowait_pct) }}</span>
-                  <span>{{ t(M + 'hostCpuIdle') }} {{ pctText(rtHost.cpu.idle_pct) }}</span>
-                </div>
-              </div>
-              <!-- 内存 -->
-              <div class="flex flex-col gap-1.5 rounded-lg bg-gray-50/80 p-3 dark:bg-gray-800/40">
-                <span class="text-xs text-gray-500 dark:text-gray-400">{{ t(M + 'hostMem') }}</span>
-                <span class="font-medium tabular-nums">
-                  {{ formatMb(rtHost.mem.used_mb) }}
-                  <span class="text-xs text-gray-500 dark:text-gray-400">/ {{ formatMb(rtHost.mem.total_mb) }}</span>
-                </span>
-                <ElProgress
-                  v-if="memUsedPct !== null"
-                  :percentage="clampPct(memUsedPct)"
-                  :color="percentColor"
-                  :show-text="false"
-                />
-                <span class="text-xs text-gray-500 dark:text-gray-400">
-                  {{ t(M + 'hostMemAvailable') }} {{ formatMb(rtHost.mem.available_mb) }}
-                </span>
-              </div>
-              <!-- 系统负载 -->
-              <div class="flex flex-col gap-1.5 rounded-lg bg-gray-50/80 p-3 dark:bg-gray-800/40">
-                <span class="text-xs text-gray-500 dark:text-gray-400">{{ t(M + 'hostLoad') }}</span>
-                <div class="flex flex-col gap-0.5 text-sm tabular-nums">
-                  <span>{{ t(M + 'hostLoad1m') }} <span class="font-medium">{{ formatMetric(rtHost.load['1m']) }}</span></span>
-                  <span>{{ t(M + 'hostLoad5m') }} <span class="font-medium">{{ formatMetric(rtHost.load['5m']) }}</span></span>
-                  <span>{{ t(M + 'hostLoad15m') }} <span class="font-medium">{{ formatMetric(rtHost.load['15m']) }}</span></span>
-                </div>
-              </div>
-              <!-- 磁盘 -->
-              <div class="flex flex-col gap-1.5 rounded-lg bg-gray-50/80 p-3 dark:bg-gray-800/40">
-                <span class="text-xs text-gray-500 dark:text-gray-400">
-                  {{ t(M + 'hostDiskMount', { mount: rtHost.disk.mount }) }}
-                </span>
-                <span class="font-medium tabular-nums">{{ pctText(rtHost.disk.used_pct) }}</span>
-                <ElProgress
-                  :percentage="clampPct(rtHost.disk.used_pct)"
-                  :color="percentColor"
-                  :show-text="false"
-                />
-                <span class="text-xs text-gray-500 dark:text-gray-400">
-                  {{ t(M + 'hostDiskFree') }} {{ formatGb(rtHost.disk.free_gb) }}
-                </span>
-              </div>
-              <!-- 网络 -->
-              <div class="flex flex-col gap-1.5 rounded-lg bg-gray-50/80 p-3 dark:bg-gray-800/40">
-                <span class="text-xs text-gray-500 dark:text-gray-400">{{ t(M + 'hostNet') }}</span>
-                <div class="flex flex-col gap-0.5 text-sm tabular-nums">
-                  <span>
-                    <span class="text-gray-500 dark:text-gray-400">{{ t(M + 'hostNetRx') }}</span>
-                    {{ formatKbps(rtHost.net.rx_kbps) }}
-                  </span>
-                  <span>
-                    <span class="text-gray-500 dark:text-gray-400">{{ t(M + 'hostNetTx') }}</span>
-                    {{ formatKbps(rtHost.net.tx_kbps) }}
-                  </span>
-                </div>
-              </div>
-              <!-- 磁盘 IO -->
-              <div class="flex flex-col gap-1.5 rounded-lg bg-gray-50/80 p-3 dark:bg-gray-800/40">
-                <span class="text-xs text-gray-500 dark:text-gray-400">{{ t(M + 'hostDiskIo') }}</span>
-                <div class="flex flex-col gap-0.5 text-sm tabular-nums">
-                  <span>
-                    <span class="text-gray-500 dark:text-gray-400">{{ t(M + 'hostDiskIoRead') }}</span>
-                    {{ formatKbps(rtHost.diskio.read_kbps) }}
-                  </span>
-                  <span>
-                    <span class="text-gray-500 dark:text-gray-400">{{ t(M + 'hostDiskIoWrite') }}</span>
-                    {{ formatKbps(rtHost.diskio.write_kbps) }}
-                  </span>
-                </div>
-              </div>
-              <!-- 后端进程 -->
-              <div class="flex flex-col gap-1.5 rounded-lg bg-gray-50/80 p-3 dark:bg-gray-800/40">
-                <span class="text-xs text-gray-500 dark:text-gray-400">{{ t(M + 'hostProc') }}</span>
-                <div class="flex flex-col gap-0.5 text-sm tabular-nums">
-                  <span>
-                    <span class="text-gray-500 dark:text-gray-400">{{ t(M + 'hostProcRss') }}</span>
-                    {{ formatMb(rtHost.proc.rss_mb) }}
-                  </span>
-                  <span>
-                    <span class="text-gray-500 dark:text-gray-400">{{ t(M + 'hostProcUptime') }}</span>
-                    {{ formatHours(rtHost.proc.uptime_hours) }}
-                  </span>
-                </div>
-              </div>
-            </div>
-          </section>
 
           <!-- Oracle 负载 + 连接池 -->
           <div class="grid grid-cols-1 gap-4 xl:grid-cols-2">
@@ -1615,23 +1792,26 @@ onBeforeUnmount(() => {
         <div class="text-sm text-gray-500 dark:text-gray-400">{{ t(M + 'retentionNote') }}</div>
       </div>
     </ElCard>
-  </div>
-
-  <!-- 首次加载 / 读取失败 -->
-  <ElCard v-else shadow="never" class="mt-8">
-    <template #header>
-      <span class="font-medium">{{ t(M + 'title') }}</span>
     </template>
-    <div class="flex min-h-24 flex-wrap items-center gap-3">
-      <template v-if="loadError && !loading">
-        <span class="text-sm text-gray-500 dark:text-gray-400">{{ loadError }}</span>
-        <ElButton text bg :icon="Refresh" @click="refresh">
-          {{ t('maintenance.recheck') }}
-        </ElButton>
-      </template>
-      <span v-else class="text-sm text-gray-500 dark:text-gray-400">{{ t(M + 'loading') }}</span>
-    </div>
-  </ElCard>
+
+    <!-- 首次加载 / 读取失败(数据库分区) -->
+    <template v-else>
+      <ElCard shadow="never">
+        <template #header>
+          <span class="font-medium">{{ t(M + 'title') }}</span>
+        </template>
+        <div class="flex min-h-24 flex-wrap items-center gap-3">
+          <template v-if="loadError && !loading">
+            <span class="text-sm text-gray-500 dark:text-gray-400">{{ loadError }}</span>
+            <ElButton text bg :icon="Refresh" @click="refresh">
+              {{ t('maintenance.recheck') }}
+            </ElButton>
+          </template>
+          <span v-else class="text-sm text-gray-500 dark:text-gray-400">{{ t(M + 'loading') }}</span>
+        </div>
+      </ElCard>
+    </template>
+  </div>
 </template>
 
 <style scoped>

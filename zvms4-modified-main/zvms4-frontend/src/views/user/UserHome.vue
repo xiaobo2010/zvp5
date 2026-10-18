@@ -103,10 +103,6 @@ watch(
               :position="user.position"
             />
           </ElDescriptionsItem>
-          <ElDescriptionsItem v-if="!loading" :label="t('home.labels.status')">
-            <span v-if="!user.banned">{{ t('home.status.normal') }}</span>
-            <ElTag v-else type="danger" size="small">{{ t('home.status.banned') }}</ElTag>
-          </ElDescriptionsItem>
         </ElDescriptions>
         <div v-if="user.position.includes('secretary')" class="py-4">
           <ElButton text bg class="w-full" @click="$router.push('/group/' + user.class_id)">

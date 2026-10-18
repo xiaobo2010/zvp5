@@ -896,6 +896,26 @@ async def collect_sessions(session: AsyncSession) -> dict[str, Any]:
         return deepcopy(data)
 
 
+def get_local_metrics() -> dict[str, Any]:
+    """Host-only snapshot for the realtime panel's sibling endpoint (R6).
+
+    Every section here is produced **inside this process**: the ``/proc``
+    reading, the SQLAlchemy connection pool counters and the in-process API
+    window.  The function takes no session and calls none of the Oracle
+    collectors above, so it cannot cost a database round trip — the caller (and
+    the test suite) can rely on that by construction, not by measuring.
+
+    ``host``/``pool``/``api`` are built by the very same builders
+    :func:`get_realtime_metrics` uses, which keeps the two endpoints' shapes
+    byte-for-byte identical for the frontend renderer.
+    """
+    return {
+        "host": collect_host_metrics()["host"],
+        "pool": pool_metrics(),
+        "api": api_metrics.snapshot(),
+    }
+
+
 async def get_realtime_metrics(session: AsyncSession) -> dict[str, Any]:
     """Everything the realtime panel needs (design §5.1).
 
@@ -926,6 +946,7 @@ __all__ = [
     "collect_sessions",
     "collect_slow",
     "get_database_status",
+    "get_local_metrics",
     "get_realtime_metrics",
     "pool_metrics",
 ]
