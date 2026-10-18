@@ -11,7 +11,6 @@ import {
   ElButtonGroup,
   ElPopover,
   ElConfigProvider,
-  ElDivider,
   ElMessageBox,
   ElWatermark
 } from 'element-plus'
@@ -26,7 +25,6 @@ import { useI18n } from 'vue-i18n'
 import { computed, watch, ref, onMounted, onUnmounted, h, reactive } from 'vue'
 import type { WatermarkFontType } from 'element-plus'
 import { zhCn } from 'element-plus/es/locale/index.mjs'
-import ZVerticalNav from '@/components/form/ZVerticalNav.vue'
 import { useRegisterSW } from 'virtual:pwa-register/vue'
 import { CarbonCloudOffline } from '@/icons'
 import { modifyPasswordDialogs } from '@/views'
@@ -273,8 +271,22 @@ const panelButtons = [
   {
     icon: SwitchButton,
     async click() {
-      await userStore.removeUser()
-      router.replace('/user/login')
+      try {
+        await ElMessageBox.confirm(
+          t('nav.logoutConfirm', '退出登录后需要重新验证身份，确定要退出吗？'),
+          t('nav.logout', '退出登录'),
+          {
+            confirmButtonText: t('nav.logout', '退出登录'),
+            cancelButtonText: t('action.cancel', '取消'),
+            type: 'warning',
+            confirmButtonClass: 'el-button--danger'
+          }
+        )
+        await userStore.removeUser()
+        router.replace('/user/login')
+      } catch {
+        /* 用户取消 */
+      }
     },
     text: 'logout'
   }
@@ -380,8 +392,6 @@ onMounted(async () => {
                 ]"
                 @dblclick="router.push(userStore.isLogin ? '/user' : '/user/login')"
               >
-                <ZVerticalNav v-if="verticalMode && userStore.isLogin" class="pl-6" />
-                <ElDivider v-if="verticalMode && userStore.isLogin" direction="vertical" />
                 <ElIcon style="border-radius: .25rem;"><img src="/favicon.ico" class="scale-50" style="border-radius: 20%;" alt="favicon" /></ElIcon>
                 <span class="lh-100% ml-2">{{ headerStore.header }}</span>
               </div>
@@ -417,8 +427,16 @@ onMounted(async () => {
             </ElCol>
           </ElRow>
         </ElHeader>
-        <ElContainer class="full">
-          <UserNav style="height: 100%; width: 3.2rem" v-if="userStore.isLogin && !verticalMode" />
+        <ElContainer
+          class="full bg-slate-50 dark:bg-gray-950"
+          :style="{
+            paddingLeft: !verticalMode && userStore.isLogin ? 'calc(8.5rem + 8px)' : '0',
+            paddingBottom: verticalMode && userStore.isLogin
+              ? 'calc(4.5rem + env(safe-area-inset-bottom, 0px))'
+              : '0'
+          }"
+        >
+          <UserNav :portrait="verticalMode" v-if="userStore.isLogin" />
           <RouterView
             class="bg-slate-50 dark:bg-gray-950 view fragment-container"
             style="width: 100%; height: 100%; box-sizing: border-box;"
