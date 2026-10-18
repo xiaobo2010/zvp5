@@ -73,6 +73,13 @@ async def validate_read_group_permission(
 
     A malformed ``target_group`` never raises ``InvalidOid``: the class-group
     rule is skipped and the request falls through to the same 403 as today.
+
+    The secretary branch reads the caller's ``class_id`` off the auth dict when
+    :func:`util.object_id._authenticate` supplied it (it always does for real
+    requests: the key is present, possibly ``None``). That spares a re-read of
+    the very document authentication just loaded. A hand-built ``user`` dict
+    without the key keeps the old behaviour and re-reads the document, so the
+    allow/deny decision is the same either way.
     """
     per = user.get("per") or []
     if "admin" in per or "department" in per:
@@ -84,11 +91,11 @@ async def validate_read_group_permission(
         if await backends.get_groups_repo().get_permission_group(target_group) is None:
             return True
     if "secretary" in per:
-        current = await get_zvms_new_user(user["id"])
-        if (
-            current is not None
-            and current.get("class_id") is not None
-            and str(current["class_id"]) == target_group
-        ):
+        if "class_id" in user:
+            class_id = user.get("class_id")
+        else:
+            current = await get_zvms_new_user(user["id"])
+            class_id = current.get("class_id") if current is not None else None
+        if class_id is not None and str(class_id) == target_group:
             return True
     raise HTTPException(status_code=403, detail="权限不足")

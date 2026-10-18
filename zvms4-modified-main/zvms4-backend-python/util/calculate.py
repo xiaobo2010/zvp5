@@ -230,13 +230,21 @@ async def calculate_user_time_bulk(
     date_start: datetime | None = None,
     date_end: datetime | None = None,
     allow_cache: bool = True,
+    session=None,
 ):
+    """Bulk user times.
+
+    ``session`` is an optional caller-owned ``AsyncSession``: when supplied,
+    every repository call below runs on it (one checkout / one teardown per
+    request instead of one per statement). When omitted the repos keep opening
+    their own sessions, i.e. the historical behaviour is unchanged.
+    """
     ids = [str(user_id) for user_id in user_ids]
     results: dict[str, dict] = {}
     pending: list[str] = []
 
     if allow_cache and date_start is None and date_end is None:
-        cached = await backends.get_time_repo().list_by_users(ids)
+        cached = await backends.get_time_repo(session).list_by_users(ids)
         cached_index = {normalize_oid(row["user"]): row for row in cached}
         for user_id in ids:
             row = cached_index.get(normalize_oid(user_id))
@@ -252,14 +260,14 @@ async def calculate_user_time_bulk(
         pending = list(ids)
 
     if pending:
-        accepted_activities = await backends.get_activities_repo().list_effective(
+        accepted_activities = await backends.get_activities_repo(session).list_effective(
             date_start, date_end
         )
         accepted_set = {
             normalize_oid(str(activity["_id"])) for activity in accepted_activities
         }
 
-        collections = await backends.get_members_repo().list_by_members(pending)
+        collections = await backends.get_members_repo(session).list_by_members(pending)
 
         aggregates: dict[str, dict] = {}
         for user_id in pending:

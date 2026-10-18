@@ -3,15 +3,16 @@ import {
   ElButton,
   ElCol,
   ElEmpty,
+  ElIcon,
   ElMessage,
   ElResult,
   ElRow,
-  ElSegmented,
-  ElStatistic
+  ElStatistic,
+  ElTag
 } from 'element-plus'
 import { computed, ref, watch } from 'vue'
 import { useWindowSize } from '@vueuse/core'
-import { Download, Refresh } from '@element-plus/icons-vue'
+import { ArrowDown, Download, Refresh } from '@element-plus/icons-vue'
 import { Bar, Doughnut } from 'vue-chartjs'
 import {
   Chart as ChartJS,
@@ -35,7 +36,11 @@ import {
   statisticsFileName,
   type StatisticsCsvLabels
 } from '@/utils/activityStatistics'
-import type { ActivityStatistics, ActivityStatisticsDescription } from '@/../types'
+import type {
+  ActivityStatistics,
+  ActivityStatisticsDescription,
+  StatisticsMemberRef
+} from '@/../types'
 
 ChartJS.register(Colors, Tooltip, Legend, BarElement, CategoryScale, LinearScale, ArcElement)
 
@@ -60,6 +65,14 @@ const STATS_CACHE_TTL_MS = 5 * 60 * 1000
 const STATS_CACHE_MAX = 20
 const CLASS_CHART_LIMIT = 12
 const DISTRIBUTION_CHART_HEIGHT = 280
+const ROSTER_TOOLTIP_LIMIT = 6
+
+const MODE_COLORS: Record<string, { base: string; hover: string }> = {
+  'on-campus': { base: '#409eff', hover: '#337ecc' },
+  'off-campus': { base: '#67c23a', hover: '#529b2e' },
+  'social-practice': { base: '#e6a23c', hover: '#cf9236' }
+}
+const FALLBACK_MODE_COLOR = { base: '#909399', hover: '#73767a' }
 
 interface StatsCacheEntry {
   payload: ActivityStatistics
@@ -102,15 +115,6 @@ const hasData = computed(
     statistics.value !== null && statistics.value.total > 0 && statistics.value.description !== null
 )
 
-type StatisticsTab = 'overview' | 'distribution' | 'groups'
-
-const segmentOptions = computed(() => [
-  { label: t('activity.statistics.tabs.overview'), value: 'overview' },
-  { label: t('activity.statistics.tabs.distribution'), value: 'distribution' },
-  { label: t('activity.statistics.tabs.groups'), value: 'groups' }
-])
-const activeTab = ref<StatisticsTab>('overview')
-
 function descMetric(key: keyof ActivityStatisticsDescription): number {
   return statistics.value?.description?.[key] ?? 0
 }
@@ -148,6 +152,12 @@ const overviewMetrics = computed<OverviewMetric[]>(() => [
     precision: 1
   },
   {
+    key: 'mode',
+    titleKey: 'activity.statistics.metrics.mode',
+    unitKey: 'activity.units.hour',
+    precision: 1
+  },
+  {
     key: 'min',
     titleKey: 'activity.statistics.metrics.min',
     unitKey: 'activity.units.hour',
@@ -170,17 +180,28 @@ const overviewMetrics = computed<OverviewMetric[]>(() => [
     titleKey: 'activity.statistics.metrics.p75',
     unitKey: 'activity.units.hour',
     precision: 1
+  },
+  {
+    key: 'std',
+    titleKey: 'activity.statistics.metrics.std',
+    unitKey: 'activity.units.hour',
+    precision: 1
   }
 ])
 
 const modeLabels = computed<Record<string, string>>(() => ({
   'on-campus': t('activity.mode.on-campus.name'),
   'off-campus': t('activity.mode.off-campus.name'),
-  'social-practice': t('activity.mode.social-practice.name')
+  'social-practice': t('activity.mode.social-practice.name'),
+  hybrid: t('activity.mode.hybrid.name')
 }))
 
 function modeName(mode: string): string {
   return modeLabels.value[mode] ?? mode
+}
+
+function formatHours(value: number): string {
+  return value.toFixed(1)
 }
 
 const csvLabels = computed<StatisticsCsvLabels>(() => ({
@@ -217,6 +238,19 @@ const durationChart = computed<ChartData<'bar'> | null>(() => {
   }
 })
 
+const peakBin = computed(() => {
+  const stats = statistics.value
+  if (!stats || stats.bins.length === 0) {
+    return null
+  }
+  return stats.bins.reduce((best, bin) => (bin.count > best.count ? bin : best), stats.bins[0])
+})
+
+const binWidthLabel = computed(() => {
+  const binWidth = statistics.value?.bin_width ?? 0
+  return String(Math.round(binWidth * 1e6) / 1e6)
+})
+
 const durationOptions = computed<ChartOptions<'bar'>>(() => ({
   responsive: true,
   maintainAspectRatio: false,
@@ -242,46 +276,122 @@ const durationOptions = computed<ChartOptions<'bar'>>(() => ({
   }
 }))
 
-const modeChart = computed<ChartData<'doughnut'> | null>(() => {
+interface ModeRow {
+  mode: string
+  count: number
+  sum: number
+  mean: number
+  color: string
+  hoverColor: string
+  members: StatisticsMemberRef[] | null
+}
+
+const hasModeRoster = computed(() => {
+  const modeMembers = statistics.value?.mode_members
+  return modeMembers !== undefined && Object.keys(modeMembers).length > 0
+})
+
+const modeRows = computed<ModeRow[]>(() => {
   const stats = statistics.value
-  if (!stats || stats.modes.length === 0) {
+  if (!stats) {
+    return []
+  }
+  const modeMembers = stats.mode_members ?? null
+  return stats.modes
+    .map((row) => ({
+      mode: row.mode,
+      count: row.count,
+      sum: row.sum,
+      mean: row.mean,
+      color: MODE_COLORS[row.mode]?.base ?? FALLBACK_MODE_COLOR.base,
+      hoverColor: MODE_COLORS[row.mode]?.hover ?? FALLBACK_MODE_COLOR.hover,
+      members: modeMembers ? (modeMembers[row.mode] ?? []) : null
+    }))
+    .sort((a, b) => a.count - b.count)
+})
+
+const expandedMode = ref<string | null>(null)
+
+function toggleModeRow(mode: string) {
+  expandedMode.value = expandedMode.value === mode ? null : mode
+}
+
+function activateModeRow(row: ModeRow) {
+  if (row.count > 0 && hasModeRoster.value) {
+    toggleModeRow(row.mode)
+  }
+}
+
+const modeChart = computed<ChartData<'doughnut', number[], string> | null>(() => {
+  if (modeRows.value.length === 0) {
     return null
   }
   return {
-    labels: stats.modes.map((row) => modeName(row.mode)),
-    datasets: [{ data: stats.modes.map((row) => row.count) }]
+    labels: modeRows.value.map((row) => modeName(row.mode)),
+    datasets: [
+      {
+        data: modeRows.value.map((row) => row.count),
+        backgroundColor: modeRows.value.map((row) => row.color),
+        hoverBackgroundColor: modeRows.value.map((row) => row.hoverColor)
+      }
+    ]
   }
 })
 
 const modeOptions = computed<ChartOptions<'doughnut'>>(() => ({
   responsive: true,
   plugins: {
-    legend: { position: 'bottom', labels: { boxWidth: 12, boxHeight: 12 } },
+    legend: { display: false },
     tooltip: {
       callbacks: {
         label: (ctx) => `${ctx.parsed} ${t('activity.units.person')}`,
         afterLabel: (ctx) => {
-          const row = statistics.value?.modes[ctx.dataIndex]
-          return row
-            ? `${t('activity.statistics.groups.sum')}：${row.sum.toFixed(1)} ${t('activity.units.hour')}`
-            : ''
+          const row = modeRows.value[ctx.dataIndex]
+          if (!row) {
+            return []
+          }
+          const lines = [
+            `${t('activity.statistics.groups.sum')}：${formatHours(row.sum)} ${t('activity.units.hour')}`,
+            `${t('activity.statistics.groups.mean')}：${formatHours(row.mean)} ${t('activity.units.hour')}`
+          ]
+          if (row.members && row.members.length > 0) {
+            const shown = row.members.slice(0, ROSTER_TOOLTIP_LIMIT).map((member) => member.name)
+            if (row.members.length > ROSTER_TOOLTIP_LIMIT) {
+              shown.push(`+${row.members.length - ROSTER_TOOLTIP_LIMIT}`)
+            }
+            return [...lines, ...shown]
+          }
+          return lines
         }
       }
+    }
+  },
+  onClick: (_event, elements) => {
+    if (elements.length === 0) {
+      expandedMode.value = null
+      return
+    }
+    const row = modeRows.value[elements[0].index]
+    if (row && row.count > 0 && hasModeRoster.value) {
+      toggleModeRow(row.mode)
     }
   }
 }))
 
-const classRows = computed(() =>
-  mergeClassRows(
+const classRows = computed(() => {
+  const merged = mergeClassRows(
     statistics.value?.classes ?? [],
     CLASS_CHART_LIMIT,
     t('activity.statistics.groups.other')
   )
-)
+  const named = merged.filter((row) => row.group_name !== '' && row.group_oid !== 'other')
+  const pinned = merged.filter((row) => row.group_name === '' || row.group_oid === 'other')
+  return [...named].sort((a, b) => a.sum - b.sum).concat(pinned)
+})
 
 const classChartHeight = computed(() => Math.max(classRows.value.length, 1) * 32 + 48)
 
-const classChart = computed<ChartData<'bar'> | null>(() => {
+const classChart = computed<ChartData<'bar', number[], string> | null>(() => {
   if (classRows.value.length === 0) {
     return null
   }
@@ -305,7 +415,13 @@ const classOptions = computed<ChartOptions<'bar'>>(() => ({
           `${classRows.value[ctx.dataIndex]?.count ?? 0} ${t('activity.units.person')}`,
         afterLabel: (ctx) => {
           const row = classRows.value[ctx.dataIndex]
-          return `${t('activity.statistics.groups.sum')}：${(row?.sum ?? 0).toFixed(1)} ${t('activity.units.hour')}`
+          if (!row) {
+            return []
+          }
+          return [
+            `${t('activity.statistics.groups.sum')}：${formatHours(row.sum)} ${t('activity.units.hour')}`,
+            `${t('activity.statistics.groups.mean')}：${formatHours(row.mean)} ${t('activity.units.hour')}`
+          ]
         }
       }
     }
@@ -318,7 +434,7 @@ const classOptions = computed<ChartOptions<'bar'>>(() => ({
       },
       beginAtZero: true
     },
-    y: { ticks: { autoSkip: false } }
+    y: { reverse: true, ticks: { autoSkip: false } }
   }
 }))
 
@@ -370,6 +486,20 @@ function exportCsv() {
   ElMessage.success(t('activity.statistics.exportDone'))
 }
 
+function memberChipTitle(member: StatisticsMemberRef) {
+  const base = `${member.name}（${member.id}）`
+  const duration =
+    member.duration !== undefined
+      ? ` · ${formatHours(member.duration)} ${t('activity.units.hour')}`
+      : ''
+  return `${base}${duration}`
+}
+
+function memberChipLabel(member: StatisticsMemberRef) {
+  const duration = member.duration !== undefined ? ` · ${formatHours(member.duration)}h` : ''
+  return `${member.name}${duration}`
+}
+
 watch(open, () => {
   if (open.value) {
     void load(props.aid)
@@ -400,9 +530,8 @@ watch(
   >
     <template #default>
       <div v-loading="loading" class="min-h-40">
-        <div class="mb-3 flex items-center justify-between gap-2">
-          <ElSegmented v-model="activeTab" :options="segmentOptions" aria-label="统计维度切换" />
-          <div class="flex items-center">
+        <div class="stats-body">
+          <div class="mb-3 flex items-center justify-end gap-2">
             <ElButton
               class="px-2"
               type="primary"
@@ -428,111 +557,199 @@ watch(
               @click="reload"
             />
           </div>
-        </div>
-        <ElResult
-          v-if="error && !loading"
-          icon="error"
-          :title="t('activity.statistics.loadFailed')"
-        >
-          <template #extra>
-            <ElButton
-              type="warning"
-              text
-              bg
-              round
-              :icon="Refresh"
-              :title="t('activity.statistics.retry')"
-              :aria-label="t('activity.statistics.retry')"
-              @click="reload"
-            >
-              {{ t('activity.statistics.retry') }}
-            </ElButton>
-          </template>
-        </ElResult>
-        <ElEmpty
-          v-else-if="!loading && !hasData"
-          :description="t('activity.statistics.empty')"
-          :image-size="120"
-        />
-        <template v-else>
-          <ElRow v-if="activeTab === 'overview'" class="stats-grid">
-            <ElCol v-for="metric in overviewMetrics" :key="metric.key" :span="4" :sm="6" :xs="8">
-              <ElStatistic
-                :title="t(metric.titleKey)"
-                :value="descMetric(metric.key)"
-                :precision="metric.precision"
-                :suffix="t(metric.unitKey)"
-              />
-            </ElCol>
-          </ElRow>
-          <div v-else-if="activeTab === 'distribution'">
-            <div
-              class="relative mx-auto"
-              :style="{ height: DISTRIBUTION_CHART_HEIGHT + 'px', maxWidth: '640px' }"
-            >
-              <Bar
-                v-if="durationChart"
-                role="img"
-                aria-label="活动参与时长分布柱状图"
-                :data="durationChart"
-                :options="durationOptions"
-              />
-            </div>
-            <p class="mt-2 text-center text-xs text-gray-500">
-              {{
-                t('activity.statistics.distribution.percentile', {
-                  p25: descMetric('25_percentile').toFixed(1),
-                  p50: descMetric('median').toFixed(1),
-                  p75: descMetric('75_percentile').toFixed(1)
-                })
-              }}
-            </p>
-          </div>
-          <ElRow v-else :gutter="16">
-            <ElCol :span="12" :xs="24">
-              <p class="mb-2 text-center text-sm text-gray-500">
-                {{ t('activity.statistics.groups.mode') }}
-              </p>
-              <div class="relative mx-auto" style="max-width: 320px">
-                <Doughnut
-                  v-if="modeChart"
-                  role="img"
-                  aria-label="活动参与模式占比环形图"
-                  :data="modeChart"
-                  :options="modeOptions"
-                />
-                <div
-                  v-if="statistics"
-                  class="pointer-events-none absolute inset-0 grid place-items-center"
-                  aria-hidden="true"
+          <ElResult
+            v-if="error && !loading"
+            icon="error"
+            :title="t('activity.statistics.loadFailed')"
+          >
+            <template #extra>
+              <ElButton
+                type="warning"
+                text
+                bg
+                round
+                :icon="Refresh"
+                :title="t('activity.statistics.retry')"
+                :aria-label="t('activity.statistics.retry')"
+                @click="reload"
+              >
+                {{ t('activity.statistics.retry') }}
+              </ElButton>
+            </template>
+          </ElResult>
+          <ElEmpty
+            v-else-if="!loading && !hasData"
+            :description="t('activity.statistics.empty')"
+            :image-size="120"
+          />
+          <template v-else>
+            <section class="stats-section">
+              <h4 class="stats-section-title">
+                {{ t('activity.statistics.sections.overview') }}
+              </h4>
+              <ElRow class="stats-grid -mb-2">
+                <ElCol
+                  v-for="metric in overviewMetrics"
+                  :key="metric.key"
+                  :span="4"
+                  :sm="6"
+                  :xs="8"
                 >
-                  <span class="text-center">
-                    <span class="block text-2xl font-semibold text-gray-700">
-                      {{ statistics.total }}
-                    </span>
-                    <span class="block text-xs text-gray-400">
-                      {{ t('activity.statistics.metrics.total') }}
-                    </span>
-                  </span>
-                </div>
+                  <ElStatistic
+                    :title="t(metric.titleKey)"
+                    :value="descMetric(metric.key)"
+                    :precision="metric.precision"
+                    :suffix="t(metric.unitKey)"
+                  />
+                </ElCol>
+              </ElRow>
+            </section>
+            <section v-if="durationChart" class="stats-section">
+              <h4 class="stats-section-title">
+                {{ t('activity.statistics.sections.distribution') }}
+              </h4>
+              <div
+                class="relative mx-auto"
+                :style="{ height: DISTRIBUTION_CHART_HEIGHT + 'px', maxWidth: '640px' }"
+              >
+                <Bar
+                  role="img"
+                  :aria-label="t('activity.statistics.distribution.aria')"
+                  :data="durationChart"
+                  :options="durationOptions"
+                />
               </div>
-            </ElCol>
-            <ElCol :span="12" :xs="24">
-              <p class="mb-2 text-center text-sm text-gray-500">
-                {{ t('activity.statistics.groups.class') }}
+              <p class="mt-2 text-center text-xs text-gray-500">
+                {{
+                  t('activity.statistics.distribution.percentile', {
+                    p25: formatHours(descMetric('25_percentile')),
+                    p50: formatHours(descMetric('median')),
+                    p75: formatHours(descMetric('75_percentile'))
+                  })
+                }}
               </p>
+              <p v-if="peakBin && peakBin.count > 0" class="text-center text-xs text-gray-500">
+                {{
+                  t('activity.statistics.distribution.binLine', {
+                    width: binWidthLabel,
+                    range: formatBinLabel(peakBin.from, peakBin.to),
+                    count: peakBin.count
+                  })
+                }}
+              </p>
+            </section>
+            <section v-if="modeChart" class="stats-section">
+              <h4 class="stats-section-title">
+                {{ t('activity.statistics.sections.mode') }}
+              </h4>
+              <ElRow :gutter="16">
+                <ElCol :span="10" :xs="24">
+                  <div class="relative mx-auto" style="max-width: 300px">
+                    <Doughnut
+                      role="img"
+                      :aria-label="t('activity.statistics.groups.ariaMode')"
+                      :data="modeChart"
+                      :options="modeOptions"
+                    />
+                    <div
+                      v-if="statistics"
+                      class="pointer-events-none absolute inset-0 grid place-items-center"
+                      aria-hidden="true"
+                    >
+                      <span class="text-center">
+                        <span class="block text-2xl font-semibold text-gray-700">
+                          {{ statistics.total }}
+                        </span>
+                        <span class="block text-xs text-gray-400">
+                          {{ t('activity.statistics.metrics.total') }}
+                        </span>
+                      </span>
+                    </div>
+                  </div>
+                </ElCol>
+                <ElCol :span="14" :xs="24">
+                  <ul class="mode-list">
+                    <template v-for="row in modeRows" :key="row.mode">
+                      <li
+                        class="mode-row"
+                        :class="{
+                          expandable: row.count > 0 && hasModeRoster,
+                          expanded: expandedMode === row.mode
+                        }"
+                        :title="
+                          row.count > 0 && hasModeRoster
+                            ? t('activity.statistics.groups.rosterToggle')
+                            : undefined
+                        "
+                        role="button"
+                        tabindex="0"
+                        :aria-expanded="expandedMode === row.mode"
+                        @click="activateModeRow(row)"
+                        @keydown.enter.prevent="activateModeRow(row)"
+                        @keydown.space.prevent="activateModeRow(row)"
+                      >
+                        <span
+                          class="mode-dot"
+                          :style="{ backgroundColor: row.color }"
+                          aria-hidden="true"
+                        ></span>
+                        <span class="mode-label">{{ modeName(row.mode) }}</span>
+                        <span class="mode-nums">
+                          {{ row.count }} {{ t('activity.units.person') }} ·
+                          {{ formatHours(row.sum) }} {{ t('activity.units.hour') }} ·
+                          {{ t('activity.statistics.groups.mean') }}
+                          {{ formatHours(row.mean) }}
+                        </span>
+                        <ElIcon
+                          v-if="row.count > 0 && hasModeRoster"
+                          class="mode-caret"
+                          :size="12"
+                          aria-hidden="true"
+                        >
+                          <ArrowDown />
+                        </ElIcon>
+                      </li>
+                      <li v-if="expandedMode === row.mode && row.count > 0" class="roster-row">
+                        <div v-if="row.members && row.members.length > 0" class="member-chips">
+                          <ElTag
+                            v-for="(member, memberIndex) in row.members"
+                            :key="member._id || member.id || memberIndex"
+                            size="small"
+                            type="info"
+                            effect="plain"
+                            class="member-chip"
+                            :title="memberChipTitle(member)"
+                          >
+                            {{ memberChipLabel(member) }}
+                          </ElTag>
+                        </div>
+                        <span v-else class="text-xs text-gray-400">
+                          {{ t('activity.statistics.groups.rosterUnavailable') }}
+                        </span>
+                      </li>
+                    </template>
+                  </ul>
+                </ElCol>
+              </ElRow>
+            </section>
+            <section v-if="classChart" class="stats-section">
+              <h4 class="stats-section-title">
+                {{ t('activity.statistics.sections.classes') }}
+              </h4>
               <div class="relative" :style="{ height: classChartHeight + 'px' }">
                 <Bar
-                  v-if="classChart"
                   role="img"
-                  aria-label="活动班级总时长对比横向柱状图（按后端统计顺序，未分班垫底）"
+                  :aria-label="t('activity.statistics.groups.ariaClass')"
                   :data="classChart"
                   :options="classOptions"
                 />
               </div>
-            </ElCol>
-          </ElRow>
-        </template>
+              <p class="mt-1 text-center text-xs text-gray-500">
+                {{ t('activity.statistics.groups.sortedAsc') }}
+              </p>
+            </section>
+          </template>
+        </div>
       </div>
     </template>
     <template #text> {{ t('activity.statistics.name') }} </template>
@@ -540,6 +757,25 @@ watch(
 </template>
 
 <style scoped>
+.stats-body {
+  max-height: min(76vh, 920px);
+  overflow-y: auto;
+}
+
+.stats-section {
+  margin-bottom: 20px;
+}
+
+.stats-section-title {
+  margin: 0 0 10px;
+  padding-left: 8px;
+  border-left: 3px solid var(--el-color-primary);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--el-text-color-primary);
+}
+
 .stats-grid :deep(.el-statistic__number) {
   font-variant-numeric: tabular-nums;
 }
@@ -550,5 +786,86 @@ watch(
 
 .stats-grid .el-col {
   margin-bottom: 8px;
+}
+
+.mode-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.mode-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 8px;
+  border-radius: 6px;
+  font-size: 13px;
+  color: var(--el-text-color-regular);
+  transition: background-color 0.15s ease;
+}
+
+.mode-row.expandable {
+  cursor: pointer;
+}
+
+.mode-row.expandable:hover {
+  background-color: var(--el-fill-color-light);
+}
+
+.mode-row.expanded {
+  background-color: var(--el-fill-color-light);
+}
+
+.mode-dot {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+
+.mode-label {
+  flex: none;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mode-nums {
+  flex: 1 1 auto;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+
+.mode-caret {
+  flex: none;
+  color: var(--el-text-color-secondary);
+  transition: transform 0.18s ease;
+}
+
+.mode-row.expanded .mode-caret {
+  transform: rotate(180deg);
+}
+
+.mode-row.expandable:focus-visible {
+  outline: 2px solid var(--el-color-primary);
+  outline-offset: 1px;
+}
+
+.roster-row {
+  padding: 4px 8px 6px 18px;
+}
+
+.member-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.member-chip {
+  cursor: default;
 }
 </style>
