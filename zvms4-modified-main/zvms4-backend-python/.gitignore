@@ -476,3 +476,8 @@ aes_key.txt
 settings.py
 test.py
 uploads
+
+# 运行时本地状态库：测试/部署都可能在仓库目录里生成，
+# 绝不能进仓库（rsync 部署会同步过去，覆盖线上的维护状态/采样历史）。
+system_state.db*
+perf_samples.db*
