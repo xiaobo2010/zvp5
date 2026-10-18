@@ -198,12 +198,33 @@ axiosInstance.interceptors.response.use(
       } else {
         if (!errorDisplayed) {
           errorDisplayed = true
+          let detail: unknown = error.response?.data?.detail
+          const rawData = error.response?.data
+          // 缩略图/字节类请求(responseType: 'blob' / 'arraybuffer')失败时 data 是二进制,
+          // data.detail 取不到会一律落到「未知错误」。此处按需把二进制读成文本再尝试解析。
+          if (rawData instanceof Blob || rawData instanceof ArrayBuffer) {
+            try {
+              const text =
+                rawData instanceof Blob ? await rawData.text() : new TextDecoder().decode(rawData)
+              if (text) {
+                try {
+                  const parsed = JSON.parse(text)
+                  if (parsed && typeof parsed === 'object' && 'detail' in parsed) {
+                    detail = (parsed as { detail?: unknown }).detail
+                  }
+                } catch {
+                  if (text.length <= 300) {
+                    detail = text
+                  }
+                }
+              }
+            } catch {
+              detail = undefined
+            }
+          }
           ElMessage({
-            message: error.response?.data?.detail
-              ? '' +
-                (typeof error.response?.data?.detail === 'string'
-                  ? error.response?.data?.detail
-                  : JSON.stringify(error.response?.data?.detail))
+            message: detail
+              ? '' + (typeof detail === 'string' ? detail : JSON.stringify(detail))
               : '未知错误',
             type: 'error',
             grouping: true,

@@ -17,12 +17,14 @@ import {
   Picture,
   Delete,
   ZoomIn,
+  Loading,
   Plus,
   Close
 } from '@element-plus/icons-vue'
 import type { AxiosProgressEvent } from 'axios'
 import type {
   AttachmentMeta,
+  AttachmentStatus,
   AttachmentUploadResult
 } from '@/../types'
 import * as attachmentApi from '@/api/attachment'
@@ -34,8 +36,8 @@ interface DisplayItem {
   url: string
   // 原图预览 blob URL（按需加载）
   fullUrl?: string
-  // 上传状态
-  status: 'uploading' | 'done' | 'error'
+  // 附件加载/上传状态
+  status: 'loading' | 'uploading' | 'done' | 'error' | 'failed'
   // 上传进度 0-100
   progress: number
   // 元数据
@@ -114,16 +116,28 @@ onUnmounted(() => {
   items.value.forEach(revokeItem)
 })
 
+// 视为可用的存量附件状态；其余（processing / rejected / quarantined / deleted 等）一律静默移除
+const STORED_META_OK: ReadonlySet<AttachmentStatus> = new Set([
+  'stored',
+  'ready',
+  'verified'
+])
+
 async function loadStored(oid: string) {
   const index =
     items.value.push({
       oid,
       url: '',
-      status: 'uploading',
+      status: 'loading',
       progress: 0
     }) - 1
   try {
     const meta = await attachmentApi.read.getMeta(oid)
+    // 后端已判定该附件不可用（如软删行 status=deleted）：静默移除
+    if (meta?.status && !STORED_META_OK.has(meta.status)) {
+      dropStoredItem(oid)
+      return
+    }
     const blob = await attachmentApi.read.getThumb(oid)
     const url = URL.createObjectURL(blob)
     // 等待期间 modelValue 变化会触发 watch 重排数组，槽位可能已不是本项
@@ -136,13 +150,28 @@ async function loadStored(oid: string) {
     target.meta = meta
     target.status = 'done'
   } catch (err) {
-    const target = items.value[index]
-    if (target && target.oid === oid) {
-      target.status = 'error'
+    const http = (err as { response?: { status?: number } }).response?.status
+    // 404/410：存量附件已不存在或已软删，静默移除，不污染父级
+    if (http === 404 || http === 410) {
+      dropStoredItem(oid)
+      return
+    }
+    // 其它失败（断网/5xx/超时）：保留占位，显示「加载失败」，只提供删除按钮
+    const target = items.value.find((i) => i.oid === oid)
+    if (target) {
+      target.status = 'failed'
       target.url = ''
     }
-    emit('error', err)
   }
+}
+
+// 静默移除一个不可用的存量附件：释放预览、移出 items 并同步 v-model
+function dropStoredItem(oid: string) {
+  const target = items.value.find((i) => i.oid === oid)
+  if (!target) return
+  revokeItem(target)
+  items.value.splice(items.value.indexOf(target), 1)
+  syncModel()
 }
 
 function revokeItem(item: DisplayItem) {
@@ -157,7 +186,7 @@ function revokeItem(item: DisplayItem) {
 function syncModel() {
   emit(
     'update:modelValue',
-    items.value.filter((i) => i.oid && i.status !== 'error').map((i) => i.oid)
+    items.value.filter((i) => i.oid).map((i) => i.oid)
   )
 }
 
@@ -259,7 +288,7 @@ async function uploadSingle(file: File, replaceIndex?: number) {
 
 async function removeItem(item: DisplayItem) {
   if (props.disabled || props.readonly) return
-  if (item.oid && item.status === 'done') {
+  if (item.oid) {
     try {
       await attachmentApi.manage.deleteOne(item.oid)
       emit('deleted', item.oid)
@@ -315,8 +344,10 @@ function closePreview() {
 }
 
 function statusText(item: DisplayItem): string {
+  if (item.status === 'loading') return '加载中…'
   if (item.status === 'uploading') return '上传中…'
   if (item.status === 'error') return '上传失败'
+  if (item.status === 'failed') return '加载失败'
   const ocr = item.meta?.ocr_status
   if (ocr === 'processing') return '识别中'
   if (ocr === 'done') return '已识别'
@@ -362,8 +393,16 @@ function statusText(item: DisplayItem): string {
         :key="item.oid || item.url"
         class="relative aspect-square rounded-lg overflow-hidden border border-gray-200 bg-gray-100"
       >
+        <div
+          v-if="item.status === 'loading'"
+          class="w-full h-full flex items-center justify-center"
+        >
+          <ElIcon class="att-spin text-xl text-gray-400">
+            <Loading />
+          </ElIcon>
+        </div>
         <img
-          v-if="item.url"
+          v-else-if="item.url"
           :src="item.url"
           class="w-full h-full object-cover"
           alt="附件预览"
@@ -412,7 +451,21 @@ function statusText(item: DisplayItem): string {
         </div>
 
         <div
-          v-else
+          v-else-if="item.status === 'failed'"
+          class="absolute inset-0 bg-black/60 flex flex-col items-center justify-center px-2 text-center"
+        >
+          <span class="text-white text-xs mb-2">加载失败</span>
+          <button
+            type="button"
+            class="text-white text-xs px-2 py-1 rounded hover:bg-white/20"
+            @click="removeItem(item)"
+          >
+            删除
+          </button>
+        </div>
+
+        <div
+          v-else-if="item.status === 'done'"
           class="absolute inset-x-0 bottom-0 bg-black/40 px-1 py-0.5 flex items-center justify-between"
         >
           <span class="text-white text-[10px] truncate">{{ statusText(item) }}</span>
@@ -526,5 +579,13 @@ function statusText(item: DisplayItem): string {
 }
 .hover\:text-primary:hover {
   color: var(--el-color-primary);
+}
+.att-spin {
+  animation: att-spin 1s linear infinite;
+}
+@keyframes att-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 </style>
