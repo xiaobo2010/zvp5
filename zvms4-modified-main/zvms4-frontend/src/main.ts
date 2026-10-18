@@ -18,7 +18,7 @@ import 'animate.css/animate.min.css'
 import 'virtual:uno.css'
 
 // 全局圆角 + 磨砂玻璃效果层，必须最后加载以覆盖 Element Plus 默认样式
-import './assets/styles/liquid-glass.css'
+import './assets/styles/glass.css'
 
 import persistedstate from 'pinia-plugin-persistedstate'
 
