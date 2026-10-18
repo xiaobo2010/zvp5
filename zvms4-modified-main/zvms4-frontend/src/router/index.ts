@@ -100,6 +100,21 @@ const router = createRouter({
           path: 'totp',
           name: 'server-totp',
           component: () => import('../views/server/ServerTotp.vue')
+        },
+        {
+          path: 'ssh',
+          name: 'server-ssh',
+          component: () => import('../views/server/ServerSsh.vue')
+        },
+        {
+          path: 'files',
+          name: 'server-files',
+          component: () => import('../views/server/ServerFiles.vue')
+        },
+        {
+          path: 'db/content',
+          name: 'server-db-content',
+          component: () => import('../views/server/ServerDbContent.vue')
         }
       ]
     },

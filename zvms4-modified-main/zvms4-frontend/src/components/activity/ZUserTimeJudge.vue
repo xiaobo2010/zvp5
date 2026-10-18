@@ -133,7 +133,7 @@ const reportPage = ref(false)
       <ZDetailedAnalysis :id="user" mode="on-campus" :sums="sums" />
     </ElDialog>
     <ElCard
-      shadow="hover"
+      shadow="never"
     >
       <ElRow>
         <ElCol :span="12">

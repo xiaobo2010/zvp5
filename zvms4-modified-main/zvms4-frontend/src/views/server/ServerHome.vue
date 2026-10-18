@@ -4,7 +4,7 @@ import { useUserStore } from '@/stores/user.ts'
 import { ref, watch, type Component } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ElPageHeader, ElSegmented, ElIcon } from 'element-plus'
-import { ArrowLeft, Setting, DataLine, Key } from '@element-plus/icons-vue'
+import { ArrowLeft, Setting, DataLine, Key, Connection, Folder, Grid } from '@element-plus/icons-vue'
 
 interface SegmentedTab {
   label: string
@@ -39,6 +39,21 @@ const tabs = ref<SegmentedTab[]>([
     value: 'totp',
     icon: Key
   },
+  {
+    label: 'Ssh',
+    value: 'ssh',
+    icon: Connection
+  },
+  {
+    label: 'Files',
+    value: 'files',
+    icon: Folder
+  },
+  {
+    label: 'Content',
+    value: 'dbContent',
+    icon: Grid
+  },
 ])
 
 // 分段导航与子路由双向同步:子页 path 即 tab value
@@ -46,19 +61,24 @@ watch(
   () => route.path,
   () => {
     const seg = route.path.split('/')
-    current.value = seg[1] === 'server' && seg[2] ? seg[2] : 'maintenance'
+    const isDbContent = seg[1] === 'server' && seg[2] === 'db' && seg[3] === 'content'
+    current.value = seg[1] === 'server' && seg[2] ? (isDbContent ? 'dbContent' : seg[2]) : 'maintenance'
   },
   { immediate: true }
 )
 
 watch(current, () => {
+  if (current.value === 'dbContent') {
+    router.replace('/server/db/content')
+    return
+  }
   router.replace('/server/' + current.value)
 })
 </script>
 
 <template>
-  <div class="px-16 py-8">
-    <ElPageHeader :icon="ArrowLeft" @back="() => router.back()" class="py-4">
+  <div class="px-4 py-4">
+    <ElPageHeader :icon="ArrowLeft" @back="() => router.back()" class="py-2">
       <template #content>
         {{ t('server.tabs.' + current) }}
       </template>

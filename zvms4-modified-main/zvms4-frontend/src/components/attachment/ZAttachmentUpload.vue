@@ -435,14 +435,14 @@ function statusText(item: DisplayItem): string {
           <div class="flex gap-1">
             <button
               type="button"
-              class="text-white text-xs px-2 py-1 rounded hover:bg-white/20"
+              class="text-white text-xs px-2 py-1 rounded hover:opacity-80"
               @click="retryItem(item)"
             >
               重试
             </button>
             <button
               type="button"
-              class="text-white text-xs px-2 py-1 rounded hover:bg-white/20"
+              class="text-white text-xs px-2 py-1 rounded hover:opacity-80"
               @click="removeItem(item)"
             >
               删除
@@ -457,7 +457,7 @@ function statusText(item: DisplayItem): string {
           <span class="text-white text-xs mb-2">加载失败</span>
           <button
             type="button"
-            class="text-white text-xs px-2 py-1 rounded hover:bg-white/20"
+            class="text-white text-xs px-2 py-1 rounded hover:opacity-80"
             @click="removeItem(item)"
           >
             删除
@@ -473,7 +473,7 @@ function statusText(item: DisplayItem): string {
             <button
               v-if="item.url"
               type="button"
-              class="text-white p-1 rounded hover:bg-white/20"
+              class="text-white p-1 rounded hover:opacity-80"
               @click="openPreview(item)"
             >
               <ElIcon><ZoomIn /></ElIcon>
@@ -481,7 +481,7 @@ function statusText(item: DisplayItem): string {
             <button
               v-if="!readonly && !disabled"
               type="button"
-              class="text-white p-1 rounded hover:bg-white/20"
+              class="text-white p-1 rounded hover:opacity-80"
               @click="removeItem(item)"
             >
               <ElIcon><Delete /></ElIcon>

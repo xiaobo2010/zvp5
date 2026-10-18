@@ -102,9 +102,9 @@ function routeTo(page: string) {
 </script>
 
 <template>
-  <div class="px-2 bg-slate-100 dark:bg-gray-900 pl-3 menu">
+  <div class="px-2 z-bg pl-3 menu" style="border-right: 1px solid var(--zv-hairline)">
     <div v-for="nav in navs" :key="nav.path">
-      <div class="py-1" v-if="nav.show">
+      <div class="py-0.5" v-if="nav.show">
         <ElTooltip
           v-if="nav.show"
           :content="t(`nav.${nav.name}`)"

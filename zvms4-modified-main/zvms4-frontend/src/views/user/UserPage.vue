@@ -145,8 +145,8 @@ watch(
 </script>
 
 <template>
-  <div class="px-16 py-8">
-    <ElPageHeader v-if="id" :icon="ArrowLeft" @back="router.back()" class="py-4">
+  <div class="px-6 py-4">
+    <ElPageHeader v-if="id" :icon="ArrowLeft" @back="router.back()" class="py-2">
       <template #content>
         {{ user?.name }}
         <ElTag v-if="user?.banned" type="danger" class="ml-2">

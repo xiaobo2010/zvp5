@@ -162,11 +162,11 @@ watch(user, async () => {
 <template>
   <div class="w-full login-wrap" style="display: flex; flex-direction: column; height: 100%;">
     <div style="flex-grow: 1;"></div>
-    <ElCard class="login-field text-center px-4 w-full" shadow="hover" style="flex-grow: 0;">
+    <ElCard shadow="never" class="login-field text-center px-4 w-full" style="flex-grow: 0;">
       <ElRow class="w-full py-1">
         <ElCol :span="8" />
         <ElCol :span="8">
-          <p class="text-2xl py-1 pl-8" style="text-align: center">
+          <p class="text-lg py-1" style="text-align: center">
             {{ t('nav.login.actions.login') }}
           </p>
         </ElCol>
