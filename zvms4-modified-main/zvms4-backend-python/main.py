@@ -23,6 +23,7 @@ from routers import (
     changelog_router,
     attachments_router,
     db_system_router,
+    db_metrics_router,
 )
 import socketio
 from socketio.exceptions import ConnectionRefusedError as SocketIOConnectionRefusedError
@@ -39,6 +40,8 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from tasks.compute_time import rebuild_statistics, generate_reports
 from tasks.files_retention import purge_expired_attachments
 from tasks.retention import purge_expired_records
+from services import perf_sampler
+from services.api_metrics import ApiMetricsMiddleware
 
 scheduler = AsyncIOScheduler()
 _logger = logging.getLogger(__name__)
@@ -98,6 +101,12 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# 端点耗时统计：纯 ASGI 中间件，注册位置刻意夹在 CORSMiddleware 与
+# maintenance_middleware 之间（add_middleware 后注册者更靠外层）。这样它位于维护
+# 中间件**内侧** —— 被维护模式 503 挡下的请求不会进入统计（它们没有执行任何路由），
+# 而 shield 仍然是最外层。它只记录真正匹配到路由模板的请求（§5.4）。
+app.add_middleware(ApiMetricsMiddleware)
 
 SEC_PATTERN = re.compile(
     "|".join(
@@ -272,6 +281,52 @@ async def startup_event():
         misfire_grace_time=3600,
     )
 
+    # 性能采样三档 + 每天一次的采样清理（设计 §4）。间隔全部可配
+    # （PERF_HOST_ORACLE... 见 services/perf_sampler.py），单 worker 下进程内采样可靠。
+    # 30s 档纯本地零 DB 往返；120s 档为 1 条合并语句；600s 档为 3 条慢语句。
+    scheduler.add_job(
+        perf_sampler.sample_host,
+        "interval",
+        seconds=perf_sampler.host_interval_seconds(),
+        id="perf_sample_host",
+        coalesce=True,
+        max_instances=1,
+        misfire_grace_time=30,
+    )
+    scheduler.add_job(
+        perf_sampler.sample_oracle,
+        "interval",
+        seconds=perf_sampler.oracle_interval_seconds(),
+        id="perf_sample_oracle",
+        coalesce=True,
+        max_instances=1,
+        misfire_grace_time=60,
+    )
+    scheduler.add_job(
+        perf_sampler.sample_slow,
+        "interval",
+        seconds=perf_sampler.slow_interval_seconds(),
+        id="perf_sample_slow",
+        coalesce=True,
+        max_instances=1,
+        misfire_grace_time=300,
+    )
+
+    # 采样表保留期清理（PERF_RETENTION_DAYS，默认 14 天）。04:30 HKT：03:00
+    # 附件、03:30 业务日志、04:00 报表均已占用。
+    scheduler.add_job(
+        perf_sampler.purge_expired,
+        "cron",
+        hour=4,
+        minute=30,
+        second=0,
+        timezone="Asia/Hong_Kong",
+        id="daily_perf_retention_purge",
+        coalesce=True,
+        max_instances=1,
+        misfire_grace_time=3600,
+    )
+
     print("Application started.")
 
 
@@ -313,6 +368,9 @@ app.include_router(
 )
 app.include_router(system_router, prefix="/api/system/maintenance", tags=["System"])
 app.include_router(db_system_router.router, prefix="/api/system/db", tags=["System"])
+app.include_router(
+    db_metrics_router.router, prefix="/api/system/db/metrics", tags=["System"]
+)
 
 
 @app.get("/api/")
