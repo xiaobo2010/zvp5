@@ -143,6 +143,23 @@ async function putUserRoles(uid: string, roles: string[]) {
   return response?.status === 204
 }
 
+async function putUserStudentId(uid: string, studentId: string) {
+  const response = await axios({
+    method: 'put',
+    url: `/v3/users/${uid}/student-id`,
+    data: { id: studentId }
+  })
+  return response?.status >= 200 && response?.status < 300
+}
+
+async function deleteUserV3(uid: string) {
+  const response = await axios({
+    method: 'delete',
+    url: `/v3/users/${uid}`
+  })
+  return response?.status >= 200 && response?.status < 300
+}
+
 async function putUserBanned(uid: string, banned: boolean) {
   const response = await axios({
     method: 'put',
@@ -170,4 +187,4 @@ async function createUserV3(
   return { id: result.id, initial_password: result.initial_password ?? '' }
 }
 
-export { getUser as readOne, getUsers as read, putUser as update, getUserV3 as readOne_v3, getUsersV2 as read_v2, putUserRoles as updateRoles, putUserBanned as updateBanned, createUserV3 as create_v3 }
+export { getUser as readOne, getUsers as read, putUser as update, getUserV3 as readOne_v3, getUsersV2 as read_v2, putUserRoles as updateRoles, putUserStudentId as updateStudentId, deleteUserV3 as deleteUser, putUserBanned as updateBanned, createUserV3 as create_v3 }
