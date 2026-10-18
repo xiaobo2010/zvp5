@@ -103,6 +103,14 @@ watch(height, () => {
       :activity="activity"
       mode="campus"
       :members-count="membersCount"
+      show-members-inline
+    />
+    <ZActivityMemberList
+      class="py-2"
+      mode="inline"
+      :activity="activity"
+      :members-count="membersCount"
+      @refresh="getInfo"
     />
     <!--<p class="text-gray-500 dark:text-gray-400 px-4 py-2" style="white-space: pre-wrap">
       {{ activity?.description }}
