@@ -21,3 +21,9 @@ declare module 'virtual:pwa-register/vue' {
     updateServiceWorker: (reloadPage?: boolean) => Promise<void>
   }
 }
+
+declare module '~icons/*' {
+  import type { FunctionalComponent, SVGAttributes } from 'vue'
+  const component: FunctionalComponent<SVGAttributes>
+  export default component
+}

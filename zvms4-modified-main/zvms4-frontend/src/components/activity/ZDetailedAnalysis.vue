@@ -112,7 +112,7 @@ const totalDuration = computed(() => sums.value?.[activeMode.value] ?? 0)
         </ElSegmented>
       </ElCol>
       <ElCol :span="8" :xs="24" class="summary-col" style="text-align: right">
-        <span class="text-sm text-gray-500">
+        <span class="text-sm text-gray-500 dark:text-gray-400">
           共 <span class="summary-number">{{ totalCount }}</span> 项 · 累计
           <span class="summary-number">{{ totalDuration.toFixed(1) }}</span> 小时
         </span>

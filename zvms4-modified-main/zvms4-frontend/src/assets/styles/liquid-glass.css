@@ -1,0 +1,713 @@
+/*
+ * ============================================================
+ * Liquid Glass 全局设计系统
+ * 视觉参考：Apple Liquid Glass (iOS 26) / liquid-glass-react
+ *   - displacementScale 64 → 强 backdrop-blur + 边缘折射光
+ *   - saturation 130-140   → backdrop saturate(140%)
+ *   - elasticity 0.35      → 点击/悬浮弹性动画
+ *   - cornerRadius 100     → 胶囊圆角按钮
+ * 纯 CSS 实现：Safari/平板 WebView 全兼容（原库的 Canvas 位移
+ * 在 Safari 中也不生效，CSS 方案视觉等效且性能更好）
+ * ============================================================
+ */
+
+:root {
+  /* —— Liquid Glass 核心参数 —— */
+  --lg-blur-strong: 20px;                       /* 浮层玻璃模糊 */
+  --lg-blur-soft: 12px;                         /* 常驻卡片模糊 */
+  --lg-saturate: 140%;
+  --lg-ease: cubic-bezier(0.34, 1.56, 0.64, 1); /* 弹性缓动 */
+  --lg-duration: 0.25s;
+
+  /* 浅色模式玻璃材质 */
+  --lg-bg-strong: linear-gradient(135deg, rgba(255, 255, 255, 0.62), rgba(255, 255, 255, 0.38));
+  --lg-bg-soft: linear-gradient(135deg, rgba(255, 255, 255, 0.5), rgba(255, 255, 255, 0.28));
+  --lg-specular: rgba(255, 255, 255, 0.75);     /* 顶部高光 */
+  --lg-rim: inset 0 0 0 1px rgba(255, 255, 255, 0.35);   /* 边缘折射光环 */
+  --lg-rim-bottom: inset 0 -1px 0 rgba(0, 0, 0, 0.04);   /* 底部内阴影 */
+  --lg-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+  --lg-shadow-float: 0 12px 40px rgba(0, 0, 0, 0.14);
+
+  /* Element Plus 圆角接入 */
+  --el-border-radius-base: 12px;
+  --el-border-radius-small: 8px;
+  --el-border-radius-round: 999px;
+  --el-card-border-radius: 20px;
+}
+
+html.dark {
+  --lg-bg-strong: linear-gradient(135deg, rgba(40, 42, 52, 0.68), rgba(28, 30, 38, 0.5));
+  --lg-bg-soft: linear-gradient(135deg, rgba(40, 42, 52, 0.5), rgba(28, 30, 38, 0.34));
+  --lg-specular: rgba(255, 255, 255, 0.16);
+  --lg-rim: inset 0 0 0 1px rgba(255, 255, 255, 0.12);
+  --lg-rim-bottom: inset 0 -1px 0 rgba(0, 0, 0, 0.3);
+  --lg-shadow: 0 8px 32px rgba(0, 0, 0, 0.36);
+  --lg-shadow-float: 0 12px 40px rgba(0, 0, 0, 0.44);
+}
+
+/* ============ 玻璃材质说明 ============
+ * 所有组件共用同一套材质：渐变玻璃底色 + backdrop 模糊/饱和 +
+ * 边缘折射光环（inset rim）+ 顶部镜面高光（::before 伪元素）
+ */
+
+/* ============================================================
+ * 1. 按钮 —— 胶囊玻璃 + 高光 + 弹性按压
+ * ========================================================== */
+.el-button {
+  position: relative;
+  overflow: hidden;
+  border: none;
+  border-radius: var(--el-border-radius-round);
+  background: var(--lg-bg-strong);
+  -webkit-backdrop-filter: blur(var(--lg-blur-strong)) saturate(var(--lg-saturate));
+  backdrop-filter: blur(var(--lg-blur-strong)) saturate(var(--lg-saturate));
+  box-shadow: var(--lg-rim), inset 0 1px 0 var(--lg-specular), var(--lg-rim-bottom),
+    0 4px 16px rgba(0, 0, 0, 0.08);
+  transition: transform var(--lg-duration) var(--lg-ease),
+    filter var(--lg-duration) ease, box-shadow var(--lg-duration) ease;
+}
+
+/* 顶部高光（折射光） */
+.el-button::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background: radial-gradient(120% 70% at 50% 0%, var(--lg-specular) 0%, transparent 60%);
+  opacity: 0.55;
+}
+
+.el-button:hover {
+  filter: brightness(1.07);
+  transform: translateY(-1px);
+  box-shadow: var(--lg-rim), inset 0 1px 0 var(--lg-specular), var(--lg-rim-bottom),
+    0 8px 24px rgba(0, 0, 0, 0.12);
+}
+
+.el-button:active {
+  transform: scale(0.96);
+  filter: brightness(0.97);
+}
+
+/* 主题色按钮：保留品牌色，叠加玻璃质感 */
+.el-button--primary,
+.el-button--success,
+.el-button--warning,
+.el-button--danger,
+.el-button--info {
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, currentColor 0%, var(--el-button-bg-color, var(--el-color-primary)) 82%),
+    color-mix(in srgb, var(--el-button-bg-color, var(--el-color-primary)) 62%, transparent)
+  );
+}
+
+.el-button--primary {
+  box-shadow: var(--lg-rim), inset 0 1px 0 rgba(255, 255, 255, 0.45),
+    0 4px 20px color-mix(in srgb, var(--el-color-primary) 38%, transparent);
+}
+
+.el-button.is-plain {
+  background: var(--lg-bg-soft);
+}
+
+.el-button.is-link,
+.el-button.is-text {
+  background: transparent;
+  box-shadow: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+/* text+bg 悬浮按钮（如首页刷新钮）：给玻璃底，深浅色下均可辨认 */
+.el-button.is-text.is-has-bg {
+  background: var(--lg-bg-strong);
+  -webkit-backdrop-filter: blur(var(--lg-blur-strong)) saturate(var(--lg-saturate));
+  backdrop-filter: blur(var(--lg-blur-strong)) saturate(var(--lg-saturate));
+  box-shadow: var(--lg-rim), inset 0 1px 0 var(--lg-specular),
+    0 2px 10px rgba(0, 0, 0, 0.1);
+}
+
+html.dark .el-button.is-text.is-has-bg {
+  box-shadow: var(--lg-rim), inset 0 1px 0 var(--lg-specular),
+    0 2px 12px rgba(0, 0, 0, 0.4);
+}
+
+/* 悬浮态：跟随当前主题加深玻璃，而非 EP 默认的反色填充 */
+.el-button.is-text.is-has-bg:hover {
+  background: var(--lg-bg-strong);
+  filter: brightness(1.1);
+  transform: translateY(-1px);
+}
+
+html.dark .el-button.is-text.is-has-bg:hover {
+  filter: brightness(1.25);
+}
+
+.el-button.is-text.is-has-bg:active {
+  transform: scale(0.94);
+  filter: brightness(0.95);
+}
+
+.el-button.is-link::before,
+.el-button.is-text::before {
+  display: none;
+}
+
+.el-button.is-link:hover,
+.el-button.is-text:hover {
+  background: var(--lg-bg-soft);
+  transform: none;
+}
+
+/* ============================================================
+ * 2. 输入 / 选择 / 文本域 —— 内凹玻璃
+ * ========================================================== */
+.el-input__wrapper,
+.el-textarea__inner,
+.el-select__wrapper {
+  border-radius: var(--el-border-radius-base);
+  background: var(--lg-bg-soft);
+  -webkit-backdrop-filter: blur(var(--lg-blur-soft)) saturate(var(--lg-saturate));
+  backdrop-filter: blur(var(--lg-blur-soft)) saturate(var(--lg-saturate));
+  box-shadow: var(--lg-rim), var(--lg-rim-bottom) !important;
+  transition: box-shadow var(--lg-duration) ease, background var(--lg-duration) ease;
+}
+
+.el-input__wrapper.is-focus,
+.el-select__wrapper.is-focused,
+.el-textarea__inner:focus {
+  box-shadow: var(--lg-rim), var(--lg-rim-bottom),
+    0 0 0 2px color-mix(in srgb, var(--el-color-primary) 45%, transparent) !important;
+}
+
+/* ============================================================
+ * 3. 标签 —— 胶囊玻璃
+ * ========================================================== */
+.el-tag {
+  position: relative;
+  border: none;
+  border-radius: var(--el-border-radius-round);
+  -webkit-backdrop-filter: blur(var(--lg-blur-soft)) saturate(var(--lg-saturate));
+  backdrop-filter: blur(var(--lg-blur-soft)) saturate(var(--lg-saturate));
+  box-shadow: var(--lg-rim), var(--lg-rim-bottom);
+}
+
+/* ============================================================
+ * 4. 卡片 —— 大圆角玻璃面板（Z* 卡片组件全基于 ElCard）
+ * ========================================================== */
+.el-card {
+  position: relative;
+  border: none;
+  border-radius: var(--el-card-border-radius);
+  background: var(--lg-bg-soft);
+  -webkit-backdrop-filter: blur(var(--lg-blur-soft)) saturate(var(--lg-saturate));
+  backdrop-filter: blur(var(--lg-blur-soft)) saturate(var(--lg-saturate));
+  box-shadow: var(--lg-rim), var(--lg-rim-bottom), var(--lg-shadow);
+  overflow: hidden;
+  transition: transform var(--lg-duration) var(--lg-ease),
+    box-shadow var(--lg-duration) ease;
+}
+
+@supports (corner-shape: squircle) {
+  .el-card {
+    corner-shape: squircle;
+  }
+}
+
+/* 卡片顶部环境反光 */
+.el-card::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background: radial-gradient(140% 50% at 50% 0%, var(--lg-specular) 0%, transparent 55%);
+  opacity: 0.28;
+}
+
+.el-card:hover {
+  box-shadow: var(--lg-rim), var(--lg-rim-bottom), var(--lg-shadow-float);
+}
+
+/* ============================================================
+ * 5. 浮层 —— 对话框 / 抽屉 / 消息盒 / 下拉 / 气泡
+ * ========================================================== */
+.el-dialog,
+.el-message-box,
+.el-drawer,
+.el-popover.el-popper,
+.el-select__popper.el-popper,
+.el-dropdown__popper.el-popper,
+.el-picker__popper.el-popper,
+.el-cascader__dropdown.el-popper,
+.el-popper.is-light {
+  border: none;
+  border-radius: 20px;
+  background: var(--lg-bg-strong);
+  -webkit-backdrop-filter: blur(var(--lg-blur-strong)) saturate(var(--lg-saturate));
+  backdrop-filter: blur(var(--lg-blur-strong)) saturate(var(--lg-saturate));
+  box-shadow: var(--lg-rim), var(--lg-rim-bottom), var(--lg-shadow-float);
+  overflow: hidden;
+}
+
+.el-drawer {
+  border-radius: 20px 0 0 20px;
+}
+
+/* 消息条 / 通知 —— 药丸玻璃 */
+.el-message,
+.el-notification {
+  border: none;
+  border-radius: var(--el-border-radius-round);
+  background: var(--lg-bg-strong);
+  -webkit-backdrop-filter: blur(var(--lg-blur-strong)) saturate(var(--lg-saturate));
+  backdrop-filter: blur(var(--lg-blur-strong)) saturate(var(--lg-saturate));
+  box-shadow: var(--lg-rim), inset 0 1px 0 var(--lg-specular), var(--lg-shadow-float);
+}
+
+.el-notification {
+  border-radius: 20px;
+}
+
+/* ============================================================
+ * 6. 翻页 —— 玻璃页码（ZPagination 已统一接入）
+ * ========================================================== */
+.el-pagination button,
+.el-pagination .el-pager li {
+  border-radius: 10px;
+  background: var(--lg-bg-soft);
+  -webkit-backdrop-filter: blur(var(--lg-blur-soft));
+  backdrop-filter: blur(var(--lg-blur-soft));
+  box-shadow: var(--lg-rim);
+  transition: transform var(--lg-duration) var(--lg-ease), filter var(--lg-duration) ease;
+}
+
+.el-pagination .el-pager li:hover,
+.el-pagination button:hover:not(:disabled) {
+  filter: brightness(1.06);
+  transform: translateY(-1px);
+}
+
+.el-pagination .el-pager li.is-active {
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--el-color-primary) 82%, transparent),
+    color-mix(in srgb, var(--el-color-primary) 62%, transparent)
+  );
+  box-shadow: var(--lg-rim), inset 0 1px 0 rgba(255, 255, 255, 0.45),
+    0 4px 16px color-mix(in srgb, var(--el-color-primary) 35%, transparent);
+}
+
+/* ============================================================
+ * 7. 表格 / 描述列表 —— 磨砂边框
+ * ========================================================== */
+.el-table--border,
+.el-table,
+.el-descriptions--bordered .el-descriptions__body {
+  border-radius: 16px;
+  overflow: hidden;
+}
+
+.el-table th.el-table__cell {
+  background: var(--lg-bg-soft);
+  -webkit-backdrop-filter: blur(var(--lg-blur-soft));
+  backdrop-filter: blur(var(--lg-blur-soft));
+}
+
+/* ============================================================
+ * 8. 其他小组件
+ * ========================================================== */
+
+/* 分段选择器 */
+.el-segmented {
+  border-radius: var(--el-border-radius-round);
+  background: var(--lg-bg-soft);
+  -webkit-backdrop-filter: blur(var(--lg-blur-soft));
+  backdrop-filter: blur(var(--lg-blur-soft));
+  box-shadow: var(--lg-rim), var(--lg-rim-bottom);
+  padding: 4px;
+}
+
+.el-segmented__item-selected {
+  border-radius: var(--el-border-radius-round);
+  box-shadow: inset 0 1px 0 var(--lg-specular), 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+/* 开关 —— 玻璃轨道 */
+.el-switch__core {
+  box-shadow: var(--lg-rim), var(--lg-rim-bottom);
+}
+
+/* 进度条 */
+.el-progress-bar__outer {
+  background: var(--lg-bg-soft);
+  box-shadow: var(--lg-rim);
+}
+
+/* 骨架屏 */
+.el-skeleton {
+  border-radius: 12px;
+}
+
+/* 加载遮罩 */
+.el-loading-mask {
+  -webkit-backdrop-filter: blur(var(--lg-blur-soft));
+  backdrop-filter: blur(var(--lg-blur-soft));
+  background-color: rgba(255, 255, 255, 0.5);
+}
+
+html.dark .el-loading-mask {
+  background-color: rgba(18, 18, 22, 0.5);
+}
+
+/* ============================================================
+ * 9. 深色 Tooltip 保持深玻璃（对比度优先）
+ * ========================================================== */
+.el-popper.is-dark {
+  border-radius: 10px;
+  background: rgba(22, 24, 30, 0.82);
+  -webkit-backdrop-filter: blur(var(--lg-blur-strong)) saturate(var(--lg-saturate));
+  backdrop-filter: blur(var(--lg-blur-strong)) saturate(var(--lg-saturate));
+  box-shadow: var(--lg-rim), var(--lg-shadow-float);
+}
+
+/* ============================================================
+ * 9.1 Tooltip 悬浮提示：跟随主题同色系
+ * 浅色模式 → 白底黑字；深色模式 → 黑底白字
+ * ========================================================== */
+.el-popper.is-dark,
+.el-popper.is-light[role='tooltip'] {
+  border-radius: 10px;
+  -webkit-backdrop-filter: blur(var(--lg-blur-strong)) saturate(var(--lg-saturate));
+  backdrop-filter: blur(var(--lg-blur-strong)) saturate(var(--lg-saturate));
+  box-shadow: var(--lg-rim), 0 4px 16px rgba(0, 0, 0, 0.15);
+}
+
+/* 浅色模式：白底黑字 */
+html:not(.dark) .el-popper[role='tooltip'] {
+  background: rgba(255, 255, 255, 0.92) !important;
+  color: #1a1d26 !important;
+  border: 1px solid rgba(0, 0, 0, 0.08) !important;
+}
+
+html:not(.dark) .el-popper[role='tooltip'] .el-popper__arrow::before {
+  background: rgba(255, 255, 255, 0.92) !important;
+  border: 1px solid rgba(0, 0, 0, 0.08) !important;
+}
+
+/* 深色模式：黑底白字 */
+html.dark .el-popper[role='tooltip'] {
+  background: rgba(18, 20, 26, 0.94) !important;
+  color: #e8eaf2 !important;
+  border: 1px solid rgba(255, 255, 255, 0.12) !important;
+}
+
+html.dark .el-popper[role='tooltip'] .el-popper__arrow::before {
+  background: rgba(18, 20, 26, 0.94) !important;
+  border: 1px solid rgba(255, 255, 255, 0.12) !important;
+}
+
+/* ============================================================
+ * 10. 减少动态偏好：关闭弹性动画（无障碍）
+ * ========================================================== */
+@media (prefers-reduced-motion: reduce) {
+  .el-button,
+  .el-card,
+  .el-pagination button,
+  .el-pagination .el-pager li {
+    transition: none;
+  }
+
+  .el-button:hover,
+  .el-pagination .el-pager li:hover {
+    transform: none;
+  }
+}
+
+/* ============================================================
+ * 11. 深色 / 浅色模式丝滑过渡
+ * 切换瞬间给 <html> 挂 .theme-transition（约 650ms），
+ * 期间所有元素的颜色类属性平滑渐变，避免生硬跳变
+ * ========================================================== */
+html.theme-transition,
+html.theme-transition *,
+html.theme-transition *::before,
+html.theme-transition *::after {
+  transition:
+    background-color 0.55s ease,
+    background 0.55s ease,
+    color 0.55s ease,
+    border-color 0.55s ease,
+    box-shadow 0.55s ease,
+    fill 0.55s ease,
+    stroke 0.55s ease,
+    /* transform/opacity 必须保留：主题图标的旋转渐变切换正在进行 */
+    transform 0.65s var(--lg-ease),
+    opacity 0.3s ease !important;
+}
+
+/* ============================================================
+ * 12. 深色模式色彩优化（可读性 + 舒适度）
+ * 深而不黑的层次背景、提高文字对比度、柔化边框
+ * ========================================================== */
+html.dark {
+  /* 背景层次：避免纯黑，偏蓝的深灰更护眼 */
+  --el-bg-color-page: #13151c;
+  --el-bg-color: #1a1d26;
+  --el-bg-color-overlay: #232735;
+
+  /* 文字：提高与背景的对比度 */
+  --el-text-color-primary: #e8eaf2;
+  --el-text-color-regular: #c6cadb;
+  --el-text-color-secondary: #9ba1b5;
+  --el-text-color-placeholder: #6b7186;
+  --el-text-color-disabled: #565b6e;
+
+  /* 边框/填充：低亮度半透明，减少刺眼分界线 */
+  --el-border-color: rgba(255, 255, 255, 0.14);
+  --el-border-color-light: rgba(255, 255, 255, 0.09);
+  --el-border-color-lighter: rgba(255, 255, 255, 0.06);
+  --el-fill-color: rgba(255, 255, 255, 0.08);
+  --el-fill-color-light: rgba(255, 255, 255, 0.05);
+  --el-fill-color-lighter: rgba(255, 255, 255, 0.03);
+  --el-fill-color-blank: transparent;
+
+  /* 遮罩稍浅，保留页面层次 */
+  --el-mask-color: rgba(10, 12, 18, 0.62);
+
+  /* 品牌主色在深色下提亮一档，保证按钮/链接可辨 */
+  --el-color-primary-light-3: #6a9eff;
+  --el-color-primary-light-5: #8fb5ff;
+  --el-color-primary-light-7: #b3cbff;
+  --el-color-primary-light-8: #c7d8ff;
+  --el-color-primary-light-9: rgba(106, 158, 255, 0.16);
+  --el-color-primary-dark-2: #3d6fd6;
+}
+
+/* 深色下页面底色微调（覆盖 UnoCSS 的 gray-950，偏蓝更柔和） */
+html.dark body,
+html.dark .el-container,
+html.dark .view {
+  background-color: #13151c;
+}
+
+/* ============================================================
+ * 13.1 用户弹出菜单项 —— 玻璃菜单按钮（修改密码 / 退出登录）
+ * ========================================================== */
+.el-popover.el-popper .el-button-group {
+  display: block;
+}
+
+.el-popover.el-popper .action-btn {
+  border-radius: 12px !important;
+  margin: 3px 0;
+  padding: 10px 14px !important;
+  height: auto;
+  font-size: 14px;
+  justify-content: flex-start;
+  /* 默认：高透明液态玻璃，去除立体感 */
+  background: rgba(255, 255, 255, 0.18);
+  -webkit-backdrop-filter: blur(16px) saturate(150%);
+  backdrop-filter: blur(16px) saturate(150%);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.22);
+  border: none;
+  transition: background var(--lg-duration) ease,
+    box-shadow var(--lg-duration) ease,
+    -webkit-backdrop-filter var(--lg-duration) ease,
+    backdrop-filter var(--lg-duration) ease;
+}
+
+@supports (corner-shape: squircle) {
+  .el-popover.el-popper .action-btn {
+    corner-shape: squircle;
+  }
+}
+
+html.dark .el-popover.el-popper .action-btn {
+  background: rgba(255, 255, 255, 0.06);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+}
+
+/* 悬停：不做位移/缩放，改为降低透明度与玻璃模糊，文字浮现感 */
+.el-popover.el-popper .action-btn:hover {
+  background: rgba(255, 255, 255, 0.06);
+  -webkit-backdrop-filter: blur(4px) saturate(110%);
+  backdrop-filter: blur(4px) saturate(110%);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12);
+  transform: none;
+}
+
+html.dark .el-popover.el-popper .action-btn:hover {
+  background: rgba(255, 255, 255, 0.02);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.05);
+}
+
+/* 按压：仅轻微缩小反馈 */
+.el-popover.el-popper .action-btn:active {
+  transform: scale(0.98);
+}
+
+/* 弹层容器去掉默认白底，透出玻璃 */
+.el-popover.el-popper {
+  padding: 8px;
+}
+
+/* ============================================================
+ * 14. 返回按钮 —— 完全圆形 + 强液态玻璃（参考 iOS 26 返回钮）
+ * ElPageHeader 的返回区统一渲染为玻璃圆钮，隐藏文字
+ * ========================================================== */
+.el-page-header__back {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  min-width: 42px;
+  height: 42px;
+  padding: 0;
+  border-radius: 50%;
+  /* 强液态玻璃：与侧栏同级的高不透明渐变 + 强模糊/饱和 */
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.85), rgba(255, 255, 255, 0.62));
+  -webkit-backdrop-filter: blur(24px) saturate(160%);
+  backdrop-filter: blur(24px) saturate(160%);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.45),
+    inset 0 1px 0 var(--lg-specular),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.05),
+    0 4px 16px rgba(0, 0, 0, 0.12),
+    0 12px 32px rgba(0, 0, 0, 0.08);
+  color: var(--el-text-color-primary);
+  cursor: pointer;
+  transition: transform var(--lg-duration) var(--lg-ease), filter var(--lg-duration) ease,
+    box-shadow var(--lg-duration) ease;
+}
+
+html.dark .el-page-header__back {
+  background: linear-gradient(135deg, rgba(44, 46, 58, 0.9), rgba(28, 30, 38, 0.72));
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.14),
+    inset 0 1px 0 rgba(255, 255, 255, 0.18),
+    0 4px 16px rgba(0, 0, 0, 0.4),
+    0 12px 32px rgba(0, 0, 0, 0.25);
+}
+
+/* 返回钮顶部镜面高光 */
+.el-page-header__back::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  pointer-events: none;
+  background: radial-gradient(140% 60% at 50% 0%, var(--lg-specular) 0%, transparent 55%);
+  opacity: 0.55;
+}
+
+/* 隐藏"返回"文字，只留箭头图标 */
+.el-page-header__back .el-page-header__title {
+  display: none;
+}
+
+/* 隐藏返回钮与标题之间的分隔线 */
+.el-page-header__separator {
+  display: none;
+}
+
+.el-page-header__back:hover {
+  filter: brightness(1.07);
+  transform: translateY(-1px);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.5),
+    inset 0 1px 0 var(--lg-specular),
+    0 8px 24px rgba(0, 0, 0, 0.16),
+    0 16px 40px rgba(0, 0, 0, 0.1);
+}
+
+.el-page-header__back:active {
+  transform: scale(0.9);
+}
+
+.el-page-header__back .el-page-header__icon {
+  font-size: 20px;
+  margin-right: 0;
+}
+
+/* ============================================================
+ * 14. G2 连续曲率（Apple squircle）
+ * 支持 corner-shape 的浏览器启用 squircle，其他回退普通圆角
+ * ========================================================== */
+@supports (corner-shape: squircle) {
+  .el-card,
+  .el-button,
+  .el-input__wrapper,
+  .el-textarea__inner,
+  .el-select__wrapper,
+  .el-dialog,
+  .el-message-box,
+  .el-message,
+  .el-notification,
+  .el-popover.el-popper,
+  .el-select__popper.el-popper,
+  .el-dropdown__popper.el-popper,
+  .el-picker__popper.el-popper,
+  .el-page-header__back,
+  .el-descriptions--bordered .el-descriptions__body,
+  .el-segmented,
+  .lg-nav {
+    corner-shape: squircle;
+  }
+}
+
+/* ============================================================
+ * 15. 首页信息 / 时长 —— 描述列表玻璃化
+ * ========================================================== */
+.el-descriptions {
+  border-radius: 16px;
+  overflow: hidden;
+}
+
+.el-descriptions__header {
+  background: transparent;
+}
+
+.el-descriptions--bordered .el-descriptions__body {
+  border-radius: 16px;
+  overflow: hidden;
+  background: var(--lg-bg-soft);
+  -webkit-backdrop-filter: blur(var(--lg-blur-soft)) saturate(var(--lg-saturate));
+  backdrop-filter: blur(var(--lg-blur-soft)) saturate(var(--lg-saturate));
+  box-shadow: var(--lg-rim);
+}
+
+.el-descriptions--bordered .el-descriptions__cell {
+  background: transparent !important;
+}
+
+/* ============================================================
+ * 16. View Transitions —— 整屏同步主题过渡
+ * 旧/新快照同时交叉淡化（非线性缓动），不再按组件逐个变色
+ * ========================================================== */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 0.6s;
+  animation-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+::view-transition-old(root) {
+  animation-name: lg-vt-fade-out;
+}
+
+::view-transition-new(root) {
+  animation-name: lg-vt-fade-in;
+}
+
+@keyframes lg-vt-fade-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
+@keyframes lg-vt-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}

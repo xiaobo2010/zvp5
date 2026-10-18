@@ -29,6 +29,7 @@ import { useI18n } from 'vue-i18n'
 import { ZButtonOrCard } from '@/components'
 import UilStatistics from '@/icons/UilStatistics.vue'
 import api from '@/api'
+import { useChartTheme } from '@/utils/chartTheme'
 import {
   buildStatisticsCsv,
   formatBinLabel,
@@ -60,6 +61,7 @@ const emits = defineEmits<{
 const { t } = useI18n()
 
 const { width, height } = useWindowSize()
+const chartTheme = useChartTheme()
 
 const STATS_CACHE_TTL_MS = 5 * 60 * 1000
 const STATS_CACHE_MAX = 20
@@ -264,14 +266,27 @@ const durationOptions = computed<ChartOptions<'bar'>>(() => ({
   },
   scales: {
     x: {
-      title: { display: true, text: t('activity.statistics.distribution.axisHours') },
-      ticks: { autoSkip: true, maxRotation: 45 },
+      title: {
+        display: true,
+        text: t('activity.statistics.distribution.axisHours'),
+        color: chartTheme.value.text
+      },
+      ticks: {
+        autoSkip: true,
+        maxRotation: 45,
+        color: chartTheme.value.muted
+      },
       grid: { display: false }
     },
     y: {
-      title: { display: true, text: t('activity.statistics.distribution.axisPerson') },
+      title: {
+        display: true,
+        text: t('activity.statistics.distribution.axisPerson'),
+        color: chartTheme.value.text
+      },
       beginAtZero: true,
-      ticks: { precision: 0 }
+      ticks: { precision: 0, color: chartTheme.value.muted },
+      grid: { color: chartTheme.value.grid }
     }
   }
 }))
@@ -430,11 +445,18 @@ const classOptions = computed<ChartOptions<'bar'>>(() => ({
     x: {
       title: {
         display: true,
-        text: t('activity.statistics.groups.axisSum')
+        text: t('activity.statistics.groups.axisSum'),
+        color: chartTheme.value.text
       },
-      beginAtZero: true
+      beginAtZero: true,
+      ticks: { color: chartTheme.value.muted },
+      grid: { color: chartTheme.value.grid }
     },
-    y: { reverse: true, ticks: { autoSkip: false } }
+    y: {
+      reverse: true,
+      ticks: { autoSkip: false, color: chartTheme.value.muted },
+      grid: { display: false }
+    }
   }
 }))
 
@@ -619,7 +641,7 @@ watch(
                   :options="durationOptions"
                 />
               </div>
-              <p class="mt-2 text-center text-xs text-gray-500">
+              <p class="mt-2 text-center text-xs text-gray-500 dark:text-gray-400">
                 {{
                   t('activity.statistics.distribution.percentile', {
                     p25: formatHours(descMetric('25_percentile')),
@@ -628,7 +650,7 @@ watch(
                   })
                 }}
               </p>
-              <p v-if="peakBin && peakBin.count > 0" class="text-center text-xs text-gray-500">
+              <p v-if="peakBin && peakBin.count > 0" class="text-center text-xs text-gray-500 dark:text-gray-400">
                 {{
                   t('activity.statistics.distribution.binLine', {
                     width: binWidthLabel,
@@ -657,10 +679,10 @@ watch(
                       aria-hidden="true"
                     >
                       <span class="text-center">
-                        <span class="block text-2xl font-semibold text-gray-700">
+                        <span class="block text-2xl font-semibold text-gray-700 dark:text-gray-100">
                           {{ statistics.total }}
                         </span>
-                        <span class="block text-xs text-gray-400">
+                        <span class="block text-xs text-gray-400 dark:text-gray-500">
                           {{ t('activity.statistics.metrics.total') }}
                         </span>
                       </span>
@@ -723,7 +745,7 @@ watch(
                             {{ memberChipLabel(member) }}
                           </ElTag>
                         </div>
-                        <span v-else class="text-xs text-gray-400">
+                        <span v-else class="text-xs text-gray-400 dark:text-gray-500">
                           {{ t('activity.statistics.groups.rosterUnavailable') }}
                         </span>
                       </li>
@@ -744,7 +766,7 @@ watch(
                   :options="classOptions"
                 />
               </div>
-              <p class="mt-1 text-center text-xs text-gray-500">
+              <p class="mt-1 text-center text-xs text-gray-500 dark:text-gray-400">
                 {{ t('activity.statistics.groups.sortedAsc') }}
               </p>
             </section>
