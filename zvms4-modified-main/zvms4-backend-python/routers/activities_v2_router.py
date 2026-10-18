@@ -150,22 +150,24 @@ async def get_activity_v2(activity_id: str, user=Depends(get_current_user)):
 @router.delete("/{activity_id}")
 async def delete_activity_v2(
     activity_id: str,
-    user=Depends(get_current_user),
+    user=Depends(compulsory_temporary_token),
     log=Depends(inject_log),
 ):
     """
     :param activity_id: ID of the activity to be deleted
-    :param user: Current user
+    :param user: Current user (temporary/5-minute credential)
     :param log: Logger object
     :return: Deletion status
     """
+
+    validate_object_id(activity_id)
 
     target_activity = await backends.get_activities_repo().get(activity_id)
 
     if not target_activity:
         raise HTTPException(status_code=404, detail="Activity not found")
 
-    await volunteer.validate_update_permission(
+    await volunteer.validate_delete_permission(
         user, Activity.model_validate(target_activity, strict=False)
     )
 
@@ -316,16 +318,19 @@ async def add_activity_member_v2(
 async def delete_activity_member_v2(
     activity_id: str,
     session_id: str,
-    user=Depends(get_current_user),
+    user=Depends(compulsory_temporary_token),
     log=Depends(inject_log),
 ):
     """
     :param activity_id: ID of the activity to be retrieved
-    :param user: Current user
+    :param user: Current user (temporary/5-minute credential)
     :param session_id: ID of the session. Since it's allowed to have *multiple* records in the same activity for the same
     person if the recoding mode is different, we must use another `session_id` to specify a document.
     :return: Activity object
     """
+    validate_object_id(activity_id)
+    validate_object_id(session_id)
+
     await volunteer_member.validate_update_permission(user)
 
     target_member = await backends.get_members_repo().get_by_oid(session_id)
