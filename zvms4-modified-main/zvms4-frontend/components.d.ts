@@ -8,6 +8,7 @@ export {}
 /* prettier-ignore */
 declare module 'vue' {
   export interface GlobalComponents {
+    2: typeof import('./src/components/utils/ZPagination 2.vue')['default']
     ElAlert: typeof import('element-plus/es')['ElAlert']
     ElButton: typeof import('element-plus/es')['ElButton']
     ElForm: typeof import('element-plus/es')['ElForm']
@@ -48,6 +49,7 @@ declare module 'vue' {
     ZMarkdown: typeof import('./src/components/markdown/ZMarkdown.vue')['default']
     ZMarkdownEditor: typeof import('./src/components/markdown/ZMarkdownEditor.vue')['default']
     ZPagination: typeof import('./src/components/utils/ZPagination.vue')['default']
+    'ZPagination 2': typeof import('./src/components/utils/ZPagination 2.vue')['default']
     ZSelectActivityMode: typeof import('./src/components/form/ZSelectActivityMode.vue')['default']
     ZSelectClass: typeof import('./src/components/form/ZSelectClass.vue')['default']
     ZSelectPerson: typeof import('./src/components/form/ZSelectPerson.vue')['default']
