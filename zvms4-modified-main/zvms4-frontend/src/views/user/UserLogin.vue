@@ -133,7 +133,7 @@ watch(user, async () => {
 </script>
 
 <template>
-  <div class="w-full" style="display: flex; flex-direction: column;">
+  <div class="w-full login-wrap" style="display: flex; flex-direction: column; height: 100%;">
     <div style="flex-grow: 1;"></div>
     <ElCard class="login-field text-center px-4 w-full" shadow="hover" style="flex-grow: 0;">
       <ElRow class="w-full py-1">
@@ -195,12 +195,19 @@ watch(user, async () => {
 <style scoped>
 .login-field {
   width: 80%;
+  max-width: 480px;
   height: 296px !important;
   overflow-y: scroll;
   text-align: center;
   margin-left: auto;
   margin-right: auto;
-  top: 50%;
+  border-radius: 24px;
+}
+
+@supports (corner-shape: squircle) {
+  .login-field {
+    corner-shape: squircle;
+  }
 }
 
 .actions {

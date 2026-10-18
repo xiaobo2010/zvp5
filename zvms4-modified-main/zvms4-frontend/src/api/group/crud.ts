@@ -84,9 +84,15 @@ export async function getGroupsV2(
   size: number = 10,
   query: string = ''
 ) {
+  // The backend caps a page at 100 rows. Clamp at the API boundary so an old
+  // caller cannot turn a routine list request into a 422 response.
+  const safePage = Number.isFinite(page) && page >= 1 ? Math.trunc(page) : 1
+  const safeSize = Number.isFinite(size)
+    ? Math.min(100, Math.max(1, Math.trunc(size)))
+    : 10
   const response = (
     await axios('/v2/groups', {
-      params: { page, size, query }
+      params: { page: safePage, size: safeSize, query }
     })
   ).data as { data: Group[]; total: number }
   return {
