@@ -5,9 +5,10 @@ body {
   overflow: hidden;
   position: fixed;
   width: 100%;
+  /* Swiss:grotesque sans 优先,等宽视觉节奏 */
   font-family:
-    Ubuntu, 'PingFang SC', 'Source Han Sans SC', 'Microsoft YaHei', 'Helvetica Neue', Helvetica,
-    Arial, sans-serif !important;
+    'Helvetica Neue', Helvetica, Inter, system-ui, 'PingFang SC', 'Source Han Sans SC',
+    'Microsoft YaHei', Arial, sans-serif !important;
 }
 
 ::-webkit-scrollbar {

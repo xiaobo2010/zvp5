@@ -52,6 +52,7 @@ declare module 'vue' {
     ZSelectActivityMode: typeof import('./src/components/form/ZSelectActivityMode.vue')['default']
     ZSelectClass: typeof import('./src/components/form/ZSelectClass.vue')['default']
     ZSelectPerson: typeof import('./src/components/form/ZSelectPerson.vue')['default']
+    ZSystemAuthDialog: typeof import('./src/components/system/ZSystemAuthDialog.vue')['default']
     ZTime: typeof import('./src/components/tags/ZTime.vue')['default']
     ZTimeJudge: typeof import('./src/components/activity/ZTimeJudge.vue')['default']
     ZUploadFile: typeof import('./src/components/activity/ZUploadFile.vue')['default']

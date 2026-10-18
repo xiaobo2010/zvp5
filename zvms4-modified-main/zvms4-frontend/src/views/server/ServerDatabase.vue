@@ -941,7 +941,7 @@ onBeforeUnmount(() => {
 
 <template>
   <!-- 数据库监控:仅 admin 可见;页内 ElSegmented 分区(数据库 / 本地服务器) -->
-  <div class="mt-8 flex flex-col gap-6">
+  <div class="flex flex-col gap-3">
     <div>
       <ElSegmented v-model="activeView" :options="viewOptions" />
     </div>
@@ -980,15 +980,15 @@ onBeforeUnmount(() => {
               <div class="text-sm font-medium">{{ t(M + 'hostTitle') }}</div>
               <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
                 <!-- CPU -->
-                <div class="flex flex-col gap-1.5 rounded-lg bg-gray-50/80 p-3 dark:bg-gray-800/40">
-                  <span class="text-xs text-gray-500 dark:text-gray-400">{{ t(M + 'hostCpu') }}</span>
-                  <div class="flex h-2 w-full overflow-hidden rounded-full bg-gray-200/80 dark:bg-gray-700/60">
+                <div class="flex flex-col gap-1.5 z-tile">
+                  <span class="z-label">{{ t(M + 'hostCpu') }}</span>
+                  <div class="flex h-2 w-full overflow-hidden bg-gray-200 dark:bg-gray-700">
                     <div class="h-full" :style="{ width: `${Math.max(0, hostRes.cpu.user_pct)}%`, background: '#409eff' }"></div>
                     <div class="h-full" :style="{ width: `${Math.max(0, hostRes.cpu.system_pct)}%`, background: '#e6a23c' }"></div>
                     <div class="h-full" :style="{ width: `${Math.max(0, hostRes.cpu.iowait_pct)}%`, background: '#f56c6c' }"></div>
-                    <div class="h-full" :style="{ width: `${Math.max(0, hostRes.cpu.idle_pct)}%`, background: 'rgba(144, 147, 153, 0.35)' }"></div>
+                    <div class="h-full" :style="{ width: `${Math.max(0, hostRes.cpu.idle_pct)}%`, background: '#9ca3af' }"></div>
                   </div>
-                  <div class="flex flex-wrap gap-x-2.5 gap-y-0.5 text-xs text-gray-500 dark:text-gray-400">
+                  <div class="flex flex-wrap gap-x-2.5 gap-y-0.5 z-label">
                     <span>{{ t(M + 'hostCpuUser') }} {{ pctText(hostRes.cpu.user_pct) }}</span>
                     <span>{{ t(M + 'hostCpuSystem') }} {{ pctText(hostRes.cpu.system_pct) }}</span>
                     <span>{{ t(M + 'hostCpuIowait') }} {{ pctText(hostRes.cpu.iowait_pct) }}</span>
@@ -996,11 +996,11 @@ onBeforeUnmount(() => {
                   </div>
                 </div>
                 <!-- 内存 -->
-                <div class="flex flex-col gap-1.5 rounded-lg bg-gray-50/80 p-3 dark:bg-gray-800/40">
-                  <span class="text-xs text-gray-500 dark:text-gray-400">{{ t(M + 'hostMem') }}</span>
+                <div class="flex flex-col gap-1.5 z-tile">
+                  <span class="z-label">{{ t(M + 'hostMem') }}</span>
                   <span class="font-medium tabular-nums">
                     {{ formatMb(hostRes.mem.used_mb) }}
-                    <span class="text-xs text-gray-500 dark:text-gray-400">/ {{ formatMb(hostRes.mem.total_mb) }}</span>
+                    <span class="z-label">/ {{ formatMb(hostRes.mem.total_mb) }}</span>
                   </span>
                   <ElProgress
                     v-if="hostMemUsedPct !== null"
@@ -1008,13 +1008,13 @@ onBeforeUnmount(() => {
                     :color="percentColor"
                     :show-text="false"
                   />
-                  <span class="text-xs text-gray-500 dark:text-gray-400">
+                  <span class="z-label">
                     {{ t(M + 'hostMemAvailable') }} {{ formatMb(hostRes.mem.available_mb) }}
                   </span>
                 </div>
                 <!-- 系统负载 -->
-                <div class="flex flex-col gap-1.5 rounded-lg bg-gray-50/80 p-3 dark:bg-gray-800/40">
-                  <span class="text-xs text-gray-500 dark:text-gray-400">{{ t(M + 'hostLoad') }}</span>
+                <div class="flex flex-col gap-1.5 z-tile">
+                  <span class="z-label">{{ t(M + 'hostLoad') }}</span>
                   <div class="flex flex-col gap-0.5 text-sm tabular-nums">
                     <span>{{ t(M + 'hostLoad1m') }} <span class="font-medium">{{ formatMetric(hostRes.load['1m']) }}</span></span>
                     <span>{{ t(M + 'hostLoad5m') }} <span class="font-medium">{{ formatMetric(hostRes.load['5m']) }}</span></span>
@@ -1022,8 +1022,8 @@ onBeforeUnmount(() => {
                   </div>
                 </div>
                 <!-- 磁盘 -->
-                <div class="flex flex-col gap-1.5 rounded-lg bg-gray-50/80 p-3 dark:bg-gray-800/40">
-                  <span class="text-xs text-gray-500 dark:text-gray-400">
+                <div class="flex flex-col gap-1.5 z-tile">
+                  <span class="z-label">
                     {{ t(M + 'hostDiskMount', { mount: hostRes.disk.mount }) }}
                   </span>
                   <span class="font-medium tabular-nums">{{ pctText(hostRes.disk.used_pct) }}</span>
@@ -1032,13 +1032,13 @@ onBeforeUnmount(() => {
                     :color="percentColor"
                     :show-text="false"
                   />
-                  <span class="text-xs text-gray-500 dark:text-gray-400">
+                  <span class="z-label">
                     {{ t(M + 'hostDiskFree') }} {{ formatGb(hostRes.disk.free_gb) }}
                   </span>
                 </div>
                 <!-- 网络 -->
-                <div class="flex flex-col gap-1.5 rounded-lg bg-gray-50/80 p-3 dark:bg-gray-800/40">
-                  <span class="text-xs text-gray-500 dark:text-gray-400">{{ t(M + 'hostNet') }}</span>
+                <div class="flex flex-col gap-1.5 z-tile">
+                  <span class="z-label">{{ t(M + 'hostNet') }}</span>
                   <div class="flex flex-col gap-0.5 text-sm tabular-nums">
                     <span>
                       <span class="text-gray-500 dark:text-gray-400">{{ t(M + 'hostNetRx') }}</span>
@@ -1051,8 +1051,8 @@ onBeforeUnmount(() => {
                   </div>
                 </div>
                 <!-- 磁盘 IO -->
-                <div class="flex flex-col gap-1.5 rounded-lg bg-gray-50/80 p-3 dark:bg-gray-800/40">
-                  <span class="text-xs text-gray-500 dark:text-gray-400">{{ t(M + 'hostDiskIo') }}</span>
+                <div class="flex flex-col gap-1.5 z-tile">
+                  <span class="z-label">{{ t(M + 'hostDiskIo') }}</span>
                   <div class="flex flex-col gap-0.5 text-sm tabular-nums">
                     <span>
                       <span class="text-gray-500 dark:text-gray-400">{{ t(M + 'hostDiskIoRead') }}</span>
@@ -1065,8 +1065,8 @@ onBeforeUnmount(() => {
                   </div>
                 </div>
                 <!-- 后端进程 -->
-                <div class="flex flex-col gap-1.5 rounded-lg bg-gray-50/80 p-3 dark:bg-gray-800/40">
-                  <span class="text-xs text-gray-500 dark:text-gray-400">{{ t(M + 'hostProc') }}</span>
+                <div class="flex flex-col gap-1.5 z-tile">
+                  <span class="z-label">{{ t(M + 'hostProc') }}</span>
                   <div class="flex flex-col gap-0.5 text-sm tabular-nums">
                     <span>
                       <span class="text-gray-500 dark:text-gray-400">{{ t(M + 'hostProcRss') }}</span>
@@ -1122,6 +1122,8 @@ onBeforeUnmount(() => {
     </template>
 
     <template v-else-if="dbStatus">
+    <!-- 概览 + 容量并排(Swiss 栅格):宽屏左右分栏,窄屏纵向 -->
+    <div class="grid grid-cols-1 gap-3 xl:grid-cols-2 xl:items-start">
     <!-- 总览:状态 / 观测时间 / 缓存口径 / 合计 / warnings -->
     <ElCard shadow="never">
       <template #header>
@@ -1199,7 +1201,7 @@ onBeforeUnmount(() => {
               :show-text="false"
             />
           </div>
-          <div v-if="applicationTablespaces.length > 1" class="flex flex-wrap items-baseline justify-between gap-x-3 border-t border-gray-200/70 pt-2 text-sm dark:border-gray-700/70">
+          <div v-if="applicationTablespaces.length > 1" class="flex flex-wrap items-baseline justify-between gap-x-3 border-t border-gray-200 pt-2 text-sm dark:border-gray-700">
             <span class="text-gray-500 dark:text-gray-400">{{ t(M + 'tablespacesTotal') }}</span>
             <span>
               {{ formatBytes(tablespaceTotals.used) }} / {{ formatBytes(tablespaceTotals.max) }}
@@ -1214,6 +1216,7 @@ onBeforeUnmount(() => {
         </template>
       </div>
     </ElCard>
+    </div>
 
     <!-- 每表占用与数据量:字节拆分 + 优化器估算行数 + 统计新鲜度 -->
     <ElCard shadow="never">
@@ -1230,7 +1233,7 @@ onBeforeUnmount(() => {
           :description="degradeText(tables.reason, tables.message)"
         />
         <template v-else-if="tables">
-          <ElTable :data="sortedTableItems" show-summary :summary-method="tableSummaries">
+          <ElTable :data="sortedTableItems" show-summary :summary-method="tableSummaries" :max-height="440">
             <ElTableColumn prop="name" :label="t(M + 'colTable')" min-width="140" show-overflow-tooltip />
             <ElTableColumn prop="total_bytes" sortable :label="t(M + 'colTotal')" min-width="96">
               <template #default="{ row }">{{ formatBytes(row.total_bytes) }}</template>
@@ -1285,7 +1288,7 @@ onBeforeUnmount(() => {
           :description="degradeText(load.reason, undefined)"
         />
         <template v-else-if="load">
-          <ElTable :data="load.metrics">
+          <ElTable :data="load.metrics" :max-height="360">
             <ElTableColumn prop="name" :label="t(M + 'colMetric')" min-width="160" show-overflow-tooltip />
             <ElTableColumn :label="t(M + 'colValue')" min-width="110">
               <template #default="{ row }">
@@ -1547,7 +1550,7 @@ onBeforeUnmount(() => {
           :begin-at-zero="currentTrendFamily?.beginAtZero ?? false"
           :y-max="currentTrendFamily?.yMax"
         />
-        <div class="flex flex-col gap-1 text-xs text-gray-500 dark:text-gray-400">
+        <div class="flex flex-col gap-1 z-label">
           <span v-if="unknownTrendKeys">{{ t(M + 'trendUnknownHint', { keys: unknownTrendKeys }) }}</span>
           <span>{{ t(M + 'trendNote') }}</span>
         </div>
@@ -1580,7 +1583,7 @@ onBeforeUnmount(() => {
         >
           <ElTableColumn type="expand">
             <template #default="{ row }">
-              <pre class="whitespace-pre-wrap break-all rounded bg-gray-50 p-3 font-mono text-xs leading-relaxed dark:bg-gray-800/60">{{ row.sql_text || t(M + 'sqlTextUnavailable') }}</pre>
+              <pre class="whitespace-pre-wrap break-all rounded bg-gray-50 p-2 font-mono text-xs leading-relaxed dark:bg-gray-800">{{ row.sql_text || t(M + 'sqlTextUnavailable') }}</pre>
             </template>
           </ElTableColumn>
           <ElTableColumn prop="sql_id" :label="t(M + 'colSqlId')" min-width="130">

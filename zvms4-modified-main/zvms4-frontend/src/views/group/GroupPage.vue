@@ -134,7 +134,7 @@ watch(tab, () => {
 </script>
 
 <template>
-  <div class="page-container px-6 lg:px-16 py-8">
+  <div class="page-container px-6 py-4">
     <ElPageHeader v-if="id" :icon="ArrowLeft" @back="() => router.back()" class="py-4">
       <template #content>
         {{ group?.name }}

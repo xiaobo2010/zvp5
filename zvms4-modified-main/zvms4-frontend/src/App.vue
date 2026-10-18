@@ -329,7 +329,7 @@ onMounted(async () => {
 </script>
 
 <template>
-  <ElConfigProvider :locale="langPack" class="bg-slate-100 dark:bg-gray-900 full">
+  <ElConfigProvider :locale="langPack" class="z-bg full">
     <ElWatermark
       :font="watermark"
       content=""
@@ -376,16 +376,18 @@ onMounted(async () => {
       <ElContainer
         @contextmenu.prevent
         :inert="banLocked"
-        class="bg-slate-100 dark:bg-gray-900"
+        class="z-bg"
         direction="vertical"
         :style="{ width: width + 'px', height: height + 'px' }"
       >
         <ElHeader>
-          <ElRow :class="['pt-4', verticalMode && userStore.isLogin ? 'px-1' : 'px-4']">
+          <ElRow :class="['pt-2', verticalMode && userStore.isLogin ? 'px-1' : 'px-4']">
             <ElCol :span="16">
               <div
                 :class="[
-                  'text-2xl',
+                  'text-base',
+                  'font-semibold',
+                  'tracking-tight',
                   'w-full',
                   verticalMode && userStore.isLogin ? 'pl-1' : 'pl-10',
                   'pt-1.5',
@@ -434,7 +436,7 @@ onMounted(async () => {
         <ElContainer class="full">
           <UserNav style="height: 100%; width: 3.2rem" v-if="userStore.isLogin && !verticalMode" />
           <RouterView
-            class="bg-slate-50 dark:bg-gray-950 view fragment-container"
+            class="z-surface dark:text-gray-100 view fragment-container"
             style="width: 100%; height: 100%; box-sizing: border-box;"
           />
         </ElContainer>
@@ -481,7 +483,7 @@ onMounted(async () => {
 }
 
 .view {
-  border-radius: 1rem;
+  border-radius: 0;
   width: 100%;
 }
 
@@ -491,9 +493,7 @@ onMounted(async () => {
 }
 
 .banned-shield {
-  background:
-    radial-gradient(900px 600px at 50% 30%, rgba(255, 255, 255, 0.08), transparent 70%),
-    #7f1d1d;
+  background: #7f1d1d;
   color: #fff;
   animation: banned-shield-in 0.2s ease-out;
 }
