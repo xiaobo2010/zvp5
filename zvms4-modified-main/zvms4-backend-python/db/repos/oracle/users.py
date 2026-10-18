@@ -505,6 +505,25 @@ def _count_expired_trash_stmt(cutoff: Any):
     )
 
 
+async def _existing_tables(session: AsyncSession, names: set[str]) -> set[str]:
+    """本次连接的 schema 里真实存在的表名（小写）。
+
+    生产 schema 可能与仓库 DDL 漂移（实测生产库缺 ``user_device_bindings``，
+    而它是 ``_CHILD_TABLES`` 里的静态条目）。缺表时若照常查询会抛 ORA-00942，
+    让整个「删除用户」失败，因此先按 ``user_tables`` 过滤，并把缺表名写进回收站
+    payload（``skipped_tables``）留审计线索。
+    """
+    if not names:
+        return set()
+    stmt = text(
+        "SELECT table_name FROM user_tables WHERE table_name IN ("
+        + ",".join(f"'{name.upper()}'" for name in sorted(names))
+        + ")"
+    )
+    rows = (await session.execute(stmt)).all()
+    return {str(row[0]).lower() for row in rows}
+
+
 async def archive_and_delete_user(
     session: AsyncSession, oid: str, deleted_by: str | None
 ) -> str:
@@ -534,7 +553,14 @@ async def archive_and_delete_user(
         "user": _row_json(user_row._mapping),
         "related": {},
     }
-    for name, table, column, columns, _cleanup in _CHILD_TABLES:
+    all_names = {spec[0] for spec in _CHILD_TABLES}
+    present = await _existing_tables(session, all_names)
+    missing = sorted(all_names - present)
+    if missing:
+        # 记录缺表：本次没有归档/清理这些表，事后回溯时要能看出来。
+        payload["skipped_tables"] = missing
+    active = tuple(spec for spec in _CHILD_TABLES if spec[0] in present)
+    for name, table, column, columns, _cleanup in active:
         rows = (
             await session.execute(_child_select_stmt(table, column, columns, target))
         ).all()
@@ -552,7 +578,7 @@ async def archive_and_delete_user(
         )
     )
 
-    for _name, table, column, _columns, cleanup in _CHILD_TABLES:
+    for _name, table, column, _columns, cleanup in active:
         if cleanup:
             await session.execute(delete(table).where(table.c[column] == target))
 

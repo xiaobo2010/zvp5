@@ -350,7 +350,11 @@ class FakeSession:
         table = getattr(stmt, "table", None)
         if table is not None:
             return table.name
-        for frm in stmt.get_final_froms():
+        get_final_froms = getattr(stmt, "get_final_froms", None)
+        if get_final_froms is None:
+            # TextClause（如 user_tables 的存在性探测）没有 FROM 可枚举。
+            return None
+        for frm in get_final_froms():
             name = getattr(frm, "name", None)
             if name:
                 return name
@@ -376,6 +380,20 @@ class FakeSession:
         kind = type(stmt).__name__.lower()
         table = self._table_of(stmt)
         self.log.append((kind, table))
+
+        if kind == "textclause":
+            # schema 漂移探测：仓库真实实现会先问 user_tables 有哪些子表。
+            sql = str(stmt)
+            if "USER_TABLES" not in sql.upper():
+                raise AssertionError(f"unexpected text statement: {sql}")
+            requested = sql.split("'")[1::2]
+            present = [name for name in requested if name.lower() in self.staged]
+            return SimpleNamespace(
+                all=lambda: [(name,) for name in present],
+                first=lambda: None,
+                scalar_one=lambda: len(present),
+                rowcount=len(present),
+            )
 
         if kind == "select":
             rows = self._select(stmt)
@@ -567,6 +585,28 @@ def test_delete_cascade_archives_and_cleans_in_one_transaction(install_fake_sess
     # BLOB 绝不进 payload：查询只投影元数据列，_json_safe 也会丢弃 bytes。
     assert "content" not in payload["related"]["files"][0]
     assert "content" not in {column.name for column in _FILES_METADATA_COLUMNS}
+
+
+def test_delete_cascade_skips_tables_missing_from_the_live_schema(install_fake_session):
+    """schema 漂移回归：线上缺表（实测缺 user_device_bindings）不能让删除整条挂掉。"""
+    db = _fake_db()
+    db.pop("user_device_bindings")
+    session = install_fake_session(db=db)
+
+    trash_oid = asyncio.run(OracleUsersRepo().delete_user_cascade(OTHER, SELF))
+
+    assert session.commits == 1
+    assert is_valid_oid(trash_oid)
+    assert db["users"] == []
+    assert db["user_time"] == []
+    assert "user_device_bindings" not in db
+
+    payload = json.loads(db["user_trash"][0]["payload"])
+    assert payload["skipped_tables"] == ["user_device_bindings"]
+    assert "user_device_bindings" not in payload["related"]
+    # 其余子表照常归档，不被缺表连坐。
+    assert payload["related"]["user_time"][0]["on_campus_raw"] == 8.5
+    assert payload["related"]["activity_members"][0]["member_oid"] == OTHER
 
 
 def test_delete_cascade_rolls_back_entirely_on_failure(install_fake_session):
