@@ -898,6 +898,24 @@ class AppLogsRepo(Protocol):
         """
         ...
 
+    async def count_expired(self, cutoff: datetime) -> int:
+        """Count the rows :meth:`purge_batch` would eventually delete.
+
+        Read-only; shared by the retention preview and the purge loop. ``cutoff``
+        is a naive ``datetime`` compared against ``TS_AT``.
+        """
+        ...
+
+    async def purge_batch(self, cutoff: datetime, batch_size: int) -> int:
+        """Delete at most ``batch_size`` expired rows; return the deleted count.
+
+        The retention predicate (design §2): ``TS_AT`` precedes ``cutoff`` and the
+        row is neither a protected type (``db.repos.oracle.app_logs``
+        ``PROTECTED_LTYPES``) nor warning-level. ``0`` means nothing is left to
+        purge; the caller loops (``tasks.retention``). One commit per call.
+        """
+        ...
+
 
 class TasksRepo(Protocol):
     """Data access for ``zvms_new.tasks`` (runtime export queue).
@@ -964,7 +982,25 @@ class TasksRepo(Protocol):
     async def fail_pending(self, reason: str) -> int:
         """Mark every non-``completed`` task ``failed``; return the row count.
 
-        Lifts ``main.py::mark_all_tasks_failed``.
+        Lifts ``main.py::mark_all_tasks_failed``. ``task_end`` is stamped as well
+        so the failed rows carry an age the retention purge can read.
+        """
+        ...
+
+    async def count_expired_finished(self, cutoff: datetime) -> int:
+        """Count the finished rows :meth:`purge_finished_batch` would delete.
+
+        Read-only; shared by the retention preview and the purge loop.
+        """
+        ...
+
+    async def purge_finished_batch(self, cutoff: datetime, batch_size: int) -> int:
+        """Delete at most ``batch_size`` finished rows older than ``cutoff``.
+
+        The retention predicate (design §2): ``status IN ('completed','failed')``
+        and ``COALESCE(task_end, task_start)`` precedes ``cutoff``. ``0`` means
+        nothing is left to purge; the caller loops (``tasks.retention``). One
+        commit per call.
         """
         ...
 
