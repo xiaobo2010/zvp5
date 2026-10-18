@@ -37,6 +37,7 @@ from db.oracle.engine import ping as oracle_ping
 from util.object_id import is_admin_token
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from tasks.compute_time import rebuild_statistics, generate_reports
+from tasks.files_retention import purge_expired_attachments
 
 scheduler = AsyncIOScheduler()
 _logger = logging.getLogger(__name__)
@@ -238,6 +239,21 @@ async def startup_event():
         second=0,
         timezone="Asia/Hong_Kong",
         id="daily_generate_reports",
+    )
+
+    # Clear the bytes of soft-deleted attachments older than the retention
+    # window daily at 03:00 HKT (UTC+8). Tombstone metadata is kept.
+    scheduler.add_job(
+        purge_expired_attachments,
+        "cron",
+        hour=3,
+        minute=0,
+        second=0,
+        timezone="Asia/Hong_Kong",
+        id="daily_purge_files",
+        coalesce=True,
+        max_instances=1,
+        misfire_grace_time=3600,
     )
 
     print("Application started.")
