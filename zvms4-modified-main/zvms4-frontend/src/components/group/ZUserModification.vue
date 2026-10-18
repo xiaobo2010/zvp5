@@ -61,7 +61,7 @@ if (cid.value.length === 24) {
 
 const originalClassID = ref('')
 
-// 创建成功后的一次性初始密码：明文只在此响应中出现，关闭弹窗后无法再查看
+// 建号后的初始密码（=学号）：由创建响应返回，弹窗当场转交，关闭后不再展示
 const createdPasswordVisible = ref(false)
 const createdInitialPassword = ref('')
 const { copy: copyToClipboard, copied: passwordCopied } = useClipboard({
@@ -234,7 +234,7 @@ async function remoteFetchClass(search: string) {
         </div>
       </ElForm>
     </ElCard>
-    <!-- 一次性初始密码弹窗：明文只显示这一次，必须点「我已记下」关闭 -->
+    <!-- 建号初始密码弹窗：初始密码为该生学号，必须点「我已记下」关闭 -->
     <ElDialog
       v-model="createdPasswordVisible"
       :title="t('manage.personalPanel.userCreatedTitle')"
@@ -243,7 +243,7 @@ async function remoteFetchClass(search: string) {
       :close-on-click-modal="false"
     >
       <p class="text-sm leading-6 opacity-80">
-        {{ t('manage.personalPanel.initialPasswordDialog.notice') }}
+        {{ t('manage.personalPanel.initialPasswordDialog.studentNumberNotice') }}
       </p>
       <div class="mt-4 flex items-center gap-2">
         <code

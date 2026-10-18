@@ -161,7 +161,9 @@ async def create_user_v3(
         ):
             raise HTTPException(status_code=404, detail="班级不存在")
 
-    initial_password = generate_initial_password()
+    # 建号初始密码 = 学号（平台运营要求新生可用学号直接登录；可枚举风险已确认接受）。
+    # 学号 pwd_strength=1<3，登录仍走「弱密码 → 5 分钟临时令牌 → 强制改密」闭环。
+    initial_password = payload.id
     password = hashpw(initial_password.encode("utf-8"), gensalt()).decode("utf-8")
 
     new_id = await repo.create(
@@ -173,7 +175,7 @@ async def create_user_v3(
     )
 
     log.with_text(
-        f"管理员 {await get_user_display_name(user['id'])} 创建了用户 {payload.name}（学号 {payload.id}），已生成一次性初始密码",
+        f"管理员 {await get_user_display_name(user['id'])} 创建了用户 {payload.name}（学号 {payload.id}），初始密码为学号",
         type="user_create",
     )
     await log.insert_log()
