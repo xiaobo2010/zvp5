@@ -17,13 +17,14 @@ from tasks.retention import (
     AUDIT_LEVEL,
     AUDIT_TYPE,
     RetentionBusy,
-    audit_message,
-    purge_now,
+    progress_snapshot,
     retention_cutoffs,
+    start_background_purge,
 )
 from typings.log import inject_log
 from util.object_id import get_current_user
 from util.user import get_user_display_name
+
 
 _logger = logging.getLogger(__name__)
 
@@ -106,27 +107,49 @@ async def retention_run(
     user=Depends(get_current_user),
     log=Depends(inject_log),
 ):
-    """Run the retention purge now, up to the batch ceiling; returns the totals.
+    """Start the retention purge as a **background job**; returns its handle.
 
-    Synchronous by design: the admin waits for the result, and a run is bounded
-    by ``RETENTION_MAX_BATCHES``. A concurrent purge answers 409 instead of
-    queueing.
+    立即返回 ``{job_id, started_at, state: "running"}``（HTTP 200，envelope
+    ``status=ok``）。真正干活的是 ``tasks.retention.start_background_purge`` 里的
+    后台任务：它先让全站进维护态（``updated_by='auto:retention'``），逐个批量
+    清理，然后**无论成功失败**都恢复；进度看
+    ``GET /api/system/db/retention/progress``。已经在清理 → 409（沿用既有约定，
+    detail 里带当前 phase）而不是排队。
     """
     await _require_system_admin(user)
 
     try:
-        result = await purge_now()
+        started = start_background_purge(str(user["id"]))
     except RetentionBusy as exc:
         raise HTTPException(status_code=409, detail=str(exc))
 
+    # 审计「谁发起了这次清理」：结果行由后台任务在收尾时写（同一 type/level）。
     log.with_text(
-        f"管理员 {await get_user_display_name(user['id'])} 执行了{audit_message(result)}",
+        f"管理员 {await get_user_display_name(user['id'])} 启动了数据库历史数据清理"
+        f"（后台任务 {started['job_id']}，期间系统进入维护状态）",
         type=AUDIT_TYPE,
         level=AUDIT_LEVEL,
     )
     await log.insert_log()
 
-    return {"status": "ok", "code": 200, "data": result}
+    return {"status": "ok", "code": 200, "data": started}
+
+
+@router.get("/retention/progress")
+async def retention_progress(
+    response: Response,
+    user=Depends(get_current_user),
+):
+    """Database-cleanup job progress (frozen shape, design §5.5).
+
+    管理员专用（维护页不消费本端点）：清理期间维护中间件放行整个 ``/api/system``
+    前缀，所以管理员在维护态里照样能轮询它。
+    """
+    await _require_system_admin(user)
+    # 进度是瞬态的：别让任何一层（浏览器/反代）缓存它。
+    response.headers["Cache-Control"] = "no-store"
+    return {"status": "ok", "code": 200, "data": progress_snapshot()}
 
 
 __all__ = ["router"]
+

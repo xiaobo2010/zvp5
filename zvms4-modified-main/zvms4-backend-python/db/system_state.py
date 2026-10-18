@@ -3,6 +3,25 @@
 状态存本地 SQLite（标准库 ``sqlite3``，无新依赖），与业务库解耦：维护模式
 必须在业务库不可用时仍能读写、且不能因业务库故障而丢失，所以这里不碰任何
 repo / engine，也不依赖 startup hook（惰性建表，首次访问自建）。
+
+崩溃自愈（清理编排把全站切进维护态后进程崩了，绝不能留下「永久 503」）：
+
+* 不新增 schema 列 —— 复用 ``maintenance_state.updated_by`` 编码**自动来源**：
+  值以 :data:`AUTO_ACTOR_PREFIX`（``auto:``）开头，就说明这一行是**进程内的
+  自动流程**（数据库清理，``tasks/retention.py``）写的，而不是管理员手工开启的。
+* 人工维护（``updated_by`` 是管理员 oid）**永不**自愈。
+* 自动来源是否还活着由使用方通过 :func:`set_auto_source_probe` 注册的探针回答
+  （``tasks/retention.py`` 在 import 时注册）。``enabled=1`` + 自动来源 + 探针
+  返回 ``False`` ⇒ 上一次进程已经不在 ⇒ **判定为未维护**，并惰性清除该行
+  （写 ``enabled=0``）+ 记一条 ``maintenance_events`` 审计。
+* **核心前提：单 worker 进程内标志即真相。** 进程重启后不可能还有清理在跑，
+  所以陈旧态必须自愈；反过来，多 worker / 多机部署会破坏该假设（A worker 的
+  清理会被 B worker 的探针误判为陈旧）。实测生产为单 worker uvicorn
+  （``systemd ExecStart: uvicorn main:app``，无 ``--workers``）。若将来多 worker，
+  探针必须换成带租约的外部存储（如心跳行），不能再读进程内标志。
+* 自愈与 :data:`CACHE_TTL`（2s）的交互：自愈走 :func:`set_state`，而它会
+  :func:`invalidate_cache`，所以**本进程**下一次 :func:`is_enabled` 立刻读到
+  ``False``；唯一窗口是「缓存里还压着 True 的那 2s 内」——与既有缓存语义一致。
 """
 
 from __future__ import annotations
@@ -12,6 +31,7 @@ import sqlite3
 import threading
 import time
 from contextlib import closing
+from typing import Callable
 
 # 后端根目录：本文件位于 db/ 下，向上两级即后端根。刻意不用 cwd ——
 # systemd 的 WorkingDirectory 可能变，相对路径会指向别处。
@@ -69,6 +89,22 @@ _cache_lock = threading.Lock()
 _cache_path: str | None = None
 _cache_value: bool = False
 _cache_at: float = 0.0
+
+# 「自动来源」标记：``updated_by`` 以它开头即该维护态由进程内自动流程写入。
+AUTO_ACTOR_PREFIX = "auto:"
+# 自愈写审计时的 actor：也带该前缀（enabled=0，不会再被判定）。
+AUTO_HEAL_ACTOR = "auto:heal"
+# 自愈时写进 reason 的说明（state 行与 events 行都会带上）。
+STALE_AUTO_REASON = "自动清理进程已退出，维护态自愈"
+
+# 探针注册表：``None`` = 没有注册（例如只 import 本模块的测试）⇒ 无法判定
+# 自动来源是否还活着 ⇒ **保守地不自愈**（宁可靠管理员手工关闭，也不误判）。
+_probe_lock = threading.Lock()
+_auto_source_probe: Callable[[], bool] | None = None
+
+# 自愈写库要串行：多个请求同时发现陈旧态时必须只写一次库（一次 enabled=0 +
+# 一条审计），而不是每个请求写一次。锁只圈住判断+写库，不跨任何 IO 等待。
+_heal_lock = threading.Lock()
 
 
 def _db_path() -> str:
@@ -176,33 +212,98 @@ def set_state(
     return get_state()
 
 
+def invalidate_cache() -> None:
+    """供测试或外部直接改库后手动失效缓存。"""
+    with _cache_lock:
+        _set_cache_locked(None, False)
+
+
+def set_auto_source_probe(probe: Callable[[], bool] | None) -> None:
+    """注册「自动维护来源是否仍在运行」的探针；``None`` 表示注销。
+
+    由 :mod:`tasks.retention` 在 **import 时**注册（``main.py`` 已 import 该
+    模块用于调度，因此探针在服务受理第一个请求之前就已就位），避免两个模块
+    互相 import。探针必须是**不阻塞、不抛异常（抛了按未知处理）**的廉价调用，
+    因为它可能出现在每个请求的准入路径上。
+    """
+    global _auto_source_probe
+    with _probe_lock:
+        _auto_source_probe = probe
+
+
+def is_auto_actor(updated_by: str | None) -> bool:
+    """``updated_by`` 是否标记为自动来源（见模块 docstring）。"""
+    return bool(updated_by) and str(updated_by).startswith(AUTO_ACTOR_PREFIX)
+
+
+def _auto_probe_result() -> bool | None:
+    """探针结果：``True`` 活着 / ``False`` 已不在 / ``None`` 无法判定。"""
+    with _probe_lock:
+        probe = _auto_source_probe
+    if probe is None:
+        return None
+    try:
+        return bool(probe())
+    except Exception:  # 探针坏了不能把准入路径带崩，按未知处理（不自愈）
+        return None
+
+
+def _state_with_auto_recovery() -> dict:
+    """读状态；发现「自动来源的陈旧维护态」时惰性自愈，返回自愈后的状态。
+
+    绝大多数调用都走前两个 return（非维护态 / 人工维护 / 探针活着），**不写库**；
+    只有确认陈旧时才进入 :data:`_heal_lock` 写一次（双重检查，保证并发下也只写
+    一次）。
+    """
+    state = get_state()
+    if not state["enabled"] or not is_auto_actor(state["updated_by"]):
+        return state
+
+    if _auto_probe_result() is not False:
+        # True = 自动流程还在跑；None = 无法判定（未注册探针 / 探针坏了）
+        return state
+
+    with _heal_lock:
+        # 双重检查：可能在等锁期间已被别的线程自愈，或自动流程刚好又启动了。
+        state = get_state()
+        if not state["enabled"] or not is_auto_actor(state["updated_by"]):
+            return state
+        if _auto_probe_result() is not False:
+            return state
+        print(
+            "maintenance: stale auto maintenance state detected "
+            f"(updated_by={state['updated_by']!r}, probe=False) -> healing"
+        )
+        set_state(False, STALE_AUTO_REASON, None, AUTO_HEAL_ACTOR)
+        return get_state()
+
+
 def is_enabled() -> bool:
-    """当前是否维护模式，进程内 TTL 缓存兜住读路径。"""
+    """当前是否维护模式，进程内 TTL 缓存兜住读路径。
+
+    自动来源的陈旧维护态在这里自愈（见模块 docstring）：自愈写库会让缓存失效，
+    所以本进程读到的立刻是 ``False``。
+    """
     path = _db_path()
     now = time.monotonic()
     with _cache_lock:
         # 缓存按路径区分：换库（测试隔离）时不会读到上一个库的值。
         if _cache_path == path and (now - _cache_at) < CACHE_TTL:
             return _cache_value
-    value = bool(get_state()["enabled"])
+    value = bool(_state_with_auto_recovery()["enabled"])
     with _cache_lock:
         _set_cache_locked(path, value)
     return value
 
 
 def is_enabled_fresh() -> bool:
-    """绕过 TTL 缓存，直读 SQLite 的当前状态。
+    """绕过 TTL 缓存，直读 SQLite 的当前状态（同样做自动来源自愈）。
 
     给「准入类」判断用：缓存窗口（:data:`CACHE_TTL` 秒）内刚开启的维护模式
     不能被放进来，所以这里刻意不走 :func:`is_enabled` 的缓存分支。
     """
-    return bool(get_state()["enabled"])
+    return bool(_state_with_auto_recovery()["enabled"])
 
-
-def invalidate_cache() -> None:
-    """供测试或外部直接改库后手动失效缓存。"""
-    with _cache_lock:
-        _set_cache_locked(None, False)
 
 
 def _set_cache_locked(path: str | None, value: bool) -> None:
