@@ -92,8 +92,7 @@ function tick() {
   if (ms === null) return
   remaining.value = ms > 0 ? Math.ceil(ms / 1000) : 0
   if (remaining.value <= 0) {
-    // 过期后收起明文,避免展示已失效的动态码
-    otp.value = null
+    // 过期后收起明文，但保留卡片与刷新入口；清空 otp 会让页面误落到“加载中“。
     showCode.value = false
     stopTimer()
   }
@@ -183,6 +182,9 @@ onUnmounted(() => {
         />
         <span class="text-sm text-gray-500 dark:text-gray-400">
           {{ remainsText }} · {{ t(M + 'refreshInterval') }}
+        </span>
+        <span v-if="loadError" class="text-sm text-red-600 dark:text-red-400">
+          {{ loadError }}
         </span>
       </div>
       <ul class="flex list-disc flex-col gap-1 pl-5 text-sm text-gray-600 dark:text-gray-300">
