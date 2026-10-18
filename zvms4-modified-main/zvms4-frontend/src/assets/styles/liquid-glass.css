@@ -210,6 +210,12 @@ html.dark .el-button.is-text.is-has-bg:hover {
     box-shadow var(--lg-duration) ease;
 }
 
+@supports (corner-shape: squircle) {
+  .el-card {
+    corner-shape: squircle;
+  }
+}
+
 /* 卡片顶部环境反光 */
 .el-card::before {
   content: '';
@@ -488,7 +494,59 @@ html.dark .view {
 }
 
 /* ============================================================
- * 13. 返回按钮 —— 完全圆形 + 强液态玻璃（参考 iOS 26 返回钮）
+ * 13.1 用户弹出菜单项 —— 玻璃菜单按钮（修改密码 / 退出登录）
+ * ========================================================== */
+.el-popover.el-popper .el-button-group {
+  display: block;
+}
+
+.el-popover.el-popper .action-btn {
+  border-radius: 12px !important;
+  margin: 3px 0;
+  padding: 10px 14px !important;
+  height: auto;
+  font-size: 14px;
+  justify-content: flex-start;
+  background: rgba(255, 255, 255, 0.45);
+  -webkit-backdrop-filter: blur(12px) saturate(140%);
+  backdrop-filter: blur(12px) saturate(140%);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.4);
+  transition: transform var(--lg-duration) var(--lg-ease),
+    background var(--lg-duration) ease, box-shadow var(--lg-duration) ease;
+}
+
+@supports (corner-shape: squircle) {
+  .el-popover.el-popper .action-btn {
+    corner-shape: squircle;
+  }
+}
+
+html.dark .el-popover.el-popper .action-btn {
+  background: rgba(255, 255, 255, 0.08);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1);
+}
+
+.el-popover.el-popper .action-btn:hover {
+  background: rgba(255, 255, 255, 0.72);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.55), 0 4px 14px rgba(0, 0, 0, 0.1);
+  transform: translateY(-1px);
+}
+
+html.dark .el-popover.el-popper .action-btn:hover {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.el-popover.el-popper .action-btn:active {
+  transform: scale(0.97);
+}
+
+/* 弹层容器去掉默认白底，透出玻璃 */
+.el-popover.el-popper {
+  padding: 8px;
+}
+
+/* ============================================================
+ * 14. 返回按钮 —— 完全圆形 + 强液态玻璃（参考 iOS 26 返回钮）
  * ElPageHeader 的返回区统一渲染为玻璃圆钮，隐藏文字
  * ========================================================== */
 .el-page-header__back {
