@@ -8,8 +8,12 @@ import '@xterm/xterm/css/xterm.css'
 import { useDark } from '@vueuse/core'
 import { createSshSession, buildSshWsUrl } from '@/api/system/ssh.ts'
 import ZSystemAuthDialog from '@/components/system/ZSystemAuthDialog.vue'
+import { Connection, VideoPlay, SwitchButton } from '@element-plus/icons-vue'
 
 const { t } = useI18n()
+// 本批 i18n 冻结,新增文案暂用英文正文之外的简短中文硬编码(报告中注明,待放开后迁入 server.ts)
+const i18nFontSizeLabel = '字号'
+const closedAdvice = '请重新建立双人授权后再接入；若反复失败,检查服务器 sshd 状态或联系另一位管理员。'
 
 type Status = 'idle' | 'connecting' | 'connected' | 'closed'
 
@@ -17,6 +21,9 @@ const status = ref<Status>('idle')
 const banner = ref('')
 const containerRef = ref<HTMLDivElement>()
 const authRef = ref<InstanceType<typeof ZSystemAuthDialog>>()
+
+const FONT_SIZES = [12, 13, 14, 16]
+const fontSize = ref(14)
 
 let term: Terminal | null = null
 let fit: FitAddon | null = null
@@ -26,17 +33,12 @@ let resizeObserver: ResizeObserver | null = null
 let resizeDebounce: number | null = null
 
 const dark = useDark()
+
 const statusText = computed(() => {
   if (status.value === 'idle') return t('server.ssh.statusIdle')
   if (status.value === 'connecting') return t('server.ssh.statusConnecting')
   if (status.value === 'connected') return t('server.ssh.statusConnected')
   return t('server.ssh.statusClosed')
-})
-
-const statusColor = computed(() => {
-  if (status.value === 'connected') return 'var(--zv-text)'
-  if (status.value === 'connecting') return 'var(--zv-label)'
-  return 'var(--zv-label)'
 })
 
 const xtermTheme = computed(() => ({
@@ -63,12 +65,20 @@ watch(xtermTheme, (value) => {
   }
 })
 
+watch(fontSize, (value) => {
+  if (term) {
+    term.options.fontSize = value
+    fitTerminal()
+  }
+})
+
 function ensureTerminal() {
   if (term || !containerRef.value) return
   term = new Terminal({
     fontFamily:
-      "ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace",
-    fontSize: 13,
+      'ui-monospace, "JetBrains Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace',
+    fontSize: fontSize.value,
+    lineHeight: 1.3,
     cursorBlink: false,
     convertEol: false,
     scrollback: 5000,
@@ -140,6 +150,7 @@ function handleFrame(event: MessageEvent) {
   }
   if (frame.type === 'exit') {
     banner.value = t('server.ssh.exitCode', { code: frame.code ?? 0 })
+    status.value = 'closed'
     return
   }
   if (frame.type === 'error') {
@@ -149,7 +160,7 @@ function handleFrame(event: MessageEvent) {
   // pong / 其它帧静默
 }
 
-// 关闭码映射:后端裁定 services/ssh_bridge.py 常量(system_ssh_router.py 引用)
+// 关闭码映射(后端裁定 ssh_bridge.py WS_CLOSE_* 常量):呈现层用
 function closeReason(event: CloseEvent): string | null {
   switch (event.code) {
     case 4401:
@@ -185,9 +196,9 @@ function teardown() {
 function startTerminal(voirTicket: string) {
   teardown()
   status.value = 'connecting'
-  banner.value = t('server.ssh.connecting')
+  banner.value = ''
   ensureTerminal()
-  term?.clear()
+  term?.reset()
   term?.focus()
 
   const url = buildSshWsUrl(voirTicket)
@@ -200,43 +211,35 @@ function startTerminal(voirTicket: string) {
   }
   ws.onmessage = (event) => handleFrame(event)
   ws.onclose = (event) => {
-    const port = closeReason(event)
-    status.value = 'closed'
+    const reason = closeReason(event)
+    if (status.value !== 'closed') {
+      status.value = 'closed'
+    }
     stopPing()
-    if (event.code !== 1000) {
-      banner.value = port || t('server.ssh.wsCloseNoun', { code: event.code })
-      ElMessage({
-        message: banner.value,
-        type: 'error',
-        grouping: true,
-        plain: true
-      })
+    if (event.code !== 1000 && reason) {
+      banner.value = reason
     }
     ws = null
   }
 }
 
-async function openAuth(scene: string): Promise<string | null> {
-  const dialog = authRef.value
-  if (!dialog) return null
-  return dialog.open(scene)
-}
-
 async function openTerminal() {
   banner.value = ''
-  const code = await openAuth(t('server.ssh.authScene'))
+  const dialog = authRef.value
+  if (!dialog) return
+  const code = await dialog.open(t('server.ssh.authScene'))
   if (!code) return
   try {
     const res = await createSshSession(code)
     const ticket = res.data?.data?.ticket
     if (!ticket) {
-      authRef.value?.fail(t('server.ssh.wsErrorTicket'))
+      dialog.fail(t('server.ssh.wsErrorTicket'))
       return
     }
-    authRef.value?.succeed()
+    dialog.succeed()
     startTerminal(ticket)
   } catch (error) {
-    authRef.value?.fail(errorMessageOf(error))
+    dialog.fail(errorMessageOf(error))
   }
 }
 
@@ -268,42 +271,142 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="flex flex-col gap-2">
-    <div class="flex flex-wrap items-center justify-between gap-2 border border-[var(--zv-hairline)] bg-[var(--zv-surface)] px-3 py-2">
-      <div class="flex items-center gap-4">
-        <span class="text-[13px] font-medium text-[var(--zv-text)]">{{ statusText }}</span>
-        <span class="h-3 w-px bg-[var(--zv-hairline)]"></span>
-        <span class="text-[11px] uppercase tracking-wide text-[var(--zv-label)]" :style="{ color: statusColor }">
-          {{ statusText }}
-        </span>
-        <span class="h-3 w-px bg-[var(--zv-hairline)]"></span>
+  <div class="flex flex-col gap-3 pb-2">
+    <!-- 页面标题行 -->
+    <div class="flex flex-wrap items-end justify-between gap-2 px-1">
+      <div class="flex flex-col gap-0.5">
+        <h2 class="m-0 text-[22px] font-semibold leading-7 text-[var(--zv-text)]">{{ t('server.ssh.title') }}</h2>
         <span class="text-[12px] text-[var(--zv-label)]">{{ t('server.ssh.limitNote') }}</span>
       </div>
+    </div>
+
+    <!-- 工具条:状态 + 目标 + 字号 + 动作(图标+文字,≥34px 高) -->
+    <div class="flex flex-wrap items-center gap-x-5 gap-y-2 border border-[var(--zv-hairline)] bg-[var(--zv-surface)] px-4 py-2">
       <div class="flex items-center gap-2">
+        <span
+          class="inline-block h-2.5 w-2.5 rounded-[2px]"
+          :class="{
+            'bg-[#1a7f37]': status === 'connected',
+            'bg-[#9a6700]': status === 'connecting',
+            'bg-[#b42318]': status === 'closed',
+            'bg-[var(--zv-hairline-strong)]': status === 'idle'
+          }"
+        ></span>
+        <span class="min-w-[64px] text-[14px] font-medium text-[var(--zv-text)]">{{ statusText }}</span>
+      </div>
+      <span class="h-5 w-px bg-[var(--zv-hairline)]"></span>
+      <div class="flex items-center gap-2 text-[13px] text-[var(--zv-text-sub)]">
+        <ElIcon :size="18"><Connection /></ElIcon>
+        <span class="font-mono text-[13px]">root@127.0.0.1</span>
+      </div>
+      <span class="h-5 w-px bg-[var(--zv-hairline)]"></span>
+      <div class="flex items-center gap-1.5 text-[12px] text-[var(--zv-label)]">
+        <span>{{ i18nFontSizeLabel }}</span>
+        <div class="flex overflow-hidden rounded-[2px] border border-[var(--zv-hairline-strong)]">
+          <button
+            v-for="size in FONT_SIZES"
+            :key="size"
+            class="border-0 bg-[var(--zv-surface)] px-2.5 text-[13px] tabular-nums transition-colors first:border-r last:border-l border-[var(--zv-hairline)]"
+            :class="fontSize === size ? 'bg-[var(--zv-text)] text-[var(--zv-surface)]' : 'text-[var(--zv-text)] hover:bg-[var(--zv-surface-alt)]'"
+            style="height: 34px"
+            @click="fontSize = size"
+          >
+            {{ size }}
+          </button>
+        </div>
+      </div>
+      <div class="ml-auto flex items-center gap-2">
         <button
-          class="border border-[var(--zv-hairline-strong)] bg-[var(--zv-text)] px-3 py-1.5 text-[13px] text-[var(--zv-surface)] transition-colors hover:opacity-80"
-          @click="openTerminal"
+          class="flex items-center gap-1.5 border border-[var(--zv-hairline-strong)] bg-[var(--zv-surface)] px-3 text-[14px] text-[var(--zv-text)] transition-colors hover:bg-[var(--zv-surface-alt)] disabled:opacity-50"
+          style="height: 34px"
+          :disabled="status === 'connecting'"
+          @click="status === 'connected' ? ws?.close(1000) : openTerminal()"
         >
-          {{ t('server.ssh.startButton') }}
+          <ElIcon :size="18"><VideoPlay /></ElIcon>
+          <template v-if="status === 'connected'">{{ t('server.ssh.disconnect') }}</template>
+          <template v-else-if="status === 'closed'">{{ t('server.ssh.reconnect') }}</template>
+          <template v-else>{{ t('server.ssh.startButton') }}</template>
         </button>
         <button
-          v-if="status === 'closed'"
-          class="border border-[var(--zv-hairline-strong)] bg-[var(--zv-surface)] px-3 py-1.5 text-[13px] text-[var(--zv-text)] transition-colors hover:bg-[var(--zv-surface-alt)]"
-          @click="openTerminal"
+          v-if="status === 'connected'"
+          class="flex items-center gap-1.5 border border-[#b42318] bg-[var(--zv-surface)] px-3 text-[14px] text-[#b42318] transition-colors hover:bg-[var(--zv-surface-alt)] dark:text-[#ff8a7a]"
+          style="height: 34px"
+          @click="ws?.close(1000)"
         >
-          {{ t('server.ssh.reconnect') }}
+          <ElIcon :size="18"><SwitchButton /></ElIcon>
+          {{ t('server.ssh.disconnect') }}
         </button>
       </div>
     </div>
-    <div v-if="banner" class="border border-[var(--zv-hairline)] bg-[var(--zv-surface-alt)] px-3 py-2 text-[12px] text-[var(--zv-text-sub)]">
-      {{ banner }}
+
+    <!-- 断线 / 出错横幅:显眼的功能性呈现,不再一行小字 -->
+    <div
+      v-if="status === 'closed' && (banner || statusText)"
+      class="flex items-center justify-between gap-3 border border-[#b42318] border-l-4 bg-[var(--zv-surface)] px-4 py-3 dark:border-[#ff8a7a]"
+    >
+      <div class="flex flex-col gap-0.5">
+        <span class="text-[14px] font-medium text-[#b42318] dark:text-[#ff8a7a]">
+          {{ banner || t('server.ssh.statusClosed') }}
+        </span>
+        <span class="text-[12px] text-[var(--zv-label)]">{{ closedAdvice }}</span>
+      </div>
+      <button
+        class="flex shrink-0 items-center gap-1.5 border border-[var(--zv-hairline-strong)] bg-[var(--zv-text)] px-3 text-[14px] text-[var(--zv-surface)] transition-colors hover:opacity-80"
+        style="height: 34px"
+        @click="openTerminal"
+      >
+        <ElIcon :size="18"><VideoPlay /></ElIcon>
+        {{ t('server.ssh.reconnect') }}
+      </button>
     </div>
     <div
+      v-else-if="banner && status === 'connected'"
+      class="border-l-4 border-[#9a6700] bg-[var(--zv-surface)] px-4 py-2 text-[13px] text-[var(--zv-text-sub)]"
+    >
+      {{ banner }}
+    </div>
+
+    <!-- 终端区:connecting 骨架 / 空态说明 / 终端本体 -->
+    <div
       ref="containerRef"
-      class="border border-[var(--zv-hairline)] bg-[var(--zv-bg)] p-1"
-      style="height: calc(100vh - 220px); min-height: 320px"
-    ></div>
+      class="border border-[var(--zv-hairline)] bg-[var(--zv-bg)] p-2"
+      style="height: calc(100vh - 300px); min-height: 360px"
+    >
+      <!-- 连接中骨架 -->
+      <div v-if="status === 'connecting'" class="flex h-full flex-col gap-2 px-2 py-2">
+        <div class="h-4 w-1/3 animate-pulse bg-[var(--zv-surface-alt)]"></div>
+        <div class="h-4 w-1/2 animate-pulse bg-[var(--zv-surface-alt)]"></div>
+        <div class="h-4 w-2/5 animate-pulse bg-[var(--zv-surface-alt)]"></div>
+        <div class="h-4 w-1/4 animate-pulse bg-[var(--zv-surface-alt)]"></div>
+      </div>
+      <!-- 未连接空态 -->
+      <div v-else-if="status === 'idle'" class="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
+        <span class="text-[16px] font-medium text-[var(--zv-text)]">root 终端</span>
+        <span class="max-w-md text-[14px] leading-6 text-[var(--zv-text-sub)]">
+          这是连接到服务器 root 的全交互终端；发起需另一位管理员的动态码双人授权,票据 120 秒内单次有效。
+        </span>
+        <span class="max-w-md text-[13px] leading-5 text-[#b42318] dark:text-[#ff8a7a]">
+          风险提示:root 下运行的命令不可撤销,请确认操作内容后再开启。
+        </span>
+        <button
+          class="mt-1 flex items-center gap-1.5 border border-[var(--zv-hairline-strong)] bg-[var(--zv-text)] px-4 text-[14px] text-[var(--zv-surface)] transition-colors hover:opacity-80"
+          style="height: 34px"
+          @click="openTerminal"
+        >
+          <ElIcon :size="18"><Connection /></ElIcon>
+          {{ t('server.ssh.startButton') }}
+        </button>
+      </div>
+    </div>
     <p class="text-[12px] text-[var(--zv-label)]">{{ t('server.ssh.typeToStart') }}</p>
     <ZSystemAuthDialog ref="authRef" />
   </div>
 </template>
+
+<style scoped>
+/* 本页局部 token:建议后续由 flat.css 统一收口(另一车道) */
+textarea,
+input {
+  font-family: inherit;
+}
+</style>
