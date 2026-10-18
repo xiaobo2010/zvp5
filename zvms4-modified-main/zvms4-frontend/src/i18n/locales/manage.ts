@@ -94,6 +94,7 @@ export const zhCN = {
     initialPasswordDialog: {
       title: '一次性初始密码',
       notice: '请立即复制并转交给该用户。此密码只显示这一次，用户首次登录后必须修改密码。',
+      studentNumberNotice: '该账号的初始密码为学号，请提醒该生首次登录后立即修改密码。',
       copy: '复制',
       copied: '已复制',
       acknowledge: '我已记下'
