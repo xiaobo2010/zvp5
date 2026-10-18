@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.oracle.session import get_session
 from routers.system_router import _require_system_admin
-from services.db_monitor import get_realtime_metrics
+from services.db_monitor import get_local_metrics, get_realtime_metrics
 from services.perf_sampler import query_endpoints, query_history, query_top_sql
 from util.object_id import get_current_user
 
@@ -66,6 +66,25 @@ async def metrics_realtime(
     status = data.pop("status", "degraded")
     response.headers["Cache-Control"] = "no-store"
     return {"status": status, "code": 200, "data": data}
+
+
+@router.get("/host")
+async def metrics_host(
+    response: Response,
+    user=Depends(get_current_user),
+):
+    """Local server panel: ``/proc`` host metrics + this process' pool/api.
+
+    Deliberately **stateless with respect to the database**: the endpoint does
+    not depend on ``get_session`` and calls no Oracle collector, so the panel
+    renders even while the database is unreachable or still warming up (the
+    realtime panel waits for Oracle; this one does not).  ``host``/``pool``
+    keep the exact shapes ``/realtime`` returns, so the frontend reuses one
+    renderer for both.
+    """
+    await _require_system_admin(user)
+    response.headers["Cache-Control"] = "no-store"
+    return {"status": "ok", "code": 200, "data": get_local_metrics()}
 
 
 @router.get("/history")

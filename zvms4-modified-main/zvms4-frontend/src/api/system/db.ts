@@ -390,6 +390,23 @@ export function getMetricsRealtime() {
   return axios.get<DbMetricsRealtimeResponse>('/system/db/metrics/realtime')
 }
 
+// 本地服务器快照(零 Oracle 往返):host/pool 字段与 /realtime 逐字一致(R6 §3.4)
+export interface DbMetricsHostData {
+  host: DbMetricsHost
+  pool: DbMetricsPool
+  observed_at?: string
+}
+
+export interface DbMetricsHostResponse {
+  status: string
+  code: number
+  data: DbMetricsHostData
+}
+
+export function getMetricsHost() {
+  return axios.get<DbMetricsHostResponse>('/system/db/metrics/host')
+}
+
 // 时序历史:series 为逗号分隔的 key 列表(§4.1 冻结键),未知 key 被后端忽略
 export function getMetricsHistory(params: {
   series: string[]
