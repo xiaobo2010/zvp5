@@ -3,7 +3,7 @@ import re
 from datetime import datetime
 from typing import Literal, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
-from fastapi.responses import RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import BaseModel
 from bcrypt import hashpw, gensalt
 from util.activity_signoff import user_activity_signoff
@@ -24,6 +24,7 @@ from util.permission.user import (
     validate_read_user_permission,
 )
 from db import backends
+from db.system_state import is_enabled_fresh
 from util.cert import (
     get_hashed_password_by_cert,
     used_otp_credential,
@@ -135,6 +136,34 @@ async def auth_user(auth: AuthUser, request: Request, response: Response):
         str(validate_object_id(id))
     )
     log_name = user_doc["name"] if user_doc else await get_user_name(id)
+
+    # v4.2.4-2 R4（设计 §3.2）：维护期间只放行 admin —— 非 admin 一律拒绝下发
+    # token。拒绝必须落在端点内：``/api/users/auth`` 是中间件的维护豁免路径
+    # （main.py:136-144），否则管理员无法登录关掉维护。
+    # 角色取刚落库读到的这一份 user_doc，不额外查库；读不到文档按「非 admin」
+    # 处理（fail-closed，宁拒不放）。
+    if is_enabled_fresh() and "admin" not in ((user_doc or {}).get("roles") or []):
+        try:
+            await ZVMSLog(
+                str(request.url),
+                id,
+                f"维护模式拒绝用户 {log_name} 登录（非管理员）",
+                datetime.timestamp(datetime.now()),
+                type="auth_maintenance_blocked",
+                level="warning",
+                xuehai_id=xuehai_id,
+            ).insert_log()
+        except Exception:
+            # 审计写失败不得把 503 变成 500：拒绝本身仍然生效。
+            _logger.exception("failed to write auth_maintenance_blocked log")
+        # 与维护中间件的 503 体逐字同形（main.py:169-172）：前端
+        # plugins/axios.ts:129-140 靠顶层 ``maintenance: true`` 识别维护态，
+        # 既不清 token 也不弹「登录已过期」。
+        return JSONResponse(
+            status_code=503,
+            content={"detail": "系统维护中，仅管理员可登录", "maintenance": True},
+        )
+
     is_otp = used_otp_credential(credential, id)
     if is_login:
         if is_otp:

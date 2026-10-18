@@ -56,6 +56,25 @@ async function postLoginTarget(): Promise<string> {
   return redirectTarget() || '/user'
 }
 
+// 维护模式 503(v4.2.4-2 R4):维护期间后端只给 admin 下发 token,非 admin 的老
+// 登录请求会被拒。该响应只做提示 —— 绝不清 token、绝不跳登录页,清 token 只属
+// 于 axios 的 401 分支(plugins/axios.ts:168-186)。
+function isMaintenanceBlocked(error: unknown): boolean {
+  const response = (
+    error as { response?: { status?: number; data?: { maintenance?: boolean } } }
+  )?.response
+  return response?.status === 503 && response?.data?.maintenance === true
+}
+
+function notifyMaintenanceBlocked() {
+  ElMessage({
+    message: t('maintenance.loginBlocked'),
+    type: 'warning',
+    grouping: true,
+    plain: true
+  })
+}
+
 if (userStore.isLogin) {
   void postLoginTarget().then((target) => router.replace(target))
 } else {
@@ -70,9 +89,14 @@ async function login() {
     loading.value = true
     
     const id = user.value
-    const { token, _id } = (await api.user.auth.useLongTermAuth(id, password.value, 'short', 'login').catch(() => {
-      loading.value = false
-    })) || {
+    const { token, _id } = (await api.user.auth
+      .useLongTermAuth(id, password.value, 'short', 'login')
+      .catch((error: unknown) => {
+        loading.value = false
+        if (isMaintenanceBlocked(error)) {
+          notifyMaintenanceBlocked()
+        }
+      })) || {
       token: '',
       _id: '',
     }
@@ -106,8 +130,11 @@ async function login() {
   await userStore
     .setUser(id, password.value as string)
     .then(async () => router.replace(await postLoginTarget()))
-    .catch(() => {
+    .catch((error: unknown) => {
       loading.value = false
+      if (isMaintenanceBlocked(error)) {
+        notifyMaintenanceBlocked()
+      }
     })
 }
 
