@@ -126,13 +126,25 @@ def get_current_totp(user_id: str) -> tuple[str, float]:
     return code, (counter + 1) * OTP_STEP
 
 
-def verify_totp(user_id: str, code: str) -> bool:
+def match_totp_counter(user_id: str, code: str) -> Optional[int]:
+    """返回命中的计数器窗口；不命中返回 ``None``。
+
+    只比对 ``counter`` 与 ``counter-1`` 两个窗口，与 :func:`verify_totp` 原有
+    语义完全一致（容忍一个 ``OTP_STEP`` 的边界漂移）。返回计数器本身是为了让
+    双人授权把它当**唯一防重放键**：(approver, counter) 一次一用，比「码字符串」
+    更稳（同一个 6 位码可能在不同窗口重复出现）。
+    """
     counter = int(datetime.datetime.now().timestamp() // OTP_STEP)
     secret = _totp_secret(user_id)
-    return any(
-        hmac.compare_digest(_totp_code(secret, counter - offset), code)
-        for offset in range(2)
-    )
+    for offset in range(2):
+        candidate = counter - offset
+        if hmac.compare_digest(_totp_code(secret, candidate), code):
+            return candidate
+    return None
+
+
+def verify_totp(user_id: str, code: str) -> bool:
+    return match_totp_counter(user_id, code) is not None
 
 
 def used_otp_credential(cert: str, user_id: str) -> bool:

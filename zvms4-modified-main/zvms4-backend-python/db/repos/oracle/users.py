@@ -44,6 +44,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.ids import is_valid_oid, new_oid, normalize_oid
 from db.models import activity_members as activity_members_tbl
+from db.models import dual_auth_uses as dual_auth_uses_tbl
 from db.models import files as files_tbl
 from db.models import groups as groups_tbl
 from db.models import time_academic_year as time_academic_year_tbl
@@ -294,6 +295,21 @@ _PAST_MATCH = "regexp_like(json_serialize(users.past), :past_value, 'i')"
 
 def _all_users_stmt():
     return select(*_user_columns()).order_by(users_tbl.c.oid.asc())
+
+
+def _list_admin_oids_stmt():
+    """全部 admin 的 oid。
+
+    复用 ``_ROLE_EXISTS``（JSON_EXISTS + 绑定参数）而不是
+    ``DBMS_LOB.INSTR(roles, '"admin"')``：JSON_EXISTS 按数组元素精确匹配，
+    不会把 ``"not_admin"`` 之类的子串误判成 admin。
+    """
+    return (
+        select(users_tbl.c.oid)
+        .where(text(_ROLE_EXISTS).bindparams(role_value="admin"))
+        .order_by(users_tbl.c.oid.asc())
+    )
+
 
 
 def _list_by_id_prefix_stmt(prefix: str):
@@ -874,6 +890,42 @@ class OracleUsersRepo:
         async with _session_for(self._session) as (session, _owns):
             rows = (await session.execute(stmt)).all()
         return [_user_doc(row._mapping) for row in rows]
+
+    async def list_admin_oids(self) -> list[str]:
+        """全部 admin 的 oid（双人授权用来找「另一位管理员」）。"""
+        stmt = _list_admin_oids_stmt()
+        async with _session_for(self._session) as (session, _owns):
+            rows = (await session.execute(stmt)).all()
+        return [str(row[0]) for row in rows]
+
+    async def insert_dual_auth_use(
+        self,
+        approver_oid: str,
+        otp_counter: int,
+        action: str,
+        operator_oid: str,
+    ) -> str:
+        """落一条动态码使用记录，返回新行 oid。
+
+        唯一约束 ``uq_dual_approver_counter`` 是防重放的**唯一**裁决者，这里
+        不做「先查后插」：并发两个请求会在同一个窗口里双双查到「未使用」。
+        冲突（ORA-00001）由 SQLAlchemy 包成 ``IntegrityError`` 抛出，翻译成
+        409 是守卫层的职责，本方法只负责让异常上抛。
+        """
+        oid = new_oid()
+        stmt = insert(dual_auth_uses_tbl).values(
+            oid=oid,
+            approver_oid=normalize_oid(approver_oid),
+            otp_counter=int(otp_counter),
+            action=action,
+            operator_oid=normalize_oid(operator_oid),
+            created_at=datetime.now(),
+        )
+        async with _session_for(self._session) as (session, owns):
+            await session.execute(stmt)
+            if owns:
+                await session.commit()
+        return oid
 
     async def list_by_id_prefix(self, prefix: str) -> list[Row]:
         stmt = _list_by_id_prefix_stmt(prefix)

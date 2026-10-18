@@ -630,6 +630,26 @@ Index("ix_udb_xuehai_id", user_device_bindings.c.xuehai_id)
 
 
 # ---------------------------------------------------------------------------
+# DUAL_AUTH_USES  ← new (Stage 2 双人授权; V012)
+#   One row per accepted TOTP window: the unique (approver_oid, otp_counter)
+#   constraint is the atomic replay guard. No FK on purpose - the row must
+#   survive deletion of either account (it is an audit trail, not a relation).
+# ---------------------------------------------------------------------------
+
+dual_auth_uses = Table(
+    "dual_auth_uses",
+    metadata,
+    _oid_pk(),
+    Column("approver_oid", VARCHAR2(24), nullable=False),
+    Column("otp_counter", NUMBER(19), nullable=False),
+    Column("action", VARCHAR2(64), nullable=False),
+    Column("operator_oid", VARCHAR2(24), nullable=False),
+    Column("created_at", oracle.TIMESTAMP, nullable=False),
+    UniqueConstraint("approver_oid", "otp_counter", name="uq_dual_approver_counter"),
+)
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
