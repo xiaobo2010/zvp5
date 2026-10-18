@@ -385,7 +385,7 @@ onMounted(async () => {
             <ElCol :span="16">
               <div
                 :class="[
-                  'text-base',
+                  'text-[22px]',
                   'font-semibold',
                   'tracking-tight',
                   'w-full',
