@@ -97,11 +97,16 @@ function refresh() {
 
 async function refreshClasses() {
   loadingClasses.value = true
-  const classesSet = await api.group.read_v2(1, 1000, '')
-  if (classesSet) {
-    classes.value = classesSet.groups.filter((g) => g.type !== 'permission')
+  try {
+    // page=-1 is the documented "all rows" mode of the v1 list endpoint.
+    // `/v2/groups` caps size at 100 and must not be used as a bulk loader.
+    const classesSet = await api.group.read('class', -1)
+    classes.value = classesSet
+      ? classesSet.groups.filter((g) => g.type !== 'permission')
+      : []
+  } finally {
+    loadingClasses.value = false
   }
-  loadingClasses.value = false
 }
 
 async function refreshPermissions() {

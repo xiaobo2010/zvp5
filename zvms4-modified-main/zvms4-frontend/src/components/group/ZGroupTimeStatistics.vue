@@ -20,9 +20,11 @@ import type { ActivityMember } from 'types/activity.v2'
 import type { GroupComplianceMemberRosters, StatisticsMemberRef } from 'types/statistics'
 import { useI18n } from 'vue-i18n'
 import { useUserStore } from '@/stores/user'
+import { useChartTheme } from '@/utils/chartTheme'
 
 const { t } = useI18n()
 const userStore = useUserStore()
+const chartTheme = useChartTheme()
 
 const props = withDefaults(
   defineProps<{
@@ -211,7 +213,14 @@ const barChartData = computed<ChartData<'bar', number[], string>>(() => {
 const barOptions = computed<ChartOptions<'bar'>>(() => ({
   responsive: true,
   plugins: {
-    legend: { position: 'bottom', labels: { boxWidth: 12, boxHeight: 12 } },
+    legend: {
+      position: 'bottom',
+      labels: {
+        boxWidth: 12,
+        boxHeight: 12,
+        color: chartTheme.value.text
+      }
+    },
     tooltip: {
       callbacks: {
         label: (ctx) =>
@@ -223,8 +232,15 @@ const barOptions = computed<ChartOptions<'bar'>>(() => ({
     }
   },
   scales: {
-    x: { grid: { display: false } },
-    y: { beginAtZero: true, ticks: { precision: 0 }, grid: { color: '#e4e7ed' } }
+    x: {
+      grid: { display: false },
+      ticks: { color: chartTheme.value.muted }
+    },
+    y: {
+      beginAtZero: true,
+      ticks: { precision: 0, color: chartTheme.value.muted },
+      grid: { color: chartTheme.value.grid }
+    }
   }
 }))
 
@@ -352,15 +368,15 @@ function memberChipLabel(member: StatisticsMemberRef) {
             :data="barChartData"
             :options="barOptions"
           />
-          <p class="mt-2 text-center text-xs text-gray-500">
+          <p class="mt-2 text-center text-xs text-gray-500 dark:text-gray-400">
             {{ t('manage.groupDetails.statistics.sortedBarNote') }}
           </p>
         </template>
         <div v-else class="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
           <ElCard v-for="card in modeCards" :key="card.mode" shadow="hover" class="mode-card">
             <header class="mb-3 text-center">
-              <p class="text-base font-medium text-gray-800">{{ card.name }}</p>
-              <p class="mt-1 text-xs text-gray-500">
+              <p class="text-base font-medium text-gray-800 dark:text-gray-100">{{ card.name }}</p>
+              <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
                 {{ t('manage.groupDetails.statistics.total') }} {{ card.total }}
                 {{ t('activity.units.person') }}
                 <template v-if="card.total > 0">
@@ -391,10 +407,10 @@ function memberChipLabel(member: StatisticsMemberRef) {
                   aria-hidden="true"
                 >
                   <span class="text-center">
-                    <span class="block text-2xl font-semibold tracking-wide text-gray-700">
+                    <span class="block text-2xl font-semibold tracking-wide text-gray-700 dark:text-gray-100">
                       {{ card.total }}
                     </span>
-                    <span class="block text-xs text-gray-400">
+                    <span class="block text-xs text-gray-400 dark:text-gray-500">
                       {{ t('activity.units.person') }}
                     </span>
                   </span>
@@ -460,7 +476,7 @@ function memberChipLabel(member: StatisticsMemberRef) {
                         {{ memberChipLabel(member) }}
                       </ElTag>
                     </div>
-                    <span v-else class="text-xs text-gray-400">
+                    <span v-else class="text-xs text-gray-400 dark:text-gray-500">
                       {{ t('manage.groupDetails.statistics.rosterUnavailable') }}
                     </span>
                   </li>

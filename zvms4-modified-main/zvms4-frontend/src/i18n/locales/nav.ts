@@ -16,6 +16,7 @@ export const zhCN = {
   },
   language: '',
   dark: '夜间模式',
+  light: '日间模式',
   languages: {
     'zh-CN': '',
     'en-US': '',
