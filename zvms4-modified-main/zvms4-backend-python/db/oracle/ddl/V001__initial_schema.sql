@@ -718,3 +718,29 @@ EXCEPTION
     IF SQLCODE NOT IN (-955, -1408) THEN RAISE; END IF;
 END;
 /
+
+-- ----------------------------------------------------------------------------
+-- DUAL_AUTH_USES  ← new (Stage 2 双人授权)
+--   One row per accepted TOTP window for a cross-admin approval.  The unique
+--   (approver_oid, otp_counter) constraint is the atomic replay guard; also
+--   added by V012__add_dual_auth_uses.sql for already-deployed instances.
+--   No FK on purpose: the row is an audit trail and must survive deletion of
+--   either account.
+-- ----------------------------------------------------------------------------
+BEGIN
+  EXECUTE IMMEDIATE '
+CREATE TABLE dual_auth_uses (
+  oid VARCHAR2(24 CHAR) NOT NULL,
+  approver_oid VARCHAR2(24 CHAR) NOT NULL,
+  otp_counter NUMBER(19) NOT NULL,
+  action VARCHAR2(64 CHAR) NOT NULL,
+  operator_oid VARCHAR2(24 CHAR) NOT NULL,
+  created_at TIMESTAMP NOT NULL,
+  PRIMARY KEY (oid),
+  CONSTRAINT uq_dual_approver_counter UNIQUE (approver_oid, otp_counter)
+)';
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE != -955 THEN RAISE; END IF;
+END;
+/
