@@ -61,7 +61,7 @@ watch(
 
 <template>
   <div class="px-6 fill" style="width: 100%" v-if="user.isLogin">
-    <p class="text-xl py-4 semibold">
+    <p class="text-[22px] py-4 font-semibold">
       {{ t('home.greeting', { greet: t('home.greetings.' + greeting), name: user.name }) }}
     </p>
     <div class="py-2">

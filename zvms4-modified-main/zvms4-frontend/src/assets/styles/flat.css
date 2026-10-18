@@ -31,10 +31,16 @@
   --el-border-color-extra-light: #efefef;
   --el-text-color-primary: #111111;
   --el-text-color-regular: #333333;
-  --el-font-size-base: 13px;
+  --el-font-size-base: 14px;
 
   /* 硬边微投影代替大投影 */
   --zv-shadow-flat: 0 1px 0 0 rgba(0, 0, 0, 0.06);
+
+  /* 单一强调色:蓝(白字对比度约 5.2:1 >= 4.5:1) */
+  --zv-accent: #1667d9;
+
+  /* 表单控件高度下限 >= 34px */
+  --el-component-size: 36px;
 }
 
 html.dark {
@@ -60,7 +66,7 @@ html.dark {
 
 html,
 body {
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1.5;
   letter-spacing: 0.01em;
 }
@@ -72,11 +78,22 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
+/* 图标:内联/工具栏/导航统一 18px(文字级差异靠层级色彩) */
+.el-icon {
+  font-size: 18px;
+}
+
+/* 页面标题(PageHeader 内容区):22px */
+.el-page-header__content {
+  font-size: 22px;
+  line-height: 1.35;
+}
+
 /* ---------- 微标签(字段名/表头) ---------- */
 
 .z-label {
-  font-size: 11px;
-  line-height: 1.35;
+  font-size: 12px;
+  line-height: 1.5;
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--zv-label);
@@ -96,7 +113,7 @@ body {
 }
 
 .z-stat .z-label {
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .z-stat__value {
@@ -112,7 +129,7 @@ body {
   --el-card-bg-color: var(--zv-surface);
   --el-card-border-color: var(--zv-hairline);
   --el-card-border-radius: 2px;
-  --el-card-padding: 12px;
+  --el-card-padding: 16px;
   border-width: 1px;
   border-style: solid;
   border-radius: 2px;
@@ -126,15 +143,15 @@ body {
 }
 
 .el-card__header {
-  padding: 8px 12px;
+  padding: 12px 16px;
   border-bottom: 1px solid var(--zv-hairline);
-  font-size: 13px;
+  font-size: 16px;
   font-weight: 600;
   line-height: 1.35;
 }
 
 .el-card__body {
-  padding: 12px;
+  padding: 16px;
 }
 
 .el-descriptions.is-bordered {
@@ -143,7 +160,7 @@ body {
 }
 
 .el-descriptions__label {
-  font-size: 11px !important;
+  font-size: 12px !important;
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--zv-label) !important;
@@ -151,7 +168,7 @@ body {
 }
 
 .el-descriptions__content {
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .el-dialog {
@@ -202,7 +219,7 @@ body {
 /* ---------- 表格:高密度 + sticky 表头 ---------- */
 
 .el-table {
-  font-size: 13px;
+  font-size: 14px;
   --el-table-bg-color: var(--zv-surface);
   --el-table-tr-bg-color: var(--zv-surface);
   --el-table-header-bg-color: var(--zv-surface);
@@ -220,7 +237,7 @@ body {
 
 /* 表头:11px 大写微标签 */
 .el-table th.el-table__cell {
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 500;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -230,16 +247,16 @@ body {
 /* 行高压缩:默认 40px+ → 34px */
 .el-table td.el-table__cell,
 .el-table th.el-table__cell {
-  padding: 4px 8px;
+  padding: 11px 12px;
 }
 
 .el-table .cell {
-  line-height: 1.45;
-  padding: 0 8px 0 0;
+  line-height: 1.4;
+  padding: 0 12px 0 0;
 }
 
 .el-table th.el-table__cell > .cell {
-  padding: 0 8px 0 0;
+  padding: 0 12px 0 0;
 }
 
 /* 默认(未传 max-height)表格也提供 sticky 表头:
@@ -254,7 +271,7 @@ body {
 
 .el-card__body .el-table:not(.el-table--scrollable-y) .el-table__header-wrapper {
   position: sticky;
-  top: -12px;
+  top: -16px;
   z-index: 3;
   background: var(--zv-surface);
 }
@@ -293,7 +310,7 @@ body {
 }
 
 .el-form-item__label {
-  font-size: 11px !important;
+  font-size: 12px !important;
   letter-spacing: 0.06em;
   color: var(--zv-label) !important;
   font-weight: 400 !important;
@@ -346,18 +363,27 @@ html.dark .el-select__wrapper {
 /* ---------- 其他 ---------- */
 
 .el-segmented {
-  --el-segmented-item-selected-bg-color: var(--zv-text);
-  --el-segmented-item-selected-color: var(--zv-bg);
-  font-size: 12px;
+  --el-segmented-item-selected-bg-color: var(--zv-accent);
+  --el-segmented-item-selected-color: #ffffff;
+  font-size: 14px;
 }
 
 html.dark .el-segmented {
-  --el-segmented-item-selected-bg-color: #f2f2f2;
-  --el-segmented-item-selected-color: #0f0f0f;
+  --el-segmented-item-selected-bg-color: var(--zv-accent);
+  --el-segmented-item-selected-color: #ffffff;
 }
 
 .el-segmented__item-label {
-  font-size: 12px;
+  font-size: 14px;
+}
+
+/* 分段 Tab:hover 轻反馈(实色浅蓝),选中对比度 >=4.5:1 */
+.el-segmented__item:hover:not(.is-selected) {
+  background: #e8effa;
+}
+
+html.dark .el-segmented__item:hover:not(.is-selected) {
+  background: #22304a;
 }
 
 /* 页面底色工具类:不透明实色 */
