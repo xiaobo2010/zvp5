@@ -78,6 +78,18 @@ export interface ActivityStatisticsClassGroup {
 }
 
 /**
+ * @description Minimal member reference reused by optional roster fields of the
+ * statistics payloads. Mirrors the `{_id, id, name}` tuples already carried by
+ * activity member payloads; `duration` is optional and measured in hours.
+ */
+export interface StatisticsMemberRef {
+  _id: string
+  id: string
+  name: string
+  duration?: number
+}
+
+/**
  * @description Payload shape of `/v2/statistics/activities/:id/analysis`.
  */
 export interface ActivityStatistics {
@@ -87,4 +99,21 @@ export interface ActivityStatistics {
   bins: ActivityStatisticsBin[]
   modes: ActivityStatisticsModeGroup[]
   classes: ActivityStatisticsClassGroup[]
+  /**
+   * @description Optional member rosters per participation mode. Keys are mode
+   * names and entries mirror the `modes` rows one to one, so consumers can join
+   * by `mode`. When the field is absent the UI degrades to aggregate rows only.
+   */
+  mode_members?: Record<string, StatisticsMemberRef[]>
+}
+
+/**
+ * @description Member rosters carried by the additive `member_rosters` field of
+ * `/v2/groups/:id/statistics/compliance`. Mode keys and bucket keys match the
+ * compliance payload verbatim so consumers can join by label; any missing mode
+ * or bucket means no visible members for that slice, and a response without the
+ * field degrades the same way.
+ */
+export interface GroupComplianceMemberRosters {
+  [mode: string]: Record<string, StatisticsMemberRef[]>
 }

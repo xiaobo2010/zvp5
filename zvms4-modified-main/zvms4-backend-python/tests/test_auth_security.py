@@ -94,6 +94,32 @@ async def test_temporary_verification_works_for_log_but_not_business(account):
         await object_id.get_current_user(signed)
 
 
+@pytest.mark.asyncio
+async def test_current_user_carries_the_class_id_for_downstream_checks(account):
+    """认证结果带上 class_id（附加字段，旧键不动）。
+
+    这是纯附加：下游需要班级的权限校验（如
+    ``validate_read_group_permission`` 的团支书分支）可以直接复用认证时刚读到的
+    那份文档，不必再读一次同一个用户。
+    """
+    account["class_id"] = "000000000000000000000002"
+    user = await object_id.get_current_user(token())
+    assert user["id"] == OID
+    assert user["per"] == ["student"]
+    assert user["class_id"] == "000000000000000000000002"
+
+
+@pytest.mark.asyncio
+async def test_current_user_reports_a_missing_class_as_none_not_a_missing_key(
+    account,
+):
+    # 键必须始终存在：None 表示「本人没有班级」，与「字典根本没带这个键」可
+    # 区分——后者是历史调用形态，会退回再读一次库。
+    user = await object_id.get_current_user(token())
+    assert "class_id" in user
+    assert user["class_id"] is None
+
+
 @pytest.mark.parametrize("value", [float("nan"), float("inf"), -float("inf"), True, None, "oops"])
 def test_invalid_timestamps_fail(value):
     with pytest.raises(HTTPException):

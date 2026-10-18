@@ -40,7 +40,15 @@ PREFIX = "/api/v2/statistics/activities"
 _USERS = [{"_id": "u1", "class_id": "c1"}, {"_id": "u2", "class_id": "c1"}]
 _CLASSES = [{"_id": "c1", "name": "高一(1)班"}]
 
-_ANALYSIS_KEYS = {"total", "bin_width", "description", "bins", "modes", "classes"}
+_ANALYSIS_KEYS = {
+    "total",
+    "bin_width",
+    "description",
+    "bins",
+    "modes",
+    "classes",
+    "mode_members",
+}
 _EMPTY_ANALYSIS = {
     "total": 0,
     "bin_width": BIN_WIDTH_SMALL,

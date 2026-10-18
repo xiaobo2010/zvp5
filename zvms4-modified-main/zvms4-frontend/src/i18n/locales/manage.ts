@@ -57,6 +57,29 @@ export const zhCN = {
       diff: '查看与达标所差时间',
       filled: '已完成',
       diffed: '还差 {time} 小时'
+    },
+    statistics: {
+      chartType: {
+        doughnut: '环形图',
+        bar: '柱状图'
+      },
+      chartSwitch: '图表类型切换',
+      ariaBar: '班级达标人数柱状分布图',
+      ariaDoughnut: '{mode}达标人数环形分布图',
+      noPermission: '无权限查看班级统计',
+      loadFailed: '统计加载失败，请稍后重试',
+      empty: '暂无统计数据',
+      modeEmpty: '该类型暂无记录',
+      completed: '已达标',
+      total: '总人数',
+      completedOf: '已达标 {count} 人',
+      rateOf: '达标率 {rate}%',
+      bucketLine: '{count} 人（{percent}%）',
+      sortedBarNote: '各区间已按三类合计人数从少到多排序',
+      viewRoster: '点击查看成员名单',
+      rosterUnavailable: '成员名单暂未开放',
+      rosterEmpty: '该区间暂无成员',
+      barPersonLine: '{mode}：{count} 人'
     }
   },
   personalPanel: {
@@ -70,8 +93,7 @@ export const zhCN = {
     resetConfirm: '请确认您的操作。',
     initialPasswordDialog: {
       title: '一次性初始密码',
-      notice:
-        '请立即复制并转交给该用户。此密码只显示这一次，用户首次登录后必须修改密码。',
+      notice: '请立即复制并转交给该用户。此密码只显示这一次，用户首次登录后必须修改密码。',
       copy: '复制',
       copied: '已复制',
       acknowledge: '我已记下'
