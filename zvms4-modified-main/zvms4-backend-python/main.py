@@ -40,6 +40,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from tasks.compute_time import rebuild_statistics, generate_reports
 from tasks.files_retention import purge_expired_attachments
 from tasks.retention import purge_expired_records
+from tasks.user_trash_gc import purge_expired_trash
 from services import perf_sampler
 from services.api_metrics import ApiMetricsMiddleware
 
@@ -276,6 +277,24 @@ async def startup_event():
         second=0,
         timezone="Asia/Hong_Kong",
         id="daily_retention_purge",
+        coalesce=True,
+        max_instances=1,
+        misfire_grace_time=3600,
+    )
+
+    # Delete user_trash rows whose 30-day recovery window has passed, daily at
+    # 02:00 HKT (UTC+8). 02:00 is the only free slot: 01:00 compute_time,
+    # 03:00 files, 03:30 retention, 04:00 reports, 04:30 perf retention.
+    # Retention window: USER_TRASH_RETENTION_DAYS (default 30) in
+    # tasks/user_trash_gc.py.
+    scheduler.add_job(
+        purge_expired_trash,
+        "cron",
+        hour=2,
+        minute=0,
+        second=0,
+        timezone="Asia/Hong_Kong",
+        id="daily_user_trash_gc",
         coalesce=True,
         max_instances=1,
         misfire_grace_time=3600,
