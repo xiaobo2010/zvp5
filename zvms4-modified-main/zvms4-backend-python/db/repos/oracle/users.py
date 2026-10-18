@@ -23,13 +23,33 @@ from __future__ import annotations
 import json
 import re
 from contextlib import asynccontextmanager
+from datetime import date, datetime
+from decimal import Decimal
 from typing import Any, AsyncIterator
 
-from sqlalchemy import func, insert, or_, select, text, update
+from sqlalchemy import (
+    Column,
+    MetaData,
+    Table,
+    delete,
+    func,
+    insert,
+    or_,
+    select,
+    text,
+    update,
+)
+from sqlalchemy.dialects.oracle import CLOB, TIMESTAMP, VARCHAR2
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db.ids import new_oid, normalize_oid
+from db.ids import is_valid_oid, new_oid, normalize_oid
+from db.models import activity_members as activity_members_tbl
+from db.models import files as files_tbl
 from db.models import groups as groups_tbl
+from db.models import time_academic_year as time_academic_year_tbl
+from db.models import time_with_origin as time_with_origin_tbl
+from db.models import user_device_bindings as user_device_bindings_tbl
+from db.models import user_time as user_time_tbl
 from db.models import users as users_tbl
 from db.oracle.session import session_scope
 
@@ -209,6 +229,19 @@ def _set_roles_stmt(oid: str, roles: list[str]):
     return update(users_tbl).where(users_tbl.c.oid == oid).values(roles=roles, session_id=new_oid())
 
 
+def _set_business_id_stmt(oid: str, business_id: str):
+    """学号 = 登录名：改完轮换 ``session_id``，旧 token 立即失效。
+
+    与 ``_set_roles_stmt`` / ``_set_password_stmt`` 同一约定：任何影响「
+    这个账号是谁 / 怎么进来」的写都轮换会话 id。
+    """
+    return (
+        update(users_tbl)
+        .where(users_tbl.c.oid == oid)
+        .values(business_id=business_id, session_id=new_oid())
+    )
+
+
 def _set_banned_stmt(oid: str, banned: int):
     return (
         update(users_tbl)
@@ -332,9 +365,206 @@ def _group_by_id_prefix_stmt():
     )
 
 
+# ---------------------------------------------------------------------------
+# USER_TRASH（回收站）—— 硬删除前的整包归档
+#
+# DDL 在 ``db/oracle/ddl/V011__add_user_trash.sql``（**不自动执行**）。
+# 这里刻意挂在**独立的 MetaData** 上：``db/ddl_check.py`` 比对
+# ``db.models.metadata`` ↔ ``V001``，把回收站表塞进共享 metadata 会被它判成
+# 「模型比 DDL 多一张表」的漂移。独立 metadata 让本表完全不影响那次比对。
+#
+# ``user_oid`` **故意没有外键**指向 ``users``：回收站的意义就是在 users 行被删掉
+# 之后仍然保留整包数据；有外键会直接让删除失败（ORA-02292）。
+# ---------------------------------------------------------------------------
+
+_trash_metadata = MetaData()
+
+user_trash_tbl = Table(
+    "user_trash",
+    _trash_metadata,
+    Column("oid", VARCHAR2(24), primary_key=True),
+    Column("user_oid", VARCHAR2(24), nullable=False),
+    Column("deleted_by", VARCHAR2(24), nullable=True),
+    Column("deleted_at", TIMESTAMP, nullable=False),
+    Column("payload", CLOB, nullable=False),
+    Column("restored_at", TIMESTAMP, nullable=True),
+)
+
+# ``files`` 的 BLOB（``content``）绝不进回收站 payload：CLOB 装不下附件字节，
+# 而且字节本身没有「身份」语义。只抄元数据。
+_FILES_METADATA_COLUMNS = (
+    files_tbl.c.oid,
+    files_tbl.c.owner_oid,
+    files_tbl.c.kind,
+    files_tbl.c.parent_oid,
+    files_tbl.c.mime,
+    files_tbl.c.size_bytes,
+    files_tbl.c.width,
+    files_tbl.c.height,
+    files_tbl.c.sha256,
+    files_tbl.c.original_name,
+    files_tbl.c.purpose,
+    files_tbl.c.entity_type,
+    files_tbl.c.entity_oid,
+    files_tbl.c.status,
+    files_tbl.c.ocr_status,
+    files_tbl.c.created_at,
+    files_tbl.c.updated_at,
+    files_tbl.c.deleted_at,
+)
+
+# 用户的所有关联行，以及**逐表处置决策**（v4.2.4-2 契约 §3.3A-3b 要求逐项列出）：
+#
+#   (名称, 表, 指向用户的列, 归档时读取的列(None=全部), 是否物理清理)
+#
+# * ``user_time`` / ``time_academic_year`` / ``time_with_origin`` /
+#   ``user_device_bindings`` —— 真外键（NO ACTION，全库无 ON DELETE CASCADE），
+#   不清理就删不掉 users 行；全量归档后物理删除。义工时长是**可以从活动台账
+#   重算**的派生数据，且已随回收站整体保留，删除不丢事实。
+# * ``activity_members`` —— 无外键的软引用，**只归档、不删**：这些行是别人活动
+#   的参与记录/时长来源，删掉会静默改变他人的统计；保留后 ``member_oid`` 悬空，
+#   与既有「未知用户」语义一致（``db/models.py`` 对 member_oid 的注释）。
+# * ``files`` —— 无外键的软引用，**只归档元数据、不删也不置空**：置空会让附件
+#   变成无主孤儿并破坏 ``ix_files_sha256`` 的 (owner_oid, sha256) 去重口径；
+#   保留悬空 owner_oid 同样落到「未知用户」，且回收站行里存着 user_oid↔文件的
+#   对应关系，可追溯。
+#
+# 未列入的软引用（``activities.creator_oid`` / ``appointee_oid``、
+# ``imports.user_oid``）一律**保留不动**：前两列是 NOT NULL 的活动台账事实
+# （改不了也不能改），后者是整批导入的日期范围审计记录，且带 BLOB 不适合进
+# CLOB payload。
+_CHILD_TABLES: tuple[tuple[str, Any, str, tuple[Any, ...] | None, bool], ...] = (
+    ("user_time", user_time_tbl, "user_oid", None, True),
+    ("time_academic_year", time_academic_year_tbl, "user_oid", None, True),
+    ("time_with_origin", time_with_origin_tbl, "user_oid", None, True),
+    ("user_device_bindings", user_device_bindings_tbl, "user_oid", None, True),
+    ("activity_members", activity_members_tbl, "member_oid", None, False),
+    ("files", files_tbl, "owner_oid", _FILES_METADATA_COLUMNS, False),
+)
+
+
+class UserGoneError(RuntimeError):
+    """目标 users 行不存在——并发删除，或 id 在两次读写之间失效。"""
+
+
+def _json_safe(value: Any) -> Any:
+    """把一行里的列值压成可 JSON 序列化的形状。
+
+    ``TIMESTAMP`` → ISO8601 字符串（payload 是 JSON，不是 Oracle 类型）；
+    ``NUMBER`` 可能是 :class:`~decimal.Decimal`，转 ``float``；``JSONText`` 列
+    （``roles`` / ``eligibility`` / ``past`` / ``time_with_origin.data``）已经是
+    list/dict，**递归保形**——绝不能落进 ``str(value)`` 分支，否则一个 JSON 数组
+    会被序列化成字符串 ``"['student']"``（读回来不再是数组）；BLOB 一律丢弃
+    （``files.content`` 已在查询里排除，这里是纵深）。其余保持原样，认不出的类型
+    退化成 ``str``：宁可留个字符串，也不让归档整体失败。
+    """
+    if value is None or isinstance(value, (str, bool, int, float)):
+        return value
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, dict):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, Decimal):
+        return float(value)
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        return None
+    return str(value)
+
+
+def _row_json(mapping: Any) -> Row:
+    return {key: _json_safe(value) for key, value in mapping.items()}
+
+
+def _child_select_stmt(
+    table: Any, column: str, columns: tuple[Any, ...] | None, target: str
+):
+    projection = tuple(columns) if columns is not None else tuple(table.c)
+    return select(*projection).where(table.c[column] == target)
+
+
+def _purge_trash_stmt(cutoff: Any, batch_size: int):
+    """一批回收站物理删除。
+
+    ``ROWNUM`` 而非 ``FETCH FIRST n ROWS ONLY``：Oracle 的 ``DELETE`` 不接受后者
+    （与 ``db/repos/oracle/app_logs.py::_purge_batch_stmt`` 同一写法）。
+    只按 ``deleted_at`` 判过期——``restored_at`` 是标记位，不参与保留期计算。
+    """
+    return delete(user_trash_tbl).where(
+        user_trash_tbl.c.deleted_at < cutoff,
+        text("ROWNUM <= :batch_size").bindparams(batch_size=batch_size),
+    )
+
+
+def _count_expired_trash_stmt(cutoff: Any):
+    return (
+        select(func.count())
+        .select_from(user_trash_tbl)
+        .where(user_trash_tbl.c.deleted_at < cutoff)
+    )
+
+
+async def archive_and_delete_user(
+    session: AsyncSession, oid: str, deleted_by: str | None
+) -> str:
+    """在**调用方的事务里**归档并删除一个用户；返回回收站行的 oid。
+
+    步骤（顺序是承重的）：
+    1. 读 users 行（不存在 → :class:`UserGoneError`）；
+    2. 读全部关联行（``_CHILD_TABLES``）拼成 payload；
+    3. 写 ``user_trash``（先归档，后删除：删到一半失败也已经有完整快照）；
+    4. 物理清理带外键的子表（``_CHILD_TABLES`` 里 cleanup=True 的那些）；
+    5. 删 users 行，``rowcount`` 必须为 1，否则 :class:`UserGoneError`。
+
+    本函数**自己不开事务、不 commit**：事务边界属于调用方
+    （:meth:`OracleUsersRepo.delete_user_cascade` 或单测里的替身会话），因此
+    任何一步抛异常都不会留下半删状态。
+    """
+    target = normalize_oid(oid)
+    actor = normalize_oid(deleted_by) if is_valid_oid(deleted_by) else None
+
+    user_row = (
+        await session.execute(_get_by_oid_stmt(target))
+    ).first()
+    if user_row is None:
+        raise UserGoneError(f"用户不存在: {target}")
+
+    payload: dict[str, Any] = {
+        "user": _row_json(user_row._mapping),
+        "related": {},
+    }
+    for name, table, column, columns, _cleanup in _CHILD_TABLES:
+        rows = (
+            await session.execute(_child_select_stmt(table, column, columns, target))
+        ).all()
+        payload["related"][name] = [_row_json(row._mapping) for row in rows]
+
+    trash_oid = new_oid()
+    await session.execute(
+        insert(user_trash_tbl).values(
+            oid=trash_oid,
+            user_oid=target,
+            deleted_by=actor,
+            deleted_at=datetime.now(),
+            payload=json.dumps(payload, ensure_ascii=False),
+            restored_at=None,
+        )
+    )
+
+    for _name, table, column, _columns, cleanup in _CHILD_TABLES:
+        if cleanup:
+            await session.execute(delete(table).where(table.c[column] == target))
+
+    removed = await session.execute(delete(users_tbl).where(users_tbl.c.oid == target))
+    if int(removed.rowcount) != 1:
+        raise UserGoneError(f"用户行未被删除（可能已被并发删除）: {target}")
+
+    return trash_oid
+
+
 def _page_row(mapping: Any) -> Row:
     """Aggregation-shaped row for ``list_page`` (matches users_v2 pipeline).
-
     ``has_password`` is an internal flag (``password_hash IS NOT NULL``): the
     ``pv``-less list endpoints must drop it, callers that only report password
     presence use it instead of re-fetching every row.
@@ -488,6 +718,51 @@ class OracleUsersRepo:
             if owns:
                 await session.commit()
 
+    async def set_business_id(self, oid: str, business_id: str) -> None:
+        """改学号（登录名）并轮换 ``session_id``（旧 token 立即失效）。
+
+        唯一冲突由 ``uq_users_business_id`` 抛出 ``IntegrityError``，调用方
+        （``users_v3_router``）转 409——这里不做「先查再写」的软判定，那是端点
+        层的友好提示，约束才是最终裁决者。
+        """
+        stmt = _set_business_id_stmt(normalize_oid(oid), business_id)
+        async with _session_for(self._session) as (session, owns):
+            await session.execute(stmt)
+            if owns:
+                await session.commit()
+
+    async def delete_user_cascade(self, oid: str, deleted_by: str) -> str:
+        """硬删除用户：归档 → 清理子表 → 删 users 行，**一个事务**。
+
+        默认（``self._session is None``）自己开一个 :func:`session_scope`：所有
+        语句共用一次连接，最后一次 :meth:`commit`。任何一步抛异常都不会走到
+        commit，``session_scope`` 关闭时会话自动回滚——因此**不存在半删状态**。
+        注入了 session 时事务边界归调用方（同样只在调用方 commit 时才落库）。
+
+        返回回收站行的 oid，供审计/回溯。目标行不存在（并发删除）时抛
+        :class:`UserGoneError`，由端点转 404。
+        """
+        async with _session_for(self._session) as (session, owns):
+            trash_oid = await archive_and_delete_user(session, oid, deleted_by)
+            if owns:
+                await session.commit()
+        return trash_oid
+
+    async def purge_trash_batch(self, cutoff: Any, batch_size: int) -> int:
+        """物理删除一批 ``deleted_at < cutoff`` 的回收站行；返回删除行数。"""
+        stmt = _purge_trash_stmt(cutoff, batch_size)
+        async with _session_for(self._session) as (session, owns):
+            result = await session.execute(stmt)
+            if owns:
+                await session.commit()
+        return int(result.rowcount)
+
+    async def count_expired_trash(self, cutoff: Any) -> int:
+        """``deleted_at < cutoff`` 的回收站行数（过期判定与批删共用同一条件）。"""
+        stmt = _count_expired_trash_stmt(cutoff)
+        async with _session_for(self._session) as (session, _owns):
+            return int((await session.execute(stmt)).scalar_one())
+
     async def set_banned(self, oid: str, banned: int) -> None:
         stmt = _set_banned_stmt(normalize_oid(oid), banned)
         async with _session_for(self._session) as (session, owns):
@@ -627,4 +902,4 @@ class OracleUsersRepo:
         return out
 
 
-__all__ = ["OracleUsersRepo"]
+__all__ = ["OracleUsersRepo", "UserGoneError", "archive_and_delete_user", "user_trash_tbl"]
