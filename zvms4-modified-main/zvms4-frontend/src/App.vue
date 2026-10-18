@@ -67,16 +67,17 @@ const route = useRoute()
 const router = useRouter()
 const userStore = useUserStore()
 const headerStore = useHeaderStore()
+const dark = useDark()
 
-const watermark: WatermarkFontType = {
-  color: 'rgba(0,0,0,.15)',
+const watermark = computed<WatermarkFontType>(() => ({
+  color: dark.value ? 'rgba(255,255,255,.10)' : 'rgba(0,0,0,.15)',
   fontSize: 16,
   fontWeight: 'normal',
   fontStyle: 'normal',
   fontFamily: 'sans-serif',
   textAlign: 'center',
   textBaseline: 'hanging'
-}
+}))
 
 async function resetPassword() {
   if (userStore.shouldResetPassword) {
@@ -212,8 +213,6 @@ onUnmounted(() => {
   }
   document.body.style.overflow = ''
 })
-
-const dark = useDark()
 
 watch(
   () => route.path,
