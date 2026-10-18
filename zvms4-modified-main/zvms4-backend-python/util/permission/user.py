@@ -55,6 +55,32 @@ def credential_change_forbidden(
     return "admin" in (target_per or [])
 
 
+def role_change_forbidden(
+    actor_oid: str, target_per: list[str], target_oid: str
+) -> bool:
+    """
+    判断一次**角色变更**是否被「等级闸」拦下（与
+    :func:`credential_change_forbidden` 同一套语义：admin 级账号只认本人）。
+
+    两条拦停理由：
+
+    1. **改别人的 admin 账号**：角色决定权限，能改别人的 admin 角色就等于能
+       给自己造一个 admin（先降级对方再顶替其权限链），这会击穿 Stage 2 的双人
+       授权前提（见 :func:`credential_change_forbidden` 的说明）。因此目标账号
+       带 ``admin`` 且目标 ≠ 操作者 → 拒绝。
+    2. **改自己的角色**：一条请求里同时包含「自我提权」（给自己加 ``admin``）
+       与「自我降级/自锁」（把自己踢出 ``admin``，`_set_roles_stmt` 还会轮换
+       ``session_id``，本地立即掉线）。两者都不可在无人复核的情况下自助发生，
+       与 ``users_v3_router`` 的「不能封禁自己」是同一类自锁风险，故**自我角色
+       变更整体拒绝**（是「禁止自我提权」的超集）。
+
+    纯判定、不查库：目标账号的角色由调用方查库后传入，便于单测。
+    """
+    if str(actor_oid) == str(target_oid):
+        return True
+    return "admin" in (target_per or [])
+
+
 async def validate_read_group_permission(
     user: dict,
     target_group: str,
