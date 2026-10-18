@@ -46,6 +46,38 @@ from db.oracle.session import session_scope
 
 Row = dict[str, Any]
 
+# Statuses whose bytes are servable (design ``FILES_API_DESIGN.md`` §3.3 / §4 #2):
+# the serve gate is ``status IN ('stored','ready','verified')`` and everything
+# else — ``deleted`` / ``quarantined`` / ``rejected`` — is a 410 (even with a
+# valid signature). :data:`_DEAD_STATUSES` below is the listing-side echo of this
+# gate. The dedup lookup below must honour the same gate: it is a
+# *skip-the-upload* shortcut, so it may only return a row whose bytes can be
+# fetched. Any other row is a guaranteed 410 on every byte read, so "hitting" it
+# would hand the caller an oid that can never be served.
+#
+# This holds regardless of the tombstone retention job: §3.3's purge nulls the
+# ``content`` of expired tombstones (``tasks/files_retention.py`` →
+# ``purge_expired_attachments``, scheduled daily in ``main.py``), but scheduling
+# it is not what makes a tombstone unusable — the serve gate already answers 410
+# for it. Should the job run, it only widens the same conclusion from "410" to
+# "410 and the bytes are already gone".
+_SERVE_STATUSES = ("stored", "ready", "verified")
+
+# Statuses a default listing must never show (the dead ones), i.e. the rows
+# whose serve gate rejects them: ``routers/attachments_router.py``'s
+# ``SERVE_STATUSES`` + design §4 #2 answer 410 for ``deleted`` / ``rejected`` /
+# ``quarantined``, so listing them can only render as an un-fetchable ghost
+# entry (same class of bug as the soft-delete ghost, except the client now gets
+# a real error detail instead of a silent miss).
+#
+# Deliberately *not* the complement of ``_SERVE_STATUSES``: the schema CHECK
+# (``db/models.py``) also allows ``processing`` — an in-flight status, not a
+# dead one (it has no writer today: verification goes through ``set_status`` and
+# OCR through ``set_ocr``/``ocr_status``). Deriving this set from the whitelist
+# would silently hide any future in-flight status from the listing, which is the
+# opposite of what a listing is for. Adding a status here is a product decision.
+_DEAD_STATUSES = ("deleted", "rejected", "quarantined")
+
 
 @asynccontextmanager
 async def _session_for(
@@ -138,12 +170,26 @@ def _get_content_stmt(oid: str):
 
 
 def _find_by_sha256_stmt(owner_oid: str, sha256: str, kind: str):
+    """Same-owner dedup lookup (design §8.6), restricted to servable rows.
+
+    The ``status`` predicate is not optional: dedup is a *skip-the-upload*
+    shortcut, so it may only ever return a row the caller can actually fetch.
+    Matching a ``deleted``/``quarantined``/``rejected`` row would return an oid
+    that ``GET /api/attachments/{oid}`` (and ``/thumb``) answers 410 for — the
+    serve gate rejects those statuses on every byte read — so the upload would
+    be reported as "side-stepped" while nothing new was stored.
+
+    Note the §3.3 retention job (``purge_deleted``, wired as
+    ``tasks/files_retention.py`` / ``main.py``'s ``daily_purge_files``) is not
+    what makes a tombstone unusable, it would merely also clear its bytes.
+    """
     return (
         select(*_meta_columns())
         .where(
             files_tbl.c.owner_oid == owner_oid,
             files_tbl.c.sha256 == sha256,
             files_tbl.c.kind == kind,
+            files_tbl.c.status.in_(_SERVE_STATUSES),
         )
         .order_by(files_tbl.c.created_at.desc(), files_tbl.c.oid.desc())
         .limit(1)
@@ -157,6 +203,19 @@ def _list_conds(
     entity_type: str | None,
     entity_oid: str | None,
 ) -> list[Any]:
+    """WHERE conditions shared by :func:`_list_page_stmt` and :func:`_count_stmt`.
+
+    Default semantics: with no explicit ``status`` the listing **excludes every
+    dead status** (``deleted`` / ``rejected`` / ``quarantined`` — see
+    :data:`_DEAD_STATUSES`), so a ``GET /api/attachments`` (whose caller does not
+    pass ``status``) never surfaces an attachment that the serve gate would
+    answer 410 for. In-flight statuses such as ``processing`` are **kept**.
+    Passing ``status`` restores exact matching, including
+    ``status='deleted'`` / ``'rejected'`` for administrative audit views.
+    Because both the page query and the count query build their WHERE from this
+    one helper, the paged rows and the reported total always share the same
+    filter.
+    """
     conds: list[Any] = []
     if owner_oid is not None:
         conds.append(files_tbl.c.owner_oid == owner_oid)
@@ -164,6 +223,8 @@ def _list_conds(
         conds.append(files_tbl.c.purpose == purpose)
     if status is not None:
         conds.append(files_tbl.c.status == status)
+    else:
+        conds.append(files_tbl.c.status.notin_(_DEAD_STATUSES))
     if entity_type is not None:
         conds.append(files_tbl.c.entity_type == entity_type)
     if entity_oid is not None:
