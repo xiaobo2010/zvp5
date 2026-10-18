@@ -103,3 +103,49 @@ export interface DbStatusResponse {
 export function getDatabaseStatus() {
   return axios.get<DbStatusResponse>('/system/db/status')
 }
+
+// 数据保留期清理:预览只统计,执行为写操作;清理进行中返回 HTTP 409
+
+export interface RetentionTablePreview {
+  cutoff: string
+  deletable: number
+}
+
+export interface RetentionPreviewData {
+  app_logs: RetentionTablePreview
+  export_tasks: RetentionTablePreview
+}
+
+export interface RetentionPreviewResponse {
+  status: string
+  code: number
+  data: RetentionPreviewData
+}
+
+export interface RetentionTableRun {
+  cutoff: string
+  deleted: number
+  remaining: number
+}
+
+export interface RetentionRunData {
+  app_logs: RetentionTableRun
+  export_tasks: RetentionTableRun
+  batches: number
+}
+
+export interface RetentionRunResponse {
+  status: string
+  code: number
+  data: RetentionRunData
+}
+
+// 预览两表按保留期可删除的行数(只读 COUNT,不删除数据)
+export function previewRetention() {
+  return axios.post<RetentionPreviewResponse>('/system/db/retention/preview')
+}
+
+// 执行保留期清理(同步跑至批次上限或清空,删除的行不可恢复)
+export function runRetention() {
+  return axios.post<RetentionRunResponse>('/system/db/retention/run')
+}

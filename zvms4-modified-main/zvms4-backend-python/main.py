@@ -38,6 +38,7 @@ from util.object_id import is_admin_token
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from tasks.compute_time import rebuild_statistics, generate_reports
 from tasks.files_retention import purge_expired_attachments
+from tasks.retention import purge_expired_records
 
 scheduler = AsyncIOScheduler()
 _logger = logging.getLogger(__name__)
@@ -251,6 +252,21 @@ async def startup_event():
         second=0,
         timezone="Asia/Hong_Kong",
         id="daily_purge_files",
+        coalesce=True,
+        max_instances=1,
+        misfire_grace_time=3600,
+    )
+
+    # Delete expired app_logs / export_tasks rows daily at 03:30 HKT (UTC+8).
+    # minute=30: hour=3 is taken by daily_purge_files above.
+    scheduler.add_job(
+        purge_expired_records,
+        "cron",
+        hour=3,
+        minute=30,
+        second=0,
+        timezone="Asia/Hong_Kong",
+        id="daily_retention_purge",
         coalesce=True,
         max_instances=1,
         misfire_grace_time=3600,

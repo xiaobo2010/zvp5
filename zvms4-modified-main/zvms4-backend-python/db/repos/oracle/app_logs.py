@@ -22,7 +22,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Any, AsyncIterator
 
-from sqlalchemy import func, insert, or_, select
+from sqlalchemy import delete, func, insert, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.ids import new_oid
@@ -198,6 +198,67 @@ def _count_for_user_stmt(user_oid: str, query: str):
     )
 
 
+# Log types that are never purged (design §2): security/compliance records whose
+# retention is a signed-off policy decision, not an operational one. Narrowing
+# this set needs the same sign-off.
+PROTECTED_LTYPES = (
+    "security_alert",
+    "ban_change",
+    "passwd_change",
+    "binding_mismatch",
+    "device_bind",
+    "device_unbind",
+    "system_maintenance_enable",
+    "system_maintenance_disable",
+)
+
+# Warning-level rows are protected as well, whatever their type.
+PROTECTED_LEVEL = "warning"
+
+
+def _expired_conds(cutoff: Any) -> list[Any]:
+    """WHERE shared by the expiry count and the batched purge (design §2).
+
+    ``TS_AT`` is the only indexed time column (``ix_app_logs_ts_at``) and is
+    derived from ``TS_RAW`` on insert (``app_logs.py`` write path), so the two
+    agree. Rows whose ``TS_AT`` is NULL are never touched: a comparison against
+    NULL is never true.
+
+    The ``IS NULL OR`` branches are load-bearing: Oracle treats ``''`` as NULL
+    and :class:`typings.log.ZVMSLog` defaults ``type``/``level`` to ``""``, so a
+    bare ``NOT (ltype IN ...)`` would evaluate to NULL and keep every ordinary
+    row forever.
+    """
+    return [
+        app_logs_tbl.c.ts_at < cutoff,
+        or_(
+            app_logs_tbl.c.ltype.is_(None),
+            app_logs_tbl.c.ltype.not_in(PROTECTED_LTYPES),
+        ),
+        or_(
+            app_logs_tbl.c.log_level.is_(None),
+            app_logs_tbl.c.log_level != PROTECTED_LEVEL,
+        ),
+    ]
+
+
+def _count_expired_stmt(cutoff: Any):
+    """How many rows the purge predicate currently matches (no batching)."""
+    return select(func.count()).select_from(app_logs_tbl).where(*_expired_conds(cutoff))
+
+
+def _purge_batch_stmt(cutoff: Any, batch_size: int):
+    """One ``DELETE`` bounded to ``batch_size`` rows.
+
+    ``ROWNUM`` is used instead of ``FETCH FIRST n ROWS ONLY``: the latter is not
+    accepted on a ``DELETE`` in Oracle.
+    """
+    return delete(app_logs_tbl).where(
+        *_expired_conds(cutoff),
+        text("ROWNUM <= :batch_size").bindparams(batch_size=batch_size),
+    )
+
+
 def _log_row(mapping: Any) -> Row:
     """Mongo document shape; ``timestamp`` is the preserved raw float."""
     ts_raw = mapping["ts_raw"]
@@ -276,6 +337,26 @@ class OracleAppLogsRepo:
             total = (await session.execute(count_stmt)).scalar_one()
             rows = (await session.execute(page_stmt)).all()
         return [_log_row(row._mapping) for row in rows], int(total)
+
+    async def count_expired(self, cutoff: datetime) -> int:
+        """Rows :meth:`purge_batch` would eventually delete (read-only)."""
+        stmt = _count_expired_stmt(cutoff)
+        async with _session_for(self._session) as (session, _owns):
+            total = (await session.execute(stmt)).scalar_one()
+        return int(total)
+
+    async def purge_batch(self, cutoff: datetime, batch_size: int) -> int:
+        """Delete at most ``batch_size`` rows older than ``cutoff``; return the count.
+
+        ``0`` means nothing is left to purge. One short session and one commit
+        per call — the batching loop lives in :mod:`tasks.retention`.
+        """
+        stmt = _purge_batch_stmt(cutoff, batch_size)
+        async with _session_for(self._session) as (session, owns):
+            result = await session.execute(stmt)
+            if owns:
+                await session.commit()
+        return int(result.rowcount)
 
 
 __all__ = ["OracleAppLogsRepo"]

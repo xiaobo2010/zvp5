@@ -16,9 +16,10 @@ from __future__ import annotations
 
 import uuid
 from contextlib import asynccontextmanager
+from datetime import datetime
 from typing import Any, AsyncIterator
 
-from sqlalchemy import delete, insert, select, update
+from sqlalchemy import delete, func, insert, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.ids import new_oid, normalize_oid
@@ -62,6 +63,11 @@ async def _session_for(
         return
     async with session_scope() as owned:
         yield owned, True
+
+
+def _now() -> datetime:
+    """Naive ``datetime.now()`` — the schema convention for ``TIMESTAMP`` columns."""
+    return datetime.now()
 
 
 def _task_columns() -> tuple[Any, ...]:
@@ -142,10 +148,56 @@ def _result_stmt(task_uuid: str):
 
 
 def _fail_pending_stmt(reason: str):
+    """Fail every non-``completed`` task, stamping ``task_end`` as well.
+
+    ``task_end`` is the purge's age signal (``COALESCE(task_end, task_start)``
+    in :func:`_expired_finished_conds`). Leaving it NULL made the rows this
+    statement fails at shutdown undatable, so they were aged by ``task_start``
+    at best and never at all if that was NULL too.
+    """
     return (
         update(tasks_tbl)
         .where(tasks_tbl.c.status != "completed")
-        .values(status="failed", errmsg=reason)
+        .values(status="failed", errmsg=reason, task_end=_now())
+    )
+
+
+# Statuses a finished task can be in. The purge only ever touches these: there
+# is no CHECK constraint on ``status`` at the DB level (design §2).
+FINISHED_STATUSES = ("completed", "failed")
+
+
+def _expired_finished_conds(cutoff: Any) -> list[Any]:
+    """WHERE shared by the expiry count and the batched purge (design §2).
+
+    ``COALESCE(task_end, task_start)`` is deliberate: :func:`_fail_pending_stmt`
+    historically left ``task_end`` NULL on shutdown-failed rows, while
+    ``task_start`` is written on every creation path
+    (``routers/exports_router.py``) — the coalesce is the only age signal those
+    rows have.
+    """
+    return [
+        tasks_tbl.c.status.in_(FINISHED_STATUSES),
+        func.coalesce(tasks_tbl.c.task_end, tasks_tbl.c.task_start) < cutoff,
+    ]
+
+
+def _count_expired_finished_stmt(cutoff: Any):
+    """How many finished rows the purge predicate currently matches."""
+    return select(func.count()).select_from(tasks_tbl).where(
+        *_expired_finished_conds(cutoff)
+    )
+
+
+def _purge_finished_batch_stmt(cutoff: Any, batch_size: int):
+    """One ``DELETE`` bounded to ``batch_size`` rows.
+
+    ``ROWNUM`` is used instead of ``FETCH FIRST n ROWS ONLY``: the latter is not
+    accepted on a ``DELETE`` in Oracle.
+    """
+    return delete(tasks_tbl).where(
+        *_expired_finished_conds(cutoff),
+        text("ROWNUM <= :batch_size").bindparams(batch_size=batch_size),
     )
 
 
@@ -273,6 +325,26 @@ class OracleTasksRepo:
 
     async def fail_pending(self, reason: str) -> int:
         stmt = _fail_pending_stmt(reason)
+        async with _session_for(self._session) as (session, owns):
+            result = await session.execute(stmt)
+            if owns:
+                await session.commit()
+        return int(result.rowcount)
+
+    async def count_expired_finished(self, cutoff: datetime) -> int:
+        """Rows :meth:`purge_finished_batch` would eventually delete (read-only)."""
+        stmt = _count_expired_finished_stmt(cutoff)
+        async with _session_for(self._session) as (session, _owns):
+            total = (await session.execute(stmt)).scalar_one()
+        return int(total)
+
+    async def purge_finished_batch(self, cutoff: datetime, batch_size: int) -> int:
+        """Delete at most ``batch_size`` finished rows older than ``cutoff``.
+
+        ``0`` means nothing is left to purge. One short session and one commit
+        per call — the batching loop lives in :mod:`tasks.retention`.
+        """
+        stmt = _purge_finished_batch_stmt(cutoff, batch_size)
         async with _session_for(self._session) as (session, owns):
             result = await session.execute(stmt)
             if owns:
