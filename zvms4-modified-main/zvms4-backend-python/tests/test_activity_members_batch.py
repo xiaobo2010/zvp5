@@ -384,3 +384,102 @@ async def test_bulk_import_keeps_the_type_mismatch_error(monkeypatch) -> None:
     assert failure.value.detail == "义工类型不匹配"
     assert state["members"].writes == []
     assert state["log"].inserts == 0
+
+
+# 大小写混合的 oid：``validate_object_id``（utils.py:6-10）经 ``normalize_oid``
+# （db/ids.py:70-80）转小写，handler 在 members.py 归一化边界之前已把 key 折成小写。
+MIXED_OID = "abcdefabcdefabcdefabcdef"
+
+
+@pytest.mark.asyncio
+async def test_bulk_import_normalizes_mixed_case_oids_without_duplicate_rows(
+    monkeypatch,
+) -> None:
+    """同一成员以不同大小写出现 ⇒ 归一化后合并成一个三元组、只写一次。
+
+    归一化发生在 handler ``routers/activities_v3_router.py:182``
+    （``str(validate_object_id(member.member))``，utils.py 走 ``normalize_oid`` 转小写），
+    先于 ``additions`` 聚合（:183）。因此小写/大写两条 payload 落到同一 key，
+    ``duration`` 相加而非各插一行。
+    """
+    state = _bulk(
+        monkeypatch,
+        existing={},
+        users={MIXED_OID: _user_doc(MIXED_OID)},
+    )
+
+    await activities.add_activity_member_v3(
+        ACTIVITY_ID,
+        [
+            _new_member(MIXED_OID, duration=1.0),
+            _new_member(MIXED_OID.upper(), duration=2.0),  # 同一成员，大写
+        ],
+        MANAGER,
+        state["log"],
+    )
+
+    # 归一化 → 去重：批量用户查询、既有三元组查询都只带一个小写 oid。
+    assert state["users"].batch_calls == [[MIXED_OID]]
+    assert state["members"].bulk_calls == [(ACTIVITY_ID, (MIXED_OID,))]
+    # 只写一行，时长相加（1.0 + 2.0），不是两行。
+    assert state["members"].writes == [("add", MIXED_OID, "on-campus", 3.0)]
+    assert state["log"].inserts == 1
+
+
+@pytest.mark.asyncio
+async def test_bulk_import_reports_the_first_error_in_payload_order(monkeypatch) -> None:
+    """混合 payload：payload 顺序中第一个出错成员的错误先抛。
+
+    逐成员判定顺序从 ``routers/activities_v3_router.py:197-201`` 推出：
+    ``for oid, mode in additions`` 按 payload 插入顺序迭代（:180-183），
+    成员内先查类型（:198-199「义工类型不匹配」）后查存在（:200-201「成员不存在」）。
+    """
+    # (a) 未知用户在前、类型不匹配在后 ⇒ 未知用户先被判定 → 「成员不存在」。
+    state = _bulk(
+        monkeypatch,
+        existing={},
+        users={MEMBER_OIDS[1]: _user_doc(MEMBER_OIDS[1])},
+        atype="on-campus",
+    )
+
+    with pytest.raises(HTTPException) as first:
+        await activities.add_activity_member_v3(
+            ACTIVITY_ID,
+            [
+                _new_member(GHOST_OID, mode="on-campus"),  # 用户不存在（类型合法）
+                _new_member(MEMBER_OIDS[1], mode="off-campus"),  # 类型不匹配（用户存在）
+            ],
+            MANAGER,
+            state["log"],
+        )
+
+    assert first.value.status_code == 400
+    assert first.value.detail == "成员不存在"
+    assert state["members"].writes == []  # 未发生任何写
+    assert state["activities"].updates == []
+    assert state["log"].inserts == 0
+
+    # (b) 顺序对调 ⇒ 类型不匹配先被判定 → 「义工类型不匹配」。
+    flipped = _bulk(
+        monkeypatch,
+        existing={},
+        users={MEMBER_OIDS[1]: _user_doc(MEMBER_OIDS[1])},
+        atype="on-campus",
+    )
+
+    with pytest.raises(HTTPException) as second:
+        await activities.add_activity_member_v3(
+            ACTIVITY_ID,
+            [
+                _new_member(MEMBER_OIDS[1], mode="off-campus"),  # 类型不匹配
+                _new_member(GHOST_OID, mode="on-campus"),  # 用户不存在
+            ],
+            MANAGER,
+            flipped["log"],
+        )
+
+    assert second.value.status_code == 400
+    assert second.value.detail == "义工类型不匹配"
+    assert flipped["members"].writes == []
+    assert flipped["activities"].updates == []
+    assert flipped["log"].inserts == 0
