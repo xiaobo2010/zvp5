@@ -4,14 +4,17 @@ import { useUserStore } from '@/stores/user.ts'
 import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
-  ElCard, ElTag, ElAlert, ElButton, ElTooltip,
+  ElCard, ElTag, ElAlert, ElButton, ElTooltip, ElMessageBox,
   ElTable, ElTableColumn, ElProgress
 } from 'element-plus'
 import type { TableColumnCtx } from 'element-plus'
 import { Refresh } from '@element-plus/icons-vue'
 import dayjs from '@/plugins/dayjs'
 import { isAxiosError } from 'axios'
-import { getDatabaseStatus, type DbStatusData, type DbTableItem } from '@/api/system/db.ts'
+import {
+  getDatabaseStatus, previewRetention, runRetention,
+  type DbStatusData, type DbTableItem, type RetentionPreviewData, type RetentionRunData
+} from '@/api/system/db.ts'
 
 const router = useRouter()
 const userStore = useUserStore()
@@ -68,6 +71,86 @@ async function refresh() {
     loadError.value = detailOf(err) || t(M + 'loadFailed')
   } finally {
     loading.value = false
+  }
+}
+
+// —— 数据保留期清理:预览只统计,执行需二次确认,删除不可恢复 ——
+const retentionPreview = ref<RetentionPreviewData | null>(null)
+const retentionRun = ref<RetentionRunData | null>(null)
+const previewLoading = ref(false)
+const runLoading = ref(false)
+const retentionError = ref<{ type: 'warning' | 'error'; text: string } | null>(null)
+
+const retentionRows = computed(() => {
+  const preview = retentionPreview.value
+  if (!preview) return []
+  return [
+    {
+      key: 'app_logs',
+      label: '应用日志（app_logs）',
+      cutoff: preview.app_logs.cutoff,
+      deletable: preview.app_logs.deletable
+    },
+    {
+      key: 'export_tasks',
+      label: '导出任务（export_tasks）',
+      cutoff: preview.export_tasks.cutoff,
+      deletable: preview.export_tasks.deletable
+    }
+  ]
+})
+
+async function previewRetentionNow() {
+  previewLoading.value = true
+  retentionError.value = null
+  try {
+    const res = await previewRetention()
+    retentionPreview.value = res.data.data
+  } catch (err) {
+    // 403:token 对应账号已无 admin 权限,与页面守卫行为一致
+    if (isAxiosError(err) && err.response?.status === 403) {
+      router.replace('/not-found')
+      return
+    }
+    retentionError.value = { type: 'error', text: detailOf(err) || '预览失败，请稍后重试' }
+  } finally {
+    previewLoading.value = false
+  }
+}
+
+async function onRunRetention() {
+  if (!retentionPreview.value) return
+  try {
+    await ElMessageBox.confirm(
+      '将按保留期删除上表统计的过期数据，删除后不可恢复。确认执行清理？',
+      '数据保留期清理',
+      { type: 'warning', confirmButtonText: '执行清理', cancelButtonText: '取消' }
+    )
+  } catch {
+    return
+  }
+  runLoading.value = true
+  retentionError.value = null
+  try {
+    const res = await runRetention()
+    retentionRun.value = res.data.data
+    void previewRetentionNow()
+  } catch (err) {
+    if (isAxiosError(err) && err.response?.status === 403) {
+      router.replace('/not-found')
+      return
+    }
+    // 409:已有清理在跑,属暂时冲突而非故障,用中性提示
+    if (isAxiosError(err) && err.response?.status === 409) {
+      retentionError.value = {
+        type: 'warning',
+        text: detailOf(err) || '清理正在进行中，请稍后再试'
+      }
+    } else {
+      retentionError.value = { type: 'error', text: detailOf(err) || '执行失败，请稍后重试' }
+    }
+  } finally {
+    runLoading.value = false
   }
 }
 
@@ -421,6 +504,67 @@ if (isAdmin) {
             <div class="text-sm text-gray-500 dark:text-gray-400">{{ t(M + 'poolScopeNote') }}</div>
           </div>
         </template>
+      </div>
+    </ElCard>
+
+    <!-- 数据保留期清理:预览只统计,执行需二次确认 -->
+    <ElCard shadow="never">
+      <template #header>
+        <div class="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
+          <span class="font-medium">数据保留期清理</span>
+          <div class="flex flex-wrap items-center gap-2">
+            <ElButton text bg :icon="Refresh" :loading="previewLoading" @click="previewRetentionNow">
+              预览
+            </ElButton>
+            <ElButton text bg :loading="runLoading" :disabled="!retentionPreview" @click="onRunRetention">
+              执行清理
+            </ElButton>
+          </div>
+        </div>
+      </template>
+      <div class="flex flex-col gap-4">
+        <ElAlert
+          v-if="retentionError"
+          :type="retentionError.type"
+          show-icon
+          :closable="false"
+          :title="retentionError.text"
+        />
+        <template v-if="retentionPreview">
+          <div v-for="row in retentionRows" :key="row.key" class="flex flex-col gap-1">
+            <div class="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+              <span class="font-medium">{{ row.label }}</span>
+              <span class="text-sm text-gray-600 dark:text-gray-300">
+                截止 {{ formatTime(row.cutoff) }} · 可删除 {{ formatCount(row.deletable) }} 行
+              </span>
+            </div>
+          </div>
+        </template>
+        <div v-else class="text-sm text-gray-500 dark:text-gray-400">
+          尚未预览：点击右上角「预览」统计两表可删除行数，不会删除数据。
+        </div>
+        <template v-if="retentionRun">
+          <div class="flex flex-col gap-2">
+            <div class="text-sm font-medium">上次执行结果</div>
+            <div class="flex flex-wrap gap-x-8 gap-y-2 text-sm">
+              <span>
+                <span class="text-gray-500 dark:text-gray-400">应用日志</span>
+                删除 {{ formatCount(retentionRun.app_logs.deleted) }} 行 · 剩余过期 {{ formatCount(retentionRun.app_logs.remaining) }} 行
+              </span>
+              <span>
+                <span class="text-gray-500 dark:text-gray-400">导出任务</span>
+                删除 {{ formatCount(retentionRun.export_tasks.deleted) }} 行 · 剩余过期 {{ formatCount(retentionRun.export_tasks.remaining) }} 行
+              </span>
+              <span>
+                <span class="text-gray-500 dark:text-gray-400">批次</span>
+                {{ retentionRun.batches }}
+              </span>
+            </div>
+          </div>
+        </template>
+        <div class="text-sm text-gray-500 dark:text-gray-400">
+          应用日志与导出任务按各自配置的保留期清理；安全告警等白名单类型与 warning 级日志不参与清理；导出任务仅清理已完成与已失败的过期任务。各表实际截止时间以上方预览为准。
+        </div>
       </div>
     </ElCard>
   </div>
