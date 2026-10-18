@@ -31,10 +31,13 @@ export async function remove(id: string, aid: string, uid: string) {
         Authorization: `Bearer ${token}`
       }
     })
-  ).data as Response<ActivityMember>
-  if (result.status === 'ok') {
-    return result.data
+  ).data as { detail?: unknown }
+  // 服务端成功响应是 {"detail": "..."}，不是 v1 的 {status:'ok',data}。
+  // 形状不符即视为失败并抛出，避免静默 no-op。
+  if (typeof result?.detail !== 'string') {
+    throw new Error('移除活动成员失败：服务端未确认删除')
   }
+  return result
 }
 
 export async function read(aid: string, sid: string) {
