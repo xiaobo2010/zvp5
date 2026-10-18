@@ -201,13 +201,6 @@ watch(user, async () => {
   text-align: center;
   margin-left: auto;
   margin-right: auto;
-  border-radius: 24px;
-}
-
-@supports (corner-shape: squircle) {
-  .login-field {
-    corner-shape: squircle;
-  }
 }
 
 .actions {
