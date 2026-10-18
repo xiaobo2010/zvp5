@@ -2,8 +2,7 @@
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { ElCard, ElResult, ElButton, ElAlert, ElIcon, ElMessage } from 'element-plus'
-import { RefreshRight } from '@element-plus/icons-vue'
+import { ElCard, ElResult, ElButton, ElAlert } from 'element-plus'
 import dayjs from '@/plugins/dayjs'
 import {
   getMaintenanceStatus,
@@ -13,18 +12,20 @@ import {
 // 页面状态机:checking 查询中 / maintenance 维护中 / ended 刚恢复 / normal 本就未维护
 type Phase = 'checking' | 'maintenance' | 'ended' | 'normal'
 
+// 10 分钟:该接口公开无鉴权,降频防刷
+const STATUS_POLL_INTERVAL_MS = 600000
+
 const { t } = useI18n()
 const router = useRouter()
 
 const phase = ref<Phase>('checking')
 const status = ref<MaintenanceStatus | null>(null)
-const manualChecking = ref(false)
 let timer: number | undefined
 
 function startPolling() {
   // 幂等:避免重复叠加定时器
   if (timer === undefined) {
-    timer = window.setInterval(() => void check(), 30000)
+    timer = window.setInterval(() => void check(), STATUS_POLL_INTERVAL_MS)
   }
 }
 
@@ -43,9 +44,7 @@ const sinceText = computed(() => {
   return dayjs(since * 1000).format('YYYY-MM-DD HH:mm:ss')
 })
 
-async function check(manual: boolean = false) {
-  if (manual && manualChecking.value) return
-  if (manual) manualChecking.value = true
+async function check() {
   try {
     const res = await getMaintenanceStatus()
     const next = res.data.data
@@ -53,23 +52,16 @@ async function check(manual: boolean = false) {
     status.value = next
     if (next.enabled) {
       phase.value = 'maintenance'
-      // 维护中保持 30 秒轮询;从 ended 手动复查回维护态时恢复轮询
+      // 维护中保持 10 分钟轮询
       startPolling()
-      if (manual) {
-        ElMessage.warning(t('maintenance.stillMaintenance'))
-      }
     } else {
       // 本次会话曾处于维护中则视为「维护已结束」,否则视为「当前未在维护」
       phase.value = wasMaintaining ? 'ended' : 'normal'
-      // 已进入终态:停止轮询,仅保留手动检查
+      // 已进入终态:停止轮询
       stopPolling()
     }
   } catch {
-    if (manual) {
-      ElMessage.error(t('maintenance.checkFailed'))
-    }
-  } finally {
-    if (manual) manualChecking.value = false
+    // 查询失败静默,等待下一次自动轮询
   }
 }
 
@@ -115,22 +107,14 @@ onBeforeUnmount(() => {
             <span v-if="sinceText" class="text-sm text-gray-500 dark:text-gray-400">
               {{ t('maintenance.startedAt') }} {{ sinceText }}
             </span>
-            <ElButton
-              type="primary"
-              text
-              bg
-              :icon="RefreshRight"
-              :loading="manualChecking"
-              @click="check(true)"
-            >
-              {{ manualChecking ? t('maintenance.checking') : t('maintenance.recheck') }}
-            </ElButton>
+            <span class="text-xs text-gray-400 dark:text-gray-500">
+              {{ t('maintenance.autoCheckNote') }}
+            </span>
             <!-- 低调的管理员入口:始终显示,不携带任何角色/登录态信息 -->
             <ElButton
               text
               size="small"
               type="info"
-              class="mt-2"
               @click="router.push({ path: '/user/login', query: { redirect: '/server' } })"
             >
               {{ t('maintenance.adminEntry') }}
@@ -147,10 +131,6 @@ onBeforeUnmount(() => {
           <div class="flex flex-col items-center gap-2">
             <ElButton type="primary" text bg @click="goHome">
               {{ t('maintenance.ended.enter') }}
-            </ElButton>
-            <!-- 终态已停止轮询,保留手动复查入口感知维护再次开启 -->
-            <ElButton text size="small" type="info" :loading="manualChecking" @click="check(true)">
-              {{ manualChecking ? t('maintenance.checking') : t('maintenance.recheck') }}
             </ElButton>
           </div>
         </template>
