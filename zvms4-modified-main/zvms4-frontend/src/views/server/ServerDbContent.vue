@@ -23,6 +23,7 @@ import {
   type ColumnDef
 } from '@/api/system/dbContent.ts'
 import ZSystemAuthDialog from '@/components/system/ZSystemAuthDialog.vue'
+import { Plus } from '@element-plus/icons-vue'
 
 const { t } = useI18n()
 
@@ -139,15 +140,13 @@ function gotoPage(target: number) {
   void loadRows()
 }
 
-function toggleSort(col: string) {
-  if (orderBy.value !== col) {
-    orderBy.value = col
-    desc.value = false
-  } else if (!desc.value) {
-    desc.value = true
-  } else {
+function onSortChange(payload: { prop: string; order: 'ascending' | 'descending' | null }) {
+  if (!payload.order) {
     orderBy.value = null
     desc.value = false
+  } else {
+    orderBy.value = payload.prop
+    desc.value = payload.order === 'descending'
   }
   page.value = 0
   void loadRows()
@@ -271,8 +270,15 @@ const submitting = ref(false)
 
 async function openAuth(scene: string): Promise<string | null> {
   const dialog = authRef.value
-  if (!dialog) return null
-  return dialog.open(scene)
+  if (!dialog) {
+    ElMessage.error(t('server.dbContent.authUnavailable'))
+    return null
+  }
+  const code = await dialog.open(scene)
+  if (!code) {
+    ElMessage.warning(t('server.dbContent.authCancelled'))
+  }
+  return code
 }
 
 function errorMessageOf(error: unknown): string {
@@ -313,6 +319,7 @@ async function submitRowChange() {
       await updateRow(table, editingKey, values, code)
     }
     authRef.value?.succeed()
+    ElMessage.success(t('server.dbContent.rowSaved'))
     await loadRows()
   } catch (error) {
     authRef.value?.fail(errorMessageOf(error))
@@ -334,6 +341,7 @@ async function doDelete(row: Record<string, CellValue>) {
   try {
     await deleteRow(selectedTable.value, key, code)
     authRef.value?.succeed()
+    ElMessage.success(t('server.dbContent.rowDeleted'))
     // 删除后若当页只剩 1 行且不在第一页,回退一页再刷新
     if (page.value > 0 && rowsData.value?.rows.length === 1) {
       page.value -= 1
@@ -458,306 +466,295 @@ void loadSchema()
 </script>
 
 <template>
-  <div class="flex flex-col gap-3 pb-2">
-    <!-- 页面标题行 -->
-    <div class="flex flex-wrap items-end justify-between gap-2 px-1">
-      <div class="flex flex-col gap-0.5">
-        <h2 class="m-0 text-[22px] font-semibold leading-7 text-[var(--zv-text)]">{{ t('server.tabs.dbContent') }}</h2>
-        <span class="text-[12px] text-[var(--zv-label)]">{{ t('server.dbContent.selTableHint') }}</span>
+  <div class="flex h-[calc(100vh-260px)] min-h-[560px] gap-4 pb-2">
+    <!-- 左:表清单 -->
+    <ElCard class="w-72 shrink-0" body-class="table-list-body">
+      <span class="z-label mb-2 block tabular-nums">{{ t('server.dbContent.schemaCount', { count: filteredSchema.length }) }}</span>
+      <ElInput
+        v-model="schemaFilter"
+        :placeholder="t('server.dbContent.searchPlaceholder')"
+        clearable
+        class="mb-2"
+      />
+      <div class="min-h-0 flex-1">
+        <ElTable
+          v-loading="schemaLoading"
+          :data="filteredSchema"
+          size="small"
+          height="100%"
+          highlight-current-row
+          @row-click="(row: SchemaItem) => selectTable(row.name)"
+        >
+          <ElTableColumn prop="name" :label="t('server.dbContent.tableName')" min-width="140" show-overflow-tooltip />
+          <ElTableColumn :label="t('server.dbContent.tableRows')" width="70" align="right">
+            <template #default="{ row }">
+              <span class="tabular-nums text-[12px] text-[var(--zv-label)]">
+                {{ row.num_rows === null ? '—' : t('server.dbContent.totalEstimate', { count: row.num_rows }) }}
+              </span>
+            </template>
+          </ElTableColumn>
+          <template #empty>
+            <ElEmpty :image-size="48" :description="t('server.dbContent.queryEmpty')" />
+          </template>
+        </ElTable>
       </div>
-    </div>
+    </ElCard>
 
-    <div class="flex h-[calc(100vh-330px)] min-h-[560px] gap-3">
-      <!-- 左:表清单 -->
-      <aside class="flex w-64 shrink-0 flex-col border border-[var(--zv-hairline)] bg-[var(--zv-surface)] p-4">
-        <div class="d-label mb-2">{{ t('server.dbContent.schemaCount', { count: filteredSchema.length }) }}</div>
-        <input
-          v-model="schemaFilter"
-          :placeholder="t('server.dbContent.searchPlaceholder')"
-          class="mb-3 w-full border border-[var(--zv-hairline)] bg-[var(--zv-surface-alt)] px-3 text-[14px] text-[var(--zv-text)] outline-none focus:border-[var(--zv-hairline-strong)]"
-          style="height: 34px"
-        />
-        <div class="min-h-0 flex-1 overflow-auto">
-          <button
-            v-for="item in filteredSchema"
-            :key="item.name"
-            class="block w-full border-0 px-1 py-2 text-left transition-colors"
-            :class="selectedTable === item.name ? 'bg-[var(--zv-surface-alt)]' : 'bg-transparent hover:bg-[var(--zv-surface-alt)]'"
-            @click="selectTable(item.name)"
+    <!-- 右区 -->
+    <div class="grid min-w-0 flex-1 grid-cols-1 grid-rows-[auto_auto_minmax(0,1fr)] items-stretch gap-4 xl:grid-cols-2 xl:grid-rows-[minmax(0,auto) minmax(0,auto) minmax(0,1fr)]">
+      <!-- 列定义:占满左列纵向 -->
+      <ElCard class="db-col-card xl:col-start-1 xl:row-span-2" body-class="db-col-body">
+        <template #header>
+          <span class="text-[14px] font-semibold text-[var(--zv-text)]">{{ t('server.dbContent.columnsTitle') }}</span>
+        </template>
+        <div v-if="columnsData" class="min-h-0 flex-1">
+          <ElTable
+            v-loading="columnsLoading"
+            :data="columnsData.columns"
+            size="small"
+            height="100%"
           >
-            <span class="block truncate text-[14px] font-medium text-[var(--zv-text)]">{{ item.name }}</span>
-            <span class="block text-[12px] tabular-nums text-[var(--zv-label)]">
-              {{ item.type }}
-              · {{ item.num_rows === null ? '—' : t('server.dbContent.totalEstimate', { count: item.num_rows }) }}
+            <ElTableColumn prop="name" :label="t('server.dbContent.colCol')" min-width="120" show-overflow-tooltip>
+              <template #default="{ row }">
+                <span class="font-mono">{{ row.name }}</span>
+              </template>
+            </ElTableColumn>
+            <ElTableColumn prop="type" :label="t('server.dbContent.colColType')" width="110" show-overflow-tooltip>
+              <template #default="{ row }">
+                <span class="text-[var(--zv-text-sub)]">{{ row.type }}</span>
+              </template>
+            </ElTableColumn>
+            <ElTableColumn prop="length" :label="t('server.dbContent.colLen')" width="60" align="right">
+              <template #default="{ row }">
+                <span class="tabular-nums text-[var(--zv-text-sub)]">{{ row.length ?? '—' }}</span>
+              </template>
+            </ElTableColumn>
+            <ElTableColumn prop="nullable" :label="t('server.dbContent.colNullable')" width="60" align="center">
+              <template #default="{ row }">
+                <span class="text-[var(--zv-text-sub)]">{{ row.nullable ? t('server.dbContent.nullableYes') : '—' }}</span>
+              </template>
+            </ElTableColumn>
+            <ElTableColumn prop="primary_key" :label="t('server.dbContent.colPk')" width="60" align="center">
+              <template #default="{ row }">
+                <span v-if="row.primary_key" class="font-semibold text-[var(--zv-accent)]">PK</span>
+                <span v-else class="text-[var(--zv-label)]">—</span>
+              </template>
+            </ElTableColumn>
+            <ElTableColumn prop="default" :label="t('server.dbContent.colDefault')" min-width="100" show-overflow-tooltip>
+              <template #default="{ row }">
+                <span class="font-mono text-[12px] text-[var(--zv-text-sub)]">{{ fmtCell(row.default as CellValue) }}</span>
+              </template>
+            </ElTableColumn>
+          </ElTable>
+        </div>
+        <div v-else class="flex flex-1 items-center justify-center">
+          <ElEmpty :image-size="60" :description="columnsLoading ? t('server.database.loading') : t('server.dbContent.selTableHint')" />
+        </div>
+      </ElCard>
+
+      <!-- SQL 查询(只读) + DDL:右列两个卡片 -->
+      <ElCard class="xl:col-start-2 xl:row-start-1" body-class="db-panel-body">
+        <template #header>
+          <span class="text-[14px] font-semibold text-[var(--zv-text)]">{{ t('server.dbContent.sqlTitle') }}</span>
+        </template>
+        <ElInput
+          v-model="sqlText"
+          type="textarea"
+          :rows="3"
+          :placeholder="t('server.dbContent.sqlPlaceholder')"
+          class="sql-input"
+        />
+        <div class="mt-2 flex flex-wrap items-center gap-2">
+          <ElButton type="primary" :disabled="sqlRunning" @click="executeQuery">
+            {{ t('server.dbContent.sqlRun') }}
+          </ElButton>
+          <span class="z-label">{{ t('server.dbContent.sqlLimitLabel') }}</span>
+          <ElInputNumber v-model="sqlLimit" :min="1" :max="500" size="small" class="!w-24" />
+        </div>
+        <ElAlert
+          v-if="queryError"
+          type="error"
+          :title="queryError"
+          :closable="false"
+          class="mt-2"
+        />
+        <div v-if="queryResult" class="mt-2">
+          <div class="mb-1 flex items-center gap-4">
+            <span class="z-label tabular-nums">{{ t('server.dbContent.queryElapsed', { ms: queryResult.elapsed_ms }) }}</span>
+            <span v-if="queryResult.truncated" class="z-label tabular-nums">
+              {{ t('server.dbContent.queryTruncated', { limit: sqlLimit }) }}
             </span>
-          </button>
-          <p v-if="!schemaLoading && filteredSchema.length === 0" class="px-1 py-4 text-[13px] text-[var(--zv-label)]">
-            {{ t('server.dbContent.queryEmpty') }}
-          </p>
-          <p v-if="schemaLoading" class="px-1 py-4 text-[13px] text-[var(--zv-label)]">…</p>
+          </div>
+          <ElTable :data="queryResult.rows" size="small" max-height="200" class="w-full">
+            <ElTableColumn
+              v-for="col in queryResult.columns"
+              :key="col"
+              :prop="col"
+              :label="col"
+              min-width="120"
+              show-overflow-tooltip
+            >
+              <template #default="{ row }">
+                <ElButton
+                  v-if="isLob(row[col])"
+                  link
+                  size="small"
+                  class="!font-mono !text-[12px]"
+                  @click="openLobPreview(row[col] as LobValue)"
+                >
+                  {{ lobBadge(row[col] as LobValue) }}
+                </ElButton>
+                <span v-else class="font-mono text-[12px] text-[var(--zv-text-sub)]">{{ fmtCell(row[col]) }}</span>
+              </template>
+            </ElTableColumn>
+            <template #empty>
+              <ElEmpty :image-size="40" :description="t('server.dbContent.queryEmpty')" />
+            </template>
+          </ElTable>
         </div>
-      </aside>
+      </ElCard>
 
-      <!-- 右区 -->
-      <div class="flex min-w-0 flex-1 flex-col gap-2">
-        <div class="grid shrink-0 grid-cols-1 items-stretch gap-3 xl:grid-cols-2">
-          <!-- 列定义 -->
-          <section class="border border-[var(--zv-hairline)] bg-[var(--zv-surface)] p-4">
-            <h3 class="m-0 mb-2 text-[16px] font-medium text-[var(--zv-text)]">{{ t('server.dbContent.columnsTitle') }}</h3>
-            <div class="max-h-56 overflow-auto" v-if="columnsData">
-              <table class="d-table w-full border-collapse text-[14px] tabular-nums">
-                <thead class="sticky top-0 bg-[var(--zv-surface-alt)]">
-                  <tr class="border-b border-[var(--zv-hairline-strong)]">
-                    <th class="d-label px-2 py-1.5 text-left font-normal">{{ t('server.dbContent.colCol') }}</th>
-                    <th class="d-label px-2 py-1.5 text-left font-normal">{{ t('server.dbContent.colColType') }}</th>
-                    <th class="d-label px-2 py-1.5 text-right font-normal">{{ t('server.dbContent.colLen') }}</th>
-                    <th class="d-label px-2 py-1.5 text-center font-normal">{{ t('server.dbContent.colNullable') }}</th>
-                    <th class="d-label px-2 py-1.5 text-center font-normal">{{ t('server.dbContent.colPk') }}</th>
-                    <th class="d-label px-2 py-1.5 text-left font-normal">{{ t('server.dbContent.colDefault') }}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr
-                    v-for="col in columnsData.columns"
-                    :key="col.name"
-                    class="border-b border-[var(--zv-hairline)]"
-                  >
-                    <td class="px-2 py-1.5 text-[var(--zv-text)]">{{ col.name }}</td>
-                    <td class="px-2 py-1.5 text-[var(--zv-text-sub)]">{{ col.type }}</td>
-                    <td class="px-2 py-1.5 text-right text-[var(--zv-text-sub)]">{{ col.length ?? '—' }}</td>
-                    <td class="px-2 py-1.5 text-center text-[var(--zv-text-sub)]">
-                      {{ col.nullable ? t('server.dbContent.nullableYes') : '—' }}
-                    </td>
-                    <td class="px-2 py-1.5 text-center text-[var(--zv-text-sub)]">{{ col.primary_key ? 'PK' : '—' }}</td>
-                    <td class="px-2 py-1.5 text-[var(--zv-text-sub)]">{{ fmtCell(col.default as CellValue) }}</td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-            <div v-else class="py-8 text-center text-[13px] text-[var(--zv-label)]">
-              {{ columnsLoading ? '…' : t('server.dbContent.selTableHint') }}
-            </div>
-          </section>
+      <ElCard class="xl:col-start-2 xl:row-start-2" body-class="db-panel-body">
+        <template #header>
+          <span class="text-[14px] font-semibold text-[var(--zv-text)]">{{ t('server.dbContent.ddlTitle') }}</span>
+        </template>
+        <ElInput
+          v-model="ddlText"
+          type="textarea"
+          :rows="3"
+          :placeholder="t('server.dbContent.ddlPlaceholder')"
+          class="sql-input"
+        />
+        <div class="mt-2 flex flex-wrap items-center gap-2">
+          <span class="z-label">{{ t('server.dbContent.ddlConfirmLabel') }}</span>
+          <ElInput
+            v-model="ddlConfirm"
+            :placeholder="t('server.dbContent.ddlConfirmPlaceholder')"
+            size="small"
+            class="!w-32 uppercase"
+          />
+          <ElButton type="danger" :disabled="ddlRunning" @click="executeDdl">
+            {{ t('server.dbContent.ddlRun') }}
+          </ElButton>
+        </div>
+        <ElAlert
+          v-if="ddlError"
+          type="error"
+          :title="ddlError"
+          :closable="false"
+          class="mt-2"
+        />
+        <template v-else>
+          <div v-if="ddlResult" class="mt-2 font-mono text-[13px] tabular-nums text-[var(--zv-text-sub)]">
+            {{ t('server.dbContent.ddlRowcount') }}: {{ ddlResult.rowcount === null ? '—' : ddlResult.rowcount }}
+            · {{ t('server.dbContent.ddlSummary') }}: {{ ddlResult.summary }}
+          </div>
+          <div v-else class="mt-2 z-label">{{ ddlNote || t('server.dbContent.ddlNone') }}</div>
+        </template>
+        <p class="mt-2 z-label">{{ t('server.dbContent.ddlCommitted') }}</p>
+      </ElCard>
 
-          <!-- SQL 查询 + DDL -->
-          <div class="flex flex-col gap-3">
-            <section class="border border-[var(--zv-hairline)] bg-[var(--zv-surface)] p-4">
-              <h3 class="m-0 mb-2 text-[16px] font-medium text-[var(--zv-text)]">{{ t('server.dbContent.sqlTitle') }}</h3>
-              <textarea
-                v-model="sqlText"
-                rows="3"
-                :placeholder="t('server.dbContent.sqlPlaceholder')"
-                class="sql-area w-full resize-none border border-[var(--zv-hairline)] bg-[var(--zv-surface-alt)] p-2 text-[13px] leading-5 text-[var(--zv-text)] outline-none focus:border-[var(--zv-hairline-strong)]"
-              ></textarea>
-              <div class="mt-2 flex items-center gap-3">
-                <button
-                  class="border border-[var(--zv-hairline-strong)] bg-[var(--zv-text)] px-4 text-[14px] text-[var(--zv-surface)] transition-colors hover:opacity-80 disabled:opacity-50"
-                  style="height: 34px"
-                  :disabled="sqlRunning"
-                  @click="executeQuery"
-                >
-                  {{ t('server.dbContent.sqlRun') }}
-                </button>
-                <span class="text-[12px] text-[var(--zv-label)]">{{ t('server.dbContent.sqlLimitLabel') }}</span>
-                <input
-                  v-model.number="sqlLimit"
-                  type="number"
-                  min="1"
-                  max="500"
-                  class="w-16 border border-[var(--zv-hairline)] bg-[var(--zv-surface-alt)] px-2 py-0.5 text-right text-[13px] tabular-nums text-[var(--zv-text)] outline-none"
-                  style="height: 34px"
-                />
-                <span v-if="queryError" class="text-[12px] text-[#b42318] dark:text-[#ff8a7a]">{{ queryError }}</span>
-              </div>
-              <div v-if="queryResult" class="mt-3">
-                <div class="mb-1 flex items-center gap-4 text-[12px] text-[var(--zv-label)]">
-                  <span>{{ t('server.dbContent.queryElapsed', { ms: queryResult.elapsed_ms }) }}</span>
-                  <span v-if="queryResult.truncated">{{ t('server.dbContent.queryTruncated', { limit: sqlLimit }) }}</span>
-                </div>
-                <div class="max-h-40 overflow-auto border border-[var(--zv-hairline)]">
-                  <table class="d-table w-full border-collapse text-[13px] tabular-nums">
-                    <thead class="sticky top-0 bg-[var(--zv-surface-alt)]">
-                      <tr class="border-b border-[var(--zv-hairline-strong)]">
-                        <th
-                          v-for="col in queryResult.columns"
-                          :key="col"
-                          class="d-label px-2 py-1.5 text-left font-normal"
-                        >
-                          {{ col }}
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      <tr v-for="(row, index) in queryResult.rows" :key="index" class="border-b border-[var(--zv-hairline)]">
-                        <td
-                          v-for="col in queryResult.columns"
-                          :key="col"
-                          class="max-w-48 truncate px-2 py-1.5 text-[var(--zv-text-sub)]"
-                        >
-                          <template v-if="isLob(row[col])">
-                            <button class="lob-badge underline" @click="openLobPreview(row[col] as LobValue)">
-                              {{ lobBadge(row[col] as LobValue) }}
-                            </button>
-                          </template>
-                          <template v-else>{{ fmtCell(row[col]) }}</template>
-                        </td>
-                      </tr>
-                      <tr v-if="queryResult.rows.length === 0">
-                        <td :colspan="queryResult.columns.length" class="px-2 py-2 text-center text-[12px] text-[var(--zv-label)]">
-                          {{ t('server.dbContent.queryEmpty') }}
-                        </td>
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            </section>
-
-            <section class="border border-[var(--zv-hairline)] bg-[var(--zv-surface)] p-4">
-              <h3 class="m-0 mb-2 text-[16px] font-medium text-[var(--zv-text)]">{{ t('server.dbContent.ddlTitle') }}</h3>
-              <textarea
-                v-model="ddlText"
-                rows="3"
-                :placeholder="t('server.dbContent.ddlPlaceholder')"
-                class="sql-area w-full resize-none border border-[var(--zv-hairline)] bg-[var(--zv-surface-alt)] p-2 text-[13px] leading-5 text-[var(--zv-text)] outline-none focus:border-[var(--zv-hairline-strong)]"
-              ></textarea>
-              <div class="mt-2 flex flex-wrap items-center gap-3">
-                <span class="text-[12px] text-[var(--zv-label)]">{{ t('server.dbContent.ddlConfirmLabel') }}</span>
-                <input
-                  v-model="ddlConfirm"
-                  :placeholder="t('server.dbContent.ddlConfirmPlaceholder')"
-                  class="w-32 border border-[var(--zv-hairline)] bg-[var(--zv-surface-alt)] px-2 text-[13px] uppercase text-[var(--zv-text)] outline-none"
-                  style="height: 34px"
-                />
-                <button
-                  class="border border-[#b42318] bg-[#b42318] px-4 text-[14px] text-white transition-colors hover:opacity-80 disabled:opacity-50"
-                  style="height: 34px"
-                  :disabled="ddlRunning"
-                  @click="executeDdl"
-                >
-                  {{ t('server.dbContent.ddlRun') }}
-                </button>
-              </div>
-              <p class="mt-2 text-[12px] leading-4 text-[var(--zv-label)]">{{ t('server.dbContent.ddlCommitted') }}</p>
-              <div v-if="ddlError" class="mt-1 text-[13px] leading-5 text-[#b42318] dark:text-[#ff8a7a]">{{ ddlError }}</div>
-              <div v-else-if="ddlResult" class="mt-1 text-[13px] leading-5 text-[var(--zv-text-sub)]">
-                {{ t('server.dbContent.ddlRowcount') }}: {{ ddlResult.rowcount === null ? '—' : ddlResult.rowcount }}
-                · {{ t('server.dbContent.ddlSummary') }}: {{ ddlResult.summary }}
-              </div>
-              <div v-else class="mt-1 text-[13px] leading-5 text-[var(--zv-label)]">{{ t('server.dbContent.ddlNone') }}</div>
-            </section>
+      <!-- 数据网格 -->
+      <ElCard class="xl:col-span-2" body-class="db-grid-body">
+        <div class="flex flex-wrap items-center justify-between gap-2 pb-2">
+          <div class="flex items-center gap-3">
+            <span class="z-label">{{ t('server.dbContent.gridTitle') }}</span>
+            <span v-if="selectedTable" class="font-mono text-[14px] font-semibold text-[var(--zv-text)]">
+              {{ selectedTable }}
+            </span>
+            <span v-if="selectedTable && !hasPk" class="z-label">
+              {{ t('server.dbContent.noPkNote') }}
+            </span>
+          </div>
+          <div class="flex items-center gap-2">
+            <ElButton size="small" :icon="Plus" :disabled="!selectedTable" @click="openInsert">
+              {{ t('server.dbContent.insert') }}
+            </ElButton>
+            <span v-if="rowsData" class="z-label tabular-nums">
+              {{ t('server.dbContent.totalLabel') }} {{ rowsTotalDisplay() }}
+            </span>
+            <ElButton size="small" :disabled="page <= 0 || rowsLoading" @click="gotoPage(page - 1)">
+              ‹ {{ t('server.dbContent.pagePrev') }}
+            </ElButton>
+            <span v-if="rowsData" class="z-label tabular-nums">
+              {{ t('server.dbContent.pageInfo', { page: page + 1, pages: Math.max(1, rowsPages()) }) }}
+            </span>
+            <ElButton
+              size="small"
+              :disabled="rowsLoading || !rowsData || !rowsData.has_more"
+              @click="gotoPage(page + 1)"
+            >
+              {{ t('server.dbContent.pageNext') }} ›
+            </ElButton>
           </div>
         </div>
 
-        <!-- 数据网格 -->
-        <section class="flex min-h-0 flex-1 flex-col border border-[var(--zv-hairline)] bg-[var(--zv-surface)] p-4">
-          <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
-            <div class="flex items-center gap-3">
-              <h3 class="m-0 text-[16px] font-medium text-[var(--zv-text)]">{{ t('server.dbContent.gridTitle') }}</h3>
-              <span v-if="selectedTable" class="text-[14px] font-medium text-[var(--zv-text)] font-mono">{{ selectedTable }}</span>
-              <span v-if="selectedTable && !hasPk" class="text-[12px] text-[#b42318] dark:text-[#ff8a7a]">
-                {{ t('server.dbContent.noPkNote') }}
-              </span>
-            </div>
-            <div class="flex items-center gap-2">
-              <button
-                class="flex items-center gap-1.5 border border-[var(--zv-hairline-strong)] bg-[var(--zv-surface)] px-3 text-[14px] text-[var(--zv-text)] enabled:hover:bg-[var(--zv-surface-alt)] disabled:opacity-40"
-                style="height: 34px"
-                :disabled="!selectedTable"
-                @click="openInsert"
-              >
-                {{ t('server.dbContent.insert') }}
-              </button>
-              <span class="text-[12px] tabular-nums text-[var(--zv-label)]">
-                {{ rowsData ? t('server.dbContent.totalLabel') + ' ' + rowsTotalDisplay() : '' }}
-              </span>
-              <button
-                class="border border-[var(--zv-hairline-strong)] bg-[var(--zv-surface)] px-3 text-[13px] tabular-nums text-[var(--zv-text)] disabled:opacity-40 hover:bg-[var(--zv-surface-alt)]"
-                style="height: 34px"
-                :disabled="page <= 0 || rowsLoading"
-                @click="gotoPage(page - 1)"
-              >
-                ‹ {{ t('server.dbContent.pagePrev') }}
-              </button>
-              <span class="text-[12px] tabular-nums text-[var(--zv-label)]">
-                {{ rowsData ? t('server.dbContent.pageInfo', { page: page + 1, pages: Math.max(1, rowsPages()) }) : '' }}
-              </span>
-              <button
-                class="border border-[var(--zv-hairline-strong)] bg-[var(--zv-surface)] px-3 text-[13px] tabular-nums text-[var(--zv-text)] disabled:opacity-40 hover:bg-[var(--zv-surface-alt)]"
-                style="height: 34px"
-                :disabled="rowsLoading || !rowsData || !rowsData.has_more"
-                @click="gotoPage(page + 1)"
-              >
-                {{ t('server.dbContent.pageNext') }} ›
-              </button>
-            </div>
-          </div>
+        <ElAlert
+          v-if="dataErrorNote"
+          type="error"
+          :title="dataErrorNote"
+          :closable="false"
+          class="mb-2"
+        />
 
-          <div v-if="dataErrorNote" class="mb-2 text-[13px] text-[#b42318] dark:text-[#ff8a7a]">{{ dataErrorNote }}</div>
-
-          <div v-if="rowsData" class="min-h-0 flex-1 overflow-auto">
-            <table class="d-table w-full border-collapse text-[14px] tabular-nums">
-              <thead class="sticky top-0 bg-[var(--zv-surface-alt)]">
-                <tr class="border-b border-[var(--zv-hairline-strong)]">
-                  <th
-                    v-for="col in columnsData?.columns ?? []"
-                    :key="col.name"
-                    class="d-label whitespace-nowrap px-3 py-2 text-left font-normal hover:text-[var(--zv-text)] cursor-pointer"
-                    @click="toggleSort(col.name)"
-                  >
-                    {{ col.name }}
-                    <template v-if="orderBy === col.name">{{ desc ? '▼' : '▲' }}</template>
-                  </th>
-                  <th v-if="hasPk" class="d-label px-3 py-2 text-right font-normal">
-                    {{ t('server.dbContent.rowActions') }}
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr
-                  v-for="(row, index) in rowsData.rows"
-                  :key="index"
-                  class="border-b border-[var(--zv-hairline)] hover:bg-[var(--zv-surface-alt)]"
+        <div v-if="rowsData" class="min-h-0 flex-1">
+          <ElTable
+            v-loading="rowsLoading"
+            :data="rowsData.rows"
+            height="100%"
+            class="w-full"
+            @sort-change="onSortChange"
+          >
+            <ElTableColumn
+              v-for="col in columnsData?.columns ?? []"
+              :key="col.name"
+              :prop="col.name"
+              :label="col.name"
+              sortable="custom"
+              min-width="140"
+              show-overflow-tooltip
+            >
+              <template #default="{ row }">
+                <ElButton
+                  v-if="isLob(row[col.name] as CellValue)"
+                  link
+                  size="small"
+                  class="!font-mono !text-[12px]"
+                  @click="openLobPreview(row[col.name] as LobValue)"
                 >
-                  <td
-                    v-for="col in columnsData?.columns ?? []"
-                    :key="col.name"
-                    class="max-w-56 whitespace-nowrap px-3 py-2 text-[var(--zv-text-sub)]"
-                  >
-                    <template v-if="isLob(row[col.name] as CellValue)">
-                      <button
-                        class="lob-badge"
-                        @click="openLobPreview(row[col.name] as LobValue)"
-                      >
-                        {{ lobBadge(row[col.name] as LobValue) }}
-                      </button>
-                    </template>
-                    <template v-else>
-                      <span class="block max-w-56 truncate">{{ fmtCell(row[col.name] as CellValue) }}</span>
-                    </template>
-                  </td>
-                  <td v-if="hasPk" class="whitespace-nowrap px-3 py-1.5 text-right">
-                    <button class="d-link" @click="openEdit(row)">
-                      {{ t('server.dbContent.edit') }}
-                    </button>
-                    <button class="d-link-danger" @click="doDelete(row)">
-                      {{ t('server.dbContent.del') }}
-                    </button>
-                  </td>
-                </tr>
-                <tr v-if="rowsData.rows.length === 0">
-                  <td :colspan="columnsData?.columns.length ?? 1" class="px-3 py-6 text-center text-[13px] text-[var(--zv-label)]">
-                    —
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-          <div v-else class="flex flex-1 items-center justify-center text-[13px] text-[var(--zv-label)]">
-            {{ rowsLoading ? '…' : t('server.dbContent.selTableHint') }}
-          </div>
-        </section>
-      </div>
+                  {{ lobBadge(row[col.name] as LobValue) }}
+                </ElButton>
+                <span v-else class="font-mono text-[12px] text-[var(--zv-text-sub)]">{{ fmtCell(row[col.name] as CellValue) }}</span>
+              </template>
+            </ElTableColumn>
+            <ElTableColumn
+              v-if="hasPk"
+              :label="t('server.dbContent.rowActions')"
+              width="150"
+              align="right"
+              fixed="right"
+            >
+              <template #default="{ row }">
+                <ElButton text bg size="small" @click="openEdit(row as Record<string, CellValue>)">
+                  {{ t('server.dbContent.edit') }}
+                </ElButton>
+                <ElButton text bg size="small" type="danger" @click="doDelete(row as Record<string, CellValue>)">
+                  {{ t('server.dbContent.del') }}
+                </ElButton>
+              </template>
+            </ElTableColumn>
+            <template #empty>
+              <ElEmpty
+                :image-size="56"
+                :description="rowsData && rowsData.rows.length === 0 ? t('server.dbContent.gridEmpty') : t('server.dbContent.selTableHint')"
+              />
+            </template>
+          </ElTable>
+        </div>
+        <div v-else class="flex flex-1 items-center justify-center">
+          <ElEmpty :image-size="56" :description="t('server.dbContent.selTableHint')" />
+        </div>
+      </ElCard>
     </div>
 
     <!-- 插入 / 编辑表单 -->
@@ -769,34 +766,31 @@ void loadSchema()
     >
       <div class="max-h-[60vh] overflow-auto pr-1">
         <div v-for="field in editFields" :key="field.name" class="mb-3">
-          <div class="d-label mb-1">
+          <div class="z-label mb-1 font-mono">
             {{ field.name }}
             <span class="normal-case">· {{ field.type }}{{ field.isPk ? ' · PK' : field.nullable ? '' : ' · NOT NULL' }}</span>
           </div>
-          <input
+          <ElInput
+            v-if="fieldMode(field.type) !== 'textarea'"
             v-model="field.text"
-            class="w-full border border-[var(--zv-hairline)] bg-[var(--zv-surface-alt)] px-3 text-[14px] text-[var(--zv-text)] outline-none focus:border-[var(--zv-hairline-strong)]"
-            style="height: 34px"
+            :type="fieldMode(field.type)"
+            :placeholder="t('server.dbContent.nullHint')"
+          />
+          <ElInput
+            v-else
+            v-model="field.text"
+            type="textarea"
+            :rows="3"
             :placeholder="t('server.dbContent.nullHint')"
           />
         </div>
       </div>
       <template #footer>
         <div class="flex justify-end gap-2">
-          <button
-            class="border border-[var(--zv-hairline-strong)] bg-[var(--zv-surface)] px-4 text-[14px] text-[var(--zv-text)] hover:bg-[var(--zv-surface-alt)]"
-            style="height: 34px"
-            @click="rowDialogVisible = false"
-          >
-            {{ t('server.auth.cancel') }}
-          </button>
-          <button
-            class="border border-[var(--zv-hairline-strong)] bg-[var(--zv-text)] px-4 text-[14px] text-[var(--zv-surface)] hover:opacity-80"
-            style="height: 34px"
-            @click="submitRowChange"
-          >
+          <ElButton @click="rowDialogVisible = false">{{ t('server.auth.cancel') }}</ElButton>
+          <ElButton type="primary" :loading="submitting" @click="submitRowChange">
             {{ t('server.dbContent.proceedAuth') }}
-          </button>
+          </ElButton>
         </div>
       </template>
     </ElDialog>
@@ -808,8 +802,8 @@ void loadSchema()
       width="600px"
       append-to-body
     >
-      <pre class="max-h-[50vh] overflow-auto whitespace-pre-wrap break-all border border-[var(--zv-hairline)] bg-[var(--zv-surface-alt)] p-3 text-[13px] leading-5 text-[var(--zv-text)]">{{ lobPreviewText }}</pre>
-      <p class="mt-2 text-[12px] text-[var(--zv-label)]">{{ t('server.dbContent.lobTitle') }}</p>
+      <pre class="max-h-[50vh] overflow-auto whitespace-pre-wrap break-all rounded-md border border-[var(--zv-hairline)] bg-[var(--zv-surface-alt)] p-3 font-mono text-[13px] leading-5 text-[var(--zv-text)]">{{ lobPreviewText }}</pre>
+      <p class="mt-2 z-label">{{ t('server.dbContent.lobTitle') }}</p>
     </ElDialog>
 
     <ZSystemAuthDialog ref="authRef" />
@@ -817,62 +811,14 @@ void loadSchema()
 </template>
 
 <style scoped>
-/* 本页局部 token:建议后续由 flat.css 统一收口(另一车道) */
-.d-label {
-  font-size: 12px;
-  line-height: 1.35;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--zv-label);
-  font-weight: 400;
-  font-variant-numeric: tabular-nums;
+.table-list-body {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
 }
 
-.sql-area {
+.sql-input {
   font-family: ui-monospace, 'JetBrains Mono', SFMono-Regular, Menlo, Consolas, monospace;
-}
-
-.lob-badge {
-  display: inline-block;
-  border: 1px solid var(--zv-hairline);
-  background: var(--zv-surface-alt);
-  border-radius: 2px;
-  padding: 1px 6px;
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
-  color: var(--zv-text);
-  cursor: pointer;
-}
-
-.lob-badge:hover {
-  border-color: var(--zv-hairline-strong);
-}
-
-.d-link,
-.d-link-danger {
-  border: 0;
-  background: transparent;
-  padding: 0 6px;
-  font-size: 14px;
-  height: 28px;
-  cursor: pointer;
-  text-decoration: underline;
-}
-
-.d-link {
-  color: var(--zv-text-sub);
-}
-
-.d-link:hover {
-  color: var(--zv-text);
-}
-
-.d-link-danger {
-  color: #b42318;
-}
-
-.dark .d-link-danger,
-:global(html.dark) .d-link-danger {
-  color: #ff8a7a;
 }
 </style>
