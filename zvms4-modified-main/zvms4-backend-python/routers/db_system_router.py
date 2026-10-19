@@ -1,4 +1,4 @@
-"""Administrative Oracle ADB endpoints: monitoring plus the retention purge."""
+"""Administrative Oracle ADB endpoints: monitoring, retention purge and backup."""
 
 from __future__ import annotations
 
@@ -12,6 +12,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from db import backends
 from db.oracle.session import get_session
 from routers.system_router import _require_system_admin
+from services.adb_backup import (
+    AUDIT_LEVEL as BACKUP_AUDIT_LEVEL,
+    AUDIT_TYPE as BACKUP_AUDIT_TYPE,
+    BackupBusy,
+    BackupTriggerError,
+    backup_snapshot,
+    trigger_backup,
+)
 from services.db_monitor import get_database_status
 from tasks.retention import (
     AUDIT_LEVEL,
@@ -149,6 +157,53 @@ async def retention_progress(
     # 进度是瞬态的：别让任何一层（浏览器/反代）缓存它。
     response.headers["Cache-Control"] = "no-store"
     return {"status": "ok", "code": 200, "data": progress_snapshot()}
+
+
+@router.post("/backup/run")
+async def backup_run(
+    user=Depends(get_current_user),
+    log=Depends(inject_log),
+):
+    """Start one manual ADB backup (prod → adb2); returns the current snapshot.
+
+    真正干活的是服务器上的 ``adb-sync.service``（oneshot，实测约 15 分钟），本端点
+    只**提交**任务并立刻返回快照 —— 不能把请求挂 15 分钟；进度轮询
+    ``GET /api/system/db/backup/progress``。已有备份在跑 → 409（沿用清理那边的既有
+    约定）；提交失败 → 500：``services.adb_backup`` 只抛领域异常，必须在这里
+    **显式**翻成 HTTPException，否则会被本 router 的 route_class 吞成 503 丢掉语义。
+    """
+    await _require_system_admin(user)
+
+    try:
+        snapshot = await trigger_backup()
+    except BackupBusy as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    except BackupTriggerError as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    log.with_text(
+        f"管理员 {await get_user_display_name(user['id'])} 启动了 ADB 手动备份（prod → adb2）",
+        type=BACKUP_AUDIT_TYPE,
+        level=BACKUP_AUDIT_LEVEL,
+    )
+    await log.insert_log()
+
+    return {"status": "ok", "code": 200, "data": snapshot}
+
+
+@router.get("/backup/progress")
+async def backup_progress(
+    response: Response,
+    user=Depends(get_current_user),
+):
+    """ADB manual-backup progress (frozen shape; ``state`` ∈ idle/running/ok/failed).
+
+    只回结构化字段 + 中文 ``message``：备份日志原文与其中的 DSN 永不外泄
+    （见 ``services/adb_backup``）。
+    """
+    await _require_system_admin(user)
+    response.headers["Cache-Control"] = "no-store"
+    return {"status": "ok", "code": 200, "data": await backup_snapshot()}
 
 
 __all__ = ["router"]
