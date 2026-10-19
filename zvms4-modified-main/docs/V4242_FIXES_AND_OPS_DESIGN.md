@@ -20,7 +20,7 @@
 | 议题 | 裁定 |
 |---|---|
 | SSH 终端形态 | **全交互真终端**（xterm.js + WebSocket + asyncssh，真 PTY） |
-| 文件管理范围 | **整个文件系统 `/`**，`/boot` 等系统目录列入**黑名单**，操作需**再次双管理员验证** |
+| 文件管理范围 | **整个文件系统 `/`**，仅 `/proc`、`/sys` 虚拟文件系统保护（2026-10-19 修订，原系统目录黑名单已放开），操作需**再次双管理员验证** |
 | DB 内容管理范围 | **含 DDL 的完整管理** |
 | 双人 TOTP 落地 | **操作者现场输入另一位管理员的 TOTP 码**，服务端校验（复核人 ≠ 操作人 + 一次性消费防重放） |
 | 删除用户语义 | **硬删除 + 事务级联**，同时写入**独立缓冲备份表**，**30 天后由垃圾回收任务清理** |
@@ -128,7 +128,7 @@
 
 - **双人复核基建**：`util/permission/dual_control.py` —— 入参 `(operator, approver_id, code, action, target)`；强制 `approver_id != operator.oid`、`approver` 必须是 admin、`verify_totp(approver_id, code)` 通过、**同一 (approver_id, 时间步/码哈希) 只能消费一次**（防重放）；消费记录落本地 SQLite（沿用 `db/system_state.py` 的路径范式，env 可覆写），审计写 `app_logs`（含 approver_id、action、target、结果）。
 - **终端**：`GET/POST` 建立的 WebSocket 端点（FastAPI WebSocket，鉴权失败用 `WebSocketException`，不用 `HTTPException`）；连接建立前需双人 TOTP；PTY resize、心跳、会话注册表（session_id → handle）、空闲超时、强制断开；审计记录连接/断开/操作者/审批人/来源 IP。
-- **文件管理**：根 `/`，**系统目录黑名单**（至少含 `/boot`、`/proc`、`/sys`、`/dev`、`/run`、`/etc/shadow` 等，清单在契约细化时逐条冻结）；所有路径先 `realpath` 解析符号链接再做根/黑名单断言；读写/删除/上传/重命名/新建目录均需双人 TOTP + 审计；上传走临时文件 + `os.replace` 原子替换。
+- **文件管理**：根 `/`，仅保留 `/proc`、`/sys` 两个**虚拟文件系统**的保护（2026-10-19 按用户裁定放开系统目录黑名单，`/etc`、`/root`、`/usr`、`/dev` 等由 OS 权限裁决）；所有路径先 `realpath` 解析符号链接再做虚拟文件系统断言；读写/删除/上传/重命名/新建目录均需双人 TOTP + 审计；上传走临时文件 + `os.replace` 原子替换。
 - **数据库内容管理**：查询（限行/超时/禁多语句）与执行（含 DDL）；**写与 DDL 一律双人 TOTP + 逐条审计**（记录 SQL 全文、影响行数、耗时、错误码）。
 - **前端**：新增 `views/server/ServerTerminal.vue`（xterm.js）、`ServerFiles.vue`、`ServerDbConsole.vue`，`views/server/ServerHome.vue` 增 tab，`router/index.ts` 增子路由，`i18n/locales/server.ts` 增文案；依赖 `@xterm/xterm` + `@xterm/addon-fit` 等。
 - **反代**：nginx/Caddy 必须放行 WebSocket 升级并调大 `proxy_read_timeout`（部署项，实测后再上线）。

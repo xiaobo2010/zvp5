@@ -7,7 +7,13 @@
 1. 系统管理员闸（``_require_system_admin``）：严格 ``admin`` + 即时查库复核，
    与 ``routers/system_router.py`` 同源，不吃 token 里的权限快照。
 2. 写操作额外要求另一位管理员的 TOTP（``util/dual_auth.require_dual_auth``）；
-   读操作不过双人码，但同样受黑名单约束（``/proc`` 之类读也不许）。
+   读操作不过双人码，但同样不能访问 ``/proc``、``/sys`` 虚拟文件系统。
+
+同步文件 IO 一律经 ``asyncio.to_thread`` 执行：本服务是单 uvicorn worker，直接在
+async 端点里 ``scandir``/``stat``/``write`` 会把事件循环连同 SSH WS 心跳一起卡住。
+端点代码保持「一行一个 ``to_thread``」，这样 grep 就能核对是否漏了某个动作。
+``download`` 只把 resolve/stat/open 放进线程；响应体的同步生成器由 Starlette
+（``iterate_in_threadpool``）自动搬到线程池，不会阻塞事件循环。
 
 所有写操作写一条 ``type=system_file`` 审计，``detail`` 只含操作与路径，不含
 文件内容。
@@ -15,6 +21,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import functools
 import urllib.parse
 from typing import Iterator
@@ -119,7 +126,8 @@ async def list_files(
     user=Depends(get_current_user),
 ):
     await _require_system_admin(user)
-    return _ok(file_ops.list_dir(path, offset=offset, limit=limit))
+    data = await asyncio.to_thread(file_ops.list_dir, path, offset=offset, limit=limit)
+    return _ok(data)
 
 
 @router.get("/stat")
@@ -129,7 +137,8 @@ async def stat_file(
     user=Depends(get_current_user),
 ):
     await _require_system_admin(user)
-    return _ok(file_ops.stat_entry(path))
+    data = await asyncio.to_thread(file_ops.stat_entry, path)
+    return _ok(data)
 
 
 @router.get("/download")
@@ -139,7 +148,7 @@ async def download_file(
     user=Depends(get_current_user),
 ):
     await _require_system_admin(user)
-    handle, size, name = file_ops.open_download(path)
+    handle, size, name = await asyncio.to_thread(file_ops.open_download, path)
 
     def _stream() -> Iterator[bytes]:
         try:
@@ -169,7 +178,7 @@ async def make_dir(payload: MkdirRequest, user=Depends(get_current_user)):
     await _require_system_admin(user)
     approver = await _approve(user, payload.totp_code)
 
-    data = file_ops.make_dir(payload.path)
+    data = await asyncio.to_thread(file_ops.make_dir, payload.path)
     await _audit(user, "mkdir", data["path"], approver)
     return _ok(data)
 
@@ -199,7 +208,9 @@ async def rename_file(payload: RenameRequest, user=Depends(get_current_user)):
     await _require_system_admin(user)
     approver = await _approve(user, payload.totp_code)
 
-    data = file_ops.rename_path(payload.source, payload.target)
+    data = await asyncio.to_thread(
+        file_ops.rename_path, payload.source, payload.target
+    )
     await _audit(user, "rename", f"{data['from']} -> {data['to']}", approver)
     return _ok(data)
 
@@ -210,7 +221,9 @@ async def delete_file(payload: DeleteRequest, user=Depends(get_current_user)):
     await _require_system_admin(user)
     approver = await _approve(user, payload.totp_code)
 
-    data = file_ops.delete_path(payload.path, recursive=payload.recursive)
+    data = await asyncio.to_thread(
+        file_ops.delete_path, payload.path, recursive=payload.recursive
+    )
     await _audit(user, "delete", data["path"], approver)
     return _ok(data)
 
@@ -221,6 +234,6 @@ async def chmod_file(payload: ChmodRequest, user=Depends(get_current_user)):
     await _require_system_admin(user)
     approver = await _approve(user, payload.totp_code)
 
-    data = file_ops.chmod_path(payload.path, payload.mode)
+    data = await asyncio.to_thread(file_ops.chmod_path, payload.path, payload.mode)
     await _audit(user, "chmod", f"{data['path']} {oct(data['mode'])}", approver)
     return _ok(data)

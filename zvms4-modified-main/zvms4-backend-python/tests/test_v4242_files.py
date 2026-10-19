@@ -1,11 +1,12 @@
 """Stage 2 文件管理端点（``/api/system/files``）的离线用例。
 
 全部落在 ``tmp_path`` 上，只读地碰系统路径（``/etc/passwd``、``/proc/...``）
-用于验证黑名单，绝不对真实系统目录做写操作。
+用于验证虚拟文件系统保护，绝不对真实系统目录做写操作。
 
 覆盖四类硬约束：
 
-1. 路径安全：绝对路径、``..`` 展开后再判黑名单、路径段匹配（``/etcfoo`` 不误杀）。
+1. 路径安全：绝对路径、``..`` 展开后再判 ``/proc``/``/sys``、路径段匹配
+   （``/procfs`` 不误杀）；``/etc`` 等原黑名单目录已放开。
 2. 鉴权：管理员闸（per + 查库复核）、写操作双人 TOTP、失败时零副作用。
 3. 文件动作：list 排序/分页、stat、mkdir/rename/delete、upload 原子落盘与上限、
    chmod 拒绝特殊位、download 流式与上限。
@@ -185,6 +186,84 @@ def test_totp_rejection_has_no_side_effects(harness, tmp_path):
     assert (directory / "inner.txt").exists()
 
 
+def test_write_endpoints_require_login():
+    # 双人码之前还有登录闸；这里证明上传/重命名/删除/改权限没有被「放开路径」顺带削弱。
+    client = TestClient(_make_client())
+    responses = [
+        client.post(f"{PREFIX}/mkdir", json={"path": "/tmp/unused"}),
+        client.post(
+            f"{PREFIX}/rename", json={"from": "/tmp/a", "to": "/tmp/b"}
+        ),
+        client.post(f"{PREFIX}/delete", json={"path": "/tmp/a"}),
+        client.post(f"{PREFIX}/chmod", json={"path": "/tmp/a", "mode": 0o600}),
+        client.post(
+            f"{PREFIX}/upload",
+            data={"path": "/tmp"},
+            files={"file": ("a.txt", b"x")},
+        ),
+    ]
+    assert [response.status_code for response in responses] == [401] * 5
+
+
+def test_write_endpoints_still_require_dual_auth(monkeypatch, tmp_path):
+    """用真实 ``require_dual_auth``（不 fake）验证写操作仍要求另一位管理员的码。"""
+    from util import dual_auth as dual_auth_module
+
+    async def get_by_oid(oid):
+        return {"_id": oid, "roles": ["admin"], "banned": False}
+
+    async def list_admin_oids():
+        return []
+
+    monkeypatch.setattr(
+        backends,
+        "get_users_repo",
+        lambda session=None: SimpleNamespace(
+            get_by_oid=get_by_oid, list_admin_oids=list_admin_oids
+        ),
+    )
+
+    async def noop(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(dual_auth_module, "_write_audit", noop)
+    dual_auth_module._failures.pop(OPERATOR, None)
+
+    app = _make_client()
+    app.dependency_overrides[get_current_user] = lambda: {
+        "id": OPERATOR,
+        "per": ["admin"],
+    }
+    client = TestClient(app)
+
+    wrong = "000000"
+    responses = [
+        client.post(f"{PREFIX}/mkdir", json={"path": str(tmp_path / "d"), "totp_code": wrong}),
+        client.post(
+            f"{PREFIX}/rename",
+            json={"from": str(tmp_path / "a"), "to": str(tmp_path / "b"), "totp_code": wrong},
+        ),
+        client.post(f"{PREFIX}/delete", json={"path": str(tmp_path / "a"), "totp_code": wrong}),
+        client.post(
+            f"{PREFIX}/chmod",
+            json={"path": str(tmp_path / "a"), "mode": 0o600, "totp_code": wrong},
+        ),
+        client.post(
+            f"{PREFIX}/upload",
+            data={"path": str(tmp_path), "totp_code": wrong},
+            files={"file": ("a.txt", b"x")},
+        ),
+    ]
+
+    for response in responses:
+        assert response.status_code == 403
+        assert response.json()["detail"] == "动态码无效或已过期"
+    assert not (tmp_path / "d").exists()
+    assert not (tmp_path / "a.txt").exists()
+
+    dual_auth_module._failures.pop(OPERATOR, None)
+
+
 # ---------------------------------------------------------------------------
 # 路径安全
 # ---------------------------------------------------------------------------
@@ -193,29 +272,32 @@ def test_totp_rejection_has_no_side_effects(harness, tmp_path):
 @pytest.mark.parametrize(
     "path",
     [
-        "/etc/passwd",
-        "/proc/self/environ",
         "/proc",
-        "/boot/vmlinuz",
-        "/var/lib/docker/overlay2",
-        "/etc/../etc/passwd",
-        "/tmp/../../../etc/passwd",
+        "/proc/self/environ",
+        "/proc/self/cmdline",
+        "/sys",
+        "/sys/kernel",
+        "/proc/../proc/self/cmdline",
+        "/tmp/../../../proc/self/environ",
     ],
 )
-def test_blacklisted_paths_are_forbidden_even_for_reads(harness, path):
+def test_virtual_fs_paths_are_forbidden_even_for_reads(harness, path):
     response = harness.client.get(f"{PREFIX}/stat", params={"path": path})
     assert response.status_code == 403
-    assert response.json()["detail"] == "该路径受保护，禁止访问"
+    assert response.json()["detail"] == "虚拟文件系统不可访问"
 
 
-def test_blacklist_is_segment_matched():
-    assert file_ops._is_blocked("/etc") is True
-    assert file_ops._is_blocked("/etc/passwd") is True
-    assert file_ops._is_blocked("/etcfoo") is False
-    assert file_ops._is_blocked("/etcfoo/passwd") is False
-    assert file_ops._is_blocked("/var/lib/docker/x") is True
-    assert file_ops._is_blocked("/var/lib/dockerfoo") is False
-    assert file_ops._is_blocked("/www/zvms4/backend") is False
+def test_virtual_fs_is_segment_matched():
+    assert file_ops._is_virtual_fs("/proc") is True
+    assert file_ops._is_virtual_fs("/proc/self/environ") is True
+    assert file_ops._is_virtual_fs("/procfs") is False
+    assert file_ops._is_virtual_fs("/procfs/passwd") is False
+    assert file_ops._is_virtual_fs("/sys/kernel") is True
+    assert file_ops._is_virtual_fs("/syslog") is False
+    # 原黑名单目录不再被任何路径判断拦截。
+    assert file_ops._is_virtual_fs("/etc") is False
+    assert file_ops._is_virtual_fs("/etc/passwd") is False
+    assert file_ops._is_virtual_fs("/var/lib/docker/x") is False
 
 
 def test_segment_matching_holds_on_a_real_filesystem(harness, tmp_path, monkeypatch):
@@ -227,7 +309,7 @@ def test_segment_matching_holds_on_a_real_filesystem(harness, tmp_path, monkeypa
     (lookalike / "open.txt").write_text("ok")
 
     monkeypatch.setattr(
-        file_ops, "BLOCKED_PREFIXES", (os.path.realpath(str(secret)),)
+        file_ops, "VIRTUAL_FS_PREFIXES", (os.path.realpath(str(secret)),)
     )
 
     blocked = harness.client.get(f"{PREFIX}/stat", params={"path": str(secret / "token")})
@@ -236,7 +318,21 @@ def test_segment_matching_holds_on_a_real_filesystem(harness, tmp_path, monkeypa
     )
 
     assert blocked.status_code == 403
+    assert blocked.json()["detail"] == "虚拟文件系统不可访问"
     assert allowed.status_code == 200
+
+
+def test_former_system_directories_are_no_longer_blocked(harness):
+    # 回归：/etc/passwd 曾经被黑名单 403。现在只允许因 OS 权限/不存在返回别的码，
+    # 不能再出现「该路径受保护」或虚拟文件系统的拒绝。
+    assert file_ops.resolve_path("/etc/passwd") == "/etc/passwd"
+    assert file_ops.resolve_entry_path("/etc/passwd")[0] == "/etc/passwd"
+
+    response = harness.client.get(f"{PREFIX}/stat", params={"path": "/etc/passwd"})
+    assert response.status_code in {200, 403, 404}
+    detail = response.json().get("detail", "")
+    assert detail != "该路径受保护，禁止访问"
+    assert "虚拟文件系统" not in detail
 
 
 @pytest.mark.parametrize("path", ["etc/passwd", "tmp/../etc/passwd", "./etc"])
@@ -253,12 +349,13 @@ def test_control_characters_are_rejected(path):
     assert excinfo.value.status_code == 400
 
 
-def test_blacklisted_write_is_forbidden_before_any_syscall(harness):
+def test_virtual_fs_write_is_forbidden_before_any_syscall(harness):
     response = harness.client.post(
         f"{PREFIX}/chmod",
-        json={"path": "/etc/passwd", "mode": 0o777, "totp_code": CODE},
+        json={"path": "/proc/self/environ", "mode": 0o777, "totp_code": CODE},
     )
     assert response.status_code == 403
+    assert response.json()["detail"] == "虚拟文件系统不可访问"
     assert harness.audits == []
 
 
@@ -318,6 +415,27 @@ def test_list_limit_is_capped_by_contract(harness, tree):
     )
     # 服务层自身也夹紧，别处直接调用时不会越界。
     assert file_ops.list_dir(str(tree), limit=5000)["limit"] == file_ops.MAX_LIST_LIMIT
+
+
+def test_list_dir_keeps_only_a_bounded_window(tmp_path, monkeypatch):
+    # 大目录不再全量 list + sort：只保留 offset+limit 个候选；total 仍精确。
+    for index in range(30):
+        (tmp_path / f"{index:02}.txt").write_bytes(b"")
+    monkeypatch.setattr(file_ops, "MAX_LIST_WINDOW", 10)
+
+    page = file_ops.list_dir(str(tmp_path), offset=0, limit=5)
+    assert page["total"] == 30
+    assert [item["name"] for item in page["entries"]] == [
+        "00.txt",
+        "01.txt",
+        "02.txt",
+        "03.txt",
+        "04.txt",
+    ]
+
+    deep = file_ops.list_dir(str(tmp_path), offset=15, limit=5)
+    assert deep["total"] == 30
+    assert deep["entries"] == []
 
 
 def test_list_rejects_file_and_missing_dir(harness, tree):
