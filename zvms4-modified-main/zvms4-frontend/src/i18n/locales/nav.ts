@@ -11,7 +11,7 @@ export const zhCN = {
   banned: {
     title: '账号已被封禁',
     message: '由于明确的违规使用，您的账号已被封禁，稍后您将自动退出登录。',
-    appeal: '如需申诉，请联系管理员。',
+    appeal: '违规使用平板是严重的违纪行为。',
     autoLogoutIn: '将在 {seconds} 秒后自动退出登录'
   },
   language: '',
