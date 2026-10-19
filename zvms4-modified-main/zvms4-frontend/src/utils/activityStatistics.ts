@@ -39,6 +39,7 @@ export interface StatisticsCsvLabels {
   mode: string
   className: string
   unnamedClass: string
+  unknownClass: string
   modeNames: Record<string, string>
 }
 
@@ -87,7 +88,10 @@ export function buildStatisticsCsv(stats: ActivityStatistics, labels: Statistics
 
   const classGroup = [labels.classGroup, csvRow(labels.className, labels.count, labels.sum)]
   for (const group of stats.classes) {
-    const name = group.group_name === '' ? labels.unnamedClass : group.group_name
+    const name =
+      group.group_oid === ''
+        ? labels.unnamedClass
+        : group.group_name || `${labels.unknownClass}（${group.group_oid}）`
     classGroup.push(csvRow(name, group.count, group.sum))
   }
 
@@ -103,28 +107,15 @@ export function buildStatisticsCsv(stats: ActivityStatistics, labels: Statistics
 }
 
 /**
- * @description Cap the class ranking chart at `limit` rows. `rows` is expected to
- * be already ordered by the backend, so its order is preserved; when it holds
- * more than `limit` rows the surplus is folded into a trailing "other" row.
+ * @description Order every class row for the ranking chart without folding
+ * named classes into an "other" bucket. Named classes sort by total duration
+ * ascending; class-less users and unresolved class records stay pinned last.
  */
-export function mergeClassRows(
-  rows: ActivityStatisticsClassGroup[],
-  limit: number,
-  otherLabel: string
+export function orderClassRowsForChart(
+  rows: ActivityStatisticsClassGroup[]
 ): ActivityStatisticsClassGroup[] {
-  const visible = rows.slice(0, limit)
-  const rest = rows.slice(limit)
-  if (rest.length === 0) {
-    return visible
-  }
-  const count = rest.reduce((acc, row) => acc + row.count, 0)
-  const sum = rest.reduce((acc, row) => acc + row.sum, 0)
-  visible.push({
-    group_oid: 'other',
-    group_name: otherLabel,
-    count,
-    sum,
-    mean: count > 0 ? sum / count : 0
-  })
-  return visible
+  const named = rows.filter((row) => row.group_oid !== '' && row.group_name !== '')
+  const pinned = rows.filter((row) => row.group_oid === '' || row.group_name === '')
+  named.sort((a, b) => a.sum - b.sum || a.group_name.localeCompare(b.group_name))
+  return [...named, ...pinned]
 }
