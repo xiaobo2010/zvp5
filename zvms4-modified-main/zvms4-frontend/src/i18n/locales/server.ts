@@ -325,7 +325,26 @@ export const zhCN = {
     outputError: '终端错误：{detail}',
     connecting: '正在建立终端连接…',
     typeToStart: '点击「开启终端」建立 SSH 会话；票据 120 秒内有效，过期需重新授权。',
-    notAvailable: '需要系统管理员权限'
+    notAvailable: '需要系统管理员权限',
+    fontLabel: '字号',
+    closedAdvice:
+      '请重新建立双人授权后再接入；若反复失败，检查服务器 sshd 状态或联系另一位管理员。',
+    emptyTitle: 'root 终端',
+    emptyDesc:
+      '这是连接到服务器 root 的全交互终端；发起需另一位管理员的动态码双人授权，票据 120 秒内单次有效。',
+    riskHint: '风险提示：root 下运行的命令不可撤销，请确认操作内容后再开启。',
+    authDialogNotReady: '授权弹窗未就绪，请刷新页面后重试',
+    ticketMissing: '后端未返回会话票据，请稍后重试',
+    connectTimeout: '连接超时（15 秒未建立会话），已停止等待；请确认服务器 sshd 状态后重试',
+    riskTitle: '使用前必读',
+    riskPower:
+      '这是服务器的 root 全交互终端，权限极高，以最高权限用户身份执行命令。',
+    riskScope:
+      '仅用于系统运维与故障排查；不得用于查看或导出与你职责无关的数据，不得超出本职运维范围操作。',
+    riskConsequence:
+      'root 下执行的任何操作不可撤销，会留下审计记录，可能造成服务中断或数据损坏；滥用将被追责。请确认本次操作内容后再继续。',
+    riskCancel: '取消',
+    riskAck: '我已知悉，继续'
   },
   files: {
     title: '文件管理',
@@ -339,12 +358,10 @@ export const zhCN = {
     delete: '删除',
     chmod: '改权限',
     download: '下载',
-    noSelection: '未选中条目',
-    selection: '已选中：{name}',
+    colActions: '操作',
     colName: '名称',
     colType: '类型',
     colSize: '大小',
-    colMode: '权限',
     colMtime: '修改时间',
     typeDir: '目录',
     typeFile: '文件',
@@ -355,9 +372,7 @@ export const zhCN = {
     loadFailed: '目录读取失败',
     parent: '上一级',
     totalEntries: '共 {count} 条',
-    pagePrev: '上一页',
-    pageNext: '下一页',
-    pageInfo: '第 {page} / {pages} 页',
+    absolutePathOnly: '仅接受绝对路径',
     mkdirScene: '新建目录',
     mkdirPromptTitle: '新建目录',
     renameScene: '重命名（输入新路径名）',
@@ -381,6 +396,13 @@ export const zhCN = {
     authSceneSingle: '单条',
     authSceneChmod: '修改权限 {path} → {mode}',
     downloadFailed: '下载失败',
+    authCancelled: '已取消双人授权',
+    authUnavailable: '授权对话框未就绪，请刷新页面重试',
+    mkdirDone: '目录已创建',
+    uploadDone: '文件已上传',
+    renameDone: '重命名成功',
+    deleteDone: '已删除',
+    chmodDone: '权限已修改',
     protectedNote: '受保护目录（/etc /root /proc 等）读写全禁'
   },
   dbContent: {
@@ -441,6 +463,13 @@ export const zhCN = {
     fieldRequired: '主键列不能为空：{cols}',
     insertDialogTitle: '插入行：{table}',
     editDialogTitle: '编辑行：{table}',
-    nullHint: '留空 = NULL'
+    nullHint: '留空 = NULL',
+    authCancelled: '已取消双人授权',
+    authUnavailable: '授权对话框未就绪，请刷新页面重试',
+    tableName: '名称',
+    tableRows: '行数',
+    gridEmpty: '该表暂无数据',
+    rowSaved: '已保存',
+    rowDeleted: '已删除'
   }
 }
