@@ -13,6 +13,7 @@ from reportlab.lib import colors
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
+import json
 import os
 from datetime import datetime
 from typing import List, Optional, Literal
@@ -585,21 +586,23 @@ class VolunteerStatementGenerator:
         print(f"Volunteer statement generated: {filename}")
 
 
-# Function to create statement from your kernel data
-async def create_statement_from_kernel_data(
+# Function to build statement data from your kernel data
+async def build_statement_data(
     id: str,
     period: tuple[datetime, datetime],
-    filename: str = "volunteer_statement.pdf",
     language: Language = "zh",
-):
+) -> tuple[VolunteerStatementData, dict]:
     """
-    Create volunteer statement from your kernel data
+    Build the volunteer statement model and spreadsheet row from kernel data
 
     Args:
         id: Unique identifier for the user (e.g., student ID)
         period: Tuple containing start and end dates for the statement period
-        filename: Name of the output PDF file
         language: Language for the statement ("zh" for Chinese, "en" for English)
+
+    Returns:
+        A tuple of the assembled ``VolunteerStatementData`` and the per-user
+        ``spreadsheet_data`` dict (``filename`` is added by the caller).
     """
 
     validate_object_id(id)
@@ -707,10 +710,6 @@ async def create_statement_from_kernel_data(
         header_icon_path="./data/pwa-192x192.png",  # Optional, can be None
     )
 
-    # Generate PDF with specified language
-    generator = VolunteerStatementGenerator(language=language)
-    generator.generate_statement(filename, volunteer_data)
-
     description = await generate_description(id)
 
     spreadsheet_data = {
@@ -727,4 +726,79 @@ async def create_statement_from_kernel_data(
         "description": description,
     }
 
+    return volunteer_data, spreadsheet_data
+
+
+async def create_statement_from_kernel_data(
+    id: str,
+    period: tuple[datetime, datetime],
+    filename: str = "volunteer_statement.pdf",
+    language: Language = "zh",
+):
+    """
+    Create volunteer statement from your kernel data
+
+    Args:
+        id: Unique identifier for the user (e.g., student ID)
+        period: Tuple containing start and end dates for the statement period
+        filename: Name of the output PDF file
+        language: Language for the statement ("zh" for Chinese, "en" for English)
+    """
+
+    volunteer_data, spreadsheet_data = await build_statement_data(id, period, language)
+
+    # Generate PDF with specified language
+    generator = VolunteerStatementGenerator(language=language)
+    generator.generate_statement(filename, volunteer_data)
+
     return filename, spreadsheet_data
+
+
+def _stats_payload(stats: StatsData) -> dict:
+    """Dump a ``StatsData`` and append the derived ``total_hours`` property."""
+    payload = stats.model_dump()
+    payload["total_hours"] = stats.total_hours
+    return payload
+
+
+def statement_data_to_json(
+    data: VolunteerStatementData, spreadsheet: dict, filename: str
+) -> str:
+    """
+    Serialise a volunteer statement into a UTF-8 friendly JSON string
+
+    Args:
+        data: Assembled volunteer statement model
+        spreadsheet: Per-user spreadsheet row dict
+        filename: Output filename to record in the payload
+
+    Returns:
+        An indented JSON string with non-ASCII characters left unescaped.
+    """
+
+    payload = {
+        "user_data": data.user_data.model_dump(),
+        "stats_data": _stats_payload(data.stats_data),
+        "stats_data_raw": _stats_payload(data.stats_data_raw),
+        "stats_data_this_year": _stats_payload(data.stats_data_this_year),
+        "statement_data": [record.model_dump() for record in data.statement_data],
+        "spreadsheet": spreadsheet,
+        "filename": filename,
+    }
+    return json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+def write_statement_json(
+    data: VolunteerStatementData, spreadsheet: dict, filename: str
+) -> None:
+    """
+    Write ``statement_data_to_json`` output to ``filename`` as UTF-8
+
+    Args:
+        data: Assembled volunteer statement model
+        spreadsheet: Per-user spreadsheet row dict
+        filename: Destination path for the JSON file
+    """
+
+    with open(filename, "w", encoding="utf-8") as handle:
+        handle.write(statement_data_to_json(data, spreadsheet, filename))
