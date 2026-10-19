@@ -48,10 +48,24 @@ ssh zvp-frontend "docker exec zvms4-mongo mongosh --quiet --eval 'const d=db.get
 
 ```bash
 # 3.1 rsync（排除本地 settings / venv / 密钥 / pyc）
+#
+# ⚠️ 两条纪律（2026-10-19 事故复盘）：
+#  a) 密钥/本地配置的排除项一个都不能少。漏掉 --exclude aes_key.txt / --exclude 'rsa_*.pem'
+#     会用本地开发密钥覆盖生产密钥（本次侥幸两端一致才没出事）。
+#  b) 本命令**不带 --delete**。若确实需要 --delete（清理生产上已删除的源文件），
+#     必须同时排除生产侧的运行时产物 export/ 与 data/：它们由
+#     tasks/compute_time.generate_reports 在每日 04:00 生成，不在源树里，
+#     否则 --delete 会在任务运行途中删掉它正在写入的目录，导致
+#     `FileNotFoundError: ./export/<班级>/<学号>_<姓名>.pdf`（2026-10-19 已实际发生）。
 rsync -az \
   --exclude settings.py --exclude '.venv' --exclude '__pycache__' --exclude '*.pyc' \
   --exclude aes_key.txt --exclude 'rsa_*.pem' \
+  --exclude ssh_key --exclude 'ssh_key.pub' --exclude ssh_known_hosts \
+  --exclude 'system_state.db*' --exclude 'perf_samples.db*' \
   ~/zvp5-repo/zvms4-modified-main/zvms4-backend-python/ zvp-frontend:/www/zvms4/backend/
+
+# 3.1b 仅当确实需要 --delete 时，追加这两条排除（生产运行时产物，不在源树里）
+#   --exclude export --exclude data
 
 # 3.2 归属（rsync 以 root 写，须改回 www）
 ssh zvp-frontend 'chown -R www:www /www/zvms4/backend'
