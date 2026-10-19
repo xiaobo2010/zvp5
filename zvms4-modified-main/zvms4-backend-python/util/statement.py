@@ -5,10 +5,9 @@ from pydantic import BaseModel, Field
 
 from db import backends
 from db.ids import is_valid_oid
-from typings.time import UserTimeStat, UserActivityTime
-from typings.user_v2 import UserActivityTimeSums
+from typings.time import UserActivityTime
 from util.calculate import calculate_user_time, generate_description
-from util.get_class import get_user_class, get_user_classname
+from util.get_class import get_user_classname
 from utils import validate_object_id
 
 # Language type definition
