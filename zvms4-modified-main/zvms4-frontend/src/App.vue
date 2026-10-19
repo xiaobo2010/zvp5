@@ -30,7 +30,6 @@ import ZVerticalNav from '@/components/form/ZVerticalNav.vue'
 import { useRegisterSW } from 'virtual:pwa-register/vue'
 import { CarbonCloudOffline } from '@/icons'
 import { modifyPasswordDialogs } from '@/views'
-import { getMaintenanceStatus } from '@/api/system/maintenance.ts'
 
 const { needRefresh, offlineReady, updateServiceWorker } = useRegisterSW()
 
@@ -312,21 +311,15 @@ watch(offlineReady, () => {
 })
 
 onMounted(async () => {
-  // 启动时检查一次维护状态(公开接口):维护中跳公告页并略过注定 503 的用户刷新;admin 放行
+  // 维护模式的跳转统一交给 router 全局守卫(见 src/router/maintenanceGuard.ts),
+  // 这里只负责登录态刷新;维护页自身不再发起注定 503 的业务请求。
   try {
-    const res = await getMaintenanceStatus()
-    if (res.data.data.enabled) {
-      if (!userStore.position.includes('admin') && route.path !== '/maintenance') {
-        router.replace('/maintenance')
-      }
-      return
+    if (userStore.isLogin && route.path !== '/maintenance') {
+      await userStore.refreshUser().catch(() => {})
+      resetPassword()
     }
   } catch {
-    // 状态接口不可达时静默,不阻塞正常启动
-  }
-  if (userStore.isLogin) {
-    await userStore.refreshUser().catch(() => {})
-    resetPassword()
+    // 刷新失败时静默,不阻塞正常启动
   }
 })
 </script>
