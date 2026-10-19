@@ -35,6 +35,7 @@ export const zhCN = {
     },
   },
   login: {
+    pageTitle: '登录义工平台',
     actions: {
       login: '登录',
       reset: '重置',
