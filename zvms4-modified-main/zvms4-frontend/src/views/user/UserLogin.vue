@@ -1,12 +1,7 @@
 <script setup lang="ts">
 import { ref, watch, h } from 'vue'
 import {
-  ElInput,
-  ElForm,
-  ElFormItem,
   ElButton,
-  ElRow,
-  ElCol,
   ElCard,
   ElMessageBox,
   ElMessage,
@@ -162,57 +157,43 @@ watch(user, async () => {
 <template>
   <div class="w-full login-wrap" style="display: flex; flex-direction: column; height: 100%;">
     <div style="flex-grow: 1;"></div>
-    <ElCard shadow="never" class="login-field text-center px-4 w-full" style="flex-grow: 0;">
-      <ElRow class="w-full py-1">
-        <ElCol :span="8" />
-        <ElCol :span="8">
-          <p class="text-lg py-1" style="text-align: center">
-            {{ t('nav.login.actions.login') }}
-          </p>
-        </ElCol>
-        <ElCol :span="8">
-          <!--<p class="align-right motto" style="text-align: right">{{ t('nav.login.motto') }}</p>-->
-        </ElCol>
-      </ElRow>
-      <ElForm ref="loginfield" label-position="right" label-width="48px">
-        <ElFormItem :label="t('nav.login.form.account')" prop="id" class="py-1">
+    <ElCard shadow="never" class="login-field text-center w-full" style="flex-grow: 0;">
+      <p class="login-title">{{ t('nav.login.pageTitle') }}</p>
+      <ElForm ref="loginfield" label-position="top">
+        <ElFormItem :label="t('nav.login.form.account')" prop="id">
           <ElInput
             v-model.number="user"
             :minlength="8"
             :maxlength="8"
             clearable
             type="number"
-            class="w-full"
+            class="login-input w-full"
           />
         </ElFormItem>
-        <ElFormItem :label="t('nav.login.form.password')" prop="password" class="py-1">
+        <ElFormItem :label="t('nav.login.form.password')" prop="password">
           <ElInput
             type="password"
             v-model="password"
             clearable
             show-password
+            class="login-input w-full"
             @keyup.enter="login"
           />
         </ElFormItem>
       </ElForm>
-      <ElRow>
-        <ElCol :span="24" class="actions">
-          <!--<ElButton type="warning" @click="refresh" text bg :icon="Refresh">
-            {{ t('nav.login.actions.reset') }}
-          </ElButton>-->
-          <ElButton
-            type="primary"
-            @click="login"
-            text
-            bg
-            :icon="ArrowRight"
-            :disabled="password === '' || String(user).length !== 8"
-            :loading="loading"
-          >
-            {{ t('nav.login.actions.login') }}
-          </ElButton>
-        </ElCol>
-      </ElRow>
+      <div class="actions">
+        <ElButton
+          type="primary"
+          size="large"
+          class="login-button"
+          @click="login"
+          :icon="ArrowRight"
+          :disabled="password === '' || String(user).length !== 8"
+          :loading="loading"
+        >
+          {{ t('nav.login.actions.login') }}
+        </ElButton>
+      </div>
     </ElCard>
     <div style="flex-grow: 1;"></div>
     <div style="flex-grow: 0; min-height: 3.75rem; max-height: 3.75rem;"></div>
@@ -221,25 +202,40 @@ watch(user, async () => {
 
 <style scoped>
 .login-field {
-  width: 80%;
-  max-width: 480px;
-  height: 296px !important;
-  overflow-y: scroll;
+  width: 88%;
+  max-width: 400px;
+  padding: 32px 24px;
   text-align: center;
   margin-left: auto;
   margin-right: auto;
 }
 
-.actions {
-  text-align: right;
+.login-title {
+  font-size: 30px;
+  line-height: 1.25;
+  font-weight: 600;
+  text-align: center;
+  margin: 0 0 20px;
 }
 
-.motto {
-  color: #aaaaaa;
+.login-input {
+  --el-input-height: 44px;
+}
+
+.login-field :deep(.el-form-item__label) {
   font-size: 16px;
-  text-align: right;
-  position: relative;
-  right: 0;
-  transform: translateY(60%);
+  font-weight: 500;
+  letter-spacing: normal;
+  color: var(--zv-text, #303133);
+}
+
+.login-field :deep(.el-form-item) {
+  margin-bottom: 18px;
+}
+
+.login-button {
+  width: 100%;
+  font-size: 16px;
+  height: 46px;
 }
 </style>
