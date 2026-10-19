@@ -30,6 +30,9 @@ const loading = ref(false)
 const loadError = ref('')
 const remaining = ref(0)
 let timer: ReturnType<typeof setInterval> | undefined
+// 每个过期窗口(以 exp 标识)最多自动续期一次;失败后 exp 不变,因此不会重试,
+// 避免 60s 一次的错误风暴。服务器时钟偏差导致新 exp 仍已过期时同样不会循环。
+let autoRefreshedForExp: number | null = null
 
 // 从后端错误里提取 detail 用于展示
 function detailOf(err: unknown): string {
@@ -95,7 +98,19 @@ function tick() {
     // 过期后收起明文，但保留卡片与刷新入口；清空 otp 会让页面误落到“加载中“。
     showCode.value = false
     stopTimer()
+    autoRefreshOnce()
   }
+}
+
+// 过期自动续期:仅在页面可见、无请求在飞、且该 exp 窗口还没自动刷过时触发。
+// 后台标签页不发起请求；失败由 refresh 内部落 loadError,这里不重试。
+function autoRefreshOnce() {
+  if (loading.value) return
+  if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return
+  const exp = expSeconds.value
+  if (exp === null || autoRefreshedForExp === exp) return
+  autoRefreshedForExp = exp
+  void refresh()
 }
 
 function startTimer() {
@@ -112,6 +127,9 @@ async function refresh() {
     const res = await getMyTotp(String(userStore._id))
     otp.value = res.data.data.otp
     expSeconds.value = res.data.data.exp
+    // 服务器时钟偏差导致返回的窗口本身已过期:标记为「已自动刷过」,
+    // 避免 tick 每次命中过期再发请求形成循环。
+    if (expSeconds.value * 1000 <= Date.now()) autoRefreshedForExp = expSeconds.value
     showCode.value = false
     startTimer()
   } catch (err) {
