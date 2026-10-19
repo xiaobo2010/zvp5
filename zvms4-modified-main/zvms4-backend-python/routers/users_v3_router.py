@@ -1,7 +1,8 @@
+import logging
 from typing import Literal, Optional
 
 from bcrypt import hashpw, gensalt
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Response
 from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
 
@@ -17,6 +18,8 @@ from utils import validate_object_id
 from util.validation import validate_number, validate_student_name
 
 router = APIRouter()
+
+_logger = logging.getLogger(__name__)
 
 
 async def _get_zvms_new_user(oid: str) -> Optional[dict]:
@@ -378,10 +381,23 @@ async def reset_user_password_v3(
     return {"status": "ok", "code": 200, "data": {"initial_password": initial_password}}
 
 
+async def _persist_totp_view_log(log) -> None:
+    """把「查看动态码」审计日志落库。
+
+    作为 BackgroundTasks 在响应发出后执行，避免审计写库拖慢响应；失败不能静默
+    丢日志，因此这里统一捕获并记录异常。
+    """
+    try:
+        await log.insert_log()
+    except Exception:
+        _logger.exception("TOTP view audit log write failed (user=%s)", log.user)
+
+
 @router.get("/{user_id}/totp")
 async def get_user_totp_v3(
     user_id: str,
     response: Response,
+    background_tasks: BackgroundTasks,
     user=Depends(get_current_user),
     log=Depends(inject_log),
 ):
@@ -405,12 +421,17 @@ async def get_user_totp_v3(
     # produce a different code whenever a business id (student number) is used.
     code, exp = get_current_totp(user["id"])
 
+    # `target` is already the caller's full user document (the self-only check
+    # above guarantees it), so its `name` is exactly what
+    # get_user_display_name() would fetch again——reuse it instead of a 2nd query.
     log.with_text(
-        f"用户 {await get_user_display_name(user['id'])} 查看了自己的登录动态码",
+        f"用户 {target.get('name') or '未知用户'} 查看了自己的登录动态码",
         type="totp_view",
         level="info",
     )
-    await log.insert_log()
+    # Audit is a security control: it must still be written, just not on the
+    # response path. Failures are logged inside the task, never swallowed.
+    background_tasks.add_task(_persist_totp_view_log, log)
 
     response.headers["Cache-Control"] = "no-store"
     return {"status": "ok", "code": 200, "data": {"otp": code, "exp": exp}}
