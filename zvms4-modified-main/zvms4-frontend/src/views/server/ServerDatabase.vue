@@ -13,12 +13,13 @@ import dayjs from '@/plugins/dayjs'
 import { isAxiosError } from 'axios'
 import {
   getDatabaseStatus, previewRetention, runRetention, getRetentionProgress,
+  runBackup, getBackupProgress,
   getMetricsRealtime, getMetricsHost, getMetricsHistory, getMetricsTopSql, getMetricsEndpoints,
   isRetentionJobStart,
   type DbStatusData, type DbTableItem, type RetentionPreviewData, type RetentionRunData,
   type RetentionProgressData, type DbMetricsRealtimeData, type DbMetricsHistoryData,
   type DbMetricsRange, type DbMetricsTopSqlData, type DbMetricsEndpointsData,
-  type DbMetricsHostData
+  type DbMetricsHostData, type BackupProgressData
 } from '@/api/system/db.ts'
 import DbPerfTrendChart from '@/components/server/DbPerfTrendChart.vue'
 
@@ -275,6 +276,140 @@ function stopProgressPolling() {
   if (progressTimer !== undefined) {
     window.clearInterval(progressTimer)
     progressTimer = undefined
+  }
+}
+
+// —— 手动备份:prod → adb2 全量备份,后台任务 + 进度轮询 ——
+const backupProgress = ref<BackupProgressData | null>(null)
+const backupRunLoading = ref(false)
+const backupError = ref<string | null>(null)
+let backupTimer: number | undefined
+
+// POST /backup/run 成功后的瞬间,进度端点读到的仍可能是上一次 run 的终态快照:
+// 有界启动窗口内(fake running)保持轮询,等新 run 写出 running 行或窗口超时
+const BACKUP_START_GRACE_MS = 120000
+const backupStarting = ref(false)
+let backupStartDeadline = 0
+
+const backupState = computed(() => backupProgress.value?.state ?? 'idle')
+const backupRunning = computed(() => backupState.value === 'running')
+
+// 启动窗口内统一按 running 呈现,防止"点完按钮立刻显示上次的成功"
+const displayedBackupState = computed<'idle' | 'running' | 'ok' | 'failed'>(() => {
+  if (backupStarting.value && !backupRunning.value) return 'running'
+  return backupState.value
+})
+
+const backupTotalText = computed(() => {
+  const total = backupProgress.value?.tables_total
+  return total === null || total === undefined ? '—' : total
+})
+
+const backupPercent = computed(() => {
+  const p = backupProgress.value
+  if (!p || p.tables_total === null || p.tables_total <= 0) return 0
+  return clampPct((p.tables_done / p.tables_total) * 100)
+})
+
+// 启动窗口内的快照明细仍是上一次 run 的数字,不作为当前进度展示
+const backupShowDetail = computed(() => {
+  if (!backupProgress.value) return false
+  return !backupStarting.value || backupRunning.value
+})
+
+// 状态语义与 progressStateLabel 同型:未知值回显原文
+function backupStateLabel(state: string): string {
+  switch (state) {
+    case 'running':
+      return t(M + 'backupRunning')
+    case 'ok':
+      return t(M + 'backupOk')
+    case 'failed':
+      return t(M + 'backupFailed')
+    case 'idle':
+      return t(M + 'backupIdle')
+    default:
+      return state
+  }
+}
+
+function formatElapsedSeconds(seconds: number | null | undefined): string {
+  if (seconds === null || seconds === undefined) return '—'
+  if (seconds < 90) return `${Math.round(seconds)}s`
+  return `${Math.floor(seconds / 60)}m ${Math.round(seconds % 60)}s`
+}
+
+async function refreshBackupProgress() {
+  try {
+    const res = await getBackupProgress()
+    const data = res.data.data
+    const wasRunning = backupRunning.value
+    backupProgress.value = data
+    if (data.state === 'running') {
+      // 新 run 的进度行已写出,退出启动窗口
+      backupStarting.value = false
+      ensureBackupPolling()
+    } else if (backupStarting.value && Date.now() < backupStartDeadline) {
+      // 启动窗口内:快照仍是上一次 run 的终态,保持轮询等新 run 上线
+      ensureBackupPolling()
+    } else {
+      backupStarting.value = false
+      stopBackupPolling()
+      // 终态:failed 落页内错误(不用 ElMessage),ok 收尾清错误
+      if (data.state === 'failed') {
+        backupError.value = data.message || t(M + 'backupRunFailed')
+      } else if (wasRunning) {
+        backupError.value = null
+      }
+    }
+  } catch (err) {
+    if (redirectIfForbidden(err)) return
+    // 503 等瞬时故障:保留旧数据,轮询由 interval 继续
+  }
+}
+
+function ensureBackupPolling() {
+  if (backupTimer === undefined) {
+    backupTimer = window.setInterval(() => void refreshBackupProgress(), PROGRESS_INTERVAL_MS)
+  }
+}
+
+function stopBackupPolling() {
+  if (backupTimer !== undefined) {
+    window.clearInterval(backupTimer)
+    backupTimer = undefined
+  }
+}
+
+async function onRunBackup() {
+  try {
+    await ElMessageBox.confirm(
+      t(M + 'backupConfirmBody'),
+      t(M + 'backupConfirmTitle'),
+      {
+        type: 'warning',
+        confirmButtonText: t(M + 'backupConfirmOk'),
+        cancelButtonText: t(M + 'backupConfirmCancel')
+      }
+    )
+  } catch {
+    return
+  }
+  backupRunLoading.value = true
+  backupError.value = null
+  try {
+    await runBackup()
+    // 进度端点此刻可能仍读到上一次 run 的终态:进入有界启动窗口,
+    // 立即拉一次进度并开启 3 秒轮询,窗口内按 running 呈现
+    backupStarting.value = true
+    backupStartDeadline = Date.now() + BACKUP_START_GRACE_MS
+    ensureBackupPolling()
+    void refreshBackupProgress()
+  } catch (err) {
+    if (redirectIfForbidden(err)) return
+    backupError.value = detailOf(err) || t(M + 'backupRunFailed')
+  } finally {
+    backupRunLoading.value = false
   }
 }
 
@@ -918,6 +1053,7 @@ if (isAdmin) {
   onMounted(() => {
     void refresh()
     void refreshProgress()
+    void refreshBackupProgress()
     void probeMetrics()
     // 注意:初始分区是「数据库」,不预拉 /metrics/host —— 该请求同样推进 host_metrics
     // 的模块级 _previous 状态,会扰动 /realtime 的速率计算(L4 事实)
@@ -926,6 +1062,7 @@ if (isAdmin) {
 
 onBeforeUnmount(() => {
   stopProgressPolling()
+  stopBackupPolling()
   stopMetricsPolling()
   stopHostPolling()
   if (probeTimer !== undefined) {
@@ -1793,6 +1930,61 @@ onBeforeUnmount(() => {
           </div>
         </template>
         <div class="text-sm text-gray-500 dark:text-gray-400">{{ t(M + 'retentionNote') }}</div>
+      </div>
+    </ElCard>
+
+    <!-- 手动备份:prod → adb2 全量备份,后台任务 + 进度轮询 -->
+    <ElCard shadow="never">
+      <template #header>
+        <div class="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
+          <span class="font-medium">{{ t(M + 'backupTitle') }}</span>
+          <ElButton
+            text bg
+            :loading="backupRunLoading || displayedBackupState === 'running'"
+            :disabled="displayedBackupState === 'running'"
+            @click="onRunBackup"
+          >
+            {{ t(M + 'backupRun') }}
+          </ElButton>
+        </div>
+      </template>
+      <div class="flex flex-col gap-4">
+        <ElAlert
+          v-if="backupError"
+          type="error"
+          show-icon
+          :closable="false"
+          :title="backupError"
+        />
+        <ElAlert
+          v-if="backupProgress"
+          :type="displayedBackupState === 'running' ? 'warning' : displayedBackupState === 'ok' ? 'success' : displayedBackupState === 'failed' ? 'error' : 'info'"
+          show-icon
+          :closable="false"
+          :title="backupStateLabel(displayedBackupState)"
+        >
+          <template #default v-if="backupShowDetail">
+            <div class="flex flex-col gap-2">
+              <div class="flex flex-wrap gap-x-6 gap-y-1 text-sm tabular-nums">
+                <span>{{ t(M + 'backupTables', { done: backupProgress.tables_done, total: backupTotalText }) }}</span>
+                <span>{{ t(M + 'backupRows', { rows: formatCount(backupProgress.rows_loaded) }) }}</span>
+              </div>
+              <div class="flex flex-wrap gap-x-6 gap-y-1 text-sm tabular-nums">
+                <span v-if="backupProgress.current_table">
+                  {{ t(M + 'backupCurrent', { table: backupProgress.current_table }) }}
+                </span>
+                <span>{{ t(M + 'backupElapsed', { time: formatElapsedSeconds(backupProgress.elapsed_seconds) }) }}</span>
+              </div>
+              <ElProgress
+                v-if="backupRunning && backupProgress.tables_total !== null && backupProgress.tables_total > 0"
+                :percentage="backupPercent"
+                :show-text="false"
+              />
+            </div>
+          </template>
+        </ElAlert>
+        <div v-else class="text-sm text-gray-500 dark:text-gray-400">{{ t(M + 'backupIdleEmpty') }}</div>
+        <div class="text-sm text-gray-500 dark:text-gray-400">{{ t(M + 'backupNote') }}</div>
       </div>
     </ElCard>
     </template>

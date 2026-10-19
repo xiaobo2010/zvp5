@@ -394,7 +394,7 @@ onMounted(async () => {
               >
                 <ZVerticalNav v-if="verticalMode && userStore.isLogin" class="pl-6" />
                 <ElDivider v-if="verticalMode && userStore.isLogin" direction="vertical" />
-                <ElIcon style="border-radius: .25rem;"><img src="/favicon.ico" class="scale-50" style="border-radius: 20%;" alt="favicon" /></ElIcon>
+                <ElIcon style="width: 28px; height: 28px; font-size: 28px; flex-shrink: 0; border-radius: .25rem; overflow: hidden;"><img src="/favicon.ico" style="width: 28px; height: 28px; border-radius: 20%;" alt="favicon" /></ElIcon>
                 <span class="lh-100% ml-2">{{ headerStore.header }}</span>
               </div>
             </ElCol>
