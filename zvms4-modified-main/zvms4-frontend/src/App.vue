@@ -37,13 +37,16 @@ const { needRefresh, offlineReady, updateServiceWorker } = useRegisterSW()
 const online = useOnline()
 const cached = ref(localStorage.getItem('cached'))
 
-// reload once when a NEW service worker takes control (skip first install)
+// 新 SW 接管(controllerchange)时刷新一次。skipWaiting + clientsClaim 会立即接管,
+// 所以部署后无需等下一次导航。首次安装时页面本来就没有 controller(hadController
+// 为 false),不刷新;reloaded 保证只 reload 一次,避免重复刷新。
 if ('serviceWorker' in navigator) {
   const hadController = !!navigator.serviceWorker.controller
+  let reloaded = false
   navigator.serviceWorker.addEventListener('controllerchange', () => {
-    if (hadController) {
-      window.location.reload()
-    }
+    if (!hadController || reloaded) return
+    reloaded = true
+    window.location.reload()
   })
 }
 
