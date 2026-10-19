@@ -4,6 +4,8 @@
 > 基线仓库：`zvms4-modified-main/`（GitHub `xiaobo2010/zvp5`），HEAD `0ada10b`。
 > 来源：三只读勘察泳道（Oracle 持久化约定 / 上传·鉴权·前端现状 / 照片上传最佳实践）+ 一轮 oracle 安全审计。
 
+> **路径策略变更（2026-10-19）**：本文档只覆盖附件上传（Oracle BLOB），不涉及系统文件管理。另行修订：`/api/system/files` 的**系统目录黑名单已放开**（`/etc`、`/root`、`/usr`、`/dev`、`/var/lib/*` 等由 OS 权限裁决），仅保留 `/proc`、`/sys` 两个虚拟文件系统保护。详见 `V4242_STAGE2_CONTRACT.md` §3.3。
+
 ---
 
 ## 0. TL;DR（已锁定）

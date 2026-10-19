@@ -6,46 +6,33 @@
 安全模型（按契约 §3.2 逐条落地）：
 
 * 输入必须是绝对路径；``os.path.realpath`` 先展开 ``..`` 与符号链接，**再**判定
-  黑名单。顺序不能反：``/etc/../etc/passwd``、``/tmp/link -> /etc`` 这类只有在
-  解析之后才看得出真实落点。
-* 黑名单按「路径段」匹配（``/etc`` 命中 ``/etc`` 与 ``/etc/passwd``，但不命中
-  ``/etcfoo``）；命中即拒绝，读也不许，避免 ``/proc`` 类信息泄漏。
+  虚拟文件系统。顺序不能反：``/proc/self/../self/environ``、``/tmp/link -> /proc``
+  这类只有在解析之后才看得出真实落点。
+* 全盘放开（``/etc`` / ``/root`` / ``/usr`` / ``/dev`` / ``/var/lib/*`` 等都可读写），
+  实际能不能操作由 OS 权限决定：进程是 ``www``，写不动自然得到 403。
+* 唯一保留的拒绝面是 ``/proc``、``/sys`` 两个**虚拟文件系统**：``/proc/self/environ``
+  之类会泄露后端进程的环境变量（含数据库口令），不属于「用户文件」。按「路径段」
+  匹配（``/proc`` 命中 ``/proc`` 与 ``/proc/self/environ``，但不命中 ``/procfs``）。
 * 拒绝 NUL / 换行：路径最终会进系统调用与审计日志，控制字符只会带来歧义。
+* 所有同步文件 IO 都可能被路由层放进线程池执行（见 ``routers/system_files_router``），
+  本模块自身保持同步，方便离线测试。
 """
 
 from __future__ import annotations
 
+import asyncio
+import heapq
 import os
 import shutil
 import stat as stat_module
 import tempfile
 from typing import Awaitable, BinaryIO, Callable
 
-# 契约 §3.3：读写全禁。注意每个条目都是「路径段」锚点，不做裸字符串前缀比较。
-BLOCKED_PREFIXES: tuple[str, ...] = (
-    "/proc",
-    "/sys",
-    "/dev",
-    "/boot",
-    "/efi",
-    "/run",
-    "/lost+found",
-    "/etc",
-    "/root",
-    "/usr",
-    "/bin",
-    "/sbin",
-    "/lib",
-    "/lib32",
-    "/lib64",
-    "/libx32",
-    "/var/lib/docker",
-    "/var/lib/systemd",
-    "/var/lib/containerd",
-    "/var/lib/mysql",
-    "/snap",
-    "/var/snap",
-)
+# 契约 §3.3（2026-10-19 修订）：系统目录黑名单已放开，只保留两个虚拟文件系统的
+# 保护。``/proc/self/environ``、``/proc/self/cmdline`` 会泄露后端进程的环境变量，
+# 不属于「用户文件」；``/sys`` 同属内核虚拟视图，一起保留。
+# 其余路径（``/etc``、``/root``、``/usr``、``/dev``、``/var/lib/*`` …）由 OS 权限裁决。
+VIRTUAL_FS_PREFIXES: tuple[str, ...] = ("/proc", "/sys")
 
 # 下载上限：256MB 是「能一次性交给浏览器且不撑爆 1.8G 小内存机器」的经验上限；
 # 更大的文件应该走 SSH 终端里的 rsync/scp。
@@ -54,6 +41,10 @@ MAX_DOWNLOAD_BYTES = 256 * 1024 * 1024
 MAX_UPLOAD_BYTES = 100 * 1024 * 1024
 # 单页上限：契约 §3.1，避免一次 scandir 结果全量返回打满前端表格。
 MAX_LIST_LIMIT = 2000
+# 保留窗口上限：目录再大也只维护「offset + limit」个候选条目（不超过此值）在内存里，
+# 用 heapq.nsmallest 边扫边淘汰。10 万条目的目录不会因为排序把整张名单物化进内存。
+# 超过该窗口的深分页返回空页；``total`` 仍是精确值（仍会完整枚举一遍目录）。
+MAX_LIST_WINDOW = 20000
 # 递归删除前的条目数闸门：超过就先拒绝，避免一次误操作拖垮机器。
 MAX_RECURSIVE_ENTRIES = 10000
 
@@ -79,16 +70,16 @@ def _reject_illegal_input(raw: str) -> None:
         raise FileOpError(400, "仅接受绝对路径")
 
 
-def _is_blocked(path: str) -> bool:
-    """按路径段判断黑名单：``/etcfoo`` 不能被 ``/etc`` 误杀。"""
-    for blocked in BLOCKED_PREFIXES:
+def _is_virtual_fs(path: str) -> bool:
+    """按路径段判断虚拟文件系统：``/procfs`` 不能被 ``/proc`` 误杀。"""
+    for blocked in VIRTUAL_FS_PREFIXES:
         if path == blocked or path.startswith(blocked + "/"):
             return True
     return False
 
 
 def resolve_path(raw: str) -> str:
-    """把请求路径解析成真实绝对路径，并过黑名单。"""
+    """把请求路径解析成真实绝对路径，并拦截虚拟文件系统。"""
     _reject_illegal_input(raw)
 
     resolved = os.path.realpath(raw)
@@ -97,10 +88,10 @@ def resolve_path(raw: str) -> str:
     if not os.path.isabs(resolved):
         raise FileOpError(400, "仅接受绝对路径")
 
-    # ``..`` 在 realpath 阶段已经展开：从 ``/`` 起算无法逃出根，落到受保护目录
-    # 的路径在这里被拦下（例如 ``/tmp/../../../etc/passwd``）。
-    if _is_blocked(resolved):
-        raise FileOpError(403, "该路径受保护，禁止访问")
+    # ``..`` 在 realpath 阶段已经展开：从 ``/`` 起算无法逃出根，落到 ``/proc`` /
+    # ``/sys`` 的路径在这里被拦下（例如 ``/tmp/../../../proc/self/environ``）。
+    if _is_virtual_fs(resolved):
+        raise FileOpError(403, "虚拟文件系统不可访问")
     return resolved
 
 
@@ -125,14 +116,14 @@ def resolve_entry_path(raw: str) -> tuple[str, str]:
     parent = os.path.realpath(os.path.dirname(stripped))
     if not os.path.isabs(parent):
         raise FileOpError(400, "仅接受绝对路径")
-    if _is_blocked(parent):
-        raise FileOpError(403, "该路径受保护，禁止访问")
+    if _is_virtual_fs(parent):
+        raise FileOpError(403, "虚拟文件系统不可访问")
 
     entry = os.path.join(parent, name)
     target = os.path.realpath(entry)
-    # 链接目标同样要过黑名单：``/tmp/link -> /etc`` 不允许通过链接间接读写。
-    if _is_blocked(target):
-        raise FileOpError(403, "该路径受保护，禁止访问")
+    # 链接目标同样要过虚拟文件系统检查：``/tmp/link -> /proc`` 不允许借链接绕过。
+    if _is_virtual_fs(target):
+        raise FileOpError(403, "虚拟文件系统不可访问")
     return entry, target
 
 
@@ -172,25 +163,41 @@ def _describe(name: str, path: str) -> dict:
 
 
 def list_dir(path: str, *, offset: int = 0, limit: int = 500) -> dict:
-    """目录列表：目录在前、按名排序，不递归统计。"""
+    """目录列表：目录在前、按名排序，不递归统计。
+
+    大目录策略（2026-10-19）：不再把全部条目收进 list 再排序，而是用
+    ``heapq.nsmallest`` 只维护 ``offset + limit`` 个最小候选（上限
+    :data:`MAX_LIST_WINDOW`）。内存从 O(目录规模) 降到 O(page depth)。
+    ``total`` 仍要求精确，所以目录仍会被完整枚举一遍；但从 ``scandir`` 到
+    ``total`` 只有一次顺序读，远轻于「全量 list + sort + 逐条 stat」。
+    深分页超过窗口时返回空 ``entries``，这是有意的取舍：前端分页是 500/页，
+    不会走到 2 万条之后。
+    """
     resolved = resolve_path(path)
     if offset < 0:
         raise FileOpError(400, "offset 不能为负")
     if limit < 1:
         raise FileOpError(400, "limit 必须大于 0")
     limit = min(limit, MAX_LIST_LIMIT)
+    window = min(offset + limit, MAX_LIST_WINDOW)
 
-    entries: list[tuple[str, bool]] = []
-    try:
+    total = 0
+
+    def _keyed_entries():
+        nonlocal total
         with os.scandir(resolved) as iterator:
             for entry in iterator:
+                total += 1
                 # 只取名字与「是否目录」，stat 留到分页之后再打：大目录里
                 # 对十万个条目逐个 stat 是纯粹的浪费。
                 try:
                     is_dir = entry.is_dir(follow_symlinks=False)
                 except OSError:
                     is_dir = False
-                entries.append((entry.name, is_dir))
+                yield (not is_dir, entry.name)
+
+    try:
+        retained = heapq.nsmallest(window, _keyed_entries())
     except NotADirectoryError:
         raise FileOpError(400, "目标不是目录")
     except FileNotFoundError:
@@ -198,9 +205,7 @@ def list_dir(path: str, *, offset: int = 0, limit: int = 500) -> dict:
     except PermissionError:
         raise FileOpError(403, "权限不足，无法列出该目录")
 
-    entries.sort(key=lambda item: (not item[1], item[0]))
-    total = len(entries)
-    page = entries[offset : offset + limit]
+    page = retained[offset : offset + limit]
 
     return {
         "path": resolved,
@@ -208,7 +213,7 @@ def list_dir(path: str, *, offset: int = 0, limit: int = 500) -> dict:
         "limit": limit,
         "total": total,
         "entries": [
-            _describe(name, os.path.join(resolved, name)) for name, _ in page
+            _describe(name, os.path.join(resolved, name)) for _, name in page
         ],
     }
 
@@ -284,24 +289,25 @@ async def save_upload(
 
     ``os.replace`` 保证任何时刻目标路径要么是旧文件、要么是完整新文件，不会出现
     被进程重启/磁盘满截断的半成品。超限时删掉临时文件并 413。
+
+    落盘的每个同步调用（realpath/isdir/stat/mkstemp/write/chmod/replace）都放进
+    线程池：100MB 文件按 64KB 分片，一次 ``write`` 通常只是写页缓存，但事件循环
+    仍不该替它等磁盘。
     """
-    resolved_dir = resolve_path(directory)
-    if not os.path.isdir(resolved_dir):
+    resolved_dir = await asyncio.to_thread(resolve_path, directory)
+    if not await asyncio.to_thread(os.path.isdir, resolved_dir):
         raise FileOpError(404, "目标目录不存在")
 
     name = _safe_upload_name(filename)
     target = os.path.join(resolved_dir, name)
-    if not overwrite and os.path.lexists(target):
+    if not overwrite and await asyncio.to_thread(os.path.lexists, target):
         raise FileOpError(409, "同名文件已存在")
 
     # 覆盖时沿用目标文件的权限位：上传替换 web 资源不能把它变成 0600。
-    try:
-        existing_mode = stat_module.S_IMODE(os.stat(target).st_mode)
-    except OSError:
-        existing_mode = 0o644
+    existing_mode = await asyncio.to_thread(_existing_mode, target)
 
     try:
-        fd, temp_path = tempfile.mkstemp(dir=resolved_dir, prefix=_UPLOAD_TEMP_PREFIX)
+        fd, temp_path = await asyncio.to_thread(_make_temp_file, resolved_dir)
     except PermissionError:
         raise FileOpError(403, "权限不足，无法写入该目录")
     except OSError as exc:
@@ -309,7 +315,8 @@ async def save_upload(
 
     written = 0
     try:
-        with os.fdopen(fd, "wb") as handle:
+        handle = os.fdopen(fd, "wb")
+        try:
             while True:
                 chunk = await reader(CHUNK_SIZE)
                 if not chunk:
@@ -317,20 +324,37 @@ async def save_upload(
                 written += len(chunk)
                 if written > MAX_UPLOAD_BYTES:
                     raise FileOpError(413, "文件超过 100MB 上传上限")
-                handle.write(chunk)
-        os.chmod(temp_path, existing_mode)
-        os.replace(temp_path, target)
+                await asyncio.to_thread(handle.write, chunk)
+        finally:
+            await asyncio.to_thread(handle.close)
+        await asyncio.to_thread(os.chmod, temp_path, existing_mode)
+        await asyncio.to_thread(os.replace, temp_path, target)
     except FileOpError:
-        _discard(temp_path)
+        await asyncio.to_thread(_discard, temp_path)
         raise
     except PermissionError:
-        _discard(temp_path)
+        await asyncio.to_thread(_discard, temp_path)
         raise FileOpError(403, "权限不足，无法写入该目录")
     except OSError as exc:
-        _discard(temp_path)
+        await asyncio.to_thread(_discard, temp_path)
         raise FileOpError(400, f"写入失败：{exc.strerror or exc}")
+    except BaseException:
+        # 客户端断开（ClientDisconnect / CancelledError）也要清掉临时文件。
+        await asyncio.to_thread(_discard, temp_path)
+        raise
 
     return {"path": target, "name": name, "size": written, "overwritten": overwrite}
+
+
+def _existing_mode(target: str) -> int:
+    try:
+        return stat_module.S_IMODE(os.stat(target).st_mode)
+    except OSError:
+        return 0o644
+
+
+def _make_temp_file(directory: str) -> tuple[int, str]:
+    return tempfile.mkstemp(dir=directory, prefix=_UPLOAD_TEMP_PREFIX)
 
 
 def _discard(path: str) -> None:
