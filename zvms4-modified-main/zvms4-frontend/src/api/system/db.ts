@@ -446,3 +446,35 @@ export interface DbMetricsEndpointsResponse {
   code: number
   data: DbMetricsEndpointsData
 }
+
+// —— 手动备份:prod → adb2 全量备份,后台任务 + 进度轮询 ——
+
+export type BackupState = 'idle' | 'running' | 'ok' | 'failed'
+
+export interface BackupProgressData {
+  state: BackupState
+  started_at: string | null
+  finished_at: string | null
+  tables_total: number | null
+  tables_done: number
+  rows_loaded: number
+  current_table: string | null
+  elapsed_seconds: number | null
+  message: string
+}
+
+export interface BackupProgressResponse {
+  status: string
+  code: number
+  data: BackupProgressData
+}
+
+// 启动手动备份(立即返回,进度经备份进度端点轮询)
+export function runBackup() {
+  return axios.post<BackupProgressResponse>('/system/db/backup/run')
+}
+
+// 读取手动备份进度快照
+export function getBackupProgress() {
+  return axios.get<BackupProgressResponse>('/system/db/backup/progress')
+}

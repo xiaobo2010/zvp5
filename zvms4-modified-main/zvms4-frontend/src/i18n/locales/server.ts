@@ -213,6 +213,24 @@ export const zhCN = {
     lastRunBatches: '批次',
     retentionNote:
       '应用日志与导出任务按各自配置的保留期清理；安全告警等白名单类型与 warning 级日志不参与清理；导出任务仅清理已完成与已失败的过期任务。各表实际截止时间以上方预览为准。',
+    backupTitle: '手动备份',
+    backupRun: '手动备份',
+    backupConfirmTitle: '手动备份',
+    backupConfirmBody: '将主库全部数据同步到 adb2，期间不要关闭服务，预计约 15 分钟。确认执行备份？',
+    backupConfirmOk: '执行备份',
+    backupConfirmCancel: '取消',
+    backupRunFailed: '执行失败，请稍后重试',
+    backupRunning: '正在备份',
+    backupOk: '备份完成',
+    backupFailed: '备份失败',
+    backupIdle: '未执行',
+    backupFailedDetail: '失败原因 {message}',
+    backupTables: '已完成 {done} / {total} 张表',
+    backupRows: '已读取 {rows} 行',
+    backupCurrent: '当前表 {table}',
+    backupElapsed: '已用时 {time}',
+    backupIdleEmpty: '尚未执行备份。',
+    backupNote: '将生产主库全量复制到 adb2 备份库，备份期间可在上方查看进度。',
     perfSeries: {
       host: {
         cpu: {

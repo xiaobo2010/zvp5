@@ -1,5 +1,6 @@
 import os
 import re
+import logging
 from collections import defaultdict
 from typing import Any, cast
 import tarfile
@@ -16,7 +17,13 @@ from config import (
 )
 from db import backends
 from db.oracle.session import session_scope
-from util.statement import create_statement_from_kernel_data, TRANSLATIONS
+from util.statement import (
+    build_statement_data,
+    write_statement_json,
+    TRANSLATIONS,
+)
+
+_logger = logging.getLogger(__name__)
 
 
 async def generate_reports():
@@ -25,65 +32,79 @@ async def generate_reports():
     db_id = await backends.get_daily_exports_repo().insert(
         {"created_at": datetime.now(), "status": "processing", "data": []}
     )
-    if not os.path.exists("./export"):
-        os.makedirs("./export")
-    else:
-        for item in os.listdir("./export"):
-            item_path = os.path.join("./export", item)
-            if os.path.isdir(item_path):
-                for file in os.listdir(item_path):
-                    file_path = os.path.join(item_path, file)
-                    if file.endswith(".pdf"):
-                        os.remove(file_path)
-                os.rmdir(item_path)
-    for class_id in classes:
-        users = await backends.get_users_repo().list_by_class(class_id["_id"])
-        os.makedirs(f'./export/{class_id["name"]}', exist_ok=True)
-        for user in users:
-            user_id = str(user["id"])
-            entry = int(user_id[:4])
-            soy = datetime.now().replace(
-                month=8, day=1, year=entry, hour=0, minute=0, second=0, microsecond=0
+    try:
+        if not os.path.exists("./export"):
+            os.makedirs("./export")
+        else:
+            for item in os.listdir("./export"):
+                item_path = os.path.join("./export", item)
+                if os.path.isdir(item_path):
+                    for file in os.listdir(item_path):
+                        file_path = os.path.join(item_path, file)
+                        if file.endswith((".pdf", ".json")):
+                            os.remove(file_path)
+                    os.rmdir(item_path)
+        for class_id in classes:
+            users = await backends.get_users_repo().list_by_class(class_id["_id"])
+            class_dir = f'./export/{class_id["name"]}'
+            os.makedirs(class_dir, exist_ok=True)
+            for user in users:
+                user_id = str(user["id"])
+                entry = int(user_id[:4])
+                soy = datetime.now().replace(
+                    month=8, day=1, year=entry, hour=0, minute=0, second=0, microsecond=0
+                )
+                eoy = datetime.now().replace(
+                    month=7,
+                    day=31,
+                    year=entry + 3,
+                    hour=23,
+                    minute=59,
+                    second=59,
+                    microsecond=999999,
+                )
+                os.makedirs(class_dir, exist_ok=True)
+                filename = f'{class_dir}/{user["id"]}_{user["name"]}.json'
+                volunteer_data, spreadsheet = await build_statement_data(
+                    str(user["_id"]),
+                    (soy, eoy),
+                    language="zh",
+                )
+                write_statement_json(volunteer_data, spreadsheet, filename)
+                await backends.get_daily_exports_repo().push_data(
+                    db_id,
+                    {
+                        **spreadsheet,
+                        "filename": filename,
+                    },
+                )
+                print(
+                    f"Exported statement for {user['name']} in class {class_id['name']} (saved to {filename})."
+                )
+            print(f"Exported statements for class {class_id['name']}.")
+        # Create a tar.gz archive of the export directory
+        spreadsheet_items = await backends.get_daily_exports_repo().find_one(db_id)
+        spreadsheet_items = spreadsheet_items.get("data", [])
+        df = pd.DataFrame(spreadsheet_items)
+        df.rename(columns=TRANSLATIONS["zh"]["spreadsheet"], inplace=True)
+        if os.path.exists("./export/summary.xlsx"):
+            os.remove("./export/summary.xlsx")
+        df.to_excel(f"./export/summary.xlsx", index=False)
+        os.makedirs("./data", exist_ok=True)
+        if os.path.exists("./data/export.tar.gz"):
+            os.remove("./data/export.tar.gz")
+        with tarfile.open("./data/export.tar.gz", "w:gz") as tar:
+            tar.add("./export", arcname="export")
+        return "./data/export.tar.gz"
+    except Exception:
+        _logger.exception("Failed to generate daily reports")
+        try:
+            await backends.get_daily_exports_repo().update_fields(
+                db_id, {"status": "failed"}
             )
-            eoy = datetime.now().replace(
-                month=7,
-                day=31,
-                year=entry + 3,
-                hour=23,
-                minute=59,
-                second=59,
-                microsecond=999999,
-            )
-            filename, spreadsheet = await create_statement_from_kernel_data(
-                str(user["_id"]),
-                (soy, eoy),
-                filename=f'./export/{class_id['name']}/{user['id']}_{user["name"]}.pdf',
-                language="zh",
-            )
-            await backends.get_daily_exports_repo().push_data(
-                db_id,
-                {
-                    **spreadsheet,
-                    "filename": filename,
-                },
-            )
-            print(
-                f"Exported statement for {user['name']} in class {class_id['name']} (saved to {filename})."
-            )
-        print(f"Exported statements for class {class_id['name']}.")
-    # Create a tar.gz archive of the export directory
-    spreadsheet_items = await backends.get_daily_exports_repo().find_one(db_id)
-    spreadsheet_items = spreadsheet_items.get("data", [])
-    df = pd.DataFrame(spreadsheet_items)
-    df.rename(columns=TRANSLATIONS["zh"]["spreadsheet"], inplace=True)
-    if os.path.exists("./export/summary.xlsx"):
-        os.remove("./export/summary.xlsx")
-    df.to_excel(f"./export/summary.xlsx", index=False)
-    if os.path.exists("./data/export.tar.gz"):
-        os.remove("./data/export.tar.gz")
-    with tarfile.open("./data/export.tar.gz", "w:gz") as tar:
-        tar.add("./export", arcname="export")
-    return "./data/export.tar.gz"
+        except Exception:
+            _logger.exception("Failed to mark the daily export row as failed")
+        raise
 
 
 def describe_percentile(items: np.ndarray, step: int, bound: float) -> dict[str, float]:
