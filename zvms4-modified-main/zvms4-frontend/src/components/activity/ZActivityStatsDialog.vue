@@ -33,12 +33,13 @@ import { useChartTheme } from '@/utils/chartTheme'
 import {
   buildStatisticsCsv,
   formatBinLabel,
-  mergeClassRows,
+  orderClassRowsForChart,
   statisticsFileName,
   type StatisticsCsvLabels
 } from '@/utils/activityStatistics'
 import type {
   ActivityStatistics,
+  ActivityStatisticsClassGroup,
   ActivityStatisticsDescription,
   StatisticsMemberRef
 } from '@/../types'
@@ -65,7 +66,6 @@ const chartTheme = useChartTheme()
 
 const STATS_CACHE_TTL_MS = 5 * 60 * 1000
 const STATS_CACHE_MAX = 20
-const CLASS_CHART_LIMIT = 12
 const DISTRIBUTION_CHART_HEIGHT = 280
 const ROSTER_TOOLTIP_LIMIT = 6
 
@@ -226,6 +226,7 @@ const csvLabels = computed<StatisticsCsvLabels>(() => ({
   mode: t('activity.statistics.groups.mode'),
   className: t('activity.statistics.groups.class'),
   unnamedClass: t('activity.statistics.groups.unnamedClass'),
+  unknownClass: t('activity.statistics.groups.unknownClass'),
   modeNames: modeLabels.value
 }))
 
@@ -394,26 +395,26 @@ const modeOptions = computed<ChartOptions<'doughnut'>>(() => ({
 }))
 
 const classRows = computed(() => {
-  const merged = mergeClassRows(
-    statistics.value?.classes ?? [],
-    CLASS_CHART_LIMIT,
-    t('activity.statistics.groups.other')
-  )
-  const named = merged.filter((row) => row.group_name !== '' && row.group_oid !== 'other')
-  const pinned = merged.filter((row) => row.group_name === '' || row.group_oid === 'other')
-  return [...named].sort((a, b) => a.sum - b.sum).concat(pinned)
+  return orderClassRowsForChart(statistics.value?.classes ?? [])
 })
 
 const classChartHeight = computed(() => Math.max(classRows.value.length, 1) * 32 + 48)
+
+function classLabel(row: ActivityStatisticsClassGroup): string {
+  if (row.group_oid === '') {
+    return t('activity.statistics.groups.unnamedClass')
+  }
+  return row.group_name || t('activity.statistics.groups.unknownClassWithId', {
+    id: row.group_oid.slice(-6)
+  })
+}
 
 const classChart = computed<ChartData<'bar', number[], string> | null>(() => {
   if (classRows.value.length === 0) {
     return null
   }
   return {
-    labels: classRows.value.map((row) =>
-      row.group_name === '' ? t('activity.statistics.groups.unnamedClass') : row.group_name
-    ),
+    labels: classRows.value.map(classLabel),
     datasets: [{ data: classRows.value.map((row) => row.sum) }]
   }
 })

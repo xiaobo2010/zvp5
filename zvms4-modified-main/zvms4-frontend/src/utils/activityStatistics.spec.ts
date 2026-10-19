@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   buildStatisticsCsv,
   formatBinLabel,
-  mergeClassRows,
+  orderClassRowsForChart,
   statisticsFileName,
   type StatisticsCsvLabels
 } from './activityStatistics'
@@ -28,6 +28,7 @@ const labels: StatisticsCsvLabels = {
   mode: '参与模式',
   className: '班级',
   unnamedClass: '未分班',
+  unknownClass: '未知班级',
   modeNames: { 'on-campus': '校内义工' }
 }
 
@@ -116,7 +117,7 @@ describe('buildStatisticsCsv', () => {
       '分组-班级\r\n' +
       '班级,人数,总时长\r\n' +
       '高一(1)班,5,6\r\n' +
-      '未分班,1,0.5'
+      '未知班级（g2）,1,0.5'
 
     const csv = buildStatisticsCsv(fixture, labels)
 
@@ -173,7 +174,7 @@ describe('buildStatisticsCsv', () => {
       '分组-班级\r\n' +
       '班级,人数,总时长\r\n' +
       '"李四, 高一(2)""班""",1,1\r\n' +
-      '未分班,1,1'
+      '未知班级（b）,1,1'
 
     expect(buildStatisticsCsv(stats, labels)).toBe(expected)
   })
@@ -251,7 +252,7 @@ describe('buildStatisticsCsv', () => {
   })
 })
 
-describe('mergeClassRows', () => {
+describe('orderClassRowsForChart', () => {
   const classRow = (index: number): ActivityStatisticsClassGroup => ({
     group_oid: `g${index}`,
     group_name: `班级${index}`,
@@ -260,45 +261,40 @@ describe('mergeClassRows', () => {
     mean: index > 0 ? 0.5 : 0
   })
 
-  it('folds the surplus rows into a trailing other row', () => {
+  it('keeps every named class instead of folding extra classes into other', () => {
     const rows = Array.from({ length: 13 }, (_, index) => classRow(index + 1))
 
-    const merged = mergeClassRows(rows, 12, '其他')
+    const ordered = orderClassRowsForChart(rows)
 
-    expect(merged).toHaveLength(13)
-    expect(merged.slice(0, 12)).toEqual(rows.slice(0, 12))
-    expect(merged[12]).toEqual({
-      group_oid: 'other',
-      group_name: '其他',
-      count: 13,
-      sum: 6.5,
-      mean: 0.5
-    })
+    expect(ordered).toHaveLength(13)
+    expect(ordered.map((row) => row.group_oid)).not.toContain('other')
+    expect(new Set(ordered.map((row) => row.group_oid))).toEqual(
+      new Set(rows.map((row) => row.group_oid))
+    )
   })
 
-  it('sums every dropped row into the other row', () => {
-    const rows = Array.from({ length: 5 }, (_, index) => classRow(index + 1))
+  it('sorts named classes by total duration and pins class-less rows last', () => {
+    const rows = [
+      classRow(5),
+      { group_oid: '', group_name: '', count: 9, sum: 99, mean: 11 },
+      classRow(1),
+      classRow(3)
+    ]
 
-    const merged = mergeClassRows(rows, 2, '其他')
+    const ordered = orderClassRowsForChart(rows)
 
-    expect(merged).toHaveLength(3)
-    expect(merged.slice(0, 2)).toEqual(rows.slice(0, 2))
-    expect(merged[2]).toEqual({
-      group_oid: 'other',
-      group_name: '其他',
-      count: 12,
-      sum: 6,
-      mean: 0.5
-    })
+    expect(ordered.map((row) => row.group_oid)).toEqual(['g1', 'g3', 'g5', ''])
   })
 
-  it('keeps the input untouched when it fits the limit', () => {
-    const rows = Array.from({ length: 12 }, (_, index) => classRow(index + 1))
-
-    expect(mergeClassRows(rows, 12, '其他')).toEqual(rows)
+  it('keeps unresolved class records separate from class-less users', () => {
+    const rows = [
+      { group_oid: 'missing', group_name: '', count: 1, sum: 2, mean: 2 },
+      { group_oid: '', group_name: '', count: 1, sum: 1, mean: 1 }
+    ]
+    expect(orderClassRowsForChart(rows)).toEqual(rows)
   })
 
   it('returns an empty array for an empty input', () => {
-    expect(mergeClassRows([], 12, '其他')).toEqual([])
+    expect(orderClassRowsForChart([])).toEqual([])
   })
 })
