@@ -16,10 +16,10 @@
   --zv-hairline: #e5e5e5;
   --zv-hairline-strong: #d4d4d4;
 
-  /* —— 圆角:数据表/按钮 0–2px —— */
-  --el-border-radius-base: 2px;
-  --el-border-radius-small: 2px;
-  --el-border-radius-round: 2px;
+  /* —— 圆角:数据表保持硬边,表面组件适度圆角 —— */
+  --el-border-radius-base: 6px;
+  --el-border-radius-small: 4px;
+  --el-border-radius-round: 6px;
 
   /* —— Element Plus 表面对接 —— */
   --el-bg-color: #ffffff;
@@ -39,8 +39,9 @@
   /* 单一强调色:蓝(白字对比度约 5.2:1 >= 4.5:1) */
   --zv-accent: #1667d9;
 
-  /* 表单控件高度下限 >= 34px */
+  /* 表单控件高度下限 >= 34px(默认 36,小型 34) */
   --el-component-size: 36px;
+  --el-component-size-small: 34px;
 }
 
 html.dark {
@@ -83,10 +84,18 @@ body {
   font-size: 18px;
 }
 
-/* 页面标题(PageHeader 内容区):22px */
+/* 页面标题(PageHeader 内容区):20px 单行,窄屏不折行
+   左侧容器必须可收缩,否则 nowrap 会把右侧子页签顶出容器 */
+.el-page-header__left {
+  min-width: 0;
+}
+
 .el-page-header__content {
-  font-size: 22px;
+  font-size: 20px;
   line-height: 1.35;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* ---------- 微标签(字段名/表头) ---------- */
@@ -128,11 +137,11 @@ body {
 .el-card {
   --el-card-bg-color: var(--zv-surface);
   --el-card-border-color: var(--zv-hairline);
-  --el-card-border-radius: 2px;
+  --el-card-border-radius: 8px;
   --el-card-padding: 16px;
   border-width: 1px;
   border-style: solid;
-  border-radius: 2px;
+  border-radius: 8px;
   box-shadow: none;
 }
 
@@ -155,7 +164,7 @@ body {
 }
 
 .el-descriptions.is-bordered {
-  border-radius: 2px;
+  border-radius: 6px;
   --el-descriptions-item-bordered-label-background: var(--zv-surface-alt);
 }
 
@@ -174,14 +183,14 @@ body {
 .el-dialog {
   --el-dialog-bg-color: var(--zv-surface);
   border: 1px solid var(--zv-hairline);
-  border-radius: 2px;
+  border-radius: 8px;
   box-shadow: 0 1px 0 0 rgba(0, 0, 0, 0.12);
 }
 
 .el-message-box {
   --el-messagebox-bg-color: var(--zv-surface);
   border: 1px solid var(--zv-hairline);
-  border-radius: 2px;
+  border-radius: 8px;
   box-shadow: 0 1px 0 0 rgba(0, 0, 0, 0.12);
 }
 
@@ -192,14 +201,14 @@ body {
 .el-message {
   --el-message-bg-color: var(--zv-surface);
   border: 1px solid var(--zv-hairline);
-  border-radius: 2px;
+  border-radius: 8px;
   box-shadow: 0 1px 0 0 rgba(0, 0, 0, 0.12);
 }
 
 .el-notification {
   --el-notification-bg-color: var(--zv-surface);
   border: 1px solid var(--zv-hairline);
-  border-radius: 2px;
+  border-radius: 8px;
   box-shadow: 0 1px 0 0 rgba(0, 0, 0, 0.12);
 }
 
@@ -207,7 +216,7 @@ body {
 .el-popper.is-light {
   background: var(--el-bg-color-overlay);
   border: 1px solid var(--zv-hairline);
-  border-radius: 2px;
+  border-radius: 8px;
   box-shadow: 0 1px 0 0 rgba(0, 0, 0, 0.12);
 }
 
@@ -279,15 +288,25 @@ body {
 /* ---------- 按钮 / 标签 / 分页 / 表单 ---------- */
 
 .el-button {
-  --el-button-border-radius: 2px;
+  --el-button-border-radius: 6px;
 }
 
 .el-button.is-text {
-  border-radius: 2px;
+  border-radius: 6px;
+}
+
+/* 小号控件高度 >= 34px:可点面积与可读性 */
+.el-button--small {
+  --el-button-size: var(--el-component-size-small);
+}
+
+/* 行内密集的纯图标小按钮允许略收(<=32px) */
+.el-button--small:has(> .el-icon):not(:has(> span)) {
+  height: 32px;
 }
 
 .el-tag {
-  border-radius: 1px;
+  border-radius: 4px;
   font-weight: 500;
   letter-spacing: 0.02em;
 }
@@ -299,7 +318,7 @@ body {
 
 .el-pagination button,
 .el-pagination .el-pager li {
-  border-radius: 1px;
+  border-radius: 4px;
   font-variant-numeric: tabular-nums;
 }
 
@@ -317,7 +336,7 @@ body {
 }
 
 .el-input__wrapper {
-  border-radius: 2px;
+  border-radius: 6px;
 }
 
 .el-input__inner {
@@ -335,7 +354,11 @@ html.dark .el-input__wrapper {
 }
 
 .el-select__wrapper {
-  border-radius: 2px;
+  border-radius: 6px;
+}
+
+.el-select--small .el-select__wrapper {
+  min-height: var(--el-component-size-small);
 }
 
 html.dark .el-select__wrapper {
@@ -343,13 +366,13 @@ html.dark .el-select__wrapper {
 }
 
 .el-textarea__inner {
-  border-radius: 2px;
+  border-radius: 6px;
 }
 
 /* ---------- 骨架屏 / 进度条 ---------- */
 
 .el-skeleton__item {
-  border-radius: 1px;
+  border-radius: 4px;
 }
 
 .el-progress-bar__outer {
@@ -362,10 +385,26 @@ html.dark .el-select__wrapper {
 
 /* ---------- 其他 ---------- */
 
+/* 子 Tab(ElSegmented):容器 8px / 项与选中态 6px。
+   EP 内部圆角均派生自 --el-border-radius-base(item 为 calc(base - 2px)),
+   局部覆写为 8px 即可同时命中容器 8px、item 6px、选中块 6px,无需 !important */
 .el-segmented {
+  --el-border-radius-base: 8px;
   --el-segmented-item-selected-bg-color: var(--zv-accent);
   --el-segmented-item-selected-color: #ffffff;
   font-size: 14px;
+  max-width: 100%;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+/* 横向滚动条:细、透明轨道,避免遮挡内容与布局跳动 */
+.el-segmented::-webkit-scrollbar {
+  height: 4px;
+}
+
+.el-segmented::-webkit-scrollbar-track {
+  background: transparent;
 }
 
 html.dark .el-segmented {
@@ -373,8 +412,15 @@ html.dark .el-segmented {
   --el-segmented-item-selected-color: #ffffff;
 }
 
+/* 窄屏不压缩、不折行:保持自然宽度,溢出走容器横向滚动 */
+.el-segmented__item {
+  flex: 1 0 auto;
+  white-space: nowrap;
+}
+
 .el-segmented__item-label {
   font-size: 14px;
+  white-space: nowrap;
 }
 
 /* 分段 Tab:hover 轻反馈(实色浅蓝),选中对比度 >=4.5:1 */
