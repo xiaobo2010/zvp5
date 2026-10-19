@@ -3,7 +3,7 @@ import { RouterView, useRoute, useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user.ts'
 import { ref, watch, type Component } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ElPageHeader, ElSegmented, ElIcon } from 'element-plus'
+import { ElButton, ElSegmented, ElIcon } from 'element-plus'
 import { ArrowLeft, Setting, DataLine, Key, Connection, Folder, Grid } from '@element-plus/icons-vue'
 
 interface SegmentedTab {
@@ -78,23 +78,19 @@ watch(current, () => {
 
 <template>
   <div class="px-4 py-4">
-    <ElPageHeader :icon="ArrowLeft" @back="() => router.back()" class="py-2">
-      <template #content>
-        {{ t('server.tabs.' + current) }}
-      </template>
-      <template #extra>
-        <ElSegmented v-model="current" :options="tabs">
-          <template #default="props">
-            <div class="flex flex-col items-center gap-2 p-2">
-              <ElIcon :size="18" class="mt-2">
-                <Component :is="(props.item as SegmentedTab).icon" />
-              </ElIcon>
-              {{ t(('server.tabs.' + (props.item as SegmentedTab).value) as string) }}
-            </div>
-          </template>
-        </ElSegmented>
-      </template>
-    </ElPageHeader>
+    <div class="flex items-center gap-3 mb-4">
+      <ElButton text bg :icon="ArrowLeft" @click="() => router.back()" />
+      <ElSegmented v-model="current" :options="tabs" class="flex-1 min-w-0 w-full">
+        <template #default="props">
+          <div class="flex flex-row items-center gap-1.5 p-2">
+            <ElIcon :size="16">
+              <Component :is="(props.item as SegmentedTab).icon" />
+            </ElIcon>
+            {{ t(('server.tabs.' + (props.item as SegmentedTab).value) as string) }}
+          </div>
+        </template>
+      </ElSegmented>
+    </div>
     <RouterView />
   </div>
 </template>
