@@ -1,4 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router'
+import { maintenanceGuard } from './maintenanceGuard'
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -151,10 +152,12 @@ const router = createRouter({
 // 切换到 history 路由后它会命中 `/:pathMatch(.*)*` 渲染 404 页）。统一归一化到 SPA 根。
 // 勿在此处取消「所有在飞请求」：组件首个请求（onMounted）与触发导航的
 // router.replace 同 tick 发出，渲染 flush 先于守卫，会掐掉新页面自己的请求。
+// 维护模式与入口归一化共用同一个全局守卫:应用内导航、深链接、冷启动都会被覆盖。
 router.beforeEach((to) => {
   if (to.path === '/index.html' || to.path.endsWith('/index.html')) {
     return { path: '/', replace: true }
   }
+  return maintenanceGuard(to)
 })
 
 export default router
