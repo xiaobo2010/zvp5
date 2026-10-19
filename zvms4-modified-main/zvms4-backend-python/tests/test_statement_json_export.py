@@ -61,7 +61,6 @@ def _sample() -> tuple[VolunteerStatementData, dict]:
                 person_in_charge_id="AUTHORITY",
             ),
         ],
-        header_icon_path="./data/pwa-192x192.png",
     )
     spreadsheet = {
         "_id": "65f0000000000000000000ab",
