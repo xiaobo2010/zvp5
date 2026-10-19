@@ -142,3 +142,14 @@ uvicorn main:app --host 0.0.0.0 --port 8000
 - **前端体验批次（2026-10-12，v4.2.1-1）**：changelog/about 免登录可见并新增返回按钮；PWA 版本自动接管强化（SW 轮询 10h→30min + controllerchange 自动 reload）；IndexedDB 本地缓存层（取证确认 zvp-latest 无手写 IDB 代码，系自建——零依赖零网络，网络失败/网关错误时回读缓存兜底）；身份徽标升级为与群组管理页同源的彩色 logo（管理员红色）；生产 404 三类残留定案消除。详见 `STATUS.md` Part 11 §46。
 - **通知 API 暂废弃、待重构（2026-10-13，随 Mongo 退役）**：`/api/users/{oid}/notification`（`routers/users_router.py`）与 `zvms_new.notifications` 集合——前端零调用（仅 UI 库 `ElNotification` 弹窗，非该 API）、集合计数为 0。随 MongoDB 退役一并移除端点与集合；**后续以新设计重构该通知 API**，不复刻旧 Mongo 的形状。记录于 `docs/ADB_MIGRATION.md` §7 与项目记忆。
 - **MongoDB 退役进行中（2026-10-13）**：目标为彻底移除 Mongo 依赖（MongoDB 将来 phase-out，ADB 为唯一版本）。已切换 users/groups/activities/activity_members/time/stats/changelog 至 ADB；剩余新增表 `APP_LOGS`/`EXPORT_TASKS`/`IMPORTS`、`GROUPS.TYPE/PERMISSIONS` 与全部 v1/v2/v3 原始 Mongo 读取接线在推进中（见 `docs/ADB_MIGRATION.md` §6.6/§7）。
+
+## 7. 美学设计准则（前端约束）
+
+以下为前端视觉与交互约束（2026-10-19 定），新增与改动界面据此执行：
+
+1. **克制**
+   - 圆角控制在中等大小，大致是 AI 推荐圆角的 **70%**。
+   - 严格控制半透明效果的使用：**弹出页面内不允许使用半透明**；页面周围用毛玻璃式模糊区分层次感。
+2. **配色**：整体定位为天蓝色（义工管理子 Tab 的高亮色）+ 黑 / 白 + Logo 色。
+3. **实用性优先**：保持当前行距；页面卡片之间的间隙适当扩大。
+4. **扁平化**：减少立体按钮；需要体现立体感时用阴影，方便融入其他设计。
