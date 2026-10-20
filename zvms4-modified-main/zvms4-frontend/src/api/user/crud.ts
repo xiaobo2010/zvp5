@@ -160,11 +160,13 @@ async function deleteUserV3(uid: string) {
   return response?.status >= 200 && response?.status < 300
 }
 
-async function putUserBanned(uid: string, banned: boolean) {
+async function putUserBanned(uid: string, banned: boolean, reason?: string) {
   const response = await axios({
     method: 'put',
     url: `/v3/users/${uid}/banned`,
-    data: { banned }
+    // 解封没有原因语义;封禁时只在真的填了原因才带 reason,避免把空串当"已填写"传下去,
+    // 让后端自己回退到默认原因。
+    data: { banned, ...(banned && reason ? { reason } : {}) }
   })
   return response?.status === 204
 }

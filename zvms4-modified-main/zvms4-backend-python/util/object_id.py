@@ -9,6 +9,7 @@ from typing import Optional
 from datetime import datetime, timezone
 from db import backends
 from db.ids import normalize_oid, is_valid_oid
+from util.ban import ban_is_active, raise_banned
 from util.cert import jwt_decode
 from util.group import get_user_permissions
 
@@ -120,12 +121,11 @@ async def _authenticate(
         # session_id 轮换掉，若这里统一返回 401，前端只能当成登录过期并立刻
         # 退到登录页，用户永远看不到封禁警告。故在 sid 校验之前用 403 + 稳定
         # 标记返回；detail 是机器可读契约，前端不得直接展示。
-        if current.get("banned"):
+        # 判定必须走 ban_is_active：到期封禁的 banned 列不会自动归零，只看
+        # ``banned`` 会让刑满用户永久进不来。
+        if ban_is_active(current):
             if exception:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="USER_BANNED",
-                )
+                raise_banned(current)
             return None
         if payload.get("sid") != current.get("session_id", ""):
             return raise_exception()

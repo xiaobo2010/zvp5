@@ -10,15 +10,16 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from db import backends
 from db.system_state import get_state, set_state
 from realtime import disconnect_all_clients
 from typings.log import inject_log
+from util.ban import ban_is_active, raise_banned
 from util.group import get_user_permissions
-from util.object_id import get_current_user
+from util.object_id import get_current_user, is_admin_token
 from util.user import get_user_display_name
 
 router = APIRouter()
@@ -41,8 +42,9 @@ async def _require_system_admin(user: dict) -> dict:
     me = await backends.get_users_repo().get_by_oid(user["id"])
     if me is None:
         raise HTTPException(status_code=403, detail="权限不足")
-    if me.get("banned"):
-        raise HTTPException(status_code=403, detail="用户已被封禁")
+    # 到期封禁会保留 banned=1，只有 ban_is_active 才能反映「此刻是否可放行」。
+    if ban_is_active(me):
+        raise_banned(me)
     if "admin" not in (await get_user_permissions(me)):
         raise HTTPException(status_code=403, detail="权限不足")
 
@@ -50,20 +52,32 @@ async def _require_system_admin(user: dict) -> dict:
     return me
 
 
-def _public_state() -> dict:
-    """对外只暴露公开字段：reason / updated_by 属内部信息，不外泄。"""
+def _public_state(admin: bool = False) -> dict:
+    """对外只暴露公开字段：reason / updated_by 属内部信息，不外泄。
+
+    ``admin`` 是给维护页/登录页的准入提示：维护期间前端需要立刻知道当前
+    token 是否具备 admin 权限，才能决定放行管理员入口；前端 store 里的
+    position 由小组权限推导，登录未就绪时可能为空，不可作为唯一依据。
+    """
     state = get_state()
     return {
         "enabled": state["enabled"],
         "since": state["since"],
         "announcement": state["announcement"],
+        "admin": admin,
     }
 
 
 @router.get("")
-async def read_maintenance_state():
-    """公开端点：无需登录，维护模式开启期间仍可用。"""
-    return {"status": "ok", "code": 200, "data": _public_state()}
+async def read_maintenance_state(request: Request):
+    """公开端点：无需登录，维护模式开启期间仍可用。
+
+    admin 判定复用 ``is_admin_token``：它内部走与 ``get_current_user`` 相同的
+    校验链（签名/过期/scope/sid/封禁/当前 roles），且永不抛异常 —— 缺失或
+    非法 token 一律按 False 返回，公开端点不会因此变成 401。
+    """
+    admin = await is_admin_token(request.headers.get("authorization"))
+    return {"status": "ok", "code": 200, "data": _public_state(admin)}
 
 
 @router.post("/enable")
@@ -89,7 +103,7 @@ async def enable_maintenance(
     )
     await log.insert_log()
 
-    data = _public_state()
+    data = _public_state(admin=True)
     data["reason"] = state["reason"]
     return {"status": "ok", "code": 200, "data": data}
 
@@ -112,6 +126,6 @@ async def disable_maintenance(
     )
     await log.insert_log()
 
-    data = _public_state()
+    data = _public_state(admin=True)
     data["reason"] = state["reason"]
     return {"status": "ok", "code": 200, "data": data}

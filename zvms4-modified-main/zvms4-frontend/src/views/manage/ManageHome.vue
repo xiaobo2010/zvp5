@@ -5,12 +5,13 @@ import { ref, watch, type Component } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ElPageHeader, ElSegmented, ElIcon } from 'element-plus'
 import { ArrowLeft } from '@element-plus/icons-vue'
-import { Group, Log, User } from '@icon-park/vue-next'
+import { Block, Group, Log, User } from '@icon-park/vue-next'
 import ZGroupUserList from '@/components/group/ZGroupUserList.vue'
 import ZGroupList from '@/components/group/ZGroupList.vue'
 import ZLogList from '@/components/log/ZLogList.vue'
 import TablerSum from '@/icons/TablerSum.vue'
 import ZGroupUserTimeList from '@/components/group/ZGroupUserTimeList.vue'
+import ZBanRules from '@/components/manage/ZBanRules.vue'
 
 interface SegmentedTab {
   label: string
@@ -50,6 +51,11 @@ const tabs = ref<SegmentedTab[]>([
 ])
 
 if (userStore.position.includes('admin')) {
+  tabs.value[tabs.value.length] = {
+    label: 'Ban',
+    value: 'ban',
+    icon: Block
+  }
   tabs.value[tabs.value.length] = {
     label: 'Logs',
     value: 'logs',
@@ -94,5 +100,6 @@ watch(
     <ZGroupUserList v-else-if="current === 'users'" id="" />
     <ZLogList v-else-if="current === 'logs'" id="" user="" />
     <ZGroupUserTimeList v-else-if="current === 'time'" id="" />
+    <ZBanRules v-else-if="current === 'ban'" />
   </div>
 </template>

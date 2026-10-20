@@ -298,3 +298,43 @@ def test_cached_true_with_fresh_false_stops_rejecting(
 
     response = client.get(PROBE_URL, headers=MOZ)  # 缓存为 True ⇒ 走到 fresh 复核
     assert response.status_code == 404
+
+
+STATE_URL = "/api/system/maintenance"
+
+
+def test_public_state_reports_non_admin_without_token(
+    client: TestClient, account
+) -> None:
+    """公开状态端点无 token：admin=false，且原有字段形状不变（不会变成 401）。"""
+    enable()
+
+    response = client.get(STATE_URL, headers=MOZ)
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["enabled"] is True
+    assert data["admin"] is False
+    assert set(data) == {"enabled", "since", "announcement", "admin"}
+
+
+def test_public_state_reports_admin_with_valid_admin_token(
+    client: TestClient, account
+) -> None:
+    """有效 admin token（签名/sid/未封禁/当前 roles 全通过）：admin=true。"""
+    enable()
+
+    response = client.get(STATE_URL, headers=bearer(admin_token()))
+    assert response.status_code == 200
+    assert response.json()["data"]["admin"] is True
+
+
+def test_public_state_admin_flag_follows_current_roles(
+    client: TestClient, account
+) -> None:
+    """admin 来自当前 roles 复核：库里降级后即使 JWT 快照写着 admin 也是 false。"""
+    enable()
+    account["roles"] = ["student"]
+
+    response = client.get(STATE_URL, headers=bearer(admin_token()))
+    assert response.status_code == 200
+    assert response.json()["data"]["admin"] is False

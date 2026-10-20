@@ -31,6 +31,11 @@ class UsersRepo(Protocol):
     """Data access for ``zvms_new.users``.
 
     Satisfied by both the Mongo adapter and the Oracle implementation.
+
+    Full-document rows carry the ban metadata additively — ``ban_reason`` /
+    ``ban_until`` / ``ban_source`` / ``ban_rule`` appear **only when non-NULL**,
+    mirroring the Mongo "absent field" semantics (``"ban_until" in row`` keeps
+    its meaning). ``banned`` is the login gate: ``True`` or absent.
     """
 
     async def get_by_oid(self, oid: str) -> Row | None:
@@ -89,7 +94,40 @@ class UsersRepo(Protocol):
         ...
 
     async def set_banned(self, oid: str, banned: int) -> None:
-        """Set a user's ``banned`` flag (``1`` to ban, ``0`` to unban)."""
+        """Set a user's ``banned`` flag (``1`` to ban, ``0`` to unban).
+
+        Compatibility shim for the pre-V013 call sites: ``1`` forwards to
+        :meth:`set_ban` (``source="admin"``, no reason, permanent), ``0`` to
+        :meth:`clear_ban`.
+        """
+        ...
+
+    async def set_ban(
+        self,
+        oid: str,
+        *,
+        reason: str,
+        until: datetime | None,
+        source: str,
+        rule_code: str | None,
+    ) -> None:
+        """Ban a user and record **why** (``banned = 1``).
+
+        ``until is None`` means permanent (``BAN_UNTIL`` stays NULL); otherwise
+        the caller-side expiry task unbans at that naive ``datetime``.
+        ``source`` is ``admin`` or ``rule``; ``rule_code`` names the automatic
+        rule and is ``None`` for a manual ban. The session id is rotated, so any
+        live token of the banned account dies with the same write.
+        """
+        ...
+
+    async def clear_ban(self, oid: str) -> None:
+        """Unban a user and drop the ban metadata (``banned = 0``, four columns NULL).
+
+        The metadata is cleared rather than kept: an unbanned row must not look
+        like it still carries a reason/expiry, and the audit trail lives in
+        ``ban_records``. Rotates the session id like every other identity write.
+        """
         ...
 
     async def set_class(self, user_oid: str, class_oid: str | None) -> None:
@@ -916,6 +954,19 @@ class AppLogsRepo(Protocol):
         """
         ...
 
+    async def count_distinct_xuehai(self, user_oid: str, since_ts: float) -> int:
+        """Count distinct 学海 device ids one user logged in from since ``since_ts``.
+
+        The multi-device-login rule's evidence query: ``app_user = user_oid``
+        (the log writer stores the user's oid), ``ltype = 'user_login'`` only
+        (other event types may echo a device id without being a login), a
+        non-blank ``xuehai_id``, and ``ts_raw >= since_ts`` (epoch seconds on
+        the raw float column, so the window never depends on the derived
+        ``ts_at``). ``since_ts`` is inclusive; the caller derives it from the
+        rule's ``window_hours``.
+        """
+        ...
+
 
 class TasksRepo(Protocol):
     """Data access for ``zvms_new.tasks`` (runtime export queue).
@@ -1201,4 +1252,98 @@ class BindingsRepo(Protocol):
 
     async def revoke(self, user_oid: str, xuehai_id: str) -> None:
         """Mark the ``(user, xuehai)`` binding ``revoked`` (no-op if absent)."""
+        ...
+
+
+class BanRulesRepo(Protocol):
+    """Data access for ``BAN_RULES`` (规则封禁配置, V013).
+
+    Satisfied by ``db.repos.oracle.ban_rules.OracleBanRulesRepo``. Rows use the
+    Mongo document shape ``{"_id": <24-char lowercase hex str>, "code": str,
+    "name": str, "enabled": bool, "config": str, "penalties": str,
+    "builtin": bool, "created_at": datetime, "updated_at": datetime}``.
+
+    ``config`` / ``penalties`` stay **JSON text**: the DB only validates them
+    (``IS JSON``), and parsing is the service layer's decision (it owns the
+    schema of each rule). ``code`` is the stable identity the login path quotes;
+    :meth:`update_by_code` never touches it.
+    """
+
+    async def list_all(self) -> list[Row]:
+        """Return every rule, ordered by ``code`` asc (built-ins first is a UI choice)."""
+        ...
+
+    async def get_by_code(self, code: str) -> Row | None:
+        """Return the rule with ``code == code``, or ``None``."""
+        ...
+
+    async def update_by_code(
+        self,
+        code: str,
+        *,
+        enabled: bool | None = None,
+        config: str | None = None,
+        penalties: str | None = None,
+    ) -> int:
+        """Patch a rule's tunables and bump ``updated_at``; return the row count.
+
+        ``None`` means "leave unchanged" (so ``enabled=False`` is expressible).
+        ``0`` = no rule with that ``code`` — the caller turns it into a 404.
+        ``code`` / ``name`` / ``builtin`` are immutable here.
+        """
+        ...
+
+
+class BanRecordsRepo(Protocol):
+    """Data access for ``BAN_RECORDS`` (封禁流水, V013).
+
+    Satisfied by ``db.repos.oracle.ban_records.OracleBanRecordsRepo``. Rows use
+    the Mongo document shape ``{"_id": <hex str>, "user_oid": str,
+    "user_name": str, "user_business_id": str, "source": "admin" | "rule",
+    "rule_code": str | None, "reason": str | None, "permanent": bool,
+    "started_at": datetime, "expires_at": datetime | None,
+    "operator_oid": str | None, "created_at": datetime}`` (``user_name`` /
+    ``user_business_id`` come from the ``USERS`` join and are ``None`` if the
+    account is gone).
+
+    This is the escalation ledger: the number of rows for one
+    ``(user_oid, rule_code)`` pair selects the next penalty step.
+    """
+
+    async def insert(
+        self,
+        user_oid: str,
+        *,
+        source: str,
+        rule_code: str | None = None,
+        reason: str | None = None,
+        permanent: bool = False,
+        started_at: datetime | None = None,
+        expires_at: datetime | None = None,
+        operator_oid: str | None = None,
+    ) -> str:
+        """Append one ban record and return its new ``_id``.
+
+        ``started_at`` defaults to ``datetime.now()`` (naive, schema convention);
+        ``expires_at is None`` with ``permanent=True`` for an indefinite ban.
+        Append-only — records are never updated or deleted by this layer.
+        """
+        ...
+
+    async def count_for_user_rule(self, user_oid: str, rule_code: str) -> int:
+        """Count a user's previous records for one rule (the penalty index).
+
+        ``0`` = first offence (use ``penalties[0]``); N = the N-th repeat.
+        """
+        ...
+
+    async def list_page(
+        self, page: int, size: int, query: str
+    ) -> tuple[list[Row], int]:
+        """Return ``(rows, total)`` for one page of the ban ledger, newest first.
+
+        ``query`` is a case-insensitive *contains* over the joined user's
+        ``name`` / 学号 (empty = no filter); ``page`` is 1-based, ``page == -1``
+        means "no offset". ``total`` counts matching records, not users.
+        """
         ...

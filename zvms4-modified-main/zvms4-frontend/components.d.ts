@@ -47,6 +47,7 @@ declare module 'vue' {
     ZActivityTag: typeof import('./src/components/tags/ZActivityTag.vue')['default']
     ZActivityType: typeof import('./src/components/tags/ZActivityType.vue')['default']
     ZAttachmentUpload: typeof import('./src/components/attachment/ZAttachmentUpload.vue')['default']
+    ZBanRules: typeof import('./src/components/manage/ZBanRules.vue')['default']
     ZButtonOrCard: typeof import('./src/components/utils/ZButtonOrCard.vue')['default']
     ZButtonTag: typeof import('./src/components/utils/ZButtonTag.vue')['default']
     ZDataExport: typeof import('./src/components/utils/ZDataExport.vue')['default']

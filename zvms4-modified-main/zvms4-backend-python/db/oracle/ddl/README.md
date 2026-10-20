@@ -13,6 +13,8 @@ Versioned, hand-written Oracle DDL for the `zvms_new` → Oracle ADB migration.
 | `V008__add_app_logs_xuehai_index.sql` | Adds `ix_app_logs_xuehai_id` (APP_LOGS device 学海 ID filter) on an existing instance. Idempotent. |
 | `V009__statistics_rework.sql` | Adds the deferred `GROUP_INDICATORS.GROUP_OID` → `GROUPS.OID` FK (`fk_group_indicators_group_oid`). Apply **after** the first `rebuild_statistics` (else ORA-02298 on legacy ids). Idempotent. |
 | `V010__add_user_device_bindings.sql` | Adds `USER_DEVICE_BINDINGS` + `uq_udb_user_xuehai` UNIQUE + `ix_udb_xuehai_id` (学海 ID 身份追溯 MVP, observe-only) on an existing instance. Idempotent. |
+| `V012__add_dual_auth_uses.sql` | Adds `DUAL_AUTH_USES` + `uq_dual_approver_counter` (Stage 2 双人授权 TOTP 防重放) on an existing instance. Idempotent. |
+| `V013__add_ban_rules.sql` | Adds the `USERS` ban metadata columns (`BAN_REASON`/`BAN_UNTIL`/`BAN_SOURCE`/`BAN_RULE`), `BAN_RULES` + `BAN_RECORDS` (+ 2 indexes), the built-in `multi_device_login` rule seed and `ix_app_logs_user_ts` on an existing instance. Idempotent. |
 | `../models.py` (`db/models.py`) | SQLAlchemy 2.0 Core `MetaData` mirror of V001. |
 | `../ddl_check.py` (`db/ddl_check.py`) | Offline drift check between the two. |
 
@@ -55,6 +57,22 @@ instances get the table from `V001`; existing instances are extended by `V010`.
 Design conventions (JSON→CLOB+`IS JSON`, ObjectId→`VARCHAR2(24)` lowercase hex,
 naive `TIMESTAMP`, deferred `GROUP_INDICATORS` FK) are documented in the header
 of `V001__initial_schema.sql` and in `docs/ADB_SCHEMA_SPEC.md` §1–§4.
+
+`BAN_RULES` / `BAN_RECORDS` back 规则封禁（同学号多设备登录 …）while
+`USERS.BANNED` stays the **only** login gate: the four new `USERS` columns
+(`BAN_REASON`/`BAN_UNTIL`/`BAN_SOURCE`/`BAN_RULE`) only answer "why, until when,
+and who/which rule". `BAN_UNTIL IS NULL` with `BANNED = 1` means a permanent ban;
+an expiry task unbans rule bans at their `BAN_UNTIL`. `BAN_RECORDS` is the
+append-only ledger that drives escalating penalties (one row per ban event, the
+row count for `(USER_OID, RULE_CODE)` picks the next step from the rule's
+`PENALTIES`). `BAN_RULES.CONFIG`/`PENALTIES` are **bounded** JSON documents and
+therefore `VARCHAR2(2000 CHAR)` + `IS JSON` rather than CLOB. The built-in
+`multi_device_login` rule is seeded with the fixed oid
+`0b0000000000000000000001` via an idempotent `MERGE ... WHEN NOT MATCHED THEN
+INSERT`, so re-running never overwrites admin edits. `ix_app_logs_user_ts`
+(`APP_USER, TS_RAW`) backs the rule's evidence query
+`COUNT(DISTINCT XUEHAI_ID)` over a time window. Fresh instances get all of this
+from `V001` (same seed); existing instances are extended by `V013`.
 
 ## Applying V001
 

@@ -1,4 +1,7 @@
+from datetime import datetime
+
 from db import backends
+from util.ban import ban_is_active, ban_reason_of, ban_until_epoch
 from utils import validate_object_id
 
 
@@ -27,9 +30,15 @@ def user_profile(user: dict) -> dict:
     """用户摘要，与 v1 ``read_user`` 的 ``user_info`` 逐字段同形。
 
     ``password`` / ``session_id`` 这类仅存储层字段不在白名单里，绝不外泄。
+
+    ``banned`` 是**有效封禁**（走 :func:`util.ban.ban_is_active`），不是列值：
+    到期封禁的 ``banned`` 列仍是 1，直接透传会让管理页永远显示「封禁中」。
+    封禁详情只在有效时出现——未封禁账号的字段集合保持与历史响应逐字同形，
+    不给所有读用户端点引入无意义的 null。
     """
     class_id = str(user["class_id"]) if user.get("class_id") else ""
-    return {
+    banned = ban_is_active(user)
+    profile = {
         "_id": str(user["_id"]),
         "id": user["id"],
         "name": user["name"],
@@ -38,8 +47,19 @@ def user_profile(user: dict) -> dict:
         "class_id": class_id,
         "group": [class_id] if class_id else [],
         "past": user.get("past", []),
-        "banned": bool(user.get("banned")),
+        "banned": banned,
     }
+    if banned:
+        until = user.get("ban_until")
+        profile["ban_reason"] = ban_reason_of(user)
+        profile["ban_until"] = (
+            until.isoformat() if isinstance(until, datetime) else None
+        )
+        profile["ban_source"] = user.get("ban_source")
+        profile["ban_rule"] = user.get("ban_rule")
+        # 永久封禁 = 没有到期时间；前端靠这一位决定显示「永久」而不是空白。
+        profile["ban_permanent"] = ban_until_epoch(user) is None
+    return profile
 
 
 async def get_user_name(id: str):

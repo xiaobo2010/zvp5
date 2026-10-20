@@ -104,6 +104,20 @@ def get_bindings_repo(session: Any = None) -> Any:
     return OracleBindingsRepo(session)
 
 
+def get_ban_rules_repo(session: Any = None) -> Any:
+    """Return the ``BanRulesRepo`` implementation (规则封禁配置)."""
+    from db.repos.oracle.ban_rules import OracleBanRulesRepo
+
+    return OracleBanRulesRepo(session)
+
+
+def get_ban_records_repo(session: Any = None) -> Any:
+    """Return the ``BanRecordsRepo`` implementation (封禁流水)."""
+    from db.repos.oracle.ban_records import OracleBanRecordsRepo
+
+    return OracleBanRecordsRepo(session)
+
+
 __all__ = [
     "get_users_repo",
     "get_groups_repo",
@@ -118,4 +132,6 @@ __all__ = [
     "get_daily_exports_repo",
     "get_files_repo",
     "get_bindings_repo",
+    "get_ban_rules_repo",
+    "get_ban_records_repo",
 ]

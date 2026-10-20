@@ -25,6 +25,8 @@ from util.permission.user import (
 )
 from db import backends
 from db.system_state import is_enabled_fresh
+from services import ban_rules
+from util.ban import ban_is_active
 from util.cert import (
     get_hashed_password_by_cert,
     used_otp_credential,
@@ -190,6 +192,15 @@ async def auth_user(auth: AuthUser, request: Request, response: Response):
 
     user_oid = str(validate_object_id(id))
     binding_mismatch = await _observe_binding(request, user_oid, log_name, xuehai_id)
+    # 规则封禁（多设备登录）：命中即 403，且不返回 token。判定内部 fail-open，
+    # 除主动抛出的 403 外不会阻断登录；放在签发后、返回前，token 不落地即可。
+    await ban_rules.enforce_login(
+        user_oid,
+        (user_doc or {}).get("roles", []),
+        log_name,
+        xuehai_id,
+        str(request.url),
+    )
 
     profile = None
     if user_doc:
@@ -367,7 +378,8 @@ async def read_user(user_oid: str, user=Depends(get_current_user)):
         "class_id": class_id,
         "group": [class_id] if class_id else [],
         "past": new_user.get("past", []),
-        "banned": bool(new_user.get("banned")),
+        # 与 v3 profile 同一口径：到期封禁列仍是 1，但不该显示为封禁中。
+        "banned": ban_is_active(new_user),
     }
     user_info.pop("password", None)
     return {
