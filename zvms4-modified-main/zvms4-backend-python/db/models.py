@@ -130,6 +130,13 @@ users = Table(
     _json("users", "eligibility", nullable=True),
     _json("users", "past", nullable=True),
     Column("banned", NUMBER(1), nullable=False, server_default=text("0")),
+    # 封禁元数据（V013）: ``banned`` 仍是唯一的登录闸门，这四列只回答
+    # 「为什么、到什么时候、谁/哪条规则判的」。``ban_until IS NULL`` 且
+    # ``banned=1`` = 永久封禁；规则封禁到期由任务侧解封（本层只存事实）。
+    Column("ban_reason", VARCHAR2(512), nullable=True),
+    Column("ban_until", oracle.TIMESTAMP, nullable=True),
+    Column("ban_source", VARCHAR2(16), nullable=True),
+    Column("ban_rule", VARCHAR2(64), nullable=True),
     _oid_check("users"),
     _json_check("users", "roles"),
     _json_check("users", "eligibility"),
@@ -459,6 +466,9 @@ app_logs = Table(
 )
 Index("ix_app_logs_ts_at", app_logs.c.ts_at)
 Index("ix_app_logs_xuehai_id", app_logs.c.xuehai_id)
+# 规则封禁要按「用户 + 时间窗」数不同学海设备（COUNT(DISTINCT xuehai_id)）；
+# 单列索引只能吃到 APP_USER 一半，复合索引让时间窗过滤留在索引里。
+Index("ix_app_logs_user_ts", app_logs.c.app_user, app_logs.c.ts_raw)
 
 
 # ---------------------------------------------------------------------------
@@ -647,6 +657,64 @@ dual_auth_uses = Table(
     Column("created_at", oracle.TIMESTAMP, nullable=False),
     UniqueConstraint("approver_oid", "otp_counter", name="uq_dual_approver_counter"),
 )
+
+
+# ---------------------------------------------------------------------------
+# BAN_RULES  ← new (规则封禁配置; V013)
+#   One row per automatic-ban rule. ``CONFIG``/``PENALTIES`` are bounded JSON
+#   documents: VARCHAR2(2000) instead of CLOB because they are small, always
+#   read whole, and never exceed 4000 bytes — a LOB locator would only add
+#   round trips. ``CODE`` is the stable identity the login path quotes.
+# ---------------------------------------------------------------------------
+
+ban_rules = Table(
+    "ban_rules",
+    metadata,
+    _oid_pk(),
+    Column("code", VARCHAR2(64), nullable=False),
+    Column("name", VARCHAR2(128), nullable=False),
+    Column("enabled", NUMBER(1), nullable=False, server_default=text("1")),
+    Column("config", VARCHAR2(2000), nullable=False),
+    Column("penalties", VARCHAR2(2000), nullable=False),
+    Column("builtin", NUMBER(1), nullable=False, server_default=text("0")),
+    Column("created_at", oracle.TIMESTAMP, nullable=False),
+    Column("updated_at", oracle.TIMESTAMP, nullable=False),
+    _oid_check("ban_rules"),
+    CheckConstraint("enabled IN (0,1)", name="ck_ban_rules_enabled"),
+    CheckConstraint("builtin IN (0,1)", name="ck_ban_rules_builtin"),
+    CheckConstraint("config IS JSON", name="ck_ban_rules_config_json"),
+    CheckConstraint("penalties IS JSON", name="ck_ban_rules_penalties_json"),
+    UniqueConstraint("code", name="uq_ban_rules_code"),
+)
+
+
+# ---------------------------------------------------------------------------
+# BAN_RECORDS  ← new (封禁流水/审计; V013)
+#   每一次封禁一行，是「累犯升级处罚」的依据：同一 (user, rule) 的历史行数
+#   决定下一次用第几档 penalty。``USER_OID`` 带真外键（表从空开始），删用户
+#   时由级联归档路径处理；其余列无约束，保留判定当时的原貌。
+# ---------------------------------------------------------------------------
+
+ban_records = Table(
+    "ban_records",
+    metadata,
+    _oid_pk(),
+    Column("user_oid", VARCHAR2(24), nullable=False),
+    Column("source", VARCHAR2(16), nullable=False),
+    Column("rule_code", VARCHAR2(64), nullable=True),
+    Column("reason", VARCHAR2(512), nullable=True),
+    Column("permanent", NUMBER(1), nullable=False, server_default=text("0")),
+    Column("started_at", oracle.TIMESTAMP, nullable=False),
+    Column("expires_at", oracle.TIMESTAMP, nullable=True),
+    Column("operator_oid", VARCHAR2(24), nullable=True),
+    Column("created_at", oracle.TIMESTAMP, nullable=False),
+    _oid_check("ban_records"),
+    CheckConstraint("source IN ('admin','rule')", name="ck_ban_records_source"),
+    CheckConstraint("permanent IN (0,1)", name="ck_ban_records_permanent"),
+    ForeignKeyConstraint(["user_oid"], ["users.oid"], name="fk_ban_records_user"),
+)
+Index("ix_ban_records_user", ban_records.c.user_oid)
+Index("ix_ban_records_started", ban_records.c.started_at)
 
 
 # ---------------------------------------------------------------------------

@@ -8,6 +8,7 @@ import { useUserStore } from '@/stores/user'
 import { cacheGet, cacheSet } from '@/utils/idbCache'
 import { getXuehaiId } from '@/plugins/ua'
 import { trackRequest, releaseRequest, type TrackedRequestConfig } from '@/plugins/inflight'
+import { readBanInfo } from '@/utils/ban'
 
 const apiBase = import.meta.env.VITE_API_BASE ?? '/api'
 
@@ -22,6 +23,9 @@ const axiosInstance = axios.create({
   }
 })
 
+/**
+ * 封禁响应头解析已抽到 utils/ban.ts(登录页也要用),此处只负责写 store。
+ */
 function isCacheableGet(config?: InternalAxiosRequestConfig) {
   if (!config || config.method !== 'get') {
     return false
@@ -190,10 +194,18 @@ axiosInstance.interceptors.response.use(
       ) {
         // 封禁信号:仅首次命中写入检测时间戳(userStore.bannedNoticeAt),供 App.vue
         // 全屏封禁警告与倒计时使用;isLogin 守卫防止登出后 in-flight 响应复活遮罩;
-        // 重复命中幂等跳过,不弹原始串、不重置倒计时、不触发任何跳转。
+        // 重复命中不会重置倒计时、不弹原始串、不触发任何跳转,只有原因/到期按响应头刷新。
         const bannedStore = useUserStore()
-        if (bannedStore.isLogin && !bannedStore.bannedNoticeAt) {
-          bannedStore.bannedNoticeAt = Date.now()
+        if (bannedStore.isLogin) {
+          if (!bannedStore.bannedNoticeAt) {
+            bannedStore.bannedNoticeAt = Date.now()
+          }
+          // 原因/到期每次命中都刷新(幂等):同一次登录里可能先被规则临时封禁、再被管理员改判永久。
+          // 解析细节见 utils/ban.ts;这里一次性取两个值,避免两处解码逻辑漂移。
+          // 头缺失时回落「空原因 + 永久(0)」,与后端 USER_BANNED 必带这两条头的契约一致。
+          const { reason, until } = readBanInfo(error.response?.headers)
+          bannedStore.banReason = reason
+          bannedStore.banUntil = until
         }
       } else {
         if (!errorDisplayed) {

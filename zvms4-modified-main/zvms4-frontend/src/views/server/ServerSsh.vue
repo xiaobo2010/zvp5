@@ -32,6 +32,8 @@ let resizeObserver: ResizeObserver | null = null
 let resizeDebounce: number | null = null
 let connectTimer: number | null = null
 let riskResolver: ((ok: boolean) => void) | null = null
+// 风险框的结论先暂存,等 @closed 再结算;null 表示当前没有待结算的结论。
+let riskVerdict: boolean | null = null
 
 const CONNECT_TIMEOUT_MS = 15000
 const riskVisible = ref(false)
@@ -76,21 +78,37 @@ function warnedKey(): string {
 function confirmRootRisk(): Promise<boolean> {
   return new Promise((resolve) => {
     riskResolver = resolve
+    riskVerdict = null
     riskVisible.value = true
   })
 }
 
-function cancelRisk() {
+// 这里只决定结论并让框离场,不 resolve:
+// 真正的结算必须等 @closed(离场动画结束、DOM 已移除)。
+// 否则风险框与紧随其后的授权框会同批渲染,ElDialog 的 overlay 刚建好就被拆掉,
+// 表现为"点了我已知悉却什么也没发生",服务端根本收不到授权请求。
+function closeRisk(ok: boolean) {
+  riskVerdict = ok
   riskVisible.value = false
-  riskResolver?.(false)
+}
+
+// ElDialog 关闭动画结束后触发。resolver 只消费一次,重复 closed 直接忽略(防重入)。
+function onRiskClosed() {
+  if (!riskResolver) return
+  const verdict = riskVerdict ?? false // 右上角 X / ESC 不会走 ack/cancel,按取消结算
+  const resolve = riskResolver
   riskResolver = null
+  riskVerdict = null
+  resolve(verdict)
+}
+
+function cancelRisk() {
+  closeRisk(false)
 }
 
 function ackRisk() {
   localStorage.setItem(warnedKey(), '1')
-  riskVisible.value = false
-  riskResolver?.(true)
-  riskResolver = null
+  closeRisk(true)
 }
 
 const xtermTheme = computed(() => ({
@@ -461,6 +479,7 @@ onBeforeUnmount(() => {
       width="500px"
       :close-on-click-modal="false"
       append-to-body
+      @closed="onRiskClosed"
     >
       <div class="flex flex-col gap-3 text-sm leading-6">
         <p>{{ t('server.ssh.riskPower') }}</p>

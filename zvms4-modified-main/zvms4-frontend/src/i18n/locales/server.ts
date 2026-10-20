@@ -333,7 +333,7 @@ export const zhCN = {
     statusConnected: '已连接',
     statusClosed: '已断开',
     limitNote: '每人最多 2 个并发会话，全站上限 4 个；空闲 15 分钟自动断开',
-    authScene: '开启 Web SSH 终端会话（root@127.0.0.1）',
+    authScene: "开启 Web SSH 终端会话（root{'@'}127.0.0.1）",
     wsErrorTicket: '票据无效或已过期，请重新授权',
     wsErrorLimit: '并发会话数已达上限，请稍后再试',
     wsErrorIdle: '空闲超时，终端已断开',

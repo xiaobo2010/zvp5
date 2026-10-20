@@ -68,6 +68,11 @@ def _row(oid: str, **overrides) -> _Row:
         "eligibility": None,
         "past": None,
         "banned": 0,
+        # V013: ``_user_columns`` 的封禁元数据四列（NULL = 未封禁 / 永久封禁）
+        "ban_reason": None,
+        "ban_until": None,
+        "ban_source": None,
+        "ban_rule": None,
     }
     mapping.update(overrides)
     return _Row(mapping)
@@ -80,7 +85,8 @@ def _bound_oids(stmt) -> list[str]:
 
 def test_stmt_selects_the_full_user_columns_and_filters_by_in() -> None:
     stmt = _get_many_by_oids_stmt([OID_A, OID_B])
-    assert len(stmt.selected_columns) == len(_user_columns()) == 11
+    # 11 个原有列 + V013 的 4 个封禁元数据列
+    assert len(stmt.selected_columns) == len(_user_columns()) == 15
     assert "IN" in str(stmt.whereclause).upper()
 
 
@@ -118,7 +124,16 @@ async def test_more_than_1000_oids_are_split_into_chunks() -> None:
 async def test_rows_come_back_as_full_documents_keyed_by_oid() -> None:
     session = _Session(
         [
-            _row(OID_A, roles=["admin"], banned=1, sex="M", past=["旧班级"]),
+            _row(
+                OID_A,
+                roles=["admin"],
+                banned=1,
+                sex="M",
+                past=["旧班级"],
+                ban_reason="多设备登录",
+                ban_source="rule",
+                ban_rule="multi_device_login",
+            ),
             _row(OID_B, class_oid=None),
         ]
     )
@@ -131,5 +146,8 @@ async def test_rows_come_back_as_full_documents_keyed_by_oid() -> None:
     assert found[OID_A]["banned"] is True
     assert found[OID_A]["sex"] == "M"
     assert found[OID_A]["past"] == ["旧班级"]
+    assert found[OID_A]["ban_source"] == "rule"
+    assert found[OID_A]["ban_rule"] == "multi_device_login"
+    assert "ban_until" not in found[OID_A]  # NULL = 永久封禁，字段不出现
     assert "class_id" not in found[OID_B]  # NULL 可选列不进文档（同 get_by_oid）
     assert found[OID_A]["password"] is None

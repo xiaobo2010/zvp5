@@ -5,6 +5,8 @@ export interface MaintenanceStatus {
   enabled: boolean
   since: number | null
   announcement: string | null
+  // 服务端用 Authorization 复核出的 admin 身份。老后端不返回该字段,按 false 处理。
+  admin?: boolean
 }
 
 export interface MaintenanceStatusResponse {

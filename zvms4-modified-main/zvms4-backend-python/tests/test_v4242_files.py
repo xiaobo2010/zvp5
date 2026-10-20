@@ -149,7 +149,10 @@ def test_banned_admin_is_forbidden(harness, tmp_path):
 
     response = harness.client.get(f"{PREFIX}/list", params={"path": str(tmp_path)})
     assert response.status_code == 403
-    assert response.json()["detail"] == "用户已被封禁"
+    # 统一封禁契约：detail 是机器可读标记，原因走响应头（util/ban.py）。
+    assert response.json()["detail"] == "USER_BANNED"
+    assert response.headers["X-Ban-Reason"]
+    assert response.headers["X-Ban-Until"] == ""
 
 
 def test_totp_rejection_has_no_side_effects(harness, tmp_path):

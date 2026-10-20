@@ -14,6 +14,9 @@ import { useI18n } from 'vue-i18n'
 import { modifyPasswordDialogs } from '@/views'
 import api from '@/api'
 import { getMaintenanceStatus } from '@/api/system/maintenance.ts'
+import { resetMaintenanceGuardCache } from '@/router/maintenanceGuard'
+import { formatBanUntil, readBanInfo } from '@/utils/ban'
+import dayjs from 'dayjs'
 
 const header = useHeaderStore()
 
@@ -35,20 +38,30 @@ function redirectTarget(): string {
   return typeof target === 'string' && target.startsWith('/') ? target : ''
 }
 
-// 登录后按角色分流:普通用户维护中一律回维护暂停页;redirect 参数仅在站内路径生效,缺省 /user
+// 登录后按角色分流:维护中只有 admin 能继续(普通用户回维护暂停页);redirect
+// 参数仅在站内路径生效,缺省 /user。
+// admin 判定优先用维护状态接口的 data.admin:它由服务端用 token 复核,而 position
+// 由小组权限推导,刚登录/缓存未就绪时可能为空 —— 只看 position 会把真管理员弹回
+// 维护页,导致「登录后进不去 /server」。
 async function postLoginTarget(): Promise<string> {
-  if (userStore.position.includes('admin')) {
-    return redirectTarget() || '/user'
-  }
+  const target = redirectTarget() || '/user'
+  const positionalAdmin = userStore.position.includes('admin')
   try {
     const res = await getMaintenanceStatus()
-    if (res.data.data.enabled) {
+    const data = res.data.data
+    if (data.enabled) {
+      if (data.admin === true || positionalAdmin) {
+        // 守卫缓存的是「登录前」的判定(无 token ⇒ admin=false)。登录后必须失效,
+        // 否则真管理员会被 30s 内的旧缓存重新挡回维护页,落不到 /server。
+        resetMaintenanceGuardCache()
+        return target
+      }
       return '/maintenance'
     }
   } catch {
     // 状态接口不可达时按未维护处理
   }
-  return redirectTarget() || '/user'
+  return target
 }
 
 // 维护模式 503(v4.2.4-2 R4):维护期间后端只给 admin 下发 token,非 admin 的老
@@ -67,6 +80,41 @@ function notifyMaintenanceBlocked() {
     type: 'warning',
     grouping: true,
     plain: true
+  })
+}
+
+// 封禁信号:后端登录被拒时返回 403 + detail USER_BANNED,原因/期限在 X-Ban-* 头里。
+// 只提示、不清 token、不跳转 —— 与维护模式 503 各自独立,避免两套分支互相污染。
+function isUserBanned(error: unknown): boolean {
+  const response = (
+    error as { response?: { status?: number; data?: { detail?: unknown } } }
+  )?.response
+  return response?.status === 403 && response?.data?.detail === 'USER_BANNED'
+}
+
+function notifyUserBanned(error: unknown) {
+  const { reason, until } = readBanInfo(
+    (error as { response?: { headers?: unknown } })?.response?.headers
+  )
+  // 期限行:until=0 是永久;否则交给调用方按 locale 决定日期格式(util 不碰 i18n)。
+  const untilLine =
+    formatBanUntil(until, (ms) => t('nav.banned.until', { time: dayjs(ms).format('YYYY-MM-DD HH:mm') })) ||
+    t('nav.banned.permanent')
+  // alert 只有一个确认按钮:用户必须显式确认才能关(不允许点遮罩误关掉原因)。
+  void ElMessageBox.alert(
+    h('div', null, [
+      h('p', { style: 'margin: 0 0 8px;' }, reason || t('nav.banned.reasonFallback')),
+      h('p', { style: 'margin: 0;' }, untilLine)
+    ]),
+    t('nav.banned.title'),
+    {
+      confirmButtonText: t('nav.banned.ack'),
+      closeOnClickModal: false,
+      closeOnPressEscape: false,
+      showClose: false
+    }
+  ).catch(() => {
+    // 弹窗被程序化关闭时 alert 会 reject,这里吞掉即可,不影响登录流程。
   })
 }
 
@@ -90,6 +138,8 @@ async function login() {
         loading.value = false
         if (isMaintenanceBlocked(error)) {
           notifyMaintenanceBlocked()
+        } else if (isUserBanned(error)) {
+          notifyUserBanned(error)
         }
       })) || {
       token: '',
@@ -129,6 +179,8 @@ async function login() {
       loading.value = false
       if (isMaintenanceBlocked(error)) {
         notifyMaintenanceBlocked()
+      } else if (isUserBanned(error)) {
+        notifyUserBanned(error)
       }
     })
 }

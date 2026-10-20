@@ -125,7 +125,16 @@ export const zhCN = {
     banConfirm: '确定要封禁用户 {name} 吗？封禁后该用户将无法登录。',
     unbanConfirm: '确定要解封用户 {name} 吗？',
     bannedNotification: '已封禁用户 {name}',
-    unbannedNotification: '已解封用户 {name}'
+    unbannedNotification: '已解封用户 {name}',
+    banDialogTitle: '封禁账号',
+    banDialogNotice: '管理员封禁为永久封禁；解封需管理员手动操作。',
+    banReasonLabel: '封禁原因',
+    banReasonPlaceholder: '例如：同学号多设备登录',
+    banReasonInvalid: '请填写 1-200 字的封禁原因',
+    banReasonFallback: '管理员封禁',
+    banDialogConfirm: '确认封禁',
+    banPermanent: '永久',
+    banUntil: '到期：{time}'
   },
   upload: {
     label: '上传',
@@ -142,7 +151,66 @@ export const zhCN = {
       users: '用户',
       time: '时间',
       import: '导入',
+      ban: '封禁',
       logs: '日志'
+    }
+  },
+  banRules: {
+    rulesTitle: '规则列表',
+    recordsTitle: '封禁记录',
+    refresh: '刷新',
+    loadFailed: '加载失败，请稍后重试',
+    savedNotice: '已保存',
+    saveFailed: '保存失败',
+    revertedNotice: '保存失败，已还原',
+    rule: {
+      columns: {
+        name: '规则名称',
+        trigger: '触发条件',
+        penalties: '处罚梯度',
+        enabled: '启用',
+        actions: '操作'
+      },
+      builtin: '内置',
+      triggerText: '{threshold} 台设备 / {window_hours} 小时',
+      penaltyDay: '{days} 天',
+      penaltiesHint: '处罚按梯度递进，超出最后一档时按最后一档处罚',
+      edit: '编辑'
+    },
+    dialog: {
+      title: '编辑规则：{name}',
+      thresholdLabel: '触发设备数（台）',
+      windowLabel: '时间窗（小时）',
+      penaltiesLabel: '处罚梯度（天）',
+      penaltiesPlaceholder: '逗号分隔的天数，例如 1,2,7',
+      penaltiesHint: '至少 1 项，最多 6 项，按升序填写（重复视为无效）',
+      cancel: '取消',
+      save: '保存'
+    },
+    validation: {
+      thresholdRequired: '请输入触发设备数',
+      thresholdRange: '触发设备数须为 2 到 20 之间的整数',
+      windowRequired: '请输入时间窗小时数',
+      windowRange: '时间窗须为 1 到 168 之间的整数',
+      penaltiesFormat: '处罚梯度须为逗号分隔的正整数天数，至少 1 项，最多 6 项，且按升序排列、不重复'
+    },
+    records: {
+      columns: {
+        name: '姓名',
+        userId: '学号',
+        source: '来源',
+        reason: '原因',
+        startedAt: '开始时间',
+        expiresAt: '到期时间',
+        operator: '操作人'
+      },
+      sourceRule: '规则',
+      sourceAdmin: '管理员',
+      permanent: '永久'
+    },
+    empty: {
+      rules: '暂无规则',
+      records: '暂无封禁记录'
     }
   },
   exports: {

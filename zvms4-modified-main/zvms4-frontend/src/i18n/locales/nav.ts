@@ -10,9 +10,13 @@ export const zhCN = {
   reset: '密码修改',
   banned: {
     title: '账号已被封禁',
-    message: '由于明确的违规使用，您的账号已被封禁，稍后您将自动退出登录。',
+    message: '由于{reason}，您的账号已被封禁。',
+    reasonFallback: '违反平台使用规定',
+    permanent: '永久封禁',
+    until: '封禁到期：{time}',
     appeal: '违规使用平板是严重的违纪行为。',
-    autoLogoutIn: '将在 {seconds} 秒后自动退出登录'
+    autoLogoutIn: '将在 {seconds} 秒后自动退出登录',
+    ack: '我知道了'
   },
   language: '',
   dark: '夜间模式',

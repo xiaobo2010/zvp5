@@ -33,6 +33,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from db import backends
 from services import file_ops
 from util.dual_auth import DualAuthError, audit_system_op, require_dual_auth
+from util.ban import ban_is_active, raise_banned
 from util.group import get_user_permissions
 from util.object_id import get_current_user
 
@@ -75,8 +76,9 @@ async def _require_system_admin(user: dict) -> dict:
     me = await backends.get_users_repo().get_by_oid(user["id"])
     if me is None:
         raise HTTPException(status_code=403, detail="权限不足")
-    if me.get("banned"):
-        raise HTTPException(status_code=403, detail="用户已被封禁")
+    # 到期封禁会保留 banned=1，只有 ban_is_active 才能反映「此刻是否可放行」。
+    if ban_is_active(me):
+        raise_banned(me)
     if "admin" not in (await get_user_permissions(me)):
         raise HTTPException(status_code=403, detail="权限不足")
     return me
