@@ -217,9 +217,19 @@ async def add_activity_member_v3(
                 else:
                     await members_repo.add(activity_id, oid, mode, duration, "effective")
             await activities_repo.update(activity_id, {"status": "pending", "updatedAt": datetime.now()})
+            # 审计日志是给人读的：oid 写进「详情」等于让管理员拿哈希再查一轮。
+            # 操作者与成员名一次批量取回（同一事务内），活动名用行锁读到的文档。
+            names = await users_repo.get_names(
+                [str(user["id"]), *[oid for oid, _mode in additions]]
+            )
+            performer = names.get(str(user["id"])) or "未知用户"
+            activity_name = target_activity["name"] or "未知活动"
+            detail = "；".join(
+                f"{names.get(oid) or '未知用户'} {mode} +{duration}"
+                for (oid, mode), duration in additions.items()
+            )
             log.with_text(
-                f"用户 {user['id']} 为活动 {activity_id} 增加时长：" +
-                "; ".join(f"{oid} {mode} +{duration}" for (oid, mode), duration in additions.items()),
+                f"用户 {performer} 为义工活动《{activity_name}》增加时长：{detail}",
                 type="activity_member_update",
             )
             await log.insert_log(session)

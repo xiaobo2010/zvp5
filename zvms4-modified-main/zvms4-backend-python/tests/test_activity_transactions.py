@@ -59,6 +59,11 @@ class Repos:
         await asyncio.sleep(0)
         return {oid: {"_id": oid} for oid in dict.fromkeys(oids)}
 
+    async def get_names(self, oids):
+        # 审计文案的人名解析：同一事务内批量查，不额外开连接。
+        await asyncio.sleep(0)
+        return {oid: f"用户{oid[-2:]}" for oid in dict.fromkeys(oids)}
+
     async def get_by_triple(self, activity, oid, mode):
         assert self.session.locked
         await asyncio.sleep(0)
@@ -101,7 +106,11 @@ class Repos:
 
 
 class Log:
-    def with_text(self, *args, **kwargs):
+    def __init__(self):
+        self.texts = []
+
+    def with_text(self, text, *args, **kwargs):
+        self.texts.append(text)
         return self
 
     async def insert_log(self, session):
@@ -192,3 +201,17 @@ async def test_import_requires_admin_before_reading_upload():
     with pytest.raises(HTTPException) as failure:
         await imports.upload_activity_excel("Activity", "Description", None, {"id": USER, "per": ["student"]}, Log())
     assert failure.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_import_log_uses_names_instead_of_oids(store):
+    content = workbook([[USER, "Name", "123", "Group", 1, 0, 0]])
+    upload = UploadFile(
+        BytesIO(content),
+        filename="import.xlsx",
+        headers=Headers({"content-type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"}),
+    )
+    log = Log()
+    await imports.upload_activity_excel("支教活动", "测试活动导入描述", upload, {"id": USER, "per": ["admin"]}, log)
+    assert log.texts == ["用户 用户01 导入义工活动《支教活动》Excel，记录 1 条"]
+    assert USER not in log.texts[0]
