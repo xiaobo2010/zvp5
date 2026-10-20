@@ -262,6 +262,14 @@ class _BulkUsersRepo:
             oid: self.users[oid] for oid in dict.fromkeys(oids) if oid in self.users
         }
 
+    async def get_names(self, oids):
+        # 日志文案用批量姓名查询，避免把 oid 直接写进审计详情。
+        return {
+            oid: self.users[oid]["name"]
+            for oid in dict.fromkeys(oids)
+            if oid in self.users and self.users[oid].get("name")
+        }
+
     async def get_by_oid(self, oid):
         self.single_calls.append(oid)
         return self.users.get(oid)
@@ -272,7 +280,11 @@ class _ActivitiesRepo:
         self.atype, self.updates = atype, []
 
     async def get_for_update(self, activity_oid):
-        return {"_id": activity_oid, "type": self.atype}
+        return {
+            "_id": activity_oid,
+            "type": self.atype,
+            "name": "支教活动",
+        }
 
     async def update(self, activity_oid, fields):
         self.updates.append(fields)
@@ -281,8 +293,10 @@ class _ActivitiesRepo:
 class _Log:
     def __init__(self) -> None:
         self.inserts = 0
+        self.texts: list[str] = []
 
-    def with_text(self, *args, **kwargs):
+    def with_text(self, text, *args, **kwargs):
+        self.texts.append(text)
         return self
 
     async def insert_log(self, session=None):
@@ -348,6 +362,12 @@ async def test_bulk_import_batches_reads_and_upserts_in_memory(monkeypatch) -> N
     assert state["activities"].updates[0]["status"] == "pending"
     assert "updatedAt" in state["activities"].updates[0]
     assert state["log"].inserts == 1
+    # 审计详情必须是人名 + 活动名，不能把 oid 直接写进去。
+    assert state["log"].texts == [
+        "用户 成员0a 为义工活动《支教活动》增加时长：成员0a on-campus +2.0；成员0b off-campus +1.0"
+    ]
+    assert MEMBER_OIDS[0] not in state["log"].texts[0]
+    assert MEMBER_OIDS[1] not in state["log"].texts[0]
 
 
 @pytest.mark.asyncio
