@@ -115,7 +115,14 @@ async def upload_activity_excel(
             members_repo = backends.get_members_repo(session)
             for (oid, mode), duration in records.items():
                 await members_repo.add(str(activity_id), oid, mode, duration, "effective")
-            log.with_text(f"用户 {user['id']} 导入义工活动 Excel，活动 {activity_id}，记录 {len(records)} 条", type="import_excel")
+            # 同一条审计要能直接读：操作者写名字，活动写文件名里的活动名。
+            performer = (
+                await users_repo.get_names([str(user["id"])])
+            ).get(str(user["id"])) or "未知用户"
+            log.with_text(
+                f"用户 {performer} 导入义工活动《{name}》Excel，记录 {len(records)} 条",
+                type="import_excel",
+            )
             await log.insert_log(session)
 
     return {"status": "ok", "code": 201}
