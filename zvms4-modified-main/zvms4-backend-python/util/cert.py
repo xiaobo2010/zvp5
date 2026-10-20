@@ -17,6 +17,7 @@ from Crypto.Hash import SHA256
 
 from db import backends
 from db.ids import new_oid
+from util.ban import ban_is_active, raise_banned
 from util.group import get_user_permissions
 
 
@@ -252,8 +253,10 @@ async def validate_by_cert(
     user = await backends.get_users_repo().get_by_oid(id)
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
-    if user.get("banned"):
-        raise HTTPException(status_code=403, detail="User is banned")
+    # 登录前的封禁闸：到期封禁（banned 仍为 1）必须放行，否则刑满用户
+    # 永远无法重新登录——判定口径统一交给 util.ban。
+    if ban_is_active(user):
+        raise_banned(user)
     # 旧行为：``password`` 为 NULL 时把「初始密码 == 用户自己的学号」当作凭据
     # 比对。学号是公开可枚举的，任何能清空他人密码的人都能据此冒充对方登录
     # （双人授权被人格冒用击穿）。删除此回落后，未设置密码的账号无法用密码

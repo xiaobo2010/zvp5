@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime
 from typing import Literal, Optional
 
 from bcrypt import hashpw, gensalt
@@ -55,6 +56,9 @@ class PutRolesRequest(BaseModel):
 
 class PutBannedRequest(BaseModel):
     banned: bool
+    # 原因随请求一起落库（USERS.BAN_REASON + BAN_RECORDS），前端封禁弹窗可填；
+    # 512 与 BAN_REASON / BAN_RECORDS.REASON 的列宽一致，超长在这里就 422。
+    reason: Optional[str] = Field(default=None, max_length=512)
 
 
 @router.put("/{user_id}/roles", status_code=204)
@@ -237,10 +241,31 @@ async def set_user_banned_v3(
     if payload.banned and str(oid) == str(user["id"]):
         raise HTTPException(status_code=403, detail="不能封禁自己")
 
-    await repo.set_banned(str(oid), 1 if payload.banned else 0)
+    if payload.banned:
+        reason = (payload.reason or "").strip() or "管理员封禁"
+        now = datetime.now()
+        # 管理员封禁一律永久（until=None 就是「无到期」），与规则封禁的
+        # 限时处罚区分开：人工判定不需要自动解封。
+        await repo.set_ban(
+            str(oid), reason=reason, until=None, source="admin", rule_code=None
+        )
+        await backends.get_ban_records_repo().insert(
+            str(oid),
+            source="admin",
+            reason=reason,
+            permanent=True,
+            started_at=now,
+            expires_at=None,
+            operator_oid=str(user["id"]),
+        )
+        action = f"封禁了用户 {target['name']}（原因：{reason}）"
+    else:
+        # 解封只清当前状态；历史事实由 BAN_RECORDS 流水承担（不删不写）。
+        await repo.clear_ban(str(oid))
+        action = f"解封了用户 {target['name']}"
 
     log.with_text(
-        f"管理员 {await get_user_display_name(user['id'])} {'封禁' if payload.banned else '解封'}了用户 {target['name']}",
+        f"管理员 {await get_user_display_name(user['id'])} {action}",
         type="ban_change",
         level="warning",
     )

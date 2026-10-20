@@ -30,6 +30,7 @@ import ZVerticalNav from '@/components/form/ZVerticalNav.vue'
 import { useRegisterSW } from 'virtual:pwa-register/vue'
 import { CarbonCloudOffline } from '@/icons'
 import { modifyPasswordDialogs } from '@/views'
+import dayjs from '@/plugins/dayjs'
 
 const { needRefresh, offlineReady, updateServiceWorker } = useRegisterSW()
 
@@ -149,6 +150,15 @@ const BAN_NOTICE_SECONDS = 30
 const banCountdown = ref(0)
 const banLocked = computed(() => userStore.bannedNoticeAt > 0)
 const banFinalizing = ref(false)
+
+// 原因来自 403 响应头(X-Ban-Reason);后端偶发不带时用兜底原因,不让文案出现空洞。
+// 期限:banUntil === 0(含空串头)按永久呈现,否则按本地时区格式化到分钟。
+const banReasonText = computed(() => userStore.banReason || t('nav.banned.reasonFallback'))
+const banUntilText = computed(() =>
+  userStore.banUntil > 0
+    ? t('nav.banned.until', { time: dayjs(userStore.banUntil).format('YYYY-MM-DD HH:mm') })
+    : t('nav.banned.permanent')
+)
 
 let banTimer: ReturnType<typeof setInterval> | undefined
 
@@ -362,7 +372,8 @@ onMounted(async () => {
             <CircleCloseFilled />
           </ElIcon>
           <h2 id="banned-title" class="banned-title">{{ t('nav.banned.title') }}</h2>
-          <p class="banned-message">{{ t('nav.banned.message') }}</p>
+          <p class="banned-message">{{ t('nav.banned.message', { reason: banReasonText }) }}</p>
+          <p class="banned-until">{{ banUntilText }}</p>
           <p class="banned-appeal">{{ t('nav.banned.appeal') }}</p>
           <p v-show="banCountdown > 0" class="banned-countdown">
             {{ t('nav.banned.autoLogoutIn', { seconds: banCountdown }) }}
@@ -521,6 +532,13 @@ onMounted(async () => {
   font-size: 1rem;
   opacity: 0.75;
   margin: 0.5rem 0 0;
+}
+
+.banned-until {
+  font-size: 1rem;
+  opacity: 0.85;
+  margin: 0.5rem 0 0;
+  font-variant-numeric: tabular-nums;
 }
 
 .banned-countdown {

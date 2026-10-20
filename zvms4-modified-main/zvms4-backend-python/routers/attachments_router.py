@@ -42,6 +42,7 @@ from util.attachment import (
     verify_signed,
 )
 from util.attachment_ocr import OCR_PROCESSING, process_ocr
+from util.ban import ban_is_active, raise_banned
 from util.object_id import get_current_user, optional_current_user, validate_object_id
 
 # ---------------------------------------------------------------------------
@@ -254,10 +255,10 @@ async def upload_attachment(
     log=Depends(inject_log),
 ):
     # Re-check `banned` at the DB layer: long-lived tokens survive a ban
-    # (design §8.7 / P2-7).
+    # (design §8.7 / P2-7). 只看列会误伤到期封禁，判定统一走 ban_is_active。
     me = await backends.get_users_repo().get_by_oid(user["id"])
-    if me is not None and me.get("banned"):
-        raise HTTPException(status_code=403, detail="User is banned")
+    if ban_is_active(me):
+        raise_banned(me)
 
     # Uploading is a student-union-or-above action. Both frontend entry points
     # (the activity-creation form and the attachment dialog) are manager-only,

@@ -37,6 +37,10 @@ export const useUserStore = defineStore('user', {
     shouldResetPassword: false,
     banned: false,
     bannedNoticeAt: 0,
+    // 封禁原因与到期时间都来自 403 响应头(X-Ban-Reason / X-Ban-Until),随 persist 落盘,
+    // 这样刷新页面后全屏遮罩仍能显示完整信息。banUntil 为 0 表示永久封禁。
+    banReason: '',
+    banUntil: 0,
     time: {
       socialPractice: 0,
       onCampus: 0,
@@ -100,6 +104,10 @@ export const useUserStore = defineStore('user', {
       this.isLogin = false
       this.shouldResetPassword = false
       this.banned = false
+      // 封禁原因/到期必须跟着身份一起清掉,否则下一个登录者会看到上一个人的封禁文案。
+      // bannedNoticeAt 的清理交给 App.vue 的 finalizeBan(倒计时结束才归零),这里不动。
+      this.banReason = ''
+      this.banUntil = 0
       this.time = { socialPractice: 0, onCampus: 0, offCampus: 0 }
       await clearCache()
     },

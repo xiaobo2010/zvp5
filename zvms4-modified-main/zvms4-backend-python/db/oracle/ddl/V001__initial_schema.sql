@@ -47,6 +47,10 @@ CREATE TABLE users (
   eligibility CLOB,
   past CLOB,
   banned NUMBER(1) DEFAULT 0 NOT NULL,
+  ban_reason VARCHAR2(512 CHAR),
+  ban_until TIMESTAMP,
+  ban_source VARCHAR2(16 CHAR),
+  ban_rule VARCHAR2(64 CHAR),
   PRIMARY KEY (oid),
   CONSTRAINT ck_users_oid CHECK (REGEXP_LIKE(oid,''^[0-9a-f]{24}$'')),
   CONSTRAINT ck_users_roles_json CHECK (roles IS JSON),
@@ -456,6 +460,14 @@ EXCEPTION
 END;
 /
 
+BEGIN
+  EXECUTE IMMEDIATE 'CREATE INDEX ix_app_logs_user_ts ON app_logs (app_user, ts_raw)';
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE NOT IN (-955, -1408) THEN RAISE; END IF;
+END;
+/
+
 -- ----------------------------------------------------------------------------
 -- EXPORT_TASKS  ← zvms_new.tasks   (runtime export queue; `id` is a BSON UUID)
 -- ----------------------------------------------------------------------------
@@ -742,5 +754,106 @@ CREATE TABLE dual_auth_uses (
 EXCEPTION
   WHEN OTHERS THEN
     IF SQLCODE != -955 THEN RAISE; END IF;
+END;
+/
+
+-- ----------------------------------------------------------------------------
+-- BAN_RULES  ← new (规则封禁配置)
+--   一行一条自动封禁规则。CONFIG / PENALTIES 是**有界** JSON：用
+--   VARCHAR2(2000 CHAR) 而不是 CLOB —— 配置体量固定且总是整体读取，LOB
+--   locator 只会多一次往返。CODE 是登录链路引用的稳定身份。
+--   也由 V013__add_ban_rules.sql 在存量实例上创建。
+-- ----------------------------------------------------------------------------
+BEGIN
+  EXECUTE IMMEDIATE '
+CREATE TABLE ban_rules (
+  oid VARCHAR2(24 CHAR) NOT NULL,
+  code VARCHAR2(64 CHAR) NOT NULL,
+  name VARCHAR2(128 CHAR) NOT NULL,
+  enabled NUMBER(1) DEFAULT 1 NOT NULL,
+  config VARCHAR2(2000 CHAR) NOT NULL,
+  penalties VARCHAR2(2000 CHAR) NOT NULL,
+  builtin NUMBER(1) DEFAULT 0 NOT NULL,
+  created_at TIMESTAMP NOT NULL,
+  updated_at TIMESTAMP NOT NULL,
+  PRIMARY KEY (oid),
+  CONSTRAINT ck_ban_rules_oid CHECK (REGEXP_LIKE(oid,''^[0-9a-f]{24}$'')),
+  CONSTRAINT ck_ban_rules_enabled CHECK (enabled IN (0,1)),
+  CONSTRAINT ck_ban_rules_builtin CHECK (builtin IN (0,1)),
+  CONSTRAINT ck_ban_rules_config_json CHECK (config IS JSON),
+  CONSTRAINT ck_ban_rules_penalties_json CHECK (penalties IS JSON),
+  CONSTRAINT uq_ban_rules_code UNIQUE (code)
+)';
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE != -955 THEN RAISE; END IF;
+END;
+/
+
+-- ----------------------------------------------------------------------------
+-- BAN_RECORDS  ← new (封禁流水/审计)
+--   每次封禁一行，是「累犯升级处罚」的依据：同一 (user, rule) 的历史行数
+--   决定下一档 penalty。USER_OID 带真外键（表从空开始，不会有历史脏 id）；
+--   其余列刻意无约束，保留判定当时的原貌。
+-- ----------------------------------------------------------------------------
+BEGIN
+  EXECUTE IMMEDIATE '
+CREATE TABLE ban_records (
+  oid VARCHAR2(24 CHAR) NOT NULL,
+  user_oid VARCHAR2(24 CHAR) NOT NULL,
+  source VARCHAR2(16 CHAR) NOT NULL,
+  rule_code VARCHAR2(64 CHAR),
+  reason VARCHAR2(512 CHAR),
+  permanent NUMBER(1) DEFAULT 0 NOT NULL,
+  started_at TIMESTAMP NOT NULL,
+  expires_at TIMESTAMP,
+  operator_oid VARCHAR2(24 CHAR),
+  created_at TIMESTAMP NOT NULL,
+  PRIMARY KEY (oid),
+  CONSTRAINT ck_ban_records_oid CHECK (REGEXP_LIKE(oid,''^[0-9a-f]{24}$'')),
+  CONSTRAINT ck_ban_records_source CHECK (source IN (''admin'',''rule'')),
+  CONSTRAINT ck_ban_records_permanent CHECK (permanent IN (0,1)),
+  CONSTRAINT fk_ban_records_user FOREIGN KEY (user_oid) REFERENCES users (oid)
+)';
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE != -955 THEN RAISE; END IF;
+END;
+/
+
+BEGIN
+  EXECUTE IMMEDIATE 'CREATE INDEX ix_ban_records_user ON ban_records (user_oid)';
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE NOT IN (-955, -1408) THEN RAISE; END IF;
+END;
+/
+
+BEGIN
+  EXECUTE IMMEDIATE 'CREATE INDEX ix_ban_records_started ON ban_records (started_at)';
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE NOT IN (-955, -1408) THEN RAISE; END IF;
+END;
+/
+
+-- ----------------------------------------------------------------------------
+-- BAN_RULES seed  ← 唯一一处 DML（也由 V013 mirror）
+--   内置规则与 V013 用同一个固定 oid，MERGE 保证「不存在才插入」：重复执行
+--   不会覆盖管理员已调过的 threshold / penalties。
+-- ----------------------------------------------------------------------------
+BEGIN
+  EXECUTE IMMEDIATE '
+MERGE INTO ban_rules t
+USING (SELECT ''0b0000000000000000000001'' oid FROM dual) s
+ON (t.code = ''multi_device_login'')
+WHEN NOT MATCHED THEN INSERT
+  (oid, code, name, enabled, config, penalties, builtin, created_at, updated_at)
+  VALUES (''0b0000000000000000000001'', ''multi_device_login'', ''同学号多设备登录'',
+          1, ''{"threshold":3,"window_hours":24}'', ''[1,2,7]'', 1,
+          SYSTIMESTAMP, SYSTIMESTAMP)';
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE NOT IN (-1, -955) THEN RAISE; END IF;
 END;
 /

@@ -27,6 +27,7 @@ from routers import (
     system_ssh_router,
     system_files_router,
     system_db_content_router,
+    ban_router,
 )
 import socketio
 from socketio.exceptions import ConnectionRefusedError as SocketIOConnectionRefusedError
@@ -104,6 +105,9 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    # 封禁拒绝是 403，原因/到期走响应头（见 util/ban.py）。浏览器的 JS 默认读
+    # 不到自定义响应头，跨域本地调试会丢原因；显式暴露后前端才能提示用户。
+    expose_headers=["X-Ban-Reason", "X-Ban-Until"],
 )
 
 # 端点耗时统计：纯 ASGI 中间件，注册位置刻意夹在 CORSMiddleware 与
@@ -404,6 +408,7 @@ app.include_router(
     prefix="/api/system/db/content",
     tags=["System"],
 )
+app.include_router(ban_router.router, prefix="/api/v3/ban", tags=["ban"])
 
 
 @app.get("/api/")

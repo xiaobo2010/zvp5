@@ -166,6 +166,10 @@ def _user_columns() -> tuple[Any, ...]:
         users_tbl.c.eligibility,
         users_tbl.c.past,
         users_tbl.c.banned,
+        users_tbl.c.ban_reason,
+        users_tbl.c.ban_until,
+        users_tbl.c.ban_source,
+        users_tbl.c.ban_rule,
     )
 
 
@@ -248,6 +252,53 @@ def _set_banned_stmt(oid: str, banned: int):
         update(users_tbl)
         .where(users_tbl.c.oid == oid)
         .values(banned=banned, session_id=new_oid())
+    )
+
+
+def _set_ban_stmt(
+    oid: str,
+    reason: str,
+    until: datetime | None,
+    source: str,
+    rule_code: str | None,
+):
+    """封禁一条 UPDATE：``banned`` 闸门 + 四列元数据 + 会话轮换。
+
+    元数据必须和 ``banned=1`` 同一条语句落下：分两步写会让「已封禁但无原因」
+    的中间态被并发的审核页面读到。``until=None`` 就是永久（列留 NULL），
+    这正是「NULL 且 banned=1 表示永久」的写入半边。
+    """
+    return (
+        update(users_tbl)
+        .where(users_tbl.c.oid == oid)
+        .values(
+            banned=1,
+            ban_reason=reason,
+            ban_until=until,
+            ban_source=source,
+            ban_rule=rule_code,
+            session_id=new_oid(),
+        )
+    )
+
+
+def _clear_ban_stmt(oid: str):
+    """解封：闸门归零 + 四列清空。
+
+    元数据不保留在 users 行上：解封后的账号不该看起来还带着原因/到期时间，
+    历史事实由 ``BAN_RECORDS`` 流水承担。
+    """
+    return (
+        update(users_tbl)
+        .where(users_tbl.c.oid == oid)
+        .values(
+            banned=0,
+            ban_reason=None,
+            ban_until=None,
+            ban_source=None,
+            ban_rule=None,
+            session_id=new_oid(),
+        )
     )
 
 
@@ -664,6 +715,16 @@ def _user_doc(mapping: Any) -> Row:
         doc["past"] = mapping["past"]
     if mapping["banned"]:
         doc["banned"] = True
+    # 封禁元数据只补非 NULL 的：``"ban_until" in user`` 必须保持 Mongo 的
+    # 「字段不存在」语义（永久封禁 = 该 key 不出现）。
+    if mapping["ban_reason"] is not None:
+        doc["ban_reason"] = mapping["ban_reason"]
+    if mapping["ban_until"] is not None:
+        doc["ban_until"] = mapping["ban_until"]
+    if mapping["ban_source"] is not None:
+        doc["ban_source"] = mapping["ban_source"]
+    if mapping["ban_rule"] is not None:
+        doc["ban_rule"] = mapping["ban_rule"]
     return doc
 
 
@@ -806,7 +867,36 @@ class OracleUsersRepo:
             return int((await session.execute(stmt)).scalar_one())
 
     async def set_banned(self, oid: str, banned: int) -> None:
-        stmt = _set_banned_stmt(normalize_oid(oid), banned)
+        """兼容旧调用：``1`` → 管理员永久封禁，``0`` → 解封。
+
+        旧接口没有原因/来源/到期时间的表达力，转发到 :meth:`set_ban`（
+        ``reason=""`` / ``until=None`` / ``source="admin"``）与
+        :meth:`clear_ban`，语义与 V013 之前一致，同时把元数据列写正。
+        """
+        if banned:
+            await self.set_ban(oid, reason="", until=None, source="admin", rule_code=None)
+        else:
+            await self.clear_ban(oid)
+
+    async def set_ban(
+        self,
+        oid: str,
+        *,
+        reason: str,
+        until: datetime | None,
+        source: str,
+        rule_code: str | None,
+    ) -> None:
+        """封禁并记录原因/到期/来源（``banned = 1``），同一条写里轮换会话。"""
+        stmt = _set_ban_stmt(normalize_oid(oid), reason, until, source, rule_code)
+        async with _session_for(self._session) as (session, owns):
+            await session.execute(stmt)
+            if owns:
+                await session.commit()
+
+    async def clear_ban(self, oid: str) -> None:
+        """解封并清空元数据（``banned = 0``），同一条写里轮换会话。"""
+        stmt = _clear_ban_stmt(normalize_oid(oid))
         async with _session_for(self._session) as (session, owns):
             await session.execute(stmt)
             if owns:

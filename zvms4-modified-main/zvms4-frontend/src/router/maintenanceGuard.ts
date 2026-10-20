@@ -8,11 +8,17 @@ const STATUS_TIMEOUT_MS = 3_000
 
 interface StatusCache {
   enabled: boolean
+  admin: boolean
   expiresAt: number
 }
 
+export interface MaintenanceState {
+  enabled: boolean
+  admin: boolean
+}
+
 let statusCache: StatusCache | null = null
-let inflight: Promise<boolean | null> | null = null
+let inflight: Promise<MaintenanceState | null> | null = null
 
 export type MaintenanceGuardResult = true | { path: string; replace: true }
 
@@ -41,10 +47,11 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
 /**
  * 读取维护状态。成功才写缓存;失败/超时返回 null 且不缓存,下次导航重试。
  * 同一时刻只允许一个在飞请求,避免并发导航放大请求。
+ * admin 与服务端同一次响应返回,不额外发请求。
  */
-async function readMaintenanceEnabled(): Promise<boolean | null> {
+async function readMaintenanceState(): Promise<MaintenanceState | null> {
   if (statusCache && statusCache.expiresAt > Date.now()) {
-    return statusCache.enabled
+    return { enabled: statusCache.enabled, admin: statusCache.admin }
   }
   if (inflight) {
     return inflight
@@ -52,9 +59,11 @@ async function readMaintenanceEnabled(): Promise<boolean | null> {
   inflight = (async () => {
     try {
       const res = await withTimeout(getMaintenanceStatus(), STATUS_TIMEOUT_MS)
-      const enabled = res?.data?.data?.enabled === true
-      statusCache = { enabled, expiresAt: Date.now() + STATUS_CACHE_TTL_MS }
-      return enabled
+      const data = res?.data?.data
+      const enabled = data?.enabled === true
+      const admin = data?.admin === true
+      statusCache = { enabled, admin, expiresAt: Date.now() + STATUS_CACHE_TTL_MS }
+      return { enabled, admin }
     } catch {
       return null
     } finally {
@@ -72,7 +81,12 @@ function isLoggedIn(): boolean {
   }
 }
 
-function isAdmin(): boolean {
+function isAdmin(serverAdmin: boolean): boolean {
+  // 服务端用 token 复核出的 admin 最可信:position 由小组权限推导,登录未就绪
+  // 时可能为空,只看它会把真管理员在维护期间弹回维护页。
+  if (serverAdmin) {
+    return true
+  }
   try {
     const position = useUserStore().position
     return Array.isArray(position) && position.includes('admin')
@@ -84,21 +98,26 @@ function isAdmin(): boolean {
 
 /**
  * 维护模式路由守卫:
- * - 维护中:除 admin 外全部收敛到 /maintenance(已在维护页则放行,避免自跳循环)
+ * - 维护中:/maintenance 与 /user/login 永远放行(登录页是管理员唯一入口);
+ *   其余路径仅 admin 放行,否则收敛到 /maintenance
  * - 非维护中:访问 /maintenance 时按登录态送回 /user 或 /user/login
  * - 状态接口失败/超时:放行且不缓存失败结果
  */
 export async function maintenanceGuard(
   to: Pick<{ path: string }, 'path'>
 ): Promise<MaintenanceGuardResult> {
-  const enabled = await readMaintenanceEnabled()
+  const state = await readMaintenanceState()
 
-  if (enabled === null) {
+  if (state === null) {
     return true
   }
 
-  if (enabled) {
-    if (to.path === '/maintenance' || isAdmin()) {
+  if (state.enabled) {
+    if (
+      to.path === '/maintenance' ||
+      to.path === '/user/login' ||
+      isAdmin(state.admin)
+    ) {
       return true
     }
     return { path: '/maintenance', replace: true }

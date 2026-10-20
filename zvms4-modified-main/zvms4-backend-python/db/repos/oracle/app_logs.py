@@ -247,6 +247,31 @@ def _count_expired_stmt(cutoff: Any):
     return select(func.count()).select_from(app_logs_tbl).where(*_expired_conds(cutoff))
 
 
+def _count_distinct_xuehai_stmt(user_oid: str, since_ts: float):
+    """用户在时间窗内登录过的不同学海设备数（规则封禁的证据查询）。
+
+    谓词刻意收窄成 ``ltype = 'user_login'``：其它事件也会带上 ``Xuehai-Id``
+    头，但只有登录才代表「这台设备正在使用这个账号」。
+
+    不用 ``xuehai_id != ''``：Oracle 把空串当 NULL，``col != NULL`` 恒为 NULL，
+    整张表会被过滤成 0 行。改用 ``length(trim(col)) > 0``，NULL 与纯空白一起
+    被排除，语义才是想要的「非空且非空串」。
+
+    ``ts_raw``（BINARY_DOUBLE epoch 秒）是时间窗的权威列，``ix_app_logs_user_ts``
+    让 ``app_user`` + ``ts_raw`` 两个谓词都走索引。
+    """
+    return (
+        select(func.count(app_logs_tbl.c.xuehai_id.distinct()))
+        .select_from(app_logs_tbl)
+        .where(
+            app_logs_tbl.c.app_user == user_oid,
+            app_logs_tbl.c.ltype == "user_login",
+            func.length(func.trim(app_logs_tbl.c.xuehai_id)) > 0,
+            app_logs_tbl.c.ts_raw >= since_ts,
+        )
+    )
+
+
 def _purge_batch_stmt(cutoff: Any, batch_size: int):
     """One ``DELETE`` bounded to ``batch_size`` rows.
 
@@ -341,6 +366,13 @@ class OracleAppLogsRepo:
     async def count_expired(self, cutoff: datetime) -> int:
         """Rows :meth:`purge_batch` would eventually delete (read-only)."""
         stmt = _count_expired_stmt(cutoff)
+        async with _session_for(self._session) as (session, _owns):
+            total = (await session.execute(stmt)).scalar_one()
+        return int(total)
+
+    async def count_distinct_xuehai(self, user_oid: str, since_ts: float) -> int:
+        """用户在 ``since_ts`` 之后登录过的不同学海设备数（规则封禁判定用）。"""
+        stmt = _count_distinct_xuehai_stmt(user_oid, float(since_ts))
         async with _session_for(self._session) as (session, _owns):
             total = (await session.execute(stmt)).scalar_one()
         return int(total)

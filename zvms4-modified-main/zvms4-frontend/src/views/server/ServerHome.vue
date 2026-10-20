@@ -82,8 +82,8 @@ watch(current, () => {
       <ElButton text bg :icon="ArrowLeft" @click="() => router.back()" />
       <ElSegmented v-model="current" :options="tabs" class="flex-1 min-w-0 w-full">
         <template #default="props">
-          <div class="flex flex-row items-center gap-1.5 p-2">
-            <ElIcon :size="16">
+          <div class="flex flex-col items-center gap-2 p-2">
+            <ElIcon :size="18" class="mt-2">
               <Component :is="(props.item as SegmentedTab).icon" />
             </ElIcon>
             {{ t(('server.tabs.' + (props.item as SegmentedTab).value) as string) }}

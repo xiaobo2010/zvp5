@@ -1,6 +1,6 @@
 import { mount, flushPromises, type VueWrapper } from '@vue/test-utils'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-import { h } from 'vue'
+import { h, watch, type SetupContext } from 'vue'
 import ServerSsh from './ServerSsh.vue'
 import { createSshSession } from '@/api/system/ssh.ts'
 
@@ -23,9 +23,25 @@ const {
   const ElDialog = {
     name: 'ElDialog',
     props: { modelValue: Boolean, title: String, width: String },
-    emits: ['update:modelValue'],
-    template:
-      '<div v-if="modelValue" class="el-dialog-stub" :data-title="title"><slot /><slot name="footer" /></div>'
+    emits: ['update:modelValue', 'closed'],
+    setup(props: { modelValue?: boolean; title?: string }, ctx: SetupContext) {
+      // 真实 ElDialog 是在离场动画结束、DOM 已移除之后才发 closed 的。
+      // 桩在 modelValue 落回 false 时补发一次,否则被测页等 @closed 结算的 Promise 永远不 resolve
+      // (旧桩不发 closed,没有任何用例能跑通风险框确认之后的分支)。
+      watch(
+        () => props.modelValue,
+        (value, old) => {
+          if (!value && old) ctx.emit('closed')
+        }
+      )
+      return () =>
+        props.modelValue
+          ? h('div', { class: 'el-dialog-stub', 'data-title': props.title }, [
+              ...(ctx.slots.default?.() ?? []),
+              ...(ctx.slots.footer?.() ?? [])
+            ])
+          : null
+    }
   }
   const ElCard = {
     name: 'ElCard',
@@ -265,6 +281,48 @@ it('acknowledging the risk dialog opens the system auth dialog and remembers the
   expect(openSpy).toHaveBeenCalledTimes(1)
   expect(openSpy).toHaveBeenCalledWith('server.ssh.authScene')
   expect(createSshSession).not.toHaveBeenCalled()
+
+  wrapper.unmount()
+})
+
+// 回归:风险框返回 true 后必须真的把授权框打开。
+// 旧实现同批渲染导致授权框 overlay 被拆掉,服务端连 POST 都收不到,这里钉住后续链路。
+it('continues to the auth dialog after the risk dialog closes', async () => {
+  openSpy.mockResolvedValue(null)
+  const wrapper = mountPage()
+  await flushPromises()
+
+  await emptyStateButton(wrapper).trigger('click')
+  await flushPromises()
+  expect(wrapper.find('.el-dialog-stub').exists()).toBe(true)
+
+  await buttonByText(wrapper, 'server.ssh.riskAck').trigger('click')
+  await flushPromises()
+
+  // 风险框先离场,授权框才打开(顺序即修复点)
+  expect(wrapper.find('.el-dialog-stub').exists()).toBe(false)
+  expect(openSpy).toHaveBeenCalledTimes(1)
+  expect(openSpy).toHaveBeenCalledWith('server.ssh.authScene')
+
+  wrapper.unmount()
+})
+
+// 右上角 X / ESC 只改 modelValue,不走 ack/cancel:必须按取消结算,Promise 不能挂着。
+it('settles as cancelled when the risk dialog is dismissed without a decision', async () => {
+  const wrapper = mountPage()
+  await flushPromises()
+
+  await emptyStateButton(wrapper).trigger('click')
+  await flushPromises()
+
+  wrapper.findComponent({ name: 'ElDialog' }).vm.$emit('update:modelValue', false)
+  await flushPromises()
+
+  expect(wrapper.find('.el-dialog-stub').exists()).toBe(false)
+  expect(openSpy).not.toHaveBeenCalled()
+  expect(createSshSession).not.toHaveBeenCalled()
+  expect(wrapper.text()).toContain('server.ssh.statusIdle')
+  expect(localStorage.getItem(WARNED_KEY)).toBeNull()
 
   wrapper.unmount()
 })
