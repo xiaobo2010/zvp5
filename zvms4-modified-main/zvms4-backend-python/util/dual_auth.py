@@ -82,6 +82,23 @@ def _is_unique_violation(exc: BaseException) -> bool:
     return "ORA-00001" in str(getattr(exc, "orig", exc))
 
 
+async def resolve_names(oids: list[str]) -> dict[str, str]:
+    """批量把 oid 解析成姓名（一次 ``get_names``，不按行查）。
+
+    审计的首要职责是**写得下**：取不到名字（用户已删、库抖动、替身 repo 没有
+    该方法）绝不能连审计一起丢，所以任何异常都降级成空表，由调用方回落成
+    空字符串——oid 仍在 payload 里，溯源不丢。
+    """
+    wanted = [oid for oid in dict.fromkeys(oids) if oid]
+    if not wanted:
+        return {}
+    try:
+        return await backends.get_users_repo().get_names(wanted)
+    except Exception as exc:  # noqa: BLE001 - 取名失败不影响审计落库
+        print(f"Failed to resolve names for audit: {exc}")
+        return {}
+
+
 async def _write_audit(
     *,
     action: str,
@@ -89,10 +106,21 @@ async def _write_audit(
     approver_oid: str = "",
     reason: str = "",
 ) -> None:
-    """写一条双人授权审计。``reason`` 只在服务端留存，不会回给客户端。"""
-    payload: dict[str, str] = {"action": action, "operator": operator_oid}
+    """写一条双人授权审计。``reason`` 只在服务端留存，不会回给客户端。
+
+    ``data`` 同时带 oid 与姓名：oid 是机器可溯源的键，姓名是给管理员看的。
+    ``ZVMSLog.user`` 固定写 oid —— 显示的姓名由日志列表的 ``users`` 连接解
+    析，写路径不承担展示职责。
+    """
+    names = await resolve_names([operator_oid, approver_oid])
+    payload: dict[str, str] = {
+        "action": action,
+        "operator": operator_oid,
+        "operator_name": names.get(operator_oid, ""),
+    }
     if approver_oid:
         payload["approver"] = approver_oid
+        payload["approver_name"] = names.get(approver_oid, "")
     if reason:
         payload["reason"] = reason
     try:
@@ -117,13 +145,23 @@ async def audit_system_op(
     log_type: str = "system_op",
     level: str = "warning",
 ) -> None:
-    """给三块系统能力的普通操作留审计（同样只写结果，不写凭证）。"""
+    """给三块系统能力的普通操作留审计（同样只写结果，不写凭证）。
+
+    ``detail`` 原样保留（调用方已经写好人类可读的上下文），额外补
+    ``operator_name``，免得管理员在日志页只看到串 oid。
+    """
+    names = await resolve_names([operator_oid])
     try:
         await ZVMSLog(
             url=f"system:{action}",
             user=operator_oid,
             data=json.dumps(
-                {"action": action, "operator": operator_oid, "detail": detail},
+                {
+                    "action": action,
+                    "operator": operator_oid,
+                    "operator_name": names.get(operator_oid, ""),
+                    "detail": detail,
+                },
                 ensure_ascii=False,
             ),
             type=log_type,

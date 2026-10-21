@@ -149,7 +149,6 @@ export const zhCN = {
     tabs: {
       groups: '群组',
       users: '用户',
-      time: '时间',
       import: '导入',
       ban: '封禁',
       logs: '日志'
@@ -157,7 +156,7 @@ export const zhCN = {
   },
   banRules: {
     rulesTitle: '规则列表',
-    recordsTitle: '封禁记录',
+    usersTitle: '当前被封用户',
     refresh: '刷新',
     loadFailed: '加载失败，请稍后重试',
     savedNotice: '已保存',
@@ -208,9 +207,24 @@ export const zhCN = {
       sourceAdmin: '管理员',
       permanent: '永久'
     },
+    users: {
+      searchPlaceholder: '按姓名或学号搜索',
+      search: '搜索',
+      columns: {
+        name: '姓名',
+        userId: '学号',
+        className: '班级',
+        reason: '原因',
+        period: '期限',
+        source: '来源'
+      },
+      sourceAdmin: '管理员封禁',
+      sourceRule: '规则：{code}',
+      permanent: '永久',
+      empty: '当前没有被封禁的用户'
+    },
     empty: {
-      rules: '暂无规则',
-      records: '暂无封禁记录'
+      rules: '暂无规则'
     }
   },
   exports: {

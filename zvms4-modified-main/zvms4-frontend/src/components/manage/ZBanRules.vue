@@ -17,7 +17,7 @@ import {
   ElTag
 } from 'element-plus'
 import type { FormInstance, FormItemRule, FormRules } from 'element-plus'
-import { getRecords, getRules, updateRule, type BanRecord, type BanRule } from '@/api/ban'
+import { getBannedUsers, getRules, updateRule, type BannedUser, type BanRule } from '@/api/ban'
 import ZPagination from '@/components/utils/ZPagination.vue'
 
 const { t } = useI18n()
@@ -26,12 +26,13 @@ const rules = ref<BanRule[]>([])
 const rulesLoading = ref(false)
 const rulesFailed = ref(false)
 
-const records = ref<BanRecord[]>([])
-const recordsLoading = ref(false)
-const recordsFailed = ref(false)
-const recordsPage = ref(1)
-const recordsPerpage = ref(20)
-const recordsTotal = ref(0)
+const users = ref<BannedUser[]>([])
+const usersLoading = ref(false)
+const usersFailed = ref(false)
+const usersPage = ref(1)
+const usersPerpage = ref(20)
+const usersTotal = ref(0)
+const usersQuery = ref('')
 
 const dialogVisible = ref(false)
 const saving = ref(false)
@@ -116,37 +117,49 @@ async function loadRules() {
   }
 }
 
-async function loadRecords() {
-  recordsLoading.value = true
+async function loadUsers() {
+  usersLoading.value = true
   try {
-    const result = await getRecords(recordsPage.value, recordsPerpage.value)
-    records.value = result.records
-    recordsTotal.value = result.size
-    recordsFailed.value = false
+    const result = await getBannedUsers(
+      usersPage.value,
+      usersPerpage.value,
+      usersQuery.value.trim()
+    )
+    users.value = result.users
+    usersTotal.value = result.size
+    usersFailed.value = false
   } catch {
-    records.value = []
-    recordsFailed.value = true
+    users.value = []
+    usersFailed.value = true
   } finally {
-    recordsLoading.value = false
+    usersLoading.value = false
   }
 }
 
 onMounted(() => {
   void loadRules()
-  void loadRecords()
+  void loadUsers()
 })
 
-watch(recordsPage, () => {
-  void loadRecords()
+watch(usersPage, () => {
+  void loadUsers()
 })
 
-watch(recordsPerpage, () => {
-  if (recordsPage.value === 1) {
-    void loadRecords()
+watch(usersPerpage, () => {
+  if (usersPage.value === 1) {
+    void loadUsers()
   } else {
-    recordsPage.value = 1
+    usersPage.value = 1
   }
 })
+
+function searchUsers() {
+  if (usersPage.value === 1) {
+    void loadUsers()
+  } else {
+    usersPage.value = 1
+  }
+}
 
 function replaceRule(updated: BanRule) {
   const index = rules.value.findIndex((item) => item.code === updated.code)
@@ -240,22 +253,20 @@ function formatTime(value?: string | null): string {
   return `${date.getFullYear()}-${fill(date.getMonth() + 1)}-${fill(date.getDate())} ${fill(date.getHours())}:${fill(date.getMinutes())}`
 }
 
-function formatExpires(record: BanRecord): string {
-  if (record.permanent) {
-    return t('manage.banRules.records.permanent')
+function formatUntil(user: BannedUser): string {
+  if (user.permanent) {
+    return t('manage.banRules.users.permanent')
   }
-  return formatTime(record.expires_at)
+  return formatTime(user.until)
 }
 
-function formatSource(record: BanRecord): string {
-  if (record.source === 'admin') {
-    return t('manage.banRules.records.sourceAdmin')
+function formatSource(user: BannedUser): string {
+  if (user.source === 'admin') {
+    return t('manage.banRules.users.sourceAdmin')
   }
-  const rule = rules.value.find((item) => item.code === record.rule_code)
-  if (rule) {
-    return `${t('manage.banRules.records.sourceRule')}:${rule.name}`
-  }
-  return record.rule_code || t('manage.banRules.records.sourceRule')
+  const rule = rules.value.find((item) => item.code === user.rule_code)
+  const label = rule?.name || user.rule_code || ''
+  return t('manage.banRules.users.sourceRule', { code: label })
 }
 </script>
 
@@ -335,72 +346,78 @@ function formatSource(record: BanRecord): string {
       </p>
     </ElCard>
 
-    <ElCard shadow="never" v-loading="recordsLoading">
+    <ElCard shadow="never" v-loading="usersLoading">
       <template #header>
-        <span>{{ t('manage.banRules.recordsTitle') }}</span>
+        <div class="flex items-center justify-between gap-2">
+          <span>{{ t('manage.banRules.usersTitle') }}</span>
+          <div class="flex items-center gap-2">
+            <ElInput
+              v-model="usersQuery"
+              :placeholder="t('manage.banRules.users.searchPlaceholder')"
+              clearable
+              class="w-56"
+              @keyup.enter="searchUsers"
+              @clear="searchUsers"
+            />
+            <ElButton size="small" @click="searchUsers">
+              {{ t('manage.banRules.users.search') }}
+            </ElButton>
+          </div>
+        </div>
       </template>
-      <ElTable :data="records" row-key="_id" stripe>
+      <ElTable :data="users" row-key="oid" stripe>
         <ElTableColumn
-          prop="user_name"
-          :label="t('manage.banRules.records.columns.name')"
+          prop="name"
+          :label="t('manage.banRules.users.columns.name')"
           min-width="100"
         />
         <ElTableColumn
           prop="user_id"
-          :label="t('manage.banRules.records.columns.userId')"
+          :label="t('manage.banRules.users.columns.userId')"
           min-width="100"
         />
         <ElTableColumn
+          prop="class_name"
+          :label="t('manage.banRules.users.columns.className')"
+          min-width="110"
+        />
+        <ElTableColumn
+          prop="reason"
+          :label="t('manage.banRules.users.columns.reason')"
+          min-width="200"
+          show-overflow-tooltip
+        />
+        <ElTableColumn
+          prop="until"
+          :label="t('manage.banRules.users.columns.period')"
+          min-width="150"
+        >
+          <template #default="{ row }">
+            <span class="tabular-nums">{{ formatUntil(row) }}</span>
+          </template>
+        </ElTableColumn>
+        <ElTableColumn
           prop="source"
-          :label="t('manage.banRules.records.columns.source')"
-          min-width="160"
+          :label="t('manage.banRules.users.columns.source')"
+          min-width="150"
         >
           <template #default="{ row }">
             <span>{{ formatSource(row) }}</span>
           </template>
         </ElTableColumn>
-        <ElTableColumn
-          prop="reason"
-          :label="t('manage.banRules.records.columns.reason')"
-          min-width="220"
-          show-overflow-tooltip
-        />
-        <ElTableColumn
-          prop="started_at"
-          :label="t('manage.banRules.records.columns.startedAt')"
-          min-width="150"
-        >
-          <template #default="{ row }">
-            <span class="tabular-nums">{{ formatTime(row.started_at) }}</span>
-          </template>
-        </ElTableColumn>
-        <ElTableColumn
-          prop="expires_at"
-          :label="t('manage.banRules.records.columns.expiresAt')"
-          min-width="150"
-        >
-          <template #default="{ row }">
-            <span class="tabular-nums">{{ formatExpires(row) }}</span>
-          </template>
-        </ElTableColumn>
-        <ElTableColumn
-          prop="operator_name"
-          :label="t('manage.banRules.records.columns.operator')"
-          min-width="100"
-        />
         <template #empty>
           <ElEmpty
             :description="
-              recordsFailed ? t('manage.banRules.loadFailed') : t('manage.banRules.empty.records')
+              usersFailed ? t('manage.banRules.loadFailed') : t('manage.banRules.users.empty')
             "
             :image-size="100"
           />
         </template>
       </ElTable>
       <ZPagination
-        v-model:current-page="recordsPage"
-        v-model:page-size="recordsPerpage"
-        :total="recordsTotal"
+        v-model:current-page="usersPage"
+        v-model:page-size="usersPerpage"
+        :total="usersTotal"
       />
     </ElCard>
 

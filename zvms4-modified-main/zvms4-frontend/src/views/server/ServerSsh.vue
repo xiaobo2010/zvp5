@@ -9,7 +9,7 @@ import { useDark } from '@vueuse/core'
 import { createSshSession, buildSshWsUrl } from '@/api/system/ssh.ts'
 import ZSystemAuthDialog from '@/components/system/ZSystemAuthDialog.vue'
 import { useUserStore } from '@/stores/user.ts'
-import { Connection, VideoPlay, SwitchButton, RefreshRight } from '@element-plus/icons-vue'
+import { ArrowDown, Connection, VideoPlay, SwitchButton, RefreshRight } from '@element-plus/icons-vue'
 
 const { t } = useI18n()
 const userStore = useUserStore()
@@ -37,6 +37,11 @@ let riskVerdict: boolean | null = null
 
 const CONNECT_TIMEOUT_MS = 15000
 const riskVisible = ref(false)
+
+// 终端历史滚动:用户向上滚出底部时显示「回到底部」
+const scrolledUp = ref(false)
+let viewportEl: HTMLElement | null = null
+let touchLastY: number | null = null
 
 const dark = useDark()
 
@@ -157,10 +162,12 @@ function ensureTerminal() {
   fit = new FitAddon()
   term.loadAddon(fit)
   term.open(containerRef.value)
+  term.attachCustomKeyEventHandler(handleTerminalKey)
   term.onData((data) => {
     sendFrame({ type: 'input', data })
   })
   if (containerRef.value) {
+    attachScrollHelpers(containerRef.value)
     resizeObserver?.disconnect()
     resizeObserver = new ResizeObserver(() => fitTerminal())
     resizeObserver.observe(containerRef.value)
@@ -174,9 +181,127 @@ function fitTerminal() {
   } catch {
     return
   }
+  updateScrollState()
   if (ws && ws.readyState === WebSocket.OPEN) {
     sendFrame({ type: 'resize', cols: term.cols, rows: term.rows })
   }
+}
+
+// ---- 历史滚动辅助 ----
+// xterm 默认滚轮就能翻 scrollback;但远端程序开启鼠标上报后,滚轮会被转成
+// 应用按键而不是翻历史,备用缓冲(如 vim/htop)必须继续交给应用,所以只在
+// 「鼠标上报开启 + 普通缓冲」的组合下拦截滚轮自己翻历史。
+function updateScrollState() {
+  if (!term) {
+    scrolledUp.value = false
+    return
+  }
+  try {
+    const buffer = term.buffer.active
+    scrolledUp.value =
+      buffer.type === 'normal' && buffer.viewportY < buffer.length - term.rows - 1
+  } catch {
+    return
+  }
+}
+
+function handleTerminalKey(event: KeyboardEvent): boolean {
+  if (event.type !== 'keydown' || !term) {
+    return true
+  }
+  if (event.shiftKey && !event.ctrlKey && event.code === 'PageUp') {
+    term.scrollPages(-1)
+    updateScrollState()
+    return false
+  }
+  if (event.shiftKey && !event.ctrlKey && event.code === 'PageDown') {
+    term.scrollPages(1)
+    updateScrollState()
+    return false
+  }
+  if (event.ctrlKey && event.shiftKey && (event.code === 'ArrowUp' || event.code === 'ArrowDown')) {
+    term.scrollLines(event.code === 'ArrowUp' ? -1 : 1)
+    updateScrollState()
+    return false
+  }
+  return true
+}
+
+function handleTerminalWheel(event: WheelEvent) {
+  if (!term) return
+  try {
+    const tracking = term.modes.mouseTrackingMode
+    if (!tracking || tracking === 'none' || term.buffer.active.type !== 'normal') return
+    event.stopPropagation()
+    event.preventDefault()
+    term.scrollLines(event.deltaY > 0 ? 3 : -3)
+    updateScrollState()
+  } catch {
+    return
+  }
+}
+
+function handleTerminalTouchStart(event: TouchEvent) {
+  try {
+    touchLastY = event.touches.length === 1 ? event.touches[0].clientY : null
+  } catch {
+    touchLastY = null
+  }
+}
+
+function handleTerminalTouchMove(event: TouchEvent) {
+  if (touchLastY === null || !term) return
+  try {
+    if (term.buffer.active.type !== 'normal') {
+      touchLastY = null
+      return
+    }
+    const y = event.touches[0]?.clientY
+    if (y === undefined) return
+    const lines = Math.round((touchLastY - y) / 14)
+    if (lines !== 0) {
+      event.preventDefault()
+      term.scrollLines(lines)
+      touchLastY = y
+      updateScrollState()
+    }
+  } catch {
+    touchLastY = null
+  }
+}
+
+function handleTerminalTouchEnd() {
+  touchLastY = null
+}
+
+function scrollToTermBottom() {
+  if (!term) return
+  term.scrollToBottom()
+  term.focus()
+  updateScrollState()
+}
+
+function attachScrollHelpers(container: HTMLDivElement) {
+  container.addEventListener('wheel', handleTerminalWheel, { capture: true, passive: false })
+  container.addEventListener('touchstart', handleTerminalTouchStart, { passive: true })
+  container.addEventListener('touchmove', handleTerminalTouchMove, { passive: false })
+  container.addEventListener('touchend', handleTerminalTouchEnd, { passive: true })
+  viewportEl = container.querySelector('.xterm-viewport')
+  viewportEl?.addEventListener('scroll', updateScrollState)
+}
+
+function detachScrollHelpers() {
+  const container = containerRef.value
+  if (container) {
+    container.removeEventListener('wheel', handleTerminalWheel, { capture: true } as EventListenerOptions)
+    container.removeEventListener('touchstart', handleTerminalTouchStart)
+    container.removeEventListener('touchmove', handleTerminalTouchMove)
+    container.removeEventListener('touchend', handleTerminalTouchEnd)
+  }
+  viewportEl?.removeEventListener('scroll', updateScrollState)
+  viewportEl = null
+  touchLastY = null
+  scrolledUp.value = false
 }
 
 function sendFrame(payload: Record<string, unknown>) {
@@ -289,6 +414,7 @@ function startTerminal(voirTicket: string) {
   banner.value = ''
   ensureTerminal()
   term?.reset()
+  scrolledUp.value = false
   term?.focus()
 
   const url = buildSshWsUrl(voirTicket)
@@ -388,6 +514,7 @@ onBeforeUnmount(() => {
   }
   cancelConnectTimeout()
   teardown()
+  detachScrollHelpers()
 })
 </script>
 
@@ -438,34 +565,48 @@ onBeforeUnmount(() => {
         />
 
         <!-- 终端区:connecting 骨架 / 空态说明 / 终端本体 -->
-        <div
-          ref="containerRef"
-          class="h-[calc(100vh_-_20rem)] min-h-[360px] bg-[var(--zv-bg)] p-2"
-        >
-          <!-- 连接中骨架 -->
-          <ElSkeleton v-if="status === 'connecting'" :rows="4" animated />
-          <!-- 未连接空态 -->
+        <div class="relative">
           <div
-            v-else-if="status === 'idle'"
-            class="flex h-full flex-col items-center justify-center gap-2 px-6 text-center"
+            ref="containerRef"
+            class="terminal-box h-[calc(100vh_-_20rem)] min-h-[360px] bg-[var(--zv-bg)] p-2"
           >
-            <span class="text-base font-semibold">{{ t('server.ssh.emptyTitle') }}</span>
-            <p class="max-w-md text-sm leading-6 opacity-75">
-              {{ t('server.ssh.emptyDesc') }}
-            </p>
-            <p class="max-w-md text-xs leading-5 text-red-600 dark:text-red-400">
-              {{ t('server.ssh.riskHint') }}
-            </p>
-            <ElButton
-              size="large"
-              type="primary"
-              :icon="Connection"
-              class="mt-2"
-              @click="openTerminal"
+            <!-- 连接中骨架 -->
+            <ElSkeleton v-if="status === 'connecting'" :rows="4" animated />
+            <!-- 未连接空态 -->
+            <div
+              v-else-if="status === 'idle'"
+              class="flex h-full flex-col items-center justify-center gap-2 px-6 text-center"
             >
-              {{ t('server.ssh.startButton') }}
-            </ElButton>
+              <span class="text-base font-semibold">{{ t('server.ssh.emptyTitle') }}</span>
+              <p class="max-w-md text-sm leading-6 opacity-75">
+                {{ t('server.ssh.emptyDesc') }}
+              </p>
+              <p class="max-w-md text-xs leading-5 text-red-600 dark:text-red-400">
+                {{ t('server.ssh.riskHint') }}
+              </p>
+              <ElButton
+                size="large"
+                type="primary"
+                :icon="Connection"
+                class="mt-2"
+                @click="openTerminal"
+              >
+                {{ t('server.ssh.startButton') }}
+              </ElButton>
+            </div>
           </div>
+          <!-- 向上翻过历史后出现,点击回到底部并聚焦终端 -->
+          <button
+            v-if="scrolledUp"
+            type="button"
+            class="back-to-bottom absolute bottom-4 right-6 z-10 flex items-center gap-1 rounded-full border border-current/15 bg-[var(--zv-bg)] px-3 py-1.5 text-xs opacity-80 shadow-md transition hover:opacity-100"
+            style="color: var(--zv-label)"
+            :title="t('server.ssh.scrollToBottom')"
+            @click="scrollToTermBottom"
+          >
+            <ElIcon :size="12"><ArrowDown /></ElIcon>
+            {{ t('server.ssh.scrollToBottom') }}
+          </button>
         </div>
       </div>
     </ElCard>
@@ -501,5 +642,33 @@ onBeforeUnmount(() => {
 textarea,
 input {
   font-family: inherit;
+}
+
+/* 终端历史滚动条:xterm 用 .xterm-viewport 内滚,收窄宽度并压低对比度 */
+.terminal-box :deep(.xterm) {
+  height: 100%;
+}
+
+.terminal-box :deep(.xterm-viewport) {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(128, 128, 128, 0.4) transparent;
+}
+
+.terminal-box :deep(.xterm-viewport::-webkit-scrollbar) {
+  width: 7px;
+  height: 7px;
+}
+
+.terminal-box :deep(.xterm-viewport::-webkit-scrollbar-track) {
+  background: transparent;
+}
+
+.terminal-box :deep(.xterm-viewport::-webkit-scrollbar-thumb) {
+  background: rgba(128, 128, 128, 0.4);
+  border-radius: 4px;
+}
+
+.terminal-box :deep(.xterm-viewport::-webkit-scrollbar-thumb:hover) {
+  background: rgba(128, 128, 128, 0.65);
 }
 </style>

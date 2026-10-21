@@ -26,6 +26,7 @@ from datetime import datetime
 import pytest
 from sqlalchemy.dialects import oracle
 
+from db.models import ban_records as ban_records_tbl
 from db.repos.oracle import app_logs as app_logs_repo
 from db.repos.oracle import ban_records as ban_records_repo
 from db.repos.oracle import ban_rules as ban_rules_repo
@@ -213,6 +214,7 @@ def test_ban_record_insert_binds_permanent_as_number():
             UNTIL,
             None,
             OTHER_OID,
+            UNTIL,
         )
     )
     assert sql.startswith("INSERT INTO ban_records ")
@@ -221,6 +223,73 @@ def test_ban_record_insert_binds_permanent_as_number():
     assert "'multi_device_login'" in sql
     assert f"'{USER_OID}'" in sql
     assert f"'{OTHER_OID}'" in sql
+
+
+def test_ban_record_insert_covers_every_not_null_column():
+    """回归：``created_at`` 漏列曾让生产封禁 500（ORA-01400）。
+
+    离线 SQL 契约测试之前只断言「某些值出现过」，没有校验**必填列是否都在**，
+    于是 ``created_at NOT NULL``（无默认值）这条漏列一路跑到生产。这里直接拿
+    ORM 表定义做列级校验：凡 NOT NULL 且无 ``server_default`` 的列，insert
+    的 values 里必须存在——以后再丢一列，这条会先红。
+    """
+    stmt = ban_records_repo._insert_stmt(
+        "0a00000000000000000000ff",
+        USER_OID,
+        "admin",
+        None,
+        "管理员封禁",
+        True,
+        UNTIL,
+        None,
+        OTHER_OID,
+        UNTIL,
+    )
+    provided = {
+        (key if isinstance(key, str) else key.name).lower() for key in stmt._values
+    }
+    required = {
+        col.name.lower()
+        for col in ban_records_tbl.c
+        if not col.nullable and col.server_default is None
+    }
+    assert required - provided == set()
+    assert "created_at" in provided
+
+
+def test_ban_record_insert_uses_write_time_for_created_at():
+    """``created_at`` 与 ``started_at`` 缺省值必须同源，不能各取一次 now。
+
+    直接跑 ``insert()`` 观察绑定值：调用方不传 ``started_at`` 时两列相等；
+    传了（补录场景）时 ``created_at`` 仍是写入时刻，晚于 ``started_at``。
+    """
+    captured: list[dict] = []
+
+    class FakeSession:
+        async def execute(self, stmt):
+            captured.append(dict(stmt.compile(dialect=DIALECT).params))
+
+        async def commit(self):
+            pass
+
+    async def _run(started_at):
+        repo = ban_records_repo.OracleBanRecordsRepo(session=FakeSession())
+        await repo.insert(
+            USER_OID, source="admin", reason="违规", permanent=True,
+            started_at=started_at,
+        )
+        return captured[-1]
+
+    import asyncio
+
+    implicit = asyncio.run(_run(None))
+    assert implicit["created_at"] == implicit["started_at"]
+
+    backfilled = datetime(2026, 1, 1, 0, 0, 0)
+    explicit = asyncio.run(_run(backfilled))
+    assert explicit["started_at"] == backfilled
+    assert explicit["created_at"] > backfilled
+
 
 
 def test_ban_record_count_is_scoped_to_user_and_rule():
@@ -303,3 +372,57 @@ def test_ban_records_row_maps_permanent_and_joined_columns():
 def test_user_columns_project_the_new_ban_columns(column):
     names = [col.name for col in users_repo._user_columns()]
     assert column in names
+
+
+# ---------------------------------------------------------------------------
+# list_banned_page: 「当前被封用户」不是流水
+# ---------------------------------------------------------------------------
+
+def test_banned_page_selects_currently_banned_users_only():
+    sql = _sql(users_repo._banned_page_stmt("", 2, 20))
+    assert "FROM users LEFT OUTER JOIN groups ON users.class_oid = groups.oid" in sql
+    assert "users.banned = 1" in sql
+    assert "groups.name AS class_name" in sql
+    assert "count(*) OVER () AS total_count" in sql
+    assert "ORDER BY users.business_id ASC, users.oid ASC" in sql
+    # 第 2 页 → OFFSET 20 ROWS
+    assert "OFFSET 20 ROWS" in sql
+    # 读的是 users 上的封禁状态，不能拿流水表兜底
+    assert "ban_records" not in sql
+
+
+def test_banned_page_query_matches_name_or_business_id():
+    sql = _sql(users_repo._banned_page_stmt("2026", 1, 20))
+    assert "users.banned = 1" in sql
+    assert "regexp_like(users.name, '2026', 'i')" in sql
+    assert "regexp_like(users.business_id, '2026', 'i')" in sql
+
+
+def test_banned_count_stmt_uses_the_same_filter_without_join():
+    sql = _sql(users_repo._banned_count_stmt(""))
+    assert "count(*)" in sql
+    assert "FROM users" in sql
+    assert "users.banned = 1" in sql
+    assert "JOIN groups" not in sql
+
+
+def test_banned_row_maps_permanent_ban_and_unknown_class():
+    row = users_repo._banned_row(
+        {
+            "oid": USER_OID,
+            "business_id": "2026002",
+            "name": "李四",
+            "ban_reason": "管理员封禁",
+            "ban_until": None,
+            "ban_source": "admin",
+            "ban_rule": None,
+            "class_name": None,
+        }
+    )
+    assert row["_id"] == USER_OID
+    assert row["id"] == "2026002"
+    assert row["class_name"] == users_repo._UNKNOWN_CLASS
+    assert row["ban_reason"] == "管理员封禁"
+    assert row["ban_until"] is None
+    assert row["ban_source"] == "admin"
+    assert row["ban_rule"] is None
