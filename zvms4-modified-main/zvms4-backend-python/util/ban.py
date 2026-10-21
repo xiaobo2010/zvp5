@@ -61,6 +61,35 @@ def ban_is_active(doc: dict | None, now: datetime | None = None) -> bool:
     return until > _comparable(until, now or datetime.now())
 
 
+def _naive_until(value: datetime) -> datetime:
+    """比较前统一去掉时区：双方都是同一台机器上的「本地时刻」。"""
+    return value.replace(tzinfo=None) if value.tzinfo is not None else value
+
+
+def ban_outranks(existing: dict | None, until: datetime | None) -> bool:
+    """已有封禁是否**不弱于**本次算出的 ``until``（即不该被本次覆写）。
+
+    规则是自动执行的，它只能加刑、不能减刑：管理员落的永久封禁
+    （``banned=1`` 且 ``ban_until IS NULL``）被梯度首档改写成 1 天，等于
+    用一条自动规则把人工裁定推翻。判定口径：
+
+    * 本次 ``until is None``（永久）→ 本次最强，一律覆写（返回 False）；
+    * 已有 ``ban_until IS NULL`` 且处于封禁态 → 已有是永久，保留（True）；
+    * 其余按时间比大小，已有更晚则保留。
+
+    ``banned`` 为假或已刑满（``ban_until`` 在过去）都不算「更强」：后者是正常
+    存量状态，新封禁理应覆盖它。
+    """
+    if until is None:
+        return False
+    if not existing or not existing.get("banned"):
+        return False
+    current = _as_until(existing.get("ban_until"))
+    if current is None:
+        return True
+    return _naive_until(current) > _naive_until(until)
+
+
 def ban_reason_of(doc: dict | None) -> str:
     """封禁原因；缺失/空白时回退到 :data:`DEFAULT_BAN_REASON`。"""
     reason = (doc or {}).get("ban_reason")
@@ -104,6 +133,7 @@ __all__ = [
     "BAN_REASON_HEADER",
     "BAN_UNTIL_HEADER",
     "ban_is_active",
+    "ban_outranks",
     "ban_reason_of",
     "ban_until_epoch",
     "ban_headers",

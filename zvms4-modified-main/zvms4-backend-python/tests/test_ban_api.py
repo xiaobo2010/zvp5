@@ -125,9 +125,33 @@ def api(monkeypatch):
         lambda *a, **k: SimpleNamespace(list_page=list_page),
     )
 
+    async def get_names(oids):
+        return {oid: "管理员" for oid in oids}
+
+    monkeypatch.setattr(
+        backends,
+        "get_users_repo",
+        lambda *a, **k: SimpleNamespace(get_names=get_names),
+    )
+
+    # 规则变更审计日志：与 devices_api 同款打桩，避免真去连库写日志。
+    log = SimpleNamespace(
+        entries=[],
+        with_text=lambda text, type="", level="": (
+            log.entries.append({"text": text, "type": type, "level": level}) or log
+        ),
+    )
+
+    async def insert_log():
+        return None
+
+    log.insert_log = insert_log
+    calls["log"] = log
+
     app = FastAPI()
     app.include_router(ban_router.router, prefix=PREFIX)
     app.dependency_overrides[get_current_user] = lambda: ADMIN
+    app.dependency_overrides[ban_router.inject_log] = lambda: log
     return TestClient(app), rules, calls
 
 
@@ -299,6 +323,54 @@ def test_unknown_rule_is_404(api) -> None:
     assert response.status_code == 404
     assert response.json()["detail"] == "规则不存在"
     assert calls["updates"] == []
+
+
+# ---------------------------------------------------------------------------
+# PUT /rules/{code} 的审计日志
+# ---------------------------------------------------------------------------
+
+
+def test_rule_change_writes_audit_log(api) -> None:
+    """改的是登录闸门阈值/梯度，必须留下「谁把什么从多少改成多少」。"""
+    http, _rules, calls = api
+    body = http.put(
+        f"{PREFIX}/rules/multi_device_login",
+        json={
+            "enabled": False,
+            "config": {"threshold": 5},
+            "penalties": [1, 3],
+        },
+    ).json()
+
+    assert body["code"] == 200
+    entries = calls["log"].entries
+    assert len(entries) == 1
+    entry = entries[0]
+    assert entry["type"] == "ban_change"
+    assert entry["level"] == "warning"
+    text = entry["text"]
+    assert "multi_device_login" in text
+    assert "threshold 3→5" in text
+    assert "window_hours 24→24" in text
+    assert "penalties [1, 2, 7]→[1, 3]" in text
+    assert "enabled True→False" in text
+
+
+def test_empty_patch_writes_no_audit_log(api) -> None:
+    """空 patch 是一次「读回」，没改动就不该产生审计行。"""
+    http, _rules, calls = api
+    http.put(f"{PREFIX}/rules/multi_device_login", json={})
+
+    assert calls["updates"] == []
+    assert calls["log"].entries == []
+
+
+def test_rejected_rule_patch_writes_no_audit_log(api) -> None:
+    http, _rules, calls = api
+    http.put(f"{PREFIX}/rules/multi_device_login", json={"penalties": [3, 2]})
+    http.put(f"{PREFIX}/rules/not_a_rule", json={"enabled": False})
+
+    assert calls["log"].entries == []
 
 
 # ---------------------------------------------------------------------------

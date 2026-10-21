@@ -73,6 +73,11 @@ def _rule_view(rule: dict) -> dict:
     }
 
 
+def _json_text(value) -> str:
+    """日志里的结构化值统一用 JSON 文本：``null`` 档位与空列表必须能区分。"""
+    return json.dumps(value, ensure_ascii=False)
+
+
 class PutRuleConfig(BaseModel):
     # 只校验类型；范围在端点上判，才能给出中文 422（与既有 v3 端点一致）。
     threshold: Optional[int] = None
@@ -138,12 +143,15 @@ async def update_ban_rule(
     code: str,
     payload: PutRuleRequest,
     user=Depends(get_current_user),
+    log=Depends(inject_log),
 ):
     _require_admin(user)
     repo = backends.get_ban_rules_repo()
     rule = await repo.get_by_code(code)
     if rule is None:
         raise HTTPException(status_code=404, detail="规则不存在")
+    # 改动前的快照要在此刻取：后续 update 之后同一个 dict 可能已被就地改写。
+    before = _rule_view(rule)
 
     fields: dict = {}
     if payload.enabled is not None:
@@ -174,6 +182,25 @@ async def update_ban_rule(
     updated = await repo.get_by_code(code)
     if updated is None:
         raise HTTPException(status_code=404, detail="规则不存在")
+
+    if fields:
+        # 改的是登录闸门的阈值与处罚梯度，必须留痕：没有这条日志，事后
+        # 「为什么突然开始封人」只能靠猜。字段用改动前后的值成对表达。
+        after = _rule_view(updated)
+        config_before, config_after = before["config"], after["config"]
+        log.with_text(
+            f"管理员 {await get_user_display_name(user['id'])} 修改封禁规则 {code}："
+            f"threshold {config_before.get('threshold')}→{config_after.get('threshold')}，"
+            f"window_hours {config_before.get('window_hours')}→"
+            f"{config_after.get('window_hours')}，"
+            f"penalties {_json_text(before['penalties'])}→"
+            f"{_json_text(after['penalties'])}，"
+            f"enabled {before['enabled']}→{after['enabled']}",
+            type="ban_change",
+            level="warning",
+        )
+        await log.insert_log()
+
     return {"status": "ok", "code": 200, "data": _rule_view(updated)}
 
 

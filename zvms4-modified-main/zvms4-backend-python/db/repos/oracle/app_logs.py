@@ -243,6 +243,9 @@ PROTECTED_LTYPES = (
     "device_ban_skipped",
     "system_maintenance_enable",
     "system_maintenance_disable",
+    # SSH 命令全文是 root 级操作的追责证据，写的是 level="info"
+    # （routers/system_ssh_router.py），不进本元组就会被保留期批量清掉。
+    "system_ssh_command",
 )
 
 # Warning-level rows are protected as well, whatever their type.
