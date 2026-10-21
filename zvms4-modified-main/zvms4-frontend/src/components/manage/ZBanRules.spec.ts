@@ -1,8 +1,8 @@
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import ZBanRules from './ZBanRules.vue'
-import { getRecords, getRules, updateRule } from '@/api/ban'
-import type { BanRecord, BanRule } from '@/api/ban'
+import { getBannedUsers, getRules, updateRule } from '@/api/ban'
+import type { BannedUser, BanRule } from '@/api/ban'
 
 const { elMessageErrorSpy, elMessageSuccessSpy } = vi.hoisted(() => ({
   elMessageErrorSpy: vi.fn(),
@@ -12,7 +12,7 @@ const { elMessageErrorSpy, elMessageSuccessSpy } = vi.hoisted(() => ({
 vi.mock('@/api/ban', () => ({
   getRules: vi.fn(),
   updateRule: vi.fn(),
-  getRecords: vi.fn()
+  getBannedUsers: vi.fn()
 }))
 
 vi.mock('vue-i18n', () => ({
@@ -280,48 +280,44 @@ const ruleFixture: BanRule = {
   updated_at: '2026-10-20T12:00:00'
 }
 
-const recordFixtures: BanRecord[] = [
+const bannedUserFixtures: BannedUser[] = [
   {
-    _id: 'r1',
-    user_oid: 'u1',
-    user_name: '张三',
-    user_id: '20240001',
-    source: 'rule',
-    rule_code: 'multi_device_login',
+    oid: '69b7a4ad0243d973f1e1a2b3',
+    name: '张三',
+    user_id: '20240801',
+    class_name: '高三8班',
     reason: '同学号多设备登录',
     permanent: false,
-    started_at: '2026-10-20T08:00:00',
-    expires_at: '2026-10-21T08:00:00',
-    operator_name: ''
+    until: '2026-10-21T08:00:00',
+    source: 'rule',
+    rule_code: 'multi_device_login'
   },
   {
-    _id: 'r2',
-    user_oid: 'u2',
-    user_name: '李四',
+    oid: '69b7a4ad0243d973f1e1a2b4',
+    name: '李四',
     user_id: '20240002',
-    source: 'admin',
-    rule_code: '',
-    reason: '违规操作',
+    class_name: '高三8班',
+    reason: '管理员封禁',
     permanent: true,
-    started_at: '2026-10-19T10:30:00',
-    expires_at: null,
-    operator_name: '管理员'
+    until: null,
+    source: 'admin',
+    rule_code: null
   }
 ]
 
 function mockApi(options?: {
   rules?: BanRule[]
-  records?: BanRecord[]
-  recordsSize?: number
+  users?: BannedUser[]
+  usersSize?: number
   updateRejects?: boolean
 }) {
   // 组件会就地改写 rule.enabled(乐观更新),fixture 必须深拷贝避免用例间串扰
   vi.mocked(getRules).mockResolvedValue(
     options?.rules ?? [structuredClone(ruleFixture)]
   )
-  vi.mocked(getRecords).mockResolvedValue({
-    records: options?.records ?? structuredClone(recordFixtures),
-    size: options?.recordsSize ?? recordFixtures.length
+  vi.mocked(getBannedUsers).mockResolvedValue({
+    users: options?.users ?? structuredClone(bannedUserFixtures),
+    size: options?.usersSize ?? bannedUserFixtures.length
   })
   if (options?.updateRejects) {
     vi.mocked(updateRule).mockRejectedValue(new Error('forbidden'))
@@ -341,7 +337,7 @@ function mountPage(): VueWrapper {
 
 beforeEach(() => {
   vi.mocked(getRules).mockReset()
-  vi.mocked(getRecords).mockReset()
+  vi.mocked(getBannedUsers).mockReset()
   vi.mocked(updateRule).mockReset()
   elMessageErrorSpy.mockReset()
   elMessageSuccessSpy.mockReset()
@@ -438,15 +434,15 @@ it('submits edited rule config and penalties via updateRule', async () => {
   wrapper.unmount()
 })
 
-it('renders ban records with pagination and re-queries on page change', async () => {
-  mockApi({ recordsSize: 25 })
+it('renders banned users with pagination and re-queries on page change', async () => {
+  mockApi({ usersSize: 25 })
   const wrapper = mountPage()
   await flushPromises()
 
-  expect(getRecords).toHaveBeenCalledWith(1, 20)
+  expect(getBannedUsers).toHaveBeenCalledWith(1, 20, '')
   expect(wrapper.text()).toContain('张三')
-  expect(wrapper.text()).toContain('李四')
-  expect(wrapper.text()).toContain('manage.banRules.records.permanent')
+  expect(wrapper.text()).toContain('高三8班')
+  expect(wrapper.text()).toContain('manage.banRules.users.permanent')
 
   const pagination = wrapper.find('.z-pagination-stub')
   expect(pagination.attributes('data-total')).toBe('25')
@@ -455,14 +451,48 @@ it('renders ban records with pagination and re-queries on page change', async ()
   await pagination.trigger('click')
   await flushPromises()
 
-  expect(getRecords).toHaveBeenLastCalledWith(2, 20)
+  expect(getBannedUsers).toHaveBeenLastCalledWith(2, 20, '')
+
+  wrapper.unmount()
+})
+
+it('searches banned users by name or student id', async () => {
+  mockApi()
+  const wrapper = mountPage()
+  await flushPromises()
+
+  const searchInput = wrapper.find('.el-input-stub')
+  expect(searchInput.exists()).toBe(true)
+  await searchInput.setValue('张三')
+
+  const searchButton = wrapper
+    .findAll('button')
+    .find((button) => button.text() === 'manage.banRules.users.search')
+  expect(searchButton).toBeDefined()
+  await searchButton!.trigger('click')
+  await flushPromises()
+
+  expect(getBannedUsers).toHaveBeenLastCalledWith(1, 20, '张三')
+
+  wrapper.unmount()
+})
+
+it('shows a clear empty state when no banned users exist', async () => {
+  mockApi({ users: [], usersSize: 0 })
+  const wrapper = mountPage()
+  await flushPromises()
+
+  const empties = wrapper.findAll('.el-empty-stub')
+  expect(empties.length).toBe(1)
+  expect(empties[0]!.text()).toBe('manage.banRules.users.empty')
+  expect(wrapper.text()).not.toContain('张三')
 
   wrapper.unmount()
 })
 
 it('shows empty states when both endpoints fail (e.g. 403)', async () => {
   vi.mocked(getRules).mockRejectedValue(new Error('forbidden'))
-  vi.mocked(getRecords).mockRejectedValue(new Error('forbidden'))
+  vi.mocked(getBannedUsers).mockRejectedValue(new Error('forbidden'))
   const wrapper = mountPage()
   await flushPromises()
 

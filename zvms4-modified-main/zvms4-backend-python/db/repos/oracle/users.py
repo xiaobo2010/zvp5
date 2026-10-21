@@ -152,6 +152,59 @@ def _user_count_stmt(query: str, role: str):
     return stmt
 
 
+def _banned_filter(query: str) -> list[Any]:
+    """「当前被封禁」的谓词：闸门列 + 可选的姓名/学号包含匹配。
+
+    复用 :func:`_user_filter` 的 ``query`` 语义（``re.escape`` + REGEXP_LIKE
+    ``'i'``），只额外钉住 ``banned = 1``——两条列表的搜索行为必须一致，管理员
+    才会觉得是同一个框。
+    """
+    return [users_tbl.c.banned == 1, *_user_filter(query, "")]
+
+
+def _banned_page_stmt(query: str, page: int, size: int):
+    """``list_banned_page`` 一页「当前被封」用户 + ``COUNT(*) OVER()`` 总数。
+
+    与 ``_user_page_stmt`` 同一形状（LEFT JOIN ``GROUPS`` 取班级名、窗口计数、
+    ``business_id``/``oid`` 升序），区别只是谓词换成 ``banned = 1`` 且投影
+    带出封禁元数据：前端这一屏回答的是「现在谁进不来」，不是流水账。
+    ``USERS``↔``GROUPS`` 是 1:1，窗口计数不会被 join 放大。
+    """
+    stmt = (
+        select(
+            users_tbl.c.oid,
+            users_tbl.c.business_id,
+            users_tbl.c.name,
+            users_tbl.c.ban_reason,
+            users_tbl.c.ban_until,
+            users_tbl.c.ban_source,
+            users_tbl.c.ban_rule,
+            groups_tbl.c.name.label("class_name"),
+            func.count().over().label("total_count"),
+        )
+        .select_from(
+            users_tbl.outerjoin(
+                groups_tbl, users_tbl.c.class_oid == groups_tbl.c.oid
+            )
+        )
+        .where(*_banned_filter(query))
+    )
+    return (
+        stmt.order_by(users_tbl.c.business_id.asc(), users_tbl.c.oid.asc())
+        .offset((page - 1) * size)
+        .limit(size)
+    )
+
+
+def _banned_count_stmt(query: str):
+    """越界页补总数用；不需要 join，``GROUPS`` 不参与过滤。"""
+    return (
+        select(func.count())
+        .select_from(users_tbl)
+        .where(*_banned_filter(query))
+    )
+
+
 def _user_columns() -> tuple[Any, ...]:
     """The full USERS projection shared by the by-id / by-学号 lookups."""
     return (
@@ -677,6 +730,26 @@ def _page_row(mapping: Any) -> Row:
     }
 
 
+def _banned_row(mapping: Any) -> Row:
+    """当前被封用户的一行（``list_banned_page`` 的投影形状）。
+
+    ``class_name`` 沿用 ``_page_row`` 的「未知班级」哨兵：班级被删/未分配时
+    列表仍要给出一个可显示值，而不是让前端处理 ``None``。``ban_until`` 保持
+    ``datetime | None`` 原样（``None`` = 永久），ISO 化是端点层的事。
+    """
+    class_name = mapping["class_name"]
+    return {
+        "_id": mapping["oid"],
+        "id": mapping["business_id"],
+        "name": mapping["name"],
+        "class_name": class_name if class_name is not None else _UNKNOWN_CLASS,
+        "ban_reason": mapping["ban_reason"],
+        "ban_until": mapping["ban_until"],
+        "ban_source": mapping["ban_source"],
+        "ban_rule": mapping["ban_rule"],
+    }
+
+
 def _total_of(rows: Any) -> int | None:
     """The ``COUNT(*) OVER()`` value carried by a merged count+page result.
 
@@ -767,6 +840,28 @@ class OracleUsersRepo:
                     else int((await session.execute(count_stmt)).scalar_one())
                 )
         return [_page_row(row._mapping) for row in rows], total
+
+    async def list_banned_page(
+        self, query: str, page: int, size: int
+    ) -> tuple[list[Row], int]:
+        """当前被封禁（``banned = 1``）用户的一页，``(rows, total)``。
+
+        「当前状态」以 ``USERS.BANNED`` 为准，不读 ``BAN_RECORDS``：流水是
+        只增的历史账本（同一用户可能有多条、也可能被人工解封），拿它当列表
+        会把已解封的人和重复封禁的次数一起显示出来。
+        """
+        page_stmt = _banned_page_stmt(query, page, size)
+        count_stmt = _banned_count_stmt(query)
+        async with _session_for(self._session) as (session, _owns):
+            rows = (await session.execute(page_stmt)).all()
+            total = _total_of(rows)
+            if total is None:
+                total = (
+                    0
+                    if page == 1
+                    else int((await session.execute(count_stmt)).scalar_one())
+                )
+        return [_banned_row(row._mapping) for row in rows], total
 
     async def create(
         self,

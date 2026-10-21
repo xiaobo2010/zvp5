@@ -10,6 +10,7 @@ WS 协议帧、并发/尺寸硬约束、审计不含终端内容。
 from __future__ import annotations
 
 import asyncio
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -105,10 +106,25 @@ def _fresh_process_state(monkeypatch):
 @pytest.fixture
 def env(monkeypatch):
     audits: list[dict] = []
+    commands: list[dict] = []
+
+    class StubCommandLog:
+        """``ZVMSLog`` 替身：命令审计在后台任务里写，落进列表供断言。"""
+
+        def __init__(self, **kwargs) -> None:
+            self.kwargs = kwargs
+
+        async def insert_log(self):
+            commands.append(self.kwargs)
+
+    monkeypatch.setattr(system_ssh_router, "ZVMSLog", StubCommandLog)
 
     class StubUsersRepo:
         async def get_by_oid(self, oid):
             return {"_id": OPERATOR, "id": "20240101", "roles": ["admin"]}
+
+        async def get_names(self, oids):
+            return {oid: "运维管理员" for oid in oids if oid == OPERATOR}
 
     monkeypatch.setattr(backends, "get_users_repo", lambda session=None: StubUsersRepo())
 
@@ -155,6 +171,7 @@ def env(monkeypatch):
         app=app,
         client=TestClient(app),
         audits=audits,
+        commands=commands,
         approve=approve,
         install_ssh=install_ssh,
     )
@@ -375,6 +392,7 @@ def test_third_session_for_same_operator_is_denied(env):
 
 
 def test_connect_and_close_are_audited_without_terminal_content(env):
+    """open/close 审计只写会话事件；命令原文走单独的 ``system_ssh_command``。"""
     env.install_ssh(chunks=[b"TOPSECRET-OUTPUT\n"])
 
     with env.client.websocket_connect(f"{WS_PATH}?ticket={_ticket()}") as ws:
@@ -393,3 +411,64 @@ def test_connect_and_close_are_audited_without_terminal_content(env):
     joined = " ".join(details)
     assert "TOPSECRET" not in joined
     assert "secret-input" not in joined
+
+
+def test_executed_commands_are_audited_as_their_own_log_type(env):
+    """命令原文进 ``system_ssh_command``：这是审计要求，不是泄露。"""
+    env.install_ssh()
+
+    with env.client.websocket_connect(f"{WS_PATH}?ticket={_ticket()}") as ws:
+        ws.send_json({"type": "input", "data": "echo hi\r"})
+        ws.send_json({"type": "input", "data": "cd /tmp\npwd\r"})
+        ws.send_json({"type": "ping"})
+        assert ws.receive_json() == {"type": "pong"}
+
+    payloads = [json.loads(entry["data"]) for entry in env.commands]
+    assert [payload["command"] for payload in payloads] == [
+        "echo hi",
+        "cd /tmp",
+        "pwd",
+    ]
+    for entry in env.commands:
+        assert entry["url"] == "system:web_ssh"
+        assert entry["type"] == "system_ssh_command"
+        assert entry["level"] == "info"
+        # ``user`` 保持 oid：日志列表靠 users 连接出显示名。
+        assert entry["user"] == OPERATOR
+    assert payloads[0] == {
+        "command": "echo hi",
+        "operator": OPERATOR,
+        "operator_name": "运维管理员",
+    }
+
+
+def test_unfinished_line_is_not_audited_as_a_command(env):
+    """没按回车的半行远端没有执行，不该留成命令。"""
+    env.install_ssh()
+
+    with env.client.websocket_connect(f"{WS_PATH}?ticket={_ticket()}") as ws:
+        ws.send_json({"type": "input", "data": "echo half"})
+        ws.send_json({"type": "ping"})
+        assert ws.receive_json() == {"type": "pong"}
+
+    assert env.commands == []
+
+
+def test_command_audit_failure_never_breaks_the_terminal(env, monkeypatch):
+    """审计是旁路：写库炸了终端照样能用。"""
+    env.install_ssh()
+
+    class BrokenLog:
+        def __init__(self, **kwargs) -> None:
+            pass
+
+        async def insert_log(self):
+            raise RuntimeError("db down")
+
+    monkeypatch.setattr(system_ssh_router, "ZVMSLog", BrokenLog)
+
+    with env.client.websocket_connect(f"{WS_PATH}?ticket={_ticket()}") as ws:
+        ws.send_json({"type": "input", "data": "ls\r"})
+        ws.send_json({"type": "ping"})
+        assert ws.receive_json() == {"type": "pong"}
+

@@ -27,6 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.ids import new_oid
 from db.models import app_logs as app_logs_tbl
+from db.models import users as users_tbl
 from db.oracle.session import session_scope
 
 Row = dict[str, Any]
@@ -59,6 +60,13 @@ async def _session_for(
 
 
 def _log_columns() -> tuple[Any, ...]:
+    """读取投影：日志本体 + ``USERS`` 解析出的显示名/学号。
+
+    ``APP_USER`` 存的是 oid，直接回前端就是「一串哈希」。显示名在这里用
+    LEFT JOIN 解析，历史行与新行一视同仁；写路径仍只落 oid（``performer``
+    过滤与 DB 语义都依赖它）。``users`` 侧两列在左连接未命中时是 NULL，
+    由调用方回落（``app_user`` 为空串 = 未登录请求）。
+    """
     return (
         app_logs_tbl.c.oid,
         app_logs_tbl.c.url,
@@ -69,7 +77,18 @@ def _log_columns() -> tuple[Any, ...]:
         app_logs_tbl.c.ltype,
         app_logs_tbl.c.log_level,
         app_logs_tbl.c.xuehai_id,
+        users_tbl.c.name.label("user_name"),
+        users_tbl.c.business_id.label("user_id"),
     )
+
+
+def _log_from() -> Any:
+    """``app_logs LEFT JOIN users``：必须 LEFT。
+
+    ``app_user`` 可能是空串（未登录请求）或指向已被删除的用户；内连接会把
+    这些行从列表里删掉，管理员就再也看不到「匿名」和「已删号」的记录了。
+    """
+    return app_logs_tbl.outerjoin(users_tbl, app_logs_tbl.c.app_user == users_tbl.c.oid)
 
 
 def _insert_stmt(
@@ -141,7 +160,7 @@ def _list_stmt(
     size: int,
     xuehai_id: str = "",
 ):
-    stmt = select(*_log_columns())
+    stmt = select(*_log_columns()).select_from(_log_from())
     conds = _filter(query, performer, types, levels, time_start, time_end, xuehai_id)
     if conds:
         stmt = stmt.where(*conds)
@@ -182,7 +201,11 @@ def _for_user_filter(user_oid: str, query: str) -> list[Any]:
 
 
 def _list_for_user_stmt(user_oid: str, query: str, page: int, size: int):
-    stmt = select(*_log_columns()).where(*_for_user_filter(user_oid, query))
+    stmt = (
+        select(*_log_columns())
+        .select_from(_log_from())
+        .where(*_for_user_filter(user_oid, query))
+    )
     return (
         stmt.order_by(app_logs_tbl.c.ts_raw.desc())
         .offset(0 if page == -1 else (page - 1) * size)
@@ -285,7 +308,12 @@ def _purge_batch_stmt(cutoff: Any, batch_size: int):
 
 
 def _log_row(mapping: Any) -> Row:
-    """Mongo document shape; ``timestamp`` is the preserved raw float."""
+    """Mongo document shape; ``timestamp`` is the preserved raw float.
+
+    ``user_name``/``user_id`` 来自 LIST 语句的 ``users`` 左连接，只读路径才有；
+    写路径与单行构造（若被复用）走 ``.get`` 回落 None。``user`` 保持 oid：
+    它是 ``performer`` 过滤与审计溯源的锚点。
+    """
     ts_raw = mapping["ts_raw"]
     if ts_raw is None and mapping["ts_at"] is not None:
         ts_raw = mapping["ts_at"].timestamp()
@@ -293,6 +321,8 @@ def _log_row(mapping: Any) -> Row:
         "_id": mapping["oid"],
         "url": mapping["url"],
         "user": mapping["app_user"],
+        "user_name": mapping.get("user_name"),
+        "user_id": mapping.get("user_id"),
         "data": mapping["data"],
         "timestamp": ts_raw,
         "type": mapping["ltype"],

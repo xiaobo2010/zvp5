@@ -55,6 +55,17 @@ class UsersRepo(Protocol):
         """
         ...
 
+    async def list_banned_page(
+        self, query: str, page: int, size: int
+    ) -> tuple[list[Row], int]:
+        """Return ``(rows, total)`` for one page of currently banned users.
+
+        Source of truth is the ``banned`` gate on the user row (not the
+        ``BAN_RECORDS`` ledger), so a user who was unbanned is absent even
+        though the ledger still holds their history.
+        """
+        ...
+
     async def create(
         self,
         business_id: str,
@@ -886,6 +897,12 @@ class AppLogsRepo(Protocol):
     "xuehai_id": str}`` (``timestamp`` is the raw float epoch seconds). The
     Oracle table renames these to ``APP_USER``/``LTYPE``/``LOG_LEVEL``/
     ``TS_AT``/``TS_RAW``/``XUEHAI_ID``; the adapters translate.
+
+    Listing rows additionally carry ``user_name`` / ``user_id`` (display name
+    and ``business_id``) resolved from ``users``: ``user`` itself is an oid and
+    is unreadable for a human. Both are ``None`` when the log has no user
+    (anonymous request) or the account has been deleted, so they never filter
+    rows out.
     """
 
     async def insert(

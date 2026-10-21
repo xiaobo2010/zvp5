@@ -56,7 +56,12 @@ class StubRepo:
         self.conflict = conflict
         self.used: set[tuple[str, int]] = set()
         self.insert_calls: list[tuple[str, int, str, str]] = []
+        self.name_calls: list[list[str]] = []
         self.list_calls = 0
+
+    async def get_names(self, oids: list[str]) -> dict[str, str]:
+        self.name_calls.append(list(oids))
+        return {oid: f"姓名-{oid[-1]}" for oid in oids if oid in self.admin_oids}
 
     async def list_admin_oids(self) -> list[str]:
         self.list_calls += 1
@@ -139,8 +144,12 @@ def test_success_returns_approver_and_audits(install, audits):
     assert json.loads(log["data"]) == {
         "action": "web_ssh",
         "operator": OPERATOR,
+        "operator_name": "姓名-1",
         "approver": APPROVER,
+        "approver_name": "姓名-2",
     }
+    # 一次审计只查一次姓名：批量解析，不按人 N+1。
+    assert repo.name_calls == [[OPERATOR, APPROVER]]
 
 
 def test_accepts_underscore_id_shape(install, audits):
@@ -267,7 +276,8 @@ def test_duplicate_admin_rows_do_not_block_success(install, audits):
     assert repo.insert_calls[0][0] == APPROVER
 
 
-def test_audit_system_op_writes_detail(monkeypatch, audits):
+def test_audit_system_op_writes_detail(install, audits):
+    install([OPERATOR])
     asyncio.run(
         audit_system_op(OPERATOR, action="db_ddl", detail="DROP TABLE demo", log_type="system_op")
     )
@@ -276,7 +286,53 @@ def test_audit_system_op_writes_detail(monkeypatch, audits):
     log = audits[0].kwargs
     assert log["type"] == "system_op"
     assert log["user"] == OPERATOR
-    assert json.loads(log["data"])["detail"] == "DROP TABLE demo"
+    payload = json.loads(log["data"])
+    assert payload["detail"] == "DROP TABLE demo"
+    assert payload["operator"] == OPERATOR
+    # 没有姓名就没有人能读懂这行日志；oid 仍保留用于溯源。
+    assert payload["operator_name"] == "姓名-1"
+
+
+def test_audit_system_op_includes_operator_name(install, audits):
+    install([OPERATOR, APPROVER])
+
+    asyncio.run(audit_system_op(OPERATOR, action="web_ssh", detail="open"))
+
+    payload = json.loads(audits[-1].kwargs["data"])
+    assert payload["operator"] == OPERATOR
+    assert payload["operator_name"] == "姓名-1"
+    assert payload["detail"] == "open"
+
+
+def test_name_lookup_failure_still_writes_the_audit(monkeypatch, audits):
+    """取名失败不能丢审计：降级成空姓名，oid 仍在。"""
+
+    class BrokenNamesRepo:
+        async def get_names(self, oids):
+            raise RuntimeError("users table unavailable")
+
+    monkeypatch.setattr(
+        backends, "get_users_repo", lambda session=None: BrokenNamesRepo()
+    )
+
+    asyncio.run(audit_system_op(OPERATOR, action="web_ssh", detail="open"))
+
+    assert len(audits) == 1
+    payload = json.loads(audits[0].kwargs["data"])
+    assert payload["operator"] == OPERATOR
+    assert payload["operator_name"] == ""
+
+
+def test_failed_dual_auth_audit_carries_operator_name(install, audits):
+    install([OPERATOR, APPROVER])
+
+    _reject({"id": OPERATOR}, _wrong_code())
+
+    payload = json.loads(audits[0].kwargs["data"])
+    assert payload["operator_name"] == "姓名-1"
+    # 被拒时审批人未知：不能凭空写一个 approver_name。
+    assert "approver_name" not in payload
+
 
 
 # ---------------------------------------------------------------------------

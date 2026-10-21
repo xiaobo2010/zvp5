@@ -362,7 +362,8 @@ export const zhCN = {
     riskConsequence:
       'root 下执行的任何操作不可撤销，会留下审计记录，可能造成服务中断或数据损坏；滥用将被追责。请确认本次操作内容后再继续。',
     riskCancel: '取消',
-    riskAck: '我已知悉，继续'
+    riskAck: '我已知悉，继续',
+    scrollToBottom: '回到底部'
   },
   files: {
     title: '文件管理',
