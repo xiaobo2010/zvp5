@@ -140,6 +140,7 @@ def env(monkeypatch):
         "devices": 3,
         "history": 0,
         "since": None,
+        "current_ban": None,
         "bans": [],
         "records": [],
         "logs": StubLogs(),
@@ -169,6 +170,9 @@ def env(monkeypatch):
     async def count_for_user_rule(user_oid, rule_code):
         return state["history"]
 
+    async def get_by_oid(oid):
+        return state["current_ban"]
+
     async def insert(user_oid, **kwargs):
         state["records"].append({"user_oid": user_oid, **kwargs})
         return "rec"
@@ -196,7 +200,7 @@ def env(monkeypatch):
     monkeypatch.setattr(
         backends,
         "get_users_repo",
-        lambda *a, **k: SimpleNamespace(set_ban=set_ban),
+        lambda *a, **k: SimpleNamespace(set_ban=set_ban, get_by_oid=get_by_oid),
     )
     return state
 
@@ -316,6 +320,82 @@ async def test_hit_writes_audit_log(env) -> None:
     assert row["xuehai_id"] == XUEHAI
     assert row["data"].startswith("自动封禁 张三：")
     assert "到期" in row["data"]
+
+
+# ---------------------------------------------------------------------------
+# 只加刑不减刑：规则封禁不得降级更强的既有封禁
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_permanent_admin_ban_is_not_downgraded(env, caplog) -> None:
+    env["current_ban"] = {"banned": True, "ban_reason": "管理员封禁"}
+
+    result = await _evaluate(env)
+
+    assert env["bans"] == []  # USERS 行没被改写
+    assert result["until"] is None
+    assert result["permanent"] is True
+    # 流水照落，且描述的是库里真正生效的封禁。
+    assert len(env["records"]) == 1
+    assert env["records"][0]["permanent"] is True
+    assert env["records"][0]["expires_at"] is None
+    # 审计日志的到期文案必须跟着实际生效值走。
+    assert "永久封禁" in env["logs"].rows[0]["data"]
+    assert "保留既有封禁" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_longer_existing_until_is_kept(env) -> None:
+    later = NOW + timedelta(days=30)
+    env["current_ban"] = {"banned": True, "ban_until": later, "ban_reason": "管理员封禁"}
+
+    result = await _evaluate(env)
+
+    assert env["bans"] == []
+    assert result["until"] == later
+    assert result["days"] == 1
+    assert env["records"][0]["expires_at"] == later
+
+
+@pytest.mark.asyncio
+async def test_later_new_until_overwrites(env) -> None:
+    env["current_ban"] = {
+        "banned": True,
+        "ban_until": NOW + timedelta(hours=6),
+        "ban_reason": "旧封禁",
+    }
+
+    result = await _evaluate(env)
+
+    assert env["bans"][0]["until"] == NOW + timedelta(days=1)
+    assert result["until"] == NOW + timedelta(days=1)
+
+
+@pytest.mark.asyncio
+async def test_expired_existing_ban_is_overwritten(env) -> None:
+    env["current_ban"] = {"banned": True, "ban_until": NOW - timedelta(days=3)}
+
+    result = await _evaluate(env)
+
+    assert env["bans"][0]["until"] == NOW + timedelta(days=1)
+    assert result["until"] == NOW + timedelta(days=1)
+
+
+@pytest.mark.asyncio
+async def test_permanent_step_overwrites_any_existing_ban(env) -> None:
+    """本次算出的 until 为 None（永久）时它最强，一律覆写。"""
+    env["history"] = 9
+    env["current_ban"] = {
+        "banned": True,
+        "ban_until": NOW + timedelta(days=365),
+    }
+    env["rule"] = _rule(penalties="[1,2,7,14,30,null]")
+
+    result = await _evaluate(env)
+
+    assert result["until"] is None
+    assert env["bans"][0]["until"] is None
 
 
 # ---------------------------------------------------------------------------

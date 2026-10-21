@@ -503,11 +503,11 @@ async def apply_account_ban(
 
     until, days = ban_rules.penalty_expiry(penalties, offense, at)
 
-    await backends.get_users_repo().set_ban(
+    # 规则封禁只加刑不减刑：管理员已落的永久/更长封禁保留，流水照落。
+    effective_until = await ban_rules.set_ban_unless_stronger(
         user_oid,
         reason=reason,
         until=until,
-        source="rule",
         rule_code=rule_code,
     )
     await records.insert(
@@ -515,17 +515,17 @@ async def apply_account_ban(
         source="rule",
         rule_code=rule_code,
         reason=reason,
-        permanent=until is None,
+        permanent=effective_until is None,
         started_at=at,
-        expires_at=until,
+        expires_at=effective_until,
         operator_oid=None,
     )
 
     return {
         "reason": reason,
-        "until": until,
+        "until": effective_until,
         "days": days,
-        "permanent": until is None,
+        "permanent": effective_until is None,
         "offense": offense,
     }
 

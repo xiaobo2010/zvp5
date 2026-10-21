@@ -54,6 +54,8 @@ class Env:
         self.rule_error: Exception | None = None
         self.other_primary: set[str] = set()
         self.history = 0
+        # 当前 USERS 行上的封禁状态：``apply_account_ban`` 会先读它避免降级。
+        self.current_ban: dict | None = None
         self.bans: list[dict] = []
         self.records: list[dict] = []
         self.device_upserts: list[dict] = []
@@ -97,6 +99,9 @@ def env(monkeypatch) -> Env:
                 "rule_code": rule_code,
             }
         )
+
+    async def get_by_oid(oid):
+        return state.current_ban
 
     async def insert_challenge(token_hash, user_oid, xuehai_id, expires_at):
         state.challenges[token_hash] = {
@@ -170,6 +175,7 @@ def env(monkeypatch) -> Env:
         "get_users_repo",
         lambda *a, **k: SimpleNamespace(
             set_ban=set_ban,
+            get_by_oid=get_by_oid,
             list_banned_by_xuehai=list_banned_by_xuehai,
             primary_owned_by_other=primary_owned_by_other,
         ),
@@ -707,3 +713,65 @@ async def test_apply_account_ban_follows_gradient(env, history, days, permanent)
     assert result["offense"] == history + 1
     assert env.bans[0]["until"] == (None if permanent else NOW + timedelta(days=days))
     assert env.records[0]["permanent"] is permanent
+
+
+@pytest.mark.asyncio
+async def test_apply_account_ban_does_not_downgrade_admin_permanent_ban(env) -> None:
+    """管理员落的永久封禁（banned=1 + ban_until IS NULL）不能被规则改成 1 天。"""
+    env.current_ban = {"banned": True, "ban_reason": "管理员封禁"}
+    env.history = 0
+
+    result = await device_guard.apply_account_ban(
+        USER, device_guard.RULE_CODE_FOREIGN_DEVICE, "连续输错", now=NOW
+    )
+
+    assert env.bans == []  # 没写 USERS
+    assert result["until"] is None  # 反映库里真正生效的永久封禁
+    assert result["permanent"] is True
+    assert len(env.records) == 1  # 流水照落
+    assert env.records[0]["permanent"] is True
+    assert env.records[0]["expires_at"] is None
+
+
+@pytest.mark.asyncio
+async def test_apply_account_ban_keeps_longer_existing_ban(env) -> None:
+    later = NOW + timedelta(days=30)
+    env.current_ban = {"banned": True, "ban_until": later, "ban_reason": "管理员封禁"}
+
+    result = await device_guard.apply_account_ban(
+        USER, device_guard.RULE_CODE_FOREIGN_DEVICE, "连续输错", now=NOW
+    )
+
+    assert env.bans == []
+    assert result["until"] == later
+    assert result["days"] == 1  # 本次梯度仍照实回报
+    assert env.records[0]["expires_at"] == later
+
+
+@pytest.mark.asyncio
+async def test_apply_account_ban_overwrites_shorter_existing_ban(env) -> None:
+    env.current_ban = {
+        "banned": True,
+        "ban_until": NOW + timedelta(hours=1),
+        "ban_reason": "旧封禁",
+    }
+
+    result = await device_guard.apply_account_ban(
+        USER, device_guard.RULE_CODE_FOREIGN_DEVICE, "连续输错", now=NOW
+    )
+
+    assert env.bans[0]["until"] == NOW + timedelta(days=1)
+    assert result["until"] == NOW + timedelta(days=1)
+
+
+@pytest.mark.asyncio
+async def test_apply_account_ban_overwrites_expired_ban(env) -> None:
+    """刑满的 ``banned=1`` 是正常存量状态，新封禁理应覆盖它。"""
+    env.current_ban = {"banned": True, "ban_until": NOW - timedelta(days=2)}
+
+    result = await device_guard.apply_account_ban(
+        USER, device_guard.RULE_CODE_FOREIGN_DEVICE, "连续输错", now=NOW
+    )
+
+    assert result["until"] == NOW + timedelta(days=1)
+    assert env.bans[0]["until"] == NOW + timedelta(days=1)
