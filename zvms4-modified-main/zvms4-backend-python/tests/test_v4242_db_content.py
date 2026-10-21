@@ -14,6 +14,9 @@
 5. 行 CRUD：按主键定位；无主键表 400、key 缺列 400、values 列名不在表内 400。
 6. DDL：自保护表 403、破坏性语句 confirm 校验、单语句、已提交语义。
 7. 鉴权：管理员闸、双人码失败零 SQL、审计不含列值。
+8. 真实驱动形状：用户 SQL 原样交给驱动（``text()`` 不解析冒号）；朴素
+   DATE/TIMESTAMP 的 ISO8601 字符串在绑定前转成 ``datetime``（避免 ORA-01861）；
+   TSTZ 拒绝写入、LTZ 只接受 naive 会话本地时间。
 
 跑法：``.venv/bin/python -m pytest tests/test_v4242_db_content.py -q``
 """
@@ -75,12 +78,25 @@ class FakeResult:
         return self._rows[:size]
 
 
+class FakeConnection:
+    """只实现 ``exec_driver_sql``：模拟 AsyncConnection 的驱动级执行入口。"""
+
+    def __init__(self, session):
+        self.session = session
+
+    async def exec_driver_sql(self, sql, params=None):
+        self.session.driver_calls.append(sql)
+        return await self.session.execute(sql, params)
+
+
 class FakeSession:
     """替身会话：不连库，按 SQL 文本分发到内存表。"""
 
     def __init__(self, db):
         self.db = db
         self.calls: list[tuple[str, dict]] = []
+        # 用户 SQL（/query、/ddl）走驱动级执行：单独记录，证明没有经过 text()。
+        self.driver_calls: list[str] = []
         self.commits = 0
         self.results: list[FakeResult] = []
         # /query 的结果由用例预置（真实 SQL 由用户提供，替身无从推断）。
@@ -89,6 +105,9 @@ class FakeSession:
     @property
     def executed(self) -> list[str]:
         return [sql for sql, _ in self.calls]
+
+    async def connection(self):
+        return FakeConnection(self)
 
     async def execute(self, stmt, params=None):
         sql = re.sub(r"\s+", " ", str(stmt)).strip()
@@ -314,6 +333,9 @@ def _make_db() -> FakeDb:
                 ("AVATAR", "BLOB", 4000, "Y", None),
                 ("BIO", "CLOB", 4000, "Y", None),
                 ("CREATED_AT", "TIMESTAMP(6)", 11, "Y", "SYSTIMESTAMP"),
+                # 时区列只用于写入策略回归；真实 V001 约定全部是朴素 TIMESTAMP。
+                ("TZ_AT", "TIMESTAMP(6) WITH TIME ZONE", 13, "Y", None),
+                ("LTZ_AT", "TIMESTAMP(6) WITH LOCAL TIME ZONE", 11, "Y", None),
             ],
             "pk": ["OID"],
             "num_rows": 1234,
@@ -588,6 +610,27 @@ def test_query_clamps_limit_to_contract_ceiling(fake_db):
     assert session.results[0].fetchmany_calls == [db_content.MAX_QUERY_LIMIT + 1]
 
 
+def test_query_executes_user_sql_verbatim(monkeypatch, fake_db):
+    """用户 SQL 不得经过 SQLAlchemy 的 ``text()`` 绑定解析。
+
+    合法 Oracle SQL 里出现 ``:``（JSON 字面量、时间格式等）不代表有绑定参数；
+    ``text()`` 会把 ``:name`` 当成绑定并在到达驱动前抛 ``StatementError`` → 500。
+    """
+    session = FakeSession(fake_db)
+    session.pending.append(FakeResult([("ok",)], ["X"]))
+    sql = "SELECT '{\"a\":1}' AS X FROM DUAL"
+
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("用户 SQL 不应经过 db_content.text()")
+
+    monkeypatch.setattr(db_content, "text", forbidden)
+
+    data = asyncio.run(db_content.run_query(session, sql, limit=5))
+
+    assert session.driver_calls == [sql]
+    assert data["rows"] == [{"X": "ok"}]
+
+
 def test_query_timeout_is_504(monkeypatch, fake_db):
     monkeypatch.setattr(db_content, "QUERY_TIMEOUT_SECONDS", 0.01)
     session = FakeSession(fake_db)
@@ -772,6 +815,101 @@ def test_insert_row_binds_values(fake_db):
     sql, params = session.calls[-1]
     assert "赵六" not in sql and "0009" not in sql
     assert params == {"v0": "0009", "v1": "赵六"}
+
+
+def test_insert_row_coerces_iso_timestamp_for_temporal_column(fake_db):
+    """网格回填的是 ISO8601 字符串；绑定前必须转成 datetime（否则 ORA-01861）。"""
+    session = FakeSession(fake_db)
+    data = asyncio.run(
+        db_content.insert_row(
+            session,
+            "USERS",
+            {"OID": "0009", "NAME": "赵六", "CREATED_AT": "2026-10-01T12:00:00"},
+        )
+    )
+    assert data == {"rowcount": 1}
+    params = session.calls[-1][1]
+    assert isinstance(params["v2"], datetime)
+    assert params["v2"] == datetime(2026, 10, 1, 12, 0, 0)
+    # 非时间列即便长得像时间也保持字符串。
+    assert params["v1"] == "赵六"
+
+
+def test_update_row_coerces_iso_timestamp_and_rejects_garbage(fake_db):
+    session = FakeSession(fake_db)
+    asyncio.run(
+        db_content.update_row(
+            session,
+            "USERS",
+            {"OID": "000000000000000000000001"},
+            {"CREATED_AT": "2026-10-01T12:00:00"},
+        )
+    )
+    assert isinstance(session.calls[-1][1]["s0"], datetime)
+
+    with pytest.raises(db_content.DbContentError) as exc:
+        asyncio.run(
+            db_content.update_row(
+                session,
+                "USERS",
+                {"OID": "000000000000000000000001"},
+                {"CREATED_AT": "not-a-timestamp"},
+            )
+        )
+    assert exc.value.status_code == 400
+    assert "CREATED_AT" in exc.value.detail
+
+
+def test_temporal_column_accepts_date_only_and_tz_suffix(fake_db):
+    session = FakeSession(fake_db)
+    asyncio.run(
+        db_content.update_row(
+            session,
+            "USERS",
+            {"OID": "000000000000000000000001"},
+            {"CREATED_AT": "2026-10-01T12:00:00Z"},
+        )
+    )
+    assert session.calls[-1][1]["s0"] == datetime(2026, 10, 1, 12, 0, 0)
+
+
+def test_timestamp_with_time_zone_rejects_writes_instead_of_dropping_zone(fake_db):
+    """TSTZ 的偏移无法通过网格往返；拒绝写入而不是悄悄改时间点。"""
+    for value in (
+        "2026-10-01T12:00:00+08:00",
+        "2026-10-01T12:00:00",  # 无偏移同样无法确定原时区
+    ):
+        session = FakeSession(fake_db)
+        with pytest.raises(db_content.DbContentError) as exc:
+            asyncio.run(
+                db_content.insert_row(session, "USERS", {"OID": "0009", "TZ_AT": value})
+            )
+        assert exc.value.status_code == 400
+        assert "TIME ZONE" in exc.value.detail
+        assert not any(sql.upper().startswith("INSERT") for sql in session.executed)
+
+
+def test_local_time_zone_column_accepts_naive_session_time_only(fake_db):
+    """LTZ 读回来是会话本地 naive 值；原样写回可往返，带偏移则拒绝。"""
+    session = FakeSession(fake_db)
+    asyncio.run(
+        db_content.insert_row(
+            session, "USERS", {"OID": "0009", "LTZ_AT": "2026-10-01T12:00:00"}
+        )
+    )
+    assert session.calls[-1][1]["v1"] == datetime(2026, 10, 1, 12, 0, 0)
+
+    with pytest.raises(db_content.DbContentError) as exc:
+        asyncio.run(
+            db_content.update_row(
+                session,
+                "USERS",
+                {"OID": "0009"},
+                {"LTZ_AT": "2026-10-01T12:00:00Z"},
+            )
+        )
+    assert exc.value.status_code == 400
+    assert "LOCAL TIME ZONE" in exc.value.detail
 
 
 def test_insert_row_rejects_unknown_column(fake_db):
@@ -968,6 +1106,28 @@ def test_run_ddl_reports_null_rowcount_and_committed(fake_db):
     }
     assert session.commits == 1
     assert "LEGACY_TABLE" not in fake_db.tables
+
+
+def test_run_ddl_executes_user_sql_verbatim(monkeypatch, fake_db):
+    """``/ddl`` 同样必须把语句原样交给驱动，而不是让 ``text()`` 解析冒号。"""
+    session = FakeSession(fake_db)
+
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("用户 SQL 不应经过 db_content.text()")
+
+    monkeypatch.setattr(db_content, "text", forbidden)
+
+    data = asyncio.run(
+        db_content.run_ddl(
+            session,
+            "UPDATE LEGACY_TABLE SET ID = 2 WHERE ID = 1",
+            None,
+        )
+    )
+
+    assert session.driver_calls == ["UPDATE LEGACY_TABLE SET ID = 2 WHERE ID = 1"]
+    assert data["rowcount"] == 1
+    assert session.commits == 1
 
 
 def test_run_ddl_dml_reports_rowcount(fake_db):
