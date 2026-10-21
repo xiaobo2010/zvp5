@@ -169,7 +169,16 @@ def jwt_encode(
     *,
     session_id: str = "",
     purpose: str = "verify",
+    expires_in: Optional[datetime.timedelta] = None,
+    tp: bool = False,
 ):
+    """签发 JWT。
+
+    ``expires_in`` 覆盖默认有效期但**不改 scope**：临时密码登入要的是「1 小时的
+    正式会话」，不是「5 分钟的改密授权」，后者会让用户刚进来就被要求改密。
+    ``tp`` 标记「本会话由临时密码产生」，下游据此把日志级别抬到 warning——
+    这条链路本身就是安全事件，不该混在 info 里。
+    """
     if type == "long":
         duration = datetime.timedelta(days=10)
         scope = "access_token"
@@ -181,6 +190,8 @@ def jwt_encode(
         # Dangerous Zone Access needs temporary token, others need access token.
         duration = datetime.timedelta(minutes=5)
         scope = "temporary_token"
+    if expires_in is not None:
+        duration = expires_in
     payload = {
         "iss": "zvms",
         "exp": datetime.datetime.now(datetime.timezone.utc) + duration,
@@ -193,6 +204,8 @@ def jwt_encode(
         "sid": session_id,
         "purpose": purpose,
     }
+    if tp:
+        payload["tp"] = True
     result = jwt.encode(payload, jwt_private_key, algorithm="HS256")
     return result
 

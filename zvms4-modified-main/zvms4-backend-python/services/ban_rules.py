@@ -61,13 +61,46 @@ def rule_config(rule: dict | None) -> dict:
     return {"threshold": threshold, "window_hours": window_hours}
 
 
-def rule_penalties(rule: dict | None) -> list[int]:
-    """天数梯度；空/非正数的坏数据回退 ``[1]``（永不因为配置坏而不处罚）。"""
+def rule_penalties(rule: dict | None) -> list[int | None]:
+    """天数梯度；空/非正数的坏数据回退 ``[1]``（永不因为配置坏而不处罚）。
+
+    ``None`` 是「永久封禁」的档位，**只在末位有意义**：读到 ``None`` 就到此为止
+    （后面的档位永远轮不到），这样 ``[1,3,7,14,30,null]`` 与 ``[1,3,null,9]``
+    在语义上一致，调用方不必自己防御「中间夹 null」的坏配置。
+    """
     raw = _json_value((rule or {}).get("penalties"), None)
     if not isinstance(raw, list):
         return list(DEFAULT_PENALTIES)
-    steps = [step for step in (_positive_int(item) for item in raw) if step is not None]
+    steps: list[int | None] = []
+    for item in raw:
+        if item is None:
+            steps.append(None)
+            break
+        value = _positive_int(item)
+        if value is not None:
+            steps.append(value)
     return steps or list(DEFAULT_PENALTIES)
+
+
+def penalty_expiry(
+    penalties: list[int | None],
+    offense: int,
+    at: datetime,
+) -> tuple[datetime | None, int | None]:
+    """第 ``offense`` 次处罚的 ``(到期时刻, 天数)``；末档 ``None`` → 永久。
+
+    ``offense`` 超出梯度长度时取末档（与旧行为一致）；返回 ``(None, None)``
+    表示永久封禁——调用方据此写 ``permanent=True`` 且 ``expires_at=None`` 的流水。
+    抽成函数是为了让「临时密码连错」与「多设备登录」共用同一套梯度算法，
+    两条规则各写一遍必然漂移。
+    """
+    if not penalties:
+        penalties = list(DEFAULT_PENALTIES)
+    index = min(max(int(offense), 1) - 1, len(penalties) - 1)
+    step = penalties[index]
+    if step is None:
+        return None, None
+    return at + timedelta(days=step), step
 
 
 def _reason(window_hours: int, devices: int, threshold: int) -> str:
@@ -115,8 +148,7 @@ async def evaluate_login(
     records = backends.get_ban_records_repo()
     # 历史流水条数 = 已发生的处罚次数；本次是第 offense 次。
     offense = await records.count_for_user_rule(user_oid, RULE_CODE) + 1
-    days = penalties[min(offense - 1, len(penalties) - 1)]
-    until = at + timedelta(days=days)
+    until, days = penalty_expiry(penalties, offense, at)
     reason = _reason(window_hours, devices, threshold)
 
     # 先改当前状态，再补流水：状态是登录闸门的依据，必须最先落库。
@@ -132,7 +164,7 @@ async def evaluate_login(
         source="rule",
         rule_code=RULE_CODE,
         reason=reason,
-        permanent=False,
+        permanent=until is None,
         started_at=at,
         expires_at=until,
         operator_oid=None,
@@ -140,11 +172,12 @@ async def evaluate_login(
 
     # 审计写失败不能把「已落库的封禁」变成一次异常冒泡：封禁已经生效，
     # 吞掉写日志的错误并留痕，本次仍然按命中处理（下面照常 403）。
+    expiry_text = "永久封禁" if until is None else f"到期 {until:%Y-%m-%d %H:%M}"
     try:
         await ZVMSLog(
             request_url,
             user_oid,
-            f"自动封禁 {display_name}：{reason}，到期 {until:%Y-%m-%d %H:%M}",
+            f"自动封禁 {display_name}：{reason}，{expiry_text}",
             at.timestamp(),
             type="ban_rule",
             level="warning",
@@ -157,6 +190,7 @@ async def evaluate_login(
         "reason": reason,
         "until": until,
         "days": days,
+        "permanent": until is None,
         "devices": devices,
     }
 
@@ -198,6 +232,7 @@ __all__ = [
     "DEFAULT_PENALTIES",
     "rule_config",
     "rule_penalties",
+    "penalty_expiry",
     "evaluate_login",
     "enforce_login",
 ]
