@@ -27,6 +27,7 @@ import { computed, watch, ref, onMounted, onUnmounted, h, reactive } from 'vue'
 import type { WatermarkFontType } from 'element-plus'
 import { zhCn } from 'element-plus/es/locale/index.mjs'
 import ZVerticalNav from '@/components/form/ZVerticalNav.vue'
+import ZNotificationReminder from '@/components/notification/ZNotificationReminder.vue'
 import { useRegisterSW } from 'virtual:pwa-register/vue'
 import { CarbonCloudOffline } from '@/icons'
 import { modifyPasswordDialogs } from '@/views'
@@ -449,6 +450,7 @@ onMounted(async () => {
         </ElContainer>
       </ElContainer>
     </ElWatermark>
+    <ZNotificationReminder />
   </ElConfigProvider>
 </template>
 

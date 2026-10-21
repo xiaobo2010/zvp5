@@ -1,0 +1,391 @@
+"""``/api/v3/notifications`` 的离线契约测试。
+
+覆盖四件事：
+
+* 权限：用户端只需登录；管理端每个写/管理读请求都只认**当前** ``admin``；
+* CRUD：创建/编辑/停用/重新启用/删除的成功与失败语义；
+* 版本：全局版本只在成功写时 +1，单条版本每次成功编辑 +1，失败不推进；
+* 审计：发布/编辑/删除日志使用数据库里的真实显示名。
+
+全部离线：通知仓储与日志依赖打桩，不连 Oracle。
+"""
+
+from __future__ import annotations
+
+from datetime import datetime
+
+import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+from db import backends
+from routers import notifications_router
+from typings.log import inject_log
+from util.object_id import get_current_user
+
+PREFIX = "/api/v3/notifications"
+ADMIN = {"id": "000000000000000000000001", "per": ["admin"]}
+STUDENT = {"id": "000000000000000000000002", "per": ["student"]}
+CREATED = datetime(2026, 10, 21, 9, 30, 0)
+UPDATED = datetime(2026, 10, 21, 10, 15, 0)
+
+
+class FakeNotificationsRepo:
+    """In-memory repo with the same version rules as the Oracle implementation."""
+
+    def __init__(self) -> None:
+        self.rows: dict[str, dict] = {}
+        self.version = 0
+        self._seq = 0
+
+    def _new_id(self) -> str:
+        self._seq += 1
+        return f"0d000000000000000000{self._seq:04d}"
+
+    async def get_state(self):
+        return {"version": self.version, "updated_at": UPDATED}
+
+    def _ordered(self):
+        return sorted(
+            self.rows.values(),
+            key=lambda row: (row["created_at"], row["_id"]),
+            reverse=True,
+        )
+
+    async def list_active(self):
+        return (
+            [dict(row) for row in self._ordered() if row["active"]],
+            self.version,
+        )
+
+    async def list_all(self):
+        return [dict(row) for row in self._ordered()], self.version
+
+    async def get(self, oid):
+        row = self.rows.get(oid)
+        return dict(row) if row else None
+
+    async def create(self, *, title, content, author_oid, author_name):
+        oid = self._new_id()
+        row = {
+            "_id": oid,
+            "title": title,
+            "content": content,
+            "active": True,
+            "author_oid": author_oid,
+            "author_name": author_name,
+            "version": 1,
+            "created_at": CREATED,
+            "updated_at": CREATED,
+        }
+        self.rows[oid] = row
+        self.version += 1
+        return dict(row), self.version
+
+    async def update(self, oid, *, title=None, content=None, active=None):
+        row = self.rows.get(oid)
+        if row is None:
+            return None, self.version
+        if title is not None:
+            row["title"] = title
+        if content is not None:
+            row["content"] = content
+        if active is not None:
+            row["active"] = active
+        row["version"] += 1
+        row["updated_at"] = UPDATED
+        self.version += 1
+        return dict(row), self.version
+
+    async def delete(self, oid):
+        row = self.rows.pop(oid, None)
+        if row is None:
+            return None, self.version
+        self.version += 1
+        return dict(row), self.version
+
+
+class FakeLog:
+    def __init__(self) -> None:
+        self.text = ""
+        self.type = ""
+        self.insert_count = 0
+
+    def with_text(self, text, type="", level=""):
+        self.text = text
+        self.type = type
+        return self
+
+    async def insert_log(self, session=None):
+        self.insert_count += 1
+
+
+@pytest.fixture
+def api(monkeypatch):
+    repo = FakeNotificationsRepo()
+    log = FakeLog()
+
+    async def display_name(_oid):
+        return "张老师"
+
+    monkeypatch.setattr(
+        backends, "get_notifications_repo", lambda *a, **k: repo
+    )
+    monkeypatch.setattr(notifications_router, "get_user_display_name", display_name)
+
+    app = FastAPI()
+    app.include_router(notifications_router.router, prefix=PREFIX)
+    app.dependency_overrides[get_current_user] = lambda: ADMIN
+    app.dependency_overrides[inject_log] = lambda: log
+    return TestClient(app), repo, log
+
+
+def _as(http, user) -> None:
+    http.app.dependency_overrides[get_current_user] = lambda: user
+
+
+CREATE_PAYLOAD = {"title": "活动调整", "content": "本周活动改到周六。"}
+
+
+# ---------------------------------------------------------------------------
+# 权限
+# ---------------------------------------------------------------------------
+
+
+def test_user_list_allows_any_logged_in_user(api) -> None:
+    http, _repo, _log = api
+    _as(http, STUDENT)
+
+    response = http.get(PREFIX)
+    assert response.status_code == 200
+    assert response.json()["data"] == {"version": 0, "notifications": []}
+
+
+def test_admin_endpoints_reject_non_admin(api) -> None:
+    http, repo, log = api
+    _as(http, STUDENT)
+
+    assert http.get(f"{PREFIX}/admin").status_code == 403
+    assert http.post(PREFIX, json=CREATE_PAYLOAD).status_code == 403
+    assert http.put(
+        f"{PREFIX}/0d0000000000000000000001", json={"active": False}
+    ).status_code == 403
+    assert http.delete(f"{PREFIX}/0d0000000000000000000001").status_code == 403
+
+    # 没有写发生，版本也没有被推进，审计日志也不应出现。
+    assert repo.version == 0
+    assert repo.rows == {}
+    assert log.insert_count == 0
+
+
+# ---------------------------------------------------------------------------
+# POST create
+# ---------------------------------------------------------------------------
+
+
+def test_admin_create_binds_author_and_bumps_global_version(api) -> None:
+    http, repo, log = api
+    response = http.post(PREFIX, json=CREATE_PAYLOAD)
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["code"] == 201
+    assert body["data"]["version"] == 1
+
+    notice = body["data"]["notification"]
+    assert notice["title"] == "活动调整"
+    assert notice["content"] == "本周活动改到周六。"
+    assert notice["version"] == 1
+    # 发布人来自认证 oid + 当前 USERS 显示名，客户端不能伪造。
+    assert notice["author_id"] == ADMIN["id"]
+    assert notice["author_name"] == "张老师"
+    assert notice["active"] is True
+    assert notice["created_at"] == "2026-10-21T09:30:00"
+    assert notice["updated_at"] == "2026-10-21T09:30:00"
+
+    stored = next(iter(repo.rows.values()))
+    assert stored["author_oid"] == ADMIN["id"]
+    assert stored["author_name"] == "张老师"
+    assert repo.version == 1
+
+    assert log.type == "notification_create"
+    assert "张老师" in log.text
+    assert "活动调整" in log.text
+    assert log.insert_count == 1
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"title": "   ", "content": "正文"},
+        {"title": "标题", "content": "   "},
+        {"title": "x" * 201, "content": "正文"},
+        {"title": "标题", "content": "x" * 4001},
+        # 2000 个汉字 = 6000 UTF-8 字节，超过 VARCHAR2(4000) 的字节上限。
+        {"title": "标题", "content": "中" * 2000},
+        {"title": "标题"},
+    ],
+)
+def test_create_rejects_invalid_payload(api, payload) -> None:
+    http, repo, log = api
+    assert http.post(PREFIX, json=payload).status_code == 422
+    assert repo.rows == {}
+    assert repo.version == 0
+    assert log.insert_count == 0
+
+
+# ---------------------------------------------------------------------------
+# GET list + update semantics
+# ---------------------------------------------------------------------------
+
+
+def test_user_list_returns_only_active_notices_and_global_version(api) -> None:
+    http, repo, _log = api
+    http.post(PREFIX, json=CREATE_PAYLOAD)
+    second = http.post(
+        PREFIX, json={"title": "第二条", "content": "内容"}
+    ).json()["data"]["notification"]
+
+    # 停用第二条后，用户端只应看到第一条，但全局版本仍是两次写的和。
+    http.put(f"{PREFIX}/{second['id']}", json={"active": False})
+
+    body = http.get(PREFIX).json()
+    assert body["data"]["version"] == 3
+    assert [row["title"] for row in body["data"]["notifications"]] == ["活动调整"]
+    assert body["data"]["notifications"][0]["active"] is True
+
+
+def test_update_bumps_notice_and_global_but_keeps_author(api) -> None:
+    http, repo, log = api
+    created = http.post(PREFIX, json=CREATE_PAYLOAD).json()["data"]["notification"]
+
+    body = http.put(
+        f"{PREFIX}/{created['id']}",
+        json={"title": "活动再次调整", "content": "改到周日。"},
+    ).json()
+
+    notice = body["data"]["notification"]
+    assert body["data"]["version"] == 2
+    assert notice["version"] == 2
+    assert notice["title"] == "活动再次调整"
+    assert notice["content"] == "改到周日。"
+    # 发布人与发送时间不可变
+    assert notice["author_id"] == created["author_id"]
+    assert notice["author_name"] == created["author_name"]
+    assert notice["created_at"] == created["created_at"]
+    assert notice["updated_at"] == "2026-10-21T10:15:00"
+    assert repo.version == 2
+
+    assert log.type == "notification_update"
+    assert "张老师" in log.text
+    assert "活动再次调整" in log.text
+
+
+def test_update_cannot_overwrite_author_fields(api) -> None:
+    """客户端塞进来的 author_* 字段必须被忽略；发布人是服务端事实。"""
+    http, _repo, _log = api
+    created = http.post(PREFIX, json=CREATE_PAYLOAD).json()["data"]["notification"]
+
+    notice = http.put(
+        f"{PREFIX}/{created['id']}",
+        json={
+            "title": "改标题",
+            "author_id": "00000000000000000000ff",
+            "author_name": "伪造发布人",
+            "created_at": "1999-01-01T00:00:00",
+        },
+    ).json()["data"]["notification"]
+
+    assert notice["author_id"] == ADMIN["id"]
+    assert notice["author_name"] == "张老师"
+    assert notice["created_at"] == created["created_at"]
+
+
+def test_deactivate_and_reactivate_are_edits(api) -> None:
+    http, repo, _log = api
+    created = http.post(PREFIX, json=CREATE_PAYLOAD).json()["data"]["notification"]
+
+    off = http.put(f"{PREFIX}/{created['id']}", json={"active": False}).json()
+    assert off["data"]["notification"]["active"] is False
+    assert off["data"]["notification"]["version"] == 2
+    assert off["data"]["version"] == 2
+
+    admin = http.get(f"{PREFIX}/admin").json()
+    assert admin["data"]["version"] == 2
+    assert admin["data"]["notifications"][0]["active"] is False
+
+    # 用户端看不到停用通知
+    assert http.get(PREFIX).json()["data"]["notifications"] == []
+
+    on = http.put(f"{PREFIX}/{created['id']}", json={"active": True}).json()
+    assert on["data"]["notification"]["active"] is True
+    assert on["data"]["notification"]["version"] == 3
+    assert on["data"]["version"] == 3
+    assert [n["id"] for n in http.get(PREFIX).json()["data"]["notifications"]] == [
+        created["id"]
+    ]
+    assert repo.version == 3
+
+
+def test_update_rejects_empty_payload_bad_oid_and_unknown(api) -> None:
+    http, repo, log = api
+    created = http.post(PREFIX, json=CREATE_PAYLOAD).json()["data"]["notification"]
+    version = repo.version
+
+    assert http.put(f"{PREFIX}/{created['id']}", json={}).status_code == 422
+    assert http.put(f"{PREFIX}/not-an-oid", json={"title": "x"}).status_code == 400
+    unknown = http.put(
+        f"{PREFIX}/0d000000000000000000ffff", json={"title": "x"}
+    )
+    assert unknown.status_code == 404
+    assert unknown.json()["detail"] == "通知不存在"
+
+    assert repo.version == version
+    assert log.insert_count == 1  # only the create log
+
+
+# ---------------------------------------------------------------------------
+# DELETE
+# ---------------------------------------------------------------------------
+
+
+def test_delete_removes_notice_bumps_version_and_logs(api) -> None:
+    http, repo, log = api
+    created = http.post(PREFIX, json=CREATE_PAYLOAD).json()["data"]["notification"]
+
+    response = http.delete(f"{PREFIX}/{created['id']}")
+    assert response.status_code == 204
+    assert repo.rows == {}
+    assert repo.version == 2
+    assert http.get(PREFIX).json()["data"] == {"version": 2, "notifications": []}
+    assert http.get(f"{PREFIX}/admin").json()["data"] == {
+        "version": 2,
+        "notifications": [],
+    }
+
+    assert log.type == "notification_delete"
+    assert "张老师" in log.text
+    assert "活动调整" in log.text
+
+
+def test_delete_unknown_is_404_and_does_not_bump(api) -> None:
+    http, repo, log = api
+    response = http.delete(f"{PREFIX}/0d000000000000000000ffff")
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "通知不存在"
+    assert repo.version == 0
+    assert log.insert_count == 0
+
+
+def test_admin_list_shape_includes_inactive(api) -> None:
+    http, _repo, _log = api
+    created = http.post(PREFIX, json=CREATE_PAYLOAD).json()["data"]["notification"]
+    http.put(f"{PREFIX}/{created['id']}", json={"active": False})
+
+    body = http.get(f"{PREFIX}/admin").json()
+    assert body["status"] == "ok"
+    assert body["code"] == 200
+    assert body["data"]["version"] == 2
+    assert body["data"]["notifications"][0]["active"] is False
+    assert body["data"]["notifications"][0]["author_name"] == "张老师"

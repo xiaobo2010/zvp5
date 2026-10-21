@@ -857,3 +857,81 @@ EXCEPTION
     IF SQLCODE NOT IN (-1, -955) THEN RAISE; END IF;
 END;
 /
+
+-- ----------------------------------------------------------------------------
+-- NOTIFICATIONS  ← new (站内通知)
+--   管理员发布的站内通知。AUTHOR_OID / AUTHOR_NAME 是发布当时的事实，写入后
+--   不再修改；不建 FK 是为了账号被删除后历史通知仍能回答「谁发的」。
+--   VERSION 是单条通知的修订号：创建为 1，每次成功编辑/停用 +1，客户端据此
+--   区分「已阅过的旧内容」与「编辑后的新内容」。
+--   也由 V014__add_notifications.sql 在存量实例上创建。
+-- ----------------------------------------------------------------------------
+BEGIN
+  EXECUTE IMMEDIATE '
+CREATE TABLE notifications (
+  oid VARCHAR2(24 CHAR) NOT NULL,
+  title VARCHAR2(200 CHAR) NOT NULL,
+  content VARCHAR2(4000 CHAR) NOT NULL,
+  active NUMBER(1) DEFAULT 1 NOT NULL,
+  author_oid VARCHAR2(24 CHAR) NOT NULL,
+  author_name VARCHAR2(128 CHAR) NOT NULL,
+  version NUMBER(19) DEFAULT 1 NOT NULL,
+  created_at TIMESTAMP NOT NULL,
+  updated_at TIMESTAMP NOT NULL,
+  PRIMARY KEY (oid),
+  CONSTRAINT ck_notifications_oid CHECK (REGEXP_LIKE(oid,''^[0-9a-f]{24}$'')),
+  CONSTRAINT ck_notifications_active CHECK (active IN (0,1)),
+  CONSTRAINT ck_notifications_version CHECK (version > 0)
+)';
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE != -955 THEN RAISE; END IF;
+END;
+/
+
+BEGIN
+  EXECUTE IMMEDIATE 'CREATE INDEX ix_notifications_active_created ON notifications (active, created_at)';
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE NOT IN (-955, -1408) THEN RAISE; END IF;
+END;
+/
+
+-- ----------------------------------------------------------------------------
+-- NOTIFICATION_STATE  ← new (通知全局版本，单行 ID = 1)
+--   每次成功的通知创建/编辑/删除与业务行在同一事务里 VERSION + 1；客户端只
+--   比较这个数字就知道「有没有变化」，不必轮询整张表。
+--   也由 V014__add_notifications.sql 在存量实例上创建并播种。
+-- ----------------------------------------------------------------------------
+BEGIN
+  EXECUTE IMMEDIATE '
+CREATE TABLE notification_state (
+  id NUMBER(1) NOT NULL,
+  version NUMBER(19) DEFAULT 0 NOT NULL,
+  updated_at TIMESTAMP NOT NULL,
+  PRIMARY KEY (id),
+  CONSTRAINT ck_notification_state_id CHECK (id = 1),
+  CONSTRAINT ck_notification_state_version CHECK (version >= 0)
+)';
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE != -955 THEN RAISE; END IF;
+END;
+/
+
+-- ----------------------------------------------------------------------------
+-- NOTIFICATION_STATE seed  ← V014 mirror
+--   MERGE ... WHEN NOT MATCHED 保证重复执行不会把已有版本号重置为 0。
+-- ----------------------------------------------------------------------------
+BEGIN
+  EXECUTE IMMEDIATE '
+MERGE INTO notification_state t
+USING (SELECT 1 id FROM dual) s
+ON (t.id = s.id)
+WHEN NOT MATCHED THEN INSERT (id, version, updated_at)
+  VALUES (1, 0, SYSTIMESTAMP)';
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE NOT IN (-1, -955) THEN RAISE; END IF;
+END;
+/

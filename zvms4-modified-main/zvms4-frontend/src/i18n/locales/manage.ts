@@ -150,8 +150,68 @@ export const zhCN = {
       groups: '群组',
       users: '用户',
       import: '导入',
+      notifications: '通知',
       ban: '封禁',
       logs: '日志'
+    }
+  },
+  notifications: {
+    title: '通知管理',
+    subtitle: '创建后立即发送给所有已登录用户；用户端按本地已阅状态逐条提醒。',
+    create: '撰写通知',
+    refresh: '刷新',
+    edit: '编辑',
+    activate: '恢复',
+    deactivate: '停用',
+    delete: '删除',
+    cancel: '取消',
+    empty: '还没有通知',
+    loadFailed: '加载失败，请稍后重试',
+    deleteHint: '如需保留发送记录，请优先停用；删除为不可恢复的硬删除。',
+    createdNotice: '通知已发送',
+    savedNotice: '通知已更新',
+    activatedNotice: '通知已恢复发送',
+    deactivatedNotice: '通知已停用',
+    deletedNotice: '通知已删除',
+    noChanges: '没有需要保存的修改',
+    sendConfirmTitle: '发送通知',
+    sendConfirm: '通知创建后将立即发送给所有用户，是否确认？',
+    sendConfirmOk: '确认发送',
+    sendConfirmCancel: '返回修改',
+    deleteConfirmTitle: '删除通知',
+    deleteConfirm: '确定要永久删除「{title}」吗？删除后无法恢复，建议优先使用停用。',
+    columns: {
+      title: '标题',
+      content: '正文预览',
+      author: '发布人',
+      createdAt: '发布时间',
+      status: '状态',
+      actions: '操作'
+    },
+    status: {
+      active: '已发布',
+      inactive: '已停用'
+    },
+    dialog: {
+      createTitle: '撰写通知',
+      editTitle: '编辑通知',
+      titleLabel: '标题',
+      titlePlaceholder: '例如：关于本周义工活动调整的通知',
+      contentLabel: '正文',
+      contentPlaceholder: '输入通知正文，支持 Markdown 格式。',
+      contentHint: '最长 4000 字；中文按 UTF-8 计算，正文总字节不能超过 4000。',
+      byteCount: '{bytes} / {max} 字节',
+      createHint: '发送人由服务器按当前登录账号记录，提交前会再次确认。',
+      editHint: '该通知最初发送于 {time}；编辑后版本号会递增，用户会再次收到提醒。',
+      send: '发送',
+      save: '保存修改'
+    },
+    validation: {
+      titleRequired: '请填写通知标题',
+      titleTooLong: '标题不能超过 {max} 个字符',
+      contentRequired: '请填写通知正文',
+      contentTooLong: '正文不能超过 {max} 个字符',
+      contentTooManyBytes: '正文按 UTF-8 编码后不能超过 {max} 字节（中文约 3 字节/字）'
     }
   },
   banRules: {

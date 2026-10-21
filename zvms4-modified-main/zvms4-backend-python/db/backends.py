@@ -118,6 +118,13 @@ def get_ban_records_repo(session: Any = None) -> Any:
     return OracleBanRecordsRepo(session)
 
 
+def get_notifications_repo(session: Any = None) -> Any:
+    """Return the ``NotificationsRepo`` implementation (站内通知)."""
+    from db.repos.oracle.notifications import OracleNotificationsRepo
+
+    return OracleNotificationsRepo(session)
+
+
 __all__ = [
     "get_users_repo",
     "get_groups_repo",
@@ -134,4 +141,5 @@ __all__ = [
     "get_bindings_repo",
     "get_ban_rules_repo",
     "get_ban_records_repo",
+    "get_notifications_repo",
 ]
