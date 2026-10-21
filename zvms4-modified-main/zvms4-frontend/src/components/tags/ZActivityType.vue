@@ -1,7 +1,8 @@
 <script lang="ts" setup>
 import { useI18n } from 'vue-i18n'
-import { toRefs } from 'vue'
+import { toRefs, computed } from 'vue'
 import type { SpecialActivityClassification, ActivityStatus } from '@/../types'
+import type { ActivityType as LegacyActivityType } from '@/../types'
 import type { Activity } from '@/../types/v2'
 import { ZButtonTag } from '@/components'
 import { ZActivityStatus } from '@/components'
@@ -12,7 +13,7 @@ const { t } = useI18n()
 
 const props = withDefaults(
   defineProps<{
-    type: Activity['type']
+    type: Activity['type'] | LegacyActivityType
     special?: SpecialActivityClassification
     showSpecial?: boolean
     size?: 'large' | 'default' | 'small'
@@ -52,9 +53,22 @@ const {
   callWhenModify
 } = toRefs(props)
 
+// 兼容两套类型取值:V2 活动的 type 是 mode(on-campus 等),
+// V1/后端实际返回的是义工类型(specified/special/social/scale),走另一套文案
 const types = classifications.mode
 
-const effective = type?.value in types
+const activityTypes = classifications.type
+
+const isActivityType = typeof type?.value === 'string' && type.value in activityTypes
+
+const effective = isActivityType || type?.value in types
+
+const typeText = computed(() => {
+  const raw = (type?.value as string) ?? ''
+  const key = `activity.type.${raw}`
+  const translated = t(key)
+  return translated === key ? raw : translated
+})
 </script>
 
 <template>
@@ -69,6 +83,17 @@ const effective = type?.value in types
       :bg="bg"
     >
       {{ t(`activity.mode.${type}.${mode === 'full' ? 'name' : 'short'}`) }}
+    </ZButtonTag>
+    <ZButtonTag
+      v-else-if="isActivityType"
+      :size="size ?? 'small'"
+      :type="activityTypes[type].color"
+      :icon="activityTypes[type].icon"
+      :unknown="!effective"
+      :force="force"
+      :bg="bg"
+    >
+      {{ typeText }}
     </ZButtonTag>
     <ZActivityStatus
       v-if="status"
