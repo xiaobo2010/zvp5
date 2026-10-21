@@ -33,6 +33,13 @@ export const zhCN = {
       key: 'hybrid'
     }
   },
+  type: {
+    unknown: '未知',
+    specified: '指定义工',
+    special: '特殊义工',
+    social: '社会义工',
+    scale: '大型义工'
+  },
   form: {
     type: '类型',
     title: '{create} {type}',
