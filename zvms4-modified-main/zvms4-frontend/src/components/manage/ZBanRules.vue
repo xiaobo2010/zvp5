@@ -264,9 +264,17 @@ function formatSource(user: BannedUser): string {
   if (user.source === 'admin') {
     return t('manage.banRules.users.sourceAdmin')
   }
-  const rule = rules.value.find((item) => item.code === user.rule_code)
-  const label = rule?.name || user.rule_code || ''
-  return t('manage.banRules.users.sourceRule', { code: label })
+  if (user.source === 'rule' && user.rule_code) {
+    const rule = rules.value.find((item) => item.code === user.rule_code)
+    const label = rule?.name || user.rule_code
+    return t('manage.banRules.users.sourceRule', { code: label })
+  }
+  // 老数据封禁功能上线前就处于封禁状态:source/rule_code 为 null,归为历史封禁
+  return t('manage.banRules.users.sourceUnknown')
+}
+
+function formatReason(user: BannedUser): string | null {
+  return user.reason && user.reason.length > 0 ? user.reason : null
 }
 </script>
 
@@ -386,7 +394,14 @@ function formatSource(user: BannedUser): string {
           :label="t('manage.banRules.users.columns.reason')"
           min-width="200"
           show-overflow-tooltip
-        />
+        >
+          <template #default="{ row }">
+            <span v-if="formatReason(row)">{{ row.reason }}</span>
+            <span v-else class="text-xs" style="color: var(--zv-label)">
+              {{ t('manage.banRules.users.reasonUnknown') }}
+            </span>
+          </template>
+        </ElTableColumn>
         <ElTableColumn
           prop="until"
           :label="t('manage.banRules.users.columns.period')"
