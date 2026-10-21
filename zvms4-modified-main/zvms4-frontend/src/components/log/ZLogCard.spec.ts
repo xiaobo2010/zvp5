@@ -1,6 +1,6 @@
 import { mount, type VueWrapper } from '@vue/test-utils'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-import { h } from 'vue'
+import { h, type SetupContext } from 'vue'
 import ZLogCard from './ZLogCard.vue'
 import type { Log } from '../../../types/log'
 
@@ -22,7 +22,7 @@ vi.mock('element-plus', async () => {
     ElTag: {
       name: 'ElTag',
       props: { type: String, size: String },
-      setup(_, { slots }) {
+      setup(_props: unknown, { slots }: SetupContext) {
         return () => h('span', { class: 'el-tag-stub' }, slots.default?.())
       }
     }
