@@ -30,7 +30,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Any, AsyncIterator
 
-from sqlalchemy import func, insert, or_, select
+from sqlalchemy import delete, func, insert, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.ids import new_oid, normalize_oid
@@ -111,6 +111,25 @@ def _count_for_user_rule_stmt(user_oid: str, rule_code: str):
             ban_records_tbl.c.rule_code == rule_code,
         )
     )
+
+
+def _delete_for_user_rule_stmt(user_oid: str, rule_code: str | None):
+    """删除某用户的封禁流水（可选限定规则）——处罚梯度重置。
+
+    只删流水、不动 ``USERS.BANNED``：这里是「把档位归零」的管理动作，
+    解封是另一件事（``users_repo.clear_ban``）。两件事分开，管理员可以
+    先降温档位但保留当前封禁，反之亦然。
+
+    ``rule_code is None``（不限规则）时额外钉住 ``source = 'rule'``：管理员
+    手动封禁的流水 ``rule_code IS NULL``，从不参与梯度计数，删掉纯属审计
+    证据灭失。指定规则时管理员记录因 ``rule_code`` 为 NULL 天然不命中。
+    """
+    stmt = delete(ban_records_tbl).where(ban_records_tbl.c.user_oid == user_oid)
+    if rule_code is not None:
+        stmt = stmt.where(ban_records_tbl.c.rule_code == rule_code)
+    else:
+        stmt = stmt.where(ban_records_tbl.c.source == "rule")
+    return stmt
 
 
 def _page_filter(query: str) -> list[Any]:
@@ -245,6 +264,22 @@ class OracleBanRecordsRepo:
         async with _session_for(self._session) as (session, _owns):
             total = (await session.execute(stmt)).scalar_one()
         return int(total)
+
+    async def delete_for_user_rule(
+        self, user_oid: str, rule_code: str | None = None
+    ) -> int:
+        """删除该用户（可限定规则）的封禁流水，返回受影响行数。
+
+        用于管理员「重置惩罚梯度」：档位由行数决定，删空即回到第一档。
+        只动流水、不动 ``USERS.BANNED``——解封是 ``users_repo.clear_ban``，
+        两件事分开，管理员可以先降温档位但保留当前封禁。
+        """
+        stmt = _delete_for_user_rule_stmt(normalize_oid(user_oid), rule_code)
+        async with _session_for(self._session) as (session, owns):
+            result = await session.execute(stmt)
+            if owns:
+                await session.commit()
+        return int(result.rowcount or 0)
 
     async def list_page(
         self, page: int, size: int, query: str

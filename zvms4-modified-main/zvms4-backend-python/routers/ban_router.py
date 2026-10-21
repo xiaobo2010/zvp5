@@ -20,7 +20,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from db import backends
+from typings.log import inject_log
 from util.object_id import get_current_user
+from util.user import get_user_display_name
 
 router = APIRouter()
 
@@ -80,7 +82,8 @@ class PutRuleConfig(BaseModel):
 class PutRuleRequest(BaseModel):
     enabled: Optional[bool] = None
     config: Optional[PutRuleConfig] = None
-    penalties: Optional[list[int]] = None
+    # 末位 ``null`` = 永久处罚（梯度用尽后不再累计天数）。
+    penalties: Optional[list[Optional[int]]] = None
 
 
 def _check_range(name: str, value: int, low: int, high: int) -> None:
@@ -90,13 +93,28 @@ def _check_range(name: str, value: int, low: int, high: int) -> None:
         )
 
 
-def _validated_penalties(penalties: list[int]) -> list[int]:
-    """1–6 档、每档 1–3650 天、严格升序。"""
+def _validated_penalties(penalties: list[Optional[int]]) -> list[Optional[int]]:
+    """1–6 档、每档 1–3650 天、严格升序；``null`` 只允许出现在最后一位。
+
+    ``null`` 是「此后永久」，所以它之后不能再有档位——否则「永久」后面的天数
+    永远轮不到，配置会变成一句谎话。中间档仍按非空值严格升序校验。
+    """
     if not 1 <= len(penalties) <= 6:
         raise HTTPException(status_code=422, detail="处罚梯度必须是 1–6 项")
-    for step in penalties:
+
+    last_index = len(penalties) - 1
+    for index, step in enumerate(penalties):
+        if step is None:
+            if index != last_index:
+                raise HTTPException(
+                    status_code=422, detail="永久处罚（null）只能出现在最后一位"
+                )
+            continue
         _check_range("处罚天数", step, 1, 3650)
-    for previous, current in zip(penalties, penalties[1:]):
+
+    # None 只可能在末位，取出来就是一段前缀；升序只需在这段前缀上判。
+    concrete = [step for step in penalties if step is not None]
+    for previous, current in zip(concrete, concrete[1:]):
         if current <= previous:
             raise HTTPException(
                 status_code=422, detail="处罚梯度必须严格升序"
@@ -195,6 +213,71 @@ async def list_banned_users(
         "data": data,
         "metadata": {"size": total, "page": page, "perpage": perpage},
     }
+
+
+# ---------------------------------------------------------------------------
+# 设备封禁（BANNED_DEVICES）
+#
+# 设备封禁与账号封禁是两份事实：账号解封不会顺带放出设备，反之亦然。只有
+# 「临时密码连错 3 次」会写显式设备封禁行；账号封禁对联动的设备是由
+# ``services.device_guard.device_ban_status`` 实时推导的，不出现在本列表里。
+# ---------------------------------------------------------------------------
+
+
+def _device_view(row: dict) -> dict:
+    until = row.get("until")
+    return {
+        "xuehai_id": row["xuehai_id"],
+        "reason": row.get("reason"),
+        # until 为 NULL 就是永久，与 /users、/records 的 permanent 语义一致。
+        "permanent": until is None,
+        "until": _iso(until),
+        "source": row.get("source"),
+        "rule_code": row.get("rule_code"),
+        "created_at": _iso(row.get("created_at")),
+    }
+
+
+@router.get("/devices")
+async def list_banned_devices(
+    page: int = Query(1, ge=1),
+    perpage: int = Query(20, ge=1, le=100),
+    user=Depends(get_current_user),
+):
+    _require_admin(user)
+    rows, total = await backends.get_device_bans_repo().list_page(page, perpage)
+    return {
+        "status": "ok",
+        "code": 200,
+        "data": [_device_view(row) for row in rows],
+        "metadata": {"size": total, "page": page, "perpage": perpage},
+    }
+
+
+@router.delete("/devices/{xuehai_id}", status_code=204)
+async def unban_device(
+    xuehai_id: str,
+    user=Depends(get_current_user),
+    log=Depends(inject_log),
+):
+    """解除设备封禁（人工出口）。
+
+    被删除的只是显式封禁行；因账号封禁而「实时推导为封禁」的设备无需在此处理
+    ——账号解封后它们自动恢复。
+    """
+    _require_admin(user)
+
+    deleted = await backends.get_device_bans_repo().delete(xuehai_id)
+    if deleted == 0:
+        # 没有这行就是没封过（或被并发解除）：对外是「对象不存在」，不是成功。
+        raise HTTPException(status_code=404, detail="设备未被封禁")
+
+    log.with_text(
+        f"管理员 {await get_user_display_name(user['id'])} 解除了设备 {xuehai_id} 的封禁",
+        type="ban_change",
+        level="warning",
+    )
+    await log.insert_log()
 
 
 @router.get("/records")
