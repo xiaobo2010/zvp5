@@ -4,6 +4,7 @@ import * as home from './home'
 import * as nav from './nav'
 import * as validation from './validation'
 import * as manage from './manage'
+import * as notificationCenter from './notificationCenter'
 import * as server from './server'
 import * as changelog from './changelog'
 import * as markdown from './markdown'
@@ -16,6 +17,7 @@ export const zhCN = {
   nav: nav.zhCN,
   validation: validation.zhCN,
   manage: manage.zhCN,
+  notificationCenter: notificationCenter.zhCN,
   server: server.zhCN,
   changelog: changelog.zhCN,
   markdown: markdown.zhCN,

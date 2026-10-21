@@ -718,6 +718,59 @@ Index("ix_ban_records_started", ban_records.c.started_at)
 
 
 # ---------------------------------------------------------------------------
+# NOTIFICATIONS ← new (站内通知; V014)
+#   One row per admin-published notice. AUTHOR_OID / AUTHOR_NAME are written
+#   once and never updated: the display name at send time is part of the audit
+#   trail, so a later rename must not rewrite history. No FK on AUTHOR_OID for
+#   the same reason (the notice survives account deletion).
+#   VERSION is the per-notice revision: 1 on create, +1 on every successful
+#   edit/deactivate, so clients can tell an edited notice from the one they
+#   already acknowledged.
+# ---------------------------------------------------------------------------
+
+notifications = Table(
+    "notifications",
+    metadata,
+    _oid_pk(),
+    Column("title", VARCHAR2(200), nullable=False),
+    Column("content", VARCHAR2(4000), nullable=False),
+    Column("active", NUMBER(1), nullable=False, server_default=text("1")),
+    Column("author_oid", VARCHAR2(24), nullable=False),
+    Column("author_name", VARCHAR2(128), nullable=False),
+    Column("version", NUMBER(19), nullable=False, server_default=text("1")),
+    Column("created_at", oracle.TIMESTAMP, nullable=False),
+    Column("updated_at", oracle.TIMESTAMP, nullable=False),
+    _oid_check("notifications"),
+    CheckConstraint("active IN (0,1)", name="ck_notifications_active"),
+    CheckConstraint("version > 0", name="ck_notifications_version"),
+)
+Index(
+    "ix_notifications_active_created",
+    notifications.c.active,
+    notifications.c.created_at,
+)
+
+
+# ---------------------------------------------------------------------------
+# NOTIFICATION_STATE ← new (通知全局版本; V014)
+#   Single-row counter (ID = 1). Every successful notification create / edit /
+#   delete bumps VERSION in the same transaction as the row change, which is
+#   the client's cheap "is there anything new?" signal. Keeping it in one row
+#   also serialises concurrent admin writes at the database.
+# ---------------------------------------------------------------------------
+
+notification_state = Table(
+    "notification_state",
+    metadata,
+    Column("id", NUMBER(1), primary_key=True),
+    Column("version", NUMBER(19), nullable=False, server_default=text("0")),
+    Column("updated_at", oracle.TIMESTAMP, nullable=False),
+    CheckConstraint("id = 1", name="ck_notification_state_id"),
+    CheckConstraint("version >= 0", name="ck_notification_state_version"),
+)
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 

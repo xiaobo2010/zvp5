@@ -1364,3 +1364,107 @@ class BanRecordsRepo(Protocol):
         means "no offset". ``total`` counts matching records, not users.
         """
         ...
+
+
+class NotificationsRepo(Protocol):
+    """Data access for ``NOTIFICATIONS`` + ``NOTIFICATION_STATE`` (站内通知, V014).
+
+    Satisfied by ``db.repos.oracle.notifications.OracleNotificationsRepo``.
+    Rows use the shape::
+
+        {"_id": <24-char lowercase hex str>,
+         "title": str,
+         "content": str,
+         "active": bool,
+         "author_oid": str,
+         "author_name": str,
+         "version": int,
+         "created_at": datetime,
+         "updated_at": datetime}
+
+    ``author_oid`` / ``author_name`` / ``created_at`` are immutable after
+    create: they record the real authenticated sender and send time, and are
+    deliberately not touched by :meth:`update`. ``version`` is the per-notice
+    revision (1 on create, +1 on every successful edit/deactivate).
+
+    ``NOTIFICATION_STATE`` is the singleton ``id = 1`` row holding the global
+    notification version. Every successful create / edit / delete bumps it in
+    the **same transaction** as the row change; failed writes (unknown oid) bump
+    nothing. List methods read the state **before** the rows so a notice created
+    between the two statements can never be hidden behind an older global
+    version in the response.
+    """
+
+    async def get_state(self) -> Row:
+        """Return ``{"version": int, "updated_at": datetime | None}``.
+
+        A missing state row (only possible on an unseeded database) reads as
+        version ``0`` with ``updated_at = None``; it is not repaired here.
+        """
+        ...
+
+    async def list_active(self) -> tuple[list[Row], int]:
+        """Return ``(active_rows, global_version)``, newest first.
+
+        Reads ``NOTIFICATION_STATE`` first, then the active rows. This ordering
+        is the response-consistency contract: a concurrent create may add a row
+        the client sees even though the returned version is older, but never the
+        reverse (a new global version with the new notice missing).
+        """
+        ...
+
+    async def list_all(self) -> tuple[list[Row], int]:
+        """Return ``(all_rows, global_version)`` for the admin management UI.
+
+        Includes inactive/deactivated rows; same read ordering as
+        :meth:`list_active`.
+        """
+        ...
+
+    async def get(self, oid: str) -> Row | None:
+        """Return the notification with ``_id == oid``, or ``None``."""
+        ...
+
+    async def create(
+        self,
+        *,
+        title: str,
+        content: str,
+        author_oid: str,
+        author_name: str,
+    ) -> tuple[Row, int]:
+        """Insert an active notification and return ``(row, global_version)``.
+
+        ``version`` starts at 1 and ``created_at == updated_at``. The state bump
+        shares the insert's transaction, so a committed notification always has
+        a committed version increment.
+        """
+        ...
+
+    async def update(
+        self,
+        oid: str,
+        *,
+        title: str | None = None,
+        content: str | None = None,
+        active: bool | None = None,
+    ) -> tuple[Row | None, int]:
+        """Patch supplied fields, bump the notice revision, return ``(row, version)``.
+
+        ``None`` means "leave unchanged" (the columns are NOT NULL, so it cannot
+        be a stored value). A successful update sets ``version = version + 1``
+        and refreshes ``updated_at``; ``author_oid`` / ``author_name`` /
+        ``created_at`` are never modified. An unknown ``oid`` returns
+        ``(None, current_global_version)`` and bumps nothing.
+        """
+        ...
+
+    async def delete(self, oid: str) -> tuple[Row | None, int]:
+        """Hard-delete a notification; return ``(deleted_row, global_version)``.
+
+        The row is selected with ``FOR UPDATE`` before deletion so the returned
+        snapshot is exactly what was removed (the router logs its title). An
+        unknown ``oid`` returns ``(None, current_global_version)`` and bumps
+        nothing. The audit log row survives the deletion.
+        """
+        ...

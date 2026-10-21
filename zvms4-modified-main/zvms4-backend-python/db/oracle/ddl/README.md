@@ -4,7 +4,7 @@ Versioned, hand-written Oracle DDL for the `zvms_new` → Oracle ADB migration.
 
 | File | Purpose |
 | ---- | ------- |
-| `V001__initial_schema.sql` | 16 tables + 9 indexes for all of `zvms_new`. Idempotent. |
+| `V001__initial_schema.sql` | 25 tables + 23 indexes for all of `zvms_new` (fresh-install mirror of V002–V014). Idempotent. |
 | `V002__add_users_banned.sql` | Adds `USERS.BANNED NUMBER(1)` + `ck_users_banned` to an existing instance. Idempotent. |
 | `V003__relax_activities_text_null.sql` | Relaxes `ACTIVITIES.DESCRIPTION/APPROVER/PLACE` to nullable (Mongo `''` → Oracle NULL). Idempotent. |
 | `V004__retire_mongo_tables.sql` | Adds `APP_LOGS`/`EXPORT_TASKS`/`IMPORTS` and extends `GROUPS` with `TYPE`/`PERMISSIONS` on an existing instance. Idempotent. |
@@ -15,6 +15,7 @@ Versioned, hand-written Oracle DDL for the `zvms_new` → Oracle ADB migration.
 | `V010__add_user_device_bindings.sql` | Adds `USER_DEVICE_BINDINGS` + `uq_udb_user_xuehai` UNIQUE + `ix_udb_xuehai_id` (学海 ID 身份追溯 MVP, observe-only) on an existing instance. Idempotent. |
 | `V012__add_dual_auth_uses.sql` | Adds `DUAL_AUTH_USES` + `uq_dual_approver_counter` (Stage 2 双人授权 TOTP 防重放) on an existing instance. Idempotent. |
 | `V013__add_ban_rules.sql` | Adds the `USERS` ban metadata columns (`BAN_REASON`/`BAN_UNTIL`/`BAN_SOURCE`/`BAN_RULE`), `BAN_RULES` + `BAN_RECORDS` (+ 2 indexes), the built-in `multi_device_login` rule seed and `ix_app_logs_user_ts` on an existing instance. Idempotent. |
+| `V014__add_notifications.sql` | Adds `NOTIFICATIONS` (+ `ix_notifications_active_created`) and the singleton `NOTIFICATION_STATE` counter (seeded `id=1, version=0`) on an existing instance. Idempotent. |
 | `../models.py` (`db/models.py`) | SQLAlchemy 2.0 Core `MetaData` mirror of V001. |
 | `../ddl_check.py` (`db/ddl_check.py`) | Offline drift check between the two. |
 
@@ -73,6 +74,16 @@ INSERT`, so re-running never overwrites admin edits. `ix_app_logs_user_ts`
 (`APP_USER, TS_RAW`) backs the rule's evidence query
 `COUNT(DISTINCT XUEHAI_ID)` over a time window. Fresh instances get all of this
 from `V001` (same seed); existing instances are extended by `V013`.
+
+`NOTIFICATIONS` / `NOTIFICATION_STATE` back the 站内通知 feature
+(`docs/NOTIFICATIONS_API.md`). A notification stores its immutable send-time
+identity (`AUTHOR_OID`, `AUTHOR_NAME`, `CREATED_AT`) plus a per-notice
+`VERSION` revision. The singleton `NOTIFICATION_STATE` row (`id = 1`) holds the
+global version, incremented in the same transaction as every successful
+create/edit/delete so clients can use a single cheap version check. `AUTHOR_OID`
+carries **no** foreign key: notices must survive deletion of the sending
+account. Fresh instances get both tables and the `id=1, version=0` seed from
+`V001`; existing instances are extended by `V014`.
 
 ## Applying V001
 
