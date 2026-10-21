@@ -220,6 +220,8 @@ export const zhCN = {
       },
       sourceAdmin: '管理员封禁',
       sourceRule: '规则：{code}',
+      sourceUnknown: '历史封禁（无记录）',
+      reasonUnknown: '未记录原因',
       permanent: '永久',
       empty: '当前没有被封禁的用户'
     },
