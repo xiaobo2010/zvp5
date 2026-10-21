@@ -490,6 +490,62 @@ it('shows a clear empty state when no banned users exist', async () => {
   wrapper.unmount()
 })
 
+it('falls back to the legacy-ban label when source is null and never prints an empty 规则 prefix', async () => {
+  mockApi({
+    users: [
+      {
+        oid: '69b7a4ad0243d973f1e1a2b5',
+        name: '王二',
+        user_id: '20240802',
+        class_name: '高三8班',
+        reason: null,
+        permanent: true,
+        until: null,
+        source: null,
+        rule_code: null
+      }
+    ] as BannedUser[],
+    usersSize: 1
+  })
+  const wrapper = mountPage()
+  await flushPromises()
+
+  const usersTable = wrapper.findAll('.el-table-stub')[1]!
+  expect(usersTable.text()).toContain('manage.banRules.users.sourceUnknown')
+  expect(usersTable.text()).toContain('manage.banRules.users.reasonUnknown')
+  expect(usersTable.text()).not.toBe('manage.banRules.users.sourceRule')
+
+  wrapper.unmount()
+})
+
+it('falls back to the legacy-ban label when source is rule without rule_code', async () => {
+  mockApi({
+    users: [
+      {
+        oid: '69b7a4ad0243d973f1e1a2b6',
+        name: '赵一',
+        user_id: '20240803',
+        class_name: '高三8班',
+        reason: '同学号多设备登录',
+        permanent: true,
+        until: null,
+        source: 'rule',
+        rule_code: null
+      }
+    ] as BannedUser[],
+    usersSize: 1
+  })
+  const wrapper = mountPage()
+  await flushPromises()
+
+  expect(wrapper.findAll('.el-table-stub')[1]!.text()).toContain(
+    'manage.banRules.users.sourceUnknown'
+  )
+  expect(wrapper.text()).not.toContain('manage.banRules.users.sourceRule {')
+
+  wrapper.unmount()
+})
+
 it('shows empty states when both endpoints fail (e.g. 403)', async () => {
   vi.mocked(getRules).mockRejectedValue(new Error('forbidden'))
   vi.mocked(getBannedUsers).mockRejectedValue(new Error('forbidden'))

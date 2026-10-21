@@ -88,10 +88,10 @@ export interface BannedUser {
   name: string
   user_id: string
   class_name: string
-  reason: string
+  reason?: string | null
   permanent: boolean
   until?: string | null
-  source: 'admin' | 'rule'
+  source?: 'admin' | 'rule' | null
   rule_code?: string | null
 }
 
