@@ -8,6 +8,7 @@ export * as group from './group'
 export * as exports from './exports'
 export * as logs from './logs'
 export * as changelog from './changelog'
+export * as notifications from './notifications'
 export * as version from './version'
 export * as attachment from './attachment'
 export const time = {
