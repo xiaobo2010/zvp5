@@ -82,3 +82,40 @@ export async function getRecords(page: number = 1, perpage: number = 20, query: 
     size: result.metadata.size
   }
 }
+
+export interface BannedUser {
+  oid: string
+  name: string
+  user_id: string
+  class_name: string
+  reason: string
+  permanent: boolean
+  until?: string | null
+  source: 'admin' | 'rule'
+  rule_code?: string | null
+}
+
+export async function getBannedUsers(page: number = 1, perpage: number = 20, query: string = '') {
+  const result = (
+    await axios('/v3/ban/users', {
+      params: {
+        page,
+        perpage,
+        query
+      }
+    })
+  ).data as Response<BannedUser[]> & {
+    metadata: {
+      size: number
+      page: number
+      perpage: number
+    }
+  }
+  if (result.status === 'error') {
+    throw result
+  }
+  return {
+    users: result.data,
+    size: result.metadata.size
+  }
+}

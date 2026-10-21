@@ -10,7 +10,8 @@ const {
   failSpy,
   elMessageErrorSpy,
   elMessageWarningSpy,
-  elementComponents
+  elementComponents,
+  terminalInstances
 } = vi.hoisted(() => {
   // 本页用了 unplugin-vue-components 的按需注入,编译产物会直接从 'element-plus'
   // 具名导入 El*,所以 mock 必须同时提供这些组件,否则渲染期会报 "No ElTag export"。
@@ -80,7 +81,15 @@ const {
       ElIcon,
       ElSelect,
       ElOption
-    }
+    },
+    terminalInstances: [] as Array<{
+      buffer: { active: { type: string; viewportY: number; length: number } }
+      modes: { mouseTrackingMode: string }
+      scrollLines: ReturnType<typeof vi.fn>
+      scrollPages: ReturnType<typeof vi.fn>
+      scrollToBottom: ReturnType<typeof vi.fn>
+      focus: ReturnType<typeof vi.fn>
+    }>
   }
 })
 
@@ -129,9 +138,13 @@ vi.mock('@/components/system/ZSystemAuthDialog.vue', () => ({
 
 vi.mock('@xterm/xterm', () => ({
   Terminal: class TerminalStub {
+    static instances: unknown[] = []
+
     cols = 80
     rows = 24
     options: Record<string, unknown> = {}
+    buffer = { active: { type: 'normal', viewportY: 0, length: 24 } }
+    modes = { mouseTrackingMode: 'none' as const }
     open = vi.fn()
     write = vi.fn()
     onData = vi.fn()
@@ -140,6 +153,15 @@ vi.mock('@xterm/xterm', () => ({
     loadAddon = vi.fn()
     reset = vi.fn()
     focus = vi.fn()
+    attachCustomKeyEventHandler = vi.fn()
+    scrollLines = vi.fn()
+    scrollPages = vi.fn()
+    scrollToBottom = vi.fn()
+
+    constructor() {
+      terminalInstances.push(this)
+    }
+    // 收集给测试断言用;vi.mock 工厂里的属性在运行时仍指向 hoisted 变量
   }
 }))
 
@@ -194,6 +216,7 @@ function buttonByText(wrapper: VueWrapper, text: string) {
 beforeEach(() => {
   localStorage.clear()
   WebSocketStub.instances = []
+  terminalInstances.length = 0
   openSpy.mockReset()
   succeedSpy.mockReset()
   failSpy.mockReset()
@@ -361,6 +384,52 @@ it('exchanges a six-digit code for a ticket', async () => {
   expect(succeedSpy).toHaveBeenCalledTimes(1)
   expect(WebSocketStub.instances).toHaveLength(1)
   expect(WebSocketStub.instances[0].url).toContain('ticket=ticket-1')
+
+  wrapper.unmount()
+})
+
+// 滚轮翻历史:远端开启鼠标上报时滚轮会被拦截改为翻 scrollback,
+// 翻出底部后应显示「回到底部」,点击要真正 scrollToBottom 并聚焦终端。
+it('scrolls into history on wheel and offers the back-to-bottom button', async () => {
+  localStorage.setItem(WARNED_KEY, '1')
+  openSpy.mockResolvedValue(CODE)
+  vi.mocked(createSshSession).mockResolvedValue({
+    data: { status: 'ok', code: 200, data: { ticket: 'ticket-1', expires_in: 120 } }
+  } as never)
+
+  const wrapper = mountPage()
+  await flushPromises()
+
+  await emptyStateButton(wrapper).trigger('click')
+  await flushPromises()
+
+  const term = terminalInstances.at(-1)!
+  expect(term.attachCustomKeyEventHandler).toHaveBeenCalled()
+
+  // 视口在底部时不显示按钮
+  expect(wrapper.find('.back-to-bottom').exists()).toBe(false)
+
+  // 模拟远端开启鼠标上报 + 视口已翻离底部
+  term.modes.mouseTrackingMode = 'drag'
+  term.buffer.active.length = 50
+  term.buffer.active.viewportY = 0
+
+  const WheelEventCtor =
+    (globalThis as { WheelEvent?: typeof WheelEvent }).WheelEvent ??
+    (globalThis as unknown as { MouseEvent: typeof MouseEvent }).MouseEvent
+  const box = wrapper.find('.terminal-box')
+  box.element.dispatchEvent(
+    new WheelEventCtor('wheel', { deltaY: 120, cancelable: true }) as Event
+  )
+  await flushPromises()
+
+  expect(term.scrollLines).toHaveBeenCalledWith(3)
+  const backToBottom = wrapper.find('.back-to-bottom')
+  expect(backToBottom.exists()).toBe(true)
+
+  await backToBottom.trigger('click')
+  expect(term.scrollToBottom).toHaveBeenCalledTimes(1)
+  expect(term.focus).toHaveBeenCalled()
 
   wrapper.unmount()
 })

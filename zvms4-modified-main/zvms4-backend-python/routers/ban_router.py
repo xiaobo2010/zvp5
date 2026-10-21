@@ -159,6 +159,44 @@ async def update_ban_rule(
     return {"status": "ok", "code": 200, "data": _rule_view(updated)}
 
 
+@router.get("/users")
+async def list_banned_users(
+    page: int = Query(1, ge=1),
+    perpage: int = Query(20, ge=1, le=100),
+    query: str = Query("", max_length=128),
+    user=Depends(get_current_user),
+):
+    """当前被封禁的用户（``USERS.BANNED = 1``），不是流水。
+
+    ``/records`` 是只增的封禁历史，一屏「封禁管理」要看的是「现在谁进不来」：
+    人工解封后流水仍留着，照流水显示会把已解封的人继续挂在列表上。
+    """
+    _require_admin(user)
+    rows, total = await backends.get_users_repo().list_banned_page(query, page, perpage)
+    data = [
+        {
+            "oid": row["_id"],
+            "name": row["name"],
+            # 与 /records 同一命名约定：对外叫 user_id，值是学号。
+            "user_id": row.get("id"),
+            "class_name": row.get("class_name"),
+            "reason": row.get("ban_reason"),
+            # ban_until 为 NULL 且 banned=1 就是永久封禁。
+            "permanent": row.get("ban_until") is None,
+            "until": _iso(row.get("ban_until")),
+            "source": row.get("ban_source"),
+            "rule_code": row.get("ban_rule"),
+        }
+        for row in rows
+    ]
+    return {
+        "status": "ok",
+        "code": 200,
+        "data": data,
+        "metadata": {"size": total, "page": page, "perpage": perpage},
+    }
+
+
 @router.get("/records")
 async def list_ban_records(
     page: int = Query(1, ge=1),

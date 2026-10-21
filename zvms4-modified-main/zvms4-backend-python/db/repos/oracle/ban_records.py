@@ -83,7 +83,11 @@ def _insert_stmt(
     started_at: datetime,
     expires_at: datetime | None,
     operator_oid: str | None,
+    created_at: datetime,
 ):
+    # ``created_at`` 必填而非在 values 里取 ``datetime.now()``：DDL 该列是
+    # ``NOT NULL`` 且无默认值，漏列直接 ORA-01400；而时间点必须与
+    # ``started_at`` 的缺省值同源（调用方传同一个 now），否则两列会漂移。
     return insert(ban_records_tbl).values(
         oid=oid,
         user_oid=user_oid,
@@ -94,6 +98,7 @@ def _insert_stmt(
         started_at=started_at,
         expires_at=expires_at,
         operator_oid=operator_oid,
+        created_at=created_at,
     )
 
 
@@ -211,9 +216,11 @@ class OracleBanRecordsRepo:
 
         ``created_at`` 由本层生成（写入时刻），``started_at`` 允许调用方回填
         （例如补录）；两者语义不同：前者是「这行什么时候被写下」，后者是
-        「封禁从什么时候生效」。
+        「封禁从什么时候生效」。调用方不传 ``started_at`` 时两者共用同一个
+        ``now``：取两次时间会让同一行的两列差几毫秒，对账时没法判断谁对。
         """
         oid = new_oid()
+        now = datetime.now()
         stmt = _insert_stmt(
             oid,
             normalize_oid(user_oid),
@@ -221,9 +228,10 @@ class OracleBanRecordsRepo:
             rule_code,
             reason,
             permanent,
-            started_at if started_at is not None else datetime.now(),
+            started_at if started_at is not None else now,
             expires_at,
             normalize_oid(operator_oid) if operator_oid is not None else None,
+            now,
         )
         async with _session_for(self._session) as (session, owns):
             await session.execute(stmt)

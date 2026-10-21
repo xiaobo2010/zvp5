@@ -301,3 +301,98 @@ def test_admin_record_carries_operator_name_and_permanent_shape(api) -> None:
     assert row["permanent"] is True
     assert row["expires_at"] is None
     assert row["operator_name"] == "管理员"
+
+
+# ---------------------------------------------------------------------------
+# GET /users —— 当前被封用户（USERS.BANNED = 1，不是流水）
+# ---------------------------------------------------------------------------
+
+BANNED_ROWS = [
+    {
+        "_id": "000000000000000000000002",
+        "id": "2026002",
+        "name": "张三",
+        "class_name": "高三8班",
+        "ban_reason": "管理员封禁",
+        "ban_until": None,
+        "ban_source": "admin",
+        "ban_rule": None,
+    },
+    {
+        "_id": "000000000000000000000003",
+        "id": "2026003",
+        "name": "李四",
+        "class_name": "未知班级",
+        "ban_reason": "同学号多设备登录",
+        "ban_until": datetime(2026, 11, 1, 0, 0, 0),
+        "ban_source": "rule",
+        "ban_rule": "multi_device_login",
+    },
+]
+
+
+@pytest.fixture
+def banned_api(monkeypatch):
+    calls: list[tuple] = []
+
+    async def list_banned_page(query, page, size):
+        calls.append((query, page, size))
+        return BANNED_ROWS, len(BANNED_ROWS)
+
+    monkeypatch.setattr(
+        backends,
+        "get_users_repo",
+        lambda *a, **k: SimpleNamespace(list_banned_page=list_banned_page),
+    )
+
+    app = FastAPI()
+    app.include_router(ban_router.router, prefix=PREFIX)
+    app.dependency_overrides[get_current_user] = lambda: ADMIN
+    return TestClient(app), calls
+
+
+def test_banned_users_shape_matches_frontend_contract(banned_api) -> None:
+    http, calls = banned_api
+    body = http.get(f"{PREFIX}/users?query=2026&page=1&perpage=20").json()
+
+    assert body["status"] == "ok"
+    assert body["code"] == 200
+    assert body["metadata"] == {"size": 2, "page": 1, "perpage": 20}
+    assert body["data"][0] == {
+        "oid": "000000000000000000000002",
+        "name": "张三",
+        "user_id": "2026002",
+        "class_name": "高三8班",
+        "reason": "管理员封禁",
+        "permanent": True,
+        "until": None,
+        "source": "admin",
+        "rule_code": None,
+    }
+    # 查询参数原样透传给仓储，顺序不参与契约
+    assert calls == [("2026", 1, 20)]
+
+
+def test_banned_users_marks_timed_rule_ban(banned_api) -> None:
+    http, _calls = banned_api
+    row = http.get(f"{PREFIX}/users").json()["data"][1]
+
+    assert row["permanent"] is False
+    assert row["until"] == "2026-11-01T00:00:00"
+    assert row["source"] == "rule"
+    assert row["rule_code"] == "multi_device_login"
+
+
+def test_banned_users_requires_admin(banned_api) -> None:
+    http, _calls = banned_api
+    http.app.dependency_overrides[get_current_user] = lambda: STUDENT
+    response = http.get(f"{PREFIX}/users")
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "权限不足"
+
+
+@pytest.mark.parametrize("qs", ["page=0", "perpage=0", "perpage=101"])
+def test_banned_users_rejects_out_of_range_paging(banned_api, qs) -> None:
+    http, _calls = banned_api
+    assert http.get(f"{PREFIX}/users?{qs}").status_code == 422

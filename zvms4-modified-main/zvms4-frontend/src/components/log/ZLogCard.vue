@@ -1,8 +1,7 @@
 <script setup lang="ts">
 import type { Log } from '../../../types/log'
-import { toRefs } from 'vue'
+import { computed, toRefs } from 'vue'
 import { ElCard, ElForm, ElFormItem, ElTag } from 'element-plus'
-import { ZActivityMember } from '@/components'
 import dayjs from '@/plugins/dayjs'
 
 const props = defineProps<{
@@ -42,6 +41,76 @@ const levelLabels: Record<string, string> = {
   verbose: '详细'
 }
 
+// 系统审计日志:data 是 JSON,展开成人名而不是 oid 哈希;action 语义给出中文标签
+const AUDIT_TYPES = new Set([
+  'system_dual_auth',
+  'system_op',
+  'system_ssh',
+  'system_files',
+  'system_db_content',
+  'system_ssh_command'
+])
+
+const auditActionLabels: Record<string, string> = {
+  web_ssh: 'Web SSH',
+  ssh: 'Web SSH',
+  files: '文件管理',
+  db_content: '资料中心',
+  maintenance: '维护',
+  system: '系统'
+}
+
+const UNKNOWN_NAME = '未知用户'
+
+function auditName(value: unknown): string {
+  if (typeof value === 'string' && value.length > 0) {
+    return value
+  }
+  return UNKNOWN_NAME
+}
+
+const auditDetail = computed(() => {
+  const type = log.value?.type
+  if (!type || !AUDIT_TYPES.has(type)) {
+    return null
+  }
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(log.value.data)
+  } catch {
+    return null
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return null
+  }
+  const doc = parsed as Record<string, unknown>
+  const action = doc.action
+  const actionLabel =
+    typeof action === 'string' && action.length > 0 ? (auditActionLabels[action] ?? action) : ''
+  const operator = auditName(doc.operator_name)
+  const detail = typeof doc.detail === 'string' ? doc.detail : ''
+
+  if (type === 'system_ssh_command') {
+    const command = typeof doc.command === 'string' ? doc.command : ''
+    return { text: `${operator} $ ${command}`, mono: true }
+  }
+  if (type === 'system_dual_auth') {
+    const approver = auditName(doc.approver_name)
+    const text = action
+      ? `${actionLabel} · 操作人 ${operator} · 审批人 ${approver}`
+      : `操作人 ${operator} · 审批人 ${approver}`
+    const lines = [text]
+    if (typeof doc.reason === 'string' && doc.reason) {
+      lines.push(`原因：${doc.reason}`)
+    }
+    return { text: lines.join('\n'), mono: false }
+  }
+  const parts: string[] = []
+  if (typeof action === 'string' && action) parts.push(actionLabel || action)
+  parts.push(operator)
+  if (detail) parts.push(detail)
+  return { text: parts.join(' · '), mono: false }
+})
 </script>
 
 <template>
@@ -59,11 +128,17 @@ const levelLabels: Record<string, string> = {
           </ElTag>
         </ElFormItem>
         <ElFormItem label="用户">
-          <ZActivityMember v-if="log.user" :id="log.user" />
-          <ElTag v-else size="small" type="info">未登录</ElTag>
-        </ElFormItem>
-        <ElFormItem label="用户 ID">
-          {{ log.user }}
+          <ElTag v-if="!log.user && !log.user_name" size="small" type="info">匿名</ElTag>
+          <div v-else class="leading-snug">
+            <div>{{ log.user_name || '未知用户' }}</div>
+            <div
+              v-if="log.user_id"
+              class="text-xs"
+              style="color: var(--zv-label)"
+            >
+              {{ log.user_id }}
+            </div>
+          </div>
         </ElFormItem>
         <ElFormItem v-if="log.xuehai_id" label="学海 ID">
           {{ log.xuehai_id }}
@@ -72,7 +147,15 @@ const levelLabels: Record<string, string> = {
           {{ dayjs.unix(log.timestamp).format('YYYY-MM-DD HH:mm:ss') }}
         </ElFormItem>
         <ElFormItem label="详情" style="overflow-wrap: break-word; white-space: pre-wrap">
-          {{ log.data }}
+          <!-- 审计日志解析成功:节到 3 行并给出 title 悬浮全文,避免长详情占满卡片;
+               解析失败或其它类型:维持原文展示,不吞内容 -->
+          <span
+            v-if="auditDetail"
+            :class="auditDetail.mono ? 'font-mono' : ''"
+            class="audit-text"
+            :title="auditDetail.text"
+          >{{ auditDetail.text }}</span>
+          <template v-else>{{ log.data }}</template>
         </ElFormItem>
         <ElFormItem label="URL">
           {{ log.url }}
@@ -82,4 +165,12 @@ const levelLabels: Record<string, string> = {
   </div>
 </template>
 
-<style scoped></style>
+<style scoped>
+/* 解析后的审计详情:最多 3 行截断,title 悬浮已有全文 */
+.audit-text {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+}
+</style>

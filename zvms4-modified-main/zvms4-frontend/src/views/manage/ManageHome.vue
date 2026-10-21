@@ -9,8 +9,6 @@ import { Block, Group, Log, User } from '@icon-park/vue-next'
 import ZGroupUserList from '@/components/group/ZGroupUserList.vue'
 import ZGroupList from '@/components/group/ZGroupList.vue'
 import ZLogList from '@/components/log/ZLogList.vue'
-import TablerSum from '@/icons/TablerSum.vue'
-import ZGroupUserTimeList from '@/components/group/ZGroupUserTimeList.vue'
 import ZBanRules from '@/components/manage/ZBanRules.vue'
 
 interface SegmentedTab {
@@ -18,6 +16,8 @@ interface SegmentedTab {
   value: string
   icon: Component
 }
+
+const VALID_CURRENT = ['groups', 'users', 'ban', 'logs']
 
 const route = useRoute()
 const router = useRouter()
@@ -30,7 +30,11 @@ if (!(userStore.position.includes('admin') || userStore.position.includes('depar
 
 const curPage = route.params.action?.toString()
 
-const current = ref(curPage && curPage !== '' ? curPage : 'groups')
+if (curPage && !VALID_CURRENT.includes(curPage)) {
+  router.replace('/manage/groups')
+}
+
+const current = ref(curPage && VALID_CURRENT.includes(curPage) ? curPage : 'groups')
 
 const tabs = ref<SegmentedTab[]>([
   {
@@ -42,11 +46,6 @@ const tabs = ref<SegmentedTab[]>([
     label: 'Users',
     value: 'users',
     icon: User
-  },
-  {
-    label: 'Time',
-    value: 'time',
-    icon: TablerSum
   },
 ])
 
@@ -69,10 +68,13 @@ watch(current, () => {
 
 watch(
   () => route.params.action,
-  (value) => {
-    console.log(value)
+  () => {
     const curPage = route.params.action?.toString()
-    current.value = curPage && curPage !== '' ? curPage : 'groups'
+    if (curPage && VALID_CURRENT.includes(curPage)) {
+      current.value = curPage
+    } else {
+      router.replace('/manage/groups')
+    }
   }
 )
 </script>
@@ -99,7 +101,6 @@ watch(
     <ZGroupList v-if="current === 'groups'" />
     <ZGroupUserList v-else-if="current === 'users'" id="" />
     <ZLogList v-else-if="current === 'logs'" id="" user="" />
-    <ZGroupUserTimeList v-else-if="current === 'time'" id="" />
     <ZBanRules v-else-if="current === 'ban'" />
   </div>
 </template>
