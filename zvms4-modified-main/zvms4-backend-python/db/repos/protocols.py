@@ -235,6 +235,41 @@ class UsersRepo(Protocol):
         """
         ...
 
+    async def set_primary_xuehai(self, oid: str, xuehai_id: str) -> None:
+        """Bind the account's 主学海设备 (``primary_xuehai_id``).
+
+        The session id is **not** rotated: a primary device is not a credential,
+        so switching devices must not log the account out everywhere. The
+        "only from the current primary device" rule is the endpoint's job.
+        """
+        ...
+
+    async def clear_primary_xuehai(self, oid: str) -> None:
+        """Unbind the 主学海设备 (column back to NULL = no device check).
+
+        Like :meth:`set_primary_xuehai`, no session rotation.
+        """
+        ...
+
+    async def list_banned_by_xuehai(self, xuehai_id: str) -> list[Row]:
+        """Users whose ``primary_xuehai_id == xuehai_id`` and ``banned = 1``.
+
+        Raw filter only: an expired ban keeps ``banned = 1`` by design, so the
+        caller decides whether it is *currently* in force with
+        ``util.ban.ban_is_active``. Rows are full user documents.
+        """
+        ...
+
+    async def primary_owned_by_other(self, xuehai_id: str, user_oid: str) -> bool:
+        """Whether ``xuehai_id`` is **someone else's** primary device.
+
+        The device id is self-reported by the client, so it can be forged. The
+        ban path uses this to refuse writing a ``BANNED_DEVICES`` row for a
+        forged victim id: only the account gets banned, never a device that
+        belongs to another user.
+        """
+        ...
+
 
 class GroupsRepo(Protocol):
     """Data access for ``zvms_new.groups`` (class groups only).
@@ -1354,6 +1389,18 @@ class BanRecordsRepo(Protocol):
         """
         ...
 
+    async def delete_for_user_rule(
+        self, user_oid: str, rule_code: str | None = None
+    ) -> int:
+        """Delete a user's ban records (optionally one rule); return the count.
+
+        Backs the admin "reset penalty ladder" action: the ladder index is the
+        row count, so emptying it sends the next offence back to
+        ``penalties[0]``. Current ban state (``USERS.BANNED``) is untouched —
+        unbanning is ``UsersRepo.clear_ban``.
+        """
+        ...
+
     async def list_page(
         self, page: int, size: int, query: str
     ) -> tuple[list[Row], int]:
@@ -1363,4 +1410,148 @@ class BanRecordsRepo(Protocol):
         ``name`` / 学号 (empty = no filter); ``page`` is 1-based, ``page == -1``
         means "no offset". ``total`` counts matching records, not users.
         """
+        ...
+
+
+class DeviceBansRepo(Protocol):
+    """Data access for ``BANNED_DEVICES`` (设备级封禁, V014).
+
+    Satisfied by ``db.repos.oracle.device_bans.OracleDeviceBansRepo``. Rows are
+    ``{"xuehai_id": str, "reason": str | None, "until": datetime | None,
+    "source": "rule" | "admin", "rule_code": str | None,
+    "operator_oid": str | None, "created_at": datetime}`` — the 学海 device id is
+    the primary key, so there is no ``_id``: it *is* the identity.
+
+    The primary key is also the upsert key (one current verdict per device).
+    ``until is None`` means permanent. Account bans are **not** mirrored here;
+    the service layer derives them from ``users.primary_xuehai_id``.
+    """
+
+    async def get(self, xuehai_id: str) -> Row | None:
+        """Return the device's current ban row, or ``None`` when not banned."""
+        ...
+
+    async def upsert(
+        self,
+        xuehai_id: str,
+        *,
+        reason: str | None,
+        until: datetime | None,
+        source: str,
+        rule_code: str | None,
+        operator_oid: str | None,
+    ) -> None:
+        """Ban a device, overwriting any existing verdict for that device.
+
+        ``until is None`` = permanent; ``source`` is ``rule`` or ``admin``.
+        ``created_at`` is refreshed so it always describes the current verdict.
+        """
+        ...
+
+    async def delete(self, xuehai_id: str) -> int:
+        """Lift a device ban; returns the affected row count (``0`` = not banned)."""
+        ...
+
+    async def list_page(self, page: int, size: int) -> tuple[list[Row], int]:
+        """Return ``(rows, total)`` for one page, newest ban first.
+
+        ``page`` is 1-based; ``total`` counts devices, not page size.
+        """
+        ...
+
+
+class TempPasswordsRepo(Protocol):
+    """Data access for ``TEMP_LOGIN_PASSWORDS`` (一次性临时密码, V014).
+
+    Satisfied by ``db.repos.oracle.temp_passwords.OracleTempPasswordsRepo``.
+    Rows are ``{"_id": <hex str>, "target_user_oid": str,
+    "created_by_oid": str, "code_hash": str, "creator_xuehai_id": str | None,
+    "expires_at": datetime, "used_at": datetime | None,
+    "revoked_at": datetime | None, "created_at": datetime}``.
+
+    Only the bcrypt hash is stored — the plaintext code appears once, in the
+    creation response. There is deliberately no "read the code back" method.
+    """
+
+    async def insert(
+        self,
+        target_user_oid: str,
+        created_by_oid: str,
+        code_hash: str,
+        creator_xuehai_id: str | None,
+        expires_at: datetime,
+    ) -> str:
+        """Store a hashed one-shot code and return its new ``_id``."""
+        ...
+
+    async def list_active_for_user(
+        self, target_user_oid: str, limit: int = 3
+    ) -> list[Row]:
+        """Codes that are unused, unrevoked and unexpired, newest first.
+
+        The default stays small on purpose: the login path bcrypt-compares every
+        row, and with "one active code + a 30-minute window" there is normally a
+        single usable row. A caller that truly wants a listing passes a bigger
+        ``limit`` explicitly.
+        """
+        ...
+
+    async def mark_used(self, oid: str) -> int:
+        """Mark a code used, **only** when ``used_at IS NULL``; returns row count.
+
+        ``0`` means the code was already spent (or does not exist) and must be
+        treated as a failure — that guard is what makes the code single-use.
+        """
+        ...
+
+    async def revoke_expired(self, cutoff: datetime) -> int:
+        """Revoke codes with ``expires_at < cutoff``; returns the row count.
+
+        Only untouched rows are revoked: an already-used code keeps its
+        ``used_at`` as audit evidence.
+        """
+        ...
+
+
+class DeviceChallengesRepo(Protocol):
+    """Data access for ``DEVICE_CHALLENGES`` (异设备登录挑战, V014).
+
+    Satisfied by
+    ``db.repos.oracle.device_challenges.OracleDeviceChallengesRepo``. Rows are
+    ``{"_id": <hex str>, "token_hash": str, "user_oid": str, "xuehai_id": str,
+    "attempts": int, "expires_at": datetime, "consumed_at": datetime | None,
+    "created_at": datetime}``.
+
+    ``token_hash`` is a SHA-256 hex digest of the one-time token (the plaintext
+    is only returned to the client), unique per challenge. ``attempts`` lives in
+    the DB so the "third failure bans" rule survives multiple workers;
+    :meth:`increment_attempts` is the atomic counter and ``consumed_at`` keeps a
+    challenge single-use.
+    """
+
+    async def insert(
+        self,
+        token_hash: str,
+        user_oid: str,
+        xuehai_id: str,
+        expires_at: datetime,
+    ) -> str:
+        """Store a challenge and return its new ``_id``."""
+        ...
+
+    async def get(self, token_hash: str) -> Row | None:
+        """Fetch the challenge, or ``None`` when unknown.
+
+        No row lock: each call owns its session, so a lock would be released on
+        return. Concurrency is carried by the atomic ``attempts = attempts + 1``
+        update and the single-use guard on ``consumed_at``.
+        """
+        ...
+
+    async def increment_attempts(self, oid: str) -> int:
+        """Add one failure and return the **new** attempt count."""
+        ...
+
+    async def consume(self, oid: str) -> None:
+        """Stamp ``consumed_at`` so the challenge cannot be used twice."""
         ...
