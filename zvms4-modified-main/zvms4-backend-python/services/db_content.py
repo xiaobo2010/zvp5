@@ -24,7 +24,7 @@ from __future__ import annotations
 import asyncio
 import re
 import time
-from datetime import date, datetime, time as time_of_day
+from datetime import date, datetime, time as time_of_day, timezone
 from decimal import Decimal
 from typing import Any
 
@@ -609,16 +609,102 @@ async def read_rows(
 # --------------------------------------------------------------------------- #
 
 
-async def _table_columns(session: Any, table: str) -> list[str]:
-    return [str(row[0]).upper() for row in await _column_rows(session, table)]
+async def _table_columns(session: Any, table: str) -> dict[str, str]:
+    """列名 → 列类型（均已大写）；写路径据此把前端值转成驱动可绑定的类型。"""
+    return {
+        str(row[0]).upper(): str(row[1]).upper()
+        for row in await _column_rows(session, table)
+    }
+
+
+def _temporal_kind(data_type: str) -> str | None:
+    """Classify a ``USER_TAB_COLUMNS.DATA_TYPE`` value.
+
+    * ``naive`` — ``DATE`` / plain ``TIMESTAMP[(p)]``; project convention is a
+      naive local timestamp (``docs/ADB_SCHEMA_SPEC.md`` §0).
+    * ``ltz`` — ``TIMESTAMP[(p)] WITH LOCAL TIME ZONE``; Oracle stores UTC and
+      returns session-local time.
+    * ``tz`` — ``TIMESTAMP[(p)] WITH TIME ZONE``; the zone offset is part of the
+      column value.
+
+    ``None`` means "not a temporal type" (no coercion).
+    """
+    compact = re.sub(r"\([^)]*\)", " ", data_type or "")
+    compact = re.sub(r"\s+", " ", compact).strip().upper()
+    if compact == "DATE":
+        return "naive"
+    if not compact.startswith("TIMESTAMP"):
+        return None
+    if "WITH LOCAL TIME ZONE" in compact:
+        return "ltz"
+    if "WITH TIME ZONE" in compact:
+        return "tz"
+    return "naive"
+
+
+def _coerce_value(column: str, value: Any, data_type: str) -> Any:
+    """把前端值转成 Oracle 列要求的类型。
+
+    网格读出来的朴素 ``DATE``/``TIMESTAMP`` 是 ISO8601 字符串
+    （``…T12:00:00``），编辑后原样送回来。若直接按字符串绑定，Oracle 会按
+    ``NLS_DATE_FORMAT`` / ``NLS_TIMESTAMP_FORMAT`` 做隐式转换并抛
+    ``ORA-01861``——即整页写操作 500。这里在进入驱动前转成 ``datetime``；
+    非法值走 400，而不是把数据库错误漏成 500。
+
+    时区列按列类型分开处理（python-oracledb 对所有 timestamp 都返回 naive 值，
+    无法可靠往返 TSTZ）：
+
+    * ``TIMESTAMP WITH TIME ZONE``：内容管理页无法保留偏移，**拒绝写入**，
+      避免悄悄改写时间点；
+    * ``TIMESTAMP WITH LOCAL TIME ZONE``：接受 UI 读回来的 naive 会话本地时间
+      （Oracle 会按数据库时区归一化），拒绝带偏移的输入，避免二次换算；
+    * 朴素列：保持原策略，带偏移的输入按 UTC 归一化为 naive 值。
+    """
+    kind = _temporal_kind(data_type)
+    if value is None or kind is None:
+        return value
+
+    if kind == "tz":
+        raise DbContentError(
+            400,
+            f"列 {column} 是 TIMESTAMP WITH TIME ZONE，内容管理页不支持写入（会丢失时区信息）",
+        )
+
+    if isinstance(value, datetime):
+        parsed = value
+    elif isinstance(value, date):
+        parsed = datetime.combine(value, time_of_day.min)
+    elif isinstance(value, str):
+        raw = value.strip()
+        if not raw:
+            return None
+        try:
+            parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        except ValueError:
+            raise DbContentError(
+                400, f"列 {column} 的时间格式不合法，需为 ISO8601"
+            ) from None
+    else:
+        raise DbContentError(400, f"列 {column} 的时间格式不合法，需为 ISO8601")
+
+    if kind == "ltz" and parsed.tzinfo is not None:
+        raise DbContentError(
+            400,
+            f"列 {column} 是 TIMESTAMP WITH LOCAL TIME ZONE，只接受无时区时间",
+        )
+
+    # 朴素列没有时区语义；带偏移的输入按 UTC 归一化后落成 naive 值。
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+    return parsed
 
 
 def _split_columns(
-    payload: dict[str, Any], known: list[str], *, what: str
+    payload: dict[str, Any], known: dict[str, str], *, what: str
 ) -> list[tuple[str, Any]]:
     """``{列名: 值}`` → ``[(大写列名, 值)]``，未知名/重复名一律 400。
 
-    只保留顺序与列名，值原样带走（随后绑定）；这里不碰 SQL 文本。
+    列名只用于拼接 SQL 标识符；值按列类型归一化后走绑定参数。这里不碰 SQL 文本。
     """
     if not payload:
         raise DbContentError(400, f"{what}不能为空")
@@ -632,7 +718,7 @@ def _split_columns(
         if name not in known:
             raise DbContentError(400, f"列不存在：{name}")
         seen.add(name)
-        items.append((name, value))
+        items.append((name, _coerce_value(name, value, known[name])))
     return items
 
 
@@ -676,7 +762,9 @@ async def _writable_table(session: Any, raw_name: str) -> str:
     return table
 
 
-async def _column_names_checked(session: Any, raw_name: str) -> tuple[str, list[str]]:
+async def _column_names_checked(
+    session: Any, raw_name: str
+) -> tuple[str, dict[str, str]]:
     table = await _writable_table(session, raw_name)
     return table, await _table_columns(session, table)
 
@@ -779,6 +867,19 @@ async def _set_call_timeout(session: Any, seconds: float) -> None:
         return
 
 
+async def _execute_user_sql(session: Any, sql: str) -> Any:
+    """把用户 SQL 原样交给驱动执行。
+
+    ``/query`` 与 ``/ddl`` 都不接受绑定参数，所以 SQL 里的 ``:`` 必须是字面量。
+    若走 SQLAlchemy 的 ``text()``，它会把形如 ``:name`` 的片段当成绑定参数（连
+    字符串字面量里也不放过），这类合法 Oracle SQL（JSON/时间格式/注释等）会在
+    真正到达数据库前抛 ``StatementError`` → 500。驱动级执行既保留了只读闸与
+    标识符闸（都在这之前），也让控制台的行为符合「输入什么就执行什么」。
+    """
+    connection = await session.connection()
+    return await connection.exec_driver_sql(sql)
+
+
 async def run_query(session: Any, sql: str, *, limit: int = 100) -> dict[str, Any]:
     """只读查询（契约 §4.3/§4.5）：无双人码，但有严格只读闸。"""
     body = validate_readonly_sql(sql)
@@ -789,7 +890,7 @@ async def run_query(session: Any, sql: str, *, limit: int = 100) -> dict[str, An
     started = time.perf_counter()
     try:
         result = await asyncio.wait_for(
-            session.execute(text(body)), timeout=QUERY_TIMEOUT_SECONDS
+            _execute_user_sql(session, body), timeout=QUERY_TIMEOUT_SECONDS
         )
         # 只 fetchmany：``fetchall`` 会把一条 ``SELECT * FROM 大表`` 整体拉进内存。
         rows = list(result.fetchmany(limit + 1))
@@ -821,7 +922,7 @@ async def run_ddl(session: Any, sql: str, confirm: str | None = None) -> dict[st
     """
     plan = validate_ddl_sql(sql, confirm)
 
-    result = await session.execute(text(plan["sql"]))
+    result = await _execute_user_sql(session, plan["sql"])
     await session.commit()
 
     rowcount = None if plan["is_ddl"] else _rowcount_of(result)
