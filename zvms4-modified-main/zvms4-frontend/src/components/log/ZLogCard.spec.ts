@@ -154,3 +154,25 @@ it('keeps raw content for unknown log types', () => {
 
   wrapper.unmount()
 })
+
+// 已知类型的封面:typeLabels 命中后应显示中文,而不是透出英文原始值
+it('translates known log types like ban_change into Chinese', () => {
+  const wrapper = mountCard(logFixture({ type: 'ban_change', data: '' }))
+
+  expect(wrapper.find('.el-form-item-stub[data-label="类型"]').text()).toContain('封禁变更')
+  expect(wrapper.text()).not.toContain('ban_change')
+
+  wrapper.unmount()
+})
+
+// 未知类型回落原值,不出「未知」也不猜
+it('falls back to the raw type for types without a label', () => {
+  const futureType = 'future_new_type'
+
+  const wrapper = mountCard(logFixture({ type: futureType, data: '' }))
+
+  expect(wrapper.find('.el-form-item-stub[data-label="类型"]').text()).toContain(futureType)
+  expect(wrapper.text()).not.toContain('未知')
+
+  wrapper.unmount()
+})
