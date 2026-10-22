@@ -677,6 +677,11 @@ ban_rules = Table(
     _oid_pk(),
     Column("code", VARCHAR2(64), nullable=False),
     Column("name", VARCHAR2(128), nullable=False),
+    # 检查项（V016）：求值入口按 trigger 取唯一一条规则，CODE 只是管理员看到的名字。
+    # 可空是给存量行加列留的余地（唯一索引允许多个 NULL）。
+    # ``quote=False``：TRIGGER 在 Oracle 里是非保留关键字，可以裸用；不加引号
+    # 才能让手写 DDL 与 SQLAlchemy 生成的语句保持同一份文本。
+    Column("trigger", VARCHAR2(64), nullable=True, quote=False),
     Column("enabled", NUMBER(1), nullable=False, server_default=text("1")),
     Column("config", VARCHAR2(2000), nullable=False),
     Column("penalties", VARCHAR2(2000), nullable=False),
@@ -690,6 +695,8 @@ ban_rules = Table(
     CheckConstraint("penalties IS JSON", name="ck_ban_rules_penalties_json"),
     UniqueConstraint("code", name="uq_ban_rules_code"),
 )
+# 一个检查项最多一条规则：两条时「用哪条」只能靠运气，封禁天数就不可复现。
+Index("ux_ban_rules_trigger", ban_rules.c.trigger, unique=True)
 
 
 # ---------------------------------------------------------------------------
@@ -852,6 +859,33 @@ banned_devices = Table(
     Column("operator_oid", VARCHAR2(24), nullable=True),
     Column("created_at", oracle.TIMESTAMP, nullable=False),
     CheckConstraint("source IN ('rule','admin')", name="ck_banned_devices_source"),
+)
+
+
+# ---------------------------------------------------------------------------
+# BAN_VIOLATIONS  ← new (客户端上报的违规信号; V016)
+#   append-only：一条信号一行，「窗口内累计计数」由服务层按
+#   (user_oid, trigger, created_at) 统计。无外键：违规记录是审计材料，必须比
+#   账号活得久（用户被硬删除后仍要能回答「他当时因为什么被封」）。
+# ---------------------------------------------------------------------------
+
+ban_violations = Table(
+    "ban_violations",
+    metadata,
+    _oid_pk(),
+    Column("user_oid", VARCHAR2(24), nullable=False),
+    Column("trigger", VARCHAR2(64), nullable=False, quote=False),
+    Column("signal", VARCHAR2(32), nullable=False),
+    Column("xuehai_id", VARCHAR2(32), nullable=True),
+    Column("detail", VARCHAR2(500), nullable=True),
+    Column("created_at", oracle.TIMESTAMP, nullable=False),
+    _oid_check("ban_violations"),
+)
+Index(
+    "ix_ban_violations_user",
+    ban_violations.c.user_oid,
+    ban_violations.c.trigger,
+    ban_violations.c.created_at,
 )
 
 

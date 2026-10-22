@@ -1,12 +1,13 @@
-"""规则封禁的判定与执行（登录时同步调用）。
+"""规则封禁的公共积木：配置解析、处罚梯度、落封禁（不降级）。
 
-为什么判在**登录**：``app_logs`` 只在登录时拿到 ``Xuehai-Id``，其它请求带这个
-头也不代表「这台设备在用这个账号」；把窗口计数放在登录路径，证据与动作就是
-同一次请求里的因果关系，不需要额外的后台任务去追。
+为什么只剩「积木」：规则的**求值**已经搬到各自的入口
+（``services.device_guard`` 的设备闸、``services.violation_guard`` 的上报闸），
+因为三条规则用的证据完全不同（设备号 / 登录流水 / 客户端信号），硬塞进一个
+函数只会让参数表变成一堆「这条规则用不到」的占位符。本模块只保留三者共用的
+部分，算法只有一份，梯度不会各自漂移。
 
-与 ``routers/users_router._observe_binding`` 同款的 fail-open 原则：除了**命中
-规则后主动抛出的 403**，任何异常（规则表读不到、JSON 坏、审计写失败）都只
-记日志，绝不阻断登录。判封禁是「额外保护」，不能变成登录的单点故障。
+fail-open 原则仍在：配置读不到就回落默认值（``rule_config`` /
+``rule_penalties``），判封禁是「额外保护」，不能变成登录或上报的单点故障。
 """
 
 from __future__ import annotations
@@ -16,12 +17,10 @@ import logging
 from datetime import datetime, timedelta
 
 from db import backends
-from typings.log import ZVMSLog
-from util.ban import ban_outranks, raise_banned
+from util.ban import ban_outranks
 
 _logger = logging.getLogger(__name__)
 
-RULE_CODE = "multi_device_login"
 DEFAULT_CONFIG = {"threshold": 3, "window_hours": 24}
 DEFAULT_PENALTIES = [1]
 
@@ -51,12 +50,12 @@ def rule_config(rule: dict | None) -> dict:
     raw = _json_value((rule or {}).get("config"), None)
     if not isinstance(raw, dict):
         if raw is not None:
-            _logger.warning("%s 规则的 config 不是对象，回退默认值", RULE_CODE)
+            _logger.warning("规则 config 不是对象，回退默认值：%r", raw)
         return dict(DEFAULT_CONFIG)
     threshold = _positive_int(raw.get("threshold"))
     window_hours = _positive_int(raw.get("window_hours"))
     if threshold is None or window_hours is None:
-        _logger.warning("%s 规则的 config 字段非法，回退默认值", RULE_CODE)
+        _logger.warning("规则 config 字段非法，回退默认值：%r", raw)
         return dict(DEFAULT_CONFIG)
     return {"threshold": threshold, "window_hours": window_hours}
 
@@ -91,8 +90,8 @@ def penalty_expiry(
 
     ``offense`` 超出梯度长度时取末档（与旧行为一致）；返回 ``(None, None)``
     表示永久封禁——调用方据此写 ``permanent=True`` 且 ``expires_at=None`` 的流水。
-    抽成函数是为了让「临时密码连错」与「多设备登录」共用同一套梯度算法，
-    两条规则各写一遍必然漂移。
+    抽成函数是为了让「临时密码连错」「平台违规使用」共用同一套梯度算法，
+    每条规则各写一遍必然漂移。
     """
     if not penalties:
         penalties = list(DEFAULT_PENALTIES)
@@ -101,13 +100,6 @@ def penalty_expiry(
     if step is None:
         return None, None
     return at + timedelta(days=step), step
-
-
-def _reason(window_hours: int, devices: int, threshold: int) -> str:
-    return (
-        f"在 {window_hours} 小时内使用 {devices} 台学海设备登录"
-        f"（阈值 {threshold} 台）"
-    )
 
 
 async def set_ban_unless_stronger(
@@ -146,135 +138,21 @@ async def set_ban_unless_stronger(
     return until
 
 
-async def evaluate_login(
-    user_oid: str,
-    roles,
-    display_name: str,
-    xuehai_id: str,
-    request_url: str,
-    now: datetime | None = None,
-) -> dict | None:
-    """判定本次登录是否命中规则封禁；命中则落库并返回事实，否则 ``None``。
+async def get_rule_by_trigger(trigger: str) -> dict | None:
+    """按**检查项**取规则：求值入口只认 trigger，不认管理员起的名字。
 
-    不吞异常：调用方（:func:`enforce_login`）负责 fail-open，这样单测能直接
-    看到规则求值里真实的错误。
+    读表失败照旧冒泡给调用方——这里不吞异常，fail-open 由各入口自己决定
+    （登录放行、设备闸回落默认上限），两处的「放行」语义并不相同。
     """
-    # 没有设备号就没有证据：规则的全部依据是「同一账号被多少台设备登录」。
-    if not xuehai_id:
-        return None
-    # 绝不自动封管理员：规则是自动执行的，误封管理员的代价是丢掉管理入口。
-    if "admin" in (roles or []):
-        return None
-
-    rule = await backends.get_ban_rules_repo().get_by_code(RULE_CODE)
-    if rule is None or not rule.get("enabled"):
-        return None
-
-    config = rule_config(rule)
-    threshold = config["threshold"]
-    window_hours = config["window_hours"]
-    penalties = rule_penalties(rule)
-
-    at = now or datetime.now()
-    since = at.timestamp() - window_hours * 3600
-    devices = await backends.get_applogs_repo().count_distinct_xuehai(user_oid, since)
-    if devices < threshold:
-        return None
-
-    records = backends.get_ban_records_repo()
-    # 历史流水条数 = 已发生的处罚次数；本次是第 offense 次。
-    offense = await records.count_for_user_rule(user_oid, RULE_CODE) + 1
-    until, days = penalty_expiry(penalties, offense, at)
-    reason = _reason(window_hours, devices, threshold)
-
-    # 先改当前状态，再补流水：状态是登录闸门的依据，必须最先落库。
-    # 已有更强封禁（例如管理员落的永久封禁）时这一写会被跳过，流水照落，
-    # 返回值里带的 until 必须是库里真正生效的那个。
-    effective_until = await set_ban_unless_stronger(
-        user_oid,
-        reason=reason,
-        until=until,
-        rule_code=RULE_CODE,
-    )
-    await records.insert(
-        user_oid,
-        source="rule",
-        rule_code=RULE_CODE,
-        reason=reason,
-        permanent=effective_until is None,
-        started_at=at,
-        expires_at=effective_until,
-        operator_oid=None,
-    )
-
-    # 审计写失败不能把「已落库的封禁」变成一次异常冒泡：封禁已经生效，
-    # 吞掉写日志的错误并留痕，本次仍然按命中处理（下面照常 403）。
-    expiry_text = (
-        "永久封禁"
-        if effective_until is None
-        else f"到期 {effective_until:%Y-%m-%d %H:%M}"
-    )
-    try:
-        await ZVMSLog(
-            request_url,
-            user_oid,
-            f"自动封禁 {display_name}：{reason}，{expiry_text}",
-            at.timestamp(),
-            type="ban_rule",
-            level="warning",
-            xuehai_id=xuehai_id,
-        ).insert_log()
-    except Exception:
-        _logger.exception("写入 ban_rule 审计日志失败（封禁已生效）")
-
-    return {
-        "reason": reason,
-        "until": effective_until,
-        "days": days,
-        "permanent": effective_until is None,
-        "devices": devices,
-    }
-
-
-async def enforce_login(
-    user_oid: str,
-    roles,
-    display_name: str,
-    xuehai_id: str,
-    request_url: str,
-    now: datetime | None = None,
-) -> None:
-    """登录路径的封禁闸：命中抛 403，其余一切异常只记日志（fail-open）。"""
-    try:
-        result = await evaluate_login(
-            user_oid, roles, display_name, xuehai_id, request_url, now=now
-        )
-    except Exception:
-        _logger.exception("规则封禁判定失败，放行本次登录")
-        return
-
-    if not result:
-        return
-
-    # 手工构造一个「文档」只为复用 util.ban 的头/文案口径：此时用户行里可能
-    # 还没有 ban_reason（写入失败也不会走到这里），以判定结果为准更准确。
-    raise_banned(
-        {
-            "banned": True,
-            "ban_reason": result["reason"],
-            "ban_until": result["until"],
-        }
-    )
+    return await backends.get_ban_rules_repo().get_by_trigger(trigger)
 
 
 __all__ = [
-    "RULE_CODE",
     "DEFAULT_CONFIG",
     "DEFAULT_PENALTIES",
     "rule_config",
     "rule_penalties",
     "penalty_expiry",
     "set_ban_unless_stronger",
-    "evaluate_login",
-    "enforce_login",
+    "get_rule_by_trigger",
 ]

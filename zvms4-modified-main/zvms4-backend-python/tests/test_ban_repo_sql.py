@@ -27,6 +27,8 @@ import pytest
 from sqlalchemy.dialects import oracle
 
 from db.models import ban_records as ban_records_tbl
+from db.models import ban_rules as ban_rules_tbl
+from db.models import ban_violations as ban_violations_tbl
 from db.repos.oracle import app_logs as app_logs_repo
 from db.repos.oracle import ban_records as ban_records_repo
 from db.repos.oracle import ban_rules as ban_rules_repo
@@ -311,36 +313,117 @@ def test_ban_record_page_joins_users_and_counts_windowed_total():
 
 def test_ban_rules_update_by_code_patches_only_given_fields():
     sql = _sql(
-        ban_rules_repo._update_by_code_stmt("multi_device_login", {"enabled": 0}, UNTIL)
+        ban_rules_repo._update_by_code_stmt("foreign_device_login", {"enabled": 0}, UNTIL)
     )
     assert sql.startswith("UPDATE ban_rules SET ")
     assert "enabled=0" in sql
     assert "updated_at=" in sql
-    assert "config=" not in sql
-    assert "penalties=" not in sql
-    assert "WHERE ban_rules.code = 'multi_device_login'" in sql
+    # 没传的列一律不进 SET：name/config/penalties/trigger 都不该被顺手写成 NULL。
+    for untouched in ("config=", "penalties=", "name=", "trigger="):
+        assert untouched not in sql
+    assert "WHERE ban_rules.code = 'foreign_device_login'" in sql
+
+
+def test_ban_rules_update_by_code_can_rename():
+    sql = _sql(
+        ban_rules_repo._update_by_code_stmt("my_rule", {"name": "改名后"}, UNTIL)
+    )
+    assert sql.startswith("UPDATE ban_rules SET ")
+    assert "'改名后'" in sql
+    assert "enabled=" not in sql
+    assert "WHERE ban_rules.code = 'my_rule'" in sql
 
 
 def test_ban_rules_row_maps_flags_to_bools():
     row = ban_rules_repo._rule_row(
         {
-            "oid": "0b0000000000000000000001",
-            "code": "multi_device_login",
-            "name": "同学号多设备登录",
+            "oid": "0b0000000000000000000002",
+            "code": "foreign_device_login",
+            "name": "非主学海设备登录",
+            "trigger": "foreign_device_login",
             "enabled": 1,
-            "config": '{"threshold":3,"window_hours":24}',
-            "penalties": "[1,2,7]",
+            "config": '{"threshold":3}',
+            "penalties": "[1,3,7,14,30,null]",
             "builtin": 1,
             "created_at": UNTIL,
             "updated_at": UNTIL,
         }
     )
-    assert row["_id"] == "0b0000000000000000000001"
+    assert row["_id"] == "0b0000000000000000000002"
     assert row["enabled"] is True
     assert row["builtin"] is True
+    # trigger 是求值入口的键，必须在读投影里出现（漏了就只能按 code 猜）
+    assert row["trigger"] == "foreign_device_login"
     # JSON 保持文本：解析是服务层的决定，数据层不猜每类规则的 schema
-    assert row["config"] == '{"threshold":3,"window_hours":24}'
-    assert row["penalties"] == "[1,2,7]"
+    assert row["config"] == '{"threshold":3}'
+    assert row["penalties"] == "[1,3,7,14,30,null]"
+
+
+def test_ban_rules_columns_project_trigger():
+    names = [col.name for col in ban_rules_repo._columns()]
+    assert "trigger" in names
+    assert names.index("trigger") < names.index("created_at")
+
+
+def test_ban_rules_get_by_trigger_stmt_filters_one_column():
+    sql = _sql(ban_rules_repo._get_by_trigger_stmt("platform_misuse"))
+    assert sql.startswith("SELECT ")
+    assert "ban_rules.trigger = 'platform_misuse'" in sql
+
+
+def test_ban_rules_delete_by_code_stmt_targets_one_code():
+    sql = _sql(ban_rules_repo._delete_by_code_stmt("my_rule"))
+    assert sql.startswith("DELETE FROM ban_rules")
+    assert "WHERE ban_rules.code = 'my_rule'" in sql
+    # 删规则不等于删历史：流水表一个字都不能出现在这条语句里
+    assert "ban_records" not in sql
+
+
+def test_ban_rules_insert_covers_every_not_null_column():
+    """回归：``created_at`` 无默认值，漏列直接 ORA-01400（生产 500）。
+
+    与 ban_records 的同名用例同一个理由：离线契约只断言「某些值出现过」，会
+    漏掉「必填列是否都在」。
+    """
+    stmt = ban_rules_repo._insert_stmt(
+        "0b0000000000000000000003",
+        "my_rule",
+        "我的规则",
+        "platform_misuse",
+        True,
+        '{"threshold":3,"window_hours":24}',
+        "[1,3]",
+        False,
+        UNTIL,
+    )
+    provided = {
+        (key if isinstance(key, str) else key.name).lower() for key in stmt._values
+    }
+    required = {
+        col.name.lower()
+        for col in ban_rules_tbl.c
+        if not col.nullable and col.server_default is None
+    }
+    assert required - provided == set()
+    assert "trigger" in provided
+
+
+def test_ban_violations_columns_and_index_cover_the_counting_path():
+    """窗口内计数是热路径：索引必须是 (user_oid, trigger, created_at)。"""
+    names = [col.name for col in ban_violations_tbl.c]
+    for column in ("oid", "user_oid", "trigger", "signal", "xuehai_id", "detail",
+                   "created_at"):
+        assert column in names
+
+    indexes = {
+        index.name: [col.name for col in index.columns]
+        for index in ban_violations_tbl.indexes
+    }
+    assert indexes["ix_ban_violations_user"] == [
+        "user_oid",
+        "trigger",
+        "created_at",
+    ]
 
 
 def test_ban_records_row_maps_permanent_and_joined_columns():

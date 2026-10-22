@@ -9,6 +9,8 @@ export interface BanRuleConfig {
 export interface BanRule {
   code: string
   name: string
+  trigger: string
+  trigger_name: string
   enabled: boolean
   builtin: boolean
   config: Partial<BanRuleConfig>
@@ -19,8 +21,38 @@ export interface BanRule {
 
 export interface BanRuleUpdate {
   enabled?: boolean
+  name?: string
   config?: Partial<BanRuleConfig>
   penalties?: (number | null)[]
+}
+
+export interface BanRuleCreate {
+  code: string
+  name: string
+  trigger: string
+  config: BanRuleConfig
+  penalties: (number | null)[]
+  enabled: boolean
+}
+
+export interface BanTrigger {
+  trigger: string
+  name: string
+  evaluation: 'login' | 'report'
+  description: string
+  config: Partial<BanRuleConfig>
+}
+
+export interface BanViolation {
+  _id: string
+  user_oid: string
+  user_name: string
+  user_id: string
+  trigger: string
+  signal: string
+  detail: string | null
+  xuehai_id: string | null
+  created_at: string
 }
 
 export interface BanRecord {
@@ -43,6 +75,66 @@ export async function getRules() {
     throw result
   }
   return result.data
+}
+
+export async function getTriggers() {
+  const result = (await axios('/v3/ban/triggers')).data as Response<BanTrigger[]>
+  if (result.status === 'error') {
+    throw result
+  }
+  return result.data
+}
+
+export async function createRule(payload: BanRuleCreate) {
+  const result = (
+    await axios({
+      method: 'post',
+      url: '/v3/ban/rules',
+      data: payload
+    })
+  ).data as Response<BanRule>
+  if (result.status === 'error') {
+    throw result
+  }
+  return result.data
+}
+
+export async function deleteRule(code: string) {
+  const result = (
+    await axios({
+      method: 'delete',
+      url: `/v3/ban/rules/${code}`
+    })
+  ).data as Response<null>
+  if (result.status === 'error') {
+    throw result
+  }
+  return true
+}
+
+export async function getViolations(page: number = 1, perpage: number = 20, query: string = '') {
+  const result = (
+    await axios('/v3/ban/violations', {
+      params: {
+        page,
+        perpage,
+        query
+      }
+    })
+  ).data as Response<BanViolation[]> & {
+    metadata: {
+      size: number
+      page: number
+      perpage: number
+    }
+  }
+  if (result.status === 'error') {
+    throw result
+  }
+  return {
+    violations: result.data,
+    size: result.metadata.size
+  }
 }
 
 export async function updateRule(code: string, payload: BanRuleUpdate) {

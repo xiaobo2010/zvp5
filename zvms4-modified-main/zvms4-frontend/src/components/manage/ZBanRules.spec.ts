@@ -1,18 +1,31 @@
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import ZBanRules from './ZBanRules.vue'
-import { getBannedUsers, getRules, updateRule } from '@/api/ban'
-import type { BannedUser, BanRule } from '@/api/ban'
+import {
+  createRule,
+  deleteRule,
+  getBannedUsers,
+  getRules,
+  getTriggers,
+  getViolations,
+  updateRule
+} from '@/api/ban'
+import type { BannedUser, BanRule, BanTrigger, BanViolation } from '@/api/ban'
 
-const { elMessageErrorSpy, elMessageSuccessSpy } = vi.hoisted(() => ({
+const { elMessageErrorSpy, elMessageSuccessSpy, elMessageBoxConfirmSpy } = vi.hoisted(() => ({
   elMessageErrorSpy: vi.fn(),
-  elMessageSuccessSpy: vi.fn()
+  elMessageSuccessSpy: vi.fn(),
+  elMessageBoxConfirmSpy: vi.fn()
 }))
 
 vi.mock('@/api/ban', () => ({
   getRules: vi.fn(),
   updateRule: vi.fn(),
-  getBannedUsers: vi.fn()
+  getBannedUsers: vi.fn(),
+  getTriggers: vi.fn(),
+  createRule: vi.fn(),
+  deleteRule: vi.fn(),
+  getViolations: vi.fn()
 }))
 
 vi.mock('vue-i18n', () => ({
@@ -118,11 +131,20 @@ vi.mock('element-plus', async () => {
     name: 'ElButton',
     props: { type: String, size: String, loading: Boolean, disabled: Boolean },
     emits: ['click'],
-    setup(_, { emit, slots }) {
+    setup(props, { emit, slots }) {
       return () =>
         h(
           'button',
-          { class: 'el-button-stub', onClick: () => emit('click') },
+          {
+            class: 'el-button-stub',
+            disabled: props.disabled || undefined,
+            onClick: () => {
+              if (props.disabled) {
+                return
+              }
+              emit('click')
+            }
+          },
           slots.default?.()
         )
     }
@@ -217,6 +239,30 @@ vi.mock('element-plus', async () => {
     }
   })
 
+  const ElSelect = defineComponent({
+    name: 'ElSelect',
+    props: { modelValue: { type: [String, Number], default: '' }, placeholder: String },
+    emits: ['update:modelValue'],
+    setup(props, { emit }) {
+      return () =>
+        h('input', {
+          class: 'el-select-stub',
+          value: props.modelValue,
+          placeholder: props.placeholder,
+          onInput: (event: Event) =>
+            emit('update:modelValue', (event.target as HTMLInputElement).value)
+        })
+    }
+  })
+
+  const ElOption = defineComponent({
+    name: 'ElOption',
+    props: { label: String, value: [String, Number] },
+    setup() {
+      return () => null
+    }
+  })
+
   return {
     ElCard: { name: 'ElCard', template: '<section><slot name="header" /><slot /></section>' },
     ElTable,
@@ -230,6 +276,8 @@ vi.mock('element-plus', async () => {
     ElInputNumber,
     ElEmpty,
     ElTag,
+    ElSelect,
+    ElOption,
     // v-loading 由 unplugin-vue-components 的 ElementPlusResolver 从本包按需引入
     ElLoadingDirective: { name: 'loading', mounted() {}, updated() {} },
     ElMessage: Object.assign(vi.fn(), {
@@ -237,6 +285,9 @@ vi.mock('element-plus', async () => {
       success: elMessageSuccessSpy,
       warning: vi.fn(),
       info: vi.fn()
+    }),
+    ElMessageBox: Object.assign(vi.fn(), {
+      confirm: elMessageBoxConfirmSpy
     })
   }
 })
@@ -271,13 +322,44 @@ vi.mock('@/components/utils/ZPagination.vue', async () => {
 })
 
 const ruleFixture: BanRule = {
-  code: 'multi_device_login',
-  name: '同学号多设备登录',
+  code: 'foreign_device_login',
+  name: '非主学海设备登录',
+  trigger: 'foreign_device_login',
+  trigger_name: '非主学海设备登录',
   enabled: true,
   builtin: true,
   config: { threshold: 3, window_hours: 24 },
   penalties: [1, 2, 7],
   updated_at: '2026-10-20T12:00:00'
+}
+
+const triggerFixtures: BanTrigger[] = [
+  {
+    trigger: 'foreign_device_login',
+    name: '非主学海设备登录',
+    evaluation: 'login',
+    description: '非主绑定的学海设备登录时记一次违规',
+    config: { threshold: 3, window_hours: 24 }
+  },
+  {
+    trigger: 'platform_misuse',
+    name: '平台违规使用',
+    evaluation: 'report',
+    description: '客户端上报的嵌入/调试/桥缺失信号累计计数',
+    config: { threshold: 3, window_hours: 24 }
+  }
+]
+
+const violationFixture: BanViolation = {
+  _id: 'violation-1',
+  user_oid: '69b7a4ad0243d973f1e1a2c1',
+  user_name: '王违规',
+  user_id: '20241010',
+  trigger: 'platform_misuse',
+  signal: 'iframe',
+  detail: 'top!=self',
+  xuehai_id: 'xh0001',
+  created_at: '2026-10-21T09:30:00'
 }
 
 const bannedUserFixtures: BannedUser[] = [
@@ -309,12 +391,19 @@ function mockApi(options?: {
   rules?: BanRule[]
   users?: BannedUser[]
   usersSize?: number
+  violations?: BanViolation[]
+  violationsSize?: number
   updateRejects?: boolean
 }) {
   // 组件会就地改写 rule.enabled(乐观更新),fixture 必须深拷贝避免用例间串扰
   vi.mocked(getRules).mockResolvedValue(
     options?.rules ?? [structuredClone(ruleFixture)]
   )
+  vi.mocked(getTriggers).mockResolvedValue(structuredClone(triggerFixtures))
+  vi.mocked(getViolations).mockResolvedValue({
+    violations: options?.violations ?? [structuredClone(violationFixture)],
+    size: options?.violationsSize ?? 1
+  })
   vi.mocked(getBannedUsers).mockResolvedValue({
     users: options?.users ?? structuredClone(bannedUserFixtures),
     size: options?.usersSize ?? bannedUserFixtures.length
@@ -329,6 +418,17 @@ function mockApi(options?: {
       penalties: payload.penalties ?? ruleFixture.penalties
     }))
   }
+  vi.mocked(createRule).mockImplementation(
+    async (payload) =>
+      ({
+        ...ruleFixture,
+        builtin: false,
+        ...payload,
+        updated_at: '2026-10-21T12:00:00'
+      }) as BanRule
+  )
+  vi.mocked(deleteRule).mockResolvedValue(true)
+  elMessageBoxConfirmSpy.mockResolvedValue('confirm')
 }
 
 function mountPage(): VueWrapper {
@@ -339,8 +439,13 @@ beforeEach(() => {
   vi.mocked(getRules).mockReset()
   vi.mocked(getBannedUsers).mockReset()
   vi.mocked(updateRule).mockReset()
+  vi.mocked(getTriggers).mockReset()
+  vi.mocked(createRule).mockReset()
+  vi.mocked(deleteRule).mockReset()
+  vi.mocked(getViolations).mockReset()
   elMessageErrorSpy.mockReset()
   elMessageSuccessSpy.mockReset()
+  elMessageBoxConfirmSpy.mockReset()
 })
 
 afterEach(() => {
@@ -355,7 +460,7 @@ it('renders rules from the API in a data-driven list', async () => {
   const rulesTable = wrapper.findAll('.el-table-stub')[0]!
   const rows = rulesTable.findAll('.el-table-stub__row')
   expect(rows.length).toBe(1)
-  expect(wrapper.text()).toContain('同学号多设备登录')
+  expect(wrapper.text()).toContain('非主学海设备登录')
   expect(wrapper.text()).toContain('{"threshold":3,"window_hours":24}')
   expect(wrapper.text()).toContain(
     'manage.banRules.rule.penaltyDay {"days":1} → manage.banRules.rule.penaltyDay {"days":2} → manage.banRules.rule.penaltyDay {"days":7}'
@@ -374,7 +479,7 @@ it('toggling the enabled switch calls updateRule and reflects the new state', as
   await wrapper.find('.el-switch-stub').trigger('click')
   await flushPromises()
 
-  expect(updateRule).toHaveBeenCalledWith('multi_device_login', { enabled: false })
+  expect(updateRule).toHaveBeenCalledWith('foreign_device_login', { enabled: false })
   expect(wrapper.find('.el-switch-stub').attributes('data-checked')).toBe('false')
 
   wrapper.unmount()
@@ -388,7 +493,7 @@ it('rolls the switch back and shows an error when the update fails', async () =>
   await wrapper.find('.el-switch-stub').trigger('click')
   await flushPromises()
 
-  expect(updateRule).toHaveBeenCalledWith('multi_device_login', { enabled: false })
+  expect(updateRule).toHaveBeenCalledWith('foreign_device_login', { enabled: false })
   expect(wrapper.find('.el-switch-stub').attributes('data-checked')).toBe('true')
   expect(elMessageErrorSpy).toHaveBeenCalledWith('manage.banRules.revertedNotice')
 
@@ -409,7 +514,7 @@ it('submits edited rule config and penalties via updateRule', async () => {
   const dialog = wrapper.find('.el-dialog-stub')
   expect(dialog.exists()).toBe(true)
   expect(dialog.attributes('data-title')).toBe(
-    'manage.banRules.dialog.title {"name":"同学号多设备登录"}'
+    'manage.banRules.dialog.title {"name":"非主学海设备登录"}'
   )
 
   const numberInputs = dialog.findAll('.el-input-number-stub')
@@ -424,7 +529,7 @@ it('submits edited rule config and penalties via updateRule', async () => {
   await saveButton!.trigger('click')
   await flushPromises()
 
-  expect(updateRule).toHaveBeenCalledWith('multi_device_login', {
+  expect(updateRule).toHaveBeenCalledWith('foreign_device_login', {
     config: { threshold: 4, window_hours: 48 },
     penalties: [2, 5]
   })
@@ -444,7 +549,7 @@ it('renders banned users with pagination and re-queries on page change', async (
   expect(wrapper.text()).toContain('高三8班')
   expect(wrapper.text()).toContain('manage.banRules.users.permanent')
 
-  const pagination = wrapper.find('.z-pagination-stub')
+  const pagination = wrapper.findAll('.z-pagination-stub')[1]!
   expect(pagination.attributes('data-total')).toBe('25')
   expect(pagination.attributes('data-page-size')).toBe('20')
 
@@ -461,7 +566,7 @@ it('searches banned users by name or student id', async () => {
   const wrapper = mountPage()
   await flushPromises()
 
-  const searchInput = wrapper.find('.el-input-stub')
+  const searchInput = wrapper.findAll('.el-input-stub')[1]!
   expect(searchInput.exists()).toBe(true)
   await searchInput.setValue('张三')
 
@@ -510,7 +615,7 @@ it('falls back to the legacy-ban label when source is null and never prints an e
   const wrapper = mountPage()
   await flushPromises()
 
-  const usersTable = wrapper.findAll('.el-table-stub')[1]!
+  const usersTable = wrapper.findAll('.el-table-stub')[2]!
   expect(usersTable.text()).toContain('manage.banRules.users.sourceUnknown')
   expect(usersTable.text()).toContain('manage.banRules.users.reasonUnknown')
   expect(usersTable.text()).not.toBe('manage.banRules.users.sourceRule')
@@ -538,7 +643,7 @@ it('falls back to the legacy-ban label when source is rule without rule_code', a
   const wrapper = mountPage()
   await flushPromises()
 
-  expect(wrapper.findAll('.el-table-stub')[1]!.text()).toContain(
+  expect(wrapper.findAll('.el-table-stub')[2]!.text()).toContain(
     'manage.banRules.users.sourceUnknown'
   )
   expect(wrapper.text()).not.toContain('manage.banRules.users.sourceRule {')
@@ -548,12 +653,13 @@ it('falls back to the legacy-ban label when source is rule without rule_code', a
 
 it('shows empty states when both endpoints fail (e.g. 403)', async () => {
   vi.mocked(getRules).mockRejectedValue(new Error('forbidden'))
+  vi.mocked(getViolations).mockRejectedValue(new Error('forbidden'))
   vi.mocked(getBannedUsers).mockRejectedValue(new Error('forbidden'))
   const wrapper = mountPage()
   await flushPromises()
 
   const empties = wrapper.findAll('.el-empty-stub')
-  expect(empties.length).toBe(2)
+  expect(empties.length).toBe(3)
   expect(empties.every((node) => node.text() === 'manage.banRules.loadFailed')).toBe(true)
 
   wrapper.unmount()
@@ -651,6 +757,138 @@ it('rejects 0 outside the last position or repeated instead of silently fixing i
 
   expect(updateRule).not.toHaveBeenCalled()
   expect(wrapper.find('.el-dialog-stub').exists()).toBe(true)
+
+  wrapper.unmount()
+})
+
+it('renders the trigger name column and violation records with signal labels', async () => {
+  mockApi()
+  const wrapper = mountPage()
+  await flushPromises()
+
+  const rulesTable = wrapper.findAll('.el-table-stub')[0]!
+  expect(rulesTable.text()).toContain('非主学海设备登录')
+
+  const violationsTable = wrapper.findAll('.el-table-stub')[1]!
+  expect(violationsTable.text()).toContain('王违规')
+  expect(violationsTable.text()).toContain('20241010')
+  expect(violationsTable.text()).toContain('top!=self')
+  expect(violationsTable.text()).toContain('manage.banRules.violations.signals.iframe')
+
+  wrapper.unmount()
+})
+
+it('shows the violations empty state when there are no records', async () => {
+  mockApi({ violations: [], violationsSize: 0 })
+  const wrapper = mountPage()
+  await flushPromises()
+
+  const empties = wrapper.findAll('.el-empty-stub')
+  expect(empties.map((node) => node.text())).toContain('manage.banRules.violations.empty')
+
+  wrapper.unmount()
+})
+
+it('creates a rule via createRule from the create dialog', async () => {
+  mockApi()
+  const wrapper = mountPage()
+  await flushPromises()
+
+  await findButton(wrapper, 'manage.banRules.rule.create')!.trigger('click')
+
+  const dialog = wrapper.find('.el-dialog-stub')
+  expect(dialog.exists()).toBe(true)
+  expect(dialog.attributes('data-title')).toBe('manage.banRules.rule.create')
+
+  const inputs = dialog.findAll('.el-input-stub')
+  await inputs[0]!.setValue('迟交作业封号')
+  await inputs[1]!.setValue('late_homework')
+  await dialog.find('.el-select-stub').setValue('platform_misuse')
+  await inputs[2]!.setValue('1,3')
+
+  await findButton(wrapper, 'manage.banRules.dialog.create')!.trigger('click')
+  await flushPromises()
+
+  expect(createRule).toHaveBeenCalledWith({
+    code: 'late_homework',
+    name: '迟交作业封号',
+    trigger: 'platform_misuse',
+    config: { threshold: 3, window_hours: 24 },
+    penalties: [1, 3],
+    enabled: true
+  })
+  expect(elMessageSuccessSpy).toHaveBeenCalledWith('manage.banRules.rule.createdNotice')
+  expect(wrapper.find('.el-dialog-stub').exists()).toBe(false)
+
+  wrapper.unmount()
+})
+
+it('shows an error and keeps the dialog open when creating fails', async () => {
+  mockApi()
+  vi.mocked(createRule).mockRejectedValue(new Error('conflict'))
+  const wrapper = mountPage()
+  await flushPromises()
+
+  await findButton(wrapper, 'manage.banRules.rule.create')!.trigger('click')
+  const dialog = wrapper.find('.el-dialog-stub')
+  const inputs = dialog.findAll('.el-input-stub')
+  await inputs[0]!.setValue('迟交作业封号')
+  await inputs[1]!.setValue('late_homework')
+  await dialog.find('.el-select-stub').setValue('platform_misuse')
+  await inputs[2]!.setValue('1,3')
+
+  await findButton(wrapper, 'manage.banRules.dialog.create')!.trigger('click')
+  await flushPromises()
+
+  expect(elMessageErrorSpy).toHaveBeenCalledWith('manage.banRules.rule.createFailed')
+  expect(wrapper.find('.el-dialog-stub').exists()).toBe(true)
+
+  wrapper.unmount()
+})
+
+it('deletes a non-builtin rule after confirmation and refreshes the list', async () => {
+  mockApi({ rules: [{ ...structuredClone(ruleFixture), builtin: false }] })
+  const wrapper = mountPage()
+  await flushPromises()
+
+  const callsBefore = vi.mocked(getRules).mock.calls.length
+  await findButton(wrapper, 'manage.banRules.rule.delete')!.trigger('click')
+  await flushPromises()
+
+  expect(elMessageBoxConfirmSpy).toHaveBeenCalledTimes(1)
+  expect(deleteRule).toHaveBeenCalledWith('foreign_device_login')
+  expect(elMessageSuccessSpy).toHaveBeenCalledWith('manage.banRules.rule.deletedNotice')
+  expect(vi.mocked(getRules).mock.calls.length).toBeGreaterThan(callsBefore)
+
+  wrapper.unmount()
+})
+
+it('does not delete when the confirm dialog is cancelled', async () => {
+  mockApi({ rules: [{ ...structuredClone(ruleFixture), builtin: false }] })
+  elMessageBoxConfirmSpy.mockRejectedValue('cancel')
+  const wrapper = mountPage()
+  await flushPromises()
+
+  await findButton(wrapper, 'manage.banRules.rule.delete')!.trigger('click')
+  await flushPromises()
+
+  expect(deleteRule).not.toHaveBeenCalled()
+  expect(elMessageSuccessSpy).not.toHaveBeenCalled()
+
+  wrapper.unmount()
+})
+
+it('disables delete for builtin rules with an explain tooltip', async () => {
+  mockApi()
+  const wrapper = mountPage()
+  await flushPromises()
+
+  const deleteButton = findButton(wrapper, 'manage.banRules.rule.delete')!
+  expect(deleteButton.attributes('disabled')).toBeDefined()
+  await deleteButton.trigger('click')
+  await flushPromises()
+
+  expect(deleteRule).not.toHaveBeenCalled()
 
   wrapper.unmount()
 })
