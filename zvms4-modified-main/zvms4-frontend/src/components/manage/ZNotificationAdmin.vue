@@ -17,6 +17,7 @@ import {
 } from 'element-plus'
 import type { FormInstance, FormItemRule, FormRules } from 'element-plus'
 import dayjs from '@/plugins/dayjs'
+import { ZMarkdownEditor } from '@/components/markdown'
 import {
   createNotification,
   deleteNotification,
@@ -123,8 +124,27 @@ function formatTime(value: string | null | undefined): string {
   return parsed.isValid() ? parsed.format('YYYY-MM-DD HH:mm') : value
 }
 
+function stripMarkdown(source: string): string {
+  // 先整段删掉围栏代码，再删未闭合的围栏残留（否则代码正文会混进摘要）
+  const withoutCodeBlocks = source
+    .replace(/```[\s\S]*?```/g, '')
+    .replace(/^```.*$/gm, '')
+  return withoutCodeBlocks
+    .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/^\s{0,3}#{1,6}\s+/gm, '')
+    .replace(/^\s{0,3}>\s?/gm, '')
+    .replace(/^\s{0,3}[-*+]\s+/gm, '')
+    .replace(/^\s{0,3}\d+\.\s+/gm, '')
+    .replace(/^\s{0,3}([-*_]\s?){3,}\s*$/gm, '')
+    .replace(/`([^`]*)`/g, '$1')
+    .replace(/(\*\*\*|\*\*|\*|___|__|_|~~)([^*_~]+?)\1/g, '$2')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
 function preview(content: string): string {
-  const compact = content.replace(/\s+/g, ' ').trim()
+  const compact = stripMarkdown(content)
   return compact.length > 120 ? `${compact.slice(0, 120)}…` : compact
 }
 
@@ -426,7 +446,7 @@ onMounted(() => {
     <ElDialog
       v-model="dialogVisible"
       :title="dialogTitle"
-      width="min(720px, 94vw)"
+      width="min(880px, 94vw)"
       top="5vh"
       :close-on-click-modal="false"
       :close-on-press-escape="!submitting"
@@ -450,27 +470,28 @@ onMounted(() => {
           />
         </ElFormItem>
         <ElFormItem :label="t('manage.notifications.dialog.contentLabel')" prop="content">
-          <ElInput
-            v-model="form.content"
-            type="textarea"
-            :rows="10"
-            :maxlength="CONTENT_MAX"
-            show-word-limit
-            resize="vertical"
-            :placeholder="t('manage.notifications.dialog.contentPlaceholder')"
-            :disabled="submitting"
-          />
+          <div
+            class="w-full"
+            :style="submitting ? 'pointer-events: none; opacity: 0.6;' : ''"
+          >
+            <ZMarkdownEditor
+              v-model="form.content"
+              :maxlength="CONTENT_MAX"
+              :show-count="false"
+              :placeholder="t('manage.notifications.dialog.contentPlaceholder')"
+            />
+          </div>
           <div class="flex flex-wrap justify-between gap-2 w-full text-xs mt-1">
             <span style="color: var(--zv-label)">
               {{ t('manage.notifications.dialog.contentHint') }}
             </span>
-            <span class="tabular-nums" style="color: var(--zv-label)">
-              {{
-                t('manage.notifications.dialog.byteCount', {
-                  bytes: contentBytes,
-                  max: CONTENT_BYTE_MAX
-                })
-              }}
+            <span class="tabular-nums flex gap-3" style="color: var(--zv-label)">
+              <span :style="form.content.length > CONTENT_MAX ? 'color: var(--el-color-danger)' : ''">
+                {{ t('manage.notifications.dialog.charCount', { current: form.content.length, max: CONTENT_MAX }) }}
+              </span>
+              <span :style="contentBytes > CONTENT_BYTE_MAX ? 'color: var(--el-color-danger)' : ''">
+                {{ t('manage.notifications.dialog.byteCount', { bytes: contentBytes, max: CONTENT_BYTE_MAX }) }}
+              </span>
             </span>
           </div>
         </ElFormItem>
@@ -506,14 +527,5 @@ onMounted(() => {
 <style scoped>
 .notification-form :deep(.el-form-item:last-child) {
   margin-bottom: 0;
-}
-
-.notification-form :deep(.el-textarea__inner) {
-  line-height: 1.7;
-}
-
-.notification-form :deep(.el-input__count),
-.notification-form :deep(.el-textarea .el-input__count) {
-  color: var(--zv-label);
 }
 </style>

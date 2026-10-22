@@ -174,6 +174,17 @@ async def download_file(
     )
 
 
+@router.get("/preview")
+@_translates_file_errors
+async def preview_file(
+    path: str = Query(..., max_length=4096),
+    user=Depends(get_current_user),
+):
+    await _require_system_admin(user)
+    data = await asyncio.to_thread(file_ops.preview_file, path)
+    return _ok(data)
+
+
 @router.post("/mkdir")
 @_translates_file_errors
 async def make_dir(payload: MkdirRequest, user=Depends(get_current_user)):

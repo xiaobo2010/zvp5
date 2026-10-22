@@ -15,6 +15,7 @@ import {
 } from '@/api/system/files.ts'
 import ZSystemAuthDialog from '@/components/system/ZSystemAuthDialog.vue'
 import ZPagination from '@/components/utils/ZPagination.vue'
+import ZFilePreview from '@/components/server/ZFilePreview.vue'
 import {
   Refresh,
   FolderAdd,
@@ -144,10 +145,20 @@ function entryPath(name: string): string {
   return currentPath.value === '/' ? `/${name}` : `${currentPath.value}/${name}`
 }
 
+const previewVisible = ref(false)
+const previewPath = ref('')
+const previewName = ref('')
+
 function openEntry(entry: FileEntry) {
   if (entry.type === 'dir' || entry.type === 'symlink') {
     pathInput.value = entryPath(entry.name)
     void jumpPath()
+    return
+  }
+  if (entry.type === 'file') {
+    previewPath.value = entryPath(entry.name)
+    previewName.value = entry.name
+    previewVisible.value = true
   }
 }
 
@@ -518,6 +529,7 @@ void load()
       </div>
     </div>
     <ZSystemAuthDialog ref="authRef" />
+    <ZFilePreview v-model="previewVisible" :path="previewPath" :name="previewName" />
   </div>
 </template>
 

@@ -160,11 +160,40 @@ async def _guard_primary_device(
     事实（新平板、旧机坏了），按封禁处理会把所有人挡在门外。真正解决路径是
     让团支书/管理员签发一次性临时密码，所以响应里直接带 challenge。
 
-    两个条件同时成立才拦：用户已绑定主设备、请求带了设备号、且两者不等。
-    缺设备号（老客户端）不拦——没有任何证据说明它不是那台机器。
+    顺序：豁免角色 → 无设备号 → 主设备比对。
+    团支书及以上直接放行（含无设备号、非主设备）；普通用户必须带学海设备号，
+    否则 403 ``DEVICE_REQUIRED``，连 challenge 都不发——没有可兑换的目标设备。
     """
+    roles = (user_doc or {}).get("roles")
+    if device_guard.has_privileged_role(roles):
+        return
+
     primary = (user_doc or {}).get("primary_xuehai_id")
-    if not primary or not xuehai_id or str(primary) == xuehai_id:
+    if not xuehai_id:
+        # 先判设备号再判主设备：未绑定 = 没有可比的基准，不等于「本机是主设备」。
+        try:
+            await ZVMSLog(
+                str(request.url),
+                user_oid,
+                f"用户 {log_name} 未使用学海设备，登录被拒绝（普通用户）",
+                datetime.timestamp(datetime.now()),
+                type="device_required",
+                level="warning",
+                xuehai_id=xuehai_id,
+            ).insert_log()
+        except Exception:
+            _logger.exception("写入 device_required 日志失败")
+
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": "DEVICE_REQUIRED",
+                "message": device_guard.DEVICE_REQUIRED_MESSAGE,
+            },
+        )
+
+    # 未绑定主设备的账号仍放行：存量账号从没绑过，锁死等于全站登录不可用。
+    if not primary or str(primary) == xuehai_id:
         return
 
     try:

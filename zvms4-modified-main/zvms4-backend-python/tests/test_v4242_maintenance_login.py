@@ -30,6 +30,7 @@ from routers import users_router
 
 NORMAL_OID = "000000000000000000000001"
 ADMIN_OID = "000000000000000000000002"
+XUEHAI = "20240001"
 PASSWORD = "StrongPwd1!"
 TOKEN = "signed-token"
 BLOCKED_DETAIL = "系统维护中，仅管理员可登录"
@@ -82,6 +83,7 @@ def harness(monkeypatch):
             "name": "普通用户",
             "roles": ["student"],
             "class_id": None,
+            "primary_xuehai_id": XUEHAI,
         },
         ADMIN_OID: {
             "_id": ADMIN_OID,
@@ -89,6 +91,7 @@ def harness(monkeypatch):
             "name": "管理员",
             "roles": ["admin"],
             "class_id": None,
+            "primary_xuehai_id": XUEHAI,
         },
     }
 
@@ -102,12 +105,34 @@ def harness(monkeypatch):
         # 凭据校验已通过（RSA/OTP 链路不在本用例范围内）。
         return TOKEN, False
 
+    async def get_active_for_user(user_oid):
+        # 学海设备是主设备且已绑定：设备闸不写额外审计，日志里只留 user_login。
+        return [{"xuehai_id": XUEHAI}]
+
+    async def no_device_ban(xuehai_id):
+        return None
+
+    async def no_banned_users(xuehai_id):
+        return []
+
     monkeypatch.setattr(
         backends,
         "get_users_repo",
         lambda *a, **k: SimpleNamespace(
-            get_by_oid=get_by_oid, find_by_business_id=find_by_business_id
+            get_by_oid=get_by_oid,
+            find_by_business_id=find_by_business_id,
+            list_banned_by_xuehai=no_banned_users,
         ),
+    )
+    monkeypatch.setattr(
+        backends,
+        "get_device_bans_repo",
+        lambda *a, **k: SimpleNamespace(get=no_device_ban),
+    )
+    monkeypatch.setattr(
+        backends,
+        "get_bindings_repo",
+        lambda *a, **k: SimpleNamespace(get_active_for_user=get_active_for_user),
     )
     monkeypatch.setattr(backends, "get_applogs_repo", lambda *a, **k: logs)
     monkeypatch.setattr(users_router, "validate_by_cert", validate_by_cert)
@@ -126,6 +151,7 @@ def _login(http: TestClient, oid: str, purpose: str = "login"):
             "mode": "long",
             "purpose": purpose,
         },
+        headers={"Xuehai-Id": XUEHAI},
     )
 
 

@@ -52,6 +52,7 @@ declare module 'vue' {
     ZButtonTag: typeof import('./src/components/utils/ZButtonTag.vue')['default']
     ZDataExport: typeof import('./src/components/utils/ZDataExport.vue')['default']
     ZDetailedAnalysis: typeof import('./src/components/activity/ZDetailedAnalysis.vue')['default']
+    ZFilePreview: typeof import('./src/components/server/ZFilePreview.vue')['default']
     ZGroupList: typeof import('./src/components/group/ZGroupList.vue')['default']
     ZGroupTimeStatistics: typeof import('./src/components/group/ZGroupTimeStatistics.vue')['default']
     ZGroupUserList: typeof import('./src/components/group/ZGroupUserList.vue')['default']

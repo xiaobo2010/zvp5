@@ -422,7 +422,29 @@ export const zhCN = {
     renameDone: '重命名成功',
     deleteDone: '已删除',
     chmodDone: '权限已修改',
-    protectedNote: '受保护目录（/etc /root /proc 等）读写全禁'
+    protectedNote: '受保护目录（/etc /root /proc 等）读写全禁',
+    preview: {
+      title: '文件预览',
+      loading: '正在读取预览…',
+      retry: '重试',
+      loadFailed: '预览加载失败',
+      forbidden: '需要系统管理员权限才能预览文件',
+      notFound: '文件不存在或已被移动',
+      notSupportTitle: '不支持在线预览',
+      binaryHint: '该文件不是文本或图片，无法在线预览，请下载后处理。',
+      tooLargeHint: '文件超过预览大小上限（512KB），请下载后查看。',
+      truncatedHint: '文件过大，仅显示前 512KB',
+      hiddenLines: '已省略其余 {count} 行',
+      copied: '已复制到剪贴板',
+      copyFailed: '复制失败',
+      copy: '复制',
+      downloadFailed: '下载失败',
+      encodingLabel: '编码',
+      wrap: '折行',
+      rendered: '预览',
+      source: '源码',
+      zoomHint: '点击图片可放大'
+    }
   },
   dbContent: {
     searchPlaceholder: '按名称过滤',

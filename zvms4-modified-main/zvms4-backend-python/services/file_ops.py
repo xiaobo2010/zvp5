@@ -21,7 +21,9 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import heapq
+import mimetypes
 import os
 import shutil
 import stat as stat_module
@@ -47,6 +49,51 @@ MAX_LIST_LIMIT = 2000
 MAX_LIST_WINDOW = 20000
 # 递归删除前的条目数闸门：超过就先拒绝，避免一次误操作拖垮机器。
 MAX_RECURSIVE_ENTRIES = 10000
+
+# 预览上限：文本只读首屏，512KB 已覆盖几千行源码/日志，再大就该下载或走 SSH；
+# 图片 8MB 是 base64 后约 11MB 的 JSON 响应，超过就会明显拖慢小内存机器与前端渲染。
+PREVIEW_TEXT_BYTES = 512 * 1024
+PREVIEW_IMAGE_BYTES = 8 * 1024 * 1024
+# 二进制嗅探只看前 4KB：够判 NUL 与编码，成本与文件大小无关。
+PREVIEW_SNIFF_BYTES = 4096
+
+# 文本白名单（含无扩展名的点文件：``.gitignore`` / ``.env``）按扩展名小写判定。
+TEXT_EXTENSIONS: frozenset[str] = frozenset(
+    {
+        "py", "json", "txt", "md", "markdown", "yml", "yaml", "toml", "ini",
+        "cfg", "conf", "env", "sh", "bash", "zsh", "fish", "js", "mjs", "cjs",
+        "ts", "tsx", "jsx", "vue", "css", "scss", "sass", "less", "html", "htm",
+        "xml", "xsl", "sql", "log", "go", "rs", "java", "kt", "c", "h", "cpp",
+        "hpp", "cs", "rb", "php", "lua", "pl", "r", "swift", "scala", "gradle",
+        "properties", "service", "timer", "csv", "tsv", "tex", "rst", "bat",
+        "ps1", "psm1", "dockerfile", "makefile", "gitignore", "gitattributes",
+        "editorconfig",
+    }
+)
+
+# 图片先于文本判定：``svg`` 两边都在，按图片（``<img>`` 可直接渲染）处理。
+IMAGE_MIME_TYPES: dict[str, str] = {
+    "png": "image/png",
+    "jpg": "image/jpeg",
+    "jpeg": "image/jpeg",
+    "gif": "image/gif",
+    "webp": "image/webp",
+    "bmp": "image/bmp",
+    "ico": "image/x-icon",
+    "svg": "image/svg+xml",
+}
+
+# ``mimetypes`` 在部分系统上把 .ts 认成 Qt 翻译文件、把 .md/.py 认成 octet-stream，
+# 这里固定几个高频文本类型，其余仍交给 mimetypes。
+TEXT_MIME_OVERRIDES: dict[str, str] = {
+    "py": "text/x-python",
+    "md": "text/markdown",
+    "markdown": "text/markdown",
+    "ts": "text/typescript",
+    "tsx": "text/typescript",
+    "jsx": "text/javascript",
+    "vue": "text/plain",
+}
 
 CHUNK_SIZE = 64 * 1024
 _UPLOAD_TEMP_PREFIX = ".zvms-upload-"
@@ -253,6 +300,141 @@ def open_download(path: str) -> tuple[BinaryIO, int, str]:
         raise FileOpError(400, f"无法读取文件：{exc.strerror or exc}")
 
     return handle, info.st_size, os.path.basename(resolved)
+
+
+def _extension(name: str) -> str:
+    """取判定用的扩展名标识；``.env`` / ``Dockerfile`` 这类无后缀名字也能命中。"""
+    lowered = name.lower()
+    suffix = os.path.splitext(lowered)[1]
+    if suffix and suffix != ".":
+        return suffix[1:]
+    return lowered.lstrip(".") if lowered.startswith(".") else lowered
+
+
+def _guess_mime(name: str, *, is_text: bool) -> str:
+    extension = _extension(name)
+    if extension in IMAGE_MIME_TYPES:
+        return IMAGE_MIME_TYPES[extension]
+    if is_text and extension in TEXT_MIME_OVERRIDES:
+        return TEXT_MIME_OVERRIDES[extension]
+    guessed = mimetypes.guess_type(name, strict=False)[0]
+    if is_text and guessed in (None, "application/octet-stream"):
+        return "text/plain"
+    return guessed or "application/octet-stream"
+
+
+def _read_prefix(resolved: str, limit: int) -> bytes:
+    try:
+        with open(resolved, "rb") as handle:
+            return handle.read(limit)
+    except PermissionError:
+        raise FileOpError(403, "权限不足，无法读取该文件")
+    except OSError as exc:
+        raise FileOpError(400, f"无法读取文件：{exc.strerror or exc}")
+
+
+def _decodes(data: bytes, encoding: str) -> bool:
+    try:
+        data.decode(encoding)
+        return True
+    except UnicodeDecodeError as exc:
+        # 前缀截断会把多字节字符切成两半：尾部残字节不算解码失败。
+        if exc.end < len(data) - 3:
+            return False
+        try:
+            data[: exc.start].decode(encoding)
+            return True
+        except UnicodeDecodeError:
+            return False
+
+
+def _decode_text(data: bytes, *, truncated: bool) -> tuple[str, str]:
+    for encoding in ("utf-8", "gbk"):
+        try:
+            return data.decode(encoding), encoding
+        except UnicodeDecodeError as exc:
+            # 截断读取可能切在多字节字符中间：丢掉这段残字节再当作已解码。
+            if truncated and exc.end >= len(data) - 3:
+                try:
+                    return data[: exc.start].decode(encoding), encoding
+                except UnicodeDecodeError:
+                    pass
+    return data.decode("latin-1"), "latin-1"
+
+
+def _preview(kind: str, mime: str, size: int, **extra) -> dict:
+    payload = {
+        "kind": kind,
+        "mime": mime,
+        "size": size,
+        "content": None,
+        "encoding": None,
+        "truncated": False,
+    }
+    payload.update(extra)
+    return payload
+
+
+def _text_preview(resolved: str, name: str, size: int) -> dict:
+    data = _read_prefix(resolved, PREVIEW_TEXT_BYTES + 1)
+    truncated = len(data) > PREVIEW_TEXT_BYTES
+    if truncated:
+        data = data[:PREVIEW_TEXT_BYTES]
+    text, encoding = _decode_text(data, truncated=truncated)
+    return _preview(
+        "text",
+        _guess_mime(name, is_text=True),
+        size,
+        content=text,
+        encoding=encoding,
+        truncated=truncated,
+    )
+
+
+def _looks_like_text(head: bytes) -> bool:
+    # NUL 是二进制最便宜的判据：UTF-8/GBK 文本里不会出现裸 0x00。
+    if b"\x00" in head:
+        return False
+    return _decodes(head, "utf-8") or _decodes(head, "gbk")
+
+
+def _preview_regular_file(resolved: str, name: str, size: int) -> dict:
+    extension = _extension(name)
+
+    if extension in IMAGE_MIME_TYPES:
+        mime = IMAGE_MIME_TYPES[extension]
+        if size > PREVIEW_IMAGE_BYTES:
+            return _preview("too_large", mime, size)
+        data = _read_prefix(resolved, PREVIEW_IMAGE_BYTES)
+        return _preview(
+            "image", mime, size, content=base64.b64encode(data).decode("ascii")
+        )
+
+    if extension in TEXT_EXTENSIONS:
+        return _text_preview(resolved, name, size)
+
+    head = _read_prefix(resolved, PREVIEW_SNIFF_BYTES)
+    if not _looks_like_text(head):
+        return _preview("binary", _guess_mime(name, is_text=False), size)
+    return _text_preview(resolved, name, size)
+
+
+def preview_file(path: str) -> dict:
+    """按内容类型返回预览载荷；异常口径与 ``open_download`` 一致。"""
+    resolved = resolve_path(path)
+    try:
+        info = os.stat(resolved)
+    except FileNotFoundError:
+        raise FileOpError(404, "路径不存在")
+    except PermissionError:
+        raise FileOpError(403, "权限不足，无法读取该路径")
+
+    if stat_module.S_ISDIR(info.st_mode):
+        raise FileOpError(400, "目录不支持预览")
+    if not stat_module.S_ISREG(info.st_mode):
+        raise FileOpError(400, "仅支持预览普通文件")
+
+    return _preview_regular_file(resolved, os.path.basename(resolved), info.st_size)
 
 
 def make_dir(path: str) -> dict:
