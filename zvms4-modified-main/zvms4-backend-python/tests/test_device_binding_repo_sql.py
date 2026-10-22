@@ -467,7 +467,11 @@ def test_v014_adds_the_primary_xuehai_column_and_its_index():
     new_indexes = {idx for idx in modeled_indexes if idx[0] in new_tables}
     assert new_indexes
     # V014 只补它自己带来的索引：新表的索引必须一字不差地出现在补丁里。
-    assert new_indexes == {idx for idx in schema["indexes"] if idx[0] in new_tables}
+    # V021 之后给 device_challenges 补了计数索引，不在 V014 的范围内。
+    added_later = {("device_challenges", False, ("user_oid", "created_at"))}
+    assert new_indexes - added_later == {
+        idx for idx in schema["indexes"] if idx[0] in new_tables
+    }
     assert ("users", False, ("primary_xuehai_id",)) in modeled_indexes
 
 

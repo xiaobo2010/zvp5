@@ -487,6 +487,20 @@ def _fake_db():
                 "updated_at": old,
             }
         ],
+        "ban_records": [
+            {
+                "oid": new_oid(),
+                "user_oid": OTHER,
+                "source": "rule",
+                "rule_code": "multi_device_login",
+                "reason": "同学号多设备登录",
+                "permanent": 0,
+                "started_at": old,
+                "expires_at": old,
+                "operator_oid": None,
+                "created_at": old,
+            }
+        ],
         "activity_members": [
             {
                 "oid": new_oid(),
@@ -549,6 +563,7 @@ def test_delete_cascade_archives_and_cleans_in_one_transaction(install_fake_sess
         "time_academic_year",
         "time_with_origin",
         "user_device_bindings",
+        "ban_records",
     ):
         assert db[table] == [], table
 
@@ -571,6 +586,7 @@ def test_delete_cascade_archives_and_cleans_in_one_transaction(install_fake_sess
     assert payload["user"]["roles"] == ["student"]
     assert payload["related"]["user_time"][0]["on_campus_raw"] == 8.5
     assert payload["related"]["user_device_bindings"][0]["xuehai_id"] == "1001"
+    assert payload["related"]["ban_records"][0]["rule_code"] == "multi_device_login"
     assert payload["related"]["activity_members"][0]["member_oid"] == OTHER
     assert payload["related"]["files"][0]["sha256"] == "deadbeef"
 
@@ -585,6 +601,19 @@ def test_delete_cascade_archives_and_cleans_in_one_transaction(install_fake_sess
     # BLOB 绝不进 payload：查询只投影元数据列，_json_safe 也会丢弃 bytes。
     assert "content" not in payload["related"]["files"][0]
     assert "content" not in {column.name for column in _FILES_METADATA_COLUMNS}
+
+
+def test_delete_cascade_clears_ban_records_before_the_users_row(install_fake_session):
+    """BAN_RECORDS 没有 ON DELETE CASCADE：不清子表就删 users 会 ORA-02292。"""
+    db = _fake_db()
+    session = install_fake_session(db=db)
+
+    asyncio.run(OracleUsersRepo().delete_user_cascade(OTHER, SELF))
+
+    deleted = [table for kind, table in session.log if kind == "delete"]
+    assert "ban_records" in deleted
+    assert deleted.index("ban_records") < deleted.index("users")
+    assert db["ban_records"] == []
 
 
 def test_delete_cascade_skips_tables_missing_from_the_live_schema(install_fake_session):
