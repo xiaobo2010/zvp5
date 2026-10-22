@@ -242,3 +242,128 @@ def test_row_maps_active_number_to_bool(active: int) -> None:
         }
     )
     assert row["active"] is bool(active)
+
+
+# ---------------------------------------------------------------------------
+# CONTENT HASH / VERSION SNAPSHOTS
+# ---------------------------------------------------------------------------
+
+
+def test_content_hash_is_stable_sha256_hex() -> None:
+    first = notifications_repo.notification_content_hash("标题", "正文", True)
+    second = notifications_repo.notification_content_hash("标题", "正文", True)
+
+    assert first == second
+    assert len(first) == 64
+    assert first == first.lower()
+    assert all(ch in "0123456789abcdef" for ch in first)
+
+
+def test_content_hash_covers_every_field_including_active() -> None:
+    base = notifications_repo.notification_content_hash("标题", "正文", True)
+
+    assert notifications_repo.notification_content_hash("新标题", "正文", True) != base
+    assert notifications_repo.notification_content_hash("标题", "新正文", True) != base
+    assert notifications_repo.notification_content_hash("标题", "正文", False) != base
+
+
+def test_content_hash_matches_contract_algorithm() -> None:
+    import hashlib
+
+    expected = hashlib.sha256("标题\n正文\n0".encode("utf-8")).hexdigest()
+    assert (
+        notifications_repo.notification_content_hash("标题", "正文", False) == expected
+    )
+
+
+def test_snapshot_stmt_carries_full_content_and_hash() -> None:
+    snapshot = notifications_repo._snapshot_values(
+        notification_oid=OID,
+        version=2,
+        title="新标题",
+        content="新正文",
+        active=False,
+        op="update",
+        author_oid=AUTHOR_OID,
+        author_name="张老师",
+        created_at=NOW,
+    )
+    sql = _sql(notifications_repo._snapshot_insert_stmt(snapshot))
+
+    assert sql.startswith("INSERT INTO notification_versions ")
+    assert f"'{OID}'" in sql
+    assert "'update'" in sql
+    assert "'新正文', 0, 'update'" in sql
+    assert snapshot["content_hash"] in sql
+    assert snapshot["content_hash"] == notifications_repo.notification_content_hash(
+        "新标题", "新正文", False
+    )
+    assert ", 'update', NULL," in sql
+
+
+def test_snapshot_stmt_records_rollback_target() -> None:
+    snapshot = notifications_repo._snapshot_values(
+        notification_oid=OID,
+        version=3,
+        title="标题",
+        content="正文",
+        active=True,
+        op="rollback",
+        author_oid=AUTHOR_OID,
+        author_name="张老师",
+        created_at=NOW,
+        source_version=1,
+    )
+    sql = _sql(notifications_repo._snapshot_insert_stmt(snapshot))
+
+    assert "1, 'rollback', 1," in sql
+
+
+def test_version_history_reads_newest_first() -> None:
+    sql = _sql(notifications_repo._list_versions_stmt(OID))
+
+    assert "FROM notification_versions" in sql
+    assert f"notification_versions.notification_oid = '{OID}'" in sql
+    assert "ORDER BY notification_versions.version DESC" in sql
+
+
+def test_single_version_lookup_is_scoped_to_the_notice() -> None:
+    sql = _sql(notifications_repo._get_version_stmt(OID, 2))
+
+    assert "FROM notification_versions" in sql
+    assert f"notification_versions.notification_oid = '{OID}'" in sql
+    assert "notification_versions.version = 2" in sql
+
+
+def test_max_version_is_per_notice() -> None:
+    sql = _sql(notifications_repo._max_version_stmt(OID))
+
+    assert "max(notification_versions.version)" in sql
+    assert f"notification_versions.notification_oid = '{OID}'" in sql
+
+
+def test_version_row_maps_flags_and_numeric_versions() -> None:
+    row = notifications_repo._version_row(
+        {
+            "oid": "0e00000000000000000000aa",
+            "notification_oid": OID,
+            "version": 2,
+            "title": "标题",
+            "content": "正文",
+            "active": 0,
+            "op": "rollback",
+            "source_version": 1,
+            "content_hash": "a" * 64,
+            "author_oid": AUTHOR_OID,
+            "author_name": "张老师",
+            "created_at": NOW,
+        }
+    )
+
+    assert row["_id"] == "0e00000000000000000000aa"
+    assert row["notification_oid"] == OID
+    assert row["version"] == 2
+    assert row["active"] is False
+    assert row["source_version"] == 1
+    assert row["content_hash"] == "a" * 64
+    assert row["created_at"] == NOW

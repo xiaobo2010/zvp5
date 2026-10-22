@@ -15,6 +15,9 @@
   业务行**同一事务** +1；失败（通知不存在）不推进。
 * 单条通知的 ``version``（``NOTIFICATIONS.VERSION``）创建为 1，每次成功编辑
   或停用 +1，用于客户端判断「这条通知是否被改过」。
+* 每次成功写入都在**同一事务**里落一条 ``NOTIFICATION_VERSIONS`` 快照，
+  ``content_hash`` 是 ``sha256(title + "\n" + content + "\n" + "1"/"0")``。
+  管理端据此查看历史并把通知回滚到任一版本。
 * 发布人 ``author_id`` / ``author_name`` 与 ``created_at`` 写入后不可变，
   编辑接口不会覆盖它们。
 """
@@ -24,10 +27,11 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Body, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from db import backends
+from db.repos.oracle.notifications import notification_content_hash
 from typings.log import inject_log
 from util.object_id import get_current_user
 from util.user import get_user_display_name
@@ -81,17 +85,38 @@ def _view(entry: dict) -> dict:
 
     ``author_id`` is the sender's user oid (24-char lowercase hex); it is stored
     as ``AUTHOR_OID`` and is the immutable identity behind ``author_name``.
+    ``content_hash`` covers title/content/active, so a client can detect an
+    edit without comparing the body text.
     """
     return {
         "id": entry["_id"],
         "title": entry["title"],
         "content": entry["content"],
         "version": int(entry["version"]),
+        "content_hash": notification_content_hash(
+            entry["title"], entry["content"], bool(entry["active"])
+        ),
         "author_id": entry["author_oid"],
         "author_name": entry["author_name"],
         "created_at": _iso(entry["created_at"]),
         "updated_at": _iso(entry["updated_at"]),
         "active": bool(entry["active"]),
+    }
+
+
+def _version_view(snapshot: dict) -> dict:
+    """One historical revision; ``content_hash`` is the stored, historical one."""
+    return {
+        "version": int(snapshot["version"]),
+        "content_hash": snapshot["content_hash"],
+        "title": snapshot["title"],
+        "content": snapshot["content"],
+        "active": bool(snapshot["active"]),
+        "op": snapshot["op"],
+        "source_version": snapshot["source_version"],
+        "author_id": snapshot["author_oid"],
+        "author_name": snapshot["author_name"],
+        "created_at": _iso(snapshot["created_at"]),
     }
 
 
@@ -142,8 +167,10 @@ async def create_notification(
         author_name=author_name,
     )
 
+    view = _view(entry)
     log.with_text(
-        f"管理员 {author_name} 发布通知「{title}」",
+        f"管理员 {author_name} 发布通知「{title}」"
+        f"（版本 1，哈希 {view['content_hash'][:12]}）",
         type="notification_create",
     )
     await log.insert_log()
@@ -151,7 +178,7 @@ async def create_notification(
     return {
         "status": "ok",
         "code": 201,
-        "data": {"notification": _view(entry), "version": version},
+        "data": {"notification": view, "version": version},
     }
 
 
@@ -178,18 +205,22 @@ async def update_notification(
     if title is None and content is None and payload.active is None:
         raise HTTPException(status_code=422, detail="至少提供一个要修改的字段")
 
+    editor_name = await get_user_display_name(user["id"])
     entry, version = await backends.get_notifications_repo().update(
         oid,
         title=title,
         content=content,
         active=payload.active,
+        author_oid=user["id"],
+        author_name=editor_name,
     )
     if entry is None:
         raise HTTPException(status_code=404, detail="通知不存在")
 
-    editor_name = await get_user_display_name(user["id"])
+    view = _view(entry)
     log.with_text(
-        f"管理员 {editor_name} 更新通知「{entry['title']}」",
+        f"管理员 {editor_name} 更新通知「{entry['title']}」"
+        f"（版本 {view['version']}，哈希 {view['content_hash'][:12]}）",
         type="notification_update",
     )
     await log.insert_log()
@@ -197,7 +228,7 @@ async def update_notification(
     return {
         "status": "ok",
         "code": 200,
-        "data": {"notification": _view(entry), "version": version},
+        "data": {"notification": view, "version": version},
     }
 
 
@@ -210,15 +241,82 @@ async def delete_notification(
     _require_admin(user)
     validate_object_id(oid)
 
-    entry, _version = await backends.get_notifications_repo().delete(oid)
+    actor_name = await get_user_display_name(user["id"])
+    entry, _version = await backends.get_notifications_repo().delete(
+        oid,
+        author_oid=user["id"],
+        author_name=actor_name,
+    )
     if entry is None:
         raise HTTPException(status_code=404, detail="通知不存在")
 
-    actor_name = await get_user_display_name(user["id"])
+    deleted = _view(entry)
     log.with_text(
-        f"管理员 {actor_name} 删除通知「{entry['title']}」",
+        f"管理员 {actor_name} 删除通知「{entry['title']}」"
+        f"（版本 {deleted['version']}，哈希 {deleted['content_hash'][:12]}）",
         type="notification_delete",
     )
     await log.insert_log()
 
     return
+
+
+@router.get("/{oid}/versions")
+async def read_notification_versions(oid: str, user=Depends(get_current_user)):
+    """Full revision history, newest revision first; deleted notices included."""
+    _require_admin(user)
+    validate_object_id(oid)
+
+    snapshots, version = await backends.get_notifications_repo().list_versions(oid)
+    return {
+        "status": "ok",
+        "code": 200,
+        "data": {
+            "versions": [_version_view(snapshot) for snapshot in snapshots],
+            "version": version,
+        },
+    }
+
+
+@router.post("/{oid}/rollback")
+async def rollback_notification(
+    oid: str,
+    payload: dict = Body(...),
+    user=Depends(get_current_user),
+    log=Depends(inject_log),
+):
+    """Restore an earlier revision; a deleted notice is revived under its oid."""
+    _require_admin(user)
+    validate_object_id(oid)
+
+    target = payload.get("version")
+    if isinstance(target, bool) or not isinstance(target, int) or target < 1:
+        raise HTTPException(status_code=400, detail="版本号非法")
+
+    actor_name = await get_user_display_name(user["id"])
+    entry, version, snapshot = await backends.get_notifications_repo().rollback(
+        oid,
+        target_version=target,
+        author_oid=user["id"],
+        author_name=actor_name,
+    )
+    if snapshot is None or entry is None:
+        raise HTTPException(status_code=404, detail="版本不存在")
+
+    view = _view(entry)
+    log.with_text(
+        f"管理员 {actor_name} 回滚通知「{view['title']}」到版本 {target}，"
+        f"当前版本 {view['version']}（哈希 {view['content_hash'][:12]}）",
+        type="notification_rollback",
+    )
+    await log.insert_log()
+
+    return {
+        "status": "ok",
+        "code": 200,
+        "data": {
+            "notification": view,
+            "version": version,
+            "content_hash": snapshot["content_hash"],
+        },
+    }

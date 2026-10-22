@@ -213,6 +213,38 @@ export const zhCN = {
       contentRequired: '请填写通知正文',
       contentTooLong: '正文不能超过 {max} 个字符',
       contentTooManyBytes: '正文按 UTF-8 编码后不能超过 {max} 字节（中文约 3 字节/字）'
+    },
+    history: {
+      entry: '历史',
+      title: '修改历史',
+      empty: '暂无历史版本',
+      notFound: '通知不存在或已被删除',
+      forbidden: '没有权限查看修改历史（仅管理员可用）',
+      network: '网络异常，无法加载修改历史',
+      unknown: '加载修改历史失败',
+      compareOn: '对比当前',
+      compareOff: '查看原文',
+      identical: '与当前版本一致',
+      collapsedLines: '已折叠 {count} 行无变化内容',
+      ops: {
+        create: '新建',
+        update: '编辑',
+        delete: '删除',
+        rollback: '回滚',
+        rollbackFrom: '回滚到 v{version}'
+      },
+      rollback: '回滚',
+      rollbackTo: '回滚到 v{version}',
+      rollbackHint: '回滚会生成一个新版本，历史记录保持不变。',
+      rollbackConfirmTitle: '确认回滚',
+      rollbackConfirm:
+        '将把通知内容恢复到 v{version} 的状态。回滚会产生一个新版本，不会改写历史记录。确认回滚？',
+      rollbackConfirmOk: '确认回滚',
+      rollbackDone: '已回滚，新版本为 v{version}',
+      rollbackForbidden: '没有权限执行回滚（仅管理员可用）',
+      rollbackMissing: '通知或目标版本不存在，请刷新后重试',
+      rollbackNetwork: '网络异常，回滚未完成，请稍后重试',
+      rollbackFailed: '回滚失败，请稍后重试'
     }
   },
   banRules: {

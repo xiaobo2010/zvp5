@@ -34,15 +34,17 @@ Nothing here opens a connection at import time.
 
 from __future__ import annotations
 
+import hashlib
 from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Any, AsyncIterator
 
-from sqlalchemy import delete, insert, select, update
+from sqlalchemy import delete, func, insert, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.ids import new_oid, normalize_oid
 from db.models import notification_state as state_tbl
+from db.models import notification_versions as versions_tbl
 from db.models import notifications as notifications_tbl
 from db.oracle.session import session_scope
 
@@ -139,6 +141,30 @@ def _delete_stmt(oid: str):
     return delete(notifications_tbl).where(notifications_tbl.c.oid == oid)
 
 
+def _restore_stmt(
+    oid: str,
+    title: str,
+    content: str,
+    active: bool,
+    author_oid: str,
+    author_name: str,
+    version: int,
+    now: datetime,
+):
+    """Re-insert a deleted notice under its original oid for a rollback."""
+    return insert(notifications_tbl).values(
+        oid=oid,
+        title=title,
+        content=content,
+        active=_active_value(active),
+        author_oid=author_oid,
+        author_name=author_name,
+        version=version,
+        created_at=now,
+        updated_at=now,
+    )
+
+
 def _state_select_stmt():
     return select(state_tbl.c.version, state_tbl.c.updated_at).where(
         state_tbl.c.id == 1
@@ -204,6 +230,162 @@ def _active_value(value: bool) -> int:
     return 1 if value else 0
 
 
+def notification_content_hash(title: str, content: str, active: bool) -> str:
+    """Return the 64-char lowercase sha256 of a notice's public content.
+
+    ``active`` is folded in because deactivating a notice is a content change a
+    client must notice even when the text is byte-identical.
+    """
+    flag = "1" if active else "0"
+    return hashlib.sha256(f"{title}\n{content}\n{flag}".encode("utf-8")).hexdigest()
+
+
+def _version_columns() -> tuple[Any, ...]:
+    return (
+        versions_tbl.c.oid,
+        versions_tbl.c.notification_oid,
+        versions_tbl.c.version,
+        versions_tbl.c.title,
+        versions_tbl.c.content,
+        versions_tbl.c.active,
+        versions_tbl.c.op,
+        versions_tbl.c.source_version,
+        versions_tbl.c.content_hash,
+        versions_tbl.c.author_oid,
+        versions_tbl.c.author_name,
+        versions_tbl.c.created_at,
+    )
+
+
+def _list_versions_stmt(notification_oid: str):
+    return (
+        select(*_version_columns())
+        .where(versions_tbl.c.notification_oid == notification_oid)
+        .order_by(versions_tbl.c.version.desc())
+    )
+
+
+def _get_version_stmt(notification_oid: str, version: int):
+    return select(*_version_columns()).where(
+        versions_tbl.c.notification_oid == notification_oid,
+        versions_tbl.c.version == version,
+    )
+
+
+def _max_version_stmt(notification_oid: str):
+    return select(func.max(versions_tbl.c.version)).where(
+        versions_tbl.c.notification_oid == notification_oid
+    )
+
+
+def _snapshot_values(
+    *,
+    notification_oid: str,
+    version: int,
+    title: str,
+    content: str,
+    active: bool,
+    op: str,
+    author_oid: str | None,
+    author_name: str,
+    created_at: datetime,
+    source_version: int | None = None,
+) -> Row:
+    return {
+        "_id": new_oid(),
+        "notification_oid": notification_oid,
+        "version": version,
+        "title": title,
+        "content": content,
+        "active": bool(active),
+        "op": op,
+        "source_version": source_version,
+        "content_hash": notification_content_hash(title, content, active),
+        "author_oid": author_oid,
+        "author_name": author_name,
+        "created_at": created_at,
+    }
+
+
+def _snapshot_insert_stmt(values: Row):
+    return insert(versions_tbl).values(
+        oid=values["_id"],
+        notification_oid=values["notification_oid"],
+        version=values["version"],
+        title=values["title"],
+        content=values["content"],
+        active=_active_value(values["active"]),
+        op=values["op"],
+        source_version=values["source_version"],
+        content_hash=values["content_hash"],
+        author_oid=values["author_oid"],
+        author_name=values["author_name"],
+        created_at=values["created_at"],
+    )
+
+
+def _version_row(mapping: Any) -> Row:
+    source_version = mapping["source_version"]
+    return {
+        "_id": mapping["oid"],
+        "notification_oid": mapping["notification_oid"],
+        "version": int(mapping["version"]),
+        "title": mapping["title"],
+        "content": mapping["content"],
+        "active": bool(mapping["active"]),
+        "op": mapping["op"],
+        "source_version": None if source_version is None else int(source_version),
+        "content_hash": mapping["content_hash"],
+        "author_oid": mapping["author_oid"],
+        "author_name": mapping["author_name"],
+        "created_at": mapping["created_at"],
+    }
+
+
+async def _write_snapshot(
+    session: AsyncSession,
+    *,
+    notification_oid: str,
+    version: int,
+    title: str,
+    content: str,
+    active: bool,
+    op: str,
+    author_oid: str | None,
+    author_name: str,
+    created_at: datetime,
+    source_version: int | None = None,
+) -> Row:
+    values = _snapshot_values(
+        notification_oid=notification_oid,
+        version=version,
+        title=title,
+        content=content,
+        active=active,
+        op=op,
+        author_oid=author_oid,
+        author_name=author_name,
+        created_at=created_at,
+        source_version=source_version,
+    )
+    await session.execute(_snapshot_insert_stmt(values))
+    return values
+
+
+async def _next_snapshot_version(
+    session: AsyncSession, notification_oid: str, current_version: int
+) -> int:
+    """Next free revision for a snapshot that does not follow a normal edit.
+
+    Deletes and re-inserts take a new revision while leaving
+    ``NOTIFICATIONS.VERSION`` alone (delete) or starting from the history
+    (rollback), so they must also clear any revision a legacy row already used.
+    """
+    row = (await session.execute(_max_version_stmt(notification_oid))).first()
+    highest = int(row[0]) if row is not None and row[0] is not None else 0
+    return max(highest, current_version) + 1
+
+
 class OracleNotificationsRepo:
     """``NotificationsRepo`` over Oracle ADB (``NOTIFICATIONS``)."""
 
@@ -249,6 +431,18 @@ class OracleNotificationsRepo:
         stmt = _create_stmt(oid, title, content, author_oid, author_name, now)
         async with _session_for(self._session) as (session, owns):
             await session.execute(stmt)
+            await _write_snapshot(
+                session,
+                notification_oid=oid,
+                version=1,
+                title=title,
+                content=content,
+                active=True,
+                op="create",
+                author_oid=author_oid,
+                author_name=author_name,
+                created_at=now,
+            )
             version = await _bump_state(session, now)
             if owns:
                 await session.commit()
@@ -274,6 +468,8 @@ class OracleNotificationsRepo:
         title: str | None = None,
         content: str | None = None,
         active: bool | None = None,
+        author_oid: str | None = None,
+        author_name: str | None = None,
     ) -> tuple[Row | None, int]:
         normalized = normalize_oid(oid)
         fields: dict[str, Any] = {}
@@ -293,34 +489,168 @@ class OracleNotificationsRepo:
                 int(state["version"]),
             )
 
+        actor_oid = normalize_oid(author_oid) if author_oid is not None else None
         now = datetime.now()
         stmt = _update_stmt(normalized, fields, now)
         async with _session_for(self._session) as (session, owns):
+            # Lock first: two concurrent edits then produce revisions 2 and 3
+            # instead of both computing 2 and colliding on the unique snapshot.
+            locked = (await session.execute(_get_for_update_stmt(normalized))).first()
+            if locked is None:
+                state = await _read_state(session)
+                return None, int(state["version"])
             result = await session.execute(stmt)
             if int(result.rowcount or 0) == 0:
                 state = await _read_state(session)
                 return None, int(state["version"])
-            version = await _bump_state(session, now)
             row = (await session.execute(_get_stmt(normalized))).first()
+            if row is None:
+                state = await _read_state(session)
+                return None, int(state["version"])
+            entry = _row(row._mapping)
+            await _write_snapshot(
+                session,
+                notification_oid=normalized,
+                version=entry["version"],
+                title=entry["title"],
+                content=entry["content"],
+                active=entry["active"],
+                op="update",
+                author_oid=actor_oid or entry["author_oid"],
+                author_name=author_name or entry["author_name"],
+                created_at=now,
+            )
+            version = await _bump_state(session, now)
             if owns:
                 await session.commit()
-        if row is None:
-            return None, version
-        return _row(row._mapping), version
+        return entry, version
 
-    async def delete(self, oid: str) -> tuple[Row | None, int]:
+    async def delete(
+        self,
+        oid: str,
+        *,
+        author_oid: str | None = None,
+        author_name: str | None = None,
+    ) -> tuple[Row | None, int]:
         normalized = normalize_oid(oid)
+        actor_oid = normalize_oid(author_oid) if author_oid is not None else None
+        now = datetime.now()
         async with _session_for(self._session) as (session, owns):
             row = (await session.execute(_get_for_update_stmt(normalized))).first()
             if row is None:
                 state = await _read_state(session)
                 return None, int(state["version"])
             deleted = _row(row._mapping)
+            await _write_snapshot(
+                session,
+                notification_oid=normalized,
+                version=await _next_snapshot_version(
+                    session, normalized, deleted["version"]
+                ),
+                title=deleted["title"],
+                content=deleted["content"],
+                active=deleted["active"],
+                op="delete",
+                author_oid=actor_oid or deleted["author_oid"],
+                author_name=author_name or deleted["author_name"],
+                created_at=now,
+            )
             await session.execute(_delete_stmt(normalized))
-            version = await _bump_state(session, datetime.now())
+            version = await _bump_state(session, now)
             if owns:
                 await session.commit()
         return deleted, version
 
+    async def list_versions(self, oid: str) -> tuple[list[Row], int]:
+        normalized = normalize_oid(oid)
+        async with _session_for(self._session) as (session, _owns):
+            state = await _read_state(session)
+            rows = (await session.execute(_list_versions_stmt(normalized))).all()
+        return [_version_row(row._mapping) for row in rows], int(state["version"])
 
-__all__ = ["OracleNotificationsRepo"]
+    async def rollback(
+        self,
+        oid: str,
+        *,
+        target_version: int,
+        author_oid: str,
+        author_name: str,
+    ) -> tuple[Row | None, int, Row | None]:
+        normalized = normalize_oid(oid)
+        actor_oid = normalize_oid(author_oid)
+        now = datetime.now()
+        async with _session_for(self._session) as (session, owns):
+            current = (await session.execute(_get_for_update_stmt(normalized))).first()
+            target = (
+                await session.execute(_get_version_stmt(normalized, target_version))
+            ).first()
+            if target is None:
+                state = await _read_state(session)
+                return None, int(state["version"]), None
+            snap = _version_row(target._mapping)
+            if current is None:
+                # Deleted: revive the original oid with the target content, so
+                # client-side markers (read/suppressed keyed by id) stay valid.
+                new_version = await _next_snapshot_version(session, normalized, 0)
+                restored_author_oid = snap["author_oid"] or actor_oid
+                await session.execute(
+                    _restore_stmt(
+                        normalized,
+                        snap["title"],
+                        snap["content"],
+                        snap["active"],
+                        restored_author_oid,
+                        snap["author_name"] or author_name,
+                        new_version,
+                        now,
+                    )
+                )
+                entry = {
+                    "_id": normalized,
+                    "title": snap["title"],
+                    "content": snap["content"],
+                    "active": snap["active"],
+                    "author_oid": restored_author_oid,
+                    "author_name": snap["author_name"] or author_name,
+                    "version": new_version,
+                    "created_at": now,
+                    "updated_at": now,
+                }
+                note = entry
+            else:
+                await session.execute(
+                    _update_stmt(
+                        normalized,
+                        {
+                            "title": snap["title"],
+                            "content": snap["content"],
+                            "active": _active_value(snap["active"]),
+                        },
+                        now,
+                    )
+                )
+                row = (await session.execute(_get_stmt(normalized))).first()
+                if row is None:
+                    state = await _read_state(session)
+                    return None, int(state["version"]), None
+                note = _row(row._mapping)
+            snapshot = await _write_snapshot(
+                session,
+                notification_oid=normalized,
+                version=note["version"],
+                title=note["title"],
+                content=note["content"],
+                active=note["active"],
+                op="rollback",
+                author_oid=actor_oid,
+                author_name=author_name,
+                created_at=now,
+                source_version=target_version,
+            )
+            version = await _bump_state(session, now)
+            if owns:
+                await session.commit()
+        return note, version, snapshot
+
+
+__all__ = ["OracleNotificationsRepo", "notification_content_hash"]

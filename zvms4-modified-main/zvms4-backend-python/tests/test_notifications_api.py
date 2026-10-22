@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from datetime import datetime
 
 import pytest
@@ -30,11 +31,18 @@ CREATED = datetime(2026, 10, 21, 9, 30, 0)
 UPDATED = datetime(2026, 10, 21, 10, 15, 0)
 
 
+def content_hash(title: str, content: str, active: bool) -> str:
+    return hashlib.sha256(
+        f"{title}\n{content}\n{'1' if active else '0'}".encode("utf-8")
+    ).hexdigest()
+
+
 class FakeNotificationsRepo:
     """In-memory repo with the same version rules as the Oracle implementation."""
 
     def __init__(self) -> None:
         self.rows: dict[str, dict] = {}
+        self.versions: dict[str, list[dict]] = {}
         self.version = 0
         self._seq = 0
 
@@ -65,6 +73,39 @@ class FakeNotificationsRepo:
         row = self.rows.get(oid)
         return dict(row) if row else None
 
+    def _history(self, oid: str) -> list[dict]:
+        return self.versions.setdefault(oid, [])
+
+    def _snapshot(
+        self,
+        oid: str,
+        row: dict,
+        version: int,
+        op: str,
+        *,
+        author_oid: str | None,
+        author_name: str,
+        source_version: int | None = None,
+    ) -> dict:
+        snapshot = {
+            "_id": f"0e{self._seq:022d}",
+            "notification_oid": oid,
+            "version": version,
+            "title": row["title"],
+            "content": row["content"],
+            "active": row["active"],
+            "op": op,
+            "source_version": source_version,
+            "content_hash": content_hash(
+                row["title"], row["content"], row["active"]
+            ),
+            "author_oid": author_oid,
+            "author_name": author_name,
+            "created_at": UPDATED,
+        }
+        self._history(oid).append(snapshot)
+        return snapshot
+
     async def create(self, *, title, content, author_oid, author_name):
         oid = self._new_id()
         row = {
@@ -79,10 +120,27 @@ class FakeNotificationsRepo:
             "updated_at": CREATED,
         }
         self.rows[oid] = row
+        self._snapshot(
+            oid,
+            row,
+            1,
+            "create",
+            author_oid=author_oid,
+            author_name=author_name,
+        )
         self.version += 1
         return dict(row), self.version
 
-    async def update(self, oid, *, title=None, content=None, active=None):
+    async def update(
+        self,
+        oid,
+        *,
+        title=None,
+        content=None,
+        active=None,
+        author_oid=None,
+        author_name=None,
+    ):
         row = self.rows.get(oid)
         if row is None:
             return None, self.version
@@ -94,15 +152,89 @@ class FakeNotificationsRepo:
             row["active"] = active
         row["version"] += 1
         row["updated_at"] = UPDATED
+        self._snapshot(
+            oid,
+            row,
+            row["version"],
+            "update",
+            author_oid=author_oid or row["author_oid"],
+            author_name=author_name or row["author_name"],
+        )
         self.version += 1
         return dict(row), self.version
 
-    async def delete(self, oid):
-        row = self.rows.pop(oid, None)
+    async def delete(self, oid, *, author_oid=None, author_name=None):
+        row = self.rows.get(oid)
         if row is None:
             return None, self.version
+        highest = max(
+            [snapshot["version"] for snapshot in self._history(oid)] + [row["version"]]
+        )
+        self._snapshot(
+            oid,
+            row,
+            highest + 1,
+            "delete",
+            author_oid=author_oid or row["author_oid"],
+            author_name=author_name or row["author_name"],
+        )
+        self.rows.pop(oid)
         self.version += 1
         return dict(row), self.version
+
+    async def list_versions(self, oid):
+        history = sorted(
+            self._history(oid), key=lambda snapshot: snapshot["version"], reverse=True
+        )
+        return [dict(snapshot) for snapshot in history], self.version
+
+    async def rollback(self, oid, *, target_version, author_oid, author_name):
+        target = next(
+            (
+                snapshot
+                for snapshot in self._history(oid)
+                if snapshot["version"] == target_version
+            ),
+            None,
+        )
+        if target is None:
+            return None, self.version, None
+
+        row = self.rows.get(oid)
+        if row is None:
+            highest = max(
+                [snapshot["version"] for snapshot in self._history(oid)] + [0]
+            )
+            row = {
+                "_id": oid,
+                "title": target["title"],
+                "content": target["content"],
+                "active": target["active"],
+                "author_oid": target["author_oid"] or author_oid,
+                "author_name": target["author_name"] or author_name,
+                "version": highest + 1,
+                "created_at": UPDATED,
+                "updated_at": UPDATED,
+            }
+            self.rows[oid] = row
+        else:
+            row["title"] = target["title"]
+            row["content"] = target["content"]
+            row["active"] = target["active"]
+            row["version"] += 1
+            row["updated_at"] = UPDATED
+
+        snapshot = self._snapshot(
+            oid,
+            row,
+            row["version"],
+            "rollback",
+            author_oid=author_oid,
+            author_name=author_name,
+            source_version=target_version,
+        )
+        self.version += 1
+        return dict(row), self.version, snapshot
 
 
 class FakeLog:
@@ -389,3 +521,225 @@ def test_admin_list_shape_includes_inactive(api) -> None:
     assert body["data"]["version"] == 2
     assert body["data"]["notifications"][0]["active"] is False
     assert body["data"]["notifications"][0]["author_name"] == "张老师"
+
+
+# ---------------------------------------------------------------------------
+# 内容哈希
+# ---------------------------------------------------------------------------
+
+
+def test_view_hash_matches_contract_algorithm(api) -> None:
+    http, _repo, _log = api
+    created = http.post(PREFIX, json=CREATE_PAYLOAD).json()["data"]["notification"]
+
+    assert created["content_hash"] == content_hash(
+        "活动调整", "本周活动改到周六。", True
+    )
+    assert len(created["content_hash"]) == 64
+    assert created["content_hash"] == created["content_hash"].lower()
+
+    edited = http.put(
+        f"{PREFIX}/{created['id']}", json={"active": False}
+    ).json()["data"]["notification"]
+    # active 参与哈希：正文没变，但停用本身也是一次内容变化。
+    assert edited["content_hash"] != created["content_hash"]
+    assert edited["content_hash"] == content_hash(
+        "活动调整", "本周活动改到周六。", False
+    )
+
+
+def test_audit_logs_carry_version_and_hash_prefix(api) -> None:
+    http, _repo, log = api
+    created = http.post(PREFIX, json=CREATE_PAYLOAD).json()["data"]["notification"]
+    assert log.type == "notification_create"
+    assert "版本 1" in log.text
+    assert created["content_hash"][:12] in log.text
+
+    edited = http.put(
+        f"{PREFIX}/{created['id']}", json={"title": "新标题"}
+    ).json()["data"]["notification"]
+    assert log.type == "notification_update"
+    assert "版本 2" in log.text
+    assert edited["content_hash"][:12] in log.text
+
+    http.delete(f"{PREFIX}/{created['id']}")
+    assert log.type == "notification_delete"
+    assert "版本 2" in log.text
+    assert edited["content_hash"][:12] in log.text
+
+
+# ---------------------------------------------------------------------------
+# 版本历史
+# ---------------------------------------------------------------------------
+
+
+def test_versions_endpoint_lists_history_newest_first(api) -> None:
+    http, _repo, _log = api
+    created = http.post(PREFIX, json=CREATE_PAYLOAD).json()["data"]["notification"]
+    http.put(f"{PREFIX}/{created['id']}", json={"title": "改过的标题"})
+
+    body = http.get(f"{PREFIX}/{created['id']}/versions").json()
+
+    assert body["status"] == "ok"
+    assert body["code"] == 200
+    assert body["data"]["version"] == 2
+    versions = body["data"]["versions"]
+    assert [row["version"] for row in versions] == [2, 1]
+    assert [row["op"] for row in versions] == ["update", "create"]
+    assert versions[1]["content_hash"] == created["content_hash"]
+    assert versions[0]["title"] == "改过的标题"
+    assert versions[0]["source_version"] is None
+    assert versions[0]["author_id"] == ADMIN["id"]
+    assert versions[0]["author_name"] == "张老师"
+    assert versions[0]["created_at"] == "2026-10-21T10:15:00"
+
+
+def test_versions_requires_admin_and_valid_oid(api) -> None:
+    http, _repo, log = api
+    created = http.post(PREFIX, json=CREATE_PAYLOAD).json()["data"]["notification"]
+    _as(http, STUDENT)
+
+    assert http.get(f"{PREFIX}/{created['id']}/versions").status_code == 403
+    assert http.post(
+        f"{PREFIX}/{created['id']}/rollback", json={"version": 1}
+    ).status_code == 403
+    assert log.insert_count == 1  # 只有创建那条
+
+    _as(http, ADMIN)
+    assert http.get(f"{PREFIX}/not-an-oid/versions").status_code == 400
+    assert http.post(
+        f"{PREFIX}/not-an-oid/rollback", json={"version": 1}
+    ).status_code == 400
+
+
+def test_versions_of_unknown_notice_is_empty_list(api) -> None:
+    http, _repo, _log = api
+    body = http.get(f"{PREFIX}/0d000000000000000000ffff/versions").json()
+    assert body["data"] == {"versions": [], "version": 0}
+
+
+def test_versions_survive_delete(api) -> None:
+    http, repo, _log = api
+    created = http.post(PREFIX, json=CREATE_PAYLOAD).json()["data"]["notification"]
+    http.delete(f"{PREFIX}/{created['id']}")
+
+    body = http.get(f"{PREFIX}/{created['id']}/versions").json()
+    versions = body["data"]["versions"]
+
+    assert [row["op"] for row in versions] == ["delete", "create"]
+    assert [row["version"] for row in versions] == [2, 1]
+    assert versions[0]["active"] is True  # 删除前的状态
+    assert versions[0]["content_hash"] == created["content_hash"]
+    assert body["data"]["version"] == repo.version == 2
+
+
+# ---------------------------------------------------------------------------
+# 回滚
+# ---------------------------------------------------------------------------
+
+
+def test_rollback_existing_notice_appends_revision(api) -> None:
+    http, repo, log = api
+    created = http.post(PREFIX, json=CREATE_PAYLOAD).json()["data"]["notification"]
+    edited = http.put(
+        f"{PREFIX}/{created['id']}", json={"title": "改过的标题"}
+    ).json()["data"]["notification"]
+
+    body = http.post(
+        f"{PREFIX}/{created['id']}/rollback", json={"version": 1}
+    ).json()
+
+    notice = body["data"]["notification"]
+    assert body["code"] == 200
+    assert notice["id"] == created["id"]
+    assert notice["title"] == "活动调整"
+    assert notice["content"] == "本周活动改到周六。"
+    assert notice["active"] is True
+    assert notice["version"] == 3
+    assert body["data"]["version"] == 3
+    assert body["data"]["content_hash"] == created["content_hash"]
+    assert repo.version == 3
+
+    versions = http.get(f"{PREFIX}/{created['id']}/versions").json()["data"][
+        "versions"
+    ]
+    assert [row["op"] for row in versions] == ["rollback", "update", "create"]
+    assert versions[0]["source_version"] == 1
+    assert versions[0]["content_hash"] == created["content_hash"]
+    # 回滚只还原内容；发布人和发送时间仍是不可变事实。
+    assert edited["author_id"] == notice["author_id"]
+    assert notice["created_at"] == created["created_at"]
+
+    assert log.type == "notification_rollback"
+    assert "版本 1" in log.text
+    assert "当前版本 3" in log.text
+    assert notice["content_hash"][:12] in log.text
+
+
+def test_rollback_deleted_notice_revives_same_oid(api) -> None:
+    http, repo, log = api
+    created = http.post(PREFIX, json=CREATE_PAYLOAD).json()["data"]["notification"]
+    http.put(f"{PREFIX}/{created['id']}", json={"content": "改过的正文。"})
+    http.delete(f"{PREFIX}/{created['id']}")
+    assert repo.rows == {}
+
+    body = http.post(
+        f"{PREFIX}/{created['id']}/rollback", json={"version": 1}
+    ).json()
+
+    notice = body["data"]["notification"]
+    assert notice["id"] == created["id"]
+    assert notice["content"] == "本周活动改到周六。"
+    assert notice["version"] == 4  # 历史最大版本 3（create/update/delete）+ 1
+    assert body["data"]["content_hash"] == created["content_hash"]
+    assert repo.rows[created["id"]]["version"] == 4
+    assert http.get(PREFIX).json()["data"]["notifications"][0]["id"] == created["id"]
+
+    versions = http.get(f"{PREFIX}/{created['id']}/versions").json()["data"][
+        "versions"
+    ]
+    assert [row["op"] for row in versions] == [
+        "rollback",
+        "delete",
+        "update",
+        "create",
+    ]
+    assert versions[0]["source_version"] == 1
+    assert log.type == "notification_rollback"
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {},
+        {"version": "1"},
+        {"version": 0},
+        {"version": -1},
+        {"version": 1.5},
+        {"version": True},
+        {"version": None},
+    ],
+)
+def test_rollback_rejects_invalid_version(api, payload) -> None:
+    http, repo, log = api
+    created = http.post(PREFIX, json=CREATE_PAYLOAD).json()["data"]["notification"]
+    version = repo.version
+    log.insert_count = 0
+
+    response = http.post(f"{PREFIX}/{created['id']}/rollback", json=payload)
+    assert response.status_code == 400
+    assert response.json()["detail"] == "版本号非法"
+    assert repo.version == version
+    assert log.insert_count == 0
+
+
+def test_rollback_unknown_version_is_404(api) -> None:
+    http, repo, log = api
+    created = http.post(PREFIX, json=CREATE_PAYLOAD).json()["data"]["notification"]
+    log.insert_count = 0
+
+    response = http.post(f"{PREFIX}/{created['id']}/rollback", json={"version": 99})
+    assert response.status_code == 404
+    assert response.json()["detail"] == "版本不存在"
+    assert repo.version == 1
+    assert log.insert_count == 0
