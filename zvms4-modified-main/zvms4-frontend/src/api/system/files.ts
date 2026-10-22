@@ -44,11 +44,37 @@ export function statFile(path: string) {
   })
 }
 
+// 与后端 /preview 契约一一对应:kind 决定 content 的消费方式
+export type FilePreviewKind = 'text' | 'image' | 'binary' | 'too_large'
+
+export interface FilePreviewData {
+  kind: FilePreviewKind
+  mime: string
+  size: number
+  content?: string
+  encoding?: string
+  truncated: boolean
+}
+
+export interface FilePreviewResponse {
+  status: string
+  code: number
+  data: FilePreviewData
+}
+
 // 流式下载,≤256MB;失败时后端 detail 会给出中文原因(413/403/400)
 export function downloadFile(path: string) {
   return axios.get<Blob>('/system/files/download', {
     params: { path },
     responseType: 'blob'
+  })
+}
+
+// kind=text 时 content 为原文(encoding utf-8|gbk|latin-1);kind=image 时
+// content 为纯 base64(无 data URL 前缀);binary/too_large 无 content
+export function previewFile(path: string) {
+  return axios.get<FilePreviewResponse>('/system/files/preview', {
+    params: { path }
   })
 }
 

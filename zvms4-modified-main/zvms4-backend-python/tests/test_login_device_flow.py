@@ -287,9 +287,103 @@ def test_foreign_device_gets_challenge_and_no_token(client, env) -> None:
     assert [row for row in env.logs if row["type"] == "user_login"] == []
 
 
-def test_missing_device_header_skips_primary_gate(client, env) -> None:
-    """老客户端不带 Xuehai-Id：没有证据，不拦。"""
+def test_missing_device_header_blocks_student(client, env) -> None:
+    """老客户端不带 Xuehai-Id：学生是在非学海设备上，必须拒绝。"""
     env.user["primary_xuehai_id"] = XUEHAI
+
+    response = _login(client)
+
+    assert response.status_code == 403
+    assert response.json()["detail"]["code"] == "DEVICE_REQUIRED"
+
+
+_MISSING = object()
+
+
+def _set_roles(env, roles) -> None:
+    if roles is _MISSING:
+        env.user.pop("roles", None)
+    else:
+        env.user["roles"] = roles
+
+
+def test_student_without_device_is_rejected_without_challenge(client, env) -> None:
+    response = _login(client)
+
+    assert response.status_code == 403
+    detail = response.json()
+    assert detail["detail"] == {
+        "code": "DEVICE_REQUIRED",
+        "message": device_guard.DEVICE_REQUIRED_MESSAGE,
+    }
+    assert "token" not in detail
+    assert "challenge" not in detail["detail"]
+
+    # 不发 challenge、不封禁、不写成功登录日志，但留一条同类 warning 审计
+    assert env.challenges == {}
+    assert env.bans == []
+    assert env.device_upserts == []
+    assert [row for row in env.logs if row["type"] == "user_login"] == []
+    required = [row for row in env.logs if row["type"] == "device_required"]
+    assert len(required) == 1
+    assert required[0]["level"] == "warning"
+
+
+def test_unbound_student_without_device_is_rejected(client, env) -> None:
+    env.user["primary_xuehai_id"] = None
+
+    response = _login(client)
+
+    assert response.status_code == 403
+    assert response.json()["detail"]["code"] == "DEVICE_REQUIRED"
+
+
+@pytest.mark.parametrize("roles", [[], None, _MISSING])
+def test_missing_or_empty_roles_is_treated_as_student(client, env, roles) -> None:
+    _set_roles(env, roles)
+
+    response = _login(client)
+
+    assert response.status_code == 403
+    assert response.json()["detail"]["code"] == "DEVICE_REQUIRED"
+
+
+@pytest.mark.parametrize("roles", [["secretary"], ["department"], ["admin"], ["teacher"]])
+def test_privileged_roles_login_without_device_header(client, env, roles) -> None:
+    _set_roles(env, roles)
+
+    response = _login(client)
+
+    assert response.status_code == 200
+    assert response.json()["token"] == "signed-token"
+
+
+@pytest.mark.parametrize("roles", ["secretary", {"admin": True}, 123])
+def test_bad_role_type_is_treated_as_student(client, env, roles) -> None:
+    _set_roles(env, roles)
+
+    response = _login(client)
+
+    assert response.status_code == 403
+    assert response.json()["detail"]["code"] == "DEVICE_REQUIRED"
+
+
+@pytest.mark.parametrize("roles", [["secretary"], ["department"], ["admin"], ["teacher"]])
+def test_privileged_roles_bypass_primary_device_gate(client, env, roles) -> None:
+    """团支书及以上换了设备直接放行，不再走临时密码。"""
+    _set_roles(env, roles)
+    env.user["primary_xuehai_id"] = XUEHAI
+
+    response = _login(client, OTHER)
+
+    assert response.status_code == 200
+    assert response.json()["token"] == "signed-token"
+    assert env.challenges == {}
+
+
+def test_multi_role_hits_exemption(client, env) -> None:
+    _set_roles(env, ["student", "secretary"])
+
     assert _login(client).status_code == 200
 
 

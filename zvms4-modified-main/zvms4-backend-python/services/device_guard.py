@@ -45,10 +45,18 @@ MAX_TEMP_ATTEMPTS = 3
 MAX_TEMP_PASSWORDS_SCANNED = 3
 RULE_CODE_FOREIGN_DEVICE = "foreign_device_login"
 
+# 团支书及以上：不受「必须学海设备」与主设备闸约束，可自由换设备登入。
+# teacher 也在此列——教师没有主学海设备，按学生口径要求会把教师账号整体锁死。
+PRIVILEGED_ROLES = frozenset({"admin", "department", "secretary", "teacher"})
+
 DEVICE_BANNED_MESSAGE = "这台设备由于违规使用，已被限制平台访问。"
 DEVICE_NOT_PRIMARY_MESSAGE = (
     "正在尝试登入不属于本机的主学海设备账号；"
     "如确需在本机登入，请让团支书或管理员签发临时密码。"
+)
+DEVICE_REQUIRED_MESSAGE = (
+    "普通用户需使用学海设备登录；"
+    "如确需在其它设备登入，请让团支书或管理员签发临时密码。"
 )
 TEMP_PASSWORD_INVALID_MESSAGE = "临时密码错误或已失效"
 CHALLENGE_MISMATCH_MESSAGE = "临时密码只能在一台设备上使用"
@@ -76,6 +84,17 @@ class DeviceBanned(Exception):
 # ---------------------------------------------------------------------------
 # 小工具
 # ---------------------------------------------------------------------------
+
+
+def has_privileged_role(roles: Any) -> bool:
+    """``roles`` 缺失 / ``None`` / 坏类型一律按学生处理（无豁免）。
+
+    登录路径上不能用异常表达未知角色：一条脏数据只能让本人走学生口径，
+    不能把登录打成 500。
+    """
+    if not isinstance(roles, (list, tuple, set, frozenset)):
+        return False
+    return bool(PRIVILEGED_ROLES & {role for role in roles if isinstance(role, str)})
 
 
 def _token_hash(token: str) -> str:
