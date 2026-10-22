@@ -1,5 +1,5 @@
 -- ============================================================================
--- V014__add_notifications.sql
+-- V015__add_notifications.sql
 -- ----------------------------------------------------------------------------
 -- 站内通知: adds NOTIFICATIONS and the singleton NOTIFICATION_STATE counter on
 -- an instance where V001 was already applied.

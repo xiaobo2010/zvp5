@@ -558,3 +558,99 @@ it('shows empty states when both endpoints fail (e.g. 403)', async () => {
 
   wrapper.unmount()
 })
+
+const permanentRuleFixture: BanRule = {
+  ...structuredClone(ruleFixture),
+  code: 'permanent_gradient',
+  name: '永久梯度规则',
+  penalties: [1, 3, null]
+}
+
+function findButton(wrapper: VueWrapper, label: string) {
+  return wrapper.findAll('button').find((button) => button.text() === label)
+}
+
+async function openEditDialog(wrapper: VueWrapper) {
+  await findButton(wrapper, 'manage.banRules.rule.edit')!.trigger('click')
+  return wrapper.find('.el-dialog-stub')
+}
+
+async function submitPenaltiesInput(wrapper: VueWrapper, text: string) {
+  const dialog = wrapper.find('.el-dialog-stub')
+  await dialog.find('.el-input-stub').setValue(text)
+  await findButton(wrapper, 'manage.banRules.dialog.save')!.trigger('click')
+  await flushPromises()
+}
+
+it('keeps the permanent grade when saving an untouched gradient', async () => {
+  mockApi({ rules: [structuredClone(permanentRuleFixture)] })
+  const wrapper = mountPage()
+  await flushPromises()
+
+  const dialog = await openEditDialog(wrapper)
+  expect((dialog.find('.el-input-stub').element as HTMLInputElement).value).toBe('1,3,0')
+
+  await findButton(wrapper, 'manage.banRules.dialog.save')!.trigger('click')
+  await flushPromises()
+
+  expect(updateRule).toHaveBeenCalledWith('permanent_gradient', {
+    config: { threshold: 3, window_hours: 24 },
+    penalties: [1, 3, null]
+  })
+  expect(elMessageSuccessSpy).toHaveBeenCalledWith('manage.banRules.savedNotice')
+
+  wrapper.unmount()
+})
+
+it('renders the permanent grade without leaking null', async () => {
+  mockApi({ rules: [structuredClone(permanentRuleFixture)] })
+  const wrapper = mountPage()
+  await flushPromises()
+
+  const rulesTable = wrapper.findAll('.el-table-stub')[0]!
+  expect(rulesTable.text()).toContain('manage.banRules.rule.penaltyPermanent')
+  expect(rulesTable.text()).not.toContain('null')
+
+  wrapper.unmount()
+})
+
+it('accepts 0 as the permanent grade only in the last position', async () => {
+  mockApi({ rules: [structuredClone(permanentRuleFixture)] })
+  const wrapper = mountPage()
+  await flushPromises()
+
+  await openEditDialog(wrapper)
+  await submitPenaltiesInput(wrapper, '0')
+  expect(updateRule).toHaveBeenLastCalledWith('permanent_gradient', {
+    config: { threshold: 3, window_hours: 24 },
+    penalties: [null]
+  })
+
+  await openEditDialog(wrapper)
+  await submitPenaltiesInput(wrapper, '1,0')
+  expect(updateRule).toHaveBeenLastCalledWith('permanent_gradient', {
+    config: { threshold: 3, window_hours: 24 },
+    penalties: [1, null]
+  })
+
+  wrapper.unmount()
+})
+
+it('rejects 0 outside the last position or repeated instead of silently fixing it', async () => {
+  mockApi({ rules: [structuredClone(permanentRuleFixture)] })
+  const wrapper = mountPage()
+  await flushPromises()
+
+  await openEditDialog(wrapper)
+  for (const text of ['0,1', '0,0']) {
+    await submitPenaltiesInput(wrapper, text)
+    expect(elMessageErrorSpy).toHaveBeenLastCalledWith(
+      'manage.banRules.validation.penaltiesPermanentPosition'
+    )
+  }
+
+  expect(updateRule).not.toHaveBeenCalled()
+  expect(wrapper.find('.el-dialog-stub').exists()).toBe(true)
+
+  wrapper.unmount()
+})

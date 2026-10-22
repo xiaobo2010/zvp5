@@ -73,6 +73,8 @@ def _row(oid: str, **overrides) -> _Row:
         "ban_until": None,
         "ban_source": None,
         "ban_rule": None,
+        # V014: 主学海设备（NULL = 未绑定）
+        "primary_xuehai_id": None,
     }
     mapping.update(overrides)
     return _Row(mapping)
@@ -85,8 +87,8 @@ def _bound_oids(stmt) -> list[str]:
 
 def test_stmt_selects_the_full_user_columns_and_filters_by_in() -> None:
     stmt = _get_many_by_oids_stmt([OID_A, OID_B])
-    # 11 个原有列 + V013 的 4 个封禁元数据列
-    assert len(stmt.selected_columns) == len(_user_columns()) == 15
+    # 11 个原有列 + V013 的 4 个封禁元数据列 + V014 的主学海设备列
+    assert len(stmt.selected_columns) == len(_user_columns()) == 16
     assert "IN" in str(stmt.whereclause).upper()
 
 

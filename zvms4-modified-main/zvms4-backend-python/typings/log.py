@@ -2,7 +2,7 @@ from fastapi import Request, Depends
 from datetime import datetime
 
 from db import backends
-from util.object_id import authenticated_log_user
+from util.object_id import authenticated_log_user, log_level_floor
 
 
 class ZVMSLog:
@@ -51,6 +51,19 @@ class ZVMSLog:
             self.level = level
         return self
 
+    def effective_level(self) -> str:
+        """应用请求级级别下限（临时密码会话内的 info 提升为 warning）。
+
+        「提升」而不是「覆盖」：调用方显式写了 ``warning``/``error`` 的必须原样
+        保留，下限只负责把**看起来正常**的 info 记录拉进安全审计的视野。
+        空级别（``ZVMSLog`` 允许传 ``""``）按未指定处理，同样受下限约束——
+        否则随手省略 level 的日志就能绕过这条规则。
+        """
+        floor = log_level_floor.get()
+        if floor == "warning" and self.level in ("", "info"):
+            return "warning"
+        return self.level
+
     async def insert_log(self, session=None):
         repo = backends.get_applogs_repo(session) if session is not None else backends.get_applogs_repo()
         return await repo.insert(
@@ -59,7 +72,7 @@ class ZVMSLog:
             self.data,
             self.timestamp,
             self.type,
-            self.level,
+            self.effective_level(),
             self.xuehai_id,
         )
 

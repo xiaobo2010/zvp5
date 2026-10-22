@@ -12,14 +12,15 @@ export interface BanRule {
   enabled: boolean
   builtin: boolean
   config: Partial<BanRuleConfig>
-  penalties: number[]
+  // 正数为封禁天数,null 表示永久(只能是梯度末位)
+  penalties: (number | null)[]
   updated_at: string
 }
 
 export interface BanRuleUpdate {
   enabled?: boolean
   config?: Partial<BanRuleConfig>
-  penalties?: number[]
+  penalties?: (number | null)[]
 }
 
 export interface BanRecord {
