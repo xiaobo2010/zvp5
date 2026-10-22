@@ -314,7 +314,7 @@ watch(
               </template>
             </div>
           </template>
-          <ZMarkdown v-else :content="selected.content" />
+          <ZMarkdown v-else :source="selected.content" />
         </section>
       </div>
     </div>

@@ -242,7 +242,11 @@ function syncPlatformGuard(_newState: [boolean, string], oldState?: [boolean, st
   }
 }
 
-watch([() => userStore.isLogin, () => route.path], syncPlatformGuard, { immediate: true })
+watch(
+  () => [userStore.isLogin, route.path] as [boolean, string],
+  (state, oldState) => syncPlatformGuard(state, oldState),
+  { immediate: true }
+)
 
 onUnmounted(() => {
   if (banTimer) {

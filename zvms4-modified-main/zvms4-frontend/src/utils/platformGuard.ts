@@ -38,7 +38,8 @@ export function setPlatformGuardAccount(oid: string): void {
   bridgeReported = false
   tamperAppReported = false
   tamperMetaReported = false
-  devtoolsStreak = 0
+  devtoolsStrongStreak = 0
+  devtoolsWeakStreak = 0
 }
 
 /** 登出时清理当前账号的全部巡检键。 */
@@ -48,7 +49,8 @@ export function clearPlatformGuardData(): void {
   bridgeReported = false
   tamperAppReported = false
   tamperMetaReported = false
-  devtoolsStreak = 0
+  devtoolsStrongStreak = 0
+  devtoolsWeakStreak = 0
 }
 
 // localStorage 在隐私模式/配额满时会抛异常;巡检是旁路能力,不能因此影响主流程。
@@ -202,38 +204,49 @@ function detectBridge(): PlatformSignal | null {
   return { signal: 'bridge', detail }
 }
 
-/** 三个独立条件同时满足两个才算命中,单一条件(分屏/卡顿)不构成证据。 */
+/**
+ * devtools 命中分两级,不同证据用不同连击阈值:
+ * - strong(强证据):debugger 真实挂起 > 300ms。开着开发者工具时注入的
+ *   debugger 会真的挂起主线程,低端设备上连续 3 个采样周期都出现几乎
+ *   不可能是巧合 —— 未停靠的独立工具窗口(不压缩窗口)只能靠这条兜住。
+ * - weak(弱证据):窗口宽高双向压缩都 > 240px(停靠式面板的典型形态),
+ *   连续 5 个采样周期才成立,避免误伤分屏/缩放。
+ *
+ * 同一采样周期里 strong 优先,只推进一个计数,不会双计数导致重复上报;
+ * 两个条件都不成立时,两个连击计数一并清零。
+ */
 const DEVTOOLS_GAP_PX = 240
 const DEBUGGER_SUSPEND_MS = 300
-const DEVTOOLS_STREAK = 5
+const DEVTOOLS_STRONG_STREAK = 3
+const DEVTOOLS_WEAK_STREAK = 5
 
-let devtoolsStreak = 0
+type DevtoolsHit = 'strong' | 'weak' | 'none'
+
+let devtoolsStrongStreak = 0
+let devtoolsWeakStreak = 0
 
 /**
- * 单次 devtools 采样:三个条件里至少两个同时成立才累计连续命中。
- * debugger 计时 >300ms 才算是真被断点/单步挂起,120-300ms 区间的
- * 长任务/GC/低端平板卡顿不再算命中。
+ * 单次 devtools 采样,归一成 strong / weak / none 三档:
+ * debugger 挂起 >300ms 才算 strong(120-300ms 区间的长任务/GC/低端平板
+ * 卡顿不算),窗口宽高双向压缩 >240px 才算 weak,两者都不成立就是 none。
+ * debugger 每次都要测:停靠式面板同时满足 weak 与 strong 时,生效的是
+ * strong(阈值更低、证据更硬)。
  */
-function probeDevtoolsConditions(): boolean {
+function probeDevtoolsConditions(): DevtoolsHit {
   const widthGap = window.outerWidth - window.innerWidth
   const heightGap = window.outerHeight - window.innerHeight
-  let conditions = 0
-  if (widthGap > DEVTOOLS_GAP_PX) {
-    conditions += 1
-  }
-  if (heightGap > DEVTOOLS_GAP_PX) {
-    conditions += 1
-  }
-  if (conditions >= 2) {
-    return true
-  }
+  const squeezed = widthGap > DEVTOOLS_GAP_PX && heightGap > DEVTOOLS_GAP_PX
+
   const started = performance.now()
   debugger
   const suspended = performance.now() - started
   if (suspended > DEBUGGER_SUSPEND_MS) {
-    conditions += 1
+    return 'strong'
   }
-  return conditions >= 2
+  if (squeezed) {
+    return 'weak'
+  }
+  return 'none'
 }
 
 /**
@@ -278,7 +291,8 @@ function detectTamper(now: number): PlatformSignal | null {
 
 /**
  * 采集当前命中的信号。iframe / bridge / tamper 自带会话级状态机,
- * devtools 需连续 5 个采样周期双条件命中,高频调用也不会放大开销。
+ * devtools 分 strong / weak 两级连击:debugger 挂起连续 3 个采样周期即报,
+ * 窗口双向压缩连续 5 个采样周期才报,高频调用也不会放大开销。
  */
 export function detectSignals(now: number = Date.now()): PlatformSignal[] {
   const signals: PlatformSignal[] = []
@@ -294,14 +308,25 @@ export function detectSignals(now: number = Date.now()): PlatformSignal[] {
   if (tamper) {
     signals.push(tamper)
   }
-  if (probeDevtoolsConditions()) {
-    devtoolsStreak += 1
-    if (devtoolsStreak >= DEVTOOLS_STREAK) {
-      devtoolsStreak = 0
+  const hit = probeDevtoolsConditions()
+  if (hit === 'strong') {
+    // strong 优先:weak 计数不推进,同一周期不会双计数
+    devtoolsWeakStreak = 0
+    devtoolsStrongStreak += 1
+    if (devtoolsStrongStreak >= DEVTOOLS_STRONG_STREAK) {
+      devtoolsStrongStreak = 0
+      signals.push({ signal: 'devtools', detail: 'panel-detected' })
+    }
+  } else if (hit === 'weak') {
+    devtoolsStrongStreak = 0
+    devtoolsWeakStreak += 1
+    if (devtoolsWeakStreak >= DEVTOOLS_WEAK_STREAK) {
+      devtoolsWeakStreak = 0
       signals.push({ signal: 'devtools', detail: 'panel-detected' })
     }
   } else {
-    devtoolsStreak = 0
+    devtoolsStrongStreak = 0
+    devtoolsWeakStreak = 0
   }
   return signals
 }
@@ -327,7 +352,9 @@ export async function checkPlatform(): Promise<void> {
   if (!readKeyRaw('token')) {
     return
   }
-  if (document.visibilityState !== 'visible') {
+  // 页面不可见(切到别的标签页/最小化)时不采样:连击计数也不推进,
+  // 否则后台挂机时长会被算成「持续命中」。
+  if (document.hidden || document.visibilityState !== 'visible') {
     return
   }
 
