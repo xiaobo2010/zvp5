@@ -1308,17 +1308,19 @@ class BindingsRepo(Protocol):
 
 
 class BanRulesRepo(Protocol):
-    """Data access for ``BAN_RULES`` (规则封禁配置, V013).
+    """Data access for ``BAN_RULES`` (规则封禁配置, V013 / V016).
 
     Satisfied by ``db.repos.oracle.ban_rules.OracleBanRulesRepo``. Rows use the
     Mongo document shape ``{"_id": <24-char lowercase hex str>, "code": str,
-    "name": str, "enabled": bool, "config": str, "penalties": str,
-    "builtin": bool, "created_at": datetime, "updated_at": datetime}``.
+    "name": str, "trigger": str | None, "enabled": bool, "config": str,
+    "penalties": str, "builtin": bool, "created_at": datetime,
+    "updated_at": datetime}``.
 
     ``config`` / ``penalties`` stay **JSON text**: the DB only validates them
     (``IS JSON``), and parsing is the service layer's decision (it owns the
-    schema of each rule). ``code`` is the stable identity the login path quotes;
-    :meth:`update_by_code` never touches it.
+    schema of each rule). ``code`` is the administrator-facing identity;
+    ``trigger`` is the **evaluation** identity — the login / report paths look a
+    rule up by trigger, so at most one rule may own one trigger.
     """
 
     async def list_all(self) -> list[Row]:
@@ -1329,10 +1331,37 @@ class BanRulesRepo(Protocol):
         """Return the rule with ``code == code``, or ``None``."""
         ...
 
+    async def get_by_trigger(self, trigger: str) -> Row | None:
+        """Return the rule owning ``trigger``, or ``None`` (unique index ⇒ ≤ 1)."""
+        ...
+
+    async def insert(
+        self,
+        code: str,
+        name: str,
+        trigger: str,
+        *,
+        enabled: bool,
+        config: str,
+        penalties: str,
+        builtin: bool = False,
+    ) -> str:
+        """Create one rule and return its new ``_id`` (hex string).
+
+        ``code`` / ``trigger`` uniqueness is enforced by the DB; a violation is
+        the caller's 409, not something this layer retries.
+        """
+        ...
+
+    async def delete_by_code(self, code: str) -> int:
+        """Delete the rule with ``code``; return the row count (``0`` ⇒ absent)."""
+        ...
+
     async def update_by_code(
         self,
         code: str,
         *,
+        name: str | None = None,
         enabled: bool | None = None,
         config: str | None = None,
         penalties: str | None = None,
@@ -1341,7 +1370,59 @@ class BanRulesRepo(Protocol):
 
         ``None`` means "leave unchanged" (so ``enabled=False`` is expressible).
         ``0`` = no rule with that ``code`` — the caller turns it into a 404.
-        ``code`` / ``name`` / ``builtin`` are immutable here.
+        ``code`` / ``trigger`` / ``builtin`` are immutable here.
+        """
+        ...
+
+
+class ViolationsRepo(Protocol):
+    """Data access for ``BAN_VIOLATIONS`` (客户端上报的违规信号, V016).
+
+    Rows use the Mongo document shape ``{"_id": <hex str>, "user_oid": str,
+    "trigger": str, "signal": str, "xuehai_id": str | None,
+    "detail": str | None, "created_at": datetime}``; :meth:`list_page` rows add
+    ``user_name`` / ``user_id`` from the ``USERS`` join (``None`` if the account
+    is gone).
+
+    The table is append-only: counting inside a window (``count_since``) is what
+    turns repeated signals into a ban, and re-counting the same row must never
+    be possible.
+    """
+
+    async def insert(
+        self,
+        user_oid: str,
+        trigger: str,
+        signal: str,
+        *,
+        xuehai_id: str | None = None,
+        detail: str | None = None,
+    ) -> str:
+        """Append one violation and return its new ``_id``."""
+        ...
+
+    async def exists_recent(
+        self, user_oid: str, signal: str, since: datetime
+    ) -> bool:
+        """Whether the user already reported ``signal`` at/after ``since``.
+
+        This is the de-duplication gate: the same signal must not inflate the
+        counter (and hand out a ban) just because a page was reloaded.
+        """
+        ...
+
+    async def count_since(
+        self, user_oid: str, trigger: str, since: datetime
+    ) -> int:
+        """Violation count for ``(user_oid, trigger)`` at/after ``since``."""
+        ...
+
+    async def list_page(
+        self, query: str, page: int, size: int
+    ) -> tuple[list[Row], int]:
+        """Return ``(rows, total)`` for one page, newest first.
+
+        ``page`` is 1-based; ``query`` matches 姓名 / 学号 (empty ⇒ no filter).
         """
         ...
 

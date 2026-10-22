@@ -1,9 +1,13 @@
 """封禁规则与封禁流水的管理端点（前缀 ``/api/v3/ban``，admin only）。
 
-为什么规则要有管理端点：``multi_device_login`` 的阈值/时间窗/处罚梯度全部在
-``BAN_RULES`` 里，改一次就影响整条登录闸门。把它们暴露成「只改tunables」的
-接口（``code`` / ``name`` / ``builtin`` 不可改），既能让管理员按学校实际情况
-调参，又不会在运行时把代码引用的 ``code`` 改坏。
+为什么规则要有管理端点：规则的阈值/时间窗/处罚梯度全部在 ``BAN_RULES`` 里，
+改一次就影响整条判定闸门。把它们暴露成「只改 tunables」的接口
+（``code`` / ``trigger`` / ``builtin`` 不可改），既能让管理员按学校实际情况
+调参，又不会在运行时把求值入口引用的 ``trigger`` 改坏。
+
+管理员可以**新增/删除**规则，但**不能写检查逻辑**：检查项（trigger）由平台
+在 :data:`TRIGGERS` 里注册，管理员只能从下拉里选。这是「谁能扩大封禁口径」
+的边界——平台提供证据来源，学校决定阈值与梯度。
 
 ``CONFIG`` / ``PENALTIES`` 在库里是文本（DB 只保证 ``IS JSON``），解析与校验
 都在本层：读路径对坏数据降级（``{}`` / ``[]``），写路径对非法值直接 422，
@@ -13,6 +17,7 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime
 from typing import Optional
 
@@ -26,10 +31,50 @@ from util.user import get_user_display_name
 
 router = APIRouter()
 
+# ---------------------------------------------------------------------------
+# 检查项注册表
+#
+# 这是**平台**的能力清单，不是学校的配置：每一项对应一段求值代码（登录闸 /
+# 上报闸）。管理员新增规则时只能从这张表里选 trigger，所以「封禁口径」的
+# 扩张必须经过一次代码发布，而不是点几下管理界面。
+#
+# ``config`` 给的是新建规则的默认参数（阈值 / 窗口），前端据此填表单初值。
+# ---------------------------------------------------------------------------
+
+TRIGGERS: tuple[dict, ...] = (
+    {
+        "trigger": "foreign_device_login",
+        "name": "非主学海设备登录",
+        "evaluation": "login",
+        "description": (
+            "登录来自不属于本人的主学海设备：证据是临时密码连续输错次数与"
+            "设备归属查询，达到阈值后账号按梯度封禁（设备可单独解封）。"
+        ),
+        "config": {"threshold": 2, "window_hours": 1},
+    },
+    {
+        "trigger": "platform_misuse",
+        "name": "平台违规使用",
+        "evaluation": "report",
+        "description": (
+            "客户端上报的违规信号（页面被嵌套、学海桥缺失、调试器/注入痕迹）；"
+            "窗口内累计到阈值才按梯度封号，管理员/学生会/教师只记录不封。"
+        ),
+        "config": {"threshold": 2, "window_hours": 1},
+    },
+)
+
+TRIGGER_REGISTRY: dict[str, dict] = {item["trigger"]: item for item in TRIGGERS}
+
+# 规则的 code 会出现在审计日志与流水里，限定成 ASCII 小写下划线：
+# 中文/空格会让「引用了哪条规则」在日志里无法 grep。
+RULE_CODE_PATTERN = re.compile(r"^[a-z][a-z0-9_]{2,63}$")
+
 
 def _require_admin(user: dict) -> None:
     if "admin" not in (user.get("per") or []):
         raise HTTPException(status_code=403, detail="权限不足")
+
 
 
 def _iso(value) -> Optional[str]:
@@ -61,10 +106,19 @@ def _rule_penalties(rule: dict) -> list:
     return penalties if isinstance(penalties, list) else []
 
 
+def _trigger_name(trigger: str | None) -> str:
+    """检查项的中文名；未知/空 trigger 返回空串（老规则或手工改库的数据）。"""
+    entry = TRIGGER_REGISTRY.get(trigger or "")
+    return entry["name"] if entry else ""
+
+
 def _rule_view(rule: dict) -> dict:
+    trigger = rule.get("trigger") or ""
     return {
         "code": rule["code"],
         "name": rule["name"],
+        "trigger": trigger,
+        "trigger_name": _trigger_name(trigger),
         "enabled": bool(rule.get("enabled")),
         "builtin": bool(rule.get("builtin")),
         "config": _rule_config(rule),
@@ -85,10 +139,24 @@ class PutRuleConfig(BaseModel):
 
 
 class PutRuleRequest(BaseModel):
+    # ``name`` 可改；``trigger`` 只用于「传了就报 422」的显式拒绝——静默忽略
+    # 会让调用方以为改成功了。
+    name: Optional[str] = None
+    trigger: Optional[str] = None
     enabled: Optional[bool] = None
     config: Optional[PutRuleConfig] = None
     # 末位 ``null`` = 永久处罚（梯度用尽后不再累计天数）。
     penalties: Optional[list[Optional[int]]] = None
+
+
+class PostRuleRequest(BaseModel):
+    code: str
+    name: str
+    trigger: str
+    enabled: bool = True
+    # 省略的项取注册表默认值（前端表单初值就是它），显式传的必须过范围校验。
+    config: Optional[PutRuleConfig] = None
+    penalties: list[Optional[int]]
 
 
 def _check_range(name: str, value: int, low: int, high: int) -> None:
@@ -138,6 +206,130 @@ async def list_ban_rules(user=Depends(get_current_user)):
     }
 
 
+@router.get("/triggers")
+async def list_triggers(user=Depends(get_current_user)):
+    """平台注册的检查项：管理员新增规则时的下拉来源。
+
+    返回 ``config`` 是**默认参数**，不是某条规则的现值——表单需要一个合理的
+    初值，而现值属于 ``GET /rules``。
+    """
+    _require_admin(user)
+    return {"status": "ok", "code": 200, "data": list(TRIGGERS)}
+
+
+@router.post("/rules", status_code=201)
+async def create_ban_rule(
+    payload: PostRuleRequest,
+    user=Depends(get_current_user),
+    log=Depends(inject_log),
+):
+    """新增一条规则（检查项由平台注册，管理员只能选不能写）。
+
+    两条 409 是同一个约束的两面：``code`` 是管理员看到的名字，``trigger`` 是
+    求值入口的入口键。后者尤其不能重复——同一检查项两条规则时，「这个用户该
+    按哪条梯度封」取决于查询顺序，封禁天数就不可复现了。
+    """
+    _require_admin(user)
+
+    if not RULE_CODE_PATTERN.match(payload.code or ""):
+        raise HTTPException(
+            status_code=422,
+            detail="code 必须匹配 ^[a-z][a-z0-9_]{2,63}$（小写字母开头，可含数字与下划线）",
+        )
+
+    name = (payload.name or "").strip()
+    if not 1 <= len(name) <= 128:
+        raise HTTPException(status_code=422, detail="规则名称长度必须在 1–128 之间")
+
+    entry = TRIGGER_REGISTRY.get(payload.trigger or "")
+    if entry is None:
+        raise HTTPException(
+            status_code=422, detail=f"未知的检查项：{payload.trigger}"
+        )
+
+    repo = backends.get_ban_rules_repo()
+    if await repo.get_by_code(payload.code) is not None:
+        raise HTTPException(status_code=409, detail="规则 code 已存在")
+    holder = await repo.get_by_trigger(payload.trigger)
+    if holder is not None:
+        raise HTTPException(
+            status_code=409,
+            detail=f"检查项「{entry['name']}」已被规则 {holder['code']} 使用",
+        )
+
+    # 以注册表默认值为底：只传了一项时另一项不会缺，配置形状始终完整。
+    config = dict(entry["config"])
+    if payload.config is not None:
+        if payload.config.threshold is not None:
+            _check_range("threshold", payload.config.threshold, 2, 20)
+            config["threshold"] = payload.config.threshold
+        if payload.config.window_hours is not None:
+            _check_range("window_hours", payload.config.window_hours, 1, 168)
+            config["window_hours"] = payload.config.window_hours
+    penalties = _validated_penalties(payload.penalties)
+
+    await repo.insert(
+        payload.code,
+        name,
+        payload.trigger,
+        enabled=payload.enabled,
+        config=json.dumps(config, ensure_ascii=False),
+        penalties=json.dumps(penalties, ensure_ascii=False),
+    )
+
+    created = await repo.get_by_code(payload.code)
+    if created is None:
+        # 插入成功后立刻读不到 = 并发删除；对外就是「对象不存在」。
+        raise HTTPException(status_code=404, detail="规则不存在")
+
+    log.with_text(
+        f"管理员 {await get_user_display_name(user['id'])} 新增封禁规则 "
+        f"{payload.code}（检查项 {entry['name']}）："
+        f"threshold {config.get('threshold')}，"
+        f"window_hours {config.get('window_hours')}，"
+        f"penalties {_json_text(penalties)}，"
+        f"enabled {payload.enabled}",
+        type="ban_change",
+        level="warning",
+    )
+    await log.insert_log()
+
+    return {"status": "ok", "code": 201, "data": _rule_view(created)}
+
+
+@router.delete("/rules/{code}", status_code=204)
+async def delete_ban_rule(
+    code: str,
+    user=Depends(get_current_user),
+    log=Depends(inject_log),
+):
+    """删除规则。
+
+    内置规则只能停用不能删除：它们对应平台的一条求值链路（设备闸/上报闸），
+    删掉后那条链路会「静默不封」，管理员在界面上看不出区别，只会以为策略还在。
+    """
+    _require_admin(user)
+
+    repo = backends.get_ban_rules_repo()
+    rule = await repo.get_by_code(code)
+    if rule is None:
+        raise HTTPException(status_code=404, detail="规则不存在")
+    if rule.get("builtin"):
+        raise HTTPException(status_code=409, detail="内置规则不能删除，只能停用")
+
+    if await repo.delete_by_code(code) == 0:
+        # 前置读与删除之间的并发删除：对外仍是 404。
+        raise HTTPException(status_code=404, detail="规则不存在")
+
+    log.with_text(
+        f"管理员 {await get_user_display_name(user['id'])} 删除了封禁规则 {code}"
+        f"（{rule.get('name')}）",
+        type="ban_change",
+        level="warning",
+    )
+    await log.insert_log()
+
+
 @router.put("/rules/{code}")
 async def update_ban_rule(
     code: str,
@@ -153,7 +345,17 @@ async def update_ban_rule(
     # 改动前的快照要在此刻取：后续 update 之后同一个 dict 可能已被就地改写。
     before = _rule_view(rule)
 
+    # 检查项不可改：换 trigger 等于换一条规则（求值链路、证据来源全变了），
+    # 静默忽略又会让调用方误以为改成功——两种都不行，直接 422。
+    if payload.trigger is not None and payload.trigger != (rule.get("trigger") or ""):
+        raise HTTPException(status_code=422, detail="规则的检查项（trigger）不可修改")
+
     fields: dict = {}
+    if payload.name is not None:
+        name = payload.name.strip()
+        if not 1 <= len(name) <= 128:
+            raise HTTPException(status_code=422, detail="规则名称长度必须在 1–128 之间")
+        fields["name"] = name
     if payload.enabled is not None:
         fields["enabled"] = payload.enabled
 
@@ -184,12 +386,19 @@ async def update_ban_rule(
         raise HTTPException(status_code=404, detail="规则不存在")
 
     if fields:
-        # 改的是登录闸门的阈值与处罚梯度，必须留痕：没有这条日志，事后
+        # 改的是判定闸门的阈值与处罚梯度，必须留痕：没有这条日志，事后
         # 「为什么突然开始封人」只能靠猜。字段用改动前后的值成对表达。
         after = _rule_view(updated)
         config_before, config_after = before["config"], after["config"]
+        # 名称只在真的改过时出现：绝大多数改动是调阈值，日志要能一眼扫过。
+        name_part = (
+            f"name {before['name']}→{after['name']}，"
+            if before["name"] != after["name"]
+            else ""
+        )
         log.with_text(
             f"管理员 {await get_user_display_name(user['id'])} 修改封禁规则 {code}："
+            f"{name_part}"
             f"threshold {config_before.get('threshold')}→{config_after.get('threshold')}，"
             f"window_hours {config_before.get('window_hours')}→"
             f"{config_after.get('window_hours')}，"

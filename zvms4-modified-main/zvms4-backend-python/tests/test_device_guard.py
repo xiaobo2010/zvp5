@@ -207,7 +207,7 @@ def env(monkeypatch) -> Env:
     monkeypatch.setattr(
         backends,
         "get_ban_rules_repo",
-        lambda *a, **k: SimpleNamespace(get_by_code=get_rule),
+        lambda *a, **k: SimpleNamespace(get_by_code=get_rule, get_by_trigger=get_rule),
     )
     monkeypatch.setattr(
         backends,

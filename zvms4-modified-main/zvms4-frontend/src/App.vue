@@ -31,6 +31,7 @@ import ZNotificationReminder from '@/components/notification/ZNotificationRemind
 import { useRegisterSW } from 'virtual:pwa-register/vue'
 import { CarbonCloudOffline } from '@/icons'
 import { modifyPasswordDialogs } from '@/views'
+import { startPlatformGuard, stopPlatformGuard } from '@/utils/platformGuard'
 import dayjs from '@/plugins/dayjs'
 
 const { needRefresh, offlineReady, updateServiceWorker } = useRegisterSW()
@@ -219,11 +220,24 @@ watch(
   { immediate: true }
 )
 
+// 客户端违规检测(iframe / 学海桥缺失 / devtools)只在已登录且不在登录页时巡检,
+// 登录页自身没有 token 也没有业务页面,巡检只会白跑;登出或组件卸载立即停机。
+function syncPlatformGuard() {
+  if (userStore.isLogin && !route.path.endsWith('login')) {
+    startPlatformGuard()
+  } else {
+    stopPlatformGuard()
+  }
+}
+
+watch([() => userStore.isLogin, () => route.path], syncPlatformGuard, { immediate: true })
+
 onUnmounted(() => {
   if (banTimer) {
     clearInterval(banTimer)
     banTimer = undefined
   }
+  stopPlatformGuard()
   document.body.style.overflow = ''
 })
 

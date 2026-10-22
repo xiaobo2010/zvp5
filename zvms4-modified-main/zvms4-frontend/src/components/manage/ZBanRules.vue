@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { nextTick, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
   ElButton,
@@ -10,14 +10,29 @@ import {
   ElFormItem,
   ElInput,
   ElInputNumber,
+  ElMessageBox,
   ElMessage,
+  ElOption,
+  ElSelect,
   ElSwitch,
   ElTable,
   ElTableColumn,
   ElTag
 } from 'element-plus'
 import type { FormInstance, FormItemRule, FormRules } from 'element-plus'
-import { getBannedUsers, getRules, updateRule, type BannedUser, type BanRule } from '@/api/ban'
+import {
+  createRule,
+  deleteRule,
+  getBannedUsers,
+  getRules,
+  getTriggers,
+  getViolations,
+  updateRule,
+  type BannedUser,
+  type BanRule,
+  type BanTrigger,
+  type BanViolation
+} from '@/api/ban'
 import ZPagination from '@/components/utils/ZPagination.vue'
 
 const { t } = useI18n()
@@ -25,6 +40,17 @@ const { t } = useI18n()
 const rules = ref<BanRule[]>([])
 const rulesLoading = ref(false)
 const rulesFailed = ref(false)
+
+const triggers = ref<BanTrigger[]>([])
+const triggersFailed = ref(false)
+
+const violations = ref<BanViolation[]>([])
+const violationsLoading = ref(false)
+const violationsFailed = ref(false)
+const violationsPage = ref(1)
+const violationsPerpage = ref(20)
+const violationsTotal = ref(0)
+const violationsQuery = ref('')
 
 const users = ref<BannedUser[]>([])
 const usersLoading = ref(false)
@@ -43,6 +69,18 @@ const form = reactive({
   threshold: 3,
   window_hours: 24,
   penaltiesText: '1,2,7'
+})
+
+const createDialogVisible = ref(false)
+const creating = ref(false)
+const createFormRef = ref<FormInstance>()
+const createForm = reactive({
+  name: '',
+  code: '',
+  trigger: '',
+  threshold: 3,
+  window_hours: 24,
+  penaltiesText: '1,3,7'
 })
 
 const PERMANENT_TOKENS = ['0']
@@ -127,13 +165,44 @@ function validateWindow(_rule: unknown, value: unknown, callback: (error?: Error
   callback()
 }
 
-function validatePenalties(_rule: unknown, _value: unknown, callback: (error?: Error) => void) {
-  if (hasMisplacedPermanent(form.penaltiesText)) {
+function validatePenalties(_rule: unknown, value: unknown, callback: (error?: Error) => void) {
+  const text = typeof value === 'string' ? value : ''
+  if (hasMisplacedPermanent(text)) {
     callback(new Error(t('manage.banRules.validation.penaltiesPermanentPosition')))
     return
   }
-  if (parsePenalties(form.penaltiesText) === null) {
+  if (parsePenalties(text) === null) {
     callback(new Error(t('manage.banRules.validation.penaltiesFormat')))
+    return
+  }
+  callback()
+}
+
+function validateNameRequired(_rule: unknown, value: unknown, callback: (error?: Error) => void) {
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    callback(new Error(t('manage.banRules.rule.nameRequired')))
+    return
+  }
+  callback()
+}
+
+const CODE_PATTERN = /^[a-z][a-z0-9_]{2,63}$/
+
+function validateCode(_rule: unknown, value: unknown, callback: (error?: Error) => void) {
+  if (typeof value !== 'string' || value.length === 0) {
+    callback(new Error(t('manage.banRules.rule.codeRequired')))
+    return
+  }
+  if (!CODE_PATTERN.test(value)) {
+    callback(new Error(t('manage.banRules.rule.codeFormat')))
+    return
+  }
+  callback()
+}
+
+function validateTriggerRequired(_rule: unknown, value: unknown, callback: (error?: Error) => void) {
+  if (typeof value !== 'string' || value.length === 0) {
+    callback(new Error(t('manage.banRules.rule.triggerRequired')))
     return
   }
   callback()
@@ -143,6 +212,25 @@ const formRules: FormRules = {
   threshold: [{ validator: validateThreshold, trigger: 'blur' }] as FormItemRule[],
   window_hours: [{ validator: validateWindow, trigger: 'blur' }] as FormItemRule[],
   penaltiesText: [{ validator: validatePenalties, trigger: 'blur' }] as FormItemRule[]
+}
+
+const createFormRules: FormRules = {
+  name: [{ validator: validateNameRequired, trigger: 'blur' }] as FormItemRule[],
+  code: [{ validator: validateCode, trigger: 'blur' }] as FormItemRule[],
+  trigger: [{ validator: validateTriggerRequired, trigger: 'change' }] as FormItemRule[],
+  threshold: [{ validator: validateThreshold, trigger: 'blur' }] as FormItemRule[],
+  window_hours: [{ validator: validateWindow, trigger: 'blur' }] as FormItemRule[],
+  penaltiesText: [{ validator: validatePenalties, trigger: 'blur' }] as FormItemRule[]
+}
+
+async function loadTriggers() {
+  try {
+    triggers.value = await getTriggers()
+    triggersFailed.value = false
+  } catch {
+    triggers.value = []
+    triggersFailed.value = true
+  }
 }
 
 async function loadRules() {
@@ -181,6 +269,92 @@ onMounted(() => {
   void loadRules()
   void loadUsers()
 })
+
+async function loadViolations() {
+  violationsLoading.value = true
+  try {
+    const result = await getViolations(
+      violationsPage.value,
+      violationsPerpage.value,
+      violationsQuery.value.trim()
+    )
+    violations.value = result.violations
+    violationsTotal.value = result.size
+    violationsFailed.value = false
+  } catch {
+    violations.value = []
+    violationsFailed.value = true
+  } finally {
+    violationsLoading.value = false
+  }
+}
+
+onMounted(() => {
+  void loadRules()
+  void loadTriggers()
+  void loadViolations()
+  void loadUsers()
+})
+
+watch(violationsPage, () => {
+  void loadViolations()
+})
+
+watch(violationsPerpage, () => {
+  if (violationsPage.value === 1) {
+    void loadViolations()
+  } else {
+    violationsPage.value = 1
+  }
+})
+
+function searchViolations() {
+  if (violationsPage.value === 1) {
+    void loadViolations()
+  } else {
+    violationsPage.value = 1
+  }
+}
+
+const KNOWN_SIGNALS = ['iframe', 'bridge', 'devtools']
+
+function signalLabel(signal: string): string {
+  // 未注册的新信号直接展示原始值,避免在模板里渲染一串 i18n key
+  if (!KNOWN_SIGNALS.includes(signal)) {
+    return signal
+  }
+  return t(`manage.banRules.violations.signals.${signal}`)
+}
+
+const selectedTrigger = computed(() =>
+  triggers.value.find((item) => item.trigger === createForm.trigger)
+)
+
+function onTriggerChange(value: string | number | boolean | object) {
+  const meta = triggers.value.find((item) => item.trigger === value)
+  if (!meta) {
+    return
+  }
+  if (meta.config?.threshold !== undefined) {
+    createForm.threshold = meta.config.threshold
+  }
+  if (meta.config?.window_hours !== undefined) {
+    createForm.window_hours = meta.config.window_hours
+  }
+}
+
+function triggerDefaultHint(): string {
+  const threshold = selectedTrigger.value?.config?.threshold ?? 2
+  const windowHours = selectedTrigger.value?.config?.window_hours ?? 1
+  return t('manage.banRules.rule.triggerHint', {
+    threshold,
+    window_hours: windowHours
+  })
+}
+
+function triggerTitle(rule: BanRule): string {
+  return rule.trigger || ''
+}
 
 watch(usersPage, () => {
   void loadUsers()
@@ -268,8 +442,78 @@ async function submitEdit() {
   }
 }
 
-function formatTrigger(rule: BanRule): string {
-  const threshold = rule.config?.threshold
+function openCreate() {
+  createForm.name = ''
+  createForm.code = ''
+  createForm.trigger = ''
+  createForm.threshold = 3
+  createForm.window_hours = 24
+  createForm.penaltiesText = '1,3,7'
+  if (triggers.value.length === 0) {
+    void loadTriggers()
+  }
+  createDialogVisible.value = true
+  void nextTick(() => createFormRef.value?.clearValidate())
+}
+
+async function submitCreate() {
+  if (!createFormRef.value) {
+    return
+  }
+  const valid = await createFormRef.value.validate().catch(() => false)
+  if (!valid) {
+    return
+  }
+  const penalties = parsePenalties(createForm.penaltiesText)
+  if (penalties === null) {
+    ElMessage.error(t('manage.banRules.validation.penaltiesFormat'))
+    return
+  }
+  creating.value = true
+  try {
+    await createRule({
+      code: createForm.code,
+      name: createForm.name.trim(),
+      trigger: createForm.trigger,
+      config: { threshold: createForm.threshold, window_hours: createForm.window_hours },
+      penalties,
+      enabled: true
+    })
+    createDialogVisible.value = false
+    ElMessage.success(t('manage.banRules.rule.createdNotice'))
+    void loadRules()
+  } catch {
+    ElMessage.error(t('manage.banRules.rule.createFailed'))
+  } finally {
+    creating.value = false
+  }
+}
+
+async function removeRule(rule: BanRule) {
+  try {
+    await ElMessageBox.confirm(
+      t('manage.banRules.rule.deleteConfirm', { name: rule.name }),
+      t('manage.banRules.rule.delete')
+    )
+  } catch {
+    return
+  }
+  try {
+    await deleteRule(rule.code)
+    ElMessage.success(t('manage.banRules.rule.deletedNotice'))
+    void loadRules()
+  } catch (err) {
+    // 内置规则被并发删除/409 拒绝时给出专门文案
+    const message = (err as { message?: string }).message
+    if (rule.builtin || (message ?? '').includes('内置')) {
+      ElMessage.error(t('manage.banRules.rule.deleteBuiltinDenied'))
+    } else {
+      ElMessage.error(t('manage.banRules.rule.deleteFailed'))
+    }
+  }
+}
+
+function formatTrigger(rule: BanRule): string {  const threshold = rule.config?.threshold
   const windowHours = rule.config?.window_hours
   if (threshold === undefined || windowHours === undefined) {
     return '—'
@@ -333,9 +577,14 @@ function formatReason(user: BannedUser): string | null {
       <template #header>
         <div class="flex items-center justify-between gap-2">
           <span>{{ t('manage.banRules.rulesTitle') }}</span>
-          <ElButton text size="small" @click="loadRules">
-            {{ t('manage.banRules.refresh') }}
-          </ElButton>
+          <div class="flex items-center gap-2">
+            <ElButton type="primary" size="small" @click="openCreate">
+              {{ t('manage.banRules.rule.create') }}
+            </ElButton>
+            <ElButton text size="small" @click="loadRules">
+              {{ t('manage.banRules.refresh') }}
+            </ElButton>
+          </div>
         </div>
       </template>
       <ElTable :data="rules" row-key="code">
@@ -354,8 +603,19 @@ function formatReason(user: BannedUser): string | null {
           </template>
         </ElTableColumn>
         <ElTableColumn
-          prop="config"
+          prop="trigger_name"
           :label="t('manage.banRules.rule.columns.trigger')"
+          min-width="150"
+        >
+          <template #default="{ row }">
+            <span class="block truncate" :title="triggerTitle(row)">
+              {{ row.trigger_name || row.trigger || '—' }}
+            </span>
+          </template>
+        </ElTableColumn>
+        <ElTableColumn
+          prop="config"
+          :label="t('manage.banRules.rule.columns.config')"
           min-width="170"
         >
           <template #default="{ row }">
@@ -384,11 +644,24 @@ function formatReason(user: BannedUser): string | null {
             />
           </template>
         </ElTableColumn>
-        <ElTableColumn fixed="right" width="90" align="right">
+        <ElTableColumn fixed="right" width="150" align="right">
           <template #default="{ row }">
-            <ElButton text type="primary" size="small" @click="openEdit(row)">
-              {{ t('manage.banRules.rule.edit') }}
-            </ElButton>
+            <div class="flex items-center justify-end gap-1">
+              <ElButton text type="primary" size="small" @click="openEdit(row)">
+                {{ t('manage.banRules.rule.edit') }}
+              </ElButton>
+              <span :title="row.builtin ? t('manage.banRules.rule.deleteBuiltinDenied') : undefined">
+                <ElButton
+                  text
+                  type="danger"
+                  size="small"
+                  :disabled="row.builtin"
+                  @click="removeRule(row)"
+                >
+                  {{ t('manage.banRules.rule.delete') }}
+                </ElButton>
+              </span>
+            </div>
           </template>
         </ElTableColumn>
         <template #empty>
@@ -401,6 +674,94 @@ function formatReason(user: BannedUser): string | null {
       <p class="text-xs" style="color: var(--zv-label)">
         {{ t('manage.banRules.rule.penaltiesHint') }}
       </p>
+    </ElCard>
+
+    <ElCard shadow="never" v-loading="violationsLoading">
+      <template #header>
+        <div class="flex items-center justify-between gap-2">
+          <span>{{ t('manage.banRules.violations.title') }}</span>
+          <div class="flex items-center gap-2">
+            <ElInput
+              v-model="violationsQuery"
+              :placeholder="t('manage.banRules.violations.searchPlaceholder')"
+              clearable
+              class="w-56"
+              @keyup.enter="searchViolations"
+              @clear="searchViolations"
+            />
+            <ElButton size="small" @click="searchViolations">
+              {{ t('manage.banRules.violations.search') }}
+            </ElButton>
+          </div>
+        </div>
+      </template>
+      <ElTable :data="violations" row-key="_id" stripe>
+        <ElTableColumn
+          prop="user_name"
+          :label="t('manage.banRules.violations.columns.name')"
+          min-width="100"
+        />
+        <ElTableColumn
+          prop="user_id"
+          :label="t('manage.banRules.violations.columns.userId')"
+          min-width="100"
+        />
+        <ElTableColumn
+          prop="trigger"
+          :label="t('manage.banRules.violations.columns.type')"
+          min-width="150"
+        >
+          <template #default="{ row }">
+            <span>{{ row.trigger_name || row.trigger || '—' }}</span>
+          </template>
+        </ElTableColumn>
+        <ElTableColumn
+          prop="signal"
+          :label="t('manage.banRules.violations.columns.signal')"
+          min-width="120"
+        >
+          <template #default="{ row }">
+            <span>{{ signalLabel(row.signal) }}</span>
+          </template>
+        </ElTableColumn>
+        <ElTableColumn
+          prop="detail"
+          :label="t('manage.banRules.violations.columns.detail')"
+          min-width="200"
+          show-overflow-tooltip
+        >
+          <template #default="{ row }">
+            <span v-if="row.detail">{{ row.detail }}</span>
+            <span v-else class="text-xs" style="color: var(--zv-label)">
+              {{ t('manage.banRules.violations.detailUnknown') }}
+            </span>
+          </template>
+        </ElTableColumn>
+        <ElTableColumn
+          prop="created_at"
+          :label="t('manage.banRules.violations.columns.time')"
+          min-width="150"
+        >
+          <template #default="{ row }">
+            <span class="tabular-nums">{{ formatTime(row.created_at) }}</span>
+          </template>
+        </ElTableColumn>
+        <template #empty>
+          <ElEmpty
+            :description="
+              violationsFailed
+                ? t('manage.banRules.loadFailed')
+                : t('manage.banRules.violations.empty')
+            "
+            :image-size="100"
+          />
+        </template>
+      </ElTable>
+      <ZPagination
+        v-model:current-page="violationsPage"
+        v-model:page-size="violationsPerpage"
+        :total="violationsTotal"
+      />
     </ElCard>
 
     <ElCard shadow="never" v-loading="usersLoading">
@@ -519,6 +880,71 @@ function formatReason(user: BannedUser): string | null {
         </ElButton>
         <ElButton type="primary" :loading="saving" @click="submitEdit">
           {{ t('manage.banRules.dialog.save') }}
+        </ElButton>
+      </template>
+    </ElDialog>
+
+    <ElDialog
+      v-model="createDialogVisible"
+      :title="t('manage.banRules.rule.create')"
+      width="min(480px, 92vw)"
+    >
+      <ElForm
+        ref="createFormRef"
+        :model="createForm"
+        :rules="createFormRules"
+        label-position="right"
+        label-width="140px"
+      >
+        <ElFormItem :label="t('manage.banRules.rule.nameLabel')" prop="name">
+          <ElInput v-model="createForm.name" />
+        </ElFormItem>
+        <ElFormItem :label="t('manage.banRules.rule.codeLabel')" prop="code">
+          <ElInput v-model="createForm.code" :placeholder="t('manage.banRules.rule.codePlaceholder')" />
+          <p class="text-xs w-full" style="color: var(--zv-label)">
+            {{ t('manage.banRules.rule.codeHint') }}
+          </p>
+        </ElFormItem>
+        <ElFormItem :label="t('manage.banRules.rule.triggerLabel')" prop="trigger">
+          <ElSelect v-model="createForm.trigger" @update:model-value="onTriggerChange">
+            <ElOption
+              v-for="item in triggers"
+              :key="item.trigger"
+              :label="item.name"
+              :value="item.trigger"
+            />
+          </ElSelect>
+          <template v-if="selectedTrigger">
+            <p class="text-xs w-full" style="color: var(--zv-label)">
+              {{ selectedTrigger.description }}
+            </p>
+            <p class="text-xs w-full" style="color: var(--zv-label)">
+              {{ triggerDefaultHint() }}
+            </p>
+          </template>
+        </ElFormItem>
+        <ElFormItem :label="t('manage.banRules.dialog.thresholdLabel')" prop="threshold">
+          <ElInputNumber v-model="createForm.threshold" :min="2" :max="20" :step="1" step-strictly />
+        </ElFormItem>
+        <ElFormItem :label="t('manage.banRules.dialog.windowLabel')" prop="window_hours">
+          <ElInputNumber v-model="createForm.window_hours" :min="1" :max="168" :step="1" step-strictly />
+        </ElFormItem>
+        <ElFormItem :label="t('manage.banRules.dialog.penaltiesLabel')" prop="penaltiesText">
+          <ElInput
+            v-model="createForm.penaltiesText"
+            :placeholder="t('manage.banRules.dialog.penaltiesPlaceholder')"
+          />
+          <p class="text-xs w-full" style="color: var(--zv-label)">
+            {{ t('manage.banRules.dialog.penaltiesHint') }}
+          </p>
+        </ElFormItem>
+      </ElForm>
+      <template #footer>
+        <ElButton @click="createDialogVisible = false">
+          {{ t('manage.banRules.dialog.cancel') }}
+        </ElButton>
+        <ElButton type="primary" :loading="creating" @click="submitCreate">
+          {{ t('manage.banRules.dialog.create') }}
         </ElButton>
       </template>
     </ElDialog>
