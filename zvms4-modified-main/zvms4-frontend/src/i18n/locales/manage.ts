@@ -233,6 +233,7 @@ export const zhCN = {
       builtin: '内置',
       triggerText: '{threshold} 台设备 / {window_hours} 小时',
       penaltyDay: '{days} 天',
+      penaltyPermanent: '永久',
       penaltiesHint: '处罚按梯度递进，超出最后一档时按最后一档处罚',
       edit: '编辑'
     },
@@ -241,8 +242,8 @@ export const zhCN = {
       thresholdLabel: '触发设备数（台）',
       windowLabel: '时间窗（小时）',
       penaltiesLabel: '处罚梯度（天）',
-      penaltiesPlaceholder: '逗号分隔的天数，例如 1,2,7',
-      penaltiesHint: '至少 1 项，最多 6 项，按升序填写（重复视为无效）',
+      penaltiesPlaceholder: '逗号分隔的天数，例如 1,2,7（末尾填 0 表示永久）',
+      penaltiesHint: '至少 1 项，最多 6 项，按升序填写（重复视为无效）；0 表示永久，只能写在最后一位',
       cancel: '取消',
       save: '保存'
     },
@@ -251,7 +252,8 @@ export const zhCN = {
       thresholdRange: '触发设备数须为 2 到 20 之间的整数',
       windowRequired: '请输入时间窗小时数',
       windowRange: '时间窗须为 1 到 168 之间的整数',
-      penaltiesFormat: '处罚梯度须为逗号分隔的正整数天数，至少 1 项，最多 6 项，且按升序排列、不重复'
+      penaltiesFormat: '处罚梯度须为逗号分隔的正整数天数，至少 1 项，最多 6 项，且按升序排列、不重复',
+      penaltiesPermanentPosition: '0 表示永久封禁，只能出现在最后一位且只能出现一次'
     },
     records: {
       columns: {

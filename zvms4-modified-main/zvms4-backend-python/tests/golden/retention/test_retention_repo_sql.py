@@ -47,8 +47,16 @@ PROTECTED_TYPES = (
     "binding_mismatch",
     "device_bind",
     "device_unbind",
+    "temp_password_create",
+    "temp_password_login",
+    "temp_password_fail",
+    "device_mismatch",
+    "device_ban",
+    "ban_rule_skipped",
+    "device_ban_skipped",
     "system_maintenance_enable",
     "system_maintenance_disable",
+    "system_ssh_command",
 )
 FINISHED_STATUSES = ("completed", "failed")
 
@@ -148,7 +156,7 @@ def test_app_logs_protected_types_are_excluded_by_not_in() -> None:
     op, values = predicates[0]
     assert op == "NOT IN", f"protected types must be excluded, got {op}"
     assert values == frozenset(PROTECTED_TYPES), values
-    assert len(PROTECTED_TYPES) == 8
+    assert len(PROTECTED_TYPES) == 16
 
 
 def test_app_logs_warning_level_is_protected() -> None:

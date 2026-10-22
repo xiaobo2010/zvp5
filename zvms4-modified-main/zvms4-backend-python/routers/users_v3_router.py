@@ -1,17 +1,24 @@
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Literal, Optional
 
 from bcrypt import hashpw, gensalt
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Response
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    HTTPException,
+    Request,
+    Response,
+)
 from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
 
 from db import backends
 from db.repos.oracle.users import UserGoneError
-from typings.log import inject_log
+from typings.log import inject_log, xuehai_id_from
 from util.cert import generate_initial_password, get_current_totp
-from util.group import get_user_permissions
+from util.group import get_user_permissions, is_in_a_same_class
 from util.object_id import compulsory_temporary_token, get_current_user
 from util.permission.user import credential_change_forbidden, role_change_forbidden
 from util.user import get_user_display_name, user_profile
@@ -568,3 +575,354 @@ async def delete_user_binding_v3(
     await log.insert_log()
 
     return
+
+
+# ---------------------------------------------------------------------------
+# 主学海设备 / 一次性临时密码
+#
+# 设备身份取自请求头 ``Xuehai-Id``，不是请求体：请求体里的值只能说明「客户端
+# 声称自己是谁」，请求头也是，但请求头是整条登录链路（登录、日志、封禁）唯一
+# 认可的来源，自助改绑必须与之一致，否则等于允许任何令牌持有者替任意平板注册。
+# ---------------------------------------------------------------------------
+
+_DEVICE_ID_MAX_LEN = 32
+
+
+async def _device_ban_status(
+    xuehai_id: str,
+) -> tuple[bool, Optional[str], Optional[datetime]]:
+    """设备封禁状态统一问 :mod:`services.device_guard`。
+
+    服务层在并行车道落地，这里延迟导入：路由模块不因服务层尚未就绪而在导入期
+    失败，同时保证常量与判定逻辑只有一份实现（本层不重复推导账号封禁联动）。
+    """
+    from services.device_guard import device_ban_status
+
+    return await device_ban_status(xuehai_id)
+
+
+def _temp_password_ttl_minutes() -> int:
+    """TTL 的唯一来源是 :mod:`services.device_guard` 的常量。"""
+    from services.device_guard import TEMP_PASSWORD_TTL_MINUTES
+
+    return TEMP_PASSWORD_TTL_MINUTES
+
+
+def _validated_device_id(raw: str) -> str:
+    """学海设备 ID：纯数字、1–32 位（与 ``users.primary_xuehai_id`` 列宽一致）。
+
+    ``isascii`` 必须先判：``str.isdecimal`` 对全角/阿拉伯-印度数字同样为真，
+    放到 Oracle 列里会变成无法与请求头对齐的异体字符。
+    """
+    value = (raw or "").strip()
+    if not value.isascii() or not value.isdecimal() or not 1 <= len(value) <= _DEVICE_ID_MAX_LEN:
+        raise HTTPException(status_code=400, detail="学海设备 ID 必须是 1–32 位数字")
+    return value
+
+
+def _iso_or_none(value) -> Optional[str]:
+    return value.isoformat(timespec="seconds") if isinstance(value, datetime) else None
+
+
+@router.get("/me/device")
+async def get_my_device(request: Request, user=Depends(get_current_user)):
+    """当前请求所携带的设备身份 + 本人主设备绑定/封禁状态。
+
+    ``xuehai_id`` 是请求头原值（经 ``xuehai_id_from`` 规整，缺失/非法即空串），
+    前端用它区分「没带设备头」和「带了但不是主设备」，因此不做 400。
+    """
+    xuehai_id = xuehai_id_from(request)
+    current = await _get_zvms_new_user(user["id"])
+
+    device_banned, ban_reason, ban_until = False, None, None
+    if xuehai_id:
+        # 空设备号不代表任何设备，拿它去查只会命中脏数据行。
+        device_banned, ban_reason, ban_until = await _device_ban_status(xuehai_id)
+
+    return {
+        "status": "ok",
+        "code": 200,
+        "data": {
+            "xuehai_id": xuehai_id,
+            "primary_xuehai_id": current.get("primary_xuehai_id") if current else None,
+            "device_banned": device_banned,
+            "device_ban_reason": ban_reason,
+            "device_ban_until": _iso_or_none(ban_until),
+        },
+    }
+
+
+@router.get("/me/device-bindings")
+async def get_my_device_bindings(
+    request: Request,
+    user=Depends(get_current_user),
+):
+    """当前请求设备 ID + 本账号在 ``USER_DEVICE_BINDINGS`` 中登记的设备 ID。
+
+    * ``current_device_id`` 取自请求头 ``Xuehai-Id``（与登录/日志/封禁同源，
+      经 :func:`xuehai_id_from` 规整）；缺失或非法时为 ``None``。设备号来自
+      请求头而不是查询参数/请求体，调用方无法用别人的 OID 读取他人绑定。
+    * ``registered_device_ids`` 只含 ``status='active'`` 的绑定，按仓储返回的
+      登记时间升序排列；已撤销（revoked）的历史行不返回。取的是绑定行的
+      ``xuehai_id``——它才是学海定制设备号；``device_id`` 列是 observe-only
+      阶段留空的协议字段，绑定行 OID 也不是设备 ID。
+    * ``USERS.PRIMARY_XUEHAI_ID``（V014）是账号选定的主设备，不属于
+      ``USER_DEVICE_BINDINGS``，因此不混入这个列表；需要时由
+      ``GET /me/device`` 单独返回。
+
+    Permission: 任意已登录用户，且只能读自己。
+    """
+    current_device_id = xuehai_id_from(request) or None
+    rows = await backends.get_bindings_repo().get_active_for_user(user["id"])
+    return {
+        "status": "ok",
+        "code": 200,
+        "data": {
+            "current_device_id": current_device_id,
+            "registered_device_ids": [row["xuehai_id"] for row in rows],
+        },
+    }
+
+
+class PutPrimaryDeviceRequest(BaseModel):
+    xuehai_id: str
+
+
+@router.put("/me/primary-device", status_code=204)
+async def set_my_primary_device(
+    payload: PutPrimaryDeviceRequest,
+    request: Request,
+    user=Depends(get_current_user),
+    log=Depends(inject_log),
+):
+    """把某台学海设备登记为本人主设备（可换成新平板）。
+
+    两条互斥规则，对应「首次绑定」与「换绑」两种风险：
+
+    * 未绑定（``primary_xuehai_id`` 为 NULL）：目标必须**就是当前这台设备**
+      （请求头等于请求体）。否则任何拿到令牌的人都能把别人手里的平板登记成
+      自己账号的合法入口，反向冒用。
+    * 已绑定：**发起请求的必须是当前主设备**，目标可以是别的学海 ID（换新机）。
+      这条是把「谁能决定下一台主设备」锁在已受信任的设备上。
+
+    写操作不轮换 ``session_id``（主设备不是身份凭证，换机不该把其他会话踢下线）。
+    """
+    xuehai_id = _validated_device_id(payload.xuehai_id)
+    header_xuehai_id = xuehai_id_from(request)
+
+    current = await _get_zvms_new_user(user["id"])
+    if current is None:
+        raise HTTPException(status_code=404, detail="用户不存在")
+
+    current_primary = current.get("primary_xuehai_id")
+
+    if current_primary is None:
+        if header_xuehai_id != xuehai_id:
+            raise HTTPException(
+                status_code=400,
+                detail="首次绑定只能在目标设备上发起（请求头 Xuehai-Id 与目标设备不一致）",
+            )
+    elif header_xuehai_id != str(current_primary):
+        raise HTTPException(
+            status_code=403, detail="只能在主学海设备上更换主学海设备"
+        )
+
+    if current_primary is not None and str(current_primary) == xuehai_id:
+        # 幂等：目标与现值相同，不产生写、不产生审计噪声。
+        return
+
+    await backends.get_users_repo().set_primary_xuehai(str(current["_id"]), xuehai_id)
+
+    log.with_text(
+        f"用户 {current.get('name') or '未知用户'} 将主学海设备由 {current_primary or '未绑定'} 改为 {xuehai_id}",
+        type="device_bind",
+        level="info",
+    )
+    await log.insert_log()
+
+
+@router.delete("/me/primary-device", status_code=204)
+async def clear_my_primary_device(
+    request: Request,
+    user=Depends(get_current_user),
+    log=Depends(inject_log),
+):
+    """解绑本人的主学海设备，解绑后回到「未绑定不校验设备」状态。
+
+    只允许当前主设备发起：否则任何令牌持有者都能把受害者踢回未绑定态，再用
+    自己手上的平板抢占绑定。没有主设备时返回 **409**——这是状态冲突（本来就没
+    绑），不是请求格式错误，前端据此可以只提示而不弹输入框。
+    """
+    current = await _get_zvms_new_user(user["id"])
+    if current is None:
+        raise HTTPException(status_code=404, detail="用户不存在")
+
+    current_primary = current.get("primary_xuehai_id")
+    if current_primary is None:
+        raise HTTPException(status_code=409, detail="尚未绑定主学海设备")
+
+    if xuehai_id_from(request) != str(current_primary):
+        raise HTTPException(
+            status_code=403, detail="只能在主学海设备上更换主学海设备"
+        )
+
+    await backends.get_users_repo().clear_primary_xuehai(str(current["_id"]))
+
+    log.with_text(
+        f"用户 {current.get('name') or '未知用户'} 解绑了主学海设备 {current_primary}",
+        type="device_unbind",
+        level="info",
+    )
+    await log.insert_log()
+
+
+@router.delete("/{user_id}/primary-device", status_code=204)
+async def admin_clear_user_primary_device(
+    user_id: str,
+    user=Depends(get_current_user),
+    log=Depends(inject_log),
+):
+    """管理员清空任意用户的主设备（用户换机丢了旧平板时的人工出口）。
+
+    Permission: admin only。幂等：目标本来未绑定也返回 204，不写审计。
+    """
+    per = user.get("per") or []
+    if "admin" not in per:
+        raise HTTPException(status_code=403, detail="权限不足")
+
+    oid = validate_object_id(user_id)
+    target = await backends.get_users_repo().get_by_oid(str(oid))
+    if target is None:
+        raise HTTPException(status_code=404, detail="用户不存在")
+
+    previous = target.get("primary_xuehai_id")
+    if previous is None:
+        return
+
+    await backends.get_users_repo().clear_primary_xuehai(str(oid))
+
+    log.with_text(
+        f"管理员 {await get_user_display_name(user['id'])} 清除了用户 {target['name']} 的主学海设备 {previous}",
+        type="device_unbind",
+        level="info",
+    )
+    await log.insert_log()
+
+
+class ResetBanRecordsRequest(BaseModel):
+    # 64 = BAN_RECORDS.RULE_CODE 列宽；空串在下游按「不限规则」处理。
+    rule_code: Optional[str] = Field(default=None, max_length=64)
+
+
+@router.post("/{user_id}/ban-records/reset")
+async def reset_user_ban_records_v3(
+    user_id: str,
+    payload: Optional[ResetBanRecordsRequest] = None,
+    user=Depends(get_current_user),
+    log=Depends(inject_log),
+):
+    """清空某用户的封禁流水（可只清某条规则），把处罚梯度打回第一档。
+
+    Permission: admin only。只删审计流水、不动 ``USERS.BANNED``：当前封禁状态
+    由「解封」端点单独负责，混在一起会让「仍在封禁中但梯度已清零」变得无法表达。
+    """
+    per = user.get("per") or []
+    if "admin" not in per:
+        raise HTTPException(status_code=403, detail="权限不足")
+
+    oid = validate_object_id(user_id)
+    target = await backends.get_users_repo().get_by_oid(str(oid))
+    if target is None:
+        raise HTTPException(status_code=404, detail="用户不存在")
+
+    rule_code = None
+    if payload is not None:
+        rule_code = (payload.rule_code or "").strip() or None
+    deleted = await backends.get_ban_records_repo().delete_for_user_rule(
+        str(oid), rule_code
+    )
+
+    scope = f"规则 {rule_code} 的" if rule_code else "全部"
+    log.with_text(
+        f"管理员 {await get_user_display_name(user['id'])} 重置了用户 {target['name']} {scope}封禁梯度（删除 {deleted} 条流水）",
+        type="ban_change",
+        level="warning",
+    )
+    await log.insert_log()
+
+    return {"status": "ok", "code": 200, "data": {"deleted": deleted}}
+
+
+@router.post("/{user_id}/temp-password")
+async def create_temp_password_v3(
+    user_id: str,
+    response: Response,
+    request: Request,
+    user=Depends(get_current_user),
+    log=Depends(inject_log),
+):
+    """为指定用户签发一个「一次性临时密码」，供其在**非主设备**上完成登录验证。
+
+    Permission: admin / department（全校），或 secretary 且**同班**。同班判定用
+    :func:`util.group.is_in_a_same_class`，它对「任一方没有班级」返回 ``None``——
+    这里是放行条件而不是拒绝条件，所以必须写 ``is True`` 的等价判断（``not ...``
+    会把 None 当成 False 拒绝，正好符合预期；显式判 None 则更易读）。
+
+    目标侧保护：不能给别人手上的 ``admin`` 账号建临时密码——那等于绕开管理员
+    凭据。只有请求者自己也是 admin 时才允许（对齐 ``credential_change_forbidden``
+    的「管理员凭据只能由管理员处置」口径）。
+
+    明文只在本响应里出现一次；库里只留 bcrypt 哈希。
+    """
+    per = user.get("per") or []
+    target = await _get_zvms_new_user(user_id)
+    if target is None:
+        raise HTTPException(status_code=404, detail="用户不存在")
+
+    if "admin" not in per and "department" not in per:
+        same_class = False
+        if "secretary" in per:
+            same_class = await is_in_a_same_class(user["id"], user_id)
+        if same_class is not True:
+            raise HTTPException(status_code=403, detail="权限不足")
+
+    target_per = await get_user_permissions(target)
+    if "admin" in target_per and "admin" not in per:
+        raise HTTPException(status_code=403, detail="不能为管理员账号创建临时密码")
+
+    from services.device_guard import generate_temp_password, hash_temp_password
+
+    ttl_minutes = _temp_password_ttl_minutes()
+    code = generate_temp_password()
+    expires_at = datetime.now() + timedelta(minutes=ttl_minutes)
+
+    await backends.get_temp_passwords_repo().insert(
+        str(target["_id"]),
+        str(user["id"]),
+        hash_temp_password(code),
+        xuehai_id_from(request) or None,
+        expires_at,
+    )
+
+    log.with_text(
+        f"用户 {await get_user_display_name(user['id'])} 为用户 {target['name']} 创建了一次性临时密码（{ttl_minutes} 分钟内有效）",
+        type="temp_password_create",
+        level="info",
+    )
+    await log.insert_log()
+
+    # 明文密码等价于一次登录凭据，任何缓存都可能把它留下。
+    response.headers["Cache-Control"] = "no-store"
+    return {
+        "status": "ok",
+        "code": 200,
+        "data": {
+            "code": code,
+            "expires_at": _iso_or_none(expires_at),
+            "target": {
+                "_id": str(target["_id"]),
+                "id": target.get("id"),
+                "name": target.get("name"),
+            },
+        },
+    }

@@ -125,6 +125,27 @@ def get_notifications_repo(session: Any = None) -> Any:
     return OracleNotificationsRepo(session)
 
 
+def get_device_bans_repo(session: Any = None) -> Any:
+    """Return the ``DeviceBansRepo`` implementation (设备级封禁)."""
+    from db.repos.oracle.device_bans import OracleDeviceBansRepo
+
+    return OracleDeviceBansRepo(session)
+
+
+def get_temp_passwords_repo(session: Any = None) -> Any:
+    """Return the ``TempPasswordsRepo`` implementation (一次性临时密码)."""
+    from db.repos.oracle.temp_passwords import OracleTempPasswordsRepo
+
+    return OracleTempPasswordsRepo(session)
+
+
+def get_device_challenges_repo(session: Any = None) -> Any:
+    """Return the ``DeviceChallengesRepo`` implementation (异设备登录挑战)."""
+    from db.repos.oracle.device_challenges import OracleDeviceChallengesRepo
+
+    return OracleDeviceChallengesRepo(session)
+
+
 __all__ = [
     "get_users_repo",
     "get_groups_repo",
@@ -142,4 +163,7 @@ __all__ = [
     "get_ban_rules_repo",
     "get_ban_records_repo",
     "get_notifications_repo",
+    "get_device_bans_repo",
+    "get_temp_passwords_repo",
+    "get_device_challenges_repo",
 ]

@@ -137,6 +137,9 @@ users = Table(
     Column("ban_until", oracle.TIMESTAMP, nullable=True),
     Column("ban_source", VARCHAR2(16), nullable=True),
     Column("ban_rule", VARCHAR2(64), nullable=True),
+    # 主学海设备（V014）: NULL = 未绑定。存量账号保持 NULL，未绑定期间不做设备
+    # 校验；一旦绑定，登录只允许来自该设备（或走临时密码）。
+    Column("primary_xuehai_id", VARCHAR2(32), nullable=True),
     _oid_check("users"),
     _json_check("users", "roles"),
     _json_check("users", "eligibility"),
@@ -146,6 +149,7 @@ users = Table(
     ForeignKeyConstraint(["class_oid"], ["groups.oid"], name="fk_users_class_oid"),
 )
 Index("ix_users_class_oid", users.c.class_oid)
+Index("ix_users_primary_xuehai", users.c.primary_xuehai_id)
 
 
 # ---------------------------------------------------------------------------
@@ -718,7 +722,7 @@ Index("ix_ban_records_started", ban_records.c.started_at)
 
 
 # ---------------------------------------------------------------------------
-# NOTIFICATIONS ← new (站内通知; V014)
+# NOTIFICATIONS ← new (站内通知; V015)
 #   One row per admin-published notice. AUTHOR_OID / AUTHOR_NAME are written
 #   once and never updated: the display name at send time is part of the audit
 #   trail, so a later rename must not rewrite history. No FK on AUTHOR_OID for
@@ -752,7 +756,37 @@ Index(
 
 
 # ---------------------------------------------------------------------------
-# NOTIFICATION_STATE ← new (通知全局版本; V014)
+# TEMP_LOGIN_PASSWORDS  ← new (团支书/学生会签发的一次性临时密码; V014)
+#   只存 bcrypt 哈希：明文只在创建响应里出现一次，DB 泄露也无法还原。单次使用
+#   （``used_at``）+ 30 分钟过期（``expires_at``）+ 可撤销（``revoked_at``）：
+#   三个时间戳而不是一个状态列，是因为「用过 / 过期 / 被撤销」在审计上是三种
+#   不同的事实，合并成枚举会丢掉时间点。
+#   无外键：签发人与目标用户都可能被硬删除，而密码行是审计材料。
+# ---------------------------------------------------------------------------
+
+temp_login_passwords = Table(
+    "temp_login_passwords",
+    metadata,
+    _oid_pk(),
+    Column("target_user_oid", VARCHAR2(24), nullable=False),
+    Column("created_by_oid", VARCHAR2(24), nullable=False),
+    Column("code_hash", VARCHAR2(100), nullable=False),
+    Column("creator_xuehai_id", VARCHAR2(32), nullable=True),
+    Column("expires_at", oracle.TIMESTAMP, nullable=False),
+    Column("used_at", oracle.TIMESTAMP, nullable=True),
+    Column("revoked_at", oracle.TIMESTAMP, nullable=True),
+    Column("created_at", oracle.TIMESTAMP, nullable=False),
+    _oid_check("temp_login_passwords"),
+)
+Index(
+    "ix_tlp_target",
+    temp_login_passwords.c.target_user_oid,
+    temp_login_passwords.c.expires_at,
+)
+
+
+# ---------------------------------------------------------------------------
+# NOTIFICATION_STATE ← new (通知全局版本; V015)
 #   Single-row counter (ID = 1). Every successful notification create / edit /
 #   delete bumps VERSION in the same transaction as the row change, which is
 #   the client's cheap "is there anything new?" signal. Keeping it in one row
@@ -767,6 +801,57 @@ notification_state = Table(
     Column("updated_at", oracle.TIMESTAMP, nullable=False),
     CheckConstraint("id = 1", name="ck_notification_state_id"),
     CheckConstraint("version >= 0", name="ck_notification_state_version"),
+)
+
+
+# ---------------------------------------------------------------------------
+# DEVICE_CHALLENGES  ← new (异设备登录的一次性挑战; V014)
+#   ``token_hash`` 存 SHA-256 hex 而不是明文 token：挑战值等价于「一次登录
+#   许可」，泄露即可被抢用。唯一索引既是查找路径也是防重放裁决者。
+#   ``attempts`` 由服务层在行锁（``SELECT ... FOR UPDATE``）内递增，第 3 次
+#   同时封账号与设备——所以计数必须落在库里，不能放进程内存。
+# ---------------------------------------------------------------------------
+
+device_challenges = Table(
+    "device_challenges",
+    metadata,
+    _oid_pk(),
+    Column("token_hash", VARCHAR2(64), nullable=False),
+    Column("user_oid", VARCHAR2(24), nullable=False),
+    Column("xuehai_id", VARCHAR2(32), nullable=False),
+    Column("attempts", NUMBER(3), nullable=False, server_default=text("0")),
+    Column("expires_at", oracle.TIMESTAMP, nullable=False),
+    Column("consumed_at", oracle.TIMESTAMP, nullable=True),
+    Column("created_at", oracle.TIMESTAMP, nullable=False),
+    _oid_check("device_challenges"),
+)
+Index(
+    "ux_device_challenges_token",
+    device_challenges.c.token_hash,
+    unique=True,
+)
+
+
+# ---------------------------------------------------------------------------
+# BANNED_DEVICES  ← new (设备级封禁; V014)
+#   主键就是学海设备号：一台设备只有一条当前封禁状态，重复封禁是覆盖而不是
+#   追加。``until`` NULL = 永久；``source`` 区分规则判罚（连错临时密码 3 次）
+#   与管理员手动封禁。账号封禁**不**镜像到这里：由服务层按
+#   ``users.primary_xuehai_id`` 实时推导，账号解封/换设备后自动失效。
+#   无 ``oid``、无外键：设备号是外部标识，删除用户不应连带删设备封禁。
+# ---------------------------------------------------------------------------
+
+banned_devices = Table(
+    "banned_devices",
+    metadata,
+    Column("xuehai_id", VARCHAR2(32), primary_key=True),
+    Column("reason", VARCHAR2(512), nullable=True),
+    Column("until", oracle.TIMESTAMP, nullable=True),
+    Column("source", VARCHAR2(16), nullable=False),
+    Column("rule_code", VARCHAR2(64), nullable=True),
+    Column("operator_oid", VARCHAR2(24), nullable=True),
+    Column("created_at", oracle.TIMESTAMP, nullable=False),
+    CheckConstraint("source IN ('rule','admin')", name="ck_banned_devices_source"),
 )
 
 

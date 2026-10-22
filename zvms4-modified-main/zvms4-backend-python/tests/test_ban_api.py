@@ -125,9 +125,33 @@ def api(monkeypatch):
         lambda *a, **k: SimpleNamespace(list_page=list_page),
     )
 
+    async def get_names(oids):
+        return {oid: "管理员" for oid in oids}
+
+    monkeypatch.setattr(
+        backends,
+        "get_users_repo",
+        lambda *a, **k: SimpleNamespace(get_names=get_names),
+    )
+
+    # 规则变更审计日志：与 devices_api 同款打桩，避免真去连库写日志。
+    log = SimpleNamespace(
+        entries=[],
+        with_text=lambda text, type="", level="": (
+            log.entries.append({"text": text, "type": type, "level": level}) or log
+        ),
+    )
+
+    async def insert_log():
+        return None
+
+    log.insert_log = insert_log
+    calls["log"] = log
+
     app = FastAPI()
     app.include_router(ban_router.router, prefix=PREFIX)
     app.dependency_overrides[get_current_user] = lambda: ADMIN
+    app.dependency_overrides[ban_router.inject_log] = lambda: log
     return TestClient(app), rules, calls
 
 
@@ -235,6 +259,40 @@ def test_penalties_replacement(api) -> None:
     assert rules["multi_device_login"]["penalties"] == "[2, 5, 30]"
 
 
+def test_penalties_allows_trailing_permanent(api) -> None:
+    """末位 ``null`` 表示「此后永久」，是种子梯度 [1,3,7,14,30,null] 的形状。"""
+    http, rules, _calls = api
+    body = http.put(
+        f"{PREFIX}/rules/multi_device_login",
+        json={"penalties": [1, 3, 7, 14, 30, None]},
+    ).json()
+
+    assert body["code"] == 200
+    assert body["data"]["penalties"] == [1, 3, 7, 14, 30, None]
+    assert rules["multi_device_login"]["penalties"] == "[1, 3, 7, 14, 30, null]"
+
+
+def test_penalties_still_accepts_all_int_gradient(api) -> None:
+    http, _rules, _calls = api
+    body = http.put(
+        f"{PREFIX}/rules/multi_device_login",
+        json={"penalties": [1, 3, 7, 14, 30]},
+    ).json()
+
+    assert body["data"]["penalties"] == [1, 3, 7, 14, 30]
+
+
+def test_penalties_rejects_null_before_the_end(api) -> None:
+    """``null`` 之后的档位永远轮不到，配置就成了死数据，直接在写入口拒绝。"""
+    http, _rules, calls = api
+    response = http.put(
+        f"{PREFIX}/rules/multi_device_login", json={"penalties": [1, None, 7]}
+    )
+
+    assert response.status_code == 422
+    assert calls["updates"] == []
+
+
 @pytest.mark.parametrize(
     "payload",
     [
@@ -265,6 +323,54 @@ def test_unknown_rule_is_404(api) -> None:
     assert response.status_code == 404
     assert response.json()["detail"] == "规则不存在"
     assert calls["updates"] == []
+
+
+# ---------------------------------------------------------------------------
+# PUT /rules/{code} 的审计日志
+# ---------------------------------------------------------------------------
+
+
+def test_rule_change_writes_audit_log(api) -> None:
+    """改的是登录闸门阈值/梯度，必须留下「谁把什么从多少改成多少」。"""
+    http, _rules, calls = api
+    body = http.put(
+        f"{PREFIX}/rules/multi_device_login",
+        json={
+            "enabled": False,
+            "config": {"threshold": 5},
+            "penalties": [1, 3],
+        },
+    ).json()
+
+    assert body["code"] == 200
+    entries = calls["log"].entries
+    assert len(entries) == 1
+    entry = entries[0]
+    assert entry["type"] == "ban_change"
+    assert entry["level"] == "warning"
+    text = entry["text"]
+    assert "multi_device_login" in text
+    assert "threshold 3→5" in text
+    assert "window_hours 24→24" in text
+    assert "penalties [1, 2, 7]→[1, 3]" in text
+    assert "enabled True→False" in text
+
+
+def test_empty_patch_writes_no_audit_log(api) -> None:
+    """空 patch 是一次「读回」，没改动就不该产生审计行。"""
+    http, _rules, calls = api
+    http.put(f"{PREFIX}/rules/multi_device_login", json={})
+
+    assert calls["updates"] == []
+    assert calls["log"].entries == []
+
+
+def test_rejected_rule_patch_writes_no_audit_log(api) -> None:
+    http, _rules, calls = api
+    http.put(f"{PREFIX}/rules/multi_device_login", json={"penalties": [3, 2]})
+    http.put(f"{PREFIX}/rules/not_a_rule", json={"enabled": False})
+
+    assert calls["log"].entries == []
 
 
 # ---------------------------------------------------------------------------
@@ -396,3 +502,121 @@ def test_banned_users_requires_admin(banned_api) -> None:
 def test_banned_users_rejects_out_of_range_paging(banned_api, qs) -> None:
     http, _calls = banned_api
     assert http.get(f"{PREFIX}/users?{qs}").status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# GET /devices、DELETE /devices/{xuehai_id} —— 设备封禁
+# ---------------------------------------------------------------------------
+
+DEVICE_ROWS = [
+    {
+        "xuehai_id": "1234567890",
+        "reason": "临时密码连续输错 3 次",
+        "until": None,
+        "source": "rule",
+        "rule_code": "foreign_device_login",
+        "operator_oid": None,
+        "created_at": STARTED,
+    },
+    {
+        "xuehai_id": "99887766",
+        "reason": "管理员封禁",
+        "until": UNTIL,
+        "source": "admin",
+        "rule_code": None,
+        "operator_oid": ADMIN["id"],
+        "created_at": STARTED,
+    },
+]
+
+
+@pytest.fixture
+def devices_api(monkeypatch):
+    calls = {"pages": [], "deleted": []}
+
+    async def list_page(page, size):
+        calls["pages"].append((page, size))
+        return DEVICE_ROWS, len(DEVICE_ROWS)
+
+    async def delete(xuehai_id):
+        calls["deleted"].append(xuehai_id)
+        return 1 if xuehai_id == "1234567890" else 0
+
+    async def get_names(oids):
+        return {oid: "管理员" for oid in oids}
+
+    monkeypatch.setattr(
+        backends,
+        "get_users_repo",
+        lambda *a, **k: SimpleNamespace(get_names=get_names),
+    )
+    monkeypatch.setattr(
+        backends,
+        "get_device_bans_repo",
+        lambda *a, **k: SimpleNamespace(list_page=list_page, delete=delete),
+        raising=False,
+    )
+    log = SimpleNamespace(
+        entries=[],
+        with_text=lambda text, type="", level="": (
+            log.entries.append({"text": text, "type": type, "level": level}) or log
+        ),
+    )
+
+    async def insert_log():
+        return None
+
+    log.insert_log = insert_log
+
+    app = FastAPI()
+    app.include_router(ban_router.router, prefix=PREFIX)
+    app.dependency_overrides[get_current_user] = lambda: ADMIN
+    app.dependency_overrides[ban_router.inject_log] = lambda: log
+    return TestClient(app), calls, log
+
+
+def test_banned_devices_shape(devices_api) -> None:
+    http, calls, _log = devices_api
+    body = http.get(f"{PREFIX}/devices?page=2&perpage=10").json()
+
+    assert body["code"] == 200
+    assert body["metadata"] == {"size": 2, "page": 2, "perpage": 10}
+    assert calls["pages"] == [(2, 10)]
+    assert body["data"][0] == {
+        "xuehai_id": "1234567890",
+        "reason": "临时密码连续输错 3 次",
+        "permanent": True,
+        "until": None,
+        "source": "rule",
+        "rule_code": "foreign_device_login",
+        "created_at": "2026-10-20T12:00:00",
+    }
+    assert body["data"][1]["permanent"] is False
+    assert body["data"][1]["until"] == "2026-10-21T12:00:00"
+
+
+def test_unban_device_writes_ban_change_log(devices_api) -> None:
+    http, calls, log = devices_api
+    response = http.delete(f"{PREFIX}/devices/1234567890")
+
+    assert response.status_code == 204
+    assert calls["deleted"] == ["1234567890"]
+    assert log.entries[-1]["type"] == "ban_change"
+    assert log.entries[-1]["level"] == "warning"
+
+
+def test_unban_unknown_device_is_404(devices_api) -> None:
+    http, _calls, log = devices_api
+    response = http.delete(f"{PREFIX}/devices/99887766")
+
+    assert response.status_code == 404
+    assert log.entries == []
+
+
+def test_device_endpoints_require_admin(devices_api) -> None:
+    http, _calls, _log = devices_api
+    http.app.dependency_overrides[get_current_user] = lambda: STUDENT
+
+    assert http.get(f"{PREFIX}/devices").status_code == 403
+    assert http.delete(f"{PREFIX}/devices/1234567890").status_code == 403
+

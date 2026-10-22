@@ -45,23 +45,60 @@ const form = reactive({
   penaltiesText: '1,2,7'
 })
 
-function parsePenalties(text: string): number[] | null {
-  const parts = text
+const PERMANENT_TOKENS = ['0']
+
+function splitPenalties(text: string): string[] {
+  return text
     .split(/[,，\s]+/)
     .filter((part) => part.length > 0)
-    .map((part) => Number(part))
+}
+
+// 0 是"永久"的文本记号:只允许出现在末位且只能出现一次
+function hasMisplacedPermanent(text: string): boolean {
+  const parts = splitPenalties(text)
+  const positions = parts.reduce<number[]>((acc, part, index) => {
+    if (PERMANENT_TOKENS.includes(part)) {
+      acc.push(index)
+    }
+    return acc
+  }, [])
+  if (positions.length === 0) {
+    return false
+  }
+  return positions.length > 1 || positions[0] !== parts.length - 1
+}
+
+function parsePenalties(text: string): (number | null)[] | null {
+  const parts = splitPenalties(text)
   if (parts.length < 1 || parts.length > 6) {
     return null
   }
-  if (parts.some((days) => !Number.isInteger(days) || days <= 0)) {
+  if (hasMisplacedPermanent(text)) {
     return null
   }
-  for (let i = 1; i < parts.length; i++) {
-    if (parts[i]! <= parts[i - 1]!) {
+  const lastIndex = parts.length - 1
+  const parsed: (number | null)[] = []
+  for (let i = 0; i < parts.length; i++) {
+    const token = parts[i]!
+    if (i === lastIndex && PERMANENT_TOKENS.includes(token)) {
+      parsed.push(null)
+      continue
+    }
+    const days = Number(token)
+    if (!Number.isInteger(days) || days <= 0) {
       return null
     }
+    const previous = parsed[parsed.length - 1]
+    if (previous !== undefined && (previous === null || days <= previous)) {
+      return null
+    }
+    parsed.push(days)
   }
-  return parts
+  return parsed
+}
+
+function formatPenaltiesInput(penalties: (number | null)[]): string {
+  return penalties.map((days) => (days === null ? '0' : String(days))).join(',')
 }
 
 function validateThreshold(_rule: unknown, value: unknown, callback: (error?: Error) => void) {
@@ -91,6 +128,10 @@ function validateWindow(_rule: unknown, value: unknown, callback: (error?: Error
 }
 
 function validatePenalties(_rule: unknown, _value: unknown, callback: (error?: Error) => void) {
+  if (hasMisplacedPermanent(form.penaltiesText)) {
+    callback(new Error(t('manage.banRules.validation.penaltiesPermanentPosition')))
+    return
+  }
   if (parsePenalties(form.penaltiesText) === null) {
     callback(new Error(t('manage.banRules.validation.penaltiesFormat')))
     return
@@ -189,7 +230,7 @@ function openEdit(rule: BanRule) {
   editingName.value = rule.name
   form.threshold = rule.config?.threshold ?? 2
   form.window_hours = rule.config?.window_hours ?? 1
-  form.penaltiesText = (rule.penalties ?? []).join(',')
+  form.penaltiesText = formatPenaltiesInput(rule.penalties ?? [])
   dialogVisible.value = true
   void nextTick(() => formRef.value?.clearValidate())
 }
@@ -200,6 +241,10 @@ async function submitEdit() {
   }
   const valid = await formRef.value.validate().catch(() => false)
   if (!valid) {
+    return
+  }
+  if (hasMisplacedPermanent(form.penaltiesText)) {
+    ElMessage.error(t('manage.banRules.validation.penaltiesPermanentPosition'))
     return
   }
   const penalties = parsePenalties(form.penaltiesText)
@@ -237,7 +282,11 @@ function formatPenalties(rule: BanRule): string {
     return '—'
   }
   return rule.penalties
-    .map((days) => t('manage.banRules.rule.penaltyDay', { days }))
+    .map((days) =>
+      days === null
+        ? t('manage.banRules.rule.penaltyPermanent')
+        : t('manage.banRules.rule.penaltyDay', { days })
+    )
     .join(' → ')
 }
 

@@ -223,6 +223,7 @@ def _user_columns() -> tuple[Any, ...]:
         users_tbl.c.ban_until,
         users_tbl.c.ban_source,
         users_tbl.c.ban_rule,
+        users_tbl.c.primary_xuehai_id,
     )
 
 
@@ -352,6 +353,62 @@ def _clear_ban_stmt(oid: str):
             ban_rule=None,
             session_id=new_oid(),
         )
+    )
+
+
+def _set_primary_xuehai_stmt(oid: str, xuehai_id: str):
+    """绑定主学海设备——**不**轮换 ``session_id``。
+
+    与 ``_set_business_id_stmt`` / ``_set_ban_stmt`` 刻意不同：主设备不是身份
+    凭证，改它不该把账号在所有设备上踢下线（那会让「换台平板」变成一次全端
+    重新登录）。真正的登录闸门在登录路径上按 ``primary_xuehai_id`` 判定，旧
+    token 依然有效，只是下一次登录会要求从新设备发起。
+    """
+    return (
+        update(users_tbl)
+        .where(users_tbl.c.oid == oid)
+        .values(primary_xuehai_id=xuehai_id)
+    )
+
+
+def _clear_primary_xuehai_stmt(oid: str):
+    """解绑主学海设备（列归 NULL = 未绑定，回到「不做设备校验」状态）。
+
+    同样不轮换会话：解绑后账号反而更宽松，没必要让在线用户重新登录。
+    """
+    return (
+        update(users_tbl)
+        .where(users_tbl.c.oid == oid)
+        .values(primary_xuehai_id=None)
+    )
+
+
+def _list_banned_by_xuehai_stmt(xuehai_id: str):
+    """主设备 = 该学海 ID 且 ``banned = 1`` 的用户（**只做原始筛选**）。
+
+    ``ban_until`` 是否已过期不在这里判：到期封禁仍留着 ``banned=1`` 是正常
+    存量状态，只有 ``util.ban.ban_is_active`` 能回答「此刻是否生效」。把时间
+    比较搬进 SQL 会造出第二套判定口径，两边迟早漂移。
+    """
+    return select(*_user_columns()).where(
+        users_tbl.c.primary_xuehai_id == xuehai_id,
+        users_tbl.c.banned == 1,
+    )
+
+
+def _primary_owned_by_other_stmt(xuehai_id: str, user_oid: str):
+    """该设备号是否**挂在别人名下**的主设备（``EXISTS`` 语义，取一行即止）。
+
+    设备号来自请求头，可以被伪造成受害者的主设备号；封禁路径据此拒写
+    ``BANNED_DEVICES``，免得 3 次错密码就能把任意人永久锁在门外。
+    """
+    return (
+        select(users_tbl.c.oid)
+        .where(
+            users_tbl.c.primary_xuehai_id == xuehai_id,
+            users_tbl.c.oid != user_oid,
+        )
+        .limit(1)
     )
 
 
@@ -798,6 +855,10 @@ def _user_doc(mapping: Any) -> Row:
         doc["ban_source"] = mapping["ban_source"]
     if mapping["ban_rule"] is not None:
         doc["ban_rule"] = mapping["ban_rule"]
+    # 主设备同样只补非 NULL 的：``"primary_xuehai_id" in user`` 必须表示「已绑定」，
+    # 未绑定是「字段不存在」（Oracle 把空串当 NULL，两者无法区分，只能看 key）。
+    if mapping["primary_xuehai_id"] is not None:
+        doc["primary_xuehai_id"] = mapping["primary_xuehai_id"]
     return doc
 
 
@@ -996,6 +1057,50 @@ class OracleUsersRepo:
             await session.execute(stmt)
             if owns:
                 await session.commit()
+
+    async def set_primary_xuehai(self, oid: str, xuehai_id: str) -> None:
+        """绑定主学海设备（**不**轮换 ``session_id``，见语句构造器注释）。
+
+        不做「已绑定时禁止覆盖」的判定：那是端点层的授权规则（只能从当前主设备
+        发起），仓储只负责把值写进去。
+        """
+        stmt = _set_primary_xuehai_stmt(normalize_oid(oid), xuehai_id)
+        async with _session_for(self._session) as (session, owns):
+            await session.execute(stmt)
+            if owns:
+                await session.commit()
+
+    async def clear_primary_xuehai(self, oid: str) -> None:
+        """解绑主学海设备（列归 NULL → 回到未绑定、不做设备校验的状态）。"""
+        stmt = _clear_primary_xuehai_stmt(normalize_oid(oid))
+        async with _session_for(self._session) as (session, owns):
+            await session.execute(stmt)
+            if owns:
+                await session.commit()
+
+    async def list_banned_by_xuehai(self, xuehai_id: str) -> list[Row]:
+        """主设备为该学海 ID 且 ``banned = 1`` 的用户文档。
+
+        只按两列做原始筛选，**不**判 ``ban_until`` 是否过期：到期未解封的行
+        ``banned`` 仍是 1，是否「此刻生效」必须由服务层用
+        :func:`util.ban.ban_is_active` 判定（见 ``db/repos/oracle/users.py``
+        的语句构造器注释）。返回完整文档，服务层据此拿 ``_id`` 与封禁元数据。
+        """
+        stmt = _list_banned_by_xuehai_stmt(xuehai_id)
+        async with _session_for(self._session) as (session, _owns):
+            rows = (await session.execute(stmt)).all()
+        return [_user_doc(row._mapping) for row in rows]
+
+    async def primary_owned_by_other(self, xuehai_id: str, user_oid: str) -> bool:
+        """``xuehai_id`` 是否是**别人**的主设备。
+
+        只回答「有没有另一个人把它当主设备」，不判封禁状态：调用方（临时密码
+        连错封禁）要防的是「伪造受害者设备号借刀封人」，与对方此刻封没封无关。
+        """
+        stmt = _primary_owned_by_other_stmt(xuehai_id, normalize_oid(user_oid))
+        async with _session_for(self._session) as (session, _owns):
+            row = (await session.execute(stmt)).first()
+        return row is not None
 
     async def set_class(self, user_oid: str, class_oid: str | None) -> None:
         class_value = normalize_oid(class_oid) if class_oid is not None else None
