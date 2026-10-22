@@ -1,5 +1,6 @@
 from collections import defaultdict
 from datetime import datetime
+import logging
 from typing import Literal
 from config import BASE_ON_CAMPUS, BASE_OFF_CAMPUS, BASE_SOCIAL_PRACTICE
 from db import backends
@@ -8,6 +9,8 @@ from settings import LANGUAGE
 from typings.time import UserActivityTime
 from utils import validate_object_id
 import pandas as pd
+
+logger = logging.getLogger(__name__)
 
 
 async def generate_description(user_id: str):
@@ -65,7 +68,7 @@ async def calculate_user_time_with_origin(
 
     :return: User time with origin data
     """
-    print(f"Calculating time for user {user_id}.")
+    logger.debug("Calculating time for user %s.", user_id)
     cache_data = await backends.get_time_repo().get_with_origin(user_id) if allow_cache else None
     if cache_data:
         return cache_data['data']
@@ -111,7 +114,7 @@ async def time_with_origin(
     :param scope_id: Scope ID. For `grade`, it is the four-digit number of entry year; for `group`, it is the ObjectID of group.
     :param require_percentage: If > 0, only count students whose total time percentage is greater than this value
     """
-    print(f"Calculating time for scope {scope} with id {scope_id}.")
+    logger.debug("Calculating time for scope %s with id %s.", scope, scope_id)
     if scope == "grade":
         users = await backends.get_users_repo().list_by_id_prefix(scope_id)
     elif scope == "group":
@@ -142,7 +145,7 @@ async def time_with_origin(
     for item in data:
         df = pd.DataFrame.from_dict(item['data']['by_origin'], orient='index').fillna(0)
         df_list.append(df)
-    print(df_list)
+    logger.debug("%s", df_list)
     if not df_list:
         return {
             "by_origin": {},
@@ -168,6 +171,7 @@ async def calculate_user_time(
     date_end: datetime | None = None,
     allow_cache: bool = True,
     attach_description: bool = False,
+    activities: list | None = None,
 ):
     """
     Get user time
@@ -177,11 +181,19 @@ async def calculate_user_time(
     :param date_end: End date for filtering activities
     :param allow_cache: If True, do not use cached data
     :param attach_description: If True, attach description to the result
+    :param activities: Pre-resolved ``list_effective`` rows for this date range.
+        Callers looping over users pass the same set once instead of re-reading
+        the whole activity table per user; ``None`` keeps the historical query.
 
     :return: User time
     """
-    print(
-        f"Calculating time for user {user_id} with date range {date_start} to {date_end}, allow_cache={allow_cache}, attach_description={attach_description}"
+    logger.debug(
+        "Calculating time for user %s with date range %s to %s, allow_cache=%s, attach_description=%s",
+        user_id,
+        date_start,
+        date_end,
+        allow_cache,
+        attach_description,
     )
     if allow_cache and date_start is None and date_end is None:
         db_data = await backends.get_time_repo().get_for_user(user_id)
@@ -192,10 +204,11 @@ async def calculate_user_time(
                 "social-practice": db_data["social_practice"],
             }
 
-    accepted_activities = await backends.get_activities_repo().list_effective(
-        date_start, date_end
-    )
-    accepted_activities = [str(activity["_id"]) for activity in accepted_activities]
+    if activities is None:
+        activities = await backends.get_activities_repo().list_effective(
+            date_start, date_end
+        )
+    accepted_activities = [str(activity["_id"]) for activity in activities]
 
     collections = await backends.get_members_repo().list_for_member(
         user_id,

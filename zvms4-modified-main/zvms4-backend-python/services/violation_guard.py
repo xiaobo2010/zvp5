@@ -5,20 +5,20 @@
 该不该封号」是政策问题，必须由服务端按同一份计数口径裁决——客户端只提交
 观察到的信号，不提交结论。
 
-**为什么先入库、再判封禁**：证据与处罚是两份事实。规则被停用、角色豁免、
-计数还没到阈值时都应留下证据；反过来，先判后记会让「差一次到阈值」的那批
-上报彻底消失，管理员在违规列表里看不到「差一点就被封」的人。
+**为什么先入库、再判封禁**：证据与处罚是两份事实。规则被停用、计数还没到
+阈值时都应留下证据；反过来，先判后记会让「差一次到阈值」的那批上报彻底消失，
+管理员在违规列表里看不到「差一点就被封」的人。只有角色豁免是例外：特权角色
+的记录留在窗口里会在换届后变成别人的处罚依据，所以那一类只留审计日志。
 
-**为什么用「计数等于阈值」而不是 `>=`**：与临时密码同一思路（见
-``services.device_guard.verify_temp_password``）。计数只会随上报递增，若用
-``>=``，阈值之后每一次上报都会再封一次，梯度会被一路打到永久档；用等号则
-只在跨过阈值的那一次落封禁。管理员事后调低阈值导致 ``count > threshold``
-时不再补封——那是一次配置变更，不该由下一条无关上报来触发历史追罚。
+**为什么计数单位是「上报批次」而不是「一条信号」**：一次页面加载可能同时
+命中 iframe + bridge + devtools，按行计数会让阈值 2 的规则在第一次加载就封号。
+``BATCH_ID`` 由服务端为每次请求生成（客户端不能传），判定统计窗口内的
+``COUNT(DISTINCT batch_id)``；``COALESCE(batch_id, oid)`` 让旧行保持「每行一批」。
 
-**为什么 privileged 角色只记录不封**：``iframe``/``devtools`` 在管理端调试、
-投屏、嵌入场景里误报代价极高，自动封掉管理员等于丢掉管理入口（与
-``services.ban_rules`` 的「绝不自动封 admin」同一条原则，这里扩到学生会与
-教师）。
+**为什么用 ``>=`` 且要求「当前没有生效封禁」**：计数只在批次上递增，用等号会
+漏掉「一次上报跨过阈值」的情形（3 条批次 > 阈值 2）。而 ``>=`` 本身会让阈值
+之后的每一批都再封一次，梯度被一路打到永久档——所以落封前先看当前是否已经
+有生效封禁，有就只记账不重复处罚。
 """
 
 from __future__ import annotations
@@ -29,8 +29,10 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from db import backends
+from db.ids import new_oid
 from services import ban_rules, device_guard
 from typings.log import ZVMSLog
+from util.ban import ban_is_active
 
 _logger = logging.getLogger(__name__)
 
@@ -44,14 +46,15 @@ SIGNALS = ("iframe", "bridge", "devtools")
 DEDUP_WINDOW_SECONDS = 300
 DEVTOOLS_DEDUP_WINDOW_SECONDS = 1800
 
-# 规则缺失/坏数据时的产品默认值（与 V016 种子一致）。
+# 规则缺失/坏数据时的产品默认值（与 V001/V019 种子、ban_rules.DEFAULT_CONFIG 一致）。
 DEFAULT_CONFIG = {"threshold": 3, "window_hours": 24}
 
 # DB 列宽即契约：超长详情在服务端截断，不让一次上报因为一个长字符串丢整批。
 MAX_DETAIL_CHARS = 500
 
 # 角色豁免：这些角色即使在别的账号视角下「违规」，也可能是工作行为。
-NO_AUTO_BAN_ROLES = ("admin", "department", "teacher")
+# 与 ``services.device_guard.PRIVILEGED_ROLES`` 对齐（团支书也在其中）。
+NO_AUTO_BAN_ROLES = ("admin", "department", "secretary", "teacher")
 
 Row = dict[str, Any]
 
@@ -74,11 +77,19 @@ def _clean_detail(detail: Any) -> str | None:
     return text[:MAX_DETAIL_CHARS]
 
 
-def _config(rule: dict | None) -> dict:
-    """规则 ``{threshold, window_hours}``；坏数据整体回退默认值。
+def _positive(value: Any, fallback: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return fallback
+    return parsed if parsed > 0 else fallback
 
-    与 ``ban_rules.rule_config`` 同口径，但这里不复用它：违规计数窗口与登录
-    判定窗口是两条独立策略，将来任一侧改语义时不该互相牵连。
+
+def _config(rule: dict | None) -> dict:
+    """规则 ``{threshold, window_hours}``，缺项/坏数据**逐项**回退默认值。
+
+    逐项而不是整体回退：管理员只写了一个键（``{"threshold":5}``）时，另一个键
+    该拿产品默认值，而不是把整份配置丢掉——否则「调高阈值」会被静默改回默认。
     """
     raw = (rule or {}).get("config")
     if isinstance(raw, str):
@@ -88,19 +99,30 @@ def _config(rule: dict | None) -> dict:
             raw = None
     if not isinstance(raw, dict):
         return dict(DEFAULT_CONFIG)
+    return {
+        "threshold": _positive(raw.get("threshold"), DEFAULT_CONFIG["threshold"]),
+        "window_hours": _positive(
+            raw.get("window_hours"), DEFAULT_CONFIG["window_hours"]
+        ),
+    }
 
-    def positive(value: Any) -> int | None:
-        try:
-            parsed = int(value)
-        except (TypeError, ValueError):
-            return None
-        return parsed if parsed > 0 else None
 
-    threshold = positive(raw.get("threshold"))
-    window_hours = positive(raw.get("window_hours"))
-    if threshold is None or window_hours is None:
-        return dict(DEFAULT_CONFIG)
-    return {"threshold": threshold, "window_hours": window_hours}
+def _roles(value: Any) -> tuple[str, ...]:
+    """角色列表；缺失/坏类型按学生处理，但要留一条 warning。
+
+    一条脏数据只能让本人走学生口径，不能把上报打成 500；也不能因为读不懂就
+    当他是管理员（那等于给一条坏数据发豁免）。
+    """
+    if value is None:
+        return ()
+    if not isinstance(value, (list, tuple, set, frozenset)):
+        _logger.warning("用户角色字段类型异常（%r），按学生处理", type(value).__name__)
+        return ()
+    return tuple(role for role in value if isinstance(role, str))
+
+
+def _exempt_roles(roles: tuple[str, ...]) -> tuple[str, ...]:
+    return tuple(role for role in roles if role in NO_AUTO_BAN_ROLES)
 
 
 async def _rule() -> dict | None:
@@ -114,6 +136,20 @@ async def _rule() -> dict | None:
     except Exception:
         _logger.exception("读取 %s 规则失败，本次只记录违规不判定封禁", TRIGGER)
         return None
+
+
+async def _ban_active(user_oid: str) -> bool:
+    """该账号此刻是否已在封禁中（``ban_until`` 到期即视为解除）。
+
+    读不到按「未封禁」处理：少判一次只会让本次处罚照旧，而多判一次会让真正
+    该封的人一直被封不掉（``>=`` 分支每次都以为「已经封过了」）。
+    """
+    try:
+        doc = await backends.get_users_repo().get_by_oid(user_oid)
+    except Exception:
+        _logger.exception("读取用户封禁状态失败，按未封禁处理")
+        return False
+    return ban_is_active(doc)
 
 
 async def _log_violation(
@@ -139,6 +175,29 @@ async def _log_violation(
         _logger.exception("写入 platform_misuse_violation 日志失败（违规已入库）")
 
 
+async def _log_exempt(
+    user_oid: str,
+    roles: tuple[str, ...],
+    count: int,
+    xuehai_id: str,
+    at: datetime,
+) -> None:
+    """特权角色被豁免的审计：**没有**违规入库，这条日志是唯一痕迹。"""
+    try:
+        await ZVMSLog(
+            "",
+            user_oid,
+            f"特权角色（{'/'.join(roles)}）上报 {count} 条平台违规信号，"
+            f"按策略只记录不封禁（设备 {xuehai_id or '未知'}）",
+            at.timestamp(),
+            type="platform_misuse_exempt",
+            level="warning",
+            xuehai_id=xuehai_id,
+        ).insert_log()
+    except Exception:
+        _logger.exception("写入 platform_misuse_exempt 日志失败")
+
+
 async def _log_ban(user_oid: str, reason: str, xuehai_id: str, at: datetime) -> None:
     """封禁已生效后的审计；同样吞掉失败，封禁状态才是事实。"""
     try:
@@ -158,17 +217,35 @@ async def _log_ban(user_oid: str, reason: str, xuehai_id: str, at: datetime) -> 
 async def record(user: dict, signals: list[dict], xuehai_id: str = "") -> dict:
     """记录一批平台违规信号，命中阈值当次按规则梯度封禁。
 
-    流程（顺序即语义）：白名单过滤 → 逐条窗口去重 → 入库 + 审计 → 取规则 →
-    窗口计数 → ``count == threshold`` 且角色可封时落封禁。
+    流程（顺序即语义）：角色豁免 → 白名单过滤 → 逐条窗口去重 → 入库 + 审计 →
+    取规则 → 窗口内**批次**计数 → ``count >= threshold`` 且当前无生效封禁时落封禁。
 
     返回 ``{"recorded", "duplicates", "banned", "rule_code"}``：``recorded`` 是
     真正新增的证据条数（客户端可据此判断是否被去重），``duplicates`` 是被窗口
-    挡掉的条数，两者之和只统计合法信号。
+    挡掉的条数，两者之和只统计合法信号。特权角色只写审计不写证据，因此两项
+    都是 0。
     """
     user_oid = str(user["id"])
     now = datetime.now()
 
+    result = {
+        "recorded": 0,
+        "duplicates": 0,
+        "banned": False,
+        "rule_code": TRIGGER,
+    }
+
+    exempt = _exempt_roles(_roles(user.get("per")))
+    if exempt:
+        # 豁免必须在计数之前：特权角色的记录留在窗口里，换届/降级后会被一条
+        # 无关上报当成「累计违规」触发封禁。
+        await _log_exempt(
+            user_oid, exempt, len(signals or []), xuehai_id, now
+        )
+        return result
+
     violations = backends.get_violations_repo()
+    batch_id = new_oid()
     recorded = 0
     duplicates = 0
     for item in signals or []:
@@ -185,17 +262,18 @@ async def record(user: dict, signals: list[dict], xuehai_id: str = "") -> dict:
             continue
 
         await violations.insert(
-            user_oid, TRIGGER, signal, xuehai_id=xuehai_id or None, detail=detail
+            user_oid,
+            TRIGGER,
+            signal,
+            xuehai_id=xuehai_id or None,
+            detail=detail,
+            batch_id=batch_id,
         )
         recorded += 1
         await _log_violation(user_oid, signal, detail, xuehai_id, now)
 
-    result = {
-        "recorded": recorded,
-        "duplicates": duplicates,
-        "banned": False,
-        "rule_code": TRIGGER,
-    }
+    result["recorded"] = recorded
+    result["duplicates"] = duplicates
     if recorded == 0:
         # 全是重复或非法信号：计数没有变化，没必要再读规则表。
         return result
@@ -214,12 +292,12 @@ async def record(user: dict, signals: list[dict], xuehai_id: str = "") -> dict:
     threshold = config["threshold"]
     window_hours = config["window_hours"]
     since = now - timedelta(hours=window_hours)
-    count = await violations.count_since(user_oid, TRIGGER, since)
-    if count != threshold:
+    count = await violations.count_batches_since(user_oid, TRIGGER, since)
+    if count < threshold:
         return result
 
-    if any(role in NO_AUTO_BAN_ROLES for role in (user.get("per") or [])):
-        # 只记录不封：管理端的调试/嵌入/投屏会稳定触发这些信号。
+    if await _ban_active(user_oid):
+        # 已经封着：本批只是新证据，不该再推一档梯度。
         return result
 
     reason = (
@@ -229,8 +307,7 @@ async def record(user: dict, signals: list[dict], xuehai_id: str = "") -> dict:
     try:
         await device_guard.apply_account_ban(user_oid, rule_code, reason)
     except Exception:
-        # 封禁落库失败不回滚已入库的证据：下一条上报的 count 已越过阈值，
-        # 不会再走等号分支，这里只能留痕给运维补封。
+        # 封禁落库失败不回滚已入库的证据：留痕给运维补封。
         _logger.exception("平台违规封禁落库失败（证据已入库）")
         return result
 

@@ -54,10 +54,16 @@ class Repos:
         return {"_id": oid}
 
     async def get_many_by_oids(self, oids):
-        # 批量用户查询：与 get_by_triple 一样必须在事务内（activity 行锁之后）。
-        assert self.session.locked
+        # activities 的批量用户读必须在 activity 行锁之后；imports 的存在性校验
+        # 在事务内、activity 行创建之前，同样走这个批量接口。
+        assert self.session.locked or self.session.store.data["activities"] == 0
         await asyncio.sleep(0)
-        return {oid: {"_id": oid} for oid in dict.fromkeys(oids)}
+        self.session.store.bulk_calls.append(list(oids))
+        return {
+            oid: {"_id": oid}
+            for oid in dict.fromkeys(oids)
+            if oid not in self.session.store.unknown
+        }
 
     async def get_names(self, oids):
         # 审计文案的人名解析：同一事务内批量查，不额外开连接。
@@ -120,7 +126,7 @@ class Log:
 @pytest.fixture
 def store(monkeypatch):
     state = SimpleNamespace(data={"members": {}, "status": "effective", "activities": 0, "imports": 0, "logs": 0},
-                            lock=asyncio.Lock(), fail_on=None)
+                            lock=asyncio.Lock(), fail_on=None, unknown=set(), bulk_calls=[])
 
     @asynccontextmanager
     async def scope():
@@ -215,3 +221,35 @@ async def test_import_log_uses_names_instead_of_oids(store):
     await imports.upload_activity_excel("支教活动", "测试活动导入描述", upload, {"id": USER, "per": ["admin"]}, log)
     assert log.texts == ["用户 用户01 导入义工活动《支教活动》Excel，记录 1 条"]
     assert USER not in log.texts[0]
+
+
+@pytest.mark.asyncio
+async def test_import_checks_user_existence_in_batches(store):
+    oids = [f"{index:024x}" for index in range(1, 1202)]
+    content = workbook([[oid, "Name", "123", "Group", 1, 0, 0] for oid in oids])
+    upload = UploadFile(
+        BytesIO(content),
+        filename="import.xlsx",
+        headers=Headers({"content-type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"}),
+    )
+    await imports.upload_activity_excel("义工活动", "测试活动导入描述", upload, {"id": USER, "per": ["admin"]}, Log())
+
+    batches = store.bulk_calls
+    assert [len(batch) for batch in batches] == [500, 500, 201]
+    assert sorted(oid for batch in batches for oid in batch) == oids
+
+
+@pytest.mark.asyncio
+async def test_import_unknown_user_still_rejects_the_whole_workbook(store):
+    store.unknown = {OTHER}
+    content = workbook([[USER, "Name", "123", "Group", 1, 0, 0], [OTHER, "Name", "124", "Group", 1, 0, 0]])
+    upload = UploadFile(
+        BytesIO(content),
+        filename="import.xlsx",
+        headers=Headers({"content-type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"}),
+    )
+    before = deepcopy(store.data)
+    with pytest.raises(HTTPException) as failure:
+        await imports.upload_activity_excel("义工活动", "测试活动导入描述", upload, {"id": USER, "per": ["admin"]}, Log())
+    assert failure.value.status_code == 400
+    assert store.data == before

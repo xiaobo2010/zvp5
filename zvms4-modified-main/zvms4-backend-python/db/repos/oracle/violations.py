@@ -58,6 +58,7 @@ def _insert_stmt(
     xuehai_id: str | None,
     detail: str | None,
     created_at: datetime,
+    batch_id: str | None = None,
 ):
     # ``created_at`` 由调用方传同一个 now，与去重窗口、窗口计数同源：取两次
     # 时间会让「刚写下的这条」落在自己计算的窗口之外。
@@ -68,6 +69,7 @@ def _insert_stmt(
         signal=signal,
         xuehai_id=xuehai_id,
         detail=detail,
+        batch_id=batch_id,
         created_at=created_at,
     )
 
@@ -88,6 +90,29 @@ def _exists_recent_stmt(user_oid: str, signal: str, since: datetime):
 def _count_since_stmt(user_oid: str, trigger: str, since: datetime):
     return (
         select(func.count())
+        .select_from(ban_violations_tbl)
+        .where(
+            ban_violations_tbl.c.user_oid == user_oid,
+            ban_violations_tbl.c.trigger_code == trigger,
+            ban_violations_tbl.c.created_at >= since,
+        )
+    )
+
+
+def _count_batches_since_stmt(user_oid: str, trigger: str, since: datetime):
+    """窗口内违规**批次**数：一次上报里报了几个信号都只算一次。
+
+    ``COALESCE(batch_id, oid)`` 是给 V019 之前的存量行留的语义：那时没有批次
+    概念，每一行都是独立的一次违规，用主键顶替批次号即可保持历史口径。
+    """
+    return (
+        select(
+            func.count(
+                func.distinct(
+                    func.coalesce(ban_violations_tbl.c.batch_id, ban_violations_tbl.c.oid)
+                )
+            )
+        )
         .select_from(ban_violations_tbl)
         .where(
             ban_violations_tbl.c.user_oid == user_oid,
@@ -190,8 +215,13 @@ class OracleViolationsRepo:
         *,
         xuehai_id: str | None = None,
         detail: str | None = None,
+        batch_id: str | None = None,
     ) -> str:
-        """追加一条违规证据并返回新 ``_id``（写入时刻由本层生成）。"""
+        """追加一条违规证据并返回新 ``_id``（写入时刻由本层生成）。
+
+        ``batch_id`` 由服务层为**一次上报**生成并复用给该批的每一行；它是计数
+        单位（``count_batches_since``），不是证据内容。
+        """
         oid = new_oid()
         stmt = _insert_stmt(
             oid,
@@ -201,6 +231,7 @@ class OracleViolationsRepo:
             xuehai_id,
             detail,
             datetime.now(),
+            batch_id,
         )
         async with _session_for(self._session) as (session, owns):
             await session.execute(stmt)
@@ -216,8 +247,17 @@ class OracleViolationsRepo:
         return row is not None
 
     async def count_since(self, user_oid: str, trigger: str, since: datetime) -> int:
-        """``since`` 之后该用户在该 trigger 下的违规条数（累计封禁的计数）。"""
+        """``since`` 之后该用户在该 trigger 下的违规条数（证据行数）。"""
         stmt = _count_since_stmt(normalize_oid(user_oid), trigger, since)
+        async with _session_for(self._session) as (session, _owns):
+            total = (await session.execute(stmt)).scalar_one()
+        return int(total)
+
+    async def count_batches_since(
+        self, user_oid: str, trigger: str, since: datetime
+    ) -> int:
+        """``since`` 之后该用户在该 trigger 下的违规**批次数**（封禁计数）。"""
+        stmt = _count_batches_since_stmt(normalize_oid(user_oid), trigger, since)
         async with _session_for(self._session) as (session, _owns):
             total = (await session.execute(stmt)).scalar_one()
         return int(total)

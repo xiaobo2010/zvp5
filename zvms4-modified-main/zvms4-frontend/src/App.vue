@@ -31,7 +31,12 @@ import ZNotificationReminder from '@/components/notification/ZNotificationRemind
 import { useRegisterSW } from 'virtual:pwa-register/vue'
 import { CarbonCloudOffline } from '@/icons'
 import { modifyPasswordDialogs } from '@/views'
-import { startPlatformGuard, stopPlatformGuard } from '@/utils/platformGuard'
+import {
+  startPlatformGuard,
+  stopPlatformGuard,
+  setPlatformGuardAccount,
+  clearPlatformGuardData
+} from '@/utils/platformGuard'
 import dayjs from '@/plugins/dayjs'
 
 const { needRefresh, offlineReady, updateServiceWorker } = useRegisterSW()
@@ -222,8 +227,15 @@ watch(
 
 // 客户端违规检测(iframe / 学海桥缺失 / devtools)只在已登录且不在登录页时巡检,
 // 登录页自身没有 token 也没有业务页面,巡检只会白跑;登出或组件卸载立即停机。
-function syncPlatformGuard() {
+// 所有检测键按账号 oid 隔离:登录时注入账号,登出(由登录态切回否)时清掉
+// 当前账号的键,同机切换账号不会把上一人的节流状态带过来。
+function syncPlatformGuard(_newState: [boolean, string], oldState?: [boolean, string]) {
+  const [wasLogin, wasPath] = oldState ?? [undefined, '']
+  if (!userStore.isLogin && wasLogin && !wasPath?.endsWith('login')) {
+    clearPlatformGuardData()
+  }
   if (userStore.isLogin && !route.path.endsWith('login')) {
+    setPlatformGuardAccount(String(userStore._id))
     startPlatformGuard()
   } else {
     stopPlatformGuard()

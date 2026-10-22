@@ -23,6 +23,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
+from sqlalchemy.exc import IntegrityError
 
 from db import backends
 from typings.log import inject_log
@@ -50,7 +51,7 @@ TRIGGERS: tuple[dict, ...] = (
             "登录来自不属于本人的主学海设备：证据是临时密码连续输错次数与"
             "设备归属查询，达到阈值后账号按梯度封禁（设备可单独解封）。"
         ),
-        "config": {"threshold": 2, "window_hours": 1},
+        "config": {"threshold": 3, "window_hours": 24},
     },
     {
         "trigger": "platform_misuse",
@@ -60,7 +61,7 @@ TRIGGERS: tuple[dict, ...] = (
             "客户端上报的违规信号（页面被嵌套、学海桥缺失、调试器/注入痕迹）；"
             "窗口内累计到阈值才按梯度封号，管理员/学生会/教师只记录不封。"
         ),
-        "config": {"threshold": 2, "window_hours": 1},
+        "config": {"threshold": 3, "window_hours": 24},
     },
 )
 
@@ -268,14 +269,20 @@ async def create_ban_rule(
             config["window_hours"] = payload.config.window_hours
     penalties = _validated_penalties(payload.penalties)
 
-    await repo.insert(
-        payload.code,
-        name,
-        payload.trigger,
-        enabled=payload.enabled,
-        config=json.dumps(config, ensure_ascii=False),
-        penalties=json.dumps(penalties, ensure_ascii=False),
-    )
+    try:
+        await repo.insert(
+            payload.code,
+            name,
+            payload.trigger,
+            enabled=payload.enabled,
+            config=json.dumps(config, ensure_ascii=False),
+            penalties=json.dumps(penalties, ensure_ascii=False),
+        )
+    except IntegrityError:
+        raise HTTPException(
+            status_code=409,
+            detail="规则 code 已存在，或该检查项已有一条规则（同一检查项只允许一条）",
+        )
 
     created = await repo.get_by_code(payload.code)
     if created is None:

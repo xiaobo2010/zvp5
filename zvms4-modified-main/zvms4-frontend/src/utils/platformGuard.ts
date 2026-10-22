@@ -3,39 +3,58 @@ import type { PlatformSignal, PlatformSignalName } from '@/api/platformGuard'
 
 const KEY_PREFIX = 'zvms.platformGuard.'
 
-/** 检测结果缓存:同一分钟内多次调用(路由切换、手动触发)不重复采样。 */
-const RESULT_KEY = `${KEY_PREFIX}result`
-const RESULT_TTL_MS = 60_000
-
 /** 巡检周期。与后端去重窗口对齐的「采样」节奏,也是 debugger 计时的最小间隔。 */
 const TICK_MS = 60_000
 
-/** devtools 需要连续命中这么多次才上报,避免窗口尺寸抖动、偶发卡顿误判。 */
-const DEVTOOLS_STREAK = 3
-const DEVTOOLS_GAP_PX = 160
-const DEBUGGER_SUSPEND_MS = 120
-
-/** 每信号上报节流:普通信号 5 分钟、devtools 30 分钟,与后端 ban_violations 去重窗口一致。 */
-const DEFAULT_THROTTLE_MS = 5 * 60_000
-const THROTTLE_MS: Record<PlatformSignalName, number> = {
-  iframe: DEFAULT_THROTTLE_MS,
-  bridge: DEFAULT_THROTTLE_MS,
-  devtools: 30 * 60_000
+/**
+ * 按键隔离:所有 localStorage 键都带当前账号前缀,同机切换账号时
+ * 旧账号的节流/检测状态不会作用于新账号。
+ */
+let account = 'anon'
+function keyName(key: string): string {
+  return `${KEY_PREFIX}${account}.${key}`
 }
 
-interface CachedResult {
-  at: number
-  signals: PlatformSignal[]
+function resetAccountKeys(): void {
+  try {
+    for (let i = localStorage.length - 1; i >= 0; i -= 1) {
+      const name = localStorage.key(i)
+      if (name?.startsWith(`${KEY_PREFIX}${account}.`)) {
+        localStorage.removeItem(name)
+      }
+    }
+  } catch {
+    /* 隐私模式/配额满时无法访问,静默放弃 */
+  }
 }
 
-let timer: ReturnType<typeof setInterval> | undefined
-let lastSampleAt = 0
-let devtoolsStreak = 0
+/** 登录后由调用方注入账号,切换账号时旧账号的会话状态一并作废。 */
+export function setPlatformGuardAccount(oid: string): void {
+  if (oid === account) {
+    return
+  }
+  account = oid || 'anon'
+  iframeReported = false
+  bridgeReported = false
+  tamperAppReported = false
+  tamperMetaReported = false
+  devtoolsStreak = 0
+}
+
+/** 登出时清理当前账号的全部巡检键。 */
+export function clearPlatformGuardData(): void {
+  resetAccountKeys()
+  iframeReported = false
+  bridgeReported = false
+  tamperAppReported = false
+  tamperMetaReported = false
+  devtoolsStreak = 0
+}
 
 // localStorage 在隐私模式/配额满时会抛异常;巡检是旁路能力,不能因此影响主流程。
 function readKey(key: string): string | null {
   try {
-    return localStorage.getItem(key)
+    return localStorage.getItem(keyName(key))
   } catch {
     return null
   }
@@ -43,42 +62,77 @@ function readKey(key: string): string | null {
 
 function writeKey(key: string, value: string): void {
   try {
-    localStorage.setItem(key, value)
+    localStorage.setItem(keyName(key), value)
   } catch {
     /* 存不下就退化成「每次都检测」,不做额外补偿 */
   }
 }
 
-function readCache(now: number): PlatformSignal[] | null {
-  const raw = readKey(RESULT_KEY)
-  if (!raw) {
+/**
+ * 跨域嵌套判定。正常嵌入(同源、或 referrer 为空/本站)不上报;
+ * 只在 referrer 主机与当前站点不同时才视为跨域嵌套候选。
+ */
+function iframeCandidate(): { path: string; refHost: string } | null {
+  if (window.top === window.self) {
     return null
   }
+  const referrer = document.referrer
+  if (!referrer) {
+    return null
+  }
+  let refHost: string
   try {
-    const parsed = JSON.parse(raw) as CachedResult
-    if (!parsed || typeof parsed.at !== 'number' || !Array.isArray(parsed.signals)) {
-      return null
-    }
-    if (now - parsed.at >= RESULT_TTL_MS) {
-      return null
-    }
-    return parsed.signals.filter((item) => item && typeof item.signal === 'string')
+    refHost = new URL(referrer).hostname
   } catch {
     return null
   }
-}
-
-function writeCache(now: number, signals: PlatformSignal[]): void {
-  writeKey(RESULT_KEY, JSON.stringify({ at: now, signals }))
+  if (refHost === location.hostname) {
+    return null
+  }
+  return { path: location.pathname, refHost }
 }
 
 /**
- * 学海客户端判定。只有「明确是学海浏览器」时才校验桥：
- * 桥对象存在，或 UA 带 `xhbrowser`。资料中心 App 的 UA 只有 `userId/<id>`
- * 且本来就不注入桥，若按它判违规，所有资料中心用户都会被误伤。
+ * iframe 上报条件:跨域嵌套且持续存在超过 120 秒,且每次会话最多一次。
+ * 首次满足「top!=self + 异源 referrer」时记录时间戳,之后每个巡检周期
+ * 复查是否仍处于嵌套状态。
+ */
+const IFRAME_MIN_DURATION_MS = 120_000
+
+/** iframe / bridge 每个会话只报一次(跨会话回到 0 由新一轮检测重新累积)。 */
+let iframeReported = false
+
+function detectIframe(): PlatformSignal | null {
+  if (iframeReported) {
+    return null
+  }
+  const candidate = iframeCandidate()
+  if (!candidate) {
+    // 嵌套解除:计时作废,下次重新嵌套时重新起算
+    writeKey('iframe.firstAt', '')
+    return null
+  }
+  let firstAt = Number(readKey('iframe.firstAt'))
+  if (!Number.isFinite(firstAt) || firstAt <= 0) {
+    firstAt = Date.now()
+    writeKey('iframe.firstAt', String(firstAt))
+    return null
+  }
+  if (Date.now() - firstAt < IFRAME_MIN_DURATION_MS) {
+    return null
+  }
+  iframeReported = true
+  writeKey('iframe.firstAt', '')
+  return { signal: 'iframe', detail: `path=${candidate.path} ref=${candidate.refHost}` }
+}
+
+/**
+ * 学海客户端候选判定。只有 UA 明确带 `xhbrowser` 标记时才校验桥。
+ * 资料中心 App 的 UA 只有 `userId/<id>`,普通 PC 浏览器更没有,
+ * 都不算候选,永不报 bridge。
  */
 function looksLikeXuehaiClient(): boolean {
-  return typeof window.xhBrowserJava !== 'undefined' || /xhbrowser/i.test(navigator.userAgent)
+  return /xhbrowser/i.test(navigator.userAgent)
 }
 
 /** 桥存在且 getUserId 可调用并返回合法 id 才算「正常」;抛异常/返回空都算缺失。 */
@@ -95,86 +149,182 @@ function bridgeUsable(): boolean {
   }
 }
 
+let bridgeReported = false
+
 /**
- * 单次 devtools/tamper 采样,返回命中原因(未命中返回 null)。
- * tamper 并入 devtools:页面根节点或平台标记被摘掉,与调试器注入同属「页面被外力改动」,
- * 合并成一个 signal 可让后端只依赖 platform_misuse 一条规则。
+ * bridge 上报条件:候选客户端首次检测到桥缺失后,连续 3 次探测(间隔 ≥10 秒,
+ * 实际由 60 秒巡检周期保证)都失败,且距首次缺失超过 30 秒才上报,
+ * 用以覆盖客户端升级、桥延迟注入、WebView 首屏竞态。任一次探测恢复正常即清零。
  */
-function probeDevtools(): string | null {
-  if (!document.getElementById('app')) {
-    return 'tamper:app-missing'
+const BRIDGE_MIN_WAIT_MS = 30_000
+const BRIDGE_CONSECUTIVE_FAILURES = 3
+
+function detectBridge(): PlatformSignal | null {
+  if (bridgeReported) {
+    return null
   }
-  if (!document.querySelector('meta[name="zvms-platform"]')) {
-    return 'tamper:meta-missing'
+  if (!looksLikeXuehaiClient()) {
+    if (Number(readKey('bridge.failCount')) > 0) {
+      writeKey('bridge.failCount', '0')
+      writeKey('bridge.firstAt', '')
+    }
+    return null
   }
+  if (bridgeUsable()) {
+    writeKey('bridge.failCount', '0')
+    writeKey('bridge.firstAt', '')
+    return null
+  }
+  const firstAt = Date.now()
+  let failCount = Number(readKey('bridge.failCount'))
+  if (!Number.isFinite(failCount) || failCount <= 0) {
+    writeKey('bridge.firstAt', String(firstAt))
+    failCount = 1
+  } else {
+    failCount += 1
+  }
+  writeKey('bridge.failCount', String(failCount))
+  const origin = Number(readKey('bridge.firstAt')) || firstAt
+  if (failCount < BRIDGE_CONSECUTIVE_FAILURES) {
+    return null
+  }
+  if (Date.now() - origin < BRIDGE_MIN_WAIT_MS) {
+    return null
+  }
+  bridgeReported = true
+  writeKey('bridge.failCount', '0')
+  writeKey('bridge.firstAt', '')
+  const version = /xhbrowser\/([\w.-]+)/i.exec(navigator.userAgent)?.[1]
+  const uaDigest = navigator.userAgent.slice(0, 64)
+  const detail = version
+    ? `version=${version} ua=${uaDigest}`
+    : `ua=${uaDigest}`
+  return { signal: 'bridge', detail }
+}
+
+/** 三个独立条件同时满足两个才算命中,单一条件(分屏/卡顿)不构成证据。 */
+const DEVTOOLS_GAP_PX = 240
+const DEBUGGER_SUSPEND_MS = 300
+const DEVTOOLS_STREAK = 5
+
+let devtoolsStreak = 0
+
+/**
+ * 单次 devtools 采样:三个条件里至少两个同时成立才累计连续命中。
+ * debugger 计时 >300ms 才算是真被断点/单步挂起,120-300ms 区间的
+ * 长任务/GC/低端平板卡顿不再算命中。
+ */
+function probeDevtoolsConditions(): boolean {
   const widthGap = window.outerWidth - window.innerWidth
-  if (widthGap > DEVTOOLS_GAP_PX) {
-    return `devtools:width+${widthGap}`
-  }
   const heightGap = window.outerHeight - window.innerHeight
-  if (heightGap > DEVTOOLS_GAP_PX) {
-    return `devtools:height+${heightGap}`
+  let conditions = 0
+  if (widthGap > DEVTOOLS_GAP_PX) {
+    conditions += 1
   }
-  // 尺寸特征不成立时补一次 debugger 计时:没有调试器时该语句开销接近 0,
-  // 有断点/单步时会阻塞在这里,performance.now() 的差值即为被挂起的毫秒数。
+  if (heightGap > DEVTOOLS_GAP_PX) {
+    conditions += 1
+  }
+  if (conditions >= 2) {
+    return true
+  }
   const started = performance.now()
   debugger
   const suspended = performance.now() - started
-  return suspended > DEBUGGER_SUSPEND_MS ? `devtools:suspended+${Math.round(suspended)}` : null
+  if (suspended > DEBUGGER_SUSPEND_MS) {
+    conditions += 1
+  }
+  return conditions >= 2
 }
 
 /**
- * 采集当前命中的所有信号。devtools 带采样间隔与连续命中计数器,
- * 因此本函数被高频调用也不会放大 debugger 开销。
+ * tamper 检查(强度收敛版):仅在 document.readyState === 'complete'
+ * 且页面已加载 10 秒后检查一次;#app 存在但 meta 缺失、或反之,各自限一次/会话。
+ * 后端信号白名单没有独立的 tamper,因此沿用 devtools 信号名上报。
+ */
+const TAMPER_MIN_SESSION_MS = 10_000
+
+let tamperAppReported = false
+let tamperMetaReported = false
+
+/** 页面加载起点:每次页面加载(刷新)重新起算,不持久化——刷新是正常的加载行为。 */
+let sessionStartAtMs = 0
+
+function sessionStartAt(now: number): number {
+  if (!sessionStartAtMs) {
+    sessionStartAtMs = now
+  }
+  return sessionStartAtMs
+}
+
+function detectTamper(now: number): PlatformSignal | null {
+  if (document.readyState !== 'complete') {
+    return null
+  }
+  if (now - sessionStartAt(now) < TAMPER_MIN_SESSION_MS) {
+    return null
+  }
+  const hasApp = Boolean(document.getElementById('app'))
+  const hasMeta = Boolean(document.querySelector('meta[name="zvms-platform"]'))
+  if (hasApp && !hasMeta && !tamperMetaReported) {
+    tamperMetaReported = true
+    return { signal: 'devtools', detail: 'tamper:meta-missing' }
+  }
+  if (hasMeta && !hasApp && !tamperAppReported) {
+    tamperAppReported = true
+    return { signal: 'devtools', detail: 'tamper:app-missing' }
+  }
+  return null
+}
+
+/**
+ * 采集当前命中的信号。iframe / bridge / tamper 自带会话级状态机,
+ * devtools 需连续 5 个采样周期双条件命中,高频调用也不会放大开销。
  */
 export function detectSignals(now: number = Date.now()): PlatformSignal[] {
   const signals: PlatformSignal[] = []
-
-  if (window.top !== window.self) {
-    signals.push({ signal: 'iframe', detail: 'top!=self' })
+  const iframe = detectIframe()
+  if (iframe) {
+    signals.push(iframe)
   }
-
-  if (looksLikeXuehaiClient() && !bridgeUsable()) {
-    signals.push({ signal: 'bridge', detail: 'xhBrowserJava.getUserId unavailable' })
+  const bridge = detectBridge()
+  if (bridge) {
+    signals.push(bridge)
   }
-
-  if (now - lastSampleAt >= TICK_MS) {
-    lastSampleAt = now
-    const hit = probeDevtools()
-    if (hit) {
-      devtoolsStreak += 1
-      if (devtoolsStreak >= DEVTOOLS_STREAK) {
-        signals.push({ signal: 'devtools', detail: hit })
-        // 归零:上报后重新攒连续命中,避免一次命中在后续每个窗口里反复上报
-        devtoolsStreak = 0
-      }
-    } else {
+  const tamper = detectTamper(now)
+  if (tamper) {
+    signals.push(tamper)
+  }
+  if (probeDevtoolsConditions()) {
+    devtoolsStreak += 1
+    if (devtoolsStreak >= DEVTOOLS_STREAK) {
       devtoolsStreak = 0
+      signals.push({ signal: 'devtools', detail: 'panel-detected' })
     }
+  } else {
+    devtoolsStreak = 0
   }
-
   return signals
 }
 
+/** 同一信号 10 分钟内不重复;一次上报最多携带 2 个信号。 */
+const THROTTLE_MS = 10 * 60_000
+const MAX_BATCH = 2
+
 function lastReportedAt(signal: PlatformSignalName): number {
-  const value = Number(readKey(`${KEY_PREFIX}report.${signal}`))
+  const value = Number(readKey(`report.${signal}`))
   return Number.isFinite(value) ? value : 0
 }
 
-function throttleFor(signal: PlatformSignalName): number {
-  return THROTTLE_MS[signal] ?? DEFAULT_THROTTLE_MS
-}
-
 function isThrottled(signal: PlatformSignalName, now: number): boolean {
-  return now - lastReportedAt(signal) < throttleFor(signal)
+  return now - lastReportedAt(signal) < THROTTLE_MS
 }
 
 /**
  * 一次完整巡检:未登录或页面不可见时直接跳过(后台标签页不计违规),
- * 否则读 60s 内的检测缓存,过滤掉节流中的信号后上报。
+ * 否则采集信号、按节流过滤后取前 2 个上报。不为了「凑数」重复发送。
  */
 export async function checkPlatform(): Promise<void> {
-  if (!readKey('token')) {
+  if (!readKeyRaw('token')) {
     return
   }
   if (document.visibilityState !== 'visible') {
@@ -182,16 +332,12 @@ export async function checkPlatform(): Promise<void> {
   }
 
   const now = Date.now()
-  const cached = readCache(now)
-  const signals = cached ?? detectSignals(now)
-  if (!cached) {
-    writeCache(now, signals)
-  }
+  const signals = detectSignals(now)
   if (signals.length === 0) {
     return
   }
 
-  const pending = signals.filter((item) => !isThrottled(item.signal, now))
+  const pending = signals.filter((item) => !isThrottled(item.signal, now)).slice(0, MAX_BATCH)
   if (pending.length === 0) {
     return
   }
@@ -202,7 +348,15 @@ export async function checkPlatform(): Promise<void> {
     return
   }
   for (const item of pending) {
-    writeKey(`${KEY_PREFIX}report.${item.signal}`, String(now))
+    writeKey(`report.${item.signal}`, String(now))
+  }
+}
+
+function readKeyRaw(key: string): string | null {
+  try {
+    return localStorage.getItem(key)
+  } catch {
+    return null
   }
 }
 
@@ -217,7 +371,7 @@ export function startPlatformGuard(): void {
   }, TICK_MS)
 }
 
-/** 登出/卸载时停止;已攒的 devtools 连续计数保留,重新登录后继续累计。 */
+/** 登出/卸载时停止。 */
 export function stopPlatformGuard(): void {
   if (!timer) {
     return
@@ -225,3 +379,5 @@ export function stopPlatformGuard(): void {
   clearInterval(timer)
   timer = undefined
 }
+
+let timer: ReturnType<typeof setInterval> | undefined

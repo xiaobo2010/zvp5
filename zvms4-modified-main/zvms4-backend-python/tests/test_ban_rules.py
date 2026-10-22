@@ -294,3 +294,36 @@ def test_evaluate_and_enforce_login_are_gone() -> None:
     assert not hasattr(ban_rules, "evaluate_login")
     assert not hasattr(ban_rules, "enforce_login")
     assert "RULE_CODE" not in ban_rules.__all__
+
+
+# ---------------------------------------------------------------------------
+# 默认值的唯一来源（误封 B7/B8）
+# ---------------------------------------------------------------------------
+
+
+def test_registry_default_matches_service_default() -> None:
+    """注册表给表单的初值必须与服务默认值同源：两套「默认」= 两套判定。"""
+    assert ban_rules.REGISTRY_DEFAULT_CONFIG == ban_rules.DEFAULT_CONFIG
+
+
+def test_normalize_config_fills_missing_keys_per_field() -> None:
+    """逐项归一：只写了一个键时另一个键补默认值，已有值不被冲掉。"""
+    assert ban_rules.normalize_config({"threshold": 5}) == {
+        "threshold": 5,
+        "window_hours": 24,
+    }
+    assert ban_rules.normalize_config({"window_hours": 6}) == {
+        "threshold": 3,
+        "window_hours": 6,
+    }
+    assert ban_rules.normalize_config(None) == dict(ban_rules.DEFAULT_CONFIG)
+    assert ban_rules.normalize_config({"threshold": "x", "window_hours": 12}) == {
+        "threshold": 3,
+        "window_hours": 12,
+    }
+
+
+def test_normalize_config_accepts_an_explicit_baseline() -> None:
+    base = {"threshold": 2, "window_hours": 1}
+    assert ban_rules.normalize_config({}, defaults=base) == base
+    assert ban_rules.normalize_config(None, defaults=base) == base

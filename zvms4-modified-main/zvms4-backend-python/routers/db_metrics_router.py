@@ -9,6 +9,7 @@ rather than an import: the two lanes own separate files and must not couple.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
@@ -84,7 +85,7 @@ async def metrics_host(
     """
     await _require_system_admin(user)
     response.headers["Cache-Control"] = "no-store"
-    return {"status": "ok", "code": 200, "data": get_local_metrics()}
+    return {"status": "ok", "code": 200, "data": await asyncio.to_thread(get_local_metrics)}
 
 
 @router.get("/history")
@@ -103,7 +104,7 @@ async def metrics_history(
     if len(keys) > _MAX_SERIES:
         raise HTTPException(status_code=422, detail=f"series 最多 {_MAX_SERIES} 个")
     try:
-        data = query_history(keys, range_, agg)
+        data = await asyncio.to_thread(query_history, keys, range_, agg)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
     return {"status": "ok", "code": 200, "data": data}
@@ -116,7 +117,7 @@ async def metrics_top_sql(
 ):
     """Latest schema-filtered Top SQL snapshot."""
     await _require_system_admin(user)
-    return {"status": "ok", "code": 200, "data": query_top_sql(limit)}
+    return {"status": "ok", "code": 200, "data": await asyncio.to_thread(query_top_sql, limit)}
 
 
 @router.get("/endpoints")
@@ -128,7 +129,7 @@ async def metrics_endpoints(
     """Persisted per-route latency aggregates over the requested range."""
     await _require_system_admin(user)
     try:
-        data = query_endpoints(range_, limit)
+        data = await asyncio.to_thread(query_endpoints, range_, limit)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
     return {"status": "ok", "code": 200, "data": data}

@@ -515,8 +515,8 @@ def test_create_rule_fills_missing_config_from_registry(api) -> None:
     http.post(f"{PREFIX}/rules", json=payload)
 
     # 只传 threshold 时窗口取注册表默认值，配置形状始终完整
-    assert rules["my_rule"]["config"] == '{"threshold": 5, "window_hours": 1}'
-    assert calls["inserts"][0]["config"] == '{"threshold": 5, "window_hours": 1}'
+    assert rules["my_rule"]["config"] == '{"threshold": 5, "window_hours": 24}'
+    assert calls["inserts"][0]["config"] == '{"threshold": 5, "window_hours": 24}'
 
 
 def test_create_rule_writes_ban_change_audit(api) -> None:

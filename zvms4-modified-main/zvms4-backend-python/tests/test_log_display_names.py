@@ -55,12 +55,17 @@ def test_count_sql_does_not_join_users():
 
 
 def test_query_filter_stays_on_url_and_data_after_the_join():
-    """``query`` 只匹配 url/data：join 不能顺手把 users.name 也纳入搜索。"""
-    sql = _sql(app_logs_repo._list_stmt("张三", "", None, None, None, None, -1, 10))
+    """``query`` 只匹配 url/data：join 不能顺手把 users.name 也纳入搜索。
 
-    assert "regexp_like(app_logs.url, '张三')" in sql
-    assert "regexp_like(app_logs.data, '张三')" in sql
-    assert "regexp_like(users." not in sql
+    ``REGEXP_LIKE`` 已换成 ``LOWER(col) LIKE ... ESCAPE``：正则引擎不再参与，
+    但命中的列范围不变（url + data，大小写不敏感）。
+    """
+    sql = _sql(app_logs_repo._list_stmt("张三", "", None, None, None, None, 1, 10))
+
+    assert "lower(app_logs.url) LIKE '%张三%' ESCAPE '\\'" in sql
+    assert "lower(app_logs.data) LIKE '%张三%' ESCAPE '\\'" in sql
+    assert "regexp_like" not in sql.lower()
+    assert "users." not in sql.split(" WHERE ")[-1].lower()
 
 
 def test_anonymous_rows_survive_because_join_has_no_user_predicate():

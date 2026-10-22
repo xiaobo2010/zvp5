@@ -151,6 +151,29 @@ def _revoke_expired_stmt(cutoff: datetime, revoked_at: datetime):
     )
 
 
+def _revoke_open_for_user_stmt(target_user_oid: str, now: datetime):
+    """把该用户**仍然可用**的码全部作废（新码签发时的取代动作）。
+
+    语义是「被取代而失效」：写 ``used_at`` 而不是 ``revoked_at``，因为
+    ``revoked_at`` 留给「过期清理/管理员撤销」这条独立事实，而这里的事实是
+    「它被同一用户的新码替代，从此不该再被接受」。置位后 ``list_active_for_user``
+    与 ``_record_usable`` 都会排除它，等价于不可用。
+
+    只碰未用、未撤销、未过期的行：已经用掉/被撤销的码不改写，它们的原时间戳
+    是审计证据。
+    """
+    return (
+        update(temp_passwords_tbl)
+        .where(
+            temp_passwords_tbl.c.target_user_oid == target_user_oid,
+            temp_passwords_tbl.c.used_at.is_(None),
+            temp_passwords_tbl.c.revoked_at.is_(None),
+            temp_passwords_tbl.c.expires_at > now,
+        )
+        .values(used_at=now)
+    )
+
+
 def _password_row(mapping: Any) -> Row:
     return {
         "_id": mapping["oid"],
@@ -220,6 +243,22 @@ class OracleTempPasswordsRepo:
         """把 ``expires_at < cutoff`` 且未用未撤销的码置撤销，返回行数。"""
         now = _now()
         stmt = _revoke_expired_stmt(cutoff, now)
+        async with _session_for(self._session) as (session, owns):
+            result = await session.execute(stmt)
+            if owns:
+                await session.commit()
+        return int(result.rowcount)
+
+    async def revoke_open_for_user(
+        self, target_user_oid: str, now: datetime | None = None
+    ) -> int:
+        """作废该用户所有仍可用的临时密码，返回受影响行数。
+
+        签发新码前调用：同一时刻用户手里只该有一个有效码，否则「旧码明明正确
+        却被判错」会把设备刷到永久封禁。
+        """
+        at = now or _now()
+        stmt = _revoke_open_for_user_stmt(normalize_oid(target_user_oid), at)
         async with _session_for(self._session) as (session, owns):
             result = await session.execute(stmt)
             if owns:

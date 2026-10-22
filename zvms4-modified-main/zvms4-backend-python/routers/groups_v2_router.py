@@ -3,6 +3,7 @@ from collections import defaultdict
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import ValidationError
 
 from config import (
     BASE_OFF_CAMPUS,
@@ -24,6 +25,30 @@ from util.user import public_user
 
 router = APIRouter()
 
+# 班级列表的硬上限（与 ``db.repos.oracle.groups._CLASS_LIST_CAP`` 同值）：
+# 合并「班级 + 权限组」后的排序切片在内存里做，班级一侧先按上限取一页。
+_CLASS_LIST_CAP = 1000
+
+
+def _as_float(value) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _user_activity_time(row) -> UserActivityTime:
+    try:
+        return UserActivityTime.model_validate(row, strict=False)
+    except ValidationError:
+        return UserActivityTime.model_construct(
+            user=str(row.get("user") or ""),
+            on_campus_raw=_as_float(row.get("on_campus_raw")),
+            off_campus_raw=_as_float(row.get("off_campus_raw")),
+            social_practice=_as_float(row.get("social_practice")),
+            updated_at=row.get("updated_at"),
+        )
+
 
 @router.get("")
 async def get_groups_v2(
@@ -42,8 +67,8 @@ async def get_groups_v2(
         raise HTTPException(status_code=403, detail="权限不足")
 
     repo = backends.get_groups_repo()
-    _, class_total = await repo.list_classes(query, 1, 1)
-    class_rows, _ = await repo.list_classes(query, 1, class_total or 1)
+    # 一次往返：一页班级 + 总数（SQL 侧 OFFSET/FETCH + COUNT(*) OVER()）。
+    class_rows, _ = await repo.list_classes(query, 1, _CLASS_LIST_CAP)
 
     permission_rows = await repo.list_permission_groups(query)
 
@@ -114,9 +139,9 @@ async def get_group_activities_v2(
     group_id: str,
     page: int = Query(1, ge=1, description="Page number for pagination"),
     perpage: int = Query(10, ge=1, le=100, description="Number of items per page"),
-    search: str = Query("", description="Search keyword"),
+    search: str = Query("", max_length=64, description="Search keyword"),
     sort: str = Query("_id", description="Sort by field"),
-    regex: bool = Query(True, description="Use regex for search"),
+    regex: bool = Query(False, description="Treat search as a regular expression"),
     asc: bool = Query(False, description="Sort in ascending order"),
     user=Depends(get_current_user),
 ):
@@ -183,7 +208,7 @@ async def read_users(
     results = []
 
     for user in user_times:
-        time_struct = UserActivityTime.model_validate(user, strict=False)
+        time_struct = _user_activity_time(user)
         results.append(
             {
                 "_id": str(user["user"]),

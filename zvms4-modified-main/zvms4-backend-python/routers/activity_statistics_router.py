@@ -158,6 +158,13 @@ async def _all_classes() -> list[dict]:
         return await backends.get_groups_repo(session).list_all()
 
 
+def _grade_series(result: dict, key: str, grade: str):
+    series = result.get(key)
+    if not isinstance(series, dict) or grade not in series:
+        raise HTTPException(status_code=404, detail="该年级暂无统计数据")
+    return series[grade]
+
+
 @router.get("/grades/{grade}/percentiles")
 async def get_time_percentiles(grade: str, user=Depends(get_current_user)):
     """
@@ -170,7 +177,7 @@ async def get_time_percentiles(grade: str, user=Depends(get_current_user)):
     if result is None:
         # If there are no indicators, return an empty dictionary
         return {}
-    return result["percentiles"][grade]
+    return _grade_series(result, "percentiles", grade)
 
 
 @router.get("/grades/{grade}/indicators")
@@ -185,4 +192,4 @@ async def get_time_indicators(grade: str, user=Depends(get_current_user)):
     if result is None:
         # If there are no indicators, return an empty dictionary
         return {}
-    return result["indicators"][grade]
+    return _grade_series(result, "indicators", grade)

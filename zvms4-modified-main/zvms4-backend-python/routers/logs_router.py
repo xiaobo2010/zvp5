@@ -13,9 +13,13 @@ router = APIRouter()
 @router.get("")
 async def read_logs(
     performer: str = Query("", description="Filter by performer/user"),
-    page: int = Query(-1, ge=-1, description="Page number (-1 for no pagination)"),
-    perpage: int = Query(10, ge=1, le=100, description="Number of items per page"),
-    query: str = Query("", max_length=MAX_QUERY_COUNT, description="Search query"),
+    page: int = Query(1, ge=1, description="Page number (1-based)"),
+    perpage: int = Query(10, ge=1, le=100, description="Items per page (max 100)"),
+    query: str = Query(
+        "",
+        max_length=MAX_QUERY_COUNT,
+        description="Search query (url/data, case-insensitive contains)",
+    ),
     type: str = Query("", description="Comma-separated log types"),
     level: str = Query("", description="Comma-separated log levels"),
     time_start: Optional[int] = Query(None, description="Start timestamp (seconds)"),
@@ -23,6 +27,12 @@ async def read_logs(
     xuehai_id: str = Query("", description="Filter by 学海设备 ID (Xuehai-Id header)"),
     user=Depends(get_current_user),
 ):
+    """管理端日志列表。
+
+    分页口径：``page`` 从 1 开始（``page < 1`` → 422），``perpage`` 上限 100，
+    两者在仓储层再钳一次，避免直接调用方绕过 FastAPI 校验。总数由仓储用
+    ``COUNT(*) OVER()`` 与当页数据一起带回，不再每页执行一次全表 ``COUNT``。
+    """
     if "admin" not in user["per"]:
         raise HTTPException(status_code=403, detail="Permission denied")
 

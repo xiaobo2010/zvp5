@@ -31,6 +31,10 @@ Row = dict[str, Any]
 
 _UNKNOWN_CLASS = "未知班级"
 
+# ``list_classes`` 的硬上限：列表接口只做「合并后排序切片」，班级数量本就很小，
+# 但没有上限就等于允许一条 SQL 拉全表。给个明确天花板，超出的部分由分页兜。
+_CLASS_LIST_CAP = 1000
+
 # Permission-group membership: Mongo ``{"permissions": {"$in": [...]}}`` matches
 # when the JSON array contains a listed value. ``$[*]?(@ == $p)`` tests every
 # element against the value passed through PASSING, so it stays a bound parameter.
@@ -72,7 +76,18 @@ def _list_non_permission_stmt():
 
 
 def _list_classes_stmt(query: str, page: int, size: int):
-    stmt = select(groups_tbl.c.oid, groups_tbl.c.name, groups_tbl.c.description)
+    """班级列表一页 + ``COUNT(*) OVER()`` 总数（一次往返）。
+
+    与 :func:`db.repos.oracle.users._user_page_stmt` 同一范式：总数随页一起
+    返回，省掉「先 COUNT 再拉全量」的两步取数。``oid`` 升序本身就是唯一键，
+    分页天然确定。
+    """
+    stmt = select(
+        groups_tbl.c.oid,
+        groups_tbl.c.name,
+        groups_tbl.c.description,
+        func.count().over().label("total_count"),
+    )
     if query:
         stmt = stmt.where(
             func.regexp_like(groups_tbl.c.name, re.escape(query), "i")
@@ -85,6 +100,7 @@ def _list_classes_stmt(query: str, page: int, size: int):
 
 
 def _list_classes_count_stmt(query: str):
+    """越界页补总数用：空页上窗口计数不可观测（同 ``list_page`` 的兜底）。"""
     stmt = select(func.count()).select_from(groups_tbl)
     if query:
         stmt = stmt.where(
@@ -341,14 +357,37 @@ class OracleGroupsRepo:
         return _class_row(row._mapping)
 
     async def list_classes(
-        self, query: str, page: int, size: int
+        self, query: str = "", page: int = 1, size: int = _CLASS_LIST_CAP
     ) -> tuple[list[Row], int]:
+        """``(rows, total)``：一页班级 + 总数，**一次往返**。
+
+        分页下推到 SQL（``OFFSET/FETCH``），总数由 ``COUNT(*) OVER()`` 随页
+        带回；只有空页（越界）才补一条 ``COUNT``。``size`` 被夹在
+        ``1.._CLASS_LIST_CAP``，``page < 1`` 归一到 1：负 offset 在 Oracle 上
+        直接报错，也不是任何调用方想要的语义。默认参数让老的两参数/三参数
+        调用继续可用。
+        """
+        page = max(int(page), 1)
+        size = min(max(int(size), 1), _CLASS_LIST_CAP)
         page_stmt = _list_classes_stmt(query, page, size)
-        count_stmt = _list_classes_count_stmt(query)
         async with _session_for(self._session) as (session, _owns):
-            total = (await session.execute(count_stmt)).scalar_one()
             rows = (await session.execute(page_stmt)).all()
-        return [_class_row(row._mapping) for row in rows], int(total)
+            total = (
+                int(rows[0]._mapping["total_count"])
+                if rows
+                else (
+                    0
+                    if page == 1
+                    else int(
+                        (
+                            await session.execute(
+                                _list_classes_count_stmt(query)
+                            )
+                        ).scalar_one()
+                    )
+                )
+            )
+        return [_class_row(row._mapping) for row in rows], total
 
     async def create(self, name: str) -> str:
         oid = new_oid()

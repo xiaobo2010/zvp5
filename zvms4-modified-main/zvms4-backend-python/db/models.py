@@ -473,6 +473,10 @@ Index("ix_app_logs_xuehai_id", app_logs.c.xuehai_id)
 # 规则封禁要按「用户 + 时间窗」数不同学海设备（COUNT(DISTINCT xuehai_id)）；
 # 单列索引只能吃到 APP_USER 一半，复合索引让时间窗过滤留在索引里。
 Index("ix_app_logs_user_ts", app_logs.c.app_user, app_logs.c.ts_raw)
+# 管理端日志页按 ts_raw 倒序分页，并按类型/级别过滤后再排序；两条索引分别
+# 服务「无过滤」与「type(±level) + 时间窗」两种查询形状。
+Index("ix_app_logs_ts_raw", app_logs.c.ts_raw)
+Index("ix_app_logs_type_level_ts", app_logs.c.ltype, app_logs.c.log_level, app_logs.c.ts_raw)
 
 
 # ---------------------------------------------------------------------------
@@ -812,6 +816,43 @@ notification_state = Table(
 
 
 # ---------------------------------------------------------------------------
+# NOTIFICATION_VERSIONS ← new (通知内容快照; V017)
+#   Append-only: one row per successful create / update / delete / rollback,
+#   each holding the full content **after** that write. No FK on
+#   NOTIFICATION_OID for the same reason NOTIFICATIONS has none on
+#   AUTHOR_OID - the history has to outlive the notice it describes. The
+#   (notification_oid, version) unique constraint is the last line of defence
+#   against two writers claiming the same revision; normal serialisation comes
+#   from the FOR UPDATE lock on the NOTIFICATIONS row.
+#   CONTENT_HASH is the sha256 of title/content/active, so clients can compare
+#   content without fetching and diffing it.
+# ---------------------------------------------------------------------------
+
+notification_versions = Table(
+    "notification_versions",
+    metadata,
+    _oid_pk(),
+    Column("notification_oid", VARCHAR2(24), nullable=False),
+    Column("version", NUMBER(19), nullable=False),
+    Column("title", VARCHAR2(200), nullable=False),
+    Column("content", VARCHAR2(4000), nullable=False),
+    Column("active", NUMBER(1), nullable=False),
+    Column("op", VARCHAR2(16), nullable=False),
+    Column("source_version", NUMBER(19), nullable=True),
+    Column("content_hash", VARCHAR2(64), nullable=False),
+    Column("author_oid", VARCHAR2(24), nullable=True),
+    Column("author_name", VARCHAR2(128), nullable=False),
+    Column("created_at", oracle.TIMESTAMP, nullable=False),
+    UniqueConstraint("notification_oid", "version", name="uq_notification_versions"),
+)
+Index(
+    "ix_notification_versions_doc",
+    notification_versions.c.notification_oid,
+    notification_versions.c.version,
+)
+
+
+# ---------------------------------------------------------------------------
 # DEVICE_CHALLENGES  ← new (异设备登录的一次性挑战; V014)
 #   ``token_hash`` 存 SHA-256 hex 而不是明文 token：挑战值等价于「一次登录
 #   许可」，泄露即可被抢用。唯一索引既是查找路径也是防重放裁决者。
@@ -863,10 +904,11 @@ banned_devices = Table(
 
 
 # ---------------------------------------------------------------------------
-# BAN_VIOLATIONS  ← new (客户端上报的违规信号; V016)
-#   append-only：一条信号一行，「窗口内累计计数」由服务层按
-#   (user_oid, trigger, created_at) 统计。无外键：违规记录是审计材料，必须比
+# BAN_VIOLATIONS  ← new (客户端上报的违规信号; V016 / V019)
+#   append-only：一条信号一行；**计数单位是批次而不是行**（V019 的 BATCH_ID），
+#   一次上报里的多个信号只算一次违规。无外键：违规记录是审计材料，必须比
 #   账号活得久（用户被硬删除后仍要能回答「他当时因为什么被封」）。
+#   BATCH_ID 由服务端生成，旧行为 NULL（以 OID 顶替，等价于「每行一批」）。
 # ---------------------------------------------------------------------------
 
 ban_violations = Table(
@@ -878,6 +920,7 @@ ban_violations = Table(
     Column("signal", VARCHAR2(32), nullable=False),
     Column("xuehai_id", VARCHAR2(32), nullable=True),
     Column("detail", VARCHAR2(500), nullable=True),
+    Column("batch_id", VARCHAR2(32), nullable=True),
     Column("created_at", oracle.TIMESTAMP, nullable=False),
     _oid_check("ban_violations"),
 )
@@ -886,6 +929,13 @@ Index(
     ban_violations.c.user_oid,
     ban_violations.c.trigger_code,
     ban_violations.c.created_at,
+)
+Index(
+    "ix_ban_violations_batch",
+    ban_violations.c.user_oid,
+    ban_violations.c.trigger_code,
+    ban_violations.c.created_at,
+    ban_violations.c.batch_id,
 )
 
 

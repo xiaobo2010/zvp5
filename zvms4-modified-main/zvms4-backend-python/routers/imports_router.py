@@ -18,6 +18,7 @@ router = APIRouter()
 
 _MAX_BYTES = 10 * 1024 * 1024
 _MAX_ROWS = 10_000
+_EXISTENCE_BATCH = 500
 _COLUMNS = ["_id", "Name", "ID", "Group", "On Campus", "Off Campus", "Social Practice"]
 _MODES = {"On Campus": "on-campus", "Off Campus": "off-campus", "Social Practice": "social-practice"}
 
@@ -97,9 +98,16 @@ async def upload_activity_excel(
     async with session_scope() as session:
         async with session.begin():
             users_repo = backends.get_users_repo(session)
-            for oid in sorted({key[0] for key in records}):
-                if await users_repo.get_by_oid(oid) is None:
-                    raise HTTPException(status_code=400, detail="Workbook contains an unknown user")
+            oids = sorted({key[0] for key in records})
+            known_oids: set[str] = set()
+            for start in range(0, len(oids), _EXISTENCE_BATCH):
+                known_oids.update(
+                    await users_repo.get_many_by_oids(
+                        oids[start:start + _EXISTENCE_BATCH]
+                    )
+                )
+            if any(oid not in known_oids for oid in oids):
+                raise HTTPException(status_code=400, detail="Workbook contains an unknown user")
             now = datetime.now()
             await backends.get_imports_repo(session).create(
                 name, (payload.filename or "import.xlsx").encode("utf-8")[:256].decode("utf-8", "ignore"),

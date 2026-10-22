@@ -22,6 +22,9 @@ from util.ban import ban_outranks
 _logger = logging.getLogger(__name__)
 
 DEFAULT_CONFIG = {"threshold": 3, "window_hours": 24}
+#: 检查项注册表（``routers.ban_router.TRIGGERS``）给的表单初值必须是同一份数值；
+#: 两者曾出现 3/24 与 2/1 的冲突，同一件事有了两种「默认」。
+REGISTRY_DEFAULT_CONFIG = {"threshold": 3, "window_hours": 24}
 DEFAULT_PENALTIES = [1]
 
 
@@ -45,19 +48,40 @@ def _positive_int(value) -> int | None:
     return parsed if parsed > 0 else None
 
 
-def rule_config(rule: dict | None) -> dict:
-    """规则的 ``{threshold, window_hours}``；坏数据整体回退默认值。"""
-    raw = _json_value((rule or {}).get("config"), None)
+def normalize_config(raw, defaults: dict | None = None) -> dict:
+    """把任意形状的规则配置归一成完整的 ``{threshold, window_hours}``。
+
+    这是**读取侧的唯一归一入口**：注册表默认值、V016 的 ``{"threshold":3}``
+    种子、管理员只改了一个键的配置，都必须能在这里补成完整形状，判定层才不必
+    各写一份「缺项怎么办」。``defaults`` 允许调用方（注册表）传入自己的基线，
+    缺项与非法值都落回基线。
+    """
+    base = dict(defaults or DEFAULT_CONFIG)
     if not isinstance(raw, dict):
         if raw is not None:
             _logger.warning("规则 config 不是对象，回退默认值：%r", raw)
-        return dict(DEFAULT_CONFIG)
+        return base
     threshold = _positive_int(raw.get("threshold"))
     window_hours = _positive_int(raw.get("window_hours"))
-    if threshold is None or window_hours is None:
-        _logger.warning("规则 config 字段非法，回退默认值：%r", raw)
-        return dict(DEFAULT_CONFIG)
-    return {"threshold": threshold, "window_hours": window_hours}
+    if threshold is None and "threshold" in raw:
+        _logger.warning("规则 config threshold 非法，回退默认值：%r", raw)
+    if window_hours is None and "window_hours" in raw:
+        _logger.warning("规则 config window_hours 非法，回退默认值：%r", raw)
+    return {
+        "threshold": threshold or base["threshold"],
+        "window_hours": window_hours or base["window_hours"],
+    }
+
+
+def rule_config(rule: dict | None) -> dict:
+    """规则的 ``{threshold, window_hours}``；缺项/坏数据**逐项**回退默认值。
+
+    逐项归一而不是整体丢弃：规则的 config 是文本 JSON，历史上出现过只有
+    ``{"threshold":3}`` 的形状（V016 的 seed、以及注册表默认值被原样写库的
+    情况）。整体丢弃会把管理员已调过的 threshold 悄悄改回默认值，逐项合并则
+    只补缺失项——注册表给的默认值因此不会「半份配置」直接进判定层。
+    """
+    return normalize_config(_json_value((rule or {}).get("config"), None))
 
 
 def rule_penalties(rule: dict | None) -> list[int | None]:
@@ -149,7 +173,9 @@ async def get_rule_by_trigger(trigger: str) -> dict | None:
 
 __all__ = [
     "DEFAULT_CONFIG",
+    "REGISTRY_DEFAULT_CONFIG",
     "DEFAULT_PENALTIES",
+    "normalize_config",
     "rule_config",
     "rule_penalties",
     "penalty_expiry",

@@ -16,6 +16,10 @@ const XUEHAI_UA =
 const DATACENTER_UA =
   'Mozilla/5.0 (Linux; Android 13; SM-P620) AppleWebKit/537.36 Chrome/120.0 Mobile deviceId/8f21ab userId/9527'
 
+/** jsdom 默认 origin 是 localhost */
+const SELF_HOST = 'localhost'
+const PORTAL_REF = 'https://portal.school.edu/course'
+
 interface SavedProp {
   target: object
   name: string
@@ -61,6 +65,18 @@ function setWindowSize(outer: number, inner: number) {
   setProp(window, 'innerHeight', inner)
 }
 
+/** debugger 计时桩:每次采样给一次稳定差值,不打断测试进程。 */
+function stubDebuggerCost(ms: number) {
+  let call = 0
+  const realNow = performance.now.bind(performance)
+  setProp(window, 'performance', {
+    now: () => {
+      call += 1
+      return call % 2 === 1 ? realNow() : realNow() + ms
+    }
+  })
+}
+
 async function loadGuard(): Promise<Guard> {
   return await import('./platformGuard')
 }
@@ -77,8 +93,18 @@ function reportedNames(call = 0): string[] {
   return reportedSignals(call).map((item) => item.signal)
 }
 
+function embedCrossOrigin() {
+  setProp(window, 'top', { name: 'parent-window' })
+  setProp(document, 'referrer', PORTAL_REF)
+}
+
+function embedSelf() {
+  setProp(window, 'top', { name: 'parent-window' })
+  setProp(document, 'referrer', `https://${SELF_HOST}/course`)
+}
+
 beforeEach(() => {
-  // 模块内藏着 devtools 连续计数与结果缓存,每个用例都要一份干净状态
+  // 模块内藏着各会话状态与节流,每个用例都要一份干净状态
   vi.resetModules()
   reportSignals.mockClear()
   reportSignals.mockResolvedValue(true)
@@ -87,6 +113,7 @@ beforeEach(() => {
   document.head.querySelectorAll('meta[name="zvms-platform"]').forEach((node) => node.remove())
   installPlatformMarkup()
   setProp(navigator, 'userAgent', PLAIN_UA)
+  setProp(navigator, 'language', 'zh-CN')
   delete window.xhBrowserJava
   setWindowSize(1024, 1024)
   vi.useFakeTimers({ now: new Date('2026-01-01T08:00:00Z') })
@@ -99,47 +126,71 @@ afterEach(() => {
   localStorage.clear()
 })
 
-describe('checkPlatform 信号判定', () => {
-  it('被 iframe 嵌套时报 iframe', async () => {
+describe('iframe 判定', () => {
+  it('正常嵌入(同源 referrer 舰名)不上报', async () => {
+    embedSelf()
+    const { checkPlatform } = await loadGuard()
+
+    for (let i = 0; i < 6; i += 1) {
+      await checkPlatform()
+      await tick(60_000)
+    }
+
+    expect(reportSignals).not.toHaveBeenCalled()
+  })
+
+  it('referrer 为空(正常门户/投屏常见)不上报', async () => {
     setProp(window, 'top', { name: 'parent-window' })
     const { checkPlatform } = await loadGuard()
 
-    await checkPlatform()
-
-    expect(reportSignals).toHaveBeenCalledTimes(1)
-    expect(reportedSignals()).toEqual([{ signal: 'iframe', detail: 'top!=self' }])
-  })
-
-  it('学海 UA 但没有可用桥时报 bridge', async () => {
-    setProp(navigator, 'userAgent', XUEHAI_UA)
-    const { checkPlatform } = await loadGuard()
-
-    await checkPlatform()
-
-    expect(reportSignals).toHaveBeenCalledTimes(1)
-    expect(reportedSignals()).toEqual([
-      { signal: 'bridge', detail: 'xhBrowserJava.getUserId unavailable' }
-    ])
-  })
-
-  it('桥存在但 getUserId 抛异常同样算桥不可用', async () => {
-    setProp(navigator, 'userAgent', XUEHAI_UA)
-    window.xhBrowserJava = {
-      getUserId() {
-        throw new Error('bridge broken')
-      }
+    for (let i = 0; i < 6; i += 1) {
+      await checkPlatform()
+      await tick(60_000)
     }
+
+    expect(reportSignals).not.toHaveBeenCalled()
+  })
+
+  it('平台自身(未嵌套)不检测,直接跳过', async () => {
+    const { checkPlatform } = await loadGuard()
+
+    for (let i = 0; i < 6; i += 1) {
+      await checkPlatform()
+      await tick(60_000)
+    }
+
+    expect(reportSignals).not.toHaveBeenCalled()
+  })
+
+  it('跨域嵌满 120 秒才报一次,带 pathname 与 referrer 主机名', async () => {
+    embedCrossOrigin()
     const { checkPlatform } = await loadGuard()
 
     await checkPlatform()
+    expect(reportSignals).not.toHaveBeenCalled()
 
-    expect(reportedNames()).toEqual(['bridge'])
+    // 持续嵌套满 120 秒:第三次巡检起报,且只报一次
+    await tick(60_000)
+    await checkPlatform()
+    await tick(60_000)
+    await checkPlatform()
+    expect(reportSignals).toHaveBeenCalledTimes(1)
+    expect(reportedNames()).toEqual(['iframe'])
+    const detail = reportedSignals()[0].detail as string
+    expect(detail).toContain(`path=${location.pathname}`)
+    expect(detail).toContain('ref=portal.school.edu')
+    expect(detail).not.toContain('?')
   })
+})
 
+describe('bridge 判定', () => {
   it('普通 PC 浏览器即使没有桥也不报', async () => {
     const { checkPlatform } = await loadGuard()
 
-    await checkPlatform()
+    for (let i = 0; i < 6; i += 1) {
+      await checkPlatform()
+      await tick(60_000)
+    }
 
     expect(reportSignals).not.toHaveBeenCalled()
   })
@@ -148,14 +199,283 @@ describe('checkPlatform 信号判定', () => {
     setProp(navigator, 'userAgent', DATACENTER_UA)
     const { checkPlatform } = await loadGuard()
 
-    await checkPlatform()
+    for (let i = 0; i < 6; i += 1) {
+      await checkPlatform()
+      await tick(60_000)
+    }
 
     expect(reportSignals).not.toHaveBeenCalled()
   })
 
+  it('连续 3 次探测失败后才报 bridge,且距首次缺失 >= 30 秒', async () => {
+    setProp(navigator, 'userAgent', XUEHAI_UA)
+    const { checkPlatform } = await loadGuard()
+
+    await checkPlatform()
+    expect(reportSignals).not.toHaveBeenCalled()
+
+    // 第二次探测只累计为 2 连败
+    await tick(60_000)
+    await checkPlatform()
+    expect(reportSignals).not.toHaveBeenCalled()
+
+    // 第三次探测:累计 3 连败,且距首次缺失超过 30 秒
+    await tick(60_000)
+    await checkPlatform()
+    expect(reportSignals).toHaveBeenCalledTimes(1)
+    expect(reportedNames()).toEqual(['bridge'])
+    expect(reportedSignals(0)[0].detail).toContain('version=1.2')
+  })
+
+  it('桥中途恢复即清零,之后重新失败要重新累计', async () => {
+    setProp(navigator, 'userAgent', XUEHAI_UA)
+    let usable = false
+    window.xhBrowserJava = {
+      getUserId: () => {
+        if (!usable) {
+          throw new Error('not ready')
+        }
+        return 9527
+      }
+    } as never
+    const { checkPlatform } = await loadGuard()
+
+    await checkPlatform()
+    await tick(60_000)
+    await checkPlatform()
+    expect(reportSignals).not.toHaveBeenCalled()
+
+    // 桥恢复:失败计数清零
+    usable = true
+    await tick(60_000)
+    await checkPlatform()
+    expect(reportSignals).not.toHaveBeenCalled()
+
+    usable = false
+    // 重新失败两次不足以构成 3 连败
+    await tick(60_000)
+    await checkPlatform()
+    await tick(60_000)
+    await checkPlatform()
+    expect(reportSignals).not.toHaveBeenCalled()
+
+    await tick(60_000)
+    await checkPlatform()
+    expect(reportedNames()).toEqual(['bridge'])
+  })
+})
+
+describe('devtools 判定', () => {
+  it('单条件(只有宽度差)不报,即使放宽后仍超过 240px', async () => {
+    setWindowSize(1400, 1024)
+    const { checkPlatform } = await loadGuard()
+
+    for (let i = 0; i < 10; i += 1) {
+      await checkPlatform()
+      await tick(60_000)
+    }
+
+    expect(reportSignals).not.toHaveBeenCalled()
+  })
+
+  it('单条件(只有 debugger 计时)不报', async () => {
+    stubDebuggerCost(400)
+    const { checkPlatform } = await loadGuard()
+
+    for (let i = 0; i < 10; i += 1) {
+      await checkPlatform()
+      await tick(60_000)
+    }
+
+    expect(reportSignals).not.toHaveBeenCalled()
+  })
+
+  it('两个条件同时成立且连续 5 个采样周期才报', async () => {
+    setWindowSize(1400, 1024)
+    stubDebuggerCost(400)
+    const { checkPlatform } = await loadGuard()
+
+    for (let i = 0; i < 4; i += 1) {
+      await checkPlatform()
+      await tick(60_000)
+      expect(reportSignals).not.toHaveBeenCalled()
+    }
+
+    await checkPlatform()
+    expect(reportSignals).toHaveBeenCalledTimes(1)
+    expect(reportedNames()).toEqual(['devtools'])
+  })
+
+  it('中间一次未命中会清零连续计数', async () => {
+    setWindowSize(1400, 1024)
+    const { checkPlatform } = await loadGuard()
+    for (let i = 0; i < 4; i += 1) {
+      await checkPlatform()
+      await tick(60_000)
+    }
+
+    // 恢复正常窗口尺寸:命中链断掉,后面几次仍不足 5 连
+    setWindowSize(1024, 1024)
+    await tick(60_000)
+    await checkPlatform()
+    setWindowSize(1400, 1024)
+    for (let i = 0; i < 3; i += 1) {
+      await tick(60_000)
+      await checkPlatform()
+    }
+
+    expect(reportSignals).not.toHaveBeenCalled()
+  })
+})
+
+describe('tamper 判定(检测强度收敛版,沿用 devtools 信号名)', () => {
+  it('meta 被摘时在页面加载 10 秒后单独上报一次,不再要求连续命中', async () => {
+    document.head.querySelector('meta[name="zvms-platform"]')?.remove()
+    const { checkPlatform } = await loadGuard()
+
+    await checkPlatform()
+    await tick(60_000)
+    await checkPlatform()
+    expect(reportSignals).toHaveBeenCalledTimes(1)
+    expect(reportedNames()).toEqual(['devtools'])
+    expect(reportedSignals(0)[0].detail).toBe('tamper:meta-missing')
+  })
+
+  it('#app 被摘时同样上报,且各自限一次/会话', async () => {
+    document.body.querySelector('#app')?.remove()
+    const { checkPlatform } = await loadGuard()
+
+    await checkPlatform()
+    await tick(60_000)
+    await checkPlatform()
+    expect(reportSignals).toHaveBeenCalledTimes(1)
+    expect(reportedNames()).toEqual(['devtools'])
+    expect(reportedSignals(0)[0].detail).toBe('tamper:app-missing')
+
+    // 伪装恢复再重复摘:不重复上报
+    installPlatformMarkup()
+    for (let i = 0; i < 4; i += 1) {
+      await tick(60_000)
+      await checkPlatform()
+    }
+    expect(reportSignals).toHaveBeenCalledTimes(1)
+  })
+
+  it('readyState 未 complete 时不判定', async () => {
+    setProp(document, 'readyState', 'loading')
+    document.head.querySelector('meta[name="zvms-platform"]')?.remove()
+    const { checkPlatform } = await loadGuard()
+
+    await checkPlatform()
+    await tick(120_000)
+    await checkPlatform()
+
+    expect(reportSignals).not.toHaveBeenCalled()
+  })
+})
+
+describe('按键隔离与批量语义', () => {
+  it('切账号不继承节流:A 刚上报过,B 在 10 分钟内仍按自身节奏上报', async () => {
+    embedCrossOrigin()
+    const { checkPlatform, setPlatformGuardAccount } = await loadGuard()
+    setPlatformGuardAccount('1001')
+    localStorage.setItem('token', 'test-token')
+
+    // 账号 A:持续嵌套满 120 秒后上报一次
+    await checkPlatform()
+    await tick(120_000)
+    await checkPlatform()
+    expect(reportSignals).toHaveBeenCalledTimes(1)
+
+    // 账号 B 在 A 上报后 < 10 分钟切换进来:不继承 A 的节流
+    setPlatformGuardAccount('1002')
+    localStorage.setItem('token', 'test-token')
+    await checkPlatform()
+    await tick(120_000)
+    await checkPlatform()
+    expect(reportSignals).toHaveBeenCalledTimes(2)
+    expect(reportedNames(0)).toEqual(['iframe'])
+    expect(reportedNames(1)).toEqual(['iframe'])
+  })
+
+  it('登出清理当前账号的键;不同账号各自独立累计', async () => {
+    embedCrossOrigin()
+    const { checkPlatform, setPlatformGuardAccount, clearPlatformGuardData } = await loadGuard()
+    setPlatformGuardAccount('1001')
+    localStorage.setItem('token', 'test-token')
+
+    await checkPlatform()
+    // 嵌套候选的计时戳已写入 A 名下
+    expect(localStorage.getItem('zvms.platformGuard.1001.iframe.firstAt')).toBeTruthy()
+
+    await tick(120_000)
+    await checkPlatform()
+    expect(localStorage.getItem('zvms.platformGuard.1001.report.iframe')).toBeTruthy()
+
+    // 登出:该账号全部巡检键被清理
+    clearPlatformGuardData()
+    expect(localStorage.getItem('zvms.platformGuard.1001.report.iframe')).toBeFalsy()
+    expect(localStorage.getItem('zvms.platformGuard.1001.iframe.firstAt')).toBeFalsy()
+  })
+
+  it('一次上报最多携带 2 个信号,不为凑数重复发送', async () => {
+    embedCrossOrigin()
+    setProp(navigator, 'userAgent', XUEHAI_UA)
+    document.head.querySelector('meta[name="zvms-platform"]')?.remove()
+    const { checkPlatform, setPlatformGuardAccount } = await loadGuard()
+    setPlatformGuardAccount('1001')
+    localStorage.setItem('token', 'test-token')
+
+    // 先让 iframe / bridge 的时长条件“烧至就绪”,最后一步再摘 meta,
+    // 三路信号在同一巡检同时命中
+    await checkPlatform()
+    await tick(60_000)
+    await checkPlatform()
+    document.head.querySelector('meta[name="zvms-platform"]')?.remove()
+    await tick(60_000)
+    await checkPlatform()
+
+    expect(reportSignals).toHaveBeenCalledTimes(2)
+    expect(reportedSignals(1).length).toBe(2)
+    expect(reportedNames(1).some((name) => ['iframe', 'bridge'].includes(name))).toBe(true)
+  })
+
+  it('同一信号 10 分钟内不重复(devtools 重奏被压住,过窗可再报)', async () => {
+    setWindowSize(1400, 1024)
+    stubDebuggerCost(400)
+    const { checkPlatform } = await loadGuard()
+
+    // 5 个采样周期:第 5 次上报
+    for (let i = 0; i < 5; i += 1) {
+      await checkPlatform()
+      await tick(60_000)
+    }
+    expect(reportSignals).toHaveBeenCalledTimes(1)
+
+    // 10 分钟内再攒满 5 连:节流压住,不重复报
+    for (let i = 0; i < 5; i += 1) {
+      await checkPlatform()
+      await tick(60_000)
+    }
+    expect(reportSignals).toHaveBeenCalledTimes(1)
+
+    // 距首报满 10 分钟,再攒满 5 连可再报
+    // (首报在 t=240s,这里再过 4 个周期后到 780s... 补足差值)
+    for (let i = 0; i < 2; i += 1) {
+      await tick(60_000)
+    }
+    for (let i = 0; i < 5; i += 1) {
+      await checkPlatform()
+      await tick(60_000)
+    }
+    expect(reportSignals).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe('登录态与可见性前置', () => {
   it('未登录(token 缺失)时不检测也不上报', async () => {
     localStorage.removeItem('token')
-    setProp(window, 'top', { name: 'parent-window' })
+    embedCrossOrigin()
     const { checkPlatform } = await loadGuard()
 
     await checkPlatform()
@@ -165,107 +485,17 @@ describe('checkPlatform 信号判定', () => {
 
   it('页面不可见时不采样不上报', async () => {
     setProp(document, 'visibilityState', 'hidden')
-    setProp(window, 'top', { name: 'parent-window' })
+    embedCrossOrigin()
     const { checkPlatform } = await loadGuard()
 
     await checkPlatform()
 
     expect(reportSignals).not.toHaveBeenCalled()
-  })
-})
-
-describe('checkPlatform devtools 判定', () => {
-  it('连续 3 次采样命中才报 devtools', async () => {
-    setWindowSize(1300, 1024)
-    const { checkPlatform } = await loadGuard()
-
-    await checkPlatform()
-    expect(reportSignals).not.toHaveBeenCalled()
-
-    await tick(60_000)
-    await checkPlatform()
-    expect(reportSignals).not.toHaveBeenCalled()
-
-    await tick(60_000)
-    await checkPlatform()
-    expect(reportSignals).toHaveBeenCalledTimes(1)
-    expect(reportedNames()).toEqual(['devtools'])
-    expect(reportedSignals()[0].detail).toContain('devtools:width+276')
-  })
-
-  it('中间一次未命中会清零连续计数', async () => {
-    setWindowSize(1300, 1024)
-    const { checkPlatform } = await loadGuard()
-    await checkPlatform()
-    await tick(60_000)
-    await checkPlatform()
-
-    // 恢复正常窗口尺寸:命中链断掉,后面两次仍不够 3 连
-    setWindowSize(1024, 1024)
-    await tick(60_000)
-    await checkPlatform()
-    setWindowSize(1300, 1024)
-    await tick(60_000)
-    await checkPlatform()
-
-    expect(reportSignals).not.toHaveBeenCalled()
-  })
-
-  it('平台标记 meta 被摘掉时按 devtools(tamper)上报', async () => {
-    document.head.querySelector('meta[name="zvms-platform"]')?.remove()
-    const { checkPlatform } = await loadGuard()
-
-    for (let i = 0; i < 3; i += 1) {
-      await checkPlatform()
-      await tick(60_000)
-    }
-
-    expect(reportSignals).toHaveBeenCalledTimes(1)
-    expect(reportedNames()).toEqual(['devtools'])
-    expect(reportedSignals()[0].detail).toBe('tamper:meta-missing')
-  })
-})
-
-describe('checkPlatform 节流', () => {
-  it('普通信号 5 分钟内只上报一次,窗口过后可再报', async () => {
-    setProp(window, 'top', { name: 'parent-window' })
-    const { checkPlatform } = await loadGuard()
-
-    await checkPlatform()
-    expect(reportSignals).toHaveBeenCalledTimes(1)
-    expect(localStorage.getItem('zvms.platformGuard.report.iframe')).toBeTruthy()
-
-    await tick(60_000)
-    await checkPlatform()
-    expect(reportSignals).toHaveBeenCalledTimes(1)
-
-    // 距首次上报满 5 分钟(throttle 与后端去重窗口对齐)才允许补报
-    await tick(4 * 60_000)
-    await checkPlatform()
-    expect(reportSignals).toHaveBeenCalledTimes(2)
-  })
-
-  it('devtools 节流 30 分钟,普通窗口过了也不重报', async () => {
-    setWindowSize(1300, 1024)
-    const { checkPlatform } = await loadGuard()
-    for (let i = 0; i < 3; i += 1) {
-      await checkPlatform()
-      await tick(60_000)
-    }
-    expect(reportSignals).toHaveBeenCalledTimes(1)
-
-    // 再来一轮 3 连命中(共 3 分钟),仍在 30 分钟窗口内
-    for (let i = 0; i < 3; i += 1) {
-      await checkPlatform()
-      await tick(60_000)
-    }
-    expect(reportSignals).toHaveBeenCalledTimes(1)
   })
 })
 
 describe('startPlatformGuard / stopPlatformGuard', () => {
   it('重复启动只保留一个定时器,停止后不再巡检', async () => {
-    setWindowSize(1300, 1024)
     const { startPlatformGuard, stopPlatformGuard } = await loadGuard()
 
     const setIntervalSpy = vi.spyOn(globalThis, 'setInterval')
@@ -273,15 +503,11 @@ describe('startPlatformGuard / stopPlatformGuard', () => {
     startPlatformGuard()
     // 幂等:第二次启动只该复用已有定时器
     expect(setIntervalSpy).toHaveBeenCalledTimes(1)
-    // 启动即巡检一次,定时器再造两次(共 3 次采样)
-    await tick(120_000)
-    expect(reportSignals).toHaveBeenCalledTimes(1)
 
     const clearIntervalSpy = vi.spyOn(globalThis, 'clearInterval')
     stopPlatformGuard()
     expect(clearIntervalSpy).toHaveBeenCalledTimes(1)
-    setWindowSize(1300, 1024)
     await tick(180_000)
-    expect(reportSignals).toHaveBeenCalledTimes(1)
+    expect(reportSignals).not.toHaveBeenCalled()
   })
 })

@@ -528,7 +528,41 @@ def test_backup_run_is_409_when_a_backup_is_already_running(client, logs, monkey
 
 
 def test_backup_run_translates_the_domain_error_into_500(client, logs, monkeypatch):
-    """service 只抛 BackupTriggerError；路由层必须显式翻成 500（不是 503）。"""
+    """service 只抛 BackupTriggerError；路由层翻成 500 + 固定文案，摘要只进审计。
+
+    stderr 里可能有主机名、路径与凭据片段，因此响应体只能是固定中文文案；
+    原始摘要（脱敏后）留在 ``adb_backup`` 审计行里，管理员据此定位。
+    """
+    http, _ = client
+
+    async def failing():
+        raise adb_backup.BackupTriggerError(
+            "启动备份任务失败：sudo: sorry, password=Hunter2 rejected "
+            "while starting adb-sync.service on adb-secret-host.invalid"
+        )
+
+    monkeypatch.setattr(db_system_router, "trigger_backup", failing)
+
+    response = http.post(RUN_URL)
+
+    assert response.status_code == 500
+    assert response.json()["detail"] == db_system_router.BACKUP_FAILED_DETAIL
+    # 响应体不得回传任何 stderr 片段
+    for leak in ("sudo", "Hunter2", "adb-secret-host", "adb-sync"):
+        assert leak not in response.text
+
+    assert len(logs.inserted) == 1
+    audit = logs.inserted[0]
+    assert audit["type"] == "adb_backup"
+    assert audit["level"] == "warning"
+    assert "失败" in audit["data"]
+    assert "Hunter2" not in audit["data"]
+    assert "password=<redacted>" in audit["data"]
+    assert "adb-secret-host.invalid" in audit["data"]
+
+
+def test_audit_failure_does_not_mask_the_backup_failure(client, monkeypatch):
+    """审计写失败不得把 500 变成 503：客户端仍要看到固定的失败文案。"""
     http, _ = client
 
     async def failing():
@@ -536,11 +570,16 @@ def test_backup_run_translates_the_domain_error_into_500(client, logs, monkeypat
 
     monkeypatch.setattr(db_system_router, "trigger_backup", failing)
 
+    class BrokenLogs:
+        async def insert(self, *args, **kwargs):
+            raise RuntimeError("db down")
+
+    monkeypatch.setattr(backends, "get_applogs_repo", lambda session=None: BrokenLogs())
+
     response = http.post(RUN_URL)
 
     assert response.status_code == 500
-    assert response.json()["detail"] == "启动备份任务失败：sudo: a password is required"
-    assert logs.inserted == []
+    assert response.json()["detail"] == db_system_router.BACKUP_FAILED_DETAIL
 
 
 def test_backup_run_500_is_not_swallowed_into_503(client, logs, monkeypatch):

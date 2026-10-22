@@ -25,6 +25,11 @@ from util.user import get_user_display_name, public_user
 
 router = APIRouter()
 
+# 班级列表的硬上限（与 ``db.repos.oracle.groups._CLASS_LIST_CAP`` 同值）：
+# 这里把「班级 + 权限组」合并后再排序切片，所以先按上限取一页班级，
+# 避免为了分页把整张 ``GROUPS`` 拉进内存。
+_CLASS_LIST_CAP = 1000
+
 
 @router.post("")
 async def create_group(
@@ -81,8 +86,9 @@ async def get_groups(
     permission_ids = {str(group["_id"]) for group in permission_groups}
 
     if type != "permission":
-        _, class_total = await groups_repo.list_classes(search, 1, 1)
-        class_groups, _ = await groups_repo.list_classes(search, 1, class_total or 1)
+        # 一次往返拿一页班级 + 总数（SQL 侧 OFFSET/FETCH + 窗口计数），
+        # 不再「先 COUNT 再按总数把整表拉回来」。
+        class_groups, _ = await groups_repo.list_classes(search, 1, _CLASS_LIST_CAP)
         for group in class_groups:
             if str(group["_id"]) in permission_ids:
                 continue
@@ -302,7 +308,11 @@ async def get_user_times_in_class(
     time = []
     class_groups: dict[str, Optional[dict]] = {}
     for user in result:
-        user_time = user_times[str(user["_id"])]
+        user_time = user_times.get(str(user["_id"])) or {
+            "on-campus": 0.0,
+            "off-campus": 0.0,
+            "social-practice": 0.0,
+        }
         if exceeding or shortage:
             more_on_campus = min(
                 round(max(user_time["off-campus"] - 15, 1) / 2, 0), 6.0

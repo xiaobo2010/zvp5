@@ -43,6 +43,16 @@ router = APIRouter()
 
 _logger = logging.getLogger(__name__)
 
+# ``page=-1``（不分页）的硬上限：保留「一次拿完」的语义，但不允许无界返回。
+_USER_LIST_CAP = 1000
+
+
+def _query_datetime(value: str, field: str) -> datetime:
+    try:
+        return datetime.fromisoformat(value)
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail=f"无效的时间参数：{field}")
+
 
 async def _observe_binding(
     request: Request, user_oid: str, log_name: str, xuehai_id: str
@@ -531,8 +541,17 @@ async def read_users(
         for group in groups:
             selected.append(str(group["_id"]))
 
-    users, _ = await backends.get_users_repo().search(query, user is not None)
+    # 分页下推到 SQL：``page == -1`` 仍表示「不分页」，但必须给硬上限——
+    # 不限量返回才是这条路径原来的问题。``perpage`` 本身已由 Query(le=100)
+    # 夹住，所以只有 -1 分支需要这个天花板。
+    limit = _USER_LIST_CAP if page == -1 else perpage
+    offset = 0 if page == -1 else (page - 1) * perpage
+    users, count = await backends.get_users_repo().search(
+        query, user is not None, limit=limit, offset=offset
+    )
 
+    # 行序由 SQL 的 ``ORDER BY business_id, oid`` 决定（与这里原来的
+    # ``rows.sort(key=row["id"])`` 同序），因此不再整页重排、也不再切片。
     rows = []
     for doc in users:
         class_id = doc.get("class_id")
@@ -545,16 +564,7 @@ async def read_users(
             }
         )
 
-    rows.sort(key=lambda row: row["id"])
-    count = len(rows)
-
-    if page == -1:
-        result = rows
-    else:
-        start = (page - 1) * perpage
-        result = rows[start : start + perpage]
-
-    return {"status": "ok", "code": 200, "data": result, "metadata": {"size": count}}
+    return {"status": "ok", "code": 200, "data": rows, "metadata": {"size": count}}
 
 
 @router.get("/{user_oid}")
@@ -746,7 +756,9 @@ async def read_user_time(
 
     if start is not None and end is not None:
         result = await calculate_user_time(
-            user_oid, datetime.fromisoformat(start), datetime.fromisoformat(end)
+            user_oid,
+            _query_datetime(start, "start"),
+            _query_datetime(end, "end"),
         )
     else:
         result = await calculate_user_time(user_oid)
@@ -801,7 +813,10 @@ async def delete_past(
     # Remove by index
     user_doc = await users_repo.get_by_oid(oid)
     name = (user_doc or {}).get("past", [])
-    idx = int(past_identity_idx)
+    try:
+        idx = int(past_identity_idx)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="无效的历史身份序号")
     if idx < 0 or idx >= len(name):
         raise HTTPException(status_code=404, detail="Past identity not found.")
     await users_repo.remove_past(oid, name[idx])
