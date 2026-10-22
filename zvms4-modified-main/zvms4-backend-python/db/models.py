@@ -505,6 +505,8 @@ export_tasks = Table(
     UniqueConstraint("task_uuid", name="uq_export_tasks_uuid"),
 )
 Index("ix_export_tasks_status", export_tasks.c.status)
+# 导出列表按 task_start 倒序分页；没有它只能全表取回再截断。
+Index("ix_export_tasks_task_start", export_tasks.c.task_start)
 
 
 # ---------------------------------------------------------------------------
@@ -877,6 +879,12 @@ Index(
     "ux_device_challenges_token",
     device_challenges.c.token_hash,
     unique=True,
+)
+# challenge_flood 按 (user_oid, created_at) 数窗口内的挑战数。
+Index(
+    "ix_device_challenges_user_created",
+    device_challenges.c.user_oid,
+    device_challenges.c.created_at,
 )
 
 

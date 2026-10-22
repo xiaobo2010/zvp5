@@ -18,6 +18,7 @@ Stage 2 的三块能力（Web SSH 终端 / 全盘文件管理 / 数据库内容�
 from __future__ import annotations
 
 import json
+import logging
 import re
 import time
 
@@ -26,6 +27,8 @@ from sqlalchemy.exc import IntegrityError
 from db import backends
 from typings.log import ZVMSLog
 from util.cert import match_totp_counter
+
+logger = logging.getLogger(__name__)
 
 # 6 位数字是 TOTP 的唯一合法形态；其它形态一律 422，不消耗限流额度（那属于
 # 客户端 bug，不是猜码）。
@@ -95,7 +98,7 @@ async def resolve_names(oids: list[str]) -> dict[str, str]:
     try:
         return await backends.get_users_repo().get_names(wanted)
     except Exception as exc:  # noqa: BLE001 - 取名失败不影响审计落库
-        print(f"Failed to resolve names for audit: {exc}")
+        logger.warning("failed to resolve names for audit: %s", type(exc).__name__)
         return {}
 
 
@@ -133,8 +136,8 @@ async def _write_audit(
         ).insert_log()
     except Exception as exc:  # noqa: BLE001 - 审计写失败不该改变鉴权结论
         # 结论（放行 / 拒绝）已经判定完毕，这里再抛异常只会让响应码不可预测；
-        # 把失败原因打到 stderr 留痕即可。
-        print(f"Failed to write dual-auth log: {exc}")
+        # 把失败原因打到日志留痕即可。
+        logger.warning("failed to write dual-auth audit: %s", type(exc).__name__)
 
 
 async def audit_system_op(
@@ -168,7 +171,7 @@ async def audit_system_op(
             level=level,
         ).insert_log()
     except Exception as exc:  # noqa: BLE001
-        print(f"Failed to write system op log: {exc}")
+        logger.warning("failed to write system op audit: %s", type(exc).__name__)
 
 
 async def require_dual_auth(operator: dict, code: str, *, action: str) -> str:

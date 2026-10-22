@@ -32,7 +32,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Any, AsyncIterator
 
-from sqlalchemy import case, delete, func, insert, or_, select
+from sqlalchemy import case, delete, false, func, insert, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.ids import new_oid, normalize_oid
@@ -217,13 +217,35 @@ def _search_conds(query: str, logged_in: bool) -> list[Any]:
     return _search_filter(query, logged_in)
 
 
+_SEARCH_QUERY_MAX = 64
+
+
+def _like_pattern(query: str) -> str:
+    """``%query%`` with LIKE wildcards escaped (lower-cased for ``LOWER(col)``)."""
+    escaped = (
+        query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    )
+    return f"%{escaped.lower()}%"
+
+
 def _class_conds(class_oid: str, query: str) -> list[Any]:
+    """班级成员 + 姓名/学号的关键字**字面量**匹配。
+
+    ``LIKE`` 而不是 ``REGEXP_LIKE``：正则引擎会在每行上编译模式，用户可控的
+    关键词还能构造灾难性回溯；``LIKE`` 是普通字符串比较，``%``/``_``/``\\``
+    转义后保持字面量语义。关键词上限 :data:`_SEARCH_QUERY_MAX`，超长直接
+    判空（不查库也不报错），避免把异常长的入参带进任何 SQL。
+    """
     conds: list[Any] = [users_tbl.c.class_oid == class_oid]
     if query:
+        if len(query) > _SEARCH_QUERY_MAX:
+            conds.append(false())
+            return conds
+        pattern = _like_pattern(query)
         conds.append(
             or_(
-                func.regexp_like(users_tbl.c.name, query, "i"),
-                func.regexp_like(users_tbl.c.business_id, query, "i"),
+                func.lower(users_tbl.c.name).like(pattern, escape="\\"),
+                func.lower(users_tbl.c.business_id).like(pattern, escape="\\"),
             )
         )
     return conds

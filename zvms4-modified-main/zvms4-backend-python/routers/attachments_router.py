@@ -119,23 +119,24 @@ def _require_owner_or_manager(user: dict, row: dict) -> None:
     raise HTTPException(status_code=403, detail="Permission denied")
 
 
-async def _can_read(user: dict, row: dict) -> bool:
-    """owner | admin | department | secretary in the same class (design §4)."""
+async def _can_read(user: dict, row: dict, class_id: str | None) -> bool:
+    """owner | admin | department | secretary in the same class (design §4).
+
+    ``class_id`` is the authenticated user's own class, carried by the auth
+    result (``util.object_id._authenticate``); only the owner's row is read.
+    """
     owner_oid = str(row.get("owner_oid") or "")
     if owner_oid and owner_oid == user["id"]:
         return True
     per = _per(user)
     if "admin" in per or "department" in per:
         return True
-    if "secretary" in per and owner_oid:
-        users_repo = backends.get_users_repo()
-        current = await users_repo.get_by_oid(user["id"])
-        owner = await users_repo.get_by_oid(owner_oid)
+    if "secretary" in per and owner_oid and class_id is not None:
+        owner = await backends.get_users_repo().get_by_oid(owner_oid)
         if (
-            current is not None
-            and owner is not None
-            and current.get("class_id") is not None
-            and str(current.get("class_id")) == str(owner.get("class_id"))
+            owner is not None
+            and owner.get("class_id") is not None
+            and str(class_id) == str(owner.get("class_id"))
         ):
             return True
     return False
@@ -229,7 +230,7 @@ async def _authorize_byte_request(
         row = await repo.get_meta(oid)
         if row is None:
             raise HTTPException(status_code=404, detail="Attachment not found")
-        if not await _can_read(user, row):
+        if not await _can_read(user, row, user.get("class_id")):
             raise HTTPException(status_code=403, detail="Permission denied")
     else:
         if not (exp and purpose and sig):
@@ -489,7 +490,7 @@ async def get_attachment_meta(
     row = await backends.get_files_repo().get_meta(oid)
     if row is None:
         raise HTTPException(status_code=404, detail="Attachment not found")
-    if not await _can_read(user, row):
+    if not await _can_read(user, row, user.get("class_id")):
         raise HTTPException(status_code=403, detail="Permission denied")
     # sha256 is only for the owner (design §8.6 / P1-5).
     include_sha = str(row.get("owner_oid") or "") == user["id"]

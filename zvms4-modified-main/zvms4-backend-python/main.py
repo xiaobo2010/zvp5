@@ -1,4 +1,4 @@
-from fastapi import Request, FastAPI
+from fastapi import Request, FastAPI, HTTPException
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, RedirectResponse
 import logging
@@ -43,7 +43,7 @@ from db.system_state import is_enabled_fresh as maintenance_enabled_fresh
 import realtime
 from routers.system_router import router as system_router
 from db.oracle.engine import ping as oracle_ping
-from util.object_id import is_admin_token
+from util.object_id import _authenticate, is_admin_token
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from tasks.compute_time import rebuild_statistics, generate_reports
 from tasks.files_retention import purge_expired_attachments
@@ -217,17 +217,27 @@ async def connect(sid, environ, auth=None):
     # 兜底：正常路径上 MaintenanceSocketGuard 已在握手阶段拒掉新连接（并且
     # GET /api/system/maintenance 已放行），这里再查一次**绕过缓存**的最新状态，
     # 万一有入口绕过那层中间件也不会漏进连接。admin 在维护期间照常连接。
-    if maintenance_enabled_fresh() and not await is_admin_token(
-        realtime.connect_token(environ, auth)
-    ):
-        print(f"refuse connect {sid} (maintenance)")
+    token = realtime.connect_token(environ, auth)
+    if maintenance_enabled_fresh() and not await is_admin_token(token):
+        _logger.warning("refuse socket connect %s (maintenance)", sid)
         raise SocketIOConnectionRefusedError("系统维护中，请稍后再试")
-    print(f"connect {sid}")
+    if token:
+        try:
+            await _authenticate(token, "long", True)
+        except HTTPException as exc:
+            _logger.warning(
+                "refuse socket connect %s (auth rejected: %s)", sid, exc.status_code
+            )
+            return False
+        except Exception:
+            _logger.exception("refuse socket connect %s (auth unavailable)", sid)
+            return False
+    _logger.info("connect %s", sid)
 
 
 @sio.event
 async def disconnect(sid):
-    print(f"disconnect {sid}")
+    _logger.info("disconnect %s", sid)
 
 
 async def mark_all_tasks_failed():
