@@ -805,7 +805,7 @@ END;
 
 BEGIN
   EXECUTE IMMEDIATE
-    'CREATE UNIQUE INDEX ux_ban_rules_trigger ON ban_rules (trigger)';
+    'CREATE UNIQUE INDEX ux_ban_rules_trigger ON ban_rules (trigger_code)';
 EXCEPTION
   WHEN OTHERS THEN
     IF SQLCODE NOT IN (-955, -1408) THEN RAISE; END IF;
@@ -962,7 +962,7 @@ END;
 --   一条一行，append-only；命中「窗口内累计计数」后由规则梯度决定封禁。
 --   无外键：违规记录是审计材料，必须比账号活得久（用户被硬删除后仍要能
 --   回答「他当时因为什么被封」）。SIGNAL 是 iframe / bridge / devtools，
---   DETAIL 存判定时的原始依据。(user_oid, trigger, created_at) 的组合索引
+--   DETAIL 存判定时的原始依据。(user_oid, trigger_code, created_at) 的组合索引
 --   服务「窗口内计数」这条热路径。
 --   也由 V016__rule_engine_and_violations.sql 在存量实例上创建。
 -- ----------------------------------------------------------------------------
@@ -971,7 +971,7 @@ BEGIN
 CREATE TABLE ban_violations (
   oid VARCHAR2(24 CHAR) NOT NULL,
   user_oid VARCHAR2(24 CHAR) NOT NULL,
-  trigger VARCHAR2(64 CHAR) NOT NULL,
+  trigger_code VARCHAR2(64 CHAR) NOT NULL,
   signal VARCHAR2(32 CHAR) NOT NULL,
   xuehai_id VARCHAR2(32 CHAR),
   detail VARCHAR2(500 CHAR),
@@ -987,7 +987,7 @@ END;
 
 BEGIN
   EXECUTE IMMEDIATE
-    'CREATE INDEX ix_ban_violations_user ON ban_violations (user_oid, trigger, created_at)';
+    'CREATE INDEX ix_ban_violations_user ON ban_violations (user_oid, trigger_code, created_at)';
 EXCEPTION
   WHEN OTHERS THEN
     IF SQLCODE NOT IN (-955, -1408) THEN RAISE; END IF;
@@ -1084,7 +1084,7 @@ MERGE INTO ban_rules t
 USING (SELECT ''0b0000000000000000000002'' oid FROM dual) s
 ON (t.code = ''foreign_device_login'')
 WHEN NOT MATCHED THEN INSERT
-  (oid, code, name, trigger, enabled, config, penalties, builtin, created_at, updated_at)
+  (oid, code, name, trigger_code, enabled, config, penalties, builtin, created_at, updated_at)
   VALUES (''0b0000000000000000000002'', ''foreign_device_login'', ''非主学海设备登录'',
           ''foreign_device_login'', 1, ''{"threshold":3}'',
           ''[1,3,7,14,30,null]'', 1, SYSTIMESTAMP, SYSTIMESTAMP)';

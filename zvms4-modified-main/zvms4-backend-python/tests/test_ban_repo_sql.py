@@ -319,7 +319,7 @@ def test_ban_rules_update_by_code_patches_only_given_fields():
     assert "enabled=0" in sql
     assert "updated_at=" in sql
     # 没传的列一律不进 SET：name/config/penalties/trigger 都不该被顺手写成 NULL。
-    for untouched in ("config=", "penalties=", "name=", "trigger="):
+    for untouched in ("config=", "penalties=", "name=", "trigger_code="):
         assert untouched not in sql
     assert "WHERE ban_rules.code = 'foreign_device_login'" in sql
 
@@ -340,7 +340,7 @@ def test_ban_rules_row_maps_flags_to_bools():
             "oid": "0b0000000000000000000002",
             "code": "foreign_device_login",
             "name": "非主学海设备登录",
-            "trigger": "foreign_device_login",
+            "trigger_code": "foreign_device_login",
             "enabled": 1,
             "config": '{"threshold":3}',
             "penalties": "[1,3,7,14,30,null]",
@@ -361,14 +361,14 @@ def test_ban_rules_row_maps_flags_to_bools():
 
 def test_ban_rules_columns_project_trigger():
     names = [col.name for col in ban_rules_repo._columns()]
-    assert "trigger" in names
-    assert names.index("trigger") < names.index("created_at")
+    assert "trigger_code" in names
+    assert names.index("trigger_code") < names.index("created_at")
 
 
 def test_ban_rules_get_by_trigger_stmt_filters_one_column():
     sql = _sql(ban_rules_repo._get_by_trigger_stmt("platform_misuse"))
     assert sql.startswith("SELECT ")
-    assert "ban_rules.trigger = 'platform_misuse'" in sql
+    assert "ban_rules.trigger_code = 'platform_misuse'" in sql
 
 
 def test_ban_rules_delete_by_code_stmt_targets_one_code():
@@ -405,13 +405,13 @@ def test_ban_rules_insert_covers_every_not_null_column():
         if not col.nullable and col.server_default is None
     }
     assert required - provided == set()
-    assert "trigger" in provided
+    assert "trigger_code" in provided
 
 
 def test_ban_violations_columns_and_index_cover_the_counting_path():
     """窗口内计数是热路径：索引必须是 (user_oid, trigger, created_at)。"""
     names = [col.name for col in ban_violations_tbl.c]
-    for column in ("oid", "user_oid", "trigger", "signal", "xuehai_id", "detail",
+    for column in ("oid", "user_oid", "trigger_code", "signal", "xuehai_id", "detail",
                    "created_at"):
         assert column in names
 
@@ -421,7 +421,7 @@ def test_ban_violations_columns_and_index_cover_the_counting_path():
     }
     assert indexes["ix_ban_violations_user"] == [
         "user_oid",
-        "trigger",
+        "trigger_code",
         "created_at",
     ]
 

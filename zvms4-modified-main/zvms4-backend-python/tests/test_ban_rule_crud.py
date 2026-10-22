@@ -181,7 +181,7 @@ def _mapping(**overrides) -> dict:
         "oid": "0b0000000000000000000002",
         "code": "foreign_device_login",
         "name": "非主学海设备登录",
-        "trigger": "foreign_device_login",
+        "trigger_code": "foreign_device_login",
         "enabled": 1,
         "config": '{"threshold":3}',
         "penalties": "[1,3,7,14,30,null]",
@@ -201,11 +201,11 @@ def test_get_by_trigger_filters_on_the_trigger_column():
     assert row["enabled"] is True
     assert row["builtin"] is True
     sql = _sql(session.statements[0])
-    assert "WHERE ban_rules.trigger = 'foreign_device_login'" in sql
+    assert "WHERE ban_rules.trigger_code = 'foreign_device_login'" in sql
     # 谓词只能落在 trigger 上：求值入口不能退化成「按 code 找」，
     # 否则管理员一改名，入口就失联了
     assert "WHERE" in sql
-    assert sql.split("WHERE", 1)[1].strip().startswith("ban_rules.trigger =")
+    assert sql.split("WHERE", 1)[1].strip().startswith("ban_rules.trigger_code =")
 
 
 def test_get_by_trigger_returns_none_when_absent():
@@ -251,7 +251,7 @@ def test_ban_rules_trigger_is_uniquely_indexed():
     unique = [
         index
         for index in models.ban_rules.indexes
-        if index.unique and [col.name for col in index.columns] == ["trigger"]
+        if index.unique and [col.name for col in index.columns] == ["trigger_code"]
     ]
     assert unique, "ban_rules(trigger) 缺少唯一索引"
 
@@ -267,21 +267,21 @@ def _ddl(sql_path: Path) -> str:
 
 def test_v015_adds_trigger_column_and_unique_index():
     ddl = _ddl(V016_PATH)
-    assert "ALTER TABLE ban_rules ADD trigger VARCHAR2(64 CHAR)" in ddl
-    assert "CREATE UNIQUE INDEX ux_ban_rules_trigger ON ban_rules (trigger)" in ddl
+    assert "ALTER TABLE ban_rules ADD trigger_code VARCHAR2(64 CHAR)" in ddl
+    assert "CREATE UNIQUE INDEX ux_ban_rules_trigger ON ban_rules (trigger_code)" in ddl
 
 
 def test_v015_creates_violations_table_and_counting_index():
     ddl = _ddl(V016_PATH)
     assert "CREATE TABLE ban_violations" in ddl
     for column in ("user_oid VARCHAR2(24 CHAR) NOT NULL",
-                   "trigger VARCHAR2(64 CHAR) NOT NULL",
+                   "trigger_code VARCHAR2(64 CHAR) NOT NULL",
                    "signal VARCHAR2(32 CHAR) NOT NULL",
                    "detail VARCHAR2(500 CHAR)"):
         assert column in ddl
     assert (
         "CREATE INDEX ix_ban_violations_user ON ban_violations "
-        "(user_oid, trigger, created_at)" in ddl
+        "(user_oid, trigger_code, created_at)" in ddl
     )
 
 

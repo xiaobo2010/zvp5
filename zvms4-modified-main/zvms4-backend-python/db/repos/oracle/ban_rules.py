@@ -55,7 +55,7 @@ def _columns() -> tuple[Any, ...]:
         ban_rules_tbl.c.oid,
         ban_rules_tbl.c.code,
         ban_rules_tbl.c.name,
-        ban_rules_tbl.c.trigger,
+        ban_rules_tbl.c.trigger_code,
         ban_rules_tbl.c.enabled,
         ban_rules_tbl.c.config,
         ban_rules_tbl.c.penalties,
@@ -76,7 +76,7 @@ def _get_by_code_stmt(code: str):
 
 def _get_by_trigger_stmt(trigger: str):
     # 唯一索引保证最多一行：求值入口拿到的规则必须唯一，否则封禁天数不可复现。
-    return select(*_columns()).where(ban_rules_tbl.c.trigger == trigger)
+    return select(*_columns()).where(ban_rules_tbl.c.trigger_code == trigger)
 
 
 def _insert_stmt(
@@ -94,7 +94,7 @@ def _insert_stmt(
         oid=oid,
         code=code,
         name=name,
-        trigger=trigger,
+        trigger_code=trigger,
         enabled=1 if enabled else 0,
         config=config,
         penalties=penalties,
@@ -130,7 +130,7 @@ def _rule_row(mapping: Any) -> Row:
         "_id": mapping["oid"],
         "code": mapping["code"],
         "name": mapping["name"],
-        "trigger": mapping["trigger"],
+        "trigger": mapping["trigger_code"],
         "enabled": bool(mapping["enabled"]),
         "config": mapping["config"],
         "penalties": mapping["penalties"],

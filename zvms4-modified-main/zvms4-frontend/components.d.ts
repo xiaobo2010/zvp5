@@ -61,6 +61,8 @@ declare module 'vue' {
     ZLogList: typeof import('./src/components/log/ZLogList.vue')['default']
     ZMarkdown: typeof import('./src/components/markdown/ZMarkdown.vue')['default']
     ZMarkdownEditor: typeof import('./src/components/markdown/ZMarkdownEditor.vue')['default']
+    ZNotificationAdmin: typeof import('./src/components/manage/ZNotificationAdmin.vue')['default']
+    ZNotificationReminder: typeof import('./src/components/notification/ZNotificationReminder.vue')['default']
     ZPagination: typeof import('./src/components/utils/ZPagination.vue')['default']
     ZSelectActivityMode: typeof import('./src/components/form/ZSelectActivityMode.vue')['default']
     ZSelectClass: typeof import('./src/components/form/ZSelectClass.vue')['default']
