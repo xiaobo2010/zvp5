@@ -2,7 +2,7 @@ import os
 import uuid
 import asyncio
 import logging
-from fastapi import APIRouter, HTTPException, Depends, Request
+from fastapi import APIRouter, HTTPException, Depends, Query, Request
 
 
 from config import (
@@ -25,11 +25,65 @@ from util.object_id import (
     validate_object_id,
     compulsory_temporary_token,
 )
-from datetime import datetime
+from datetime import datetime, timedelta
 from db import backends
+from db.models import export_tasks as _tasks_tbl
+from db.oracle.session import get_session
 import pandas as pd
 from fastapi import BackgroundTasks
 from pydantic import BaseModel
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+
+_MAX_EXPORT_PAGE_SIZE = 100
+_DEFAULT_EXPORT_WINDOW_DAYS = 30
+_MAX_EXPORT_WINDOW_DAYS = 365
+
+
+def _task_age():
+    return func.coalesce(_tasks_tbl.c.task_end, _tasks_tbl.c.task_start)
+
+
+def _task_page_stmt(cutoff: datetime, page: int, size: int):
+    return (
+        select(
+            _tasks_tbl.c.oid,
+            _tasks_tbl.c.task_uuid,
+            _tasks_tbl.c.status,
+            _tasks_tbl.c.variant,
+            _tasks_tbl.c.export_format,
+            _tasks_tbl.c.task_start,
+            _tasks_tbl.c.task_end,
+            _tasks_tbl.c.percentage,
+        )
+        .where(_task_age() >= cutoff)
+        .order_by(_tasks_tbl.c.task_start.desc(), _tasks_tbl.c.oid.desc())
+        .offset((page - 1) * size)
+        .limit(size)
+    )
+
+
+def _task_count_stmt(cutoff: datetime):
+    return select(func.count()).select_from(_tasks_tbl).where(_task_age() >= cutoff)
+
+
+def _task_summary(row) -> dict:
+    raw_uuid = row["task_uuid"]
+    try:
+        task_id = uuid.UUID(str(raw_uuid))
+    except (ValueError, TypeError):
+        task_id = raw_uuid
+    return {
+        "_id": str(row["oid"]),
+        "id": task_id,
+        "status": row["status"],
+        "variant": row["variant"],
+        "format": row["export_format"],
+        "task_start": row["task_start"],
+        "task_end": row["task_end"],
+        "percentage": row["percentage"],
+    }
 
 
 class CreateExport(BaseModel):
@@ -87,6 +141,9 @@ async def _process_task(task_id: str):
     if task["variant"] == "time":
         result = []
         users = await backends.get_users_repo().list_all()
+        activities = await backends.get_activities_repo().list_effective(
+            task["export_start"], task["export_end"]
+        )
         for idx, user in enumerate(users):
             if task["export_start"] is not None or task["export_end"] is not None:
                 user_time = await calculate_user_time(
@@ -94,12 +151,14 @@ async def _process_task(task_id: str):
                     task["export_start"],
                     task["export_end"],
                     attach_description=include_description,
+                    activities=activities,
                 )
             else:
                 user_time = await calculate_user_time(
                     str(user["_id"]),
                     allow_cache=task["allow_cache"],
                     attach_description=include_description,
+                    activities=activities,
                 )
             more_on_campus = min(
                 round(
@@ -411,21 +470,24 @@ async def get_export_file(
 
 
 @router.get("")
-async def get_export_list(user=Depends(get_current_user)):
+async def get_export_list(
+    page: int = Query(1, ge=1),
+    size: int = Query(20, ge=1, le=_MAX_EXPORT_PAGE_SIZE),
+    days: int = Query(_DEFAULT_EXPORT_WINDOW_DAYS, ge=1, le=_MAX_EXPORT_WINDOW_DAYS),
+    user=Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
     if "admin" not in user["per"]:
         raise HTTPException(status_code=403, detail="权限不足")
-    result = []
-    for task_id, task in enumerate(await backends.get_tasks_repo().list_all()):
-        result.append(
-            {
-                "_id": str(task["_id"]),
-                "id": task["id"],
-                "status": task["status"],
-                "variant": task["variant"],
-                "format": task["format"],
-                "task_start": task["task_start"],
-                "task_end": task["task_end"],
-                "percentage": task["percentage"],
-            }
-        )
-    return {"code": 200, "status": "ok", "data": result}
+    cutoff = datetime.now() - timedelta(days=days)
+    total = int((await session.execute(_task_count_stmt(cutoff))).scalar_one())
+    rows = (await session.execute(_task_page_stmt(cutoff, page, size))).all()
+    return {
+        "code": 200,
+        "status": "ok",
+        "data": [_task_summary(row._mapping) for row in rows],
+        "page": page,
+        "size": size,
+        "days": days,
+        "total": total,
+    }

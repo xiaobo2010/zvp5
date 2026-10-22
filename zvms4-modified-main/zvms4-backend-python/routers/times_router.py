@@ -1,5 +1,6 @@
 from typing import Optional
 from fastapi import Depends, APIRouter, Query
+from pydantic import ValidationError
 
 from typings.time import UserActivityTime
 from util.calculate import calculate_user_time
@@ -11,6 +12,26 @@ from util.object_id import (
 from db import backends
 
 router = APIRouter()
+
+
+def _as_float(value) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _user_activity_time(row) -> UserActivityTime:
+    try:
+        return UserActivityTime.model_validate(row, strict=False)
+    except ValidationError:
+        return UserActivityTime.model_construct(
+            user=str(row.get("user") or ""),
+            on_campus_raw=_as_float(row.get("on_campus_raw")),
+            off_campus_raw=_as_float(row.get("off_campus_raw")),
+            social_practice=_as_float(row.get("social_practice")),
+            updated_at=row.get("updated_at"),
+        )
 
 
 @router.get("")
@@ -75,7 +96,7 @@ async def read_times(
     results = []
 
     for user in user_times:
-        time_struct = UserActivityTime.model_validate(user, strict=False)
+        time_struct = _user_activity_time(user)
         results.append(
             {
                 "_id": str(user["user"]),

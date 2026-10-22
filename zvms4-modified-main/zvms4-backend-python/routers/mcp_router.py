@@ -97,7 +97,7 @@ async def mcp_get_activity_details(
 
     try:
         activity_oid = validate_object_id(activity_id)
-    except:
+    except (HTTPException, ValueError):
         raise HTTPException(status_code=400, detail="Invalid activity ID format")
 
     activity = await backends.get_activities_repo().get(activity_id)
@@ -141,7 +141,7 @@ async def mcp_get_activity_statistics(
 
     try:
         validate_object_id(activity_id)
-    except:
+    except (HTTPException, ValueError):
         raise HTTPException(status_code=400, detail="Invalid activity ID format")
 
     # Check if activity exists

@@ -60,9 +60,13 @@ async def test_end_only_export_preserves_filter(monkeypatch):
         observed.append(args)
         return {"on-campus": 1, "off-campus": 0, "social-practice": 0}
 
+    async def list_effective(*args, **kwargs):
+        return [{"_id": "activity"}]
+
     monkeypatch.setattr(backends, "get_tasks_repo", lambda: SimpleNamespace(get_by_uuid=get_task, update_fields=nothing, push_result=nothing))
     monkeypatch.setattr(backends, "get_users_repo", lambda: SimpleNamespace(list_all=list_all))
     monkeypatch.setattr(backends, "get_groups_repo", lambda: SimpleNamespace(get=group))
+    monkeypatch.setattr(backends, "get_activities_repo", lambda: SimpleNamespace(list_effective=list_effective))
     monkeypatch.setattr(exports, "calculate_user_time", calculate)
     await exports.process_task(str(uuid.uuid4()))
     assert observed == [("user", None, end)]

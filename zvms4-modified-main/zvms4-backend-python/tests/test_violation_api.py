@@ -222,3 +222,53 @@ def test_out_of_range_paging_is_422(api, qs) -> None:
 
     assert http.get(f"{PREFIX}/violations?{qs}").status_code == 422
     assert calls["pages"] == []
+
+
+# ---------------------------------------------------------------------------
+# POST /violations —— 入参上界（审计 P0，放大式 DoS）
+# ---------------------------------------------------------------------------
+
+
+def test_batch_of_twenty_signals_is_accepted(api) -> None:
+    """上界本身必须放行：批量语义不变，20 条全部原样交给服务层。"""
+    http, calls, _log = api
+    signals = [{"signal": "iframe", "detail": f"frame-{index}"} for index in range(20)]
+
+    response = http.post(f"{PREFIX}/violations", json={"signals": signals})
+
+    assert response.status_code == 200, response.text
+    assert response.json()["recorded"] == 20
+    assert calls["records"][0]["signals"] == signals
+
+
+def test_batch_above_twenty_signals_is_422(api) -> None:
+    """21 条直接 422（不静默截断）：不让一次请求放大成任意多次写入。"""
+    http, calls, _log = api
+    signals = [{"signal": "iframe"} for _ in range(21)]
+
+    response = http.post(f"{PREFIX}/violations", json={"signals": signals})
+
+    assert response.status_code == 422, response.text
+    assert calls["records"] == [], "超限批次不得进入服务层"
+
+
+def test_signal_name_of_64_chars_is_accepted(api) -> None:
+    http, calls, _log = api
+    signal = "s" * 64
+
+    response = http.post(f"{PREFIX}/violations", json={"signals": [{"signal": signal}]})
+
+    assert response.status_code == 200, response.text
+    assert calls["records"][0]["signals"] == [{"signal": signal, "detail": None}]
+
+
+def test_signal_name_above_64_chars_is_422(api) -> None:
+    http, calls, _log = api
+
+    response = http.post(
+        f"{PREFIX}/violations", json={"signals": [{"signal": "s" * 65}]}
+    )
+
+    assert response.status_code == 422, response.text
+    assert calls["records"] == []
+

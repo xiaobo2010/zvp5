@@ -99,13 +99,19 @@ def env(monkeypatch) -> Env:
                 "rule_code": rule_code,
             }
         )
+        state.current_ban = {
+            "banned": True,
+            "ban_reason": reason,
+            "ban_until": until,
+        }
 
     async def get_by_oid(oid):
         return state.current_ban
 
     async def insert_challenge(token_hash, user_oid, xuehai_id, expires_at):
+        oid = f"{0xC1 + len(state.challenges):024x}"
         state.challenges[token_hash] = {
-            "_id": "0000000000000000000000c1",
+            "_id": oid,
             "token_hash": token_hash,
             "user_oid": user_oid,
             "xuehai_id": xuehai_id,
@@ -113,7 +119,7 @@ def env(monkeypatch) -> Env:
             "expires_at": expires_at,
             "consumed_at": None,
         }
-        return "0000000000000000000000c1"
+        return oid
 
     async def get(token_hash):
         return state.challenges.get(token_hash)
@@ -213,6 +219,13 @@ def env(monkeypatch) -> Env:
         backends,
         "get_applogs_repo",
         lambda *a, **k: SimpleNamespace(insert=insert_log),
+    )
+
+    async def count_recent_temp_failures(user_oid, since):
+        return sum(1 for row in state.logs if row["type"] == "temp_password_fail")
+
+    monkeypatch.setattr(
+        device_guard, "count_recent_temp_failures", count_recent_temp_failures
     )
     return state
 
@@ -378,8 +391,9 @@ async def test_challenge_stores_only_hash(env) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _add_password(env, code="12345678", **overrides) -> str:
-    oid = "0000000000000000000000d1"
+def _add_password(
+    env, code="12345678", oid="0000000000000000000000d1", **overrides
+) -> str:
     env.passwords[oid] = {
         "_id": oid,
         "user_oid": USER,
@@ -682,14 +696,109 @@ async def test_rule_read_failure_still_bans_with_default_limit(env) -> None:
 
 
 @pytest.mark.asyncio
-async def test_at_most_three_temp_passwords_are_scanned(env) -> None:
-    """单次有效 + 30 分钟窗口 → 正常只有 1 条，bcrypt 遍历上限钉在 3。"""
+async def test_every_unexpired_temp_password_is_scanned(env) -> None:
+    """扫描窗口是 20 条：第 5 条的有效码也必须被接受（3 条会误判为「密码错」）。"""
+    for index in range(4):
+        _add_password(
+            env, f"0000000{index}", oid=f"0000000000000000000000e{index}"
+        )
+    _add_password(env, "87654321", oid="0000000000000000000000ef")
+    token = await _challenge(env)
+
+    assert await device_guard.verify_temp_password(
+        token, "87654321", now=NOW
+    ) == (USER, XUEHAI)
+    assert env.scan_limits == [device_guard.MAX_TEMP_PASSWORDS_SCANNED]
+
+
+@pytest.mark.asyncio
+async def test_scan_limit_is_twenty(env) -> None:
     _add_password(env)
     token = await _challenge(env)
 
     await device_guard.verify_temp_password(token, "12345678", now=NOW)
 
-    assert env.scan_limits == [device_guard.MAX_TEMP_PASSWORDS_SCANNED]
+    assert device_guard.MAX_TEMP_PASSWORDS_SCANNED == 20
+    assert env.scan_limits == [20]
+
+
+# ---------------------------------------------------------------------------
+# 跨挑战累计失败（漏封 C2）
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_failures_accumulate_across_challenges(env) -> None:
+    """每张挑战只有 3 次机会：换挑战重置计数必须被 24h 累计挡住。"""
+    _add_password(env)
+
+    for _ in range(device_guard.CUMULATIVE_TEMP_FAILURES - 1):
+        token = await _challenge(env)
+        with pytest.raises(HTTPException) as failure:
+            await device_guard.verify_temp_password(token, "00000000", now=NOW)
+        assert failure.value.detail["code"] == "TEMP_PASSWORD_INVALID"
+    assert env.bans == []
+    assert env.device_upserts == []
+
+    token = await _challenge(env)
+    with pytest.raises(HTTPException) as failure:
+        await device_guard.verify_temp_password(token, "00000000", now=NOW)
+
+    assert failure.value.detail["code"] == "DEVICE_BAN_APPLIED"
+    assert len(env.bans) == 1
+    assert len(env.device_upserts) == 1
+    assert "24 小时" in env.bans[0]["reason"]
+
+
+@pytest.mark.asyncio
+async def test_cumulative_ban_is_not_repeated(env) -> None:
+    _add_password(env)
+
+    for _ in range(device_guard.CUMULATIVE_TEMP_FAILURES):
+        token = await _challenge(env)
+        with pytest.raises(HTTPException):
+            await device_guard.verify_temp_password(token, "00000000", now=NOW)
+
+    assert len(env.bans) == 1
+
+    token = await _challenge(env)
+    with pytest.raises(HTTPException) as failure:
+        await device_guard.verify_temp_password(token, "00000000", now=NOW)
+    assert failure.value.detail["code"] == "TEMP_PASSWORD_INVALID"
+    assert len(env.bans) == 1
+    assert len(env.device_upserts) == 1
+
+
+@pytest.mark.asyncio
+async def test_correct_password_still_wins_over_past_failures(env) -> None:
+    """手里有有效码时，几次手抖不该把正确密码挡在门外。"""
+    _add_password(env)
+
+    for _ in range(device_guard.CUMULATIVE_TEMP_FAILURES - 1):
+        token = await _challenge(env)
+        with pytest.raises(HTTPException):
+            await device_guard.verify_temp_password(token, "00000000", now=NOW)
+
+    token = await _challenge(env)
+    assert await device_guard.verify_temp_password(
+        token, "12345678", now=NOW
+    ) == (USER, XUEHAI)
+    assert env.bans == []
+
+
+@pytest.mark.asyncio
+async def test_cumulative_ban_respects_disabled_rule(env) -> None:
+    env.rule["enabled"] = False
+    _add_password(env)
+
+    for _ in range(device_guard.CUMULATIVE_TEMP_FAILURES):
+        token = await _challenge(env)
+        with pytest.raises(HTTPException) as failure:
+            await device_guard.verify_temp_password(token, "00000000", now=NOW)
+
+    assert failure.value.detail["code"] == "TEMP_PASSWORD_INVALID"
+    assert env.bans == []
+    assert "ban_rule_skipped" in [row["type"] for row in env.logs]
 
 
 # ---------------------------------------------------------------------------
@@ -775,3 +884,37 @@ async def test_apply_account_ban_overwrites_expired_ban(env) -> None:
 
     assert result["until"] == NOW + timedelta(days=1)
     assert env.bans[0]["until"] == NOW + timedelta(days=1)
+
+
+# ---------------------------------------------------------------------------
+# 失败次数的读取口径（直接落 APP_LOGS）
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_count_recent_temp_failures_reads_app_logs(monkeypatch) -> None:
+    """只查「该用户 + temp_password_fail + 时间窗」三类谓词，且不另建计数表。"""
+    from contextlib import asynccontextmanager
+
+    import db.oracle.session as oracle_session
+
+    captured: dict[str, str] = {}
+
+    class FakeSession:
+        async def execute(self, stmt):
+            captured["sql"] = str(stmt.compile(compile_kwargs={"literal_binds": True}))
+            return SimpleNamespace(scalar_one=lambda: 7)
+
+    @asynccontextmanager
+    async def fake_scope():
+        yield FakeSession()
+
+    monkeypatch.setattr(oracle_session, "session_scope", fake_scope)
+
+    assert await device_guard.count_recent_temp_failures(USER, NOW) == 7
+
+    sql = captured["sql"].lower()
+    assert "count(*)" in sql
+    assert "app_logs.app_user = '000000000000000000000002'" in sql
+    assert "app_logs.ltype = 'temp_password_fail'" in sql
+    assert "app_logs.ts_raw >=" in sql

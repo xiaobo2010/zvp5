@@ -17,7 +17,6 @@ Nothing here opens a connection at import time.
 
 from __future__ import annotations
 
-import re
 from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Any, AsyncIterator
@@ -115,6 +114,52 @@ def _insert_stmt(
     )
 
 
+#: Hard cap on one page, mirrored by ``logs_router``'s ``perpage`` ``le=``.
+PAGE_SIZE_MAX = 100
+
+
+def _clamped(page: int, size: int) -> tuple[int, int]:
+    """Normalise paging to ``page >= 1`` and ``1 <= size <= PAGE_SIZE_MAX``.
+
+    ``page <= 0`` (the legacy ``-1`` the router used to accept) means the first
+    page: the old code rendered it as ``OFFSET 0`` + ``LIMIT size``, and there is
+    no cheap way to return "everything" anyway. The router now rejects ``page < 1``
+    with a 422, so this only guards direct repo callers.
+    """
+    return max(1, int(page)), min(PAGE_SIZE_MAX, max(1, int(size)))
+
+
+def _like_pattern(query: str) -> str:
+    """``%query%`` with LIKE wildcards escaped (lower-cased for ``LOWER(col)``).
+
+    ``REGEXP_LIKE`` is gone from this module: it compiled a regex per row and made
+    every search a full-table scan even on ``url``. ``LIKE`` is a plain string
+    comparison — no regex engine, no backtracking — and ``%``/``_``/``\\`` in the
+    admin's keyword are escaped so they stay literals (the old ``re.escape``
+    behaviour).
+    """
+    escaped = (
+        query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    )
+    return f"%{escaped.lower()}%"
+
+
+def _search_conds(query: str) -> Any:
+    """关键字匹配 ``url`` 或 ``data``（大小写不敏感）。
+
+    默认搜索必须仍然能命中 url 与 data 里的关键字，所以两支都保留；成本控制
+    交给 ``LIKE``（普通字符串比较，不是每行编译正则）和调用方的可索引谓词。
+    ``data`` 在 ``db/models.py`` 里是 ``VARCHAR2(2000 CHAR)``（写入按 2000 字节
+    切块，见 :func:`_chunks_utf8`），不是 CLOB/LOB 定位符——这里不会触发
+    ``REGEXP_LIKE`` 那套全表正则，也无需 ``DBMS_LOB``。
+    """
+    pattern = _like_pattern(query)
+    return or_(
+        func.lower(app_logs_tbl.c.url).like(pattern, escape="\\"),
+        func.lower(app_logs_tbl.c.data).like(pattern, escape="\\"),
+    )
+
+
 def _filter(
     query: str,
     performer: str,
@@ -124,16 +169,10 @@ def _filter(
     time_end: int | None,
     xuehai_id: str = "",
 ) -> list[Any]:
-    """Admin-browser ``$match`` (``logs_router``): escaped url/data contains etc."""
+    """Admin-browser ``$match`` (``logs_router``): LIKE contains url/data etc."""
     conds: list[Any] = []
     if query:
-        pattern = re.escape(query)
-        conds.append(
-            or_(
-                func.regexp_like(app_logs_tbl.c.url, pattern),
-                func.regexp_like(app_logs_tbl.c.data, pattern),
-            )
-        )
+        conds.append(_search_conds(query))
     if performer:
         conds.append(app_logs_tbl.c.app_user == performer)
     if types:
@@ -149,6 +188,26 @@ def _filter(
     return conds
 
 
+def _page_columns() -> tuple[Any, ...]:
+    """列表投影 + ``COUNT(*) OVER()`` 总数。
+
+    ``APP_LOGS``↔``USERS`` 是 ``app_user = oid`` 的 1:1 左连接（``oid`` 是主键），
+    所以窗口计数与「匹配行数」相等，一页一条语句就能同时拿到数据与总数。
+    """
+    return (*_log_columns(), func.count().over().label("total_count"))
+
+
+def _total_of(rows: Any) -> int | None:
+    """``COUNT(*) OVER()`` 带回的总数；空页时不可观测 → ``None``。
+
+    与 :mod:`db.repos.oracle.users` 同一范式：空结果由调用方决定是「第一页本来
+    就空」（0）还是「页码越界」（补一条 count 语句）。
+    """
+    if not rows:
+        return None
+    return int(rows[0]._mapping["total_count"])
+
+
 def _list_stmt(
     query: str,
     performer: str,
@@ -160,13 +219,19 @@ def _list_stmt(
     size: int,
     xuehai_id: str = "",
 ):
-    stmt = select(*_log_columns()).select_from(_log_from())
+    """一页日志 + 总数：``COUNT(*) OVER()`` 省掉每页一次全表 COUNT。
+
+    排序走 ``ix_app_logs_ts_raw``（V018），过滤走 ``ltype``/``app_user``/
+    ``xuehai_id``/``log_level`` 上的索引或复合索引前缀。
+    """
+    page, size = _clamped(page, size)
+    stmt = select(*_page_columns()).select_from(_log_from())
     conds = _filter(query, performer, types, levels, time_start, time_end, xuehai_id)
     if conds:
         stmt = stmt.where(*conds)
     return (
         stmt.order_by(app_logs_tbl.c.ts_raw.desc())
-        .offset(0 if page == -1 else (page - 1) * size)
+        .offset((page - 1) * size)
         .limit(size)
     )
 
@@ -180,6 +245,10 @@ def _count_stmt(
     time_end: int | None,
     xuehai_id: str = "",
 ):
+    """页码越界（窗口计数不可观测）时的兜底总数。
+
+    正常翻页不再执行本语句：``_list_stmt`` 已经把总数带回来了。
+    """
     stmt = select(func.count()).select_from(app_logs_tbl)
     conds = _filter(query, performer, types, levels, time_start, time_end, xuehai_id)
     if conds:
@@ -188,32 +257,29 @@ def _count_stmt(
 
 
 def _for_user_filter(user_oid: str, query: str) -> list[Any]:
-    """Per-user ``$match`` (``users_router``): raw (unescaped) url/data contains."""
+    """Per-user ``$match`` (``users_router``): ``app_user`` + LIKE url/data."""
     conds: list[Any] = [app_logs_tbl.c.app_user == user_oid]
     if query:
-        conds.append(
-            or_(
-                func.regexp_like(app_logs_tbl.c.url, query),
-                func.regexp_like(app_logs_tbl.c.data, query),
-            )
-        )
+        conds.append(_search_conds(query))
     return conds
 
 
 def _list_for_user_stmt(user_oid: str, query: str, page: int, size: int):
+    page, size = _clamped(page, size)
     stmt = (
-        select(*_log_columns())
+        select(*_page_columns())
         .select_from(_log_from())
         .where(*_for_user_filter(user_oid, query))
     )
     return (
         stmt.order_by(app_logs_tbl.c.ts_raw.desc())
-        .offset(0 if page == -1 else (page - 1) * size)
+        .offset((page - 1) * size)
         .limit(size)
     )
 
 
 def _count_for_user_stmt(user_oid: str, query: str):
+    """页码越界时的兜底总数（同 :func:`_count_stmt`）。"""
     return (
         select(func.count())
         .select_from(app_logs_tbl)
@@ -382,28 +448,62 @@ class OracleAppLogsRepo:
         time_start: int | None = None,
         time_end: int | None = None,
         xuehai_id: str = "",
-        page: int = -1,
+        page: int = 1,
         size: int = 10,
     ) -> tuple[list[Row], int]:
+        """一页日志与总数 ``(rows, total)``；``page`` 从 1 起，``size`` 上限 100。
+
+        总数由 ``COUNT(*) OVER()`` 与数据同一条语句返回，常规翻页不再额外执行
+        ``COUNT(*)``。只有空页（页码越界）才补一条兜底 count——空页本身看不出
+        真实总数，且第一页为空时总数必然为 0，无需查库。
+        """
+        page, size = _clamped(page, size)
         page_stmt = _list_stmt(
             query, performer, types, levels, time_start, time_end, page, size, xuehai_id
         )
-        count_stmt = _count_stmt(
-            query, performer, types, levels, time_start, time_end, xuehai_id
-        )
         async with _session_for(self._session) as (session, _owns):
-            total = (await session.execute(count_stmt)).scalar_one()
             rows = (await session.execute(page_stmt)).all()
+            total = _total_of(rows)
+            if total is None:
+                total = (
+                    0
+                    if page <= 1
+                    else int(
+                        (
+                            await session.execute(
+                                _count_stmt(
+                                    query,
+                                    performer,
+                                    types,
+                                    levels,
+                                    time_start,
+                                    time_end,
+                                    xuehai_id,
+                                )
+                            )
+                        ).scalar_one()
+                    )
+                )
         return [_log_row(row._mapping) for row in rows], int(total)
 
     async def list_for_user(
-        self, user_oid: str, query: str = "", page: int = -1, size: int = 10
+        self, user_oid: str, query: str = "", page: int = 1, size: int = 10
     ) -> tuple[list[Row], int]:
+        """某用户的一页日志与总数，分页/计数口径与 :meth:`list_page` 一致。"""
+        page, size = _clamped(page, size)
         page_stmt = _list_for_user_stmt(user_oid, query, page, size)
-        count_stmt = _count_for_user_stmt(user_oid, query)
         async with _session_for(self._session) as (session, _owns):
-            total = (await session.execute(count_stmt)).scalar_one()
             rows = (await session.execute(page_stmt)).all()
+            total = _total_of(rows)
+            if total is None:
+                total = (
+                    0
+                    if page <= 1
+                    else int(
+                        (await session.execute(_count_for_user_stmt(user_oid, query)))
+                        .scalar_one()
+                    )
+                )
         return [_log_row(row._mapping) for row in rows], int(total)
 
     async def count_expired(self, cutoff: datetime) -> int:

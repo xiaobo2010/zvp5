@@ -89,6 +89,8 @@ def api(monkeypatch):
         "set_primary": [],
         "clear_primary": [],
         "ban_delete": [],
+        "revoked_open": [],
+        "ops": [],
     }
 
     # 设备封禁替身：默认不封；单个用例可改写 status["ban"]。
@@ -130,7 +132,13 @@ def api(monkeypatch):
         if oid in users:
             users[oid]["primary_xuehai_id"] = None
 
+    async def temp_revoke_open(target_oid, now=None):
+        calls["revoked_open"].append((target_oid, now))
+        calls["ops"].append("revoke")
+        return 1
+
     async def temp_insert(target_oid, creator_oid, code_hash, creator_xuehai, expires_at):
+        calls["ops"].append("insert")
         calls["inserts"].append(
             {
                 "target_oid": target_oid,
@@ -155,7 +163,9 @@ def api(monkeypatch):
     monkeypatch.setattr(
         backends,
         "get_temp_passwords_repo",
-        lambda *a, **k: SimpleNamespace(insert=temp_insert),
+        lambda *a, **k: SimpleNamespace(
+            insert=temp_insert, revoke_open_for_user=temp_revoke_open
+        ),
         raising=False,
     )
 
@@ -526,3 +536,27 @@ def test_ban_records_reset_requires_admin(api) -> None:
 
     assert response.status_code == 403
     assert api.calls["ban_delete"] == []
+
+
+# ---------------------------------------------------------------------------
+# POST /{user_id}/temp-password —— 旧码作废（误封 B10）
+# ---------------------------------------------------------------------------
+
+
+def test_new_code_revokes_previous_open_codes_first(api) -> None:
+    """签发新码前先作废旧码：否则旧码正确也会因为不在扫描窗口里被判错。"""
+    response = api.http.post(f"{PREFIX}/{MATE_OID}/temp-password")
+
+    assert response.status_code == 200
+    assert api.calls["revoked_open"][0][0] == MATE_OID
+    assert api.calls["revoked_open"][0][1] is not None  # 时间戳由路由给
+    assert api.calls["ops"] == ["revoke", "insert"]
+
+
+def test_revocation_target_is_the_code_owner(api) -> None:
+    _act_as(api, DEPARTMENT_OID, ["department"])
+
+    api.http.post(f"{PREFIX}/{OTHER_OID}/temp-password")
+
+    # 作废的是**目标用户**的旧码，不是签发人的。
+    assert [oid for oid, _at in api.calls["revoked_open"]] == [OTHER_OID]

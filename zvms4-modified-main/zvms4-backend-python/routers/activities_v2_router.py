@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Literal, cast
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 from db import backends
 from typings.activity_v2 import Activity, ActivityMember
 from typings.log import inject_log
@@ -15,6 +15,13 @@ from util.validation import validate_activity_description, validate_activity_nam
 from utils import validate_object_id
 
 router = APIRouter()
+
+
+def _validated_activity(target_activity) -> Activity:
+    try:
+        return Activity.model_validate(target_activity, strict=False)
+    except ValidationError:
+        raise HTTPException(status_code=409, detail="活动数据不完整，无法完成该操作")
 
 
 @router.post("")
@@ -167,9 +174,7 @@ async def delete_activity_v2(
     if not target_activity:
         raise HTTPException(status_code=404, detail="Activity not found")
 
-    await volunteer.validate_delete_permission(
-        user, Activity.model_validate(target_activity, strict=False)
-    )
+    await volunteer.validate_delete_permission(user, _validated_activity(target_activity))
 
     await backends.get_members_repo().remove_for_activity(activity_id)
 
@@ -275,7 +280,7 @@ async def add_activity_member_v2(
     target_user = await backends.get_users_repo().get_by_oid(
         validate_object_id(member.member)
     )
-    target_activity = Activity.model_validate(target_activity, strict=False)
+    target_activity = _validated_activity(target_activity)
     if not target_user:
         raise HTTPException(status_code=404, detail="User not found")
     await volunteer_member.validate_create_permission(
@@ -379,7 +384,7 @@ async def modify_activity_status_v2(
     if not target_activity:
         raise HTTPException(status_code=404, detail="Activity not found")
 
-    target_activity = Activity.model_validate(target_activity, strict=False)
+    target_activity = _validated_activity(target_activity)
 
     if target_activity.status != "pending" and "admin" not in user.get("perm"):
         raise HTTPException(
@@ -530,7 +535,7 @@ async def update_activity_info(
         raise HTTPException(status_code=404, detail="Activity not found")
 
     await volunteer.validate_update_permission(
-        user, Activity.model_validate(target_activity, strict=False)
+        user, _validated_activity(target_activity)
     )
 
     validated, reason = validate_activity_name(payload.name)

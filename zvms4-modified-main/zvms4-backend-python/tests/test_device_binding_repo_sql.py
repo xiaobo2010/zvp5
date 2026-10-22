@@ -311,6 +311,23 @@ def test_temp_password_revoke_expired_skips_used_rows():
     assert "temp_login_passwords.expires_at < TO_DATE('2026-10-21 12:30:00', 'YYYY-MM-DD HH24:MI:SS')" in sql
 
 
+def test_temp_password_revoke_open_for_user_replaces_previous_codes():
+    """签发新码前的作废：只碰该用户「仍可用」的码，且写 used_at（被取代）。"""
+    sql = _sql(temp_passwords_repo._revoke_open_for_user_stmt(USER_OID, UNTIL))
+
+    assert sql.startswith("UPDATE temp_login_passwords SET ")
+    assert "used_at=TO_DATE('2026-11-01 00:00:00', 'YYYY-MM-DD HH24:MI:SS')" in sql
+    assert f"temp_login_passwords.target_user_oid = '{USER_OID}'" in sql
+    assert "temp_login_passwords.used_at IS NULL" in sql
+    assert "temp_login_passwords.revoked_at IS NULL" in sql
+    assert (
+        "temp_login_passwords.expires_at > "
+        "TO_DATE('2026-11-01 00:00:00', 'YYYY-MM-DD HH24:MI:SS')"
+    ) in sql
+    # 过期码由 revoke_expired 统一处理，这里不改写它们的时间戳。
+    assert "revoked_at=" not in sql
+
+
 def test_temp_password_row_maps_hex_id():
     row = temp_passwords_repo._password_row(
         {

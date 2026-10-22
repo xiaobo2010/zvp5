@@ -46,12 +46,12 @@ def _iso(value) -> Optional[str]:
 
 class SignalReport(BaseModel):
     # 信号名不做枚举校验：非法值由服务层忽略（不 422），理由见模块 docstring。
-    signal: str
+    signal: str = Field(max_length=64)
     detail: Optional[str] = None
 
 
 class ViolationReport(BaseModel):
-    signals: list[SignalReport] = Field(default_factory=list)
+    signals: list[SignalReport] = Field(default_factory=list, max_length=20)
 
 
 @router.post("/violations")
