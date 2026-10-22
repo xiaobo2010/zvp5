@@ -681,7 +681,7 @@ ban_rules = Table(
     # 可空是给存量行加列留的余地（唯一索引允许多个 NULL）。
     # ``quote=False``：TRIGGER 在 Oracle 里是非保留关键字，可以裸用；不加引号
     # 才能让手写 DDL 与 SQLAlchemy 生成的语句保持同一份文本。
-    Column("trigger", VARCHAR2(64), nullable=True, quote=False),
+    Column("trigger_code", VARCHAR2(64), nullable=True),
     Column("enabled", NUMBER(1), nullable=False, server_default=text("1")),
     Column("config", VARCHAR2(2000), nullable=False),
     Column("penalties", VARCHAR2(2000), nullable=False),
@@ -696,7 +696,7 @@ ban_rules = Table(
     UniqueConstraint("code", name="uq_ban_rules_code"),
 )
 # 一个检查项最多一条规则：两条时「用哪条」只能靠运气，封禁天数就不可复现。
-Index("ux_ban_rules_trigger", ban_rules.c.trigger, unique=True)
+Index("ux_ban_rules_trigger", ban_rules.c.trigger_code, unique=True)
 
 
 # ---------------------------------------------------------------------------
@@ -874,7 +874,7 @@ ban_violations = Table(
     metadata,
     _oid_pk(),
     Column("user_oid", VARCHAR2(24), nullable=False),
-    Column("trigger", VARCHAR2(64), nullable=False, quote=False),
+    Column("trigger_code", VARCHAR2(64), nullable=False),
     Column("signal", VARCHAR2(32), nullable=False),
     Column("xuehai_id", VARCHAR2(32), nullable=True),
     Column("detail", VARCHAR2(500), nullable=True),
@@ -884,7 +884,7 @@ ban_violations = Table(
 Index(
     "ix_ban_violations_user",
     ban_violations.c.user_oid,
-    ban_violations.c.trigger,
+    ban_violations.c.trigger_code,
     ban_violations.c.created_at,
 )
 
