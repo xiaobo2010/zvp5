@@ -64,7 +64,7 @@ def _insert_stmt(
     return insert(ban_violations_tbl).values(
         oid=oid,
         user_oid=user_oid,
-        trigger=trigger,
+        trigger_code=trigger,
         signal=signal,
         xuehai_id=xuehai_id,
         detail=detail,
@@ -91,7 +91,7 @@ def _count_since_stmt(user_oid: str, trigger: str, since: datetime):
         .select_from(ban_violations_tbl)
         .where(
             ban_violations_tbl.c.user_oid == user_oid,
-            ban_violations_tbl.c.trigger == trigger,
+            ban_violations_tbl.c.trigger_code == trigger,
             ban_violations_tbl.c.created_at >= since,
         )
     )
@@ -126,7 +126,7 @@ def _page_stmt(query: str, page: int, size: int):
     stmt = select(
         ban_violations_tbl.c.oid,
         ban_violations_tbl.c.user_oid,
-        ban_violations_tbl.c.trigger,
+        ban_violations_tbl.c.trigger_code,
         ban_violations_tbl.c.signal,
         ban_violations_tbl.c.xuehai_id,
         ban_violations_tbl.c.detail,
@@ -161,7 +161,7 @@ def _record_row(mapping: Any) -> Row:
         "user_oid": mapping["user_oid"],
         "user_name": mapping["user_name"],
         "user_business_id": mapping["user_business_id"],
-        "trigger": mapping["trigger"],
+        "trigger": mapping["trigger_code"],
         "signal": mapping["signal"],
         "xuehai_id": mapping["xuehai_id"],
         "detail": mapping["detail"],
