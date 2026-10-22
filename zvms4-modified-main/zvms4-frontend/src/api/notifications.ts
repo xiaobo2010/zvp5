@@ -13,6 +13,8 @@ export interface NotificationRecord {
   content: string
   /** 单条通知的修订号，每次编辑/停用/恢复都会 +1。 */
   version: number
+  /** 当前内容的哈希标识，由服务端计算；老响应可能缺省。 */
+  content_hash?: string
   /** 发布人用户 oid（创建时写入，之后不可变）。 */
   author_id: string
   /** 发布当时的显示名（之后不可变）。 */
@@ -21,6 +23,7 @@ export interface NotificationRecord {
   updated_at: string | null
   active: boolean
 }
+
 
 export interface NotificationListData {
   /** 全局通知版本，仅用于和本地缓存比较，不能代替单条 read 判定。 */
@@ -102,4 +105,64 @@ export async function deleteNotification(id: string): Promise<void> {
     method: 'delete',
     url: `/v3/notifications/${id}`
   })
+}
+
+export type NotificationVersionOp = 'create' | 'update' | 'delete' | 'rollback'
+
+/** 历史版本快照，按 version 倒序（契约见后端 system_notifications 路由）。 */
+export interface NotificationVersionItem {
+  version: number
+  content_hash: string
+  title: string
+  content: string
+  active: boolean
+  op: NotificationVersionOp
+  /** 回滚操作指向的源版本号，其余 op 恒为 null。 */
+  source_version: number | null
+  author_id: string | null
+  author_name: string
+  created_at: string
+}
+
+export interface NotificationVersionsData {
+  versions: NotificationVersionItem[]
+  /** 当前生效版本号。 */
+  version: number
+}
+
+export interface NotificationRollbackData {
+  notification: NotificationRecord
+  version: number
+  content_hash: string
+}
+
+/** HTTP 非 2xx 时 axios 拦截器 reject 的是 AxiosError，用 HTTP 状态区分场景。 */
+export function httpStatusOf(error: unknown): number | null {
+  if (error && typeof error === 'object' && 'isAxiosError' in error) {
+    const status = (error as { response?: { status?: number } }).response?.status
+    return typeof status === 'number' ? status : null
+  }
+  return null
+}
+
+/** 管理端：读取单条通知的全部版本快照。仅严格 admin 可用。 */
+export async function listVersions(id: string): Promise<NotificationVersionsData> {
+  const response = await axios({
+    method: 'get',
+    url: `/system/notifications/${id}/versions`
+  })
+  return unwrap(response.data as Response<NotificationVersionsData>)
+}
+
+/** 回滚到指定版本：产生一个新版本，不改写历史。 */
+export async function rollbackNotification(
+  id: string,
+  version: number
+): Promise<NotificationRollbackData> {
+  const response = await axios({
+    method: 'post',
+    url: `/system/notifications/${id}/rollback`,
+    data: { version }
+  })
+  return unwrap(response.data as Response<NotificationRollbackData>)
 }
