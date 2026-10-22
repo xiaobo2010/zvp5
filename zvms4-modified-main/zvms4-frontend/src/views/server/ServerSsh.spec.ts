@@ -89,6 +89,7 @@ const {
       scrollPages: ReturnType<typeof vi.fn>
       scrollToBottom: ReturnType<typeof vi.fn>
       focus: ReturnType<typeof vi.fn>
+      attachCustomKeyEventHandler: ReturnType<typeof vi.fn>
     }>
   }
 })
@@ -403,7 +404,7 @@ it('scrolls into history on wheel and offers the back-to-bottom button', async (
   await emptyStateButton(wrapper).trigger('click')
   await flushPromises()
 
-  const term = terminalInstances.at(-1)!
+  const term = terminalInstances[terminalInstances.length - 1]!
   expect(term.attachCustomKeyEventHandler).toHaveBeenCalled()
 
   // 视口在底部时不显示按钮

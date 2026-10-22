@@ -231,8 +231,21 @@ PROTECTED_LTYPES = (
     "binding_mismatch",
     "device_bind",
     "device_unbind",
+    # 临时密码 / 设备封禁链路（设计 §7）：证据链一旦被保留策略删掉，
+    # 「为什么封了这台机器」就永久无法追溯，故与 passwd_change 同级保护。
+    "temp_password_create",
+    "temp_password_login",
+    "temp_password_fail",
+    "device_mismatch",
+    "device_ban",
+    # 规则被停用时「本该封但没封」与「设备封禁被跳过」同样是追责证据。
+    "ban_rule_skipped",
+    "device_ban_skipped",
     "system_maintenance_enable",
     "system_maintenance_disable",
+    # SSH 命令全文是 root 级操作的追责证据，写的是 level="info"
+    # （routers/system_ssh_router.py），不进本元组就会被保留期批量清掉。
+    "system_ssh_command",
 )
 
 # Warning-level rows are protected as well, whatever their type.

@@ -1,7 +1,7 @@
 """Oracle implementation of :class:`db.repos.protocols.NotificationsRepo`.
 
 SQLAlchemy 2.0 async Core over ``NOTIFICATIONS`` and the singleton
-``NOTIFICATION_STATE`` counter (V014). Returned rows use the shared dict shape
+``NOTIFICATION_STATE`` counter (V015). Returned rows use the shared dict shape
 (``_id`` = lowercase-hex ``OID``, ``active`` = bool, ``version`` = int).
 
 Why the global counter lives in a table

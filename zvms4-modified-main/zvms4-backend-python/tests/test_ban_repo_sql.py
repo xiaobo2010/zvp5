@@ -64,6 +64,7 @@ def _mapping(**overrides) -> dict:
         "ban_until": None,
         "ban_source": None,
         "ban_rule": None,
+        "primary_xuehai_id": None,
     }
     base.update(overrides)
     return base
@@ -426,3 +427,29 @@ def test_banned_row_maps_permanent_ban_and_unknown_class():
     assert row["ban_until"] is None
     assert row["ban_source"] == "admin"
     assert row["ban_rule"] is None
+
+
+def test_delete_for_user_rule_targets_one_user_and_one_rule():
+    """梯度重置限定规则时，DELETE 必须同时钉住 user_oid 与 rule_code。
+
+    管理员封禁流水 ``rule_code IS NULL``，按规则删天然碰不到它们，所以指定
+    规则时**不该**再叠加 ``source`` 谓词。
+    """
+    sql = _sql(
+        ban_records_repo._delete_for_user_rule_stmt(USER_OID, "foreign_device_login")
+    )
+    assert sql.startswith("DELETE FROM ban_records")
+    assert USER_OID in sql
+    assert "foreign_device_login" in sql
+    assert "rule_code" in sql
+    assert "source" not in sql
+
+
+def test_delete_for_user_rule_without_rule_keeps_admin_records():
+    """不限规则时只删规则流水（source = 'rule'），保住管理员封禁的审计证据。"""
+    sql = _sql(ban_records_repo._delete_for_user_rule_stmt(USER_OID, None))
+    assert sql.startswith("DELETE FROM ban_records")
+    assert USER_OID in sql
+    assert "source = 'rule'" in sql
+    assert "rule_code" not in sql
+

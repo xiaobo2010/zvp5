@@ -5,6 +5,7 @@ from util.positions import trans_permissions
 from typings.user import UserPosition as UserPositionV1
 from typings.user_v2 import UserPosition as UserPositionV2
 import jwt
+from contextvars import ContextVar
 from typing import Optional
 from datetime import datetime, timezone
 from db import backends
@@ -14,6 +15,27 @@ from util.cert import jwt_decode
 from util.group import get_user_permissions
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token", auto_error=False)
+
+# 请求级日志级别下限：临时密码登入产生的会话里，所有 info 日志都按 warning 落库。
+# 用 ContextVar 而不是「按 user 查库」：日志写入是同步热点，而「本次请求是谁」
+# 在认证阶段就已经知道了，再查一次库只会多一次 IO、还可能读到不一致的快照。
+log_level_floor: ContextVar[Optional[str]] = ContextVar(
+    "zvms_log_level_floor", default=None
+)
+
+
+async def _log_level_scope():
+    """请求结束时把级别下限复位。
+
+    做成依赖生成器（而不是在 ``_authenticate`` 里 try/finally）是因为下限必须
+    **贯穿整个 handler**：日志是在 handler 里写的，认证函数返回时就清掉等于
+    什么都没做。捕获进入时的值再恢复，避免嵌套依赖之间互相污染。
+    """
+    previous = log_level_floor.get()
+    try:
+        yield
+    finally:
+        log_level_floor.set(previous)
 
 
 def validate_object_id(id: str):
@@ -50,18 +72,27 @@ async def password_change_token(token: str = Depends(oauth2_scheme)):
     return await _authenticate(token, "password_change", True)
 
 
-async def authenticated_log_user(token: str = Depends(oauth2_scheme)):
+async def authenticated_log_user(
+    token: str = Depends(oauth2_scheme),
+    _log_scope=Depends(_log_level_scope),
+):
     # Route dependencies enforce the required scope; logging accepts either
     # credential so a second auth dependency cannot break verification routes.
     return await _authenticate(token, "any", True)
 
 
-async def optional_current_user(token: str = Depends(oauth2_scheme)):
+async def optional_current_user(
+    token: str = Depends(oauth2_scheme),
+    _log_scope=Depends(_log_level_scope),
+):
     result = await _authenticate(token, "long", False)
     return result
 
 
-async def get_current_user(token: Optional[str] = Depends(oauth2_scheme)):
+async def get_current_user(
+    token: Optional[str] = Depends(oauth2_scheme),
+    _log_scope=Depends(_log_level_scope),
+):
     return await _authenticate(token, "long", True)
 
 
@@ -130,12 +161,15 @@ async def _authenticate(
         if payload.get("sid") != current.get("session_id", ""):
             return raise_exception()
         permissions = await get_user_permissions(current)
+        temp_session = bool(payload.get("tp"))
         user = {
             "id": oid,
             "perm": upgrade_user_positions(permissions),
             "per": permissions,
             "scope": token_scope,
             "purpose": purpose,
+            # 临时密码登入的会话：显式的派生事实，让读路径不必自己解 token。
+            "temp_session": temp_session,
             # Additive: the very document this request was authenticated
             # against already carries ``class_id``. Read paths that would
             # otherwise re-fetch the same user (e.g. the secretary branch of
@@ -145,6 +179,9 @@ async def _authenticate(
             # test or a direct call still falls back to a fresh read).
             "class_id": current.get("class_id"),
         }
+        if temp_session:
+            # 临时密码会话期间写下的所有日志都至少是 warning（typings.log 消费）。
+            log_level_floor.set("warning")
         return user
     except (jwt.PyJWTError, TypeError, ValueError):
         return raise_exception()
@@ -176,10 +213,15 @@ async def is_admin_token(raw) -> bool:
     Never raises: a missing token, a bad signature, an expired token or any
     other failure all mean "not admin", so middleware callers can stay total.
     """
+    previous = log_level_floor.get()
     try:
         user = await _authenticate(bearer_token(raw), "long", False)
     except Exception:
         return False
+    finally:
+        # 中间件这条路径不经依赖清理，自己把下限复位：维护判定之后日志照旧
+        # 按调用方级别落库，不继承上一个请求留下的 warning 下限。
+        log_level_floor.set(previous)
     return bool(user) and "admin" in (user.get("per") or [])
 
 

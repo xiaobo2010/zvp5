@@ -1,6 +1,6 @@
 import logging
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Literal, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import JSONResponse, RedirectResponse
@@ -25,10 +25,11 @@ from util.permission.user import (
 )
 from db import backends
 from db.system_state import is_enabled_fresh
-from services import ban_rules
-from util.ban import ban_is_active
+from services import ban_rules, device_guard
+from util.ban import ban_headers, ban_is_active, raise_banned
 from util.cert import (
     get_hashed_password_by_cert,
+    jwt_encode,
     used_otp_credential,
     validate_by_cert,
 )
@@ -94,6 +95,109 @@ class AuthUser(BaseModel):
     purpose: str = "login"
 
 
+class DeviceAuthUser(BaseModel):
+    challenge: str
+    temp_password: str
+
+
+def _profile_payload(user_doc, user_id: str) -> Optional[dict]:
+    """登录响应的 ``profile``：两个登录端点必须逐字段同形，故抽成一处。
+
+    ``user_id`` 单独传：``/api/users/auth`` 历史上回显的是请求里那个标识
+    （学号或 oid），改成库里的 oid 会改变前端已经依赖的字段值。
+    """
+    if not user_doc:
+        return None
+    return {
+        "_id": user_id,
+        "id": user_doc["id"],
+        "name": user_doc["name"],
+        "roles": user_doc.get("roles", []),
+        "class_id": str(user_doc["class_id"]) if user_doc.get("class_id") else "",
+        "group": [str(user_doc["class_id"])] if user_doc.get("class_id") else [],
+    }
+
+
+async def _reject_banned_device(xuehai_id: str) -> None:
+    """设备闸：这台机器被封就 403，**与当前提交的账号无关**。
+
+    放在密码校验之前是有意的：设备封禁是「机器被拉黑」，先验密码会泄露
+    「这个账号存在且密码对不对」的信息给一台已知的违规机器，也让被借用的
+    设备多试几次密码。判定失败一律放行（fail-open）：设备表读不到是运维
+    问题，不能变成全站无法登录的单点故障。
+    """
+    if not xuehai_id:
+        return
+    try:
+        banned, reason, until = await device_guard.device_ban_status(xuehai_id)
+    except Exception:
+        _logger.exception("设备封禁判定失败，放行本次登录")
+        return
+    if not banned:
+        return
+    raise HTTPException(
+        status_code=403,
+        detail={
+            "code": "DEVICE_BANNED",
+            "message": device_guard.DEVICE_BANNED_MESSAGE,
+        },
+        # 原因与到期时间仍走 util.ban 的头口径（URL 编码 + epoch 秒），前端只写
+        # 一套解析逻辑。
+        headers=ban_headers({"banned": True, "ban_reason": reason, "ban_until": until}),
+    )
+
+
+async def _guard_primary_device(
+    request: Request,
+    user_doc,
+    user_oid: str,
+    log_name: str,
+    xuehai_id: str,
+) -> None:
+    """主设备闸（第三步）：凭据正确但设备不是本人的 → 给挑战令牌，不发 token。
+
+    这里**不封账号**也**不封设备**：账号密码已经证明是本人，换设备是常见
+    事实（新平板、旧机坏了），按封禁处理会把所有人挡在门外。真正解决路径是
+    让团支书/管理员签发一次性临时密码，所以响应里直接带 challenge。
+
+    两个条件同时成立才拦：用户已绑定主设备、请求带了设备号、且两者不等。
+    缺设备号（老客户端）不拦——没有任何证据说明它不是那台机器。
+    """
+    primary = (user_doc or {}).get("primary_xuehai_id")
+    if not primary or not xuehai_id or str(primary) == xuehai_id:
+        return
+
+    try:
+        challenge = await device_guard.issue_challenge(user_oid, xuehai_id)
+    except Exception:
+        _logger.exception("签发设备挑战令牌失败")
+        challenge = ""
+
+    # 审计写失败不得吞掉这次拒绝：拒绝是主行为，日志是附带证据。
+    try:
+        await ZVMSLog(
+            str(request.url),
+            user_oid,
+            f"用户 {log_name} 尝试在非主学海设备 {xuehai_id} 上登录"
+            f"（主设备 {primary}）",
+            datetime.timestamp(datetime.now()),
+            type="device_mismatch",
+            level="warning",
+            xuehai_id=xuehai_id,
+        ).insert_log()
+    except Exception:
+        _logger.exception("写入 device_mismatch 日志失败")
+
+    raise HTTPException(
+        status_code=403,
+        detail={
+            "code": "DEVICE_NOT_PRIMARY",
+            "message": device_guard.DEVICE_NOT_PRIMARY_MESSAGE,
+            "challenge": challenge,
+        },
+    )
+
+
 @router.post("/auth")
 async def auth_user(auth: AuthUser, request: Request, response: Response):
     id = auth.id
@@ -104,6 +208,9 @@ async def auth_user(auth: AuthUser, request: Request, response: Response):
     # typo can never mint a long-lived session token.
     is_login = auth.purpose == "login"
     xuehai_id = xuehai_id_from(request)
+
+    # 三步顺序（设计 §5）：设备闸 → 凭据校验 → 主设备闸。
+    await _reject_banned_device(xuehai_id)
 
     if string_to_option_object_id(id) is None:
         user_doc = await backends.get_users_repo().find_by_business_id(id)
@@ -137,6 +244,7 @@ async def auth_user(auth: AuthUser, request: Request, response: Response):
     user_doc = await backends.get_users_repo().get_by_oid(
         str(validate_object_id(id))
     )
+    user_oid = str(validate_object_id(id))
     log_name = user_doc["name"] if user_doc else await get_user_name(id)
 
     # v4.2.4-2 R4（设计 §3.2）：维护期间只放行 admin —— 非 admin 一律拒绝下发
@@ -168,6 +276,7 @@ async def auth_user(auth: AuthUser, request: Request, response: Response):
 
     is_otp = used_otp_credential(credential, id)
     if is_login:
+        await _guard_primary_device(request, user_doc, user_oid, log_name, xuehai_id)
         if is_otp:
             log_text = f"用户 {log_name} 使用动态码登录了系统"
         elif weak_password and mode == "long":
@@ -190,7 +299,6 @@ async def auth_user(auth: AuthUser, request: Request, response: Response):
 
     await log.insert_log()
 
-    user_oid = str(validate_object_id(id))
     binding_mismatch = await _observe_binding(request, user_oid, log_name, xuehai_id)
     # 规则封禁（多设备登录）：命中即 403，且不返回 token。判定内部 fail-open，
     # 除主动抛出的 403 外不会阻断登录；放在签发后、返回前，token 不落地即可。
@@ -202,16 +310,7 @@ async def auth_user(auth: AuthUser, request: Request, response: Response):
         str(request.url),
     )
 
-    profile = None
-    if user_doc:
-        profile = {
-            "_id": id,
-            "id": user_doc["id"],
-            "name": user_doc["name"],
-            "roles": user_doc.get("roles", []),
-            "class_id": str(user_doc["class_id"]) if user_doc.get("class_id") else "",
-            "group": [str(user_doc["class_id"])] if user_doc.get("class_id") else [],
-        }
+    profile = _profile_payload(user_doc, id)
 
     response.headers["Cache-Control"] = "no-store"
     return {
@@ -220,6 +319,91 @@ async def auth_user(auth: AuthUser, request: Request, response: Response):
         "profile": profile,
         "weak_password": weak_password,
         "binding_mismatch": binding_mismatch,
+    }
+
+
+@router.post("/auth/device")
+async def auth_user_by_temp_password(
+    auth: DeviceAuthUser, request: Request, response: Response
+):
+    """临时密码登入（异设备登录的唯一正路）。
+
+    挑战令牌与临时密码都是**一次一用**：``verify_temp_password`` 内部
+    ``mark_used`` + ``consume`` 同时置位，所以即使两个请求并发拿着同一对凭据，
+    也只有一个能拿到 token。签发的 token 只有 1 小时有效期且带 ``tp`` claim——
+    这条链路本身是安全事件，会话不该和正常登录一样活 10 天。
+
+    兑换前的两道闸与 ``/auth`` 同源：
+
+    1. 请求头设备必须就是挑战签发时那台机器。挑战是**这台设备**的单次许可，
+       换台机器兑换等于把它变成可转手的通用凭据；这里只拒绝，不消耗 attempts
+       （否则拿着别人的 challenge 连打几次就能把号刷到封禁）；
+    2. 设备封禁闸（头里没带设备号时退回挑战里的设备号）。被拉黑的机器连
+       兑换的机会都不该有，也不该拿到 token。
+    """
+    xuehai_id = xuehai_id_from(request)
+
+    challenge_xuehai = await device_guard.challenge_device(auth.challenge)
+    if xuehai_id and challenge_xuehai and xuehai_id != challenge_xuehai:
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": "DEVICE_CHALLENGE_MISMATCH",
+                "message": device_guard.CHALLENGE_MISMATCH_MESSAGE,
+            },
+        )
+
+    await _reject_banned_device(xuehai_id or challenge_xuehai or "")
+
+    user_oid, challenge_xuehai = await device_guard.verify_temp_password(
+        auth.challenge, auth.temp_password, request_url=str(request.url)
+    )
+
+    user_doc = await backends.get_users_repo().get_by_oid(user_oid)
+    if user_doc is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    # 连错 3 次会把账号一起封掉；即便还有人拿着有效临时密码，也必须先解封。
+    if ban_is_active(user_doc):
+        raise_banned(user_doc)
+
+    token = jwt_encode(
+        user_oid,
+        user_doc.get("eligibility", []),
+        await get_user_permissions(user_doc),
+        "long",
+        session_id=user_doc.get("session_id", ""),
+        purpose="login",
+        expires_in=timedelta(hours=device_guard.TEMP_SESSION_HOURS),
+        tp=True,
+    )
+
+    log_name = user_doc.get("name") or user_oid
+    try:
+        await ZVMSLog(
+            str(request.url),
+            user_oid,
+            f"用户 {log_name} 使用临时密码在设备 {challenge_xuehai} 登入",
+            datetime.timestamp(datetime.now()),
+            type="temp_password_login",
+            level="warning",
+            xuehai_id=xuehai_id or challenge_xuehai,
+        ).insert_log()
+    except Exception:
+        # 审计写失败不能把「已验证成功的临时密码」变成登录失败：密码是一次性
+        # 的，拒绝这次等于让用户回去重新申请一张。
+        _logger.exception("写入 temp_password_login 日志失败")
+
+    primary = user_doc.get("primary_xuehai_id")
+    response.headers["Cache-Control"] = "no-store"
+    return {
+        "token": token,
+        "_id": user_oid,
+        "profile": _profile_payload(user_doc, user_oid),
+        "weak_password": False,
+        "binding_mismatch": bool(
+            primary and (xuehai_id or challenge_xuehai) != str(primary)
+        ),
+        "temp_session": True,
     }
 
 

@@ -252,7 +252,7 @@ suppressed[notice.id] = true; // 或记录当前 notice.version 作为压制标�
     `AUTHOR_NAME`、`VERSION`、`CREATED_AT`、`UPDATED_AT`；
   - `NOTIFICATION_STATE`：单行 `ID = 1`、`VERSION`、`UPDATED_AT`。
 - 索引：`ix_notifications_active_created (ACTIVE, CREATED_AT)`。
-- 存量实例：`db/oracle/ddl/V014__add_notifications.sql`（幂等）。
+- 存量实例：`db/oracle/ddl/V015__add_notifications.sql`（幂等）。
 - 全新实例：`V001__initial_schema.sql` 已包含同样对象和 `id=1` 种子。
 - `db/models.py` 已镜像；修改 DDL/模型后运行：
 
