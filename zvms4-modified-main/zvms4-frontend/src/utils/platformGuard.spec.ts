@@ -65,16 +65,55 @@ function setWindowSize(outer: number, inner: number) {
   setProp(window, 'innerHeight', inner)
 }
 
-/** debugger 计时桩:每次采样给一次稳定差值,不打断测试进程。 */
-function stubDebuggerCost(ms: number) {
+/** 直接设定「窗口被压缩的宽/高差」,用来精确构造 weak / 单条件场景。 */
+function setWindowGaps(widthGap: number, heightGap: number) {
+  setProp(window, 'outerWidth', 1024 + widthGap)
+  setProp(window, 'innerWidth', 1024)
+  setProp(window, 'outerHeight', 1024 + heightGap)
+  setProp(window, 'innerHeight', 1024)
+}
+
+interface DebuggerTimer {
+  /** 设置下一次采样里 debugger 的挂起时长(ms)。 */
+  setCost(ms: number): void
+  /** 复位配对计数,保证下一次采样的两次 now() 调用分别落在奇/偶位。 */
+  reset(): void
+}
+
+/**
+ * debugger 计时桩:模块在 debugger 前后各取一次 performance.now(),
+ * 这里把第二次调用的时间往后推 ms 毫秒,模拟主线程被挂起。
+ * 不用真的 debugger 语句,免得打断测试进程。
+ */
+function stubDebuggerCost(initialMs: number): DebuggerTimer {
   let call = 0
+  let cost = initialMs
   const realNow = performance.now.bind(performance)
   setProp(window, 'performance', {
     now: () => {
       call += 1
-      return call % 2 === 1 ? realNow() : realNow() + ms
+      return call % 2 === 1 ? realNow() : realNow() + cost
     }
   })
+  return {
+    setCost(ms: number) {
+      cost = ms
+    },
+    reset() {
+      call = 0
+    }
+  }
+}
+
+/** 采样一次:先固定本次 debugger 挂起时长并复位配对,再巡检。 */
+async function sampleWith(
+  checkPlatform: () => Promise<void>,
+  timer: DebuggerTimer,
+  cost: number
+): Promise<void> {
+  timer.setCost(cost)
+  timer.reset()
+  await checkPlatform()
 }
 
 async function loadGuard(): Promise<Guard> {
@@ -267,61 +306,183 @@ describe('bridge 判定', () => {
 
 describe('devtools 判定', () => {
   it('单条件(只有宽度差)不报,即使放宽后仍超过 240px', async () => {
-    setWindowSize(1400, 1024)
+    setWindowGaps(376, 0)
+    const timer = stubDebuggerCost(0)
     const { checkPlatform } = await loadGuard()
 
     for (let i = 0; i < 10; i += 1) {
-      await checkPlatform()
+      await sampleWith(checkPlatform, timer, 0)
       await tick(60_000)
     }
 
     expect(reportSignals).not.toHaveBeenCalled()
   })
 
-  it('单条件(只有 debugger 计时)不报', async () => {
-    stubDebuggerCost(400)
+  it('单条件(只有高度差)不报', async () => {
+    setWindowGaps(0, 376)
+    const timer = stubDebuggerCost(0)
     const { checkPlatform } = await loadGuard()
 
     for (let i = 0; i < 10; i += 1) {
-      await checkPlatform()
+      await sampleWith(checkPlatform, timer, 0)
       await tick(60_000)
     }
 
     expect(reportSignals).not.toHaveBeenCalled()
   })
 
-  it('两个条件同时成立且连续 5 个采样周期才报', async () => {
-    setWindowSize(1400, 1024)
-    stubDebuggerCost(400)
+  it('strong(debugger 挂起 >300ms)连续 3 个采样周期即报', async () => {
+    setWindowGaps(0, 0)
+    const timer = stubDebuggerCost(400)
+    const { checkPlatform } = await loadGuard()
+
+    await sampleWith(checkPlatform, timer, 400)
+    await tick(60_000)
+    await sampleWith(checkPlatform, timer, 400)
+    await tick(60_000)
+    expect(reportSignals).not.toHaveBeenCalled()
+
+    // 第三个采样周期:strong 连击满 3
+    await sampleWith(checkPlatform, timer, 400)
+    expect(reportSignals).toHaveBeenCalledTimes(1)
+    expect(reportedNames()).toEqual(['devtools'])
+    expect(reportedSignals()[0].detail).toBe('panel-detected')
+  })
+
+  it('debugger 只连续 2 个采样周期不报', async () => {
+    setWindowGaps(0, 0)
+    const timer = stubDebuggerCost(400)
+    const { checkPlatform } = await loadGuard()
+
+    await sampleWith(checkPlatform, timer, 400)
+    await tick(60_000)
+    await sampleWith(checkPlatform, timer, 400)
+
+    expect(reportSignals).not.toHaveBeenCalled()
+  })
+
+  it('weak(宽高双向压缩)连续 5 个采样周期才报', async () => {
+    setWindowGaps(376, 376)
+    const timer = stubDebuggerCost(0)
     const { checkPlatform } = await loadGuard()
 
     for (let i = 0; i < 4; i += 1) {
-      await checkPlatform()
+      await sampleWith(checkPlatform, timer, 0)
       await tick(60_000)
       expect(reportSignals).not.toHaveBeenCalled()
     }
 
-    await checkPlatform()
+    // 第五个采样周期:weak 连击满 5
+    await sampleWith(checkPlatform, timer, 0)
+    expect(reportSignals).toHaveBeenCalledTimes(1)
+    expect(reportedNames()).toEqual(['devtools'])
+    expect(reportedSignals()[0].detail).toBe('panel-detected')
+  })
+
+  it('同一采样周期 strong 与 weak 同时成立时按 strong 走(3 连就报)', async () => {
+    setWindowGaps(376, 376)
+    const timer = stubDebuggerCost(400)
+    const { checkPlatform } = await loadGuard()
+
+    for (let i = 0; i < 2; i += 1) {
+      await sampleWith(checkPlatform, timer, 400)
+      await tick(60_000)
+      expect(reportSignals).not.toHaveBeenCalled()
+    }
+
+    await sampleWith(checkPlatform, timer, 400)
+    expect(reportSignals).toHaveBeenCalledTimes(1)
+  })
+
+  it('strong 命中后 weak 计数不影响(前置 weak 不提前上报)', async () => {
+    setWindowGaps(376, 376)
+    const timer = stubDebuggerCost(0)
+    const { checkPlatform } = await loadGuard()
+
+    // 前两个采样周期只有 weak 成立(窗口被压缩、无 debugger 挂起)
+    for (let i = 0; i < 2; i += 1) {
+      await sampleWith(checkPlatform, timer, 0)
+      await tick(60_000)
+      expect(reportSignals).not.toHaveBeenCalled()
+    }
+
+    // 接着三个采样周期 strong 成立:weak 计数不参与,按 strong 的 3 连上报
+    for (let i = 0; i < 2; i += 1) {
+      await sampleWith(checkPlatform, timer, 400)
+      await tick(60_000)
+      expect(reportSignals).not.toHaveBeenCalled()
+    }
+    await sampleWith(checkPlatform, timer, 400)
     expect(reportSignals).toHaveBeenCalledTimes(1)
     expect(reportedNames()).toEqual(['devtools'])
   })
 
+  it('两者都不命中时连击清零', async () => {
+    setWindowGaps(0, 0)
+    const timer = stubDebuggerCost(400)
+    const { checkPlatform } = await loadGuard()
+
+    // 先攒 2 次 strong
+    await sampleWith(checkPlatform, timer, 400)
+    await tick(60_000)
+    await sampleWith(checkPlatform, timer, 400)
+    await tick(60_000)
+    expect(reportSignals).not.toHaveBeenCalled()
+
+    // 一次都不命中(无挂起、窗口正常):两个连击计数一并清零
+    await sampleWith(checkPlatform, timer, 0)
+    await tick(60_000)
+
+    // 再攒 2 次 strong:连击从头开始,仍不足 3 连
+    await sampleWith(checkPlatform, timer, 400)
+    await tick(60_000)
+    await sampleWith(checkPlatform, timer, 400)
+
+    expect(reportSignals).not.toHaveBeenCalled()
+  })
+
+  it('页面隐藏时不累计连击', async () => {
+    setWindowGaps(0, 0)
+    const timer = stubDebuggerCost(400)
+    const { checkPlatform } = await loadGuard()
+
+    setProp(document, 'hidden', true)
+    setProp(document, 'visibilityState', 'hidden')
+    for (let i = 0; i < 5; i += 1) {
+      await sampleWith(checkPlatform, timer, 400)
+      await tick(60_000)
+    }
+    expect(reportSignals).not.toHaveBeenCalled()
+
+    // 回到前台:连击从零重新累计,仍要 3 连才报
+    setProp(document, 'hidden', false)
+    setProp(document, 'visibilityState', 'visible')
+    await sampleWith(checkPlatform, timer, 400)
+    await tick(60_000)
+    await sampleWith(checkPlatform, timer, 400)
+    expect(reportSignals).not.toHaveBeenCalled()
+
+    await sampleWith(checkPlatform, timer, 400)
+    expect(reportSignals).toHaveBeenCalledTimes(1)
+  })
+
   it('中间一次未命中会清零连续计数', async () => {
-    setWindowSize(1400, 1024)
+    setWindowGaps(376, 376)
+    const timer = stubDebuggerCost(0)
     const { checkPlatform } = await loadGuard()
     for (let i = 0; i < 4; i += 1) {
-      await checkPlatform()
+      await sampleWith(checkPlatform, timer, 0)
       await tick(60_000)
     }
 
     // 恢复正常窗口尺寸:命中链断掉,后面几次仍不足 5 连
-    setWindowSize(1024, 1024)
+    setWindowGaps(0, 0)
     await tick(60_000)
-    await checkPlatform()
-    setWindowSize(1400, 1024)
+    await sampleWith(checkPlatform, timer, 0)
+    setWindowGaps(376, 376)
     for (let i = 0; i < 3; i += 1) {
       await tick(60_000)
-      await checkPlatform()
+      await sampleWith(checkPlatform, timer, 0)
     }
 
     expect(reportSignals).not.toHaveBeenCalled()
@@ -441,32 +602,29 @@ describe('按键隔离与批量语义', () => {
   })
 
   it('同一信号 10 分钟内不重复(devtools 重奏被压住,过窗可再报)', async () => {
-    setWindowSize(1400, 1024)
-    stubDebuggerCost(400)
+    setWindowGaps(0, 0)
+    const timer = stubDebuggerCost(400)
     const { checkPlatform } = await loadGuard()
 
-    // 5 个采样周期:第 5 次上报
-    for (let i = 0; i < 5; i += 1) {
-      await checkPlatform()
+    // strong 连击 3 个采样周期:第三次上报(t=120s)
+    await sampleWith(checkPlatform, timer, 400)
+    await tick(60_000)
+    await sampleWith(checkPlatform, timer, 400)
+    await tick(60_000)
+    await sampleWith(checkPlatform, timer, 400)
+    expect(reportSignals).toHaveBeenCalledTimes(1)
+
+    // 节流窗口内继续攒连击:每次攒满 3 连都会被压住,不重复报
+    for (let i = 0; i < 9; i += 1) {
       await tick(60_000)
+      await sampleWith(checkPlatform, timer, 400)
     }
     expect(reportSignals).toHaveBeenCalledTimes(1)
 
-    // 10 分钟内再攒满 5 连:节流压住,不重复报
-    for (let i = 0; i < 5; i += 1) {
-      await checkPlatform()
+    // 距首报满 10 分钟(>=600s)后再攒满 3 连可再报
+    for (let i = 0; i < 3; i += 1) {
       await tick(60_000)
-    }
-    expect(reportSignals).toHaveBeenCalledTimes(1)
-
-    // 距首报满 10 分钟,再攒满 5 连可再报
-    // (首报在 t=240s,这里再过 4 个周期后到 780s... 补足差值)
-    for (let i = 0; i < 2; i += 1) {
-      await tick(60_000)
-    }
-    for (let i = 0; i < 5; i += 1) {
-      await checkPlatform()
-      await tick(60_000)
+      await sampleWith(checkPlatform, timer, 400)
     }
     expect(reportSignals).toHaveBeenCalledTimes(2)
   })
