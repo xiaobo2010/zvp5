@@ -27,6 +27,28 @@ DEFAULT_CONFIG = {"threshold": 3, "window_hours": 24}
 REGISTRY_DEFAULT_CONFIG = {"threshold": 3, "window_hours": 24}
 DEFAULT_PENALTIES = [1]
 
+#: ``mode`` 决定「达到阈值之后做什么」，而不是「算不算违规」：证据与审计在两种
+#: 模式下都会落，区别只在要不要动账号。新增监控规则先跑 ``alert`` 观察误报率，
+#: 是这个字段存在的唯一理由。
+MODE_BAN = "ban"
+MODE_ALERT = "alert"
+MODES = (MODE_BAN, MODE_ALERT)
+DEFAULT_MODE = MODE_BAN
+
+
+def normalize_mode(value) -> str:
+    """未知/缺失的 ``mode`` 归一成 ``ban``：缺省即既有规则的行为。
+
+    未知值不能猜成 ``alert``——那会让一条本该封禁的规则静默失效，而管理员在
+    界面上看到的是「规则已启用」。坏数据也在这里降级并留一条 warning。
+    """
+    if value is None or value == "":
+        return DEFAULT_MODE
+    if isinstance(value, str) and value.strip().lower() in MODES:
+        return value.strip().lower()
+    _logger.warning("规则 config mode 非法，按 %s 处理：%r", DEFAULT_MODE, value)
+    return DEFAULT_MODE
+
 
 def _json_value(raw, fallback):
     """``CONFIG`` / ``PENALTIES`` 是 DB 只做 ``IS JSON`` 的文本，解析归本层。"""
@@ -49,18 +71,30 @@ def _positive_int(value) -> int | None:
 
 
 def normalize_config(raw, defaults: dict | None = None) -> dict:
-    """把任意形状的规则配置归一成完整的 ``{threshold, window_hours}``。
+    """把任意形状的规则配置归一成完整的 ``{threshold, window_hours, mode}``。
 
     这是**读取侧的唯一归一入口**：注册表默认值、V016 的 ``{"threshold":3}``
     种子、管理员只改了一个键的配置，都必须能在这里补成完整形状，判定层才不必
     各写一份「缺项怎么办」。``defaults`` 允许调用方（注册表）传入自己的基线，
     缺项与非法值都落回基线。
+
+    ``mode`` 也从这里出：它是「达到阈值后做什么」的开关，缺省 ``ban`` 保证
+    存量规则行为不变；未知值归一成 ``ban``（见 :func:`normalize_mode`）。
     """
     base = dict(defaults or DEFAULT_CONFIG)
+    base_threshold = _positive_int(base.get("threshold")) or DEFAULT_CONFIG["threshold"]
+    base_window = (
+        _positive_int(base.get("window_hours")) or DEFAULT_CONFIG["window_hours"]
+    )
+    base_mode = normalize_mode(base.get("mode"))
     if not isinstance(raw, dict):
         if raw is not None:
             _logger.warning("规则 config 不是对象，回退默认值：%r", raw)
-        return base
+        return {
+            "threshold": base_threshold,
+            "window_hours": base_window,
+            "mode": base_mode,
+        }
     threshold = _positive_int(raw.get("threshold"))
     window_hours = _positive_int(raw.get("window_hours"))
     if threshold is None and "threshold" in raw:
@@ -68,13 +102,14 @@ def normalize_config(raw, defaults: dict | None = None) -> dict:
     if window_hours is None and "window_hours" in raw:
         _logger.warning("规则 config window_hours 非法，回退默认值：%r", raw)
     return {
-        "threshold": threshold or base["threshold"],
-        "window_hours": window_hours or base["window_hours"],
+        "threshold": threshold or base_threshold,
+        "window_hours": window_hours or base_window,
+        "mode": normalize_mode(raw.get("mode")) if raw.get("mode") else base_mode,
     }
 
 
 def rule_config(rule: dict | None) -> dict:
-    """规则的 ``{threshold, window_hours}``；缺项/坏数据**逐项**回退默认值。
+    """规则的 ``{threshold, window_hours, mode}``；缺项/坏数据**逐项**回退默认值。
 
     逐项归一而不是整体丢弃：规则的 config 是文本 JSON，历史上出现过只有
     ``{"threshold":3}`` 的形状（V016 的 seed、以及注册表默认值被原样写库的
@@ -175,6 +210,11 @@ __all__ = [
     "DEFAULT_CONFIG",
     "REGISTRY_DEFAULT_CONFIG",
     "DEFAULT_PENALTIES",
+    "MODE_BAN",
+    "MODE_ALERT",
+    "MODES",
+    "DEFAULT_MODE",
+    "normalize_mode",
     "normalize_config",
     "rule_config",
     "rule_penalties",

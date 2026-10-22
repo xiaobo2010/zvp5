@@ -63,6 +63,82 @@ TRIGGERS: tuple[dict, ...] = (
         ),
         "config": {"threshold": 3, "window_hours": 24},
     },
+    {
+        "trigger": "login_failure_burst",
+        "name": "登录失败暴破",
+        "evaluation": "monitor",
+        "description": (
+            "证据来源：服务端 APP_LOGS 中该账号的登录失败记录"
+            "（ltype=login_fail，只记摘要不记密码）。窗口内失败次数达到阈值"
+            "按梯度封禁；正常用户偶尔输错不会触发。"
+        ),
+        "config": {"threshold": 10, "window_hours": 1, "mode": "ban"},
+    },
+    {
+        "trigger": "ban_evasion_retry",
+        "name": "封禁期内反复尝试登录",
+        "evaluation": "monitor",
+        "description": (
+            "证据来源：APP_LOGS 中账号处于封禁态时的登录失败记录"
+            "（ltype=login_fail 且摘要含 banned）。封禁期内持续尝试说明有人在"
+            "撞库或不服判，达到阈值按梯度加刑。"
+        ),
+        "config": {"threshold": 5, "window_hours": 1, "mode": "ban"},
+    },
+    {
+        "trigger": "challenge_flood",
+        "name": "设备挑战刷取",
+        "evaluation": "monitor",
+        "description": (
+            "证据来源：DEVICE_CHALLENGES 中该账号的挑战签发条数。非主设备登录"
+            "每次都会签发一次性挑战，短时间大量签发说明在反复试探设备闸；"
+            "默认只告警，管理员确认误报率后再切封禁。"
+        ),
+        "config": {"threshold": 8, "window_hours": 1, "mode": "alert"},
+    },
+    {
+        "trigger": "temp_password_issue_burst",
+        "name": "临时密码签发过频",
+        "evaluation": "monitor",
+        "description": (
+            "证据来源：APP_LOGS 中签发人自己的 temp_password_create 记录。"
+            "为大量账号连发临时密码可能是批量协助，也可能是账号被盗用后批量"
+            "开门；默认只告警。"
+        ),
+        "config": {"threshold": 20, "window_hours": 1, "mode": "alert"},
+    },
+    {
+        "trigger": "export_burst",
+        "name": "导出任务过频",
+        "evaluation": "monitor",
+        "description": (
+            "证据来源：APP_LOGS 中请求者发起的导出任务记录（ltype=export）。"
+            "短时间大量导出是数据外带的前兆；默认只告警。"
+        ),
+        "config": {"threshold": 10, "window_hours": 1, "mode": "alert"},
+    },
+    {
+        "trigger": "login_success_churn",
+        "name": "短时间反复登录",
+        "evaluation": "monitor",
+        "description": (
+            "证据来源：APP_LOGS 中该账号的成功登录记录（ltype=user_login）。"
+            "同一账号一小时内的登录次数远超正常使用，可能是凭据被共享；"
+            "默认只告警。"
+        ),
+        "config": {"threshold": 15, "window_hours": 1, "mode": "alert"},
+    },
+    {
+        "trigger": "device_switch_burst",
+        "name": "频繁更换设备",
+        "evaluation": "monitor",
+        "description": (
+            "证据来源：APP_LOGS 中该账号的主设备不匹配记录"
+            "（ltype=device_mismatch）。一天内反复在不同设备上尝试登录，"
+            "可能是账号被多人共用；默认只告警。"
+        ),
+        "config": {"threshold": 5, "window_hours": 24, "mode": "alert"},
+    },
 )
 
 TRIGGER_REGISTRY: dict[str, dict] = {item["trigger"]: item for item in TRIGGERS}

@@ -448,13 +448,21 @@ def test_triggers_lists_registered_checks(api) -> None:
     body = http.get(f"{PREFIX}/triggers").json()
 
     assert body["status"] == "ok"
-    assert [item["trigger"] for item in body["data"]] == [
-        "foreign_device_login",
-        "platform_misuse",
-    ]
+    triggers = [item["trigger"] for item in body["data"]]
+    # 两个既有闸门的检查项排在最前（前端下拉的稳定顺序），后面是监控规则。
+    assert triggers[:2] == ["foreign_device_login", "platform_misuse"]
+    assert set(triggers[2:]) == {
+        "login_failure_burst",
+        "ban_evasion_retry",
+        "challenge_flood",
+        "temp_password_issue_burst",
+        "export_burst",
+        "login_success_churn",
+        "device_switch_burst",
+    }
     for item in body["data"]:
         assert item["name"]
-        assert item["evaluation"] in ("login", "report")
+        assert item["evaluation"] in ("login", "report", "monitor")
         assert item["description"]
         # 新建规则的默认参数：阈值/窗口都必须是合法范围内的整数
         assert isinstance(item["config"]["threshold"], int)

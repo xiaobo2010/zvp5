@@ -25,7 +25,7 @@ from util.permission.user import (
 )
 from db import backends
 from db.system_state import is_enabled_fresh
-from services import device_guard
+from services import device_guard, risk_monitor
 from util.ban import ban_headers, ban_is_active, raise_banned
 from util.cert import (
     get_hashed_password_by_cert,
@@ -45,6 +45,68 @@ _logger = logging.getLogger(__name__)
 
 # ``page=-1``（不分页）的硬上限：保留「一次拿完」的语义，但不允许无界返回。
 _USER_LIST_CAP = 1000
+
+# 失败登录的证据：同一 oid 60 秒内最多写一条。没有这个节流，攻击者每提交一次
+# 错误密码就能往 APP_LOGS 里塞一行，「记录失败」会变成新的日志风暴入口。
+_LOGIN_FAILURE_LOG_SECONDS = 60
+_LOGIN_FAILURE_LOG_MAX_ENTRIES = 4096
+_login_failure_logged: dict[str, float] = {}
+
+
+def _presented_oid(value: str) -> str:
+    """请求里的标识解析成 oid；不是合法 oid（学号也没查到）时返回空串。"""
+    parsed = string_to_option_object_id(value)
+    return str(parsed) if parsed is not None else ""
+
+
+async def _note_login_failure(
+    request: Request, user_oid: str, xuehai_id: str, summary: str
+) -> None:
+    """把「有人拿错了凭据」这件事落成审计，**只记摘要**。
+
+    为什么现在要记：登录失败次数是「暴破 / 封禁期重试」两条规则的唯一证据，
+    不落库就只剩客户端自述。摘要固定为 ``password-mismatch`` / ``banned``，
+    提交的密码、长度、哈希一律不进日志——日志的读者是管理员，不是攻击者。
+
+    节流按 oid：同一个人 60 秒内的连续失败只留一条。窗口由判定层按分钟统计，
+    省掉的行不会改变结论，却能挡住日志风暴。
+    """
+    if not user_oid:
+        return
+    now = datetime.now().timestamp()
+    last = _login_failure_logged.get(user_oid)
+    if last is not None and now - last < _LOGIN_FAILURE_LOG_SECONDS:
+        return
+    if len(_login_failure_logged) > _LOGIN_FAILURE_LOG_MAX_ENTRIES:
+        for key, stamp in list(_login_failure_logged.items()):
+            if now - stamp >= _LOGIN_FAILURE_LOG_SECONDS:
+                _login_failure_logged.pop(key, None)
+        if len(_login_failure_logged) > _LOGIN_FAILURE_LOG_MAX_ENTRIES:
+            _login_failure_logged.clear()
+    _login_failure_logged[user_oid] = now
+    try:
+        await ZVMSLog(
+            str(request.url),
+            user_oid,
+            f"登录失败（{summary}）",
+            now,
+            type="login_fail",
+            level="warning",
+            xuehai_id=xuehai_id,
+        ).insert_log()
+    except Exception:
+        _logger.exception("写入 login_fail 日志失败")
+
+
+async def _run_risk(trigger: str, user_oid: str) -> None:
+    """风险规则的挂钩点：评估失败只留日志，绝不影响本次请求的结果。"""
+    if not user_oid:
+        return
+    try:
+        await risk_monitor.evaluate(trigger, user_oid)
+    except Exception:
+        # evaluate 本身已兜底；这里再包一层是因为调用点都在登录/导出主路径上。
+        _logger.warning("风险规则 %s 评估失败，忽略", trigger, exc_info=True)
 
 
 def _query_datetime(value: str, field: str) -> datetime:
@@ -227,6 +289,9 @@ async def _guard_primary_device(
     except Exception:
         _logger.exception("写入 device_mismatch 日志失败")
 
+    await _run_risk("challenge_flood", user_oid)
+    await _run_risk("device_switch_burst", user_oid)
+
     raise HTTPException(
         status_code=403,
         detail={
@@ -274,10 +339,21 @@ async def auth_user(auth: AuthUser, request: Request, response: Response):
             id, credential, validation_mode
         )
     except HTTPException as exc:
-        # Normalize the credential failure to the same body as "user not found",
-        # keeping the two paths byte-identical.
+        # 失败分支同样要留证据（摘要，不含凭据）：这两条规则只认服务端自己
+        # 写下的行。封禁态走 ban_evasion_retry，密码错走 login_failure_burst。
         if exc.detail == "Password incorrect":
+            failed_oid = _presented_oid(id)
+            await _note_login_failure(
+                request, failed_oid, xuehai_id, "password-mismatch"
+            )
+            await _run_risk("login_failure_burst", failed_oid)
+            # Normalize the credential failure to the same body as "user not found",
+            # keeping the two paths byte-identical.
             raise HTTPException(status_code=403, detail="用户名或密码错误")
+        if exc.detail == "USER_BANNED":
+            failed_oid = _presented_oid(id)
+            await _note_login_failure(request, failed_oid, xuehai_id, "banned")
+            await _run_risk("ban_evasion_retry", failed_oid)
         raise
 
     user_doc = await backends.get_users_repo().get_by_oid(
@@ -337,6 +413,9 @@ async def auth_user(auth: AuthUser, request: Request, response: Response):
     )
 
     await log.insert_log()
+
+    if is_login:
+        await _run_risk("login_success_churn", user_oid)
 
     binding_mismatch = await _observe_binding(request, user_oid, log_name, xuehai_id)
 

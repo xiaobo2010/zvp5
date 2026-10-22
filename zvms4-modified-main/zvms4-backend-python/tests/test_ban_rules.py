@@ -100,15 +100,20 @@ def test_raise_banned_is_403_user_banned_with_headers() -> None:
 
 def test_rule_config_reads_json_text() -> None:
     rule = {"config": json.dumps({"threshold": 5, "window_hours": 48})}
-    assert ban_rules.rule_config(rule) == {"threshold": 5, "window_hours": 48}
+    assert ban_rules.rule_config(rule) == {
+        "threshold": 5,
+        "window_hours": 48,
+        "mode": ban_rules.MODE_BAN,
+    }
 
 
 def test_rule_config_accepts_dict_and_falls_back_on_broken_json() -> None:
     assert ban_rules.rule_config({"config": {"threshold": 4, "window_hours": 2}}) == {
         "threshold": 4,
         "window_hours": 2,
+        "mode": ban_rules.MODE_BAN,
     }
-    fallback = dict(ban_rules.DEFAULT_CONFIG)
+    fallback = {**ban_rules.DEFAULT_CONFIG, "mode": ban_rules.MODE_BAN}
     assert ban_rules.rule_config({"config": "{not json"}) == fallback
     assert ban_rules.rule_config(None) == fallback
     assert ban_rules.rule_config({"config": json.dumps({"threshold": 0})}) == fallback
@@ -311,19 +316,37 @@ def test_normalize_config_fills_missing_keys_per_field() -> None:
     assert ban_rules.normalize_config({"threshold": 5}) == {
         "threshold": 5,
         "window_hours": 24,
+        "mode": ban_rules.MODE_BAN,
     }
     assert ban_rules.normalize_config({"window_hours": 6}) == {
         "threshold": 3,
         "window_hours": 6,
+        "mode": ban_rules.MODE_BAN,
     }
-    assert ban_rules.normalize_config(None) == dict(ban_rules.DEFAULT_CONFIG)
+    assert ban_rules.normalize_config(None) == {
+        **ban_rules.DEFAULT_CONFIG,
+        "mode": ban_rules.MODE_BAN,
+    }
     assert ban_rules.normalize_config({"threshold": "x", "window_hours": 12}) == {
         "threshold": 3,
         "window_hours": 12,
+        "mode": ban_rules.MODE_BAN,
     }
 
 
 def test_normalize_config_accepts_an_explicit_baseline() -> None:
-    base = {"threshold": 2, "window_hours": 1}
+    base = {"threshold": 2, "window_hours": 1, "mode": ban_rules.MODE_ALERT}
     assert ban_rules.normalize_config({}, defaults=base) == base
     assert ban_rules.normalize_config(None, defaults=base) == base
+
+
+def test_normalize_config_defaults_mode_to_ban() -> None:
+    """缺省 mode 等价于既有行为：存量规则不需要改数据也不会突然只告警。"""
+    assert ban_rules.normalize_config({"threshold": 5})["mode"] == ban_rules.MODE_BAN
+
+
+def test_normalize_config_keeps_alert_and_degrades_unknown_mode() -> None:
+    assert ban_rules.normalize_config({"mode": "alert"})["mode"] == ban_rules.MODE_ALERT
+    assert ban_rules.normalize_config({"mode": "ALERT "})["mode"] == ban_rules.MODE_ALERT
+    assert ban_rules.normalize_config({"mode": "warn"})["mode"] == ban_rules.MODE_BAN
+    assert ban_rules.normalize_config({"mode": 1})["mode"] == ban_rules.MODE_BAN

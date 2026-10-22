@@ -203,6 +203,35 @@ def test_count_distinct_xuehai_stmt_filters_blank_and_counts_distinct():
 
 
 # ---------------------------------------------------------------------------
+# count_by_user_ltype: 用户 + 类型 + 时间窗（风险规则的事件计数）
+# ---------------------------------------------------------------------------
+
+def test_count_by_user_ltype_stmt_is_index_friendly():
+    since = 1760000000.0
+    sql = _sql(
+        app_logs_repo._count_by_user_ltype_stmt(USER_OID, "login_fail", since)
+    )
+    assert sql.startswith("SELECT count(*) AS count_1 FROM app_logs")
+    assert f"app_logs.app_user = '{USER_OID}'" in sql
+    assert "app_logs.ltype = 'login_fail'" in sql
+    assert f"app_logs.ts_raw >= {since}" in sql
+    # 没有 contains 时不得引入 data 上的 LIKE：少一个非索引谓词。
+    assert "LIKE" not in sql.upper()
+
+
+def test_count_by_user_ltype_stmt_escapes_contains_wildcards():
+    """``contains`` 只是摘要匹配：``%`` / ``_`` 必须是字面量，且大小写不敏感。"""
+    sql = _sql(
+        app_logs_repo._count_by_user_ltype_stmt(
+            USER_OID, "login_fail", 1.0, "100%_banned"
+        )
+    )
+    assert "lower(app_logs.data) like" in sql.lower()
+    assert "100\\%\\_banned" in sql
+    assert "ESCAPE '\\'" in sql
+
+
+# ---------------------------------------------------------------------------
 # BAN_RECORDS / BAN_RULES 语句形状
 # ---------------------------------------------------------------------------
 

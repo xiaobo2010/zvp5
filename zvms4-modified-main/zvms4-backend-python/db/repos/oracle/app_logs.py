@@ -374,6 +374,31 @@ def _count_distinct_xuehai_stmt(user_oid: str, since_ts: float):
     )
 
 
+def _count_by_user_ltype_stmt(
+    user_oid: str, ltype: str, since_ts: float, contains: str | None = None
+):
+    """用户 + 日志类型 + 时间窗的事件计数（``services.risk_monitor`` 的证据）。
+
+    谓词顺序对应 ``ix_app_logs_user_ts``（``app_user`` + ``ts_raw``）与
+    ``ix_app_logs_type_level_ts`` 的前缀 ``ltype``：等值列在前、范围列在后，
+    两个索引都能被吃到。``contains`` 是**补充**条件（同一 ``ltype`` 下靠 ``data``
+    摘要区分两条规则，例如登录失败里的 ``banned`` 标记），走 ``LOWER(data) LIKE``
+    并转义通配符，让它只是字符串比较而不是正则。
+    """
+    conds: list[Any] = [
+        app_logs_tbl.c.app_user == user_oid,
+        app_logs_tbl.c.ltype == ltype,
+        app_logs_tbl.c.ts_raw >= float(since_ts),
+    ]
+    if contains:
+        conds.append(
+            func.lower(app_logs_tbl.c.data).like(
+                _like_pattern(contains), escape="\\"
+            )
+        )
+    return select(func.count()).select_from(app_logs_tbl).where(*conds)
+
+
 def _purge_batch_stmt(cutoff: Any, batch_size: int):
     """One ``DELETE`` bounded to ``batch_size`` rows.
 
@@ -516,6 +541,26 @@ class OracleAppLogsRepo:
     async def count_distinct_xuehai(self, user_oid: str, since_ts: float) -> int:
         """用户在 ``since_ts`` 之后登录过的不同学海设备数（规则封禁判定用）。"""
         stmt = _count_distinct_xuehai_stmt(user_oid, float(since_ts))
+        async with _session_for(self._session) as (session, _owns):
+            total = (await session.execute(stmt)).scalar_one()
+        return int(total)
+
+    async def count_by_user_ltype(
+        self,
+        user_oid: str,
+        ltype: str,
+        since_ts: float,
+        contains: str | None = None,
+    ) -> int:
+        """``since_ts`` 之后该用户该类型的事件条数（只读，判定用计数）。
+
+        ``contains`` 在 ``data`` 上做大小写不敏感的 contains，用于把共享同一
+        ``ltype`` 的两条规则分开（登录失败 vs 封禁期重试）。时间窗用 ``ts_raw``
+        （BINARY_DOUBLE epoch 秒）——与写入路径同源，``ts_at`` 是它的派生列。
+        """
+        stmt = _count_by_user_ltype_stmt(
+            user_oid, ltype, float(since_ts), contains
+        )
         async with _session_for(self._session) as (session, _owns):
             total = (await session.execute(stmt)).scalar_one()
         return int(total)
