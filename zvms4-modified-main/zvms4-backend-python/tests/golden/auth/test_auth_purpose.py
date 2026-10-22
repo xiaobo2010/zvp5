@@ -11,7 +11,9 @@
 4. verify 也接受 TOTP 动态码，成功后仍只发临时令牌，登录路径行为一字不变。
 5. 成功审计分流：verify 写 ``type="user_verify"``（文案含「身份验证」+ 凭据类型
    密码/动态码），login 仍写 ``type="user_login"``。
-6. 失败（密码错 / 动态码错 / banned / 过期）一行日志都不写。
+6. 失败分流：密码不匹配写一条 ``login_fail``（摘要 ``password-mismatch``，60 秒
+   内按 oid 节流），动态码错 / 过期仍一行不写。失败证据是「登录失败暴破」与
+   「封禁期重试」两条规则的唯一数据源，所以密码错必须留痕且不含凭据原文。
 
 全离线：真跑 ``util.cert.validate_by_cert`` + 真 RSA/TOTP + 真 jwt，只把 users
 repo 换成内存假实现、``ZVMSLog`` 换成记录器。不连数据库、不发网络。
@@ -85,6 +87,16 @@ class _RecordingLog:
         _LOG_CALLS.append({"kind": "insert_log", "type": self.type, "data": self.data})
 
 
+class _NoRuleRepo:
+    """规则一律「不存在」：本文件不测封禁判定，也避免真去连库。"""
+
+    async def get_by_trigger(self, trigger: str):
+        return None
+
+    async def get_by_code(self, code: str):
+        return None
+
+
 class _FakeUsersRepo:
     """Users repo backed by one in-memory document."""
 
@@ -125,10 +137,12 @@ def _user_doc() -> dict:
 def client(monkeypatch) -> TestClient:
     _LOG_CALLS.clear()
     doc = _user_doc()
+    users_router._login_failure_logged.clear()
     monkeypatch.setattr(users_router, "ZVMSLog", _RecordingLog)
     monkeypatch.setattr(
         backends, "get_users_repo", lambda *a, **k: _FakeUsersRepo(doc)
     )
+    monkeypatch.setattr(backends, "get_ban_rules_repo", lambda *a, **k: _NoRuleRepo())
     app = FastAPI()
     app.include_router(users_router.router, prefix=PREFIX)
     return TestClient(app)
@@ -222,16 +236,21 @@ def test_login_totp_still_gets_otp_session_token(client: TestClient) -> None:
     assert _scope(response.json()["token"]) == "access_token"
 
 
-# --- 失败零日志 ---------------------------------------------------------------
+# --- 失败证据 ---------------------------------------------------------------
 
 
-def test_verify_wrong_password_is_403_and_writes_no_log(
+def test_verify_wrong_password_is_403_and_logs_one_failure(
     client: TestClient,
 ) -> None:
     response = _auth(client, _credential("WrongPass1!"), purpose="verify")
     assert response.status_code == 403
     assert response.json() == {"detail": "用户名或密码错误"}
-    assert _LOG_CALLS == []
+
+    inserts = [c for c in _LOG_CALLS if c["kind"] == "insert_log"]
+    assert [c["type"] for c in inserts] == ["login_fail"]
+    assert "password-mismatch" in inserts[0]["data"]
+    # 密码原文绝不能进日志。
+    assert "WrongPass1!" not in inserts[0]["data"]
 
 
 def test_verify_wrong_totp_is_403_and_writes_no_log(client: TestClient) -> None:
@@ -241,8 +260,13 @@ def test_verify_wrong_totp_is_403_and_writes_no_log(client: TestClient) -> None:
     assert _LOG_CALLS == []
 
 
-def test_login_wrong_password_is_403_and_writes_no_log(client: TestClient) -> None:
+def test_login_wrong_password_is_403_and_logs_one_failure(
+    client: TestClient,
+) -> None:
     response = _auth(client, _credential("WrongPass1!"), purpose="login")
     assert response.status_code == 403
     assert response.json() == {"detail": "用户名或密码错误"}
-    assert _LOG_CALLS == []
+
+    inserts = [c for c in _LOG_CALLS if c["kind"] == "insert_log"]
+    assert [c["type"] for c in inserts] == ["login_fail"]
+    assert "WrongPass1!" not in inserts[0]["data"]

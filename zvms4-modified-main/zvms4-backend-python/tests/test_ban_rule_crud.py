@@ -372,3 +372,93 @@ def test_v001_mirrors_v019_batch_column_index_and_seed():
     assert "'0b0000000000000000000003'" in ddl
     assert '"threshold":3,"window_hours":24' in ddl
     assert "[1,3,7]" in ddl
+
+
+# ---------------------------------------------------------------------------
+# DDL：V020 风险规则种子（七条服务端可观测规则）
+# ---------------------------------------------------------------------------
+
+V020_PATH = DDL_DIR / "V020__risk_rules.sql"
+
+#: trigger → (阈值, 窗口小时, mode)
+RISK_SEEDS = {
+    "login_failure_burst": (10, 1, "ban"),
+    "ban_evasion_retry": (5, 1, "ban"),
+    "challenge_flood": (8, 1, "alert"),
+    "temp_password_issue_burst": (20, 1, "alert"),
+    "export_burst": (10, 1, "alert"),
+    "login_success_churn": (15, 1, "alert"),
+    "device_switch_burst": (5, 24, "alert"),
+}
+
+
+@pytest.mark.parametrize("path", [V001_PATH, V020_PATH])
+def test_risk_seeds_are_present_and_configured(path: Path) -> None:
+    """种子必须与 ``services.risk_monitor.TRIGGERS`` 的默认值逐字一致。"""
+    ddl = _ddl(path)
+
+    for trigger, (threshold, hours, mode) in RISK_SEEDS.items():
+        # ``_ddl`` 会把 SQL 里的 '' 还原成 '，所以这里比较的是真实的 SQL 文本。
+        # 规则 code 与 trigger 同名：MERGE 的 ON 子句 + VALUES 里两列共三处。
+        assert ddl.count(f"'{trigger}'") >= 3, f"{path.name} 缺 {trigger} 种子"
+        # 102 行的 VALUES 顺序是 (oid, code, name, trigger_code, enabled, config)：
+        # trigger_code 后面紧跟 enabled=1 与 config，缺 trigger 就等于「规则不生效」。
+        assert (
+            f"'{trigger}', 1, '{{\"threshold\":{threshold},"
+            f'\"window_hours\":{hours},\"mode\":\"{mode}\"}}' in ddl
+        ), f"{path.name} 的 {trigger} trigger/config 与默认值不一致"
+
+
+@pytest.mark.parametrize("path", [V001_PATH, V020_PATH])
+def test_risk_seeds_penalties_follow_the_mode(path: Path) -> None:
+    """alert 模式的规则不封人：penalties 落 JSON null，ban 模式给梯度。"""
+    ddl = _ddl(path)
+
+    assert ddl.count("'null', 1, SYSTIMESTAMP, SYSTIMESTAMP") == 5
+    assert ddl.count("'[1,3,7]', 1, SYSTIMESTAMP, SYSTIMESTAMP") >= 2
+
+
+@pytest.mark.parametrize("path", [V001_PATH, V020_PATH])
+def test_risk_seeds_are_idempotent_merges(path: Path) -> None:
+    """幂等：WHEN NOT MATCHED 才插，重复执行不覆盖管理员改过的值。"""
+    text = path.read_text(encoding="utf-8")
+
+    assert "WHEN NOT MATCHED THEN INSERT" in text
+    assert "WHEN MATCHED THEN UPDATE" not in text
+    assert "IF SQLCODE NOT IN (-1, -955) THEN RAISE; END IF;" in text
+
+
+def test_v020_has_no_ddl_changes():
+    """本次扩展不改表结构：V020 里除了种子 MERGE 不该有 ALTER/CREATE。"""
+    ddl = _ddl(V020_PATH)
+
+    assert "MERGE INTO ban_rules" in ddl
+    for forbidden in ("ALTER TABLE", "CREATE TABLE", "CREATE INDEX"):
+        assert forbidden not in ddl
+
+
+def test_risk_seed_defaults_match_the_service_registry() -> None:
+    """DDL 与 ``services.risk_monitor.TRIGGERS`` 是同一份默认值，不许漂移。"""
+    from services import risk_monitor
+
+    assert set(risk_monitor.TRIGGERS) == set(RISK_SEEDS)
+    for trigger, (threshold, hours, mode) in RISK_SEEDS.items():
+        assert risk_monitor.TRIGGERS[trigger]["config"] == {
+            "threshold": threshold,
+            "window_hours": hours,
+            "mode": mode,
+        }
+
+
+def test_risk_seed_defaults_match_the_router_registry() -> None:
+    """管理端表单初值同样来自注册表：三处（DDL / 服务 / 注册表）必须一致。"""
+    from routers import ban_router
+
+    for trigger, (threshold, hours, mode) in RISK_SEEDS.items():
+        entry = ban_router.TRIGGER_REGISTRY[trigger]
+        assert entry["evaluation"] == "monitor"
+        assert entry["config"] == {
+            "threshold": threshold,
+            "window_hours": hours,
+            "mode": mode,
+        }
