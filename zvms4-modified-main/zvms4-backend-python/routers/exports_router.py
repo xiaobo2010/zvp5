@@ -35,10 +35,21 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from services import risk_monitor
+
+_logger = logging.getLogger(__name__)
 
 _MAX_EXPORT_PAGE_SIZE = 100
 _DEFAULT_EXPORT_WINDOW_DAYS = 30
 _MAX_EXPORT_WINDOW_DAYS = 365
+
+
+async def _run_risk_export(user_oid) -> None:
+    """导出频率规则：评估失败不得影响导出任务已创建的响应。"""
+    try:
+        await risk_monitor.evaluate("export_burst", str(user_oid))
+    except Exception:
+        _logger.warning("风险规则 export_burst 评估失败", exc_info=True)
 
 
 def _task_age():
@@ -289,6 +300,7 @@ async def export_users(
         type="export",
     )
     await log.insert_log()
+    await _run_risk_export(user["id"])
     background_tasks.add_task(process_task, str(task_id))
     return {"code": 201, "status": "ok", "data": str(task_id)}
 
@@ -334,6 +346,7 @@ async def export_time(
         type="export",
     )
     await log.insert_log()
+    await _run_risk_export(user["id"])
     background_tasks.add_task(process_task, str(task_id))
     return {"code": 201, "status": "ok", "data": str(task_id)}
 

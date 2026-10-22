@@ -16,6 +16,7 @@ from sqlalchemy.exc import IntegrityError
 
 from db import backends
 from db.repos.oracle.users import UserGoneError
+from services import risk_monitor
 from typings.log import inject_log, xuehai_id_from
 from util.cert import generate_initial_password, get_current_totp
 from util.group import get_user_permissions, is_in_a_same_class
@@ -945,6 +946,12 @@ async def create_temp_password_v3(
         level="info",
     )
     await log.insert_log()
+
+    # 签发人是**请求者**（app_user 即其 oid）：批量替别人开门才是要观察的行为。
+    try:
+        await risk_monitor.evaluate("temp_password_issue_burst", str(user["id"]))
+    except Exception:
+        _logger.warning("风险规则 temp_password_issue_burst 评估失败", exc_info=True)
 
     # 明文密码等价于一次登录凭据，任何缓存都可能把它留下。
     response.headers["Cache-Control"] = "no-store"

@@ -532,6 +532,14 @@ EXCEPTION
 END;
 /
 
+BEGIN
+  EXECUTE IMMEDIATE 'CREATE INDEX ix_export_tasks_task_start ON export_tasks (task_start)';
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE NOT IN (-955, -1408) THEN RAISE; END IF;
+END;
+/
+
 -- ----------------------------------------------------------------------------
 -- IMPORTS  ← zvms_new.imports   (written by routers/imports_router.py)
 --   `date` (an ISO string in Mongo) -> IMPORT_DATE; `content` is BSON Binary.
@@ -946,6 +954,14 @@ EXCEPTION
 END;
 /
 
+BEGIN
+  EXECUTE IMMEDIATE 'CREATE INDEX ix_device_challenges_user_created ON device_challenges (user_oid, created_at)';
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE NOT IN (-955, -1408) THEN RAISE; END IF;
+END;
+/
+
 -- ----------------------------------------------------------------------------
 -- BANNED_DEVICES  ← new (设备级封禁)
 --   主键就是学海设备号：一台设备只有一条当前状态，重复封禁是覆盖而非追加。
@@ -1179,6 +1195,146 @@ WHEN NOT MATCHED THEN INSERT
   VALUES (''0b0000000000000000000003'', ''platform_misuse'', ''平台违规使用'',
           ''platform_misuse'', 1, ''{"threshold":3,"window_hours":24}'',
           ''[1,3,7]'', 1, SYSTIMESTAMP, SYSTIMESTAMP)';
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE NOT IN (-1, -955) THEN RAISE; END IF;
+END;
+/
+
+-- ----------------------------------------------------------------------------
+-- BAN_RULES seed  ← 七条服务端可观测规则的默认行（也由 V020__risk_rules.sql mirror）
+--   config.mode 决定达到阈值后「只告警」（alert）还是「按梯度封禁」（ban）；
+--   缺省等价于 ban。alert 的 penalties 是 JSON null（该规则不封人）。
+--   固定 oid + MERGE：重复执行既不重复插入，也不覆盖管理员调过的阈值与梯度。
+-- ----------------------------------------------------------------------------
+-- ----------------------------------------------------------------------------
+-- 内置规则: 登录失败暴破（APP_LOGS ltype=login_fail）
+-- ----------------------------------------------------------------------------
+BEGIN
+  EXECUTE IMMEDIATE '
+MERGE INTO ban_rules t
+USING (SELECT ''0b0000000000000000000004'' oid FROM dual) s
+ON (t.code = ''login_failure_burst'')
+WHEN NOT MATCHED THEN INSERT
+  (oid, code, name, trigger_code, enabled, config, penalties, builtin, created_at, updated_at)
+  VALUES (''0b0000000000000000000004'', ''login_failure_burst'', ''登录失败暴破'',
+          ''login_failure_burst'', 1, ''{"threshold":10,"window_hours":1,"mode":"ban"}'',
+          ''[1,3,7]'', 1, SYSTIMESTAMP, SYSTIMESTAMP)';
+EXCEPTION
+  -- -1: 并发执行时另一会话已插入（uq_ban_rules_code），结果一致，忽略。
+  WHEN OTHERS THEN
+    IF SQLCODE NOT IN (-1, -955) THEN RAISE; END IF;
+END;
+/
+
+-- ----------------------------------------------------------------------------
+-- 内置规则: 封禁期内反复尝试登录（APP_LOGS ltype=login_fail 且摘要含 banned）
+-- ----------------------------------------------------------------------------
+BEGIN
+  EXECUTE IMMEDIATE '
+MERGE INTO ban_rules t
+USING (SELECT ''0b0000000000000000000005'' oid FROM dual) s
+ON (t.code = ''ban_evasion_retry'')
+WHEN NOT MATCHED THEN INSERT
+  (oid, code, name, trigger_code, enabled, config, penalties, builtin, created_at, updated_at)
+  VALUES (''0b0000000000000000000005'', ''ban_evasion_retry'', ''封禁期内反复尝试登录'',
+          ''ban_evasion_retry'', 1, ''{"threshold":5,"window_hours":1,"mode":"ban"}'',
+          ''[1,3,7]'', 1, SYSTIMESTAMP, SYSTIMESTAMP)';
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE NOT IN (-1, -955) THEN RAISE; END IF;
+END;
+/
+
+-- ----------------------------------------------------------------------------
+-- 内置规则: 设备挑战刷取（DEVICE_CHALLENGES 按 user_oid 计数，默认只告警）
+-- ----------------------------------------------------------------------------
+BEGIN
+  EXECUTE IMMEDIATE '
+MERGE INTO ban_rules t
+USING (SELECT ''0b0000000000000000000006'' oid FROM dual) s
+ON (t.code = ''challenge_flood'')
+WHEN NOT MATCHED THEN INSERT
+  (oid, code, name, trigger_code, enabled, config, penalties, builtin, created_at, updated_at)
+  VALUES (''0b0000000000000000000006'', ''challenge_flood'', ''设备挑战刷取'',
+          ''challenge_flood'', 1, ''{"threshold":8,"window_hours":1,"mode":"alert"}'',
+          ''null'', 1, SYSTIMESTAMP, SYSTIMESTAMP)';
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE NOT IN (-1, -955) THEN RAISE; END IF;
+END;
+/
+
+-- ----------------------------------------------------------------------------
+-- 内置规则: 临时密码签发过频（APP_LOGS ltype=temp_password_create，按签发人）
+-- ----------------------------------------------------------------------------
+BEGIN
+  EXECUTE IMMEDIATE '
+MERGE INTO ban_rules t
+USING (SELECT ''0b0000000000000000000007'' oid FROM dual) s
+ON (t.code = ''temp_password_issue_burst'')
+WHEN NOT MATCHED THEN INSERT
+  (oid, code, name, trigger_code, enabled, config, penalties, builtin, created_at, updated_at)
+  VALUES (''0b0000000000000000000007'', ''temp_password_issue_burst'', ''临时密码签发过频'',
+          ''temp_password_issue_burst'', 1, ''{"threshold":20,"window_hours":1,"mode":"alert"}'',
+          ''null'', 1, SYSTIMESTAMP, SYSTIMESTAMP)';
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE NOT IN (-1, -955) THEN RAISE; END IF;
+END;
+/
+
+-- ----------------------------------------------------------------------------
+-- 内置规则: 导出任务过频（APP_LOGS ltype=export，按请求者）
+-- ----------------------------------------------------------------------------
+BEGIN
+  EXECUTE IMMEDIATE '
+MERGE INTO ban_rules t
+USING (SELECT ''0b0000000000000000000008'' oid FROM dual) s
+ON (t.code = ''export_burst'')
+WHEN NOT MATCHED THEN INSERT
+  (oid, code, name, trigger_code, enabled, config, penalties, builtin, created_at, updated_at)
+  VALUES (''0b0000000000000000000008'', ''export_burst'', ''导出任务过频'',
+          ''export_burst'', 1, ''{"threshold":10,"window_hours":1,"mode":"alert"}'',
+          ''null'', 1, SYSTIMESTAMP, SYSTIMESTAMP)';
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE NOT IN (-1, -955) THEN RAISE; END IF;
+END;
+/
+
+-- ----------------------------------------------------------------------------
+-- 内置规则: 短时间反复登录（APP_LOGS ltype=user_login）
+-- ----------------------------------------------------------------------------
+BEGIN
+  EXECUTE IMMEDIATE '
+MERGE INTO ban_rules t
+USING (SELECT ''0b0000000000000000000009'' oid FROM dual) s
+ON (t.code = ''login_success_churn'')
+WHEN NOT MATCHED THEN INSERT
+  (oid, code, name, trigger_code, enabled, config, penalties, builtin, created_at, updated_at)
+  VALUES (''0b0000000000000000000009'', ''login_success_churn'', ''短时间反复登录'',
+          ''login_success_churn'', 1, ''{"threshold":15,"window_hours":1,"mode":"alert"}'',
+          ''null'', 1, SYSTIMESTAMP, SYSTIMESTAMP)';
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE NOT IN (-1, -955) THEN RAISE; END IF;
+END;
+/
+
+-- ----------------------------------------------------------------------------
+-- 内置规则: 频繁更换设备（APP_LOGS ltype=device_mismatch，24 小时窗口）
+-- ----------------------------------------------------------------------------
+BEGIN
+  EXECUTE IMMEDIATE '
+MERGE INTO ban_rules t
+USING (SELECT ''0b000000000000000000000a'' oid FROM dual) s
+ON (t.code = ''device_switch_burst'')
+WHEN NOT MATCHED THEN INSERT
+  (oid, code, name, trigger_code, enabled, config, penalties, builtin, created_at, updated_at)
+  VALUES (''0b000000000000000000000a'', ''device_switch_burst'', ''频繁更换设备'',
+          ''device_switch_burst'', 1, ''{"threshold":5,"window_hours":24,"mode":"alert"}'',
+          ''null'', 1, SYSTIMESTAMP, SYSTIMESTAMP)';
 EXCEPTION
   WHEN OTHERS THEN
     IF SQLCODE NOT IN (-1, -955) THEN RAISE; END IF;
