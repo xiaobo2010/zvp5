@@ -770,8 +770,11 @@ END;
 -- BAN_RULES  ← new (规则封禁配置)
 --   一行一条自动封禁规则。CONFIG / PENALTIES 是**有界** JSON：用
 --   VARCHAR2(2000 CHAR) 而不是 CLOB —— 配置体量固定且总是整体读取，LOB
---   locator 只会多一次往返。CODE 是登录链路引用的稳定身份。
---   也由 V013__add_ban_rules.sql 在存量实例上创建。
+--   locator 只会多一次往返。CODE 是管理员看到的名字/稳定身份，TRIGGER 是
+--   求值入口引用的检查项（V016）：同一检查项最多一条规则，否则「用哪条」
+--   只能靠运气。TRIGGER 可空是给存量行加列留的余地（唯一索引允许多个 NULL）。
+--   也由 V013__add_ban_rules.sql / V016__rule_engine_and_violations.sql 在
+--   存量实例上创建。
 -- ----------------------------------------------------------------------------
 BEGIN
   EXECUTE IMMEDIATE '
@@ -779,6 +782,7 @@ CREATE TABLE ban_rules (
   oid VARCHAR2(24 CHAR) NOT NULL,
   code VARCHAR2(64 CHAR) NOT NULL,
   name VARCHAR2(128 CHAR) NOT NULL,
+  trigger VARCHAR2(64 CHAR),
   enabled NUMBER(1) DEFAULT 1 NOT NULL,
   config VARCHAR2(2000 CHAR) NOT NULL,
   penalties VARCHAR2(2000 CHAR) NOT NULL,
@@ -796,6 +800,15 @@ CREATE TABLE ban_rules (
 EXCEPTION
   WHEN OTHERS THEN
     IF SQLCODE != -955 THEN RAISE; END IF;
+END;
+/
+
+BEGIN
+  EXECUTE IMMEDIATE
+    'CREATE UNIQUE INDEX ux_ban_rules_trigger ON ban_rules (trigger)';
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE NOT IN (-955, -1408) THEN RAISE; END IF;
 END;
 /
 
@@ -945,23 +958,39 @@ END;
 /
 
 -- ----------------------------------------------------------------------------
--- BAN_RULES seed  ← 唯一一处 DML（也由 V013 mirror）
---   内置规则与 V013 用同一个固定 oid，MERGE 保证「不存在才插入」：重复执行
---   不会覆盖管理员已调过的 threshold / penalties。
+-- BAN_VIOLATIONS  ← new (客户端上报的违规信号)
+--   一条一行，append-only；命中「窗口内累计计数」后由规则梯度决定封禁。
+--   无外键：违规记录是审计材料，必须比账号活得久（用户被硬删除后仍要能
+--   回答「他当时因为什么被封」）。SIGNAL 是 iframe / bridge / devtools，
+--   DETAIL 存判定时的原始依据。(user_oid, trigger, created_at) 的组合索引
+--   服务「窗口内计数」这条热路径。
+--   也由 V016__rule_engine_and_violations.sql 在存量实例上创建。
 -- ----------------------------------------------------------------------------
 BEGIN
   EXECUTE IMMEDIATE '
-MERGE INTO ban_rules t
-USING (SELECT ''0b0000000000000000000001'' oid FROM dual) s
-ON (t.code = ''multi_device_login'')
-WHEN NOT MATCHED THEN INSERT
-  (oid, code, name, enabled, config, penalties, builtin, created_at, updated_at)
-  VALUES (''0b0000000000000000000001'', ''multi_device_login'', ''同学号多设备登录'',
-          1, ''{"threshold":3,"window_hours":24}'', ''[1,2,7]'', 1,
-          SYSTIMESTAMP, SYSTIMESTAMP)';
+CREATE TABLE ban_violations (
+  oid VARCHAR2(24 CHAR) NOT NULL,
+  user_oid VARCHAR2(24 CHAR) NOT NULL,
+  trigger VARCHAR2(64 CHAR) NOT NULL,
+  signal VARCHAR2(32 CHAR) NOT NULL,
+  xuehai_id VARCHAR2(32 CHAR),
+  detail VARCHAR2(500 CHAR),
+  created_at TIMESTAMP NOT NULL,
+  PRIMARY KEY (oid),
+  CONSTRAINT ck_ban_violations_oid CHECK (REGEXP_LIKE(oid,''^[0-9a-f]{24}$''))
+)';
 EXCEPTION
   WHEN OTHERS THEN
-    IF SQLCODE NOT IN (-1, -955) THEN RAISE; END IF;
+    IF SQLCODE != -955 THEN RAISE; END IF;
+END;
+/
+
+BEGIN
+  EXECUTE IMMEDIATE
+    'CREATE INDEX ix_ban_violations_user ON ban_violations (user_oid, trigger, created_at)';
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE NOT IN (-955, -1408) THEN RAISE; END IF;
 END;
 /
 
@@ -1044,8 +1073,10 @@ END;
 /
 
 -- ----------------------------------------------------------------------------
--- BAN_RULES seed  ← 非主学海设备登录（也由 V014 mirror）
---   惩罚梯度末位 null = 永久。同样用 MERGE：管理员调过的档位不会被种子覆盖。
+-- BAN_RULES seed  ← 内置规则（非主学海设备登录；也由 V014/V016 mirror）
+--   惩罚梯度末位 null = 永久。用固定 oid + MERGE：重复执行不会覆盖管理员
+--   调过的 threshold / penalties。旧的 multi_device_login 已随 V016 删除
+--   （口径被「主设备 + 临时密码」取代），它的历史流水保留在 BAN_RECORDS 里。
 -- ----------------------------------------------------------------------------
 BEGIN
   EXECUTE IMMEDIATE '
@@ -1053,10 +1084,10 @@ MERGE INTO ban_rules t
 USING (SELECT ''0b0000000000000000000002'' oid FROM dual) s
 ON (t.code = ''foreign_device_login'')
 WHEN NOT MATCHED THEN INSERT
-  (oid, code, name, enabled, config, penalties, builtin, created_at, updated_at)
+  (oid, code, name, trigger, enabled, config, penalties, builtin, created_at, updated_at)
   VALUES (''0b0000000000000000000002'', ''foreign_device_login'', ''非主学海设备登录'',
-          1, ''{"max_attempts":3}'', ''[1,3,7,14,30,null]'', 1,
-          SYSTIMESTAMP, SYSTIMESTAMP)';
+          ''foreign_device_login'', 1, ''{"threshold":3}'',
+          ''[1,3,7,14,30,null]'', 1, SYSTIMESTAMP, SYSTIMESTAMP)';
 EXCEPTION
   WHEN OTHERS THEN
     IF SQLCODE NOT IN (-1, -955) THEN RAISE; END IF;

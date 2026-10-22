@@ -146,6 +146,13 @@ def get_device_challenges_repo(session: Any = None) -> Any:
     return OracleDeviceChallengesRepo(session)
 
 
+def get_violations_repo(session: Any = None) -> Any:
+    """Return the ``ViolationsRepo`` implementation (平台违规使用证据)."""
+    from db.repos.oracle.violations import OracleViolationsRepo
+
+    return OracleViolationsRepo(session)
+
+
 __all__ = [
     "get_users_repo",
     "get_groups_repo",
@@ -166,4 +173,5 @@ __all__ = [
     "get_device_bans_repo",
     "get_temp_passwords_repo",
     "get_device_challenges_repo",
+    "get_violations_repo",
 ]

@@ -25,7 +25,7 @@ from util.permission.user import (
 )
 from db import backends
 from db.system_state import is_enabled_fresh
-from services import ban_rules, device_guard
+from services import device_guard
 from util.ban import ban_headers, ban_is_active, raise_banned
 from util.cert import (
     get_hashed_password_by_cert,
@@ -300,15 +300,6 @@ async def auth_user(auth: AuthUser, request: Request, response: Response):
     await log.insert_log()
 
     binding_mismatch = await _observe_binding(request, user_oid, log_name, xuehai_id)
-    # 规则封禁（多设备登录）：命中即 403，且不返回 token。判定内部 fail-open，
-    # 除主动抛出的 403 外不会阻断登录；放在签发后、返回前，token 不落地即可。
-    await ban_rules.enforce_login(
-        user_oid,
-        (user_doc or {}).get("roles", []),
-        log_name,
-        xuehai_id,
-        str(request.url),
-    )
 
     profile = _profile_payload(user_doc, id)
 

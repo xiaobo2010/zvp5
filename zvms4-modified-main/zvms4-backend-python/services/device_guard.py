@@ -10,7 +10,7 @@
 
 **为什么不物理同步账号封禁与设备封禁**：只有「临时密码连错 3 次」这一类
 证据能确认「有人在这台机器上冒用身份」，才写显式 ``BANNED_DEVICES`` 行；
-普通的账号封禁（多设备登录、管理员封禁）靠 :func:`device_ban_status` 的第二个
+普通的账号封禁（平台违规使用、管理员封禁）靠 :func:`device_ban_status` 的第二个
 条件**实时推导**（主设备=该机器且该用户此刻被封）。账号解封、用户换主设备后
 设备封禁自动消失，不需要任何反向同步任务，也就没有「两边不一致」的状态。
 """
@@ -38,7 +38,8 @@ TEMP_PASSWORD_TTL_MINUTES = 30
 TEMP_PASSWORD_CODE_LEN = 8
 TEMP_SESSION_HOURS = 1
 DEVICE_CHALLENGE_TTL_MINUTES = 5
-# 产品默认值：真正生效的上限读规则 ``config["max_attempts"]``，读不到才回落这里。
+# 产品默认值：真正生效的上限读规则的 ``config["threshold"]``（旧键 max_attempts 兼容），
+# 都读不到才回落这里。
 MAX_TEMP_ATTEMPTS = 3
 # 一次登录最多 bcrypt 比对几条有效临时密码（单次有效 + 30 分钟窗口，通常 1 条）。
 MAX_TEMP_PASSWORDS_SCANNED = 3
@@ -213,7 +214,12 @@ async def challenge_device(
 
 
 def _rule_max_attempts(rule: Any) -> int:
-    """规则 ``config["max_attempts"]``；缺失/非正/坏 JSON 一律回落常量。"""
+    """规则的尝试上限：``config["threshold"]`` → ``config["max_attempts"]`` → 常量 3。
+
+    ``threshold`` 优先是因为规则配置已统一成 ``{threshold, window_hours}``
+    （管理员界面只编辑这两个字段）；``max_attempts`` 是 V014 时代的旧键，留着
+    回落是为了「老库里没被 V016 改写的行」也照旧生效，而不是突然放宽成 3 次。
+    """
     if not isinstance(rule, dict):
         return MAX_TEMP_ATTEMPTS
     config = rule.get("config")
@@ -224,24 +230,29 @@ def _rule_max_attempts(rule: Any) -> int:
             return MAX_TEMP_ATTEMPTS
     if not isinstance(config, dict):
         return MAX_TEMP_ATTEMPTS
-    try:
-        value = int(config.get("max_attempts"))
-    except (TypeError, ValueError):
-        return MAX_TEMP_ATTEMPTS
-    return value if value > 0 else MAX_TEMP_ATTEMPTS
+    for key in ("threshold", "max_attempts"):
+        try:
+            value = int(config.get(key))
+        except (TypeError, ValueError):
+            continue
+        if value > 0:
+            return value
+    return MAX_TEMP_ATTEMPTS
 
 
 async def _temp_attempt_policy() -> tuple[int, bool]:
     """``(尝试上限, 规则是否启用)``。
+
+    按**检查项**取规则（``foreign_device_login``）：设备闸关心的是「这台机器
+    能不能登」，与管理员给规则起的名字无关；同一检查项最多一条规则，所以
+    取到的配置是确定的。
 
     读规则失败 → ``(默认上限, True)``：配置读不到是运维问题，不能顺手把封禁
     也关掉（fail-open 到产品默认值）。规则**存在但停用** → ``(上限, False)``，
     调用方据此只拒绝本次登入、不封禁。
     """
     try:
-        rule = await backends.get_ban_rules_repo().get_by_code(
-            RULE_CODE_FOREIGN_DEVICE
-        )
+        rule = await ban_rules.get_rule_by_trigger(RULE_CODE_FOREIGN_DEVICE)
     except Exception:
         _logger.exception(
             "读取 %s 规则失败，临时密码上限回落到 %s",
@@ -485,7 +496,7 @@ async def apply_account_ban(
 ) -> dict:
     """按规则梯度封账号，返回事实供调用方拼响应。
 
-    与 ``ban_rules.evaluate_login`` 共用 :func:`services.ban_rules.penalty_expiry`：
+    与 ``services.violation_guard`` 共用 :func:`services.ban_rules.penalty_expiry`：
     梯度末位 ``None`` → ``until=None``（永久），流水的 ``permanent`` 与
     ``expires_at`` 必须同时表达这件事，否则管理页会把永久封禁显示成「无到期时间」。
     """

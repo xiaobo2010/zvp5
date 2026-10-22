@@ -226,30 +226,50 @@ export const zhCN = {
       columns: {
         name: '规则名称',
         trigger: '触发条件',
+        config: '触发参数',
         penalties: '处罚梯度',
         enabled: '启用',
         actions: '操作'
       },
       builtin: '内置',
-      triggerText: '{threshold} 台设备 / {window_hours} 小时',
+      triggerText: '{threshold} 次 / {window_hours} 小时',
       penaltyDay: '{days} 天',
       penaltyPermanent: '永久',
       penaltiesHint: '处罚按梯度递进，超出最后一档时按最后一档处罚',
-      edit: '编辑'
+      edit: '编辑',
+      create: '新增规则',
+      nameLabel: '规则名称',
+      nameRequired: '请输入规则名称',
+      codeLabel: '规则标识',
+      codePlaceholder: '例如 late_homework',
+      codeHint: '小写字母开头，仅含小写字母、数字与下划线，3–64 位',
+      codeRequired: '请输入规则标识',
+      codeFormat: '规则标识格式不正确',
+      triggerLabel: '检查项',
+      triggerHint: '默认参数：{threshold} 次 / {window_hours} 小时',
+      triggerRequired: '请选择检查项',
+      delete: '删除',
+      deleteConfirm: '确定删除规则「{name}」？此操作不可恢复',
+      deletedNotice: '已删除',
+      deleteFailed: '删除失败',
+      deleteBuiltinDenied: '内置规则不能删除，只能停用',
+      createdNotice: '已创建',
+      createFailed: '创建失败'
     },
     dialog: {
       title: '编辑规则：{name}',
-      thresholdLabel: '触发设备数（台）',
+      thresholdLabel: '触发次数（次）',
       windowLabel: '时间窗（小时）',
       penaltiesLabel: '处罚梯度（天）',
       penaltiesPlaceholder: '逗号分隔的天数，例如 1,2,7（末尾填 0 表示永久）',
       penaltiesHint: '至少 1 项，最多 6 项，按升序填写（重复视为无效）；0 表示永久，只能写在最后一位',
       cancel: '取消',
-      save: '保存'
+      save: '保存',
+      create: '创建'
     },
     validation: {
-      thresholdRequired: '请输入触发设备数',
-      thresholdRange: '触发设备数须为 2 到 20 之间的整数',
+      thresholdRequired: '请输入触发次数',
+      thresholdRange: '触发次数须为 2 到 20 之间的整数',
       windowRequired: '请输入时间窗小时数',
       windowRange: '时间窗须为 1 到 168 之间的整数',
       penaltiesFormat: '处罚梯度须为逗号分隔的正整数天数，至少 1 项，最多 6 项，且按升序排列、不重复',
@@ -289,6 +309,26 @@ export const zhCN = {
     },
     empty: {
       rules: '暂无规则'
+    },
+    violations: {
+      title: '违规记录',
+      searchPlaceholder: '按姓名或学号搜索',
+      search: '搜索',
+      columns: {
+        name: '姓名',
+        userId: '学号',
+        type: '类型',
+        signal: '信号',
+        detail: '详情',
+        time: '时间'
+      },
+      signals: {
+        iframe: '被 iframe 嵌套',
+        bridge: '客户端桥缺失',
+        devtools: '调试器痕迹'
+      },
+      detailUnknown: '无详情',
+      empty: '暂无违规记录'
     }
   },
   exports: {

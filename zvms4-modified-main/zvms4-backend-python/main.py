@@ -29,6 +29,7 @@ from routers import (
     system_db_content_router,
     ban_router,
     notifications_router,
+    ban_violations_router,
 )
 import socketio
 from socketio.exceptions import ConnectionRefusedError as SocketIOConnectionRefusedError
@@ -414,6 +415,9 @@ app.include_router(
     notifications_router.router,
     prefix="/api/v3/notifications",
     tags=["notifications"],
+)
+app.include_router(
+    ban_violations_router.router, prefix="/api/v3/ban", tags=["ban"]
 )
 
 
