@@ -45,6 +45,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.ids import is_valid_oid, new_oid, normalize_oid
 from db.models import activity_members as activity_members_tbl
+from db.models import ban_records as ban_records_tbl
 from db.models import dual_auth_uses as dual_auth_uses_tbl
 from db.models import files as files_tbl
 from db.models import groups as groups_tbl
@@ -493,11 +494,12 @@ def _list_by_class_stmt(class_oid: str):
 def _search_filter(query: str, logged_in: bool):
     if not logged_in:
         return [users_tbl.c.business_id == query]
+    pattern = re.escape(query)
     return [
         or_(
-            func.regexp_like(users_tbl.c.name, query, "i"),
-            func.regexp_like(users_tbl.c.business_id, query, "i"),
-            text(_PAST_MATCH).bindparams(past_value=query),
+            func.regexp_like(users_tbl.c.name, pattern, "i"),
+            func.regexp_like(users_tbl.c.business_id, pattern, "i"),
+            text(_PAST_MATCH).bindparams(past_value=pattern),
         )
     ]
 
@@ -641,9 +643,10 @@ _FILES_METADATA_COLUMNS = (
 #   (名称, 表, 指向用户的列, 归档时读取的列(None=全部), 是否物理清理)
 #
 # * ``user_time`` / ``time_academic_year`` / ``time_with_origin`` /
-#   ``user_device_bindings`` —— 真外键（NO ACTION，全库无 ON DELETE CASCADE），
-#   不清理就删不掉 users 行；全量归档后物理删除。义工时长是**可以从活动台账
-#   重算**的派生数据，且已随回收站整体保留，删除不丢事实。
+#   ``user_device_bindings`` / ``ban_records`` —— 真外键（NO ACTION，全库无
+#   ON DELETE CASCADE），不清理就删不掉 users 行；全量归档后物理删除。义工
+#   时长是**可以从活动台账重算**的派生数据，封禁流水是只增的历史账本，两者
+#   都已随回收站整体保留，删除不丢事实。
 # * ``activity_members`` —— 无外键的软引用，**只归档、不删**：这些行是别人活动
 #   的参与记录/时长来源，删掉会静默改变他人的统计；保留后 ``member_oid`` 悬空，
 #   与既有「未知用户」语义一致（``db/models.py`` 对 member_oid 的注释）。
@@ -661,6 +664,7 @@ _CHILD_TABLES: tuple[tuple[str, Any, str, tuple[Any, ...] | None, bool], ...] = 
     ("time_academic_year", time_academic_year_tbl, "user_oid", None, True),
     ("time_with_origin", time_with_origin_tbl, "user_oid", None, True),
     ("user_device_bindings", user_device_bindings_tbl, "user_oid", None, True),
+    ("ban_records", ban_records_tbl, "user_oid", None, True),
     ("activity_members", activity_members_tbl, "member_oid", None, False),
     ("files", files_tbl, "owner_oid", _FILES_METADATA_COLUMNS, False),
 )

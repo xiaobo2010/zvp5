@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 
 from fastapi import (
     APIRouter,
@@ -39,6 +40,8 @@ from util.group import get_user_permissions
 from util.object_id import get_current_user
 
 router = APIRouter()
+
+logger = logging.getLogger(__name__)
 
 # 终端尺寸上限：只防明显异常的数值把 PTY 撑坏，正常 xterm 在几百以内。
 MAX_TERM_DIMENSION = 1000
@@ -131,7 +134,7 @@ async def _pump_output(websocket: WebSocket, session: ssh_bridge.SshSession) -> 
     except (RuntimeError, WebSocketDisconnect):
         return
     except Exception as exc:  # noqa: BLE001 - 泵异常必须转成明确 error 帧
-        print(f"web ssh output pump failed: {type(exc).__name__}")
+        logger.error("web ssh output pump failed: %s", type(exc).__name__)
         await _send_quietly(websocket, {"type": "error", "detail": "终端连接已断开"})
         await _close(websocket, ssh_bridge.WS_CLOSE_FAILURE, "终端连接已断开")
 
@@ -162,7 +165,7 @@ async def _write_command_audit(
             level="info",
         ).insert_log()
     except Exception as exc:  # noqa: BLE001 - 审计失败不改变会话结论
-        print(f"Failed to write ssh command log: {exc}")
+        logger.error("web ssh command audit failed: %s", type(exc).__name__)
 
 
 def _spawn_command_audit(
@@ -318,7 +321,7 @@ async def open_terminal(websocket: WebSocket, ticket: str = Query(default="")):
             session = await ssh_bridge.SshSession.open()
         except Exception as exc:  # noqa: BLE001 - 连接失败只回笼统提示
             # 只打异常类型：异常消息里可能带私钥路径或主机指纹。
-            print(f"web ssh connect failed: {type(exc).__name__}")
+            logger.error("web ssh connect failed: %s", type(exc).__name__)
             await _send_quietly(
                 websocket, {"type": "error", "detail": "终端连接失败"}
             )
