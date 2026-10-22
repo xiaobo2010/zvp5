@@ -8,6 +8,7 @@ import {
   ElEmpty,
   ElForm,
   ElFormItem,
+  ElIcon,
   ElInput,
   ElMessage,
   ElMessageBox,
@@ -15,9 +16,11 @@ import {
   ElTableColumn,
   ElTag
 } from 'element-plus'
+import { Timer } from '@element-plus/icons-vue'
 import type { FormInstance, FormItemRule, FormRules } from 'element-plus'
 import dayjs from '@/plugins/dayjs'
 import { ZMarkdownEditor } from '@/components/markdown'
+import ZNotificationHistoryDialog from './ZNotificationHistoryDialog.vue'
 import {
   createNotification,
   deleteNotification,
@@ -38,6 +41,13 @@ const loading = ref(false)
 const loadFailed = ref(false)
 const togglingId = ref('')
 const deletingId = ref('')
+const historyVisible = ref(false)
+const historyRow = ref<NotificationRecord | null>(null)
+
+function openHistory(row: NotificationRecord) {
+  historyRow.value = row
+  historyVisible.value = true
+}
 
 type DialogMode = 'create' | 'edit'
 const mode = ref<DialogMode>('create')
@@ -403,6 +413,10 @@ onMounted(() => {
               <ElButton text type="primary" size="small" @click="openEdit(row)">
                 {{ t('manage.notifications.edit') }}
               </ElButton>
+              <ElButton text size="small" @click="openHistory(row)">
+                <ElIcon class="mr-1"><Timer /></ElIcon>
+                {{ t('manage.notifications.history.entry') }}
+              </ElButton>
               <ElButton
                 text
                 size="small"
@@ -521,6 +535,13 @@ onMounted(() => {
         </div>
       </template>
     </ElDialog>
+
+    <ZNotificationHistoryDialog
+      :notification="historyRow"
+      :visible="historyVisible"
+      @update:visible="historyVisible = $event"
+      @refresh="loadNotifications"
+    />
   </div>
 </template>
 
