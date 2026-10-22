@@ -30,8 +30,11 @@ from db import backends
 from typings.log import ZVMSLog, inject_log, xuehai_id_from
 from util.attachment import (
     ALLOWED_PURPOSES,
+    DAILY_MAX_BYTES,
+    DAILY_MAX_FILES,
     MAX_BYTES,
     AttachmentError,
+    QuotaExceeded,
     check_quota,
     ext_for_mime,
     make_signed_url,
@@ -302,10 +305,18 @@ async def upload_attachment(
 
     original_name = sanitize_filename(form.get("original_name") or upload.filename)
 
-    check_quota(user["id"])
-    raw = await read_capped(upload, MAX_BYTES)
     try:
+        check_quota(user["id"])
+        raw = await read_capped(upload, MAX_BYTES)
         processed = await process_upload(raw)
+    except QuotaExceeded:
+        raise HTTPException(
+            status_code=429,
+            detail=(
+                f"今日上传配额已用尽（每日上限 {DAILY_MAX_FILES} 个 / "
+                f"{DAILY_MAX_BYTES // (1024 * 1024)} MB），请明天再试"
+            ),
+        )
     except AttachmentError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc))
 

@@ -34,6 +34,7 @@ DIALECT = oracle.dialect()
 DDL_DIR = Path(__file__).resolve().parents[1] / "db" / "oracle" / "ddl"
 V001_PATH = DDL_DIR / "V001__initial_schema.sql"
 V016_PATH = DDL_DIR / "V016__rule_engine_and_violations.sql"
+V019_PATH = DDL_DIR / "V019__harden_ban_engine.sql"
 
 NOW = datetime(2026, 10, 22, 9, 0, 0)
 
@@ -322,3 +323,52 @@ def test_seeded_foreign_device_rule_matches_the_registry(path: Path) -> None:
     )
     assert "trigger" in text
     assert '{"threshold":3}' in text or "''{\"threshold\":3}''" in text
+
+
+# ---------------------------------------------------------------------------
+# DDL：V019 加固（批次列 + 索引 + platform_misuse 种子）
+# ---------------------------------------------------------------------------
+
+
+def test_v019_adds_batch_id_and_its_index():
+    ddl = _ddl(V019_PATH)
+
+    assert "ALTER TABLE ban_violations ADD batch_id VARCHAR2(32 CHAR)" in ddl
+    assert (
+        "CREATE INDEX ix_ban_violations_batch ON ban_violations "
+        "(user_oid, trigger_code, created_at, batch_id)" in ddl
+    )
+
+
+def test_v019_seeds_platform_misuse_rule():
+    ddl = _ddl(V019_PATH)
+
+    assert "MERGE INTO ban_rules" in ddl
+    assert "'platform_misuse'" in ddl
+    assert '"threshold":3,"window_hours":24' in ddl
+    assert "[1,3,7]" in ddl
+    # 种子必须带 trigger：上报闸按 trigger 取规则，没有它就等于「只记录不封」。
+    assert "platform_misuse" in ddl.split("VALUES", 1)[1]
+
+
+def test_v019_swallows_already_exists_errors():
+    text = V019_PATH.read_text(encoding="utf-8")
+
+    assert "IF SQLCODE != -1430 THEN RAISE; END IF;" in text
+    assert "IF SQLCODE NOT IN (-955, -1408) THEN RAISE; END IF;" in text
+    assert "IF SQLCODE NOT IN (-1, -955) THEN RAISE; END IF;" in text
+
+
+def test_v001_mirrors_v019_batch_column_index_and_seed():
+    """新建实例走 V001：列/索引/种子必须与 V019 完全一致（ddl_check 只盯前两者）。"""
+    ddl = _ddl(V001_PATH)
+
+    assert "batch_id VARCHAR2(32 CHAR)" in ddl
+    assert (
+        "CREATE INDEX ix_ban_violations_batch ON ban_violations "
+        "(user_oid, trigger_code, created_at, batch_id)" in ddl
+    )
+    assert "MERGE INTO ban_rules" in ddl
+    assert "'0b0000000000000000000003'" in ddl
+    assert '"threshold":3,"window_hours":24' in ddl
+    assert "[1,3,7]" in ddl

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 
 import pytest
@@ -178,6 +179,55 @@ def test_top_sql_and_endpoints_validate_limits(client, monkeypatch):
     assert response.json()["data"]["window_seconds"] == 3600
     assert seen == {"limit": 20, "range": "1h"}
     assert http.get(f"{PREFIX}/endpoints?limit=101").status_code == 422
+
+
+def test_sync_sqlite_collectors_never_run_on_the_event_loop(client, monkeypatch):
+    """The four sqlite collectors are synchronous: they must be off-loaded.
+
+    ``asyncio.get_running_loop()`` inside a collector only succeeds on the event
+    loop thread, so a collector that observes it is blocking the whole worker.
+    """
+    http, _ = client
+    ran = []
+
+    def off_loop(name, payload):
+        def collect(*args):
+            try:
+                asyncio.get_running_loop()
+            except RuntimeError:
+                ran.append(name)
+                return payload
+            raise AssertionError(f"{name} blocked the event loop")
+
+        return collect
+
+    monkeypatch.setattr(
+        db_metrics_router,
+        "get_local_metrics",
+        off_loop("host", {"host": {"cpu": {}}, "pool": {}}),
+    )
+    monkeypatch.setattr(
+        db_metrics_router,
+        "query_history",
+        off_loop("history", {"from": None, "to": None, "step_seconds": 60, "agg": "avg",
+                             "unknown_series": [], "series": []}),
+    )
+    monkeypatch.setattr(
+        db_metrics_router,
+        "query_top_sql",
+        off_loop("top_sql", {"observed_at": None, "items": []}),
+    )
+    monkeypatch.setattr(
+        db_metrics_router,
+        "query_endpoints",
+        off_loop("endpoints", {"window_seconds": 3600, "items": []}),
+    )
+
+    assert http.get(f"{PREFIX}/host").status_code == 200
+    assert http.get(f"{PREFIX}/history?series=host.load.1m").status_code == 200
+    assert http.get(f"{PREFIX}/top-sql").status_code == 200
+    assert http.get(f"{PREFIX}/endpoints").status_code == 200
+    assert ran == ["host", "history", "top_sql", "endpoints"]
 
 
 def test_wiring_keeps_shield_and_maintenance_outside_api_metrics():

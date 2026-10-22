@@ -477,6 +477,22 @@ EXCEPTION
 END;
 /
 
+BEGIN
+  EXECUTE IMMEDIATE 'CREATE INDEX ix_app_logs_ts_raw ON app_logs (ts_raw)';
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE NOT IN (-955, -1408) THEN RAISE; END IF;
+END;
+/
+
+BEGIN
+  EXECUTE IMMEDIATE 'CREATE INDEX ix_app_logs_type_level_ts ON app_logs (ltype, log_level, ts_raw)';
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE NOT IN (-955, -1408) THEN RAISE; END IF;
+END;
+/
+
 -- ----------------------------------------------------------------------------
 -- EXPORT_TASKS  ← zvms_new.tasks   (runtime export queue; `id` is a BSON UUID)
 -- ----------------------------------------------------------------------------
@@ -960,11 +976,14 @@ END;
 -- ----------------------------------------------------------------------------
 -- BAN_VIOLATIONS  ← new (客户端上报的违规信号)
 --   一条一行，append-only；命中「窗口内累计计数」后由规则梯度决定封禁。
---   无外键：违规记录是审计材料，必须比账号活得久（用户被硬删除后仍要能
---   回答「他当时因为什么被封」）。SIGNAL 是 iframe / bridge / devtools，
---   DETAIL 存判定时的原始依据。(user_oid, trigger_code, created_at) 的组合索引
---   服务「窗口内计数」这条热路径。
---   也由 V016__rule_engine_and_violations.sql 在存量实例上创建。
+--   计数单位是 BATCH_ID（一次上报 = 一批，V019）：同一次页面加载里的
+--   iframe+bridge+devtools 只该算一次违规。无外键：违规记录是审计材料，
+--   必须比账号活得久（用户被硬删除后仍要能回答「他当时因为什么被封」）。
+--   SIGNAL 是 iframe / bridge / devtools，DETAIL 存判定时的原始依据。
+--   (user_oid, trigger_code, created_at) 的组合索引服务「窗口内计数」这条热路径，
+--   第二个索引把 BATCH_ID 带进同一条访问路径（COUNT(DISTINCT ...) 不必回表）。
+--   也由 V016__rule_engine_and_violations.sql / V019__harden_ban_engine.sql 在
+--   存量实例上创建。
 -- ----------------------------------------------------------------------------
 BEGIN
   EXECUTE IMMEDIATE '
@@ -975,6 +994,7 @@ CREATE TABLE ban_violations (
   signal VARCHAR2(32 CHAR) NOT NULL,
   xuehai_id VARCHAR2(32 CHAR),
   detail VARCHAR2(500 CHAR),
+  batch_id VARCHAR2(32 CHAR),
   created_at TIMESTAMP NOT NULL,
   PRIMARY KEY (oid),
   CONSTRAINT ck_ban_violations_oid CHECK (REGEXP_LIKE(oid,''^[0-9a-f]{24}$''))
@@ -988,6 +1008,15 @@ END;
 BEGIN
   EXECUTE IMMEDIATE
     'CREATE INDEX ix_ban_violations_user ON ban_violations (user_oid, trigger_code, created_at)';
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE NOT IN (-955, -1408) THEN RAISE; END IF;
+END;
+/
+
+BEGIN
+  EXECUTE IMMEDIATE
+    'CREATE INDEX ix_ban_violations_batch ON ban_violations (user_oid, trigger_code, created_at, batch_id)';
 EXCEPTION
   WHEN OTHERS THEN
     IF SQLCODE NOT IN (-955, -1408) THEN RAISE; END IF;
@@ -1073,6 +1102,46 @@ END;
 /
 
 -- ----------------------------------------------------------------------------
+-- NOTIFICATION_VERSIONS  ← new (通知内容快照; append-only)
+--   一行 = 一次写入后的完整内容（create / update / delete / rollback），
+--   SOURCE_VERSION 只在 rollback 行上有值。CONTENT_HASH 是
+--   sha256(title + '\n' + content + '\n' + "1"/"0") 的 64 位小写 hex。
+--   不建 FK：通知被硬删后历史仍要能回答「当时是什么内容、谁改的」。
+--   也由 V017__add_notification_versions.sql 在存量实例上创建。
+-- ----------------------------------------------------------------------------
+BEGIN
+  EXECUTE IMMEDIATE '
+CREATE TABLE notification_versions (
+  oid VARCHAR2(24 CHAR) NOT NULL,
+  notification_oid VARCHAR2(24 CHAR) NOT NULL,
+  version NUMBER(19) NOT NULL,
+  title VARCHAR2(200 CHAR) NOT NULL,
+  content VARCHAR2(4000 CHAR) NOT NULL,
+  active NUMBER(1) NOT NULL,
+  op VARCHAR2(16 CHAR) NOT NULL,
+  source_version NUMBER(19),
+  content_hash VARCHAR2(64 CHAR) NOT NULL,
+  author_oid VARCHAR2(24 CHAR),
+  author_name VARCHAR2(128 CHAR) NOT NULL,
+  created_at TIMESTAMP NOT NULL,
+  PRIMARY KEY (oid),
+  CONSTRAINT uq_notification_versions UNIQUE (notification_oid, version)
+)';
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE != -955 THEN RAISE; END IF;
+END;
+/
+
+BEGIN
+  EXECUTE IMMEDIATE 'CREATE INDEX ix_notification_versions_doc ON notification_versions (notification_oid, version)';
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE NOT IN (-955, -1408) THEN RAISE; END IF;
+END;
+/
+
+-- ----------------------------------------------------------------------------
 -- BAN_RULES seed  ← 内置规则（非主学海设备登录；也由 V014/V016 mirror）
 --   惩罚梯度末位 null = 永久。用固定 oid + MERGE：重复执行不会覆盖管理员
 --   调过的 threshold / penalties。旧的 multi_device_login 已随 V016 删除
@@ -1088,6 +1157,28 @@ WHEN NOT MATCHED THEN INSERT
   VALUES (''0b0000000000000000000002'', ''foreign_device_login'', ''非主学海设备登录'',
           ''foreign_device_login'', 1, ''{"threshold":3}'',
           ''[1,3,7,14,30,null]'', 1, SYSTIMESTAMP, SYSTIMESTAMP)';
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE NOT IN (-1, -955) THEN RAISE; END IF;
+END;
+/
+
+-- ----------------------------------------------------------------------------
+-- BAN_RULES seed  ← 内置规则（平台违规使用；也由 V019__harden_ban_engine.sql mirror）
+--   上报闸（services.violation_guard）按 trigger 取这条规则。没有种子的后果是
+--   「只记录不封禁」——上报端点看起来在工作，实际永远不会处罚。config 与
+--   ban_rules.DEFAULT_CONFIG / violation_guard.DEFAULT_CONFIG 同一形状与数值。
+-- ----------------------------------------------------------------------------
+BEGIN
+  EXECUTE IMMEDIATE '
+MERGE INTO ban_rules t
+USING (SELECT ''0b0000000000000000000003'' oid FROM dual) s
+ON (t.code = ''platform_misuse'')
+WHEN NOT MATCHED THEN INSERT
+  (oid, code, name, trigger_code, enabled, config, penalties, builtin, created_at, updated_at)
+  VALUES (''0b0000000000000000000003'', ''platform_misuse'', ''平台违规使用'',
+          ''platform_misuse'', 1, ''{"threshold":3,"window_hours":24}'',
+          ''[1,3,7]'', 1, SYSTIMESTAMP, SYSTIMESTAMP)';
 EXCEPTION
   WHEN OTHERS THEN
     IF SQLCODE NOT IN (-1, -955) THEN RAISE; END IF;

@@ -33,6 +33,7 @@ from db.repos.oracle import app_logs as app_logs_repo
 from db.repos.oracle import ban_records as ban_records_repo
 from db.repos.oracle import ban_rules as ban_rules_repo
 from db.repos.oracle import users as users_repo
+from db.repos.oracle import violations as violations_repo
 
 USER_OID = "000000000000000000000002"
 OTHER_OID = "000000000000000000000003"
@@ -412,7 +413,7 @@ def test_ban_violations_columns_and_index_cover_the_counting_path():
     """窗口内计数是热路径：索引必须是 (user_oid, trigger, created_at)。"""
     names = [col.name for col in ban_violations_tbl.c]
     for column in ("oid", "user_oid", "trigger_code", "signal", "xuehai_id", "detail",
-                   "created_at"):
+                   "batch_id", "created_at"):
         assert column in names
 
     indexes = {
@@ -424,6 +425,51 @@ def test_ban_violations_columns_and_index_cover_the_counting_path():
         "trigger_code",
         "created_at",
     ]
+    # 批次去重（COUNT(DISTINCT ...)）必须能只走索引。
+    assert indexes["ix_ban_violations_batch"] == [
+        "user_oid",
+        "trigger_code",
+        "created_at",
+        "batch_id",
+    ]
+
+
+def test_ban_violations_insert_writes_the_batch_id():
+    stmt = violations_repo._insert_stmt(
+        "0e00000000000000000000ff",
+        USER_OID,
+        "platform_misuse",
+        "iframe",
+        "2026000001",
+        "top!=self",
+        UNTIL,
+        "0e00000000000000000000aa",
+    )
+    provided = {(k if isinstance(k, str) else k.name).lower() for k in stmt._values}
+    assert "batch_id" in provided
+    sql = _sql(stmt)
+    assert "'0e00000000000000000000aa'" in sql
+    # batch_id 可空：V019 之前的存量行没有批次号。
+    assert ban_violations_tbl.c.batch_id.nullable is True
+
+
+def test_ban_violations_count_batches_dedups_with_oid_fallback():
+    """计数口径：``COUNT(DISTINCT COALESCE(batch_id, oid))``（旧行每行一批）。"""
+    sql = _sql(violations_repo._count_batches_since_stmt(USER_OID, "platform_misuse", UNTIL))
+
+    assert "count(distinct(coalesce(" in sql.lower()
+    assert "ban_violations.batch_id" in sql
+    assert "ban_violations.oid" in sql
+    assert f"ban_violations.user_oid = '{USER_OID}'" in sql
+    assert "ban_violations.trigger_code = 'platform_misuse'" in sql
+    assert "ban_violations.created_at >=" in sql
+
+
+def test_ban_violations_count_since_stays_row_based():
+    """证据行数仍然逐行统计：批次口径只用于封禁判定。"""
+    sql = _sql(violations_repo._count_since_stmt(USER_OID, "platform_misuse", UNTIL))
+    assert "count(*)" in sql
+    assert "DISTINCT" not in sql
 
 
 def test_ban_records_row_maps_permanent_and_joined_columns():

@@ -21,8 +21,8 @@ OTHER = "000000000000000000000002"
 
 
 class StubLog:
-    def __init__(self):
-        self.calls = []
+    def __init__(self, sink=None):
+        self.calls = [] if sink is None else sink
 
     def with_text(self, *args, **kwargs):
         self.calls.append((args, kwargs))
@@ -34,10 +34,23 @@ class StubLog:
 
 @pytest.fixture
 def client(monkeypatch):
-    state = {"bans": [], "clears": [], "records": []}
+    state = {
+        "bans": [],
+        "clears": [],
+        "records": [],
+        "device_deletes": [],
+        "device_rows": 1,
+        "logs": [],
+    }
     users = {
         SELF: {"_id": SELF, "name": "self", "roles": ["admin"], "banned": 0},
-        OTHER: {"_id": OTHER, "name": "other", "roles": ["student"], "banned": 0},
+        OTHER: {
+            "_id": OTHER,
+            "name": "other",
+            "roles": ["student"],
+            "banned": 0,
+            "primary_xuehai_id": "202600011234",
+        },
     }
 
     async def get_by_oid(oid):
@@ -61,6 +74,12 @@ def client(monkeypatch):
         state["records"].append({"user_oid": user_oid, **kwargs})
         return "rec-1"
 
+    async def device_delete(xuehai_id):
+        state["device_deletes"].append(xuehai_id)
+        if isinstance(state["device_rows"], Exception):
+            raise state["device_rows"]
+        return state["device_rows"]
+
     async def display_name(oid):
         return "admin"
 
@@ -76,12 +95,17 @@ def client(monkeypatch):
         "get_ban_records_repo",
         lambda *a, **k: SimpleNamespace(insert=insert),
     )
+    monkeypatch.setattr(
+        backends,
+        "get_device_bans_repo",
+        lambda *a, **k: SimpleNamespace(delete=device_delete),
+    )
     monkeypatch.setattr(users_v3_router, "get_user_display_name", display_name)
 
     app = FastAPI()
     app.include_router(users_v3_router.router, prefix="/api/v3/users")
     app.dependency_overrides[get_current_user] = lambda: {"id": SELF, "per": ["admin"]}
-    app.dependency_overrides[inject_log] = lambda: StubLog()
+    app.dependency_overrides[inject_log] = lambda: StubLog(state["logs"])
     return TestClient(app), state
 
 
@@ -155,3 +179,58 @@ def test_self_unban_is_not_blocked(client):
     assert state["bans"] == []
     # 解封不写流水：历史事实已经由封禁时的行承担，解封不能追加「负封禁」。
     assert state["records"] == []
+
+
+# ---------------------------------------------------------------------------
+# 解封连带解除主设备封禁（误封 B11）
+# ---------------------------------------------------------------------------
+
+
+def _last_log_text(state) -> str:
+    return state["logs"][-1][0][0]
+
+
+def test_unban_also_lifts_primary_device_ban(client):
+    http, state = client
+
+    assert http.put(f"/api/v3/users/{OTHER}/banned", json={"banned": False}).status_code == 204
+
+    assert state["clears"] == [OTHER]
+    assert state["device_deletes"] == ["202600011234"]
+    text = _last_log_text(state)
+    assert "解除了主学海设备" in text
+    assert "1 条" in text
+    # 设备号只留后四位，审计日志里不出现完整设备号。
+    assert "1234" in text
+    assert "202600011234" not in text
+
+
+def test_unban_without_primary_device_skips_device_row(client, monkeypatch):
+    http, state = client
+    state["device_deletes"].clear()
+
+    assert http.put(f"/api/v3/users/{SELF}/banned", json={"banned": False}).status_code == 204
+    assert state["device_deletes"] == []
+
+
+def test_unban_survives_device_delete_failure(client):
+    http, state = client
+    state["device_rows"] = RuntimeError("oracle down")
+
+    response = http.put(f"/api/v3/users/{OTHER}/banned", json={"banned": False})
+
+    assert response.status_code == 204
+    assert state["clears"] == [OTHER]
+    text = _last_log_text(state)
+    assert "失败" in text
+    assert "RuntimeError" in text
+    assert "202600011234" not in text
+
+
+def test_unban_without_device_ban_row_mentions_nothing(client):
+    http, state = client
+    state["device_rows"] = 0
+
+    assert http.put(f"/api/v3/users/{OTHER}/banned", json={"banned": False}).status_code == 204
+    assert state["device_deletes"] == ["202600011234"]
+    assert "主学海设备" not in _last_log_text(state)

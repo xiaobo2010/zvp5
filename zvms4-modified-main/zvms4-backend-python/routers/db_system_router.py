@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 
 from fastapi import APIRouter, Depends, HTTPException, Response
 from fastapi.exceptions import RequestValidationError
@@ -35,6 +36,21 @@ from util.user import get_user_display_name
 
 
 _logger = logging.getLogger(__name__)
+
+# 提交失败对客户端的固定文案：systemd/sudo 的 stderr 里可能有主机名、路径与
+# 凭据片段，只留在审计日志里，不进 HTTP 响应。
+BACKUP_FAILED_DETAIL = "备份任务执行失败"
+
+_CREDENTIAL_RE = re.compile(
+    r"\b((?:password|passwd|pwd|secret|token|user|userid|username)=)[^\s,;]+",
+    re.IGNORECASE,
+)
+
+
+def _audit_summary(text: str) -> str:
+    """审计用的一句话摘要：抹掉凭据型键值并压平空白（长度与 stderr 同量级）。"""
+    scrubbed = _CREDENTIAL_RE.sub(r"\1<redacted>", text or "")
+    return " ".join(scrubbed.split())[:300]
 
 
 class _DatabaseStatusRoute(APIRoute):
@@ -169,26 +185,42 @@ async def backup_run(
     真正干活的是服务器上的 ``adb-sync.service``（oneshot，实测约 15 分钟），本端点
     只**提交**任务并立刻返回快照 —— 不能把请求挂 15 分钟；进度轮询
     ``GET /api/system/db/backup/progress``。已有备份在跑 → 409（沿用清理那边的既有
-    约定）；提交失败 → 500：``services.adb_backup`` 只抛领域异常，必须在这里
-    **显式**翻成 HTTPException，否则会被本 router 的 route_class 吞成 503 丢掉语义。
+    约定）；提交失败 → 500 + 固定中文文案：``services.adb_backup`` 只抛领域异常，
+    必须在这里**显式**翻成 HTTPException，否则会被本 router 的 route_class 吞成 503
+    丢掉语义。失败原因（已脱敏的 stderr 摘要）只写审计日志，不回给客户端。
     """
     await _require_system_admin(user)
 
+    failure: str | None = None
+    snapshot = None
     try:
         snapshot = await trigger_backup()
     except BackupBusy as exc:
         raise HTTPException(status_code=409, detail=str(exc))
     except BackupTriggerError as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+        failure = str(exc)
 
-    log.with_text(
-        f"管理员 {await get_user_display_name(user['id'])} 启动了 ADB 手动备份（prod → adb2）",
-        type=BACKUP_AUDIT_TYPE,
-        level=BACKUP_AUDIT_LEVEL,
-    )
-    await log.insert_log()
+    if failure is None:
+        log.with_text(
+            f"管理员 {await get_user_display_name(user['id'])} 启动了 ADB 手动备份（prod → adb2）",
+            type=BACKUP_AUDIT_TYPE,
+            level=BACKUP_AUDIT_LEVEL,
+        )
+        await log.insert_log()
+        return {"status": "ok", "code": 200, "data": snapshot}
 
-    return {"status": "ok", "code": 200, "data": snapshot}
+    # 审计不能盖掉真正的失败：查显示名 / 写审计出错时，客户端仍拿到固定的 500。
+    try:
+        log.with_text(
+            f"管理员 {await get_user_display_name(user['id'])} 启动 ADB 手动备份失败："
+            f"{_audit_summary(failure)}",
+            type=BACKUP_AUDIT_TYPE,
+            level=BACKUP_AUDIT_LEVEL,
+        )
+        await log.insert_log()
+    except Exception:
+        _logger.exception("failed to audit the backup trigger failure")
+    raise HTTPException(status_code=500, detail=BACKUP_FAILED_DETAIL)
 
 
 @router.get("/backup/progress")

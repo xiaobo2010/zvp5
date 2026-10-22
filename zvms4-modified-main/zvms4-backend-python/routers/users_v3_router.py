@@ -225,6 +225,30 @@ async def delete_user_v3(
     return
 
 
+async def _release_primary_device_ban(user_oid: str, target: dict) -> str:
+    """解封账号时连带解除其主设备的显式设备封禁，返回写进审计日志的说明。
+
+    「临时密码连错」落的是永久设备封，不随账号解封自动消失（``device_ban_status``
+    只推导账号联动那一支）。管理员解封账号的意图就是「这个人恢复使用」，把他
+    自己的平板继续锁在门外不是意图的一部分。没有主设备时无事可做。
+
+    解除失败不影响账号解封结果：账号状态是主事实，设备行可以事后单独处理，
+    但必须在同一条审计里说明失败，否则「为什么这台机器还登不进」无从追查。
+    """
+    primary = target.get("primary_xuehai_id")
+    if not primary:
+        return ""
+    masked = f"****{str(primary)[-4:]}"
+    try:
+        removed = await backends.get_device_bans_repo().delete(str(primary))
+    except Exception as exc:
+        _logger.exception("解封账号时解除设备封禁失败（账号已解封）")
+        return f"，但解除主学海设备 {masked} 的设备封禁失败（{type(exc).__name__}）"
+    if not removed:
+        return ""
+    return f"，并解除了主学海设备 {masked} 的设备封禁（{removed} 条）"
+
+
 @router.put("/{user_id}/banned", status_code=204)
 async def set_user_banned_v3(
     user_id: str,
@@ -269,7 +293,10 @@ async def set_user_banned_v3(
     else:
         # 解封只清当前状态；历史事实由 BAN_RECORDS 流水承担（不删不写）。
         await repo.clear_ban(str(oid))
-        action = f"解封了用户 {target['name']}"
+        # 设备封禁不镜像账号状态，但「临时密码连错」写下的显式设备封是永久行：
+        # 只解账号会留下「账号能登、这台机器永远登不进」的死角。
+        device_note = await _release_primary_device_ban(str(oid), target)
+        action = f"解封了用户 {target['name']}{device_note}"
 
     log.with_text(
         f"管理员 {await get_user_display_name(user['id'])} {action}",
@@ -331,13 +358,16 @@ async def create_user_v3(
     initial_password = payload.id
     password = hashpw(initial_password.encode("utf-8"), gensalt()).decode("utf-8")
 
-    new_id = await repo.create(
-        payload.id,
-        payload.name,
-        list(payload.roles),
-        password,
-        str(class_oid) if class_oid is not None else None,
-    )
+    try:
+        new_id = await repo.create(
+            payload.id,
+            payload.name,
+            list(payload.roles),
+            password,
+            str(class_oid) if class_oid is not None else None,
+        )
+    except IntegrityError:
+        raise HTTPException(status_code=409, detail="学号已存在")
 
     log.with_text(
         f"管理员 {await get_user_display_name(user['id'])} 创建了用户 {payload.name}（学号 {payload.id}），初始密码为学号",
@@ -894,9 +924,14 @@ async def create_temp_password_v3(
 
     ttl_minutes = _temp_password_ttl_minutes()
     code = generate_temp_password()
-    expires_at = datetime.now() + timedelta(minutes=ttl_minutes)
+    now = datetime.now()
+    expires_at = now + timedelta(minutes=ttl_minutes)
 
-    await backends.get_temp_passwords_repo().insert(
+    passwords = backends.get_temp_passwords_repo()
+    # 先作废旧码再落新码：同一时刻用户手里只该有一个有效码。否则旧码「明明
+    # 正确」却因为扫描窗口被新码挤掉，被判错三次后设备会被永久封禁。
+    await passwords.revoke_open_for_user(str(target["_id"]), now)
+    await passwords.insert(
         str(target["_id"]),
         str(user["id"]),
         hash_temp_password(code),

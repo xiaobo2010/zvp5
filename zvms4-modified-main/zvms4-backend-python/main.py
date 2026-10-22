@@ -2,7 +2,9 @@ from fastapi import Request, FastAPI
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, RedirectResponse
 import logging
+import os
 import re
+import threading
 from datetime import datetime
 from typings.log import ZVMSLog, xuehai_id_from
 from routers import (
@@ -59,7 +61,7 @@ socket = socketio.ASGIApp(sio)
 # import main 造成循环导入。
 realtime.register_server(sio)
 
-app = FastAPI(default_response_class=JSONResponse, docs_url=None)
+app = FastAPI(default_response_class=JSONResponse, docs_url=None, openapi_url=None)
 
 # Neutral value returned when the version cannot be resolved from the database.
 # Deliberately not a version literal: the CHANGELOG table is the only source of
@@ -160,10 +162,11 @@ MAINTENANCE_EXEMPT_PREFIXES = ("/api/system",)
 # 维护开启期间 admin 全域放行：从 ``Authorization: Bearer`` 取 token，走
 # ``util.object_id.is_admin_token``（与 get_current_user 同一条认证路径，含
 # banned / session 校验，``per`` 取库里的当前 roles）。
-# 门控是「缓存 + fresh」两级：缓存快路径挡住绝大多数请求，免掉每请求一次
-# SQLite 读；本进程 enable/disable 经 set_state → invalidate_cache() 缓存即刻
-# 准确，fresh 复核只兜「缓存陈旧」的窗口（跨进程 enable 最多 2s 陈旧放行，
-# 与纯缓存的既有行为一致；跨进程 disable 缓存陈旧为 True 时 fresh 立刻纠正）。
+# 门控是「缓存 + fresh」两级：缓存快路径（2s）挡住绝大多数请求，fresh 再复核一次
+# 兜「缓存陈旧」的窗口。fresh 自己带 1s 短缓存（db.system_state.FRESH_CACHE_TTL），
+# 所以准入路径最多每秒一次 SQLite 读，而不是每请求一次；本进程 enable/disable 经
+# set_state → invalidate_cache() 两级缓存即刻失效。跨进程 enable 最多 2s 陈旧放行
+# （与纯缓存的既有行为一致），跨进程 disable 最多 1s 内被 fresh 纠正。
 @app.middleware("http")
 async def maintenance_middleware(request: Request, call_next):
     path = request.url.path
@@ -497,12 +500,41 @@ async def health_check():
         )
 
 
+# 公钥按本文件定位，不依赖 cwd：systemd 的 WorkingDirectory 与手工启动时不同。
+CERT_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "rsa_public_key.pem"
+)
+
+_cert_lock = threading.Lock()
+_cert_pem: str | None = None
+
+
+def _load_cert() -> str:
+    """读公钥并在内存里缓存：证书不轮换，只有失败才不缓存（修好后自愈）。"""
+    global _cert_pem
+    if _cert_pem is not None:
+        return _cert_pem
+    with _cert_lock:
+        if _cert_pem is None:
+            with open(CERT_PATH, "r", encoding="utf-8") as handle:
+                _cert_pem = handle.read()
+        return _cert_pem
+
+
 @app.get("/api/cert")
 async def get_cert():
+    try:
+        data = _load_cert()
+    except (OSError, UnicodeDecodeError) as exc:
+        _logger.warning("cert public key is unreadable: %s", exc)
+        return JSONResponse(
+            status_code=503,
+            content={"status": "error", "code": 503, "data": "证书暂不可用"},
+        )
     return {
         "status": "ok",
         "code": 200,
-        "data": open("./rsa_public_key.pem", "r").read(),
+        "data": data,
     }
 
 

@@ -7,6 +7,7 @@ depends on it) is called.
 
 from __future__ import annotations
 
+import os
 from typing import Optional
 
 from sqlalchemy import text
@@ -38,6 +39,24 @@ def _connect_args(cfg: oracle_config.OracleConfig) -> dict:
     return args
 
 
+def _pool_settings() -> dict:
+    """Pool sizing, overridable per deployment without a code change.
+
+    ``pool_timeout`` is deliberately short: checkout runs on the greenlet as a
+    blocking ``queue.get``, so an exhausted pool freezes the *whole* event loop
+    for the timeout instead of failing one request. Production has one worker,
+    which turned a saturated pool into multi-minute site-wide stalls
+    (``QueuePool limit of size 5 overflow 5 reached``), so waiting is capped at
+    a few seconds and the excess request fails fast.
+    """
+    return {
+        "pool_size": int(os.environ.get("ZVMS_DB_POOL_SIZE", "8")),
+        "max_overflow": int(os.environ.get("ZVMS_DB_POOL_OVERFLOW", "8")),
+        "pool_timeout": float(os.environ.get("ZVMS_DB_POOL_TIMEOUT", "5")),
+        "pool_use_lifo": True,
+    }
+
+
 def get_engine() -> AsyncEngine:
     """Return the process-wide async engine, creating it on first use.
 
@@ -51,10 +70,9 @@ def get_engine() -> AsyncEngine:
         _engine = create_async_engine(
             oracle_config.build_async_url(cfg),
             connect_args=_connect_args(cfg),
-            pool_size=5,
-            max_overflow=5,
             pool_pre_ping=True,
             pool_recycle=1800,
+            **_pool_settings(),
         )
         install_lob_binds(_engine)
     return _engine

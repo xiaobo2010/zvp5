@@ -191,13 +191,24 @@ class UsersRepo(Protocol):
         """
         ...
 
-    async def search(self, query: str, logged_in: bool) -> tuple[list[Row], int]:
-        """Return ``(rows, total)`` for ``routers/times_router.read_times``.
+    async def search(
+        self,
+        query: str,
+        logged_in: bool,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> tuple[list[Row], int]:
+        """Return ``(rows, total)`` for a page of users.
 
         ``logged_in`` selects between the two filter shapes verbatim: the
         three-branch ``$or`` (``name``/``id``/``past`` ``$regex`` — *not*
         escaped) and the unlogged exact ``{"id": query}``. Rows carry the
         ``_id``/``name``/``id``/``class_id`` projection.
+
+        ``limit``/``offset`` push pagination into SQL (``OFFSET … FETCH``) and
+        the total comes from a window count, so a page costs one round trip.
+        ``limit is None`` keeps the unpaginated shape for callers that need
+        every row (``routers/times_router.read_times``).
         """
         ...
 
@@ -1397,8 +1408,13 @@ class ViolationsRepo(Protocol):
         *,
         xuehai_id: str | None = None,
         detail: str | None = None,
+        batch_id: str | None = None,
     ) -> str:
-        """Append one violation and return its new ``_id``."""
+        """Append one violation and return its new ``_id``.
+
+        ``batch_id`` is generated once per report and reused for every signal in
+        that report, so one page load counts as one incident.
+        """
         ...
 
     async def exists_recent(
@@ -1415,6 +1431,16 @@ class ViolationsRepo(Protocol):
         self, user_oid: str, trigger: str, since: datetime
     ) -> int:
         """Violation count for ``(user_oid, trigger)`` at/after ``since``."""
+        ...
+
+    async def count_batches_since(
+        self, user_oid: str, trigger: str, since: datetime
+    ) -> int:
+        """Distinct report count for ``(user_oid, trigger)`` at/after ``since``.
+
+        Counts ``DISTINCT COALESCE(batch_id, oid)``: rows written before batches
+        existed each count as their own report.
+        """
         ...
 
     async def list_page(
@@ -1521,6 +1547,28 @@ class NotificationsRepo(Protocol):
     nothing. List methods read the state **before** the rows so a notice created
     between the two statements can never be hidden behind an older global
     version in the response.
+
+    Version history (``NOTIFICATION_VERSIONS``, V017): every successful write
+    also inserts a full-content snapshot in the same transaction, with the
+    ``op`` that produced it (``create`` / ``update`` / ``delete`` /
+    ``rollback``). Snapshot rows use the shape::
+
+        {"_id": <24-char lowercase hex str>,
+         "notification_oid": str,
+         "version": int,
+         "title": str,
+         "content": str,
+         "active": bool,
+         "op": str,
+         "source_version": int | None,
+         "content_hash": str,
+         "author_oid": str | None,
+         "author_name": str,
+         "created_at": datetime}
+
+    ``content_hash`` is the sha256 of the content fields, so two revisions are
+    equivalent exactly when their hashes match. Snapshots carry no FK: the
+    history must outlive the notice it describes.
     """
 
     async def get_state(self) -> Row:
@@ -1576,6 +1624,8 @@ class NotificationsRepo(Protocol):
         title: str | None = None,
         content: str | None = None,
         active: bool | None = None,
+        author_oid: str | None = None,
+        author_name: str | None = None,
     ) -> tuple[Row | None, int]:
         """Patch supplied fields, bump the notice revision, return ``(row, version)``.
 
@@ -1584,16 +1634,59 @@ class NotificationsRepo(Protocol):
         and refreshes ``updated_at``; ``author_oid`` / ``author_name`` /
         ``created_at`` are never modified. An unknown ``oid`` returns
         ``(None, current_global_version)`` and bumps nothing.
+
+        The row is selected with ``FOR UPDATE`` before the patch so concurrent
+        edits produce consecutive revisions instead of a lost update. The
+        snapshot's ``author_oid`` / ``author_name`` describe the *actor*
+        (falling back to the notice's publisher when omitted).
         """
         ...
 
-    async def delete(self, oid: str) -> tuple[Row | None, int]:
+    async def delete(
+        self,
+        oid: str,
+        *,
+        author_oid: str | None = None,
+        author_name: str | None = None,
+    ) -> tuple[Row | None, int]:
         """Hard-delete a notification; return ``(deleted_row, global_version)``.
 
         The row is selected with ``FOR UPDATE`` before deletion so the returned
-        snapshot is exactly what was removed (the router logs its title). An
-        unknown ``oid`` returns ``(None, current_global_version)`` and bumps
-        nothing. The audit log row survives the deletion.
+        snapshot is exactly what was removed (the router logs its title). A
+        delete snapshot is written first in the same transaction, taking the
+        next free revision; the notice row itself is not bumped. An unknown
+        ``oid`` returns ``(None, current_global_version)`` and bumps nothing.
+        The audit log row survives the deletion.
+        """
+        ...
+
+    async def list_versions(self, oid: str) -> tuple[list[Row], int]:
+        """Return ``(version_rows, global_version)``, newest revision first.
+
+        Works for deleted notices too (snapshots are independent of the notice
+        row). An oid with no history returns an empty list, not ``None``: the
+        absence of a notice is not an error here, the router decides.
+        """
+        ...
+
+    async def rollback(
+        self,
+        oid: str,
+        *,
+        target_version: int,
+        author_oid: str,
+        author_name: str,
+    ) -> tuple[Row | None, int, Row | None]:
+        """Restore ``target_version``'s content; return ``(row, version, snapshot)``.
+
+        A missing target snapshot returns ``(None, current_global_version,
+        None)``; the router maps that to 404. When the notice still exists the
+        restore takes the same ``FOR UPDATE`` + ``version + 1`` path as
+        :meth:`update`; when it was deleted the content is re-inserted under the
+        **original oid** with ``version`` one past the highest historical
+        revision, so client-side per-id markers stay meaningful. Either way a
+        ``rollback`` snapshot with ``source_version = target_version`` is
+        appended and the global version bumps in the same transaction.
         """
         ...
 

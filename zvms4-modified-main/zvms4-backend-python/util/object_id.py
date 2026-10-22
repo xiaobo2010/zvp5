@@ -1,5 +1,7 @@
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
+
+from sqlalchemy.exc import DatabaseError, InterfaceError, OperationalError
 
 from util.positions import trans_permissions
 from typings.user import UserPosition as UserPositionV1
@@ -13,6 +15,17 @@ from db.ids import normalize_oid, is_valid_oid
 from util.ban import ban_is_active, raise_banned
 from util.cert import jwt_decode
 from util.group import get_user_permissions
+
+try:  # 驱动层异常可能没被 SQLAlchemy 包成 DBAPIError（如连接中途断开）
+    import oracledb
+
+    _DRIVER_ERRORS: tuple[type[BaseException], ...] = (oracledb.Error,)
+except ImportError:  # pragma: no cover - oracledb 是硬依赖，仅为导入路径兜底
+    _DRIVER_ERRORS = ()
+
+# 数据库不可用 ≠ 凭据无效：401/403 会让前端立刻退到登录页，把一次短暂的
+# DB 抖动伪装成「登录过期」。503 才是可重试的事实。
+DB_UNAVAILABLE_DETAIL = "数据库暂时不可用，请稍后重试"
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token", auto_error=False)
 
@@ -63,43 +76,84 @@ async def get_user(oid: str):
     return await backends.get_users_repo().get_by_oid(oid)
 
 
-async def compulsory_temporary_token(token: str = Depends(oauth2_scheme)):
-    result = await _authenticate(token, "short", True)
+async def compulsory_temporary_token(
+    token: str = Depends(oauth2_scheme), request: Request = None
+):
+    result = await _authenticate(token, "short", True, request)
     return result
 
 
-async def password_change_token(token: str = Depends(oauth2_scheme)):
-    return await _authenticate(token, "password_change", True)
+async def password_change_token(
+    token: str = Depends(oauth2_scheme), request: Request = None
+):
+    return await _authenticate(token, "password_change", True, request)
 
 
 async def authenticated_log_user(
     token: str = Depends(oauth2_scheme),
     _log_scope=Depends(_log_level_scope),
+    request: Request = None,
 ):
     # Route dependencies enforce the required scope; logging accepts either
     # credential so a second auth dependency cannot break verification routes.
-    return await _authenticate(token, "any", True)
+    return await _authenticate(token, "any", True, request)
 
 
 async def optional_current_user(
     token: str = Depends(oauth2_scheme),
     _log_scope=Depends(_log_level_scope),
+    request: Request = None,
 ):
-    result = await _authenticate(token, "long", False)
+    result = await _authenticate(token, "long", False, request)
     return result
 
 
 async def get_current_user(
     token: Optional[str] = Depends(oauth2_scheme),
     _log_scope=Depends(_log_level_scope),
+    request: Request = None,
 ):
-    return await _authenticate(token, "long", True)
+    return await _authenticate(token, "long", True, request)
+
+
+_AUTH_CACHE_ATTR = "_zvms_request_auth"
+
+
+def _auth_cache(request: Optional[Request]) -> Optional[dict]:
+    """Per-request token -> resolved user cache.
+
+    A write endpoint depends on ``get_current_user`` *and* ``inject_log``, which
+    lives in a different module and therefore cannot share FastAPI's dependency
+    cache. Both then ran a full authentication (user read + permissions read)
+    for the same request. The cache is request-scoped state, so nothing survives
+    the response.
+    """
+    if request is None:
+        return None
+    cache = getattr(request.state, _AUTH_CACHE_ATTR, None)
+    if cache is None:
+        cache = {}
+        setattr(request.state, _AUTH_CACHE_ATTR, cache)
+    return cache
+
+
+def _scope_satisfied(token_scope: str, purpose, scope: str) -> bool:
+    if token_scope not in ("access_token", "temporary_token"):
+        return False
+    if scope == "long" and token_scope != "access_token":
+        return False
+    if scope in ("short", "password_change") and token_scope != "temporary_token":
+        return False
+    if purpose == "password_change" and scope not in ("password_change", "any"):
+        return False
+    return True
 
 
 async def _authenticate(
     token: Optional[str],
     scope: str,
     exception: bool = True,
+    request: Optional[Request] = None,
 ):
     """
     Inject `Depends`, returning user info
@@ -145,6 +199,12 @@ async def _authenticate(
             return raise_exception()
         if not is_valid_oid(oid):
             return raise_exception()
+        cache = _auth_cache(request)
+        cached = cache.get(token) if (cache is not None and token) else None
+        if cached is not None and _scope_satisfied(cached[1], cached[2], scope):
+            if cached[0].get("temp_session"):
+                log_level_floor.set("warning")
+            return cached[0]
         current = await backends.get_users_repo().get_by_oid(oid)
         if current is None:
             return raise_exception()
@@ -182,7 +242,16 @@ async def _authenticate(
         if temp_session:
             # 临时密码会话期间写下的所有日志都至少是 warning（typings.log 消费）。
             log_level_floor.set("warning")
+        if cache is not None and token:
+            cache[token] = (user, token_scope, purpose)
         return user
+    except (OperationalError, DatabaseError, InterfaceError, *_DRIVER_ERRORS) as exc:
+        # 认证要读库（用户 + 当前 roles）；库抖动必须翻成可重试的 503，
+        # 不能冒泡成 500，也不能伪装成 401。
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=DB_UNAVAILABLE_DETAIL,
+        ) from exc
     except (jwt.PyJWTError, TypeError, ValueError):
         return raise_exception()
 

@@ -47,9 +47,9 @@ async def get_user_activities_v2(
     user_id: str,
     page: int = Query(1, ge=1, description="Page number for pagination"),
     perpage: int = Query(10, ge=1, le=100, description="Number of items per page"),
-    search: str = Query("", description="Search keyword"),
+    search: str = Query("", max_length=64, description="Search keyword"),
     sort: str = Query("_id", description="Sort by field"),
-    regex: bool = Query(True, description="Use regex for search"),
+    regex: bool = Query(False, description="Treat search as a regular expression"),
     asc: bool = Query(False, description="Sort in ascending order"),
     user=Depends(get_current_user),
 ):

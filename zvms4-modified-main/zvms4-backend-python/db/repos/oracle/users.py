@@ -21,6 +21,7 @@ Nothing here opens a connection at import time.
 from __future__ import annotations
 
 import json
+import logging
 import re
 from contextlib import asynccontextmanager
 from datetime import date, datetime
@@ -501,20 +502,47 @@ def _search_filter(query: str, logged_in: bool):
     ]
 
 
-def _search_stmt(query: str, logged_in: bool):
+def _search_page_stmt(
+    query: str,
+    logged_in: bool,
+    limit: int | None = None,
+    offset: int = 0,
+):
+    """``search`` 一页 + ``COUNT(*) OVER()`` 总数（一次往返）。
+
+    分页下推到 SQL：``OFFSET ... ROWS FETCH NEXT ... ROWS ONLY``（Oracle 12c+），
+    总数走窗口函数而不是第二条全表 ``COUNT``——与 :func:`_user_page_stmt` 同一
+    形状（见该函数的注释）。
+
+    排序键必须**确定**：``business_id`` 是端点展示顺序，``oid`` 是唯一列。
+    只按 ``business_id`` 排（学号可重复的历史数据、或 NULL）时同一行可能既出现
+    在上一页又出现在下一页，因此补 ``oid`` 作第二排序键。
+
+    ``limit is None`` = 不分页（调用方必须自己给出硬上限，见
+    ``routers/users_router.read_users``）。
+    """
     stmt = select(
         users_tbl.c.oid,
         users_tbl.c.name,
         users_tbl.c.business_id,
         users_tbl.c.class_oid,
+        func.count().over().label("total_count"),
     )
     conds = _search_filter(query, logged_in)
     if conds:
         stmt = stmt.where(*conds)
-    return stmt.order_by(users_tbl.c.oid.asc())
+    stmt = stmt.order_by(
+        users_tbl.c.business_id.asc(), users_tbl.c.oid.asc()
+    )
+    if offset:
+        stmt = stmt.offset(offset)
+    if limit is not None:
+        stmt = stmt.limit(limit)
+    return stmt
 
 
 def _search_count_stmt(query: str, logged_in: bool):
+    """越界页补总数用：窗口计数在空页上不可观测（同 ``list_page`` 的兜底）。"""
     stmt = select(func.count()).select_from(users_tbl)
     conds = _search_filter(query, logged_in)
     if conds:
@@ -532,6 +560,24 @@ def _list_by_name_or_id_stmt(pattern: str):
             )
         )
     return stmt.order_by(users_tbl.c.oid.asc())
+
+
+_logger = logging.getLogger(__name__)
+
+
+def _json_id_array(raw: Any) -> list[Any]:
+    if raw is None:
+        return []
+    try:
+        if hasattr(raw, "read"):
+            raw = raw.read()
+        if isinstance(raw, (bytes, bytearray)):
+            raw = raw.decode("utf-8", "replace")
+        parsed = json.loads(raw) if isinstance(raw, str) else list(raw)
+    except Exception:
+        _logger.warning("无法解析 JSON_ARRAYAGG 结果，按空列表处理", exc_info=True)
+        return []
+    return [] if parsed is None else list(parsed)
 
 
 def _group_by_id_prefix_stmt():
@@ -1229,12 +1275,30 @@ class OracleUsersRepo:
             rows = (await session.execute(stmt)).all()
         return [_user_doc(row._mapping) for row in rows]
 
-    async def search(self, query: str, logged_in: bool) -> tuple[list[Row], int]:
-        page_stmt = _search_stmt(query, logged_in)
+    async def search(
+        self,
+        query: str,
+        logged_in: bool,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> tuple[list[Row], int]:
+        """按 ``query`` 搜索用户，``(rows, total)``。
+
+        分页与计数都在 SQL 里完成（``COUNT(*) OVER()`` + ``OFFSET/FETCH``），
+        不再把整张 ``USERS`` 拉进 Python 再切片。``limit=None`` 表示不分页，
+        调用方负责给硬上限。越界页（窗口计数不可观测）才回落到一条 ``COUNT``。
+        """
+        page_stmt = _search_page_stmt(query, logged_in, limit, offset)
         count_stmt = _search_count_stmt(query, logged_in)
         async with _session_for(self._session) as (session, _owns):
-            total = (await session.execute(count_stmt)).scalar_one()
             rows = (await session.execute(page_stmt)).all()
+            total = _total_of(rows)
+            if total is None:
+                total = (
+                    0
+                    if offset == 0
+                    else int((await session.execute(count_stmt)).scalar_one())
+                )
         out: list[Row] = []
         for row in rows:
             m = row._mapping
@@ -1261,11 +1325,7 @@ class OracleUsersRepo:
         out: list[Row] = []
         for row in rows:
             m = row._mapping
-            raw = m["original_ids"]
-            if isinstance(raw, str):
-                ids = json.loads(raw)
-            else:
-                ids = list(raw) if raw is not None else []
+            ids = _json_id_array(m["original_ids"])
             out.append({"_id": m["prefix"], "originalIds": [str(x) for x in ids]})
         return out
 

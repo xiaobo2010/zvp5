@@ -1,7 +1,7 @@
-"""``services.violation_guard`` 的离线契约（去重窗口、累计阈值、角色豁免）。
+"""``services.violation_guard`` 的离线契约（去重窗口、批次计数、角色豁免）。
 
 为什么这些用例都在服务层：封禁判定是政策，客户端上报只提供事实。这里的每条
-断言都对应一个「能被事后追问」的决定——窗口多长、等号还是大于、谁能被自动封。
+断言都对应一个「能被事后追问」的决定——窗口多长、一批算几次、谁能被自动封。
 全部仓储打桩，不连 Oracle。
 """
 
@@ -13,20 +13,29 @@ from types import SimpleNamespace
 import pytest
 
 from db import backends
-from services import ban_rules, violation_guard
+from services import ban_rules, device_guard, violation_guard
 
 USER = {"id": "000000000000000000000002", "per": ["student"]}
 XUEHAI = "1234567890"
 
 
 class FakeViolations:
-    """内存版 ``ViolationsRepo``：只实现服务层用到的三个方法。"""
+    """内存版 ``ViolationsRepo``：只实现服务层用到的方法。"""
 
     def __init__(self) -> None:
         self.rows: list[dict] = []
         self.windows: list[tuple[str, datetime]] = []
 
-    async def insert(self, user_oid, trigger, signal, *, xuehai_id=None, detail=None):
+    async def insert(
+        self,
+        user_oid,
+        trigger,
+        signal,
+        *,
+        xuehai_id=None,
+        detail=None,
+        batch_id=None,
+    ):
         oid = f"{len(self.rows) + 1:024x}"
         self.rows.append(
             {
@@ -36,6 +45,7 @@ class FakeViolations:
                 "signal": signal,
                 "xuehai_id": xuehai_id,
                 "detail": detail,
+                "batch_id": batch_id,
                 "created_at": datetime.now(),
             }
         )
@@ -59,6 +69,18 @@ class FakeViolations:
             and row["created_at"] >= since
         )
 
+    async def count_batches_since(self, user_oid, trigger, since):
+        """旧行（无 batch_id）各自算一批：``COALESCE(batch_id, oid)`` 的等价物。"""
+        return len(
+            {
+                row.get("batch_id") or row["_id"]
+                for row in self.rows
+                if row["user_oid"] == user_oid
+                and row["trigger"] == trigger
+                and row["created_at"] >= since
+            }
+        )
+
 
 def _rule(*, threshold: int = 3, window_hours: int = 24, enabled: bool = True) -> dict:
     return {
@@ -76,7 +98,7 @@ def guard(monkeypatch):
     logs: list[dict] = []
     calls = {"rules": [], "bans": [], "logs": logs}
 
-    state = {"rule": _rule()}
+    state = {"rule": _rule(), "user_doc": None}
 
     async def get_rule_by_trigger(trigger):
         calls["rules"].append(trigger)
@@ -84,7 +106,11 @@ def guard(monkeypatch):
 
     async def apply_account_ban(user_oid, rule_code, reason, **kwargs):
         calls["bans"].append((user_oid, rule_code, reason))
+        state["user_doc"] = {"banned": True, "ban_until": None}
         return {"reason": reason, "until": None, "days": None, "permanent": True}
+
+    async def get_by_oid(oid):
+        return state["user_doc"]
 
     async def insert_log(
         url, user, data, timestamp, ltype, level, xuehai_id
@@ -102,6 +128,12 @@ def guard(monkeypatch):
 
     monkeypatch.setattr(
         backends, "get_violations_repo", lambda *a, **k: repo, raising=False
+    )
+    monkeypatch.setattr(
+        backends,
+        "get_users_repo",
+        lambda *a, **k: SimpleNamespace(get_by_oid=get_by_oid),
+        raising=False,
     )
     monkeypatch.setattr(
         backends,
@@ -124,6 +156,19 @@ def guard(monkeypatch):
 
 def _violation_logs(logs: list[dict]) -> list[dict]:
     return [entry for entry in logs if entry["type"] == "platform_misuse_violation"]
+
+
+def _legacy_row(index: int, signal: str, *, minutes_ago: int = 1) -> dict:
+    return {
+        "_id": f"{index:024x}",
+        "user_oid": USER["id"],
+        "trigger": "platform_misuse",
+        "signal": signal,
+        "xuehai_id": XUEHAI,
+        "detail": None,
+        "batch_id": None,
+        "created_at": datetime.now() - timedelta(minutes=minutes_ago),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -165,6 +210,21 @@ async def test_records_each_valid_signal_with_audit_log(guard) -> None:
 
 
 @pytest.mark.asyncio
+async def test_one_report_shares_a_single_server_side_batch_id(guard) -> None:
+    repo, _state, _calls = guard
+    await violation_guard.record(
+        USER,
+        [{"signal": "iframe"}, {"signal": "bridge"}, {"signal": "devtools"}],
+        XUEHAI,
+    )
+
+    batch_ids = {row["batch_id"] for row in repo.rows}
+    assert len(repo.rows) == 3
+    assert len(batch_ids) == 1
+    assert None not in batch_ids
+
+
+@pytest.mark.asyncio
 async def test_unknown_signal_is_ignored_not_fatal(guard) -> None:
     repo, _state, _calls = guard
     result = await violation_guard.record(
@@ -193,17 +253,7 @@ async def test_detail_is_truncated_to_column_width(guard) -> None:
 @pytest.mark.asyncio
 async def test_duplicate_within_window_is_not_recorded(guard) -> None:
     repo, _state, calls = guard
-    repo.rows.append(
-        {
-            "_id": "0" * 24,
-            "user_oid": USER["id"],
-            "trigger": "platform_misuse",
-            "signal": "iframe",
-            "xuehai_id": XUEHAI,
-            "detail": None,
-            "created_at": datetime.now() - timedelta(seconds=60),
-        }
-    )
+    repo.rows.append(_legacy_row(1, "iframe", minutes_ago=1))
 
     result = await violation_guard.record(
         USER, [{"signal": "iframe"}], XUEHAI
@@ -234,6 +284,7 @@ async def test_devtools_has_longer_dedup_window(guard) -> None:
                 "signal": signal,
                 "xuehai_id": XUEHAI,
                 "detail": None,
+                "batch_id": None,
                 "created_at": old,
             }
         )
@@ -251,22 +302,45 @@ async def test_devtools_has_longer_dedup_window(guard) -> None:
 
 
 # ---------------------------------------------------------------------------
-# 阈值与封禁
+# 计数口径：一批只算一次
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_bans_only_when_count_equals_threshold(guard) -> None:
+async def test_many_signals_in_one_report_count_as_one_violation(guard) -> None:
+    """审计 P0：同一次页面加载的 iframe+bridge+devtools 不该当场封号。"""
     repo, state, calls = guard
     state["rule"] = _rule(threshold=2)
+
+    result = await violation_guard.record(
+        USER,
+        [
+            {"signal": "iframe", "detail": "top!=self"},
+            {"signal": "bridge", "detail": "no bridge"},
+            {"signal": "devtools", "detail": "debugger"},
+        ],
+        XUEHAI,
+    )
+
+    assert result["recorded"] == 3
+    assert result["banned"] is False
+    assert calls["bans"] == []
+    assert len(repo.rows) == 3
+
+
+@pytest.mark.asyncio
+async def test_second_batch_reaches_threshold_and_bans(guard) -> None:
+    repo, state, calls = guard
+    state["rule"] = _rule(threshold=2)
+
     first = await violation_guard.record(
-        USER, [{"signal": "iframe", "detail": "a"}], XUEHAI
+        USER, [{"signal": "iframe", "detail": "a"}, {"signal": "bridge"}], XUEHAI
     )
     assert first["banned"] is False
     assert calls["bans"] == []
 
     second = await violation_guard.record(
-        USER, [{"signal": "bridge", "detail": "b"}], XUEHAI
+        USER, [{"signal": "devtools", "detail": "b"}], XUEHAI
     )
     assert second["banned"] is True
     assert calls["bans"] == [
@@ -276,40 +350,56 @@ async def test_bans_only_when_count_equals_threshold(guard) -> None:
     assert len(ban_logs) == 1
     assert ban_logs[0]["level"] == "warning"
     assert "阈值 2 次" in ban_logs[0]["data"]
+    assert len(repo.rows) == 3
 
-    # 第三次上报越过阈值：用等号判断，不会反复封。
-    third = await violation_guard.record(
-        USER, [{"signal": "devtools", "detail": "c"}], XUEHAI
+
+@pytest.mark.asyncio
+async def test_batch_jumping_over_threshold_still_bans(guard) -> None:
+    """``count == threshold`` 会漏判：一次上报跨过阈值也必须封（C3）。"""
+    state_rule = _rule(threshold=1)
+    repo, state, calls = guard
+    state["rule"] = state_rule
+    repo.rows.extend([_legacy_row(1, "iframe"), _legacy_row(2, "bridge")])
+
+    result = await violation_guard.record(
+        USER, [{"signal": "devtools"}], XUEHAI
     )
-    assert third["banned"] is False
+
+    assert result["banned"] is True
+    assert len(calls["bans"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_active_ban_is_not_escalated_by_new_batches(guard) -> None:
+    """``>=`` 之后每一批都会命中：已经封着就不再推一档梯度。"""
+    repo, state, calls = guard
+    state["rule"] = _rule(threshold=2)
+
+    await violation_guard.record(USER, [{"signal": "iframe"}], XUEHAI)
+    await violation_guard.record(USER, [{"signal": "bridge"}], XUEHAI)
+    assert len(calls["bans"]) == 1
+
+    for signal in ("devtools", "iframe", "bridge"):
+        again = await violation_guard.record(USER, [{"signal": signal}], XUEHAI)
+        assert again["banned"] is False
+
     assert len(calls["bans"]) == 1
     assert len(repo.rows) == 3
 
 
 @pytest.mark.asyncio
-async def test_count_above_threshold_does_not_backfill_a_ban(guard) -> None:
-    """管理员调低阈值后 count > threshold：不该由下一条无关上报追罚。"""
+async def test_legacy_rows_without_batch_id_each_count_once(guard) -> None:
+    """V019 之前的行没有批次号：``COALESCE(batch_id, oid)`` 让每行自成一派。"""
     repo, state, calls = guard
     state["rule"] = _rule(threshold=2)
-    for signal in ("iframe", "bridge", "devtools"):
-        repo.rows.append(
-            {
-                "_id": f"{len(repo.rows) + 1:024x}",
-                "user_oid": USER["id"],
-                "trigger": "platform_misuse",
-                "signal": signal,
-                "xuehai_id": XUEHAI,
-                "detail": None,
-                "created_at": datetime.now() - timedelta(minutes=1),
-            }
-        )
+    repo.rows.extend([_legacy_row(1, "iframe"), _legacy_row(2, "bridge")])
 
     result = await violation_guard.record(
-        USER, [{"signal": "iframe", "detail": "new batch"}], XUEHAI
+        USER, [{"signal": "devtools"}], XUEHAI
     )
 
-    assert result["banned"] is False
-    assert calls["bans"] == []
+    assert result["banned"] is True
+    assert len(calls["bans"]) == 1
 
 
 @pytest.mark.asyncio
@@ -342,9 +432,15 @@ async def test_missing_rule_only_records(guard) -> None:
     assert calls["bans"] == []
 
 
+# ---------------------------------------------------------------------------
+# 特权角色：豁免在计数之前
+# ---------------------------------------------------------------------------
+
+
 @pytest.mark.asyncio
-@pytest.mark.parametrize("role", ["admin", "department", "teacher"])
-async def test_privileged_roles_are_recorded_but_never_banned(guard, role) -> None:
+@pytest.mark.parametrize("role", ["admin", "department", "secretary", "teacher"])
+async def test_privileged_roles_are_never_recorded_nor_banned(guard, role) -> None:
+    """豁免必须发生在入库之前：留下的记录会在换届后变成别人的处罚依据。"""
     repo, state, calls = guard
     state["rule"] = _rule(threshold=1)
 
@@ -352,10 +448,39 @@ async def test_privileged_roles_are_recorded_but_never_banned(guard, role) -> No
         {**USER, "per": [role]}, [{"signal": "iframe"}], XUEHAI
     )
 
-    assert result["recorded"] == 1
-    assert result["banned"] is False
-    assert len(repo.rows) == 1
+    assert result == {
+        "recorded": 0,
+        "duplicates": 0,
+        "banned": False,
+        "rule_code": "platform_misuse",
+    }
+    assert repo.rows == []
     assert calls["bans"] == []
+    assert _violation_logs(calls["logs"]) == []
+
+    exempt_logs = [e for e in calls["logs"] if e["type"] == "platform_misuse_exempt"]
+    assert len(exempt_logs) == 1
+    assert exempt_logs[0]["level"] == "warning"
+    assert role in exempt_logs[0]["data"]
+
+
+@pytest.mark.asyncio
+async def test_broken_role_type_is_treated_as_student(guard) -> None:
+    repo, state, calls = guard
+    state["rule"] = _rule(threshold=1)
+
+    result = await violation_guard.record(
+        {**USER, "per": "admin"}, [{"signal": "iframe"}], XUEHAI
+    )
+
+    assert result["recorded"] == 1
+    assert len(repo.rows) == 1
+    assert result["banned"] is True
+
+
+# ---------------------------------------------------------------------------
+# 失败路径
+# ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
@@ -413,3 +538,16 @@ async def test_rule_lookup_failure_still_keeps_evidence(guard, monkeypatch) -> N
     assert result["recorded"] == 1
     assert result["banned"] is False
     assert len(repo.rows) == 1
+
+
+def test_default_config_is_the_single_source_of_truth() -> None:
+    """两个模块各写一份默认值就会漂：这里钉住它们是同一份数值。"""
+    assert violation_guard.DEFAULT_CONFIG == ban_rules.DEFAULT_CONFIG
+    assert violation_guard.DEFAULT_CONFIG == {"threshold": 3, "window_hours": 24}
+
+
+def test_no_auto_ban_roles_cover_every_privileged_role() -> None:
+    """与设备闸的特权角色集合对齐（团支书不能只在一边被豁免）。"""
+    assert set(violation_guard.NO_AUTO_BAN_ROLES) == set(
+        device_guard.PRIVILEGED_ROLES
+    )
