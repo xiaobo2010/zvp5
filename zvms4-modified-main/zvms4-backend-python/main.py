@@ -32,6 +32,7 @@ from routers import (
     ban_router,
     notifications_router,
     ban_violations_router,
+    ai_router,
 )
 import socketio
 from socketio.exceptions import ConnectionRefusedError as SocketIOConnectionRefusedError
@@ -143,6 +144,11 @@ SEC_PATTERN = re.compile(
 
 allowed_methods = ["GET", "POST", "DELETE", "PUT", "PATCH", "HEAD", "OPTIONS"]
 
+# OpenAI SDK 的 UA 是 ``OpenAI/Python x.y``，不含 Mozilla。AI 兼容面如果照旧吃
+# 418，SDK 客户端一个请求都发不出去。只放开这一条前缀，且只放开 UA 判断：
+# SEC_PATTERN 与 method 检查原样保留，鉴权仍走 Authorization: Bearer。
+AI_OPENAI_PREFIX = "/api/ai/v1/"
+
 # 维护模式放行清单：登录、证书、版本、健康检查、首页，以及整个 /api/system
 # 前缀（管理员必须能在维护期间关掉维护模式）。
 MAINTENANCE_EXEMPT_PATHS = {
@@ -190,7 +196,10 @@ async def maintenance_middleware(request: Request, call_next):
 async def shield_middleware(request: Request, call_next):
     if (
         SEC_PATTERN.search(request.url.path)
-        or "Mozilla" not in request.headers.get("User-Agent", "")
+        or (
+            "Mozilla" not in request.headers.get("User-Agent", "")
+            and not request.url.path.startswith(AI_OPENAI_PREFIX)
+        )
         or str(request.method).upper() not in allowed_methods
     ):
         try:
@@ -432,6 +441,7 @@ app.include_router(
 app.include_router(
     ban_violations_router.router, prefix="/api/v3/ban", tags=["ban"]
 )
+app.include_router(ai_router.router, prefix="/api/ai", tags=["ai"])
 
 
 @app.get("/api/")

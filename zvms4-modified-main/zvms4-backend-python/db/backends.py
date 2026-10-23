@@ -153,6 +153,34 @@ def get_violations_repo(session: Any = None) -> Any:
     return OracleViolationsRepo(session)
 
 
+def get_ai_call_logs_repo(session: Any = None) -> Any:
+    """Return the ``AICallLogsRepo`` implementation (AI 网关调用流水)."""
+    from db.repos.oracle.ai_call_logs import OracleAICallLogsRepo
+
+    return OracleAICallLogsRepo(session)
+
+
+def get_ai_quota_repo(session: Any = None) -> Any:
+    """Return the ``AIQuotaRepo`` implementation (AI 额度)."""
+    from db.repos.oracle.ai_quota import OracleAIQuotaRepo
+
+    return OracleAIQuotaRepo(session)
+
+
+def get_ai_credentials_repo(session: Any = None) -> Any:
+    """Return the ``AICredentialsRepo`` implementation (AI provider 凭据)."""
+    from db.repos.oracle.ai_credentials import OracleAICredentialsRepo
+
+    return OracleAICredentialsRepo(session)
+
+
+def get_ai_ocr_engines_repo(session: Any = None) -> Any:
+    """Return the ``AIOcrEnginesRepo`` implementation (OCR 引擎注册表)."""
+    from db.repos.oracle.ai_ocr_engines import OracleAIOcrEnginesRepo
+
+    return OracleAIOcrEnginesRepo(session)
+
+
 __all__ = [
     "get_users_repo",
     "get_groups_repo",
@@ -174,4 +202,8 @@ __all__ = [
     "get_temp_passwords_repo",
     "get_device_challenges_repo",
     "get_violations_repo",
+    "get_ai_call_logs_repo",
+    "get_ai_quota_repo",
+    "get_ai_credentials_repo",
+    "get_ai_ocr_engines_repo",
 ]

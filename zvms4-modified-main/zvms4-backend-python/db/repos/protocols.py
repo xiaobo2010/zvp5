@@ -1866,3 +1866,313 @@ class DeviceChallengesRepo(Protocol):
     async def consume(self, oid: str) -> None:
         """Stamp ``consumed_at`` so the challenge cannot be used twice."""
         ...
+
+
+class AICallLogsRepo(Protocol):
+    """Data access for ``AI_CALL_LOGS`` (AI 网关调用流水, V022).
+
+    Rows use the Mongo document shape ``{"_id": <hex str>, "user_oid": str,
+    "capability": "ocr" | "chat", "endpoint": str, "provider": str | None,
+    "model": str | None, "status": "success" | "error" | "timeout" |
+    "rejected" | "busy", "http_status": int | None, "error_code": str | None,
+    "latency_ms": int | None, "units": int, "input_bytes": int | None,
+    "request_id": str | None, "key_scope": "personal" | "shared" | "server" |
+    None, "created_at": datetime}``.
+
+    The table is append-only in normal operation: :meth:`insert` is the only
+    write, and nothing here updates a row. The one deletion path is
+    :meth:`purge_batch` (保留期清理, called by :mod:`tasks.retention`), which
+    removes whole expired rows in bounded batches — irreversibly, one commit per
+    batch. ``units`` is the quota amount this call consumed, so the ledger and
+    ``AI_QUOTA.used`` can be reconciled against each other.
+    ``key_scope`` records which kind of key paid for the call, so "platform
+    spend" and "admin's own key" stay separable in the same report.
+    """
+
+    async def insert(
+        self,
+        *,
+        user_oid: str,
+        capability: str,
+        endpoint: str,
+        provider: str | None = None,
+        model: str | None = None,
+        status: str = "success",
+        http_status: int | None = None,
+        error_code: str | None = None,
+        latency_ms: int | None = None,
+        units: int = 0,
+        input_bytes: int | None = None,
+        request_id: str | None = None,
+        key_scope: str | None = None,
+    ) -> str:
+        """Append one call record and return its new ``_id``.
+
+        ``status`` defaults to ``success`` because that is the only outcome
+        where the caller has nothing extra to pass; failures must say so
+        explicitly.
+
+        ``key_scope`` is ``personal`` (an admin's own key), ``shared`` (a
+        common key), ``server`` (the server-side default config) or ``None``
+        (unknown / rows written before the column existed). It never takes part
+        in auth — it only makes the ledger auditable per funding source.
+        """
+        ...
+
+    async def count_since(self, user_oid: str, since: datetime) -> int:
+        """Number of calls by ``user_oid`` at/after ``since`` (rate-limit window)."""
+        ...
+
+    async def list_page(
+        self,
+        *,
+        user_oid: str | None = None,
+        capability: str | None = None,
+        status: str | None = None,
+        page: int = 1,
+        page_size: int = 20,
+    ) -> list[Row]:
+        """Return one page, newest first (``created_at DESC, oid DESC``).
+
+        All filters are optional; ``None`` means "no filter". ``page`` is
+        1-based.
+        """
+        ...
+
+    async def total_count(
+        self,
+        *,
+        user_oid: str | None = None,
+        capability: str | None = None,
+        status: str | None = None,
+    ) -> int:
+        """Total rows matching the same filters as :meth:`list_page`."""
+        ...
+
+    async def count_expired(self, cutoff: datetime) -> int:
+        """Rows with ``created_at < cutoff`` (read-only; same predicate as the purge)."""
+        ...
+
+    async def purge_batch(self, cutoff: datetime, batch_size: int) -> int:
+        """Delete at most ``batch_size`` rows with ``created_at < cutoff``.
+
+        不可逆，按批提交：每批一个短 session、一次 commit，批循环在
+        :mod:`tasks.retention`。返回实际删除行数，``0`` 表示已经删空。
+        """
+        ...
+
+
+class AIQuotaRepo(Protocol):
+    """Data access for ``AI_QUOTA`` (按 用户 + 月份 + 能力 计的额度, V022).
+
+    Rows use the Mongo document shape ``{"_id": <hex str>, "user_oid": str,
+    "period": str, "kind": "ocr" | "chat", "used": int, "limit_count": int,
+    "updated_at": datetime}``. ``period`` is ``YYYYMM``.
+
+    The unique key ``(user_oid, period, kind)`` is what makes :meth:`consume`
+    safe: the decrement is a single conditional ``UPDATE``, so concurrent calls
+    cannot oversell the quota.
+    """
+
+    async def consume(
+        self, user_oid: str, period: str, kind: str, amount: int, default_limit: int
+    ) -> tuple[bool, int, int]:
+        """原子扣减，返回 (allowed, used, limit)。不超卖。"""
+        ...
+
+    async def get(self, user_oid: str, period: str, kind: str) -> Row | None:
+        """Return the quota row, or ``None`` when the user has not used it yet."""
+        ...
+
+    async def set_limit(
+        self, user_oid: str, period: str, kind: str, limit_count: int
+    ) -> None:
+        """Set the quota ceiling, creating the row (``used = 0``) when absent."""
+        ...
+
+    async def reset_used(self, user_oid: str, period: str, kind: str) -> int:
+        """Zero ``used`` and keep ``limit_count``.
+
+        Returns the affected row count: ``0`` means the row does not exist,
+        which is success (idempotent) rather than an error.
+        """
+        ...
+
+
+# ---------------------------------------------------------------------------
+# AI credentials (V023)
+# ---------------------------------------------------------------------------
+
+# ``shared`` 凭据的 owner 哨兵：24 个 0。**不是 NULL** —— Oracle 的唯一索引里
+# NULL 互不相等，``owner_oid`` 可空就等于 ``(scope, owner_oid, name)`` 对共享项
+# 完全不生效，同名的共享 provider 可以插进任意多行。哨兵是个合法 hex oid，不指向
+# 任何用户，但让唯一索引对两类行同样有效。
+SHARED_OWNER_OID = "0" * 24
+
+
+class AICredentialsRepo(Protocol):
+    """Data access for ``AI_CREDENTIALS`` (AI provider 凭据, V023).
+
+    Rows use the Mongo document shape::
+
+        {"_id": <hex str>, "scope": "personal" | "shared", "owner_oid": str,
+         "name": str, "kind": "openai_compat", "base_url": str,
+         "models": list[str], "api_key_cipher": str, "key_hint": str | None,
+         "enabled": bool, "created_at": datetime, "updated_at": datetime}
+
+    ``models`` is the parsed form of the ``MODELS_JSON`` CLOB (a list of model id
+    strings). ``api_key_cipher`` is the **only** form of the key that ever
+    reaches the database: AES-GCM ciphertext, base64-encoded. ``key_hint`` holds
+    the last four characters for display and is never used to decrypt.
+
+    Two kinds of rows share one table: ``personal`` (an admin's own key) and
+    ``shared`` (a key everyone may use). Shared rows always carry
+    :data:`SHARED_OWNER_OID` as ``owner_oid`` so that the unique index
+    ``(scope, owner_oid, name)`` constrains them too.
+    """
+
+    async def list_visible(self, user_oid: str) -> list[Row]:
+        """该用户可见的全部凭据：自己的 personal + 全部 shared（含 disabled，过滤由服务层做）。"""
+        ...
+
+    async def list_all(self) -> list[Row]:
+        """Every credential row (admin view), personal rows first."""
+        ...
+
+    async def get(self, oid: str) -> Row | None:
+        """Return one credential row, or ``None`` when it does not exist."""
+        ...
+
+    async def create(
+        self,
+        *,
+        scope: str,
+        owner_oid: str,
+        name: str,
+        kind: str,
+        base_url: str,
+        models: list[str],
+        api_key_cipher: str,
+        key_hint: str | None = None,
+        enabled: bool = True,
+    ) -> str:
+        """Insert a credential and return its new ``_id``.
+
+        Raises :class:`db.repos.oracle.ai_credentials.DuplicateCredential` when
+        ``(scope, owner_oid, name)`` already exists — the service layer turns
+        that into ``409``. A duplicate is never swallowed: silently keeping the
+        old key while the admin thinks theirs was saved is the worst outcome.
+        """
+        ...
+
+    async def update(
+        self,
+        oid: str,
+        *,
+        name: str | None = None,
+        base_url: str | None = None,
+        models: list[str] | None = None,
+        api_key_cipher: str | None = None,
+        key_hint: str | None = None,
+        enabled: bool | None = None,
+    ) -> bool:
+        """只更新传入的字段；返回是否命中。"""
+        ...
+
+    async def delete(self, oid: str) -> bool:
+        """Delete one credential; ``True`` when a row was removed."""
+        ...
+
+
+# ---------------------------------------------------------------------------
+# AI OCR engines (V026)
+# ---------------------------------------------------------------------------
+
+class DuplicateOcrEngine(Exception):
+    """``name`` 已存在（``ux_ai_ocr_engines_name`` → Oracle -1）。
+
+    与 :class:`db.repos.oracle.ai_credentials.DuplicateCredential` 同形：带上
+    撞了的 ``name``，服务层才能把 409 写成「哪个名字重复了」而不是一句「冲突」。
+    放在协议文件里而不是 oracle 实现里，是因为调用方（服务层）不该为了捕获它而
+    依赖具体后端。
+    """
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+        super().__init__(f"ocr engine already exists: name={name!r}")
+
+
+class AIOcrEnginesRepo(Protocol):
+    """Data access for ``AI_OCR_ENGINES`` (OCR 引擎注册表, V026).
+
+    Rows use the Mongo document shape::
+
+        {"_id": <hex str>, "name": str,
+         "kind": "tencent" | "aliyun" | "rapidocr",
+         "config": dict, "secret_cipher": str | None, "key_hint": str | None,
+         "enabled": bool, "priority": int,
+         "created_at": datetime, "updated_at": datetime}
+
+    ``config`` is the parsed ``CONFIG_JSON`` CLOB (request-shape knobs such as
+    ``language_type``; never credentials). ``secret_cipher`` is the **only**
+    form of the credentials that reaches the database: AES-GCM ciphertext of the
+    whole credential object, base64-encoded (see :mod:`services.ai.crypto`).
+    ``None`` means "this engine needs no credentials" (rapidocr) — not "missing
+    config". ``key_hint`` is display-only.
+
+    ``priority`` is a small-is-first ordering key: the router picks the first
+    enabled row, so ``(enabled, priority)`` is both the index and the query
+    shape.
+    """
+
+    async def list_all(self, *, enabled_only: bool = False) -> list[Row]:
+        """Every engine row, ``priority`` ascending then ``name``.
+
+        ``enabled_only`` is the routing path (skip disabled rows in SQL rather
+        than in Python); the admin path takes everything so a disabled engine
+        stays visible.
+        """
+        ...
+
+    async def get_by_oid(self, oid: str) -> Row | None:
+        """Return one engine row, or ``None`` when it does not exist."""
+        ...
+
+    async def insert(
+        self,
+        *,
+        name: str,
+        kind: str,
+        config: dict | None = None,
+        secret_cipher: str | None = None,
+        key_hint: str | None = None,
+        enabled: bool = True,
+        priority: int = 100,
+    ) -> str:
+        """Insert an engine and return its new ``_id``.
+
+        Raises :class:`DuplicateOcrEngine` when ``name`` already exists — the
+        service layer turns that into ``409``. A duplicate is never swallowed:
+        silently keeping the old row while the admin thinks theirs was saved is
+        the worst outcome.
+        """
+        ...
+
+    async def update(
+        self,
+        oid: str,
+        *,
+        name: str | None = None,
+        kind: str | None = None,
+        config: dict | None = None,
+        secret_cipher: str | None = None,
+        key_hint: str | None = None,
+        enabled: bool | None = None,
+        priority: int | None = None,
+    ) -> bool:
+        """只更新传入的字段（``None`` = 不改）；返回是否命中。"""
+        ...
+
+    async def delete(self, oid: str) -> bool:
+        """Delete one engine; ``True`` when a row was removed."""
+        ...

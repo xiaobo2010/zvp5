@@ -35,6 +35,7 @@ from util.attachment import (
     MAX_BYTES,
     AttachmentError,
     QuotaExceeded,
+    can_read_attachment,
     check_quota,
     ext_for_mime,
     make_signed_url,
@@ -120,26 +121,11 @@ def _require_owner_or_manager(user: dict, row: dict) -> None:
 
 
 async def _can_read(user: dict, row: dict, class_id: str | None) -> bool:
-    """owner | admin | department | secretary in the same class (design §4).
+    """薄包装：实现在 ``util.attachment.can_read_attachment``。
 
-    ``class_id`` is the authenticated user's own class, carried by the auth
-    result (``util.object_id._authenticate``); only the owner's row is read.
+    抽出去是因为 AI 网关的 OCR 入口需要同一条判定；调用点保持不变。
     """
-    owner_oid = str(row.get("owner_oid") or "")
-    if owner_oid and owner_oid == user["id"]:
-        return True
-    per = _per(user)
-    if "admin" in per or "department" in per:
-        return True
-    if "secretary" in per and owner_oid and class_id is not None:
-        owner = await backends.get_users_repo().get_by_oid(owner_oid)
-        if (
-            owner is not None
-            and owner.get("class_id") is not None
-            and str(class_id) == str(owner.get("class_id"))
-        ):
-            return True
-    return False
+    return await can_read_attachment(user, row, class_id)
 
 
 # ---------------------------------------------------------------------------
@@ -559,7 +545,9 @@ async def request_attachment_ocr(
     )
     log.with_text(f"用户 {user['id']} 触发附件 OCR {oid}")
     await log.insert_log()
-    background_tasks.add_task(process_ocr, oid)
+    # 手动重识别：显式传 ``None`` = 「没有指定引擎」，process_ocr 会自选第一个
+    # enabled 引擎且不扣站点额度（manager 排障属于低频操作）。
+    background_tasks.add_task(process_ocr, oid, None, None)
     return {"status": "ok", "code": 202, "data": {"status": "pending"}}
 
 

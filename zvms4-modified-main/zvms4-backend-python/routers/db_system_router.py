@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import re
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Response
 from fastapi.exceptions import RequestValidationError
@@ -26,7 +27,9 @@ from tasks.retention import (
     AUDIT_LEVEL,
     AUDIT_TYPE,
     RetentionBusy,
+    ai_call_logs_retention_days,
     progress_snapshot,
+    retention_cutoff,
     retention_cutoffs,
     start_background_purge,
 )
@@ -102,14 +105,25 @@ async def retention_preview(
     """Show how many rows each table's retention window would delete (read-only).
 
     Counts only — nothing is deleted here, and the cutoffs are the ones the next
-    run would use.
+    run would use (``tasks.retention`` 的同一套函数与窗口配置)。
+
+    ``ai_call_logs`` 是只读诊断项：它查不了（表未迁移 / 权限不足）时只把
+    ``deletable`` 置 ``null`` 并记一条 warning，绝不让整个预览 500/503。
     """
     await _require_system_admin(user)
     logs_cutoff, tasks_cutoff = retention_cutoffs()
+    ai_cutoff = retention_cutoff(datetime.now(), ai_call_logs_retention_days())
     deletable_logs = await backends.get_applogs_repo(session).count_expired(logs_cutoff)
     deletable_tasks = await backends.get_tasks_repo(session).count_expired_finished(
         tasks_cutoff
     )
+    try:
+        deletable_ai = await backends.get_ai_call_logs_repo(session).count_expired(
+            ai_cutoff
+        )
+    except Exception:
+        _logger.warning("retention preview: ai_call_logs count failed", exc_info=True)
+        deletable_ai = None
     return {
         "status": "ok",
         "code": 200,
@@ -121,6 +135,10 @@ async def retention_preview(
             "export_tasks": {
                 "cutoff": tasks_cutoff.isoformat(),
                 "deletable": deletable_tasks,
+            },
+            "ai_call_logs": {
+                "cutoff": ai_cutoff.isoformat(),
+                "deletable": deletable_ai,
             },
         },
     }

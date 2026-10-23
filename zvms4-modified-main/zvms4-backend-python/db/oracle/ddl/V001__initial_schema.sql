@@ -1158,6 +1158,226 @@ END;
 /
 
 -- ----------------------------------------------------------------------------
+-- AI_CALL_LOGS  ← new (AI 网关调用流水; append-only)
+--   一次网关调用一行，成功/失败/超时/拒绝/忙都落库——只记成功就无法回答
+--   「额度为什么没扣成」。无外键：审计要活得比账号久（同 BAN_VIOLATIONS）。
+--   UNITS 是本次调用扣掉的额度单位，与 AI_QUOTA.USED 的增量同源。
+--   KEY_SCOPE 记录用的是哪一类 key（personal / shared / server；存量行为 NULL），
+--   光有 provider 名回答不了「这次调用凭什么扣的额度」。
+--   也由 V024__add_ai_gateway.sql 在存量实例上创建。
+-- ----------------------------------------------------------------------------
+BEGIN
+  EXECUTE IMMEDIATE '
+CREATE TABLE ai_call_logs (
+  oid VARCHAR2(24 CHAR) NOT NULL,
+  user_oid VARCHAR2(24 CHAR) NOT NULL,
+  capability VARCHAR2(16 CHAR) NOT NULL,
+  endpoint VARCHAR2(40 CHAR) NOT NULL,
+  provider VARCHAR2(40 CHAR),
+  model VARCHAR2(80 CHAR),
+  status VARCHAR2(16 CHAR) NOT NULL,
+  http_status NUMBER(3),
+  error_code VARCHAR2(40 CHAR),
+  latency_ms NUMBER(10),
+  units NUMBER(10) DEFAULT 0 NOT NULL,
+  input_bytes NUMBER(10),
+  request_id VARCHAR2(64 CHAR),
+  key_scope VARCHAR2(16 CHAR),
+  created_at TIMESTAMP NOT NULL,
+  PRIMARY KEY (oid),
+  CONSTRAINT ck_ai_call_logs_oid CHECK (REGEXP_LIKE(oid,''^[0-9a-f]{24}$'')),
+  CONSTRAINT ck_ai_call_logs_capability CHECK (capability IN (''ocr'',''chat'')),
+  CONSTRAINT ck_ai_call_logs_status CHECK (status IN (''success'',''error'',''timeout'',''rejected'',''busy'')),
+  CONSTRAINT ck_ai_call_logs_units CHECK (units >= 0),
+  CONSTRAINT ck_ai_call_logs_key_scope CHECK (key_scope IS NULL OR key_scope IN (''personal'',''shared'',''server''))
+)';
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE != -955 THEN RAISE; END IF;
+END;
+/
+
+BEGIN
+  EXECUTE IMMEDIATE 'CREATE INDEX ix_ai_call_logs_user_created ON ai_call_logs (user_oid, created_at)';
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE NOT IN (-955, -1408) THEN RAISE; END IF;
+END;
+/
+
+BEGIN
+  EXECUTE IMMEDIATE 'CREATE INDEX ix_ai_call_logs_created ON ai_call_logs (created_at)';
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE NOT IN (-955, -1408) THEN RAISE; END IF;
+END;
+/
+
+BEGIN
+  EXECUTE IMMEDIATE 'CREATE INDEX ix_ai_call_logs_endpoint_status ON ai_call_logs (endpoint, status, created_at)';
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE NOT IN (-955, -1408) THEN RAISE; END IF;
+END;
+/
+
+-- ----------------------------------------------------------------------------
+-- AI_QUOTA  ← new (按 用户 + 月份 + 能力 计的额度行)
+--   三元组唯一（ux_ai_quota_user_period_kind），所以额度扣减可以用单条
+--   UPDATE ... WHERE used + :amount <= limit_count 原子完成，不读后写、不超卖。
+--   PERIOD 是 CHAR(6) 的 YYYYMM：月份是计费口径而不是时间点。
+--   KIND 是前缀式（'ocr' / 'chat' / 'ocr_<engine>'）：OCR 引擎会持续增加，
+--   前缀让「某引擎的月度额度」不必每次改 DDL 约束；ESCAPE '\' 是必须的，
+--   LIKE 的 '_' 是单字符通配符。
+--   也由 V024__add_ai_gateway.sql 在存量实例上创建（V026 把 KIND 放宽为前缀式）。
+-- ----------------------------------------------------------------------------
+BEGIN
+  EXECUTE IMMEDIATE '
+CREATE TABLE ai_quota (
+  oid VARCHAR2(24 CHAR) NOT NULL,
+  user_oid VARCHAR2(24 CHAR) NOT NULL,
+  period CHAR(6) NOT NULL,
+  kind VARCHAR2(16 CHAR) NOT NULL,
+  used NUMBER(10) DEFAULT 0 NOT NULL,
+  limit_count NUMBER(10) NOT NULL,
+  updated_at TIMESTAMP NOT NULL,
+  PRIMARY KEY (oid),
+  CONSTRAINT ck_ai_quota_oid CHECK (REGEXP_LIKE(oid,''^[0-9a-f]{24}$'')),
+  CONSTRAINT ck_ai_quota_period CHECK (REGEXP_LIKE(period,''^[0-9]{6}$'')),
+  CONSTRAINT ck_ai_quota_kind CHECK (kind IN (''ocr'',''chat'') OR kind LIKE ''ocr\_%'' ESCAPE ''\''),
+  CONSTRAINT ck_ai_quota_used CHECK (used >= 0),
+  CONSTRAINT ck_ai_quota_limit CHECK (limit_count >= 0)
+)';
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE != -955 THEN RAISE; END IF;
+END;
+/
+
+BEGIN
+  EXECUTE IMMEDIATE 'CREATE UNIQUE INDEX ux_ai_quota_user_period_kind ON ai_quota (user_oid, period, kind)';
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE NOT IN (-955, -1408) THEN RAISE; END IF;
+END;
+/
+
+-- ----------------------------------------------------------------------------
+-- AI_CREDENTIALS  ← new (AI provider 凭据；personal = 管理员个人，shared = 通用)
+--   OWNER_OID 对 shared 行固定是 24 个 0 的哨兵，不用 NULL：Oracle 唯一索引里
+--   NULL 互不相等，owner 可空就等于 (scope, owner_oid, name) 的唯一性失效。
+--   API_KEY_CIPHER 只存 AES-GCM 密文（base64），明文永不落库。
+--   MODELS_JSON 是模型 id 字符串数组，IS JSON 约束挡住坏串。
+--   HEADERS_JSON / API_PATH 是请求形状（头名映射 + 路径），空 = 沿用默认；
+--   由 V026__add_ai_ocr_engines_and_key_headers.sql 在存量实例上补列。
+--   也由 V025__add_ai_credentials.sql 在存量实例上创建。
+-- ----------------------------------------------------------------------------
+BEGIN
+  EXECUTE IMMEDIATE '
+CREATE TABLE ai_credentials (
+  oid VARCHAR2(24 CHAR) NOT NULL,
+  scope VARCHAR2(8 CHAR) NOT NULL,
+  owner_oid VARCHAR2(24 CHAR) NOT NULL,
+  name VARCHAR2(64 CHAR) NOT NULL,
+  kind VARCHAR2(24 CHAR) NOT NULL,
+  base_url VARCHAR2(400 CHAR) NOT NULL,
+  models_json CLOB NOT NULL,
+  headers_json CLOB,
+  api_path VARCHAR2(200 CHAR),
+  api_key_cipher VARCHAR2(2000 CHAR) NOT NULL,
+  key_hint VARCHAR2(16 CHAR),
+  enabled NUMBER(1) DEFAULT 1 NOT NULL,
+  created_at TIMESTAMP NOT NULL,
+  updated_at TIMESTAMP NOT NULL,
+  PRIMARY KEY (oid),
+  CONSTRAINT ck_ai_credentials_oid CHECK (REGEXP_LIKE(oid,''^[0-9a-f]{24}$'')),
+  CONSTRAINT ck_ai_credentials_scope CHECK (scope IN (''personal'',''shared'')),
+  CONSTRAINT ck_ai_credentials_kind CHECK (kind IN (''openai_compat'')),
+  CONSTRAINT ck_ai_credentials_enabled CHECK (enabled IN (0,1)),
+  CONSTRAINT ck_ai_credentials_models_json CHECK (models_json IS JSON),
+  CONSTRAINT ck_ai_credentials_headers_json CHECK (headers_json IS JSON)
+)';
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE != -955 THEN RAISE; END IF;
+END;
+/
+
+BEGIN
+  EXECUTE IMMEDIATE 'CREATE UNIQUE INDEX ux_ai_credentials_scope_owner_name ON ai_credentials (scope, owner_oid, name)';
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE NOT IN (-955, -1408) THEN RAISE; END IF;
+END;
+/
+
+BEGIN
+  EXECUTE IMMEDIATE 'CREATE INDEX ix_ai_credentials_owner ON ai_credentials (owner_oid, enabled)';
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE NOT IN (-955, -1408) THEN RAISE; END IF;
+END;
+/
+
+BEGIN
+  EXECUTE IMMEDIATE 'CREATE INDEX ix_ai_credentials_scope ON ai_credentials (scope, enabled)';
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE NOT IN (-955, -1408) THEN RAISE; END IF;
+END;
+/
+
+-- ----------------------------------------------------------------------------
+-- AI_OCR_ENGINES  ← new (OCR 引擎注册表；本地 / 云端引擎统一一行)
+--   KIND 是引擎类型（tencent / aliyun / rapidocr）而不是 provider 名：同类型
+--   可以有多行（不同 region / 配额来源）。PRIORITY 越小越优先，路由按
+--   (enabled, priority) 取第一行可用引擎。
+--   SECRET_CIPHER 可空：本地引擎没有凭证（NULL = 不需要，不是配置缺失）。
+--   NAME 唯一：运维按名字指定/禁用某个引擎。
+--   也由 V026__add_ai_ocr_engines_and_key_headers.sql 在存量实例上创建。
+-- ----------------------------------------------------------------------------
+BEGIN
+  EXECUTE IMMEDIATE '
+CREATE TABLE ai_ocr_engines (
+  oid VARCHAR2(24 CHAR) NOT NULL,
+  name VARCHAR2(64 CHAR) NOT NULL,
+  kind VARCHAR2(20 CHAR) NOT NULL,
+  config_json CLOB,
+  secret_cipher VARCHAR2(4000 CHAR),
+  key_hint VARCHAR2(16 CHAR),
+  enabled NUMBER(1) DEFAULT 1 NOT NULL,
+  priority NUMBER(3) DEFAULT 100 NOT NULL,
+  created_at TIMESTAMP NOT NULL,
+  updated_at TIMESTAMP NOT NULL,
+  CONSTRAINT pk_ai_ocr_engines PRIMARY KEY (oid),
+  CONSTRAINT ck_ai_ocr_engines_oid CHECK (REGEXP_LIKE(oid,''^[0-9a-f]{24}$'')),
+  CONSTRAINT ck_ai_ocr_engines_kind CHECK (kind IN (''tencent'',''aliyun'',''rapidocr'')),
+  CONSTRAINT ck_ai_ocr_engines_enabled CHECK (enabled IN (0,1)),
+  CONSTRAINT ck_ai_ocr_engines_config_json CHECK (config_json IS JSON)
+)';
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE != -955 THEN RAISE; END IF;
+END;
+/
+
+BEGIN
+  EXECUTE IMMEDIATE 'CREATE UNIQUE INDEX ux_ai_ocr_engines_name ON ai_ocr_engines (name)';
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE NOT IN (-955, -1408) THEN RAISE; END IF;
+END;
+/
+
+BEGIN
+  EXECUTE IMMEDIATE 'CREATE INDEX ix_ai_ocr_engines_enabled_priority ON ai_ocr_engines (enabled, priority)';
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE NOT IN (-955, -1408) THEN RAISE; END IF;
+END;
+/
+
+-- ----------------------------------------------------------------------------
 -- BAN_RULES seed  ← 内置规则（非主学海设备登录；也由 V014/V016 mirror）
 --   惩罚梯度末位 null = 永久。用固定 oid + MERGE：重复执行不会覆盖管理员
 --   调过的 threshold / penalties。旧的 multi_device_login 已随 V016 删除

@@ -120,14 +120,41 @@ class _FakeTasksRepo:
         return self.rowcounts.pop(0) if self.rowcounts else 0
 
 
+class _FakeAICallLogsRepo:
+    """Fake ``AICallLogsRepo``：与 tasks fake 同风格（过期计数 + 单批量删除）。"""
+
+    def __init__(self, deletable: int = 0, deleted: list[int] | None = None) -> None:
+        self.deletable = deletable
+        self.rowcounts = list(deleted or [])
+        self.count_calls: list[datetime] = []
+        self.purge_calls: list[tuple[datetime, int]] = []
+        self.fail: Exception | None = None
+
+    def _guard(self) -> None:
+        if self.fail is not None:
+            raise self.fail
+
+    async def count_expired(self, cutoff: datetime) -> int:
+        self._guard()
+        self.count_calls.append(cutoff)
+        return self.deletable
+
+    async def purge_batch(self, cutoff: datetime, batch_size: int) -> int:
+        self._guard()
+        self.purge_calls.append((cutoff, batch_size))
+        return self.rowcounts.pop(0) if self.rowcounts else 0
+
+
 @pytest.fixture
 def repos(monkeypatch):
-    """Wire fake repositories through ``backends`` (both sides)."""
+    """Wire fake repositories through ``backends`` (all three sides)."""
     logs = _FakeLogsRepo()
     tasks = _FakeTasksRepo()
+    ai = _FakeAICallLogsRepo()
     monkeypatch.setattr(backends, "get_applogs_repo", lambda session=None: logs)
     monkeypatch.setattr(backends, "get_tasks_repo", lambda session=None: tasks)
-    return logs, tasks
+    monkeypatch.setattr(backends, "get_ai_call_logs_repo", lambda session=None: ai)
+    return logs, tasks, ai
 
 
 @pytest.fixture(autouse=True)
@@ -248,7 +275,7 @@ def test_retention_rechecks_privileges_before_touching_any_repository(
     """
     http, state = client
     state.update(roles=roles, banned=banned)
-    logs, tasks = repos
+    logs, tasks, ai = repos
 
     assert http.post(url).status_code == 403
     assert logs.count_calls == [] and logs.purge_calls == []
@@ -263,9 +290,10 @@ def test_retention_rechecks_privileges_before_touching_any_repository(
 
 def test_preview_returns_both_cutoffs_and_counts(client, repos):
     http, _ = client
-    logs, tasks = repos
+    logs, tasks, ai = repos
     logs.deletable = 7
     tasks.deletable = 2
+    ai.deletable = 4
 
     before = datetime.now()
     response = http.post(PREVIEW_URL)
@@ -274,31 +302,58 @@ def test_preview_returns_both_cutoffs_and_counts(client, repos):
     assert response.status_code == 200
     body = response.json()
     assert body["status"] == "ok" and body["code"] == 200
-    assert set(body["data"]) == {"app_logs", "export_tasks"}
-    for table in ("app_logs", "export_tasks"):
+    assert set(body["data"]) == {"app_logs", "export_tasks", "ai_call_logs"}
+    for table in ("app_logs", "export_tasks", "ai_call_logs"):
         assert set(body["data"][table]) == {"cutoff", "deletable"}
     assert body["data"]["app_logs"]["deletable"] == 7
     assert body["data"]["export_tasks"]["deletable"] == 2
+    assert body["data"]["ai_call_logs"]["deletable"] == 4
 
     logs_cutoff = datetime.fromisoformat(body["data"]["app_logs"]["cutoff"])
     tasks_cutoff = datetime.fromisoformat(body["data"]["export_tasks"]["cutoff"])
+    ai_cutoff = datetime.fromisoformat(body["data"]["ai_call_logs"]["cutoff"])
     assert before - timedelta(days=90) <= logs_cutoff <= after - timedelta(days=90)
     assert before - timedelta(days=30) <= tasks_cutoff <= after - timedelta(days=30)
+    assert before - timedelta(days=90) <= ai_cutoff <= after - timedelta(days=90)
 
     # The counts were asked for with the very cutoffs the response reports.
     assert logs.count_calls == [logs_cutoff]
     assert tasks.count_calls == [tasks_cutoff]
+    assert ai.count_calls == [ai_cutoff]
 
 
 def test_preview_deletes_nothing(client, repos):
     http, _ = client
-    logs, tasks = repos
+    logs, tasks, ai = repos
 
     assert http.post(PREVIEW_URL).status_code == 200
 
     assert logs.purge_calls == []
     assert tasks.purge_calls == []
+    assert ai.purge_calls == []
     assert logs.inserted == []
+
+
+def test_preview_ai_count_failure_degrades_to_null(client, repos, caplog):
+    """AI 表查不了只降级成 ``deletable: null``（只读诊断不能整页挂）。"""
+    http, _ = client
+    logs, tasks, ai = repos
+    logs.deletable = 7
+    tasks.deletable = 2
+    ai.fail = RuntimeError("AI_CALL_LOGS is not migrated")
+
+    response = http.post(PREVIEW_URL)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "ok" and body["code"] == 200
+    assert body["data"]["app_logs"]["deletable"] == 7
+    assert body["data"]["export_tasks"]["deletable"] == 2
+    assert body["data"]["ai_call_logs"]["deletable"] is None
+    assert datetime.fromisoformat(body["data"]["ai_call_logs"]["cutoff"])
+    assert "ai_call_logs count failed" in caplog.text
+    # 内部细节（表名/异常文案）不进响应。
+    assert "not migrated" not in response.text
 
 
 # ---------------------------------------------------------------------------
@@ -309,7 +364,7 @@ def test_preview_deletes_nothing(client, repos):
 def test_run_starts_a_background_job_and_audits_the_actor(client, repos, monkeypatch):
     """POST /retention/run 立刻给作业句柄；结果通过进度端点取（不再同步返回）。"""
     http, _ = client
-    logs, tasks = repos
+    logs, tasks, ai = repos
     logs.delay = 0.2  # 响应返回时作业仍在跑
     logs.rowcounts = [3]  # one short batch
     tasks.rowcounts = [0]  # nothing expired
@@ -342,8 +397,14 @@ def test_run_starts_a_background_job_and_audits_the_actor(client, repos, monkeyp
     assert result["app_logs"]["remaining"] == 0
     assert result["export_tasks"]["deleted"] == 0
     assert result["export_tasks"]["remaining"] == 0
-    assert result["batches"] == 2
-    for table, days in (("app_logs", 90), ("export_tasks", 30)):
+    assert result["ai_call_logs"]["deleted"] == 0
+    assert result["ai_call_logs"]["remaining"] == 0
+    assert result["batches"] == 3
+    for table, days in (
+        ("app_logs", 90),
+        ("export_tasks", 30),
+        ("ai_call_logs", 90),
+    ):
         assert set(result[table]) == {"cutoff", "deleted", "remaining"}
         cutoff = datetime.fromisoformat(result[table]["cutoff"])
         assert datetime.now() - timedelta(days=days + 1) < cutoff < datetime.now()
@@ -364,7 +425,7 @@ def test_run_reports_the_remaining_rows_when_the_ceiling_is_hit(
     client, repos, monkeypatch
 ):
     http, _ = client
-    logs, tasks = repos
+    logs, tasks, ai = repos
     monkeypatch.setattr(retention, "retention_max_batches", lambda: 1)
     logs.rowcounts = [5000]
     logs.deletable = 42  # what count_expired answers
@@ -376,13 +437,13 @@ def test_run_reports_the_remaining_rows_when_the_ceiling_is_hit(
     result = _wait_terminal(http)["result"]
     assert result["app_logs"]["deleted"] == 5000
     assert result["app_logs"]["remaining"] == 42
-    assert result["batches"] == 2
+    assert result["batches"] == 3
 
 
 def test_run_is_409_when_a_purge_is_already_running(client, repos):
     """第二个请求 409（沿用既有文案），detail 里带当前 phase，且什么都不做。"""
     http, _ = client
-    logs, tasks = repos
+    logs, tasks, ai = repos
     logs.delay = 1.0  # 足够宽的窗口
 
     first = http.post(RUN_URL)
@@ -406,7 +467,7 @@ def test_run_is_409_when_a_purge_is_already_running(client, repos):
 def test_run_failure_is_surfaced_in_progress_without_internal_details(client, repos):
     """后台任务化后失败不再走 503：请求 200，失败在进度里（且不泄露内部细节）。"""
     http, _ = client
-    logs, _ = repos
+    logs, _, _ = repos
     logs.fail = ConnectionError("private DSN and password")
 
     response = http.post(RUN_URL)

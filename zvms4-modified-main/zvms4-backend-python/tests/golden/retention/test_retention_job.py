@@ -39,17 +39,21 @@ from sqlalchemy.dialects import oracle
 
 import config
 from db import backends
+from db.repos.oracle import ai_call_logs as ai_call_logs_repo
 from db.repos.oracle import app_logs as app_logs_repo
 from db.repos.oracle import tasks as tasks_repo
+from db.repos.oracle.ai_call_logs import OracleAICallLogsRepo
 from db.repos.oracle.app_logs import OracleAppLogsRepo
 from db.repos.oracle.tasks import OracleTasksRepo
 from tasks import retention
 from tasks.retention import (
+    DEFAULT_AI_CALL_LOGS_RETENTION_DAYS,
     DEFAULT_APP_LOGS_RETENTION_DAYS,
     DEFAULT_EXPORT_TASKS_RETENTION_DAYS,
     DEFAULT_RETENTION_BATCH_SIZE,
     DEFAULT_RETENTION_MAX_BATCHES,
     RetentionBusy,
+    ai_call_logs_retention_days,
     app_logs_retention_days,
     export_tasks_retention_days,
     purge_expired_records,
@@ -125,15 +129,22 @@ def _real_repos(
     logs_count: int = 0,
     tasks_rowcounts: list[int] | None = None,
     tasks_count: int = 0,
-) -> tuple[_FakeSession, _FakeSession]:
-    """Real repositories over fake sessions; returns the two sessions."""
+    ai_rowcounts: list[int] | None = None,
+    ai_count: int = 0,
+) -> tuple[_FakeSession, _FakeSession, _FakeSession]:
+    """Real repositories over fake sessions; returns the three sessions."""
     logs_session = _FakeSession(logs_rowcounts, logs_count)
     tasks_session = _FakeSession(tasks_rowcounts, tasks_count)
+    ai_session = _FakeSession(ai_rowcounts, ai_count)
     _wire(monkeypatch, app_logs_repo, logs_session)
     _wire(monkeypatch, tasks_repo, tasks_session)
+    _wire(monkeypatch, ai_call_logs_repo, ai_session)
     monkeypatch.setattr(backends, "get_applogs_repo", lambda session=None: OracleAppLogsRepo())
     monkeypatch.setattr(backends, "get_tasks_repo", lambda session=None: OracleTasksRepo())
-    return logs_session, tasks_session
+    monkeypatch.setattr(
+        backends, "get_ai_call_logs_repo", lambda session=None: OracleAICallLogsRepo()
+    )
+    return logs_session, tasks_session, ai_session
 
 
 class _FakeAppLogsRepo:
@@ -194,16 +205,35 @@ class _FakeTasksRepo:
         return self.count
 
 
+class _FakeAICallLogsRepo:
+    """Fake ``AICallLogsRepo``: one configurable rowcount (same style)."""
+
+    def __init__(self, rowcounts: list[int] | None = None, count: int = 0) -> None:
+        self.rowcounts = list(rowcounts or [])
+        self.count = count
+        self.purges: list[tuple[datetime, int]] = []
+
+    async def purge_batch(self, cutoff: datetime, batch_size: int) -> int:
+        self.purges.append((cutoff, batch_size))
+        return self.rowcounts.pop(0) if self.rowcounts else 0
+
+    async def count_expired(self, cutoff: datetime) -> int:
+        return self.count
+
+
 def _fake_repos(
     monkeypatch,
     logs: _FakeAppLogsRepo | None = None,
     tasks: _FakeTasksRepo | None = None,
-) -> tuple[_FakeAppLogsRepo, _FakeTasksRepo]:
+    ai: _FakeAICallLogsRepo | None = None,
+) -> tuple[_FakeAppLogsRepo, _FakeTasksRepo, _FakeAICallLogsRepo]:
     logs_repo = logs if logs is not None else _FakeAppLogsRepo()
     tasks_repo = tasks if tasks is not None else _FakeTasksRepo()
+    ai_repo = ai if ai is not None else _FakeAICallLogsRepo()
     monkeypatch.setattr(backends, "get_applogs_repo", lambda session=None: logs_repo)
     monkeypatch.setattr(backends, "get_tasks_repo", lambda session=None: tasks_repo)
-    return logs_repo, tasks_repo
+    monkeypatch.setattr(backends, "get_ai_call_logs_repo", lambda session=None: ai_repo)
+    return logs_repo, tasks_repo, ai_repo
 
 
 @pytest.fixture(autouse=True)
@@ -251,6 +281,7 @@ def test_retention_cutoffs_give_each_table_its_own_window():
 def test_defaults_match_the_frozen_parameters():
     assert DEFAULT_APP_LOGS_RETENTION_DAYS == 90
     assert DEFAULT_EXPORT_TASKS_RETENTION_DAYS == 30
+    assert DEFAULT_AI_CALL_LOGS_RETENTION_DAYS == 90
     assert DEFAULT_RETENTION_BATCH_SIZE == 5000
     assert DEFAULT_RETENTION_MAX_BATCHES == 20
 
@@ -260,6 +291,7 @@ def test_defaults_match_the_frozen_parameters():
     [
         (app_logs_retention_days, "APP_LOGS_RETENTION_DAYS", 90),
         (export_tasks_retention_days, "EXPORT_TASKS_RETENTION_DAYS", 30),
+        (ai_call_logs_retention_days, "AI_CALL_LOGS_RETENTION_DAYS", 90),
         (retention_batch_size, "RETENTION_BATCH_SIZE", 5000),
         (retention_max_batches, "RETENTION_MAX_BATCHES", 20),
     ],
@@ -275,6 +307,7 @@ def test_readers_fall_back_on_invalid_values(monkeypatch, bad):
     for key in (
         "APP_LOGS_RETENTION_DAYS",
         "EXPORT_TASKS_RETENTION_DAYS",
+        "AI_CALL_LOGS_RETENTION_DAYS",
         "RETENTION_BATCH_SIZE",
         "RETENTION_MAX_BATCHES",
     ):
@@ -282,6 +315,7 @@ def test_readers_fall_back_on_invalid_values(monkeypatch, bad):
 
     assert app_logs_retention_days() == DEFAULT_APP_LOGS_RETENTION_DAYS
     assert export_tasks_retention_days() == DEFAULT_EXPORT_TASKS_RETENTION_DAYS
+    assert ai_call_logs_retention_days() == DEFAULT_AI_CALL_LOGS_RETENTION_DAYS
     assert retention_batch_size() == DEFAULT_RETENTION_BATCH_SIZE
     assert retention_max_batches() == DEFAULT_RETENTION_MAX_BATCHES
 
@@ -289,11 +323,13 @@ def test_readers_fall_back_on_invalid_values(monkeypatch, bad):
 def test_readers_honour_positive_config(monkeypatch):
     monkeypatch.setattr(config, "APP_LOGS_RETENTION_DAYS", 14, raising=False)
     monkeypatch.setattr(config, "EXPORT_TASKS_RETENTION_DAYS", "2", raising=False)
+    monkeypatch.setattr(config, "AI_CALL_LOGS_RETENTION_DAYS", 7, raising=False)
     monkeypatch.setattr(config, "RETENTION_BATCH_SIZE", 100, raising=False)
     monkeypatch.setattr(config, "RETENTION_MAX_BATCHES", 3, raising=False)
 
     assert app_logs_retention_days() == 14
     assert export_tasks_retention_days() == 2
+    assert ai_call_logs_retention_days() == 7
     assert retention_batch_size() == 100
     assert retention_max_batches() == 3
 
@@ -325,7 +361,7 @@ def test_module_reads_config_by_attribute_not_by_import():
 
 def test_run_drains_until_a_short_batch(monkeypatch):
     """``[5000, 5000, 3]`` ⇒ exactly three batches, three commits, 10003 rows."""
-    logs_session, tasks_session = _real_repos(
+    logs_session, tasks_session, ai_session = _real_repos(
         monkeypatch,
         logs_rowcounts=[5000, 5000, 3],
         logs_count=3,
@@ -342,12 +378,16 @@ def test_run_drains_until_a_short_batch(monkeypatch):
     assert len(tasks_session.deletes) == 1
     assert tasks_session.commits == 1
     assert result["export_tasks"]["deleted"] == 0
-    assert result["batches"] == 4
+    assert len(ai_session.deletes) == 1
+    assert ai_session.commits == 1
+    assert set(result["ai_call_logs"]) == {"cutoff", "deleted", "remaining"}
+    assert result["ai_call_logs"]["deleted"] == 0
+    assert result["batches"] == 5
 
 
 def test_run_stops_on_the_first_empty_batch(monkeypatch):
     """A first batch of ``0`` means nothing is expired: one call, one commit."""
-    logs_session, tasks_session = _real_repos(
+    logs_session, tasks_session, ai_session = _real_repos(
         monkeypatch, logs_rowcounts=[0], tasks_rowcounts=[0]
     )
 
@@ -356,14 +396,15 @@ def test_run_stops_on_the_first_empty_batch(monkeypatch):
     assert len(logs_session.deletes) == 1
     assert logs_session.commits == 1
     assert len(tasks_session.deletes) == 1
+    assert len(ai_session.deletes) == 1
     assert result["app_logs"]["deleted"] == 0
-    assert result["batches"] == 2
+    assert result["batches"] == 3
 
 
 def test_run_stops_at_the_batch_ceiling(monkeypatch):
     """A full batch every time must not loop forever: ``RETENTION_MAX_BATCHES``."""
     monkeypatch.setattr(config, "RETENTION_MAX_BATCHES", 2, raising=False)
-    logs_session, _ = _real_repos(
+    logs_session, _, _ = _real_repos(
         monkeypatch,
         logs_rowcounts=[5000, 5000, 5000],
         logs_count=7,
@@ -377,13 +418,15 @@ def test_run_stops_at_the_batch_ceiling(monkeypatch):
     assert result["app_logs"]["deleted"] == 10000
     # The ceiling was hit, so the remaining expired rows are reported.
     assert result["app_logs"]["remaining"] == 7
+    assert result["batches"] == 4
 
 
 def test_run_uses_the_configured_windows_and_batch_size(monkeypatch):
     monkeypatch.setattr(config, "APP_LOGS_RETENTION_DAYS", 10, raising=False)
     monkeypatch.setattr(config, "EXPORT_TASKS_RETENTION_DAYS", 2, raising=False)
+    monkeypatch.setattr(config, "AI_CALL_LOGS_RETENTION_DAYS", 5, raising=False)
     monkeypatch.setattr(config, "RETENTION_BATCH_SIZE", 100, raising=False)
-    logs_session, tasks_session = _real_repos(
+    logs_session, tasks_session, ai_session = _real_repos(
         monkeypatch, logs_rowcounts=[0], tasks_rowcounts=[0]
     )
 
@@ -393,16 +436,19 @@ def test_run_uses_the_configured_windows_and_batch_size(monkeypatch):
 
     assert "ROWNUM <= 100" in _sql(logs_session.deletes[0])
     assert "ROWNUM <= 100" in _sql(tasks_session.deletes[0])
+    assert "ROWNUM <= 100" in _sql(ai_session.deletes[0])
     logs_cutoff = datetime.fromisoformat(result["app_logs"]["cutoff"])
     tasks_cutoff = datetime.fromisoformat(result["export_tasks"]["cutoff"])
+    ai_cutoff = datetime.fromisoformat(result["ai_call_logs"]["cutoff"])
     assert before - timedelta(days=10) <= logs_cutoff <= after - timedelta(days=10)
     assert before - timedelta(days=2) <= tasks_cutoff <= after - timedelta(days=2)
+    assert before - timedelta(days=5) <= ai_cutoff <= after - timedelta(days=5)
     assert before - timedelta(days=10) <= logs_cutoff < tasks_cutoff
 
 
 def test_run_reports_the_cutoff_it_used_to_the_repo(monkeypatch):
     """The cutoff handed to the repo is the one echoed in the response."""
-    logs_repo, tasks_repo = _fake_repos(monkeypatch)
+    logs_repo, tasks_repo, ai_repo = _fake_repos(monkeypatch)
 
     result = asyncio.run(run_retention())
 
@@ -413,6 +459,12 @@ def test_run_reports_the_cutoff_it_used_to_the_repo(monkeypatch):
     assert tasks_cutoff.isoformat() == result["export_tasks"]["cutoff"]
     assert tasks_cutoff - logs_cutoff == timedelta(
         days=DEFAULT_APP_LOGS_RETENTION_DAYS - DEFAULT_EXPORT_TASKS_RETENTION_DAYS
+    )
+    ai_cutoff, ai_batch_size = ai_repo.purges[0]
+    assert ai_cutoff.isoformat() == result["ai_call_logs"]["cutoff"]
+    assert ai_batch_size == DEFAULT_RETENTION_BATCH_SIZE
+    assert tasks_cutoff - ai_cutoff == timedelta(
+        days=DEFAULT_AI_CALL_LOGS_RETENTION_DAYS - DEFAULT_EXPORT_TASKS_RETENTION_DAYS
     )
 
 
@@ -446,11 +498,11 @@ def test_lock_is_released_after_a_manual_run(monkeypatch):
         second = await purge_now()
         return first["batches"], second["batches"]
 
-    assert asyncio.run(_scenario()) == (2, 2)
+    assert asyncio.run(_scenario()) == (3, 3)
 
 
 def test_scheduled_run_skips_quietly_while_a_purge_is_running(monkeypatch, capsys):
-    logs_repo, _ = _fake_repos(monkeypatch)
+    logs_repo, _, _ = _fake_repos(monkeypatch)
 
     async def _scenario():
         assert await retention.acquire_nowait() is True
@@ -470,10 +522,11 @@ def test_scheduled_run_skips_quietly_while_a_purge_is_running(monkeypatch, capsy
 
 
 def test_scheduled_run_writes_one_audit_row_for_the_scheduler(monkeypatch, capsys):
-    logs_repo, _ = _fake_repos(
+    logs_repo, _, _ = _fake_repos(
         monkeypatch,
         logs=_FakeAppLogsRepo([5000, 3], count=0),
         tasks=_FakeTasksRepo([2], count=0),
+        ai=_FakeAICallLogsRepo([0], count=0),
     )
 
     assert asyncio.run(purge_expired_records()) == 5005
@@ -486,6 +539,7 @@ def test_scheduled_run_writes_one_audit_row_for_the_scheduler(monkeypatch, capsy
     assert "数据保留期清理" in row["data"]
     assert "app_logs 删除 5003 行" in row["data"]
     assert "export_tasks 删除 2 行" in row["data"]
+    assert "ai_call_logs 删除 0 行" in row["data"]
     assert "deleted 5005 row(s)" in capsys.readouterr().out
 
 
@@ -503,10 +557,11 @@ def test_audit_row_level_is_inside_the_protected_set(monkeypatch):
 
 
 def test_scheduled_run_swallows_purge_failures(monkeypatch, capsys):
-    logs_repo, _ = _fake_repos(
+    logs_repo, _, _ = _fake_repos(
         monkeypatch,
         logs=_FakeAppLogsRepo([], count=0),
         tasks=_FakeTasksRepo([0]),
+        ai=_FakeAICallLogsRepo([0]),
     )
     logs_repo.exc = RuntimeError("boom")
 
@@ -530,10 +585,11 @@ def test_scheduled_run_swallows_repo_lookup_failures(monkeypatch, capsys):
 
 def test_audit_failure_does_not_hide_a_completed_purge(monkeypatch, capsys):
     """The rows are already gone; a failing audit must not turn the run into 0."""
-    logs_repo, _ = _fake_repos(
+    logs_repo, _, _ = _fake_repos(
         monkeypatch,
         logs=_FakeAppLogsRepo([7], count=0),
         tasks=_FakeTasksRepo([0]),
+        ai=_FakeAICallLogsRepo([0]),
     )
 
     async def _boom(result):
