@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import {
   CirclePlusFilled,
+  EditPen,
   HomeFilled,
   InfoFilled,
   Sunny,
@@ -54,7 +55,9 @@ const navs: Array<{
     path: '/activities/mine',
     show: true,
     judge: (path) =>
-      (path.startsWith('/activity') && !path.startsWith('/activity/create')) ||
+      (path.startsWith('/activity') &&
+        !path.startsWith('/activity/create') &&
+        !path.startsWith('/activity/register')) ||
       path.startsWith('/activities')
   },
   {
@@ -63,6 +66,13 @@ const navs: Array<{
     path: '/activity/create',
     show: user.position.includes('admin') || user.position.includes('department'),
     judge: (path) => path.startsWith('/activity/create')
+  },
+  {
+    icon: EditPen,
+    name: 'register',
+    path: '/activity/register',
+    show: user.position.includes('admin') || user.position.includes('department'),
+    judge: (path) => path.startsWith('/activity/register')
   },
   {
     icon: Management,
