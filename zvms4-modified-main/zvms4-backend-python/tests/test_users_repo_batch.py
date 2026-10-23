@@ -118,6 +118,17 @@ async def test_more_than_1000_oids_are_split_into_chunks() -> None:
     repo = OracleUsersRepo(session)
 
     assert await repo.get_many_by_oids(oids) == {}
+
+
+@pytest.mark.asyncio
+async def test_get_names_also_chunks_at_1000() -> None:
+    oids = [f"{index:024x}" for index in range(1001)]
+    session = _Session()
+    repo = OracleUsersRepo(session)
+
+    assert await repo.get_names(oids) == {}
+    assert len(session.statements) == 2
+    assert max(len(_bound_oids(stmt)) for stmt in session.statements) <= 1000
     assert len(session.statements) == 2  # 1000 + 1
     assert [len(_bound_oids(stmt)) for stmt in session.statements] == [1000, 1]
 

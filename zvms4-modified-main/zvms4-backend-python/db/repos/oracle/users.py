@@ -39,6 +39,7 @@ from sqlalchemy import (
     select,
     text,
     update,
+    and_,
 )
 from sqlalchemy.dialects.oracle import CLOB, TIMESTAMP, VARCHAR2
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -233,6 +234,20 @@ def _get_by_oid_stmt(oid: str):
     return select(*_user_columns()).where(users_tbl.c.oid == oid)
 
 
+def _get_by_oid_for_update_stmt(oid: str):
+    """Lock the user row while archiving/delete children.
+
+    Without this lock a concurrent ban/time insert can commit between the
+    archive read and the child deletes, making the final USERS delete fail on
+    the NO ACTION FK (ORA-02292) and leaving the caller with a 500.
+    """
+    return (
+        select(*_user_columns())
+        .where(users_tbl.c.oid == oid)
+        .with_for_update()
+    )
+
+
 def _find_by_business_id_stmt(business_id: str):
     return select(*_user_columns()).where(
         users_tbl.c.business_id == business_id
@@ -336,6 +351,34 @@ def _set_ban_stmt(
             session_id=new_oid(),
         )
     )
+
+
+def _set_ban_if_stronger_stmt(
+    oid: str,
+    reason: str,
+    until: datetime | None,
+    source: str,
+    rule_code: str | None,
+):
+    """Ban only when the new sentence outranks the current row.
+
+    The old service did read -> compare -> unconditional UPDATE in two
+    transactions; a human permanent ban could land in between and then be
+    shortened by an automatic 1-day rule. Put the comparison in the UPDATE
+    predicate so the database decides atomically.
+    """
+    stmt = _set_ban_stmt(oid, reason, until, source, rule_code)
+    if until is not None:
+        stmt = stmt.where(
+            or_(
+                users_tbl.c.banned == 0,
+                and_(
+                    users_tbl.c.ban_until.is_not(None),
+                    users_tbl.c.ban_until < until,
+                ),
+            )
+        )
+    return stmt
 
 
 def _clear_ban_stmt(oid: str):
@@ -771,7 +814,7 @@ async def archive_and_delete_user(
     actor = normalize_oid(deleted_by) if is_valid_oid(deleted_by) else None
 
     user_row = (
-        await session.execute(_get_by_oid_stmt(target))
+        await session.execute(_get_by_oid_for_update_stmt(target))
     ).first()
     if user_row is None:
         raise UserGoneError(f"用户不存在: {target}")
@@ -1100,6 +1143,34 @@ class OracleUsersRepo:
             if owns:
                 await session.commit()
 
+    async def set_ban_if_stronger(
+        self,
+        oid: str,
+        *,
+        reason: str,
+        until: datetime | None,
+        source: str,
+        rule_code: str | None,
+    ) -> datetime | None:
+        """Ban atomically only when ``until`` outranks the current sentence.
+
+        Returns the currently effective ``ban_until`` (``None`` = permanent).
+        ``until=None`` is permanent and always applied.
+        """
+        target = normalize_oid(oid)
+        stmt = _set_ban_if_stronger_stmt(target, reason, until, source, rule_code)
+        async with _session_for(self._session) as (session, owns):
+            result = await session.execute(stmt)
+            changed = int(result.rowcount or 0)
+            if owns:
+                await session.commit()
+            if changed:
+                return until
+            row = (await session.execute(_get_by_oid_stmt(target))).first()
+            if row is None:
+                return None
+            return row._mapping["ban_until"]
+
     async def clear_ban(self, oid: str) -> None:
         """解封并清空元数据（``banned = 0``），同一条写里轮换会话。"""
         stmt = _clear_ban_stmt(normalize_oid(oid))
@@ -1199,10 +1270,18 @@ class OracleUsersRepo:
         unique = list(dict.fromkeys(normalize_oid(oid) for oid in oids))
         if not unique:
             return {}
-        stmt = _get_names_stmt(unique)
+        found: dict[str, str] = {}
         async with _session_for(self._session) as (session, _owns):
-            rows = (await session.execute(stmt)).all()
-        return {row._mapping["oid"]: row._mapping["name"] for row in rows}
+            # Same 1000-element limit as get_many_by_oids. The activity member
+            # endpoint accepts 1000 members plus the actor oid, so a single
+            # un-chunked IN is a guaranteed ORA-01795 on a legal request.
+            for start in range(0, len(unique), _OID_CHUNK):
+                chunk = unique[start : start + _OID_CHUNK]
+                rows = (await session.execute(_get_names_stmt(chunk))).all()
+                found.update(
+                    {row._mapping["oid"]: row._mapping["name"] for row in rows}
+                )
+        return found
 
     async def get_many_by_oids(self, oids: list[str]) -> dict[str, Row]:
         """Full user documents for many oids in one round trip.

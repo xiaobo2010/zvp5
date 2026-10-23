@@ -19,8 +19,9 @@
 --
 --   * ``config.mode`` 是「达到阈值之后做什么」：``ban`` 按梯度封禁，``alert``
 --     只写证据 + 告警审计。新口径先跑 alert 观察误报率，是这次扩展里唯一
---     影响「会不会真封人」的开关；缺省（没有该键）等价于 ``ban``，所以存量
---     两条规则的行为不变。
+--     影响「会不会真封人」的开关；缺省（没有该键）等价于 ``ban``。
+--     V022 进一步把 login_failure_burst 的存量/新装默认值降为 alert：该规则
+--     只按受害者 oid 归因，无法区分「本人输错」与「第三方拿公开学号定向刷」。
 --
 --   * alert 模式的 penalties 落 JSON ``null``：没有处罚梯度，任何读取方都会
 --     在 ``rule_penalties`` 里回落到默认值——alert 路径根本不调用封禁，
@@ -51,7 +52,7 @@ ON (t.code = ''login_failure_burst'')
 WHEN NOT MATCHED THEN INSERT
   (oid, code, name, trigger_code, enabled, config, penalties, builtin, created_at, updated_at)
   VALUES (''0b0000000000000000000004'', ''login_failure_burst'', ''登录失败暴破'',
-          ''login_failure_burst'', 1, ''{"threshold":10,"window_hours":1,"mode":"ban"}'',
+          ''login_failure_burst'', 1, ''{"threshold":10,"window_hours":1,"mode":"alert"}'',
           ''[1,3,7]'', 1, SYSTIMESTAMP, SYSTIMESTAMP)';
 EXCEPTION
   -- -1: 并发执行时另一会话已插入（uq_ban_rules_code），结果一致，忽略。

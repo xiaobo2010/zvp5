@@ -1218,7 +1218,7 @@ ON (t.code = ''login_failure_burst'')
 WHEN NOT MATCHED THEN INSERT
   (oid, code, name, trigger_code, enabled, config, penalties, builtin, created_at, updated_at)
   VALUES (''0b0000000000000000000004'', ''login_failure_burst'', ''登录失败暴破'',
-          ''login_failure_burst'', 1, ''{"threshold":10,"window_hours":1,"mode":"ban"}'',
+          ''login_failure_burst'', 1, ''{"threshold":10,"window_hours":1,"mode":"alert"}'',
           ''[1,3,7]'', 1, SYSTIMESTAMP, SYSTIMESTAMP)';
 EXCEPTION
   -- -1: 并发执行时另一会话已插入（uq_ban_rules_code），结果一致，忽略。

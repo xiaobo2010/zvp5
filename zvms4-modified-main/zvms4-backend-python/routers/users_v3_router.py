@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
 
 from db import backends
+from db.oracle.session import session_scope
 from db.repos.oracle.users import UserGoneError
 from services import risk_monitor
 from typings.log import inject_log, xuehai_id_from
@@ -327,7 +328,12 @@ async def create_user_v3(
     if "admin" not in per:
         raise HTTPException(status_code=403, detail="权限不足")
 
-    allowed_roles = {"student", "secretary", "department", "admin", "teacher"}
+    # 创建账号不是提权入口：admin 只能由现存的另一个 admin 通过受控流程
+    # 授予，不能在一次普通建号里直接生成。否则一个被窃取的 admin token 可以
+    # 造一个已知密码（学号）的 admin，再用它的 TOTP 给自己做双人审批。
+    if "admin" in payload.roles:
+        raise HTTPException(status_code=403, detail="不能通过创建账号直接授予管理员角色")
+    allowed_roles = {"student", "secretary", "department", "teacher"}
     for role in payload.roles:
         if role not in allowed_roles:
             raise HTTPException(status_code=400, detail=f"无效角色：{role}")
@@ -869,17 +875,22 @@ async def reset_user_ban_records_v3(
     rule_code = None
     if payload is not None:
         rule_code = (payload.rule_code or "").strip() or None
-    deleted = await backends.get_ban_records_repo().delete_for_user_rule(
-        str(oid), rule_code
-    )
+    # The delete is evidence-destroying: the audit row must commit with it.
+    # A separate app-log transaction could fail after the rows are gone,
+    # leaving no trace of who reset the escalation ladder.
+    async with session_scope() as session:
+        deleted = await backends.get_ban_records_repo(
+            session
+        ).delete_for_user_rule(str(oid), rule_code)
 
-    scope = f"规则 {rule_code} 的" if rule_code else "全部"
-    log.with_text(
-        f"管理员 {await get_user_display_name(user['id'])} 重置了用户 {target['name']} {scope}封禁梯度（删除 {deleted} 条流水）",
-        type="ban_change",
-        level="warning",
-    )
-    await log.insert_log()
+        scope = f"规则 {rule_code} 的" if rule_code else "全部"
+        log.with_text(
+            f"管理员 {await get_user_display_name(user['id'])} 重置了用户 {target['name']} {scope}封禁梯度（删除 {deleted} 条流水）",
+            type="ban_change",
+            level="warning",
+        )
+        await log.insert_log(session=session)
+        await session.commit()
 
     return {"status": "ok", "code": 200, "data": {"deleted": deleted}}
 
@@ -929,10 +940,10 @@ async def create_temp_password_v3(
     expires_at = now + timedelta(minutes=ttl_minutes)
 
     passwords = backends.get_temp_passwords_repo()
-    # 先作废旧码再落新码：同一时刻用户手里只该有一个有效码。否则旧码「明明
-    # 正确」却因为扫描窗口被新码挤掉，被判错三次后设备会被永久封禁。
-    await passwords.revoke_open_for_user(str(target["_id"]), now)
-    await passwords.insert(
+    # 作废旧码 + 落新码必须在一个事务里：拆成两次提交时，中间失败会让用户
+    # 一个有效码都没有，并发签发则可能留下两个有效码，最终都被登录失败计数
+    # 推向封禁。仓储内部的 issue_for_user 用同一 session 完成两件事。
+    await passwords.issue_for_user(
         str(target["_id"]),
         str(user["id"]),
         hash_temp_password(code),

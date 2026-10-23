@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import sys
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from types import ModuleType, SimpleNamespace
 
@@ -65,7 +66,7 @@ class FakeLog:
         self.entries.append({"text": text, "type": type, "level": level})
         return self
 
-    async def insert_log(self) -> None:
+    async def insert_log(self, session=None) -> None:
         return None
 
 
@@ -150,6 +151,13 @@ def api(monkeypatch):
         )
         return "0000000000000000000000ff"
 
+    async def temp_issue(target_oid, creator_oid, code_hash, creator_xuehai, expires_at):
+        # Mirrors the real repo: revoke + insert share one transaction.
+        await temp_revoke_open(target_oid, datetime.now())
+        return await temp_insert(
+            target_oid, creator_oid, code_hash, creator_xuehai, expires_at
+        )
+
     monkeypatch.setattr(
         backends,
         "get_users_repo",
@@ -164,7 +172,9 @@ def api(monkeypatch):
         backends,
         "get_temp_passwords_repo",
         lambda *a, **k: SimpleNamespace(
-            insert=temp_insert, revoke_open_for_user=temp_revoke_open
+            issue_for_user=temp_issue,
+            insert=temp_insert,
+            revoke_open_for_user=temp_revoke_open,
         ),
         raising=False,
     )
@@ -179,6 +189,20 @@ def api(monkeypatch):
         lambda *a, **k: SimpleNamespace(delete_for_user_rule=delete_for_user_rule),
         raising=False,
     )
+
+    class _AdminSession:
+        def __init__(self):
+            self.commits = 0
+
+        async def commit(self):
+            self.commits += 1
+
+    @asynccontextmanager
+    async def admin_scope():
+        yield _AdminSession()
+
+    # 封禁梯度重置现在把删除和审计放在同一个事务里；测试替身不需要真库。
+    monkeypatch.setattr(users_v3_router, "session_scope", admin_scope)
 
     log = FakeLog()
     app = FastAPI()
