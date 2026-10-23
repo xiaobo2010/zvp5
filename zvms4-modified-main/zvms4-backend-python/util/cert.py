@@ -1,4 +1,7 @@
+from contextlib import asynccontextmanager
+from contextvars import ContextVar
 from typing import Optional
+import asyncio
 import bcrypt
 from Crypto.PublicKey import RSA
 from Crypto.Cipher import PKCS1_OAEP
@@ -12,7 +15,6 @@ import hmac
 import secrets
 import string
 import struct
-from bcrypt import checkpw, gensalt, hashpw
 from Crypto.Hash import SHA256
 
 from db import backends
@@ -37,6 +39,38 @@ def check_password(password: str, hashed: str):
         # bcrypt rejects inputs longer than its 72-byte limit. A malformed
         # credential is a failed check, never an internal server error.
         return False
+
+
+async def hash_password_async(password) -> bytes:
+    """``hash_password`` 的线程池版本，给 ``async def`` 调用方用。
+
+    bcrypt cost 12 单次约 250ms 且是纯 CPU：直接在协程里调会把整个事件
+    循环按死这么久，一次并发登录就能让所有请求排队。cost 保持 12，只换
+    执行位置。
+    """
+    return await asyncio.to_thread(hash_password, password)
+
+
+async def verify_password_async(password: str, hashed: str) -> bool:
+    """``check_password`` 的线程池版本；判定口径与原函数逐字相同。"""
+    return await asyncio.to_thread(check_password, password, hashed)
+
+
+def _custom_password_flags(rows) -> list[bool]:
+    flags = []
+    for row in rows:
+        stored = row.get("password")
+        flags.append(stored is not None and not check_password(row["id"], stored))
+    return flags
+
+
+async def custom_password_flags_async(rows) -> list[bool]:
+    """``pwdm`` 页内判定：True = 库里存的是自定义密码（不等于学号）。
+
+    整页一次性交给线程：``perpage`` 上限是 100，逐人 to_thread 只会多付
+    100 次线程池往返，bcrypt 的 CPU 一秒都省不下来，还把循环切得稀碎。
+    """
+    return await asyncio.to_thread(_custom_password_flags, rows)
 
 
 def pwd_strength(password: str) -> int:
@@ -248,6 +282,33 @@ def _read_credential(cert: str) -> dict:
     return credential
 
 
+# 登录端点在同一个请求里往往已经读过这一行 users（按学号查，或按 oid 查），
+# 而 ``validate_by_cert`` 自己还会再读一次同一行。跨洋链路单程 138ms，这一次
+# 重复读是白付的，所以让调用方把「刚读到的文档」放进来复用。
+#
+# 用 ContextVar 而不是给 ``validate_by_cert`` 加参数：它的调用签名是稳定契约
+# （多处单测按 ``(id, credential, mode)`` 三参数打桩），加位置/关键字参数都会
+# 把「省一次往返」变成破坏性变更。没设置或 oid 对不上时行为与原来完全一致——
+# 自己查库，所以直连调用方不受影响。
+_prefetched_user: ContextVar[Optional[tuple[str, Optional[dict]]]] = ContextVar(
+    "cert_prefetched_user", default=None
+)
+
+
+@asynccontextmanager
+async def prefetched_user(user_oid: str, user_doc: Optional[dict]):
+    """在此上下文内让 ``validate_by_cert`` 复用 ``user_doc``。
+
+    ``user_doc`` 允许是 ``None``：那表示调用方刚刚确认过「这个 oid 查不到」，
+    同样不必再读一次。退出时无条件复位，避免值泄漏到同进程的其他请求。
+    """
+    token = _prefetched_user.set((str(user_oid), user_doc))
+    try:
+        yield
+    finally:
+        _prefetched_user.reset(token)
+
+
 async def validate_by_cert(
     id: str, cert: str, type: Optional[str] = "long"
 ) -> tuple[str, bool]:
@@ -263,7 +324,12 @@ async def validate_by_cert(
     (no password is involved).
     """
     auth_field = _read_credential(cert)
-    user = await backends.get_users_repo().get_by_oid(id)
+    prefetched = _prefetched_user.get()
+    if prefetched is not None and prefetched[0] == str(id):
+        # 调用方刚读到的就是这一行（含「确实不存在」），别再花一次往返。
+        user = prefetched[1]
+    else:
+        user = await backends.get_users_repo().get_by_oid(id)
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
     # 登录前的封禁闸：到期封禁（banned 仍为 1）必须放行，否则刑满用户
@@ -278,7 +344,9 @@ async def validate_by_cert(
     if user["password"] is None:
         authenticated = False
     else:
-        authenticated = check_password(auth_field["password"], user["password"])
+        authenticated = await verify_password_async(
+            auth_field["password"], user["password"]
+        )
     if authenticated:
         if "eligibility" in user:
             eligibility = user["eligibility"]
@@ -317,12 +385,12 @@ async def get_hashed_password_by_cert(cert: str):
     password = auth_field["password"]
     if pwd_strength(password) < 3:
         raise HTTPException(status_code=400, detail="密码强度不足")
-    return hashpw(bytes(password, "utf-8"), gensalt()).decode("utf-8")
+    return (await hash_password_async(password)).decode("utf-8")
 
 
 async def checkpwd(id: str, pwd: str):
     user = await backends.get_users_repo().get_by_oid(id)
-    if user is not None and user.get("password") and check_password(
+    if user is not None and user.get("password") and await verify_password_async(
         pwd, user["password"]
     ):
         return True
