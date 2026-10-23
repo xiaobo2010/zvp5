@@ -60,7 +60,10 @@ TRIGGERS: dict[str, dict[str, Any]] = {
         "source": "app_logs",
         "ltype": "login_fail",
         "contains": None,
-        "config": {"threshold": 10, "window_hours": 1, "mode": "ban"},
+        # 密码失败无法可靠归因到「攻击者」：受害者的学号是公开的，攻击者
+        # 反复提交错密码就能把失败记录写到受害者 oid 上。默认只告警，避免
+        # 未登录的第三方用 10 次请求定向封掉任意学生；管理员仍可显式改回 ban。
+        "config": {"threshold": 10, "window_hours": 1, "mode": "alert"},
     },
     "ban_evasion_retry": {
         "name": "封禁期内反复尝试登录",

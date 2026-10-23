@@ -81,6 +81,38 @@ _DML_VERBS = frozenset({"INSERT", "UPDATE", "DELETE", "MERGE"})
 # 失去可信度（例如删掉 dual_auth_uses 里的重放记录），所以任何写语句一律拒绝。
 _PROTECTED_TABLES: tuple[str, ...] = ("DUAL_AUTH_USES", "USER_TRASH", "CHANGELOG")
 
+# Tables whose *rows* carry credentials/audit substrate. The row reader is
+# still useful for ordinary content tables, but these must go through a
+# dedicated, dual-auth operation, not the generic console.
+_PROTECTED_READ_TABLES: tuple[str, ...] = (
+    "DUAL_AUTH_USES",
+    "USER_TRASH",
+    "TEMP_LOGIN_PASSWORDS",
+    "DEVICE_CHALLENGES",
+)
+
+# Column values that must never be returned by the generic content console.
+# `PAYLOAD` is the archived user row (password hash + session id included);
+# `*_HASH` covers PASSWORD_HASH / CODE_HASH / TOKEN_HASH.
+_SENSITIVE_COLUMNS: frozenset[str] = frozenset(
+    {"PASSWORD_HASH", "SESSION_ID", "CODE_HASH", "TOKEN_HASH", "PAYLOAD"}
+)
+
+# Data-dictionary / system objects. The console is for the application schema;
+# reading SYS/DBA_/V$ tables is how a "read-only" admin query becomes a
+# cross-schema dump or a DB-host SSRF primitive.
+_SYSTEM_OBJECT_RE = re.compile(
+    r"(?i)(?<![\w$#])(?:SYS|DBA_[A-Z0-9_]+|V\$[A-Z0-9_]+|"
+    r"GV\$[A-Z0-9_]+|ALL_[A-Z0-9_]+|USER\$[A-Z0-9_$#]*)(?![\w$#])"
+)
+_DANGEROUS_FUNCTION_RE = re.compile(
+    r"(?i)(?<![\w$#])(?:UTL_[A-Z0-9_]+|DBMS_[A-Z0-9_]+|HTTPURITYPE)(?![\w$#])"
+)
+_PROTECTED_READ_TABLE_RE = re.compile(
+    r"(?i)(?<![\w$#])(?:DUAL_AUTH_USES|USER_TRASH|TEMP_LOGIN_PASSWORDS|"
+    r"DEVICE_CHALLENGES)(?![\w$#])"
+)
+
 # 破坏性语句里「目标表名」位于这些关键字之后；顺序即匹配优先级。
 _TARGET_PATTERNS: dict[str, str] = {
     "DELETE": r"^DELETE\s+FROM\s+([A-Za-z][A-Za-z0-9_$#]*)",
@@ -143,6 +175,23 @@ def quote_identifier(raw: str) -> str:
     return f'"{validate_identifier(raw)}"'
 
 
+def _is_sensitive_column(name: str) -> bool:
+    upper = str(name).upper()
+    return (
+        upper in _SENSITIVE_COLUMNS
+        or upper.endswith("_HASH")
+        or "PASSWORD" in upper
+        or "SECRET" in upper
+    )
+
+
+def _redact_cell(column: str, value: Any) -> Any:
+    """Hide credential material while keeping the row/column shape stable."""
+    if value is None:
+        return None
+    return "***" if _is_sensitive_column(column) else value
+
+
 # --------------------------------------------------------------------------- #
 # 语句分析（纯函数，可脱离会话测试）
 # --------------------------------------------------------------------------- #
@@ -187,6 +236,15 @@ def validate_readonly_sql(sql: str) -> str:
         # 的形态：只判开头不够。
         raise DbContentError(400, f"只读查询不允许包含 {hit.group(1)}")
 
+    if _SYSTEM_OBJECT_RE.search(scannable):
+        raise DbContentError(403, "只读查询不允许访问 SYS/DBA_/V$/ALL_ 系统对象")
+    if _DANGEROUS_FUNCTION_RE.search(scannable):
+        raise DbContentError(403, "只读查询不允许调用 UTL_/DBMS_/HTTPURITYPE 等外部函数")
+    if _PROTECTED_READ_TABLE_RE.search(scannable):
+        raise DbContentError(403, "该表包含凭据/审批数据，禁止通过通用查询读取")
+    if "@" in scannable:
+        raise DbContentError(403, "只读查询不允许使用数据库链接")
+
     # ``FOR UPDATE`` 不是写语句，因此不在关键字黑名单里，但它会在只读端点上
     # 加行锁并持有到会话结束——一次「查询」就能把其它事务堵住，单独拒绝。
     if _FOR_UPDATE_RE.search(scannable):
@@ -203,11 +261,18 @@ def _target_table(scannable: str, verb: str) -> str | None:
 
 
 def _is_destructive(verb: str, scannable: str) -> bool:
-    """契约 §4.4.3：DROP / TRUNCATE / 无 WHERE 的 DELETE / 无 WHERE 的 UPDATE。"""
-    if verb in {"DROP", "TRUNCATE"}:
+    """Return True for every statement that can widen beyond one typed row.
+
+    ``WHERE`` is not a safety proof: ``WHERE 1=1`` is a full-table write. Any
+    UPDATE/DELETE/MERGE therefore needs the target-table confirmation, and so
+    does an ALTER that drops/renames/modifies a column.
+    """
+    if verb in {"DROP", "TRUNCATE", "UPDATE", "DELETE", "MERGE"}:
         return True
-    if verb in {"DELETE", "UPDATE"}:
-        return re.search(r"\bWHERE\b", scannable, re.I) is None
+    if verb == "ALTER" and re.search(
+        r"\b(?:DROP|RENAME|MODIFY|SET\s+UNUSED)\b", scannable, re.I
+    ):
+        return True
     return False
 
 
@@ -256,6 +321,32 @@ def validate_ddl_sql(sql: str, confirm: str | None) -> dict[str, Any]:
     verb = match.group(1).upper()
     if verb not in _DDL_VERBS and verb not in _DML_VERBS and verb not in _READONLY_VERBS:
         raise DbContentError(400, f"该端点不支持 {verb} 语句")
+
+    # The write console is not a SQL*Plus: reject statement classes that change
+    # the session/instance or the security model. `CREATE USER`, `GRANT DBA`
+    # and `ALTER SYSTEM` were all accepted by the old first-verb-only check.
+    if verb in {"GRANT", "REVOKE", "COMMENT", "RENAME"}:
+        raise DbContentError(403, f"该端点不允许 {verb} 语句")
+    if verb in _READONLY_VERBS:
+        raise DbContentError(400, "写端点只接受 DDL/DML；只读查询请使用 /query")
+    if verb == "ALTER" and re.match(
+        r"^ALTER\s+(?:SESSION|SYSTEM)\b", scannable, re.I
+    ):
+        raise DbContentError(403, "不允许通过内容控制台修改会话或实例")
+    if verb == "CREATE" and not re.match(
+        r"^CREATE\s+(?:OR\s+REPLACE\s+)?(?:TABLE|VIEW|INDEX|SEQUENCE)\b",
+        scannable,
+        re.I,
+    ):
+        raise DbContentError(403, "只允许创建表/视图/索引/序列")
+    if verb == "DROP" and not re.match(
+        r"^DROP\s+(?:TABLE|VIEW|INDEX|SEQUENCE)\b", scannable, re.I
+    ):
+        raise DbContentError(403, "只允许删除表/视图/索引/序列")
+    if verb == "TRUNCATE" and not re.match(
+        r"^TRUNCATE\s+TABLE\b", scannable, re.I
+    ):
+        raise DbContentError(403, "TRUNCATE 只允许用于表")
 
     target = _target_table(scannable, verb)
     upper = scannable.upper()
@@ -550,6 +641,8 @@ async def read_rows(
 
     info = await require_table(session, raw_name)
     table = info["name"]
+    if table in _PROTECTED_READ_TABLES:
+        raise DbContentError(403, "该表包含凭据/审批数据，禁止通过通用内容读取")
 
     column_rows = await _column_rows(session, table)
     columns = [str(row[0]).upper() for row in column_rows]
@@ -591,7 +684,9 @@ async def read_rows(
         "columns": columns,
         "rows": [
             {
-                name: _serialize_cell(value, str(column_rows[index][1]))
+                name: _redact_cell(
+                    name, _serialize_cell(value, str(column_rows[index][1]))
+                )
                 for index, (name, value) in enumerate(zip(columns, row))
             }
             for row in page
@@ -901,9 +996,14 @@ async def run_query(session: Any, sql: str, *, limit: int = 100) -> dict[str, An
 
     truncated = len(rows) > limit
     rows = rows[:limit]
+    dict_rows = _rows_as_dicts(columns, rows)
+    for row in dict_rows:
+        for column in columns:
+            if column in row:
+                row[column] = _redact_cell(column, row[column])
     return {
         "columns": columns,
-        "rows": _rows_as_dicts(columns, rows),
+        "rows": dict_rows,
         "truncated": truncated,
         "elapsed_ms": elapsed_ms,
     }

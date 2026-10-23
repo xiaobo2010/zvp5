@@ -405,8 +405,15 @@ const ddlError = ref('')
 
 function isDestructive(sql: string): boolean {
   const upper = sql.toUpperCase().trim()
-  if (/^(DROP|TRUNCATE)\b/.test(upper)) return true
-  if (/^(DELETE|UPDATE)\b/.test(upper) && !/\bWHERE\b/.test(upper)) return true
+  // WHERE is not a safety proof: WHERE 1=1 is a full-table write. Every
+  // UPDATE/DELETE/MERGE must name the target table, matching the backend.
+  if (/^(DROP|TRUNCATE|DELETE|UPDATE|MERGE)\b/.test(upper)) return true
+  if (
+    /^ALTER\s+TABLE\b/.test(upper) &&
+    /\b(DROP|RENAME|MODIFY|SET\s+UNUSED)\b/.test(upper)
+  ) {
+    return true
+  }
   return false
 }
 

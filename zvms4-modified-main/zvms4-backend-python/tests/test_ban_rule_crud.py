@@ -382,7 +382,7 @@ V020_PATH = DDL_DIR / "V020__risk_rules.sql"
 
 #: trigger → (阈值, 窗口小时, mode)
 RISK_SEEDS = {
-    "login_failure_burst": (10, 1, "ban"),
+    "login_failure_burst": (10, 1, "alert"),
     "ban_evasion_retry": (5, 1, "ban"),
     "challenge_flood": (8, 1, "alert"),
     "temp_password_issue_burst": (20, 1, "alert"),

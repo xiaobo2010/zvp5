@@ -155,11 +155,16 @@ async def read_rows(
 ):
     await _require_system_admin(user)
     async with db_content.session_scope() as session:
-        return _ok(
-            await db_content.read_rows(
-                session, name, offset=offset, limit=limit, order_by=order_by, desc=desc
-            )
+        data = await db_content.read_rows(
+            session, name, offset=offset, limit=limit, order_by=order_by, desc=desc
         )
+    await _audit(
+        user,
+        "db_read",
+        f"read {data['table']} offset={data['offset']} rows={len(data['rows'])}",
+        log_type="system_db_read",
+    )
+    return _ok(data)
 
 
 @router.post("/query")
@@ -172,6 +177,15 @@ async def run_readonly_query(
     await _require_system_admin(user)
     async with db_content.session_scope() as session:
         data = await db_content.run_query(session, payload.sql, limit=payload.limit)
+    # Query text can contain column values in literals; the audit row records
+    # only shape/count/timing, never the SQL body.
+    await _audit(
+        user,
+        "db_query",
+        f"query rows={len(data['rows'])} truncated={data['truncated']} "
+        f"elapsed_ms={data['elapsed_ms']}",
+        log_type="system_db_query",
+    )
     return _ok(data)
 
 

@@ -174,6 +174,27 @@ async def set_ban_unless_stronger(
     几天。被保留时写一条日志留痕，封禁流水仍由调用方照常落库。
     """
     repo = backends.get_users_repo()
+    setter = getattr(repo, "set_ban_if_stronger", None)
+    if setter is not None:
+        effective = await setter(
+            user_oid,
+            reason=reason,
+            until=until,
+            source="rule",
+            rule_code=rule_code,
+        )
+        if effective != until:
+            _logger.warning(
+                "用户 %s 已有更强封禁，规则 %s 的 until=%s 未写入（保留 %s）",
+                user_oid,
+                rule_code,
+                until,
+                effective,
+            )
+        return effective
+
+    # Compatibility for test doubles / older adapters. Production always takes
+    # the atomic branch above.
     current = await repo.get_by_oid(user_oid)
     if ban_outranks(current, until):
         _logger.warning(
