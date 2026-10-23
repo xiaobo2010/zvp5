@@ -27,7 +27,7 @@ USER = "000000000000000000000002"
 
 #: 七条新规则的 (trigger, 默认阈值, 默认窗口小时, 默认 mode)。
 RULE_TABLE = [
-    ("login_failure_burst", 10, 1, "ban", "login_fail", None),
+    ("login_failure_burst", 10, 1, "alert", "login_fail", None),
     ("ban_evasion_retry", 5, 1, "ban", "login_fail", "banned"),
     ("challenge_flood", 8, 1, "alert", None, None),
     ("temp_password_issue_burst", 20, 1, "alert", "temp_password_create", None),

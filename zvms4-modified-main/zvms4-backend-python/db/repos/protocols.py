@@ -132,6 +132,23 @@ class UsersRepo(Protocol):
         """
         ...
 
+    async def set_ban_if_stronger(
+        self,
+        oid: str,
+        *,
+        reason: str,
+        until: datetime | None,
+        source: str,
+        rule_code: str | None,
+    ) -> datetime | None:
+        """Ban atomically only when ``until`` outranks the current sentence.
+
+        The comparison must live in the UPDATE predicate; a read-then-write
+        pair lets a concurrent human permanent ban be shortened by a rule.
+        Returns the currently effective ``ban_until`` (``None`` = permanent).
+        """
+        ...
+
     async def clear_ban(self, oid: str) -> None:
         """Unban a user and drop the ban metadata (``banned = 0``, four columns NULL).
 
@@ -1760,6 +1777,22 @@ class TempPasswordsRepo(Protocol):
         expires_at: datetime,
     ) -> str:
         """Store a hashed one-shot code and return its new ``_id``."""
+        ...
+
+    async def issue_for_user(
+        self,
+        target_user_oid: str,
+        created_by_oid: str,
+        code_hash: str,
+        creator_xuehai_id: str | None,
+        expires_at: datetime,
+    ) -> str:
+        """Atomically revoke the target's open codes then insert the new one.
+
+        Implementations must use one transaction. A partial success would
+        either leave the user with no code or leave two live codes, both of
+        which make the next login failure walk the account toward a ban.
+        """
         ...
 
     async def list_active_for_user(

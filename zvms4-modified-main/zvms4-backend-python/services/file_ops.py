@@ -36,6 +36,40 @@ from typing import Awaitable, BinaryIO, Callable
 # 其余路径（``/etc``、``/root``、``/usr``、``/dev``、``/var/lib/*`` …）由 OS 权限裁决。
 VIRTUAL_FS_PREFIXES: tuple[str, ...] = ("/proc", "/sys")
 
+# Application/runtime secrets live on the same disk as user files. Full-disk
+# access is deliberate for the admin file manager, but these names are never
+# "user files": reading them turns one admin token into the JWT signing key,
+# the DB password or the Oracle wallet. Match by real path (symlinks included),
+# not just by the raw request string.
+PROTECTED_BASENAMES: frozenset[str] = frozenset(
+    {
+        "aes_key.txt",
+        "rsa_private_key.pem",
+        "rsa_public_key.pem",
+        "settings.py",
+        "settings.example.py",
+        "ewallet.pem",
+        "cwallet.sso",
+        "tnsnames.ora",
+        "sqlnet.ora",
+        "ojdbc.properties",
+        "keystore.jks",
+        "truststore.jks",
+        "id_rsa",
+        "id_ed25519",
+    }
+)
+PROTECTED_PATH_SEGMENTS: frozenset[str] = frozenset({".oci", "adb-wallet"})
+
+
+def _is_protected_secret(path: str) -> bool:
+    """True when ``path`` names an application/credential artifact."""
+    name = os.path.basename(path).lower()
+    if name in PROTECTED_BASENAMES:
+        return True
+    segments = {part.lower() for part in path.split(os.sep) if part}
+    return bool(segments & PROTECTED_PATH_SEGMENTS)
+
 # 下载上限：256MB 是「能一次性交给浏览器且不撑爆 1.8G 小内存机器」的经验上限；
 # 更大的文件应该走 SSH 终端里的 rsync/scp。
 MAX_DOWNLOAD_BYTES = 256 * 1024 * 1024
@@ -139,6 +173,8 @@ def resolve_path(raw: str) -> str:
     # ``/sys`` 的路径在这里被拦下（例如 ``/tmp/../../../proc/self/environ``）。
     if _is_virtual_fs(resolved):
         raise FileOpError(403, "虚拟文件系统不可访问")
+    if _is_protected_secret(resolved):
+        raise FileOpError(403, "受保护的应用密钥/凭据不可访问")
     return resolved
 
 
@@ -171,6 +207,8 @@ def resolve_entry_path(raw: str) -> tuple[str, str]:
     # 链接目标同样要过虚拟文件系统检查：``/tmp/link -> /proc`` 不允许借链接绕过。
     if _is_virtual_fs(target):
         raise FileOpError(403, "虚拟文件系统不可访问")
+    if _is_protected_secret(target) or _is_protected_secret(entry):
+        raise FileOpError(403, "受保护的应用密钥/凭据不可访问")
     return entry, target
 
 

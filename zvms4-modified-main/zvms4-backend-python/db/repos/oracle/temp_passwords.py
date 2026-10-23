@@ -219,6 +219,40 @@ class OracleTempPasswordsRepo:
                 await session.commit()
         return oid
 
+    async def issue_for_user(
+        self,
+        target_user_oid: str,
+        created_by_oid: str,
+        code_hash: str,
+        creator_xuehai_id: str | None,
+        expires_at: datetime,
+    ) -> str:
+        """Revoke the target's open codes and insert the new one atomically.
+
+        The two statements must share one transaction: a failure between them
+        would leave the user with no valid code, while two concurrent issuers
+        could both revoke nothing and leave two live codes.
+        """
+        oid = new_oid()
+        now = _now()
+        target = normalize_oid(target_user_oid)
+        async with _session_for(self._session) as (session, owns):
+            await session.execute(_revoke_open_for_user_stmt(target, now))
+            await session.execute(
+                _insert_stmt(
+                    oid,
+                    target,
+                    normalize_oid(created_by_oid),
+                    code_hash,
+                    creator_xuehai_id,
+                    expires_at,
+                    now,
+                )
+            )
+            if owns:
+                await session.commit()
+        return oid
+
     async def list_active_for_user(
         self, target_user_oid: str, limit: int = 10
     ) -> list[Row]:

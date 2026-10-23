@@ -136,6 +136,29 @@ def test_set_ban_stmt_is_one_update_with_metadata_and_session_rotation():
     assert "2026-11-01" in sql
 
 
+def test_set_ban_if_stronger_has_atomic_guard():
+    sql = _sql(
+        users_repo._set_ban_if_stronger_stmt(
+            USER_OID, "规则封禁", UNTIL, "rule", "login_failure_burst"
+        )
+    )
+    assert "banned=1" in sql
+    assert "ban_until IS NOT NULL" in sql
+    assert "users.ban_until <" in sql
+    assert f"WHERE users.oid = '{USER_OID}'" in sql
+
+
+def test_set_ban_if_stronger_permanent_is_unconditional():
+    sql = _sql(
+        users_repo._set_ban_if_stronger_stmt(
+            USER_OID, "管理员永久封禁", None, "admin", None
+        )
+    )
+    assert "banned=1" in sql
+    assert "ban_until=NULL" in sql
+    assert "ban_until IS NOT NULL" not in sql
+
+
 def test_set_ban_stmt_leaves_ban_until_null_for_permanent_ban():
     sql = _sql(
         users_repo._set_ban_stmt(USER_OID, "违规", None, "admin", None)

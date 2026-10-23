@@ -363,6 +363,25 @@ def _make_db() -> FakeDb:
             "last_analyzed": None,
             "rows": [{"ID": 1}],
         },
+        "CREDS": {
+            "columns": [
+                ("OID", "VARCHAR2", 24, "N", None),
+                ("NAME", "VARCHAR2", 50, "Y", None),
+                ("PASSWORD_HASH", "VARCHAR2", 200, "Y", None),
+                ("SESSION_ID", "VARCHAR2", 24, "Y", None),
+            ],
+            "pk": ["OID"],
+            "num_rows": 1,
+            "last_analyzed": None,
+            "rows": [
+                {
+                    "OID": "000000000000000000000009",
+                    "NAME": "张三",
+                    "PASSWORD_HASH": "$2b$12$secret",
+                    "SESSION_ID": "sess-secret",
+                }
+            ],
+        },
         # 自保护表：行的写操作必须被拒（契约 §4.4.2）。
         "DUAL_AUTH_USES": {
             "columns": [
@@ -566,6 +585,25 @@ def test_readonly_gate_allows_keywords_inside_literals():
     )
 
 
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT username, password FROM sys.user$",
+        "SELECT * FROM dba_users",
+        "SELECT * FROM v$session",
+        "SELECT HTTPURITYPE('http://169.254.169.254/').getclob() FROM dual",
+        "SELECT DBMS_LOCK.SLEEP(100) FROM dual",
+        "SELECT * FROM USER_TRASH",
+        "SELECT * FROM DUAL_AUTH_USES",
+        "SELECT * FROM USERS@REMOTE_DB",
+    ],
+)
+def test_readonly_gate_blocks_system_objects_and_external_calls(sql):
+    with pytest.raises(db_content.DbContentError) as exc:
+        db_content.validate_readonly_sql(sql)
+    assert exc.value.status_code == 403
+
+
 def test_readonly_gate_rejects_for_update_row_locks():
     """``FOR UPDATE`` 不在写关键字里，却能在只读端点上加行锁，必须单独拒绝。"""
     for sql in (
@@ -656,6 +694,22 @@ def test_query_endpoint_needs_no_dual_code(harness):
     assert isinstance(data["elapsed_ms"], int)
 
 
+def test_run_query_redacts_sensitive_columns(fake_db):
+    session = FakeSession(fake_db)
+    session.pending.append(
+        FakeResult(
+            [("$2b$12$secret", "sess-secret")],
+            ["PASSWORD_HASH", "SESSION_ID"],
+        )
+    )
+    data = asyncio.run(
+        db_content.run_query(
+            session, "SELECT PASSWORD_HASH, SESSION_ID FROM CREDS"
+        )
+    )
+    assert data["rows"] == [{"PASSWORD_HASH": "***", "SESSION_ID": "***"}]
+
+
 def test_query_endpoint_rejects_delete(harness):
     response = harness.client.post(f"{PREFIX}/query", json={"sql": "DELETE FROM USERS"})
     assert response.status_code == 400
@@ -676,7 +730,7 @@ def test_query_endpoint_limit_over_500_is_422(harness):
 
 def test_schema_lists_tables_and_views(fake_db):
     data = asyncio.run(db_content.list_schema(FakeSession(fake_db)))
-    assert data["total"] == 5  # 3 表 + 1 视图 + DUAL_AUTH_USES
+    assert data["total"] == 6  # 4 表 + 1 视图 + DUAL_AUTH_USES
     by_name = {item["name"]: item for item in data["tables"]}
     assert by_name["USERS"] == {
         "name": "USERS",
@@ -790,6 +844,16 @@ def test_large_clob_preview_is_truncated(fake_db):
     bio = data["rows"][0]["BIO"]
     assert bio["length"] == 5000
     assert len(bio["preview"]) == db_content.LOB_PREVIEW_CHARS
+
+
+def test_read_rows_redacts_credential_columns(fake_db):
+    data = asyncio.run(
+        db_content.read_rows(FakeSession(fake_db), "CREDS", limit=1)
+    )
+    row = data["rows"][0]
+    assert row["NAME"] == "张三"
+    assert row["PASSWORD_HASH"] == "***"
+    assert row["SESSION_ID"] == "***"
 
 
 def test_rows_of_view_have_no_primary_key(fake_db):
@@ -1017,10 +1081,10 @@ def test_row_write_on_protected_table_is_403(fake_db):
     assert delete_exc.value.status_code == 403
 
     assert fake_db.tables["DUAL_AUTH_USES"]["rows"] == [{"OID": "u1", "APPROVER_OID": "a1"}]
-    # 读取是允许的（自保护禁的是写，不是查）。
-    assert asyncio.run(
-        db_content.read_rows(session, "DUAL_AUTH_USES", limit=10)
-    )["rows"][0]["OID"] == "u1"
+    # 读取也必须拒绝：审批/凭据表的行本身就是敏感材料，不能走通用控制台。
+    with pytest.raises(db_content.DbContentError) as read_exc:
+        asyncio.run(db_content.read_rows(session, "DUAL_AUTH_USES", limit=10))
+    assert read_exc.value.status_code == 403
 
 
 # ---------------------------------------------------------------------------
@@ -1048,10 +1112,34 @@ def test_ddl_rejects_self_protected_tables(sql):
 @pytest.mark.parametrize(
     "sql",
     [
+        "GRANT DBA TO HACKER",
+        "CREATE USER HACKER IDENTIFIED BY x",
+        "ALTER SESSION SET CURRENT_SCHEMA=SYS",
+        "ALTER SYSTEM KILL SESSION '1,1'",
+    ],
+)
+def test_ddl_rejects_security_model_and_session_statements(sql):
+    with pytest.raises(db_content.DbContentError) as exc:
+        db_content.validate_ddl_sql(sql, None)
+    assert exc.value.status_code == 403
+
+
+def test_ddl_rejects_readonly_statement():
+    with pytest.raises(db_content.DbContentError) as exc:
+        db_content.validate_ddl_sql("SELECT * FROM LEGACY_TABLE FOR UPDATE", None)
+    assert exc.value.status_code == 400
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
         "DROP TABLE LEGACY_TABLE",
         "TRUNCATE TABLE LEGACY_TABLE",
         "DELETE FROM LEGACY_TABLE",
+        "DELETE FROM LEGACY_TABLE WHERE 1=1",
         "UPDATE LEGACY_TABLE SET ID = 2",
+        "UPDATE LEGACY_TABLE SET ID = 2 WHERE 1=1",
+        "ALTER TABLE LEGACY_TABLE DROP COLUMN ID",
     ],
 )
 def test_destructive_statements_require_confirm(sql):
@@ -1121,7 +1209,7 @@ def test_run_ddl_executes_user_sql_verbatim(monkeypatch, fake_db):
         db_content.run_ddl(
             session,
             "UPDATE LEGACY_TABLE SET ID = 2 WHERE ID = 1",
-            None,
+            "LEGACY_TABLE",
         )
     )
 
@@ -1134,7 +1222,7 @@ def test_run_ddl_dml_reports_rowcount(fake_db):
     session = FakeSession(fake_db)
     data = asyncio.run(
         db_content.run_ddl(
-            session, "UPDATE LEGACY_TABLE SET ID = 5 WHERE ID = 1", None
+            session, "UPDATE LEGACY_TABLE SET ID = 5 WHERE ID = 1", "LEGACY_TABLE"
         )
     )
     assert data["rowcount"] == 1
@@ -1308,7 +1396,7 @@ def test_row_write_on_protected_table_is_403_over_http(harness):
 def test_schema_and_rows_endpoints_work(harness):
     schema = harness.client.get(f"{PREFIX}/schema")
     assert schema.status_code == 200
-    assert schema.json()["data"]["total"] == 5
+    assert schema.json()["data"]["total"] == 6
 
     rows = harness.client.get(f"{PREFIX}/table/USERS/rows", params={"limit": 2})
     assert rows.status_code == 200

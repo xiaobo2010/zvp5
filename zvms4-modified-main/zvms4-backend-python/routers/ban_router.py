@@ -69,10 +69,11 @@ TRIGGERS: tuple[dict, ...] = (
         "evaluation": "monitor",
         "description": (
             "证据来源：服务端 APP_LOGS 中该账号的登录失败记录"
-            "（ltype=login_fail，只记摘要不记密码）。窗口内失败次数达到阈值"
-            "按梯度封禁；正常用户偶尔输错不会触发。"
+            "（ltype=login_fail，只记摘要不记密码）。密码失败无法可靠区分"
+            "本人输错与第三方拿公开学号定向刷，默认只告警；确认来源可信后"
+            "管理员可显式改为封禁。"
         ),
-        "config": {"threshold": 10, "window_hours": 1, "mode": "ban"},
+        "config": {"threshold": 10, "window_hours": 1, "mode": "alert"},
     },
     {
         "trigger": "ban_evasion_retry",

@@ -30,7 +30,14 @@ def _connect_args(cfg: oracle_config.OracleConfig) -> dict:
     is added only when non-empty, so the driver never falls back to an
     interactive "Enter PEM pass phrase" prompt.
     """
-    args: dict = {}
+    args: dict = {
+        # Never let a black-holed ADB endpoint pin the whole worker in the
+        # blocking connect handshake. 5s is enough for a healthy ADB round trip
+        # and short enough that a site-wide stall is bounded.
+        "tcp_connect_timeout": float(
+            os.environ.get("ZVMS_DB_TCP_CONNECT_TIMEOUT", "5")
+        ),
+    }
     if cfg.wallet_dir:
         args["config_dir"] = cfg.wallet_dir
         args["wallet_location"] = cfg.wallet_dir
@@ -72,6 +79,10 @@ def get_engine() -> AsyncEngine:
             connect_args=_connect_args(cfg),
             pool_pre_ping=True,
             pool_recycle=1800,
+            # SQLAlchemy appends bound parameters to StatementError by default.
+            # These routes bind password hashes, CLOB previews and personal
+            # data; keep them out of exception strings / logs.
+            hide_parameters=True,
             **_pool_settings(),
         )
         install_lob_binds(_engine)

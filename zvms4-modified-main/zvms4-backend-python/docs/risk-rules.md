@@ -16,7 +16,7 @@
 
 | trigger | 名称 | 数据源 | 默认阈值 / 窗口 | 默认 mode |
 |---|---|---|---|---|
-| `login_failure_burst` | 登录失败暴破 | `APP_LOGS` `ltype=login_fail` | 10 次 / 1h | `ban` |
+| `login_failure_burst` | 登录失败暴破 | `APP_LOGS` `ltype=login_fail` | 10 次 / 1h | `alert` |
 | `ban_evasion_retry` | 封禁期内反复尝试登录 | `APP_LOGS` `ltype=login_fail` 且摘要含 `banned` | 5 次 / 1h | `ban` |
 | `challenge_flood` | 设备挑战刷取 | `DEVICE_CHALLENGES` 按 `user_oid` | 8 次 / 1h | `alert` |
 | `temp_password_issue_burst` | 临时密码签发过频 | `APP_LOGS` `ltype=temp_password_create`（签发人） | 20 次 / 1h | `alert` |
@@ -26,6 +26,8 @@
 
 两条登录规则共享 `ltype=login_fail`：`login_failure_burst` 数全部失败，
 `ban_evasion_retry` 只数摘要含 `banned` 的那部分（账号处于封禁态时的尝试）。
+`login_failure_burst` 默认只告警：失败记录按受害者 oid 归因，无法可靠区分
+本人输错与第三方拿公开学号定向刷；管理员确认来源可信后才应显式改回 `ban`。
 
 ## mode：只告警不封禁
 
