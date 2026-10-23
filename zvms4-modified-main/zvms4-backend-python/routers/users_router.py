@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import BaseModel
 from bcrypt import hashpw, gensalt
+import asyncio
 from util.activity_signoff import user_activity_signoff
 from typings.log import inject_log, ZVMSLog, xuehai_id_from
 from typings.user import User
@@ -24,12 +25,14 @@ from util.permission.user import (
     validate_read_user_permission,
 )
 from db import backends
+from db.oracle.session import session_scope
 from db.system_state import is_enabled_fresh
 from services import device_guard, risk_monitor
 from util.ban import ban_headers, ban_is_active, raise_banned
 from util.cert import (
     get_hashed_password_by_cert,
     jwt_encode,
+    prefetched_user,
     used_otp_credential,
     validate_by_cert,
 )
@@ -109,6 +112,136 @@ async def _run_risk(trigger: str, user_oid: str) -> None:
         _logger.warning("风险规则 %s 评估失败，忽略", trigger, exc_info=True)
 
 
+# 审计与风控是「响应不需要等」的副作用：它们既不决定 token，也不改状态码，
+# 却是每次登录里 3～5 个跨洋往返（单程实测 138ms）。搬到响应之后跑，客户端
+# 少等这一截；任务体里各自开 session（见 ``main.py`` 的 security audit 同款
+# 做法），绝不复用请求那个——响应返回时它已经关了。
+#
+# 这里不学 ``main.py`` 再用 Semaphore 限并发：模块级 Semaphore 会绑定第一个
+# 事件循环，而测试里每个 TestClient 都是新循环，跨循环复用直接 RuntimeError；
+# 限流带来的收益（任务本身只是一次 insert + 一次评估）不值这个坑。
+_background_tasks: set[asyncio.Task] = set()
+
+
+async def _run_background(coro) -> None:
+    try:
+        await coro
+    except Exception:
+        # 后台任务没有调用方等结果：异常只能落日志，否则会变成「响应已发出
+        # 之后」的未处理异常。
+        _logger.warning("后台审计/风控任务失败（已忽略）", exc_info=True)
+
+
+def _spawn_background(coro) -> None:
+    """派发后台任务，并用集合持有强引用，避免任务跑到一半被 GC 回收。"""
+    try:
+        task = asyncio.create_task(_run_background(coro))
+    except RuntimeError:
+        # 没有运行中的事件循环（同步调用/已关闭）：关掉协程，别留
+        # "coroutine was never awaited" 警告。
+        coro.close()
+        _logger.warning("后台审计/风控任务无法调度（无事件循环），已跳过")
+        return
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+
+
+async def _log_failure_then_evaluate(
+    request: Request, user_oid: str, xuehai_id: str, summary: str, trigger: str
+) -> None:
+    """失败证据 + 风险判定必须合成**一个**后台任务，且先写日志后评估。
+
+    ``login_failure_burst`` / ``ban_evasion_retry`` 的 count 数的就是刚写下的
+    那一行 ``login_fail``；拆成两个并发任务会让本次失败偶尔数不进去，阈值
+    也就偶尔晚一次触发。
+    """
+    await _note_login_failure(request, user_oid, xuehai_id, summary)
+    await _run_risk(trigger, user_oid)
+
+
+async def _log_login_then_evaluate(
+    log: ZVMSLog, user_oid: str, trigger: Optional[str]
+) -> None:
+    """成功登录/身份验证的审计，以及紧随其后的风控评估。
+
+    顺序不能换：``login_success_churn`` 数的是刚写下的 ``user_login`` 行，
+    先评估后落日志会让本次登录数不进去，阈值永远晚一次触发。
+    """
+    try:
+        await log.insert_log()
+    except Exception:
+        _logger.exception("写入登录审计日志失败")
+    if trigger:
+        await _run_risk(trigger, user_oid)
+
+
+async def _log_device_mismatch_then_evaluate(
+    request: Request,
+    user_oid: str,
+    log_name: str,
+    xuehai_id: str,
+    primary: object,
+) -> None:
+    """非主设备登录的审计 + 两条风控，同样先写日志后评估（同上的计数依赖）。"""
+    # 审计写失败不得吞掉这次拒绝的语义：拒绝早已同步返回，这里只补证据。
+    try:
+        await ZVMSLog(
+            str(request.url),
+            user_oid,
+            f"用户 {log_name} 尝试在非主学海设备 {xuehai_id} 上登录"
+            f"（主设备 {primary}）",
+            datetime.timestamp(datetime.now()),
+            type="device_mismatch",
+            level="warning",
+            xuehai_id=xuehai_id,
+        ).insert_log()
+    except Exception:
+        _logger.exception("写入 device_mismatch 日志失败")
+    await _run_risk("challenge_flood", user_oid)
+    await _run_risk("device_switch_burst", user_oid)
+
+
+async def _bind_device_and_log(
+    request: Request, user_oid: str, log_name: str, xuehai_id: str
+) -> None:
+    """首次绑定：upsert 与审计日志都挪到响应之后。
+
+    返回值不参与响应（``binding_mismatch`` 只看「读到的绑定里有没有这台
+    设备」），所以这两步写得慢不该拖住登录。
+    """
+    try:
+        await backends.get_bindings_repo().upsert(user_oid, xuehai_id, "auto", None)
+        await ZVMSLog(
+            str(request.url),
+            user_oid,
+            f"用户 {log_name} 首次绑定了学海设备 {xuehai_id}",
+            datetime.timestamp(datetime.now()),
+            type="device_bind",
+            level="info",
+            xuehai_id=xuehai_id,
+        ).insert_log()
+    except Exception:
+        _logger.exception("首次绑定学海设备失败")
+
+
+async def _log_binding_mismatch(
+    request: Request, user_oid: str, log_name: str, xuehai_id: str, bound: str
+) -> None:
+    """设备不一致的审计：判定（``binding_mismatch``）已经同步做完了，只补日志。"""
+    try:
+        await ZVMSLog(
+            str(request.url),
+            user_oid,
+            f"用户 {log_name} 登录设备 {xuehai_id} 与已绑定设备 {bound} 不一致",
+            datetime.timestamp(datetime.now()),
+            type="binding_mismatch",
+            level="warning",
+            xuehai_id=xuehai_id,
+        ).insert_log()
+    except Exception:
+        _logger.exception("写入 binding_mismatch 日志失败")
+
+
 def _query_datetime(value: str, field: str) -> datetime:
     try:
         return datetime.fromisoformat(value)
@@ -117,7 +250,7 @@ def _query_datetime(value: str, field: str) -> datetime:
 
 
 async def _observe_binding(
-    request: Request, user_oid: str, log_name: str, xuehai_id: str
+    request: Request, user_oid: str, log_name: str, xuehai_id: str, session=None
 ) -> bool:
     """Observe-only 学海 device-binding hook; never raises, never blocks login.
 
@@ -128,31 +261,18 @@ async def _observe_binding(
     if not xuehai_id:
         return False
     try:
-        bindings = backends.get_bindings_repo()
+        bindings = backends.get_bindings_repo(session)
         active = await bindings.get_active_for_user(user_oid)
         if not active:
-            await bindings.upsert(user_oid, xuehai_id, "auto", None)
-            await ZVMSLog(
-                str(request.url),
-                user_oid,
-                f"用户 {log_name} 首次绑定了学海设备 {xuehai_id}",
-                datetime.timestamp(datetime.now()),
-                type="device_bind",
-                level="info",
-                xuehai_id=xuehai_id,
-            ).insert_log()
+            # 「有没有绑定」决定返回值，必须同步读；首次绑定的写与日志不参与
+            # 判定，放到响应之后。
+            _spawn_background(_bind_device_and_log(request, user_oid, log_name, xuehai_id))
             return False
         if all(row.get("xuehai_id") != xuehai_id for row in active):
             bound = ",".join(sorted({str(row.get("xuehai_id")) for row in active}))
-            await ZVMSLog(
-                str(request.url),
-                user_oid,
-                f"用户 {log_name} 登录设备 {xuehai_id} 与已绑定设备 {bound} 不一致",
-                datetime.timestamp(datetime.now()),
-                type="binding_mismatch",
-                level="warning",
-                xuehai_id=xuehai_id,
-            ).insert_log()
+            _spawn_background(
+                _log_binding_mismatch(request, user_oid, log_name, xuehai_id, bound)
+            )
             return True
         return False
     except Exception:
@@ -268,29 +388,19 @@ async def _guard_primary_device(
     if not primary or str(primary) == xuehai_id:
         return
 
+    # challenge 必须同步签好：它要出现在 403 的响应体里。旁边的审计与风控
+    # 不参与这个响应，放到响应之后跑。
     try:
         challenge = await device_guard.issue_challenge(user_oid, xuehai_id)
     except Exception:
         _logger.exception("签发设备挑战令牌失败")
         challenge = ""
 
-    # 审计写失败不得吞掉这次拒绝：拒绝是主行为，日志是附带证据。
-    try:
-        await ZVMSLog(
-            str(request.url),
-            user_oid,
-            f"用户 {log_name} 尝试在非主学海设备 {xuehai_id} 上登录"
-            f"（主设备 {primary}）",
-            datetime.timestamp(datetime.now()),
-            type="device_mismatch",
-            level="warning",
-            xuehai_id=xuehai_id,
-        ).insert_log()
-    except Exception:
-        _logger.exception("写入 device_mismatch 日志失败")
-
-    await _run_risk("challenge_flood", user_oid)
-    await _run_risk("device_switch_burst", user_oid)
+    _spawn_background(
+        _log_device_mismatch_then_evaluate(
+            request, user_oid, log_name, xuehai_id, primary
+        )
+    )
 
     raise HTTPException(
         status_code=403,
@@ -313,122 +423,160 @@ async def auth_user(auth: AuthUser, request: Request, response: Response):
     is_login = auth.purpose == "login"
     xuehai_id = xuehai_id_from(request)
 
-    # 三步顺序（设计 §5）：设备闸 → 凭据校验 → 主设备闸。
-    await _reject_banned_device(xuehai_id)
+    # 整条认证链共用**一个** session：每次 repo 调用各开一个 session 就是一次
+    # checkout（跨洋 138ms），而这里连着读的其实是同一批表。共享 session 只
+    # 承载读，退出时不 commit（repo 在「外部传入 session」模式下不提交也不关闭）。
+    async with session_scope() as session:
+        users_repo = backends.get_users_repo(session)
 
-    if string_to_option_object_id(id) is None:
-        user_doc = await backends.get_users_repo().find_by_business_id(id)
-        if user_doc:
-            id = str(user_doc["_id"])
+        # 三步顺序（设计 §5）：设备闸 → 凭据校验 → 主设备闸。
+        # 设备闸的库读在 services/device_guard.py 内自开 session，不在这份共享
+        # 范围内（改动它超出本次范围）。
+        await _reject_banned_device(xuehai_id)
+
+        if string_to_option_object_id(id) is None:
+            user_doc = await users_repo.find_by_business_id(id)
+            if user_doc:
+                id = str(user_doc["_id"])
+            else:
+                # Indistinguishable from a wrong password: same status and, below,
+                # the same body, so a probe cannot tell whether the 学号 exists.
+                raise HTTPException(
+                    status_code=403,
+                    detail="用户名或密码错误",
+                )
         else:
-            # Indistinguishable from a wrong password: same status and, below,
-            # the same body, so a probe cannot tell whether the 学号 exists.
-            raise HTTPException(
-                status_code=403,
-                detail="用户名或密码错误",
-            )
+            user_doc = None
 
-    # Server-side clamp: a verification request must never issue a session
-    # token, whatever ``mode`` says. Routing it through the short-token path
-    # keeps ``validate_by_cert`` (and thus the login path) untouched, while
-    # TOTP credentials remain accepted and yield a 5-minute temporary token.
-    validation_mode = mode if is_login else "short"
+        user_oid = str(validate_object_id(id))
+        if user_doc is None:
+            # oid 直达时没有「学号 → 文档」那一次读，这里补上唯一的一次，随后
+            # 交给 validate_by_cert 复用（它本来也要读这一行）。
+            user_doc = await users_repo.get_by_oid(user_oid)
 
-    try:
-        result, weak_password = await validate_by_cert(
-            id, credential, validation_mode
-        )
-    except HTTPException as exc:
-        # 失败分支同样要留证据（摘要，不含凭据）：这两条规则只认服务端自己
-        # 写下的行。封禁态走 ban_evasion_retry，密码错走 login_failure_burst。
-        if exc.detail == "Password incorrect":
-            failed_oid = _presented_oid(id)
-            await _note_login_failure(
-                request, failed_oid, xuehai_id, "password-mismatch"
-            )
-            await _run_risk("login_failure_burst", failed_oid)
-            # Normalize the credential failure to the same body as "user not found",
-            # keeping the two paths byte-identical.
-            raise HTTPException(status_code=403, detail="用户名或密码错误")
-        if exc.detail == "USER_BANNED":
-            failed_oid = _presented_oid(id)
-            await _note_login_failure(request, failed_oid, xuehai_id, "banned")
-            await _run_risk("ban_evasion_retry", failed_oid)
-        raise
+        # Server-side clamp: a verification request must never issue a session
+        # token, whatever ``mode`` says. Routing it through the short-token path
+        # keeps ``validate_by_cert`` (and thus the login path) untouched, while
+        # TOTP credentials remain accepted and yield a 5-minute temporary token.
+        validation_mode = mode if is_login else "short"
 
-    user_doc = await backends.get_users_repo().get_by_oid(
-        str(validate_object_id(id))
-    )
-    user_oid = str(validate_object_id(id))
-    log_name = user_doc["name"] if user_doc else await get_user_name(id)
-
-    # v4.2.4-2 R4（设计 §3.2）：维护期间只放行 admin —— 非 admin 一律拒绝下发
-    # token。拒绝必须落在端点内：``/api/users/auth`` 是中间件的维护豁免路径
-    # （main.py:136-144），否则管理员无法登录关掉维护。
-    # 角色取刚落库读到的这一份 user_doc，不额外查库；读不到文档按「非 admin」
-    # 处理（fail-closed，宁拒不放）。
-    if is_enabled_fresh() and "admin" not in ((user_doc or {}).get("roles") or []):
         try:
-            await ZVMSLog(
-                str(request.url),
-                id,
-                f"维护模式拒绝用户 {log_name} 登录（非管理员）",
-                datetime.timestamp(datetime.now()),
-                type="auth_maintenance_blocked",
-                level="warning",
-                xuehai_id=xuehai_id,
-            ).insert_log()
-        except Exception:
-            # 审计写失败不得把 503 变成 500：拒绝本身仍然生效。
-            _logger.exception("failed to write auth_maintenance_blocked log")
-        # 与维护中间件的 503 体逐字同形（main.py:169-172）：前端
-        # plugins/axios.ts:129-140 靠顶层 ``maintenance: true`` 识别维护态，
-        # 既不清 token 也不弹「登录已过期」。
-        return JSONResponse(
-            status_code=503,
-            content={"detail": "系统维护中，仅管理员可登录", "maintenance": True},
+            # 把上面读到的这一行交给 validate_by_cert：封禁判定、密码校验、
+            # token 里的 eligibility/session_id 用的都是同一份数据，只是不再
+            # 为它多跑一次跨洋往返。
+            async with prefetched_user(user_oid, user_doc):
+                result, weak_password = await validate_by_cert(
+                    id, credential, validation_mode
+                )
+        except HTTPException as exc:
+            # 失败分支同样要留证据（摘要，不含凭据）：这两条规则只认服务端自己
+            # 写下的行。封禁态走 ban_evasion_retry，密码错走 login_failure_burst。
+            # 证据与判定合成一个后台任务：顺序写反就数不到本次失败。
+            if exc.detail == "Password incorrect":
+                failed_oid = _presented_oid(id)
+                if failed_oid:
+                    _spawn_background(
+                        _log_failure_then_evaluate(
+                            request,
+                            failed_oid,
+                            xuehai_id,
+                            "password-mismatch",
+                            "login_failure_burst",
+                        )
+                    )
+                # Normalize the credential failure to the same body as "user not found",
+                # keeping the two paths byte-identical.
+                raise HTTPException(status_code=403, detail="用户名或密码错误")
+            if exc.detail == "USER_BANNED":
+                failed_oid = _presented_oid(id)
+                if failed_oid:
+                    _spawn_background(
+                        _log_failure_then_evaluate(
+                            request,
+                            failed_oid,
+                            xuehai_id,
+                            "banned",
+                            "ban_evasion_retry",
+                        )
+                    )
+            raise
+
+        # user_doc 是上面读过的那一份（可能是 None），不再重复 get_by_oid。
+        # None 时保留 get_user_name 兜底：oid 直达且库读不到时仍要有个名字。
+        log_name = user_doc["name"] if user_doc else await get_user_name(id)
+
+        # v4.2.4-2 R4（设计 §3.2）：维护期间只放行 admin —— 非 admin 一律拒绝下发
+        # token。拒绝必须落在端点内：``/api/users/auth`` 是中间件的维护豁免路径
+        # （main.py:136-144），否则管理员无法登录关掉维护。
+        # 角色取刚落库读到的这一份 user_doc，不额外查库；读不到文档按「非 admin」
+        # 处理（fail-closed，宁拒不放）。
+        if is_enabled_fresh() and "admin" not in ((user_doc or {}).get("roles") or []):
+            try:
+                await ZVMSLog(
+                    str(request.url),
+                    id,
+                    f"维护模式拒绝用户 {log_name} 登录（非管理员）",
+                    datetime.timestamp(datetime.now()),
+                    type="auth_maintenance_blocked",
+                    level="warning",
+                    xuehai_id=xuehai_id,
+                ).insert_log()
+            except Exception:
+                # 审计写失败不得把 503 变成 500：拒绝本身仍然生效。
+                _logger.exception("failed to write auth_maintenance_blocked log")
+            # 与维护中间件的 503 体逐字同形（main.py:169-172）：前端
+            # plugins/axios.ts:129-140 靠顶层 ``maintenance: true`` 识别维护态，
+            # 既不清 token 也不弹「登录已过期」。
+            return JSONResponse(
+                status_code=503,
+                content={"detail": "系统维护中，仅管理员可登录", "maintenance": True},
+            )
+
+        is_otp = used_otp_credential(credential, id)
+        if is_login:
+            await _guard_primary_device(request, user_doc, user_oid, log_name, xuehai_id)
+            if is_otp:
+                log_text = f"用户 {log_name} 使用动态码登录了系统"
+            elif weak_password and mode == "long":
+                log_text = f"用户 {log_name} 登录了系统（密码强度不足，仅发放临时授权）"
+            else:
+                log_text = f"用户 {log_name} 登录了系统"
+            log_type = "user_login"
+        else:
+            credential_kind = "动态码" if is_otp else "密码"
+            log_text = f"用户 {log_name} 完成了身份验证（{credential_kind}）"
+            log_type = "user_verify"
+        log = ZVMSLog(
+            str(request.url),
+            id,
+            log_text,
+            datetime.timestamp(datetime.now()),
+            type=log_type,
+            xuehai_id=xuehai_id,
         )
 
-    is_otp = used_otp_credential(credential, id)
-    if is_login:
-        await _guard_primary_device(request, user_doc, user_oid, log_name, xuehai_id)
-        if is_otp:
-            log_text = f"用户 {log_name} 使用动态码登录了系统"
-        elif weak_password and mode == "long":
-            log_text = f"用户 {log_name} 登录了系统（密码强度不足，仅发放临时授权）"
-        else:
-            log_text = f"用户 {log_name} 登录了系统"
-        log_type = "user_login"
-    else:
-        credential_kind = "动态码" if is_otp else "密码"
-        log_text = f"用户 {log_name} 完成了身份验证（{credential_kind}）"
-        log_type = "user_verify"
-    log = ZVMSLog(
-        str(request.url),
-        id,
-        log_text,
-        datetime.timestamp(datetime.now()),
-        type=log_type,
-        xuehai_id=xuehai_id,
-    )
+        # 登录成功的审计与 churn 风控都不决定响应内容，挪到响应之后。
+        _spawn_background(
+            _log_login_then_evaluate(
+                log, user_oid, "login_success_churn" if is_login else None
+            )
+        )
 
-    await log.insert_log()
+        # 绑定判定要回填 ``binding_mismatch``，读必须同步；写与日志已挪到后台。
+        binding_mismatch = await _observe_binding(
+            request, user_oid, log_name, xuehai_id, session
+        )
 
-    if is_login:
-        await _run_risk("login_success_churn", user_oid)
+        profile = _profile_payload(user_doc, id)
 
-    binding_mismatch = await _observe_binding(request, user_oid, log_name, xuehai_id)
-
-    profile = _profile_payload(user_doc, id)
-
-    response.headers["Cache-Control"] = "no-store"
-    return {
-        "token": result,
-        "_id": id,
-        "profile": profile,
-        "weak_password": weak_password,
-        "binding_mismatch": binding_mismatch,
-    }
+        response.headers["Cache-Control"] = "no-store"
+        return {
+            "token": result,
+            "_id": id,
+            "profile": profile,
+            "weak_password": weak_password,
+            "binding_mismatch": binding_mismatch,
+        }
 
 
 @router.post("/auth/device")
