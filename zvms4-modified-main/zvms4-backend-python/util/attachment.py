@@ -310,3 +310,34 @@ def record_upload(user_oid: str, size: int) -> None:
     entry = _quota.setdefault((_today(), user_oid), [0, 0])
     entry[0] += 1
     entry[1] += size
+
+
+async def can_read_attachment(user: dict, row: dict, class_id: str | None) -> bool:
+    """owner | admin | department | secretary in the same class.
+
+    从 ``routers/attachments_router.py`` 抽出来，因为 AI 网关的 OCR 入口也要用同一
+    条判定：附件读权限只能有一份实现，两处各写一遍迟早漂移。
+
+    ``class_id`` 是当前登录用户自己的班级（由 ``util.object_id._authenticate``
+    带出），这里只读 owner 的那一行。``backends`` 在函数内导入：``db`` 侧会反向
+    依赖 util，模块级导入容易成环。
+    """
+    from db import backends
+
+    owner_oid = str(row.get("owner_oid") or "")
+    if owner_oid and owner_oid == str(user.get("id") or ""):
+        return True
+
+    per = user.get("per") or []
+    if "admin" in per or "department" in per:
+        return True
+
+    if "secretary" in per and owner_oid and class_id is not None:
+        owner = await backends.get_users_repo().get_by_oid(owner_oid)
+        if (
+            owner is not None
+            and owner.get("class_id") is not None
+            and str(class_id) == str(owner.get("class_id"))
+        ):
+            return True
+    return False

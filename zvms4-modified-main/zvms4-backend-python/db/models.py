@@ -948,6 +948,197 @@ Index(
 
 
 # ---------------------------------------------------------------------------
+# AI_CALL_LOGS  ← new (AI 网关调用流水; V022)
+#   append-only：一次网关调用一行，success/error/timeout/rejected/busy 都落库
+#   ——只记成功就无法回答「额度为什么没扣成」。无外键：审计材料必须比账号
+#   活得久（同 BAN_VIOLATIONS）。UNITS 是本次调用扣掉的额度单位，与
+#   AI_QUOTA.USED 的增量同源，两边都留下才能对账。
+# ---------------------------------------------------------------------------
+
+ai_call_logs = Table(
+    "ai_call_logs",
+    metadata,
+    _oid_pk(),
+    Column("user_oid", VARCHAR2(24), nullable=False),
+    Column("capability", VARCHAR2(16), nullable=False),
+    Column("endpoint", VARCHAR2(40), nullable=False),
+    Column("provider", VARCHAR2(40), nullable=True),
+    Column("model", VARCHAR2(80), nullable=True),
+    Column("status", VARCHAR2(16), nullable=False),
+    Column("http_status", _int3, nullable=True),
+    Column("error_code", VARCHAR2(40), nullable=True),
+    Column("latency_ms", NUMBER(10), nullable=True),
+    Column("units", NUMBER(10), nullable=False, server_default=text("0")),
+    Column("input_bytes", NUMBER(10), nullable=True),
+    Column("request_id", VARCHAR2(64), nullable=True),
+    # 本次调用用的 key 来源（personal / shared / server）；V023 新增，存量行 NULL。
+    Column("key_scope", VARCHAR2(16), nullable=True),
+    Column("created_at", oracle.TIMESTAMP, nullable=False),
+    _oid_check("ai_call_logs"),
+    CheckConstraint("capability IN ('ocr','chat')", name="ck_ai_call_logs_capability"),
+    CheckConstraint(
+        "status IN ('success','error','timeout','rejected','busy')",
+        name="ck_ai_call_logs_status",
+    ),
+    CheckConstraint("units >= 0", name="ck_ai_call_logs_units"),
+    CheckConstraint(
+        "key_scope IS NULL OR key_scope IN ('personal','shared','server')",
+        name="ck_ai_call_logs_key_scope",
+    ),
+)
+Index(
+    "ix_ai_call_logs_user_created",
+    ai_call_logs.c.user_oid,
+    ai_call_logs.c.created_at,
+)
+Index("ix_ai_call_logs_created", ai_call_logs.c.created_at)
+Index(
+    "ix_ai_call_logs_endpoint_status",
+    ai_call_logs.c.endpoint,
+    ai_call_logs.c.status,
+    ai_call_logs.c.created_at,
+)
+
+
+# ---------------------------------------------------------------------------
+# AI_QUOTA  ← new (按 用户 + 月份 + 能力 计的额度行; V022)
+#   三元组唯一（ux_ai_quota_user_period_kind），因此额度扣减是单条
+#   `UPDATE ... WHERE used + :amount <= limit_count`：并发由数据库串行化，
+#   没有读后写、不会超卖。PERIOD 是 CHAR(6) 的 YYYYMM —— 月份是计费口径，
+#   不是时间点，用 CHAR 避免「按哪个时区截断月初」的隐式规则。
+#   KIND 是前缀式：'ocr' / 'chat' / 'ocr_<engine>'。OCR 引擎类型会持续增加，
+#   枚举式 CHECK 会让每加一个引擎都要改 DDL；前缀让「某引擎的月度额度」直接
+#   是合法 kind。ESCAPE '\' 必须带上：LIKE 的 '_' 是单字符通配符。
+# ---------------------------------------------------------------------------
+
+ai_quota = Table(
+    "ai_quota",
+    metadata,
+    _oid_pk(),
+    Column("user_oid", VARCHAR2(24), nullable=False),
+    Column("period", oracle.CHAR(6), nullable=False),
+    Column("kind", VARCHAR2(16), nullable=False),
+    Column("used", NUMBER(10), nullable=False, server_default=text("0")),
+    Column("limit_count", NUMBER(10), nullable=False),
+    Column("updated_at", oracle.TIMESTAMP, nullable=False),
+    _oid_check("ai_quota"),
+    CheckConstraint("REGEXP_LIKE(period,'^[0-9]{6}$')", name="ck_ai_quota_period"),
+    CheckConstraint(
+        "kind IN ('ocr','chat') OR kind LIKE 'ocr\\_%' ESCAPE '\\'",
+        name="ck_ai_quota_kind",
+    ),
+    CheckConstraint("used >= 0", name="ck_ai_quota_used"),
+    CheckConstraint("limit_count >= 0", name="ck_ai_quota_limit"),
+)
+Index(
+    "ux_ai_quota_user_period_kind",
+    ai_quota.c.user_oid,
+    ai_quota.c.period,
+    ai_quota.c.kind,
+    unique=True,
+)
+
+
+# ---------------------------------------------------------------------------
+# AI_CREDENTIALS  ← new (AI provider 凭据; V023)
+#   一张表放两类凭据，用 SCOPE 区分：personal（管理员自己的 key）与 shared
+#   （所有人可用的通用 key）——字段与读取路径完全相同，拆表只会把「按名字找
+#   provider」变成两次查询加一次合并。
+#   OWNER_OID 对 shared 行固定是 24 个 0 的哨兵而**不是 NULL**：Oracle 唯一索引
+#   里 NULL 互不相等，owner 可空就等于 (scope, owner_oid, name) 的唯一性失效。
+#   API_KEY_CIPHER 只存 AES-GCM 密文（base64），明文永不落库；KEY_HINT 只留末
+#   四位用于展示。MODELS_JSON 是模型 id 字符串数组，路由与 /v1/models 目录都由
+#   它驱动，所以用 CLOB + IS JSON 而不是裸字符串。
+#   HEADERS_JSON / API_PATH 是请求形状：头名映射 + 路径，空 = 沿用默认
+#   （Authorization + 默认路径）。存量 provider 不需要回填。
+# ---------------------------------------------------------------------------
+
+ai_credentials = Table(
+    "ai_credentials",
+    metadata,
+    _oid_pk(),
+    Column("scope", VARCHAR2(8), nullable=False),
+    Column("owner_oid", VARCHAR2(24), nullable=False),
+    Column("name", VARCHAR2(64), nullable=False),
+    Column("kind", VARCHAR2(24), nullable=False),
+    Column("base_url", VARCHAR2(400), nullable=False),
+    _json("ai_credentials", "models_json", nullable=False),
+    # 额外请求头（头名 -> 值，值是服务层展开的模板）；NULL = 只用默认鉴权头。
+    _json("ai_credentials", "headers_json", nullable=True),
+    # 相对 base_url 的路径；NULL = 用默认路径。有些引擎的能力不在 /v1 下。
+    Column("api_path", VARCHAR2(200), nullable=True),
+    Column("api_key_cipher", VARCHAR2(2000), nullable=False),
+    Column("key_hint", VARCHAR2(16), nullable=True),
+    Column("enabled", NUMBER(1), nullable=False, server_default=text("1")),
+    Column("created_at", oracle.TIMESTAMP, nullable=False),
+    Column("updated_at", oracle.TIMESTAMP, nullable=False),
+    _oid_check("ai_credentials"),
+    CheckConstraint("scope IN ('personal','shared')", name="ck_ai_credentials_scope"),
+    CheckConstraint("kind IN ('openai_compat')", name="ck_ai_credentials_kind"),
+    CheckConstraint("enabled IN (0,1)", name="ck_ai_credentials_enabled"),
+    CheckConstraint("models_json IS JSON", name="ck_ai_credentials_models_json"),
+    CheckConstraint("headers_json IS JSON", name="ck_ai_credentials_headers_json"),
+)
+Index(
+    "ux_ai_credentials_scope_owner_name",
+    ai_credentials.c.scope,
+    ai_credentials.c.owner_oid,
+    ai_credentials.c.name,
+    unique=True,
+)
+Index(
+    "ix_ai_credentials_owner",
+    ai_credentials.c.owner_oid,
+    ai_credentials.c.enabled,
+)
+Index(
+    "ix_ai_credentials_scope",
+    ai_credentials.c.scope,
+    ai_credentials.c.enabled,
+)
+
+
+# ---------------------------------------------------------------------------
+# AI_OCR_ENGINES  ← new (OCR 引擎注册表; V026)
+#   一行 = 一个可路由的 OCR 引擎配置，KIND 是引擎类型（tencent / aliyun /
+#   rapidocr）而不是 provider 名：同类型可以有多行（不同 region / 配额来源）。
+#   PRIORITY 数字越小越优先（100 为默认档），路由按 (enabled, priority) 取
+#   第一行可用引擎，所以 ix_ai_ocr_engines_enabled_priority 就是查询形状。
+#   SECRET_CIPHER 可空：本地引擎（rapidocr）没有凭证，「NULL = 不需要」而不是
+#   「配置缺失」。密文口径同 API_KEY_CIPHER：只存 AES-GCM 的 base64。
+#   NAME 唯一：运维按名字指定/禁用某个引擎。
+# ---------------------------------------------------------------------------
+
+ai_ocr_engines = Table(
+    "ai_ocr_engines",
+    metadata,
+    _oid_pk(),
+    Column("name", VARCHAR2(64), nullable=False),
+    Column("kind", VARCHAR2(20), nullable=False),
+    _json("ai_ocr_engines", "config_json", nullable=True),
+    Column("secret_cipher", VARCHAR2(4000), nullable=True),
+    Column("key_hint", VARCHAR2(16), nullable=True),
+    Column("enabled", NUMBER(1), nullable=False, server_default=text("1")),
+    Column("priority", NUMBER(3), nullable=False, server_default=text("100")),
+    Column("created_at", oracle.TIMESTAMP, nullable=False),
+    Column("updated_at", oracle.TIMESTAMP, nullable=False),
+    _oid_check("ai_ocr_engines"),
+    CheckConstraint(
+        "kind IN ('tencent','aliyun','rapidocr')",
+        name="ck_ai_ocr_engines_kind",
+    ),
+    CheckConstraint("enabled IN (0,1)", name="ck_ai_ocr_engines_enabled"),
+    CheckConstraint("config_json IS JSON", name="ck_ai_ocr_engines_config_json"),
+)
+Index("ux_ai_ocr_engines_name", ai_ocr_engines.c.name, unique=True)
+Index(
+    "ix_ai_ocr_engines_enabled_priority",
+    ai_ocr_engines.c.enabled,
+    ai_ocr_engines.c.priority,
+)
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 

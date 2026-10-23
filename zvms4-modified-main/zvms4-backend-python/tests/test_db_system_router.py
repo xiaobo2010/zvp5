@@ -126,13 +126,16 @@ def test_status_contract_is_unchanged_by_the_progress_endpoint(client, monkeypat
 
 
 def test_preview_contract_keeps_its_keys(client, monkeypatch):
-    """preview 只有 ``{cutoff, deletable}``：加了新端点也不能往里塞字段。"""
+    """preview 每张表只有 ``{cutoff, deletable}``：加了新端点也不能往里塞字段。"""
     http, _ = client
 
     async def count(cutoff):
         return 0
 
     async def count_tasks(cutoff):
+        return 0
+
+    async def count_ai(cutoff):
         return 0
 
     monkeypatch.setattr(
@@ -145,11 +148,16 @@ def test_preview_contract_keeps_its_keys(client, monkeypatch):
         "get_tasks_repo",
         lambda session=None: SimpleNamespace(count_expired_finished=count_tasks),
     )
+    monkeypatch.setattr(
+        backends,
+        "get_ai_call_logs_repo",
+        lambda session=None: SimpleNamespace(count_expired=count_ai),
+    )
     body = http.post("/api/system/db/retention/preview").json()
 
     assert body["status"] == "ok" and body["code"] == 200
-    assert set(body["data"]) == {"app_logs", "export_tasks"}
-    for table in ("app_logs", "export_tasks"):
+    assert set(body["data"]) == {"app_logs", "export_tasks", "ai_call_logs"}
+    for table in ("app_logs", "export_tasks", "ai_call_logs"):
         assert set(body["data"][table]) == {"cutoff", "deletable"}
 
 
@@ -224,6 +232,7 @@ def test_progress_envelope_and_frozen_shape(client, state_db):
     assert data["progress"] == {
         "app_logs": {"deleted": 0, "remaining": 0},
         "export_tasks": {"deleted": 0, "remaining": 0},
+        "ai_call_logs": {"deleted": 0, "remaining": 0},
         "batches": 0,
         "max_batches": retention.retention_max_batches(),
     }
