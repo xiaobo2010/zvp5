@@ -64,6 +64,7 @@ PHASES = {
     "entering_maintenance",
     "purging_app_logs",
     "purging_export_tasks",
+    "purging_ai_call_logs",
     "leaving_maintenance",
     "done",
     "failed",
@@ -149,6 +150,24 @@ class _FakeTasksRepo:
         return self.rowcounts.pop(0) if self.rowcounts else 0
 
 
+class _FakeAICallLogsRepo:
+    """Fake ``AICallLogsRepo``：与 tasks fake 同风格（单批量 + 过期计数）。"""
+
+    def __init__(self, deleted: list[int] | None = None, deletable: int = 0) -> None:
+        self.rowcounts = list(deleted or [])
+        self.deletable = deletable
+        self.purge_calls: list[tuple[datetime, int]] = []
+        self.count_calls: list[datetime] = []
+
+    async def count_expired(self, cutoff: datetime) -> int:
+        self.count_calls.append(cutoff)
+        return self.deletable
+
+    async def purge_batch(self, cutoff: datetime, batch_size: int) -> int:
+        self.purge_calls.append((cutoff, batch_size))
+        return self.rowcounts.pop(0) if self.rowcounts else 0
+
+
 @pytest.fixture(autouse=True)
 def _clean_job_state(monkeypatch):
     """进程内作业状态是模块级的（单 worker 前提），用例之间必须归零。"""
@@ -177,9 +196,11 @@ def state_db(tmp_path, monkeypatch) -> Path:
 def repos(monkeypatch):
     logs = _FakeLogsRepo(deleted=[3], deletable=0)
     tasks = _FakeTasksRepo(deleted=[0], deletable=0)
+    ai = _FakeAICallLogsRepo(deleted=[0], deletable=0)
     monkeypatch.setattr(backends, "get_applogs_repo", lambda session=None: logs)
     monkeypatch.setattr(backends, "get_tasks_repo", lambda session=None: tasks)
-    return logs, tasks
+    monkeypatch.setattr(backends, "get_ai_call_logs_repo", lambda session=None: ai)
+    return logs, tasks, ai
 
 
 @pytest.fixture()
@@ -282,8 +303,14 @@ def _wait_terminal(http, timeout: float = 5.0) -> dict:
 def _assert_frozen_shape(data: dict) -> None:
     assert set(data) == PROGRESS_KEYS
     assert set(data["maintenance"]) == MAINTENANCE_KEYS
-    assert set(data["progress"]) == {"app_logs", "export_tasks", "batches", "max_batches"}
-    for table in ("app_logs", "export_tasks"):
+    assert set(data["progress"]) == {
+        "app_logs",
+        "export_tasks",
+        "ai_call_logs",
+        "batches",
+        "max_batches",
+    }
+    for table in ("app_logs", "export_tasks", "ai_call_logs"):
         assert set(data["progress"][table]) == PROGRESS_COUNTER_KEYS
     assert isinstance(data["progress"]["batches"], int)
     assert isinstance(data["progress"]["max_batches"], int)
@@ -337,7 +364,7 @@ def test_announcement_matches_the_frozen_text(state_db, repos, disconnects):
 def test_manual_entry_writes_one_result_audit_row(state_db, repos, disconnects):
     asyncio.run(retention.purge_now(actor=ADMIN_OID))
 
-    logs, _ = repos
+    logs, _, _ = repos
     assert len(logs.inserted) == 1
     row = logs.inserted[0]
     assert row["type"] == "retention_purge"
@@ -352,7 +379,7 @@ def test_manual_entry_writes_one_result_audit_row(state_db, repos, disconnects):
 
 
 def test_scheduled_entry_uses_the_same_orchestration(state_db, repos, disconnects):
-    logs, _ = repos
+    logs, _, _ = repos
     logs.rowcounts = [5000, 3]
     logs.deletable = 4
 
@@ -372,7 +399,7 @@ def test_scheduled_entry_uses_the_same_orchestration(state_db, repos, disconnect
 def test_scheduled_entry_never_raises_and_still_restores(
     state_db, repos, disconnects, capsys
 ):
-    logs, _ = repos
+    logs, _, _ = repos
     logs.fail = RuntimeError("boom")
 
     assert asyncio.run(retention.purge_expired_records()) == 0
@@ -389,7 +416,7 @@ def test_scheduled_entry_skips_without_touching_maintenance(
     state_db, repos, disconnects, capsys
 ):
     """已经在清理：定时侧安静跳过，绝不二次进维护（也不二次恢复）。"""
-    logs, _ = repos
+    logs, _, _ = repos
 
     async def _scenario() -> int:
         assert await retention.acquire_nowait() is True
@@ -410,7 +437,7 @@ def test_scheduled_entry_skips_without_touching_maintenance(
 
 
 def test_purge_failure_restores_maintenance(state_db, repos, disconnects):
-    logs, _ = repos
+    logs, _, _ = repos
     logs.fail = ConnectionError("private DSN and password")
 
     with pytest.raises(ConnectionError):
@@ -430,7 +457,7 @@ def test_purge_failure_restores_maintenance(state_db, repos, disconnects):
 
 def test_maintenance_entry_failure_aborts_the_purge(state_db, repos, disconnects):
     """进不去维护态 ⇒ 不清理（绝不允许「没有维护态的清理」）。"""
-    logs, _ = repos
+    logs, _, _ = repos
     real_set_state = system_state.set_state
 
     def _set_state(enabled, reason, announcement, actor_oid):
@@ -454,7 +481,7 @@ def test_maintenance_entry_failure_aborts_the_purge(state_db, repos, disconnects
 
 def test_purge_cancellation_still_restores_maintenance(state_db, repos, disconnects):
     """进程退出（任务被取消）也要恢复维护态。"""
-    logs, _ = repos
+    logs, _, _ = repos
     logs.delay = 0.05  # 保证 cancel 时任务确实还挂在 await 上
 
     async def _scenario() -> str:
@@ -477,7 +504,7 @@ def test_purge_cancellation_still_restores_maintenance(state_db, repos, disconne
 
 def test_run_returns_the_job_handle_immediately(client, repos, disconnects, state_db):
     http, _ = client
-    logs, _ = repos
+    logs, _, _ = repos
     logs.delay = 0.2  # 请求返回时作业仍在跑
 
     response = http.post(RUN_URL)
@@ -522,6 +549,7 @@ def test_progress_idle_shape_is_frozen(client, state_db):
         "auto": False,
     }
     assert data["progress"]["app_logs"] == {"deleted": 0, "remaining": 0}
+    assert data["progress"]["ai_call_logs"] == {"deleted": 0, "remaining": 0}
     assert data["progress"]["max_batches"] == retention.retention_max_batches()
 
 
@@ -529,7 +557,7 @@ def test_progress_while_running_reports_phase_counts_and_maintenance(
     client, repos, state_db
 ):
     http, _ = client
-    logs, _ = repos
+    logs, _, _ = repos
     logs.delay = 0.3
     logs.deletable = 10  # 进度里的剩余量（展示用初始计数）
 
@@ -558,7 +586,7 @@ def test_progress_while_running_reports_phase_counts_and_maintenance(
 
 def test_run_is_409_while_a_purge_is_running(client, repos, state_db):
     http, _ = client
-    logs, _ = repos
+    logs, _, _ = repos
     logs.delay = 1.0  # 足够宽的窗口，让 409 与其断言都在「作业在飞」时发生
 
     first = http.post(RUN_URL)
@@ -585,7 +613,7 @@ def test_run_failure_is_surfaced_in_progress_without_leaking_internals(
     client, repos, state_db
 ):
     http, _ = client
-    logs, _ = repos
+    logs, _, _ = repos
     logs.fail = ConnectionError("private DSN and password")
 
     response = http.post(RUN_URL)
@@ -649,7 +677,7 @@ def test_progress_without_login_is_401(state_db):
 
 
 def test_run_retention_progress_callback_is_optional(state_db, repos):
-    logs, tasks = repos
+    logs, tasks, ai = repos
 
     seen: list[tuple[str, dict]] = []
 
@@ -661,16 +689,19 @@ def test_run_retention_progress_callback_is_optional(state_db, repos):
     phases = [phase for phase, _ in seen]
     assert retention.PHASE_PURGING_APP_LOGS in phases
     assert retention.PHASE_PURGING_EXPORT_TASKS in phases
+    assert retention.PHASE_PURGING_AI_CALL_LOGS in phases
     final = seen[-1][1]
     assert final["app_logs"] == {"deleted": 3, "remaining": 0}
     assert final["export_tasks"] == {"deleted": 0, "remaining": 0}
-    assert final["batches"] == 2
+    assert final["ai_call_logs"] == {"deleted": 0, "remaining": 0}
+    assert final["batches"] == 3
     assert final["max_batches"] == retention.retention_max_batches()
     # 返回值语义不变（进度里的 remaining 只是展示口径）。
-    assert set(result) == {"app_logs", "export_tasks", "batches"}
-    assert set(result["app_logs"]) == {"cutoff", "deleted", "remaining"}
+    assert set(result) == {"app_logs", "export_tasks", "ai_call_logs", "batches"}
+    for table in ("app_logs", "export_tasks", "ai_call_logs"):
+        assert set(result[table]) == {"cutoff", "deleted", "remaining"}
     assert result["app_logs"]["deleted"] == 3
-    assert logs.purge_calls and tasks.purge_calls
+    assert logs.purge_calls and tasks.purge_calls and ai.purge_calls
 
 
 def test_retention_module_registers_the_auto_source_probe():
