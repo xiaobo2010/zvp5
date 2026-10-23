@@ -71,8 +71,13 @@ lazily on first use — importing any module here never connects.
   `connect_args` for thin mode, only when a wallet dir is configured.
 - `wallet_password` is forwarded only when non-empty; it is the OCI wallet
   password (decrypts `ewallet.pem`), not the DB user password.
-- Pool configuration is 5 persistent connections plus up to 5 overflow
-  connections per API process, with `pool_pre_ping` and 1800s recycle.
+- Pool configuration is 8 persistent connections plus up to 8 overflow
+  connections per API process (`ZVMS_DB_POOL_SIZE` / `ZVMS_DB_POOL_OVERFLOW`).
+  `pool_pre_ping` defaults **off** and `pool_recycle` defaults to 600s
+  (`ZVMS_DB_PRE_PING` / `ZVMS_DB_RECYCLE`): on the cross-region link to ADB a
+  pre-ping probe costs a full extra round trip on every checkout, so connection
+  freshness is guaranteed by proactive aging instead. See `_pool_settings()` in
+  `engine.py` for the trade-off and when to turn pre-ping back on.
 
 ## Read-only monitoring
 

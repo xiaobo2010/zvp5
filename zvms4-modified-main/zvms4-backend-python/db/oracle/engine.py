@@ -46,8 +46,19 @@ def _connect_args(cfg: oracle_config.OracleConfig) -> dict:
     return args
 
 
+_TRUTHY = frozenset({"1", "true", "yes", "on"})
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    """把环境变量读成布尔值；未设置时返回 ``default``。"""
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in _TRUTHY
+
+
 def _pool_settings() -> dict:
-    """Pool sizing, overridable per deployment without a code change.
+    """Pool sizing and health-check policy, overridable without a code change.
 
     ``pool_timeout`` is deliberately short: checkout runs on the greenlet as a
     blocking ``queue.get``, so an exhausted pool freezes the *whole* event loop
@@ -55,12 +66,32 @@ def _pool_settings() -> dict:
     which turned a saturated pool into multi-minute site-wide stalls
     (``QueuePool limit of size 5 overflow 5 reached``), so waiting is capped at
     a few seconds and the excess request fails fast.
+
+    连接健康度这块是**跨洋链路的成本权衡**，默认值与直觉相反，别随手改回去：
+
+    * ``pool_pre_ping`` 默认关闭（``ZVMS_DB_PRE_PING`` 默认 ``0``）。pre_ping 在
+      **每次** checkout 前都先发一条探测 SQL 验证连接没死，前端→数据库侧单程 RTT
+      实测 138ms，一次 checkout 因此从 2 个 RTT 涨到 3 个（279ms → 416ms），
+      所有请求都按这个比例变慢。代价是：ADB 侧静默掐掉的连接（空闲超时、
+      实例维护、网络抖动）会以 ``DPY-1001``/``ORA-03113`` 的形式砸到第一个
+      撞上它的请求上。
+    * ``pool_recycle`` 默认 600 秒（``ZVMS_DB_RECYCLE``）。关掉 pre_ping 后，
+      「连接是否还活着」只能靠**主动老化**来保证：超过 recycle 的连接在下次
+      checkout 时被静默丢弃重建，我们永远不去碰一条可能已经被对端掐断的
+      连接。600 秒是保守值 —— 比 ADB 典型的空闲断连阈值短，又不至于让连接
+      池频繁重建（池只有 8 条，重建一次就是一个握手 RTT 的成本）。
+    * 什么时候该把 ``ZVMS_DB_PRE_PING=1`` 打开：链路本身不稳（丢包/重传明显）、
+      ADB 侧的空闲超时被调到比 recycle 更短、或实例侧频繁做维护重启时。此时
+      多付一个 RTT 换「不把死连接交给业务 SQL」是划算的；反之在稳定链路上
+      它就是纯开销。
     """
     return {
         "pool_size": int(os.environ.get("ZVMS_DB_POOL_SIZE", "8")),
         "max_overflow": int(os.environ.get("ZVMS_DB_POOL_OVERFLOW", "8")),
         "pool_timeout": float(os.environ.get("ZVMS_DB_POOL_TIMEOUT", "5")),
         "pool_use_lifo": True,
+        "pool_pre_ping": _env_bool("ZVMS_DB_PRE_PING", False),
+        "pool_recycle": int(os.environ.get("ZVMS_DB_RECYCLE", "600")),
     }
 
 
@@ -77,8 +108,6 @@ def get_engine() -> AsyncEngine:
         _engine = create_async_engine(
             oracle_config.build_async_url(cfg),
             connect_args=_connect_args(cfg),
-            pool_pre_ping=True,
-            pool_recycle=1800,
             # SQLAlchemy appends bound parameters to StatementError by default.
             # These routes bind password hashes, CLOB previews and personal
             # data; keep them out of exception strings / logs.
