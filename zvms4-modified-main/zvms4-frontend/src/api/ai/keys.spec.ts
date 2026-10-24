@@ -21,6 +21,7 @@ const keyFixture = {
   api_path: null,
   key_hint: '7890',
   enabled: true,
+  expires_at: null,
   created_at: '2026-10-24T00:00:00',
   updated_at: '2026-10-24T00:00:00',
   owned: false

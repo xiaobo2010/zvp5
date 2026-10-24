@@ -78,6 +78,8 @@ export interface AiRequestConfig {
   method: 'get' | 'post' | 'put' | 'patch' | 'delete'
   url: string
   data?: unknown
+  /** 查询参数；值为 undefined 的键不会落到 query string。 */
+  params?: Record<string, string | number | boolean>
 }
 
 /**
@@ -88,6 +90,7 @@ async function request(config: AiRequestConfig) {
     method: config.method,
     url: config.url,
     data: config.data,
+    params: config.params,
     validateStatus: () => true
   })
 
@@ -148,6 +151,38 @@ export async function aiRequest<T>(config: AiRequestConfig): Promise<T> {
  */
 export async function aiRequestVoid(config: AiRequestConfig): Promise<void> {
   await request(config)
+}
+
+/** 带 metadata 的列表响应：列表接口要拿总数（metadata.size）。 */
+export interface AiListResult<T> {
+  data: T
+  metadata: { size: number }
+}
+
+/**
+ * 列表请求：与 aiRequest 同样拆 envelope，但把 metadata 一起交回。
+ * 仓库里带 metadata 的列表调用（src/api/logs.ts、src/api/ban.ts）都读
+ * metadata.size 作为总数，这里沿用同一形状。
+ */
+export async function aiRequestList<T>(config: AiRequestConfig): Promise<AiListResult<T>> {
+  const response = await request(config)
+  const payload = response.data as {
+    status?: string
+    message?: string
+    data?: T
+    metadata?: { size?: number }
+  }
+  if (!payload || payload.status !== 'ok') {
+    throw new AiRequestError({
+      status: response.status,
+      code: parseAiCode(response.data) || 'AI_INVALID_RESPONSE',
+      message: payload?.message ?? ''
+    })
+  }
+  return {
+    data: payload.data as T,
+    metadata: { size: Number(payload.metadata?.size ?? 0) }
+  }
 }
 
 /**

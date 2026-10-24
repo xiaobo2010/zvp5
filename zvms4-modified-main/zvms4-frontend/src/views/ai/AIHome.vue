@@ -11,7 +11,8 @@ import {
   Cpu,
   DataLine,
   Key,
-  Odometer
+  Odometer,
+  Tickets
 } from '@element-plus/icons-vue'
 import ZAiChat from '@/components/ai/ZAiChat.vue'
 import ZAiQuotaPanel from '@/components/ai/ZAiQuotaPanel.vue'
@@ -19,6 +20,7 @@ import ZAiKeysAdmin from '@/components/ai/ZAiKeysAdmin.vue'
 import ZAiOcrEnginesAdmin from '@/components/ai/ZAiOcrEnginesAdmin.vue'
 import ZAiQuotaAdmin from '@/components/ai/ZAiQuotaAdmin.vue'
 import ZAiHealthPanel from '@/components/ai/ZAiHealthPanel.vue'
+import ZAiLogsAdmin from '@/components/ai/ZAiLogsAdmin.vue'
 
 interface SegmentedTab {
   label: string
@@ -26,8 +28,8 @@ interface SegmentedTab {
   icon: Component
 }
 
-const VALID_CURRENT = ['chat', 'quota', 'keys', 'engines', 'quota-admin', 'health']
-const ADMIN_ONLY = ['keys', 'engines', 'quota-admin', 'health']
+const VALID_CURRENT = ['chat', 'quota', 'keys', 'engines', 'quota-admin', 'health', 'logs']
+const ADMIN_ONLY = ['keys', 'engines', 'quota-admin', 'health', 'logs']
 
 const route = useRoute()
 const router = useRouter()
@@ -76,6 +78,7 @@ if (isAdmin) {
   tabs.value.push({ label: 'engines', value: 'engines', icon: Cpu })
   tabs.value.push({ label: 'quota-admin', value: 'quota-admin', icon: DataLine })
   tabs.value.push({ label: 'health', value: 'health', icon: Odometer })
+  tabs.value.push({ label: 'logs', value: 'logs', icon: Tickets })
 }
 
 watch(current, () => {
@@ -120,5 +123,6 @@ watch(
     <ZAiOcrEnginesAdmin v-else-if="current === 'engines'" />
     <ZAiQuotaAdmin v-else-if="current === 'quota-admin'" />
     <ZAiHealthPanel v-else-if="current === 'health'" />
+    <ZAiLogsAdmin v-else-if="current === 'logs'" />
   </div>
 </template>
