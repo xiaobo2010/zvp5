@@ -23,6 +23,7 @@ export const zhCN = {
   },
   language: '',
   dark: '夜间模式',
+  toggleDark: '切换深浅色模式',
   languages: {
     'zh-CN': '',
     'en-US': '',
