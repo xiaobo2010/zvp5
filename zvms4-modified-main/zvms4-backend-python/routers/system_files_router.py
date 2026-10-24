@@ -6,7 +6,10 @@
 
 1. 系统管理员闸（``_require_system_admin``）：严格 ``admin`` + 即时查库复核，
    与 ``routers/system_router.py`` 同源，不吃 token 里的权限快照。
-2. 写操作额外要求另一位管理员的 TOTP（``util/dual_auth.require_dual_auth``）；
+2. 写操作分两类：``mkdir`` / ``upload`` / ``rename`` / ``chmod`` 额外要求另一位
+   管理员的 TOTP（``util/dual_auth.require_dual_auth``）；``edit`` / ``delete``
+   不再要求双人码，只写审计。需求明确取消这两类的双人审批（日常改文本、清临时
+   文件太频繁，双人码把流程卡成瓶颈），留痕由 ``system_file`` 审计承担。
    读操作不过双人码，但同样不能访问 ``/proc``、``/sys`` 虚拟文件系统。
 
 同步文件 IO 一律经 ``asyncio.to_thread`` 执行：本服务是单 uvicorn worker，直接在
@@ -55,9 +58,17 @@ class RenameRequest(BaseModel):
 
 
 class DeleteRequest(BaseModel):
+    # 删除不再要求双人码：日常清理临时文件/上传残片太频繁，审批成本高于风险，
+    # 因此没有 ``totp_code`` 字段。留痕由 ``_audit`` 的 system_file 日志承担。
     path: str = Field(min_length=1, max_length=4096)
     recursive: bool = False
-    totp_code: str = ""
+
+
+class EditRequest(BaseModel):
+    # 编辑同样免双人码（见模块 docstring 的鉴权说明），编码由服务层做白名单校验。
+    path: str = Field(min_length=1, max_length=4096)
+    content: str
+    encoding: str = "utf-8"
 
 
 class ChmodRequest(BaseModel):
@@ -92,12 +103,21 @@ async def _approve(user: dict, code: str) -> str:
         raise HTTPException(status_code=exc.status_code, detail=exc.detail)
 
 
-async def _audit(user: dict, op: str, path: str, approver_oid: str) -> None:
-    # 审计里带上审批人，事后才能还原「谁批的这次改动」；细节仍只有 op + 路径。
+async def _audit(
+    user: dict, op: str, path: str, *, approver_oid: str | None = None
+) -> None:
+    """写一条文件管理审计；有审批人才把审批人拼进 detail。
+
+    ``edit`` / ``delete`` 已取消双人审批，detail 里不能凭空出现 ``approver=``，
+    否则事后回溯会误以为有人批过。
+    """
+    detail = f"{op} {path}"
+    if approver_oid is not None:
+        detail += f" approver={approver_oid}"
     await audit_system_op(
         user["id"],
         action="fs_admin",
-        detail=f"{op} {path} approver={approver_oid}",
+        detail=detail,
         log_type="system_file",
     )
 
@@ -192,7 +212,7 @@ async def make_dir(payload: MkdirRequest, user=Depends(get_current_user)):
     approver = await _approve(user, payload.totp_code)
 
     data = await asyncio.to_thread(file_ops.make_dir, payload.path)
-    await _audit(user, "mkdir", data["path"], approver)
+    await _audit(user, "mkdir", data["path"], approver_oid=approver)
     return _ok(data)
 
 
@@ -211,7 +231,7 @@ async def upload_file(
     data = await file_ops.save_upload(
         path, file.filename, file.read, overwrite=overwrite
     )
-    await _audit(user, "upload", data["path"], approver)
+    await _audit(user, "upload", data["path"], approver_oid=approver)
     return _ok(data)
 
 
@@ -224,20 +244,35 @@ async def rename_file(payload: RenameRequest, user=Depends(get_current_user)):
     data = await asyncio.to_thread(
         file_ops.rename_path, payload.source, payload.target
     )
-    await _audit(user, "rename", f"{data['from']} -> {data['to']}", approver)
+    await _audit(
+        user, "rename", f"{data['from']} -> {data['to']}", approver_oid=approver
+    )
+    return _ok(data)
+
+
+@router.post("/edit")
+@_translates_file_errors
+async def edit_file(payload: EditRequest, user=Depends(get_current_user)):
+    """整篇文本写回；免双人码，只留一条审计（detail 不含内容）。"""
+    await _require_system_admin(user)
+
+    data = await asyncio.to_thread(
+        file_ops.write_text, payload.path, payload.content, payload.encoding
+    )
+    await _audit(user, "edit", f"{data['path']} {data['size']} bytes")
     return _ok(data)
 
 
 @router.post("/delete")
 @_translates_file_errors
 async def delete_file(payload: DeleteRequest, user=Depends(get_current_user)):
+    # 删除已取消双人审批（见模块 docstring）：只过管理员闸，动作后写审计留痕。
     await _require_system_admin(user)
-    approver = await _approve(user, payload.totp_code)
 
     data = await asyncio.to_thread(
         file_ops.delete_path, payload.path, recursive=payload.recursive
     )
-    await _audit(user, "delete", data["path"], approver)
+    await _audit(user, "delete", data["path"])
     return _ok(data)
 
 
@@ -248,5 +283,7 @@ async def chmod_file(payload: ChmodRequest, user=Depends(get_current_user)):
     approver = await _approve(user, payload.totp_code)
 
     data = await asyncio.to_thread(file_ops.chmod_path, payload.path, payload.mode)
-    await _audit(user, "chmod", f"{data['path']} {oct(data['mode'])}", approver)
+    await _audit(
+        user, "chmod", f"{data['path']} {oct(data['mode'])}", approver_oid=approver
+    )
     return _ok(data)
