@@ -11,7 +11,7 @@ from db import backends
 from db.oracle.session import session_scope
 from typings.activity_v2 import Activity, ActivityMember
 from typings.log import inject_log
-from util.calculate import calculate_user_time_bulk
+from util.calculate import calculate_user_time, calculate_user_time_bulk
 from util.object_id import get_current_user, compulsory_temporary_token
 from util.permission import volunteer, volunteer_member
 from util.user import get_user_display_name
@@ -418,6 +418,10 @@ class PutActivityStatus(BaseModel):
     status: Literal["effective", "pending", "refused"]
 
 
+class PutMemberStatus(BaseModel):
+    status: Literal["effective", "pending", "refused"]
+
+
 @router.put("/{activity_id}/status")
 async def modify_activity_status_v2(
     activity_id: str,
@@ -476,6 +480,77 @@ async def modify_activity_status_v2(
     await log.insert_log()
 
     return JSONResponse({"detail": "Activity status updated successfully"})
+
+
+@router.put("/{activity_id}/members/{session_id}/status")
+async def modify_activity_member_status_v2(
+    activity_id: str,
+    session_id: str,
+    status: PutMemberStatus,
+    user=Depends(get_current_user),
+    log=Depends(inject_log),
+):
+    """
+    :param activity_id: ID of the activity the membership belongs to
+    :param session_id: ID of the membership row (not the member's user ID)
+    :param status: Status to be set
+    :param user: Current user
+    :param log: Logger object
+
+    :return: Updated membership ID and its new status
+    """
+
+    activity_id = str(validate_object_id(activity_id))
+    session_id = str(validate_object_id(session_id))
+
+    target_activity = await backends.get_activities_repo().get(activity_id)
+    if not target_activity:
+        raise HTTPException(status_code=404, detail="Activity not found")
+
+    target_member = await backends.get_members_repo().get_by_oid(session_id)
+    if not target_member:
+        raise HTTPException(status_code=404, detail="Activity member not found")
+
+    if str(target_member["activity"]) != activity_id:
+        raise HTTPException(status_code=404, detail="Activity member not found")
+
+    member_oid = str(validate_object_id(target_member["member"]))
+    target_user = await backends.get_users_repo().get_by_oid(member_oid)
+    if not target_user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    await volunteer_member.validate_create_permission(
+        user, target_user, target_activity
+    )
+
+    if status.status == target_member["status"]:
+        raise HTTPException(
+            status_code=400,
+            detail="Activity member status is not changed",
+        )
+
+    await backends.get_members_repo().update_fields(
+        session_id, {"status": status.status}
+    )
+
+    # ``allow_cache=False`` recomputes from effective memberships and writes the
+    # row back, so the next cached read already reflects this review.
+    try:
+        await calculate_user_time(member_oid, allow_cache=False)
+    except Exception:
+        logger.warning(
+            "成员 %s 状态审核后重算时长失败，保留缓存旧值",
+            member_oid,
+            exc_info=True,
+        )
+
+    log.with_text(
+        f'用户 {await get_user_display_name(user["id"])} 将义工活动《{target_activity.get("name") or "未知活动"}》成员 {await get_user_display_name(member_oid)} 的状态审核为 {status.status}',
+        type="activity_member_review",
+    )
+    await log.insert_log()
+
+    return {"id": session_id, "status": status.status}
 
 
 class AmalgamationForm(BaseModel):
