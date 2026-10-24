@@ -26,6 +26,9 @@ import './assets/styles/element-overrides.css'
 import './assets/styles/flat.css'
 import './assets/main.css'
 
+// 新版前端设计准则的 --yg-* 令牌层（只定义变量，不改 Element Plus 结构）
+import './assets/styles/yg-design-tokens.css'
+
 import persistedstate from 'pinia-plugin-persistedstate'
 
 const app = createApp(App)
