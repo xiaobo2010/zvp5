@@ -18,16 +18,6 @@ export async function signLink(oid: string): Promise<SignedLink> {
   return result.data
 }
 
-export async function startOcr(oid: string): Promise<OcrResult> {
-  const result = (await axios(`/attachments/${oid}/ocr`, {
-    method: 'post'
-  })).data as Response<OcrResult>
-  if (result.status === 'error') {
-    throw new Error(result.message)
-  }
-  return result.data
-}
-
 export async function getOcr(oid: string): Promise<OcrResult | undefined> {
   const result = (await axios(`/attachments/${oid}/ocr`)).data as Response<OcrResult>
   if (result.status === 'error') {
