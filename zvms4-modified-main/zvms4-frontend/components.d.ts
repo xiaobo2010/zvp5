@@ -52,6 +52,7 @@ declare module 'vue' {
     ZAiChat: typeof import('./src/components/ai/ZAiChat.vue')['default']
     ZAiHealthPanel: typeof import('./src/components/ai/ZAiHealthPanel.vue')['default']
     ZAiKeysAdmin: typeof import('./src/components/ai/ZAiKeysAdmin.vue')['default']
+    ZAiLogsAdmin: typeof import('./src/components/ai/ZAiLogsAdmin.vue')['default']
     ZAiOcrEnginesAdmin: typeof import('./src/components/ai/ZAiOcrEnginesAdmin.vue')['default']
     ZAiQuotaAdmin: typeof import('./src/components/ai/ZAiQuotaAdmin.vue')['default']
     ZAiQuotaPanel: typeof import('./src/components/ai/ZAiQuotaPanel.vue')['default']

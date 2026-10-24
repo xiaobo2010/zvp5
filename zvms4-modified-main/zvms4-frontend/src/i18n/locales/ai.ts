@@ -7,7 +7,8 @@ export const zhCN = {
     keys: 'Key 管理',
     engines: 'OCR 引擎',
     'quota-admin': '额度管理',
-    health: '健康状态'
+    health: '健康状态',
+    logs: '调用日志'
   },
   common: {
     refresh: '刷新',
@@ -107,6 +108,12 @@ export const zhCN = {
     addHeader: '添加请求头',
     removeHeader: '移除该头',
     keyHint: '密钥提示',
+    expires: '到期',
+    expiresLabel: '到期时间',
+    expiresPlaceholder: '留空表示永不过期',
+    neverExpires: '永久',
+    expired: '已过期',
+    expiresHint: '到期后该凭据移出生效目录，依赖它的模型立即不可用；编辑时清空即可恢复永久。',
     empty: '还没有凭据',
     loadFailed: '凭据列表加载失败',
     createdNotice: '凭据已创建',
@@ -125,6 +132,7 @@ export const zhCN = {
       apiKeyLength: '密钥长度需在 8 到 512 位之间',
       modelsTooMany: '模型最多 20 个',
       modelTooLong: '单个模型名称不能超过 80 个字符',
+      expiresInPast: '到期时间必须晚于当前时间',
       headerNameRequired: '请填写请求头名称'
     }
   },
@@ -223,6 +231,54 @@ export const zhCN = {
     models: '可用模型',
     modelsEmpty: '暂无可用模型',
     loadFailed: '健康状态加载失败'
+  },
+  logs: {
+    title: '调用日志',
+    subtitle: '只读视图：记录每次调用的状态、延迟与计费单位，不含任何密钥材料。',
+    filters: '过滤条件',
+    user: '用户',
+    userAll: '全部用户',
+    capability: '能力',
+    capabilityAll: '全部能力',
+    capabilityOcr: 'OCR 识别',
+    capabilityChat: '对话',
+    status: '状态',
+    statusAll: '全部状态',
+    statusSuccess: '成功',
+    statusError: '错误',
+    statusTimeout: '超时',
+    statusRejected: '已拒绝',
+    statusBusy: '繁忙',
+    keyScope: '密钥来源',
+    keyScopeAll: '全部来源',
+    keyScopePersonal: '个人',
+    keyScopeShared: '共享',
+    keyScopeServer: '服务端',
+    timeRange: '时间范围',
+    timeRangeTo: '至',
+    timeRangeStart: '开始时间',
+    timeRangeEnd: '结束时间',
+    timeRangeHint: '留空表示不限时间；筛选条件改动后自动回到第一页。',
+    resetFilters: '重置过滤',
+    columns: {
+      createdAt: '时间',
+      user: '用户',
+      capability: '能力',
+      endpoint: '接口',
+      provider: '服务商',
+      model: '模型',
+      status: '状态',
+      httpStatus: 'HTTP',
+      errorCode: '错误码',
+      latency: '延迟',
+      units: '计费单位',
+      keyScope: '密钥来源',
+      requestId: '请求编号'
+    },
+    latencyUnit: '毫秒',
+    copyRequestId: '复制请求编号',
+    empty: '没有符合条件的调用记录',
+    loadFailed: '调用日志加载失败'
   },
   ocr: {
     action: '识别',
@@ -324,6 +380,14 @@ export const zhCN = {
     AI_KEY_FORBIDDEN: {
       title: '无权操作该凭据',
       hint: '个人 Key 只能由其所有者修改。'
+    },
+    AI_KEY_BAD_EXPIRY: {
+      title: '到期时间不合法',
+      hint: '到期时间必须是合法时间且晚于当前时间。'
+    },
+    AI_LOGS_BAD_FILTER: {
+      title: '过滤条件不合法',
+      hint: '请检查能力、状态与密钥来源的取值后重试。'
     },
     AI_OCR_ENGINE_DUPLICATE: {
       title: '引擎名称已存在',
