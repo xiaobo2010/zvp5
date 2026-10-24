@@ -406,10 +406,11 @@ class StubLog:
 def _client(user: dict | None = None) -> TestClient:
     app = FastAPI()
     app.include_router(ai_router.router, prefix="/api/ai")
-    app.dependency_overrides[get_current_user] = lambda: user or {
-        "id": ADMIN,
-        "per": ["admin"],
-    }
+    identity = lambda: user or {"id": ADMIN, "per": ["admin"]}  # noqa: E731
+    app.dependency_overrides[get_current_user] = identity
+    # ``/v1/*`` 走独立的鉴权入口（API key 或 JWT）：这个用例测的是模型目录，
+    # 与凭据形态无关，两条入口都直接放行同一个身份。
+    app.dependency_overrides[ai_router.get_ai_client] = identity
     app.dependency_overrides[inject_log] = lambda: StubLog()
     return TestClient(app)
 

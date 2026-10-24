@@ -1380,6 +1380,53 @@ END;
 /
 
 -- ----------------------------------------------------------------------------
+-- AI_API_KEYS  ← new (OpenAI 兼容面的独立 API key)
+--   TOKEN_HASH 是 sha256(token) 的 hex：明文只在创建响应里出现一次，永不落库。
+--   NAME 在同一 USER_OID 内唯一（ux_ai_api_keys_owner_name）；TOKEN_HASH 全局
+--   唯一（所有 key 共用一个校验入口，撞哈希等于两条记录互相遮蔽）。
+--   EXPIRES_AT 可空 = 永不过期；LAST_USED_AT 是采样写（最多每 60 秒一次），
+--   不是精确审计。
+--   也由 V030__add_ai_api_keys.sql 在存量实例上创建。
+-- ----------------------------------------------------------------------------
+BEGIN
+  EXECUTE IMMEDIATE '
+CREATE TABLE ai_api_keys (
+  oid VARCHAR2(24 CHAR) NOT NULL,
+  user_oid VARCHAR2(24 CHAR) NOT NULL,
+  name VARCHAR2(64 CHAR) NOT NULL,
+  token_hash VARCHAR2(64 CHAR) NOT NULL,
+  key_hint VARCHAR2(16 CHAR) NOT NULL,
+  enabled NUMBER(1) DEFAULT 1 NOT NULL,
+  expires_at TIMESTAMP,
+  last_used_at TIMESTAMP,
+  created_at TIMESTAMP DEFAULT SYSTIMESTAMP NOT NULL,
+  CONSTRAINT pk_ai_api_keys PRIMARY KEY (oid),
+  CONSTRAINT ck_ai_api_keys_oid CHECK (REGEXP_LIKE(oid,''^[0-9a-f]{24}$'')),
+  CONSTRAINT ck_ai_api_keys_enabled CHECK (enabled IN (0,1))
+)';
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE != -955 THEN RAISE; END IF;
+END;
+/
+
+BEGIN
+  EXECUTE IMMEDIATE 'CREATE UNIQUE INDEX ux_ai_api_keys_token_hash ON ai_api_keys (token_hash)';
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE NOT IN (-955, -1408) THEN RAISE; END IF;
+END;
+/
+
+BEGIN
+  EXECUTE IMMEDIATE 'CREATE UNIQUE INDEX ux_ai_api_keys_owner_name ON ai_api_keys (user_oid, name)';
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE NOT IN (-955, -1408) THEN RAISE; END IF;
+END;
+/
+
+-- ----------------------------------------------------------------------------
 -- BAN_RULES seed  ← 内置规则（非主学海设备登录；也由 V014/V016 mirror）
 --   惩罚梯度末位 null = 永久。用固定 oid + MERGE：重复执行不会覆盖管理员
 --   调过的 threshold / penalties。旧的 multi_device_login 已随 V016 删除

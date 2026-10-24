@@ -97,10 +97,11 @@ def _entry(name: str, oid: str, scope: str = "shared", models=("gpt-x",)) -> dic
 def _client(user: dict | None = None) -> TestClient:
     app = FastAPI()
     app.include_router(ai_router.router, prefix="/api/ai")
-    app.dependency_overrides[get_current_user] = lambda: user or {
-        "id": ADMIN,
-        "per": ["admin"],
-    }
+    identity = lambda: user or {"id": ADMIN, "per": ["admin"]}  # noqa: E731
+    app.dependency_overrides[get_current_user] = identity
+    # ``/v1/*`` 的鉴权入口是 get_ai_client（API key 或 JWT）；这里把两条路径都
+    # 固定成同一个身份，鉴权分支本身由 tests/test_ai_api_keys.py 覆盖。
+    app.dependency_overrides[ai_router.get_ai_client] = identity
     app.dependency_overrides[inject_log] = lambda: StubLog()
     return TestClient(app)
 

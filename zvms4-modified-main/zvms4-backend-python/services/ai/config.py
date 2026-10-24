@@ -253,6 +253,75 @@ def max_concurrency() -> int:
     return value if value >= 1 else _DEFAULT_CONCURRENCY
 
 
+def worker_count() -> int:
+    """部署的 worker 进程数（单 worker = 1）。
+
+    读法依次是 ``settings.AI_WORKER_COUNT`` → ``config.AI_WORKER_COUNT`` →
+    环境变量 ``WEB_CONCURRENCY`` → ``UVICORN_WORKERS`` → 1。环境变量是 gunicorn /
+    uvicorn 的标准旋钮，运维在启动命令上写 ``--workers 4`` 时只有
+    ``UVICORN_WORKERS`` 会跟着变，所以两者都要认。
+
+    非正整数（``"abc"``、``0``、``-1``、``True``）一律回退 1：把 worker 数写成 0
+    会让进程内阈值除零，写成 ``True`` 会变成「1 个 worker 但阈值按 1 折算」的
+    假象——都不该静默通过。
+    """
+    candidates = (
+        getattr(settings, "AI_WORKER_COUNT", None),
+        getattr(config, "AI_WORKER_COUNT", None),
+        os.environ.get("WEB_CONCURRENCY"),
+        os.environ.get("UVICORN_WORKERS"),
+    )
+    for value in candidates:
+        count = _strict_positive_int(value)
+        if count is not None:
+            return count
+    return 1
+
+
+def _strict_positive_int(value: object) -> int | None:
+    """只认真正的正整数；``True``/``"4"`` 这类「看起来像」的值分别处理。
+
+    字符串要认（环境变量天生是字符串），bool 不认（``True`` 是 int 的子类）。
+    """
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return None
+        try:
+            value = int(text)
+        except ValueError:
+            return None
+    if not isinstance(value, int):
+        return None
+    return value if value >= 1 else None
+
+
+def api_key_cache_ttl() -> float:
+    """API key 校验缓存的秒数；非正数/非数值回退 30 秒。"""
+    fallback = float(getattr(config, "AI_API_KEY_CACHE_TTL", 30))
+    try:
+        value = float(getattr(settings, "AI_API_KEY_CACHE_TTL", fallback))
+    except (TypeError, ValueError):
+        return fallback
+    return value if value > 0 else fallback
+
+
+def api_key_rate_limit_per_minute() -> int:
+    """单个 API key 的每分钟上限（额外于用户维度）；0 = 不限。
+
+    默认 60 而不是沿用 chat 的 20：一把 key 通常代表一个自动化客户端，比交互式
+    对话更容易突发；真正的成本闸门仍是月额度。
+    """
+    fallback = int(getattr(config, "AI_API_KEY_RATE_LIMIT_PER_MINUTE", 60))
+    try:
+        value = int(getattr(settings, "AI_API_KEY_RATE_LIMIT_PER_MINUTE", fallback))
+    except (TypeError, ValueError):
+        return fallback
+    return value if value >= 0 else fallback
+
+
 def provider_api_key(cfg: dict) -> str | None:
     """先环境变量，再 settings。
 

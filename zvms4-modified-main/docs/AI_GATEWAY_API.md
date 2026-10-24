@@ -1,7 +1,8 @@
 # AI 网关 API
 
-适用代码：`zvms4-backend-python` @ `fd2f006`（2026-10-24）
+适用代码：`zvms4-backend-python` @ `d25417b`（2026-10-24）
 挂载点：`main.py` → `app.include_router(ai_router.router, prefix="/api/ai")`
++ `app.include_router(ai_api_keys_router.router, prefix="/api/ai/api-keys")`
 
 网关有三件事：**LLM 对话**（OpenAI 兼容面）、**OCR**（多引擎池）、**运维面**（凭据 / 引擎 / 额度 / 流水 / 健康）。
 OCR 还有一条附件侧入口 `POST /api/attachments/{oid}/ocr`，与 `/api/ai/ocr` 共用同一套计价。
@@ -12,21 +13,28 @@ OCR 还有一条附件侧入口 `POST /api/attachments/{oid}/ocr`，与 `/api/ai
 
 ### 1.1 鉴权
 
-与平台其它接口一致：`Authorization: Bearer <token>`（登录态 JWT / session）。
-没有独立的「AI API Key」体系；OpenAI SDK 走的也是同一个 token。
+两种凭据，前缀不同、作用面不同：
+
+| 凭据 | 形态 | 作用面 |
+|---|---|---|
+| 平台登录 token（`zvp_` / JWT） | `Authorization: Bearer <jwt>` | **全部** `/api/ai/*` 与 `/api/ai/v1/*` |
+| API key（`zvk_...`） | `Authorization: Bearer zvk_...` | **仅** `/v1/models`、`/v1/chat/completions` |
+
+API key 详见 §8；它**不能**打开管理面（`/keys`、`/quota`、`/logs`、`/health`）——
+泄漏一把 key 的爆炸半径就是「以本人身份对话、花本人的月额度」。
 
 | 门禁 | 判定 |
 |---|---|
 | `AI_FORBIDDEN` | 角色不在 `config.AI_ALLOWED_ROLES`（默认 `admin`、`department`） |
-| `admin` | 凭据 / 引擎 / 额度管理 / 流水 / 健康 |
-| `department`（学生会） | OCR、对话、查自己的额度 |
-| 普通用户 | 无 AI 权限 |
+| `admin` | 凭据 / 引擎 / 额度管理 / 流水 / 健康 / API key 管理 |
+| `department`（学生会） | OCR、对话、查自己的额度、管自己的 API key |
+| 普通用户 | 无 AI 对话权限（API key 只能由本人签发/吊销） |
 
 个人凭据（`scope=personal`）的调用**不占**平台月度额度（自付上游成本）。
 
 ### 1.2 两套响应协议
 
-**zvp 面**（`/ocr`、`/keys`、`/logs`、`/ocr-engines`、`/quota`、`/health`）：
+**zvp 面**（`/ocr`、`/keys`、`/logs`、`/ocr-engines`、`/quota`、`/health`、`/api-keys`）：
 
 ```json
 { "status": "ok", "code": 200, "data": { } }
@@ -289,8 +297,11 @@ Content-Type: application/json
   "enabled": true,
   "local_engine_ready": true,
   "max_concurrency": 4,
+  "worker_count": 1,
+  "rate_limit_per_minute": { "ocr": 10, "chat": 20 },
   "providers": { },
   "cooldown_seconds": { },
+  "cooldown_scope": "process",
   "models": ["..."],
   "quota_defaults": { },
   "credentials": {
@@ -300,8 +311,15 @@ Content-Type: application/json
 }
 ```
 
+| 字段 | 含义 |
+|---|---|
+| `worker_count` | 部署的 worker 进程数（`settings.AI_WORKER_COUNT` → `config.AI_WORKER_COUNT` → 环境变量 `WEB_CONCURRENCY` / `UVICORN_WORKERS` → 1） |
+| `rate_limit_per_minute` | **每进程**的实际阈值 = `ceil(全局阈值 / worker_count)`（至少 1）；全局真实上限 ≈ 阈值 × `worker_count` |
+| `cooldown_scope` | 恒为 `"process"`：熔断状态是进程内的，多 worker 各熔各的 |
+
 `local_engine_ready` 只是一个布尔，不暴露路径、模型名或密钥材料。
 `settings.AI_ROUTES` 已废弃并从响应里移除（它从来没生效过，回显只会误导运维）。
+频控 / 熔断 / 凭据缓存 / API key 校验缓存都是**进程内**状态：`worker_count > 1` 时进程启动会打一条 WARNING。
 
 ---
 
@@ -330,9 +348,11 @@ Content-Type: application/json
 
 | 状态 | code | 触发 |
 |---|---|---|
+| 401 | `AI_API_KEY_INVALID` | 用了 API key 但无效（不存在/已禁用/已过期/用户已删） |
 | 403 | `AI_FORBIDDEN` | 角色无 AI 权限 |
+| 403 | `USER_BANNED` | 账号处于封禁中（带 `X-Ban-Reason` / `X-Ban-Until`） |
 | 404 | `model_not_found` | 没有任何可见凭据声明该模型 |
-| 429 | `AI_RATE_LIMITED` | 超过 20 次/分钟 |
+| 429 | `AI_RATE_LIMITED` | 用户维度超过 20 次/分钟，或单把 API key 超过 60 次/分钟 |
 | 429 | `insufficient_quota` | 个人 `chat` 月额度耗尽 |
 | 429 | `AI_BUSY` | 全局并发闸门已满 |
 | 502 | `AI_UPSTREAM_AUTH` | 上游 401/403（凭证问题） |
@@ -359,18 +379,72 @@ print(client.chat.completions.create(
 ```
 
 `api_key` 就是平台 Bearer token，不是单独的 AI key——**没有按 key 限额、按模型授权的机制**。
+需要「按客户端限额 / 可单独吊销」的第三方接入，用 §9 的独立 API key。
 
 ### 8.4 上游重试与熔断
 
 - 每个请求最多尝试 2 个候选上游（`MAX_PROVIDER_ATTEMPTS`）。
 - 仅 `AI_UPSTREAM_RATE_LIMIT`、`AI_UPSTREAM_ERROR`、`AI_TIMEOUT` 会换下一个上游。
 - `AI_NO_PROVIDER`、`AI_UPSTREAM_AUTH`、`AI_UPSTREAM_REJECTED` 直接失败，不换。
-- 失败上游进入冷却（秒数见 `/health` 的 `cooldown_seconds`），冷却期内不再当选。
-- 频控、熔断、凭据缓存都是**进程内**状态。
+- 失败上游进入冷却（秒数见 `/health` 的 `cooldown_seconds`，作用域 `process`），冷却期内不再当选。
+- 频控、熔断、凭据缓存、API key 校验缓存都是**进程内**状态（见 `/health` 的 `worker_count` / `rate_limit_per_minute`）。
 
 ---
 
-## 9. 错误码总表
+## 9. 独立 API key `/api/ai/api-keys`
+
+给 OpenAI 兼容面的第三方接入用：与平台登录 token 分开、可单独吊销、可单独限额。
+**只在 `/v1/models` 与 `/v1/chat/completions` 生效**，管理面（`/keys`、`/quota`、
+`/logs`、`/health`）仍然只认 JWT。
+
+### 9.1 关键事实
+
+| 项 | 说明 |
+|---|---|
+| token 形态 | `zvk_` + `token_urlsafe(32)`（约 51 字符）；平台登录 token 是 `zvp_`/JWT |
+| 落库形态 | `sha256(token)` 的 hex，**明文只在创建响应里出现一次**；没有「再查看一次」的接口 |
+| `key_hint` | 前 8 + 后 4（如 `zvk_ab12…wxyz`），只用于人眼识别 |
+| 数量上限 | 每用户 10 把（超出 409 `AI_API_KEY_LIMIT`） |
+| 额度 | 仍按 `user_oid` 计：同一用户的多把 key **共享**月额度 |
+| 频控 | 用户维度沿用 `chat` 的 20 次/分钟；**另加**每把 key 60 次/分钟（`AI_API_KEY_RATE_LIMIT_PER_MINUTE`），两者都要过 |
+| 吊销 | 删除即失效（同进程立即，其它 worker 最晚一个 30s 缓存 TTL） |
+| 鉴权失败 | 不存在 / 已禁用 / 已过期 / 用户已删 一律 `401 AI_API_KEY_INVALID`（不区分，避免探测）；封禁是 `403 USER_BANNED` |
+
+### 9.2 端点
+
+| 方法 | 路径 | 权限 | 行为 |
+|---|---|---|---|
+| GET | `/api/ai/api-keys` | 登录 | 只列自己的；admin 可加 `?user_oid=` 看别人 |
+| POST | `/api/ai/api-keys` | 登录 | `{name, expires_at?}` → 201，`data.token` = 明文（仅此一次） |
+| PATCH | `/api/ai/api-keys/{oid}` | owner 或 admin | `{name?, enabled?, expires_at?}`；`expires_at` 三态同 `/keys` |
+| DELETE | `/api/ai/api-keys/{oid}` | owner 或 admin | 204 |
+
+视图字段：`{oid, name, key_hint, enabled, expires_at, last_used_at, created_at}`，
+**永不回 `token` 或 `token_hash`**。`last_used_at` 是采样写（最多每 60 秒一次），
+不是精确审计。
+
+错误：`400 AI_API_KEY_BAD_NAME` / `AI_API_KEY_BAD_EXPIRY`、`401 AI_API_KEY_INVALID`、
+`403 AI_FORBIDDEN`（不是 owner 也不是 admin）、`404 AI_API_KEY_NOT_FOUND`、
+`409 AI_API_KEY_DUPLICATE` / `AI_API_KEY_LIMIT`。
+
+### 9.3 使用
+
+```python
+from openai import OpenAI
+
+client = OpenAI(
+    base_url="https://zvp.xiaobopisces.top/api/ai/v1",
+    api_key="zvk_...",   # 创建时拿到的明文
+)
+```
+
+鉴权判定顺序：token 形状（`zvk_` 前缀）→ `sha256` 查表（30s 进程内缓存，CRUD 主动失效）
+→ 存在 → `enabled` → `expires_at` → 用户存在 → 封禁 → 构造与 JWT 同形的 user
+（`id` / `perm` / `per` / `class_id`，`per` 取**当前**角色，不是签发时的快照）。
+
+---
+
+## 10. 错误码总表
 
 | code | HTTP | 含义 |
 |---|---|---|
@@ -395,6 +469,11 @@ print(client.chat.completions.create(
 | `model_not_found` | 404 | 模型不可见 |
 | `AI_INVALID_REQUEST` | 422 | 请求体校验失败（含 pydantic 数组 detail） |
 | `AI_KEY_*` | 400/403/404/409 | 凭据相关 |
+| `AI_API_KEY_INVALID` | 401 | API key 无效（不存在/禁用/过期/用户已删） |
+| `AI_API_KEY_NOT_FOUND` / `AI_API_KEY_DUPLICATE` / `AI_API_KEY_LIMIT` | 404 / 409 / 409 | API key 管理 |
+| `AI_API_KEY_BAD_EXPIRY` | 400 | API key 到期时间非法 |
+| `AI_API_KEY_BAD_NAME` | 400 | API key 名字非法（空 / 超 64 字符 / 控制字符） |
+| `USER_BANNED` | 403 | 账号封禁中（带 `X-Ban-Reason` / `X-Ban-Until`） |
 | `AI_OCR_ENGINE_*` | 400/404/409 | 引擎相关 |
 | `AI_QUOTA_BAD_KIND` / `AI_QUOTA_BAD_LIMIT` | 400 | 额度参数非法 |
 | `AI_LOGS_BAD_FILTER` | 400 | 流水过滤参数非法 |
@@ -403,24 +482,27 @@ print(client.chat.completions.create(
 
 ---
 
-## 10. 已知限制与缺口
+## 11. 已知限制与缺口
 
 | # | 缺口 | 影响 |
 |---|---|---|
-| 4 | 频控 / 熔断 / 凭据缓存均为进程内 | 多 worker 下实际限额变成 N 倍，冷却状态各自为政 |
-| 7 | OpenAI 面无独立 API key | 第三方接入必须拿用户 token，无法按 key 限额 |
 | 8 | 审计写入失败静默 | `units` 与 `ai_quota.used` 可能对不上账 |
 | 10 | 附件 OCR 只支持 jpeg/png/webp | PDF 附件无法识别 |
 
+> 频控 / 熔断 / 凭据缓存 / API key 缓存仍是**进程内**状态，但不再「静默」：进程内阈值
+> 已按 worker 数折算，`/health` 回显 `worker_count`、`rate_limit_per_minute`、
+> `cooldown_scope`，启动时也会打 WARNING。要做到跨进程精确限流仍需 Redis。
+
 ---
 
-## 11. 运维速查
+## 12. 运维速查
 
 | 配置项 | 位置 | 作用 |
 |---|---|---|
 | `AI_ENABLED` | `settings` | 网关总开关 |
 | `AI_ALLOWED_ROLES` | `config.py` | 可用角色，默认 `admin`/`department` |
 | `AI_RATE_LIMIT_PER_MINUTE` | `config.py` | `{"ocr":10,"chat":20}` |
+| `AI_WORKER_COUNT` | `config.py` / `settings` / 环境变量 | 部署的 worker 数，默认按 `WEB_CONCURRENCY` / `UVICORN_WORKERS` 探测，缺省 1 |
 | `AI_DEFAULT_OCR_MONTHLY_UNITS` | `config.py` | 用户 OCR 默认 100 |
 | `AI_DEFAULT_CHAT_MONTHLY_UNITS` | `config.py` | 用户对话默认 200000 |
 | `AI_ROLE_QUOTA` | `config.py` | 角色覆盖额度 |
@@ -428,7 +510,9 @@ print(client.chat.completions.create(
 | `AI_DEFAULT_SITE_OCR_MONTHLY_UNITS` | `settings` | 站点额度兜底 1000 |
 | `AI_OCR_MAX_IMAGE_BYTES` | `config.py` / `settings` | OCR 单图体积上限，默认 20MB |
 | `AI_CREDENTIALS_CACHE_TTL` | `config.py` | 凭据缓存 30s |
+| `AI_API_KEY_CACHE_TTL` | `config.py` | API key 校验缓存 30s |
+| `AI_API_KEY_RATE_LIMIT_PER_MINUTE` | `config.py` | 单把 API key 的每分钟上限，默认 60 |
 | `AI_OCR_ORT_THREADS` | 环境变量 | rapidocr 线程数 |
 | `AI_CALL_LOGS_RETENTION_DAYS` | `config.py` | 流水保留 90 天 |
 
-相关表：`ai_credentials`、`ai_ocr_engines`、`ai_quota`、`ai_call_logs`、`file_ocr`（迁移 `V024`–`V029`）。
+相关表：`ai_credentials`、`ai_ocr_engines`、`ai_api_keys`、`ai_quota`、`ai_call_logs`、`file_ocr`（迁移 `V024`–`V030`）。

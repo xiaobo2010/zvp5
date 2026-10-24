@@ -2234,3 +2234,97 @@ class AIOcrEnginesRepo(Protocol):
     async def delete(self, oid: str) -> bool:
         """Delete one engine; ``True`` when a row was removed."""
         ...
+
+
+# ---------------------------------------------------------------------------
+# AI API keys (V030)
+# ---------------------------------------------------------------------------
+
+class DuplicateApiKey(Exception):
+    """``(user_oid, name)`` 或 ``token_hash`` 已存在（唯一索引 → Oracle -1）。
+
+    与 :class:`DuplicateOcrEngine` / ``DuplicateCredential`` 同形：带上撞了的
+    ``name``，服务层才能把 409 写成「哪个名字重复了」。名字撞与哈希撞用同一个
+    异常：两者对调用方都是「这条记录已经有了」，区分它们只会泄露哈希的存在性。
+    """
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+        super().__init__(f"api key already exists: name={name!r}")
+
+
+class AIApiKeysRepo(Protocol):
+    """Data access for ``AI_API_KEYS`` (OpenAI 兼容面的独立 API key, V030).
+
+    Rows use the Mongo document shape::
+
+        {"_id": <hex str>, "user_oid": str, "name": str, "token_hash": str,
+         "key_hint": str, "enabled": bool, "expires_at": datetime | None,
+         "last_used_at": datetime | None, "created_at": datetime}
+
+    ``token_hash`` is ``sha256(token).hexdigest()`` — the plaintext never reaches
+    the database or any read path, so a leaked dump yields no usable key.
+    ``key_hint`` is display-only (前 8 + 后 4，见 ``services.ai.api_keys``).
+    ``expires_at = None`` means "never expires"; ``last_used_at`` is written
+    on a sampling basis (at most once per minute), not an audit trail.
+    """
+
+    async def list_for(self, user_oid: str) -> list[Row]:
+        """Every key of one user, newest first."""
+        ...
+
+    async def count_for(self, user_oid: str) -> int:
+        """How many keys one user has (the per-user cap is enforced by the caller)."""
+        ...
+
+    async def get_by_oid(self, oid: str) -> Row | None:
+        """Return one key row, or ``None`` when it does not exist."""
+        ...
+
+    async def get_by_hash(self, token_hash: str) -> Row | None:
+        """Return the row whose ``token_hash`` matches, or ``None``.
+
+        This is the authentication lookup: one equality predicate on the unique
+        index, never a scan of every key.
+        """
+        ...
+
+    async def insert(
+        self,
+        *,
+        user_oid: str,
+        name: str,
+        token_hash: str,
+        key_hint: str,
+        enabled: bool = True,
+        expires_at: datetime | None = None,
+    ) -> str:
+        """Insert a key and return its new ``_id``.
+
+        Raises :class:`DuplicateApiKey` when ``(user_oid, name)`` or
+        ``token_hash`` already exists.
+        """
+        ...
+
+    async def update(
+        self,
+        oid: str,
+        *,
+        name: str | None = None,
+        enabled: bool | None = None,
+        expires_at: Any = UNSET,
+    ) -> bool:
+        """只更新传入的字段（``None`` = 不改），返回是否命中。
+
+        ``expires_at`` 用 :data:`UNSET` 区分「不改」与「显式清空（永不过期）」。
+        """
+        ...
+
+    async def delete(self, oid: str) -> bool:
+        """Delete one key; ``True`` when a row was removed."""
+        ...
+
+    async def touch(self, oid: str) -> None:
+        """Stamp ``last_used_at`` (sampled: at most once per minute per key)."""
+        ...
+
