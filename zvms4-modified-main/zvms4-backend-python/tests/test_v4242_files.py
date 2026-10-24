@@ -7,7 +7,8 @@
 
 1. 路径安全：绝对路径、``..`` 展开后再判 ``/proc``/``/sys``、路径段匹配
    （``/procfs`` 不误杀）；``/etc`` 等原黑名单目录已放开。
-2. 鉴权：管理员闸（per + 查库复核）、写操作双人 TOTP、失败时零副作用。
+2. 鉴权：管理员闸（per + 查库复核）、写操作的双人 TOTP 边界（mkdir/upload/
+   rename/chmod 要码，edit/delete 免码）、失败时零副作用。
 3. 文件动作：list 排序/分页、stat、mkdir/rename/delete、upload 原子落盘与上限、
    chmod 拒绝特殊位、download 流式与上限。
 4. 审计：每次成功写入都留 ``type=system_file`` 且不含文件内容。
@@ -173,16 +174,20 @@ def test_totp_rejection_has_no_side_effects(harness, tmp_path):
         f"{PREFIX}/rename",
         json={"from": str(source), "to": str(tmp_path / "renamed.txt"), "totp_code": "000000"},
     )
-    delete = harness.client.post(
-        f"{PREFIX}/delete", json={"path": str(directory), "totp_code": "000000"}
-    )
     chmod = harness.client.post(
         f"{PREFIX}/chmod", json={"path": str(source), "mode": 0o600, "totp_code": "000000"}
     )
 
-    for response in (mkdir, upload, rename, delete, chmod):
+    for response in (mkdir, upload, rename, chmod):
         assert response.status_code == 403
         assert response.json()["detail"] == "动态码无效或已过期"
+
+    # delete 已不属于双人码范畴（免审批），因此不进上面的拒绝清单；这里只证明它
+    # 不会顺手删掉真实文件：目标给一个不存在的路径，得到 404，目录树原样不动。
+    delete = harness.client.post(
+        f"{PREFIX}/delete", json={"path": str(tmp_path / "ghost.txt")}
+    )
+    assert delete.status_code == 404
 
     assert _snapshot(tmp_path) == before
     assert source.read_bytes() == b"keep"
@@ -232,6 +237,13 @@ def test_write_endpoints_still_require_dual_auth(monkeypatch, tmp_path):
     monkeypatch.setattr(dual_auth_module, "_write_audit", noop)
     dual_auth_module._failures.pop(OPERATOR, None)
 
+    audits: list[dict] = []
+
+    async def fake_audit(operator_oid, *, action, detail="", log_type="system_op", level="warning"):
+        audits.append({"action": action, "detail": detail, "log_type": log_type})
+
+    monkeypatch.setattr(system_files_router, "audit_system_op", fake_audit)
+
     app = _make_client()
     app.dependency_overrides[get_current_user] = lambda: {
         "id": OPERATOR,
@@ -246,7 +258,6 @@ def test_write_endpoints_still_require_dual_auth(monkeypatch, tmp_path):
             f"{PREFIX}/rename",
             json={"from": str(tmp_path / "a"), "to": str(tmp_path / "b"), "totp_code": wrong},
         ),
-        client.post(f"{PREFIX}/delete", json={"path": str(tmp_path / "a"), "totp_code": wrong}),
         client.post(
             f"{PREFIX}/chmod",
             json={"path": str(tmp_path / "a"), "mode": 0o600, "totp_code": wrong},
@@ -263,6 +274,18 @@ def test_write_endpoints_still_require_dual_auth(monkeypatch, tmp_path):
         assert response.json()["detail"] == "动态码无效或已过期"
     assert not (tmp_path / "d").exists()
     assert not (tmp_path / "a.txt").exists()
+
+    # delete 不需要双人码：同一个客户端（真实守卫、没有有效码）也能删成功，
+    # 但审计必须照写，且 detail 里不出现 approver。
+    victim = tmp_path / "scratch.txt"
+    victim.write_bytes(b"x")
+    deleted = client.post(f"{PREFIX}/delete", json={"path": str(victim)})
+
+    assert deleted.status_code == 200
+    assert not victim.exists()
+    assert audits and audits[-1]["action"] == "fs_admin"
+    assert audits[-1]["detail"] == f"delete {victim}"
+    assert "approver=" not in audits[-1]["detail"]
 
     dual_auth_module._failures.pop(OPERATOR, None)
 
@@ -549,7 +572,7 @@ def test_delete_empty_dir_and_non_empty_conflict(harness, tmp_path):
     empty.mkdir()
     assert (
         harness.client.post(
-            f"{PREFIX}/delete", json={"path": str(empty), "totp_code": CODE}
+            f"{PREFIX}/delete", json={"path": str(empty)}
         ).json()["data"]["deleted"]
         == 1
     )
@@ -560,7 +583,7 @@ def test_delete_empty_dir_and_non_empty_conflict(harness, tmp_path):
     (occupied / "f.txt").write_bytes(b"1")
 
     conflict = harness.client.post(
-        f"{PREFIX}/delete", json={"path": str(occupied), "totp_code": CODE}
+        f"{PREFIX}/delete", json={"path": str(occupied)}
     )
     assert conflict.status_code == 409
     assert (occupied / "f.txt").exists()
@@ -574,7 +597,7 @@ def test_recursive_delete_removes_tree(harness, tmp_path):
 
     response = harness.client.post(
         f"{PREFIX}/delete",
-        json={"path": str(root), "recursive": True, "totp_code": CODE},
+        json={"path": str(root), "recursive": True},
     )
     assert response.status_code == 200
     assert response.json()["data"]["deleted"] == 3
@@ -590,7 +613,7 @@ def test_recursive_delete_entry_limit(harness, tmp_path, monkeypatch):
 
     response = harness.client.post(
         f"{PREFIX}/delete",
-        json={"path": str(root), "recursive": True, "totp_code": CODE},
+        json={"path": str(root), "recursive": True},
     )
     assert response.status_code == 400
     assert root.exists()
@@ -598,7 +621,7 @@ def test_recursive_delete_entry_limit(harness, tmp_path, monkeypatch):
 
 def test_delete_symlink_keeps_target(harness, tree):
     response = harness.client.post(
-        f"{PREFIX}/delete", json={"path": str(tree / "link.txt"), "totp_code": CODE}
+        f"{PREFIX}/delete", json={"path": str(tree / "link.txt")}
     )
     assert response.status_code == 200
     assert not (tree / "link.txt").exists()
@@ -699,19 +722,19 @@ def test_every_write_is_audited_without_file_content(harness, tmp_path):
     harness.client.post(
         f"{PREFIX}/chmod", json={"path": str(target), "mode": 0o600, "totp_code": CODE}
     )
-    harness.client.post(
-        f"{PREFIX}/delete", json={"path": str(target), "totp_code": CODE}
-    )
+    harness.client.post(f"{PREFIX}/delete", json={"path": str(target)})
 
     assert [entry["action"] for entry in harness.audits] == ["fs_admin"] * 3
     for entry in harness.audits:
         assert entry["operator"] == OPERATOR
         assert entry["log_type"] == "system_file"
         assert entry["level"] == "warning"
-        assert "approver=" + APPROVER in entry["detail"]
         assert "secret-body" not in entry["detail"]
 
     details = [entry["detail"] for entry in harness.audits]
     assert details[0].startswith(f"upload {target}")
+    assert details[0].endswith(f"approver={APPROVER}")
     assert details[1].startswith(f"chmod {target}")
-    assert details[2].startswith(f"delete {target}")
+    assert details[1].endswith(f"approver={APPROVER}")
+    # delete 免双人码，detail 只有动作与路径，不能凭空出现审批人。
+    assert details[2] == f"delete {target}"

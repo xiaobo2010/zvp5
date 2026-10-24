@@ -78,7 +78,8 @@ export function previewFile(path: string) {
   })
 }
 
-// 以下写操作请求体一律带 totp_code;字段名以后端 routers/system_files_router.py 为准
+// mkdir / upload / rename / chmod 的请求体带 totp_code;
+// delete / edit 免双人码(留痕走后端审计)。字段名以后端 routers/system_files_router.py 为准
 export function makeDir(path: string, totpCode: string) {
   return axios.post<FileOpResponse>('/system/files/mkdir', {
     path,
@@ -104,11 +105,33 @@ export function renamePath(from: string, to: string, totpCode: string) {
   })
 }
 
-export function deleteEntry(path: string, recursive: boolean, totpCode: string) {
+// 删除不再要双人码:日常清理临时文件太频繁,审批成本高于风险,留痕由后端审计承担
+export function deleteEntry(path: string, recursive: boolean) {
   return axios.post<FileOpResponse>('/system/files/delete', {
     path,
-    recursive,
-    totp_code: totpCode
+    recursive
+  })
+}
+
+// 文本写回:与后端 services/file_ops.py:write_text 一一对应。
+// encoding 只放行 utf-8 与 gbk(latin-1 是预览解码兜底,写回会破坏原始字节)。
+export interface FileEditData {
+  path: string
+  size: number
+  encoding: string
+}
+
+export interface FileEditResponse {
+  status: string
+  code: number
+  data: FileEditData
+}
+
+export function editFile(path: string, content: string, encoding: string) {
+  return axios.post<FileEditResponse>('/system/files/edit', {
+    path,
+    content,
+    encoding
   })
 }
 
