@@ -5,6 +5,7 @@ import { ElNotification } from 'element-plus'
 import { useRouter } from 'vue-router'
 import { getUserPositions } from '@/utils/groupPosition'
 import { clearCache } from '@/utils/idbCache'
+import { clearMemoryCache } from '@/utils/requestCache'
 import { useGroupsStore } from '@/stores/groups'
 
 interface UserTime {
@@ -109,6 +110,8 @@ export const useUserStore = defineStore('user', {
       this.banReason = ''
       this.banUntil = 0
       this.time = { socialPractice: 0, onCampus: 0, offCampus: 0 }
+      // 换人登录时必须丢掉上一个账号的响应缓存，避免串数据
+      clearMemoryCache()
       await clearCache()
     },
     async getUserActivityTime() {
