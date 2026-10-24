@@ -149,7 +149,7 @@ export function httpStatusOf(error: unknown): number | null {
 export async function listVersions(id: string): Promise<NotificationVersionsData> {
   const response = await axios({
     method: 'get',
-    url: `/system/notifications/${id}/versions`
+    url: `/v3/notifications/${id}/versions`
   })
   return unwrap(response.data as Response<NotificationVersionsData>)
 }
@@ -161,7 +161,7 @@ export async function rollbackNotification(
 ): Promise<NotificationRollbackData> {
   const response = await axios({
     method: 'post',
-    url: `/system/notifications/${id}/rollback`,
+    url: `/v3/notifications/${id}/rollback`,
     data: { version }
   })
   return unwrap(response.data as Response<NotificationRollbackData>)
