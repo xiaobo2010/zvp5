@@ -7,7 +7,7 @@ import {
   ZActivityStatus,
   ZActivityMode
 } from '..'
-import { onMounted, ref, toRefs, withDefaults } from 'vue'
+import { computed, onMounted, ref, toRefs, withDefaults } from 'vue'
 import { useWindowSize } from '@vueuse/core'
 import {
   ElPageHeader,
@@ -25,6 +25,7 @@ import { useI18n } from 'vue-i18n'
 import dayjs from '@/plugins/dayjs'
 import api from '@/api'
 import { ZActivityDetails } from '.'
+import { displayStatus } from '@/utils/activityStatus'
 
 const user = useUserStore()
 const router = useRouter()
@@ -56,6 +57,10 @@ watch(
 const mine = ref<ActivityMember>()
 const activity = ref<Activity>()
 const membersCount = ref(0)
+
+const mineStatus = computed(() =>
+  displayStatus({ status: activity.value?.status, mine: mine.value })
+)
 
 async function getInfo() {
   const memberTask = session.value
@@ -153,9 +158,19 @@ watch(height, () => {
       :column="vert ? 2 : undefined"
     >
       <ElDescriptionsItem :label="t('activity.form.duration')">
-        <ElButton :icon="Timer" type="info" text round size="small">
+        <ElButton
+          :icon="Timer"
+          type="info"
+          text
+          round
+          size="small"
+          :class="{ 'duration-pending': mineStatus === 'pending' }"
+        >
           {{ mine?.duration ?? 0 }} h
         </ElButton>
+      </ElDescriptionsItem>
+      <ElDescriptionsItem :label="t('activity.status.title')">
+        <ZActivityStatus :type="mineStatus" size="small" force="full" />
       </ElDescriptionsItem>
       <ElDescriptionsItem :label="t('activity.form.mode')">
         <ZActivityMode
@@ -185,6 +200,11 @@ watch(height, () => {
 </template>
 
 <style scoped>
+.duration-pending.el-button {
+  color: var(--el-text-color-secondary);
+  text-decoration: line-through;
+}
+
 @media print {
   .no-print {
     display: none;

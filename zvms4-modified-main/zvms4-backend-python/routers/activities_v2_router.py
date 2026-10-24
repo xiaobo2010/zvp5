@@ -1,3 +1,5 @@
+import asyncio
+import logging
 import re
 from collections import defaultdict
 from datetime import datetime
@@ -6,8 +8,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ValidationError
 from db import backends
+from db.oracle.session import session_scope
 from typings.activity_v2 import Activity, ActivityMember
 from typings.log import inject_log
+from util.calculate import calculate_user_time_bulk
 from util.object_id import get_current_user, compulsory_temporary_token
 from util.permission import volunteer, volunteer_member
 from util.user import get_user_display_name
@@ -15,6 +19,57 @@ from util.validation import validate_activity_description, validate_activity_nam
 from utils import validate_object_id
 
 router = APIRouter()
+
+logger = logging.getLogger(__name__)
+
+_TIME_REFRESH_MEMBER_LIMIT = 500
+_time_refresh_semaphore = asyncio.Semaphore(2)
+_time_refresh_tasks: set[asyncio.Task] = set()
+
+
+async def _refresh_user_time_for_activity(activity_id: str) -> None:
+    async with _time_refresh_semaphore:
+        member_count = 0
+        try:
+            rows = await backends.get_members_repo().list_by_activity(activity_id)
+            members = list(dict.fromkeys(str(row["member"]) for row in rows))
+            member_count = len(members)
+            if member_count > _TIME_REFRESH_MEMBER_LIMIT:
+                logger.info(
+                    "活动 %s 有 %d 名成员，跳过即时重算，交由每日全量重建",
+                    activity_id,
+                    member_count,
+                )
+                return
+            if not members:
+                return
+            async with session_scope() as session:
+                times = await calculate_user_time_bulk(
+                    members, allow_cache=False, session=session
+                )
+                time_repo = backends.get_time_repo(session)
+                for member in members:
+                    member_time = times[member]
+                    await time_repo.upsert_for_user(
+                        member,
+                        member_time["on-campus"],
+                        member_time["off-campus"],
+                        member_time["social-practice"],
+                    )
+                await session.commit()
+        except Exception:
+            logger.warning(
+                "活动 %s 状态变更后重算 %d 名成员时长失败，保留缓存旧值",
+                activity_id,
+                member_count,
+                exc_info=True,
+            )
+
+
+def _schedule_user_time_refresh(activity_id: str) -> None:
+    task = asyncio.create_task(_refresh_user_time_for_activity(activity_id))
+    _time_refresh_tasks.add(task)
+    task.add_done_callback(_time_refresh_tasks.discard)
 
 
 def _validated_activity(target_activity) -> Activity:
@@ -410,6 +465,8 @@ async def modify_activity_status_v2(
         del update_content["approver"] # The activity is not being approved
 
     await backends.get_activities_repo().update(activity_id, update_content)
+
+    _schedule_user_time_refresh(activity_id)
 
     status_labels = {"effective": "生效", "pending": "待审核", "refused": "已驳回"}
     log.with_text(

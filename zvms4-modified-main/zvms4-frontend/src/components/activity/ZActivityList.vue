@@ -7,7 +7,8 @@ import {
   ElButton,
   ElCard,
   ElInput,
-  ElDivider
+  ElDivider,
+  ElTooltip
 } from 'element-plus'
 import type { TableInstance } from 'element-plus'
 import { onMounted, ref, toRefs, watch, useTemplateRef } from 'vue'
@@ -18,6 +19,7 @@ import { useWindowSize, useSwipe, usePointerSwipe } from '@vueuse/core'
 import { useI18n } from 'vue-i18n'
 import { getActivity } from './getActivity'
 import { ZActivityType, ZActivityStatus, ZActivityDuration, ZActivityCard } from '@/components'
+import { displayStatus } from '@/utils/activityStatus'
 import { useRouter, useRoute } from 'vue-router'
 import ZDataExport from '@/components/utils/ZDataExport.vue'
 import { pad } from '@/plugins/ua.ts'
@@ -286,11 +288,22 @@ watch(isPointerSwiping, (swiping) => {
         </ElTableColumn>
         <ElTableColumn v-else :label="t('activity.form.duration')">
           <template #default="{ row }">
-            <ZActivityDuration
-              :mode="row.mine.mode"
-              :duration="row.mine.duration"
-              force="short"
-            />
+            <div class="mine-duration">
+              <ElTooltip
+                :content="t('activity.analysis.pendingTip')"
+                placement="top"
+                :disabled="displayStatus(row) !== 'pending'"
+              >
+                <span class="mine-status">
+                  <ZActivityStatus :type="displayStatus(row)" size="small" force="full" />
+                </span>
+              </ElTooltip>
+              <ZActivityDuration
+                :mode="row.mine.mode"
+                :duration="row.mine.duration"
+                force="short"
+              />
+            </div>
           </template>
         </ElTableColumn>
         <ElTableColumn fixed="right">
@@ -336,6 +349,23 @@ watch(isPointerSwiping, (swiping) => {
 <style scoped>
 .code {
   font-family: 'Menlo', 'Monaco', 'Consolas', 'Courier New', 'Courier', 'monospace';
+}
+
+.mine-duration {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.mine-duration > :deep(.el-button-group) {
+  flex-shrink: 0;
+}
+
+.mine-status {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
 }
 
 .el-card.z-embed {
