@@ -1051,6 +1051,8 @@ Index(
 #   它驱动，所以用 CLOB + IS JSON 而不是裸字符串。
 #   HEADERS_JSON / API_PATH 是请求形状：头名映射 + 路径，空 = 沿用默认
 #   （Authorization + 默认路径）。存量 provider 不需要回填。
+#   EXPIRES_AT 是 key 的到期时间，NULL = 永不过期；过期行不进生效目录（服务层
+#   与 disabled 同路径处理），因此不需要在每个消费点各判一次。
 # ---------------------------------------------------------------------------
 
 ai_credentials = Table(
@@ -1072,6 +1074,11 @@ ai_credentials = Table(
     Column("enabled", NUMBER(1), nullable=False, server_default=text("1")),
     Column("created_at", oracle.TIMESTAMP, nullable=False),
     Column("updated_at", oracle.TIMESTAMP, nullable=False),
+    # 这把 key 的到期时间；NULL = 永不过期（存量行不回填：它们本来就该一直有效）。
+    # 过期条目在服务层与 disabled 走同一条「不进生效目录」的路径，所以路由与
+    # /v1/models 都不需要单独判断它。不建 CHECK：「未来时间」是写入时刻的性质，
+    # 不是行的不变量——今天合法的到期时间，明天自然就过期了。
+    Column("expires_at", oracle.TIMESTAMP, nullable=True),
     _oid_check("ai_credentials"),
     CheckConstraint("scope IN ('personal','shared')", name="ck_ai_credentials_scope"),
     CheckConstraint("kind IN ('openai_compat')", name="ck_ai_credentials_kind"),

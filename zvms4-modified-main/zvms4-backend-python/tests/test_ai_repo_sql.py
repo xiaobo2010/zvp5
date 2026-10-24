@@ -172,3 +172,103 @@ def test_insert_is_one_statement() -> None:
     assert sql.count("INSERT") == 1
     assert "SELECT" not in sql
     assert "DELETE" not in sql
+
+
+# ---------------------------------------------------------------------------
+# AI_CALL_LOGS：管理端日志查询的过滤谓词
+# ---------------------------------------------------------------------------
+#
+# 这两个谓词各有一个静默出错的形态：``key_scope`` 漏了 = 按「哪类 key 付的钱」
+# 筛选永远返回全量；时间边界写成 ``>``/``<`` = 按秒排查时端点那一秒的调用消失。
+# 所以断言的是编译后的 SQL 文本（含 ``>=`` / ``<=`` 与 ``OR`` 的缺席）。
+
+
+def _page(**kwargs) -> str:
+    params = {
+        "user_oid": None,
+        "capability": None,
+        "status": None,
+        "page": 1,
+        "size": 20,
+    }
+    params.update(kwargs)
+    return _sql(ai_call_logs_repo._page_stmt(**params))
+
+
+def test_page_stmt_filters_key_scope_by_equality() -> None:
+    sql = _page(key_scope="personal")
+    assert "ai_call_logs.key_scope = 'personal'" in sql
+
+
+def test_page_stmt_time_bounds_are_inclusive() -> None:
+    sql = _page(time_start=TS, time_end=TS)
+    # 闭区间：``>=`` / ``<=``，不是 ``>`` / ``<``。
+    assert "ai_call_logs.created_at >= TO_DATE('2026-10-23 01:02:03'" in sql
+    assert "ai_call_logs.created_at <= TO_DATE('2026-10-23 01:02:03'" in sql
+
+
+def test_page_stmt_omits_absent_filters() -> None:
+    sql = _page()
+    # key_scope 是投影列，所以只在 WHERE 里判缺席。
+    assert " WHERE " not in sql
+    assert "created_at >=" not in sql
+    assert "created_at <=" not in sql
+
+
+def test_total_stmt_shares_the_page_filters() -> None:
+    sql = _sql(
+        ai_call_logs_repo._total_stmt(None, "ocr", "timeout", "server", TS, TS)
+    )
+    assert sql.upper().startswith("SELECT COUNT(*)")
+    assert "ai_call_logs.capability = 'ocr'" in sql
+    assert "ai_call_logs.status = 'timeout'" in sql
+    assert "ai_call_logs.key_scope = 'server'" in sql
+    assert "ai_call_logs.created_at >= TO_DATE('2026-10-23 01:02:03'" in sql
+    assert "ai_call_logs.created_at <= TO_DATE('2026-10-23 01:02:03'" in sql
+
+
+# ---------------------------------------------------------------------------
+# AI_CREDENTIALS：expires_at 的三态
+# ---------------------------------------------------------------------------
+#
+# ``None`` 在本协议里通常表示「不改」，所以「清除到期」必须靠 UNSET 哨兵与
+# ``None`` 区分。写成「None 也当不改」不会报错，只会让管理员的「清除到期」
+# 静默失效（key 到期后依旧被目录排除，他以为操作没生效）。
+
+
+def test_update_values_omits_expires_at_when_unset() -> None:
+    from db.repos.protocols import UNSET
+
+    assert "expires_at" not in ai_credentials_repo._update_values(name="x")
+    assert ai_credentials_repo._update_values(expires_at=UNSET) == {}
+
+
+def test_update_values_none_clears_expires_at() -> None:
+    assert ai_credentials_repo._update_values(expires_at=None) == {"expires_at": None}
+
+
+def test_update_values_sets_the_expiry() -> None:
+    assert ai_credentials_repo._update_values(expires_at=TS) == {"expires_at": TS}
+
+
+def test_credentials_insert_binds_expires_at() -> None:
+    sql = _sql(
+        ai_credentials_repo._insert_stmt(
+            oid="a" * 24,
+            scope="shared",
+            owner_oid="0" * 24,
+            name="team",
+            kind="openai_compat",
+            base_url="https://api.example.com/v1",
+            models=["m"],
+            api_key_cipher="cipher",
+            key_hint=None,
+            enabled=True,
+            created_at=TS,
+            updated_at=TS,
+            expires_at=None,
+        )
+    )
+    # NULL 显式绑定：它表示「永不过期」这个事实，不是「没传」。
+    assert "updated_at, expires_at)" in sql
+    assert "TO_DATE('2026-10-23 01:02:03', 'YYYY-MM-DD HH24:MI:SS'), NULL)" in sql

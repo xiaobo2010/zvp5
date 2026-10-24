@@ -19,12 +19,14 @@ import json
 import logging
 import math
 import time
+from datetime import datetime
 from uuid import uuid4
 
-from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Query
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
+from db import backends
 from services.ai import audit, credentials, quota, rate_limit, routing
 from services.ai import config as ai_config
 from services.ai import ocr as ai_ocr
@@ -36,6 +38,7 @@ from services.ai.routing import RouteError
 from typings.log import inject_log
 from util.attachment_ocr import process_ocr
 from util.object_id import get_current_user, validate_object_id
+from util.user import get_user_display_names
 
 router = APIRouter()
 _logger = logging.getLogger(__name__)
@@ -69,12 +72,17 @@ class KeyCreateRequest(BaseModel):
     enabled: bool = True
     headers: dict[str, str] | None = None
     api_path: str | None = None
+    # ISO 8601 字符串；不传 = 永不过期。解析与「必须晚于现在」的口径全在
+    # ``credentials._clean_expires_at``（错误码 AI_KEY_BAD_EXPIRY）。
+    expires_at: str | None = None
 
 
 class KeyUpdateRequest(BaseModel):
     """部分更新：只改传了的字段，没传的保持原值。
 
     ``api_key`` 允许不传（改名字/换模型时不该被迫重填 key）；传了就是轮换。
+    ``expires_at`` 用 ``exclude_unset`` 天然区分三种意图：不传 = 不改，传字符串
+    = 设置，显式 ``null`` = 清除到期。
     """
 
     name: str | None = None
@@ -84,6 +92,7 @@ class KeyUpdateRequest(BaseModel):
     enabled: bool | None = None
     headers: dict[str, str] | None = None
     api_path: str | None = None
+    expires_at: str | None = None
 
 
 class OcrEngineCreateRequest(BaseModel):
@@ -360,6 +369,7 @@ async def create_key(
             enabled=payload.enabled,
             headers=payload.headers,
             api_path=payload.api_path,
+            expires_at=payload.expires_at,
         )
     except CredentialError as exc:
         raise _credential_error(exc) from None
@@ -412,6 +422,103 @@ async def delete_key(
     log.with_text(f"AI 凭据删除 {target}", type="ai_key_delete")
     await log.insert_log()
     return None
+
+
+# ---------------------------------------------------------------------------
+# 调用流水（admin）
+# ---------------------------------------------------------------------------
+
+# 过滤值的合法集合与库里的 CHECK 一一对应（db/models.py 的 ck_ai_call_logs_*）。
+# 非法值回 400 AI_LOGS_BAD_FILTER 而不是静默忽略：静默忽略会让「筛出来是空的」
+# 与「筛条件写错了」长得一样。
+LOG_CAPABILITIES = frozenset({"ocr", "chat"})
+LOG_STATUSES = frozenset({"success", "error", "timeout", "rejected", "busy"})
+LOG_KEY_SCOPES = frozenset({"personal", "shared", "server"})
+
+
+def _bad_filter() -> HTTPException:
+    return HTTPException(status_code=400, detail="AI_LOGS_BAD_FILTER")
+
+
+def _epoch_to_local(value: int | None) -> datetime | None:
+    """epoch 秒 → naive 本地 datetime。
+
+    ``AI_CALL_LOGS.CREATED_AT`` 是 naive ``TIMESTAMP``（仓储写入用
+    ``datetime.now()``），所以查询边界也用本地时间：``fromtimestamp`` 出来的
+    正是同一口径。带 tz 的 datetime 直接比较会被 SQLAlchemy 当成另一个时区，
+    「含端点」的边界就会偏移几个小时。
+    """
+    if value is None:
+        return None
+    try:
+        return datetime.fromtimestamp(value)
+    except (OverflowError, OSError, ValueError):
+        raise _bad_filter() from None
+
+
+@router.get("/logs")
+async def list_call_logs(
+    page: int = Query(1, ge=1, description="Page number (1-based)"),
+    perpage: int = Query(20, ge=1, le=100, description="Items per page (max 100)"),
+    user_oid: str | None = Query(None, description="Filter by user oid"),
+    capability: str | None = Query(None, description="ocr | chat"),
+    status: str | None = Query(None, description="success|error|timeout|rejected|busy"),
+    key_scope: str | None = Query(None, description="personal | shared | server"),
+    time_start: int | None = Query(None, description="created_at >= (epoch seconds)"),
+    time_end: int | None = Query(None, description="created_at <= (epoch seconds)"),
+    user=Depends(get_current_user),
+):
+    """AI 调用流水（新调用在前），仅 admin。
+
+    分页口径与 ``/api/logs`` 一致：``page`` 1-based，``perpage`` 1..100，
+    总数由仓储单独 ``COUNT``（分页只取 ``LIMIT`` 行，不必为拿一页扫全表）。
+
+    时间边界是**闭区间**：``created_at >= time_start`` 且 ``created_at <= time_end``
+    ——排查「某一秒发生了什么」时，端点那一秒不该被排除在外。
+    """
+    _require_admin(user)
+
+    if capability and capability not in LOG_CAPABILITIES:
+        raise _bad_filter()
+    if status and status not in LOG_STATUSES:
+        raise _bad_filter()
+    if key_scope and key_scope not in LOG_KEY_SCOPES:
+        raise _bad_filter()
+
+    target = validate_object_id(user_oid) if user_oid else None
+    start = _epoch_to_local(time_start)
+    end = _epoch_to_local(time_end)
+
+    repo = backends.get_ai_call_logs_repo()
+    filters = {
+        "user_oid": target,
+        "capability": capability or None,
+        "status": status or None,
+        "key_scope": key_scope or None,
+        "time_start": start,
+        "time_end": end,
+    }
+    logs = await repo.list_page(**filters, page=page, page_size=perpage)
+    total = await repo.total_count(**filters)
+
+    names = await get_user_display_names(
+        [row["user_oid"] for row in logs if row.get("user_oid")]
+    )
+    for row in logs:
+        # 主键给两份字符串：``_id`` 是仓储的行形状（Mongo 口径），``oid`` 是
+        # 对外契约/前端行 key 用的名字。两者同值，调用方不必猜该读哪个。
+        oid = str(row["_id"])
+        row["_id"] = oid
+        row["oid"] = oid
+        # 与 ``/api/logs`` 同款兜底：账号被删/查不到时回「未知用户」而不是空串。
+        row["user_name"] = names.get(row.get("user_oid"), "未知用户")
+
+    return {
+        "status": "ok",
+        "code": 200,
+        "data": logs,
+        "metadata": {"size": total},
+    }
 
 
 # ---------------------------------------------------------------------------

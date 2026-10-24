@@ -42,11 +42,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from db.ids import new_oid, normalize_oid
 from db.models import ai_credentials as ai_credentials_tbl
 from db.oracle.session import session_scope
-from db.repos.protocols import SHARED_OWNER_OID
+from db.repos.protocols import SHARED_OWNER_OID, UNSET
 
 Row = dict[str, Any]
 
 _logger = logging.getLogger(__name__)
+
+# ``expires_at`` 的「不改」哨兵：该列是本表唯一需要区分「不改」与「置空」的字段
+# （清除到期是管理员的正常操作），所以它的默认值不是 None 而是 :data:`UNSET`。
+_UNSET = UNSET
 
 
 class DuplicateCredential(Exception):
@@ -108,6 +112,7 @@ def _columns():
         ai_credentials_tbl.c.enabled,
         ai_credentials_tbl.c.created_at,
         ai_credentials_tbl.c.updated_at,
+        ai_credentials_tbl.c.expires_at,
     )
 
 
@@ -153,6 +158,7 @@ def _insert_stmt(
     updated_at: datetime,
     headers: dict[str, str] | None = None,
     api_path: str | None = None,
+    expires_at: datetime | None = None,
 ):
     # ``models`` 直接给 list：``JSONText`` 负责 ``json.dumps``，落库是 JSON 字符串，
     # 不是 Python repr（后者会被 ``IS JSON`` 约束挡下来）。``headers`` 显式 dumps，
@@ -174,6 +180,8 @@ def _insert_stmt(
         enabled=1 if enabled else 0,
         created_at=created_at,
         updated_at=updated_at,
+        # 显式绑定（含 None）：NULL 是「永不过期」这个业务事实，不是「没传」。
+        expires_at=expires_at,
     )
 
 
@@ -187,6 +195,7 @@ def _update_values(
     enabled: bool | None = None,
     headers: dict[str, str] | None = None,
     api_path: str | None = None,
+    expires_at: datetime | None = _UNSET,
 ) -> dict[str, Any]:
     """只把**非 None** 的字段放进 UPDATE 的 SET。
 
@@ -194,6 +203,9 @@ def _update_values(
     允许置空，就需要一个与 None 不同的哨兵，而协议刻意没引入它——想换 key 就
     连 ``api_key_cipher`` 一起给。``headers={}`` 是「清空自定义头」的显式表达，
     与「不改」区分开（落库是 ``"{}"``，读回来仍是空 dict）。
+
+    ``expires_at`` 是唯一的例外：清除到期（``None``）是管理员的正常操作，所以
+    它的默认值是 :data:`UNSET`（不改），``None`` 明确表示「置 NULL」。
     """
     values: dict[str, Any] = {}
     if name is not None:
@@ -212,6 +224,8 @@ def _update_values(
         values["headers_json"] = json.dumps(headers, ensure_ascii=False)
     if api_path is not None:
         values["api_path"] = api_path
+    if expires_at is not _UNSET:
+        values["expires_at"] = expires_at
     return values
 
 
@@ -276,6 +290,7 @@ def _row(mapping: Any) -> Row:
         "enabled": bool(mapping["enabled"]),
         "created_at": mapping["created_at"],
         "updated_at": mapping["updated_at"],
+        "expires_at": mapping["expires_at"],
     }
 
 
@@ -321,6 +336,7 @@ class OracleAICredentialsRepo:
         enabled: bool = True,
         headers: dict[str, str] | None = None,
         api_path: str | None = None,
+        expires_at: datetime | None = None,
     ) -> str:
         """插入一行并返回新 ``_id``；撞唯一键抛 :class:`DuplicateCredential`。
 
@@ -346,6 +362,7 @@ class OracleAICredentialsRepo:
             updated_at=now,
             headers=headers,
             api_path=api_path,
+            expires_at=expires_at,
         )
         async with _session_for(self._session) as (session, owns):
             try:
@@ -371,8 +388,12 @@ class OracleAICredentialsRepo:
         enabled: bool | None = None,
         headers: dict[str, str] | None = None,
         api_path: str | None = None,
+        expires_at: datetime | None = _UNSET,
     ) -> bool:
-        """只更新传入的字段（``None`` = 不改），``updated_at`` 每次刷新。"""
+        """只更新传入的字段（``None`` = 不改），``updated_at`` 每次刷新。
+
+        ``expires_at`` 例外：``UNSET``（默认）= 不改，``None`` = 清除到期。
+        """
         values = _update_values(
             name=name,
             base_url=base_url,
@@ -382,6 +403,7 @@ class OracleAICredentialsRepo:
             enabled=enabled,
             headers=headers,
             api_path=api_path,
+            expires_at=expires_at,
         )
         stmt = _update_stmt(normalize_oid(oid), values, _now())
         async with _session_for(self._session) as (session, owns):
