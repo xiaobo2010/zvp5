@@ -9,7 +9,7 @@ import {
   Monitor,
   ChatLineRound
 } from '@element-plus/icons-vue'
-import { ElButton, ElTooltip, ElSpace } from 'element-plus'
+import { ElIcon, ElTooltip } from 'element-plus'
 import { ref } from 'vue'
 import { useUserStore } from '@/stores/user'
 import MdiEye from '@/icons/MdiEye.vue'
@@ -19,6 +19,18 @@ import { useDark } from '@vueuse/core'
 import { useI18n } from 'vue-i18n'
 import { watch } from 'vue'
 import { pad, getTabletType } from '@/plugins/ua'
+
+/** 宽屏折叠成图标条；窄屏转为抽屉（由 App.vue 渲染遮罩）。 */
+withDefaults(
+  defineProps<{
+    collapsed?: boolean
+    open?: boolean
+  }>(),
+  {
+    collapsed: false,
+    open: false
+  }
+)
 
 const user = useUserStore()
 const router = useRouter()
@@ -110,59 +122,69 @@ function routeTo(page: string) {
 </script>
 
 <template>
-  <div class="px-2 z-bg pl-3 menu" style="border-right: 1px solid var(--zv-hairline)">
-    <div v-for="nav in navs" :key="nav.path">
-      <div class="py-0.5" v-if="nav.show">
+  <aside
+    class="yg-layout__sidebar yg-sidebar yg-liquid-glass"
+    :class="{ 'is-collapsed': collapsed, 'is-open': open }"
+  >
+    <div class="yg-sidebar__header">
+      <span class="yg-sidebar__logo">
+        <img src="/favicon.ico" alt="" />
+      </span>
+      <span class="yg-sidebar__title">义工平台</span>
+    </div>
+
+    <nav class="yg-menu">
+      <template v-for="nav in navs" :key="nav.path">
         <ElTooltip
           v-if="nav.show"
           :content="t(`nav.${nav.name}`)"
           placement="right"
-          effect="light"
+          :disabled="!collapsed"
           :show-after="200"
         >
-          <ElButton
-            :icon="nav.icon"
-            size="large"
-            text
-            :bg="nav.judge(path ?? '')"
-            :type="nav.judge(path ?? '') ? 'primary' : ''"
-            circle
+          <button
+            type="button"
+            class="yg-menu__item"
+            :class="{ 'is-active': nav.judge(path ?? '') }"
             @click="routeTo(nav.path)"
           >
-          </ElButton>
+            <ElIcon class="yg-menu__icon">
+              <component :is="nav.icon" />
+            </ElIcon>
+            <span class="yg-menu__label">{{ t(`nav.${nav.name}`) }}</span>
+          </button>
         </ElTooltip>
-      </div>
-    </div>
-    <ElSpace class="bottom" direction="vertical">
-      <ElButton
+      </template>
+    </nav>
+
+    <div class="yg-sidebar__footer">
+      <button
         v-if="!pad() || getTabletType() === 'p615' || getTabletType() === 'p620'"
-        :icon="dark ? Moon : Sunny"
-        size="large"
-        text
-        circle
+        type="button"
+        class="yg-icon-btn yg-icon-btn--ghost"
+        :aria-label="t('nav.dark', '深色模式')"
+        :title="t('nav.dark', '深色模式')"
         @click="dark = !dark"
-      />
-    </ElSpace>
-  </div>
+      >
+        <ElIcon>
+          <Moon v-if="dark" />
+          <Sunny v-else />
+        </ElIcon>
+      </button>
+    </div>
+  </aside>
 </template>
 
 <style scoped>
-.menu {
-  width: 4rem;
-}
-
-.full {
+.yg-sidebar__logo img {
   width: 100%;
-}
-
-.bottom {
-  position: absolute;
-  left: 0.72rem;
-  bottom: 1rem;
+  height: 100%;
+  border-radius: inherit;
+  object-fit: cover;
 }
 
 @media print {
-  .menu {
+  .yg-sidebar {
     display: none;
   }
 }

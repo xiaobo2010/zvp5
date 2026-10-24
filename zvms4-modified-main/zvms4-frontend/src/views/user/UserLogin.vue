@@ -2,7 +2,6 @@
 import { ref, watch, h } from 'vue'
 import {
   ElButton,
-  ElCard,
   ElMessageBox,
   ElMessage,
 } from 'element-plus'
@@ -130,7 +129,7 @@ async function login() {
   }
   if (!userStore.validatePasswordStrength(password.value)) {
     loading.value = true
-    
+
     const id = user.value
     const { token, _id } = (await api.user.auth
       .useLongTermAuth(id, password.value, 'short', 'login')
@@ -207,11 +206,19 @@ watch(user, async () => {
 </script>
 
 <template>
-  <div class="w-full login-wrap" style="display: flex; flex-direction: column; height: 100%;">
-    <div style="flex-grow: 1;"></div>
-    <ElCard shadow="never" class="login-field text-center w-full" style="flex-grow: 0;">
-      <p class="login-title">{{ t('nav.login.pageTitle') }}</p>
-      <ElForm ref="loginfield" label-position="top">
+  <div class="yg-login">
+    <section class="yg-login__card" aria-labelledby="yg-login-title">
+      <div class="yg-login__brand">
+        <span class="yg-login__logo">
+          <img src="/favicon.ico" alt="" />
+        </span>
+        <span class="yg-login__brand-name">义工平台</span>
+      </div>
+
+      <h1 id="yg-login-title" class="yg-login__title">{{ t('nav.login.pageTitle') }}</h1>
+      <p class="yg-login__subtitle">{{ t('nav.login.motto') }}</p>
+
+      <ElForm ref="loginfield" label-position="top" class="yg-login__form">
         <ElFormItem :label="t('nav.login.form.account')" prop="id">
           <ElInput
             v-model.number="user"
@@ -219,7 +226,7 @@ watch(user, async () => {
             :maxlength="8"
             clearable
             type="number"
-            class="login-input w-full"
+            class="yg-login__input w-full"
           />
         </ElFormItem>
         <ElFormItem :label="t('nav.login.form.password')" prop="password">
@@ -228,16 +235,17 @@ watch(user, async () => {
             v-model="password"
             clearable
             show-password
-            class="login-input w-full"
+            class="yg-login__input w-full"
             @keyup.enter="login"
           />
         </ElFormItem>
       </ElForm>
-      <div class="actions">
+
+      <div class="yg-login__actions">
         <ElButton
           type="primary"
           size="large"
-          class="login-button"
+          class="w-full"
           @click="login"
           :icon="ArrowRight"
           :disabled="password === '' || String(user).length !== 8"
@@ -246,48 +254,97 @@ watch(user, async () => {
           {{ t('nav.login.actions.login') }}
         </ElButton>
       </div>
-    </ElCard>
-    <div style="flex-grow: 1;"></div>
-    <div style="flex-grow: 0; min-height: 3.75rem; max-height: 3.75rem;"></div>
+    </section>
   </div>
 </template>
 
 <style scoped>
-.login-field {
-  width: 88%;
-  max-width: 400px;
-  padding: 32px 24px;
-  text-align: center;
-  margin-left: auto;
-  margin-right: auto;
+.yg-login {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100%;
+  padding: var(--yg-space-6) 0;
 }
 
-.login-title {
-  font-size: 30px;
-  line-height: 1.25;
-  font-weight: 600;
-  text-align: center;
-  margin: 0 0 20px;
-}
-
-.login-input {
-  --el-input-height: 44px;
-}
-
-.login-field :deep(.el-form-item__label) {
-  font-size: 16px;
-  font-weight: 500;
-  letter-spacing: normal;
-  color: var(--zv-text, #303133);
-}
-
-.login-field :deep(.el-form-item) {
-  margin-bottom: 18px;
-}
-
-.login-button {
+/* 登录卡：白底实色 + G2 2xl 圆角 + 柔和双层阴影（准则 2.4 / 2.5） */
+.yg-login__card {
   width: 100%;
-  font-size: 16px;
-  height: 46px;
+  max-width: 400px;
+  padding: var(--yg-space-8);
+  background-color: var(--yg-bg-surface);
+  border: calc(var(--yg-space-1) / 4) solid var(--yg-border-subtle);
+  border-radius: var(--yg-radius-2xl);
+  box-shadow: var(--yg-shadow-lg);
+}
+
+.yg-login__brand {
+  display: flex;
+  align-items: center;
+  gap: var(--yg-space-3);
+  margin-bottom: var(--yg-space-6);
+}
+
+.yg-login__logo {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--yg-space-9);
+  height: var(--yg-space-9);
+  flex-shrink: 0;
+  border-radius: var(--yg-radius-lg);
+  overflow: hidden;
+}
+
+.yg-login__logo img {
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  object-fit: cover;
+}
+
+.yg-login__brand-name {
+  font-size: var(--yg-font-size-sm);
+  font-weight: var(--yg-font-weight-medium);
+  color: var(--yg-text-tertiary);
+  letter-spacing: 0.08em;
+}
+
+.yg-login__title {
+  margin: 0;
+  font-size: var(--yg-font-size-3xl);
+  font-weight: var(--yg-font-weight-semibold);
+  line-height: var(--yg-line-height-tight);
+  color: var(--yg-text-primary);
+}
+
+.yg-login__subtitle {
+  margin: var(--yg-space-2) 0 0;
+  font-size: var(--yg-font-size-sm);
+  color: var(--yg-text-tertiary);
+}
+
+.yg-login__form {
+  margin-top: var(--yg-space-6);
+}
+
+.yg-login__form :deep(.el-form-item) {
+  margin-bottom: var(--yg-space-5);
+}
+
+/* 登录控件用大号档（44px），移动端触控目标达标 */
+.yg-login__input {
+  --el-input-height: var(--yg-control-height-lg);
+}
+
+.yg-login__actions {
+  margin-top: var(--yg-space-6);
+}
+
+@supports (corner-shape: squircle) {
+  .yg-login__card,
+  .yg-login__logo {
+    corner-shape: squircle;
+  }
 }
 </style>

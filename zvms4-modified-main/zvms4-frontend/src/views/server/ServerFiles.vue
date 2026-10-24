@@ -395,7 +395,7 @@ void load()
     <div class="flex h-[calc(100vh-300px)] min-h-[480px] items-stretch gap-4">
       <!-- 左:快捷目录 -->
       <ElCard class="w-64 shrink-0" body-class="quick-body">
-        <span class="z-label mb-2 block">{{ t('server.files.quickDirs') }}</span>
+        <span class="yg-text-xs yg-text-tertiary mb-2 block">{{ t('server.files.quickDirs') }}</span>
         <ElMenu class="quick-menu" :default-active="currentPath" @select="goQuick">
           <ElMenuItem
             v-for="dir in QUICK_DIRS"
@@ -425,7 +425,7 @@ void load()
             </ElButton>
             <ElButton :icon="FolderAdd" @click="doMkdir">{{ t('server.files.mkdir') }}</ElButton>
             <ElButton :icon="Upload" @click="pickUploadFile">{{ t('server.files.upload') }}</ElButton>
-            <span class="z-label">{{ t('server.files.uploadLimit') }}</span>
+            <span class="yg-text-xs yg-text-tertiary">{{ t('server.files.uploadLimit') }}</span>
           </div>
         </ElCard>
 
@@ -442,7 +442,7 @@ void load()
                 {{ crumb.name }}
               </ElBreadcrumbItem>
             </ElBreadcrumb>
-            <span class="z-label tabular-nums">{{ t('server.files.totalEntries', { count: total }) }}</span>
+            <span class="yg-text-xs yg-text-tertiary tabular-nums">{{ t('server.files.totalEntries', { count: total }) }}</span>
           </div>
 
           <div class="min-h-0 flex-1">
@@ -463,23 +463,23 @@ void load()
                     @click="openEntry(row)"
                     @keyup.enter="openEntry(row)"
                   >
-                    {{ row.name }}<span v-if="row.type === 'dir'" class="text-[var(--zv-label)]">/</span>
+                    {{ row.name }}<span v-if="row.type === 'dir'" class="text-[var(--yg-text-tertiary)]">/</span>
                   </span>
                 </template>
               </ElTableColumn>
               <ElTableColumn prop="size" :label="t('server.files.colSize')" width="100">
                 <template #default="{ row }">
-                  <span class="tabular-nums text-[var(--zv-text-sub)]">{{ fmtSize(row.size, row.type === 'dir') }}</span>
+                  <span class="tabular-nums text-[var(--yg-text-secondary)]">{{ fmtSize(row.size, row.type === 'dir') }}</span>
                 </template>
               </ElTableColumn>
               <ElTableColumn prop="mtime" :label="t('server.files.colMtime')" width="150">
                 <template #default="{ row }">
-                  <span class="tabular-nums text-[var(--zv-text-sub)]">{{ fmtTime(row.mtime) }}</span>
+                  <span class="tabular-nums text-[var(--yg-text-secondary)]">{{ fmtTime(row.mtime) }}</span>
                 </template>
               </ElTableColumn>
               <ElTableColumn prop="type" :label="t('server.files.colType')" width="90">
                 <template #default="{ row }">
-                  <span class="text-[var(--zv-text-sub)]">{{ typeLabel(row) }}</span>
+                  <span class="text-[var(--yg-text-secondary)]">{{ typeLabel(row) }}</span>
                 </template>
               </ElTableColumn>
               <ElTableColumn :label="t('server.files.colActions')" width="250" align="right" fixed="right">
@@ -558,7 +558,7 @@ void load()
 }
 
 .name-cell:hover {
-  color: var(--zv-accent);
+  color: var(--yg-color-primary);
   text-decoration: underline;
 }
 

@@ -62,7 +62,7 @@ function onSizeChange(size: number) {
 </script>
 
 <template>
-  <div class="z-pagination">
+  <div class="yg-pagination-bar">
     <ElPagination
       :current-page="currentPage"
       :page-size="pageSize"
@@ -80,7 +80,7 @@ function onSizeChange(size: number) {
 </template>
 
 <style scoped>
-.z-pagination {
+.yg-pagination-bar {
   display: flex;
   justify-content: center;
   width: 100%;
@@ -88,7 +88,7 @@ function onSizeChange(size: number) {
 }
 
 /* 允许换行居中，杜绝横向溢出滚动 */
-.z-pagination :deep(.el-pagination) {
+.yg-pagination-bar :deep(.el-pagination) {
   flex-wrap: wrap;
   justify-content: center;
   row-gap: 8px;
@@ -96,8 +96,8 @@ function onSizeChange(size: number) {
 }
 
 /* 触控友好：加大按钮点击热区 */
-.z-pagination :deep(.el-pagination button),
-.z-pagination :deep(.el-pagination .el-pager li) {
+.yg-pagination-bar :deep(.el-pagination button),
+.yg-pagination-bar :deep(.el-pagination .el-pager li) {
   min-width: 32px;
   height: 32px;
   line-height: 32px;

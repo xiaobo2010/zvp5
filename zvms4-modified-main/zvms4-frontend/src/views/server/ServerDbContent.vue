@@ -476,7 +476,7 @@ void loadSchema()
   <div class="flex h-[calc(100vh-260px)] min-h-[560px] gap-4 pb-2">
     <!-- 左:表清单 -->
     <ElCard class="w-72 shrink-0" body-class="table-list-body">
-      <span class="z-label mb-2 block tabular-nums">{{ t('server.dbContent.schemaCount', { count: filteredSchema.length }) }}</span>
+      <span class="yg-text-xs yg-text-tertiary mb-2 block tabular-nums">{{ t('server.dbContent.schemaCount', { count: filteredSchema.length }) }}</span>
       <ElInput
         v-model="schemaFilter"
         :placeholder="t('server.dbContent.searchPlaceholder')"
@@ -495,7 +495,7 @@ void loadSchema()
           <ElTableColumn prop="name" :label="t('server.dbContent.tableName')" min-width="140" show-overflow-tooltip />
           <ElTableColumn :label="t('server.dbContent.tableRows')" width="70" align="right">
             <template #default="{ row }">
-              <span class="tabular-nums text-[12px] text-[var(--zv-label)]">
+              <span class="tabular-nums text-[12px] text-[var(--yg-text-tertiary)]">
                 {{ row.num_rows === null ? '—' : t('server.dbContent.totalEstimate', { count: row.num_rows }) }}
               </span>
             </template>
@@ -512,7 +512,7 @@ void loadSchema()
       <!-- 列定义:占满左列纵向 -->
       <ElCard class="db-col-card xl:col-start-1 xl:row-span-2" body-class="db-col-body">
         <template #header>
-          <span class="text-[14px] font-semibold text-[var(--zv-text)]">{{ t('server.dbContent.columnsTitle') }}</span>
+          <span class="text-[14px] font-semibold text-[var(--yg-text-primary)]">{{ t('server.dbContent.columnsTitle') }}</span>
         </template>
         <div v-if="columnsData" class="min-h-0 flex-1">
           <ElTable
@@ -528,28 +528,28 @@ void loadSchema()
             </ElTableColumn>
             <ElTableColumn prop="type" :label="t('server.dbContent.colColType')" width="110" show-overflow-tooltip>
               <template #default="{ row }">
-                <span class="text-[var(--zv-text-sub)]">{{ row.type }}</span>
+                <span class="text-[var(--yg-text-secondary)]">{{ row.type }}</span>
               </template>
             </ElTableColumn>
             <ElTableColumn prop="length" :label="t('server.dbContent.colLen')" width="60" align="right">
               <template #default="{ row }">
-                <span class="tabular-nums text-[var(--zv-text-sub)]">{{ row.length ?? '—' }}</span>
+                <span class="tabular-nums text-[var(--yg-text-secondary)]">{{ row.length ?? '—' }}</span>
               </template>
             </ElTableColumn>
             <ElTableColumn prop="nullable" :label="t('server.dbContent.colNullable')" width="60" align="center">
               <template #default="{ row }">
-                <span class="text-[var(--zv-text-sub)]">{{ row.nullable ? t('server.dbContent.nullableYes') : '—' }}</span>
+                <span class="text-[var(--yg-text-secondary)]">{{ row.nullable ? t('server.dbContent.nullableYes') : '—' }}</span>
               </template>
             </ElTableColumn>
             <ElTableColumn prop="primary_key" :label="t('server.dbContent.colPk')" width="60" align="center">
               <template #default="{ row }">
-                <span v-if="row.primary_key" class="font-semibold text-[var(--zv-accent)]">PK</span>
-                <span v-else class="text-[var(--zv-label)]">—</span>
+                <span v-if="row.primary_key" class="font-semibold text-[var(--yg-color-primary)]">PK</span>
+                <span v-else class="text-[var(--yg-text-tertiary)]">—</span>
               </template>
             </ElTableColumn>
             <ElTableColumn prop="default" :label="t('server.dbContent.colDefault')" min-width="100" show-overflow-tooltip>
               <template #default="{ row }">
-                <span class="font-mono text-[12px] text-[var(--zv-text-sub)]">{{ fmtCell(row.default as CellValue) }}</span>
+                <span class="font-mono text-[12px] text-[var(--yg-text-secondary)]">{{ fmtCell(row.default as CellValue) }}</span>
               </template>
             </ElTableColumn>
           </ElTable>
@@ -562,7 +562,7 @@ void loadSchema()
       <!-- SQL 查询(只读) + DDL:右列两个卡片 -->
       <ElCard class="xl:col-start-2 xl:row-start-1" body-class="db-panel-body">
         <template #header>
-          <span class="text-[14px] font-semibold text-[var(--zv-text)]">{{ t('server.dbContent.sqlTitle') }}</span>
+          <span class="text-[14px] font-semibold text-[var(--yg-text-primary)]">{{ t('server.dbContent.sqlTitle') }}</span>
         </template>
         <ElInput
           v-model="sqlText"
@@ -575,7 +575,7 @@ void loadSchema()
           <ElButton type="primary" :disabled="sqlRunning" @click="executeQuery">
             {{ t('server.dbContent.sqlRun') }}
           </ElButton>
-          <span class="z-label">{{ t('server.dbContent.sqlLimitLabel') }}</span>
+          <span class="yg-text-xs yg-text-tertiary">{{ t('server.dbContent.sqlLimitLabel') }}</span>
           <ElInputNumber v-model="sqlLimit" :min="1" :max="500" size="small" class="!w-24" />
         </div>
         <ElAlert
@@ -587,8 +587,8 @@ void loadSchema()
         />
         <div v-if="queryResult" class="mt-2">
           <div class="mb-1 flex items-center gap-4">
-            <span class="z-label tabular-nums">{{ t('server.dbContent.queryElapsed', { ms: queryResult.elapsed_ms }) }}</span>
-            <span v-if="queryResult.truncated" class="z-label tabular-nums">
+            <span class="yg-text-xs yg-text-tertiary tabular-nums">{{ t('server.dbContent.queryElapsed', { ms: queryResult.elapsed_ms }) }}</span>
+            <span v-if="queryResult.truncated" class="yg-text-xs yg-text-tertiary tabular-nums">
               {{ t('server.dbContent.queryTruncated', { limit: sqlLimit }) }}
             </span>
           </div>
@@ -611,7 +611,7 @@ void loadSchema()
                 >
                   {{ lobBadge(row[col] as LobValue) }}
                 </ElButton>
-                <span v-else class="font-mono text-[12px] text-[var(--zv-text-sub)]">{{ fmtCell(row[col]) }}</span>
+                <span v-else class="font-mono text-[12px] text-[var(--yg-text-secondary)]">{{ fmtCell(row[col]) }}</span>
               </template>
             </ElTableColumn>
             <template #empty>
@@ -623,7 +623,7 @@ void loadSchema()
 
       <ElCard class="xl:col-start-2 xl:row-start-2" body-class="db-panel-body">
         <template #header>
-          <span class="text-[14px] font-semibold text-[var(--zv-text)]">{{ t('server.dbContent.ddlTitle') }}</span>
+          <span class="text-[14px] font-semibold text-[var(--yg-text-primary)]">{{ t('server.dbContent.ddlTitle') }}</span>
         </template>
         <ElInput
           v-model="ddlText"
@@ -633,7 +633,7 @@ void loadSchema()
           class="sql-input"
         />
         <div class="mt-2 flex flex-wrap items-center gap-2">
-          <span class="z-label">{{ t('server.dbContent.ddlConfirmLabel') }}</span>
+          <span class="yg-text-xs yg-text-tertiary">{{ t('server.dbContent.ddlConfirmLabel') }}</span>
           <ElInput
             v-model="ddlConfirm"
             :placeholder="t('server.dbContent.ddlConfirmPlaceholder')"
@@ -652,24 +652,24 @@ void loadSchema()
           class="mt-2"
         />
         <template v-else>
-          <div v-if="ddlResult" class="mt-2 font-mono text-[13px] tabular-nums text-[var(--zv-text-sub)]">
+          <div v-if="ddlResult" class="mt-2 font-mono text-[13px] tabular-nums text-[var(--yg-text-secondary)]">
             {{ t('server.dbContent.ddlRowcount') }}: {{ ddlResult.rowcount === null ? '—' : ddlResult.rowcount }}
             · {{ t('server.dbContent.ddlSummary') }}: {{ ddlResult.summary }}
           </div>
-          <div v-else class="mt-2 z-label">{{ ddlNote || t('server.dbContent.ddlNone') }}</div>
+          <div v-else class="mt-2 yg-text-xs yg-text-tertiary">{{ ddlNote || t('server.dbContent.ddlNone') }}</div>
         </template>
-        <p class="mt-2 z-label">{{ t('server.dbContent.ddlCommitted') }}</p>
+        <p class="mt-2 yg-text-xs yg-text-tertiary">{{ t('server.dbContent.ddlCommitted') }}</p>
       </ElCard>
 
       <!-- 数据网格 -->
       <ElCard class="xl:col-span-2" body-class="db-grid-body">
         <div class="flex flex-wrap items-center justify-between gap-2 pb-2">
           <div class="flex items-center gap-3">
-            <span class="z-label">{{ t('server.dbContent.gridTitle') }}</span>
-            <span v-if="selectedTable" class="font-mono text-[14px] font-semibold text-[var(--zv-text)]">
+            <span class="yg-text-xs yg-text-tertiary">{{ t('server.dbContent.gridTitle') }}</span>
+            <span v-if="selectedTable" class="font-mono text-[14px] font-semibold text-[var(--yg-text-primary)]">
               {{ selectedTable }}
             </span>
-            <span v-if="selectedTable && !hasPk" class="z-label">
+            <span v-if="selectedTable && !hasPk" class="yg-text-xs yg-text-tertiary">
               {{ t('server.dbContent.noPkNote') }}
             </span>
           </div>
@@ -677,13 +677,13 @@ void loadSchema()
             <ElButton size="small" :icon="Plus" :disabled="!selectedTable" @click="openInsert">
               {{ t('server.dbContent.insert') }}
             </ElButton>
-            <span v-if="rowsData" class="z-label tabular-nums">
+            <span v-if="rowsData" class="yg-text-xs yg-text-tertiary tabular-nums">
               {{ t('server.dbContent.totalLabel') }} {{ rowsTotalDisplay() }}
             </span>
             <ElButton size="small" :disabled="page <= 0 || rowsLoading" @click="gotoPage(page - 1)">
               ‹ {{ t('server.dbContent.pagePrev') }}
             </ElButton>
-            <span v-if="rowsData" class="z-label tabular-nums">
+            <span v-if="rowsData" class="yg-text-xs yg-text-tertiary tabular-nums">
               {{ t('server.dbContent.pageInfo', { page: page + 1, pages: Math.max(1, rowsPages()) }) }}
             </span>
             <ElButton
@@ -731,7 +731,7 @@ void loadSchema()
                 >
                   {{ lobBadge(row[col.name] as LobValue) }}
                 </ElButton>
-                <span v-else class="font-mono text-[12px] text-[var(--zv-text-sub)]">{{ fmtCell(row[col.name] as CellValue) }}</span>
+                <span v-else class="font-mono text-[12px] text-[var(--yg-text-secondary)]">{{ fmtCell(row[col.name] as CellValue) }}</span>
               </template>
             </ElTableColumn>
             <ElTableColumn
@@ -773,7 +773,7 @@ void loadSchema()
     >
       <div class="max-h-[60vh] overflow-auto pr-1">
         <div v-for="field in editFields" :key="field.name" class="mb-3">
-          <div class="z-label mb-1 font-mono">
+          <div class="yg-text-xs yg-text-tertiary mb-1 font-mono">
             {{ field.name }}
             <span class="normal-case">· {{ field.type }}{{ field.isPk ? ' · PK' : field.nullable ? '' : ' · NOT NULL' }}</span>
           </div>
@@ -809,8 +809,8 @@ void loadSchema()
       width="600px"
       append-to-body
     >
-      <pre class="max-h-[50vh] overflow-auto whitespace-pre-wrap break-all rounded-md border border-[var(--zv-hairline)] bg-[var(--zv-surface-alt)] p-3 font-mono text-[13px] leading-5 text-[var(--zv-text)]">{{ lobPreviewText }}</pre>
-      <p class="mt-2 z-label">{{ t('server.dbContent.lobTitle') }}</p>
+      <pre class="max-h-[50vh] overflow-auto whitespace-pre-wrap break-all rounded-md border border-[var(--yg-border-default)] bg-[var(--yg-bg-surface-sunken)] p-3 font-mono text-[13px] leading-5 text-[var(--yg-text-primary)]">{{ lobPreviewText }}</pre>
+      <p class="mt-2 yg-text-xs yg-text-tertiary">{{ t('server.dbContent.lobTitle') }}</p>
     </ElDialog>
 
     <ZSystemAuthDialog ref="authRef" />

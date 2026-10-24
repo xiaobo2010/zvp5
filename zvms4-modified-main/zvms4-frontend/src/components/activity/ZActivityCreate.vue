@@ -6,7 +6,6 @@ import dayjs from '@/plugins/dayjs'
 import { useI18n } from 'vue-i18n'
 import {
   ElButton,
-  ElCard,
   ElCol,
   ElDatePicker,
   ElForm,
@@ -89,7 +88,11 @@ const activityCategories =
 
 const members = reactive<ActivityMember[]>([])
 
-const scrollableCardHeight = ref((height.value - 64) * 0.6)
+// 表单区可视高度：视口高度减去外壳（顶栏 + 内容区内边距）与卡片操作区，
+// 让表单在卡片内滚动、操作按钮始终可见。
+const CHROME_HEIGHT = 56 + 48 + 88
+const scrollableCardHeight = computed(() => Math.max(240, height.value - CHROME_HEIGHT))
+
 const origin = ref<string[]>(['others'])
 
 // @ts-ignore
@@ -161,10 +164,6 @@ watch(origin, (newVal) => {
     }) + dict[mode]
 })
 
-watch(height, () => {
-  scrollableCardHeight.value = (height.value - 64) * 0.6
-})
-
 async function nextStep() {
   load.value = true
   if (activePage.value === 'info') {
@@ -231,11 +230,11 @@ function checkReviewAllowed() {
 </script>
 
 <template>
-  <div class="px-6 py-3">
-    <div class="p-4">
-      <ElCard shadow="hover" class="full">
-        <ElForm label-position="right" label-width="64px" :model="activity" style="width: 100%">
-          <ElScrollbar :height="scrollableCardHeight + 'px'">
+  <div class="yg-activity-create">
+    <section class="yg-card yg-activity-create__card">
+      <ElForm label-position="top" :model="activity" class="w-full">
+        <ElScrollbar :height="scrollableCardHeight + 'px'">
+          <div class="yg-activity-create__body">
             <ElFormItem
               prop="name"
               :label="t('activity.form.name')"
@@ -370,17 +369,17 @@ function checkReviewAllowed() {
                 </span>
               </p>
             </ElFormItem>
-          </ElScrollbar>
-          <span class="text-sm text-gray-500 dark:text-gray-300 pl-16" v-if="activePage === 'info'">
+          </div>
+        </ElScrollbar>
+        <div class="yg-activity-create__actions">
+          <p class="yg-text-sm yg-text-tertiary" v-if="activePage === 'info'">
             {{ t('activity.creating_guide.info.next') }}
-          </span>
-          <div class="actions text-right pt-2">
+          </p>
+          <div class="flex items-center justify-end gap-2">
+            <!-- 次级操作：描边按钮；主操作：唯一的天蓝实心按钮（准则 3.5） -->
             <ElButton
               v-if="activePage !== 'info'"
-              type="primary"
               :icon="ArrowLeft"
-              text
-              bg
               :disabled="activePage === 'member'"
               @click="prevStep"
             >
@@ -391,26 +390,44 @@ function checkReviewAllowed() {
               type="primary"
               :icon="ArrowRight"
               :loading="load"
-              text
-              bg
               @click="nextStep"
             >
               {{ activePage === 'member' || activePage === 'volunteer_order' ? '完成' : t('activity.batch.steps.next') }}
             </ElButton>
           </div>
-        </ElForm>
-      </ElCard>
-    </div>
+        </div>
+      </ElForm>
+    </section>
   </div>
 </template>
 
 <style scoped>
-.full {
+/* 创建向导：卡片内表单滚动，操作区常驻卡片底部 */
+.yg-activity-create {
+  padding: var(--yg-space-6) 0;
+}
+
+.yg-activity-create__card {
   width: 100%;
 }
 
-.actions {
-  text-align: right;
-  right: 0;
+.yg-activity-create__body {
+  padding: var(--yg-space-4) var(--yg-space-5) 0;
+}
+
+.yg-activity-create__actions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--yg-space-2);
+  padding: var(--yg-space-3) var(--yg-space-5) var(--yg-space-4);
+  border-top: calc(var(--yg-space-1) / 4) solid var(--yg-border-subtle);
+}
+
+.yg-activity-create__body :deep(.el-form-item) {
+  margin-bottom: var(--yg-space-5);
+}
+
+.yg-activity-create__body :deep(.el-form-item:last-child) {
+  margin-bottom: 0;
 }
 </style>

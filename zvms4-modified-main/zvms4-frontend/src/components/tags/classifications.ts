@@ -44,7 +44,8 @@ export default {
     },
     hybrid: {
       icon: Star,
-      color: 'danger'
+      // 红色只用于高危操作；混合模式用中性灰（准则第 5 章）
+      color: 'info'
     }
   } as Record<Activity['type'], IconAndColor>,
   status: {
@@ -64,7 +65,8 @@ export default {
       icon: Vacation
     },
     special: {
-      color: 'danger',
+      // 红色只用于高危操作；特殊类型用中性灰（准则第 5 章）
+      color: 'info',
       icon: Star
     }
   } as Record<ActivityType, IconAndColor>,

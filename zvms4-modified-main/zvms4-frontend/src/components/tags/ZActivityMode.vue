@@ -91,7 +91,7 @@ const modes: Record<
   Activity['type'],
   {
     icon: VueComponent
-    color: 'primary' | 'warning' | 'success' | 'danger'
+    color: 'primary' | 'warning' | 'success' | 'danger' | 'info'
   }
 > = {
   'on-campus': {
@@ -108,7 +108,8 @@ const modes: Record<
   },
   hybrid: {
     icon: Star,
-    color: 'danger'
+    // 红色只用于高危操作；混合模式用中性灰（准则第 5 章）
+    color: 'info'
   }
 }
 </script>
@@ -148,7 +149,7 @@ const modes: Record<
       </ElCol>
     </ElRow>
   </ElPopover>
-  <ZButtonTag v-else :size="size ?? 'small'" type="danger" :icon="Star" :force="force" :bg="bg">
+  <ZButtonTag v-else :size="size ?? 'small'" type="info" :icon="Star" :force="force" :bg="bg">
     {{ t(`activity.mode.hybrid.short`) }}
   </ZButtonTag>
 </template>

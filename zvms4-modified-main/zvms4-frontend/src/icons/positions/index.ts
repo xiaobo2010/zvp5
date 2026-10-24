@@ -20,7 +20,8 @@ export const positions = {
   },
   admin: {
     icon: AdminIcon,
-    color: 'danger'
+    // 红色只用于高危操作（准则第 5 章），管理员徽标改用绿色区分
+    color: 'success'
   }
 } as Partial<
   Record<

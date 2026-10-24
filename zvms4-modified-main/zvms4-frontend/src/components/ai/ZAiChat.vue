@@ -238,15 +238,15 @@ onUnmounted(() => {
         <div class="flex flex-wrap items-center justify-between gap-3">
           <div class="flex flex-col gap-1">
             <span>{{ t('ai.chat.title') }}</span>
-            <span class="text-xs font-normal" style="color: var(--zv-label)">
+            <span class="text-xs font-normal" style="color: var(--yg-text-tertiary)">
               {{ t('ai.chat.subtitle') }}
             </span>
           </div>
           <div class="flex flex-wrap items-center gap-3">
             <div class="flex items-center gap-2">
-              <span class="z-label">{{ t('ai.chat.stream') }}</span>
+              <span class="yg-text-xs yg-text-tertiary">{{ t('ai.chat.stream') }}</span>
               <ElSwitch v-model="streamEnabled" />
-              <span class="text-xs tabular-nums" style="color: var(--zv-label)">
+              <span class="text-xs tabular-nums" style="color: var(--yg-text-tertiary)">
                 {{ streamEnabled ? t('ai.chat.streamOn') : t('ai.chat.streamOff') }}
               </span>
             </div>
@@ -259,7 +259,7 @@ onUnmounted(() => {
       </template>
 
       <div class="flex flex-wrap items-center gap-3">
-        <span class="z-label">{{ t('ai.chat.model') }}</span>
+        <span class="yg-text-xs yg-text-tertiary">{{ t('ai.chat.model') }}</span>
         <ElSelect
           v-model="model"
           class="w-64"
@@ -292,12 +292,12 @@ onUnmounted(() => {
         </div>
 
         <div v-for="turn in turns" :key="turn.id" class="ai-chat__row" :class="turn.role">
-          <div class="ai-chat__who z-label">
+          <div class="ai-chat__who yg-text-xs yg-text-tertiary">
             {{ turn.role === 'user' ? t('ai.chat.you') : t('ai.chat.assistant') }}
           </div>
           <div class="ai-chat__bubble" :class="turn.role">
             <p v-if="turn.content" class="ai-chat__text">{{ turn.content }}</p>
-            <p v-else-if="turn.status === 'pending'" class="text-xs" style="color: var(--zv-label)">
+            <p v-else-if="turn.status === 'pending'" class="text-xs" style="color: var(--yg-text-tertiary)">
               {{ t('ai.chat.thinking') }}
             </p>
 
@@ -321,7 +321,7 @@ onUnmounted(() => {
                 }}
               </p>
               <div v-if="turn.requestId" class="flex flex-wrap items-center gap-2 text-xs">
-                <span style="color: var(--zv-label)">{{ t('ai.chat.requestId') }}</span>
+                <span style="color: var(--yg-text-tertiary)">{{ t('ai.chat.requestId') }}</span>
                 <code class="tabular-nums">{{ turn.requestId }}</code>
                 <ElButton text size="small" @click="copyRequestId(turn)">
                   <ElIcon class="mr-1"><CopyDocument /></ElIcon>
@@ -352,7 +352,7 @@ onUnmounted(() => {
           @keydown.enter.exact.prevent="send"
         />
         <div class="flex flex-wrap items-center justify-between gap-2 mt-2">
-          <span class="text-xs" style="color: var(--zv-label)">
+          <span class="text-xs" style="color: var(--yg-text-tertiary)">
             <template v-if="cooldown > 0">
               {{ t('ai.chat.rateLimited', { seconds: cooldown }) }}
             </template>
@@ -385,10 +385,10 @@ onUnmounted(() => {
 .ai-chat__list {
   overflow-y: auto;
   overscroll-behavior: contain;
-  border: 1px solid var(--zv-hairline);
+  border: 1px solid var(--yg-border-default);
   border-radius: 6px;
   padding: 12px;
-  background: var(--zv-surface-alt);
+  background: var(--yg-bg-surface-sunken);
 }
 
 .ai-chat__row {
@@ -410,13 +410,13 @@ onUnmounted(() => {
   max-width: min(680px, 88%);
   padding: 8px 10px;
   border-radius: 6px;
-  border: 1px solid var(--zv-hairline);
-  background: var(--zv-surface);
+  border: 1px solid var(--yg-border-default);
+  background: var(--yg-bg-surface);
 }
 
 .ai-chat__bubble.user {
-  background: var(--zv-accent);
-  border-color: var(--zv-accent);
+  background: var(--yg-color-primary);
+  border-color: var(--yg-color-primary);
   color: #ffffff;
 }
 
@@ -432,7 +432,7 @@ onUnmounted(() => {
   gap: 4px;
   padding: 8px;
   border-left: 2px solid var(--el-color-danger);
-  background: var(--zv-surface);
+  background: var(--yg-bg-surface);
 }
 
 .ai-chat__notice {
@@ -440,8 +440,8 @@ onUnmounted(() => {
   flex-direction: column;
   gap: 2px;
   padding-left: 8px;
-  border-left: 2px solid var(--zv-hairline-strong);
-  color: var(--zv-label);
+  border-left: 2px solid var(--yg-border-strong);
+  color: var(--yg-text-tertiary);
 }
 
 .ai-chat__composer {

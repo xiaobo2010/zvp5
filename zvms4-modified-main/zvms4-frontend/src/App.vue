@@ -1,17 +1,11 @@
 <script setup lang="ts">
-import { ArrowDown, User, SwitchButton, CircleCloseFilled } from '@element-plus/icons-vue'
+import { ArrowDown, User, SwitchButton, CircleCloseFilled, Fold, Expand } from '@element-plus/icons-vue'
 import {
-  ElContainer,
-  ElHeader,
-  ElFooter,
   ElIcon,
-  ElRow,
-  ElCol,
   ElButton,
   ElButtonGroup,
   ElPopover,
   ElConfigProvider,
-  ElDivider,
   ElMessageBox,
   ElWatermark
 } from 'element-plus'
@@ -21,7 +15,7 @@ import { useRouter, useRoute } from 'vue-router'
 import Password from '@/icons/MaterialSymbolsPasswordRounded.vue'
 import UserNav from '@/views/user/UserNav.vue'
 import { useHeaderStore } from './stores/header'
-import { useWindowSize, useDark, useOnline } from '@vueuse/core'
+import { useWindowSize, useDark, useOnline, usePreferredDark } from '@vueuse/core'
 import { useI18n } from 'vue-i18n'
 import { computed, watch, ref, onMounted, onUnmounted, h, reactive } from 'vue'
 import type { WatermarkFontType } from 'element-plus'
@@ -78,9 +72,64 @@ const router = useRouter()
 const userStore = useUserStore()
 const headerStore = useHeaderStore()
 const dark = useDark()
+const prefersDark = usePreferredDark()
+
+// useDark 底层是 useColorMode，存储值有三态：'auto'（跟随系统）、'dark'、'light'。
+// useDark 返回的 isDark 只在「手动深色」时为 true，'auto' 态下即使系统是深色也为 false。
+// 这里还原「实际生效」的深浅态，让 --yg-* 令牌与 html.dark 始终一致。
+const COLOR_SCHEME_KEY = 'vueuse-color-scheme'
+const effectiveDark = computed(() => {
+  // 依赖 dark：用户手动切换时重新求值
+  const manualDark = dark.value
+  const stored = localStorage.getItem(COLOR_SCHEME_KEY)
+  if (stored === 'dark') {
+    return true
+  }
+  if (stored === 'light') {
+    return false
+  }
+  if (manualDark) {
+    return true
+  }
+  return prefersDark.value
+})
+
+// 主题状态唯一来源仍是 useDark（它负责写 html.dark 与 localStorage）。
+// 这里额外把同一状态映射到 data-theme，让 --yg-* 令牌跟着明暗切换
+// （准则 2.1：暗色通过 <html data-theme="dark"> 手动切换）。
+// 用 flush: 'sync' 让属性同步落到 DOM，后续读取令牌的代码能立刻拿到新值。
+watch(
+  effectiveDark,
+  (value) => {
+    document.documentElement.dataset.theme = value ? 'dark' : 'light'
+  },
+  { immediate: true, flush: 'sync' }
+)
+
+/** 把 #RGB / #RRGGBB 令牌值转成带透明度的 rgba，避免在脚本里写死色值。 */
+function tokenToRgba(token: string, alpha: number): string {
+  const hex = token.trim()
+  const short = /^#([0-9a-f])([0-9a-f])([0-9a-f])$/i.exec(hex)
+  const full = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex)
+  const match = short ?? full
+  if (!match) {
+    return hex
+  }
+  const channels = match.slice(1).map((part) =>
+    short ? parseInt(part + part, 16) : parseInt(part, 16)
+  )
+  return `rgba(${channels.join(', ')}, ${alpha})`
+}
+
+// 水印颜色取自 --yg-text-primary 令牌（运行时读取，明暗自适应）
+const watermarkColor = computed(() => {
+  const isDark = effectiveDark.value
+  const raw = getComputedStyle(document.documentElement).getPropertyValue('--yg-text-primary')
+  return tokenToRgba(raw, isDark ? 0.12 : 0.15)
+})
 
 const watermark = computed<WatermarkFontType>(() => ({
-  color: dark.value ? 'rgba(255,255,255,.10)' : 'rgba(0,0,0,.15)',
+  color: watermarkColor.value,
   fontSize: 16,
   fontWeight: 'normal',
   fontStyle: 'normal',
@@ -279,6 +328,7 @@ locale.value = 'zh-CN'
 
 const { width, height } = useWindowSize()
 
+// 竖屏（窄高比）时导航收进顶栏抽屉，由 ZVerticalNav 承载；横屏时用左侧栏。
 const verticalMode = ref<boolean>(width.value < height.value * 1.2)
 
 watch(
@@ -287,6 +337,20 @@ watch(
     verticalMode.value = w < height.value * 1.2
   }
 )
+
+// 侧边栏折叠态（准则 4.3.1）：宽屏折叠成图标条，窄屏转为抽屉。
+const NARROW_BREAKPOINT = 1024
+const sidebarCollapsed = ref(false)
+const sidebarOpen = ref(false)
+const isNarrow = computed(() => width.value <= NARROW_BREAKPOINT)
+
+function toggleSidebar() {
+  if (isNarrow.value) {
+    sidebarOpen.value = !sidebarOpen.value
+    return
+  }
+  sidebarCollapsed.value = !sidebarCollapsed.value
+}
 
 const locales: Record<
   (typeof locale)['value'],
@@ -348,7 +412,7 @@ watch(offlineReady, () => {
   if (!offlineReady.value) {
     return
   }
-  localStorage.setItem('cached','true')
+  localStorage.setItem('cached', 'true')
 })
 
 onMounted(async () => {
@@ -366,82 +430,88 @@ onMounted(async () => {
 </script>
 
 <template>
-  <ElConfigProvider :locale="langPack" class="z-bg full">
+  <ElConfigProvider :locale="langPack" class="yg-bg-page full">
     <ElWatermark
       :font="watermark"
       content=""
       :z-index="999"
     >
-      <ElAlert
-        type="error"
-        center
-        :closable="true"
-        v-if="(cached || offlineReady) && !online"
-        class="hidden-print"
-      >
-        <template #title>
-          <ElIcon class="disconnected">
-            <CarbonCloudOffline />
-          </ElIcon>
-          <span class="text-lg px-1">{{ locales[locale].disconnected.title }}</span>
-          <span class="text-sm px-1">{{ locales[locale].disconnected.message }}</span>
-        </template>
-      </ElAlert>
-      <div
-        v-if="banLocked"
-        class="banned-shield hidden-print fixed inset-0 flex items-center justify-center"
-        style="z-index: 9999"
-        role="alertdialog"
-        aria-modal="true"
-        aria-labelledby="banned-title"
-        @wheel.prevent
-        @touchmove.prevent
-        @contextmenu.prevent
-      >
-        <div class="banned-card flex flex-col items-center text-center px-6">
-          <ElIcon class="banned-icon" :size="88">
-            <CircleCloseFilled />
-          </ElIcon>
-          <h2 id="banned-title" class="banned-title">{{ t('nav.banned.title') }}</h2>
-          <p class="banned-message">{{ t('nav.banned.message', { reason: banReasonText }) }}</p>
-          <p class="banned-until">{{ banUntilText }}</p>
-          <p class="banned-appeal">{{ t('nav.banned.appeal') }}</p>
-          <p v-show="banCountdown > 0" class="banned-countdown">
-            {{ t('nav.banned.autoLogoutIn', { seconds: banCountdown }) }}
-          </p>
+      <div class="yg-app-shell">
+        <ElAlert
+          type="error"
+          center
+          :closable="true"
+          v-if="(cached || offlineReady) && !online"
+          class="hidden-print"
+        >
+          <template #title>
+            <ElIcon class="disconnected">
+              <CarbonCloudOffline />
+            </ElIcon>
+            <span class="text-lg px-1">{{ locales[locale].disconnected.title }}</span>
+            <span class="text-sm px-1">{{ locales[locale].disconnected.message }}</span>
+          </template>
+        </ElAlert>
+        <div
+          v-if="banLocked"
+          class="banned-shield hidden-print fixed inset-0 flex items-center justify-center"
+          style="z-index: 9999"
+          role="alertdialog"
+          aria-modal="true"
+          aria-labelledby="banned-title"
+          @wheel.prevent
+          @touchmove.prevent
+          @contextmenu.prevent
+        >
+          <div class="banned-card flex flex-col items-center text-center px-6">
+            <ElIcon class="banned-icon" :size="88">
+              <CircleCloseFilled />
+            </ElIcon>
+            <h2 id="banned-title" class="banned-title">{{ t('nav.banned.title') }}</h2>
+            <p class="banned-message">{{ t('nav.banned.message', { reason: banReasonText }) }}</p>
+            <p class="banned-until">{{ banUntilText }}</p>
+            <p class="banned-appeal">{{ t('nav.banned.appeal') }}</p>
+            <p v-show="banCountdown > 0" class="banned-countdown">
+              {{ t('nav.banned.autoLogoutIn', { seconds: banCountdown }) }}
+            </p>
+          </div>
         </div>
-      </div>
-      <ElContainer
-        @contextmenu.prevent
-        :inert="banLocked"
-        class="z-bg"
-        direction="vertical"
-        :style="{ width: width + 'px', height: height + 'px' }"
-      >
-        <ElHeader>
-          <ElRow :class="['pt-2', verticalMode && userStore.isLogin ? 'px-1' : 'px-4']">
-            <ElCol :span="16">
-              <div
-                :class="[
-                  'text-[22px]',
-                  'font-semibold',
-                  'tracking-tight',
-                  'w-full',
-                  verticalMode && userStore.isLogin ? 'pl-1' : 'pl-10',
-                  'pt-1.5',
-                  'flex',
-                  'items-center'
-                ]"
-                @dblclick="router.push(userStore.isLogin ? '/user' : '/user/login')"
-              >
-                <ZVerticalNav v-if="verticalMode && userStore.isLogin" class="pl-6" />
-                <ElDivider v-if="verticalMode && userStore.isLogin" direction="vertical" />
-                <ElIcon style="width: 28px; height: 28px; font-size: 28px; flex-shrink: 0; border-radius: .25rem; overflow: hidden;"><img src="/favicon.ico" style="width: 28px; height: 28px; border-radius: 20%;" alt="favicon" /></ElIcon>
-                <span class="lh-100% ml-2">{{ headerStore.header }}</span>
+        <div class="yg-layout yg-layout--app">
+          <UserNav
+            v-if="userStore.isLogin && !verticalMode"
+            :collapsed="sidebarCollapsed"
+            :open="sidebarOpen"
+          />
+          <div class="yg-layout__main">
+            <header class="yg-layout__topbar yg-topbar">
+              <div class="yg-topbar__left">
+                <button
+                  v-if="userStore.isLogin && !verticalMode"
+                  type="button"
+                  class="yg-icon-btn yg-icon-btn--ghost yg-topbar__toggle"
+                  :aria-label="t('nav.menu', '菜单')"
+                  @click="toggleSidebar"
+                >
+                  <ElIcon>
+                    <Expand v-if="sidebarCollapsed || isNarrow" />
+                    <Fold v-else />
+                  </ElIcon>
+                </button>
+                <ZVerticalNav v-if="verticalMode && userStore.isLogin" />
+                <img
+                  v-if="verticalMode"
+                  class="yg-topbar__logo"
+                  src="/favicon.ico"
+                  alt="favicon"
+                />
+                <span
+                  class="yg-topbar__title"
+                  @dblclick="router.push(userStore.isLogin ? '/user' : '/user/login')"
+                >
+                  {{ headerStore.header }}
+                </span>
               </div>
-            </ElCol>
-            <ElCol :span="8">
-              <div class="user" v-if="userStore.isLogin">
+              <div class="yg-topbar__right" v-if="userStore.isLogin">
                 <ElButtonGroup>
                   <ElButton text bg :icon="User" type="primary">
                     {{ userStore.name }}
@@ -468,17 +538,18 @@ onMounted(async () => {
                   </ElPopover>
                 </ElButtonGroup>
               </div>
-            </ElCol>
-          </ElRow>
-        </ElHeader>
-        <ElContainer class="full">
-          <UserNav style="height: 100%; width: 3.2rem" v-if="userStore.isLogin && !verticalMode" />
-          <RouterView
-            class="z-surface dark:text-gray-100 view fragment-container"
-            style="width: 100%; height: 100%; box-sizing: border-box;"
-          />
-        </ElContainer>
-      </ElContainer>
+            </header>
+            <main class="yg-layout__content">
+              <RouterView class="yg-view" />
+            </main>
+          </div>
+        </div>
+        <div
+          v-if="sidebarOpen"
+          class="yg-mask yg-sidebar-mask is-visible"
+          @click="sidebarOpen = false"
+        ></div>
+      </div>
     </ElWatermark>
     <ZNotificationReminder />
   </ElConfigProvider>
@@ -490,10 +561,6 @@ onMounted(async () => {
   height: 100%;
 }
 
-.footer-container {
-  height: 3rem;
-}
-
 .disconnected {
   position: relative;
   top: 40%;
@@ -501,39 +568,41 @@ onMounted(async () => {
   font-size: 1.2rem;
 }
 
-.footer {
-  font-size: 0.8rem;
-  position: fixed;
-  width: 100%;
-  bottom: 0;
-  display: flex;
-  justify-content: center;
-  align-items: center;
-}
-
-.fragment-container {
-  height: 100%;
-  overflow-y: scroll;
-  max-height: calc(100vh - 3.75rem);
-}
-
 .action-btn {
   width: 100%;
 }
 
-.view {
-  border-radius: 0;
-  width: 100%;
+/* 顶栏外观由标准样式库的 .yg-topbar 提供，这里只补项目自有元素 */
+
+.yg-topbar__title {
+  font-size: var(--yg-font-size-lg);
+  font-weight: var(--yg-font-weight-semibold);
+  line-height: var(--yg-line-height-tight);
+  color: var(--yg-text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.user {
-  position: absolute;
-  right: 0;
+.yg-topbar__logo {
+  width: var(--yg-space-7);
+  height: var(--yg-space-7);
+  border-radius: var(--yg-radius-md);
+  object-fit: cover;
 }
 
+.yg-topbar__right {
+  display: flex;
+  align-items: center;
+  gap: var(--yg-space-2);
+  flex-shrink: 0;
+}
+
+/* 封禁全屏：危险态用红色系（准则第 5 章）。深红底不在语义调色板内，
+   这里取 --yg-red-800 色阶令牌；文字用 --yg-color-on-danger。 */
 .banned-shield {
-  background: #7f1d1d;
-  color: #fff;
+  background: var(--yg-red-800);
+  color: var(--yg-color-on-danger);
   animation: banned-shield-in 0.2s ease-out;
 }
 
@@ -543,7 +612,7 @@ onMounted(async () => {
 }
 
 .banned-icon {
-  color: #fecaca;
+  color: var(--yg-red-100);
   margin-bottom: 1.5rem;
 }
 
@@ -574,10 +643,10 @@ onMounted(async () => {
 }
 
 .banned-countdown {
-  margin: 2.5rem 0 0;
   font-size: 1rem;
   font-variant-numeric: tabular-nums;
   opacity: 0.9;
+  margin: 0.5rem 0 0;
 }
 
 @keyframes banned-shield-in {
@@ -606,11 +675,6 @@ onMounted(async () => {
   }
 }
 
-body {
-  transition-property: color, background-color !important;
-  transition-duration: 1s !important;
-}
-
 /* 翻页样式统一由 ZPagination 组件负责（响应式换行，无需横向滚动） */
 
 input::-webkit-outer-spin-button,
@@ -626,17 +690,7 @@ div[data-netlify-site-id] {
   display: none !important;
 }
 
-*,
-*:active,
-*:focus {
-  -webkit-tap-highlight-color: rgba(0, 0, 0, 0) !important;
-  -webkit-focus-ring-color: rgba(0, 0, 0, 0) !important;
-  outline: none !important;
-  -ms-overflow-style: none !important;
-  scrollbar-width: none !important;
-}
-
-.z-wrap .el-form-item--default .el-form-item__content {
+.yg-form-wrap .el-form-item--default .el-form-item__content {
   display: block;
   overflow-wrap: break-word;
 }
