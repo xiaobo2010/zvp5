@@ -22,12 +22,12 @@ import './assets/styles/yg/main.css'
 // Element Plus 令牌适配层：把 EP 变量映射到 --yg-* 令牌
 import './assets/styles/element-overrides.css'
 
+// 液态玻璃导航（UserNav）：仅该组件使用的强玻璃材质，令牌取自 yg/design-tokens.css
+import './assets/styles/yg-glass-nav.css'
+
 // 项目自定义层：EP 组件外观收尾 + 应用外壳
 import './assets/styles/flat.css'
 import './assets/main.css'
-
-// 新版前端设计准则的 --yg-* 令牌层（只定义变量，不改 Element Plus 结构）
-import './assets/styles/yg-design-tokens.css'
 
 import persistedstate from 'pinia-plugin-persistedstate'
 

@@ -186,13 +186,13 @@ onMounted(async () => {
   align-items: center;
   gap: 20px;
   padding-bottom: 16px;
-  border-bottom: 1px solid var(--zv-hairline);
+  border-bottom: 1px solid var(--yg-border-default);
 }
 
 .profile-avatar {
   flex-shrink: 0;
   font-size: 24px;
-  background: var(--zv-accent);
+  background: var(--yg-color-primary);
   color: #fff;
 }
 
@@ -214,7 +214,7 @@ onMounted(async () => {
   font-size: 22px;
   font-weight: 600;
   line-height: 1.3;
-  color: var(--zv-text);
+  color: var(--yg-text-primary);
 }
 
 .profile-role {
@@ -222,7 +222,7 @@ onMounted(async () => {
 }
 
 .profile-class {
-  color: var(--zv-text-sub);
+  color: var(--yg-text-secondary);
   font-size: 14px;
 }
 
@@ -248,7 +248,7 @@ onMounted(async () => {
 }
 
 .profile-action + .profile-action {
-  border-top: 1px solid var(--zv-hairline);
+  border-top: 1px solid var(--yg-border-default);
 }
 
 .profile-switch {
@@ -256,7 +256,7 @@ onMounted(async () => {
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  color: var(--zv-text);
+  color: var(--yg-text-primary);
 }
 
 .profile-logout {

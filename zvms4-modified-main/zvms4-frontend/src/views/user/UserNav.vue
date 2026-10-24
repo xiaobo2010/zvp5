@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import {
+  Avatar,
   CirclePlusFilled,
+  EditPen,
   HomeFilled,
   InfoFilled,
   Sunny,
@@ -57,7 +59,9 @@ const navs: Array<{
     path: '/activities/mine',
     show: true,
     judge: (path) =>
-      (path.startsWith('/activity') && !path.startsWith('/activity/create')) ||
+      (path.startsWith('/activity') &&
+        !path.startsWith('/activity/create') &&
+        !path.startsWith('/activity/register')) ||
       path.startsWith('/activities')
   },
   {
@@ -68,6 +72,13 @@ const navs: Array<{
     judge: (path) => path.startsWith('/activity/create')
   },
   {
+    icon: EditPen,
+    name: 'register',
+    path: '/activity/register',
+    show: user.position.includes('admin') || user.position.includes('department'),
+    judge: (path) => path.startsWith('/activity/register')
+  },
+  {
     icon: Management,
     name: 'manage',
     path: '/management',
@@ -76,6 +87,13 @@ const navs: Array<{
       path.startsWith('/group') ||
       (path.startsWith('/user/') && path !== '/user/login') ||
       path.startsWith('/manage')
+  },
+  {
+    icon: Avatar,
+    name: 'profile',
+    path: '/me',
+    show: true,
+    judge: (path) => path.startsWith('/me')
   },
   {
     icon: InfoFilled,

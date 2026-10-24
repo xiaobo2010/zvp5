@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ArrowDown, User, SwitchButton, CircleCloseFilled, Fold, Expand } from '@element-plus/icons-vue'
+import { ArrowDown, User, SwitchButton, CircleCloseFilled } from '@element-plus/icons-vue'
 import {
   ElIcon,
   ElButton,
@@ -20,7 +20,6 @@ import { useI18n } from 'vue-i18n'
 import { computed, watch, ref, onMounted, onUnmounted, h, reactive } from 'vue'
 import type { WatermarkFontType } from 'element-plus'
 import { zhCn } from 'element-plus/es/locale/index.mjs'
-import ZVerticalNav from '@/components/form/ZVerticalNav.vue'
 import ZNotificationReminder from '@/components/notification/ZNotificationReminder.vue'
 import { useRegisterSW } from 'virtual:pwa-register/vue'
 import { CarbonCloudOffline } from '@/icons'
@@ -128,15 +127,8 @@ const watermarkColor = computed(() => {
   return tokenToRgba(raw, isDark ? 0.12 : 0.15)
 })
 
-// 新版设计令牌通过 data-theme 切换深浅色；沿用现有 useDark 的 class 状态并同步，
-// 避免两套主题开关各走各的。
-watch(
-  dark,
-  (value) => {
-    document.documentElement.dataset.theme = value ? 'dark' : 'light'
-  },
-  { immediate: true }
-)
+// 新版设计令牌通过 data-theme 切换深浅色；唯一写入点见上方 effectiveDark 监听。
+// （合并分支曾重复挂一个 watch(dark)，会把 auto 态首屏强制成浅色，已移除。）
 
 const watermark = computed<WatermarkFontType>(() => ({
   color: watermarkColor.value,
@@ -338,7 +330,8 @@ locale.value = 'zh-CN'
 
 const { width, height } = useWindowSize()
 
-// 竖屏（窄高比）时导航收进顶栏抽屉，由 ZVerticalNav 承载；横屏时用左侧栏。
+// 竖屏（窄高比）时 UserNav 自带底部悬浮药丸导航，App 外壳只需给底部 dock 让位；
+// 横屏时 UserNav 走左侧玻璃栏。折叠/抽屉状态已随旧侧边栏一并移除。
 const verticalMode = ref<boolean>(width.value < height.value * 1.2)
 
 watch(
@@ -347,20 +340,6 @@ watch(
     verticalMode.value = w < height.value * 1.2
   }
 )
-
-// 侧边栏折叠态（准则 4.3.1）：宽屏折叠成图标条，窄屏转为抽屉。
-const NARROW_BREAKPOINT = 1024
-const sidebarCollapsed = ref(false)
-const sidebarOpen = ref(false)
-const isNarrow = computed(() => width.value <= NARROW_BREAKPOINT)
-
-function toggleSidebar() {
-  if (isNarrow.value) {
-    sidebarOpen.value = !sidebarOpen.value
-    return
-  }
-  sidebarCollapsed.value = !sidebarCollapsed.value
-}
 
 const locales: Record<
   (typeof locale)['value'],
@@ -487,27 +466,10 @@ onMounted(async () => {
           </div>
         </div>
         <div class="yg-layout yg-layout--app">
-          <UserNav
-            v-if="userStore.isLogin && !verticalMode"
-            :collapsed="sidebarCollapsed"
-            :open="sidebarOpen"
-          />
+          <UserNav v-if="userStore.isLogin" />
           <div class="yg-layout__main">
             <header class="yg-layout__topbar yg-topbar">
               <div class="yg-topbar__left">
-                <button
-                  v-if="userStore.isLogin && !verticalMode"
-                  type="button"
-                  class="yg-icon-btn yg-icon-btn--ghost yg-topbar__toggle"
-                  :aria-label="t('nav.menu', '菜单')"
-                  @click="toggleSidebar"
-                >
-                  <ElIcon>
-                    <Expand v-if="sidebarCollapsed || isNarrow" />
-                    <Fold v-else />
-                  </ElIcon>
-                </button>
-                <ZVerticalNav v-if="verticalMode && userStore.isLogin" />
                 <img
                   v-if="verticalMode"
                   class="yg-topbar__logo"
@@ -550,15 +512,13 @@ onMounted(async () => {
               </div>
             </header>
             <main class="yg-layout__content">
-              <RouterView class="yg-view" />
+              <RouterView
+                class="yg-view"
+                :style="verticalMode && userStore.isLogin ? { paddingBottom: '96px' } : {}"
+              />
             </main>
           </div>
         </div>
-        <div
-          v-if="sidebarOpen"
-          class="yg-mask yg-sidebar-mask is-visible"
-          @click="sidebarOpen = false"
-        ></div>
       </div>
     </ElWatermark>
     <ZNotificationReminder />
