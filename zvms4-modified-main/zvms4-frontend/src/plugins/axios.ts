@@ -9,6 +9,13 @@ import { cacheGet, cacheSet } from '@/utils/idbCache'
 import { getXuehaiId } from '@/plugins/ua'
 import { trackRequest, releaseRequest, type TrackedRequestConfig } from '@/plugins/inflight'
 import { readBanInfo } from '@/utils/ban'
+import {
+  memoryGet,
+  memorySet,
+  clearMemoryCache,
+  cloneForCaller,
+  ttlFor
+} from '@/utils/requestCache'
 
 const apiBase = import.meta.env.VITE_API_BASE ?? '/api'
 
@@ -53,7 +60,34 @@ function isIdempotentGet(config?: InternalAxiosRequestConfig) {
 
 function cacheKey(config: InternalAxiosRequestConfig) {
   const params = config.params ? JSON.stringify(config.params) : ''
-  return `${config.baseURL ?? ''}${config.url ?? ''}${params}`
+  const suffix = config.data && config.method !== 'get' ? JSON.stringify(config.data) : ''
+  return `${config.baseURL ?? ''}${config.url ?? ''}${params}${suffix}`
+}
+
+type CachedConfig = InternalAxiosRequestConfig & { __fromCache?: boolean }
+
+/**
+ * 命中进程内缓存时构造一个等价的响应，并让本次请求跳过真实网络。
+ * 这样重复进入页面/重复展开同一条数据时是同步可用的，不会再有加载卡顿。
+ */
+function cachedResponse(config: InternalAxiosRequestConfig): AxiosResponse | null {
+  if (!isCacheableGet(config)) {
+    return null
+  }
+  const key = cacheKey(config)
+  const entry = memoryGet(key)
+  if (!entry || Date.now() - entry.t > ttlFor(key)) {
+    return null
+  }
+  ;(config as CachedConfig).__fromCache = true
+  return {
+    data: cloneForCaller(entry.data),
+    status: 200,
+    statusText: 'OK',
+    headers: {},
+    config,
+    request: null
+  }
 }
 
 const RETRYABLE_STATUS = new Set([502, 503, 504])
@@ -90,6 +124,12 @@ function noticeStaleCache() {
 
 axiosInstance.interceptors.request.use(
   (config) => {
+    // 命中进程内缓存：直接返回上次的响应，不再发请求、不点亮进度条
+    const cached = cachedResponse(config)
+    if (cached) {
+      config.adapter = () => Promise.resolve(cached)
+      return config
+    }
     nprogress.start()
     const token = localStorage.getItem('token')
     if (token && !config.headers['Authorization']) {
@@ -114,8 +154,16 @@ axiosInstance.interceptors.response.use(
   (response) => {
     releaseRequest(response.config)
     nprogress.done()
-    if (isCacheableGet(response.config)) {
-      void cacheSet(cacheKey(response.config), response.data)
+    const config = response.config as CachedConfig
+    if (isCacheableGet(config)) {
+      // 缓存命中的响应不再回写，避免同一条数据把有效期无限续上
+      if (!config.__fromCache) {
+        memorySet(cacheKey(config), response.data)
+        void cacheSet(cacheKey(config), response.data)
+      }
+    } else if (config.method && config.method !== 'get') {
+      // 任何写操作之后立即失效，下次读取拿到的是最新数据
+      clearMemoryCache()
     }
     return response
   },
