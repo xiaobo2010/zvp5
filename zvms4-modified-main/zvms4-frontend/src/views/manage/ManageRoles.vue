@@ -308,12 +308,12 @@ onMounted(() => {
   font-size: 18px;
   font-weight: 600;
   line-height: 1.4;
-  color: var(--zv-text);
+  color: var(--yg-text-primary);
 }
 
 .roles-toolbar__title p {
   margin: 4px 0 0;
-  color: var(--zv-text-sub);
+  color: var(--yg-text-secondary);
   font-size: 13px;
 }
 
@@ -347,7 +347,7 @@ onMounted(() => {
 
 .roles-muted,
 .roles-hint {
-  color: var(--zv-text-sub);
+  color: var(--yg-text-secondary);
   font-size: 13px;
 }
 

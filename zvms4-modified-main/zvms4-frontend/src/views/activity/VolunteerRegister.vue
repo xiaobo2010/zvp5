@@ -704,16 +704,19 @@ async function searchActivities(query: string) {
   activityLoading.value = true
   try {
     const result = await api.activity.read.campus('', 1, 30, query)
-    const merged = [...result.activities]
+    // 只列已生效活动：pending/refused 的活动后端不拦，前端必须挡住
+    const merged = result.activities.filter((activity) => activity.status === 'effective')
     if (
       selectedActivity.value &&
+      selectedActivity.value.status === 'effective' &&
       !merged.some((activity) => activity._id === selectedActivity.value?._id)
     ) {
       merged.unshift(selectedActivity.value)
     }
     activityOptions.value = merged
   } catch {
-    activityOptions.value = selectedActivity.value ? [selectedActivity.value] : []
+    activityOptions.value =
+      selectedActivity.value?.status === 'effective' ? [selectedActivity.value] : []
   } finally {
     activityLoading.value = false
   }
@@ -773,6 +776,11 @@ async function submitRegistration() {
   )
   if (invalid.length) {
     ElMessage.error(`还有 ${invalid.length} 行需要修正后再提交`)
+    return
+  }
+  // 后端 Body(max_length=1000)：超限整批 422，这里先拦并提示分批
+  if (pendingRows.value.length > 1000) {
+    ElMessage.error(`单次最多登记 1000 行，当前 ${pendingRows.value.length} 行，请分批提交`)
     return
   }
 

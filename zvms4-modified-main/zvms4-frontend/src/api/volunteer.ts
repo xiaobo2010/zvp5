@@ -33,7 +33,7 @@ export interface OcrVolunteerResponse {
   confidence?: number
 }
 
-const SUPPORTED_MIME = new Set(['image/jpeg', 'image/jpg', 'image/png', 'image/webp'])
+const SUPPORTED_MIME = new Set(['image/jpeg', 'image/png', 'image/webp'])
 const MAX_BYTES = 15 * 1024 * 1024
 const POLL_INTERVAL_MS = 2500
 const MAX_POLL_ATTEMPTS = 40
