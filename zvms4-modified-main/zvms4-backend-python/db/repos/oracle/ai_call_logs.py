@@ -152,8 +152,16 @@ def _filters(
     user_oid: str | None,
     capability: str | None,
     status: str | None,
+    key_scope: str | None = None,
+    time_start: datetime | None = None,
+    time_end: datetime | None = None,
 ) -> list[Any]:
-    """可选过滤条件；``None`` = 不过滤（而不是「匹配 NULL」）。"""
+    """可选过滤条件；``None`` = 不过滤（而不是「匹配 NULL」）。
+
+    时间边界是**闭区间**（``>= time_start`` / ``<= time_end``）：端点那一秒是
+    调用方明确要求看的，排除它会让「按秒排查」少一行。两个边界都收的是 naive
+    本地 datetime（``CREATED_AT`` 的列口径），epoch→datetime 的转换在路由层。
+    """
     conds: list[Any] = []
     if user_oid is not None:
         conds.append(ai_call_logs_tbl.c.user_oid == normalize_oid(user_oid))
@@ -161,6 +169,12 @@ def _filters(
         conds.append(ai_call_logs_tbl.c.capability == capability)
     if status is not None:
         conds.append(ai_call_logs_tbl.c.status == status)
+    if key_scope is not None:
+        conds.append(ai_call_logs_tbl.c.key_scope == key_scope)
+    if time_start is not None:
+        conds.append(ai_call_logs_tbl.c.created_at >= time_start)
+    if time_end is not None:
+        conds.append(ai_call_logs_tbl.c.created_at <= time_end)
     return conds
 
 
@@ -170,6 +184,9 @@ def _page_stmt(
     status: str | None,
     page: int,
     size: int,
+    key_scope: str | None = None,
+    time_start: datetime | None = None,
+    time_end: datetime | None = None,
 ):
     """一页流水，新调用在前。
 
@@ -177,7 +194,7 @@ def _page_stmt(
     时间戳，所以这个次序同时也是写入次序，分页不会因时间戳相同而漂移。
     """
     stmt = select(*_columns()).select_from(ai_call_logs_tbl)
-    conds = _filters(user_oid, capability, status)
+    conds = _filters(user_oid, capability, status, key_scope, time_start, time_end)
     if conds:
         stmt = stmt.where(*conds)
     return (
@@ -193,9 +210,12 @@ def _total_stmt(
     user_oid: str | None,
     capability: str | None,
     status: str | None,
+    key_scope: str | None = None,
+    time_start: datetime | None = None,
+    time_end: datetime | None = None,
 ):
     stmt = select(func.count()).select_from(ai_call_logs_tbl)
-    conds = _filters(user_oid, capability, status)
+    conds = _filters(user_oid, capability, status, key_scope, time_start, time_end)
     if conds:
         stmt = stmt.where(*conds)
     return stmt
@@ -295,11 +315,23 @@ class OracleAICallLogsRepo:
         user_oid: str | None = None,
         capability: str | None = None,
         status: str | None = None,
+        key_scope: str | None = None,
+        time_start: datetime | None = None,
+        time_end: datetime | None = None,
         page: int = 1,
         page_size: int = 20,
     ) -> list[Row]:
         """一页流水（新调用在前）；``page`` 从 1 开始。"""
-        stmt = _page_stmt(user_oid, capability, status, page, page_size)
+        stmt = _page_stmt(
+            user_oid,
+            capability,
+            status,
+            page,
+            page_size,
+            key_scope,
+            time_start,
+            time_end,
+        )
         async with _session_for(self._session) as (session, _owns):
             rows = (await session.execute(stmt)).all()
         return [_row(row._mapping) for row in rows]
@@ -310,9 +342,14 @@ class OracleAICallLogsRepo:
         user_oid: str | None = None,
         capability: str | None = None,
         status: str | None = None,
+        key_scope: str | None = None,
+        time_start: datetime | None = None,
+        time_end: datetime | None = None,
     ) -> int:
         """与 :meth:`list_page` 同过滤条件的总数。"""
-        stmt = _total_stmt(user_oid, capability, status)
+        stmt = _total_stmt(
+            user_oid, capability, status, key_scope, time_start, time_end
+        )
         async with _session_for(self._session) as (session, _owns):
             total = (await session.execute(stmt)).scalar_one()
         return int(total)

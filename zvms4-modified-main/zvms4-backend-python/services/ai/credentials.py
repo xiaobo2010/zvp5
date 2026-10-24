@@ -22,6 +22,7 @@ import json
 import re
 import socket
 import time
+from datetime import datetime
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -93,15 +94,20 @@ class CredentialError(Exception):
 
 
 async def catalog(user_oid: str) -> list[dict]:
-    """该用户当前生效的 provider 列表，顺序 personal → shared → server。"""
+    """该用户当前生效的 provider 列表，顺序 personal → shared → server。
+
+    缓存里存的已经是「未过期」的条目，但 TTL 窗口内条目仍可能到期：所以读缓存
+    之后还要按当前时刻再筛一遍（这是「缓存消费处」的过滤点）。不这么做，一把
+    5 分钟前到期的 key 会一直出现在 ``/v1/models`` 里，直到缓存自然过期。
+    """
     now = time.monotonic()
     cached = _cache.get(user_oid)
     if cached is not None and cached[0] > now:
-        return cached[1]
+        return _live_entries(cached[1])
 
     entries = await _build(user_oid)
     _cache[user_oid] = (now + config.credentials_cache_ttl(), entries)
-    return entries
+    return _live_entries(entries)
 
 
 async def invalidate(user_oid: str | None = None) -> None:
@@ -121,6 +127,10 @@ async def _build(user_oid: str) -> list[dict]:
 
     for row in _ordered(rows):
         if not row.get("enabled", True):
+            continue
+        # 到期与 disabled 是同一条「不进生效目录」的路径：这样路由与
+        # /v1/models 都不需要各自再判一次时间。
+        if _is_expired(row.get("expires_at")):
             continue
         name = str(row.get("name") or "")
         if not name or name in seen:
@@ -147,6 +157,7 @@ async def _build(user_oid: str) -> list[dict]:
                 "oid": oid,
                 "created_at": row.get("created_at"),
                 "updated_at": row.get("updated_at"),
+                "expires_at": row.get("expires_at"),
             }
         )
 
@@ -175,10 +186,41 @@ async def _build(user_oid: str) -> list[dict]:
                 "oid": None,
                 "created_at": None,
                 "updated_at": None,
+                # 服务端兜底项没有到期概念：env 里的 key 由运维直接换。
+                "expires_at": None,
             }
         )
 
     return entries
+
+
+def _live_entries(entries: list[dict]) -> list[dict]:
+    """缓存读出口的过滤：只留未到期的条目（返回新列表，不改缓存里的那份）。"""
+    return [entry for entry in entries if not _is_expired(entry.get("expires_at"))]
+
+
+def _is_expired(value: object, now: datetime | None = None) -> bool:
+    """``expires_at`` 非空且 ``<= now`` 即视为过期（``None`` = 永不过期）。
+
+    比较口径：仓储出来的是 naive datetime（``TIMESTAMP`` 列的约定），所以
+    ``now`` 也用 naive 本地时间。带时区的值先换算到本地再抹掉 tzinfo，避免
+    「库里的 12:00 是哪个时区」变成隐式规则。
+    """
+    expiry = _as_datetime(value)
+    if expiry is None:
+        return False
+    return expiry <= (now or datetime.now())
+
+
+def _as_datetime(value: object) -> datetime | None:
+    """把 ``expires_at`` 归一成 naive 本地 datetime；无法解析时返回 ``None``。"""
+    if isinstance(value, datetime):
+        if value.tzinfo is not None:
+            return value.astimezone().replace(tzinfo=None)
+        return value
+    if isinstance(value, str) and value.strip():
+        return _parse_datetime(value)
+    return None
 
 
 def _ordered(rows: list[dict]) -> list[dict]:
@@ -245,6 +287,8 @@ def public_view(entry: dict) -> dict:
         "enabled": bool(entry.get("enabled", True)),
         "created_at": entry.get("created_at"),
         "updated_at": entry.get("updated_at"),
+        # 与 created_at / updated_at 同样原样透传（datetime 交给 JSON 编码器）。
+        "expires_at": entry.get("expires_at"),
     }
 
 
@@ -275,6 +319,7 @@ async def list_entries(user: dict) -> list[dict]:
                 "enabled": row.get("enabled", True),
                 "created_at": row.get("created_at"),
                 "updated_at": row.get("updated_at"),
+                "expires_at": row.get("expires_at"),
             }
         )
         view["owned"] = (
@@ -295,6 +340,7 @@ async def create_entry(
     enabled: bool = True,
     headers: dict | None = None,
     api_path: str | None = None,
+    expires_at: str | None = None,
 ) -> dict:
     if scope not in _MUTABLE_SCOPES:
         raise CredentialError("AI_KEY_INVALID", "unknown scope", 400)
@@ -305,6 +351,7 @@ async def create_entry(
     secret = _clean_api_key(api_key)
     clean_headers = _clean_headers(headers)
     clean_path = _clean_api_path(api_path)
+    clean_expiry = _clean_expires_at(expires_at)
     owner_oid = user_oid if scope == SCOPE_PERSONAL else SHARED_OWNER
 
     repo = backends.get_ai_credentials_repo()
@@ -321,6 +368,7 @@ async def create_entry(
             enabled=bool(enabled),
             headers=clean_headers,
             api_path=clean_path,
+            expires_at=clean_expiry,
         )
     except Exception as exc:
         if _is_duplicate(exc):
@@ -346,6 +394,7 @@ async def create_entry(
             "enabled": bool(enabled),
             "created_at": (row or {}).get("created_at"),
             "updated_at": (row or {}).get("updated_at"),
+            "expires_at": (row or {}).get("expires_at", clean_expiry),
         }
     )
     view["owned"] = scope == SCOPE_PERSONAL and owner_oid == user_oid
@@ -379,6 +428,11 @@ async def update_entry(
         secret = _clean_api_key(fields["api_key"])
         changes["api_key_cipher"] = crypto.encrypt_secret(secret)
         changes["key_hint"] = crypto.key_hint(secret)
+    # ``expires_at`` 按「键是否存在」判断而不是按值：``fields`` 来自
+    # ``model_dump(exclude_unset=True)``，所以「没传」= 键不存在（不改），
+    # 显式 ``null`` = 键存在且值为 None（清除到期）。仓储用 UNSET 哨兵区分这两者。
+    if "expires_at" in fields:
+        changes["expires_at"] = _clean_expires_at(fields["expires_at"])
     # 显式参数优先于 ``fields``：``fields`` 是路由层透传的 payload，显式关键字
     # 是服务层调用方的意图，两者都支持是为了不让路由层改写 payload 形状。
     raw_headers = headers if headers is not None else fields.get("headers")
@@ -419,6 +473,7 @@ async def update_entry(
             "enabled": fresh.get("enabled", True),
             "created_at": fresh.get("created_at"),
             "updated_at": fresh.get("updated_at"),
+            "expires_at": fresh.get("expires_at"),
         }
     )
     view["owned"] = (
@@ -556,6 +611,54 @@ def _clean_headers(value: object) -> dict[str, str]:
             )
         headers[raw_name] = raw_value
     return headers
+
+
+def _clean_expires_at(value: object) -> datetime | None:
+    """``expires_at`` 的入库校验：``None`` = 永不过期，其余必须晚于「现在」。
+
+    解析口径：ISO 8601（``datetime.fromisoformat``）。带时区（``+08:00`` /
+    ``Z``）的先换算到服务器本地再抹掉 tzinfo；**不带时区的按服务器本地时间
+    解释**。落库是 naive ``TIMESTAMP``，与 ``created_at`` / ``updated_at``
+    同口径，比较时不需要再做时区转换。
+
+    为什么「必须晚于现在」是 400 而不是自动清空：把过去的时刻存下来等于存一条
+    「立刻过期」的凭据——管理员想停用就该用 ``enabled``，想让 key 立刻消失就该
+    删除。静默接受只会让「我明明设了到期」变成一条查不出原因的 401。
+    """
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise CredentialError(
+            "AI_KEY_BAD_EXPIRY", "expires_at must be an ISO 8601 string", 400
+        )
+    expiry = _parse_datetime(value)
+    if expiry is None:
+        raise CredentialError(
+            "AI_KEY_BAD_EXPIRY", "expires_at must be an ISO 8601 string", 400
+        )
+    if expiry <= datetime.now():
+        raise CredentialError(
+            "AI_KEY_BAD_EXPIRY", "expires_at must be in the future", 400
+        )
+    return expiry
+
+
+def _parse_datetime(value: str) -> datetime | None:
+    """ISO 8601 → naive 本地 datetime；解析不了返回 ``None``（由调用方定错误码）。"""
+    text = value.strip()
+    if not text:
+        return None
+    # ``Z`` 是 ISO 8601 的 UTC 后缀，3.11+ 的 fromisoformat 已经认；这里显式
+    # 归一化是为了不把行为绑在解释器版本上。
+    if text[-1] in ("Z", "z"):
+        text = text[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is not None:
+        return parsed.astimezone().replace(tzinfo=None)
+    return parsed
 
 
 def _clean_api_path(value: object) -> str | None:

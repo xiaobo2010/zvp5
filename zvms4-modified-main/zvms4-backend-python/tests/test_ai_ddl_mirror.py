@@ -1,14 +1,14 @@
-"""AI 网关迁移的三方镜像：V024 / V025 / V026 / V027 / ``db/models.py`` / V001，
-离线不连库。
+"""AI 网关迁移的三方镜像：V024 / V025 / V026 / V027 / V028 / ``db/models.py`` /
+V001，离线不连库。
 
 ``db.ddl_check`` 只比对 models 与 V001（``python -m db.ddl_check``），所以「V024、
-V025、V026、V027 是否真的与 models 一致」这条事实没有任何东西守着——它一漂，
-存量实例（走 V024..V027）与全新实例（走 V001）就会长出不同的 AI 表。这里用
+V025、V026、V027、V028 是否真的与 models 一致」这条事实没有任何东西守着——它一
+漂，存量实例（走 V024..V028）与全新实例（走 V001）就会长出不同的 AI 表。这里用
 ddl_check 的解析器把这些迁移文件也拉进同一次比较。
 
-迁移是历史事实：V024/V025/V026 描述的是当时的形状，后续迁移只做增量。所以下面的
-断言写成「V0xx == models **减去** 后续迁移的增量」，而不是让历史文件去追新目标
-态——那样每次改 schema 都得回头改历史迁移。
+迁移是历史事实：V024/V025/V026/V027 描述的是当时的形状，后续迁移只做增量。所以
+下面的断言写成「V0xx == models **减去** 后续迁移的增量」，而不是让历史文件去追新
+目标态——那样每次改 schema 都得回头改历史迁移。
 
 版本号是写死的：迁移被改名/重编号本身就是运维要立刻知道的事，测试宁可红一次，
 也不要在「文件找不到」时悄悄跳过整组断言。
@@ -25,12 +25,13 @@ DDL_DIR = ddl_check.DDL_PATH.parent
 
 # AI 网关的迁移：V024 建表（ai_call_logs / ai_quota），V025 建凭据表并给
 # ai_call_logs 补 key_scope，V026 建 OCR 引擎表并放宽 ai_quota.kind，V027 把
-# ai_ocr_engines.kind 从三值扩到五值。
+# ai_ocr_engines.kind 从三值扩到五值，V028 给 ai_credentials 补 expires_at。
 GATEWAY_FILE = "V024__add_ai_gateway.sql"
 CREDENTIALS_FILE = "V025__add_ai_credentials.sql"
 OCR_FILE = "V026__add_ai_ocr_engines_and_key_headers.sql"
 OCR_KIND_FILE = "V027__extend_ai_ocr_engines_kind.sql"
 ZHIPU_KIND_FILE = "V029__add_zhipu_ocr_engine_kind.sql"
+EXPIRY_FILE = "V028__add_ai_credentials_expires_at.sql"
 
 # ``ai_call_logs.key_scope`` 的 CHECK 规范化后的形态（ddl_check 会把大小写与空白
 # 折叠掉）。V024 建表时还没有这一列，它由 V025 的幂等 ALTER 补上——所以下面既断言
@@ -58,6 +59,9 @@ QUOTA_KIND_CK = "kind in ('ocr','chat') or kind like 'ocr\\_%' escape '\\'"
 # V026 给 ai_credentials 补的两列与它们的 IS JSON 约束。
 HEADER_COLUMNS = ("headers_json", "api_path")
 HEADERS_JSON_CK = "headers_json is json"
+
+# V028 给 ai_credentials 补的到期列（NULL = 永不过期）。
+EXPIRY_COLUMN = "expires_at"
 
 # ai_ocr_engines.kind 的三代集合：V026 建表时三值，V027 扩到五值（+baidu/groq），
 # V029 再扩到六值（+zhipu）。三代都写死：迁移是历史事实，不能让旧迁移去追新态。
@@ -109,6 +113,14 @@ def _ocr_kind_text() -> str:
 
 def _zhipu_kind_text() -> str:
     return _migration(ZHIPU_KIND_FILE).read_text(encoding="utf-8")
+
+
+def _expiry() -> dict:
+    return _parsed(_migration(EXPIRY_FILE))
+
+
+def _expiry_text() -> str:
+    return _migration(EXPIRY_FILE).read_text(encoding="utf-8")
 
 
 def test_ai_quota_migration_matches_models_and_v001() -> None:
@@ -183,10 +195,12 @@ def test_ai_credentials_migration_matches_models_and_v001() -> None:
     v001 = ddl_check.parse_v001()
 
     expected = modeled["tables"]["ai_credentials"]
-    # V025 建表时还没有请求形状列；V026 补齐（见下一个测试）。
+    # V025 建表时还没有请求形状列（V026 补）与到期列（V028 补）。
     before_headers = {
         "columns": {
-            k: v for k, v in expected["columns"].items() if k not in HEADER_COLUMNS
+            k: v
+            for k, v in expected["columns"].items()
+            if k not in HEADER_COLUMNS and k != EXPIRY_COLUMN
         },
         "pk": expected["pk"],
         "uq": set(expected["uq"]),
@@ -195,7 +209,8 @@ def test_ai_credentials_migration_matches_models_and_v001() -> None:
     }
     assert credentials["tables"]["ai_credentials"] == before_headers
 
-    # 全新实例走 V001，一次就拿到完整形状（含 headers_json / api_path）。
+    # 全新实例走 V001，一次就拿到完整形状（含 headers_json / api_path /
+    # expires_at）。
     assert v001["tables"]["ai_credentials"] == expected
 
     assert CREDENTIAL_INDEXES <= credentials["indexes"]
@@ -421,6 +436,49 @@ def test_ocr_migration_is_idempotent_on_existing_objects() -> None:
     # 约束名已占用 -> -2264；约束不存在（DROP 重跑）-> -2443。
     for code in ("-955", "-1408", "-1430", "-2264", "-2443"):
         assert code in text
+
+
+def test_v028_adds_exactly_the_modeled_expiry_column() -> None:
+    """V028 只做一件事：给 ai_credentials 补 ``expires_at``（与 models/V001 同型）。
+
+    三件事都必须钉住：列定义逐字段一致（类型 / NOT NULL / 默认值）、幂等是
+    「吞 ORA-01430/-955」、以及历史迁移 V025/V026 保持冻结（不得提前出现该列）。
+    """
+    extracted = ddl_check.extract_execute_immediate(_expiry_text())
+    modeled = ddl_check.parse_models()
+    v001 = ddl_check.parse_v001()
+
+    added = re.findall(
+        r"ALTER TABLE ai_credentials ADD \((.*)\)\s*$",
+        extracted,
+        re.IGNORECASE | re.MULTILINE,
+    )
+    assert added, extracted
+    # 只加一列：多出来的列说明这次迁移夹带了别的东西。
+    assert [frag.split()[0].lower() for frag in added] == [EXPIRY_COLUMN]
+
+    name, type_, notnull, default = ddl_check._parse_column(added[0])
+    assert name == EXPIRY_COLUMN
+    assert notnull is False  # NULL = 永不过期
+    assert default is None
+    assert (type_, notnull, default) == modeled["tables"]["ai_credentials"]["columns"][
+        EXPIRY_COLUMN
+    ]
+    assert v001["tables"]["ai_credentials"]["columns"][EXPIRY_COLUMN] == (
+        type_,
+        notnull,
+        default,
+    )
+
+    # 幂等：列已存在（-1430）/ 表已由更新基线带上该列（-955）都收敛。
+    text = _expiry_text()
+    assert "EXECUTE IMMEDIATE" in text
+    assert "-1430" in text
+    assert "-955" in text
+
+    # 历史迁移冻结：V025/V026 不许提前出现 expires_at。
+    assert EXPIRY_COLUMN not in _credentials_text().lower()
+    assert EXPIRY_COLUMN not in _ocr_text().lower()
 
 
 def test_ai_tables_have_no_foreign_keys() -> None:
