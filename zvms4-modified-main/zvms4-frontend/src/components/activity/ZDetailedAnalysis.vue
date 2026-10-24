@@ -4,6 +4,7 @@ import {
   ElCard,
   ElCol,
   ElEmpty,
+  ElIcon,
   ElResult,
   ElRow,
   ElSegmented,
@@ -11,13 +12,14 @@ import {
   ElTableColumn
 } from 'element-plus'
 import { computed, ref, toRefs, watch } from 'vue'
-import { Refresh } from '@element-plus/icons-vue'
+import { InfoFilled, Refresh } from '@element-plus/icons-vue'
 import { useI18n } from 'vue-i18n'
 import api from '@/api'
 import dayjs from '@/plugins/dayjs'
 import type { Activity, ActivityMember } from '@/../types/v2'
 import type { UserActivityTimeSums } from '@/../types'
 import { ZActivityDuration, ZActivityStatus } from '@/components'
+import { displayStatus } from '@/utils/activityStatus'
 
 type UserActivityMine = {
   _id: string
@@ -99,6 +101,10 @@ const hasRecords = computed(() => filtered.value.length > 0)
 const totalCount = computed(() => total.value)
 
 const totalDuration = computed(() => sums.value?.[activeMode.value] ?? 0)
+
+const pendingCount = computed(
+  () => filtered.value.filter((record) => displayStatus(record) === 'pending').length
+)
 </script>
 
 <template>
@@ -129,6 +135,10 @@ const totalDuration = computed(() => sums.value?.[activeMode.value] ?? 0)
         />
       </ElCol>
     </ElRow>
+    <div v-if="pendingCount > 0" class="pending-note">
+      <ElIcon class="pending-note-icon"><InfoFilled /></ElIcon>
+      <span>{{ t('activity.analysis.pendingNote', { count: pendingCount }) }}</span>
+    </div>
     <ElResult
       v-if="error && !loading"
       icon="error"
@@ -147,16 +157,21 @@ const totalDuration = computed(() => sums.value?.[activeMode.value] ?? 0)
       </ElTableColumn>
       <ElTableColumn :label="t('activity.form.duration')" width="192">
         <template #default="{ row }">
-          <ZActivityDuration
-            :mode="row.mine?.mode"
-            :duration="row.mine?.duration ?? 0"
-            force="short"
-          />
+          <span
+            class="duration-cell"
+            :class="{ 'duration-cell--pending': displayStatus(row) === 'pending' }"
+          >
+            <ZActivityDuration
+              :mode="row.mine?.mode"
+              :duration="row.mine?.duration ?? 0"
+              force="short"
+            />
+          </span>
         </template>
       </ElTableColumn>
       <ElTableColumn :label="t('activity.status.title')" width="96">
         <template #default="{ row }">
-          <ZActivityStatus :type="row.mine?.status ?? 'effective'" size="small" />
+          <ZActivityStatus :type="displayStatus(row)" size="small" force="full" />
         </template>
       </ElTableColumn>
       <template #empty>
@@ -182,6 +197,29 @@ const totalDuration = computed(() => sums.value?.[activeMode.value] ?? 0)
   justify-content: flex-end;
   gap: 12px;
   flex-wrap: wrap;
+}
+
+.pending-note {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+  padding: 6px 10px;
+  border-radius: 4px;
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--el-text-color-secondary);
+  background-color: var(--el-fill-color-light);
+}
+
+.pending-note-icon {
+  flex-shrink: 0;
+  color: var(--el-color-warning);
+}
+
+.duration-cell--pending :deep(.el-button-group .el-button:last-child) {
+  color: var(--el-text-color-secondary);
+  text-decoration: line-through;
 }
 
 .summary-number {

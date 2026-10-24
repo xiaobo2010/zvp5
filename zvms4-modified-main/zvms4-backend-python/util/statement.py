@@ -236,6 +236,8 @@ async def build_statement_data(
     type_map = {"on-campus": "on", "off-campus": "off", "social-practice": "social"}
     for item in items:
         activity = await backends.get_activities_repo().get(item["activity"])
+        if not activity or activity.get("status") != "effective":
+            continue
         assignee = activity.get("approver", "Unknown")
         if is_valid_oid(assignee):
             assignee_data = await backends.get_users_repo().get_by_oid(assignee)
