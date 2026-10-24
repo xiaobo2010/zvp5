@@ -17,18 +17,13 @@ header.setHeader(t('nav.activity'))
 const route = useRoute()
 const router = useRouter()
 
-const path = ref(route.params?.type ?? 'mine')
-
-const tab = ref((path.value as string).replace('/', ''))
+const tab = ref<'campus' | 'class' | 'mine'>('mine')
 
 watch(
-  () => route.params?.type,
-  () => {
-    if (route.path.startsWith('/activities/')) {
-      tab.value = route.path.replace('/activities/', '') ?? 'mine'
-    } else {
-      tab.value = 'mine'
-    }
+  () => route.params.mode,
+  (mode) => {
+    const value = Array.isArray(mode) ? mode[0] : mode
+    tab.value = value === 'class' || value === 'campus' ? value : 'mine'
     header.setHeader(t('nav.activity'))
   },
   { immediate: true }
@@ -61,8 +56,8 @@ const panes = [
 }>
 
 function moveTo(type: string) {
-  tab.value = type
-  router.replace(`/activities/${type}`)
+  // 等新路由就绪后再切换页签，避免新列表挂载时仍读到旧页签的高页码。
+  router.replace({ path: `/activities/${type}`, query: {} })
 }
 </script>
 
@@ -90,6 +85,6 @@ function moveTo(type: string) {
         </ElSpace>
       </div>
     </div>
-    <ZActivityList class="mx-12" :role="tab as ('campus' | 'class' | 'mine')" :key="tab" />
+    <ZActivityList class="mx-12" :role="tab" :key="tab" />
   </div>
 </template>

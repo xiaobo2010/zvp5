@@ -7,7 +7,6 @@ import {
   ElButton,
   ElDivider,
   ElSwitch,
-  ElSpace,
   ElResult,
   ElTooltip,
   ElSkeleton,
@@ -28,6 +27,7 @@ const userStore = useUserStore()
 const { t } = useI18n()
 const loading = ref(false)
 const error = ref('')
+const isWide = computed(() => width.value >= 900 && width.value >= height.value)
 
 const props = withDefaults(
   defineProps<{
@@ -166,36 +166,25 @@ const reportPage = ref(false)
         </ElCol>
       </ElRow>
       <ElResult v-if="error && !loading" icon="error" :title="error" />
-      <ElRow v-else-if="!loading" class="fill py-2 statistic">
-        <template v-if="width >= height">
-          <ElCol :span="2" />
-          <ElCol :span="4">
-            <ZActivityMemberTimeJudge type="on-campus" :realTime="on" />
-          </ElCol>
-          <ElCol :span="2">
-            <ElDivider direction="vertical" class="height-full" />
-          </ElCol>
-          <ElCol :span="4">
-            <ZActivityMemberTimeJudge type="off-campus" :realTime="off" />
-          </ElCol>
-          <ElCol :span="1">
-            <ElDivider direction="vertical" class="height-full" />
-          </ElCol>
-          <ElCol :span="4">
-            <ZActivityMemberTimeJudge type="social-practice" :realTime="base.socialPractice" />
-          </ElCol>
-          <ElCol :span="2">
-            <ElDivider direction="vertical" class="height-full" />
-          </ElCol>
-          <ElCol :span="4">
-            <ElSpace direction="vertical">
-              <span>{{ t('home.panels.time.discount') }}</span>
-              <ElSwitch v-model="exceed" aria-label="校内校外时长互补" />
-            </ElSpace>
-          </ElCol>
-          <ElCol :span="1" />
-        </template>
-        <ElCol v-else :span="24" class="statistic__stack">
+      <div v-else-if="!loading" class="fill py-2 statistic">
+        <div v-if="isWide" class="statistic__wide">
+          <div class="statistic__gauges">
+            <div class="statistic__gauge">
+              <ZActivityMemberTimeJudge type="on-campus" :realTime="on" />
+            </div>
+            <div class="statistic__gauge">
+              <ZActivityMemberTimeJudge type="off-campus" :realTime="off" />
+            </div>
+            <div class="statistic__gauge">
+              <ZActivityMemberTimeJudge type="social-practice" :realTime="base.socialPractice" />
+            </div>
+          </div>
+          <div class="statistic__discount">
+            <span>{{ t('home.panels.time.discount') }}</span>
+            <ElSwitch v-model="exceed" aria-label="校内校外时长互补" />
+          </div>
+        </div>
+        <div v-else class="statistic__stack">
           <ZActivityMemberTimeJudge type="on-campus" :realTime="on" />
           <ElDivider class="statistic__divider" />
           <ZActivityMemberTimeJudge type="off-campus" :realTime="off" />
@@ -206,8 +195,8 @@ const reportPage = ref(false)
             <span>{{ t('home.panels.time.discount') }}</span>
             <ElSwitch v-model="exceed" aria-label="校内校外时长互补" />
           </div>
-        </ElCol>
-      </ElRow>
+        </div>
+      </div>
       <ElSkeleton v-else :throttle="200" :rows="4" animated class="py-2" />
     </ElCard>
   </div>
@@ -218,14 +207,37 @@ const reportPage = ref(false)
   text-align: center;
 }
 
-.height-full {
-  height: 100%;
+.statistic__wide {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(120px, 160px);
+  align-items: center;
+  column-gap: var(--yg-space-6);
+}
+
+.statistic__gauges {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-items: center;
+}
+
+.statistic__gauge {
+  display: flex;
+  justify-content: center;
+  min-width: 0;
+  padding-inline: var(--yg-space-3);
+}
+
+.statistic__gauge + .statistic__gauge {
+  border-left: 1px solid var(--yg-border-subtle);
 }
 
 .statistic__stack {
   display: flex;
   flex-direction: column;
   align-items: center;
+  width: 100%;
+  max-width: 360px;
+  margin-inline: auto;
 }
 
 .statistic__divider {
