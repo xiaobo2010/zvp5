@@ -32,6 +32,7 @@ repo / engine，也不依赖 startup hook（惰性建表，首次访问自建）
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import sqlite3
@@ -375,6 +376,16 @@ def is_enabled_fresh() -> bool:
         _set_fresh_cache_locked(path, value)
     return value
 
+
+
+async def is_enabled_async() -> bool:
+    """:func:`is_enabled` 的 async 版本：同步 sqlite 读挪到工作线程。"""
+    return await asyncio.to_thread(is_enabled)
+
+
+async def is_enabled_fresh_async() -> bool:
+    """:func:`is_enabled_fresh` 的 async 版本：同步 sqlite 读挪到工作线程。"""
+    return await asyncio.to_thread(is_enabled_fresh)
 
 
 def _set_cache_locked(path: str | None, value: bool) -> None:
