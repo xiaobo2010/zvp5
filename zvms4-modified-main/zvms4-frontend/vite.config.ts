@@ -123,5 +123,14 @@ export default defineConfig({
       '@': fileURLToPath(new URL('./src', import.meta.url)),
       '@zvms/zvms4-types': fileURLToPath(new URL('./types', import.meta.url))
     }
+  },
+  // 本地后端联调：开发服务器把 /api 代理到本机 uvicorn（默认 baseURL 为 /api）
+  server: {
+    proxy: {
+      '/api': {
+        target: 'http://127.0.0.1:8000',
+        changeOrigin: true
+      }
+    }
   }
 })
