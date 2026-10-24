@@ -20,6 +20,9 @@ import 'virtual:uno.css'
 // Swiss Style 全局基线层,必须最后加载以覆盖 Element Plus 默认样式
 import './assets/styles/flat.css'
 
+// 新版前端设计准则的 --yg-* 令牌层（只定义变量，不改 Element Plus 结构）
+import './assets/styles/yg-design-tokens.css'
+
 import persistedstate from 'pinia-plugin-persistedstate'
 
 const app = createApp(App)

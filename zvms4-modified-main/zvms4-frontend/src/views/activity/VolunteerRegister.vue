@@ -37,7 +37,12 @@ import {
   type StudentIndexState,
   type StudentRecord
 } from '@/utils/studentIndex'
-import { parseVolunteerSheet, type OcrVolunteerRow } from '@/api/volunteer'
+import {
+  parseVolunteerSheet,
+  type OcrVolunteerRow,
+  type VolunteerOcrProgress
+} from '@/api/volunteer'
+import { aiErrorCodeOf, aiErrorCopy } from '@/api/ai/errors'
 
 type RegistrationMode = Exclude<ActivityMode, 'hybrid'>
 type RowStatus = 'empty' | 'ok' | 'warning' | 'error' | 'saved'
@@ -90,6 +95,7 @@ const rows = ref<RegistrationRow[]>([])
 const activeCell = ref<{ r: number; c: number } | null>(null)
 const submitLoading = ref(false)
 const ocrLoading = ref(false)
+const ocrStage = ref('')
 const savedActivityId = ref('')
 const savedCount = ref(0)
 
@@ -628,13 +634,30 @@ async function onImportFile(event: Event) {
   }
 }
 
+function describeOcrProgress(progress: VolunteerOcrProgress): string {
+  if (progress.stage === 'uploading') {
+    return progress.progress === undefined ? '上传图片…' : `上传图片 ${progress.progress}%`
+  }
+  if (progress.stage === 'queued') return '已加入 OCR 队列…'
+  if (progress.status === 'processing') return 'OCR 识别中…'
+  return '等待 OCR 结果…'
+}
+
 async function onOcrFile(event: Event) {
   const input = event.target as HTMLInputElement
   const file = input.files?.[0]
   if (!file) return
   ocrLoading.value = true
+  ocrStage.value = '准备上传…'
   try {
-    const result = await parseVolunteerSheet(file)
+    const result = await parseVolunteerSheet(file, (progress) => {
+      ocrStage.value = describeOcrProgress(progress)
+    })
+    if (!result.rows.length) {
+      ElMessage.warning(result.warnings?.join('；') || 'OCR 未解析出学生行，请手动粘贴')
+      return
+    }
+
     const start = rows.value.findIndex((row) => !hasContent(row))
     const base = start < 0 ? rows.value.length : start
     ensureRows(base + result.rows.length)
@@ -645,20 +668,32 @@ async function onOcrFile(event: Event) {
       revalidateRow(row)
     })
     markDuplicates()
+
     if (result.warnings?.length) {
       ElMessage.warning(result.warnings.join('；'))
     }
-    ElMessage.success(`OCR 返回 ${result.rows.length} 行，已填入并完成本地校正`)
-  } catch {
-    ElMessage.info('OCR 接口已预留，接入识别服务后即可使用')
+    if (result.confidence !== undefined && result.confidence > 0 && result.confidence < 0.6) {
+      ElMessage.warning('OCR 整体置信度较低，请逐行复核识别结果')
+    }
+    const engine = result.engine ? `（${result.engine}）` : ''
+    ElMessage.success(`OCR 识别 ${result.rows.length} 行${engine}，已按本地名单校正`)
+  } catch (error) {
+    const code = aiErrorCodeOf(error)
+    if (code) {
+      const copy = aiErrorCopy(code, t)
+      ElMessage.error(`${copy.title}：${copy.hint}`)
+    } else {
+      ElMessage.error((error as Error)?.message || 'OCR 识别失败，请稍后重试')
+    }
   } finally {
     ocrLoading.value = false
+    ocrStage.value = ''
     input.value = ''
   }
 }
 
 function applyOcrRow(row: RegistrationRow, item: OcrVolunteerRow) {
-  row.studentId = normalizeStudentId(String(item.student_id ?? item.studentId ?? ''))
+  row.studentId = normalizeStudentId(String(item.studentId ?? ''))
   row.name = normalizePersonName(String(item.name ?? ''))
   row.duration = item.duration == null ? '' : cleanDuration(String(item.duration))
   row.mode = normalizeMode(item.mode) ?? defaultMode()
@@ -810,9 +845,10 @@ function statusLabel(status: RowStatus): string {
 
 async function clearAll() {
   try {
-    await ElMessageBox.confirm('清空后当前草稿不可恢复，确定继续？', '清空登记明细', {
+    await ElMessageBox.confirm('清空后当前草稿不可恢复，确定继续？', '清空该登记明细？', {
       confirmButtonText: '清空',
       cancelButtonText: '取消',
+      confirmButtonClass: 'el-button--danger',
       type: 'warning'
     })
   } catch {
@@ -969,12 +1005,12 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="register-page">
-    <ElPageHeader :icon="ArrowLeft" @back="router.back()">
+    <ElPageHeader class="yg-page-header" :icon="ArrowLeft" @back="router.back()">
       <template #content>
-        <span class="page-title">批量义工登记</span>
+        <span class="page-title yg-page-header__title">批量义工登记</span>
       </template>
       <template #extra>
-        <div class="index-status">
+        <div class="index-status yg-page-header__actions">
           <ElTag :type="indexTagType" effect="plain">{{ indexLabel }}</ElTag>
           <span class="index-meta">
             {{ students.length }} 人
@@ -1045,13 +1081,24 @@ onBeforeUnmount(() => {
         :title="`活动类型为${modeLabel(selectedActivity.type)}，明细行模式已锁定`"
       />
 
+      <ElAlert
+        type="info"
+        show-icon
+        :closable="false"
+        title="OCR 识别会消耗 AI 网关额度"
+        description="仅支持 JPG / PNG / WebP，单张不超过 15MB。识别文本会在本地拆行并用 index.db 校正，提交前请逐行复核。"
+      />
+
       <section class="reg-card toolbar-card">
         <ElButton :icon="Plus" @click="addRow">新增行</ElButton>
         <ElButton :icon="CopyDocument" @click="pasteFromClipboard">从剪贴板粘贴</ElButton>
         <ElButton :icon="UploadFilled" @click="triggerImport">导入表格</ElButton>
         <ElButton :icon="UploadFilled" :loading="ocrLoading" @click="triggerOcr">
-          OCR 识别（预留）
+          OCR 识别
         </ElButton>
+        <span v-if="ocrLoading && ocrStage" class="ocr-stage" role="status" aria-live="polite">
+          {{ ocrStage }}
+        </span>
         <ElButton :icon="Refresh" :loading="indexLoading || indexBooting" @click="refreshIndex()">
           同步名单
         </ElButton>
@@ -1079,7 +1126,7 @@ onBeforeUnmount(() => {
         <input
           ref="ocrInput"
           type="file"
-          accept="image/*,.pdf,application/pdf"
+          accept="image/jpeg,image/png,image/webp"
           hidden
           @change="onOcrFile"
         />
@@ -1096,23 +1143,23 @@ onBeforeUnmount(() => {
           <div class="summary-strip">
             <div class="summary-item">
               <span>总行数</span>
-              <strong>{{ stats.total }}</strong>
+              <strong class="yg-text-num">{{ stats.total }}</strong>
             </div>
             <div class="summary-item">
               <span>待提交</span>
-              <strong class="ok">{{ stats.ready }}</strong>
+              <strong class="ok yg-text-num">{{ stats.ready }}</strong>
             </div>
             <div v-if="stats.saved" class="summary-item">
               <span>已提交</span>
-              <strong class="saved">{{ stats.saved }}</strong>
+              <strong class="saved yg-text-num">{{ stats.saved }}</strong>
             </div>
             <div class="summary-item">
               <span>待确认</span>
-              <strong class="warning">{{ stats.warning }}</strong>
+              <strong class="warning yg-text-num">{{ stats.warning }}</strong>
             </div>
             <div class="summary-item">
               <span>错误</span>
-              <strong class="error">{{ stats.error }}</strong>
+              <strong class="error yg-text-num">{{ stats.error }}</strong>
             </div>
           </div>
         </div>
@@ -1156,6 +1203,8 @@ onBeforeUnmount(() => {
                       inputmode="numeric"
                       autocomplete="off"
                       placeholder="学号"
+                      aria-label="学号"
+                      :aria-invalid="row.status === 'error'"
                       @input="onIdInput(row, $event)"
                       @focus="onCellFocus(r, 0)"
                       @keydown="onGridKeydown($event, r, 0)"
@@ -1188,6 +1237,8 @@ onBeforeUnmount(() => {
                       :value="row.name"
                       autocomplete="off"
                       placeholder="姓名"
+                      aria-label="姓名"
+                      :aria-invalid="row.status === 'error'"
                       @input="onNameInput(row, $event)"
                       @focus="onCellFocus(r, 1)"
                       @keydown="onGridKeydown($event, r, 1)"
@@ -1225,6 +1276,8 @@ onBeforeUnmount(() => {
                     inputmode="decimal"
                     autocomplete="off"
                     placeholder="0.0"
+                    aria-label="时长"
+                    :aria-invalid="row.status === 'error'"
                     @input="onDurationInput(row, $event)"
                     @focus="onCellFocus(r, 2)"
                     @keydown="onGridKeydown($event, r, 2)"
@@ -1235,6 +1288,8 @@ onBeforeUnmount(() => {
                     v-model="row.mode"
                     class="cell-select"
                     :data-cell="`${r}-3`"
+                    aria-label="模式"
+                    :aria-invalid="row.status === 'error'"
                     @change="onModeChange(row)"
                     @focus="onCellFocus(r, 3)"
                     @keydown="onGridKeydown($event, r, 3)"
@@ -1251,6 +1306,7 @@ onBeforeUnmount(() => {
                     :data-cell="`${r}-4`"
                     autocomplete="off"
                     placeholder="可选"
+                    aria-label="备注"
                     @focus="onCellFocus(r, 4)"
                     @keydown="onGridKeydown($event, r, 4)"
                   />
@@ -1273,14 +1329,17 @@ onBeforeUnmount(() => {
                       size="small"
                       :icon="CopyDocument"
                       title="复制行"
+                      aria-label="复制行"
                       @click="duplicateRow(r)"
                     />
                     <ElButton
                       text
                       circle
                       size="small"
+                      type="danger"
                       :icon="Delete"
                       title="删除行"
+                      aria-label="删除行"
                       @click="removeRow(r)"
                     />
                   </div>
@@ -1298,96 +1357,114 @@ onBeforeUnmount(() => {
 .register-page {
   box-sizing: border-box;
   width: 100%;
-  padding: 16px 24px 32px;
+  max-width: 80rem;
+  margin: 0 auto;
+  padding: var(--yg-space-4) var(--yg-space-6) var(--yg-space-7);
+  --el-color-primary: var(--yg-color-primary);
+  --el-color-primary-light-3: var(--yg-color-primary-hover);
+  --el-color-primary-light-5: var(--yg-color-primary-soft);
+  --el-color-primary-light-7: var(--yg-color-primary-soft);
+  --el-color-primary-light-8: var(--yg-color-primary-soft);
+  --el-color-primary-light-9: var(--yg-color-primary-soft);
+  --el-color-primary-dark-2: var(--yg-color-primary-active);
+  --el-color-success: var(--yg-color-success);
+  --el-color-warning: var(--yg-color-warning);
+  --el-color-danger: var(--yg-color-danger);
+  --el-border-radius-base: var(--yg-radius-md);
 }
 
 .page-title {
-  font-size: 24px;
-  font-weight: 600;
-  letter-spacing: -0.01em;
+  font-size: var(--yg-font-size-3xl);
+  font-weight: var(--yg-font-weight-semibold);
 }
 
 .index-status {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--yg-space-2);
   flex-wrap: wrap;
 }
 
 .index-meta {
-  color: var(--zv-label);
-  font-size: 12px;
+  color: var(--yg-text-tertiary);
+  font-size: var(--yg-font-size-xs);
   font-variant-numeric: tabular-nums;
 }
 
 .reg-stack {
   display: flex;
   flex-direction: column;
-  gap: 18px;
-  margin-top: 10px;
+  gap: var(--yg-space-4);
+  margin-top: var(--yg-space-2);
 }
 
 .reg-card {
-  background: var(--zv-surface);
-  border: 1px solid var(--zv-hairline);
-  border-radius: 8px;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
+  background: var(--yg-bg-surface);
+  border: 1px solid var(--yg-border-subtle);
+  border-radius: var(--yg-radius-lg);
+  box-shadow: var(--yg-shadow-sm);
 }
 
 .activity-card {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 18px 28px;
-  padding: 16px 18px;
+  gap: var(--yg-space-4) var(--yg-space-6);
+  padding: var(--yg-space-4);
 }
 
 .activity-picker {
   display: flex;
   align-items: center;
-  gap: 10px;
-  min-width: 360px;
+  gap: var(--yg-space-3);
+  min-width: 22rem;
 }
 
 .field-label {
   flex: none;
-  color: var(--zv-label);
-  font-size: 13px;
-  font-weight: 500;
+  color: var(--yg-text-secondary);
+  font-size: var(--yg-font-size-sm);
+  font-weight: var(--yg-font-weight-medium);
 }
 
 .activity-select {
-  width: 360px;
+  width: 24rem;
   max-width: 100%;
 }
 
 .activity-summary {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--yg-space-3);
   min-width: 0;
   flex-wrap: wrap;
 }
 
 .activity-name {
-  font-weight: 600;
+  font-weight: var(--yg-font-weight-semibold);
 }
 
 .muted {
-  color: var(--zv-label);
-  font-size: 12px;
+  color: var(--yg-text-tertiary);
+  font-size: var(--yg-font-size-xs);
+}
+
+.ocr-stage {
+  color: var(--yg-text-secondary);
+  font-size: var(--yg-font-size-xs);
+  font-variant-numeric: tabular-nums;
 }
 
 .toolbar-card {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
-  padding: 10px 14px;
+  gap: var(--yg-space-2);
+  padding: var(--yg-space-2) var(--yg-space-3);
 }
 
 .toolbar-spacer {
-  flex: 1 1 24px;
+  flex: 1 1 var(--yg-space-6);
 }
 
 .grid-card {
@@ -1398,26 +1475,26 @@ onBeforeUnmount(() => {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  gap: 16px;
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--zv-hairline);
+  gap: var(--yg-space-4);
+  padding: var(--yg-space-3) var(--yg-space-4);
+  border-bottom: 1px solid var(--yg-border-subtle);
   flex-wrap: wrap;
 }
 
 .grid-title {
-  font-size: 15px;
-  font-weight: 600;
+  font-size: var(--yg-font-size-lg);
+  font-weight: var(--yg-font-weight-semibold);
 }
 
 .grid-sub {
-  margin-top: 2px;
-  color: var(--zv-label);
-  font-size: 12px;
+  margin-top: var(--yg-space-1);
+  color: var(--yg-text-tertiary);
+  font-size: var(--yg-font-size-xs);
 }
 
 .summary-strip {
   display: flex;
-  gap: 18px;
+  gap: var(--yg-space-4);
   flex-wrap: wrap;
 }
 
@@ -1425,111 +1502,111 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   align-items: flex-end;
-  line-height: 1.2;
+  line-height: var(--yg-line-height-tight);
 }
 
 .summary-item span {
-  color: var(--zv-label);
-  font-size: 11px;
+  color: var(--yg-text-tertiary);
+  font-size: var(--yg-font-size-xs);
 }
 
 .summary-item strong {
-  font-size: 18px;
+  font-size: var(--yg-font-size-2xl);
   font-variant-numeric: tabular-nums;
 }
 
 .summary-item .ok {
-  color: #15803d;
+  color: var(--yg-text-success);
 }
 
 .summary-item .warning {
-  color: #b45309;
+  color: var(--yg-text-warning);
 }
 
 .summary-item .error {
-  color: #b91c1c;
+  color: var(--yg-text-danger);
 }
 
 .summary-item .saved {
-  color: #1d4ed8;
+  color: var(--yg-text-link);
 }
 
 .grid-wrap {
-  min-height: 240px;
-  max-height: calc(100vh - 360px);
+  min-height: 15rem;
+  max-height: calc(100vh - 22.5rem);
   overflow: auto;
 }
 
 .reg-grid {
   width: 100%;
-  min-width: 1120px;
+  min-width: 70rem;
   border-collapse: separate;
   border-spacing: 0;
-  font-size: 13px;
+  font-size: var(--yg-font-size-sm);
   table-layout: fixed;
 }
 
 .reg-grid th {
   position: sticky;
   top: 0;
-  z-index: 2;
-  background: var(--zv-surface-alt);
-  color: var(--zv-label);
-  font-weight: 500;
+  z-index: var(--yg-z-sticky);
+  background: var(--yg-bg-surface-sunken);
+  color: var(--yg-text-tertiary);
+  font-weight: var(--yg-font-weight-medium);
   text-align: left;
-  padding: 8px 6px;
-  border-bottom: 1px solid var(--zv-hairline);
+  padding: var(--yg-space-2);
+  border-bottom: 1px solid var(--yg-border-subtle);
   white-space: nowrap;
 }
 
 .reg-grid td {
-  padding: 2px 4px;
-  border-bottom: 1px solid var(--zv-hairline);
+  padding: var(--yg-space-1);
+  border-bottom: 1px solid var(--yg-border-subtle);
   vertical-align: middle;
 }
 
 .reg-grid tbody tr:hover td {
-  background: var(--zv-surface-alt);
+  background: var(--yg-bg-hover);
 }
 
 .rownum-col,
 .rownum {
-  width: 42px;
+  width: 2.625rem;
   text-align: center;
-  color: var(--zv-label);
+  color: var(--yg-text-tertiary);
   font-variant-numeric: tabular-nums;
 }
 
 .id-col {
-  width: 148px;
+  width: 9.25rem;
 }
 
 .name-col {
-  width: 132px;
+  width: 8.25rem;
 }
 
 .class-col {
-  width: 142px;
+  width: 8.875rem;
 }
 
 .duration-col {
-  width: 96px;
+  width: 6rem;
 }
 
 .mode-col {
-  width: 132px;
+  width: 8.25rem;
 }
 
 .note-col {
-  width: 220px;
+  width: 13.75rem;
 }
 
 .status-col {
-  width: 190px;
+  width: 11.875rem;
 }
 
 .action-col {
-  width: 76px;
+  width: 4.75rem;
 }
 
 .cell-wrap {
@@ -1539,34 +1616,38 @@ onBeforeUnmount(() => {
 .cell-input {
   box-sizing: border-box;
   width: 100%;
-  height: 34px;
-  padding: 0 8px;
+  height: var(--yg-control-height-md);
+  padding: 0 var(--yg-space-2);
   border: 1px solid transparent;
-  border-radius: 4px;
+  border-radius: var(--yg-radius-md);
   background: transparent;
-  color: var(--zv-text);
+  color: var(--yg-text-primary);
   font: inherit;
+  transition:
+    border-color var(--yg-dur-fast) var(--yg-ease-out),
+    box-shadow var(--yg-dur-fast) var(--yg-ease-out),
+    background-color var(--yg-dur-fast) var(--yg-ease-out);
 }
 
 .cell-input::placeholder {
-  color: var(--zv-label);
+  color: var(--yg-text-tertiary);
 }
 
 .cell-input:focus {
   outline: none;
-  border-color: var(--zv-accent);
-  background: var(--zv-surface);
-  box-shadow: 0 0 0 2px rgba(22, 103, 217, 0.12);
+  border-color: var(--yg-color-primary);
+  background: var(--yg-bg-surface);
+  box-shadow: var(--yg-focus-ring);
 }
 
 .cell-input.is-error {
-  border-color: #dc2626;
-  background: #fff5f5;
+  border-color: var(--yg-color-danger);
+  background: var(--yg-bg-surface);
 }
 
 .cell-input.is-warning {
-  border-color: #d97706;
-  background: #fffbeb;
+  border-color: var(--yg-color-warning);
+  background: var(--yg-bg-surface);
 }
 
 .duration-input {
@@ -1577,25 +1658,29 @@ onBeforeUnmount(() => {
 .cell-select {
   box-sizing: border-box;
   width: 100%;
-  height: 34px;
-  padding: 0 6px;
+  height: var(--yg-control-height-md);
+  padding: 0 var(--yg-space-2);
   border: 1px solid transparent;
-  border-radius: 4px;
+  border-radius: var(--yg-radius-md);
   background: transparent;
-  color: var(--zv-text);
+  color: var(--yg-text-primary);
   font: inherit;
+  transition:
+    border-color var(--yg-dur-fast) var(--yg-ease-out),
+    box-shadow var(--yg-dur-fast) var(--yg-ease-out),
+    background-color var(--yg-dur-fast) var(--yg-ease-out);
 }
 
 .cell-select:focus {
   outline: none;
-  border-color: var(--zv-accent);
-  background: var(--zv-surface);
-  box-shadow: 0 0 0 2px rgba(22, 103, 217, 0.12);
+  border-color: var(--yg-color-primary);
+  background: var(--yg-bg-surface);
+  box-shadow: var(--yg-focus-ring);
 }
 
 .class-cell {
-  padding: 0 8px;
-  color: var(--zv-text-sub);
+  padding: 0 var(--yg-space-2);
+  color: var(--yg-text-secondary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1604,48 +1689,48 @@ onBeforeUnmount(() => {
 .status-cell {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--yg-space-1);
   min-width: 0;
-  padding: 2px 4px;
+  padding: var(--yg-space-1);
 }
 
 .status-pill {
   align-self: flex-start;
-  padding: 1px 6px;
-  border-radius: 4px;
-  font-size: 11px;
-  line-height: 1.5;
+  padding: 0 var(--yg-space-2);
+  border-radius: var(--yg-radius-xs);
+  font-size: var(--yg-font-size-xs);
+  line-height: var(--yg-line-height-normal);
   white-space: nowrap;
 }
 
 .status-empty {
-  color: var(--zv-label);
-  background: var(--zv-surface-alt);
+  color: var(--yg-text-tertiary);
+  background: var(--yg-bg-surface-sunken);
 }
 
 .status-ok {
-  color: #166534;
-  background: #dcfce7;
+  color: var(--yg-text-success);
+  background: var(--yg-color-success-soft);
 }
 
 .status-warning {
-  color: #92400e;
-  background: #fef3c7;
+  color: var(--yg-text-warning);
+  background: var(--yg-color-warning-soft);
 }
 
 .status-error {
-  color: #991b1b;
-  background: #fee2e2;
+  color: var(--yg-text-danger);
+  background: var(--yg-color-danger-soft);
 }
 
 .status-saved {
-  color: #1e3a8a;
-  background: #dbeafe;
+  color: var(--yg-text-link);
+  background: var(--yg-color-primary-soft);
 }
 
 .status-msg {
-  color: var(--zv-label);
-  font-size: 11px;
+  color: var(--yg-text-tertiary);
+  font-size: var(--yg-font-size-xs);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1660,17 +1745,17 @@ onBeforeUnmount(() => {
 
 .candidate-menu {
   position: absolute;
-  top: calc(100% + 2px);
+  top: calc(100% + var(--yg-space-1));
   left: 0;
-  z-index: 20;
-  min-width: 260px;
-  max-height: 240px;
+  z-index: var(--yg-z-popup);
+  min-width: 16.25rem;
+  max-height: 15rem;
   overflow: auto;
-  padding: 4px;
-  background: var(--zv-surface);
-  border: 1px solid var(--zv-hairline-strong);
-  border-radius: 6px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.14);
+  padding: var(--yg-space-1);
+  background: var(--yg-bg-surface-raised);
+  border: 1px solid var(--yg-border-default);
+  border-radius: var(--yg-radius-lg);
+  box-shadow: var(--yg-shadow-lg);
 }
 
 .candidate-item {
@@ -1678,87 +1763,70 @@ onBeforeUnmount(() => {
   flex-direction: column;
   align-items: flex-start;
   width: 100%;
-  padding: 6px 8px;
+  padding: var(--yg-space-2);
   border: 0;
-  border-radius: 4px;
+  border-radius: var(--yg-radius-md);
   background: transparent;
-  color: var(--zv-text);
+  color: var(--yg-text-primary);
   font: inherit;
   text-align: left;
   cursor: pointer;
+  transition: background-color var(--yg-dur-fast) var(--yg-ease-out);
 }
 
 .candidate-item:hover,
-.candidate-item:focus {
-  background: var(--zv-surface-alt);
+.candidate-item:focus-visible {
+  background: var(--yg-bg-surface-sunken);
   outline: none;
 }
 
+.candidate-item:focus-visible {
+  box-shadow: var(--yg-focus-ring);
+}
+
 .candidate-name {
-  font-weight: 600;
+  font-weight: var(--yg-font-weight-semibold);
 }
 
 .candidate-meta {
-  color: var(--zv-label);
-  font-size: 11px;
+  color: var(--yg-text-tertiary);
+  font-size: var(--yg-font-size-xs);
   font-variant-numeric: tabular-nums;
 }
 
 .row-error .status-msg {
-  color: #b91c1c;
+  color: var(--yg-text-danger);
 }
 
 .row-warning .status-msg {
-  color: #b45309;
+  color: var(--yg-text-warning);
 }
 
-html.dark .cell-input.is-error {
-  background: #2a1414;
+.register-page :deep(.el-button:focus-visible) {
+  box-shadow: var(--yg-focus-ring);
 }
 
-html.dark .cell-input.is-warning {
-  background: #2a2110;
+@media (max-width: 768px) {
+  .cell-input,
+  .cell-select {
+    height: var(--yg-control-height-lg);
+  }
 }
 
-html.dark .status-ok {
-  color: #bbf7d0;
-  background: #14351f;
-}
-
-html.dark .status-warning {
-  color: #fde68a;
-  background: #3a2a0a;
-}
-
-html.dark .status-error {
-  color: #fecaca;
-  background: #3a1414;
-}
-
-html.dark .status-saved {
-  color: #bfdbfe;
-  background: #13233f;
-}
-
-html.dark .summary-item .ok {
-  color: #4ade80;
-}
-
-html.dark .summary-item .warning {
-  color: #fbbf24;
-}
-
-html.dark .summary-item .error {
-  color: #f87171;
-}
-
-html.dark .summary-item .saved {
-  color: #60a5fa;
+@supports (corner-shape: squircle) {
+  .reg-card,
+  .cell-input,
+  .cell-select,
+  .candidate-menu,
+  .candidate-item,
+  .status-pill {
+    corner-shape: squircle;
+  }
 }
 
 @media (max-width: 900px) {
   .register-page {
-    padding: 12px;
+    padding: var(--yg-space-3);
   }
 
   .activity-picker {
@@ -1771,7 +1839,7 @@ html.dark .summary-item .saved {
   }
 
   .grid-wrap {
-    max-height: calc(100vh - 320px);
+    max-height: calc(100vh - 20rem);
   }
 }
 </style>
