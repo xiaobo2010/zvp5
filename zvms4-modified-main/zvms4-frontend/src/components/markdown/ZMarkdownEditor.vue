@@ -11,10 +11,12 @@ import {
   OrderedList,
   Quote,
   TitleLevel,
-  FileCodeOne
+  FileCodeOne,
+  Brain
 } from '@icon-park/vue-next'
 import { useI18n } from 'vue-i18n'
 import ZMarkdown from './ZMarkdown.vue'
+import ZMarkdownAiDialog from './ZMarkdownAiDialog.vue'
 
 const props = defineProps<{
   modelValue: string
@@ -190,6 +192,36 @@ function codeBlock() {
   replaceSelection(replacement, cursor)
 }
 
+// AI 写作助手：打开弹窗时把「选中的范围」快照下来。弹窗拿走了焦点，等到用户点
+// 「应用」时 textarea 的 selectionStart 已经不可信，只能按快照回写。
+const aiVisible = ref(false)
+const aiSource = ref('')
+const aiHasSelection = ref(false)
+const aiRange = ref({ start: 0, end: 0 })
+
+function openAi() {
+  const { start, end, text } = getSelection()
+  aiRange.value = { start, end }
+  aiHasSelection.value = text.length > 0
+  aiSource.value = text.length > 0 ? text : currentValue.value
+  aiVisible.value = true
+}
+
+function applyAi(text: string) {
+  const value = currentValue.value
+  const start = Math.min(aiRange.value.start, value.length)
+  const end = Math.min(Math.max(aiRange.value.end, start), value.length)
+  const nextValue = value.slice(0, start) + text + value.slice(end)
+  const cursor = start + text.length
+  const safeCursor = setEditorValue(nextValue, cursor)
+  nextTick(() => {
+    const ta = rawTextarea.value
+    if (!ta) return
+    ta.focus()
+    ta.setSelectionRange(safeCursor, safeCursor)
+  })
+}
+
 const actions = [
   {
     id: 'bold',
@@ -246,6 +278,13 @@ const actions = [
         :title="t(action.titleKey)"
         @click="action.handler"
       />
+      <ElButton
+        size="small"
+        text
+        :icon="Brain"
+        :title="t('markdown.editor.ai.open')"
+        @click="openAi"
+      />
       <div
         v-if="showLengthCount"
         class="markdown-editor__count"
@@ -300,6 +339,13 @@ const actions = [
         </div>
       </div>
     </div>
+
+    <ZMarkdownAiDialog
+      v-model:visible="aiVisible"
+      :source="aiSource"
+      :has-selection="aiHasSelection"
+      @apply="applyAi"
+    />
   </div>
 </template>
 

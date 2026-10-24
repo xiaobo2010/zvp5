@@ -71,6 +71,7 @@ declare module 'vue' {
     ZLogCard: typeof import('./src/components/log/ZLogCard.vue')['default']
     ZLogList: typeof import('./src/components/log/ZLogList.vue')['default']
     ZMarkdown: typeof import('./src/components/markdown/ZMarkdown.vue')['default']
+    ZMarkdownAiDialog: typeof import('./src/components/markdown/ZMarkdownAiDialog.vue')['default']
     ZMarkdownEditor: typeof import('./src/components/markdown/ZMarkdownEditor.vue')['default']
     ZNotificationAdmin: typeof import('./src/components/manage/ZNotificationAdmin.vue')['default']
     ZNotificationHistoryDialog: typeof import('./src/components/manage/ZNotificationHistoryDialog.vue')['default']

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ElButton, ElCard, ElIcon, ElProgress } from 'element-plus'
+import { ElButton, ElIcon, ElProgress } from 'element-plus'
 import { Refresh } from '@element-plus/icons-vue'
 import { myQuota } from '@/api/ai'
 import type { AiQuotaEntry } from '@/../types/ai'
@@ -49,72 +49,70 @@ onMounted(() => {
 
 <template>
   <div class="flex flex-col gap-4">
-    <ElCard shadow="never" v-loading="loading">
-      <template #header>
-        <div class="flex flex-wrap items-center justify-between gap-3">
-          <div class="flex flex-col gap-1">
-            <span>{{ t('ai.quota.title') }}</span>
-            <span class="text-xs font-normal" style="color: var(--zv-label)">
-              {{ t('ai.quota.subtitle') }}
-            </span>
-          </div>
+    <section class="yg-card" v-loading="loading">
+      <header class="yg-card__header">
+        <div class="flex flex-col gap-1 min-w-0">
+          <h2 class="yg-card__title">{{ t('ai.quota.title') }}</h2>
+          <p class="yg-text-xs yg-text-tertiary">{{ t('ai.quota.subtitle') }}</p>
+        </div>
+        <div class="yg-card__extra">
           <ElButton @click="load">
             <ElIcon class="mr-1"><Refresh /></ElIcon>
-            {{ t('ai.quota.refresh') }}
+            {{ t('ai.common.refresh') }}
           </ElButton>
         </div>
-      </template>
+      </header>
 
-      <div class="grid gap-4 sm:grid-cols-2">
-        <div class="z-tile rounded-lg p-4">
-          <div class="flex items-baseline justify-between gap-2">
-            <span class="z-label">{{ t('ai.quota.ocrTitle') }}</span>
-            <span class="text-xs" style="color: var(--zv-label)">{{ t('ai.quota.ocrUnit') }}</span>
+      <div class="yg-card__body">
+        <div class="grid gap-4 sm:grid-cols-2">
+          <div class="yg-tile p-4">
+            <div class="flex items-baseline justify-between gap-2">
+              <span class="yg-statistic__title">{{ t('ai.quota.ocrTitle') }}</span>
+              <span class="yg-text-xs yg-text-tertiary">{{ t('ai.quota.ocrUnit') }}</span>
+            </div>
+            <p class="yg-statistic__value">
+              {{ ocr?.used ?? 0 }}
+              <span class="yg-statistic__suffix">/ {{ ocr?.limit ?? 0 }}</span>
+            </p>
+            <ElProgress :percentage="ocrPercent" :stroke-width="6" class="mt-2" />
+            <p class="yg-text-xs yg-text-tertiary mt-2 tabular-nums">
+              {{ t('ai.common.period') }}：{{ ocr?.period ?? '—' }}
+            </p>
           </div>
-          <p class="z-stat__value tabular-nums mt-1">
-            {{ ocr?.used ?? 0 }}
-            <span class="text-sm font-normal" style="color: var(--zv-label)">
-              / {{ ocr?.limit ?? 0 }}
-            </span>
-          </p>
-          <ElProgress :percentage="ocrPercent" :stroke-width="6" class="mt-2" />
-          <p class="text-xs mt-2 tabular-nums" style="color: var(--zv-label)">
-            {{ t('ai.common.period') }}：{{ ocr?.period ?? '—' }}
-          </p>
+
+          <div class="yg-tile p-4">
+            <div class="flex items-baseline justify-between gap-2">
+              <span class="yg-statistic__title">{{ t('ai.quota.chatTitle') }}</span>
+              <span class="yg-text-xs yg-text-tertiary">{{ t('ai.quota.chatUnit') }}</span>
+            </div>
+            <p class="yg-statistic__value">
+              {{ chat?.used ?? 0 }}
+              <span class="yg-statistic__suffix">/ {{ chat?.limit ?? 0 }}</span>
+            </p>
+            <ElProgress :percentage="chatPercent" :stroke-width="6" class="mt-2" />
+            <p class="yg-text-xs yg-text-tertiary mt-2 tabular-nums">
+              {{ t('ai.common.period') }}：{{ chat?.period ?? '—' }}
+            </p>
+          </div>
         </div>
 
-        <div class="z-tile rounded-lg p-4">
-          <div class="flex items-baseline justify-between gap-2">
-            <span class="z-label">{{ t('ai.quota.chatTitle') }}</span>
-            <span class="text-xs" style="color: var(--zv-label)">{{ t('ai.quota.chatUnit') }}</span>
-          </div>
-          <p class="z-stat__value tabular-nums mt-1">
-            {{ chat?.used ?? 0 }}
-            <span class="text-sm font-normal" style="color: var(--zv-label)">
-              / {{ chat?.limit ?? 0 }}
-            </span>
-          </p>
-          <ElProgress :percentage="chatPercent" :stroke-width="6" class="mt-2" />
-          <p class="text-xs mt-2 tabular-nums" style="color: var(--zv-label)">
-            {{ t('ai.common.period') }}：{{ chat?.period ?? '—' }}
-          </p>
-        </div>
+        <p v-if="failed" class="yg-text-xs yg-text-danger mt-3">
+          {{ t('ai.quota.loadFailed') }}
+        </p>
       </div>
+    </section>
 
-      <p v-if="failed" class="text-xs mt-3" style="color: var(--el-color-danger)">
-        {{ t('ai.quota.loadFailed') }}
-      </p>
-    </ElCard>
-
-    <ElCard shadow="never">
-      <template #header>
-        <span class="z-label">{{ t('ai.quota.ruleTitle') }}</span>
-      </template>
-      <ul class="text-sm flex flex-col gap-1" style="color: var(--zv-text-sub)">
-        <li>{{ t('ai.quota.ruleOcr') }}</li>
-        <li>{{ t('ai.quota.rulePersonal') }}</li>
-        <li>{{ t('ai.quota.ruleShared') }}</li>
-      </ul>
-    </ElCard>
+    <section class="yg-card">
+      <header class="yg-card__header">
+        <h2 class="yg-statistic__title">{{ t('ai.quota.ruleTitle') }}</h2>
+      </header>
+      <div class="yg-card__body">
+        <ul class="yg-text-sm yg-text-secondary flex flex-col gap-1">
+          <li>{{ t('ai.quota.ruleOcr') }}</li>
+          <li>{{ t('ai.quota.rulePersonal') }}</li>
+          <li>{{ t('ai.quota.ruleShared') }}</li>
+        </ul>
+      </div>
+    </section>
   </div>
 </template>

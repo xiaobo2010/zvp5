@@ -413,7 +413,7 @@ onMounted(() => {
         <div class="flex flex-wrap items-center justify-between gap-3">
           <div class="flex flex-col gap-1">
             <span>{{ t('ai.keys.title') }}</span>
-            <span class="text-xs font-normal" style="color: var(--zv-label)">
+            <span class="text-xs font-normal" style="color: var(--yg-text-tertiary)">
               {{ t('ai.keys.subtitle') }}
             </span>
           </div>
@@ -472,7 +472,7 @@ onMounted(() => {
         <ElTableColumn :label="t('ai.keys.expires')" width="170">
           <template #default="{ row }">
             <div v-if="!row.expires_at" class="flex flex-col">
-              <span class="text-xs" style="color: var(--zv-label)">
+              <span class="text-xs" style="color: var(--yg-text-tertiary)">
                 {{ t('ai.keys.neverExpires') }}
               </span>
             </div>
@@ -495,7 +495,7 @@ onMounted(() => {
             <ElTag v-if="row.owned" type="success" size="small">
               {{ t('ai.keys.owned') }}
             </ElTag>
-            <span v-else style="color: var(--zv-label)">—</span>
+            <span v-else style="color: var(--yg-text-tertiary)">—</span>
           </template>
         </ElTableColumn>
         <ElTableColumn
@@ -526,7 +526,7 @@ onMounted(() => {
                 {{ t('ai.common.delete') }}
               </ElButton>
             </div>
-            <span v-else class="text-xs" style="color: var(--zv-label)">
+            <span v-else class="text-xs" style="color: var(--yg-text-tertiary)">
               {{ t('ai.keys.readOnlyHint') }}
             </span>
           </template>
@@ -591,7 +591,7 @@ onMounted(() => {
             show-password
             :placeholder="t('ai.keys.apiKeyPlaceholder')"
           />
-          <p class="text-xs mt-1" style="color: var(--zv-label)">{{ t('ai.keys.apiKeyHint') }}</p>
+          <p class="text-xs mt-1" style="color: var(--yg-text-tertiary)">{{ t('ai.keys.apiKeyHint') }}</p>
         </ElFormItem>
 
         <ElFormItem :label="t('ai.keys.apiPath')" prop="apiPath">
@@ -608,7 +608,7 @@ onMounted(() => {
           <p v-if="fieldError.expiresAt" class="text-xs mt-1" style="color: var(--el-color-danger)">
             {{ fieldError.expiresAt }}
           </p>
-          <p class="text-xs mt-1" style="color: var(--zv-label)">{{ t('ai.keys.expiresHint') }}</p>
+          <p class="text-xs mt-1" style="color: var(--yg-text-tertiary)">{{ t('ai.keys.expiresHint') }}</p>
         </ElFormItem>
 
         <ElFormItem :label="t('ai.keys.headers')">
@@ -639,7 +639,7 @@ onMounted(() => {
                 <ElIcon class="mr-1"><Plus /></ElIcon>
                 {{ t('ai.keys.addHeader') }}
               </ElButton>
-              <span class="text-xs" style="color: var(--zv-label)">
+              <span class="text-xs" style="color: var(--yg-text-tertiary)">
                 {{ t('ai.keys.headersHint') }}
               </span>
             </div>

@@ -3,7 +3,6 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
   ElButton,
-  ElCard,
   ElDatePicker,
   ElEmpty,
   ElIcon,
@@ -26,7 +25,7 @@ const CAPABILITY_OPTIONS: AiLogCapability[] = ['ocr', 'chat']
 const STATUS_OPTIONS: AiLogStatus[] = ['success', 'error', 'timeout', 'rejected', 'busy']
 const KEY_SCOPE_OPTIONS: AiLogKeyScope[] = ['personal', 'shared', 'server']
 
-/** 五种状态各自的配色：成功绿、错误红、超时橙、拒绝灰、繁忙黄。 */
+/** 五种状态各自的配色：成功绿、错误红、超时橙、拒绝灰、繁忙橙描边。 */
 const STATUS_TAG_TYPE: Record<AiLogStatus, 'success' | 'danger' | 'warning' | 'info'> = {
   success: 'success',
   error: 'danger',
@@ -188,245 +187,245 @@ onMounted(() => {
 
 <template>
   <div class="flex flex-col gap-4">
-    <ElCard shadow="never">
-      <template #header>
-        <div class="flex flex-wrap items-center justify-between gap-3">
+    <section class="yg-card">
+      <header class="yg-card__header">
+        <div class="flex flex-col gap-1 min-w-0">
+          <h2 class="yg-card__title">{{ t('ai.logs.title') }}</h2>
+          <p class="yg-text-xs yg-text-tertiary">{{ t('ai.logs.subtitle') }}</p>
+        </div>
+        <div class="yg-card__extra flex flex-wrap items-center gap-2">
+          <ElButton @click="resetFilters">
+            {{ t('ai.logs.resetFilters') }}
+          </ElButton>
+          <ElButton :loading="loading" @click="load">
+            <ElIcon class="mr-1"><Refresh /></ElIcon>
+            {{ t('ai.common.refresh') }}
+          </ElButton>
+        </div>
+      </header>
+
+      <div class="yg-card__body">
+        <div class="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
           <div class="flex flex-col gap-1">
-            <span>{{ t('ai.logs.title') }}</span>
-            <span class="text-xs font-normal" style="color: var(--zv-label)">
-              {{ t('ai.logs.subtitle') }}
-            </span>
+            <span class="yg-text-xs yg-text-tertiary">{{ t('ai.logs.user') }}</span>
+            <ZSelectPerson
+              :model-value="filters.userOid"
+              :filter-start="6"
+              full-width
+              clearable
+              :placeholder="t('ai.logs.userAll')"
+              @update:model-value="onUserChange"
+            />
           </div>
-          <div class="flex flex-wrap items-center gap-2">
-            <ElButton @click="resetFilters">
-              {{ t('ai.logs.resetFilters') }}
-            </ElButton>
-            <ElButton :loading="loading" @click="load">
-              <ElIcon class="mr-1"><Refresh /></ElIcon>
-              {{ t('ai.common.refresh') }}
-            </ElButton>
+          <div class="flex flex-col gap-1">
+            <span class="yg-text-xs yg-text-tertiary">{{ t('ai.logs.capability') }}</span>
+            <ElSelect v-model="filters.capability" class="w-full">
+              <ElOption :label="t('ai.logs.capabilityAll')" value="" />
+              <ElOption
+                v-for="item in CAPABILITY_OPTIONS"
+                :key="item"
+                :label="capabilityLabel(item)"
+                :value="item"
+              />
+            </ElSelect>
+          </div>
+          <div class="flex flex-col gap-1">
+            <span class="yg-text-xs yg-text-tertiary">{{ t('ai.logs.status') }}</span>
+            <ElSelect v-model="filters.status" class="w-full">
+              <ElOption :label="t('ai.logs.statusAll')" value="" />
+              <ElOption
+                v-for="item in STATUS_OPTIONS"
+                :key="item"
+                :label="statusLabel(item)"
+                :value="item"
+              />
+            </ElSelect>
+          </div>
+          <div class="flex flex-col gap-1">
+            <span class="yg-text-xs yg-text-tertiary">{{ t('ai.logs.keyScope') }}</span>
+            <ElSelect v-model="filters.keyScope" class="w-full">
+              <ElOption :label="t('ai.logs.keyScopeAll')" value="" />
+              <ElOption
+                v-for="item in KEY_SCOPE_OPTIONS"
+                :key="item"
+                :label="keyScopeLabel(item)"
+                :value="item"
+              />
+            </ElSelect>
+          </div>
+          <div class="flex flex-col gap-1">
+            <span class="yg-text-xs yg-text-tertiary">{{ t('ai.logs.timeRange') }}</span>
+            <ElDatePicker
+              v-model="filters.range"
+              type="datetimerange"
+              class="w-full"
+              :range-separator="t('ai.logs.timeRangeTo')"
+              :start-placeholder="t('ai.logs.timeRangeStart')"
+              :end-placeholder="t('ai.logs.timeRangeEnd')"
+            />
           </div>
         </div>
-      </template>
-
-      <div class="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
-        <div class="flex flex-col gap-1">
-          <span class="z-label">{{ t('ai.logs.user') }}</span>
-          <ZSelectPerson
-            :model-value="filters.userOid"
-            :filter-start="6"
-            full-width
-            clearable
-            :placeholder="t('ai.logs.userAll')"
-            @update:model-value="onUserChange"
-          />
-        </div>
-        <div class="flex flex-col gap-1">
-          <span class="z-label">{{ t('ai.logs.capability') }}</span>
-          <ElSelect v-model="filters.capability" class="w-full">
-            <ElOption :label="t('ai.logs.capabilityAll')" value="" />
-            <ElOption
-              v-for="item in CAPABILITY_OPTIONS"
-              :key="item"
-              :label="capabilityLabel(item)"
-              :value="item"
-            />
-          </ElSelect>
-        </div>
-        <div class="flex flex-col gap-1">
-          <span class="z-label">{{ t('ai.logs.status') }}</span>
-          <ElSelect v-model="filters.status" class="w-full">
-            <ElOption :label="t('ai.logs.statusAll')" value="" />
-            <ElOption
-              v-for="item in STATUS_OPTIONS"
-              :key="item"
-              :label="statusLabel(item)"
-              :value="item"
-            />
-          </ElSelect>
-        </div>
-        <div class="flex flex-col gap-1">
-          <span class="z-label">{{ t('ai.logs.keyScope') }}</span>
-          <ElSelect v-model="filters.keyScope" class="w-full">
-            <ElOption :label="t('ai.logs.keyScopeAll')" value="" />
-            <ElOption
-              v-for="item in KEY_SCOPE_OPTIONS"
-              :key="item"
-              :label="keyScopeLabel(item)"
-              :value="item"
-            />
-          </ElSelect>
-        </div>
-        <div class="flex flex-col gap-1">
-          <span class="z-label">{{ t('ai.logs.timeRange') }}</span>
-          <ElDatePicker
-            v-model="filters.range"
-            type="datetimerange"
-            class="w-full"
-            :range-separator="t('ai.logs.timeRangeTo')"
-            :start-placeholder="t('ai.logs.timeRangeStart')"
-            :end-placeholder="t('ai.logs.timeRangeEnd')"
-          />
-        </div>
+        <p class="yg-text-xs yg-text-tertiary mt-3">{{ t('ai.logs.timeRangeHint') }}</p>
       </div>
-      <p class="text-xs mt-3" style="color: var(--zv-label)">{{ t('ai.logs.timeRangeHint') }}</p>
-    </ElCard>
+    </section>
 
-    <ElCard shadow="never" v-loading="loading">
-      <ElTable :data="rows" row-key="oid" stripe>
-        <ElTableColumn prop="created_at" :label="t('ai.logs.columns.createdAt')" min-width="160">
-          <template #default="{ row }">
-            <span class="tabular-nums text-xs">{{ formatTime(row.created_at) }}</span>
+    <section class="yg-card" v-loading="loading">
+      <div class="yg-card__body">
+        <ElTable :data="rows" row-key="oid" stripe>
+          <ElTableColumn prop="created_at" :label="t('ai.logs.columns.createdAt')" min-width="160">
+            <template #default="{ row }">
+              <span class="tabular-nums yg-text-xs">{{ formatTime(row.created_at) }}</span>
+            </template>
+          </ElTableColumn>
+          <ElTableColumn :label="t('ai.logs.columns.user')" min-width="140">
+            <template #default="{ row }">
+              <div class="flex flex-col">
+                <span class="yg-text-sm">{{ row.user_name || '—' }}</span>
+                <span class="yg-text-xs yg-text-tertiary">{{ row.user_oid }}</span>
+              </div>
+            </template>
+          </ElTableColumn>
+          <ElTableColumn :label="t('ai.logs.columns.capability')" width="100" align="center">
+            <template #default="{ row }">
+              <ElTag :type="row.capability === 'chat' ? 'success' : 'primary'" size="small">
+                {{ capabilityLabel(row.capability) }}
+              </ElTag>
+            </template>
+          </ElTableColumn>
+          <ElTableColumn
+            prop="endpoint"
+            :label="t('ai.logs.columns.endpoint')"
+            min-width="180"
+            show-overflow-tooltip
+          >
+            <template #default="{ row }">
+              <span class="yg-text-xs">{{ row.endpoint || '—' }}</span>
+            </template>
+          </ElTableColumn>
+          <ElTableColumn
+            prop="provider"
+            :label="t('ai.logs.columns.provider')"
+            min-width="110"
+            show-overflow-tooltip
+          >
+            <template #default="{ row }">
+              <span class="yg-text-xs">{{ row.provider ?? '—' }}</span>
+            </template>
+          </ElTableColumn>
+          <ElTableColumn
+            prop="model"
+            :label="t('ai.logs.columns.model')"
+            min-width="140"
+            show-overflow-tooltip
+          >
+            <template #default="{ row }">
+              <span class="yg-text-xs">{{ row.model ?? '—' }}</span>
+            </template>
+          </ElTableColumn>
+          <ElTableColumn :label="t('ai.logs.columns.status')" width="100" align="center">
+            <template #default="{ row }">
+              <ElTag
+                :type="statusTagType(row.status)"
+                :class="statusTagClass(row.status)"
+                :data-status="row.status"
+                size="small"
+              >
+                {{ statusLabel(row.status) }}
+              </ElTag>
+            </template>
+          </ElTableColumn>
+          <ElTableColumn
+            prop="http_status"
+            :label="t('ai.logs.columns.httpStatus')"
+            width="90"
+            align="right"
+          >
+            <template #default="{ row }">
+              <span class="tabular-nums">{{ row.http_status ?? '—' }}</span>
+            </template>
+          </ElTableColumn>
+          <ElTableColumn
+            prop="error_code"
+            :label="t('ai.logs.columns.errorCode')"
+            min-width="150"
+            show-overflow-tooltip
+          >
+            <template #default="{ row }">
+              <span v-if="row.error_code" class="tabular-nums yg-text-xs">{{ row.error_code }}</span>
+              <span v-else class="yg-text-tertiary">—</span>
+            </template>
+          </ElTableColumn>
+          <ElTableColumn
+            prop="latency_ms"
+            :label="t('ai.logs.columns.latency')"
+            width="110"
+            align="right"
+          >
+            <template #default="{ row }">
+              <span v-if="row.latency_ms !== null" class="tabular-nums">
+                {{ row.latency_ms }} {{ t('ai.logs.latencyUnit') }}
+              </span>
+              <span v-else class="yg-text-tertiary">—</span>
+            </template>
+          </ElTableColumn>
+          <ElTableColumn prop="units" :label="t('ai.logs.columns.units')" width="100" align="right">
+            <template #default="{ row }">
+              <span class="tabular-nums">{{ row.units }}</span>
+            </template>
+          </ElTableColumn>
+          <ElTableColumn :label="t('ai.logs.columns.keyScope')" width="100" align="center">
+            <template #default="{ row }">
+              <ElTag
+                v-if="row.key_scope"
+                :type="
+                  row.key_scope === 'server'
+                    ? 'warning'
+                    : row.key_scope === 'shared'
+                      ? 'primary'
+                      : 'info'
+                "
+                size="small"
+              >
+                {{ keyScopeLabel(row.key_scope) }}
+              </ElTag>
+              <span v-else class="yg-text-tertiary">—</span>
+            </template>
+          </ElTableColumn>
+          <ElTableColumn :label="t('ai.logs.columns.requestId')" min-width="180">
+            <template #default="{ row }">
+              <div v-if="row.request_id" class="flex items-center gap-1">
+                <code class="tabular-nums yg-text-xs font-mono">{{ row.request_id }}</code>
+                <ElButton text size="small" @click="copyRequestId(row.request_id)">
+                  <ElIcon><CopyDocument /></ElIcon>
+                </ElButton>
+              </div>
+              <span v-else class="yg-text-tertiary">—</span>
+            </template>
+          </ElTableColumn>
+          <template #empty>
+            <ElEmpty
+              :description="loadFailed ? t('ai.logs.loadFailed') : t('ai.logs.empty')"
+              :image-size="90"
+            />
           </template>
-        </ElTableColumn>
-        <ElTableColumn :label="t('ai.logs.columns.user')" min-width="140">
-          <template #default="{ row }">
-            <div class="flex flex-col">
-              <span class="text-sm">{{ row.user_name || '—' }}</span>
-              <span class="text-xs" style="color: var(--zv-label)">{{ row.user_oid }}</span>
-            </div>
-          </template>
-        </ElTableColumn>
-        <ElTableColumn :label="t('ai.logs.columns.capability')" width="100" align="center">
-          <template #default="{ row }">
-            <ElTag :type="row.capability === 'chat' ? 'success' : 'primary'" size="small">
-              {{ capabilityLabel(row.capability) }}
-            </ElTag>
-          </template>
-        </ElTableColumn>
-        <ElTableColumn
-          prop="endpoint"
-          :label="t('ai.logs.columns.endpoint')"
-          min-width="180"
-          show-overflow-tooltip
-        >
-          <template #default="{ row }">
-            <span class="text-xs">{{ row.endpoint || '—' }}</span>
-          </template>
-        </ElTableColumn>
-        <ElTableColumn
-          prop="provider"
-          :label="t('ai.logs.columns.provider')"
-          min-width="110"
-          show-overflow-tooltip
-        >
-          <template #default="{ row }">
-            <span class="text-xs">{{ row.provider ?? '—' }}</span>
-          </template>
-        </ElTableColumn>
-        <ElTableColumn
-          prop="model"
-          :label="t('ai.logs.columns.model')"
-          min-width="140"
-          show-overflow-tooltip
-        >
-          <template #default="{ row }">
-            <span class="text-xs">{{ row.model ?? '—' }}</span>
-          </template>
-        </ElTableColumn>
-        <ElTableColumn :label="t('ai.logs.columns.status')" width="100" align="center">
-          <template #default="{ row }">
-            <ElTag
-              :type="statusTagType(row.status)"
-              :class="statusTagClass(row.status)"
-              :data-status="row.status"
-              size="small"
-            >
-              {{ statusLabel(row.status) }}
-            </ElTag>
-          </template>
-        </ElTableColumn>
-        <ElTableColumn
-          prop="http_status"
-          :label="t('ai.logs.columns.httpStatus')"
-          width="90"
-          align="right"
-        >
-          <template #default="{ row }">
-            <span class="tabular-nums">{{ row.http_status ?? '—' }}</span>
-          </template>
-        </ElTableColumn>
-        <ElTableColumn
-          prop="error_code"
-          :label="t('ai.logs.columns.errorCode')"
-          min-width="150"
-          show-overflow-tooltip
-        >
-          <template #default="{ row }">
-            <span v-if="row.error_code" class="tabular-nums text-xs">{{ row.error_code }}</span>
-            <span v-else style="color: var(--zv-label)">—</span>
-          </template>
-        </ElTableColumn>
-        <ElTableColumn
-          prop="latency_ms"
-          :label="t('ai.logs.columns.latency')"
-          width="110"
-          align="right"
-        >
-          <template #default="{ row }">
-            <span v-if="row.latency_ms !== null" class="tabular-nums">
-              {{ row.latency_ms }} {{ t('ai.logs.latencyUnit') }}
-            </span>
-            <span v-else style="color: var(--zv-label)">—</span>
-          </template>
-        </ElTableColumn>
-        <ElTableColumn prop="units" :label="t('ai.logs.columns.units')" width="100" align="right">
-          <template #default="{ row }">
-            <span class="tabular-nums">{{ row.units }}</span>
-          </template>
-        </ElTableColumn>
-        <ElTableColumn :label="t('ai.logs.columns.keyScope')" width="100" align="center">
-          <template #default="{ row }">
-            <ElTag
-              v-if="row.key_scope"
-              :type="
-                row.key_scope === 'server'
-                  ? 'warning'
-                  : row.key_scope === 'shared'
-                    ? 'primary'
-                    : 'info'
-              "
-              size="small"
-            >
-              {{ keyScopeLabel(row.key_scope) }}
-            </ElTag>
-            <span v-else style="color: var(--zv-label)">—</span>
-          </template>
-        </ElTableColumn>
-        <ElTableColumn :label="t('ai.logs.columns.requestId')" min-width="180">
-          <template #default="{ row }">
-            <div v-if="row.request_id" class="flex items-center gap-1">
-              <code class="tabular-nums text-xs">{{ row.request_id }}</code>
-              <ElButton text size="small" @click="copyRequestId(row.request_id)">
-                <ElIcon><CopyDocument /></ElIcon>
-              </ElButton>
-            </div>
-            <span v-else style="color: var(--zv-label)">—</span>
-          </template>
-        </ElTableColumn>
-        <template #empty>
-          <ElEmpty
-            :description="loadFailed ? t('ai.logs.loadFailed') : t('ai.logs.empty')"
-            :image-size="90"
-          />
-        </template>
-      </ElTable>
+        </ElTable>
 
-      <ZPagination
-        v-model:current-page="page"
-        v-model:page-size="perpage"
-        :total="total"
-        @change="onPageChange"
-      />
-    </ElCard>
+        <ZPagination
+          v-model:current-page="page"
+          v-model:page-size="perpage"
+          :total="total"
+          @change="onPageChange"
+        />
+      </div>
+    </section>
   </div>
 </template>
 
 <style scoped>
-/* 繁忙态用黄，与超时的橙区分开：tag 的配色走同名 CSS 变量，这里只改变量。 */
+/* 繁忙态用描边橙，与超时的实心橙区分开：tag 的配色走同名 CSS 变量，这里只改变量。 */
 .ai-log-status--busy.el-tag {
-  --el-tag-bg-color: #fdf6e3;
-  --el-tag-border-color: #f0dca6;
-  --el-tag-text-color: #8a6d0b;
+  --el-tag-bg-color: var(--yg-bg-surface);
+  --el-tag-border-color: var(--yg-color-warning);
+  --el-tag-text-color: var(--yg-text-warning);
 }
 </style>

@@ -213,7 +213,7 @@ watch(isPointerSwiping, (swiping) => {
     >
       <ZDataExport type="time" v-model="openExport" />
     </ElDrawer>
-    <ElCard ref="card" shadow="never" v-loading="loading" :class="[embed ? 'z-embed' : '']">
+    <ElCard ref="card" shadow="never" v-loading="loading" :class="[embed ? 'yg-embed' : '']">
       <div class="text-lg px-2">
         <slot name="title" />
       </div>
@@ -368,11 +368,11 @@ watch(isPointerSwiping, (swiping) => {
   align-items: center;
 }
 
-.el-card.z-embed {
+.el-card.yg-embed {
   padding: 0 !important;
 }
 
-.el-card.z-embed > .el-card__body {
+.el-card.yg-embed > .el-card__body {
   padding: 0 !important;
   margin: 0 !important;
 }

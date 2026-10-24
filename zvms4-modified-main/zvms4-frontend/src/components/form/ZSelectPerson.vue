@@ -144,7 +144,7 @@ async function filter(number: string) {
     class="w-full"
     size="default"
     remote-show-suffix
-    popper-class="z-select-person__selector"
+    popper-class="yg-select-person__selector"
     :popper-append-to-body="true"
     v-bind="$attrs"
   >
@@ -157,7 +157,7 @@ async function filter(number: string) {
       remote
     >
       <span style="float: left">{{ item.label }}</span>
-      <span style="float: right; color: #aaaaaa; font-size: 13px">
+      <span style="float: right; color: var(--yg-text-tertiary); font-size: var(--yg-font-size-sm)">
         {{ item.number }}, {{ item.class }}
       </span>
     </ElOption>
@@ -168,7 +168,7 @@ async function filter(number: string) {
 </template>
 
 <style>
-.z-select-person__selector .el-select-dropdown__wrap {
+.yg-select-person__selector .el-select-dropdown__wrap {
   max-height: 182px;
 }
 </style>

@@ -331,7 +331,7 @@ onMounted(() => {
         <div class="flex flex-wrap items-center justify-between gap-3">
           <div class="flex flex-col gap-1">
             <span>{{ t('manage.notifications.title') }}</span>
-            <span class="text-xs font-normal" style="color: var(--zv-label)">
+            <span class="text-xs font-normal" style="color: var(--yg-text-tertiary)">
               {{ t('manage.notifications.subtitle') }}
             </span>
           </div>
@@ -371,7 +371,7 @@ onMounted(() => {
           <template #default="{ row }">
             <div class="flex flex-col">
               <span>{{ row.author_name || '—' }}</span>
-              <span class="text-xs tabular-nums" style="color: var(--zv-label)">
+              <span class="text-xs tabular-nums" style="color: var(--yg-text-tertiary)">
                 {{ row.author_id }}
               </span>
             </div>
@@ -452,7 +452,7 @@ onMounted(() => {
           />
         </template>
       </ElTable>
-      <p class="text-xs mt-2" style="color: var(--zv-label)">
+      <p class="text-xs mt-2" style="color: var(--yg-text-tertiary)">
         {{ t('manage.notifications.deleteHint') }}
       </p>
     </ElCard>
@@ -496,10 +496,10 @@ onMounted(() => {
             />
           </div>
           <div class="flex flex-wrap justify-between gap-2 w-full text-xs mt-1">
-            <span style="color: var(--zv-label)">
+            <span style="color: var(--yg-text-tertiary)">
               {{ t('manage.notifications.dialog.contentHint') }}
             </span>
-            <span class="tabular-nums flex gap-3" style="color: var(--zv-label)">
+            <span class="tabular-nums flex gap-3" style="color: var(--yg-text-tertiary)">
               <span :style="form.content.length > CONTENT_MAX ? 'color: var(--el-color-danger)' : ''">
                 {{ t('manage.notifications.dialog.charCount', { current: form.content.length, max: CONTENT_MAX }) }}
               </span>
@@ -513,7 +513,7 @@ onMounted(() => {
 
       <template #footer>
         <div class="flex flex-wrap items-center justify-between gap-3">
-          <span class="text-xs" style="color: var(--zv-label)">
+          <span class="text-xs" style="color: var(--yg-text-tertiary)">
             {{
               mode === 'create'
                 ? t('manage.notifications.dialog.createHint')

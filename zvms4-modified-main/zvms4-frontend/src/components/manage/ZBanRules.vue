@@ -671,7 +671,7 @@ function formatReason(user: BannedUser): string | null {
           />
         </template>
       </ElTable>
-      <p class="text-xs" style="color: var(--zv-label)">
+      <p class="text-xs" style="color: var(--yg-text-tertiary)">
         {{ t('manage.banRules.rule.penaltiesHint') }}
       </p>
     </ElCard>
@@ -732,7 +732,7 @@ function formatReason(user: BannedUser): string | null {
         >
           <template #default="{ row }">
             <span v-if="row.detail">{{ row.detail }}</span>
-            <span v-else class="text-xs" style="color: var(--zv-label)">
+            <span v-else class="text-xs" style="color: var(--yg-text-tertiary)">
               {{ t('manage.banRules.violations.detailUnknown') }}
             </span>
           </template>
@@ -807,7 +807,7 @@ function formatReason(user: BannedUser): string | null {
         >
           <template #default="{ row }">
             <span v-if="formatReason(row)">{{ row.reason }}</span>
-            <span v-else class="text-xs" style="color: var(--zv-label)">
+            <span v-else class="text-xs" style="color: var(--yg-text-tertiary)">
               {{ t('manage.banRules.users.reasonUnknown') }}
             </span>
           </template>
@@ -869,7 +869,7 @@ function formatReason(user: BannedUser): string | null {
             v-model="form.penaltiesText"
             :placeholder="t('manage.banRules.dialog.penaltiesPlaceholder')"
           />
-          <p class="text-xs w-full" style="color: var(--zv-label)">
+          <p class="text-xs w-full" style="color: var(--yg-text-tertiary)">
             {{ t('manage.banRules.dialog.penaltiesHint') }}
           </p>
         </ElFormItem>
@@ -901,7 +901,7 @@ function formatReason(user: BannedUser): string | null {
         </ElFormItem>
         <ElFormItem :label="t('manage.banRules.rule.codeLabel')" prop="code">
           <ElInput v-model="createForm.code" :placeholder="t('manage.banRules.rule.codePlaceholder')" />
-          <p class="text-xs w-full" style="color: var(--zv-label)">
+          <p class="text-xs w-full" style="color: var(--yg-text-tertiary)">
             {{ t('manage.banRules.rule.codeHint') }}
           </p>
         </ElFormItem>
@@ -915,10 +915,10 @@ function formatReason(user: BannedUser): string | null {
             />
           </ElSelect>
           <template v-if="selectedTrigger">
-            <p class="text-xs w-full" style="color: var(--zv-label)">
+            <p class="text-xs w-full" style="color: var(--yg-text-tertiary)">
               {{ selectedTrigger.description }}
             </p>
-            <p class="text-xs w-full" style="color: var(--zv-label)">
+            <p class="text-xs w-full" style="color: var(--yg-text-tertiary)">
               {{ triggerDefaultHint() }}
             </p>
           </template>
@@ -934,7 +934,7 @@ function formatReason(user: BannedUser): string | null {
             v-model="createForm.penaltiesText"
             :placeholder="t('manage.banRules.dialog.penaltiesPlaceholder')"
           />
-          <p class="text-xs w-full" style="color: var(--zv-label)">
+          <p class="text-xs w-full" style="color: var(--yg-text-tertiary)">
             {{ t('manage.banRules.dialog.penaltiesHint') }}
           </p>
         </ElFormItem>

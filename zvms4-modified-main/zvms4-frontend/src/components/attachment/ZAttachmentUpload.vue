@@ -513,20 +513,18 @@ function statusText(item: DisplayItem): string {
 </script>
 
 <template>
-  <div class="w-full">
-    <div class="flex items-center justify-between mb-2">
-      <span class="text-sm text-gray-700">义工单照片</span>
-      <span class="text-xs text-gray-500">{{ countText }}</span>
+  <div class="yg-upload yg-upload--picture yg-attachment-upload">
+    <div class="flex items-center justify-between">
+      <span class="yg-text-sm yg-text-secondary">义工单照片</span>
+      <span class="yg-text-xs yg-text-tertiary">{{ countText }}</span>
     </div>
 
-    <div
-      v-if="items.length === 0"
-      class="rounded-lg border border-dashed border-gray-300 bg-gray-50 p-6 text-center"
-    >
-      <ElIcon class="text-2xl text-gray-400 mb-2">
+    <!-- 空态：拖拽上传区（准则 4.2.10） -->
+    <div v-if="items.length === 0" class="yg-upload__drag">
+      <ElIcon class="yg-text-2xl yg-text-tertiary">
         <Picture />
       </ElIcon>
-      <p class="text-sm text-gray-500 mb-4">尚未上传照片</p>
+      <p class="yg-text-sm yg-text-tertiary">尚未上传照片</p>
       <div v-if="canAdd" class="flex justify-center gap-3">
         <ElButton type="primary" plain @click="triggerCamera">
           <ElIcon class="mr-1"><Camera /></ElIcon>拍照
@@ -537,68 +535,63 @@ function statusText(item: DisplayItem): string {
       </div>
     </div>
 
-    <div
-      v-else
-      class="grid gap-3"
-      :style="{
-        gridTemplateColumns: 'repeat(auto-fill, minmax(96px, 1fr))'
-      }"
-    >
+    <!-- 图片墙 -->
+    <div v-else class="yg-upload__list yg-attachment-upload__grid">
       <div
         v-for="item in items"
         :key="item.oid || item.url"
-        class="relative aspect-square rounded-lg overflow-hidden border border-gray-200 bg-gray-100"
+        class="yg-attachment-upload__item"
       >
-        <div
-          v-if="item.status === 'loading'"
-          class="w-full h-full flex items-center justify-center"
-        >
-          <ElIcon class="att-spin text-xl text-gray-400">
-            <Loading />
-          </ElIcon>
-        </div>
-        <img
-          v-else-if="item.url"
-          :src="item.url"
-          class="w-full h-full object-cover"
-          alt="附件预览"
-        />
-        <div
-          v-else
-          class="w-full h-full flex items-center justify-center text-xs text-gray-500"
-        >
-          无预览
+        <div class="yg-upload__thumb yg-attachment-upload__thumb">
+          <div
+            v-if="item.status === 'loading'"
+            class="yg-attachment-upload__media"
+          >
+            <ElIcon class="yg-attachment-upload__spin yg-text-xl yg-text-tertiary">
+              <Loading />
+            </ElIcon>
+          </div>
+          <img
+            v-else-if="item.url"
+            :src="item.url"
+            alt="附件预览"
+          />
+          <div
+            v-else
+            class="yg-attachment-upload__media yg-text-xs yg-text-tertiary"
+          >
+            无预览
+          </div>
         </div>
 
-        <div
-          v-if="item.status === 'uploading'"
-          class="absolute inset-0 bg-black/50 flex flex-col items-center justify-center px-2"
-        >
+        <!-- 上传中：遮罩 + 进度 -->
+        <div v-if="item.status === 'uploading'" class="yg-attachment-upload__overlay">
           <ElProgress
             :percentage="item.progress"
             :show-text="false"
             :stroke-width="4"
             class="w-full"
           />
-          <span class="text-white text-xs mt-2">上传中…</span>
+          <span class="yg-text-xs yg-text-inverse mt-2">上传中…</span>
         </div>
 
+        <!-- 上传失败 -->
         <div
           v-else-if="item.status === 'error'"
-          class="absolute inset-0 bg-black/60 flex flex-col items-center justify-center px-2 text-center"
+          class="yg-attachment-upload__overlay"
         >
-          <span class="text-white text-xs mb-2">上传失败</span>
+          <span class="yg-text-xs yg-text-inverse mb-2">上传失败</span>
           <div class="flex gap-1">
             <button
               type="button"
-              class="text-white text-xs px-2 py-1 rounded hover:opacity-80"
+              class="yg-attachment-upload__ghost-btn"
               @click="retryItem(item)"
             >
               重试
             </button>
             <button
               type="button"
-              class="text-white text-xs px-2 py-1 rounded hover:opacity-80"
+              class="yg-attachment-upload__ghost-btn"
               @click="removeItem(item)"
             >
               删除
@@ -606,34 +599,36 @@ function statusText(item: DisplayItem): string {
           </div>
         </div>
 
+        <!-- 加载失败 -->
         <div
           v-else-if="item.status === 'failed'"
-          class="absolute inset-0 bg-black/60 flex flex-col items-center justify-center px-2 text-center"
+          class="yg-attachment-upload__overlay"
         >
-          <span class="text-white text-xs mb-2">加载失败</span>
+          <span class="yg-text-xs yg-text-inverse mb-2">加载失败</span>
           <button
             type="button"
-            class="text-white text-xs px-2 py-1 rounded hover:opacity-80"
+            class="yg-attachment-upload__ghost-btn"
             @click="removeItem(item)"
           >
             删除
           </button>
         </div>
 
+        <!-- 已完成：状态条 + 图标操作 -->
         <div
           v-else-if="item.status === 'done'"
-          class="absolute inset-x-0 bottom-0 bg-black/40 px-1 py-0.5 flex items-center justify-between"
+          class="yg-attachment-upload__bar"
         >
-          <span class="text-white text-[12px] truncate">{{ statusText(item) }}</span>
+          <span class="yg-text-xs yg-text-inverse truncate">{{ statusText(item) }}</span>
           <div class="flex items-center">
             <button
               v-if="supportsOcr(item) || item.ocr"
               type="button"
-              class="text-white p-1 rounded hover:opacity-80"
+              class="yg-attachment-upload__icon-btn"
               :title="ocrButtonTitle(item)"
               @click="onOcrClick(item)"
             >
-              <ElIcon :class="ocrRunning(item) ? 'att-spin' : ''">
+              <ElIcon :class="ocrRunning(item) ? 'yg-attachment-upload__spin' : ''">
                 <Loading v-if="ocrRunning(item)" />
                 <Document v-else />
               </ElIcon>
@@ -641,15 +636,16 @@ function statusText(item: DisplayItem): string {
             <button
               v-if="item.url"
               type="button"
-              class="text-white p-1 rounded hover:opacity-80"
+              class="yg-attachment-upload__icon-btn"
               @click="openPreview(item)"
             >
               <ElIcon><ZoomIn /></ElIcon>
             </button>
+            <!-- 删除属于破坏性操作：用红图标（准则 5.1） -->
             <button
               v-if="!readonly && !disabled"
               type="button"
-              class="text-white p-1 rounded hover:opacity-80"
+              class="yg-attachment-upload__icon-btn yg-attachment-upload__icon-btn--danger"
               @click="removeItem(item)"
             >
               <ElIcon><Delete /></ElIcon>
@@ -661,11 +657,11 @@ function statusText(item: DisplayItem): string {
       <button
         v-if="canAdd"
         type="button"
-        class="aspect-square rounded-lg border border-dashed border-gray-300 flex flex-col items-center justify-center text-gray-500 hover:border-primary hover:text-primary transition-colors"
+        class="yg-attachment-upload__item yg-attachment-upload__item--add"
         @click="triggerCamera"
       >
-        <ElIcon class="text-xl mb-1"><Plus /></ElIcon>
-        <span class="text-xs">继续拍照</span>
+        <ElIcon class="yg-text-xl"><Plus /></ElIcon>
+        <span class="yg-text-xs">继续拍照</span>
       </button>
     </div>
 
@@ -710,20 +706,20 @@ function statusText(item: DisplayItem): string {
       append-to-body
     >
       <div class="flex flex-col gap-2">
-        <div class="flex flex-wrap items-center gap-3 text-xs" style="color: var(--zv-label)">
+        <div class="flex flex-wrap items-center gap-3 yg-text-xs yg-text-tertiary">
           <span v-if="ocrResultItem?.ocr?.engine">
             {{ t('ai.ocr.engine') }}：{{ ocrResultItem.ocr.engine }}
           </span>
           <span v-if="ocrResultItem?.ocr?.confidence !== undefined" class="tabular-nums">
             {{ t('ai.ocr.confidence') }}：{{ Math.round((ocrResultItem.ocr.confidence ?? 0) * 100) }}%
           </span>
-          <span v-if="ocrResultItem?.ocr?.error" style="color: var(--el-color-danger)">
+          <span v-if="ocrResultItem?.ocr?.error" class="yg-text-danger">
             {{ ocrResultItem.ocr.error }}
           </span>
         </div>
-        <pre
-          class="ocr-text"
-        >{{ ocrResultItem?.ocr?.text || t('ai.ocr.emptyText') }}</pre>
+        <pre class="yg-attachment-upload__ocr-text">{{
+          ocrResultItem?.ocr?.text || t('ai.ocr.emptyText')
+        }}</pre>
       </div>
       <template #footer>
         <div class="flex items-center justify-end gap-2">
@@ -742,53 +738,163 @@ function statusText(item: DisplayItem): string {
 </template>
 
 <style scoped>
-.text-gray-700 {
-  color: var(--el-text-color-regular);
+/* 图片墙：8px 网格上的 96px 缩略图 */
+.yg-attachment-upload__grid {
+  display: grid;
+  gap: var(--yg-space-3);
+  grid-template-columns: repeat(auto-fill, minmax(calc(var(--yg-space-9) * 2), 1fr));
 }
-.text-gray-500 {
-  color: var(--el-text-color-secondary);
+
+.yg-attachment-upload__item {
+  position: relative;
+  aspect-ratio: 1 / 1;
+  overflow: hidden;
+  border-radius: var(--yg-radius-lg);
+  background-color: var(--yg-bg-surface-sunken);
+  border: calc(var(--yg-space-1) / 4) solid var(--yg-border-default);
 }
-.text-gray-400 {
-  color: var(--el-text-color-placeholder);
+
+.yg-attachment-upload__thumb {
+  width: 100%;
+  height: 100%;
+  border-radius: var(--yg-radius-lg);
 }
-.border-gray-300 {
-  border-color: var(--el-border-color);
+
+/* 占位（加载中 / 无预览） */
+.yg-attachment-upload__media {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
 }
-.border-gray-200 {
-  border-color: var(--el-border-color-light);
+
+/* 遮罩层：深色不透明底（不支持 color-mix 时退化为实色，文字始终可读） */
+.yg-attachment-upload__overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding-inline: var(--yg-space-2);
+  background-color: var(--yg-gray-950);
+  background-color: color-mix(in srgb, var(--yg-gray-950) 72%, transparent);
+  text-align: center;
 }
-.bg-gray-50 {
-  background-color: var(--el-fill-color-light);
+
+/* 底部状态条 */
+.yg-attachment-upload__bar {
+  position: absolute;
+  inset-inline: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--yg-space-1);
+  padding: var(--yg-space-1) var(--yg-space-2);
+  background-color: var(--yg-gray-950);
+  background-color: color-mix(in srgb, var(--yg-gray-950) 62%, transparent);
 }
-.bg-gray-100 {
-  background-color: var(--el-fill-color);
+
+.yg-attachment-upload__icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--yg-space-6);
+  height: var(--yg-space-6);
+  border-radius: var(--yg-radius-sm);
+  color: var(--yg-text-inverse);
+  cursor: pointer;
+  transition: background-color var(--yg-dur-fast) var(--yg-ease-out);
 }
-.hover\:border-primary:hover {
-  border-color: var(--el-color-primary);
+
+.yg-attachment-upload__icon-btn:hover {
+  background-color: var(--yg-bg-hover);
 }
-.hover\:text-primary:hover {
-  color: var(--el-color-primary);
+
+.yg-attachment-upload__icon-btn:focus-visible {
+  box-shadow: var(--yg-focus-ring);
 }
-.att-spin {
-  animation: att-spin 1s linear infinite;
+
+/* 删除：破坏性操作，用红色（准则 5.1） */
+.yg-attachment-upload__icon-btn--danger {
+  color: var(--yg-text-danger);
 }
-@keyframes att-spin {
-  to {
-    transform: rotate(360deg);
-  }
+
+.yg-attachment-upload__ghost-btn {
+  padding: var(--yg-space-1) var(--yg-space-2);
+  border-radius: var(--yg-radius-sm);
+  color: var(--yg-text-inverse);
+  font-size: var(--yg-font-size-xs);
+  cursor: pointer;
+  transition: background-color var(--yg-dur-fast) var(--yg-ease-out);
 }
-.ocr-text {
+
+.yg-attachment-upload__ghost-btn:hover {
+  background-color: var(--yg-bg-hover);
+}
+
+/* 继续拍照：虚线占位块 */
+.yg-attachment-upload__item--add {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--yg-space-1);
+  border-style: dashed;
+  color: var(--yg-text-tertiary);
+  cursor: pointer;
+  transition:
+    color var(--yg-dur-fast) var(--yg-ease-out),
+    border-color var(--yg-dur-fast) var(--yg-ease-out),
+    background-color var(--yg-dur-fast) var(--yg-ease-out);
+}
+
+.yg-attachment-upload__item--add:hover {
+  color: var(--yg-color-primary);
+  border-color: var(--yg-color-primary);
+  background-color: var(--yg-color-primary-soft);
+}
+
+/* OCR 文本：凹陷面 + 发丝线（实色，可读性优先） */
+.yg-attachment-upload__ocr-text {
   margin: 0;
-  padding: 10px 12px;
+  padding: var(--yg-space-3);
   max-height: 60vh;
   overflow: auto;
   white-space: pre-wrap;
   word-break: break-word;
-  line-height: 1.6;
-  font-size: 14px;
-  border: 1px solid var(--zv-hairline);
-  border-radius: 6px;
-  background: var(--zv-surface-alt);
-  color: var(--zv-text);
+  line-height: var(--yg-line-height-relaxed);
+  font-size: var(--yg-font-size-md);
+  font-family: var(--yg-font-mono);
+  border: calc(var(--yg-space-1) / 4) solid var(--yg-border-default);
+  border-radius: var(--yg-radius-md);
+  background-color: var(--yg-bg-surface-sunken);
+  color: var(--yg-text-primary);
+}
+
+.yg-attachment-upload__spin {
+  animation: yg-attachment-upload__spin 1s linear infinite;
+}
+
+@keyframes yg-attachment-upload__spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .yg-attachment-upload__spin {
+    animation: none;
+  }
+}
+
+@supports (corner-shape: squircle) {
+  .yg-attachment-upload__item,
+  .yg-attachment-upload__thumb,
+  .yg-attachment-upload__ocr-text {
+    corner-shape: squircle;
+  }
 }
 </style>
