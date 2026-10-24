@@ -1,4 +1,4 @@
-"""OCR 引擎适配器注册表（腾讯 / 阿里 / RapidOCR）。
+"""OCR 引擎适配器注册表（腾讯 / 阿里 / 百度 / RapidOCR / Groq）。
 
 注册表把「用哪个厂商的 OCR」收敛成一组同签名的适配器::
 
@@ -30,14 +30,21 @@
 / `rapidocr` 都是重包（onnxruntime 尤甚），装不上或没装的部署不该在 import 阶段
 把整个网关带崩；缺依赖时抛 :class:`OcrEngineError`，消息可直接进审计日志（不含
 任何凭证）。
+
+百度与 Groq 走项目自带的 ``httpx`` **手写 HTTP**，不引 SDK：百度 ``baidu-aip``
+停更多年，Groq 只需一个 OpenAI 兼容端点，多一个包就多一份升级债。
 """
 
 from __future__ import annotations
 
 import base64
+import hashlib
+import inspect
 import json
 import logging
+import os
 import threading
+import time
 from types import SimpleNamespace
 from typing import Any, Mapping
 
@@ -51,9 +58,17 @@ _logger = logging.getLogger(__name__)
 
 KIND_TENCENT = "tencent"
 KIND_ALIYUN = "aliyun"
+KIND_BAIDU = "baidu"
 KIND_RAPIDOCR = "rapidocr"
+KIND_GROQ = "groq"
 
-ENGINE_KINDS: tuple[str, ...] = (KIND_TENCENT, KIND_ALIYUN, KIND_RAPIDOCR)
+ENGINE_KINDS: tuple[str, ...] = (
+    KIND_TENCENT,
+    KIND_ALIYUN,
+    KIND_BAIDU,
+    KIND_RAPIDOCR,
+    KIND_GROQ,
+)
 
 # 各引擎的上游超时（秒）。写入 ``ClientProfile.reqTimeout`` /
 # ``RuntimeOptions.read_timeout``：默认 60 秒对一张 10MB 的图太长，占着并发名额
@@ -67,6 +82,20 @@ TENCENT_DEFAULT_LANGUAGE = "zh"
 # 阿里 OCR 的默认服务端点；``secret["endpoint"]`` 或 ``config["endpoint"]`` 可覆盖。
 # 显式写默认值是因为 Tea SDK 的 ``Config`` 不自带 endpoint，缺了会拼不出 URL。
 ALIYUN_DEFAULT_ENDPOINT = "ocr-api.cn-hangzhou.aliyuncs.com"
+
+# 百度 OCR：token 端点与识别端点同域，``ocr_api`` 默认走高精度版（``accurate_basic``
+# 比 ``general_basic`` 慢一点但中英混排准得多，本地兜底已有 RapidOCR 顶着延迟）。
+BAIDU_DEFAULT_ENDPOINT = "https://aip.baidubce.com"
+BAIDU_DEFAULT_OCR_API = "accurate_basic"
+# 换 token 的提前量（秒）。上游 ``expires_in`` 是 30 天，掐点复用 token 会偶发
+# ``error_code 110``；留 5 分钟缓冲，代价是每 30 天多一次换 token 请求。
+BAIDU_TOKEN_REFRESH_MARGIN = 300.0
+
+# Groq：OpenAI 兼容端点。``model`` 一律从 ``config`` 读，**不写死**——Groq 的
+# 可用视觉模型换得比 SDK 版本还快，写死等于给自己埋一个定时 404。
+GROQ_DEFAULT_BASE_URL = "https://api.groq.com/openai/v1"
+GROQ_DEFAULT_MODEL = "qwen/qwen3.8-27b"
+GROQ_DEFAULT_REASONING_EFFORT = "none"
 
 
 class OcrEngineError(RuntimeError):
@@ -173,6 +202,54 @@ def _require(secret: Mapping[str, Any], field: str, engine: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise OcrEngineError(f"{engine} engine requires secret field {field!r}")
     return value.strip()
+
+
+# ---------------------------------------------------------------------------
+# 手写 HTTP（百度 / Groq 共用）
+# ---------------------------------------------------------------------------
+
+def _async_http_client(timeout: float) -> Any:
+    """建一个 ``httpx.AsyncClient``；httpx 缺失时给可照装的提示。
+
+    单独成函数是为了可测：用例 monkeypatch 这个工厂，把
+    ``httpx.MockTransport`` 塞进去，就能在不碰网络、不用真凭证的前提下断言
+    出站 URL / 头 / body（比 mock 掉整个适配器方法有信息量得多）。
+    """
+    try:
+        import httpx
+    except ImportError as exc:  # pragma: no cover - 依赖已装在 .venv
+        raise OcrEngineError("httpx is unavailable: pip install httpx") from exc
+    return httpx.AsyncClient(timeout=timeout)
+
+
+def _truncate(value: Any, limit: int = 200) -> str:
+    """错误信息截断：上游 500 的 HTML 整页塞进异常会把日志冲爆。"""
+    text = "" if value is None else str(value)
+    text = " ".join(text.split())
+    return text if len(text) <= limit else text[:limit] + "…"
+
+
+def _ok_json(response: Any, engine: str) -> dict:
+    """非 2xx / 非 JSON / 非对象一律转成 :class:`OcrEngineError`。
+
+    错误体只截前 200 字符：够定位（``model_not_found`` 之类），又不会把整页
+    HTML 灌进审计日志。响应体里不会有请求头，所以 ``Authorization`` 不会漏。
+    """
+    status = getattr(response, "status_code", 0)
+    if not 200 <= status < 300:
+        raise OcrEngineError(
+            f"{engine} engine request failed with status {status}: {_truncate(getattr(response, 'text', ''))}"
+        )
+    try:
+        data = response.json()
+    except ValueError as exc:
+        raise OcrEngineError(
+            f"{engine} engine returned a non-JSON response: {_truncate(getattr(response, 'text', ''))}"
+        ) from exc
+    if not isinstance(data, dict):
+        raise OcrEngineError(f"{engine} engine returned an unexpected JSON payload")
+    return data
+
 
 
 # ---------------------------------------------------------------------------
@@ -388,6 +465,204 @@ def _parse_json_object(payload: Any) -> dict | None:
 
 
 # ---------------------------------------------------------------------------
+# 百度 OCR（accurate_basic / general_basic）
+# ---------------------------------------------------------------------------
+
+# token 缓存：``(endpoint, api_key, secret 摘要)`` → ``(access_token, 到期时刻 monotonic)``。
+# 为什么不把 token 拼进类的实例属性：适配器是**每次识别新建**的
+# （``ENGINES[kind]()``），实例级缓存等于没有缓存，每次识别都多一次换 token 往返。
+# 缓存键带 secret 摘要：轮换 secret_key 后，旧 secret 换出的 token 必须立刻作废
+# （百度 token 有效期以月计，不作废等于「换了密钥还留着旧通道」）。摘要用
+# sha256 前 16 位而不是原始密钥——键只做相等比较，不落原始密钥到内存长驻。
+_BAIDU_TOKEN_LOCK = threading.Lock()
+_BAIDU_TOKENS: dict[tuple[str, str, str], tuple[str, float]] = {}
+
+
+def _baidu_secret_digest(secret_key: str) -> str:
+    return hashlib.sha256(secret_key.encode("utf-8")).hexdigest()[:16]
+
+
+def _baidu_token_key(endpoint: str, api_key: str, secret_key: str) -> tuple[str, str, str]:
+    return (endpoint.rstrip("/"), api_key, _baidu_secret_digest(secret_key))
+
+
+def _baidu_cached_token(endpoint: str, api_key: str, secret_key: str) -> str | None:
+    key = _baidu_token_key(endpoint, api_key, secret_key)
+    with _BAIDU_TOKEN_LOCK:
+        entry = _BAIDU_TOKENS.get(key)
+    if entry is None:
+        return None
+    token, expires_at = entry
+    if time.monotonic() >= expires_at:
+        _baidu_drop_token(endpoint, api_key, secret_key)
+        return None
+    return token
+
+
+def _baidu_store_token(
+    endpoint: str, api_key: str, secret_key: str, token: str, expires_in: Any
+) -> None:
+    try:
+        ttl = float(expires_in)
+    except (TypeError, ValueError):
+        ttl = 0.0
+    if ttl <= 0:
+        # ``expires_in`` 缺失/异常：宁可不缓存，也不要拿一个寿命未知的 token
+        # 去赌（过期后的 110 会以「识别失败」的形式冒出来，极难查）。
+        return
+    # 提前 ``BAIDU_TOKEN_REFRESH_MARGIN`` 秒视为过期；token 寿命比缓冲还短时
+    # 按原寿命缓存，否则每次识别都会换 token，缓存等于没写。
+    lifetime = ttl - BAIDU_TOKEN_REFRESH_MARGIN if ttl > BAIDU_TOKEN_REFRESH_MARGIN else ttl
+    key = _baidu_token_key(endpoint, api_key, secret_key)
+    # 临界区只做字典写入，**不跨 await**：线程锁配协程时，锁内 await 会同时
+    # 卡住事件循环和别的 worker。
+    with _BAIDU_TOKEN_LOCK:
+        _BAIDU_TOKENS[key] = (token, time.monotonic() + lifetime)
+
+
+def _baidu_drop_token(endpoint: str, api_key: str, secret_key: str) -> None:
+    key = _baidu_token_key(endpoint, api_key, secret_key)
+    with _BAIDU_TOKEN_LOCK:
+        _BAIDU_TOKENS.pop(key, None)
+
+
+def _clear_baidu_tokens() -> None:
+    """清空 token 缓存（运维排障 / 用例隔离用）。"""
+    with _BAIDU_TOKEN_LOCK:
+        _BAIDU_TOKENS.clear()
+
+
+async def _baidu_access_token(
+    endpoint: str, api_key: str, secret_key: str, timeout: float
+) -> str:
+    """取 access_token：先查进程内缓存，未命中才走 OAuth。
+
+    并发下最多出现两次并行换 token（错过窗口就各换各的），最后一次写入胜出——
+    百度对同一组 client_id 不做旧 token 吊销，重复换是幂等的，加锁跨 await 反而
+    会把所有识别请求串成一条队。
+    """
+    cached = _baidu_cached_token(endpoint, api_key, secret_key)
+    if cached:
+        return cached
+
+    url = f"{endpoint.rstrip('/')}/oauth/2.0/token"
+    async with _async_http_client(timeout) as client:
+        response = await client.post(
+            url,
+            params={
+                "grant_type": "client_credentials",
+                "client_id": api_key,
+                "client_secret": secret_key,
+            },
+        )
+
+    status = getattr(response, "status_code", 0)
+    if not 200 <= status < 300:
+        raise OcrEngineError(
+            f"baidu engine token request failed with status {status}"
+        )
+    try:
+        data = response.json()
+    except ValueError as exc:
+        raise OcrEngineError("baidu engine token endpoint returned non-JSON") from exc
+    if not isinstance(data, dict) or not data.get("access_token"):
+        # 只回放百度自己的错误字段：``response.text`` 整体可能带上别的参数，
+        # 而这个异常会进审计日志。
+        detail = None
+        if isinstance(data, dict):
+            detail = data.get("error_description") or data.get("error")
+        raise OcrEngineError(
+            f"baidu engine token request was rejected: {_truncate(detail) or 'no access_token'}"
+        )
+
+    token = str(data["access_token"])
+    _baidu_store_token(endpoint, api_key, secret_key, token, data.get("expires_in"))
+    return token
+
+
+class BaiduOcrEngine:
+    """百度 OCR 通用文字识别（``accurate_basic`` 默认，可配 ``general_basic``）。
+
+    两次 HTTP：
+    1. ``/oauth/2.0/token`` 换 access_token（进程内按 ``expires_in`` 缓存）；
+    2. ``/rest/2.0/ocr/v1/{ocr_api}`` 送纯 base64 图片。
+
+    ``confidence`` 一律为 ``None``：该接口不返回逐行置信度（``probability=true``
+    才有 ``probability.average``，但那是整包均值，塞进每一行就是编数据）。
+    """
+
+    kind = KIND_BAIDU
+    VERSION = "baidu-v1"
+
+    async def recognize(
+        self,
+        image: bytes,
+        mime: str,
+        secret: Mapping[str, Any],
+        config: Mapping[str, Any],
+    ) -> dict:
+        api_key = _require(secret, "api_key", self.kind)
+        secret_key = _require(secret, "secret_key", self.kind)
+        endpoint = str(
+            secret.get("endpoint") or config.get("endpoint") or BAIDU_DEFAULT_ENDPOINT
+        ).strip()
+        ocr_api = str(
+            config.get("ocr_api") or secret.get("ocr_api") or BAIDU_DEFAULT_OCR_API
+        ).strip()
+        timeout = float(config.get("timeout") or DEFAULT_TIMEOUT)
+
+        payload = _base64_payload(image)
+        if not payload:
+            raise OcrEngineError("baidu engine requires non-empty image bytes")
+
+        token = await _baidu_access_token(endpoint, api_key, secret_key, timeout)
+        body = {
+            "image": payload,
+            "detect_direction": True,
+            "paragraph": False,
+        }
+        url = f"{endpoint.rstrip('/')}/rest/2.0/ocr/v1/{ocr_api}"
+        async with _async_http_client(timeout) as client:
+            # 百度 v1 OCR 接口文档指定的 Content-Type 是
+            # application/x-www-form-urlencoded（不是 JSON body）；发 JSON 时
+            # 真机可能回 error_code 216202（参数错误），所以按官方口径发表单。
+            response = await client.post(
+                url,
+                params={"access_token": token},
+                data=body,
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+            )
+
+        data = _ok_json(response, self.kind)
+        error_code = data.get("error_code")
+        if error_code is not None:
+            # 110/111 是 token 失效/过期：把缓存条目丢掉，下次调用自动换新的。
+            if str(error_code) in {"110", "111"}:
+                _baidu_drop_token(endpoint, api_key, secret_key)
+            raise OcrEngineError(
+                f"baidu engine rejected the request: error_code={error_code} "
+                f"error_msg={_truncate(data.get('error_msg'))}"
+            )
+
+        return self._normalize(data)
+
+    @staticmethod
+    def _normalize(data: Mapping[str, Any]) -> dict:
+        lines: list[dict] = []
+        for item in data.get("words_result") or []:
+            if not isinstance(item, Mapping):
+                continue
+            # ``location`` 原样保留（{"left","top","width","height"}），按模块约定
+            # 不转换成统一 box 形状。
+            lines.append(_line(item.get("words", ""), None, _plain(item.get("location"))))
+        raw = {
+            "words_result_num": data.get("words_result_num"),
+            "direction": data.get("direction"),
+        }
+        return _result(lines=lines, engine=KIND_BAIDU, raw=raw)
+
+
+# ---------------------------------------------------------------------------
 # RapidOCR（本地兜底）
 # ---------------------------------------------------------------------------
 
@@ -397,6 +672,82 @@ def _parse_json_object(payload: Any) -> dict | None:
 # 绑定事件循环，多 worker/重载时会出现「锁绑在旧 loop 上」的经典错误。
 _RAPIDOCR_ENGINE: Any = None
 _RAPIDOCR_INIT_LOCK = threading.Lock()
+
+# ORT 线程上限：onnxruntime 默认 ``intra_op_num_threads=0`` = 吃满物理核。这台机器
+# 上还跑着 ComfyUI + Ollama，一个 OCR 请求把 8 个 vCPU 全占了，别的服务就开始
+# 排队。默认取 ``min(4, max(2, cpu//2))``（8 vCPU → 4），``inter_op`` 固定 1：
+# OCR 的算子图是串行的小图，inter-op 并行只会增加调度抖动。
+ORT_THREADS_ENV = "AI_OCR_ORT_THREADS"
+ORT_DEFAULT_MAX_INTRA_THREADS = 4
+ORT_DEFAULT_MIN_INTRA_THREADS = 2
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        return int(raw.strip())
+    except ValueError:
+        _logger.warning("ignoring %s=%r: not an integer", name, raw)
+        return default
+
+
+def _rapidocr_intra_threads(cpu_count: int | None = None) -> int:
+    """intra-op 线程数：环境变量优先，缺省 ``min(4, max(2, cpu//2))``。
+
+    ``AI_OCR_ORT_THREADS`` 设成 ``0`` / 负数表示**不限制**（交给 ORT 默认值），
+    给压测或纯批处理部署留个口子。返回值始终钳进 ``1..cpu_count``：rapidocr
+    的 ``_init_sess_opts`` 对越界值静默忽略，钳位是我们自己保证「限制真的生效」。
+    """
+    cpus = cpu_count if cpu_count and cpu_count > 0 else (os.cpu_count() or 1)
+    default = min(ORT_DEFAULT_MAX_INTRA_THREADS, max(ORT_DEFAULT_MIN_INTRA_THREADS, cpus // 2))
+    threads = _env_int(ORT_THREADS_ENV, default)
+    if threads <= 0:
+        return 0
+    return max(1, min(threads, cpus))
+
+
+def _rapidocr_engine_params() -> dict:
+    """rapidocr 3.x 的线程参数入口：``params`` 里的**点号路径**。
+
+    3.10.0 的 ``RapidOCR(params=...)`` 经 ``ParseParams.update_batch`` 按 ``.``
+    拆段写进 OmegaConf（``rapidocr/utils/parse_parameters.py:45``），Det/Cls/Rec
+    三个模型都从 ``cfg.EngineConfig[engine_type]`` 取线程数
+    （``rapidocr/main.py:127``），最终落到
+    ``OrtInferSession._init_sess_opts``（``inference_engine/onnxruntime/main.py:85``）。
+    所以这里只需写 ``EngineConfig.onnxruntime.*`` 一处，三个会话共享。
+    """
+    intra = _rapidocr_intra_threads()
+    if intra <= 0:
+        return {}
+    return {
+        "EngineConfig.onnxruntime.intra_op_num_threads": intra,
+        "EngineConfig.onnxruntime.inter_op_num_threads": 1,
+    }
+
+
+def _construct_rapidocr(factory: Any) -> Any:
+    """按 ``params`` 建实例；2.x（或只收零参的桩）退回默认构造。
+
+    用 ``inspect`` 而不是 ``try/except TypeError``：后者的兜底范围含 init 内部
+    抛出的 TypeError，会把「参数真的错了」误判成「这个版本不支持」，然后静默
+    退回吃满 CPU 的模式。
+    """
+    params = _rapidocr_engine_params()
+    if not params:
+        return factory()
+    try:
+        signature = inspect.signature(factory)
+    except (TypeError, ValueError):  # pragma: no cover - C 扩展/内建
+        return factory()
+    accepts_params = "params" in signature.parameters or any(
+        param.kind is inspect.Parameter.VAR_KEYWORD
+        for param in signature.parameters.values()
+    )
+    if not accepts_params:  # pragma: no cover - rapidocr 2.x
+        return factory()
+    return factory(params=params)
 
 
 def _load_rapidocr_sdk() -> SimpleNamespace:
@@ -416,7 +767,7 @@ def _rapidocr_instance() -> Any:
         return _RAPIDOCR_ENGINE
     with _RAPIDOCR_INIT_LOCK:
         if _RAPIDOCR_ENGINE is None:
-            _RAPIDOCR_ENGINE = _load_rapidocr_sdk().RapidOCR()
+            _RAPIDOCR_ENGINE = _construct_rapidocr(_load_rapidocr_sdk().RapidOCR)
     return _RAPIDOCR_ENGINE
 
 
@@ -470,13 +821,256 @@ class RapidOcrEngine:
 
 
 # ---------------------------------------------------------------------------
+# 本地引擎预热
+# ---------------------------------------------------------------------------
+
+# 8x8 纯白 PNG：只要能过 rapidocr 的 load_img + det 前处理即可。空白图的 det
+# 结果是空，rapidocr 内部把「检测不到」当正常输出返回，不会抛。
+_WARMUP_PNG = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAAAAADhZOFXAAAAEElEQVR4nGP8zwABTAwUMQBJQQEPeWDz+AAAAABJRU5ErkJggg=="
+)
+_WARMUP_LOCK = threading.Lock()
+_WARMUP_DONE = False
+
+
+def _warmup_sync() -> bool:
+    """在 worker 线程里跑一次最小推理；幂等。
+
+    首次调用要付模型加载 + ORT 会话初始化的钱（实测 ~3.3s），放在健康检查里
+    预热，用户的第一张图就不用等。失败**只记日志**：本地引擎挂了不该让健康检查
+    变成 500，调用方拿 False 自己决定要不要展示「本地不可用」。
+    """
+    global _WARMUP_DONE
+    if _WARMUP_DONE:
+        return True
+    with _WARMUP_LOCK:
+        if _WARMUP_DONE:
+            return True
+        try:
+            engine = _rapidocr_instance()
+            engine(_WARMUP_PNG)
+        except Exception as exc:
+            # 不标记 done：下次健康检查还能再试（可能只是模型没下载完）。
+            _logger.warning(
+                "local OCR warmup failed: %s: %s", type(exc).__name__, str(exc)[:300]
+            )
+            return False
+        try:
+            # 空白图检测不到行，rec 模型不会被加载；显式跑一次 rec-only，
+            # 让「第一张真图」也不用等 rec 会话初始化。
+            engine(_WARMUP_PNG, use_det=False, use_cls=False, use_rec=True)
+        except Exception as exc:  # pragma: no cover - 预热 rec 失败不影响主路径
+            _logger.debug(
+                "local OCR warmup skipped rec preload: %s: %s",
+                type(exc).__name__,
+                str(exc)[:200],
+            )
+        _WARMUP_DONE = True
+        return True
+
+
+async def warmup_local_engines() -> bool:
+    """预热本地 OCR（RapidOCR）；成功 ``True``，失败 ``False``（不抛异常）。
+
+    幂等且可并发：状态与锁都在 worker 线程侧，事件循环不会被 3 秒的模型加载
+    卡住；重复调用直接命中已完成的标记。
+    """
+    return await anyio.to_thread.run_sync(_warmup_sync)
+
+
+# ---------------------------------------------------------------------------
+# Groq（OpenAI 兼容 chat/completions，视觉模型）
+# ---------------------------------------------------------------------------
+
+# 提示词固定中文：线上主力是中文附件，用中文指令能让模型对「逐行、不改写」
+# 更稳（英文提示词在中文票据上容易出现整段摘要）。
+GROQ_PROMPT = (
+    "你是 OCR 引擎，请把图片里的文字逐行提取出来。要求：\n"
+    "1. 每行一个对象，text 是该行的文字内容，原样保留，不要翻译、改写、合并或补全。\n"
+    "2. box 是该行文字在图片中的绝对像素坐标 [x1, y1, x2, y2]，"
+    "x1,y1 是左上角，x2,y2 是右下角；不要输出归一化坐标。\n"
+    "3. 保持阅读顺序：从上到下，同一行从左到右。\n"
+    "4. 只输出 JSON，不要解释。图中没有文字时返回 {\"lines\": []}。"
+)
+
+# ``strict: true`` 要求所有字段都进 ``required`` 且 ``additionalProperties: false``，
+# 否则 Groq 会直接 400。box 用 items:number + minItems/maxItems 而不是 prefixItems：
+# 兼容性最好，长度约束一样硬。
+GROQ_RESPONSE_SCHEMA: dict = {
+    "type": "object",
+    "properties": {
+        "lines": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "text": {"type": "string"},
+                    "box": {
+                        "type": "array",
+                        "items": {"type": "number"},
+                        "minItems": 4,
+                        "maxItems": 4,
+                    },
+                },
+                "required": ["text", "box"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    "required": ["lines"],
+    "additionalProperties": False,
+}
+
+
+def _json_object_from_text(text: str) -> dict | None:
+    """模型输出 → dict；顺手剥掉 ```` ```json ```` 围栏。
+
+    ``strict`` 模式下理论上只有裸 JSON，但上游换模型/降级时偶尔会带上围栏
+    或前导空白，剥一层比在这里报「解析失败」有用。
+    """
+    cleaned = text.strip()
+    if cleaned.startswith("```"):
+        parts = cleaned.split("```")
+        if len(parts) >= 2:
+            cleaned = parts[1].strip()
+            if cleaned.lower().startswith("json"):
+                cleaned = cleaned[4:].strip()
+    try:
+        parsed = json.loads(cleaned)
+    except ValueError:
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+class GroqOcrEngine:
+    """Groq Chat Completions + 视觉模型，定位是**人工效果对照档**，非主力链路。
+
+    免费层额度（RPM/RPD/TPM）撑不起生产流量，且不支持 logprobs（传了直接 400），
+    逐行置信度拿不到，所以 ``confidence`` 一律 ``None``。
+
+    因此这里**不做任何自动质量仲裁**：不因为行数偏少、box 越界、文本超长就重跑
+    或切别的引擎——「哪个引擎读得更准」由人对着同一张图比。任何自动化判断都只是
+    把模型的偏差换成代码的偏差。
+    """
+
+    kind = KIND_GROQ
+    VERSION = "groq-openai-compatible"
+
+    async def recognize(
+        self,
+        image: bytes,
+        mime: str,
+        secret: Mapping[str, Any],
+        config: Mapping[str, Any],
+    ) -> dict:
+        api_key = _require(secret, "api_key", self.kind)
+        base_url = str(
+            secret.get("base_url") or config.get("base_url") or GROQ_DEFAULT_BASE_URL
+        ).strip().rstrip("/")
+        # model 必须来自 config：Groq 的视觉模型下线/改名没有过渡期。
+        model = str(config.get("model") or GROQ_DEFAULT_MODEL).strip()
+        timeout = float(config.get("timeout") or DEFAULT_TIMEOUT)
+        reasoning_effort = config.get("reasoning_effort", GROQ_DEFAULT_REASONING_EFFORT)
+        reasoning_effort = "" if reasoning_effort is None else str(reasoning_effort).strip()
+
+        payload = _base64_payload(image)
+        if not payload:
+            raise OcrEngineError("groq engine requires non-empty image bytes")
+        mime_type = str(mime or "").strip()
+        if not mime_type and isinstance(image, str) and image.strip().startswith("data:"):
+            mime_type = image.split(";", 1)[0][5:]
+        mime_type = mime_type or "image/png"
+
+        body: dict[str, Any] = {
+            "model": model,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": GROQ_PROMPT},
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:{mime_type};base64,{payload}"
+                            },
+                        },
+                    ],
+                }
+            ],
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "ocr_lines",
+                    "strict": True,
+                    "schema": GROQ_RESPONSE_SCHEMA,
+                },
+            },
+        }
+        if reasoning_effort:
+            # 非推理模型收到未知字段会 400；想彻底不传就把 config 里设成 ""。
+            body["reasoning_effort"] = reasoning_effort
+        # 不传 temperature：Groq 会把 0 静默改成 1e-8，传了等于没传，还多一个
+        # 让人误以为「已锁定确定性」的假象。不传 logprobs：直接 400。
+
+        headers = {"Authorization": f"Bearer {api_key}"}
+        async with _async_http_client(timeout) as client:
+            response = await client.post(
+                f"{base_url}/chat/completions", json=body, headers=headers
+            )
+
+        data = _ok_json(response, self.kind)
+        choices = data.get("choices")
+        if not isinstance(choices, list) or not choices:
+            raise OcrEngineError("groq engine returned no choices")
+        message = choices[0].get("message") if isinstance(choices[0], Mapping) else None
+        content = message.get("content") if isinstance(message, Mapping) else None
+        if not isinstance(content, str) or not content.strip():
+            raise OcrEngineError("groq engine returned empty message content")
+        parsed = _json_object_from_text(content)
+        if parsed is None:
+            raise OcrEngineError(
+                f"groq engine returned unparsable content: {_truncate(content)}"
+            )
+        items = parsed.get("lines")
+        if not isinstance(items, list):
+            raise OcrEngineError("groq engine response is missing the 'lines' array")
+
+        lines: list[dict] = []
+        for item in items:
+            if not isinstance(item, Mapping):
+                continue
+            text = item.get("text")
+            box = item.get("box")
+            lines.append(
+                _line(
+                    "" if text is None else text,
+                    None,
+                    _plain(box) if isinstance(box, (list, tuple)) else None,
+                )
+            )
+
+        raw = {
+            "model": data.get("model") or model,
+            "finish_reason": (
+                choices[0].get("finish_reason")
+                if isinstance(choices[0], Mapping)
+                else None
+            ),
+            "usage": _plain(data.get("usage")),
+        }
+        return _result(lines=lines, engine=KIND_GROQ, raw=raw)
+
+
+# ---------------------------------------------------------------------------
 # 注册表
 # ---------------------------------------------------------------------------
 
 ENGINES: dict[str, type] = {
     KIND_TENCENT: TencentOcrEngine,
     KIND_ALIYUN: AliyunOcrEngine,
+    KIND_BAIDU: BaiduOcrEngine,
     KIND_RAPIDOCR: RapidOcrEngine,
+    KIND_GROQ: GroqOcrEngine,
 }
 
 
@@ -485,12 +1079,24 @@ __all__ = [
     "ENGINE_KINDS",
     "KIND_TENCENT",
     "KIND_ALIYUN",
+    "KIND_BAIDU",
     "KIND_RAPIDOCR",
+    "KIND_GROQ",
     "TENCENT_DEFAULT_LANGUAGE",
     "ALIYUN_DEFAULT_ENDPOINT",
+    "BAIDU_DEFAULT_ENDPOINT",
+    "BAIDU_DEFAULT_OCR_API",
+    "BAIDU_TOKEN_REFRESH_MARGIN",
+    "GROQ_DEFAULT_BASE_URL",
+    "GROQ_DEFAULT_MODEL",
+    "GROQ_DEFAULT_REASONING_EFFORT",
+    "ORT_THREADS_ENV",
     "DEFAULT_TIMEOUT",
     "OcrEngineError",
     "TencentOcrEngine",
     "AliyunOcrEngine",
+    "BaiduOcrEngine",
     "RapidOcrEngine",
+    "GroqOcrEngine",
+    "warmup_local_engines",
 ]

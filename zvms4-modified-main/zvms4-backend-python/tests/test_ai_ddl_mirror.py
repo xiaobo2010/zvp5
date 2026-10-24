@@ -1,13 +1,14 @@
-"""AI 网关迁移的三方镜像：V024 / V025 / V026 / ``db/models.py`` / V001，离线不连库。
+"""AI 网关迁移的三方镜像：V024 / V025 / V026 / V027 / ``db/models.py`` / V001，
+离线不连库。
 
 ``db.ddl_check`` 只比对 models 与 V001（``python -m db.ddl_check``），所以「V024、
-V025、V026 是否真的与 models 一致」这条事实没有任何东西守着——它一漂，存量实例
-（走 V024+V025+V026）与全新实例（走 V001）就会长出不同的 AI 表。这里用
+V025、V026、V027 是否真的与 models 一致」这条事实没有任何东西守着——它一漂，
+存量实例（走 V024..V027）与全新实例（走 V001）就会长出不同的 AI 表。这里用
 ddl_check 的解析器把这些迁移文件也拉进同一次比较。
 
-迁移是历史事实：V024/V025 描述的是当时的形状，后续迁移只做增量。所以下面的
-断言写成「V024/V025 == models **减去** V026 的增量」，而不是让历史文件去追新
-目标态——那样每次改 schema 都得回头改历史迁移。
+迁移是历史事实：V024/V025/V026 描述的是当时的形状，后续迁移只做增量。所以下面的
+断言写成「V0xx == models **减去** 后续迁移的增量」，而不是让历史文件去追新目标
+态——那样每次改 schema 都得回头改历史迁移。
 
 版本号是写死的：迁移被改名/重编号本身就是运维要立刻知道的事，测试宁可红一次，
 也不要在「文件找不到」时悄悄跳过整组断言。
@@ -23,10 +24,12 @@ from db import ddl_check
 DDL_DIR = ddl_check.DDL_PATH.parent
 
 # AI 网关的迁移：V024 建表（ai_call_logs / ai_quota），V025 建凭据表并给
-# ai_call_logs 补 key_scope，V026 建 OCR 引擎表并放宽 ai_quota.kind。
+# ai_call_logs 补 key_scope，V026 建 OCR 引擎表并放宽 ai_quota.kind，V027 把
+# ai_ocr_engines.kind 从三值扩到五值。
 GATEWAY_FILE = "V024__add_ai_gateway.sql"
 CREDENTIALS_FILE = "V025__add_ai_credentials.sql"
 OCR_FILE = "V026__add_ai_ocr_engines_and_key_headers.sql"
+OCR_KIND_FILE = "V027__extend_ai_ocr_engines_kind.sql"
 
 # ``ai_call_logs.key_scope`` 的 CHECK 规范化后的形态（ddl_check 会把大小写与空白
 # 折叠掉）。V024 建表时还没有这一列，它由 V025 的幂等 ALTER 补上——所以下面既断言
@@ -54,6 +57,11 @@ QUOTA_KIND_CK = "kind in ('ocr','chat') or kind like 'ocr\\_%' escape '\\'"
 # V026 给 ai_credentials 补的两列与它们的 IS JSON 约束。
 HEADER_COLUMNS = ("headers_json", "api_path")
 HEADERS_JSON_CK = "headers_json is json"
+
+# ai_ocr_engines.kind 的两代集合：V026 建表时是三值，V027 才扩到五值。
+LEGACY_OCR_KIND_CK = "kind in ('tencent','aliyun','rapidocr')"
+OCR_KIND_CK = "kind in ('tencent','aliyun','rapidocr','baidu','groq')"
+OCR_KIND_CONSTRAINT = "ck_ai_ocr_engines_kind"
 
 
 def _migration(name: str) -> Path:
@@ -90,6 +98,10 @@ def _ocr() -> dict:
 
 def _ocr_text() -> str:
     return _migration(OCR_FILE).read_text(encoding="utf-8")
+
+
+def _ocr_kind_text() -> str:
+    return _migration(OCR_KIND_FILE).read_text(encoding="utf-8")
 
 
 def test_ai_quota_migration_matches_models_and_v001() -> None:
@@ -219,8 +231,21 @@ def test_ocr_migration_matches_models_and_v001() -> None:
     v001 = ddl_check.parse_v001()
 
     expected = modeled["tables"]["ai_ocr_engines"]
-    assert ocr["tables"]["ai_ocr_engines"] == expected
+    # V026 建表时 kind 还是三值集合，V027 才补上 baidu/groq。按文件头约定，
+    # V026 的期望形状 = models **减去** V027 的增量（而不是让历史迁移追新态）。
+    before_kind_extension = {
+        "columns": expected["columns"],
+        "pk": expected["pk"],
+        "uq": set(expected["uq"]),
+        "fk": set(expected["fk"]),
+        "ck": (expected["ck"] - {OCR_KIND_CK}) | {LEGACY_OCR_KIND_CK},
+    }
+    assert ocr["tables"]["ai_ocr_engines"] == before_kind_extension
+
+    # 全新实例走 V001，一次就拿到五值集合。
     assert v001["tables"]["ai_ocr_engines"] == expected
+    assert OCR_KIND_CK in expected["ck"]
+    assert LEGACY_OCR_KIND_CK not in expected["ck"]
 
     indexes = {
         ("ai_ocr_engines", True, ("name",)),
@@ -229,6 +254,61 @@ def test_ocr_migration_matches_models_and_v001() -> None:
     assert indexes <= ocr["indexes"]
     assert indexes <= modeled["indexes"]
     assert indexes <= v001["indexes"]
+
+
+def test_v027_extends_kind_to_the_modeled_set() -> None:
+    """V027 只做一件事：把 kind 的 CHECK 扩到 models/V001 的五值集合。
+
+    三件事都必须钉住：约束名与表达式逐字一致、幂等是先读后改（重复执行 no-op）、
+    以及历史迁移 V026 保持冻结（不得提前出现 baidu/groq）。
+    """
+    text = _ocr_kind_text()
+    extracted = ddl_check.extract_execute_immediate(text)
+
+    added = re.search(
+        r"ALTER TABLE\s+ai_ocr_engines\s+ADD CONSTRAINT\s+(\w+)\s+CHECK\s*\((.*)\)",
+        extracted,
+        re.IGNORECASE | re.DOTALL,
+    )
+    assert added, extracted
+    assert added.group(1).lower() == OCR_KIND_CONSTRAINT
+    parsed = ddl_check._parse_constraint(
+        f"constraint {added.group(1)} check ({added.group(2)})"
+    )
+    assert parsed == ("ck", OCR_KIND_CK)
+
+    modeled_ck = ddl_check.parse_models()["tables"]["ai_ocr_engines"]["ck"]
+    v001_ck = ddl_check.parse_v001()["tables"]["ai_ocr_engines"]["ck"]
+    assert parsed[1] in modeled_ck
+    assert parsed[1] in v001_ck
+    # 表达式里真的带上两个新 kind（只比对长度/前缀会让漏一个也通过）。
+    assert "'baidu'" in parsed[1]
+    assert "'groq'" in parsed[1]
+
+    # 幂等结构：先读 USER_CONSTRAINTS，只有当前表达式缺 baidu/groq 时才 DROP+ADD；
+    # 已是新集合时整段 no-op（不会在重跑窗口里短暂摘掉约束）。
+    lowered = text.lower()
+    read_at = lowered.index("from user_constraints")
+    needs_change_at = lowered.index("if v_needs_change then")
+    drop_at = lowered.index("drop constraint ck_ai_ocr_engines_kind")
+    add_at = lowered.index("add constraint ck_ai_ocr_engines_kind")
+    assert read_at < needs_change_at < drop_at < add_at
+    assert "select search_condition" in lowered
+    assert "where table_name = 'ai_ocr_engines'" in lowered
+    assert "and constraint_name = 'ck_ai_ocr_engines_kind'" in lowered
+    assert "and constraint_type = 'c'" in lowered
+    # 两个新字面量都参与「需不需要改」的判断：只查一个会让另一个永远补不上。
+    assert "instr(lower(v_condition), '''baidu''') = 0" in lowered
+    assert "instr(lower(v_condition), '''groq''') = 0" in lowered
+    # 约束不存在（V001 全新建库已带新集合 / 表还没建）→ 跳过而不是报错。
+    assert "when no_data_found then" in lowered
+
+    # 历史迁移冻结：V026 不许提前出现新 kind，否则「存量库走 V027」这条路径
+    # 会在 V026 上被绕过，V027 的幂等分支也失去意义。
+    v026 = _ocr_text().lower()
+    assert "'baidu'" not in v026
+    assert "'groq'" not in v026
+    assert LEGACY_OCR_KIND_CK in _ocr()["tables"]["ai_ocr_engines"]["ck"]
 
 
 def test_credentials_migration_adds_exactly_the_modeled_key_scope() -> None:

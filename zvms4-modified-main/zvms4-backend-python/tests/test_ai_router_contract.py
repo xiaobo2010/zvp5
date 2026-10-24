@@ -20,7 +20,7 @@ import settings
 from db import backends
 from routers import ai_router
 from services.ai import config as ai_config
-from services.ai import credentials, providers, quota, routing
+from services.ai import credentials, providers, quota, rate_limit, routing
 from typings.log import inject_log
 from util.object_id import get_current_user
 
@@ -109,6 +109,9 @@ def _client(user: dict | None = None) -> TestClient:
 def _isolated_gateway(monkeypatch):
     credentials._cache.clear()
     routing.reset_state()
+    # 频控是进程级滑动窗口：同一 oid 的 OCR 请求数会跨用例累积，也会被同进程的
+    # 其它测试文件（如 test_ai_ocr_wiring.py）提前消耗。每个用例从空窗口开始。
+    rate_limit.reset_state()
     # 信号量会绑定 event loop；TestClient 每个请求一个新 loop，跨用例复用会炸。
     routing._semaphore = None
     routing._semaphore_size = 0
@@ -116,6 +119,7 @@ def _isolated_gateway(monkeypatch):
     yield
     credentials._cache.clear()
     routing.reset_state()
+    rate_limit.reset_state()
     routing._semaphore = None
     routing._semaphore_size = 0
 
