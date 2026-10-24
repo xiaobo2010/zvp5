@@ -28,6 +28,7 @@ describe('错误码到人话文案的映射', () => {
       'AI_TIMEOUT',
       'AI_CREDENTIAL_UNREADABLE',
       'AI_UNSUPPORTED_MEDIA',
+      'AI_OCR_IMAGE_TOO_LARGE',
       'AI_OCR_NO_ENGINE',
       'AI_OCR_SITE_QUOTA_EXHAUSTED',
       'AI_KEY_DUPLICATE',

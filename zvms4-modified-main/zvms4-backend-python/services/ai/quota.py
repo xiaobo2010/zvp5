@@ -189,14 +189,29 @@ async def admin_snapshot(user_oid: str) -> dict:
     return await snapshot(user_oid)
 
 
+def _quota_owner(user_oid: str, kind: str) -> str:
+    """额度行的归属：站点级 kind 记在哨兵行上，用户级 kind 记在用户自己身上。
+
+    ``site_consume`` 就是这么记账的（``SHARED_OWNER_OID``）。管理端设额若仍写
+    目标用户的行，管理员以为调了站点额度，实际只造出一条**永远不会被查询**的
+    孤儿记录——``site_consume`` 依然读哨兵行，额度一点没变。
+    """
+    return SHARED_OWNER_OID if kind in SITE_KINDS else user_oid
+
+
 async def set_user_limit(user_oid: str, kind: object, limit_count: object) -> dict:
-    """设置某能力的月上限；已用额度不受影响（调上限 ≠ 重置用量）。"""
+    """设置某能力的月上限；已用额度不受影响（调上限 ≠ 重置用量）。
+
+    ``ocr_<engine>`` 这类站点 kind 写到站点行（见 :func:`_quota_owner`），响应里
+    的 ``kind`` 仍是站点 kind：调用方传什么就回什么，不暴露内部归属。
+    """
     target_kind = check_kind(kind)
     target_limit = check_limit(limit_count)
     period = period_now()
     repo = backends.get_ai_quota_repo()
-    await repo.set_limit(user_oid, period, target_kind, target_limit)
-    row = await repo.get(user_oid, period, target_kind)
+    owner = _quota_owner(user_oid, target_kind)
+    await repo.set_limit(owner, period, target_kind, target_limit)
+    row = await repo.get(owner, period, target_kind)
     used, limit = _row_values(row, target_kind)
     return _entry(period, target_kind, used, limit)
 
@@ -210,8 +225,9 @@ async def reset_used(user_oid: str, kind: object) -> dict:
     target_kind = check_kind(kind)
     period = period_now()
     repo = backends.get_ai_quota_repo()
-    await repo.reset_used(user_oid, period, target_kind)
-    row = await repo.get(user_oid, period, target_kind)
+    owner = _quota_owner(user_oid, target_kind)
+    await repo.reset_used(owner, period, target_kind)
+    row = await repo.get(owner, period, target_kind)
     used, limit = _row_values(row, target_kind)
     return _entry(period, target_kind, used, limit)
 
@@ -257,6 +273,23 @@ async def site_consume(
     return await consume(SHARED_OWNER_OID, site_kind(engine_kind), int(amount))
 
 
+async def site_refund(engine_kind: str, units: int = 1) -> int:
+    """退还一次站点级 OCR 额度，返回受影响行数。
+
+    只用于**补偿**「站点额度已扣、用户额度竞态失败」这一条路径：入队先占站点
+    额度再扣用户额度，后者失败时如果不退，这一次就白扣了平台的钱。识别失败
+    （上游可能已经计费）**不**退——那笔成本确实发生了。
+
+    ``used`` 不足时归零而不是报错：表上有 ``used >= 0`` 的 CHECK，宁可少退也
+    不能让补偿本身变成一个 500。
+    """
+    if int(units) <= 0:
+        return 0
+    return await backends.get_ai_quota_repo().refund(
+        SHARED_OWNER_OID, period_now(), site_kind(engine_kind), int(units)
+    )
+
+
 __all__ = [
     "KINDS",
     "SITE_KIND_PREFIX",
@@ -274,4 +307,5 @@ __all__ = [
     "reset_used",
     "site_kind",
     "site_consume",
+    "site_refund",
 ]

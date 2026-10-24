@@ -88,9 +88,10 @@ Content-Type: application/json
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `attachment_oid` | string | 是 | 附件 oid，必须已通过附件 API 落库 |
-| `provider` | string \| null | 否 | **收下但忽略**，保留给以后按请求指定引擎；不能用它绕过站点额度 |
+| `provider` | string \| null | 否 | **引擎 kind**（`tencent` / `baidu` / `rapidocr` / ...，不是模型名）。有值时只在该 kind 的引擎里选；**仅 admin 可用**，且不减免站点额度。非 admin 传了 → 403 `AI_FORBIDDEN`，拼错的 kind → 400 `AI_OCR_ENGINE_BAD_KIND` |
 
 > 网关不提供图片直传：OCR 只处理已落库的附件，否则就成了绕过附件配额与内容审核的旁路。
+> 单图体积上限 20MB（`config.AI_OCR_MAX_IMAGE_BYTES`，`settings.AI_OCR_MAX_IMAGE_BYTES` 可覆盖）：入队按元数据判一次，后台识别按真实字节再判一次。
 
 响应 `data`：
 
@@ -103,17 +104,19 @@ Content-Type: application/json
 
 | 状态 | `detail` | 触发 |
 |---|---|---|
-| 403 | `AI_FORBIDDEN` | 角色无 AI 权限 |
+| 403 | `AI_FORBIDDEN` | 角色无 AI 权限；或非 admin 传了 `provider` |
 | 404 | `Attachment not found` | oid 不存在 |
 | 403 | `Permission denied` | 无权读该附件 |
 | 400 | `AI_UNSUPPORTED_MEDIA` | mime 不在 `image/jpeg`、`image/png`、`image/webp` |
+| 400 | `AI_OCR_IMAGE_TOO_LARGE` | 图片超过单图体积上限（默认 20MB） |
+| 400 | `AI_OCR_ENGINE_BAD_KIND` | `provider` 不是受支持的引擎 kind |
 | 429 | `AI_RATE_LIMITED` | 超过 10 次/分钟（带 `Retry-After`） |
 | 429 | `AI_QUOTA_EXCEEDED` | 个人 `ocr` 月额度耗尽（带 `X-AI-Quota-*`） |
-| 503 | `AI_OCR_NO_ENGINE` | 没有任何启用的引擎 |
+| 503 | `AI_OCR_NO_ENGINE` | 没有任何启用的引擎（含 `provider` 指定的 kind 没配） |
 | 503 | `AI_OCR_SITE_QUOTA_EXHAUSTED` | 所有启用引擎的站点额度都满了 |
 
-执行顺序（固定，不可调换）：鉴权 → mime → 幂等检查 → 频控 → 用户额度 `peek` → 选引擎并扣站点额度 → 扣用户额度 → 入队。
-「先扣额度再拒绝」是不允许的：引擎选不出来时用户额度一分不扣。
+执行顺序（固定，不可调换）：鉴权 → mime → 体积 → 幂等检查 → 频控 → 用户额度 `peek` → 选引擎并扣站点额度 → 扣用户额度 → 入队。
+「先扣额度再拒绝」是不允许的：引擎选不出来时用户额度一分不扣；用户额度在竞态中扣失败时，刚占的站点额度会被**退回**（见 2.3）。
 
 结果通过轮询 `GET /api/attachments/{oid}/ocr` 获取（前端间隔 2.5s，连续失败 3 次停表）。
 
@@ -128,9 +131,13 @@ Content-Type: application/json
 
 ### 2.3 引擎选择语义
 
-1. 取所有 `enabled` 引擎，按 `priority ASC, name ASC` 排序。
+1. 取所有 `enabled` 引擎，按 `priority ASC, name ASC` 排序（`provider` 有值时先按 kind 过滤）。
 2. 逐个调用 `site_consume(kind, 1)`（原子条件自增）；**第一个还有额度的胜出**，被拒的那次不扣费。
-3. 选定即锁定：后台任务只用入队时的 `kind`/`name`，识别失败**不换引擎、不退额度**，状态置 `failed`。
+3. 入队选中的引擎是后台任务的**第一次尝试**；识别失败时按同一套顺序回退到下一个候选（`name` 已试过即跳过），最多共 **3 次尝试**（选中那个 + 2 次回退）。每次回退都按该引擎重新 `site_consume` 一份，`file_ocr.engine` 记**实际成功**的那个。
+4. **失败不退额度**：上游可能已经计费。唯一会退的是「站点额度已扣、用户额度竞态失败」这条路径（`quota.site_refund`，单条条件 UPDATE，`used` 不足时归零）。
+5. 尝试全部失败才落 `failed`（`ocr_retry` +1，可再次 POST 重试并重新计价）。超限体积、附件内容丢失这类**与引擎无关**的失败直接落 `failed`，不再换引擎白花额度。
+
+每次尝试都会写一条 `ai_call_logs`：`model`/`provider` 是引擎名，失败带 `error_code=AI_OCR_ENGINE_ERROR`，`units=0`——计费那一笔在入队时已经记过（`units=1`），逐次流水只记「用了谁、成没成」。
 
 生产推荐优先级：
 
@@ -244,10 +251,9 @@ Content-Type: application/json
 | POST | `/api/ai/quota/{user_oid}/reset` | admin | `{kind}`，`used` 归零，上限保留 |
 
 - `period` 为 `YYYYMM`，按月自动开新行。
-- 扣减是单条条件 UPDATE（`used + n <= limit_count`），原子防超卖。
+- 扣减是单条条件 UPDATE（`used + n <= limit_count`），原子防超卖；补偿退款也是单条 UPDATE（`used - n < 0` 时归零）。
+- `kind` 为 `ocr_<engine>` 时写的**是站点行**（`SHARED_OWNER_OID` + 该站点 kind），返回的 `kind` 仍是站点 kind；`PUT` 与 `POST .../reset` 都是这个规则。所以 `PUT /quota/{user_oid}` 可以直接调站点额度，`GET /quota/{user_oid}` 依然只回这个人的 `ocr`/`chat`。
 - 错误：`400 AI_QUOTA_BAD_KIND` / `AI_QUOTA_BAD_LIMIT`。
-
-> 注意（已知缺陷）：`PUT /quota/{user_oid}` 接受 `ocr_<kind>`，但写的是目标用户行而非站点行，会生成一条永不生效的孤儿记录。调站点额度目前只能改 `settings.AI_SITE_QUOTA`。
 
 ---
 
@@ -284,7 +290,6 @@ Content-Type: application/json
   "local_engine_ready": true,
   "max_concurrency": 4,
   "providers": { },
-  "routes": { },
   "cooldown_seconds": { },
   "models": ["..."],
   "quota_defaults": { },
@@ -296,6 +301,7 @@ Content-Type: application/json
 ```
 
 `local_engine_ready` 只是一个布尔，不暴露路径、模型名或密钥材料。
+`settings.AI_ROUTES` 已废弃并从响应里移除（它从来没生效过，回显只会误导运维）。
 
 ---
 
@@ -374,9 +380,12 @@ print(client.chat.completions.create(
 | `AI_QUOTA_EXCEEDED` / `insufficient_quota` | 429 | 用户月额度耗尽 |
 | `AI_BUSY` | 429 | 并发闸门满 |
 | `AI_NO_PROVIDER` | 503 | 无可用上游 |
-| `AI_OCR_NO_ENGINE` | 503 | 无启用 OCR 引擎 |
+| `AI_OCR_NO_ENGINE` | 503 | 无启用 OCR 引擎（含 `provider` 指定的 kind 没配） |
 | `AI_OCR_SITE_QUOTA_EXHAUSTED` | 503 | 全部 OCR 引擎站点额度耗尽 |
 | `AI_UNSUPPORTED_MEDIA` | 400 | OCR 入队 mime 不支持 |
+| `AI_OCR_IMAGE_TOO_LARGE` | 400 | OCR 单图超过体积上限（默认 20MB） |
+| `AI_OCR_ENGINE_BAD_KIND` | 400 | `provider` 不是受支持的引擎 kind |
+| `AI_OCR_ENGINE_ERROR` | — | 仅出现在 `ai_call_logs.error_code`：某次引擎尝试失败 |
 | `AI_TIMEOUT` | 504 | 上游超时 |
 | `AI_UPSTREAM_AUTH` | 502 | 上游鉴权失败 |
 | `AI_UPSTREAM_REJECTED` | 502 | 上游 4xx 拒绝 |
@@ -398,15 +407,9 @@ print(client.chat.completions.create(
 
 | # | 缺口 | 影响 |
 |---|---|---|
-| 1 | OCR 选定引擎后失败**不回退** | 站点额度已扣、用户额度不退，一次失败白花一次上游调用 |
-| 2 | 用户额度与站点额度不在同一事务 | 并发竞态下站点额度可能漏损（代码注释已承认） |
-| 3 | `PUT /quota/{oid}` 可写 `ocr_*` 但落到用户行 | 管理员以为调了站点额度，实际是孤儿记录 |
 | 4 | 频控 / 熔断 / 凭据缓存均为进程内 | 多 worker 下实际限额变成 N 倍，冷却状态各自为政 |
-| 5 | `settings.AI_ROUTES` 是死配置 | 配了不生效，`/health` 却当生效项回显 |
-| 6 | `AI_OCR_MAX_IMAGE_BYTES` 未接线 | 大图直接进 base64，无体积闸门 |
 | 7 | OpenAI 面无独立 API key | 第三方接入必须拿用户 token，无法按 key 限额 |
 | 8 | 审计写入失败静默 | `units` 与 `ai_quota.used` 可能对不上账 |
-| 9 | `OcrRequest.provider` 空字段 | 客户端以为能指定引擎，实际被忽略 |
 | 10 | 附件 OCR 只支持 jpeg/png/webp | PDF 附件无法识别 |
 
 ---
@@ -423,6 +426,7 @@ print(client.chat.completions.create(
 | `AI_ROLE_QUOTA` | `config.py` | 角色覆盖额度 |
 | `AI_SITE_QUOTA` | `settings.py`（生产专属） | 按 `ocr_<kind>` 覆盖站点额度 |
 | `AI_DEFAULT_SITE_OCR_MONTHLY_UNITS` | `settings` | 站点额度兜底 1000 |
+| `AI_OCR_MAX_IMAGE_BYTES` | `config.py` / `settings` | OCR 单图体积上限，默认 20MB |
 | `AI_CREDENTIALS_CACHE_TTL` | `config.py` | 凭据缓存 30s |
 | `AI_OCR_ORT_THREADS` | 环境变量 | rapidocr 线程数 |
 | `AI_CALL_LOGS_RETENTION_DAYS` | `config.py` | 流水保留 90 天 |
