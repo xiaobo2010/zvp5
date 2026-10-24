@@ -948,7 +948,7 @@ Index(
 
 
 # ---------------------------------------------------------------------------
-# AI_CALL_LOGS  ← new (AI 网关调用流水; V022)
+# AI_CALL_LOGS  ← new (AI 网关调用流水; V024)
 #   append-only：一次网关调用一行，success/error/timeout/rejected/busy 都落库
 #   ——只记成功就无法回答「额度为什么没扣成」。无外键：审计材料必须比账号
 #   活得久（同 BAN_VIOLATIONS）。UNITS 是本次调用扣掉的额度单位，与
@@ -1001,7 +1001,7 @@ Index(
 
 
 # ---------------------------------------------------------------------------
-# AI_QUOTA  ← new (按 用户 + 月份 + 能力 计的额度行; V022)
+# AI_QUOTA  ← new (按 用户 + 月份 + 能力 计的额度行; V024)
 #   三元组唯一（ux_ai_quota_user_period_kind），因此额度扣减是单条
 #   `UPDATE ... WHERE used + :amount <= limit_count`：并发由数据库串行化，
 #   没有读后写、不会超卖。PERIOD 是 CHAR(6) 的 YYYYMM —— 月份是计费口径，
@@ -1040,7 +1040,7 @@ Index(
 
 
 # ---------------------------------------------------------------------------
-# AI_CREDENTIALS  ← new (AI provider 凭据; V023)
+# AI_CREDENTIALS  ← new (AI provider 凭据; V025)
 #   一张表放两类凭据，用 SCOPE 区分：personal（管理员自己的 key）与 shared
 #   （所有人可用的通用 key）——字段与读取路径完全相同，拆表只会把「按名字找
 #   provider」变成两次查询加一次合并。
