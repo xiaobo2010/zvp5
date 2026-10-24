@@ -1,6 +1,0 @@
-export * as activity from './activity'
-export * as user from './user'
-export * as group from './group'
-export * as logs from './logs'
-export * as xh from './xh.js'
-export * as exports from './exports'

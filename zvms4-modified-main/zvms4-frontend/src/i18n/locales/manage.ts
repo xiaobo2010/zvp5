@@ -149,10 +149,47 @@ export const zhCN = {
     tabs: {
       groups: '群组',
       users: '用户',
+      roles: '角色',
       import: '导入',
       notifications: '通知',
       ban: '封禁',
       logs: '日志'
+    }
+  },
+  roleManagement: {
+    title: '角色管理',
+    subtitle: '按角色筛选用户并调整身份；不勾选任何角色即为普通学生。',
+    filterLabel: '角色筛选',
+    filterAll: '全部用户',
+    searchPlaceholder: '搜索姓名或学号',
+    search: '搜索',
+    refresh: '刷新',
+    loading: '加载中',
+    empty: '没有符合条件的用户',
+    loadFailed: '加载失败，请稍后重试',
+    columns: {
+      name: '姓名',
+      id: '学号',
+      group: '班级',
+      roles: '身份',
+      actions: '操作'
+    },
+    edit: '修改角色',
+    cannotEdit: '不能修改自己或管理员账号的角色',
+    dialogTitle: '修改角色{name}',
+    dialogHint: '不勾选任何角色则为普通学生。',
+    save: '保存',
+    saving: '保存中',
+    cancel: '取消',
+    saved: '角色已更新',
+    saveFailed: '角色更新失败，请稍后重试',
+    noPermission: '您没有权限查看此页面',
+    roles: {
+      student: '学生',
+      secretary: '团支书',
+      department: '学生会',
+      admin: '管理员',
+      teacher: '教师'
     }
   },
   notifications: {
