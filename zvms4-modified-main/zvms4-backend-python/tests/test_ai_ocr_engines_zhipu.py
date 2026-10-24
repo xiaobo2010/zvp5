@@ -64,11 +64,22 @@ def _install(
     content=None,
     finish_reason="stop",
     headers=None,
+    script=None,
 ):
     calls: list[httpx.Request] = []
+    steps = list(script or [])
 
     def handler(request: httpx.Request) -> httpx.Response:
         calls.append(request)
+        if steps:
+            step = steps.pop(0)
+            if step.get("status", 200) == 200 and "response" not in step:
+                return httpx.Response(200, json=_completion(), headers=step.get("headers"))
+            return httpx.Response(
+                step.get("status", 200),
+                json=step.get("response"),
+                headers=step.get("headers"),
+            )
         if response is not None:
             return httpx.Response(status, json=response, headers=headers)
         body = _completion()
@@ -95,6 +106,17 @@ def _recognize(config=None):
     return _run(
         ocr_engines.ZhipuOcrEngine().recognize(PNG, "image/png", SECRET, config or {})
     )
+
+
+def _record_sleeps(monkeypatch):
+    """把 ``anyio.sleep`` 换成记录器：退避不该在测试里真的等 7 秒。"""
+    delays: list[float] = []
+
+    async def fake_sleep(delay):
+        delays.append(delay)
+
+    monkeypatch.setattr(ocr_engines.anyio, "sleep", fake_sleep)
+    return delays
 
 
 # ---------------------------------------------------------------------------
@@ -321,7 +343,7 @@ def test_429_carries_the_business_code(monkeypatch) -> None:
     )
 
     with pytest.raises(ocr_engines.OcrEngineRateLimited) as excinfo:
-        _recognize()
+        _recognize(config={"retry_attempts": 1})
 
     message = str(excinfo.value)
     assert "code=1302" in message
@@ -339,6 +361,120 @@ def test_429_uses_the_retry_after_header_when_present(monkeypatch) -> None:
     )
 
     with pytest.raises(ocr_engines.OcrEngineRateLimited) as excinfo:
-        _recognize()
+        _recognize(config={"retry_attempts": 1})
 
     assert excinfo.value.retry_after == pytest.approx(3.0)
+
+
+# ---------------------------------------------------------------------------
+# 瞬态限流：自动退避重试，客户端不该看到
+#
+# 依据：2026-10-24 生产实测，glm-4.6v-flash 偶发 1305「该模型当前访问量过大」，
+# 紧接着重试即成功。这类抖动不该冒到最终用户面前。
+# ---------------------------------------------------------------------------
+
+
+def test_1305_is_retried_transparently(monkeypatch) -> None:
+    delays = _record_sleeps(monkeypatch)
+    calls = _install(
+        monkeypatch,
+        script=[
+            {"status": 429, "response": {"error": {"code": "1305", "message": "平台过载"}}},
+            {"status": 429, "response": {"error": {"code": "1305", "message": "平台过载"}}},
+            {"status": 200},
+        ],
+    )
+
+    result = _recognize()
+
+    assert len(calls) == 3
+    assert [line["text"] for line in result["lines"]] == ["第一行", "second line"]
+    assert delays == [2.0, 5.0]
+
+
+def test_retries_are_bounded_and_then_raise(monkeypatch) -> None:
+    delays = _record_sleeps(monkeypatch)
+    calls = _install(
+        monkeypatch,
+        script=[
+            {"status": 429, "response": {"error": {"code": "1305", "message": "平台过载"}}}
+            for _ in range(3)
+        ],
+    )
+
+    with pytest.raises(ocr_engines.OcrEngineRateLimited) as excinfo:
+        _recognize()
+
+    assert len(calls) == 3
+    assert delays == [2.0, 5.0]
+    assert "attempts=3/3" in str(excinfo.value)
+
+
+def test_usage_cap_1308_is_not_retried(monkeypatch) -> None:
+    """1308 = 使用上限已到，重试一百次也还是超限，只会把失败拖慢。"""
+    delays = _record_sleeps(monkeypatch)
+    calls = _install(
+        monkeypatch,
+        script=[
+            {"status": 429, "response": {"error": {"code": "1308", "message": "使用上限已到"}}},
+        ],
+    )
+
+    with pytest.raises(ocr_engines.OcrEngineRateLimited) as excinfo:
+        _recognize()
+
+    assert len(calls) == 1
+    assert delays == []
+    assert "code=1308" in str(excinfo.value)
+
+
+def test_retry_attempts_can_be_configured(monkeypatch) -> None:
+    delays = _record_sleeps(monkeypatch)
+    calls = _install(
+        monkeypatch,
+        script=[
+            {"status": 429, "response": {"error": {"code": "1305", "message": "平台过载"}}},
+        ],
+    )
+
+    with pytest.raises(ocr_engines.OcrEngineRateLimited):
+        _recognize(config={"retry_attempts": 1})
+
+    assert len(calls) == 1
+    assert delays == []
+
+
+def test_non_429_is_not_retried(monkeypatch) -> None:
+    """401/400 这类不是限流，重试只会把错误拖慢。"""
+    delays = _record_sleeps(monkeypatch)
+    calls = _install(
+        monkeypatch,
+        status=401,
+        response={"error": {"code": "1001", "message": "auth"}},
+    )
+
+    with pytest.raises(ocr_engines.OcrEngineError) as excinfo:
+        _recognize()
+
+    assert not isinstance(excinfo.value, ocr_engines.OcrEngineRateLimited)
+    assert len(calls) == 1
+    assert delays == []
+
+
+def test_retry_uses_retry_after_header_when_present(monkeypatch) -> None:
+    delays = _record_sleeps(monkeypatch)
+    _install(
+        monkeypatch,
+        script=[
+            {
+                "status": 429,
+                "response": {"error": {"code": "1305", "message": "过载"}},
+                "headers": {"retry-after": "1"},
+            },
+            {"status": 200},
+        ],
+    )
+
+    _recognize()
+
+    assert delays == [1.0]
