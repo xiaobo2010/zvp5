@@ -117,6 +117,14 @@ ZHIPU_DEFAULT_MODEL = "glm-4.6v-flash"
 ZHIPU_DEFAULT_MAX_TOKENS = 4096
 # 官方 temperature 区间是 (0, 1)，传 0 不合法；默认 0.6 对 OCR 偏发散。
 ZHIPU_DEFAULT_TEMPERATURE = 0.1
+# 智谱免费模型会偶发 1305（平台过载）/ 1302（账户并发）——都是瞬态，实测重试即成功。
+# 上游不给 Retry-After，所以按固定退避：3 次尝试、间隔 2s/5s，最坏多等 7 秒。
+# OCR 跑在后台任务里，这点等待不该让最终用户看到失败。
+ZHIPU_DEFAULT_RETRY_ATTEMPTS = 3
+ZHIPU_DEFAULT_RETRY_DELAYS = (2.0, 5.0)
+# 值得重试的业务码：1302 账户并发、1305 平台过载。1308 是「使用上限已到」，
+# 重试一百次也还是超限，只会把失败拖慢——必须立刻抛。
+ZHIPU_RETRYABLE_CODES = frozenset({"1302", "1305"})
 
 
 class OcrEngineError(RuntimeError):
@@ -1265,6 +1273,20 @@ class ZhipuOcrEngine:
         if max_tokens <= 0:
             raise OcrEngineError("zhipu engine max_tokens must be positive")
 
+        raw_attempts = config.get("retry_attempts")
+        try:
+            attempts = int(
+                ZHIPU_DEFAULT_RETRY_ATTEMPTS
+                if raw_attempts is None
+                else raw_attempts
+            )
+        except (TypeError, ValueError):
+            raise OcrEngineError(
+                "zhipu engine retry_attempts must be an integer"
+            ) from None
+        if attempts < 1:
+            raise OcrEngineError("zhipu engine retry_attempts must be positive")
+
         raw_temperature = config.get("temperature")
         try:
             temperature = float(
@@ -1313,20 +1335,43 @@ class ZhipuOcrEngine:
             body["thinking"] = {"type": thinking}
 
         headers = {"Authorization": f"Bearer {api_key}"}
-        async with _async_http_client(timeout) as client:
-            response = await client.post(
-                f"{base_url}/chat/completions", json=body, headers=headers
-            )
+        response = None
+        for attempt in range(1, attempts + 1):
+            async with _async_http_client(timeout) as client:
+                response = await client.post(
+                    f"{base_url}/chat/completions", json=body, headers=headers
+                )
+            if getattr(response, "status_code", 0) != 429:
+                break
 
-        if getattr(response, "status_code", 0) == 429:
             retry_after = _retry_after_hint(response)
             code = _error_code(response) or "unknown"
-            wait = f"{retry_after:g}s" if retry_after is not None else "unknown"
-            raise OcrEngineRateLimited(
-                f"zhipu engine rate limited (code={code}, retry_after={wait}): "
-                f"{_truncate(getattr(response, 'text', ''))}",
-                retry_after=retry_after,
+            # 1308（使用上限已到）重试无意义；只有瞬态的并发/过载值得再试。
+            retryable = code in ZHIPU_RETRYABLE_CODES or code == "unknown"
+            if attempt >= attempts or not retryable:
+                wait = f"{retry_after:g}s" if retry_after is not None else "unknown"
+                raise OcrEngineRateLimited(
+                    f"zhipu engine rate limited (code={code}, retry_after={wait}, "
+                    f"attempts={attempt}/{attempts}): "
+                    f"{_truncate(getattr(response, 'text', ''))}",
+                    retry_after=retry_after,
+                )
+            # 上游给了 Retry-After 就听它的；否则走固定退避表（末项兜底）。
+            delay = (
+                retry_after
+                if retry_after is not None
+                else ZHIPU_DEFAULT_RETRY_DELAYS[
+                    min(attempt - 1, len(ZHIPU_DEFAULT_RETRY_DELAYS) - 1)
+                ]
             )
+            _logger.info(
+                "zhipu engine transient limit (code=%s), retry %s/%s in %.1fs",
+                code,
+                attempt,
+                attempts - 1,
+                delay,
+            )
+            await anyio.sleep(delay)
 
         data = _ok_json(response, self.kind)
         first, finish_reason = _openai_vision_choice(data, self.kind, max_tokens)
