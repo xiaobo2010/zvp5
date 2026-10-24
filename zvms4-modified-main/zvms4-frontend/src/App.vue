@@ -79,6 +79,16 @@ const userStore = useUserStore()
 const headerStore = useHeaderStore()
 const dark = useDark()
 
+// 新版设计令牌通过 data-theme 切换深浅色；沿用现有 useDark 的 class 状态并同步，
+// 避免两套主题开关各走各的。
+watch(
+  dark,
+  (value) => {
+    document.documentElement.dataset.theme = value ? 'dark' : 'light'
+  },
+  { immediate: true }
+)
+
 const watermark = computed<WatermarkFontType>(() => ({
   color: dark.value ? 'rgba(255,255,255,.10)' : 'rgba(0,0,0,.15)',
   fontSize: 16,

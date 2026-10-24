@@ -1,121 +1,150 @@
-import axios from '@/plugins/axios.ts'
+import type { OcrResult, OcrStatus } from '@/../types'
+import { enqueueOcr } from '@/api/ai/ocr'
+import { getOcr } from '@/api/attachment/manage'
+import { upload as uploadAttachment } from '@/api/attachment/upload'
+import { parseOcrText, type OcrVolunteerRow } from '@/utils/ocrText'
 
 /**
- * 志愿时长登记表的 OCR 识别接口（**预留**）。
+ * 义工登记表的 OCR：上传图片 → AI 网关入队 → 轮询附件结果 → 本地拆行。
  *
- * 后端目前没有该路由，页面需要自行捕获 404 / 501 并展示占位提示；
- * 这里只负责把文件发出去、把响应整形成稳定的行结构，绝不返回 undefined 的 rows。
+ * 不再假设后端有 `/volunteer/registration/ocr` 这种专用路由。图片走现有附件
+ * 库（purpose=volunteer_order），识别走 `/ai/ocr` 网关，因此额度、频控、引擎
+ * 选择都复用既有实现。
  */
-export const OCR_ENDPOINT = '/volunteer/registration/ocr'
+export type { OcrVolunteerRow } from '@/utils/ocrText'
 
-export interface OcrVolunteerRow {
-  student_id?: string
-  studentId?: string
-  name?: string
-  duration?: number | string
-  mode?: 'on-campus' | 'off-campus' | 'social-practice'
-  note?: string
-  confidence?: number
+export type VolunteerOcrStage = 'uploading' | 'queued' | 'recognizing'
+
+export interface VolunteerOcrProgress {
+  stage: VolunteerOcrStage
+  progress?: number
+  status?: OcrStatus
+  engine?: string
 }
+
+export type VolunteerOcrProgressHandler = (progress: VolunteerOcrProgress) => void
 
 export interface OcrVolunteerResponse {
   rows: OcrVolunteerRow[]
   warnings?: string[]
+  text?: string
+  attachmentOid?: string
+  engine?: string
+  confidence?: number
 }
 
-const MODES = new Set<OcrVolunteerRow['mode']>(['on-campus', 'off-campus', 'social-practice'])
+const SUPPORTED_MIME = new Set(['image/jpeg', 'image/jpg', 'image/png', 'image/webp'])
+const MAX_BYTES = 15 * 1024 * 1024
+const POLL_INTERVAL_MS = 2500
+const MAX_POLL_ATTEMPTS = 40
+const MAX_CONSECUTIVE_ERRORS = 3
 
-function text(value: unknown): string {
-  if (typeof value === 'string') return value.trim()
-  if (typeof value === 'number' && Number.isFinite(value)) return String(value)
-  return ''
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms)
+  })
 }
 
-function durationOf(value: unknown): number | string | undefined {
-  if (typeof value === 'number') {
-    return Number.isFinite(value) ? value : undefined
+function validateFile(file: File): void {
+  if (!file) {
+    throw new Error('请选择要识别的图片')
   }
-  if (typeof value === 'string') {
-    const trimmed = value.trim()
-    if (!trimmed) return undefined
-    const numeric = Number(trimmed)
-    // 「2」「2.5」这类字符串统一成数字，其余（如「2小时」）保留原文交给页面判断。
-    if (trimmed !== '' && Number.isFinite(numeric)) return numeric
-    return trimmed
+  if (!SUPPORTED_MIME.has((file.type || '').toLowerCase())) {
+    throw new Error('OCR 仅支持 JPG / PNG / WebP 图片')
   }
-  return undefined
+  if (file.size > MAX_BYTES) {
+    throw new Error('图片不能超过 15MB')
+  }
 }
 
-function normalizeRow(raw: unknown): OcrVolunteerRow | null {
-  if (!raw || typeof raw !== 'object') return null
-  const source = raw as Record<string, unknown>
+async function waitForResult(
+  attachmentOid: string,
+  onProgress?: VolunteerOcrProgressHandler,
+  engine?: string
+): Promise<OcrResult> {
+  let consecutiveErrors = 0
+  for (let attempt = 0; attempt < MAX_POLL_ATTEMPTS; attempt += 1) {
+    try {
+      const result = await getOcr(attachmentOid)
+      if (!result) {
+        consecutiveErrors += 1
+      } else {
+        consecutiveErrors = 0
+        onProgress?.({ stage: 'recognizing', status: result.status, engine })
+        if (result.status === 'done' || result.status === 'failed') {
+          return result
+        }
+      }
+    } catch {
+      consecutiveErrors += 1
+    }
 
-  const studentId = text(source.student_id ?? source.studentId)
-  const name = text(source.name)
-  // 既没有学号也没有姓名的行无法定位到人，视为脏数据丢弃。
-  if (!studentId && !name) return null
-
-  const row: OcrVolunteerRow = {}
-  if (studentId) row.studentId = studentId
-  if (name) row.name = name
-
-  const duration = durationOf(source.duration)
-  if (duration !== undefined) row.duration = duration
-
-  if (typeof source.mode === 'string' && MODES.has(source.mode as OcrVolunteerRow['mode'])) {
-    row.mode = source.mode as OcrVolunteerRow['mode']
+    if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
+      throw new Error('OCR 状态查询连续失败，请稍后重试')
+    }
+    await sleep(POLL_INTERVAL_MS)
   }
-
-  const note = text(source.note)
-  if (note) row.note = note
-
-  if (typeof source.confidence === 'number' && Number.isFinite(source.confidence)) {
-    row.confidence = source.confidence
-  }
-
-  return row
+  throw new Error('OCR 识别等待超时，请换一张更清晰的图片或稍后重试')
 }
 
-function rowsOf(value: unknown): unknown[] {
-  return Array.isArray(value) ? value : []
-}
+/**
+ * 上传登记表图片并等待 OCR 文本，再在本地拆成登记行。
+ *
+ * 识别行只包含 OCR 能确定的字段；学号/姓名/时长仍由页面校验，不会静默落库。
+ */
+export async function parseVolunteerSheet(
+  file: File,
+  onProgress?: VolunteerOcrProgressHandler
+): Promise<OcrVolunteerResponse> {
+  validateFile(file)
 
-/** 兼容 `{ rows }`、`{ data: [...] }`、`{ data: { rows } }` 与裸数组。 */
-function extractPayload(payload: unknown): { rows: OcrVolunteerRow[]; warnings?: string[] } {
-  if (Array.isArray(payload)) {
-    return { rows: payload.map(normalizeRow).filter((row): row is OcrVolunteerRow => row !== null) }
+  const uploaded = await uploadAttachment(
+    file,
+    'volunteer_order',
+    undefined,
+    undefined,
+    (event) => {
+      onProgress?.({
+        stage: 'uploading',
+        progress: event.total ? Math.round((event.loaded / event.total) * 100) : undefined
+      })
+    }
+  )
+  const attachment = uploaded[0]
+  if (!attachment?._id) {
+    throw new Error('图片上传失败：服务端没有返回附件标识')
   }
-  if (!payload || typeof payload !== 'object') return { rows: [] }
 
-  const envelope = payload as { rows?: unknown; data?: unknown; warnings?: unknown }
-  let rawRows = rowsOf(envelope.rows)
-  if (!rawRows.length) {
-    rawRows = Array.isArray(envelope.data)
-      ? envelope.data
-      : rowsOf((envelope.data as { rows?: unknown } | null | undefined)?.rows)
-  }
-
-  const rows = rawRows.map(normalizeRow).filter((row): row is OcrVolunteerRow => row !== null)
-  const warnings = Array.isArray(envelope.warnings)
-    ? envelope.warnings.filter(
-        (item): item is string => typeof item === 'string' && item.trim() !== ''
-      )
-    : undefined
-
-  return warnings && warnings.length ? { rows, warnings } : { rows }
-}
-
-/** 上传登记表截图 / PDF，返回规整后的识别行。 */
-export async function parseVolunteerSheet(file: File): Promise<OcrVolunteerResponse> {
-  const form = new FormData()
-  form.append('file', file)
-
-  const response = await axios({
-    method: 'post',
-    url: OCR_ENDPOINT,
-    data: form,
-    timeout: 60000
+  onProgress?.({ stage: 'queued' })
+  const queued = await enqueueOcr(attachment._id)
+  onProgress?.({
+    stage: 'recognizing',
+    status: queued.status,
+    engine: queued.engine
   })
 
-  return extractPayload(response?.data)
+  const result = await waitForResult(attachment._id, onProgress, queued.engine)
+  if (result.status === 'failed') {
+    throw new Error('OCR 识别失败，请换一张更清晰的图片或稍后重试')
+  }
+
+  const text = result.text?.trim() ?? ''
+  const warnings: string[] = []
+  if (!text) {
+    warnings.push('OCR 没有返回文字，请检查图片清晰度或手动粘贴')
+  }
+
+  const rows = parseOcrText(text)
+  if (text && !rows.length) {
+    warnings.push('OCR 文本中未解析出学生行，请手动粘贴或调整识别图片')
+  }
+
+  return {
+    rows,
+    warnings: warnings.length ? warnings : undefined,
+    text,
+    attachmentOid: attachment._id,
+    engine: result.engine ?? queued.engine,
+    confidence: result.confidence
+  }
 }
