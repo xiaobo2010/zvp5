@@ -12,8 +12,14 @@ import {
 } from 'element-plus'
 import { useI18n } from 'vue-i18n'
 import { listModels } from '@/api/ai/chat'
-import { streamChatCompletion } from '@/api/ai/stream'
-import { aiErrorCodeOf, aiErrorCopy, type AiErrorCopy } from '@/api/ai/errors'
+import { streamChatCompletion, type AiStreamError } from '@/api/ai/stream'
+import {
+  AI_ERROR_FALLBACK_SECTION,
+  aiErrorCodeOf,
+  aiErrorCopy,
+  aiErrorSection,
+  type AiErrorCopy
+} from '@/api/ai/errors'
 import {
   AI_WRITE_ACTIONS,
   buildAiMessages,
@@ -86,6 +92,14 @@ function showError(caught: unknown): void {
   error.value = aiErrorCopy(aiErrorCodeOf(caught), t)
 }
 
+/** 流内 error 帧 → 展示文案；码表不认识的码优先用后端给的中文 message。 */
+function streamErrorCopy(payload: AiStreamError): AiErrorCopy {
+  if (payload.message && aiErrorSection(payload.code) === AI_ERROR_FALLBACK_SECTION) {
+    return { title: payload.message, hint: '' }
+  }
+  return aiErrorCopy(payload.code, t)
+}
+
 function stop(): void {
   controller?.abort()
   controller = null
@@ -120,7 +134,13 @@ async function run(): Promise<void> {
     })
     const final = stripWrappingFence(out.text || result.value).trim()
     result.value = final
-    interrupted.value = out.interrupted
+    if (out.error) {
+      // 流内错误帧是明确失败，不是截断：正文（若有）照旧展示，警告换成错误。
+      error.value = streamErrorCopy(out.error)
+      interrupted.value = false
+    } else {
+      interrupted.value = out.interrupted
+    }
   } catch (caught) {
     if ((caught as Error)?.name === 'AbortError') {
       return

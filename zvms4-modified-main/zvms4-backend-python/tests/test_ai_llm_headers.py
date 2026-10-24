@@ -62,7 +62,7 @@ class FakeStream:
     async def __aexit__(self, *exc_info) -> bool:
         return False
 
-    async def aiter_raw(self):
+    async def aiter_bytes(self):
         for chunk in self._chunks:
             yield chunk
 
@@ -256,6 +256,8 @@ async def test_default_endpoint_and_bearer_headers_unchanged(upstream):
     assert request["headers"] == {
         "Authorization": f"Bearer {SECRET}",
         "Content-Type": "application/json",
+        # SSE 逐帧透传，不允许上游压缩；非流式请求带同一套头，故一并出现。
+        "Accept-Encoding": "identity",
     }
 
 
@@ -341,6 +343,7 @@ async def test_extra_headers_are_merged_with_defaults(upstream):
     assert headers == {
         "Authorization": f"Bearer {SECRET}",
         "Content-Type": "application/json",
+        "Accept-Encoding": "identity",
         "X-Api-Key": HEADER_SECRET,
         "X-Title": "zvms",
     }

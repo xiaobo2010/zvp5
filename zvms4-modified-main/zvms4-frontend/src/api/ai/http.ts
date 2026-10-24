@@ -209,6 +209,9 @@ export async function aiFetchJson<T>(path: string, init: RequestInit = {}): Prom
 export async function aiFetchRaw(path: string, init: RequestInit = {}): Promise<Response> {
   const token = localStorage.getItem('token')
   const headers: Record<string, string> = {
+    // SSE 的显式声明：中间代理（Caddy / nginx）据此决定不缓冲，部分上游也只在
+    // Accept 里出现 text/event-stream 时才真的开流。
+    Accept: 'text/event-stream',
     'Content-Type': 'application/json',
     ...((init.headers as Record<string, string>) ?? {})
   }

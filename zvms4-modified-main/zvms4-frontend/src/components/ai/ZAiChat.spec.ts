@@ -212,7 +212,8 @@ describe('对话页', () => {
       text: '答案',
       done: true,
       interrupted: false,
-      requestId: 'req-1'
+      requestId: 'req-1',
+      error: null
     })
     const wrapper = mountPage()
     await flushPromises()
@@ -304,7 +305,8 @@ describe('对话页', () => {
       text: '半截回答',
       done: false,
       interrupted: true,
-      requestId: 'req-2'
+      requestId: 'req-2',
+      error: null
     })
     const wrapper = mountPage()
     await flushPromises()
