@@ -1,0 +1,1959 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>义工平台 · 标准组件演示</title>
+  <link rel="stylesheet" href="css/main.css">
+  <style>
+    /* ============================================================
+       演示页布局胶水（仅网格/对齐等布局用途，颜色一律引用 --yg-*）
+       ============================================================ */
+    .demo-section {
+      margin-bottom: var(--yg-space-9);
+      scroll-margin-top: calc(var(--yg-header-height) + var(--yg-space-6));
+    }
+    .demo-note {
+      color: var(--yg-text-tertiary);
+      font-size: var(--yg-font-size-sm);
+      margin-bottom: var(--yg-space-4);
+      max-width: calc(var(--yg-space-1) * 190);
+    }
+    .demo-block {
+      background: var(--yg-bg-surface);
+      border: 1px solid var(--yg-border-subtle);
+      border-radius: var(--yg-radius-lg);
+      padding: var(--yg-space-6);
+      margin-bottom: var(--yg-space-4);
+    }
+    .demo-block__title {
+      font-size: var(--yg-font-size-md);
+      font-weight: var(--yg-font-weight-semibold);
+      color: var(--yg-text-secondary);
+      margin-bottom: var(--yg-space-4);
+    }
+    .demo-row {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: var(--yg-space-3);
+      margin-bottom: var(--yg-space-4);
+    }
+    .demo-row--start { align-items: flex-start; }
+    .demo-row:last-child { margin-bottom: 0; }
+    .demo-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(calc(var(--yg-space-1) * 72), 1fr));
+      gap: var(--yg-space-4);
+    }
+    .demo-col {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: var(--yg-space-2);
+    }
+    .demo-stack { display: flex; flex-direction: column; gap: var(--yg-space-3); }
+    .demo-hint { font-size: var(--yg-font-size-xs); color: var(--yg-text-tertiary); }
+    /* 令牌展示 */
+    .demo-swatch {
+      width: var(--yg-space-7);
+      height: var(--yg-space-7);
+      border-radius: var(--yg-radius-sm);
+      border: 1px solid var(--yg-border-default);
+    }
+    .demo-swatch__name {
+      font-size: var(--yg-font-size-xs);
+      color: var(--yg-text-tertiary);
+      text-align: center;
+    }
+    .demo-radius-box {
+      width: calc(var(--yg-space-1) * 24);
+      height: calc(var(--yg-space-1) * 17);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: var(--yg-color-primary-soft);
+      border: 1px solid var(--yg-border-default);
+      font-size: var(--yg-font-size-xs);
+      color: var(--yg-text-secondary);
+    }
+    .demo-shadow-box {
+      width: calc(var(--yg-space-1) * 24);
+      height: calc(var(--yg-space-1) * 17);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: var(--yg-bg-surface);
+      border-radius: var(--yg-radius-md);
+      font-size: var(--yg-font-size-xs);
+      color: var(--yg-text-tertiary);
+    }
+    /* 弹层定位锚点 */
+    .demo-tooltip-host { position: relative; display: inline-flex; }
+    .demo-popover-wrap { position: relative; display: inline-flex; }
+    .demo-badge-anchor { position: relative; display: inline-flex; }
+    .demo-loading-area { position: relative; }
+    .demo-side { max-width: calc(var(--yg-space-1) * 80); }
+  </style>
+</head>
+<body>
+  <!-- ================================================================
+       页面骨架：液态玻璃侧边栏 + 粘性顶栏 + 内容区（本页自身即准则示例）
+       ================================================================ -->
+  <div class="yg-layout">
+    <aside class="yg-layout__sidebar yg-sidebar yg-liquid-glass" id="demo-sidebar">
+      <div class="yg-sidebar__header">
+        <span class="yg-sidebar__logo">义</span>
+        <span class="yg-sidebar__title">义工平台</span>
+      </div>
+      <nav class="yg-menu">
+        <div class="yg-menu__group">
+          <div class="yg-menu__title">演示目录</div>
+          <a class="yg-menu__item is-active" href="#sec-start">
+            <svg class="yg-menu__icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h14V9.5"/></svg>
+            <span class="yg-menu__label">开始</span>
+          </a>
+          <a class="yg-menu__item" href="#sec-tokens" data-menu-toggle>
+            <svg class="yg-menu__icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3s6 6.5 6 11a6 6 0 0 1-12 0c0-4.5 6-11 6-11Z"/></svg>
+            <span class="yg-menu__label">设计令牌</span>
+            <svg class="yg-menu__arrow" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+          </a>
+          <div class="yg-menu__sub">
+            <a class="yg-menu__item" href="#sec-tokens"><span class="yg-menu__label">色板</span></a>
+            <a class="yg-menu__item" href="#sec-tokens"><span class="yg-menu__label">圆角与阴影</span></a>
+          </div>
+          <a class="yg-menu__item" href="#sec-layout">
+            <svg class="yg-menu__icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M3 9h18M9 21V9"/></svg>
+            <span class="yg-menu__label">布局骨架</span>
+          </a>
+        </div>
+        <div class="yg-menu__group">
+          <div class="yg-menu__title">组件</div>
+          <a class="yg-menu__item" href="#sec-buttons">
+            <svg class="yg-menu__icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="3"/></svg>
+            <span class="yg-menu__label">基础组件</span>
+          </a>
+          <a class="yg-menu__item" href="#sec-forms">
+            <svg class="yg-menu__icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5Z"/></svg>
+            <span class="yg-menu__label">数据录入</span>
+          </a>
+          <a class="yg-menu__item" href="#sec-nav">
+            <svg class="yg-menu__icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="m15.5 8.5-2 5-5 2 2-5 5-2Z"/></svg>
+            <span class="yg-menu__label">导航</span>
+          </a>
+          <a class="yg-menu__item" href="#sec-data">
+            <svg class="yg-menu__icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
+            <span class="yg-menu__label">数据展示</span>
+          </a>
+          <a class="yg-menu__item" href="#sec-feedback">
+            <svg class="yg-menu__icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h16v11H9l-5 4V5Z"/></svg>
+            <span class="yg-menu__label">反馈</span>
+            <span class="yg-menu__badge">11</span>
+          </a>
+        </div>
+        <div class="yg-menu__group">
+          <div class="yg-menu__title">规范专项</div>
+          <a class="yg-menu__item" href="#sec-danger">
+            <svg class="yg-menu__icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4 2.5 20h19L12 4Z"/><path d="M12 10v4M12 17.5h.01"/></svg>
+            <span class="yg-menu__label">高危操作</span>
+          </a>
+          <a class="yg-menu__item" href="#sec-popup">
+            <svg class="yg-menu__icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 3 9 5-9 5-9-5 9-5Z"/><path d="m3 13 9 5 9-5"/></svg>
+            <span class="yg-menu__label">弹出层</span>
+          </a>
+        </div>
+        <a class="yg-menu__item yg-menu__item--danger" href="#sec-danger">
+          <svg class="yg-menu__icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6 7l1 13h10l1-13"/></svg>
+          <span class="yg-menu__label">删除演示</span>
+        </a>
+      </nav>
+      <div class="yg-sidebar__footer">
+        <span class="yg-avatar yg-avatar--sm">林</span>
+        <span class="yg-text-sm yg-text-secondary">林小满</span>
+        <button type="button" class="yg-icon-btn yg-icon-btn--ghost yg-icon-btn--sm" aria-label="退出登录">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5M21 12H9"/></svg>
+        </button>
+      </div>
+    </aside>
+
+    <div class="yg-layout__main">
+      <header class="yg-layout__topbar yg-topbar">
+        <div class="yg-topbar__left">
+          <button type="button" class="yg-icon-btn yg-icon-btn--ghost" id="demo-collapse-btn" aria-label="折叠侧边栏">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="M9 4v16"/></svg>
+          </button>
+          <nav class="yg-breadcrumb" aria-label="面包屑">
+            <span class="yg-breadcrumb__item"><a href="#sec-start">首页</a></span>
+            <span class="yg-breadcrumb__item"><a href="#sec-start">组件库</a></span>
+            <span class="yg-breadcrumb__item is-current">演示页</span>
+          </nav>
+        </div>
+        <div class="yg-topbar__center"></div>
+        <div class="yg-topbar__right">
+          <span class="yg-input-affix">
+            <span class="yg-input-affix__prefix">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+            </span>
+            <input class="yg-input yg-input--search yg-input--sm" type="search" placeholder="搜索组件" aria-label="搜索组件">
+          </span>
+          <span class="demo-badge-anchor">
+            <button type="button" class="yg-icon-btn yg-icon-btn--ghost" aria-label="通知">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9a6 6 0 0 1 12 0c0 5 2 6 2 6H4s2-1 2-6"/><path d="M10 19a2 2 0 0 0 4 0"/></svg>
+            </button>
+            <span class="yg-badge">3</span>
+          </span>
+          <button type="button" class="yg-icon-btn yg-icon-btn--ghost" id="demo-theme-btn" aria-label="切换深浅主题">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 13A8 8 0 0 1 11 4a8 8 0 1 0 9 9Z"/></svg>
+          </button>
+          <span class="yg-avatar yg-avatar--sm">林</span>
+        </div>
+      </header>
+
+      <main class="yg-layout__content">
+        <!-- ============ ① 标题与说明 ============ -->
+        <div class="yg-page-header" id="sec-start">
+          <div>
+            <h1 class="yg-page-header__title">标准组件演示</h1>
+            <p class="yg-page-header__subtitle">本页完全按《前端设计准则》构建：瑞士网格 × 苹果质感 · 天蓝主色 · G2 连续曲率 · 扁平化 · 弹出层面板一律不透明</p>
+          </div>
+          <div class="yg-page-header__actions">
+            <button type="button" class="yg-btn yg-btn--secondary" id="demo-theme-btn-2">切换深浅主题</button>
+            <a class="yg-btn yg-btn--primary" href="#sec-tokens">开始浏览</a>
+          </div>
+        </div>
+
+        <section class="demo-section" aria-label="说明">
+          <div class="demo-block">
+            <div class="demo-block__title">阅读说明</div>
+            <ul class="yg-list">
+              <li class="yg-list__item">
+                <div><span class="yg-text-medium">悬停查看交互状态</span><p class="yg-text-sm yg-text-tertiary mb-0">按钮、输入框、菜单等组件的 hover 状态请将鼠标悬停在元素上查看；键盘用户可用 Tab 聚焦查看焦点环（--yg-focus-ring）。</p></div>
+              </li>
+              <li class="yg-list__item">
+                <div><span class="yg-text-medium">弹出层面板一律不透明</span><p class="yg-text-sm yg-text-tertiary mb-0">弹窗/抽屉/气泡/消息/通知面板均为实色 var(--yg-bg-surface-raised)，遮罩 .yg-mask 是唯一允许的半透明元素（见「弹出层」专节）。</p></div>
+              </li>
+              <li class="yg-list__item">
+                <div><span class="yg-text-medium">无外部依赖</span><p class="yg-text-sm yg-text-tertiary mb-0">本页仅引用 css/main.css，图标全部为内联 SVG（线性、1.5px 描边），无任何 CDN、字体或图片依赖。</p></div>
+              </li>
+            </ul>
+          </div>
+        </section>
+
+        <!-- ============ ② 设计令牌展示 ============ -->
+        <section class="demo-section" id="sec-tokens">
+          <h2>设计令牌</h2>
+          <p class="demo-note">组件只允许引用语义令牌；以下色板来自 design-tokens.css 的 --yg-* 变量。</p>
+          <div class="demo-block">
+            <div class="demo-block__title">主色 · 天蓝（品牌色，主操作/选中态/链接）</div>
+            <div class="demo-row">
+              <div class="demo-col"><span class="demo-swatch" style="background: var(--yg-sky-50)"></span><span class="demo-swatch__name">sky-50</span></div>
+              <div class="demo-col"><span class="demo-swatch" style="background: var(--yg-sky-100)"></span><span class="demo-swatch__name">sky-100</span></div>
+              <div class="demo-col"><span class="demo-swatch" style="background: var(--yg-sky-200)"></span><span class="demo-swatch__name">sky-200</span></div>
+              <div class="demo-col"><span class="demo-swatch" style="background: var(--yg-sky-300)"></span><span class="demo-swatch__name">sky-300</span></div>
+              <div class="demo-col"><span class="demo-swatch" style="background: var(--yg-sky-400)"></span><span class="demo-swatch__name">sky-400</span></div>
+              <div class="demo-col"><span class="demo-swatch" style="background: var(--yg-sky-500)"></span><span class="demo-swatch__name">sky-500</span></div>
+              <div class="demo-col"><span class="demo-swatch" style="background: var(--yg-sky-600)"></span><span class="demo-swatch__name">sky-600</span></div>
+              <div class="demo-col"><span class="demo-swatch" style="background: var(--yg-sky-700)"></span><span class="demo-swatch__name">sky-700</span></div>
+              <div class="demo-col"><span class="demo-swatch" style="background: var(--yg-sky-800)"></span><span class="demo-swatch__name">sky-800</span></div>
+              <div class="demo-col"><span class="demo-swatch" style="background: var(--yg-sky-900)"></span><span class="demo-swatch__name">sky-900</span></div>
+            </div>
+          </div>
+          <div class="demo-block">
+            <div class="demo-block__title">中性灰（Apple 灰阶）</div>
+            <div class="demo-row">
+              <div class="demo-col"><span class="demo-swatch" style="background: var(--yg-gray-50)"></span><span class="demo-swatch__name">gray-50</span></div>
+              <div class="demo-col"><span class="demo-swatch" style="background: var(--yg-gray-100)"></span><span class="demo-swatch__name">gray-100</span></div>
+              <div class="demo-col"><span class="demo-swatch" style="background: var(--yg-gray-200)"></span><span class="demo-swatch__name">gray-200</span></div>
+              <div class="demo-col"><span class="demo-swatch" style="background: var(--yg-gray-300)"></span><span class="demo-swatch__name">gray-300</span></div>
+              <div class="demo-col"><span class="demo-swatch" style="background: var(--yg-gray-400)"></span><span class="demo-swatch__name">gray-400</span></div>
+              <div class="demo-col"><span class="demo-swatch" style="background: var(--yg-gray-500)"></span><span class="demo-swatch__name">gray-500</span></div>
+              <div class="demo-col"><span class="demo-swatch" style="background: var(--yg-gray-600)"></span><span class="demo-swatch__name">gray-600</span></div>
+              <div class="demo-col"><span class="demo-swatch" style="background: var(--yg-gray-700)"></span><span class="demo-swatch__name">gray-700</span></div>
+              <div class="demo-col"><span class="demo-swatch" style="background: var(--yg-gray-800)"></span><span class="demo-swatch__name">gray-800</span></div>
+              <div class="demo-col"><span class="demo-swatch" style="background: var(--yg-gray-900)"></span><span class="demo-swatch__name">gray-900</span></div>
+              <div class="demo-col"><span class="demo-swatch" style="background: var(--yg-gray-950)"></span><span class="demo-swatch__name">gray-950</span></div>
+            </div>
+          </div>
+          <div class="demo-block">
+            <div class="demo-block__title">语义色（红 = 危险，仅用于破坏性操作）</div>
+            <div class="demo-row">
+              <div class="demo-col"><span class="demo-swatch" style="background: var(--yg-color-primary)"></span><span class="demo-swatch__name">primary</span></div>
+              <div class="demo-col"><span class="demo-swatch" style="background: var(--yg-color-primary-soft)"></span><span class="demo-swatch__name">primary-soft</span></div>
+              <div class="demo-col"><span class="demo-swatch" style="background: var(--yg-color-success)"></span><span class="demo-swatch__name">success</span></div>
+              <div class="demo-col"><span class="demo-swatch" style="background: var(--yg-color-success-soft)"></span><span class="demo-swatch__name">success-soft</span></div>
+              <div class="demo-col"><span class="demo-swatch" style="background: var(--yg-color-warning)"></span><span class="demo-swatch__name">warning</span></div>
+              <div class="demo-col"><span class="demo-swatch" style="background: var(--yg-color-warning-soft)"></span><span class="demo-swatch__name">warning-soft</span></div>
+              <div class="demo-col"><span class="demo-swatch" style="background: var(--yg-color-danger)"></span><span class="demo-swatch__name">danger</span></div>
+              <div class="demo-col"><span class="demo-swatch" style="background: var(--yg-color-danger-soft)"></span><span class="demo-swatch__name">danger-soft</span></div>
+              <div class="demo-col"><span class="demo-swatch" style="background: var(--yg-text-success)"></span><span class="demo-swatch__name">text-success</span></div>
+              <div class="demo-col"><span class="demo-swatch" style="background: var(--yg-text-warning)"></span><span class="demo-swatch__name">text-warning</span></div>
+              <div class="demo-col"><span class="demo-swatch" style="background: var(--yg-text-danger)"></span><span class="demo-swatch__name">text-danger</span></div>
+              <div class="demo-col"><span class="demo-swatch" style="background: var(--yg-bg-page)"></span><span class="demo-swatch__name">bg-page</span></div>
+              <div class="demo-col"><span class="demo-swatch" style="background: var(--yg-bg-surface)"></span><span class="demo-swatch__name">bg-surface</span></div>
+              <div class="demo-col"><span class="demo-swatch" style="background: var(--yg-bg-surface-raised)"></span><span class="demo-swatch__name">bg-raised</span></div>
+            </div>
+          </div>
+          <div class="demo-block">
+            <div class="demo-block__title">圆角 · Apple G2 连续曲率（.yg-g2--*）</div>
+            <div class="demo-row">
+              <div class="demo-col"><span class="demo-radius-box yg-g2--xs">xs 6px</span><span class="demo-swatch__name">--yg-radius-xs</span></div>
+              <div class="demo-col"><span class="demo-radius-box yg-g2--sm">sm 8px</span><span class="demo-swatch__name">--yg-radius-sm</span></div>
+              <div class="demo-col"><span class="demo-radius-box yg-g2--md">md 12px</span><span class="demo-swatch__name">--yg-radius-md</span></div>
+              <div class="demo-col"><span class="demo-radius-box yg-g2--lg">lg 16px</span><span class="demo-swatch__name">--yg-radius-lg</span></div>
+              <div class="demo-col"><span class="demo-radius-box yg-g2--xl">xl 20px</span><span class="demo-swatch__name">--yg-radius-xl</span></div>
+              <div class="demo-col"><span class="demo-radius-box yg-g2--2xl">2xl 24px</span><span class="demo-swatch__name">--yg-radius-2xl</span></div>
+              <div class="demo-col"><span class="demo-radius-box yg-g2--pill">pill</span><span class="demo-swatch__name">--yg-radius-pill</span></div>
+            </div>
+            <p class="demo-hint">在支持 corner-shape 的浏览器（Chromium 139+）中自动升级为超椭圆连续曲率，其余浏览器回退为普通圆角。</p>
+          </div>
+          <div class="demo-block">
+            <div class="demo-block__title">阴影（层次感唯一来源，扁平化）</div>
+            <div class="demo-row">
+              <div class="demo-col"><span class="demo-shadow-box" style="box-shadow: var(--yg-shadow-xs)">xs</span></div>
+              <div class="demo-col"><span class="demo-shadow-box" style="box-shadow: var(--yg-shadow-sm)">sm</span></div>
+              <div class="demo-col"><span class="demo-shadow-box" style="box-shadow: var(--yg-shadow-md)">md</span></div>
+              <div class="demo-col"><span class="demo-shadow-box" style="box-shadow: var(--yg-shadow-lg)">lg</span></div>
+              <div class="demo-col"><span class="demo-shadow-box" style="box-shadow: var(--yg-shadow-xl)">xl</span></div>
+              <div class="demo-col"><span class="demo-shadow-box" style="box-shadow: var(--yg-focus-ring)">焦点环</span></div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ============ ③ 布局骨架 ============ -->
+        <section class="demo-section" id="sec-layout">
+          <h2>布局骨架</h2>
+          <p class="demo-note">本页自身即布局骨架示例：左侧 .yg-sidebar + .yg-liquid-glass 液态玻璃侧边栏（260px，收起 72px），顶部 56px 粘性顶栏，内容区 24px 内边距与 .yg-page-header 页面头部。</p>
+          <div class="demo-block">
+            <div class="demo-block__title">页面头部 .yg-page-header（标题 / 副标题 / 右侧操作区）</div>
+            <div class="yg-page-header">
+              <div>
+                <h1 class="yg-page-header__title">活动管理</h1>
+                <p class="yg-page-header__subtitle">共 128 场活动 · 本周新增 12 场</p>
+              </div>
+              <div class="yg-page-header__actions">
+                <button type="button" class="yg-btn yg-btn--secondary">导出</button>
+                <button type="button" class="yg-btn yg-btn--primary">创建活动</button>
+              </div>
+            </div>
+            <p class="demo-hint">点击顶栏左侧「折叠」按钮可收起侧边栏（.is-collapsed，收起后仅显示图标）；侧边栏菜单当前项以 .is-active 高亮。</p>
+          </div>
+        </section>
+
+        <!-- ============ ④ 全部组件 · 4.1 基础组件 ============ -->
+        <section class="demo-section" id="sec-buttons">
+          <h2>基础组件（准则 4.1）</h2>
+          <p class="demo-note">按钮 / 图标按钮 / 链接。悬停查看 hover 态，Tab 聚焦查看焦点环，按下查看 active 态。</p>
+
+          <div class="demo-block">
+            <div class="demo-block__title">按钮变体 .yg-btn</div>
+            <div class="demo-row">
+              <button type="button" class="yg-btn yg-btn--primary">主操作</button>
+              <button type="button" class="yg-btn yg-btn--secondary">次级操作</button>
+              <button type="button" class="yg-btn yg-btn--ghost">幽灵按钮</button>
+              <button type="button" class="yg-btn yg-btn--text">文字按钮</button>
+              <button type="button" class="yg-btn yg-btn--danger">危险操作</button>
+              <button type="button" class="yg-btn yg-btn--danger-outline">危险描边</button>
+            </div>
+          </div>
+          <div class="demo-block">
+            <div class="demo-block__title">尺寸与形状（--sm / 默认 / --lg / --block / --circle）</div>
+            <div class="demo-row">
+              <button type="button" class="yg-btn yg-btn--primary yg-btn--sm">小按钮</button>
+              <button type="button" class="yg-btn yg-btn--primary">默认按钮</button>
+              <button type="button" class="yg-btn yg-btn--primary yg-btn--lg">大按钮</button>
+              <button type="button" class="yg-btn yg-btn--secondary yg-btn--sm">小按钮</button>
+              <button type="button" class="yg-btn yg-btn--secondary yg-btn--lg">大按钮</button>
+              <button type="button" class="yg-btn yg-btn--circle yg-btn--primary" aria-label="新增">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+              </button>
+            </div>
+            <div class="demo-row">
+              <button type="button" class="yg-btn yg-btn--primary yg-btn--block">全宽按钮 --block</button>
+            </div>
+          </div>
+          <div class="demo-block">
+            <div class="demo-block__title">状态（is-disabled / is-loading）</div>
+            <div class="demo-row">
+              <button type="button" class="yg-btn yg-btn--primary is-disabled" disabled>禁用按钮</button>
+              <button type="button" class="yg-btn yg-btn--secondary is-disabled" disabled>禁用按钮</button>
+              <button type="button" class="yg-btn yg-btn--danger is-disabled" disabled>禁用按钮</button>
+              <button type="button" class="yg-btn yg-btn--primary is-loading" disabled>
+                <span class="yg-btn__spinner"></span>提交中…
+              </button>
+            </div>
+          </div>
+          <div class="demo-block">
+            <div class="demo-block__title">带图标按钮（.yg-btn__icon）</div>
+            <div class="demo-row">
+              <button type="button" class="yg-btn yg-btn--primary">
+                <svg class="yg-btn__icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+                创建活动
+              </button>
+              <button type="button" class="yg-btn yg-btn--secondary">
+                <svg class="yg-btn__icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v12M7 11l5 5 5-5"/><path d="M4 20h16"/></svg>
+                导出
+              </button>
+            </div>
+          </div>
+          <div class="demo-block">
+            <div class="demo-block__title">图标按钮 .yg-icon-btn</div>
+            <div class="demo-row">
+              <button type="button" class="yg-icon-btn yg-icon-btn--primary" aria-label="主操作"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg></button>
+              <button type="button" class="yg-icon-btn yg-icon-btn--secondary" aria-label="次级"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M12 5v14" transform="rotate(45 12 12)"/></svg></button>
+              <button type="button" class="yg-icon-btn yg-icon-btn--ghost" aria-label="幽灵"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5a6 6 0 1 0 0 12h2a4 4 0 0 0 0-8h-2a2 2 0 0 0 0 4h2"/></svg></button>
+              <button type="button" class="yg-icon-btn yg-icon-btn--danger" aria-label="删除"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6 7l1 13h10l1-13"/></svg></button>
+              <button type="button" class="yg-icon-btn yg-icon-btn--ghost yg-icon-btn--sm" aria-label="小号"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg></button>
+              <button type="button" class="yg-icon-btn yg-icon-btn--ghost yg-icon-btn--lg" aria-label="大号"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg></button>
+              <button type="button" class="yg-icon-btn yg-icon-btn--ghost is-disabled" disabled aria-label="禁用"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/></svg></button>
+            </div>
+          </div>
+          <div class="demo-block">
+            <div class="demo-block__title">按钮组 .yg-btn-group</div>
+            <div class="demo-row">
+              <div class="yg-btn-group">
+                <button type="button" class="yg-btn yg-btn--secondary">列表</button>
+                <button type="button" class="yg-btn yg-btn--secondary is-active">日历</button>
+                <button type="button" class="yg-btn yg-btn--secondary">地图</button>
+              </div>
+            </div>
+          </div>
+          <div class="demo-block">
+            <div class="demo-block__title">链接 .yg-link</div>
+            <div class="demo-row">
+              <a class="yg-link" href="#sec-buttons">默认链接</a>
+              <a class="yg-link yg-link--neutral" href="#sec-buttons">中性链接</a>
+              <a class="yg-link yg-link--danger" href="#sec-danger">危险链接</a>
+              <a class="yg-link is-disabled" aria-disabled="true">禁用链接</a>
+            </div>
+          </div>
+        </section>
+
+        <!-- ============ ④ 全部组件 · 4.2 数据录入 ============ -->
+        <section class="demo-section" id="sec-forms">
+          <h2>数据录入（准则 4.2）</h2>
+          <p class="demo-note">表单 / 输入框 / 文本域 / 选择器 / 复选单选 / 开关 / 滑杆 / 步进器 / 评分 / 上传 / 日期选择 / 分段控件。</p>
+
+          <div class="demo-block">
+            <div class="demo-block__title">表单 .yg-form（垂直布局，必填与校验反馈）</div>
+            <div class="demo-grid">
+              <div class="yg-form">
+                <div class="yg-form-item">
+                  <label class="yg-form-item__label is-required" for="f-name">活动名称</label>
+                  <div class="yg-form-item__control"><input class="yg-input" id="f-name" placeholder="请输入活动名称"></div>
+                </div>
+                <div class="yg-form-item">
+                  <label class="yg-form-item__label" for="f-phone">联系电话</label>
+                  <div class="yg-form-item__control"><input class="yg-input" id="f-phone" placeholder="选填"></div>
+                </div>
+                <div class="yg-form-item is-error">
+                  <label class="yg-form-item__label" for="f-count">招募人数</label>
+                  <div class="yg-form-item__control"><input class="yg-input is-error" id="f-count" value="999"></div>
+                  <div class="yg-form-item__message">人数不能超过 500 人</div>
+                </div>
+                <div class="yg-form-item is-success">
+                  <label class="yg-form-item__label" for="f-addr">集合地点</label>
+                  <div class="yg-form-item__control"><input class="yg-input is-success" id="f-addr" value="市图书馆东门"></div>
+                  <div class="yg-form-item__message">地点可用</div>
+                </div>
+                <div class="demo-row">
+                  <button type="button" class="yg-btn yg-btn--primary">提交</button>
+                  <button type="button" class="yg-btn yg-btn--secondary">重置</button>
+                </div>
+              </div>
+              <div>
+                <div class="yg-form yg-form--inline">
+                  <div class="yg-form-item">
+                    <label class="yg-form-item__label" for="fi-city">城市</label>
+                    <div class="yg-form-item__control"><input class="yg-input" id="fi-city" placeholder="城市"></div>
+                  </div>
+                  <div class="yg-form-item">
+                    <label class="yg-form-item__label" for="fi-date">日期</label>
+                    <div class="yg-form-item__control"><input class="yg-input" id="fi-date" placeholder="日期"></div>
+                  </div>
+                  <button type="button" class="yg-btn yg-btn--primary">查询</button>
+                </div>
+                <p class="demo-hint mt-16">上：.yg-form 垂直表单（含 .is-error / .is-success 反馈）；左：.yg-form--inline 行内表单。</p>
+              </div>
+            </div>
+          </div>
+
+          <div class="demo-block">
+            <div class="demo-block__title">输入框 .yg-input（尺寸 / 前后缀 / 搜索 / 密码 / 清除 / 计数）</div>
+            <div class="demo-row">
+              <input class="yg-input" placeholder="默认输入框">
+              <input class="yg-input yg-input--sm" placeholder="小号">
+              <input class="yg-input yg-input--lg" placeholder="大号">
+            </div>
+            <div class="demo-row">
+              <span class="yg-input-affix">
+                <span class="yg-input-affix__prefix">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+                </span>
+                <input class="yg-input yg-input--search" type="search" placeholder="搜索（放大镜前缀）">
+              </span>
+              <span class="yg-input-affix">
+                <span class="yg-input-affix__prefix">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>
+                </span>
+                <input class="yg-input" placeholder="时长">
+                <span class="yg-input-affix__suffix">小时</span>
+              </span>
+              <span class="yg-input-affix" id="demo-input-clear">
+                <input class="yg-input" id="demo-input-clear-field" value="可清除内容">
+                <button type="button" class="yg-input-clear" aria-label="清除"></button>
+              </span>
+              <span class="yg-input-affix" id="demo-password-wrap">
+                <input class="yg-input yg-input--password" id="demo-password" type="password" value="yg123456">
+                <button type="button" class="yg-input-affix__suffix yg-input-toggle" id="demo-password-toggle" aria-label="显示密码"></button>
+              </span>
+            </div>
+            <div class="demo-row">
+              <input class="yg-input is-disabled" disabled value="禁用输入框">
+              <input class="yg-input" readonly value="只读输入框">
+              <input class="yg-input is-error" value="校验失败">
+              <div class="demo-stack">
+                <input class="yg-input" id="demo-input-count" maxlength="20" placeholder="输入文字查看计数">
+                <span class="yg-input-count" id="demo-input-count-num">0 / 20</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="demo-block">
+            <div class="demo-block__title">文本域 .yg-textarea</div>
+            <div class="demo-row">
+              <textarea class="yg-textarea" rows="3" placeholder="活动描述，默认 3 行"></textarea>
+              <textarea class="yg-textarea" rows="3" disabled>禁用的文本域</textarea>
+            </div>
+          </div>
+
+          <div class="demo-block">
+            <div class="demo-block__title">选择器 .yg-select（点击展开，弹层实色不透明）</div>
+            <div class="demo-row">
+              <div class="yg-select" id="demo-select">
+                <button type="button" class="yg-select__trigger">
+                  <span class="yg-select__placeholder">请选择活动类型</span>
+                  <svg class="yg-select__arrow" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+                </button>
+                <div class="yg-select__dropdown" role="listbox">
+                  <div class="yg-select__option" role="option">环保公益</div>
+                  <div class="yg-select__option" role="option">助老服务</div>
+                  <div class="yg-select__option" role="option">社区服务</div>
+                  <div class="yg-select__option is-disabled" role="option">支教助学（不可选）</div>
+                </div>
+              </div>
+              <div class="yg-select yg-select--multiple is-disabled">
+                <button type="button" class="yg-select__trigger" disabled>
+                  <span class="yg-select__tag">环保公益</span>
+                  <span class="yg-select__tag">助老服务</span>
+                </button>
+              </div>
+              <span class="demo-hint">多选示例见左（禁用态）；弹层背景为 --yg-bg-surface-raised 实色。</span>
+            </div>
+          </div>
+
+          <div class="demo-block">
+            <div class="demo-block__title">复选框 .yg-checkbox / 单选框 .yg-radio</div>
+            <div class="demo-row">
+              <label class="yg-checkbox"><input class="yg-checkbox__input" type="checkbox" checked><span class="yg-checkbox__box"></span><span class="yg-checkbox__label">已选</span></label>
+              <label class="yg-checkbox"><input class="yg-checkbox__input" type="checkbox"><span class="yg-checkbox__box"></span><span class="yg-checkbox__label">未选</span></label>
+              <label class="yg-checkbox is-indeterminate"><input class="yg-checkbox__input" type="checkbox"><span class="yg-checkbox__box"></span><span class="yg-checkbox__label">半选</span></label>
+              <label class="yg-checkbox is-disabled"><input class="yg-checkbox__input" type="checkbox" disabled><span class="yg-checkbox__box"></span><span class="yg-checkbox__label">禁用</span></label>
+            </div>
+            <div class="demo-row">
+              <label class="yg-radio"><input class="yg-radio__input" type="radio" name="r1" checked><span class="yg-radio__box"></span><span class="yg-radio__label">按服务时长</span></label>
+              <label class="yg-radio"><input class="yg-radio__input" type="radio" name="r1"><span class="yg-radio__box"></span><span class="yg-radio__label">按报名时间</span></label>
+              <label class="yg-radio is-disabled"><input class="yg-radio__input" type="radio" name="r1" disabled><span class="yg-radio__box"></span><span class="yg-radio__label">禁用</span></label>
+            </div>
+            <div class="demo-row">
+              <div class="yg-radio-group yg-radio-group--button">
+                <label class="yg-radio yg-radio--button"><input class="yg-radio__input" type="radio" name="r2" checked><span class="yg-radio__label">全部</span></label>
+                <label class="yg-radio yg-radio--button"><input class="yg-radio__input" type="radio" name="r2"><span class="yg-radio__label">进行中</span></label>
+                <label class="yg-radio yg-radio--button"><input class="yg-radio__input" type="radio" name="r2"><span class="yg-radio__label">已结束</span></label>
+              </div>
+            </div>
+          </div>
+
+          <div class="demo-block">
+            <div class="demo-block__title">开关 .yg-switch / 滑杆 .yg-slider</div>
+            <div class="demo-row">
+              <label class="yg-switch is-checked"><input type="checkbox" checked></label><span class="demo-hint">开启</span>
+              <label class="yg-switch"><input type="checkbox"></label><span class="demo-hint">关闭</span>
+              <label class="yg-switch is-disabled"><input type="checkbox" disabled></label><span class="demo-hint">禁用</span>
+            </div>
+            <div class="demo-row">
+              <input class="yg-slider" type="range" min="0" max="100" value="40" aria-label="滑杆">
+              <input class="yg-slider yg-slider--vertical" type="range" min="0" max="100" value="60" aria-label="竖向滑杆">
+              <input class="yg-slider is-disabled" type="range" min="0" max="100" value="30" disabled aria-label="禁用滑杆">
+            </div>
+          </div>
+
+          <div class="demo-block">
+            <div class="demo-block__title">步进器 .yg-stepper / 评分 .yg-rate</div>
+            <div class="demo-row">
+              <div class="yg-stepper" id="demo-stepper">
+                <button type="button" class="yg-stepper__btn" data-step="-1" aria-label="减少">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/></svg>
+                </button>
+                <input class="yg-stepper__input" id="demo-stepper-input" value="1" inputmode="numeric" aria-label="数量">
+                <button type="button" class="yg-stepper__btn" data-step="1" aria-label="增加">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+                </button>
+              </div>
+              <div class="yg-rate" id="demo-rate" aria-label="评分">
+                <button type="button" class="yg-rate__star is-active" data-value="1"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 3 2.7 5.6 6.3.8-4.6 4.3 1.2 6.3L12 17l-5.6 3 1.2-6.3L3 9.4l6.3-.8L12 3Z"/></svg></button>
+                <button type="button" class="yg-rate__star is-active" data-value="2"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 3 2.7 5.6 6.3.8-4.6 4.3 1.2 6.3L12 17l-5.6 3 1.2-6.3L3 9.4l6.3-.8L12 3Z"/></svg></button>
+                <button type="button" class="yg-rate__star is-active" data-value="3"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 3 2.7 5.6 6.3.8-4.6 4.3 1.2 6.3L12 17l-5.6 3 1.2-6.3L3 9.4l6.3-.8L12 3Z"/></svg></button>
+                <button type="button" class="yg-rate__star" data-value="4"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 3 2.7 5.6 6.3.8-4.6 4.3 1.2 6.3L12 17l-5.6 3 1.2-6.3L3 9.4l6.3-.8L12 3Z"/></svg></button>
+                <button type="button" class="yg-rate__star" data-value="5"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 3 2.7 5.6 6.3.8-4.6 4.3 1.2 6.3L12 17l-5.6 3 1.2-6.3L3 9.4l6.3-.8L12 3Z"/></svg></button>
+              </div>
+              <div class="yg-rate is-readonly" aria-label="只读评分">
+                <button type="button" class="yg-rate__star is-active" disabled><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 3 2.7 5.6 6.3.8-4.6 4.3 1.2 6.3L12 17l-5.6 3 1.2-6.3L3 9.4l6.3-.8L12 3Z"/></svg></button>
+                <button type="button" class="yg-rate__star is-active" disabled><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 3 2.7 5.6 6.3.8-4.6 4.3 1.2 6.3L12 17l-5.6 3 1.2-6.3L3 9.4l6.3-.8L12 3Z"/></svg></button>
+                <button type="button" class="yg-rate__star is-active" disabled><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 3 2.7 5.6 6.3.8-4.6 4.3 1.2 6.3L12 17l-5.6 3 1.2-6.3L3 9.4l6.3-.8L12 3Z"/></svg></button>
+                <button type="button" class="yg-rate__star" disabled><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 3 2.7 5.6 6.3.8-4.6 4.3 1.2 6.3L12 17l-5.6 3 1.2-6.3L3 9.4l6.3-.8L12 3Z"/></svg></button>
+                <button type="button" class="yg-rate__star" disabled><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 3 2.7 5.6 6.3.8-4.6 4.3 1.2 6.3L12 17l-5.6 3 1.2-6.3L3 9.4l6.3-.8L12 3Z"/></svg></button>
+              </div>
+            </div>
+            <p class="demo-hint">点击步进器按钮调整数量；点击星星评分（只读示例不可点）。</p>
+          </div>
+
+          <div class="demo-block">
+            <div class="demo-block__title">上传 .yg-upload（拖拽区 / 文件列表 / 图片墙）</div>
+            <div class="demo-grid">
+              <div class="yg-upload">
+                <div class="yg-upload__drag" tabindex="0">
+                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 16V4M7 9l5-5 5 5"/><path d="M4 20h16"/></svg>
+                  <p class="yg-text-medium mb-0">点击或拖拽文件到此处上传</p>
+                  <p class="demo-hint mb-0">支持 jpg / png / pdf，单个不超过 10MB</p>
+                </div>
+                <div class="yg-upload__list">
+                  <div class="yg-upload__item">
+                    <span class="yg-upload__name">活动合影.jpg</span>
+                    <span class="yg-upload__progress" style="--yg-upload-progress: 68%"></span>
+                    <button type="button" class="yg-upload__remove" aria-label="移除"></button>
+                  </div>
+                  <div class="yg-upload__item">
+                    <span class="yg-upload__name">活动方案.pdf</span>
+                    <span class="yg-text-sm yg-text-success">已完成</span>
+                    <button type="button" class="yg-upload__remove" aria-label="移除"></button>
+                  </div>
+                </div>
+              </div>
+              <div class="yg-upload yg-upload--picture">
+                <div class="yg-upload__list">
+                  <div class="yg-upload__thumb yg-g2-mask" style="background: linear-gradient(135deg, var(--yg-color-primary-soft), var(--yg-color-success-soft))"></div>
+                  <div class="yg-upload__thumb yg-g2-mask" style="background: linear-gradient(135deg, var(--yg-color-warning-soft), var(--yg-color-danger-soft))"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="demo-block">
+            <div class="demo-block__title">日期选择 .yg-date-picker / 分段控件 .yg-segmented</div>
+            <div class="demo-row">
+              <div class="yg-date-picker" id="demo-datepicker">
+                <button type="button" class="yg-date-picker__trigger" data-datepicker-toggle>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2.5"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>
+                  <span>2026-10-24</span>
+                </button>
+                <div class="yg-date-picker__panel">
+                  <div class="yg-calendar">
+                    <div class="yg-calendar__header">
+                      <div class="yg-calendar__nav"><button type="button" aria-label="上个月"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="m15 6-6 6 6 6"/></svg></button></div>
+                      <div class="yg-calendar__title">2026 年 10 月</div>
+                      <div class="yg-calendar__nav"><button type="button" aria-label="下个月"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"/></svg></button></div>
+                    </div>
+                    <div class="yg-calendar__grid">
+                      <div class="yg-calendar__cell demo-hint">一</div><div class="yg-calendar__cell demo-hint">二</div><div class="yg-calendar__cell demo-hint">三</div><div class="yg-calendar__cell demo-hint">四</div><div class="yg-calendar__cell demo-hint">五</div><div class="yg-calendar__cell demo-hint">六</div><div class="yg-calendar__cell demo-hint">日</div>
+                      <div class="yg-calendar__cell is-disabled">28</div><div class="yg-calendar__cell is-disabled">29</div><div class="yg-calendar__cell is-disabled">30</div>
+                      <div class="yg-calendar__cell">1</div><div class="yg-calendar__cell">2</div><div class="yg-calendar__cell">3</div><div class="yg-calendar__cell">4</div>
+                      <div class="yg-calendar__cell">5</div><div class="yg-calendar__cell">6</div><div class="yg-calendar__cell">7</div><div class="yg-calendar__cell">8</div><div class="yg-calendar__cell">9</div><div class="yg-calendar__cell">10</div><div class="yg-calendar__cell">11</div>
+                      <div class="yg-calendar__cell">12</div><div class="yg-calendar__cell">13</div><div class="yg-calendar__cell">14</div><div class="yg-calendar__cell">15</div><div class="yg-calendar__cell">16</div><div class="yg-calendar__cell">17</div><div class="yg-calendar__cell">18</div>
+                      <div class="yg-calendar__cell">19</div><div class="yg-calendar__cell">20</div><div class="yg-calendar__cell">21</div><div class="yg-calendar__cell">22</div><div class="yg-calendar__cell">23</div><div class="yg-calendar__cell is-today">24</div><div class="yg-calendar__cell is-range">25</div>
+                      <div class="yg-calendar__cell is-selected">26</div><div class="yg-calendar__cell">27</div><div class="yg-calendar__cell">28</div><div class="yg-calendar__cell">29</div><div class="yg-calendar__cell">30</div><div class="yg-calendar__cell">31</div><div class="yg-calendar__cell is-disabled">1</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div class="yg-segmented">
+                <button type="button" class="yg-segmented__item is-active">按天</button>
+                <button type="button" class="yg-segmented__item">按周</button>
+                <button type="button" class="yg-segmented__item">按月</button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ============ ④ 全部组件 · 4.3 导航 ============ -->
+        <section class="demo-section" id="sec-nav">
+          <h2>导航（准则 4.3）</h2>
+          <p class="demo-note">侧边栏、菜单、顶栏见本页骨架（左侧实况演示）；下方为面包屑、标签页、分页、下拉菜单、步骤条。下拉菜单弹层见「弹出层」专节。</p>
+
+          <div class="demo-block">
+            <div class="demo-block__title">面包屑 .yg-breadcrumb</div>
+            <nav class="yg-breadcrumb" aria-label="面包屑示例">
+              <span class="yg-breadcrumb__item"><a href="#sec-nav">首页</a></span>
+              <span class="yg-breadcrumb__item"><a href="#sec-nav">活动管理</a></span>
+              <span class="yg-breadcrumb__item"><a href="#sec-nav">我的活动</a></span>
+              <span class="yg-breadcrumb__item is-current">活动详情</span>
+            </nav>
+          </div>
+
+          <div class="demo-block">
+            <div class="demo-block__title">标签页 .yg-tabs（--line / --card / --pill，点击切换）</div>
+            <div class="demo-stack">
+              <div class="yg-tabs yg-tabs--line" data-tabs>
+                <div class="yg-tabs__nav" role="tablist">
+                  <button type="button" class="yg-tabs__item is-active" role="tab">全部活动</button>
+                  <button type="button" class="yg-tabs__item" role="tab">进行中</button>
+                  <button type="button" class="yg-tabs__item" role="tab">待审核</button>
+                  <button type="button" class="yg-tabs__item is-disabled" role="tab" disabled>已结束（禁用）</button>
+                </div>
+                <div class="yg-tabs__content">全部活动面板：128 场活动按时间倒序展示。</div>
+                <div class="yg-tabs__content" hidden>进行中面板：当前有 36 场活动进行中。</div>
+                <div class="yg-tabs__content" hidden>待审核面板：3 场活动等待平台审核。</div>
+              </div>
+              <div class="yg-tabs yg-tabs--card" data-tabs>
+                <div class="yg-tabs__nav" role="tablist">
+                  <button type="button" class="yg-tabs__item is-active" role="tab">详情</button>
+                  <button type="button" class="yg-tabs__item" role="tab">报名记录</button>
+                  <button type="button" class="yg-tabs__item" role="tab">评价</button>
+                </div>
+                <div class="yg-tabs__content">卡片式标签页内容一。</div>
+                <div class="yg-tabs__content" hidden>卡片式标签页内容二。</div>
+                <div class="yg-tabs__content" hidden>卡片式标签页内容三。</div>
+              </div>
+              <div class="yg-tabs yg-tabs--pill" data-tabs>
+                <div class="yg-tabs__nav" role="tablist">
+                  <button type="button" class="yg-tabs__item is-active" role="tab">日报</button>
+                  <button type="button" class="yg-tabs__item" role="tab">周报</button>
+                  <button type="button" class="yg-tabs__item" role="tab">月报</button>
+                </div>
+                <div class="yg-tabs__content">胶囊式标签页内容一。</div>
+                <div class="yg-tabs__content" hidden>胶囊式标签页内容二。</div>
+                <div class="yg-tabs__content" hidden>胶囊式标签页内容三。</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="demo-block">
+            <div class="demo-block__title">分页 .yg-pagination（点击切换）</div>
+            <nav class="yg-pagination" data-pagination aria-label="分页">
+              <button type="button" class="yg-pagination__prev is-disabled" disabled aria-label="上一页"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="m15 6-6 6 6 6"/></svg></button>
+              <button type="button" class="yg-pagination__item is-active" aria-current="page">1</button>
+              <button type="button" class="yg-pagination__item">2</button>
+              <button type="button" class="yg-pagination__item">3</button>
+              <span class="yg-pagination__ellipsis">…</span>
+              <button type="button" class="yg-pagination__item">8</button>
+              <button type="button" class="yg-pagination__next" aria-label="下一页"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"/></svg></button>
+            </nav>
+          </div>
+
+          <div class="demo-block">
+            <div class="demo-block__title">下拉菜单 .yg-dropdown（弹层实色不透明）</div>
+            <div class="demo-row">
+              <div class="yg-dropdown" id="demo-dropdown-1">
+                <button type="button" class="yg-btn yg-btn--secondary" data-dropdown-toggle>
+                  更多操作
+                  <svg class="yg-btn__icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+                </button>
+                <div class="yg-dropdown__menu">
+                  <button type="button" class="yg-dropdown__item">编辑活动</button>
+                  <button type="button" class="yg-dropdown__item">复制链接</button>
+                  <div class="yg-dropdown__divider"></div>
+                  <button type="button" class="yg-dropdown__item is-disabled" disabled>归档（不可用）</button>
+                  <button type="button" class="yg-dropdown__item is-danger">删除活动</button>
+                </div>
+              </div>
+              <span class="demo-hint">点击触发展开；再次点击 / 点击外部 / Esc 关闭；弹层为 --yg-bg-surface-raised 实色。</span>
+            </div>
+          </div>
+
+          <div class="demo-block">
+            <div class="demo-block__title">步骤条 .yg-steps（横向 / 竖向）</div>
+            <div class="demo-stack">
+              <div class="yg-steps">
+                <div class="yg-steps__item is-done">
+                  <span class="yg-steps__dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg></span>
+                  <div><div class="yg-steps__title">提交报名</div><div class="yg-steps__desc">信息已提交</div></div>
+                </div>
+                <div class="yg-steps__item is-active">
+                  <span class="yg-steps__dot">2</span>
+                  <div><div class="yg-steps__title">平台审核</div><div class="yg-steps__desc">预计 1 个工作日</div></div>
+                </div>
+                <div class="yg-steps__item">
+                  <span class="yg-steps__dot">3</span>
+                  <div><div class="yg-steps__title">参与活动</div><div class="yg-steps__desc">按时集合签到</div></div>
+                </div>
+              </div>
+              <div class="yg-steps yg-steps--vertical">
+                <div class="yg-steps__item is-done">
+                  <span class="yg-steps__dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg></span>
+                  <div><div class="yg-steps__title">报名成功</div><div class="yg-steps__desc">2026-10-24 09:30</div></div>
+                </div>
+                <div class="yg-steps__item is-active">
+                  <span class="yg-steps__dot">2</span>
+                  <div><div class="yg-steps__title">服务进行中</div><div class="yg-steps__desc">累计 2.5 小时</div></div>
+                </div>
+                <div class="yg-steps__item">
+                  <span class="yg-steps__dot">3</span>
+                  <div><div class="yg-steps__title">签退与评价</div><div class="yg-steps__desc">等待签退</div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ============ ④ 全部组件 · 4.4 数据展示 ============ -->
+        <section class="demo-section" id="sec-data">
+          <h2>数据展示（准则 4.4）</h2>
+          <p class="demo-note">卡片 / 表格 / 列表 / 标签 / 徽标 / 头像 / 时间线 / 树 / 折叠 / 统计 / 进度 / 空状态 / 骨架 / 日历 / 描述列表 / 轮播 / 快捷键。</p>
+
+          <div class="demo-block">
+            <div class="demo-block__title">卡片 .yg-card（默认 / hoverable / narrow）</div>
+            <div class="demo-grid">
+              <div class="yg-card">
+                <div class="yg-card__header"><div class="yg-card__title">本周志愿活动</div><div class="yg-card__extra"><a class="yg-link" href="#sec-data">查看全部</a></div></div>
+                <div class="yg-card__body">共 18 场活动，报名 246 人次，覆盖 12 个社区。</div>
+                <div class="yg-card__footer"><span class="yg-text-sm yg-text-tertiary">更新于 10 分钟前</span></div>
+              </div>
+              <div class="yg-card yg-card--hoverable">
+                <div class="yg-card__header"><div class="yg-card__title">悬停卡片</div></div>
+                <div class="yg-card__body">悬停查看上浮 + 阴影增强效果。</div>
+              </div>
+              <div class="yg-card yg-card--narrow">
+                <div class="yg-card__body">紧凑卡片：内边距更小的场景。</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="demo-block">
+            <div class="demo-block__title">表格 .yg-table（斑马纹 / 可排序 / 选中行 / 等宽数字）</div>
+            <div class="yg-table__wrapper">
+              <table class="yg-table yg-table--stripe">
+                <thead>
+                  <tr>
+                    <th class="is-sortable">活动名称</th>
+                    <th class="is-sortable">时间</th>
+                    <th>地点</th>
+                    <th class="yg-text-right">已报 / 名额</th>
+                    <th>状态</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr class="is-selected">
+                    <td>滨江净滩行动</td>
+                    <td class="yg-text-num">10-26 09:00</td>
+                    <td>滨江公园</td>
+                    <td class="yg-text-right yg-text-num">32 / 40</td>
+                    <td><span class="yg-tag yg-tag--success">报名中</span></td>
+                  </tr>
+                  <tr>
+                    <td>社区助老探访</td>
+                    <td class="yg-text-num">10-26 14:00</td>
+                    <td>阳光社区</td>
+                    <td class="yg-text-right yg-text-num">18 / 20</td>
+                    <td><span class="yg-tag yg-tag--sky">报名中</span></td>
+                  </tr>
+                  <tr>
+                    <td>图书馆整理</td>
+                    <td class="yg-text-num">10-27 10:00</td>
+                    <td>市图书馆</td>
+                    <td class="yg-text-right yg-text-num">40 / 40</td>
+                    <td><span class="yg-tag">已满员</span></td>
+                  </tr>
+                  <tr>
+                    <td>儿童公益课堂</td>
+                    <td class="yg-text-num">10-28 09:30</td>
+                    <td>少年宫</td>
+                    <td class="yg-text-right yg-text-num">12 / 30</td>
+                    <td><span class="yg-tag yg-tag--warning">审核中</span></td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <p class="demo-hint">表头 .is-sortable 可排序；首行 .is-selected 选中；数字单元格右对齐 + .yg-text-num。</p>
+          </div>
+
+          <div class="demo-block">
+            <div class="demo-block__title">列表 .yg-list</div>
+            <ul class="yg-list">
+              <li class="yg-list__item">
+                <div><span class="yg-text-medium">滨江净滩行动</span><p class="yg-text-sm yg-text-tertiary mb-0">环保公益 · 滨江公园</p></div>
+                <div class="yg-list__meta yg-text-num">10-26 09:00</div>
+                <div class="yg-list__extra"><button type="button" class="yg-btn yg-btn--text yg-btn--sm">报名</button></div>
+              </li>
+              <li class="yg-list__item">
+                <div><span class="yg-text-medium">社区助老探访</span><p class="yg-text-sm yg-text-tertiary mb-0">助老服务 · 阳光社区</p></div>
+                <div class="yg-list__meta yg-text-num">10-26 14:00</div>
+                <div class="yg-list__extra"><button type="button" class="yg-btn yg-btn--text yg-btn--sm">报名</button></div>
+              </li>
+              <li class="yg-list__item">
+                <div><span class="yg-text-medium">图书馆整理</span><p class="yg-text-sm yg-text-tertiary mb-0">文化服务 · 市图书馆</p></div>
+                <div class="yg-list__meta yg-text-num">10-27 10:00</div>
+                <div class="yg-list__extra"><span class="yg-text-sm yg-text-tertiary">已满员</span></div>
+              </li>
+            </ul>
+          </div>
+
+          <div class="demo-block">
+            <div class="demo-block__title">标签 .yg-tag / 徽标 .yg-badge</div>
+            <div class="demo-row">
+              <span class="yg-tag">默认</span>
+              <span class="yg-tag yg-tag--sky">天蓝</span>
+              <span class="yg-tag yg-tag--success">成功</span>
+              <span class="yg-tag yg-tag--warning">警告</span>
+              <span class="yg-tag yg-tag--danger">危险</span>
+              <span class="yg-tag yg-tag--outline">描边</span>
+              <span class="yg-tag yg-tag--sm">小号 sm</span>
+              <span class="yg-tag">可关闭<button type="button" class="yg-tag__close" data-tag-close aria-label="关闭"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6 6 18"/></svg></button></span>
+            </div>
+            <div class="demo-row">
+              <span class="yg-badge yg-badge--standalone">8</span>
+              <span class="yg-badge yg-badge--standalone">99+</span>
+              <span class="yg-badge"><span class="yg-badge__dot" style="background: var(--yg-color-success)"></span></span>
+              <span class="yg-badge"><span class="yg-badge__dot" style="background: var(--yg-color-warning)"></span></span>
+              <span class="yg-badge"><span class="yg-badge__dot" style="background: var(--yg-color-danger)"></span></span>
+              <span class="demo-badge-anchor">
+                <button type="button" class="yg-icon-btn yg-icon-btn--ghost" aria-label="消息">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h16v11H9l-5 4V5Z"/></svg>
+                </button>
+                <span class="yg-badge">5</span>
+              </span>
+            </div>
+          </div>
+
+          <div class="demo-block">
+            <div class="demo-block__title">头像 .yg-avatar / 头像组</div>
+            <div class="demo-row">
+              <span class="yg-avatar yg-avatar--xs">王</span>
+              <span class="yg-avatar yg-avatar--sm">李</span>
+              <span class="yg-avatar">张</span>
+              <span class="yg-avatar yg-avatar--lg">陈</span>
+              <span class="yg-avatar yg-avatar--xl">义</span>
+              <span class="yg-avatar yg-avatar--square yg-avatar--lg">义</span>
+              <span class="yg-avatar" aria-label="图标头像"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-6 8-6s8 2 8 6"/></svg></span>
+              <div class="yg-avatar-group">
+                <span class="yg-avatar yg-avatar--sm">王</span>
+                <span class="yg-avatar yg-avatar--sm">李</span>
+                <span class="yg-avatar yg-avatar--sm">张</span>
+                <span class="yg-avatar yg-avatar--sm">+9</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="demo-block">
+            <div class="demo-block__title">时间线 .yg-timeline</div>
+            <div class="yg-timeline">
+              <div class="yg-timeline__item">
+                <div class="yg-timeline__dot"></div>
+                <div class="yg-timeline__line"></div>
+                <div class="yg-timeline__content"><span class="yg-text-medium">报名成功</span><p class="yg-text-sm yg-text-tertiary mb-0">滨江净滩行动 · 名额已确认</p></div>
+                <div class="yg-timeline__time yg-text-num">10-24 09:30</div>
+              </div>
+              <div class="yg-timeline__item">
+                <div class="yg-timeline__dot" style="background: var(--yg-color-success)"></div>
+                <div class="yg-timeline__line"></div>
+                <div class="yg-timeline__content"><span class="yg-text-medium">审核通过</span><p class="yg-text-sm yg-text-tertiary mb-0">平台已确认你的报名信息</p></div>
+                <div class="yg-timeline__time yg-text-num">10-24 10:15</div>
+              </div>
+              <div class="yg-timeline__item">
+                <div class="yg-timeline__dot" style="background: var(--yg-border-strong)"></div>
+                <div class="yg-timeline__line"></div>
+                <div class="yg-timeline__content"><span class="yg-text-medium">待签到</span><p class="yg-text-sm yg-text-tertiary mb-0">请于活动当天 09:00 前到达集合点</p></div>
+                <div class="yg-timeline__time yg-text-num">—</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="demo-block">
+            <div class="demo-block__title">树形控件 .yg-tree / 折叠面板 .yg-collapse（点击展开）</div>
+            <div class="demo-grid">
+              <div class="yg-tree">
+                <div class="yg-tree__node is-expanded">
+                  <button type="button" class="yg-tree__arrow" data-tree-toggle aria-label="展开或收起"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg></button>
+                  <span class="yg-tree__label" data-tree-label>华东地区</span>
+                </div>
+                <div class="yg-tree">
+                  <div class="yg-tree__node">
+                    <button type="button" class="yg-tree__arrow" data-tree-toggle aria-label="展开或收起"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg></button>
+                    <span class="yg-tree__label" data-tree-label>上海市</span>
+                  </div>
+                  <div class="yg-tree" hidden>
+                    <div class="yg-tree__node"><span class="yg-tree__indent"></span><span class="yg-tree__label" data-tree-label>浦东新区</span></div>
+                    <div class="yg-tree__node"><span class="yg-tree__indent"></span><span class="yg-tree__label" data-tree-label>徐汇区</span></div>
+                  </div>
+                  <div class="yg-tree__node"><span class="yg-tree__indent"></span><span class="yg-tree__label" data-tree-label>江苏省</span></div>
+                  <div class="yg-tree__node"><span class="yg-tree__indent"></span><span class="yg-tree__label" data-tree-label>浙江省</span></div>
+                </div>
+                <div class="yg-tree__node is-expanded">
+                  <button type="button" class="yg-tree__arrow" data-tree-toggle aria-label="展开或收起"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg></button>
+                  <span class="yg-tree__label" data-tree-label>华南地区</span>
+                </div>
+                <div class="yg-tree">
+                  <div class="yg-tree__node"><span class="yg-tree__indent"></span><span class="yg-tree__label" data-tree-label>广东省</span></div>
+                </div>
+              </div>
+              <div class="yg-collapse">
+                <div class="yg-collapse__item is-open">
+                  <button type="button" class="yg-collapse__header" data-collapse-header>
+                    <span>集合与签到说明</span>
+                    <svg class="yg-collapse__arrow" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+                  </button>
+                  <div class="yg-collapse__content"><p class="mb-0">请于活动当天 09:00 前到达滨江公园东门集合点，出示报名二维码完成签到。</p></div>
+                </div>
+                <div class="yg-collapse__item">
+                  <button type="button" class="yg-collapse__header" data-collapse-header>
+                    <span>装备与注意事项</span>
+                    <svg class="yg-collapse__arrow" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+                  </button>
+                  <div class="yg-collapse__content"><p class="mb-0">建议穿着长袖长裤与运动鞋，自备水杯；如遇雨天活动将顺延并短信通知。</p></div>
+                </div>
+                <div class="yg-collapse__item is-disabled">
+                  <button type="button" class="yg-collapse__header" data-collapse-header disabled>
+                    <span>禁用面板</span>
+                    <svg class="yg-collapse__arrow" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+                  </button>
+                  <div class="yg-collapse__content"><p class="mb-0">不可展开。</p></div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="demo-block">
+            <div class="demo-block__title">统计数值 .yg-statistic / 进度条 .yg-progress</div>
+            <div class="demo-row">
+              <div class="yg-statistic">
+                <div class="yg-statistic__title">累计服务时长</div>
+                <div class="yg-statistic__value yg-text-num">12,860<span class="yg-statistic__suffix">小时</span></div>
+                <div class="yg-statistic__trend yg-text-success"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5M6 11l6-6 6 6"/></svg>较上月 +12.5%</div>
+              </div>
+              <div class="yg-statistic">
+                <div class="yg-statistic__title">本月缺席率</div>
+                <div class="yg-statistic__value yg-text-num"><span class="yg-statistic__prefix">约</span>2.4<span class="yg-statistic__suffix">%</span></div>
+                <div class="yg-statistic__trend yg-text-danger"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M6 13l6 6 6-6"/></svg>较上月 +0.3%</div>
+              </div>
+            </div>
+            <div class="demo-stack" style="max-width: calc(var(--yg-space-1) * 120)">
+              <div class="yg-progress"><div class="yg-progress__rail"><div class="yg-progress__bar" id="demo-progress-bar" style="width: 30%"></div></div></div>
+              <div class="yg-progress yg-progress--success"><div class="yg-progress__rail"><div class="yg-progress__bar" style="width: 80%"></div></div></div>
+              <div class="yg-progress yg-progress--warning"><div class="yg-progress__rail"><div class="yg-progress__bar" style="width: 45%"></div></div></div>
+              <div class="yg-progress yg-progress--danger"><div class="yg-progress__rail"><div class="yg-progress__bar" style="width: 95%"></div></div></div>
+              <div class="demo-row">
+                <div class="yg-progress yg-progress--circle" role="img" aria-label="进度 75%" data-percent="75%" style="--yg-progress-value: 75"></div>
+                <button type="button" class="yg-btn yg-btn--secondary yg-btn--sm" id="demo-progress-run">模拟加载进度</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="demo-block">
+            <div class="demo-block__title">空状态 .yg-empty / 骨架屏 .yg-skeleton</div>
+            <div class="demo-grid">
+              <div class="yg-empty">
+                <div class="yg-empty__icon">
+                  <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
+                </div>
+                <div class="yg-empty__title">暂无活动</div>
+                <div class="yg-empty__desc">当前筛选条件下没有活动，换个条件试试</div>
+                <div class="yg-empty__actions"><button type="button" class="yg-btn yg-btn--primary">创建活动</button></div>
+              </div>
+              <div class="yg-skeleton is-active">
+                <div class="demo-row">
+                  <span class="yg-skeleton__circle"></span>
+                  <div class="demo-stack" style="flex: 1">
+                    <span class="yg-skeleton__text" style="width: 60%"></span>
+                    <span class="yg-skeleton__text" style="width: 40%"></span>
+                  </div>
+                </div>
+                <span class="yg-skeleton__rect"></span>
+                <div class="demo-row">
+                  <span class="yg-skeleton__text" style="width: 80%"></span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="demo-block">
+            <div class="demo-block__title">日历 .yg-calendar（今日 / 选中 / 范围 / 禁用）</div>
+            <div class="demo-row">
+              <div class="yg-calendar demo-side">
+                <div class="yg-calendar__header">
+                  <button type="button" class="yg-calendar__nav" aria-label="上个月"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="m15 6-6 6 6 6"/></svg></button>
+                  <div class="yg-calendar__title">2026 年 10 月</div>
+                  <button type="button" class="yg-calendar__nav" aria-label="下个月"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"/></svg></button>
+                </div>
+                <div class="yg-calendar__grid">
+                  <div class="yg-calendar__cell demo-hint">一</div><div class="yg-calendar__cell demo-hint">二</div><div class="yg-calendar__cell demo-hint">三</div><div class="yg-calendar__cell demo-hint">四</div><div class="yg-calendar__cell demo-hint">五</div><div class="yg-calendar__cell demo-hint">六</div><div class="yg-calendar__cell demo-hint">日</div>
+                  <div class="yg-calendar__cell is-disabled">28</div><div class="yg-calendar__cell is-disabled">29</div><div class="yg-calendar__cell is-disabled">30</div>
+                  <div class="yg-calendar__cell">1</div><div class="yg-calendar__cell">2</div><div class="yg-calendar__cell">3</div><div class="yg-calendar__cell">4</div>
+                  <div class="yg-calendar__cell">5</div><div class="yg-calendar__cell">6</div><div class="yg-calendar__cell">7</div><div class="yg-calendar__cell">8</div><div class="yg-calendar__cell">9</div><div class="yg-calendar__cell">10</div><div class="yg-calendar__cell">11</div>
+                  <div class="yg-calendar__cell">12</div><div class="yg-calendar__cell">13</div><div class="yg-calendar__cell">14</div><div class="yg-calendar__cell">15</div><div class="yg-calendar__cell">16</div><div class="yg-calendar__cell">17</div><div class="yg-calendar__cell">18</div>
+                  <div class="yg-calendar__cell">19</div><div class="yg-calendar__cell">20</div><div class="yg-calendar__cell">21</div><div class="yg-calendar__cell">22</div><div class="yg-calendar__cell">23</div><div class="yg-calendar__cell is-today">24</div><div class="yg-calendar__cell is-range">25</div>
+                  <div class="yg-calendar__cell is-selected">26</div><div class="yg-calendar__cell">27</div><div class="yg-calendar__cell">28</div><div class="yg-calendar__cell">29</div><div class="yg-calendar__cell">30</div><div class="yg-calendar__cell">31</div><div class="yg-calendar__cell is-disabled">1</div>
+                </div>
+              </div>
+              <span class="demo-hint">.is-today 天蓝描边、.is-selected 天蓝实心白字、.is-range 天蓝软底、.is-disabled 禁用灰。</span>
+            </div>
+          </div>
+
+          <div class="demo-block">
+            <div class="demo-block__title">描述列表 .yg-descriptions（默认 / --bordered）</div>
+            <div class="demo-stack">
+              <dl class="yg-descriptions">
+                <div class="yg-descriptions__item"><dt class="yg-descriptions__label">活动名称</dt><dd class="yg-descriptions__value">滨江净滩行动</dd></div>
+                <div class="yg-descriptions__item"><dt class="yg-descriptions__label">活动类型</dt><dd class="yg-descriptions__value">环保公益</dd></div>
+                <div class="yg-descriptions__item"><dt class="yg-descriptions__label">招募人数</dt><dd class="yg-descriptions__value yg-text-num">40 人</dd></div>
+                <div class="yg-descriptions__item"><dt class="yg-descriptions__label">集合地点</dt><dd class="yg-descriptions__value">滨江公园东门</dd></div>
+              </dl>
+              <dl class="yg-descriptions yg-descriptions--bordered">
+                <div class="yg-descriptions__item"><dt class="yg-descriptions__label">主办方</dt><dd class="yg-descriptions__value">城市志愿者协会</dd></div>
+                <div class="yg-descriptions__item"><dt class="yg-descriptions__label">负责人</dt><dd class="yg-descriptions__value">林小满</dd></div>
+              </dl>
+            </div>
+          </div>
+
+          <div class="demo-block">
+            <div class="demo-block__title">轮播 .yg-carousel（点击圆点或箭头切换）</div>
+            <div class="yg-carousel demo-side" id="demo-carousel">
+              <div class="yg-carousel__viewport">
+                <div class="yg-carousel__slide is-active" style="background: var(--yg-color-primary-soft)"><span class="yg-text-lg yg-text-semibold">滨江净滩行动</span><p class="yg-text-sm mb-0">10 月 26 日 · 滨江公园</p></div>
+                <div class="yg-carousel__slide" style="background: var(--yg-color-success-soft)"><span class="yg-text-lg yg-text-semibold">社区助老探访</span><p class="yg-text-sm mb-0">10 月 26 日 · 阳光社区</p></div>
+                <div class="yg-carousel__slide" style="background: var(--yg-color-warning-soft)"><span class="yg-text-lg yg-text-semibold">儿童公益课堂</span><p class="yg-text-sm mb-0">10 月 28 日 · 少年宫</p></div>
+              </div>
+              <div class="yg-carousel__dots">
+                <button type="button" class="is-active" aria-label="第 1 张"></button>
+                <button type="button" aria-label="第 2 张"></button>
+                <button type="button" aria-label="第 3 张"></button>
+              </div>
+              <button type="button" class="yg-carousel__arrow" aria-label="上一张"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="m15 6-6 6 6 6"/></svg></button>
+              <button type="button" class="yg-carousel__arrow" aria-label="下一张"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"/></svg></button>
+            </div>
+          </div>
+
+          <div class="demo-block">
+            <div class="demo-block__title">快捷键提示 .yg-kbd</div>
+            <div class="demo-row">
+              <span class="demo-hint">搜索：</span><kbd class="yg-kbd">⌘</kbd><kbd class="yg-kbd">K</kbd>
+              <span class="demo-hint">关闭弹窗：</span><kbd class="yg-kbd">Esc</kbd>
+              <span class="demo-hint">切换主题：</span><kbd class="yg-kbd">⌥</kbd><kbd class="yg-kbd">T</kbd>
+            </div>
+          </div>
+        </section>
+
+        <!-- ============ ④ 全部组件 · 4.5 反馈 ============ -->
+        <section class="demo-section" id="sec-feedback">
+          <h2>反馈（准则 4.5）</h2>
+          <p class="demo-note">警告提示 / 文字提示 / 气泡卡片 / 加载 / 结果页 / 回到顶部；消息、通知、弹窗、抽屉见「弹出层」专节。</p>
+
+          <div class="demo-block">
+            <div class="demo-block__title">警告提示 .yg-alert（--info / --success / --warning / --danger）</div>
+            <div class="demo-stack">
+              <div class="yg-alert yg-alert--info">
+                <svg class="yg-alert__icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg>
+                <div class="yg-alert__title">报名通道即将关闭</div>
+                <div class="yg-alert__desc">滨江净滩行动将于今晚 20:00 截止报名，剩余名额 8 个。</div>
+              </div>
+              <div class="yg-alert yg-alert--success">
+                <svg class="yg-alert__icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>
+                <div class="yg-alert__title">报名成功</div>
+                <div class="yg-alert__desc">你已成功报名社区助老探访，请准时到达集合点。</div>
+              </div>
+              <div class="yg-alert yg-alert--warning">
+                <svg class="yg-alert__icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4 2.5 20h19L12 4Z"/><path d="M12 10v4M12 17.5h.01"/></svg>
+                <div class="yg-alert__title">天气提醒</div>
+                <div class="yg-alert__desc">活动当天可能有小雨，请自备雨具；如遇暴雨活动将顺延。</div>
+              </div>
+              <div class="yg-alert yg-alert--danger">
+                <svg class="yg-alert__icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8v4M12 16h.01"/></svg>
+                <div class="yg-alert__title">签到已截止</div>
+                <div class="yg-alert__desc">本场活动已开始 30 分钟，无法再签到，请联系活动负责人。</div>
+              </div>
+              <div class="yg-alert yg-alert--info" id="demo-alert-closable">
+                <svg class="yg-alert__icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg>
+                <div class="yg-alert__title">可关闭的提示横幅</div>
+                <div class="yg-alert__desc">点击右侧关闭按钮移除本条提示（__close）。</div>
+                <button type="button" class="yg-icon-btn yg-icon-btn--ghost yg-icon-btn--sm yg-alert__close" data-alert-close aria-label="关闭">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div class="demo-block">
+            <div class="demo-block__title">文字提示 .yg-tooltip（--top / --bottom / --left / --right，悬停查看）</div>
+            <div class="demo-row">
+              <span class="demo-tooltip-host">
+                <button type="button" class="yg-btn yg-btn--secondary yg-btn--sm">上方提示</button>
+                <span class="yg-tooltip yg-tooltip--top" role="tooltip">深色实底 · 方向 --top</span>
+              </span>
+              <span class="demo-tooltip-host">
+                <button type="button" class="yg-btn yg-btn--secondary yg-btn--sm">下方提示</button>
+                <span class="yg-tooltip yg-tooltip--bottom" role="tooltip">方向 --bottom</span>
+              </span>
+              <span class="demo-tooltip-host">
+                <button type="button" class="yg-btn yg-btn--secondary yg-btn--sm">左侧提示</button>
+                <span class="yg-tooltip yg-tooltip--left" role="tooltip">方向 --left</span>
+              </span>
+              <span class="demo-tooltip-host">
+                <button type="button" class="yg-btn yg-btn--secondary yg-btn--sm">右侧提示</button>
+                <span class="yg-tooltip yg-tooltip--right" role="tooltip">方向 --right</span>
+              </span>
+            </div>
+            <p class="demo-hint">tooltip 为弹出层体系中唯一允许使用深色实底（--yg-gray-950）的面板，且不透明；其余弹出面板一律 --yg-bg-surface-raised。</p>
+          </div>
+
+          <div class="demo-block">
+            <div class="demo-block__title">气泡卡片 .yg-popover（__title / __content / __actions，点击触发，弹簧进出场）</div>
+            <div class="demo-row">
+              <span class="demo-popover-wrap">
+                <button type="button" class="yg-btn yg-btn--primary yg-btn--sm" data-popover-toggle>报名前确认</button>
+                <div class="yg-popover" id="demo-popover" role="dialog">
+                  <div class="yg-popover__title">确认报名？</div>
+                  <div class="yg-popover__content">报名后请于活动当天 09:00 前到达集合点签到，缺席将影响信用分。</div>
+                  <div class="yg-popover__actions">
+                    <button type="button" class="yg-btn yg-btn--secondary yg-btn--sm" data-popover-toggle>再想想</button>
+                    <button type="button" class="yg-btn yg-btn--primary yg-btn--sm" data-popover-toggle>确认报名</button>
+                  </div>
+                </div>
+              </span>
+            </div>
+          </div>
+
+          <div class="demo-block">
+            <div class="demo-block__title">加载 .yg-spinner / .yg-loading</div>
+            <div class="demo-row">
+              <span class="yg-spinner yg-spinner--sm" aria-label="加载中"></span>
+              <span class="yg-spinner" aria-label="加载中"></span>
+              <span class="yg-spinner yg-spinner--lg" aria-label="加载中"></span>
+              <span class="demo-col">
+                <span style="display:flex;align-items:center;justify-content:center;width:var(--yg-space-8);height:var(--yg-space-8);border-radius:var(--yg-radius-md);background:var(--yg-color-primary)">
+                  <span class="yg-spinner yg-spinner--inverse" aria-label="加载中"></span>
+                </span>
+                <span class="demo-hint">--inverse 白圈</span>
+              </span>
+              <button type="button" class="yg-btn yg-btn--primary is-loading" disabled><span class="yg-btn__spinner"></span>按钮加载中</button>
+            </div>
+            <div class="demo-row">
+              <div class="demo-loading-area demo-side">
+                <div class="yg-card">
+                  <div class="yg-card__header"><div class="yg-card__title">区域数据</div></div>
+                  <div class="yg-card__body">这里是即将加载的内容区域。</div>
+                </div>
+                <div class="yg-loading is-loading">
+                  <span class="yg-spinner"></span>
+                  <span>加载中…</span>
+                </div>
+              </div>
+              <span class="demo-hint">左侧：区域遮罩 .yg-loading（白底不透明 + spinner + 文案）；右上按钮可触发全屏加载（--fullscreen）。</span>
+              <button type="button" class="yg-btn yg-btn--secondary" id="demo-loading-fs-btn">演示全屏加载</button>
+            </div>
+          </div>
+
+          <div class="demo-block">
+            <div class="demo-block__title">结果页 .yg-result（--success / --warning / --danger / --info）</div>
+            <div class="demo-grid">
+              <div class="yg-result yg-result--success">
+                <div class="yg-result__icon"><svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg></div>
+                <div class="yg-result__title">报名成功</div>
+                <div class="yg-result__subtitle">请于 10 月 26 日 09:00 前到达集合点</div>
+                <div class="yg-result__actions"><button type="button" class="yg-btn yg-btn--primary yg-btn--sm">查看我的活动</button></div>
+              </div>
+              <div class="yg-result yg-result--warning">
+                <div class="yg-result__icon"><svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4 2.5 20h19L12 4Z"/><path d="M12 10v4M12 17.5h.01"/></svg></div>
+                <div class="yg-result__title">信息待补充</div>
+                <div class="yg-result__subtitle">请补充紧急联系人后再提交报名</div>
+                <div class="yg-result__actions"><button type="button" class="yg-btn yg-btn--primary yg-btn--sm">去补充</button></div>
+              </div>
+              <div class="yg-result yg-result--danger">
+                <div class="yg-result__icon"><svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8v4M12 16h.01"/></svg></div>
+                <div class="yg-result__title">提交失败</div>
+                <div class="yg-result__subtitle">网络异常，请稍后重试</div>
+                <div class="yg-result__actions"><button type="button" class="yg-btn yg-btn--primary yg-btn--sm">重新提交</button></div>
+              </div>
+              <div class="yg-result yg-result--info">
+                <div class="yg-result__icon"><svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg></div>
+                <div class="yg-result__title">审核中</div>
+                <div class="yg-result__subtitle">预计 1 个工作日内完成审核</div>
+                <div class="yg-result__actions"><button type="button" class="yg-btn yg-btn--secondary yg-btn--sm">返回首页</button></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="demo-block">
+            <div class="demo-block__title">回到顶部 .yg-backtop</div>
+            <p class="demo-note mb-0">页面右下角悬浮按钮（滚动超过一段距离后淡入出现，点击平滑回到顶部），请向下滚动页面查看。</p>
+          </div>
+        </section>
+
+        <!-- ============ ⑤ 高危操作专节 ============ -->
+        <section class="demo-section" id="sec-danger">
+          <h2>高危操作（准则第 5 章）</h2>
+          <p class="demo-note">红色 --yg-color-danger 是破坏性操作唯一识别色，不得用于促销、装饰或普通提示；所有高危操作必须经 .yg-confirm 二次确认并说明后果与不可恢复性。</p>
+
+          <div class="demo-block">
+            <div class="demo-block__title">触发样式：危险按钮 / 描边 / 红字 / 红色图标</div>
+            <div class="demo-row">
+              <button type="button" class="yg-btn yg-btn--danger">删除活动</button>
+              <button type="button" class="yg-btn yg-btn--danger-outline">清空草稿</button>
+              <button type="button" class="yg-btn yg-btn--text yg-text-danger">注销账号</button>
+              <button type="button" class="yg-icon-btn yg-icon-btn--danger" aria-label="删除"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6 7l1 13h10l1-13"/></svg></button>
+            </div>
+            <div class="demo-row">
+              <ul class="yg-list" style="flex: 1">
+                <li class="yg-list__item">
+                  <div><span class="yg-text-medium">滨江净滩行动</span><p class="yg-text-sm yg-text-tertiary mb-0">行内高危操作：危险按钮靠右，远离高频操作</p></div>
+                  <div class="yg-list__extra">
+                    <button type="button" class="yg-btn yg-btn--text yg-btn--sm">编辑</button>
+                    <button type="button" class="yg-btn yg-btn--text yg-btn--sm yg-text-danger" data-modal="#demo-confirm">删除</button>
+                  </div>
+                </li>
+              </ul>
+            </div>
+            <p class="demo-hint">多个操作并列时危险操作靠右；点击下方「删除该活动」或上方红色「删除」均可打开 .yg-confirm 危险确认弹窗。</p>
+          </div>
+
+          <div class="demo-block">
+            <div class="demo-block__title">二次确认 · .yg-confirm（删除活动场景）</div>
+            <div class="demo-row">
+              <button type="button" class="yg-btn yg-btn--danger" data-modal="#demo-confirm">删除该活动</button>
+              <span class="demo-hint">确认弹窗含：红色警示图标 + 动词句标题 + 后果说明 + 左取消右确认；确认后按钮进入 loading 防重复提交。</span>
+            </div>
+          </div>
+        </section>
+
+        <!-- ============ ⑥ 弹出层专节 ============ -->
+        <section class="demo-section" id="sec-popup">
+          <h2>弹出层（准则第 6 章）</h2>
+          <p class="demo-note">弹窗 / 抽屉 / 气泡 / 文字提示 / 下拉菜单 / 消息 / 通知。<strong>面板一律不透明</strong>（实色 var(--yg-bg-surface-raised)，禁止半透明与 backdrop-filter），<strong>遮罩 .yg-mask 是唯一允许的半透明元素</strong>；层级遵循 --yg-z-* 令牌；点击遮罩、Esc、右上 × 均可关闭。</p>
+
+          <div class="demo-block">
+            <div class="demo-block__title">对话框 .yg-modal（sm 400 / md 520 / lg 720，遮罩淡入 + 面板弹簧缩放）</div>
+            <div class="demo-row">
+              <button type="button" class="yg-btn yg-btn--secondary" data-modal="#demo-modal-sm">小弹窗 sm</button>
+              <button type="button" class="yg-btn yg-btn--primary" data-modal="#demo-modal-md">标准弹窗 md（默认）</button>
+              <button type="button" class="yg-btn yg-btn--secondary" data-modal="#demo-modal-lg">大弹窗 lg</button>
+              <span class="demo-hint">Esc / 点击遮罩 / 右上 × 均可关闭；打开时锁定页面滚动。</span>
+            </div>
+          </div>
+
+          <div class="demo-block">
+            <div class="demo-block__title">抽屉 .yg-drawer（--right 默认 / --bottom，位移滑入）</div>
+            <div class="demo-row">
+              <button type="button" class="yg-btn yg-btn--primary" data-drawer="#demo-drawer-right">右侧抽屉（筛选）</button>
+              <button type="button" class="yg-btn yg-btn--secondary" data-drawer="#demo-drawer-bottom">底部抽屉（确认）</button>
+              <span class="demo-hint">--left / --top 方向样式同源（贴边侧圆角为 0），见 feedback.css。</span>
+            </div>
+          </div>
+
+          <div class="demo-block">
+            <div class="demo-block__title">气泡 / 文字提示 / 下拉菜单</div>
+            <div class="demo-row">
+              <span class="demo-popover-wrap">
+                <button type="button" class="yg-btn yg-btn--secondary yg-btn--sm" data-popover-toggle>气泡 popover</button>
+                <div class="yg-popover" role="dialog">
+                  <div class="yg-popover__title">气泡卡片</div>
+                  <div class="yg-popover__content">实色 --yg-bg-surface-raised + 阴影 lg + 圆角 lg，弹簧进出场。</div>
+                  <div class="yg-popover__actions"><button type="button" class="yg-btn yg-btn--primary yg-btn--sm" data-popover-toggle>知道了</button></div>
+                </div>
+              </span>
+              <span class="demo-tooltip-host">
+                <button type="button" class="yg-btn yg-btn--ghost yg-btn--sm">tooltip 悬停</button>
+                <span class="yg-tooltip" role="tooltip">文字提示，淡入上移 4px</span>
+              </span>
+              <div class="yg-dropdown" id="demo-dropdown-2">
+                <button type="button" class="yg-btn yg-btn--secondary yg-btn--sm" data-dropdown-toggle>下拉菜单</button>
+                <div class="yg-dropdown__menu">
+                  <button type="button" class="yg-dropdown__item">导出名单</button>
+                  <button type="button" class="yg-dropdown__item">分享活动</button>
+                  <div class="yg-dropdown__divider"></div>
+                  <button type="button" class="yg-dropdown__item is-danger">删除活动</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="demo-block">
+            <div class="demo-block__title">全局消息 .yg-message（顶部居中，2–3s 自动消失，淡入上移）</div>
+            <div class="demo-row">
+              <button type="button" class="yg-btn yg-btn--secondary yg-btn--sm" data-message="success" data-text="报名成功">成功消息</button>
+              <button type="button" class="yg-btn yg-btn--secondary yg-btn--sm" data-message="info" data-text="审核预计 1 个工作日">信息消息</button>
+              <button type="button" class="yg-btn yg-btn--secondary yg-btn--sm" data-message="warning" data-text="活动当天可能有小雨">警告消息</button>
+              <button type="button" class="yg-btn yg-btn--secondary yg-btn--sm" data-message="danger" data-text="报名失败，请重试">错误消息</button>
+            </div>
+          </div>
+
+          <div class="demo-block">
+            <div class="demo-block__title">通知 .yg-notification（右上角堆叠，可关闭）</div>
+            <div class="demo-row">
+              <button type="button" class="yg-btn yg-btn--primary yg-btn--sm" data-notification data-title="报名成功" data-desc="滨江净滩行动已报名，请准时参加。">报名成功通知</button>
+              <button type="button" class="yg-btn yg-btn--secondary yg-btn--sm" data-notification data-title="审核提醒" data-desc="你发布的活动有 3 条新报名待审核。">审核提醒通知</button>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+  </div>
+
+  <!-- ================= 弹出层实例（均位于页面底部，默认隐藏） ================= -->
+
+  <!-- 弹窗 sm：简单提示 -->
+  <div class="yg-modal yg-modal--sm" id="demo-modal-sm" aria-hidden="true">
+    <div class="yg-modal__dialog" role="dialog" aria-modal="true" aria-labelledby="demo-modal-sm-title" tabindex="-1">
+      <div class="yg-modal__header">
+        <div class="yg-modal__title" id="demo-modal-sm-title">简单提示</div>
+        <button type="button" class="yg-icon-btn yg-icon-btn--ghost yg-modal__close" data-close aria-label="关闭">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
+        </button>
+      </div>
+      <div class="yg-modal__body">
+        <p class="mb-0">这是宽度 400px 的小弹窗（--sm），用于简单提示场景。</p>
+      </div>
+      <div class="yg-modal__footer">
+        <button type="button" class="yg-btn yg-btn--primary" data-close>知道了</button>
+      </div>
+    </div>
+  </div>
+  <div class="yg-mask" data-mask></div>
+
+  <!-- 弹窗 md（默认 520px）：表单场景 -->
+  <div class="yg-modal" id="demo-modal-md" aria-hidden="true">
+    <div class="yg-modal__dialog" role="dialog" aria-modal="true" aria-labelledby="demo-modal-md-title" tabindex="-1">
+      <div class="yg-modal__header">
+        <div class="yg-modal__title" id="demo-modal-md-title">编辑活动</div>
+        <button type="button" class="yg-icon-btn yg-icon-btn--ghost yg-modal__close" data-close aria-label="关闭">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
+        </button>
+      </div>
+      <div class="yg-modal__body">
+        <div class="yg-form">
+          <div class="yg-form-item">
+            <label class="yg-form-item__label is-required" for="m-name">活动名称</label>
+            <div class="yg-form-item__control"><input class="yg-input" id="m-name" value="滨江净滩行动"></div>
+          </div>
+          <div class="yg-form-item">
+            <label class="yg-form-item__label" for="m-type">活动类型</label>
+            <div class="yg-form-item__control">
+              <div class="yg-select">
+                <button type="button" class="yg-select__trigger">
+                  <span class="yg-select__value">环保公益</span>
+                  <svg class="yg-select__arrow" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+                </button>
+              </div>
+            </div>
+          </div>
+          <div class="yg-form-item">
+            <label class="yg-form-item__label" for="m-count">招募人数</label>
+            <div class="yg-form-item__control"><input class="yg-input" id="m-count" value="40" inputmode="numeric"></div>
+          </div>
+          <div class="yg-form-item">
+            <label class="yg-form-item__label" for="m-desc">活动描述</label>
+            <div class="yg-form-item__control"><textarea class="yg-textarea" id="m-desc" rows="3">沿江滩涂捡拾垃圾，守护滨江环境。</textarea></div>
+          </div>
+        </div>
+      </div>
+      <div class="yg-modal__footer">
+        <button type="button" class="yg-btn yg-btn--secondary" data-close>取消</button>
+        <button type="button" class="yg-btn yg-btn--primary" data-close>保存</button>
+      </div>
+    </div>
+  </div>
+  <div class="yg-mask" data-mask></div>
+
+  <!-- 弹窗 lg：720px 长内容 -->
+  <div class="yg-modal yg-modal--lg" id="demo-modal-lg" aria-hidden="true">
+    <div class="yg-modal__dialog" role="dialog" aria-modal="true" aria-labelledby="demo-modal-lg-title" tabindex="-1">
+      <div class="yg-modal__header">
+        <div class="yg-modal__title" id="demo-modal-lg-title">报名名单（大弹窗 lg）</div>
+        <button type="button" class="yg-icon-btn yg-icon-btn--ghost yg-modal__close" data-close aria-label="关闭">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
+        </button>
+      </div>
+      <div class="yg-modal__body">
+        <div class="yg-table__wrapper">
+          <table class="yg-table yg-table--stripe">
+            <thead>
+              <tr><th>姓名</th><th>服务时长</th><th class="yg-text-right">累计场次</th><th>状态</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>王小明</td><td class="yg-text-num">128h</td><td class="yg-text-right yg-text-num">36</td><td><span class="yg-tag yg-tag--success">已签到</span></td></tr>
+              <tr><td>李思思</td><td class="yg-text-num">86h</td><td class="yg-text-right yg-text-num">21</td><td><span class="yg-tag yg-tag--success">已签到</span></td></tr>
+              <tr><td>张海</td><td class="yg-text-num">42h</td><td class="yg-text-right yg-text-num">12</td><td><span class="yg-tag yg-tag--warning">未签到</span></td></tr>
+              <tr><td>陈晨</td><td class="yg-text-num">15h</td><td class="yg-text-right yg-text-num">4</td><td><span class="yg-tag">待审核</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="demo-hint mb-0">面板实色 --yg-bg-surface-raised，阴影 --yg-shadow-lg，圆角 xl（G2）。</p>
+      </div>
+      <div class="yg-modal__footer">
+        <button type="button" class="yg-btn yg-btn--secondary" data-close>导出名单</button>
+        <button type="button" class="yg-btn yg-btn--primary" data-close>关闭</button>
+      </div>
+    </div>
+  </div>
+  <div class="yg-mask" data-mask></div>
+
+  <!-- 危险确认（删除活动场景，准则第 5 章） -->
+  <div class="yg-modal yg-modal--sm yg-confirm" id="demo-confirm" aria-hidden="true">
+    <div class="yg-modal__dialog" role="alertdialog" aria-modal="true" aria-labelledby="demo-confirm-title" tabindex="-1">
+      <div class="yg-confirm__icon">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4 2.5 20h19L12 4Z"/><path d="M12 10v4M12 17.5h.01"/></svg>
+      </div>
+      <div class="yg-confirm__title" id="demo-confirm-title">删除该活动？</div>
+      <div class="yg-confirm__desc">删除后所有报名记录将一并清除，且无法恢复。</div>
+      <div class="yg-confirm__actions">
+        <button type="button" class="yg-btn yg-btn--secondary" data-close>再考虑</button>
+        <button type="button" class="yg-btn yg-btn--danger" id="demo-confirm-ok">删除</button>
+      </div>
+    </div>
+  </div>
+  <div class="yg-mask" data-mask></div>
+
+  <!-- 右侧抽屉：筛选表单 -->
+  <aside class="yg-drawer yg-drawer--right" id="demo-drawer-right" aria-hidden="true">
+    <div class="yg-drawer__header">
+      <div class="yg-text-xl yg-text-semibold">活动筛选</div>
+      <button type="button" class="yg-icon-btn yg-icon-btn--ghost" data-close aria-label="关闭">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
+      </button>
+    </div>
+    <div class="yg-drawer__body">
+      <div class="yg-form">
+        <div class="yg-form-item">
+          <label class="yg-form-item__label">活动类型</label>
+          <div class="yg-form-item__control">
+            <div class="yg-select">
+              <button type="button" class="yg-select__trigger">
+                <span class="yg-select__placeholder">全部类型</span>
+                <svg class="yg-select__arrow" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+              </button>
+            </div>
+          </div>
+        </div>
+        <div class="yg-form-item">
+          <label class="yg-form-item__label">时间范围</label>
+          <div class="yg-form-item__control">
+            <div class="yg-form yg-form--inline">
+              <input class="yg-input" placeholder="开始日期">
+              <input class="yg-input" placeholder="结束日期">
+            </div>
+          </div>
+        </div>
+        <div class="yg-form-item">
+          <label class="yg-form-item__label">状态</label>
+          <div class="yg-form-item__control">
+            <div class="demo-stack">
+              <label class="yg-checkbox"><input class="yg-checkbox__input" type="checkbox" checked><span class="yg-checkbox__box"></span><span class="yg-checkbox__label">报名中</span></label>
+              <label class="yg-checkbox"><input class="yg-checkbox__input" type="checkbox"><span class="yg-checkbox__box"></span><span class="yg-checkbox__label">待审核</span></label>
+              <label class="yg-checkbox"><input class="yg-checkbox__input" type="checkbox"><span class="yg-checkbox__box"></span><span class="yg-checkbox__label">已结束</span></label>
+            </div>
+          </div>
+        </div>
+        <div class="yg-form-item">
+          <label class="yg-form-item__label">仅看可报名</label>
+          <div class="yg-form-item__control">
+            <label class="yg-switch is-checked"><input type="checkbox" checked></label>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="yg-drawer__footer">
+      <button type="button" class="yg-btn yg-btn--secondary" data-close>重置</button>
+      <button type="button" class="yg-btn yg-btn--primary" data-close>应用筛选</button>
+    </div>
+  </aside>
+  <div class="yg-mask" data-mask></div>
+
+  <!-- 底部抽屉：确认操作 -->
+  <aside class="yg-drawer yg-drawer--bottom" id="demo-drawer-bottom" aria-hidden="true">
+    <div class="yg-drawer__header">
+      <div class="yg-text-xl yg-text-semibold">确认导出</div>
+      <button type="button" class="yg-icon-btn yg-icon-btn--ghost" data-close aria-label="关闭">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
+      </button>
+    </div>
+    <div class="yg-drawer__body">
+      <p class="mb-0">将导出全部 128 场活动的报名数据为 Excel 文件，预计需要 30 秒。</p>
+    </div>
+    <div class="yg-drawer__footer">
+      <button type="button" class="yg-btn yg-btn--secondary" data-close>取消</button>
+      <button type="button" class="yg-btn yg-btn--primary" data-close>开始导出</button>
+    </div>
+  </aside>
+  <div class="yg-mask" data-mask></div>
+
+  <!-- 全屏加载 -->
+  <div class="yg-loading yg-loading--fullscreen" id="demo-loading-fs">
+    <span class="yg-spinner yg-spinner--lg"></span>
+    <span>正在加载数据…</span>
+  </div>
+
+  <!-- 全局消息容器 -->
+  <div class="yg-message__wrap" id="demo-message-wrap" aria-live="polite"></div>
+
+  <!-- 通知容器 -->
+  <div class="yg-notification" id="demo-notification-wrap" aria-live="polite"></div>
+
+  <!-- 回到顶部 -->
+  <button type="button" class="yg-backtop" id="demo-backtop" aria-label="回到顶部">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5M6 11l6-6 6 6"/></svg>
+  </button>
+
+  <script>
+    /* ============================================================
+       演示页交互脚本（少量原生 JS）
+       ============================================================ */
+    (function () {
+      "use strict";
+
+      var $ = function (sel, root) { return (root || document).querySelector(sel); };
+      var $$ = function (sel, root) { return Array.prototype.slice.call((root || document).querySelectorAll(sel)); };
+
+      /* ---------- 弹层通用：开关 / 遮罩点击 / Esc / 页面滚动锁定 ---------- */
+      function openLayer(el) {
+        el.classList.add("is-open");
+        el.setAttribute("aria-hidden", "false");
+        syncBodyLock();
+      }
+      function closeLayer(el) {
+        el.classList.remove("is-open");
+        el.setAttribute("aria-hidden", "true");
+        syncBodyLock();
+      }
+      function syncBodyLock() {
+        var any = $(".yg-modal.is-open, .yg-drawer.is-open");
+        document.body.style.overflow = any ? "hidden" : "";
+      }
+
+      $$("[data-modal]").forEach(function (btn) {
+        btn.addEventListener("click", function () { openLayer($(btn.getAttribute("data-modal"))); });
+      });
+      $$("[data-drawer]").forEach(function (btn) {
+        btn.addEventListener("click", function () { openLayer($(btn.getAttribute("data-drawer"))); });
+      });
+      $$("[data-close]").forEach(function (btn) {
+        btn.addEventListener("click", function () {
+          var layer = btn.closest(".yg-modal, .yg-drawer");
+          if (layer) closeLayer(layer);
+        });
+      });
+      $$("[data-mask]").forEach(function (mask) {
+        mask.addEventListener("click", function () {
+          var prev = mask.previousElementSibling;
+          if (prev && prev.classList.contains("is-open")) closeLayer(prev);
+        });
+      });
+      document.addEventListener("keydown", function (e) {
+        if (e.key === "Escape") {
+          $$(".yg-modal.is-open, .yg-drawer.is-open, .yg-dropdown.is-open, .yg-select.is-open, .yg-date-picker.is-open").forEach(closeLayer);
+          $$(".yg-popover.is-open").forEach(function (p) { p.classList.remove("is-open"); });
+        }
+      });
+      /* 点击外部关闭：下拉 / 选择器 / 日期选择 / 气泡 */
+      document.addEventListener("click", function (e) {
+        $$(".yg-dropdown.is-open").forEach(function (l) {
+          if (!l.contains(e.target)) l.classList.remove("is-open");
+        });
+        $$(".yg-select.is-open").forEach(function (l) {
+          if (!l.contains(e.target)) l.classList.remove("is-open");
+        });
+        $$(".yg-date-picker.is-open").forEach(function (l) {
+          if (!l.contains(e.target)) l.classList.remove("is-open");
+        });
+        $$(".yg-popover.is-open").forEach(function (p) {
+          if (!p.contains(e.target) && !e.target.closest(".demo-popover-wrap")) p.classList.remove("is-open");
+        });
+      });
+
+      /* ---------- 侧边栏收起 / 菜单子项展开 / 主题切换 ---------- */
+      $("#demo-collapse-btn").addEventListener("click", function () {
+        $("#demo-sidebar").classList.toggle("is-collapsed");
+      });
+      $$("[data-menu-toggle]").forEach(function (item) {
+        item.addEventListener("click", function (e) {
+          e.preventDefault();
+          item.classList.toggle("is-expanded");
+        });
+      });
+      function toggleTheme() {
+        var cur = document.documentElement.getAttribute("data-theme");
+        document.documentElement.setAttribute("data-theme", cur === "dark" ? "light" : "dark");
+      }
+      $("#demo-theme-btn").addEventListener("click", toggleTheme);
+      $("#demo-theme-btn-2").addEventListener("click", toggleTheme);
+
+      /* ---------- 标签页（--line / --card / --pill 通用） ---------- */
+      $$("[data-tabs]").forEach(function (tabs) {
+        var items = $$(".yg-tabs__item", tabs);
+        var panels = $$(".yg-tabs__content", tabs);
+        items.forEach(function (item, i) {
+          item.addEventListener("click", function () {
+            if (item.classList.contains("is-disabled")) return;
+            items.forEach(function (it, j) { it.classList.toggle("is-active", it === item); });
+            panels.forEach(function (p, j) { p.hidden = j !== i; });
+          });
+        });
+      });
+
+      /* ---------- 分页 ---------- */
+      $$("[data-pagination]").forEach(function (pg) {
+        $$(".yg-pagination__item", pg).forEach(function (item) {
+          item.addEventListener("click", function () {
+            $$(".yg-pagination__item", pg).forEach(function (it) { it.classList.toggle("is-active", it === item); });
+            $$(".yg-pagination__prev, .yg-pagination__next", pg).forEach(function (b) { b.classList.remove("is-disabled"); b.disabled = false; });
+          });
+        });
+      });
+
+      /* ---------- 下拉菜单（点击触发 / 选中项后收起） ---------- */
+      $$(".yg-dropdown").forEach(function (dd) {
+        var trig = $("[data-dropdown-toggle]", dd);
+        if (trig) trig.addEventListener("click", function () { dd.classList.toggle("is-open"); });
+        $$(".yg-dropdown__item", dd).forEach(function (item) {
+          item.addEventListener("click", function () { dd.classList.remove("is-open"); });
+        });
+      });
+
+      /* ---------- 选择器 ---------- */
+      function bindSelect(sel) {
+        var trig = $(".yg-select__trigger", sel);
+        if (!trig) return;
+        trig.addEventListener("click", function () { sel.classList.toggle("is-open"); });
+        $$(".yg-select__option", sel).forEach(function (opt) {
+          opt.addEventListener("click", function () {
+            if (opt.classList.contains("is-disabled")) return;
+            $$(".yg-select__option", sel).forEach(function (o) { o.classList.toggle("is-selected", o === opt); });
+            var val = $(".yg-select__placeholder, .yg-select__value", sel);
+            if (val) {
+              val.textContent = opt.textContent;
+              val.className = "yg-select__value";
+            }
+            sel.classList.remove("is-open");
+          });
+        });
+      }
+      bindSelect($("#demo-select"));
+      $$(".yg-select").forEach(function (s) { if (s.id !== "demo-select") bindSelect(s); });
+
+      /* ---------- 日期选择 ---------- */
+      $$(".yg-date-picker").forEach(function (dp) {
+        var trig = $("[data-datepicker-toggle]", dp);
+        if (trig) trig.addEventListener("click", function () { dp.classList.toggle("is-open"); });
+      });
+
+      /* ---------- 密码可见切换 / 输入清除 / 字数统计 ---------- */
+      var pw = $("#demo-password");
+      if (pw) $("#demo-password-toggle").addEventListener("click", function () {
+        var show = pw.type === "password";
+        pw.type = show ? "text" : "password";
+        this.classList.toggle("is-active", show);
+        this.setAttribute("aria-label", show ? "隐藏密码" : "显示密码");
+      });
+      var clearBtn = $("#demo-input-clear .yg-input-clear");
+      if (clearBtn) clearBtn.addEventListener("click", function () {
+        var f = $("#demo-input-clear-field");
+        f.value = "";
+        f.focus();
+      });
+      var ic = $("#demo-input-count");
+      if (ic) ic.addEventListener("input", function () {
+        $("#demo-input-count-num").textContent = ic.value.length + " / 20";
+      });
+
+      /* ---------- 步进器 / 评分 / 开关同步 ---------- */
+      $$("#demo-stepper [data-step]").forEach(function (btn) {
+        btn.addEventListener("click", function () {
+          var input = $("#demo-stepper-input");
+          var v = parseInt(input.value, 10) + parseInt(btn.getAttribute("data-step"), 10);
+          input.value = Math.max(0, Math.min(99, v));
+        });
+      });
+      var rate = $("#demo-rate");
+      if (rate) $$(".yg-rate__star", rate).forEach(function (star) {
+        star.addEventListener("click", function () {
+          var v = parseInt(star.getAttribute("data-value"), 10);
+          $$(".yg-rate__star", rate).forEach(function (s) {
+            s.classList.toggle("is-active", parseInt(s.getAttribute("data-value"), 10) <= v);
+          });
+        });
+      });
+      $$(".yg-switch input[type=checkbox]").forEach(function (inp) {
+        inp.addEventListener("change", function () {
+          inp.closest(".yg-switch").classList.toggle("is-checked", inp.checked);
+        });
+      });
+
+      /* ---------- 树 / 折叠面板 ---------- */
+      $$("[data-tree-toggle]").forEach(function (t) {
+        t.addEventListener("click", function () {
+          var node = t.closest(".yg-tree__node");
+          node.classList.toggle("is-expanded");
+          var sub = node.nextElementSibling;
+          if (sub && sub.classList.contains("yg-tree")) {
+            sub.hidden = !node.classList.contains("is-expanded");
+          }
+        });
+      });
+      $$("[data-tree-label]").forEach(function (l) {
+        l.addEventListener("click", function () {
+          $$(".yg-tree__node").forEach(function (n) { n.classList.remove("is-selected"); });
+          l.closest(".yg-tree__node").classList.add("is-selected");
+        });
+      });
+      $$("[data-collapse-header]").forEach(function (h) {
+        h.addEventListener("click", function () {
+          var item = h.closest(".yg-collapse__item");
+          if (!item.classList.contains("is-disabled")) item.classList.toggle("is-open");
+        });
+      });
+
+      /* ---------- 轮播 ---------- */
+      var car = $("#demo-carousel");
+      if (car) {
+        var slides = $$(".yg-carousel__slide", car);
+        var dots = $$(".yg-carousel__dots button", car);
+        var arrows = $$(".yg-carousel__arrow", car);
+        var cur = 0;
+        function showSlide(i) {
+          slides.forEach(function (s, j) { s.classList.toggle("is-active", j === i); });
+          dots.forEach(function (d, j) { d.classList.toggle("is-active", j === i); });
+          cur = i;
+        }
+        dots.forEach(function (d, j) { d.addEventListener("click", function () { showSlide(j); }); });
+        arrows.forEach(function (a, k) {
+          a.addEventListener("click", function () {
+            showSlide((cur + (k === 0 ? -1 : 1) + slides.length) % slides.length);
+          });
+        });
+        showSlide(0);
+      }
+
+      /* ---------- 进度模拟 ---------- */
+      $("#demo-progress-run").addEventListener("click", function () {
+        var bar = $("#demo-progress-bar");
+        var v = 30;
+        if (window.__demoProgressTimer) clearInterval(window.__demoProgressTimer);
+        window.__demoProgressTimer = setInterval(function () {
+          v = Math.min(100, v + 7);
+          bar.style.width = v + "%";
+          if (v >= 100) clearInterval(window.__demoProgressTimer);
+        }, 120);
+      });
+
+      /* ---------- 标签关闭 / 提示条关闭 ---------- */
+      $$("[data-tag-close]").forEach(function (b) {
+        b.addEventListener("click", function () { b.closest(".yg-tag").remove(); });
+      });
+      $$("[data-alert-close]").forEach(function (b) {
+        b.addEventListener("click", function () { b.closest(".yg-alert").remove(); });
+      });
+
+      /* ---------- 气泡卡片 ---------- */
+      $$(".demo-popover-wrap").forEach(function (wrap) {
+        var pop = $(".yg-popover", wrap);
+        $$("[data-popover-toggle]", wrap).forEach(function (t) {
+          t.addEventListener("click", function () { pop.classList.toggle("is-open"); });
+        });
+      });
+
+      /* ---------- 文字提示（悬停 / 聚焦显示） ---------- */
+      $$(".demo-tooltip-host").forEach(function (host) {
+        var tip = $(".yg-tooltip", host);
+        if (!tip) return;
+        host.addEventListener("mouseenter", function () { tip.classList.add("is-visible"); });
+        host.addEventListener("mouseleave", function () { tip.classList.remove("is-visible"); });
+        host.addEventListener("focusin", function () { tip.classList.add("is-visible"); });
+        host.addEventListener("focusout", function () { tip.classList.remove("is-visible"); });
+      });
+
+      /* ---------- 全局消息 ---------- */
+      var MSG_ICONS = {
+        success: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>',
+        info: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg>',
+        warning: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4 2.5 20h19L12 4Z"/><path d="M12 10v4M12 17.5h.01"/></svg>',
+        danger: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8v4M12 16h.01"/></svg>'
+      };
+      function showMessage(type, text) {
+        var wrap = $("#demo-message-wrap");
+        var el = document.createElement("div");
+        el.className = "yg-message__item yg-message__item--" + type;
+        el.innerHTML = '<span class="yg-message__icon">' + MSG_ICONS[type] + "</span><span>" + text + "</span>";
+        wrap.appendChild(el);
+        requestAnimationFrame(function () {
+          requestAnimationFrame(function () { el.classList.add("is-open"); });
+        });
+        setTimeout(function () { el.classList.remove("is-open"); }, 2400);
+        setTimeout(function () { el.remove(); }, 2800);
+      }
+      $$("[data-message]").forEach(function (btn) {
+        btn.addEventListener("click", function () {
+          showMessage(btn.getAttribute("data-message"), btn.getAttribute("data-text") || "操作成功");
+        });
+      });
+
+      /* ---------- 通知 ---------- */
+      var NOTI_ICON = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9a6 6 0 0 1 12 0c0 5 2 6 2 6H4s2-1 2-6"/><path d="M10 19a2 2 0 0 0 4 0"/></svg>';
+      var CLOSE_ICON = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>';
+      function showNotification(title, desc) {
+        var wrap = $("#demo-notification-wrap");
+        var el = document.createElement("div");
+        el.className = "yg-notification__item";
+        el.innerHTML =
+          '<span class="yg-notification__icon">' + NOTI_ICON + "</span>" +
+          '<span class="yg-notification__title">' + title + "</span>" +
+          '<button type="button" class="yg-icon-btn yg-icon-btn--ghost yg-icon-btn--sm yg-notification__close" aria-label="关闭">' + CLOSE_ICON + "</button>" +
+          '<span class="yg-notification__desc">' + desc + "</span>";
+        wrap.appendChild(el);
+        var close = function () {
+          el.classList.remove("is-open");
+          setTimeout(function () { el.remove(); }, 350);
+        };
+        $(".yg-notification__close", el).addEventListener("click", close);
+        requestAnimationFrame(function () {
+          requestAnimationFrame(function () { el.classList.add("is-open"); });
+        });
+        setTimeout(close, 5000);
+      }
+      $$("[data-notification]").forEach(function (btn) {
+        btn.addEventListener("click", function () {
+          showNotification(btn.getAttribute("data-title") || "通知", btn.getAttribute("data-desc") || "这是一条通知内容。");
+        });
+      });
+
+      /* ---------- 危险确认：确认按钮 loading 防重复提交 ---------- */
+      var ok = $("#demo-confirm-ok");
+      if (ok) ok.addEventListener("click", function () {
+        ok.disabled = true;
+        ok.classList.add("is-loading");
+        ok.innerHTML = '<span class="yg-btn__spinner"></span>删除中…';
+        setTimeout(function () {
+          ok.disabled = false;
+          ok.classList.remove("is-loading");
+          ok.textContent = "删除";
+          closeLayer($("#demo-confirm"));
+          showMessage("success", "活动已删除，报名记录已清除");
+        }, 1200);
+      });
+
+      /* ---------- 全屏加载 ---------- */
+      $("#demo-loading-fs-btn").addEventListener("click", function () {
+        var fs = $("#demo-loading-fs");
+        fs.classList.add("is-loading");
+        setTimeout(function () { fs.classList.remove("is-loading"); }, 1400);
+      });
+
+      /* ---------- 回到顶部 ---------- */
+      var backtop = $("#demo-backtop");
+      if (backtop) {
+        var onScroll = function () {
+          backtop.classList.toggle("is-visible", window.scrollY > 400);
+        };
+        window.addEventListener("scroll", onScroll, { passive: true });
+        onScroll();
+        backtop.addEventListener("click", function () {
+          window.scrollTo({ top: 0, behavior: "smooth" });
+        });
+      }
+    })();
+  </script>
+</body>
+</html>
