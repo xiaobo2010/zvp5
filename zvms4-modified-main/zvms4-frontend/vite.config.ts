@@ -12,6 +12,7 @@ import Icons from 'unplugin-icons/vite'
 import IconsResolver from 'unplugin-icons/resolver'
 import { VitePWA as pwa } from 'vite-plugin-pwa'
 import { ElementPlusResolver, VantResolver } from 'unplugin-vue-components/resolvers'
+import { externalizeInlineScripts } from './scripts/vite-plugin-externalize-inline-scripts'
 
 // https://vitejs.dev/config/
 export default defineConfig({
@@ -33,6 +34,9 @@ export default defineConfig({
     // basicSsl(),
     UnoCSS(),
     vueDevtools(),
+    // CSP 整改：必须注册在 pwa 之前——closeBundle 按数组顺序执行，先搬移
+    // index.html 的内联脚本，workbox precache 才能收录新外置文件。
+    externalizeInlineScripts(),
     pwa({
       injectRegister: 'auto',
       registerType: 'autoUpdate',
