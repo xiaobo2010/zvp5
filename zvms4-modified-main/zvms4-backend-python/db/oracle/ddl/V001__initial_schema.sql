@@ -1352,7 +1352,7 @@ CREATE TABLE ai_ocr_engines (
   updated_at TIMESTAMP NOT NULL,
   CONSTRAINT pk_ai_ocr_engines PRIMARY KEY (oid),
   CONSTRAINT ck_ai_ocr_engines_oid CHECK (REGEXP_LIKE(oid,''^[0-9a-f]{24}$'')),
-  CONSTRAINT ck_ai_ocr_engines_kind CHECK (kind IN (''tencent'',''aliyun'',''rapidocr'',''baidu'',''groq'')),
+  CONSTRAINT ck_ai_ocr_engines_kind CHECK (kind IN (''tencent'',''aliyun'',''rapidocr'',''baidu'',''groq'',''zhipu'')),
   CONSTRAINT ck_ai_ocr_engines_enabled CHECK (enabled IN (0,1)),
   CONSTRAINT ck_ai_ocr_engines_config_json CHECK (config_json IS JSON)
 )';
