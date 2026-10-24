@@ -1,5 +1,6 @@
 export const zhCN = {
   home: '首页',
+  profile: '我的',
   activity: '义工列表',
   manage: '平台管理',
   server: '服务器管理',

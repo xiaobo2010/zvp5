@@ -1,5 +1,10 @@
 # STATUS — 模块移植与安全审计（zvp → zvms4-modified）
 
+> **2026-10-24：原 `zvp-latest/` 与 `zvp5-gitlab/` 已删除。** 学海 API 原文件归档在
+> 仓库根 `reference/xuehai/zvp-latest/`；审核流/FAQ/资源/定向推送设计归档在
+> `reference/zvp5-gitlab/`。本文中的参考树路径均为删除前的历史记录，对账与处置
+> 结论见 `docs/REFERENCE_TREES_ALIGNMENT.md`。
+
 > **Part 1 · 义工管理** | 日期：2026-10-09
 > 任务：把现役 zvp（`~/zvp-build-test`，zvp-latest）的**义工管理**（创建义工 / 添加、修改义工成员）移植进本仓库，并对移植面做「外链 / 翻出平台」危险代码审计。
 > 审计方式：静态扫描（grep / AST）+ 全量人工读码 + 独立安全复核；未运行服务、未连接数据库。
