@@ -18,7 +18,7 @@ import { ArrowLeft } from '@element-plus/icons-vue'
 import { useUserStore } from '@/stores/user'
 import { useGroupsStore } from '@/stores/groups'
 import { useHeaderStore } from '@/stores/header'
-import { modifyPasswordDialogs } from '@/views/user'
+import { modifyPasswordDialogs } from '@/views/user/modifyPasswordDialogs'
 
 const user = useUserStore()
 const groupsStore = useGroupsStore()
