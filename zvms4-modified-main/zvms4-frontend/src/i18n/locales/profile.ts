@@ -20,6 +20,15 @@ export const zhCN = {
     changelog: '更新日志',
     logout: '退出登录'
   },
+  notices: {
+    title: '通知',
+    refresh: '刷新',
+    loading: '正在加载通知…',
+    failed: '通知加载失败，请稍后重试',
+    empty: '暂无通知',
+    sender: '发布人',
+    collapse: '收起'
+  },
   logoutConfirmTitle: '退出登录',
   logoutConfirm: '确定要退出登录吗？',
   logoutConfirmOk: '仍然登出',

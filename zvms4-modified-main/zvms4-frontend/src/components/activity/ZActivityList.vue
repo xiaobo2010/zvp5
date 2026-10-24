@@ -11,7 +11,7 @@ import {
   ElTooltip
 } from 'element-plus'
 import type { TableInstance } from 'element-plus'
-import { onMounted, ref, toRefs, watch, useTemplateRef } from 'vue'
+import { nextTick, onMounted, ref, toRefs, watch, useTemplateRef } from 'vue'
 import { useUserStore } from '@/stores/user'
 import dayjs from '@/plugins/dayjs'
 import { Box, Search, PieChart, Refresh, View } from '@element-plus/icons-vue'
@@ -100,14 +100,37 @@ function refresh() {
     })
 }
 
-onMounted(refresh)
+onMounted(() => {
+  refresh()
+  // 首帧渲染后按表格真实位置校准一次高度
+  nextTick(() => {
+    tableMaxHeight.value = computeTableHeight()
+  })
+})
 
 watch(selectTarget, refresh)
 
-const tableMaxHeight = ref(height.value * 0.56)
+/** 分页行 + 卡片下边距 + 页面底部留白 */
+const BOTTOM_ROOM = 96
 
-watch(width, () => {
-  tableMaxHeight.value = height.value * 0.56
+/**
+ * 表格高度 = 视口高度 − 表格实际顶部 − 底部预留，
+ * 以表头真实位置为基准，不受页面标题、卡片工具栏行数影响，尽量少留白。
+ */
+function computeTableHeight() {
+  const el = (tableRef.value as { $el?: HTMLElement } | undefined)?.$el
+  const top = el?.getBoundingClientRect?.().top ?? 0
+  if (top > 0 && top < height.value * 0.8) {
+    return Math.max(280, Math.round(height.value - top - BOTTOM_ROOM))
+  }
+  const reserved = width.value < 768 ? 340 : 320
+  return Math.max(280, height.value - reserved)
+}
+
+const tableMaxHeight = ref(computeTableHeight())
+
+watch([width, height], () => {
+  tableMaxHeight.value = computeTableHeight()
 })
 
 const items = ref<Activity[]>([])
@@ -214,26 +237,28 @@ watch(isPointerSwiping, (swiping) => {
       <ZDataExport type="time" v-model="openExport" />
     </ElDrawer>
     <ElCard ref="card" shadow="never" v-loading="loading" :class="[embed ? 'yg-embed' : '']">
-      <div class="text-lg px-2">
-        <slot name="title" />
-      </div>
-      <div v-if="perspective === user._id && !selectTarget" class="text-right">
-        <ElButton type="primary" round class="px-1" text bg :icon="Refresh" @click="refresh">
-          {{ t('activity.form.actions.refresh') }}
-        </ElButton>
-        <ElDivider v-if="!pad()" direction="vertical" />
-        <ElButton
-          v-if="role === 'campus' && !pad()"
-          :icon="Box"
-          @click="openExport = true"
-          type="warning"
-          text
-          bg
-          round
-          :disabled="!user.position.includes('admin')"
-        >
-          {{ t('activity.export.name') }}
-        </ElButton>
+      <div class="flex items-center justify-between gap-2 flex-wrap px-2">
+        <div class="text-lg">
+          <slot name="title" />
+        </div>
+        <div v-if="perspective === user._id && !selectTarget" class="flex items-center gap-1">
+          <ElButton type="primary" round class="px-1" text bg :icon="Refresh" @click="refresh">
+            {{ t('activity.form.actions.refresh') }}
+          </ElButton>
+          <ElDivider v-if="!pad()" direction="vertical" />
+          <ElButton
+            v-if="role === 'campus' && !pad()"
+            :icon="Box"
+            @click="openExport = true"
+            type="warning"
+            text
+            bg
+            round
+            :disabled="!user.position.includes('admin')"
+          >
+            {{ t('activity.export.name') }}
+          </ElButton>
+        </div>
       </div>
       <!-- @vue-ignore -->
       <ElTable
