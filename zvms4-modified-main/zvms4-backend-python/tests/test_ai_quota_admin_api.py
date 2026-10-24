@@ -217,6 +217,29 @@ def test_admin_set_limit_keeps_used(api) -> None:
     assert log.entries[-1]["type"] == "ai_quota_set"
 
 
+def test_admin_can_set_site_level_engine_quota(api) -> None:
+    """站点级 ``ocr_<engine>`` 也是合法 kind：管理端要能直接给单条引擎设额度。
+
+    这些 kind 由 ``site_consume`` 内部记账；不放行的话，管理员只能改
+    ``settings.AI_SITE_QUOTA`` 再重启，管理接口对站点额度等于失效。
+    """
+    client, _repo, log = api
+
+    body = client.put(
+        f"{PREFIX}/quota/{TARGET_OID}",
+        json={"kind": "ocr_tencent", "limit_count": 1000},
+    ).json()
+
+    assert body["code"] == 200
+    assert body["data"] == {
+        "period": quota_service.period_now(),
+        "kind": "ocr_tencent",
+        "used": 0,
+        "limit": 1000,
+    }
+    assert log.entries[-1]["type"] == "ai_quota_set"
+
+
 def test_set_limit_then_consume_honours_new_ceiling(api) -> None:
     client, _repo, _log = api
 

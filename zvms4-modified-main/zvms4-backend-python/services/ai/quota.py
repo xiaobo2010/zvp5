@@ -34,11 +34,16 @@ class QuotaError(Exception):
 
 
 def check_kind(kind: object) -> str:
-    """能力名是封闭集合（与 ``ck_ai_quota_kind`` 一致），别把拼错的 key 写进库。"""
-    if not isinstance(kind, str) or kind not in KINDS:
-        raise QuotaError(
-            "AI_QUOTA_BAD_KIND", f"kind must be one of: {', '.join(KINDS)}"
-        )
+    """能力名是封闭集合（与 ``ck_ai_quota_kind`` 一致），别把拼错的 key 写进库。
+
+    除 ``ocr`` / ``chat`` 两个大类外，**还放行站点级 ``ocr_<engine>``**：管理端要能
+    给单条引擎设站点月额度（``PUT /api/ai/quota/{oid}`` → ``set_user_limit``），而
+    ``site_consume`` 内部本来就拿这些 kind 记账。不放行的话，管理员只能靠
+    ``settings.AI_SITE_QUOTA`` 重启生效，管理接口等于对站点额度失效。
+    """
+    if not isinstance(kind, str) or (kind not in KINDS and kind not in SITE_KINDS):
+        allowed = ", ".join(KINDS + SITE_KINDS)
+        raise QuotaError("AI_QUOTA_BAD_KIND", f"kind must be one of: {allowed}")
     return kind
 
 
