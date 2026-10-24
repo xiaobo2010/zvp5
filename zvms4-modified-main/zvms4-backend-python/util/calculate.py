@@ -20,6 +20,8 @@ async def generate_description(user_id: str):
     desc = []
     for collection in collections:
         activity = await backends.get_activities_repo().get(collection["activity"])
+        if not activity or activity.get("status") != "effective":
+            continue
         if LANGUAGE == "zh-CN":
             modes = {
                 "on-campus": "校内",

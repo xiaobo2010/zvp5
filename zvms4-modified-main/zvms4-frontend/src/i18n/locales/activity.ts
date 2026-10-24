@@ -186,6 +186,10 @@ export const zhCN = {
     effective: '有效',
     refused: '无效'
   },
+  analysis: {
+    pendingNote: '本页有 {count} 项审核中的时长尚未计入累计时长，审核通过后会计入。',
+    pendingTip: '审核中的时长尚未计入累计时长，审核通过后会计入。'
+  },
   member: {
     name: '姓名',
     status: '状态',
