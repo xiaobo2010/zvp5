@@ -16,10 +16,11 @@ import base64
 import hashlib
 import hmac
 import io
+import os
 import time
 import warnings
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 
 import anyio
 from PIL import Image, ImageOps, UnidentifiedImageError
@@ -42,7 +43,24 @@ Image.MAX_IMAGE_PIXELS = 64_000_000
 
 # Pillow is CPU-bound; the deployment is a single uvicorn process, so cap the
 # number of concurrent normalization jobs (design §5 / P1-1).
-_image_semaphore = asyncio.Semaphore(2)
+IMAGE_CONCURRENCY_DEFAULT = 4
+IMAGE_CONCURRENCY_MIN = 1
+IMAGE_CONCURRENCY_MAX = 8
+
+
+def image_concurrency() -> int:
+    """``ZVMS_IMAGE_CONCURRENCY``（1..8），非法或越界回落默认值。"""
+    raw = os.environ.get("ZVMS_IMAGE_CONCURRENCY")
+    try:
+        value = int(str(raw))
+    except (TypeError, ValueError):
+        return IMAGE_CONCURRENCY_DEFAULT
+    if not IMAGE_CONCURRENCY_MIN <= value <= IMAGE_CONCURRENCY_MAX:
+        return IMAGE_CONCURRENCY_DEFAULT
+    return value
+
+
+_image_semaphore = asyncio.Semaphore(image_concurrency())
 
 _ALLOWED_FORMATS = {"JPEG", "PNG", "WEBP"}
 _MIME_BY_FORMAT = {"JPEG": "image/jpeg", "PNG": "image/png", "WEBP": "image/webp"}
@@ -294,22 +312,43 @@ DAILY_MAX_FILES = 50
 DAILY_MAX_BYTES = 100 * 1024 * 1024  # 100 MB / user / day
 
 _quota: dict[tuple[str, str], list[int]] = {}
+_quota_day: str | None = None
 
 
 def _today() -> str:
     return date.today().isoformat()
 
 
+def _prune_quota(today: str) -> None:
+    """按日切换时丢掉过期 key：只保留当天与前 1 天。"""
+    global _quota_day
+    if _quota_day == today:
+        return
+    keep = {today, (date.fromisoformat(today) - timedelta(days=1)).isoformat()}
+    for key in [key for key in _quota if key[0] not in keep]:
+        del _quota[key]
+    _quota_day = today
+
+
 def check_quota(user_oid: str) -> None:
-    count, used = _quota.get((_today(), user_oid), [0, 0])
+    today = _today()
+    _prune_quota(today)
+    count, used = _quota.get((today, user_oid), [0, 0])
     if count >= DAILY_MAX_FILES or used >= DAILY_MAX_BYTES:
         raise QuotaExceeded("Daily upload quota exceeded")
 
 
 def record_upload(user_oid: str, size: int) -> None:
-    entry = _quota.setdefault((_today(), user_oid), [0, 0])
+    today = _today()
+    _prune_quota(today)
+    entry = _quota.setdefault((today, user_oid), [0, 0])
     entry[0] += 1
     entry[1] += size
+
+
+# ---------------------------------------------------------------------------
+# Read permission (design §4)
+# ---------------------------------------------------------------------------
 
 
 async def can_read_attachment(user: dict, row: dict, class_id: str | None) -> bool:

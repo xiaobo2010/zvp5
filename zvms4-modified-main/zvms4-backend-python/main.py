@@ -1,6 +1,7 @@
 from fastapi import Request, FastAPI, HTTPException
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, RedirectResponse
+import asyncio
 import logging
 import os
 import re
@@ -39,8 +40,8 @@ from socketio.exceptions import ConnectionRefusedError as SocketIOConnectionRefu
 from fastapi.middleware.cors import CORSMiddleware
 from db import backends
 from db.ids import InvalidOid
-from db.system_state import is_enabled as maintenance_enabled
-from db.system_state import is_enabled_fresh as maintenance_enabled_fresh
+from db.system_state import is_enabled_async as maintenance_enabled
+from db.system_state import is_enabled_fresh_async as maintenance_enabled_fresh
 import realtime
 from routers.system_router import router as system_router
 from db.oracle.engine import ping as oracle_ping
@@ -161,6 +162,26 @@ MAINTENANCE_EXEMPT_PATHS = {
 }
 MAINTENANCE_EXEMPT_PREFIXES = ("/api/system",)
 
+# 异常 UA / 可疑路径的审计写入：外部探针能把它变成写放大，所以限并发、放后台。
+SECURITY_AUDIT_CONCURRENCY = 8
+
+_security_audit_semaphore = asyncio.Semaphore(SECURITY_AUDIT_CONCURRENCY)
+_security_audit_tasks: set[asyncio.Task] = set()
+
+
+async def _write_security_audit(log: ZVMSLog) -> None:
+    try:
+        async with _security_audit_semaphore:
+            await log.insert_log()
+    except Exception as exc:  # noqa: BLE001 - 审计失败不改变 418 结论
+        _logger.warning("security alert audit failed: %s", type(exc).__name__)
+
+
+def _spawn_security_audit(log: ZVMSLog) -> None:
+    task = asyncio.create_task(_write_security_audit(log))
+    _security_audit_tasks.add(task)
+    task.add_done_callback(_security_audit_tasks.discard)
+
 
 # 顺序至关重要：add_middleware 是「后注册的更外层」，本中间件定义在
 # shield_middleware 之前，保证盾牌仍在最外层（非 Mozilla UA 仍先吃 418）。
@@ -181,8 +202,8 @@ async def maintenance_middleware(request: Request, call_next):
         and str(request.method).upper() != "OPTIONS"  # 放行 CORS 预检
         and path not in MAINTENANCE_EXEMPT_PATHS
         and not path.startswith(MAINTENANCE_EXEMPT_PREFIXES)
-        and maintenance_enabled()
-        and maintenance_enabled_fresh()
+        and await maintenance_enabled()
+        and await maintenance_enabled_fresh()
         and not await is_admin_token(request.headers.get("Authorization"))
     ):
         return JSONResponse(
@@ -202,8 +223,8 @@ async def shield_middleware(request: Request, call_next):
         )
         or str(request.method).upper() not in allowed_methods
     ):
-        try:
-            await ZVMSLog(
+        _spawn_security_audit(
+            ZVMSLog(
                 url=str(request.url),
                 user="",
                 data="系统检测到异常请求",
@@ -211,9 +232,8 @@ async def shield_middleware(request: Request, call_next):
                 type="security_alert",
                 level="warning",
                 xuehai_id=xuehai_id_from(request),
-            ).insert_log()
-        except Exception as e:
-            print(f"Failed to write security log: {e}")
+            )
+        )
         return JSONResponse(status_code=418, content="请求已被拦截")
     return await call_next(request)
 
@@ -227,7 +247,7 @@ async def connect(sid, environ, auth=None):
     # GET /api/system/maintenance 已放行），这里再查一次**绕过缓存**的最新状态，
     # 万一有入口绕过那层中间件也不会漏进连接。admin 在维护期间照常连接。
     token = realtime.connect_token(environ, auth)
-    if maintenance_enabled_fresh() and not await is_admin_token(token):
+    if await maintenance_enabled_fresh() and not await is_admin_token(token):
         _logger.warning("refuse socket connect %s (maintenance)", sid)
         raise SocketIOConnectionRefusedError("系统维护中，请稍后再试")
     if token:
