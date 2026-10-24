@@ -31,6 +31,9 @@ import './assets/main.css'
 
 import persistedstate from 'pinia-plugin-persistedstate'
 
+// 表格展开行进出场动画（捕获期监听，对所有 el-table 生效）
+import { installTableExpandMotion } from './plugins/tableExpandMotion'
+
 const app = createApp(App)
 
 app.use(createPinia().use(persistedstate))
@@ -41,5 +44,7 @@ app.use(i18n as unknown as Plugin)
 app.use(ElementPlus, {
   size: 'default'
 })
+
+installTableExpandMotion()
 
 app.mount('#app')
