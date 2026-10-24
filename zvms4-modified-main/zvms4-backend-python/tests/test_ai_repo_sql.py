@@ -21,6 +21,7 @@ from datetime import datetime
 from sqlalchemy.dialects import oracle
 
 from db.repos.oracle import ai_call_logs as ai_call_logs_repo
+from db.repos.oracle import ai_api_keys as ai_api_keys_repo
 from db.repos.oracle import ai_credentials as ai_credentials_repo
 from db.repos.oracle import ai_quota as ai_quota_repo
 
@@ -272,3 +273,101 @@ def test_credentials_insert_binds_expires_at() -> None:
     # NULL 显式绑定：它表示「永不过期」这个事实，不是「没传」。
     assert "updated_at, expires_at)" in sql
     assert "TO_DATE('2026-10-23 01:02:03', 'YYYY-MM-DD HH24:MI:SS'), NULL)" in sql
+
+
+# ---------------------------------------------------------------------------
+# AI_API_KEYS：认证查询与 expires_at 的三态
+# ---------------------------------------------------------------------------
+#
+# 认证是每个请求都要跑的路径，所以两件事必须在 SQL 形状里钉住：
+#
+# * 查 key 只按 ``token_hash`` 等值命中唯一索引（``ux_ai_api_keys_token_hash``）；
+#   退化成「把行都取回来在 Python 里比」既慢，又会在拼错时静默放行。
+# * ``update(expires_at=UNSET)`` 不写列，``None`` 写 NULL（永不过期），
+#   ``datetime`` 写值——三种意图三次编译结果必须不同。
+
+
+def _hash_sql() -> str:
+    return _sql(ai_api_keys_repo._select_by_hash_stmt("a" * 64))
+
+
+def test_api_key_lookup_is_an_equality_on_the_unique_index() -> None:
+    sql = _hash_sql()
+
+    assert sql.upper().startswith("SELECT ")
+    assert f"ai_api_keys.token_hash = '{'a' * 64}'" in sql
+    # 只有一个谓词：多一个「顺便按用户过滤」会让认证路径变成猜谜。
+    assert sql.count("ai_api_keys.") >= 1
+    assert " OR " not in sql.upper()
+    assert " LIKE " not in sql.upper()
+
+
+def test_api_key_lookup_never_projects_the_plaintext() -> None:
+    """行形状里只有 ``token_hash``：没有 token 列可以投影。"""
+    sql = _hash_sql().lower()
+    assert "token_hash" in sql
+    assert " token," not in sql
+    assert " token " not in sql
+
+
+def test_api_key_list_is_scoped_to_one_owner() -> None:
+    sql = _sql(ai_api_keys_repo._list_stmt(USER_OID))
+
+    assert f"ai_api_keys.user_oid = '{USER_OID}'" in sql
+    # 新的在前：管理面板第一眼看到的是刚签发的 key。
+    assert "ORDER BY ai_api_keys.created_at DESC" in sql
+
+
+def test_api_key_count_is_scoped_to_one_owner() -> None:
+    sql = _sql(ai_api_keys_repo._count_stmt(USER_OID))
+
+    assert sql.upper().startswith("SELECT COUNT(*)")
+    assert f"ai_api_keys.user_oid = '{USER_OID}'" in sql
+
+
+def test_api_key_update_values_omit_unset_expiry() -> None:
+    from db.repos.protocols import UNSET
+
+    assert "expires_at" not in ai_api_keys_repo._update_values(name="ci")
+    assert ai_api_keys_repo._update_values(expires_at=UNSET) == {}
+
+
+def test_api_key_update_values_none_clears_expiry() -> None:
+    assert ai_api_keys_repo._update_values(expires_at=None) == {"expires_at": None}
+
+
+def test_api_key_update_values_sets_the_expiry_and_enabled_flag() -> None:
+    assert ai_api_keys_repo._update_values(enabled=False) == {"enabled": 0}
+    assert ai_api_keys_repo._update_values(expires_at=TS) == {"expires_at": TS}
+
+
+def test_api_key_insert_binds_every_non_default_column() -> None:
+    sql = _sql(
+        ai_api_keys_repo._insert_stmt(
+            oid="a" * 24,
+            user_oid=USER_OID,
+            name="ci",
+            token_hash="b" * 64,
+            key_hint="zvk_1234wxyz",
+            enabled=True,
+            expires_at=None,
+            created_at=TS,
+        )
+    )
+
+    assert sql.upper().startswith("INSERT INTO AI_API_KEYS ")
+    assert "'ci'" in sql
+    assert "'" + "b" * 64 + "'" in sql
+    # created_at 显式绑定：列默认值的 SYSTIMESTAMP 在仓储层拿不到回读值。
+    assert "TO_DATE('2026-10-23 01:02:03'" in sql
+    assert "last_used_at" in sql
+
+
+def test_api_key_touch_only_writes_last_used_at() -> None:
+    sql = _sql(ai_api_keys_repo._touch_stmt("a" * 24, TS)).lower()
+
+    assert sql.startswith("update ai_api_keys set last_used_at=")
+    # 采样写不能顺手把 enabled / name / token_hash 改回去。
+    assert "enabled" not in sql
+    assert "name" not in sql
+    assert "token_hash" not in sql

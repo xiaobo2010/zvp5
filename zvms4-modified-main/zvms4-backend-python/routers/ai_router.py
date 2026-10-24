@@ -22,12 +22,20 @@ import time
 from datetime import datetime
 from uuid import uuid4
 
-from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Query
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Body,
+    Depends,
+    HTTPException,
+    Query,
+    Request,
+)
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from db import backends
-from services.ai import audit, credentials, quota, rate_limit, routing
+from services.ai import api_keys, audit, credentials, quota, rate_limit, routing
 from services.ai import config as ai_config
 from services.ai import ocr as ai_ocr
 from services.ai import ocr_engines
@@ -37,7 +45,13 @@ from services.ai.credentials import CredentialError
 from services.ai.routing import RouteError
 from typings.log import inject_log
 from util.attachment_ocr import process_ocr
-from util.object_id import get_current_user, validate_object_id
+from util.object_id import (
+    _authenticate,
+    _log_level_scope,
+    get_current_user,
+    oauth2_scheme,
+    validate_object_id,
+)
 from util.user import get_user_display_names
 
 router = APIRouter()
@@ -207,6 +221,35 @@ def _units_from_usage(usage: object) -> int:
 
 def _is_admin(user: dict) -> bool:
     return "admin" in (user.get("per") or [])
+
+
+async def get_ai_client(
+    token: str | None = Depends(oauth2_scheme),
+    _log_scope=Depends(_log_level_scope),
+    request: Request = None,
+):
+    """``/v1/*`` 的鉴权入口：API key 或平台 JWT，二选一。
+
+    ``zvk_`` 前缀的 token 走 :func:`services.ai.api_keys.authenticate`（只读
+    ``ai_api_keys``，判定存在/启用/到期/用户/封禁）；其余 token 原样交给
+    ``_authenticate``——JWT 行为逐字节不变（同样的 401 体、同样的 request 级
+    缓存与日志级别下限）。
+
+    **只有 ``/v1/models`` 与 ``/v1/chat/completions`` 用它**：API key 的爆炸
+    半径就是「以本人身份对话、花本人的额度」，管理面仍然只认 JWT。
+    """
+    if api_keys.is_api_key(token):
+        try:
+            return await api_keys.authenticate(token)
+        except api_keys.ApiKeyError as exc:
+            # 鉴权失败发生在依赖层，响应体走仓库约定的 ``{"detail": "<code>"}``
+            # ——与 JWT 路径的 401 同形（客户端看到的是「凭据无效」，不是业务错误）。
+            raise HTTPException(
+                status_code=exc.status_code,
+                detail=exc.code,
+                headers={"WWW-Authenticate": "Bearer"},
+            ) from None
+    return await _authenticate(token, "long", True, request)
 
 
 def _require_admin(user: dict) -> None:
@@ -725,6 +768,7 @@ async def ai_health(
     # 预热的失败不影响本响应（失败只体现在下面 local_engine_ready 的取值上）。
     background_tasks.add_task(_warmup_local_engines)
 
+    workers = ai_config.worker_count()
     return {
         "status": "ok",
         "code": 200,
@@ -733,8 +777,18 @@ async def ai_health(
             # 只有一个布尔：预热是否已就绪。不暴露任何路径 / 模型名 / 密钥材料。
             "local_engine_ready": bool(_local_engine_ready),
             "max_concurrency": ai_config.max_concurrency(),
+            # 部署的进程数 + 每进程的实际频控阈值：两者一起才能算出「全局真实
+            # 上限」（阈值 × N）。单 worker 时阈值就是配置值。
+            "worker_count": workers,
+            "rate_limit_per_minute": {
+                kind: rate_limit.effective_limit(kind)
+                for kind in ai_config.RATE_LIMIT_KINDS
+            },
             "providers": ai_config.public_provider_view(),
+            # 冷却状态是**进程内**的：多 worker 各熔各的，所以显式标出作用域，
+            # 免得运维把它当成全局事实。
             "cooldown_seconds": routing.cooldown_state(),
+            "cooldown_scope": "process",
             "models": sorted(models),
             "quota_defaults": dict(ai_config.DEFAULT_QUOTA),
             "credentials": {
@@ -753,7 +807,7 @@ async def ai_health(
 
 
 @router.get("/v1/models")
-async def list_models(user=Depends(get_current_user)):
+async def list_models(user=Depends(get_ai_client)):
     """只列这个用户真的能调的模型：个人 key 的模型不该出现在别人的列表里。"""
     if not _has_ai_access(user):
         # OpenAI 兼容面不能抛 detail：客户端只认 {"error": {...}}。
@@ -779,7 +833,7 @@ async def list_models(user=Depends(get_current_user)):
 @router.post("/v1/chat/completions")
 async def chat_completions(
     payload: dict = Body(...),
-    user=Depends(get_current_user),
+    user=Depends(get_ai_client),
 ):
     request_id = uuid4().hex
     user_oid = user["id"]
@@ -844,7 +898,16 @@ async def chat_completions(
 
     # 分钟级频控：月额度防长期滥用，这一层防「一个用户在一分钟内把单 worker 打满」。
     # 位置在配额预检之前、角色门禁之后——被门禁拒掉的请求不计数。
+    # 独立 API key 另有「每把 key」的维度（默认 60 次/分钟）：先查更细的那层，
+    # 这样一把失控的客户端不会提前消耗同一个人的用户级窗口。
     try:
+        key_oid = user.get("api_key_oid")
+        if key_oid:
+            rate_limit.check(
+                f"{user_oid}:{key_oid}",
+                "chat",
+                limit=ai_config.api_key_rate_limit_per_minute(),
+            )
         rate_limit.check(user_oid, "chat")
     except rate_limit.RateLimitError as exc:
         return _rate_limited(exc, request_id=request_id)

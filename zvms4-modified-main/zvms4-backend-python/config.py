@@ -16,6 +16,16 @@ AI_DEFAULT_OCR_MONTHLY_UNITS = 100
 AI_DEFAULT_CHAT_MONTHLY_UNITS = 200000
 AI_OCR_MAX_IMAGE_BYTES = 20 * 1024 * 1024
 
+# 部署的 worker 进程数（``None`` = 按环境变量自动探测 WEB_CONCURRENCY /
+# UVICORN_WORKERS，都缺省为 1）。频控/熔断/凭据缓存都是进程内状态，进程内阈值
+# 按这个数折算，否则加了 --workers N 会静默变成「限额 × N」。
+AI_WORKER_COUNT = None
+
+# 独立 API key 的进程内缓存秒数（校验命中时不在每个请求上读库）。
+AI_API_KEY_CACHE_TTL = 30
+# 单个 API key 的每分钟调用上限（额外于用户维度的 chat 频控）。
+AI_API_KEY_RATE_LIMIT_PER_MINUTE = 60
+
 # 凭据目录（个人/共享/服务端三层）的进程内缓存秒数。改完 key 由 CRUD 主动失效，
 # 这个 TTL 只兜「别的进程改了、本进程还没感知」的窗口。
 AI_CREDENTIALS_CACHE_TTL = 30

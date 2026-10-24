@@ -32,6 +32,7 @@ OCR_FILE = "V026__add_ai_ocr_engines_and_key_headers.sql"
 OCR_KIND_FILE = "V027__extend_ai_ocr_engines_kind.sql"
 ZHIPU_KIND_FILE = "V029__add_zhipu_ocr_engine_kind.sql"
 EXPIRY_FILE = "V028__add_ai_credentials_expires_at.sql"
+API_KEYS_FILE = "V030__add_ai_api_keys.sql"
 
 # ``ai_call_logs.key_scope`` 的 CHECK 规范化后的形态（ddl_check 会把大小写与空白
 # 折叠掉）。V024 建表时还没有这一列，它由 V025 的幂等 ALTER 补上——所以下面既断言
@@ -121,6 +122,14 @@ def _expiry() -> dict:
 
 def _expiry_text() -> str:
     return _migration(EXPIRY_FILE).read_text(encoding="utf-8")
+
+
+def _api_keys() -> dict:
+    return _parsed(_migration(API_KEYS_FILE))
+
+
+def _api_keys_text() -> str:
+    return _migration(API_KEYS_FILE).read_text(encoding="utf-8")
 
 
 def test_ai_quota_migration_matches_models_and_v001() -> None:
@@ -488,6 +497,7 @@ def test_ai_tables_have_no_foreign_keys() -> None:
     gateway = _gateway()
     credentials = _credentials()
     ocr = _ocr()
+    api_keys = _api_keys()
 
     for table in ("ai_call_logs", "ai_quota"):
         assert modeled["tables"][table]["fk"] == set()
@@ -501,3 +511,52 @@ def test_ai_tables_have_no_foreign_keys() -> None:
     assert modeled["tables"]["ai_ocr_engines"]["fk"] == set()
     assert v001["tables"]["ai_ocr_engines"]["fk"] == set()
     assert ocr["tables"]["ai_ocr_engines"]["fk"] == set()
+
+    assert modeled["tables"]["ai_api_keys"]["fk"] == set()
+    assert v001["tables"]["ai_api_keys"]["fk"] == set()
+    assert api_keys["tables"]["ai_api_keys"]["fk"] == set()
+
+
+def test_api_keys_migration_matches_models_and_v001() -> None:
+    """V030 建的表必须与 models / V001 逐字段一致（含列默认值与唯一索引）。"""
+    api_keys = _api_keys()
+    modeled = ddl_check.parse_models()
+    v001 = ddl_check.parse_v001()
+
+    expected = modeled["tables"]["ai_api_keys"]
+    assert api_keys["tables"]["ai_api_keys"] == expected
+    assert v001["tables"]["ai_api_keys"] == expected
+
+    indexes = {
+        ("ai_api_keys", True, ("token_hash",)),
+        ("ai_api_keys", True, ("user_oid", "name")),
+    }
+    assert indexes <= api_keys["indexes"]
+    assert indexes <= modeled["indexes"]
+    assert indexes <= v001["indexes"]
+
+
+def test_api_keys_columns_carry_the_documented_shape() -> None:
+    """列的「形状」是这次迁移的实质内容：NOT NULL / 默认值 / 可空都在这里钉住。"""
+    columns = ddl_check.parse_models()["tables"]["ai_api_keys"]["columns"]
+
+    assert columns["user_oid"] == ("varchar2(24)", True, None)
+    assert columns["name"] == ("varchar2(64)", True, None)
+    # sha256 的 hex 恒为 64 字符；存不下就是写不进去，不是截断。
+    assert columns["token_hash"] == ("varchar2(64)", True, None)
+    assert columns["key_hint"] == ("varchar2(16)", True, None)
+    assert columns["enabled"] == ("number(1)", True, "1")
+    # NULL = 永不过期 / 从未用过。
+    assert columns["expires_at"] == ("timestamp", False, None)
+    assert columns["last_used_at"] == ("timestamp", False, None)
+    assert columns["created_at"] == ("timestamp", True, "SYSTIMESTAMP")
+
+
+def test_api_keys_migration_is_idempotent_on_existing_objects() -> None:
+    """重跑不能炸：表已存在 → -955，索引已存在 → -1408。"""
+    text = _api_keys_text()
+
+    assert "EXECUTE IMMEDIATE" in text
+    for code in ("-955", "-1408"):
+        assert code in text
+
