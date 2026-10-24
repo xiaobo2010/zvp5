@@ -62,6 +62,30 @@ RETRYABLE_CODES = frozenset({"AI_UPSTREAM_RATE_LIMIT", "AI_UPSTREAM_ERROR", "AI_
 REJECTED_CODES = frozenset({"AI_NO_PROVIDER", "AI_UPSTREAM_AUTH", "AI_UPSTREAM_REJECTED"})
 PERSONAL_SCOPE = credentials.SCOPE_PERSONAL
 
+# 流式响应头一旦发出就改不了状态码（上游 4xx/5xx 往往在首个字节前才抛），
+# 只能把失败写进流里。这里是 code → 中文人话的映射：key 必须与前端
+# ``src/api/ai/errors.ts`` 的码表对齐，否则客户端只会显示通用错误。
+STREAM_ERROR_MESSAGES = {
+    "AI_TIMEOUT": "上游模型响应超时，请稍后重试。",
+    "AI_UPSTREAM_AUTH": "上游模型拒绝了凭据，请联系管理员检查 key。",
+    "AI_UPSTREAM_RATE_LIMIT": "上游模型限流，请稍后重试。",
+    "AI_UPSTREAM_REJECTED": "上游模型拒绝了本次请求，请检查模型与参数。",
+    "AI_UPSTREAM_ERROR": "上游模型暂时不可用，请稍后重试。",
+}
+STREAM_ERROR_FALLBACK = "AI_UPSTREAM_ERROR"
+STREAM_DONE_FRAME = b"data: [DONE]\n\n"
+
+
+def _stream_error_frame(code: str, message: str) -> bytes:
+    """一帧 ``data: {"error": {...}}``：流内报错的唯一通道（形状对齐 OpenAI 面）。"""
+    return (
+        "data: "
+        + json.dumps(
+            {"error": {"code": code, "message": message}}, ensure_ascii=False
+        )
+        + "\n\n"
+    ).encode("utf-8")
+
 
 class OcrRequest(BaseModel):
     attachment_oid: str
@@ -1096,11 +1120,25 @@ async def _stream_completion(
                 state["chars"] += len(chunk)
                 yield chunk
         except Exception as exc:  # noqa: BLE001 - 已开始输出，只能收尾
-            code = getattr(exc, "code", "AI_STREAM_ERROR")
+            # 走到这里说明响应头（200 + text/event-stream）早就发出去了，状态码
+            # 改不了。以前只写一条 warning 就结束生成器，客户端拿到的是
+            # 「200 + 空 body」——前端只能猜成「被截断」。现在把失败作为一帧
+            # 显式写进流里，已发过的正文保留，后面跟 error 帧 + [DONE] 收尾。
+            raw_code = getattr(exc, "code", None)
+            code = (
+                raw_code
+                if isinstance(raw_code, str) and raw_code in STREAM_ERROR_MESSAGES
+                else STREAM_ERROR_FALLBACK
+            )
             state["status"] = _audit_status(code)
             state["error_code"] = code
             routing.mark_failure(key)
-            _logger.warning("ai stream failed on %s: %s", name, type(exc).__name__)
+            # 只记异常类名与码：异常 message 可能带上游原文，不能进日志。
+            _logger.warning(
+                "ai stream failed on %s: %s (%s)", name, type(exc).__name__, code
+            )
+            yield _stream_error_frame(code, STREAM_ERROR_MESSAGES[code])
+            yield STREAM_DONE_FRAME
         else:
             routing.mark_success(key)
         finally:

@@ -92,6 +92,9 @@ def _headers(entry: dict, api_key: str) -> dict[str, str]:
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
+        # 上游默认会按 httpx 的 ``Accept-Encoding`` 压成 gzip/br；SSE 要逐帧透传，
+        # 压缩体在客户端那边就是一堆二进制垃圾。要求 identity，别让它压。
+        "Accept-Encoding": "identity",
     }
     extra = entry.get("headers")
     if not isinstance(extra, dict):
@@ -172,7 +175,10 @@ async def chat_completion_stream(
                     response.status_code,
                     body.decode("utf-8", "replace"),
                 )
-            async for chunk in response.aiter_raw():
+            # 双保险：就算上游无视 ``Accept-Encoding: identity`` 仍然压了，
+            # ``aiter_bytes()`` 会按 Content-Encoding 解压后再给我们；``aiter_raw()``
+            # 原样吐压缩字节，转发出去浏览器按 UTF-8 解析只有乱码/空白。
+            async for chunk in response.aiter_bytes():
                 yield chunk
     except httpx.TimeoutException:
         raise RouteError("AI_TIMEOUT", "upstream timed out", 504) from None

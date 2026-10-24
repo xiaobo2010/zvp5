@@ -146,20 +146,58 @@ export interface AiStreamOptions {
   onDelta?: (delta: string) => void
 }
 
+/** 流开始后上游才失败时，后端写在流里的错误帧。 */
+export interface AiStreamError {
+  code: string
+  message: string
+}
+
 export interface AiStreamResult {
   text: string
   /** 是否收到 [DONE]。 */
   done: boolean
   /** 流已结束但没收到 [DONE]：回答被截断。 */
   interrupted: boolean
+  /** 流内错误帧（明确失败，不是截断）。 */
+  error: AiStreamError | null
   requestId: string | null
+}
+
+/**
+ * 从一帧里取出后端写入的 ``{"error": {...}}``；不是错误帧返回 null。
+ *
+ * 流式响应头已经发了 200，上游失败（4xx/5xx 往往在首个字节前才抛）只能这样
+ * 报给客户端。形状与 OpenAI 面一致：``{error: {code, message}}``。
+ */
+export function extractStreamError(frame: string): AiStreamError | null {
+  let payload: unknown
+  try {
+    payload = JSON.parse(frame)
+  } catch {
+    return null
+  }
+  if (!payload || typeof payload !== 'object') {
+    return null
+  }
+  const error = (payload as { error?: unknown }).error
+  if (!error || typeof error !== 'object') {
+    return null
+  }
+  const record = error as Record<string, unknown>
+  const code = typeof record.code === 'string' ? record.code.trim() : ''
+  const message = typeof record.message === 'string' ? record.message.trim() : ''
+  if (!code && !message) {
+    return null
+  }
+  // 没给码时归到通用上游错误：页面按码分支，空码只会落到「未知错误」。
+  return { code: code || 'AI_UPSTREAM_ERROR', message }
 }
 
 /**
  * 发起一次流式对话。
  *
  * 失败一律抛 AiRequestError（带 status / code / 请求编号 / 退避与额度头）；
- * 调用方自己决定怎么呈现。
+ * 调用方自己决定怎么呈现。已经发出 200 之后的失败不抛，走返回值里的 error。
  */
 export async function streamChatCompletion(options: AiStreamOptions): Promise<AiStreamResult> {
   const payload = {
@@ -194,7 +232,15 @@ export async function streamChatCompletion(options: AiStreamOptions): Promise<Ai
   const requestId = response.headers.get('X-AI-Request-Id')
   const body = response.body
   if (!body) {
-    return { text: '', done: false, interrupted: true, requestId }
+    // 200 + 空 body 不是「截断」而是明确失败（后端以前吞异常就会这样）。
+    // 现在后端会把失败写成流内 error 帧；这里只是兜住新的或异常的网关。
+    return {
+      text: '',
+      done: false,
+      interrupted: false,
+      error: { code: 'AI_UPSTREAM_ERROR', message: '' },
+      requestId
+    }
   }
 
   const reader = body.getReader()
@@ -202,6 +248,22 @@ export async function streamChatCompletion(options: AiStreamOptions): Promise<Ai
   let buffer = ''
   let text = ''
   let done = false
+  let error: AiStreamError | null = null
+
+  const consume = (state: SseParseResult): void => {
+    for (const frame of state.events) {
+      const failure = extractStreamError(frame)
+      if (failure) {
+        error = failure
+        continue
+      }
+      const delta = extractDelta(frame)
+      if (delta) {
+        text += delta
+        options.onDelta?.(delta)
+      }
+    }
+  }
 
   try {
     for (;;) {
@@ -209,20 +271,30 @@ export async function streamChatCompletion(options: AiStreamOptions): Promise<Ai
       if (chunk.value) {
         buffer += decoder.decode(chunk.value, { stream: true })
       }
+      if (chunk.done) {
+        // 冲刷解码器里剩下的多字节字符，否则末尾一个汉字会被丢掉。
+        buffer += decoder.decode()
+      }
       const state = parseSseChunk(buffer, '')
       buffer = state.buffer
-      for (const frame of state.events) {
-        const delta = extractDelta(frame)
-        if (delta) {
-          text += delta
-          options.onDelta?.(delta)
-        }
-      }
+      consume(state)
       if (state.done) {
         done = true
         break
       }
+      // 明确失败就收尾：后端不会再补内容。
+      if (error) {
+        break
+      }
       if (chunk.done) {
+        // 上游可能在 ``[DONE]`` 后不带空行直接关连接：帧解析要求空行收尾，
+        // 于是 ``done`` 永远是 false、结果被误判成截断。补一个空行再解析一次。
+        const tail = parseSseChunk(`${buffer}\n\n`, '')
+        buffer = tail.buffer
+        consume(tail)
+        if (tail.done) {
+          done = true
+        }
         break
       }
     }
@@ -230,5 +302,5 @@ export async function streamChatCompletion(options: AiStreamOptions): Promise<Ai
     reader.releaseLock?.()
   }
 
-  return { text, done, interrupted: !done, requestId }
+  return { text, done, interrupted: !done && !error, error, requestId }
 }
