@@ -11,7 +11,6 @@ import {
   ElButtonGroup,
   ElPopover,
   ElConfigProvider,
-  ElDivider,
   ElMessageBox,
   ElWatermark
 } from 'element-plus'
@@ -26,7 +25,6 @@ import { useI18n } from 'vue-i18n'
 import { computed, watch, ref, onMounted, onUnmounted, h, reactive } from 'vue'
 import type { WatermarkFontType } from 'element-plus'
 import { zhCn } from 'element-plus/es/locale/index.mjs'
-import ZVerticalNav from '@/components/form/ZVerticalNav.vue'
 import ZNotificationReminder from '@/components/notification/ZNotificationReminder.vue'
 import { useRegisterSW } from 'virtual:pwa-register/vue'
 import { CarbonCloudOffline } from '@/icons'
@@ -434,8 +432,6 @@ onMounted(async () => {
                 ]"
                 @dblclick="router.push(userStore.isLogin ? '/user' : '/user/login')"
               >
-                <ZVerticalNav v-if="verticalMode && userStore.isLogin" class="pl-6" />
-                <ElDivider v-if="verticalMode && userStore.isLogin" direction="vertical" />
                 <ElIcon style="width: 28px; height: 28px; font-size: 28px; flex-shrink: 0; border-radius: .25rem; overflow: hidden;"><img src="/favicon.ico" style="width: 28px; height: 28px; border-radius: 20%;" alt="favicon" /></ElIcon>
                 <span class="lh-100% ml-2">{{ headerStore.header }}</span>
               </div>
@@ -472,10 +468,11 @@ onMounted(async () => {
           </ElRow>
         </ElHeader>
         <ElContainer class="full">
-          <UserNav style="height: 100%; width: 3.2rem" v-if="userStore.isLogin && !verticalMode" />
+          <UserNav v-if="userStore.isLogin" />
           <RouterView
             class="z-surface dark:text-gray-100 view fragment-container"
             style="width: 100%; height: 100%; box-sizing: border-box;"
+            :style="verticalMode && userStore.isLogin ? { paddingBottom: '96px' } : {}"
           />
         </ElContainer>
       </ElContainer>

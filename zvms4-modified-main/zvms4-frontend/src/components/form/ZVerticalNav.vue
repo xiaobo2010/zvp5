@@ -9,7 +9,7 @@ import {
   Monitor,
   ChatLineRound
 } from '@element-plus/icons-vue'
-import { ElButton, ElButtonGroup, ElDrawer, ElSwitch, ElForm, ElFormItem } from 'element-plus'
+import { ElButton, ElDrawer, ElSwitch, ElForm, ElFormItem, ElIcon } from 'element-plus'
 import { ref } from 'vue'
 import { useUserStore } from '@/stores/user'
 import MdiEye from '@/icons/MdiEye.vue'
@@ -102,6 +102,7 @@ const navs: Array<{
 ]
 
 function routeTo(page: string) {
+  show.value = false
   if (page === '/management') {
     if (user.position.includes('admin') || user.position.includes('department')) {
       routeTo('/manage/groups')
@@ -126,23 +127,18 @@ watch(useless, () => {
   <Teleport to="body">
     <div class="full">
       <ElDrawer v-model="show" direction="ltr" size="40%">
-        <div class="menu full">
-          <ElButtonGroup class="full">
-            <ElButton
-              v-for="nav in navs.filter((x) => x.show)"
-              :key="nav.path"
-              :icon="nav.icon"
-              text
-              class="full py-4"
-              size="large"
-              :bg="nav.judge(path ?? '')"
-              :type="nav.judge(path ?? '') ? 'primary' : ''"
-              @click="routeTo(nav.path)"
-            >
-              {{ t(`nav.${nav.name}`) }}
-            </ElButton>
-          </ElButtonGroup>
-        </div>
+        <nav class="yg-menu full">
+          <div
+            v-for="nav in navs.filter((x) => x.show)"
+            :key="nav.path"
+            class="yg-menu__item"
+            :class="{ 'is-active': nav.judge(path ?? '') }"
+            @click="routeTo(nav.path)"
+          >
+            <ElIcon class="yg-menu__icon"><component :is="nav.icon" /></ElIcon>
+            <span class="yg-menu__label">{{ t(`nav.${nav.name}`) }}</span>
+          </div>
+        </nav>
         <div class="bottom">
           <ElForm label-position="right" label-width="120px">
             <ElFormItem :label="t('nav.dark')" v-if="!pad() || getTabletType() === 'p615' || getTabletType() === 'p620'">
@@ -163,11 +159,6 @@ watch(useless, () => {
 </template>
 
 <style scoped>
-.menu {
-  width: 4rem;
-  overflow: hidden;
-}
-
 .full {
   width: 100%;
 }
