@@ -24,7 +24,8 @@ from fastapi.testclient import TestClient
 import settings  # noqa: F401  (services.ai.config 读它，先导入保证顺序一致)
 from db import backends
 from routers import ai_router, attachments_router
-from services.ai import audit, crypto, ocr_engines, quota
+from services.ai import audit, config as ai_config, crypto, ocr_engines, quota
+from services.ai import rate_limit
 from typings.log import inject_log
 from util import attachment_ocr
 from util.object_id import get_current_user
@@ -169,6 +170,27 @@ class StubAdapter:
         }
 
 
+class AlwaysOkAdapter(StubAdapter):
+    """回退目标：不受 ``StubAdapter.error`` 影响，永远成功。
+
+    用来区分「第一个引擎坏了」与「所有引擎都坏了」——共用同一个桩的话，
+    ``StubAdapter.error`` 会让回退也一起失败。
+    """
+
+    VERSION = "stub-ok-v1"
+
+    async def recognize(self, image, mime, secret, config):
+        StubAdapter.calls.append(
+            {"image": image, "mime": mime, "secret": secret, "config": config}
+        )
+        return {
+            "text": "Fallback",
+            "lines": [{"text": "Fallback", "confidence": 0.9, "box": None}],
+            "engine": "aliyun",
+            "raw": {"RequestId": "r-2"},
+        }
+
+
 # ---------------------------------------------------------------------------
 # 夹具
 # ---------------------------------------------------------------------------
@@ -178,9 +200,12 @@ class StubAdapter:
 def _reset_stub():
     StubAdapter.calls = []
     StubAdapter.error = None
+    # 频控是进程级滑动窗口：同一 oid 的 OCR 请求数会跨用例累积。
+    rate_limit.reset_state()
     yield
     StubAdapter.calls = []
     StubAdapter.error = None
+    rate_limit.reset_state()
 
 
 @pytest.fixture(autouse=True)
@@ -228,15 +253,17 @@ def engines(monkeypatch):
 
 @pytest.fixture
 def quotas(monkeypatch):
-    """三份额度的桩：用户 peek / 用户 consume / 站点 consume。"""
+    """四份额度的桩：用户 peek / 用户 consume / 站点 consume / 站点 refund。"""
     state = {
         "peek": Recorder((True, 0, 100)),
         "consume": Recorder((True, 1, 100)),
         "site": Recorder((True, 1, 100)),
+        "refund": Recorder(1),
     }
     monkeypatch.setattr(quota, "peek", state["peek"])
     monkeypatch.setattr(quota, "consume", state["consume"])
     monkeypatch.setattr(quota, "site_consume", state["site"])
+    monkeypatch.setattr(quota, "site_refund", state["refund"])
     return state
 
 
@@ -368,7 +395,9 @@ def test_enqueue_user_quota_is_prechecked_before_site_quota(
     assert files_repo.statuses == []
 
 
-def test_enqueue_consume_race_is_429(files_repo, engines, quotas, audit_repo):
+def test_enqueue_consume_race_is_429_and_refunds_site_quota(
+    files_repo, engines, quotas, audit_repo
+):
     engines([_engine_row("primary", "tencent")])
     quotas["consume"].result = (False, 9, 9)
 
@@ -377,6 +406,9 @@ def test_enqueue_consume_race_is_429(files_repo, engines, quotas, audit_repo):
     assert response.status_code == 429
     assert response.json()["detail"] == "AI_QUOTA_EXCEEDED"
     assert quotas["peek"].calls == [(ADMIN, "ocr", 1)]
+    # 站点额度已经扣过一次，必须原样退回去：这次识别根本不会发生。
+    assert quotas["site"].calls == [("tencent", 1)]
+    assert quotas["refund"].calls == [("tencent",)]
     assert files_repo.statuses == []
 
 
@@ -403,7 +435,7 @@ def test_enqueue_hides_engine_kind_from_response_but_keeps_task_aligned(
     monkeypatch.setattr(
         ai_router,
         "process_ocr",
-        lambda oid, kind=None, name=None: seen.append((oid, kind, name)),
+        lambda oid, kind=None, name=None, user_oid=None: seen.append((oid, kind, name)),
     )
 
     response = _post_ocr()
@@ -411,6 +443,121 @@ def test_enqueue_hides_engine_kind_from_response_but_keeps_task_aligned(
     assert response.status_code == 202
     # 入队选中的引擎与后台任务收到的引擎必须一致，否则扣 A 跑 B。
     assert seen == [(ATTACHMENT, "tencent", "primary")]
+
+
+# ---------------------------------------------------------------------------
+# 入队：体积闸门
+# ---------------------------------------------------------------------------
+
+
+def test_enqueue_rejects_oversized_image(
+    files_repo, engines, quotas, audit_repo, monkeypatch
+):
+    """大图不该进 base64：上游请求体与内存都会被撑爆。"""
+    engines([_engine_row("primary", "tencent")])
+    monkeypatch.setattr(ai_config, "max_ocr_image_bytes", lambda: 1024)
+    files_repo.row["size_bytes"] = 2048
+
+    response = _post_ocr()
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "AI_OCR_IMAGE_TOO_LARGE"
+    # 拒绝发生在任何计价之前。
+    assert quotas["site"].calls == []
+    assert quotas["consume"].calls == []
+    assert files_repo.statuses == []
+
+
+def test_enqueue_size_falls_back_to_content_length(
+    files_repo, engines, quotas, audit_repo, monkeypatch
+):
+    """元数据缺 ``size_bytes`` 时按真实内容长度判（异常数据也不能放行）。"""
+    engines([_engine_row("primary", "tencent")])
+    monkeypatch.setattr(ai_config, "max_ocr_image_bytes", lambda: 4)
+    files_repo.row.pop("size_bytes")
+
+    response = _post_ocr()
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "AI_OCR_IMAGE_TOO_LARGE"
+
+
+def test_enqueue_accepts_image_at_the_limit(
+    files_repo, engines, quotas, audit_repo, monkeypatch
+):
+    engines([_engine_row("primary", "tencent")])
+    monkeypatch.setattr(ai_config, "max_ocr_image_bytes", lambda: 2048)
+
+    assert _post_ocr().status_code == 202
+
+
+# ---------------------------------------------------------------------------
+# 入队：provider（仅 admin，按引擎 kind 定向）
+# ---------------------------------------------------------------------------
+
+
+def test_enqueue_provider_pins_the_engine_kind(
+    files_repo, engines, quotas, audit_repo
+):
+    """``provider`` 传的是引擎 kind：只在该 kind 里选，priority 让位。"""
+    engines(
+        [
+            _engine_row("primary", "tencent", priority=10),
+            _engine_row("backup", "aliyun", priority=20),
+        ]
+    )
+
+    response = _client().post(
+        "/api/ai/ocr", json={"attachment_oid": ATTACHMENT, "provider": "aliyun"}
+    )
+
+    assert response.status_code == 202
+    assert response.json()["data"]["engine"] == "backup"
+    # 指定引擎不等于免费：照样扣那一份站点额度，且不碰 tencent 的。
+    assert quotas["site"].calls == [("aliyun", 1)]
+    assert quotas["consume"].calls == [(ADMIN, "ocr", 1)]
+
+
+def test_enqueue_provider_is_admin_only(files_repo, engines, quotas, audit_repo):
+    engines([_engine_row("primary", "tencent")])
+
+    response = _client({"id": USER, "per": ["department"]}).post(
+        "/api/ai/ocr", json={"attachment_oid": ATTACHMENT, "provider": "tencent"}
+    )
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "AI_FORBIDDEN"
+    # 门禁在计价之前：被拒的请求一份额度都不碰。
+    assert quotas["peek"].calls == []
+    assert quotas["site"].calls == []
+
+
+def test_enqueue_rejects_unknown_provider(files_repo, engines, quotas, audit_repo):
+    """拼错的 kind 是 400，不是「没有可用引擎」——后者会把运维引去查引擎表。"""
+    engines([_engine_row("primary", "tencent")])
+
+    response = _client().post(
+        "/api/ai/ocr", json={"attachment_oid": ATTACHMENT, "provider": "tencent_typo"}
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "AI_OCR_ENGINE_BAD_KIND"
+    assert quotas["site"].calls == []
+
+
+def test_enqueue_provider_without_matching_engine_is_503(
+    files_repo, engines, quotas, audit_repo
+):
+    engines([_engine_row("primary", "tencent")])
+
+    response = _client().post(
+        "/api/ai/ocr", json={"attachment_oid": ATTACHMENT, "provider": "baidu"}
+    )
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "AI_OCR_NO_ENGINE"
+    assert quotas["consume"].calls == []
+    assert quotas["site"].calls == []
 
 
 # ---------------------------------------------------------------------------
@@ -426,7 +573,7 @@ def test_process_ocr_success_writes_result(files_repo, engines, adapters):
     engines([_engine_row("primary", "tencent")])
     _install_tencent(adapters)
 
-    anyio.run(attachment_ocr.process_ocr, ATTACHMENT, "tencent", "primary")
+    anyio.run(attachment_ocr.process_ocr, ATTACHMENT, "tencent", "primary", ADMIN)
 
     assert [status for _oid, status, _bump in files_repo.statuses] == [
         "processing",
@@ -452,7 +599,7 @@ def test_process_ocr_failure_lands_failed_and_swallows(
     _install_tencent(adapters)
     StubAdapter.error = ocr_engines.OcrEngineError("tencent engine requires secret field 'region'")
 
-    anyio.run(attachment_ocr.process_ocr, ATTACHMENT, "tencent", "primary")
+    anyio.run(attachment_ocr.process_ocr, ATTACHMENT, "tencent", "primary", ADMIN)
 
     assert files_repo.statuses[-1] == (ATTACHMENT, "failed", True)
     assert files_repo.ocr_rows == []
@@ -484,15 +631,99 @@ def test_process_ocr_decrypts_secret_before_calling_adapter(
     assert "sk-xyz" not in json.dumps(files_repo.ocr_rows, default=str)
 
 
-def test_process_ocr_fails_when_engine_was_disabled(files_repo, engines, adapters, caplog):
+def test_process_ocr_falls_back_when_engine_was_disabled(
+    files_repo, engines, adapters, quotas, audit_repo
+):
+    """入队后引擎被禁用：不锁死，按 priority 换下一个候选跑完。"""
     engines([_engine_row("backup", "aliyun")])
-    adapters["tencent"] = StubAdapter
+    adapters["aliyun"] = StubAdapter
 
-    anyio.run(attachment_ocr.process_ocr, ATTACHMENT, "tencent", "primary")
+    anyio.run(attachment_ocr.process_ocr, ATTACHMENT, "tencent", "primary", ADMIN)
 
-    # 引擎入队后被禁用：如实失败（可重试），不悄悄换一个引擎去花另一份额度。
-    assert files_repo.statuses[-1][1] == "failed"
-    assert "no longer enabled" in caplog.text
+    assert files_repo.statuses[-1][1] == "done"
+    # 落库的是**实际**成功的引擎，而不是入队时那个已经消失的。
+    assert files_repo.ocr_rows[0]["engine"] == "backup"
+    # 回退的这一次要扣 backup 那份站点额度（kind=aliyun）。
+    assert quotas["site"].calls == [("aliyun", 1)]
+    # 第一次尝试的失败也要留流水（model 是入队时的引擎名）。
+    assert [(row["model"], row["status"]) for row in audit_repo.rows] == [
+        ("primary", "error"),
+        ("backup", "success"),
+    ]
+    assert audit_repo.rows[0]["error_code"] == attachment_ocr.ERROR_ENGINE
+    # 逐次流水不重复计费：额度那一笔在入队时已经记过。
+    assert [row["units"] for row in audit_repo.rows] == [0, 0]
+
+
+def test_process_ocr_fails_over_to_the_next_candidate(
+    files_repo, engines, adapters, quotas, audit_repo
+):
+    """第一个引擎识别失败（上游抖动/额度失效）→ 自动换下一个，落实际成功的引擎。"""
+    engines(
+        [
+            _engine_row("primary", "tencent", priority=10),
+            _engine_row("backup", "aliyun", priority=20),
+        ]
+    )
+    _install_tencent(adapters)
+    adapters["aliyun"] = AlwaysOkAdapter
+    StubAdapter.error = ocr_engines.OcrEngineError("tencent upstream is down")
+
+    anyio.run(attachment_ocr.process_ocr, ATTACHMENT, "tencent", "primary", ADMIN)
+
+    assert files_repo.statuses[-1][1] == "done"
+    assert files_repo.ocr_rows[0]["engine"] == "backup"
+    assert files_repo.ocr_rows[0]["engine_version"] == "stub-ok-v1"
+    assert quotas["site"].calls == [("aliyun", 1)]
+    assert [row["status"] for row in audit_repo.rows] == ["error", "success"]
+    assert audit_repo.rows[0]["error_code"] == attachment_ocr.ERROR_ENGINE
+
+
+def test_process_ocr_stops_after_three_attempts(
+    files_repo, engines, adapters, quotas, audit_repo
+):
+    """最多试 3 个引擎（入队那个 + 2 次回退），全失败才落 failed。"""
+    engines(
+        [
+            _engine_row("one", "tencent", priority=10),
+            _engine_row("two", "aliyun", priority=20),
+            _engine_row("three", "baidu", priority=30),
+            _engine_row("four", "zhipu", priority=40),
+        ]
+    )
+    for kind in ("tencent", "aliyun", "baidu", "zhipu"):
+        adapters[kind] = StubAdapter
+    StubAdapter.error = ocr_engines.OcrEngineError("upstream is down")
+
+    anyio.run(attachment_ocr.process_ocr, ATTACHMENT, "tencent", "one", ADMIN)
+
+    assert files_repo.statuses[-1] == (ATTACHMENT, "failed", True)
+    assert len(StubAdapter.calls) == attachment_ocr.ai_ocr.MAX_ENGINE_ATTEMPTS == 3
+    # 第 4 个候选根本没被尝试：也就不该为它扣站点额度。
+    assert [call[0] for call in quotas["site"].calls] == ["aliyun", "baidu"]
+
+
+def test_process_ocr_oversized_content_fails_without_burning_a_fallback(
+    files_repo, engines, adapters, quotas, monkeypatch
+):
+    """真实字节超限是和引擎无关的失败：不回退，白花下一个引擎的额度。"""
+    engines(
+        [
+            _engine_row("primary", "tencent", priority=10),
+            _engine_row("backup", "aliyun", priority=20),
+        ]
+    )
+    _install_tencent(adapters)
+    monkeypatch.setattr(
+        attachment_ocr.ai_config, "max_ocr_image_bytes", lambda: 4
+    )
+
+    anyio.run(attachment_ocr.process_ocr, ATTACHMENT, "tencent", "primary", ADMIN)
+
+    assert files_repo.statuses[-1] == (ATTACHMENT, "failed", True)
+    assert quotas["site"].calls == []
+    assert StubAdapter.calls == []
+    assert files_repo.ocr_rows == []
 
 
 # ---------------------------------------------------------------------------

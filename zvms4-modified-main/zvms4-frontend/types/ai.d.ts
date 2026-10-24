@@ -154,7 +154,6 @@ export interface AiHealthData {
   local_engine_ready?: boolean
   max_concurrency: number
   providers: AiProviderView[]
-  routes: Record<string, string[]>
   /** 供应商 → 熔断剩余秒数。 */
   cooldown_seconds: Record<string, number>
   models: string[]

@@ -2015,6 +2015,16 @@ class AIQuotaRepo(Protocol):
         """
         ...
 
+    async def refund(self, user_oid: str, period: str, kind: str, amount: int) -> int:
+        """Give ``amount`` units back in a single conditional ``UPDATE``.
+
+        ``used - amount`` is clamped at zero (the table has a ``used >= 0``
+        CHECK): a compensation must never turn the counter negative, and it must
+        never fail either — the caller already decided to give the units back.
+        Returns the affected row count (``0`` = no such row, nothing to give back).
+        """
+        ...
+
 
 # ---------------------------------------------------------------------------
 # AI credentials (V023)

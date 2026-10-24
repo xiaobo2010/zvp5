@@ -230,9 +230,19 @@ def _config_api_path(raw: object) -> str:
     return path
 
 
-def routes() -> dict[str, list[str]]:
-    raw = getattr(settings, "AI_ROUTES", {}) or {}
-    return raw if isinstance(raw, dict) else {}
+def max_ocr_image_bytes() -> int:
+    """OCR 单图体积上限（字节）；``settings`` 可覆盖 ``config`` 的默认 20MB。
+
+    非正数/非整数一律回退默认值：把上限配成 0 或负数等于把 OCR 整条链路掐死，
+    而这类错误在启动时看不出来，只有第一个用户撞上才发现。
+    """
+    fallback = int(config.AI_OCR_MAX_IMAGE_BYTES)
+    raw = getattr(settings, "AI_OCR_MAX_IMAGE_BYTES", fallback)
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return fallback
+    return value if value > 0 else fallback
 
 
 def max_concurrency() -> int:

@@ -23,8 +23,6 @@ AI_ENABLED = True
 # name -> {"kind":"openai_compat","base_url":"https://...","api_key_env":"ZVMS_AI_XXX_KEY",
 #          "models":["..."],"timeout":{"connect":5,"read":120}}
 AI_PROVIDERS = {}
-# capability -> provider 名，顺序即优先级；forced（admin）必须出现在这里。
-AI_ROUTES = {"chat": [], "ocr": []}
 AI_MAX_CONCURRENCY = 8
 # 允许使用 /api/ai 的角色（per 口径）。默认学生会 + 管理员。
 AI_ALLOWED_ROLES = ("admin", "department")

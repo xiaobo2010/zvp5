@@ -20,6 +20,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from db import backends
+from db.repos.protocols import SHARED_OWNER_OID
 from routers import ai_router
 from services.ai import quota as quota_service
 from services.ai.config import DEFAULT_QUOTA
@@ -222,8 +223,10 @@ def test_admin_can_set_site_level_engine_quota(api) -> None:
 
     这些 kind 由 ``site_consume`` 内部记账；不放行的话，管理员只能改
     ``settings.AI_SITE_QUOTA`` 再重启，管理接口对站点额度等于失效。
+    写的必须是**站点哨兵行**（``SHARED_OWNER_OID``），否则只是一条永不生效的
+    孤儿记录：``site_consume`` 读的是哨兵行，管理员以为调了额度其实没调。
     """
-    client, _repo, log = api
+    client, repo, log = api
 
     body = client.put(
         f"{PREFIX}/quota/{TARGET_OID}",
@@ -237,7 +240,61 @@ def test_admin_can_set_site_level_engine_quota(api) -> None:
         "used": 0,
         "limit": 1000,
     }
+    period = quota_service.period_now()
+    assert repo.rows[(SHARED_OWNER_OID, period, "ocr_tencent")]["limit_count"] == 1000
+    # 目标用户身上不该多出任何站点 kind 的行。
+    assert (TARGET_OID, period, "ocr_tencent") not in repo.rows
     assert log.entries[-1]["type"] == "ai_quota_set"
+
+
+def test_site_level_quota_does_not_leak_into_the_user_view(api) -> None:
+    client, _repo, _log = api
+
+    client.put(
+        f"{PREFIX}/quota/{TARGET_OID}",
+        json={"kind": "ocr_rapidocr", "limit_count": 1234},
+    )
+
+    data = client.get(f"{PREFIX}/quota/{TARGET_OID}").json()["data"]
+
+    # 管理端的用户视图只有用户级两种能力：站点额度不是「这个人的额度」。
+    assert set(data) == {"ocr", "chat"}
+    assert data["ocr"]["limit"] == DEFAULT_QUOTA["ocr"]
+
+
+def test_admin_can_reset_site_level_used(api) -> None:
+    """重置站点 kind 同样落在哨兵行上。"""
+    client, repo, _log = api
+    repo.seed(SHARED_OWNER_OID, "ocr_tencent", used=42, limit=1000)
+
+    body = client.post(
+        f"{PREFIX}/quota/{TARGET_OID}/reset", json={"kind": "ocr_tencent"}
+    ).json()
+
+    assert body["data"] == {
+        "period": quota_service.period_now(),
+        "kind": "ocr_tencent",
+        "used": 0,
+        "limit": 1000,
+    }
+    assert repo.rows[(SHARED_OWNER_OID, quota_service.period_now(), "ocr_tencent")][
+        "used"
+    ] == 0
+
+
+def test_site_level_set_limit_is_what_site_consume_reads(api) -> None:
+    """设完站点额度后 ``site_consume`` 必须认新上限（否则「永不生效」又回来了）。"""
+    client, _repo, _log = api
+
+    client.put(
+        f"{PREFIX}/quota/{TARGET_OID}",
+        json={"kind": "ocr_groq", "limit_count": 1},
+    )
+
+    allowed, used, limit = asyncio.run(quota_service.site_consume("groq", 1))
+    assert (allowed, used, limit) == (True, 1, 1)
+    allowed, used, limit = asyncio.run(quota_service.site_consume("groq", 1))
+    assert (allowed, used, limit) == (False, 1, 1)
 
 
 def test_set_limit_then_consume_honours_new_ceiling(api) -> None:
