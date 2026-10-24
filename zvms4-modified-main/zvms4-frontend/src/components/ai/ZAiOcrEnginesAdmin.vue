@@ -44,7 +44,8 @@ const SECRET_FIELDS: Record<AiOcrEngineKind, string[]> = {
   aliyun: ['access_key_id', 'access_key_secret'],
   baidu: ['api_key', 'secret_key'],
   rapidocr: [],
-  groq: ['api_key']
+  groq: ['api_key'],
+  zhipu: ['api_key']
 }
 
 const SECRET_LABELS: Record<string, string> = {
@@ -56,7 +57,7 @@ const SECRET_LABELS: Record<string, string> = {
   api_key: 'ai.engines.apiKey'
 }
 
-const KIND_OPTIONS: AiOcrEngineKind[] = ['tencent', 'aliyun', 'baidu', 'rapidocr', 'groq']
+const KIND_OPTIONS: AiOcrEngineKind[] = ['tencent', 'aliyun', 'baidu', 'rapidocr', 'groq', 'zhipu']
 
 const rows = ref<AiOcrEngineRecord[]>([])
 const loading = ref(false)

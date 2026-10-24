@@ -4,9 +4,15 @@
 
 export type AiKeyScope = 'personal' | 'shared'
 
-export type AiOcrEngineKind = 'tencent' | 'aliyun' | 'baidu' | 'rapidocr' | 'groq'
+export type AiOcrEngineKind = 'tencent' | 'aliyun' | 'baidu' | 'rapidocr' | 'groq' | 'zhipu'
 
 export type AiQuotaKind = 'ocr' | 'chat'
+
+export type AiLogCapability = 'ocr' | 'chat'
+
+export type AiLogStatus = 'success' | 'error' | 'timeout' | 'rejected' | 'busy'
+
+export type AiLogKeyScope = 'personal' | 'shared' | 'server'
 
 export interface AiKeyRecord {
   oid: string
@@ -22,6 +28,8 @@ export interface AiKeyRecord {
   /** 密钥末四位提示，不含完整密钥。 */
   key_hint: string | null
   enabled: boolean
+  /** 到期时间（ISO 字符串）；null 表示永不过期。 */
+  expires_at: string | null
   created_at: string | null
   updated_at: string | null
   /** personal 且属于当前管理员时为 true。 */
@@ -37,6 +45,8 @@ export interface AiKeyCreateInput {
   enabled?: boolean
   headers?: Record<string, string>
   api_path?: string
+  /** 到期时间（ISO 字符串）；不传表示永不过期。 */
+  expires_at?: string | null
 }
 
 export interface AiKeyUpdateInput {
@@ -48,6 +58,28 @@ export interface AiKeyUpdateInput {
   enabled?: boolean
   headers?: Record<string, string>
   api_path?: string
+  /** 显式传 null 表示清除到期，不传表示保持不变。 */
+  expires_at?: string | null
+}
+
+/** 调用日志的一行（/ai/logs）。仅 admin 可读。 */
+export interface AiLogRecord {
+  oid: string
+  user_oid: string
+  user_name: string
+  capability: AiLogCapability
+  endpoint: string
+  provider: string | null
+  model: string | null
+  status: AiLogStatus
+  http_status: number
+  error_code: string | null
+  latency_ms: number | null
+  units: number
+  input_bytes: number | null
+  request_id: string | null
+  key_scope: AiLogKeyScope | null
+  created_at: string
 }
 
 export interface AiOcrEngineRecord {

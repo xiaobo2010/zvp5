@@ -1,7 +1,7 @@
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import ZAiKeysAdmin from './ZAiKeysAdmin.vue'
-import { createKey, listKeys } from '@/api/ai'
+import { createKey, listKeys, updateKey } from '@/api/ai'
 import { AiRequestError } from '@/api/ai/errors'
 import type { AiKeyRecord } from '@/../types/ai'
 
@@ -203,8 +203,8 @@ vi.mock('element-plus', async () => {
   const ElFormItem = defineComponent({
     name: 'ElFormItem',
     props: { prop: String, label: String },
-    setup(_, { slots }) {
-      return () => h('div', { class: 'el-form-item-stub' }, slots.default?.())
+    setup(props, { slots }) {
+      return () => h('div', { class: 'el-form-item-stub', 'data-prop': props.prop }, slots.default?.())
     }
   })
 
@@ -248,6 +248,33 @@ vi.mock('element-plus', async () => {
     }
   })
 
+  const ElDatePicker = defineComponent({
+    name: 'ElDatePicker',
+    props: {
+      modelValue: { type: [Date, Array, String, Number], default: null },
+      type: String,
+      placeholder: String
+    },
+    emits: ['update:modelValue'],
+    setup(props, { emit }) {
+      return () =>
+        h('input', {
+          class: 'el-date-picker-stub',
+          value: props.modelValue instanceof Date ? props.modelValue.toISOString() : '',
+          placeholder: props.placeholder,
+          onInput: (event: Event) => {
+            const raw = (event.target as HTMLInputElement).value
+            if (!raw) {
+              emit('update:modelValue', null)
+              return
+            }
+            const parsed = new Date(raw)
+            emit('update:modelValue', Number.isNaN(parsed.getTime()) ? null : parsed)
+          }
+        })
+    }
+  })
+
   const ElIcon = defineComponent({
     name: 'ElIcon',
     setup(_, { slots }) {
@@ -283,6 +310,7 @@ vi.mock('element-plus', async () => {
     ElInput,
     ElSelect,
     ElOption,
+    ElDatePicker,
     ElIcon,
     ElEmpty,
     ElTag,
@@ -311,6 +339,7 @@ const personalOther: AiKeyRecord = {
   api_path: null,
   key_hint: '1111',
   enabled: true,
+  expires_at: null,
   created_at: '2026-10-24T00:00:00',
   updated_at: '2026-10-24T00:00:00',
   owned: false
@@ -328,6 +357,7 @@ const shared: AiKeyRecord = {
   api_path: '/v1/chat/completions',
   key_hint: '2222',
   enabled: true,
+  expires_at: null,
   created_at: '2026-10-24T00:00:00',
   updated_at: '2026-10-24T00:00:00',
   owned: false
@@ -353,6 +383,7 @@ function findButton(wrapper: VueWrapper, label: string) {
 beforeEach(() => {
   vi.mocked(listKeys).mockReset()
   vi.mocked(createKey).mockReset()
+  vi.mocked(updateKey).mockReset()
   elMessageErrorSpy.mockReset()
   elMessageSuccessSpy.mockReset()
   elMessageBoxConfirmSpy.mockReset()
@@ -492,6 +523,106 @@ describe('Key 管理', () => {
     await flushPromises()
 
     expect(wrapper.find('.el-empty-stub').text()).toBe('ai.keys.loadFailed')
+
+    wrapper.unmount()
+  })
+})
+
+describe('Key 到期', () => {
+  const expired: AiKeyRecord = {
+    ...shared,
+    oid: 'oid-expired',
+    name: 'expired-key',
+    expires_at: '2020-01-01T00:00:00Z'
+  }
+
+  it('到期列区分永久与已过期', async () => {
+    vi.mocked(listKeys).mockResolvedValue([shared, expired])
+    const wrapper = mountPage()
+    await flushPromises()
+
+    const rows = wrapper.findAll('.el-table-stub__row')
+    const permanentRow = rows.find((row) => row.text().includes('shared-key'))!
+    const expiredRow = rows.find((row) => row.text().includes('expired-key'))!
+
+    expect(permanentRow.text()).toContain('ai.keys.neverExpires')
+    expect(permanentRow.text()).not.toContain('ai.keys.expired')
+
+    expect(expiredRow.text()).toContain('ai.keys.expired')
+    expect(expiredRow.find('[data-expired="true"]').exists()).toBe(true)
+    expect(expiredRow.text()).toContain('2020-01-01')
+
+    wrapper.unmount()
+  })
+
+  it('编辑时清空到期时间会显式传 null', async () => {
+    const withExpiry: AiKeyRecord = { ...shared, expires_at: '2030-01-01T00:00:00Z' }
+    vi.mocked(listKeys).mockResolvedValue([withExpiry])
+    vi.mocked(updateKey).mockResolvedValue(withExpiry)
+
+    const wrapper = mountPage()
+    await flushPromises()
+
+    const row = wrapper.findAll('.el-table-stub__row')[0]!
+    const editButton = row.findAll('button').find((button) => button.text() === 'ai.common.edit')!
+    await editButton.trigger('click')
+
+    const dialog = wrapper.find('.el-dialog-stub')
+    const picker = dialog.find('.el-date-picker-stub')
+    expect(picker.exists()).toBe(true)
+    await picker.setValue('')
+
+    await findButton(wrapper, 'ai.common.save')!.trigger('click')
+    await flushPromises()
+
+    expect(updateKey).toHaveBeenCalledWith('oid-shared', expect.objectContaining({ expires_at: null }))
+
+    wrapper.unmount()
+  })
+
+  it('编辑时保留原有到期时间', async () => {
+    const withExpiry: AiKeyRecord = { ...shared, expires_at: '2030-01-01T00:00:00Z' }
+    vi.mocked(listKeys).mockResolvedValue([withExpiry])
+    vi.mocked(updateKey).mockResolvedValue(withExpiry)
+
+    const wrapper = mountPage()
+    await flushPromises()
+
+    const row = wrapper.findAll('.el-table-stub__row')[0]!
+    const editButton = row.findAll('button').find((button) => button.text() === 'ai.common.edit')!
+    await editButton.trigger('click')
+
+    await findButton(wrapper, 'ai.common.save')!.trigger('click')
+    await flushPromises()
+
+    expect(updateKey).toHaveBeenCalledWith(
+      'oid-shared',
+      expect.objectContaining({ expires_at: '2030-01-01T00:00:00.000Z' })
+    )
+
+    wrapper.unmount()
+  })
+
+  it('到期时间不合法时错误落到到期字段上', async () => {
+    vi.mocked(createKey).mockRejectedValue(
+      new AiRequestError({ status: 400, code: 'AI_KEY_BAD_EXPIRY' })
+    )
+    const wrapper = mountPage()
+    await flushPromises()
+
+    await findButton(wrapper, 'ai.keys.create')!.trigger('click')
+    const dialog = wrapper.find('.el-dialog-stub')
+    const inputs = dialog.findAll('.el-input-stub')
+    await inputs[0]!.setValue('demo-key')
+    await inputs[1]!.setValue('https://api.example.com')
+    await inputs[3]!.setValue('sk-1234567890')
+
+    await findButton(wrapper, 'ai.common.create')!.trigger('click')
+    await flushPromises()
+
+    const expiresItem = wrapper.find('[data-prop="expiresAt"]')
+    expect(expiresItem.text()).toContain('AI_KEY_BAD_EXPIRY')
+    expect(wrapper.find('.el-dialog-stub').exists()).toBe(true)
 
     wrapper.unmount()
   })

@@ -34,6 +34,8 @@ describe('错误码到人话文案的映射', () => {
       'AI_KEY_INVALID',
       'AI_KEY_NOT_FOUND',
       'AI_KEY_FORBIDDEN',
+      'AI_KEY_BAD_EXPIRY',
+      'AI_LOGS_BAD_FILTER',
       'AI_OCR_ENGINE_DUPLICATE',
       'AI_OCR_ENGINE_INVALID',
       'AI_OCR_ENGINE_BAD_KIND',

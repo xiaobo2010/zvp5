@@ -4,6 +4,7 @@ import { useI18n } from 'vue-i18n'
 import {
   ElButton,
   ElCard,
+  ElDatePicker,
   ElDialog,
   ElEmpty,
   ElForm,
@@ -58,6 +59,7 @@ const form = reactive({
   apiKey: '',
   apiPath: '',
   enabled: true,
+  expiresAt: undefined as Date | undefined,
   headers: [] as HeaderRow[]
 })
 
@@ -170,6 +172,7 @@ function resetForm() {
   form.apiKey = ''
   form.apiPath = ''
   form.enabled = true
+  form.expiresAt = undefined
   form.headers = []
   headersTouched.value = false
   fieldError.value = {}
@@ -192,6 +195,7 @@ function openEdit(row: AiKeyRecord) {
   form.models = row.models.join(', ')
   form.apiPath = row.api_path ?? ''
   form.enabled = row.enabled
+  form.expiresAt = row.expires_at ? new Date(row.expires_at) : undefined
   // 请求头的值不回显，只列出头名：留空即保持不变，填写即轮换。
   form.headers = Object.keys(row.headers ?? {}).map((name) => ({ name, value: '' }))
   dialogVisible.value = true
@@ -232,9 +236,18 @@ function applyServerError(error: unknown) {
     fieldError.value = { name: `${copy.title}：${copy.hint}` }
     return
   }
+  if (code === 'AI_KEY_BAD_EXPIRY') {
+    fieldError.value = { expiresAt: `${copy.title}：${copy.hint}` }
+    return
+  }
   fieldError.value = {
     form: detail ? `${copy.title}：${copy.hint}（${detail}）` : `${copy.title}：${copy.hint}`
   }
+}
+
+/** 到期时间折成后端要的 ISO 字符串；空值表示永不过期。 */
+function expiryPayload(): string | null {
+  return form.expiresAt ? form.expiresAt.toISOString() : null
 }
 
 async function submit() {
@@ -255,6 +268,11 @@ async function submit() {
     const apiKey = form.apiKey.trim()
     const headers = collectHeaders()
 
+    if (form.expiresAt && form.expiresAt.getTime() <= Date.now()) {
+      fieldError.value = { expiresAt: t('ai.keys.validation.expiresInPast') }
+      return
+    }
+
     if (mode.value === 'create') {
       await createKey({
         scope: form.scope,
@@ -264,7 +282,8 @@ async function submit() {
         api_key: apiKey,
         enabled: form.enabled,
         ...(headers ? { headers } : {}),
-        ...(form.apiPath.trim() ? { api_path: form.apiPath.trim() } : {})
+        ...(form.apiPath.trim() ? { api_path: form.apiPath.trim() } : {}),
+        ...(form.expiresAt ? { expires_at: expiryPayload() } : {})
       })
       dialogVisible.value = false
       ElMessage.success(t('ai.keys.createdNotice'))
@@ -297,10 +316,8 @@ async function submit() {
       if (apiPath !== (original.api_path ?? '')) {
         payload.api_path = apiPath
       }
-      if (Object.keys(payload).length === 0) {
-        ElMessage.info(t('ai.keys.noChanges'))
-        return
-      }
+      // 到期时间不做差异比较：编辑提交时永远带上（值或 null，null = 清除到期）。
+      payload.expires_at = expiryPayload()
       await updateKey(editingId.value, payload)
       dialogVisible.value = false
       ElMessage.success(t('ai.keys.savedNotice'))
@@ -361,6 +378,27 @@ async function remove(row: AiKeyRecord) {
 
 function modelPreview(row: AiKeyRecord): string {
   return row.models.join(', ')
+}
+
+function formatTime(value?: string | null): string {
+  if (!value) {
+    return '—'
+  }
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) {
+    return value
+  }
+  const fill = (n: number) => String(n).padStart(2, '0')
+  return `${date.getFullYear()}-${fill(date.getMonth() + 1)}-${fill(date.getDate())} ${fill(date.getHours())}:${fill(date.getMinutes())}`
+}
+
+/** 已过期的凭据照常列出（后端不隐藏行），只做醒目标记。 */
+function isExpired(row: AiKeyRecord): boolean {
+  if (!row.expires_at) {
+    return false
+  }
+  const time = new Date(row.expires_at).getTime()
+  return !Number.isNaN(time) && time <= Date.now()
 }
 
 onMounted(() => {
@@ -429,6 +467,27 @@ onMounted(() => {
               :disabled="!canMutate(row) || Boolean(togglingId)"
               @change="toggleEnabled(row)"
             />
+          </template>
+        </ElTableColumn>
+        <ElTableColumn :label="t('ai.keys.expires')" width="170">
+          <template #default="{ row }">
+            <div v-if="!row.expires_at" class="flex flex-col">
+              <span class="text-xs" style="color: var(--zv-label)">
+                {{ t('ai.keys.neverExpires') }}
+              </span>
+            </div>
+            <div v-else class="flex flex-col gap-1">
+              <ElTag
+                v-if="isExpired(row)"
+                type="danger"
+                size="small"
+                class="ai-key-expires__badge"
+                data-expired="true"
+              >
+                {{ t('ai.keys.expired') }}
+              </ElTag>
+              <span class="tabular-nums text-xs">{{ formatTime(row.expires_at) }}</span>
+            </div>
           </template>
         </ElTableColumn>
         <ElTableColumn :label="t('ai.keys.owned')" width="90" align="center">
@@ -537,6 +596,19 @@ onMounted(() => {
 
         <ElFormItem :label="t('ai.keys.apiPath')" prop="apiPath">
           <ElInput v-model="form.apiPath" :placeholder="t('ai.keys.apiPathPlaceholder')" />
+        </ElFormItem>
+
+        <ElFormItem :label="t('ai.keys.expiresLabel')" prop="expiresAt">
+          <ElDatePicker
+            v-model="form.expiresAt"
+            type="datetime"
+            class="w-full"
+            :placeholder="t('ai.keys.expiresPlaceholder')"
+          />
+          <p v-if="fieldError.expiresAt" class="text-xs mt-1" style="color: var(--el-color-danger)">
+            {{ fieldError.expiresAt }}
+          </p>
+          <p class="text-xs mt-1" style="color: var(--zv-label)">{{ t('ai.keys.expiresHint') }}</p>
         </ElFormItem>
 
         <ElFormItem :label="t('ai.keys.headers')">
