@@ -8,6 +8,7 @@ import {
 } from 'vue'
 import {
   ElButton,
+  ElDialog,
   ElProgress,
   ElIcon,
   ElImageViewer,
@@ -19,15 +20,21 @@ import {
   Delete,
   ZoomIn,
   Loading,
-  Plus
+  Plus,
+  Document
 } from '@element-plus/icons-vue'
 import type { AxiosProgressEvent } from 'axios'
+import { useI18n } from 'vue-i18n'
 import type {
   AttachmentMeta,
   AttachmentStatus,
   AttachmentUploadResult
 } from '@/../types'
 import * as attachmentApi from '@/api/attachment'
+import { useUserStore } from '@/stores/user'
+import { enqueueOcr } from '@/api/ai/ocr'
+import { aiErrorCodeOf, aiErrorCopy } from '@/api/ai/errors'
+import { useAiOcrPolling } from '@/components/ai/useAiOcrPolling'
 
 interface DisplayItem {
   // 服务端 oid；上传中时可能为空串
@@ -46,6 +53,14 @@ interface DisplayItem {
   isLocal?: boolean
   // 原始文件引用，失败后可重试
   file?: File
+  // OCR 实时状态（网关受理后由轮询维护）
+  ocr?: {
+    status: 'pending' | 'processing' | 'done' | 'failed'
+    engine?: string
+    confidence?: number
+    text?: string
+    error?: string
+  }
 }
 
 const props = withDefaults(
@@ -86,11 +101,135 @@ const cameraInput = ref<HTMLInputElement>()
 const galleryInput = ref<HTMLInputElement>()
 const previewUrl = ref<string>()
 const previewVisible = ref(false)
+const user = useUserStore()
+const { t } = useI18n()
+
+// OCR 走网关（/ai/ocr）：有额度与频控，普通学生看不到入口。
+const canOcr = computed(
+  () => user.position.includes('admin') || user.position.includes('department')
+)
+const OCR_MIME = ['image/jpeg', 'image/png', 'image/webp']
 
 const countText = computed(() => `${items.value.length}/${props.max}`)
 const canAdd = computed(
   () => items.value.length < props.max && !props.disabled && !props.readonly
 )
+
+// —— OCR：受理 + 轮询 + 结果展示 ——
+
+const ocrResultVisible = ref(false)
+const ocrResultItem = ref<DisplayItem | null>(null)
+const ocrBusy = ref('')
+
+const polling = useAiOcrPolling({
+  onUpdate: (oid, result) => {
+    const item = items.value.find((entry) => entry.oid === oid)
+    if (!item) {
+      return
+    }
+    item.ocr = {
+      status: result.status,
+      engine: result.engine ?? item.ocr?.engine,
+      confidence: result.confidence,
+      text: result.text
+    }
+  },
+  onError: (oid) => {
+    const item = items.value.find((entry) => entry.oid === oid)
+    if (item) {
+      item.ocr = { status: 'failed', error: item.ocr?.error }
+    }
+  }
+})
+
+function itemOcrStatus(item: DisplayItem): string | undefined {
+  if (item.ocr) {
+    return item.ocr.status
+  }
+  return item.meta?.ocr_status
+}
+
+function supportsOcr(item: DisplayItem): boolean {
+  if (!canOcr.value || !item.oid || item.status !== 'done') {
+    return false
+  }
+  const mime = (item.meta?.mime ?? '').toLowerCase()
+  return OCR_MIME.includes(mime)
+}
+
+function ocrRunning(item: DisplayItem): boolean {
+  const status = itemOcrStatus(item)
+  return status === 'pending' || status === 'processing'
+}
+
+function ocrButtonTitle(item: DisplayItem): string {
+  if (ocrRunning(item)) {
+    return t('ai.ocr.running')
+  }
+  if (itemOcrStatus(item) === 'done') {
+    return t('ai.ocr.viewText')
+  }
+  if (itemOcrStatus(item) === 'failed') {
+    return t('ai.ocr.retry')
+  }
+  return t('ai.ocr.action')
+}
+
+function onOcrClick(item: DisplayItem) {
+  if (ocrRunning(item)) {
+    return
+  }
+  const status = itemOcrStatus(item)
+  if (status === 'done') {
+    openOcrResult(item)
+    return
+  }
+  void startOcr(item)
+}
+
+async function startOcr(item: DisplayItem) {
+  if (!item.oid || ocrBusy.value) {
+    return
+  }
+  ocrBusy.value = item.oid
+  try {
+    const result = await enqueueOcr(item.oid)
+    item.ocr = {
+      status: result.status === 'pending' ? 'pending' : 'processing',
+      engine: result.engine
+    }
+    polling.start(item.oid)
+  } catch (error) {
+    const copy = aiErrorCopy(aiErrorCodeOf(error), t)
+    item.ocr = { status: 'failed', error: `${copy.title}：${copy.hint}` }
+    ElMessage({
+      message: `${copy.title}：${copy.hint}`,
+      type: 'error',
+      plain: true,
+      grouping: true
+    })
+  } finally {
+    ocrBusy.value = ''
+  }
+}
+
+function openOcrResult(item: DisplayItem) {
+  ocrResultItem.value = item
+  ocrResultVisible.value = true
+}
+
+async function copyOcrText() {
+  const text = ocrResultItem.value?.ocr?.text ?? ''
+  if (!text) {
+    return
+  }
+  try {
+    await navigator.clipboard.writeText(text)
+    ElMessage({ message: t('ai.common.copied'), type: 'success', plain: true, grouping: true })
+  } catch {
+    ElMessage({ message: text, type: 'warning', plain: true, grouping: true })
+  }
+}
 
 watch(
   () => props.modelValue,
@@ -99,6 +238,7 @@ watch(
     const wanted = new Set(oids)
     const toRemove = items.value.filter((i) => !wanted.has(i.oid))
     for (const item of toRemove) {
+      polling.stop(item.oid)
       revokeItem(item)
     }
     items.value = items.value.filter((i) => wanted.has(i.oid))
@@ -113,6 +253,8 @@ watch(
 )
 
 onUnmounted(() => {
+  // 组件销毁时停掉 OCR 轮询，不让定时器在卸载后继续发请求。
+  polling.stopAll()
   items.value.forEach(revokeItem)
 })
 
@@ -149,6 +291,13 @@ async function loadStored(oid: string) {
     target.url = url
     target.meta = meta
     target.status = 'done'
+    // 上一次识别还没跑完（对话框关过、或别人发起的）：接上轮询，
+    // 不让状态永远停在「识别中」。
+    const metaOcrStatus = meta?.ocr_status
+    if (canOcr.value && (metaOcrStatus === 'pending' || metaOcrStatus === 'processing')) {
+      target.ocr = { status: metaOcrStatus }
+      polling.start(oid)
+    }
   } catch (err) {
     const http = (err as { response?: { status?: number } }).response?.status
     // 404/410：存量附件已不存在或已软删，静默移除，不污染父级
@@ -169,6 +318,7 @@ async function loadStored(oid: string) {
 function dropStoredItem(oid: string) {
   const target = items.value.find((i) => i.oid === oid)
   if (!target) return
+  polling.stop(oid)
   revokeItem(target)
   items.value.splice(items.value.indexOf(target), 1)
   syncModel()
@@ -289,6 +439,8 @@ async function uploadSingle(file: File, replaceIndex?: number) {
 async function removeItem(item: DisplayItem) {
   if (props.disabled || props.readonly) return
   if (item.oid) {
+    // 附件没了，它的识别轮询也没有意义，先停表。
+    polling.stop(item.oid)
     try {
       await attachmentApi.manage.deleteOne(item.oid)
       emit('deleted', item.oid)
@@ -348,6 +500,10 @@ function statusText(item: DisplayItem): string {
   if (item.status === 'uploading') return '上传中…'
   if (item.status === 'error') return '上传失败'
   if (item.status === 'failed') return '加载失败'
+  const live = item.ocr?.status
+  if (live === 'processing' || live === 'pending') return t('ai.ocr.running')
+  if (live === 'done') return t('ai.ocr.done')
+  if (live === 'failed') return t('ai.ocr.failed')
   const ocr = item.meta?.ocr_status
   if (ocr === 'processing') return '识别中'
   if (ocr === 'done') return '已识别'
@@ -471,6 +627,18 @@ function statusText(item: DisplayItem): string {
           <span class="text-white text-[12px] truncate">{{ statusText(item) }}</span>
           <div class="flex items-center">
             <button
+              v-if="supportsOcr(item) || item.ocr"
+              type="button"
+              class="text-white p-1 rounded hover:opacity-80"
+              :title="ocrButtonTitle(item)"
+              @click="onOcrClick(item)"
+            >
+              <ElIcon :class="ocrRunning(item) ? 'att-spin' : ''">
+                <Loading v-if="ocrRunning(item)" />
+                <Document v-else />
+              </ElIcon>
+            </button>
+            <button
               v-if="item.url"
               type="button"
               class="text-white p-1 rounded hover:opacity-80"
@@ -534,6 +702,42 @@ function statusText(item: DisplayItem): string {
       hide-on-click-modal
       @close="closePreview"
     />
+
+    <ElDialog
+      v-model="ocrResultVisible"
+      :title="t('ai.ocr.dialogTitle')"
+      width="min(720px, 94vw)"
+      append-to-body
+    >
+      <div class="flex flex-col gap-2">
+        <div class="flex flex-wrap items-center gap-3 text-xs" style="color: var(--zv-label)">
+          <span v-if="ocrResultItem?.ocr?.engine">
+            {{ t('ai.ocr.engine') }}：{{ ocrResultItem.ocr.engine }}
+          </span>
+          <span v-if="ocrResultItem?.ocr?.confidence !== undefined" class="tabular-nums">
+            {{ t('ai.ocr.confidence') }}：{{ Math.round((ocrResultItem.ocr.confidence ?? 0) * 100) }}%
+          </span>
+          <span v-if="ocrResultItem?.ocr?.error" style="color: var(--el-color-danger)">
+            {{ ocrResultItem.ocr.error }}
+          </span>
+        </div>
+        <pre
+          class="ocr-text"
+        >{{ ocrResultItem?.ocr?.text || t('ai.ocr.emptyText') }}</pre>
+      </div>
+      <template #footer>
+        <div class="flex items-center justify-end gap-2">
+          <ElButton @click="ocrResultVisible = false">{{ t('ai.common.close') }}</ElButton>
+          <ElButton
+            type="primary"
+            :disabled="!ocrResultItem?.ocr?.text"
+            @click="copyOcrText"
+          >
+            {{ t('ai.ocr.copyText') }}
+          </ElButton>
+        </div>
+      </template>
+    </ElDialog>
   </div>
 </template>
 
@@ -572,5 +776,19 @@ function statusText(item: DisplayItem): string {
   to {
     transform: rotate(360deg);
   }
+}
+.ocr-text {
+  margin: 0;
+  padding: 10px 12px;
+  max-height: 60vh;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.6;
+  font-size: 14px;
+  border: 1px solid var(--zv-hairline);
+  border-radius: 6px;
+  background: var(--zv-surface-alt);
+  color: var(--zv-text);
 }
 </style>

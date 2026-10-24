@@ -82,6 +82,16 @@ const router = createRouter({
       component: () => import('../views/manage/ManageHome.vue')
     },
     {
+      path: '/ai',
+      name: 'ai',
+      redirect: '/ai/chat'
+    },
+    {
+      path: '/ai/:action',
+      name: 'ai-action',
+      component: () => import('../views/ai/AIHome.vue')
+    },
+    {
       path: '/server',
       name: 'server',
       component: () => import('../views/server/ServerHome.vue'),
