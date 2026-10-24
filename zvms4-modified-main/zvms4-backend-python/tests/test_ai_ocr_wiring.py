@@ -483,25 +483,6 @@ def test_process_ocr_decrypts_secret_before_calling_adapter(
     assert "sk-xyz" not in json.dumps(files_repo.ocr_rows, default=str)
 
 
-def test_process_ocr_manual_path_uses_first_enabled_and_skips_site_quota(
-    files_repo, engines, adapters, quotas
-):
-    repo = engines(
-        [
-            _engine_row("backup", "aliyun"),
-            _engine_row("primary", "tencent", priority=20),
-        ]
-    )
-    adapters["aliyun"] = StubAdapter
-
-    anyio.run(attachment_ocr.process_ocr, ATTACHMENT)
-
-    # 只查 enabled 行；手动重识别是 manager 的低频排障，不扣站点额度。
-    assert repo.calls == [True]
-    assert quotas["site"].calls == []
-    assert files_repo.ocr_rows[0]["engine"] == "backup"
-
-
 def test_process_ocr_fails_when_engine_was_disabled(files_repo, engines, adapters, caplog):
     engines([_engine_row("backup", "aliyun")])
     adapters["tencent"] = StubAdapter
@@ -518,10 +499,16 @@ def test_process_ocr_fails_when_engine_was_disabled(files_repo, engines, adapter
 # ---------------------------------------------------------------------------
 
 
-def test_attachment_manual_ocr_does_not_touch_site_quota(
+def test_attachment_manual_ocr_uses_engine_pool(
     files_repo, engines, adapters, quotas, audit_repo
 ):
-    engines([_engine_row("primary", "tencent")])
+    """attachments 端不再免额度：与 ``/api/ai/ocr`` 同一条计价路径。"""
+    engines(
+        [
+            _engine_row("primary", "tencent", priority=10),
+            _engine_row("backup", "aliyun", priority=20),
+        ]
+    )
     _install_tencent(adapters)
 
     client = _client(routers=("attachments",))
@@ -530,12 +517,70 @@ def test_attachment_manual_ocr_does_not_touch_site_quota(
     # attachments 端沿用既有契约：HTTP 200 + body 里的 code 202（表示已入队）。
     assert response.status_code == 200
     assert response.json()["code"] == 202
-    # TestClient 会同步跑完 background task：识别结果应当已经落库。
+    # 引擎由入队时选定并按 priority 取第一个，后台任务必须跟着它跑。
+    assert response.json()["data"]["engine"] == "primary"
     assert files_repo.ocr_rows and files_repo.ocr_rows[0]["engine"] == "primary"
-    assert quotas["site"].calls == []
+    # 用户额度与站点额度各扣一次，没有「manager 免费」这回事。
+    assert quotas["peek"].calls == [(ADMIN, "ocr", 1)]
+    assert quotas["consume"].calls == [(ADMIN, "ocr", 1)]
+    assert quotas["site"].calls == [("tencent", 1)]
+    # 记账口径与网关一致：引擎凭证是站点级的 → server。
+    assert audit_repo.rows and audit_repo.rows[-1]["key_scope"] == "server"
+
+
+def test_attachment_manual_ocr_site_quota_exhausted_is_503(
+    files_repo, engines, adapters, quotas
+):
+    engines([_engine_row("primary", "tencent")])
+    _install_tencent(adapters)
+    quotas["site"].result = (False, 1000, 1000)
+
+    response = _client(routers=("attachments",)).post(
+        f"/api/attachments/{ATTACHMENT}/ocr"
+    )
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "AI_OCR_SITE_QUOTA_EXHAUSTED"
+    # 选不到引擎就不动用户额度：预检只读，真扣只发生在引擎选中之后。
     assert quotas["consume"].calls == []
-    assert quotas["peek"].calls == []
-    assert audit_repo.rows == []
+    assert files_repo.ocr_rows == []
+
+
+def test_attachment_manual_ocr_processing_is_idempotent(
+    files_repo, engines, adapters, quotas
+):
+    engines([_engine_row("primary", "tencent")])
+    _install_tencent(adapters)
+    files_repo.row["ocr_status"] = "processing"
+
+    response = _client(routers=("attachments",)).post(
+        f"/api/attachments/{ATTACHMENT}/ocr"
+    )
+
+    assert response.status_code == 200
+    assert response.json()["code"] == 200
+    assert response.json()["data"]["status"] == "processing"
+    # 已受理过的不重复扣额度，也不重复入队。
+    assert quotas["consume"].calls == []
+    assert quotas["site"].calls == []
+    assert files_repo.ocr_rows == []
+
+
+def test_attachment_manual_ocr_rejects_unsupported_mime(
+    files_repo, engines, adapters, quotas
+):
+    engines([_engine_row("primary", "tencent")])
+    _install_tencent(adapters)
+    files_repo.row["mime"] = "application/pdf"
+
+    response = _client(routers=("attachments",)).post(
+        f"/api/attachments/{ATTACHMENT}/ocr"
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "AI_UNSUPPORTED_MEDIA"
+    assert quotas["consume"].calls == []
+    assert quotas["site"].calls == []
 
 
 def test_attachment_manual_ocr_is_manager_only(files_repo, engines, adapters, quotas):
@@ -547,6 +592,9 @@ def test_attachment_manual_ocr_is_manager_only(files_repo, engines, adapters, qu
 
     assert response.status_code == 403
     assert files_repo.statuses == []
+    # 权限在计价之前判定：被拒的请求不碰任何一份额度。
+    assert quotas["peek"].calls == []
+    assert quotas["site"].calls == []
 
 
 # ---------------------------------------------------------------------------

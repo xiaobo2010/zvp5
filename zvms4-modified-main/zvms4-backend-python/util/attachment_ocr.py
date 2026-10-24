@@ -3,13 +3,12 @@
 引擎的**实现**不在这里：真实适配器都在 :mod:`services.ai.ocr_engines`（腾讯 /
 阿里 / RapidOCR），本模块只负责「按注册表挑一个引擎 → 跑 → 落库 → 推进状态机」。
 
-引擎选择有两个入口语义，别混：
+引擎由入队方选定，本模块只**跟随**，绝不二次扣费、也不自选：
 
-* ``engine_kind`` 有值 = 网关入队路径（``services.ai.ocr.enqueue`` 已经扣过站点
-  额度并按 ``priority`` 选好引擎）。这里只**跟随**那个选择，绝不二次扣费——否则
-  一次 OCR 会扣两遍站点额度。
-* ``engine_kind`` 为 ``None`` = 附件管理端手动重识别（``manager`` 权限）。它是低
-  频排障操作，走**第一个** enabled 引擎且不扣站点额度。
+``services.ai.ocr.enqueue`` 已经扣过用户额度、按 ``priority`` 选好引擎并扣过站点
+额度（``/api/ai/ocr`` 与 ``POST /api/attachments/{oid}/ocr`` 两条入口共用同一
+套计价）。入队时选的是哪一行，这里就必须跑哪一行——即使它在入队后被改名或禁用，
+也只能如实失败交给状态机重试，绝不换一个引擎去花另一份额度。
 
 State machine: ``stored -> (ocr pending -> processing -> done|failed) ->
 verified|rejected``. Every transition is driven through
@@ -93,13 +92,13 @@ async def mark_ocr_failed(file_oid: str) -> None:
 
 async def process_ocr(
     file_oid: str,
-    engine_kind: str | None = None,
+    engine_kind: str,
     engine_name: str | None = None,
 ) -> None:
     """Run the selected engine against the file's stored bytes and record it.
 
-    ``engine_kind`` / ``engine_name`` 由网关入队路径透传（见模块 docstring）；
-    ``None`` 表示手动重识别，这时自选第一个 enabled 引擎且不扣站点额度。
+    ``engine_kind`` / ``engine_name`` 由入队方透传（见模块 docstring），必填：
+    引擎与额度都在入队时定好，这里不做任何选择或扣费。
 
     Drives ``set_ocr`` transitions and writes ``file_ocr`` + ``file_events``.
     Any failure lands the file in ``failed`` (retry bumped) and is swallowed so a
@@ -143,8 +142,8 @@ async def process_ocr(
             pass
 
 
-async def _select_row(engine_kind: str | None, engine_name: str | None) -> dict:
-    """按 kind/name 取引擎行；手动路径取第一行。
+async def _select_row(engine_kind: str, engine_name: str | None) -> dict:
+    """按 kind/name 取引擎行。
 
     ``name`` 只是同一 ``kind`` 内的消歧（同类型可以有多行：不同 region / 不同
     配额来源）；名字对不上就回落到该 kind 的第一行，而不是直接失败——引擎被改名
@@ -153,9 +152,6 @@ async def _select_row(engine_kind: str | None, engine_name: str | None) -> dict:
     rows = await backends.get_ai_ocr_engines_repo().list_all(enabled_only=True)
     if not rows:
         raise ocr_engines.OcrEngineError("no OCR engine is enabled")
-
-    if engine_kind is None:
-        return rows[0]
 
     candidates = [row for row in rows if str(row.get("kind") or "") == engine_kind]
     if not candidates:
