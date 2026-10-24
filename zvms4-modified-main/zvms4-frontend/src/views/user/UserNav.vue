@@ -1,8 +1,6 @@
 <script setup lang="ts">
 import {
-  Avatar,
   CirclePlusFilled,
-  EditPen,
   HomeFilled,
   InfoFilled,
   Sunny,
@@ -11,28 +9,15 @@ import {
   Monitor,
   ChatLineRound
 } from '@element-plus/icons-vue'
-import { ElIcon, ElTooltip } from 'element-plus'
-import { ref } from 'vue'
+import { ElTooltip, ElIcon } from 'element-plus'
+import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useUserStore } from '@/stores/user'
 import MdiEye from '@/icons/MdiEye.vue'
 import type { Component as VueComponent } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
-import { useDark } from '@vueuse/core'
+import { useDark, useWindowSize } from '@vueuse/core'
 import { useI18n } from 'vue-i18n'
-import { watch } from 'vue'
 import { pad, getTabletType } from '@/plugins/ua'
-
-/** 宽屏折叠成图标条；窄屏转为抽屉（由 App.vue 渲染遮罩）。 */
-withDefaults(
-  defineProps<{
-    collapsed?: boolean
-    open?: boolean
-  }>(),
-  {
-    collapsed: false,
-    open: false
-  }
-)
 
 const user = useUserStore()
 const router = useRouter()
@@ -47,6 +32,10 @@ const path = ref(route.fullPath)
 watch(route, () => {
   path.value = route.fullPath
 })
+
+// 与 App.vue 保持同一判定：宽 < 高 × 1.2 即竖屏
+const { width, height } = useWindowSize()
+const verticalMode = computed(() => width.value < height.value * 1.2)
 
 const navs: Array<{
   icon: VueComponent
@@ -68,9 +57,7 @@ const navs: Array<{
     path: '/activities/mine',
     show: true,
     judge: (path) =>
-      (path.startsWith('/activity') &&
-        !path.startsWith('/activity/create') &&
-        !path.startsWith('/activity/register')) ||
+      (path.startsWith('/activity') && !path.startsWith('/activity/create')) ||
       path.startsWith('/activities')
   },
   {
@@ -81,26 +68,14 @@ const navs: Array<{
     judge: (path) => path.startsWith('/activity/create')
   },
   {
-    icon: EditPen,
-    name: 'register',
-    path: '/activity/register',
-    show: user.position.includes('admin') || user.position.includes('department'),
-    judge: (path) => path.startsWith('/activity/register')
-  },
-  {
     icon: Management,
     name: 'manage',
     path: '/management',
     show: user.position.filter((x) => x !== 'student').length > 0,
     judge: (path) =>
-      path.startsWith('/group') || path.startsWith('/user/') && path !== '/user/login' || path.startsWith('/manage')
-  },
-  {
-    icon: Avatar,
-    name: 'profile',
-    path: '/me',
-    show: true,
-    judge: (path) => path.startsWith('/me')
+      path.startsWith('/group') ||
+      (path.startsWith('/user/') && path !== '/user/login') ||
+      path.startsWith('/manage')
   },
   {
     icon: InfoFilled,
@@ -125,6 +100,8 @@ const navs: Array<{
   }
 ]
 
+const visibleNavs = computed(() => navs.filter((x) => x.show))
+
 function routeTo(page: string) {
   if (page === '/management') {
     if (user.position.includes('admin') || user.position.includes('department')) {
@@ -137,72 +114,121 @@ function routeTo(page: string) {
     router.push(page)
   }
 }
+
+/* ---- 弹性滑动指示器：测量激活项位置，弹簧缓动滑动 ---- */
+const itemsRef = ref<HTMLElement>()
+const indicator = ref({ x: 0, y: 0, w: 0, h: 0, visible: false })
+
+function updateIndicator() {
+  const root = itemsRef.value
+  if (!root) return
+  const active = root.querySelector<HTMLElement>('.yg-glass-nav__item.is-active')
+  if (!active) {
+    indicator.value.visible = false
+    return
+  }
+  indicator.value = {
+    x: active.offsetLeft,
+    y: active.offsetTop,
+    w: active.offsetWidth,
+    h: active.offsetHeight,
+    visible: true
+  }
+}
+
+const indicatorStyle = computed(() => ({
+  transform: `translate(${indicator.value.x}px, ${indicator.value.y}px)`,
+  width: indicator.value.w + 'px',
+  height: indicator.value.h + 'px',
+  opacity: indicator.value.visible ? 1 : 0
+}))
+
+onMounted(() => {
+  nextTick(updateIndicator)
+  window.addEventListener('resize', updateIndicator)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('resize', updateIndicator)
+})
+
+watch([path, verticalMode], () => nextTick(updateIndicator))
+
+/* ---- 深浅色切换：图标旋转一圈 + View Transitions 整屏丝滑过渡 ---- */
+const spinning = ref(false)
+
+function toggleDark() {
+  if (spinning.value) return
+  spinning.value = true
+  setTimeout(() => (spinning.value = false), 650)
+  const apply = () => {
+    dark.value = !dark.value
+  }
+  if (document.startViewTransition) {
+    document.startViewTransition(apply)
+  } else {
+    apply()
+  }
+}
+
+const showThemeToggle = !pad() || getTabletType() === 'p615' || getTabletType() === 'p620'
 </script>
 
 <template>
-  <aside
-    class="yg-layout__sidebar yg-sidebar yg-liquid-glass"
-    :class="{ 'is-collapsed': collapsed, 'is-open': open }"
+  <nav
+    :class="['yg-glass-nav', verticalMode ? 'yg-glass-nav--portrait' : 'yg-glass-nav--landscape']"
+    aria-label="主导航"
   >
-    <div class="yg-sidebar__header">
-      <span class="yg-sidebar__logo">
-        <img src="/favicon.ico" alt="" />
-      </span>
-      <span class="yg-sidebar__title">义工平台</span>
-    </div>
-
-    <nav class="yg-menu">
-      <template v-for="nav in navs" :key="nav.path">
+    <div ref="itemsRef" class="yg-glass-nav__items">
+      <span class="yg-glass-nav__indicator" :style="indicatorStyle" aria-hidden="true" />
+      <template v-for="nav in visibleNavs" :key="nav.path">
         <ElTooltip
-          v-if="nav.show"
+          v-if="!verticalMode"
           :content="t(`nav.${nav.name}`)"
           placement="right"
-          :disabled="!collapsed"
+          effect="light"
           :show-after="200"
         >
           <button
             type="button"
-            class="yg-menu__item"
+            class="yg-glass-nav__item"
             :class="{ 'is-active': nav.judge(path ?? '') }"
+            :aria-label="t(`nav.${nav.name}`)"
             @click="routeTo(nav.path)"
           >
-            <ElIcon class="yg-menu__icon">
-              <component :is="nav.icon" />
-            </ElIcon>
-            <span class="yg-menu__label">{{ t(`nav.${nav.name}`) }}</span>
+            <ElIcon><component :is="nav.icon" /></ElIcon>
           </button>
         </ElTooltip>
+        <button
+          v-else
+          type="button"
+          class="yg-glass-nav__item"
+          :class="{ 'is-active': nav.judge(path ?? '') }"
+          :aria-label="t(`nav.${nav.name}`)"
+          @click="routeTo(nav.path)"
+        >
+          <ElIcon><component :is="nav.icon" /></ElIcon>
+        </button>
       </template>
-    </nav>
-
-    <div class="yg-sidebar__footer">
+      <span v-if="showThemeToggle" class="yg-glass-nav__divider" aria-hidden="true" />
       <button
-        v-if="!pad() || getTabletType() === 'p615' || getTabletType() === 'p620'"
+        v-if="showThemeToggle"
         type="button"
-        class="yg-icon-btn yg-icon-btn--ghost"
-        :aria-label="t('nav.dark', '深色模式')"
-        :title="t('nav.dark', '深色模式')"
-        @click="dark = !dark"
+        class="yg-glass-nav__item yg-glass-nav__theme"
+        :aria-label="t('nav.toggleDark', '切换深浅色模式')"
+        @click="toggleDark"
       >
-        <ElIcon>
-          <Moon v-if="dark" />
-          <Sunny v-else />
-        </ElIcon>
+        <span class="yg-glass-nav__theme-icon" :class="{ spinning }">
+          <ElIcon><component :is="dark ? Moon : Sunny" /></ElIcon>
+        </span>
       </button>
     </div>
-  </aside>
+  </nav>
 </template>
 
 <style scoped>
-.yg-sidebar__logo img {
-  width: 100%;
-  height: 100%;
-  border-radius: inherit;
-  object-fit: cover;
-}
-
 @media print {
-  .yg-sidebar {
+  .yg-glass-nav {
     display: none;
   }
 }
