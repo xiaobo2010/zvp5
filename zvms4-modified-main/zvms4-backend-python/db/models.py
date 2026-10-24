@@ -1125,7 +1125,7 @@ ai_ocr_engines = Table(
     Column("updated_at", oracle.TIMESTAMP, nullable=False),
     _oid_check("ai_ocr_engines"),
     CheckConstraint(
-        "kind IN ('tencent','aliyun','rapidocr','baidu','groq')",
+        "kind IN ('tencent','aliyun','rapidocr','baidu','groq','zhipu')",
         name="ck_ai_ocr_engines_kind",
     ),
     CheckConstraint("enabled IN (0,1)", name="ck_ai_ocr_engines_enabled"),

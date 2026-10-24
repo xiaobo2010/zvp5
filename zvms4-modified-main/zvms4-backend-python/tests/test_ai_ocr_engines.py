@@ -577,7 +577,7 @@ def test_rapidocr_ort_default_threads_are_bounded_by_cpu_count(monkeypatch) -> N
 
 
 def test_registry_covers_every_ddl_kind() -> None:
-    # 两处都写死五元组：只断言 ``set(ENGINES) == set(ENGINE_KINDS)`` 时，两边
+    # 两处都写死六元组：只断言 ``set(ENGINES) == set(ENGINE_KINDS)`` 时，两边
     # 一起漏掉同一个 kind 会静默通过——那正好是「DDL 拒收新 kind」的前置条件。
     expected_kinds = {
         ocr_engines.KIND_TENCENT,
@@ -585,8 +585,9 @@ def test_registry_covers_every_ddl_kind() -> None:
         ocr_engines.KIND_BAIDU,
         ocr_engines.KIND_RAPIDOCR,
         ocr_engines.KIND_GROQ,
+        ocr_engines.KIND_ZHIPU,
     }
-    assert len(expected_kinds) == 5
+    assert len(expected_kinds) == 6
     assert set(ocr_engines.ENGINE_KINDS) == expected_kinds
     assert set(ocr_engines.ENGINES) == expected_kinds
     for kind, engine_cls in ocr_engines.ENGINES.items():
@@ -635,6 +636,7 @@ def test_site_kinds_are_the_engine_whitelist() -> None:
         "ocr_baidu",
         "ocr_rapidocr",
         "ocr_groq",
+        "ocr_zhipu",
     }
     for kind in ocr_engines.ENGINE_KINDS:
         assert quota.site_kind(kind) == f"{quota.SITE_KIND_PREFIX}{kind}"
