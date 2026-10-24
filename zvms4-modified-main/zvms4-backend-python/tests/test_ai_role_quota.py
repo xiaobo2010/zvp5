@@ -95,11 +95,16 @@ def test_non_string_roles_are_ignored():
     assert quota_service.default_limit_for([None, 123], "ocr") == DEFAULT_QUOTA["ocr"]
 
 
-def test_site_kinds_fall_back_to_the_base_kind():
-    """``ocr_tencent`` 这类站点额度没有角色维度，按大类默认值走。"""
-    assert (
-        quota_service.default_limit_for(None, "ocr_tencent") == DEFAULT_QUOTA["ocr"]
-    )
+def test_site_kinds_use_the_site_quota():
+    """站点额度没有角色维度，走站点口径，**不**回落到用户的 ``DEFAULT_QUOTA["ocr"]``。
+
+    回落到用户额度会让站点额度一建就是 100（几十个用户一天打满、全站 OCR 503，
+    2026-10-24 上线实测）。这条断言就是那个坑的回归守卫。
+    """
+    site_limit = quota_service.default_limit_for(None, "ocr_tencent")
+
+    assert site_limit > 0
+    assert site_limit != DEFAULT_QUOTA["ocr"]
 
 
 def test_consume_without_roles_keeps_the_old_behaviour(repo):
