@@ -248,6 +248,28 @@ def _get_by_oid_for_update_stmt(oid: str):
     )
 
 
+def _auth_columns() -> tuple[Any, ...]:
+    """认证投影：``_authenticate`` 判定与 ``util.ban`` 出响应头真正读的列。
+
+    ``past`` / ``eligibility`` 是 CLOB，只有登录（``validate_by_cert``）和
+    资料读取才用；每个已认证请求都为它们多搬两次 LOB 是纯浪费。``roles``
+    是 CLOB 但权限判定就靠它，保留。
+    """
+    return (
+        users_tbl.c.oid,
+        users_tbl.c.roles,
+        users_tbl.c.class_oid,
+        users_tbl.c.session_id,
+        users_tbl.c.banned,
+        users_tbl.c.ban_reason,
+        users_tbl.c.ban_until,
+    )
+
+
+def _get_for_auth_stmt(oid: str):
+    return select(*_auth_columns()).where(users_tbl.c.oid == oid)
+
+
 def _find_by_business_id_stmt(business_id: str):
     return select(*_user_columns()).where(
         users_tbl.c.business_id == business_id
@@ -955,6 +977,30 @@ def _user_doc(mapping: Any) -> Row:
     return doc
 
 
+def _auth_doc(mapping: Any) -> Row:
+    """``_auth_columns`` 那一行对应的文档；键集合是认证路径的契约。
+
+    ``banned`` / ``ban_until`` / ``ban_reason`` 走与 ``_user_doc`` 相同的
+    「非 NULL 才出现 / 真值才出现」规则——``util.ban`` 靠 key 是否存在区分
+    「永久封禁」与「未封禁」，两条路径必须逐字同口径。
+    """
+    doc: Row = {
+        "_id": mapping["oid"],
+        "roles": mapping["roles"] if mapping["roles"] is not None else [],
+    }
+    if mapping["class_oid"] is not None:
+        doc["class_id"] = mapping["class_oid"]
+    if mapping["session_id"] is not None:
+        doc["session_id"] = mapping["session_id"]
+    if mapping["banned"]:
+        doc["banned"] = True
+    if mapping["ban_reason"] is not None:
+        doc["ban_reason"] = mapping["ban_reason"]
+    if mapping["ban_until"] is not None:
+        doc["ban_until"] = mapping["ban_until"]
+    return doc
+
+
 class OracleUsersRepo:
     """``UsersRepo`` over Oracle ADB (``zvms_new.users``)."""
 
@@ -969,6 +1015,21 @@ class OracleUsersRepo:
         if row is None:
             return None
         return _user_doc(row._mapping)
+
+    async def get_for_auth(self, oid: str) -> Row | None:
+        """``get_by_oid`` 的窄投影：只供 :func:`util.object_id._authenticate`。
+
+        每个已认证请求都走这里，``past`` / ``eligibility`` 两个 CLOB 因此
+        不必被搬出来。返回的文档不含 ``password`` —— 认证只校验 token，不
+        参与密码比对；需要密码的登录路径继续用 ``get_by_oid``。
+        """
+        stmt = _get_for_auth_stmt(normalize_oid(oid))
+        async with _session_for(self._session) as (session, _owns):
+            result = await session.execute(stmt)
+            row = result.first()
+        if row is None:
+            return None
+        return _auth_doc(row._mapping)
 
     async def find_by_business_id(self, business_id: str) -> Row | None:
         stmt = _find_by_business_id_stmt(business_id)

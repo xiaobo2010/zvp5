@@ -42,6 +42,15 @@ class UsersRepo(Protocol):
         """Return the user with the given ``_id`` (hex string), or ``None``."""
         ...
 
+    async def get_for_auth(self, oid: str) -> Row | None:
+        """Return only the columns the authentication path reads.
+
+        Narrower than :meth:`get_by_oid` on purpose: ``past`` and
+        ``eligibility`` are CLOBs that only profile/credential pages need,
+        while every authenticated request reads this row.
+        """
+        ...
+
     async def find_by_business_id(self, business_id: str) -> Row | None:
         """Return the user with the given 学号 (``id`` field), or ``None``."""
         ...

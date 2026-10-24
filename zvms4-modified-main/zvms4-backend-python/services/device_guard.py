@@ -17,6 +17,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -123,6 +124,11 @@ def _check_code(code: str, hashed: str) -> bool:
 def hash_temp_password(code: str) -> str:
     """临时密码只在创建响应里出现一次，落库的永远是 bcrypt。"""
     return bcrypt.hashpw(code.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+
+
+async def hash_temp_password_async(code: str) -> str:
+    """``hash_temp_password`` 的线程池版本：cost 12 不能在事件循环里等。"""
+    return await asyncio.to_thread(hash_temp_password, code)
 
 
 def generate_temp_password() -> str:
@@ -397,14 +403,14 @@ async def verify_temp_password(
     passwords = backends.get_temp_passwords_repo()
     matched: Row | None = None
     if code:
-        for record in await passwords.list_active_for_user(
-            user_oid, limit=MAX_TEMP_PASSWORDS_SCANNED
-        ):
-            if not _record_usable(record, at):
-                continue
-            if _check_code(code, str(record.get("code_hash") or "")):
-                matched = record
-                break
+        matched = await asyncio.to_thread(
+            _match_temp_password,
+            await passwords.list_active_for_user(
+                user_oid, limit=MAX_TEMP_PASSWORDS_SCANNED
+            ),
+            code,
+            at,
+        )
 
     matched_id = matched.get("_id") if matched is not None else None
     if matched is not None and not matched_id:
@@ -537,6 +543,20 @@ def _record_usable(record: Row, at: datetime) -> bool:
         return False
     expires_at = _as_until(record.get("expires_at"))
     return expires_at is not None and not _expired(expires_at, at)
+
+
+def _match_temp_password(records: list[Row], code: str, at: datetime) -> Row | None:
+    """整批候选一次跑完：逐个 ``to_thread`` 只会换来一串线程池往返。
+
+    bcrypt cost 12 每次约 250ms，CPU 该花还是要花，但整批只应占用事件
+    循环一次切换；扫描顺序与判定口径与原来的 for 循环逐条等价。
+    """
+    for record in records:
+        if not _record_usable(record, at):
+            continue
+        if _check_code(code, str(record.get("code_hash") or "")):
+            return record
+    return None
 
 
 async def _log_temp_failure(
@@ -740,4 +760,5 @@ __all__ = [
     "apply_account_ban",
     "generate_temp_password",
     "hash_temp_password",
+    "hash_temp_password_async",
 ]
