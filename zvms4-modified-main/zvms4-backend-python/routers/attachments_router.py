@@ -27,6 +27,8 @@ from pydantic import BaseModel
 from starlette.datastructures import UploadFile
 
 from db import backends
+from services.ai import ocr as ai_ocr
+from services.ai.routing import RouteError
 from typings.log import ZVMSLog, inject_log, xuehai_id_from
 from util.attachment import (
     ALLOWED_PURPOSES,
@@ -45,7 +47,7 @@ from util.attachment import (
     sanitize_filename,
     verify_signed,
 )
-from util.attachment_ocr import OCR_PROCESSING, process_ocr
+from util.attachment_ocr import process_ocr
 from util.ban import ban_is_active, raise_banned
 from util.object_id import get_current_user, optional_current_user, validate_object_id
 
@@ -529,26 +531,41 @@ async def request_attachment_ocr(
     user=Depends(get_current_user),
     log=Depends(inject_log),
 ):
+    """触发附件 OCR：与 ``/api/ai/ocr`` 共用同一套引擎池。
+
+    早期这里是一条 manager 专属的排障通道——自选第一个 enabled 引擎，且不扣用户
+    额度也不扣站点额度，等于给附件 API 留了个免费 OCR 后门。现在两条入口同样计价：
+    频控 → 用户额度 peek/consume → 按 priority 选「站点额度还够」的引擎 → 入队。
+
+    引擎在入队时就定下来，后台任务必须复用同一个（``engine_kind``），否则识别会
+    花掉 A 引擎的站点额度却打到 B 引擎上。
+    """
     _require_manager(user)
     oid = validate_object_id(oid)
-    repo = backends.get_files_repo()
-    row = await repo.get_meta(oid)
-    if row is None:
-        raise HTTPException(status_code=404, detail="Attachment not found")
 
-    if str(row.get("ocr_status") or "") == OCR_PROCESSING:
-        return {"status": "ok", "code": 200, "data": {"status": OCR_PROCESSING}}
+    try:
+        data = await ai_ocr.enqueue(user, oid)
+    except RouteError as exc:
+        # 与 ``/api/ai/*`` 对齐：detail 用 code，客户端按 code 分支。
+        raise HTTPException(status_code=exc.status_code, detail=exc.code) from None
 
-    await repo.set_ocr(oid, "pending")
-    await repo.add_event(
-        oid, user["id"], "ocr_enqueue", row.get("ocr_status"), "pending", ""
+    # ``engine_kind`` 只服务于后台任务，不对外暴露。
+    engine_kind = data.pop("engine_kind", None)
+    if data.get("status") == "pending":
+        background_tasks.add_task(process_ocr, oid, engine_kind, data.get("engine"))
+
+    log.with_text(
+        f"用户 {user['id']} 触发附件 OCR {oid}"
+        f"（引擎 {data.get('engine') or '-'}，状态 {data.get('status')}）",
+        type="attachment_ocr_enqueue",
     )
-    log.with_text(f"用户 {user['id']} 触发附件 OCR {oid}")
     await log.insert_log()
-    # 手动重识别：显式传 ``None`` = 「没有指定引擎」，process_ocr 会自选第一个
-    # enabled 引擎且不扣站点额度（manager 排障属于低频操作）。
-    background_tasks.add_task(process_ocr, oid, None, None)
-    return {"status": "ok", "code": 202, "data": {"status": "pending"}}
+
+    if data.get("status") == "processing":
+        # 幂等分支：这次没有新受理任何东西（也没扣额度），200 表示「已经是这个状态」。
+        return {"status": "ok", "code": 200, "data": data}
+
+    return {"status": "ok", "code": 202, "data": data}
 
 
 @router.get("/{oid}/ocr")

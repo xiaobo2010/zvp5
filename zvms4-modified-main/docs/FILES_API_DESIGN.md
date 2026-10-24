@@ -172,7 +172,7 @@ class FilesRepo(Protocol):
 | 4 | `GET /api/attachments` | `scope=all` **服务端**判 `admin|department ∈ per`，否则 403 | 过滤 `purpose/status/entity_*`；分页（`page=-1` 不分页） |
 | 5 | `GET /api/attachments/{oid}/thumb` | 同 #2 | 缩略图字节（同 gate） |
 | 6 | `POST /api/attachments/{oid}/link` | owner / admin / department | 签发外链 `{url, expires_at}` |
-| 7 | `POST /api/attachments/{oid}/ocr` | admin / department（幂等） | 入队（重跑）；`processing` 时返回当前状态 |
+| 7 | `POST /api/attachments/{oid}/ocr` | admin / department（幂等） | 入队（重跑）**走网关同一套引擎池**：频控 → 用户额度 `ocr` → 按 `priority` 选站点额度还够的引擎；`processing` 时返回当前状态且不重复计价 |
 | 8 | `GET /api/attachments/{oid}/ocr` | owner / admin / department | `{status, engine, engine_version, text, confidence, updated_at}` |
 | 9 | `POST /api/attachments/{oid}/verify` | admin / department | `{decision: verified\|rejected, note}` → `set_status` + `file_events` |
 | 10 | `POST /api/attachments/{oid}/bind` | admin / department | `{entity_type, entity_oid}` |
