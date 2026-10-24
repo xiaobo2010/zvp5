@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import {
   ElAlert,
@@ -67,6 +67,7 @@ const INDEX_STALE_MS = 24 * 60 * 60 * 1000
 const MODES: RegistrationMode[] = ['on-campus', 'off-campus', 'social-practice']
 
 const router = useRouter()
+const route = useRoute()
 const headerStore = useHeaderStore()
 const userStore = useUserStore()
 const { t } = useI18n()
@@ -101,6 +102,8 @@ const savedCount = ref(0)
 
 let rowSeq = 0
 let draftTimer: ReturnType<typeof setTimeout> | undefined
+let draftIdleHandle: number | undefined
+let draftIdleTimer: ReturnType<typeof setTimeout> | undefined
 let draftReady = false
 let savedOids = new Set<string>()
 
@@ -924,7 +927,7 @@ function restoreDraft() {
   }
 }
 
-function persistDraftNow() {
+function writeDraft() {
   if (!draftReady) return
   const payload = {
     activityId: selectedActivityId.value,
@@ -949,10 +952,41 @@ function persistDraftNow() {
   }
 }
 
+function cancelIdleDraft() {
+  if (draftIdleHandle !== undefined) {
+    if (typeof window.cancelIdleCallback === 'function') window.cancelIdleCallback(draftIdleHandle)
+    draftIdleHandle = undefined
+  }
+  if (draftIdleTimer !== undefined) {
+    clearTimeout(draftIdleTimer)
+    draftIdleTimer = undefined
+  }
+}
+
+// 大表序列化 + localStorage 写入放空闲时段，避免击键后抢占主线程
+function persistDraftIdle() {
+  if (!draftReady) return
+  cancelIdleDraft()
+  if (typeof window.requestIdleCallback === 'function') {
+    draftIdleHandle = window.requestIdleCallback(writeDraft, { timeout: 1000 })
+  } else {
+    draftIdleTimer = setTimeout(writeDraft, 200)
+  }
+}
+
+// 离开页面/卸载时同步落盘一次，避免 debounce 窗口内的改动丢失
+function flushDraft() {
+  if (!draftReady) return
+  clearTimeout(draftTimer)
+  draftTimer = undefined
+  cancelIdleDraft()
+  writeDraft()
+}
+
 function scheduleDraft() {
   if (!draftReady) return
   clearTimeout(draftTimer)
-  draftTimer = setTimeout(persistDraftNow, 400)
+  draftTimer = setTimeout(persistDraftIdle, 1500)
 }
 
 async function refreshIndex(showSuccess = true) {
@@ -994,8 +1028,26 @@ async function initIndex() {
 async function initPage() {
   restoreDraft()
   await searchActivities('')
-  await hydrateSelectedActivity()
+  const queryActivityId = routeActivityId()
+  if (queryActivityId) {
+    // 从活动详情/创建向导跳进来：预选该活动，仍可手动更换
+    selectedActivityId.value = queryActivityId
+    await hydrateSelectedActivity()
+    if (selectedActivity.value && selectedActivity.value.status !== 'effective') {
+      selectedActivityId.value = ''
+      selectedActivity.value = null
+      ElMessage.warning('该活动尚未生效，已清除预选；请重新选择已生效的活动')
+    }
+  } else {
+    await hydrateSelectedActivity()
+  }
   await initIndex()
+}
+
+function routeActivityId(): string {
+  const raw = route.query.activity
+  const id = Array.isArray(raw) ? raw[0] : raw
+  return typeof id === 'string' ? id.trim() : ''
 }
 
 watch(rows, scheduleDraft, { deep: true })
@@ -1003,11 +1055,12 @@ watch(selectedActivityId, scheduleDraft)
 
 onMounted(() => {
   void initPage()
+  window.addEventListener('pagehide', flushDraft)
 })
 
 onBeforeUnmount(() => {
-  clearTimeout(draftTimer)
-  persistDraftNow()
+  window.removeEventListener('pagehide', flushDraft)
+  flushDraft()
 })
 </script>
 

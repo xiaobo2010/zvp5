@@ -7,6 +7,8 @@ export const zhCN = {
   ai: 'AI 网关',
   create: '创建义工',
   register: '批量登记',
+  registerHint:
+    '成员可前往批量登记页逐个录入或粘贴名单：该页会自动带上本活动，提交后回到活动详情继续上传义工单。',
   about: '关于',
   changelog: '更新日志',
   logout: '退出登录',

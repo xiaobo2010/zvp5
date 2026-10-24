@@ -2,7 +2,6 @@
 import {
   Avatar,
   CirclePlusFilled,
-  EditPen,
   HomeFilled,
   InfoFilled,
   Sunny,
@@ -70,13 +69,6 @@ const navs: Array<{
     path: '/activity/create',
     show: user.position.includes('admin') || user.position.includes('department'),
     judge: (path) => path.startsWith('/activity/create')
-  },
-  {
-    icon: EditPen,
-    name: 'register',
-    path: '/activity/register',
-    show: user.position.includes('admin') || user.position.includes('department'),
-    judge: (path) => path.startsWith('/activity/register')
   },
   {
     icon: Management,

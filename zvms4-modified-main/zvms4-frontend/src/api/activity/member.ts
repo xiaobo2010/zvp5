@@ -44,6 +44,25 @@ export async function read(aid: string, sid: string) {
   return (await axios(`/v2/activities/${aid}/members/${sid}`)).data as ActivityMember
 }
 
+export async function modifyStatus(
+  aid: string,
+  sessionId: string,
+  status: ActivityMember['status']
+) {
+  return (
+    await axios({
+      url: `/v2/activities/${aid}/members/${sessionId}/status`,
+      method: 'put',
+      data: {
+        status
+      }
+    })
+  ).data as {
+    id: string
+    status: ActivityMember['status']
+  }
+}
+
 export async function reads(aid: string, page: number, perpage: number, search: string) {
   const result = (
     await axios(`/v2/activities/${aid}/members`, {
