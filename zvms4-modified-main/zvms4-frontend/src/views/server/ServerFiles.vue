@@ -51,6 +51,14 @@ function errorMessageOf(error: unknown): string {
   return t('server.auth.failed')
 }
 
+// 删除不再有双人码,失败原因不能落到「动态码无效」上,单独取一次后端 detail
+function deleteErrorMessage(error: unknown): string {
+  const err = error as AxiosError<{ detail?: unknown }>
+  const detail = err?.response?.data?.detail
+  if (typeof detail === 'string' && detail) return detail
+  return t('server.files.deleteFailed')
+}
+
 function axiosStatus(error: unknown): number {
   const err = error as AxiosError
   return err?.response?.status ?? 0
@@ -173,7 +181,8 @@ function crumbs(): { name: string; path: string | null }[] {
   return acc
 }
 
-// —— 写操作统一模式:先双人授权,拿码后带 totp_code 发请求 —— //
+// —— 写操作:mkdir / upload / rename / chmod 先双人授权,拿码后带 totp_code 发请求 —— //
+// 删除已免双人码(留痕走后端审计),见 doDelete。
 
 async function openAuth(scene: string): Promise<string | null> {
   const dialog = authRef.value
@@ -292,30 +301,17 @@ async function doRename(entry: FileEntry) {
   }
 }
 
-async function doDelete(entry: FileEntry, recursive: boolean, reuseCode?: string | null) {
+// 删除不再走双人授权:二次确认(防误删)保留,审批改为后端审计留痕。
+async function doDelete(entry: FileEntry, recursive: boolean) {
   const path = entryPath(entry.name)
-  let code: string | null = reuseCode ?? null
-  if (!code) {
-    code = await openAuth(
-      t('server.files.authSceneDelete', {
-        path,
-        recursive: recursive
-          ? t('server.files.authSceneRecursive')
-          : t('server.files.authSceneSingle')
-      })
-    )
-  }
-  if (!code) return
   try {
-    await deleteEntry(path, recursive, code)
-    authRef.value?.succeed()
+    await deleteEntry(path, recursive)
     ElMessage.success(t('server.files.deleteDone'))
     await load()
   } catch (error) {
     const status = axiosStatus(error)
     if (status === 409 && !recursive) {
       // 后端 delete_path:非空目录 + 非递归 → 409 "目录非空,需递归删除"
-      authRef.value?.succeed()
       try {
         await ElMessageBox.confirm(t('server.files.deleteRecursiveConfirm'), t('server.files.delete'), {
           type: 'warning'
@@ -323,11 +319,10 @@ async function doDelete(entry: FileEntry, recursive: boolean, reuseCode?: string
       } catch {
         return
       }
-      // 防重放:同一动态码不能二次使用,递归重试需重新双人授权
       await doDelete(entry, true)
       return
     }
-    authRef.value?.fail(errorMessageOf(error))
+    ElMessage.error(deleteErrorMessage(error))
   }
 }
 

@@ -1,7 +1,8 @@
 """全盘文件管理的文件系统原语（Stage 2，契约 §3）。
 
 本模块只做「路径 → 文件系统动作」，不碰 FastAPI / 鉴权 / 审计；路由层负责
-管理员闸、双人 TOTP 与审计。这样路径安全与文件动作可以脱离 HTTP 单独测试。
+管理员闸与审计，部分写操作仍需双人 TOTP（如 mkdir/upload/rename/chmod）。
+这样路径安全与文件动作可以脱离 HTTP 单独测试。
 
 安全模型（按契约 §3.2 逐条落地）：
 
@@ -22,6 +23,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import codecs
 import heapq
 import mimetypes
 import os
@@ -88,6 +90,10 @@ MAX_RECURSIVE_ENTRIES = 10000
 # 图片 8MB 是 base64 后约 11MB 的 JSON 响应，超过就会明显拖慢小内存机器与前端渲染。
 PREVIEW_TEXT_BYTES = 512 * 1024
 PREVIEW_IMAGE_BYTES = 8 * 1024 * 1024
+# 编辑上限与 :data:`PREVIEW_TEXT_BYTES` 同源：预览能完整看一篇文本的边界，就是
+# 编辑器能完整写回一篇文本的边界。写入内容是整串编码后的字节，超限直接 413，
+# 不做截断——截断写回等于悄悄损坏文件。
+MAX_EDIT_BYTES = 512 * 1024
 # 二进制嗅探只看前 4KB：够判 NUL 与编码，成本与文件大小无关。
 PREVIEW_SNIFF_BYTES = 4096
 
@@ -131,6 +137,8 @@ TEXT_MIME_OVERRIDES: dict[str, str] = {
 
 CHUNK_SIZE = 64 * 1024
 _UPLOAD_TEMP_PREFIX = ".zvms-upload-"
+# 编辑临时文件前缀与上传区分开：同目录下出问题时一眼能看出是谁留下的残片。
+_EDIT_TEMP_PREFIX = ".zvms-edit-"
 
 
 class FileOpError(Exception):
@@ -582,6 +590,85 @@ def _discard(path: str) -> None:
         os.unlink(path)
     except OSError:
         pass
+
+
+def _resolve_edit_encoding(encoding: str) -> str:
+    """校验编辑用的编码并返回规范名。
+
+    只放行 ``utf-8`` 与 ``gbk``：``latin-1`` 只是预览解码的兜底（任何字节都能
+    解出来），拿它写回会把非 ASCII 文本变成另一串字节，等于破坏原文件。
+    """
+    try:
+        normalized = codecs.lookup(encoding).name
+    except (LookupError, TypeError):
+        raise FileOpError(400, "不支持的编码：只允许 utf-8 或 gbk")
+    if normalized not in {"utf-8", "gbk"}:
+        raise FileOpError(400, "不支持的编码：只允许 utf-8 或 gbk")
+    return normalized
+
+
+def write_text(path: str, content: str, encoding: str) -> dict:
+    """把整篇文本原子写回一个已存在的普通文件。
+
+    ``resolve_path`` 会 realpath 展开符号链接，因此编辑一个 symlink 实际写的是
+    它的**目标文件**（链接本身保持不动）；这与预览/下载的「看目标内容」口径一致。
+
+    原子性沿用 ``save_upload`` 的做法：同目录临时文件 + ``os.replace``，任何时刻
+    目标路径上要么是旧内容、要么是完整新内容，不会留下写了一半的文件。临时文件
+    的权限位在替换前改成原文件的模式，避免编辑把 0640 的配置改成 0600。
+    """
+    resolved = resolve_path(path)
+    codec = _resolve_edit_encoding(encoding)
+
+    try:
+        info = os.stat(resolved)
+    except FileNotFoundError:
+        raise FileOpError(404, "路径不存在")
+    except PermissionError:
+        raise FileOpError(403, "权限不足，无法访问该路径")
+
+    if stat_module.S_ISDIR(info.st_mode):
+        raise FileOpError(400, "目录不支持编辑")
+    if not stat_module.S_ISREG(info.st_mode):
+        raise FileOpError(400, "仅支持编辑普通文件")
+
+    try:
+        data = content.encode(codec)
+    except UnicodeEncodeError:
+        raise FileOpError(400, f"内容无法按 {codec} 编码保存")
+    if len(data) > MAX_EDIT_BYTES:
+        raise FileOpError(413, "文件超过 512KB 编辑上限")
+
+    # 原文件权限位在替换前取：mkstemp 默认 0600，不显式 chmod 会把文件改权限。
+    mode = _existing_mode(resolved)
+    directory = os.path.dirname(resolved) or "/"
+    try:
+        fd, temp_path = tempfile.mkstemp(dir=directory, prefix=_EDIT_TEMP_PREFIX)
+    except PermissionError:
+        raise FileOpError(403, "权限不足，无法写入该目录")
+    except OSError as exc:
+        raise FileOpError(400, f"无法创建临时文件：{exc.strerror or exc}")
+
+    try:
+        handle = os.fdopen(fd, "wb")
+        try:
+            handle.write(data)
+        finally:
+            handle.close()
+        os.chmod(temp_path, mode)
+        os.replace(temp_path, resolved)
+    except PermissionError:
+        _discard(temp_path)
+        raise FileOpError(403, "权限不足，无法写入该文件")
+    except OSError as exc:
+        _discard(temp_path)
+        raise FileOpError(400, f"写入失败：{exc.strerror or exc}")
+    except BaseException:
+        # 与上传一致：非 OSError 的异常（如线程被取消）同样不能留下残片。
+        _discard(temp_path)
+        raise
+
+    return {"path": resolved, "size": len(data), "encoding": codec}
 
 
 def rename_path(source: str, target: str) -> dict:

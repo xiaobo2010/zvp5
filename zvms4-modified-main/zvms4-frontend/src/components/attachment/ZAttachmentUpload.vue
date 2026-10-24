@@ -10,6 +10,7 @@ import {
   ElButton,
   ElProgress,
   ElIcon,
+  ElImageViewer,
   ElMessage
 } from 'element-plus'
 import {
@@ -18,8 +19,7 @@ import {
   Delete,
   ZoomIn,
   Loading,
-  Plus,
-  Close
+  Plus
 } from '@element-plus/icons-vue'
 import type { AxiosProgressEvent } from 'axios'
 import type {
@@ -527,28 +527,13 @@ function statusText(item: DisplayItem): string {
       @change="onInputChange($event, 'gallery')"
     />
 
-    <Teleport to="body">
-      <div
-        v-if="previewVisible"
-        class="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4"
-        @click="closePreview"
-      >
-        <button
-          type="button"
-          class="absolute top-4 right-4 text-white text-2xl"
-          @click="closePreview"
-        >
-          <ElIcon><Close /></ElIcon>
-        </button>
-        <img
-          v-if="previewUrl"
-          :src="previewUrl"
-          class="max-w-full max-h-full rounded shadow-lg"
-          alt="大图预览"
-          @click.stop
-        />
-      </div>
-    </Teleport>
+    <ElImageViewer
+      v-if="previewVisible && previewUrl"
+      :url-list="[previewUrl]"
+      teleported
+      hide-on-click-modal
+      @close="closePreview"
+    />
   </div>
 </template>
 
