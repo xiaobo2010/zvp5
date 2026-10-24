@@ -1,11 +1,23 @@
 <script setup lang="ts">
 import type { ErrorResponse, User } from '@/../types'
-import { toRefs, ref, watch } from 'vue'
+import type { ActivityMember } from '@/../types/v2'
+import { computed, toRefs, ref, watch } from 'vue'
 import type { Component as VueComponent } from 'vue'
 import { Plus, Refresh, User as UserIcon } from '@element-plus/icons-vue'
 import { ZButtonOrCard, ZUserTimeJudge } from '@/components'
 import api from '@/api'
-import { ElButton, ElDescriptions, ElDescriptionsItem, ElDialog, ElNotification, ElTag } from 'element-plus'
+import {
+  ElButton,
+  ElDescriptions,
+  ElDescriptionsItem,
+  ElDialog,
+  ElMessage,
+  ElNotification,
+  ElPopconfirm,
+  ElPopover,
+  ElSpace,
+  ElTag
+} from 'element-plus'
 import { useI18n } from 'vue-i18n'
 import ZUserGroup from '../tags/ZUserGroup.vue'
 import ZUserPosition from '../tags/ZUserPosition.vue'
@@ -30,6 +42,9 @@ const props = withDefaults(
     mode?: 'card' | 'button'
     icon?: VueComponent
     color?: 'primary' | 'success' | 'danger' | 'warning' | 'info'
+    aid?: string
+    memberSession?: string
+    memberStatus?: ActivityMember['status']
   }>(),
   {
     icon: UserIcon,
@@ -38,6 +53,10 @@ const props = withDefaults(
   }
 )
 const { id, person: personProp, icon, color, mode } = toRefs(props)
+
+const emits = defineEmits<{
+  refresh: []
+}>()
 const personData = ref<PersonLike>()
 const loading = ref(true)
 const loading2 = ref(false)
@@ -139,6 +158,54 @@ watch(height, () => {
   vert.value = width.value < height.value * 1.2
 })
 
+const localStatus = ref<ActivityMember['status'] | undefined>(props.memberStatus)
+watch(
+  () => props.memberStatus,
+  (status) => {
+    localStatus.value = status
+  }
+)
+
+const currentStatus = computed(() => localStatus.value ?? props.memberStatus)
+const canReview = computed(
+  () =>
+    !!props.aid &&
+    !!props.memberSession &&
+    (userStore.position.includes('admin') || userStore.position.includes('department'))
+)
+
+const reviewVisible = ref(false)
+const reviewing = ref<ActivityMember['status'] | null>(null)
+const reviewOptions: ActivityMember['status'][] = ['effective', 'pending', 'refused']
+
+const reviewTagType = {
+  effective: 'success',
+  pending: 'warning',
+  refused: 'danger'
+} as const
+
+const reviewLabel = computed(() => t(`activity.member.review.status.${currentStatus.value}`))
+
+async function modifyMemberStatus(status: ActivityMember['status']) {
+  if (!props.aid || !props.memberSession) return
+  if (status === currentStatus.value) {
+    reviewVisible.value = false
+    return
+  }
+  reviewing.value = status
+  try {
+    await api.activity.member.modifyStatus(props.aid, props.memberSession, status)
+  } catch {
+    return
+  } finally {
+    reviewing.value = null
+  }
+  localStatus.value = status
+  reviewVisible.value = false
+  ElMessage.success(t('activity.member.review.success'))
+  emits('refresh')
+}
+
 async function removeUserPast(tag: string) {
   const index = past.value.indexOf(tag)
   if (index > -1) {
@@ -178,7 +245,7 @@ async function insertUserPast() {
     :icon="icon"
     :title="personData?.name"
     pop-type="dialog"
-    width="50%"
+    :width="vert ? '94%' : 'min(720px, 60vw)'"
     v-bind="$attrs"
   >
     <template #default>
@@ -212,6 +279,53 @@ async function insertUserPast() {
         <ElDescriptionsItem :label="t('home.labels.status')">
           <span v-if="!personData?.banned">{{ t('home.status.normal') }}</span>
           <ElTag v-else type="danger" size="small">{{ t('home.status.banned') }}</ElTag>
+        </ElDescriptionsItem>
+        <ElDescriptionsItem v-if="memberStatus" :label="t('activity.member.review.label')">
+          <ElPopover
+            v-if="canReview"
+            :title="t('activity.member.review.title', { name: personData?.name })"
+            trigger="click"
+            width="384px"
+            v-model:visible="reviewVisible"
+            placement="right"
+          >
+            <template #reference>
+              <ElTag
+                :type="reviewTagType[currentStatus ?? 'pending']"
+                size="small"
+                class="member-review__tag"
+              >
+                {{ reviewLabel }}
+              </ElTag>
+            </template>
+            <div class="flex justify-end py-1">
+              <ElSpace>
+                <ElPopconfirm
+                  v-for="option in reviewOptions"
+                  :key="option"
+                  :title="t('activity.member.review.confirm')"
+                  width="256px"
+                  @confirm="() => modifyMemberStatus(option)"
+                >
+                  <template #reference>
+                    <ElButton
+                      :type="option === 'effective' ? 'primary' : undefined"
+                      text
+                      bg
+                      size="small"
+                      :loading="reviewing === option"
+                      :disabled="option === currentStatus || reviewing !== null"
+                    >
+                      {{ t('activity.member.review.' + option) }}
+                    </ElButton>
+                  </template>
+                </ElPopconfirm>
+              </ElSpace>
+            </div>
+          </ElPopover>
+          <ElTag v-else :type="reviewTagType[currentStatus ?? 'pending']" size="small">
+            {{ reviewLabel }}
+          </ElTag>
         </ElDescriptionsItem>
         <ElDescriptionsItem
           :label="t('home.labels.past')"
@@ -331,3 +445,9 @@ async function insertUserPast() {
     </template>
   </ElDialog>
 </template>
+
+<style scoped>
+.member-review__tag {
+  cursor: pointer;
+}
+</style>

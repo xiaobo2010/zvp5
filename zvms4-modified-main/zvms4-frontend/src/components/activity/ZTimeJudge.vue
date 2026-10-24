@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { ElIcon, ElProgress } from 'element-plus'
-import { toRefs, computed } from 'vue'
-import { ref, watch } from 'vue'
+import { computed, onUnmounted, ref, toRefs, watch } from 'vue'
 import { CaretTop, CaretBottom } from '@element-plus/icons-vue'
 import { useI18n } from 'vue-i18n'
 import type { ActivityMember } from 'types/activity.v2'
@@ -60,6 +59,93 @@ const percentage = computed(() => {
   return Math.min((real.value / standard.value) * 100, 100)
 })
 
+const DEFAULT_DURATION = 450
+
+const shownPercentage = ref(0)
+const shownReal = ref(0)
+
+const realDecimals = computed(() => {
+  const text = String(real.value)
+  const dot = text.indexOf('.')
+  if (dot === -1) return 0
+  return Math.min(text.length - dot - 1, 4)
+})
+
+const shownRealText = computed(() => shownReal.value.toFixed(realDecimals.value))
+
+let frameId = 0
+let startedAt = 0
+let duration = DEFAULT_DURATION
+let fromPercentage = 0
+let toPercentage = 0
+let fromReal = 0
+let toReal = 0
+
+function readPageDuration() {
+  if (typeof window === 'undefined') return DEFAULT_DURATION
+  const raw = getComputedStyle(document.documentElement).getPropertyValue('--yg-dur-page').trim()
+  const matched = /^([\d.]+)(ms|s)$/.exec(raw)
+  if (!matched) return DEFAULT_DURATION
+  const value = Number(matched[1])
+  return matched[2] === 's' ? value * 1000 : value
+}
+
+function prefersReducedMotion() {
+  return (
+    typeof window !== 'undefined' &&
+    typeof window.matchMedia === 'function' &&
+    window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  )
+}
+
+function easeOut(t: number) {
+  return 1 - (1 - t) ** 3
+}
+
+function stopTween() {
+  if (frameId) {
+    cancelAnimationFrame(frameId)
+    frameId = 0
+  }
+}
+
+function settle() {
+  shownPercentage.value = toPercentage
+  shownReal.value = toReal
+}
+
+function step(now: number) {
+  const progress = Math.min((now - startedAt) / duration, 1)
+  const eased = easeOut(progress)
+  shownPercentage.value = fromPercentage + (toPercentage - fromPercentage) * eased
+  shownReal.value = fromReal + (toReal - fromReal) * eased
+  if (progress < 1) {
+    frameId = requestAnimationFrame(step)
+    return
+  }
+  frameId = 0
+  settle()
+}
+
+function sweep() {
+  stopTween()
+  toPercentage = percentage.value
+  toReal = real.value
+  if (prefersReducedMotion()) {
+    settle()
+    return
+  }
+  fromPercentage = shownPercentage.value
+  fromReal = shownReal.value
+  duration = readPageDuration()
+  startedAt = performance.now()
+  frameId = requestAnimationFrame(step)
+}
+
+watch([real, percentage], sweep, { immediate: true })
+
+onUnmounted(stopTween)
+
 function calculateLoss() {
   const loss = standard.value - real.value
   if (loss > 0) {
@@ -82,8 +168,8 @@ function calculateLoss() {
 
 <template>
   <div class="time-gauge">
-    <ElProgress type="dashboard" :percentage="percentage" :color="colors" :width="128">
-      <p class="gauge-time">{{ real }}h</p>
+    <ElProgress type="dashboard" :percentage="shownPercentage" :color="colors" :width="128">
+      <p class="gauge-time yg-text-num">{{ shownRealText }}h</p>
       <p class="gauge-label">{{ t(`activity.mode.${type}.name`) }}</p>
     </ElProgress>
     <div class="footer-item">
@@ -112,6 +198,7 @@ function calculateLoss() {
 .gauge-time {
   font-size: 20px;
   font-weight: bold;
+  font-variant-numeric: tabular-nums;
 }
 
 .gauge-label {

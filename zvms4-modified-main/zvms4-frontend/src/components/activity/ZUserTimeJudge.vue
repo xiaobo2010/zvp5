@@ -167,35 +167,46 @@ const reportPage = ref(false)
       </ElRow>
       <ElResult v-if="error && !loading" icon="error" :title="error" />
       <ElRow v-else-if="!loading" class="fill py-2 statistic">
-        <ElCol v-if="width > height" :span="2" />
-        <ElCol :span="width < height ? 10 : 4">
+        <template v-if="width >= height">
+          <ElCol :span="2" />
+          <ElCol :span="4">
+            <ZActivityMemberTimeJudge type="on-campus" :realTime="on" />
+          </ElCol>
+          <ElCol :span="2">
+            <ElDivider direction="vertical" class="height-full" />
+          </ElCol>
+          <ElCol :span="4">
+            <ZActivityMemberTimeJudge type="off-campus" :realTime="off" />
+          </ElCol>
+          <ElCol :span="1">
+            <ElDivider direction="vertical" class="height-full" />
+          </ElCol>
+          <ElCol :span="4">
+            <ZActivityMemberTimeJudge type="social-practice" :realTime="base.socialPractice" />
+          </ElCol>
+          <ElCol :span="2">
+            <ElDivider direction="vertical" class="height-full" />
+          </ElCol>
+          <ElCol :span="4">
+            <ElSpace direction="vertical">
+              <span>{{ t('home.panels.time.discount') }}</span>
+              <ElSwitch v-model="exceed" aria-label="校内校外时长互补" />
+            </ElSpace>
+          </ElCol>
+          <ElCol :span="1" />
+        </template>
+        <ElCol v-else :span="24" class="statistic__stack">
           <ZActivityMemberTimeJudge type="on-campus" :realTime="on" />
-          <ElDivider v-if="width < height" />
-        </ElCol>
-        <ElCol :span="2">
-          <ElDivider direction="vertical" class="height-full" />
-        </ElCol>
-        <ElCol :span="width < height ? 10 : 4">
+          <ElDivider class="statistic__divider" />
           <ZActivityMemberTimeJudge type="off-campus" :realTime="off" />
-          <ElDivider v-if="width < height" />
-        </ElCol>
-        <ElCol v-if="width > height" :span="1">
-          <ElDivider direction="vertical" class="height-full" />
-        </ElCol>
-        <ElCol :span="width < height ? 10 : 4">
+          <ElDivider class="statistic__divider" />
           <ZActivityMemberTimeJudge type="social-practice" :realTime="base.socialPractice" />
-        </ElCol>
-        <ElCol :span="2">
-          <ElDivider direction="vertical" class="height-full" />
-        </ElCol>
-        <ElCol v-if="width < height" :span="1" />
-        <ElCol :span="width < height ? 8 : 4">
-          <ElSpace direction="vertical">
+          <ElDivider class="statistic__divider" />
+          <div class="statistic__discount">
             <span>{{ t('home.panels.time.discount') }}</span>
             <ElSwitch v-model="exceed" aria-label="校内校外时长互补" />
-          </ElSpace>
+          </div>
         </ElCol>
-        <ElCol v-if="width > height" :span="1" />
       </ElRow>
       <ElSkeleton v-else :throttle="200" :rows="4" animated class="py-2" />
     </ElCard>
@@ -209,5 +220,27 @@ const reportPage = ref(false)
 
 .height-full {
   height: 100%;
+}
+
+.statistic__stack {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.statistic__divider {
+  width: 100%;
+  margin: var(--yg-space-2) 0;
+}
+
+.statistic__divider.el-divider--horizontal {
+  border-top-color: var(--yg-border-subtle);
+}
+
+.statistic__discount {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--yg-space-2);
 }
 </style>

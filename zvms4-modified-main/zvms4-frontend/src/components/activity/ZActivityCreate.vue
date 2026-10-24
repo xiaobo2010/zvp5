@@ -320,6 +320,7 @@ function checkReviewAllowed() {
             >
               <div class="w-full" style="flex-grow: 1">
                 <ZActivityMemberList mode="card" :activity="activity as unknown as Activity" />
+                <p class="yg-activity-create__hint">{{ t('nav.registerHint') }}</p>
               </div>
             </ElFormItem>
             <ElFormItem
@@ -429,5 +430,12 @@ function checkReviewAllowed() {
 
 .yg-activity-create__body :deep(.el-form-item:last-child) {
   margin-bottom: 0;
+}
+
+.yg-activity-create__hint {
+  margin-top: var(--yg-space-2);
+  color: var(--yg-text-tertiary);
+  font-size: var(--yg-font-size-xs);
+  line-height: var(--yg-line-height-normal);
 }
 </style>

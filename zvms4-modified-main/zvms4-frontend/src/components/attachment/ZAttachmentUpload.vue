@@ -79,13 +79,16 @@ const props = withDefaults(
     entityType?: string
     // 上传时绑定到的实体 oid；两者需同时提供才会随上传提交
     entityOid?: string
+    // 上传成功后自动入队 OCR（由调用方显式开启，默认关闭，避免偷偷消耗额度）
+    autoOcr?: boolean
   }>(),
   {
     modelValue: () => [],
     purpose: 'volunteer_order',
     max: 5,
     disabled: false,
-    readonly: false
+    readonly: false,
+    autoOcr: false
   }
 )
 
@@ -119,7 +122,8 @@ const canAdd = computed(
 
 const ocrResultVisible = ref(false)
 const ocrResultItem = ref<DisplayItem | null>(null)
-const ocrBusy = ref('')
+// 正在提交入队的附件 oid：同一附件防重复点击，不同附件允许并发入队
+const ocrBusy = ref(new Set<string>())
 
 const polling = useAiOcrPolling({
   onUpdate: (oid, result) => {
@@ -187,11 +191,11 @@ function onOcrClick(item: DisplayItem) {
   void startOcr(item)
 }
 
-async function startOcr(item: DisplayItem) {
-  if (!item.oid || ocrBusy.value) {
+async function startOcr(item: DisplayItem, silentError = false) {
+  if (!item.oid || ocrBusy.value.has(item.oid)) {
     return
   }
-  ocrBusy.value = item.oid
+  ocrBusy.value.add(item.oid)
   try {
     const result = await enqueueOcr(item.oid)
     item.ocr = {
@@ -201,16 +205,31 @@ async function startOcr(item: DisplayItem) {
     polling.start(item.oid)
   } catch (error) {
     const copy = aiErrorCopy(aiErrorCodeOf(error), t)
+    // 自动识别失败只落在该条目的状态上，不弹全局错误打扰批量上传
     item.ocr = { status: 'failed', error: `${copy.title}：${copy.hint}` }
-    ElMessage({
-      message: `${copy.title}：${copy.hint}`,
-      type: 'error',
-      plain: true,
-      grouping: true
-    })
+    if (!silentError) {
+      ElMessage({
+        message: `${copy.title}：${copy.hint}`,
+        type: 'error',
+        plain: true,
+        grouping: true
+      })
+    }
   } finally {
-    ocrBusy.value = ''
+    ocrBusy.value.delete(item.oid)
   }
+}
+
+// 上传成功后按调用方的显式开关决定是否立即识别：
+// 复用 startOcr 的入队 + 轮询状态机，不另起一套。
+async function autoOcrIfEnabled(item: DisplayItem) {
+  if (!props.autoOcr || !supportsOcr(item)) {
+    return
+  }
+  if (ocrRunning(item) || itemOcrStatus(item) === 'done') {
+    return
+  }
+  await startOcr(item, true)
 }
 
 function openOcrResult(item: DisplayItem) {
@@ -421,12 +440,14 @@ async function uploadSingle(file: File, replaceIndex?: number) {
     if (!result) {
       throw new Error('服务端未返回上传结果')
     }
-    items.value[index].oid = result._id
-    items.value[index].meta = result
-    items.value[index].isLocal = false
-    items.value[index].status = 'done'
+    const uploaded = items.value[index]
+    uploaded.oid = result._id
+    uploaded.meta = result
+    uploaded.isLocal = false
+    uploaded.status = 'done'
     syncModel()
     emit('uploaded', [result])
+    await autoOcrIfEnabled(uploaded)
   } catch (err) {
     items.value[index].status = 'error'
     items.value[index].progress = 0

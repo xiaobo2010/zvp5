@@ -294,7 +294,9 @@ export const zhCN = {
     retry: '重试',
     emptyText: '没有识别到文字',
     noPermission: '当前角色没有识别权限',
-    dialogTitle: '识别结果'
+    dialogTitle: '识别结果',
+    autoLabel: '上传后自动识别（OCR）',
+    autoHint: '每张图片上传成功后自动提交识别，会消耗本月 OCR 额度。'
   },
   errors: {
     AI_FORBIDDEN: {

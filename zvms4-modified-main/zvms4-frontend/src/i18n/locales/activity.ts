@@ -208,6 +208,20 @@ export const zhCN = {
       title: '成员列表',
       count: '共 {count} 人',
       empty: '暂无成员'
+    },
+    review: {
+      label: '义工状态',
+      title: '修改 {name} 的义工状态',
+      effective: '通过',
+      pending: '待审核',
+      refused: '驳回',
+      confirm: '请确认对该成员义工状态的修改',
+      success: '义工状态已更新',
+      status: {
+        effective: '已通过',
+        pending: '待审核',
+        refused: '已驳回'
+      }
     }
   },
   view: {
