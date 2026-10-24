@@ -3,15 +3,16 @@
  * ZPagination —— 统一翻页组件（自绘，不依赖 ElPagination）
  *
  * 交互设计：
- * - 页码轨道可直接左右拖动，按位移比例快速滑页（scrub），松手吸附到整数页；
- * - 拖动中实时更新「第 x / y 页」提示，页码窗口跟随当前页滚动；
- * - 选中页有一颗弹性滑块，切换页面时以弹簧曲线滑过去（回弹不僵硬）；
- * - 上一页 / 下一页、页码均为按压回弹；`prefers-reduced-motion` 时关闭弹性。
+ * - 页码轨道可左右拖动：滑块 1:1 跟随手指（不做整数吸附），拖得越快横向拉伸越明显；
+ * - 松手时滑块以强回弹弹簧滑到整数页，同时做一次缩放脉冲；
+ * - 点击页码 / 上一页 / 下一页 / 跳页，每次都会重新播放弹簧动画与脉冲，
+ *   动画由 WAAPI 驱动，不依赖 CSS 过渡状态，所以不会被上一次性状吞掉；
+ * - `prefers-reduced-motion` 时关闭全部弹性。
  *
  * 兼容：对外仍暴露 total / currentPage / pageSize / pageSizes / hideOnSinglePage
  * 与 `update:currentPage` / `update:pageSize` / `change`，既有调用点无需改动。
  */
-import { computed, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useWindowSize } from '@vueuse/core'
 
 const props = withDefaults(
@@ -45,32 +46,51 @@ const isMobile = computed(() => width.value < 768)
 /** 轨道同时可见的页码个数（奇数，保证当前页居中） */
 const visibleCount = computed(() => (isMobile.value ? 5 : 7))
 
+/** 每个页码格子的宽度：轨道宽度完全由它决定，滑块与格子因此严格对齐 */
+const slotPx = computed(() => (isMobile.value ? 36 : 42))
+
+/** 轨道内边距，滑块起点与之对齐 */
+const TRACK_PAD = 3
+
+const SPRING = 'cubic-bezier(0.16, 1.72, 0.3, 1)'
+
 const pageCount = computed(() => Math.max(1, Math.ceil(props.total / Math.max(1, props.pageSize))))
 
 function clamp(page: number) {
   return Math.min(pageCount.value, Math.max(1, Math.round(page)))
 }
 
+function reduceMotion() {
+  return window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
+}
+
 /** 本地页：拖动过程中先行更新，避免等父组件异步刷新造成卡顿 */
 const localPage = ref(clamp(props.currentPage))
+
+/** 拖动期间冻结页码窗口，避免数字在手指下跳动 */
+const windowAnchor = ref<number | null>(null)
+
+const dragging = ref(false)
 
 watch(
   () => props.currentPage,
   (page) => {
     if (!dragging.value) {
       localPage.value = clamp(page)
+      placeThumb(true)
     }
   }
 )
 
 watch(pageCount, () => {
   localPage.value = clamp(localPage.value)
+  windowAnchor.value = null
 })
 
 /** 以当前页为中心的页码窗口，边界处对齐，不留空位 */
 const visiblePages = computed(() => {
   const count = Math.min(visibleCount.value, pageCount.value)
-  const current = clamp(localPage.value)
+  const current = clamp(windowAnchor.value ?? localPage.value)
   const half = Math.floor(count / 2)
   let start = Math.max(1, current - half)
   if (start + count - 1 > pageCount.value) {
@@ -79,42 +99,76 @@ const visiblePages = computed(() => {
   return Array.from({ length: count }, (_, i) => start + i)
 })
 
-/** 选中滑块在轨道中的位置（按百分比，天然响应式） */
-const thumbStyle = computed(() => {
-  const count = visiblePages.value.length
-  const index = visiblePages.value.indexOf(clamp(localPage.value))
-  const safeIndex = index < 0 ? 0 : index
-  return {
-    left: `${(safeIndex / count) * 100}%`,
-    width: `${100 / count}%`
-  }
-})
+/* ---------- 滑块：位置全部由 JS 驱动，动画走 WAAPI ---------- */
+const trackRef = ref<HTMLElement>()
+const thumbRef = ref<HTMLElement>()
 
-function commit(page: number) {
-  const target = clamp(page)
-  if (target === props.currentPage) {
+/** 最近一次写入的滑块位移，作为下一次弹簧动画的起点 */
+let lastX = TRACK_PAD
+
+function slotX(index: number): number {
+  return TRACK_PAD + index * slotPx.value
+}
+
+function pageIndexOf(page: number): number {
+  const index = visiblePages.value.indexOf(clamp(page))
+  return index < 0 ? 0 : index
+}
+
+function paintThumb(indexFloat: number) {
+  const el = thumbRef.value
+  if (!el) {
     return
   }
-  localPage.value = target
-  emit('update:currentPage', target)
-  emit('change', target, props.pageSize)
+  const x = slotX(indexFloat)
+  lastX = x
+  el.style.transform = `translate3d(${x}px, 0, 0)`
+}
+
+/**
+ * 把滑块放到当前页的位置。
+ * animate 时从 lastX 弹到目标位置（WAAPI 每次都是新的动画实例，
+ * 所以同一页连点、或目标与上次相同时也能重新弹一次）。
+ */
+function placeThumb(animate: boolean) {
+  const el = thumbRef.value
+  if (!el || dragging.value) {
+    return
+  }
+  const x = slotX(pageIndexOf(localPage.value))
+  const from = lastX
+  paintThumb(pageIndexOf(localPage.value))
+  if (!animate || reduceMotion() || Math.abs(from - x) < 0.5) {
+    return
+  }
+  el.animate(
+    [
+      { transform: `translate3d(${from}px, 0, 0)` },
+      { transform: `translate3d(${x}px, 0, 0)` }
+    ],
+    { duration: 470, easing: SPRING }
+  )
+}
+
+/** 缩放脉冲：让每一次翻页都有可见的弹性反馈 */
+function pulse() {
+  const el = thumbRef.value
+  if (!el || reduceMotion()) {
+    return
+  }
+  el.animate([{ scale: '1' }, { scale: '1.12' }, { scale: '1' }], {
+    duration: 430,
+    easing: 'cubic-bezier(0.22, 1.6, 0.36, 1)'
+  })
 }
 
 /* ---------- 拖动滑页 ---------- */
-const trackRef = ref<HTMLElement>()
-const dragging = ref(false)
 const moved = ref(false)
 let startX = 0
-let startPage = 1
+let startIndex = 0
+let dragIndex = 0
 let pointerId = -1
-
-function stepWidth(): number {
-  const el = trackRef.value
-  if (!el) {
-    return 44
-  }
-  return el.clientWidth / Math.max(1, visiblePages.value.length)
-}
+let lastMoveX = 0
 
 function onPointerDown(event: PointerEvent) {
   if (pageCount.value <= 1) {
@@ -124,12 +178,22 @@ function onPointerDown(event: PointerEvent) {
   if (event.pointerType === 'mouse' && event.button !== 0) {
     return
   }
+  const el = thumbRef.value
+  // 手指按下立刻接管滑块，取消还没播完的弹簧，避免和手动定位打架
+  el?.getAnimations().forEach((animation) => animation.cancel())
+  if (el) {
+    el.style.scale = '1'
+  }
+
   dragging.value = true
   moved.value = false
   startX = event.clientX
-  startPage = clamp(localPage.value)
+  lastMoveX = event.clientX
+  startIndex = pageIndexOf(localPage.value)
+  dragIndex = startIndex
+  windowAnchor.value = clamp(localPage.value)
   pointerId = event.pointerId
-  // 监听 window：即使指针滑出轨道或 capture 不可用，也能持续收到移动
+  // 监听 window：即使指针滑出轨道，也能持续收到移动
   window.addEventListener('pointermove', onPointerMove, { passive: false })
   window.addEventListener('pointerup', onPointerUp)
   window.addEventListener('pointercancel', onPointerUp)
@@ -147,15 +211,32 @@ function onPointerMove(event: PointerEvent) {
     return
   }
   const dx = event.clientX - startX
-  if (!moved.value && Math.abs(dx) > 6) {
+  if (!moved.value && Math.abs(dx) > 5) {
     moved.value = true
   }
   if (!moved.value) {
     return
   }
-  // 向左拖 → 下一页；每滑过一个页码宽度约等于 1 页，1.15 倍灵敏度让长列表也能快速跨越
-  const steps = Math.round((-dx / stepWidth()) * 1.15)
-  localPage.value = clamp(startPage + steps)
+
+  const count = Math.max(1, visiblePages.value.length)
+  // 1:1 跟手：手指移动一个格子宽度就换一页，不做整数吸附
+  const raw = startIndex - dx / Math.max(1, slotPx.value)
+  dragIndex = Math.min(count - 1, Math.max(0, raw))
+  paintThumb(dragIndex)
+
+  // 拖动速度决定横向拉伸幅度，松手后回弹到原形
+  const speed = Math.abs(event.clientX - lastMoveX)
+  lastMoveX = event.clientX
+  const el = thumbRef.value
+  if (el) {
+    const stretch = Math.min(0.16, speed / 260)
+    el.style.scale = `${(1 + stretch).toFixed(3)} ${(1 - stretch * 0.45).toFixed(3)}`
+  }
+
+  const page = visiblePages.value[Math.round(dragIndex)]
+  if (page !== undefined && page !== localPage.value) {
+    localPage.value = page
+  }
   event.preventDefault()
 }
 
@@ -163,15 +244,31 @@ function onPointerUp(event: PointerEvent) {
   if (!dragging.value || event.pointerId !== pointerId) {
     return
   }
-  dragging.value = false
   stopListening()
   pointerId = -1
+
+  const el = thumbRef.value
+  if (el) {
+    el.style.scale = '1'
+  }
+
+  const count = Math.max(1, visiblePages.value.length)
+  const index = Math.min(count - 1, Math.max(0, Math.round(dragIndex)))
+  const page = visiblePages.value[index] ?? localPage.value
+
+  // 先解除冻结、再落页，让「重排窗口 + 弹簧回位」合并成一次动画
+  dragging.value = false
+  windowAnchor.value = null
+
   if (moved.value) {
-    commit(localPage.value)
+    localPage.value = page
+    commit(page)
     // 等 click 派发完再复位，否则拖动结束会被当作点击页码
     setTimeout(() => {
       moved.value = false
     }, 0)
+  } else {
+    placeThumb(true)
   }
 }
 
@@ -183,9 +280,33 @@ function onClickCapture(event: MouseEvent) {
   }
 }
 
-function selectPage(page: number) {
+/* ---------- 翻页 ---------- */
+function commit(page: number) {
+  const target = clamp(page)
+  localPage.value = target
+  placeThumb(true)
+  pulse()
+  if (target !== props.currentPage) {
+    emit('update:currentPage', target)
+    emit('change', target, props.pageSize)
+  }
+}
+
+function selectPage(page: number, event: MouseEvent) {
   if (moved.value) {
     return
+  }
+  // 每点一次都给被点的数字一次完整的弹簧挤压，不受上一次动画状态影响
+  const target = event.currentTarget as HTMLElement | null
+  if (target && !reduceMotion()) {
+    target.animate(
+      [
+        { transform: 'scale(0.86)' },
+        { transform: 'scale(1.18)' },
+        { transform: 'scale(1)' }
+      ],
+      { duration: 420, easing: 'cubic-bezier(0.22, 1.55, 0.36, 1)' }
+    )
   }
   commit(page)
 }
@@ -202,6 +323,7 @@ const sizeModel = computed({
     emit('update:currentPage', 1)
     emit('change', 1, size)
     localPage.value = 1
+    placeThumb(true)
   }
 })
 
@@ -226,10 +348,33 @@ function applyJump() {
 }
 
 const hidden = computed(() => props.hideOnSinglePage && pageCount.value <= 1)
+
+onMounted(() => {
+  nextTick(() => {
+    placeThumb(false)
+    // 首帧后再同步一次，保证父级卡片布局稳定后位置依然准确
+    requestAnimationFrame(() => placeThumb(false))
+  })
+})
+
+onBeforeUnmount(() => {
+  stopListening()
+})
+
+watch([visiblePages, slotPx], () => {
+  if (!dragging.value) {
+    placeThumb(true)
+  }
+})
 </script>
 
 <template>
-  <div v-if="!hidden" class="yg-pg" :class="{ 'is-mobile': isMobile }">
+  <div
+    v-if="!hidden"
+    class="yg-pg"
+    :class="{ 'is-mobile': isMobile }"
+    :style="{ '--yg-pg-slot': `${slotPx}px` }"
+  >
     <span v-if="!isMobile" class="yg-pg__total">共 {{ total }} 条</span>
 
     <label v-if="!isMobile" class="yg-pg__size">
@@ -267,7 +412,7 @@ const hidden = computed(() => props.hideOnSinglePage && pageCount.value <= 1)
         @pointerdown="onPointerDown"
         @click.capture="onClickCapture"
       >
-        <span class="yg-pg__thumb" :style="thumbStyle" aria-hidden="true" />
+        <span ref="thumbRef" class="yg-pg__thumb" aria-hidden="true" />
         <button
           v-for="page in visiblePages"
           :key="page"
@@ -276,7 +421,7 @@ const hidden = computed(() => props.hideOnSinglePage && pageCount.value <= 1)
           :class="{ 'is-active': page === localPage }"
           :aria-current="page === localPage ? 'page' : undefined"
           :aria-label="`第 ${page} 页`"
-          @click="selectPage(page)"
+          @click="selectPage(page, $event)"
         >
           {{ page }}
         </button>
@@ -399,7 +544,7 @@ const hidden = computed(() => props.hideOnSinglePage && pageCount.value <= 1)
   color: var(--yg-text-primary);
   cursor: pointer;
   transition:
-    transform 380ms cubic-bezier(0.34, 1.56, 0.64, 1),
+    transform 460ms cubic-bezier(0.34, 1.9, 0.42, 1),
     background-color 160ms ease,
     border-color 160ms ease,
     opacity 160ms ease;
@@ -411,8 +556,8 @@ const hidden = computed(() => props.hideOnSinglePage && pageCount.value <= 1)
 }
 
 .yg-pg__btn:active:not(:disabled) {
-  transform: scale(0.86);
-  transition-duration: 90ms;
+  transform: scale(0.84);
+  transition-duration: 70ms;
 }
 
 .yg-pg__btn:disabled {
@@ -425,12 +570,11 @@ const hidden = computed(() => props.hideOnSinglePage && pageCount.value <= 1)
   box-shadow: var(--yg-focus-ring);
 }
 
-/* 页码轨道：可拖拽 */
+/* 页码轨道：可拖拽，宽度完全由 --yg-pg-slot 决定，滑块与格子严格对齐 */
 .yg-pg__track {
   position: relative;
   display: inline-flex;
   align-items: stretch;
-  min-width: 0;
   padding: 3px;
   border: 1px solid var(--yg-border-default);
   border-radius: 999px;
@@ -438,35 +582,34 @@ const hidden = computed(() => props.hideOnSinglePage && pageCount.value <= 1)
   cursor: grab;
   user-select: none;
   touch-action: none;
+  overflow: hidden;
 }
 
 .yg-pg__track.is-dragging {
   cursor: grabbing;
 }
 
-/* 选中滑块：弹性位移，拖动时跟手（无过渡） */
+/* 选中滑块：位置与弹簧动画全部由 JS/WAAPI 驱动，CSS 不参与过渡 */
 .yg-pg__thumb {
   position: absolute;
   top: 3px;
   bottom: 3px;
+  left: 0;
+  width: var(--yg-pg-slot, 42px);
   border-radius: 999px;
   background: var(--yg-color-primary);
-  box-shadow: 0 2px 8px rgba(14, 165, 233, 0.35);
-  transition: left 420ms cubic-bezier(0.34, 1.56, 0.64, 1), width 240ms ease;
-  will-change: left;
+  box-shadow: 0 2px 10px rgba(14, 165, 233, 0.4);
+  transform: translate3d(3px, 0, 0);
+  will-change: transform, scale;
   pointer-events: none;
-}
-
-.yg-pg__track.is-dragging .yg-pg__thumb {
-  transition: none;
 }
 
 .yg-pg__num {
   position: relative;
   z-index: 1;
-  min-width: 38px;
+  width: var(--yg-pg-slot, 42px);
   height: 32px;
-  padding: 0 6px;
+  padding: 0;
   border: 0;
   border-radius: 999px;
   background: transparent;
@@ -474,9 +617,7 @@ const hidden = computed(() => props.hideOnSinglePage && pageCount.value <= 1)
   font-size: 13px;
   font-variant-numeric: tabular-nums;
   cursor: pointer;
-  transition:
-    color 200ms ease,
-    transform 380ms cubic-bezier(0.34, 1.56, 0.64, 1);
+  transition: color 200ms ease;
 }
 
 .yg-pg__num:hover {
@@ -484,8 +625,8 @@ const hidden = computed(() => props.hideOnSinglePage && pageCount.value <= 1)
 }
 
 .yg-pg__num:active {
-  transform: scale(0.9);
-  transition-duration: 90ms;
+  color: var(--yg-text-primary);
+  opacity: 0.72;
 }
 
 .yg-pg__num.is-active {
@@ -535,15 +676,14 @@ const hidden = computed(() => props.hideOnSinglePage && pageCount.value <= 1)
   padding: 8px 0;
 }
 
-.is-mobile .yg-pg__num {
-  min-width: 34px;
-}
-
 @media (prefers-reduced-motion: reduce) {
-  .yg-pg__thumb,
   .yg-pg__btn,
   .yg-pg__num {
     transition: none;
+  }
+
+  .yg-pg__btn:active:not(:disabled) {
+    transform: none;
   }
 }
 </style>
