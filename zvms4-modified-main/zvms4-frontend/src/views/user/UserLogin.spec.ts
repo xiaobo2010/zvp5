@@ -97,7 +97,7 @@ vi.mock('@/api/system/maintenance.ts', () => ({
   getMaintenanceStatus: getMaintenanceStatusMock
 }))
 vi.mock('@/router/maintenanceGuard', () => ({ resetMaintenanceGuardCache: vi.fn() }))
-vi.mock('@/views', () => ({ modifyPasswordDialogs: vi.fn() }))
+vi.mock('@/views/user/modifyPasswordDialogs', () => ({ modifyPasswordDialogs: vi.fn() }))
 vi.mock('@element-plus/icons-vue', () => ({ ArrowRight: { name: 'ArrowRight' } }))
 
 beforeEach(() => {

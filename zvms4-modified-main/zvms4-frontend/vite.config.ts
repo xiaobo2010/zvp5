@@ -65,6 +65,10 @@ export default defineConfig({
         clientsClaim: true,
         cleanupOutdatedCaches: true,
         sourcemap: true,
+        // legacy 产物仅供老浏览器降级使用，不必进 precache：
+        // SW 首装可少拉 ~2.8MB，modern 浏览器按需回退即可。
+        // 注意 workbox GenerateSW 没有 exclude 选项，等价物是 globIgnores。
+        globIgnores: ['**/node_modules/**/*', '**/*-legacy-*.js'],
         maximumFileSizeToCacheInBytes: 5 * 1024 * 1024
       },
       onRegisteredSW(swUrl, r) {
@@ -122,6 +126,24 @@ export default defineConfig({
       '@/../types': fileURLToPath(new URL('./types', import.meta.url)),
       '@': fileURLToPath(new URL('./src', import.meta.url)),
       '@zvms/zvms4-types': fileURLToPath(new URL('./types', import.meta.url))
+    }
+  },
+  build: {
+    rollupOptions: {
+      output: {
+        // 只做粗粒度拆分：element-plus 与 vue 全家各自成 chunk，
+        // 其余交给 rollup 默认的按入口/动态导入切分，避免过度碎片化。
+        manualChunks(id) {
+          if (!id.includes('node_modules')) return
+          if (id.includes('element-plus') || id.includes('@element-plus')) return 'element-plus'
+          if (
+            /node_modules\/(vue|vue-router|pinia|vue-i18n|@vue\/[^/]+|@vueuse\/[^/]+)\//.test(id)
+          ) {
+            return 'vue-vendor'
+          }
+          return
+        }
+      }
     }
   },
   // 本地后端联调：开发服务器把 /api 代理到本机 uvicorn（默认 baseURL 为 /api）

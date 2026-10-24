@@ -23,7 +23,8 @@ import { zhCn } from 'element-plus/es/locale/index.mjs'
 import ZNotificationReminder from '@/components/notification/ZNotificationReminder.vue'
 import { useRegisterSW } from 'virtual:pwa-register/vue'
 import { CarbonCloudOffline } from '@/icons'
-import { modifyPasswordDialogs } from '@/views'
+// 直接从定义模块引入：绕过 @/views barrel，避免主 chunk 打包全部路由视图
+import { modifyPasswordDialogs } from '@/views/user/modifyPasswordDialogs'
 import {
   startPlatformGuard,
   stopPlatformGuard,

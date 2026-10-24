@@ -23,4 +23,5 @@ body {
 @font-face {
   font-family: 'Ubuntu';
   src: url('./Ubuntu-R.ttf');
+  font-display: swap;
 }
