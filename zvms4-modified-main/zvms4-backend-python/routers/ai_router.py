@@ -51,8 +51,8 @@ PERSONAL_SCOPE = credentials.SCOPE_PERSONAL
 
 class OcrRequest(BaseModel):
     attachment_oid: str
-    # 预留给以后按请求指定引擎；实际引擎由 ai_ocr_engines 注册表按 priority 选，
-    # 字段收下但不影响路由（也不允许绕过站点额度）。
+    # 引擎 kind（``tencent`` / ``baidu`` / ...，**不是**模型名）：仅 admin 可用，
+    # 有值时只在该 kind 的引擎里选，站点额度照扣（见 ``services.ai.ocr.enqueue``）。
     provider: str | None = None
 
 
@@ -308,14 +308,17 @@ async def request_ocr(
     _require_ai_access(user)
     oid = validate_object_id(payload.attachment_oid)
     try:
-        data = await ai_ocr.enqueue(user, oid)
+        data = await ai_ocr.enqueue(user, oid, provider=payload.provider)
     except RouteError as exc:
         # 仓库约定：``/api/ai/*`` 的普通端点用 ``detail`` + 状态码。
         raise HTTPException(status_code=exc.status_code, detail=exc.code) from None
     # ``engine_kind`` 只服务于后台任务（入队与处理必须是同一个引擎），不对外暴露。
     engine_kind = data.pop("engine_kind", None)
     if data.get("status") == "pending":
-        background_tasks.add_task(process_ocr, oid, engine_kind, data.get("engine"))
+        # 第 4 个参数只用于逐次尝试的审计归属（谁触发的这次识别）。
+        background_tasks.add_task(
+            process_ocr, oid, engine_kind, data.get("engine"), user["id"]
+        )
 
     log.with_text(
         f"AI OCR 入队 {oid}（引擎 {data.get('engine') or '-'}，"
@@ -731,7 +734,6 @@ async def ai_health(
             "local_engine_ready": bool(_local_engine_ready),
             "max_concurrency": ai_config.max_concurrency(),
             "providers": ai_config.public_provider_view(),
-            "routes": ai_config.routes(),
             "cooldown_seconds": routing.cooldown_state(),
             "models": sorted(models),
             "quota_defaults": dict(ai_config.DEFAULT_QUOTA),

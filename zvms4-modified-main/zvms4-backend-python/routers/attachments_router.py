@@ -537,8 +537,9 @@ async def request_attachment_ocr(
     额度也不扣站点额度，等于给附件 API 留了个免费 OCR 后门。现在两条入口同样计价：
     频控 → 用户额度 peek/consume → 按 priority 选「站点额度还够」的引擎 → 入队。
 
-    引擎在入队时就定下来，后台任务必须复用同一个（``engine_kind``），否则识别会
-    花掉 A 引擎的站点额度却打到 B 引擎上。
+    引擎在入队时就定下来，后台任务第一次尝试必须复用同一个（``engine_kind``），
+    否则识别会花掉 A 引擎的站点额度却打到 B 引擎上；A 失败之后才按同一套
+    ``priority`` 顺序回退，回退的每一次尝试另扣一份对应的站点额度。
     """
     _require_manager(user)
     oid = validate_object_id(oid)
@@ -552,7 +553,10 @@ async def request_attachment_ocr(
     # ``engine_kind`` 只服务于后台任务，不对外暴露。
     engine_kind = data.pop("engine_kind", None)
     if data.get("status") == "pending":
-        background_tasks.add_task(process_ocr, oid, engine_kind, data.get("engine"))
+        # 第 4 个参数只用于逐次尝试的审计归属（谁触发的这次识别）。
+        background_tasks.add_task(
+            process_ocr, oid, engine_kind, data.get("engine"), user["id"]
+        )
 
     log.with_text(
         f"用户 {user['id']} 触发附件 OCR {oid}"

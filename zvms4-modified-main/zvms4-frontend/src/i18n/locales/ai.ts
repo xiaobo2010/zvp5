@@ -357,6 +357,10 @@ export const zhCN = {
       title: '不支持的文件类型',
       hint: '仅支持 jpeg、png 与 webp 图片。'
     },
+    AI_OCR_IMAGE_TOO_LARGE: {
+      title: '图片体积过大',
+      hint: '请压缩或裁剪到 20MB 以内后重新上传。'
+    },
     AI_OCR_NO_ENGINE: {
       title: '没有可用识别引擎',
       hint: '站点尚未配置 OCR 引擎，请联系管理员。'

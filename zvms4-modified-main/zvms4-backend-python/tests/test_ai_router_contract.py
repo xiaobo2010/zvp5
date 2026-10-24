@@ -225,6 +225,7 @@ def ocr_deps(monkeypatch, files_repo):
     consume = Recorder()
     peek = Recorder()
     site = Recorder()
+    refund = Recorder()
 
     async def _can_read(user, row, class_id):
         return state["readable"]
@@ -241,11 +242,15 @@ def ocr_deps(monkeypatch, files_repo):
         site.calls.append((engine_kind, amount))
         return state["site_results"].pop(0) if state["site_results"] else (True, 1, 100)
 
+    async def _site_refund(engine_kind, units=1):
+        refund.calls.append((engine_kind, units))
+        return 1
+
     class _EngineRepo:
         async def list_all(self, *, enabled_only: bool = False) -> list[dict]:
             return [dict(row) for row in state["engines"]]
 
-    def _process(oid, engine_kind=None, engine_name=None):
+    def _process(oid, engine_kind=None, engine_name=None, user_oid=None):
         state["background"].append(oid)
         state["selected"].append((engine_kind, engine_name))
 
@@ -253,6 +258,7 @@ def ocr_deps(monkeypatch, files_repo):
     monkeypatch.setattr(quota, "peek", _peek)
     monkeypatch.setattr(quota, "consume", _consume)
     monkeypatch.setattr(quota, "site_consume", _site_consume)
+    monkeypatch.setattr(quota, "site_refund", _site_refund)
     monkeypatch.setattr(
         backends, "get_ai_ocr_engines_repo", lambda session=None: _EngineRepo()
     )
@@ -260,6 +266,7 @@ def ocr_deps(monkeypatch, files_repo):
     state["consume"] = consume
     state["peek"] = peek
     state["site"] = site
+    state["refund"] = refund
     return state
 
 
@@ -302,6 +309,8 @@ def test_ocr_exhausted_quota_is_429_with_headers(files_repo, ocr_deps, audit_rep
     assert response.json()["detail"] == "AI_QUOTA_EXCEEDED"
     assert response.headers["X-AI-Quota-Used"] == "7"
     assert response.headers["X-AI-Quota-Limit"] == "7"
+    # 用户额度竞态失败时把已占的站点额度退回去。
+    assert ocr_deps["refund"].calls == [("tencent", 1)]
     # 配额被拒就不能把附件挂进队列（否则前端看到 pending 却永远等不到结果）。
     assert files_repo.statuses == []
     assert ocr_deps["background"] == []
@@ -368,6 +377,26 @@ def test_health_never_echoes_keys(catalog):
     assert SECRET not in response.text
     assert "cipher-" not in response.text
     assert "api_key" not in response.text
+
+
+def test_health_does_not_echo_the_dead_routes_config(catalog):
+    """``settings.AI_ROUTES`` 配了不生效：既不能当生效项回显，就该从响应里消失。"""
+    catalog([])
+
+    body = _client().get("/api/ai/health").json()["data"]
+
+    assert "routes" not in body
+    # 其余运维字段还在（删的是死配置，不是整个视图）。
+    assert set(body) >= {
+        "enabled",
+        "local_engine_ready",
+        "max_concurrency",
+        "providers",
+        "cooldown_seconds",
+        "models",
+        "quota_defaults",
+        "credentials",
+    }
 
 
 # ---------------------------------------------------------------------------

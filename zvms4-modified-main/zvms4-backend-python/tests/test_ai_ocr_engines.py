@@ -617,10 +617,15 @@ def test_registry_kinds_match_the_model_check_constraint() -> None:
 class _FakeQuotaRepo:
     def __init__(self) -> None:
         self.calls: list[tuple] = []
+        self.refunds: list[tuple] = []
 
     async def consume(self, user_oid, period, kind, amount, default_limit):
         self.calls.append((user_oid, period, kind, amount, default_limit))
         return True, 7, 100
+
+    async def refund(self, user_oid, period, kind, amount):
+        self.refunds.append((user_oid, period, kind, amount))
+        return 1
 
 
 def test_site_kinds_are_the_engine_whitelist() -> None:
@@ -678,6 +683,48 @@ def test_site_consume_rejects_unknown_engine_before_touching_the_repo(monkeypatc
         _run(quota.site_consume("tencent_typo"))
 
     assert repo.calls == []
+
+
+def test_site_refund_books_against_the_shared_owner(monkeypatch) -> None:
+    """补偿走同一条站点行：用户额度竞态失败时把刚占的那一份退回去。"""
+    repo = _FakeQuotaRepo()
+    monkeypatch.setattr(backends, "get_ai_quota_repo", lambda session=None: repo)
+
+    assert _run(quota.site_refund("tencent")) == 1
+
+    user_oid, period, kind, amount = repo.refunds[0]
+    assert user_oid == SHARED_OWNER_OID
+    assert period == quota.period_now()
+    assert kind == "ocr_tencent"
+    assert amount == 1
+
+
+def test_site_refund_can_be_skipped(monkeypatch) -> None:
+    """``units <= 0`` = 没东西可退：不写库，也不报错。"""
+    repo = _FakeQuotaRepo()
+    monkeypatch.setattr(backends, "get_ai_quota_repo", lambda session=None: repo)
+
+    assert _run(quota.site_refund("tencent", 0)) == 0
+
+    assert repo.refunds == []
+
+
+def test_refund_statement_clamps_used_at_zero() -> None:
+    """单条 UPDATE 里 ``used - n`` 不足时归零：表上有 ``used >= 0`` 的 CHECK。"""
+    from db.repos.oracle import ai_quota as quota_repo
+
+    sql = _sql(
+        quota_repo._refund_stmt(
+            SHARED_OWNER_OID, "202610", "ocr_tencent", 1, TS
+        )
+    )
+
+    assert "UPDATE ai_quota SET used=CASE WHEN" in sql
+    assert "ai_quota.used - 1" in sql
+    assert "ELSE 0 END" in sql
+    # 归属与 kind 都在 WHERE 里：退款只可能落到那一行。
+    assert f"ai_quota.user_oid = '{SHARED_OWNER_OID}'" in sql
+    assert "ai_quota.kind = 'ocr_tencent'" in sql
 
 
 def test_default_limit_uses_site_quota_for_site_kinds() -> None:

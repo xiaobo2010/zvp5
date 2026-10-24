@@ -34,7 +34,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Any, AsyncIterator
 
-from sqlalchemy import insert, select, update
+from sqlalchemy import case, insert, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -153,6 +153,32 @@ def _reset_stmt(user_oid: str, period: str, kind: str, updated_at: datetime):
             ai_quota_tbl.c.kind == kind,
         )
         .values(used=0, updated_at=updated_at)
+    )
+
+
+def _refund_stmt(
+    user_oid: str, period: str, kind: str, amount: int, updated_at: datetime
+):
+    """退还额度：一条 UPDATE 完成「扣到零为止」。
+
+    ``CASE`` 而不是「先 SELECT 再写差值」：后者把读-改-写窗口留给并发请求，
+    两个补偿同时算同一个旧值就会把别的调用的用量抹掉。``used < amount`` 时
+    归零——表上有 ``used >= 0`` 的 CHECK，补偿不能自己制造一次失败。
+    """
+    return (
+        update(ai_quota_tbl)
+        .where(
+            ai_quota_tbl.c.user_oid == user_oid,
+            ai_quota_tbl.c.period == period,
+            ai_quota_tbl.c.kind == kind,
+        )
+        .values(
+            used=case(
+                (ai_quota_tbl.c.used >= amount, ai_quota_tbl.c.used - amount),
+                else_=0,
+            ),
+            updated_at=updated_at,
+        )
     )
 
 
@@ -309,6 +335,25 @@ class OracleAIQuotaRepo:
         target = normalize_oid(user_oid)
         async with _session_for(self._session) as (session, owns):
             result = await session.execute(_reset_stmt(target, period, kind, _now()))
+            if owns:
+                await session.commit()
+        return int(result.rowcount or 0)
+
+    async def refund(
+        self, user_oid: str, period: str, kind: str, amount: int
+    ) -> int:
+        """退还额度（``used`` 不足时归零），返回受影响行数。
+
+        没有「建行」分支：能退的前提是先扣过，扣过就必然有行。``amount <= 0``
+        直接返回 0——不写库也不报错，调用方传 0 只是「没东西可退」。
+        """
+        if int(amount) <= 0:
+            return 0
+        target = normalize_oid(user_oid)
+        async with _session_for(self._session) as (session, owns):
+            result = await session.execute(
+                _refund_stmt(target, period, kind, int(amount), _now())
+            )
             if owns:
                 await session.commit()
         return int(result.rowcount or 0)
