@@ -45,6 +45,8 @@ _REQUIRED_SECRET_FIELDS: dict[str, tuple[str, ...]] = {
     ocr_engines.KIND_BAIDU: ("api_key", "secret_key"),
     # Groq：OpenAI 兼容，单 api_key 就够。
     ocr_engines.KIND_GROQ: ("api_key",),
+    # 智谱：同样是 OpenAI 兼容的单 key。
+    ocr_engines.KIND_ZHIPU: ("api_key",),
 }
 
 # key_hint 取「账号标识」而不是密钥本身：给管理界面认「这是哪把 key」，
@@ -56,6 +58,7 @@ _HINT_FIELD: dict[str, str] = {
     # api_key 是「应用级」标识，更适合做 hint）。
     ocr_engines.KIND_BAIDU: "api_key",
     ocr_engines.KIND_GROQ: "api_key",
+    ocr_engines.KIND_ZHIPU: "api_key",
 }
 
 

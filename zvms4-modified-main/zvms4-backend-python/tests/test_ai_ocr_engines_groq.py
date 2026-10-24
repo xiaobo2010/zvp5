@@ -54,22 +54,33 @@ def _completion(lines=None, *, model=MODEL) -> dict:
     }
 
 
-def _install(monkeypatch, *, response=None, status=200, content=None):
+def _install(
+    monkeypatch,
+    *,
+    response=None,
+    status=200,
+    content=None,
+    finish_reason="stop",
+    headers=None,
+):
     """装上 MockTransport，返回按发生顺序记录的 ``httpx.Request`` 列表。
 
     ``content`` 覆盖模型输出的正文（用于非法 JSON 用例）；``response`` 覆盖整个
-    响应体（用于空 choices 等结构错误）。
+    响应体（用于空 choices / 429 错误体）；``finish_reason`` 覆盖停止原因（用于
+    截断用例）；``headers`` 用于 ``retry-after`` 这类响应头分支。
     """
     calls: list[httpx.Request] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
         calls.append(request)
         if response is not None:
-            return httpx.Response(status, json=response)
+            return httpx.Response(status, json=response, headers=headers)
         body = _completion()
         if content is not None:
             body["choices"][0]["message"]["content"] = content
-        return httpx.Response(status, json=body)
+        if finish_reason != "stop":
+            body["choices"][0]["finish_reason"] = finish_reason
+        return httpx.Response(status, json=body, headers=headers)
 
     def factory(timeout: float) -> httpx.AsyncClient:
         return httpx.AsyncClient(
@@ -269,3 +280,108 @@ def test_reasoning_effort_can_be_overridden_and_empty_omits_it(monkeypatch) -> N
     assert _body(calls[1])["reasoning_effort"] == "high"
     # 空串 = 整个字段省略：非推理模型收到未知字段会 400。
     assert "reasoning_effort" not in _body(calls[2])
+
+
+# ---------------------------------------------------------------------------
+# 真实额度约束：max_tokens / 截断 / 限流
+#
+# 以下三条全部来自 2026-10-24 的真机实测（免费层 on_demand，模型
+# qwen/qwen3.8-27b），单测里复现不了，只能把结论钉在契约上：
+#   1. 不传 max_tokens → 上游按 1164 估，超 OTPM 1000 直接 429
+#   2. 密集页 max_tokens=1000 → 38 行只回 25 行，finish_reason=length，HTTP 200
+#   3. 连发两次 → 第二次 429 "Used 990, Requested 1000, try again in 59.4s"
+# ---------------------------------------------------------------------------
+
+
+def test_max_tokens_defaults_to_the_free_tier_output_cap(monkeypatch) -> None:
+    calls = _install(monkeypatch)
+    _recognize()
+
+    assert ocr_engines.GROQ_DEFAULT_MAX_TOKENS == 1000
+    assert _body(calls[0])["max_tokens"] == ocr_engines.GROQ_DEFAULT_MAX_TOKENS
+
+
+def test_max_tokens_can_be_overridden_from_config(monkeypatch) -> None:
+    calls = _install(monkeypatch)
+    _recognize(config={"max_tokens": 512})
+
+    assert _body(calls[0])["max_tokens"] == 512
+
+
+@pytest.mark.parametrize("bad", [0, -1, "abc"])
+def test_invalid_max_tokens_is_rejected_before_any_request(monkeypatch, bad) -> None:
+    calls = _install(monkeypatch)
+
+    with pytest.raises(ocr_engines.OcrEngineError):
+        _recognize(config={"max_tokens": bad})
+
+    # 非法配置不该先发一次注定 429/400 的请求再报错。
+    assert calls == []
+
+
+def test_finish_reason_length_is_an_engine_error(monkeypatch) -> None:
+    """截断页是 HTTP 200 + 残缺内容，必须硬失败而不是交出半页。"""
+    _install(monkeypatch, finish_reason="length")
+
+    with pytest.raises(ocr_engines.OcrEngineError) as excinfo:
+        _recognize()
+
+    message = str(excinfo.value)
+    assert "truncated" in message
+    assert "finish_reason=length" in message
+    assert API_KEY not in message
+
+
+def test_429_is_a_retryable_error_with_the_upstream_wait(monkeypatch) -> None:
+    _install(
+        monkeypatch,
+        status=429,
+        response={
+            "error": {
+                "message": (
+                    "Rate limit reached ... on output tokens per minute (OTPM): "
+                    "Limit 1000, Used 990, Requested 1000. "
+                    "Please try again in 59.4s."
+                ),
+                "type": "tokens",
+                "code": "rate_limit_exceeded",
+            }
+        },
+    )
+
+    with pytest.raises(ocr_engines.OcrEngineRateLimited) as excinfo:
+        _recognize()
+
+    assert excinfo.value.retry_after == pytest.approx(59.4)
+    assert "retry_after=59.4s" in str(excinfo.value)
+    assert API_KEY not in str(excinfo.value)
+
+
+def test_429_prefers_the_retry_after_header(monkeypatch) -> None:
+    _install(
+        monkeypatch,
+        status=429,
+        response={"error": {"message": "slow down"}},
+        headers={"retry-after": "12"},
+    )
+
+    with pytest.raises(ocr_engines.OcrEngineRateLimited) as excinfo:
+        _recognize()
+
+    assert excinfo.value.retry_after == pytest.approx(12.0)
+
+
+def test_429_without_a_hint_has_no_retry_after(monkeypatch) -> None:
+    _install(monkeypatch, status=429, response={"error": {"message": "slow down"}})
+
+    with pytest.raises(ocr_engines.OcrEngineRateLimited) as excinfo:
+        _recognize()
+
+    # 上游没给等待时间就老实承认没有，不编一个数字。
+    assert excinfo.value.retry_after is None
+    assert "retry_after=unknown" in str(excinfo.value)
+
+
+def test_rate_limited_is_a_subclass_of_engine_error(monkeypatch) -> None:
+    """既有调用方只 catch OcrEngineError，新增子类不能把它们打断。"""
+    assert issubclass(ocr_engines.OcrEngineRateLimited, ocr_engines.OcrEngineError)

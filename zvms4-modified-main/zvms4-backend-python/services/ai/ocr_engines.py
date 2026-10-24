@@ -43,6 +43,7 @@ import inspect
 import json
 import logging
 import os
+import re
 import threading
 import time
 from types import SimpleNamespace
@@ -61,6 +62,7 @@ KIND_ALIYUN = "aliyun"
 KIND_BAIDU = "baidu"
 KIND_RAPIDOCR = "rapidocr"
 KIND_GROQ = "groq"
+KIND_ZHIPU = "zhipu"
 
 ENGINE_KINDS: tuple[str, ...] = (
     KIND_TENCENT,
@@ -68,6 +70,7 @@ ENGINE_KINDS: tuple[str, ...] = (
     KIND_BAIDU,
     KIND_RAPIDOCR,
     KIND_GROQ,
+    KIND_ZHIPU,
 )
 
 # 各引擎的上游超时（秒）。写入 ``ClientProfile.reqTimeout`` /
@@ -96,6 +99,24 @@ BAIDU_TOKEN_REFRESH_MARGIN = 300.0
 GROQ_DEFAULT_BASE_URL = "https://api.groq.com/openai/v1"
 GROQ_DEFAULT_MODEL = "qwen/qwen3.8-27b"
 GROQ_DEFAULT_REASONING_EFFORT = "none"
+# ``max_tokens`` **必须显式传**：不传时 Groq 按一个远高于实际需要的「预期输出」
+# 计费（实测 1164），而免费/on_demand 档的 OTPM 上限就是 1000 → 每一页都 429。
+# 1000 是免费层的硬上限；Dev Tier 可用 ``config["max_tokens"]`` 调大。
+GROQ_DEFAULT_MAX_TOKENS = 1000
+
+# 智谱 BigModel（OpenAI 兼容 v4）。定位是**境内免费兜底**：免费视觉模型没有公开
+# 的日/月 token 上限，只按「并发数」限流（具体值在控制台），比腾讯/百度的
+# 1000 次/月宽松得多。
+#
+# model 必须选**视觉**款：``glm-4.7-flash`` 确实存在，但官方模型页标注它的输入
+# 模态是「文本」——传图片进去不会被识别，只会得到一段凭空编的文字。
+ZHIPU_DEFAULT_BASE_URL = "https://open.bigmodel.cn/api/paas/v4"
+ZHIPU_DEFAULT_MODEL = "glm-4.6v-flash"
+# 免费视觉模型最大输出 32K / 默认 16K；一页 38 行约 1.2K token，4096 够用，
+# 而且能把「截断」更早暴露出来（配合 finish_reason 检查）。
+ZHIPU_DEFAULT_MAX_TOKENS = 4096
+# 官方 temperature 区间是 (0, 1)，传 0 不合法；默认 0.6 对 OCR 偏发散。
+ZHIPU_DEFAULT_TEMPERATURE = 0.1
 
 
 class OcrEngineError(RuntimeError):
@@ -104,6 +125,19 @@ class OcrEngineError(RuntimeError):
     消息里**只有引擎名与缺失的字段名**：这个字符串会进审计与日志，任何情况下
     都不能拼进 secret 的值（TENCENT 的 key 一进日志就等于泄露）。
     """
+
+
+class OcrEngineRateLimited(OcrEngineError):
+    """上游限流，属于**可重试**失败（与「这页读不出来」区分开）。
+
+    ``retry_after`` 是上游建议的等待秒数；上游没给提示时为 ``None``。归成一类
+    独立异常而不是靠消息文本判断：调用方将来要做退避重试时，需要能按类型分支，
+    字符串匹配在错误体换文案的那天就会静默失效。
+    """
+
+    def __init__(self, message: str, retry_after: float | None = None) -> None:
+        super().__init__(message)
+        self.retry_after = retry_after
 
 
 # ---------------------------------------------------------------------------
@@ -893,6 +927,20 @@ GROQ_PROMPT = (
     "4. 只输出 JSON，不要解释。图中没有文字时返回 {\"lines\": []}。"
 )
 
+# 智谱的提示词与 Groq 有一处刻意的不同：**不要坐标**。
+# 智谱官方文档里没有 grounding / 行级 bbox 契约（全文检索零命中），向模型要坐标
+# 只会得到一组看起来合理、实际对不上的数字，前端按它画高亮会画到错位置。
+# 所以这里只要 text，box 一律 None —— 「没有」比「猜的」诚实。
+ZHIPU_PROMPT = (
+    "你是 OCR 引擎，请把图片里的文字逐行提取出来。要求：\n"
+    "1. 只输出一个 JSON 对象，形如 {\"lines\":[{\"text\":\"第一行\"}]}，"
+    "不要 Markdown 代码块，不要任何解释。\n"
+    "2. 每行一个对象，text 是该行的文字，原样保留，不要翻译、改写、合并或补全。\n"
+    "3. 保持阅读顺序：从上到下，同一行从左到右。\n"
+    "4. 图中没有文字时输出 {\"lines\":[]}。\n"
+    "5. 不要输出任何坐标字段。"
+)
+
 # ``strict: true`` 要求所有字段都进 ``required`` 且 ``additionalProperties: false``，
 # 否则 Groq 会直接 400。box 用 items:number + minItems/maxItems 而不是 prefixItems：
 # 兼容性最好，长度约束一样硬。
@@ -942,6 +990,122 @@ def _json_object_from_text(text: str) -> dict | None:
     return parsed if isinstance(parsed, dict) else None
 
 
+def _retry_after_hint(response: Any) -> float | None:
+    """从 429 响应里取「建议等多久」：优先 ``retry-after`` 头，其次错误体文案。
+
+    Groq 的错误体形如 ``... Please try again in 59.4s.``；智谱的错误体只有中文
+    message 且官方未文档化 ``Retry-After``，所以多数情况返回 ``None``——调用方
+    按固定退避处理，不自己编一个数。
+    """
+    headers = getattr(response, "headers", None) or {}
+    try:
+        raw_header = headers.get("retry-after")
+    except Exception:  # noqa: BLE001 - 测试里的假响应未必是 mapping
+        raw_header = None
+    if raw_header not in (None, ""):
+        try:
+            return float(str(raw_header).strip())
+        except (TypeError, ValueError):
+            pass
+    text = getattr(response, "text", "") or ""
+    match = re.search(r"try again in\s*([0-9.]+)\s*s", text)
+    if not match:
+        return None
+    try:
+        return float(match.group(1))
+    except ValueError:
+        return None
+
+
+def _error_code(response: Any) -> str | None:
+    """取上游错误体里的业务码（智谱 ``{"error":{"code":"1302"}}``）。
+
+    只用于把「账户并发超限(1302)」和「平台过载(1305)」区分到日志里——处置动作
+    不同，混成一条 message 之后运维只能靠猜。
+    """
+    try:
+        payload = response.json()
+    except Exception:  # noqa: BLE001 - 非 JSON 错误体（网关 HTML 之类）
+        return None
+    if not isinstance(payload, dict):
+        return None
+    error = payload.get("error")
+    if not isinstance(error, Mapping):
+        return None
+    code = error.get("code")
+    return None if code is None else str(code)
+
+
+def _openai_vision_user_content(
+    prompt: str, mime_type: str, payload: str
+) -> list[dict]:
+    """OpenAI 兼容视觉消息体：一段文本 + 一张 base64 data URL 图。"""
+    return [
+        {"type": "text", "text": prompt},
+        {
+            "type": "image_url",
+            "image_url": {"url": f"data:{mime_type};base64,{payload}"},
+        },
+    ]
+
+
+def _openai_vision_choice(data: dict, kind: str, max_tokens: int) -> tuple[Any, Any]:
+    """取 ``choices[0]``，并把「输出触顶」变成硬失败。
+
+    OpenAI 兼容系（Groq / 智谱）在输出触顶时都返回 **HTTP 200 +**
+    ``finish_reason="length"``：内容被砍掉一截，调用方却看不出任何错误。实测
+    一张 38 行的正文页在 Groq 上只回 25 行且伴随改写——这种「成功但残缺」必须
+    在归一化之前拦住，绝不放行到上层。
+    """
+    choices = data.get("choices")
+    if not isinstance(choices, list) or not choices:
+        raise OcrEngineError(f"{kind} engine returned no choices")
+    first = choices[0]
+    finish_reason = first.get("finish_reason") if isinstance(first, Mapping) else None
+    if str(finish_reason or "").strip() == "length":
+        raise OcrEngineError(
+            f"{kind} engine output was truncated at max_tokens={max_tokens} "
+            "(finish_reason=length); the page is too dense for one request, "
+            "split the image or use another engine instead of trusting partial lines"
+        )
+    return first, finish_reason
+
+
+def _openai_vision_lines(
+    content: str, kind: str, *, allow_box: bool = True
+) -> list[dict]:
+    """把模型输出的 JSON 正文归一化成行列表。
+
+    ``allow_box=False`` 用于**没有坐标契约**的上游（智谱）：即使模型自己塞了一组
+    box，也一律丢弃。编出来的坐标比没有坐标更危险——前端会按它画高亮，画到错的
+    位置比不画更误导。
+    """
+    parsed = _json_object_from_text(content)
+    if parsed is None:
+        raise OcrEngineError(
+            f"{kind} engine returned unparsable content: {_truncate(content)}"
+        )
+    items = parsed.get("lines")
+    if not isinstance(items, list):
+        raise OcrEngineError(f"{kind} engine response is missing the 'lines' array")
+
+    lines: list[dict] = []
+    for item in items:
+        if not isinstance(item, Mapping):
+            continue
+        text = item.get("text")
+        box = item.get("box")
+        keep_box = allow_box and isinstance(box, (list, tuple))
+        lines.append(
+            _line(
+                "" if text is None else text,
+                None,
+                _plain(box) if keep_box else None,
+            )
+        )
+    return lines
+
+
 class GroqOcrEngine:
     """Groq Chat Completions + 视觉模型，定位是**人工效果对照档**，非主力链路。
 
@@ -972,6 +1136,19 @@ class GroqOcrEngine:
         timeout = float(config.get("timeout") or DEFAULT_TIMEOUT)
         reasoning_effort = config.get("reasoning_effort", GROQ_DEFAULT_REASONING_EFFORT)
         reasoning_effort = "" if reasoning_effort is None else str(reasoning_effort).strip()
+        # 免费层 OTPM=1000 按「预期输出」计费：不传 max_tokens 时上游按 1164 估，
+        # 直接 429。必须显式传，且默认值就取 1000（免费层硬上限）。
+        # 用 ``is None`` 而不是 ``or``：``max_tokens=0`` 是非法值，不该被当成
+        # 「没配」静默回落到默认值——那会让人以为配了个很小的上限，实际按 1000 跑。
+        raw_max_tokens = config.get("max_tokens")
+        try:
+            max_tokens = int(
+                GROQ_DEFAULT_MAX_TOKENS if raw_max_tokens is None else raw_max_tokens
+            )
+        except (TypeError, ValueError):
+            raise OcrEngineError("groq engine max_tokens must be an integer") from None
+        if max_tokens <= 0:
+            raise OcrEngineError("groq engine max_tokens must be positive")
 
         payload = _base64_payload(image)
         if not payload:
@@ -983,18 +1160,13 @@ class GroqOcrEngine:
 
         body: dict[str, Any] = {
             "model": model,
+            "max_tokens": max_tokens,
             "messages": [
                 {
                     "role": "user",
-                    "content": [
-                        {"type": "text", "text": GROQ_PROMPT},
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:{mime_type};base64,{payload}"
-                            },
-                        },
-                    ],
+                    "content": _openai_vision_user_content(
+                        GROQ_PROMPT, mime_type, payload
+                    ),
                 }
             ],
             "response_format": {
@@ -1018,47 +1190,161 @@ class GroqOcrEngine:
                 f"{base_url}/chat/completions", json=body, headers=headers
             )
 
+        # 429 单独成一类：限流不是「这页读不出来」，退避重试就能过。免费层
+        # OTPM=1000 意味着密集页一分钟只能发一次，这个分支在生产里会常态触发。
+        if getattr(response, "status_code", 0) == 429:
+            retry_after = _retry_after_hint(response)
+            wait = f"{retry_after:g}s" if retry_after is not None else "unknown"
+            raise OcrEngineRateLimited(
+                "groq engine rate limited (retry_after="
+                f"{wait}): {_truncate(getattr(response, 'text', ''))}",
+                retry_after=retry_after,
+            )
+
         data = _ok_json(response, self.kind)
-        choices = data.get("choices")
-        if not isinstance(choices, list) or not choices:
-            raise OcrEngineError("groq engine returned no choices")
-        message = choices[0].get("message") if isinstance(choices[0], Mapping) else None
+        first, finish_reason = _openai_vision_choice(data, self.kind, max_tokens)
+        message = first.get("message") if isinstance(first, Mapping) else None
         content = message.get("content") if isinstance(message, Mapping) else None
         if not isinstance(content, str) or not content.strip():
             raise OcrEngineError("groq engine returned empty message content")
-        parsed = _json_object_from_text(content)
-        if parsed is None:
-            raise OcrEngineError(
-                f"groq engine returned unparsable content: {_truncate(content)}"
-            )
-        items = parsed.get("lines")
-        if not isinstance(items, list):
-            raise OcrEngineError("groq engine response is missing the 'lines' array")
-
-        lines: list[dict] = []
-        for item in items:
-            if not isinstance(item, Mapping):
-                continue
-            text = item.get("text")
-            box = item.get("box")
-            lines.append(
-                _line(
-                    "" if text is None else text,
-                    None,
-                    _plain(box) if isinstance(box, (list, tuple)) else None,
-                )
-            )
+        lines = _openai_vision_lines(content, self.kind)
 
         raw = {
             "model": data.get("model") or model,
-            "finish_reason": (
-                choices[0].get("finish_reason")
-                if isinstance(choices[0], Mapping)
-                else None
-            ),
+            "finish_reason": finish_reason,
+            "max_tokens": max_tokens,
             "usage": _plain(data.get("usage")),
         }
         return _result(lines=lines, engine=KIND_GROQ, raw=raw)
+
+
+class ZhipuOcrEngine:
+    """智谱 BigModel（OpenAI 兼容 v4）视觉模型，定位**境内免费兜底**。
+
+    选它的理由是额度形态：免费视觉模型没有公开的日/月 token 上限，只按「并发数」
+    限流（具体值在控制台），比腾讯/百度的 1000 次/月宽松得多。代价是下面四条，
+    每条都写在这里，免得以后有人照着 Groq 的写法「对齐」掉：
+
+    * **没有 json_schema/strict**：官方只支持 ``response_format={"type":
+      "json_object"}``，且明说「不能保证返回数据始终合法」。所以 schema 写进
+      prompt，解析后再校验 ``lines`` 形状，不合格直接失败——不猜、不补。
+    * **没有 bbox 契约**：``box`` 恒 ``None``（见 ``ZHIPU_PROMPT`` 的注释）。
+    * **限流按并发**：429 的业务码 1302（账户并发超限）/ 1305（平台过载），官方
+      错误体没有 ``Retry-After``。
+    * **temperature 不能为 0**：官方区间是 (0, 1)，传 0 不合法；默认 0.6 对 OCR
+      偏发散，这里默认 0.1。
+    """
+
+    kind = KIND_ZHIPU
+    VERSION = "zhipu-openai-compatible"
+
+    async def recognize(
+        self,
+        image: bytes,
+        mime: str,
+        secret: Mapping[str, Any],
+        config: Mapping[str, Any],
+    ) -> dict:
+        api_key = _require(secret, "api_key", self.kind)
+        base_url = str(
+            secret.get("base_url") or config.get("base_url") or ZHIPU_DEFAULT_BASE_URL
+        ).strip().rstrip("/")
+        # model 必须来自 config：智谱的免费型号换得比文档更新快（4V → 4.1V → 4.6V）。
+        model = str(config.get("model") or ZHIPU_DEFAULT_MODEL).strip()
+        timeout = float(config.get("timeout") or DEFAULT_TIMEOUT)
+
+        raw_max_tokens = config.get("max_tokens")
+        try:
+            max_tokens = int(
+                ZHIPU_DEFAULT_MAX_TOKENS
+                if raw_max_tokens is None
+                else raw_max_tokens
+            )
+        except (TypeError, ValueError):
+            raise OcrEngineError("zhipu engine max_tokens must be an integer") from None
+        if max_tokens <= 0:
+            raise OcrEngineError("zhipu engine max_tokens must be positive")
+
+        raw_temperature = config.get("temperature")
+        try:
+            temperature = float(
+                ZHIPU_DEFAULT_TEMPERATURE
+                if raw_temperature is None
+                else raw_temperature
+            )
+        except (TypeError, ValueError):
+            raise OcrEngineError("zhipu engine temperature must be a number") from None
+        if not 0 < temperature < 1:
+            # 官方区间 (0,1)：0 和 1 都不合法。本地先拦，别让上游用 400 告诉我们。
+            raise OcrEngineError(
+                "zhipu engine temperature must be between 0 and 1 (exclusive)"
+            )
+
+        payload = _base64_payload(image)
+        if not payload:
+            raise OcrEngineError("zhipu engine requires non-empty image bytes")
+        mime_type = str(mime or "").strip()
+        if not mime_type and isinstance(image, str) and image.strip().startswith("data:"):
+            mime_type = image.split(";", 1)[0][5:]
+        mime_type = mime_type or "image/png"
+
+        body: dict[str, Any] = {
+            "model": model,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": _openai_vision_user_content(
+                        ZHIPU_PROMPT, mime_type, payload
+                    ),
+                }
+            ],
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+            "stream": False,
+        }
+        # json_object 是软约束；万一某个型号不收这个字段，把 config["json_mode"]
+        # 设成 false 就退回纯 prompt 约束，而不是让整条链路吃 400。
+        if config.get("json_mode", True):
+            body["response_format"] = {"type": "json_object"}
+        thinking = config.get("thinking", "disabled")
+        thinking = "" if thinking is None else str(thinking).strip()
+        if thinking:
+            # 4.6V 可开关；换到强制思考的型号时把 config 里设成 "" 来省略该字段。
+            body["thinking"] = {"type": thinking}
+
+        headers = {"Authorization": f"Bearer {api_key}"}
+        async with _async_http_client(timeout) as client:
+            response = await client.post(
+                f"{base_url}/chat/completions", json=body, headers=headers
+            )
+
+        if getattr(response, "status_code", 0) == 429:
+            retry_after = _retry_after_hint(response)
+            code = _error_code(response) or "unknown"
+            wait = f"{retry_after:g}s" if retry_after is not None else "unknown"
+            raise OcrEngineRateLimited(
+                f"zhipu engine rate limited (code={code}, retry_after={wait}): "
+                f"{_truncate(getattr(response, 'text', ''))}",
+                retry_after=retry_after,
+            )
+
+        data = _ok_json(response, self.kind)
+        first, finish_reason = _openai_vision_choice(data, self.kind, max_tokens)
+        message = first.get("message") if isinstance(first, Mapping) else None
+        content = message.get("content") if isinstance(message, Mapping) else None
+        if not isinstance(content, str) or not content.strip():
+            raise OcrEngineError("zhipu engine returned empty message content")
+        # allow_box=False：智谱没有坐标契约，模型自报的 box 一律丢弃。
+        lines = _openai_vision_lines(content, self.kind, allow_box=False)
+
+        raw = {
+            "model": data.get("model") or model,
+            "finish_reason": finish_reason,
+            "max_tokens": max_tokens,
+            "request_id": data.get("request_id"),
+            "usage": _plain(data.get("usage")),
+        }
+        return _result(lines=lines, engine=KIND_ZHIPU, raw=raw)
 
 
 # ---------------------------------------------------------------------------
@@ -1071,6 +1357,7 @@ ENGINES: dict[str, type] = {
     KIND_BAIDU: BaiduOcrEngine,
     KIND_RAPIDOCR: RapidOcrEngine,
     KIND_GROQ: GroqOcrEngine,
+    KIND_ZHIPU: ZhipuOcrEngine,
 }
 
 
@@ -1082,6 +1369,7 @@ __all__ = [
     "KIND_BAIDU",
     "KIND_RAPIDOCR",
     "KIND_GROQ",
+    "KIND_ZHIPU",
     "TENCENT_DEFAULT_LANGUAGE",
     "ALIYUN_DEFAULT_ENDPOINT",
     "BAIDU_DEFAULT_ENDPOINT",
@@ -1090,13 +1378,20 @@ __all__ = [
     "GROQ_DEFAULT_BASE_URL",
     "GROQ_DEFAULT_MODEL",
     "GROQ_DEFAULT_REASONING_EFFORT",
+    "GROQ_DEFAULT_MAX_TOKENS",
+    "ZHIPU_DEFAULT_BASE_URL",
+    "ZHIPU_DEFAULT_MODEL",
+    "ZHIPU_DEFAULT_MAX_TOKENS",
+    "ZHIPU_DEFAULT_TEMPERATURE",
     "ORT_THREADS_ENV",
     "DEFAULT_TIMEOUT",
     "OcrEngineError",
+    "OcrEngineRateLimited",
     "TencentOcrEngine",
     "AliyunOcrEngine",
     "BaiduOcrEngine",
     "RapidOcrEngine",
     "GroqOcrEngine",
+    "ZhipuOcrEngine",
     "warmup_local_engines",
 ]

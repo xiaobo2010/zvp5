@@ -30,6 +30,7 @@ GATEWAY_FILE = "V024__add_ai_gateway.sql"
 CREDENTIALS_FILE = "V025__add_ai_credentials.sql"
 OCR_FILE = "V026__add_ai_ocr_engines_and_key_headers.sql"
 OCR_KIND_FILE = "V027__extend_ai_ocr_engines_kind.sql"
+ZHIPU_KIND_FILE = "V029__add_zhipu_ocr_engine_kind.sql"
 
 # ``ai_call_logs.key_scope`` 的 CHECK 规范化后的形态（ddl_check 会把大小写与空白
 # 折叠掉）。V024 建表时还没有这一列，它由 V025 的幂等 ALTER 补上——所以下面既断言
@@ -58,9 +59,11 @@ QUOTA_KIND_CK = "kind in ('ocr','chat') or kind like 'ocr\\_%' escape '\\'"
 HEADER_COLUMNS = ("headers_json", "api_path")
 HEADERS_JSON_CK = "headers_json is json"
 
-# ai_ocr_engines.kind 的两代集合：V026 建表时是三值，V027 才扩到五值。
+# ai_ocr_engines.kind 的三代集合：V026 建表时三值，V027 扩到五值（+baidu/groq），
+# V029 再扩到六值（+zhipu）。三代都写死：迁移是历史事实，不能让旧迁移去追新态。
 LEGACY_OCR_KIND_CK = "kind in ('tencent','aliyun','rapidocr')"
-OCR_KIND_CK = "kind in ('tencent','aliyun','rapidocr','baidu','groq')"
+V027_OCR_KIND_CK = "kind in ('tencent','aliyun','rapidocr','baidu','groq')"
+OCR_KIND_CK = "kind in ('tencent','aliyun','rapidocr','baidu','groq','zhipu')"
 OCR_KIND_CONSTRAINT = "ck_ai_ocr_engines_kind"
 
 
@@ -102,6 +105,10 @@ def _ocr_text() -> str:
 
 def _ocr_kind_text() -> str:
     return _migration(OCR_KIND_FILE).read_text(encoding="utf-8")
+
+
+def _zhipu_kind_text() -> str:
+    return _migration(ZHIPU_KIND_FILE).read_text(encoding="utf-8")
 
 
 def test_ai_quota_migration_matches_models_and_v001() -> None:
@@ -275,12 +282,17 @@ def test_v027_extends_kind_to_the_modeled_set() -> None:
     parsed = ddl_check._parse_constraint(
         f"constraint {added.group(1)} check ({added.group(2)})"
     )
-    assert parsed == ("ck", OCR_KIND_CK)
+    assert parsed == ("ck", V027_OCR_KIND_CK)
 
+    # V027 是**历史态**：models/V001 现在已是六值（V029 加了 zhipu），所以这里不
+    # 要求与当前集合逐字相等，而是钉住「五值该有的都有、六值里的 zhipu 还没有」。
+    for literal in ("'tencent'", "'aliyun'", "'rapidocr'", "'baidu'", "'groq'"):
+        assert literal in parsed[1]
+    assert "'zhipu'" not in parsed[1]
     modeled_ck = ddl_check.parse_models()["tables"]["ai_ocr_engines"]["ck"]
     v001_ck = ddl_check.parse_v001()["tables"]["ai_ocr_engines"]["ck"]
-    assert parsed[1] in modeled_ck
-    assert parsed[1] in v001_ck
+    assert OCR_KIND_CK in modeled_ck
+    assert OCR_KIND_CK in v001_ck
     # 表达式里真的带上两个新 kind（只比对长度/前缀会让漏一个也通过）。
     assert "'baidu'" in parsed[1]
     assert "'groq'" in parsed[1]
@@ -309,6 +321,47 @@ def test_v027_extends_kind_to_the_modeled_set() -> None:
     assert "'baidu'" not in v026
     assert "'groq'" not in v026
     assert LEGACY_OCR_KIND_CK in _ocr()["tables"]["ai_ocr_engines"]["ck"]
+
+
+def test_v029_extends_kind_with_zhipu() -> None:
+    """V029 把 kind 从五值扩到六值（+zhipu），与 models/V001 逐字一致。
+
+    与 V027 同一套断言口径：约束名与表达式逐字一致、幂等是先读后改、历史迁移
+    V027 保持冻结。
+    """
+    text = _zhipu_kind_text()
+    extracted = ddl_check.extract_execute_immediate(text)
+
+    added = re.search(
+        r"ALTER TABLE\s+ai_ocr_engines\s+ADD CONSTRAINT\s+(\w+)\s+CHECK\s*\((.*)\)",
+        extracted,
+        re.IGNORECASE | re.DOTALL,
+    )
+    assert added, extracted
+    assert added.group(1).lower() == OCR_KIND_CONSTRAINT
+    parsed = ddl_check._parse_constraint(
+        f"constraint {added.group(1)} check ({added.group(2)})"
+    )
+    assert parsed == ("ck", OCR_KIND_CK)
+
+    modeled_ck = ddl_check.parse_models()["tables"]["ai_ocr_engines"]["ck"]
+    v001_ck = ddl_check.parse_v001()["tables"]["ai_ocr_engines"]["ck"]
+    assert parsed[1] in modeled_ck
+    assert parsed[1] in v001_ck
+    assert "'zhipu'" in parsed[1]
+
+    lowered = text.lower()
+    read_at = lowered.index("from user_constraints")
+    needs_change_at = lowered.index("if v_needs_change then")
+    drop_at = lowered.index("drop constraint ck_ai_ocr_engines_kind")
+    add_at = lowered.index("add constraint ck_ai_ocr_engines_kind")
+    assert read_at < needs_change_at < drop_at < add_at
+    assert "instr(lower(v_condition), '''zhipu''') = 0" in lowered
+    assert "when no_data_found then" in lowered
+
+    # 历史迁移冻结：V027 不许提前出现 zhipu，否则「存量库走 V029」这条路径会被
+    # V027 绕过，V029 的幂等分支也就失去意义。
+    assert "'zhipu'" not in _ocr_kind_text().lower()
 
 
 def test_credentials_migration_adds_exactly_the_modeled_key_scope() -> None:
