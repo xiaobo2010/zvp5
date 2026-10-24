@@ -1,0 +1,384 @@
+/* ==========================================================================
+   义工平台 · 基础样式 base.css
+   文件：css/base.css
+   内容：Reset、排版、栅格与间距工具、布局骨架（侧边栏+顶栏+内容）、
+         毛玻璃/液态玻璃工具、遮罩、G2 连续曲率圆角工具、无障碍降级。
+   规则：仅允许引用 design-tokens.css 中的 --yg-* 变量。
+   ========================================================================== */
+
+/* ---------- Reset ---------- */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  font-family: var(--yg-font-sans);
+  font-size: var(--yg-font-size-md);
+  line-height: var(--yg-line-height-normal);
+  color: var(--yg-text-primary);
+  background-color: var(--yg-bg-page);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+::selection {
+  background: var(--yg-color-selection);
+}
+
+img,
+svg,
+video,
+canvas {
+  display: block;
+  max-width: 100%;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+ul,
+ol {
+  list-style: none;
+}
+
+/* ---------- 标题 ---------- */
+h1, h2, h3, h4, h5, h6 {
+  font-weight: var(--yg-font-weight-semibold);
+  line-height: var(--yg-line-height-tight);
+  margin-bottom: var(--yg-space-3);
+}
+
+h1 { font-size: var(--yg-font-size-3xl); }
+h2 { font-size: var(--yg-font-size-2xl); }
+h3 { font-size: var(--yg-font-size-xl); }
+h4 { font-size: var(--yg-font-size-lg); }
+h5 { font-size: var(--yg-font-size-md); }
+h6 { font-size: var(--yg-font-size-sm); }
+
+p { margin-bottom: var(--yg-space-3); }
+
+a {
+  color: var(--yg-text-link);
+  text-decoration: none;
+  transition: color var(--yg-dur-fast) var(--yg-ease-out);
+}
+
+a:hover { text-decoration: underline; }
+
+/* ---------- 滚动条（细、圆、克制） ---------- */
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-thumb {
+  background-color: var(--yg-gray-300);
+  border-radius: var(--yg-radius-pill);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background-color: var(--yg-gray-400);
+  background-clip: padding-box;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--yg-gray-300) transparent;
+}
+
+/* ---------- 键盘焦点环 ---------- */
+:focus-visible {
+  outline: none;
+  box-shadow: var(--yg-focus-ring);
+}
+
+/* ---------- 容器 ---------- */
+.yg-container {
+  width: 100%;
+  max-width: 1280px;
+  margin-inline: auto;
+  padding-inline: var(--yg-space-6);
+}
+
+/* ---------- 12 栅格（瑞士网格：8px 列距） ---------- */
+.yg-row {
+  display: flex;
+  flex-wrap: wrap;
+  margin-inline: calc(var(--yg-space-2) * -1);
+}
+
+.yg-col {
+  flex: 1 0 0%;
+  padding-inline: var(--yg-space-2);
+}
+
+.yg-col-1  { flex: 0 0 8.333333%;  max-width: 8.333333%;  padding-inline: var(--yg-space-2); }
+.yg-col-2  { flex: 0 0 16.666667%; max-width: 16.666667%; padding-inline: var(--yg-space-2); }
+.yg-col-3  { flex: 0 0 25%;        max-width: 25%;        padding-inline: var(--yg-space-2); }
+.yg-col-4  { flex: 0 0 33.333333%; max-width: 33.333333%; padding-inline: var(--yg-space-2); }
+.yg-col-5  { flex: 0 0 41.666667%; max-width: 41.666667%; padding-inline: var(--yg-space-2); }
+.yg-col-6  { flex: 0 0 50%;        max-width: 50%;        padding-inline: var(--yg-space-2); }
+.yg-col-7  { flex: 0 0 58.333333%; max-width: 58.333333%; padding-inline: var(--yg-space-2); }
+.yg-col-8  { flex: 0 0 66.666667%; max-width: 66.666667%; padding-inline: var(--yg-space-2); }
+.yg-col-9  { flex: 0 0 75%;        max-width: 75%;        padding-inline: var(--yg-space-2); }
+.yg-col-10 { flex: 0 0 83.333333%; max-width: 83.333333%; padding-inline: var(--yg-space-2); }
+.yg-col-11 { flex: 0 0 91.666667%; max-width: 91.666667%; padding-inline: var(--yg-space-2); }
+.yg-col-12 { flex: 0 0 100%;       max-width: 100%;       padding-inline: var(--yg-space-2); }
+
+@media (max-width: 768px) {
+  .yg-col-1, .yg-col-2, .yg-col-3, .yg-col-4, .yg-col-5, .yg-col-6,
+  .yg-col-7, .yg-col-8, .yg-col-9, .yg-col-10, .yg-col-11, .yg-col-12 {
+    flex: 0 0 100%;
+    max-width: 100%;
+  }
+}
+
+/* ---------- 间距工具类（4px 网格，数值即像素） ---------- */
+.mt-0{margin-top:0}.mt-4{margin-top:4px}.mt-8{margin-top:8px}.mt-12{margin-top:12px}.mt-16{margin-top:16px}.mt-20{margin-top:20px}.mt-24{margin-top:24px}.mt-32{margin-top:32px}.mt-48{margin-top:48px}.mt-64{margin-top:64px}
+.mr-0{margin-right:0}.mr-4{margin-right:4px}.mr-8{margin-right:8px}.mr-12{margin-right:12px}.mr-16{margin-right:16px}.mr-20{margin-right:20px}.mr-24{margin-right:24px}.mr-32{margin-right:32px}
+.mb-0{margin-bottom:0}.mb-4{margin-bottom:4px}.mb-8{margin-bottom:8px}.mb-12{margin-bottom:12px}.mb-16{margin-bottom:16px}.mb-20{margin-bottom:20px}.mb-24{margin-bottom:24px}.mb-32{margin-bottom:32px}.mb-48{margin-bottom:48px}.mb-64{margin-bottom:64px}
+.ml-0{margin-left:0}.ml-4{margin-left:4px}.ml-8{margin-left:8px}.ml-12{margin-left:12px}.ml-16{margin-left:16px}.ml-20{margin-left:20px}.ml-24{margin-left:24px}.ml-32{margin-left:32px}
+.mx-auto{margin-inline:auto}.mx-4{margin-inline:4px}.mx-8{margin-inline:8px}.mx-12{margin-inline:12px}.mx-16{margin-inline:16px}.mx-24{margin-inline:24px}
+.my-4{margin-block:4px}.my-8{margin-block:8px}.my-12{margin-block:12px}.my-16{margin-block:16px}.my-24{margin-block:24px}.my-32{margin-block:32px}
+.p-0{padding:0}.p-4{padding:4px}.p-8{padding:8px}.p-12{padding:12px}.p-16{padding:16px}.p-20{padding:20px}.p-24{padding:24px}.p-32{padding:32px}
+.px-4{padding-inline:4px}.px-8{padding-inline:8px}.px-12{padding-inline:12px}.px-16{padding-inline:16px}.px-20{padding-inline:20px}.px-24{padding-inline:24px}.px-32{padding-inline:32px}
+.py-4{padding-block:4px}.py-8{padding-block:8px}.py-12{padding-block:12px}.py-16{padding-block:16px}.py-20{padding-block:20px}.py-24{padding-block:24px}.py-32{padding-block:32px}
+.pt-8{padding-top:8px}.pt-16{padding-top:16px}.pt-24{padding-top:24px}
+.pb-8{padding-bottom:8px}.pb-16{padding-bottom:16px}.pb-24{padding-bottom:24px}
+
+/* ---------- 文字工具 ---------- */
+.yg-text-primary { color: var(--yg-text-primary); }
+.yg-text-secondary { color: var(--yg-text-secondary); }
+.yg-text-tertiary { color: var(--yg-text-tertiary); }
+.yg-text-disabled { color: var(--yg-text-disabled); }
+.yg-text-success { color: var(--yg-text-success); }
+.yg-text-warning { color: var(--yg-text-warning); }
+.yg-text-danger { color: var(--yg-text-danger); }
+
+.yg-text-xs { font-size: var(--yg-font-size-xs); }
+.yg-text-sm { font-size: var(--yg-font-size-sm); }
+.yg-text-md { font-size: var(--yg-font-size-md); }
+.yg-text-lg { font-size: var(--yg-font-size-lg); }
+.yg-text-xl { font-size: var(--yg-font-size-xl); }
+.yg-text-2xl { font-size: var(--yg-font-size-2xl); }
+.yg-text-3xl { font-size: var(--yg-font-size-3xl); }
+
+.yg-text-regular { font-weight: var(--yg-font-weight-regular); }
+.yg-text-medium { font-weight: var(--yg-font-weight-medium); }
+.yg-text-semibold { font-weight: var(--yg-font-weight-semibold); }
+.yg-text-bold { font-weight: var(--yg-font-weight-bold); }
+
+.yg-text-left { text-align: left; }
+.yg-text-center { text-align: center; }
+.yg-text-right { text-align: right; }
+
+.yg-text-num { font-variant-numeric: tabular-nums; } /* 数字等宽 */
+
+.yg-truncate {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.yg-truncate-2 {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* ---------- 布局骨架：侧边栏 + 顶栏 + 内容 ---------- */
+.yg-layout {
+  display: flex;
+  min-height: 100vh;
+}
+
+.yg-layout__sidebar {
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  flex: 0 0 auto;
+  z-index: var(--yg-z-sticky);
+}
+
+.yg-layout__main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.yg-layout__topbar {
+  position: sticky;
+  top: 0;
+  z-index: var(--yg-z-sticky);
+}
+
+.yg-layout__content {
+  flex: 1;
+  padding: var(--yg-space-6);
+}
+
+/* ---------- 页面头部（标题 + 副标题 + 操作区） ---------- */
+.yg-page-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--yg-space-4);
+  flex-wrap: wrap;
+  margin-bottom: var(--yg-space-6);
+}
+
+.yg-page-header__title {
+  font-size: var(--yg-font-size-3xl);
+  font-weight: var(--yg-font-weight-semibold);
+  line-height: var(--yg-line-height-tight);
+  margin: 0;
+}
+
+.yg-page-header__subtitle {
+  margin-top: var(--yg-space-1);
+  color: var(--yg-text-secondary);
+}
+
+.yg-page-header__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--yg-space-3);
+  flex-wrap: wrap;
+}
+
+/* ==========================================================================
+   G2 连续曲率圆角工具（Apple 风格）
+   - 支持 corner-shape 的浏览器（Chromium 139+）渲染真正的超椭圆连续曲率；
+   - 其余浏览器自动回退为同尺寸的普通圆角（视觉近似，无损坏）。
+   ========================================================================== */
+.yg-g2--xs  { border-radius: var(--yg-radius-xs); }
+.yg-g2--sm  { border-radius: var(--yg-radius-sm); }
+.yg-g2--md  { border-radius: var(--yg-radius-md); }
+.yg-g2--lg  { border-radius: var(--yg-radius-lg); }
+.yg-g2--xl  { border-radius: var(--yg-radius-xl); }
+.yg-g2--2xl { border-radius: var(--yg-radius-2xl); }
+.yg-g2--pill { border-radius: var(--yg-radius-pill); }
+
+@supports (corner-shape: squircle) {
+  .yg-g2--xs, .yg-g2--sm, .yg-g2--md,
+  .yg-g2--lg, .yg-g2--xl, .yg-g2--2xl {
+    corner-shape: squircle; /* superellipse(2)：Apple G2 连续曲率 */
+  }
+}
+
+/* SVG 遮罩近似 G2（用于图片裁切等 border-radius 无法覆盖的场景，任意宽高比拉伸） */
+.yg-g2-mask {
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Cpath d='M50,0C28.3,0,10.6,0,5.9,4.7C0,10.6,0,28.3,0,50s0,39.4,5.9,45.3C10.6,100,28.3,100,50,100s39.4,0,45.3-5.9C100,89.4,100,71.7,100,50S100,10.6,94.1,4.7C89.4,0,71.7,0,50,0Z'/%3E%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Cpath d='M50,0C28.3,0,10.6,0,5.9,4.7C0,10.6,0,28.3,0,50s0,39.4,5.9,45.3C10.6,100,28.3,100,50,100s39.4,0,45.3-5.9C100,89.4,100,71.7,100,50S100,10.6,94.1,4.7C89.4,0,71.7,0,50,0Z'/%3E%3C/svg%3E");
+  -webkit-mask-size: 100% 100%;
+  mask-size: 100% 100%;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+}
+
+/* ==========================================================================
+   毛玻璃与液态玻璃工具
+   使用范围（准则 2.6、第 6 章）：
+   - .yg-frost        背景装饰层、横幅（允许）
+   - .yg-liquid-glass 侧边栏等常驻玻璃面板（允许）
+   - .yg-mask         弹出层遮罩（允许，且为弹窗唯一允许的半透明元素）
+   - 弹出层面板本身：一律禁止半透明与 backdrop-filter。
+   ========================================================================== */
+
+/* 背景毛玻璃：渐变 + 模糊（可作 Hero/横幅背景层） */
+.yg-frost {
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.55), rgba(255, 255, 255, 0.28));
+  -webkit-backdrop-filter: blur(var(--yg-glass-blur-md)) saturate(160%);
+  backdrop-filter: blur(var(--yg-glass-blur-md)) saturate(160%);
+  border: 1px solid rgba(255, 255, 255, 0.45);
+}
+
+/* 渐变模糊：边缘渐隐，用于背景装饰块 */
+.yg-frost--fade {
+  -webkit-mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.95), rgba(0, 0, 0, 0.35));
+  mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.95), rgba(0, 0, 0, 0.35));
+}
+
+/* 液态玻璃（仅限侧边栏等常驻面板；浅色配方） */
+.yg-liquid-glass {
+  background: linear-gradient(160deg, rgba(255, 255, 255, 0.82) 0%, rgba(255, 255, 255, 0.60) 100%);
+  -webkit-backdrop-filter: blur(var(--yg-glass-blur-lg)) saturate(180%);
+  backdrop-filter: blur(var(--yg-glass-blur-lg)) saturate(180%);
+  border-right: 1px solid rgba(255, 255, 255, 0.55);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.65), /* 顶部高光 */
+    0 8px 32px rgba(28, 28, 30, 0.08);        /* 层次投影 */
+}
+
+/* 液态玻璃 · 深色配方 */
+:root[data-theme="dark"] .yg-liquid-glass {
+  background: linear-gradient(160deg, rgba(28, 28, 30, 0.78) 0%, rgba(28, 28, 30, 0.55) 100%);
+  border-right-color: rgba(255, 255, 255, 0.10);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    0 8px 32px rgba(0, 0, 0, 0.45);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .yg-liquid-glass {
+    background: linear-gradient(160deg, rgba(28, 28, 30, 0.78) 0%, rgba(28, 28, 30, 0.55) 100%);
+    border-right-color: rgba(255, 255, 255, 0.10);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.08),
+      0 8px 32px rgba(0, 0, 0, 0.45);
+  }
+}
+
+/* 弹出层遮罩：半透明黑 + 轻微毛玻璃（弹窗体系唯一允许的半透明元素） */
+.yg-mask {
+  position: fixed;
+  inset: 0;
+  z-index: var(--yg-z-mask);
+  background: rgba(0, 0, 0, 0.35);
+  -webkit-backdrop-filter: blur(var(--yg-glass-blur-sm));
+  backdrop-filter: blur(var(--yg-glass-blur-sm));
+}
+
+/* ---------- 无障碍：用户偏好减少动效时全局降级 ----------
+   注：此处 !important 为全库唯一允许的特例。 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

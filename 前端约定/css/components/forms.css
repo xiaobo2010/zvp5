@@ -1,0 +1,1784 @@
+/* ==========================================================================
+   义工平台 · 数据录入组件样式（forms.css）
+   文件：css/components/forms.css
+   内容清单：
+     1. 表单/表单项      .yg-form（--inline/--horizontal）、.yg-form-item
+                        （__label/__control/__message；is-required/is-error/is-success）
+     2. 输入框           .yg-input（--sm/--lg、--search/--password；
+                        is-error/is-success/is-disabled、[readonly]）
+     3. 前后缀容器       .yg-input-affix（__prefix/__suffix）
+     4. 输入框附属       .yg-input-clear（可清除）、.yg-input-toggle（密码切换）、
+                        .yg-input-count（字数统计，超限配合 is-error 红字）
+     5. 文本域           .yg-textarea（--auto）
+     6. 选择器           .yg-select（--multiple、is-open/is-disabled；__trigger/__value/
+                        __placeholder/__arrow/__dropdown/__option/__tag/__search；
+                        is-selected/is-disabled）
+     7. 复选框           .yg-checkbox（__input/__box/__label；is-checked/
+                        is-indeterminate/is-disabled）+ .yg-checkbox-group
+     8. 单选框           .yg-radio（__input/__box/__label；is-checked/is-disabled）+
+                        .yg-radio-group（--button）+ .yg-radio--button
+     9. 开关             .yg-switch（--sm；is-checked/is-disabled/is-loading）
+    10. 滑杆             .yg-slider（__rail/__track/__thumb；--vertical/is-disabled）
+    11. 步进器           .yg-stepper（__btn/__input）
+    12. 评分             .yg-rate（__star；is-active/is-readonly）
+    13. 上传             .yg-upload（__drag/__trigger/__list/__item/__name/__progress/
+                        __remove；--picture/__thumb；is-dragover/is-error/is-disabled）
+    14. 日期选择         .yg-date-picker（__trigger/__panel，面板内复用 .yg-calendar）
+    15. 分段控件         .yg-segmented（__item；is-active/is-disabled；--sm）
+   规则：仅引用 design-tokens.css 的 --yg-* 变量；弹出层面板（下拉/日期面板）
+         一律 var(--yg-bg-surface-raised) 实色，禁止半透明与 backdrop-filter；
+         遮罩统一使用 base.css 的 .yg-mask；圆角在文件末尾以
+         @supports (corner-shape: squircle) 渐进增强为 G2 连续曲率
+         （圆形与胶囊类组件除外）。
+   ========================================================================== */
+
+/* ==========================================================================
+   1. 表单 .yg-form / 表单项 .yg-form-item
+   ========================================================================== */
+
+/* 纵向表单：标签在控件上方，行间距 20px */
+.yg-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--yg-space-5);
+}
+
+/* 行内表单：表单项横向排列、可换行 */
+.yg-form--inline {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: var(--yg-space-4);
+}
+
+.yg-form--inline .yg-form-item {
+  flex-direction: row;
+  align-items: flex-start;
+  gap: var(--yg-space-2);
+}
+
+.yg-form--inline .yg-form-item__label {
+  padding-block-start: var(--yg-space-2);
+}
+
+/* 横向表单：标签右对齐固定宽（96px），控件区弹性 */
+.yg-form--horizontal .yg-form-item {
+  flex-direction: row;
+  align-items: flex-start;
+  gap: var(--yg-space-3);
+}
+
+.yg-form--horizontal .yg-form-item__label {
+  width: calc(var(--yg-space-9) * 2);
+  flex-shrink: 0;
+  padding-block-start: var(--yg-space-2);
+  text-align: right;
+}
+
+.yg-form--horizontal .yg-form-item__control {
+  flex: 1;
+  min-width: 0;
+}
+
+/* 表单项：标签在上、控件与消息在下 */
+.yg-form-item {
+  display: flex;
+  flex-direction: column;
+  gap: var(--yg-space-1);
+}
+
+.yg-form-item__label {
+  font-size: var(--yg-font-size-sm);
+  line-height: var(--yg-line-height-snug);
+  color: var(--yg-text-secondary);
+}
+
+/* 必填：标签前红色星号（准则 3.5） */
+.yg-form-item.is-required .yg-form-item__label::before {
+  content: "*";
+  margin-inline-end: var(--yg-space-1);
+  color: var(--yg-text-danger);
+}
+
+.yg-form-item__control {
+  display: flex;
+  flex-direction: column;
+  gap: var(--yg-space-1);
+}
+
+.yg-form-item__message {
+  font-size: var(--yg-font-size-xs);
+  line-height: var(--yg-line-height-normal);
+  color: var(--yg-text-tertiary);
+}
+
+/* 错误：消息红字 + 控件红边框 */
+.yg-form-item.is-error .yg-form-item__message {
+  color: var(--yg-text-danger);
+}
+
+.yg-form-item.is-error .yg-input,
+.yg-form-item.is-error .yg-textarea,
+.yg-form-item.is-error .yg-input-affix,
+.yg-form-item.is-error .yg-select__trigger,
+.yg-form-item.is-error .yg-date-picker__trigger {
+  border-color: var(--yg-color-danger);
+}
+
+/* 成功：仅文字反馈，不加绿框（准则 3.5） */
+.yg-form-item.is-success .yg-form-item__message {
+  color: var(--yg-text-success);
+}
+
+/* ==========================================================================
+   2. 输入框 .yg-input
+   ========================================================================== */
+
+.yg-input {
+  display: block;
+  width: 100%;
+  height: var(--yg-control-height-md);
+  padding-inline: var(--yg-space-3);
+  font-family: var(--yg-font-sans);
+  font-size: var(--yg-font-size-md);
+  color: var(--yg-text-primary);
+  background-color: var(--yg-bg-surface);
+  border: 1px solid var(--yg-border-default);
+  border-radius: var(--yg-radius-md);
+  transition:
+    border-color var(--yg-dur-fast) var(--yg-ease-out),
+    background-color var(--yg-dur-fast) var(--yg-ease-out),
+    box-shadow var(--yg-dur-fast) var(--yg-ease-out);
+}
+
+.yg-input::placeholder {
+  color: var(--yg-text-tertiary);
+}
+
+/* 悬停：边框加深 */
+.yg-input:hover {
+  border-color: var(--yg-border-strong);
+}
+
+/* 聚焦：天蓝边框；键盘聚焦叠加焦点环 */
+.yg-input:focus {
+  border-color: var(--yg-color-primary);
+}
+
+.yg-input:focus-visible {
+  border-color: var(--yg-color-primary);
+  box-shadow: var(--yg-focus-ring);
+  outline: none;
+}
+
+/* 错误：红边框 */
+.yg-input.is-error {
+  border-color: var(--yg-color-danger);
+}
+
+.yg-input.is-error:hover,
+.yg-input.is-error:focus,
+.yg-input.is-error:focus-visible {
+  border-color: var(--yg-color-danger);
+}
+
+/* 成功：不加绿框（准则 3.5），保持默认边框，配合表单消息文字反馈 */
+.yg-input.is-success {
+  border-color: var(--yg-border-default);
+}
+
+/* 禁用：凹陷底 + 禁用文字 */
+.yg-input.is-disabled,
+.yg-input:disabled {
+  color: var(--yg-text-disabled);
+  background-color: var(--yg-bg-surface-sunken);
+  border-color: var(--yg-border-default);
+  cursor: not-allowed;
+}
+
+/* 只读：凹陷底，保留文本可见 */
+.yg-input[readonly] {
+  background-color: var(--yg-bg-surface-sunken);
+  cursor: default;
+}
+
+/* ---- 尺寸 ---- */
+
+.yg-input--sm {
+  height: var(--yg-control-height-sm);
+  padding-inline: var(--yg-space-2);
+  font-size: var(--yg-font-size-sm);
+}
+
+.yg-input--lg {
+  height: var(--yg-control-height-lg);
+  padding-inline: var(--yg-space-4);
+  font-size: var(--yg-font-size-lg);
+}
+
+/* ---- 搜索/密码修饰 ----
+   放大镜与眼睛图标由前后缀容器提供（推荐结构）：
+   .yg-input-affix > .yg-input-affix__prefix(放大镜 svg) + .yg-input--search
+   .yg-input-affix > .yg-input--password + .yg-input-affix__suffix(.yg-input-toggle)
+   修饰类在此预留图标位；置于 affix 容器内时该内边距被容器接管。 */
+.yg-input--search {
+  padding-inline-start: calc(var(--yg-space-3) + var(--yg-space-4) + var(--yg-space-2));
+}
+
+.yg-input--password {
+  padding-inline-end: calc(var(--yg-space-3) + var(--yg-space-4) + var(--yg-space-2));
+}
+
+/* ==========================================================================
+   3. 前后缀容器 .yg-input-affix
+   ========================================================================== */
+
+.yg-input-affix {
+  display: flex;
+  align-items: center;
+  gap: var(--yg-space-2);
+  width: 100%;
+  height: var(--yg-control-height-md);
+  padding-inline: var(--yg-space-3);
+  color: var(--yg-text-primary);
+  background-color: var(--yg-bg-surface);
+  border: 1px solid var(--yg-border-default);
+  border-radius: var(--yg-radius-md);
+  transition:
+    border-color var(--yg-dur-fast) var(--yg-ease-out),
+    box-shadow var(--yg-dur-fast) var(--yg-ease-out);
+}
+
+.yg-input-affix:hover {
+  border-color: var(--yg-border-strong);
+}
+
+/* 内层输入框聚焦时：容器天蓝边框 + 焦点环 */
+.yg-input-affix:focus-within {
+  border-color: var(--yg-color-primary);
+  box-shadow: var(--yg-focus-ring);
+}
+
+/* 内层输入框去掉自身边框与圆角，样式交给容器 */
+.yg-input-affix .yg-input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  padding-inline: 0;
+  background-color: transparent;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.yg-input-affix .yg-input:hover,
+.yg-input-affix .yg-input:focus,
+.yg-input-affix .yg-input:focus-visible {
+  border: none;
+  box-shadow: none;
+}
+
+.yg-input-affix__prefix,
+.yg-input-affix__suffix {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  color: var(--yg-text-tertiary);
+}
+
+/* 禁用：跟随内层输入框禁用态 */
+.yg-input-affix:has(.yg-input.is-disabled),
+.yg-input-affix:has(.yg-input:disabled) {
+  color: var(--yg-text-disabled);
+  background-color: var(--yg-bg-surface-sunken);
+  border-color: var(--yg-border-default);
+}
+
+/* ==========================================================================
+   4. 输入框附属：清除按钮 / 密码切换 / 字数统计
+   ========================================================================== */
+
+/* 可清除按钮：×（伪元素两条交叉线） */
+.yg-input-clear {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--yg-space-4);
+  height: var(--yg-space-4);
+  flex-shrink: 0;
+  border-radius: 50%;
+  color: var(--yg-text-tertiary);
+  cursor: pointer;
+}
+
+.yg-input-clear::before,
+.yg-input-clear::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: var(--yg-space-2);
+  height: 0;
+  border-top: 1px solid currentColor;
+}
+
+.yg-input-clear::before {
+  transform: translate(-50%, -50%) rotate(45deg);
+}
+
+.yg-input-clear::after {
+  transform: translate(-50%, -50%) rotate(-45deg);
+}
+
+.yg-input-clear:hover {
+  color: var(--yg-text-primary);
+}
+
+.yg-input-clear:active {
+  color: var(--yg-color-primary-active);
+}
+
+.yg-input-clear:focus-visible {
+  box-shadow: var(--yg-focus-ring);
+  outline: none;
+}
+
+/* 密码可见性切换：眼睛（默认睁眼=密码隐藏，.is-active 闭眼横线=密码可见） */
+.yg-input-toggle {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--yg-space-4);
+  height: var(--yg-space-4);
+  flex-shrink: 0;
+  border-radius: 50%;
+  color: var(--yg-text-tertiary);
+  cursor: pointer;
+}
+
+/* 眼眶：描边圆 */
+.yg-input-toggle::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+}
+
+/* 瞳孔：实心圆点 */
+.yg-input-toggle::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: var(--yg-space-1);
+  height: var(--yg-space-1);
+  background-color: currentColor;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+}
+
+/* 密码可见态：瞳孔变横线（闭眼） */
+.yg-input-toggle.is-active::after {
+  width: var(--yg-space-2);
+  height: 0;
+  background-color: transparent;
+  border-top: 1px solid currentColor;
+  border-radius: 0;
+}
+
+.yg-input-toggle:hover {
+  color: var(--yg-text-primary);
+}
+
+.yg-input-toggle:active {
+  color: var(--yg-color-primary-active);
+}
+
+.yg-input-toggle:focus-visible {
+  box-shadow: var(--yg-focus-ring);
+  outline: none;
+}
+
+/* 字数统计：弱化小字；超限时配合表单 is-error 红字 */
+.yg-input-count {
+  font-size: var(--yg-font-size-xs);
+  color: var(--yg-text-tertiary);
+  text-align: right;
+}
+
+.yg-form-item.is-error .yg-input-count {
+  color: var(--yg-text-danger);
+}
+
+/* ==========================================================================
+   5. 文本域 .yg-textarea
+   ========================================================================== */
+
+.yg-textarea {
+  display: block;
+  width: 100%;
+  min-height: calc(var(--yg-control-height-md) * 3); /* 默认约 3 行 */
+  padding: var(--yg-space-2) var(--yg-space-3);
+  font-family: var(--yg-font-sans);
+  font-size: var(--yg-font-size-md);
+  line-height: var(--yg-line-height-normal);
+  color: var(--yg-text-primary);
+  background-color: var(--yg-bg-surface);
+  border: 1px solid var(--yg-border-default);
+  border-radius: var(--yg-radius-md);
+  resize: vertical; /* 可纵向拖拽调高，禁横向拖拽 */
+  transition:
+    border-color var(--yg-dur-fast) var(--yg-ease-out),
+    box-shadow var(--yg-dur-fast) var(--yg-ease-out);
+}
+
+.yg-textarea::placeholder {
+  color: var(--yg-text-tertiary);
+}
+
+.yg-textarea:hover {
+  border-color: var(--yg-border-strong);
+}
+
+.yg-textarea:focus {
+  border-color: var(--yg-color-primary);
+}
+
+.yg-textarea:focus-visible {
+  border-color: var(--yg-color-primary);
+  box-shadow: var(--yg-focus-ring);
+  outline: none;
+}
+
+.yg-textarea.is-error {
+  border-color: var(--yg-color-danger);
+}
+
+.yg-textarea.is-success {
+  border-color: var(--yg-border-default);
+}
+
+.yg-textarea.is-disabled,
+.yg-textarea:disabled {
+  color: var(--yg-text-disabled);
+  background-color: var(--yg-bg-surface-sunken);
+  border-color: var(--yg-border-default);
+  cursor: not-allowed;
+}
+
+.yg-textarea[readonly] {
+  background-color: var(--yg-bg-surface-sunken);
+  cursor: default;
+}
+
+/* 自动增高：禁拖拽，高度由 JS 按内容调整 */
+.yg-textarea--auto {
+  overflow: hidden;
+  resize: none;
+}
+
+/* ==========================================================================
+   6. 选择器 .yg-select
+   ========================================================================== */
+
+.yg-select {
+  position: relative;
+  display: inline-flex;
+  width: 100%;
+}
+
+/* 触发器：与输入框同外观 */
+.yg-select__trigger {
+  display: flex;
+  align-items: center;
+  gap: var(--yg-space-2);
+  width: 100%;
+  height: var(--yg-control-height-md);
+  padding-inline: var(--yg-space-3);
+  color: var(--yg-text-primary);
+  background-color: var(--yg-bg-surface);
+  border: 1px solid var(--yg-border-default);
+  border-radius: var(--yg-radius-md);
+  cursor: pointer;
+  user-select: none;
+  transition:
+    border-color var(--yg-dur-fast) var(--yg-ease-out),
+    background-color var(--yg-dur-fast) var(--yg-ease-out),
+    box-shadow var(--yg-dur-fast) var(--yg-ease-out);
+}
+
+.yg-select__trigger:hover {
+  border-color: var(--yg-border-strong);
+}
+
+.yg-select__trigger:active {
+  background-color: var(--yg-bg-active);
+  border-color: var(--yg-color-primary);
+}
+
+.yg-select__trigger:focus-visible,
+.yg-select.is-open .yg-select__trigger {
+  border-color: var(--yg-color-primary);
+}
+
+.yg-select__trigger:focus-visible {
+  box-shadow: var(--yg-focus-ring);
+  outline: none;
+}
+
+.yg-select__value {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: var(--yg-font-size-md);
+}
+
+.yg-select__placeholder {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: var(--yg-font-size-md);
+  color: var(--yg-text-tertiary);
+}
+
+/* 箭头：chevron，展开旋转 180° */
+.yg-select__arrow {
+  width: var(--yg-space-2);
+  height: var(--yg-space-2);
+  flex-shrink: 0;
+  color: var(--yg-text-tertiary);
+  border-right: 1px solid currentColor;
+  border-bottom: 1px solid currentColor;
+  transform: rotate(45deg) translate(calc(var(--yg-space-1) / -2), calc(var(--yg-space-1) / -2));
+  transition: transform var(--yg-dur-base) var(--yg-ease-out);
+}
+
+.yg-select.is-open .yg-select__arrow {
+  transform: rotate(225deg) translate(calc(var(--yg-space-1) / 2), calc(var(--yg-space-1) / 2));
+}
+
+/* 弹层：强制实色 raised（禁止半透明/backdrop-filter，见准则第 6 章）+
+   shadow-lg + 圆角 lg；淡入上移进场 */
+.yg-select__dropdown {
+  position: absolute;
+  top: calc(100% + var(--yg-space-2));
+  left: 0;
+  min-width: 100%;
+  padding: var(--yg-space-1);
+  background: var(--yg-bg-surface-raised);
+  border: 1px solid var(--yg-border-subtle);
+  border-radius: var(--yg-radius-lg);
+  box-shadow: var(--yg-shadow-lg);
+  z-index: var(--yg-z-dropdown);
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(calc(var(--yg-space-1) * -1));
+  transition:
+    opacity var(--yg-dur-slow) var(--yg-ease-out),
+    transform var(--yg-dur-slow) var(--yg-ease-out),
+    visibility var(--yg-dur-slow);
+}
+
+.yg-select.is-open .yg-select__dropdown {
+  opacity: 1;
+  visibility: visible;
+  transform: none;
+}
+
+/* 选项：hover 浅底，选中天蓝 + 对勾 */
+.yg-select__option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--yg-space-2);
+  padding: var(--yg-space-2) var(--yg-space-3);
+  border-radius: var(--yg-radius-md);
+  font-size: var(--yg-font-size-md);
+  color: var(--yg-text-primary);
+  cursor: pointer;
+  transition: background-color var(--yg-dur-fast) var(--yg-ease-out);
+}
+
+.yg-select__option:hover {
+  background-color: var(--yg-bg-hover);
+}
+
+.yg-select__option:active {
+  background-color: var(--yg-bg-active);
+}
+
+.yg-select__option.is-selected {
+  color: var(--yg-color-primary);
+  font-weight: var(--yg-font-weight-medium);
+}
+
+/* 选中对勾 */
+.yg-select__option.is-selected::after {
+  content: "";
+  width: var(--yg-space-2);
+  height: var(--yg-space-1);
+  flex-shrink: 0;
+  border-left: 1px solid currentColor;
+  border-bottom: 1px solid currentColor;
+  transform: rotate(-45deg);
+}
+
+.yg-select__option.is-disabled {
+  color: var(--yg-text-disabled);
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+/* 禁用 */
+.yg-select.is-disabled .yg-select__trigger {
+  color: var(--yg-text-disabled);
+  background-color: var(--yg-bg-surface-sunken);
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+/* ---- 多选：trigger 内放标签 + 内嵌搜索 ---- */
+
+.yg-select--multiple .yg-select__trigger {
+  flex-wrap: wrap;
+  height: auto;
+  min-height: var(--yg-control-height-md);
+  padding-block: var(--yg-space-1);
+  gap: var(--yg-space-1);
+}
+
+/* 已选标签 */
+.yg-select__tag {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--yg-space-1);
+  height: calc(var(--yg-control-height-sm) - var(--yg-space-1));
+  padding-inline: var(--yg-space-2);
+  background-color: var(--yg-bg-surface-sunken);
+  border-radius: var(--yg-radius-xs);
+  font-size: var(--yg-font-size-sm);
+  color: var(--yg-text-secondary);
+  cursor: default;
+}
+
+/* 标签可删：右侧 ×（两条交叉渐变线） */
+.yg-select__tag::after {
+  content: "";
+  width: var(--yg-space-2);
+  height: var(--yg-space-2);
+  background:
+    linear-gradient(45deg, transparent 45%, currentColor 45%, currentColor 55%, transparent 55%),
+    linear-gradient(-45deg, transparent 45%, currentColor 45%, currentColor 55%, transparent 55%);
+  cursor: pointer;
+}
+
+.yg-select__tag:hover::after {
+  color: var(--yg-text-primary);
+}
+
+/* 多选内嵌搜索输入 */
+.yg-select__search {
+  flex: 1;
+  min-width: var(--yg-space-7);
+  height: var(--yg-control-height-sm);
+  padding-inline: 0;
+  font-family: var(--yg-font-sans);
+  font-size: var(--yg-font-size-sm);
+  color: var(--yg-text-primary);
+  background-color: transparent;
+  border: none;
+  outline: none;
+}
+
+.yg-select__search::placeholder {
+  color: var(--yg-text-tertiary);
+}
+
+/* ==========================================================================
+   7. 复选框 .yg-checkbox
+   ========================================================================== */
+
+.yg-checkbox {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--yg-space-2);
+  cursor: pointer;
+  user-select: none;
+}
+
+/* 原生输入隐藏但保留可聚焦性（准则 3.8） */
+.yg-checkbox__input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+/* 自绘内块：16×16，圆角 sm */
+.yg-checkbox__box {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--yg-space-4);
+  height: var(--yg-space-4);
+  flex-shrink: 0;
+  background-color: var(--yg-bg-surface);
+  border: 1px solid var(--yg-border-default);
+  border-radius: var(--yg-radius-sm);
+  transition:
+    background-color var(--yg-dur-fast) var(--yg-ease-out),
+    border-color var(--yg-dur-fast) var(--yg-ease-out),
+    box-shadow var(--yg-dur-fast) var(--yg-ease-out);
+}
+
+.yg-checkbox__label {
+  font-size: var(--yg-font-size-md);
+  color: var(--yg-text-primary);
+}
+
+/* 悬停：边框加深 */
+.yg-checkbox:hover .yg-checkbox__box {
+  border-color: var(--yg-border-strong);
+}
+
+/* 按下：内块边框转天蓝 */
+.yg-checkbox:active .yg-checkbox__box {
+  border-color: var(--yg-color-primary);
+}
+
+/* 键盘焦点环 */
+.yg-checkbox__input:focus-visible + .yg-checkbox__box {
+  box-shadow: var(--yg-focus-ring);
+}
+
+/* 选中：天蓝底白勾（类名与原生 :checked 双驱动） */
+.yg-checkbox.is-checked .yg-checkbox__box,
+.yg-checkbox__input:checked + .yg-checkbox__box {
+  background-color: var(--yg-color-primary);
+  border-color: var(--yg-color-primary);
+}
+
+.yg-checkbox.is-checked .yg-checkbox__box::after,
+.yg-checkbox__input:checked + .yg-checkbox__box::after {
+  content: "";
+  width: var(--yg-space-2);
+  height: var(--yg-space-1);
+  border-left: calc(var(--yg-space-1) / 2) solid var(--yg-color-on-primary);
+  border-bottom: calc(var(--yg-space-1) / 2) solid var(--yg-color-on-primary);
+  transform: rotate(-45deg) translate(calc(var(--yg-space-1) / 4), calc(var(--yg-space-1) / -4));
+}
+
+/* 半选：天蓝底横线 */
+.yg-checkbox.is-indeterminate .yg-checkbox__box {
+  background-color: var(--yg-color-primary);
+  border-color: var(--yg-color-primary);
+}
+
+.yg-checkbox.is-indeterminate .yg-checkbox__box::after {
+  content: "";
+  width: var(--yg-space-2);
+  height: 0;
+  border-left: 0;
+  border-bottom: 0;
+  border-top: calc(var(--yg-space-1) / 2) solid var(--yg-color-on-primary);
+  transform: none;
+}
+
+/* 禁用 */
+.yg-checkbox.is-disabled,
+.yg-checkbox.is-disabled .yg-checkbox__input {
+  cursor: not-allowed;
+}
+
+.yg-checkbox.is-disabled .yg-checkbox__box {
+  background-color: var(--yg-bg-surface-sunken);
+  border-color: var(--yg-border-default);
+}
+
+.yg-checkbox.is-disabled .yg-checkbox__label {
+  color: var(--yg-text-disabled);
+}
+
+/* 组：横向排列可换行 */
+.yg-checkbox-group {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--yg-space-3) var(--yg-space-4);
+}
+
+/* ==========================================================================
+   8. 单选框 .yg-radio
+   ========================================================================== */
+
+.yg-radio {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--yg-space-2);
+  cursor: pointer;
+  user-select: none;
+}
+
+/* 原生输入隐藏但保留可聚焦性 */
+.yg-radio__input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+/* 自绘圆框：16×16 圆形 */
+.yg-radio__box {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--yg-space-4);
+  height: var(--yg-space-4);
+  flex-shrink: 0;
+  background-color: var(--yg-bg-surface);
+  border: 1px solid var(--yg-border-default);
+  border-radius: 50%;
+  transition:
+    border-color var(--yg-dur-fast) var(--yg-ease-out),
+    box-shadow var(--yg-dur-fast) var(--yg-ease-out);
+}
+
+.yg-radio__label {
+  font-size: var(--yg-font-size-md);
+  color: var(--yg-text-primary);
+}
+
+.yg-radio:hover .yg-radio__box {
+  border-color: var(--yg-border-strong);
+}
+
+.yg-radio:active .yg-radio__box {
+  border-color: var(--yg-color-primary);
+}
+
+.yg-radio__input:focus-visible + .yg-radio__box {
+  box-shadow: var(--yg-focus-ring);
+}
+
+/* 选中：天蓝描边 + 天蓝内圆点 */
+.yg-radio.is-checked .yg-radio__box,
+.yg-radio__input:checked + .yg-radio__box {
+  border-color: var(--yg-color-primary);
+}
+
+.yg-radio.is-checked .yg-radio__box::after,
+.yg-radio__input:checked + .yg-radio__box::after {
+  content: "";
+  width: var(--yg-space-2);
+  height: var(--yg-space-2);
+  background-color: var(--yg-color-primary);
+  border-radius: 50%;
+}
+
+/* 禁用 */
+.yg-radio.is-disabled,
+.yg-radio.is-disabled .yg-radio__input {
+  cursor: not-allowed;
+}
+
+.yg-radio.is-disabled .yg-radio__box {
+  background-color: var(--yg-bg-surface-sunken);
+  border-color: var(--yg-border-default);
+}
+
+.yg-radio.is-disabled .yg-radio__label {
+  color: var(--yg-text-disabled);
+}
+
+/* 组：横向排列可换行 */
+.yg-radio-group {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--yg-space-3) var(--yg-space-4);
+}
+
+/* ---- 按钮风格组：描边分段，选中天蓝实心白字 ---- */
+
+.yg-radio-group--button {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--yg-border-default);
+  border-radius: var(--yg-radius-md);
+}
+
+.yg-radio--button {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: var(--yg-control-height-sm);
+  padding-inline: var(--yg-space-3);
+  font-size: var(--yg-font-size-sm);
+  color: var(--yg-text-secondary);
+  cursor: pointer;
+  user-select: none;
+  transition:
+    color var(--yg-dur-fast) var(--yg-ease-out),
+    background-color var(--yg-dur-fast) var(--yg-ease-out),
+    box-shadow var(--yg-dur-fast) var(--yg-ease-out);
+}
+
+/* 项间分隔线 */
+.yg-radio--button + .yg-radio--button {
+  border-inline-start: 1px solid var(--yg-border-default);
+}
+
+/* 按钮风格隐藏自绘圆框 */
+.yg-radio--button .yg-radio__box {
+  display: none;
+}
+
+.yg-radio--button .yg-radio__input {
+  inset: 0;
+}
+
+.yg-radio--button:hover {
+  color: var(--yg-color-primary);
+}
+
+.yg-radio--button:active {
+  background-color: var(--yg-bg-active);
+}
+
+.yg-radio--button:focus-visible {
+  box-shadow: var(--yg-focus-ring);
+  outline: none;
+}
+
+.yg-radio--button.is-checked,
+.yg-radio--button:has(> .yg-radio__input:checked) {
+  color: var(--yg-color-on-primary);
+  background-color: var(--yg-color-primary);
+}
+
+.yg-radio--button.is-checked:hover,
+.yg-radio--button:has(> .yg-radio__input:checked):hover {
+  color: var(--yg-color-on-primary);
+}
+
+/* 首尾项恢复容器圆角 */
+.yg-radio--button:first-child {
+  border-start-start-radius: var(--yg-radius-md);
+  border-end-start-radius: var(--yg-radius-md);
+}
+
+.yg-radio--button:last-child {
+  border-start-end-radius: var(--yg-radius-md);
+  border-end-end-radius: var(--yg-radius-md);
+}
+
+.yg-radio--button.is-disabled {
+  color: var(--yg-text-disabled);
+  background-color: var(--yg-bg-surface-sunken);
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+/* ==========================================================================
+   9. 开关 .yg-switch
+   ========================================================================== */
+
+/* 默认 md：44×24 胶囊轨道；关态灰（准则 4.2.6 指定 --yg-gray-300） */
+.yg-switch {
+  position: relative;
+  display: inline-flex;
+  flex-shrink: 0;
+  width: var(--yg-control-height-lg);
+  height: var(--yg-space-6);
+  background-color: var(--yg-gray-300);
+  border-radius: var(--yg-radius-pill);
+  cursor: pointer;
+  transition: background-color var(--yg-dur-base) var(--yg-ease-out);
+}
+
+/* 原生输入隐藏驱动（准则 3.8），不新增子元素类名 */
+.yg-switch > input {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+/* 圆点：白底 + 轻阴影，位移 200ms */
+.yg-switch::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  inset-inline-start: var(--yg-space-1);
+  width: var(--yg-space-5);
+  height: var(--yg-space-5);
+  background-color: var(--yg-bg-surface);
+  border-radius: 50%;
+  box-shadow: var(--yg-shadow-sm);
+  transform: translateY(-50%);
+  transition:
+    transform var(--yg-dur-base) var(--yg-ease-out),
+    background-color var(--yg-dur-fast) var(--yg-ease-out),
+    box-shadow var(--yg-dur-fast) var(--yg-ease-out);
+}
+
+/* 选中：天蓝轨道 + 圆点右移（位移 = 轨道宽 - 圆点宽 - 两侧间隙） */
+.yg-switch.is-checked,
+.yg-switch:has(> input:checked) {
+  background-color: var(--yg-color-primary);
+}
+
+.yg-switch.is-checked::after,
+.yg-switch:has(> input:checked)::after {
+  transform: translateY(-50%) translateX(calc(var(--yg-control-height-lg) - var(--yg-space-5) - 2 * var(--yg-space-1)));
+}
+
+/* 悬停：开态加深，关态轨道深一档 */
+.yg-switch.is-checked:hover,
+.yg-switch:has(> input:checked):hover {
+  background-color: var(--yg-color-primary-hover);
+}
+
+.yg-switch:not(.is-checked):not(:has(> input:checked)):hover {
+  background-color: var(--yg-gray-400);
+}
+
+/* 按下 */
+.yg-switch.is-checked:active,
+.yg-switch:has(> input:checked):active {
+  background-color: var(--yg-color-primary-active);
+}
+
+.yg-switch:not(.is-checked):not(:has(> input:checked)):active {
+  background-color: var(--yg-border-strong);
+}
+
+/* 键盘焦点环 */
+.yg-switch:focus-within {
+  box-shadow: var(--yg-focus-ring);
+}
+
+/* 小尺寸：36×20 */
+.yg-switch--sm {
+  width: var(--yg-control-height-md);
+  height: var(--yg-space-5);
+}
+
+.yg-switch--sm::after {
+  width: var(--yg-space-4);
+  height: var(--yg-space-4);
+}
+
+.yg-switch--sm.is-checked::after,
+.yg-switch--sm:has(> input:checked)::after {
+  transform: translateY(-50%) translateX(calc(var(--yg-control-height-md) - var(--yg-space-4) - 2 * var(--yg-space-1)));
+}
+
+/* 禁用：关态灰轨道 + 灰圆点 */
+.yg-switch.is-disabled {
+  background-color: var(--yg-gray-300);
+  cursor: not-allowed;
+}
+
+.yg-switch.is-disabled > input {
+  cursor: not-allowed;
+}
+
+.yg-switch.is-disabled::after {
+  background-color: var(--yg-bg-surface-sunken);
+  box-shadow: none;
+}
+
+/* 加载中：spinner 圆环替代圆点 */
+.yg-switch.is-loading {
+  cursor: progress;
+}
+
+.yg-switch.is-loading::after {
+  background-color: transparent;
+  border: calc(var(--yg-space-1) / 2) solid var(--yg-bg-surface);
+  border-top-color: transparent;
+  box-shadow: none;
+  animation: yg-switch-spin var(--yg-dur-page) linear infinite;
+}
+
+@keyframes yg-switch-spin {
+  to {
+    transform: translateY(-50%) rotate(360deg);
+  }
+}
+
+/* ==========================================================================
+   10. 滑杆 .yg-slider
+   ========================================================================== */
+
+.yg-slider {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+  height: var(--yg-space-5);
+  cursor: pointer;
+  touch-action: none;
+}
+
+/* 轨道：4px 胶囊凹陷底 */
+.yg-slider__rail {
+  position: relative;
+  width: 100%;
+  height: var(--yg-space-1);
+  background-color: var(--yg-bg-surface-sunken);
+  border-radius: var(--yg-radius-pill);
+}
+
+/* 已选段：天蓝（宽度由 --yg-slider-value 驱动，JS 更新） */
+.yg-slider__track {
+  position: absolute;
+  top: 0;
+  inset-inline-start: 0;
+  width: var(--yg-slider-value, 0%);
+  height: 100%;
+  background-color: var(--yg-color-primary);
+  border-radius: var(--yg-radius-pill);
+}
+
+/* 拇指：16px 白圆 + 边框 + 轻阴影 */
+.yg-slider__thumb {
+  position: absolute;
+  top: 50%;
+  inset-inline-start: var(--yg-slider-value, 0%);
+  width: var(--yg-space-4);
+  height: var(--yg-space-4);
+  background-color: var(--yg-bg-surface);
+  border: 1px solid var(--yg-border-default);
+  border-radius: 50%;
+  box-shadow: var(--yg-shadow-sm);
+  transform: translate(-50%, -50%);
+  transition:
+    width var(--yg-dur-fast) var(--yg-ease-out),
+    height var(--yg-dur-fast) var(--yg-ease-out),
+    box-shadow var(--yg-dur-fast) var(--yg-ease-out);
+}
+
+/* 悬停：拇指放大至 20px */
+.yg-slider:hover .yg-slider__thumb {
+  width: var(--yg-space-5);
+  height: var(--yg-space-5);
+}
+
+/* 按下：内阴影按压反馈 */
+.yg-slider:active .yg-slider__thumb {
+  box-shadow: var(--yg-shadow-inset);
+}
+
+/* 键盘焦点环 */
+.yg-slider:focus-visible .yg-slider__thumb,
+.yg-slider:focus-within .yg-slider__thumb {
+  box-shadow: var(--yg-focus-ring), var(--yg-shadow-sm);
+}
+
+/* 竖向 */
+.yg-slider--vertical {
+  flex-direction: column;
+  width: var(--yg-space-5);
+  height: 100%;
+  min-height: var(--yg-space-10);
+}
+
+.yg-slider--vertical .yg-slider__rail {
+  width: var(--yg-space-1);
+  height: 100%;
+}
+
+.yg-slider--vertical .yg-slider__track {
+  top: auto;
+  bottom: 0;
+  inset-inline-start: 0;
+  width: 100%;
+  height: var(--yg-slider-value, 0%);
+}
+
+.yg-slider--vertical .yg-slider__thumb {
+  top: var(--yg-slider-value, 0%);
+  inset-inline-start: 50%;
+  transform: translate(-50%, 50%);
+}
+
+/* 禁用：已选段与拇指置灰 */
+.yg-slider.is-disabled {
+  cursor: not-allowed;
+}
+
+.yg-slider.is-disabled .yg-slider__track {
+  background-color: var(--yg-text-disabled);
+}
+
+.yg-slider.is-disabled .yg-slider__thumb {
+  border-color: var(--yg-border-default);
+  box-shadow: none;
+}
+
+.yg-slider.is-disabled:hover .yg-slider__thumb {
+  width: var(--yg-space-4);
+  height: var(--yg-space-4);
+}
+
+/* ==========================================================================
+   11. 步进器 .yg-stepper
+   ========================================================================== */
+
+.yg-stepper {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--yg-space-1);
+}
+
+/* 左右 −/+ 按钮：36×36 幽灵式 */
+.yg-stepper__btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--yg-control-height-md);
+  height: var(--yg-control-height-md);
+  font-size: var(--yg-font-size-xl);
+  color: var(--yg-text-secondary);
+  background-color: transparent;
+  border-radius: var(--yg-radius-md);
+  cursor: pointer;
+  user-select: none;
+  transition:
+    color var(--yg-dur-fast) var(--yg-ease-out),
+    background-color var(--yg-dur-fast) var(--yg-ease-out),
+    box-shadow var(--yg-dur-fast) var(--yg-ease-out);
+}
+
+.yg-stepper__btn:hover {
+  color: var(--yg-color-primary);
+  background-color: var(--yg-bg-hover);
+}
+
+.yg-stepper__btn:active {
+  background-color: var(--yg-bg-active);
+}
+
+.yg-stepper__btn:focus-visible {
+  box-shadow: var(--yg-focus-ring);
+  outline: none;
+}
+
+.yg-stepper__btn.is-disabled,
+.yg-stepper__btn:disabled {
+  color: var(--yg-text-disabled);
+  background-color: transparent;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+/* 中间数值：48px 宽居中等宽数字 */
+.yg-stepper__input {
+  width: var(--yg-space-9);
+  height: var(--yg-control-height-md);
+  padding-inline: 0;
+  font-family: var(--yg-font-mono);
+  font-size: var(--yg-font-size-md);
+  text-align: center;
+  color: var(--yg-text-primary);
+  background-color: var(--yg-bg-surface);
+  border: 1px solid var(--yg-border-default);
+  border-radius: var(--yg-radius-md);
+  appearance: textfield;
+  transition:
+    border-color var(--yg-dur-fast) var(--yg-ease-out),
+    box-shadow var(--yg-dur-fast) var(--yg-ease-out);
+}
+
+/* 隐藏原生步进箭头 */
+.yg-stepper__input::-webkit-outer-spin-button,
+.yg-stepper__input::-webkit-inner-spin-button {
+  margin: 0;
+  -webkit-appearance: none;
+}
+
+.yg-stepper__input:hover {
+  border-color: var(--yg-border-strong);
+}
+
+.yg-stepper__input:focus {
+  border-color: var(--yg-color-primary);
+}
+
+.yg-stepper__input:focus-visible {
+  border-color: var(--yg-color-primary);
+  box-shadow: var(--yg-focus-ring);
+  outline: none;
+}
+
+.yg-stepper__input.is-disabled,
+.yg-stepper__input:disabled {
+  color: var(--yg-text-disabled);
+  background-color: var(--yg-bg-surface-sunken);
+  cursor: not-allowed;
+}
+
+/* ==========================================================================
+   12. 评分 .yg-rate
+   ========================================================================== */
+
+/* row-reverse + 兄弟选择器实现纯 CSS 悬停预览：
+   悬停的星及其左侧（视觉）全部点亮 */
+.yg-rate {
+  display: inline-flex;
+  flex-direction: row-reverse;
+  gap: var(--yg-space-1);
+}
+
+.yg-rate__star {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--yg-text-disabled);
+  border-radius: var(--yg-radius-sm);
+  cursor: pointer;
+  transition:
+    color var(--yg-dur-fast) var(--yg-ease-out),
+    box-shadow var(--yg-dur-fast) var(--yg-ease-out);
+}
+
+/* 激活星：天蓝 */
+.yg-rate__star.is-active {
+  color: var(--yg-color-primary);
+}
+
+/* 悬停预览（只读时禁交互） */
+.yg-rate:not(.is-readonly) .yg-rate__star:hover,
+.yg-rate:not(.is-readonly) .yg-rate__star:hover ~ .yg-rate__star {
+  color: var(--yg-color-primary);
+}
+
+.yg-rate:not(.is-readonly) .yg-rate__star:active {
+  color: var(--yg-color-primary-active);
+}
+
+.yg-rate__star:focus-visible {
+  box-shadow: var(--yg-focus-ring);
+  outline: none;
+}
+
+/* 只读：禁交互 */
+.yg-rate.is-readonly .yg-rate__star {
+  cursor: default;
+  pointer-events: none;
+}
+
+/* ==========================================================================
+   13. 上传 .yg-upload
+   ========================================================================== */
+
+.yg-upload {
+  display: flex;
+  flex-direction: column;
+  gap: var(--yg-space-3);
+}
+
+/* 拖拽区：虚线边框圆角 lg，中心图标 + 文案 */
+.yg-upload__drag {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--yg-space-2);
+  padding: var(--yg-space-6);
+  text-align: center;
+  color: var(--yg-text-secondary);
+  background-color: var(--yg-bg-surface);
+  border: 1px dashed var(--yg-border-strong);
+  border-radius: var(--yg-radius-lg);
+  cursor: pointer;
+  transition:
+    color var(--yg-dur-fast) var(--yg-ease-out),
+    background-color var(--yg-dur-fast) var(--yg-ease-out),
+    border-color var(--yg-dur-fast) var(--yg-ease-out);
+}
+
+/* hover / 拖拽悬停：天蓝边框 + 天蓝浅底 */
+.yg-upload__drag:hover,
+.yg-upload.is-dragover .yg-upload__drag {
+  color: var(--yg-color-primary);
+  background-color: var(--yg-color-primary-soft);
+  border-color: var(--yg-color-primary);
+}
+
+.yg-upload__drag:active {
+  background-color: var(--yg-bg-active);
+  border-color: var(--yg-color-primary);
+}
+
+/* 键盘焦点环 */
+.yg-upload__drag:focus-visible {
+  box-shadow: var(--yg-focus-ring);
+  outline: none;
+}
+
+/* 触发元素（内含按钮等） */
+.yg-upload__trigger {
+  display: inline-flex;
+}
+
+/* 文件列表 */
+.yg-upload__list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--yg-space-2);
+}
+
+/* 文件项：文件名 + 进度条 + 删除 */
+.yg-upload__item {
+  display: flex;
+  align-items: center;
+  gap: var(--yg-space-3);
+  padding: var(--yg-space-2) var(--yg-space-3);
+  background-color: var(--yg-bg-surface);
+  border: 1px solid var(--yg-border-subtle);
+  border-radius: var(--yg-radius-md);
+  transition: background-color var(--yg-dur-fast) var(--yg-ease-out);
+}
+
+.yg-upload__item:hover {
+  background-color: var(--yg-bg-hover);
+}
+
+.yg-upload__name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: var(--yg-font-size-md);
+  color: var(--yg-text-primary);
+}
+
+/* 进度条：凹陷轨道 + 天蓝填充（填充宽度由 --yg-upload-progress 驱动） */
+.yg-upload__progress {
+  position: relative;
+  width: var(--yg-space-10);
+  height: var(--yg-space-1);
+  flex-shrink: 0;
+  overflow: hidden;
+  background-color: var(--yg-bg-surface-sunken);
+  border-radius: var(--yg-radius-pill);
+}
+
+.yg-upload__progress::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  inset-inline-start: 0;
+  width: var(--yg-upload-progress, 0%);
+  background-color: var(--yg-color-primary);
+  border-radius: var(--yg-radius-pill);
+}
+
+/* 删除：红 ×（伪元素两条交叉线） */
+.yg-upload__remove {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--yg-space-4);
+  height: var(--yg-space-4);
+  flex-shrink: 0;
+  border-radius: 50%;
+  color: var(--yg-text-danger);
+  cursor: pointer;
+}
+
+.yg-upload__remove::before,
+.yg-upload__remove::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: var(--yg-space-2);
+  height: 0;
+  border-top: 1px solid currentColor;
+}
+
+.yg-upload__remove::before {
+  transform: translate(-50%, -50%) rotate(45deg);
+}
+
+.yg-upload__remove::after {
+  transform: translate(-50%, -50%) rotate(-45deg);
+}
+
+.yg-upload__remove:hover {
+  color: var(--yg-color-danger);
+}
+
+.yg-upload__remove:focus-visible {
+  box-shadow: var(--yg-focus-ring);
+  outline: none;
+}
+
+/* ---- 图片墙：缩略图网格 ---- */
+
+.yg-upload--picture .yg-upload__list {
+  flex-direction: row;
+  flex-wrap: wrap;
+}
+
+/* 缩略图：圆角裁切（G2 渐进增强见文件末尾） */
+.yg-upload__thumb {
+  width: var(--yg-space-10);
+  height: var(--yg-space-10);
+  flex-shrink: 0;
+  overflow: hidden;
+  background-color: var(--yg-bg-surface-sunken);
+  border-radius: var(--yg-radius-md);
+}
+
+.yg-upload__thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* ---- 状态 ---- */
+
+/* 错误：红虚线边框 */
+.yg-upload.is-error .yg-upload__drag {
+  border-color: var(--yg-color-danger);
+}
+
+.yg-upload.is-error .yg-upload__drag:hover {
+  border-color: var(--yg-color-danger);
+}
+
+/* 禁用 */
+.yg-upload.is-disabled .yg-upload__drag,
+.yg-upload.is-disabled .yg-upload__trigger {
+  color: var(--yg-text-disabled);
+  background-color: var(--yg-bg-surface-sunken);
+  border-color: var(--yg-border-default);
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+/* ==========================================================================
+   14. 日期选择 .yg-date-picker
+   ========================================================================== */
+
+.yg-date-picker {
+  position: relative;
+  display: inline-flex;
+  width: 100%;
+}
+
+/* 触发器：同输入框外观，右侧日历图标由 HTML 提供 */
+.yg-date-picker__trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--yg-space-2);
+  width: 100%;
+  height: var(--yg-control-height-md);
+  padding-inline: var(--yg-space-3);
+  color: var(--yg-text-primary);
+  background-color: var(--yg-bg-surface);
+  border: 1px solid var(--yg-border-default);
+  border-radius: var(--yg-radius-md);
+  cursor: pointer;
+  user-select: none;
+  transition:
+    border-color var(--yg-dur-fast) var(--yg-ease-out),
+    box-shadow var(--yg-dur-fast) var(--yg-ease-out);
+}
+
+.yg-date-picker__trigger:hover {
+  border-color: var(--yg-border-strong);
+}
+
+.yg-date-picker__trigger:active {
+  border-color: var(--yg-color-primary);
+}
+
+.yg-date-picker__trigger:focus-visible {
+  border-color: var(--yg-color-primary);
+  box-shadow: var(--yg-focus-ring);
+  outline: none;
+}
+
+.yg-date-picker__trigger.is-disabled {
+  color: var(--yg-text-disabled);
+  background-color: var(--yg-bg-surface-sunken);
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+/* 面板：强制实色 raised 弹层（禁止半透明/backdrop-filter，见准则第 6 章），
+   内部复用 4.4.15 .yg-calendar（data-display.css） */
+.yg-date-picker__panel {
+  position: absolute;
+  top: calc(100% + var(--yg-space-2));
+  left: 0;
+  min-width: 100%;
+  padding: var(--yg-space-4);
+  background: var(--yg-bg-surface-raised);
+  border: 1px solid var(--yg-border-subtle);
+  border-radius: var(--yg-radius-lg);
+  box-shadow: var(--yg-shadow-lg);
+  z-index: var(--yg-z-dropdown);
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(calc(var(--yg-space-1) * -1));
+  transition:
+    opacity var(--yg-dur-slow) var(--yg-ease-out),
+    transform var(--yg-dur-slow) var(--yg-ease-out),
+    visibility var(--yg-dur-slow);
+}
+
+.yg-date-picker.is-open .yg-date-picker__panel {
+  opacity: 1;
+  visibility: visible;
+  transform: none;
+}
+
+/* ==========================================================================
+   15. 分段控件 .yg-segmented
+   ========================================================================== */
+
+/* 胶囊容器：凹陷底 + 4px 内边距 */
+.yg-segmented {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--yg-space-1);
+  padding: var(--yg-space-1);
+  background-color: var(--yg-bg-surface-sunken);
+  border-radius: var(--yg-radius-pill);
+}
+
+.yg-segmented__item {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--yg-space-1);
+  height: var(--yg-control-height-sm);
+  padding-inline: var(--yg-space-3);
+  font-size: var(--yg-font-size-sm);
+  color: var(--yg-text-secondary);
+  border-radius: var(--yg-radius-pill);
+  cursor: pointer;
+  user-select: none;
+  transition:
+    color var(--yg-dur-fast) var(--yg-ease-out),
+    background-color var(--yg-dur-fast) var(--yg-ease-out),
+    box-shadow var(--yg-dur-fast) var(--yg-ease-out);
+}
+
+.yg-segmented__item:hover {
+  color: var(--yg-text-primary);
+}
+
+.yg-segmented__item:active {
+  color: var(--yg-color-primary-active);
+}
+
+.yg-segmented__item:focus-visible {
+  box-shadow: var(--yg-focus-ring);
+  outline: none;
+}
+
+/* 选中：白底 + 轻阴影 + 天蓝文字 */
+.yg-segmented__item.is-active {
+  color: var(--yg-color-primary);
+  background-color: var(--yg-bg-surface);
+  box-shadow: var(--yg-shadow-sm);
+}
+
+.yg-segmented__item.is-active:hover {
+  color: var(--yg-color-primary);
+}
+
+.yg-segmented__item.is-disabled {
+  color: var(--yg-text-disabled);
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+/* 小尺寸：项高 24px */
+.yg-segmented--sm .yg-segmented__item {
+  height: calc(var(--yg-control-height-sm) - var(--yg-space-1));
+  padding-inline: var(--yg-space-2);
+  font-size: var(--yg-font-size-xs);
+}
+
+/* ==========================================================================
+   响应式适配（≤768px）
+   ========================================================================== */
+
+@media (max-width: 768px) {
+  /* 横向/行内表单降级为纵向：标签在上、控件全宽 */
+  .yg-form--horizontal .yg-form-item,
+  .yg-form--inline .yg-form-item {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--yg-space-1);
+  }
+
+  .yg-form--horizontal .yg-form-item__label,
+  .yg-form--inline .yg-form-item__label {
+    width: auto;
+    padding-block-start: 0;
+    text-align: left;
+  }
+
+  /* 触控目标：小尺寸输入框提升高度 */
+  .yg-input--sm {
+    height: var(--yg-control-height-lg);
+  }
+
+  /* 弹出层面板限制宽度，避免小屏溢出 */
+  .yg-select__dropdown,
+  .yg-date-picker__panel {
+    max-width: calc(100vw - var(--yg-space-4));
+  }
+}
+
+/* ==========================================================================
+   G2 连续曲率渐进增强（Chromium 139+；圆形与胶囊类组件除外）
+   border-radius 已在组件常态规则中以 --yg-radius-* 定义，
+   此处仅启用 corner-shape: squircle 曲线形状。
+   ========================================================================== */
+
+@supports (corner-shape: squircle) {
+  .yg-input,
+  .yg-input-affix,
+  .yg-textarea,
+  .yg-select__trigger,
+  .yg-select__dropdown,
+  .yg-select__option,
+  .yg-select__tag,
+  .yg-checkbox__box,
+  .yg-radio-group--button,
+  .yg-radio--button,
+  .yg-stepper__btn,
+  .yg-stepper__input,
+  .yg-upload__drag,
+  .yg-upload__item,
+  .yg-upload__thumb,
+  .yg-date-picker__trigger,
+  .yg-date-picker__panel {
+    corner-shape: squircle;
+  }
+}
