@@ -1938,13 +1938,18 @@ class AICallLogsRepo(Protocol):
         user_oid: str | None = None,
         capability: str | None = None,
         status: str | None = None,
+        key_scope: str | None = None,
+        time_start: datetime | None = None,
+        time_end: datetime | None = None,
         page: int = 1,
         page_size: int = 20,
     ) -> list[Row]:
         """Return one page, newest first (``created_at DESC, oid DESC``).
 
         All filters are optional; ``None`` means "no filter". ``page`` is
-        1-based.
+        1-based. ``time_start`` / ``time_end`` are **inclusive** bounds on
+        ``created_at`` (naive local datetimes, the column's convention); the
+        epoch-seconds → datetime conversion belongs to the router.
         """
         ...
 
@@ -1954,6 +1959,9 @@ class AICallLogsRepo(Protocol):
         user_oid: str | None = None,
         capability: str | None = None,
         status: str | None = None,
+        key_scope: str | None = None,
+        time_start: datetime | None = None,
+        time_end: datetime | None = None,
     ) -> int:
         """Total rows matching the same filters as :meth:`list_page`."""
         ...
@@ -2019,6 +2027,22 @@ class AIQuotaRepo(Protocol):
 SHARED_OWNER_OID = "0" * 24
 
 
+class _UnsetType:
+    """「未传参」哨兵：与 ``None``（= 显式置空）区分开。
+
+    只有 ``expires_at`` 用得到它。表里其他可空列的 ``None`` 一律表示「不改」，
+    而「清除到期」是管理员的正常操作——没有哨兵就无法同时表达「不改」与「置空」。
+    """
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:  # pragma: no cover - 仅调试输出
+        return "UNSET"
+
+
+UNSET: Any = _UnsetType()
+
+
 class AICredentialsRepo(Protocol):
     """Data access for ``AI_CREDENTIALS`` (AI provider 凭据, V023).
 
@@ -2027,12 +2051,15 @@ class AICredentialsRepo(Protocol):
         {"_id": <hex str>, "scope": "personal" | "shared", "owner_oid": str,
          "name": str, "kind": "openai_compat", "base_url": str,
          "models": list[str], "api_key_cipher": str, "key_hint": str | None,
-         "enabled": bool, "created_at": datetime, "updated_at": datetime}
+         "enabled": bool, "created_at": datetime, "updated_at": datetime,
+         "expires_at": datetime | None}
 
     ``models`` is the parsed form of the ``MODELS_JSON`` CLOB (a list of model id
     strings). ``api_key_cipher`` is the **only** form of the key that ever
     reaches the database: AES-GCM ciphertext, base64-encoded. ``key_hint`` holds
     the last four characters for display and is never used to decrypt.
+    ``expires_at`` is ``None`` for "never expires" (the historical behaviour);
+    the service layer keeps expired rows out of the effective catalog.
 
     Two kinds of rows share one table: ``personal`` (an admin's own key) and
     ``shared`` (a key everyone may use). Shared rows always carry
@@ -2064,6 +2091,9 @@ class AICredentialsRepo(Protocol):
         api_key_cipher: str,
         key_hint: str | None = None,
         enabled: bool = True,
+        headers: dict[str, str] | None = None,
+        api_path: str | None = None,
+        expires_at: datetime | None = None,
     ) -> str:
         """Insert a credential and return its new ``_id``.
 
@@ -2071,6 +2101,8 @@ class AICredentialsRepo(Protocol):
         ``(scope, owner_oid, name)`` already exists — the service layer turns
         that into ``409``. A duplicate is never swallowed: silently keeping the
         old key while the admin thinks theirs was saved is the worst outcome.
+
+        ``expires_at=None`` means "never expires".
         """
         ...
 
@@ -2084,8 +2116,15 @@ class AICredentialsRepo(Protocol):
         api_key_cipher: str | None = None,
         key_hint: str | None = None,
         enabled: bool | None = None,
+        headers: dict[str, str] | None = None,
+        api_path: str | None = None,
+        expires_at: datetime | None = UNSET,
     ) -> bool:
-        """只更新传入的字段；返回是否命中。"""
+        """只更新传入的字段；返回是否命中。
+
+        ``None`` 一律表示「不改」，唯一的例外是 ``expires_at``：它的默认值是
+        :data:`UNSET`（不改），显式传 ``None`` 才是「清除到期」。
+        """
         ...
 
     async def delete(self, oid: str) -> bool:

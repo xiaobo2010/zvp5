@@ -1289,6 +1289,7 @@ CREATE TABLE ai_credentials (
   enabled NUMBER(1) DEFAULT 1 NOT NULL,
   created_at TIMESTAMP NOT NULL,
   updated_at TIMESTAMP NOT NULL,
+  expires_at TIMESTAMP,
   PRIMARY KEY (oid),
   CONSTRAINT ck_ai_credentials_oid CHECK (REGEXP_LIKE(oid,''^[0-9a-f]{24}$'')),
   CONSTRAINT ck_ai_credentials_scope CHECK (scope IN (''personal'',''shared'')),
