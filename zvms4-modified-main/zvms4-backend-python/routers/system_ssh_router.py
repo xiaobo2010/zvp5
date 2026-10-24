@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 
 from fastapi import (
     APIRouter,
@@ -45,6 +46,22 @@ logger = logging.getLogger(__name__)
 
 # 终端尺寸上限：只防明显异常的数值把 PTY 撑坏，正常 xterm 在几百以内。
 MAX_TERM_DIMENSION = 1000
+
+# 一次粘贴 N 行会派生 N 个审计写任务；限并发只是为了不把连接池打满，
+# 超出上限的命令排队，不丢弃。
+AUDIT_CONCURRENCY_DEFAULT = 8
+
+
+def audit_concurrency() -> int:
+    raw = os.environ.get("ZVMS_SSH_AUDIT_CONCURRENCY")
+    try:
+        value = int(str(raw))
+    except (TypeError, ValueError):
+        return AUDIT_CONCURRENCY_DEFAULT
+    return value if value > 0 else AUDIT_CONCURRENCY_DEFAULT
+
+
+_audit_semaphore = asyncio.Semaphore(audit_concurrency())
 
 
 class SessionRequest(BaseModel):
@@ -150,20 +167,21 @@ async def _write_command_audit(
     会话本身——审计是旁路，不能成为终端的单点故障。
     """
     try:
-        await ZVMSLog(
-            url="system:web_ssh",
-            user=operator_oid,
-            data=json.dumps(
-                {
-                    "command": command,
-                    "operator": operator_oid,
-                    "operator_name": operator_name,
-                },
-                ensure_ascii=False,
-            ),
-            type="system_ssh_command",
-            level="info",
-        ).insert_log()
+        async with _audit_semaphore:
+            await ZVMSLog(
+                url="system:web_ssh",
+                user=operator_oid,
+                data=json.dumps(
+                    {
+                        "command": command,
+                        "operator": operator_oid,
+                        "operator_name": operator_name,
+                    },
+                    ensure_ascii=False,
+                ),
+                type="system_ssh_command",
+                level="info",
+            ).insert_log()
     except Exception as exc:  # noqa: BLE001 - 审计失败不改变会话结论
         logger.error("web ssh command audit failed: %s", type(exc).__name__)
 

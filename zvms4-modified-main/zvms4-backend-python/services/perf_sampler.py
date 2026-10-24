@@ -31,6 +31,7 @@ bearing, not an optimisation.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import math
 import os
@@ -264,6 +265,23 @@ def record_waits(ts: int, items: Iterable[Mapping[str, Any]]) -> int:
             "INSERT INTO perf_waits (ts, wait_class, sessions) VALUES (?, ?, ?)", rows
         )
     return len(rows)
+
+
+async def record_series_async(ts: int, series: Mapping[str, Any]) -> int:
+    """``record_series`` 的 async 版本（sqlite 写入在工作线程）。"""
+    return await asyncio.to_thread(record_series, ts, series)
+
+
+async def record_endpoints_async(ts: int, items: Iterable[Mapping[str, Any]]) -> int:
+    return await asyncio.to_thread(record_endpoints, ts, list(items))
+
+
+async def record_top_sql_async(ts: int, items: Iterable[Mapping[str, Any]]) -> int:
+    return await asyncio.to_thread(record_top_sql, ts, list(items))
+
+
+async def record_waits_async(ts: int, items: Iterable[Mapping[str, Any]]) -> int:
+    return await asyncio.to_thread(record_waits, ts, list(items))
 
 
 def purge_expired(days: int | None = None, now: float | None = None) -> dict[str, Any]:
@@ -568,10 +586,10 @@ async def sample_host() -> dict[str, Any]:
     try:
         series = dict(collect_host_metrics()["series"])
         series.update(_pool_series(db_monitor.pool_metrics()))
-        rows = record_series(ts, series)
+        rows = await record_series_async(ts, series)
 
         window = api_metrics.drain()
-        endpoints = record_endpoints(ts, window["items"])
+        endpoints = await record_endpoints_async(ts, window["items"])
         return {"ts": ts, "series": len(series), "rows": rows, "endpoints": endpoints}
     except Exception as exc:  # a sampler must never take the scheduler down
         _logger.warning("perf sample_host failed: %r", exc)
@@ -598,7 +616,7 @@ async def _sample_oracle_once(session, ts: int) -> dict[str, Any]:
         series["oracle.aas.5m"] = round(aas, 4)
     series.update(_rate_series(fast.get("counters") or {}))
 
-    rows = record_series(ts, series)
+    rows = await record_series_async(ts, series)
     return {"ts": ts, "available": True, "series": len(series), "rows": rows}
 
 
@@ -633,9 +651,9 @@ async def _sample_slow_once(session, ts: int) -> dict[str, Any]:
         if wait_class and sessions is not None:
             series[f"oracle.wait.{wait_class}.sessions"] = sessions
 
-    rows = record_series(ts, series)
-    record_waits(ts, waits)
-    top = record_top_sql(ts, slow.get("top_sql") or [])
+    rows = await record_series_async(ts, series)
+    await record_waits_async(ts, waits)
+    top = await record_top_sql_async(ts, slow.get("top_sql") or [])
     return {
         "ts": ts,
         "available": slow.get("available", False),
@@ -679,9 +697,13 @@ __all__ = [
     "query_history",
     "query_top_sql",
     "record_endpoints",
+    "record_endpoints_async",
     "record_series",
+    "record_series_async",
     "record_top_sql",
+    "record_top_sql_async",
     "record_waits",
+    "record_waits_async",
     "reset_rate_state",
     "resolve_range",
     "retention_days",

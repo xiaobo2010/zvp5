@@ -28,10 +28,12 @@ _logger = logging.getLogger(__name__)
 
 async def generate_reports():
     classes = await backends.get_groups_repo().list_non_permission()
-    await backends.get_daily_exports_repo().delete_all()
-    db_id = await backends.get_daily_exports_repo().insert(
+    exports_repo = backends.get_daily_exports_repo()
+    await exports_repo.delete_all()
+    db_id = await exports_repo.insert(
         {"created_at": datetime.now(), "status": "processing", "data": []}
     )
+    spreadsheet_items: list[dict[str, Any]] = []
     try:
         if not os.path.exists("./export"):
             os.makedirs("./export")
@@ -71,19 +73,17 @@ async def generate_reports():
                     language="zh",
                 )
                 write_statement_json(volunteer_data, spreadsheet, filename)
-                await backends.get_daily_exports_repo().push_data(
-                    db_id,
-                    {
-                        **spreadsheet,
-                        "filename": filename,
-                    },
+                spreadsheet_items.append({**spreadsheet, "filename": filename})
+                _logger.info(
+                    "Exported statement for %s in class %s (saved to %s).",
+                    user["name"],
+                    class_id["name"],
+                    filename,
                 )
-                print(
-                    f"Exported statement for {user['name']} in class {class_id['name']} (saved to {filename})."
-                )
-            print(f"Exported statements for class {class_id['name']}.")
+            _logger.info("Exported statements for class %s.", class_id["name"])
+        await exports_repo.update_fields(db_id, {"data": spreadsheet_items})
         # Create a tar.gz archive of the export directory
-        spreadsheet_items = await backends.get_daily_exports_repo().find_one(db_id)
+        spreadsheet_items = await exports_repo.find_one(db_id)
         spreadsheet_items = spreadsheet_items.get("data", [])
         df = pd.DataFrame(spreadsheet_items)
         df.rename(columns=TRANSLATIONS["zh"]["spreadsheet"], inplace=True)
