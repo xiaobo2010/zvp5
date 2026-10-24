@@ -1,7 +1,8 @@
 <script lang="ts" setup>
 import { useRouter } from 'vue-router'
 import { ElTable, ElTableColumn, ElCard, ElButton, ElInput } from 'element-plus'
-import { ref, onMounted, watch } from 'vue'
+import { nextTick, ref, onMounted, watch } from 'vue'
+import type { TableInstance } from 'element-plus'
 import api from '@/api'
 import type { Group } from '@/../types'
 import { useWindowSize } from '@vueuse/core'
@@ -22,10 +23,31 @@ const total = ref(0)
 const { t } = useI18n()
 const userStore = useUserStore()
 
-const tableHeight = ref(height.value * 0.6)
+const tableRef = ref<TableInstance>()
+
+/** 分页行 + 卡片下边距 + 页面底部留白 */
+const BOTTOM_ROOM = 96
+
+/** 表格高度 = 视口高度 − 表格实际顶部 − 底部预留，尽量少留白 */
+function computeTableHeight() {
+  const el = (tableRef.value as { $el?: HTMLElement } | undefined)?.$el
+  const top = el?.getBoundingClientRect?.().top ?? 0
+  if (top > 0 && top < height.value * 0.8) {
+    return Math.max(280, Math.round(height.value - top - BOTTOM_ROOM))
+  }
+  return Math.max(280, Math.round(height.value - 320))
+}
+
+const tableHeight = ref(computeTableHeight())
 
 watch(height, () => {
-  tableHeight.value = height.value * 0.6
+  tableHeight.value = computeTableHeight()
+})
+
+onMounted(() => {
+  nextTick(() => {
+    tableHeight.value = computeTableHeight()
+  })
 })
 
 function refresh() {
@@ -69,7 +91,7 @@ async function remove(id: string) {
 <template>
   <div class="px-2">
     <ElCard shadow="never" v-loading="loading">
-      <ElTable :data="groups">
+      <ElTable :ref="tableRef" :data="groups" :max-height="tableHeight">
         <ElTableColumn prop="name" :label="t('manage.groupList.columns.name')"></ElTableColumn>
         <ElTableColumn prop="permission" :label="t('manage.groupList.columns.permission')">
           <template #default="{ row }">

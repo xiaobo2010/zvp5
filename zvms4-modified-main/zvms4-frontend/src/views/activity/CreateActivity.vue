@@ -69,7 +69,7 @@ const visibility = permissions(user.position as UserPosition[])
 </script>
 
 <template>
-  <div class="p-4" style="width: 100%">
+  <div class="p-4 yg-create-page" style="width: 100%">
     <ElPageHeader v-if="tab" class="text-2xl px-12 py-6" @back="router.back()" :icon="ArrowLeft">
       <template #content>
         {{ $t(tab ? `activity.create.${tab}` : 'nav.create') }}
