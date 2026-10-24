@@ -1,0 +1,1057 @@
+/*
+ * 义工平台全局主题层（依据《前端设计准则》v1.0）
+ * 风格：瑞士国际主义 × 苹果质感；扁平化；天蓝主色；Apple G2 连续曲率圆角。
+ * 规则：颜色/圆角/阴影/间距/动效一律引用 design-tokens.css 的 --yg-* 令牌。
+ * 必须在 element-plus 样式之后加载（见 main.ts 导入顺序）。
+ * 仅影响前端 UI，不涉及任何后端逻辑。
+ */
+
+/* ==========================================================================
+   1. Element Plus 令牌映射（浅色）
+   ========================================================================== */
+:root {
+  /* 主色 · 天蓝 */
+  --el-color-primary: var(--yg-color-primary);
+  --el-color-primary-light-3: #56c0f0;
+  --el-color-primary-light-5: #87d2f4;
+  --el-color-primary-light-7: #b7e4f8;
+  --el-color-primary-light-8: #cfedfb;
+  --el-color-primary-light-9: #e7f6fc;
+  --el-color-primary-dark-2: #0b84ba;
+
+  /* 成功 · 绿 */
+  --el-color-success: var(--yg-color-success);
+  --el-color-success-light-3: #71d88b;
+  --el-color-success-light-5: #9ae3ac;
+  --el-color-success-light-7: #c3f1cd;
+  --el-color-success-light-8: #d7f6dc;
+  --el-color-success-light-9: #ebfbec;
+  --el-color-success-dark-2: #2a9f47;
+
+  /* 警告 · 橙 */
+  --el-color-warning: var(--yg-color-warning);
+  --el-color-warning-light-3: #ffb54d;
+  --el-color-warning-light-5: #ffca80;
+  --el-color-warning-light-7: #ffe0b3;
+  --el-color-warning-light-8: #ffeacc;
+  --el-color-warning-light-9: #fff4e6;
+  --el-color-warning-dark-2: #cc7700;
+
+  /* 危险/错误 · 红（仅高危操作） */
+  --el-color-danger: var(--yg-color-danger);
+  --el-color-danger-light-3: #ff766e;
+  --el-color-danger-light-5: #ff9d98;
+  --el-color-danger-light-7: #ffc5c1;
+  --el-color-danger-light-8: #ffd8d4;
+  --el-color-danger-light-9: #ffebe7;
+  --el-color-danger-dark-2: #cc2f26;
+  --el-color-error: var(--yg-color-danger);
+  --el-color-error-light-3: #ff766e;
+  --el-color-error-light-5: #ff9d98;
+  --el-color-error-light-7: #ffc5c1;
+  --el-color-error-light-8: #ffd8d4;
+  --el-color-error-light-9: #ffebe7;
+  --el-color-error-dark-2: #cc2f26;
+
+  /* 信息 · 中性灰（EP 的 info 用于中性提示，不占用天蓝） */
+  --el-color-info: var(--yg-gray-600);
+  --el-color-info-light-3: #b0b0b3;
+  --el-color-info-light-5: #c7c7c9;
+  --el-color-info-light-7: #dcdcde;
+  --el-color-info-light-8: #e8e8e9;
+  --el-color-info-light-9: #f2f2f3;
+  --el-color-info-dark-2: #727276;
+
+  /* 表面：一律实色不透明 */
+  --el-bg-color: var(--yg-bg-surface);
+  --el-bg-color-page: var(--yg-bg-page);
+  --el-bg-color-overlay: var(--yg-bg-surface-raised); /* 弹出面板强制实色 */
+  --el-fill-color-blank: var(--yg-bg-surface);
+  --el-fill-color-light: var(--yg-bg-surface-sunken);
+  --el-fill-color-lighter: var(--yg-bg-surface-sunken);
+  --el-fill-color-extra-light: var(--yg-gray-50);
+
+  /* 文字三级 */
+  --el-text-color-primary: var(--yg-text-primary);
+  --el-text-color-regular: var(--yg-text-secondary);
+  --el-text-color-secondary: var(--yg-text-tertiary);
+  --el-text-color-placeholder: var(--yg-text-tertiary);
+  --el-text-color-disabled: var(--yg-text-disabled);
+
+  /* 边框 */
+  --el-border-color: var(--yg-border-default);
+  --el-border-color-light: var(--yg-border-default);
+  --el-border-color-lighter: var(--yg-border-subtle);
+  --el-border-color-extra-light: var(--yg-border-subtle);
+
+  /* 圆角：控件 md=12px（准则 2.4），小组件 sm=8px */
+  --el-border-radius-base: var(--yg-radius-md);
+  --el-border-radius-small: var(--yg-radius-sm);
+  --el-border-radius-round: var(--yg-radius-pill);
+
+  /* 阴影：扁平化的层次来源 */
+  --el-box-shadow: var(--yg-shadow-md);
+  --el-box-shadow-light: var(--yg-shadow-sm);
+  --el-box-shadow-lighter: var(--yg-shadow-xs);
+  --el-box-shadow-dark: var(--yg-shadow-lg);
+
+  /* 遮罩：弹出层体系中唯一允许的半透明元素 */
+  --el-overlay-color-lighter: rgba(0, 0, 0, 0.35);
+
+  /* 字体与控件尺寸 */
+  --el-font-family: var(--yg-font-sans);
+  --el-font-size-base: var(--yg-font-size-md);
+  --el-component-size: var(--yg-control-height-md);
+  --el-component-size-small: var(--yg-control-height-sm);
+  --el-component-size-large: var(--yg-control-height-lg);
+
+  /* 页面级变量（供视图与工具类引用） */
+  --zv-bg: var(--yg-bg-page);
+  --zv-surface: var(--yg-bg-surface);
+  --zv-surface-alt: var(--yg-bg-surface-sunken);
+  --zv-text: var(--yg-text-primary);
+  --zv-text-sub: var(--yg-text-secondary);
+  --zv-label: var(--yg-text-tertiary);
+  --zv-hairline: var(--yg-border-default);
+  --zv-hairline-strong: var(--yg-border-strong);
+  --zv-accent: var(--yg-color-primary);
+}
+
+/* ==========================================================================
+   2. Element Plus 令牌映射（深色）
+   ========================================================================== */
+html.dark {
+  --el-color-primary: var(--yg-color-primary);
+  --el-color-primary-light-3: #0a74a3;
+  --el-color-primary-light-5: #075375;
+  --el-color-primary-light-7: #043246;
+  --el-color-primary-light-8: #03212f;
+  --el-color-primary-light-9: #011117;
+  --el-color-primary-dark-2: #3eb7ed;
+
+  --el-color-success: var(--yg-color-success);
+  --el-color-success-light-3: #248b3e;
+  --el-color-success-light-5: #1a642d;
+  --el-color-success-light-7: #103c1b;
+  --el-color-success-light-8: #0a2812;
+  --el-color-success-light-9: #051409;
+  --el-color-success-dark-2: #5dd27a;
+
+  --el-color-warning: var(--yg-color-warning);
+  --el-color-warning-light-3: #b36800;
+  --el-color-warning-light-5: #804b00;
+  --el-color-warning-light-7: #4d2d00;
+  --el-color-warning-light-8: #331e00;
+  --el-color-warning-light-9: #1a0f00;
+  --el-color-warning-dark-2: #ffaa33;
+
+  --el-color-danger: var(--yg-color-danger);
+  --el-color-danger-light-3: #b32922;
+  --el-color-danger-light-5: #801e18;
+  --el-color-danger-light-7: #4d120e;
+  --el-color-danger-light-8: #330c0a;
+  --el-color-danger-light-9: #1a0605;
+  --el-color-danger-dark-2: #ff6259;
+  --el-color-error: var(--yg-color-danger);
+  --el-color-error-light-3: #b32922;
+  --el-color-error-light-5: #801e18;
+  --el-color-error-light-7: #4d120e;
+  --el-color-error-light-8: #330c0a;
+  --el-color-error-light-9: #1a0605;
+  --el-color-error-dark-2: #ff6259;
+
+  --el-color-info: var(--yg-gray-500);
+  --el-color-info-light-3: #636367;
+  --el-color-info-light-5: #47474a;
+  --el-color-info-light-7: #2b2b2c;
+  --el-color-info-light-8: #1c1c1d;
+  --el-color-info-light-9: #0e0e0f;
+  --el-color-info-dark-2: #a5a5a9;
+
+  --el-bg-color: var(--yg-bg-surface);
+  --el-bg-color-page: var(--yg-bg-page);
+  --el-bg-color-overlay: var(--yg-bg-surface-raised);
+  --el-fill-color-blank: var(--yg-bg-surface);
+  --el-fill-color-light: var(--yg-bg-surface-sunken);
+  --el-fill-color-lighter: var(--yg-bg-surface-sunken);
+  --el-fill-color-extra-light: var(--yg-gray-900);
+
+  --el-text-color-primary: var(--yg-text-primary);
+  --el-text-color-regular: var(--yg-text-secondary);
+  --el-text-color-secondary: var(--yg-text-tertiary);
+  --el-text-color-placeholder: var(--yg-text-tertiary);
+  --el-text-color-disabled: var(--yg-text-disabled);
+
+  --el-border-color: var(--yg-border-default);
+  --el-border-color-light: var(--yg-border-default);
+  --el-border-color-lighter: var(--yg-border-subtle);
+  --el-border-color-extra-light: var(--yg-border-subtle);
+
+  --el-overlay-color-lighter: rgba(0, 0, 0, 0.5);
+}
+
+/* ==========================================================================
+   3. 基础排版与页面底色
+   ========================================================================== */
+html,
+body {
+  font-family: var(--yg-font-sans);
+  font-size: var(--yg-font-size-md);
+  line-height: var(--yg-line-height-normal);
+  letter-spacing: 0.01em;
+  background-color: var(--yg-bg-page);
+  color: var(--yg-text-primary);
+}
+
+/* 数字与日期等宽（准则 2.2） */
+.tabular-nums,
+.yg-text-num,
+.el-table td.el-table__cell,
+.el-pagination {
+  font-variant-numeric: tabular-nums;
+}
+
+/* 文本选中色 */
+::selection {
+  background: var(--yg-color-selection);
+}
+
+/* 键盘焦点环（准则 3.8） */
+:focus-visible {
+  outline: none;
+  box-shadow: var(--yg-focus-ring);
+}
+
+/* 图标统一 18px */
+.el-icon {
+  font-size: 18px;
+}
+
+/* 页面标题：20px 单行，窄屏不折行 */
+.el-page-header__left {
+  min-width: 0;
+}
+
+.el-page-header__content {
+  font-size: var(--yg-font-size-2xl);
+  line-height: var(--yg-line-height-snug);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ==========================================================================
+   4. 工具类（沿用 z-* 契约，语义映射到 yg 令牌）
+   ========================================================================== */
+
+/* 微标签：字段名/表头 */
+.z-label {
+  font-size: var(--yg-font-size-xs);
+  line-height: var(--yg-line-height-normal);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--yg-text-tertiary);
+  font-weight: var(--yg-font-weight-regular);
+}
+
+.z-hairline {
+  border-color: var(--yg-border-default);
+}
+
+/* 横向统计条带：大号等宽数字 + 小号大写标签 */
+.z-stat {
+  display: flex;
+  flex-direction: column;
+  gap: var(--yg-space-1);
+  min-width: 0;
+}
+
+.z-stat .z-label {
+  font-size: var(--yg-font-size-xs);
+}
+
+.z-stat__value {
+  font-size: var(--yg-font-size-2xl);
+  line-height: 1.15;
+  font-variant-numeric: tabular-nums;
+  color: var(--yg-text-primary);
+}
+
+/* 页面底色工具类：不透明实色 */
+.z-bg {
+  background-color: var(--yg-bg-page);
+}
+
+.z-surface {
+  background-color: var(--yg-bg-surface);
+}
+
+/* 指标瓦片：实色浅面 + 边框 */
+.z-tile {
+  background: var(--yg-bg-surface-sunken);
+  border: 1px solid var(--yg-border-subtle);
+  border-radius: var(--yg-radius-lg);
+}
+
+/* ==========================================================================
+   5. 卡片 / 描述列表
+   ========================================================================== */
+.el-card {
+  --el-card-bg-color: var(--yg-bg-surface);
+  --el-card-border-color: var(--yg-border-subtle);
+  --el-card-border-radius: var(--yg-radius-lg);
+  --el-card-padding: var(--yg-space-4);
+  border-width: 1px;
+  border-style: solid;
+  border-radius: var(--yg-radius-lg);
+  box-shadow: none;
+}
+
+.el-card.is-hover-shadow:hover {
+  box-shadow: var(--yg-shadow-md);
+  transform: translateY(-2px);
+  transition:
+    box-shadow var(--yg-dur-base) var(--yg-ease-out),
+    transform var(--yg-dur-base) var(--yg-ease-out);
+}
+
+.el-card.is-always-shadow {
+  box-shadow: var(--yg-shadow-sm);
+}
+
+/* 深色模式修正：EP 自带深色规则把卡片接到了 overlay（弹层）色上，
+   导致卡片过亮发灰。卡片应贴 --yg-bg-surface，弹层才用 raised。 */
+html.dark .el-card {
+  --el-card-bg-color: var(--yg-bg-surface);
+  --el-fill-color-blank: var(--yg-bg-surface);
+}
+
+/* 深色模式修正：凹陷色（#101012）用在卡片内部会形成刺眼的"黑带"。
+   暗色界面中表头/标签列应比卡片略亮一档（贴 raised 层级）。 */
+html.dark .el-table {
+  --el-table-header-bg-color: var(--yg-bg-surface-raised);
+  --el-table-footer-bg-color: var(--yg-bg-surface-raised);
+}
+
+html.dark .el-descriptions {
+  --el-descriptions-item-bordered-label-background: var(--yg-bg-surface-raised);
+}
+
+/* 深色模式修正：默认按钮底色与卡片同色会隐形，抬升一档并补描边。 */
+html.dark
+  .el-button:not(.is-text):not(.is-link):not(.el-button--primary):not(.el-button--success):not(.el-button--warning):not(.el-button--danger):not(.el-button--error) {
+  --el-button-bg-color: var(--yg-bg-surface-raised);
+  --el-button-border-color: var(--yg-border-default);
+  --el-button-hover-bg-color: #3a3a3c; /* raised 再抬半档，令牌无此级 */
+  --el-button-active-bg-color: #3a3a3c;
+}
+
+.el-card__header {
+  padding: var(--yg-space-3) var(--yg-space-4);
+  border-bottom: 1px solid var(--yg-border-subtle);
+  font-size: var(--yg-font-size-lg);
+  font-weight: var(--yg-font-weight-semibold);
+  line-height: var(--yg-line-height-snug);
+}
+
+.el-card__body {
+  padding: var(--yg-space-4);
+}
+
+.el-descriptions.is-bordered {
+  border-radius: var(--yg-radius-md);
+  --el-descriptions-item-bordered-label-background: var(--yg-bg-surface-sunken);
+}
+
+.el-descriptions__label {
+  font-size: var(--yg-font-size-xs);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--yg-text-tertiary);
+  font-weight: var(--yg-font-weight-regular);
+}
+
+.el-descriptions__content {
+  font-size: var(--yg-font-size-md);
+}
+
+/* ==========================================================================
+   6. 弹出层铁律：面板实色不透明 + 阴影层次（准则第 6 章）
+   ========================================================================== */
+
+/* 弹窗：圆角 xl + 大阴影 */
+.el-dialog {
+  --el-dialog-bg-color: var(--yg-bg-surface-raised);
+  border-radius: var(--yg-radius-xl);
+  box-shadow: var(--yg-shadow-lg);
+}
+
+/* 消息确认框：圆角 xl */
+.el-message-box {
+  --el-messagebox-bg-color: var(--yg-bg-surface-raised);
+  border: none;
+  border-radius: var(--yg-radius-xl);
+  box-shadow: var(--yg-shadow-lg);
+}
+
+/* 抽屉：实色 + 大阴影 */
+.el-drawer {
+  --el-drawer-bg-color: var(--yg-bg-surface-raised);
+  box-shadow: var(--yg-shadow-lg);
+}
+
+/* 全局消息：圆角 md + 大阴影 */
+.el-message {
+  --el-message-bg-color: var(--yg-bg-surface-raised);
+  border: none;
+  border-radius: var(--yg-radius-md);
+  box-shadow: var(--yg-shadow-lg);
+}
+
+/* 通知：圆角 xl + 大阴影 */
+.el-notification {
+  --el-notification-bg-color: var(--yg-bg-surface-raised);
+  border: none;
+  border-radius: var(--yg-radius-xl);
+  box-shadow: var(--yg-shadow-lg);
+}
+
+/* 浮层面板（下拉/选择器/气泡/日期面板）：实色 + 圆角 lg + 中阴影 */
+.el-popper.is-light {
+  background: var(--yg-bg-surface-raised);
+  border: none;
+  border-radius: var(--yg-radius-lg);
+  box-shadow: var(--yg-shadow-md);
+}
+
+.el-popper.is-light > .el-popper__arrow::before {
+  background: var(--yg-bg-surface-raised);
+  border: none;
+}
+
+/* 气泡确认框 */
+.el-popover.el-popover {
+  border-radius: var(--yg-radius-lg);
+}
+
+/* 文字提示：深色实底 + 圆角 md */
+.el-popper.is-dark {
+  background: var(--yg-gray-950);
+  border-radius: var(--yg-radius-md);
+}
+
+html.dark .el-popper.is-dark {
+  background: var(--yg-gray-800);
+}
+
+/* 弹出面板禁用一切模糊与半透明（准则 6.2 禁止清单兜底） */
+.el-dialog,
+.el-message-box,
+.el-drawer,
+.el-message,
+.el-notification,
+.el-popper {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+/* ==========================================================================
+   7. 表格：表头凹陷底 + 行 hover
+   ========================================================================== */
+.el-table {
+  font-size: var(--yg-font-size-md);
+  --el-table-bg-color: var(--yg-bg-surface);
+  --el-table-tr-bg-color: var(--yg-bg-surface);
+  --el-table-header-bg-color: var(--yg-bg-surface-sunken);
+  --el-table-footer-bg-color: var(--yg-bg-surface-sunken);
+  --el-table-border-color: var(--yg-border-subtle);
+  --el-table-header-text-color: var(--yg-text-tertiary);
+  --el-table-text-color: var(--yg-text-primary);
+  --el-table-row-hover-bg-color: var(--yg-bg-hover);
+  border-radius: var(--yg-radius-lg);
+}
+
+.el-table th.el-table__cell {
+  font-size: var(--yg-font-size-sm);
+  font-weight: var(--yg-font-weight-medium);
+  color: var(--yg-text-tertiary);
+}
+
+/* 行高压缩 */
+.el-table td.el-table__cell,
+.el-table th.el-table__cell,
+.el-table--small td.el-table__cell,
+.el-table--small th.el-table__cell {
+  padding: var(--yg-space-2) 10px;
+}
+
+.el-table--small {
+  font-size: var(--yg-font-size-md);
+}
+
+.el-table .cell,
+.el-table--small .cell {
+  line-height: 1.3;
+  padding: 0 10px 0 0;
+}
+
+.el-table th.el-table__cell > .cell,
+.el-table--small th.el-table__cell > .cell {
+  padding: 0 10px 0 0;
+}
+
+/* 卡片内表格 sticky 表头 */
+.el-card__body .el-table {
+  overflow: visible;
+}
+
+.el-card__body .el-table__inner-wrapper {
+  overflow: visible;
+}
+
+.el-card__body .el-table:not(.el-table--scrollable-y) .el-table__header-wrapper {
+  position: sticky;
+  top: -16px;
+  z-index: 3;
+  background: var(--yg-bg-surface-sunken);
+}
+
+/* ==========================================================================
+   8. 按钮 / 标签 / 分页 / 表单（扁平实色，准则 4.1）
+   ========================================================================== */
+.el-button {
+  --el-button-border-radius: var(--yg-radius-md);
+  border-radius: var(--yg-radius-md);
+  font-weight: var(--yg-font-weight-medium);
+  transition:
+    background-color var(--yg-dur-fast) var(--yg-ease-out),
+    border-color var(--yg-dur-fast) var(--yg-ease-out),
+    color var(--yg-dur-fast) var(--yg-ease-out),
+    box-shadow var(--yg-dur-fast) var(--yg-ease-out);
+}
+
+.el-button--primary {
+  box-shadow: var(--yg-shadow-sm);
+}
+
+.el-button--primary:hover {
+  box-shadow: var(--yg-shadow-md);
+}
+
+.el-button--danger {
+  box-shadow: var(--yg-shadow-sm);
+}
+
+.el-button.is-text {
+  border-radius: var(--yg-radius-md);
+}
+
+.el-button .el-icon {
+  font-size: 18px;
+}
+
+.el-button--small {
+  --el-button-size: var(--yg-control-height-sm);
+}
+
+/* 行内密集纯图标小按钮允许略收 */
+.el-button--small:has(> .el-icon):not(:has(> span)) {
+  height: 32px;
+}
+
+/* 标签：圆角 xs（准则 4.4.4） */
+.el-tag {
+  border-radius: var(--yg-radius-xs);
+  font-weight: var(--yg-font-weight-medium);
+  letter-spacing: 0.02em;
+}
+
+/* 警告横幅：圆角 md */
+.el-alert {
+  border-radius: var(--yg-radius-md);
+  --el-alert-padding: var(--yg-space-2) var(--yg-space-3);
+}
+
+/* 分页：36px 圆角 md，选中天蓝实心 */
+.el-pagination button,
+.el-pagination .el-pager li {
+  border-radius: var(--yg-radius-md);
+  font-variant-numeric: tabular-nums;
+}
+
+.el-pagination.is-background .el-pager li,
+.el-pagination.is-background .btn-prev,
+.el-pagination.is-background .btn-next {
+  background: var(--yg-bg-surface-sunken);
+}
+
+.el-form-item__label {
+  font-size: var(--yg-font-size-sm);
+  color: var(--yg-text-secondary);
+  font-weight: var(--yg-font-weight-regular);
+}
+
+/* 输入框：圆角 md + 焦点环 */
+.el-input__wrapper {
+  border-radius: var(--yg-radius-md);
+}
+
+.el-input__wrapper.is-focus {
+  box-shadow:
+    0 0 0 1px var(--yg-color-primary) inset,
+    var(--yg-focus-ring);
+}
+
+.el-input__inner {
+  font-variant-numeric: tabular-nums;
+}
+
+.el-input__inner::placeholder,
+.el-textarea__inner::placeholder {
+  color: var(--yg-text-tertiary);
+  opacity: 1;
+}
+
+html.dark .el-input__wrapper {
+  background-color: var(--yg-bg-surface-sunken);
+}
+
+.el-select__wrapper {
+  border-radius: var(--yg-radius-md);
+}
+
+.el-select--small .el-select__wrapper {
+  min-height: var(--yg-control-height-sm);
+}
+
+html.dark .el-select__wrapper {
+  background-color: var(--yg-bg-surface-sunken);
+}
+
+.el-textarea__inner {
+  border-radius: var(--yg-radius-md);
+}
+
+/* ==========================================================================
+   9. 骨架屏 / 进度条 / 其他
+   ========================================================================== */
+.el-skeleton__item {
+  border-radius: var(--yg-radius-sm);
+}
+
+.el-progress-bar__outer {
+  border-radius: var(--yg-radius-pill);
+  background: var(--yg-bg-surface-sunken);
+}
+
+.el-progress-bar__inner {
+  border-radius: var(--yg-radius-pill);
+}
+
+/* 分段控件：容器凹陷底，选中天蓝实心 */
+.el-segmented {
+  --el-border-radius-base: var(--yg-radius-md);
+  --el-segmented-item-selected-bg-color: var(--yg-color-primary);
+  --el-segmented-item-selected-color: #ffffff;
+  --el-segmented-bg-color: var(--yg-bg-surface-sunken);
+  font-size: var(--yg-font-size-md);
+  max-width: 100%;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.el-segmented::-webkit-scrollbar {
+  height: 4px;
+}
+
+.el-segmented::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+html.dark .el-segmented {
+  --el-segmented-item-selected-bg-color: var(--yg-color-primary);
+  --el-segmented-item-selected-color: #ffffff;
+}
+
+.el-segmented__item {
+  flex: 1 0 auto;
+  white-space: nowrap;
+}
+
+.el-segmented__item-label {
+  font-size: var(--yg-font-size-md);
+  white-space: nowrap;
+}
+
+.el-segmented__item:hover:not(.is-selected) {
+  background: var(--yg-bg-hover);
+}
+
+/* ElHeader / 顶栏：准则 4.3.3 背景层特批，轻微毛玻璃（blur 16px + 半透明） */
+.el-header {
+  background: rgba(255, 255, 255, 0.72);
+  -webkit-backdrop-filter: blur(16px) saturate(160%);
+  backdrop-filter: blur(16px) saturate(160%);
+  border-bottom: 1px solid var(--yg-border-subtle);
+}
+
+html.dark .el-header {
+  background: rgba(28, 28, 30, 0.72);
+}
+
+/* ==========================================================================
+   10. 毛玻璃与液态玻璃（准则 2.6：仅背景层/侧边栏/遮罩允许）
+   ========================================================================== */
+
+/* 液态玻璃：仅用于常驻侧边栏 */
+.yg-liquid-glass {
+  background: linear-gradient(160deg, rgba(255, 255, 255, 0.82), rgba(255, 255, 255, 0.6));
+  -webkit-backdrop-filter: blur(var(--yg-glass-blur-lg)) saturate(180%);
+  backdrop-filter: blur(var(--yg-glass-blur-lg)) saturate(180%);
+  border-right: 1px solid rgba(255, 255, 255, 0.55);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.65),
+    0 8px 32px rgba(28, 28, 30, 0.08);
+}
+
+html.dark .yg-liquid-glass {
+  background: linear-gradient(160deg, rgba(44, 44, 46, 0.82), rgba(28, 28, 30, 0.6));
+  border-right: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.12),
+    0 8px 32px rgba(0, 0, 0, 0.4);
+}
+
+/* 背景装饰毛玻璃（Hero/横幅） */
+.yg-frost {
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.7),
+    rgba(255, 255, 255, 0.4)
+  );
+  -webkit-backdrop-filter: blur(var(--yg-glass-blur-md)) saturate(160%);
+  backdrop-filter: blur(var(--yg-glass-blur-md)) saturate(160%);
+}
+
+html.dark .yg-frost {
+  background: linear-gradient(180deg, rgba(28, 28, 30, 0.7), rgba(28, 28, 30, 0.4));
+}
+
+/* 弹出层遮罩：弹出层体系中唯一允许的半透明元素 */
+.yg-mask {
+  background: rgba(0, 0, 0, 0.35);
+  -webkit-backdrop-filter: blur(var(--yg-glass-blur-sm));
+  backdrop-filter: blur(var(--yg-glass-blur-sm));
+}
+
+/* ==========================================================================
+   10.5 导航菜单（准则 4.3.2 .yg-menu：抽屉/侧边栏通用菜单项）
+   ========================================================================== */
+.yg-menu {
+  display: flex;
+  flex-direction: column;
+  gap: var(--yg-space-1);
+  padding: var(--yg-space-2);
+}
+
+.yg-menu__item {
+  display: flex;
+  align-items: center;
+  gap: var(--yg-space-3);
+  min-height: var(--yg-control-height-lg); /* 触控目标 ≥ 44px */
+  padding: 0 var(--yg-space-3);
+  border-radius: var(--yg-radius-md);
+  color: var(--yg-text-secondary);
+  font-size: var(--yg-font-size-md);
+  cursor: pointer;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  transition:
+    background-color var(--yg-dur-base) var(--yg-ease-out),
+    color var(--yg-dur-base) var(--yg-ease-out),
+    transform var(--yg-dur-base) var(--yg-ease-spring);
+}
+
+.yg-menu__item:hover {
+  background: var(--yg-bg-hover);
+  color: var(--yg-text-primary);
+}
+
+/* 按压弹性：弹簧缓动缩放 */
+.yg-menu__item:active {
+  transform: scale(0.96);
+  transition-timing-function: var(--yg-ease-spring);
+}
+
+/* 选中态：天蓝浅底 + 天蓝文字，弹出弹性动画 */
+.yg-menu__item.is-active {
+  background: var(--yg-color-primary-soft);
+  color: var(--yg-color-primary);
+  font-weight: var(--yg-font-weight-medium);
+  animation: yg-menu-pop var(--yg-dur-slow) var(--yg-ease-spring);
+}
+
+@keyframes yg-menu-pop {
+  0% {
+    transform: scale(0.96);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+.yg-menu__icon {
+  width: 20px;
+  height: 20px;
+  font-size: 20px;
+  flex-shrink: 0;
+}
+
+.yg-menu__label {
+  line-height: var(--yg-line-height-snug);
+}
+
+/* ==========================================================================
+   10.6 液态玻璃导航（参考 rdev/liquid-glass-react：高光折射 + 弹性交互）
+   横屏 = 左侧玻璃栏；竖屏 = 底部悬浮药丸。仅此组件使用强玻璃材质。
+   ========================================================================== */
+.yg-glass-nav {
+  position: relative;
+  z-index: 100;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* —— 横屏：左侧玻璃栏 —— */
+.yg-glass-nav--landscape {
+  width: 4rem;
+  height: 100%;
+  flex-shrink: 0;
+  background: linear-gradient(160deg, rgba(255, 255, 255, 0.78), rgba(255, 255, 255, 0.55));
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  backdrop-filter: blur(24px) saturate(180%);
+  border-right: 1px solid rgba(255, 255, 255, 0.55);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.65),
+    inset -1px 0 0 rgba(255, 255, 255, 0.25),
+    0 8px 32px rgba(28, 28, 30, 0.08);
+}
+
+/* —— 竖屏：底部悬浮药丸 —— */
+.yg-glass-nav--portrait {
+  position: fixed;
+  left: 50%;
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 12px);
+  transform: translateX(-50%);
+  max-width: calc(100vw - 24px);
+  border-radius: var(--yg-radius-pill);
+  background: linear-gradient(160deg, rgba(255, 255, 255, 0.85), rgba(255, 255, 255, 0.62));
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  backdrop-filter: blur(24px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.55);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.7),
+    0 8px 32px rgba(28, 28, 30, 0.14);
+}
+
+html.dark .yg-glass-nav--landscape {
+  background: linear-gradient(160deg, rgba(44, 44, 46, 0.78), rgba(28, 28, 30, 0.58));
+  border-right: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.12),
+    inset -1px 0 0 rgba(255, 255, 255, 0.06),
+    0 8px 32px rgba(0, 0, 0, 0.4);
+}
+
+html.dark .yg-glass-nav--portrait {
+  background: linear-gradient(160deg, rgba(44, 44, 46, 0.82), rgba(28, 28, 30, 0.62));
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.12),
+    0 8px 32px rgba(0, 0, 0, 0.5);
+}
+
+.yg-glass-nav__items {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 6px;
+}
+
+.yg-glass-nav--landscape .yg-glass-nav__items {
+  flex-direction: column;
+  height: 100%;
+  padding: var(--yg-space-2) 0;
+}
+
+.yg-glass-nav--landscape .yg-glass-nav__theme {
+  margin-top: auto;
+}
+
+/* 弹性滑动指示器（液态玻璃高亮药丸） */
+.yg-glass-nav__indicator {
+  position: absolute;
+  left: 0;
+  top: 0;
+  border-radius: var(--yg-radius-pill);
+  background: var(--yg-color-primary-soft);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.55),
+    0 2px 8px rgba(14, 165, 233, 0.25);
+  transition:
+    transform 0.45s cubic-bezier(0.3, 1.6, 0.4, 1),
+    width 0.45s cubic-bezier(0.3, 1.6, 0.4, 1),
+    height 0.45s cubic-bezier(0.3, 1.6, 0.4, 1),
+    opacity 0.2s ease-out;
+  pointer-events: none;
+}
+
+html.dark .yg-glass-nav__indicator {
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.15),
+    0 2px 8px rgba(14, 165, 233, 0.3);
+}
+
+/* 导航项：44px 触控目标 + 按压回弹 */
+.yg-glass-nav__item {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border: none;
+  border-radius: var(--yg-radius-pill);
+  background: transparent;
+  color: var(--yg-text-tertiary);
+  cursor: pointer;
+  transition:
+    color var(--yg-dur-base) var(--yg-ease-out),
+    background-color var(--yg-dur-base) var(--yg-ease-out),
+    transform var(--yg-dur-base) var(--yg-ease-spring);
+}
+
+.yg-glass-nav__item:hover {
+  color: var(--yg-text-primary);
+}
+
+.yg-glass-nav__item:active {
+  transform: scale(0.86);
+  transition-timing-function: var(--yg-ease-spring);
+}
+
+.yg-glass-nav__item.is-active {
+  color: var(--yg-color-primary);
+}
+
+.yg-glass-nav__item .el-icon {
+  font-size: 22px;
+}
+
+.yg-glass-nav__divider {
+  flex-shrink: 0;
+  background: var(--yg-border-default);
+}
+
+.yg-glass-nav--portrait .yg-glass-nav__divider {
+  width: 1px;
+  height: 22px;
+  margin: 0 4px;
+}
+
+.yg-glass-nav--landscape .yg-glass-nav__divider {
+  width: 22px;
+  height: 1px;
+  margin: 4px 0;
+}
+
+/* 主题切换按钮：点击旋转一整圈，旋转中图标随整屏快照交叉淡化 */
+.yg-glass-nav__theme-icon {
+  display: inline-flex;
+  transition: transform 0.6s var(--yg-ease-spring);
+}
+
+.yg-glass-nav__theme-icon.spinning {
+  animation: yg-theme-spin 0.6s var(--yg-ease-spring);
+}
+
+@keyframes yg-theme-spin {
+  from {
+    transform: rotate(0deg) scale(0.85);
+  }
+  50% {
+    transform: rotate(180deg) scale(1.08);
+  }
+  to {
+    transform: rotate(360deg) scale(1);
+  }
+}
+
+/* 深浅色整屏过渡：View Transitions 快照交叉淡化（非线性缓动） */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 480ms;
+  animation-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+  mix-blend-mode: normal;
+}
+
+::view-transition-old(root) {
+  z-index: 1;
+}
+
+::view-transition-new(root) {
+  z-index: 2147483646;
+}
+
+/* ==========================================================================
+   11. Apple G2 连续曲率（渐进增强：Chromium 139+ 升级为 squircle）
+       圆形与胶囊除外（准则 2.4）
+   ========================================================================== */
+@supports (corner-shape: squircle) {
+  .el-button,
+  .el-input__wrapper,
+  .el-select__wrapper,
+  .el-textarea__inner,
+  .el-pagination button,
+  .el-pagination .el-pager li,
+  .el-segmented,
+  .el-segmented__item,
+  .el-message {
+    corner-shape: squircle;
+  }
+
+  .el-card,
+  .el-popper.is-light,
+  .el-popover.el-popover,
+  .z-tile,
+  .el-table,
+  .yg-menu__item {
+    corner-shape: squircle;
+  }
+
+  .el-dialog,
+  .el-message-box,
+  .el-notification,
+  .el-drawer {
+    corner-shape: squircle;
+  }
+
+  .el-tag,
+  .el-skeleton__item {
+    corner-shape: squircle;
+  }
+}
+
+/* ==========================================================================
+   12. 尊重减少动效偏好（准则 2.7，!important 唯一特许场景）
+   ========================================================================== */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
