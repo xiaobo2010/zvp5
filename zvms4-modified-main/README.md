@@ -4,6 +4,11 @@
 > MongoDB 代码与依赖已移除。本文保留早期移植与双库阶段的工程记录；部署、配置和
 > 数据库口径以 `zvms4-backend-python/README.md`、`db/oracle/` 与
 > `docs/ADB_SCHEMA_SPEC.md` 为准。
+>
+> **2026-10-24 参考树收敛**：`zvp-latest/` 与 `zvp5-gitlab/` 已删除；学海 API
+> 原始文件归档在仓库根 `reference/xuehai/`，审核流/FAQ/资源/定向推送设计归档在
+> `reference/zvp5-gitlab/`。`UserProfile` 与 `ManageRoles` 页面已接入主线。对账
+> 与处置记录见 `docs/REFERENCE_TREES_ALIGNMENT.md`。
 
 > 基于上游 **zvms4**（`zvms/zvms4-backend-python` + `zvms/zvms4-frontend`）的定制版本。
 > **改动方向一：数据库层向现役 zvp 平台的真实结构对齐。**

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import {
+  Avatar,
   CirclePlusFilled,
   EditPen,
   HomeFilled,
@@ -81,6 +82,13 @@ const navs: Array<{
     show: user.position.filter((x) => x !== 'student').length > 0,
     judge: (path) =>
       path.startsWith('/group') || path.startsWith('/user/') && path !== '/user/login' || path.startsWith('/manage')
+  },
+  {
+    icon: Avatar,
+    name: 'profile',
+    path: '/me',
+    show: true,
+    judge: (path) => path.startsWith('/me')
   },
   {
     icon: InfoFilled,
