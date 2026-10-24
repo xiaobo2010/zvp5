@@ -28,6 +28,7 @@ from pydantic import BaseModel, Field
 from services.ai import audit, credentials, quota, rate_limit, routing
 from services.ai import config as ai_config
 from services.ai import ocr as ai_ocr
+from services.ai import ocr_engines
 from services.ai import ocr_engines_admin
 from services.ai import providers
 from services.ai.credentials import CredentialError
@@ -562,9 +563,28 @@ async def reset_user_quota(
 # Health（admin 视图：不含密钥、不含上游原始报文）
 # ---------------------------------------------------------------------------
 
+# 本地引擎（rapidocr）的预热状态。``None`` = 还没预热过。
+# 只存布尔值：不存路径、不存模型名、不存任何加载细节，避免 health 视图变成
+# 「服务器文件系统/引擎内部结构」的泄露面。
+_local_engine_ready: bool | None = None
+
+
+async def _warmup_local_engines() -> bool:
+    """后台预热本地引擎；健康检查不能因此失败，异常一律降级为 ``False``。"""
+    global _local_engine_ready
+    try:
+        _local_engine_ready = bool(await ocr_engines.warmup_local_engines())
+    except Exception:  # noqa: BLE001 - warmup 契约上不抛，这里只是最后一道保险
+        _logger.exception("ai local engine warmup failed")
+        _local_engine_ready = False
+    return _local_engine_ready
+
 
 @router.get("/health")
-async def ai_health(user=Depends(get_current_user)):
+async def ai_health(
+    background_tasks: BackgroundTasks,
+    user=Depends(get_current_user),
+):
     _require_admin(user)
 
     entries = await credentials.catalog(user["id"])
@@ -590,11 +610,18 @@ async def ai_health(user=Depends(get_current_user)):
                 }
             )
 
+    # 预热本地引擎（rapidocr）：首次加载 onnxruntime 与模型要秒级时间，放在
+    # 后台任务里跑，/health 立即返回；warmup 本身幂等，重复请求只是复用实例。
+    # 预热的失败不影响本响应（失败只体现在下面 local_engine_ready 的取值上）。
+    background_tasks.add_task(_warmup_local_engines)
+
     return {
         "status": "ok",
         "code": 200,
         "data": {
             "enabled": ai_config.is_enabled(),
+            # 只有一个布尔：预热是否已就绪。不暴露任何路径 / 模型名 / 密钥材料。
+            "local_engine_ready": bool(_local_engine_ready),
             "max_concurrency": ai_config.max_concurrency(),
             "providers": ai_config.public_provider_view(),
             "routes": ai_config.routes(),

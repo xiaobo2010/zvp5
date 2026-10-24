@@ -40,6 +40,11 @@ _REQUIRED_SECRET_FIELDS: dict[str, tuple[str, ...]] = {
     ocr_engines.KIND_TENCENT: ("secret_id", "secret_key", "region"),
     ocr_engines.KIND_ALIYUN: ("access_key_id", "access_key_secret"),
     ocr_engines.KIND_RAPIDOCR: (),
+    # 百度 OCR：api_key + secret_key 先换 access_token 再调识别接口，两者都必填
+    # （缺 secret_key 换不到 token，缺 api_key 无法标识应用）。
+    ocr_engines.KIND_BAIDU: ("api_key", "secret_key"),
+    # Groq：OpenAI 兼容，单 api_key 就够。
+    ocr_engines.KIND_GROQ: ("api_key",),
 }
 
 # key_hint 取「账号标识」而不是密钥本身：给管理界面认「这是哪把 key」，
@@ -47,6 +52,10 @@ _REQUIRED_SECRET_FIELDS: dict[str, tuple[str, ...]] = {
 _HINT_FIELD: dict[str, str] = {
     ocr_engines.KIND_TENCENT: "secret_id",
     ocr_engines.KIND_ALIYUN: "access_key_id",
+    # baidu / groq 的账号标识就是 api_key 本身（baidu 另有 secret_key，但
+    # api_key 是「应用级」标识，更适合做 hint）。
+    ocr_engines.KIND_BAIDU: "api_key",
+    ocr_engines.KIND_GROQ: "api_key",
 }
 
 

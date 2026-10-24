@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 from contextlib import asynccontextmanager
 from datetime import datetime
 from types import SimpleNamespace
@@ -462,16 +463,132 @@ def test_rapidocr_real_smoke() -> None:
 
 
 # ---------------------------------------------------------------------------
+# RapidOCR 的 ORT 线程限制 + 本地预热
+# ---------------------------------------------------------------------------
+
+
+class _WarmupSpy:
+    """预热用的假引擎：记录每次调用，可选地模拟「模型加载失败」。"""
+
+    def __init__(self, *, fail: bool = False) -> None:
+        self.fail = fail
+        self.calls: list[tuple[bytes, dict]] = []
+
+    def __call__(self, payload, **kwargs):
+        self.calls.append((payload, kwargs))
+        if self.fail:
+            raise RuntimeError("onnxruntime session init failed")
+        return SimpleNamespace(txts=(), scores=(), boxes=None, elapse=0.0)
+
+
+def test_warmup_local_engines_is_idempotent(monkeypatch) -> None:
+    spy = _WarmupSpy()
+    monkeypatch.setattr(ocr_engines, "_RAPIDOCR_ENGINE", spy)
+    monkeypatch.setattr(ocr_engines, "_WARMUP_DONE", False)
+
+    assert _run(ocr_engines.warmup_local_engines()) is True
+    assert _run(ocr_engines.warmup_local_engines()) is True
+
+    # 首次：det/cls 一遍 + rec-only 一遍（让第一张真图也不用等 rec 会话）；
+    # 第二次命中完成标记，一次推理都不该再跑。
+    assert len(spy.calls) == 2
+    assert spy.calls[0][1] == {}
+    assert spy.calls[1][1] == {
+        "use_det": False,
+        "use_cls": False,
+        "use_rec": True,
+    }
+
+
+def test_warmup_local_engines_returns_false_instead_of_raising(monkeypatch) -> None:
+    spy = _WarmupSpy(fail=True)
+    monkeypatch.setattr(ocr_engines, "_RAPIDOCR_ENGINE", spy)
+    monkeypatch.setattr(ocr_engines, "_WARMUP_DONE", False)
+
+    # 健康检查依赖这个契约：本地引擎挂了只降级成 False，不能把 /health 变成 500。
+    assert _run(ocr_engines.warmup_local_engines()) is False
+    # 失败不标记完成：下次健康检查还能重试（也许只是模型没下载完）。
+    assert ocr_engines._WARMUP_DONE is False
+    assert _run(ocr_engines.warmup_local_engines()) is False
+    assert len(spy.calls) == 2
+
+
+def test_rapidocr_ort_threads_env_override_reaches_the_constructor(monkeypatch) -> None:
+    captured: dict = {}
+
+    class _FakeRapidOCR:
+        def __init__(self, params=None) -> None:
+            captured["params"] = params
+
+    monkeypatch.setenv(ocr_engines.ORT_THREADS_ENV, "2")
+    monkeypatch.setattr(ocr_engines, "_RAPIDOCR_ENGINE", None)
+    monkeypatch.setattr(
+        ocr_engines,
+        "_load_rapidocr_sdk",
+        lambda: SimpleNamespace(RapidOCR=_FakeRapidOCR),
+    )
+
+    ocr_engines._rapidocr_instance()
+
+    # 只断言构造参数：这里绝不真的加载 ONNX 模型。
+    assert captured["params"] == {
+        "EngineConfig.onnxruntime.intra_op_num_threads": 2,
+        "EngineConfig.onnxruntime.inter_op_num_threads": 1,
+    }
+
+
+@pytest.mark.parametrize("raw", ["0", "-1", "-8"])
+def test_rapidocr_ort_threads_zero_or_negative_means_unlimited(
+    monkeypatch, raw: str
+) -> None:
+    recorded: list[dict] = []
+
+    class _Factory:
+        def __init__(self, **kwargs) -> None:
+            recorded.append(kwargs)
+
+    monkeypatch.setenv(ocr_engines.ORT_THREADS_ENV, raw)
+
+    ocr_engines._construct_rapidocr(_Factory)
+
+    # 0 / 负数 = 不限制，把线程数交还给 ORT 默认值：一个参数都不传。
+    assert recorded == [{}]
+
+
+def test_rapidocr_ort_default_threads_are_bounded_by_cpu_count(monkeypatch) -> None:
+    monkeypatch.delenv(ocr_engines.ORT_THREADS_ENV, raising=False)
+    cpus = os.cpu_count() or 1
+
+    threads = ocr_engines._rapidocr_intra_threads()
+
+    expected_default = min(
+        ocr_engines.ORT_DEFAULT_MAX_INTRA_THREADS,
+        max(ocr_engines.ORT_DEFAULT_MIN_INTRA_THREADS, cpus // 2),
+    )
+    # 默认值本身落在 2..4；最终值再被 CPU 数钳住（1 核机器上只能降到 1）。
+    assert 2 <= expected_default <= 4
+    assert threads == max(1, min(expected_default, cpus))
+    assert threads <= cpus
+
+
+# ---------------------------------------------------------------------------
 # 注册表
 # ---------------------------------------------------------------------------
 
 
 def test_registry_covers_every_ddl_kind() -> None:
-    assert set(ocr_engines.ENGINES) == {
+    # 两处都写死五元组：只断言 ``set(ENGINES) == set(ENGINE_KINDS)`` 时，两边
+    # 一起漏掉同一个 kind 会静默通过——那正好是「DDL 拒收新 kind」的前置条件。
+    expected_kinds = {
         ocr_engines.KIND_TENCENT,
         ocr_engines.KIND_ALIYUN,
+        ocr_engines.KIND_BAIDU,
         ocr_engines.KIND_RAPIDOCR,
+        ocr_engines.KIND_GROQ,
     }
+    assert len(expected_kinds) == 5
+    assert set(ocr_engines.ENGINE_KINDS) == expected_kinds
+    assert set(ocr_engines.ENGINES) == expected_kinds
     for kind, engine_cls in ocr_engines.ENGINES.items():
         assert engine_cls.kind == kind
         assert callable(engine_cls().recognize)
@@ -507,7 +624,20 @@ class _FakeQuotaRepo:
 
 def test_site_kinds_are_the_engine_whitelist() -> None:
     assert quota.SITE_KIND_PREFIX == "ocr_"
-    assert quota.SITE_KINDS == ("ocr_tencent", "ocr_aliyun", "ocr_rapidocr")
+    # 白名单必须由注册表**派生**：只把字面量从 3 个换成 5 个，会让「新增引擎但
+    # 忘了同步额度口径」继续通过；这里同时钉住派生关系与具体五元组。
+    assert quota.SITE_KINDS == tuple(
+        f"{quota.SITE_KIND_PREFIX}{kind}" for kind in ocr_engines.ENGINE_KINDS
+    )
+    assert set(quota.SITE_KINDS) == {
+        "ocr_tencent",
+        "ocr_aliyun",
+        "ocr_baidu",
+        "ocr_rapidocr",
+        "ocr_groq",
+    }
+    for kind in ocr_engines.ENGINE_KINDS:
+        assert quota.site_kind(kind) == f"{quota.SITE_KIND_PREFIX}{kind}"
     assert quota.site_kind("tencent") == "ocr_tencent"
 
 
