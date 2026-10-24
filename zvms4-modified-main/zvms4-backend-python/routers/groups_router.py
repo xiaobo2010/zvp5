@@ -11,7 +11,7 @@ from db import backends
 from pydantic import BaseModel
 
 from util.calculate import calculate_user_time_bulk
-from util.cert import check_password
+from util.cert import custom_password_flags_async
 from util.get_class import get_activities_related_to_user
 
 from util.object_id import (
@@ -252,16 +252,16 @@ async def get_users_in_class(
     count = len(result)
     result.sort(key=lambda user: user.get("id") or "")
     result = result[(page - 1) * perpage : (page - 1) * perpage + perpage]
-    for user in result:
+    custom_flags = (
+        await custom_password_flags_async(result) if pwdm else None
+    )
+    for index, user in enumerate(result):
         user["_id"] = str(user["_id"])
         class_id = str(user["class_id"]) if user.get("class_id") else ""
         user["class_id"] = class_id
         user["group"] = [class_id] if class_id else []
         if pwdm:
-            stored = user.get("password")
-            user["password"] = (
-                stored is not None and not check_password(user["id"], stored)
-            )
+            user["password"] = custom_flags[index]
         else:
             user["password"] = None
     return {"status": "ok", "code": 200, "data": [public_user(row) for row in result], "metadata": {"size": count}}

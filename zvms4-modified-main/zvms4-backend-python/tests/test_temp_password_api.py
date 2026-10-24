@@ -106,6 +106,11 @@ def api(monkeypatch):
         code.encode("utf-8"), gensalt()
     ).decode("utf-8")
 
+    async def hash_temp_password_async(code):
+        return guard.hash_temp_password(code)
+
+    guard.hash_temp_password_async = hash_temp_password_async
+
     status = {"ban": (False, None, None)}
 
     async def device_ban_status(xuehai_id):

@@ -20,7 +20,7 @@ from util.get_class import get_user_class
 from util.object_id import get_current_user, validate_object_id
 from db.oracle.session import session_scope
 from util.permission.user import validate_read_group_permission
-from util.cert import check_password
+from util.cert import custom_password_flags_async
 from util.user import public_user
 
 router = APIRouter()
@@ -286,16 +286,16 @@ async def get_group_users_v2(
     start = (page - 1) * perpage
     members = members[start : start + perpage]
 
-    for member in members:
+    custom_flags = (
+        await custom_password_flags_async(members) if pwdm else None
+    )
+    for index, member in enumerate(members):
         member["_id"] = str(member["_id"])
         class_id = str(member["class_id"]) if member.get("class_id") else ""
         member["class_id"] = class_id
         member["group"] = [class_id] if class_id else []
         if pwdm:
-            stored = member.get("password")
-            member["password"] = (
-                stored is not None and not check_password(member["id"], stored)
-            )
+            member["password"] = custom_flags[index]
         else:
             member["password"] = None
 

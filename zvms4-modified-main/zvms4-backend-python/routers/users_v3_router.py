@@ -2,7 +2,6 @@ import logging
 from datetime import datetime, timedelta
 from typing import Literal, Optional
 
-from bcrypt import hashpw, gensalt
 from fastapi import (
     APIRouter,
     BackgroundTasks,
@@ -19,7 +18,11 @@ from db.oracle.session import session_scope
 from db.repos.oracle.users import UserGoneError
 from services import risk_monitor
 from typings.log import inject_log, xuehai_id_from
-from util.cert import generate_initial_password, get_current_totp
+from util.cert import (
+    generate_initial_password,
+    get_current_totp,
+    hash_password_async,
+)
 from util.group import get_user_permissions, is_in_a_same_class
 from util.object_id import compulsory_temporary_token, get_current_user
 from util.permission.user import credential_change_forbidden, role_change_forbidden
@@ -363,7 +366,7 @@ async def create_user_v3(
     # 建号初始密码 = 学号（平台运营要求新生可用学号直接登录；可枚举风险已确认接受）。
     # 学号 pwd_strength=1<3，登录仍走「弱密码 → 5 分钟临时令牌 → 强制改密」闭环。
     initial_password = payload.id
-    password = hashpw(initial_password.encode("utf-8"), gensalt()).decode("utf-8")
+    password = (await hash_password_async(initial_password)).decode("utf-8")
 
     try:
         new_id = await repo.create(
@@ -432,7 +435,7 @@ async def reset_user_password_v3(
     target_oid = str(target["_id"])
     affected = await backends.get_users_repo().set_password_guarded(
         target_oid,
-        hashpw(initial_password.encode("utf-8"), gensalt()).decode("utf-8"),
+        (await hash_password_async(initial_password)).decode("utf-8"),
         user["id"],
     )
     if affected == 0:
@@ -932,7 +935,10 @@ async def create_temp_password_v3(
     if "admin" in target_per and "admin" not in per:
         raise HTTPException(status_code=403, detail="不能为管理员账号创建临时密码")
 
-    from services.device_guard import generate_temp_password, hash_temp_password
+    from services.device_guard import (
+        generate_temp_password,
+        hash_temp_password_async,
+    )
 
     ttl_minutes = _temp_password_ttl_minutes()
     code = generate_temp_password()
@@ -946,7 +952,7 @@ async def create_temp_password_v3(
     await passwords.issue_for_user(
         str(target["_id"]),
         str(user["id"]),
-        hash_temp_password(code),
+        await hash_temp_password_async(code),
         xuehai_id_from(request) or None,
         expires_at,
     )
