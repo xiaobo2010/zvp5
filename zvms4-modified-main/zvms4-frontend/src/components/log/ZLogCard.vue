@@ -144,7 +144,7 @@ const auditDetail = computed(() => {
 </script>
 
 <template>
-  <div class="py-1 z-wrap">
+  <div class="py-1 yg-form-wrap">
     <ElCard shadow="hover">
       <ElForm>
         <ElFormItem label="类型">
@@ -164,7 +164,7 @@ const auditDetail = computed(() => {
             <div
               v-if="log.user_id"
               class="text-xs"
-              style="color: var(--zv-label)"
+              style="color: var(--yg-text-tertiary)"
             >
               {{ log.user_id }}
             </div>

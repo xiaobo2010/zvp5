@@ -85,11 +85,11 @@ defineExpose({ open, succeed, fail })
   >
     <div class="space-y-4">
       <div>
-        <div class="mb-1 text-[12px] uppercase tracking-wide text-[var(--zv-label)]">{{ t('server.auth.scene') }}</div>
-        <div class="break-all text-[14px] leading-6 text-[var(--zv-text)]">{{ scene }}</div>
+        <div class="mb-1 text-[12px] uppercase tracking-wide text-[var(--yg-text-tertiary)]">{{ t('server.auth.scene') }}</div>
+        <div class="break-all text-[14px] leading-6 text-[var(--yg-text-primary)]">{{ scene }}</div>
       </div>
       <div>
-        <div class="mb-1 text-[12px] uppercase tracking-wide text-[var(--zv-label)]">{{ t('server.auth.codeLabel') }}</div>
+        <div class="mb-1 text-[12px] uppercase tracking-wide text-[var(--yg-text-tertiary)]">{{ t('server.auth.codeLabel') }}</div>
         <ElInput
           v-model="code"
           :placeholder="t('server.auth.codePlaceholder')"
@@ -102,12 +102,12 @@ defineExpose({ open, succeed, fail })
       <p v-if="errorMessage" class="text-[13px] leading-5 text-[#b42318] dark:text-[#ff8a7a]">
         {{ errorMessage }}
       </p>
-      <p class="text-[12px] leading-5 text-[var(--zv-label)]">{{ t('server.auth.note') }}</p>
+      <p class="text-[12px] leading-5 text-[var(--yg-text-tertiary)]">{{ t('server.auth.note') }}</p>
     </div>
     <template #footer>
       <div class="flex items-center justify-end gap-2">
         <button
-          class="border border-[var(--zv-hairline-strong)] bg-[var(--zv-surface)] px-4 text-[14px] text-[var(--zv-text)] transition-colors hover:bg-[var(--zv-surface-alt)] disabled:opacity-50"
+          class="border border-[var(--yg-border-strong)] bg-[var(--yg-bg-surface)] px-4 text-[14px] text-[var(--yg-text-primary)] transition-colors hover:bg-[var(--yg-bg-surface-sunken)] disabled:opacity-50"
           style="height: 34px"
           :disabled="loading"
           @click="cancel"
@@ -115,7 +115,7 @@ defineExpose({ open, succeed, fail })
           {{ t('server.auth.cancel') }}
         </button>
         <button
-          class="border border-[var(--zv-hairline-strong)] bg-[var(--zv-text)] px-4 text-[14px] text-[var(--zv-surface)] transition-colors hover:opacity-80 disabled:opacity-50"
+          class="border border-[var(--yg-border-strong)] bg-[var(--yg-text-primary)] px-4 text-[14px] text-[var(--yg-bg-surface)] transition-colors hover:opacity-80 disabled:opacity-50"
           style="height: 34px"
           :disabled="loading"
           @click="submit"

@@ -4,14 +4,13 @@ import { toRefs, ref, computed } from 'vue'
 import {
   ElButton,
   ElInput,
-  ElRow,
-  ElCol,
   ElPopconfirm,
   ElButtonGroup,
-  ElMessage
+  ElIcon,
+  ElMessage,
+  ElTag
 } from 'element-plus'
-import categories from './categories.json'
-import { Calendar, ArrowRight, Delete, Plus, Edit } from '@element-plus/icons-vue'
+import { Calendar, ArrowRight, Delete, Edit } from '@element-plus/icons-vue'
 import dayjs from '@/plugins/dayjs'
 import { useUserStore } from '@/stores/user'
 import {
@@ -55,7 +54,7 @@ const emits = defineEmits<{
 }>()
 
 const user = useUserStore()
-const { t, locale } = useI18n()
+const { t } = useI18n()
 const { activity, mode, membersCount, showDetails, local, memberDetails } = toRefs(props)
 
 const hovered = ref(false)
@@ -116,120 +115,189 @@ const refresh = () => emits('refresh')
     @mouseleave="hovered = false"
     style="width: 100%"
   >
-    <p class="flex flex-wrap items-center gap-x-2 gap-y-1 text-xl pl-4" style="width: 100%">
-      <span v-if="!editDescription" @dblclick="canModify && (editDescription = true)" class="break-words">{{
-        activity.name
-      }}</span>
-      <ElInput v-else v-model="name" style="width: 328px" required @keydown.enter="submitInfo">
-        <!--<template #append>
-          <ElButton class="px-2" type="success" :icon="ArrowRight" @click="submitInfo" />
-        </template>-->
-      </ElInput>
-      <ElButtonGroup>
-        <ZActivityType
-          class="px-2"
-          :type="activity.type"
-          mode="full"
-          show-special
-          force="full"
-          :status="activity.status"
-        />
-      </ElButtonGroup>
-    </p>
-    <div v-if="!editDescription" class="flex items-start justify-between gap-2 pl-4">
-      <div class="text-sm text-gray-500" @dblclick="canModify && (editDescription = true)">
-        <ZMarkdown :source="activity.description" />
+    <div class="yg-activity-details">
+      <!-- 标题行 -->
+      <div class="yg-activity-details__head">
+        <h3 class="yg-activity-details__title">
+          <span
+            v-if="!editDescription"
+            class="break-words"
+            @dblclick="canModify && (editDescription = true)"
+          >
+            {{ activity.name }}
+          </span>
+          <ElInput
+            v-else
+            v-model="name"
+            class="yg-activity-details__name-input"
+            required
+            @keydown.enter="submitInfo"
+          />
+        </h3>
+        <ElButtonGroup>
+          <ZActivityType
+            class="px-2"
+            :type="activity.type"
+            mode="full"
+            show-special
+            force="full"
+            :status="activity.status"
+          />
+        </ElButtonGroup>
       </div>
-      <ElButton
-        v-if="canModify"
-        class="flex-shrink-0"
-        size="small"
-        text
-        bg
-        circle
-        :icon="Edit"
-        :title="t('activity.form.actions.modify')"
-        @click="editDescription = true"
-      />
-    </div>
-    <div v-else class="pt-2 pl-4">
-      <ZMarkdownEditor v-model="description" :maxlength="1000" />
-      <div style="text-align: right" class="py-2">
-        <ElButton
-          text
-          bg
-          circle
-          class="px-2"
-          type="success"
-          :icon="ArrowRight"
-          @click="submitInfo"
-        />
+
+      <!-- 描述 -->
+      <div v-if="!editDescription" class="yg-activity-details__desc-row">
+        <div
+          class="yg-activity-details__desc"
+          @dblclick="canModify && (editDescription = true)"
+        >
+          <ZMarkdown :source="activity.description" />
+        </div>
+        <button
+          v-if="canModify"
+          type="button"
+          class="yg-icon-btn yg-icon-btn--ghost yg-icon-btn--sm flex-shrink-0"
+          :title="t('activity.form.actions.modify')"
+          :aria-label="t('activity.form.actions.modify')"
+          @click="editDescription = true"
+        >
+          <ElIcon><Edit /></ElIcon>
+        </button>
       </div>
-    </div>
-    <div class="py-2 pl-4">
-      <ElButton
-        size="small"
-        text
-        bg
-        round
-        :type="getDateStatusColor(activity.date)"
-        class="py-2"
-        :icon="Calendar"
-      >
-        {{ dayjs(activity.date).format('YYYY-MM-DD HH:mm:ss') }}
-      </ElButton>
-      <ZActivityDuration
-        class="px-2"
-        v-if="memberDetails"
-        :mode="memberDetails?.mode"
-        :duration="memberDetails?.duration"
-        force="full"
-      />
-      <ZActivityMemberList
-        v-if="!showMembersInline"
-        :members-count="membersCount"
-        class="px-2"
-        :activity="activity"
-        @refresh="refresh"
-      />
-      <ZActivityStatsDialog v-if="canViewStats" :aid="activity._id" @refresh="refresh" />
-      <ZActivityAttachmentsDialog
-        v-if="canModify && !isXuehaiDevice"
-        class="px-2"
-        :activity-id="activity._id"
-      />
-    </div>
-    <ElRow>
-      <ElCol :span="6">
-        <div class="pl-4 py-2">
-          <ZActivityMember
-            :id="activity.creator"
-            :icon="
-              StreamlineInterfaceUserEditActionsCloseEditGeometricHumanPencilPersonSingleUpUserWrite
-            "
+      <div v-else class="yg-activity-details__edit">
+        <ZMarkdownEditor v-model="description" :maxlength="1000" />
+        <div class="yg-activity-details__edit-actions">
+          <ElButton
+            text
+            circle
+            class="px-2"
+            type="primary"
+            :icon="ArrowRight"
+            @click="submitInfo"
           />
         </div>
-      </ElCol>
-      <ElCol :span="18">
-        <div class="pl-4 py-2" style="text-align: right">
-          <ElPopconfirm
-            v-if="
-              mode !== 'mine' &&
-              !local &&
-              (user._id === activity.creator || user.position.includes('admin') || user.position.includes('department'))
-            "
-            :title="t('activity.form.actions.delete.confirm')"
-            width="328px"
-            @confirm="deleteActivity(activity._id)"
-          >
-            <template #reference>
-              <ElButton :icon="Delete" type="danger" size="small" text bg round>
-                {{ t('activity.form.actions.delete.name') }}
-              </ElButton>
-            </template>
-          </ElPopconfirm>
-        </div>
-      </ElCol>
-    </ElRow>
+      </div>
+
+      <!-- 元信息行 -->
+      <div class="yg-activity-details__meta">
+        <ElTag :type="getDateStatusColor(activity.date)" size="small">
+          <ElIcon class="mr-1"><Calendar /></ElIcon>
+          {{ dayjs(activity.date).format('YYYY-MM-DD HH:mm:ss') }}
+        </ElTag>
+        <ZActivityDuration
+          class="px-2"
+          v-if="memberDetails"
+          :mode="memberDetails?.mode"
+          :duration="memberDetails?.duration"
+          force="full"
+        />
+        <ZActivityMemberList
+          v-if="!showMembersInline"
+          :members-count="membersCount"
+          class="px-2"
+          :activity="activity"
+          @refresh="refresh"
+        />
+        <ZActivityStatsDialog v-if="canViewStats" :aid="activity._id" @refresh="refresh" />
+        <ZActivityAttachmentsDialog
+          v-if="canModify && !isXuehaiDevice"
+          class="px-2"
+          :activity-id="activity._id"
+        />
+      </div>
+
+      <!-- 底部：创建者 + 危险操作 -->
+      <div class="yg-activity-details__foot">
+        <ZActivityMember
+          :id="activity.creator"
+          :icon="
+            StreamlineInterfaceUserEditActionsCloseEditGeometricHumanPencilPersonSingleUpUserWrite
+          "
+        />
+        <ElPopconfirm
+          v-if="
+            mode !== 'mine' &&
+            !local &&
+            (user._id === activity.creator || user.position.includes('admin') || user.position.includes('department'))
+          "
+          :title="t('activity.form.actions.delete.confirm')"
+          width="328px"
+          confirm-button-type="danger"
+          @confirm="deleteActivity(activity._id)"
+        >
+          <template #reference>
+            <!-- 删除活动是高危操作：红字按钮 + 二次确认（准则第 5 章） -->
+            <ElButton :icon="Delete" type="danger" size="small" text>
+              {{ t('activity.form.actions.delete.name') }}
+            </ElButton>
+          </template>
+        </ElPopconfirm>
+      </div>
+    </div>
   </ZButtonOrCard>
 </template>
+
+<style scoped>
+/* 活动卡片：统一内边距与行距，替代原先零散的 pl-4 硬编码（准则 2.3 间距阶梯） */
+.yg-activity-details {
+  display: flex;
+  flex-direction: column;
+  gap: var(--yg-space-3);
+  padding: var(--yg-space-4);
+}
+
+.yg-activity-details__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--yg-space-2);
+}
+
+.yg-activity-details__title {
+  margin: 0;
+  font-size: var(--yg-font-size-2xl);
+  font-weight: var(--yg-font-weight-semibold);
+  line-height: var(--yg-line-height-tight);
+  color: var(--yg-text-primary);
+}
+
+.yg-activity-details__name-input {
+  width: 328px;
+}
+
+.yg-activity-details__desc {
+  font-size: var(--yg-font-size-md);
+  color: var(--yg-text-secondary);
+}
+
+.yg-activity-details__desc-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--yg-space-2);
+}
+
+.yg-activity-details__edit-actions {
+  display: flex;
+  justify-content: flex-end;
+  padding-block: var(--yg-space-2);
+}
+
+.yg-activity-details__meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--yg-space-2);
+}
+
+.yg-activity-details__foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--yg-space-2);
+  padding-top: var(--yg-space-2);
+  border-top: calc(var(--yg-space-1) / 4) solid var(--yg-border-subtle);
+}
+</style>

@@ -3,7 +3,6 @@ import { computed, nextTick, onMounted, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
   ElButton,
-  ElCard,
   ElDialog,
   ElEmpty,
   ElForm,
@@ -321,91 +320,90 @@ onMounted(() => {
 
 <template>
   <div class="flex flex-col gap-4">
-    <ElCard shadow="never" v-loading="loading">
-      <template #header>
-        <div class="flex flex-wrap items-center justify-between gap-3">
-          <div class="flex flex-col gap-1">
-            <span>{{ t('ai.engines.title') }}</span>
-            <span class="text-xs font-normal" style="color: var(--zv-label)">
-              {{ t('ai.engines.subtitle') }}
-            </span>
-          </div>
-          <div class="flex flex-wrap items-center gap-2">
-            <ElButton @click="load">
-              <ElIcon class="mr-1"><Refresh /></ElIcon>
-              {{ t('ai.common.refresh') }}
-            </ElButton>
-            <ElButton type="primary" @click="openCreate">
-              <ElIcon class="mr-1"><Plus /></ElIcon>
-              {{ t('ai.engines.create') }}
-            </ElButton>
-          </div>
+    <section class="yg-card" v-loading="loading">
+      <header class="yg-card__header">
+        <div class="flex flex-col gap-1 min-w-0">
+          <h2 class="yg-card__title">{{ t('ai.engines.title') }}</h2>
+          <p class="yg-text-xs yg-text-tertiary">{{ t('ai.engines.subtitle') }}</p>
         </div>
-      </template>
+        <div class="yg-card__extra flex flex-wrap items-center gap-2">
+          <ElButton @click="load">
+            <ElIcon class="mr-1"><Refresh /></ElIcon>
+            {{ t('ai.common.refresh') }}
+          </ElButton>
+          <ElButton type="primary" @click="openCreate">
+            <ElIcon class="mr-1"><Plus /></ElIcon>
+            {{ t('ai.engines.create') }}
+          </ElButton>
+        </div>
+      </header>
 
-      <ElTable :data="rows" row-key="oid" stripe>
-        <ElTableColumn prop="name" :label="t('ai.engines.name')" min-width="140" show-overflow-tooltip />
-        <ElTableColumn :label="t('ai.engines.kind')" width="120" align="center">
-          <template #default="{ row }">
-            <ElTag size="small" type="info">{{ kindLabel(row.kind) }}</ElTag>
+      <div class="yg-card__body">
+        <ElTable :data="rows" row-key="oid" stripe>
+          <ElTableColumn prop="name" :label="t('ai.engines.name')" min-width="140" show-overflow-tooltip />
+          <ElTableColumn :label="t('ai.engines.kind')" width="120" align="center">
+            <template #default="{ row }">
+              <ElTag size="small" type="info">{{ kindLabel(row.kind) }}</ElTag>
+            </template>
+          </ElTableColumn>
+          <ElTableColumn :label="t('ai.engines.secret')" min-width="160">
+            <template #default="{ row }">
+              <div class="flex flex-col">
+                <span class="tabular-nums yg-text-xs">{{ row.key_hint ?? '—' }}</span>
+                <span class="yg-text-xs yg-text-tertiary">
+                  {{ row.has_secret ? t('ai.engines.hasSecret') : t('ai.engines.noSecretYet') }}
+                </span>
+              </div>
+            </template>
+          </ElTableColumn>
+          <ElTableColumn prop="priority" :label="t('ai.engines.priority')" width="90" align="right">
+            <template #default="{ row }">
+              <span class="tabular-nums">{{ row.priority }}</span>
+            </template>
+          </ElTableColumn>
+          <ElTableColumn :label="t('ai.common.status')" width="90" align="center">
+            <template #default="{ row }">
+              <ElTag :type="row.enabled ? 'primary' : 'info'" size="small">
+                {{ row.enabled ? t('ai.common.enabled') : t('ai.common.disabled') }}
+              </ElTag>
+            </template>
+          </ElTableColumn>
+          <ElTableColumn prop="updated_at" :label="t('ai.common.updatedAt')" min-width="150">
+            <template #default="{ row }">
+              <span class="tabular-nums yg-text-xs">{{ row.updated_at ?? '—' }}</span>
+            </template>
+          </ElTableColumn>
+          <ElTableColumn :label="t('ai.common.actions')" width="150" fixed="right" align="right">
+            <template #default="{ row }">
+              <div class="flex items-center justify-end gap-1">
+                <ElButton text type="primary" size="small" @click="openEdit(row)">
+                  <ElIcon class="mr-1"><Edit /></ElIcon>
+                  {{ t('ai.common.edit') }}
+                </ElButton>
+                <!-- 删除引擎属于破坏性操作：红字按钮 + 二次确认（准则 5.1 / 5.2） -->
+                <ElButton
+                  text
+                  type="danger"
+                  size="small"
+                  :loading="deletingId === row.oid"
+                  :disabled="Boolean(deletingId) && deletingId !== row.oid"
+                  @click="remove(row)"
+                >
+                  <ElIcon class="mr-1"><Delete /></ElIcon>
+                  {{ t('ai.common.delete') }}
+                </ElButton>
+              </div>
+            </template>
+          </ElTableColumn>
+          <template #empty>
+            <ElEmpty
+              :description="loadFailed ? t('ai.engines.loadFailed') : t('ai.engines.empty')"
+              :image-size="90"
+            />
           </template>
-        </ElTableColumn>
-        <ElTableColumn :label="t('ai.engines.secret')" min-width="160">
-          <template #default="{ row }">
-            <div class="flex flex-col">
-              <span class="tabular-nums text-xs">{{ row.key_hint ?? '—' }}</span>
-              <span class="text-xs" style="color: var(--zv-label)">
-                {{ row.has_secret ? t('ai.engines.hasSecret') : t('ai.engines.noSecretYet') }}
-              </span>
-            </div>
-          </template>
-        </ElTableColumn>
-        <ElTableColumn prop="priority" :label="t('ai.engines.priority')" width="90" align="right">
-          <template #default="{ row }">
-            <span class="tabular-nums">{{ row.priority }}</span>
-          </template>
-        </ElTableColumn>
-        <ElTableColumn :label="t('ai.common.status')" width="90" align="center">
-          <template #default="{ row }">
-            <ElTag :type="row.enabled ? 'primary' : 'info'" size="small">
-              {{ row.enabled ? t('ai.common.enabled') : t('ai.common.disabled') }}
-            </ElTag>
-          </template>
-        </ElTableColumn>
-        <ElTableColumn prop="updated_at" :label="t('ai.common.updatedAt')" min-width="150">
-          <template #default="{ row }">
-            <span class="tabular-nums text-xs">{{ row.updated_at ?? '—' }}</span>
-          </template>
-        </ElTableColumn>
-        <ElTableColumn :label="t('ai.common.actions')" width="150" fixed="right" align="right">
-          <template #default="{ row }">
-            <div class="flex items-center justify-end gap-1">
-              <ElButton text type="primary" size="small" @click="openEdit(row)">
-                <ElIcon class="mr-1"><Edit /></ElIcon>
-                {{ t('ai.common.edit') }}
-              </ElButton>
-              <ElButton
-                text
-                type="danger"
-                size="small"
-                :loading="deletingId === row.oid"
-                :disabled="Boolean(deletingId) && deletingId !== row.oid"
-                @click="remove(row)"
-              >
-                <ElIcon class="mr-1"><Delete /></ElIcon>
-                {{ t('ai.common.delete') }}
-              </ElButton>
-            </div>
-          </template>
-        </ElTableColumn>
-        <template #empty>
-          <ElEmpty
-            :description="loadFailed ? t('ai.engines.loadFailed') : t('ai.engines.empty')"
-            :image-size="90"
-          />
-        </template>
-      </ElTable>
-    </ElCard>
+        </ElTable>
+      </div>
+    </section>
 
     <ElDialog
       v-model="dialogVisible"
@@ -427,7 +425,7 @@ onMounted(() => {
         <div class="grid gap-x-4 sm:grid-cols-2">
           <ElFormItem :label="t('ai.engines.name')" prop="name">
             <ElInput v-model="form.name" />
-            <p v-if="fieldError.name" class="text-xs mt-1" style="color: var(--el-color-danger)">
+            <p v-if="fieldError.name" class="yg-text-xs yg-text-danger mt-1">
               {{ fieldError.name }}
             </p>
           </ElFormItem>
@@ -440,7 +438,7 @@ onMounted(() => {
                 :value="kind"
               />
             </ElSelect>
-            <p v-if="mode === 'edit'" class="text-xs mt-1" style="color: var(--zv-label)">
+            <p v-if="mode === 'edit'" class="yg-text-xs yg-text-tertiary mt-1">
               {{ t('ai.engines.kindLocked') }}
             </p>
           </ElFormItem>
@@ -449,7 +447,7 @@ onMounted(() => {
         <div class="grid gap-x-4 sm:grid-cols-2">
           <ElFormItem :label="t('ai.engines.priority')" prop="priority">
             <ElInputNumber v-model="form.priority" :min="PRIORITY_MIN" :max="PRIORITY_MAX" />
-            <p class="text-xs mt-1" style="color: var(--zv-label)">{{ t('ai.engines.priorityHint') }}</p>
+            <p class="yg-text-xs yg-text-tertiary mt-1">{{ t('ai.engines.priorityHint') }}</p>
           </ElFormItem>
           <ElFormItem :label="t('ai.common.status')">
             <ElSwitch v-model="form.enabled" />
@@ -464,7 +462,7 @@ onMounted(() => {
                 :key="field"
                 class="flex flex-wrap items-center gap-2"
               >
-                <span class="z-label w-40">{{ t(SECRET_LABELS[field] ?? field) }}</span>
+                <span class="yg-text-xs yg-text-tertiary w-40">{{ t(SECRET_LABELS[field] ?? field) }}</span>
                 <ElInput
                   v-model="form.secret[field]"
                   class="w-64"
@@ -472,10 +470,10 @@ onMounted(() => {
                   show-password
                 />
               </div>
-              <p class="text-xs" style="color: var(--zv-label)">{{ t('ai.engines.secretHint') }}</p>
+              <p class="yg-text-xs yg-text-tertiary">{{ t('ai.engines.secretHint') }}</p>
             </template>
-            <p v-else class="text-xs" style="color: var(--zv-label)">{{ t('ai.engines.noSecret') }}</p>
-            <p v-if="fieldError.secret" class="text-xs" style="color: var(--el-color-danger)">
+            <p v-else class="yg-text-xs yg-text-tertiary">{{ t('ai.engines.noSecret') }}</p>
+            <p v-if="fieldError.secret" class="yg-text-xs yg-text-danger">
               {{ fieldError.secret }}
             </p>
           </div>
@@ -489,12 +487,12 @@ onMounted(() => {
             resize="none"
             :placeholder="t('ai.engines.configPlaceholder')"
           />
-          <p v-if="fieldError.config" class="text-xs mt-1" style="color: var(--el-color-danger)">
+          <p v-if="fieldError.config" class="yg-text-xs yg-text-danger mt-1">
             {{ fieldError.config }}
           </p>
         </ElFormItem>
 
-        <p v-if="fieldError.form" class="text-xs" style="color: var(--el-color-danger)">
+        <p v-if="fieldError.form" class="yg-text-xs yg-text-danger">
           {{ fieldError.form }}
         </p>
       </ElForm>

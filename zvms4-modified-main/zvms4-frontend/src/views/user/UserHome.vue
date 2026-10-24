@@ -111,7 +111,7 @@ watch(
         </div>
       </ElCard>
     </div>
-    <div :class="['py-2', user.shouldResetPassword ? 'z-blur' : '']">
+    <div :class="['py-2', user.shouldResetPassword ? 'yg-blur' : '']">
       <ZUserTimeJudge
         :user="user._id"
         :on-campus="user.time.onCampus"
@@ -127,7 +127,7 @@ watch(
 .fill {
   width: 100%;
 }
-.z-blur {
+.yg-blur {
   filter: blur(2rem);
 }
 </style>

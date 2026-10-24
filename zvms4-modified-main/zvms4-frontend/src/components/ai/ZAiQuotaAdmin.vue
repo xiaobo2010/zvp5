@@ -3,10 +3,10 @@ import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
   ElButton,
-  ElCard,
   ElDialog,
   ElForm,
   ElFormItem,
+  ElIcon,
   ElInputNumber,
   ElMessage,
   ElMessageBox,
@@ -124,71 +124,76 @@ async function resetUsage(kind: AiQuotaKind) {
 
 <template>
   <div class="flex flex-col gap-4">
-    <ElCard shadow="never">
-      <template #header>
-        <div class="flex flex-wrap items-center justify-between gap-3">
-          <div class="flex flex-col gap-1">
-            <span>{{ t('ai.quotaAdmin.title') }}</span>
-            <span class="text-xs font-normal" style="color: var(--zv-label)">
-              {{ t('ai.quotaAdmin.subtitle') }}
-            </span>
-          </div>
+    <section class="yg-card">
+      <header class="yg-card__header">
+        <div class="flex flex-col gap-1 min-w-0">
+          <h2 class="yg-card__title">{{ t('ai.quotaAdmin.title') }}</h2>
+          <p class="yg-text-xs yg-text-tertiary">{{ t('ai.quotaAdmin.subtitle') }}</p>
+        </div>
+        <div class="yg-card__extra">
           <ElButton :disabled="!userOid" @click="load">
             <ElIcon class="mr-1"><Refresh /></ElIcon>
             {{ t('ai.common.refresh') }}
           </ElButton>
         </div>
-      </template>
+      </header>
 
-      <div class="flex flex-wrap items-center gap-3">
-        <span class="z-label">{{ t('ai.quotaAdmin.pickUser') }}</span>
-        <div class="w-72">
-          <ZSelectPerson v-model="userOid" :filter-start="6" full-width />
-        </div>
-      </div>
-    </ElCard>
-
-    <ElCard shadow="never" v-loading="loading">
-      <template #header>
-        <span class="z-label">{{ t('ai.quotaAdmin.title') }}</span>
-      </template>
-
-      <div v-if="!userOid" class="py-8 text-center text-sm" style="color: var(--zv-label)">
-        {{ t('ai.quotaAdmin.noUser') }}
-      </div>
-      <p v-else-if="failed" class="py-8 text-center text-sm" style="color: var(--el-color-danger)">
-        {{ t('ai.quotaAdmin.loadFailed') }}
-      </p>
-      <div v-else class="grid gap-4 sm:grid-cols-2">
-        <div v-for="item in [
-          { kind: 'ocr' as AiQuotaKind, title: t('ai.quotaAdmin.ocrTitle'), entry: ocr },
-          { kind: 'chat' as AiQuotaKind, title: t('ai.quotaAdmin.chatTitle'), entry: chat }
-        ]" :key="item.kind" class="z-tile rounded-lg p-4 flex flex-col gap-2">
-          <div class="flex items-baseline justify-between gap-2">
-            <span class="z-label">{{ item.title }}</span>
-            <span class="text-xs tabular-nums" style="color: var(--zv-label)">
-              {{ t('ai.common.period') }}：{{ item.entry?.period ?? '—' }}
-            </span>
-          </div>
-          <p class="z-stat__value tabular-nums">
-            {{ item.entry?.used ?? 0 }}
-            <span class="text-sm font-normal" style="color: var(--zv-label)">
-              / {{ item.entry?.limit ?? 0 }}
-            </span>
-          </p>
-          <ElProgress :percentage="percent(item.entry)" :stroke-width="6" />
-          <div class="flex flex-wrap items-center justify-end gap-2">
-            <ElButton size="small" @click="resetUsage(item.kind)">
-              {{ t('ai.quotaAdmin.reset') }}
-            </ElButton>
-            <ElButton size="small" type="primary" plain @click="openLimit(item.entry, item.kind)">
-              <ElIcon class="mr-1"><Setting /></ElIcon>
-              {{ t('ai.quotaAdmin.setLimit') }}
-            </ElButton>
+      <div class="yg-card__body">
+        <div class="flex flex-wrap items-center gap-3">
+          <span class="yg-text-xs yg-text-tertiary">{{ t('ai.quotaAdmin.pickUser') }}</span>
+          <div class="w-72">
+            <ZSelectPerson v-model="userOid" :filter-start="6" full-width />
           </div>
         </div>
       </div>
-    </ElCard>
+    </section>
+
+    <section class="yg-card" v-loading="loading">
+      <header class="yg-card__header">
+        <h2 class="yg-statistic__title">{{ t('ai.quotaAdmin.title') }}</h2>
+      </header>
+
+      <div class="yg-card__body">
+        <div v-if="!userOid" class="py-8 text-center yg-text-sm yg-text-tertiary">
+          {{ t('ai.quotaAdmin.noUser') }}
+        </div>
+        <p v-else-if="failed" class="py-8 text-center yg-text-sm yg-text-danger">
+          {{ t('ai.quotaAdmin.loadFailed') }}
+        </p>
+        <div v-else class="grid gap-4 sm:grid-cols-2">
+          <div
+            v-for="item in [
+              { kind: 'ocr' as AiQuotaKind, title: t('ai.quotaAdmin.ocrTitle'), entry: ocr },
+              { kind: 'chat' as AiQuotaKind, title: t('ai.quotaAdmin.chatTitle'), entry: chat }
+            ]"
+            :key="item.kind"
+            class="yg-tile p-4 flex flex-col gap-2"
+          >
+            <div class="flex items-baseline justify-between gap-2">
+              <span class="yg-statistic__title">{{ item.title }}</span>
+              <span class="yg-text-xs yg-text-tertiary tabular-nums">
+                {{ t('ai.common.period') }}：{{ item.entry?.period ?? '—' }}
+              </span>
+            </div>
+            <p class="yg-statistic__value">
+              {{ item.entry?.used ?? 0 }}
+              <span class="yg-statistic__suffix">/ {{ item.entry?.limit ?? 0 }}</span>
+            </p>
+            <ElProgress :percentage="percent(item.entry)" :stroke-width="6" />
+            <div class="flex flex-wrap items-center justify-end gap-2">
+              <!-- 清空计数属于破坏性操作：红字按钮 + 二次确认（准则 5.1 / 5.2） -->
+              <ElButton size="small" text type="danger" @click="resetUsage(item.kind)">
+                {{ t('ai.quotaAdmin.reset') }}
+              </ElButton>
+              <ElButton size="small" type="primary" plain @click="openLimit(item.entry, item.kind)">
+                <ElIcon class="mr-1"><Setting /></ElIcon>
+                {{ t('ai.quotaAdmin.setLimit') }}
+              </ElButton>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
 
     <ElDialog
       v-model="limitVisible"
@@ -208,7 +213,7 @@ async function resetUsage(kind: AiQuotaKind) {
         </ElFormItem>
         <ElFormItem :label="t('ai.quotaAdmin.limitValue')">
           <ElInputNumber v-model="limitValue" :min="0" :step="10" class="w-full" />
-          <p class="text-xs mt-1" style="color: var(--zv-label)">{{ t('ai.quotaAdmin.limitHint') }}</p>
+          <p class="yg-text-xs yg-text-tertiary mt-1">{{ t('ai.quotaAdmin.limitHint') }}</p>
         </ElFormItem>
       </ElForm>
       <template #footer>

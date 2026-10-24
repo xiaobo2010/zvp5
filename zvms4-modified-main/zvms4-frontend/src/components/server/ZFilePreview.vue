@@ -334,8 +334,8 @@ async function saveEdit() {
   >
     <div class="meta-row">
       <ElTag size="small" effect="plain" class="font-mono">{{ mimeLabel }}</ElTag>
-      <span class="z-label tabular-nums">{{ sizeLabel }}</span>
-      <span v-if="isText && !skipped" class="z-label font-mono">
+      <span class="yg-text-xs yg-text-tertiary tabular-nums">{{ sizeLabel }}</span>
+      <span v-if="isText && !skipped" class="yg-text-xs yg-text-tertiary font-mono">
         {{ t('server.files.preview.encodingLabel') }}: {{ encodingLabel }}
       </span>
       <ElTag v-if="preview?.truncated" size="small" type="warning" effect="plain">
@@ -371,7 +371,7 @@ async function saveEdit() {
       <template v-if="!loading">
         <div v-if="editing" class="editor">
           <div class="editor-toolbar">
-            <span class="z-label">{{ t('server.files.preview.editEncodingLabel') }}</span>
+            <span class="yg-text-xs yg-text-tertiary">{{ t('server.files.preview.editEncodingLabel') }}</span>
             <ElButtonGroup size="small">
               <ElButton
                 :type="editEncoding === 'utf-8' ? 'primary' : 'default'"
@@ -388,10 +388,10 @@ async function saveEdit() {
                 {{ t('server.files.preview.editEncodingGbk') }}
               </ElButton>
             </ElButtonGroup>
-            <span class="z-label">{{ t('server.files.preview.editEncodingHint') }}</span>
+            <span class="yg-text-xs yg-text-tertiary">{{ t('server.files.preview.editEncodingHint') }}</span>
             <span class="min-w-0 flex-1" />
-            <span class="z-label tabular-nums">{{ editStats }}</span>
-            <span class="z-label">{{ t('server.files.preview.editLimitHint') }}</span>
+            <span class="yg-text-xs yg-text-tertiary tabular-nums">{{ editStats }}</span>
+            <span class="yg-text-xs yg-text-tertiary">{{ t('server.files.preview.editLimitHint') }}</span>
           </div>
           <ElAlert
             v-if="saveError"
@@ -448,7 +448,7 @@ async function saveEdit() {
               @load="onImageLoad"
               @click="lightbox = true"
             />
-            <div class="z-label pt-2 text-center tabular-nums">
+            <div class="yg-text-xs yg-text-tertiary pt-2 text-center tabular-nums">
               <span v-if="dimensions">{{ dimensions.w }} × {{ dimensions.h }} px · </span>{{ sizeLabel }}
               <span>· {{ t('server.files.preview.zoomHint') }}</span>
             </div>
@@ -533,7 +533,7 @@ async function saveEdit() {
   padding: 2px 0 2px 10px;
   font-size: 12px;
   line-height: 1.6;
-  color: var(--zv-text-sub);
+  color: var(--yg-text-secondary);
 }
 
 .editor {
@@ -617,7 +617,7 @@ async function saveEdit() {
   width: 52px;
   padding-right: 10px;
   text-align: right;
-  color: var(--zv-label);
+  color: var(--yg-text-tertiary);
   user-select: none;
 }
 
@@ -627,7 +627,7 @@ async function saveEdit() {
 
 .rows-tail {
   padding: 6px 0 2px 52px;
-  color: var(--zv-label);
+  color: var(--yg-text-tertiary);
   font-size: 12px;
 }
 

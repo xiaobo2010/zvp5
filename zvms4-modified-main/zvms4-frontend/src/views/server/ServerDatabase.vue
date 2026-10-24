@@ -1117,15 +1117,15 @@ onBeforeUnmount(() => {
               <div class="text-sm font-medium">{{ t(M + 'hostTitle') }}</div>
               <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
                 <!-- CPU -->
-                <div class="flex flex-col gap-1.5 z-tile">
-                  <span class="z-label">{{ t(M + 'hostCpu') }}</span>
+                <div class="flex flex-col gap-1.5 yg-tile">
+                  <span class="yg-text-xs yg-text-tertiary">{{ t(M + 'hostCpu') }}</span>
                   <div class="flex h-2 w-full overflow-hidden bg-gray-200 dark:bg-gray-700">
                     <div class="h-full" :style="{ width: `${Math.max(0, hostRes.cpu.user_pct)}%`, background: '#409eff' }"></div>
                     <div class="h-full" :style="{ width: `${Math.max(0, hostRes.cpu.system_pct)}%`, background: '#e6a23c' }"></div>
                     <div class="h-full" :style="{ width: `${Math.max(0, hostRes.cpu.iowait_pct)}%`, background: '#f56c6c' }"></div>
                     <div class="h-full" :style="{ width: `${Math.max(0, hostRes.cpu.idle_pct)}%`, background: '#9ca3af' }"></div>
                   </div>
-                  <div class="flex flex-wrap gap-x-2.5 gap-y-0.5 z-label">
+                  <div class="flex flex-wrap gap-x-2.5 gap-y-0.5 yg-text-xs yg-text-tertiary">
                     <span>{{ t(M + 'hostCpuUser') }} {{ pctText(hostRes.cpu.user_pct) }}</span>
                     <span>{{ t(M + 'hostCpuSystem') }} {{ pctText(hostRes.cpu.system_pct) }}</span>
                     <span>{{ t(M + 'hostCpuIowait') }} {{ pctText(hostRes.cpu.iowait_pct) }}</span>
@@ -1133,11 +1133,11 @@ onBeforeUnmount(() => {
                   </div>
                 </div>
                 <!-- 内存 -->
-                <div class="flex flex-col gap-1.5 z-tile">
-                  <span class="z-label">{{ t(M + 'hostMem') }}</span>
+                <div class="flex flex-col gap-1.5 yg-tile">
+                  <span class="yg-text-xs yg-text-tertiary">{{ t(M + 'hostMem') }}</span>
                   <span class="font-medium tabular-nums">
                     {{ formatMb(hostRes.mem.used_mb) }}
-                    <span class="z-label">/ {{ formatMb(hostRes.mem.total_mb) }}</span>
+                    <span class="yg-text-xs yg-text-tertiary">/ {{ formatMb(hostRes.mem.total_mb) }}</span>
                   </span>
                   <ElProgress
                     v-if="hostMemUsedPct !== null"
@@ -1145,13 +1145,13 @@ onBeforeUnmount(() => {
                     :color="percentColor"
                     :show-text="false"
                   />
-                  <span class="z-label">
+                  <span class="yg-text-xs yg-text-tertiary">
                     {{ t(M + 'hostMemAvailable') }} {{ formatMb(hostRes.mem.available_mb) }}
                   </span>
                 </div>
                 <!-- 系统负载 -->
-                <div class="flex flex-col gap-1.5 z-tile">
-                  <span class="z-label">{{ t(M + 'hostLoad') }}</span>
+                <div class="flex flex-col gap-1.5 yg-tile">
+                  <span class="yg-text-xs yg-text-tertiary">{{ t(M + 'hostLoad') }}</span>
                   <div class="flex flex-col gap-0.5 text-sm tabular-nums">
                     <span>{{ t(M + 'hostLoad1m') }} <span class="font-medium">{{ formatMetric(hostRes.load['1m']) }}</span></span>
                     <span>{{ t(M + 'hostLoad5m') }} <span class="font-medium">{{ formatMetric(hostRes.load['5m']) }}</span></span>
@@ -1159,8 +1159,8 @@ onBeforeUnmount(() => {
                   </div>
                 </div>
                 <!-- 磁盘 -->
-                <div class="flex flex-col gap-1.5 z-tile">
-                  <span class="z-label">
+                <div class="flex flex-col gap-1.5 yg-tile">
+                  <span class="yg-text-xs yg-text-tertiary">
                     {{ t(M + 'hostDiskMount', { mount: hostRes.disk.mount }) }}
                   </span>
                   <span class="font-medium tabular-nums">{{ pctText(hostRes.disk.used_pct) }}</span>
@@ -1169,13 +1169,13 @@ onBeforeUnmount(() => {
                     :color="percentColor"
                     :show-text="false"
                   />
-                  <span class="z-label">
+                  <span class="yg-text-xs yg-text-tertiary">
                     {{ t(M + 'hostDiskFree') }} {{ formatGb(hostRes.disk.free_gb) }}
                   </span>
                 </div>
                 <!-- 网络 -->
-                <div class="flex flex-col gap-1.5 z-tile">
-                  <span class="z-label">{{ t(M + 'hostNet') }}</span>
+                <div class="flex flex-col gap-1.5 yg-tile">
+                  <span class="yg-text-xs yg-text-tertiary">{{ t(M + 'hostNet') }}</span>
                   <div class="flex flex-col gap-0.5 text-sm tabular-nums">
                     <span>
                       <span class="text-gray-500 dark:text-gray-400">{{ t(M + 'hostNetRx') }}</span>
@@ -1188,8 +1188,8 @@ onBeforeUnmount(() => {
                   </div>
                 </div>
                 <!-- 磁盘 IO -->
-                <div class="flex flex-col gap-1.5 z-tile">
-                  <span class="z-label">{{ t(M + 'hostDiskIo') }}</span>
+                <div class="flex flex-col gap-1.5 yg-tile">
+                  <span class="yg-text-xs yg-text-tertiary">{{ t(M + 'hostDiskIo') }}</span>
                   <div class="flex flex-col gap-0.5 text-sm tabular-nums">
                     <span>
                       <span class="text-gray-500 dark:text-gray-400">{{ t(M + 'hostDiskIoRead') }}</span>
@@ -1202,8 +1202,8 @@ onBeforeUnmount(() => {
                   </div>
                 </div>
                 <!-- 后端进程 -->
-                <div class="flex flex-col gap-1.5 z-tile">
-                  <span class="z-label">{{ t(M + 'hostProc') }}</span>
+                <div class="flex flex-col gap-1.5 yg-tile">
+                  <span class="yg-text-xs yg-text-tertiary">{{ t(M + 'hostProc') }}</span>
                   <div class="flex flex-col gap-0.5 text-sm tabular-nums">
                     <span>
                       <span class="text-gray-500 dark:text-gray-400">{{ t(M + 'hostProcRss') }}</span>
@@ -1687,7 +1687,7 @@ onBeforeUnmount(() => {
           :begin-at-zero="currentTrendFamily?.beginAtZero ?? false"
           :y-max="currentTrendFamily?.yMax"
         />
-        <div class="flex flex-col gap-1 z-label">
+        <div class="flex flex-col gap-1 yg-text-xs yg-text-tertiary">
           <span v-if="unknownTrendKeys">{{ t(M + 'trendUnknownHint', { keys: unknownTrendKeys }) }}</span>
           <span>{{ t(M + 'trendNote') }}</span>
         </div>

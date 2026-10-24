@@ -1,18 +1,23 @@
+/* ==========================================================================
+   义工平台 · 应用全局基线 main.css
+   文件：src/assets/main.css
+   层级：项目自定义层（在「标准样式库 yg/main.css」与「令牌适配层」之后加载）。
+
+   说明：
+   - 颜色、字体、字号、圆角等视觉基线一律由标准样式库（--yg-* 令牌）负责，
+     本文件不再重复定义字体与字号，避免两套基线并存；
+   - 这里只保留应用自身的行为性设置：固定视口、禁止页面级滚动、字体文件。
+   ========================================================================== */
+
 @import './base.css';
 
 body {
   user-select: none;
   overflow: hidden;
   position: fixed;
+  inset: 0;
   width: 100%;
-  /* Swiss:grotesque sans 优先,等宽视觉节奏 */
-  font-family:
-    'Helvetica Neue', Helvetica, Inter, system-ui, 'PingFang SC', 'Source Han Sans SC',
-    'Microsoft YaHei', Arial, sans-serif !important;
-}
-
-::-webkit-scrollbar {
-  display: none; /* Chrome Safari */
+  height: 100%;
 }
 
 @font-face {

@@ -1,75 +1,24 @@
-/*
- * Swiss Style (International Typographic Style) 全局基线层
- * 取代原 glass.css:零半透明、零模糊、发丝线分隔、高信息密度。
- * 必须在 element-plus 样式之后加载(见 main.ts 导入顺序)。
- * 仅影响前端 UI,不涉及任何后端逻辑。
- */
+/* ==========================================================================
+   义工平台 · 项目自定义层 flat.css
+   文件：src/assets/styles/flat.css
+   层级：位于「Element Plus 样式 → 标准样式库 yg/main.css → 令牌适配层
+        element-overrides.css → 本文件」之后，是最后一道覆盖。
 
-:root {
-  /* —— 表面:一律不透明实色 —— */
-  --zv-bg: #f2f2f2;
-  --zv-surface: #ffffff;
-  --zv-surface-alt: #f7f7f7;
-  --zv-text: #111111;
-  --zv-text-sub: #555555;
-  --zv-label: #666666;
-  --zv-hairline: #e5e5e5;
-  --zv-hairline-strong: #d4d4d4;
+   职责：
+   1. 收尾 Element Plus 组件的细节外观（密度、字号、表格、弹层阴影等），
+      全部引用 --yg-* 令牌，不出现字面量；
+   2. 提供项目自有的少量工具类（yg-bg-page / yg-bg-surface / yg-tile）；
+   3. 承载应用外壳（yg-layout）的落地差异：桌面端是「固定视口 + 内容区滚动」。
 
-  /* —— 圆角:数据表保持硬边,表面组件适度圆角 —— */
-  --el-border-radius-base: 6px;
-  --el-border-radius-small: 4px;
-  --el-border-radius-round: 6px;
+   硬规则（准则 1.3 / 第 5、6 章）在 element-overrides.css 里已做全局兜底，
+   本文件只做展示层收尾，不再重复声明令牌。
+   ========================================================================== */
 
-  /* —— Element Plus 表面对接 —— */
-  --el-bg-color: #ffffff;
-  --el-bg-color-overlay: #ffffff;
-  --el-fill-color-blank: #ffffff;
-  --el-border-color: #e5e5e5;
-  --el-border-color-light: #e5e5e5;
-  --el-border-color-lighter: #e5e5e5;
-  --el-border-color-extra-light: #efefef;
-  --el-text-color-primary: #111111;
-  --el-text-color-regular: #333333;
-  --el-font-size-base: 14px;
-
-  /* 硬边微投影代替大投影 */
-  --zv-shadow-flat: 0 1px 0 0 rgba(0, 0, 0, 0.06);
-
-  /* 单一强调色:蓝(白字对比度约 5.2:1 >= 4.5:1) */
-  --zv-accent: #1667d9;
-
-  /* 表单控件高度下限 >= 34px(默认 36,小型 34) */
-  --el-component-size: 36px;
-  --el-component-size-small: 34px;
-}
-
-html.dark {
-  --zv-bg: #0f0f0f;
-  --zv-surface: #1a1a1a;
-  --zv-surface-alt: #222222;
-  --zv-text: #f2f2f2;
-  --zv-text-sub: #b3b3b3;
-  --zv-label: #999999;
-  --zv-hairline: #2a2a2a;
-  --zv-hairline-strong: #3a3a3a;
-
-  --el-bg-color: #1a1a1a;
-  --el-bg-color-overlay: #1f1f1f;
-  --el-fill-color-blank: #1a1a1a;
-  --el-border-color: #2a2a2a;
-  --el-border-color-light: #2a2a2a;
-  --el-border-color-lighter: #2a2a2a;
-  --el-border-color-extra-light: #303030;
-  --el-text-color-primary: #f2f2f2;
-  --el-text-color-regular: #d4d4d4;
-}
-
+/* ---------- 全局排版基线 ---------- */
 html,
 body {
-  font-size: 14px;
-  line-height: 1.5;
-  letter-spacing: 0.01em;
+  font-size: var(--yg-font-size-md);
+  line-height: var(--yg-line-height-normal);
 }
 
 /* 数字一律等宽数字 */
@@ -79,69 +28,125 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
-/* 图标:内联/工具栏/导航统一 18px(文字级差异靠层级色彩) */
+/* 图标：线性图标，尺寸取准则 3.3 的 16px 档 */
 .el-icon {
-  font-size: 18px;
+  font-size: var(--yg-font-size-lg);
 }
 
-/* 页面标题(PageHeader 内容区):20px 单行,窄屏不折行
-   左侧容器必须可收缩,否则 nowrap 会把右侧子页签顶出容器 */
+/* ---------- 项目工具类 ---------- */
+
+/* 页面底色：实色，不透明 */
+.yg-bg-page {
+  background-color: var(--yg-bg-page);
+}
+
+/* 面板底色：实色，不透明 */
+.yg-bg-surface {
+  background-color: var(--yg-bg-surface);
+}
+
+/* 反色文字：深色遮罩/深色底上的文字（标准库提供了 --yg-text-inverse 令牌，
+   但没给对应工具类，这里补一个同族工具类） */
+.yg-text-inverse {
+  color: var(--yg-text-inverse);
+}
+
+/* 指标瓦片：凹陷面 + 发丝线边框（准则 2.1 凹陷区语义） */
+.yg-tile {
+  background-color: var(--yg-bg-surface-sunken);
+  border: calc(var(--yg-space-1) / 4) solid var(--yg-border-default);
+  border-radius: var(--yg-radius-lg);
+}
+
+/* ---------- 应用外壳（yg-layout 落地差异） ---------- */
+
+/* 应用外壳：固定视口 + 纵向可伸缩，离线横幅等会占用顶部空间 */
+.yg-app-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* 桌面端：整页固定视口，滚动发生在内容区内部 */
+.yg-layout--app {
+  position: relative;
+  z-index: 1;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* 侧边栏液态玻璃背后的天蓝光斑（准则 3.1）：固定定位，不干扰内容。
+   用径向渐变代替 filter: blur(80px)——两者视觉等价，但渐变不会创建合成层，
+   在低端平板与无头浏览器上更稳。 */
+.yg-app-shell::before {
+  content: '';
+  position: fixed;
+  top: -20vh;
+  left: -6vw;
+  width: 56vw;
+  height: 82vh;
+  pointer-events: none;
+  z-index: 0;
+  opacity: 0.12;
+  background: radial-gradient(
+    closest-side,
+    var(--yg-color-primary) 0%,
+    transparent 100%
+  );
+}
+
+.yg-layout--app .yg-layout__content {
+  min-height: 0;
+  overflow-y: auto;
+  background-color: var(--yg-bg-page);
+}
+
+/* 路由视图：撑满内容区 */
+.yg-view {
+  width: 100%;
+  min-height: 100%;
+}
+
+/* 抽屉态侧边栏的遮罩：仅在窄屏抽屉展开时出现 */
+.yg-sidebar-mask {
+  display: none;
+}
+
+@media (max-width: 1024px) {
+  .yg-sidebar-mask.is-visible {
+    display: block;
+  }
+}
+
+/* ---------- 页面标题（ElPageHeader 对齐 .yg-page-header 规格） ---------- */
 .el-page-header__left {
   min-width: 0;
 }
 
 .el-page-header__content {
-  font-size: 20px;
-  line-height: 1.35;
+  font-size: var(--yg-font-size-3xl);
+  font-weight: var(--yg-font-weight-semibold);
+  line-height: var(--yg-line-height-tight);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-/* ---------- 微标签(字段名/表头) ---------- */
-
-.z-label {
-  font-size: 12px;
-  line-height: 1.5;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--zv-label);
-  font-weight: 400;
+.el-page-header__content .el-page-header__title {
+  font-size: inherit;
+  font-weight: inherit;
 }
 
-.z-hairline {
-  border-color: var(--zv-hairline);
-}
-
-/* 横向统计条带(Swiss 数据条):大号等宽数字 + 小号大写标签 */
-.z-stat {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
-
-.z-stat .z-label {
-  font-size: 12px;
-}
-
-.z-stat__value {
-  font-size: 20px;
-  line-height: 1.15;
-  font-variant-numeric: tabular-nums;
-  color: var(--zv-text);
-}
-
-/* ---------- 表面组件:卡片 / 描述列表 / 对话框 ---------- */
-
+/* ---------- 卡片 ---------- */
 .el-card {
-  --el-card-bg-color: var(--zv-surface);
-  --el-card-border-color: var(--zv-hairline);
-  --el-card-border-radius: 8px;
-  --el-card-padding: 16px;
-  border-width: 1px;
+  --el-card-bg-color: var(--yg-bg-surface);
+  --el-card-border-color: var(--yg-border-subtle);
+  --el-card-border-radius: var(--yg-radius-lg);
+  --el-card-padding: var(--yg-space-5);
+  border-width: calc(var(--yg-space-1) / 4);
   border-style: solid;
-  border-radius: 8px;
   box-shadow: none;
 }
 
@@ -152,91 +157,84 @@ body {
 }
 
 .el-card__header {
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--zv-hairline);
-  font-size: 16px;
-  font-weight: 600;
-  line-height: 1.35;
+  padding: var(--yg-space-3) var(--yg-space-4);
+  border-bottom: calc(var(--yg-space-1) / 4) solid var(--yg-border-subtle);
+  font-size: var(--yg-font-size-lg);
+  font-weight: var(--yg-font-weight-semibold);
+  line-height: var(--yg-line-height-snug);
 }
 
 .el-card__body {
-  padding: 16px;
+  padding: var(--yg-space-4);
 }
 
+/* ---------- 描述列表 ---------- */
 .el-descriptions.is-bordered {
-  border-radius: 6px;
-  --el-descriptions-item-bordered-label-background: var(--zv-surface-alt);
+  border-radius: var(--yg-radius-md);
+  --el-descriptions-item-bordered-label-background: var(--yg-bg-surface-sunken);
 }
 
 .el-descriptions__label {
-  font-size: 12px !important;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--zv-label) !important;
-  font-weight: 400 !important;
+  font-size: var(--yg-font-size-sm);
+  color: var(--yg-text-tertiary);
+  font-weight: var(--yg-font-weight-regular);
 }
 
 .el-descriptions__content {
-  font-size: 14px;
+  font-size: var(--yg-font-size-md);
 }
 
-.el-dialog {
-  --el-dialog-bg-color: var(--zv-surface);
-  border: 1px solid var(--zv-hairline);
-  border-radius: 8px;
-  box-shadow: 0 1px 0 0 rgba(0, 0, 0, 0.12);
-}
-
+/* ---------- 弹层：实色不透明 + 统一层次（准则第 6 章） ---------- */
+.el-dialog,
 .el-message-box {
-  --el-messagebox-bg-color: var(--zv-surface);
-  border: 1px solid var(--zv-hairline);
-  border-radius: 8px;
-  box-shadow: 0 1px 0 0 rgba(0, 0, 0, 0.12);
+  border: calc(var(--yg-space-1) / 4) solid var(--yg-border-subtle);
+  border-radius: var(--yg-radius-xl);
+  box-shadow: var(--yg-shadow-lg);
 }
 
 .el-drawer {
-  --el-drawer-bg-color: var(--zv-surface);
+  --el-drawer-bg-color: var(--yg-bg-surface-raised);
+  box-shadow: var(--yg-shadow-lg);
 }
 
 .el-message {
-  --el-message-bg-color: var(--zv-surface);
-  border: 1px solid var(--zv-hairline);
-  border-radius: 8px;
-  box-shadow: 0 1px 0 0 rgba(0, 0, 0, 0.12);
+  --el-message-bg-color: var(--yg-bg-surface-raised);
+  border: calc(var(--yg-space-1) / 4) solid var(--yg-border-subtle);
+  border-radius: var(--yg-radius-md);
+  box-shadow: var(--yg-shadow-lg);
 }
 
 .el-notification {
-  --el-notification-bg-color: var(--zv-surface);
-  border: 1px solid var(--zv-hairline);
-  border-radius: 8px;
-  box-shadow: 0 1px 0 0 rgba(0, 0, 0, 0.12);
+  --el-notification-bg-color: var(--yg-bg-surface-raised);
+  border: calc(var(--yg-space-1) / 4) solid var(--yg-border-subtle);
+  border-radius: var(--yg-radius-xl);
+  box-shadow: var(--yg-shadow-lg);
 }
 
-/* 浮层面板(下拉 / 选择器 / 气泡):不透明实色 + 发丝线 */
+/* 浮层面板（下拉 / 选择器 / 气泡）：实色 + 发丝线 */
 .el-popper.is-light {
-  background: var(--el-bg-color-overlay);
-  border: 1px solid var(--zv-hairline);
-  border-radius: 8px;
-  box-shadow: 0 1px 0 0 rgba(0, 0, 0, 0.12);
+  background: var(--yg-bg-surface-raised);
+  border: calc(var(--yg-space-1) / 4) solid var(--yg-border-default);
+  border-radius: var(--yg-radius-lg);
+  box-shadow: var(--yg-shadow-md);
 }
 
 .el-popper.is-light > .el-popper__arrow::before {
-  background: var(--el-bg-color-overlay);
-  border: 1px solid var(--zv-hairline);
+  background: var(--yg-bg-surface-raised);
+  border: calc(var(--yg-space-1) / 4) solid var(--yg-border-default);
 }
 
-/* ---------- 表格:高密度 + sticky 表头 ---------- */
-
+/* ---------- 表格：表头弱化、行高舒展、粘性表头 ---------- */
 .el-table {
-  font-size: 15px;
-  --el-table-bg-color: var(--zv-surface);
-  --el-table-tr-bg-color: var(--zv-surface);
-  --el-table-header-bg-color: var(--zv-surface);
-  --el-table-footer-bg-color: var(--zv-surface);
-  --el-table-border-color: var(--zv-hairline);
-  --el-table-header-text-color: var(--zv-label);
-  --el-table-text-color: var(--zv-text);
-  --el-table-row-hover-bg-color: var(--zv-surface-alt);
+  font-size: var(--yg-font-size-md);
+  --el-table-bg-color: var(--yg-bg-surface);
+  --el-table-tr-bg-color: var(--yg-bg-surface);
+  --el-table-header-bg-color: var(--yg-bg-surface-sunken);
+  --el-table-footer-bg-color: var(--yg-bg-surface);
+  --el-table-border-color: var(--yg-border-subtle);
+  --el-table-header-text-color: var(--yg-text-tertiary);
+  --el-table-text-color: var(--yg-text-primary);
+  --el-table-row-hover-bg-color: var(--yg-bg-hover);
   border-radius: 0;
 }
 
@@ -244,40 +242,38 @@ body {
   border-radius: 0;
 }
 
-/* 表头:11px 大写微标签 */
+/* 表头：13px 中性弱化字重 */
 .el-table th.el-table__cell {
-  font-size: 12px;
-  font-weight: 500;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--zv-label);
+  font-size: var(--yg-font-size-sm);
+  font-weight: var(--yg-font-weight-medium);
+  color: var(--yg-text-tertiary);
 }
 
-/* 行高压缩:默认 40px+ → 34px */
+/* 行高：8px 网格上的紧凑行 */
 .el-table td.el-table__cell,
 .el-table th.el-table__cell,
 .el-table--small td.el-table__cell,
 .el-table--small th.el-table__cell {
-  padding: 6px 10px;
+  padding: var(--yg-space-2) var(--yg-space-3);
 }
 
 .el-table--small {
-  font-size: 14px;
+  font-size: var(--yg-font-size-sm);
 }
 
 .el-table .cell,
 .el-table--small .cell {
-  line-height: 1.3;
-  padding: 0 10px 0 0;
+  line-height: var(--yg-line-height-normal);
+  padding: 0 var(--yg-space-3) 0 0;
 }
 
 .el-table th.el-table__cell > .cell,
 .el-table--small th.el-table__cell > .cell {
-  padding: 0 10px 0 0;
+  padding: 0 var(--yg-space-3) 0 0;
 }
 
-/* 默认(未传 max-height)表格也提供 sticky 表头:
-   表格本身放开 overflow,由页面滚动容器驱动吸顶 */
+/* 默认（未传 max-height）表格也提供 sticky 表头：
+   表格本身放开 overflow，由页面滚动容器驱动吸顶 */
 .el-card__body .el-table {
   overflow: visible;
 }
@@ -288,67 +284,196 @@ body {
 
 .el-card__body .el-table:not(.el-table--scrollable-y) .el-table__header-wrapper {
   position: sticky;
-  top: -16px;
+  top: calc(var(--yg-space-4) * -1);
   z-index: 3;
-  background: var(--zv-surface);
+  background: var(--yg-bg-surface);
 }
 
-/* ---------- 按钮 / 标签 / 分页 / 表单 ---------- */
-
+/* ---------- 按钮 ---------- */
 .el-button {
-  --el-button-border-radius: 6px;
+  --el-button-border-radius: var(--yg-radius-md);
+  font-weight: var(--yg-font-weight-medium);
 }
 
 .el-button.is-text {
-  border-radius: 6px;
+  border-radius: var(--yg-radius-md);
 }
 
-.el-button .el-icon {
-  font-size: 18px;
+/* 主按钮：天蓝实心，悬停/按下走准则的语义色 */
+.el-button--primary {
+  --el-button-bg-color: var(--yg-color-primary);
+  --el-button-border-color: var(--yg-color-primary);
+  --el-button-hover-bg-color: var(--yg-color-primary-hover);
+  --el-button-hover-border-color: var(--yg-color-primary-hover);
+  --el-button-hover-text-color: var(--yg-color-on-primary);
+  --el-button-active-bg-color: var(--yg-color-primary-active);
+  --el-button-active-border-color: var(--yg-color-primary-active);
+  --el-button-active-text-color: var(--yg-color-on-primary);
+  --el-button-disabled-bg-color: var(--yg-color-primary-soft);
+  --el-button-disabled-border-color: var(--yg-color-primary-soft);
+  --el-button-disabled-text-color: var(--yg-text-disabled);
 }
 
-/* 小号控件高度 >= 34px:可点面积与可读性 */
-.el-button--small {
-  --el-button-size: var(--el-component-size-small);
+/* 次级按钮：白底 + 发丝线边框 */
+.el-button--default {
+  --el-button-bg-color: var(--yg-bg-surface);
+  --el-button-border-color: var(--yg-border-default);
+  --el-button-hover-bg-color: var(--yg-bg-hover);
+  --el-button-hover-border-color: var(--yg-border-strong);
+  --el-button-hover-text-color: var(--yg-text-primary);
+  --el-button-active-bg-color: var(--yg-bg-active);
+  --el-button-active-border-color: var(--yg-border-strong);
+  --el-button-active-text-color: var(--yg-text-primary);
 }
 
-/* 行内密集的纯图标小按钮允许略收(<=32px) */
-.el-button--small:has(> .el-icon):not(:has(> span)) {
-  height: 32px;
+/* 成功/警告按钮：悬停走语义色，白字保持对比度 */
+.el-button--success {
+  --el-button-bg-color: var(--yg-color-success);
+  --el-button-border-color: var(--yg-color-success);
+  --el-button-hover-bg-color: var(--yg-color-success-hover);
+  --el-button-hover-border-color: var(--yg-color-success-hover);
+  --el-button-hover-text-color: var(--yg-color-on-success);
+  --el-button-active-bg-color: var(--yg-color-success-active);
+  --el-button-active-border-color: var(--yg-color-success-active);
+  --el-button-active-text-color: var(--yg-color-on-success);
 }
 
+.el-button--warning {
+  --el-button-bg-color: var(--yg-color-warning);
+  --el-button-border-color: var(--yg-color-warning);
+  --el-button-hover-bg-color: var(--yg-color-warning-hover);
+  --el-button-hover-border-color: var(--yg-color-warning-hover);
+  --el-button-hover-text-color: var(--yg-color-on-warning);
+  --el-button-active-bg-color: var(--yg-color-warning-active);
+  --el-button-active-border-color: var(--yg-color-warning-active);
+  --el-button-active-text-color: var(--yg-color-on-warning);
+}
+
+/* ---------- 标签 ---------- */
 .el-tag {
-  border-radius: 4px;
-  font-weight: 500;
-  letter-spacing: 0.02em;
+  --el-tag-border-radius: var(--yg-radius-xs);
+  --el-tag-font-size: var(--yg-font-size-xs);
+  font-weight: var(--yg-font-weight-medium);
 }
 
+/* 标签：软底 + 语义文字色（准则 4.4.4）。
+   EP 默认用「亮色相」当文字色，对比度不足；这里统一换成准则的语义文字色。 */
+.el-tag.el-tag--primary {
+  --el-tag-bg-color: var(--yg-color-primary-soft);
+  --el-tag-border-color: var(--yg-color-primary-soft);
+  --el-tag-text-color: var(--yg-text-link);
+}
+
+.el-tag.el-tag--success {
+  --el-tag-bg-color: var(--yg-color-success-soft);
+  --el-tag-border-color: var(--yg-color-success-soft);
+  --el-tag-text-color: var(--yg-text-success);
+}
+
+.el-tag.el-tag--warning {
+  --el-tag-bg-color: var(--yg-color-warning-soft);
+  --el-tag-border-color: var(--yg-color-warning-soft);
+  --el-tag-text-color: var(--yg-text-warning);
+}
+
+.el-tag.el-tag--danger {
+  --el-tag-bg-color: var(--yg-color-danger-soft);
+  --el-tag-border-color: var(--yg-color-danger-soft);
+  --el-tag-text-color: var(--yg-text-danger);
+}
+
+.el-tag.el-tag--info {
+  --el-tag-bg-color: var(--yg-bg-surface-sunken);
+  --el-tag-border-color: var(--yg-bg-surface-sunken);
+  --el-tag-text-color: var(--yg-text-secondary);
+}
+
+/* ---------- 提示条 ---------- */
 .el-alert {
-  border-radius: 0;
-  --el-alert-padding: 7px 12px;
+  --el-alert-border-radius-base: var(--yg-radius-md);
+  --el-alert-padding: var(--yg-space-2) var(--yg-space-3);
 }
 
-.el-pagination button,
-.el-pagination .el-pager li {
-  border-radius: 4px;
+/* 提示条：软底 + 语义文字色（准则 4.5.3） */
+.el-alert--primary.is-light,
+.el-alert--primary.is-light .el-alert__description {
+  color: var(--yg-text-link);
+}
+
+.el-alert--success.is-light,
+.el-alert--success.is-light .el-alert__description {
+  color: var(--yg-text-success);
+}
+
+.el-alert--warning.is-light,
+.el-alert--warning.is-light .el-alert__description {
+  color: var(--yg-text-warning);
+}
+
+.el-alert--error.is-light,
+.el-alert--error.is-light .el-alert__description {
+  color: var(--yg-text-danger);
+}
+
+.el-alert--info.is-light,
+.el-alert--info.is-light .el-alert__description {
+  color: var(--yg-text-secondary);
+}
+
+/* ---------- 全局消息：实色面板 + 语义文字色（准则 4.5.4） ---------- */
+.el-message--primary {
+  --el-message-bg-color: var(--yg-bg-surface-raised);
+  --el-message-border-color: var(--yg-border-subtle);
+  --el-message-text-color: var(--yg-text-link);
+}
+
+.el-message--success {
+  --el-message-bg-color: var(--yg-bg-surface-raised);
+  --el-message-border-color: var(--yg-border-subtle);
+  --el-message-text-color: var(--yg-text-success);
+}
+
+.el-message--warning {
+  --el-message-bg-color: var(--yg-bg-surface-raised);
+  --el-message-border-color: var(--yg-border-subtle);
+  --el-message-text-color: var(--yg-text-warning);
+}
+
+.el-message--error {
+  --el-message-bg-color: var(--yg-bg-surface-raised);
+  --el-message-border-color: var(--yg-border-subtle);
+  --el-message-text-color: var(--yg-text-danger);
+}
+
+.el-message--info {
+  --el-message-bg-color: var(--yg-bg-surface-raised);
+  --el-message-border-color: var(--yg-border-subtle);
+  --el-message-text-color: var(--yg-text-secondary);
+}
+
+/* ---------- 分页 ---------- */
+.el-pagination {
+  --el-pagination-border-radius: var(--yg-radius-md);
+  --el-pagination-button-width: var(--yg-space-9);
+  --el-pagination-button-height: var(--yg-space-9);
   font-variant-numeric: tabular-nums;
 }
 
 .el-pagination.is-background .el-pager li,
 .el-pagination.is-background .btn-prev,
 .el-pagination.is-background .btn-next {
-  background: var(--zv-surface-alt);
+  background: var(--yg-bg-surface-sunken);
 }
 
+/* ---------- 表单 ---------- */
 .el-form-item__label {
-  font-size: 12px !important;
-  letter-spacing: 0.06em;
-  color: var(--zv-label) !important;
-  font-weight: 400 !important;
+  font-size: var(--yg-font-size-sm);
+  color: var(--yg-text-tertiary);
+  font-weight: var(--yg-font-weight-regular);
 }
 
 .el-input__wrapper {
-  border-radius: 6px;
+  border-radius: var(--yg-radius-md);
 }
 
 .el-input__inner {
@@ -357,110 +482,90 @@ body {
 
 .el-input__inner::placeholder,
 .el-textarea__inner::placeholder {
-  color: var(--zv-label);
+  color: var(--yg-text-tertiary);
   opacity: 1;
 }
 
-html.dark .el-input__wrapper {
-  background-color: var(--zv-surface);
-}
-
 .el-select__wrapper {
-  border-radius: 6px;
+  border-radius: var(--yg-radius-md);
+  min-height: var(--yg-control-height-md);
 }
 
 .el-select--small .el-select__wrapper {
-  min-height: var(--el-component-size-small);
-}
-
-html.dark .el-select__wrapper {
-  background-color: var(--zv-surface);
+  min-height: var(--yg-control-height-sm);
 }
 
 .el-textarea__inner {
-  border-radius: 6px;
+  border-radius: var(--yg-radius-md);
 }
 
 /* ---------- 骨架屏 / 进度条 ---------- */
-
 .el-skeleton__item {
-  border-radius: 4px;
+  border-radius: var(--yg-radius-sm);
 }
 
-.el-progress-bar__outer {
-  border-radius: 0;
-}
-
+/* 进度条：胶囊轨道 + 胶囊填充（准则 4.4.11） */
+.el-progress-bar__outer,
 .el-progress-bar__inner {
-  border-radius: 0;
+  border-radius: var(--yg-radius-pill);
 }
 
-/* ---------- 其他 ---------- */
-
-/* 子 Tab(ElSegmented):容器 8px / 项与选中态 6px。
-   EP 内部圆角均派生自 --el-border-radius-base(item 为 calc(base - 2px)),
-   局部覆写为 8px 即可同时命中容器 8px、item 6px、选中块 6px,无需 !important */
+/* ---------- 分段控件（胶囊） ---------- */
 .el-segmented {
-  --el-border-radius-base: 8px;
-  --el-segmented-item-selected-bg-color: var(--zv-accent);
-  --el-segmented-item-selected-color: #ffffff;
-  font-size: 14px;
+  --el-border-radius-base: var(--yg-radius-pill);
+  --el-segmented-bg-color: var(--yg-bg-surface-sunken);
+  --el-segmented-item-selected-bg-color: var(--yg-color-primary);
+  --el-segmented-item-selected-color: var(--yg-color-on-primary);
+  --el-segmented-item-hover-bg-color: var(--yg-bg-hover);
+  font-size: var(--yg-font-size-md);
   max-width: 100%;
   overflow-x: auto;
   scrollbar-width: thin;
 }
 
-/* 横向滚动条:细、透明轨道,避免遮挡内容与布局跳动 */
+/* 横向滚动条：细、透明轨道，避免遮挡内容与布局跳动 */
 .el-segmented::-webkit-scrollbar {
-  height: 4px;
+  height: var(--yg-space-1);
 }
 
 .el-segmented::-webkit-scrollbar-track {
   background: transparent;
 }
 
-html.dark .el-segmented {
-  --el-segmented-item-selected-bg-color: var(--zv-accent);
-  --el-segmented-item-selected-color: #ffffff;
-}
-
-/* 窄屏不压缩、不折行:保持自然宽度,溢出走容器横向滚动 */
+/* 窄屏不压缩、不折行：保持自然宽度，溢出走容器横向滚动 */
 .el-segmented__item {
   flex: 1 0 auto;
   white-space: nowrap;
 }
 
 .el-segmented__item-label {
-  font-size: 14px;
+  font-size: var(--yg-font-size-md);
   white-space: nowrap;
 }
 
-/* 分段 Tab:hover 轻反馈(实色浅蓝),选中对比度 >=4.5:1 */
-.el-segmented__item:hover:not(.is-selected) {
-  background: #e8effa;
+/* ---------- 链接 ---------- */
+.el-link {
+  --el-link-hover-text-color: var(--yg-text-link);
+  --el-link-text-color: var(--yg-text-link);
 }
 
-html.dark .el-segmented__item:hover:not(.is-selected) {
-  background: #22304a;
+/* ---------- 菜单（EP 内建菜单，与 yg-menu 并存时的中性化处理） ---------- */
+.el-menu {
+  --el-menu-bg-color: transparent;
+  --el-menu-hover-bg-color: var(--yg-bg-hover);
+  --el-menu-active-color: var(--yg-color-primary);
+  background-color: transparent;
+  border-right: none;
 }
 
-/* 页面底色工具类:不透明实色 */
-.z-bg {
-  background-color: var(--zv-bg);
+/* 菜单项文字左对齐：<button> 的 UA 默认 text-align:center，
+   标准库的 .yg-menu__label 未复位，这里在项目层补上。 */
+.yg-menu__label {
+  text-align: left;
 }
 
-.z-surface {
-  background-color: var(--zv-surface);
-}
-
-/* 指标瓦片:实色浅面 + 发丝线边框 */
-.z-tile {
-  background: var(--zv-surface-alt);
-  border: 1px solid var(--zv-hairline);
-}
-
-/* ElHeader / 页面滚动容器 */
-.el-header {
-  background: var(--zv-surface);
-  border-bottom: 1px solid var(--zv-hairline);
+/* ---------- 空状态 ---------- */
+.el-empty__description p {
+  color: var(--yg-text-tertiary);
+  font-size: var(--yg-font-size-sm);
 }

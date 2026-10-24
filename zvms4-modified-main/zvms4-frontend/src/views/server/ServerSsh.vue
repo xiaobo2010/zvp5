@@ -568,7 +568,7 @@ onBeforeUnmount(() => {
         <div class="relative">
           <div
             ref="containerRef"
-            class="terminal-box h-[calc(100vh_-_20rem)] min-h-[360px] bg-[var(--zv-bg)] p-2"
+            class="terminal-box h-[calc(100vh_-_20rem)] min-h-[360px] bg-[var(--yg-bg-page)] p-2"
           >
             <!-- 连接中骨架 -->
             <ElSkeleton v-if="status === 'connecting'" :rows="4" animated />
@@ -599,8 +599,8 @@ onBeforeUnmount(() => {
           <button
             v-if="scrolledUp"
             type="button"
-            class="back-to-bottom absolute bottom-4 right-6 z-10 flex items-center gap-1 rounded-full border border-current/15 bg-[var(--zv-bg)] px-3 py-1.5 text-xs opacity-80 shadow-md transition hover:opacity-100"
-            style="color: var(--zv-label)"
+            class="back-to-bottom absolute bottom-4 right-6 z-10 flex items-center gap-1 rounded-full border border-current/15 bg-[var(--yg-bg-page)] px-3 py-1.5 text-xs opacity-80 shadow-md transition hover:opacity-100"
+            style="color: var(--yg-text-tertiary)"
             :title="t('server.ssh.scrollToBottom')"
             @click="scrollToTermBottom"
           >

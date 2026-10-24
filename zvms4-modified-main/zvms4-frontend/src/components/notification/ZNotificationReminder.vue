@@ -272,19 +272,19 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 6px;
   font-size: 13px;
-  color: var(--zv-label);
+  color: var(--yg-text-tertiary);
 }
 
 .notification-dot {
-  color: var(--zv-hairline-strong);
+  color: var(--yg-border-strong);
 }
 
 .notification-progress {
   margin-left: auto;
   padding: 2px 8px;
-  border: 1px solid var(--zv-hairline);
+  border: 1px solid var(--yg-border-default);
   border-radius: 4px;
-  color: var(--zv-text-sub);
+  color: var(--yg-text-secondary);
   font-variant-numeric: tabular-nums;
 }
 
@@ -293,7 +293,7 @@ onBeforeUnmount(() => {
   font-size: 22px;
   line-height: 1.35;
   font-weight: 600;
-  color: var(--zv-text);
+  color: var(--yg-text-primary);
   overflow-wrap: anywhere;
   word-break: break-word;
 }
@@ -302,10 +302,10 @@ onBeforeUnmount(() => {
   max-height: min(48vh, 420px);
   overflow-y: auto;
   padding: 14px 16px;
-  border: 1px solid var(--zv-hairline);
+  border: 1px solid var(--yg-border-default);
   border-radius: 6px;
-  background: var(--zv-surface-alt);
-  color: var(--zv-text);
+  background: var(--yg-bg-surface-sunken);
+  color: var(--yg-text-primary);
   font-size: 15px;
   line-height: 1.7;
   overflow-wrap: anywhere;
@@ -348,7 +348,7 @@ onBeforeUnmount(() => {
   text-align: left;
   font-size: 12px;
   line-height: 1.5;
-  color: var(--zv-label);
+  color: var(--yg-text-tertiary);
 }
 
 .notification-hints p {
@@ -385,18 +385,18 @@ onBeforeUnmount(() => {
 <style>
 /* 弹窗内部必须是不透明实色；低圆角沿用全局 flat 基线。 */
 .notification-dialog.el-dialog {
-  background: var(--zv-surface);
-  border: 1px solid var(--zv-hairline);
+  background: var(--yg-bg-surface);
+  border: 1px solid var(--yg-border-default);
   border-radius: 8px;
 }
 
 .notification-dialog .el-dialog__header {
-  border-bottom: 1px solid var(--zv-hairline);
+  border-bottom: 1px solid var(--yg-border-default);
   padding-bottom: 12px;
 }
 
 .notification-dialog .el-dialog__title {
-  color: var(--zv-text);
+  color: var(--yg-text-primary);
   font-size: 16px;
   font-weight: 600;
 }
@@ -407,7 +407,7 @@ onBeforeUnmount(() => {
 }
 
 .notification-dialog .el-dialog__footer {
-  border-top: 1px solid var(--zv-hairline);
+  border-top: 1px solid var(--yg-border-default);
   padding-top: 14px;
 }
 </style>

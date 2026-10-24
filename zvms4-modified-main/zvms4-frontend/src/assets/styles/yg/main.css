@@ -1,0 +1,20 @@
+/* ==========================================================================
+   本文件由 `npm run design:sync` 自动生成，请勿手工修改。
+   来源：前端约定/css/main.css
+   需要改动请编辑上述源文件后重新执行同步命令；
+   直接改本文件会在下次同步时被覆盖，造成样式库与准则漂移。
+   ========================================================================== */
+/* ==========================================================================
+   义工平台 · 标准样式入口 main.css
+   用法：<link rel="stylesheet" href="css/main.css">
+   依赖：本目录下的 design-tokens.css、base.css 与 components/ 全部组件样式。
+   顺序不可变更：令牌 → 基础 → 组件。
+   ========================================================================== */
+
+@import url("./design-tokens.css");
+@import url("./base.css");
+@import url("./components/buttons.css");
+@import url("./components/forms.css");
+@import url("./components/navigation.css");
+@import url("./components/data-display.css");
+@import url("./components/feedback.css");

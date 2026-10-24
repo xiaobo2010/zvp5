@@ -10,7 +10,10 @@
   },
   "type": "module",
   "scripts": {
+    "design:sync": "node scripts/sync-design-css.mjs",
+    "predev": "npm run design:sync",
     "dev": "vite --port 5173",
+    "prebuild": "npm run design:sync",
     "build": "run-p type-check \"build-only {@}\" --",
     "preview": "vite preview --port 4173",
     "test:unit": "vitest",

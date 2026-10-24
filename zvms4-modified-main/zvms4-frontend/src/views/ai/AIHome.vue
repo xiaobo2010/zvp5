@@ -99,30 +99,51 @@ watch(
 </script>
 
 <template>
-  <div class="px-6 py-4">
-    <ElPageHeader :icon="ArrowLeft" @back="() => router.back()" class="py-4">
+  <div class="yg-ai-home">
+    <ElPageHeader :icon="ArrowLeft" @back="() => router.back()" class="yg-ai-home__header">
       <template #content>
         {{ t('ai.tabs.' + current) }}
       </template>
-      <template #extra>
-        <ElSegmented v-model="current" :options="tabs">
-          <template #default="props">
-            <div class="flex flex-col items-center gap-2 p-2">
-              <ElIcon :size="18" class="mt-2">
-                <Component :is="(props.item as SegmentedTab).icon" />
-              </ElIcon>
-              {{ t('ai.tabs.' + (props.item as SegmentedTab).value) }}
-            </div>
-          </template>
-        </ElSegmented>
-      </template>
     </ElPageHeader>
-    <ZAiChat v-if="current === 'chat'" />
-    <ZAiQuotaPanel v-else-if="current === 'quota'" />
-    <ZAiKeysAdmin v-else-if="current === 'keys'" />
-    <ZAiOcrEnginesAdmin v-else-if="current === 'engines'" />
-    <ZAiQuotaAdmin v-else-if="current === 'quota-admin'" />
-    <ZAiHealthPanel v-else-if="current === 'health'" />
-    <ZAiLogsAdmin v-else-if="current === 'logs'" />
+
+    <!-- 标签页：横向分段控件（准则 4.2.12 / 4.3.5） -->
+    <div class="yg-ai-home__tabs">
+      <ElSegmented v-model="current" :options="tabs">
+        <template #default="props">
+          <div class="flex items-center gap-2 px-2">
+            <ElIcon :size="16">
+              <Component :is="(props.item as SegmentedTab).icon" />
+            </ElIcon>
+            {{ t('ai.tabs.' + (props.item as SegmentedTab).value) }}
+          </div>
+        </template>
+      </ElSegmented>
+    </div>
+
+    <div class="yg-ai-home__panel">
+      <ZAiChat v-if="current === 'chat'" />
+      <ZAiQuotaPanel v-else-if="current === 'quota'" />
+      <ZAiKeysAdmin v-else-if="current === 'keys'" />
+      <ZAiOcrEnginesAdmin v-else-if="current === 'engines'" />
+      <ZAiQuotaAdmin v-else-if="current === 'quota-admin'" />
+      <ZAiHealthPanel v-else-if="current === 'health'" />
+      <ZAiLogsAdmin v-else-if="current === 'logs'" />
+    </div>
   </div>
 </template>
+
+<style scoped>
+.yg-ai-home {
+  display: flex;
+  flex-direction: column;
+  gap: var(--yg-space-4);
+}
+
+.yg-ai-home__tabs {
+  overflow-x: auto;
+}
+
+.yg-ai-home__panel {
+  min-width: 0;
+}
+</style>

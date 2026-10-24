@@ -321,7 +321,7 @@ watch(
 
     <template #footer>
       <div class="flex flex-wrap items-center justify-between gap-3">
-        <span class="text-xs" style="color: var(--zv-label)">
+        <span class="text-xs" style="color: var(--yg-text-tertiary)">
           {{ t('manage.notifications.history.rollbackHint') }}
         </span>
         <div class="flex items-center gap-2">
@@ -404,7 +404,7 @@ watch(
 .history-hash {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 12px;
-  color: var(--zv-label);
+  color: var(--yg-text-tertiary);
   background: var(--el-fill-color-darker);
   border-radius: 4px;
   padding: 0 4px;
@@ -432,7 +432,7 @@ watch(
   padding: 12px;
   border-radius: 8px;
   background: var(--el-fill-color-light);
-  color: var(--zv-label);
+  color: var(--yg-text-tertiary);
   font-size: 13px;
 }
 
@@ -454,7 +454,7 @@ watch(
 }
 
 .diff-same {
-  color: var(--zv-label);
+  color: var(--yg-text-tertiary);
 }
 
 .diff-add {
@@ -467,7 +467,7 @@ watch(
 }
 
 .diff-collapsed {
-  color: var(--zv-label);
+  color: var(--yg-text-tertiary);
   background: var(--el-fill-color-lighter);
   font-size: 12px;
   text-align: center;
