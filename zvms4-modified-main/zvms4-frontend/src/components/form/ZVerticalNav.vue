@@ -6,7 +6,8 @@ import {
   Sunny,
   Moon,
   Management,
-  Monitor
+  Monitor,
+  ChatLineRound
 } from '@element-plus/icons-vue'
 import { ElButton, ElButtonGroup, ElDrawer, ElSwitch, ElForm, ElFormItem } from 'element-plus'
 import { ref } from 'vue'
@@ -90,6 +91,13 @@ const navs: Array<{
     path: '/server',
     show: user.position.includes('admin'),
     judge: (path) => path.startsWith('/server')
+  },
+  {
+    icon: ChatLineRound,
+    name: 'ai',
+    path: '/ai/chat',
+    show: user.position.includes('admin') || user.position.includes('department'),
+    judge: (path) => path.startsWith('/ai')
   }
 ]
 

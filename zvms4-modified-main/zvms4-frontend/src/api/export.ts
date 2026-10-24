@@ -11,6 +11,7 @@ export * as changelog from './changelog'
 export * as notifications from './notifications'
 export * as version from './version'
 export * as attachment from './attachment'
+export * as ai from './ai'
 export const time = {
   async reads(
     search: string = '',
