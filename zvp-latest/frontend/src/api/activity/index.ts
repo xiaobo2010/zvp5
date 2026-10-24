@@ -1,5 +1,0 @@
-export { deleteActivity as deleteOne } from './delete'
-export * as update from './modify'
-export * from './read'
-export * as member from './member'
-export * as duration from './duration'
