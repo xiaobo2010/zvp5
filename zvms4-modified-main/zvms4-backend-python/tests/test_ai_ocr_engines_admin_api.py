@@ -22,7 +22,7 @@ import settings  # noqa: F401  (导入顺序与其它 AI 用例一致)
 from db import backends
 from db.repos.protocols import DuplicateOcrEngine
 from routers import ai_router
-from services.ai import crypto
+from services.ai import crypto, ocr_engines_admin
 from typings.log import inject_log
 from util.object_id import get_current_user
 
@@ -34,6 +34,13 @@ TENCENT_SECRET = {
     "secret_key": "tencent-secret-key-0123456789",
     "region": "ap-guangzhou",
 }
+
+BAIDU_SECRET = {
+    "api_key": "baidu-api-key-0123456789abcdef",
+    "secret_key": "baidu-secret-key-fedcba9876543210",
+}
+
+GROQ_SECRET = {"api_key": "gsk-groq-0123456789abcdef-never-print"}
 
 
 class StubLog:
@@ -249,6 +256,76 @@ def test_create_rejects_missing_required_secret_field(repo):
     assert response.status_code == 400
     assert response.json()["detail"] == "AI_OCR_ENGINE_INVALID"
     assert repo.rows == {}
+
+
+def test_create_baidu_requires_both_key_parts(repo):
+    # api_key 能标识应用，但换 token 还必须有 secret_key：缺了要在录入时就拒，
+    # 不能等第一次识别（用户已经扣过额度）才炸。
+    response = _create(
+        name="baidu-main",
+        kind="baidu",
+        secret={"api_key": BAIDU_SECRET["api_key"]},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "AI_OCR_ENGINE_INVALID"
+    # 校验失败不能回显已经提供的密钥值（响应里只有稳定错误码）。
+    assert BAIDU_SECRET["api_key"] not in response.text
+    assert repo.rows == {}
+
+
+@pytest.mark.parametrize("secret", [None, {}])
+def test_create_groq_requires_api_key(repo, secret):
+    response = _create(name="groq-main", kind="groq", secret=secret)
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "AI_OCR_ENGINE_INVALID"
+    assert repo.rows == {}
+
+
+def test_create_baidu_and_groq_encrypt_their_credentials(repo):
+    baidu = _create(
+        name="baidu-main", kind="baidu", secret=dict(BAIDU_SECRET), priority=20
+    )
+    groq = _create(
+        name="groq-main", kind="groq", secret=dict(GROQ_SECRET), priority=30
+    )
+
+    assert (baidu.status_code, groq.status_code) == (201, 201)
+    for response, expected, kind in (
+        (baidu, BAIDU_SECRET, "baidu"),
+        (groq, GROQ_SECRET, "groq"),
+    ):
+        view = response.json()["data"]
+        assert view["kind"] == kind
+        assert view["has_secret"] is True
+        # hint 取账号标识（api_key）的末四位，不是 secret_key 的任何部分。
+        assert view["key_hint"] == crypto.key_hint(expected["api_key"])
+        stored = repo.rows[view["oid"]]["secret_cipher"]
+        assert stored != json.dumps(expected, sort_keys=True)
+        assert json.loads(crypto.decrypt_secret(stored)) == expected
+
+
+def test_public_view_never_leaks_baidu_or_groq_secret_material(repo):
+    baidu = _create(name="baidu-main", kind="baidu", secret=dict(BAIDU_SECRET))
+    groq = _create(name="groq-main", kind="groq", secret=dict(GROQ_SECRET))
+    assert (baidu.status_code, groq.status_code) == (201, 201)
+
+    # public_view 连密文都不带：只有 has_secret 透露「有没有凭证」。
+    view = ocr_engines_admin.public_view(
+        repo.rows[baidu.json()["data"]["oid"]]
+    )
+    assert "secret_cipher" not in view
+    assert BAIDU_SECRET["api_key"] not in json.dumps(view)
+    assert BAIDU_SECRET["secret_key"] not in json.dumps(view)
+
+    listing = _client().get("/api/ai/ocr-engines")
+    assert listing.status_code == 200
+    for secret in (BAIDU_SECRET, GROQ_SECRET):
+        for value in secret.values():
+            assert value not in listing.text
+    for row in repo.rows.values():
+        assert row["secret_cipher"] not in listing.text
 
 
 def test_create_rejects_secret_for_rapidocr(repo):

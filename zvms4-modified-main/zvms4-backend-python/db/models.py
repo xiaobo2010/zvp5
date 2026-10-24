@@ -1099,9 +1099,10 @@ Index(
 
 
 # ---------------------------------------------------------------------------
-# AI_OCR_ENGINES  ← new (OCR 引擎注册表; V026)
+# AI_OCR_ENGINES  ← new (OCR 引擎注册表; V026, KIND 由 V027 扩展)
 #   一行 = 一个可路由的 OCR 引擎配置，KIND 是引擎类型（tencent / aliyun /
-#   rapidocr）而不是 provider 名：同类型可以有多行（不同 region / 配额来源）。
+#   rapidocr / baidu / groq）而不是 provider 名：同类型可以有多行（不同
+#   region / 配额来源）。
 #   PRIORITY 数字越小越优先（100 为默认档），路由按 (enabled, priority) 取
 #   第一行可用引擎，所以 ix_ai_ocr_engines_enabled_priority 就是查询形状。
 #   SECRET_CIPHER 可空：本地引擎（rapidocr）没有凭证，「NULL = 不需要」而不是
@@ -1124,7 +1125,7 @@ ai_ocr_engines = Table(
     Column("updated_at", oracle.TIMESTAMP, nullable=False),
     _oid_check("ai_ocr_engines"),
     CheckConstraint(
-        "kind IN ('tencent','aliyun','rapidocr')",
+        "kind IN ('tencent','aliyun','rapidocr','baidu','groq')",
         name="ck_ai_ocr_engines_kind",
     ),
     CheckConstraint("enabled IN (0,1)", name="ck_ai_ocr_engines_enabled"),

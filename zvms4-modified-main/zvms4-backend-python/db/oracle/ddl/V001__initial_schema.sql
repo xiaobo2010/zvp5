@@ -1329,12 +1329,13 @@ END;
 
 -- ----------------------------------------------------------------------------
 -- AI_OCR_ENGINES  ← new (OCR 引擎注册表；本地 / 云端引擎统一一行)
---   KIND 是引擎类型（tencent / aliyun / rapidocr）而不是 provider 名：同类型
---   可以有多行（不同 region / 配额来源）。PRIORITY 越小越优先，路由按
---   (enabled, priority) 取第一行可用引擎。
+--   KIND 是引擎类型（tencent / aliyun / rapidocr / baidu / groq）而不是
+--   provider 名：同类型可以有多行（不同 region / 配额来源）。PRIORITY 越小
+--   越优先，路由按 (enabled, priority) 取第一行可用引擎。
 --   SECRET_CIPHER 可空：本地引擎没有凭证（NULL = 不需要，不是配置缺失）。
 --   NAME 唯一：运维按名字指定/禁用某个引擎。
---   也由 V026__add_ai_ocr_engines_and_key_headers.sql 在存量实例上创建。
+--   也由 V026__add_ai_ocr_engines_and_key_headers.sql 在存量实例上创建；
+--   KIND 集合由 V027__extend_ai_ocr_engines_kind.sql 扩到含 baidu / groq。
 -- ----------------------------------------------------------------------------
 BEGIN
   EXECUTE IMMEDIATE '
@@ -1351,7 +1352,7 @@ CREATE TABLE ai_ocr_engines (
   updated_at TIMESTAMP NOT NULL,
   CONSTRAINT pk_ai_ocr_engines PRIMARY KEY (oid),
   CONSTRAINT ck_ai_ocr_engines_oid CHECK (REGEXP_LIKE(oid,''^[0-9a-f]{24}$'')),
-  CONSTRAINT ck_ai_ocr_engines_kind CHECK (kind IN (''tencent'',''aliyun'',''rapidocr'')),
+  CONSTRAINT ck_ai_ocr_engines_kind CHECK (kind IN (''tencent'',''aliyun'',''rapidocr'',''baidu'',''groq'')),
   CONSTRAINT ck_ai_ocr_engines_enabled CHECK (enabled IN (0,1)),
   CONSTRAINT ck_ai_ocr_engines_config_json CHECK (config_json IS JSON)
 )';
