@@ -18,6 +18,45 @@ DEFAULT_QUOTA = {
     "chat": config.AI_DEFAULT_CHAT_MONTHLY_UNITS,
 }
 
+# 站点级 OCR 额度的默认值。**不能**回落到 ``DEFAULT_QUOTA["ocr"]``：那个 100 是
+# 「单个用户每月能免费用几次」的口径，站点额度是「平台愿意为所有用户垫多少上游
+# 调用」——两者差一个数量级。回落到 100 的结果是：几十个用户一天就把站点额度
+# 打满，之后全站 OCR 一起 503。
+_DEFAULT_SITE_OCR_MONTHLY_UNITS = 1000
+
+
+def site_quota() -> dict[str, int]:
+    """``settings.AI_SITE_QUOTA``：按引擎 kind 覆盖站点月额度。
+
+    形如 ``{"ocr_tencent": 1000, "ocr_rapidocr": 1000000}``。值非法（负数/非整数）
+    直接跳过，保留默认值——写错一个条目不该让额度变成 0 把整条链路掐死。
+    """
+    raw = getattr(settings, "AI_SITE_QUOTA", {}) or {}
+    out: dict[str, int] = {}
+    if isinstance(raw, dict):
+        for key, value in raw.items():
+            try:
+                limit = int(value)
+            except (TypeError, ValueError):
+                continue
+            if limit >= 0:
+                out[str(key)] = limit
+    return out
+
+
+def default_site_ocr_limit() -> int:
+    """站点级 OCR 额度的兜底值（``settings.AI_DEFAULT_SITE_OCR_MONTHLY_UNITS``）。"""
+    raw = getattr(
+        settings,
+        "AI_DEFAULT_SITE_OCR_MONTHLY_UNITS",
+        _DEFAULT_SITE_OCR_MONTHLY_UNITS,
+    )
+    try:
+        limit = int(raw)
+    except (TypeError, ValueError):
+        limit = _DEFAULT_SITE_OCR_MONTHLY_UNITS
+    return max(0, limit)
+
 OPENAI_COMPAT = "openai_compat"
 _DEFAULT_CONCURRENCY = 8
 

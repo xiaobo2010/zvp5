@@ -11,7 +11,13 @@ from datetime import datetime
 from db import backends
 from db.repos.protocols import SHARED_OWNER_OID
 
-from .config import DEFAULT_QUOTA, ROLE_QUOTA_PRIORITY, role_quota
+from .config import (
+    DEFAULT_QUOTA,
+    ROLE_QUOTA_PRIORITY,
+    default_site_ocr_limit,
+    role_quota,
+    site_quota,
+)
 from .ocr_engines import ENGINE_KINDS
 
 KINDS = ("ocr", "chat")
@@ -53,12 +59,17 @@ def period_now(now: datetime | None = None) -> str:
 
 
 def _default_limit(kind: str) -> int:
-    """默认月额度；``ocr_*`` 这类站点子类回落到它的大类（``ocr``）。
+    """默认月额度。
 
-    ``ai_quota.kind`` 的 CHECK 是前缀式的（V026），``ocr_tencent`` 是合法 kind，
-    但配置里只有大类 ``ocr`` 的默认值。不回落的话新引擎的首次调用会拿到
-    ``default_limit=0``——额度一建就是满的，所有站点级 OCR 调用都会被拒。
+    站点级 ``ocr_*`` 走**站点口径**（``settings.AI_SITE_QUOTA`` → 兜底
+    ``AI_DEFAULT_SITE_OCR_MONTHLY_UNITS``），**不**回落到用户的
+    ``DEFAULT_QUOTA["ocr"]``：后者是「一个用户每月免费几次」，前者是「平台愿意
+    为全站垫多少上游调用」，两者差一个数量级。回落会让几十个用户一天打满站点
+    额度，之后全站 OCR 一起 503（2026-10-24 上线实测 limit=100 就是这个坑）。
     """
+    if kind in SITE_KINDS:
+        override = site_quota().get(kind)
+        return override if override is not None else default_site_ocr_limit()
     base = kind.split("_", 1)[0] if kind not in DEFAULT_QUOTA else kind
     try:
         return int(DEFAULT_QUOTA.get(kind, DEFAULT_QUOTA.get(base, 0)))

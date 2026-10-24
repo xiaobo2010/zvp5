@@ -656,6 +656,7 @@ def test_site_consume_books_against_the_shared_owner(monkeypatch) -> None:
 
     allowed, used, limit = _run(quota.site_consume("aliyun", 2))
 
+    # (7, 100) 来自假仓储那一行：consume 返回的是**行里的**上限，与默认值无关。
     assert (allowed, used, limit) == (True, 7, 100)
     user_oid, period, kind, amount, default_limit = repo.calls[0]
     # 站点额度不属于任何用户，用 24 个 0 的哨兵（NULL 会让唯一索引失效）。
@@ -663,8 +664,10 @@ def test_site_consume_books_against_the_shared_owner(monkeypatch) -> None:
     assert period == quota.period_now()
     assert kind == "ocr_aliyun"
     assert amount == 2
-    # 新引擎的默认额度回落到大类 ocr，否则首建行就是 limit=0（全拒）。
-    assert default_limit == DEFAULT_QUOTA["ocr"]
+    # 传给仓储的 default_limit 必须是**站点口径**：回落到用户额度（100）会让站点
+    # 额度一建就满，几十个用户一天打满、之后全站 OCR 503（2026-10-24 上线实测）。
+    assert default_limit == quota._default_limit("ocr_aliyun")
+    assert default_limit != DEFAULT_QUOTA["ocr"]
 
 
 def test_site_consume_rejects_unknown_engine_before_touching_the_repo(monkeypatch) -> None:
@@ -677,8 +680,10 @@ def test_site_consume_rejects_unknown_engine_before_touching_the_repo(monkeypatc
     assert repo.calls == []
 
 
-def test_default_limit_falls_back_to_the_base_kind() -> None:
-    assert quota._default_limit("ocr_tencent") == DEFAULT_QUOTA["ocr"]
+def test_default_limit_uses_site_quota_for_site_kinds() -> None:
+    # 站点 kind 走站点口径（默认 1000），用户级 kind 才走 DEFAULT_QUOTA。
+    assert quota._default_limit("ocr_tencent") == 1000
+    assert quota._default_limit("ocr_tencent") != DEFAULT_QUOTA["ocr"]
     assert quota._default_limit("ocr") == DEFAULT_QUOTA["ocr"]
     assert quota._default_limit("chat") == DEFAULT_QUOTA["chat"]
     assert quota._default_limit("unknown_kind") == 0
