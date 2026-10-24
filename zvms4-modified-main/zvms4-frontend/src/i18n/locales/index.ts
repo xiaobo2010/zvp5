@@ -1,5 +1,6 @@
 import * as about from './about'
 import * as activity from './activity'
+import * as ai from './ai'
 import * as home from './home'
 import * as nav from './nav'
 import * as validation from './validation'
@@ -13,6 +14,7 @@ import * as maintenance from './maintenance'
 export const zhCN = {
   about: about.zhCN,
   activity: activity.zhCN,
+  ai: ai.zhCN,
   home: home.zhCN,
   nav: nav.zhCN,
   validation: validation.zhCN,

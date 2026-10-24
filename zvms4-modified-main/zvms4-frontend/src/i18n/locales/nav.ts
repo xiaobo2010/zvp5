@@ -3,6 +3,7 @@ export const zhCN = {
   activity: '义工列表',
   manage: '平台管理',
   server: '服务器管理',
+  ai: 'AI 网关',
   create: '创建义工',
   about: '关于',
   changelog: '更新日志',
