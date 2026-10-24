@@ -24,6 +24,12 @@ AI_ENABLED = True
 #          "models":["..."],"timeout":{"connect":5,"read":120}}
 AI_PROVIDERS = {}
 AI_MAX_CONCURRENCY = 8
+# 部署的 worker 进程数。不写就按环境变量 WEB_CONCURRENCY / UVICORN_WORKERS 探测，
+# 都缺省为 1。频控/熔断/缓存是进程内状态，进程内阈值会按这个数折算。
+# AI_WORKER_COUNT = 1
+# 独立 API key（/api/ai/api-keys）：单把 key 的每分钟上限与校验缓存秒数。
+# AI_API_KEY_RATE_LIMIT_PER_MINUTE = 60
+# AI_API_KEY_CACHE_TTL = 30
 # 允许使用 /api/ai 的角色（per 口径）。默认学生会 + 管理员。
 AI_ALLOWED_ROLES = ("admin", "department")
 # 每用户每分钟调用上限（滑动窗口）；0 或缺省 kind 表示不限。

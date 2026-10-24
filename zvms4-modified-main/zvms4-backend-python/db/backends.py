@@ -181,6 +181,13 @@ def get_ai_ocr_engines_repo(session: Any = None) -> Any:
     return OracleAIOcrEnginesRepo(session)
 
 
+def get_ai_api_keys_repo(session: Any = None) -> Any:
+    """Return the ``AIApiKeysRepo`` implementation (OpenAI 面独立 API key)."""
+    from db.repos.oracle.ai_api_keys import OracleAIApiKeysRepo
+
+    return OracleAIApiKeysRepo(session)
+
+
 __all__ = [
     "get_users_repo",
     "get_groups_repo",
@@ -206,4 +213,5 @@ __all__ = [
     "get_ai_quota_repo",
     "get_ai_credentials_repo",
     "get_ai_ocr_engines_repo",
+    "get_ai_api_keys_repo",
 ]

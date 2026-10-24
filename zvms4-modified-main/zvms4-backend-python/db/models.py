@@ -1147,6 +1147,46 @@ Index(
 
 
 # ---------------------------------------------------------------------------
+# AI_API_KEYS  ← new (OpenAI 兼容面的独立 API key; V030)
+#   一行 = 一位用户的一把 key。TOKEN_HASH 存 sha256(token) 的 hex，明文只在
+#   创建响应里出现一次，永不落库——所以这张表泄露也拿不到可用的 key。
+#   NAME 在**同一 owner 内**唯一：key 的名字是管理人员认 key 的标签，不同用户
+#   各叫各的「CI」互不影响（ux_ai_api_keys_owner_name）。
+#   TOKEN_HASH 全局唯一：所有 key 走同一个校验入口，撞哈希等于两条记录互相遮蔽。
+#   EXPIRES_AT 可空 = 永不过期；到期与 enabled=0 在鉴权层是同一条 401 路径。
+#   LAST_USED_AT 是采样写的（最多每 60 秒回写一次），不是精确审计。
+# ---------------------------------------------------------------------------
+
+ai_api_keys = Table(
+    "ai_api_keys",
+    metadata,
+    _oid_pk(),
+    Column("user_oid", VARCHAR2(24), nullable=False),
+    Column("name", VARCHAR2(64), nullable=False),
+    Column("token_hash", VARCHAR2(64), nullable=False),
+    Column("key_hint", VARCHAR2(16), nullable=False),
+    Column("enabled", NUMBER(1), nullable=False, server_default=text("1")),
+    Column("expires_at", oracle.TIMESTAMP, nullable=True),
+    Column("last_used_at", oracle.TIMESTAMP, nullable=True),
+    Column(
+        "created_at",
+        oracle.TIMESTAMP,
+        nullable=False,
+        server_default=text("SYSTIMESTAMP"),
+    ),
+    _oid_check("ai_api_keys"),
+    CheckConstraint("enabled IN (0,1)", name="ck_ai_api_keys_enabled"),
+)
+Index("ux_ai_api_keys_token_hash", ai_api_keys.c.token_hash, unique=True)
+Index(
+    "ux_ai_api_keys_owner_name",
+    ai_api_keys.c.user_oid,
+    ai_api_keys.c.name,
+    unique=True,
+)
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
