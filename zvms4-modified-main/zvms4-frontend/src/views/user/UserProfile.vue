@@ -63,6 +63,8 @@ async function logout() {
         confirmButtonText: t('profile.logoutConfirmOk'),
         cancelButtonText: t('profile.logoutConfirmCancel'),
         type: 'warning',
+        // 退出登录属高危确认，主按钮走红色语义色（深浅色一致）
+        confirmButtonClass: 'el-button--danger',
         closeOnClickModal: false
       }
     )
