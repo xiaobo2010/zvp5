@@ -488,7 +488,13 @@ onMounted(async () => {
                     <ElIcon><User /></ElIcon>
                   </span>
                   <span class="yg-user-chip__name">{{ userStore.name }}</span>
-                  <ElPopover width="216px" trigger="click" popper-class="yg-user-menu">
+                  <ElPopover
+                    width="200px"
+                    trigger="click"
+                    placement="bottom-end"
+                    :popper-options="{ modifiers: [{ name: 'offset', options: { offset: [0, 10] } }] }"
+                    popper-class="yg-user-menu"
+                  >
                     <template #reference>
                       <button
                         type="button"
@@ -597,6 +603,7 @@ onMounted(async () => {
   background: var(--yg-color-primary-soft);
   color: var(--yg-color-primary);
   font-size: 15px;
+  line-height: 1;
 }
 
 .yg-user-chip__name {
@@ -605,12 +612,16 @@ onMounted(async () => {
   color: var(--yg-text-primary);
   font-size: var(--yg-font-size-sm);
   font-weight: var(--yg-font-weight-medium);
+  /* 行盒压到 26px 与头像同高，三者共用 flex 中线，避免基线把文字顶偏 */
+  display: inline-flex;
+  align-items: center;
+  height: 26px;
   line-height: 1;
   white-space: nowrap;
   text-overflow: ellipsis;
 }
 
-/* 箭头按钮保留 24px 触控区，不参与主色填充 */
+/* 箭头按钮保留 24px 触控区，不参与主色填充；图标自身对齐中线 */
 .yg-user-chip__toggle {
   display: inline-flex;
   align-items: center;
@@ -623,10 +634,18 @@ onMounted(async () => {
   background: transparent;
   color: var(--yg-text-secondary);
   font-size: 13px;
+  line-height: 1;
   cursor: pointer;
   transition:
     color var(--yg-dur-fast) var(--yg-ease-out),
     background-color var(--yg-dur-fast) var(--yg-ease-out);
+}
+
+.yg-user-chip__toggle > .el-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
 }
 
 .yg-user-chip__toggle:hover {
@@ -648,13 +667,14 @@ onMounted(async () => {
   gap: 2px;
 }
 
+/* 菜单只有两项，压到 32px 行高 + 4px 内边距，整体更紧凑 */
 :global(.yg-user-menu__item.el-button) {
   justify-content: flex-start;
   width: 100%;
-  height: 36px;
+  height: 32px;
   margin: 0;
-  padding: 0 10px;
-  border-radius: var(--yg-radius-md);
+  padding: 0 8px;
+  border-radius: var(--yg-radius-sm);
   color: var(--yg-text-primary);
   font-size: var(--yg-font-size-sm);
 }
@@ -675,7 +695,13 @@ onMounted(async () => {
 }
 
 :global(.yg-user-menu) {
-  padding: 6px;
+  padding: 4px;
+}
+
+/* 极简风去掉指向箭头，弹层直接以右边缘对齐胶囊 */
+:global(.yg-user-menu .el-popper__arrow),
+:global(.yg-user-menu > .el-popper__arrow) {
+  display: none;
 }
 
 /* 封禁全屏：危险态用红色系（准则第 5 章）。深红底不在语义调色板内，
