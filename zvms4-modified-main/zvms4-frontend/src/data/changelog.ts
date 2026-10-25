@@ -6,7 +6,7 @@ export interface ChangelogEntry {
 
 export const changelog: ChangelogEntry[] = [
   {
-    version: 'v4.2.4-10',
+    version: 'v4.3.0-1',
     date: '2026-10-25',
     items: [
       '批量登记开放审核中的活动：可先录入成员，审核通过后自动计入时长统计',
