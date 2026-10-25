@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, reactive, ref } from 'vue'
+import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useWindowSize } from '@vueuse/core'
 import {
   ElButton,
   ElCard,
@@ -17,7 +18,7 @@ import {
   ElTag
 } from 'element-plus'
 import { Timer } from '@element-plus/icons-vue'
-import type { FormInstance, FormItemRule, FormRules } from 'element-plus'
+import type { FormInstance, FormItemRule, FormRules, TableInstance } from 'element-plus'
 import dayjs from '@/plugins/dayjs'
 import { ZMarkdownEditor } from '@/components/markdown'
 import ZNotificationHistoryDialog from './ZNotificationHistoryDialog.vue'
@@ -31,6 +32,41 @@ import {
 } from '@/api/notifications'
 
 const { t } = useI18n()
+
+const { width, height } = useWindowSize()
+
+/** 窄屏（≤768px，准则 3.7）：列宽收窄，减少横向滚动距离 */
+const narrow = computed(() => width.value <= 768)
+
+const tableRef = ref<TableInstance>()
+
+/** 分页行 + 卡片下边距 + 页面底部留白 */
+const BOTTOM_ROOM = 96
+
+/**
+ * 表格高度 = 视口高度 − 表格实际顶部 − 底部预留（与群组列表同一算法）。
+ * 表格带 max-height：纵向滚动交给 EP 的内部滚动容器，表头固定在表格顶部。
+ */
+function computeTableHeight(): number {
+  const el = (tableRef.value as { $el?: HTMLElement } | undefined)?.$el
+  const top = el?.getBoundingClientRect?.().top ?? 0
+  if (top > 0 && top < height.value * 0.8) {
+    return Math.max(280, Math.round(height.value - top - BOTTOM_ROOM))
+  }
+  return Math.max(280, Math.round(height.value - 320))
+}
+
+const tableHeight = ref(computeTableHeight())
+
+watch([width, height], () => {
+  tableHeight.value = computeTableHeight()
+})
+
+onMounted(() => {
+  void nextTick(() => {
+    tableHeight.value = computeTableHeight()
+  })
+})
 
 const TITLE_MAX = 200
 const CONTENT_MAX = 4000
@@ -326,7 +362,7 @@ onMounted(() => {
 
 <template>
   <div class="flex flex-col gap-4">
-    <ElCard shadow="never" v-loading="loading">
+    <ElCard shadow="never">
       <template #header>
         <div class="flex flex-wrap items-center justify-between gap-3">
           <div class="flex flex-col gap-1">
@@ -346,17 +382,25 @@ onMounted(() => {
         </div>
       </template>
 
-      <ElTable :data="rows" row-key="id" stripe>
+      <!-- 加载遮罩只盖数据区：卡片头按钮与底部提示保持可见 -->
+      <ElTable
+        ref="tableRef"
+        v-loading="loading"
+        :data="rows"
+        row-key="id"
+        stripe
+        :max-height="tableHeight"
+      >
         <ElTableColumn
           prop="title"
           :label="t('manage.notifications.columns.title')"
-          min-width="200"
+          :min-width="narrow ? 140 : 200"
           show-overflow-tooltip
         />
         <ElTableColumn
           prop="content"
           :label="t('manage.notifications.columns.content')"
-          min-width="260"
+          :min-width="narrow ? 160 : 260"
           show-overflow-tooltip
         >
           <template #default="{ row }">
@@ -366,7 +410,7 @@ onMounted(() => {
         <ElTableColumn
           prop="author_name"
           :label="t('manage.notifications.columns.author')"
-          min-width="120"
+          :min-width="narrow ? 100 : 120"
         >
           <template #default="{ row }">
             <div class="flex flex-col">
@@ -380,7 +424,7 @@ onMounted(() => {
         <ElTableColumn
           prop="created_at"
           :label="t('manage.notifications.columns.createdAt')"
-          min-width="160"
+          :min-width="narrow ? 140 : 160"
         >
           <template #default="{ row }">
             <span class="tabular-nums">{{ formatTime(row.created_at) }}</span>
@@ -404,7 +448,7 @@ onMounted(() => {
         </ElTableColumn>
         <ElTableColumn
           :label="t('manage.notifications.columns.actions')"
-          min-width="210"
+          :min-width="narrow ? 150 : 210"
           fixed="right"
           align="right"
         >

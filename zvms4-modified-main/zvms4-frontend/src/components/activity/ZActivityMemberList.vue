@@ -5,7 +5,7 @@ import { toRefs, watch } from 'vue'
 import { User as IconUser, Minus, EditPen } from '@element-plus/icons-vue'
 import { useUserStore } from '@/stores/user'
 import { useI18n } from 'vue-i18n'
-import { ElTable, ElTableColumn, ElButton, ElPopconfirm, ElIcon, ElEmpty } from 'element-plus'
+import { ElTable, ElTableColumn, ElButton, ElIcon, ElEmpty, ElMessageBox } from 'element-plus'
 import { useWindowSize } from '@vueuse/core'
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
@@ -105,6 +105,25 @@ const memberFunctions = {
   }
 }
 
+// 删除成员是不可恢复的写操作，先弹危险确认；取消则不发请求。
+async function confirmRemove(sessionId: string) {
+  try {
+    await ElMessageBox.confirm(
+      t('activity.member.dialog.actions.removeMessage'),
+      t('activity.member.dialog.actions.removeTitle'),
+      {
+        type: 'warning',
+        confirmButtonText: t('activity.member.dialog.actions.remove'),
+        cancelButtonText: t('activity.member.dialog.actions.cancel'),
+        confirmButtonClass: 'el-button--danger'
+      }
+    )
+  } catch {
+    return
+  }
+  await memberFunctions.remove(sessionId)
+}
+
 watch(open, () => {
   // refreshMembers()
   if (open.value) {
@@ -149,8 +168,9 @@ watch(search, refreshMembers)
           {{ t('activity.member.inline.count', { count: size }) }}
         </span>
       </div>
-      <div v-if="show" v-loading="pageLoading">
+      <div v-if="show">
         <ElTable
+          v-loading="pageLoading"
           :data="members"
           stripe
           :height="mode === 'inline' ? undefined : max"
@@ -197,28 +217,19 @@ watch(search, refreshMembers)
               </ElButton>
             </template>
             <template #default="scope">
-              <ElPopconfirm
-                :title="t('activity.member.dialog.actions.confirm')"
-                @confirm="memberFunctions.remove(scope.row._id)"
-                width="216px"
-                placement="left"
+              <ElButton
+                text
+                bg
+                round
+                size="small"
+                type="danger"
                 class="no-print"
+                :loading="loading === scope.row._id"
+                :icon="Minus"
+                @click="confirmRemove(scope.row._id)"
               >
-                <template #reference>
-                  <ElButton
-                    text
-                    bg
-                    round
-                    size="small"
-                    type="danger"
-                    @click="scope"
-                    :loading="loading === scope.row._id"
-                    :icon="Minus"
-                  >
-                    {{ t('activity.member.dialog.actions.remove') }}
-                  </ElButton>
-                </template>
-              </ElPopconfirm>
+                {{ t('activity.member.dialog.actions.remove') }}
+              </ElButton>
             </template>
           </ElTableColumn>
           <template #empty v-if="mode === 'inline'">

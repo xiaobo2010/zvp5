@@ -57,7 +57,9 @@ watch(xuehai_id2, refresh)
         @blur="xuehai_id2 = xuehai_id"
       ></ElInput>
     </div>
-    <ZLogCard v-loading="loading" :log="log" v-for="log in logs" :key="log._id" />
+    <div v-loading="loading" class="log-list">
+      <ZLogCard :log="log" v-for="log in logs" :key="log._id" />
+    </div>
     <div class="py-2">
       <ZPagination
         v-model:current-page="page"
@@ -68,4 +70,9 @@ watch(xuehai_id2, refresh)
   </div>
 </template>
 
-<style scoped></style>
+<style scoped>
+/* 遮罩只覆盖条目区，上方的筛选输入与底部分页保持可读可点 */
+.log-list {
+  position: relative;
+}
+</style>

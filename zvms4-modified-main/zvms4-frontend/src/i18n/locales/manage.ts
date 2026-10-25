@@ -22,7 +22,18 @@ export const zhCN = {
       name: '名称',
       permission: '权限',
       details: '详细信息',
-      search: '搜索'
+      search: '搜索',
+      action: '操作',
+      view: '查看',
+      rename: '重命名',
+      delete: '删除'
+    },
+    delete: {
+      title: '删除该群组？',
+      message: '确定删除群组「{name}」吗？删除后群组成员与权限配置将一并清除，且无法恢复。',
+      confirm: '删除',
+      cancel: '取消',
+      deletedNotice: '已删除群组'
     }
   },
   groupDetails: {

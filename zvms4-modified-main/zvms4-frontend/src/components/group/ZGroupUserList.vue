@@ -10,9 +10,11 @@ import {
   ElButton,
   ElCol,
   ElRow,
-  ElPopover
+  ElPopover,
+  ElIcon,
+  ElTooltip
 } from 'element-plus'
-import { nextTick, ref, onMounted, toRefs, watch } from 'vue'
+import { computed, nextTick, ref, onMounted, toRefs, watch } from 'vue'
 import type { TableInstance } from 'element-plus'
 import api from '@/api'
 import { useI18n } from 'vue-i18n'
@@ -21,7 +23,7 @@ import { useGroupsStore } from '@/stores/groups'
 import type { User, Group } from '@/../types'
 import { ZUserGroup } from '@/components'
 import { useWindowSize } from '@vueuse/core'
-import { Box, Search } from '@element-plus/icons-vue'
+import { Box, Search, View } from '@element-plus/icons-vue'
 import { pad } from '@/plugins/ua.ts'
 import ZDataExport from '@/components/utils/ZDataExport.vue'
 
@@ -56,6 +58,14 @@ const { id, selectable, modelValue, selectorCallback } = toRefs(props)
 
 const tableRef = ref<TableInstance>()
 
+/** 窄屏（≤768px，准则 3.7）：操作列收起成图标按钮，搜索/导出移到表格上方 */
+const narrow = computed(() => width.value <= 768)
+
+/** 表头只放搜索框（不排导出按钮）的场景：平板 / 非班级群组 / 可选择模式 */
+const searchOnly = computed(
+  () => pad() || (group.value?.type !== 'class' && id.value) || selectable.value
+)
+
 /** 分页行 + 卡片下边距 + 页面底部留白 */
 const BOTTOM_ROOM = 96
 
@@ -77,6 +87,13 @@ const tableHeight = ref(computeTableHeight())
 
 watch([width, height], () => {
   tableHeight.value = computeTableHeight()
+})
+
+/** 窄屏工具栏出现/消失会改变表格顶部位置，等布局落定后重算高度 */
+watch(narrow, () => {
+  void nextTick(() => {
+    tableHeight.value = computeTableHeight()
+  })
 })
 
 onMounted(() => {
@@ -171,7 +188,7 @@ function handleSelectionChange(val: string[]) {
       selectable
     "
   >
-    <ElCard shadow="never" v-loading="loading">
+    <ElCard shadow="never">
       <ElFormItem
         v-if="id && !selectable"
         :label="t('manage.groupDetails.userList.checkPasswordPrompt')"
@@ -179,8 +196,52 @@ function handleSelectionChange(val: string[]) {
       >
         <ElSwitch v-model="pwdm" />
       </ElFormItem>
+
+      <!-- 窄屏：搜索/导出移到表格上方，避免被固定操作列挤出可视区 -->
+      <div v-if="narrow" class="group-user-toolbar">
+        <ElInput
+          v-model="search"
+          size="small"
+          clearable
+          :placeholder="t('manage.groupList.columns.search')"
+          :prefix-icon="Search"
+          @blur="handleSearch"
+          @keyup.enter="handleSearch"
+          @clear="handleSearch"
+        />
+        <ElButton
+          v-if="!searchOnly && id"
+          :icon="Box"
+          size="small"
+          text
+          bf
+          round
+          type="warning"
+          @click="exportUserList"
+        >
+          {{ t('manage.exports.actions.export') }}
+        </ElButton>
+        <ElPopover v-else-if="!searchOnly" :width="320">
+          <template #reference>
+            <ElButton
+              :icon="Box"
+              size="small"
+              text
+              bf
+              round
+              type="warning"
+              @click="exportUserList"
+            >
+              {{ t('manage.exports.actions.export') }}
+            </ElButton>
+          </template>
+          <ZDataExport type="users" :model-value="true" />
+        </ElPopover>
+      </div>
+
       <ElTable
         ref="tableRef"
+        v-loading="loading"
         :data="users"
         stripe
         row-key="_id"
@@ -188,16 +249,34 @@ function handleSelectionChange(val: string[]) {
         :max-height="tableHeight"
       >
         <ElTableColumn v-if="selectable" type="selection" reserve-selection />
-        <ElTableColumn prop="name" :label="t('manage.groupDetails.userList.columns.name')" />
-        <ElTableColumn prop="id" :label="t('manage.groupDetails.userList.columns.id')" />
-        <ElTableColumn prop="banned" :label="t('manage.groupDetails.userList.columns.status')">
+        <ElTableColumn
+          prop="name"
+          :label="t('manage.groupDetails.userList.columns.name')"
+          :min-width="narrow ? 110 : 140"
+          show-overflow-tooltip
+        />
+        <ElTableColumn
+          prop="id"
+          :label="t('manage.groupDetails.userList.columns.id')"
+          :min-width="narrow ? 110 : 140"
+          show-overflow-tooltip
+        />
+        <ElTableColumn
+          prop="banned"
+          :label="t('manage.groupDetails.userList.columns.status')"
+          :min-width="narrow ? 80 : 100"
+        >
           <template #default="{ row }">
             <span :class="row.banned ? 'color-red' : 'color-green'">
               {{ row.banned ? t('home.status.banned') : t('home.status.normal') }}
             </span>
           </template>
         </ElTableColumn>
-        <ElTableColumn prop="group" :label="t('manage.groupDetails.userList.columns.group')">
+        <ElTableColumn
+          prop="group"
+          :label="t('manage.groupDetails.userList.columns.group')"
+          :min-width="narrow ? 120 : 160"
+        >
           <template #default="{ row }">
             <ZUserGroup v-for="group in row.group" :key="group" :group="group" class="px-1" />
           </template>
@@ -206,6 +285,7 @@ function handleSelectionChange(val: string[]) {
           v-if="pwdm && !selectable"
           prop="password"
           :label="t('manage.groupDetails.userList.columns.pwdm')"
+          min-width="120"
         >
           <template #default="{ row }">
             <span v-if="row.password" class="color-green">{{
@@ -216,17 +296,18 @@ function handleSelectionChange(val: string[]) {
             }}</span>
           </template>
         </ElTableColumn>
-        <ElTableColumn fixed="right" :min-width="260">
+        <ElTableColumn fixed="right" :min-width="narrow ? 72 : 260">
           <template #header>
-            <div>
+            <div v-if="!narrow">
               <ElInput
-                v-if="pad() || (group?.type !== 'class' && id) || selectable"
+                v-if="searchOnly"
                 v-model="search"
                 size="small"
                 :placeholder="t('manage.groupList.columns.search')"
                 :prefix-icon="Search"
                 @blur="handleSearch"
                 @keyup.enter="handleSearch"
+                @clear="handleSearch"
               />
               <ElRow class="w-full" v-else>
                 <ElCol :span="16">
@@ -238,6 +319,7 @@ function handleSelectionChange(val: string[]) {
                     :prefix-icon="Search"
                     @blur="handleSearch"
                     @keyup.enter="handleSearch"
+                    @clear="handleSearch"
                   />
                 </ElCol>
                 <ElCol :span="8">
@@ -277,7 +359,7 @@ function handleSelectionChange(val: string[]) {
           </template>
           <template #default="{ row }">
             <ElButton
-              v-if="!selectable"
+              v-if="!selectable && !narrow"
               type="primary"
               text
               bg
@@ -286,6 +368,20 @@ function handleSelectionChange(val: string[]) {
             >
               {{ t('manage.groupList.columns.details') }}
             </ElButton>
+            <ElTooltip
+              v-else-if="!selectable"
+              :content="t('manage.groupList.columns.details')"
+              placement="top"
+            >
+              <button
+                type="button"
+                class="yg-icon-btn yg-icon-btn--lg group-user-action"
+                :aria-label="t('manage.groupList.columns.details')"
+                @click="router.push(`/user/${row._id}`)"
+              >
+                <ElIcon :size="18"><View /></ElIcon>
+              </button>
+            </ElTooltip>
           </template>
         </ElTableColumn>
       </ElTable>
@@ -298,3 +394,18 @@ function handleSelectionChange(val: string[]) {
     </ElCard>
   </div>
 </template>
+
+<style scoped>
+/* 窄屏工具栏：搜索框与导出并排，间距走 4px 网格 */
+.group-user-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--yg-space-2);
+  margin-bottom: var(--yg-space-3);
+}
+
+/* 行内图标按钮：主色，44px 触控目标 */
+.group-user-action {
+  color: var(--yg-color-primary);
+}
+</style>

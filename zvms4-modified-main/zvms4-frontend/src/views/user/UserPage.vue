@@ -146,7 +146,13 @@ async function deleteUser() {
   try {
     await ElMessageBox.confirm(
       t('manage.personalPanel.deleteConfirm', { name: user.value.name }),
-      { type: 'warning' }
+      t('activity.member.userDelete.title'),
+      {
+        type: 'warning',
+        confirmButtonText: t('activity.member.userDelete.confirm'),
+        cancelButtonText: t('activity.member.userDelete.cancel'),
+        confirmButtonClass: 'el-button--danger'
+      }
     )
   } catch {
     return

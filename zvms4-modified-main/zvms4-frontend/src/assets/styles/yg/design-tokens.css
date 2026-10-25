@@ -44,12 +44,16 @@
   --yg-green-500: #34C759;
   --yg-green-600: #28A745;
   --yg-green-700: #1E7E34;
+  --yg-green-800: #16662A; /* 承白字 7.08:1，实心成功按钮悬停 */
+  --yg-green-900: #0F4A1E; /* 承白字 9.30:1，实心成功按钮按下 */
 
   /* ---------- 功能色 · 警告（橙） ---------- */
   --yg-orange-50:  #FFF7E6;
   --yg-orange-500: #FF9500;
   --yg-orange-600: #E68600;
   --yg-orange-700: #C93400;
+  --yg-orange-800: #A32A00; /* 承白字 7.30:1，实心警告按钮悬停 */
+  --yg-orange-900: #7F2100; /* 承白字 9.20:1，实心警告按钮按下 */
 
   /* ---------- 功能色 · 危险（红，仅用于高危/破坏性操作） ---------- */
   --yg-red-50:  #FFF1F0;
@@ -69,23 +73,45 @@
   --yg-color-primary-soft: var(--yg-sky-50);   /* 主色浅底 */
   --yg-color-on-primary: #FFFFFF;              /* 主色之上的文字 */
 
+  /* 实底主色（承白字，≥ 4.5:1）：只给「实色按钮底色」使用。
+     --yg-color-primary 保持品牌天蓝，继续用于图标、边框、选中态、进度条等
+     非文字场景；凡是要在实底上压白字的地方，一律改走 strong 系列。 */
+  --yg-color-primary-strong: var(--yg-sky-700);        /* 白字 5.93:1 */
+  --yg-color-primary-strong-hover: var(--yg-sky-800);   /* 白字 7.56:1 */
+  --yg-color-primary-strong-active: var(--yg-sky-900);  /* 白字 9.46:1 */
+
   --yg-color-success: var(--yg-green-500);
   --yg-color-success-hover: var(--yg-green-600);
   --yg-color-success-active: var(--yg-green-700);
   --yg-color-success-soft: var(--yg-green-50);
   --yg-color-on-success: #FFFFFF;
+  /* 实底成功色（承白字 ≥ 4.5:1）：只有实心按钮底色用它。
+     --yg-color-success 保留给图标、边框与浅底。 */
+  --yg-color-success-strong: var(--yg-green-700);        /* 白字 5.20:1 */
+  --yg-color-success-strong-hover: var(--yg-green-800);   /* 白字 7.08:1 */
+  --yg-color-success-strong-active: var(--yg-green-900);  /* 白字 9.30:1 */
 
   --yg-color-warning: var(--yg-orange-500);
   --yg-color-warning-hover: var(--yg-orange-600);
   --yg-color-warning-active: var(--yg-orange-700);
   --yg-color-warning-soft: var(--yg-orange-50);
   --yg-color-on-warning: #FFFFFF;
+  /* 实底警告色（承白字 ≥ 4.5:1）：同理，只给实心按钮。 */
+  --yg-color-warning-strong: var(--yg-orange-700);        /* 白字 5.32:1 */
+  --yg-color-warning-strong-hover: var(--yg-orange-800);   /* 白字 7.30:1 */
+  --yg-color-warning-strong-active: var(--yg-orange-900);  /* 白字 9.20:1 */
 
   --yg-color-danger: var(--yg-red-500);
   --yg-color-danger-hover: var(--yg-red-600);
   --yg-color-danger-active: var(--yg-red-700);
   --yg-color-danger-soft: var(--yg-red-50);
   --yg-color-on-danger: #FFFFFF;
+
+  /* 实底危险色（承白字，≥ 4.5:1）：只有破坏性操作的实心按钮可用。
+     --yg-color-danger 本身保留给图标、边框与文字（红 = 危险的识别色）。 */
+  --yg-color-danger-strong: var(--yg-red-700);        /* 白字 5.39:1 */
+  --yg-color-danger-strong-hover: var(--yg-red-800);   /* 白字 8.05:1 */
+  --yg-color-danger-strong-active: var(--yg-red-900);  /* 白字 11.46:1 */
 
   --yg-color-info: var(--yg-sky-500);
   --yg-color-info-soft: var(--yg-sky-50);
@@ -94,20 +120,24 @@
   --yg-text-primary: var(--yg-gray-950);
   --yg-text-secondary: var(--yg-gray-800);
   --yg-text-tertiary: var(--yg-gray-600);
-  --yg-text-disabled: var(--yg-gray-400);
+  --yg-text-disabled: var(--yg-gray-400);          /* 极弱化：占位符、禁用标记 */
+  --yg-text-disabled-control: #8A8A8F;            /* 禁用控件正文：浅灰底 3.08:1 */
   --yg-text-inverse: #FFFFFF;
-  --yg-text-link: var(--yg-sky-600);
+  --yg-text-link: var(--yg-sky-700);                /* 主色文字：白底 5.93:1 */
+  --yg-text-link-hover: var(--yg-sky-800);          /* 悬停往深走：白底 7.56:1 */
+  --yg-text-link-active: var(--yg-sky-900);         /* 按下往深走：白底 9.46:1 */
   --yg-text-success: var(--yg-green-700);
   --yg-text-warning: var(--yg-orange-700);
   --yg-text-danger: var(--yg-red-700);
+  --yg-text-danger-hover: var(--yg-red-800);        /* 危险文字悬停往深走 */
 
   /* ---------- 背景 ---------- */
   --yg-bg-page: #F5F5F7;           /* 页面底色 */
   --yg-bg-surface: #FFFFFF;        /* 卡片、面板（不透明） */
   --yg-bg-surface-raised: #FFFFFF; /* 弹出层面板（强制不透明，见准则第 6 章） */
   --yg-bg-surface-sunken: #F2F2F7; /* 凹陷区：输入槽、表头、轨道 */
-  --yg-bg-hover: rgba(14, 165, 233, 0.06);  /* 列表/菜单悬浮高亮 */
-  --yg-bg-active: rgba(14, 165, 233, 0.12); /* 选中高亮 */
+  --yg-bg-hover: #CDE7F9;   /* 悬浮高亮：与表面 1.28:1，肉眼可辨 */
+  --yg-bg-active: #B7DCF6;  /* 按下高亮：与表面 1.44:1 */
 
   /* ---------- 边框 ---------- */
   --yg-border-subtle: #F0F0F3;
@@ -130,7 +160,11 @@
   --yg-shadow-lg: 0 4px 8px rgba(28, 28, 30, 0.05), 0 12px 32px rgba(28, 28, 30, 0.12);
   --yg-shadow-xl: 0 8px 16px rgba(28, 28, 30, 0.08), 0 24px 64px rgba(28, 28, 30, 0.18);
   --yg-shadow-inset: inset 0 1px 2px rgba(28, 28, 30, 0.06);
-  --yg-focus-ring: 0 0 0 3px rgba(14, 165, 233, 0.32); /* 键盘焦点环 */
+
+  /* ---------- 键盘焦点环（双层：内 2px 分隔色 + 外 2px 强色） ---------- */
+  --yg-focus-ring-color: var(--yg-sky-700);   /* 外圈焦点色：白底 5.93:1 */
+  --yg-focus-ring-inner: var(--yg-bg-surface); /* 内圈分隔色：与被聚焦元素底色拉开 */
+  --yg-focus-ring: 0 0 0 2px var(--yg-focus-ring-inner), 0 0 0 4px var(--yg-focus-ring-color);
 
   /* ---------- 层级（z-index） ---------- */
   --yg-z-dropdown: 1000; /* 下拉、选择弹层 */
@@ -212,130 +246,235 @@
 }
 
 /* ==========================================================================
-   暗色模式：<html data-theme="dark">，或未设置 data-theme 时跟随系统。
-   注意：下方两份暗色令牌块必须保持完全一致。
+   暗色调色板（深色取值的唯一来源）
+   深色色值只在这里写一次；下面两个深色入口（<html data-theme="dark"> 与
+   系统 prefers-color-scheme: dark）都只做变量映射，避免双份维护造成漂移。
+   --yg-dark-* 为内部令牌，组件不得直接引用。
+   ========================================================================== */
+:root {
+  --yg-dark-color-primary: var(--yg-sky-500);
+  --yg-dark-color-primary-hover: var(--yg-sky-400);
+  --yg-dark-color-primary-active: var(--yg-sky-300);
+  --yg-dark-color-primary-soft: rgba(56, 189, 248, 0.14);
+  --yg-dark-color-on-primary: #FFFFFF;
+  --yg-dark-color-primary-strong: var(--yg-sky-700); /* 白字 5.93:1 */
+  --yg-dark-color-primary-strong-hover: var(--yg-sky-800); /* 白字 7.56:1 */
+  --yg-dark-color-primary-strong-active: var(--yg-sky-900); /* 白字 9.46:1 */
+
+  --yg-dark-color-success: var(--yg-green-500);
+  --yg-dark-color-success-hover: var(--yg-green-600);
+  --yg-dark-color-success-active: var(--yg-green-700);
+  --yg-dark-color-success-soft: rgba(52, 199, 89, 0.14);
+  --yg-dark-color-on-success: #FFFFFF;
+  --yg-dark-color-success-strong: var(--yg-green-700); /* 白字 5.20:1 */
+  --yg-dark-color-success-strong-hover: var(--yg-green-800); /* 白字 7.08:1 */
+  --yg-dark-color-success-strong-active: var(--yg-green-900); /* 白字 9.30:1 */
+
+  --yg-dark-color-warning: var(--yg-orange-500);
+  --yg-dark-color-warning-hover: var(--yg-orange-600);
+  --yg-dark-color-warning-active: var(--yg-orange-700);
+  --yg-dark-color-warning-soft: rgba(255, 149, 0, 0.16);
+  --yg-dark-color-on-warning: #FFFFFF;
+  --yg-dark-color-warning-strong: var(--yg-orange-700); /* 白字 5.32:1 */
+  --yg-dark-color-warning-strong-hover: var(--yg-orange-800); /* 白字 7.30:1 */
+  --yg-dark-color-warning-strong-active: var(--yg-orange-900); /* 白字 9.20:1 */
+
+  --yg-dark-color-danger: var(--yg-red-500);
+  --yg-dark-color-danger-hover: var(--yg-red-400);
+  --yg-dark-color-danger-active: var(--yg-red-300);
+  --yg-dark-color-danger-soft: rgba(255, 59, 48, 0.16);
+  --yg-dark-color-on-danger: #FFFFFF;
+  --yg-dark-color-danger-strong: var(--yg-red-700); /* 白字 5.39:1 */
+  --yg-dark-color-danger-strong-hover: var(--yg-red-800); /* 白字 8.05:1 */
+  --yg-dark-color-danger-strong-active: var(--yg-red-900); /* 白字 11.46:1 */
+
+  --yg-dark-color-info: var(--yg-sky-400);
+  --yg-dark-color-info-soft: rgba(56, 189, 248, 0.14);
+
+  --yg-dark-text-primary: #F5F5F7;
+  --yg-dark-text-secondary: #AEAEB2;
+  --yg-dark-text-tertiary: #8E8E93;
+  --yg-dark-text-disabled: #636366;
+  --yg-dark-text-disabled-control: var(--yg-gray-600); /* 深色凹陷底 5.83:1 */
+  --yg-dark-text-inverse: #1C1C1E;
+  --yg-dark-text-link: var(--yg-sky-400);
+  --yg-dark-text-link-hover: var(--yg-sky-300);
+  --yg-dark-text-link-active: var(--yg-sky-200);
+  --yg-dark-text-success: #34C759;
+  --yg-dark-text-warning: #FFB340;
+  --yg-dark-text-danger: var(--yg-red-400);
+  --yg-dark-text-danger-hover: var(--yg-red-300);
+
+  --yg-dark-bg-page: #0D0D0F;
+  --yg-dark-bg-surface: #1C1C1E;
+  --yg-dark-bg-surface-raised: #2C2C2E; /* 弹出层面板：深色下同样强制不透明 */
+  --yg-dark-bg-surface-sunken: #101012;
+  --yg-dark-bg-hover: #31414F; /* 与表面 1.62:1 */
+  --yg-dark-bg-active: #3D5162; /* 与表面 2.07:1 */
+
+  --yg-dark-border-subtle: rgba(255, 255, 255, 0.06);
+  --yg-dark-border-default: rgba(255, 255, 255, 0.10);
+  --yg-dark-border-strong: rgba(255, 255, 255, 0.18);
+
+  --yg-dark-shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.40);
+  --yg-dark-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.40), 0 2px 6px rgba(0, 0, 0, 0.45);
+  --yg-dark-shadow-md: 0 2px 4px rgba(0, 0, 0, 0.35), 0 6px 16px rgba(0, 0, 0, 0.50);
+  --yg-dark-shadow-lg: 0 4px 8px rgba(0, 0, 0, 0.40), 0 12px 32px rgba(0, 0, 0, 0.55);
+  --yg-dark-shadow-xl: 0 8px 16px rgba(0, 0, 0, 0.45), 0 24px 64px rgba(0, 0, 0, 0.65);
+  --yg-dark-shadow-inset: inset 0 1px 2px rgba(0, 0, 0, 0.40);
+  --yg-dark-focus-ring-color: var(--yg-sky-400); /* 焦点环外圈：深色底 7.94:1 */
+
+  --yg-dark-color-selection: rgba(56, 189, 248, 0.3);
+}
+
+/* ==========================================================================
+   深色入口 1：<html data-theme="dark"> 手动切换（映射列表由上方调色板生成）
    ========================================================================== */
 :root[data-theme="dark"] {
-  --yg-color-primary: var(--yg-sky-500);
-  --yg-color-primary-hover: var(--yg-sky-400);
-  --yg-color-primary-active: var(--yg-sky-300);
-  --yg-color-primary-soft: rgba(56, 189, 248, 0.14);
-  --yg-color-on-primary: #FFFFFF;
+  --yg-color-primary: var(--yg-dark-color-primary);
+  --yg-color-primary-hover: var(--yg-dark-color-primary-hover);
+  --yg-color-primary-active: var(--yg-dark-color-primary-active);
+  --yg-color-primary-soft: var(--yg-dark-color-primary-soft);
+  --yg-color-on-primary: var(--yg-dark-color-on-primary);
+  --yg-color-primary-strong: var(--yg-dark-color-primary-strong); /* 白字 5.93:1 */
+  --yg-color-primary-strong-hover: var(--yg-dark-color-primary-strong-hover); /* 白字 7.56:1 */
+  --yg-color-primary-strong-active: var(--yg-dark-color-primary-strong-active); /* 白字 9.46:1 */
 
-  --yg-color-success: var(--yg-green-500);
-  --yg-color-success-hover: var(--yg-green-600);
-  --yg-color-success-active: var(--yg-green-700);
-  --yg-color-success-soft: rgba(52, 199, 89, 0.14);
-  --yg-color-on-success: #FFFFFF;
+  --yg-color-success: var(--yg-dark-color-success);
+  --yg-color-success-hover: var(--yg-dark-color-success-hover);
+  --yg-color-success-active: var(--yg-dark-color-success-active);
+  --yg-color-success-soft: var(--yg-dark-color-success-soft);
+  --yg-color-on-success: var(--yg-dark-color-on-success);
 
-  --yg-color-warning: var(--yg-orange-500);
-  --yg-color-warning-hover: var(--yg-orange-600);
-  --yg-color-warning-active: var(--yg-orange-700);
-  --yg-color-warning-soft: rgba(255, 149, 0, 0.16);
-  --yg-color-on-warning: #FFFFFF;
+  --yg-color-warning: var(--yg-dark-color-warning);
+  --yg-color-warning-hover: var(--yg-dark-color-warning-hover);
+  --yg-color-warning-active: var(--yg-dark-color-warning-active);
+  --yg-color-warning-soft: var(--yg-dark-color-warning-soft);
+  --yg-color-on-warning: var(--yg-dark-color-on-warning);
 
-  --yg-color-danger: var(--yg-red-500);
-  --yg-color-danger-hover: var(--yg-red-400);
-  --yg-color-danger-active: var(--yg-red-300);
-  --yg-color-danger-soft: rgba(255, 59, 48, 0.16);
-  --yg-color-on-danger: #FFFFFF;
+  --yg-color-danger: var(--yg-dark-color-danger);
+  --yg-color-danger-hover: var(--yg-dark-color-danger-hover);
+  --yg-color-danger-active: var(--yg-dark-color-danger-active);
+  --yg-color-danger-soft: var(--yg-dark-color-danger-soft);
+  --yg-color-on-danger: var(--yg-dark-color-on-danger);
+  --yg-color-danger-strong: var(--yg-dark-color-danger-strong); /* 白字 5.39:1 */
+  --yg-color-danger-strong-hover: var(--yg-dark-color-danger-strong-hover); /* 白字 8.05:1 */
+  --yg-color-danger-strong-active: var(--yg-dark-color-danger-strong-active); /* 白字 11.46:1 */
 
-  --yg-color-info: var(--yg-sky-400);
-  --yg-color-info-soft: rgba(56, 189, 248, 0.14);
+  --yg-color-info: var(--yg-dark-color-info);
+  --yg-color-info-soft: var(--yg-dark-color-info-soft);
 
-  --yg-text-primary: #F5F5F7;
-  --yg-text-secondary: #AEAEB2;
-  --yg-text-tertiary: #8E8E93;
-  --yg-text-disabled: #636366;
-  --yg-text-inverse: #1C1C1E;
-  --yg-text-link: var(--yg-sky-400);
-  --yg-text-success: #34C759;
-  --yg-text-warning: #FFB340;
-  --yg-text-danger: var(--yg-red-400);
+  --yg-text-primary: var(--yg-dark-text-primary);
+  --yg-text-secondary: var(--yg-dark-text-secondary);
+  --yg-text-tertiary: var(--yg-dark-text-tertiary);
+  --yg-text-disabled: var(--yg-dark-text-disabled);
+  --yg-text-disabled-control: var(--yg-dark-text-disabled-control); /* 深色凹陷底 5.83:1 */
+  --yg-text-inverse: var(--yg-dark-text-inverse);
+  --yg-text-link: var(--yg-dark-text-link);
+  --yg-text-link-hover: var(--yg-dark-text-link-hover);
+  --yg-text-link-active: var(--yg-dark-text-link-active);
+  --yg-text-success: var(--yg-dark-text-success);
+  --yg-text-warning: var(--yg-dark-text-warning);
+  --yg-text-danger: var(--yg-dark-text-danger);
+  --yg-text-danger-hover: var(--yg-dark-text-danger-hover);
 
-  --yg-bg-page: #0D0D0F;
-  --yg-bg-surface: #1C1C1E;
-  --yg-bg-surface-raised: #2C2C2E; /* 弹出层面板：深色下同样强制不透明 */
-  --yg-bg-surface-sunken: #101012;
-  --yg-bg-hover: rgba(56, 189, 248, 0.10);
-  --yg-bg-active: rgba(56, 189, 248, 0.16);
+  --yg-bg-page: var(--yg-dark-bg-page);
+  --yg-bg-surface: var(--yg-dark-bg-surface);
+  --yg-bg-surface-raised: var(--yg-dark-bg-surface-raised); /* 弹出层面板：深色下同样强制不透明 */
+  --yg-bg-surface-sunken: var(--yg-dark-bg-surface-sunken);
+  --yg-bg-hover: var(--yg-dark-bg-hover); /* 与表面 1.62:1 */
+  --yg-bg-active: var(--yg-dark-bg-active); /* 与表面 2.07:1 */
 
-  --yg-border-subtle: rgba(255, 255, 255, 0.06);
-  --yg-border-default: rgba(255, 255, 255, 0.10);
-  --yg-border-strong: rgba(255, 255, 255, 0.18);
+  --yg-border-subtle: var(--yg-dark-border-subtle);
+  --yg-border-default: var(--yg-dark-border-default);
+  --yg-border-strong: var(--yg-dark-border-strong);
 
-  --yg-shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.40);
-  --yg-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.40), 0 2px 6px rgba(0, 0, 0, 0.45);
-  --yg-shadow-md: 0 2px 4px rgba(0, 0, 0, 0.35), 0 6px 16px rgba(0, 0, 0, 0.50);
-  --yg-shadow-lg: 0 4px 8px rgba(0, 0, 0, 0.40), 0 12px 32px rgba(0, 0, 0, 0.55);
-  --yg-shadow-xl: 0 8px 16px rgba(0, 0, 0, 0.45), 0 24px 64px rgba(0, 0, 0, 0.65);
-  --yg-shadow-inset: inset 0 1px 2px rgba(0, 0, 0, 0.40);
-  --yg-focus-ring: 0 0 0 3px rgba(56, 189, 248, 0.40);
+  --yg-shadow-xs: var(--yg-dark-shadow-xs);
+  --yg-shadow-sm: var(--yg-dark-shadow-sm);
+  --yg-shadow-md: var(--yg-dark-shadow-md);
+  --yg-shadow-lg: var(--yg-dark-shadow-lg);
+  --yg-shadow-xl: var(--yg-dark-shadow-xl);
+  --yg-shadow-inset: var(--yg-dark-shadow-inset);
+  --yg-focus-ring-color: var(--yg-dark-focus-ring-color); /* 焦点环外圈：深色底 7.94:1 */
 
-  --yg-color-selection: rgba(56, 189, 248, 0.3);
+  --yg-color-selection: var(--yg-dark-color-selection);
 
   color-scheme: dark;
 }
 
+/* ==========================================================================
+   深色入口 2：未设置 data-theme 时跟随系统 prefers-color-scheme
+   （映射列表与入口 1 逐字一致）
+   ========================================================================== */
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --yg-color-primary: var(--yg-sky-500);
-    --yg-color-primary-hover: var(--yg-sky-400);
-    --yg-color-primary-active: var(--yg-sky-300);
-    --yg-color-primary-soft: rgba(56, 189, 248, 0.14);
-    --yg-color-on-primary: #FFFFFF;
+    --yg-color-primary: var(--yg-dark-color-primary);
+    --yg-color-primary-hover: var(--yg-dark-color-primary-hover);
+    --yg-color-primary-active: var(--yg-dark-color-primary-active);
+    --yg-color-primary-soft: var(--yg-dark-color-primary-soft);
+    --yg-color-on-primary: var(--yg-dark-color-on-primary);
+    --yg-color-primary-strong: var(--yg-dark-color-primary-strong); /* 白字 5.93:1 */
+    --yg-color-primary-strong-hover: var(--yg-dark-color-primary-strong-hover); /* 白字 7.56:1 */
+    --yg-color-primary-strong-active: var(--yg-dark-color-primary-strong-active); /* 白字 9.46:1 */
 
-    --yg-color-success: var(--yg-green-500);
-    --yg-color-success-hover: var(--yg-green-600);
-    --yg-color-success-active: var(--yg-green-700);
-    --yg-color-success-soft: rgba(52, 199, 89, 0.14);
-    --yg-color-on-success: #FFFFFF;
+    --yg-color-success: var(--yg-dark-color-success);
+    --yg-color-success-hover: var(--yg-dark-color-success-hover);
+    --yg-color-success-active: var(--yg-dark-color-success-active);
+    --yg-color-success-soft: var(--yg-dark-color-success-soft);
+    --yg-color-on-success: var(--yg-dark-color-on-success);
 
-    --yg-color-warning: var(--yg-orange-500);
-    --yg-color-warning-hover: var(--yg-orange-600);
-    --yg-color-warning-active: var(--yg-orange-700);
-    --yg-color-warning-soft: rgba(255, 149, 0, 0.16);
-    --yg-color-on-warning: #FFFFFF;
+    --yg-color-warning: var(--yg-dark-color-warning);
+    --yg-color-warning-hover: var(--yg-dark-color-warning-hover);
+    --yg-color-warning-active: var(--yg-dark-color-warning-active);
+    --yg-color-warning-soft: var(--yg-dark-color-warning-soft);
+    --yg-color-on-warning: var(--yg-dark-color-on-warning);
 
-    --yg-color-danger: var(--yg-red-500);
-    --yg-color-danger-hover: var(--yg-red-400);
-    --yg-color-danger-active: var(--yg-red-300);
-    --yg-color-danger-soft: rgba(255, 59, 48, 0.16);
-    --yg-color-on-danger: #FFFFFF;
+    --yg-color-danger: var(--yg-dark-color-danger);
+    --yg-color-danger-hover: var(--yg-dark-color-danger-hover);
+    --yg-color-danger-active: var(--yg-dark-color-danger-active);
+    --yg-color-danger-soft: var(--yg-dark-color-danger-soft);
+    --yg-color-on-danger: var(--yg-dark-color-on-danger);
+    --yg-color-danger-strong: var(--yg-dark-color-danger-strong); /* 白字 5.39:1 */
+    --yg-color-danger-strong-hover: var(--yg-dark-color-danger-strong-hover); /* 白字 8.05:1 */
+    --yg-color-danger-strong-active: var(--yg-dark-color-danger-strong-active); /* 白字 11.46:1 */
 
-    --yg-color-info: var(--yg-sky-400);
-    --yg-color-info-soft: rgba(56, 189, 248, 0.14);
+    --yg-color-info: var(--yg-dark-color-info);
+    --yg-color-info-soft: var(--yg-dark-color-info-soft);
 
-    --yg-text-primary: #F5F5F7;
-    --yg-text-secondary: #AEAEB2;
-    --yg-text-tertiary: #8E8E93;
-    --yg-text-disabled: #636366;
-    --yg-text-inverse: #1C1C1E;
-    --yg-text-link: var(--yg-sky-400);
-    --yg-text-success: #34C759;
-    --yg-text-warning: #FFB340;
-    --yg-text-danger: var(--yg-red-400);
+    --yg-text-primary: var(--yg-dark-text-primary);
+    --yg-text-secondary: var(--yg-dark-text-secondary);
+    --yg-text-tertiary: var(--yg-dark-text-tertiary);
+    --yg-text-disabled: var(--yg-dark-text-disabled);
+    --yg-text-disabled-control: var(--yg-dark-text-disabled-control); /* 深色凹陷底 5.83:1 */
+    --yg-text-inverse: var(--yg-dark-text-inverse);
+    --yg-text-link: var(--yg-dark-text-link);
+    --yg-text-link-hover: var(--yg-dark-text-link-hover);
+    --yg-text-link-active: var(--yg-dark-text-link-active);
+    --yg-text-success: var(--yg-dark-text-success);
+    --yg-text-warning: var(--yg-dark-text-warning);
+    --yg-text-danger: var(--yg-dark-text-danger);
+    --yg-text-danger-hover: var(--yg-dark-text-danger-hover);
 
-    --yg-bg-page: #0D0D0F;
-    --yg-bg-surface: #1C1C1E;
-    --yg-bg-surface-raised: #2C2C2E;
-    --yg-bg-surface-sunken: #101012;
-    --yg-bg-hover: rgba(56, 189, 248, 0.10);
-    --yg-bg-active: rgba(56, 189, 248, 0.16);
+    --yg-bg-page: var(--yg-dark-bg-page);
+    --yg-bg-surface: var(--yg-dark-bg-surface);
+    --yg-bg-surface-raised: var(--yg-dark-bg-surface-raised); /* 弹出层面板：深色下同样强制不透明 */
+    --yg-bg-surface-sunken: var(--yg-dark-bg-surface-sunken);
+    --yg-bg-hover: var(--yg-dark-bg-hover); /* 与表面 1.62:1 */
+    --yg-bg-active: var(--yg-dark-bg-active); /* 与表面 2.07:1 */
 
-    --yg-border-subtle: rgba(255, 255, 255, 0.06);
-    --yg-border-default: rgba(255, 255, 255, 0.10);
-    --yg-border-strong: rgba(255, 255, 255, 0.18);
+    --yg-border-subtle: var(--yg-dark-border-subtle);
+    --yg-border-default: var(--yg-dark-border-default);
+    --yg-border-strong: var(--yg-dark-border-strong);
 
-    --yg-shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.40);
-    --yg-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.40), 0 2px 6px rgba(0, 0, 0, 0.45);
-    --yg-shadow-md: 0 2px 4px rgba(0, 0, 0, 0.35), 0 6px 16px rgba(0, 0, 0, 0.50);
-    --yg-shadow-lg: 0 4px 8px rgba(0, 0, 0, 0.40), 0 12px 32px rgba(0, 0, 0, 0.55);
-    --yg-shadow-xl: 0 8px 16px rgba(0, 0, 0, 0.45), 0 24px 64px rgba(0, 0, 0, 0.65);
-    --yg-shadow-inset: inset 0 1px 2px rgba(0, 0, 0, 0.40);
-    --yg-focus-ring: 0 0 0 3px rgba(56, 189, 248, 0.40);
+    --yg-shadow-xs: var(--yg-dark-shadow-xs);
+    --yg-shadow-sm: var(--yg-dark-shadow-sm);
+    --yg-shadow-md: var(--yg-dark-shadow-md);
+    --yg-shadow-lg: var(--yg-dark-shadow-lg);
+    --yg-shadow-xl: var(--yg-dark-shadow-xl);
+    --yg-shadow-inset: var(--yg-dark-shadow-inset);
+    --yg-focus-ring-color: var(--yg-dark-focus-ring-color); /* 焦点环外圈：深色底 7.94:1 */
 
-    --yg-color-selection: rgba(56, 189, 248, 0.3);
+    --yg-color-selection: var(--yg-dark-color-selection);
 
     color-scheme: dark;
   }

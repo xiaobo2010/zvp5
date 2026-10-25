@@ -12,6 +12,10 @@ POST ``/{aid}/members``：
 5. 既有三元组走 ``update_fields``，新三元组走 ``add``；
 6. 用户不存在 / 类型不匹配的错误分支与文案不变，且不发生写。
 
+7. 默认（不带 ``overwrite``）仍是时长累加，行为与改造前一致；
+8. ``overwrite=true`` 时既有三元组的 ``duration`` 直接设为本次值，不当累加；
+9. ``overwrite=true`` 且同一请求内同一 ``(member, mode)`` 出现多行 ⇒ 取最后一行。
+
     cd <repo root> && .venv/bin/python -m pytest tests/test_activity_members_batch.py -q
 """
 
@@ -503,3 +507,100 @@ async def test_bulk_import_reports_the_first_error_in_payload_order(monkeypatch)
     assert flipped["members"].writes == []
     assert flipped["activities"].updates == []
     assert flipped["log"].inserts == 0
+
+
+@pytest.mark.asyncio
+async def test_bulk_import_without_overwrite_still_accumulates(monkeypatch) -> None:
+    """默认（``overwrite`` 缺省）语义不变：既有三元组继续累加。
+
+    路由签名 ``routers/activities_v3_router.py`` 里 ``overwrite`` 是
+    ``Query(False)``，因此老调用方（不传该参数）拿到的是原行为。
+    """
+    existing = {(MEMBER_OIDS[0], "on-campus"): 3.0}
+    state = _bulk(
+        monkeypatch,
+        existing=existing,
+        users={MEMBER_OIDS[0]: _user_doc(MEMBER_OIDS[0])},
+    )
+
+    await activities.add_activity_member_v3(
+        ACTIVITY_ID,
+        [_new_member(MEMBER_OIDS[0], duration=2.0)],
+        MANAGER,
+        state["log"],
+        False,
+    )
+
+    assert state["members"].writes == [
+        ("update", f"{MEMBER_OIDS[0]}:on-campus", "", 5.0)
+    ]
+    # 审计详情沿用「+时长」写法。
+    assert state["log"].texts == [
+        "用户 成员0a 为义工活动《支教活动》增加时长：成员0a on-campus +2.0"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_bulk_import_overwrite_sets_duration_instead_of_accumulating(
+    monkeypatch,
+) -> None:
+    """``overwrite=True``：既有记录的 ``duration`` 直接设为本次值（3.0 → 2.0）。"""
+    existing = {(MEMBER_OIDS[0], "on-campus"): 3.0}
+    state = _bulk(
+        monkeypatch,
+        existing=existing,
+        users={MEMBER_OIDS[0]: _user_doc(MEMBER_OIDS[0])},
+    )
+
+    await activities.add_activity_member_v3(
+        ACTIVITY_ID,
+        [_new_member(MEMBER_OIDS[0], duration=2.0)],
+        MANAGER,
+        state["log"],
+        True,
+    )
+
+    assert state["members"].writes == [
+        ("update", f"{MEMBER_OIDS[0]}:on-campus", "", 2.0)
+    ]
+    assert len(state["activities"].updates) == 1
+    assert state["log"].inserts == 1
+    # 设置语义的详情不带「+」，避免审计记录被读成累加。
+    assert state["log"].texts == [
+        "用户 成员0a 为义工活动《支教活动》设置时长：成员0a on-campus 2.0"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_bulk_import_overwrite_takes_the_last_duplicate_row(
+    monkeypatch,
+) -> None:
+    """同请求内重复 ``(member, mode)`` ⇒ overwrite 下取最后一行，只写一次。"""
+    existing = {(MEMBER_OIDS[0], "on-campus"): 3.0}
+    state = _bulk(
+        monkeypatch,
+        existing=existing,
+        users={MEMBER_OIDS[0]: _user_doc(MEMBER_OIDS[0])},
+    )
+
+    await activities.add_activity_member_v3(
+        ACTIVITY_ID,
+        [
+            _new_member(MEMBER_OIDS[0], duration=1.0),
+            _new_member(MEMBER_OIDS[0], duration=2.5),  # 最后一行生效
+        ],
+        MANAGER,
+        state["log"],
+        True,
+    )
+
+    # 一次批量查询、一次写入：最后一行 2.5 既不是 1.0 也不是 3.0+1.0+2.5。
+    assert state["users"].batch_calls == [[MEMBER_OIDS[0]]]
+    assert state["members"].bulk_calls == [(ACTIVITY_ID, (MEMBER_OIDS[0],))]
+    assert state["members"].writes == [
+        ("update", f"{MEMBER_OIDS[0]}:on-campus", "", 2.5)
+    ]
+    assert state["log"].texts == [
+        "用户 成员0a 为义工活动《支教活动》设置时长：成员0a on-campus 2.5"
+    ]
+

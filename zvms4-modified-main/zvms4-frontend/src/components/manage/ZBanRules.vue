@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useWindowSize } from '@vueuse/core'
 import {
   ElButton,
   ElCard,
@@ -19,7 +20,7 @@ import {
   ElTableColumn,
   ElTag
 } from 'element-plus'
-import type { FormInstance, FormItemRule, FormRules } from 'element-plus'
+import type { FormInstance, FormItemRule, FormRules, TableInstance } from 'element-plus'
 import {
   createRule,
   deleteRule,
@@ -36,6 +37,52 @@ import {
 import ZPagination from '@/components/utils/ZPagination.vue'
 
 const { t } = useI18n()
+
+const { width, height } = useWindowSize()
+
+/** 窄屏（≤768px，准则 3.7）：列宽收窄，减少横向滚动距离 */
+const narrow = computed(() => width.value <= 768)
+
+const rulesTableRef = ref<TableInstance>()
+const violationsTableRef = ref<TableInstance>()
+const usersTableRef = ref<TableInstance>()
+
+/** 分页行 + 卡片下边距 + 页面底部留白 */
+const BOTTOM_ROOM = 96
+
+/**
+ * 表格高度 = 视口高度 − 表格实际顶部 − 底部预留（与群组列表同一算法）。
+ * 表格一律带 max-height：纵向滚动交给 EP 的内部滚动容器，
+ * 表头固定在表格顶部，不再依赖页面滚动容器。
+ */
+function computeTableHeight(table: TableInstance | undefined): number {
+  const el = (table as { $el?: HTMLElement } | undefined)?.$el
+  const top = el?.getBoundingClientRect?.().top ?? 0
+  if (top > 0 && top < height.value * 0.8) {
+    return Math.max(280, Math.round(height.value - top - BOTTOM_ROOM))
+  }
+  return Math.max(280, Math.round(height.value - 320))
+}
+
+const rulesTableHeight = ref(280)
+const violationsTableHeight = ref(280)
+const usersTableHeight = ref(280)
+
+function measureTables() {
+  rulesTableHeight.value = computeTableHeight(rulesTableRef.value)
+  violationsTableHeight.value = computeTableHeight(violationsTableRef.value)
+  usersTableHeight.value = computeTableHeight(usersTableRef.value)
+}
+
+watch([width, height], () => {
+  measureTables()
+})
+
+onMounted(() => {
+  void nextTick(() => {
+    measureTables()
+  })
+})
 
 const rules = ref<BanRule[]>([])
 const rulesLoading = ref(false)
@@ -573,7 +620,7 @@ function formatReason(user: BannedUser): string | null {
 
 <template>
   <div class="flex flex-col gap-4">
-    <ElCard shadow="never" v-loading="rulesLoading">
+    <ElCard shadow="never">
       <template #header>
         <div class="flex items-center justify-between gap-2">
           <span>{{ t('manage.banRules.rulesTitle') }}</span>
@@ -587,11 +634,19 @@ function formatReason(user: BannedUser): string | null {
           </div>
         </div>
       </template>
-      <ElTable :data="rules" row-key="code">
+      <!-- 加载遮罩只盖数据区：卡片头按钮与分页保持可交互 -->
+      <ElTable
+        ref="rulesTableRef"
+        v-loading="rulesLoading"
+        :data="rules"
+        row-key="code"
+        :max-height="rulesTableHeight"
+      >
         <ElTableColumn
           prop="name"
           :label="t('manage.banRules.rule.columns.name')"
-          min-width="180"
+          :min-width="narrow ? 130 : 180"
+          show-overflow-tooltip
         >
           <template #default="{ row }">
             <div class="flex items-center gap-2">
@@ -605,7 +660,7 @@ function formatReason(user: BannedUser): string | null {
         <ElTableColumn
           prop="trigger_name"
           :label="t('manage.banRules.rule.columns.trigger')"
-          min-width="150"
+          :min-width="narrow ? 110 : 150"
         >
           <template #default="{ row }">
             <span class="block truncate" :title="triggerTitle(row)">
@@ -616,7 +671,7 @@ function formatReason(user: BannedUser): string | null {
         <ElTableColumn
           prop="config"
           :label="t('manage.banRules.rule.columns.config')"
-          min-width="170"
+          :min-width="narrow ? 130 : 170"
         >
           <template #default="{ row }">
             <span class="tabular-nums">{{ formatTrigger(row) }}</span>
@@ -625,7 +680,7 @@ function formatReason(user: BannedUser): string | null {
         <ElTableColumn
           prop="penalties"
           :label="t('manage.banRules.rule.columns.penalties')"
-          min-width="220"
+          :min-width="narrow ? 160 : 220"
         >
           <template #default="{ row }">
             <span class="tabular-nums">{{ formatPenalties(row) }}</span>
@@ -644,7 +699,7 @@ function formatReason(user: BannedUser): string | null {
             />
           </template>
         </ElTableColumn>
-        <ElTableColumn fixed="right" width="150" align="right">
+        <ElTableColumn fixed="right" :width="narrow ? 120 : 150" align="right">
           <template #default="{ row }">
             <div class="flex items-center justify-end gap-1">
               <ElButton text type="primary" size="small" @click="openEdit(row)">
@@ -676,16 +731,16 @@ function formatReason(user: BannedUser): string | null {
       </p>
     </ElCard>
 
-    <ElCard shadow="never" v-loading="violationsLoading">
+    <ElCard shadow="never">
       <template #header>
-        <div class="flex items-center justify-between gap-2">
+        <div class="flex flex-wrap items-center justify-between gap-2">
           <span>{{ t('manage.banRules.violations.title') }}</span>
-          <div class="flex items-center gap-2">
+          <div class="flex flex-wrap items-center gap-2">
             <ElInput
               v-model="violationsQuery"
               :placeholder="t('manage.banRules.violations.searchPlaceholder')"
               clearable
-              class="w-56"
+              :class="narrow ? 'w-full' : 'w-56'"
               @keyup.enter="searchViolations"
               @clear="searchViolations"
             />
@@ -695,21 +750,29 @@ function formatReason(user: BannedUser): string | null {
           </div>
         </div>
       </template>
-      <ElTable :data="violations" row-key="_id" stripe>
+      <!-- 加载遮罩只盖数据区：筛选行与分页保持可交互 -->
+      <ElTable
+        ref="violationsTableRef"
+        v-loading="violationsLoading"
+        :data="violations"
+        row-key="_id"
+        stripe
+        :max-height="violationsTableHeight"
+      >
         <ElTableColumn
           prop="user_name"
           :label="t('manage.banRules.violations.columns.name')"
-          min-width="100"
+          :min-width="narrow ? 90 : 100"
         />
         <ElTableColumn
           prop="user_id"
           :label="t('manage.banRules.violations.columns.userId')"
-          min-width="100"
+          :min-width="narrow ? 100 : 100"
         />
         <ElTableColumn
           prop="trigger"
           :label="t('manage.banRules.violations.columns.type')"
-          min-width="150"
+          :min-width="narrow ? 120 : 150"
         >
           <template #default="{ row }">
             <span>{{ row.trigger_name || row.trigger || '—' }}</span>
@@ -718,7 +781,7 @@ function formatReason(user: BannedUser): string | null {
         <ElTableColumn
           prop="signal"
           :label="t('manage.banRules.violations.columns.signal')"
-          min-width="120"
+          :min-width="narrow ? 100 : 120"
         >
           <template #default="{ row }">
             <span>{{ signalLabel(row.signal) }}</span>
@@ -727,7 +790,7 @@ function formatReason(user: BannedUser): string | null {
         <ElTableColumn
           prop="detail"
           :label="t('manage.banRules.violations.columns.detail')"
-          min-width="200"
+          :min-width="narrow ? 150 : 200"
           show-overflow-tooltip
         >
           <template #default="{ row }">
@@ -740,7 +803,7 @@ function formatReason(user: BannedUser): string | null {
         <ElTableColumn
           prop="created_at"
           :label="t('manage.banRules.violations.columns.time')"
-          min-width="150"
+          :min-width="narrow ? 140 : 150"
         >
           <template #default="{ row }">
             <span class="tabular-nums">{{ formatTime(row.created_at) }}</span>
@@ -764,16 +827,16 @@ function formatReason(user: BannedUser): string | null {
       />
     </ElCard>
 
-    <ElCard shadow="never" v-loading="usersLoading">
+    <ElCard shadow="never">
       <template #header>
-        <div class="flex items-center justify-between gap-2">
+        <div class="flex flex-wrap items-center justify-between gap-2">
           <span>{{ t('manage.banRules.usersTitle') }}</span>
-          <div class="flex items-center gap-2">
+          <div class="flex flex-wrap items-center gap-2">
             <ElInput
               v-model="usersQuery"
               :placeholder="t('manage.banRules.users.searchPlaceholder')"
               clearable
-              class="w-56"
+              :class="narrow ? 'w-full' : 'w-56'"
               @keyup.enter="searchUsers"
               @clear="searchUsers"
             />
@@ -783,26 +846,33 @@ function formatReason(user: BannedUser): string | null {
           </div>
         </div>
       </template>
-      <ElTable :data="users" row-key="oid" stripe>
+      <ElTable
+        ref="usersTableRef"
+        v-loading="usersLoading"
+        :data="users"
+        row-key="oid"
+        stripe
+        :max-height="usersTableHeight"
+      >
         <ElTableColumn
           prop="name"
           :label="t('manage.banRules.users.columns.name')"
-          min-width="100"
+          :min-width="narrow ? 90 : 100"
         />
         <ElTableColumn
           prop="user_id"
           :label="t('manage.banRules.users.columns.userId')"
-          min-width="100"
+          :min-width="narrow ? 100 : 100"
         />
         <ElTableColumn
           prop="class_name"
           :label="t('manage.banRules.users.columns.className')"
-          min-width="110"
+          :min-width="narrow ? 100 : 110"
         />
         <ElTableColumn
           prop="reason"
           :label="t('manage.banRules.users.columns.reason')"
-          min-width="200"
+          :min-width="narrow ? 150 : 200"
           show-overflow-tooltip
         >
           <template #default="{ row }">
@@ -815,7 +885,7 @@ function formatReason(user: BannedUser): string | null {
         <ElTableColumn
           prop="until"
           :label="t('manage.banRules.users.columns.period')"
-          min-width="150"
+          :min-width="narrow ? 140 : 150"
         >
           <template #default="{ row }">
             <span class="tabular-nums">{{ formatUntil(row) }}</span>
@@ -824,7 +894,7 @@ function formatReason(user: BannedUser): string | null {
         <ElTableColumn
           prop="source"
           :label="t('manage.banRules.users.columns.source')"
-          min-width="150"
+          :min-width="narrow ? 130 : 150"
         >
           <template #default="{ row }">
             <span>{{ formatSource(row) }}</span>

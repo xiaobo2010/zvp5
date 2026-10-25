@@ -334,12 +334,10 @@ const { width, height } = useWindowSize()
 // 横屏时 UserNav 走左侧玻璃栏。折叠/抽屉状态已随旧侧边栏一并移除。
 const verticalMode = ref<boolean>(width.value < height.value * 1.2)
 
-watch(
-  () => width.value,
-  (w) => {
-    verticalMode.value = w < height.value * 1.2
-  }
-)
+// 宽高都要看：旋转屏幕或浏览器地址栏收起时高度会变，只听 width 会漏判。
+watch([width, height], ([w, h]) => {
+  verticalMode.value = w < h * 1.2
+})
 
 const locales: Record<
   (typeof locale)['value'],
@@ -468,7 +466,7 @@ onMounted(async () => {
         <div class="yg-layout yg-layout--app">
           <UserNav v-if="userStore.isLogin" />
           <div class="yg-layout__main">
-            <header class="yg-layout__topbar yg-topbar">
+            <header :class="['yg-layout__topbar', 'yg-topbar', { 'is-portrait': verticalMode }]">
               <div class="yg-topbar__left">
                 <img class="yg-topbar__logo" src="/pwa-192x192.png" alt="义工平台 Logo" />
                 <span
@@ -516,11 +514,8 @@ onMounted(async () => {
                 </div>
               </div>
             </header>
-            <main class="yg-layout__content">
-              <RouterView
-                class="yg-view"
-                :style="verticalMode && userStore.isLogin ? { paddingBottom: '96px' } : {}"
-              />
+            <main :class="['yg-layout__content', { 'is-portrait': verticalMode && userStore.isLogin }]">
+              <RouterView class="yg-view" />
             </main>
           </div>
         </div>
@@ -544,6 +539,52 @@ onMounted(async () => {
 }
 
 /* 顶栏外观由标准样式库的 .yg-topbar 提供，这里只补项目自有元素 */
+
+/* 竖屏底部 dock 让位：药丸 56px(--yg-header-height) + 离底 12px(--yg-space-3)
+   + 手势/刘海安全区 + 内容自身 16px 留白(--yg-space-4)。
+   抽成 --yg-content-bottom-inset 是为了让页面（如服务器页）算自身高度时引用同一份
+   数值，不必各自硬编码 96px；横屏不挂 is-portrait，padding 仍是 base.css 的 24px。 */
+.yg-layout__content {
+  --yg-content-bottom-inset: 0px;
+}
+
+.yg-layout__content.is-portrait {
+  --yg-content-bottom-inset: calc(
+    var(--yg-header-height) + var(--yg-space-3) + env(safe-area-inset-bottom, 0px) +
+      var(--yg-space-4)
+  );
+  padding-bottom: var(--yg-content-bottom-inset);
+}
+
+/* 竖屏顶栏：视觉高度仍是 56px，但用 min-height 承载顶部安全区（刘海屏），
+   左右留白收紧到 12px 把宽度让给标题；用户名在窄屏会挤掉标题，故只留头像。 */
+.yg-topbar.is-portrait {
+  height: auto;
+  min-height: calc(var(--yg-header-height) + env(safe-area-inset-top, 0px));
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-inline: var(--yg-space-3);
+  gap: var(--yg-space-2);
+}
+
+.yg-topbar.is-portrait .yg-topbar__left {
+  flex: 1;
+  min-width: 0;
+}
+
+/* 标题占满剩余宽度并被 ellipsis 截断；双击回首页的绑定在模板上，与样式无关 */
+.yg-topbar.is-portrait .yg-topbar__title {
+  max-width: 100%;
+  min-width: 0;
+}
+
+.yg-topbar.is-portrait .yg-user-chip {
+  gap: var(--yg-space-1);
+  padding: 0 var(--yg-space-1);
+}
+
+.yg-topbar.is-portrait .yg-user-chip__name {
+  display: none;
+}
 
 .yg-topbar__title {
   font-size: var(--yg-font-size-lg);

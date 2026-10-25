@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useWindowSize } from '@vueuse/core'
 import {
   ElButton,
   ElCard,
@@ -9,14 +10,17 @@ import {
   ElDialog,
   ElForm,
   ElFormItem,
+  ElIcon,
   ElInput,
   ElMessage,
   ElOption,
   ElSelect,
   ElTable,
   ElTableColumn,
-  ElTag
+  ElTag,
+  ElTooltip
 } from 'element-plus'
+import type { TableInstance } from 'element-plus'
 import { Edit, Refresh, Search } from '@element-plus/icons-vue'
 import api from '@/api'
 import type { User, UserPosition } from '@/../types'
@@ -44,6 +48,50 @@ const saving = ref(false)
 const target = ref<User | null>(null)
 const checkedRoles = ref<UserPosition[]>([])
 const extraRoles = ref<UserPosition[]>([])
+
+const tableRef = ref<TableInstance>()
+
+const { width, height } = useWindowSize()
+
+/** 窄屏（≤768px，准则 3.7）：操作列收起成图标按钮，筛选区改为整行堆叠 */
+const narrow = computed(() => width.value <= 768)
+
+/** 窄屏下控件用 large 档，满足 44px 触控目标 */
+const controlSize = computed(() => (narrow.value ? 'large' : 'default'))
+
+/** 分页行 + 卡片下边距 + 页面底部留白 */
+const BOTTOM_ROOM = 96
+
+/**
+ * 表格高度 = 视口高度 − 表格实际顶部 − 底部预留，
+ * 以表头真实位置为基准；表格始终带 max-height，表头/内容由 EP 原生同步。
+ */
+function computeTableHeight() {
+  const el = (tableRef.value as { $el?: HTMLElement } | undefined)?.$el
+  const top = el?.getBoundingClientRect?.().top ?? 0
+  if (top > 0 && top < height.value * 0.8) {
+    return Math.max(280, Math.round(height.value - top - BOTTOM_ROOM))
+  }
+  return Math.max(280, Math.round(height.value - 320))
+}
+
+const tableHeight = ref(computeTableHeight())
+
+watch([width, height], () => {
+  tableHeight.value = computeTableHeight()
+})
+
+watch(narrow, () => {
+  void nextTick(() => {
+    tableHeight.value = computeTableHeight()
+  })
+})
+
+onMounted(() => {
+  void nextTick(() => {
+    tableHeight.value = computeTableHeight()
+  })
+})
 
 const roleOptions = computed(() => [
   { value: '', label: t('manage.roleManagement.filterAll') },
@@ -144,7 +192,14 @@ onMounted(() => {
           <h2>{{ t('manage.roleManagement.title') }}</h2>
           <p>{{ t('manage.roleManagement.subtitle') }}</p>
         </div>
-        <ElButton :icon="Refresh" text bg :loading="loading" @click="loadUsers">
+        <ElButton
+          :icon="Refresh"
+          text
+          bg
+          :size="controlSize"
+          :loading="loading"
+          @click="loadUsers"
+        >
           {{ t('manage.roleManagement.refresh') }}
         </ElButton>
       </div>
@@ -153,6 +208,7 @@ onMounted(() => {
         <ElSelect
           v-model="roleFilter"
           class="roles-filter"
+          :size="controlSize"
           :aria-label="t('manage.roleManagement.filterLabel')"
           @change="changeRoleFilter"
         >
@@ -167,27 +223,42 @@ onMounted(() => {
           v-model="query"
           class="roles-search"
           clearable
+          :size="controlSize"
           :prefix-icon="Search"
           :placeholder="t('manage.roleManagement.searchPlaceholder')"
           @keyup.enter="search"
           @clear="search"
         />
-        <ElButton type="primary" :icon="Search" @click="search">
+        <ElButton type="primary" :icon="Search" :size="controlSize" @click="search">
           {{ t('manage.roleManagement.search') }}
         </ElButton>
       </div>
 
       <ElTable
+        ref="tableRef"
         v-loading="loading"
         :data="users"
         stripe
         row-key="_id"
-        max-height="60vh"
+        :max-height="tableHeight"
         class="roles-table"
       >
-        <ElTableColumn prop="name" :label="t('manage.roleManagement.columns.name')" min-width="120" />
-        <ElTableColumn prop="id" :label="t('manage.roleManagement.columns.id')" min-width="120" />
-        <ElTableColumn :label="t('manage.roleManagement.columns.group')" min-width="120">
+        <ElTableColumn
+          prop="name"
+          :label="t('manage.roleManagement.columns.name')"
+          :min-width="narrow ? 100 : 120"
+          show-overflow-tooltip
+        />
+        <ElTableColumn
+          prop="id"
+          :label="t('manage.roleManagement.columns.id')"
+          :min-width="narrow ? 110 : 120"
+          show-overflow-tooltip
+        />
+        <ElTableColumn
+          :label="t('manage.roleManagement.columns.group')"
+          :min-width="narrow ? 100 : 120"
+        >
           <template #default="{ row }">
             <ZUserGroup
               v-for="group in row.group ?? []"
@@ -198,7 +269,10 @@ onMounted(() => {
             <span v-if="!(row.group ?? []).length" class="roles-muted">—</span>
           </template>
         </ElTableColumn>
-        <ElTableColumn :label="t('manage.roleManagement.columns.roles')" min-width="180">
+        <ElTableColumn
+          :label="t('manage.roleManagement.columns.roles')"
+          :min-width="narrow ? 140 : 180"
+        >
           <template #default="{ row }">
             <ElTag
               v-for="role in displayRoles(row)"
@@ -216,11 +290,12 @@ onMounted(() => {
         </ElTableColumn>
         <ElTableColumn
           :label="t('manage.roleManagement.columns.actions')"
-          width="140"
+          :width="narrow ? 72 : 140"
           fixed="right"
         >
           <template #default="{ row }">
             <ElButton
+              v-if="!narrow"
               text
               bg
               type="primary"
@@ -231,6 +306,25 @@ onMounted(() => {
             >
               {{ t('manage.roleManagement.edit') }}
             </ElButton>
+            <ElTooltip
+              v-else
+              :content="
+                canEdit(row) ? t('manage.roleManagement.edit') : t('manage.roleManagement.cannotEdit')
+              "
+              placement="top"
+            >
+              <span class="roles-action-wrap">
+                <button
+                  type="button"
+                  class="yg-icon-btn yg-icon-btn--lg roles-action"
+                  :aria-label="t('manage.roleManagement.edit')"
+                  :disabled="!canEdit(row)"
+                  @click="openEdit(row)"
+                >
+                  <ElIcon :size="18"><Edit /></ElIcon>
+                </button>
+              </span>
+            </ElTooltip>
           </template>
         </ElTableColumn>
         <template #empty>
@@ -288,40 +382,40 @@ onMounted(() => {
 .roles-page {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: var(--yg-space-4);
 }
 
 .roles-card {
-  border-radius: 8px;
+  border-radius: var(--yg-radius-lg);
 }
 
 .roles-toolbar {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 16px;
-  margin-bottom: 16px;
+  gap: var(--yg-space-4);
+  margin-bottom: var(--yg-space-4);
 }
 
 .roles-toolbar__title h2 {
   margin: 0;
-  font-size: 18px;
-  font-weight: 600;
+  font-size: var(--yg-font-size-xl);
+  font-weight: var(--yg-font-weight-semibold);
   line-height: 1.4;
   color: var(--yg-text-primary);
 }
 
 .roles-toolbar__title p {
-  margin: 4px 0 0;
+  margin: var(--yg-space-1) 0 0;
   color: var(--yg-text-secondary);
-  font-size: 13px;
+  font-size: var(--yg-font-size-sm);
 }
 
 .roles-filters {
   display: flex;
   flex-wrap: wrap;
-  gap: 12px;
-  margin-bottom: 16px;
+  gap: var(--yg-space-3);
+  margin-bottom: var(--yg-space-4);
 }
 
 .roles-filter {
@@ -338,36 +432,56 @@ onMounted(() => {
 }
 
 .roles-group {
-  margin: 2px 4px 2px 0;
+  margin: var(--yg-space-1) var(--yg-space-1) var(--yg-space-1) 0;
 }
 
 .roles-tag {
-  margin: 2px 4px 2px 0;
+  margin: var(--yg-space-1) var(--yg-space-1) var(--yg-space-1) 0;
 }
 
 .roles-muted,
 .roles-hint {
   color: var(--yg-text-secondary);
-  font-size: 13px;
+  font-size: var(--yg-font-size-sm);
 }
 
 .roles-forbidden {
   color: var(--el-color-danger);
 }
 
+/* 行内图标按钮：主色，44px 触控目标 */
+.roles-action {
+  color: var(--yg-color-primary);
+}
+
+/* 禁用态按钮不派发鼠标事件，套一层 span 让 tooltip 仍可提示原因 */
+.roles-action-wrap {
+  display: inline-flex;
+}
+
 .roles-checkboxes {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px 16px;
+  gap: var(--yg-space-2) var(--yg-space-4);
 }
 
-@media (max-width: 600px) {
+@media (max-width: 768px) {
   .roles-toolbar {
     flex-direction: column;
+    align-items: stretch;
+  }
+
+  .roles-filters {
+    flex-direction: column;
+    align-items: stretch;
   }
 
   .roles-filter {
     width: 100%;
+  }
+
+  .roles-search {
+    min-width: 0;
   }
 }
 </style>

@@ -236,7 +236,7 @@ watch(isPointerSwiping, (swiping) => {
     >
       <ZDataExport type="time" v-model="openExport" />
     </ElDrawer>
-    <ElCard ref="card" shadow="never" v-loading="loading" :class="[embed ? 'yg-embed' : '']">
+    <ElCard ref="card" shadow="never" :class="[embed ? 'yg-embed' : '']">
       <div class="flex items-center justify-between gap-2 flex-wrap px-2">
         <div class="text-lg">
           <slot name="title" />
@@ -262,6 +262,7 @@ watch(isPointerSwiping, (swiping) => {
       </div>
       <!-- @vue-ignore -->
       <ElTable
+        v-loading="loading"
         :ref="tableRef"
         :max-height="tableMaxHeight"
         :data="items"

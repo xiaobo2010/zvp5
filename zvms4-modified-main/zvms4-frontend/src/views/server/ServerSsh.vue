@@ -148,30 +148,33 @@ watch(fontSize, (value) => {
 })
 
 function ensureTerminal() {
-  if (term || !containerRef.value) return
-  term = new Terminal({
-    fontFamily:
-      'ui-monospace, "JetBrains Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace',
-    fontSize: fontSize.value,
-    lineHeight: 1.3,
-    cursorBlink: false,
-    convertEol: false,
-    scrollback: 5000,
-    theme: xtermTheme.value
-  })
-  fit = new FitAddon()
-  term.loadAddon(fit)
-  term.open(containerRef.value)
-  term.attachCustomKeyEventHandler(handleTerminalKey)
-  term.onData((data) => {
-    sendFrame({ type: 'input', data })
-  })
-  if (containerRef.value) {
+  if (!containerRef.value) return
+  if (!term) {
+    term = new Terminal({
+      fontFamily:
+        'ui-monospace, "JetBrains Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace',
+      fontSize: fontSize.value,
+      lineHeight: 1.3,
+      cursorBlink: false,
+      convertEol: false,
+      scrollback: 5000,
+      theme: xtermTheme.value
+    })
+    fit = new FitAddon()
+    term.loadAddon(fit)
+    term.open(containerRef.value)
+    term.attachCustomKeyEventHandler(handleTerminalKey)
+    term.onData((data) => {
+      sendFrame({ type: 'input', data })
+    })
     attachScrollHelpers(containerRef.value)
-    resizeObserver?.disconnect()
-    resizeObserver = new ResizeObserver(() => fitTerminal())
-    resizeObserver.observe(containerRef.value)
   }
+  // 尺寸观察必须每次都挂:teardown() 会断开观察者,
+  // 而终端实例是复用的,不重挂的话重连后高度变化就不会再 fit。
+  // 竖屏下终端高度由 flex 分配,容器内容盒尺寸一变这里就会收到通知。
+  resizeObserver?.disconnect()
+  resizeObserver = new ResizeObserver(() => fitTerminal())
+  resizeObserver.observe(containerRef.value)
 }
 
 function fitTerminal() {
@@ -519,9 +522,9 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="flex flex-col gap-4 pb-2">
+  <div class="ssh-page flex flex-col gap-4 pb-2">
     <!-- 终端卡片:header 放状态 + 目标 + 字号 + 动作,body 放终端 -->
-    <ElCard shadow="never">
+    <ElCard shadow="never" class="ssh-card">
       <template #header>
         <div class="flex flex-wrap items-center gap-x-4 gap-y-2">
           <ElTag :type="statusTagType" effect="light" size="large">{{ statusText }}</ElTag>
@@ -546,7 +549,7 @@ onBeforeUnmount(() => {
         </div>
       </template>
 
-      <div class="flex flex-col gap-4">
+      <div class="ssh-body flex flex-col gap-4">
         <!-- 断线 / 出错提示 -->
         <ElAlert
           v-if="status === 'closed' && (banner || statusText)"
@@ -565,10 +568,10 @@ onBeforeUnmount(() => {
         />
 
         <!-- 终端区:connecting 骨架 / 空态说明 / 终端本体 -->
-        <div class="relative">
+        <div class="terminal-stage relative">
           <div
             ref="containerRef"
-            class="terminal-box h-[calc(100vh_-_20rem)] min-h-[360px] bg-[var(--yg-bg-page)] p-2"
+            class="terminal-box bg-[var(--yg-bg-page)] p-2"
           >
             <!-- 连接中骨架 -->
             <ElSkeleton v-if="status === 'connecting'" :rows="4" animated />
@@ -599,7 +602,7 @@ onBeforeUnmount(() => {
           <button
             v-if="scrolledUp"
             type="button"
-            class="back-to-bottom absolute bottom-4 right-6 z-10 flex items-center gap-1 rounded-full border border-current/15 bg-[var(--yg-bg-page)] px-3 py-1.5 text-xs opacity-80 shadow-md transition hover:opacity-100"
+            class="back-to-bottom absolute z-10 flex items-center gap-1 rounded-full border border-current/15 bg-[var(--yg-bg-page)] px-3 py-1.5 text-xs opacity-80 shadow-md transition hover:opacity-100"
             style="color: var(--yg-text-tertiary)"
             :title="t('server.ssh.scrollToBottom')"
             @click="scrollToTermBottom"
@@ -610,7 +613,7 @@ onBeforeUnmount(() => {
         </div>
       </div>
     </ElCard>
-    <p class="text-xs opacity-60">{{ t('server.ssh.limitNote') }}</p>
+    <p class="shrink-0 text-xs opacity-60">{{ t('server.ssh.limitNote') }}</p>
     <ZSystemAuthDialog ref="authRef" />
 
     <!-- 管理员首次使用警告:确认后记入 localStorage,之后不再出现 -->
@@ -642,6 +645,77 @@ onBeforeUnmount(() => {
 textarea,
 input {
   font-family: inherit;
+}
+
+/* ---------- 终端卡片:高度跟着实际可用空间走 ----------
+   竖屏时底部是悬浮药丸导航,外壳(App.vue)已经把路由视图的底距让出来,
+   终端只要填满剩下的高度,底边就一定在药丸上方,不再靠 100vh - 固定 rem 估算。 */
+.ssh-page {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.ssh-card {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.ssh-card :deep(.el-card__body) {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.ssh-body {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.terminal-stage {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* 横屏沿用既有高度算法,桌面观感不变 */
+.terminal-box {
+  height: calc(100vh - 20rem);
+  min-height: 360px;
+}
+
+/* 竖屏:高度由 flex 分配,不再用 100vh 减固定 rem 猜高度 */
+@media (max-aspect-ratio: 6/5) {
+  .terminal-box {
+    height: auto;
+    min-height: 180px;
+    flex: 1 1 auto;
+    /* 兜底:即便容器高度算错,也不许高过「视口减去底部让位」,
+       保证终端底边永远在底部悬浮药丸上方。
+       底部让位直接引用外壳的 --yg-content-bottom-inset(App.vue 在
+       .yg-layout__content 上下发,随 DOM 继承),本页不再写第二份数值。
+       视口基准跟外壳一致用 100vh,不混用 100dvh,免得两套基准打架。 */
+    max-height: calc(100vh - var(--yg-content-bottom-inset, 96px));
+  }
+}
+
+/* 浮动「回到底部」按钮:贴终端右下角,
+   右侧多留 8px 避开 xterm 自己的滚动条。
+   底部让位由外壳的 --yg-content-bottom-inset 统一承担(整页已被抬离药丸),
+   这里的 env() 只是按钮自己的额外余量,不是第二份让位数值。 */
+.back-to-bottom {
+  right: calc(var(--yg-space-6) + 8px);
+  bottom: var(--yg-space-4);
+}
+
+@media (max-aspect-ratio: 6/5) {
+  .back-to-bottom {
+    bottom: calc(var(--yg-space-4) + env(safe-area-inset-bottom, 0px));
+  }
 }
 
 /* 终端历史滚动条:xterm 用 .xterm-viewport 内滚,收窄宽度并压低对比度 */

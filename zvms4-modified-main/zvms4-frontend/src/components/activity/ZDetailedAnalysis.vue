@@ -108,7 +108,7 @@ const pendingCount = computed(
 </script>
 
 <template>
-  <ElCard shadow="never" v-loading="loading">
+  <ElCard shadow="never">
     <ElRow class="py-2" align="middle">
       <ElCol :span="16" :xs="24">
         <ElSegmented v-model="activeMode" :options="modes" aria-label="义工类型切换">
@@ -146,6 +146,7 @@ const pendingCount = computed(
     />
     <ElTable
       v-else-if="hasRecords || loading"
+      v-loading="loading"
       :data="filtered"
       stripe
     >

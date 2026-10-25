@@ -239,9 +239,9 @@ onMounted(() => {
       </div>
     </section>
 
-    <section class="yg-card" v-loading="loading">
+    <section class="yg-card">
       <div class="yg-card__body">
-        <ElTable :data="rows" row-key="oid" stripe @row-click="openDetail">
+        <ElTable v-loading="loading" :data="rows" row-key="oid" stripe @row-click="openDetail">
           <ElTableColumn :label="t('ai.prompts.columns.createdAt')" min-width="150">
             <template #default="{ row }">
               <span class="tabular-nums yg-text-xs">{{ formatDateTime(row.created_at) }}</span>

@@ -162,12 +162,17 @@ async def add_activity_member_v3(
     members: list[NewActivityMember] = Body(min_length=1, max_length=1000),
     user=Depends(get_current_user),
     log=Depends(inject_log),
+    overwrite: bool = Query(
+        False,
+        description="已有 (member, mode) 记录时，用本次时长覆盖而非累加",
+    ),
 ):
     """
     :param activity_id: ID of the activity to be retrieved
     :param user: Current user
     :param member: ActivityMember object to be added
     :param log: Logger object
+    :param overwrite: True 时同一 (member, mode) 的时长按「设置」语义写入
     :return: Activity object
     """
 
@@ -177,10 +182,19 @@ async def add_activity_member_v3(
     activity_id = str(validate_object_id(activity_id))
     if not members:
         raise HTTPException(status_code=400, detail="成员列表不能为空")
+    # 直调（单测/内部调用）时形参默认值仍是 Query 对象本身，按「未开启」归一；
+    # HTTP 请求经 FastAPI 校验后已是真正的 bool，原样通过。
+    if not isinstance(overwrite, bool):
+        overwrite = False
+
     additions: dict[tuple[str, str], float] = {}
     for member in members:
         key = (str(validate_object_id(member.member)), member.mode)
-        additions[key] = additions.get(key, 0.0) + member.duration
+        # overwrite：同键只在内存留最后一行的值（设置语义）；默认仍按累加，行为不变。
+        if overwrite:
+            additions[key] = member.duration
+        else:
+            additions[key] = additions.get(key, 0.0) + member.duration
         if not math.isfinite(additions[key]):
             raise HTTPException(status_code=400, detail="时长超出范围")
 
@@ -209,7 +223,10 @@ async def add_activity_member_v3(
             }
             for (oid, mode), duration in additions.items():
                 existing = existing_by_key.get((oid, mode))
-                if existing:
+                if existing and overwrite:
+                    # 设置语义：直接写本次值，不读旧值也不累加。
+                    await members_repo.update_fields(existing["_id"], {"duration": duration})
+                elif existing:
                     total = existing["duration"] + duration
                     if not math.isfinite(total):
                         raise HTTPException(status_code=400, detail="时长超出范围")
@@ -225,11 +242,16 @@ async def add_activity_member_v3(
             performer = names.get(str(user["id"])) or "未知用户"
             activity_name = target_activity["name"] or "未知活动"
             detail = "；".join(
-                f"{names.get(oid) or '未知用户'} {mode} +{duration}"
+                (
+                    f"{names.get(oid) or '未知用户'} {mode} {duration}"
+                    if overwrite
+                    else f"{names.get(oid) or '未知用户'} {mode} +{duration}"
+                )
                 for (oid, mode), duration in additions.items()
             )
             log.with_text(
-                f"用户 {performer} 为义工活动《{activity_name}》增加时长：{detail}",
+                f"用户 {performer} 为义工活动《{activity_name}》"
+                f"{'设置' if overwrite else '增加'}时长：{detail}",
                 type="activity_member_update",
             )
             await log.insert_log(session)

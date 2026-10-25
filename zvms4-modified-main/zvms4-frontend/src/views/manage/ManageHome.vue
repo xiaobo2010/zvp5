@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { useRoute, useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user.ts'
-import { ref, watch, type Component } from 'vue'
+import { computed, nextTick, ref, watch, type Component } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useWindowSize } from '@vueuse/core'
 import { ElPageHeader, ElSegmented, ElIcon } from 'element-plus'
 import { ArrowLeft, Avatar, Bell } from '@element-plus/icons-vue'
 import { Block, Group, Log, User } from '@icon-park/vue-next'
@@ -104,11 +105,62 @@ watch(
     }
   }
 )
+
+/* 与 App.vue / UserNav 同一判定：宽 < 高 × 1.2 即竖屏 */
+const { width, height } = useWindowSize()
+const verticalMode = computed(() => width.value < height.value * 1.2)
+
+/** 竖屏或窄屏一律改用胶囊导航；≥1024 的横屏保留原分段控件 */
+const compactTabs = computed(() => verticalMode.value || width.value < 1024)
+
+const tabsNavRef = ref<HTMLElement | null>(null)
+
+/** 当前项自动滚入可视区（横向居中，不影响页面纵向滚动） */
+function scrollActiveTabIntoView() {
+  const nav = tabsNavRef.value
+  if (!nav) {
+    return
+  }
+  const active = nav.querySelector<HTMLElement>('.manage-tabs__item.is-active')
+  if (!active) {
+    return
+  }
+  const target = active.offsetLeft - (nav.clientWidth - active.offsetWidth) / 2
+  const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
+  nav.scrollTo({ left: Math.max(0, target), behavior: reduced ? 'auto' : 'smooth' })
+}
+
+watch([current, compactTabs], () => {
+  void nextTick(() => {
+    scrollActiveTabIntoView()
+  })
+})
 </script>
 
 <template>
-  <div class="px-6 py-4">
-    <ElPageHeader :icon="ArrowLeft" @back="() => router.back()" class="py-4">
+  <div :class="compactTabs ? 'px-4 py-3' : 'px-6 py-4'">
+    <!-- 竖屏/窄屏：紧凑页头（图标优先），返回与标题同行 -->
+    <header v-if="compactTabs" class="manage-head">
+      <button
+        type="button"
+        class="yg-icon-btn manage-head__back"
+        :aria-label="t('manage.manage.back')"
+        @click="router.back()"
+      >
+        <ElIcon :size="20">
+          <ArrowLeft />
+        </ElIcon>
+      </button>
+      <h1 class="manage-head__title">{{ t('manage.manage.tabs.' + current) }}</h1>
+    </header>
+
+    <!-- 横屏（≥1024）：保留原分段控件 -->
+    <ElPageHeader
+      v-else
+      :icon="ArrowLeft"
+      @back="() => router.back()"
+      class="py-4"
+    >
       <template #content>
         {{ t('manage.manage.tabs.' + current) }}
       </template>
@@ -125,6 +177,32 @@ watch(
         </ElSegmented>
       </template>
     </ElPageHeader>
+
+    <!-- 竖屏/窄屏：横向可滚动的胶囊导航 -->
+    <nav
+      v-if="compactTabs"
+      ref="tabsNavRef"
+      class="manage-tabs yg-liquid-glass"
+      role="tablist"
+      :aria-label="t('manage.manage.tabsLabel')"
+    >
+      <button
+        v-for="tab in tabs"
+        :key="tab.value"
+        type="button"
+        role="tab"
+        class="manage-tabs__item"
+        :class="{ 'is-active': tab.value === current }"
+        :aria-selected="tab.value === current"
+        @click="current = tab.value"
+      >
+        <ElIcon :size="18">
+          <Component :is="tab.icon" />
+        </ElIcon>
+        <span class="manage-tabs__label">{{ t('manage.manage.tabs.' + tab.value) }}</span>
+      </button>
+    </nav>
+
     <ZGroupList v-if="current === 'groups'" />
     <ZGroupUserList v-else-if="current === 'users'" id="" />
     <ManageRoles v-else-if="current === 'roles'" />
@@ -133,3 +211,90 @@ watch(
     <ZNotificationAdmin v-else-if="current === 'notifications'" />
   </div>
 </template>
+
+<style scoped>
+/* 紧凑页头：返回按钮与标题同行，克制、图标优先 */
+.manage-head {
+  display: flex;
+  align-items: center;
+  gap: var(--yg-space-3);
+  margin-bottom: var(--yg-space-3);
+}
+
+.manage-head__title {
+  margin: 0;
+  font-size: var(--yg-font-size-xl);
+  font-weight: var(--yg-font-weight-semibold);
+  line-height: var(--yg-line-height-tight);
+  color: var(--yg-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 胶囊导航：横向可滚动，当前项自动滚入可视区 */
+.manage-tabs {
+  display: flex;
+  align-items: center;
+  gap: var(--yg-space-2);
+  margin-bottom: var(--yg-space-4);
+  padding: var(--yg-space-1);
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+  border: none;
+  border-radius: var(--yg-radius-pill);
+  /* 液态玻璃观感：复用标准库配方，模糊半径压到 sm —— 横向滑动时每帧都要重采样 */
+  -webkit-backdrop-filter: blur(var(--yg-glass-blur-sm)) saturate(180%);
+  backdrop-filter: blur(var(--yg-glass-blur-sm)) saturate(180%);
+}
+
+.manage-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+/* 导航项：44px 触控目标 */
+.manage-tabs__item {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--yg-space-2);
+  flex: 0 0 auto;
+  min-height: var(--yg-control-height-lg);
+  padding: 0 var(--yg-space-4);
+  border: none;
+  border-radius: var(--yg-radius-pill);
+  background-color: transparent;
+  color: var(--yg-text-tertiary);
+  font-family: inherit;
+  font-size: var(--yg-font-size-md);
+  line-height: var(--yg-line-height-snug);
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    color var(--yg-dur-base) var(--yg-ease-out),
+    background-color var(--yg-dur-base) var(--yg-ease-out),
+    box-shadow var(--yg-dur-base) var(--yg-ease-out);
+}
+
+.manage-tabs__item:hover {
+  color: var(--yg-text-primary);
+  background-color: var(--yg-bg-hover);
+}
+
+.manage-tabs__item:active {
+  background-color: var(--yg-bg-active);
+}
+
+.manage-tabs__item:focus-visible {
+  outline: none;
+  box-shadow: var(--yg-focus-ring);
+}
+
+.manage-tabs__item.is-active {
+  color: var(--yg-color-primary);
+  background-color: var(--yg-color-primary-soft);
+  box-shadow: var(--yg-shadow-sm);
+  font-weight: var(--yg-font-weight-medium);
+}
+</style>
