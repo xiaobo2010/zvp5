@@ -615,6 +615,9 @@ async def update_user_duration_v2(
     :param user: Current user
     :return: Updated activity member document
     """
+    activity_id = str(validate_object_id(activity_id))
+    document_id = str(validate_object_id(document_id))
+
     target_activity = await backends.get_activities_repo().get(activity_id)
 
     if not target_activity:
@@ -625,12 +628,36 @@ async def update_user_duration_v2(
     if not target_member:
         raise HTTPException(status_code=404, detail="Activity member not found")
 
+    # 记录必须属于路径上的活动，否则任意活动 ID 都能改到别人活动的成员。
+    # 与成员状态端点（:514-515）同口径：不确认归属，也不泄露真实归属。
+    if str(target_member["activity"]) != activity_id:
+        raise HTTPException(status_code=404, detail="Activity member not found")
+
     await volunteer_member.validate_update_permission(user)
+
+    # 计数模式必须与活动类型一致，与加成员端点（:345-348）同口径。
+    activity_type = target_activity.get("type")
+    if activity_type and activity_type != "hybrid" and activity_type != updated.mode:
+        raise HTTPException(
+            status_code=400, detail="Activity type and member mode do not match"
+        )
 
     updated_data = updated.model_dump()
     updated_data["duration"] = float(updated_data["duration"])
 
     await backends.get_members_repo().update_fields(document_id, updated_data)
+
+    # ``allow_cache=False`` recomputes from effective memberships and writes the
+    # row back, so the next cached read already reflects the new duration.
+    member_oid = str(validate_object_id(target_member["member"]))
+    try:
+        await calculate_user_time(member_oid, allow_cache=False)
+    except Exception:
+        logger.warning(
+            "成员 %s 时长修改后重算失败，保留缓存旧值",
+            member_oid,
+            exc_info=True,
+        )
 
     log.with_text(
         f'用户 {await get_user_display_name(user["id"])} 修改了义工活动《{target_activity["name"]}》中成员 {await get_user_display_name(target_member["member"])} 的记录（时长 {updated.duration}，模式 {updated.mode}）',
