@@ -1,8 +1,8 @@
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import ZAiLogsAdmin from './ZAiLogsAdmin.vue'
-import { listAiLogs } from '@/api/ai'
-import type { AiLogRecord } from '@/../types/ai'
+import { getAiLogStats, listAiLogs } from '@/api/ai'
+import type { AiLogRecord, AiLogStats } from '@/../types/ai'
 
 const { elMessageErrorSpy, elMessageSuccessSpy } = vi.hoisted(() => ({
   elMessageErrorSpy: vi.fn(),
@@ -13,7 +13,8 @@ vi.mock('@/api/ai', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/api/ai')>()
   return {
     ...actual,
-    listAiLogs: vi.fn()
+    listAiLogs: vi.fn(),
+    getAiLogStats: vi.fn()
   }
 })
 
@@ -169,6 +170,22 @@ vi.mock('element-plus', async () => {
     }
   })
 
+  const ElInput = defineComponent({
+    name: 'ElInput',
+    props: { modelValue: { type: [String, Number], default: '' }, placeholder: String },
+    emits: ['update:modelValue'],
+    setup(props, { emit }) {
+      return () =>
+        h('input', {
+          class: 'el-input-stub',
+          value: props.modelValue,
+          placeholder: props.placeholder,
+          onInput: (event: Event) =>
+            emit('update:modelValue', (event.target as HTMLInputElement).value)
+        })
+    }
+  })
+
   const ElOption = defineComponent({
     name: 'ElOption',
     props: { label: String, value: [String, Number] },
@@ -269,6 +286,7 @@ vi.mock('element-plus', async () => {
     ElTableColumn,
     ElButton,
     ElSelect,
+    ElInput,
     ElOption,
     ElDatePicker,
     ElIcon,
@@ -301,6 +319,14 @@ const ocrRow: AiLogRecord = {
   input_bytes: 20480,
   request_id: 'req-0001',
   key_scope: 'shared',
+  prompt_tokens: null,
+  completion_tokens: null,
+  total_tokens: null,
+  attempt_no: 1,
+  purpose: 'ocr',
+  first_token_ms: null,
+  engine_kind: 'baidu',
+  attachment_oid: 'att-1',
   created_at: '2026-10-24T08:00:00'
 }
 
@@ -320,7 +346,40 @@ const chatRow: AiLogRecord = {
   input_bytes: null,
   request_id: null,
   key_scope: 'personal',
+  prompt_tokens: 120,
+  completion_tokens: 30,
+  total_tokens: 150,
+  attempt_no: 2,
+  purpose: 'markdown-assistant',
+  first_token_ms: 240,
+  engine_kind: null,
+  attachment_oid: null,
   created_at: '2026-10-24T09:00:00'
+}
+
+const statsFixture: AiLogStats = {
+  days: 7,
+  since: '2026-10-18 00:00:00',
+  daily: [
+    {
+      date: '2026-10-24',
+      calls: 4,
+      errors: 1,
+      prompt_tokens: 120,
+      completion_tokens: 30,
+      total_tokens: 150,
+      avg_latency_ms: 200
+    }
+  ],
+  by_provider: [
+    { provider: 'baidu', calls: 3, errors: 0, units: 3, total_tokens: 0 },
+    { provider: null, calls: 1, errors: 1, units: 3, total_tokens: 150 }
+  ],
+  by_model: [{ model: 'ocr-general', calls: 3, errors: 0, units: 3, total_tokens: 0 }],
+  by_purpose: [
+    { purpose: 'ocr', calls: 3, errors: 0, units: 3, total_tokens: 0 },
+    { purpose: null, calls: 1, errors: 1, units: 3, total_tokens: 150 }
+  ]
 }
 
 function mountPage(): VueWrapper {
@@ -334,9 +393,11 @@ function lastQuery() {
 
 beforeEach(() => {
   vi.mocked(listAiLogs).mockReset()
+  vi.mocked(getAiLogStats).mockReset()
   elMessageErrorSpy.mockReset()
   elMessageSuccessSpy.mockReset()
   vi.mocked(listAiLogs).mockResolvedValue({ rows: [ocrRow, chatRow], total: 42 })
+  vi.mocked(getAiLogStats).mockResolvedValue(statsFixture)
 })
 
 describe('调用日志页', () => {
@@ -352,6 +413,35 @@ describe('调用日志页', () => {
     expect(table.text()).toContain('AI_TIMEOUT')
     expect(table.text()).toContain('812')
     expect(table.text()).toContain('req-0001')
+
+    wrapper.unmount()
+  })
+
+  it('新增列：场景、引擎类型、token 三段、首字耗时与尝试序号', async () => {
+    const wrapper = mountPage()
+    await flushPromises()
+
+    const table = wrapper.find('.el-table-stub')
+    // purpose / engine_kind
+    expect(table.text()).toContain('markdown-assistant')
+    expect(table.text()).toContain('baidu')
+    // token「入 / 出 / 合计」；没有 usage 的行显示占位符而不是 0
+    expect(table.text()).toContain('120 / 30 / 150')
+    // first_token_ms 与 attempt_no
+    expect(table.text()).toContain('240 ai.logs.latencyUnit')
+    expect(table.text()).toContain('ai.logs.columns.tokens')
+
+    wrapper.unmount()
+  })
+
+  it('token 为 null 的行显示占位符：那是「上游没报」，不是 0', async () => {
+    vi.mocked(listAiLogs).mockResolvedValue({ rows: [ocrRow], total: 1 })
+    const wrapper = mountPage()
+    await flushPromises()
+
+    const table = wrapper.find('.el-table-stub')
+    const tokensCell = table.find('tbody tr').findAll('td')[13]!
+    expect(tokensCell.text()).toBe('—')
 
     wrapper.unmount()
   })
@@ -426,6 +516,73 @@ describe('调用日志页', () => {
     await flushPromises()
 
     expect(wrapper.find('.el-empty-stub').text()).toBe('ai.logs.loadFailed')
+
+    wrapper.unmount()
+  })
+
+  it('新增过滤条件（场景/服务商/模型/请求编号）都传给接口', async () => {
+    const wrapper = mountPage()
+    await flushPromises()
+
+    // 场景是过滤器里的第 4 个下拉（能力、状态、来源之后；统计窗口那个在它后面）。
+    const selects = wrapper.findAll('.el-select-stub')
+    await selects[3]!.setValue('markdown-assistant')
+    await flushPromises()
+    expect(lastQuery()).toMatchObject({ purpose: 'markdown-assistant' })
+
+    const inputs = wrapper.findAll('.el-input-stub')
+    await inputs[0]!.setValue('team')
+    await inputs[1]!.setValue('gpt-x')
+    await inputs[2]!.setValue('req-0001')
+    await flushPromises()
+
+    expect(lastQuery()).toMatchObject({
+      provider: 'team',
+      model: 'gpt-x',
+      request_id: 'req-0001'
+    })
+
+    wrapper.unmount()
+  })
+
+  it('统计概览：四个总数由 daily 累加，并渲染分组小计', async () => {
+    const wrapper = mountPage()
+    await flushPromises()
+
+    expect(getAiLogStats).toHaveBeenCalledWith(7)
+    const stats = wrapper.find('.ai-log-stats__tile').element.parentElement!
+    expect(stats.textContent).toContain('4')
+    expect(stats.textContent).toContain('150')
+    // 失败率 1/4 → 25%
+    expect(stats.textContent).toContain('25%')
+    // 分组小计：服务商与场景各一张表
+    expect(wrapper.text()).toContain('ai.logs.stats.byProvider')
+    expect(wrapper.text()).toContain('ai.logs.stats.byPurpose')
+
+    wrapper.unmount()
+  })
+
+  it('统计窗口可切换：切换后按新天数重新拉取', async () => {
+    const wrapper = mountPage()
+    await flushPromises()
+
+    const selects = wrapper.findAll('.el-select-stub')
+    await selects[selects.length - 1]!.setValue('30')
+    await flushPromises()
+
+    expect(getAiLogStats).toHaveBeenLastCalledWith('30')
+
+    wrapper.unmount()
+  })
+
+  it('统计数据加载失败不影响日志列表', async () => {
+    vi.mocked(getAiLogStats).mockRejectedValue(new Error('boom'))
+    const wrapper = mountPage()
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('ai.logs.stats.refreshFailed')
+    expect(wrapper.find('.el-table-stub').text()).toContain('张三')
+    expect(elMessageErrorSpy).toHaveBeenCalled()
 
     wrapper.unmount()
   })

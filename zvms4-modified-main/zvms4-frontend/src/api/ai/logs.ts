@@ -1,5 +1,11 @@
-import type { AiLogCapability, AiLogKeyScope, AiLogRecord, AiLogStatus } from '@/../types/ai'
-import { aiRequestList } from './http'
+import type {
+  AiLogCapability,
+  AiLogKeyScope,
+  AiLogRecord,
+  AiLogStats,
+  AiLogStatus
+} from '@/../types/ai'
+import { aiRequestList, aiRequest } from './http'
 
 /**
  * 调用日志（/ai/logs）。仅 admin 可读，非 admin 返回 403 Permission denied。
@@ -19,9 +25,20 @@ export interface AiLogsQuery {
   capability?: AiLogCapability
   status?: AiLogStatus
   key_scope?: AiLogKeyScope
+  /** 精确匹配：从响应头 X-AI-Request-Id 抄下来的那一条链。 */
+  request_id?: string
+  provider?: string
+  model?: string
+  /** 场景来源（chat / markdown-assistant / ocr）。 */
+  purpose?: string
   time_start?: AiLogTimeInput
   time_end?: AiLogTimeInput
 }
+
+/** 统计窗口的合法范围：1..90 天（与流水保留期一致）。 */
+export const AI_LOG_STATS_MIN_DAYS = 1
+export const AI_LOG_STATS_MAX_DAYS = 90
+export const AI_LOG_STATS_DEFAULT_DAYS = 7
 
 export interface AiLogsPage {
   rows: AiLogRecord[]
@@ -74,6 +91,22 @@ export async function listAiLogs(query: AiLogsQuery = {}): Promise<AiLogsPage> {
   if (query.key_scope) {
     params.key_scope = query.key_scope
   }
+  const requestId = query.request_id?.trim()
+  if (requestId) {
+    params.request_id = requestId
+  }
+  const provider = query.provider?.trim()
+  if (provider) {
+    params.provider = provider
+  }
+  const model = query.model?.trim()
+  if (model) {
+    params.model = model
+  }
+  const purpose = query.purpose?.trim()
+  if (purpose) {
+    params.purpose = purpose
+  }
   const timeStart = toEpochSeconds(query.time_start)
   if (timeStart !== undefined) {
     params.time_start = timeStart
@@ -92,5 +125,31 @@ export async function listAiLogs(query: AiLogsQuery = {}): Promise<AiLogsPage> {
   return {
     rows: Array.isArray(result.data) ? result.data : [],
     total: result.metadata.size
+  }
+}
+
+function clampStatsDays(days?: number): number {
+  const value = Number.isFinite(days) ? Math.trunc(days as number) : AI_LOG_STATS_DEFAULT_DAYS
+  return Math.min(Math.max(AI_LOG_STATS_MIN_DAYS, value), AI_LOG_STATS_MAX_DAYS)
+}
+
+/**
+ * 拉统计概览（按日 + 按 provider/model/purpose 小计）。
+ *
+ * 窗口由后端按「今天零点往前 days-1 天」计算：前端只传天数，不传时间边界，
+ * 否则浏览器时区与服务器时区不一致时第一个自然日会变成半天。
+ */
+export async function getAiLogStats(days?: number): Promise<AiLogStats> {
+  const result = await aiRequest<AiLogStats>({
+    method: 'get',
+    url: '/ai/logs/stats',
+    params: { days: clampStatsDays(days) }
+  })
+  return {
+    ...result,
+    daily: Array.isArray(result.daily) ? result.daily : [],
+    by_provider: Array.isArray(result.by_provider) ? result.by_provider : [],
+    by_model: Array.isArray(result.by_model) ? result.by_model : [],
+    by_purpose: Array.isArray(result.by_purpose) ? result.by_purpose : []
   }
 }

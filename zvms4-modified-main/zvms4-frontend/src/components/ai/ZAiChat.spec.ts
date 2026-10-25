@@ -225,7 +225,9 @@ describe('对话页', () => {
     expect(streamChatCompletion).toHaveBeenCalledWith(
       expect.objectContaining({
         model: 'gpt-4o-mini',
-        messages: [{ role: 'user', content: '你好' }]
+        messages: [{ role: 'user', content: '你好' }],
+        // 审计场景名：后端落 AI_CALL_LOGS.PURPOSE（不影响额度）。
+        scene: 'chat'
       })
     )
     expect(wrapper.text()).toContain('答案')
@@ -245,9 +247,12 @@ describe('对话页', () => {
     await findButton(wrapper, 'ai.chat.send')!.trigger('click')
     await flushPromises()
 
-    expect(createChatCompletion).toHaveBeenCalledWith('gpt-4o-mini', [
-      { role: 'user', content: '你好' }
-    ])
+    expect(createChatCompletion).toHaveBeenCalledWith(
+      'gpt-4o-mini',
+      [{ role: 'user', content: '你好' }],
+      // 审计场景名：后端落 AI_CALL_LOGS.PURPOSE（不影响额度）。
+      'chat'
+    )
     expect(wrapper.text()).toContain('一次性答案')
 
     wrapper.unmount()

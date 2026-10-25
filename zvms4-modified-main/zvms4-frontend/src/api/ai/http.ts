@@ -14,6 +14,14 @@ import { AiRequestError, parseAiCode, parseAiMessage } from './errors'
  * 在飞请求计数，401 与维护模式跳转在本文件复刻。
  */
 
+/**
+ * 场景来源头：后端读它落 ``AI_CALL_LOGS.PURPOSE``（只用于审计，不参与权限/额度）。
+ *
+ * 定义在这层是为了让「哪些调用点属于哪个场景」只有一处常量：新增页面时在调用点
+ * 传一个值即可，头名不会各写一遍。
+ */
+export const AI_SCENE_HEADER = 'X-AI-Scene'
+
 function readHeader(headers: unknown, name: string): string | null {
   if (!headers || typeof headers !== 'object') {
     return null

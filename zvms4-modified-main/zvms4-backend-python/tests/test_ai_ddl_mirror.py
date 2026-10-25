@@ -33,11 +33,30 @@ OCR_KIND_FILE = "V027__extend_ai_ocr_engines_kind.sql"
 ZHIPU_KIND_FILE = "V029__add_zhipu_ocr_engine_kind.sql"
 EXPIRY_FILE = "V028__add_ai_credentials_expires_at.sql"
 API_KEYS_FILE = "V030__add_ai_api_keys.sql"
+TRACE_FILE = "V031__add_ai_call_logs_trace.sql"
 
 # ``ai_call_logs.key_scope`` 的 CHECK 规范化后的形态（ddl_check 会把大小写与空白
 # 折叠掉）。V024 建表时还没有这一列，它由 V025 的幂等 ALTER 补上——所以下面既断言
 # 「models/V001 里有它」，也断言「V024 里没有它」，把这次拆分本身钉住。
 KEY_SCOPE_CK = "key_scope is null or key_scope in ('personal','shared','server')"
+
+# V031 给 ai_call_logs 补的 8 个 trace 列（全部 nullable、无默认值）与两个 CHECK。
+TRACE_COLUMNS = {
+    "prompt_tokens",
+    "completion_tokens",
+    "total_tokens",
+    "attempt_no",
+    "purpose",
+    "first_token_ms",
+    "engine_kind",
+    "attachment_oid",
+}
+TRACE_CHECK_EXPRS = {
+    "(prompt_tokens is null or prompt_tokens >= 0)"
+    " and (completion_tokens is null or completion_tokens >= 0)"
+    " and (total_tokens is null or total_tokens >= 0)",
+    "attempt_no is null or attempt_no >= 1",
+}
 
 GATEWAY_INDEXES = {
     ("ai_call_logs", False, ("user_oid", "created_at")),
@@ -94,6 +113,14 @@ def _credentials() -> dict:
 
 def _gateway_text() -> str:
     return _migration(GATEWAY_FILE).read_text(encoding="utf-8")
+
+
+def _trace() -> dict:
+    return _parsed(_migration(TRACE_FILE))
+
+
+def _trace_text() -> str:
+    return _migration(TRACE_FILE).read_text(encoding="utf-8")
 
 
 def _credentials_text() -> str:
@@ -172,20 +199,73 @@ def test_ai_call_logs_migration_matches_models_minus_key_scope() -> None:
     v001 = ddl_check.parse_v001()
 
     expected = modeled["tables"]["ai_call_logs"]
-    # V024 建表时还没有 key_scope：把它从 models 侧摘掉后必须与迁移逐字段相等。
-    without_key_scope = {
-        "columns": {k: v for k, v in expected["columns"].items() if k != "key_scope"},
+    # V024 建表时还没有 key_scope（V025 补）与 V031 的 8 个 trace 列：
+    # 把它们从 models 侧摘掉后必须与迁移逐字段相等。
+    without_later = {
+        "columns": {
+            k: v
+            for k, v in expected["columns"].items()
+            if k != "key_scope" and k not in TRACE_COLUMNS
+        },
         "pk": expected["pk"],
         "uq": set(expected["uq"]),
         "fk": set(expected["fk"]),
-        "ck": {ck for ck in expected["ck"] if ck != KEY_SCOPE_CK},
+        "ck": {
+            ck
+            for ck in expected["ck"]
+            if ck != KEY_SCOPE_CK and ck not in TRACE_CHECK_EXPRS
+        },
     }
-    assert gateway["tables"]["ai_call_logs"] == without_key_scope
+    assert gateway["tables"]["ai_call_logs"] == without_later
 
-    # 全新实例走 V001，一次就拿到完整形状（含 key_scope 与它的 CHECK）。
+    # 全新实例走 V001，一次就拿到完整形状（含 key_scope 与 V031 的列）。
     assert v001["tables"]["ai_call_logs"] == expected
     assert "key_scope" in v001["tables"]["ai_call_logs"]["columns"]
     assert KEY_SCOPE_CK in v001["tables"]["ai_call_logs"]["ck"]
+    for column in TRACE_COLUMNS:
+        assert column in v001["tables"]["ai_call_logs"]["columns"]
+    for check in TRACE_CHECK_EXPRS:
+        assert check in v001["tables"]["ai_call_logs"]["ck"]
+
+
+def test_trace_migration_adds_the_columns_the_models_declare() -> None:
+    """V031 的 8 条 ADD 列 + 2 个 CHECK + 1 个索引必须与 models/V001 一致。"""
+    extracted = ddl_check.extract_execute_immediate(_trace_text())
+    expected_columns = ddl_check.parse_models()["tables"]["ai_call_logs"]["columns"]
+
+    added = re.findall(
+        r"ALTER TABLE ai_call_logs ADD \((.*)\)\s*$",
+        extracted,
+        re.IGNORECASE | re.MULTILINE,
+    )
+    assert added, extracted
+    for frag in added:
+        name, type_, notnull, default = ddl_check._parse_column(frag)
+        assert (type_, notnull, default) == expected_columns[name]
+    # 全部 nullable 且没有默认值：存量行留 NULL，「未知」不该被 0 顶替。
+    assert {frag.split()[0].lower() for frag in added} == set(TRACE_COLUMNS)
+    for frag in added:
+        _name, _type, notnull, default = ddl_check._parse_column(frag)
+        assert notnull is False
+        assert default is None
+
+    constraints = re.findall(
+        r"ALTER TABLE ai_call_logs ADD CONSTRAINT (\w+) CHECK \((.*)\)\s*$",
+        extracted,
+        re.IGNORECASE | re.MULTILINE,
+    )
+    assert constraints, extracted
+    parsed = {
+        ddl_check._parse_constraint(f"constraint {name} check ({expr})")
+        for name, expr in constraints
+    }
+    assert {expr for _kind, expr in parsed} == TRACE_CHECK_EXPRS
+    assert TRACE_CHECK_EXPRS <= ddl_check.parse_v001()["tables"]["ai_call_logs"]["ck"]
+
+    assert ("ai_call_logs", False, ("request_id",)) in _trace()["indexes"]
+    assert ("ai_call_logs", False, ("request_id",)) in ddl_check.parse_models()[
+        "indexes"
+    ]
 
 
 def test_gateway_migration_carries_the_models_indexes() -> None:

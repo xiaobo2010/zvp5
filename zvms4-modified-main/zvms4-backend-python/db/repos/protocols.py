@@ -1001,6 +1001,7 @@ class AppLogsRepo(Protocol):
         xuehai_id: str = "",
         page: int = -1,
         size: int = 10,
+        exclude_types: list[str] | None = None,
     ) -> tuple[list[Row], int]:
         """Return ``(rows, total)`` for the admin log browser.
 
@@ -1011,6 +1012,10 @@ class AppLogsRepo(Protocol):
         on the ``timestamp`` float, and ``xuehai_id`` an equality on the captured
         device 学海 ID (empty = no filter). Ordered by ``timestamp`` desc;
         ``page == -1`` means "no offset".
+
+        ``exclude_types`` is an OR-blacklist on ``type`` that only applies when
+        ``types`` is empty: the admin browser uses it to hide ``login_fail`` by
+        default, while an explicit ``types`` whitelist always wins.
         """
         ...
 
@@ -1878,7 +1883,7 @@ class DeviceChallengesRepo(Protocol):
 
 
 class AICallLogsRepo(Protocol):
-    """Data access for ``AI_CALL_LOGS`` (AI 网关调用流水, V022).
+    """Data access for ``AI_CALL_LOGS`` (AI 网关调用流水, V024).
 
     Rows use the Mongo document shape ``{"_id": <hex str>, "user_oid": str,
     "capability": "ocr" | "chat", "endpoint": str, "provider": str | None,
@@ -1886,7 +1891,10 @@ class AICallLogsRepo(Protocol):
     "rejected" | "busy", "http_status": int | None, "error_code": str | None,
     "latency_ms": int | None, "units": int, "input_bytes": int | None,
     "request_id": str | None, "key_scope": "personal" | "shared" | "server" |
-    None, "created_at": datetime}``.
+    None, "prompt_tokens": int | None, "completion_tokens": int | None,
+    "total_tokens": int | None, "attempt_no": int | None, "purpose": str |
+    None, "first_token_ms": int | None, "engine_kind": str | None,
+    "attachment_oid": str | None, "created_at": datetime}``.
 
     The table is append-only in normal operation: :meth:`insert` is the only
     write, and nothing here updates a row. The one deletion path is
@@ -1896,6 +1904,11 @@ class AICallLogsRepo(Protocol):
     ``AI_QUOTA.used`` can be reconciled against each other.
     ``key_scope`` records which kind of key paid for the call, so "platform
     spend" and "admin's own key" stay separable in the same report.
+
+    Metadata only — prompt/completion text is never stored (a compliance
+    decision, not a gap). ``attempt_no`` + ``request_id`` make one request's
+    retry chain greppable, ``purpose`` records which UI scene asked, and the
+    three token columns carry the upstream ``usage`` numbers.
     """
 
     async def insert(
@@ -1914,6 +1927,14 @@ class AICallLogsRepo(Protocol):
         input_bytes: int | None = None,
         request_id: str | None = None,
         key_scope: str | None = None,
+        prompt_tokens: int | None = None,
+        completion_tokens: int | None = None,
+        total_tokens: int | None = None,
+        attempt_no: int | None = None,
+        purpose: str | None = None,
+        first_token_ms: int | None = None,
+        engine_kind: str | None = None,
+        attachment_oid: str | None = None,
     ) -> str:
         """Append one call record and return its new ``_id``.
 
@@ -1925,6 +1946,12 @@ class AICallLogsRepo(Protocol):
         common key), ``server`` (the server-side default config) or ``None``
         (unknown / rows written before the column existed). It never takes part
         in auth — it only makes the ledger auditable per funding source.
+
+        The token columns are ``None`` unless the upstream reported ``usage``;
+        ``None`` is the marker for "this row's ``units`` is an estimate".
+        ``attempt_no`` is 1-based within one request. ``purpose`` is the calling
+        scene (open set: ``chat`` / ``markdown-assistant`` / ``ocr`` / ...), and
+        ``engine_kind`` / ``attachment_oid`` are OCR-only trace fields.
         """
         ...
 
@@ -1939,6 +1966,10 @@ class AICallLogsRepo(Protocol):
         capability: str | None = None,
         status: str | None = None,
         key_scope: str | None = None,
+        request_id: str | None = None,
+        provider: str | None = None,
+        model: str | None = None,
+        purpose: str | None = None,
         time_start: datetime | None = None,
         time_end: datetime | None = None,
         page: int = 1,
@@ -1950,6 +1981,9 @@ class AICallLogsRepo(Protocol):
         1-based. ``time_start`` / ``time_end`` are **inclusive** bounds on
         ``created_at`` (naive local datetimes, the column's convention); the
         epoch-seconds → datetime conversion belongs to the router.
+
+        ``request_id`` / ``provider`` / ``model`` / ``purpose`` are exact
+        matches: they are "look up this known value" entry points.
         """
         ...
 
@@ -1960,10 +1994,39 @@ class AICallLogsRepo(Protocol):
         capability: str | None = None,
         status: str | None = None,
         key_scope: str | None = None,
+        request_id: str | None = None,
+        provider: str | None = None,
+        model: str | None = None,
+        purpose: str | None = None,
         time_start: datetime | None = None,
         time_end: datetime | None = None,
     ) -> int:
         """Total rows matching the same filters as :meth:`list_page`."""
+        ...
+
+    async def stats(
+        self,
+        *,
+        since: datetime,
+        until: datetime | None = None,
+    ) -> dict[str, list[Row]]:
+        """Aggregate calls in ``[since, until]``: per day plus per dimension.
+
+        Returns ``{"daily": [{"date": "YYYY-MM-DD", "calls": int, "errors": int,
+        "prompt_tokens": int, "completion_tokens": int, "total_tokens": int,
+        "avg_latency_ms": int | None}], "by_provider": [...], "by_model": [...],
+        "by_purpose": [...]}``; each breakdown row is ``{"<dimension>": str |
+        None, "calls": int, "errors": int, "units": int, "total_tokens": int}``.
+
+        ``errors`` counts every row whose ``status`` is not ``success``
+        (``rejected`` / ``busy`` included). Token sums are 0 when the window
+        holds no usage-reported rows — that is honestly "nothing observed",
+        unlike the per-row NULL which means "unknown".
+
+        All four parts come from **one** window on purpose: separate calls
+        would let the total and the breakdowns disagree across a minute
+        boundary.
+        """
         ...
 
     async def count_expired(self, cutoff: datetime) -> int:
@@ -1980,7 +2043,7 @@ class AICallLogsRepo(Protocol):
 
 
 class AIQuotaRepo(Protocol):
-    """Data access for ``AI_QUOTA`` (按 用户 + 月份 + 能力 计的额度, V022).
+    """Data access for ``AI_QUOTA`` (按 用户 + 月份 + 能力 计的额度, V024).
 
     Rows use the Mongo document shape ``{"_id": <hex str>, "user_oid": str,
     "period": str, "kind": "ocr" | "chat", "used": int, "limit_count": int,
@@ -2027,7 +2090,7 @@ class AIQuotaRepo(Protocol):
 
 
 # ---------------------------------------------------------------------------
-# AI credentials (V023)
+# AI credentials (V025)
 # ---------------------------------------------------------------------------
 
 # ``shared`` 凭据的 owner 哨兵：24 个 0。**不是 NULL** —— Oracle 的唯一索引里
@@ -2054,7 +2117,7 @@ UNSET: Any = _UnsetType()
 
 
 class AICredentialsRepo(Protocol):
-    """Data access for ``AI_CREDENTIALS`` (AI provider 凭据, V023).
+    """Data access for ``AI_CREDENTIALS`` (AI provider 凭据, V025).
 
     Rows use the Mongo document shape::
 

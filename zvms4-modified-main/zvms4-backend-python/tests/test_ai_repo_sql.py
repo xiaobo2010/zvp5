@@ -129,42 +129,64 @@ def test_list_visible_projects_the_cipher_column() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _insert(key_scope: str | None) -> str:
-    return _sql(
-        ai_call_logs_repo._insert_stmt(
-            oid="a" * 24,
-            user_oid=USER_OID,
-            capability="chat",
-            endpoint="/api/ai/v1/chat/completions",
-            provider="lab",
-            model="gpt-x",
-            status="success",
-            http_status=200,
-            error_code=None,
-            latency_ms=12,
-            units=1,
-            input_bytes=None,
-            request_id="req-1",
-            key_scope=key_scope,
-            created_at=TS,
-        )
+def _insert(key_scope: str | None, **overrides) -> str:
+    params = dict(
+        oid="a" * 24,
+        user_oid=USER_OID,
+        capability="chat",
+        endpoint="/api/ai/v1/chat/completions",
+        provider="lab",
+        model="gpt-x",
+        status="success",
+        http_status=200,
+        error_code=None,
+        latency_ms=12,
+        units=1,
+        input_bytes=None,
+        request_id="req-1",
+        key_scope=key_scope,
+        created_at=TS,
     )
+    params.update(overrides)
+    return _sql(ai_call_logs_repo._insert_stmt(**params))
 
 
 def test_insert_binds_key_scope_column() -> None:
     sql = _insert("personal")
 
-    assert "request_id, key_scope, created_at)" in sql
-    # key_scope 紧邻 created_at 之前：锚定这个位置就能确定它落在 key_scope 那一格，
-    # 而不是碰巧在别处出现了同样的字符串。
-    assert "'req-1', 'personal', TO_DATE(" in sql
+    assert "request_id, key_scope, prompt_tokens" in sql
+    # key_scope 紧邻 request_id 之后、V031 的 token 列之前：锚定这个位置就能
+    # 确定它落在 key_scope 那一格，而不是碰巧在别处出现了同样的字符串。
+    assert "'req-1', 'personal', NULL, NULL, NULL" in sql
 
 
 def test_insert_binds_null_key_scope_explicitly() -> None:
     """``None`` 必须写成 NULL，而不是让列默认值顶替（默认值表达不了「未知」）。"""
     sql = _insert(None)
-    assert "'req-1', NULL, TO_DATE(" in sql
+    assert "'req-1', NULL, NULL, NULL, NULL" in sql
     assert "'req-1', 'server'" not in sql
+
+
+def test_insert_binds_the_trace_columns_explicitly() -> None:
+    """V031 的元数据列没有列默认值：``None`` 必须写成 NULL（不是 0）。"""
+    sql = _insert(
+        "shared",
+        prompt_tokens=11,
+        completion_tokens=22,
+        total_tokens=33,
+        attempt_no=2,
+        purpose="chat",
+        first_token_ms=140,
+        engine_kind=None,
+        attachment_oid=None,
+    )
+
+    assert (
+        "11, 22, 33, 2, 'chat', 140, NULL, NULL, TO_DATE(" in sql
+    ), sql
+    # NULL 不是 0：三个 token 列没值时写的是 NULL，读侧才能判「这是估算」。
+    bare = _insert("shared")
+    assert "NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, TO_DATE(" in bare
 
 
 def test_insert_is_one_statement() -> None:
@@ -179,21 +201,22 @@ def test_insert_is_one_statement() -> None:
 # AI_CALL_LOGS：管理端日志查询的过滤谓词
 # ---------------------------------------------------------------------------
 #
-# 这两个谓词各有一个静默出错的形态：``key_scope`` 漏了 = 按「哪类 key 付的钱」
-# 筛选永远返回全量；时间边界写成 ``>``/``<`` = 按秒排查时端点那一秒的调用消失。
+# 这几个谓词各有一个静默出错的形态：``key_scope`` 漏了 = 按「哪类 key 付的钱」
+# 筛选永远返回全量；时间边界写成 ``>``/``<`` = 按秒排查时端点那一秒的调用消失；
+# ``request_id`` 写成 LIKE = 索引让给全表扫且把子串当命中。
 # 所以断言的是编译后的 SQL 文本（含 ``>=`` / ``<=`` 与 ``OR`` 的缺席）。
 
 
 def _page(**kwargs) -> str:
-    params = {
-        "user_oid": None,
-        "capability": None,
-        "status": None,
-        "page": 1,
-        "size": 20,
+    filters = {
+        key: value
+        for key, value in kwargs.items()
+        if key in ai_call_logs_repo._FILTER_KEYS
     }
-    params.update(kwargs)
-    return _sql(ai_call_logs_repo._page_stmt(**params))
+    page = int(kwargs.get("page", 1))
+    size = int(kwargs.get("size", 20))
+    conds = ai_call_logs_repo._filters(**filters)
+    return _sql(ai_call_logs_repo._page_stmt(conds, page, size))
 
 
 def test_page_stmt_filters_key_scope_by_equality() -> None:
@@ -216,16 +239,86 @@ def test_page_stmt_omits_absent_filters() -> None:
     assert "created_at <=" not in sql
 
 
-def test_total_stmt_shares_the_page_filters() -> None:
-    sql = _sql(
-        ai_call_logs_repo._total_stmt(None, "ocr", "timeout", "server", TS, TS)
+def test_page_stmt_filters_the_trace_columns_by_equality() -> None:
+    """request_id / provider / model / purpose 都是精确匹配，走等号不等 LIKE。"""
+    sql = _page(
+        request_id="req-1",
+        provider="lab",
+        model="gpt-x",
+        purpose="chat",
     )
+
+    assert "ai_call_logs.request_id = 'req-1'" in sql
+    assert "ai_call_logs.provider = 'lab'" in sql
+    assert "ai_call_logs.model = 'gpt-x'" in sql
+    assert "ai_call_logs.purpose = 'chat'" in sql
+    assert " LIKE " not in sql.upper()
+
+
+def test_total_stmt_shares_the_page_filters() -> None:
+    conds = ai_call_logs_repo._filters(
+        capability="ocr",
+        status="timeout",
+        key_scope="server",
+        purpose="ocr",
+        time_start=TS,
+        time_end=TS,
+    )
+    sql = _sql(ai_call_logs_repo._total_stmt(conds))
     assert sql.upper().startswith("SELECT COUNT(*)")
     assert "ai_call_logs.capability = 'ocr'" in sql
     assert "ai_call_logs.status = 'timeout'" in sql
     assert "ai_call_logs.key_scope = 'server'" in sql
+    assert "ai_call_logs.purpose = 'ocr'" in sql
     assert "ai_call_logs.created_at >= TO_DATE('2026-10-23 01:02:03'" in sql
     assert "ai_call_logs.created_at <= TO_DATE('2026-10-23 01:02:03'" in sql
+
+
+# ---------------------------------------------------------------------------
+# AI_CALL_LOGS：聚合（/api/ai/logs/stats）
+# ---------------------------------------------------------------------------
+#
+# 统计面板最容易静默出错的两点：①「错误数」写成 ``status = 'error'``（漏掉
+# rejected/busy，运营会以为拦截没发生）；② 按日分组用 ``CREATED_AT`` 原值而不是
+# ``TRUNC``，每天一个数字变成每毫秒一个数字。
+
+
+def test_stats_daily_counts_every_non_success_status_as_error() -> None:
+    sql = _sql(ai_call_logs_repo._stats_daily_stmt([]))
+
+    assert "trunc(ai_call_logs.created_at)" in sql
+    assert "ai_call_logs.status != 'success'" in sql
+    assert "GROUP BY trunc(ai_call_logs.created_at)" in sql
+
+
+def test_stats_daily_sums_tokens_and_averages_latency() -> None:
+    sql = _sql(ai_call_logs_repo._stats_daily_stmt([]))
+
+    assert "sum(ai_call_logs.prompt_tokens)" in sql
+    assert "sum(ai_call_logs.completion_tokens)" in sql
+    assert "sum(ai_call_logs.total_tokens)" in sql
+    assert "avg(ai_call_logs.latency_ms)" in sql
+
+
+def test_stats_group_stmt_groups_by_the_given_dimension() -> None:
+    from db.models import ai_call_logs as tbl
+
+    sql = _sql(ai_call_logs_repo._stats_group_stmt(tbl.c.purpose, []))
+
+    assert "ai_call_logs.purpose" in sql
+    assert "GROUP BY ai_call_logs.purpose" in sql
+    assert "sum(ai_call_logs.units)" in sql
+    # 调用多的在前：面板第一眼要看到最烧钱/最常用的那个维度。
+    assert "ORDER BY count(*) DESC" in sql
+
+
+def test_stats_group_stmt_is_bounded() -> None:
+    """分组小计必须有上限：purpose 是开放集合，model 会随供应商改版膨胀。"""
+    from db.models import ai_call_logs as tbl
+
+    sql = _sql(ai_call_logs_repo._stats_group_stmt(tbl.c.model, []))
+
+    assert f"FETCH FIRST {ai_call_logs_repo.STATS_GROUP_LIMIT} ROWS ONLY" in sql
 
 
 # ---------------------------------------------------------------------------

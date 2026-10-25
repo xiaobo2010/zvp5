@@ -311,7 +311,13 @@ def test_enqueue_without_engine_is_503(files_repo, engines, quotas, audit_repo):
     assert quotas["consume"].calls == []
     assert quotas["site"].calls == []
     assert files_repo.statuses == []
-    assert audit_repo.rows == []
+    # 但「这次被拒了」要留一行审计：否则「有人一直在点识别但永远没有引擎」在
+    # 后台看不出来。units=0（一分没扣）、status=rejected（我们自己的闸门）。
+    assert [(row["status"], row["error_code"], row["units"]) for row in audit_repo.rows] == [
+        ("rejected", "AI_OCR_NO_ENGINE", 0)
+    ]
+    assert audit_repo.rows[0]["attachment_oid"] == ATTACHMENT
+    assert audit_repo.rows[0]["purpose"] == "ocr"
 
 
 def test_enqueue_picks_first_engine_by_priority(
@@ -371,10 +377,12 @@ def test_enqueue_all_site_quota_exhausted_is_503(
 
     assert response.status_code == 503
     assert response.json()["detail"] == "AI_OCR_SITE_QUOTA_EXHAUSTED"
-    # 站点额度全满 = 没接受这次任务：用户额度不扣、不入队、不写审计。
+    # 站点额度全满 = 没接受这次任务：用户额度不扣、不入队；只留一行 rejected 审计。
     assert quotas["consume"].calls == []
     assert files_repo.statuses == []
-    assert audit_repo.rows == []
+    assert [(row["status"], row["error_code"]) for row in audit_repo.rows] == [
+        ("rejected", "AI_OCR_SITE_QUOTA_EXHAUSTED")
+    ]
 
 
 def test_enqueue_user_quota_is_prechecked_before_site_quota(
@@ -530,6 +538,11 @@ def test_enqueue_provider_is_admin_only(files_repo, engines, quotas, audit_repo)
     # 门禁在计价之前：被拒的请求一份额度都不碰。
     assert quotas["peek"].calls == []
     assert quotas["site"].calls == []
+    # 但拒绝本身要留一行流水（capability 必须是 ocr，不能记到 chat 面上）。
+    assert [
+        (row["capability"], row["status"], row["error_code"], row["purpose"])
+        for row in audit_repo.rows
+    ] == [("ocr", "rejected", "AI_FORBIDDEN", "ocr")]
 
 
 def test_enqueue_rejects_unknown_provider(files_repo, engines, quotas, audit_repo):
@@ -653,6 +666,15 @@ def test_process_ocr_falls_back_when_engine_was_disabled(
     assert audit_repo.rows[0]["error_code"] == attachment_ocr.ERROR_ENGINE
     # 逐次流水不重复计费：额度那一笔在入队时已经记过。
     assert [row["units"] for row in audit_repo.rows] == [0, 0]
+    # 追踪三键 + 尝试序号：这张图「第几次试了哪个 kind 的引擎」是事实而不是猜测。
+    # 第一次尝试的 kind 是入队时要求的那个（tencent），第二次是回退到的 aliyun。
+    assert [row["engine_kind"] for row in audit_repo.rows] == ["tencent", "aliyun"]
+    assert [row["attachment_oid"] for row in audit_repo.rows] == [ATTACHMENT] * 2
+    assert [row["attempt_no"] for row in audit_repo.rows] == [1, 2]
+    assert [row["purpose"] for row in audit_repo.rows] == ["ocr", "ocr"]
+    # 同一次识别的所有尝试共用同一个 request_id（整条链可聚合）。
+    request_ids = {row["request_id"] for row in audit_repo.rows}
+    assert len(request_ids) == 1 and request_ids != {None}
 
 
 def test_process_ocr_fails_over_to_the_next_candidate(

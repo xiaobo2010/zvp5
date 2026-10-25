@@ -2,7 +2,7 @@
 -- V025__add_ai_credentials.sql
 -- ----------------------------------------------------------------------------
 -- AI 凭据: adds AI_CREDENTIALS and the AI_CALL_LOGS.KEY_SCOPE audit column on
--- an instance where V001 / V022 were already applied.
+-- an instance where V001 / V024 were already applied.
 --
 --   * AI_CREDENTIALS (管理员个人 key + 通用共享 key，密文存储)
 --   * ux_ai_credentials_scope_owner_name ON ai_credentials (scope, owner_oid, name) UNIQUE
@@ -30,10 +30,10 @@
 --     还要知道它来自 personal、shared 还是服务端默认配置。存量行保持 NULL。
 --
 -- Idempotency:
---   Same EXECUTE IMMEDIATE pattern as V001-V022.  CREATE TABLE 吞 ORA-00955；
+--   Same EXECUTE IMMEDIATE pattern as V001-V024.  CREATE TABLE 吞 ORA-00955；
 --   CREATE INDEX 另吞 ORA-01408。ALTER TABLE ADD 列吞 ORA-01430（列已存在）与
 --   ORA-00955；ADD CONSTRAINT 吞 ORA-02264（约束名已被占用）/ ORA-01430 /
---   ORA-00955。因此本文件在「已应用过 V022 的存量库」和「全新库」上都能重复
+--   ORA-00955。因此本文件在「已应用过 V024 的存量库」和「全新库」上都能重复
 --   执行，且重复执行不改变任何已有对象。
 --
 -- This file is mirrored by db/models.py / V001 (fresh instances get the same
@@ -100,7 +100,7 @@ END;
 
 -- ----------------------------------------------------------------------------
 -- AI_CALL_LOGS.KEY_SCOPE: 本次调用用的是哪一类 key
---   V022 已经建过 AI_CALL_LOGS 的库走这条幂等 ALTER；全新库由 V001 的
+--   V024 已经建过 AI_CALL_LOGS 的库走这条幂等 ALTER；全新库由 V001 的
 --   CREATE TABLE 直接带上同一列与同一约束。
 -- ----------------------------------------------------------------------------
 BEGIN

@@ -126,6 +126,11 @@ Content-Type: application/json
 执行顺序（固定，不可调换）：鉴权 → mime → 体积 → 幂等检查 → 频控 → 用户额度 `peek` → 选引擎并扣站点额度 → 扣用户额度 → 入队。
 「先扣额度再拒绝」是不允许的：引擎选不出来时用户额度一分不扣；用户额度在竞态中扣失败时，刚占的站点额度会被**退回**（见 2.3）。
 
+审计（`AI_CALL_LOGS`）：入队成功写一行（`units=1`、`purpose='ocr'`、`engine_kind`、`attachment_oid`）；
+之后每一次引擎尝试各写一行（`units=0`、`attempt_no` 从 1 递增、`engine_kind` 为实际尝试的引擎类型）；
+拒绝路径（403 无权限 / 429 频控 / 429 额度 / 503 无引擎或站点额度满）也各写一行 `status='rejected'`。
+同一次识别的所有**尝试**共用一个 `request_id`，按它就能把一条链查全（见 §6）。
+
 结果通过轮询 `GET /api/attachments/{oid}/ocr` 获取（前端间隔 2.5s，连续失败 3 次停表）。
 
 ### 2.2 附件侧入口
@@ -145,7 +150,7 @@ Content-Type: application/json
 4. **失败不退额度**：上游可能已经计费。唯一会退的是「站点额度已扣、用户额度竞态失败」这条路径（`quota.site_refund`，单条条件 UPDATE，`used` 不足时归零）。
 5. 尝试全部失败才落 `failed`（`ocr_retry` +1，可再次 POST 重试并重新计价）。超限体积、附件内容丢失这类**与引擎无关**的失败直接落 `failed`，不再换引擎白花额度。
 
-每次尝试都会写一条 `ai_call_logs`：`model`/`provider` 是引擎名，失败带 `error_code=AI_OCR_ENGINE_ERROR`，`units=0`——计费那一笔在入队时已经记过（`units=1`），逐次流水只记「用了谁、成没成」。
+每次尝试都会写一条 `ai_call_logs`：`model`/`provider` 是引擎名，失败带 `error_code=AI_OCR_ENGINE_ERROR`，`units=0`——计费那一笔在入队时已经记过（`units=1`），逐次流水只记「用了谁、成没成」。逐次行还带 `attempt_no`（第几次尝试）、`engine_kind`（引擎类型）与 `attachment_oid`，同一次识别的所有尝试共用一个 `request_id`。
 
 生产推荐优先级：
 
@@ -270,21 +275,134 @@ Content-Type: application/json
 | 方法 | 路径 | 权限 |
 |---|---|---|
 | GET | `/api/ai/logs` | admin |
+| GET | `/api/ai/logs/stats` | admin |
+
+### 6.1 GET /api/ai/logs —— 明细
 
 | 参数 | 类型 | 说明 |
 |---|---|---|
 | `page` | int ≥1 | 默认 1 |
 | `perpage` | int 1–100 | 默认 20 |
-| `user_oid` | string | 按用户过滤 |
+| `user_oid` | string | 按用户过滤（校验 oid 形状，非法回 400） |
 | `capability` | string | `ocr` / `chat` |
 | `status` | string | `success` / `error` / `timeout` / `rejected` / `busy` |
 | `key_scope` | string | `personal` / `shared` / `server` |
+| `request_id` | string | 精确匹配：一次请求的所有尝试共用同一个编号（响应头 `X-AI-Request-Id`） |
+| `provider` | string | 精确匹配服务商/引擎名 |
+| `model` | string | 精确匹配模型名 |
+| `purpose` | string | 精确匹配场景（`chat` / `markdown-assistant` / `ocr`） |
 | `time_start` / `time_end` | epoch 秒 | 闭区间 |
 
-响应 `data` 为行数组（含 `_id`、`oid`、`user_name`），`metadata.size` 为总数。
-错误：`400 AI_LOGS_BAD_FILTER`。
+响应 `data` 为行数组，`metadata.size` 为总数。错误：`400 AI_LOGS_BAD_FILTER`（枚举类
+过滤值非法）、`400 "Invalid Object ID"`（`user_oid` 形状不对）。
 
-保留期由定时任务清理（默认 90 天），没有手工删除端点。
+`_id` 与 `oid` 同值（前者是仓储行形状，后者是前端 `row-key`），另加 `user_name` 富化
+（查不到用户时回「未知用户」）。
+
+### 6.2 行字段（`AI_CALL_LOGS` 的实际列，迁移 `V024` + `V025` + `V031`）
+
+| 列 | 类型 | 含义 |
+|---|---|---|
+| `oid` | VARCHAR2(24) | 主键（小写 hex） |
+| `user_oid` | VARCHAR2(24) | 调用者；**不建外键**（审计要活过账号删除） |
+| `capability` | VARCHAR2(16) | `ocr` / `chat` |
+| `endpoint` | VARCHAR2(40) | 网关入口 |
+| `provider` | VARCHAR2(40) | 服务商名 / OCR 引擎名 |
+| `model` | VARCHAR2(80) | 模型名 / OCR 引擎名 |
+| `status` | VARCHAR2(16) | `success` / `error` / `timeout` / `rejected` / `busy` |
+| `http_status` | NUMBER(3) | 返回给客户端的状态码（流式失败为 NULL） |
+| `error_code` | VARCHAR2(40) | 稳定错误码 |
+| `latency_ms` | NUMBER(10) | 总耗时 |
+| `units` | NUMBER(10) | 这次调用消耗的额度单位（见 6.4） |
+| `input_bytes` | NUMBER(10) | OCR：附件字节数 |
+| `request_id` | VARCHAR2(64) | 请求编号；同一次请求的所有尝试共用 |
+| `key_scope` | VARCHAR2(16) | `personal` / `shared` / `server`；NULL = 未知 |
+| `prompt_tokens` | NUMBER(10) | 上游 usage 的输入 token；NULL = 上游没报 |
+| `completion_tokens` | NUMBER(10) | 上游 usage 的输出 token；NULL = 上游没报 |
+| `total_tokens` | NUMBER(10) | 上游 usage 的合计；NULL = 上游没报 |
+| `attempt_no` | NUMBER(3) | 同一次请求里的第几次尝试（1 起）；NULL = 不是某次上游尝试（门禁直接拒） |
+| `purpose` | VARCHAR2(24) | 场景来源（开放集合，见 6.5） |
+| `first_token_ms` | NUMBER(10) | 流式首块到达耗时；非流式 NULL |
+| `engine_kind` | VARCHAR2(24) | OCR 引擎类型（`tencent`/`aliyun`/`rapidocr`/`baidu`/`groq`/`zhipu`） |
+| `attachment_oid` | VARCHAR2(24) | OCR 针对的附件；无外键（附件删了事实仍成立） |
+| `created_at` | TIMESTAMP | 写入时刻（naive 本地时间） |
+
+**正文（prompt / completion）一律不落库**——这是合规决定，不是缺口。表里只有元数据，
+字段命名对齐 OTel GenAI 语义约定的子集（当自有 schema 管理，不承诺外部兼容）。
+
+新增列全部 nullable、无默认值：存量行留 NULL。**NULL 不是 0**——0 是一个真实的 token
+数，会把「不知道」伪装成观测值。
+
+### 6.3 不变式：token 为 NULL ⟺ `units` 是估算值
+
+| 路径 | token 三列 | `units` |
+|---|---|---|
+| 非流式，上游回 usage | 实测值 | `max(1, ceil(total_tokens / 1000))` |
+| 非流式，上游没回 usage | NULL | `1`（至少记一次） |
+| 流式，拿到 usage 帧 | 实测值 | 同上 |
+| 流式，没拿到 usage 帧 | NULL | `max(1, ceil(prompt_chars/4 + completion_chars/4))` |
+| OCR（入队/逐次尝试/拒绝） | NULL | 入队 `1`，其余 `0` |
+
+读这份数据时只有一条规则：**token 全 NULL 的行，它的 `units` 是估算值**。
+
+> 已知差异（本轮刻意不改）：流式估算口径是「字符数/4」，量纲接近 **token 个数**；而实测
+> 口径是「token/1000」。两者相差约 1000 倍，因此**估算行与实测行的 `units` 不能直接相加
+> 或横比**。要统一需要一个 `units_source` 标志列 + 一次数据回填，属于单独的改造。
+
+### 6.4 `units` 的语义
+
+`units` 是**这次调用扣掉的额度单位**（OCR 页数 / chat 次数），与 `AI_QUOTA.USED` 的增量
+同源；两边都留下才能对账。个人 key（`key_scope='personal'`）由管理员自付，不扣平台额度，
+但**仍然写 `units`**——它记的是「这次调用值多少」，不是「平台付了多少」，后者由
+`key_scope` 区分。扣费失败（`_charge` 的写回异常）只记 WARNING，流水照写：审计回答的是
+「上游给了什么」，不是「额度表成功了吗」。
+
+### 6.5 `purpose` 取值
+
+| 来源 | 值 |
+|---|---|
+| 前端对话页 `ZAiChat` | `chat`（请求头 `X-AI-Scene: chat`） |
+| 前端 markdown 助手 `ZMarkdownAiDialog` | `markdown-assistant`（`X-AI-Scene: markdown-assistant`） |
+| OCR（入队 / 逐次尝试 / 拒绝） | `ocr` |
+| 第三方 SDK / curl | NULL（未知来源） |
+
+`X-AI-Scene` 只影响审计：缺失、超长或含非法字符都不会拒绝请求（后端清洗成
+`[a-z0-9_-]` 并截到 24 字符）。场景是**开放集合**，加新场景不需要 DDL。
+
+### 6.6 GET /api/ai/logs/stats —— 聚合
+
+| 参数 | 类型 | 说明 |
+|---|---|---|
+| `days` | int 1–90 | 默认 7；窗口 =「今天零点往前 `days-1` 天」到今天，按本地自然日切 |
+
+```json
+{
+  "days": 7,
+  "since": "2026-10-18 00:00:00",
+  "daily": [
+    { "date": "2026-10-24", "calls": 12, "errors": 1,
+      "prompt_tokens": 3000, "completion_tokens": 900, "total_tokens": 3900,
+      "avg_latency_ms": 820 }
+  ],
+  "by_provider": [{ "provider": "team", "calls": 9, "errors": 0, "units": 12, "total_tokens": 3900 }],
+  "by_model":    [{ "model": "gpt-x",  "calls": 9, "errors": 0, "units": 12, "total_tokens": 3900 }],
+  "by_purpose":  [{ "purpose": "chat", "calls": 7, "errors": 1, "units": 10, "total_tokens": 3900 }]
+}
+```
+
+- `errors` = 所有 `status != 'success'` 的行（`rejected` / `busy` 也算：运营关心「有多少次
+  没成」，上游挂了还是我们挡了由 `status` 再看）。
+- token 合计为 `0` 表示窗口内**没有任何观测值**（与行级 NULL 的「未知」不同）。
+- 分组小计最多 50 组，按调用数降序；`provider` / `model` / `purpose` 为 NULL 的行归到
+  `null` 桶（未知来源）。
+- 四部分来自同一个时间窗口：分开查会让「总数」与「明细合计」跨分钟对不上。
+- 窗口只按时间切，不叠用户/模型过滤——细分查询用 `/api/ai/logs` 的过滤条件。
+
+### 6.7 保留期
+
+定时任务清理，默认 90 天（`AI_CALL_LOGS_RETENTION_DAYS`），没有手工删除端点；统计窗口
+上限与之对齐。`request_id` 有索引，按编号追一条链不会全表扫。
+
 
 ---
 
@@ -343,6 +461,16 @@ Content-Type: application/json
 | `messages` | 必填 |
 | `stream` | `true` 时返回 `text/event-stream` |
 | `provider` | **仅 admin 可用**，强制指定某条凭据/上游 |
+
+可选请求头 `X-AI-Scene`（如 `chat` / `markdown-assistant`）只是**审计元数据**：后端把它
+落进 `AI_CALL_LOGS.PURPOSE`，不参与鉴权、额度或路由。缺失即记为 NULL。
+
+**流式 usage（`stream_options.include_usage`）按上游白名单开启**：只有 `base_url` 的 host
+命中白名单（默认 `api.openai.com` / `api.deepseek.com`）时，网关才在发给上游的请求体里补
+`stream_options: {"include_usage": true}`；其余上游一律不带。理由是这个参数不在最早的
+OpenAI 兼容面里，严格校验请求体的网关会直接 400——为了多拿一列 token 把流式对话打挂不
+划算。白名单可用 `settings.AI_STREAM_USAGE_HOSTS` 追加（`["*"]` = 全部允许）。拿不到 usage
+时 token 三列为 NULL、`units` 走字符估算（见 §6.3）。
 
 错误：
 
@@ -486,8 +614,20 @@ client = OpenAI(
 
 | # | 缺口 | 影响 |
 |---|---|---|
-| 8 | 审计写入失败静默 | `units` 与 `ai_quota.used` 可能对不上账 |
+| 8 | 审计写入失败静默 | `units` 与 `ai_quota.used` 可能对不上账（只记 WARNING，不改变业务返回） |
 | 10 | 附件 OCR 只支持 jpeg/png/webp | PDF 附件无法识别 |
+| 12 | 流式 `units` 与实测 `units` 量纲不同 | 估算行约为实测行的 1000 倍，两种行不能直接相加（见 §6.3） |
+| 13 | 流式 usage 仅白名单上游可得 | 白名单外（含自建网关）流式的 token 列恒为 NULL，只能靠估算 |
+
+**已补上的缺口（本轮）**：token 明细（`prompt/completion/total_tokens`）、尝试链路
+（`attempt_no` + `request_id`）、场景来源（`purpose`）、OCR 引擎追踪（`engine_kind` /
+`attachment_oid`）、流式首块耗时（`first_token_ms`）、拒绝路径落流水（403/503/404/429
+各一行 `rejected`）、查询过滤（`request_id`/`provider`/`model`/`purpose`）与聚合端点
+`/logs/stats`。
+
+**既定合规决策（不是缺口）**：prompt / completion 正文一律不落库，`AI_CALL_LOGS` 只存
+元数据；审计要能回答「谁、何时、用了哪个上游/模型、花了多少、成没成」，不需要也不允许
+保存对话内容。
 
 > 频控 / 熔断 / 凭据缓存 / API key 缓存仍是**进程内**状态，但不再「静默」：进程内阈值
 > 已按 worker 数折算，`/health` 回显 `worker_count`、`rate_limit_per_minute`、
@@ -514,5 +654,6 @@ client = OpenAI(
 | `AI_API_KEY_RATE_LIMIT_PER_MINUTE` | `config.py` | 单把 API key 的每分钟上限，默认 60 |
 | `AI_OCR_ORT_THREADS` | 环境变量 | rapidocr 线程数 |
 | `AI_CALL_LOGS_RETENTION_DAYS` | `config.py` | 流水保留 90 天 |
+| `AI_STREAM_USAGE_HOSTS` | `settings`（可选） | 额外允许 `stream_options.include_usage` 的上游 host；`["*"]` = 全部 |
 
-相关表：`ai_credentials`、`ai_ocr_engines`、`ai_api_keys`、`ai_quota`、`ai_call_logs`、`file_ocr`（迁移 `V024`–`V030`）。
+相关表：`ai_credentials`、`ai_ocr_engines`、`ai_api_keys`、`ai_quota`、`ai_call_logs`、`file_ocr`（迁移 `V024`–`V031`）。

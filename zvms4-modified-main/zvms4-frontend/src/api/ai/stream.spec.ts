@@ -130,6 +130,39 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
+describe('审计场景头', () => {
+  it('传了 scene 就带上 X-AI-Scene（后端落 AI_CALL_LOGS.PURPOSE）', async () => {
+    stubFetch(fakeResponse(['data: [DONE]\n\n']))
+
+    await streamChatCompletion({
+      model: 'gpt-x',
+      messages: [{ role: 'user', content: 'hi' }],
+      scene: 'markdown-assistant'
+    })
+
+    const init = (vi.mocked(fetch).mock.calls[0]![1] ?? {}) as RequestInit
+    const headers = init.headers as Record<string, string>
+    expect(headers['X-AI-Scene']).toBe('markdown-assistant')
+    // 原有头不能因此丢失。
+    expect(headers['Content-Type']).toBe('application/json')
+    // 场景只走头，不进请求体（上游不认识这个字段）。
+    expect(String(init.body)).not.toContain('markdown-assistant')
+  })
+
+  it('没传 scene 就不带这个头', async () => {
+    stubFetch(fakeResponse(['data: [DONE]\n\n']))
+
+    await streamChatCompletion({
+      model: 'gpt-x',
+      messages: [{ role: 'user', content: 'hi' }]
+    })
+
+    const init = (vi.mocked(fetch).mock.calls[0]![1] ?? {}) as RequestInit
+    const headers = (init.headers ?? {}) as Record<string, string>
+    expect(headers['X-AI-Scene']).toBeUndefined()
+  })
+})
+
 describe('streamChatCompletion 收尾判定', () => {
   it('收到 error 帧：保留已生成文本，error 有值且不算截断', async () => {
     const out = await run([

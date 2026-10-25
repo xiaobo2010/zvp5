@@ -23,6 +23,7 @@ import json
 import logging
 import time
 from typing import Any, Protocol
+from uuid import uuid4
 
 from db import backends
 from services.ai import audit, crypto, ocr_engines
@@ -120,12 +121,17 @@ async def process_ocr(
     ``user_oid`` 只用来写审计（谁触发的这次识别）；调用方不传时跳过逐次审计，
     不影响状态机。
 
+    一次识别的**所有**尝试共用同一个 ``request_id``（本函数生成）：入队那一条
+    （``units=1``）与后续每一次回退因此能串成一条链，不必再靠「同用户 + 相邻
+    时间」去猜。
+
     Drives ``set_ocr`` transitions and writes ``file_ocr`` + ``file_events``.
     Any failure lands the file in ``failed`` (retry bumped) and is swallowed so a
     background task can never crash the caller. 异常消息**不含凭证**：适配器的
     ``OcrEngineError`` 只拼引擎名与字段名，解密失败抛的是通用 ``ValueError``。
     """
     repo = backends.get_files_repo()
+    request_id = uuid4().hex
     try:
         await mark_ocr_processing(file_oid)
         content = await repo.get_content(file_oid)
@@ -150,6 +156,7 @@ async def process_ocr(
             engine_kind,
             engine_name,
             user_oid,
+            request_id,
         )
         await mark_ocr_done(file_oid)
     except Exception as exc:  # noqa: BLE001 - 后台任务不能把异常抛回调用方
@@ -172,6 +179,7 @@ async def _recognize(
     engine_kind: str,
     engine_name: str | None,
     user_oid: str | None,
+    request_id: str,
 ) -> None:
     """按候选顺序识别，第一个成功的写 ``file_ocr`` 并返回。
 
@@ -179,6 +187,10 @@ async def _recognize(
     ``units=0``——额度与「这次调用被计费」的事实已经在入队时记过一笔（那条是
     ``units=1``），这里记的是「这一次尝试用的是谁、成没成」，重复计 unit 会让
     对账表的总额翻倍。
+
+    每行同时带上 ``request_id``（整条链共用）/ ``attachment_oid`` /
+    ``engine_kind`` / ``attempt_no``：这四列合起来才能回答「这张图第几次尝试、
+    用了哪种引擎、成没成」而不必跨表拼。
     """
     tried: set[str] = set()
     last_error: BaseException | None = None
@@ -202,7 +214,15 @@ async def _recognize(
             if engine_name:
                 tried.add(engine_name)
                 await _audit_attempt(
-                    user_oid, meta, engine_name, status="error", error_code=ERROR_ENGINE
+                    user_oid,
+                    meta,
+                    engine_name,
+                    status="error",
+                    error_code=ERROR_ENGINE,
+                    engine_kind=engine_kind,
+                    attachment_oid=file_oid,
+                    request_id=request_id,
+                    attempt_no=attempt + 1,
                 )
             continue
 
@@ -234,6 +254,10 @@ async def _recognize(
                 status="error",
                 error_code=ERROR_ENGINE,
                 latency_ms=_elapsed_ms(started),
+                engine_kind=kind,
+                attachment_oid=file_oid,
+                request_id=request_id,
+                attempt_no=attempt + 1,
             )
             continue
 
@@ -251,6 +275,10 @@ async def _recognize(
             label,
             status="success",
             latency_ms=_elapsed_ms(started),
+            engine_kind=kind,
+            attachment_oid=file_oid,
+            request_id=request_id,
+            attempt_no=attempt + 1,
         )
         return
 
@@ -267,8 +295,18 @@ async def _audit_attempt(
     status: str,
     error_code: str | None = None,
     latency_ms: int | None = None,
+    engine_kind: str | None = None,
+    attachment_oid: str | None = None,
+    request_id: str | None = None,
+    attempt_no: int | None = None,
 ) -> None:
-    """写一条「这一次尝试」的流水；没有 ``user_oid`` 就没法归属，只能跳过。"""
+    """写一条「这一次尝试」的流水；没有 ``user_oid`` 就没法归属，只能跳过。
+
+    ``purpose`` 恒为 ``'ocr'``：OCR 只有一个场景，不像 chat 那样由前端区分。
+    ``engine_kind`` 是**注册表里的 kind**（tencent/aliyun/rapidocr/baidu/
+    groq/zhipu），``provider``/``model`` 仍是引擎名——后者是运维认引擎的标签，
+    前者才能按「引擎类型」聚合失败率。
+    """
     if not user_oid:
         return
     await audit.record(
@@ -283,6 +321,11 @@ async def _audit_attempt(
         units=0,
         input_bytes=meta.get("size_bytes"),
         key_scope="server",
+        purpose="ocr",
+        engine_kind=engine_kind,
+        attachment_oid=attachment_oid,
+        request_id=request_id,
+        attempt_no=attempt_no,
     )
 
 

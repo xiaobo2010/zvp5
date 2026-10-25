@@ -17,9 +17,11 @@ from __future__ import annotations
 
 import logging
 from typing import AsyncIterator
+from urllib.parse import urlsplit
 
 import httpx
 
+from . import config as ai_config
 from .routing import RouteError
 
 _logger = logging.getLogger(__name__)
@@ -77,6 +79,53 @@ def _endpoint(entry: dict) -> str:
     if isinstance(path, str) and path:
         return base + path
     return base + "/chat/completions"
+
+
+def _host(entry: dict) -> str:
+    """``base_url`` 的 host（小写）；解析失败返回空串。"""
+    base = entry.get("base_url")
+    if not isinstance(base, str) or not base:
+        return ""
+    try:
+        return (urlsplit(base).hostname or "").lower()
+    except ValueError:
+        return ""
+
+
+def wants_stream_usage(entry: dict) -> bool:
+    """这个上游能不能带 ``stream_options.include_usage``。
+
+    **宁缺勿坏**：这个参数不在最早的 OpenAI 兼容面里，严格校验请求体的上游会
+    直接 400，那等于「为了多拿一列 token 把流式对话打挂」。所以只在 host 命中
+    白名单（``services.ai.config.stream_usage_hosts``）时才带；拿不准的一律不带，
+    代价只是该行的 token 列留 NULL、额度走估算。
+
+    不入库、不改 entry，纯函数，便于离线断言门控。
+    """
+    host = _host(entry)
+    if not host:
+        return False
+    allowed = ai_config.stream_usage_hosts()
+    return "*" in allowed or host in allowed
+
+
+def stream_request_body(payload: dict, entry: dict) -> dict:
+    """发给上游的流式请求体：门控通过时补 ``stream_options.include_usage``。
+
+    只补 ``stream_options.include_usage``，不动调用方给的其它字段（包括客户端
+    自己传的 ``stream_options`` 里我们不认识的键——原样保留）。返回新 dict，
+    不修改入参：调用方还要用原始 ``messages`` 估算字符数。
+    """
+    if not isinstance(payload, dict):
+        return payload
+    if not wants_stream_usage(entry):
+        return payload
+    body = dict(payload)
+    existing = body.get("stream_options")
+    options = dict(existing) if isinstance(existing, dict) else {}
+    options["include_usage"] = True
+    body["stream_options"] = options
+    return body
 
 
 def _headers(entry: dict, api_key: str) -> dict[str, str]:
@@ -163,7 +212,7 @@ async def chat_completion_stream(
         async with client.stream(
             "POST",
             _endpoint(entry),
-            json=payload,
+            json=stream_request_body(payload, entry),
             headers=_headers(entry, api_key),
             timeout=_timeout(entry),
         ) as response:

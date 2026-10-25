@@ -1,7 +1,7 @@
 """Oracle implementation of :class:`db.repos.protocols.AICredentialsRepo`.
 
 SQLAlchemy 2.0 async Core over the ``AI_CREDENTIALS`` table (AI provider 凭据,
-V023). 行形状是 Mongo 风格的 dict（``"_id"`` = 小写 hex ``OID``）。
+V025). 行形状是 Mongo 风格的 dict（``"_id"`` = 小写 hex ``OID``）。
 
 两类凭据同表：``personal``（管理员自己的 key）与 ``shared``（所有人可用的通用
 key）。它们的字段与读取路径完全一样，区别只有两点：

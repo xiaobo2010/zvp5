@@ -5,7 +5,7 @@ Three tables grow without bound and had no cleanup path at all:
 
 * ``zvms_new.app_logs`` — every request writes a row (:mod:`typings.log`);
 * ``zvms_new.tasks`` — one row per export request, finished or not;
-* ``zvms_new.ai_call_logs`` — one row per AI gateway call (V022).
+* ``zvms_new.ai_call_logs`` — one row per AI gateway call (V024).
 
 :func:`run_retention` is the shared coroutine: it drains each table through the
 repo's single-batch methods (``OracleAppLogsRepo.purge_batch`` /
