@@ -115,11 +115,12 @@ async def _apply(path: Path) -> int:
     statements = split_statements(path.read_text(encoding="utf-8"))
     print(f"{path.name}: {len(statements)} statement(s)")
     async with session_scope() as session:
+        # ``AsyncSession`` 本身没有 ``exec_driver_sql``（那是 ``AsyncConnection``
+        # 上的），先取连接；DDL 不需要绑定参数，原样交给驱动。
+        connection = await session.connection()
         for index, statement in enumerate(statements, start=1):
             try:
-                # 不能用 ``text()``：迁移里的字面量 JSON（``"threshold":80``）会被
-                # 解析成绑定参数 ``:80``。DDL 不需要绑定，原样交给驱动。
-                await session.exec_driver_sql(statement)
+                await connection.exec_driver_sql(statement)
                 await session.commit()
             except Exception as exc:  # noqa: BLE001 - 报出第几条即可，不要把 SQL 全量打出来
                 first = next(
