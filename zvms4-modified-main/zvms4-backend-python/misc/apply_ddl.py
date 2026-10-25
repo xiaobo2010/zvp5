@@ -121,7 +121,6 @@ async def _apply(path: Path) -> int:
         for index, statement in enumerate(statements, start=1):
             try:
                 await connection.exec_driver_sql(statement)
-                await session.commit()
             except Exception as exc:  # noqa: BLE001 - 报出第几条即可，不要把 SQL 全量打出来
                 first = next(
                     (
@@ -136,6 +135,9 @@ async def _apply(path: Path) -> int:
                     f"({first[:80]}): {type(exc).__name__}: {exc}"
                 ) from None
             print(f"  ok {index}/{len(statements)}")
+        # Oracle 的 DDL 自动提交，但种子 MERGE 是 DML：整份文件跑完后统一提交一次。
+        # 不能在每条之后 commit——那会结束事务并关闭连接，下一条直接 ResourceClosedError。
+        await session.commit()
     return len(statements)
 
 
