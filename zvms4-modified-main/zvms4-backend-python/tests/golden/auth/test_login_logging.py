@@ -4,8 +4,12 @@ Contract under test (policy change: silent failures are no longer acceptable):
 
 * a failed ``POST /api/users/auth`` still returns byte-identical 403
   ``用户名或密码错误``;
-* it writes **one** ``login_fail`` row at ``level="warning"`` whose text is a
+* it writes **one** ``login_fail`` row at ``level="info"`` whose text is a
   fixed summary (``password-mismatch``) — never the submitted credential;
+  ``info``（而非 ``warning``）是有意的：风控计数只按 ``ltype`` + 时间窗取数，
+  不看级别；而保留策略豁免所有 ``warning`` 行，取 ``warning`` 会让这类行永不
+  过期（历史堆积的根因）。``info`` 让它们随 ``APP_LOGS_RETENTION_DAYS`` 清理，
+  管理端列表默认也不显示该类型；
 * repeated failures for the same oid inside the throttle window write nothing
   more (a log storm must not be the side effect of an attack);
 * an account that is already banned writes ``banned`` instead, so the
@@ -194,7 +198,8 @@ def test_wrong_password_fails_403_and_writes_one_sanitized_log(
 
     inserts = _failed_inserts()
     assert len(inserts) == 1
-    assert inserts[0]["level"] == "warning"
+    # info 级 = 可被保留策略清理；风控按 ltype+时间窗计数，不看级别。
+    assert inserts[0]["level"] == "info"
     assert inserts[0]["user"] == VALID_OID
     # 摘要是固定串：规则靠它区分「密码错」与「封禁期重试」。
     assert "password-mismatch" in inserts[0]["data"]

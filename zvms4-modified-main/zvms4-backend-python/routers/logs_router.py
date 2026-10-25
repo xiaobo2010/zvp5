@@ -9,6 +9,12 @@ from util.user import get_user_display_names
 
 router = APIRouter()
 
+#: 管理端默认隐藏的日志类型。``login_fail`` 是两条风控规则的计数数据源
+#: （``services/risk_monitor.py``），一次暴破尝试就会写满一屏；它属于
+#: 「机器看、人不用看」的行。默认列表排除，管理员排查账号异常时用
+#: ``?type=login_fail`` 显式取回（见 :func:`read_logs` 的 docstring）。
+HIDDEN_LOG_TYPES = ("login_fail",)
+
 
 @router.get("")
 async def read_logs(
@@ -32,6 +38,10 @@ async def read_logs(
     分页口径：``page`` 从 1 开始（``page < 1`` → 422），``perpage`` 上限 100，
     两者在仓储层再钳一次，避免直接调用方绕过 FastAPI 校验。总数由仓储用
     ``COUNT(*) OVER()`` 与当页数据一起带回，不再每页执行一次全表 ``COUNT``。
+
+    默认隐藏 ``login_fail``：不传 ``type`` 时按 :data:`HIDDEN_LOG_TYPES` 做
+    黑名单（该类是风控计数数据源，量大且对管理员无事可做）；显式
+    ``type=login_fail`` 仍然按白名单查询，账号排查入口保留。
     """
     if "admin" not in user["per"]:
         raise HTTPException(status_code=403, detail="Permission denied")
@@ -41,6 +51,8 @@ async def read_logs(
 
     types = [t.strip() for t in type.split(",") if t.strip()]
     levels = [l.strip() for l in level.split(",") if l.strip()]
+    # 只在管理员**没有**指定类型时套黑名单：显式选择（含多选）以调用方为准。
+    exclude_types = list(HIDDEN_LOG_TYPES) if not types else None
 
     logs, count = await backends.get_applogs_repo().list_page(
         query=query,
@@ -52,6 +64,7 @@ async def read_logs(
         xuehai_id=xuehai_id,
         page=page,
         size=perpage,
+        exclude_types=exclude_types,
     )
 
     names = await get_user_display_names(

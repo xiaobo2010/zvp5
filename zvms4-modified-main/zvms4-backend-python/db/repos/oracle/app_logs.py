@@ -168,8 +168,13 @@ def _filter(
     time_start: int | None,
     time_end: int | None,
     xuehai_id: str = "",
+    exclude_types: list[str] | None = None,
 ) -> list[Any]:
-    """Admin-browser ``$match`` (``logs_router``): LIKE contains url/data etc."""
+    """Admin-browser ``$match`` (``logs_router``): LIKE contains url/data etc.
+
+    ``exclude_types`` 只在**没有** ``types`` 白名单时生效（``logs_router`` 用它
+    默认隐藏 ``login_fail``）；显式指定类型时管理员要看什么就给什么。
+    """
     conds: list[Any] = []
     if query:
         conds.append(_search_conds(query))
@@ -177,6 +182,15 @@ def _filter(
         conds.append(app_logs_tbl.c.app_user == performer)
     if types:
         conds.append(app_logs_tbl.c.ltype.in_(list(types)))
+    elif exclude_types:
+        # ``IS NULL OR`` 这一支是承重的：Oracle 把空串当 NULL（``ZVMSLog`` 的
+        # ``type`` 默认 ``""``），裸 ``NOT IN`` 会把这类普通行一起过滤成 NULL。
+        conds.append(
+            or_(
+                app_logs_tbl.c.ltype.is_(None),
+                app_logs_tbl.c.ltype.not_in(list(exclude_types)),
+            )
+        )
     if levels:
         conds.append(app_logs_tbl.c.log_level.in_(list(levels)))
     if time_start is not None:
@@ -218,6 +232,7 @@ def _list_stmt(
     page: int,
     size: int,
     xuehai_id: str = "",
+    exclude_types: list[str] | None = None,
 ):
     """一页日志 + 总数：``COUNT(*) OVER()`` 省掉每页一次全表 COUNT。
 
@@ -226,7 +241,9 @@ def _list_stmt(
     """
     page, size = _clamped(page, size)
     stmt = select(*_page_columns()).select_from(_log_from())
-    conds = _filter(query, performer, types, levels, time_start, time_end, xuehai_id)
+    conds = _filter(
+        query, performer, types, levels, time_start, time_end, xuehai_id, exclude_types
+    )
     if conds:
         stmt = stmt.where(*conds)
     return (
@@ -244,13 +261,16 @@ def _count_stmt(
     time_start: int | None,
     time_end: int | None,
     xuehai_id: str = "",
+    exclude_types: list[str] | None = None,
 ):
     """页码越界（窗口计数不可观测）时的兜底总数。
 
     正常翻页不再执行本语句：``_list_stmt`` 已经把总数带回来了。
     """
     stmt = select(func.count()).select_from(app_logs_tbl)
-    conds = _filter(query, performer, types, levels, time_start, time_end, xuehai_id)
+    conds = _filter(
+        query, performer, types, levels, time_start, time_end, xuehai_id, exclude_types
+    )
     if conds:
         stmt = stmt.where(*conds)
     return stmt
@@ -475,16 +495,29 @@ class OracleAppLogsRepo:
         xuehai_id: str = "",
         page: int = 1,
         size: int = 10,
+        exclude_types: list[str] | None = None,
     ) -> tuple[list[Row], int]:
         """一页日志与总数 ``(rows, total)``；``page`` 从 1 起，``size`` 上限 100。
 
         总数由 ``COUNT(*) OVER()`` 与数据同一条语句返回，常规翻页不再额外执行
         ``COUNT(*)``。只有空页（页码越界）才补一条兜底 count——空页本身看不出
         真实总数，且第一页为空时总数必然为 0，无需查库。
+
+        ``exclude_types`` 是黑名单，仅在 ``types`` 为空时生效（管理端默认隐藏
+        ``login_fail``，显式传 ``types`` 则原样按白名单查）。
         """
         page, size = _clamped(page, size)
         page_stmt = _list_stmt(
-            query, performer, types, levels, time_start, time_end, page, size, xuehai_id
+            query,
+            performer,
+            types,
+            levels,
+            time_start,
+            time_end,
+            page,
+            size,
+            xuehai_id,
+            exclude_types,
         )
         async with _session_for(self._session) as (session, _owns):
             rows = (await session.execute(page_stmt)).all()
@@ -504,6 +537,7 @@ class OracleAppLogsRepo:
                                     time_start,
                                     time_end,
                                     xuehai_id,
+                                    exclude_types,
                                 )
                             )
                         ).scalar_one()
