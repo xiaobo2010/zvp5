@@ -276,14 +276,17 @@ def test_purge_messages_is_batched_by_rownum() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_claim_next_skips_cancelled_and_uses_skip_locked() -> None:
+def test_claim_next_skips_cancelled_and_leaves_locking_to_cas() -> None:
     sql = _sql(runs_repo._claim_candidate_stmt())
 
     assert "ai_runs.status = 'queued'" in sql
     assert "ai_runs.cancel_requested = 0" in sql
     assert "ORDER BY ai_runs.created_at ASC" in sql
     assert "FETCH FIRST 1 ROWS ONLY" in sql
-    assert sql.rstrip().endswith("FOR UPDATE SKIP LOCKED")
+    # Oracle 不允许 FETCH FIRST 与 FOR UPDATE 同层（ORA-02014），
+    # 抢占原子性改由紧随其后的 CAS 承担，这里断言两者不会同时出现。
+    assert "FOR UPDATE" not in sql.upper()
+    assert "SKIP LOCKED" not in sql.upper()
     # 领取只取 oid：整行在 CAS 之后再读一次，避免「锁到的是旧快照」。
     assert sql.upper().startswith("SELECT AI_RUNS.OID ")
 
