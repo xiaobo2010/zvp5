@@ -9,12 +9,13 @@ import {
   ElCard,
   ElDescriptions,
   ElDescriptionsItem,
+  ElIcon,
   ElMessageBox,
   ElPageHeader,
   ElSwitch,
   ElTag
 } from 'element-plus'
-import { ArrowLeft } from '@element-plus/icons-vue'
+import { ArrowLeft, SwitchButton } from '@element-plus/icons-vue'
 import { useUserStore } from '@/stores/user'
 import { useGroupsStore } from '@/stores/groups'
 import { useHeaderStore } from '@/stores/header'
@@ -265,13 +266,8 @@ onMounted(async () => {
       <ElButton text size="large" class="profile-action" @click="router.push('/changelog')">
         {{ t('profile.actions.changelog') }}
       </ElButton>
-      <ElButton
-        text
-        size="large"
-        type="danger"
-        class="profile-action profile-logout"
-        @click="logout"
-      >
+      <ElButton class="profile-action profile-logout" @click="logout">
+        <ElIcon class="profile-logout__icon"><SwitchButton /></ElIcon>
         {{ t('profile.actions.logout') }}
       </ElButton>
     </ElCard>
@@ -529,8 +525,38 @@ onMounted(async () => {
   }
 }
 
-.profile-logout {
+/* 退出登录：高危操作，红色主题（浅红底 + 红字红图标，hover 加深） */
+.profile-logout.el-button {
   justify-content: center;
+  gap: 8px;
+  color: var(--yg-text-danger);
+  background: var(--yg-color-danger-soft);
+  border: 0;
+  border-radius: 0;
+  font-weight: var(--yg-font-weight-medium);
+  transition:
+    background-color var(--yg-dur-fast) var(--yg-ease-out),
+    color var(--yg-dur-fast) var(--yg-ease-out);
+}
+
+.profile-logout.el-button:hover,
+.profile-logout.el-button:focus {
+  color: var(--yg-text-danger);
+  background: color-mix(in srgb, var(--yg-color-danger-soft) 70%, var(--yg-color-danger) 30%);
+}
+
+.profile-logout.el-button:active {
+  color: var(--yg-color-on-danger);
+  background: var(--yg-color-danger);
+}
+
+.profile-logout.el-button:focus-visible {
+  outline: none;
+  box-shadow: inset var(--yg-focus-ring);
+}
+
+.profile-logout__icon {
+  font-size: 16px;
 }
 
 .profile-normal {
