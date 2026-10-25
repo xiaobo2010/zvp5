@@ -499,6 +499,86 @@ body {
   border-radius: var(--yg-radius-md);
 }
 
+/* 聚焦态重做：主色内描边 + 柔和外发光环。
+   EP 默认只把 1px 内描边变亮，在 G2 曲率外框上会显出一条错位的亮框；
+   改为「内描边与外框同曲率、外发光环自然晕开」，明暗两态一致。
+   注意：EP 复合输入框的「内芯」input 是直角的（border-radius:0），
+   必须排除全局 :focus-visible 焦点环，否则圆角外框里会多出一个
+   直角亮框——这就是「亮框和外框不匹配」的根因。 */
+.el-input__inner:focus-visible,
+.el-select__input:focus-visible,
+.el-input-otp__input-field:focus-visible {
+  box-shadow: none;
+}
+.el-input__wrapper.is-focus,
+.el-input__wrapper:focus-within,
+.el-input-number .el-input__wrapper.is-focus,
+.el-input-number .el-input__wrapper:focus-within,
+.el-select__wrapper.is-focused,
+.el-select__wrapper:focus-within,
+.el-date-editor.is-focus,
+.el-date-editor:focus-within,
+.el-textarea__inner:focus {
+  box-shadow:
+    0 0 0 1px var(--yg-color-primary) inset,
+    var(--yg-focus-ring);
+}
+
+/* 校验错误 + 聚焦：保持红色描边（准则 5.3），但同样给外发光环。
+   注意必须带 .el-form-item__content 才能把特异性提到 (0,4,0)，
+   压过 EP 自带的 .el-form-item.is-error .el-form-item__content 系列规则。 */
+.el-form-item.is-error .el-form-item__content .el-input__wrapper.is-focus,
+.el-form-item.is-error .el-form-item__content .el-input__wrapper:focus-within,
+.el-form-item.is-error .el-form-item__content .el-select__wrapper.is-focused,
+.el-form-item.is-error .el-form-item__content .el-select__wrapper:focus-within,
+.el-form-item.is-error .el-form-item__content .el-textarea__inner:focus {
+  box-shadow:
+    0 0 0 1px var(--yg-color-danger) inset,
+    var(--yg-focus-ring);
+}
+
+/* ---------- 创建义工表单：居中容器（准则 3.2 内容宽度） ---------- */
+.yg-create-page {
+  max-width: 920px;
+  margin: 0 auto;
+  box-sizing: border-box;
+}
+
+.yg-create-page > .el-page-header {
+  padding-left: var(--yg-space-2);
+  padding-right: var(--yg-space-2);
+}
+
+.yg-activity-create {
+  width: 100%;
+}
+
+.yg-activity-create__card {
+  width: 100%;
+}
+
+/* 描述编辑器做长做大：编辑/预览窗格加高，聚焦写作空间（压过组件 scoped 样式） */
+.yg-activity-create .markdown-editor__pane {
+  min-height: 320px !important;
+}
+
+.yg-activity-create .markdown-editor__textarea .el-textarea__inner {
+  min-height: 320px !important;
+}
+
+/* 竖屏：容器收窄为全宽（外侧留白由 p-4 提供），底部避让悬浮药丸导航 */
+@media (max-width: 640px) {
+  .yg-create-page {
+    padding-left: var(--yg-space-2);
+    padding-right: var(--yg-space-2);
+  }
+
+  .yg-activity-create .markdown-editor__pane,
+  .yg-activity-create .markdown-editor__textarea .el-textarea__inner {
+    min-height: 260px !important;
+  }
+}
+
 /* ---------- 骨架屏 / 进度条 ---------- */
 .el-skeleton__item {
   border-radius: var(--yg-radius-sm);
@@ -568,4 +648,37 @@ body {
 .el-empty__description p {
   color: var(--yg-text-tertiary);
   font-size: var(--yg-font-size-sm);
+}
+
+/* ---------- 表格展开行：箭头与内容进出场 ----------
+   内容的高度动画由 plugins/tableExpandMotion.ts 用 WAAPI 驱动，
+   这里只负责箭头旋转用弹簧曲线，并让展开内容不被裁切。 */
+.el-table .el-table__expand-icon {
+  transition: transform 320ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.el-table .el-table__expand-icon:hover {
+  color: var(--yg-color-primary);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .el-table .el-table__expand-icon {
+    transition: none;
+  }
+}
+
+/* ---------- 深浅色切换：View Transitions 整屏渐变 ----------
+   默认交叉淡化只有 250ms 且逐像素硬切，看起来生硬；
+   这里拉长到 480ms 并用非线性缓动，让整屏同时过渡。 */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 480ms;
+  animation-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-old(root),
+  ::view-transition-new(root) {
+    animation-duration: 1ms;
+  }
 }

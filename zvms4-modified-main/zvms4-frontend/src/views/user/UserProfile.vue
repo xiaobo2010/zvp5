@@ -19,6 +19,9 @@ import { useUserStore } from '@/stores/user'
 import { useGroupsStore } from '@/stores/groups'
 import { useHeaderStore } from '@/stores/header'
 import { modifyPasswordDialogs } from '@/views/user/modifyPasswordDialogs'
+import { listActive, type NotificationRecord } from '@/api/notifications'
+import ZMarkdown from '@/components/markdown/ZMarkdown.vue'
+import dayjs from '@/plugins/dayjs'
 
 const user = useUserStore()
 const groupsStore = useGroupsStore()
@@ -69,7 +72,58 @@ async function logout() {
   await router.replace('/user/login')
 }
 
+/* ---------- 站内通知 ---------- */
+const notices = ref<NotificationRecord[]>([])
+const noticesLoading = ref(false)
+const noticesFailed = ref(false)
+const openNoticeId = ref('')
+
+async function loadNotices() {
+  noticesLoading.value = true
+  noticesFailed.value = false
+  try {
+    const data = await listActive()
+    notices.value = data.notifications
+  } catch {
+    noticesFailed.value = true
+  } finally {
+    noticesLoading.value = false
+  }
+}
+
+function toggleNotice(id: string) {
+  openNoticeId.value = openNoticeId.value === id ? '' : id
+}
+
+function formatNoticeTime(value: string | null): string {
+  if (!value) {
+    return ''
+  }
+  const parsed = dayjs(value)
+  return parsed.isValid() ? parsed.format('YYYY-MM-DD HH:mm') : ''
+}
+
+/* ---------- 深浅色切换 ---------- */
+const reduceMotion = () =>
+  window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
+
+function toggleDarkMode() {
+  const next = !dark.value
+  const doc = document as Document & {
+    startViewTransition?: (callback: () => void) => unknown
+  }
+  // 整屏快照交叉淡化，避免逐个组件生硬切换
+  if (typeof doc.startViewTransition === 'function' && !reduceMotion()) {
+    doc.startViewTransition(() => {
+      dark.value = next
+    })
+  } else {
+    dark.value = next
+  }
+}
+
 onMounted(async () => {
+  void loadNotices()
   if (!user.class_id) {
     return
   }
@@ -135,11 +189,73 @@ onMounted(async () => {
       </ElDescriptions>
     </ElCard>
 
+    <ElCard shadow="never" class="profile-card profile-notices">
+      <div class="profile-notices-head">
+        <span class="profile-section-title">{{ t('profile.notices.title') }}</span>
+        <ElButton text size="small" :loading="noticesLoading" @click="loadNotices">
+          {{ t('profile.notices.refresh') }}
+        </ElButton>
+      </div>
+
+      <p v-if="noticesLoading && notices.length === 0" class="profile-notices-hint">
+        {{ t('profile.notices.loading') }}
+      </p>
+      <p v-else-if="noticesFailed" class="profile-notices-hint">
+        {{ t('profile.notices.failed') }}
+      </p>
+      <p v-else-if="notices.length === 0" class="profile-notices-hint">
+        {{ t('profile.notices.empty') }}
+      </p>
+      <ul v-else class="profile-notice-list">
+        <li v-for="notice in notices" :key="notice.id" class="profile-notice">
+          <button
+            type="button"
+            class="profile-notice-head"
+            :aria-expanded="openNoticeId === notice.id"
+            @click="toggleNotice(notice.id)"
+          >
+            <span class="profile-notice-title">{{ notice.title }}</span>
+            <span class="profile-notice-meta">
+              {{ notice.author_name }} · {{ formatNoticeTime(notice.created_at) }}
+            </span>
+            <svg
+              class="profile-notice-caret"
+              :class="{ 'is-open': openNoticeId === notice.id }"
+              viewBox="0 0 24 24"
+              width="16"
+              height="16"
+              aria-hidden="true"
+            >
+              <path
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                d="m6 9 6 6 6-6"
+              />
+            </svg>
+          </button>
+          <div v-if="openNoticeId === notice.id" class="profile-notice-body">
+            <ZMarkdown :source="notice.content" />
+          </div>
+        </li>
+      </ul>
+    </ElCard>
+
     <ElCard shadow="never" class="profile-card profile-actions">
       <ElButton text size="large" class="profile-action" @click="changePassword">
         {{ t('profile.actions.changePassword') }}
       </ElButton>
-      <div class="profile-action profile-switch">
+      <div
+        class="profile-action profile-switch"
+        role="switch"
+        :aria-checked="dark"
+        tabindex="0"
+        @click="toggleDarkMode"
+        @keydown.enter.prevent="toggleDarkMode"
+        @keydown.space.prevent="toggleDarkMode"
+      >
         <span>{{ t('profile.actions.darkMode') }}</span>
         <ElSwitch v-model="dark" />
       </div>
@@ -257,6 +373,160 @@ onMounted(async () => {
   justify-content: space-between;
   gap: 16px;
   color: var(--yg-text-primary);
+  cursor: pointer;
+  user-select: none;
+  transition: background-color 160ms ease;
+}
+
+/* 整行可点：开关本身不再吃掉点击（由外层统一处理，切换才带整屏过渡） */
+.profile-switch:hover {
+  background: var(--yg-bg-surface-sunken);
+}
+
+.profile-switch:focus-visible {
+  outline: none;
+  box-shadow: var(--yg-focus-ring);
+}
+
+.profile-switch :deep(.el-switch) {
+  pointer-events: none;
+}
+
+/* 开关 Q 弹：滑块用弹簧曲线位移，按压时轻微回缩 */
+.profile-switch :deep(.el-switch__core) {
+  transition:
+    background-color 260ms ease,
+    border-color 260ms ease;
+}
+
+.profile-switch :deep(.el-switch__action) {
+  transition:
+    left 420ms cubic-bezier(0.34, 1.56, 0.64, 1),
+    transform 380ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.profile-switch:active :deep(.el-switch__action) {
+  transform: scale(0.82);
+  transition-duration: 90ms;
+}
+
+/* ---------- 通知栏目 ---------- */
+.profile-section-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--yg-text-primary);
+}
+
+.profile-notices-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--yg-border-default);
+}
+
+.profile-notices-hint {
+  margin: 14px 0 2px;
+  color: var(--yg-text-secondary);
+  font-size: 14px;
+}
+
+.profile-notice-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.profile-notice + .profile-notice {
+  border-top: 1px solid var(--yg-border-default);
+}
+
+.profile-notice-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  width: 100%;
+  padding: 14px 6px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--yg-text-primary);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background-color 180ms ease,
+    transform 320ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.profile-notice-head:hover {
+  background: var(--yg-bg-surface-sunken);
+}
+
+.profile-notice-head:active {
+  transform: scale(0.99);
+  transition-duration: 90ms;
+}
+
+.profile-notice-head:focus-visible {
+  outline: none;
+  box-shadow: var(--yg-focus-ring);
+}
+
+.profile-notice-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 15px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.profile-notice-meta {
+  flex: 0 0 auto;
+  color: var(--yg-text-secondary);
+  font-size: 12.5px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.profile-notice-caret {
+  flex: 0 0 auto;
+  color: var(--yg-text-secondary);
+  transition: transform 380ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.profile-notice-caret.is-open {
+  transform: rotate(180deg);
+}
+
+.profile-notice-body {
+  padding: 0 6px 16px;
+  color: var(--yg-text-primary);
+  font-size: 14px;
+  line-height: 1.7;
+  animation: yg-notice-open 320ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@keyframes yg-notice-open {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .profile-switch :deep(.el-switch__action),
+  .profile-notice-caret,
+  .profile-notice-head,
+  .profile-notice-body {
+    transition: none;
+    animation: none;
+  }
 }
 
 .profile-logout {
