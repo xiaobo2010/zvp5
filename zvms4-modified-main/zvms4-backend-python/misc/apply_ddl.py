@@ -157,6 +157,19 @@ async def _verify(names: list[str]) -> None:
         print(f"  {table}.{column} {data_type}")
 
 
+async def _run_all(paths: list[Path], verify_tables: list[str]) -> None:
+    """All files in ONE event loop.
+
+    The engine's connection pool is bound to the loop that created it; calling
+    ``asyncio.run`` per file hands the same pool a different loop and fails with
+    "got Future attached to a different loop" on the second file.
+    """
+    for path in paths:
+        await _apply(path)
+    if verify_tables:
+        await _verify(verify_tables)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("migrations", nargs="+", help="v032 / V033__x.sql / full path")
@@ -187,10 +200,7 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"  {index:>2}. {head[:100]}")
         return 0
 
-    for path in paths:
-        asyncio.run(_apply(path))
-    if args.verify:
-        asyncio.run(_verify(args.verify))
+    asyncio.run(_run_all(paths, args.verify))
     return 0
 
 
