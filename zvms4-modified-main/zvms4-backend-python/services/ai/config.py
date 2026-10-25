@@ -402,6 +402,42 @@ def public_provider_view() -> list[dict]:
     return view
 
 
+# 文档明确支持 ``stream_options.include_usage`` 的 OpenAI 兼容服务（host 精确匹配）。
+_STREAM_USAGE_HOSTS = frozenset({"api.openai.com", "api.deepseek.com"})
+
+
+def stream_usage_hosts() -> frozenset[str]:
+    """允许带 ``stream_options.include_usage`` 的上游 host 白名单。
+
+    默认只含**确定**接受这个参数的 OpenAI 兼容服务；``settings.AI_STREAM_USAGE_HOSTS``
+    可以往白名单里**追加**（自建 vLLM / 网关确认支持时写自己的 host）。``"*"`` =
+    全部允许，留给「所有上游都是自己的、都确认支持」的部署。
+
+    非法条目（非字符串 / 带路径 / 带空格 / 带端口）逐个丢弃，全非法则只剩默认
+    集合——配错一行不该让「拿不到 usage」升级成「流式请求被上游 400」。
+
+    为什么按 host 而不是按 provider 名：网关里的 provider 名是运维起的标签，
+    与上游真实实现没有绑定关系（``ai_credentials.kind`` 只有一个
+    ``openai_compat``），拿名字判断等于拿注释当类型。
+    """
+    hosts = set(_STREAM_USAGE_HOSTS)
+    raw = getattr(settings, "AI_STREAM_USAGE_HOSTS", None)
+    if isinstance(raw, (list, tuple, set, frozenset)):
+        for item in raw:
+            if not isinstance(item, str):
+                continue
+            host = item.strip().lower()
+            if not host:
+                continue
+            if host == "*":
+                hosts.add("*")
+                continue
+            if "/" in host or " " in host or ":" in host:
+                continue
+            hosts.add(host)
+    return frozenset(hosts)
+
+
 def _host_only(url: object) -> str:
     if not url or not isinstance(url, str):
         return ""

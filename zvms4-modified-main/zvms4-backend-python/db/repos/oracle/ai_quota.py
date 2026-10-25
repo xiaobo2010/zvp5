@@ -1,7 +1,7 @@
 """Oracle implementation of :class:`db.repos.protocols.AIQuotaRepo`.
 
 SQLAlchemy 2.0 async Core over the ``AI_QUOTA`` table (按 用户 + 月份 + 能力 计的
-额度, V022). 行形状是 Mongo 风格的 dict（``"_id"`` = 小写 hex ``OID``）。
+额度, V024). 行形状是 Mongo 风格的 dict（``"_id"`` = 小写 hex ``OID``）。
 
 为什么额度要落在库里：网关是多进程/多 worker 部署的，把用量放进程内存会让
 「每人每月 N 次」变成「每 worker 每月 N 次」。``(user_oid, period, kind)`` 的

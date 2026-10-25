@@ -59,6 +59,14 @@ def _row(
         "input_bytes": 128,
         "request_id": f"req-{oid[:4]}",
         "key_scope": key_scope,
+        "prompt_tokens": None,
+        "completion_tokens": None,
+        "total_tokens": None,
+        "attempt_no": None,
+        "purpose": None,
+        "first_token_ms": None,
+        "engine_kind": None,
+        "attachment_oid": None,
         "created_at": created_at,
     }
 
@@ -89,6 +97,18 @@ class FakeCallLogsRepo:
             if filters.get("key_scope") is not None:
                 if row["key_scope"] != filters["key_scope"]:
                     return False
+            if filters.get("request_id") is not None:
+                if row["request_id"] != filters["request_id"]:
+                    return False
+            if filters.get("provider") is not None:
+                if row["provider"] != filters["provider"]:
+                    return False
+            if filters.get("model") is not None:
+                if row["model"] != filters["model"]:
+                    return False
+            if filters.get("purpose") is not None:
+                if row["purpose"] != filters["purpose"]:
+                    return False
             # 闭区间：端点那一秒要算命中。
             if filters.get("time_start") is not None:
                 if row["created_at"] < filters["time_start"]:
@@ -107,6 +127,10 @@ class FakeCallLogsRepo:
         capability=None,
         status=None,
         key_scope=None,
+        request_id=None,
+        provider=None,
+        model=None,
+        purpose=None,
         time_start=None,
         time_end=None,
         page: int = 1,
@@ -117,6 +141,10 @@ class FakeCallLogsRepo:
             "capability": capability,
             "status": status,
             "key_scope": key_scope,
+            "request_id": request_id,
+            "provider": provider,
+            "model": model,
+            "purpose": purpose,
             "time_start": time_start,
             "time_end": time_end,
         }
@@ -133,6 +161,10 @@ class FakeCallLogsRepo:
         capability=None,
         status=None,
         key_scope=None,
+        request_id=None,
+        provider=None,
+        model=None,
+        purpose=None,
         time_start=None,
         time_end=None,
     ) -> int:
@@ -141,6 +173,10 @@ class FakeCallLogsRepo:
             "capability": capability,
             "status": status,
             "key_scope": key_scope,
+            "request_id": request_id,
+            "provider": provider,
+            "model": model,
+            "purpose": purpose,
             "time_start": time_start,
             "time_end": time_end,
         }
@@ -451,6 +487,14 @@ def test_row_keeps_the_repository_key_set(repo, users):
         "input_bytes",
         "request_id",
         "key_scope",
+        "prompt_tokens",
+        "completion_tokens",
+        "total_tokens",
+        "attempt_no",
+        "purpose",
+        "first_token_ms",
+        "engine_kind",
+        "attachment_oid",
         "created_at",
         "user_name",
     }

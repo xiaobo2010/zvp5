@@ -89,6 +89,9 @@ async def enqueue(
     try:
         rate_limit.check(user["id"], "ocr")
     except rate_limit.RateLimitError as exc:
+        await _audit_reject(
+            user["id"], attachment_oid, status_code=429, code="AI_RATE_LIMITED"
+        )
         raise HTTPException(
             status_code=429,
             detail="AI_RATE_LIMITED",
@@ -100,9 +103,28 @@ async def enqueue(
         user["id"], "ocr", 1, roles=user.get("per")
     )
     if not allowed:
+        await _audit_reject(
+            user["id"],
+            attachment_oid,
+            status_code=429,
+            code="AI_QUOTA_EXCEEDED",
+            input_bytes=row.get("size_bytes"),
+        )
         raise _quota_exceeded(used, limit)
 
-    engine = await select_engine(engine_kind=engine_kind_filter)
+    try:
+        engine = await select_engine(engine_kind=engine_kind_filter)
+    except RouteError as exc:
+        # 没有可用引擎 / 站点额度打满：也是「一次没成的调用」，落 rejected
+        # （我们自己的闸门，不是上游故障——那才是 busy/error）。
+        await _audit_reject(
+            user["id"],
+            attachment_oid,
+            status_code=exc.status_code,
+            code=exc.code,
+            input_bytes=row.get("size_bytes"),
+        )
+        raise
 
     allowed, used, limit = await quota.consume(
         user["id"], "ocr", 1, roles=user.get("per")
@@ -111,6 +133,13 @@ async def enqueue(
         # 预检与真扣之间的竞态：另一个并发请求刚把额度用完。站点额度已经占了
         # 一次，退回去——那一次识别根本不会发生，平台不该为它付上游成本。
         await _refund_site(engine["kind"])
+        await _audit_reject(
+            user["id"],
+            attachment_oid,
+            status_code=429,
+            code="AI_QUOTA_EXCEEDED",
+            input_bytes=row.get("size_bytes"),
+        )
         raise _quota_exceeded(used, limit)
 
     await repo.set_ocr(attachment_oid, "pending")
@@ -135,6 +164,13 @@ async def enqueue(
         # 引擎凭证是站点级的（``ai_ocr_engines`` 全站生效），所以这里恒记 server：
         # 按 key_scope 对账的报表要靠它把这笔成本算到平台头上。
         key_scope="server",
+        # 入队这一行是整条链的起点：purpose 固定 ocr，engine_kind 让人能按引擎
+        # 类型聚合，attachment_oid 让「这张图」可追。request_id 由后台任务生成并
+        # 覆盖它自己那几次尝试，入队这一行没有（它不在那条链上）。
+        purpose="ocr",
+        engine_kind=engine["kind"],
+        attachment_oid=attachment_oid,
+        attempt_no=1,
     )
 
     return {
@@ -143,6 +179,33 @@ async def enqueue(
         "engine": engine["name"],
         "engine_kind": engine["kind"],
     }
+
+
+async def _audit_reject(
+    user_oid: str,
+    attachment_oid: str,
+    *,
+    status_code: int,
+    code: str,
+    input_bytes: int | None = None,
+) -> None:
+    """OCR 拒绝路径的审计行（额度 / 频控 / 无引擎）。
+
+    ``units=0`` 与 ``status='rejected'``：额度一分没扣、上游一次没打。``attempt_no``
+    留 NULL——这一行不是「第几次尝试」，而是「这次请求在第一步就被挡了」。
+    """
+    await audit.record(
+        user_oid=user_oid,
+        capability="ocr",
+        endpoint=audit.ENDPOINT_OCR,
+        status="rejected",
+        http_status=status_code,
+        error_code=code,
+        units=0,
+        input_bytes=input_bytes,
+        purpose="ocr",
+        attachment_oid=attachment_oid,
+    )
 
 
 def _requested_kind(provider: str | None) -> str | None:

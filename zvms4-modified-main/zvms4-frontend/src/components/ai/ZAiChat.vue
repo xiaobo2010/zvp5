@@ -30,6 +30,9 @@ import { buildChatRequest, turnsToMessages, type ChatTurn } from './chatSession'
 const { t } = useI18n()
 const { height } = useWindowSize()
 
+/** 审计场景名：后端把它写进 AI_CALL_LOGS.PURPOSE（只用于统计，不影响额度）。 */
+const AI_SCENE_CHAT = 'chat'
+
 const models = ref<AiModelItem[]>([])
 const modelsLoading = ref(false)
 const modelsFailed = ref(false)
@@ -120,12 +123,60 @@ function markError(turn: ChatTurn, error: unknown) {
 
 const listRef = ref<HTMLElement>()
 
-async function scrollToBottom() {
-  await nextTick()
-  const element = listRef.value
-  if (element) {
-    element.scrollTop = element.scrollHeight
+// 流式 delta 忠实度 vs 帧开销：SSE 几百个 chunk 若逐个写 DOM + 读 scrollHeight，
+// 每秒几十次强制同步布局。这里把 delta 攒到缓冲，rAF 每帧合并冲刷一次。
+let pendingDelta = ''
+let flushFrame = 0
+let activeTurn: ChatTurn | null = null
+let autoScroll = true
+
+function listElement(): HTMLElement | undefined {
+  return listRef.value
+}
+
+// 用户手动上翻时暂停自动跟随，滚回底部附近（64px 容差）恢复
+function handleListScroll() {
+  const element = listElement()
+  if (!element) return
+  autoScroll = element.scrollTop + element.clientHeight >= element.scrollHeight - 64
+}
+
+function scrollToBottom() {
+  const element = listElement()
+  if (!element || !autoScroll) return
+  element.scrollTop = element.scrollHeight
+}
+
+function cancelFlush() {
+  if (flushFrame) {
+    cancelAnimationFrame(flushFrame)
+    flushFrame = 0
   }
+}
+
+function applyBufferedDelta() {
+  if (!activeTurn || !pendingDelta) return
+  activeTurn.content += pendingDelta
+  pendingDelta = ''
+  void nextTick(scrollToBottom)
+}
+
+function scheduleDeltaFlush() {
+  if (flushFrame) return
+  if (typeof requestAnimationFrame !== 'function') {
+    applyBufferedDelta()
+    return
+  }
+  flushFrame = requestAnimationFrame(() => {
+    flushFrame = 0
+    applyBufferedDelta()
+  })
+}
+
+// 流结束 / 中断 / 报错时同步冲刷，保证终态立即可见（也让 vite 测试不必等帧）
+function flushDeltaNow() {
+  cancelFlush()
+  applyBufferedDelta()
 }
 
 async function send() {
@@ -146,45 +197,58 @@ async function send() {
   turns.value.push(userTurn)
 
   const request = buildChatRequest(turnsToMessages(turns.value), model.value, streamEnabled.value)
-  const assistantTurn: ChatTurn = {
+  turns.value.push({
     id: nextTurnId(),
     role: 'assistant',
     content: '',
     status: 'pending'
-  }
-  turns.value.push(assistantTurn)
+  })
+  // 取响应式代理再改字段，否则改的是原始对象、视图不重渲染
+  const assistantTurn = turns.value[turns.value.length - 1]!
 
   input.value = ''
   sending.value = true
-  void scrollToBottom()
+  autoScroll = true
+  void nextTick(scrollToBottom)
 
   if (streamEnabled.value) {
     controller = new AbortController()
+    activeTurn = assistantTurn
     try {
       const result = await streamChatCompletion({
         model: request.model,
         messages: request.messages,
         signal: controller.signal,
+        scene: AI_SCENE_CHAT,
         onDelta: (delta) => {
-          assistantTurn.content += delta
-          void scrollToBottom()
+          pendingDelta += delta
+          scheduleDeltaFlush()
         }
       })
+      flushDeltaNow()
       assistantTurn.content = result.text || assistantTurn.content
       assistantTurn.requestId = result.requestId
       assistantTurn.status = result.interrupted ? 'interrupted' : 'done'
     } catch (error) {
+      flushDeltaNow()
       if ((error as { name?: string })?.name === 'AbortError') {
         assistantTurn.status = 'stopped'
       } else {
         markError(assistantTurn, error)
       }
     } finally {
+      activeTurn = null
+      pendingDelta = ''
+      cancelFlush()
       controller = null
     }
   } else {
     try {
-      const result = await createChatCompletion(request.model, request.messages)
+      const result = await createChatCompletion(
+        request.model,
+        request.messages,
+        AI_SCENE_CHAT
+      )
       assistantTurn.content = readCompletionText(result)
       assistantTurn.status = 'done'
     } catch (error) {
@@ -193,7 +257,7 @@ async function send() {
   }
 
   sending.value = false
-  void scrollToBottom()
+  void nextTick(scrollToBottom)
 }
 
 function stop() {
@@ -204,6 +268,10 @@ function stop() {
 function clearSession() {
   controller?.abort()
   controller = null
+  activeTurn = null
+  pendingDelta = ''
+  cancelFlush()
+  autoScroll = true
   turns.value = []
   stopCooldown()
   ElMessage.success(t('ai.chat.cleared'))
@@ -227,6 +295,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   controller?.abort()
+  cancelFlush()
   stopCooldown()
 })
 </script>
@@ -277,6 +346,7 @@ onUnmounted(() => {
         ref="listRef"
         class="ai-chat__list"
         :style="{ maxHeight: `${listHeight}px` }"
+        @scroll.passive="handleListScroll"
       >
         <div v-if="turns.length === 0" class="py-10">
           <ElEmpty

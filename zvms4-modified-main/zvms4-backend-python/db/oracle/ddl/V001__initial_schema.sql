@@ -1183,13 +1183,23 @@ CREATE TABLE ai_call_logs (
   input_bytes NUMBER(10),
   request_id VARCHAR2(64 CHAR),
   key_scope VARCHAR2(16 CHAR),
+  prompt_tokens NUMBER(10),
+  completion_tokens NUMBER(10),
+  total_tokens NUMBER(10),
+  attempt_no NUMBER(3),
+  purpose VARCHAR2(24 CHAR),
+  first_token_ms NUMBER(10),
+  engine_kind VARCHAR2(24 CHAR),
+  attachment_oid VARCHAR2(24 CHAR),
   created_at TIMESTAMP NOT NULL,
   PRIMARY KEY (oid),
   CONSTRAINT ck_ai_call_logs_oid CHECK (REGEXP_LIKE(oid,''^[0-9a-f]{24}$'')),
   CONSTRAINT ck_ai_call_logs_capability CHECK (capability IN (''ocr'',''chat'')),
   CONSTRAINT ck_ai_call_logs_status CHECK (status IN (''success'',''error'',''timeout'',''rejected'',''busy'')),
   CONSTRAINT ck_ai_call_logs_units CHECK (units >= 0),
-  CONSTRAINT ck_ai_call_logs_key_scope CHECK (key_scope IS NULL OR key_scope IN (''personal'',''shared'',''server''))
+  CONSTRAINT ck_ai_call_logs_key_scope CHECK (key_scope IS NULL OR key_scope IN (''personal'',''shared'',''server'')),
+  CONSTRAINT ck_ai_call_logs_tokens CHECK ((prompt_tokens IS NULL OR prompt_tokens >= 0) AND (completion_tokens IS NULL OR completion_tokens >= 0) AND (total_tokens IS NULL OR total_tokens >= 0)),
+  CONSTRAINT ck_ai_call_logs_attempt_no CHECK (attempt_no IS NULL OR attempt_no >= 1)
 )';
 EXCEPTION
   WHEN OTHERS THEN
@@ -1215,6 +1225,14 @@ END;
 
 BEGIN
   EXECUTE IMMEDIATE 'CREATE INDEX ix_ai_call_logs_endpoint_status ON ai_call_logs (endpoint, status, created_at)';
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE NOT IN (-955, -1408) THEN RAISE; END IF;
+END;
+/
+
+BEGIN
+  EXECUTE IMMEDIATE 'CREATE INDEX ix_ai_call_logs_request_id ON ai_call_logs (request_id)';
 EXCEPTION
   WHEN OTHERS THEN
     IF SQLCODE NOT IN (-955, -1408) THEN RAISE; END IF;

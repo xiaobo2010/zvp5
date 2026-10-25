@@ -41,6 +41,9 @@ const emit = defineEmits<{
 
 const { t } = useI18n()
 
+/** 审计场景名：后端落 AI_CALL_LOGS.PURPOSE，用来区分「markdown 助手」与对话页。 */
+const AI_SCENE_MARKDOWN = 'markdown-assistant'
+
 const action = ref<AiWriteAction>('polish')
 const instruction = ref('')
 const models = ref<string[]>([])
@@ -128,6 +131,7 @@ async function run(): Promise<void> {
         instruction: instruction.value
       }),
       signal: controller.signal,
+      scene: AI_SCENE_MARKDOWN,
       onDelta: (delta) => {
         result.value += delta
       }

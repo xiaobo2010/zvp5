@@ -79,7 +79,64 @@ export interface AiLogRecord {
   input_bytes: number | null
   request_id: string | null
   key_scope: AiLogKeyScope | null
+  /** 上游 usage 报的三个 token 数；全 null = 这次没报（units 是估算值）。 */
+  prompt_tokens: number | null
+  completion_tokens: number | null
+  total_tokens: number | null
+  /** 同一次请求里的第几次尝试（1 起）；null = 不是某次上游尝试（门禁直接拒）。 */
+  attempt_no: number | null
+  /** 调用场景（chat / markdown-assistant / ocr）；null = 来源未知（第三方 SDK）。 */
+  purpose: string | null
+  /** 流式首块到达耗时（毫秒）；非流式为 null。 */
+  first_token_ms: number | null
+  /** OCR 引擎类型（tencent/aliyun/rapidocr/baidu/groq/zhipu）；OCR 行才有。 */
+  engine_kind: string | null
+  /** OCR 针对的附件 oid。 */
+  attachment_oid: string | null
   created_at: string
+}
+
+/** 按日聚合的一行（/ai/logs/stats 的 daily）。 */
+export interface AiLogDailyStat {
+  /** 本地自然日 YYYY-MM-DD。 */
+  date: string
+  calls: number
+  errors: number
+  prompt_tokens: number
+  completion_tokens: number
+  total_tokens: number
+  avg_latency_ms: number | null
+}
+
+/** 按某个维度（provider / model / purpose）的小计。 */
+export interface AiLogGroupStat {
+  calls: number
+  errors: number
+  units: number
+  total_tokens: number
+}
+
+export interface AiLogProviderStat extends AiLogGroupStat {
+  provider: string | null
+}
+
+export interface AiLogModelStat extends AiLogGroupStat {
+  model: string | null
+}
+
+export interface AiLogPurposeStat extends AiLogGroupStat {
+  purpose: string | null
+}
+
+/** /ai/logs/stats 的响应 data。 */
+export interface AiLogStats {
+  days: number
+  /** 窗口起点（本地时间 ISO 字符串）。 */
+  since: string
+  daily: AiLogDailyStat[]
+  by_provider: AiLogProviderStat[]
+  by_model: AiLogModelStat[]
+  by_purpose: AiLogPurposeStat[]
 }
 
 export interface AiOcrEngineRecord {

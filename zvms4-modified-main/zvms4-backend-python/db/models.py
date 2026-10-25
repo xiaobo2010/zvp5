@@ -953,6 +953,15 @@ Index(
 #   ——只记成功就无法回答「额度为什么没扣成」。无外键：审计材料必须比账号
 #   活得久（同 BAN_VIOLATIONS）。UNITS 是本次调用扣掉的额度单位，与
 #   AI_QUOTA.USED 的增量同源，两边都留下才能对账。
+#
+#   正文（prompt / completion）**一律不落库**：这是合规决定，不是缺口。表里只
+#   有元数据，加上 V031 的字段就是 OTel GenAI 语义约定的一个子集（当自有
+#   schema 管理，不承诺外部兼容）。
+#
+#   不变式：PROMPT_TOKENS / COMPLETION_TOKENS / TOTAL_TOKENS 为 NULL ⟺ 这次
+#   调用的 UNITS 是**估算值**（流式上游没回 usage 帧，按「4 字符 ≈ 1 token」算）。
+#   上游回了 usage 就是实测量，UNITS 也由它折算。别用 0 代替 NULL：0 是一个
+#   真实的 token 数，会把「不知道」伪装成「没有」。
 # ---------------------------------------------------------------------------
 
 ai_call_logs = Table(
@@ -971,8 +980,23 @@ ai_call_logs = Table(
     Column("units", NUMBER(10), nullable=False, server_default=text("0")),
     Column("input_bytes", NUMBER(10), nullable=True),
     Column("request_id", VARCHAR2(64), nullable=True),
-    # 本次调用用的 key 来源（personal / shared / server）；V023 新增，存量行 NULL。
+    # 本次调用用的 key 来源（personal / shared / server）；V025 新增，存量行 NULL。
     Column("key_scope", VARCHAR2(16), nullable=True),
+    # --- V031：可审计粒度（全部 nullable，存量行 NULL = 未知）---
+    # 上游 usage 的三个 token 数（非流式必填，流式仅在拿到 usage 帧时填）。
+    Column("prompt_tokens", NUMBER(10), nullable=True),
+    Column("completion_tokens", NUMBER(10), nullable=True),
+    Column("total_tokens", NUMBER(10), nullable=True),
+    # 同一次请求的第几次上游尝试（1 起）。多 provider 重试与 OCR 引擎回退共用。
+    Column("attempt_no", NUMBER(3), nullable=True),
+    # 调用场景（前端 ``X-AI-Scene`` 头 / OCR 固定 'ocr'）。开放集合，不建 CHECK。
+    Column("purpose", VARCHAR2(24), nullable=True),
+    # 流式首块到达耗时（毫秒）；非流式为 NULL（没有「首块」这个概念）。
+    Column("first_token_ms", NUMBER(10), nullable=True),
+    # OCR 引擎类型（tencent/aliyun/rapidocr/baidu/groq/zhipu）；OCR 行才填。
+    Column("engine_kind", VARCHAR2(24), nullable=True),
+    # OCR 针对的附件 oid。无外键：附件删了，这次识别发生过的事实仍然成立。
+    Column("attachment_oid", VARCHAR2(24), nullable=True),
     Column("created_at", oracle.TIMESTAMP, nullable=False),
     _oid_check("ai_call_logs"),
     CheckConstraint("capability IN ('ocr','chat')", name="ck_ai_call_logs_capability"),
@@ -984,6 +1008,16 @@ ai_call_logs = Table(
     CheckConstraint(
         "key_scope IS NULL OR key_scope IN ('personal','shared','server')",
         name="ck_ai_call_logs_key_scope",
+    ),
+    CheckConstraint(
+        "(prompt_tokens IS NULL OR prompt_tokens >= 0)"
+        " AND (completion_tokens IS NULL OR completion_tokens >= 0)"
+        " AND (total_tokens IS NULL OR total_tokens >= 0)",
+        name="ck_ai_call_logs_tokens",
+    ),
+    CheckConstraint(
+        "attempt_no IS NULL OR attempt_no >= 1",
+        name="ck_ai_call_logs_attempt_no",
     ),
 )
 Index(
@@ -998,6 +1032,9 @@ Index(
     ai_call_logs.c.status,
     ai_call_logs.c.created_at,
 )
+# 按 request_id 追一条链（一次 chat 的多 provider 尝试、一次 OCR 的多次引擎回退
+# 共用一个 request_id）是排查的主要入口，没有索引就是全表扫。
+Index("ix_ai_call_logs_request_id", ai_call_logs.c.request_id)
 
 
 # ---------------------------------------------------------------------------

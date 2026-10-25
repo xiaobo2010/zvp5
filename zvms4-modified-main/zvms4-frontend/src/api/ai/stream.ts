@@ -1,6 +1,7 @@
 import type { AiChatMessage } from '@/../types/ai'
 import { AiRequestError } from './errors'
-import { aiFetchRaw, aiResponseError, isMaintenanceResponse } from './http'
+import { AI_SCENE_HEADER, aiFetchRaw, aiResponseError, isMaintenanceResponse } from './http'
+import type { AiChatScene } from './chat'
 
 /**
  * OpenAI 兼容面的流式客户端。
@@ -142,6 +143,8 @@ export interface AiStreamOptions {
   model: string
   messages: AiChatMessage[]
   signal?: AbortSignal
+  /** 审计用的场景名（后端落 PURPOSE）；不传 = 来源未知。 */
+  scene?: AiChatScene
   /** 每收到一段增量文本回调一次。 */
   onDelta?: (delta: string) => void
 }
@@ -209,7 +212,9 @@ export async function streamChatCompletion(options: AiStreamOptions): Promise<Ai
   const response = await aiFetchRaw('/ai/v1/chat/completions', {
     method: 'POST',
     body: JSON.stringify(payload),
-    signal: options.signal
+    signal: options.signal,
+    // 审计元数据，不进请求体：后端读 X-AI-Scene 落 AI_CALL_LOGS.PURPOSE。
+    ...(options.scene ? { headers: { [AI_SCENE_HEADER]: options.scene } } : {})
   })
 
   if (!response.ok) {

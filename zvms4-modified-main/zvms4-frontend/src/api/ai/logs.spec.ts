@@ -1,5 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { AI_LOGS_PERPAGE_MAX, listAiLogs, toEpochSeconds } from './logs'
+import {
+  AI_LOG_STATS_DEFAULT_DAYS,
+  AI_LOG_STATS_MAX_DAYS,
+  AI_LOGS_PERPAGE_MAX,
+  getAiLogStats,
+  listAiLogs,
+  toEpochSeconds
+} from './logs'
 import { AiRequestError } from './errors'
 
 const { axiosMock } = vi.hoisted(() => ({ axiosMock: vi.fn() }))
@@ -164,5 +171,87 @@ describe('调用日志 API 契约', () => {
     const error = await listAiLogs().catch((err: unknown) => err)
 
     expect(error).toBeInstanceOf(AiRequestError)
+  })
+
+  it('追踪过滤条件（request_id / provider / model / purpose）逐字传给后端', async () => {
+    axiosMock.mockResolvedValueOnce(envelope([], 0))
+
+    await listAiLogs({
+      request_id: 'req-0001',
+      provider: 'team',
+      model: 'gpt-x',
+      purpose: 'markdown-assistant'
+    })
+
+    const params = axiosMock.mock.calls[0]![0].params as Record<string, unknown>
+    expect(params.request_id).toBe('req-0001')
+    expect(params.provider).toBe('team')
+    expect(params.model).toBe('gpt-x')
+    expect(params.purpose).toBe('markdown-assistant')
+  })
+
+  it('追踪过滤的空白值不落到 query string', async () => {
+    axiosMock.mockResolvedValueOnce(envelope([], 0))
+
+    await listAiLogs({ request_id: '  ', provider: ' ', model: '', purpose: '  ' })
+
+    const params = axiosMock.mock.calls[0]![0].params as Record<string, unknown>
+    expect(params.request_id).toBeUndefined()
+    expect(params.provider).toBeUndefined()
+    expect(params.model).toBeUndefined()
+    expect(params.purpose).toBeUndefined()
+  })
+})
+
+describe('统计概览 API 契约', () => {
+  const statsFixture = {
+    days: 7,
+    since: '2026-10-18 00:00:00',
+    daily: [],
+    by_provider: [],
+    by_model: [],
+    by_purpose: []
+  }
+
+  it('默认按 7 天拉取', async () => {
+    axiosMock.mockResolvedValueOnce(envelope(statsFixture, 0))
+
+    await getAiLogStats()
+
+    expect(axiosMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        method: 'get',
+        url: '/ai/logs/stats',
+        params: { days: AI_LOG_STATS_DEFAULT_DAYS }
+      })
+    )
+  })
+
+  it('天数被夹到 1..90（与流水保留期一致）', async () => {
+    axiosMock.mockResolvedValueOnce(envelope(statsFixture, 0))
+    await getAiLogStats(500)
+
+    expect(axiosMock).toHaveBeenCalledWith(
+      expect.objectContaining({ params: { days: AI_LOG_STATS_MAX_DAYS } })
+    )
+
+    axiosMock.mockReset()
+    axiosMock.mockResolvedValueOnce(envelope(statsFixture, 0))
+    await getAiLogStats(0)
+
+    expect(axiosMock).toHaveBeenCalledWith(
+      expect.objectContaining({ params: { days: 1 } })
+    )
+  })
+
+  it('缺字段时补空数组：面板不必为字段缺失写防御分支', async () => {
+    axiosMock.mockResolvedValueOnce(envelope({ days: 7, since: 'x' }, 0))
+
+    const result = await getAiLogStats(14)
+
+    expect(result.daily).toEqual([])
+    expect(result.by_provider).toEqual([])
+    expect(result.by_model).toEqual([])
+    expect(result.by_purpose).toEqual([])
   })
 })

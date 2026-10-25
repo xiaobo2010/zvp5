@@ -721,10 +721,14 @@ def test_gate_roles_are_configurable(catalog, monkeypatch):
     assert _role_client("admin").get("/api/ai/v1/models").status_code == 200
 
 
-def test_denied_chat_does_not_charge_audit_or_call_upstream(
+def test_denied_chat_does_not_charge_or_call_upstream_but_leaves_an_audit_row(
     catalog, upstream, monkeypatch, audit_repo
 ):
-    """被门禁挡下的请求必须一个副作用都没有：不扣额度、不写审计、不打上游。"""
+    """被门禁挡下的请求不扣额度、不打上游，但**要留一行 rejected 审计**。
+
+    审计从「只记成功的调用」改成「记每一次尝试」是刻意的：没有这一行，
+    「某个角色一直在试但一直被拒」在后台完全看不见（这正是要审计的滥用信号）。
+    """
     catalog([_entry("team", "b" * 24, scope="shared", models=("gpt-x",))])
     calls = upstream({"id": "ok", "usage": {"total_tokens": 1}})
 
@@ -747,4 +751,10 @@ def test_denied_chat_does_not_charge_audit_or_call_upstream(
     assert calls == []
     assert peek.calls == []
     assert consume.calls == []
-    assert audit_repo.rows == []
+    assert [(row["status"], row["error_code"], row["http_status"]) for row in audit_repo.rows] == [
+        ("rejected", "AI_FORBIDDEN", 403)
+    ]
+    # 拒绝行不带上游痕迹：没有 provider / attempt_no（一次都没打过上游）。
+    assert audit_repo.rows[0]["provider"] is None
+    assert audit_repo.rows[0]["attempt_no"] is None
+    assert audit_repo.rows[0]["units"] == 0
