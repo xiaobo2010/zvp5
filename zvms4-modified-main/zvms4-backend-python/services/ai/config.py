@@ -322,6 +322,92 @@ def api_key_rate_limit_per_minute() -> int:
     return value if value >= 0 else fallback
 
 
+_AGENT_MAX_ITERATIONS = 10
+_AGENT_TOKEN_BUDGET = 100_000
+_AGENT_PROPOSAL_TTL_SECONDS = 600
+
+
+def _agent_positive_int(name: str, fallback: int) -> int:
+    """读 ``settings`` 里的正整数；非法一律回退。
+
+    上限配成 0 或负数等于把 agent 整条链路掐死（一轮都不跑），配成 ``True``
+    会变成 1 —— 两种都该回退到默认值而不是静默生效。
+    """
+    raw = getattr(settings, name, fallback)
+    if isinstance(raw, bool) or not isinstance(raw, int) or raw <= 0:
+        return fallback
+    return raw
+
+
+def agent_max_iterations() -> int:
+    """一次 agent run 最多几轮工具调用（``settings.AI_AGENT_MAX_ITERATIONS``）。"""
+    return _agent_positive_int("AI_AGENT_MAX_ITERATIONS", _AGENT_MAX_ITERATIONS)
+
+
+def agent_token_budget() -> int:
+    """一次 agent run 累计可消耗的 token 上限（含 prompt + completion）。"""
+    return _agent_positive_int("AI_AGENT_TOKEN_BUDGET", _AGENT_TOKEN_BUDGET)
+
+
+def agent_proposal_ttl_seconds() -> int:
+    """写工具提案的有效期（秒）；过期后确认回 410。"""
+    return _agent_positive_int(
+        "AI_AGENT_PROPOSAL_TTL_SECONDS", _AGENT_PROPOSAL_TTL_SECONDS
+    )
+
+
+# prompt 受控留存（AI_PROMPT_AUDIT）的三个默认值。``services.ai.prompt_audit``
+# 与 ``tasks.retention`` 都只从这里取口径，避免「捕获按一个上限、清理按另一个
+# 窗口」这种分裂。
+_PROMPT_CAPTURE_ROLES = ("department",)
+_PROMPT_RETENTION_DAYS = 30
+_PROMPT_MAX_CHARS = 8000
+
+
+def _config_positive_int(name: str, fallback: int) -> int:
+    """读 ``config`` 里的正整数；字符串数字也算（与 ``tasks.retention`` 同口径）。
+
+    ``_positive_int`` 对 ``"30"`` 一律回退，那条规则是给**运行时阈值**的（
+    ``True`` 会变成 1）。保留期不同：它可能由部署脚本从环境变量解析成字符串写进
+    ``config.py``，而 ``tasks.retention`` 一直是 ``int(raw)`` 的宽松口径。两处
+    读同一个键，口径必须一致，否则「捕获按 30 天、清理按 7 天」。
+    """
+    raw = getattr(config, name, fallback)
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return fallback
+    return value if value > 0 else fallback
+
+
+def prompt_capture_roles() -> frozenset[str]:
+    """允许留存正文的角色集合（``per`` 口径）。
+
+    ``settings.AI_PROMPT_CAPTURE_ROLES`` 是显式的**关闭开关**：写成 ``()``
+    （空元组/空列表）表示一个角色都不留；类型写错（字符串、``None``）才回退
+    默认集合。这与 :func:`allowed_roles` 有意不同——那边的空集合是「配置写坏」，
+    这边空集合是最常见的隐私诉求，不该被静默改回「开着」。
+    """
+    raw = getattr(settings, "AI_PROMPT_CAPTURE_ROLES", None)
+    if isinstance(raw, str) or not isinstance(raw, (list, tuple, set, frozenset)):
+        return frozenset(config.AI_PROMPT_CAPTURE_ROLES)
+    return frozenset(item for item in raw if isinstance(item, str) and item)
+
+
+def prompt_retention_days() -> int:
+    """正文保留天数；``config`` 是兜底，``settings`` 覆盖，非法值逐层回退。"""
+    fallback = _config_positive_int("AI_PROMPT_RETENTION_DAYS", _PROMPT_RETENTION_DAYS)
+    return _positive_int(
+        getattr(settings, "AI_PROMPT_RETENTION_DAYS", fallback), fallback
+    )
+
+
+def prompt_max_chars() -> int:
+    """单条正文留存上限（字符）；超长在服务端截断。"""
+    fallback = _config_positive_int("AI_PROMPT_MAX_CHARS", _PROMPT_MAX_CHARS)
+    return _positive_int(getattr(settings, "AI_PROMPT_MAX_CHARS", fallback), fallback)
+
+
 def provider_api_key(cfg: dict) -> str | None:
     """先环境变量，再 settings。
 
@@ -420,8 +506,111 @@ def stream_usage_hosts() -> frozenset[str]:
     与上游真实实现没有绑定关系（``ai_credentials.kind`` 只有一个
     ``openai_compat``），拿名字判断等于拿注释当类型。
     """
-    hosts = set(_STREAM_USAGE_HOSTS)
-    raw = getattr(settings, "AI_STREAM_USAGE_HOSTS", None)
+    return _sanitised_hosts(
+        _STREAM_USAGE_HOSTS, getattr(settings, "AI_STREAM_USAGE_HOSTS", None)
+    )
+
+
+PROMPT_CACHE_MODES = ("off", "auto", "explicit")
+
+# ``prompt_cache_key`` 是 OpenAI 2026 的标准请求字段（只影响路由亲和）。服务端自动
+# 做前缀缓存的上游（DeepSeek / Gemini 一类）不吃这个字段，所以默认只放确定的 host。
+_DEFAULT_PROMPT_CACHE_KEY_HOSTS = frozenset({"api.openai.com"})
+
+_PROMPT_CACHE_KEY_PREFIX_DEFAULT = "zvp"
+# 前缀要拼进 ``prompt_cache_key``（上游上限 64），留够指纹与分隔符的空间。
+_PROMPT_CACHE_KEY_PREFIX_MAX_LEN = 24
+
+
+def prompt_cache_mode() -> str:
+    """``settings.AI_PROMPT_CACHE``：``off`` / ``auto`` / ``explicit``。
+
+    ``auto`` 只注入 ``prompt_cache_key``（路由提示，形状不变）；``explicit`` 额外给
+    system 段与 tools 段打 ``cache_control`` 断点（会改写 content 形状，只对会翻译
+    这个标记的兼容层有效）。
+
+    配错（非字符串 / 拼歪的值）一律退回 ``off``：这个开关决定「要不要往请求体里加
+    字段」，值不认识时最安全的结果是原样透传——替运维猜一个值等于在没确认过的
+    上游身上做实验，最坏情况是上游 400 把对话打挂。
+    """
+    raw = getattr(settings, "AI_PROMPT_CACHE", "auto")
+    if not isinstance(raw, str):
+        return "off"
+    mode = raw.strip().lower()
+    return mode if mode in PROMPT_CACHE_MODES else "off"
+
+
+def prompt_cache_key_hosts() -> frozenset[str]:
+    """允许注入 ``prompt_cache_key`` 的上游 host 白名单。
+
+    ``prompt_cache_key`` 是 OpenAI 2026 的标准请求字段，语义只有「同一前缀尽量落到
+    同一个缓存节点」——不改内容、不改计费，最坏情况是上游忽略它。DeepSeek / Gemini
+    这类服务端自动前缀缓存不吃这个字段，所以默认只放**确定**认它的 host；
+    ``settings.AI_PROMPT_CACHE_HOSTS`` 可以追加（自建 vLLM / 网关确认支持时）。
+    ``"*"`` = 全部允许。
+
+    净化规则与 :func:`stream_usage_hosts` 完全一致（同一份实现）：非法条目逐个
+    丢弃，全非法则只剩默认集合——配错一行不该让「多省一点钱」升级成「请求被上游
+    400」。
+    """
+    return _sanitised_hosts(
+        _DEFAULT_PROMPT_CACHE_KEY_HOSTS,
+        getattr(settings, "AI_PROMPT_CACHE_HOSTS", None),
+    )
+
+
+def prompt_cache_breakpoint_hosts() -> frozenset[str]:
+    """允许注入 Anthropic 风格 ``cache_control`` 断点的上游 host 白名单（默认空）。
+
+    这是给 OpenRouter / LiteLLM 这类会把 ``cache_control`` 翻译成上游原生缓存标记
+    的兼容层用的，所以默认空集：**直连 OpenAI 官方端点不要加**——那边的显式缓存
+    字段名与形状都不同，多出来的 ``cache_control`` 只是未知字段，严格校验请求体的
+    端点会直接 400。
+
+    净化规则同上（``settings.AI_PROMPT_CACHE_BREAKPOINT_HOSTS`` 追加）。
+    """
+    return _sanitised_hosts(
+        frozenset(), getattr(settings, "AI_PROMPT_CACHE_BREAKPOINT_HOSTS", None)
+    )
+
+
+def prompt_cache_key_prefix() -> str:
+    """``prompt_cache_key`` 的前缀（默认 ``zvp``），用来区分「这把 key 是谁发的」。
+
+    只保留 ``[A-Za-z0-9_-]``、截到 24 字符，清空后回退默认值：前缀是拼进客户端可见
+    字段的，带空格 / 引号 / 非 ASCII 会变成脏数据，而超长会把指纹挤出 64 字符上限。
+    """
+    raw = getattr(
+        settings, "AI_PROMPT_CACHE_KEY_PREFIX", _PROMPT_CACHE_KEY_PREFIX_DEFAULT
+    )
+    if not isinstance(raw, str):
+        return _PROMPT_CACHE_KEY_PREFIX_DEFAULT
+    cleaned = "".join(ch for ch in raw if _is_key_prefix_char(ch))
+    cleaned = cleaned[:_PROMPT_CACHE_KEY_PREFIX_MAX_LEN]
+    return cleaned or _PROMPT_CACHE_KEY_PREFIX_DEFAULT
+
+
+def _is_key_prefix_char(ch: str) -> bool:
+    """ASCII 字母 / 数字 / ``_`` / ``-``。``str.isalnum()`` 会放行中文，不能用。"""
+    return (
+        "a" <= ch <= "z"
+        or "A" <= ch <= "Z"
+        or "0" <= ch <= "9"
+        or ch == "_"
+        or ch == "-"
+    )
+
+
+def _sanitised_hosts(
+    defaults: frozenset[str], raw: object
+) -> frozenset[str]:
+    """默认集合 + settings 追加项，逐条净化。
+
+    非字符串 / 空 / 带路径 / 带空格 / 带端口的条目直接丢：host 白名单只做精确匹配，
+    一条 ``https://api.x.com/v1`` 混进来就永远命中不了，而 ``" * "`` 这种笔误要是被
+    当成通配符，会把「确认过的上游」变成「所有上游」。
+    """
+    hosts = set(defaults)
     if isinstance(raw, (list, tuple, set, frozenset)):
         for item in raw:
             if not isinstance(item, str):

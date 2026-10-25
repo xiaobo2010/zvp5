@@ -220,6 +220,8 @@ const statsSummary = computed(() => {
 const statsDaily = computed(() => stats.value?.daily ?? [])
 const statsByProvider = computed(() => stats.value?.by_provider ?? [])
 const statsByPurpose = computed(() => stats.value?.by_purpose ?? [])
+const statsByUser = computed(() => stats.value?.by_user ?? [])
+const statsByStatus = computed(() => stats.value?.by_status ?? [])
 
 watch(statsDays, () => {
   void loadStats()
@@ -550,6 +552,66 @@ onMounted(() => {
                     <td class="text-right tabular-nums">{{ item.calls }}</td>
                     <td class="text-right tabular-nums">{{ item.errors }}</td>
                     <td class="text-right tabular-nums">{{ item.units }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="grid gap-3 lg:grid-cols-3">
+            <div class="flex flex-col gap-2 lg:col-span-2">
+              <h3 class="yg-text-sm">{{ t('ai.logs.stats.byUser') }}</h3>
+              <div v-if="statsByUser.length === 0" class="yg-text-xs yg-text-tertiary">
+                {{ t('ai.logs.stats.noData') }}
+              </div>
+              <div v-else class="overflow-x-auto">
+                <table class="ai-log-stats__grid">
+                  <thead>
+                    <tr>
+                      <th>{{ t('ai.logs.user') }}</th>
+                      <th class="text-right">{{ t('ai.logs.stats.calls') }}</th>
+                      <th class="text-right">{{ t('ai.logs.stats.errors') }}</th>
+                      <th class="text-right">{{ t('ai.logs.stats.tokens') }}</th>
+                      <th class="text-right">{{ t('ai.logs.stats.units') }}</th>
+                      <th class="text-right">{{ t('ai.logs.stats.avgLatency') }}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="item in statsByUser" :key="item.user_oid">
+                      <td>
+                        <div class="flex flex-col">
+                          <span>{{ item.name || item.user_oid }}</span>
+                          <span class="yg-text-xs yg-text-tertiary">{{ item.user_oid }}</span>
+                        </div>
+                      </td>
+                      <td class="text-right tabular-nums">{{ item.calls }}</td>
+                      <td class="text-right tabular-nums">{{ item.errors }}</td>
+                      <td class="text-right tabular-nums">{{ item.total_tokens }}</td>
+                      <td class="text-right tabular-nums">{{ item.units }}</td>
+                      <td class="text-right tabular-nums">
+                        {{ formatMs(item.avg_latency_ms, 'ai.logs.latencyUnit') }}
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            <div class="flex flex-col gap-2">
+              <h3 class="yg-text-sm">{{ t('ai.logs.stats.byStatus') }}</h3>
+              <div v-if="statsByStatus.length === 0" class="yg-text-xs yg-text-tertiary">
+                {{ t('ai.logs.stats.noData') }}
+              </div>
+              <table v-else class="ai-log-stats__grid">
+                <thead>
+                  <tr>
+                    <th>{{ t('ai.logs.status') }}</th>
+                    <th class="text-right">{{ t('ai.logs.stats.calls') }}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="item in statsByStatus" :key="item.status ?? 'unknown'">
+                    <td>{{ item.status ? statusLabel(item.status) : '—' }}</td>
+                    <td class="text-right tabular-nums">{{ item.calls }}</td>
                   </tr>
                 </tbody>
               </table>

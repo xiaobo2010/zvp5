@@ -181,12 +181,36 @@ def test_insert_binds_the_trace_columns_explicitly() -> None:
         attachment_oid=None,
     )
 
-    assert (
-        "11, 22, 33, 2, 'chat', 140, NULL, NULL, TO_DATE(" in sql
-    ), sql
+    assert "11, 22, 33, 2, 'chat', 140" in sql, sql
+    # 其后到 created_at 之间的每一列（engine_kind / attachment_oid 与 V032/V033 的
+    # agent/缓存列）都必须显式写 NULL：它们是「未知 / 未采集」，不是 0 或空串。
+    tail = sql.split("'chat', 140", 1)[1].split("TO_DATE(", 1)[0]
+    leftovers = [part.strip() for part in tail.split(",") if part.strip()]
+    assert leftovers and set(leftovers) == {"NULL"}, tail
+
     # NULL 不是 0：三个 token 列没值时写的是 NULL，读侧才能判「这是估算」。
     bare = _insert("shared")
-    assert "NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, TO_DATE(" in bare
+    bound = bare.split("VALUES (", 1)[1].split("TO_DATE(", 1)[0]
+    assert bound.count("NULL") >= 3, bare
+
+
+def test_insert_binds_the_cache_columns_explicitly() -> None:
+    """V032 的三个缓存列没有默认值：``None`` 必须写成 NULL，不是 0 / 空串。
+
+    写成 0 会让「上游没报」在命中率里读成「真的一个都没命中」；写成空串会让
+    ``cache_key`` 从「这次没参与缓存路由」变成「参与过但哈希为空」。
+    """
+    sql = _insert(
+        "shared",
+        cache_read_tokens=64,
+        cache_write_tokens=16,
+        cache_key="zvp:0123456789abcdef",
+    )
+
+    assert "64, 16, 'zvp:0123456789abcdef', TO_DATE(" in sql, sql
+
+    bare = _insert("shared")
+    assert "NULL, NULL, NULL, TO_DATE(" in bare, bare
 
 
 def test_insert_is_one_statement() -> None:
@@ -464,3 +488,61 @@ def test_api_key_touch_only_writes_last_used_at() -> None:
     assert "enabled" not in sql
     assert "name" not in sql
     assert "token_hash" not in sql
+
+
+# ---------------------------------------------------------------------------
+# AI_CALL_LOGS：治理视角的两个聚合（by_user / by_status）
+# ---------------------------------------------------------------------------
+#
+# 这两张表各自的静默错误：
+# ① ``by_user`` 若写成 INNER JOIN USERS，账号被删除后那行流水会从报表里消失
+#    （审计要活过账号删除）；若忘了把 ``users.name`` 放进 GROUP BY，Oracle 直接
+#    报错，而不是「看起来没问题」。
+# ② ``by_status`` 若改成 ``status = 'error'`` 过滤，rejected / busy 就看不见了。
+
+
+def test_stats_user_stmt_left_joins_users_and_groups_by_name() -> None:
+    sql = _sql(ai_call_logs_repo._stats_user_stmt([]))
+
+    assert "LEFT OUTER JOIN users ON ai_call_logs.user_oid = users.oid" in sql
+    assert "users.name AS user_name" in sql
+    # 非聚合列必须出现在 GROUP BY（Oracle 的硬要求）。
+    assert "GROUP BY ai_call_logs.user_oid, users.name" in sql
+    assert "avg(ai_call_logs.latency_ms)" in sql
+
+
+def test_stats_user_stmt_is_bounded_like_every_other_breakdown() -> None:
+    sql = _sql(ai_call_logs_repo._stats_user_stmt([]))
+
+    assert f"FETCH FIRST {ai_call_logs_repo.STATS_GROUP_LIMIT} ROWS ONLY" in sql
+    assert "ORDER BY count(*) DESC" in sql
+
+
+def test_stats_status_stmt_reuses_the_group_shape() -> None:
+    from db.models import ai_call_logs as tbl
+
+    sql = _sql(ai_call_logs_repo._stats_group_stmt(tbl.c.status, []))
+
+    assert "ai_call_logs.status AS bucket" in sql
+    assert "GROUP BY ai_call_logs.status" in sql
+    # 不过滤：status 是分组维度，'error' / 'rejected' / 'busy' 都要各占一行。
+    assert "WHERE" not in sql
+
+
+def test_count_chat_stmt_only_counts_chat_rows_of_the_window() -> None:
+    sql = _sql(ai_call_logs_repo._count_chat_stmt(USER_OID, TS))
+
+    assert sql.upper().startswith("SELECT COUNT(*)")
+    assert "ai_call_logs.user_oid = '000000000000000000000002'" in sql
+    assert "ai_call_logs.capability = 'chat'" in sql
+    assert "ai_call_logs.created_at >= TO_DATE('2026-10-23 01:02:03'" in sql
+    # 不按 status 过滤：被拒/失败的行也是「在敲门」的证据。
+    assert "status" not in sql
+
+
+def test_stats_cache_stmt_is_still_one_row_per_window() -> None:
+    """新增两个分组不能顺手动到缓存那条（它必须是窗口级单行）。"""
+    sql = _sql(ai_call_logs_repo._stats_cache_stmt([ai_call_logs_repo._filters(time_start=TS)[0]]))
+
+    assert "GROUP BY" not in sql
+    assert "cache_read_tokens" in sql

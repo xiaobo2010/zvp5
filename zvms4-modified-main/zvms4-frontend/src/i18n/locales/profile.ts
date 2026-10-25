@@ -1,6 +1,7 @@
 export const zhCN = {
-  pageTitle: '我的',
-  infoTitle: '个人信息',
+  pageTitle: '个人资料',
+  pageSubtitle: '查看你的姓名、班级与账号状态',
+  infoTitle: '基本信息',
   labels: {
     name: '姓名',
     number: '学号',
@@ -8,12 +9,15 @@ export const zhCN = {
     identity: '身份',
     status: '账号状态'
   },
+  nameMissing: '未设置姓名',
   noClass: '未分班',
+  classFailed: '班级信息获取失败',
   status: {
     normal: '正常',
     banned: '已封禁'
   },
   actions: {
+    title: '快捷操作',
     changePassword: '修改密码',
     darkMode: '深色模式',
     about: '关于',
@@ -24,8 +28,14 @@ export const zhCN = {
     title: '通知',
     refresh: '刷新',
     loading: '正在加载通知…',
-    failed: '通知加载失败，请稍后重试',
+    failed: '通知加载失败',
+    failedDesc: '通知没能加载出来，请稍后重试。',
+    retry: '重新加载',
     empty: '暂无通知',
+    emptyDesc: '有新的通知时，会显示在这里。',
+    unread: '未读',
+    read: '已读',
+    unreadCount: '{count} 条未读',
     sender: '发布人',
     collapse: '收起'
   },

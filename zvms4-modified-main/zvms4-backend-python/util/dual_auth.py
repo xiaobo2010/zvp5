@@ -42,6 +42,31 @@ _FAIL_LIMIT = 5
 # operator_oid -> 最近失败时刻（time.monotonic，不受系统时间跳变影响）。
 _failures: dict[str, list[float]] = {}
 
+# ---------------------------------------------------------------------------
+# 授权缓存（30 分钟免二次验证）
+#
+# 只服务**显式 opt-in** 的调用方（目前只有 agent 写操作确认）。语义是「同一个
+# operator、同一个 action 刚刚被另一位管理员批准过，短时间内不必再输一次码」，
+# 不是「登录一次就免检」：
+#
+# * 键是 ``(operator_oid, action)``：换人 / 换动作都不继承（``agent_write`` 的
+#   授权不会顺带解锁 ``web_ssh``）；
+# * 只记**成功**的校验；失败仍然走 ``_failures`` 限流，且不会刷新缓存；
+# * TTL 用 ``time.monotonic``，系统时间跳变不会把窗口拉长；
+# * ``DUAL_AUTH_CACHE_TTL_SECONDS=0`` 可整体关闭（回到「每次都验」）；
+# * 每次命中缓存都写一条 ``system_dual_auth`` 审计并标 ``cached``：事后必须能
+#   区分「这次真的输了码」与「这次吃的是 30 分钟内的授权」。
+#
+# 进程内存储与 ``_failures`` / SSH ticket 同一个前提（单 worker）。多 worker 时
+# 每个进程各自缓存，窗口行为会变成「命中率降低」而不是「越权」——保守方向。
+# ---------------------------------------------------------------------------
+_GRANT_TTL_DEFAULT_SECONDS = 1800  # 30 分钟
+_GRANT_TTL_MAX_SECONDS = 86_400  # 配置写大了也不超过一天
+
+# (operator_oid, action) -> (approver_oid, 到期时刻 monotonic)
+_grants: dict[tuple[str, str], tuple[str, float]] = {}
+
+
 
 class DualAuthError(Exception):
     """守卫拒绝；路由层转 ``HTTPException(status_code, detail)`` 即可。"""
@@ -85,6 +110,88 @@ def _is_unique_violation(exc: BaseException) -> bool:
     return "ORA-00001" in str(getattr(exc, "orig", exc))
 
 
+# ---------------------------------------------------------------------------
+# 30 分钟授权缓存
+# ---------------------------------------------------------------------------
+
+
+def dual_auth_cache_ttl_seconds() -> int:
+    """授权窗口秒数；``0`` = 关闭缓存（回到每次都验）。
+
+    配置项是 ``settings.DUAL_AUTH_CACHE_TTL_SECONDS``。非法值回退默认 1800，
+    并且上限压到一天——配置写错成 ``864000`` 等于把双人授权废掉，不能静默生效。
+    """
+    try:
+        import settings as site_settings
+
+        raw = getattr(
+            site_settings, "DUAL_AUTH_CACHE_TTL_SECONDS", _GRANT_TTL_DEFAULT_SECONDS
+        )
+    except Exception:  # noqa: BLE001 - 读不到配置就回默认值
+        return _GRANT_TTL_DEFAULT_SECONDS
+    if isinstance(raw, bool) or not isinstance(raw, int) or raw < 0:
+        return _GRANT_TTL_DEFAULT_SECONDS
+    return min(raw, _GRANT_TTL_MAX_SECONDS)
+
+
+def cached_approval(operator: dict, *, action: str) -> str | None:
+    """``(operator, action)`` 仍在窗口内则返回审批人 oid；否则 ``None``。"""
+    if dual_auth_cache_ttl_seconds() <= 0:
+        return None
+    key = (_operator_oid(operator), str(action))
+    entry = _grants.get(key)
+    if entry is None:
+        return None
+    approver_oid, expires_at = entry
+    if time.monotonic() >= expires_at:
+        _grants.pop(key, None)
+        return None
+    return approver_oid
+
+
+def remember_approval(
+    operator: dict, *, action: str, approver_oid: str, ttl: float | None = None
+) -> None:
+    """记下一次成功的双人授权（只由 :func:`require_dual_auth_cached` 调用）。"""
+    seconds = float(dual_auth_cache_ttl_seconds() if ttl is None else ttl)
+    if seconds <= 0:
+        return
+    _grants[(_operator_oid(operator), str(action))] = (
+        str(approver_oid),
+        time.monotonic() + seconds,
+    )
+
+
+def clear_grants() -> None:
+    """清空授权缓存（测试与「立即失效」场景用）。"""
+    _grants.clear()
+
+
+async def require_dual_auth_cached(
+    operator: dict, code: str, *, action: str
+) -> tuple[str, bool]:
+    """双人授权 + 30 分钟缓存：返回 ``(approver_oid, 是否命中缓存)``。
+
+    窗口内**不再要求**动态码（``code`` 可以是空串）；窗口外与
+    :func:`require_dual_auth` 完全一致（空串 → 422 格式错误，由调用方翻译成
+    「需要二次验证」）。缓存命中也会写一条审计并标 ``cached=true``，否则事后
+    无法区分「真输了码」与「吃缓存」。
+    """
+    approver_oid = cached_approval(operator, action=action)
+    if approver_oid is not None:
+        await _write_audit(
+            action=action,
+            operator_oid=_operator_oid(operator),
+            approver_oid=approver_oid,
+            cached=True,
+        )
+        return approver_oid, True
+
+    approver_oid = await require_dual_auth(operator, code, action=action)
+    remember_approval(operator, action=action, approver_oid=approver_oid)
+    return approver_oid, False
+
+
 async def resolve_names(oids: list[str]) -> dict[str, str]:
     """批量把 oid 解析成姓名（一次 ``get_names``，不按行查）。
 
@@ -108,12 +215,16 @@ async def _write_audit(
     operator_oid: str,
     approver_oid: str = "",
     reason: str = "",
+    cached: bool = False,
 ) -> None:
     """写一条双人授权审计。``reason`` 只在服务端留存，不会回给客户端。
 
     ``data`` 同时带 oid 与姓名：oid 是机器可溯源的键，姓名是给管理员看的。
     ``ZVMSLog.user`` 固定写 oid —— 显示的姓名由日志列表的 ``users`` 连接解
     析，写路径不承担展示职责。
+
+    ``cached=True`` 表示这次没有真的校验动态码，而是命中了 30 分钟授权缓存。
+    该键只在为真时出现，既有审计形状（含测试断言）保持不变。
     """
     names = await resolve_names([operator_oid, approver_oid])
     payload: dict[str, str] = {
@@ -124,6 +235,8 @@ async def _write_audit(
     if approver_oid:
         payload["approver"] = approver_oid
         payload["approver_name"] = names.get(approver_oid, "")
+    if cached:
+        payload["cached"] = "true"
     if reason:
         payload["reason"] = reason
     try:

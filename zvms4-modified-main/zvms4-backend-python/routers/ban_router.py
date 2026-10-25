@@ -140,6 +140,18 @@ TRIGGERS: tuple[dict, ...] = (
         ),
         "config": {"threshold": 5, "window_hours": 24, "mode": "alert"},
     },
+    {
+        "trigger": "ai_chat_burst",
+        "name": "AI 对话请求突发",
+        "evaluation": "monitor",
+        "description": (
+            "证据来源：AI_CALL_LOGS 中该账号的 chat 调用流水"
+            "（capability=chat，含被拒/失败的行；agent 的每一轮也算一次）。"
+            "短时间大量请求可能是脚本化刷取或循环调用；默认只告警——"
+            "学生会（department）在豁免名单里，不会被这条规则自动封禁。"
+        ),
+        "config": {"threshold": 80, "window_hours": 1, "mode": "alert"},
+    },
 )
 
 TRIGGER_REGISTRY: dict[str, dict] = {item["trigger"]: item for item in TRIGGERS}

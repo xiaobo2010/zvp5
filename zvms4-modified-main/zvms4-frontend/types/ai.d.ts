@@ -128,6 +128,21 @@ export interface AiLogPurposeStat extends AiLogGroupStat {
   purpose: string | null
 }
 
+/** 按用户的小计（/ai/logs/stats 的 by_user，top 50）：谁在花钱。 */
+export interface AiLogUserStat extends AiLogGroupStat {
+  user_oid: string
+  /** 显示名来自 LEFT JOIN USERS；账号已删/查不到时后端回落到 oid 字符串。 */
+  name: string
+  avg_latency_ms: number | null
+}
+
+/** 按状态的小计（/ai/logs/stats 的 by_status）：把 errors 拆成逐状态计数。 */
+export interface AiLogStatusStat {
+  /** 未知状态/脏数据回落到 null。 */
+  status: AiLogStatus | null
+  calls: number
+}
+
 /** /ai/logs/stats 的响应 data。 */
 export interface AiLogStats {
   days: number
@@ -137,6 +152,35 @@ export interface AiLogStats {
   by_provider: AiLogProviderStat[]
   by_model: AiLogModelStat[]
   by_purpose: AiLogPurposeStat[]
+  by_user: AiLogUserStat[]
+  by_status: AiLogStatusStat[]
+}
+
+/** /ai/prompts 列表的一行：元数据，**不含正文**。 */
+export interface AiPromptAuditRecord {
+  oid: string
+  /** 账号被删时后端把 user_oid 置空，名字回落成「未知用户」。 */
+  user_oid: string | null
+  user_name: string
+  purpose: string | null
+  /** 留痕时刻的角色快照（逗号分隔的角色标识）。 */
+  roles_snapshot: string | null
+  /** 正文长度（后端 LENGTH），用来判断这条值不值得点开。 */
+  prompt_chars: number
+  created_at: string
+}
+
+/** /ai/prompts/{oid} 的详情：元数据 + 请求编号 + 正文（每次读取都会写访问审计）。 */
+export interface AiPromptAuditDetail {
+  oid: string
+  user_oid: string | null
+  user_name: string
+  request_id: string | null
+  purpose: string | null
+  roles_snapshot: string | null
+  /** 已脱敏、截断后的正文；null 表示库里就是空的。 */
+  prompt_text: string | null
+  created_at: string
 }
 
 export interface AiOcrEngineRecord {
@@ -246,4 +290,235 @@ export interface AiOcrEnqueueResult {
   status: 'pending' | 'processing'
   attachment_oid: string
   engine?: string
+}
+
+/** 工具类别：读工具直接执行，写工具只出提案。 */
+export type AiAgentToolKind = 'read' | 'write'
+
+/** 一次工具调用的终态（服务端 executor 里显式给出的那个值）。 */
+export type AiAgentEventStatus = 'executed' | 'proposed' | 'denied' | 'failed'
+
+/** `POST /ai/agent/run` 的 events[]：一次工具调用一行留痕。 */
+export interface AiAgentEvent {
+  round_no: number
+  /** 白名单外的工具名也会出现在这里（status=denied）。 */
+  tool_name: string | null
+  /** 未知工具没有 kind（null）。 */
+  tool_kind: AiAgentToolKind | null
+  /** 模型给的参数（紧凑 JSON 文本，已按 500 字截断）。 */
+  args_summary: string | null
+  /** 执行结果摘要（已截断）；提案事件里是「等待确认」之类的状态文本。 */
+  result_summary: string
+  status: AiAgentEventStatus
+}
+
+/* ---------------------------------------------------------------------------
+   提案预览（proposal preview）
+   服务端 prepare 阶段产出的结构化预览，直接回给前端渲染确认界面：
+   diff / new_file / mkdir / rename / delete / chmod / row_insert / row_update /
+   row_delete / sql / command；活动域写工具没有 prepare，回落 kind='args'。
+   --------------------------------------------------------------------------- */
+
+/** 预览的判别标签。 */
+export type AiAgentPreviewKind =
+  | 'diff'
+  | 'new_file'
+  | 'mkdir'
+  | 'rename'
+  | 'delete'
+  | 'chmod'
+  | 'row_insert'
+  | 'row_update'
+  | 'row_delete'
+  | 'sql'
+  | 'command'
+  | 'args'
+
+/** 统一 diff（fs_write 改已有文件）：path 是目标路径，diff 是 unified diff 文本。 */
+export interface AiAgentPreviewDiff {
+  kind: 'diff'
+  path: string
+  diff: string
+  /** 差异超过 40KB 被截断。 */
+  truncated?: boolean
+}
+
+/** 新建文件（fs_write 目标不存在）：content 是文件正文。 */
+export interface AiAgentPreviewNewFile {
+  kind: 'new_file'
+  path: string
+  content: string
+  truncated?: boolean
+}
+
+/** 新建目录（fs_mkdir）。 */
+export interface AiAgentPreviewMkdir {
+  kind: 'mkdir'
+  path: string
+}
+
+/** 重命名 / 移动（fs_rename）。 */
+export interface AiAgentPreviewRename {
+  kind: 'rename'
+  from: string
+  to: string
+}
+
+/** 删除（fs_delete）：entries 是将被删掉的条目名。 */
+export interface AiAgentPreviewDelete {
+  kind: 'delete'
+  path: string
+  entries: string[]
+  /** 条目过多，列表被截断。 */
+  entries_truncated?: boolean
+}
+
+/** 改权限（fs_chmod）：from / to 都是八进制字符串（如 "644"）。 */
+export interface AiAgentPreviewChmod {
+  kind: 'chmod'
+  path: string
+  from: string
+  to: string
+}
+
+/** 插入行（db_insert）：columns 是列名，values 是对应值。 */
+export interface AiAgentPreviewRowInsert {
+  kind: 'row_insert'
+  table: string
+  columns: string[]
+  values: Record<string, unknown>
+}
+
+/** 更新行（db_update）：key 是主键条件，values 是要改的列。 */
+export interface AiAgentPreviewRowUpdate {
+  kind: 'row_update'
+  table: string
+  key: Record<string, unknown>
+  values: Record<string, unknown>
+}
+
+/** 删除行（db_delete）：key 是主键条件。 */
+export interface AiAgentPreviewRowDelete {
+  kind: 'row_delete'
+  table: string
+  key: Record<string, unknown>
+}
+
+/** DDL（db_ddl）：destructive 为真表示 DROP / TRUNCATE 这类破坏性语句。 */
+export interface AiAgentPreviewSql {
+  kind: 'sql'
+  sql: string
+  summary: string
+  /** 语句动词（CREATE / ALTER / DROP ...）。 */
+  verb: string
+  /** 作用对象（表名等）。 */
+  target: string
+  destructive: boolean
+}
+
+/** 远程命令（ssh_exec）：target 由服务端 ssh_bridge 决定，客户端不能指定。 */
+export interface AiAgentPreviewCommand {
+  kind: 'command'
+  target: string
+  command: string
+}
+
+/** 活动域写工具的回落预览（prepare 为空时）。 */
+export interface AiAgentPreviewArgs {
+  kind: 'args'
+  args: Record<string, unknown>
+}
+
+/** 提案预览的联合类型；按 kind 判别。 */
+export type AiAgentPreview =
+  | AiAgentPreviewDiff
+  | AiAgentPreviewNewFile
+  | AiAgentPreviewMkdir
+  | AiAgentPreviewRename
+  | AiAgentPreviewDelete
+  | AiAgentPreviewChmod
+  | AiAgentPreviewRowInsert
+  | AiAgentPreviewRowUpdate
+  | AiAgentPreviewRowDelete
+  | AiAgentPreviewSql
+  | AiAgentPreviewCommand
+  | AiAgentPreviewArgs
+
+/** 提案状态机：proposed → executing → confirmed | failed；另有 rejected / expired。 */
+export type AiAgentProposalStatus =
+  | 'proposed'
+  | 'executing'
+  | 'confirmed'
+  | 'rejected'
+  | 'expired'
+  | 'failed'
+
+/** `POST /ai/agent/run` 的 proposals[]：待用户确认的写操作。 */
+export interface AiAgentProposal {
+  /** 后续 confirm / reject 的句柄（32 位 hex）。 */
+  oid: string
+  tool_name: string
+  args_summary: string
+  /** 结构化预览（确认界面用）；没有预览的提案为 null。 */
+  preview: AiAgentPreview | null
+  /** 服务端本地时间，形如 `2026-10-25 12:10:00`（默认 10 分钟有效）。 */
+  expires_at: string
+  /** 确认时是否需要另一位管理员的 6 位动态码（运维写工具为 true）。 */
+  requires_dual_auth: boolean
+  /**
+   * 30 分钟双人授权窗口是否已命中。
+   *
+   * true 表示该 operator 的写权限在窗口内已被另一位管理员批准过，
+   * 确认时直接执行、不再要动态码。
+   */
+  dual_auth_cached: boolean
+}
+
+/** run 的终止原因；null = 正常跑完。 */
+export type AiAgentStopReason = 'max_iterations' | 'token_budget' | 'timeout' | 'cancelled'
+
+/** 全轮累计 token 用量；上游没报时各字段为 null。 */
+export interface AiAgentUsage {
+  prompt_tokens: number | null
+  completion_tokens: number | null
+  total_tokens: number | null
+  cache_read_tokens: number | null
+  cache_write_tokens: number | null
+}
+
+/** `POST /ai/agent/run` 的响应：一次 run 的全部留痕（后端不推流）。 */
+export interface AiAgentRunResponse {
+  request_id: string
+  content: string
+  /** 触顶终止的原因；null = 正常结束。 */
+  stop_reason: AiAgentStopReason | null
+  /** 实际发生的上游调用轮数。 */
+  rounds: number
+  /** 全轮累计 token；null = 上游没报。 */
+  usage: AiAgentUsage | null
+  events: AiAgentEvent[]
+  proposals: AiAgentProposal[]
+}
+
+/** `GET /ai/agent/proposals` 的响应：本人待确认提案。 */
+export interface AiAgentProposalListResponse {
+  proposals: AiAgentProposal[]
+}
+
+/** `GET /ai/agent/runs/{request_id}` 的响应：一次 run 的事件回放。 */
+export interface AiAgentRunReplay {
+  request_id: string
+  events: AiAgentEvent[]
+  /** 后端若一并回带提案则给全；没有该字段时按空处理。 */
+  proposals?: AiAgentProposal[]
+}
+
+/** confirm / reject 的响应：终态 + 执行结果摘要（驳回没有结果）。 */
+export interface AiAgentProposalResult {
+  status: string
+  result_summary?: string
+  /** 双人码审批人（requires_dual_auth 的提案才有）。 */
+  approver_oid?: string
+  /** 本次确认是否命中了 30 分钟双人授权窗口（确认时才有）。 */
+  dual_auth_cached: boolean
 }

@@ -54,8 +54,7 @@ vi.mock('@/components/form/ZSelectPerson.vue', async () => {
 })
 
 // element-plus 整包 mock：真实包会连带引入 theme-chalk 的 .css，node ESM 下无法加载。
-vi.mock('element-plus', async () => {
-  const { defineComponent, Fragment, h, ref } = await import('vue')
+vi.mock('element-plus', async () => {  const { defineComponent, Fragment, h, ref } = await import('vue')
 
   const ElTable = defineComponent({
     name: 'ElTable',
@@ -303,6 +302,47 @@ vi.mock('element-plus', async () => {
   }
 })
 
+vi.mock('@/components/utils/ZPagination.vue', async () => {
+  const { defineComponent, h } = await import('vue')
+  return {
+    default: defineComponent({
+      name: 'ZPagination',
+      props: {
+        total: { type: Number, default: 0 },
+        currentPage: { type: Number, default: 1 },
+        pageSize: { type: Number, default: 20 }
+      },
+      emits: ['update:currentPage', 'update:pageSize', 'change'],
+      setup(props, { emit }) {
+        return () =>
+          h(
+            'div',
+            {
+              class: 'z-pagination-stub',
+              'data-total': String(props.total),
+              'data-page': String(props.currentPage),
+              'data-size': String(props.pageSize)
+            },
+            [
+              h(
+                'button',
+                {
+                  class: 'z-pagination-stub__next',
+                  onClick: () => {
+                    const next = props.currentPage + 1
+                    emit('update:currentPage', next)
+                    emit('change', next, props.pageSize)
+                  }
+                },
+                'next'
+              )
+            ]
+          )
+      }
+    })
+  }
+})
+
 const ocrRow: AiLogRecord = {
   oid: 'oid-1',
   user_oid: 'uid-1',
@@ -379,6 +419,30 @@ const statsFixture: AiLogStats = {
   by_purpose: [
     { purpose: 'ocr', calls: 3, errors: 0, units: 3, total_tokens: 0 },
     { purpose: null, calls: 1, errors: 1, units: 3, total_tokens: 150 }
+  ],
+  by_user: [
+    {
+      user_oid: 'uid-1',
+      name: '张三',
+      calls: 3,
+      errors: 0,
+      total_tokens: 0,
+      units: 3,
+      avg_latency_ms: 200
+    },
+    {
+      user_oid: 'uid-2',
+      name: 'uid-2',
+      calls: 1,
+      errors: 1,
+      total_tokens: 150,
+      units: 3,
+      avg_latency_ms: null
+    }
+  ],
+  by_status: [
+    { status: 'success', calls: 3 },
+    { status: 'timeout', calls: 1 }
   ]
 }
 
@@ -450,7 +514,7 @@ describe('调用日志页', () => {
     const wrapper = mountPage()
     await flushPromises()
 
-    const pagination = wrapper.find('.el-pagination-stub')
+    const pagination = wrapper.find('.z-pagination-stub')
     expect(pagination.attributes('data-total')).toBe('42')
 
     wrapper.unmount()
@@ -470,7 +534,7 @@ describe('调用日志页', () => {
     const wrapper = mountPage()
     await flushPromises()
 
-    await wrapper.find('.el-pagination-stub__next').trigger('click')
+    await wrapper.find('.z-pagination-stub__next').trigger('click')
     await flushPromises()
 
     expect(lastQuery()).toMatchObject({ page: 2, perpage: 20 })
@@ -482,7 +546,7 @@ describe('调用日志页', () => {
     const wrapper = mountPage()
     await flushPromises()
 
-    await wrapper.find('.el-pagination-stub__next').trigger('click')
+    await wrapper.find('.z-pagination-stub__next').trigger('click')
     await flushPromises()
     expect(lastQuery()).toMatchObject({ page: 2 })
 
@@ -583,6 +647,63 @@ describe('调用日志页', () => {
     expect(wrapper.text()).toContain('ai.logs.stats.refreshFailed')
     expect(wrapper.find('.el-table-stub').text()).toContain('张三')
     expect(elMessageErrorSpy).toHaveBeenCalled()
+
+    wrapper.unmount()
+  })
+
+  it('统计概览：按用户表渲染显示名、token、额度与平均延迟', async () => {
+    const wrapper = mountPage()
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('ai.logs.stats.byUser')
+
+    // 概览里第 4 张表是按用户（前 3 张：按日、按服务商、按场景）。
+    const byUser = wrapper.findAll('.ai-log-stats__grid')[3]!
+    expect(byUser.text()).toContain('张三')
+    expect(byUser.text()).toContain('uid-1')
+    // 名字查不到时后端回落到 oid，前端原样显示而不是盖成「未知用户」
+    expect(byUser.text()).toContain('uid-2')
+    expect(byUser.text()).toContain('150')
+    expect(byUser.text()).toContain('200 ai.logs.latencyUnit')
+
+    // 没有延迟观测的行给占位符，不是 0
+    const secondRow = byUser.findAll('tbody tr')[1]!
+    expect(secondRow.findAll('td')[5]!.text()).toBe('—')
+
+    wrapper.unmount()
+  })
+
+  it('统计概览：按状态表把状态翻成中文并给出调用数', async () => {
+    const wrapper = mountPage()
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('ai.logs.stats.byStatus')
+
+    const byStatus = wrapper.findAll('.ai-log-stats__grid')[4]!
+    expect(byStatus.text()).toContain('ai.logs.statusSuccess')
+    expect(byStatus.text()).toContain('ai.logs.statusTimeout')
+
+    const statusRows = byStatus.findAll('tbody tr')
+    expect(statusRows).toHaveLength(2)
+    expect(statusRows[0]!.findAll('td')[1]!.text()).toBe('3')
+    expect(statusRows[1]!.findAll('td')[1]!.text()).toBe('1')
+
+    wrapper.unmount()
+  })
+
+  it('统计响应里两张新表为空时走空态文案，不影响其余小计', async () => {
+    vi.mocked(getAiLogStats).mockResolvedValue({
+      ...statsFixture,
+      by_user: [],
+      by_status: []
+    })
+    const wrapper = mountPage()
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('ai.logs.stats.byUser')
+    expect(wrapper.text()).toContain('ai.logs.stats.byStatus')
+    expect(wrapper.text().split('ai.logs.stats.noData').length - 1).toBe(2)
+    expect(wrapper.text()).toContain('ai.logs.stats.byProvider')
 
     wrapper.unmount()
   })

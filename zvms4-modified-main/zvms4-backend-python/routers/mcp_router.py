@@ -1,15 +1,38 @@
-from fastapi import APIRouter, HTTPException, Depends, Query
-from typing import Dict, Any
-from db import backends
-from util.activity_statistics import describe_durations, to_mcp_statistics
+"""MCP（Model Context Protocol）只读端点。
+
+这些端点给 AI agent 与外部工具提供**只读**的活动数据：没有敏感操作，也没有任何
+鉴权旁路——每个端点都单独判 admin，与 ``/api/v2/*`` 的写面完全隔离。
+
+审批与响应外壳（``{"success": true, "data": ...}``）留在这里，查询逻辑全部搬到了
+``services.agent.tool_impl``：agent 工具与 MCP 端点必须回答同一份数据，各写一遍
+「怎么查活动、怎么投影字段」第一次改投影就会漂移。
+
+``validate_object_id`` 的调用刻意留在本模块：非法 id 的 400 文案
+（``Invalid Object ID format``）是既有契约，且只该由 HTTP 层决定；共享层给的是
+``AgentError(404)``，由这里翻译成 MCP 的 ``Activity not found``。
+"""
+
+from typing import Any, Dict
+
+from fastapi import APIRouter, Depends, HTTPException, Query
+
+from services.agent import tool_impl
+from services.agent.tool_impl import AgentError
 from util.object_id import get_current_user, validate_object_id
-import re
 
 router = APIRouter()
 
-# MCP (Model Context Protocol) Server Endpoints
-# These endpoints provide read-only access to activity data for AI agents and tools
-# No sensitive operations or authentication bypasses are included
+NOT_FOUND_DETAIL = "Activity not found"
+
+
+def _require_admin(user: dict) -> None:
+    if "admin" not in user["per"]:
+        raise HTTPException(status_code=403, detail="权限不足")
+
+
+def _activity_error(exc: AgentError) -> HTTPException:
+    """共享层的错误 → MCP 的历史文案（形状与状态码都不变）。"""
+    return HTTPException(status_code=exc.status_code, detail=NOT_FOUND_DETAIL)
 
 
 @router.get("/activities")
@@ -26,61 +49,17 @@ async def mcp_get_activities(
     MCP endpoint to retrieve activities with pagination and filtering.
     Read-only access to activity data for AI agents.
     """
-    if "admin" not in user["per"]:
-        raise HTTPException(status_code=403, detail="权限不足")
+    _require_admin(user)
 
-    # Validate activity types
-    if activity_type == "all" or activity_type == "":
-        target_types = ["on-campus", "off-campus", "social-practice", "hybrid"]
-    else:
-        target_types = activity_type.split(",")
-        valid_types = ["on-campus", "off-campus", "social-practice", "hybrid"]
-        target_types = [t for t in target_types if t in valid_types]
-        if not target_types:
-            target_types = valid_types
-
-    # Escape search term for safety
-    search = re.escape(search) if search else ""
-
-    activities, count = await backends.get_activities_repo().list_raw(
+    data = await tool_impl.list_activities(
+        page=page,
+        perpage=perpage,
         search=search,
-        atypes=target_types,
+        activity_type=activity_type,
         sort=sort,
         asc=asc,
-        page=page,
-        size=perpage,
     )
-
-    projected_keys = [
-        "_id",
-        "name",
-        "description",
-        "type",
-        "date",
-        "location",
-        "duration",
-        "status",
-        "creator",
-        "createdAt",
-        "updatedAt",
-    ]
-    activities = [
-        {key: activity[key] for key in projected_keys if key in activity}
-        for activity in activities
-    ]
-
-    return {
-        "success": True,
-        "data": {
-            "activities": activities,
-            "pagination": {
-                "total": count,
-                "page": page,
-                "perpage": perpage,
-                "totalPages": (count + perpage - 1) // perpage,
-            },
-        },
-    }
+    return {"success": True, "data": data}
 
 
 @router.get("/activities/{activity_id}")
@@ -91,38 +70,17 @@ async def mcp_get_activity_details(
     MCP endpoint to retrieve detailed information about a specific activity.
     Read-only access for AI agents.
     """
-
-    if "admin" not in user["per"]:
-        raise HTTPException(status_code=403, detail="权限不足")
+    _require_admin(user)
 
     try:
         activity_oid = validate_object_id(activity_id)
     except (HTTPException, ValueError):
         raise HTTPException(status_code=400, detail="Invalid activity ID format")
 
-    activity = await backends.get_activities_repo().get(activity_id)
-
-    if not activity:
-        raise HTTPException(status_code=404, detail="Activity not found")
-
-    # Get member count
-    members_count = await backends.get_members_repo().count_for_activity(activity_id)
-
-    projected_keys = [
-        "name",
-        "description",
-        "type",
-        "date",
-        "location",
-        "duration",
-        "status",
-        "creator",
-        "createdAt",
-        "updatedAt",
-    ]
-    data = {key: activity[key] for key in projected_keys if key in activity}
-    data["id"] = activity_id
-    data["members_count"] = members_count
+    try:
+        data = await tool_impl.get_activity_detail(activity_oid)
+    except AgentError as exc:
+        raise _activity_error(exc) from None
 
     return {"success": True, "data": data}
 
@@ -135,36 +93,19 @@ async def mcp_get_activity_statistics(
     MCP endpoint to retrieve statistical data for an activity.
     Provides aggregated statistics without exposing individual member data.
     """
-
-    if "admin" not in user["per"]:
-        raise HTTPException(status_code=403, detail="权限不足")
+    _require_admin(user)
 
     try:
         validate_object_id(activity_id)
     except (HTTPException, ValueError):
         raise HTTPException(status_code=400, detail="Invalid activity ID format")
 
-    # Check if activity exists
-    activity_exists = await backends.get_activities_repo().get(activity_id)
+    try:
+        data = await tool_impl.activity_statistics(activity_id)
+    except AgentError as exc:
+        raise _activity_error(exc) from None
 
-    if not activity_exists:
-        raise HTTPException(status_code=404, detail="Activity not found")
-
-    # Get the effective members' durations for statistics (same population as
-    # the reconstruction: pending/refused memberships are not counted)
-    members = await backends.get_members_repo().list_by_activity(
-        activity_id, status="effective"
-    )
-
-    if not members:
-        return {"success": True, "data": {"total_members": 0, "statistics": None}}
-
-    durations = [float(member["duration"]) for member in members]
-    distribution = describe_durations(durations)
-    if distribution is None:
-        return {"success": True, "data": {"total_members": 0, "statistics": None}}
-
-    return {"success": True, "data": to_mcp_statistics(distribution)}
+    return {"success": True, "data": data}
 
 
 @router.get("/activities/types/summary")
@@ -175,29 +116,9 @@ async def mcp_get_activity_types_summary(
     MCP endpoint to get a summary of activities by type.
     Provides aggregate counts without sensitive details.
     """
+    _require_admin(user)
 
-    if "admin" not in user["per"]:
-        raise HTTPException(status_code=403, detail="权限不足")
-
-    results = await backends.get_activities_repo().types_summary()
-
-    summary = {}
-    total_activities = 0
-
-    for result in results:
-        activity_type = result["type"]
-        count = result["count"]
-        total_activities += count
-
-        summary[activity_type] = {
-            "count": count,
-            "status_breakdown": result.get("status_breakdown", {}),
-        }
-
-    return {
-        "success": True,
-        "data": {"total_activities": total_activities, "by_type": summary},
-    }
+    return {"success": True, "data": await tool_impl.activity_types_summary()}
 
 
 @router.get("/activities/search/suggestions")
@@ -210,22 +131,10 @@ async def mcp_get_activity_search_suggestions(
     MCP endpoint to get activity name suggestions for search functionality.
     Helps AI agents provide better search assistance.
     """
+    _require_admin(user)
 
-    if "admin" not in user["per"]:
-        raise HTTPException(status_code=403, detail="权限不足")
+    return {
+        "success": True,
+        "data": await tool_impl.activity_search_suggestions(query=query, limit=limit),
+    }
 
-    # Escape the query for regex safety
-    escaped_query = re.escape(query)
-
-    raw_suggestions, _total = await backends.get_activities_repo().list_raw(
-        search=escaped_query,
-        sort=None,
-        page=1,
-        size=limit,
-    )
-    suggestions = [
-        {key: row[key] for key in ("_id", "name", "type") if key in row}
-        for row in raw_suggestions
-    ]
-
-    return {"success": True, "data": {"query": query, "suggestions": suggestions}}

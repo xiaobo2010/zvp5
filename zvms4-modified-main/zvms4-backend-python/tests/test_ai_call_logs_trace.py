@@ -90,7 +90,7 @@ def _client(user: dict | None = None) -> TestClient:
 
 
 @pytest.fixture(autouse=True)
-def _isolated_gateway(monkeypatch):
+def _isolated_gateway(monkeypatch, quiet_ai_governance):
     credentials._cache.clear()
     routing.reset_state()
     rate_limit.reset_state()

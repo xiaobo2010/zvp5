@@ -27,7 +27,9 @@ from tasks.retention import (
     AUDIT_LEVEL,
     AUDIT_TYPE,
     RetentionBusy,
+    ai_agent_events_retention_days,
     ai_call_logs_retention_days,
+    ai_prompt_retention_days,
     progress_snapshot,
     retention_cutoff,
     retention_cutoffs,
@@ -107,7 +109,7 @@ async def retention_preview(
     Counts only — nothing is deleted here, and the cutoffs are the ones the next
     run would use (``tasks.retention`` 的同一套函数与窗口配置)。
 
-    ``ai_call_logs`` 是只读诊断项：它查不了（表未迁移 / 权限不足）时只把
+    三张 ``ai_*`` 表是只读诊断项：查不了（表未迁移 / 权限不足）时只把
     ``deletable`` 置 ``null`` 并记一条 warning，绝不让整个预览 500/503。
     """
     await _require_system_admin(user)
@@ -124,6 +126,26 @@ async def retention_preview(
     except Exception:
         _logger.warning("retention preview: ai_call_logs count failed", exc_info=True)
         deletable_ai = None
+    prompt_cutoff = retention_cutoff(datetime.now(), ai_prompt_retention_days())
+    events_cutoff = retention_cutoff(datetime.now(), ai_agent_events_retention_days())
+    try:
+        deletable_prompts = await backends.get_ai_prompt_audit_repo(
+            session
+        ).count_expired(prompt_cutoff)
+    except Exception:
+        _logger.warning(
+            "retention preview: ai_prompt_audit count failed", exc_info=True
+        )
+        deletable_prompts = None
+    try:
+        deletable_events = await backends.get_ai_agent_events_repo(
+            session
+        ).count_expired(events_cutoff)
+    except Exception:
+        _logger.warning(
+            "retention preview: ai_agent_events count failed", exc_info=True
+        )
+        deletable_events = None
     return {
         "status": "ok",
         "code": 200,
@@ -139,6 +161,14 @@ async def retention_preview(
             "ai_call_logs": {
                 "cutoff": ai_cutoff.isoformat(),
                 "deletable": deletable_ai,
+            },
+            "ai_prompt_audit": {
+                "cutoff": prompt_cutoff.isoformat(),
+                "deletable": deletable_prompts,
+            },
+            "ai_agent_events": {
+                "cutoff": events_cutoff.isoformat(),
+                "deletable": deletable_events,
             },
         },
     }

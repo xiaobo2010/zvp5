@@ -16,6 +16,18 @@
 回了 usage，则 token 列与 UNITS 都来自 usage。不要用 0 代替 NULL：0 是一个真实
 的 token 数，会把「不知道」伪装成观测值。
 
+缓存列（``cache_read_tokens`` / ``cache_write_tokens``）沿用同一条 NULL 语义：
+NULL = 上游没报缓存用量（或这个上游压根没有缓存计费），不是「0 个缓存 token」。
+同一行的 ``prompt_tokens`` **已经包含**命中部分（OpenAI 与 DeepSeek 都是这个口径），
+所以缓存命中率 = ``cache_read_tokens / prompt_tokens``，不要再改成
+``cache_read / (prompt_tokens + cache_read)``。
+
+Anthropic 形状是唯一需要**还原**分母的一家：它的 ``input_tokens`` 只是「最后一个
+断点之后的未缓存部分」，总输入 = ``input_tokens + cache_read_input_tokens +
+cache_creation_input_tokens``。所以 ``prompt_tokens`` 缺失时按这个口径还原（仅当
+``input_tokens`` 存在时），``total_tokens`` 仍然只认上游原值——补的是命中率的分母，
+不是替上游算合计。
+
 本模块是纯函数 + 一个增量解析器：不读配置、不写库、不记日志，可以离线单测。
 """
 
@@ -37,6 +49,12 @@ MAX_BUFFER_BYTES = 64 * 1024
 
 _FRAME_SEPARATORS = (b"\r\n\r\n", b"\n\n")
 
+# 计费口径的三个核心列：判「这次到底有没有拿到 usage」只看这三个。
+_CORE_TOKEN_KEYS = ("prompt_tokens", "completion_tokens", "total_tokens")
+
+# 缓存列：附加信息，不参与上面那个判定（理由见 ``has_tokens``）。
+_CACHE_TOKEN_KEYS = ("cache_read_tokens", "cache_write_tokens")
+
 
 def _to_int(value: Any) -> int | None:
     """上游的数值可能是 int / float / 数字字符串；认不出就是「没报」。"""
@@ -49,29 +67,101 @@ def _to_int(value: Any) -> int | None:
     return number if number >= 0 else None
 
 
+def _cache_tokens(usage: dict[str, Any]) -> tuple[int | None, int | None]:
+    """``usage`` → ``(cache_read_tokens, cache_write_tokens)``，各自缺失为 ``None``。
+
+    三家上游的字段名互不相同，优先级固定成「先看 OpenAI 的嵌套形状，再看
+    Anthropic 的平铺字段，最后看 DeepSeek 的命中字段」——同一个响应里不该出现多
+    套，但网关聚合层（OpenRouter / LiteLLM）会把它们拼在一起，所以按顺序取第一个
+    非 None 的，而不是相加（相加会把同一份缓存读算两次）。
+    """
+    details = usage.get("prompt_tokens_details")
+    if not isinstance(details, dict):
+        details = {}
+    creation = usage.get("cache_creation")
+    if not isinstance(creation, dict):
+        creation = {}
+
+    read = _to_int(details.get("cached_tokens"))
+    if read is None:
+        read = _to_int(usage.get("cache_read_input_tokens"))
+    if read is None:
+        read = _to_int(usage.get("prompt_cache_hit_tokens"))
+
+    write = _to_int(details.get("cache_write_tokens"))
+    if write is None:
+        write = _to_int(usage.get("cache_creation_input_tokens"))
+    if write is None:
+        # Anthropic 的 5 分钟 / 1 小时缓存分开计价，但审计表只有一列「写入量」。
+        # 两个都在就相加（同一次调用写入的总量），只有一个就取那一个。
+        short = _to_int(creation.get("ephemeral_5m_input_tokens"))
+        long = _to_int(creation.get("ephemeral_1h_input_tokens"))
+        if short is not None and long is not None:
+            write = short + long
+        elif short is not None:
+            write = short
+        elif long is not None:
+            write = long
+
+    return read, write
+
+
 def token_fields(usage: Any) -> dict[str, int | None]:
-    """``usage`` dict → 三个 token 列（缺哪个留 ``None``，不是 0）。
+    """``usage`` dict → 五个 token 列（缺哪个留 ``None``，不是 0）。
 
     返回的键与 ``AI_CALL_LOGS`` 的列同名。``total_tokens`` 缺失时**不**用
     prompt+completion 推算：上游给的合计可能含缓存/推理 token，自己加出来的数
     会与供应商账单对不上，而这一列存在的意义正是对账。
+
+    唯一的例外是 ``prompt_tokens`` 的 Anthropic 还原：缺 ``prompt_tokens`` 而有
+    ``input_tokens`` 时按「input + 命中 + 写入」补出总输入。那是官方定义的还原，
+    不是估算；没有 ``input_tokens`` 就依旧留 None。
     """
     fields: dict[str, int | None] = {
         "prompt_tokens": None,
         "completion_tokens": None,
         "total_tokens": None,
+        "cache_read_tokens": None,
+        "cache_write_tokens": None,
     }
     if not isinstance(usage, dict):
         return fields
-    fields["prompt_tokens"] = _to_int(usage.get("prompt_tokens"))
+
+    # 缓存两列先算：``prompt_tokens`` 的 Anthropic 还原要用到它们（见下）。
+    read, write = _cache_tokens(usage)
+    fields["cache_read_tokens"] = read
+    fields["cache_write_tokens"] = write
+
+    prompt_tokens = _to_int(usage.get("prompt_tokens"))
+    if prompt_tokens is None:
+        # Anthropic 形状的 usage 没有 ``prompt_tokens``，只有 ``input_tokens``——
+        # 而按官方定义它只是「最后一个 cache 断点之后的**未缓存**部分」，总输入
+        # = ``input_tokens + cache_read_input_tokens + cache_creation_input_tokens``。
+        # 不还原的话「命中列有值、分母 NULL」，命中率恒为 None，缓存这两列白记。
+        #
+        # 这**不是**在推算 ``total_tokens``：那一列仍然只认上游原值，缺了就是
+        # None（自己加出来的合计会与供应商账单对不上）。这里补的只是命中率的分母。
+        base = _to_int(usage.get("input_tokens"))
+        if base is not None:
+            prompt_tokens = base + (read or 0) + (write or 0)
+    fields["prompt_tokens"] = prompt_tokens
+
     fields["completion_tokens"] = _to_int(usage.get("completion_tokens"))
     fields["total_tokens"] = _to_int(usage.get("total_tokens"))
     return fields
 
 
 def has_tokens(fields: dict[str, int | None]) -> bool:
-    """是否真的拿到了 token 数（三个全空的 usage 等于没报）。"""
-    return any(value is not None for value in fields.values())
+    """是否真的拿到了 token 数（三个**核心**列全空 = 没报）。
+
+    只认 ``_CORE_TOKEN_KEYS``，缓存列不参与。理由：调用方用这个判断决定「token
+    列落值还是留 NULL、units 走实测还是估算」。若一帧只带
+    ``prompt_tokens_details.cached_tokens`` 而三个核心列全空，把它算成「拿到
+    usage」会让 units 从「按字符估算」退化成 ``units_from_total_tokens(None)`` 的
+    恒定 1，额度被系统性低估；同时该行出现「有 token 值但 units 是估算值」的
+    混合态，读侧的不变式就失效了。
+    """
+    return any(fields.get(key) is not None for key in _CORE_TOKEN_KEYS)
 
 
 def units_from_total_tokens(total_tokens: int | None) -> int:
@@ -149,6 +239,8 @@ class StreamUsageTracker:
             "prompt_tokens": None,
             "completion_tokens": None,
             "total_tokens": None,
+            "cache_read_tokens": None,
+            "cache_write_tokens": None,
         }
 
     @property
@@ -162,6 +254,14 @@ class StreamUsageTracker:
     @property
     def total_tokens(self) -> int | None:
         return self._fields["total_tokens"]
+
+    @property
+    def cache_read_tokens(self) -> int | None:
+        return self._fields["cache_read_tokens"]
+
+    @property
+    def cache_write_tokens(self) -> int | None:
+        return self._fields["cache_write_tokens"]
 
     @property
     def captured(self) -> bool:

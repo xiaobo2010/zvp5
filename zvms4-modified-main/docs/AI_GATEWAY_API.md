@@ -3,8 +3,9 @@
 适用代码：`zvms4-backend-python` @ `d25417b`（2026-10-24）
 挂载点：`main.py` → `app.include_router(ai_router.router, prefix="/api/ai")`
 + `app.include_router(ai_api_keys_router.router, prefix="/api/ai/api-keys")`
++ `app.include_router(ai_agent_router.router, prefix="/api/ai/agent")`
 
-网关有三件事：**LLM 对话**（OpenAI 兼容面）、**OCR**（多引擎池）、**运维面**（凭据 / 引擎 / 额度 / 流水 / 健康）。
+网关有四件事：**LLM 对话**（OpenAI 兼容面）、**OCR**（多引擎池）、**智能体**（工具白名单 + 写操作人工确认）、**运维面**（凭据 / 引擎 / 额度 / 流水 / 健康）。
 OCR 还有一条附件侧入口 `POST /api/attachments/{oid}/ocr`，与 `/api/ai/ocr` 共用同一套计价。
 
 ---
@@ -276,6 +277,8 @@ Content-Type: application/json
 |---|---|---|
 | GET | `/api/ai/logs` | admin |
 | GET | `/api/ai/logs/stats` | admin |
+| GET | `/api/ai/prompts` | admin（见 6.8） |
+| GET | `/api/ai/prompts/{oid}` | admin（读正文会写访问审计） |
 
 ### 6.1 GET /api/ai/logs —— 明细
 
@@ -325,6 +328,8 @@ Content-Type: application/json
 | `first_token_ms` | NUMBER(10) | 流式首块到达耗时；非流式 NULL |
 | `engine_kind` | VARCHAR2(24) | OCR 引擎类型（`tencent`/`aliyun`/`rapidocr`/`baidu`/`groq`/`zhipu`） |
 | `attachment_oid` | VARCHAR2(24) | OCR 针对的附件；无外键（附件删了事实仍成立） |
+| `round_no` | NUMBER(3) | agent 一次 run 的第几轮（1 起）；NULL = 非 agent 轮次 |
+| `roles_snapshot` | VARCHAR2(64) | 调用时的角色快照（逗号连接）；NULL = 未采集 |
 | `created_at` | TIMESTAMP | 写入时刻（naive 本地时间） |
 
 **正文（prompt / completion）一律不落库**——这是合规决定，不是缺口。表里只有元数据，
@@ -364,6 +369,7 @@ Content-Type: application/json
 | 前端对话页 `ZAiChat` | `chat`（请求头 `X-AI-Scene: chat`） |
 | 前端 markdown 助手 `ZMarkdownAiDialog` | `markdown-assistant`（`X-AI-Scene: markdown-assistant`） |
 | OCR（入队 / 逐次尝试 / 拒绝） | `ocr` |
+| agent（`/api/ai/agent/run` 的每一轮） | `agent` |
 | 第三方 SDK / curl | NULL（未知来源） |
 
 `X-AI-Scene` 只影响审计：缺失、超长或含非法字符都不会拒绝请求（后端清洗成
@@ -386,22 +392,71 @@ Content-Type: application/json
   ],
   "by_provider": [{ "provider": "team", "calls": 9, "errors": 0, "units": 12, "total_tokens": 3900 }],
   "by_model":    [{ "model": "gpt-x",  "calls": 9, "errors": 0, "units": 12, "total_tokens": 3900 }],
-  "by_purpose":  [{ "purpose": "chat", "calls": 7, "errors": 1, "units": 10, "total_tokens": 3900 }]
+  "by_purpose":  [{ "purpose": "chat", "calls": 7, "errors": 1, "units": 10, "total_tokens": 3900 }],
+  "by_user": [
+    { "user_oid": "000000000000000000000003", "name": "张三", "calls": 7, "errors": 1,
+      "total_tokens": 3900, "units": 10, "avg_latency_ms": 760 }
+  ],
+  "by_status": [
+    { "status": "success",  "calls": 11 },
+    { "status": "rejected", "calls": 1 }
+  ],
+  "cache": { "calls": 12, "cached_calls": 4, "prompt_tokens": 3000,
+             "cache_read_tokens": 1200, "cache_write_tokens": 0, "hit_rate": 0.4 }
 }
 ```
 
 - `errors` = 所有 `status != 'success'` 的行（`rejected` / `busy` 也算：运营关心「有多少次
   没成」，上游挂了还是我们挡了由 `status` 再看）。
 - token 合计为 `0` 表示窗口内**没有任何观测值**（与行级 NULL 的「未知」不同）。
-- 分组小计最多 50 组，按调用数降序；`provider` / `model` / `purpose` 为 NULL 的行归到
-  `null` 桶（未知来源）。
-- 四部分来自同一个时间窗口：分开查会让「总数」与「明细合计」跨分钟对不上。
+- 分组小计最多 50 组，按调用数降序；`provider` / `model` / `purpose` / `status` 为 NULL
+  的行归到 `null` 桶（未知来源）。
+- `by_user` 是「谁在花钱」：top 50，`name` 由 `LEFT JOIN USERS` 取显示名，账号已删/查不到
+  时**回落 oid 字符串**（审计行要活过账号删除，用「未知用户」盖掉就再也对不上了）。
+  `avg_latency_ms` 为窗口内均值，没有观测时为 `null`。
+- `by_status` 只回 `status` + `calls`：`errors` 回答「有多少次没成」，这一层回答「是谁挡的」。
+- 所有部分来自同一个时间窗口：分开查会让「总数」与「明细合计」跨分钟对不上。
 - 窗口只按时间切，不叠用户/模型过滤——细分查询用 `/api/ai/logs` 的过滤条件。
 
 ### 6.7 保留期
 
 定时任务清理，默认 90 天（`AI_CALL_LOGS_RETENTION_DAYS`），没有手工删除端点；统计窗口
 上限与之对齐。`request_id` 有索引，按编号追一条链不会全表扫。
+
+同一轮日清还会处理两张审计表：`AI_AGENT_EVENTS`（与调用流水同窗，工具事件和流水是同一次
+run 的两面）与 `AI_PROMPT_AUDIT`（`AI_PROMPT_RETENTION_DAYS`，默认 30 天，见 6.8）。
+
+### 6.8 受控的 prompt 留存与行为监控
+
+`AI_CALL_LOGS` 的「零正文」原则不变；`AI_PROMPT_AUDIT` 是**唯一**的正文例外，只为一件事
+存在：出现安全事件 / 申诉 / 质量评估时，能还原学生会（`department`）的对话问了什么。
+
+| 事项 | 口径 |
+|---|---|
+| 捕获条件 | 调用者 `per` 与 `AI_PROMPT_CAPTURE_ROLES`（默认 `("department",)`）相交；覆盖 `chat` / `markdown-assistant` / `agent` 三种场景（OCR 没有 prompt） |
+| 捕获内容 | `messages` 中**最后一条** `role=user` 的正文（多轮对话的每一轮请求各留一条，不重复存历史轮次） |
+| 脱敏 | 18 位身份证（含 `X` 校验位）→ 前 3 位 + `*`×11 + 后 4 位；11 位手机号（`1[3-9]` 开头）→ 前 3 位 + `*`×6 + 后 2 位。正则在服务端，先脱敏后截断 |
+| 上限 / 保留 | 单条截断至 `AI_PROMPT_MAX_CHARS`（默认 8000 字符）；保留 `AI_PROMPT_RETENTION_DAYS`（默认 30 天） |
+| 写入失败 | 只记一条 **不含正文** 的 WARNING，绝不影响主请求 |
+| 读取 | 只有 `GET /api/ai/prompts`（元数据）与 `GET /api/ai/prompts/{oid}`（正文）；后者每次读取写一条 `APP_LOGS`（`type=ai_prompt_access`、`level=info`，随日志保留期清理） |
+
+`AI_PROMPT_CAPTURE_ROLES = ()` 表示关闭正文留存（空集合是显式关闭，不是配置写坏）。
+
+**审阅端点**：
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/api/ai/prompts?user_oid=&days=&page=&perpage=` | admin。**只回元数据**：`oid`、`user_oid`、`user_name`、`purpose`、`roles_snapshot`、`created_at`、`prompt_chars`（库里 `LENGTH` 算，不回正文）。`days` 1–90 默认 7（滚动窗口），`page` ≥1，`perpage` 1–100 |
+| GET | `/api/ai/prompts/{oid}` | admin。回完整正文（含 `request_id`）；每次调用写一条访问审计（目标 oid + 目标 user_oid，**不记正文**）。oid 形状非法或不存在一律 `404 AI_PROMPT_NOT_FOUND` |
+
+**`ai_chat_burst` 风控规则**（种子随 `V033` 落库，只告警不封禁）：
+
+- 证据：`AI_CALL_LOGS` 里该用户窗口内的 `capability='chat'` 行数（含 `rejected` / `busy`；
+  agent 的每一轮也是一行 chat）。默认阈值 80 次 / 1 小时 / `mode=alert`。
+- 触发点：chat 请求完成处（成功或扣费后）与 agent run 完成处各评估一次，60 秒
+  `(trigger, user)` 节流兜底；规则可在 `/api/v3/ban/rules` 里调阈值或切 `ban`。
+- `department` 在自动封禁豁免名单里（`NO_AUTO_BAN_ROLES`）：即使切成 `ban` 也只记证据与告警，
+  不改现有语义。
 
 
 ---
@@ -572,7 +627,108 @@ client = OpenAI(
 
 ---
 
-## 10. 错误码总表
+## 10. 智能体 `/api/ai/agent`
+
+服务端 agent 循环：模型按 OpenAI function-calling 协议要求调用工具，网关执行**只读**
+工具、把**写**工具变成待确认提案，用户确认后才以**他自己的权限**执行。
+
+| 方法 | 路径 | 权限 |
+|---|---|---|
+| POST | `/api/ai/agent/run` | 角色在 `AI_ALLOWED_ROLES` 内（默认 `admin` / `department`） |
+| POST | `/api/ai/agent/proposals/{oid}/confirm` | 提案归属人 |
+| POST | `/api/ai/agent/proposals/{oid}/reject` | 提案归属人 |
+
+错误体与 `/v1/chat/completions` 同形（`{"error": {"message", "type", "code"}}`），并带
+`X-AI-Request-Id`。
+
+### 10.1 POST /api/ai/agent/run —— 跑一次会话
+
+```json
+{ "messages": [{ "role": "user", "content": "查一下图书馆志愿，把张三的时长改成 6 小时" }],
+  "model": "gpt-x" }
+```
+
+| 字段 | 必填 | 说明 |
+|---|---|---|
+| `messages` | 是 | 1–50 条；`role` 只能是 `system` / `user` / `assistant`（`tool` 由服务端产生，客户端伪造会被 400） |
+| `model` | 否 | 必须在**该用户可见目录**里；省略时取目录里第一个模型 |
+
+响应：
+
+```json
+{
+  "request_id": "9f2c…",
+  "content": "已生成待确认提案，请在页面上确认。",
+  "events": [
+    { "round_no": 1, "tool_name": "search_activities", "tool_kind": "read",
+      "args_summary": "{\"query\":\"图书馆\"}", "result_summary": "…", "status": "executed" }
+  ],
+  "proposals": [
+    { "oid": "3ab4…", "tool_name": "update_member_duration",
+      "args_summary": "{\"activity_id\":\"…\"}", "expires_at": "2026-10-25 12:10:00" }
+  ]
+}
+```
+
+`events[].status` ∈ `executed` / `proposed` / `denied` / `failed`。被拒的工具（不在白名单、
+无权限、参数非法）**不会中断会话**：网关把错误作为 tool 消息回给模型，让它自己纠偏。
+
+### 10.2 工具清单（封闭集合）
+
+读工具（8 个，直接执行）：
+
+| 工具 | 参数 | 权限镜像 |
+|---|---|---|
+| `search_activities` | `query`、`limit`（1–20） | 登录即可（同 `GET /api/v2/activities`） |
+| `list_activities` | `page`、`perpage`（1–100）、`activity_type` | 同上 |
+| `get_activity` | `activity_id` | 同上（同 `GET /api/v2/activities/{id}`） |
+| `activity_statistics` | `activity_id` | 团支书及以上（同统计端点） |
+| `list_activity_members` | `activity_id`、`page`、`perpage`、`search` | 登录即可（同成员列表端点） |
+| `user_volunteer_time` | `user_id`（缺省=自己） | 登录即可（同 `GET /api/v2/users/{id}/time`） |
+| `user_activities` | `user_id`（缺省=自己）、`page` | 同上 |
+| `list_groups` | `page`、`size` | 登录即可；权限组清单只对有管理权限者返回 |
+
+写工具（2 个，**一律只生成提案，不直接执行**）：
+
+| 工具 | 参数 | 权限镜像 |
+|---|---|---|
+| `update_member_duration` | `activity_id`、`member_id`、`duration`（小时，非负） | `admin` / `department`（同成员时长端点） |
+| `set_member_status` | `activity_id`、`member_id`、`status` ∈ `effective`/`pending`/`refused` | `admin` / `department`（同成员审核端点） |
+
+白名单以外的工具名一律拒绝（落 `denied` 事件）。工具的**能力由注册表限制**，不靠 prompt。
+
+### 10.3 写操作 human-in-the-loop
+
+1. 模型调用写工具 → 网关**不执行**，生成提案：`AI_AGENT_EVENTS` 一行 `status='proposed'`，
+   记录 `args_hash`（落库参数文本的 sha256）、`args_summary`、`actor_oid`、10 分钟有效期；
+2. 用户在平台上确认 → `POST /proposals/{oid}/confirm`；
+3. 服务端**二次校验**：提案属于当前 actor、状态仍是 `proposed`、未过期、`args_hash`
+   与落库参数一致、**当前用户**仍有该工具权限 → 才以该用户权限执行；
+4. 终态：`confirmed` / `rejected` / `expired` / `denied` / `failed`。
+
+| 端点 | 成功 | 失败语义 |
+|---|---|---|
+| `POST /proposals/{oid}/confirm` | `{"status":"confirmed","result_summary":"…"}` | `404` 不存在（含 oid 形状不对）、`403` 非本人提案 / 执行时无权限、`409` 已处理 / 参数哈希不符 / 工具已下线、`410` 已过期 |
+| `POST /proposals/{oid}/reject` | `{"status":"rejected"}` | 同上（`410` 只对已过期提案） |
+
+时长/状态落地后与 REST 端点一样重算该用户的时长缓存（`allow_cache=False`）；重算失败只
+记 WARNING，不回滚已完成的写。
+
+### 10.4 计费与审计口径
+
+- **一次 `run` 的每一轮各记一条流水、各扣一次额度**：`AI_CALL_LOGS` 里 `capability='chat'`、
+  `purpose='agent'`、`round_no` 递增、`request_id` 全轮共用。所以配额面板上「10 轮的一次
+  run」看起来是 10 次调用——按真实上游成本记账，而不是按用户点了几个按钮。
+- 每一轮都走与 `/v1/chat/completions` 相同的频控、额度预检、并发闸门与熔断；
+  `AI_CALL_LOGS.roles_snapshot` 冻结该轮调用时的角色。
+- 每次工具调用写一条 `AI_AGENT_EVENTS`（含被拒/过期/驳回的）；prompt 正文按受控规则
+  留 `AI_PROMPT_AUDIT`（一次 run 只留入口那一份，见 6.8）。
+- 成本闸：`AI_AGENT_MAX_ITERATIONS`（默认 10 轮）与 `AI_AGENT_TOKEN_BUDGET`（默认
+  100000 token，含 prompt + completion）。任一触顶即终止，`content` 会说明原因。
+
+---
+
+## 11. 错误码总表
 
 | code | HTTP | 含义 |
 |---|---|---|
@@ -605,12 +761,24 @@ client = OpenAI(
 | `AI_OCR_ENGINE_*` | 400/404/409 | 引擎相关 |
 | `AI_QUOTA_BAD_KIND` / `AI_QUOTA_BAD_LIMIT` | 400 | 额度参数非法 |
 | `AI_LOGS_BAD_FILTER` | 400 | 流水过滤参数非法 |
+| `AI_AGENT_BAD_ARGUMENTS` | 400 | agent 入参/消息不合法 |
+| `AI_AGENT_BAD_ARGUMENT` | 400 | 工具参数非法（类型/枚举/上下界） |
+| `AI_AGENT_NOT_FOUND` | 404 | 工具查询目标不存在（活动/成员） |
+| `AI_AGENT_PROPOSAL_NOT_FOUND` | 404 | 提案不存在（含 oid 形状不对） |
+| `AI_AGENT_PROPOSAL_FORBIDDEN` | 403 | 不是本人的提案 |
+| `AI_AGENT_PROPOSAL_DENIED` | 403 | 执行时权限校验未通过 |
+| `AI_AGENT_PROPOSAL_CONFLICT` | 409 | 提案已处理 |
+| `AI_AGENT_PROPOSAL_TAMPERED` | 409 | 落库参数与记录的哈希不符 |
+| `AI_AGENT_PROPOSAL_UNKNOWN_TOOL` | 409 | 提案引用了已下线的工具 |
+| `AI_AGENT_PROPOSAL_EXPIRED` | 410 | 提案已过期 |
+| `AI_AGENT_NOT_WRITE_TOOL` / `AI_AGENT_ARGS_TOO_LARGE` | 400 | 提案参数问题 |
+| `AI_AGENT_TOOL_FAILED` | 502 | 工具执行内部失败 |
 
 前端映射在 `zvms4-frontend/src/api/ai/errors.ts` + `src/i18n/locales/ai.ts`；新增错误码必须两处同步。
 
 ---
 
-## 11. 已知限制与缺口
+## 12. 已知限制与缺口
 
 | # | 缺口 | 影响 |
 |---|---|---|
@@ -625,9 +793,10 @@ client = OpenAI(
 各一行 `rejected`）、查询过滤（`request_id`/`provider`/`model`/`purpose`）与聚合端点
 `/logs/stats`。
 
-**既定合规决策（不是缺口）**：prompt / completion 正文一律不落库，`AI_CALL_LOGS` 只存
-元数据；审计要能回答「谁、何时、用了哪个上游/模型、花了多少、成没成」，不需要也不允许
-保存对话内容。
+**既定合规决策（不是缺口）**：`AI_CALL_LOGS` 只存元数据，prompt / completion 正文不进流水；
+唯一的正文例外是 `AI_PROMPT_AUDIT`——按角色（默认学生会）受控留存、服务端脱敏后截断、
+默认 30 天自动清理、只有 admin 单条审阅且每次读取写访问审计（见 6.8）。审计要能回答
+「谁、何时、用了哪个上游/模型、花了多少、成没成」，不需要也不允许把对话内容散落在日志里。
 
 > 频控 / 熔断 / 凭据缓存 / API key 缓存仍是**进程内**状态，但不再「静默」：进程内阈值
 > 已按 worker 数折算，`/health` 回显 `worker_count`、`rate_limit_per_minute`、
@@ -635,7 +804,7 @@ client = OpenAI(
 
 ---
 
-## 12. 运维速查
+## 13. 运维速查
 
 | 配置项 | 位置 | 作用 |
 |---|---|---|
@@ -655,5 +824,84 @@ client = OpenAI(
 | `AI_OCR_ORT_THREADS` | 环境变量 | rapidocr 线程数 |
 | `AI_CALL_LOGS_RETENTION_DAYS` | `config.py` | 流水保留 90 天 |
 | `AI_STREAM_USAGE_HOSTS` | `settings`（可选） | 额外允许 `stream_options.include_usage` 的上游 host；`["*"]` = 全部 |
+| `AI_AGENT_MAX_ITERATIONS` | `config.py` / `settings` | agent 单次 run 的轮数上限，默认 10 |
+| `AI_AGENT_TOKEN_BUDGET` | `config.py` / `settings` | agent 单次 run 的累计 token 上限，默认 100000 |
+| `AI_AGENT_PROPOSAL_TTL_SECONDS` | `config.py` / `settings` | 写操作提案有效期，默认 600 秒 |
+| `AI_AGENT_RUN_TIMEOUT_SECONDS` | `settings`（可选） | agent 单次 run 的 wall-clock 上限，默认 300 秒 |
+| `DUAL_AUTH_CACHE_TTL_SECONDS` | `settings`（可选） | 双人授权缓存窗口，默认 1800 秒；`0` = 关闭 |
+| `AI_PROMPT_CAPTURE_ROLES` | `config.py` / `settings` | 正文留存角色，默认 `("department",)`；`()` = 关闭 |
+| `AI_PROMPT_RETENTION_DAYS` | `config.py` / `settings` | 正文保留 30 天（日清任务） |
+| `AI_PROMPT_MAX_CHARS` | `config.py` / `settings` | 单条正文上限 8000 字符（超出截断） |
 
-相关表：`ai_credentials`、`ai_ocr_engines`、`ai_api_keys`、`ai_quota`、`ai_call_logs`、`file_ocr`（迁移 `V024`–`V031`）。
+相关表：`ai_credentials`、`ai_ocr_engines`、`ai_api_keys`、`ai_quota`、`ai_call_logs`、`ai_agent_events`、`ai_prompt_audit`、`file_ocr`（迁移 `V024`–`V033`）。
+
+---
+
+## 13. Agent 面 `/api/ai/agent`
+
+智能体在一次请求里跑完「模型 → 工具 → 模型」循环，**不流式**：工具调用的完整参数
+只在整条响应里，逐字回调等于猜半个 JSON。鉴权同上（JWT + `AI_ALLOWED_ROLES`）。
+
+### 13.1 端点
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| POST | `/run` | 跑一次会话；`{messages, model?}` → `{request_id, content, stop_reason, rounds, usage, events, proposals}` |
+| GET | `/proposals?status=proposed&limit=20` | 本人待确认提案 `{proposals:[...]}`（`limit ≤ 50`，过期行顺手落 `expired`） |
+| POST | `/proposals/{oid}/confirm` | `{totp_code?}` → 执行；`404/403/409/410/422` 语义见下 |
+| POST | `/proposals/{oid}/reject` | 无 body；`proposed → rejected` |
+| GET | `/runs/{request_id}` | 本人这次 run 的事件时间线（`404` = 不存在或不是你的） |
+
+`messages` 只接受 `user` / `assistant`；`system` 由服务端注入（版本化前缀），客户端传
+→ `400 AI_AGENT_BAD_ARGUMENTS`。
+
+### 13.2 写操作 = 提案 + 双人码
+
+模型对写工具的调用**不执行任何写**，只落一条 `ai_agent_events(status='proposed')`。
+确认时按顺序校验：归属（`actor_oid`）→ 时效（`AI_AGENT_PROPOSAL_TTL_SECONDS`）→
+参数哈希（`ARGS_HASH` 覆盖 `ARGS_PAYLOAD`）→ 现查库权限（`guard`）→ 双人码 →
+CAS `proposed → executing → confirmed|failed`。
+
+- 运维写工具（`fs_*` / `db_*` / `ssh_exec`）的 `dual_auth_action="agent_write"`，必须由
+  **另一位管理员**提供 6 位动态码；缺码 `422 AI_AGENT_TOTP_REQUIRED`，码错 `403`，
+  已被使用 `409`，失败超限 `429`。
+- **30 分钟授权缓存**：同一 operator + 同一 action 首次验码成功后，窗口内
+  （`DUAL_AUTH_CACHE_TTL_SECONDS`，默认 1800，`0` = 关闭）确认**不必再输码**；
+  响应与 `GET /proposals` 每个条目都带 `dual_auth_cached`。命中缓存仍写一条
+  `system_dual_auth` 审计并标 `cached=true`。换人或换 action 不继承。
+- 活动域两条写工具（`update_member_duration` / `set_member_status`）保持无 TOTP，
+  行为不变。
+
+### 13.3 工具集（封闭白名单，27 个）
+
+| 域 | 读（自动执行） | 写（提案 + TOTP） |
+|---|---|---|
+| 活动 | `search_activities` `list_activities` `get_activity` `activity_statistics` `list_activity_members` `user_volunteer_time` `user_activities` `list_groups` | `update_member_duration` `set_member_status` |
+| 文件 | `fs_list` `fs_stat` `fs_read` | `fs_write` `fs_mkdir` `fs_rename` `fs_delete` `fs_chmod` |
+| 数据库 | `db_schema` `db_columns` `db_rows` `db_query` | `db_insert` `db_update` `db_delete` `db_ddl` |
+| SSH | — | `ssh_exec`（固定目标 `root@127.0.0.1:22`，一次 `exec`，输出 8KB 截断） |
+
+运维工具权限镜像 REST：`per` 含 `admin` + 每次执行现查库（`ban_is_active` 与权限重算），
+不信任 token 快照。`db_query` 走只读 SQL 校验；`db_ddl` 先跑 DDL 校验（含
+`confirm=表名`）；文件路径仍过 `realpath` + `/proc`/`/sys` + 敏感文件黑名单。
+
+### 13.4 成本闸
+
+`AI_AGENT_MAX_ITERATIONS`（默认 10 轮）、`AI_AGENT_TOKEN_BUDGET`（默认 100000，
+上游未报 usage 时按字符估算）、`AI_AGENT_RUN_TIMEOUT_SECONDS`（默认 300s）、单轮最多
+5 个工具调用。每轮一条 `ai_call_logs`（`purpose='agent'`、`round_no` 递增、
+`request_id` 全轮共用）并按该轮 usage 扣一次 chat 额度。
+
+**Prompt Cache**：服务端 system 段与按 name 排序的 `tools` 构成稳定前缀，每轮都经
+`services/ai/prompt_cache.request_body` 注入，`cache_key` 落审计。工具结果只追加在
+对话尾部，前缀不随轮次变化。
+
+### 13.5 错误码
+
+`AI_AGENT_BAD_ARGUMENTS`(400) `AI_AGENT_ARGS_TOO_LARGE`(413) `AI_AGENT_TOTP_REQUIRED`(422)
+`AI_AGENT_TOTP_INVALID`(403) `AI_AGENT_TOTP_RATE_LIMITED`(429)
+`AI_AGENT_PROPOSAL_NOT_FOUND`(404) `AI_AGENT_PROPOSAL_FORBIDDEN`(403)
+`AI_AGENT_PROPOSAL_CONFLICT`(409) `AI_AGENT_PROPOSAL_EXPIRED`(410)
+`AI_AGENT_PROPOSAL_DENIED`(403) `AI_AGENT_PROPOSAL_TAMPERED`(409)
+`AI_AGENT_PROPOSAL_UNKNOWN_TOOL`(409) `AI_AGENT_TOOL_FAILED`(502)
+`AI_AGENT_INTERNAL_ERROR`(500)

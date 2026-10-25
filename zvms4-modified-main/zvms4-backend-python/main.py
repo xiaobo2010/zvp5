@@ -35,6 +35,7 @@ from routers import (
     ban_violations_router,
     ai_router,
     ai_api_keys_router,
+    ai_agent_router,
 )
 import socketio
 from socketio.exceptions import ConnectionRefusedError as SocketIOConnectionRefusedError
@@ -465,6 +466,9 @@ app.include_router(
 app.include_router(ai_router.router, prefix="/api/ai", tags=["ai"])
 app.include_router(
     ai_api_keys_router.router, prefix="/api/ai/api-keys", tags=["ai"]
+)
+app.include_router(
+    ai_agent_router.router, prefix="/api/ai/agent", tags=["ai"]
 )
 
 

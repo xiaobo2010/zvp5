@@ -29,6 +29,30 @@ if str(REPO_ROOT) not in sys.path:
 from db import system_state  # noqa: E402  (sys.path 引导之后再导入)
 
 
+@pytest.fixture
+def quiet_ai_governance(monkeypatch):
+    """AI 请求的治理旁路（prompt 留存 / 突发风控）默认不连库。
+
+    ``routers.ai_router`` 与 ``services.agent.executor`` 在请求入口/完成处各挂了一个
+    **旁路**：受控 prompt 留存（``AI_PROMPT_AUDIT``）与 ``ai_chat_burst`` 风控。
+    两者都用真实仓储，而单元测试的仓储是逐文件打桩的——漏桩就会真的去连 ADB
+    （有 DSN 的环境甚至会写库）。这个 fixture 把两处**明确的治理副作用**一起
+    屏蔽，需要验证它们的用例（``test_ai_prompt_capture`` / ``test_ai_chat_burst``）
+    自己直接调服务层，不走这个 fixture。
+    """
+    from services import risk_monitor
+    from services.ai import prompt_audit
+
+    async def _no_capture(**_kwargs):
+        return None
+
+    async def _no_evaluate(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(prompt_audit, "capture", _no_capture)
+    monkeypatch.setattr(risk_monitor, "evaluate", _no_evaluate)
+
+
 @pytest.fixture(autouse=True)
 def _isolated_state_db(tmp_path_factory, monkeypatch) -> Path:
     """每个用例拿到自己的临时状态库；想覆盖就在用例里再 setenv 一次。"""

@@ -36,11 +36,15 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from db import backends
+from db.ids import is_valid_oid
+from services import risk_monitor
 from services.ai import api_keys, audit, credentials, quota, rate_limit, routing
 from services.ai import config as ai_config
 from services.ai import ocr as ai_ocr
 from services.ai import ocr_engines
 from services.ai import ocr_engines_admin
+from services.ai import prompt_audit
+from services.ai import prompt_cache
 from services.ai import providers
 from services.ai import usage as ai_usage
 from services.ai.credentials import CredentialError
@@ -54,7 +58,7 @@ from util.object_id import (
     oauth2_scheme,
     validate_object_id,
 )
-from util.user import get_user_display_names
+from util.user import get_user_display_name, get_user_display_names
 
 router = APIRouter()
 _logger = logging.getLogger(__name__)
@@ -244,7 +248,7 @@ def _elapsed_ms(started: float) -> int:
 
 
 def _usage_fields(usage: object) -> dict[str, int | None]:
-    """响应体里的 ``usage`` → 三个 token 列（口径统一在 ``services.ai.usage``）。"""
+    """响应体里的 ``usage`` → token 列（口径统一在 ``services.ai.usage``）。"""
     return ai_usage.token_fields(usage)
 
 
@@ -349,6 +353,20 @@ async def _charge(
         _logger.warning("ai quota write-back failed: %s", type(exc).__name__)
 
 
+#: AI 对话突发规则的 trigger code（与 V033 的种子、``routers.ban_router`` 同名）。
+BURST_TRIGGER = "ai_chat_burst"
+
+
+async def _evaluate_burst(user_oid: str) -> None:
+    """一次请求结束后评估「AI 对话请求突发」（只告警，不封人）。
+
+    挂点只有两个：chat 请求完成处（成功 / 扣费后）与 agent run 完成处。``evaluate``
+    自带 60 秒 ``(trigger, user)`` 节流与宽 except，所以这里不必再包一次 try：
+    调用点在已经生成答案之后，任何统计失败都只能是「少一条告警」。
+    """
+    await risk_monitor.evaluate(BURST_TRIGGER, str(user_oid))
+
+
 def _rate_limited(exc: rate_limit.RateLimitError, *, request_id: str) -> JSONResponse:
     """OpenAI 面的 429：``Retry-After`` 是客户端唯一能自动退避的信号。"""
     return _openai_error(
@@ -376,6 +394,7 @@ async def _reject(
     provider: str | None = None,
     purpose: str | None = None,
     attempt_no: int | None = None,
+    roles_snapshot: str | None = None,
 ) -> JSONResponse:
     """拒绝路径落一行审计再回错误。
 
@@ -397,6 +416,7 @@ async def _reject(
         key_scope=key_scope,
         purpose=purpose,
         attempt_no=attempt_no,
+        roles_snapshot=roles_snapshot,
     )
     return _openai_error(
         exc.status_code, exc.code, exc.message, request_id=request_id
@@ -414,6 +434,7 @@ async def _reject_http(
     error_code: str | None = None,
     capability: str = "chat",
     endpoint: str = audit.ENDPOINT_CHAT,
+    roles_snapshot: str | None = None,
 ) -> None:
     """门禁类拒绝（权限 / 关闭 / 模型不存在 / 额度 / 频控）的审计落行。
 
@@ -436,6 +457,7 @@ async def _reject_http(
         latency_ms=0,
         request_id=request_id,
         purpose=purpose,
+        roles_snapshot=roles_snapshot,
     )
 
 
@@ -463,6 +485,7 @@ async def request_ocr(
             purpose=SCENE_OCR,
             capability="ocr",
             endpoint=audit.ENDPOINT_OCR,
+            roles_snapshot=audit.roles_snapshot(user.get("per")),
         )
         raise HTTPException(status_code=403, detail="AI_FORBIDDEN")
     oid = validate_object_id(payload.attachment_oid)
@@ -481,6 +504,7 @@ async def request_ocr(
                 purpose=SCENE_OCR,
                 capability="ocr",
                 endpoint=audit.ENDPOINT_OCR,
+                roles_snapshot=audit.roles_snapshot(user.get("per")),
             )
         # 仓库约定：``/api/ai/*`` 的普通端点用 ``detail`` + 状态码。
         raise HTTPException(status_code=exc.status_code, detail=exc.code) from None
@@ -717,11 +741,15 @@ async def call_log_stats(
     days: int = Query(7, ge=1, le=STATS_MAX_DAYS, description="Window size in days"),
     user=Depends(get_current_user),
 ):
-    """调用聚合概览（按日 + 按 provider/model/purpose 小计），仅 admin。
+    """调用聚合概览（按日 + 按 provider/model/purpose/用户/状态 + 缓存），仅 admin。
 
     ``days`` 是**包含今天在内**往前数的自然日窗口（默认 7，上限 90）。窗口起点
     取「今天零点减 (days-1) 天」，而不是「现在减 days×24h」：按日分组的报表如果
     从半天中间开始，第一天的数字会是半天，看起来像服务掉了一半量。
+
+    ``by_user``（top 50，含 ``name`` / ``avg_latency_ms``）回答「谁在花钱」，
+    ``by_status`` 把 ``errors`` 拆成 success/error/rejected/busy——两者都与既有的
+    四个分项来自同一个窗口，合计口径不变。
     """
     _require_admin(user)
 
@@ -740,6 +768,103 @@ async def call_log_stats(
             **data,
         },
     }
+
+
+# ---------------------------------------------------------------------------
+# prompt 审阅（admin）：正文只在这里出现，读一条就要留一条访问审计
+# ---------------------------------------------------------------------------
+
+# 审阅列表的默认/最大窗口（天）。默认 7 而不是保留期 30：这个端点是为「查最近
+# 发生了什么」设计的，翻一个月前的正文应该显式写 days。
+PROMPT_LIST_DAYS = 7
+PROMPT_MAX_DAYS = 90
+
+
+@router.get("/prompts")
+async def list_prompt_audit(
+    page: int = Query(1, ge=1, description="Page number (1-based)"),
+    perpage: int = Query(20, ge=1, le=100, description="Items per page (max 100)"),
+    user_oid: str | None = Query(None, description="Filter by user oid"),
+    days: int = Query(
+        PROMPT_LIST_DAYS, ge=1, le=PROMPT_MAX_DAYS, description="Window size in days"
+    ),
+    user=Depends(get_current_user),
+):
+    """受控留存的 prompt **元数据**列表（新记录在前），仅 admin。
+
+    **不返回正文**（``prompt_text``）：翻一页就把几十段学生对话读进内存，既慢
+    又无谓扩大正文暴露面。要看内容走 ``GET /api/ai/prompts/{oid}``，那条路径会
+    写访问审计。``prompt_chars`` 是库里的 ``LENGTH(PROMPT_TEXT)``，够判断「这条
+    值不值得点开」。
+
+    ``days`` 是滚动窗口（现在往前 N 天，1–90），默认 7；``user_oid`` 非法形状
+    回 400（与 ``/logs`` 同口径）。
+    """
+    _require_admin(user)
+
+    target = validate_object_id(user_oid) if user_oid else None
+    since = datetime.now() - timedelta(days=days)
+
+    repo = backends.get_ai_prompt_audit_repo()
+    rows = await repo.list_page(
+        user_oid=target, since=since, page=page, page_size=perpage
+    )
+    total = await repo.count(user_oid=target, since=since)
+
+    names = await get_user_display_names(
+        [row["user_oid"] for row in rows if row.get("user_oid")]
+    )
+    for row in rows:
+        oid = str(row["_id"])
+        row["_id"] = oid
+        row["oid"] = oid
+        row["user_name"] = names.get(row.get("user_oid"), "未知用户")
+
+    return {
+        "status": "ok",
+        "code": 200,
+        "data": rows,
+        "metadata": {"size": total},
+    }
+
+
+@router.get("/prompts/{oid}")
+async def get_prompt_audit(
+    oid: str,
+    user=Depends(get_current_user),
+    log=Depends(inject_log),
+):
+    """单条 prompt 正文（admin）；**每次读取写一条 APP_LOGS 访问审计**。
+
+    审计行 ``type='ai_prompt_access'`` / ``level='info'``：``info`` 是承重的——
+    它随 APP_LOGS 的保留期自动清理（``login_fail`` 先例），不会把「谁看过学生
+    的对话」永久堆在库里；而 ``warning`` 会被清理保护集留住，那是给安全事件用的。
+
+    审计只记目标 oid 与目标 user_oid，**不记正文**：正文已经在被审计的那张表里，
+    再抄一份到 APP_LOGS 等于把暴露面翻倍。
+
+    oid 形状非法或记录不存在都回 404（不是 400）：对调用方来说两者的处置相同，
+    且 404 不会泄露「这个 oid 曾经存在过」。
+    """
+    _require_admin(user)
+
+    if not is_valid_oid(oid):
+        raise HTTPException(status_code=404, detail="AI_PROMPT_NOT_FOUND")
+
+    row = await backends.get_ai_prompt_audit_repo().get_by_oid(oid)
+    if row is None:
+        raise HTTPException(status_code=404, detail="AI_PROMPT_NOT_FOUND")
+
+    target = row.get("user_oid")
+    log.with_text(
+        f"AI prompt 审阅 oid={oid} user_oid={target or ''}",
+        type="ai_prompt_access",
+    )
+    await log.insert_log()
+
+    row["oid"] = str(row["_id"])
+    row["user_name"] = await get_user_display_name(target) if target else "未知用户"
+    return {"status": "ok", "code": 200, "data": row}
 
 
 # ---------------------------------------------------------------------------
@@ -960,6 +1085,13 @@ async def ai_health(
                 for kind in ai_config.RATE_LIMIT_KINDS
             },
             "providers": ai_config.public_provider_view(),
+            # 「当前生效的注入策略」（不是库里能配什么）：运维要能一眼看出这台
+            # 实例到底会不会往请求体里加字段。只有 host，不含密钥、路径或前缀。
+            "prompt_cache": {
+                "mode": ai_config.prompt_cache_mode(),
+                "key_hosts": sorted(ai_config.prompt_cache_key_hosts()),
+                "breakpoint_hosts": sorted(ai_config.prompt_cache_breakpoint_hosts()),
+            },
             # 冷却状态是**进程内**的：多 worker 各熔各的，所以显式标出作用域，
             # 免得运维把它当成全局事实。
             "cooldown_seconds": routing.cooldown_state(),
@@ -1013,6 +1145,20 @@ async def chat_completions(
 ):
     request_id = uuid4().hex
     user_oid = user["id"]
+    # 角色快照只进审计（V033）：chat / OCR 不因它改变任何判定，缺省 NULL = 未采集。
+    scene_roles = audit.roles_snapshot(user.get("per"))
+
+    # prompt 受控留存（AI_PROMPT_AUDIT）：只在这里挂一次，覆盖 chat 与
+    # markdown-assistant 两种 Scene（OCR 没有 prompt，不涉及）。是否真的留、留
+    # 多少、怎么脱敏都由 services.ai.prompt_audit 决定，且它是旁路——任何失败
+    # 都不会改变本请求的返回。放在门禁之前是有意的：被拒的请求同样可能带着
+    # 需要复核的正文（「这个人反复尝试问什么」本身就是治理信号）。
+    await prompt_audit.capture(
+        user=user,
+        purpose=purpose,
+        messages=payload.get("messages"),
+        request_id=request_id,
+    )
 
     if not _has_ai_access(user):
         await _reject_http(
@@ -1022,6 +1168,7 @@ async def chat_completions(
             status_code=403,
             code="AI_FORBIDDEN",
             purpose=purpose,
+            roles_snapshot=scene_roles,
         )
         return _openai_error(
             403, "AI_FORBIDDEN", AI_FORBIDDEN_MESSAGE, request_id=request_id
@@ -1035,6 +1182,7 @@ async def chat_completions(
             status_code=503,
             code="AI_DISABLED",
             purpose=purpose,
+            roles_snapshot=scene_roles,
         )
         return _openai_error(
             503, "AI_DISABLED", "ai gateway is disabled", request_id=request_id
@@ -1052,6 +1200,7 @@ async def chat_completions(
             request_id=request_id,
             latency_ms=0,
             purpose=purpose,
+            roles_snapshot=scene_roles,
         )
 
     available = await ai_config.allowed_models_for(user_oid)
@@ -1063,6 +1212,7 @@ async def chat_completions(
             status_code=404,
             code="model_not_found",
             purpose=purpose,
+            roles_snapshot=scene_roles,
         )
         return _openai_error(
             404,
@@ -1087,6 +1237,7 @@ async def chat_completions(
             request_id=request_id,
             latency_ms=0,
             purpose=purpose,
+            roles_snapshot=scene_roles,
         )
 
     candidates = [
@@ -1126,6 +1277,7 @@ async def chat_completions(
             status_code=429,
             code="AI_RATE_LIMITED",
             purpose=purpose,
+            roles_snapshot=scene_roles,
         )
         return _rate_limited(exc, request_id=request_id)
 
@@ -1144,6 +1296,7 @@ async def chat_completions(
                 status_code=429,
                 code="insufficient_quota",
                 purpose=purpose,
+                roles_snapshot=scene_roles,
             )
             return _openai_error(
                 429,
@@ -1189,6 +1342,7 @@ async def _blocking_completion(
 ) -> JSONResponse:
     started = time.monotonic()
     last_error: RouteError | None = None
+    snapshot = audit.roles_snapshot(roles)
 
     for index, entry in enumerate(candidates, start=1):
         key = str(entry.get("key") or "")
@@ -1208,11 +1362,15 @@ async def _blocking_completion(
                 provider=entry.get("name"),
                 purpose=purpose,
                 attempt_no=index,
+                roles_snapshot=snapshot,
             )
 
+        # 缓存注入只改「发给上游的 body」：``payload`` 还要用来算估算字符数、记
+        # 审计，必须保持客户端原文。cache_key 是本进程算出来的审计值（NULL = 没注入）。
+        body, cache_key = prompt_cache.request_body(payload, entry)
         try:
             async with routing.slot():
-                result = await providers.chat_completion(payload, entry, api_key)
+                result = await providers.chat_completion(body, entry, api_key)
         except RouteError as exc:
             # AI_BUSY 是我们自己的并发闸门，不是上游的错：算进熔断会把健康供应商
             # 也熔掉。
@@ -1229,6 +1387,7 @@ async def _blocking_completion(
                     provider=entry.get("name"),
                     purpose=purpose,
                     attempt_no=index,
+                    roles_snapshot=snapshot,
                 )
             last_error = exc
             await audit.record(
@@ -1245,12 +1404,13 @@ async def _blocking_completion(
                 key_scope=entry.get("scope"),
                 purpose=purpose,
                 attempt_no=index,
+                roles_snapshot=snapshot,
             )
             continue
 
         routing.mark_success(key)
-        # 上游回了 usage 就把三个 token 数一并落库：它们与 units 同源，报表才能
-        # 分清「实扣」与「估算」（token 列全 NULL ⟺ units 是估算值）。
+        # 上游回了 usage 就把 token 列一并落库：它们与 units 同源，报表才能分清
+        # 「实扣」与「估算」（token 列全 NULL ⟺ units 是估算值）。
         tokens = _usage_fields(result.get("usage"))
         units = ai_usage.units_from_total_tokens(tokens["total_tokens"])
         if _billable(entry):
@@ -1269,8 +1429,12 @@ async def _blocking_completion(
             key_scope=entry.get("scope"),
             purpose=purpose,
             attempt_no=index,
+            roles_snapshot=snapshot,
+            cache_key=cache_key,
             **tokens,
         )
+        # 请求完成处评估突发规则（流水已落库，计数才包含这一次）。
+        await _evaluate_burst(user_oid)
         return JSONResponse(
             status_code=200,
             content=result,
@@ -1296,6 +1460,7 @@ async def _stream_completion(
 ):
     name = str(entry.get("name") or "")
     key = str(entry.get("key") or "")
+    snapshot = audit.roles_snapshot(roles)
 
     try:
         api_key = await credentials.resolve_api_key(entry)
@@ -1311,6 +1476,7 @@ async def _stream_completion(
             provider=name,
             purpose=purpose,
             attempt_no=1,
+            roles_snapshot=snapshot,
         )
 
     # 并发闸门必须在返回 StreamingResponse 之前拿到：进了生成器再报 429 时响应头
@@ -1330,12 +1496,16 @@ async def _stream_completion(
             provider=name,
             purpose=purpose,
             attempt_no=1,
+            roles_snapshot=snapshot,
         )
 
     # 流式默认拿不到 usage（上游要 ``stream_options.include_usage`` 才在最后一帧
     # 报），所以先留一条估算路径；真正有没有 usage 由 StreamUsageTracker 决定。
     # 估算与实测的边界就是「token 列是否为 NULL」，见 services/ai/usage.py。
     estimated_prompt_chars = ai_usage.prompt_chars(payload)
+    # 缓存注入只作用于发给上游的 body；``stream_options`` 由 providers 内部补，
+    # 这里不重复补（两处都补会覆盖客户端自己的 stream_options 取值）。
+    body, cache_key = prompt_cache.request_body(payload, entry)
     tracker = ai_usage.StreamUsageTracker()
     state: dict[str, Any] = {
         "chars": 0,
@@ -1347,9 +1517,7 @@ async def _stream_completion(
     async def generate():
         started = time.monotonic()
         try:
-            async for chunk in providers.chat_completion_stream(
-                payload, entry, api_key
-            ):
+            async for chunk in providers.chat_completion_stream(body, entry, api_key):
                 if state["first_token_ms"] is None and chunk:
                     # 「首块到达」而不是「首字生成」：一次 yield 就是上游吐出的一段
                     # SSE 字节，客户端正是在这一刻看到第一个字的传输开始。
@@ -1386,6 +1554,8 @@ async def _stream_completion(
                 "prompt_tokens": tracker.prompt_tokens,
                 "completion_tokens": tracker.completion_tokens,
                 "total_tokens": tracker.total_tokens,
+                "cache_read_tokens": tracker.cache_read_tokens,
+                "cache_write_tokens": tracker.cache_write_tokens,
             }
             if tracker.captured:
                 units = ai_usage.units_from_total_tokens(tokens["total_tokens"])
@@ -1411,10 +1581,14 @@ async def _stream_completion(
                 purpose=purpose,
                 attempt_no=1,
                 first_token_ms=state["first_token_ms"],
+                roles_snapshot=snapshot,
+                cache_key=cache_key,
                 **tokens,
             )
             if _billable(entry):
                 await _charge(user_oid, units, roles)
+            # 流式请求的「完成」就在生成器收尾：此时流水已落库，计数包含本次。
+            await _evaluate_burst(user_oid)
             await guard.__aexit__(None, None, None)
 
     return StreamingResponse(

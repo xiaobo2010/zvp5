@@ -42,6 +42,35 @@ AI_ROLE_QUOTA = {
 }
 # AI 调用日志保留天数（tasks/retention.py 读取，缺省 90）。
 AI_CALL_LOGS_RETENTION_DAYS = 90
+# 智能体：单次 run 的轮数上限与累计 token 预算（防死循环烧钱）。每一轮都是一次
+# 独立计费的上游调用，所以最坏成本 ≈ 轮数 × 单轮 token。
+# AI_AGENT_MAX_ITERATIONS = 10
+# AI_AGENT_TOKEN_BUDGET = 100000
+# 单次 agent run 的 wall-clock 上限（秒）；超时返回已有结果并标 stop_reason=timeout。
+# AI_AGENT_RUN_TIMEOUT_SECONDS = 300
+# 写操作提案的有效期（秒）；过期后确认回 410。
+# AI_AGENT_PROPOSAL_TTL_SECONDS = 600
+# 双人授权缓存窗口（秒）：同一 operator 的同一 action 在窗口内不必再输一次动态码。
+# 只服务显式 opt-in 的调用方（当前仅 agent 写操作确认）；0 = 关闭缓存，每次都要码。
+# DUAL_AUTH_CACHE_TTL_SECONDS = 1800
+# prompt 受控留存（AI_PROMPT_AUDIT）：只有这些角色（per 口径）的对话正文会被留
+# 一份。默认学生会（department）；写成空元组 () 等于关闭正文留存。
+# AI_PROMPT_CAPTURE_ROLES = ("department",)
+# 正文保留天数（日清任务清理，缺省 30）与单条字符上限（超出截断，缺省 8000）。
+# AI_PROMPT_RETENTION_DAYS = 30
+# AI_PROMPT_MAX_CHARS = 8000
+# Prompt Cache 注入策略。off = 一律不加字段；auto = 只给白名单 host 加
+# prompt_cache_key（路由提示，不改请求结构）；explicit = 额外给白名单 host 打
+# cache_control 断点（只有会翻译这个标记的兼容层能用）。
+AI_PROMPT_CACHE = "auto"
+# prompt_cache_key 的 host 白名单（追加到默认的 api.openai.com）。host 写错只是
+# 不生效；但把「不认识该字段」的上游加成 "*" 会让请求被上游 400。
+AI_PROMPT_CACHE_HOSTS = []
+# cache_control 断点的 host 白名单（默认空）。给 OpenRouter / LiteLLM 这类兼容层
+# 用；直连 OpenAI 官方端点加进来会被未知字段校验挡下。
+AI_PROMPT_CACHE_BREAKPOINT_HOSTS = []
+# prompt_cache_key 的前缀（只留 [A-Za-z0-9_-]，最长 24）。太长会把指纹挤出 64 上限。
+AI_PROMPT_CACHE_KEY_PREFIX = "zvp"
 
 # 管理员在 /api/ai/keys 里建的凭据（个人 / 共享）加密落库，主密钥从这里取：
 # 优先环境变量 ZVMS_AI_KEY_SECRET；没有则读仓库根 aes_key.txt（65 字节随机串，

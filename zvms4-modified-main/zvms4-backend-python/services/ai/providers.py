@@ -17,11 +17,11 @@ from __future__ import annotations
 
 import logging
 from typing import AsyncIterator
-from urllib.parse import urlsplit
 
 import httpx
 
 from . import config as ai_config
+from . import prompt_cache
 from .routing import RouteError
 
 _logger = logging.getLogger(__name__)
@@ -82,14 +82,12 @@ def _endpoint(entry: dict) -> str:
 
 
 def _host(entry: dict) -> str:
-    """``base_url`` 的 host（小写）；解析失败返回空串。"""
-    base = entry.get("base_url")
-    if not isinstance(base, str) or not base:
-        return ""
-    try:
-        return (urlsplit(base).hostname or "").lower()
-    except ValueError:
-        return ""
+    """``base_url`` 的 host（小写）；解析失败返回空串。
+
+    实现委托给 ``services.ai.prompt_cache.host_of``：缓存注入的门控与这里的
+    ``stream_options`` 门控判断的是同一件事，两处各写一份迟早会漂。
+    """
+    return prompt_cache.host_of(entry)
 
 
 def wants_stream_usage(entry: dict) -> bool:

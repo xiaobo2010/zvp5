@@ -391,6 +391,11 @@ RISK_SEEDS = {
     "device_switch_burst": (5, 24, "alert"),
 }
 
+#: V033 追加的种子（AI 对话突发）。它不属于 V020，但同样注册在
+#: ``services.risk_monitor.TRIGGERS`` 里，所以「服务注册表 vs DDL 种子」的
+#: 一致性断言必须把它算进来。
+V033_SEEDS = {"ai_chat_burst": (80, 1, "alert")}
+
 
 @pytest.mark.parametrize("path", [V001_PATH, V020_PATH])
 def test_risk_seeds_are_present_and_configured(path: Path) -> None:
@@ -414,7 +419,10 @@ def test_risk_seeds_penalties_follow_the_mode(path: Path) -> None:
     """alert 模式的规则不封人：penalties 落 JSON null，ban 模式给梯度。"""
     ddl = _ddl(path)
 
-    assert ddl.count("'null', 1, SYSTIMESTAMP, SYSTIMESTAMP") == 5
+    # V020 有五条 alert 种子；V001（新建实例的基线）还多带一条 V033 的
+    # ``ai_chat_burst``（同样 mode=alert），所以是 6。
+    expected = 6 if path == V001_PATH else 5
+    assert ddl.count("'null', 1, SYSTIMESTAMP, SYSTIMESTAMP") == expected
     assert ddl.count("'[1,3,7]', 1, SYSTIMESTAMP, SYSTIMESTAMP") >= 2
 
 
@@ -441,8 +449,10 @@ def test_risk_seed_defaults_match_the_service_registry() -> None:
     """DDL 与 ``services.risk_monitor.TRIGGERS`` 是同一份默认值，不许漂移。"""
     from services import risk_monitor
 
-    assert set(risk_monitor.TRIGGERS) == set(RISK_SEEDS)
-    for trigger, (threshold, hours, mode) in RISK_SEEDS.items():
+    # V020 的七条 + V033 的 ai_chat_burst：少一条 = 规则永远不会被评估；
+    # 多一条 = 注册表里有一条没有种子的规则（管理员看不到、也调不了）。
+    assert set(risk_monitor.TRIGGERS) == set(RISK_SEEDS) | set(V033_SEEDS)
+    for trigger, (threshold, hours, mode) in {**RISK_SEEDS, **V033_SEEDS}.items():
         assert risk_monitor.TRIGGERS[trigger]["config"] == {
             "threshold": threshold,
             "window_hours": hours,
@@ -454,7 +464,7 @@ def test_risk_seed_defaults_match_the_router_registry() -> None:
     """管理端表单初值同样来自注册表：三处（DDL / 服务 / 注册表）必须一致。"""
     from routers import ban_router
 
-    for trigger, (threshold, hours, mode) in RISK_SEEDS.items():
+    for trigger, (threshold, hours, mode) in {**RISK_SEEDS, **V033_SEEDS}.items():
         entry = ban_router.TRIGGER_REGISTRY[trigger]
         assert entry["evaluation"] == "monitor"
         assert entry["config"] == {

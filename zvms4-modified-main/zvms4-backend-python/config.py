@@ -44,3 +44,21 @@ AI_ROLE_QUOTA = {
     "admin": {"ocr": 500, "chat": 1_000_000},
     "department": {"ocr": 100, "chat": 200_000},
 }
+
+# agent（智能体）执行的硬上限，防「死循环烧钱」（Denial of Wallet）。
+# 每一轮都是一次独立的上游调用、各扣一次 chat 额度，所以这两个数字直接决定
+# 一次 run 的最坏成本：iterations × 单轮 token。
+AI_AGENT_MAX_ITERATIONS = 10
+AI_AGENT_TOKEN_BUDGET = 100_000
+# 写工具提案的有效期（秒）。过期后 confirm 回 410，需要重新生成提案 ——
+# 「10 分钟前看到的那条改动」不该在半小时后被确认执行。
+AI_AGENT_PROPOSAL_TTL_SECONDS = 600
+
+# prompt 受控留存（审计层，AI_PROMPT_AUDIT）：AI_CALL_LOGS「零正文」的唯一例外。
+# 只有这些角色（per 口径）的对话正文会留一份；默认学生会（department）。
+# 管理员的调试对话没有校园治理价值，却是风险最高的正文——所以不在默认集合里。
+AI_PROMPT_CAPTURE_ROLES = ("department",)
+# 正文保留天数（tasks/retention.py 日清，缺省 30 天）。
+AI_PROMPT_RETENTION_DAYS = 30
+# 单条正文的字符上限（超出截断）：CLOB 不是垃圾桶。
+AI_PROMPT_MAX_CHARS = 8000

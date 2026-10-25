@@ -997,6 +997,23 @@ ai_call_logs = Table(
     Column("engine_kind", VARCHAR2(24), nullable=True),
     # OCR 针对的附件 oid。无外键：附件删了，这次识别发生过的事实仍然成立。
     Column("attachment_oid", VARCHAR2(24), nullable=True),
+    # --- V032/V033：prompt cache + agent 执行链路（全部 nullable，NULL = 未知 / 未注入）---
+    # 同一次 agent run 的第几轮（1 起）。一次 run 的**每一轮**各记一行流水，
+    # 因为每一轮都是一次独立的上游调用、各扣一次额度。NULL = 不是 agent 轮次。
+    Column("round_no", _int3, nullable=True),
+    # 调用时的角色快照（逗号连接，如 ``department,secretary``）。角色是可变事实：
+    # 事后改角色会让「当时凭什么放行」失真，所以冻结一份在流水行上。
+    Column("roles_snapshot", VARCHAR2(64), nullable=True),
+    # 归一后的命中 token：OpenAI ``prompt_tokens_details.cached_tokens`` /
+    # Anthropic ``cache_read_input_tokens`` / DeepSeek ``prompt_cache_hit_tokens``
+    # 三家的口径都落到这一格。NULL = 上游没报，不是「命中 0」。
+    Column("cache_read_tokens", NUMBER(10), nullable=True),
+    # 写缓存的 token（Anthropic ``cache_creation_input_tokens`` / OpenAI
+    # ``cache_write_tokens``）。NULL = 这次没写缓存，或上游没报。
+    Column("cache_write_tokens", NUMBER(10), nullable=True),
+    # 我们算的稳定前缀哈希（sha256 前 16 位，形如 ``zvp:1a2b3c4d5e6f7890``），
+    # **不含用户内容**：只用来把「同一段前缀」的调用归到一起看命中率。
+    Column("cache_key", VARCHAR2(64), nullable=True),
     Column("created_at", oracle.TIMESTAMP, nullable=False),
     _oid_check("ai_call_logs"),
     CheckConstraint("capability IN ('ocr','chat')", name="ck_ai_call_logs_capability"),
@@ -1018,6 +1035,15 @@ ai_call_logs = Table(
     CheckConstraint(
         "attempt_no IS NULL OR attempt_no >= 1",
         name="ck_ai_call_logs_attempt_no",
+    ),
+    CheckConstraint(
+        "round_no IS NULL OR round_no >= 1",
+        name="ck_ai_call_logs_round_no",
+    ),
+    CheckConstraint(
+        "(cache_read_tokens IS NULL OR cache_read_tokens >= 0)"
+        " AND (cache_write_tokens IS NULL OR cache_write_tokens >= 0)",
+        name="ck_ai_call_logs_cache_tokens",
     ),
 )
 Index(
@@ -1221,6 +1247,87 @@ Index(
     ai_api_keys.c.name,
     unique=True,
 )
+
+
+# ---------------------------------------------------------------------------
+# AI_AGENT_EVENTS  ← new (agent 每次工具调用的留痕; V033 + V034)
+#   一行 = 一次工具调用尝试，**包含被拒/过期/驳回的那些**：只记成功的调用等于
+#   看不见「模型在试探白名单外的工具」和「写操作被谁驳回」。
+#   OID 是 32 位 uuid4().hex（不是 24 位 ObjectId）：提案 oid 直接作为对外句柄
+#   （confirm/reject 的路径参数），与业务实体的 oid 空间分开，避免有人拿活动 id
+#   去撞提案。
+#   ARGS_HASH 是**完整参数（ARGS_PAYLOAD）的 sha256**：确认时要能重算并比对
+#   （防「批准的东西」与「执行的东西」不是同一份）。ARGS_PAYLOAD 是 CLOB，
+#   可复原的 canonical JSON；ARGS_SUMMARY 只是 ≤500 的展示副本，永不参与校验。
+#   V034 之前的老行没有 ARGS_PAYLOAD，确认时回落到 ARGS_SUMMARY。
+#   PREVIEW 是确认界面用的结构化预览（diff / command / row_update …），CLOB；
+#   服务端不理解它，也不拿它做校验。
+#   APPROVER_OID / CONFIRMED_AT 记录「谁批的、什么时候执行的」：运维写工具必须
+#   双人授权（TOTP），活动域两条写工具没有 TOTP，两列为 NULL。
+#   REQUEST_ID / ROUND_NO 把同一轮 run 里的多个工具调用串起来。
+#   ACTOR_OID 是发起 agent 的那个人，不是模型：提案只能由本人确认。
+#   RESULT_SUMMARY / ARGS_SUMMARY 都是**摘要**（长度受限），不落完整报文。
+#   STATUS 走 CAS 迁移：proposed → executing → confirmed | failed；驳回
+#   proposed → rejected；过期 proposed → expired。终态不可被覆盖。
+# ---------------------------------------------------------------------------
+
+ai_agent_events = Table(
+    "ai_agent_events",
+    metadata,
+    Column("oid", VARCHAR2(32), primary_key=True),
+    Column("request_id", VARCHAR2(64), nullable=True),
+    Column("round_no", _int3, nullable=True),
+    Column("tool_name", VARCHAR2(48), nullable=True),
+    Column("tool_kind", VARCHAR2(8), nullable=True),
+    Column("args_hash", VARCHAR2(64), nullable=True),
+    Column("args_summary", VARCHAR2(500), nullable=True),
+    Column("args_payload", CLOB, nullable=True),
+    Column("preview", CLOB, nullable=True),
+    Column("result_summary", VARCHAR2(500), nullable=True),
+    Column("status", VARCHAR2(12), nullable=False),
+    Column("actor_oid", VARCHAR2(32), nullable=True),
+    Column("approver_oid", VARCHAR2(32), nullable=True),
+    Column("confirmed_at", oracle.TIMESTAMP, nullable=True),
+    Column("created_at", oracle.TIMESTAMP, nullable=False),
+    CheckConstraint(
+        "tool_kind IS NULL OR tool_kind IN ('read','write')",
+        name="ck_ai_agent_events_tool_kind",
+    ),
+    CheckConstraint(
+        "status IN ('executed','proposed','executing','confirmed','rejected',"
+        "'expired','failed','denied')",
+        name="ck_ai_agent_events_status",
+    ),
+)
+Index("ix_ai_agent_events_request_id", ai_agent_events.c.request_id)
+Index(
+    "ix_ai_agent_events_status_created",
+    ai_agent_events.c.status,
+    ai_agent_events.c.created_at,
+)
+
+
+# ---------------------------------------------------------------------------
+# AI_PROMPT_AUDIT  ← new (受控的 prompt 正文留存; V033)
+#   与 AI_CALL_LOGS「正文一律不落库」并存的唯一例外：这张表是**审计专用**，
+#   写入逻辑与保留期由后续监控车道实现（本迁移只建表）。
+#   ROLES_SNAPSHOT 与 AI_CALL_LOGS 同义：角色可变，放行理由要冻结。
+#   PROMPT_TEXT 是 CLOB：一段对话可能远超 VARCHAR2 的 4000 字符上限。
+#   USER_OID / REQUEST_ID 都不建外键：审计材料要活得比账号与调用链久。
+# ---------------------------------------------------------------------------
+
+ai_prompt_audit = Table(
+    "ai_prompt_audit",
+    metadata,
+    Column("oid", VARCHAR2(32), primary_key=True),
+    Column("request_id", VARCHAR2(64), nullable=True),
+    Column("user_oid", VARCHAR2(32), nullable=True),
+    Column("roles_snapshot", VARCHAR2(64), nullable=True),
+    Column("purpose", VARCHAR2(24), nullable=True),
+    Column("prompt_text", CLOB, nullable=True),
+    Column("created_at", oracle.TIMESTAMP, nullable=False),
+)
+Index("ix_ai_prompt_audit_user_created", ai_prompt_audit.c.user_oid, ai_prompt_audit.c.created_at)
 
 
 # ---------------------------------------------------------------------------

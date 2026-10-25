@@ -396,6 +396,10 @@ def tree(tmp_path):
     (tmp_path / "adir").mkdir()
     (tmp_path / "b.txt").write_bytes(b"bbb")
     (tmp_path / "a.txt").write_bytes(b"a")
+    # 断言里的 0o644 必须与进程 umask 无关：CI/开发机 umask 0002 时
+    # write_bytes 会落成 0o664，把一条环境差异伪装成功能回归。
+    os.chmod(tmp_path / "b.txt", 0o644)
+    os.chmod(tmp_path / "a.txt", 0o644)
     os.symlink(tmp_path / "b.txt", tmp_path / "link.txt")
     return tmp_path
 

@@ -147,7 +147,7 @@ class _FakeAICallLogsRepo:
 
 @pytest.fixture
 def repos(monkeypatch):
-    """Wire fake repositories through ``backends`` (all three sides)."""
+    """Wire fake repositories through ``backends`` (既有三张表)."""
     logs = _FakeLogsRepo()
     tasks = _FakeTasksRepo()
     ai = _FakeAICallLogsRepo()
@@ -155,6 +155,22 @@ def repos(monkeypatch):
     monkeypatch.setattr(backends, "get_tasks_repo", lambda session=None: tasks)
     monkeypatch.setattr(backends, "get_ai_call_logs_repo", lambda session=None: ai)
     return logs, tasks, ai
+
+
+@pytest.fixture(autouse=True)
+def _governance_repos(monkeypatch):
+    """V033 的两张表：没有桩就会真的去连 ADB。"""
+    events = _FakeAICallLogsRepo()
+    prompts = _FakeAICallLogsRepo()
+
+    async def _purge_before(cutoff: datetime, batch_size: int) -> int:
+        prompts.purge_calls.append((cutoff, batch_size))
+        return prompts.rowcounts.pop(0) if prompts.rowcounts else 0
+
+    prompts.purge_before = _purge_before  # type: ignore[attr-defined]
+    monkeypatch.setattr(backends, "get_ai_agent_events_repo", lambda session=None: events)
+    monkeypatch.setattr(backends, "get_ai_prompt_audit_repo", lambda session=None: prompts)
+    return events, prompts
 
 
 @pytest.fixture(autouse=True)
@@ -288,12 +304,15 @@ def test_retention_rechecks_privileges_before_touching_any_repository(
 # ---------------------------------------------------------------------------
 
 
-def test_preview_returns_both_cutoffs_and_counts(client, repos):
+def test_preview_returns_both_cutoffs_and_counts(client, repos, _governance_repos):
     http, _ = client
     logs, tasks, ai = repos
+    events, prompts = _governance_repos
     logs.deletable = 7
     tasks.deletable = 2
     ai.deletable = 4
+    prompts.deletable = 5
+    events.deletable = 3
 
     before = datetime.now()
     response = http.post(PREVIEW_URL)
@@ -302,24 +321,44 @@ def test_preview_returns_both_cutoffs_and_counts(client, repos):
     assert response.status_code == 200
     body = response.json()
     assert body["status"] == "ok" and body["code"] == 200
-    assert set(body["data"]) == {"app_logs", "export_tasks", "ai_call_logs"}
-    for table in ("app_logs", "export_tasks", "ai_call_logs"):
+    assert set(body["data"]) == {
+        "app_logs",
+        "export_tasks",
+        "ai_call_logs",
+        "ai_prompt_audit",
+        "ai_agent_events",
+    }
+    for table in (
+        "app_logs",
+        "export_tasks",
+        "ai_call_logs",
+        "ai_prompt_audit",
+        "ai_agent_events",
+    ):
         assert set(body["data"][table]) == {"cutoff", "deletable"}
     assert body["data"]["app_logs"]["deletable"] == 7
     assert body["data"]["export_tasks"]["deletable"] == 2
     assert body["data"]["ai_call_logs"]["deletable"] == 4
+    assert body["data"]["ai_prompt_audit"]["deletable"] == 5
+    assert body["data"]["ai_agent_events"]["deletable"] == 3
 
     logs_cutoff = datetime.fromisoformat(body["data"]["app_logs"]["cutoff"])
     tasks_cutoff = datetime.fromisoformat(body["data"]["export_tasks"]["cutoff"])
     ai_cutoff = datetime.fromisoformat(body["data"]["ai_call_logs"]["cutoff"])
+    prompts_cutoff = datetime.fromisoformat(body["data"]["ai_prompt_audit"]["cutoff"])
+    events_cutoff = datetime.fromisoformat(body["data"]["ai_agent_events"]["cutoff"])
     assert before - timedelta(days=90) <= logs_cutoff <= after - timedelta(days=90)
     assert before - timedelta(days=30) <= tasks_cutoff <= after - timedelta(days=30)
     assert before - timedelta(days=90) <= ai_cutoff <= after - timedelta(days=90)
+    assert before - timedelta(days=30) <= prompts_cutoff <= after - timedelta(days=30)
+    assert before - timedelta(days=90) <= events_cutoff <= after - timedelta(days=90)
 
     # The counts were asked for with the very cutoffs the response reports.
     assert logs.count_calls == [logs_cutoff]
     assert tasks.count_calls == [tasks_cutoff]
     assert ai.count_calls == [ai_cutoff]
+    assert prompts.count_calls == [prompts_cutoff]
+    assert events.count_calls == [events_cutoff]
 
 
 def test_preview_deletes_nothing(client, repos):
@@ -399,11 +438,13 @@ def test_run_starts_a_background_job_and_audits_the_actor(client, repos, monkeyp
     assert result["export_tasks"]["remaining"] == 0
     assert result["ai_call_logs"]["deleted"] == 0
     assert result["ai_call_logs"]["remaining"] == 0
-    assert result["batches"] == 3
+    assert result["batches"] == 5
     for table, days in (
         ("app_logs", 90),
         ("export_tasks", 30),
         ("ai_call_logs", 90),
+        ("ai_agent_events", 90),
+        ("ai_prompt_audit", 30),
     ):
         assert set(result[table]) == {"cutoff", "deleted", "remaining"}
         cutoff = datetime.fromisoformat(result[table]["cutoff"])
@@ -437,7 +478,7 @@ def test_run_reports_the_remaining_rows_when_the_ceiling_is_hit(
     result = _wait_terminal(http)["result"]
     assert result["app_logs"]["deleted"] == 5000
     assert result["app_logs"]["remaining"] == 42
-    assert result["batches"] == 3
+    assert result["batches"] == 5
 
 
 def test_run_is_409_when_a_purge_is_already_running(client, repos):

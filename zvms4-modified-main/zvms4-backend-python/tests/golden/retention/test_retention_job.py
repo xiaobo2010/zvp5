@@ -39,10 +39,14 @@ from sqlalchemy.dialects import oracle
 
 import config
 from db import backends
+from db.repos.oracle import ai_agent_events as ai_agent_events_repo
 from db.repos.oracle import ai_call_logs as ai_call_logs_repo
+from db.repos.oracle import ai_prompt_audit as ai_prompt_audit_repo
 from db.repos.oracle import app_logs as app_logs_repo
 from db.repos.oracle import tasks as tasks_repo
+from db.repos.oracle.ai_agent_events import OracleAIAgentEventsRepo
 from db.repos.oracle.ai_call_logs import OracleAICallLogsRepo
+from db.repos.oracle.ai_prompt_audit import OracleAIPromptAuditRepo
 from db.repos.oracle.app_logs import OracleAppLogsRepo
 from db.repos.oracle.tasks import OracleTasksRepo
 from tasks import retention
@@ -132,17 +136,36 @@ def _real_repos(
     ai_rowcounts: list[int] | None = None,
     ai_count: int = 0,
 ) -> tuple[_FakeSession, _FakeSession, _FakeSession]:
-    """Real repositories over fake sessions; returns the three sessions."""
+    """Real repositories over fake sessions; returns the three original sessions.
+
+    V033 起 ``run_retention`` 还会 drain ``ai_agent_events`` / ``ai_prompt_audit``，
+    所以这两个 repo 也必须接上假 session——否则它们会自己建 engine（bequeath
+    在 thin mode 下直接 NotSupportedError）。返回值保持三元组，既有断言不用改。
+    """
     logs_session = _FakeSession(logs_rowcounts, logs_count)
     tasks_session = _FakeSession(tasks_rowcounts, tasks_count)
     ai_session = _FakeSession(ai_rowcounts, ai_count)
+    events_session = _FakeSession()
+    prompt_session = _FakeSession()
     _wire(monkeypatch, app_logs_repo, logs_session)
     _wire(monkeypatch, tasks_repo, tasks_session)
     _wire(monkeypatch, ai_call_logs_repo, ai_session)
+    _wire(monkeypatch, ai_agent_events_repo, events_session)
+    _wire(monkeypatch, ai_prompt_audit_repo, prompt_session)
     monkeypatch.setattr(backends, "get_applogs_repo", lambda session=None: OracleAppLogsRepo())
     monkeypatch.setattr(backends, "get_tasks_repo", lambda session=None: OracleTasksRepo())
     monkeypatch.setattr(
         backends, "get_ai_call_logs_repo", lambda session=None: OracleAICallLogsRepo()
+    )
+    monkeypatch.setattr(
+        backends,
+        "get_ai_agent_events_repo",
+        lambda session=None: OracleAIAgentEventsRepo(),
+    )
+    monkeypatch.setattr(
+        backends,
+        "get_ai_prompt_audit_repo",
+        lambda session=None: OracleAIPromptAuditRepo(),
     )
     return logs_session, tasks_session, ai_session
 
@@ -221,6 +244,25 @@ class _FakeAICallLogsRepo:
         return self.count
 
 
+class _FakeBatchRepo:
+    """Fake for the two V033 tables: one rowcount, either purge method name."""
+
+    def __init__(self, rowcounts: list[int] | None = None, count: int = 0) -> None:
+        self.rowcounts = list(rowcounts or [])
+        self.count = count
+        self.purges: list[tuple[datetime, int]] = []
+
+    async def purge_batch(self, cutoff: datetime, batch_size: int) -> int:
+        self.purges.append((cutoff, batch_size))
+        return self.rowcounts.pop(0) if self.rowcounts else 0
+
+    async def purge_before(self, cutoff: datetime, batch_size: int) -> int:
+        return await self.purge_batch(cutoff, batch_size)
+
+    async def count_expired(self, cutoff: datetime) -> int:
+        return self.count
+
+
 def _fake_repos(
     monkeypatch,
     logs: _FakeAppLogsRepo | None = None,
@@ -233,6 +275,13 @@ def _fake_repos(
     monkeypatch.setattr(backends, "get_applogs_repo", lambda session=None: logs_repo)
     monkeypatch.setattr(backends, "get_tasks_repo", lambda session=None: tasks_repo)
     monkeypatch.setattr(backends, "get_ai_call_logs_repo", lambda session=None: ai_repo)
+    # V033 的两张表同样必须替换，否则会落到真实 repo（要 engine）。
+    monkeypatch.setattr(
+        backends, "get_ai_agent_events_repo", lambda session=None: _FakeBatchRepo()
+    )
+    monkeypatch.setattr(
+        backends, "get_ai_prompt_audit_repo", lambda session=None: _FakeBatchRepo()
+    )
     return logs_repo, tasks_repo, ai_repo
 
 
@@ -382,7 +431,7 @@ def test_run_drains_until_a_short_batch(monkeypatch):
     assert ai_session.commits == 1
     assert set(result["ai_call_logs"]) == {"cutoff", "deleted", "remaining"}
     assert result["ai_call_logs"]["deleted"] == 0
-    assert result["batches"] == 5
+    assert result["batches"] == 7
 
 
 def test_run_stops_on_the_first_empty_batch(monkeypatch):
@@ -398,7 +447,7 @@ def test_run_stops_on_the_first_empty_batch(monkeypatch):
     assert len(tasks_session.deletes) == 1
     assert len(ai_session.deletes) == 1
     assert result["app_logs"]["deleted"] == 0
-    assert result["batches"] == 3
+    assert result["batches"] == 5
 
 
 def test_run_stops_at_the_batch_ceiling(monkeypatch):
@@ -418,7 +467,7 @@ def test_run_stops_at_the_batch_ceiling(monkeypatch):
     assert result["app_logs"]["deleted"] == 10000
     # The ceiling was hit, so the remaining expired rows are reported.
     assert result["app_logs"]["remaining"] == 7
-    assert result["batches"] == 4
+    assert result["batches"] == 6
 
 
 def test_run_uses_the_configured_windows_and_batch_size(monkeypatch):
@@ -498,7 +547,7 @@ def test_lock_is_released_after_a_manual_run(monkeypatch):
         second = await purge_now()
         return first["batches"], second["batches"]
 
-    assert asyncio.run(_scenario()) == (3, 3)
+    assert asyncio.run(_scenario()) == (5, 5)
 
 
 def test_scheduled_run_skips_quietly_while_a_purge_is_running(monkeypatch, capsys):

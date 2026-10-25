@@ -1,9 +1,10 @@
-"""服务端可观测数据的封禁规则（登录失败、挑战刷取、导出频率等）。
+"""服务端可观测数据的封禁规则（登录失败、挑战刷取、导出频率、AI 对话突发等）。
 
 **为什么单独一个模块**：``ban_rules`` 只留积木（配置解析/梯度/落封禁），设备闸与
-上报闸各自持有一条证据链。这里的七条规则证据全部来自**服务端自己写下的行**
-（``APP_LOGS`` / ``DEVICE_CHALLENGES``），既不需要客户端上报，也不该塞进任何一个
-既有闸门——它们的共同点只有一个：**先在登录/导出等入口埋点，再按窗口计数裁决**。
+上报闸各自持有一条证据链。这里的八条规则证据全部来自**服务端自己写下的行**
+（``APP_LOGS`` / ``DEVICE_CHALLENGES`` / ``AI_CALL_LOGS``），既不需要客户端上报，
+也不该塞进任何一个既有闸门——它们的共同点只有一个：**先在登录/导出等入口埋点，
+再按窗口计数裁决**。
 
 **为什么计数直接读日志表**：日志是已经落库的事实，再加一张计数表只会多一份会
 漂移的状态（补记历史、并发自增、清理任务对不上）。窗口计数是一条走索引的
@@ -53,7 +54,8 @@ NO_AUTO_BAN_ROLES = ("admin", "department", "secretary", "teacher")
 #: ``ltype`` 为 ``APP_LOGS.LTYPE``；``contains`` 在 ``DATA`` 摘要上做补充过滤
 #: （登录失败与封禁期重试共享 ``login_fail``，靠 ``banned`` 标记区分）。
 #: ``source`` 为 ``challenges`` 时按 ``DEVICE_CHALLENGES`` 计数——挑战本身就是
-#: 「有人在换设备登录」的事实，不必再借日志。
+#: 「有人在换设备登录」的事实，不必再借日志；为 ``ai_logs`` 时按 ``AI_CALL_LOGS``
+#: 的 chat 行计数（这张表没有 ltype/摘要，两个过滤字段恒为 None）。
 TRIGGERS: dict[str, dict[str, Any]] = {
     "login_failure_burst": {
         "name": "登录失败暴破",
@@ -106,6 +108,17 @@ TRIGGERS: dict[str, dict[str, Any]] = {
         "ltype": "device_mismatch",
         "contains": None,
         "config": {"threshold": 5, "window_hours": 24, "mode": "alert"},
+    },
+    "ai_chat_burst": {
+        "name": "AI 对话请求突发",
+        "source": "ai_logs",
+        # AI_CALL_LOGS 没有 LTYPE 列：这张表的证据是「窗口内调了几次 chat」，
+        # 没有日志类型与摘要可筛，所以 ltype / contains 恒为 None（只为保持
+        # TRIGGERS 的形状统一，计数分支见 _count）。
+        "ltype": None,
+        "contains": None,
+        # 阈值与 V033 的种子逐字一致（80 次 / 1 小时 / 只告警）。
+        "config": {"threshold": 80, "window_hours": 1, "mode": "alert"},
     },
 }
 
@@ -161,8 +174,15 @@ async def _count_challenges(user_oid: str, since: datetime) -> int:
 
 
 async def _count(spec: dict, user_oid: str, since: datetime) -> int:
-    if spec["source"] == "challenges":
+    source = spec["source"]
+    if source == "challenges":
         return await _count_challenges(user_oid, since)
+    if source == "ai_logs":
+        # AI 对话的突发：数 AI_CALL_LOGS 里该用户窗口内的 chat 行（含被拒/失败，
+        # agent 的每一轮也是一次 chat）。口径见仓储的 count_chat_by_user_since。
+        return await backends.get_ai_call_logs_repo().count_chat_by_user_since(
+            user_oid, since
+        )
     return await backends.get_applogs_repo().count_by_user_ltype(
         user_oid, spec["ltype"], since.timestamp(), spec["contains"]
     )

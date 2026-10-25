@@ -575,7 +575,7 @@ def _entry(models=("gpt-x",)) -> dict:
 
 
 @pytest.fixture
-def gateway(monkeypatch):
+def gateway(monkeypatch, quiet_ai_governance):
     """上游 / 目录 / 额度的桩：让 ``/v1/*`` 能跑到 200。"""
     async def _catalog(user_oid: str) -> list[dict]:
         return [_entry()]
