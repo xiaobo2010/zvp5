@@ -12,7 +12,8 @@ import {
   ElRow,
   ElPopover
 } from 'element-plus'
-import { ref, onMounted, toRefs, watch } from 'vue'
+import { nextTick, ref, onMounted, toRefs, watch } from 'vue'
+import type { TableInstance } from 'element-plus'
 import api from '@/api'
 import { useI18n } from 'vue-i18n'
 import { useUserStore } from '@/stores/user'
@@ -25,7 +26,7 @@ import { pad } from '@/plugins/ua.ts'
 import ZDataExport from '@/components/utils/ZDataExport.vue'
 
 const router = useRouter()
-const { height } = useWindowSize()
+const { width, height } = useWindowSize()
 const { t, locale } = useI18n()
 const userStore = useUserStore()
 const groupsStore = useGroupsStore()
@@ -53,10 +54,35 @@ const total = ref(0)
 
 const { id, selectable, modelValue, selectorCallback } = toRefs(props)
 
-const tableHeight = ref(height.value * 0.6)
+const tableRef = ref<TableInstance>()
 
-watch(height, () => {
-  tableHeight.value = height.value * 0.6
+/** 分页行 + 卡片下边距 + 页面底部留白 */
+const BOTTOM_ROOM = 96
+
+/**
+ * 表格高度 = 视口高度 − 表格实际顶部 − 底部预留，
+ * 以表头真实位置为基准，不受上方工具栏行数影响，尽量少留白。
+ */
+function computeTableHeight() {
+  const el = (tableRef.value as { $el?: HTMLElement } | undefined)?.$el
+  const top = el?.getBoundingClientRect?.().top ?? 0
+  if (top > 0 && top < height.value * 0.8) {
+    return Math.max(280, Math.round(height.value - top - BOTTOM_ROOM))
+  }
+  const reserved = width.value < 768 ? 340 : 320
+  return Math.max(280, height.value - reserved)
+}
+
+const tableHeight = ref(computeTableHeight())
+
+watch([width, height], () => {
+  tableHeight.value = computeTableHeight()
+})
+
+onMounted(() => {
+  nextTick(() => {
+    tableHeight.value = computeTableHeight()
+  })
 })
 
 onMounted(() => {
@@ -154,6 +180,7 @@ function handleSelectionChange(val: string[]) {
         <ElSwitch v-model="pwdm" />
       </ElFormItem>
       <ElTable
+        :ref="tableRef"
         :data="users"
         stripe
         row-key="_id"
