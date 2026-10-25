@@ -188,6 +188,20 @@ def get_ai_api_keys_repo(session: Any = None) -> Any:
     return OracleAIApiKeysRepo(session)
 
 
+def get_ai_agent_events_repo(session: Any = None) -> Any:
+    """Return the ``AIAgentEventsRepo`` implementation (agent 工具调用留痕)."""
+    from db.repos.oracle.ai_agent_events import OracleAIAgentEventsRepo
+
+    return OracleAIAgentEventsRepo(session)
+
+
+def get_ai_prompt_audit_repo(session: Any = None) -> Any:
+    """Return the ``AIPromptAuditRepo`` implementation (受控的 prompt 正文留存)."""
+    from db.repos.oracle.ai_prompt_audit import OracleAIPromptAuditRepo
+
+    return OracleAIPromptAuditRepo(session)
+
+
 __all__ = [
     "get_users_repo",
     "get_groups_repo",
@@ -214,4 +228,6 @@ __all__ = [
     "get_ai_credentials_repo",
     "get_ai_ocr_engines_repo",
     "get_ai_api_keys_repo",
+    "get_ai_agent_events_repo",
+    "get_ai_prompt_audit_repo",
 ]

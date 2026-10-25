@@ -607,30 +607,48 @@ def _resolve_edit_encoding(encoding: str) -> str:
     return normalized
 
 
-def write_text(path: str, content: str, encoding: str) -> dict:
-    """把整篇文本原子写回一个已存在的普通文件。
+def write_text(
+    path: str, content: str, encoding: str, *, create: bool = False
+) -> dict:
+    """把整篇文本原子写回一个普通文件（``create=True`` 时允许新建）。
 
     ``resolve_path`` 会 realpath 展开符号链接，因此编辑一个 symlink 实际写的是
     它的**目标文件**（链接本身保持不动）；这与预览/下载的「看目标内容」口径一致。
 
     原子性沿用 ``save_upload`` 的做法：同目录临时文件 + ``os.replace``，任何时刻
     目标路径上要么是旧内容、要么是完整新内容，不会留下写了一半的文件。临时文件
-    的权限位在替换前改成原文件的模式，避免编辑把 0640 的配置改成 0600。
+    的权限位在替换前改成原文件的模式，避免编辑把 0640 的配置改成 0600；新建文件
+    （``create=True``）用 0o644，与 ``_existing_mode`` 的兜底一致。
+
+    ``create`` 只放宽「目标不存在」这一种情况：父目录必须已存在且是目录，路径
+    仍要过 ``resolve_path``（``/proc``、``/sys``、敏感文件黑名单照旧生效）。
     """
     resolved = resolve_path(path)
     codec = _resolve_edit_encoding(encoding)
 
     try:
-        info = os.stat(resolved)
+        info: os.stat_result | None = os.stat(resolved)
     except FileNotFoundError:
-        raise FileOpError(404, "路径不存在")
+        if not create:
+            raise FileOpError(404, "路径不存在")
+        parent = os.path.dirname(resolved) or "/"
+        try:
+            parent_info = os.stat(parent)
+        except FileNotFoundError:
+            raise FileOpError(404, "父目录不存在")
+        except PermissionError:
+            raise FileOpError(403, "权限不足，无法访问该路径")
+        if not stat_module.S_ISDIR(parent_info.st_mode):
+            raise FileOpError(400, "父路径不是目录")
+        info = None
     except PermissionError:
         raise FileOpError(403, "权限不足，无法访问该路径")
 
-    if stat_module.S_ISDIR(info.st_mode):
-        raise FileOpError(400, "目录不支持编辑")
-    if not stat_module.S_ISREG(info.st_mode):
-        raise FileOpError(400, "仅支持编辑普通文件")
+    if info is not None:
+        if stat_module.S_ISDIR(info.st_mode):
+            raise FileOpError(400, "目录不支持编辑")
+        if not stat_module.S_ISREG(info.st_mode):
+            raise FileOpError(400, "仅支持编辑普通文件")
 
     try:
         data = content.encode(codec)
@@ -640,7 +658,7 @@ def write_text(path: str, content: str, encoding: str) -> dict:
         raise FileOpError(413, "文件超过 512KB 编辑上限")
 
     # 原文件权限位在替换前取：mkstemp 默认 0600，不显式 chmod 会把文件改权限。
-    mode = _existing_mode(resolved)
+    mode = _existing_mode(resolved) if info is not None else 0o644
     directory = os.path.dirname(resolved) or "/"
     try:
         fd, temp_path = tempfile.mkstemp(dir=directory, prefix=_EDIT_TEMP_PREFIX)

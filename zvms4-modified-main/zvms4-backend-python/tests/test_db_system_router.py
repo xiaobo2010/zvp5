@@ -153,11 +153,33 @@ def test_preview_contract_keeps_its_keys(client, monkeypatch):
         "get_ai_call_logs_repo",
         lambda session=None: SimpleNamespace(count_expired=count_ai),
     )
+    monkeypatch.setattr(
+        backends,
+        "get_ai_prompt_audit_repo",
+        lambda session=None: SimpleNamespace(count_expired=count_ai),
+    )
+    monkeypatch.setattr(
+        backends,
+        "get_ai_agent_events_repo",
+        lambda session=None: SimpleNamespace(count_expired=count_ai),
+    )
     body = http.post("/api/system/db/retention/preview").json()
 
     assert body["status"] == "ok" and body["code"] == 200
-    assert set(body["data"]) == {"app_logs", "export_tasks", "ai_call_logs"}
-    for table in ("app_logs", "export_tasks", "ai_call_logs"):
+    assert set(body["data"]) == {
+        "app_logs",
+        "export_tasks",
+        "ai_call_logs",
+        "ai_prompt_audit",
+        "ai_agent_events",
+    }
+    for table in (
+        "app_logs",
+        "export_tasks",
+        "ai_call_logs",
+        "ai_prompt_audit",
+        "ai_agent_events",
+    ):
         assert set(body["data"][table]) == {"cutoff", "deletable"}
 
 
@@ -233,6 +255,8 @@ def test_progress_envelope_and_frozen_shape(client, state_db):
         "app_logs": {"deleted": 0, "remaining": 0},
         "export_tasks": {"deleted": 0, "remaining": 0},
         "ai_call_logs": {"deleted": 0, "remaining": 0},
+        "ai_agent_events": {"deleted": 0, "remaining": 0},
+        "ai_prompt_audit": {"deleted": 0, "remaining": 0},
         "batches": 0,
         "max_batches": retention.retention_max_batches(),
     }

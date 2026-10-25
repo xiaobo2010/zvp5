@@ -459,6 +459,7 @@ def test_triggers_lists_registered_checks(api) -> None:
         "export_burst",
         "login_success_churn",
         "device_switch_burst",
+        "ai_chat_burst",
     }
     for item in body["data"]:
         assert item["name"]

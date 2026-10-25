@@ -130,6 +130,16 @@ def set_connect_factory(factory: ConnectFactory) -> ConnectFactory:
     return previous
 
 
+async def connect() -> Any:
+    """给「单次命令」用的连接（agent 运维工具的 ``ssh_exec``）。
+
+    目标**只**来自 :func:`load_target`：调用方没有参数可以指定主机，这样
+    「模型能不能连别处」这个问题在类型层面就不存在。连接生命周期由调用方负责
+    关闭；工厂仍可注入，测试不需要真 sshd。
+    """
+    return await _connect_factory(load_target())
+
+
 class SshSession:
     """一条交互式终端：写入、改窗口、分片读取、退出码。"""
 

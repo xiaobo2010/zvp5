@@ -3,43 +3,52 @@ import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useDark } from '@vueuse/core'
-import {
-  ElAvatar,
-  ElButton,
-  ElCard,
-  ElDescriptions,
-  ElDescriptionsItem,
-  ElIcon,
-  ElMessageBox,
-  ElPageHeader,
-  ElSwitch,
-  ElTag
-} from 'element-plus'
-import { ArrowLeft, SwitchButton } from '@element-plus/icons-vue'
+import { ElButton, ElIcon, ElMessageBox, ElSwitch } from 'element-plus'
+import { Bell, Refresh, SwitchButton, Warning } from '@element-plus/icons-vue'
 import { useUserStore } from '@/stores/user'
 import { useGroupsStore } from '@/stores/groups'
 import { useHeaderStore } from '@/stores/header'
 import { modifyPasswordDialogs } from '@/views/user/modifyPasswordDialogs'
 import { listActive, type NotificationRecord } from '@/api/notifications'
 import ZMarkdown from '@/components/markdown/ZMarkdown.vue'
-import dayjs from '@/plugins/dayjs'
+import { formatDateTime } from '@/utils/dateTime'
+import {
+  emptyNotificationState,
+  isNotificationUnread,
+  loadNotificationState,
+  markNotificationRead,
+  saveNotificationState,
+  type NotificationState
+} from '@/utils/notificationState'
 
 const user = useUserStore()
 const groupsStore = useGroupsStore()
 const header = useHeaderStore()
 const router = useRouter()
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const dark = useDark()
 
 header.setHeader(t('nav.profile'))
 
 const className = ref('')
+const classState = ref<'idle' | 'loading' | 'ready' | 'failed'>('idle')
 
 if (!user.isLogin) {
   router.replace('/user/login')
 }
 
-const initials = computed(() => user.name.slice(Math.max(user.name.length - 2, 0)) || '—')
+/* ---------- 个人信息 ---------- */
+const displayName = computed(() => user.name.trim() || t('profile.nameMissing'))
+
+const initials = computed(() => user.name.trim().slice(-2) || '—')
+
+const studentNumber = computed(() => (user.id ? String(user.id) : '—'))
+
+const statusLabel = computed(() =>
+  user.banned ? t('profile.status.banned') : t('profile.status.normal')
+)
+
+const statusTagClass = computed(() => (user.banned ? 'yg-tag--danger' : 'yg-tag--gray'))
 
 const visibleRoles = computed(() => {
   const roles = user.position.filter((role) => role !== 'student')
@@ -47,11 +56,13 @@ const visibleRoles = computed(() => {
 })
 
 function roleLabel(role: string): string {
-  return t(`manage.personalPanel.roles.${role}`)
+  const key = `manage.personalPanel.roles.${role}`
+  const label = t(key)
+  return label === key ? role : label
 }
 
 async function changePassword() {
-  await modifyPasswordDialogs(String(user._id), 'zh-CN', user.resetPassword)
+  await modifyPasswordDialogs(String(user._id), locale.value, user.resetPassword)
 }
 
 async function logout() {
@@ -80,6 +91,14 @@ const notices = ref<NotificationRecord[]>([])
 const noticesLoading = ref(false)
 const noticesFailed = ref(false)
 const openNoticeId = ref('')
+/** 已阅状态存在本地（按账号隔离），与全局提醒弹窗共用同一份读写口径。 */
+const noticeState = ref<NotificationState>(emptyNotificationState())
+
+const accountKey = computed(() => String(user._id || user.id || ''))
+
+const unreadCount = computed(
+  () => notices.value.filter((notice) => isNotificationUnread(notice, noticeState.value)).length
+)
 
 async function loadNotices() {
   noticesLoading.value = true
@@ -87,6 +106,7 @@ async function loadNotices() {
   try {
     const data = await listActive()
     notices.value = data.notifications
+    noticeState.value = loadNotificationState(accountKey.value)
   } catch {
     noticesFailed.value = true
   } finally {
@@ -94,16 +114,40 @@ async function loadNotices() {
   }
 }
 
-function toggleNotice(id: string) {
-  openNoticeId.value = openNoticeId.value === id ? '' : id
+function isNoticeUnread(notice: NotificationRecord): boolean {
+  return isNotificationUnread(notice, noticeState.value)
 }
 
-function formatNoticeTime(value: string | null): string {
-  if (!value) {
-    return ''
+function noticeReadLabel(notice: NotificationRecord): string {
+  return isNoticeUnread(notice) ? t('profile.notices.unread') : t('profile.notices.read')
+}
+
+function toggleNotice(id: string) {
+  if (openNoticeId.value === id) {
+    openNoticeId.value = ''
+    return
   }
-  const parsed = dayjs(value)
-  return parsed.isValid() ? parsed.format('YYYY-MM-DD HH:mm') : ''
+  openNoticeId.value = id
+  markNoticeRead(id)
+}
+
+/**
+ * 展开即视为已读：写本地 read 标记后，全局提醒弹窗下次检查不会再重复弹出。
+ * 读-改-写本地状态，避免覆盖其它组件（提醒弹窗）写入的标记。
+ */
+function markNoticeRead(id: string) {
+  const notice = notices.value.find((item) => item.id === id)
+  const key = accountKey.value
+  if (!notice || !key) {
+    return
+  }
+  const current = loadNotificationState(key)
+  if (!isNotificationUnread(notice, current)) {
+    return
+  }
+  const next = markNotificationRead(current, notice)
+  noticeState.value = next
+  saveNotificationState(key, next)
 }
 
 /* ---------- 深浅色切换 ---------- */
@@ -128,306 +172,444 @@ function toggleDarkMode() {
 onMounted(async () => {
   void loadNotices()
   if (!user.class_id) {
+    classState.value = 'idle'
     return
   }
-  const group = await groupsStore.fetchGroup(user.class_id).catch(() => undefined)
-  className.value = group?.name ?? ''
+  classState.value = 'loading'
+  const group = await groupsStore.fetchGroup(user.class_id)
+  if (group) {
+    className.value = group.name ?? ''
+    classState.value = 'ready'
+  } else {
+    className.value = ''
+    classState.value = 'failed'
+  }
 })
 </script>
 
 <template>
   <div class="profile-page">
-    <ElPageHeader :icon="ArrowLeft" class="profile-header" @back="router.back()">
-      <template #content>{{ t('profile.pageTitle') }}</template>
-    </ElPageHeader>
+    <header class="yg-page-header">
+      <div class="profile-heading">
+        <h1 class="yg-page-header__title">{{ t('profile.pageTitle') }}</h1>
+        <p class="yg-page-header__subtitle">{{ t('profile.pageSubtitle') }}</p>
+      </div>
+    </header>
 
-    <ElCard shadow="never" class="profile-card">
-      <div class="profile-hero">
-        <ElAvatar :size="80" class="profile-avatar">{{ initials }}</ElAvatar>
-        <div class="profile-identity">
-          <div class="profile-name-line">
-            <span class="profile-name">{{ user.name }}</span>
-            <ElTag
-              v-for="role in visibleRoles"
-              :key="role"
-              size="small"
-              effect="plain"
-              class="profile-role"
-            >
-              {{ roleLabel(role) }}
-            </ElTag>
+    <section class="yg-card profile-identity-card">
+      <div class="yg-card__header">
+        <h2 class="yg-card__title">{{ t('profile.infoTitle') }}</h2>
+      </div>
+
+      <div class="yg-card__body">
+        <div class="profile-hero">
+          <span class="yg-avatar yg-avatar--xl" aria-hidden="true">{{ initials }}</span>
+          <div class="profile-identity">
+            <p class="profile-name">{{ displayName }}</p>
+            <div class="profile-roles">
+              <span v-for="role in visibleRoles" :key="role" class="yg-tag yg-tag--sky">
+                {{ roleLabel(role) }}
+              </span>
+            </div>
           </div>
-          <span class="profile-class">
-            {{ className || user.class_id || t('profile.noClass') }}
+        </div>
+
+        <dl class="yg-descriptions profile-details">
+          <div class="yg-descriptions__item">
+            <dt class="yg-descriptions__label">{{ t('profile.labels.number') }}</dt>
+            <dd class="yg-descriptions__value yg-text-num">{{ studentNumber }}</dd>
+          </div>
+          <div class="yg-descriptions__item">
+            <dt class="yg-descriptions__label">{{ t('profile.labels.class') }}</dt>
+            <dd class="yg-descriptions__value" :aria-busy="classState === 'loading'">
+              <span
+                v-if="classState === 'loading'"
+                class="yg-skeleton yg-skeleton__text"
+                aria-hidden="true"
+              ></span>
+              <span v-else-if="classState === 'failed'" class="profile-class-error">
+                <span class="yg-tag yg-tag--warning">{{ t('profile.classFailed') }}</span>
+                <span class="yg-text-sm yg-text-tertiary">{{ user.class_id }}</span>
+              </span>
+              <span v-else-if="className || user.class_id">{{ className || user.class_id }}</span>
+              <span v-else class="yg-text-tertiary">{{ t('profile.noClass') }}</span>
+            </dd>
+          </div>
+          <div class="yg-descriptions__item">
+            <dt class="yg-descriptions__label">{{ t('profile.labels.status') }}</dt>
+            <dd class="yg-descriptions__value">
+              <span class="yg-tag" :class="statusTagClass">{{ statusLabel }}</span>
+            </dd>
+          </div>
+        </dl>
+      </div>
+    </section>
+
+    <section class="yg-card">
+      <div class="yg-card__header">
+        <div class="profile-notices-heading">
+          <h2 class="yg-card__title">{{ t('profile.notices.title') }}</h2>
+          <span v-if="unreadCount > 0" class="yg-tag yg-tag--sky">
+            {{ t('profile.notices.unreadCount', { count: unreadCount }) }}
           </span>
+        </div>
+        <div class="yg-card__extra">
+          <ElButton
+            :icon="Refresh"
+            class="profile-notices-refresh"
+            :loading="noticesLoading"
+            @click="loadNotices"
+          >
+            {{ t('profile.notices.refresh') }}
+          </ElButton>
         </div>
       </div>
 
-      <ElDescriptions :column="1" border class="profile-details">
-        <ElDescriptionsItem :label="t('profile.labels.name')">
-          {{ user.name }}
-        </ElDescriptionsItem>
-        <ElDescriptionsItem :label="t('profile.labels.number')">
-          {{ user.id }}
-        </ElDescriptionsItem>
-        <ElDescriptionsItem :label="t('profile.labels.class')">
-          {{ className || user.class_id || t('profile.noClass') }}
-        </ElDescriptionsItem>
-        <ElDescriptionsItem :label="t('profile.labels.identity')">
-          <ElTag
-            v-for="role in visibleRoles"
-            :key="role"
-            size="small"
-            effect="plain"
-            class="profile-role"
-          >
-            {{ roleLabel(role) }}
-          </ElTag>
-        </ElDescriptionsItem>
-        <ElDescriptionsItem :label="t('profile.labels.status')">
-          <span :class="user.banned ? 'profile-banned' : 'profile-normal'">
-            {{ user.banned ? t('profile.status.banned') : t('profile.status.normal') }}
-          </span>
-        </ElDescriptionsItem>
-      </ElDescriptions>
-    </ElCard>
+      <div class="yg-card__body">
+        <div
+          v-if="noticesLoading && notices.length === 0"
+          class="yg-skeleton profile-notice-skeleton"
+          role="status"
+          :aria-label="t('profile.notices.loading')"
+        >
+          <span class="yg-skeleton__text" aria-hidden="true"></span>
+          <span class="yg-skeleton__text" aria-hidden="true"></span>
+          <span class="yg-skeleton__text" aria-hidden="true"></span>
+        </div>
 
-    <ElCard shadow="never" class="profile-card profile-notices">
-      <div class="profile-notices-head">
-        <span class="profile-section-title">{{ t('profile.notices.title') }}</span>
-        <ElButton text size="small" :loading="noticesLoading" @click="loadNotices">
-          {{ t('profile.notices.refresh') }}
-        </ElButton>
-      </div>
-
-      <p v-if="noticesLoading && notices.length === 0" class="profile-notices-hint">
-        {{ t('profile.notices.loading') }}
-      </p>
-      <p v-else-if="noticesFailed" class="profile-notices-hint">
-        {{ t('profile.notices.failed') }}
-      </p>
-      <p v-else-if="notices.length === 0" class="profile-notices-hint">
-        {{ t('profile.notices.empty') }}
-      </p>
-      <ul v-else class="profile-notice-list">
-        <li v-for="notice in notices" :key="notice.id" class="profile-notice">
-          <button
-            type="button"
-            class="profile-notice-head"
-            :aria-expanded="openNoticeId === notice.id"
-            @click="toggleNotice(notice.id)"
-          >
-            <span class="profile-notice-title">{{ notice.title }}</span>
-            <span class="profile-notice-meta">
-              {{ notice.author_name }} · {{ formatNoticeTime(notice.created_at) }}
-            </span>
-            <svg
-              class="profile-notice-caret"
-              :class="{ 'is-open': openNoticeId === notice.id }"
-              viewBox="0 0 24 24"
-              width="16"
-              height="16"
-              aria-hidden="true"
-            >
-              <path
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                d="m6 9 6 6 6-6"
-              />
-            </svg>
-          </button>
-          <div v-if="openNoticeId === notice.id" class="profile-notice-body">
-            <ZMarkdown :source="notice.content" />
+        <div v-else-if="noticesFailed" class="yg-empty profile-notice-empty is-warning">
+          <div class="yg-empty__icon" aria-hidden="true">
+            <ElIcon class="profile-notice-empty-icon"><Warning /></ElIcon>
           </div>
-        </li>
-      </ul>
-    </ElCard>
+          <p class="yg-empty__title">{{ t('profile.notices.failed') }}</p>
+          <p class="yg-empty__desc">{{ t('profile.notices.failedDesc') }}</p>
+          <div class="yg-empty__actions">
+            <ElButton :loading="noticesLoading" @click="loadNotices">
+              {{ t('profile.notices.retry') }}
+            </ElButton>
+          </div>
+        </div>
 
-    <ElCard shadow="never" class="profile-card profile-actions">
-      <ElButton text size="large" class="profile-action" @click="changePassword">
-        {{ t('profile.actions.changePassword') }}
-      </ElButton>
-      <div
-        class="profile-action profile-switch"
-        role="switch"
-        :aria-checked="dark"
-        tabindex="0"
-        @click="toggleDarkMode"
-        @keydown.enter.prevent="toggleDarkMode"
-        @keydown.space.prevent="toggleDarkMode"
-      >
-        <span>{{ t('profile.actions.darkMode') }}</span>
-        <ElSwitch v-model="dark" />
+        <div v-else-if="notices.length === 0" class="yg-empty profile-notice-empty">
+          <div class="yg-empty__icon" aria-hidden="true">
+            <ElIcon class="profile-notice-empty-icon"><Bell /></ElIcon>
+          </div>
+          <p class="yg-empty__title">{{ t('profile.notices.empty') }}</p>
+          <p class="yg-empty__desc">{{ t('profile.notices.emptyDesc') }}</p>
+        </div>
+
+        <ul v-else class="profile-notice-list">
+          <li v-for="notice in notices" :key="notice.id" class="profile-notice">
+            <button
+              type="button"
+              class="profile-notice-head"
+              :class="{ 'is-read': !isNoticeUnread(notice) }"
+              :aria-expanded="openNoticeId === notice.id"
+              @click="toggleNotice(notice.id)"
+            >
+              <span
+                class="profile-notice-dot"
+                :class="{ 'is-unread': isNoticeUnread(notice) }"
+                role="img"
+                :aria-label="noticeReadLabel(notice)"
+              ></span>
+              <span class="profile-notice-title">{{ notice.title }}</span>
+              <span class="profile-notice-meta">
+                {{ notice.author_name || t('profile.notices.sender') }} ·
+                {{ formatDateTime(notice.created_at) }}
+              </span>
+              <svg
+                class="profile-notice-caret"
+                :class="{ 'is-open': openNoticeId === notice.id }"
+                viewBox="0 0 24 24"
+                width="16"
+                height="16"
+                aria-hidden="true"
+              >
+                <path
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  d="m6 9 6 6 6-6"
+                />
+              </svg>
+            </button>
+            <div v-if="openNoticeId === notice.id" class="profile-notice-body">
+              <ZMarkdown :source="notice.content" />
+            </div>
+          </li>
+        </ul>
       </div>
-      <ElButton text size="large" class="profile-action" @click="router.push('/about')">
-        {{ t('profile.actions.about') }}
-      </ElButton>
-      <ElButton text size="large" class="profile-action" @click="router.push('/changelog')">
-        {{ t('profile.actions.changelog') }}
-      </ElButton>
-      <ElButton class="profile-action profile-logout" @click="logout">
-        <ElIcon class="profile-logout__icon"><SwitchButton /></ElIcon>
-        {{ t('profile.actions.logout') }}
-      </ElButton>
-    </ElCard>
+    </section>
+
+    <section class="yg-card">
+      <div class="yg-card__header">
+        <h2 class="yg-card__title">{{ t('profile.actions.title') }}</h2>
+      </div>
+
+      <div class="yg-card__body profile-action-body">
+        <ul class="profile-action-list">
+          <li class="profile-action-item">
+            <button type="button" class="profile-action" @click="changePassword">
+              <span class="profile-action-label">{{ t('profile.actions.changePassword') }}</span>
+            </button>
+          </li>
+          <li class="profile-action-item">
+            <div
+              class="profile-action profile-action--switch"
+              role="switch"
+              :aria-checked="dark"
+              tabindex="0"
+              @click="toggleDarkMode"
+              @keydown.enter.prevent="toggleDarkMode"
+              @keydown.space.prevent="toggleDarkMode"
+            >
+              <span class="profile-action-label">{{ t('profile.actions.darkMode') }}</span>
+              <ElSwitch
+                v-model="dark"
+                class="profile-switch-control"
+                :tabindex="-1"
+                aria-hidden="true"
+              />
+            </div>
+          </li>
+          <li class="profile-action-item">
+            <button type="button" class="profile-action" @click="router.push('/about')">
+              <span class="profile-action-label">{{ t('profile.actions.about') }}</span>
+            </button>
+          </li>
+          <li class="profile-action-item">
+            <button type="button" class="profile-action" @click="router.push('/changelog')">
+              <span class="profile-action-label">{{ t('profile.actions.changelog') }}</span>
+            </button>
+          </li>
+          <li class="profile-action-item profile-action-item--danger">
+            <button type="button" class="profile-action profile-action--danger" @click="logout">
+              <ElIcon class="profile-logout-icon" aria-hidden="true"><SwitchButton /></ElIcon>
+              <span class="profile-action-label">{{ t('profile.actions.logout') }}</span>
+            </button>
+          </li>
+        </ul>
+      </div>
+    </section>
   </div>
 </template>
 
 <style scoped>
+/* ---------- 页面骨架 ---------- */
 .profile-page {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: var(--yg-space-6);
   width: 100%;
   max-width: 760px;
   margin: 0 auto;
-  padding: 16px 24px 32px;
 }
 
-.profile-header {
-  padding: 4px 0;
+/* 头部自带 24px 下外边距，与页面栅格间距叠加会翻倍，这里归零 */
+.profile-page .yg-page-header {
+  margin-bottom: 0;
 }
 
-.profile-card {
-  border-radius: 8px;
+/* ---------- 个人信息 ---------- */
+.profile-identity-card {
+  box-shadow: var(--yg-shadow-sm);
 }
 
 .profile-hero {
   display: flex;
   align-items: center;
-  gap: 20px;
-  padding-bottom: 16px;
-  border-bottom: 1px solid var(--yg-border-default);
-}
-
-.profile-avatar {
-  flex-shrink: 0;
-  font-size: 24px;
-  background: var(--yg-color-primary);
-  color: #fff;
+  flex-wrap: wrap;
+  gap: var(--yg-space-5);
 }
 
 .profile-identity {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--yg-space-2);
   min-width: 0;
 }
 
-.profile-name-line {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
 .profile-name {
-  font-size: 22px;
-  font-weight: 600;
-  line-height: 1.3;
-  color: var(--yg-text-primary);
-}
-
-.profile-role {
   margin: 0;
+  font-size: var(--yg-font-size-2xl);
+  font-weight: var(--yg-font-weight-semibold);
+  line-height: var(--yg-line-height-tight);
+  color: var(--yg-text-primary);
+  overflow-wrap: anywhere;
 }
 
-.profile-class {
-  color: var(--yg-text-secondary);
-  font-size: 14px;
+.profile-roles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--yg-space-2);
 }
 
 .profile-details {
-  margin-top: 16px;
+  margin-top: var(--yg-space-5);
+  padding-top: var(--yg-space-5);
+  border-top: calc(var(--yg-space-1) / 4) solid var(--yg-border-subtle);
 }
 
-.profile-actions {
-  display: flex;
-  flex-direction: column;
+.profile-details .yg-descriptions__item {
+  flex: 1 1 var(--yg-space-9);
+  min-width: 0;
+}
+
+.profile-details .yg-descriptions__label {
+  font-weight: var(--yg-font-weight-regular);
+}
+
+.profile-details .yg-descriptions__value {
+  margin: 0;
+  font-size: var(--yg-font-size-md);
+  font-weight: var(--yg-font-weight-medium);
+  color: var(--yg-text-primary);
+}
+
+.profile-class-error {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--yg-space-2);
+}
+
+/* ---------- 快捷操作 ---------- */
+/* 满宽操作行：卡片内边距归零，由行自己提供左右留白，分隔线才能贯通整卡 */
+.profile-action-body {
   padding: 0;
   overflow: hidden;
+  border-radius: 0 0 var(--yg-radius-lg) var(--yg-radius-lg);
+}
+
+.profile-action-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.profile-action-item + .profile-action-item {
+  border-top: calc(var(--yg-space-1) / 4) solid var(--yg-border-subtle);
+}
+
+/* 危险操作单独成组：靠间距分组，红色高危态只落在这一项上 */
+.profile-action-item--danger {
+  margin-top: var(--yg-space-2);
 }
 
 .profile-action {
-  justify-content: flex-start;
-  width: 100%;
-  height: 52px;
-  margin: 0;
-  padding: 0 16px;
-  border-radius: 0;
-  font-size: 15px;
-}
-
-.profile-action + .profile-action {
-  border-top: 1px solid var(--yg-border-default);
-}
-
-.profile-switch {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 16px;
+  justify-content: flex-start;
+  gap: var(--yg-space-3);
+  width: 100%;
+  padding: var(--yg-space-3) var(--yg-space-5);
+  border: 0;
+  background: transparent;
   color: var(--yg-text-primary);
+  font-size: var(--yg-font-size-lg);
+  line-height: var(--yg-line-height-snug);
+  text-align: left;
   cursor: pointer;
-  user-select: none;
-  transition: background-color 160ms ease;
+  transition: background-color var(--yg-dur-fast) var(--yg-ease-out);
 }
 
-/* 整行可点：开关本身不再吃掉点击（由外层统一处理，切换才带整屏过渡） */
-.profile-switch:hover {
-  background: var(--yg-bg-surface-sunken);
+.profile-action:hover {
+  background-color: var(--yg-bg-hover);
 }
 
-.profile-switch:focus-visible {
+.profile-action:active {
+  background-color: var(--yg-bg-active);
+}
+
+.profile-action:focus-visible {
   outline: none;
   box-shadow: var(--yg-focus-ring);
 }
 
-.profile-switch :deep(.el-switch) {
+/* 退出登录：高危操作，红色主题（浅红底 + 红字红图标，hover 加深）
+   独立成一行的按钮，语义与普通操作行拉开，故内容居中 */
+.profile-action.profile-action--danger {
+  justify-content: center;
+  gap: var(--yg-space-2);
+  color: var(--yg-text-danger);
+  background: var(--yg-color-danger-soft);
+  font-weight: var(--yg-font-weight-medium);
+  transition:
+    background-color var(--yg-dur-fast) var(--yg-ease-out),
+    color var(--yg-dur-fast) var(--yg-ease-out);
+}
+
+.profile-action.profile-action--danger:hover,
+.profile-action.profile-action--danger:focus {
+  color: var(--yg-text-danger);
+  background: color-mix(in srgb, var(--yg-color-danger-soft) 70%, var(--yg-color-danger) 30%);
+}
+
+.profile-action.profile-action--danger:active {
+  color: var(--yg-color-on-danger);
+  background: var(--yg-color-danger);
+}
+
+.profile-action.profile-action--danger:focus-visible {
+  outline: none;
+  box-shadow: inset var(--yg-focus-ring);
+}
+
+.profile-logout-icon {
+  font-size: var(--yg-font-size-lg);
+}
+
+.profile-action-label {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* 开关本体只作视觉呈现：焦点与交互都由外层这一层 role="switch" 承担，
+   避免出现两个可聚焦的开关 */
+.profile-action--switch {
+  justify-content: space-between;
+}
+
+.profile-switch-control {
   pointer-events: none;
 }
 
 /* 开关 Q 弹：滑块用弹簧曲线位移，按压时轻微回缩 */
-.profile-switch :deep(.el-switch__core) {
+.profile-switch-control :deep(.el-switch__core) {
   transition:
-    background-color 260ms ease,
-    border-color 260ms ease;
+    background-color var(--yg-dur-slow) var(--yg-ease-out),
+    border-color var(--yg-dur-slow) var(--yg-ease-out);
 }
 
-.profile-switch :deep(.el-switch__action) {
+.profile-switch-control :deep(.el-switch__action) {
   transition:
-    left 420ms cubic-bezier(0.34, 1.56, 0.64, 1),
-    transform 380ms cubic-bezier(0.34, 1.56, 0.64, 1);
+    left var(--yg-dur-slow) var(--yg-ease-spring),
+    transform var(--yg-dur-slow) var(--yg-ease-spring);
 }
 
-.profile-switch:active :deep(.el-switch__action) {
-  transform: scale(0.82);
-  transition-duration: 90ms;
+.profile-action--switch:active :deep(.el-switch__action) {
+  transform: scale(0.8);
+  transition-duration: var(--yg-dur-fast);
 }
 
 /* ---------- 通知栏目 ---------- */
-.profile-section-title {
-  font-size: 16px;
-  font-weight: 600;
-  color: var(--yg-text-primary);
-}
-
-.profile-notices-head {
+.profile-notices-heading {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding-bottom: 10px;
-  border-bottom: 1px solid var(--yg-border-default);
+  gap: var(--yg-space-2);
 }
 
-.profile-notices-hint {
-  margin: 14px 0 2px;
-  color: var(--yg-text-secondary);
-  font-size: 14px;
+.profile-notice-empty-icon {
+  font-size: var(--yg-space-7);
+}
+
+/* 加载失败是「警告」而非「危险」，用橙色浅底，不占用红色的危险语义 */
+.profile-notice-empty.is-warning .yg-empty__icon {
+  background-color: var(--yg-color-warning-soft);
+  color: var(--yg-text-warning);
 }
 
 .profile-notice-list {
@@ -437,34 +619,34 @@ onMounted(async () => {
 }
 
 .profile-notice + .profile-notice {
-  border-top: 1px solid var(--yg-border-default);
+  border-top: calc(var(--yg-space-1) / 4) solid var(--yg-border-subtle);
 }
 
 .profile-notice-head {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 4px 10px;
+  gap: var(--yg-space-2) var(--yg-space-3);
   width: 100%;
-  padding: 14px 6px;
+  padding: var(--yg-space-3) var(--yg-space-2);
   border: 0;
-  border-radius: 10px;
+  border-radius: var(--yg-radius-md);
   background: transparent;
   color: var(--yg-text-primary);
   text-align: left;
   cursor: pointer;
   transition:
-    background-color 180ms ease,
-    transform 320ms cubic-bezier(0.34, 1.56, 0.64, 1);
+    background-color var(--yg-dur-fast) var(--yg-ease-out),
+    transform var(--yg-dur-slow) var(--yg-ease-spring);
 }
 
 .profile-notice-head:hover {
-  background: var(--yg-bg-surface-sunken);
+  background: var(--yg-bg-hover);
 }
 
 .profile-notice-head:active {
   transform: scale(0.99);
-  transition-duration: 90ms;
+  transition-duration: var(--yg-dur-fast);
 }
 
 .profile-notice-head:focus-visible {
@@ -472,26 +654,47 @@ onMounted(async () => {
   box-shadow: var(--yg-focus-ring);
 }
 
+/* 未读圆点：主色实心；已读退成浅灰底，位置始终保留，避免行宽跳动 */
+.profile-notice-dot {
+  flex: 0 0 auto;
+  width: var(--yg-space-2);
+  height: var(--yg-space-2);
+  border-radius: 50%;
+  background-color: var(--yg-border-default);
+  transition: background-color var(--yg-dur-base) var(--yg-ease-out);
+}
+
+.profile-notice-dot.is-unread {
+  background-color: var(--yg-color-primary);
+}
+
 .profile-notice-title {
   flex: 1 1 auto;
   min-width: 0;
-  font-size: 15px;
-  font-weight: 600;
+  font-size: var(--yg-font-size-lg);
+  font-weight: var(--yg-font-weight-semibold);
+  line-height: var(--yg-line-height-snug);
+  color: var(--yg-text-primary);
   overflow-wrap: anywhere;
+}
+
+.profile-notice-head.is-read .profile-notice-title {
+  font-weight: var(--yg-font-weight-regular);
+  color: var(--yg-text-secondary);
 }
 
 .profile-notice-meta {
   flex: 0 0 auto;
-  color: var(--yg-text-secondary);
-  font-size: 12.5px;
+  color: var(--yg-text-tertiary);
+  font-size: var(--yg-font-size-sm);
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }
 
 .profile-notice-caret {
   flex: 0 0 auto;
-  color: var(--yg-text-secondary);
-  transition: transform 380ms cubic-bezier(0.34, 1.56, 0.64, 1);
+  color: var(--yg-text-tertiary);
+  transition: transform var(--yg-dur-slow) var(--yg-ease-spring);
 }
 
 .profile-notice-caret.is-open {
@@ -499,17 +702,17 @@ onMounted(async () => {
 }
 
 .profile-notice-body {
-  padding: 0 6px 16px;
+  padding: 0 var(--yg-space-2) var(--yg-space-4);
   color: var(--yg-text-primary);
-  font-size: 14px;
-  line-height: 1.7;
-  animation: yg-notice-open 320ms cubic-bezier(0.22, 1, 0.36, 1);
+  font-size: var(--yg-font-size-md);
+  line-height: var(--yg-line-height-relaxed);
+  animation: yg-notice-open var(--yg-dur-slow) var(--yg-ease-spring);
 }
 
 @keyframes yg-notice-open {
   from {
     opacity: 0;
-    transform: translateY(-6px);
+    transform: translateY(calc(var(--yg-space-1) * -1));
   }
   to {
     opacity: 1;
@@ -518,8 +721,9 @@ onMounted(async () => {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .profile-switch :deep(.el-switch__action),
+  .profile-switch-control :deep(.el-switch__action),
   .profile-notice-caret,
+  .profile-notice-dot,
   .profile-notice-head,
   .profile-notice-body {
     transition: none;
@@ -527,66 +731,14 @@ onMounted(async () => {
   }
 }
 
-/* 退出登录：高危操作，红色主题（浅红底 + 红字红图标，hover 加深） */
-.profile-logout.el-button {
-  justify-content: center;
-  gap: 8px;
-  color: var(--yg-text-danger);
-  background: var(--yg-color-danger-soft);
-  border: 0;
-  border-radius: 0;
-  font-weight: var(--yg-font-weight-medium);
-  transition:
-    background-color var(--yg-dur-fast) var(--yg-ease-out),
-    color var(--yg-dur-fast) var(--yg-ease-out);
-}
-
-.profile-logout.el-button:hover,
-.profile-logout.el-button:focus {
-  color: var(--yg-text-danger);
-  background: color-mix(in srgb, var(--yg-color-danger-soft) 70%, var(--yg-color-danger) 30%);
-}
-
-.profile-logout.el-button:active {
-  color: var(--yg-color-on-danger);
-  background: var(--yg-color-danger);
-}
-
-.profile-logout.el-button:focus-visible {
-  outline: none;
-  box-shadow: inset var(--yg-focus-ring);
-}
-
-.profile-logout__icon {
-  font-size: 16px;
-}
-
-.profile-normal {
-  color: var(--el-color-success);
-}
-
-.profile-banned {
-  color: var(--el-color-danger);
-}
-
-@media (max-width: 480px) {
-  .profile-page {
-    padding: 12px 16px 24px;
+@media (max-width: 640px) {
+  .profile-details .yg-descriptions__item {
+    flex-basis: 100%;
   }
 
-  .profile-hero {
-    align-items: flex-start;
-    gap: 14px;
-  }
-
-  .profile-avatar {
-    width: 64px !important;
-    height: 64px !important;
-    font-size: 20px;
-  }
-
-  .profile-name {
-    font-size: 20px;
+  /* 触控目标：窄屏下刷新按钮不小于 44px */
+  .profile-notices-refresh :deep(.el-button) {
+    min-height: var(--yg-control-height-lg);
   }
 }
 </style>

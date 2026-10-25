@@ -53,6 +53,8 @@ declare module 'vue' {
     ZAiKeysAdmin: typeof import('./src/components/ai/ZAiKeysAdmin.vue')['default']
     ZAiLogsAdmin: typeof import('./src/components/ai/ZAiLogsAdmin.vue')['default']
     ZAiOcrEnginesAdmin: typeof import('./src/components/ai/ZAiOcrEnginesAdmin.vue')['default']
+    ZAiPromptAudit: typeof import('./src/components/ai/ZAiPromptAudit.vue')['default']
+    ZAiProposalCard: typeof import('./src/components/ai/ZAiProposalCard.vue')['default']
     ZAiQuotaAdmin: typeof import('./src/components/ai/ZAiQuotaAdmin.vue')['default']
     ZAiQuotaPanel: typeof import('./src/components/ai/ZAiQuotaPanel.vue')['default']
     ZAttachmentUpload: typeof import('./src/components/attachment/ZAttachmentUpload.vue')['default']
@@ -87,7 +89,6 @@ declare module 'vue' {
     ZUserModification: typeof import('./src/components/group/ZUserModification.vue')['default']
     ZUserPosition: typeof import('./src/components/tags/ZUserPosition.vue')['default']
     ZUserTimeJudge: typeof import('./src/components/activity/ZUserTimeJudge.vue')['default']
-    ZVerticalNav: typeof import('./src/components/form/ZVerticalNav.vue')['default']
   }
   export interface GlobalDirectives {
     vLoading: typeof import('element-plus/es')['ElLoadingDirective']

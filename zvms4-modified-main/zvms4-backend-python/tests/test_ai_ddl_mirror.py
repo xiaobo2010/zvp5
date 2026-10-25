@@ -34,6 +34,32 @@ ZHIPU_KIND_FILE = "V029__add_zhipu_ocr_engine_kind.sql"
 EXPIRY_FILE = "V028__add_ai_credentials_expires_at.sql"
 API_KEYS_FILE = "V030__add_ai_api_keys.sql"
 TRACE_FILE = "V031__add_ai_call_logs_trace.sql"
+AGENT_FILE = "V033__agent_and_prompt_audit.sql"
+PROPOSAL_FILE = "V034__agent_proposal_payload.sql"
+
+# V033 给 ai_call_logs 补的两列（agent 轮次 + 角色快照），全部 nullable。
+AGENT_TRACE_COLUMNS = {"round_no", "roles_snapshot"}
+AGENT_TRACE_CHECK_EXPRS = {"round_no is null or round_no >= 1"}
+
+# V034 给 ai_agent_events 补的四列（完整参数 / 预览 / 审批人 / 执行时间）与
+# 放宽后的状态 CHECK。V033 建表时还没有这些，也没有 ``executing``。
+PROPOSAL_COLUMNS = {"args_payload", "preview", "approver_oid", "confirmed_at"}
+LEGACY_AGENT_STATUS_CK = (
+    "status in ('executed','proposed','confirmed','rejected','expired',"
+    "'failed','denied')"
+)
+AGENT_STATUS_CK = (
+    "status in ('executed','proposed','executing','confirmed','rejected',"
+    "'expired','failed','denied')"
+)
+
+# 相邻的 V032（prompt 前缀缓存）也往 ai_call_logs 补了三列 + 一个
+# CHECK。两份迁移互不依赖（各自幂等）：比较 V024 的建表形状时两种增量都要摘掉。
+CACHE_TRACE_COLUMNS = {"cache_read_tokens", "cache_write_tokens", "cache_key"}
+CACHE_TRACE_CHECK_EXPRS = {
+    "(cache_read_tokens is null or cache_read_tokens >= 0)"
+    " and (cache_write_tokens is null or cache_write_tokens >= 0)"
+}
 
 # ``ai_call_logs.key_scope`` 的 CHECK 规范化后的形态（ddl_check 会把大小写与空白
 # 折叠掉）。V024 建表时还没有这一列，它由 V025 的幂等 ALTER 补上——所以下面既断言
@@ -199,13 +225,16 @@ def test_ai_call_logs_migration_matches_models_minus_key_scope() -> None:
     v001 = ddl_check.parse_v001()
 
     expected = modeled["tables"]["ai_call_logs"]
-    # V024 建表时还没有 key_scope（V025 补）与 V031 的 8 个 trace 列：
-    # 把它们从 models 侧摘掉后必须与迁移逐字段相等。
+    # V024 建表时还没有 key_scope（V025 补）、V031 的 8 个 trace 列与 V033 的 2 个
+    # agent 列：把它们从 models 侧摘掉后必须与迁移逐字段相等。
     without_later = {
         "columns": {
             k: v
             for k, v in expected["columns"].items()
-            if k != "key_scope" and k not in TRACE_COLUMNS
+            if k != "key_scope"
+            and k not in TRACE_COLUMNS
+            and k not in AGENT_TRACE_COLUMNS
+            and k not in CACHE_TRACE_COLUMNS
         },
         "pk": expected["pk"],
         "uq": set(expected["uq"]),
@@ -213,18 +242,23 @@ def test_ai_call_logs_migration_matches_models_minus_key_scope() -> None:
         "ck": {
             ck
             for ck in expected["ck"]
-            if ck != KEY_SCOPE_CK and ck not in TRACE_CHECK_EXPRS
+            if ck != KEY_SCOPE_CK
+            and ck not in TRACE_CHECK_EXPRS
+            and ck not in AGENT_TRACE_CHECK_EXPRS
+            and ck not in CACHE_TRACE_CHECK_EXPRS
         },
     }
     assert gateway["tables"]["ai_call_logs"] == without_later
 
-    # 全新实例走 V001，一次就拿到完整形状（含 key_scope 与 V031 的列）。
+    # 全新实例走 V001，一次就拿到完整形状（含 key_scope 与 V031/V032/V033 的列）。
     assert v001["tables"]["ai_call_logs"] == expected
     assert "key_scope" in v001["tables"]["ai_call_logs"]["columns"]
     assert KEY_SCOPE_CK in v001["tables"]["ai_call_logs"]["ck"]
-    for column in TRACE_COLUMNS:
+    for column in TRACE_COLUMNS | AGENT_TRACE_COLUMNS | CACHE_TRACE_COLUMNS:
         assert column in v001["tables"]["ai_call_logs"]["columns"]
-    for check in TRACE_CHECK_EXPRS:
+    for check in (
+        TRACE_CHECK_EXPRS | AGENT_TRACE_CHECK_EXPRS | CACHE_TRACE_CHECK_EXPRS
+    ):
         assert check in v001["tables"]["ai_call_logs"]["ck"]
 
 
@@ -266,6 +300,145 @@ def test_trace_migration_adds_the_columns_the_models_declare() -> None:
     assert ("ai_call_logs", False, ("request_id",)) in ddl_check.parse_models()[
         "indexes"
     ]
+
+
+AGENT_TABLES = {"ai_agent_events", "ai_prompt_audit"}
+AGENT_INDEXES = {
+    ("ai_agent_events", False, ("request_id",)),
+    ("ai_agent_events", False, ("status", "created_at")),
+    ("ai_prompt_audit", False, ("user_oid", "created_at")),
+}
+
+
+def test_agent_migration_matches_models_and_v001() -> None:
+    """V033 的两列 + 两张表 + 三个索引必须与 models/V001 逐字段一致。
+
+    ``ai_agent_events`` 按文件头约定比较「models **减去** V034 的增量」：V033 是
+    历史事实（当时没有 ARGS_PAYLOAD/PREVIEW/APPROVER_OID/CONFIRMED_AT，状态 CHECK
+    也没有 ``executing``），后续迁移只做增量。
+    """
+    agent = _parsed(_migration(AGENT_FILE))
+    modeled = ddl_check.parse_models()
+    v001 = ddl_check.parse_v001()
+
+    assert agent["tables"]["ai_prompt_audit"] == modeled["tables"]["ai_prompt_audit"]
+    assert v001["tables"]["ai_prompt_audit"] == modeled["tables"]["ai_prompt_audit"]
+
+    expected_events = modeled["tables"]["ai_agent_events"]
+    before_proposal_v2 = {
+        "columns": {
+            name: spec
+            for name, spec in expected_events["columns"].items()
+            if name not in PROPOSAL_COLUMNS
+        },
+        "pk": expected_events["pk"],
+        "uq": set(expected_events["uq"]),
+        "fk": set(expected_events["fk"]),
+        "ck": (expected_events["ck"] - {AGENT_STATUS_CK}) | {LEGACY_AGENT_STATUS_CK},
+    }
+    assert agent["tables"]["ai_agent_events"] == before_proposal_v2
+
+    # 全新实例走 V001，一次就拿到完整形状（含 V034 的四列与 executing）。
+    assert v001["tables"]["ai_agent_events"] == expected_events
+    for column in PROPOSAL_COLUMNS:
+        assert column in v001["tables"]["ai_agent_events"]["columns"]
+    assert AGENT_STATUS_CK in expected_events["ck"]
+    assert LEGACY_AGENT_STATUS_CK not in expected_events["ck"]
+
+    assert AGENT_INDEXES <= agent["indexes"]
+    assert AGENT_INDEXES <= modeled["indexes"]
+    assert AGENT_INDEXES <= v001["indexes"]
+
+    # 两张新表的 OID 是 32 位 hex（uuid4().hex），不是 24 位 ObjectId：不能带
+    # ck_*_oid 的 24 位 REGEXP 约束，否则插入会直接被数据库拒掉。
+    for table in AGENT_TABLES:
+        assert modeled["tables"][table]["columns"]["oid"][0] == "varchar2(32)"
+        assert not any("oid" in ck and "0-9a-f]{24}" in ck for ck in modeled["tables"][table]["ck"])
+
+
+def test_agent_migration_widens_ai_call_logs_with_round_and_roles() -> None:
+    extracted = ddl_check.extract_execute_immediate(_migration(AGENT_FILE).read_text(encoding="utf-8"))
+    expected_columns = ddl_check.parse_models()["tables"]["ai_call_logs"]["columns"]
+
+    added = re.findall(
+        r"ALTER TABLE ai_call_logs ADD \((.*)\)\s*$",
+        extracted,
+        re.IGNORECASE | re.MULTILINE,
+    )
+    assert added, extracted
+    assert {frag.split()[0].lower() for frag in added} == AGENT_TRACE_COLUMNS
+    for frag in added:
+        name, type_, notnull, default = ddl_check._parse_column(frag)
+        assert (type_, notnull, default) == expected_columns[name]
+        assert notnull is False
+        assert default is None
+
+    constraints = re.findall(
+        r"ALTER TABLE ai_call_logs ADD CONSTRAINT (\w+) CHECK \((.*)\)\s*$",
+        extracted,
+        re.IGNORECASE | re.MULTILINE,
+    )
+    parsed = {
+        ddl_check._parse_constraint(f"constraint {name} check ({expr})")
+        for name, expr in constraints
+    }
+    assert {expr for _kind, expr in parsed} == AGENT_TRACE_CHECK_EXPRS
+
+
+def test_proposal_migration_adds_the_columns_and_widens_the_status_check() -> None:
+    """V034 的四条 ADD 列 + 重建后的状态 CHECK 必须与 models/V001 一致。"""
+    text = _migration(PROPOSAL_FILE).read_text(encoding="utf-8")
+    extracted = ddl_check.extract_execute_immediate(text)
+    expected_columns = ddl_check.parse_models()["tables"]["ai_agent_events"]["columns"]
+
+    added = re.findall(
+        r"ALTER TABLE ai_agent_events ADD \((.*)\)\s*$",
+        extracted,
+        re.IGNORECASE | re.MULTILINE,
+    )
+    assert added, extracted
+    assert {frag.split()[0].lower() for frag in added} == PROPOSAL_COLUMNS
+    for frag in added:
+        name, type_, notnull, default = ddl_check._parse_column(frag)
+        assert (type_, notnull, default) == expected_columns[name]
+        # 存量行（活动域的执行事件、已确认的提案）没有这些信息：NULL 才是真话。
+        assert notnull is False
+        assert default is None
+
+    # 先 DROP 再 ADD：只 ADD 会在约束名已被占用时被 -2264 吞掉，于是执行仍然
+    # 缺 executing——这一条把顺序钉住。
+    assert re.search(
+        r"ALTER TABLE ai_agent_events DROP CONSTRAINT ck_ai_agent_events_status",
+        extracted,
+        re.IGNORECASE,
+    )
+    constraints = re.findall(
+        r"ALTER TABLE ai_agent_events ADD CONSTRAINT (\w+) CHECK \((.*)\)\s*$",
+        extracted,
+        re.IGNORECASE | re.MULTILINE,
+    )
+    parsed = [ddl_check._parse_constraint(f"constraint {name} check ({expr})")
+              for name, expr in constraints]
+    assert parsed == [("ck", AGENT_STATUS_CK)]
+
+    # 幂等性：DROP 要吞 -2443（约束不存在），ADD 要吞 -2264（重跑）。
+    assert "IF SQLCODE NOT IN (-2443, -2264, -955) THEN RAISE; END IF;" in text
+    assert "IF SQLCODE NOT IN (-2264, -955) THEN RAISE; END IF;" in text
+    # 历史迁移不得回头改：V034 之外的两份仍然描述各自的年代。
+    v033 = _migration(AGENT_FILE).read_text(encoding="utf-8")
+    assert "args_payload" not in v033
+    assert "executing" not in v033
+
+
+def test_seed_ai_chat_burst_is_mirrored_in_both_files() -> None:
+    """``ai_chat_burst`` 只建种子：两份文件必须一致，且 mode 为 alert（不封人）。"""
+    for path in (_migration(AGENT_FILE), DDL_DIR / "V001__initial_schema.sql"):
+        text = ddl_check.extract_execute_immediate(path.read_text(encoding="utf-8"))
+        assert "'ai_chat_burst'" in text, path.name
+        assert (
+            '\'ai_chat_burst\', 1, \'{"threshold":80,"window_hours":1,"mode":"alert"}\''
+            in text
+        ), path.name
 
 
 def test_gateway_migration_carries_the_models_indexes() -> None:

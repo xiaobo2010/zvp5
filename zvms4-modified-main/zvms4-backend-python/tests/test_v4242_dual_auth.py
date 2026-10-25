@@ -88,8 +88,10 @@ class StubRepo:
 @pytest.fixture(autouse=True)
 def _reset_limiter():
     dual_auth._failures.clear()
+    dual_auth.clear_grants()
     yield
     dual_auth._failures.clear()
+    dual_auth.clear_grants()
 
 
 @pytest.fixture
@@ -374,3 +376,91 @@ def test_admin_query_matches_role_exactly():
 
     assert "JSON_EXISTS" in compiled.upper()
     assert "users.roles" in compiled
+
+
+# ---------------------------------------------------------------------------
+# 30 分钟授权缓存（``require_dual_auth_cached``）
+# ---------------------------------------------------------------------------
+
+
+def _cached(operator, code, action: str = "agent_write"):
+    return asyncio.run(dual_auth.require_dual_auth_cached(operator, code, action=action))
+
+
+def test_second_write_within_the_window_needs_no_code(install, audits):
+    install([OPERATOR, APPROVER])
+    code, _ = get_current_totp(APPROVER)
+    operator = {"id": OPERATOR}
+
+    assert _cached(operator, code) == (APPROVER, False)
+    assert _cached(operator, "") == (APPROVER, True)
+
+    cached = [
+        entry
+        for entry in audits
+        if json.loads(entry.kwargs["data"]).get("cached") == "true"
+    ]
+    assert len(cached) == 1
+
+
+def test_cache_is_scoped_per_action(install, audits):
+    install([OPERATOR, APPROVER])
+    code, _ = get_current_totp(APPROVER)
+    _cached({"id": OPERATOR}, code)
+
+    with pytest.raises(DualAuthError) as excinfo:
+        _cached({"id": OPERATOR}, "", action="web_ssh")
+
+    assert excinfo.value.status_code == 422
+
+
+def test_cache_is_scoped_per_operator(install, audits):
+    install([OPERATOR, APPROVER, THIRD])
+    code, _ = get_current_totp(APPROVER)
+    _cached({"id": OPERATOR}, code)
+
+    with pytest.raises(DualAuthError) as excinfo:
+        _cached({"id": THIRD}, "")
+
+    assert excinfo.value.status_code == 422
+
+
+def test_expired_grant_is_dropped(install, audits):
+    install([OPERATOR, APPROVER])
+    key = (OPERATOR, "agent_write")
+    dual_auth._grants[key] = (APPROVER, time.monotonic() - 1)
+
+    assert dual_auth.cached_approval({"id": OPERATOR}, action="agent_write") is None
+    assert key not in dual_auth._grants
+    with pytest.raises(DualAuthError):
+        _cached({"id": OPERATOR}, "")
+
+
+def test_ttl_zero_disables_the_cache(install, audits, monkeypatch):
+    import settings
+
+    monkeypatch.setattr(settings, "DUAL_AUTH_CACHE_TTL_SECONDS", 0, raising=False)
+    install([OPERATOR, APPROVER])
+    code, _ = get_current_totp(APPROVER)
+    operator = {"id": OPERATOR}
+
+    assert _cached(operator, code) == (APPROVER, False)
+    with pytest.raises(DualAuthError):
+        _cached(operator, "")
+
+
+def test_failed_verification_does_not_create_a_grant(install, audits):
+    install([OPERATOR, APPROVER])
+
+    with pytest.raises(DualAuthError):
+        _cached({"id": OPERATOR}, _wrong_code())
+
+    assert dual_auth.cached_approval({"id": OPERATOR}, action="agent_write") is None
+
+
+def test_ttl_is_capped_at_one_day(monkeypatch):
+    import settings
+
+    monkeypatch.setattr(settings, "DUAL_AUTH_CACHE_TTL_SECONDS", 10**9, raising=False)
+
+    assert dual_auth.dual_auth_cache_ttl_seconds() == 86_400

@@ -127,6 +127,32 @@ def test_missing_target_is_404(tmp_path):
     assert excinfo.value.detail == "路径不存在"
 
 
+def test_create_flag_allows_a_new_file(tmp_path):
+    """agent 的 ``fs_write`` 走 ``create=True``：新建文件仍要原子落盘、模式 0o644。"""
+    target = tmp_path / "new.txt"
+
+    result = file_ops.write_text(str(target), "hello", "utf-8", create=True)
+
+    assert target.read_text(encoding="utf-8") == "hello"
+    assert result["size"] == 5
+    assert stat_module.S_IMODE(os.stat(target).st_mode) == 0o644
+
+
+def test_create_flag_still_requires_an_existing_parent(tmp_path):
+    with pytest.raises(file_ops.FileOpError) as excinfo:
+        file_ops.write_text(str(tmp_path / "gone" / "x.txt"), "x", "utf-8", create=True)
+
+    assert excinfo.value.status_code == 404
+    assert excinfo.value.detail == "父目录不存在"
+
+
+def test_create_flag_still_rejects_the_virtual_fs():
+    with pytest.raises(file_ops.FileOpError) as excinfo:
+        file_ops.write_text("/proc/self/agent-new.txt", "x", "utf-8", create=True)
+
+    assert excinfo.value.status_code == 403
+
+
 def test_directory_target_is_400(tmp_path):
     with pytest.raises(file_ops.FileOpError) as excinfo:
         file_ops.write_text(str(tmp_path), "x", "utf-8")

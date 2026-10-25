@@ -1191,6 +1191,11 @@ CREATE TABLE ai_call_logs (
   first_token_ms NUMBER(10),
   engine_kind VARCHAR2(24 CHAR),
   attachment_oid VARCHAR2(24 CHAR),
+  round_no NUMBER(3),
+  roles_snapshot VARCHAR2(64 CHAR),
+  cache_read_tokens NUMBER(10),
+  cache_write_tokens NUMBER(10),
+  cache_key VARCHAR2(64 CHAR),
   created_at TIMESTAMP NOT NULL,
   PRIMARY KEY (oid),
   CONSTRAINT ck_ai_call_logs_oid CHECK (REGEXP_LIKE(oid,''^[0-9a-f]{24}$'')),
@@ -1199,7 +1204,9 @@ CREATE TABLE ai_call_logs (
   CONSTRAINT ck_ai_call_logs_units CHECK (units >= 0),
   CONSTRAINT ck_ai_call_logs_key_scope CHECK (key_scope IS NULL OR key_scope IN (''personal'',''shared'',''server'')),
   CONSTRAINT ck_ai_call_logs_tokens CHECK ((prompt_tokens IS NULL OR prompt_tokens >= 0) AND (completion_tokens IS NULL OR completion_tokens >= 0) AND (total_tokens IS NULL OR total_tokens >= 0)),
-  CONSTRAINT ck_ai_call_logs_attempt_no CHECK (attempt_no IS NULL OR attempt_no >= 1)
+  CONSTRAINT ck_ai_call_logs_attempt_no CHECK (attempt_no IS NULL OR attempt_no >= 1),
+  CONSTRAINT ck_ai_call_logs_round_no CHECK (round_no IS NULL OR round_no >= 1),
+  CONSTRAINT ck_ai_call_logs_cache_tokens CHECK ((cache_read_tokens IS NULL OR cache_read_tokens >= 0) AND (cache_write_tokens IS NULL OR cache_write_tokens >= 0))
 )';
 EXCEPTION
   WHEN OTHERS THEN
@@ -1621,6 +1628,112 @@ WHEN NOT MATCHED THEN INSERT
   (oid, code, name, trigger_code, enabled, config, penalties, builtin, created_at, updated_at)
   VALUES (''0b000000000000000000000a'', ''device_switch_burst'', ''频繁更换设备'',
           ''device_switch_burst'', 1, ''{"threshold":5,"window_hours":24,"mode":"alert"}'',
+          ''null'', 1, SYSTIMESTAMP, SYSTIMESTAMP)';
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE NOT IN (-1, -955) THEN RAISE; END IF;
+END;
+/
+
+-- ----------------------------------------------------------------------------
+-- AI_AGENT_EVENTS  ← new (agent 每次工具调用的留痕; V033 + V034)
+--   一行 = 一次工具调用尝试，包含被拒 / 驳回 / 过期的那些：只记成功就看不见
+--   「模型在试探白名单外的工具」。OID 是 32 位 hex（提案句柄，与业务 oid 空间分
+--   开），ARGS_HASH 是**完整参数 ARGS_PAYLOAD** 的 sha256——确认时必须能重算比对；
+--   ARGS_SUMMARY 只是 ≤500 的展示副本。PREVIEW 是确认界面的结构化预览。
+--   APPROVER_OID / CONFIRMED_AT 记录双人码审批人与执行时间（无 TOTP 时 NULL）。
+--   STATUS 走 CAS：proposed → executing → confirmed | failed（终态不可覆盖）。
+--   无外键：审计要活过账号删除（同 AI_CALL_LOGS）。也由
+--   V033 / V034 在存量实例上创建/补齐。
+-- ----------------------------------------------------------------------------
+BEGIN
+  EXECUTE IMMEDIATE '
+CREATE TABLE ai_agent_events (
+  oid VARCHAR2(32 CHAR) NOT NULL,
+  request_id VARCHAR2(64 CHAR),
+  round_no NUMBER(3),
+  tool_name VARCHAR2(48 CHAR),
+  tool_kind VARCHAR2(8 CHAR),
+  args_hash VARCHAR2(64 CHAR),
+  args_summary VARCHAR2(500 CHAR),
+  args_payload CLOB,
+  preview CLOB,
+  result_summary VARCHAR2(500 CHAR),
+  status VARCHAR2(12 CHAR) NOT NULL,
+  actor_oid VARCHAR2(32 CHAR),
+  approver_oid VARCHAR2(32 CHAR),
+  confirmed_at TIMESTAMP,
+  created_at TIMESTAMP NOT NULL,
+  PRIMARY KEY (oid),
+  CONSTRAINT ck_ai_agent_events_tool_kind CHECK (tool_kind IS NULL OR tool_kind IN (''read'',''write'')),
+  CONSTRAINT ck_ai_agent_events_status CHECK (status IN (''executed'',''proposed'',''executing'',''confirmed'',''rejected'',''expired'',''failed'',''denied''))
+)';
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE != -955 THEN RAISE; END IF;
+END;
+/
+
+BEGIN
+  EXECUTE IMMEDIATE 'CREATE INDEX ix_ai_agent_events_request_id ON ai_agent_events (request_id)';
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE NOT IN (-955, -1408) THEN RAISE; END IF;
+END;
+/
+
+BEGIN
+  EXECUTE IMMEDIATE 'CREATE INDEX ix_ai_agent_events_status_created ON ai_agent_events (status, created_at)';
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE NOT IN (-955, -1408) THEN RAISE; END IF;
+END;
+/
+
+-- ----------------------------------------------------------------------------
+-- AI_PROMPT_AUDIT  ← new (受控的 prompt 正文留存; V033)
+--   本迁移只建表：写入逻辑与保留期由后续监控车道实现。PROMPT_TEXT 用 CLOB，
+--   一段对话可能远超 VARCHAR2 的 4000 字符。也由 V033 在存量实例上创建。
+-- ----------------------------------------------------------------------------
+BEGIN
+  EXECUTE IMMEDIATE '
+CREATE TABLE ai_prompt_audit (
+  oid VARCHAR2(32 CHAR) NOT NULL,
+  request_id VARCHAR2(64 CHAR),
+  user_oid VARCHAR2(32 CHAR),
+  roles_snapshot VARCHAR2(64 CHAR),
+  purpose VARCHAR2(24 CHAR),
+  prompt_text CLOB,
+  created_at TIMESTAMP NOT NULL,
+  PRIMARY KEY (oid)
+)';
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE != -955 THEN RAISE; END IF;
+END;
+/
+
+BEGIN
+  EXECUTE IMMEDIATE 'CREATE INDEX ix_ai_prompt_audit_user_created ON ai_prompt_audit (user_oid, created_at)';
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE NOT IN (-955, -1408) THEN RAISE; END IF;
+END;
+/
+
+-- ----------------------------------------------------------------------------
+-- 内置规则: AI 对话请求突发（审计「谁在刷」，只告警不封禁）
+--   只建种子，不实现消费逻辑（后续监控车道）。
+-- ----------------------------------------------------------------------------
+BEGIN
+  EXECUTE IMMEDIATE '
+MERGE INTO ban_rules t
+USING (SELECT ''0b000000000000000000000b'' oid FROM dual) s
+ON (t.code = ''ai_chat_burst'')
+WHEN NOT MATCHED THEN INSERT
+  (oid, code, name, trigger_code, enabled, config, penalties, builtin, created_at, updated_at)
+  VALUES (''0b000000000000000000000b'', ''ai_chat_burst'', ''AI 对话请求突发'',
+          ''ai_chat_burst'', 1, ''{"threshold":80,"window_hours":1,"mode":"alert"}'',
           ''null'', 1, SYSTIMESTAMP, SYSTIMESTAMP)';
 EXCEPTION
   WHEN OTHERS THEN

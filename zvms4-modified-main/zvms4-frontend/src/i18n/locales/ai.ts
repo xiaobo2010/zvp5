@@ -8,7 +8,8 @@ export const zhCN = {
     engines: 'OCR 引擎',
     'quota-admin': '额度管理',
     health: '健康状态',
-    logs: '调用日志'
+    logs: '调用日志',
+    monitor: '行为监控'
   },
   common: {
     refresh: '刷新',
@@ -38,6 +39,10 @@ export const zhCN = {
   chat: {
     title: '对话',
     subtitle: '回答由上游服务商返回，平台只做转发与计费。',
+    modes: {
+      chat: '对话',
+      agent: '智能体'
+    },
     model: '模型',
     modelPlaceholder: '选择模型',
     modelsEmpty: '暂无可用模型，请联系管理员配置 Key。',
@@ -64,6 +69,156 @@ export const zhCN = {
     rateLimited: '请在 {seconds} 秒后重试',
     you: '我',
     assistant: '助手'
+  },
+  agent: {
+    subtitle: '模型会调用平台工具查数据；写操作先生成提案，确认后才执行。',
+    emptyHint: '输入问题后，模型会自己选择合适的工具查询。',
+    running: '正在执行工具…',
+    runningHint: '一次会话可能连续调用多轮工具，完成后统一返回结果。',
+    events: '工具调用',
+    eventCount: '共 {count} 次',
+    result: '结果',
+    kindWrite: '写操作',
+    status: {
+      executed: '已执行',
+      proposed: '待确认',
+      denied: '已拒绝',
+      failed: '失败'
+    },
+    tools: {
+      search_activities: '搜索活动',
+      list_activities: '活动列表',
+      get_activity: '活动详情',
+      activity_statistics: '活动统计',
+      list_activity_members: '活动成员',
+      user_volunteer_time: '义工时长',
+      user_activities: '参与活动',
+      list_groups: '班级分组',
+      update_member_duration: '修改成员时长',
+      set_member_status: '审核报名状态',
+      fs_list: '列出目录',
+      fs_stat: '查看文件信息',
+      fs_read: '读取文件',
+      fs_write: '写入文件',
+      fs_mkdir: '新建目录',
+      fs_rename: '重命名文件',
+      fs_delete: '删除文件',
+      fs_chmod: '修改权限',
+      db_schema: '查看数据表',
+      db_columns: '查看表结构',
+      db_rows: '读取数据行',
+      db_query: '执行查询',
+      db_insert: '插入数据行',
+      db_update: '更新数据行',
+      db_delete: '删除数据行',
+      db_ddl: '执行建表语句',
+      ssh_exec: '执行远程命令',
+      unknown: '未知工具'
+    },
+    preview: {
+      none: '调用参数',
+      diff: '文件差异',
+      new_file: '新建文件',
+      mkdir: '新建目录',
+      rename: '重命名',
+      delete: '删除文件',
+      chmod: '修改权限',
+      row_insert: '插入数据行',
+      row_update: '更新数据行',
+      row_delete: '删除数据行',
+      sql: '数据库语句',
+      command: '远程命令',
+      args: '调用参数'
+    },
+    previewFields: {
+      path: '目标路径',
+      from: '原路径',
+      to: '新路径',
+      table: '数据表',
+      key: '定位条件',
+      values: '写入值',
+      target: '执行目标',
+      command: '命令',
+      sql: '语句',
+      summary: '摘要',
+      verb: '语句类型',
+      destructive: '破坏性语句',
+      entries: '将删除的条目',
+      entriesTruncated: '条目过多，列表已截断',
+      truncated: '内容过长，已截断',
+      mode: '权限',
+      contentHead: '正文前 {shown} 行（共 {total} 行）',
+      moreLines: '还有 {count} 行未展示'
+    },
+    dualAuth: {
+      badge: '需双人动态码',
+      cached: '30 分钟内已由管理员授权',
+      scene: '执行「{tool}」，需另一位管理员提供动态码',
+      cancelled: '已取消动态码授权',
+      unavailable: '授权弹窗未就绪，请刷新页面后重试'
+    },
+    proposalErrors: {
+      totpRequired: '该写操作需要动态码',
+      totpRequiredHint: '请让另一位管理员提供 6 位动态码后重试。',
+      forbidden: '动态码校验未通过',
+      forbiddenHint: '动态码错误或已被使用，或当前没有第二位管理员可审批。',
+      conflict: '提案已被处理',
+      conflictHint: '这条提案可能已被确认或驳回，请刷新后查看最新状态。',
+      expired: '提案已过期',
+      expiredHint: '写操作提案十分钟内有效，请重新发起一次会话生成新提案。',
+      generic: '确认失败',
+      genericHint: '请稍后重试；若持续失败，请把请求编号交给管理员。'
+    },
+    stopReason: {
+      none: '正常结束',
+      noneHint: '本次运行正常结束。',
+      timeout: '执行超时',
+      timeoutHint: '本次运行达到时间上限，已返回当前结果，可继续追问。',
+      token_budget: 'token 预算用尽',
+      token_budgetHint: '本次运行触及 token 上限，已返回当前结果，可继续追问。',
+      max_iterations: '达到最大轮数',
+      max_iterationsHint: '本次运行达到工具调用轮数上限，已返回当前结果，可继续追问。',
+      cancelled: '已中止',
+      cancelledHint: '本次运行被手动中止。'
+    },
+    pending: {
+      title: '待确认提案',
+      subtitle: '刷新页面后仍在这里等你处理。',
+      count: '{count} 条待确认',
+      empty: '没有待确认的提案',
+      loadFailed: '待确认提案加载失败',
+      refresh: '刷新',
+      expand: '展开',
+      collapse: '收起',
+      entry: '查看待确认提案'
+    },
+    run: {
+      rounds: '共 {rounds} 轮',
+      usage: 'token {total}',
+      replay: '回看这次运行',
+      replayLoading: '正在回看…',
+      replayFailed: '回看失败',
+      replayEmpty: '这次运行没有留下工具记录',
+      replayClose: '收起回看'
+    },
+    proposal: {
+      title: '待确认的写操作',
+      pending: '待确认',
+      confirming: '执行中',
+      rejecting: '驳回中',
+      confirmed: '已执行',
+      rejected: '已驳回',
+      expired: '已过期',
+      error: '处理失败',
+      confirm: '确认执行',
+      reject: '驳回',
+      validFor: '{minutes} 分钟内有效',
+      validUnknown: '十分钟内有效',
+      confirmedNotice: '写操作已执行',
+      rejectedNotice: '提案已驳回',
+      result: '执行结果',
+      rawArgs: '查看原始参数'
+    }
   },
   quota: {
     title: '我的额度',
@@ -287,6 +442,8 @@ export const zhCN = {
       byProvider: '按服务商',
       byModel: '按模型',
       byPurpose: '按场景',
+      byUser: '按用户 Top 50',
+      byStatus: '按状态',
       date: '日期',
       calls: '次数',
       errors: '失败',
@@ -319,6 +476,43 @@ export const zhCN = {
     copyRequestId: '复制请求编号',
     empty: '没有符合条件的调用记录',
     loadFailed: '调用日志加载失败'
+  },
+  prompts: {
+    title: '行为监控',
+    subtitle:
+      '受控留存的 prompt 元数据：列表不含正文，点开单条才读取，且每次读取都会记一条访问审计。',
+    userOid: '用户 oid',
+    userOidPlaceholder: '输入用户 oid 精确定位',
+    days: '时间窗口',
+    daysUnit: '天',
+    daysHint: '滚动窗口：从当前时刻往前 N 天，上限 90 天（与正文留存期一致）。',
+    query: '查询',
+    columns: {
+      createdAt: '时间',
+      user: '用户',
+      roles: '角色快照',
+      purpose: '场景',
+      chars: '字符数'
+    },
+    empty: '窗口内没有留存的 prompt',
+    loadFailed: 'prompt 列表加载失败',
+    retry: '重试',
+    view: '查看',
+    detailTitle: 'prompt 正文',
+    accessNotice: '查看正文会记录一条访问日志',
+    accessNoticeHint: '审计只记录操作人、时间与目标记录，不会复制正文。',
+    body: '正文',
+    copyBody: '复制正文',
+    copyBlocked: '浏览器不允许自动复制，请手动选择正文',
+    noBody: '该条记录没有正文',
+    detailFailed: '正文加载失败，请重试',
+    detail: {
+      user: '用户',
+      purpose: '场景',
+      roles: '角色快照',
+      createdAt: '时间',
+      requestId: '请求编号'
+    }
   },
   ocr: {
     action: '识别',
@@ -462,6 +656,46 @@ export const zhCN = {
     AI_INVALID_REQUEST: {
       title: '请求参数不合法',
       hint: '请检查填写内容后重试。'
+    },
+    AI_AGENT_BAD_ARGUMENTS: {
+      title: '会话内容不合法',
+      hint: '输入内容为空或角色不被支持，请重新输入后发送。'
+    },
+    AI_AGENT_PROPOSAL_NOT_FOUND: {
+      title: '提案不存在',
+      hint: '提案可能已被清理，请重新发起一次对话生成新的提案。'
+    },
+    AI_AGENT_PROPOSAL_FORBIDDEN: {
+      title: '不能处理他人的提案',
+      hint: '写操作提案只能由发起人确认，请让发起人操作。'
+    },
+    AI_AGENT_PROPOSAL_CONFLICT: {
+      title: '提案已处理',
+      hint: '这条提案已经被确认或驳回，刷新页面查看最新状态。'
+    },
+    AI_AGENT_PROPOSAL_EXPIRED: {
+      title: '提案已过期',
+      hint: '写操作提案十分钟内有效，请重新发起对话生成新的提案。'
+    },
+    AI_AGENT_PROPOSAL_DENIED: {
+      title: '没有执行权限',
+      hint: '当前角色不允许执行该写操作，请联系管理员。'
+    },
+    AI_AGENT_PROPOSAL_TAMPERED: {
+      title: '提案参数校验失败',
+      hint: '提案记录与确认内容不一致，请重新生成提案。'
+    },
+    AI_AGENT_PROPOSAL_UNKNOWN_TOOL: {
+      title: '提案工具不可用',
+      hint: '该工具已下线或改名，请重新发起对话。'
+    },
+    AI_AGENT_TOOL_FAILED: {
+      title: '写操作执行失败',
+      hint: '服务端执行时出错，请稍后重试或检查参数。'
+    },
+    AI_AGENT_TOTP_REQUIRED: {
+      title: '该写操作需要动态码',
+      hint: '请让另一位管理员提供 6 位动态码后重试。'
     },
     PERMISSION_DENIED: {
       title: '没有权限',

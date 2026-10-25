@@ -150,6 +150,8 @@ export async function getAiLogStats(days?: number): Promise<AiLogStats> {
     daily: Array.isArray(result.daily) ? result.daily : [],
     by_provider: Array.isArray(result.by_provider) ? result.by_provider : [],
     by_model: Array.isArray(result.by_model) ? result.by_model : [],
-    by_purpose: Array.isArray(result.by_purpose) ? result.by_purpose : []
+    by_purpose: Array.isArray(result.by_purpose) ? result.by_purpose : [],
+    by_user: Array.isArray(result.by_user) ? result.by_user : [],
+    by_status: Array.isArray(result.by_status) ? result.by_status : []
   }
 }

@@ -26,6 +26,14 @@ provider/model/purpose 分组小计），给 ``/api/ai/logs/stats`` 用。
 「上游没报 usage」，此时该行的 ``UNITS`` 是估算值；不为 NULL 时两者同源。别把
 NULL 读成 0——0 是一个真实的 token 数。
 
+prompt 前缀缓存的三列同样 nullable：``CACHE_READ_TOKENS`` 是**归一后**的命中
+token（OpenAI / Anthropic / DeepSeek 三家的口径都落到这一格，
+``prompt_tokens_details.cached_tokens`` / ``cache_read_input_tokens`` /
+``prompt_cache_hit_tokens``），``CACHE_WRITE_TOKENS`` 是写缓存的 token
+（``cache_creation_input_tokens`` / ``cache_write_tokens``），``CACHE_KEY`` 是
+我们算的稳定前缀哈希（sha256 前 16 位，不含用户内容）。NULL = 上游没报 / 没注入，
+不是「命中 0」——用 0 顶替会把命中率算成 0%。
+
 Session ownership mirrors :mod:`db.repos.oracle.users`: with no injected session
 each method opens its own through :func:`db.oracle.session.session_scope`, and
 writes commit once; an injected session is neither committed nor closed.
@@ -44,6 +52,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.ids import new_oid, normalize_oid
 from db.models import ai_call_logs as ai_call_logs_tbl
+from db.models import users as users_tbl
 from db.oracle.session import session_scope
 
 Row = dict[str, Any]
@@ -85,6 +94,11 @@ def _columns() -> tuple[Any, ...]:
         ai_call_logs_tbl.c.first_token_ms,
         ai_call_logs_tbl.c.engine_kind,
         ai_call_logs_tbl.c.attachment_oid,
+        ai_call_logs_tbl.c.round_no,
+        ai_call_logs_tbl.c.roles_snapshot,
+        ai_call_logs_tbl.c.cache_read_tokens,
+        ai_call_logs_tbl.c.cache_write_tokens,
+        ai_call_logs_tbl.c.cache_key,
         ai_call_logs_tbl.c.created_at,
     )
 
@@ -113,6 +127,11 @@ def _insert_stmt(
     first_token_ms: int | None = None,
     engine_kind: str | None = None,
     attachment_oid: str | None = None,
+    round_no: int | None = None,
+    roles_snapshot: str | None = None,
+    cache_read_tokens: int | None = None,
+    cache_write_tokens: int | None = None,
+    cache_key: str | None = None,
     created_at: datetime,
 ):
     # ``units`` 显式写进语句而不是靠列默认值：它是这次调用**实际扣掉的额度**，
@@ -121,6 +140,8 @@ def _insert_stmt(
     # 与「平台出资」的 ``'server'`` 是两件事，靠列默认值表达不了。
     # V031 的元数据列（token / attempt / purpose / trace）同理：NULL = 未知，
     # 不是 0，所以全部显式绑定（绑定 None 会写入 NULL，列也没有 DEFAULT）。
+    # V032/V033 的两组列（agent 轮次 / 角色快照 + prompt cache 三列）照此办理：
+    # cache token 为 NULL = 上游没报或没注入，写成 0 会让命中率变成「真实的 0%」。
     return insert(ai_call_logs_tbl).values(
         oid=oid,
         user_oid=user_oid,
@@ -144,6 +165,11 @@ def _insert_stmt(
         first_token_ms=first_token_ms,
         engine_kind=engine_kind,
         attachment_oid=attachment_oid,
+        round_no=round_no,
+        roles_snapshot=roles_snapshot,
+        cache_read_tokens=cache_read_tokens,
+        cache_write_tokens=cache_write_tokens,
+        cache_key=cache_key,
         created_at=created_at,
     )
 
@@ -154,6 +180,24 @@ def _count_stmt(user_oid: str, since: datetime):
         .select_from(ai_call_logs_tbl)
         .where(
             ai_call_logs_tbl.c.user_oid == user_oid,
+            ai_call_logs_tbl.c.created_at >= since,
+        )
+    )
+
+
+def _count_chat_stmt(user_oid: str, since: datetime):
+    """``ai_chat_burst`` 的证据：窗口内该用户的 **chat** 调用行数。
+
+    只数 ``capability='chat'``：OCR 走自己的频控与额度，不是「在对话」；agent 的
+    每一轮也是 chat 行（``purpose='agent'``），所以「一个脚本循环调 agent」同样
+    会被这条规则看见。**被拒/失败的行也数**——一直敲门本身就是要看的信号。
+    """
+    return (
+        select(func.count())
+        .select_from(ai_call_logs_tbl)
+        .where(
+            ai_call_logs_tbl.c.user_oid == user_oid,
+            ai_call_logs_tbl.c.capability == "chat",
             ai_call_logs_tbl.c.created_at >= since,
         )
     )
@@ -317,25 +361,91 @@ def _stats_daily_stmt(conds: list[Any]):
     return stmt
 
 
-def _stats_group_stmt(column, conds: list[Any]):
-    """按某个维度分组的调用数 / 错误数 / 额度 / token 小计，调用多的在前。"""
+def _stats_group_stmt(
+    column,
+    conds: list[Any],
+    *,
+    extra_columns: tuple[Any, ...] = (),
+    extra_group_by: tuple[Any, ...] = (),
+    from_clause: Any = None,
+):
+    """按某个维度分组的调用数 / 错误数 / 额度 / token 小计，调用多的在前。
+
+    ``extra_columns`` / ``extra_group_by`` / ``from_clause`` 是给 ``by_user`` 用的
+    三个挂点：它需要 ``LEFT JOIN USERS`` 取显示名、外加 ``avg(latency_ms)``，但
+    分组、排序、上限的口径与其它维度必须完全一致（否则「谁在花钱」和「哪个模型
+    在花钱」两张表的合计对不上）。Oracle 要求 SELECT 里的非聚合列都出现在
+    ``GROUP BY``，所以 extra 列要成对传。
+    """
     calls = func.count()
     stmt = (
         select(
             column.label("bucket"),
+            *extra_columns,
             calls.label("calls"),
             _errors_expr().label("errors"),
             func.sum(ai_call_logs_tbl.c.units).label("units"),
             func.sum(ai_call_logs_tbl.c.total_tokens).label("total_tokens"),
         )
-        .select_from(ai_call_logs_tbl)
-        .group_by(column)
+        .select_from(from_clause if from_clause is not None else ai_call_logs_tbl)
+        .group_by(column, *extra_group_by)
         .order_by(calls.desc())
         .limit(STATS_GROUP_LIMIT)
     )
     if conds:
         stmt = stmt.where(*conds)
     return stmt
+
+
+def _stats_user_stmt(conds: list[Any]):
+    """``by_user``：谁在花钱（top 50）。
+
+    ``LEFT JOIN`` 而不是 ``JOIN``：审计要活过账号删除，账号没了这行流水仍然
+    要出现在报表里（名字回落到 oid 字符串，见 :func:`_user_row`）。
+    """
+    from_clause = ai_call_logs_tbl.outerjoin(
+        users_tbl, ai_call_logs_tbl.c.user_oid == users_tbl.c.oid
+    )
+    return _stats_group_stmt(
+        ai_call_logs_tbl.c.user_oid,
+        conds,
+        extra_columns=(
+            users_tbl.c.name.label("user_name"),
+            func.avg(ai_call_logs_tbl.c.latency_ms).label("avg_latency_ms"),
+        ),
+        extra_group_by=(users_tbl.c.name,),
+        from_clause=from_clause,
+    )
+
+
+def _stats_cache_stmt(conds: list[Any]):
+    """整个窗口一行的 prompt 前缀缓存用量（无 GROUP BY）。
+
+    ``cached_calls`` 数的是**报过命中数**的调用（``cache_read_tokens IS NOT
+    NULL``），不是「命中了非零 token」的调用：前者回答「有多少次调用我们拿到了
+    这个观测值」，后者会把「命中 0」混进「未上报」里——而这两件事的运维含义完全
+    相反。token 求和用 ``COALESCE(col, 0)``：这是聚合值（窗口内观测到的总量），
+    0 是诚实的答案，与逐行 NULL 的语义不冲突。
+    """
+    return (
+        select(
+            func.count().label("calls"),
+            func.sum(
+                case((ai_call_logs_tbl.c.cache_read_tokens.is_not(None), 1), else_=0)
+            ).label("cached_calls"),
+            func.sum(func.coalesce(ai_call_logs_tbl.c.prompt_tokens, 0)).label(
+                "prompt_tokens"
+            ),
+            func.sum(func.coalesce(ai_call_logs_tbl.c.cache_read_tokens, 0)).label(
+                "cache_read_tokens"
+            ),
+            func.sum(func.coalesce(ai_call_logs_tbl.c.cache_write_tokens, 0)).label(
+                "cache_write_tokens"
+            ),
+        )
+        .select_from(ai_call_logs_tbl)
+        .where(*conds)
+    )
 
 
 def _as_int(value: Any) -> int | None:
@@ -370,6 +480,52 @@ def _group_row(mapping: Any, key: str) -> Row:
     }
 
 
+def _user_row(mapping: Any) -> Row:
+    """``by_user`` 的一行；``name`` 查不到时回落到 oid 字符串。
+
+    账号被删 / 从未存在（第三方 API key 的 oid 可能不规范）时 ``name`` 是 NULL：
+    这时 oid 本身才是唯一能对上的标识，用「未知用户」盖掉会让人没法再查下去。
+    """
+    user_oid = mapping["bucket"]
+    return {
+        "user_oid": user_oid,
+        "name": mapping["user_name"] or user_oid,
+        "calls": _as_int(mapping["calls"]) or 0,
+        "errors": _as_int(mapping["errors"]) or 0,
+        "total_tokens": _as_int(mapping["total_tokens"]) or 0,
+        "units": _as_int(mapping["units"]) or 0,
+        "avg_latency_ms": _as_int(mapping["avg_latency_ms"]),
+    }
+
+
+def _status_row(mapping: Any) -> Row:
+    """``by_status`` 的一行：状态 → 次数（``errors`` 无法回答「谁挡的」）。"""
+    return {
+        "status": mapping["bucket"],
+        "calls": _as_int(mapping["calls"]) or 0,
+    }
+
+
+def _cache_row(mapping: Any) -> Row:
+    """窗口内的缓存用量 + 命中率；``None`` = 没有可算的分母。"""
+    prompt_tokens = _as_int(mapping["prompt_tokens"]) or 0
+    cache_read_tokens = _as_int(mapping["cache_read_tokens"]) or 0
+    return {
+        "calls": _as_int(mapping["calls"]) or 0,
+        # 报过命中数的调用条数（不是「命中非零」的条数）。
+        "cached_calls": _as_int(mapping["cached_calls"]) or 0,
+        "prompt_tokens": prompt_tokens,
+        "cache_read_tokens": cache_read_tokens,
+        "cache_write_tokens": _as_int(mapping["cache_write_tokens"]) or 0,
+        # 命中率 = 归一后的命中 token / prompt_tokens（prompt_tokens 本身已含命中
+        # 部分）。窗口内没上报过 usage 时分母为 0：回 None 而不是 0——0 会被读成
+        # 「命中率 0%」，而事实是「算不出来」。
+        "hit_rate": (
+            round(cache_read_tokens / prompt_tokens, 4) if prompt_tokens else None
+        ),
+    }
+
+
 def _row(mapping: Any) -> Row:
     """``_id`` 用主键而不是单独一列；数值列统一转 int（Oracle 返回 Decimal）。"""
     return {
@@ -401,6 +557,11 @@ def _row(mapping: Any) -> Row:
         "first_token_ms": _as_int(mapping["first_token_ms"]),
         "engine_kind": mapping["engine_kind"],
         "attachment_oid": mapping["attachment_oid"],
+        "round_no": _as_int(mapping["round_no"]),
+        "roles_snapshot": mapping["roles_snapshot"],
+        "cache_read_tokens": _as_int(mapping["cache_read_tokens"]),
+        "cache_write_tokens": _as_int(mapping["cache_write_tokens"]),
+        "cache_key": mapping["cache_key"],
         "created_at": mapping["created_at"],
     }
 
@@ -435,6 +596,11 @@ class OracleAICallLogsRepo:
         first_token_ms: int | None = None,
         engine_kind: str | None = None,
         attachment_oid: str | None = None,
+        round_no: int | None = None,
+        roles_snapshot: str | None = None,
+        cache_read_tokens: int | None = None,
+        cache_write_tokens: int | None = None,
+        cache_key: str | None = None,
     ) -> str:
         """追加一条调用流水并返回新 ``_id``（写入时刻由本层生成）。
 
@@ -447,6 +613,11 @@ class OracleAICallLogsRepo:
         报了 usage** 时传：三者与 ``units`` 同源（由 usage 折算）。为 ``None``
         时这一行的 ``units`` 就是估算值，这是「tokens 为 NULL ⟺ units 为估算」
         不变式的写入侧。
+
+        ``cache_read_tokens`` / ``cache_write_tokens`` 是**归一后**的 prompt 前缀
+        缓存用量：上游报了就填实际值，没报 / 没注入就是 ``None``。别用 0 顶替——
+        0 会让「没观测到」在命中率里读成「真的没命中」。``cache_key`` 是稳定前缀
+        哈希（sha256 前 16 位，形如 ``zvp:1a2b3c4d5e6f7890``，不含用户内容）。
         """
         oid = new_oid()
         stmt = _insert_stmt(
@@ -472,6 +643,11 @@ class OracleAICallLogsRepo:
             first_token_ms=first_token_ms,
             engine_kind=engine_kind,
             attachment_oid=attachment_oid,
+            round_no=round_no,
+            roles_snapshot=roles_snapshot,
+            cache_read_tokens=cache_read_tokens,
+            cache_write_tokens=cache_write_tokens,
+            cache_key=cache_key,
             created_at=datetime.now(),
         )
         async with _session_for(self._session) as (session, owns):
@@ -483,6 +659,17 @@ class OracleAICallLogsRepo:
     async def count_since(self, user_oid: str, since: datetime) -> int:
         """``since`` 之后该用户的调用条数（限流窗口的唯一判据）。"""
         stmt = _count_stmt(normalize_oid(user_oid), since)
+        async with _session_for(self._session) as (session, _owns):
+            total = (await session.execute(stmt)).scalar_one()
+        return int(total)
+
+    async def count_chat_by_user_since(self, user_oid: str, since: datetime) -> int:
+        """``since`` 之后该用户的 **chat** 调用条数（``ai_chat_burst`` 的证据）。
+
+        与 :meth:`count_since` 的区别是多了 ``capability='chat'``：分钟级频控数的是
+        该用户全部能力，风险规则只关心「在对话」（agent 每轮也是 chat 行）。
+        """
+        stmt = _count_chat_stmt(normalize_oid(user_oid), since)
         async with _session_for(self._session) as (session, _owns):
             total = (await session.execute(stmt)).scalar_one()
         return int(total)
@@ -558,16 +745,27 @@ class OracleAICallLogsRepo:
         *,
         since: datetime,
         until: datetime | None = None,
-    ) -> dict[str, list[Row]]:
-        """``since`` 起的调用聚合：按日 + 按 provider/model/purpose 小计。
+    ) -> dict[str, Any]:
+        """``since`` 起的调用聚合：按日 + 按 provider/model/purpose/用户/状态 + 缓存。
 
-        四条查询共用一个时间窗口（``since`` / ``until`` 边界口径与
+        七条查询共用一个时间窗口（``since`` / ``until`` 边界口径与
         :meth:`list_page` 一致：闭区间）。窗口刻意**只按时间**切：统计面板回答
         的是「这几天平台消耗了多少」，再叠用户/模型过滤会变成另一种报表。
         想看某个维度的细分，用 ``list_page`` 的过滤条件。
 
-        四个部分一次返回，是因为它们必须来自**同一个窗口**——分开调用会让面板
-        上的总数与分项小计对不上（跨了分钟边界）。
+        所有部分一次返回，是因为它们必须来自**同一个窗口**——分开调用会让面板
+        上的总数与分项小计对不上（跨了分钟边界）。``cache`` 尤其不能在另一个窗口
+        里单独查：它的分母是同一窗口的 ``prompt_tokens``，两个窗口一错开，命中率
+        就成了「别的时间段的命中 token ÷ 这段时间的 prompt token」，可以大于 1。
+
+        ``by_user`` / ``by_status`` 是治理视角的两张表：前者回答「谁在花钱」
+        （``LEFT JOIN USERS`` 取显示名，账号删了回落到 oid），后者把 ``errors``
+        拆成 ``success`` / ``error`` / ``rejected`` / ``busy``——「上游挂了」与
+        「我们挡了」在运维上是两件事。
+
+        ``cache`` 的命中率口径 = **归一后的命中 token / ``prompt_tokens``**
+        （``prompt_tokens`` 本身已含命中部分，所以命中率的理论上限是 1）；窗口内
+        没有任何 usage 上报时分母为 0，``hit_rate`` 回 ``None`` 而不是 0。
         """
         conds = _filters(time_start=since, time_end=until)
         async with _session_for(self._session) as (session, _owns):
@@ -587,6 +785,15 @@ class OracleAICallLogsRepo:
                     _stats_group_stmt(ai_call_logs_tbl.c.purpose, conds)
                 )
             ).all()
+            by_user = (await session.execute(_stats_user_stmt(conds))).all()
+            by_status = (
+                await session.execute(
+                    _stats_group_stmt(ai_call_logs_tbl.c.status, conds)
+                )
+            ).all()
+            cache = (
+                await session.execute(_stats_cache_stmt(conds))
+            ).one()
         return {
             "daily": [_daily_row(row._mapping) for row in daily],
             "by_provider": [
@@ -596,6 +803,9 @@ class OracleAICallLogsRepo:
             "by_purpose": [
                 _group_row(row._mapping, "purpose") for row in by_purpose
             ],
+            "by_user": [_user_row(row._mapping) for row in by_user],
+            "by_status": [_status_row(row._mapping) for row in by_status],
+            "cache": _cache_row(cache._mapping),
         }
 
     async def count_expired(self, cutoff: datetime) -> int:

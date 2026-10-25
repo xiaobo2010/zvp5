@@ -206,7 +206,7 @@ def _strings(value) -> list[str]:
 
 
 @pytest.fixture(autouse=True)
-def _isolated_gateway(monkeypatch):
+def _isolated_gateway(monkeypatch, quiet_ai_governance):
     credentials._cache.clear()
     monkeypatch.setenv(crypto._SECRET_ENV, "unit-test-master-secret")
     monkeypatch.setattr(crypto, "_master_key", None)

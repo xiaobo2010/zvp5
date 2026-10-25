@@ -107,7 +107,7 @@ def _client(user: dict | None = None) -> TestClient:
 
 
 @pytest.fixture(autouse=True)
-def _isolated_gateway(monkeypatch):
+def _isolated_gateway(monkeypatch, quiet_ai_governance):
     credentials._cache.clear()
     routing.reset_state()
     # 频控是进程级滑动窗口：同一 oid 的 OCR 请求数会跨用例累积，也会被同进程的

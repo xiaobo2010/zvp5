@@ -1,19 +1,24 @@
-"""Data-retention purge for ``app_logs``, ``export_tasks`` and ``ai_call_logs``
-(design §2).
+"""Data-retention purge for ``app_logs``, ``export_tasks``, ``ai_call_logs``,
+``ai_agent_events`` and ``ai_prompt_audit`` (design §2).
 
-Three tables grow without bound and had no cleanup path at all:
+Five tables grow without bound and had no cleanup path at all:
 
 * ``zvms_new.app_logs`` — every request writes a row (:mod:`typings.log`);
 * ``zvms_new.tasks`` — one row per export request, finished or not;
-* ``zvms_new.ai_call_logs`` — one row per AI gateway call (V024).
+* ``zvms_new.ai_call_logs`` — one row per AI gateway call (V024);
+* ``zvms_new.ai_agent_events`` — one row per agent tool-call attempt (V033);
+* ``zvms_new.ai_prompt_audit`` — 受控留存的 prompt 正文 (V033)。
 
 :func:`run_retention` is the shared coroutine: it drains each table through the
 repo's single-batch methods (``OracleAppLogsRepo.purge_batch`` /
 ``OracleTasksRepo.purge_finished_batch`` /
-``OracleAICallLogsRepo.purge_batch``, statements
+``OracleAICallLogsRepo.purge_batch`` / ``OracleAIAgentEventsRepo.purge_batch`` /
+``OracleAIPromptAuditRepo.purge_before``, statements
 ``db/repos/oracle/app_logs.py::_purge_batch_stmt``,
-``db/repos/oracle/tasks.py::_purge_finished_batch_stmt`` and
-``db/repos/oracle/ai_call_logs.py::_purge_batch_stmt``) for at most
+``db/repos/oracle/tasks.py::_purge_finished_batch_stmt``,
+``db/repos/oracle/ai_call_logs.py::_purge_batch_stmt``,
+``db/repos/oracle/ai_agent_events.py::_purge_batch_stmt`` and
+``db/repos/oracle/ai_prompt_audit.py::_purge_before_stmt``) for at most
 ``RETENTION_MAX_BATCHES`` batches per table, stopping early on a short batch.
 Each batch is its own short session and its own commit, so a long purge never
 holds one transaction open on ADB.
@@ -74,6 +79,7 @@ from db import backends, system_state
 DEFAULT_APP_LOGS_RETENTION_DAYS = 90
 DEFAULT_EXPORT_TASKS_RETENTION_DAYS = 30
 DEFAULT_AI_CALL_LOGS_RETENTION_DAYS = 90
+DEFAULT_AI_PROMPT_RETENTION_DAYS = 30
 DEFAULT_RETENTION_BATCH_SIZE = 5000
 DEFAULT_RETENTION_MAX_BATCHES = 20
 
@@ -108,6 +114,8 @@ PHASE_ENTERING = "entering_maintenance"
 PHASE_PURGING_APP_LOGS = "purging_app_logs"
 PHASE_PURGING_EXPORT_TASKS = "purging_export_tasks"
 PHASE_PURGING_AI_CALL_LOGS = "purging_ai_call_logs"
+PHASE_PURGING_AI_AGENT_EVENTS = "purging_ai_agent_events"
+PHASE_PURGING_AI_PROMPT_AUDIT = "purging_ai_prompt_audit"
 PHASE_LEAVING = "leaving_maintenance"
 PHASE_DONE = "done"
 PHASE_FAILED = "failed"
@@ -116,7 +124,28 @@ _PHASE_FOR_TABLE = {
     "app_logs": PHASE_PURGING_APP_LOGS,
     "export_tasks": PHASE_PURGING_EXPORT_TASKS,
     "ai_call_logs": PHASE_PURGING_AI_CALL_LOGS,
+    "ai_agent_events": PHASE_PURGING_AI_AGENT_EVENTS,
+    "ai_prompt_audit": PHASE_PURGING_AI_PROMPT_AUDIT,
 }
+
+#: 五张表的进度骨架（``run_retention`` / 作业记录 / 进度端点共用一个形状）。
+_EMPTY_PROGRESS_TABLES = (
+    "app_logs",
+    "export_tasks",
+    "ai_call_logs",
+    "ai_agent_events",
+    "ai_prompt_audit",
+)
+
+
+def _empty_progress() -> dict:
+    """五张表的进度骨架（键序固定，进度端点与作业记录共用）。"""
+    return {
+        **{table: {"deleted": 0, "remaining": 0} for table in _EMPTY_PROGRESS_TABLES},
+        "batches": 0,
+        "max_batches": retention_max_batches(),
+    }
+
 
 JOB_STATE_RUNNING = "running"
 JOB_STATE_DONE = "done"
@@ -188,6 +217,33 @@ def ai_call_logs_retention_days() -> int:
     return _positive_int(
         "AI_CALL_LOGS_RETENTION_DAYS", DEFAULT_AI_CALL_LOGS_RETENTION_DAYS
     )
+
+
+def ai_agent_events_retention_days() -> int:
+    """Retention window for ``ai_agent_events``, in days.
+
+    刻意与 ``ai_call_logs`` 同窗（``AI_CALL_LOGS_RETENTION_DAYS``）：工具事件与
+    调用流水是同一次 run 的两面，一边删了另一边还在，会让「这条提案是谁确认的」
+    变成悬空的历史。不单独加一个配置键——同一个窗口没有第二种合理值。
+    """
+    return ai_call_logs_retention_days()
+
+
+def ai_prompt_retention_days() -> int:
+    """Retention window for ``ai_prompt_audit``, in days.
+
+    这条**不能**沿用 ``_positive_int`` 里对 ``config`` 的直读：正文的保留期同时
+    出现在网关配置视图（``services.ai.config.prompt_retention_days``，支持
+    ``settings`` 覆盖）与这里。两处各读一个来源，就会出现「捕获按 30 天、清理
+    按 7 天」的分裂，所以统一委托给那一处，非法值已在那里逐层回退。
+    """
+    try:
+        from services.ai import config as ai_config
+
+        days = int(ai_config.prompt_retention_days())
+    except Exception:  # noqa: BLE001 - 配置层坏了不该让清理任务起不来
+        return DEFAULT_AI_PROMPT_RETENTION_DAYS
+    return days if days > 0 else DEFAULT_AI_PROMPT_RETENTION_DAYS
 
 
 def retention_batch_size() -> int:
@@ -268,13 +324,14 @@ async def _drain(
 
 
 async def run_retention(on_progress: ProgressCallback | None = None) -> dict:
-    """Purge all three tables in bounded batches and report what happened.
+    """Purge all five tables in bounded batches and report what happened.
 
     Returns ``{"app_logs": {"cutoff", "deleted", "remaining"}, "export_tasks":
-    {...}, "ai_call_logs": {...}, "batches": int}``; ``batches`` counts the
-    ``DELETE`` statements executed across all tables (at most
-    ``3 * RETENTION_MAX_BATCHES``), and ``remaining`` is the expired row count
-    *after* the run — non-zero only when the batch ceiling was hit.
+    {...}, "ai_call_logs": {...}, "ai_agent_events": {...}, "ai_prompt_audit":
+    {...}, "batches": int}``; ``batches`` counts the ``DELETE`` statements
+    executed across all tables (at most ``5 * RETENTION_MAX_BATCHES``), and
+    ``remaining`` is the expired row count *after* the run — non-zero only when
+    the batch ceiling was hit.
 
     ``on_progress(phase, progress)``（可选）让调用方（后台作业）实时看到进度：
     phase 取 :data:`_PHASE_FOR_TABLE` 的值，progress 形状与
@@ -282,7 +339,7 @@ async def run_retention(on_progress: ProgressCallback | None = None) -> dict:
     两次 ``COUNT``：展示用的初始 ``remaining``（每表一次）——这只影响进度显示，
     返回结构里的 ``remaining`` 仍是跑完后的真实计数，语义不变。
 
-    三张表共用同一个 ``now``、同一份 ``RETENTION_BATCH_SIZE`` 与
+    五张表共用同一个 ``now``、同一份 ``RETENTION_BATCH_SIZE`` 与
     ``RETENTION_MAX_BATCHES``，逐表串行 drain：一张表删空/触顶后再开始下一张，
     不会并发抢 ADB 的连接。
     """
@@ -291,18 +348,15 @@ async def run_retention(on_progress: ProgressCallback | None = None) -> dict:
     moment = datetime.now()
     logs_cutoff, tasks_cutoff = retention_cutoffs(moment)
     ai_cutoff = retention_cutoff(moment, ai_call_logs_retention_days())
+    prompt_cutoff = retention_cutoff(moment, ai_prompt_retention_days())
 
     logs_repo = backends.get_applogs_repo()
     tasks_repo = backends.get_tasks_repo()
     ai_repo = backends.get_ai_call_logs_repo()
+    events_repo = backends.get_ai_agent_events_repo()
+    prompt_repo = backends.get_ai_prompt_audit_repo()
 
-    progress: dict = {
-        "app_logs": {"deleted": 0, "remaining": 0},
-        "export_tasks": {"deleted": 0, "remaining": 0},
-        "ai_call_logs": {"deleted": 0, "remaining": 0},
-        "batches": 0,
-        "max_batches": max_batches,
-    }
+    progress: dict = _empty_progress()
 
     def emit(phase: str) -> None:
         if on_progress is not None:
@@ -356,6 +410,40 @@ async def run_retention(on_progress: ProgressCallback | None = None) -> dict:
         recorder("ai_call_logs", logs_batches + tasks_batches, ai_initial),
     )
 
+    events_initial = 0
+    if on_progress is not None:
+        events_initial = int(await events_repo.count_expired(ai_cutoff))
+        progress["ai_agent_events"]["remaining"] = max(0, events_initial)
+    emit(PHASE_PURGING_AI_AGENT_EVENTS)
+    events_deleted, events_batches = await _drain(
+        events_repo.purge_batch,
+        ai_cutoff,
+        batch_size,
+        max_batches,
+        recorder(
+            "ai_agent_events",
+            logs_batches + tasks_batches + ai_batches,
+            events_initial,
+        ),
+    )
+
+    prompt_initial = 0
+    if on_progress is not None:
+        prompt_initial = int(await prompt_repo.count_expired(prompt_cutoff))
+        progress["ai_prompt_audit"]["remaining"] = max(0, prompt_initial)
+    emit(PHASE_PURGING_AI_PROMPT_AUDIT)
+    prompt_deleted, prompt_batches = await _drain(
+        prompt_repo.purge_before,
+        prompt_cutoff,
+        batch_size,
+        max_batches,
+        recorder(
+            "ai_prompt_audit",
+            logs_batches + tasks_batches + ai_batches + events_batches,
+            prompt_initial,
+        ),
+    )
+
     return {
         "app_logs": {
             "cutoff": logs_cutoff.isoformat(),
@@ -372,7 +460,21 @@ async def run_retention(on_progress: ProgressCallback | None = None) -> dict:
             "deleted": ai_deleted,
             "remaining": int(await ai_repo.count_expired(ai_cutoff)),
         },
-        "batches": logs_batches + tasks_batches + ai_batches,
+        "ai_agent_events": {
+            "cutoff": ai_cutoff.isoformat(),
+            "deleted": events_deleted,
+            "remaining": int(await events_repo.count_expired(ai_cutoff)),
+        },
+        "ai_prompt_audit": {
+            "cutoff": prompt_cutoff.isoformat(),
+            "deleted": prompt_deleted,
+            "remaining": int(await prompt_repo.count_expired(prompt_cutoff)),
+        },
+        "batches": logs_batches
+        + tasks_batches
+        + ai_batches
+        + events_batches
+        + prompt_batches,
     }
 
 
@@ -394,10 +496,14 @@ def audit_message(result: dict) -> str:
     logs = result["app_logs"]
     tasks = result["export_tasks"]
     ai = result["ai_call_logs"]
+    events = result["ai_agent_events"]
+    prompts = result["ai_prompt_audit"]
     return (
         f"数据保留期清理：app_logs 删除 {logs['deleted']} 行（剩余 {logs['remaining']} 行），"
         f"export_tasks 删除 {tasks['deleted']} 行（剩余 {tasks['remaining']} 行），"
-        f"ai_call_logs 删除 {ai['deleted']} 行（剩余 {ai['remaining']} 行）"
+        f"ai_call_logs 删除 {ai['deleted']} 行（剩余 {ai['remaining']} 行），"
+        f"ai_agent_events 删除 {events['deleted']} 行（剩余 {events['remaining']} 行），"
+        f"ai_prompt_audit 删除 {prompts['deleted']} 行（剩余 {prompts['remaining']} 行）"
     )
 
 
@@ -457,11 +563,15 @@ async def purge_expired_records() -> int:
         result["app_logs"]["deleted"]
         + result["export_tasks"]["deleted"]
         + result["ai_call_logs"]["deleted"]
+        + result["ai_agent_events"]["deleted"]
+        + result["ai_prompt_audit"]["deleted"]
     )
     print(
         f"purge_expired_records: deleted {deleted} row(s); "
         f"app_logs={result['app_logs']}; export_tasks={result['export_tasks']}; "
-        f"ai_call_logs={result['ai_call_logs']}"
+        f"ai_call_logs={result['ai_call_logs']}; "
+        f"ai_agent_events={result['ai_agent_events']}; "
+        f"ai_prompt_audit={result['ai_prompt_audit']}"
     )
     return deleted
 
@@ -522,13 +632,7 @@ def _reserve_job(actor: str) -> dict:
             "phase": PHASE_ENTERING,
             "started_at": _now_iso(),
             "finished_at": None,
-            "progress": {
-                "app_logs": {"deleted": 0, "remaining": 0},
-                "export_tasks": {"deleted": 0, "remaining": 0},
-                "ai_call_logs": {"deleted": 0, "remaining": 0},
-                "batches": 0,
-                "max_batches": retention_max_batches(),
-            },
+            "progress": _empty_progress(),
             "result": None,
             "error": None,
         }
@@ -561,9 +665,10 @@ def _progress_recorder(job: dict) -> ProgressCallback:
         with _job_lock:
             job["phase"] = phase
             job["progress"] = {
-                "app_logs": dict(progress["app_logs"]),
-                "export_tasks": dict(progress["export_tasks"]),
-                "ai_call_logs": dict(progress["ai_call_logs"]),
+                **{
+                    table: dict(progress[table])
+                    for table in _EMPTY_PROGRESS_TABLES
+                },
                 "batches": progress["batches"],
                 "max_batches": progress["max_batches"],
             }
@@ -721,13 +826,7 @@ def progress_snapshot() -> dict:
                 "phase": None,
                 "started_at": None,
                 "finished_at": None,
-                "progress": {
-                    "app_logs": {"deleted": 0, "remaining": 0},
-                    "export_tasks": {"deleted": 0, "remaining": 0},
-                    "ai_call_logs": {"deleted": 0, "remaining": 0},
-                    "batches": 0,
-                    "max_batches": retention_max_batches(),
-                },
+                "progress": _empty_progress(),
                 "result": None,
                 "error": None,
             }
@@ -739,9 +838,10 @@ def progress_snapshot() -> dict:
                 "started_at": job["started_at"],
                 "finished_at": job["finished_at"],
                 "progress": {
-                    "app_logs": dict(job["progress"]["app_logs"]),
-                    "export_tasks": dict(job["progress"]["export_tasks"]),
-                    "ai_call_logs": dict(job["progress"]["ai_call_logs"]),
+                    **{
+                        table: dict(job["progress"][table])
+                        for table in _EMPTY_PROGRESS_TABLES
+                    },
                     "batches": job["progress"]["batches"],
                     "max_batches": job["progress"]["max_batches"],
                 },

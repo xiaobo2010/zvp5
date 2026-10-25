@@ -81,6 +81,12 @@ class FakeCallLogsRepo:
         self.rows = list(rows or [])
         self.page_calls: list[dict] = []
         self.count_calls: list[dict] = []
+        self.stats_calls: list[datetime] = []
+        self.stats_payload: dict | None = None
+
+    async def stats(self, *, since: datetime, until: datetime | None = None) -> dict:
+        self.stats_calls.append(since)
+        return dict(self.stats_payload or {})
 
     @staticmethod
     def _matching(rows: list[dict], **filters) -> list[dict]:
@@ -501,3 +507,90 @@ def test_row_keeps_the_repository_key_set(repo, users):
     assert row["_id"] == "a" * 24
     assert row["oid"] == "a" * 24
     assert isinstance(row["created_at"], str)  # JSON 里是 ISO 字符串
+
+
+# ---------------------------------------------------------------------------
+# /api/ai/logs/stats：治理视角的两个新分项
+# ---------------------------------------------------------------------------
+
+
+def test_stats_carries_by_user_and_by_status_next_to_the_existing_sections(repo, users):
+    """``by_user`` / ``by_status`` 是**新增**分项：既有的四个形状一个都不能少。"""
+    repo.stats_payload = {
+        "daily": [
+            {
+                "date": "2026-10-24",
+                "calls": 3,
+                "errors": 1,
+                "prompt_tokens": 10,
+                "completion_tokens": 5,
+                "total_tokens": 15,
+                "avg_latency_ms": 120,
+            }
+        ],
+        "by_provider": [
+            {"provider": "team", "calls": 3, "errors": 1, "units": 3, "total_tokens": 15}
+        ],
+        "by_model": [
+            {"model": "gpt-x", "calls": 3, "errors": 1, "units": 3, "total_tokens": 15}
+        ],
+        "by_purpose": [
+            {"purpose": "chat", "calls": 2, "errors": 0, "units": 2, "total_tokens": 10}
+        ],
+        "by_user": [
+            {
+                "user_oid": USER,
+                "name": "张三",
+                "calls": 3,
+                "errors": 1,
+                "total_tokens": 15,
+                "units": 3,
+                "avg_latency_ms": 120,
+            }
+        ],
+        "by_status": [
+            {"status": "success", "calls": 2},
+            {"status": "rejected", "calls": 1},
+        ],
+        "cache": {
+            "calls": 3,
+            "cached_calls": 1,
+            "prompt_tokens": 10,
+            "cache_read_tokens": 4,
+            "cache_write_tokens": 0,
+            "hit_rate": 0.4,
+        },
+    }
+
+    body = _client().get("/api/ai/logs/stats").json()["data"]
+
+    # 既有分项原样保留。
+    assert body["daily"][0]["calls"] == 3
+    assert body["by_provider"][0]["provider"] == "team"
+    assert body["by_model"][0]["model"] == "gpt-x"
+    assert body["by_purpose"][0]["purpose"] == "chat"
+    assert body["cache"]["hit_rate"] == 0.4
+    # 新分项：谁在花钱 / 谁挡的。
+    assert body["by_user"][0] == {
+        "user_oid": USER,
+        "name": "张三",
+        "calls": 3,
+        "errors": 1,
+        "total_tokens": 15,
+        "units": 3,
+        "avg_latency_ms": 120,
+    }
+    assert body["by_status"] == [
+        {"status": "success", "calls": 2},
+        {"status": "rejected", "calls": 1},
+    ]
+    # 窗格仍然是「今天零点往前 days-1 天」，没有被新分项改口径。
+    since = repo.stats_calls[0]
+    assert (since.hour, since.minute, since.second) == (0, 0, 0)
+
+
+def test_stats_is_still_admin_only_with_the_new_breakdowns(repo, users):
+    response = _client({"id": USER, "per": ["department"]}).get("/api/ai/logs/stats")
+
+    assert response.status_code == 403
+    assert repo.stats_calls == []

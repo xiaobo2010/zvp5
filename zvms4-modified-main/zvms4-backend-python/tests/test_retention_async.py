@@ -65,6 +65,8 @@ PHASES = {
     "purging_app_logs",
     "purging_export_tasks",
     "purging_ai_call_logs",
+    "purging_ai_agent_events",
+    "purging_ai_prompt_audit",
     "leaving_maintenance",
     "done",
     "failed",
@@ -168,6 +170,18 @@ class _FakeAICallLogsRepo:
         return self.rowcounts.pop(0) if self.rowcounts else 0
 
 
+class _FakeAIAgentEventsRepo(_FakeAICallLogsRepo):
+    """Fake ``AIAgentEventsRepo``：工具事件与调用流水同款单批量删除。"""
+
+
+class _FakeAIPromptAuditRepo(_FakeAICallLogsRepo):
+    """Fake ``AIPromptAuditRepo``：正文留存走 ``purge_before``（同签名）。"""
+
+    async def purge_before(self, cutoff: datetime, batch_size: int) -> int:
+        self.purge_calls.append((cutoff, batch_size))
+        return self.rowcounts.pop(0) if self.rowcounts else 0
+
+
 @pytest.fixture(autouse=True)
 def _clean_job_state(monkeypatch):
     """进程内作业状态是模块级的（单 worker 前提），用例之间必须归零。"""
@@ -194,6 +208,7 @@ def state_db(tmp_path, monkeypatch) -> Path:
 
 @pytest.fixture()
 def repos(monkeypatch):
+    """三张既有表的 fake（返回三元组，既有用例的拆包方式不变）。"""
     logs = _FakeLogsRepo(deleted=[3], deletable=0)
     tasks = _FakeTasksRepo(deleted=[0], deletable=0)
     ai = _FakeAICallLogsRepo(deleted=[0], deletable=0)
@@ -201,6 +216,16 @@ def repos(monkeypatch):
     monkeypatch.setattr(backends, "get_tasks_repo", lambda session=None: tasks)
     monkeypatch.setattr(backends, "get_ai_call_logs_repo", lambda session=None: ai)
     return logs, tasks, ai
+
+
+@pytest.fixture(autouse=True)
+def governance_repos(monkeypatch):
+    """V033 的两张表：每条用例都要有桩，否则清理会真的去连 ADB。"""
+    events = _FakeAIAgentEventsRepo(deleted=[0], deletable=0)
+    prompts = _FakeAIPromptAuditRepo(deleted=[0], deletable=0)
+    monkeypatch.setattr(backends, "get_ai_agent_events_repo", lambda session=None: events)
+    monkeypatch.setattr(backends, "get_ai_prompt_audit_repo", lambda session=None: prompts)
+    return events, prompts
 
 
 @pytest.fixture()
@@ -307,10 +332,18 @@ def _assert_frozen_shape(data: dict) -> None:
         "app_logs",
         "export_tasks",
         "ai_call_logs",
+        "ai_agent_events",
+        "ai_prompt_audit",
         "batches",
         "max_batches",
     }
-    for table in ("app_logs", "export_tasks", "ai_call_logs"):
+    for table in (
+        "app_logs",
+        "export_tasks",
+        "ai_call_logs",
+        "ai_agent_events",
+        "ai_prompt_audit",
+    ):
         assert set(data["progress"][table]) == PROGRESS_COUNTER_KEYS
     assert isinstance(data["progress"]["batches"], int)
     assert isinstance(data["progress"]["max_batches"], int)
@@ -676,8 +709,11 @@ def test_progress_without_login_is_401(state_db):
 # ---------------------------------------------------------------------------
 
 
-def test_run_retention_progress_callback_is_optional(state_db, repos):
+def test_run_retention_progress_callback_is_optional(
+    state_db, repos, governance_repos
+):
     logs, tasks, ai = repos
+    events, prompts = governance_repos
 
     seen: list[tuple[str, dict]] = []
 
@@ -694,14 +730,31 @@ def test_run_retention_progress_callback_is_optional(state_db, repos):
     assert final["app_logs"] == {"deleted": 3, "remaining": 0}
     assert final["export_tasks"] == {"deleted": 0, "remaining": 0}
     assert final["ai_call_logs"] == {"deleted": 0, "remaining": 0}
-    assert final["batches"] == 3
+    assert final["ai_agent_events"] == {"deleted": 0, "remaining": 0}
+    assert final["ai_prompt_audit"] == {"deleted": 0, "remaining": 0}
+    assert final["batches"] == 5
     assert final["max_batches"] == retention.retention_max_batches()
-    # 返回值语义不变（进度里的 remaining 只是展示口径）。
-    assert set(result) == {"app_logs", "export_tasks", "ai_call_logs", "batches"}
-    for table in ("app_logs", "export_tasks", "ai_call_logs"):
+    assert final["batches"] == 5
+    # 返回值语义不变（进度里的 remaining 只是展示口径），只是多了两张表。
+    assert set(result) == {
+        "app_logs",
+        "export_tasks",
+        "ai_call_logs",
+        "ai_agent_events",
+        "ai_prompt_audit",
+        "batches",
+    }
+    for table in (
+        "app_logs",
+        "export_tasks",
+        "ai_call_logs",
+        "ai_agent_events",
+        "ai_prompt_audit",
+    ):
         assert set(result[table]) == {"cutoff", "deleted", "remaining"}
     assert result["app_logs"]["deleted"] == 3
     assert logs.purge_calls and tasks.purge_calls and ai.purge_calls
+    assert events.purge_calls and prompts.purge_calls
 
 
 def test_retention_module_registers_the_auto_source_probe():

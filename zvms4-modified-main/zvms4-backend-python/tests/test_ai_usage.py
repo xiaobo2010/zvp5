@@ -18,7 +18,7 @@ from services.ai import usage
 
 
 # ---------------------------------------------------------------------------
-# usage dict → 三个 token 列
+# usage dict → 五个 token 列（三个核心 + 两个缓存）
 # ---------------------------------------------------------------------------
 
 
@@ -31,6 +31,8 @@ def test_token_fields_reads_the_three_upstream_numbers() -> None:
         "prompt_tokens": 11,
         "completion_tokens": 22,
         "total_tokens": 33,
+        "cache_read_tokens": None,
+        "cache_write_tokens": None,
     }
 
 
@@ -42,6 +44,8 @@ def test_token_fields_keeps_missing_keys_as_none() -> None:
         "prompt_tokens": 5,
         "completion_tokens": None,
         "total_tokens": None,
+        "cache_read_tokens": None,
+        "cache_write_tokens": None,
     }
 
 
@@ -58,6 +62,8 @@ def test_token_fields_tolerates_non_dict(usage_obj) -> None:
         "prompt_tokens": None,
         "completion_tokens": None,
         "total_tokens": None,
+        "cache_read_tokens": None,
+        "cache_write_tokens": None,
     }
 
 
@@ -81,6 +87,101 @@ def test_has_tokens_requires_at_least_one_number() -> None:
     assert usage.has_tokens(
         {"prompt_tokens": None, "completion_tokens": None, "total_tokens": None}
     ) is False
+
+
+# ---------------------------------------------------------------------------
+# 缓存用量：三家上游的字段名 → 两个归一列
+# ---------------------------------------------------------------------------
+#
+# 这一段的每个用例都对应一种**会静默算错命中率**的写法：字段名认错 → 命中率恒
+# None；把 Anthropic 的 input_tokens 直接当分母 → 命中率大于 1；把「只有缓存字段」
+# 当成「拿到了 usage」→ 该行 units 从实测退化成估算。
+
+
+def test_cache_tokens_reads_openai_nested_details() -> None:
+    """OpenAI：``prompt_tokens_details`` 里同时给命中与写入。"""
+    fields = usage.token_fields(
+        {
+            "prompt_tokens": 1000,
+            "prompt_tokens_details": {"cached_tokens": 64, "cache_write_tokens": 16},
+        }
+    )
+
+    assert fields["cache_read_tokens"] == 64
+    assert fields["cache_write_tokens"] == 16
+    # OpenAI 的 prompt_tokens 本来就含命中部分，不做任何还原。
+    assert fields["prompt_tokens"] == 1000
+
+
+def test_cache_tokens_reads_anthropic_flat_fields_and_restores_prompt_tokens() -> None:
+    """Anthropic：``input_tokens`` 只是未缓存部分，分母要还原成总输入。"""
+    fields = usage.token_fields(
+        {
+            "input_tokens": 100,
+            "cache_read_input_tokens": 40,
+            "cache_creation_input_tokens": 20,
+            "output_tokens": 9,
+        }
+    )
+
+    assert (fields["cache_read_tokens"], fields["cache_write_tokens"]) == (40, 20)
+    # 100 未缓存 + 40 命中 + 20 写入 = 160，这才是命中率的分母。
+    assert fields["prompt_tokens"] == 160
+    # total 只认上游：Anthropic 这个形状里没有 total_tokens，就留 None。
+    assert fields["total_tokens"] is None
+
+
+def test_anthropic_usage_without_cache_columns_keeps_prompt_tokens() -> None:
+    """没有缓存列时 input_tokens 就是全部输入：还原结果与它相等。"""
+    fields = usage.token_fields({"input_tokens": 100, "output_tokens": 7})
+
+    assert fields["prompt_tokens"] == 100
+    assert fields["cache_read_tokens"] is None
+    assert fields["cache_write_tokens"] is None
+
+
+def test_cache_tokens_sums_anthropic_ephemeral_ttl_tiers() -> None:
+    """5 分钟 / 1 小时两档分开计价，但审计只有一列写入量：同一次调用相加。"""
+    both = usage.token_fields(
+        {
+            "input_tokens": 1,
+            "cache_creation": {
+                "ephemeral_5m_input_tokens": 10,
+                "ephemeral_1h_input_tokens": 5,
+            },
+        }
+    )
+    five_only = usage.token_fields(
+        {"input_tokens": 1, "cache_creation": {"ephemeral_5m_input_tokens": 10}}
+    )
+    one_hour_only = usage.token_fields(
+        {"input_tokens": 1, "cache_creation": {"ephemeral_1h_input_tokens": 5}}
+    )
+
+    assert both["cache_write_tokens"] == 15
+    assert five_only["cache_write_tokens"] == 10
+    assert one_hour_only["cache_write_tokens"] == 5
+
+
+def test_cache_tokens_reads_deepseek_hit_tokens() -> None:
+    """DeepSeek：服务端自动缓存，只报命中，没有「写入」的概念。"""
+    fields = usage.token_fields(
+        {"prompt_tokens": 500, "prompt_cache_hit_tokens": 384}
+    )
+
+    assert fields["cache_read_tokens"] == 384
+    assert fields["cache_write_tokens"] is None
+
+
+def test_cache_only_usage_is_not_counted_as_reported_usage() -> None:
+    """只有缓存字段 = 没拿到 usage：不能把该行的 units 从估算变成实测。"""
+    fields = usage.token_fields(
+        {"prompt_tokens_details": {"cached_tokens": 64}}
+    )
+
+    assert fields["cache_read_tokens"] == 64
+    assert fields["prompt_tokens"] is None
+    assert usage.has_tokens(fields) is False
 
 
 # ---------------------------------------------------------------------------
@@ -168,6 +269,21 @@ def test_tracker_reads_the_usage_frame() -> None:
     assert tracker.captured is True
     assert (tracker.prompt_tokens, tracker.completion_tokens) == (7, 5)
     assert tracker.total_tokens == 12
+
+
+CACHE_USAGE_FRAME = b'data: {"choices":[],"usage":{"prompt_tokens":7,"completion_tokens":5,"total_tokens":12,"prompt_tokens_details":{"cached_tokens":6}}}\n\n'
+
+
+def test_tracker_captures_the_cache_columns_from_the_usage_frame() -> None:
+    """缓存列也要从流式 usage 帧里带出来，否则流式调用的命中率恒为 None。"""
+    tracker = usage.StreamUsageTracker()
+    tracker.feed(DELTA_FRAME)
+    tracker.feed(CACHE_USAGE_FRAME)
+    tracker.close()
+
+    assert tracker.captured is True
+    assert tracker.cache_read_tokens == 6
+    assert tracker.cache_write_tokens is None
 
 
 def test_tracker_survives_a_frame_split_across_chunks() -> None:
