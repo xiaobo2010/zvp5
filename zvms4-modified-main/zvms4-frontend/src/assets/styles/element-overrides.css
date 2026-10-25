@@ -269,6 +269,33 @@ html.dark {
   --el-button-disabled-text-color: var(--yg-text-disabled);
 }
 
+/* EP 的 .el-button--danger 只改底色，文字色仍取 --el-color-white。
+   项目里 --el-color-white 被映射成 --yg-color-on-primary，若该令牌为白则恰好可用；
+   这里显式补齐文字/边框色，保证任何色彩映射下都是「红底白字」，
+   深浅色模式一致（危险确认按钮，如「仍然登出」）。
+   注：写 `.el-button--danger.el-button--danger` 是为了干过 theme-chalk 与 flat.css
+   里同名的单类规则——它们在 el-message-box 这类运行时挂载的场景下会盖住这里的值。 */
+.el-button--danger.el-button--danger {
+  --el-button-text-color: var(--yg-color-on-danger);
+  --el-button-bg-color: var(--yg-color-danger);
+  --el-button-border-color: var(--yg-color-danger);
+  --el-button-hover-text-color: var(--yg-color-on-danger);
+  --el-button-hover-bg-color: var(--yg-color-danger-hover);
+  --el-button-hover-border-color: var(--yg-color-danger-hover);
+  --el-button-active-text-color: var(--yg-color-on-danger);
+  --el-button-active-bg-color: var(--yg-color-danger-active);
+  --el-button-active-border-color: var(--yg-color-danger-active);
+}
+
+.el-button--danger.is-plain,
+.el-button--danger.is-text,
+.el-button--danger.is-link {
+  --el-button-text-color: var(--yg-text-danger);
+  --el-button-bg-color: var(--yg-color-danger-soft);
+  --el-button-border-color: var(--yg-color-danger-soft);
+  --el-button-hover-text-color: var(--yg-text-danger);
+}
+
 /* 表单校验错误允许红字红边框（准则 5.3） */
 .el-form-item.is-error .el-input__wrapper,
 .el-form-item.is-error .el-textarea__inner {
