@@ -180,7 +180,7 @@ function handleSelectionChange(val: string[]) {
         <ElSwitch v-model="pwdm" />
       </ElFormItem>
       <ElTable
-        :ref="tableRef"
+        ref="tableRef"
         :data="users"
         stripe
         row-key="_id"
@@ -216,7 +216,7 @@ function handleSelectionChange(val: string[]) {
             }}</span>
           </template>
         </ElTableColumn>
-        <ElTableColumn fixed="right">
+        <ElTableColumn fixed="right" :min-width="260">
           <template #header>
             <div>
               <ElInput
@@ -254,7 +254,7 @@ function handleSelectionChange(val: string[]) {
                   >
                     {{ t('manage.exports.actions.export') }}
                   </ElButton>
-                  <ElPopover v-else>
+                  <ElPopover v-else :width="320">
                     <template #reference>
                       <ElButton
                         :icon="Box"

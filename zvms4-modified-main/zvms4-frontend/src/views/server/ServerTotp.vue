@@ -229,3 +229,11 @@ onUnmounted(() => {
     </div>
   </ElCard>
 </template>
+
+<style scoped>
+/* EP 进度条 theme 写死 `transition: width 0.6s ease`，而倒计时每 200ms tick 一次，
+   过渡永远重启、条一直追不上真实剩余时间。本页把时长压到 200ms 与 tick 对齐。 */
+:deep(.el-progress-bar__inner) {
+  transition-duration: 200ms;
+}
+</style>

@@ -3,7 +3,6 @@ import {
   Avatar,
   CirclePlusFilled,
   HomeFilled,
-  InfoFilled,
   Sunny,
   Moon,
   Management,
@@ -86,13 +85,6 @@ const navs: Array<{
     path: '/me',
     show: true,
     judge: (path) => path.startsWith('/me')
-  },
-  {
-    icon: InfoFilled,
-    name: 'about',
-    path: '/about',
-    show: true,
-    judge: (path) => path.startsWith('/about')
   },
   {
     icon: Monitor,

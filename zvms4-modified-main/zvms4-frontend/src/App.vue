@@ -471,12 +471,7 @@ onMounted(async () => {
           <div class="yg-layout__main">
             <header class="yg-layout__topbar yg-topbar">
               <div class="yg-topbar__left">
-                <img
-                  v-if="verticalMode"
-                  class="yg-topbar__logo"
-                  src="/favicon.ico"
-                  alt="favicon"
-                />
+                <img class="yg-topbar__logo" src="/pwa-192x192.png" alt="义工平台 Logo" />
                 <span
                   class="yg-topbar__title"
                   @dblclick="router.push(userStore.isLogin ? '/user' : '/user/login')"
@@ -558,6 +553,7 @@ onMounted(async () => {
 .yg-topbar__logo {
   width: var(--yg-space-7);
   height: var(--yg-space-7);
+  flex-shrink: 0;
   border-radius: var(--yg-radius-md);
   object-fit: cover;
 }
