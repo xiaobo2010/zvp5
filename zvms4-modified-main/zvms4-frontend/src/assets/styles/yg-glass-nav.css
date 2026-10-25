@@ -98,11 +98,8 @@ html.dark .yg-glass-nav--portrait {
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.55),
     0 2px 8px rgba(14, 165, 233, 0.25);
-  transition:
-    transform 0.45s cubic-bezier(0.3, 1.6, 0.4, 1),
-    width 0.45s cubic-bezier(0.3, 1.6, 0.4, 1),
-    height 0.45s cubic-bezier(0.3, 1.6, 0.4, 1),
-    opacity 0.2s ease-out;
+  /* 位移由 UserNav 的 WAAPI 弹簧驱动，这里不能加 transform transition，否则会互相抢值 */
+  transition: opacity 0.2s ease-out;
   pointer-events: none;
 }
 

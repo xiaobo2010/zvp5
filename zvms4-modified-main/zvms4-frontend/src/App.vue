@@ -3,7 +3,6 @@ import { ArrowDown, User, SwitchButton, CircleCloseFilled } from '@element-plus/
 import {
   ElIcon,
   ElButton,
-  ElButtonGroup,
   ElPopover,
   ElConfigProvider,
   ElMessageBox,
@@ -480,31 +479,35 @@ onMounted(async () => {
                 </span>
               </div>
               <div class="yg-topbar__right" v-if="userStore.isLogin">
-                <ElButtonGroup>
-                  <ElButton text bg :icon="User" type="primary">
-                    {{ userStore.name }}
-                  </ElButton>
-                  <ElPopover width="216px">
+                <div class="yg-user-chip">
+                  <span class="yg-user-chip__avatar">
+                    <ElIcon><User /></ElIcon>
+                  </span>
+                  <span class="yg-user-chip__name">{{ userStore.name }}</span>
+                  <ElPopover width="216px" trigger="click" popper-class="yg-user-menu">
                     <template #reference>
-                      <ElButton
-                        text
-                        bg
-                        :icon="ArrowDown"
-                        type="primary"
-                      />
+                      <button
+                        type="button"
+                        class="yg-user-chip__toggle"
+                        :aria-label="t('nav.accountMenu', '账号菜单')"
+                      >
+                        <ElIcon><ArrowDown /></ElIcon>
+                      </button>
                     </template>
-                    <ElButtonGroup class="w-full" v-for="button in panelButtons" :key="button.text">
+                    <div class="yg-user-menu__list">
                       <ElButton
+                        v-for="button in panelButtons"
+                        :key="button.text"
                         text
                         :icon="button.icon"
-                        class="action-btn p-1 w-full"
+                        :class="['yg-user-menu__item', `yg-user-menu__item--${button.text}`]"
                         @click="button.click"
                       >
                         {{ t(`nav.${button.text}`) }}
                       </ElButton>
-                    </ElButtonGroup>
+                    </div>
                   </ElPopover>
-                </ElButtonGroup>
+                </div>
               </div>
             </header>
             <main class="yg-layout__content">
@@ -534,10 +537,6 @@ onMounted(async () => {
   font-size: 1.2rem;
 }
 
-.action-btn {
-  width: 100%;
-}
-
 /* 顶栏外观由标准样式库的 .yg-topbar 提供，这里只补项目自有元素 */
 
 .yg-topbar__title {
@@ -563,6 +562,117 @@ onMounted(async () => {
   align-items: center;
   gap: var(--yg-space-2);
   flex-shrink: 0;
+}
+
+/* 账号胶囊：头像 + 用户名 + 展开箭头合成一个整体，替代原先两个 is-text 主色按钮 */
+.yg-user-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 36px;
+  padding: 0 4px 0 4px;
+  border: 1px solid var(--yg-border-default);
+  border-radius: var(--yg-radius-pill);
+  background: var(--yg-bg-surface);
+  transition:
+    border-color var(--yg-dur-fast) var(--yg-ease-out),
+    background-color var(--yg-dur-fast) var(--yg-ease-out);
+}
+
+.yg-user-chip:hover {
+  border-color: var(--yg-color-primary);
+  background: var(--yg-bg-hover);
+}
+
+.yg-user-chip__avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--yg-color-primary-soft);
+  color: var(--yg-color-primary);
+  font-size: 15px;
+}
+
+.yg-user-chip__name {
+  max-width: 12rem;
+  overflow: hidden;
+  color: var(--yg-text-primary);
+  font-size: var(--yg-font-size-sm);
+  font-weight: var(--yg-font-weight-medium);
+  line-height: 1;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* 箭头按钮保留 24px 触控区，不参与主色填充 */
+.yg-user-chip__toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--yg-text-secondary);
+  font-size: 13px;
+  cursor: pointer;
+  transition:
+    color var(--yg-dur-fast) var(--yg-ease-out),
+    background-color var(--yg-dur-fast) var(--yg-ease-out);
+}
+
+.yg-user-chip__toggle:hover {
+  background: var(--yg-bg-active);
+  color: var(--yg-text-primary);
+}
+
+.yg-user-chip__toggle:focus-visible {
+  outline: none;
+  box-shadow: var(--yg-focus-ring);
+}
+
+/* 账号菜单：中性项 + 危险项（退出登录属高危，走 --yg-color-danger）
+   注：弹层挂在 body 下，scoped 选择器到不了，这里用 :global 显式声明
+   （面板色另在 popper-class 同规则里补，避免白字白底） */
+:global(.yg-user-menu__list) {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+:global(.yg-user-menu__item.el-button) {
+  justify-content: flex-start;
+  width: 100%;
+  height: 36px;
+  margin: 0;
+  padding: 0 10px;
+  border-radius: var(--yg-radius-md);
+  color: var(--yg-text-primary);
+  font-size: var(--yg-font-size-sm);
+}
+
+:global(.yg-user-menu__item.el-button:hover),
+:global(.yg-user-menu__item.el-button:focus) {
+  background: var(--yg-bg-hover);
+  color: var(--yg-text-primary);
+}
+
+:global(.yg-user-menu__item.el-button.yg-user-menu__item--logout),
+:global(.yg-user-menu__item.el-button.yg-user-menu__item--logout:hover) {
+  color: var(--yg-text-danger);
+}
+
+:global(.yg-user-menu__item.el-button.yg-user-menu__item--logout:hover) {
+  background: var(--yg-color-danger-soft);
+}
+
+:global(.yg-user-menu) {
+  padding: 6px;
 }
 
 /* 封禁全屏：危险态用红色系（准则第 5 章）。深红底不在语义调色板内，
