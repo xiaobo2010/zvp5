@@ -230,6 +230,29 @@ def _config_api_path(raw: object) -> str:
     return path
 
 
+def siliconflow_free_models() -> list[str]:
+    """``settings.AI_SILICONFLOW_FREE_MODELS``：SiliconFlow 免费模型白名单。
+
+    免费档会变，所以清单是**运维资产**而不是代码常量：网关只负责读，不负责猜。
+    空列表表示「没配」，调用方（``misc/seed_channel.py``）据此拒绝上线——回落到
+    「上游全部模型」几乎必然把付费档暴露给所有登录用户，比渠道不可用糟得多。
+
+    非字符串条目与空白项逐个丢弃，重复项按首次出现保留：这份清单会直接变成凭据的
+    ``models``，脏数据留着只会让候选列表变长。
+    """
+    raw = getattr(settings, "AI_SILICONFLOW_FREE_MODELS", []) or []
+    if not isinstance(raw, (list, tuple, set, frozenset)):
+        return []
+    models: list[str] = []
+    for item in raw:
+        if not isinstance(item, str):
+            continue
+        model = item.strip()
+        if model and model not in models:
+            models.append(model)
+    return models
+
+
 def max_ocr_image_bytes() -> int:
     """OCR 单图体积上限（字节）；``settings`` 可覆盖 ``config`` 的默认 20MB。
 
@@ -489,7 +512,11 @@ def public_provider_view() -> list[dict]:
 
 
 # 文档明确支持 ``stream_options.include_usage`` 的 OpenAI 兼容服务（host 精确匹配）。
-_STREAM_USAGE_HOSTS = frozenset({"api.openai.com", "api.deepseek.com"})
+# SiliconFlow 与 OpenAI 形状一致且认这个字段：不加进默认值，公开渠道的流式调用
+# 就永远拿不到 token 数，额度只能靠字符估算。
+_STREAM_USAGE_HOSTS = frozenset(
+    {"api.openai.com", "api.deepseek.com", "api.siliconflow.cn"}
+)
 
 
 def stream_usage_hosts() -> frozenset[str]:

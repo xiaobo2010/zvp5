@@ -431,15 +431,21 @@ onMounted(() => {
       </template>
 
       <ElTable :data="rows" row-key="oid" stripe>
-        <ElTableColumn :label="t('ai.keys.scope')" width="90" align="center">
+        <ElTableColumn :label="t('ai.keys.scope')" width="120" align="center">
           <template #default="{ row }">
-            <ElTag :type="row.scope === 'shared' ? 'primary' : 'info'" size="small">
-              {{
-                row.scope === 'shared'
-                  ? t('ai.keys.scopeShared')
-                  : t('ai.keys.scopePersonal')
-              }}
-            </ElTag>
+            <div class="ai-keys__scope">
+              <ElTag :type="row.scope === 'shared' ? 'primary' : 'info'" size="small">
+                {{
+                  row.scope === 'shared'
+                    ? t('ai.keys.scopeShared')
+                    : t('ai.keys.scopePersonal')
+                }}
+              </ElTag>
+              <!-- 共享凭据就是公开渠道：全员可用，按发起人额度计费 -->
+              <ElTag v-if="row.scope === 'shared'" type="success" size="small">
+                {{ t('ai.keys.publicChannel') }}
+              </ElTag>
+            </div>
           </template>
         </ElTableColumn>
         <ElTableColumn prop="name" :label="t('ai.keys.name')" min-width="140" show-overflow-tooltip />
@@ -457,6 +463,11 @@ onMounted(() => {
         <ElTableColumn :label="t('ai.keys.models')" min-width="180">
           <template #default="{ row }">
             <span class="text-xs">{{ modelPreview(row) || '—' }}</span>
+          </template>
+        </ElTableColumn>
+        <ElTableColumn :label="t('ai.keys.modelCount')" width="90" align="center">
+          <template #default="{ row }">
+            <span class="tabular-nums text-xs">{{ row.models.length }}</span>
           </template>
         </ElTableColumn>
         <ElTableColumn :label="t('ai.common.status')" width="90" align="center">
@@ -672,5 +683,13 @@ onMounted(() => {
 <style scoped>
 .ai-keys-form :deep(.el-form-item:last-child) {
   margin-bottom: 0;
+}
+
+/* 类型列：共享凭据带「公开渠道」徽标，两枚标签竖排 */
+.ai-keys__scope {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--yg-space-1);
 }
 </style>

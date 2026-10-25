@@ -205,6 +205,28 @@ Content-Type: application/json
 
 错误：`400 AI_KEY_INVALID` / `AI_KEY_BAD_EXPIRY`，`403 AI_KEY_FORBIDDEN`，`404 AI_KEY_NOT_FOUND`，`409 AI_KEY_DUPLICATE`。
 
+### 3.1 渠道（shared）
+
+`shared` 凭据就是「渠道」：平台出资、所有登录用户可见、按发起人的月额度计费（`scope=personal` 才不计费）。渠道不新增 provider 类型——`kind` 仍是 `openai_compat`，`base_url` 指向上游兼容基址即可。
+
+| 约束 | 值 | 原因 |
+|---|---|---|
+| 单条凭据模型上限 | 20（`credentials._MODELS_MAX`） | 与 `create_entry` 校验同一口径 |
+| 模型来源 | 只用 `settings.AI_SILICONFLOW_FREE_MODELS` 里的免费模型 | 渠道对全员开放，付费模型的账单直接落到平台 |
+| 白名单为空 | 拒绝上线（脚本退出码 2） | 不回落「上游全部模型」 |
+| 流式 usage | `api.siliconflow.cn` 已在 `AI_STREAM_USAGE_HOSTS` 默认值内 | 否则流式调用 token 列恒为 NULL，只能估算 |
+| `prompt_cache_key` | **不注入** | SiliconFlow 不认该字段，加了只是未知字段 |
+
+运维命令（在后端根目录，`--dry-run` 不写库、不打印明文 key）：
+
+```bash
+# 免费清单先配进 settings.py：AI_SILICONFLOW_FREE_MODELS = ["...", "..."]
+.venv/bin/python misc/seed_channel.py --dry-run --free-only
+.venv/bin/python misc/seed_channel.py --free-only --key-file ~/.config/zvms/siliconflow.env
+```
+
+脚本行为：取 `--key-file` 里的 `SILICONFLOW_API_KEY`（或同名环境变量）→ `GET {base_url}/models` → 与免费白名单取**交集**（只收窄，不扩集）→ 同名 shared 存在则走 `update_entry` 轮换 key/models，否则 `create_entry` 新建。输出只有动作、`key_hint` 与模型清单，**不含明文 key**。换 key 就是重跑同一条命令；想立刻下线渠道就把凭据 `enabled=false` 或删除，白名单改动则重跑脚本刷新 `models`。
+
 ---
 
 ## 4. OCR 引擎管理 `/api/ai/ocr-engines`
@@ -773,6 +795,13 @@ client = OpenAI(
 | `AI_AGENT_PROPOSAL_EXPIRED` | 410 | 提案已过期 |
 | `AI_AGENT_NOT_WRITE_TOOL` / `AI_AGENT_ARGS_TOO_LARGE` | 400 | 提案参数问题 |
 | `AI_AGENT_TOOL_FAILED` | 502 | 工具执行内部失败 |
+| `AI_CONVERSATION_NOT_FOUND` | 404 | 会话不存在或不属于本人 |
+| `AI_CONVERSATION_MODE_MISMATCH` | 409 | 会话类型与端点不符（chat 会话提交 agent run，或反之） |
+| `AI_RUN_CONFLICT` | 409 | 同会话/同用户已有活跃 run；删除有活跃 run 的会话 |
+| `AI_RUN_NOT_FOUND` | 404 | run 不存在或不属于本人 |
+| `AI_RUN_NOT_CANCELLABLE` | 409 | run 已是终态 |
+| `AI_RUN_INTERRUPTED` | — | run 因进程重启/心跳丢失被收敛（出现在 `ai_runs.error_code`） |
+| `AI_CONTEXT_UNAVAILABLE` | 503 | 压缩所需上游不可用（已降级为截断时不抛） |
 
 前端映射在 `zvms4-frontend/src/api/ai/errors.ts` + `src/i18n/locales/ai.ts`；新增错误码必须两处同步。
 
@@ -824,6 +853,7 @@ client = OpenAI(
 | `AI_OCR_ORT_THREADS` | 环境变量 | rapidocr 线程数 |
 | `AI_CALL_LOGS_RETENTION_DAYS` | `config.py` | 流水保留 90 天 |
 | `AI_STREAM_USAGE_HOSTS` | `settings`（可选） | 额外允许 `stream_options.include_usage` 的上游 host；`["*"]` = 全部 |
+| `AI_SILICONFLOW_FREE_MODELS` | `settings` | SiliconFlow 免费模型白名单（运维维护）；`misc/seed_channel.py` 只从这里取模型，留空 = 渠道不上线 |
 | `AI_AGENT_MAX_ITERATIONS` | `config.py` / `settings` | agent 单次 run 的轮数上限，默认 10 |
 | `AI_AGENT_TOKEN_BUDGET` | `config.py` / `settings` | agent 单次 run 的累计 token 上限，默认 100000 |
 | `AI_AGENT_PROPOSAL_TTL_SECONDS` | `config.py` / `settings` | 写操作提案有效期，默认 600 秒 |
@@ -837,12 +867,12 @@ client = OpenAI(
 
 ---
 
-## 13. Agent 面 `/api/ai/agent`
+## 14. Agent 面 `/api/ai/agent`
 
 智能体在一次请求里跑完「模型 → 工具 → 模型」循环，**不流式**：工具调用的完整参数
 只在整条响应里，逐字回调等于猜半个 JSON。鉴权同上（JWT + `AI_ALLOWED_ROLES`）。
 
-### 13.1 端点
+### 14.1 端点
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
@@ -855,7 +885,7 @@ client = OpenAI(
 `messages` 只接受 `user` / `assistant`；`system` 由服务端注入（版本化前缀），客户端传
 → `400 AI_AGENT_BAD_ARGUMENTS`。
 
-### 13.2 写操作 = 提案 + 双人码
+### 14.2 写操作 = 提案 + 双人码
 
 模型对写工具的调用**不执行任何写**，只落一条 `ai_agent_events(status='proposed')`。
 确认时按顺序校验：归属（`actor_oid`）→ 时效（`AI_AGENT_PROPOSAL_TTL_SECONDS`）→
@@ -872,7 +902,7 @@ CAS `proposed → executing → confirmed|failed`。
 - 活动域两条写工具（`update_member_duration` / `set_member_status`）保持无 TOTP，
   行为不变。
 
-### 13.3 工具集（封闭白名单，27 个）
+### 14.3 工具集（封闭白名单，27 个）
 
 | 域 | 读（自动执行） | 写（提案 + TOTP） |
 |---|---|---|
@@ -885,7 +915,7 @@ CAS `proposed → executing → confirmed|failed`。
 不信任 token 快照。`db_query` 走只读 SQL 校验；`db_ddl` 先跑 DDL 校验（含
 `confirm=表名`）；文件路径仍过 `realpath` + `/proc`/`/sys` + 敏感文件黑名单。
 
-### 13.4 成本闸
+### 14.4 成本闸
 
 `AI_AGENT_MAX_ITERATIONS`（默认 10 轮）、`AI_AGENT_TOKEN_BUDGET`（默认 100000，
 上游未报 usage 时按字符估算）、`AI_AGENT_RUN_TIMEOUT_SECONDS`（默认 300s）、单轮最多
@@ -896,7 +926,7 @@ CAS `proposed → executing → confirmed|failed`。
 `services/ai/prompt_cache.request_body` 注入，`cache_key` 落审计。工具结果只追加在
 对话尾部，前缀不随轮次变化。
 
-### 13.5 错误码
+### 14.5 错误码
 
 `AI_AGENT_BAD_ARGUMENTS`(400) `AI_AGENT_ARGS_TOO_LARGE`(413) `AI_AGENT_TOTP_REQUIRED`(422)
 `AI_AGENT_TOTP_INVALID`(403) `AI_AGENT_TOTP_RATE_LIMITED`(429)

@@ -522,3 +522,179 @@ export interface AiAgentProposalResult {
   /** 本次确认是否命中了 30 分钟双人授权窗口（确认时才有）。 */
   dual_auth_cached: boolean
 }
+
+/* ---------------------------------------------------------------------------
+   持久会话（/ai/conversations）
+   契约见 docs/AI_CONVERSATION_DESIGN.md §3。对话与智能体共用一套会话存储：
+   conversation 是容器，message 是会话内按 seq 单调递增的一条，run 是一次
+   后台执行的智能体任务（run_id 同时是 ai_call_logs / ai_agent_events 的
+   request_id）。
+   --------------------------------------------------------------------------- */
+
+/** 会话类型：建会话时定，之后不可改。 */
+export type AiConversationMode = 'chat' | 'agent'
+
+/** 会话状态：active 在列表里，archived 是收起来的（保留期到期才硬删）。 */
+export type AiConversationStatus = 'active' | 'archived'
+
+/** 会话级累计用量（ai_conversations.tokens_*）。 */
+export interface AiConversationTokens {
+  prompt: number
+  completion: number
+  total: number
+}
+
+/** 上下文水位：最近一次请求的 prompt token 与该模型的上下文上限。 */
+export interface AiConversationContext {
+  tokens: number
+  limit: number
+  /** 占用比例（0–1）；上游没报时给 0。 */
+  ratio: number
+}
+
+/** 压缩点：≤ upto_seq 的消息不进模型上下文，只进摘要。 */
+export interface AiConversationCompaction {
+  upto_seq: number
+  /** 是否压过（upto_seq > 0 即为 true，这里冗余一份方便直接渲染）。 */
+  summarized: boolean
+  /** 最近一次压缩降级（硬截断）的时间；null = 正常。 */
+  degraded_at: string | null
+}
+
+/** 一个会话的视图（列表与详情共用；列表不含消息正文与活跃 run）。 */
+export interface AiConversation {
+  oid: string
+  mode: AiConversationMode
+  title: string
+  /** 最近使用的模型；null = 服务端默认。 */
+  model: string | null
+  status: AiConversationStatus
+  tokens: AiConversationTokens
+  context: AiConversationContext
+  compaction: AiConversationCompaction
+  message_count: number
+  created_at: string
+  updated_at: string
+}
+
+/** 会话列表的一页：游标分页（cursor 是 base64 的 updated_at|oid）。 */
+export interface AiConversationPage {
+  conversations: AiConversation[]
+  /** 下一页游标；null = 没有更多了。 */
+  next_cursor: string | null
+  /** 本页条数（metadata.size）。 */
+  size: number
+}
+
+/** 会话里的消息角色；摘要不落成消息（只存在会话行的 summary_upto_seq）。 */
+export type AiMessageRole = 'user' | 'assistant' | 'tool'
+
+/** 单条消息那一轮的 token 用量；上游没报时各字段为 null。 */
+export interface AiMessageUsage {
+  prompt_tokens: number | null
+  completion_tokens: number | null
+  total_tokens: number | null
+  cache_read_tokens: number | null
+  cache_write_tokens: number | null
+}
+
+/** 会话内的一条消息（按 seq 排序渲染）。 */
+export interface AiMessage {
+  oid: string
+  /** 会话内单调递增；压缩点就是拿它与 compaction.upto_seq 比。 */
+  seq: number
+  role: AiMessageRole
+  content: string
+  /** assistant 的 tool_calls 原文；其它角色为 null。 */
+  tool_calls?: unknown
+  /** role='tool' 时对应那次调用。 */
+  tool_call_id?: string | null
+  /** role='tool' 时工具名（折叠标题用）。 */
+  tool_name?: string | null
+  /** 所属 run 的轮次（1 起）。 */
+  round_no?: number | null
+  /** 产生该消息的 run id（= ai_call_logs.request_id）。 */
+  request_id?: string | null
+  usage?: AiMessageUsage | null
+  created_at: string
+}
+
+/** 消息的一页：after_seq 增量拉取。 */
+export interface AiMessagePage {
+  messages: AiMessage[]
+  /** 还有更早的消息（用最后一条的 seq 再拉一次）。 */
+  has_more: boolean
+  /** 会话内消息总数。 */
+  total: number
+}
+
+/** 一次后台执行的状态。 */
+export type AiRunStatus =
+  | 'queued'
+  | 'running'
+  | 'succeeded'
+  | 'failed'
+  | 'cancelled'
+  | 'interrupted'
+
+/** run 的终止原因（succeeded 且 stop_reason='completed' 表示正常跑完）。 */
+export type AiRunStopReason =
+  | 'completed'
+  | 'max_iterations'
+  | 'token_budget'
+  | 'timeout'
+  | 'cancelled'
+  | 'error'
+
+/** 一次后台执行的视图。 */
+export interface AiRun {
+  /** run_id（同时是 ai_call_logs.request_id）。 */
+  oid: string
+  conversation_oid: string
+  status: AiRunStatus
+  /** 本次使用的模型；null = 服务端默认。 */
+  model: string | null
+  stop_reason: AiRunStopReason | null
+  /** 已完成的轮数。 */
+  rounds: number
+  error_code: string | null
+  /** 人话错误（已脱敏）。 */
+  error_message: string | null
+  /** 最终 assistant 消息的 oid。 */
+  result_message_oid: string | null
+  prompt_tokens: number
+  completion_tokens: number
+  total_tokens: number
+  /** 已请求中止（worker 在轮边界检查）。 */
+  cancel_requested: boolean
+  created_at: string
+  started_at: string | null
+  finished_at: string | null
+}
+
+/** 提交 run 的受理结果（202）。 */
+export interface AiRunSubmitResult {
+  run_id: string
+  /** 提交时落库的那条用户消息。 */
+  message_oid: string
+  status: 'queued'
+  /** 命中 client_msg_id 幂等键时为 true：没有重复写消息、没有重复计费。 */
+  deduped?: boolean
+}
+
+/** 一次 run 的详情：状态 + 增量事件 + 提案。 */
+export interface AiRunDetail {
+  run: AiRun
+  /** 只含 round_no > after_round 的增量。 */
+  events: AiAgentEvent[]
+  proposals: AiAgentProposal[]
+}
+
+/** 硬删会话的结果。 */
+export interface AiConversationDeleteResult {
+  deleted: boolean
+  /** 一并删掉的消息数。 */
+  messages: number
+  /** 一并删掉的运行记录数。 */
+  runs: number
+}

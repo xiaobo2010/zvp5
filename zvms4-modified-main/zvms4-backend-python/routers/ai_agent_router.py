@@ -1,20 +1,18 @@
 """agent（智能体）HTTP 层（``/api/ai/agent``）。
 
-五个端点，一套协议：错误体与 ``/v1/chat/completions`` 同形
-（``{"error": {"message", "type", "code"}}``）+ ``X-AI-Request-Id`` 头，因为调用方
-是同一个前端 AI 封装，多一套形状只会多一处要翻译的地方。
+三个端点：确认提案、驳回提案、本人的提案列表。错误体与
+``/v1/chat/completions`` 同形（``{"error": {"message", "type", "code"}}``）+
+``X-AI-Request-Id`` 头，因为调用方是同一个前端 AI 封装，多一套形状只会多一处要
+翻译的地方。
+
+**发起 run 的端点已删除**（``POST /run``）与 ``GET /runs/{request_id}``：会话化
+之后由 ``POST /api/ai/conversations/{oid}/runs`` 与
+``GET /api/ai/runs/{run_id}`` 提供（契约 §3.3）。这里保留的只有提案的确认语义，
+它不依赖 run 是否仍在队列里。
 
 权限门禁与 chat 面同一口径（``AI_ALLOWED_ROLES``，默认 admin / department）：
 agent 只是 chat 能力的高级用法，不改另一套白名单。门禁拒绝也落一行审计——「谁在
-没有权限的情况下反复试探 agent」在后台必须看得见。executor 在**打上游之前**就
-拒绝的那些（模型不在目录、消息形状不对、频控/额度）同样补一行：具体是哪一种由
-executor 自己标记（已记账的异常带 ``audited``），这里只补漏掉的，不重复记。
-
-计费说明：**一次 ``/run`` 的每一轮都是一次独立的上游调用**，各写一条
-``AI_CALL_LOGS``（``purpose='agent'`` + ``round_no``）并各扣一次 chat 额度。
-配额面板上「10 轮的一次 run」看起来是 10 次调用，这是有意的——按真实上游成本
-记账。响应里的 ``events`` 是工具调用留痕（读工具的执行、写工具的提案、被拒的
-尝试都在里面），``proposals`` 是本次 run 生成的待确认提案。
+没有权限的情况下反复试探 agent」在后台必须看得见。
 
 写操作的确认是**双人**的：``requires_dual_auth`` 的提案必须带另一位管理员的
 6 位动态码（``totp_code``）。缺码 422，码错/已被用/无第二管理员 403/409，语义与
@@ -48,22 +46,6 @@ router = APIRouter()
 # 提案 oid 的形状：``uuid4().hex``（32 位小写 hex）。形状不对直接当「不存在」，
 # 不查库——32 位 hex 的校验不需要一次往返。
 PROPOSAL_OID_PATTERN = re.compile(r"^[0-9a-f]{32}$")
-
-
-class AgentRunRequest(BaseModel):
-    """一次 agent 会话的入参。
-
-    ``messages`` 与 OpenAI 的 ``messages`` 同形（``role`` / ``content``），只允许
-    ``user`` / ``assistant`` 两种角色 —— ``system`` 由服务端注入（缓存前缀与行为
-    护栏都归服务端），``tool`` 角色由服务端自己产生；客户端不能伪造任何一条来
-    影响模型判断。
-
-    ``model`` 可省：省了就取该用户可见目录里的第一个模型（前端不必为了「随便用」
-    先发一次 ``/v1/models``）。显式指定则必须在该用户可见目录里。
-    """
-
-    messages: list[dict] = Field(min_length=1, max_length=50)
-    model: str | None = Field(default=None, max_length=80)
 
 
 class ConfirmRequest(BaseModel):
@@ -140,64 +122,6 @@ async def _forbidden(user: dict, *, request_id: str) -> JSONResponse:
         http_status=403,
     )
     return _error(403, "AI_FORBIDDEN", AI_FORBIDDEN_MESSAGE, request_id=request_id)
-
-
-@router.post("/run")
-async def run_agent(
-    payload: AgentRunRequest,
-    user=Depends(get_current_user),
-):
-    """跑一次 agent 会话（多轮工具调用）。
-
-    成功：``{"request_id", "content", "stop_reason", "rounds", "usage", "events",
-    "proposals"}``。``stop_reason`` 为 ``null`` 时是模型自己收尾；``timeout`` /
-    ``token_budget`` / ``max_iterations`` 表示被闸门截断（``content`` 里可能是
-    已产生的内容或一句说明）。工具调用留痕在 ``events``，写工具生成的待确认提案
-    在 ``proposals``（确认走 ``POST /api/ai/agent/proposals/{oid}/confirm``）。
-    """
-    request_id = uuid4().hex
-
-    if not _has_ai_access(user):
-        return await _forbidden(user, request_id=request_id)
-
-    try:
-        data = await executor.run(
-            user=user,
-            messages=payload.messages,
-            model=payload.model,
-            request_id=request_id,
-        )
-    except AgentError as exc:
-        # executor 已经为「打了上游的这一轮」写过流水（异常上带 audited），这里
-        # 只补 preflight 拒绝（模型不在目录 / 消息形状不对 / 无可选 provider）。
-        if not getattr(exc, "audited", False):
-            await _audit(
-                user,
-                request_id=request_id,
-                status="rejected",
-                code=exc.code,
-                http_status=exc.status_code,
-            )
-        return _agent_error(exc, request_id=request_id)
-    except Exception:  # noqa: BLE001 - 兜底：协议体必须是 OpenAI 形状
-        _logger.exception("ai agent run failed")
-        await _audit(
-            user,
-            request_id=request_id,
-            status="error",
-            code="AI_AGENT_INTERNAL_ERROR",
-            http_status=500,
-        )
-        return _error(
-            500,
-            "AI_AGENT_INTERNAL_ERROR",
-            "agent run failed unexpectedly",
-            request_id=request_id,
-        )
-
-    return JSONResponse(
-        status_code=200, content=data, headers={"X-AI-Request-Id": request_id}
-    )
 
 
 @router.post("/proposals/{oid}/confirm")
@@ -332,57 +256,6 @@ async def list_proposals(
         status_code=200,
         content={"proposals": items},
         headers={"X-AI-Request-Id": request_id},
-    )
-
-
-@router.get("/runs/{request_id}")
-async def get_run(
-    request_id: str,
-    user=Depends(get_current_user),
-):
-    """一次 run 的工具事件时间线（刷新页面后回看用）。
-
-    只回**本人**发起的那些行：``request_id`` 是 32 位 hex，猜中的成本和拿到别人
-    的对话内容相比太低，不能靠「不可猜」当权限。查不到（或不是本人的）一律 404，
-    不区分「不存在」与「不是你的」。
-    """
-    audit_id = uuid4().hex
-
-    if not _has_ai_access(user):
-        return await _forbidden(user, request_id=audit_id)
-
-    if not PROPOSAL_OID_PATTERN.match(str(request_id)):
-        return _error(
-            404, "AI_AGENT_RUN_NOT_FOUND", "run not found", request_id=audit_id
-        )
-
-    try:
-        events = await proposal.run_events(request_id=str(request_id), user=user)
-    except Exception:  # noqa: BLE001 - 兜底：协议体必须是 OpenAI 形状
-        _logger.exception("ai agent run timeline failed")
-        await _audit(
-            user,
-            request_id=audit_id,
-            status="error",
-            code="AI_AGENT_INTERNAL_ERROR",
-            http_status=500,
-        )
-        return _error(
-            500,
-            "AI_AGENT_INTERNAL_ERROR",
-            "run timeline failed unexpectedly",
-            request_id=audit_id,
-        )
-
-    if not events:
-        return _error(
-            404, "AI_AGENT_RUN_NOT_FOUND", "run not found", request_id=audit_id
-        )
-
-    return JSONResponse(
-        status_code=200,
-        content={"request_id": str(request_id), "events": events},
-        headers={"X-AI-Request-Id": audit_id},
     )
 
 

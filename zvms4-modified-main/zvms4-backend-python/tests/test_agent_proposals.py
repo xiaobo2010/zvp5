@@ -904,9 +904,7 @@ def test_router_uses_the_ai_error_envelope(monkeypatch) -> None:
     app.dependency_overrides[get_current_user] = lambda: STUDENT
     client = TestClient(app)
 
-    response = client.post(
-        "/api/ai/agent/run", json={"messages": [{"role": "user", "content": "hi"}]}
-    )
+    response = client.post(f"/api/ai/agent/proposals/{'a' * 32}/confirm")
 
     assert response.status_code == 403
     body = response.json()
@@ -932,15 +930,9 @@ def test_router_gate_rejection_writes_an_audit_row(monkeypatch) -> None:
     client = TestClient(app)
 
     responses = []
-    responses.append(
-        client.post(
-            "/api/ai/agent/run", json={"messages": [{"role": "user", "content": "hi"}]}
-        )
-    )
     responses.append(client.post(f"/api/ai/agent/proposals/{'a' * 32}/confirm"))
     responses.append(client.post(f"/api/ai/agent/proposals/{'a' * 32}/reject"))
     responses.append(client.get("/api/ai/agent/proposals"))
-    responses.append(client.get(f"/api/ai/agent/runs/{'b' * 32}"))
 
     for response in responses:
         assert response.status_code == 403

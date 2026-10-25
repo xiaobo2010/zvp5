@@ -1722,6 +1722,193 @@ END;
 /
 
 -- ----------------------------------------------------------------------------
+-- AI_CONVERSATIONS  ← new (持久会话; V035)
+--   一段会话一行，OID 是 32 位 hex（对外句柄）。MODE 是 Oracle 保留字，只能
+--   带引号：物理名 "MODE"，存为大写（与其他列一致），裸写 mode 仍可解析。
+--   SUMMARY / SUMMARY_UPTO_SEQ 是压缩水位（0 = 从未压缩）；摘要只存会话行，
+--   所以 AI_MESSAGES 没有 summary 角色。计数字段 DEFAULT 0 NOT NULL（累加器），
+--   上游 token 在 AI_MESSAGES 上仍可空（NULL = 上游没报）。也由 V035 创建。
+-- ----------------------------------------------------------------------------
+BEGIN
+  EXECUTE IMMEDIATE '
+CREATE TABLE ai_conversations (
+  oid VARCHAR2(32 CHAR) NOT NULL,
+  owner_oid VARCHAR2(24 CHAR) NOT NULL,
+  "MODE" VARCHAR2(8 CHAR) NOT NULL,
+  title VARCHAR2(120 CHAR),
+  model VARCHAR2(120 CHAR),
+  status VARCHAR2(12 CHAR) DEFAULT ''active'' NOT NULL,
+  summary CLOB,
+  summary_upto_seq NUMBER(10) DEFAULT 0 NOT NULL,
+  tokens_prompt NUMBER(12) DEFAULT 0 NOT NULL,
+  tokens_completion NUMBER(12) DEFAULT 0 NOT NULL,
+  tokens_total NUMBER(12) DEFAULT 0 NOT NULL,
+  context_tokens NUMBER(12) DEFAULT 0 NOT NULL,
+  message_count NUMBER(10) DEFAULT 0 NOT NULL,
+  compaction_degraded_at TIMESTAMP,
+  created_at TIMESTAMP NOT NULL,
+  updated_at TIMESTAMP NOT NULL,
+  PRIMARY KEY (oid),
+  CONSTRAINT ck_ai_conversations_mode CHECK ("MODE" IN (''chat'',''agent'')),
+  CONSTRAINT ck_ai_conversations_status CHECK (status IN (''active'',''archived''))
+)';
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE != -955 THEN RAISE; END IF;
+END;
+/
+
+BEGIN
+  EXECUTE IMMEDIATE '
+CREATE INDEX ix_ai_conversations_owner_status_updated ON ai_conversations (owner_oid, status, updated_at DESC)';
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE NOT IN (-955, -1408) THEN RAISE; END IF;
+END;
+/
+
+-- ----------------------------------------------------------------------------
+-- AI_MESSAGES  ← new (会话内消息; V035)
+--   SEQ 会话内从 1 起，UNIQUE(CONVERSATION_OID, SEQ) 由会话行锁内的 seq 分配兜底。
+--   ROLE 只有 user/assistant/tool（没有 summary）。CLOB 是必需：工具结果全文
+--   ≤8000 字符，超过 VARCHAR2 上限。列表查询不得 select content。也由 V035 创建。
+-- ----------------------------------------------------------------------------
+BEGIN
+  EXECUTE IMMEDIATE '
+CREATE TABLE ai_messages (
+  oid VARCHAR2(32 CHAR) NOT NULL,
+  conversation_oid VARCHAR2(32 CHAR) NOT NULL,
+  seq NUMBER(10) NOT NULL,
+  role VARCHAR2(12 CHAR) NOT NULL,
+  content CLOB,
+  tool_calls CLOB,
+  tool_call_id VARCHAR2(64 CHAR),
+  tool_name VARCHAR2(64 CHAR),
+  round_no NUMBER(3),
+  finish_reason VARCHAR2(24 CHAR),
+  request_id VARCHAR2(64 CHAR),
+  prompt_tokens NUMBER(10),
+  completion_tokens NUMBER(10),
+  total_tokens NUMBER(10),
+  cache_read_tokens NUMBER(10),
+  cache_write_tokens NUMBER(10),
+  created_at TIMESTAMP NOT NULL,
+  PRIMARY KEY (oid),
+  CONSTRAINT uq_ai_messages_conv_seq UNIQUE (conversation_oid, seq),
+  CONSTRAINT ck_ai_messages_role CHECK (role IN (''user'',''assistant'',''tool'')),
+  CONSTRAINT ck_ai_messages_seq CHECK (seq >= 1),
+  CONSTRAINT ck_ai_messages_round_no CHECK (round_no IS NULL OR round_no >= 1)
+)';
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE != -955 THEN RAISE; END IF;
+END;
+/
+
+BEGIN
+  EXECUTE IMMEDIATE '
+CREATE INDEX ix_ai_messages_conv_created ON ai_messages (conversation_oid, created_at)';
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE NOT IN (-955, -1408) THEN RAISE; END IF;
+END;
+/
+
+-- ----------------------------------------------------------------------------
+-- AI_RUNS  ← new (智能体执行任务; V035)
+--   OID 同时是 ai_call_logs.request_id 与 ai_agent_events.request_id。
+--   活跃唯一性是**函数唯一索引**（只在 queued|running 时求值，终态行键为 NULL
+--   而 Oracle 不索引全 NULL 键）：应用层的 SELECT ... FOR UPDATE 只是第一道闸，
+--   并发第二个 POST 由它在 ORA-00001 上挡下 → 409。CLIENT_MSG_ID 幂等键可空。
+--   也由 V035 创建。
+-- ----------------------------------------------------------------------------
+BEGIN
+  EXECUTE IMMEDIATE '
+CREATE TABLE ai_runs (
+  oid VARCHAR2(32 CHAR) NOT NULL,
+  conversation_oid VARCHAR2(32 CHAR) NOT NULL,
+  owner_oid VARCHAR2(24 CHAR) NOT NULL,
+  client_msg_id VARCHAR2(64 CHAR),
+  status VARCHAR2(16 CHAR) NOT NULL,
+  model VARCHAR2(120 CHAR),
+  stop_reason VARCHAR2(24 CHAR),
+  rounds NUMBER(3),
+  error_code VARCHAR2(40 CHAR),
+  error_message VARCHAR2(500 CHAR),
+  result_message_oid VARCHAR2(32 CHAR),
+  prompt_tokens NUMBER(12),
+  completion_tokens NUMBER(12),
+  total_tokens NUMBER(12),
+  cancel_requested NUMBER(1) DEFAULT 0 NOT NULL,
+  heartbeat_at TIMESTAMP,
+  created_at TIMESTAMP NOT NULL,
+  started_at TIMESTAMP,
+  finished_at TIMESTAMP,
+  PRIMARY KEY (oid),
+  CONSTRAINT ck_ai_runs_status CHECK (status IN (''queued'',''running'',''succeeded'',''failed'',''cancelled'',''interrupted'')),
+  CONSTRAINT ck_ai_runs_cancel_requested CHECK (cancel_requested IN (0,1))
+)';
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE != -955 THEN RAISE; END IF;
+END;
+/
+
+BEGIN
+  EXECUTE IMMEDIATE '
+CREATE UNIQUE INDEX uq_ai_runs_active_conv ON ai_runs (CASE WHEN status IN (''queued'',''running'') THEN conversation_oid END)';
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE NOT IN (-955, -1408) THEN RAISE; END IF;
+END;
+/
+
+BEGIN
+  EXECUTE IMMEDIATE '
+CREATE UNIQUE INDEX uq_ai_runs_active_owner ON ai_runs (CASE WHEN status IN (''queued'',''running'') THEN owner_oid END)';
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE NOT IN (-955, -1408) THEN RAISE; END IF;
+END;
+/
+
+BEGIN
+  EXECUTE IMMEDIATE '
+CREATE UNIQUE INDEX uq_ai_runs_client_msg ON ai_runs (conversation_oid, client_msg_id)';
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE NOT IN (-955, -1408) THEN RAISE; END IF;
+END;
+/
+
+BEGIN
+  EXECUTE IMMEDIATE '
+CREATE INDEX ix_ai_runs_owner_status ON ai_runs (owner_oid, status)';
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE NOT IN (-955, -1408) THEN RAISE; END IF;
+END;
+/
+
+BEGIN
+  EXECUTE IMMEDIATE '
+CREATE INDEX ix_ai_runs_conv_created ON ai_runs (conversation_oid, created_at DESC)';
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE NOT IN (-955, -1408) THEN RAISE; END IF;
+END;
+/
+
+BEGIN
+  EXECUTE IMMEDIATE '
+CREATE INDEX ix_ai_runs_status_heartbeat ON ai_runs (status, heartbeat_at)';
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE NOT IN (-955, -1408) THEN RAISE; END IF;
+END;
+/
+
+-- ----------------------------------------------------------------------------
 -- 内置规则: AI 对话请求突发（审计「谁在刷」，只告警不封禁）
 --   只建种子，不实现消费逻辑（后续监控车道）。
 -- ----------------------------------------------------------------------------
