@@ -26,6 +26,12 @@ from pathlib import Path
 
 from sqlalchemy import text
 
+# 以 ``python misc/apply_ddl.py`` 运行时 ``sys.path[0]`` 是 ``misc/``，``db`` 与
+# ``settings`` 都不可见；把后端根放进来，脚本才能复用运行时的 session 工厂。
+_BACKEND_ROOT = Path(__file__).resolve().parent.parent
+if str(_BACKEND_ROOT) not in sys.path:
+    sys.path.insert(0, str(_BACKEND_ROOT))
+
 DDL_DIR = Path(__file__).resolve().parent.parent / "db" / "oracle" / "ddl"
 TERMINATOR = "/"
 _PLSQL_PREFIXES = ("BEGIN", "DECLARE")
@@ -41,13 +47,22 @@ def _executable(chunk: str) -> bool:
     return False
 
 
+def _first_code_line(chunk: str) -> str:
+    """第一条非空、非注释的行（判断 PL/SQL 时不能看注释头）。"""
+    for line in chunk.splitlines():
+        stripped = line.strip()
+        if stripped and not stripped.startswith("--"):
+            return stripped
+    return ""
+
+
 def _strip_plain_terminator(chunk: str) -> str:
     """Drop one trailing ``;`` from plain SQL.
 
     PL/SQL blocks keep theirs (it is part of the block); a plain ``CREATE TABLE
     ...;`` sent with the semicolon fails with ORA-00911.
     """
-    head = chunk.lstrip().upper()
+    head = _first_code_line(chunk).upper()
     if head.startswith(_PLSQL_PREFIXES):
         return chunk
     if chunk.rstrip().endswith(";"):
