@@ -171,6 +171,32 @@ export const zhCN = {
       title: '状态'
     }
   },
+  register: {
+    pendingRecordNotice: '该活动仍在审核中，提交的成员时长将在审核通过后计入统计',
+    blockedRecordNotice: '该活动已驳回或未提交审核，无法录入成员',
+    pendingSummary: '审核中活动的成员不计入时长统计，直到审核通过',
+    overrideNotice: '已录入成员修改时长后提交将直接覆盖，不会叠加',
+    existingBadge: '已录入',
+    existingHint: '已在活动中，现有时长 {duration} 小时，提交将覆盖',
+    existingHintUnchanged: '与现有时长一致，提交时会跳过',
+    existingLoaded: '已载入 {count} 名已在活动中的成员',
+    existingLoading: '载入已在活动中的成员…',
+    existingTruncated: '仅载入前 {limit} 名已有成员，其余请在活动详情成员列表处理',
+    rowLimitReached: '表格最多 {limit} 行，请先提交或删除部分行后再新增',
+    rowLimitTruncated: '已达 {limit} 行上限，本次丢弃 {dropped} 行，剩余部分请分批粘贴或识别',
+    existingLoadFailed: '载入已有成员失败，本次提交只会新增成员',
+    noPending: '没有待提交的行；已录入成员修改时长后提交会直接覆盖，不会叠加',
+    nothingChanged: '已录入成员的时长都没有变化，无需提交',
+    updatedRow: '时长已覆盖',
+    insertedRow: '已新增',
+    skippedRow: '时长未变，已跳过',
+    updateFailed: '更新失败：{reason}',
+    submitSummary: '《{activity}》更新 {updated} 条 / 新增 {added} 条 / 跳过 {skipped} 条',
+    partialFailedTitle: '部分成员更新失败',
+    partialFailedSummary:
+      '本次更新 {updated} 条、新增 {added} 条，失败 {failed} 条；成功的部分不回滚，可修正后重试',
+    moreFailures: '等共 {count} 条'
+  },
   special: {
     classify: {
       name: '分类',

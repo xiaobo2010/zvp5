@@ -26,7 +26,7 @@ import api from '@/api'
 import { useHeaderStore } from '@/stores/header'
 import { useUserStore } from '@/stores/user'
 import type { ActivityMode } from '@/../types'
-import type { Activity, NewActivityMember } from '@/../types/v2'
+import type { Activity, ActivityMember, NewActivityMember } from '@/../types/v2'
 import {
   loadStudentIndex,
   matchStudentRow,
@@ -35,6 +35,7 @@ import {
   suggestStudents,
   syncStudentIndex,
   type StudentIndexState,
+  type StudentMatch,
   type StudentRecord
 } from '@/utils/studentIndex'
 import {
@@ -62,9 +63,35 @@ interface RegistrationRow {
   candidates: StudentRecord[]
 }
 
+// 服务端已存在的成员记录（`GET /v3/activities/{aid}/members` 的一行）。
+// 「是否已录入」是派生态：只由这份索引 + 行的 (memberOid, mode) 决定，
+// 不写进 localStorage 草稿，换成其他活动后自然失效。
+interface ExistingMemberRecord {
+  sessionId: string
+  member: string
+  mode: RegistrationMode
+  duration: number
+  studentId: string
+  name: string
+}
+
+interface ExistingMemberRow extends ActivityMember {
+  member_name?: string
+  user?: { id?: string; name?: string } | null
+}
+
 const DRAFT_KEY = 'volunteer-register-draft-v1'
 const INDEX_STALE_MS = 24 * 60 * 60 * 1000
 const MODES: RegistrationMode[] = ['on-campus', 'off-campus', 'social-practice']
+// v3 成员列表 size 上限 100；一次登记页最多回溯 5 页，超出提示去活动详情处理。
+const EXISTING_PAGE_SIZE = 100
+const EXISTING_MEMBER_LIMIT = 500
+// 表格总行数上限：与已有成员载入上限一致。粘贴/OCR/新增都走这个闸门，
+// 否则一次全量粘贴就会把每键重算和表格渲染拖到几万行的量级。
+const MAX_REGISTER_ROWS = 500
+// 逐行 PUT 覆盖：同时最多 8 个在飞，避免一次点提交打爆后端。
+const UPDATE_CONCURRENCY = 8
+const DURATION_EPSILON = 1e-6
 
 const router = useRouter()
 const route = useRoute()
@@ -99,6 +126,8 @@ const ocrLoading = ref(false)
 const ocrStage = ref('')
 const savedActivityId = ref('')
 const savedCount = ref(0)
+const existingMembers = ref(new Map<string, ExistingMemberRecord>())
+const existingLoading = ref(false)
 
 let rowSeq = 0
 let draftTimer: ReturnType<typeof setTimeout> | undefined
@@ -147,22 +176,56 @@ const stats = computed(() => {
   let warning = 0
   let error = 0
   let saved = 0
+  let existing = 0
   for (const row of nonEmptyRows.value) {
+    if (existingOf(row)) existing += 1
     if (row.status === 'ok') ready += 1
     else if (row.status === 'saved') saved += 1
     else if (row.status === 'error') error += 1
     else warning += 1
   }
-  return { total: nonEmptyRows.value.length, ready, warning, error, saved }
+  return { total: nonEmptyRows.value.length, ready, warning, error, saved, existing }
 })
 
 const canSubmit = computed(
   () =>
     Boolean(selectedActivityId.value) &&
+    // 已有成员索引没就绪就提交，会把「更新」误判成「新增」（v3 累加，时长翻倍）。
+    !existingLoading.value &&
     pendingRows.value.length > 0 &&
     stats.value.warning === 0 &&
     stats.value.error === 0
 )
+
+function existingKey(memberOid: string, mode: string): string {
+  return `${memberOid}:${mode}`
+}
+
+function existingOf(row: RegistrationRow): ExistingMemberRecord | undefined {
+  if (!row.oid) return undefined
+  return existingMembers.value.get(existingKey(row.oid, row.mode))
+}
+
+function existingDurationChanged(row: RegistrationRow, record: ExistingMemberRecord): boolean {
+  const value = durationValue(row)
+  if (value === null) return true
+  return Math.abs(value - record.duration) > DURATION_EPSILON
+}
+
+// 徽标文案：命中已有成员时显示「现有时长」，时长改过则说明会覆盖。
+function existingHint(row: RegistrationRow): string {
+  const record = existingOf(row)
+  if (!record || row.status === 'saved') return ''
+  if (!existingDurationChanged(row, record)) {
+    return t('activity.register.existingHintUnchanged')
+  }
+  return t('activity.register.existingHint', { duration: record.duration })
+}
+
+function isRecordableStatus(status: Activity['status'] | undefined): boolean {
+  // 后端加成员不校验活动状态，审核中的活动先录入、通过后计入统计是安全的缓冲带。
+  return status === 'effective' || status === 'pending'
+}
 
 function modeLabel(mode: ActivityMode | RegistrationMode | string): string {
   return t(`activity.mode.${mode}.name`, mode)
@@ -212,8 +275,18 @@ function resetRows(count = 8) {
   rows.value = Array.from({ length: count }, () => createRow())
 }
 
+function rowLimitWarning(dropped?: number): void {
+  ElMessage.warning(
+    dropped === undefined
+      ? t('activity.register.rowLimitReached', { limit: MAX_REGISTER_ROWS })
+      : t('activity.register.rowLimitTruncated', { limit: MAX_REGISTER_ROWS, dropped })
+  )
+}
+
 function ensureRows(count: number) {
-  while (rows.value.length < count) rows.value.push(createRow())
+  const target = Math.min(count, MAX_REGISTER_ROWS)
+  while (rows.value.length < target) rows.value.push(createRow())
+  if (count > MAX_REGISTER_ROWS) rowLimitWarning(count - MAX_REGISTER_ROWS)
 }
 
 function hasContent(row: RegistrationRow): boolean {
@@ -256,6 +329,62 @@ function normalizeMode(raw: unknown): RegistrationMode | null {
   return null
 }
 
+// ---------------------------------------------------------------------------
+// 学生名单索引
+//
+// revalidateRow 每次击键都会跑一遍 matchStudentRow，而它内部是对学生名单的线性
+// 扫描（最坏 3 万条）。这里在名单换版时一次性建两张精确键索引（学号唯一、
+// 姓名键可多条），把「精确查找」降成 O(1)。
+//
+// 匹配语义仍由 matchStudentRow 决定：索引只用来把它的输入集合缩到 1~2 条，
+// 同名多选、前缀/包含候选、mismatch 判定全部原样保留。
+// ---------------------------------------------------------------------------
+interface StudentLookup {
+  byId: Map<string, StudentRecord>
+  byName: Map<string, StudentRecord[]>
+}
+
+// 与 studentIndex 内部的姓名比较键保持一致：忽略大小写与空格。
+function nameKeyOf(raw: string): string {
+  return normalizePersonName(raw).toLowerCase().replace(/\s+/g, '')
+}
+
+function buildStudentLookup(list: StudentRecord[]): StudentLookup {
+  const byId = new Map<string, StudentRecord>()
+  const byName = new Map<string, StudentRecord[]>()
+  for (const student of list) {
+    // 同键保留首条，跟 students.find 的取首个语义对齐。
+    if (!byId.has(student.studentId)) byId.set(student.studentId, student)
+    const key = nameKeyOf(student.name)
+    const group = byName.get(key)
+    if (group) group.push(student)
+    else byName.set(key, [student])
+  }
+  return { byId, byName }
+}
+
+// 名单引用只在 loadStudentIndex / syncStudentIndex 替换时变，构建成本摊到一次。
+const studentLookup = computed(() => buildStudentLookup(students.value))
+
+function matchRow(studentId: string, name: string): StudentMatch {
+  const idKey = normalizeStudentId(studentId)
+  const personKey = nameKeyOf(name)
+  const narrowed: StudentRecord[] = []
+  if (idKey) {
+    const record = studentLookup.value.byId.get(idKey)
+    if (record) narrowed.push(record)
+  }
+  if (personKey) {
+    const sameName = studentLookup.value.byName.get(personKey)
+    if (sameName) {
+      for (const record of sameName) {
+        if (!narrowed.includes(record)) narrowed.push(record)
+      }
+    }
+  }
+  return matchStudentRow(narrowed, studentId, name)
+}
+
 function revalidateRow(row: RegistrationRow) {
   if (!hasContent(row)) {
     row.status = 'empty'
@@ -267,8 +396,10 @@ function revalidateRow(row: RegistrationRow) {
     return
   }
 
-  const match = matchStudentRow(students.value, row.studentId, row.name)
+  const match = matchRow(row.studentId, row.name)
   row.candidates = match.candidates
+  // 已在活动中、但不在本地名单里的成员（毕业/转学）以服务端记录为准，别把 oid 清掉。
+  const recorded = existingOf(row)
 
   if (match.record) {
     if (!row.studentId.trim()) row.studentId = match.record.studentId
@@ -276,6 +407,9 @@ function revalidateRow(row: RegistrationRow) {
     row.classId = match.record.classId
     row.className = match.record.className
     row.oid = match.record.oid
+  } else if (recorded) {
+    row.classId = ''
+    row.className = ''
   } else {
     row.oid = ''
     row.classId = ''
@@ -293,8 +427,12 @@ function revalidateRow(row: RegistrationRow) {
   let status: RowStatus = 'ok'
   let message = ''
   if (match.status === 'missing') {
-    status = 'error'
-    message = match.message
+    if (recorded && row.oid) {
+      status = 'ok'
+    } else {
+      status = 'error'
+      message = match.message
+    }
   } else if (match.status === 'ambiguous') {
     status = 'warning'
     message = match.message
@@ -313,7 +451,7 @@ function revalidateRow(row: RegistrationRow) {
   }
 
   const activityType = selectedActivity.value?.type
-  if (activityType && activityType !== 'hybrid') {
+  if (activityType && activityType !== 'hybrid' && !recorded) {
     row.mode = activityType as RegistrationMode
   }
 
@@ -322,14 +460,16 @@ function revalidateRow(row: RegistrationRow) {
 }
 
 function markDuplicates() {
-  const byOid = new Map<string, RegistrationRow[]>()
+  // 按 (成员, 模式) 三元组去重：同一个人在同一活动里可以有不同模式的记录（hybrid）。
+  const byTriple = new Map<string, RegistrationRow[]>()
   for (const row of rows.value) {
     if (!row.oid) continue
-    const group = byOid.get(row.oid) ?? []
+    const key = existingKey(row.oid, row.mode)
+    const group = byTriple.get(key) ?? []
     group.push(row)
-    byOid.set(row.oid, group)
+    byTriple.set(key, group)
   }
-  for (const group of byOid.values()) {
+  for (const group of byTriple.values()) {
     if (group.length < 2) continue
     for (const row of group) {
       row.status = 'error'
@@ -341,6 +481,37 @@ function markDuplicates() {
 function revalidateAll() {
   for (const row of rows.value) revalidateRow(row)
   markDuplicates()
+}
+
+// 同一个人同一模式只保留一行：粘贴/OCR/草稿行若命中已有成员，把用户新值并到
+// 已有行上（运行时只对它 PUT 一次），避免同一个人被更新两遍。
+function mergeExistingDuplicates() {
+  const kept = new Map<string, RegistrationRow>()
+  const dropped = new Set<RegistrationRow>()
+  for (const row of rows.value) {
+    if (!row.oid) continue
+    const key = existingKey(row.oid, row.mode)
+    if (!existingMembers.value.has(key)) continue
+    const first = kept.get(key)
+    if (!first) {
+      kept.set(key, row)
+      continue
+    }
+    // 上一轮已提交的行（saved）遇到用户新输入：让新行代表这个人，别把新值吞掉。
+    if (first.status === 'saved' && row.status !== 'saved') {
+      dropped.add(first)
+      kept.set(key, row)
+      continue
+    }
+    if (!first.studentId.trim() && row.studentId.trim()) first.studentId = row.studentId
+    if (!first.name.trim() && row.name.trim()) first.name = row.name
+    if (row.duration.trim()) first.duration = row.duration
+    if (row.note.trim() && !first.note.trim()) first.note = row.note
+    dropped.add(row)
+  }
+  if (!dropped.size) return
+  rows.value = rows.value.filter((row) => !dropped.has(row))
+  for (const row of kept.values()) revalidateRow(row)
 }
 
 function onIdInput(row: RegistrationRow, event: Event) {
@@ -458,6 +629,10 @@ function onGridKeydown(event: KeyboardEvent, r: number, c: number) {
 }
 
 function addRow() {
+  if (rows.value.length >= MAX_REGISTER_ROWS) {
+    rowLimitWarning()
+    return
+  }
   rows.value.push(createRow())
   void nextTick(() => focusCell(rows.value.length - 1, 0))
 }
@@ -465,6 +640,10 @@ function addRow() {
 function duplicateRow(index: number) {
   const source = rows.value[index]
   if (!source) return
+  if (rows.value.length >= MAX_REGISTER_ROWS) {
+    rowLimitWarning()
+    return
+  }
   rows.value.splice(
     index + 1,
     0,
@@ -572,9 +751,16 @@ function applyText(text: string, start: { r: number; c: number }) {
   )
   const mapping = detectMapping(matrix[0] ?? [], start.c)
   const data = header ? matrix.slice(1) : matrix
-  ensureRows(start.r + data.length)
+  // 行数封顶：从 start.r 起最多再用 MAX_REGISTER_ROWS 行，多出的数据行丢弃。
+  const room = Math.max(0, MAX_REGISTER_ROWS - start.r)
+  const accepted = data.slice(0, room)
+  if (!accepted.length) {
+    rowLimitWarning(data.length)
+    return
+  }
+  ensureRows(start.r + accepted.length)
 
-  data.forEach((cells, rowOffset) => {
+  accepted.forEach((cells, rowOffset) => {
     const row = rows.value[start.r + rowOffset]
     if (!row) return
     for (const [columnKey, cellIndex] of Object.entries(mapping)) {
@@ -583,8 +769,10 @@ function applyText(text: string, start: { r: number; c: number }) {
     }
     revalidateRow(row)
   })
+  mergeExistingDuplicates()
   markDuplicates()
-  ElMessage.success(`已填入 ${data.length} 行，请复核匹配结果`)
+  if (accepted.length < data.length) rowLimitWarning(data.length - accepted.length)
+  ElMessage.success(`已填入 ${accepted.length} 行，请复核匹配结果`)
 }
 
 function onGridPaste(event: ClipboardEvent) {
@@ -663,13 +851,21 @@ async function onOcrFile(event: Event) {
 
     const start = rows.value.findIndex((row) => !hasContent(row))
     const base = start < 0 ? rows.value.length : start
-    ensureRows(base + result.rows.length)
-    result.rows.forEach((item, offset) => {
+    // 行数封顶：OCR 一次可能吐出很多行，超出部分直接丢弃并提示。
+    const room = Math.max(0, MAX_REGISTER_ROWS - base)
+    const accepted = result.rows.slice(0, room)
+    if (!accepted.length) {
+      rowLimitWarning(result.rows.length)
+      return
+    }
+    ensureRows(base + accepted.length)
+    accepted.forEach((item, offset) => {
       const row = rows.value[base + offset]
       if (!row) return
       applyOcrRow(row, item)
       revalidateRow(row)
     })
+    mergeExistingDuplicates()
     markDuplicates()
 
     if (result.warnings?.length) {
@@ -678,8 +874,11 @@ async function onOcrFile(event: Event) {
     if (result.confidence !== undefined && result.confidence > 0 && result.confidence < 0.6) {
       ElMessage.warning('OCR 整体置信度较低，请逐行复核识别结果')
     }
+    if (accepted.length < result.rows.length) {
+      rowLimitWarning(result.rows.length - accepted.length)
+    }
     const engine = result.engine ? `（${result.engine}）` : ''
-    ElMessage.success(`OCR 识别 ${result.rows.length} 行${engine}，已按本地名单校正`)
+    ElMessage.success(`OCR 识别 ${accepted.length} 行${engine}，已按本地名单校正`)
   } catch (error) {
     const code = aiErrorCodeOf(error)
     if (code) {
@@ -707,11 +906,12 @@ async function searchActivities(query: string) {
   activityLoading.value = true
   try {
     const result = await api.activity.read.campus('', 1, 30, query)
-    // 只列已生效活动：pending/refused 的活动后端不拦，前端必须挡住
-    const merged = result.activities.filter((activity) => activity.status === 'effective')
+    // 审核中的活动也允许录入：后端加成员不校验活动状态，时间聚合只看 effective，
+    // 数据上安全。只挡 refused/draft（draft 不在 status 枚举内，兜底同口径）。
+    const merged = result.activities.filter((activity) => isRecordableStatus(activity.status))
     if (
       selectedActivity.value &&
-      selectedActivity.value.status === 'effective' &&
+      isRecordableStatus(selectedActivity.value.status) &&
       !merged.some((activity) => activity._id === selectedActivity.value?._id)
     ) {
       merged.unshift(selectedActivity.value)
@@ -719,7 +919,9 @@ async function searchActivities(query: string) {
     activityOptions.value = merged
   } catch {
     activityOptions.value =
-      selectedActivity.value?.status === 'effective' ? [selectedActivity.value] : []
+      selectedActivity.value && isRecordableStatus(selectedActivity.value.status)
+        ? [selectedActivity.value]
+        : []
   } finally {
     activityLoading.value = false
   }
@@ -745,7 +947,104 @@ async function hydrateSelectedActivity() {
   }
 }
 
+// 拉取该活动已有的全部成员（分页到 500 行硬上限），建 (memberOid, mode) 索引。
+async function loadExistingMembers(aid: string): Promise<void> {
+  existingLoading.value = true
+  const next = new Map<string, ExistingMemberRecord>()
+  let total = 0
+  try {
+    for (let page = 1; page <= EXISTING_MEMBER_LIMIT / EXISTING_PAGE_SIZE; page += 1) {
+      const result = (await api.activity.member.reads_v3(
+        aid,
+        page,
+        EXISTING_PAGE_SIZE,
+        ''
+      )) as unknown as { members?: ExistingMemberRow[]; total?: number }
+      const members = result.members ?? []
+      total = Number(result.total) || total
+      for (const member of members) {
+        const mode = normalizeMode(member.mode)
+        if (!mode || !member.member || !member._id) continue
+        next.set(existingKey(String(member.member), mode), {
+          sessionId: String(member._id),
+          member: String(member.member),
+          mode,
+          duration: Number(member.duration) || 0,
+          studentId: normalizeStudentId(String(member.user?.id ?? '')),
+          name: normalizePersonName(String(member.member_name ?? member.user?.name ?? ''))
+        })
+      }
+      if (!members.length) break
+      if (total > 0 && next.size >= total) break
+    }
+  } catch {
+    existingMembers.value = new Map()
+    ElMessage.warning(t('activity.register.existingLoadFailed'))
+    return
+  } finally {
+    existingLoading.value = false
+  }
+  existingMembers.value = next
+  if (next.size >= EXISTING_MEMBER_LIMIT && total > next.size) {
+    ElMessage.warning(t('activity.register.existingTruncated', { limit: EXISTING_MEMBER_LIMIT }))
+  }
+}
+
+// 已有成员自动进表：先填空行，不够再追加；已存在同 (成员, 模式) 行时只补徽标。
+// 与用户手输行合计封顶 MAX_REGISTER_ROWS，超出部分不再建行（仍可用索引里剩余成员
+// 去活动详情页处理）。
+function fillExistingRows() {
+  const blanks = rows.value.filter((row) => !hasContent(row))
+  let dropped = 0
+  for (const member of existingMembers.value.values()) {
+    const key = existingKey(member.member, member.mode)
+    if (rows.value.some((row) => row.oid && existingKey(row.oid, row.mode) === key)) continue
+    const blank = blanks.shift()
+    if (!blank && rows.value.length >= MAX_REGISTER_ROWS) {
+      dropped += 1
+      continue
+    }
+    const row = blank ?? createRow()
+    if (!rows.value.includes(row)) rows.value.push(row)
+    row.studentId = member.studentId
+    row.name = member.name
+    row.oid = member.member
+    row.duration = member.duration ? String(member.duration) : ''
+    row.mode = member.mode
+  }
+  if (dropped) rowLimitWarning(dropped)
+}
+
+// 活动选定后的统一收口：拦掉不可录入状态、拉已有成员、补表、重算行状态。
+async function syncActivityContext(preselect = false) {
+  const activity = selectedActivity.value
+  if (!activity) {
+    existingMembers.value = new Map()
+    revalidateAll()
+    return
+  }
+  if (!isRecordableStatus(activity.status)) {
+    selectedActivityId.value = ''
+    selectedActivity.value = null
+    existingMembers.value = new Map()
+    ElMessage.warning(t('activity.register.blockedRecordNotice'))
+    return
+  }
+  if (preselect && activity.status === 'pending') {
+    ElMessage.info(t('activity.register.pendingRecordNotice'))
+  }
+  await loadExistingMembers(activity._id)
+  fillExistingRows()
+  mergeExistingDuplicates()
+  revalidateAll()
+  if (existingMembers.value.size) {
+    ElMessage.info(t('activity.register.existingLoaded', { count: existingMembers.value.size }))
+  }
+}
+
 async function onActivityChange() {
+  // 先清空上一个活动的索引：换活动后旧的 sessionId 绝不能用于 PUT。
+  existingMembers.value = new Map()
   await hydrateSelectedActivity()
   savedActivityId.value = ''
   savedCount.value = 0
@@ -755,7 +1054,7 @@ async function onActivityChange() {
     const mode = activity.type as RegistrationMode
     for (const row of rows.value) row.mode = mode
   }
-  revalidateAll()
+  await syncActivityContext()
 }
 
 function viewSavedActivity() {
@@ -764,14 +1063,31 @@ function viewSavedActivity() {
   }
 }
 
+function errorDetail(error: unknown): string {
+  const detail = (error as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail
+  if (typeof detail === 'string' && detail.trim()) return detail
+  const message = (error as Error)?.message
+  return message || '未知错误'
+}
+
+function rowLabel(row: RegistrationRow): string {
+  const who = row.name.trim() || row.studentId.trim() || '未匹配成员'
+  return row.studentId.trim() ? `${who}（${row.studentId.trim()}）` : who
+}
+
 async function submitRegistration() {
   revalidateAll()
   if (!selectedActivity.value) {
     ElMessage.warning('请先选择目标义工活动')
     return
   }
+  if (existingLoading.value) {
+    // 索引没拉完就提交，会把「改时长」误判成「新增」，v3 会累加导致时长翻倍。
+    ElMessage.info(t('activity.register.existingLoading'))
+    return
+  }
   if (!pendingRows.value.length) {
-    ElMessage.info('没有新的待提交行；已提交的行如需修改，编辑后会自动重新进入待提交状态')
+    ElMessage.info(t('activity.register.noPending'))
     return
   }
   const invalid = pendingRows.value.filter(
@@ -781,34 +1097,126 @@ async function submitRegistration() {
     ElMessage.error(`还有 ${invalid.length} 行需要修正后再提交`)
     return
   }
+
+  const activity = selectedActivity.value
+  // 分流：命中已有成员且时长有变 → PUT 覆盖；命中但没变 → 跳过；没命中 → v3 批量新增。
+  const updates: Array<{ row: RegistrationRow; record: ExistingMemberRecord; duration: number }> =
+    []
+  const inserts: RegistrationRow[] = []
+  const skipped: RegistrationRow[] = []
+  for (const row of pendingRows.value) {
+    const record = existingOf(row)
+    const duration = durationValue(row) as number
+    if (!record) {
+      inserts.push(row)
+      continue
+    }
+    if (!existingDurationChanged(row, record)) {
+      skipped.push(row)
+      continue
+    }
+    updates.push({ row, record, duration })
+  }
+
+  if (!updates.length && !inserts.length) {
+    ElMessage.info(t('activity.register.nothingChanged'))
+    return
+  }
   // 后端 Body(max_length=1000)：超限整批 422，这里先拦并提示分批
-  if (pendingRows.value.length > 1000) {
-    ElMessage.error(`单次最多登记 1000 行，当前 ${pendingRows.value.length} 行，请分批提交`)
+  if (inserts.length > 1000) {
+    ElMessage.error(`单次最多新增 1000 行，当前 ${inserts.length} 行，请分批提交`)
     return
   }
 
-  const payload: NewActivityMember[] = pendingRows.value.map((row) => ({
-    member: row.oid,
-    mode: row.mode,
-    duration: durationValue(row) as number
-  }))
-
   submitLoading.value = true
+  const failures: Array<{ label: string; reason: string }> = []
+  let updated = 0
+  let added = 0
   try {
-    await api.activity.member.insertMany(selectedActivity.value._id, payload)
-    savedActivityId.value = selectedActivity.value._id
-    savedCount.value += payload.length
-    for (const row of pendingRows.value) {
-      row.status = 'saved'
-      row.message = '已提交'
+    // PUT 逐行覆盖：小批并发，单行失败只影响自己，成功的不回滚。
+    for (let start = 0; start < updates.length; start += UPDATE_CONCURRENCY) {
+      const batch = updates.slice(start, start + UPDATE_CONCURRENCY)
+      const results = await Promise.allSettled(
+        batch.map((item) =>
+          api.activity.duration.modify(
+            item.record.sessionId,
+            activity._id,
+            item.duration,
+            item.row.mode,
+            { silent: true }
+          )
+        )
+      )
+      results.forEach((result, index) => {
+        const item = batch[index]
+        if (result.status === 'fulfilled') {
+          updated += 1
+          existingMembers.value.set(existingKey(item.record.member, item.record.mode), {
+            ...item.record,
+            duration: item.duration
+          })
+          item.row.status = 'saved'
+          item.row.message = t('activity.register.updatedRow')
+          return
+        }
+        const reason = errorDetail(result.reason)
+        failures.push({ label: rowLabel(item.row), reason })
+        item.row.message = t('activity.register.updateFailed', { reason })
+      })
     }
-    ElMessage.success(`已为《${selectedActivity.value.name}》登记 ${payload.length} 人`)
+
+    for (const row of skipped) {
+      row.status = 'saved'
+      row.message = t('activity.register.skippedRow')
+    }
+
+    if (inserts.length) {
+      const payload: NewActivityMember[] = inserts.map((row) => ({
+        member: row.oid,
+        mode: row.mode,
+        duration: durationValue(row) as number
+      }))
+      await api.activity.member.insertMany(activity._id, payload)
+      added = payload.length
+      // 新增成功后重新拉索引：拿到这些新行的 sessionId，重复提交才不会退回「累加」。
+      await loadExistingMembers(activity._id)
+      for (const row of inserts) {
+        row.status = 'saved'
+        row.message = t('activity.register.insertedRow')
+      }
+    }
+
+    savedActivityId.value = activity._id
+    savedCount.value += updated + added
+
+    if (failures.length) {
+      ElMessage.warning(
+        t('activity.register.partialFailedSummary', {
+          updated,
+          added,
+          failed: failures.length
+        })
+      )
+      const lines = failures.slice(0, 10).map((item) => `${item.label}：${item.reason}`)
+      if (failures.length > lines.length) {
+        lines.push(t('activity.register.moreFailures', { count: failures.length - lines.length }))
+      }
+      await ElMessageBox.alert(lines.join('；'), t('activity.register.partialFailedTitle'), {
+        confirmButtonText: '知道了'
+      }).catch(() => undefined)
+      return
+    }
+
+    ElMessage.success(
+      t('activity.register.submitSummary', {
+        activity: activity.name,
+        updated,
+        added,
+        skipped: skipped.length
+      })
+    )
   } catch (error) {
-    const detail =
-      (error as { response?: { data?: { detail?: string } } })?.response?.data?.detail ||
-      (error as Error)?.message ||
-      '提交失败，请重试'
-    ElMessage.error(detail)
+    ElMessage.error(errorDetail(error) || '提交失败，请重试')
   } finally {
     submitLoading.value = false
   }
@@ -871,6 +1279,7 @@ async function clearAll() {
   savedActivityId.value = ''
   savedCount.value = 0
   savedOids = new Set()
+  existingMembers.value = new Map()
   resetRows(8)
   revalidateAll()
 }
@@ -890,7 +1299,12 @@ function restoreDraft() {
       savedOids?: string[]
     }
     rowSeq = 0
-    rows.value = (parsed.rows ?? []).map((item) =>
+    // 旧版草稿可能存着超过上限的行（那时没有封顶），读回时一并截断。
+    const draftRows = Array.isArray(parsed.rows) ? parsed.rows.slice(0, MAX_REGISTER_ROWS) : []
+    if (Array.isArray(parsed.rows) && parsed.rows.length > MAX_REGISTER_ROWS) {
+      rowLimitWarning(parsed.rows.length - MAX_REGISTER_ROWS)
+    }
+    rows.value = draftRows.map((item) =>
       createRow({
         studentId: normalizeStudentId(String(item.studentId ?? '')),
         name: normalizePersonName(String(item.name ?? '')),
@@ -1028,20 +1442,19 @@ async function initIndex() {
 async function initPage() {
   restoreDraft()
   await searchActivities('')
+  // 先铺本地名单，再补已有成员：本地名单负责姓名/班级，服务端索引负责 sessionId
+  // 与「已录入」判定，两者都就绪后 revalidateAll 才能给出正确的行状态。
+  await initIndex()
   const queryActivityId = routeActivityId()
   if (queryActivityId) {
     // 从活动详情/创建向导跳进来：预选该活动，仍可手动更换
     selectedActivityId.value = queryActivityId
     await hydrateSelectedActivity()
-    if (selectedActivity.value && selectedActivity.value.status !== 'effective') {
-      selectedActivityId.value = ''
-      selectedActivity.value = null
-      ElMessage.warning('该活动尚未生效，已清除预选；请重新选择已生效的活动')
-    }
+    await syncActivityContext(true)
   } else {
     await hydrateSelectedActivity()
+    await syncActivityContext(false)
   }
-  await initIndex()
 }
 
 function routeActivityId(): string {
@@ -1118,7 +1531,13 @@ onBeforeUnmount(() => {
           </ElTag>
           <span class="activity-name">{{ selectedActivity.name }}</span>
           <span class="muted">{{ String(selectedActivity.date || '').slice(0, 10) }}</span>
-          <span class="muted">提交时写入该活动的成员时长</span>
+          <span v-if="selectedActivity.status === 'pending'" class="muted">
+            {{ t('activity.register.pendingSummary') }}
+          </span>
+          <span v-else class="muted">提交时写入该活动的成员时长</span>
+          <span v-if="existingLoading" class="muted">
+            {{ t('activity.register.existingLoading') }}
+          </span>
         </div>
         <div v-else class="activity-summary muted">
           选择活动后才能提交；未选择时仍可编辑、粘贴和导出。
@@ -1198,13 +1617,19 @@ onBeforeUnmount(() => {
           <div>
             <div class="grid-title">登记明细</div>
             <div class="grid-sub">
-              支持从 Excel 复制多行粘贴；学号/姓名会自动互相补全并标出同名或不一致
+              支持从 Excel 复制多行粘贴；学号/姓名会自动互相补全并标出同名或不一致。{{
+                t('activity.register.overrideNotice')
+              }}
             </div>
           </div>
           <div class="summary-strip">
             <div class="summary-item">
               <span>总行数</span>
               <strong class="yg-text-num">{{ stats.total }}</strong>
+            </div>
+            <div v-if="stats.existing" class="summary-item">
+              <span>{{ t('activity.register.existingBadge') }}</span>
+              <strong class="saved yg-text-num">{{ stats.existing }}</strong>
             </div>
             <div class="summary-item">
               <span>待提交</span>
@@ -1345,7 +1770,13 @@ onBeforeUnmount(() => {
                   />
                 </td>
                 <td>
+                  <div v-if="existingOf(row)" class="mode-locked">
+                    <ElTag type="info" effect="plain" size="small">
+                      {{ modeLabel(row.mode) }}
+                    </ElTag>
+                  </div>
                   <select
+                    v-else
                     v-model="row.mode"
                     class="cell-select"
                     :data-cell="`${r}-3`"
@@ -1374,11 +1805,20 @@ onBeforeUnmount(() => {
                 </td>
                 <td>
                   <div class="status-cell">
-                    <span class="status-pill" :class="`status-${row.status}`">
-                      {{ statusLabel(row.status) }}
-                    </span>
-                    <span v-if="row.message" class="status-msg" :title="row.message">
-                      {{ row.message }}
+                    <div class="status-badges">
+                      <span class="status-pill" :class="`status-${row.status}`">
+                        {{ statusLabel(row.status) }}
+                      </span>
+                      <ElTag v-if="existingOf(row)" size="small" type="primary" effect="plain">
+                        {{ t('activity.register.existingBadge') }}
+                      </ElTag>
+                    </div>
+                    <span
+                      v-if="existingHint(row) || row.message"
+                      class="status-msg"
+                      :title="[existingHint(row), row.message].filter(Boolean).join('；')"
+                    >
+                      {{ [existingHint(row), row.message].filter(Boolean).join('；') }}
                     </span>
                   </div>
                 </td>
@@ -1753,6 +2193,22 @@ onBeforeUnmount(() => {
   gap: var(--yg-space-1);
   min-width: 0;
   padding: var(--yg-space-1);
+}
+
+.status-badges {
+  display: flex;
+  align-items: center;
+  gap: var(--yg-space-1);
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.mode-locked {
+  display: flex;
+  align-items: center;
+  height: var(--yg-control-height-md);
+  padding: 0 var(--yg-space-2);
+  overflow: hidden;
 }
 
 .status-pill {
