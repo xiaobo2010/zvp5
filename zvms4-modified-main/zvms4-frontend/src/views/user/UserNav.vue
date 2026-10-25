@@ -133,44 +133,107 @@ function routeTo(page: string) {
   }
 }
 
-/* ---- 弹性滑动指示器：测量激活项位置，弹簧缓动滑动 ---- */
+/* ---- 弹性滑动指示器：WAAPI 弹簧，每次导航都重放 ----
+   旧实现依赖 CSS transition：目标位置若与上一次写入的值相同、或测量时机早于
+   导航项重渲染，位移就不会发生，表现为「切到某一项时没有弹性」。
+   改成显式读当前渲染位置 → 写目标位置 → 播放 WAAPI 弹簧，动画实例每次新建，
+   不受上一次状态影响，任何一项都能弹。 */
 const itemsRef = ref<HTMLElement>()
+const indicatorRef = ref<HTMLElement>()
 const indicator = ref({ x: 0, y: 0, w: 0, h: 0, visible: false })
 
-function updateIndicator() {
+const SPRING = 'cubic-bezier(0.3, 1.6, 0.4, 1)'
+const SPRING_MS = 460
+
+function reduceMotion() {
+  return window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
+}
+
+/** 读取当前实际渲染出的位移（含正在播放动画的中间态），作为弹簧起点 */
+function renderedTranslate(el: HTMLElement) {
+  const raw = getComputedStyle(el).transform
+  if (!raw || raw === 'none') {
+    return { x: 0, y: 0 }
+  }
+  const matrix = new DOMMatrixReadOnly(raw)
+  return { x: matrix.m41, y: matrix.m42 }
+}
+
+let indicatorAnimation: Animation | null = null
+
+function updateIndicator(animate = true) {
   const root = itemsRef.value
-  if (!root) return
+  const pill = indicatorRef.value
+  if (!root || !pill) return
   const active = root.querySelector<HTMLElement>('.yg-glass-nav__item.is-active')
   if (!active) {
-    indicator.value.visible = false
+    indicator.value = { ...indicator.value, visible: false }
     return
   }
+  const target = { x: active.offsetLeft, y: active.offsetTop }
   indicator.value = {
-    x: active.offsetLeft,
-    y: active.offsetTop,
+    ...target,
     w: active.offsetWidth,
     h: active.offsetHeight,
     visible: true
   }
+  const from = renderedTranslate(pill)
+  pill.style.transform = `translate3d(${target.x}px, ${target.y}px, 0)`
+
+  const same = Math.abs(from.x - target.x) < 0.5 && Math.abs(from.y - target.y) < 0.5
+  if (!animate || same || reduceMotion()) return
+
+  indicatorAnimation?.cancel()
+  indicatorAnimation = pill.animate(
+    [
+      { transform: `translate3d(${from.x}px, ${from.y}px, 0)` },
+      { transform: `translate3d(${target.x}px, ${target.y}px, 0)` }
+    ],
+    { duration: SPRING_MS, easing: SPRING }
+  )
 }
 
 const indicatorStyle = computed(() => ({
-  transform: `translate(${indicator.value.x}px, ${indicator.value.y}px)`,
   width: indicator.value.w + 'px',
   height: indicator.value.h + 'px',
   opacity: indicator.value.visible ? 1 : 0
 }))
 
+/** 点击即给图标一次挤压回弹，连点同一项也有反馈 */
+function pulseIcon(event: MouseEvent) {
+  if (reduceMotion()) return
+  const icon = (event.currentTarget as HTMLElement | null)?.querySelector<HTMLElement>('.el-icon')
+  if (!icon) return
+  icon.animate(
+    [{ transform: 'scale(1)' }, { transform: 'scale(1.16)' }, { transform: 'scale(1)' }],
+    { duration: 400, easing: 'cubic-bezier(0.22, 1.6, 0.36, 1)' }
+  )
+}
+
+function handleNavClick(page: string, event: MouseEvent) {
+  pulseIcon(event)
+  routeTo(page)
+}
+
+function onResize() {
+  updateIndicator(true)
+}
+
 onMounted(() => {
-  nextTick(updateIndicator)
-  window.addEventListener('resize', updateIndicator)
+  nextTick(() => updateIndicator(false))
+  window.addEventListener('resize', onResize)
 })
 
 onUnmounted(() => {
-  window.removeEventListener('resize', updateIndicator)
+  window.removeEventListener('resize', onResize)
+  indicatorAnimation?.cancel()
+  indicatorAnimation = null
 })
 
-watch([path, verticalMode], () => nextTick(updateIndicator))
+watch(
+  [path, verticalMode, () => visibleNavs.value.length],
+  () => nextTick(() => updateIndicator(true))
+)
 
 /* ---- 深浅色切换：图标旋转一圈 + View Transitions 整屏丝滑过渡 ---- */
 const spinning = ref(false)
@@ -198,7 +261,7 @@ const showThemeToggle = !pad() || getTabletType() === 'p615' || getTabletType() 
     aria-label="主导航"
   >
     <div ref="itemsRef" class="yg-glass-nav__items">
-      <span class="yg-glass-nav__indicator" :style="indicatorStyle" aria-hidden="true" />
+      <span ref="indicatorRef" class="yg-glass-nav__indicator" :style="indicatorStyle" aria-hidden="true" />
       <template v-for="nav in visibleNavs" :key="nav.path">
         <ElTooltip
           v-if="!verticalMode"
@@ -212,7 +275,7 @@ const showThemeToggle = !pad() || getTabletType() === 'p615' || getTabletType() 
             class="yg-glass-nav__item"
             :class="{ 'is-active': nav.judge(path ?? '') }"
             :aria-label="t(`nav.${nav.name}`)"
-            @click="routeTo(nav.path)"
+            @click="handleNavClick(nav.path, $event)"
           >
             <ElIcon><component :is="nav.icon" /></ElIcon>
           </button>
@@ -223,7 +286,7 @@ const showThemeToggle = !pad() || getTabletType() === 'p615' || getTabletType() 
           class="yg-glass-nav__item"
           :class="{ 'is-active': nav.judge(path ?? '') }"
           :aria-label="t(`nav.${nav.name}`)"
-          @click="routeTo(nav.path)"
+          @click="handleNavClick(nav.path, $event)"
         >
           <ElIcon><component :is="nav.icon" /></ElIcon>
         </button>
