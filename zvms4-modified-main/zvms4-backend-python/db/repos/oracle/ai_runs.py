@@ -162,10 +162,14 @@ def _user_message_oid_stmt(conversation_oid: str, run_id: str):
 
 
 def _claim_candidate_stmt():
-    """队列的前门：最老的 ``queued`` 且未被取消的一条，锁住并跳过别人锁住的行。
+    """队列的前门：最老的 ``queued`` 且未被取消的一条。
 
-    ``FETCH FIRST 1 ROWS ONLY`` 在 ``FOR UPDATE`` 之前（Oracle 的语法顺序），
-    ``SKIP LOCKED`` 让多 worker 时两个泵各领一行而不是互相等锁。
+    这里**刻意不加** ``FOR UPDATE``：Oracle 不允许 ``FETCH FIRST n ROWS ONLY`` 与
+    ``FOR UPDATE`` 同时出现，会直接抛 ORA-02014（cannot select FOR UPDATE from view
+    with DISTINCT, GROUP BY, etc.），而 ``FOR UPDATE`` 也不能与 ``ROWNUM`` 过滤写在
+    同层。抢占的原子性由紧接着的 ``_claim_cas_stmt``（``WHERE oid = :id AND status =
+    'queued'``）承担：两个泵同时读到同一行时只有一个 CAS 会命中，另一个 rowcount=0
+    并交给下一轮 pump。单 worker 部署下不存在竞争，多 worker 下最坏是各多一次空转。
     """
     tbl = ai_runs_tbl
     return (
@@ -174,7 +178,6 @@ def _claim_candidate_stmt():
         .where(tbl.c.status == "queued", tbl.c.cancel_requested == 0)
         .order_by(tbl.c.created_at.asc(), tbl.c.oid.asc())
         .fetch(1)
-        .with_for_update(skip_locked=True)
     )
 
 
