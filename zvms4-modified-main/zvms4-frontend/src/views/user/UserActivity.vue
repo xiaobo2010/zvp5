@@ -78,7 +78,7 @@ function moveTo(type: string) {
             :type="pane.color"
             :icon="pane.icon"
             @click="moveTo(pane.value)"
-            :disabled="tab === pane.value || (tab === '' && pane.value === 'mine')"
+            :disabled="tab === pane.value"
           >
             {{ t(`activity.view.panels.${pane.value}.short`) }}
           </ElButton>

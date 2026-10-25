@@ -68,11 +68,7 @@ const refresh = () => emits('refresh')
 
 <template>
   <div v-if="!loading" v-loading="loading">
-    <Transition
-      v-if="!loading && !error && activity?._id"
-      enter-active-class="animate__animated animate__fadeIn"
-      leave-active-class="animate__animated animate__fadeOut"
-    >
+    <Transition v-if="!loading && !error && activity?._id" name="activity-card">
       <ZActivityDetails
         :activity="activity"
         :mode="mode"
@@ -93,3 +89,17 @@ const refresh = () => emits('refresh')
   </div>
   <ElSkeleton v-else v-model="loading" :rows="4" animated :throttle="500" />
 </template>
+
+<style scoped>
+/* 原 animate.css 的 fadeIn/fadeOut 是 1s 的整棵子树淡入淡出；换成弹层时长档
+   --yg-dur-slow（300ms），只为这张卡片保留进出场，不再全量引入 animate.css。 */
+.activity-card-enter-active,
+.activity-card-leave-active {
+  transition: opacity var(--yg-dur-slow, 300ms) var(--yg-ease-out, ease);
+}
+
+.activity-card-enter-from,
+.activity-card-leave-to {
+  opacity: 0;
+}
+</style>

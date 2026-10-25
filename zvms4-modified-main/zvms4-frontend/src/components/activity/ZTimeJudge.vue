@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ElIcon, ElProgress } from 'element-plus'
-import { computed, onUnmounted, ref, toRefs, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, toRefs, watch } from 'vue'
 import { CaretTop, CaretBottom } from '@element-plus/icons-vue'
 import { useI18n } from 'vue-i18n'
 import type { ActivityMember } from 'types/activity.v2'
@@ -59,9 +59,13 @@ const percentage = computed(() => {
   return Math.min((real.value / standard.value) * 100, 100)
 })
 
-const DEFAULT_DURATION = 450
+// 圆环交给 ElProgress 内置的 `stroke-dasharray 0.6s ease` 过渡：这里只在挂载后
+// 写一次真实值完成扫入，之后每次数据变化直接改 prop，由 EP 从当前进度平滑过渡。
+// 自己用 rAF 逐帧改 percentage 会让那条 CSS transition 每帧重启，圆环永远追不上。
+// 数字计数器与 EP 的 0.6s 圆环同步收尾
+const REAL_TWEEN_DURATION = 600
 
-const shownPercentage = ref(0)
+const shownPercentage = ref(prefersReducedMotion() ? percentage.value : 0)
 const shownReal = ref(0)
 
 const realDecimals = computed(() => {
@@ -73,22 +77,12 @@ const realDecimals = computed(() => {
 
 const shownRealText = computed(() => shownReal.value.toFixed(realDecimals.value))
 
-let frameId = 0
-let startedAt = 0
-let duration = DEFAULT_DURATION
-let fromPercentage = 0
-let toPercentage = 0
-let fromReal = 0
-let toReal = 0
-
-function readPageDuration() {
-  if (typeof window === 'undefined') return DEFAULT_DURATION
-  const raw = getComputedStyle(document.documentElement).getPropertyValue('--yg-dur-page').trim()
-  const matched = /^([\d.]+)(ms|s)$/.exec(raw)
-  if (!matched) return DEFAULT_DURATION
-  const value = Number(matched[1])
-  return matched[2] === 's' ? value * 1000 : value
-}
+let realFrameId = 0
+let realStartedAt = 0
+let realFrom = 0
+let realTo = 0
+let ringArmed = false
+let armFrameId = 0
 
 function prefersReducedMotion() {
   return (
@@ -102,49 +96,67 @@ function easeOut(t: number) {
   return 1 - (1 - t) ** 3
 }
 
-function stopTween() {
-  if (frameId) {
-    cancelAnimationFrame(frameId)
-    frameId = 0
+function stopRealTween() {
+  if (realFrameId) {
+    cancelAnimationFrame(realFrameId)
+    realFrameId = 0
   }
 }
 
-function settle() {
-  shownPercentage.value = toPercentage
-  shownReal.value = toReal
-}
-
-function step(now: number) {
-  const progress = Math.min((now - startedAt) / duration, 1)
-  const eased = easeOut(progress)
-  shownPercentage.value = fromPercentage + (toPercentage - fromPercentage) * eased
-  shownReal.value = fromReal + (toReal - fromReal) * eased
+function stepReal(now: number) {
+  const progress = Math.min((now - realStartedAt) / REAL_TWEEN_DURATION, 1)
+  shownReal.value = realFrom + (realTo - realFrom) * easeOut(progress)
   if (progress < 1) {
-    frameId = requestAnimationFrame(step)
+    realFrameId = requestAnimationFrame(stepReal)
     return
   }
-  frameId = 0
-  settle()
+  realFrameId = 0
+  shownReal.value = realTo
 }
 
-function sweep() {
-  stopTween()
-  toPercentage = percentage.value
-  toReal = real.value
+function sweepReal() {
+  stopRealTween()
+  realTo = real.value
   if (prefersReducedMotion()) {
-    settle()
+    shownReal.value = realTo
     return
   }
-  fromPercentage = shownPercentage.value
-  fromReal = shownReal.value
-  duration = readPageDuration()
-  startedAt = performance.now()
-  frameId = requestAnimationFrame(step)
+  realFrom = shownReal.value
+  realStartedAt = performance.now()
+  realFrameId = requestAnimationFrame(stepReal)
 }
 
-watch([real, percentage], sweep, { immediate: true })
+watch(real, sweepReal, { immediate: true })
 
-onUnmounted(stopTween)
+// 圆环扫描未开始前的数据变化不起帧，等挂载后的那一帧统一写入最新值
+watch(percentage, (value) => {
+  if (ringArmed) shownPercentage.value = value
+})
+
+onMounted(() => {
+  if (prefersReducedMotion()) {
+    ringArmed = true
+    return
+  }
+  if (typeof requestAnimationFrame !== 'function') {
+    ringArmed = true
+    shownPercentage.value = percentage.value
+    return
+  }
+  armFrameId = requestAnimationFrame(() => {
+    armFrameId = 0
+    ringArmed = true
+    shownPercentage.value = percentage.value
+  })
+})
+
+onUnmounted(() => {
+  stopRealTween()
+  if (armFrameId) {
+    cancelAnimationFrame(armFrameId)
+    armFrameId = 0
+  }
+})
 
 function calculateLoss() {
   const loss = standard.value - real.value

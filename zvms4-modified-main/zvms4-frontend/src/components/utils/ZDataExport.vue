@@ -188,7 +188,6 @@ watch(allowCache, () => {
           text
           bg
           type="primary"
-          style="text-align: right"
         >
           {{ t('manage.exports.actions.export') }}
         </ElButton>

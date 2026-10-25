@@ -13,7 +13,6 @@ import ElementPlus from 'element-plus'
 import 'element-plus/theme-chalk/index.css'
 import 'element-plus/theme-chalk/dark/css-vars.css'
 import 'vant/lib/index.css'
-import 'animate.css/animate.min.css'
 import 'virtual:uno.css'
 
 // 义工平台标准样式库（令牌 → 基础 → 组件），由 design:sync 从「前端约定/css」同步而来

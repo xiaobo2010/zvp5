@@ -91,7 +91,7 @@ async function remove(id: string) {
 <template>
   <div class="px-2">
     <ElCard shadow="never" v-loading="loading">
-      <ElTable :ref="tableRef" :data="groups" :max-height="tableHeight">
+      <ElTable ref="tableRef" :data="groups" :max-height="tableHeight">
         <ElTableColumn prop="name" :label="t('manage.groupList.columns.name')"></ElTableColumn>
         <ElTableColumn prop="permission" :label="t('manage.groupList.columns.permission')">
           <template #default="{ row }">

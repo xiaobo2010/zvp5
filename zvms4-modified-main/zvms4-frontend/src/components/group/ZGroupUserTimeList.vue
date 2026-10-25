@@ -187,7 +187,7 @@ async function onSortChange(data: {
       </ElResult>
       <ElTable
         v-else
-        :ref="tableRef"
+        ref="tableRef"
         :data="time"
         stripe
         :max-height="tableHeight"
