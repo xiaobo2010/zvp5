@@ -2,50 +2,25 @@ import type {
   AiAgentProposal,
   AiAgentProposalListResponse,
   AiAgentProposalResult,
-  AiAgentProposalStatus,
-  AiAgentRunReplay,
-  AiAgentRunResponse,
-  AiChatMessage
+  AiAgentProposalStatus
 } from '@/../types/ai'
-import { AI_SCENE_HEADER, aiFetchJson } from './http'
+import { aiFetchJson } from './http'
 
 /**
- * 智能体面（/ai/agent/*）。
+ * 智能体面的提案端点（确认 / 驳回 / 待办列表）。
  *
  * 与 OpenAI 面同一套协议：成功是裸 JSON，错误是 `{"error":{...}}` + `X-AI-Request-Id`，
- * 所以复用 `aiFetchJson`（错误统一归一成 AiRequestError，带错误码与请求编号）。
+ * 所以复用 `aiFetchJson`。
  *
- * 与 chat.ts 的分界：这里**不流式**。后端一次 run 会跑完整个工具循环才返回，
- * 中途没有增量可推；用流式接口只会让前端假装在打字。
+ * run 的提交与轮询在 `conversations.ts`：智能体已任务化，提交拿 202 后按 run_id
+ * 轮询，没有「一次请求跑完整个工具循环」这种调用形态了。
  */
-
-/** 审计场景名：后端把它落进 AI_CALL_LOGS.PURPOSE（只用于统计）。 */
-export const AI_SCENE_AGENT = 'agent'
 
 /** 提案列表的条数上限：后端 limit ≤ 50，超了会 422。 */
 const PROPOSAL_LIST_LIMIT_MAX = 50
 
 /** 提案列表的默认条数。 */
 const PROPOSAL_LIST_LIMIT_DEFAULT = 20
-
-/**
- * 跑一次智能体会话。
- *
- * `model` 可省：省了由后端取该用户可见目录里的第一个模型；显式指定则必须
- * 在该目录内（否则 404 `model_not_found`）。`signal` 用于「停止」按钮中断等待。
- */
-export async function runAgent(
-  messages: AiChatMessage[],
-  model?: string,
-  signal?: AbortSignal
-): Promise<AiAgentRunResponse> {
-  return aiFetchJson<AiAgentRunResponse>('/ai/agent/run', {
-    method: 'POST',
-    body: JSON.stringify({ messages, model }),
-    headers: { [AI_SCENE_HEADER]: AI_SCENE_AGENT },
-    signal
-  })
-}
 
 /**
  * 确认并执行一条写操作提案（服务端二次校验权限、状态、时效与参数哈希）。
@@ -91,22 +66,6 @@ export async function fetchPendingProposals(
   query.set('limit', String(clampLimit(limit)))
   const body = await aiFetchJson<unknown>(`/ai/agent/proposals?${query.toString()}`)
   return { proposals: readProposalList(body) }
-}
-
-/**
- * 取一次 run 的事件时间线（刷新后回看）。
- *
- * 后端用 `list_for_request` 按 request_id 取回那一轮的留痕。
- */
-export async function fetchRun(requestId: string): Promise<AiAgentRunReplay> {
-  const body = await aiFetchJson<unknown>(`/ai/agent/runs/${encodeURIComponent(requestId)}`)
-  const record = (body ?? {}) as Record<string, unknown>
-  return {
-    request_id:
-      typeof record.request_id === 'string' && record.request_id ? record.request_id : requestId,
-    events: Array.isArray(record.events) ? (record.events as AiAgentRunReplay['events']) : [],
-    proposals: Array.isArray(record.proposals) ? (record.proposals as AiAgentProposal[]) : undefined
-  }
 }
 
 function clampLimit(limit: number): number {

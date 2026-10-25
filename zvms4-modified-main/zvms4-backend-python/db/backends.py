@@ -202,6 +202,27 @@ def get_ai_prompt_audit_repo(session: Any = None) -> Any:
     return OracleAIPromptAuditRepo(session)
 
 
+def get_ai_conversations_repo(session: Any = None) -> Any:
+    """Return the ``AIConversationsRepo`` implementation (持久会话)."""
+    from db.repos.oracle.ai_conversations import OracleAIConversationsRepo
+
+    return OracleAIConversationsRepo(session)
+
+
+def get_ai_messages_repo(session: Any = None) -> Any:
+    """Return the ``AIMessagesRepo`` implementation (会话内消息)."""
+    from db.repos.oracle.ai_conversations import OracleAIMessagesRepo
+
+    return OracleAIMessagesRepo(session)
+
+
+def get_ai_runs_repo(session: Any = None) -> Any:
+    """Return the ``AIRunsRepo`` implementation (后台执行的智能体 run)."""
+    from db.repos.oracle.ai_runs import OracleAIRunsRepo
+
+    return OracleAIRunsRepo(session)
+
+
 __all__ = [
     "get_users_repo",
     "get_groups_repo",
@@ -230,4 +251,7 @@ __all__ = [
     "get_ai_api_keys_repo",
     "get_ai_agent_events_repo",
     "get_ai_prompt_audit_repo",
+    "get_ai_conversations_repo",
+    "get_ai_messages_repo",
+    "get_ai_runs_repo",
 ]

@@ -36,10 +36,12 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import logging
+import math
 import time
-from typing import Any
+from typing import Any, Callable
 from uuid import uuid4
 
 import settings
@@ -52,6 +54,7 @@ from services.ai import usage as ai_usage
 from services.ai.credentials import CredentialError
 from services.ai.routing import RouteError
 
+from . import context as agent_context
 from . import proposal, tool_impl
 from .prompt import PROMPT_VERSION, SYSTEM_PROMPT
 from .tool_impl import AgentError
@@ -79,6 +82,17 @@ DEFAULT_RUN_TIMEOUT_SECONDS = 300
 
 # 目的标记：``AI_CALL_LOGS.PURPOSE`` 是开放集合，这里是 agent 的唯一取值。
 PURPOSE_AGENT = "agent"
+
+# 压缩专用场景标记（契约 §5.4）：与 ``agent`` 分开，便于对账「压缩成本」，
+# 也让 ``round_no=NULL`` 这件事在报表里自解释（它不是某一轮的工具循环）。
+PURPOSE_COMPACT = "compact"
+
+# 压缩失败时的候选重试次数（§5.5：换候选重试 1 次 = 共 2 次机会）。
+COMPACT_ATTEMPTS = 2
+
+# 送上游的 messages 只允许这些字段。会话化之后消息会带 ``seq`` 等存储侧字段，
+# 原样发出去轻则被上游忽略、重则被严格实现判 400；``seq`` 只服务于压缩切点。
+_WIRE_KEYS = ("role", "content", "tool_calls", "tool_call_id", "name")
 
 # run 级超时的审计错误码（与上游自己的 ``AI_TIMEOUT`` 区分：那是单次调用超时）。
 RUN_TIMEOUT_CODE = "AI_AGENT_RUN_TIMEOUT"
@@ -575,18 +589,31 @@ def _tool_message(call_id: str, payload: object) -> dict:
 
 
 def _validate_messages(messages: object) -> list[dict]:
-    """客户端消息只允许 ``user`` / ``assistant``。
+    """一次 run 的上下文消息：``user`` / ``assistant`` / ``tool``，拒绝 ``system``。
 
-    ``system`` 由服务端注入（:data:`services.agent.prompt.SYSTEM_PROMPT`）：
-    客户端能写 system 就等于能改行为护栏，也能让缓存前缀随人漂移。``tool`` 角色
-    同样禁止——工具结果只能由服务端自己产生。
+    会话化之后 ``messages`` 不再只是「本轮用户说了什么」，而是整段可回放上下文
+    （``run_queue._replay`` 把库里的消息摊成 OpenAI 形状）。工具历史是其中不可缺的
+    一段：``assistant(tool_calls)`` 与对应的 ``tool`` 结果在上游协议里是原子配对，
+    少了任何一半，**第二次提问在入口就会 400**——用户看到的是「整个会话不可用」。
+
+    ``system`` 仍然禁止：服务端前缀（:data:`services.agent.prompt.SYSTEM_PROMPT` +
+    压缩摘要）只能由服务端注入，客户端能写就等于能改行为护栏，也能让缓存前缀随人
+    漂移。
+
+    这里**不做**自动修复或丢弃：静默改上下文比报错更难查。畸形输入一律 400，并在
+    message 里点名第几条，便于定位是哪段回放出了问题。
     """
     if not isinstance(messages, list) or not messages:
         raise AgentError(
             "AI_AGENT_BAD_ARGUMENTS", "messages must be a non-empty array", 400
         )
+
     cleaned: list[dict] = []
-    for item in messages:
+    # 尚未被消费的 tool_call id：assistant(tool_calls) 开启，tool 消息逐个消费。
+    # user / 普通 assistant 会中断这条链（上游协议里工具结果必须紧跟它的调用）。
+    pending_calls: set[str] = set()
+
+    for position, item in enumerate(messages, start=1):
         if not isinstance(item, dict):
             raise AgentError(
                 "AI_AGENT_BAD_ARGUMENTS", "each message must be an object", 400
@@ -595,23 +622,93 @@ def _validate_messages(messages: object) -> list[dict]:
         if role == "system":
             raise AgentError(
                 "AI_AGENT_BAD_ARGUMENTS",
-                "system messages are injected by the server; role must be user|assistant",
+                f"message {position}: system messages are injected by the server; "
+                "role must be user|assistant|tool",
                 400,
             )
-        if role not in ("user", "assistant"):
+        if role not in ("user", "assistant", "tool"):
             raise AgentError(
                 "AI_AGENT_BAD_ARGUMENTS",
-                "message role must be user|assistant",
+                f"message {position}: message role must be user|assistant|tool",
                 400,
             )
-        if not isinstance(item.get("content"), (str, list)):
-            raise AgentError(
-                "AI_AGENT_BAD_ARGUMENTS",
-                "message content must be a string or content array",
-                400,
-            )
-        cleaned.append({"role": role, "content": item["content"]})
+
+        message: dict = {"role": role}
+
+        if role == "tool":
+            call_id = item.get("tool_call_id")
+            if not isinstance(call_id, str) or not call_id:
+                raise AgentError(
+                    "AI_AGENT_BAD_ARGUMENTS",
+                    f"message {position}: tool message requires tool_call_id",
+                    400,
+                )
+            if call_id not in pending_calls:
+                raise AgentError(
+                    "AI_AGENT_BAD_ARGUMENTS",
+                    f"message {position}: tool message {call_id} has no matching "
+                    "assistant tool_calls before it",
+                    400,
+                )
+            pending_calls.discard(call_id)
+            message["tool_call_id"] = call_id
+            message["content"] = _content_of(item, position)
+        elif role == "assistant":
+            # OpenAI 允许 assistant 只有 tool_calls、没有 content；缺失按空串补，
+            # 否则上游会把「缺字段」当成坏请求。
+            content = item.get("content")
+            message["content"] = "" if content is None else _content_of(item, position)
+            calls = item.get("tool_calls")
+            if calls is None:
+                pending_calls = set()
+            else:
+                if not isinstance(calls, list) or any(
+                    not isinstance(call, dict) for call in calls
+                ):
+                    raise AgentError(
+                        "AI_AGENT_BAD_ARGUMENTS",
+                        f"message {position}: tool_calls must be an array of objects",
+                        400,
+                    )
+                # 原样保留（含顺序）：改形状会让上游对不上调用 id，也会破坏缓存前缀。
+                message["tool_calls"] = calls
+                pending_calls = {
+                    call_id
+                    for call_id in (_tool_call_id(call) for call in calls)
+                    if call_id
+                }
+        else:
+            message["content"] = _content_of(item, position)
+            pending_calls = set()
+
+        # ``name`` 是协议字段（多说话人场景），其余存储字段（``seq`` / ``round_no``）
+        # 只在内部流转换时保留：``_wire`` 送上游前会剥掉。
+        name = item.get("name")
+        if isinstance(name, str) and name:
+            message["name"] = name
+        seq = item.get("seq")
+        if isinstance(seq, int) and not isinstance(seq, bool):
+            message["seq"] = seq
+        cleaned.append(message)
     return cleaned
+
+
+def _content_of(item: dict, position: int) -> object:
+    """``user`` / ``tool`` 的 content 必填（字符串或多模态数组）。"""
+    content = item.get("content")
+    if not isinstance(content, (str, list)):
+        raise AgentError(
+            "AI_AGENT_BAD_ARGUMENTS",
+            f"message {position}: content must be a string or content array",
+            400,
+        )
+    return content
+
+
+def _tool_call_id(call: dict) -> str:
+    """``tool_calls[i].id``（形状不对就当没有，交给配对校验去报错）。"""
+    call_id = call.get("id")
+    return call_id if isinstance(call_id, str) else ""
 
 
 def _round_tokens(tokens: dict, payload: dict, content: str) -> int:
@@ -649,16 +746,334 @@ def _add_usage(acc: dict, tokens: dict) -> dict:
     return out
 
 
+def _wire(messages: list[dict]) -> list[dict]:
+    """裁剪成上游协议能接受的形状（``seq`` 等存储字段不出去）。"""
+    return [
+        {key: message[key] for key in _WIRE_KEYS if key in message}
+        for message in messages
+    ]
+
+
+def _finish_reason(result: dict) -> str | None:
+    """上游的 ``choices[0].finish_reason``：诊断截断回答用，拿不到就是 ``None``。"""
+    choices = result.get("choices")
+    if isinstance(choices, list) and choices and isinstance(choices[0], dict):
+        value = choices[0].get("finish_reason")
+        if isinstance(value, str):
+            return value
+    return None
+
+
+def _last_seq(messages: list[dict]) -> int | None:
+    """旧段里最大的 ``seq``（= 摘要覆盖到第几条）。
+
+    倒着找而不是取 ``messages[-1]``：旧段末尾在极端情况下可能是在飞的新消息
+    （没有 ``seq``），而摘要的边界只能落在**已落库**的行上。
+    """
+    for message in reversed(messages):
+        seq = message.get("seq")
+        if isinstance(seq, int) and not isinstance(seq, bool):
+            return seq
+    return None
+
+
+async def _emit(callback, *args) -> None:
+    """调用调用方回调；同步/异步都支持（``run_queue`` 侧可能直接给协程函数）。"""
+    if callback is None:
+        return
+    result = callback(*args)
+    if inspect.isawaitable(result):
+        await result
+
+
+async def _should_stop(should_stop) -> bool:
+    """取消/中断闸：回调可以是同步也可以是协程（会话侧要查库）。
+
+    ``bool(coroutine)`` 恒为真——不 await 就等于「每次 run 第一轮就被取消」，而
+    同步回调又不必强迫调用方包一层 async，所以这里两种都吃。
+
+    回调异常按「不取消」处理：取消是尽力而为的加速器，不是正确性来源——真正的
+    保证是 run 侧在写库/扣费前复核 run 状态。让一次取消失败的探测把整个 run 打挂，
+    代价更大。
+    """
+    if should_stop is None:
+        return False
+    try:
+        result = should_stop()
+        if inspect.isawaitable(result):
+            result = await result
+        return bool(result)
+    except Exception:  # noqa: BLE001 - 回调异常不该改变执行语义
+        _logger.warning("ai agent should_stop callback failed", exc_info=True)
+        return False
+
+
+def _round_payload(
+    *,
+    round_no: int,
+    content: str,
+    finish_reason: str | None,
+    tool_calls: list[dict],
+    tools: list[dict],
+    tokens: dict,
+    units: int,
+) -> dict:
+    """一轮收尾交给 ``on_round`` 的载荷（executor 自己**不写库**）。
+
+    只会出现本轮的 usage：落库侧要把它写到该轮的 assistant/tool 行上，累计值由
+    会话行自己加——两处都算累计会重复。
+    """
+    return {
+        "round_no": round_no,
+        "assistant": {
+            "content": content,
+            "tool_calls": tool_calls,
+            "finish_reason": finish_reason,
+        },
+        "tools": tools,
+        "usage": {
+            "prompt": tokens.get("prompt_tokens"),
+            "completion": tokens.get("completion_tokens"),
+            "total": tokens.get("total_tokens"),
+            "cache_read": tokens.get("cache_read_tokens"),
+            "cache_write": tokens.get("cache_write_tokens"),
+        },
+        "units": units,
+    }
+
+
+def _compact_budget(limit: int) -> int:
+    """硬截断的目标水位：压缩阈值本身，而不是模型上限。
+
+    截到「上限」等于什么都没做（下一轮立刻又超阈值）；截到阈值以下才算真正降水位。
+    """
+    return max(1, math.ceil(limit * agent_context.compact_ratio()))
+
+
+async def _compact_context(
+    *,
+    conversation: list[dict],
+    model: str,
+    candidates: list[dict],
+    user_oid: str,
+    roles,
+    request_id: str,
+    snapshot: str | None,
+    prompt_tokens: int | None,
+    on_summary,
+) -> tuple[list[dict], bool]:
+    """判断并执行一次压缩（含降级）。返回 ``(重建后的对话, 是否动过)``。
+
+    「动过」包括压缩成功与降级到硬截断：一次 run 只允许压一次（§5.3 防抖动），
+    否则每轮都在阈值边缘反复触发，既贵又抖。
+    """
+    limit = agent_context.context_limit(model)
+    if not agent_context.needs_compaction(prompt_tokens, conversation, limit):
+        return conversation, False
+
+    head = 0
+    while head < len(conversation) and conversation[head].get("role") in (
+        "system",
+        "developer",
+    ):
+        head += 1
+    older, recent = agent_context.plan_compaction(
+        conversation[head:], agent_context.configured_keep_turns()
+    )
+    if not older:
+        # 切不出来（轮数不够 / 旧段本身是残链）：宁可不压，也不切一条坏历史。
+        return conversation, False
+
+    upto_seq = _last_seq(older)
+    if upto_seq is None:
+        # 契约把压缩限定在「消息带 seq」的会话化调用上：没有 seq 就写不了
+        # ``summary_upto_seq``，摘要会在下一轮被重新发一遍全量历史，等于白花钱。
+        # 这里也不硬截断——没有 seq 的场景（旧的无状态调用）不该被静默丢历史。
+        return conversation, False
+
+    summary_text = ""
+    for attempt in range(COMPACT_ATTEMPTS):
+        # 换候选重试（§5.5）：第二轮把上次首选的 provider 挪到末尾。
+        rotated = candidates[attempt:] + candidates[:attempt]
+        try:
+            summary_text = await _summarize_history(
+                older=older,
+                recent=recent,
+                model=model,
+                candidates=rotated,
+                user_oid=user_oid,
+                roles=roles,
+                request_id=request_id,
+                snapshot=snapshot,
+            )
+            break
+        except Exception as exc:  # noqa: BLE001 - 压缩失败必须降级，不能打挂 run
+            _logger.warning(
+                "ai agent compaction attempt %s failed: %s",
+                attempt + 1,
+                type(exc).__name__,
+            )
+
+    if not summary_text:
+        _logger.warning("ai agent compaction degraded to hard truncate")
+        return _hard_truncate(conversation, limit), True
+
+    rebuilt = agent_context.build_messages(SYSTEM_PROMPT, summary_text, recent, [])
+    # 摘要之后仍超限（旧段本身很小但最近 N 轮就很大）：截断补齐（§5.5-3）。
+    if agent_context.needs_compaction(None, rebuilt, limit):
+        rebuilt = _hard_truncate(rebuilt, limit)
+    await _emit(on_summary, summary_text, upto_seq)
+    return rebuilt, True
+
+
+def _hard_truncate(conversation: list[dict], limit: int) -> list[dict]:
+    """降级路径：丢弃最旧的消息直到回到阈值以下（保留开头的 system 段）。"""
+    return agent_context.hard_truncate(conversation, _compact_budget(limit))
+
+
+async def _maybe_compact(
+    *,
+    conversation: list[dict],
+    compacted: bool,
+    model: str,
+    candidates: list[dict],
+    user_oid: str,
+    roles,
+    run_id: str,
+    snapshot: str | None,
+    prompt_tokens: int | None,
+    on_summary,
+) -> tuple[list[dict], bool]:
+    """压缩判定的兜底外壳：全链路异常不外溢（§5.5-4）。
+
+    返回未改动的对话 + ``True``：这次尝试算「用掉了唯一一次机会」，避免每轮都在
+    同一个坏输入上重试（既贵又可能把上下文切碎）。
+    """
+    if compacted:
+        return conversation, True
+    try:
+        return await _compact_context(
+            conversation=conversation,
+            model=model,
+            candidates=candidates,
+            user_oid=user_oid,
+            roles=roles,
+            request_id=run_id,
+            snapshot=snapshot,
+            prompt_tokens=prompt_tokens,
+            on_summary=on_summary,
+        )
+    except Exception:  # noqa: BLE001 - 压缩是旁路，不能打挂 run
+        _logger.warning("ai agent context compaction failed", exc_info=True)
+        return conversation, True
+
+
+async def _summarize_history(
+    *,
+    older: list[dict],
+    recent: list[dict],
+    model: str,
+    candidates: list[dict],
+    user_oid: str,
+    roles,
+    request_id: str,
+    snapshot: str | None,
+) -> str:
+    """摘要调用：计费照扣、审计 ``purpose='compact'``、``round_no=NULL``。
+
+    契约 §5.4：压缩是**用户额度**里的真实成本，但不计入 run 的 token 预算（省下来
+    的上下文还没用上就先被预算掐死，等于白花钱）。
+    """
+
+    async def complete(prompt_messages: list[dict], max_tokens: int) -> str:
+        if _billable(candidates[0]):
+            allowed, _used, _limit = await quota.peek(
+                user_oid, "chat", 1, roles=roles
+            )
+            if not allowed:
+                raise AgentError(
+                    "insufficient_quota", "monthly chat quota is exhausted", 429
+                )
+
+        payload = {
+            "model": model,
+            "messages": prompt_messages,
+            "stream": False,
+            "max_tokens": max_tokens,
+        }
+        started = time.monotonic()
+        try:
+            result, entry, cache_key = await _call_upstream(payload, candidates)
+        except AgentError as exc:
+            last_entry = getattr(exc, "entry", None) or (
+                candidates[0] if candidates else None
+            )
+            await _audit_round(
+                user_oid=user_oid,
+                model=model,
+                request_id=request_id,
+                round_no=None,
+                snapshot=snapshot,
+                status=_audit_status(exc.code),
+                http_status=exc.status_code,
+                error_code=exc.code,
+                latency_ms=_elapsed_ms(started),
+                provider=last_entry.get("name") if last_entry else None,
+                key_scope=last_entry.get("scope") if last_entry else None,
+                purpose=PURPOSE_COMPACT,
+            )
+            raise
+
+        text, _calls = _message_of(result)
+        tokens = ai_usage.token_fields(result.get("usage"))
+        units = ai_usage.units_from_total_tokens(tokens["total_tokens"])
+        if _billable(entry):
+            try:
+                await quota.consume(user_oid, "chat", units, roles=roles)
+            except Exception as exc:  # noqa: BLE001 - 回写失败不能丢掉摘要
+                _logger.warning(
+                    "ai agent compact quota write-back failed: %s",
+                    type(exc).__name__,
+                )
+        await _audit_round(
+            user_oid=user_oid,
+            model=model,
+            request_id=request_id,
+            round_no=None,
+            snapshot=snapshot,
+            status="success",
+            http_status=200,
+            latency_ms=_elapsed_ms(started),
+            provider=entry.get("name"),
+            key_scope=entry.get("scope"),
+            units=units,
+            tokens=tokens,
+            cache_key=cache_key,
+            purpose=PURPOSE_COMPACT,
+        )
+        return text
+
+    return await agent_context.compact(older, recent, complete=complete)
+
+
 async def run(
     *,
     user: dict,
     messages: list[dict],
     model: str | None = None,
     request_id: str | None = None,
+    summary: str | None = None,
+    on_round: Callable | None = None,
+    should_stop: Callable[[], bool] | None = None,
+    on_summary: Callable[[str, int], None] | None = None,
 ) -> dict:
     """跑完一次 agent 会话。
 
     返回 ``{request_id, content, stop_reason, rounds, usage, events, proposals}``。
+
+    会话化之后本函数仍是**纯执行器**：不写会话表、不分配 ``seq``。每轮收尾通过
+    ``on_round`` 交出去（落库/计费口径都在那一侧），压缩结果通过 ``on_summary``
+    交出去（``upto_seq`` = 摘要覆盖到哪条消息）。
     """
     user_oid = user["id"]
     roles = user.get("per")
@@ -677,10 +1092,20 @@ async def run(
 
     client_messages = _validate_messages(messages)
     # 服务端 system 段固定在最前（缓存前缀 + 行为护栏）；动态内容只追加在尾部。
-    conversation: list[dict] = [
-        {"role": "system", "content": SYSTEM_PROMPT},
-        *client_messages,
-    ]
+    # 有摘要/压缩回调时走 ``context.build_messages``：摘要必须是**第二条 system**
+    # （§5.1），拼到尾部会让前缀指纹退化成全站同 key。
+    # 旧调用（无 summary / 无 on_summary）保留原路径：那是不带会话语义的无状态
+    # 执行器，不该因为引入压缩而多出一层模块耦合。
+    use_context = on_summary is not None or bool(summary)
+    if use_context:
+        conversation: list[dict] = agent_context.build_messages(
+            SYSTEM_PROMPT, summary, client_messages, []
+        )
+    else:
+        conversation = [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            *client_messages,
+        ]
     chosen, candidates = await _select_model(user_oid, model)
 
     max_iterations = ai_config.agent_max_iterations()
@@ -694,9 +1119,17 @@ async def run(
     rounds = 0
     usage: dict[str, int | None] = {key: None for key in _TOKEN_KEYS}
     stop_reason: str | None = None
+    # 压缩判水位优先用上一轮实测 ``prompt_tokens``（估算只是下界）。
+    last_prompt_tokens: int | None = None
+    compacted = False
 
     for round_no in range(1, max_iterations + 1):
-        # 0) run 级截止时间：超时不发新一轮（上游调用另有 wait_for 兜住长尾）。
+        # 0) 取消 / 中断：轮边界判一次（工具循环里每次执行前再判）。
+        if await _should_stop(should_stop):
+            stop_reason = "cancelled"
+            break
+
+        # 0a) run 级截止时间：超时不发新一轮（上游调用另有 wait_for 兜住长尾）。
         if time.monotonic() >= deadline:
             stop_reason = "timeout"
             break
@@ -768,7 +1201,7 @@ async def run(
 
         payload = {
             "model": chosen,
-            "messages": conversation,
+            "messages": _wire(conversation),
             # 强制非流式：工具调用的完整参数只在整条响应里，流式边收边执行等于
             # 猜半个 JSON。
             "stream": False,
@@ -847,6 +1280,7 @@ async def run(
             raise
 
         total_tokens += _round_tokens(tokens, payload, content)
+        last_prompt_tokens = tokens.get("prompt_tokens")
 
         if _billable(entry):
             # 后置扣减是 best-effort：回写失败不能丢掉已经生成的答案。
@@ -873,12 +1307,54 @@ async def run(
             cache_key=cache_key,
         )
 
+        finish_reason = _finish_reason(result)
+        handled_tools: list[dict] = []
+
         if not tool_calls:
+            # 收尾回调：即使模型自己停也要交出去，否则最后一轮的回答不落库。
+            await _emit(
+                on_round,
+                _round_payload(
+                    round_no=round_no,
+                    content=content,
+                    finish_reason=finish_reason,
+                    tool_calls=[],
+                    tools=[],
+                    tokens=tokens,
+                    units=units,
+                ),
+            )
+            # 最后一轮也可能把水位顶到阈值：收尾后仍判一次（每 run 最多压一次）。
+            if on_summary is not None and not compacted:
+                conversation, compacted = await _maybe_compact(
+                    conversation=conversation,
+                    compacted=compacted,
+                    model=chosen,
+                    candidates=candidates,
+                    user_oid=user_oid,
+                    roles=roles,
+                    run_id=run_id,
+                    snapshot=snapshot,
+                    prompt_tokens=last_prompt_tokens,
+                    on_summary=on_summary,
+                )
             stop_reason = None
             break
 
         # 预算闸（工具执行之前）：超预算的那一轮不落任何业务写入。
         if total_tokens >= budget:
+            await _emit(
+                on_round,
+                _round_payload(
+                    round_no=round_no,
+                    content=content,
+                    finish_reason=finish_reason,
+                    tool_calls=tool_calls,
+                    tools=[],
+                    tokens=tokens,
+                    units=units,
+                ),
+            )
             stop_reason = "token_budget"
             break
 
@@ -892,7 +1368,14 @@ async def run(
             }
         )
 
+        interrupted = False
         for index, call in enumerate(tool_calls):
+            # 每个工具执行前再判一次取消：工具可能有副作用，「已经点取消之后
+            # 再跑下一个」是最不该发生的。
+            if await _should_stop(should_stop):
+                interrupted = True
+                break
+
             _call_id, tool_name, _args = _tool_call_parts(call)
             tool = get_tool(tool_name)
             if index >= MAX_TOOL_CALLS_PER_ROUND:
@@ -905,7 +1388,15 @@ async def run(
                         "本次超出上限的部分未执行；请分批调用。"
                     ),
                 }
-                conversation.append(_tool_message(_call_id, note))
+                message = _tool_message(_call_id, note)
+                conversation.append(message)
+                handled_tools.append(
+                    {
+                        "tool_call_id": _call_id,
+                        "tool_name": tool_name or None,
+                        "content": message["content"],
+                    }
+                )
                 await _write_event(
                     request_id=run_id,
                     round_no=round_no,
@@ -934,6 +1425,13 @@ async def run(
                 call=call, user=user, request_id=run_id, round_no=round_no
             )
             conversation.append(message)
+            handled_tools.append(
+                {
+                    "tool_call_id": message.get("tool_call_id"),
+                    "tool_name": tool_name or None,
+                    "content": message.get("content"),
+                }
+            )
             events.append(
                 {
                     "round_no": round_no,
@@ -946,6 +1444,38 @@ async def run(
             )
             if created is not None:
                 proposals.append(created)
+
+        await _emit(
+            on_round,
+            _round_payload(
+                round_no=round_no,
+                content=content,
+                finish_reason=finish_reason,
+                tool_calls=tool_calls,
+                tools=handled_tools,
+                tokens=tokens,
+                units=units,
+            ),
+        )
+
+        if interrupted:
+            # 已跑完的轮次照常交付，已执行的工具结果保留；不再发下一轮。
+            stop_reason = "cancelled"
+            break
+
+        if on_summary is not None and not compacted:
+            conversation, compacted = await _maybe_compact(
+                conversation=conversation,
+                compacted=compacted,
+                model=chosen,
+                candidates=candidates,
+                user_oid=user_oid,
+                roles=roles,
+                run_id=run_id,
+                snapshot=snapshot,
+                prompt_tokens=last_prompt_tokens,
+                on_summary=on_summary,
+            )
     else:
         # for-else：跑满 max_iterations 仍在要求工具 → 截断。
         stop_reason = "max_iterations"
@@ -980,7 +1510,7 @@ async def _audit_round(
     user_oid: str,
     model: str,
     request_id: str,
-    round_no: int,
+    round_no: int | None,
     snapshot: str | None,
     status: str,
     http_status: int | None,
@@ -991,8 +1521,13 @@ async def _audit_round(
     units: int = 0,
     tokens: dict | None = None,
     cache_key: str | None = None,
+    purpose: str = PURPOSE_AGENT,
 ) -> None:
-    """一轮一条流水（``capability='chat'`` + ``purpose='agent'`` + ``round_no``）。"""
+    """一轮一条流水（``capability='chat'`` + ``purpose`` + ``round_no``）。
+
+    ``purpose='compact'`` 是压缩调用：``round_no=None``（它不是工具循环的一轮），
+    额度照扣但预算不计（§5.4）。
+    """
     await audit.record(
         user_oid=user_oid,
         capability="chat",
@@ -1006,7 +1541,7 @@ async def _audit_round(
         units=units,
         request_id=request_id,
         key_scope=key_scope,
-        purpose=PURPOSE_AGENT,
+        purpose=purpose,
         round_no=round_no,
         roles_snapshot=snapshot,
         cache_key=cache_key,
@@ -1023,6 +1558,7 @@ __all__ = [
     "MAX_TOOL_RESULT_CHARS",
     "PROMPT_VERSION",
     "PURPOSE_AGENT",
+    "PURPOSE_COMPACT",
     "run",
     "run_timeout_seconds",
 ]

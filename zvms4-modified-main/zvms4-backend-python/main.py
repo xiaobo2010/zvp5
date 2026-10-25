@@ -36,6 +36,8 @@ from routers import (
     ai_router,
     ai_api_keys_router,
     ai_agent_router,
+    ai_conversations_router,
+    ai_chat_conversations_router,
 )
 import socketio
 from socketio.exceptions import ConnectionRefusedError as SocketIOConnectionRefusedError
@@ -54,6 +56,7 @@ from tasks.files_retention import purge_expired_attachments
 from tasks.retention import purge_expired_records
 from tasks.user_trash_gc import purge_expired_trash
 from services import perf_sampler
+from services.agent import run_queue
 from services.api_metrics import ApiMetricsMiddleware
 
 scheduler = AsyncIOScheduler()
@@ -399,6 +402,33 @@ async def startup_event():
         misfire_grace_time=3600,
     )
 
+    # AI 会话的后台 run 队列（设计 §4.3）：先把上次进程遗留的 running 收敛成
+    # interrupted（单 worker 下「刚启动」等价于「没有合法在跑的任务」），再起泵
+    # 去领 queued 的。收敛失败不该挡住启动——watchdog 每 30s 还会再试一次。
+    try:
+        recovered = await run_queue.recover_on_startup()
+        if recovered:
+            print(f"ai run queue: {recovered} interrupted run(s) recovered")
+    except Exception:  # noqa: BLE001 - 启动阶段的库不可用由 health 报告
+        _logger.exception("ai run queue startup recovery failed")
+
+    # run 心跳 watchdog：心跳早于 AI_RUN_STALE_SECONDS 的 running 判僵尸并掐掉
+    # 对应协程（阈值下限 max(360, run_timeout+60)，见 run_queue.stale_seconds）。
+    scheduler.add_job(
+        run_queue.watchdog_tick,
+        "interval",
+        seconds=30,
+        id="ai_run_watchdog",
+        coalesce=True,
+        max_instances=1,
+        misfire_grace_time=10,
+    )
+
+    try:
+        await run_queue.kick()
+    except Exception:  # noqa: BLE001 - 起泵失败只影响后台执行，接口仍可用
+        _logger.exception("ai run queue kick failed")
+
     print("Application started.")
 
 
@@ -469,6 +499,12 @@ app.include_router(
 )
 app.include_router(
     ai_agent_router.router, prefix="/api/ai/agent", tags=["ai"]
+)
+app.include_router(
+    ai_conversations_router.router, prefix="/api/ai", tags=["ai"]
+)
+app.include_router(
+    ai_chat_conversations_router.router, prefix="/api/ai", tags=["ai"]
 )
 
 

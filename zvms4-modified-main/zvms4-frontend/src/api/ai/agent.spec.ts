@@ -1,12 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import {
-  AI_SCENE_AGENT,
-  confirmProposal,
-  fetchPendingProposals,
-  fetchRun,
-  rejectProposal,
-  runAgent
-} from './agent'
+import { confirmProposal, fetchPendingProposals, rejectProposal } from './agent'
 import { AiRequestError } from './errors'
 
 /**
@@ -42,64 +35,6 @@ function lastInit(): RequestInit {
 
 afterEach(() => {
   vi.unstubAllGlobals()
-})
-
-describe('runAgent', () => {
-  it('POST /ai/agent/run，带 X-AI-Scene: agent', async () => {
-    stubFetch(
-      jsonResponse({
-        request_id: 'req-1',
-        content: '好了',
-        events: [],
-        proposals: []
-      })
-    )
-
-    const result = await runAgent([{ role: 'user', content: '查一下' }], 'gpt-x')
-
-    const [url, init] = vi.mocked(fetch).mock.calls[0]!
-    expect(String(url)).toContain('/ai/agent/run')
-    expect(init?.method).toBe('POST')
-    const headers = lastInit().headers as Record<string, string>
-    expect(headers['X-AI-Scene']).toBe(AI_SCENE_AGENT)
-    // 场景只走头，不进请求体。
-    expect(String(lastInit().body)).not.toContain('agent')
-    expect(JSON.parse(String(lastInit().body))).toEqual({
-      messages: [{ role: 'user', content: '查一下' }],
-      model: 'gpt-x'
-    })
-    expect(result.content).toBe('好了')
-    expect(result.request_id).toBe('req-1')
-  })
-
-  it('省掉 model 时请求体里不带该字段（后端取目录里第一个模型）', async () => {
-    stubFetch(jsonResponse({ request_id: 'req-2', content: '', events: [], proposals: [] }))
-
-    await runAgent([{ role: 'user', content: 'hi' }])
-
-    expect(JSON.parse(String(lastInit().body))).toEqual({
-      messages: [{ role: 'user', content: 'hi' }]
-    })
-  })
-
-  it('失败按 {"error":{code,message}} 归一成 AiRequestError（带请求编号）', async () => {
-    stubFetch(
-      jsonResponse(
-        { error: { code: 'AI_AGENT_PROPOSAL_EXPIRED', message: 'expired' } },
-        { status: 410, headers: { 'X-AI-Request-Id': 'req-410' } }
-      )
-    )
-
-    const failure = await runAgent([{ role: 'user', content: 'hi' }]).catch(
-      (error: unknown) => error
-    )
-
-    expect(failure).toBeInstanceOf(AiRequestError)
-    const error = failure as AiRequestError
-    expect(error.status).toBe(410)
-    expect(error.code).toBe('AI_AGENT_PROPOSAL_EXPIRED')
-    expect(error.requestId).toBe('req-410')
-  })
 })
 
 describe('提案的确认与驳回', () => {
@@ -205,32 +140,5 @@ describe('待确认提案列表', () => {
     const result = await fetchPendingProposals()
 
     expect(result.proposals).toEqual([])
-  })
-})
-
-describe('run 回放', () => {
-  it('按 request_id 取回事件时间线', async () => {
-    stubFetch(
-      jsonResponse({
-        request_id: 'req-1',
-        events: [{ round_no: 1, tool_name: 'fs_list', tool_kind: 'read', status: 'executed' }]
-      })
-    )
-
-    const result = await fetchRun('req-1')
-
-    const [url] = vi.mocked(fetch).mock.calls[0]!
-    expect(String(url)).toContain('/ai/agent/runs/req-1')
-    expect(result.request_id).toBe('req-1')
-    expect(result.events).toHaveLength(1)
-  })
-
-  it('没有 events 时给空数组', async () => {
-    stubFetch(jsonResponse({}))
-
-    const result = await fetchRun('req-1')
-
-    expect(result.events).toEqual([])
-    expect(result.request_id).toBe('req-1')
   })
 })

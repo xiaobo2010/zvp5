@@ -68,7 +68,52 @@ export const zhCN = {
     quotaUsed: '已用 {used}，上限 {limit}',
     rateLimited: '请在 {seconds} 秒后重试',
     you: '我',
-    assistant: '助手'
+    assistant: '助手',
+    sessions: {
+      title: '会话',
+      subtitle: '对话与智能体共用一套会话，回来可以接着聊。',
+      list: '会话列表',
+      openDrawer: '会话列表',
+      new: '新建会话',
+      loadMore: '加载更多',
+      empty: '还没有会话',
+      emptyHint: '新建一个会话开始对话。',
+      pickFirst: '先新建一个会话再开始对话。',
+      loadFailed: '会话列表加载失败',
+      createFailed: '会话创建失败',
+      untitled: '新会话',
+      rename: '重命名',
+      renameTitle: '重命名会话',
+      renamePlaceholder: '输入会话标题',
+      renamed: '会话已重命名',
+      archive: '归档',
+      unarchive: '取消归档',
+      archived: '已归档',
+      archivedNotice: '会话已归档',
+      remove: '删除会话',
+      deleteConfirm: '确定删除该会话吗？会话内的消息与运行记录会一并删除，无法恢复。',
+      deleteConfirmTitle: '删除会话',
+      deletedNotice: '会话已删除',
+      deleteFailed: '会话删除失败',
+      switchTo: '切换到该会话',
+      tokens: 'token {total}',
+      modeChat: '对话',
+      modeAgent: '智能体',
+      toolRole: '工具',
+      loadEarlier: '加载更早的消息',
+      justNow: '刚刚',
+      minutesAgo: '{count} 分钟前',
+      hoursAgo: '{count} 小时前',
+      daysAgo: '{count} 天前',
+      context: {
+        label: '上下文',
+        usage: '{used} / {limit} token',
+        percent: '占用 {percent}%',
+        warning: '上下文接近上限',
+        compacted: '更早 {count} 条已压缩',
+        degraded: '压缩降级：本次按截断处理'
+      }
+    }
   },
   agent: {
     subtitle: '模型会调用平台工具查数据；写操作先生成提案，确认后才执行。',
@@ -172,6 +217,8 @@ export const zhCN = {
     stopReason: {
       none: '正常结束',
       noneHint: '本次运行正常结束。',
+      completed: '正常完成',
+      completedHint: '本次运行正常完成。',
       timeout: '执行超时',
       timeoutHint: '本次运行达到时间上限，已返回当前结果，可继续追问。',
       token_budget: 'token 预算用尽',
@@ -179,7 +226,9 @@ export const zhCN = {
       max_iterations: '达到最大轮数',
       max_iterationsHint: '本次运行达到工具调用轮数上限，已返回当前结果，可继续追问。',
       cancelled: '已中止',
-      cancelledHint: '本次运行被手动中止。'
+      cancelledHint: '本次运行被手动中止。',
+      error: '执行出错',
+      errorHint: '本次运行中途出错，已返回当前结果，可继续追问。'
     },
     pending: {
       title: '待确认提案',
@@ -199,7 +248,26 @@ export const zhCN = {
       replayLoading: '正在回看…',
       replayFailed: '回看失败',
       replayEmpty: '这次运行没有留下工具记录',
-      replayClose: '收起回看'
+      replayClose: '收起回看',
+      background: '后台执行中',
+      backgroundHint: '任务在服务端继续执行，关掉页面也不会中断。',
+      queued: '排队中',
+      running: '执行中',
+      roundsDone: '已完成 {rounds} 轮',
+      cancel: '中止运行',
+      cancelling: '正在中止',
+      cancelNotice: '已请求中止',
+      cancelFailed: '中止失败',
+      reconnectTitle: '接回进行中的任务',
+      reconnectHint: '检测到未结束的任务，已恢复进度显示。',
+      status: {
+        queued: '排队中',
+        running: '执行中',
+        succeeded: '已完成',
+        failed: '失败',
+        cancelled: '已中止',
+        interrupted: '已中断'
+      }
     },
     proposal: {
       title: '待确认的写操作',
@@ -244,6 +312,8 @@ export const zhCN = {
     scope: '类型',
     scopePersonal: '个人',
     scopeShared: '共享',
+    publicChannel: '公开渠道',
+    modelCount: '模型数',
     owned: '本人',
     name: '名称',
     namePlaceholder: '小写字母、数字、连字符或下划线',
@@ -696,6 +766,34 @@ export const zhCN = {
     AI_AGENT_TOTP_REQUIRED: {
       title: '该写操作需要动态码',
       hint: '请让另一位管理员提供 6 位动态码后重试。'
+    },
+    AI_CONVERSATION_NOT_FOUND: {
+      title: '会话不存在',
+      hint: '会话可能已被删除，请刷新列表后重试。'
+    },
+    AI_CONVERSATION_MODE_MISMATCH: {
+      title: '会话类型不匹配',
+      hint: '当前会话与所选模式不是同一种，请新建一个会话或切换到对应类型的会话。'
+    },
+    AI_RUN_CONFLICT: {
+      title: '已有任务在执行',
+      hint: '同一会话同时只能有一个任务，请等它结束，或先中止它。'
+    },
+    AI_RUN_NOT_FOUND: {
+      title: '任务不存在',
+      hint: '该任务可能已被清理，请刷新页面后重试。'
+    },
+    AI_RUN_NOT_CANCELLABLE: {
+      title: '任务已结束',
+      hint: '该任务已处于终态，无需再中止。'
+    },
+    AI_RUN_INTERRUPTED: {
+      title: '任务被中断',
+      hint: '服务重启或执行进程失去心跳，这次任务没有跑完；已完成的轮次与提案仍然保留，可直接重发。'
+    },
+    AI_CONTEXT_UNAVAILABLE: {
+      title: '上下文暂不可用',
+      hint: '压缩上下文失败，服务端已降级为截断处理，本次回答可能不完整。'
     },
     PERMISSION_DENIED: {
       title: '没有权限',

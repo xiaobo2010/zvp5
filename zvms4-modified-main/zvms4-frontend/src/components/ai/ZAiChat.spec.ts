@@ -1,41 +1,65 @@
-import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { mount, type VueWrapper } from '@vue/test-utils'
+import { createPinia } from 'pinia'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import ZAiChat from './ZAiChat.vue'
-import { buildChatRequest } from './chatSession'
 import {
+  cancelRun,
   confirmProposal,
-  createChatCompletion,
+  createConversation,
+  deleteConversation,
+  fetchActiveRuns,
   fetchPendingProposals,
-  fetchRun,
+  fetchRunDetail,
+  getConversation,
+  listConversations,
+  listMessages,
   listModels,
   rejectProposal,
-  runAgent,
-  streamChatCompletion
+  streamConversationChat,
+  submitRun,
+  updateConversation
 } from '@/api/ai'
 import { AiRequestError } from '@/api/ai/errors'
-import type { AiAgentProposal, AiAgentRunResponse } from '@/../types/ai'
+import type { AiAgentProposal, AiConversation, AiRun } from '@/../types/ai'
 
-const { elMessageSuccessSpy, authOpenSpy, authSucceedSpy, authFailSpy } = vi.hoisted(() => ({
-  elMessageSuccessSpy: vi.fn(),
-  authOpenSpy: vi.fn(),
-  authSucceedSpy: vi.fn(),
-  authFailSpy: vi.fn()
-}))
+/**
+ * 对话页（会话化之后）。
+ *
+ * 覆盖六件与旧版不同的事：会话栏与切换、上下文水位条、压缩分隔线、
+ * 智能体提交后不阻塞、轮询到终态就停、以及进入页面接回在跑的任务。
+ * 提案确认与双人动态码的既有行为一并守住。
+ */
 
 vi.mock('@/api/ai', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/api/ai')>()
   return {
     ...actual,
     listModels: vi.fn(),
-    streamChatCompletion: vi.fn(),
-    createChatCompletion: vi.fn(),
-    runAgent: vi.fn(),
+    streamConversationChat: vi.fn(),
+    fetchPendingProposals: vi.fn(),
     confirmProposal: vi.fn(),
     rejectProposal: vi.fn(),
-    fetchPendingProposals: vi.fn(),
-    fetchRun: vi.fn()
+    fetchRunDetail: vi.fn(),
+    getConversation: vi.fn(),
+    listConversations: vi.fn(),
+    listMessages: vi.fn(),
+    createConversation: vi.fn(),
+    updateConversation: vi.fn(),
+    deleteConversation: vi.fn(),
+    submitRun: vi.fn(),
+    cancelRun: vi.fn(),
+    fetchActiveRuns: vi.fn()
   }
 })
+
+const { elMessageSuccessSpy, elMessageErrorSpy, authOpenSpy, authSucceedSpy, authFailSpy } =
+  vi.hoisted(() => ({
+    elMessageSuccessSpy: vi.fn(),
+    elMessageErrorSpy: vi.fn(),
+    authOpenSpy: vi.fn(),
+    authSucceedSpy: vi.fn(),
+    authFailSpy: vi.fn()
+  }))
 
 // 动态码弹窗复用系统页那一个（它内部用 ElDialog，本文件的 element-plus 桩里没有），
 // 这里换成可控的桩：open 返回动态码，succeed/fail 记录调用。
@@ -77,6 +101,7 @@ vi.mock('element-plus', async () => {
           {
             class: 'el-button-stub',
             disabled: props.disabled || undefined,
+            'data-loading': props.loading ? 'true' : 'false',
             onClick: () => {
               if (props.disabled) {
                 return
@@ -166,6 +191,30 @@ vi.mock('element-plus', async () => {
     }
   })
 
+  const ElDialog = defineComponent({
+    name: 'ElDialog',
+    props: { modelValue: Boolean, title: String },
+    emits: ['update:modelValue'],
+    setup(props, { emit, slots }) {
+      return () =>
+        props.modelValue
+          ? h('div', { class: 'el-dialog-stub' }, [slots.default?.(), slots.footer?.()])
+          : null
+    }
+  })
+
+  const ElDrawer = defineComponent({
+    name: 'ElDrawer',
+    props: { modelValue: Boolean, title: String },
+    emits: ['update:modelValue'],
+    setup(props, { emit, slots }) {
+      return () =>
+        props.modelValue
+          ? h('div', { class: 'el-drawer-stub' }, slots.default?.())
+          : null
+    }
+  })
+
   return {
     ElCard: { name: 'ElCard', template: '<section><slot name="header" /><slot /></section>' },
     ElButton,
@@ -173,6 +222,8 @@ vi.mock('element-plus', async () => {
     ElSelect,
     ElSwitch,
     ElSegmented,
+    ElDialog,
+    ElDrawer,
     ElIcon: defineComponent({
       name: 'ElIcon',
       setup(_, { slots }) {
@@ -193,12 +244,6 @@ vi.mock('element-plus', async () => {
         return () => h('span', { class: 'el-tag-stub' }, slots.default?.())
       }
     }),
-    ElTooltip: defineComponent({
-      name: 'ElTooltip',
-      setup(_, { slots }) {
-        return () => h('div', { class: 'el-tooltip-stub' }, slots.default?.())
-      }
-    }),
     ElEmpty: defineComponent({
       name: 'ElEmpty',
       props: { description: String },
@@ -208,62 +253,57 @@ vi.mock('element-plus', async () => {
     }),
     ElLoadingDirective: { name: 'loading', mounted() {}, updated() {} },
     ElMessage: Object.assign(vi.fn(), {
-      error: vi.fn(),
+      error: elMessageErrorSpy,
       success: elMessageSuccessSpy,
       warning: vi.fn(),
       info: vi.fn()
+    }),
+    ElMessageBox: Object.assign(vi.fn(), {
+      confirm: vi.fn(async () => 'confirm'),
+      alert: vi.fn(async () => 'confirm')
     })
   }
 })
 
-function mountPage(): VueWrapper {
-  return mount(ZAiChat)
-}
+/* ---------------------------------------------------------------------------
+   夹具
+   --------------------------------------------------------------------------- */
 
-function findButton(wrapper: VueWrapper, label: string) {
-  return wrapper.findAll('button').find((button) => button.text() === label)
-}
-
-beforeEach(() => {
-  vi.mocked(listModels).mockReset()
-  vi.mocked(streamChatCompletion).mockReset()
-  vi.mocked(createChatCompletion).mockReset()
-  vi.mocked(runAgent).mockReset()
-  vi.mocked(confirmProposal).mockReset()
-  vi.mocked(rejectProposal).mockReset()
-  vi.mocked(fetchPendingProposals).mockReset()
-  vi.mocked(fetchRun).mockReset()
-  authOpenSpy.mockReset()
-  authSucceedSpy.mockReset()
-  authFailSpy.mockReset()
-  vi.mocked(listModels).mockResolvedValue({
-    object: 'list',
-    data: [{ id: 'gpt-4o-mini', object: 'model', owned_by: 'shared' }]
-  })
-  vi.mocked(fetchPendingProposals).mockResolvedValue({ proposals: [] })
-  vi.mocked(fetchRun).mockResolvedValue({ request_id: 'req-1', events: [] })
-})
-
-/** 后端 expires_at 的形态：本地时间、空格分隔、不带时区。 */
-function serverTime(offsetMs: number): string {
-  const at = new Date(Date.now() + offsetMs)
-  const pad = (value: number) => String(value).padStart(2, '0')
-  return (
-    `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())} ` +
-    `${pad(at.getHours())}:${pad(at.getMinutes())}:${pad(at.getSeconds())}`
-  )
-}
-
-/** run 的响应骨架：新契约多了 stop_reason / rounds / usage。 */
-function runResponse(overrides: Partial<AiAgentRunResponse> = {}): AiAgentRunResponse {
+function conversation(overrides: Partial<AiConversation> = {}): AiConversation {
   return {
-    request_id: 'req-1',
-    content: '',
+    oid: 'chat1',
+    mode: 'chat',
+    title: '问天气',
+    model: 'gpt-4o-mini',
+    status: 'active',
+    tokens: { prompt: 120, completion: 30, total: 150 },
+    context: { tokens: 120, limit: 32768, ratio: 0.0037 },
+    compaction: { upto_seq: 0, summarized: false, degraded_at: null },
+    message_count: 0,
+    created_at: '2026-10-25T00:00:00',
+    updated_at: '2026-10-25T01:00:00',
+    ...overrides
+  }
+}
+
+function run(overrides: Partial<AiRun> = {}): AiRun {
+  return {
+    oid: 'run1',
+    conversation_oid: 'agent1',
+    status: 'running',
+    model: 'gpt-4o-mini',
     stop_reason: null,
     rounds: 1,
-    usage: null,
-    events: [],
-    proposals: [],
+    error_code: null,
+    error_message: null,
+    result_message_oid: null,
+    prompt_tokens: 100,
+    completion_tokens: 20,
+    total_tokens: 120,
+    cancel_requested: false,
+    created_at: '2026-10-25T00:02:00',
+    started_at: '2026-10-25T00:02:01',
+    finished_at: null,
     ...overrides
   }
 }
@@ -282,556 +322,442 @@ function proposal(overrides: Partial<AiAgentProposal> = {}): AiAgentProposal {
   }
 }
 
+/** 后端 expires_at 的形态：本地时间、空格分隔、不带时区。 */
+function serverTime(offsetMs: number): string {
+  const at = new Date(Date.now() + offsetMs)
+  const pad = (value: number) => String(value).padStart(2, '0')
+  return (
+    `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())} ` +
+    `${pad(at.getHours())}:${pad(at.getMinutes())}:${pad(at.getSeconds())}`
+  )
+}
+
+/* ---------------------------------------------------------------------------
+   工具
+   --------------------------------------------------------------------------- */
+
+/** 假定时器下的「等一切落定」：推进 0 毫秒并把微任务链跑完。 */
+async function settle(times = 8): Promise<void> {
+  for (let index = 0; index < times; index += 1) {
+    await vi.advanceTimersByTimeAsync(0)
+  }
+}
+
+function mountPage(): VueWrapper {
+  return mount(ZAiChat, { global: { plugins: [createPinia()] } })
+}
+
+function findButton(wrapper: VueWrapper, label: string) {
+  return wrapper.findAll('button').find((button) => button.text() === label)
+}
+
 async function switchToAgent(wrapper: VueWrapper) {
   const item = wrapper
     .findAll('.el-segmented-stub__item')
     .find((button) => button.text() === 'ai.chat.modes.agent')
   expect(item).toBeTruthy()
   await item!.trigger('click')
+  await settle()
 }
 
 async function sendText(wrapper: VueWrapper, text: string) {
   await wrapper.find('.el-input-stub').setValue(text)
   await findButton(wrapper, 'ai.chat.send')!.trigger('click')
-  await flushPromises()
+  await settle()
 }
 
-describe('请求体形状', () => {
-  it('只带 model、messages 与 stream', () => {
-    const request = buildChatRequest([{ role: 'user', content: '你好' }], 'gpt-4o-mini', true)
-    expect(Object.keys(request).sort()).toEqual(['messages', 'model', 'stream'])
-    expect(request).toEqual({
-      model: 'gpt-4o-mini',
-      messages: [{ role: 'user', content: '你好' }],
-      stream: true
-    })
-  })
+beforeEach(() => {
+  vi.useFakeTimers()
+  vi.mocked(listModels).mockReset()
+  vi.mocked(streamConversationChat).mockReset()
+  vi.mocked(fetchPendingProposals).mockReset()
+  vi.mocked(confirmProposal).mockReset()
+  vi.mocked(rejectProposal).mockReset()
+  vi.mocked(fetchRunDetail).mockReset()
+  vi.mocked(getConversation).mockReset()
+  vi.mocked(listConversations).mockReset()
+  vi.mocked(listMessages).mockReset()
+  vi.mocked(createConversation).mockReset()
+  vi.mocked(updateConversation).mockReset()
+  vi.mocked(deleteConversation).mockReset()
+  vi.mocked(submitRun).mockReset()
+  vi.mocked(cancelRun).mockReset()
+  vi.mocked(fetchActiveRuns).mockReset()
+  authOpenSpy.mockReset()
+  authSucceedSpy.mockReset()
+  authFailSpy.mockReset()
+  elMessageSuccessSpy.mockReset()
+  elMessageErrorSpy.mockReset()
 
-  it('空内容不进历史', () => {
-    const request = buildChatRequest(
-      [
-        { role: 'user', content: '你好' },
-        { role: 'assistant', content: '   ' }
-      ],
-      'gpt-4o-mini',
-      false
-    )
-    expect(request.messages).toEqual([{ role: 'user', content: '你好' }])
-    expect(request.stream).toBe(false)
+  vi.mocked(listModels).mockResolvedValue({
+    object: 'list',
+    data: [{ id: 'gpt-4o-mini', object: 'model', owned_by: 'shared' }]
+  })
+  vi.mocked(listConversations).mockResolvedValue({
+    conversations: [conversation(), conversation({ oid: 'agent1', mode: 'agent', title: '查图书馆' })],
+    next_cursor: null,
+    size: 2
+  })
+  vi.mocked(listMessages).mockResolvedValue({ messages: [], has_more: false, total: 0 })
+  vi.mocked(fetchActiveRuns).mockResolvedValue([])
+  vi.mocked(fetchPendingProposals).mockResolvedValue({ proposals: [] })
+  vi.mocked(getConversation).mockResolvedValue(conversation())
+  vi.mocked(createConversation).mockResolvedValue(conversation({ oid: 'new1' }))
+  vi.mocked(updateConversation).mockResolvedValue(conversation())
+  vi.mocked(deleteConversation).mockResolvedValue({ deleted: true, messages: 0, runs: 0 })
+  vi.mocked(fetchRunDetail).mockResolvedValue({
+    run: run({ status: 'succeeded', stop_reason: 'completed' }),
+    events: [],
+    proposals: []
+  })
+  vi.mocked(submitRun).mockResolvedValue({
+    run_id: 'run1',
+    message_oid: 'm1',
+    status: 'queued'
   })
 })
 
-describe('对话页', () => {
-  it('没有可用模型时给出引导文案', async () => {
-    vi.mocked(listModels).mockResolvedValue({ object: 'list', data: [] })
-    const wrapper = mountPage()
-    await flushPromises()
+afterEach(() => {
+  vi.useRealTimers()
+})
 
-    expect(wrapper.find('.el-empty-stub').text()).toBe('ai.chat.modelsEmpty')
-    expect(wrapper.text()).toContain('ai.chat.modelsEmpty')
+/* ---------------------------------------------------------------------------
+   用例
+   --------------------------------------------------------------------------- */
+
+describe('会话栏', () => {
+  it('列出标题、相对时间与累计 token', async () => {
+    const wrapper = mountPage()
+    await settle()
+
+    const items = wrapper.findAll('.ai-sessions__item')
+    expect(items).toHaveLength(2)
+    expect(items[0]!.text()).toContain('问天气')
+    expect(items[0]!.text()).toContain('ai.chat.sessions.tokens')
+    expect(items[0]!.text()).toContain('150')
 
     wrapper.unmount()
   })
 
-  it('发送时按 model、messages、stream 调用网关', async () => {
-    vi.mocked(streamChatCompletion).mockResolvedValue({
-      text: '答案',
+  it('没有会话时给空态引导', async () => {
+    vi.mocked(listConversations).mockResolvedValue({
+      conversations: [],
+      next_cursor: null,
+      size: 0
+    })
+    const wrapper = mountPage()
+    await settle()
+
+    expect(wrapper.find('.ai-sessions .el-empty-stub').exists()).toBe(true)
+    expect(wrapper.text()).toContain('ai.chat.sessions.empty')
+    // 没有会话就没法开聊：提示先新建一个。
+    expect(wrapper.text()).toContain('ai.chat.sessions.pickFirst')
+
+    wrapper.unmount()
+  })
+
+  it('空态里点「新建会话」：建一个并切过去', async () => {
+    vi.mocked(listConversations).mockResolvedValue({
+      conversations: [],
+      next_cursor: null,
+      size: 0
+    })
+    const wrapper = mountPage()
+    await settle()
+
+    await findButton(wrapper, 'ai.chat.sessions.new')!.trigger('click')
+    await settle()
+
+    expect(createConversation).toHaveBeenCalledWith('chat')
+    expect(listMessages).toHaveBeenCalledWith('new1', expect.objectContaining({ afterSeq: 0 }))
+
+    wrapper.unmount()
+  })
+
+  it('切换会话：拉那个会话的消息', async () => {
+    const wrapper = mountPage()
+    await settle()
+    vi.mocked(listMessages).mockClear()
+
+    await wrapper.findAll('.ai-sessions__main')[1]!.trigger('click')
+    await settle()
+
+    expect(listMessages).toHaveBeenCalledWith('agent1', expect.objectContaining({ afterSeq: 0 }))
+    expect(wrapper.findAll('.ai-sessions__item')[1]!.classes()).toContain('is-active')
+
+    wrapper.unmount()
+  })
+
+  it('删除会话：先确认，再删', async () => {
+    const wrapper = mountPage()
+    await settle()
+
+    await wrapper
+      .findAll('.ai-sessions__item')[1]!
+      .find('button[title="ai.chat.sessions.remove"]')!
+      .trigger('click')
+    await settle()
+
+    expect(deleteConversation).toHaveBeenCalledWith('agent1')
+    expect(elMessageSuccessSpy).toHaveBeenCalledWith('ai.chat.sessions.deletedNotice')
+
+    wrapper.unmount()
+  })
+})
+
+describe('上下文水位', () => {
+  it('按 token / limit 画比例，90% 起换警示色', async () => {
+    vi.mocked(listConversations).mockResolvedValue({
+      conversations: [
+        conversation({
+          context: { tokens: 900, limit: 1000, ratio: 0.9 },
+          compaction: { upto_seq: 0, summarized: false, degraded_at: null }
+        })
+      ],
+      next_cursor: null,
+      size: 1
+    })
+    const wrapper = mountPage()
+    await settle()
+
+    const rail = wrapper.find('.ai-chat__context .yg-progress__rail')
+    expect(rail.exists()).toBe(true)
+    expect(rail.attributes('style')).toContain('--yg-progress-value: 90')
+    expect(wrapper.find('.ai-chat__context .yg-progress--warning').exists()).toBe(true)
+    expect(wrapper.text()).toContain('ai.chat.sessions.context.warning')
+
+    wrapper.unmount()
+  })
+
+  it('水位低时是中性色', async () => {
+    const wrapper = mountPage()
+    await settle()
+
+    const rail = wrapper.find('.ai-chat__context .yg-progress__rail')
+    expect(rail.attributes('style')).toContain('--yg-progress-value: 0')
+    expect(wrapper.find('.ai-chat__context .yg-progress--warning').exists()).toBe(false)
+
+    wrapper.unmount()
+  })
+})
+
+describe('压缩分隔线', () => {
+  it('在压缩点画线并说明更早有多少条被压缩', async () => {
+    vi.mocked(listConversations).mockResolvedValue({
+      conversations: [
+        conversation({
+          compaction: { upto_seq: 2, summarized: true, degraded_at: null }
+        })
+      ],
+      next_cursor: null,
+      size: 1
+    })
+    vi.mocked(listMessages).mockResolvedValue({
+      messages: [
+        { oid: 'm1', seq: 1, role: 'user', content: '第一条', created_at: '2026-10-25T00:00:00' },
+        { oid: 'm2', seq: 2, role: 'assistant', content: '第二条', created_at: '2026-10-25T00:01:00' },
+        { oid: 'm3', seq: 3, role: 'user', content: '第三条', created_at: '2026-10-25T00:02:00' }
+      ],
+      has_more: false,
+      total: 3
+    })
+    const wrapper = mountPage()
+    await settle()
+
+    const divider = wrapper.find('.ai-chat__compaction')
+    expect(divider.exists()).toBe(true)
+    expect(divider.text()).toContain('ai.chat.sessions.context.compacted')
+    expect(divider.text()).toContain('2')
+
+    wrapper.unmount()
+  })
+})
+
+describe('对话模式', () => {
+  it('走会话的 SSE：请求体只有本次内容', async () => {
+    vi.mocked(streamConversationChat).mockResolvedValue({
+      text: '今天晴。',
       done: true,
       interrupted: false,
+      error: null,
       requestId: 'req-1',
-      error: null
+      conversationOid: 'chat1',
+      messageOid: 'm2'
     })
     const wrapper = mountPage()
-    await flushPromises()
+    await settle()
 
-    await wrapper.find('.el-input-stub').setValue('你好')
-    await findButton(wrapper, 'ai.chat.send')!.trigger('click')
-    await flushPromises()
+    await sendText(wrapper, '天气怎么样')
 
-    expect(streamChatCompletion).toHaveBeenCalledWith(
-      expect.objectContaining({
-        model: 'gpt-4o-mini',
-        messages: [{ role: 'user', content: '你好' }],
-        // 审计场景名：后端落 AI_CALL_LOGS.PURPOSE（不影响额度）。
-        scene: 'chat'
-      })
+    expect(streamConversationChat).toHaveBeenCalledWith(
+      expect.objectContaining({ conversationOid: 'chat1', content: '天气怎么样' })
     )
-    expect(wrapper.text()).toContain('答案')
+    expect(wrapper.text()).toContain('今天晴。')
 
     wrapper.unmount()
   })
 
-  it('关闭流式时走非流式请求', async () => {
-    vi.mocked(createChatCompletion).mockResolvedValue({
-      choices: [{ message: { content: '一次性答案' } }]
-    })
-    const wrapper = mountPage()
-    await flushPromises()
-
-    await wrapper.find('.el-switch-stub').trigger('click')
-    await wrapper.find('.el-input-stub').setValue('你好')
-    await findButton(wrapper, 'ai.chat.send')!.trigger('click')
-    await flushPromises()
-
-    expect(createChatCompletion).toHaveBeenCalledWith(
-      'gpt-4o-mini',
-      [{ role: 'user', content: '你好' }],
-      // 审计场景名：后端落 AI_CALL_LOGS.PURPOSE（不影响额度）。
-      'chat'
-    )
-    expect(wrapper.text()).toContain('一次性答案')
-
-    wrapper.unmount()
-  })
-
-  it('错误码展示人话说明与错误码，并按 Retry-After 倒计时', async () => {
-    vi.mocked(streamChatCompletion).mockRejectedValue(
-      new AiRequestError({
-        status: 429,
-        code: 'AI_RATE_LIMITED',
-        retryAfter: 30,
-        requestId: 'req-429'
-      })
+  it('流失败时给人话说明与错误码', async () => {
+    vi.mocked(streamConversationChat).mockRejectedValue(
+      new AiRequestError({ status: 429, code: 'AI_RATE_LIMITED', retryAfter: 30 })
     )
     const wrapper = mountPage()
-    await flushPromises()
+    await settle()
 
-    await wrapper.find('.el-input-stub').setValue('你好')
-    await findButton(wrapper, 'ai.chat.send')!.trigger('click')
-    await flushPromises()
+    await sendText(wrapper, '天气怎么样')
 
     expect(wrapper.text()).toContain('ai.errors.AI_RATE_LIMITED.title')
-    expect(wrapper.text()).toContain('ai.errors.AI_RATE_LIMITED.hint')
-    expect(wrapper.text()).toContain('AI_RATE_LIMITED')
-    expect(wrapper.text()).toContain('req-429')
     expect(wrapper.text()).toContain('ai.chat.rateLimited')
-
-    wrapper.unmount()
-  })
-
-  it('额度耗尽时展示已用量与上限', async () => {
-    vi.mocked(streamChatCompletion).mockRejectedValue(
-      new AiRequestError({
-        status: 429,
-        code: 'insufficient_quota',
-        quotaUsed: 12,
-        quotaLimit: 20
-      })
-    )
-    const wrapper = mountPage()
-    await flushPromises()
-
-    await wrapper.find('.el-input-stub').setValue('你好')
-    await findButton(wrapper, 'ai.chat.send')!.trigger('click')
-    await flushPromises()
-
-    expect(wrapper.text()).toContain('ai.errors.INSUFFICIENT_QUOTA.title')
-    expect(wrapper.text()).toContain('ai.chat.quotaUsed')
-
-    wrapper.unmount()
-  })
-
-  it('没收到结束标记时标记为响应中断', async () => {
-    vi.mocked(streamChatCompletion).mockResolvedValue({
-      text: '半截回答',
-      done: false,
-      interrupted: true,
-      requestId: 'req-2',
-      error: null
-    })
-    const wrapper = mountPage()
-    await flushPromises()
-
-    await wrapper.find('.el-input-stub').setValue('你好')
-    await findButton(wrapper, 'ai.chat.send')!.trigger('click')
-    await flushPromises()
-
-    expect(wrapper.text()).toContain('ai.chat.interrupted')
-    expect(wrapper.text()).toContain('半截回答')
-
-    wrapper.unmount()
-  })
-
-  it('模型列表加载失败时给出提示', async () => {
-    vi.mocked(listModels).mockRejectedValue(new Error('boom'))
-    const wrapper = mountPage()
-    await flushPromises()
-
-    expect(wrapper.text()).toContain('ai.chat.modelsLoadFailed')
 
     wrapper.unmount()
   })
 })
 
 describe('智能体模式', () => {
-  it('切到智能体后走 /ai/agent/run，不走流式', async () => {
-    vi.mocked(runAgent).mockResolvedValue(
-      runResponse({ request_id: 'req-agent', content: '图书馆志愿有 2 个。' })
-    )
+  it('提交后立刻返回，不等任务跑完', async () => {
     const wrapper = mountPage()
-    await flushPromises()
-
+    await settle()
     await switchToAgent(wrapper)
-    await sendText(wrapper, '查一下图书馆志愿')
 
-    expect(runAgent).toHaveBeenCalledWith(
-      [{ role: 'user', content: '查一下图书馆志愿' }],
-      'gpt-4o-mini',
-      expect.any(AbortSignal)
+    await sendText(wrapper, '查一下图书馆')
+
+    expect(submitRun).toHaveBeenCalledWith(
+      'agent1',
+      '查一下图书馆',
+      expect.objectContaining({ model: 'gpt-4o-mini' })
     )
-    expect(streamChatCompletion).not.toHaveBeenCalled()
-    expect(createChatCompletion).not.toHaveBeenCalled()
-    expect(wrapper.text()).toContain('图书馆志愿有 2 个。')
+    // 提交就结束了：按钮不再处于加载态，页面显示「后台执行中」。
+    expect(findButton(wrapper, 'ai.chat.send')!.attributes('data-loading')).toBe('false')
+    expect(wrapper.text()).toContain('ai.agent.run.background')
 
     wrapper.unmount()
   })
 
-  it('运行中显示「正在执行工具」而不是打字机', async () => {
-    let release: (value: AiAgentRunResponse) => void = () => {}
-    vi.mocked(runAgent).mockImplementation(
-      () =>
-        new Promise((resolve) => {
-          release = resolve
-        })
-    )
+  it('轮询到终态就停：不再发请求', async () => {
     const wrapper = mountPage()
-    await flushPromises()
-
+    await settle()
     await switchToAgent(wrapper)
-    await wrapper.find('.el-input-stub').setValue('查一下')
-    await findButton(wrapper, 'ai.chat.send')!.trigger('click')
-    await flushPromises()
+    await sendText(wrapper, '查一下图书馆')
 
-    expect(wrapper.text()).toContain('ai.agent.running')
-    expect(wrapper.find('.ai-agent__pulse').exists()).toBe(true)
-    expect(wrapper.text()).not.toContain('ai.chat.thinking')
+    await vi.advanceTimersByTimeAsync(1500)
+    await settle()
+    const calls = vi.mocked(fetchRunDetail).mock.calls.length
+    expect(calls).toBeGreaterThan(0)
 
-    release(runResponse({ request_id: 'req-1', content: '好了' }))
-    await flushPromises()
+    await vi.advanceTimersByTimeAsync(10_000)
+    await settle()
 
-    expect(wrapper.text()).not.toContain('ai.agent.running')
-    expect(wrapper.text()).toContain('好了')
+    expect(vi.mocked(fetchRunDetail).mock.calls.length).toBe(calls)
+    expect(wrapper.text()).toContain('ai.agent.run.status.succeeded')
 
     wrapper.unmount()
   })
 
-  it('工具时间线：一行一条，点开才显示结果', async () => {
-    vi.mocked(runAgent).mockResolvedValue(
-      runResponse({
-        request_id: 'req-2',
-        content: '已完成。',
-        events: [
-          {
-            round_no: 1,
-            tool_name: 'search_activities',
-            tool_kind: 'read',
-            args_summary: '{"query":"图书馆"}',
-            result_summary: '找到 2 个活动',
-            status: 'executed'
-          },
-          {
-            round_no: 2,
-            tool_name: 'update_member_duration',
-            tool_kind: 'write',
-            args_summary: '{"duration":6}',
-            result_summary: '等待确认',
-            status: 'proposed'
-          },
-          {
-            round_no: 3,
-            tool_name: 'not_a_tool',
-            tool_kind: null,
-            args_summary: null,
-            result_summary: '工具不在白名单内，已拒绝',
-            status: 'denied'
-          }
-        ]
-      })
-    )
+  it('工具留痕与提案卡按原来的观感渲染', async () => {
+    vi.mocked(fetchRunDetail).mockResolvedValue({
+      run: run({ status: 'succeeded', stop_reason: 'completed', rounds: 2 }),
+      events: [
+        {
+          round_no: 1,
+          tool_name: 'search_activities',
+          tool_kind: 'read',
+          args_summary: '{"query":"图书馆"}',
+          result_summary: '找到 2 个活动',
+          status: 'executed'
+        }
+      ],
+      proposals: [proposal({ oid: 'b'.repeat(32) })]
+    })
     const wrapper = mountPage()
-    await flushPromises()
-
+    await settle()
     await switchToAgent(wrapper)
-    await sendText(wrapper, '查一下并改时长')
+    await sendText(wrapper, '查一下图书馆并改时长')
 
-    const rows = wrapper.findAll('.ai-agent__event-row')
-    expect(rows).toHaveLength(3)
-    // 工具名走中文标签；未知工具回落，不把原始名字直接丢给用户。
+    await vi.advanceTimersByTimeAsync(1500)
+    await settle()
+
     expect(wrapper.text()).toContain('ai.agent.tools.search_activities')
     expect(wrapper.text()).toContain('ai.agent.tools.update_member_duration')
-    expect(wrapper.text()).toContain('ai.agent.tools.unknown')
-    // 状态徽标
-    expect(wrapper.text()).toContain('ai.agent.status.executed')
-    expect(wrapper.text()).toContain('ai.agent.status.proposed')
-    expect(wrapper.text()).toContain('ai.agent.status.denied')
-    // 只读 / 写 用不同色点区分
-    expect(wrapper.find('.ai-agent__dot.is-write').exists()).toBe(true)
-    expect(wrapper.find('.ai-agent__dot.is-read').exists()).toBe(true)
-    // 写操作还有文字标签，不靠颜色单独传达
-    expect(wrapper.text()).toContain('ai.agent.kindWrite')
     // 结果默认收起
     expect(wrapper.text()).not.toContain('找到 2 个活动')
-    await rows[0]!.trigger('click')
+    await wrapper.find('.ai-agent__event-row')!.trigger('click')
     expect(wrapper.text()).toContain('找到 2 个活动')
-    expect(rows[0]!.attributes('aria-expanded')).toBe('true')
 
     wrapper.unmount()
   })
 
-  it('提案卡：确认执行后显示结果摘要', async () => {
-    const oid = 'a'.repeat(32)
-    vi.mocked(runAgent).mockResolvedValue(
-      runResponse({
-        request_id: 'req-3',
-        content: '已生成提案，请确认。',
-        events: [
-          {
-            round_no: 1,
-            tool_name: 'update_member_duration',
-            tool_kind: 'write',
-            args_summary: '{"duration":6}',
-            result_summary: '等待确认',
-            status: 'proposed'
-          }
-        ],
-        proposals: [proposal({ oid })]
-      })
-    )
-    vi.mocked(confirmProposal).mockResolvedValue({
-      status: 'confirmed',
-      result_summary: '{"duration":6,"ok":true}',
-      dual_auth_cached: false
-    })
+  it('中止运行调取消接口', async () => {
+    vi.mocked(cancelRun).mockResolvedValue({ status: 'cancelled' })
     const wrapper = mountPage()
-    await flushPromises()
-
+    await settle()
     await switchToAgent(wrapper)
-    await sendText(wrapper, '把张三时长改成 6 小时')
+    await sendText(wrapper, '查一下图书馆')
 
-    expect(wrapper.text()).toContain('ai.agent.proposal.validFor')
-    expect(wrapper.text()).toContain('ai.agent.tools.update_member_duration')
+    await findButton(wrapper, 'ai.agent.run.cancel')!.trigger('click')
+    await settle()
 
-    await findButton(wrapper, 'ai.agent.proposal.confirm')!.trigger('click')
-    await flushPromises()
-
-    expect(confirmProposal).toHaveBeenCalledWith(oid)
-    expect(wrapper.text()).toContain('ai.agent.proposal.confirmed')
-    expect(wrapper.text()).toContain('{"duration":6,"ok":true}')
-    // 终态后不再给按钮
-    expect(findButton(wrapper, 'ai.agent.proposal.confirm')).toBeUndefined()
-
-    wrapper.unmount()
-  })
-
-  it('提案卡：驳回调 reject，标已驳回', async () => {
-    const oid = 'b'.repeat(32)
-    vi.mocked(runAgent).mockResolvedValue(
-      runResponse({
-        request_id: 'req-4',
-        proposals: [proposal({ oid, tool_name: 'set_member_status' })]
-      })
-    )
-    vi.mocked(rejectProposal).mockResolvedValue({
-      status: 'rejected',
-      dual_auth_cached: false
-    })
-    const wrapper = mountPage()
-    await flushPromises()
-
-    await switchToAgent(wrapper)
-    await sendText(wrapper, '把报名改成已生效')
-
-    await findButton(wrapper, 'ai.agent.proposal.reject')!.trigger('click')
-    await flushPromises()
-
-    expect(rejectProposal).toHaveBeenCalledWith(oid)
-    expect(wrapper.text()).toContain('ai.agent.proposal.rejected')
-
-    wrapper.unmount()
-  })
-
-  it('提案已被处理（409）时给人话与请求编号', async () => {
-    const oid = 'c'.repeat(32)
-    vi.mocked(runAgent).mockResolvedValue(
-      runResponse({ request_id: 'req-5', proposals: [proposal({ oid })] })
-    )
-    vi.mocked(confirmProposal).mockRejectedValue(
-      new AiRequestError({
-        status: 409,
-        code: 'AI_AGENT_PROPOSAL_CONFLICT',
-        requestId: 'req-409'
-      })
-    )
-    const wrapper = mountPage()
-    await flushPromises()
-
-    await switchToAgent(wrapper)
-    await sendText(wrapper, '改时长')
-
-    await findButton(wrapper, 'ai.agent.proposal.confirm')!.trigger('click')
-    await flushPromises()
-
-    expect(wrapper.text()).toContain('ai.errors.AI_AGENT_PROPOSAL_CONFLICT.title')
-    expect(wrapper.text()).toContain('ai.errors.AI_AGENT_PROPOSAL_CONFLICT.hint')
-    expect(wrapper.text()).toContain('AI_AGENT_PROPOSAL_CONFLICT')
-    expect(wrapper.text()).toContain('req-409')
-
-    wrapper.unmount()
-  })
-
-  it('提案已过期（410）落过期终态', async () => {
-    const oid = 'd'.repeat(32)
-    vi.mocked(runAgent).mockResolvedValue(
-      runResponse({ request_id: 'req-6', proposals: [proposal({ oid })] })
-    )
-    vi.mocked(confirmProposal).mockRejectedValue(
-      new AiRequestError({
-        status: 410,
-        code: 'AI_AGENT_PROPOSAL_EXPIRED',
-        requestId: 'req-410'
-      })
-    )
-    const wrapper = mountPage()
-    await flushPromises()
-
-    await switchToAgent(wrapper)
-    await sendText(wrapper, '改时长')
-
-    await findButton(wrapper, 'ai.agent.proposal.confirm')!.trigger('click')
-    await flushPromises()
-
-    expect(wrapper.text()).toContain('ai.agent.proposal.expired')
-    expect(findButton(wrapper, 'ai.agent.proposal.confirm')).toBeUndefined()
-
-    wrapper.unmount()
-  })
-
-  it('智能体请求失败沿用错误码与请求编号展示', async () => {
-    vi.mocked(runAgent).mockRejectedValue(
-      new AiRequestError({
-        status: 403,
-        code: 'AI_FORBIDDEN',
-        requestId: 'req-403'
-      })
-    )
-    const wrapper = mountPage()
-    await flushPromises()
-
-    await switchToAgent(wrapper)
-    await sendText(wrapper, '查一下')
-
-    expect(wrapper.text()).toContain('ai.errors.AI_FORBIDDEN.title')
-    expect(wrapper.text()).toContain('req-403')
+    expect(cancelRun).toHaveBeenCalledWith('run1')
 
     wrapper.unmount()
   })
 })
 
-describe('结构化预览', () => {
-  it('diff 逐行着色：新增绿、删除红、块头单独一类', async () => {
-    vi.mocked(runAgent).mockResolvedValue(
-      runResponse({
-        content: '要改这个文件。',
-        proposals: [
-          proposal({
-            tool_name: 'fs_write',
-            preview: {
-              kind: 'diff',
-              path: '/etc/x.conf',
-              diff: '@@ -1,2 +1,2 @@\n keep\n-old\n+new'
-            }
-          })
-        ]
-      })
-    )
+describe('接回在跑的任务', () => {
+  it('进页面先问活跃 run：有就接管进度', async () => {
+    vi.mocked(fetchActiveRuns).mockResolvedValue([
+      run({ oid: 'run9', conversation_oid: 'agent1', status: 'running', rounds: 3 })
+    ])
     const wrapper = mountPage()
-    await flushPromises()
+    await settle()
+
+    expect(fetchActiveRuns).toHaveBeenCalled()
+    expect(wrapper.text()).toContain('ai.agent.run.background')
+    expect(wrapper.text()).toContain('ai.agent.run.roundsDone')
+
+    await vi.advanceTimersByTimeAsync(1500)
+    await settle()
+    expect(fetchRunDetail).toHaveBeenCalledWith('run9', 0)
+
+    wrapper.unmount()
+  })
+})
+
+describe('待确认提案', () => {
+  it('进入智能体模式时拉一次待确认提案', async () => {
+    vi.mocked(fetchPendingProposals).mockResolvedValue({
+      proposals: [proposal({ oid: '7'.repeat(32), tool_name: 'db_insert' })]
+    })
+    const wrapper = mountPage()
+    await settle()
 
     await switchToAgent(wrapper)
-    await sendText(wrapper, '改一下配置')
 
-    expect(wrapper.text()).toContain('ai.agent.preview.diff')
-    expect(wrapper.find('.ai-preview__line.is-add').text()).toBe('+new')
-    expect(wrapper.find('.ai-preview__line.is-remove').text()).toBe('-old')
-    expect(wrapper.find('.ai-preview__line.is-hunk').exists()).toBe(true)
-    // text() 会 trim 掉上下文行的前导空格（原始文本带空格，见 agentSession 的用例）
-    expect(wrapper.find('.ai-preview__line.is-context').text()).toBe('keep')
+    expect(fetchPendingProposals).toHaveBeenCalledWith('proposed')
+    expect(wrapper.text()).toContain('ai.agent.pending.count')
 
     wrapper.unmount()
   })
 
-  it('远程命令进等宽可滚动区', async () => {
-    vi.mocked(runAgent).mockResolvedValue(
-      runResponse({
-        proposals: [
-          proposal({
-            tool_name: 'ssh_exec',
-            preview: {
-              kind: 'command',
-              target: 'root@127.0.0.1:22',
-              command: 'systemctl status nginx'
-            }
-          })
-        ]
-      })
-    )
+  it('提案能直接确认（页面刷新后走这条路）', async () => {
+    vi.mocked(fetchPendingProposals).mockResolvedValue({
+      proposals: [proposal({ oid: '6'.repeat(32) })]
+    })
+    vi.mocked(confirmProposal).mockResolvedValue({
+      status: 'confirmed',
+      result_summary: '{"ok":true}',
+      dual_auth_cached: false
+    })
     const wrapper = mountPage()
-    await flushPromises()
-
+    await settle()
     await switchToAgent(wrapper)
-    await sendText(wrapper, '看下 nginx')
 
-    expect(wrapper.text()).toContain('ai.agent.preview.command')
-    expect(wrapper.find('.ai-preview__mono').text()).toContain('systemctl status nginx')
-    expect(wrapper.text()).toContain('root@127.0.0.1:22')
+    await findButton(wrapper, 'ai.agent.pending.entry')!.trigger('click')
+    await settle()
+    await findButton(wrapper, 'ai.agent.proposal.confirm')!.trigger('click')
+    await settle()
 
-    wrapper.unmount()
-  })
-
-  it('行变更给键值表', async () => {
-    vi.mocked(runAgent).mockResolvedValue(
-      runResponse({
-        proposals: [
-          proposal({
-            tool_name: 'db_update',
-            preview: {
-              kind: 'row_update',
-              table: 'USERS',
-              key: { OID: 'abc' },
-              values: { NAME: '张三' }
-            }
-          })
-        ]
-      })
-    )
-    const wrapper = mountPage()
-    await flushPromises()
-
-    await switchToAgent(wrapper)
-    await sendText(wrapper, '改一下名字')
-
-    expect(wrapper.text()).toContain('ai.agent.preview.row_update')
-    expect(wrapper.findAll('.yg-descriptions__item')).toHaveLength(2)
-    expect(wrapper.text()).toContain('USERS')
-    expect(wrapper.text()).toContain('张三')
-
-    wrapper.unmount()
-  })
-
-  it('预览不认识时退回参数摘要，不渲染半截数据', async () => {
-    vi.mocked(runAgent).mockResolvedValue(
-      runResponse({
-        proposals: [proposal({ preview: { kind: 'quantum' } as never })]
-      })
-    )
-    const wrapper = mountPage()
-    await flushPromises()
-
-    await switchToAgent(wrapper)
-    await sendText(wrapper, '改一下')
-
-    expect(wrapper.find('.ai-preview').exists()).toBe(false)
-    expect(wrapper.text()).toContain('{"duration":6}')
+    expect(confirmProposal).toHaveBeenCalledWith('6'.repeat(32))
+    expect(wrapper.text()).toContain('ai.agent.proposal.confirmed')
 
     wrapper.unmount()
   })
@@ -839,376 +765,53 @@ describe('结构化预览', () => {
 
 describe('双人动态码', () => {
   it('需要动态码的提案：先弹授权框，拿到码再带码确认', async () => {
-    const oid = 'e'.repeat(32)
     authOpenSpy.mockResolvedValue('123456')
-    vi.mocked(runAgent).mockResolvedValue(
-      runResponse({
-        proposals: [proposal({ oid, tool_name: 'fs_write', requires_dual_auth: true })]
-      })
-    )
+    vi.mocked(fetchPendingProposals).mockResolvedValue({
+      proposals: [proposal({ oid: 'e'.repeat(32), tool_name: 'fs_write', requires_dual_auth: true })]
+    })
     vi.mocked(confirmProposal).mockResolvedValue({
       status: 'confirmed',
       dual_auth_cached: false
     })
     const wrapper = mountPage()
-    await flushPromises()
-
+    await settle()
     await switchToAgent(wrapper)
-    await sendText(wrapper, '改一下配置')
+
+    await findButton(wrapper, 'ai.agent.pending.entry')!.trigger('click')
+    await settle()
 
     // 卡上常驻「需双人动态码」标签
     expect(wrapper.text()).toContain('ai.agent.dualAuth.badge')
 
     await findButton(wrapper, 'ai.agent.proposal.confirm')!.trigger('click')
-    await flushPromises()
+    await settle()
 
     expect(authOpenSpy).toHaveBeenCalled()
-    expect(confirmProposal).toHaveBeenCalledWith(oid, '123456')
+    expect(confirmProposal).toHaveBeenCalledWith('e'.repeat(32), '123456')
     expect(authSucceedSpy).toHaveBeenCalled()
-    expect(wrapper.text()).toContain('ai.agent.proposal.confirmed')
 
     wrapper.unmount()
   })
 
   it('不需要动态码的提案：不弹授权框', async () => {
-    const oid = 'f'.repeat(32)
-    vi.mocked(runAgent).mockResolvedValue(runResponse({ proposals: [proposal({ oid })] }))
-    vi.mocked(confirmProposal).mockResolvedValue({
-      status: 'confirmed',
-      dual_auth_cached: false
-    })
-    const wrapper = mountPage()
-    await flushPromises()
-
-    await switchToAgent(wrapper)
-    await sendText(wrapper, '改时长')
-
-    await findButton(wrapper, 'ai.agent.proposal.confirm')!.trigger('click')
-    await flushPromises()
-
-    expect(authOpenSpy).not.toHaveBeenCalled()
-    expect(confirmProposal).toHaveBeenCalledWith(oid)
-
-    wrapper.unmount()
-  })
-
-  it('命中 30 分钟授权窗口：不弹授权框，也不传动态码', async () => {
-    const oid = '5'.repeat(32)
-    vi.mocked(runAgent).mockResolvedValue(
-      runResponse({
-        proposals: [
-          proposal({
-            oid,
-            tool_name: 'fs_write',
-            requires_dual_auth: true,
-            dual_auth_cached: true
-          })
-        ]
-      })
-    )
-    vi.mocked(confirmProposal).mockResolvedValue({
-      status: 'confirmed',
-      dual_auth_cached: true
-    })
-    const wrapper = mountPage()
-    await flushPromises()
-
-    await switchToAgent(wrapper)
-    await sendText(wrapper, '改一下配置')
-
-    // 缓存命中：提示从「需双人动态码」换成中性的一句
-    expect(wrapper.text()).toContain('ai.agent.dualAuth.cached')
-    expect(wrapper.text()).not.toContain('ai.agent.dualAuth.badge')
-
-    await findButton(wrapper, 'ai.agent.proposal.confirm')!.trigger('click')
-    await flushPromises()
-
-    expect(authOpenSpy).not.toHaveBeenCalled()
-    expect(confirmProposal).toHaveBeenCalledWith(oid)
-    expect(wrapper.text()).toContain('ai.agent.proposal.confirmed')
-
-    wrapper.unmount()
-  })
-
-  it('窗口刚过期（422）：重新弹码，且不显示成失败', async () => {
-    const oid = '4'.repeat(32)
-    authOpenSpy.mockResolvedValue('123456')
-    vi.mocked(runAgent).mockResolvedValue(
-      runResponse({
-        proposals: [
-          proposal({
-            oid,
-            tool_name: 'fs_write',
-            requires_dual_auth: true,
-            dual_auth_cached: true
-          })
-        ]
-      })
-    )
-    vi.mocked(confirmProposal)
-      .mockRejectedValueOnce(new AiRequestError({ status: 422, code: 'AI_AGENT_TOTP_REQUIRED' }))
-      .mockResolvedValueOnce({ status: 'confirmed', dual_auth_cached: true })
-    const wrapper = mountPage()
-    await flushPromises()
-
-    await switchToAgent(wrapper)
-    await sendText(wrapper, '改一下配置')
-
-    await findButton(wrapper, 'ai.agent.proposal.confirm')!.trigger('click')
-    await flushPromises()
-
-    // 第一次没带码（命中缓存），服务端说要码 → 重新弹一次并带上码重试
-    expect(confirmProposal).toHaveBeenNthCalledWith(1, oid)
-    expect(authOpenSpy).toHaveBeenCalled()
-    expect(confirmProposal).toHaveBeenNthCalledWith(2, oid, '123456')
-    expect(wrapper.text()).toContain('ai.agent.proposal.confirmed')
-    // 不该被显示成失败
-    expect(wrapper.text()).not.toContain('ai.agent.proposal.error')
-
-    wrapper.unmount()
-  })
-
-  it('首次授权成功后，同列表其余待确认的运维写卡片免码', async () => {
-    const first = '3'.repeat(32)
-    const second = '2'.repeat(32)
-    authOpenSpy.mockResolvedValue('123456')
-    vi.mocked(runAgent).mockResolvedValue(
-      runResponse({
-        proposals: [
-          proposal({
-            oid: first,
-            tool_name: 'fs_write',
-            requires_dual_auth: true,
-            dual_auth_cached: false
-          }),
-          proposal({
-            oid: second,
-            tool_name: 'db_insert',
-            requires_dual_auth: true,
-            dual_auth_cached: false
-          })
-        ]
-      })
-    )
-    vi.mocked(confirmProposal).mockResolvedValue({
-      status: 'confirmed',
-      dual_auth_cached: false
-    })
-    const wrapper = mountPage()
-    await flushPromises()
-
-    await switchToAgent(wrapper)
-    await sendText(wrapper, '改配置并插一行')
-
-    await findButton(wrapper, 'ai.agent.proposal.confirm')!.trigger('click')
-    await flushPromises()
-
-    expect(confirmProposal).toHaveBeenCalledWith(first, '123456')
-    // 另一张卡进入免码态：不再显示「需双人动态码」，改显示中性提示
-    expect(wrapper.text()).toContain('ai.agent.dualAuth.cached')
-
-    await findButton(wrapper, 'ai.agent.proposal.confirm')!.trigger('click')
-    await flushPromises()
-
-    expect(confirmProposal).toHaveBeenLastCalledWith(second)
-    expect(authOpenSpy).toHaveBeenCalledTimes(1)
-
-    wrapper.unmount()
-  })
-
-  it('动态码被拒（403）：弹层说明原因，卡片留在待确认可重试', async () => {
-    const oid = '9'.repeat(32)
-    authOpenSpy.mockResolvedValue('000000')
-    vi.mocked(runAgent).mockResolvedValue(
-      runResponse({
-        proposals: [proposal({ oid, tool_name: 'fs_write', requires_dual_auth: true })]
-      })
-    )
-    vi.mocked(confirmProposal).mockRejectedValue(
-      new AiRequestError({ status: 403, code: 'AI_AGENT_DUAL_AUTH_REJECTED' })
-    )
-    const wrapper = mountPage()
-    await flushPromises()
-
-    await switchToAgent(wrapper)
-    await sendText(wrapper, '改一下配置')
-
-    await findButton(wrapper, 'ai.agent.proposal.confirm')!.trigger('click')
-    await flushPromises()
-
-    expect(authFailSpy).toHaveBeenCalled()
-    expect(wrapper.text()).toContain('ai.agent.proposalErrors.forbidden')
-    // 动态码类失败可以重试：确认按钮还在
-    expect(findButton(wrapper, 'ai.agent.proposal.confirm')).toBeTruthy()
-    // 最多试三次，不把人锁在弹层里
-    expect(confirmProposal).toHaveBeenCalledTimes(3)
-
-    wrapper.unmount()
-  })
-
-  it('缺动态码（422）：重新弹码要一次，不显示成失败', async () => {
-    const oid = '8'.repeat(32)
-    authOpenSpy.mockResolvedValue('123456')
-    vi.mocked(runAgent).mockResolvedValue(runResponse({ proposals: [proposal({ oid })] }))
-    vi.mocked(confirmProposal)
-      .mockRejectedValueOnce(new AiRequestError({ status: 422, code: 'AI_AGENT_TOTP_REQUIRED' }))
-      .mockResolvedValueOnce({ status: 'confirmed', dual_auth_cached: false })
-    const wrapper = mountPage()
-    await flushPromises()
-
-    await switchToAgent(wrapper)
-    await sendText(wrapper, '改时长')
-
-    await findButton(wrapper, 'ai.agent.proposal.confirm')!.trigger('click')
-    await flushPromises()
-
-    expect(authOpenSpy).toHaveBeenCalled()
-    expect(confirmProposal).toHaveBeenLastCalledWith(oid, '123456')
-    expect(wrapper.text()).toContain('ai.agent.proposal.confirmed')
-    // 仍需二次验证不是失败：不该出现错误块
-    expect(wrapper.text()).not.toContain('ai.agent.proposal.error')
-
-    wrapper.unmount()
-  })
-})
-
-describe('待确认提案入口', () => {
-  it('进入智能体模式时拉一次待确认提案，展开能看到', async () => {
     vi.mocked(fetchPendingProposals).mockResolvedValue({
-      proposals: [proposal({ oid: '7'.repeat(32), tool_name: 'db_insert' })]
+      proposals: [proposal({ oid: 'f'.repeat(32) })]
+    })
+    vi.mocked(confirmProposal).mockResolvedValue({
+      status: 'confirmed',
+      dual_auth_cached: false
     })
     const wrapper = mountPage()
-    await flushPromises()
-
+    await settle()
     await switchToAgent(wrapper)
-    await flushPromises()
-
-    expect(fetchPendingProposals).toHaveBeenCalledWith('proposed')
-    expect(wrapper.text()).toContain('ai.agent.pending.title')
-    expect(wrapper.text()).toContain('ai.agent.pending.count')
 
     await findButton(wrapper, 'ai.agent.pending.entry')!.trigger('click')
-    await flushPromises()
-
-    expect(wrapper.text()).toContain('ai.agent.tools.db_insert')
-
-    wrapper.unmount()
-  })
-
-  it('没有待确认提案时给空态文案', async () => {
-    vi.mocked(fetchPendingProposals).mockResolvedValue({ proposals: [] })
-    const wrapper = mountPage()
-    await flushPromises()
-
-    await switchToAgent(wrapper)
-    await flushPromises()
-
-    expect(wrapper.text()).toContain('ai.agent.pending.empty')
-
-    wrapper.unmount()
-  })
-
-  it('待确认提案能直接确认（页面刷新后走这条路）', async () => {
-    const oid = '6'.repeat(32)
-    vi.mocked(fetchPendingProposals).mockResolvedValue({
-      proposals: [proposal({ oid })]
-    })
-    vi.mocked(confirmProposal).mockResolvedValue({
-      status: 'confirmed',
-      dual_auth_cached: false
-    })
-    const wrapper = mountPage()
-    await flushPromises()
-
-    await switchToAgent(wrapper)
-    await flushPromises()
-    await findButton(wrapper, 'ai.agent.pending.entry')!.trigger('click')
-    await flushPromises()
-
+    await settle()
     await findButton(wrapper, 'ai.agent.proposal.confirm')!.trigger('click')
-    await flushPromises()
+    await settle()
 
-    expect(confirmProposal).toHaveBeenCalledWith(oid)
-
-    wrapper.unmount()
-  })
-})
-
-describe('run 的终止原因', () => {
-  it('超时用提示条说明，不当错误弹窗', async () => {
-    vi.mocked(runAgent).mockResolvedValue(
-      runResponse({ content: '查到一半', stop_reason: 'timeout', rounds: 3 })
-    )
-    const wrapper = mountPage()
-    await flushPromises()
-
-    await switchToAgent(wrapper)
-    await sendText(wrapper, '查一下')
-
-    expect(wrapper.find('.yg-alert--warning').exists()).toBe(true)
-    expect(wrapper.text()).toContain('ai.agent.stopReason.timeout')
-    expect(wrapper.text()).toContain('ai.agent.stopReason.timeoutHint')
-    expect(wrapper.text()).not.toContain('ai.agent.proposal.error')
-
-    wrapper.unmount()
-  })
-
-  it('token 预算与最大轮数各给一句说明', async () => {
-    vi.mocked(runAgent).mockResolvedValue(
-      runResponse({ content: '部分结果', stop_reason: 'token_budget' })
-    )
-    const wrapper = mountPage()
-    await flushPromises()
-
-    await switchToAgent(wrapper)
-    await sendText(wrapper, '查一下')
-
-    expect(wrapper.text()).toContain('ai.agent.stopReason.token_budget')
-
-    wrapper.unmount()
-  })
-
-  it('正常结束时不给提示条', async () => {
-    vi.mocked(runAgent).mockResolvedValue(runResponse({ content: '好了' }))
-    const wrapper = mountPage()
-    await flushPromises()
-
-    await switchToAgent(wrapper)
-    await sendText(wrapper, '查一下')
-
-    expect(wrapper.find('.yg-alert--warning').exists()).toBe(false)
-
-    wrapper.unmount()
-  })
-})
-
-describe('回看一次运行', () => {
-  it('点「回看」按 request_id 取回事件时间线', async () => {
-    vi.mocked(runAgent).mockResolvedValue(runResponse({ request_id: 'req-9', content: '好了' }))
-    vi.mocked(fetchRun).mockResolvedValue({
-      request_id: 'req-9',
-      events: [
-        {
-          round_no: 1,
-          tool_name: 'fs_list',
-          tool_kind: 'read',
-          args_summary: null,
-          result_summary: '3 个文件',
-          status: 'executed'
-        }
-      ]
-    })
-    const wrapper = mountPage()
-    await flushPromises()
-
-    await switchToAgent(wrapper)
-    await sendText(wrapper, '看下目录')
-
-    await findButton(wrapper, 'ai.agent.run.replay')!.trigger('click')
-    await flushPromises()
-
-    expect(fetchRun).toHaveBeenCalledWith('req-9')
-    expect(wrapper.text()).toContain('ai.agent.tools.fs_list')
+    expect(authOpenSpy).not.toHaveBeenCalled()
+    expect(confirmProposal).toHaveBeenCalledWith('f'.repeat(32))
 
     wrapper.unmount()
   })

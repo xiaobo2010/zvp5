@@ -91,6 +91,15 @@ def _oid_pk() -> Column:
     return Column("oid", _oid, primary_key=True)
 
 
+def _uuid_pk() -> Column:
+    """32 位 hex 主键（``uuid4().hex``）：对外句柄，与业务 oid 空间分开。
+
+    刻意**不带** :func:`_oid_check`：那条约束是 24 位正则，套到 32 位 uuid 上
+    会让每一次插入都被数据库拒掉。
+    """
+    return Column("oid", VARCHAR2(32), primary_key=True)
+
+
 def _oid_check(table_name: str) -> CheckConstraint:
     return CheckConstraint(
         f"REGEXP_LIKE(oid,'{OID_REGEX}')",
@@ -1328,6 +1337,173 @@ ai_prompt_audit = Table(
     Column("created_at", oracle.TIMESTAMP, nullable=False),
 )
 Index("ix_ai_prompt_audit_user_created", ai_prompt_audit.c.user_oid, ai_prompt_audit.c.created_at)
+
+
+# ---------------------------------------------------------------------------
+# AI_CONVERSATIONS  ← new (持久会话; V035)
+#   一段会话一行，OID 是 32 位 uuid4().hex（与提案 oid 同口径：对外句柄，不是
+#   业务 id 空间）。MODE 建会话时定死：chat 走同步 SSE，agent 走后台任务，
+#   两者的幂等与计费边界不同，混用会让「这条消息为什么没落库」无解。
+#   SUMMARY / SUMMARY_UPTO_SEQ 是压缩水位：≤ UPTO_SEQ 的消息不进模型上下文，
+#   只进摘要；0 = 从未压缩。摘要只存会话行，所以 ai_messages 没有 summary 角色。
+#   TOKENS_* 是**累加器**（DEFAULT 0 NOT NULL）：0 是真实的「还没用过」，不是
+#   未知；CONTEXT_TOKENS 是最近一次请求的 prompt token，用来画上下文水位条。
+#   MESSAGE_COUNT 是冗余计数：列表页与删除回执都不该去 COUNT 百万行 CLOB 表。
+#   LIST 查询不投影 SUMMARY（CLOB）：列表只要元数据。
+# ---------------------------------------------------------------------------
+
+ai_conversations = Table(
+    "ai_conversations",
+    metadata,
+    _uuid_pk(),
+    Column("owner_oid", VARCHAR2(24), nullable=False),
+    # ``MODE`` 是 Oracle 保留字：裸写建表会 ORA-00904，所以物理名带引号。
+    # 用大写名 + ``key="mode"``：Oracle 存的是 MODE（与其他列的折叠形式一致），
+    # 手写 SQL 写 ``mode`` 仍能解析；仓储层照常写 ``tbl.c.mode``。
+    Column("MODE", VARCHAR2(8), key="mode", nullable=False),
+    Column("title", VARCHAR2(120), nullable=True),
+    Column("model", VARCHAR2(120), nullable=True),
+    Column("status", VARCHAR2(12), nullable=False, server_default=text("'active'")),
+    Column("summary", CLOB, nullable=True),
+    Column("summary_upto_seq", NUMBER(10), nullable=False, server_default=text("0")),
+    Column("tokens_prompt", NUMBER(12), nullable=False, server_default=text("0")),
+    Column("tokens_completion", NUMBER(12), nullable=False, server_default=text("0")),
+    Column("tokens_total", NUMBER(12), nullable=False, server_default=text("0")),
+    Column("context_tokens", NUMBER(12), nullable=False, server_default=text("0")),
+    Column("message_count", NUMBER(10), nullable=False, server_default=text("0")),
+    Column("compaction_degraded_at", oracle.TIMESTAMP, nullable=True),
+    Column("created_at", oracle.TIMESTAMP, nullable=False),
+    Column("updated_at", oracle.TIMESTAMP, nullable=False),
+    # CHECK 里同样要带引号：Oracle 的表达式解析器对保留字一视同仁（ORA-00904），
+    # 而 ddl_check 逐字比较表达式，两侧必须写同一个形状。
+    CheckConstraint('"MODE" IN (\'chat\',\'agent\')', name="ck_ai_conversations_mode"),
+    CheckConstraint("status IN ('active','archived')", name="ck_ai_conversations_status"),
+)
+# 左栏列表的唯一查询形状：owner + status 过滤、updated_at 倒序键集分页。
+Index(
+    "ix_ai_conversations_owner_status_updated",
+    ai_conversations.c.owner_oid,
+    ai_conversations.c.status,
+    ai_conversations.c.updated_at.desc(),
+)
+
+
+# ---------------------------------------------------------------------------
+# AI_MESSAGES  ← new (会话内消息; V035)
+#   SEQ 会话内从 1 起，UNIQUE(CONVERSATION_OID, SEQ) 由 seq 分配所在的会话行锁
+#   兜底：并发写同一会话时宁可 ORA-00001 重试，也不写重号。
+#   ROLE 只有 user/assistant/tool —— **没有** summary：摘要是会话级水位，不是一条
+#   消息，UI 用 SUMMARY_UPTO_SEQ 画分隔线。
+#   CONTENT / TOOL_CALLS 是 CLOB：工具结果全文 ≤8000 字符，超过 VARCHAR2 上限。
+#   ROUND_NO 与 ai_call_logs(request_id, round_no) 对齐，逐轮 provider/cache/
+#   units 可 join；token 列 NULL = 上游没报（同 ai_call_logs 口径），不是 0。
+# ---------------------------------------------------------------------------
+
+ai_messages = Table(
+    "ai_messages",
+    metadata,
+    _uuid_pk(),
+    Column("conversation_oid", VARCHAR2(32), nullable=False),
+    Column("seq", NUMBER(10), nullable=False),
+    Column("role", VARCHAR2(12), nullable=False),
+    Column("content", CLOB, nullable=True),
+    Column("tool_calls", CLOB, nullable=True),
+    Column("tool_call_id", VARCHAR2(64), nullable=True),
+    Column("tool_name", VARCHAR2(64), nullable=True),
+    Column("round_no", _int3, nullable=True),
+    Column("finish_reason", VARCHAR2(24), nullable=True),
+    Column("request_id", VARCHAR2(64), nullable=True),
+    Column("prompt_tokens", NUMBER(10), nullable=True),
+    Column("completion_tokens", NUMBER(10), nullable=True),
+    Column("total_tokens", NUMBER(10), nullable=True),
+    Column("cache_read_tokens", NUMBER(10), nullable=True),
+    Column("cache_write_tokens", NUMBER(10), nullable=True),
+    Column("created_at", oracle.TIMESTAMP, nullable=False),
+    UniqueConstraint("conversation_oid", "seq", name="uq_ai_messages_conv_seq"),
+    CheckConstraint("role IN ('user','assistant','tool')", name="ck_ai_messages_role"),
+    CheckConstraint("seq >= 1", name="ck_ai_messages_seq"),
+    CheckConstraint("round_no IS NULL OR round_no >= 1", name="ck_ai_messages_round_no"),
+)
+Index(
+    "ix_ai_messages_conv_created",
+    ai_messages.c.conversation_oid,
+    ai_messages.c.created_at,
+)
+
+
+# ---------------------------------------------------------------------------
+# AI_RUNS  ← new (智能体执行任务; V035)
+#   OID 同时是 ai_call_logs.request_id 与 ai_agent_events.request_id：一次 run 的
+#   调用流水、工具留痕、消息三条链路靠它串起来。
+#   活跃唯一性是**函数唯一索引**（uq_ai_runs_active_conv / _owner）：键只在
+#   queued|running 时求值，终态行键为 NULL 而 Oracle 不索引全 NULL 键，所以终态
+#   行不互斥。应用层的 SELECT ... FOR UPDATE + 检查只是第一道闸，并发两个 POST
+#   仍可能都通过；数据库这道闸把第二个变成 ORA-00001 → 409 AI_RUN_CONFLICT。
+#   CLIENT_MSG_ID 是客户端幂等键（可空）：重试命中 uq_ai_runs_client_msg → 返回
+#   已有 run，不重复写消息、不重复计费。NULL 不参与唯一性。
+#   CANCEL_REQUESTED 不是状态：worker 在轮边界与工具执行前读它，已执行的工具
+#   不可回滚，所以取消是「不再开始下一轮」，终态由 status 记。
+#   HEARTBEAT_AT 由独立 ticker 每 30s 刷新（不能只在轮边界刷：单轮最坏可占满
+#   剩余 run deadline），watchdog 用它判僵尸。
+# ---------------------------------------------------------------------------
+
+ai_runs = Table(
+    "ai_runs",
+    metadata,
+    _uuid_pk(),
+    Column("conversation_oid", VARCHAR2(32), nullable=False),
+    Column("owner_oid", VARCHAR2(24), nullable=False),
+    Column("client_msg_id", VARCHAR2(64), nullable=True),
+    Column("status", VARCHAR2(16), nullable=False),
+    Column("model", VARCHAR2(120), nullable=True),
+    Column("stop_reason", VARCHAR2(24), nullable=True),
+    Column("rounds", _int3, nullable=True),
+    Column("error_code", VARCHAR2(40), nullable=True),
+    Column("error_message", VARCHAR2(500), nullable=True),
+    Column("result_message_oid", VARCHAR2(32), nullable=True),
+    Column("prompt_tokens", NUMBER(12), nullable=True),
+    Column("completion_tokens", NUMBER(12), nullable=True),
+    Column("total_tokens", NUMBER(12), nullable=True),
+    Column("cancel_requested", NUMBER(1), nullable=False, server_default=text("0")),
+    Column("heartbeat_at", oracle.TIMESTAMP, nullable=True),
+    Column("created_at", oracle.TIMESTAMP, nullable=False),
+    Column("started_at", oracle.TIMESTAMP, nullable=True),
+    Column("finished_at", oracle.TIMESTAMP, nullable=True),
+    CheckConstraint(
+        "status IN ('queued','running','succeeded','failed','cancelled','interrupted')",
+        name="ck_ai_runs_status",
+    ),
+    CheckConstraint("cancel_requested IN (0,1)", name="ck_ai_runs_cancel_requested"),
+)
+ai_runs.append_constraint(
+    Index(
+        "uq_ai_runs_active_conv",
+        text(
+            "CASE WHEN status IN ('queued','running') THEN conversation_oid END"
+        ),
+        unique=True,
+    )
+)
+ai_runs.append_constraint(
+    Index(
+        "uq_ai_runs_active_owner",
+        text("CASE WHEN status IN ('queued','running') THEN owner_oid END"),
+        unique=True,
+    )
+)
+Index(
+    "uq_ai_runs_client_msg",
+    ai_runs.c.conversation_oid,
+    ai_runs.c.client_msg_id,
+    unique=True,
+)
+Index("ix_ai_runs_owner_status", ai_runs.c.owner_oid, ai_runs.c.status)
+Index(
+    "ix_ai_runs_conv_created",
+    ai_runs.c.conversation_oid,
+    ai_runs.c.created_at.desc(),
+)
+Index("ix_ai_runs_status_heartbeat", ai_runs.c.status, ai_runs.c.heartbeat_at)
 
 
 # ---------------------------------------------------------------------------

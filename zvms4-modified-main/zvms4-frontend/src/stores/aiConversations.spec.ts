@@ -1,0 +1,436 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { createPinia, setActivePinia } from 'pinia'
+import { useAiConversationsStore } from './aiConversations'
+import type { AiConversation, AiMessage, AiRun } from '@/../types/ai'
+
+/**
+ * 会话状态的形状与节奏。
+ *
+ * 重点在两处：消息按 after_seq 增量（不重拉整段历史），以及 run 的轮询
+ * 在终态立刻停（没有活跃 run 就不该有常驻定时器）。
+ */
+
+const mocks = vi.hoisted(() => ({
+  cancelRun: vi.fn(),
+  createConversation: vi.fn(),
+  deleteConversation: vi.fn(),
+  fetchActiveRuns: vi.fn(),
+  fetchRunDetail: vi.fn(),
+  getConversation: vi.fn(),
+  listConversations: vi.fn(),
+  listMessages: vi.fn(),
+  submitRun: vi.fn(),
+  updateConversation: vi.fn()
+}))
+
+vi.mock('@/api/ai', () => mocks)
+
+function conversation(overrides: Partial<AiConversation> = {}): AiConversation {
+  return {
+    oid: 'c1'.repeat(16),
+    mode: 'agent',
+    title: '查一下图书馆',
+    model: 'gpt-4o-mini',
+    status: 'active',
+    tokens: { prompt: 120, completion: 30, total: 150 },
+    context: { tokens: 120, limit: 32768, ratio: 0.0037 },
+    compaction: { upto_seq: 0, summarized: false, degraded_at: null },
+    message_count: 2,
+    created_at: '2026-10-25T00:00:00',
+    updated_at: '2026-10-25T01:00:00',
+    ...overrides
+  }
+}
+
+function message(seq: number, overrides: Partial<AiMessage> = {}): AiMessage {
+  return {
+    oid: `m${seq}`.repeat(16),
+    seq,
+    role: 'user',
+    content: `第 ${seq} 条`,
+    created_at: '2026-10-25T00:01:00',
+    ...overrides
+  }
+}
+
+function run(overrides: Partial<AiRun> = {}): AiRun {
+  return {
+    oid: 'r1'.repeat(16),
+    conversation_oid: 'c1'.repeat(16),
+    status: 'running',
+    model: 'gpt-4o-mini',
+    stop_reason: null,
+    rounds: 1,
+    error_code: null,
+    error_message: null,
+    result_message_oid: null,
+    prompt_tokens: 100,
+    completion_tokens: 20,
+    total_tokens: 120,
+    cancel_requested: false,
+    created_at: '2026-10-25T00:02:00',
+    started_at: '2026-10-25T00:02:01',
+    finished_at: null,
+    ...overrides
+  }
+}
+
+beforeEach(() => {
+  setActivePinia(createPinia())
+  for (const mock of Object.values(mocks)) {
+    mock.mockReset()
+  }
+  mocks.listConversations.mockResolvedValue({
+    conversations: [conversation()],
+    next_cursor: null,
+    size: 1
+  })
+  mocks.listMessages.mockResolvedValue({ messages: [message(1)], has_more: false, total: 1 })
+  mocks.fetchActiveRuns.mockResolvedValue([])
+  mocks.fetchRunDetail.mockResolvedValue({ run: run(), events: [], proposals: [] })
+  mocks.getConversation.mockResolvedValue(conversation())
+})
+
+describe('会话列表', () => {
+  it('拉列表后填充会话与游标', async () => {
+    const store = useAiConversationsStore()
+
+    await store.loadConversations()
+
+    expect(store.conversations).toHaveLength(1)
+    expect(store.currentOid).toBe('')
+    expect(store.listFailed).toBe(false)
+  })
+
+  it('拉列表失败时给出失败标记并清空列表', async () => {
+    mocks.listConversations.mockRejectedValue(new Error('boom'))
+    const store = useAiConversationsStore()
+
+    await store.loadConversations()
+
+    expect(store.listFailed).toBe(true)
+    expect(store.conversations).toEqual([])
+  })
+
+  it('游标翻页时追加且不重复', async () => {
+    mocks.listConversations.mockResolvedValueOnce({
+      conversations: [conversation()],
+      next_cursor: 'cursor-1',
+      size: 1
+    })
+    mocks.listConversations.mockResolvedValueOnce({
+      conversations: [conversation(), conversation({ oid: 'c2'.repeat(16), title: '第二个' })],
+      next_cursor: null,
+      size: 2
+    })
+    const store = useAiConversationsStore()
+
+    await store.loadConversations()
+    await store.loadMoreConversations()
+
+    expect(store.conversations).toHaveLength(2)
+    expect(store.nextCursor).toBeNull()
+  })
+
+  it('新建会话插到列表最前', async () => {
+    mocks.createConversation.mockResolvedValue(conversation({ oid: 'c9'.repeat(16) }))
+    const store = useAiConversationsStore()
+    await store.loadConversations()
+
+    await store.createConversation('agent')
+
+    expect(store.conversations[0]!.oid).toBe('c9'.repeat(16))
+  })
+
+  it('改名后列表里的标题跟着变', async () => {
+    mocks.updateConversation.mockResolvedValue(conversation({ title: '新标题' }))
+    const store = useAiConversationsStore()
+    await store.loadConversations()
+
+    await store.renameConversation(conversation().oid, '新标题')
+
+    expect(store.conversations[0]!.title).toBe('新标题')
+  })
+
+  it('归档后从活动列表里移除', async () => {
+    mocks.updateConversation.mockResolvedValue(conversation({ status: 'archived' }))
+    const store = useAiConversationsStore()
+    await store.loadConversations()
+
+    await store.setConversationStatus(conversation().oid, 'archived')
+
+    expect(store.conversations).toEqual([])
+  })
+
+  it('删除当前会话时把当前状态一并清掉', async () => {
+    mocks.deleteConversation.mockResolvedValue({ deleted: true, messages: 1, runs: 0 })
+    const store = useAiConversationsStore()
+    await store.loadConversations()
+    await store.selectConversation(conversation().oid)
+
+    await store.removeConversation(conversation().oid)
+
+    expect(store.currentOid).toBe('')
+    expect(store.messages).toEqual([])
+  })
+})
+
+describe('消息增量', () => {
+  it('切会话时拉消息并设当前会话', async () => {
+    const store = useAiConversationsStore()
+    await store.loadConversations()
+
+    await store.selectConversation(conversation().oid)
+
+    expect(store.current?.oid).toBe(conversation().oid)
+    expect(store.messages).toHaveLength(1)
+    expect(mocks.listMessages).toHaveBeenCalledWith(conversation().oid, {
+      afterSeq: 0,
+      limit: 50
+    })
+  })
+
+  it('同一个会话不重复拉', async () => {
+    const store = useAiConversationsStore()
+    await store.loadConversations()
+    await store.selectConversation(conversation().oid)
+    const calls = mocks.listMessages.mock.calls.length
+
+    await store.selectConversation(conversation().oid)
+
+    expect(mocks.listMessages.mock.calls.length).toBe(calls)
+  })
+
+  it('长会话切到尾部窗口：先知道总数，再按 after_seq 取尾部', async () => {
+    mocks.listMessages.mockResolvedValueOnce({
+      messages: [message(1), message(2)],
+      has_more: true,
+      total: 120
+    })
+    mocks.listMessages.mockResolvedValueOnce({
+      messages: [message(118), message(119), message(120)],
+      has_more: false,
+      total: 120
+    })
+    const store = useAiConversationsStore()
+    await store.loadConversations()
+
+    await store.selectConversation(conversation().oid)
+
+    expect(mocks.listMessages).toHaveBeenNthCalledWith(2, conversation().oid, {
+      afterSeq: 118,
+      limit: 50
+    })
+    expect(store.orderedMessages.map((item) => item.seq)).toEqual([118, 119, 120])
+    expect(store.earlierCount).toBe(117)
+  })
+
+  it('往上翻：把窗口前面那一段也加载进来', async () => {
+    mocks.listMessages.mockResolvedValueOnce({
+      messages: [message(1)],
+      has_more: true,
+      total: 120
+    })
+    mocks.listMessages.mockResolvedValueOnce({
+      messages: [message(119), message(120)],
+      has_more: false,
+      total: 120
+    })
+    mocks.listMessages.mockResolvedValueOnce({
+      messages: [message(69), message(70)],
+      has_more: false,
+      total: 120
+    })
+    const store = useAiConversationsStore()
+    await store.loadConversations()
+    await store.selectConversation(conversation().oid)
+
+    await store.loadEarlierMessages()
+
+    // 窗口起点是 119，往前翻就是拿更小的 after_seq 再要一页。
+    expect(mocks.listMessages).toHaveBeenNthCalledWith(3, conversation().oid, {
+      afterSeq: 69,
+      limit: 50
+    })
+    expect(store.orderedMessages.map((item) => item.seq)).toEqual([69, 70, 119, 120])
+  })
+
+  it('增量刷新只带最新的 seq，不重拉整段历史', async () => {
+    mocks.listMessages.mockResolvedValueOnce({
+      messages: [message(1), message(2)],
+      has_more: false,
+      total: 2
+    })
+    const store = useAiConversationsStore()
+    await store.loadConversations()
+    await store.selectConversation(conversation().oid)
+    mocks.listMessages.mockClear()
+
+    await store.refreshMessages()
+
+    expect(mocks.listMessages).toHaveBeenCalledWith(conversation().oid, {
+      afterSeq: 2,
+      limit: 50
+    })
+  })
+})
+
+describe('后台执行', () => {
+  it('提交后立刻进入运行态并开始轮询', async () => {
+    mocks.submitRun.mockResolvedValue({
+      run_id: 'r1'.repeat(16),
+      message_oid: 'm1'.repeat(16),
+      status: 'queued'
+    })
+    const store = useAiConversationsStore()
+    await store.loadConversations()
+    await store.selectConversation(conversation().oid)
+
+    await store.submitRun(conversation().oid, '查一下')
+
+    expect(store.activeRun?.status).toBe('queued')
+    expect(store.polling).toBe(true)
+    expect(mocks.submitRun).toHaveBeenCalledWith(
+      conversation().oid,
+      '查一下',
+      expect.anything()
+    )
+  })
+
+  it('轮询到终态就停：不再发请求', async () => {
+    vi.useFakeTimers()
+    try {
+      mocks.submitRun.mockResolvedValue({
+        run_id: 'r1'.repeat(16),
+        message_oid: 'm1'.repeat(16),
+        status: 'queued'
+      })
+      mocks.fetchRunDetail.mockResolvedValue({
+        run: run({ status: 'succeeded', stop_reason: 'completed' }),
+        events: [],
+        proposals: []
+      })
+      const store = useAiConversationsStore()
+      await store.loadConversations()
+      await store.selectConversation(conversation().oid)
+      await store.submitRun(conversation().oid, '查一下')
+      const calls = mocks.fetchRunDetail.mock.calls.length
+
+      await vi.advanceTimersByTimeAsync(1500)
+      await vi.advanceTimersByTimeAsync(5000)
+
+      expect(mocks.fetchRunDetail.mock.calls.length).toBe(calls + 1)
+      expect(store.polling).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('页面不可见时轮询降到 5 秒', async () => {
+    vi.useFakeTimers()
+    const hidden = vi.spyOn(document, 'hidden', 'get').mockReturnValue(true)
+    try {
+      const store = useAiConversationsStore()
+      await store.loadConversations()
+      await store.selectConversation(conversation().oid)
+      mocks.fetchRunDetail.mockClear()
+
+      store.startPolling('r1'.repeat(16))
+      await vi.advanceTimersByTimeAsync(1500)
+      expect(mocks.fetchRunDetail).not.toHaveBeenCalled()
+
+      await vi.advanceTimersByTimeAsync(3500)
+      expect(mocks.fetchRunDetail).toHaveBeenCalledTimes(1)
+    } finally {
+      hidden.mockRestore()
+      vi.useRealTimers()
+    }
+  })
+
+  it('增量事件按去重键合并，展开态不被冲掉', async () => {
+    const event = {
+      round_no: 1,
+      tool_name: 'fs_list',
+      tool_kind: 'read' as const,
+      args_summary: null,
+      result_summary: '3 个文件',
+      status: 'executed' as const
+    }
+    mocks.fetchRunDetail.mockResolvedValue({ run: run(), events: [event], proposals: [] })
+    const store = useAiConversationsStore()
+    await store.loadConversations()
+    await store.selectConversation(conversation().oid)
+
+    await store.refreshRun('r1'.repeat(16))
+    await store.refreshRun('r1'.repeat(16))
+
+    expect(store.runEvents).toHaveLength(1)
+  })
+
+  it('进入页面先问一次活跃 run：有就接管', async () => {
+    mocks.fetchActiveRuns.mockResolvedValue([run({ status: 'running' })])
+    const store = useAiConversationsStore()
+
+    const runs = await store.loadActiveRuns()
+
+    expect(runs).toHaveLength(1)
+    await store.adoptRun(runs[0]!)
+    expect(store.activeRun?.oid).toBe('r1'.repeat(16))
+    expect(store.polling).toBe(true)
+  })
+
+  it('中止：调取消接口', async () => {
+    mocks.cancelRun.mockResolvedValue({ status: 'cancelled' })
+    mocks.submitRun.mockResolvedValue({
+      run_id: 'r1'.repeat(16),
+      message_oid: 'm1'.repeat(16),
+      status: 'queued'
+    })
+    const store = useAiConversationsStore()
+    await store.loadConversations()
+    await store.selectConversation(conversation().oid)
+    await store.submitRun(conversation().oid, '查一下')
+
+    await store.cancelCurrentRun()
+
+    expect(mocks.cancelRun).toHaveBeenCalledWith('r1'.repeat(16))
+  })
+})
+
+describe('派生状态', () => {
+  it('上下文比例按 token / limit 算，90% 起警示', async () => {
+    mocks.listConversations.mockResolvedValue({
+      conversations: [
+        conversation({
+          context: { tokens: 300, limit: 1000, ratio: 0.3 }
+        })
+      ],
+      next_cursor: null,
+      size: 1
+    })
+    const store = useAiConversationsStore()
+    await store.loadConversations()
+    await store.selectConversation(conversation().oid)
+
+    expect(store.contextRatio).toBeCloseTo(0.3)
+    expect(store.contextWarning).toBe(false)
+
+    store.current = conversation({ context: { tokens: 900, limit: 1000, ratio: 0.9 } })
+    expect(store.contextWarning).toBe(true)
+  })
+
+  it('压缩点条数来自会话的 upto_seq', async () => {
+    mocks.listConversations.mockResolvedValue({
+      conversations: [
+        conversation({ compaction: { upto_seq: 12, summarized: true, degraded_at: null } })
+      ],
+      next_cursor: null,
+      size: 1
+    })
+    const store = useAiConversationsStore()
+    await store.loadConversations()
+    await store.selectConversation(conversation().oid)
+
+    expect(store.compactedCount).toBe(12)
+  })
+})

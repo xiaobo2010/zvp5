@@ -20,6 +20,7 @@ Versioned, hand-written Oracle DDL for the `zvms_new` → Oracle ADB migration.
 | `V032__add_ai_call_logs_prompt_cache.sql` | Adds `AI_CALL_LOGS.CACHE_READ_TOKENS`/`CACHE_WRITE_TOKENS` (normalised prompt-prefix cache hit/write tokens) + `CACHE_KEY` (stable prefix hash, no user content) and the `ck_ai_call_logs_cache_tokens` check on an existing instance. Idempotent. |
 | `V033__agent_and_prompt_audit.sql` | Adds `AI_AGENT_EVENTS` (per tool-call audit rows: executed/proposed/confirmed/rejected/expired/failed/denied) + `ix_ai_agent_events_request_id`/`ix_ai_agent_events_status_created`, `AI_PROMPT_AUDIT` (+ `ix_ai_prompt_audit_user_created`, table only — the writer ships with the monitoring lane) and the `ai_chat_burst` rule seed (`alert`, threshold 80/1h) on an existing instance. Idempotent; independent of the V032 prompt-cache migration — the shared ROUND_NO/ROLES_SNAPSHOT columns are created by whichever runs first, so order does not matter. |
 | `V034__agent_proposal_payload.sql` | Adds `AI_AGENT_EVENTS.ARGS_PAYLOAD`/`PREVIEW` (CLOB: full recoverable arguments + structured confirmation preview) and `APPROVER_OID`/`CONFIRMED_AT` (dual-auth approver + actual execution time), and rebuilds `ck_ai_agent_events_status` to accept `executing` (CAS state machine `proposed → executing → confirmed｜failed`). `ARGS_HASH` now covers the full `ARGS_PAYLOAD`; `ARGS_SUMMARY` is display-only (≤500, truncated) and old rows keep confirming via the summary fallback. Idempotent. |
+| `V035__ai_conversations.sql` | Adds `AI_CONVERSATIONS` / `AI_MESSAGES` / `AI_RUNS` (persistent conversations, per-message rows, background agent runs) + `ix_ai_conversations_owner_status_updated`, `uq_ai_messages_conv_seq` (+ `ix_ai_messages_conv_created`), `uq_ai_runs_active_conv`/`uq_ai_runs_active_owner` (**function unique indexes** — the key only exists while `status IN ('queued','running')`, so terminal rows never collide and a second concurrent POST hits ORA-00001 → 409), `uq_ai_runs_client_msg` (client idempotency key), `ix_ai_runs_owner_status`/`ix_ai_runs_conv_created`/`ix_ai_runs_status_heartbeat`. Idempotent. |
 | `../models.py` (`db/models.py`) | SQLAlchemy 2.0 Core `MetaData` mirror of V001. |
 | `../ddl_check.py` (`db/ddl_check.py`) | Offline drift check between the two. |
 
@@ -78,6 +79,25 @@ INSERT`, so re-running never overwrites admin edits. `ix_app_logs_user_ts`
 (`APP_USER, TS_RAW`) backs the rule's evidence query
 `COUNT(DISTINCT XUEHAI_ID)` over a time window. Fresh instances get all of this
 from `V001` (same seed); existing instances are extended by `V013`.
+
+`AI_CONVERSATIONS` / `AI_MESSAGES` / `AI_RUNS` back the 持久会话 + 后台任务化智能体
+(`docs/AI_CONVERSATION_DESIGN.md` §2). `AI_CONVERSATIONS` holds one row per session
+(`summary` + `summary_upto_seq` are the compaction watermark; `tokens_*` /
+`context_tokens` / `message_count` are accumulators defaulting to `0`),
+`AI_MESSAGES` holds one row per message (`seq` is per-conversation and unique —
+allocated inside the conversation row lock), and `AI_RUNS` holds one row per agent
+execution whose `oid` is also `ai_call_logs.request_id` / `ai_agent_events.request_id`.
+**Active-run uniqueness is enforced by the database**, not only by the application:
+`uq_ai_runs_active_conv` / `uq_ai_runs_active_owner` are `CASE WHEN status IN
+('queued','running')` function unique indexes, so terminal rows (NULL key, which
+Oracle does not index) never conflict, while two concurrent submits on the same
+conversation collapse into one ORA-00001 → `409 AI_RUN_CONFLICT`.
+`uq_ai_runs_client_msg` gives a retried `client_msg_id` the same `run_id` instead of
+a second run. No foreign keys between the three tables: deletion is explicit and
+batched (`messages → runs → conversation`, ROWNUM batches), because Oracle has no
+`ON DELETE CASCADE` here. `MODE` is an Oracle reserved word, so its physical name is
+the quoted `"MODE"` (stored upper-case; unquoted `mode` still resolves). Fresh
+instances get everything from `V001`; existing instances are extended by `V035`.
 
 `NOTIFICATIONS` / `NOTIFICATION_STATE` back the 站内通知 feature
 (`docs/NOTIFICATIONS_API.md`). A notification stores its immutable send-time

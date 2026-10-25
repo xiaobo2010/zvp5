@@ -157,6 +157,8 @@ watch(
 }
 
 .yg-ai-home__panel {
+  display: flex;
+  flex-direction: column;
   min-width: 0;
 }
 </style>

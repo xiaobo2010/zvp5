@@ -57,6 +57,7 @@ declare module 'vue' {
     ZAiProposalCard: typeof import('./src/components/ai/ZAiProposalCard.vue')['default']
     ZAiQuotaAdmin: typeof import('./src/components/ai/ZAiQuotaAdmin.vue')['default']
     ZAiQuotaPanel: typeof import('./src/components/ai/ZAiQuotaPanel.vue')['default']
+    ZAiSessionList: typeof import('./src/components/ai/ZAiSessionList.vue')['default']
     ZAttachmentUpload: typeof import('./src/components/attachment/ZAttachmentUpload.vue')['default']
     ZBanRules: typeof import('./src/components/manage/ZBanRules.vue')['default']
     ZButtonOrCard: typeof import('./src/components/utils/ZButtonOrCard.vue')['default']

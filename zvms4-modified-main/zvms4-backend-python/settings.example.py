@@ -72,6 +72,23 @@ AI_PROMPT_CACHE_BREAKPOINT_HOSTS = []
 # prompt_cache_key 的前缀（只留 [A-Za-z0-9_-]，最长 24）。太长会把指纹挤出 64 上限。
 AI_PROMPT_CACHE_KEY_PREFIX = "zvp"
 
+# SiliconFlow 公开渠道的免费模型白名单（运维维护，misc/seed_channel.py 读取）。
+# 只有列在这里的模型会被写进 shared 凭据；留空 = 该渠道拒绝上线，脚本不会去猜。
+# 口径（2026-10-25 核对，均已在线的常规免费档）：
+#   - 只收支持 function calling 的通用模型：agent 模式会带 tools，选到不支持的模型
+#     上游直接报错，宁可不上架；
+#   - 不收「限免」模型（翻译/OCR 专用，随时可能恢复收费）与非 chat 模型；
+#   - 免费档会变，换档前先看官方定价页，改这里再跑 misc/seed_channel.py。
+AI_SILICONFLOW_FREE_MODELS = [
+    "zai-org/GLM-5.3-Flash",           # 1M 上下文，多模态，工具调用
+    "Qwen/Qwen3.5-4B",                 # 256K，多模态，工具调用
+    "XingChenAGI/Xing4.0-29B",         # 256K，工具调用
+    "Qwen/Qwen3-8B",                   # 128K，工具调用，主力
+    "THUDM/GLM-Z1-9B-0414",            # 128K，推理 + 工具调用
+    "THUDM/GLM-4-9B-0414",             # 32K，通用/代码
+    "Qwen/Qwen2.5-7B-Instruct",        # 32K，JSON 稳定
+]
+
 # 管理员在 /api/ai/keys 里建的凭据（个人 / 共享）加密落库，主密钥从这里取：
 # 优先环境变量 ZVMS_AI_KEY_SECRET；没有则读仓库根 aes_key.txt（65 字节随机串，
 # 已在 .gitignore 里，不入库）。派生方式：

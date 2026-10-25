@@ -4,80 +4,93 @@ import { useI18n } from 'vue-i18n'
 import {
   ElButton,
   ElCard,
+  ElDialog,
+  ElDrawer,
   ElEmpty,
   ElIcon,
   ElInput,
   ElMessage,
+  ElMessageBox,
   ElOption,
   ElSegmented,
   ElSelect,
-  ElSwitch,
-  ElTag,
-  ElTooltip
+  ElTag
 } from 'element-plus'
-import { CopyDocument, Delete, Promotion, VideoPause, WarningFilled } from '@element-plus/icons-vue'
+import { Menu, Promotion, VideoPause, WarningFilled } from '@element-plus/icons-vue'
 import { useWindowSize } from '@vueuse/core'
 import {
   AiRequestError,
   aiErrorCopy,
   aiErrorSection,
   confirmProposal,
-  createChatCompletion,
   fetchPendingProposals,
-  fetchRun,
+  fetchRunDetail,
   listModels,
-  readCompletionText,
   rejectProposal,
-  runAgent,
-  streamChatCompletion
+  streamConversationChat
 } from '@/api/ai'
+import { useAiConversationsStore } from '@/stores/aiConversations'
 import ZSystemAuthDialog from '@/components/system/ZSystemAuthDialog.vue'
-import type { AiChatMessage, AiModelItem } from '@/../types/ai'
-import { buildChatRequest, turnsToMessages, type ChatTurn } from './chatSession'
+import type { AiConversation, AiMessage, AiModelItem } from '@/../types/ai'
 import ZAiProposalCard from './ZAiProposalCard.vue'
+import ZAiSessionList from './ZAiSessionList.vue'
+import { contextPercent } from './conversationSession'
 import {
   eventStatusTone,
   markDualAuthCached,
   normalizeEventViews,
   normalizeProposals,
-  normalizeStopReason,
-  normalizeUsage,
-  stopReasonHintKey,
-  stopReasonKey,
   toolLabelKey,
   type AgentEventView,
   type AgentProposalCard,
-  type AgentProposalState,
-  type PageTurn
+  type AgentProposalState
 } from './agentSession'
 
 const { t } = useI18n()
-const { height } = useWindowSize()
-
-/** 审计场景名：后端把它写进 AI_CALL_LOGS.PURPOSE（只用于统计，不影响额度）。 */
-const AI_SCENE_CHAT = 'chat'
+const { width, height } = useWindowSize()
+const store = useAiConversationsStore()
 
 /** 提案有效期的刷新间隔：后端按 10 分钟计，30 秒刷一次足够。 */
 const PROPOSAL_TICK_MS = 30_000
 
-/** 对话 / 智能体：智能体走 /ai/agent/run，一次返回全部结果，不流式。 */
-const mode = ref('chat')
+/** 侧栏折叠成抽屉的断点：窄屏放不下固定侧栏。 */
+const SIDEBAR_BREAKPOINT = 1024
+
+/** 对话 / 智能体：两者共用一套会话，区别只在会话建时的 mode。 */
+const mode = ref<'chat' | 'agent'>('chat')
 const modeOptions = computed(() => [
   { label: t('ai.chat.modes.chat'), value: 'chat' },
   { label: t('ai.chat.modes.agent'), value: 'agent' }
 ])
 const isAgentMode = computed(() => mode.value === 'agent')
+const isNarrow = computed(() => width.value < SIDEBAR_BREAKPOINT)
 
 const models = ref<AiModelItem[]>([])
 const modelsLoading = ref(false)
 const modelsFailed = ref(false)
 const model = ref('')
-const streamEnabled = ref(true)
 
-const turns = ref<PageTurn[]>([])
 const input = ref('')
 const sending = ref(false)
 const cooldown = ref(0)
+
+/** 移动端抽屉：会话栏收进去。 */
+const drawerOpen = ref(false)
+
+/** 重命名弹层。 */
+const renameVisible = ref(false)
+const renameOid = ref('')
+const renameTitle = ref('')
+const renaming = ref(false)
+
+/** 本地暂存的用户消息与流式正文：服务端落库前先显示，不让界面空等。 */
+const pendingUser = ref('')
+const streamingText = ref('')
+
+/** 本轮出错的提示（对话流失败时展示）。 */
+const chatError = ref<{ code: string; title: string; hint: string } | null>(null)
+const chatStopped = ref(false)
+const chatInterrupted = ref(false)
 
 /** 待确认提案：进入智能体模式时拉一次；刷新页面后仍能看到没处理的写操作。 */
 const pendingProposals = ref<AgentProposalCard[]>([])
@@ -85,32 +98,133 @@ const pendingLoading = ref(false)
 const pendingFailed = ref(false)
 const pendingOpen = ref(false)
 
+/** 本次 run 的事件与提案（轮询增量合并而来）。 */
+const expandedEvents = ref<string[]>([])
+const proposalCards = ref<AgentProposalCard[]>([])
+
+/** 回看某次历史运行的工具留痕。 */
+const replays = ref<Record<string, AgentEventView[]>>({})
+const replayLoading = ref<Record<string, boolean>>({})
+const replayFailed = ref<Record<string, boolean>>({})
+
 /** 双人动态码弹窗（复用系统页那一个，运维写操作要另一位管理员放行）。 */
 const authRef = ref<InstanceType<typeof ZSystemAuthDialog>>()
 
 let controller: AbortController | null = null
 let cooldownTimer: ReturnType<typeof setInterval> | null = null
 let proposalTimer: ReturnType<typeof setInterval> | null = null
-let turnSeq = 0
 
 /** 提案倒计时用的「当前时间」：只在有 pending 提案时按 30 秒推进。 */
 const proposalNow = ref(Date.now())
 
 const listHeight = computed(() => Math.max(220, Math.round(height.value * 0.52)))
 const hasModels = computed(() => models.value.length > 0)
-const canSend = computed(
-  () => hasModels.value && Boolean(model.value) && !sending.value && cooldown.value <= 0
+
+/** 有活跃 run 时不能再提交：同一会话同时只允许一个后台任务。 */
+const runActive = computed(
+  () => store.activeRun !== null && (store.activeRun.status === 'queued' || store.activeRun.status === 'running')
 )
+const canSend = computed(
+  () =>
+    hasModels.value &&
+    Boolean(model.value) &&
+    !sending.value &&
+    cooldown.value <= 0 &&
+    Boolean(store.current) &&
+    !runActive.value
+)
+
 /** 待确认提案数：会话内的提案 + 顶部待确认入口的提案。 */
 const pendingCount = computed(
   () =>
     pendingProposals.value.filter((card) => card.state === 'pending').length +
-    turns.value.reduce(
-      (total, turn) =>
-        total + (turn.proposals?.filter((card) => card.state === 'pending').length ?? 0),
-      0
-    )
+    proposalCards.value.filter((card) => card.state === 'pending').length
 )
+
+/** 上下文水位。 */
+const contextTokens = computed(() => store.current?.context.tokens ?? 0)
+const contextLimit = computed(() => store.current?.context.limit ?? 0)
+const contextPercentValue = computed(() => contextPercent(store.contextRatio))
+const contextWarn = computed(() => store.contextWarning)
+
+/** 消息行：普通消息与「压缩点」分隔线混排。 */
+interface MessageRow {
+  key: string
+  kind: 'message' | 'compaction'
+  message?: AiMessage
+  compacted?: number
+}
+
+const messageRows = computed<MessageRow[]>(() => {
+  const upto = store.compactedCount
+  const rows: MessageRow[] = []
+  let dividerPlaced = false
+  for (const message of store.orderedMessages) {
+    if (!dividerPlaced && upto > 0 && message.seq > upto) {
+      rows.push({ key: 'compaction', kind: 'compaction', compacted: upto })
+      dividerPlaced = true
+    }
+    rows.push({ key: message.oid, kind: 'message', message })
+  }
+  if (!dividerPlaced && upto > 0 && store.orderedMessages.length > 0) {
+    rows.push({ key: 'compaction', kind: 'compaction', compacted: upto })
+  }
+  return rows
+})
+
+/** 列表空态：先说清是模型没就绪还是还没开始聊。 */
+const emptyDescription = computed(() => {
+  if (modelsFailed.value) {
+    return t('ai.chat.modelsLoadFailed')
+  }
+  if (!hasModels.value) {
+    return t('ai.chat.modelsEmpty')
+  }
+  return isAgentMode.value ? t('ai.agent.emptyHint') : t('ai.chat.emptyHint')
+})
+
+/** run 的终止原因：正常完成不算提示。 */
+const runStopReason = computed(() => {
+  const reason = store.activeRun?.stop_reason ?? null
+  if (!reason || reason === 'completed') {
+    return null
+  }
+  return reason
+})
+
+/** run 失败时的错误码与人话说明。 */
+const runErrorCopy = computed(() => {
+  const code = store.activeRun?.error_code ?? null
+  if (!code) {
+    return null
+  }
+  const copy = aiErrorCopy(code, t)
+  return { code, title: copy.title, hint: copy.hint }
+})
+
+/** 事件去重键：同一轮里同一个工具的同一条留痕只渲染一次。 */
+function eventKey(event: {
+  round_no: number
+  tool_name: string | null
+  result_summary: string
+}): string {
+  return `${event.round_no}|${event.tool_name ?? ''}|${event.result_summary}`
+}
+
+/** run 的事件视图：展开态存在这里，轮询回来也不会被冲掉。 */
+const runEventViews = computed<AgentEventView[]>(() =>
+  store.runEvents.map((event) => ({
+    ...event,
+    expanded: expandedEvents.value.includes(eventKey(event))
+  }))
+)
+
+/** 工具消息的展开态。 */
+const expandedTools = ref<string[]>([])
+
+/* ---------------------------------------------------------------------------
+   基础数据
+   --------------------------------------------------------------------------- */
 
 async function loadModels() {
   modelsLoading.value = true
@@ -131,11 +245,6 @@ async function loadModels() {
   } finally {
     modelsLoading.value = false
   }
-}
-
-function nextTurnId(): number {
-  turnSeq += 1
-  return turnSeq
 }
 
 function startCooldown(seconds: number) {
@@ -163,6 +272,132 @@ function stopCooldown() {
   cooldown.value = 0
 }
 
+/* ---------------------------------------------------------------------------
+   会话
+   --------------------------------------------------------------------------- */
+
+/**
+ * 切到某个模式：找该类型下最近的一个会话，没有就建一个。
+ *
+ * 会话的 mode 建完不可改，所以对话与智能体各有各的会话池。
+ */
+async function ensureConversation(target: 'chat' | 'agent'): Promise<void> {
+  const existing = store.conversations.find(
+    (item) => item.mode === target && item.status === 'active'
+  )
+  if (existing) {
+    await store.selectConversation(existing.oid)
+    return
+  }
+  try {
+    const created = await store.createConversation(target)
+    await store.selectConversation(created.oid)
+  } catch {
+    ElMessage.error(t('ai.chat.sessions.createFailed'))
+  }
+}
+
+async function selectSession(oid: string) {
+  await store.selectConversation(oid)
+  drawerOpen.value = false
+  void nextTick(scrollToBottom)
+}
+
+/** 新建会话：永远新建一个，不复用已有的（复用是「切换」的事）。 */
+async function createSession() {
+  try {
+    const created = await store.createConversation(mode.value)
+    await store.selectConversation(created.oid)
+  } catch {
+    ElMessage.error(t('ai.chat.sessions.createFailed'))
+  }
+  drawerOpen.value = false
+}
+
+function openRename(oid: string) {
+  renameOid.value = oid
+  renameTitle.value = store.conversations.find((item) => item.oid === oid)?.title ?? ''
+  renameVisible.value = true
+}
+
+async function submitRename() {
+  const title = renameTitle.value.trim()
+  if (!title || renaming.value) {
+    return
+  }
+  renaming.value = true
+  try {
+    await store.renameConversation(renameOid.value, title)
+    renameVisible.value = false
+    ElMessage.success(t('ai.chat.sessions.renamed'))
+  } catch (error) {
+    applyError(error)
+  } finally {
+    renaming.value = false
+  }
+}
+
+async function archiveSession(oid: string) {
+  try {
+    await store.setConversationStatus(oid, 'archived')
+    ElMessage.success(t('ai.chat.sessions.archivedNotice'))
+    if (store.currentOid === oid) {
+      await ensureConversation(mode.value)
+    }
+  } catch (error) {
+    applyError(error)
+  }
+}
+
+async function removeSession(oid: string) {
+  try {
+    await ElMessageBox.confirm(
+      t('ai.chat.sessions.deleteConfirm'),
+      t('ai.chat.sessions.deleteConfirmTitle'),
+      {
+        type: 'warning',
+        confirmButtonText: t('ai.common.delete'),
+        cancelButtonText: t('ai.common.cancel'),
+        confirmButtonClass: 'el-button--danger',
+        closeOnClickModal: false
+      }
+    )
+  } catch {
+    return
+  }
+  try {
+    await store.removeConversation(oid)
+    ElMessage.success(t('ai.chat.sessions.deletedNotice'))
+    await ensureConversation(mode.value)
+  } catch (error) {
+    applyError(error)
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   提案
+   --------------------------------------------------------------------------- */
+
+/**
+ * 拉本人待确认的提案。
+ *
+ * 页面刷新后对话记录没了，但没处理的写操作还在服务端——靠这个入口找回来。
+ */
+async function loadPendingProposals() {
+  pendingLoading.value = true
+  pendingFailed.value = false
+  try {
+    const result = await fetchPendingProposals('proposed')
+    pendingProposals.value = normalizeProposals(result?.proposals)
+  } catch {
+    pendingProposals.value = []
+    pendingFailed.value = true
+  } finally {
+    pendingLoading.value = false
+    syncProposalTimer()
+  }
+}
+
 function pendingProposalCount(): number {
   return pendingCount.value
 }
@@ -185,245 +420,6 @@ function stopProposalTimer() {
   if (proposalTimer) {
     clearInterval(proposalTimer)
     proposalTimer = null
-  }
-}
-
-/**
- * 拉本人待确认的提案。
- *
- * 页面刷新后对话记录没了，但没处理的写操作还在服务端——靠这个入口找回来。
- */
-async function loadPendingProposals() {
-  pendingLoading.value = true
-  pendingFailed.value = false
-  try {
-    const result = await fetchPendingProposals('proposed')
-    pendingProposals.value = normalizeProposals(result?.proposals)
-  } catch {
-    pendingProposals.value = []
-    pendingFailed.value = true
-  } finally {
-    pendingLoading.value = false
-    syncProposalTimer()
-  }
-}
-
-function toggleEvent(event: AgentEventView) {
-  event.expanded = !event.expanded
-}
-
-function markError(turn: ChatTurn, error: unknown) {
-  const aiError = error instanceof AiRequestError ? error : null
-  const code = aiError?.code ?? null
-  const copy = aiErrorCopy(code, t)
-  turn.status = 'error'
-  turn.errorCode = code ?? ''
-  turn.errorTitle = copy.title
-  turn.errorHint = copy.hint
-  turn.requestId = aiError?.requestId ?? null
-  turn.quotaUsed = aiError?.quotaUsed ?? null
-  turn.quotaLimit = aiError?.quotaLimit ?? null
-  if (code === 'AI_RATE_LIMITED' && aiError?.retryAfter) {
-    startCooldown(aiError.retryAfter)
-  }
-}
-
-const listRef = ref<HTMLElement>()
-
-// 流式 delta 忠实度 vs 帧开销：SSE 几百个 chunk 若逐个写 DOM + 读 scrollHeight，
-// 每秒几十次强制同步布局。这里把 delta 攒到缓冲，rAF 每帧合并冲刷一次。
-let pendingDelta = ''
-let flushFrame = 0
-let activeTurn: ChatTurn | null = null
-let autoScroll = true
-
-function listElement(): HTMLElement | undefined {
-  return listRef.value
-}
-
-// 用户手动上翻时暂停自动跟随，滚回底部附近（64px 容差）恢复
-function handleListScroll() {
-  const element = listElement()
-  if (!element) return
-  autoScroll = element.scrollTop + element.clientHeight >= element.scrollHeight - 64
-}
-
-function scrollToBottom() {
-  const element = listElement()
-  if (!element || !autoScroll) return
-  element.scrollTop = element.scrollHeight
-}
-
-function cancelFlush() {
-  if (flushFrame) {
-    cancelAnimationFrame(flushFrame)
-    flushFrame = 0
-  }
-}
-
-function applyBufferedDelta() {
-  if (!activeTurn || !pendingDelta) return
-  activeTurn.content += pendingDelta
-  pendingDelta = ''
-  void nextTick(scrollToBottom)
-}
-
-function scheduleDeltaFlush() {
-  if (flushFrame) return
-  if (typeof requestAnimationFrame !== 'function') {
-    applyBufferedDelta()
-    return
-  }
-  flushFrame = requestAnimationFrame(() => {
-    flushFrame = 0
-    applyBufferedDelta()
-  })
-}
-
-// 流结束 / 中断 / 报错时同步冲刷，保证终态立即可见（也让 vite 测试不必等帧）
-function flushDeltaNow() {
-  cancelFlush()
-  applyBufferedDelta()
-}
-
-async function send() {
-  if (!canSend.value) {
-    return
-  }
-  const text = input.value.trim()
-  if (!text) {
-    return
-  }
-
-  // 模式在发送瞬间定格：中途切回对话页不该把这一轮的执行路径也换掉。
-  const turnMode = isAgentMode.value ? 'agent' : 'chat'
-
-  const userTurn: PageTurn = {
-    id: nextTurnId(),
-    role: 'user',
-    content: text,
-    status: 'done',
-    mode: turnMode
-  }
-  turns.value.push(userTurn)
-
-  const request = buildChatRequest(turnsToMessages(turns.value), model.value, streamEnabled.value)
-  turns.value.push({
-    id: nextTurnId(),
-    role: 'assistant',
-    content: '',
-    status: 'pending',
-    mode: turnMode
-  })
-  // 取响应式代理再改字段，否则改的是原始对象、视图不重渲染
-  const assistantTurn = turns.value[turns.value.length - 1]!
-
-  input.value = ''
-  sending.value = true
-  autoScroll = true
-  void nextTick(scrollToBottom)
-
-  if (turnMode === 'agent') {
-    await runAgentTurn(assistantTurn, request.messages)
-  } else if (streamEnabled.value) {
-    controller = new AbortController()
-    activeTurn = assistantTurn
-    try {
-      const result = await streamChatCompletion({
-        model: request.model,
-        messages: request.messages,
-        signal: controller.signal,
-        scene: AI_SCENE_CHAT,
-        onDelta: (delta) => {
-          pendingDelta += delta
-          scheduleDeltaFlush()
-        }
-      })
-      flushDeltaNow()
-      assistantTurn.content = result.text || assistantTurn.content
-      assistantTurn.requestId = result.requestId
-      assistantTurn.status = result.interrupted ? 'interrupted' : 'done'
-    } catch (error) {
-      flushDeltaNow()
-      if ((error as { name?: string })?.name === 'AbortError') {
-        assistantTurn.status = 'stopped'
-      } else {
-        markError(assistantTurn, error)
-      }
-    } finally {
-      activeTurn = null
-      pendingDelta = ''
-      cancelFlush()
-      controller = null
-    }
-  } else {
-    try {
-      const result = await createChatCompletion(request.model, request.messages, AI_SCENE_CHAT)
-      assistantTurn.content = readCompletionText(result)
-      assistantTurn.status = 'done'
-    } catch (error) {
-      markError(assistantTurn, error)
-    }
-  }
-
-  sending.value = false
-  void nextTick(scrollToBottom)
-}
-
-/**
- * 智能体模式的一次 run。
- *
- * 后端一次返回全部结果（不推流）：等待期间只有一个「正在执行工具」的加载态，
- * 回来后把 events 渲染成时间线、proposals 渲染成确认卡。
- */
-async function runAgentTurn(turn: PageTurn, messages: AiChatMessage[]) {
-  controller = new AbortController()
-  try {
-    const result = await runAgent(messages, model.value || undefined, controller.signal)
-    turn.content = typeof result?.content === 'string' ? result.content : ''
-    turn.events = normalizeEventViews(result?.events)
-    turn.proposals = normalizeProposals(result?.proposals)
-    turn.requestId = typeof result?.request_id === 'string' ? result.request_id : null
-    // 触顶/超时不是错误：用提示条说明「为什么停」，内容照常给用户。
-    turn.stopReason = normalizeStopReason(result?.stop_reason)
-    turn.rounds = typeof result?.rounds === 'number' ? result.rounds : 0
-    turn.usage = normalizeUsage(result?.usage)
-    turn.status = 'done'
-  } catch (error) {
-    if ((error as { name?: string })?.name === 'AbortError') {
-      turn.status = 'stopped'
-    } else {
-      markError(turn, error)
-    }
-  } finally {
-    controller = null
-    syncProposalTimer()
-  }
-}
-
-/**
- * 回看一次 run 的工具留痕。
- *
- * 服务端按 request_id 取回时间线（刷新页面后对话没了，留痕还在）。
- */
-async function toggleReplay(turn: PageTurn) {
-  if (turn.replay) {
-    turn.replay = null
-    return
-  }
-  if (!turn.requestId) {
-    return
-  }
-  turn.replayLoading = true
-  turn.replayFailed = false
-  try {
-    const result = await fetchRun(turn.requestId)
-    turn.replay = normalizeEventViews(result?.events)
-  } catch {
-    turn.replayFailed = true
-    turn.replay = null
-  } finally {
-    turn.replayLoading = false
   }
 }
 
@@ -601,11 +597,7 @@ async function confirmCard(card: AgentProposalCard) {
  * 覆盖会话内的提案卡与顶部待确认入口两处。
  */
 function applyDualAuthCache() {
-  for (const turn of turns.value) {
-    if (turn.proposals) {
-      markDualAuthCached(turn.proposals)
-    }
-  }
+  markDualAuthCached(proposalCards.value)
   markDualAuthCached(pendingProposals.value)
 }
 
@@ -626,49 +618,362 @@ async function rejectCard(card: AgentProposalCard) {
   }
 }
 
-function stop() {
-  controller?.abort()
-  controller = null
+/* ---------------------------------------------------------------------------
+   消息区
+   --------------------------------------------------------------------------- */
+
+const listRef = ref<HTMLElement>()
+
+// 流式 delta 忠实度 vs 帧开销：SSE 几百个 chunk 若逐个写 DOM + 读 scrollHeight，
+// 每秒几十次强制同步布局。这里把 delta 攒到缓冲，rAF 每帧合并冲刷一次。
+let pendingDelta = ''
+let flushFrame = 0
+let autoScroll = true
+
+function listElement(): HTMLElement | undefined {
+  return listRef.value
 }
 
-function clearSession() {
-  controller?.abort()
-  controller = null
-  activeTurn = null
+// 用户手动上翻时暂停自动跟随，滚回底部附近（64px 容差）恢复
+function handleListScroll() {
+  const element = listElement()
+  if (!element) return
+  autoScroll = element.scrollTop + element.clientHeight >= element.scrollHeight - 64
+}
+
+function scrollToBottom() {
+  const element = listElement()
+  if (!element || !autoScroll) return
+  element.scrollTop = element.scrollHeight
+}
+
+function cancelFlush() {
+  if (flushFrame) {
+    cancelAnimationFrame(flushFrame)
+    flushFrame = 0
+  }
+}
+
+function applyBufferedDelta() {
+  if (!pendingDelta) return
+  streamingText.value += pendingDelta
   pendingDelta = ''
-  cancelFlush()
-  autoScroll = true
-  turns.value = []
-  stopCooldown()
-  stopProposalTimer()
-  ElMessage.success(t('ai.chat.cleared'))
+  void nextTick(scrollToBottom)
 }
 
-async function copyValue(value: string | null | undefined) {
-  if (!value) {
+function scheduleDeltaFlush() {
+  if (flushFrame) return
+  if (typeof requestAnimationFrame !== 'function') {
+    applyBufferedDelta()
     return
   }
+  flushFrame = requestAnimationFrame(() => {
+    flushFrame = 0
+    applyBufferedDelta()
+  })
+}
+
+// 流结束 / 中断 / 报错时同步冲刷，保证终态立即可见（也让 vite 测试不必等帧）
+function flushDeltaNow() {
+  cancelFlush()
+  applyBufferedDelta()
+}
+
+/** 工具消息的展开态。 */
+function toggleTool(oid: string) {
+  expandedTools.value = expandedTools.value.includes(oid)
+    ? expandedTools.value.filter((item) => item !== oid)
+    : [...expandedTools.value, oid]
+}
+
+function toolExpanded(oid: string): boolean {
+  return expandedTools.value.includes(oid)
+}
+
+/** 工具事件（run 留痕）的展开态。 */
+function toggleEvent(event: AgentEventView) {
+  const key = eventKey(event)
+  expandedEvents.value = expandedEvents.value.includes(key)
+    ? expandedEvents.value.filter((item) => item !== key)
+    : [...expandedEvents.value, key]
+}
+
+/**
+ * 回看某次历史运行的工具留痕。
+ *
+ * 消息上的 request_id 就是 run id，所以回看不需要另存一份映射。
+ */
+async function toggleReplay(message: AiMessage) {
+  const runId = message.request_id
+  if (!runId) {
+    return
+  }
+  if (replays.value[runId]) {
+    const next = { ...replays.value }
+    delete next[runId]
+    replays.value = next
+    return
+  }
+  replayLoading.value = { ...replayLoading.value, [runId]: true }
   try {
-    await navigator.clipboard.writeText(value)
-    ElMessage.success(t('ai.common.copied'))
+    const detail = await fetchRunDetail(runId, 0)
+    replays.value = { ...replays.value, [runId]: normalizeEventViews(detail.events) }
   } catch {
-    ElMessage.warning(value)
+    replayFailed.value = { ...replayFailed.value, [runId]: true }
+  } finally {
+    replayLoading.value = { ...replayLoading.value, [runId]: false }
   }
 }
 
-async function copyRequestId(turn: ChatTurn) {
-  await copyValue(turn.requestId)
+/* ---------------------------------------------------------------------------
+   发送
+   --------------------------------------------------------------------------- */
+
+/** 通用错误处理：错误码 + 人话说明。 */
+function applyError(error: unknown) {
+  const aiError = error instanceof AiRequestError ? error : null
+  const code = aiError?.code ?? null
+  const copy = aiErrorCopy(code, t)
+  chatError.value = { code: code ?? '', title: copy.title, hint: copy.hint }
+  if (code === 'AI_RATE_LIMITED' && aiError?.retryAfter) {
+    startCooldown(aiError.retryAfter)
+  }
 }
 
-// 进入智能体模式就把「还没处理的写操作」找回来，刷新页面也不丢。
-watch(mode, (value) => {
+function isAbort(error: unknown): boolean {
+  return (error as { name?: string })?.name === 'AbortError'
+}
+
+/** 幂等键：同一次提交重试时不会重复写消息、重复计费。 */
+function clientMsgId(): string {
+  const cryptoRef = globalThis.crypto as Crypto | undefined
+  if (cryptoRef && typeof cryptoRef.randomUUID === 'function') {
+    return cryptoRef.randomUUID().replace(/-/g, '')
+  }
+  return `${Date.now().toString(16)}${Math.random().toString(16).slice(2, 10)}`
+}
+
+/** 服务端是否已经落库了这条用户消息。 */
+function userMessagePersisted(text: string): boolean {
+  const target = text.trim()
+  return store.orderedMessages.some(
+    (message) => message.role === 'user' && message.content.trim() === target
+  )
+}
+
+async function send() {
+  if (!canSend.value) {
+    return
+  }
+  const text = input.value.trim()
+  if (!text) {
+    return
+  }
+  const conversation = store.current
+  if (!conversation) {
+    return
+  }
+
+  input.value = ''
+  sending.value = true
+  autoScroll = true
+  chatError.value = null
+  chatStopped.value = false
+  chatInterrupted.value = false
+  void nextTick(scrollToBottom)
+
+  if (isAgentMode.value) {
+    await sendAgentTurn(conversation, text)
+  } else {
+    await sendChatTurn(conversation, text)
+  }
+
+  sending.value = false
+  void nextTick(scrollToBottom)
+}
+
+/**
+ * 对话模式：走会话的 SSE。
+ *
+ * 历史与压缩摘要在服务端组装，请求体只有本次内容。流断在中途时
+ * assistant 不落库，页面给一句「响应中断」。
+ */
+async function sendChatTurn(conversation: AiConversation, text: string) {
+  pendingUser.value = text
+  streamingText.value = ''
+  controller = new AbortController()
+  try {
+    const result = await streamConversationChat({
+      conversationOid: conversation.oid,
+      content: text,
+      model: model.value || undefined,
+      signal: controller.signal,
+      onDelta: (delta) => {
+        pendingDelta += delta
+        scheduleDeltaFlush()
+      }
+    })
+    flushDeltaNow()
+    if (result.text) {
+      streamingText.value = result.text
+    }
+    if (result.error) {
+      chatError.value = {
+        code: result.error.code,
+        title: aiErrorCopy(result.error.code, t).title,
+        hint: aiErrorCopy(result.error.code, t).hint
+      }
+    } else if (result.interrupted) {
+      chatInterrupted.value = true
+    }
+    await store.refreshMessages()
+    // 服务端落库了同一条回答就撤掉本地副本，列表里那一条说了算。
+    if (
+      result.text &&
+      store.orderedMessages.some(
+        (message) => message.role === 'assistant' && message.content === result.text
+      )
+    ) {
+      streamingText.value = ''
+    }
+    if (userMessagePersisted(text)) {
+      pendingUser.value = ''
+    }
+  } catch (error) {
+    flushDeltaNow()
+    if (isAbort(error)) {
+      chatStopped.value = true
+    } else {
+      applyError(error)
+    }
+    await store.refreshMessages()
+    if (userMessagePersisted(text)) {
+      pendingUser.value = ''
+    }
+  } finally {
+    pendingDelta = ''
+    cancelFlush()
+    controller = null
+  }
+}
+
+/**
+ * 智能体模式：提交一次后台执行。
+ *
+ * 服务端写完用户消息就回 202，任务在 worker 里继续跑。页面不等它跑完：
+ * 提交成功后立刻显示「后台执行中」与轮次进度，由轮询推进。
+ */
+async function sendAgentTurn(conversation: AiConversation, text: string) {
+  pendingUser.value = text
+  try {
+    await store.submitRun(conversation.oid, text, {
+      model: model.value || undefined,
+      clientMsgId: clientMsgId()
+    })
+    await store.refreshMessages()
+    if (userMessagePersisted(text)) {
+      pendingUser.value = ''
+    }
+  } catch (error) {
+    applyError(error)
+  }
+}
+
+/** 停止：对话模式中断流，智能体模式请求中止后台任务。 */
+function stop() {
+  if (isAgentMode.value) {
+    void cancelRun()
+    return
+  }
+  controller?.abort()
+  controller = null
+}
+
+async function cancelRun() {
+  try {
+    await store.cancelCurrentRun()
+    ElMessage.success(t('ai.agent.run.cancelNotice'))
+  } catch (error) {
+    applyError(error)
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   生命周期
+   --------------------------------------------------------------------------- */
+
+// 切换模式：对话与智能体各有各的会话池；进入智能体时把待确认提案找回来。
+watch(mode, async (value) => {
+  if (store.current && store.current.mode === value) {
+    return
+  }
   if (value === 'agent') {
     void loadPendingProposals()
   }
+  await ensureConversation(value)
 })
 
-onMounted(() => {
+// 换会话时把模型选择对齐到该会话最近用的模型。
+watch(
+  () => store.currentOid,
+  () => {
+    const current = store.current
+    if (current?.model && models.value.some((item) => item.id === current.model)) {
+      model.value = current.model
+    }
+  }
+)
+
+// run 的提案增量合并：已处理过的卡片状态不能被轮询冲掉。
+watch(
+  () => store.runProposals,
+  (list) => {
+    const known = new Map(proposalCards.value.map((card) => [card.oid, card]))
+    const next: AgentProposalCard[] = []
+    for (const raw of list) {
+      const existing = known.get(raw.oid)
+      if (existing) {
+        next.push(existing)
+        continue
+      }
+      const created = normalizeProposals([raw])[0]
+      if (created) {
+        next.push(created)
+      }
+    }
+    proposalCards.value = next
+    syncProposalTimer()
+  },
+  { immediate: true }
+)
+
+onMounted(async () => {
   void loadModels()
+  await store.loadConversations()
+  // 先问一次有没有在跑的任务：有就接管进度，不另起一轮。
+  const runs = await store.loadActiveRuns()
+  const active = runs.find((item) => item.status === 'queued' || item.status === 'running')
+  if (active) {
+    await store.adoptRun(active)
+    const adoptedMode = store.current?.mode
+    if (adoptedMode && adoptedMode !== mode.value) {
+      mode.value = adoptedMode
+    }
+    if (adoptedMode === 'agent') {
+      void loadPendingProposals()
+    }
+    return
+  }
+  // 接着上一次那个会话：列表按更新时间倒序，第一个就是最近聊的。
+  const latest = store.conversations.find((item) => item.status === 'active')
+  if (!latest) {
+    // 一个会话都没有时不偷偷建：侧栏给空态引导，用户点了「新建会话」再建。
+    return
+  }
+  await store.selectConversation(latest.oid)
+  if (latest.mode !== mode.value) {
+    mode.value = latest.mode
+  }
 })
 
 onUnmounted(() => {
@@ -676,160 +981,361 @@ onUnmounted(() => {
   cancelFlush()
   stopCooldown()
   stopProposalTimer()
+  store.stopPolling()
 })
 </script>
 
 <template>
-  <div class="flex flex-col gap-4">
-    <ElCard shadow="never" v-loading="modelsLoading">
-      <template #header>
-        <div class="flex flex-wrap items-center justify-between gap-3">
-          <div class="flex flex-col gap-1">
-            <span>{{ isAgentMode ? t('ai.chat.modes.agent') : t('ai.chat.title') }}</span>
-            <span class="text-xs font-normal" style="color: var(--yg-text-tertiary)">
-              {{ isAgentMode ? t('ai.agent.subtitle') : t('ai.chat.subtitle') }}
-            </span>
-          </div>
-          <div class="flex flex-wrap items-center gap-3">
-            <ElSegmented
-              v-model="mode"
-              class="ai-chat__mode"
-              :options="modeOptions"
-              :disabled="sending"
-            />
-            <div v-if="!isAgentMode" class="flex items-center gap-2">
-              <span class="yg-text-xs yg-text-tertiary">{{ t('ai.chat.stream') }}</span>
-              <ElSwitch v-model="streamEnabled" />
-              <span class="text-xs tabular-nums" style="color: var(--yg-text-tertiary)">
-                {{ streamEnabled ? t('ai.chat.streamOn') : t('ai.chat.streamOff') }}
+  <div class="ai-chat">
+    <!-- 桌面：会话栏固定在左侧 -->
+    <aside v-if="!isNarrow" class="ai-chat__sidebar">
+      <ZAiSessionList
+        :conversations="store.conversations"
+        :current-oid="store.currentOid"
+        :loading="store.listLoading"
+        :failed="store.listFailed"
+        :has-more="Boolean(store.nextCursor)"
+        @select="selectSession"
+        @create="createSession"
+        @rename="openRename"
+        @archive="archiveSession"
+        @remove="removeSession"
+        @load-more="store.loadMoreConversations()"
+      />
+    </aside>
+
+    <!-- 窄屏：会话栏收进抽屉 -->
+    <ElDrawer
+      v-if="isNarrow"
+      v-model="drawerOpen"
+      direction="ltr"
+      :size="Math.min(320, Math.max(240, width - 48)) + 'px'"
+      :title="t('ai.chat.sessions.title')"
+    >
+      <ZAiSessionList
+        :conversations="store.conversations"
+        :current-oid="store.currentOid"
+        :loading="store.listLoading"
+        :failed="store.listFailed"
+        :has-more="Boolean(store.nextCursor)"
+        @select="selectSession"
+        @create="createSession"
+        @rename="openRename"
+        @archive="archiveSession"
+        @remove="removeSession"
+        @load-more="store.loadMoreConversations()"
+      />
+    </ElDrawer>
+
+    <div class="ai-chat__main">
+      <ElCard shadow="never" v-loading="modelsLoading">
+        <template #header>
+          <div class="flex flex-wrap items-center justify-between gap-3">
+            <div class="flex flex-col gap-1">
+              <span>{{ isAgentMode ? t('ai.chat.modes.agent') : t('ai.chat.title') }}</span>
+              <span class="text-xs font-normal" style="color: var(--yg-text-tertiary)">
+                {{ isAgentMode ? t('ai.agent.subtitle') : t('ai.chat.subtitle') }}
               </span>
             </div>
-            <ElButton :disabled="turns.length === 0" @click="clearSession">
-              <ElIcon class="mr-1"><Delete /></ElIcon>
-              {{ t('ai.chat.clear') }}
+            <div class="flex flex-wrap items-center gap-3">
+              <ElButton v-if="isNarrow" text @click="drawerOpen = true">
+                <ElIcon class="mr-1"><Menu /></ElIcon>
+                {{ t('ai.chat.sessions.openDrawer') }}
+              </ElButton>
+              <ElSegmented
+                v-model="mode"
+                class="ai-chat__mode"
+                :options="modeOptions"
+                :disabled="sending"
+              />
+            </div>
+          </div>
+        </template>
+
+        <div class="flex flex-wrap items-center gap-3">
+          <span class="yg-text-xs yg-text-tertiary">{{ t('ai.chat.model') }}</span>
+          <ElSelect
+            v-model="model"
+            class="w-64"
+            :placeholder="t('ai.chat.modelPlaceholder')"
+            :disabled="!hasModels"
+          >
+            <ElOption v-for="item in models" :key="item.id" :label="item.id" :value="item.id" />
+          </ElSelect>
+          <ElButton text @click="loadModels">{{ t('ai.common.refresh') }}</ElButton>
+        </div>
+
+        <!-- 上下文水位：接近上限时换警示色 -->
+        <div v-if="contextLimit > 0" class="ai-chat__context">
+          <div class="ai-chat__context-head">
+            <span>{{ t('ai.chat.sessions.context.label') }}</span>
+            <span class="tabular-nums">
+              {{ t('ai.chat.sessions.context.usage', { used: contextTokens, limit: contextLimit }) }}
+            </span>
+          </div>
+          <div
+            class="yg-progress yg-progress--sm"
+            :class="{ 'yg-progress--warning': contextWarn }"
+            role="progressbar"
+            :aria-valuenow="contextPercentValue"
+            aria-valuemin="0"
+            aria-valuemax="100"
+          >
+            <div
+              class="yg-progress__rail"
+              :style="{ '--yg-progress-value': contextPercentValue }"
+            >
+              <div class="yg-progress__bar" />
+            </div>
+          </div>
+          <p v-if="contextWarn" class="ai-chat__context-warn">
+            {{ t('ai.chat.sessions.context.warning') }}
+          </p>
+        </div>
+      </ElCard>
+
+      <ElCard shadow="never" class="ai-chat">
+        <!-- 待确认提案入口：刷新页面后仍在这里等你处理 -->
+        <div v-if="isAgentMode" class="yg-card yg-card--narrow ai-agent__pending">
+          <div class="yg-card__header ai-agent__pending-head">
+            <div class="ai-agent__pending-title-group">
+              <span class="yg-card__title ai-agent__pending-title">{{
+                t('ai.agent.pending.title')
+              }}</span>
+              <span v-if="pendingLoading" class="ai-agent__hint">{{
+                t('ai.agent.run.replayLoading')
+              }}</span>
+              <span v-else-if="pendingFailed" class="ai-agent__hint">{{
+                t('ai.agent.pending.loadFailed')
+              }}</span>
+              <span v-else-if="pendingCount > 0" class="ai-agent__pending-count">{{
+                t('ai.agent.pending.count', { count: pendingCount })
+              }}</span>
+              <span v-else class="ai-agent__hint">{{ t('ai.agent.pending.empty') }}</span>
+            </div>
+            <div class="yg-card__extra ai-agent__pending-actions">
+              <ElButton text size="small" @click="loadPendingProposals">{{
+                t('ai.agent.pending.refresh')
+              }}</ElButton>
+              <ElButton text size="small" @click="pendingOpen = !pendingOpen">{{
+                pendingOpen ? t('ai.agent.pending.collapse') : t('ai.agent.pending.entry')
+              }}</ElButton>
+            </div>
+          </div>
+          <div v-if="pendingOpen" class="yg-card__body ai-agent__pending-body">
+            <p v-if="pendingLoading" class="ai-agent__hint">
+              {{ t('ai.agent.run.replayLoading') }}
+            </p>
+            <p v-else-if="pendingFailed" class="ai-agent__hint">
+              {{ t('ai.agent.pending.loadFailed') }}
+            </p>
+            <p v-else-if="pendingProposals.length === 0" class="ai-agent__hint">
+              {{ t('ai.agent.pending.empty') }}
+            </p>
+            <ZAiProposalCard
+              v-for="card in pendingProposals"
+              :key="card.oid"
+              :card="card"
+              :now="proposalNow"
+              @confirm="confirmCard(card)"
+              @reject="rejectCard(card)"
+            />
+          </div>
+        </div>
+
+        <div
+          ref="listRef"
+          class="ai-chat__list"
+          :style="{ maxHeight: `${listHeight}px` }"
+          @scroll.passive="handleListScroll"
+        >
+          <div v-if="messageRows.length === 0 && !pendingUser" class="py-10">
+            <ElEmpty :description="emptyDescription" :image-size="90" />
+          </div>
+
+          <!-- 往上翻：把窗口前面那一段也加载进来 -->
+          <div v-if="store.earlierCount > 0" class="ai-chat__earlier">
+            <ElButton text size="small" :loading="store.messagesLoading" @click="store.loadEarlierMessages()">
+              {{ t('ai.chat.sessions.loadEarlier') }}（{{ store.earlierCount }}）
             </ElButton>
           </div>
-        </div>
-      </template>
 
-      <div class="flex flex-wrap items-center gap-3">
-        <span class="yg-text-xs yg-text-tertiary">{{ t('ai.chat.model') }}</span>
-        <ElSelect
-          v-model="model"
-          class="w-64"
-          :placeholder="t('ai.chat.modelPlaceholder')"
-          :disabled="!hasModels"
-        >
-          <ElOption v-for="item in models" :key="item.id" :label="item.id" :value="item.id" />
-        </ElSelect>
-        <ElButton text @click="loadModels">{{ t('ai.common.refresh') }}</ElButton>
-      </div>
-    </ElCard>
-
-    <ElCard shadow="never" class="ai-chat">
-      <!-- 待确认提案入口：刷新页面后仍在这里等你处理 -->
-      <div v-if="isAgentMode" class="yg-card yg-card--narrow ai-agent__pending">
-        <div class="yg-card__header ai-agent__pending-head">
-          <div class="ai-agent__pending-title-group">
-            <span class="yg-card__title ai-agent__pending-title">{{
-              t('ai.agent.pending.title')
-            }}</span>
-            <span v-if="pendingLoading" class="ai-agent__hint">{{
-              t('ai.agent.run.replayLoading')
-            }}</span>
-            <span v-else-if="pendingFailed" class="ai-agent__hint">{{
-              t('ai.agent.pending.loadFailed')
-            }}</span>
-            <span v-else-if="pendingCount > 0" class="ai-agent__pending-count">{{
-              t('ai.agent.pending.count', { count: pendingCount })
-            }}</span>
-            <span v-else class="ai-agent__hint">{{ t('ai.agent.pending.empty') }}</span>
-          </div>
-          <div class="yg-card__extra ai-agent__pending-actions">
-            <ElButton text size="small" @click="loadPendingProposals">{{
-              t('ai.agent.pending.refresh')
-            }}</ElButton>
-            <ElButton text size="small" @click="pendingOpen = !pendingOpen">{{
-              pendingOpen ? t('ai.agent.pending.collapse') : t('ai.agent.pending.entry')
-            }}</ElButton>
-          </div>
-        </div>
-        <div v-if="pendingOpen" class="yg-card__body ai-agent__pending-body">
-          <p v-if="pendingLoading" class="ai-agent__hint">{{ t('ai.agent.run.replayLoading') }}</p>
-          <p v-else-if="pendingFailed" class="ai-agent__hint">
-            {{ t('ai.agent.pending.loadFailed') }}
-          </p>
-          <p v-else-if="pendingProposals.length === 0" class="ai-agent__hint">
-            {{ t('ai.agent.pending.empty') }}
-          </p>
-          <ZAiProposalCard
-            v-for="card in pendingProposals"
-            :key="card.oid"
-            :card="card"
-            :now="proposalNow"
-            @confirm="confirmCard(card)"
-            @reject="rejectCard(card)"
-          />
-        </div>
-      </div>
-
-      <div
-        ref="listRef"
-        class="ai-chat__list"
-        :style="{ maxHeight: `${listHeight}px` }"
-        @scroll.passive="handleListScroll"
-      >
-        <div v-if="turns.length === 0" class="py-10">
-          <ElEmpty
-            :description="
-              modelsFailed
-                ? t('ai.chat.modelsLoadFailed')
-                : !hasModels
-                  ? t('ai.chat.modelsEmpty')
-                  : isAgentMode
-                    ? t('ai.agent.emptyHint')
-                    : t('ai.chat.emptyHint')
-            "
-            :image-size="90"
-          />
-        </div>
-
-        <div v-for="turn in turns" :key="turn.id" class="ai-chat__row" :class="turn.role">
-          <div class="ai-chat__who yg-text-xs yg-text-tertiary">
-            {{ turn.role === 'user' ? t('ai.chat.you') : t('ai.chat.assistant') }}
-          </div>
-          <div class="ai-chat__bubble" :class="turn.role">
-            <!-- 智能体：等待整次 run 返回，不做打字机 -->
-            <div
-              v-if="turn.mode === 'agent' && turn.status === 'pending'"
-              class="ai-agent__running"
-              role="status"
-              aria-live="polite"
-            >
-              <span class="ai-agent__pulse" aria-hidden="true" />
-              <span>{{ t('ai.agent.running') }}</span>
-              <span class="ai-agent__hint">{{ t('ai.agent.runningHint') }}</span>
+          <template v-for="row in messageRows" :key="row.key">
+            <!-- 压缩点：更早的消息已被摘要带走，原文仍在库里 -->
+            <div v-if="row.kind === 'compaction'" class="ai-chat__compaction">
+              <span class="ai-chat__compaction-line" aria-hidden="true" />
+              <span class="ai-chat__compaction-text">
+                {{ t('ai.chat.sessions.context.compacted', { count: row.compacted }) }}
+              </span>
+              <span class="ai-chat__compaction-line" aria-hidden="true" />
             </div>
 
-            <!-- 智能体：触顶/超时是提示不是错误 -->
+            <div v-else class="ai-chat__row" :class="row.message!.role">
+              <div class="ai-chat__who yg-text-xs yg-text-tertiary">
+                {{
+                  row.message!.role === 'user'
+                    ? t('ai.chat.you')
+                    : row.message!.role === 'tool'
+                      ? t('ai.chat.sessions.toolRole')
+                      : t('ai.chat.assistant')
+                }}
+              </div>
+              <div class="ai-chat__bubble" :class="row.message!.role">
+                <!-- 工具消息：折叠成一行，点开才看结果全文 -->
+                <div v-if="row.message!.role === 'tool'" class="ai-chat__tool">
+                  <button
+                    type="button"
+                    class="ai-agent__event-row"
+                    :aria-expanded="toolExpanded(row.message!.oid)"
+                    @click="toggleTool(row.message!.oid)"
+                  >
+                    <span class="ai-agent__dot is-read" aria-hidden="true" />
+                    <span class="ai-agent__tool">{{
+                      t(toolLabelKey(row.message!.tool_name))
+                    }}</span>
+                    <span class="ai-agent__badge is-success">
+                      {{ t('ai.agent.status.executed') }}
+                    </span>
+                  </button>
+                  <div v-if="toolExpanded(row.message!.oid)" class="ai-agent__event-result">
+                    <span class="ai-agent__hint">{{ t('ai.agent.result') }}</span>
+                    <code class="ai-agent__result-text">{{ row.message!.content }}</code>
+                  </div>
+                </div>
+
+                <p v-else-if="row.message!.content" class="ai-chat__text">
+                  {{ row.message!.content }}
+                </p>
+
+                <!-- 历史运行：回看这次运行的工具留痕 -->
+                <div v-if="row.message!.request_id" class="ai-agent__meta">
+                  <ElButton
+                    text
+                    size="small"
+                    :loading="replayLoading[row.message!.request_id]"
+                    @click="toggleReplay(row.message!)"
+                  >
+                    {{
+                      replays[row.message!.request_id]
+                        ? t('ai.agent.run.replayClose')
+                        : t('ai.agent.run.replay')
+                    }}
+                  </ElButton>
+                </div>
+                <p
+                  v-if="row.message!.request_id && replayFailed[row.message!.request_id]"
+                  class="ai-agent__hint"
+                >
+                  {{ t('ai.agent.run.replayFailed') }}
+                </p>
+                <div
+                  v-if="row.message!.request_id && replays[row.message!.request_id]"
+                  class="ai-agent__replay"
+                >
+                  <p
+                    v-if="replays[row.message!.request_id]!.length === 0"
+                    class="ai-agent__hint"
+                  >
+                    {{ t('ai.agent.run.replayEmpty') }}
+                  </p>
+                  <ul v-else class="ai-agent__replay-list">
+                    <li
+                      v-for="(event, index) in replays[row.message!.request_id]!"
+                      :key="index"
+                    >
+                      <span class="ai-agent__replay-round tabular-nums">{{
+                        event.round_no
+                      }}</span>
+                      <span>{{ t(toolLabelKey(event.tool_name)) }}</span>
+                      <span class="ai-agent__badge" :class="eventStatusTone(event.status)">{{
+                        t(`ai.agent.status.${event.status}`)
+                      }}</span>
+                    </li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+          </template>
+
+          <!-- 本地暂存的用户消息：服务端落库前先显示 -->
+          <div v-if="pendingUser" class="ai-chat__row user">
+            <div class="ai-chat__who yg-text-xs yg-text-tertiary">{{ t('ai.chat.you') }}</div>
+            <div class="ai-chat__bubble user">
+              <p class="ai-chat__text">{{ pendingUser }}</p>
+            </div>
+          </div>
+
+          <!-- 流式正文 -->
+          <div v-if="streamingText" class="ai-chat__row assistant">
+            <div class="ai-chat__who yg-text-xs yg-text-tertiary">
+              {{ t('ai.chat.assistant') }}
+            </div>
+            <div class="ai-chat__bubble assistant">
+              <p class="ai-chat__text">{{ streamingText }}</p>
+            </div>
+          </div>
+
+          <!-- 本轮出错 -->
+          <div v-if="chatError" class="ai-chat__error">
+            <div class="flex flex-wrap items-center gap-2">
+              <span class="font-medium">{{ chatError.title }}</span>
+              <ElTag v-if="chatError.code" type="danger" size="small">{{ chatError.code }}</ElTag>
+            </div>
+            <p class="text-xs">{{ chatError.hint }}</p>
+          </div>
+          <p v-else-if="chatInterrupted" class="ai-chat__notice">
+            {{ t('ai.chat.interrupted') }}
+            <span class="text-xs">{{ t('ai.chat.interruptedHint') }}</span>
+          </p>
+          <p v-else-if="chatStopped" class="ai-chat__notice">{{ t('ai.chat.stopped') }}</p>
+
+          <!-- 后台执行：轮次进度 + 工具留痕 + 提案 -->
+          <div v-if="store.activeRun" class="ai-agent__run">
+            <div v-if="runActive" class="ai-agent__running" role="status" aria-live="polite">
+              <span class="ai-agent__pulse" aria-hidden="true" />
+              <span>{{ t('ai.agent.run.background') }}</span>
+              <span class="ai-agent__hint tabular-nums">
+                {{ t('ai.agent.run.roundsDone', { rounds: store.activeRun.rounds }) }}
+              </span>
+              <ElButton text type="danger" size="small" @click="cancelRun">
+                {{ t('ai.agent.run.cancel') }}
+              </ElButton>
+            </div>
+
+            <!-- 触顶 / 超时 / 出错是提示，不是弹窗 -->
             <div
-              v-if="turn.mode === 'agent' && turn.stopReason && turn.status === 'done'"
+              v-if="runStopReason && !runActive"
               class="yg-alert yg-alert--warning ai-agent__stop"
               role="status"
             >
               <ElIcon class="yg-alert__icon"><WarningFilled /></ElIcon>
-              <span class="yg-alert__title">{{ t(stopReasonKey(turn.stopReason)) }}</span>
-              <span class="yg-alert__desc">{{ t(stopReasonHintKey(turn.stopReason)) }}</span>
+              <span class="yg-alert__title">{{
+                t(`ai.agent.stopReason.${runStopReason}`)
+              }}</span>
+              <span class="yg-alert__desc">{{
+                t(`ai.agent.stopReason.${runStopReason}Hint`)
+              }}</span>
             </div>
 
-            <!-- 智能体：工具调用时间线（一条调用一行，点开看结果） -->
-            <div v-if="turn.events && turn.events.length > 0" class="ai-agent__timeline">
+            <div v-if="runErrorCopy" class="ai-chat__error">
+              <div class="flex flex-wrap items-center gap-2">
+                <span class="font-medium">{{ runErrorCopy.title }}</span>
+                <ElTag type="danger" size="small">{{ runErrorCopy.code }}</ElTag>
+              </div>
+              <p class="text-xs">{{ runErrorCopy.hint }}</p>
+              <p v-if="store.activeRun.error_message" class="text-xs">
+                {{ store.activeRun.error_message }}
+              </p>
+            </div>
+
+            <!-- 工具调用时间线（一条调用一行，点开看结果） -->
+            <div v-if="runEventViews.length > 0" class="ai-agent__timeline">
               <div class="ai-agent__timeline-head">
                 <span>{{ t('ai.agent.events') }}</span>
-                <span>{{ t('ai.agent.eventCount', { count: turn.events.length }) }}</span>
+                <span>{{ t('ai.agent.eventCount', { count: runEventViews.length }) }}</span>
               </div>
               <ul class="ai-agent__events">
-                <li v-for="(event, index) in turn.events" :key="index" class="ai-agent__event">
+                <li v-for="(event, index) in runEventViews" :key="index" class="ai-agent__event">
                   <button
                     type="button"
                     class="ai-agent__event-row"
@@ -861,9 +1367,9 @@ onUnmounted(() => {
               </ul>
             </div>
 
-            <!-- 智能体：写操作提案卡（确认才执行） -->
+            <!-- 写操作提案卡（确认才执行） -->
             <ZAiProposalCard
-              v-for="card in turn.proposals"
+              v-for="card in proposalCards"
               :key="card.oid"
               :card="card"
               :now="proposalNow"
@@ -871,128 +1377,89 @@ onUnmounted(() => {
               @reject="rejectCard(card)"
             />
 
-            <p v-if="turn.content" class="ai-chat__text">{{ turn.content }}</p>
-            <p
-              v-else-if="turn.status === 'pending' && turn.mode !== 'agent'"
-              class="text-xs"
-              style="color: var(--yg-text-tertiary)"
-            >
-              {{ t('ai.chat.thinking') }}
-            </p>
-
-            <div v-if="turn.status === 'error'" class="ai-chat__error">
-              <div class="flex flex-wrap items-center gap-2">
-                <span class="font-medium">{{ turn.errorTitle }}</span>
-                <ElTag v-if="turn.errorCode" type="danger" size="small">
-                  {{ turn.errorCode }}
-                </ElTag>
-              </div>
-              <p class="text-xs">{{ turn.errorHint }}</p>
-              <p
-                v-if="turn.quotaUsed !== null && turn.quotaLimit !== null"
-                class="text-xs tabular-nums"
-              >
-                {{
-                  t('ai.chat.quotaUsed', {
-                    used: turn.quotaUsed,
-                    limit: turn.quotaLimit
-                  })
-                }}
-              </p>
-              <div v-if="turn.requestId" class="flex flex-wrap items-center gap-2 text-xs">
-                <span style="color: var(--yg-text-tertiary)">{{ t('ai.chat.requestId') }}</span>
-                <code class="tabular-nums">{{ turn.requestId }}</code>
-                <ElButton text size="small" @click="copyRequestId(turn)">
-                  <ElIcon class="mr-1"><CopyDocument /></ElIcon>
-                  {{ t('ai.chat.copyRequestId') }}
-                </ElButton>
-              </div>
+            <div class="ai-agent__meta">
+              <span v-if="store.activeRun.rounds">{{
+                t('ai.agent.run.rounds', { rounds: store.activeRun.rounds })
+              }}</span>
+              <span v-if="store.activeRun.total_tokens > 0">{{
+                t('ai.agent.run.usage', { total: store.activeRun.total_tokens })
+              }}</span>
+              <span class="ai-agent__badge" :class="runActive ? 'is-info' : 'is-success'">
+                {{ t(`ai.agent.run.status.${store.activeRun.status}`) }}
+              </span>
             </div>
+          </div>
+        </div>
 
-            <p v-else-if="turn.status === 'interrupted'" class="ai-chat__notice">
-              {{ t('ai.chat.interrupted') }}
-              <span class="text-xs">{{ t('ai.chat.interruptedHint') }}</span>
-            </p>
-            <p v-else-if="turn.status === 'stopped'" class="ai-chat__notice">
-              {{ t('ai.chat.stopped') }}
-            </p>
-
-            <!-- 智能体：轮数、用量与「回看这次运行」 -->
-            <div v-if="turn.mode === 'agent' && turn.status === 'done'" class="ai-agent__meta">
-              <span v-if="turn.rounds">{{
-                t('ai.agent.run.rounds', { rounds: turn.rounds })
-              }}</span>
-              <span v-if="turn.usage && turn.usage.total_tokens !== null">{{
-                t('ai.agent.run.usage', { total: turn.usage.total_tokens })
-              }}</span>
+        <div class="ai-chat__composer">
+          <ElInput
+            v-model="input"
+            type="textarea"
+            :rows="3"
+            resize="none"
+            :placeholder="t('ai.chat.inputPlaceholder')"
+            :disabled="!hasModels || !store.current"
+            @keydown.enter.exact.prevent="send"
+          />
+          <div class="flex flex-wrap items-center justify-between gap-2 mt-2">
+            <span class="text-xs" style="color: var(--yg-text-tertiary)">
+              <template v-if="cooldown > 0">
+                {{ t('ai.chat.rateLimited', { seconds: cooldown }) }}
+              </template>
+              <template v-else-if="!hasModels">
+                {{ modelsFailed ? t('ai.chat.modelsLoadFailed') : t('ai.chat.modelsEmpty') }}
+              </template>
+              <template v-else-if="!store.current">
+                {{ t('ai.chat.sessions.pickFirst') }}
+              </template>
+              <template v-else-if="runActive">
+                {{ t('ai.agent.run.background') }}
+              </template>
+            </span>
+            <div class="flex items-center gap-2">
+              <ElButton v-if="sending || runActive" type="danger" plain @click="stop">
+                <ElIcon class="mr-1"><VideoPause /></ElIcon>
+                {{ t('ai.chat.stop') }}
+              </ElButton>
               <ElButton
-                v-if="turn.requestId"
-                text
-                size="small"
-                :loading="turn.replayLoading"
-                @click="toggleReplay(turn)"
+                type="primary"
+                :disabled="!canSend || input.trim().length === 0"
+                :loading="sending"
+                @click="send"
               >
-                {{ turn.replay ? t('ai.agent.run.replayClose') : t('ai.agent.run.replay') }}
+                <ElIcon class="mr-1"><Promotion /></ElIcon>
+                {{ t('ai.chat.send') }}
               </ElButton>
             </div>
-            <p v-if="turn.replayFailed" class="ai-agent__hint">
-              {{ t('ai.agent.run.replayFailed') }}
-            </p>
-            <div v-if="turn.replay" class="ai-agent__replay">
-              <p v-if="turn.replay.length === 0" class="ai-agent__hint">
-                {{ t('ai.agent.run.replayEmpty') }}
-              </p>
-              <ul v-else class="ai-agent__replay-list">
-                <li v-for="(event, index) in turn.replay" :key="index">
-                  <span class="ai-agent__replay-round tabular-nums">{{ event.round_no }}</span>
-                  <span>{{ t(toolLabelKey(event.tool_name)) }}</span>
-                  <span class="ai-agent__badge" :class="eventStatusTone(event.status)">{{
-                    t(`ai.agent.status.${event.status}`)
-                  }}</span>
-                </li>
-              </ul>
-            </div>
           </div>
         </div>
-      </div>
+      </ElCard>
+    </div>
 
-      <div class="ai-chat__composer">
-        <ElInput
-          v-model="input"
-          type="textarea"
-          :rows="3"
-          resize="none"
-          :placeholder="t('ai.chat.inputPlaceholder')"
-          :disabled="!hasModels"
-          @keydown.enter.exact.prevent="send"
-        />
-        <div class="flex flex-wrap items-center justify-between gap-2 mt-2">
-          <span class="text-xs" style="color: var(--yg-text-tertiary)">
-            <template v-if="cooldown > 0">
-              {{ t('ai.chat.rateLimited', { seconds: cooldown }) }}
-            </template>
-            <template v-else-if="!hasModels">
-              {{ modelsFailed ? t('ai.chat.modelsLoadFailed') : t('ai.chat.modelsEmpty') }}
-            </template>
-          </span>
-          <div class="flex items-center gap-2">
-            <ElButton v-if="sending" type="danger" plain @click="stop">
-              <ElIcon class="mr-1"><VideoPause /></ElIcon>
-              {{ t('ai.chat.stop') }}
-            </ElButton>
-            <ElButton
-              type="primary"
-              :disabled="!canSend || input.trim().length === 0"
-              :loading="sending"
-              @click="send"
-            >
-              <ElIcon class="mr-1"><Promotion /></ElIcon>
-              {{ t('ai.chat.send') }}
-            </ElButton>
-          </div>
+    <!-- 重命名会话 -->
+    <ElDialog
+      v-model="renameVisible"
+      :title="t('ai.chat.sessions.renameTitle')"
+      width="min(420px, 92vw)"
+      :close-on-click-modal="false"
+      append-to-body
+    >
+      <ElInput
+        v-model="renameTitle"
+        :placeholder="t('ai.chat.sessions.renamePlaceholder')"
+        @keydown.enter.exact.prevent="submitRename"
+      />
+      <template #footer>
+        <div class="flex items-center justify-end gap-2">
+          <ElButton :disabled="renaming" @click="renameVisible = false">
+            {{ t('ai.common.cancel') }}
+          </ElButton>
+          <ElButton type="primary" :loading="renaming" @click="submitRename">
+            {{ t('ai.common.save') }}
+          </ElButton>
         </div>
-      </div>
-    </ElCard>
+      </template>
+    </ElDialog>
 
     <!-- 双人动态码：运维写操作确认时弹出（复用系统页同一个组件） -->
     <ZSystemAuthDialog ref="authRef" />
@@ -1000,6 +1467,33 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
+.ai-chat {
+  display: flex;
+  align-items: stretch;
+  gap: var(--yg-space-4);
+  width: 100%;
+  min-width: 0;
+}
+
+/* 桌面侧栏：固定宽度，跟主区等高 */
+.ai-chat__sidebar {
+  flex: none;
+  width: 260px;
+  max-height: calc(100vh - 220px);
+  padding: var(--yg-space-3);
+  border: 1px solid var(--yg-border-default);
+  border-radius: var(--yg-radius-lg);
+  background: var(--yg-bg-surface);
+}
+
+.ai-chat__main {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--yg-space-4);
+  min-width: 0;
+}
+
 .ai-chat__list {
   overflow-y: auto;
   overscroll-behavior: contain;
@@ -1038,6 +1532,14 @@ onUnmounted(() => {
   color: var(--yg-color-on-primary);
 }
 
+/* 工具消息不是一句话：它是一条工具留痕，去掉气泡壳，直接落在时间线里。 */
+.ai-chat__bubble.tool {
+  max-width: min(680px, 92%);
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
 .ai-chat__text {
   white-space: pre-wrap;
   word-break: break-word;
@@ -1066,6 +1568,57 @@ onUnmounted(() => {
   margin-top: 12px;
 }
 
+/* 压缩点：一条虚线加一句说明，把被摘要的历史隔在下面 */
+.ai-chat__compaction {
+  display: flex;
+  align-items: center;
+  gap: var(--yg-space-2);
+  margin: var(--yg-space-3) 0;
+  font-size: var(--yg-font-size-xs);
+  color: var(--yg-text-tertiary);
+}
+
+.ai-chat__compaction-line {
+  flex: 1;
+  height: 1px;
+  background: var(--yg-border-subtle);
+}
+
+.ai-chat__compaction-text {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 往上翻的入口：贴在列表顶部，不打断阅读 */
+.ai-chat__earlier {
+  display: flex;
+  justify-content: center;
+  padding-bottom: var(--yg-space-2);
+}
+
+/* 上下文水位：贴着模型选择器下面，像一条细刻度 */
+.ai-chat__context {
+  margin-top: var(--yg-space-3);
+  padding-top: var(--yg-space-3);
+  border-top: 1px solid var(--yg-border-subtle);
+}
+
+.ai-chat__context-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--yg-space-2);
+  margin-bottom: var(--yg-space-1);
+  font-size: var(--yg-font-size-xs);
+  color: var(--yg-text-tertiary);
+}
+
+.ai-chat__context-warn {
+  margin: var(--yg-space-1) 0 0;
+  font-size: var(--yg-font-size-xs);
+  color: var(--yg-text-warning);
+}
+
 /* ---------------------------------------------------------------------------
    智能体：运行态 + 工具时间线 + 待确认入口 + 回看
    颜色/间距/圆角/动效全部走令牌（准则 2.2 / 2.7）；红色只给失败与写操作警示。
@@ -1073,6 +1626,13 @@ onUnmounted(() => {
 
 .ai-chat__mode {
   flex: none;
+}
+
+.ai-agent__run {
+  display: flex;
+  flex-direction: column;
+  gap: var(--yg-space-2);
+  margin-top: var(--yg-space-2);
 }
 
 .ai-agent__running {

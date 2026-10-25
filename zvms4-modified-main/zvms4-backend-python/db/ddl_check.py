@@ -137,7 +137,10 @@ def _norm_expr(expr: str) -> str:
 
 def _parse_column(frag: str) -> Tuple[str, str, bool, str | None]:
     frag = _collapse(frag)
-    m = re.match(r"^([a-z0-9_]+)\s+(.*)$", frag, re.IGNORECASE)
+    # 标识符的两侧引号要吃掉：Oracle 的保留字（``MODE`` …）只能带引号出现，
+    # 而引号是引用方式、不是列名的一部分——把它留在名字里会让 models 侧
+    # ``"MODE"`` 与 V001 侧的同名列永远对不上。
+    m = re.match(r'^"?([a-z0-9_]+)"?\s+(.*)$', frag, re.IGNORECASE)
     if not m:
         raise ValueError(f"unparseable column: {frag!r}")
     name, rest = m.group(1).lower(), m.group(2)

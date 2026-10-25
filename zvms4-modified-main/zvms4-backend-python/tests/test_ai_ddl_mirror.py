@@ -813,3 +813,210 @@ def test_api_keys_migration_is_idempotent_on_existing_objects() -> None:
     for code in ("-955", "-1408"):
         assert code in text
 
+
+
+# ---------------------------------------------------------------------------
+# V035：持久会话 / 消息 / run（docs/AI_CONVERSATION_DESIGN.md §2）
+# ---------------------------------------------------------------------------
+
+CONVERSATIONS_FILE = "V035__ai_conversations.sql"
+CONVERSATION_TABLES = {"ai_conversations", "ai_messages", "ai_runs"}
+
+# 活跃 run 的唯一性是**函数唯一索引**：键只在 queued|running 时求值，终态行键为
+# NULL（Oracle 不索引全 NULL 键），所以终态行不互斥。模型与两份 DDL 的表达式必须
+# 逐字一致——差一个空格，ddl_check 会把它当成两条不同的索引。
+ACTIVE_CONV_INDEX = (
+    "CREATE UNIQUE INDEX uq_ai_runs_active_conv ON ai_runs "
+    "(CASE WHEN status IN ('queued','running') THEN conversation_oid END)"
+)
+ACTIVE_OWNER_INDEX = (
+    "CREATE UNIQUE INDEX uq_ai_runs_active_owner ON ai_runs "
+    "(CASE WHEN status IN ('queued','running') THEN owner_oid END)"
+)
+
+CONVERSATION_MODE_CK = '"mode" in (\'chat\',\'agent\')'
+CONVERSATION_STATUS_CK = "status in ('active','archived')"
+MESSAGE_ROLE_CK = "role in ('user','assistant','tool')"
+RUN_STATUS_CK = (
+    "status in ('queued','running','succeeded','failed','cancelled','interrupted')"
+)
+
+
+def _conversations() -> dict:
+    return _parsed(_migration(CONVERSATIONS_FILE))
+
+
+def _conversations_text() -> str:
+    return _migration(CONVERSATIONS_FILE).read_text(encoding="utf-8")
+
+
+def _models_index_sql(name: str, table: str = "ai_runs") -> str:
+    from sqlalchemy.dialects import oracle
+    from sqlalchemy.schema import CreateIndex
+
+    from db import models
+
+    index = next(
+        idx for idx in models.metadata.tables[table].indexes if idx.name == name
+    )
+    return str(CreateIndex(index).compile(dialect=oracle.dialect())).strip()
+
+
+def test_conversations_migration_matches_models_and_v001() -> None:
+    """V035 的三张表必须与 models / V001 逐字段一致（含列默认值与 CHECK）。"""
+    migration = _conversations()
+    modeled = ddl_check.parse_models()
+    v001 = ddl_check.parse_v001()
+
+    # 这份迁移只建这三张表：多出一张说明夹带了别的车道的东西。
+    assert set(migration["tables"]) == CONVERSATION_TABLES
+
+    for table in sorted(CONVERSATION_TABLES):
+        assert migration["tables"][table] == modeled["tables"][table], table
+        # 全新实例走 V001，一次就拿到同一形状。
+        assert v001["tables"][table] == modeled["tables"][table], table
+        assert migration["indexes"] <= modeled["indexes"], table
+        assert migration["indexes"] <= v001["indexes"], table
+
+
+def test_active_run_uniqueness_is_a_function_unique_index() -> None:
+    """两个 CASE 索引是唯一性的第二道闸，三处（V035 / models / V001）逐字一致。"""
+    migration = _conversations()
+    v001 = ddl_check.parse_v001()
+    modeled = ddl_check.parse_models()
+
+    raw = ddl_check.extract_execute_immediate(_conversations_text())
+    v001_raw = ddl_check.extract_execute_immediate(
+        (DDL_DIR / "V001__initial_schema.sql").read_text(encoding="utf-8")
+    )
+    for statement in (ACTIVE_CONV_INDEX, ACTIVE_OWNER_INDEX):
+        assert statement in raw, statement
+        assert statement in v001_raw, statement
+
+    assert _models_index_sql("uq_ai_runs_active_conv") == ACTIVE_CONV_INDEX
+    assert _models_index_sql("uq_ai_runs_active_owner") == ACTIVE_OWNER_INDEX
+
+    # 解析后的索引元组也必须在三处都出现（唯一 + 同一个表达式文本）。
+    for parsed in (migration, modeled, v001):
+        assert any(
+            table == "ai_runs" and unique and "CASE WHEN status IN" in cols[0]
+            for table, unique, cols in parsed["indexes"]
+        )
+
+
+def test_client_msg_idempotency_key_is_unique_per_conversation() -> None:
+    migration = _conversations()
+    modeled = ddl_check.parse_models()
+
+    expected = ("ai_runs", True, ("conversation_oid", "client_msg_id"))
+    assert expected in migration["indexes"]
+    assert expected in modeled["indexes"]
+    # 同样的键在 V001 也必须存在（新库直接具备幂等语义）。
+    assert expected in ddl_check.parse_v001()["indexes"]
+
+
+def test_conversation_and_run_columns_carry_the_documented_shape() -> None:
+    modeled = ddl_check.parse_models()
+
+    conversations = modeled["tables"]["ai_conversations"]["columns"]
+    assert conversations["oid"] == ("varchar2(32)", True, None)
+    assert conversations["owner_oid"] == ("varchar2(24)", True, None)
+    # mode 是 Oracle 保留字：物理名带引号（ddl_check 会把引号吃掉，名字仍是 mode）。
+    assert conversations["mode"] == ("varchar2(8)", True, None)
+    # 标题/模型可空：首条消息还没生成标题、model=NULL 表示用服务端默认。
+    assert conversations["title"] == ("varchar2(120)", False, None)
+    assert conversations["model"] == ("varchar2(120)", False, None)
+    assert conversations["status"] == ("varchar2(12)", True, "'active'")
+    # 摘要 CLOB 可空：NULL = 从未压缩（不是空串）。
+    assert conversations["summary"] == ("clob", False, None)
+    # 计数字段是累加器：NOT NULL DEFAULT 0，0 是「还没用过」这个真实值。
+    for counter in (
+        "summary_upto_seq",
+        "tokens_prompt",
+        "tokens_completion",
+        "tokens_total",
+        "context_tokens",
+        "message_count",
+    ):
+        type_, notnull, default = conversations[counter]
+        assert notnull is True, counter
+        assert default == "0", counter
+    assert conversations["compaction_degraded_at"] == ("timestamp", False, None)
+
+    runs = modeled["tables"]["ai_runs"]["columns"]
+    assert runs["oid"] == ("varchar2(32)", True, None)
+    assert runs["client_msg_id"] == ("varchar2(64)", False, None)
+    assert runs["cancel_requested"] == ("number(1)", True, "0")
+    assert runs["heartbeat_at"] == ("timestamp", False, None)
+    assert runs["started_at"] == ("timestamp", False, None)
+    # token 与 rounds 可空：NULL = 未知，不拿 0 顶替。
+    for column in (
+        "rounds",
+        "prompt_tokens",
+        "completion_tokens",
+        "total_tokens",
+        "result_message_oid",
+    ):
+        assert runs[column][1] is False, column
+
+
+def test_message_table_has_no_summary_role_and_a_unique_seq() -> None:
+    """摘要只存会话行：``ai_messages`` 不设 summary 角色（评审 P1-4）。"""
+    modeled = ddl_check.parse_models()
+    messages = modeled["tables"]["ai_messages"]
+
+    assert MESSAGE_ROLE_CK in messages["ck"]
+    assert "summary" not in MESSAGE_ROLE_CK
+    assert ("conversation_oid", "seq") in messages["uq"]
+    assert messages["columns"]["seq"] == ("number(10)", True, None)
+    # 正文与工具调用是 CLOB：工具结果全文 ≤8000 字符，超过 VARCHAR2 上限。
+    assert messages["columns"]["content"] == ("clob", False, None)
+    assert messages["columns"]["tool_calls"] == ("clob", False, None)
+    # 该轮 usage 可空（上游没报）。
+    for column in ("prompt_tokens", "cache_read_tokens", "cache_write_tokens"):
+        assert messages["columns"][column][1] is False, column
+
+
+def test_conversation_checks_pin_the_documented_enums() -> None:
+    migration = _conversations()
+    modeled = ddl_check.parse_models()
+
+    for parsed in (migration, modeled):
+        ck = parsed["tables"]["ai_conversations"]["ck"]
+        assert CONVERSATION_MODE_CK in ck
+        assert CONVERSATION_STATUS_CK in ck
+        assert RUN_STATUS_CK in parsed["tables"]["ai_runs"]["ck"]
+        assert MESSAGE_ROLE_CK in parsed["tables"]["ai_messages"]["ck"]
+
+
+def test_conversation_tables_have_no_foreign_keys() -> None:
+    """三表之间是**逻辑**外键：删会话要显式批删（Oracle 没有 ON DELETE CASCADE）。"""
+    migration = _conversations()
+    modeled = ddl_check.parse_models()
+    v001 = ddl_check.parse_v001()
+
+    for parsed in (migration, modeled, v001):
+        for table in CONVERSATION_TABLES:
+            assert parsed["tables"][table]["fk"] == set(), table
+
+
+def test_conversation_oids_are_32_hex_without_the_object_id_check() -> None:
+    """oid 是 ``uuid4().hex``：套上 24 位 REGEXP 会让每一次插入都被数据库拒掉。"""
+    modeled = ddl_check.parse_models()
+
+    for table in CONVERSATION_TABLES:
+        assert modeled["tables"][table]["columns"]["oid"][0] == "varchar2(32)"
+        assert not any(
+            "0-9a-f]{24}" in ck for ck in modeled["tables"][table]["ck"]
+        ), table
+
+
+def test_conversations_migration_is_idempotent_on_existing_objects() -> None:
+    """重跑不能炸：表已存在 → -955，索引已存在 → -1408。"""
+    text = _conversations_text()
+
+    assert "EXECUTE IMMEDIATE" in text
+    for code in ("-955", "-1408"):
+        assert code in text
+    # 每个对象各自一段 BEGIN/EXCEPTION：一个对象存在不该连带跳过其它对象。
+    assert text.count("WHEN OTHERS THEN") == text.count("EXECUTE IMMEDIATE '")
