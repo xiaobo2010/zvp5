@@ -73,6 +73,11 @@ async def _note_login_failure(
 
     节流按 oid：同一个人 60 秒内的连续失败只留一条。窗口由判定层按分钟统计，
     省掉的行不会改变结论，却能挡住日志风暴。
+
+    级别刻意用 ``info``：风控计数只按 ``ltype`` + 时间窗取数，与 ``level`` 无关；
+    而保留策略会豁免所有 ``warning`` 级行，取 ``warning`` 就等于让这类行永不
+    过期（历史堆积的根因）。``info`` 让它们随 ``APP_LOGS_RETENTION_DAYS`` 自然
+    清理，管理端列表也默认隐藏该类型（见 ``routers/logs_router.py``）。
     """
     if not user_oid:
         return
@@ -94,7 +99,7 @@ async def _note_login_failure(
             f"登录失败（{summary}）",
             now,
             type="login_fail",
-            level="warning",
+            level="info",
             xuehai_id=xuehai_id,
         ).insert_log()
     except Exception:
