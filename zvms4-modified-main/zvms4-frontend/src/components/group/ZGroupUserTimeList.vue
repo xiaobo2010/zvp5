@@ -174,7 +174,7 @@ async function onSortChange(data: {
       userStore.groups.includes(id)
     "
   >
-    <ElCard shadow="never" v-loading="loading" class="time-list-card">
+    <ElCard shadow="never" class="time-list-card">
       <div style="text-align: right" class="my-2">
         <ElFormItem :label="t('manage.groupDetails.timeList.diff')" style="text-align: right">
           <ElSwitch v-model="diff" aria-label="仅显示时长不符的成员" />
@@ -187,6 +187,7 @@ async function onSortChange(data: {
       </ElResult>
       <ElTable
         v-else
+        v-loading="loading"
         ref="tableRef"
         :data="time"
         stripe

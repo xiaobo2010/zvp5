@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage, ElMessageBox, ElDropdown, ElDropdownMenu, ElDropdownItem } from 'element-plus'
+import { useMediaQuery } from '@vueuse/core'
 import type { AxiosError } from 'axios'
 import {
   listFiles,
@@ -26,13 +27,22 @@ import {
   Key,
   FolderOpened,
   Back,
-  Location
+  Location,
+  MoreFilled
 } from '@element-plus/icons-vue'
 
 const { t } = useI18n()
 
 const DEFAULT_PAGE_SIZE = 200
 const QUICK_DIRS = ['/', '/www', '/www/zvms4', '/etc', '/home', '/var/log', '/tmp']
+
+// 竖屏判定与 App.vue / UserNav.vue 同阈值(宽高比 ≤ 6/5):
+// 竖屏底部是悬浮药丸导航,左侧目录栏会让表格只剩几十像素,必须改为上下排布。
+const isPortrait = useMediaQuery('(max-aspect-ratio: 6/5)')
+
+// 宽屏才铺开完整五列并把操作列固定在右侧:
+// 窄屏表格总宽装不下,固定列会像盖子一样压在修改时间上。
+const wideTable = useMediaQuery('(min-width: 1280px)')
 
 const currentPath = ref('/')
 const pathInput = ref('/')
@@ -86,6 +96,16 @@ function fmtTime(mtime: number): string {
   const date = new Date(mtime * 1000)
   const pad = (n: number) => String(n).padStart(2, '0')
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`
+}
+
+// 窄屏把时间拆成「日期 / 时刻」两行,整串必须完整渲染,不能被截成 2026-10-2…
+function fmtTimeParts(mtime: number): { date: string; time: string } {
+  const date = new Date(mtime * 1000)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return {
+    date: `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`,
+    time: `${pad(date.getHours())}:${pad(date.getMinutes())}`
+  }
 }
 
 function typeLabel(entry: FileEntry): string {
@@ -391,12 +411,31 @@ void load()
 </script>
 
 <template>
-  <div class="flex flex-col gap-4 pb-2">
-    <div class="flex h-[calc(100vh-300px)] min-h-[480px] items-stretch gap-4">
+  <div class="files-page flex flex-col gap-4 pb-2">
+    <div class="files-layout">
       <!-- 左:快捷目录 -->
-      <ElCard class="w-64 shrink-0" body-class="quick-body">
-        <span class="yg-text-xs yg-text-tertiary mb-2 block">{{ t('server.files.quickDirs') }}</span>
-        <ElMenu class="quick-menu" :default-active="currentPath" @select="goQuick">
+      <ElCard class="quick-card w-64 shrink-0" body-class="quick-body">
+        <span class="quick-card__title yg-text-xs yg-text-tertiary mb-2 block">{{
+          t('server.files.quickDirs')
+        }}</span>
+        <!-- 竖屏:256px 竖排菜单会把表格挤没,改成横向可滚动的胶囊行 -->
+        <div v-if="isPortrait" class="quick-chips">
+          <span class="quick-chips__label yg-text-xs yg-text-tertiary">{{
+            t('server.files.quickDirs')
+          }}</span>
+          <button
+            v-for="dir in QUICK_DIRS"
+            :key="dir"
+            type="button"
+            class="quick-chip"
+            :class="{ 'is-active': dir === currentPath }"
+            @click="goQuick(dir)"
+          >
+            <ElIcon :size="14"><FolderOpened /></ElIcon>
+            <span class="font-mono">{{ dir }}</span>
+          </button>
+        </div>
+        <ElMenu v-else class="quick-menu" :default-active="currentPath" @select="goQuick">
           <ElMenuItem
             v-for="dir in QUICK_DIRS"
             :key="dir"
@@ -409,10 +448,10 @@ void load()
         </ElMenu>
       </ElCard>
 
-      <div class="flex min-w-0 flex-1 flex-col gap-4">
+      <div class="files-main">
         <!-- 工具栏 -->
         <ElCard body-class="!px-4 !py-2.5">
-          <div class="flex flex-wrap items-center gap-2">
+          <div class="files-toolbar flex flex-wrap items-center gap-2">
             <ElButton :icon="Back" @click="goParent">{{ t('server.files.parent') }}</ElButton>
             <ElInput
               v-model="pathInput"
@@ -425,7 +464,9 @@ void load()
             </ElButton>
             <ElButton :icon="FolderAdd" @click="doMkdir">{{ t('server.files.mkdir') }}</ElButton>
             <ElButton :icon="Upload" @click="pickUploadFile">{{ t('server.files.upload') }}</ElButton>
-            <span class="yg-text-xs yg-text-tertiary">{{ t('server.files.uploadLimit') }}</span>
+            <span class="files-toolbar__hint yg-text-xs yg-text-tertiary">{{
+              t('server.files.uploadLimit')
+            }}</span>
           </div>
         </ElCard>
 
@@ -445,16 +486,22 @@ void load()
             <span class="yg-text-xs yg-text-tertiary tabular-nums">{{ t('server.files.totalEntries', { count: total }) }}</span>
           </div>
 
-          <div class="min-h-0 flex-1">
+          <!-- 加载遮罩只包住表格内容:宿主是一个只装表格的独立盒子,
+               工具栏与底部分页在盒子外面,加载时也照常可点。 -->
+          <div v-loading="loading" class="files-table-wrap min-h-0 flex-1">
             <ElTable
-              v-loading="loading"
               :data="entries"
               row-key="name"
               stripe
               height="100%"
               class="files-table"
             >
-              <ElTableColumn prop="name" :label="t('server.files.colName')" min-width="220" show-overflow-tooltip>
+              <ElTableColumn
+                prop="name"
+                :label="t('server.files.colName')"
+                :min-width="wideTable ? 220 : 140"
+                show-overflow-tooltip
+              >
                 <template #default="{ row }">
                   <span
                     class="name-cell"
@@ -465,44 +512,129 @@ void load()
                   >
                     {{ row.name }}<span v-if="row.type === 'dir'" class="text-[var(--yg-text-tertiary)]">/</span>
                   </span>
+                  <!-- 窄屏:大小与类型折进名称单元格的副行,给修改时间腾出位置 -->
+                  <span v-if="!wideTable" class="name-cell__meta">
+                    {{ fmtSize(row.size, row.type === 'dir') }} · {{ typeLabel(row) }}
+                  </span>
                 </template>
               </ElTableColumn>
-              <ElTableColumn prop="size" :label="t('server.files.colSize')" width="100">
+              <ElTableColumn
+                v-if="wideTable"
+                prop="size"
+                :label="t('server.files.colSize')"
+                width="100"
+              >
                 <template #default="{ row }">
                   <span class="tabular-nums text-[var(--yg-text-secondary)]">{{ fmtSize(row.size, row.type === 'dir') }}</span>
                 </template>
               </ElTableColumn>
-              <ElTableColumn prop="mtime" :label="t('server.files.colMtime')" width="150">
+              <ElTableColumn
+                prop="mtime"
+                :label="t('server.files.colMtime')"
+                :width="wideTable ? 150 : 112"
+              >
                 <template #default="{ row }">
-                  <span class="tabular-nums text-[var(--yg-text-secondary)]">{{ fmtTime(row.mtime) }}</span>
+                  <span
+                    v-if="wideTable"
+                    class="tabular-nums text-[var(--yg-text-secondary)]"
+                  >{{ fmtTime(row.mtime) }}</span>
+                  <span v-else class="mtime-cell">
+                    <span>{{ fmtTimeParts(row.mtime).date }}</span>
+                    <span>{{ fmtTimeParts(row.mtime).time }}</span>
+                  </span>
                 </template>
               </ElTableColumn>
-              <ElTableColumn prop="type" :label="t('server.files.colType')" width="90">
+              <ElTableColumn
+                v-if="wideTable"
+                prop="type"
+                :label="t('server.files.colType')"
+                width="90"
+              >
                 <template #default="{ row }">
                   <span class="text-[var(--yg-text-secondary)]">{{ typeLabel(row) }}</span>
                 </template>
               </ElTableColumn>
-              <ElTableColumn :label="t('server.files.colActions')" width="250" align="right" fixed="right">
+              <ElTableColumn
+                :label="t('server.files.colActions')"
+                :width="wideTable ? 250 : 124"
+                align="right"
+                :fixed="wideTable ? 'right' : false"
+              >
                 <template #default="{ row }">
-                  <ElButton
-                    v-if="row.type === 'file'"
-                    text
-                    bg
-                    size="small"
-                    :icon="Download"
-                    @click="doDownload(row as FileEntry)"
-                  >
-                    {{ t('server.files.download') }}
-                  </ElButton>
-                  <ElButton text bg size="small" :icon="EditPen" @click="doRename(row as FileEntry)">
-                    {{ t('server.files.rename') }}
-                  </ElButton>
-                  <ElButton text bg size="small" :icon="Key" @click="doChmod(row as FileEntry)">
-                    {{ t('server.files.chmod') }}
-                  </ElButton>
-                  <ElButton text bg size="small" type="danger" :icon="Delete" @click="onDeleteClick(row as FileEntry)">
-                    {{ t('server.files.delete') }}
-                  </ElButton>
+                  <!-- 宽屏:平铺文字按钮,整行操作一眼看全 -->
+                  <div v-if="wideTable" class="row-actions">
+                    <ElButton
+                      v-if="row.type === 'file'"
+                      text
+                      bg
+                      size="small"
+                      :icon="Download"
+                      @click="doDownload(row as FileEntry)"
+                    >
+                      {{ t('server.files.download') }}
+                    </ElButton>
+                    <ElButton text bg size="small" :icon="EditPen" @click="doRename(row as FileEntry)">
+                      {{ t('server.files.rename') }}
+                    </ElButton>
+                    <ElButton text bg size="small" :icon="Key" @click="doChmod(row as FileEntry)">
+                      {{ t('server.files.chmod') }}
+                    </ElButton>
+                    <ElButton
+                      text
+                      bg
+                      size="small"
+                      type="danger"
+                      :icon="Delete"
+                      @click="onDeleteClick(row as FileEntry)"
+                    >
+                      {{ t('server.files.delete') }}
+                    </ElButton>
+                  </div>
+                  <!-- 窄屏:收成图标按钮 +「更多」下拉,列宽压到 124px 以内 -->
+                  <div v-else class="row-actions row-actions--compact">
+                    <ElButton
+                      v-if="row.type === 'file'"
+                      class="act-btn"
+                      circle
+                      :icon="Download"
+                      :aria-label="t('server.files.download')"
+                      :title="t('server.files.download')"
+                      @click="doDownload(row as FileEntry)"
+                    />
+                    <ElDropdown trigger="click">
+                      <ElButton
+                        class="act-btn"
+                        circle
+                        :icon="MoreFilled"
+                        :aria-label="t('server.files.colActions')"
+                        :title="t('server.files.colActions')"
+                      />
+                      <template #dropdown>
+                        <ElDropdownMenu>
+                          <ElDropdownItem
+                            v-if="row.type === 'file'"
+                            :icon="Download"
+                            @click="doDownload(row as FileEntry)"
+                          >
+                            {{ t('server.files.download') }}
+                          </ElDropdownItem>
+                          <ElDropdownItem :icon="EditPen" @click="doRename(row as FileEntry)">
+                            {{ t('server.files.rename') }}
+                          </ElDropdownItem>
+                          <ElDropdownItem :icon="Key" @click="doChmod(row as FileEntry)">
+                            {{ t('server.files.chmod') }}
+                          </ElDropdownItem>
+                          <ElDropdownItem
+                            divided
+                            :icon="Delete"
+                            @click="onDeleteClick(row as FileEntry)"
+                          >
+                            {{ t('server.files.delete') }}
+                          </ElDropdownItem>
+                        </ElDropdownMenu>
+                      </template>
+                    </ElDropdown>
+                  </div>
                 </template>
               </ElTableColumn>
               <template #empty>
@@ -529,11 +661,141 @@ void load()
 </template>
 
 <style scoped>
+/* ---------- 页面骨架 ---------- */
+.files-page {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* 横屏沿用既有高度算法,桌面观感不变 */
+.files-layout {
+  display: flex;
+  align-items: stretch;
+  gap: var(--yg-space-4);
+  height: calc(100vh - 300px);
+  min-height: 480px;
+}
+
+.files-main {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-width: 0;
+  gap: var(--yg-space-4);
+}
+
+/* 竖屏:底部是悬浮药丸导航,高度交给 flex 分配;
+   左侧目录栏改为横向胶囊行,表格才有可用宽度。 */
+@media (max-aspect-ratio: 6/5) {
+  .files-layout {
+    flex-direction: column;
+    height: auto;
+    min-height: 0;
+    flex: 1 1 auto;
+    gap: var(--yg-space-3);
+    /* 兜底:即便容器高度算错,也不许高过「视口减去底部让位」,
+       保证表格底边永远在底部悬浮药丸上方。
+       底部让位直接引用外壳的 --yg-content-bottom-inset(App.vue 在
+       .yg-layout__content 上下发,随 DOM 继承),本页不再写第二份数值。
+       视口基准跟外壳一致用 100vh,不混用 100dvh,免得两套基准打架。 */
+    max-height: calc(100vh - var(--yg-content-bottom-inset, 96px));
+  }
+
+  .files-main {
+    gap: var(--yg-space-3);
+    min-height: 0;
+  }
+
+  .quick-card {
+    width: auto;
+  }
+
+  .quick-card__title {
+    display: none;
+  }
+
+  /* 竖屏:胶囊行贴着卡片内边距走,别让卡片吃掉一屏高度 */
+  .quick-card :deep(.el-card__body) {
+    padding: var(--yg-space-2);
+  }
+
+  .files-toolbar {
+    gap: var(--yg-space-1);
+  }
+
+  /* 竖屏:路径输入框让出宽度,工具栏排成两行而不是三行 */
+  .files-toolbar :deep(.el-input) {
+    min-width: 140px;
+  }
+
+  .files-toolbar__hint {
+    display: none;
+  }
+}
+
 .quick-body {
   display: flex;
   flex-direction: column;
   min-height: 0;
   height: 100%;
+}
+
+/* 竖屏快捷目录:一行可横向滚动的胶囊 */
+.quick-chips {
+  display: flex;
+  align-items: center;
+  gap: var(--yg-space-2);
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  padding-bottom: 2px;
+}
+
+.quick-chips::-webkit-scrollbar {
+  display: none;
+}
+
+.quick-chips__label {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.quick-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--yg-space-1);
+  flex: 0 0 auto;
+  min-height: 44px;
+  padding: 0 var(--yg-space-3);
+  border: 1px solid var(--yg-border-default);
+  border-radius: var(--yg-radius-pill);
+  background: var(--yg-bg-surface);
+  color: var(--yg-text-secondary);
+  font-size: var(--yg-font-size-sm);
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    color var(--yg-dur-fast) var(--yg-ease-out),
+    background-color var(--yg-dur-fast) var(--yg-ease-out),
+    border-color var(--yg-dur-fast) var(--yg-ease-out);
+}
+
+.quick-chip:hover {
+  background: var(--yg-bg-hover);
+  color: var(--yg-text-primary);
+}
+
+.quick-chip.is-active {
+  border-color: var(--yg-color-primary);
+  background: var(--yg-color-primary-soft);
+  color: var(--yg-color-primary);
+  font-weight: var(--yg-font-weight-medium);
+}
+
+.quick-chip:focus-visible {
+  outline: none;
+  box-shadow: var(--yg-focus-ring);
 }
 
 .quick-menu {
@@ -548,6 +810,10 @@ void load()
 }
 
 .name-cell {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   border: 0;
   background: transparent;
   padding: 0;
@@ -560,6 +826,23 @@ void load()
 .name-cell:hover {
   color: var(--yg-color-primary);
   text-decoration: underline;
+}
+
+/* 窄屏:名称副行(大小 · 类型) */
+.name-cell__meta {
+  display: block;
+  font-size: var(--yg-font-size-xs);
+  color: var(--yg-text-tertiary);
+}
+
+/* 窄屏:修改时间拆成日期 / 时刻两行,整串完整渲染 */
+.mtime-cell {
+  display: inline-flex;
+  flex-direction: column;
+  font-size: var(--yg-font-size-sm);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.35;
+  color: var(--yg-text-secondary);
 }
 
 .files-card {
@@ -577,5 +860,35 @@ void load()
 
 .files-table :deep(.el-table__cell) {
   line-height: 20px;
+}
+
+/* 表格区加载宿主:EP 的 v-loading 遮罩是 position:absolute + inset:0,
+   这里把宿主钉成 relative 并裁掉溢出,遮罩严格限制在表格区内,
+   绝不越界盖住上面的面包屑或下面的分页按钮。 */
+.files-table-wrap {
+  position: relative;
+  overflow: hidden;
+}
+
+/* 行内操作:宽屏平铺文字按钮,窄屏收成图标 +「更多」 */
+.row-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--yg-space-1);
+}
+
+.row-actions--compact {
+  gap: var(--yg-space-2);
+}
+
+/* 触控目标 44×44(准则 3.7) */
+.files-table :deep(.act-btn.el-button) {
+  width: 44px;
+  height: 44px;
+  min-height: 44px;
+  padding: 0;
+  margin: 0;
+  border-radius: var(--yg-radius-pill);
 }
 </style>

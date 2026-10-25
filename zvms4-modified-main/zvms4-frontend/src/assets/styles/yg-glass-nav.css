@@ -36,13 +36,17 @@
 
 /* —— 竖屏：底部悬浮药丸 —— */
 /* 竖屏药丸是 fixed 层、背后是滚动内容，每帧都要重采样；模糊半径压到 12px
-   以降低滚动手势期间的低端平板掉帧风险（横屏栏背后是静态 shell，保持 24px）。 */
+   以降低滚动手势期间的低端平板掉帧风险（横屏栏背后是静态 shell，保持 24px）。
+   层级刻意保持 100（低于顶栏的 --yg-z-sticky = 1020）：药丸是内容层上的悬浮件，
+   必须让顶栏压住自己，也不该盖过弹层/提示；要调整观感请改尺寸，别抬 z-index。 */
 .yg-glass-nav--portrait {
   position: fixed;
   left: 50%;
   bottom: calc(env(safe-area-inset-bottom, 0px) + 12px);
   transform: translateX(-50%);
   max-width: calc(100vw - 24px);
+  /* 兜底上限：极端缩放或超矮视口下，药丸不允许吃掉整屏内容 */
+  max-height: calc(100dvh - env(safe-area-inset-top, 0px) - var(--yg-space-8));
   border-radius: var(--yg-radius-pill);
   background: linear-gradient(160deg, rgba(255, 255, 255, 0.85), rgba(255, 255, 255, 0.62));
   -webkit-backdrop-filter: blur(12px) saturate(180%);
@@ -51,6 +55,20 @@
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.7),
     0 8px 32px rgba(28, 28, 30, 0.14);
+}
+
+/* 键盘弹起（visual viewport 被压到 480px 以下）时药丸整体缩一圈：
+   内边距回到 4px、触控项收到 40px，避免浮在输入框上方挡住正在输入的内容。
+   只作用于竖屏药丸，横屏玻璃栏不受影响。 */
+@media (max-height: 480px) {
+  .yg-glass-nav--portrait .yg-glass-nav__items {
+    padding: var(--yg-space-1);
+  }
+
+  .yg-glass-nav--portrait .yg-glass-nav__item {
+    width: var(--yg-space-8);
+    height: var(--yg-space-8);
+  }
 }
 
 html.dark .yg-glass-nav--landscape {

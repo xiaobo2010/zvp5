@@ -3,24 +3,32 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import {
-  ElAlert,
   ElButton,
+  ElCheckbox,
+  ElDialog,
+  ElIcon,
   ElMessage,
   ElMessageBox,
   ElOption,
   ElPageHeader,
+  ElPopover,
   ElSelect,
   ElTag
 } from 'element-plus'
 import {
   ArrowLeft,
+  Bell,
   CopyDocument,
   Delete,
   Download,
+  InfoFilled,
   Plus,
   Refresh,
+  RefreshLeft,
+  RefreshRight,
   UploadFilled,
-  View
+  View,
+  WarningFilled
 } from '@element-plus/icons-vue'
 import api from '@/api'
 import { useHeaderStore } from '@/stores/header'
@@ -80,7 +88,52 @@ interface ExistingMemberRow extends ActivityMember {
   user?: { id?: string; name?: string } | null
 }
 
-const DRAFT_KEY = 'volunteer-register-draft-v1'
+// 一次操作快照：只存表格数据，状态字段（status/message/candidates）由 revalidate 重算。
+interface RowSnapshot {
+  key: string
+  studentId: string
+  name: string
+  classId: string
+  className: string
+  oid: string
+  duration: string
+  mode: RegistrationMode
+  note: string
+}
+
+// 一条历史：快照 + 它所属的活动（撤回时可能要先把活动切回去）。
+interface HistoryEntry {
+  activityId: string
+  rows: RowSnapshot[]
+}
+
+// 覆盖确认弹窗里的一行：姓名 / 学号 / 原时长 / 新时长 / 动作。
+interface OverwritePlanRow {
+  key: string
+  name: string
+  studentId: string
+  oldDuration: number
+  newDuration: number
+  changed: boolean
+}
+
+// 顶部可收起提示的一条。
+interface RegisterNotice {
+  key: 'list' | 'type' | 'ocr'
+  type: 'warning' | 'info'
+  title: string
+  description: string
+}
+
+// 草稿按活动隔离：键 = 前缀 + 活动 id，未选活动时用哨兵值。
+const DRAFT_KEY_PREFIX = 'volunteer-register-draft-v2:'
+const DRAFT_KEY_NONE = `${DRAFT_KEY_PREFIX}__none__`
+// 记录上次停留的活动，页面重开时才知道该读哪份草稿。
+const DRAFT_LAST_ACTIVITY_KEY = `${DRAFT_KEY_PREFIX}last-activity`
+// 旧版单活动草稿：只在升级后的第一次启动里迁移一次，随后删除。
+const DRAFT_KEY_LEGACY = 'volunteer-register-draft-v1'
+// 顶部三条提示的「不再提示」记录。
+const NOTICE_DISMISSED_KEY = 'volunteer-register-notice-dismissed'
 const INDEX_STALE_MS = 24 * 60 * 60 * 1000
 const MODES: RegistrationMode[] = ['on-campus', 'off-campus', 'social-practice']
 // v3 成员列表 size 上限 100；一次登记页最多回溯 5 页，超出提示去活动详情处理。
@@ -89,9 +142,17 @@ const EXISTING_MEMBER_LIMIT = 500
 // 表格总行数上限：与已有成员载入上限一致。粘贴/OCR/新增都走这个闸门，
 // 否则一次全量粘贴就会把每键重算和表格渲染拖到几万行的量级。
 const MAX_REGISTER_ROWS = 500
+// 单次提交人数上限：超过就拦下，让管理员分批提交，避免一次事务写入过大。
+const MAX_SUBMIT_ROWS = 100
+// 批量提交相关的请求超时（毫秒）：一次提交要串行/并发跑几十个写请求，
+// axios 实例默认的 12s 会在大活动上被中途掐断。
+const BATCH_TIMEOUT = 60000
 // 逐行 PUT 覆盖：同时最多 8 个在飞，避免一次点提交打爆后端。
 const UPDATE_CONCURRENCY = 8
 const DURATION_EPSILON = 1e-6
+// 撤回/重做：历史栈深度，以及连续输入合并成一次快照的防抖时长。
+const HISTORY_LIMIT = 50
+const CELL_HISTORY_DELAY = 600
 
 const router = useRouter()
 const route = useRoute()
@@ -128,6 +189,16 @@ const savedActivityId = ref('')
 const savedCount = ref(0)
 const existingMembers = ref(new Map<string, ExistingMemberRecord>())
 const existingLoading = ref(false)
+// 已有成员索引拉取失败：继续提交会把「改时长」变成「新增」并让时长翻倍，必须拦住。
+const existingFetchFailed = ref(false)
+// 已有成员索引被 500 条上限截断：允许提交，但提交前必须走覆盖对比确认。
+const existingTruncated = ref(false)
+// 覆盖确认弹窗。
+const overwriteDialogVisible = ref(false)
+const overwriteRows = ref<OverwritePlanRow[]>([])
+// 顶部提示：默认收起成一个图标按钮，勾选「不再提示」后写进 localStorage。
+const noticeVisible = ref(false)
+const dismissedNotices = ref<string[]>([])
 
 let rowSeq = 0
 let draftTimer: ReturnType<typeof setTimeout> | undefined
@@ -135,6 +206,16 @@ let draftIdleHandle: number | undefined
 let draftIdleTimer: ReturnType<typeof setTimeout> | undefined
 let draftReady = false
 let savedOids = new Set<string>()
+// 当前表格内容归属的活动：换活动时先把它写回旧活动的草稿键，再切到新活动。
+let draftOwnerId = ''
+// 撤回/重做历史栈。存整表快照，恢复时重算派生状态。
+const undoStack = ref<HistoryEntry[]>([])
+const redoStack = ref<HistoryEntry[]>([])
+// 连续输入的防抖快照：首次击键时抓一份「改之前」的状态，600ms 后并入历史。
+let cellHistoryTimer: ReturnType<typeof setTimeout> | undefined
+let cellHistorySnapshot: RowSnapshot[] | null = null
+// 覆盖确认弹窗的 Promise 回调。
+let overwriteResolver: ((confirmed: boolean) => void) | null = null
 
 const modeOptions = computed(() => {
   const type = selectedActivity.value?.type
@@ -192,9 +273,54 @@ const canSubmit = computed(
     Boolean(selectedActivityId.value) &&
     // 已有成员索引没就绪就提交，会把「更新」误判成「新增」（v3 累加，时长翻倍）。
     !existingLoading.value &&
+    // 索引拉取失败时继续提交，等于闭眼写入：必须先重试把索引拉回来。
+    !existingFetchFailed.value &&
     pendingRows.value.length > 0 &&
     stats.value.warning === 0 &&
     stats.value.error === 0
+)
+
+const canUndo = computed(() => undoStack.value.length > 0)
+const canRedo = computed(() => redoStack.value.length > 0)
+
+// 名单没就绪时常驻的紧凑提示：没名单就会录错人，这条不能被收起来。
+const listNoticeActive = computed(
+  () => !indexBooting.value && !indexLoading.value && !students.value.length
+)
+
+// 顶部可收起的提示：命中「当前适用 且 用户没有勾掉不再提示」才展示。
+const registerNotices = computed<RegisterNotice[]>(() => {
+  const items: RegisterNotice[] = []
+  if (listNoticeActive.value) {
+    items.push({
+      key: 'list',
+      type: 'warning',
+      title: t('activity.register.noticeListTitle'),
+      description: t('activity.register.noticeListDesc')
+    })
+  }
+  const type = selectedActivity.value?.type
+  if (selectedActivity.value && type && type !== 'hybrid') {
+    items.push({
+      key: 'type',
+      type: 'info',
+      title: t('activity.register.noticeTypeTitle', { type: modeLabel(type) }),
+      description: t('activity.register.noticeTypeDesc')
+    })
+  }
+  items.push({
+    key: 'ocr',
+    type: 'info',
+    title: t('activity.register.noticeOcrTitle'),
+    description: t('activity.register.noticeOcrDesc')
+  })
+  return items.filter((item) => !dismissedNotices.value.includes(item.key))
+})
+
+// 三条全被勾掉之后图标按钮直接消失。
+const noticeButtonVisible = computed(() => registerNotices.value.length > 0)
+const noticeButtonType = computed<'warning' | 'info'>(() =>
+  registerNotices.value.some((item) => item.type === 'warning') ? 'warning' : 'info'
 )
 
 function existingKey(memberOid: string, mode: string): string {
@@ -273,6 +399,7 @@ function createRow(partial: Partial<RegistrationRow> = {}): RegistrationRow {
 
 function resetRows(count = 8) {
   rows.value = Array.from({ length: count }, () => createRow())
+  rebuildDuplicateIndex()
 }
 
 function rowLimitWarning(dropped?: number): void {
@@ -306,13 +433,13 @@ function durationValue(row: RegistrationRow): number | null {
   const raw = row.duration.trim()
   if (!raw) return null
   const value = Number(raw)
-  if (!Number.isFinite(value) || value <= 0 || value > 24) return null
+  if (!Number.isFinite(value) || value <= 0 || value > 25) return null
   return value
 }
 
 function durationMessage(row: RegistrationRow): string {
-  if (!row.duration.trim()) return '请填写时长'
-  if (durationValue(row) === null) return '时长需为 0–24 之间的数字'
+  if (!row.duration.trim()) return t('activity.register.durationRequired')
+  if (durationValue(row) === null) return t('activity.register.durationOutOfRange')
   return ''
 }
 
@@ -393,6 +520,7 @@ function revalidateRow(row: RegistrationRow) {
     row.oid = ''
     row.classId = ''
     row.className = ''
+    syncDuplicateIndex(row)
     return
   }
 
@@ -457,23 +585,77 @@ function revalidateRow(row: RegistrationRow) {
 
   row.status = status
   row.message = message
+  syncDuplicateIndex(row)
+}
+
+// ---------------------------------------------------------------------------
+// 名单内重复检测
+//
+// 旧实现每次击键都遍历全表重建一张 (成员, 模式) → 行数组 的 Map：行数上限 500
+// 时每敲一个键就要分配 500 次 Map 条目和 500 个数组，GC 压力随行数线性上升。
+//
+// 现在改成增量索引：
+//   duplicateGroups    —— 键 → 命中该键的行数组（只有真的重复才有 ≥2 行）
+//   duplicateKeyByRow  —— 行 → 它当前所在的分组键（空串表示不在任何分组里）
+// revalidateRow 是唯一会改写 oid / mode 的入口，每次都同步一次索引；
+// markDuplicates 只遍历真正重复的分组，没有重复时是零开销。
+// ---------------------------------------------------------------------------
+const duplicateGroups = new Map<string, RegistrationRow[]>()
+const duplicateKeyByRow = new Map<string, string>()
+
+function rowDuplicateKey(row: RegistrationRow): string {
+  return row.oid ? existingKey(row.oid, row.mode) : ''
+}
+
+function syncDuplicateIndex(row: RegistrationRow) {
+  const previous = duplicateKeyByRow.get(row.key) ?? ''
+  const next = rowDuplicateKey(row)
+  if (previous === next) return
+  if (previous) {
+    const group = duplicateGroups.get(previous)
+    if (group) {
+      const index = group.indexOf(row)
+      if (index >= 0) group.splice(index, 1)
+      if (!group.length) duplicateGroups.delete(previous)
+    }
+  }
+  duplicateKeyByRow.set(row.key, next)
+  if (next) {
+    const group = duplicateGroups.get(next)
+    if (group) group.push(row)
+    else duplicateGroups.set(next, [row])
+  }
+}
+
+// 行被移出表格时要从索引里摘掉，否则残留的行会把分组凑成「重复」。
+function dropDuplicateIndex(row: RegistrationRow) {
+  const previous = duplicateKeyByRow.get(row.key) ?? ''
+  if (previous) {
+    const group = duplicateGroups.get(previous)
+    if (group) {
+      const index = group.indexOf(row)
+      if (index >= 0) group.splice(index, 1)
+      if (!group.length) duplicateGroups.delete(previous)
+    }
+  }
+  duplicateKeyByRow.delete(row.key)
+}
+
+// 整表被替换（重置、读草稿）后重建索引。
+function rebuildDuplicateIndex() {
+  duplicateGroups.clear()
+  duplicateKeyByRow.clear()
+  for (const row of rows.value) syncDuplicateIndex(row)
 }
 
 function markDuplicates() {
   // 按 (成员, 模式) 三元组去重：同一个人在同一活动里可以有不同模式的记录（hybrid）。
-  const byTriple = new Map<string, RegistrationRow[]>()
-  for (const row of rows.value) {
-    if (!row.oid) continue
-    const key = existingKey(row.oid, row.mode)
-    const group = byTriple.get(key) ?? []
-    group.push(row)
-    byTriple.set(key, group)
-  }
-  for (const group of byTriple.values()) {
+  for (const group of duplicateGroups.values()) {
     if (group.length < 2) continue
     for (const row of group) {
       row.status = 'error'
-      row.message = row.message ? `${row.message}；名单内重复` : '名单内重复'
+      const reason = t('activity.register.duplicateInTable')
+      row.message = row.message ? `${row.message}；${reason}` : reason
     }
   }
 }
@@ -481,6 +663,122 @@ function markDuplicates() {
 function revalidateAll() {
   for (const row of rows.value) revalidateRow(row)
   markDuplicates()
+}
+
+// ---------------------------------------------------------------------------
+// 撤回 / 重做
+//
+// 历史栈只存表格数据快照；status / message / candidates 这些派生字段在恢复时
+// 统一重算，保证「撤回后看到的状态」和「当时的状态」一致。
+// 结构性操作（粘贴、OCR、增删行、复制行、填充下行、清空、换活动）立刻入栈；
+// 单元格连续输入用 600ms 防抖合并成一条历史，避免每敲一个字就多一步。
+//
+// 每条历史带着它所属的活动：撤回时如果和当前活动不是同一个，就先切回去，
+// 免得把 A 活动的行落到 B 活动的表里。
+// ---------------------------------------------------------------------------
+function snapshotRows(): RowSnapshot[] {
+  return rows.value.map((row) => ({
+    key: row.key,
+    studentId: row.studentId,
+    name: row.name,
+    classId: row.classId,
+    className: row.className,
+    oid: row.oid,
+    duration: row.duration,
+    mode: row.mode,
+    note: row.note
+  }))
+}
+
+function restoreSnapshot(snapshot: RowSnapshot[]) {
+  rows.value = snapshot.map((item) => createRow({ ...item }))
+  if (!rows.value.length) resetRows(1)
+  rebuildDuplicateIndex()
+  revalidateAll()
+  applySavedState()
+}
+
+// 撤回只恢复表格数据：服务端已经写进去的行仍然是「已提交」，按 savedOids 重新推导，
+// 不能因为撤回一次就把它们退回成待提交（那会重复写入）。
+function applySavedState() {
+  if (!savedOids.size) return
+  if (savedActivityId.value && savedActivityId.value !== selectedActivityId.value) return
+  for (const row of rows.value) {
+    if (row.oid && savedOids.has(row.oid)) {
+      row.status = 'saved'
+      row.message = t('activity.register.savedRow')
+    }
+  }
+}
+
+function pushUndoStack(entry: HistoryEntry) {
+  undoStack.value = [...undoStack.value, entry].slice(-HISTORY_LIMIT)
+}
+
+// 连续输入：先抓一份「改之前」的快照，600ms 内的后续击键并入同一条历史。
+function beginCellHistory() {
+  if (!cellHistorySnapshot) cellHistorySnapshot = snapshotRows()
+  if (cellHistoryTimer) clearTimeout(cellHistoryTimer)
+  cellHistoryTimer = setTimeout(() => {
+    cellHistoryTimer = undefined
+    if (!cellHistorySnapshot) return
+    pushUndoStack({ activityId: draftOwnerId, rows: cellHistorySnapshot })
+    cellHistorySnapshot = null
+    redoStack.value = []
+  }, CELL_HISTORY_DELAY)
+}
+
+// 立刻把待合并的连续输入并入历史（结构性操作前、撤回前都要先调用）。
+function commitCellHistory() {
+  if (cellHistoryTimer) {
+    clearTimeout(cellHistoryTimer)
+    cellHistoryTimer = undefined
+  }
+  if (!cellHistorySnapshot) return
+  pushUndoStack({ activityId: draftOwnerId, rows: cellHistorySnapshot })
+  cellHistorySnapshot = null
+}
+
+// 结构性操作：立刻入栈。
+function recordHistory() {
+  commitCellHistory()
+  pushUndoStack({ activityId: draftOwnerId, rows: snapshotRows() })
+  redoStack.value = []
+}
+
+async function undo() {
+  commitCellHistory()
+  if (!undoStack.value.length) return
+  const entry = undoStack.value[undoStack.value.length - 1]
+  undoStack.value = undoStack.value.slice(0, -1)
+  redoStack.value = [...redoStack.value, { activityId: draftOwnerId, rows: snapshotRows() }]
+  if (entry.activityId !== draftOwnerId) {
+    await switchActivity(entry.activityId, false)
+  }
+  restoreSnapshot(entry.rows)
+}
+
+async function redo() {
+  if (!redoStack.value.length) return
+  const entry = redoStack.value[redoStack.value.length - 1]
+  redoStack.value = redoStack.value.slice(0, -1)
+  undoStack.value = [...undoStack.value, { activityId: draftOwnerId, rows: snapshotRows() }]
+  if (entry.activityId !== draftOwnerId) {
+    await switchActivity(entry.activityId, false)
+  }
+  restoreSnapshot(entry.rows)
+}
+
+// Ctrl/Cmd+Z 撤回，Ctrl/Cmd+Shift+Z 重做。
+function onGlobalKeydown(event: KeyboardEvent) {
+  if (!event.ctrlKey && !event.metaKey) return
+  if (event.altKey) return
+  const key = event.key.toLowerCase()
+  if (key !== 'z' && key !== 'y') return
+  if (key === 'y' && !event.shiftKey) return
+  event.preventDefault()
+  if (key === 'y' || event.shiftKey) void redo()
+  else void undo()
 }
 
 // 同一个人同一模式只保留一行：粘贴/OCR/草稿行若命中已有成员，把用户新值并到
@@ -511,33 +809,40 @@ function mergeExistingDuplicates() {
   }
   if (!dropped.size) return
   rows.value = rows.value.filter((row) => !dropped.has(row))
+  // 被合并掉的行必须退出重复索引，否则它会留在分组里把保留行误判成「名单内重复」。
+  for (const row of dropped) dropDuplicateIndex(row)
   for (const row of kept.values()) revalidateRow(row)
 }
 
 function onIdInput(row: RegistrationRow, event: Event) {
+  beginCellHistory()
   row.studentId = normalizeStudentId((event.target as HTMLInputElement).value)
   revalidateRow(row)
   markDuplicates()
 }
 
 function onNameInput(row: RegistrationRow, event: Event) {
+  beginCellHistory()
   row.name = normalizePersonName((event.target as HTMLInputElement).value)
   revalidateRow(row)
   markDuplicates()
 }
 
 function onDurationInput(row: RegistrationRow, event: Event) {
+  beginCellHistory()
   row.duration = cleanDuration((event.target as HTMLInputElement).value)
   revalidateRow(row)
   markDuplicates()
 }
 
 function onModeChange(row: RegistrationRow) {
+  beginCellHistory()
   revalidateRow(row)
   markDuplicates()
 }
 
 function applyCandidate(row: RegistrationRow, candidate: StudentRecord) {
+  beginCellHistory()
   row.studentId = candidate.studentId
   row.name = candidate.name
   row.classId = candidate.classId
@@ -575,6 +880,7 @@ function focusCell(r: number, c: number) {
 
 function fillDown(r: number, c: number) {
   if (r >= rows.value.length - 1) return
+  recordHistory()
   const source = rows.value[r]
   const target = rows.value[r + 1]
   const value = readCell(source, c)
@@ -633,6 +939,7 @@ function addRow() {
     rowLimitWarning()
     return
   }
+  recordHistory()
   rows.value.push(createRow())
   void nextTick(() => focusCell(rows.value.length - 1, 0))
 }
@@ -644,6 +951,7 @@ function duplicateRow(index: number) {
     rowLimitWarning()
     return
   }
+  recordHistory()
   rows.value.splice(
     index + 1,
     0,
@@ -661,7 +969,28 @@ function duplicateRow(index: number) {
   revalidateAll()
 }
 
-function removeRow(index: number) {
+// 删除行：有内容的行要二次确认（危险操作，红色确认按钮）；空行直接删。
+async function removeRow(index: number) {
+  const row = rows.value[index]
+  if (!row) return
+  if (hasContent(row)) {
+    try {
+      await ElMessageBox.confirm(
+        t('activity.register.removeRowConfirm', { name: rowLabel(row) }),
+        t('activity.register.removeRowTitle'),
+        {
+          confirmButtonText: t('activity.register.deleteAction'),
+          cancelButtonText: t('activity.register.cancelAction'),
+          confirmButtonClass: 'el-button--danger',
+          type: 'warning'
+        }
+      )
+    } catch {
+      return
+    }
+  }
+  recordHistory()
+  dropDuplicateIndex(row)
   rows.value.splice(index, 1)
   if (!rows.value.length) resetRows(1)
   revalidateAll()
@@ -760,6 +1089,7 @@ function applyText(text: string, start: { r: number; c: number }) {
   }
   ensureRows(start.r + accepted.length)
 
+  recordHistory()
   accepted.forEach((cells, rowOffset) => {
     const row = rows.value[start.r + rowOffset]
     if (!row) return
@@ -859,6 +1189,7 @@ async function onOcrFile(event: Event) {
       return
     }
     ensureRows(base + accepted.length)
+    recordHistory()
     accepted.forEach((item, offset) => {
       const row = rows.value[base + offset]
       if (!row) return
@@ -948,6 +1279,8 @@ async function hydrateSelectedActivity() {
 }
 
 // 拉取该活动已有的全部成员（分页到 500 行硬上限），建 (memberOid, mode) 索引。
+// 失败时把 existingFetchFailed 置起来：此时索引是空的，继续提交会把「改时长」
+// 变成「新增」，后端 v3 会累加导致时长翻倍，所以必须拦住提交并让用户重试。
 async function loadExistingMembers(aid: string): Promise<void> {
   existingLoading.value = true
   const next = new Map<string, ExistingMemberRecord>()
@@ -958,7 +1291,8 @@ async function loadExistingMembers(aid: string): Promise<void> {
         aid,
         page,
         EXISTING_PAGE_SIZE,
-        ''
+        '',
+        { timeout: BATCH_TIMEOUT }
       )) as unknown as { members?: ExistingMemberRow[]; total?: number }
       const members = result.members ?? []
       total = Number(result.total) || total
@@ -979,15 +1313,30 @@ async function loadExistingMembers(aid: string): Promise<void> {
     }
   } catch {
     existingMembers.value = new Map()
+    existingFetchFailed.value = true
+    existingTruncated.value = false
     ElMessage.warning(t('activity.register.existingLoadFailed'))
     return
   } finally {
     existingLoading.value = false
   }
   existingMembers.value = next
-  if (next.size >= EXISTING_MEMBER_LIMIT && total > next.size) {
+  existingFetchFailed.value = false
+  // 索引被 500 条上限截断：允许提交，但提交前必须走覆盖对比确认。
+  existingTruncated.value = next.size >= EXISTING_MEMBER_LIMIT && total > next.size
+  if (existingTruncated.value) {
     ElMessage.warning(t('activity.register.existingTruncated', { limit: EXISTING_MEMBER_LIMIT }))
   }
+}
+
+// 索引失败后的重试入口：重新拉索引并把已有成员补回表里。
+async function retryExistingMembers() {
+  if (!selectedActivity.value) return
+  await loadExistingMembers(selectedActivity.value._id)
+  if (existingFetchFailed.value) return
+  fillExistingRows()
+  mergeExistingDuplicates()
+  revalidateAll()
 }
 
 // 已有成员自动进表：先填空行，不够再追加；已存在同 (成员, 模式) 行时只补徽标。
@@ -1020,6 +1369,8 @@ async function syncActivityContext(preselect = false) {
   const activity = selectedActivity.value
   if (!activity) {
     existingMembers.value = new Map()
+    existingFetchFailed.value = false
+    existingTruncated.value = false
     revalidateAll()
     return
   }
@@ -1027,6 +1378,8 @@ async function syncActivityContext(preselect = false) {
     selectedActivityId.value = ''
     selectedActivity.value = null
     existingMembers.value = new Map()
+    existingFetchFailed.value = false
+    existingTruncated.value = false
     ElMessage.warning(t('activity.register.blockedRecordNotice'))
     return
   }
@@ -1042,19 +1395,55 @@ async function syncActivityContext(preselect = false) {
   }
 }
 
-async function onActivityChange() {
-  // 先清空上一个活动的索引：换活动后旧的 sessionId 绝不能用于 PUT。
-  existingMembers.value = new Map()
-  await hydrateSelectedActivity()
+// 切换活动：草稿按活动隔离，换活动必须从白纸开始。
+//
+// 顺序很重要：
+//   1. 当前表格内容写回「旧活动」的草稿键；
+//   2. 清空所有上一个活动的痕迹（行、saved 状态、已有成员索引）；
+//   3. 读「新活动」的草稿，没有就 resetRows(8) 全空白。
+// 第 1 步和第 2 步的先后决定了会不会「录串」——先写回再清空，反过来就会把上一个
+// 活动的行写进新活动的草稿。
+async function switchActivity(nextId: string, record = true, preselect = false) {
+  const previousId = draftOwnerId
+  // 切走之前先把当前内容存回旧活动。
+  persistDraftFor(previousId, buildDraftPayload(previousId))
+  const beforeSwitch = snapshotRows()
+
+  selectedActivityId.value = nextId
+  draftOwnerId = nextId
+  rows.value = []
+  rebuildDuplicateIndex()
   savedActivityId.value = ''
   savedCount.value = 0
   savedOids = new Set()
+  existingMembers.value = new Map()
+  existingFetchFailed.value = false
+  existingTruncated.value = false
+
+  // 新活动自己的草稿；没有草稿就白纸起步。
+  const payload = nextId ? readDraft(nextId) : null
+  if (payload) applyDraft(payload)
+  else resetRows(8)
+
+  if (record) {
+    // 用户主动换活动：历史栈重开一条，撤回可以回到刚才那个活动。
+    undoStack.value = []
+    redoStack.value = []
+    pushUndoStack({ activityId: previousId, rows: beforeSwitch })
+  }
+
+  await hydrateSelectedActivity()
   const activity = selectedActivity.value
   if (activity && activity.type !== 'hybrid') {
     const mode = activity.type as RegistrationMode
     for (const row of rows.value) row.mode = mode
   }
-  await syncActivityContext()
+  await syncActivityContext(preselect)
+}
+
+async function onActivityChange() {
+  // 先清空上一个活动的索引：换活动后旧的 sessionId 绝不能用于 PUT。
+  await switchActivity(selectedActivityId.value)
 }
 
 function viewSavedActivity() {
@@ -1075,10 +1464,34 @@ function rowLabel(row: RegistrationRow): string {
   return row.studentId.trim() ? `${who}（${row.studentId.trim()}）` : who
 }
 
+// 覆盖确认：把「这次提交会动到哪些已有记录」摊开给用户看，确认后才写库。
+// 用户点取消就直接中止，一个字节都不写。
+function confirmOverwrite(hits: OverwritePlanRow[]): Promise<boolean> {
+  overwriteRows.value = hits
+  overwriteDialogVisible.value = true
+  return new Promise<boolean>((resolve) => {
+    overwriteResolver = resolve
+  })
+}
+
+function resolveOverwrite(confirmed: boolean) {
+  overwriteDialogVisible.value = false
+  const resolver = overwriteResolver
+  overwriteResolver = null
+  resolver?.(confirmed)
+}
+
 async function submitRegistration() {
+  // 覆盖确认弹窗还开着时不接受第二次提交，避免把上一次等待的 Promise 顶掉。
+  if (overwriteDialogVisible.value) return
   revalidateAll()
   if (!selectedActivity.value) {
-    ElMessage.warning('请先选择目标义工活动')
+    ElMessage.warning(t('activity.register.activityRequired'))
+    return
+  }
+  if (existingFetchFailed.value) {
+    // 索引没拉到：继续提交会把「改时长」误判成「新增」，v3 会累加导致时长翻倍。
+    ElMessage.error(t('activity.register.existingLoadFailedBlock'))
     return
   }
   if (existingLoading.value) {
@@ -1090,11 +1503,21 @@ async function submitRegistration() {
     ElMessage.info(t('activity.register.noPending'))
     return
   }
+  // 单次提交人数上限：一次事务写太多既慢又容易超时，让管理员分批。
+  if (pendingRows.value.length > MAX_SUBMIT_ROWS) {
+    ElMessage.error(
+      t('activity.register.submitLimitExceeded', {
+        limit: MAX_SUBMIT_ROWS,
+        count: pendingRows.value.length
+      })
+    )
+    return
+  }
   const invalid = pendingRows.value.filter(
     (row) => row.status !== 'ok' || !row.oid || durationValue(row) === null
   )
   if (invalid.length) {
-    ElMessage.error(`还有 ${invalid.length} 行需要修正后再提交`)
+    ElMessage.error(t('activity.register.invalidRowsRemain', { count: invalid.length }))
     return
   }
 
@@ -1104,6 +1527,7 @@ async function submitRegistration() {
     []
   const inserts: RegistrationRow[] = []
   const skipped: RegistrationRow[] = []
+  const hits: OverwritePlanRow[] = []
   for (const row of pendingRows.value) {
     const record = existingOf(row)
     const duration = durationValue(row) as number
@@ -1111,7 +1535,16 @@ async function submitRegistration() {
       inserts.push(row)
       continue
     }
-    if (!existingDurationChanged(row, record)) {
+    const changed = existingDurationChanged(row, record)
+    hits.push({
+      key: row.key,
+      name: row.name.trim() || row.studentId.trim(),
+      studentId: row.studentId.trim(),
+      oldDuration: record.duration,
+      newDuration: duration,
+      changed
+    })
+    if (!changed) {
       skipped.push(row)
       continue
     }
@@ -1122,10 +1555,11 @@ async function submitRegistration() {
     ElMessage.info(t('activity.register.nothingChanged'))
     return
   }
-  // 后端 Body(max_length=1000)：超限整批 422，这里先拦并提示分批
-  if (inserts.length > 1000) {
-    ElMessage.error(`单次最多新增 1000 行，当前 ${inserts.length} 行，请分批提交`)
-    return
+
+  // 命中已有记录（或索引被截断、可能有没列出来的命中）→ 先给用户看对比再写。
+  if (hits.length || existingTruncated.value) {
+    const confirmed = await confirmOverwrite(hits)
+    if (!confirmed) return
   }
 
   submitLoading.value = true
@@ -1143,7 +1577,7 @@ async function submitRegistration() {
             activity._id,
             item.duration,
             item.row.mode,
-            { silent: true }
+            { silent: true, timeout: BATCH_TIMEOUT }
           )
         )
       )
@@ -1176,7 +1610,12 @@ async function submitRegistration() {
         mode: row.mode,
         duration: durationValue(row) as number
       }))
-      await api.activity.member.insertMany(activity._id, payload)
+      // overwrite=true：后端把同 (成员, 模式) 的时长改成「设置」而不是「累加」。
+      // 索引被截断时可能有没列出来的命中，靠这个参数兜住不翻倍。
+      await api.activity.member.insertMany(activity._id, payload, {
+        overwrite: true,
+        timeout: BATCH_TIMEOUT
+      })
       added = payload.length
       // 新增成功后重新拉索引：拿到这些新行的 sessionId，重复提交才不会退回「累加」。
       await loadExistingMembers(activity._id)
@@ -1188,6 +1627,10 @@ async function submitRegistration() {
 
     savedActivityId.value = activity._id
     savedCount.value += updated + added
+    // 记下已写进服务端的行：撤回只恢复表格数据，这些行必须仍然是「已提交」。
+    savedOids = new Set(
+      rows.value.filter((row) => row.status === 'saved' && row.oid).map((row) => row.oid)
+    )
 
     if (failures.length) {
       ElMessage.warning(
@@ -1273,78 +1716,63 @@ async function clearAll() {
   } catch {
     return
   }
-  localStorage.removeItem(DRAFT_KEY)
+  recordHistory()
+  localStorage.removeItem(draftKey(draftOwnerId))
+  draftOwnerId = ''
   selectedActivityId.value = ''
   selectedActivity.value = null
   savedActivityId.value = ''
   savedCount.value = 0
   savedOids = new Set()
   existingMembers.value = new Map()
+  existingFetchFailed.value = false
+  existingTruncated.value = false
   resetRows(8)
   revalidateAll()
 }
 
-function restoreDraft() {
+// ---------------------------------------------------------------------------
+// 草稿：按活动隔离
+//
+// 键 = volunteer-register-draft-v2:<activityId>，未选活动时用 __none__。
+// 换活动时先写回旧活动的键，再读新活动的键，两个活动的行永远不会互相串。
+// ---------------------------------------------------------------------------
+interface DraftPayload {
+  rows?: Partial<RegistrationRow>[]
+  activityId?: string
+  savedActivityId?: string
+  savedCount?: number
+  savedOids?: string[]
+}
+
+function draftKey(activityId: string): string {
+  return activityId ? `${DRAFT_KEY_PREFIX}${activityId}` : DRAFT_KEY_NONE
+}
+
+function readDraft(activityId: string): DraftPayload | null {
   try {
-    const raw = localStorage.getItem(DRAFT_KEY)
-    if (!raw) {
-      resetRows(8)
-      return
-    }
-    const parsed = JSON.parse(raw) as {
-      rows?: Partial<RegistrationRow>[]
-      activityId?: string
-      savedActivityId?: string
-      savedCount?: number
-      savedOids?: string[]
-    }
-    rowSeq = 0
-    // 旧版草稿可能存着超过上限的行（那时没有封顶），读回时一并截断。
-    const draftRows = Array.isArray(parsed.rows) ? parsed.rows.slice(0, MAX_REGISTER_ROWS) : []
-    if (Array.isArray(parsed.rows) && parsed.rows.length > MAX_REGISTER_ROWS) {
-      rowLimitWarning(parsed.rows.length - MAX_REGISTER_ROWS)
-    }
-    rows.value = draftRows.map((item) =>
-      createRow({
-        studentId: normalizeStudentId(String(item.studentId ?? '')),
-        name: normalizePersonName(String(item.name ?? '')),
-        classId: String(item.classId ?? ''),
-        className: String(item.className ?? ''),
-        oid: String(item.oid ?? ''),
-        duration: cleanDuration(String(item.duration ?? '')),
-        mode: normalizeMode(item.mode) ?? defaultMode(),
-        note: String(item.note ?? '')
-      })
-    )
-    if (!rows.value.length) resetRows(8)
-    selectedActivityId.value = String(parsed.activityId ?? '')
-    savedActivityId.value = String(parsed.savedActivityId ?? '')
-    savedCount.value = Number(parsed.savedCount) || 0
-    savedOids = new Set(
-      Array.isArray(parsed.savedOids)
-        ? parsed.savedOids.filter((oid): oid is string => typeof oid === 'string')
-        : []
-    )
+    const raw = localStorage.getItem(draftKey(activityId))
+    if (!raw) return null
+    return JSON.parse(raw) as DraftPayload
   } catch {
-    resetRows(8)
-  } finally {
-    draftReady = true
-    revalidateAll()
-    if (savedActivityId.value && savedActivityId.value === selectedActivityId.value) {
-      for (const row of rows.value) {
-        if (row.oid && savedOids.has(row.oid)) {
-          row.status = 'saved'
-          row.message = '已提交'
-        }
-      }
-    }
+    return null
   }
 }
 
-function writeDraft() {
-  if (!draftReady) return
-  const payload = {
-    activityId: selectedActivityId.value,
+// 旧版单活动草稿：只在升级后的第一次启动里读一次。
+function readLegacyDraft(): DraftPayload | null {
+  try {
+    const raw = localStorage.getItem(DRAFT_KEY_LEGACY)
+    if (!raw) return null
+    return JSON.parse(raw) as DraftPayload
+  } catch {
+    return null
+  }
+}
+
+function buildDraftPayload(activityId: string): DraftPayload {
+  return {
+    activityId,
     savedActivityId: savedActivityId.value,
     savedCount: savedCount.value,
     savedOids: rows.value.filter((row) => row.status === 'saved' && row.oid).map((row) => row.oid),
@@ -1359,11 +1787,73 @@ function writeDraft() {
       note: row.note
     }))
   }
+}
+
+function persistDraftFor(activityId: string, payload?: DraftPayload) {
+  const data = payload ?? buildDraftPayload(activityId)
   try {
-    localStorage.setItem(DRAFT_KEY, JSON.stringify(payload))
+    localStorage.setItem(draftKey(activityId), JSON.stringify(data))
+    if (activityId) localStorage.setItem(DRAFT_LAST_ACTIVITY_KEY, activityId)
   } catch {
     // 隐私模式或配额不足时保持页面可用；草稿只是便利功能。
   }
+}
+
+// 把草稿铺回表格：只取表格数据，状态字段重算。
+function applyDraft(payload: DraftPayload) {
+  // 旧版草稿可能存着超过上限的行（那时没有封顶），读回时一并截断。
+  const draftRows = Array.isArray(payload.rows) ? payload.rows.slice(0, MAX_REGISTER_ROWS) : []
+  if (Array.isArray(payload.rows) && payload.rows.length > MAX_REGISTER_ROWS) {
+    rowLimitWarning(payload.rows.length - MAX_REGISTER_ROWS)
+  }
+  rows.value = draftRows.map((item) =>
+    createRow({
+      studentId: normalizeStudentId(String(item.studentId ?? '')),
+      name: normalizePersonName(String(item.name ?? '')),
+      classId: String(item.classId ?? ''),
+      className: String(item.className ?? ''),
+      oid: String(item.oid ?? ''),
+      duration: cleanDuration(String(item.duration ?? '')),
+      mode: normalizeMode(item.mode) ?? defaultMode(),
+      note: String(item.note ?? '')
+    })
+  )
+  if (!rows.value.length) resetRows(8)
+  savedActivityId.value = String(payload.savedActivityId ?? '')
+  savedCount.value = Number(payload.savedCount) || 0
+  savedOids = new Set(
+    Array.isArray(payload.savedOids)
+      ? payload.savedOids.filter((oid): oid is string => typeof oid === 'string')
+      : []
+  )
+  rebuildDuplicateIndex()
+  revalidateAll()
+  applySavedState()
+}
+
+function restoreDraft() {
+  rowSeq = 0
+  // 旧版草稿迁移：只在「还没选活动」的启动阶段迁移一次，随后删掉旧键。
+  const legacy = readLegacyDraft()
+  let targetId = ''
+  if (legacy) {
+    targetId = String(legacy.activityId ?? '')
+    persistDraftFor(targetId, { ...legacy, activityId: targetId })
+    localStorage.removeItem(DRAFT_KEY_LEGACY)
+  } else {
+    targetId = localStorage.getItem(DRAFT_LAST_ACTIVITY_KEY) ?? ''
+  }
+  draftOwnerId = targetId
+  if (targetId) selectedActivityId.value = targetId
+  const payload = targetId ? readDraft(targetId) : null
+  if (payload) applyDraft(payload)
+  else resetRows(8)
+  draftReady = true
+}
+
+function writeDraft() {
+  if (!draftReady) return
+  persistDraftFor(draftOwnerId, buildDraftPayload(draftOwnerId))
 }
 
 function cancelIdleDraft() {
@@ -1446,15 +1936,13 @@ async function initPage() {
   // 与「已录入」判定，两者都就绪后 revalidateAll 才能给出正确的行状态。
   await initIndex()
   const queryActivityId = routeActivityId()
-  if (queryActivityId) {
-    // 从活动详情/创建向导跳进来：预选该活动，仍可手动更换
-    selectedActivityId.value = queryActivityId
-    await hydrateSelectedActivity()
-    await syncActivityContext(true)
-  } else {
-    await hydrateSelectedActivity()
-    await syncActivityContext(false)
+  if (queryActivityId && queryActivityId !== draftOwnerId) {
+    // 从活动详情/创建向导跳进来：切到这个活动，读它自己的草稿（不会带上前一个活动的行）
+    await switchActivity(queryActivityId, false, true)
+    return
   }
+  await hydrateSelectedActivity()
+  await syncActivityContext(false)
 }
 
 function routeActivityId(): string {
@@ -1463,16 +1951,43 @@ function routeActivityId(): string {
   return typeof id === 'string' ? id.trim() : ''
 }
 
+// 顶部提示的「不再提示」：勾选后写进 localStorage，下次进来不再出现。
+function loadDismissedNotices() {
+  try {
+    const raw = localStorage.getItem(NOTICE_DISMISSED_KEY)
+    if (!raw) return
+    const parsed = JSON.parse(raw)
+    if (Array.isArray(parsed)) {
+      dismissedNotices.value = parsed.filter((key): key is string => typeof key === 'string')
+    }
+  } catch {
+    dismissedNotices.value = []
+  }
+}
+
+function dismissNotice(key: string) {
+  if (dismissedNotices.value.includes(key)) return
+  dismissedNotices.value = [...dismissedNotices.value, key]
+  try {
+    localStorage.setItem(NOTICE_DISMISSED_KEY, JSON.stringify(dismissedNotices.value))
+  } catch {
+    // 隐私模式或配额不足时保持页面可用。
+  }
+}
+
 watch(rows, scheduleDraft, { deep: true })
 watch(selectedActivityId, scheduleDraft)
 
 onMounted(() => {
+  loadDismissedNotices()
   void initPage()
   window.addEventListener('pagehide', flushDraft)
+  window.addEventListener('keydown', onGlobalKeydown)
 })
 
 onBeforeUnmount(() => {
   window.removeEventListener('pagehide', flushDraft)
+  window.removeEventListener('keydown', onGlobalKeydown)
   flushDraft()
 })
 </script>
@@ -1481,10 +1996,75 @@ onBeforeUnmount(() => {
   <div class="register-page">
     <ElPageHeader class="yg-page-header" :icon="ArrowLeft" @back="router.back()">
       <template #content>
-        <span class="page-title yg-page-header__title">批量义工登记</span>
+        <div class="page-head">
+          <span class="page-title yg-page-header__title">批量义工登记</span>
+          <!-- OCR 是页面的第一入口：放在左上角、蓝色实心、比其它按钮更显眼 -->
+          <ElButton
+            class="page-head__ocr"
+            type="primary"
+            size="large"
+            :icon="UploadFilled"
+            :loading="ocrLoading"
+            @click="triggerOcr"
+          >
+            {{ t('activity.register.ocrAction') }}
+          </ElButton>
+          <span v-if="ocrLoading && ocrStage" class="ocr-stage" role="status" aria-live="polite">
+            {{ ocrStage }}
+          </span>
+          <!-- 名单没就绪时常驻的紧凑提示：没名单就会录错人，这条不能被收起来 -->
+          <span v-if="listNoticeActive" class="list-hint" role="status">
+            <ElIcon class="list-hint__icon"><WarningFilled /></ElIcon>
+            <span class="list-hint__text">{{ t('activity.register.noticeListShort') }}</span>
+          </span>
+        </div>
       </template>
       <template #extra>
         <div class="index-status yg-page-header__actions">
+          <!-- 顶部三条提示默认收进这个图标按钮；三条都被勾掉后按钮消失 -->
+          <ElPopover
+            v-if="noticeButtonVisible"
+            v-model:visible="noticeVisible"
+            placement="bottom-end"
+            trigger="click"
+            width="360px"
+            popper-class="vr-notice-popper"
+          >
+            <template #reference>
+              <ElButton
+                class="notice-trigger"
+                :type="noticeButtonType"
+                :icon="Bell"
+                circle
+                :aria-label="t('activity.register.noticeTrigger')"
+                :title="t('activity.register.noticeTrigger')"
+              />
+            </template>
+            <div class="notice-panel">
+              <div
+                v-for="notice in registerNotices"
+                :key="notice.key"
+                class="notice-item"
+                :class="`notice-item--${notice.type}`"
+              >
+                <div class="notice-item__head">
+                  <ElIcon class="notice-item__icon">
+                    <WarningFilled v-if="notice.type === 'warning'" />
+                    <InfoFilled v-else />
+                  </ElIcon>
+                  <span class="notice-item__title">{{ notice.title }}</span>
+                </div>
+                <p class="notice-item__desc">{{ notice.description }}</p>
+                <ElCheckbox
+                  class="notice-item__dismiss"
+                  :model-value="dismissedNotices.includes(notice.key)"
+                  @change="dismissNotice(notice.key)"
+                >
+                  {{ t('activity.register.noticeNeverShow') }}
+                </ElCheckbox>
+              </div>
+            </div>
+          </ElPopover>
           <ElTag :type="indexTagType" effect="plain">{{ indexLabel }}</ElTag>
           <span class="index-meta">
             {{ students.length }} 人
@@ -1542,43 +2122,27 @@ onBeforeUnmount(() => {
         <div v-else class="activity-summary muted">
           选择活动后才能提交；未选择时仍可编辑、粘贴和导出。
         </div>
+        <!-- 已有成员索引没拉到：红色提示 + 重试，提交按钮同时被禁用 -->
+        <div v-if="existingFetchFailed" class="existing-error" role="alert">
+          <ElIcon class="existing-error__icon"><WarningFilled /></ElIcon>
+          <span class="existing-error__text">
+            {{ t('activity.register.existingLoadFailedBlock') }}
+          </span>
+          <ElButton
+            size="small"
+            :icon="Refresh"
+            :loading="existingLoading"
+            @click="retryExistingMembers()"
+          >
+            {{ t('activity.register.retryLoad') }}
+          </ElButton>
+        </div>
       </section>
-
-      <ElAlert
-        v-if="!indexBooting && !indexLoading && !students.length"
-        type="warning"
-        show-icon
-        :closable="false"
-        title="本地学生名单未就绪"
-        description="点击右上角“同步名单”拉取一次全校学生索引；之后补全只在本地 index.db 内完成，不会逐格查询数据库。"
-      />
-
-      <ElAlert
-        v-if="selectedActivity && selectedActivity.type !== 'hybrid'"
-        type="info"
-        show-icon
-        :closable="false"
-        :title="`活动类型为${modeLabel(selectedActivity.type)}，明细行模式已锁定`"
-      />
-
-      <ElAlert
-        type="info"
-        show-icon
-        :closable="false"
-        title="OCR 识别会消耗 AI 网关额度"
-        description="仅支持 JPG / PNG / WebP，单张不超过 15MB。识别文本会在本地拆行并用 index.db 校正，提交前请逐行复核。"
-      />
 
       <section class="reg-card toolbar-card">
         <ElButton :icon="Plus" @click="addRow">新增行</ElButton>
         <ElButton :icon="CopyDocument" @click="pasteFromClipboard">从剪贴板粘贴</ElButton>
         <ElButton :icon="UploadFilled" @click="triggerImport">导入表格</ElButton>
-        <ElButton :icon="UploadFilled" :loading="ocrLoading" @click="triggerOcr">
-          OCR 识别
-        </ElButton>
-        <span v-if="ocrLoading && ocrStage" class="ocr-stage" role="status" aria-live="polite">
-          {{ ocrStage }}
-        </span>
         <ElButton :icon="Refresh" :loading="indexLoading || indexBooting" @click="refreshIndex()">
           同步名单
         </ElButton>
@@ -1587,6 +2151,24 @@ onBeforeUnmount(() => {
           查看活动（{{ savedCount }} 人）
         </ElButton>
         <span class="toolbar-spacer" />
+        <div class="history-group">
+          <ElButton
+            :icon="RefreshLeft"
+            :disabled="!canUndo"
+            :title="`${t('activity.register.undo')}（Ctrl/Cmd+Z）`"
+            :aria-label="t('activity.register.undo')"
+            circle
+            @click="undo()"
+          />
+          <ElButton
+            :icon="RefreshRight"
+            :disabled="!canRedo"
+            :title="`${t('activity.register.redo')}（Ctrl/Cmd+Shift+Z）`"
+            :aria-label="t('activity.register.redo')"
+            circle
+            @click="redo()"
+          />
+        </div>
         <ElButton type="danger" plain @click="clearAll">清空</ElButton>
         <ElButton
           type="primary"
@@ -1851,32 +2433,189 @@ onBeforeUnmount(() => {
         </div>
       </section>
     </div>
+
+    <!-- 覆盖确认：把这次提交会动到的已有记录摊开，确认后才写库 -->
+    <ElDialog
+      v-model="overwriteDialogVisible"
+      class="vr-overwrite-dialog"
+      width="560px"
+      :title="t('activity.register.overwriteConfirmTitle', { count: overwriteRows.length })"
+      @close="resolveOverwrite(false)"
+    >
+      <p class="overwrite-desc">{{ t('activity.register.overwriteConfirmDesc') }}</p>
+      <p v-if="existingTruncated" class="overwrite-truncated">
+        {{ t('activity.register.overwriteTruncatedNotice', { limit: EXISTING_MEMBER_LIMIT }) }}
+      </p>
+      <div v-if="overwriteRows.length" class="overwrite-table-wrap">
+        <table class="overwrite-table">
+          <thead>
+            <tr>
+              <th>{{ t('activity.register.overwriteColName') }}</th>
+              <th>{{ t('activity.register.overwriteColStudentId') }}</th>
+              <th class="is-num">{{ t('activity.register.overwriteColOldDuration') }}</th>
+              <th class="is-num">{{ t('activity.register.overwriteColNewDuration') }}</th>
+              <th>{{ t('activity.register.overwriteColAction') }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="item in overwriteRows" :key="item.key">
+              <td>{{ item.name || '—' }}</td>
+              <td class="is-num">{{ item.studentId || '—' }}</td>
+              <td class="is-num">{{ item.oldDuration }}</td>
+              <td class="is-num">{{ item.newDuration }}</td>
+              <td>
+                <span
+                  class="overwrite-action"
+                  :class="item.changed ? 'is-overwrite' : 'is-skip'"
+                >
+                  {{
+                    item.changed
+                      ? t('activity.register.overwriteAction')
+                      : t('activity.register.overwriteSkipAction')
+                  }}
+                </span>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <template #footer>
+        <ElButton @click="resolveOverwrite(false)">
+          {{ t('activity.register.cancelAction') }}
+        </ElButton>
+        <ElButton type="danger" @click="resolveOverwrite(true)">
+          {{ t('activity.register.confirmOverwrite') }}
+        </ElButton>
+      </template>
+    </ElDialog>
   </div>
 </template>
 
 <style scoped>
+/* EP 主题变量由 element-overrides.css 全局定义（含单调色阶），页面不再局部覆盖：
+   旧实现把 primary 的 light-5/7/8/9 全压成 primary-soft，会让本页 EP 浅色阶退回
+   「文字与底同色」的老问题。这里只保留本页确实需要的圆角。 */
 .register-page {
   box-sizing: border-box;
   width: 100%;
   max-width: 80rem;
   margin: 0 auto;
   padding: var(--yg-space-4) var(--yg-space-6) var(--yg-space-7);
-  --el-color-primary: var(--yg-color-primary);
-  --el-color-primary-light-3: var(--yg-color-primary-hover);
-  --el-color-primary-light-5: var(--yg-color-primary-soft);
-  --el-color-primary-light-7: var(--yg-color-primary-soft);
-  --el-color-primary-light-8: var(--yg-color-primary-soft);
-  --el-color-primary-light-9: var(--yg-color-primary-soft);
-  --el-color-primary-dark-2: var(--yg-color-primary-active);
-  --el-color-success: var(--yg-color-success);
-  --el-color-warning: var(--yg-color-warning);
-  --el-color-danger: var(--yg-color-danger);
   --el-border-radius-base: var(--yg-radius-md);
 }
 
 .page-title {
   font-size: var(--yg-font-size-3xl);
   font-weight: var(--yg-font-weight-semibold);
+}
+
+/* 页头左侧：标题 + 主操作（OCR）+ 常驻的名单提示 */
+.page-head {
+  display: flex;
+  align-items: center;
+  gap: var(--yg-space-3);
+  flex-wrap: wrap;
+}
+
+.page-head__ocr {
+  box-shadow: var(--yg-shadow-sm);
+}
+
+.list-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--yg-space-1);
+  padding: 0 var(--yg-space-2);
+  border-radius: var(--yg-radius-sm);
+  background: var(--yg-color-warning-soft);
+  color: var(--yg-text-warning);
+  font-size: var(--yg-font-size-xs);
+  line-height: var(--yg-line-height-normal);
+  white-space: nowrap;
+}
+
+.list-hint__icon {
+  font-size: var(--yg-font-size-sm);
+}
+
+.notice-trigger {
+  flex: none;
+}
+
+.notice-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--yg-space-3);
+}
+
+.notice-item {
+  display: flex;
+  flex-direction: column;
+  gap: var(--yg-space-1);
+  padding: var(--yg-space-2);
+  border-radius: var(--yg-radius-md);
+  background: var(--yg-bg-surface-sunken);
+}
+
+.notice-item__head {
+  display: flex;
+  align-items: center;
+  gap: var(--yg-space-2);
+}
+
+.notice-item__icon {
+  font-size: var(--yg-font-size-md);
+}
+
+.notice-item--warning .notice-item__icon,
+.notice-item--warning .notice-item__title {
+  color: var(--yg-text-warning);
+}
+
+.notice-item--info .notice-item__icon,
+.notice-item--info .notice-item__title {
+  color: var(--yg-text-link);
+}
+
+.notice-item__title {
+  font-size: var(--yg-font-size-md);
+  font-weight: var(--yg-font-weight-semibold);
+}
+
+.notice-item__desc {
+  margin: 0;
+  color: var(--yg-text-secondary);
+  font-size: var(--yg-font-size-xs);
+  line-height: var(--yg-line-height-normal);
+}
+
+.notice-item__dismiss {
+  align-self: flex-start;
+  height: auto;
+}
+
+.existing-error {
+  display: flex;
+  align-items: center;
+  gap: var(--yg-space-2);
+  flex-wrap: wrap;
+  width: 100%;
+  padding: var(--yg-space-2) var(--yg-space-3);
+  border: 1px solid var(--yg-color-danger);
+  border-radius: var(--yg-radius-md);
+  background: var(--yg-color-danger-soft);
+}
+
+.existing-error__icon {
+  color: var(--yg-text-danger);
+  font-size: var(--yg-font-size-md);
+}
+
+.existing-error__text {
+  flex: 1 1 16rem;
+  color: var(--yg-text-danger);
+  font-size: var(--yg-font-size-sm);
+  line-height: var(--yg-line-height-normal);
 }
 
 .index-status {
@@ -1966,6 +2705,88 @@ onBeforeUnmount(() => {
 
 .toolbar-spacer {
   flex: 1 1 var(--yg-space-6);
+}
+
+/* 撤回 / 重做：两个图标按钮并成一组 */
+.history-group {
+  display: flex;
+  align-items: center;
+  gap: var(--yg-space-1);
+  margin-right: var(--yg-space-2);
+}
+
+/* 覆盖确认弹窗内容 */
+.overwrite-desc {
+  margin: 0 0 var(--yg-space-3);
+  color: var(--yg-text-secondary);
+  font-size: var(--yg-font-size-md);
+  line-height: var(--yg-line-height-normal);
+}
+
+.overwrite-truncated {
+  margin: 0 0 var(--yg-space-3);
+  padding: var(--yg-space-2) var(--yg-space-3);
+  border-radius: var(--yg-radius-md);
+  background: var(--yg-color-warning-soft);
+  color: var(--yg-text-warning);
+  font-size: var(--yg-font-size-sm);
+  line-height: var(--yg-line-height-normal);
+}
+
+.overwrite-table-wrap {
+  max-height: 18rem;
+  overflow: auto;
+  border: 1px solid var(--yg-border-subtle);
+  border-radius: var(--yg-radius-md);
+}
+
+.overwrite-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: var(--yg-font-size-sm);
+}
+
+.overwrite-table th {
+  position: sticky;
+  top: 0;
+  z-index: var(--yg-z-sticky);
+  padding: var(--yg-space-2);
+  background: var(--yg-bg-surface-sunken);
+  color: var(--yg-text-tertiary);
+  font-weight: var(--yg-font-weight-medium);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.overwrite-table td {
+  padding: var(--yg-space-2);
+  border-bottom: 1px solid var(--yg-border-subtle);
+  color: var(--yg-text-primary);
+}
+
+.overwrite-table .is-num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.overwrite-action {
+  display: inline-block;
+  padding: 0 var(--yg-space-2);
+  border-radius: var(--yg-radius-xs);
+  font-size: var(--yg-font-size-xs);
+  line-height: var(--yg-line-height-normal);
+  white-space: nowrap;
+}
+
+.overwrite-action.is-overwrite {
+  color: var(--yg-text-danger);
+  background: var(--yg-color-danger-soft);
+}
+
+.overwrite-action.is-skip {
+  color: var(--yg-text-tertiary);
+  background: var(--yg-bg-surface-sunken);
 }
 
 .grid-card {
@@ -2336,7 +3157,12 @@ onBeforeUnmount(() => {
   .cell-select,
   .candidate-menu,
   .candidate-item,
-  .status-pill {
+  .status-pill,
+  .list-hint,
+  .existing-error,
+  .notice-item,
+  .overwrite-table-wrap,
+  .overwrite-action {
     corner-shape: squircle;
   }
 }
@@ -2358,5 +3184,38 @@ onBeforeUnmount(() => {
   .grid-wrap {
     max-height: calc(100vh - 20rem);
   }
+
+  .page-head {
+    width: 100%;
+  }
+}
+</style>
+
+<!--
+  弹层外壳（提示气泡 / 覆盖确认弹窗）被传送到 body，scoped 样式够不着，
+  这里用全局块补一层：面板必须是实色，禁止半透明与 backdrop-filter（准则第 6 章）。
+-->
+<style>
+.vr-notice-popper.el-popper.is-light {
+  background: var(--yg-bg-surface-raised);
+  border: 1px solid var(--yg-border-default);
+  border-radius: var(--yg-radius-lg);
+  box-shadow: var(--yg-shadow-lg);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+.vr-notice-popper .el-popper__arrow::before {
+  background: var(--yg-bg-surface-raised);
+  border: 1px solid var(--yg-border-default);
+}
+
+.vr-overwrite-dialog.el-dialog {
+  background: var(--yg-bg-surface-raised);
+  border: 1px solid var(--yg-border-subtle);
+  border-radius: var(--yg-radius-xl);
+  box-shadow: var(--yg-shadow-lg);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
 }
 </style>

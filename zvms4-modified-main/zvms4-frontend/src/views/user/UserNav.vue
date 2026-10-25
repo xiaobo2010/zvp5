@@ -10,7 +10,7 @@ import {
   ChatLineRound
 } from '@element-plus/icons-vue'
 import { ElTooltip, ElIcon } from 'element-plus'
-import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useUserStore } from '@/stores/user'
 import MdiEye from '@/icons/MdiEye.vue'
 import type { Component as VueComponent } from 'vue'
@@ -27,23 +27,35 @@ const { t } = useI18n({
   useScope: 'global'
 })
 
-const path = ref(route.fullPath)
+/* 高亮的唯一真源是 route.path（不含 query/hash）：judge 内部用 startsWith 比较，
+   之前传 fullPath 时 `/user?tab=1`、`/me#section` 这类地址会判不中，高亮整项丢失。
+   这里只保留一个「点击后、路由尚未落地」窗口期的乐观值，路由一变立刻让位给真实路径。 */
+const optimisticPath = ref<string | null>(null)
+const highlightPath = computed(() => optimisticPath.value ?? route.path)
 
-watch(route, () => {
-  path.value = route.fullPath
-})
+watch(
+  () => route.path,
+  () => {
+    optimisticPath.value = null
+  }
+)
 
 // 与 App.vue 保持同一判定：宽 < 高 × 1.2 即竖屏
 const { width, height } = useWindowSize()
 const verticalMode = computed(() => width.value < height.value * 1.2)
 
-const navs: Array<{
+interface NavItem {
   icon: VueComponent
   name: string
   path: string
   show: boolean
   judge: (path: string) => boolean
-}> = [
+}
+
+/* 用 computed 而不是静态数组：show 依赖 user.position，而 position 是登录后由
+   App.vue 的 refreshUser() 异步拉回来的；静态数组会把首帧那份快照永久固化，
+   导致管理/服务器/AI 项永远补不齐，指示器自然找不到对应的高亮项。 */
+const navs = computed<NavItem[]>(() => [
   {
     icon: HomeFilled,
     name: 'home',
@@ -100,9 +112,9 @@ const navs: Array<{
     show: user.position.includes('admin') || user.position.includes('department'),
     judge: (path) => path.startsWith('/ai')
   }
-]
+])
 
-const visibleNavs = computed(() => navs.filter((x) => x.show))
+const visibleNavs = computed(() => navs.value.filter((x) => x.show))
 
 function routeTo(page: string) {
   if (page === '/management') {
@@ -112,7 +124,7 @@ function routeTo(page: string) {
       routeTo(`/group/${user.class_id}/users`)
     }
   } else {
-    path.value = page
+    optimisticPath.value = page
     router.push(page)
   }
 }
@@ -159,11 +171,24 @@ function playIndicator(
     height: `${size.h}px`
   }
   const end = { transform: `translate3d(${target.x}px, ${target.y}px, 0)` }
-  indicatorAnimation = pill.animate([start, end], {
+  const animation = pill.animate([start, end], {
     duration: SPRING_MS,
     easing: SPRING,
     fill: 'forwards'
   })
+  indicatorAnimation = animation
+  /* 弹簧有过冲，动画收尾的落点并不等于目标项的真实 offset；结束后无动画校正一次，
+     否则小圈会长期偏在目标项旁边几像素。cancel() 会让 finished reject，一并吞掉。 */
+  animation.finished
+    .then(() => {
+      if (indicatorAnimation !== animation) return // 已被更晚的一次弹簧取代
+      indicatorAnimation = null
+      animation.cancel()
+      updateIndicator(false)
+    })
+    .catch(() => {
+      /* 被 cancel（连点、卸载）属预期，不处理 */
+    })
 }
 
 /** 点击瞬间：活动项还没切换，先把指示器弹到被点的那一项 */
@@ -175,12 +200,35 @@ function previewIndicator(index: number) {
   playIndicator(renderedTranslate(pill), { x: item.offsetLeft, y: item.offsetTop }, indicator.value)
 }
 
+/* 指示器只关心两个盒子的尺寸/位置：导航容器（换行、横竖屏重排）与当前高亮项
+   （字体/svg 加载后尺寸变化）。window.resize 覆盖不到这些，所以用 ResizeObserver。 */
+let resizeObserver: ResizeObserver | null = null
+let observedActive: HTMLElement | null = null
+
+function syncObservedActive(active?: HTMLElement | null) {
+  if (!resizeObserver) return
+  const next =
+    active ??
+    itemsRef.value?.querySelector<HTMLElement>('.yg-glass-nav__item.is-active') ??
+    null
+  if (next === observedActive) return
+  if (observedActive) resizeObserver.unobserve(observedActive)
+  if (next) resizeObserver.observe(next)
+  observedActive = next
+}
+
 function updateIndicator(animate = true) {
   const root = itemsRef.value
   const pill = indicatorRef.value
   if (!root || !pill) return
   const active = root.querySelector<HTMLElement>('.yg-glass-nav__item.is-active')
-  if (!active) {
+  syncObservedActive(active)
+
+  /* 无激活项（如 /activity/register 不在任何 nav 的 judge 内）或是隐藏项
+     （宽度为 0，常见于首帧样式还没注入）时统一隐藏，避免残留上一次的位置。 */
+  if (!active || active.offsetWidth === 0) {
+    indicatorAnimation?.cancel()
+    indicatorAnimation = null
     indicator.value = { ...indicator.value, visible: false }
     return
   }
@@ -205,16 +253,20 @@ function updateIndicator(animate = true) {
     h: active.offsetHeight,
     visible: true
   }
-  pill.style.transform = `translate3d(${target.x}px, ${target.y}px, 0)`
 
   const same = Math.abs(from.x - target.x) < 0.5 && Math.abs(from.y - target.y) < 0.5
   if (same) return
   playIndicator(from, target, size)
 }
 
+/* transform 必须由这里输出：旧实现只在弹簧分支里写 inline transform，
+   非动画分支（首帧、ResizeObserver 校正）只改了 width/height/opacity，
+   于是小圈留在 CSS 的 left:0/top:0，而高亮类已经挂到正确项上——即「不同步」。
+   动画播放期间 WAAPI 的动画优先级高于 inline style，不会互相抢值。 */
 const indicatorStyle = computed(() => ({
   width: indicator.value.w + 'px',
   height: indicator.value.h + 'px',
+  transform: `translate3d(${indicator.value.x}px, ${indicator.value.y}px, 0)`,
   opacity: indicator.value.visible ? 1 : 0
 }))
 
@@ -236,26 +288,59 @@ function handleNavClick(page: string, event: MouseEvent, index: number) {
 }
 
 function onResize() {
-  updateIndicator(true)
+  updateIndicator(false)
 }
 
+let rafHandles: number[] = []
+let disposed = false
+
 onMounted(() => {
-  nextTick(() => updateIndicator(false))
+  resizeObserver = new ResizeObserver(() => updateIndicator(false))
+  if (itemsRef.value) resizeObserver.observe(itemsRef.value)
   window.addEventListener('resize', onResize)
+
+  /* 首帧兜底：mounted + nextTick 时字体、Vite 异步注入的 yg-glass-nav.css、ElIcon
+     里的 svg 都可能还没参与布局，offset* 会读到 0，小圈就贴在左上角。这里连续两帧、
+     以及字体就绪后再各校一次（字体变化会改变图标/项宽，位置会整体平移）。 */
+  rafHandles = [
+    requestAnimationFrame(() => {
+      rafHandles.push(requestAnimationFrame(() => updateIndicator(false)))
+    })
+  ]
+  document.fonts?.ready
+    .then(() => {
+      if (!disposed) updateIndicator(false)
+    })
+    .catch(() => {
+      /* 字体加载失败不影响导航，忽略 */
+    })
 })
 
 onUnmounted(() => {
+  disposed = true
+  rafHandles.forEach((handle) => cancelAnimationFrame(handle))
+  rafHandles = []
+  resizeObserver?.disconnect()
+  resizeObserver = null
+  observedActive = null
   window.removeEventListener('resize', onResize)
   indicatorAnimation?.cancel()
   indicatorAnimation = null
 })
 
+const navSignature = computed(() =>
+  visibleNavs.value.map((nav) => `${nav.name}:${nav.path}`).join('|')
+)
+
 watch(
-  // flush: 'pre' 让回调跑在 DOM 更新之前：此时 .is-active 还在旧项上，
-  // 能读到「动画所在的实际位置」作为起点。若用默认的 post，DOM 已切到新项，
-  // 读到的往往就是终点，弹簧会被判成「没位移」而丢掉。
-  [path, verticalMode, () => visibleNavs.value.length],
-  () => updateIndicator(true)
+  /* flush: 'post' 保证回调跑在 DOM 已经切到新高亮项之后：
+     弹簧起点来自 indicator 自身正在渲染的 transform（renderedTranslate），不依赖
+     旧 .is-active 还挂在哪个元素上，所以不需要 pre 时机的取巧。
+     依赖里补上「内容签名」而非 length，长度不变但换了项（如 admin 的活动↔创建）
+     同样要重算；user.position 变化会改变 show，进而补齐/移除导航项。 */
+  [highlightPath, verticalMode, navSignature, () => user.position.join('|')],
+  () => updateIndicator(true),
+  { flush: 'post' }
 )
 
 /* ---- 深浅色切换：图标旋转一圈 + View Transitions 整屏丝滑过渡 ---- */
@@ -296,7 +381,7 @@ const showThemeToggle = !pad() || getTabletType() === 'p615' || getTabletType() 
           <button
             type="button"
             class="yg-glass-nav__item"
-            :class="{ 'is-active': nav.judge(path ?? '') }"
+            :class="{ 'is-active': nav.judge(highlightPath) }"
             :aria-label="t(`nav.${nav.name}`)"
             @click="handleNavClick(nav.path, $event, index)"
           >
@@ -307,7 +392,7 @@ const showThemeToggle = !pad() || getTabletType() === 'p615' || getTabletType() 
           v-else
           type="button"
           class="yg-glass-nav__item"
-          :class="{ 'is-active': nav.judge(path ?? '') }"
+          :class="{ 'is-active': nav.judge(highlightPath) }"
           :aria-label="t(`nav.${nav.name}`)"
           @click="handleNavClick(nav.path, $event, index)"
         >

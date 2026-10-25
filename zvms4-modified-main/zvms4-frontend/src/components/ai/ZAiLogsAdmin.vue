@@ -621,9 +621,9 @@ onMounted(() => {
       </div>
     </section>
 
-    <section class="yg-card" v-loading="loading">
+    <section class="yg-card">
       <div class="yg-card__body">
-        <ElTable :data="rows" row-key="oid" stripe>
+        <ElTable v-loading="loading" :data="rows" row-key="oid" stripe>
           <ElTableColumn prop="created_at" :label="t('ai.logs.columns.createdAt')" min-width="160">
             <template #default="{ row }">
               <span class="tabular-nums yg-text-xs">{{ formatTime(row.created_at) }}</span>

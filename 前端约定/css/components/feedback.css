@@ -224,7 +224,9 @@
   width: var(--yg-space-5);
   height: var(--yg-space-5);
   margin-top: var(--yg-space-1);
-  color: var(--yg-color-info);
+  /* 图标取 --yg-text-link 而非 --yg-color-info：后者落在 sky-50 上仅 2.6:1，
+     低于图形元素 3:1 的下限；同色相加深后既保留识别色又达标。 */
+  color: var(--yg-text-link);
 }
 
 .yg-alert__title {
@@ -232,7 +234,9 @@
   font-size: var(--yg-font-size-md);
   font-weight: var(--yg-font-weight-semibold);
   line-height: var(--yg-line-height-snug);
-  color: var(--yg-color-info);
+  /* 标题是文字，必须 ≥4.5:1：走 --yg-text-link（sky-700，软蓝底上 5.5:1），
+     而不是识别色 --yg-color-info（sky-500 落在 sky-50 上只有 2.6:1）。 */
+  color: var(--yg-text-link);
 }
 
 .yg-alert__desc {
@@ -248,15 +252,14 @@
   margin-left: auto;
 }
 
-/* 变体：info（显式，与默认一致） */
+/* 变体：info（显式，与默认一致）。底色与图标跟默认同源，标题走达标文字色。 */
 .yg-alert--info {
   background: var(--yg-color-info-soft);
   border-color: color-mix(in srgb, var(--yg-color-info) 30%, var(--yg-bg-surface));
 }
 
-.yg-alert--info .yg-alert__icon,
 .yg-alert--info .yg-alert__title {
-  color: var(--yg-color-info);
+  color: var(--yg-text-link);
 }
 
 /* 变体：success（绿） */
@@ -342,10 +345,12 @@
   color: var(--yg-text-tertiary); /* 默认中性灰 */
 }
 
-.yg-message__item--info .yg-message__icon { color: var(--yg-color-info); }
-.yg-message__item--success .yg-message__icon { color: var(--yg-color-success); }
-.yg-message__item--warning .yg-message__icon { color: var(--yg-color-warning); }
-.yg-message__item--danger .yg-message__icon { color: var(--yg-color-danger); }
+/* 图标与文字同色：语义主色压软底只有 1.7–2.6:1，达不到图形元素 3:1 要求，
+   统一改用语义文字色（与 .yg-alert 的处理一致）。 */
+.yg-message__item--info .yg-message__icon { color: var(--yg-text-link); }
+.yg-message__item--success .yg-message__icon { color: var(--yg-text-success); }
+.yg-message__item--warning .yg-message__icon { color: var(--yg-text-warning); }
+.yg-message__item--danger .yg-message__icon { color: var(--yg-text-danger); }
 
 /* ==========================================================================
    4.5.5 通知 .yg-notification
@@ -767,22 +772,22 @@
 
 .yg-result--info .yg-result__icon {
   background: var(--yg-color-info-soft);
-  color: var(--yg-color-info);
+  color: var(--yg-text-link);
 }
 
 .yg-result--success .yg-result__icon {
   background: var(--yg-color-success-soft);
-  color: var(--yg-color-success);
+  color: var(--yg-text-success);
 }
 
 .yg-result--warning .yg-result__icon {
   background: var(--yg-color-warning-soft);
-  color: var(--yg-color-warning);
+  color: var(--yg-text-warning);
 }
 
 .yg-result--danger .yg-result__icon {
   background: var(--yg-color-danger-soft);
-  color: var(--yg-color-danger);
+  color: var(--yg-text-danger);
 }
 
 /* ==========================================================================

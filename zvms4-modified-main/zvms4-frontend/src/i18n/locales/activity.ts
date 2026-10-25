@@ -184,7 +184,7 @@ export const zhCN = {
     existingTruncated: '仅载入前 {limit} 名已有成员，其余请在活动详情成员列表处理',
     rowLimitReached: '表格最多 {limit} 行，请先提交或删除部分行后再新增',
     rowLimitTruncated: '已达 {limit} 行上限，本次丢弃 {dropped} 行，剩余部分请分批粘贴或识别',
-    existingLoadFailed: '载入已有成员失败，本次提交只会新增成员',
+    existingLoadFailed: '载入已有成员失败，已暂停提交，请重试载入后再提交',
     noPending: '没有待提交的行；已录入成员修改时长后提交会直接覆盖，不会叠加',
     nothingChanged: '已录入成员的时长都没有变化，无需提交',
     updatedRow: '时长已覆盖',
@@ -195,7 +195,53 @@ export const zhCN = {
     partialFailedTitle: '部分成员更新失败',
     partialFailedSummary:
       '本次更新 {updated} 条、新增 {added} 条，失败 {failed} 条；成功的部分不回滚，可修正后重试',
-    moreFailures: '等共 {count} 条'
+    moreFailures: '等共 {count} 条',
+    // —— 时长与行校验 ——
+    durationRequired: '请填写时长',
+    durationOutOfRange: '时长需为 0–25 之间的数字',
+    duplicateInTable: '名单内重复',
+    invalidRowsRemain: '还有 {count} 行需要修正后再提交',
+    activityRequired: '请先选择目标义工活动',
+    // —— 覆盖确认（提交是设置时长，不是累加）——
+    overwriteConfirmTitle: '确认覆盖 {count} 条已有记录？',
+    overwriteConfirmDesc: '提交是设置时长，不会累加：同一人的时长会被这次填写的值替换。',
+    overwriteTruncatedNotice:
+      '已有成员索引超过 {limit} 条被截断，部分成员没有列出；本次提交仍按设置时长写入，不会累加。',
+    overwriteColName: '姓名',
+    overwriteColStudentId: '学号',
+    overwriteColOldDuration: '原时长',
+    overwriteColNewDuration: '新时长',
+    overwriteColAction: '动作',
+    overwriteAction: '覆盖',
+    overwriteSkipAction: '未变跳过',
+    confirmOverwrite: '确认覆盖',
+    cancelAction: '取消',
+    deleteAction: '删除',
+    ocrAction: 'OCR 识别',
+    // —— 提交限制与索引失败 ——
+    submitLimitExceeded: '一次最多提交 {limit} 人，当前 {count} 人，请分批提交',
+    existingLoadFailedBlock:
+      '已有成员列表载入失败，暂时不能提交：否则会把「修改时长」当成「新增」，时长会翻倍。',
+    retryLoad: '重试',
+    // —— 行删除确认 ——
+    removeRowTitle: '删除该行？',
+    removeRowConfirm: '「{name}」这一行的内容将不再提交，删除后可用「撤回」恢复。',
+    // —— 撤回 / 重做 ——
+    undo: '撤回',
+    redo: '重做',
+    savedRow: '已提交',
+    // —— 顶部提示（可收起）——
+    noticeTrigger: '提示',
+    noticeNeverShow: '不再提示',
+    noticeListTitle: '本地学生名单未就绪',
+    noticeListDesc:
+      '点击右上角“同步名单”拉取一次全校学生索引；之后补全只在本地 index.db 内完成，不会逐格查询数据库。',
+    noticeListShort: '本地学生名单未就绪，请先同步名单',
+    noticeTypeTitle: '活动类型为{type}，明细行模式已锁定',
+    noticeTypeDesc: '该活动不是特殊义工，明细行的模式列已锁定为该类型。',
+    noticeOcrTitle: 'OCR 识别会消耗 AI 网关额度',
+    noticeOcrDesc:
+      '仅支持 JPG / PNG / WebP，单张不超过 15MB。识别文本会在本地拆行并用 index.db 校正，提交前请逐行复核。'
   },
   special: {
     classify: {
@@ -227,8 +273,22 @@ export const zhCN = {
         add: '添加',
         remove: '移除',
         confirm: '移除后将不可恢复，确定移除？',
+        removeTitle: '移除该成员？',
+        removeMessage: '移除后该成员在本活动中的时长记录将被删除，且不可恢复。',
+        cancel: '取消',
         title: '添加成员至{activity}'
       }
+    },
+    past: {
+      removeTitle: '移除该历史成员？',
+      removeMessage: '移除后该成员在历史活动中的记录将不再展示，且不可恢复。',
+      remove: '移除',
+      cancel: '取消'
+    },
+    userDelete: {
+      title: '删除该用户？',
+      confirm: '删除',
+      cancel: '取消'
     },
     inline: {
       title: '成员列表',

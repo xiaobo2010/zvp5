@@ -224,7 +224,7 @@ body {
   border: calc(var(--yg-space-1) / 4) solid var(--yg-border-default);
 }
 
-/* ---------- 表格：表头弱化、行高舒展、粘性表头 ---------- */
+/* ---------- 表格：表头弱化、行高舒展、表头/内容同步、固定列不透明 ---------- */
 .el-table {
   font-size: var(--yg-font-size-md);
   --el-table-bg-color: var(--yg-bg-surface);
@@ -272,21 +272,32 @@ body {
   padding: 0 var(--yg-space-3) 0 0;
 }
 
-/* 默认（未传 max-height）表格也提供 sticky 表头：
-   表格本身放开 overflow，由页面滚动容器驱动吸顶 */
-.el-card__body .el-table {
-  overflow: visible;
+/* 表头/内容同步交给 EP 自己管：表格必须带 max-height（或 height），
+   由 .el-table__body-wrapper 作为内部滚动容器承担纵向滚动，表头固定在表格顶部；
+   横向滚动由 EP 的 scrollbar 监听后同步到 .el-table__header-wrapper。
+   旧实现把 .el-table 的 overflow 改成 visible 并给「非 scrollable-y」的表头加
+   position: sticky —— 吸附祖先变成页面滚动容器 .yg-layout__content，
+   表头跟页面走、行跟表格自己的 body-wrapper 走，两者脱钩，故整段移除。
+   表格不再放开 overflow：EP 的 overflow:hidden 负责裁掉固定列阴影，
+   避免列溢出卡片。 */
+
+/* 固定列：EP 默认用 background:inherit 取所在行底色，这里显式补一层不透明底，
+   横向滚动时下层单元格不会透过固定列穿模（准则 4.4.2）。 */
+.el-table__body-wrapper tr td.el-table-fixed-column--left,
+.el-table__body-wrapper tr td.el-table-fixed-column--right {
+  background-color: var(--yg-bg-surface);
 }
 
-.el-card__body .el-table__inner-wrapper {
-  overflow: visible;
+/* 固定列表头：实色底，避免表头下方行内容透出 */
+.el-table__header-wrapper tr th.el-table-fixed-column--left,
+.el-table__header-wrapper tr th.el-table-fixed-column--right {
+  background-color: var(--yg-bg-surface-sunken);
 }
 
-.el-card__body .el-table:not(.el-table--scrollable-y) .el-table__header-wrapper {
-  position: sticky;
-  top: calc(var(--yg-space-4) * -1);
-  z-index: 3;
-  background: var(--yg-bg-surface);
+/* 固定列右侧补丁（滚动条占位）：EP 写死白底，暗色模式下会露出白块 */
+.el-table__body-wrapper tr td.el-table__fixed-right-patch,
+.el-table__body-wrapper tr th.el-table__fixed-right-patch {
+  background-color: var(--yg-bg-surface);
 }
 
 /* ---------- 按钮 ---------- */
@@ -326,26 +337,26 @@ body {
   --el-button-active-text-color: var(--yg-text-primary);
 }
 
-/* 成功/警告按钮：悬停走语义色，白字保持对比度 */
+/* 成功/警告按钮：实心底走 strong 系列，白字 ≥4.5:1（语义色本身只做识别色） */
 .el-button--success {
-  --el-button-bg-color: var(--yg-color-success);
-  --el-button-border-color: var(--yg-color-success);
-  --el-button-hover-bg-color: var(--yg-color-success-hover);
-  --el-button-hover-border-color: var(--yg-color-success-hover);
+  --el-button-bg-color: var(--yg-color-success-strong);
+  --el-button-border-color: var(--yg-color-success-strong);
+  --el-button-hover-bg-color: var(--yg-color-success-strong-hover);
+  --el-button-hover-border-color: var(--yg-color-success-strong-hover);
   --el-button-hover-text-color: var(--yg-color-on-success);
-  --el-button-active-bg-color: var(--yg-color-success-active);
-  --el-button-active-border-color: var(--yg-color-success-active);
+  --el-button-active-bg-color: var(--yg-color-success-strong-active);
+  --el-button-active-border-color: var(--yg-color-success-strong-active);
   --el-button-active-text-color: var(--yg-color-on-success);
 }
 
 .el-button--warning {
-  --el-button-bg-color: var(--yg-color-warning);
-  --el-button-border-color: var(--yg-color-warning);
-  --el-button-hover-bg-color: var(--yg-color-warning-hover);
-  --el-button-hover-border-color: var(--yg-color-warning-hover);
+  --el-button-bg-color: var(--yg-color-warning-strong);
+  --el-button-border-color: var(--yg-color-warning-strong);
+  --el-button-hover-bg-color: var(--yg-color-warning-strong-hover);
+  --el-button-hover-border-color: var(--yg-color-warning-strong-hover);
   --el-button-hover-text-color: var(--yg-color-on-warning);
-  --el-button-active-bg-color: var(--yg-color-warning-active);
-  --el-button-active-border-color: var(--yg-color-warning-active);
+  --el-button-active-bg-color: var(--yg-color-warning-strong-active);
+  --el-button-active-border-color: var(--yg-color-warning-strong-active);
   --el-button-active-text-color: var(--yg-color-on-warning);
 }
 

@@ -12,6 +12,7 @@ import {
   ElDescriptionsItem,
   ElDialog,
   ElMessage,
+  ElMessageBox,
   ElNotification,
   ElPopconfirm,
   ElPopover,
@@ -208,10 +209,23 @@ async function modifyMemberStatus(status: ActivityMember['status']) {
 
 async function removeUserPast(tag: string) {
   const index = past.value.indexOf(tag)
-  if (index > -1) {
-    await api.user.past.delete(id.value, index)
-    past.value.splice(index, 1)
+  if (index === -1) return
+  try {
+    await ElMessageBox.confirm(
+      t('activity.member.past.removeMessage'),
+      t('activity.member.past.removeTitle'),
+      {
+        type: 'warning',
+        confirmButtonText: t('activity.member.past.remove'),
+        cancelButtonText: t('activity.member.past.cancel'),
+        confirmButtonClass: 'el-button--danger'
+      }
+    )
+  } catch {
+    return
   }
+  await api.user.past.delete(id.value, index)
+  past.value.splice(index, 1)
 }
 
 /*

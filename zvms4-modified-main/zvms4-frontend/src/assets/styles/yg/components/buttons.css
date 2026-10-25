@@ -74,21 +74,23 @@
 
 /* ---- 变体 ---- */
 
-/* 主按钮：天蓝实底白字 + 轻阴影（页面唯一主操作） */
+/* 主按钮：天蓝实底白字 + 轻阴影（页面唯一主操作）
+   底色走 strong 系列（sky-700 一档），保证白字对比 ≥ 4.5:1；
+   --yg-color-primary 仍是品牌天蓝，只用于图标、边框、选中态等非文字场景。 */
 .yg-btn--primary {
   color: var(--yg-color-on-primary);
-  background-color: var(--yg-color-primary);
+  background-color: var(--yg-color-primary-strong);
   border-color: transparent;
   box-shadow: var(--yg-shadow-sm);
 }
 
 .yg-btn--primary:hover {
-  background-color: var(--yg-color-primary-hover);
+  background-color: var(--yg-color-primary-strong-hover);
   border-color: transparent;
 }
 
 .yg-btn--primary:active {
-  background-color: var(--yg-color-primary-active);
+  background-color: var(--yg-color-primary-strong-active);
   border-color: transparent;
   box-shadow: var(--yg-shadow-inset);
 }
@@ -122,7 +124,8 @@
   border-color: transparent;
 }
 
-/* 文字按钮：纯天蓝文字，悬停下划线（行内操作） */
+/* 文字按钮：主色文字，悬停下划线（行内操作）
+   常态用 --yg-text-link（sky-700），悬停/按下继续往深走，绝不变亮。 */
 .yg-btn--text {
   color: var(--yg-text-link);
   background-color: transparent;
@@ -130,31 +133,32 @@
 }
 
 .yg-btn--text:hover {
-  color: var(--yg-color-primary);
+  color: var(--yg-text-link-hover);
   text-decoration: underline;
   border-color: transparent;
 }
 
 .yg-btn--text:active {
-  color: var(--yg-color-primary-active);
+  color: var(--yg-text-link-active);
   border-color: transparent;
 }
 
-/* 危险按钮：红底白字（高危破坏性操作唯一实心按钮，见准则第 5 章） */
+/* 危险按钮：红底白字（高危破坏性操作唯一实心按钮，见准则第 5 章）
+   实底走 strong 系列（red-700 一档），保证白字对比 ≥ 4.5:1。 */
 .yg-btn--danger {
   color: var(--yg-color-on-danger);
-  background-color: var(--yg-color-danger);
+  background-color: var(--yg-color-danger-strong);
   border-color: transparent;
   box-shadow: var(--yg-shadow-sm);
 }
 
 .yg-btn--danger:hover {
-  background-color: var(--yg-color-danger-hover);
+  background-color: var(--yg-color-danger-strong-hover);
   border-color: transparent;
 }
 
 .yg-btn--danger:active {
-  background-color: var(--yg-color-danger-active);
+  background-color: var(--yg-color-danger-strong-active);
   border-color: transparent;
   box-shadow: var(--yg-shadow-inset);
 }
@@ -217,10 +221,11 @@
 
 /* ---- 状态 ---- */
 
-/* 禁用：浅灰底 + 禁用文字，禁光标与交互 */
+/* 禁用：浅灰底 + 禁用文字，禁光标与交互
+   文字用 --yg-text-disabled-control，在浅灰底上 ≥ 3:1，看得出是禁用而不是「白字消失」。 */
 .yg-btn.is-disabled,
 .yg-btn:disabled {
-  color: var(--yg-text-disabled);
+  color: var(--yg-text-disabled-control);
   background-color: var(--yg-bg-surface-sunken);
   border-color: transparent;
   box-shadow: none;
@@ -243,11 +248,11 @@
 }
 
 .yg-btn--primary.is-loading {
-  background-color: var(--yg-color-primary-active);
+  background-color: var(--yg-color-primary-strong-active);
 }
 
 .yg-btn--danger.is-loading {
-  background-color: var(--yg-color-danger-active);
+  background-color: var(--yg-color-danger-strong-active);
 }
 
 .yg-btn.is-loading:not(.yg-btn--primary):not(.yg-btn--danger) {
@@ -333,20 +338,20 @@
 
 /* ---- 变体 ---- */
 
-/* 主图标按钮：天蓝实底白图标（规则同主按钮） */
+/* 主图标按钮：天蓝实底白图标（规则同主按钮，底色走 strong 系列） */
 .yg-icon-btn--primary {
   color: var(--yg-color-on-primary);
-  background-color: var(--yg-color-primary);
+  background-color: var(--yg-color-primary-strong);
   border-color: transparent;
   box-shadow: var(--yg-shadow-sm);
 }
 
 .yg-icon-btn--primary:hover {
-  background-color: var(--yg-color-primary-hover);
+  background-color: var(--yg-color-primary-strong-hover);
 }
 
 .yg-icon-btn--primary:active {
-  background-color: var(--yg-color-primary-active);
+  background-color: var(--yg-color-primary-strong-active);
   box-shadow: var(--yg-shadow-inset);
 }
 
@@ -379,20 +384,20 @@
   background-color: var(--yg-bg-hover);
 }
 
-/* 危险图标按钮：红底白图标（高危操作，规则同危险按钮） */
+/* 危险图标按钮：红底白图标（高危操作，规则同危险按钮，底色走 strong 系列） */
 .yg-icon-btn--danger {
   color: var(--yg-color-on-danger);
-  background-color: var(--yg-color-danger);
+  background-color: var(--yg-color-danger-strong);
   border-color: transparent;
   box-shadow: var(--yg-shadow-sm);
 }
 
 .yg-icon-btn--danger:hover {
-  background-color: var(--yg-color-danger-hover);
+  background-color: var(--yg-color-danger-strong-hover);
 }
 
 .yg-icon-btn--danger:active {
-  background-color: var(--yg-color-danger-active);
+  background-color: var(--yg-color-danger-strong-active);
   box-shadow: var(--yg-shadow-inset);
 }
 
@@ -412,7 +417,7 @@
 
 .yg-icon-btn.is-disabled,
 .yg-icon-btn:disabled {
-  color: var(--yg-text-disabled);
+  color: var(--yg-text-disabled-control);
   background-color: transparent;
   box-shadow: none;
   cursor: not-allowed;
@@ -437,12 +442,12 @@
 }
 
 .yg-link:hover {
-  color: var(--yg-color-primary);
+  color: var(--yg-text-link-hover);
   text-decoration: underline;
 }
 
 .yg-link:active {
-  color: var(--yg-color-primary-active);
+  color: var(--yg-text-link-active);
 }
 
 .yg-link:focus-visible {
@@ -459,18 +464,19 @@
   color: var(--yg-text-primary);
 }
 
-/* 危险链接：红色文字（高危行内操作，见准则 5.1） */
+/* 危险链接：红色文字（高危行内操作，见准则 5.1）
+   悬停继续往深走（--yg-text-danger-hover），绝不变亮。 */
 .yg-link--danger {
   color: var(--yg-text-danger);
 }
 
 .yg-link--danger:hover {
-  color: var(--yg-color-danger);
+  color: var(--yg-text-danger-hover);
 }
 
 /* 禁用 */
 .yg-link.is-disabled {
-  color: var(--yg-text-disabled);
+  color: var(--yg-text-disabled-control);
   text-decoration: none;
   cursor: not-allowed;
   pointer-events: none;
