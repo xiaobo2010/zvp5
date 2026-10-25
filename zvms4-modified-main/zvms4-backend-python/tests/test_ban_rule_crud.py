@@ -416,13 +416,20 @@ def test_risk_seeds_are_present_and_configured(path: Path) -> None:
 
 @pytest.mark.parametrize("path", [V001_PATH, V020_PATH])
 def test_risk_seeds_penalties_follow_the_mode(path: Path) -> None:
-    """alert 模式的规则不封人：penalties 落 JSON null，ban 模式给梯度。"""
+    """alert 模式的规则不封人：penalties 落空数组，ban 模式给梯度。
+
+    ``ai_chat_burst`` 用 ``[]`` 而不是 ``null``：Oracle 的 ``IS JSON`` 只接受对象/
+    数组，标量 ``null`` 会撞 ``ck_ban_rules_penalties_json``（生产实测 ORA-02290）。
+    """
     ddl = _ddl(path)
 
-    # V020 有五条 alert 种子；V001（新建实例的基线）还多带一条 V033 的
-    # ``ai_chat_burst``（同样 mode=alert），所以是 6。
-    expected = 6 if path == V001_PATH else 5
-    assert ddl.count("'null', 1, SYSTIMESTAMP, SYSTIMESTAMP") == expected
+    null_seeds = ddl.count("'null', 1, SYSTIMESTAMP, SYSTIMESTAMP")
+    empty_seeds = ddl.count("'[]', 1, SYSTIMESTAMP, SYSTIMESTAMP")
+
+    # 两边各五条 ``null`` 形态的 alert 种子；``ai_chat_burst`` 只在 V001 的基线里，
+    # 且用空数组（Oracle 的 ``IS JSON`` 不接受标量 null）。
+    assert null_seeds == 5
+    assert empty_seeds == (1 if path == V001_PATH else 0)
     assert ddl.count("'[1,3,7]', 1, SYSTIMESTAMP, SYSTIMESTAMP") >= 2
 
 

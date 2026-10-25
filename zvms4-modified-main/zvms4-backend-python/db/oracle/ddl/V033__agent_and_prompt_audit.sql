@@ -169,7 +169,7 @@ WHEN NOT MATCHED THEN INSERT
   (oid, code, name, trigger_code, enabled, config, penalties, builtin, created_at, updated_at)
   VALUES (''0b000000000000000000000b'', ''ai_chat_burst'', ''AI 对话请求突发'',
           ''ai_chat_burst'', 1, ''{"threshold":80,"window_hours":1,"mode":"alert"}'',
-          ''null'', 1, SYSTIMESTAMP, SYSTIMESTAMP)';
+          ''[]'', 1, SYSTIMESTAMP, SYSTIMESTAMP)';
 EXCEPTION
   -- -1: 并发执行时另一会话已插入（uq_ban_rules_code），结果一致，忽略。
   WHEN OTHERS THEN
