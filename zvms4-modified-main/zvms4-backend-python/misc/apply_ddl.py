@@ -117,7 +117,9 @@ async def _apply(path: Path) -> int:
     async with session_scope() as session:
         for index, statement in enumerate(statements, start=1):
             try:
-                await session.execute(text(statement))
+                # 不能用 ``text()``：迁移里的字面量 JSON（``"threshold":80``）会被
+                # 解析成绑定参数 ``:80``。DDL 不需要绑定，原样交给驱动。
+                await session.exec_driver_sql(statement)
                 await session.commit()
             except Exception as exc:  # noqa: BLE001 - 报出第几条即可，不要把 SQL 全量打出来
                 first = next(
