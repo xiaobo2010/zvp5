@@ -24,7 +24,7 @@ import math
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
-from . import tool_impl
+from . import help_docs, tool_impl
 from .tool_impl import AgentError
 
 if TYPE_CHECKING:  # pragma: no cover - 仅类型检查，运行时不导入（proposal 依赖本模块）
@@ -32,6 +32,30 @@ if TYPE_CHECKING:  # pragma: no cover - 仅类型检查，运行时不导入（p
 
 READ = "read"
 WRITE = "write"
+
+# 学生会（department）可见的工具集合。声明层过滤是**能力边界**的一部分：
+# 运维工具（ops_tools 注册的那 17 个）只对管理员声明，学生会连「有这个能力」都
+# 不该知道——执行期的 permission/guard 能否决调用，但模型仍会照着 tools 数组
+# 去试、去承诺，用户看到的是「它说能改数据库」。
+VOLUNTEER_TOOL_NAMES = frozenset(
+    {
+        "search_activities",
+        "list_activities",
+        "get_activity",
+        "activity_statistics",
+        "list_activity_members",
+        "user_volunteer_time",
+        "user_activities",
+        "list_groups",
+        "update_member_duration",
+        "set_member_status",
+    }
+)
+
+PLATFORM_HELP_TOOL = "platform_help"
+
+# 非管理员看到的 = 义工管理 10 个 + 平台帮助。帮助文档对所有 AI 可用角色开放。
+DEPARTMENT_TOOL_NAMES = VOLUNTEER_TOOL_NAMES | {PLATFORM_HELP_TOOL}
 
 
 @dataclass(frozen=True)
@@ -435,16 +459,69 @@ _register(
 
 
 # ---------------------------------------------------------------------------
+# 平台帮助（静态知识库，不查库、不写库）
+# ---------------------------------------------------------------------------
+
+
+async def _impl_platform_help(user: dict, query: str) -> dict:
+    result = help_docs.find_help(query)
+    return {
+        "answer": result["answer"],
+        "sections": result["sections"],
+        "matched": result["matched"],
+    }
+
+
+_register(
+    ToolDef(
+        name=PLATFORM_HELP_TOOL,
+        description=(
+            "查询平台使用帮助（怎么报名、临时密码、义工时长规则、批量登记、附件上传、"
+            "AI 智能体、封禁申诉等）。用户询问平台用法时先调用它，并按 answer 的内容作答。"
+        ),
+        kind=READ,
+        params=_schema(
+            {
+                "query": {
+                    **_STR,
+                    "description": "用户的问题或关键词（如：临时密码、义工时长、封禁）",
+                }
+            },
+            ("query",),
+        ),
+        permission=lambda user: bool(
+            {"admin", "department"} & set(user.get("per") or [])
+        ),
+        impl=_impl_platform_help,
+    )
+)
+
+
+# ---------------------------------------------------------------------------
 # 查找 / 参数校验
 # ---------------------------------------------------------------------------
 
-# 传给上游的 ``tools`` 数组（OpenAI function-calling 格式）。每次请求现算：注册表
-# 是模块级常量，但把它物化成上游协议形状的代码只该有一份。
+# 传给上游的 ``tools`` 数组（OpenAI function-calling 格式）。
 #
 # **按 name 排序**是缓存契约的一部分：上游的前缀缓存以「tools 数组的字节」为键，
 # 注册顺序一变（有人把 import 排了个序）整段前缀就失效，全部请求变成未命中。
-def tool_specs() -> list[dict]:
-    ordered = sorted(TOOLS.values(), key=lambda tool: tool.name)
+#
+# 声明层按角色过滤：``admin`` 拿到全部工具；其余角色（实际只有 ``department``
+# 能过 AI 门禁）只拿到义工管理 + 平台帮助。两份列表**按注册表规模缓存**，同一进程
+# 内只物化一次——每轮重新排序 27 个工具是白花的 CPU，而且每轮都要重新分配一批
+# dict，等于把前缀缓存本该省下的东西又花回去。
+_SPECS_CACHE: dict[str, tuple[int, list[dict]]] = {}
+
+
+def _is_admin(user: dict) -> bool:
+    return "admin" in set((user or {}).get("per") or [])
+
+
+def _build_specs(names: frozenset[str] | set[str]) -> list[dict]:
+    ordered = sorted(
+        (tool for name, tool in TOOLS.items() if name in names),
+        key=lambda tool: tool.name,
+    )
     return [
         {
             "type": "function",
@@ -456,6 +533,26 @@ def tool_specs() -> list[dict]:
         }
         for tool in ordered
     ]
+
+
+def tool_specs(user: dict) -> list[dict]:
+    """当前用户可见的工具声明（按角色裁剪，结果按 ``name`` 排序）。
+
+    缓存键除角色外还带注册表规模：注册表是开放集合（``ops_tools`` 在导入时追加），
+    测试里也会临时注册/移除工具；只按角色缓存会让「加了工具却看不到」变成一个
+    无法复现的幽灵问题。
+
+    返回浅拷贝：调用方（executor、上游适配层）不该能把缓存里的列表改掉。
+    """
+    is_admin = _is_admin(user)
+    key = "admin" if is_admin else "department"
+    revision = len(TOOLS)
+    cached = _SPECS_CACHE.get(key)
+    if cached is None or cached[0] != revision:
+        names = set(TOOLS) if is_admin else DEPARTMENT_TOOL_NAMES
+        cached = (revision, _build_specs(names))
+        _SPECS_CACHE[key] = cached
+    return list(cached[1])
 
 
 def get_tool(name: object) -> ToolDef | None:
@@ -607,8 +704,11 @@ def run_allowed(tool: ToolDef, user: dict) -> bool:
 
 
 __all__ = [
+    "DEPARTMENT_TOOL_NAMES",
+    "PLATFORM_HELP_TOOL",
     "READ",
     "TOOLS",
+    "VOLUNTEER_TOOL_NAMES",
     "WRITE",
     "ToolDef",
     "get_tool",

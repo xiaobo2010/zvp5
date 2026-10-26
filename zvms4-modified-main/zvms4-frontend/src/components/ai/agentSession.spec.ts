@@ -1,7 +1,13 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 import {
+  PLATFORM_HELP_TOOL,
+  VOLUNTEER_AGENT_TOOLS,
+  agentUnlockMinutesLeft,
+  availableAgentTools,
   buildPreviewView,
+  clearAgentUnlock,
   eventStatusTone,
+  isAgentUnlocked,
   isOpsWriteTool,
   markDualAuthCached,
   normalizeEventViews,
@@ -18,6 +24,7 @@ import {
   previewValueText,
   proposalMinutesLeft,
   proposalTone,
+  setAgentUnlockedUntil,
   stopReasonHintKey,
   stopReasonKey,
   toolLabelKey
@@ -65,6 +72,77 @@ describe('工具标签', () => {
     expect(toolLabelKey('rm_rf')).toBe('ai.agent.tools.unknown')
     expect(toolLabelKey(null)).toBe('ai.agent.tools.unknown')
     expect(toolLabelKey(undefined)).toBe('ai.agent.tools.unknown')
+  })
+
+  it('平台帮助工具走自己的标签键', () => {
+    expect(toolLabelKey(PLATFORM_HELP_TOOL)).toBe('ai.agent.tools.platformHelp')
+  })
+})
+
+describe('按角色的工具声明', () => {
+  it('admin 见到既有 27 条加平台帮助', () => {
+    const tools = availableAgentTools(['admin'])
+    expect(tools).toHaveLength(28)
+    expect(tools).toContain('search_activities')
+    expect(tools).toContain('ssh_exec')
+    expect(tools).toContain(PLATFORM_HELP_TOOL)
+  })
+
+  it('department 只见 10 条义工管理加平台帮助', () => {
+    const tools = availableAgentTools(['department'])
+    expect(tools).toEqual([...VOLUNTEER_AGENT_TOOLS, PLATFORM_HELP_TOOL])
+    expect(tools).toHaveLength(11)
+    expect(tools).not.toContain('db_ddl')
+    expect(tools).not.toContain('ssh_exec')
+  })
+
+  it('没有角色时同样按最小集合给', () => {
+    expect(availableAgentTools([])).toHaveLength(11)
+    expect(availableAgentTools([])).toContain(PLATFORM_HELP_TOOL)
+  })
+})
+
+describe('解锁状态', () => {
+  afterEach(() => {
+    clearAgentUnlock()
+  })
+
+  it('到期前有效，到点与过期都算失效', () => {
+    const deadline = Date.parse('2026-10-25T12:30:00')
+    expect(setAgentUnlockedUntil('2026-10-25T12:30:00')).toBe(deadline)
+
+    expect(isAgentUnlocked(deadline - 1)).toBe(true)
+    expect(isAgentUnlocked(deadline)).toBe(false)
+    expect(isAgentUnlocked(deadline + 1)).toBe(false)
+  })
+
+  it('剩余分钟向上取整，过期给 0', () => {
+    const deadline = Date.parse('2026-10-25T12:30:00')
+    setAgentUnlockedUntil('2026-10-25T12:30:00')
+
+    expect(agentUnlockMinutesLeft(deadline - 1)).toBe(1)
+    expect(agentUnlockMinutesLeft(deadline - 60_000)).toBe(1)
+    expect(agentUnlockMinutesLeft(deadline - 90_000)).toBe(2)
+    expect(agentUnlockMinutesLeft(deadline)).toBe(0)
+  })
+
+  it('空值或垃圾值落成未解锁，不拿硬编码窗口兜底', () => {
+    setAgentUnlockedUntil('2026-10-25T12:30:00')
+
+    expect(setAgentUnlockedUntil('')).toBeNull()
+    expect(isAgentUnlocked()).toBe(false)
+    expect(setAgentUnlockedUntil('十分钟后')).toBeNull()
+    expect(agentUnlockMinutesLeft()).toBe(0)
+  })
+
+  it('主动清除后回到未解锁', () => {
+    setAgentUnlockedUntil('2026-10-25T12:30:00')
+    expect(isAgentUnlocked(Date.parse('2026-10-25T12:00:00'))).toBe(true)
+
+    clearAgentUnlock()
+
+    expect(isAgentUnlocked()).toBe(false)
+    expect(agentUnlockMinutesLeft()).toBe(0)
   })
 })
 

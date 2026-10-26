@@ -764,11 +764,15 @@ notifications = Table(
     Column("author_oid", VARCHAR2(24), nullable=False),
     Column("author_name", VARCHAR2(128), nullable=False),
     Column("version", NUMBER(19), nullable=False, server_default=text("1")),
+    # V038：来源对象 oid（当前只有 CHANGELOG.OID）。NULL = 管理员手写通知；
+    # 非空 = 由某个对象自动同步生成，一个来源最多一条公告。
+    Column("source_ref", VARCHAR2(24), nullable=True),
     Column("created_at", oracle.TIMESTAMP, nullable=False),
     Column("updated_at", oracle.TIMESTAMP, nullable=False),
     _oid_check("notifications"),
     CheckConstraint("active IN (0,1)", name="ck_notifications_active"),
     CheckConstraint("version > 0", name="ck_notifications_version"),
+    UniqueConstraint("source_ref", name="uq_notifications_source_ref"),
 )
 Index(
     "ix_notifications_active_created",
@@ -1027,7 +1031,7 @@ ai_call_logs = Table(
     _oid_check("ai_call_logs"),
     CheckConstraint("capability IN ('ocr','chat')", name="ck_ai_call_logs_capability"),
     CheckConstraint(
-        "status IN ('success','error','timeout','rejected','busy')",
+        "status IN ('success','error','timeout','rejected','busy','warning')",
         name="ck_ai_call_logs_status",
     ),
     CheckConstraint("units >= 0", name="ck_ai_call_logs_units"),

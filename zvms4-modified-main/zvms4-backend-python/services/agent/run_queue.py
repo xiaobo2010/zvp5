@@ -32,10 +32,12 @@ import settings
 
 from db import backends
 from db.repos.protocols import ActiveRunConflict
+from services import violation_guard
 from services.agent import executor, proposal as proposal_service
 from services.agent.tools import WRITE
 from services.agent.tool_impl import AgentError
-from services.ai import conversations
+from services.ai import audit, conversations, moderation
+from util import agent_unlock
 
 _logger = logging.getLogger(__name__)
 
@@ -202,6 +204,28 @@ def run_view(row: Mapping[str, Any]) -> dict:
 # 入队（§2.3 提交事务的调用侧）
 # ---------------------------------------------------------------------------
 
+async def _audit_moderation_skipped(
+    user: Mapping[str, Any], *, http_status: int, purpose: str | None = None
+) -> None:
+    """无限制模式跳过审核的留痕（``AI_CALL_LOGS.status='warning'``）。
+
+    审计是旁路：``services.ai.audit.record`` 内部吞掉写入异常，这里的调用不会
+    改变提交结论。
+    """
+    await audit.record(
+        user_oid=str(user.get("id") or ""),
+        capability="chat",
+        endpoint=audit.ENDPOINT_AGENT,
+        status="warning",
+        http_status=http_status,
+        error_code="AI_AGENT_MODERATION_SKIPPED",
+        latency_ms=0,
+        request_id=uuid4().hex,
+        purpose=purpose or executor.PURPOSE_AGENT,
+        roles_snapshot=audit.roles_snapshot(user.get("per")),
+    )
+
+
 async def submit(
     *,
     user: Mapping[str, Any],
@@ -233,6 +257,35 @@ async def submit(
     text = str(content or "").strip()
     if not text:
         raise AgentError("AI_AGENT_BAD_ARGUMENTS", "content must not be empty", 400)
+
+    # 密码门在审核之前：没有解锁的人连「被审核的机会」都不该有——否则审核命中
+    # 会把一次未授权的探测写进违规证据里，处罚依据就不干净了。
+    if not agent_unlock.is_unlocked(owner_oid):
+        raise AgentError(
+            "AI_AGENT_UNLOCK_REQUIRED",
+            "agent access requires an unlock with your account password",
+            422,
+        )
+
+    if agent_unlock.is_unrestricted(owner_oid):
+        # 无限制模式不是「审核通过」，是「审核没跑」：必须留一行 warning，事后
+        # 才能把这一段时间的 run 与正常放行区分开。
+        await _audit_moderation_skipped(user, http_status=202)
+    else:
+        verdict = moderation.check(text)
+        if verdict.hit:
+            _logger.warning(
+                "agent 输入审核拦截 user=%s rule=%s", owner_oid, verdict.rule
+            )
+            try:
+                await violation_guard.record_agent_jailbreak(user)
+            except Exception:  # noqa: BLE001 - 证据入库失败不该把拒绝变成 500
+                _logger.exception("agent 越狱违规入库失败（本次仍然拒绝）")
+            raise AgentError(
+                "AI_AGENT_MODERATION_REJECTED",
+                moderation.REJECTED_MESSAGE,
+                422,
+            )
 
     if client_msg_id is None:
         # 第一道闸：应用层先看着像冲突就回 409（省一次必然失败的插入）。第二道是

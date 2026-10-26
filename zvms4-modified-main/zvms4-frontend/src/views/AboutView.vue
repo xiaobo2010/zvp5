@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ElResult, ElButton, ElCard, ElPageHeader } from 'element-plus'
+import { ElResult, ElCard, ElPageHeader } from 'element-plus'
 import { ArrowLeft } from '@element-plus/icons-vue'
 import { useHeaderStore } from '@/stores/header'
 import { useI18n } from 'vue-i18n'
@@ -39,9 +39,6 @@ header.setHeader(t('nav.about'))
         </template>
         <template #extra>
           <div class="flex flex-col items-center gap-3">
-            <ElButton text bg type="primary" @click="router.push('/changelog')">
-              查看更新日志
-            </ElButton>
             <div style="opacity: .5;">
               &copy; 2018-2026 | {{ t('about.footer') }} | {{ t('about.license') }}
             </div>

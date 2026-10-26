@@ -85,7 +85,7 @@ def test_every_tool_declares_a_description_and_schema() -> None:
 
 
 def test_tool_specs_use_the_openai_function_calling_shape() -> None:
-    specs = tools.tool_specs()
+    specs = tools.tool_specs(ADMIN)
 
     assert len(specs) == len(tools.TOOLS)
     for spec in specs:
@@ -93,6 +93,44 @@ def test_tool_specs_use_the_openai_function_calling_shape() -> None:
         function = spec["function"]
         assert function["name"] in tools.TOOLS
         assert function["parameters"] == tools.TOOLS[function["name"]].params
+
+
+def test_department_specs_expose_only_volunteer_tools_and_help() -> None:
+    """学生会看不到运维能力：连声明都不该有。
+
+    执行期的 permission/guard 能否决**调用**，但模型会照着 tools 数组去承诺；
+    「它说能改数据库」本身就是一次事故。
+    """
+    names = [spec["function"]["name"] for spec in tools.tool_specs(DEPARTMENT)]
+
+    assert len(names) == 11
+    assert set(names) == tools.VOLUNTEER_TOOL_NAMES | {tools.PLATFORM_HELP_TOOL}
+    assert not [name for name in names if name.startswith(("fs_", "db_", "ssh_"))]
+
+
+def test_platform_help_is_declared_for_both_ai_roles() -> None:
+    for user in (ADMIN, DEPARTMENT):
+        names = [spec["function"]["name"] for spec in tools.tool_specs(user)]
+        assert tools.PLATFORM_HELP_TOOL in names, user["per"]
+
+    tool = tools.TOOLS[tools.PLATFORM_HELP_TOOL]
+    assert tool.kind == tools.READ
+    assert tool.params["required"] == ["query"]
+    assert set(tool.params["properties"]) == {"query"}
+    for user in (ADMIN, DEPARTMENT):
+        assert tools.run_allowed(tool, user) is True, user["per"]
+    assert tools.run_allowed(tool, STUDENT) is False
+
+
+@pytest.mark.asyncio
+async def test_platform_help_returns_markdown_answer() -> None:
+    tool = tools.TOOLS[tools.PLATFORM_HELP_TOOL]
+
+    result = await tool.impl(DEPARTMENT, query="临时密码")
+
+    assert isinstance(result["answer"], str) and result["answer"]
+    assert "临时密码登录" in result["answer"]
+    assert result["sections"] == ["temp-password"]
 
 
 # ---------------------------------------------------------------------------
@@ -217,8 +255,19 @@ def test_float_nan_is_refused_for_number_fields() -> None:
 
 def test_tool_specs_are_sorted_by_name() -> None:
     """前缀缓存的稳定性：``tools`` 数组的字节不能随注册/import 顺序漂移。"""
-    names = [spec["function"]["name"] for spec in tools.tool_specs()]
-    assert names == sorted(names)
+    for user in (ADMIN, DEPARTMENT):
+        names = [spec["function"]["name"] for spec in tools.tool_specs(user)]
+        assert names == sorted(names), user["per"]
+
+
+def test_tool_specs_are_cached_per_role() -> None:
+    """每请求重新排序/分配 27 个 dict 是白花的 CPU：缓存住，调用方拿浅拷贝。"""
+    first = tools.tool_specs(ADMIN)
+    second = tools.tool_specs(ADMIN)
+
+    assert first == second
+    assert first is not second
+    assert first[0] is second[0]
 
 
 # ---------------------------------------------------------------------------

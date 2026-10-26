@@ -2,6 +2,10 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from db import backends
+from services.changelog_notifications import (
+    deactivate_changelog_notification,
+    sync_changelog_notification,
+)
 from typings.log import inject_log
 from util.object_id import get_current_user
 from util.user import get_user_display_name
@@ -62,6 +66,9 @@ async def create_changelog(
     )
     await log.insert_log()
 
+    # 版本公告是旁路：服务内部吞异常，失败只落 warning，不影响本次创建的结果。
+    await sync_changelog_notification(_serialize(entry))
+
     return _serialize(entry)
 
 
@@ -74,9 +81,8 @@ async def update_changelog(
 ):
     _require_admin(user)
     validate_object_id(oid)
-    await backends.get_changelog_repo().update(
-        oid, payload.version, payload.date, list(payload.items)
-    )
+    repo = backends.get_changelog_repo()
+    await repo.update(oid, payload.version, payload.date, list(payload.items))
 
     summary = "; ".join(payload.items)[:800]
     log.with_text(
@@ -84,6 +90,12 @@ async def update_changelog(
         type="changelog_update",
     )
     await log.insert_log()
+
+    # 改写只同步标题/正文（并让公告 version +1 触发客户端重新未读）；行不存在时
+    # 静默跳过——PUT 本身不校验 rowcount，响应形状保持不变。
+    entry = await repo.get_by_oid(oid)
+    if entry is not None:
+        await sync_changelog_notification(_serialize(entry))
 
     return
 
@@ -99,6 +111,9 @@ async def delete_changelog(
     repo = backends.get_changelog_repo()
     entry = await repo.get_by_oid(oid)
     await repo.delete(oid)
+
+    # 公告不硬删：发布过是事实，置为 inactive 即可（客户端已读状态按 oid 记）。
+    await deactivate_changelog_notification(oid)
 
     version = entry["version"] if entry is not None else oid
     summary = "; ".join(entry.get("items") or [])[:800] if entry is not None else ""

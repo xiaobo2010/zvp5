@@ -72,6 +72,7 @@ def _columns() -> tuple[Any, ...]:
         notifications_tbl.c.author_oid,
         notifications_tbl.c.author_name,
         notifications_tbl.c.version,
+        notifications_tbl.c.source_ref,
         notifications_tbl.c.created_at,
         notifications_tbl.c.updated_at,
     )
@@ -99,6 +100,10 @@ def _get_stmt(oid: str):
     return select(*_columns()).where(notifications_tbl.c.oid == oid)
 
 
+def _get_by_source_ref_stmt(source_ref: str):
+    return select(*_columns()).where(notifications_tbl.c.source_ref == source_ref)
+
+
 def _get_for_update_stmt(oid: str):
     return _get_stmt(oid).with_for_update()
 
@@ -110,6 +115,7 @@ def _create_stmt(
     author_oid: str,
     author_name: str,
     now: datetime,
+    source_ref: str | None = None,
 ):
     return insert(notifications_tbl).values(
         oid=oid,
@@ -119,6 +125,7 @@ def _create_stmt(
         author_oid=author_oid,
         author_name=author_name,
         version=1,
+        source_ref=source_ref,
         created_at=now,
         updated_at=now,
     )
@@ -194,6 +201,8 @@ def _row(mapping: Any) -> Row:
         "author_oid": mapping["author_oid"],
         "author_name": mapping["author_name"],
         "version": int(mapping["version"]),
+        # V038：手写通知为 NULL。用 ``.get`` 是为了兼容只投影旧列的调用方/测试桩。
+        "source_ref": mapping.get("source_ref"),
         "created_at": mapping["created_at"],
         "updated_at": mapping["updated_at"],
     }
@@ -417,6 +426,15 @@ class OracleNotificationsRepo:
             return None
         return _row(row._mapping)
 
+    async def get_by_source_ref(self, source_ref: str) -> Row | None:
+        """按来源对象 oid 查自动生成的公告（V038，唯一约束保证至多一条）。"""
+        stmt = _get_by_source_ref_stmt(source_ref)
+        async with _session_for(self._session) as (session, _owns):
+            row = (await session.execute(stmt)).first()
+        if row is None:
+            return None
+        return _row(row._mapping)
+
     async def create(
         self,
         *,
@@ -424,11 +442,14 @@ class OracleNotificationsRepo:
         content: str,
         author_oid: str,
         author_name: str,
+        source_ref: str | None = None,
     ) -> tuple[Row, int]:
         oid = new_oid()
         author_oid = normalize_oid(author_oid)
         now = datetime.now()
-        stmt = _create_stmt(oid, title, content, author_oid, author_name, now)
+        stmt = _create_stmt(
+            oid, title, content, author_oid, author_name, now, source_ref
+        )
         async with _session_for(self._session) as (session, owns):
             await session.execute(stmt)
             await _write_snapshot(
@@ -455,6 +476,7 @@ class OracleNotificationsRepo:
                 "author_oid": author_oid,
                 "author_name": author_name,
                 "version": 1,
+                "source_ref": source_ref,
                 "created_at": now,
                 "updated_at": now,
             },

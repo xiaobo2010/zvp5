@@ -16,6 +16,7 @@ import { getMaintenanceStatus } from '@/api/system/maintenance.ts'
 import { resetMaintenanceGuardCache } from '@/router/maintenanceGuard'
 import { formatBanUntil, readBanInfo } from '@/utils/ban'
 import dayjs from 'dayjs'
+import type { User, UserProfile } from '@/../types'
 
 const header = useHeaderStore()
 
@@ -117,6 +118,173 @@ function notifyUserBanned(error: unknown) {
   })
 }
 
+// 设备闸的结构化 403:detail 是对象 {code,message,challenge?}。只认 403,字符串
+// detail(USER_BANNED / 密码错误)仍走各自的旧分支。
+interface DeviceLoginDetail {
+  code?: string
+  message?: string
+  challenge?: string
+}
+
+function deviceDetailOf(error: unknown): DeviceLoginDetail | null {
+  const response = (
+    error as { response?: { status?: number; data?: { detail?: unknown } } }
+  )?.response
+  if (response?.status !== 403) {
+    return null
+  }
+  const detail = response.data?.detail
+  if (!detail || typeof detail !== 'object') {
+    return null
+  }
+  return detail as DeviceLoginDetail
+}
+
+// 本机不是主设备:拿 403 里的挑战令牌切到临时密码模式。挑战 5 分钟过期,
+// 所以进入页面后要重新输账号密码换新挑战——「返回」就是干这个的。
+const mode = ref<'normal' | 'temp'>('normal')
+const challenge = ref('')
+const tempPassword = ref('')
+const tempSubmitting = ref(false)
+const tempError = ref('')
+
+function enterTempMode(detail: DeviceLoginDetail) {
+  challenge.value = detail.challenge ?? ''
+  tempPassword.value = ''
+  tempError.value = ''
+  mode.value = 'temp'
+}
+
+function backToNormal() {
+  mode.value = 'normal'
+  challenge.value = ''
+  tempPassword.value = ''
+  tempError.value = ''
+}
+
+// 纯数字 8 位:输入法/粘贴可能带空格或全角,直接滤掉不打断输入。
+watch(tempPassword, (value) => {
+  const digits = value.replace(/\D/g, '').slice(0, 8)
+  if (digits !== value) {
+    tempPassword.value = digits
+  }
+})
+
+// 设备封禁:原因/期限同样在 X-Ban-* 头里(后端复用 util.ban 的头口径),
+// 沿用账号封禁的阻塞式弹窗,只把标题/兜底原因换成设备口径。
+function notifyDeviceBanned(error: unknown) {
+  const { reason, until } = readBanInfo(
+    (error as { response?: { headers?: unknown } })?.response?.headers
+  )
+  const untilLine =
+    formatBanUntil(until, (ms) => t('nav.banned.until', { time: dayjs(ms).format('YYYY-MM-DD HH:mm') })) ||
+    t('nav.banned.permanent')
+  void ElMessageBox.alert(
+    h('div', null, [
+      h('p', { style: 'margin: 0 0 8px;' }, reason || t('nav.login.device.bannedFallback')),
+      h('p', { style: 'margin: 0;' }, untilLine)
+    ]),
+    t('nav.login.device.bannedTitle'),
+    {
+      confirmButtonText: t('nav.login.device.bannedAck'),
+      closeOnClickModal: false,
+      closeOnPressEscape: false,
+      showClose: false
+    }
+  ).catch(() => {
+    // 程序化关闭时 alert 会 reject,吞掉即可,不影响登录流程。
+  })
+}
+
+function notifyDeviceRequired(detail: DeviceLoginDetail) {
+  ElMessage({
+    message: detail.message || t('nav.login.device.required'),
+    type: 'warning',
+    grouping: true,
+    plain: true
+  })
+}
+
+// 登录失败的统一出口:设备闸三类错误优先,其余保持原有维护/封禁分支。
+function handleLoginFailure(error: unknown) {
+  const detail = deviceDetailOf(error)
+  if (detail?.code === 'DEVICE_NOT_PRIMARY') {
+    if (detail.challenge) {
+      enterTempMode(detail)
+    } else {
+      ElMessage({
+        message: t('nav.login.device.challengeMissing'),
+        type: 'error',
+        grouping: true,
+        plain: true
+      })
+    }
+    return
+  }
+  if (detail?.code === 'DEVICE_REQUIRED') {
+    notifyDeviceRequired(detail)
+    return
+  }
+  if (detail?.code === 'DEVICE_BANNED') {
+    notifyDeviceBanned(error)
+    return
+  }
+  if (isMaintenanceBlocked(error)) {
+    notifyMaintenanceBlocked()
+  } else if (isUserBanned(error)) {
+    notifyUserBanned(error)
+  }
+}
+
+// 临时密码兑换失败:后端给结构化 detail(人话 message),挑战过期/一次性用掉
+// 都没有第二次机会,只能返回重新登录拿新挑战,所以提示里必须写清退路。
+function tempErrorText(detail: DeviceLoginDetail | null): string {
+  if (detail?.code === 'TEMP_PASSWORD_INVALID') {
+    return t('nav.login.device.tempInvalid')
+  }
+  if (detail?.code === 'DEVICE_CHALLENGE_MISMATCH') {
+    return t('nav.login.device.tempMismatch')
+  }
+  return detail?.message || t('nav.login.device.tempFailed')
+}
+
+async function submitTempPassword() {
+  if (tempSubmitting.value || !/^\d{8}$/.test(tempPassword.value)) {
+    return
+  }
+  tempSubmitting.value = true
+  tempError.value = ''
+  try {
+    const result = await api.user.auth.useTempPasswordAuth(
+      challenge.value,
+      tempPassword.value
+    )
+    const information: User | UserProfile =
+      result.profile ?? ((await api.user.readOne(result._id)) as User)
+    // 临时会话不能复用 setUser:那条路会拿明文密码重新登录,而这里只有一次性
+    // 密码。安装方式与 setUser 一致,但 weak_password=false 不置位。
+    await userStore.setUserInformation(information)
+    userStore.shouldResetPassword = false
+    userStore.isLogin = true
+    ElMessage({
+      message: t('nav.login.device.tempSession'),
+      type: 'success',
+      grouping: true,
+      plain: true
+    })
+    await router.replace(await postLoginTarget())
+  } catch (error) {
+    const detail = deviceDetailOf(error)
+    if (detail?.code === 'DEVICE_BANNED') {
+      notifyDeviceBanned(error)
+      return
+    }
+    tempError.value = tempErrorText(detail)
+  } finally {
+    tempSubmitting.value = false
+  }
+}
+
 if (userStore.isLogin) {
   void postLoginTarget().then((target) => router.replace(target))
 } else {
@@ -135,11 +303,7 @@ async function login() {
       .useLongTermAuth(id, password.value, 'short', 'login')
       .catch((error: unknown) => {
         loading.value = false
-        if (isMaintenanceBlocked(error)) {
-          notifyMaintenanceBlocked()
-        } else if (isUserBanned(error)) {
-          notifyUserBanned(error)
-        }
+        handleLoginFailure(error)
       })) || {
       token: '',
       _id: '',
@@ -176,11 +340,7 @@ async function login() {
     .then(async () => router.replace(await postLoginTarget()))
     .catch((error: unknown) => {
       loading.value = false
-      if (isMaintenanceBlocked(error)) {
-        notifyMaintenanceBlocked()
-      } else if (isUserBanned(error)) {
-        notifyUserBanned(error)
-      }
+      handleLoginFailure(error)
     })
 }
 
@@ -218,7 +378,7 @@ watch(user, async () => {
       <h1 id="yg-login-title" class="yg-login__title">{{ t('nav.login.pageTitle') }}</h1>
       <p class="yg-login__subtitle">{{ t('nav.login.motto') }}</p>
 
-      <ElForm ref="loginfield" label-position="top" class="yg-login__form">
+      <ElForm v-if="mode === 'normal'" ref="loginfield" label-position="top" class="yg-login__form">
         <ElFormItem :label="t('nav.login.form.account')" prop="id">
           <ElInput
             v-model.number="user"
@@ -241,18 +401,51 @@ watch(user, async () => {
         </ElFormItem>
       </ElForm>
 
+      <div v-else class="yg-login__temp">
+        <p class="yg-login__temp-title">{{ t('nav.login.device.tempTitle') }}</p>
+        <p class="yg-login__temp-hint">{{ t('nav.login.device.tempHint') }}</p>
+        <ElInput
+          v-model="tempPassword"
+          :maxlength="8"
+          inputmode="numeric"
+          autocomplete="one-time-code"
+          :placeholder="t('nav.login.device.tempPlaceholder')"
+          class="yg-login__input yg-login__temp-input w-full"
+          @keyup.enter="submitTempPassword"
+        />
+        <p class="yg-login__temp-note">{{ t('nav.login.device.tempNote') }}</p>
+        <p v-if="tempError" class="yg-login__error" role="alert">{{ tempError }}</p>
+      </div>
+
       <div class="yg-login__actions">
-        <ElButton
-          type="primary"
-          size="large"
-          class="w-full"
-          @click="login"
-          :icon="ArrowRight"
-          :disabled="password === '' || String(user).length !== 8"
-          :loading="loading"
-        >
-          {{ t('nav.login.actions.login') }}
-        </ElButton>
+        <template v-if="mode === 'normal'">
+          <ElButton
+            type="primary"
+            size="large"
+            class="w-full"
+            @click="login"
+            :icon="ArrowRight"
+            :disabled="password === '' || String(user).length !== 8"
+            :loading="loading"
+          >
+            {{ t('nav.login.actions.login') }}
+          </ElButton>
+        </template>
+        <template v-else>
+          <ElButton
+            type="primary"
+            size="large"
+            class="w-full"
+            @click="submitTempPassword"
+            :disabled="tempPassword.length !== 8"
+            :loading="tempSubmitting"
+          >
+            {{ t('nav.login.device.tempSubmit') }}
+          </ElButton>
+          <ElButton size="large" text class="w-full yg-login__back" @click="backToNormal">
+            {{ t('nav.login.device.tempBack') }}
+          </ElButton>
+        </template>
       </div>
     </section>
   </div>
@@ -339,6 +532,50 @@ watch(user, async () => {
 
 .yg-login__actions {
   margin-top: var(--yg-space-6);
+}
+
+/* 临时密码模式：说明 + 8 位数字输入 + 行内错误（准则 3.5：错误用红字，不用绿框） */
+.yg-login__temp {
+  margin-top: var(--yg-space-6);
+}
+
+.yg-login__temp-title {
+  margin: 0;
+  font-size: var(--yg-font-size-sm);
+  font-weight: var(--yg-font-weight-semibold);
+  color: var(--yg-text-primary);
+}
+
+.yg-login__temp-hint,
+.yg-login__temp-note {
+  margin: var(--yg-space-2) 0 0;
+  font-size: var(--yg-font-size-sm);
+  line-height: var(--yg-line-height-normal);
+  color: var(--yg-text-secondary);
+}
+
+.yg-login__temp-note {
+  color: var(--yg-text-tertiary);
+}
+
+.yg-login__temp-input {
+  margin-top: var(--yg-space-4);
+}
+
+.yg-login__temp-input :deep(.el-input__inner) {
+  font-family: var(--yg-font-mono);
+  letter-spacing: 0.16em;
+}
+
+.yg-login__error {
+  margin: var(--yg-space-2) 0 0;
+  font-size: var(--yg-font-size-sm);
+  line-height: var(--yg-line-height-normal);
+  color: var(--yg-text-danger);
+}
+
+.yg-login__back {
+  margin-top: var(--yg-space-2);
 }
 
 @supports (corner-shape: squircle) {

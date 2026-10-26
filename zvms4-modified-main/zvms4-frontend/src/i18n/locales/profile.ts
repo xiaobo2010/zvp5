@@ -21,7 +21,6 @@ export const zhCN = {
     changePassword: '修改密码',
     darkMode: '深色模式',
     about: '关于',
-    changelog: '更新日志',
     logout: '退出登录'
   },
   notices: {

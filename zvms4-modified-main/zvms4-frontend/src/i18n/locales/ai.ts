@@ -138,6 +138,7 @@ export const zhCN = {
       db_delete: '删除数据行',
       db_ddl: '执行建表语句',
       ssh_exec: '执行远程命令',
+      platformHelp: '平台使用帮助',
       unknown: '未知工具'
     },
     preview: {
@@ -266,6 +267,23 @@ export const zhCN = {
       rejectedNotice: '提案已驳回',
       result: '执行结果',
       rawArgs: '查看原始参数'
+    },
+    unlock: {
+      title: '输入密码以继续',
+      prompt: '与智能体交互需要验证你的账号密码，验证后 30 分钟内无需重复输入。',
+      wrong: '密码不正确，请重试',
+      locked: '尝试次数过多，请稍后再试',
+      status: '已解锁，{min} 分钟内有效'
+    },
+    moderation: {
+      rejected: '该请求已被内容审核拦截。多次尝试将按平台封禁规则处理。'
+    },
+    unrestricted: {
+      label: '无限制模式',
+      confirmTitle: '关闭内容审核？',
+      confirm: '关闭后你在本会话中与智能体的交互将不再进行内容审核，该操作会记录警告并接受审计。',
+      onToast: '已开启无限制模式，审核已跳过并记录',
+      offToast: '已关闭无限制模式，恢复内容审核'
     }
   },
   quota: {
@@ -785,6 +803,22 @@ export const zhCN = {
     AI_AGENT_TOTP_REQUIRED: {
       title: '该写操作需要动态码',
       hint: '请让另一位管理员提供 6 位动态码后重试。'
+    },
+    AI_AGENT_UNLOCK_REQUIRED: {
+      title: '需要先验证密码',
+      hint: '与智能体交互前需要验证账号密码，验证后 30 分钟内无需重复输入。'
+    },
+    AI_AGENT_UNLOCK_FAILED: {
+      title: '密码验证失败',
+      hint: '密码不正确，请重新输入。'
+    },
+    AI_AGENT_UNLOCK_LOCKED: {
+      title: '验证尝试过于频繁，请稍后再试',
+      hint: '连续输错会临时锁定，请过几分钟再试。'
+    },
+    AI_AGENT_MODERATION_REJECTED: {
+      title: '请求已被内容审核拦截',
+      hint: '该请求已被内容审核拦截。多次尝试将按平台封禁规则处理。'
     },
     AI_CONVERSATION_NOT_FOUND: {
       title: '会话不存在',

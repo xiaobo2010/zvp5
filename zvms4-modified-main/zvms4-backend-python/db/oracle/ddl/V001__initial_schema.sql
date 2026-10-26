@@ -1045,6 +1045,8 @@ END;
 --   不再修改；不建 FK 是为了账号被删除后历史通知仍能回答「谁发的」。
 --   VERSION 是单条通知的修订号：创建为 1，每次成功编辑/停用 +1，客户端据此
 --   区分「已阅过的旧内容」与「编辑后的新内容」。
+--   SOURCE_REF 指向生成这条公告的来源对象（当前只有 CHANGELOG.OID，V038 补
+--   该列）：NULL = 管理员手写，非空 = 自动同步且一个来源最多一条。
 --   也由 V015__add_notifications.sql 在存量实例上创建。
 -- ----------------------------------------------------------------------------
 BEGIN
@@ -1057,12 +1059,14 @@ CREATE TABLE notifications (
   author_oid VARCHAR2(24 CHAR) NOT NULL,
   author_name VARCHAR2(128 CHAR) NOT NULL,
   version NUMBER(19) DEFAULT 1 NOT NULL,
+  source_ref VARCHAR2(24 CHAR),
   created_at TIMESTAMP NOT NULL,
   updated_at TIMESTAMP NOT NULL,
   PRIMARY KEY (oid),
   CONSTRAINT ck_notifications_oid CHECK (REGEXP_LIKE(oid,''^[0-9a-f]{24}$'')),
   CONSTRAINT ck_notifications_active CHECK (active IN (0,1)),
-  CONSTRAINT ck_notifications_version CHECK (version > 0)
+  CONSTRAINT ck_notifications_version CHECK (version > 0),
+  CONSTRAINT uq_notifications_source_ref UNIQUE (source_ref)
 )';
 EXCEPTION
   WHEN OTHERS THEN
@@ -1200,7 +1204,7 @@ CREATE TABLE ai_call_logs (
   PRIMARY KEY (oid),
   CONSTRAINT ck_ai_call_logs_oid CHECK (REGEXP_LIKE(oid,''^[0-9a-f]{24}$'')),
   CONSTRAINT ck_ai_call_logs_capability CHECK (capability IN (''ocr'',''chat'')),
-  CONSTRAINT ck_ai_call_logs_status CHECK (status IN (''success'',''error'',''timeout'',''rejected'',''busy'')),
+  CONSTRAINT ck_ai_call_logs_status CHECK (status IN (''success'',''error'',''timeout'',''rejected'',''busy'',''warning'')),
   CONSTRAINT ck_ai_call_logs_units CHECK (units >= 0),
   CONSTRAINT ck_ai_call_logs_key_scope CHECK (key_scope IS NULL OR key_scope IN (''personal'',''shared'',''server'')),
   CONSTRAINT ck_ai_call_logs_tokens CHECK ((prompt_tokens IS NULL OR prompt_tokens >= 0) AND (completion_tokens IS NULL OR completion_tokens >= 0) AND (total_tokens IS NULL OR total_tokens >= 0)),
@@ -1922,6 +1926,27 @@ WHEN NOT MATCHED THEN INSERT
   VALUES (''0b000000000000000000000b'', ''ai_chat_burst'', ''AI 对话请求突发'',
           ''ai_chat_burst'', 1, ''{"threshold":80,"window_hours":1,"mode":"alert"}'',
           ''[]'', 1, SYSTIMESTAMP, SYSTIMESTAMP)';
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE NOT IN (-1, -955) THEN RAISE; END IF;
+END;
+/
+
+-- ----------------------------------------------------------------------------
+-- 内置规则: agent 越狱 / 提示注入（也由 V037__ai_agent_moderation.sql mirror）
+--   审核命中（services.violation_guard.record_agent_jailbreak）按 trigger 取这一
+--   行；config 与 platform_misuse 同形，梯度末位 null = 永久。
+-- ----------------------------------------------------------------------------
+BEGIN
+  EXECUTE IMMEDIATE '
+MERGE INTO ban_rules t
+USING (SELECT ''0b000000000000000000000c'' oid FROM dual) s
+ON (t.code = ''agent_jailbreak'')
+WHEN NOT MATCHED THEN INSERT
+  (oid, code, name, trigger_code, enabled, config, penalties, builtin, created_at, updated_at)
+  VALUES (''0b000000000000000000000c'', ''agent_jailbreak'', ''agent 越狱与提示注入'',
+          ''agent_jailbreak'', 1, ''{"threshold":3,"window_hours":24,"mode":"ban","max_attempts":3}'',
+          ''[1,3,7,14,30,null]'', 1, SYSTIMESTAMP, SYSTIMESTAMP)';
 EXCEPTION
   WHEN OTHERS THEN
     IF SQLCODE NOT IN (-1, -955) THEN RAISE; END IF;

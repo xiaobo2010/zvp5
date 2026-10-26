@@ -98,4 +98,22 @@ describe('错误体解析', () => {
     expect(parseAiMessage({ error: { message: 'too many requests' } })).toBe('too many requests')
     expect(parseAiMessage({ detail: 'AI_BUSY' })).toBe('')
   })
+
+  it('结构化 detail（设备闸 403）读 detail.code', () => {
+    expect(
+      parseAiCode({
+        detail: { code: 'DEVICE_NOT_PRIMARY', message: '当前设备不是主学海设备', challenge: 'tok' }
+      })
+    ).toBe('DEVICE_NOT_PRIMARY')
+  })
+
+  it('结构化 detail 里的 message 也能取到', () => {
+    expect(
+      parseAiMessage({ detail: { code: 'DEVICE_NOT_PRIMARY', message: '当前设备不是主学海设备' } })
+    ).toBe('当前设备不是主学海设备')
+  })
+
+  it('结构化 detail 缺 code 时回空串', () => {
+    expect(parseAiCode({ detail: { message: '只有消息' } })).toBe('')
+  })
 })
