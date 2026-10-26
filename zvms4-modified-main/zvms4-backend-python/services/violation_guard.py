@@ -59,7 +59,7 @@ MAX_DETAIL_CHARS = 500
 
 # 角色豁免：这些角色即使在别的账号视角下「违规」，也可能是工作行为。
 # 与 ``services.device_guard.PRIVILEGED_ROLES`` 对齐（团支书也在其中）。
-NO_AUTO_BAN_ROLES = ("admin", "department", "secretary", "teacher")
+NO_AUTO_BAN_ROLES = ("admin", "department", "secretary")
 
 # agent 越狱单独豁免口径：AI 门禁默认只放行 admin/department，若沿用上面的豁免，
 # 学生会的越狱证据永远只留审计、封禁规则形同虚设。admin 保留豁免——有无限制模式

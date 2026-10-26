@@ -34,7 +34,7 @@ describe('primaryDeviceGateMode', () => {
     ).toBe('hidden')
   })
 
-  it.each(['admin', 'department', 'secretary', 'teacher'])(
+  it.each(['admin', 'department', 'secretary'])(
     '特权角色 %s 在学海设备上未绑定也要绑',
     (role) => {
       expect(isPrivilegedRoles([role])).toBe(true)
@@ -44,7 +44,7 @@ describe('primaryDeviceGateMode', () => {
     }
   )
 
-  it.each(['admin', 'department', 'secretary', 'teacher'])(
+  it.each(['admin', 'department', 'secretary'])(
     '特权角色 %s 在 PC 上未绑定不校验',
     (role) => {
       expect(

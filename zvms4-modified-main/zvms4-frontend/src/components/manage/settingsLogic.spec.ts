@@ -77,9 +77,9 @@ describe('类型 → 控件分支', () => {
   })
 
   it('角色候选值优先用后端给的 options', () => {
-    expect(roleOptions(makeItem({ type: 'dict', options: ['admin', 'teacher'] }))).toEqual([
+    expect(roleOptions(makeItem({ type: 'dict', options: ['admin', 'department'] }))).toEqual([
       'admin',
-      'teacher'
+      'department'
     ])
     expect(roleOptions(makeItem({ type: 'dict', options: null }))).toContain('admin')
   })
@@ -163,10 +163,10 @@ describe('差异计算', () => {
   it('dict 的增删角色行会进差异', () => {
     const item = makeItem({ type: 'dict', value: { admin: { ocr: 100 } } })
     const rows = roleQuotaRows(item.value) as RoleQuotaRow[]
-    const drafts = { [item.key]: addRoleRow(rows, ['ocr'], 'teacher') }
+    const drafts = { [item.key]: addRoleRow(rows, ['ocr'], 'department') }
     const changes = computeChanges([item], drafts)
     expect(changes).toHaveLength(1)
-    expect(changes[0].to).toEqual({ admin: { ocr: 100 }, teacher: { ocr: 0 } })
+    expect(changes[0].to).toEqual({ admin: { ocr: 100 }, department: { ocr: 0 } })
   })
 })
 
@@ -201,8 +201,8 @@ describe('角色额度表的增删行', () => {
   })
 
   it('加行可以带上角色名', () => {
-    expect(addRoleRow(rows, ['ocr'], 'teacher')[2]).toEqual({
-      role: 'teacher',
+    expect(addRoleRow(rows, ['ocr'], 'department')[2]).toEqual({
+      role: 'department',
       limits: { ocr: 0 }
     })
   })

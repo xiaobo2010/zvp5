@@ -53,7 +53,7 @@ export interface SettingSection {
 const ROLE_QUOTA_KIND_ORDER = ['ocr', 'chat']
 
 /** 角色额度表里没有候选值时提供的兜底角色（后端给了 options 就以后端为准）。 */
-export const DEFAULT_ROLE_IDS = ['admin', 'department', 'teacher', 'student', 'secretary']
+export const DEFAULT_ROLE_IDS = ['admin', 'department', 'student', 'secretary']
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)

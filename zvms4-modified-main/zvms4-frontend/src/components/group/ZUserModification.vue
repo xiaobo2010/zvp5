@@ -45,8 +45,8 @@ const classGroupID = ref<string>('')
 const permissionsID = ref<UserPosition[]>([])
 const classes = ref<Group[]>([])
 const loadingClasses = ref(false)
-// 可编辑身份白名单：学生身份靠「roles 为空」表达，没有 teacher 角色在使用，
-// 两者都不出现在设置页。若历史数据里带 student/teacher，会落到 extraRoles
+// 可编辑身份白名单：学生身份靠「roles 为空」表达，不出现在设置页。
+// 若历史数据里带 student 等未列出角色，会落到 extraRoles
 // 分支并在提交时原样保留，不会被本次改动清掉。
 const allowedRoles: UserPosition[] = ['secretary', 'department', 'admin']
 // UI 未列出的既有角色（如 system/auditor）：提交时原样保留，避免被意外清除
