@@ -3,12 +3,36 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import UserPage from './UserPage.vue'
 import api from '@/api'
 
-const { updateBannedMock, readOneV3Mock, notificationMock, confirmMock } = vi.hoisted(() => ({
+const {
+  updateBannedMock,
+  readOneV3Mock,
+  notificationMock,
+  confirmMock,
+  messageMock,
+  issueTempPasswordMock,
+  clearUserPrimaryDeviceMock,
+  copyMock
+} = vi.hoisted(() => ({
   updateBannedMock: vi.fn(),
   readOneV3Mock: vi.fn(),
   notificationMock: vi.fn(),
-  confirmMock: vi.fn()
+  confirmMock: vi.fn(),
+  messageMock: vi.fn(),
+  issueTempPasswordMock: vi.fn(),
+  clearUserPrimaryDeviceMock: vi.fn(),
+  copyMock: vi.fn()
 }))
+
+vi.mock('@/api/user/device', () => ({
+  issueTempPassword: issueTempPasswordMock,
+  clearUserPrimaryDevice: clearUserPrimaryDeviceMock
+}))
+
+// 剪贴板在 jsdom 里不可用；页面只用 copy/copied 两个返回值。
+vi.mock('@vueuse/core', async () => {
+  const { ref } = await import('vue')
+  return { useClipboard: () => ({ copy: copyMock, copied: ref(false) }) }
+})
 
 vi.mock('@/api', () => ({
   default: {
@@ -175,6 +199,7 @@ vi.mock('element-plus', async () => {
     ElInput,
     ElIcon: { name: 'ElIcon', template: '<span class="el-icon-stub"><slot /></span>' },
     ElLoading: { service: () => ({ close: () => undefined }) },
+    ElMessage: messageMock,
     ElMessageBox: { confirm: confirmMock },
     ElNotification: notificationMock
   }
@@ -202,6 +227,10 @@ beforeEach(() => {
   readOneV3Mock.mockReset().mockResolvedValue(structuredClone(userFixture))
   updateBannedMock.mockReset().mockResolvedValue(true)
   notificationMock.mockReset()
+  messageMock.mockReset()
+  issueTempPasswordMock.mockReset()
+  clearUserPrimaryDeviceMock.mockReset().mockResolvedValue(undefined)
+  copyMock.mockReset().mockResolvedValue(undefined)
   confirmMock.mockReset().mockResolvedValue('confirm')
 })
 
@@ -268,6 +297,80 @@ it('shows the ban reason and permanent status for an already banned user', async
   expect(alert.attributes('data-type')).toBe('error')
   expect(alert.text()).toContain('manage.personalPanel.banReasonLabel：同学号多设备登录')
   expect(alert.text()).toContain('manage.personalPanel.banPermanent')
+
+  wrapper.unmount()
+})
+
+it('confirms and issues a one-time temp password', async () => {
+  issueTempPasswordMock.mockResolvedValueOnce({
+    code: '12345678',
+    expires_at: '2026-10-26T12:00:00',
+    target: { _id: 'target-oid' }
+  })
+  const wrapper = mountPage()
+  await flushPromises()
+
+  await buttonByText(wrapper, 'manage.personalPanel.tempPassword.action')!.trigger('click')
+  await flushPromises()
+
+  expect(confirmMock).toHaveBeenCalledTimes(1)
+  expect(issueTempPasswordMock).toHaveBeenCalledWith('20240001')
+
+  const dialog = wrapper.find('.el-dialog-stub')
+  expect(dialog.exists()).toBe(true)
+  expect(dialog.attributes('data-title')).toBe('manage.personalPanel.tempPassword.dialogTitle')
+  expect(dialog.text()).toContain('12345678')
+  expect(dialog.text()).toContain('manage.personalPanel.tempPassword.expiresAt')
+
+  wrapper.unmount()
+})
+
+it('keeps the dialog closed when the issue confirmation is cancelled', async () => {
+  confirmMock.mockRejectedValueOnce('cancel')
+  const wrapper = mountPage()
+  await flushPromises()
+
+  await buttonByText(wrapper, 'manage.personalPanel.tempPassword.action')!.trigger('click')
+  await flushPromises()
+
+  expect(issueTempPasswordMock).not.toHaveBeenCalled()
+  expect(wrapper.find('.el-dialog-stub').exists()).toBe(false)
+
+  wrapper.unmount()
+})
+
+it('clears the primary device behind a danger confirmation', async () => {
+  const wrapper = mountPage()
+  await flushPromises()
+
+  await buttonByText(wrapper, 'manage.personalPanel.clearDevice.action')!.trigger('click')
+  await flushPromises()
+
+  expect(confirmMock).toHaveBeenCalledWith(
+    expect.any(String),
+    expect.any(String),
+    expect.objectContaining({ confirmButtonClass: 'el-button--danger' })
+  )
+  expect(clearUserPrimaryDeviceMock).toHaveBeenCalledWith('20240001')
+  expect(notificationMock).toHaveBeenCalledWith({
+    title: 'manage.personalPanel.clearDevice.done {"name":"张三"}',
+    type: 'success'
+  })
+  // 清绑后重新拉取用户，页内主设备行随之消失
+  expect(readOneV3Mock).toHaveBeenCalledTimes(2)
+
+  wrapper.unmount()
+})
+
+it('shows the bound primary device on the info tab', async () => {
+  readOneV3Mock.mockResolvedValue({
+    ...structuredClone(userFixture),
+    primary_xuehai_id: '149'
+  })
+  const wrapper = mountPage()
+  await flushPromises()
+
+  expect(wrapper.text()).toContain('manage.personalPanel.primaryDevice {"id":"149"}')
 
   wrapper.unmount()
 })

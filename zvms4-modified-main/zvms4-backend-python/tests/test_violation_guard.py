@@ -465,6 +465,60 @@ async def test_privileged_roles_are_never_recorded_nor_banned(guard, role) -> No
 
 
 @pytest.mark.asyncio
+async def test_agent_jailbreak_department_is_not_exempt(guard) -> None:
+    """越狱豁免只认 admin：学生会的证据必须真实入库，封禁规则才有得消费。"""
+    repo, state, calls = guard
+    state["rule"] = {
+        **_rule(threshold=1),
+        "code": "agent_jailbreak",
+        "trigger": "agent_jailbreak",
+    }
+
+    result = await violation_guard.record_agent_jailbreak(
+        {**USER, "per": ["department"]}
+    )
+
+    assert result == {
+        "recorded": 1,
+        "duplicates": 0,
+        "banned": True,
+        "rule_code": "agent_jailbreak",
+    }
+    assert len(repo.rows) == 1
+    assert repo.rows[0]["signal"] == "agent_jailbreak"
+    assert repo.rows[0]["trigger"] == "agent_jailbreak"
+    assert calls["bans"][0][1] == "agent_jailbreak"
+    assert [e for e in calls["logs"] if e["type"] == "platform_misuse_exempt"] == []
+
+
+@pytest.mark.asyncio
+async def test_agent_jailbreak_admin_stays_exempt(guard) -> None:
+    """admin 保留豁免：自动封管理员可能把平台锁死，且有无限制模式兜底。"""
+    repo, state, calls = guard
+    state["rule"] = {
+        **_rule(threshold=1),
+        "code": "agent_jailbreak",
+        "trigger": "agent_jailbreak",
+    }
+
+    result = await violation_guard.record_agent_jailbreak(
+        {**USER, "per": ["admin"]}
+    )
+
+    assert result == {
+        "recorded": 0,
+        "duplicates": 0,
+        "banned": False,
+        "rule_code": "platform_misuse",
+    }
+    assert repo.rows == []
+    assert calls["bans"] == []
+    exempt_logs = [e for e in calls["logs"] if e["type"] == "platform_misuse_exempt"]
+    assert len(exempt_logs) == 1
+    assert "admin" in exempt_logs[0]["data"]
+
+
+@pytest.mark.asyncio
 async def test_broken_role_type_is_treated_as_student(guard) -> None:
     repo, state, calls = guard
     state["rule"] = _rule(threshold=1)

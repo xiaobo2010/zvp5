@@ -109,3 +109,25 @@ async function UserLogin(
 }
 
 export { UserLogin as useLongTermAuth }
+
+/**
+ * 临时密码登入（异设备登录的唯一正路）。
+ *
+ * 挑战令牌来自 403 DEVICE_NOT_PRIMARY 响应体的 detail.challenge；挑战与临时
+ * 密码都是一次一用。成功响应不套 envelope，签发的是 1 小时 tp 会话（带
+ * temp_session=true）；临时密码是明文 8 位码，不走 RSA 加密链。
+ */
+export async function useTempPasswordAuth(
+  challenge: string,
+  tempPassword: string
+): Promise<LoginResult> {
+  const result = (await axios<LoginResult>('/users/auth/device', {
+    method: 'POST',
+    data: {
+      challenge: challenge,
+      temp_password: tempPassword
+    }
+  })).data
+  localStorage.setItem('token', result.token)
+  return result
+}

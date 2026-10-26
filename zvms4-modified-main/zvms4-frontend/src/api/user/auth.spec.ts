@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import axios from '@/plugins/axios'
-import { resetToInitial, useLongTermAuth } from './auth'
+import { resetToInitial, useLongTermAuth, useTempPasswordAuth } from './auth'
 
 vi.mock('@/plugins/axios', () => ({ default: vi.fn() }))
 vi.mock('element-plus', () => ({ ElNotification: vi.fn() }))
@@ -32,5 +32,16 @@ describe('authentication response contract', () => {
   it('reads initial-password resets from the response envelope', async () => {
     request.mockResolvedValueOnce({ data: { status: 'ok', data: { initial_password: 'random123' } } })
     expect(await resetToInitial('user', 'proof')).toBe('random123')
+  })
+
+  it('exchanges a one-time temp password for a session token', async () => {
+    const login = { token: 'temp-session', _id: 'user', temp_session: true }
+    request.mockResolvedValueOnce({ data: login })
+    expect(await useTempPasswordAuth('challenge-token', '12345678')).toEqual(login)
+    expect(localStorage.getItem('token')).toBe('temp-session')
+    expect(request).toHaveBeenCalledWith('/users/auth/device', {
+      method: 'POST',
+      data: { challenge: 'challenge-token', temp_password: '12345678' }
+    })
   })
 })

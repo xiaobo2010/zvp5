@@ -6,6 +6,7 @@ import type {
   AiAgentStopReason,
   AiAgentUsage
 } from '@/../types/ai'
+import { reactive } from 'vue'
 import type { ChatTurn } from './chatSession'
 
 /**
@@ -53,6 +54,104 @@ const KNOWN_TOOLS = [
 ]
 
 const KNOWN_TOOL_SET = new Set(KNOWN_TOOLS)
+
+/**
+ * 平台使用帮助：所有角色都可见（学生会也要查「这个功能怎么用」）。
+ *
+ * 它不在 KNOWN_TOOLS 里——那 27 条是活动域与运维域的既有工具，
+ * 这一条是新增的只读帮助入口，标签键也不走 snake_case 通配。
+ */
+export const PLATFORM_HELP_TOOL = 'platform_help'
+
+/**
+ * 义工管理域工具：非 admin（学生会）能看到的声明集合。
+ *
+ * 与后端 department 角色的工具白名单一致（10 条），顺序照后端声明；
+ * 运维工具（文件 / 数据库 / SSH）不在其中。
+ */
+export const VOLUNTEER_AGENT_TOOLS = [
+  'search_activities',
+  'list_activities',
+  'get_activity',
+  'activity_statistics',
+  'list_activity_members',
+  'user_volunteer_time',
+  'user_activities',
+  'list_groups',
+  'update_member_duration',
+  'set_member_status'
+] as const
+
+/** admin 的可见集合：既有 27 条加平台帮助。 */
+const ALL_AGENT_TOOLS = [...KNOWN_TOOLS, PLATFORM_HELP_TOOL]
+
+/**
+ * 当前角色能看到的工具声明。
+ *
+ * 声明层过滤的意义是「不让模型看见它无权调用的工具」，执行期仍由后端二次校验；
+ * 前端只用它决定展示与提示，不作为权限判据。
+ */
+export function availableAgentTools(position: string[]): string[] {
+  if (position.includes('admin')) {
+    return [...ALL_AGENT_TOOLS]
+  }
+  return [...VOLUNTEER_AGENT_TOOLS, PLATFORM_HELP_TOOL]
+}
+
+/**
+ * 解锁状态：模块级单例，跨组件共享。
+ *
+ * 授权窗口由服务端给到期时间，前端只负责「到点自动失效」与展示剩余分钟；
+ * 不放 localStorage——解锁是本次访问的凭证，刷新页面重新验证更符合预期。
+ */
+export const agentUnlock = reactive<{ expiresAt: number | null }>({ expiresAt: null })
+
+/** 当前是否在授权窗口内；`now` 只给测试与倒计时用。 */
+export function isAgentUnlocked(now: number = Date.now()): boolean {
+  return agentUnlock.expiresAt !== null && agentUnlock.expiresAt > now
+}
+
+/**
+ * 记下服务端给的到期时间。
+ *
+ * 解析不了（空串、垃圾值）就落成未解锁，不拿硬编码的 30 分钟兜底：
+ * 窗口长度只认服务端这一个来源。
+ */
+export function setAgentUnlockedUntil(iso: string): number | null {
+  const deadline = parseUnlockDeadline(iso)
+  agentUnlock.expiresAt = deadline
+  return deadline
+}
+
+/** 主动清掉解锁状态（例如服务端回「需要解锁」）。 */
+export function clearAgentUnlock(): void {
+  agentUnlock.expiresAt = null
+}
+
+/** 授权窗口剩余分钟（向上取整）；未解锁或已过期返回 0。 */
+export function agentUnlockMinutesLeft(now: number = Date.now()): number {
+  const deadline = agentUnlock.expiresAt
+  if (deadline === null) {
+    return 0
+  }
+  const left = deadline - now
+  if (left <= 0) {
+    return 0
+  }
+  return Math.max(1, Math.ceil(left / 60_000))
+}
+
+function parseUnlockDeadline(value: string): number | null {
+  const text = value.trim()
+  if (!text) {
+    return null
+  }
+  const iso = Date.parse(text)
+  if (Number.isFinite(iso)) {
+    return iso
+  }
+  return parseServerTime(text)
+}
 
 /**
  * 运维写工具：确认时要另一位管理员的 6 位动态码。
@@ -124,10 +223,21 @@ export type PageTurn = ChatTurn & {
   replayFailed?: boolean
 }
 
+/** 标签键覆盖：名字翻译不走 `tools.<snake_case>` 通配的那几条。 */
+const TOOL_LABEL_KEYS: Record<string, string> = {
+  [PLATFORM_HELP_TOOL]: 'ai.agent.tools.platformHelp'
+}
+
 /** 工具名 → i18n 标签键；白名单外的名字（含 null）回落到「未知工具」。 */
 export function toolLabelKey(name: string | null | undefined): string {
-  if (name && KNOWN_TOOL_SET.has(name)) {
-    return `ai.agent.tools.${name}`
+  if (name) {
+    const override = TOOL_LABEL_KEYS[name]
+    if (override) {
+      return override
+    }
+    if (KNOWN_TOOL_SET.has(name)) {
+      return `ai.agent.tools.${name}`
+    }
   }
   return 'ai.agent.tools.unknown'
 }

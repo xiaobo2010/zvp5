@@ -4,11 +4,14 @@ import { useRoute, useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user.ts'
 import { computed, ref, watch, type Component } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ElPageHeader, ElSegmented, ElLoading, ElIcon, ElButton, ElTag, ElMessageBox, ElNotification, ElTooltip, ElDialog, ElInput, ElAlert } from 'element-plus'
+import { ElPageHeader, ElSegmented, ElLoading, ElIcon, ElButton, ElTag, ElMessage, ElMessageBox, ElNotification, ElTooltip, ElDialog, ElInput, ElAlert } from 'element-plus'
 import { ZActivityList } from '@/components'
 import { ArrowLeft, Edit } from '@element-plus/icons-vue'
 import type { User } from '@/../types'
 import api from '@/api'
+import { clearUserPrimaryDevice, issueTempPassword, type TempPasswordIssueResult } from '@/api/user/device'
+import { aiErrorOf } from '@/api/ai/errors'
+import { useClipboard } from '@vueuse/core'
 import dayjs from '@/plugins/dayjs'
 import ZUserModification from '@/components/group/ZUserModification.vue'
 import { Info, Log, ViewList } from '@icon-park/vue-next'
@@ -22,6 +25,7 @@ interface UserWithBan extends User {
   ban_reason?: string | null
   ban_permanent?: boolean
   ban_until?: string | null
+  primary_xuehai_id?: string | null
 }
 
 interface SegmentedTab {
@@ -168,6 +172,118 @@ async function deleteUser() {
   }
 }
 
+const isAdmin = computed(() => userStore.position.includes('admin'))
+// 签发临时密码的服务端权限：admin/department 全校、secretary 限同班(同班判定
+// 只有服务端拿得到学年班级关系，前端只做入口可见性，403 时原样展示错误)。
+const canIssueTempPassword = computed(
+  () =>
+    userStore.position.includes('admin') ||
+    userStore.position.includes('department') ||
+    userStore.position.includes('secretary')
+)
+
+const tempPasswordDialogVisible = ref(false)
+const tempPasswordIssued = ref<TempPasswordIssueResult | null>(null)
+const tempPasswordIssuing = ref(false)
+const { copy: copyToClipboard, copied: tempPasswordCopied } = useClipboard({
+  copiedDuring: 2000
+})
+
+const tempPasswordExpiresText = computed(() => {
+  const raw = tempPasswordIssued.value?.expires_at
+  if (!raw) return ''
+  const expiresAt = dayjs(raw)
+  return expiresAt.isValid() ? expiresAt.format('YYYY-MM-DD HH:mm') : ''
+})
+
+// 主设备绑定：只在已绑定时展示（存量用户为空，不占版面）。
+const primaryDevice = computed(() => {
+  const value = (user.value as UserWithBan | undefined)?.primary_xuehai_id
+  return value ? String(value) : ''
+})
+
+// 签发/清绑走 aiRequest：错误体可能是字符串 detail（权限不足），此时
+// AiRequestError 的 message 为空、code 就是整句中文，展示两者兜底。
+function describeDeviceError(error: unknown, fallbackKey: string): string {
+  const aiError = aiErrorOf(error)
+  return aiError?.message || aiError?.code || t(fallbackKey)
+}
+
+async function issueTempPasswordForUser() {
+  if (!user.value || tempPasswordIssuing.value) return
+  try {
+    await ElMessageBox.confirm(
+      t('manage.personalPanel.tempPassword.confirm', { name: user.value.name }),
+      t('manage.personalPanel.tempPassword.confirmTitle'),
+      {
+        type: 'warning',
+        confirmButtonText: t('manage.personalPanel.tempPassword.confirmButton'),
+        cancelButtonText: t('action.cancel', '取消')
+      }
+    )
+  } catch {
+    return
+  }
+  tempPasswordIssuing.value = true
+  try {
+    tempPasswordIssued.value = await issueTempPassword(id.value)
+    tempPasswordDialogVisible.value = true
+  } catch (error) {
+    ElMessage({
+      message: describeDeviceError(error, 'manage.personalPanel.tempPassword.failed'),
+      type: 'error',
+      grouping: true,
+      plain: true
+    })
+  } finally {
+    tempPasswordIssuing.value = false
+  }
+}
+
+async function copyTempPassword() {
+  const code = tempPasswordIssued.value?.code
+  if (!code) return
+  await copyToClipboard(code).catch(() => {})
+}
+
+// 明文只该留在这一次弹窗里：关闭后立即从组件态抹掉，避免它跟着页面驻留。
+function forgetTempPassword() {
+  tempPasswordIssued.value = null
+}
+
+async function clearPrimaryDevice() {
+  if (!user.value) return
+  try {
+    await ElMessageBox.confirm(
+      t('manage.personalPanel.clearDevice.confirm', { name: user.value.name }),
+      t('manage.personalPanel.clearDevice.title'),
+      {
+        type: 'warning',
+        confirmButtonText: t('manage.personalPanel.clearDevice.confirmButton'),
+        cancelButtonText: t('action.cancel', '取消'),
+        confirmButtonClass: 'el-button--danger'
+      }
+    )
+  } catch {
+    return
+  }
+  try {
+    await clearUserPrimaryDevice(id.value)
+    ElNotification({
+      title: t('manage.personalPanel.clearDevice.done', { name: user.value.name }),
+      type: 'success'
+    })
+    await getUser()
+  } catch (error) {
+    ElMessage({
+      message: describeDeviceError(error, 'manage.personalPanel.clearDevice.failed'),
+      type: 'error',
+      grouping: true,
+      plain: true
+    })
+  }
+}
+
 getUser().then(() => {
   if (!(userStore.position.includes('admin') || userStore.position.includes('department') || userStore.position.includes('secretary') && user.value?.group[0] === userStore.class_id)) {
     router.replace('/not-found')
@@ -239,6 +355,16 @@ watch(
             </div>
           </template>
         </ElSegmented>
+        <span v-if="canIssueTempPassword && user" class="ml-4 inline-flex">
+          <ElButton text bg :loading="tempPasswordIssuing" @click="issueTempPasswordForUser">
+            {{ t('manage.personalPanel.tempPassword.action') }}
+          </ElButton>
+        </span>
+        <span v-if="isAdmin && user" class="ml-2 inline-flex">
+          <ElButton type="danger" text bg @click="clearPrimaryDevice">
+            {{ t('manage.personalPanel.clearDevice.action') }}
+          </ElButton>
+        </span>
         <ElTooltip
           v-if="userStore.position.includes('admin') && user"
           :content="t('manage.personalPanel.banSelfForbidden')"
@@ -277,6 +403,9 @@ watch(
       </template>
     </ElAlert>
     <div v-if="user && current === 'info'">
+      <p v-if="primaryDevice" class="mb-3 text-sm text-gray-500">
+        {{ t('manage.personalPanel.primaryDevice', { id: primaryDevice }) }}
+      </p>
       <ZActivityMember :id="id" mode="card" :person="user ?? undefined" />
     </div>
     <div v-else-if="user && current === 'activity'">
@@ -315,6 +444,42 @@ watch(
         </ElButton>
         <ElButton type="danger" :disabled="!banReasonValid" :loading="banSubmitting" @click="submitBan">
           {{ t('manage.personalPanel.banDialogConfirm') }}
+        </ElButton>
+      </template>
+    </ElDialog>
+    <ElDialog
+      v-model="tempPasswordDialogVisible"
+      :title="t('manage.personalPanel.tempPassword.dialogTitle')"
+      width="min(440px, 92vw)"
+      align-center
+      append-to-body
+      :close-on-click-modal="false"
+      @closed="forgetTempPassword"
+    >
+      <p class="text-sm leading-6 mb-3">{{ t('manage.personalPanel.tempPassword.notice') }}</p>
+      <div class="flex items-center gap-2">
+        <code
+          class="min-w-0 flex-1 select-all break-all rounded bg-gray-100 px-3 py-2 font-mono text-xl font-bold tracking-widest dark:bg-gray-800"
+          >{{ tempPasswordIssued?.code }}</code
+        >
+        <ElButton
+          class="flex-none"
+          :type="tempPasswordCopied ? 'success' : 'primary'"
+          @click="copyTempPassword"
+        >
+          {{
+            tempPasswordCopied
+              ? t('manage.personalPanel.tempPassword.copied')
+              : t('manage.personalPanel.tempPassword.copy')
+          }}
+        </ElButton>
+      </div>
+      <p v-if="tempPasswordExpiresText" class="mt-3 text-sm text-gray-500">
+        {{ t('manage.personalPanel.tempPassword.expiresAt', { time: tempPasswordExpiresText }) }}
+      </p>
+      <template #footer>
+        <ElButton type="primary" @click="tempPasswordDialogVisible = false">
+          {{ t('manage.personalPanel.tempPassword.acknowledge') }}
         </ElButton>
       </template>
     </ElDialog>

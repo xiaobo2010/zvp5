@@ -26,7 +26,7 @@ from services.agent.tool_impl import AgentError
 from services.agent.tools import TOOLS, WRITE
 from services.ai import config as ai_config
 from services.ai import credentials, providers, rate_limit, routing
-from util import dual_auth
+from util import agent_unlock, dual_auth
 
 ADMIN_ID = "000000000000000000000001"
 STUDENT_ID = "000000000000000000000004"
@@ -36,6 +36,17 @@ ACTIVITY = "64b7f0c2e1a3b4c5d6e7fc01"
 MEMBER = "64b7f0c2e1a3b4c5d6e7fc02"
 MEMBER_USER = "64b7f0c2e1a3b4c5d6e7fc03"
 MODEL = "gpt-x"
+
+
+@pytest.fixture(autouse=True)
+def _agent_unlocked():
+    """确认/驳回的 HTTP 面现在有 30 分钟密码门：本文件验证的是提案语义，门禁由
+    ``test_agent_unlock`` 守着，所以把两个参与者预置成已解锁。"""
+    agent_unlock.clear_state()
+    agent_unlock.mark_unlocked(ADMIN_ID)
+    agent_unlock.mark_unlocked(STUDENT_ID)
+    yield
+    agent_unlock.clear_state()
 
 
 class FakeAgentEventsRepo:

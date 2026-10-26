@@ -52,6 +52,58 @@ export async function rejectProposal(oid: string): Promise<AiAgentProposalResult
 }
 
 /**
+ * 用账号密码解锁智能体交互。
+ *
+ * 解锁是一次显式验证：服务端校验通过后给一个到期时间（`unlocked_until`），
+ * 之后提交 run、确认 / 驳回提案都靠它放行。密码错是 403
+ * `AI_AGENT_UNLOCK_FAILED`，连错锁定是 429 `AI_AGENT_UNLOCK_LOCKED`。
+ *
+ * 返回值是这个到期时间；后端没给或不认识时返回空串，让调用方按「未解锁」处理，
+ * 不在这里编一个假的窗口。
+ */
+export async function unlockAgent(password: string): Promise<string> {
+  const body = await aiFetchJson<unknown>('/ai/agent/unlock', {
+    method: 'POST',
+    body: JSON.stringify({ password })
+  })
+  return readUnlockedUntil(body)
+}
+
+/**
+ * 读当前的无限制模式开关（仅 admin）。
+ *
+ * 开关是账号级设置，不是本会话的临时状态：进页面读一次，之后由 PUT 的结果对齐。
+ */
+export async function getModerationUnrestricted(): Promise<boolean> {
+  const body = await aiFetchJson<unknown>('/ai/agent/moderation/unrestricted')
+  return readModerationEnabled(body)
+}
+
+/** 写无限制模式开关（仅 admin）；返回服务端落库后的值。 */
+export async function setModerationUnrestricted(enabled: boolean): Promise<boolean> {
+  const body = await aiFetchJson<unknown>('/ai/agent/moderation/unrestricted', {
+    method: 'PUT',
+    body: JSON.stringify({ enabled })
+  })
+  return readModerationEnabled(body)
+}
+
+function readUnlockedUntil(body: unknown): string {
+  if (!body || typeof body !== 'object') {
+    return ''
+  }
+  const value = (body as Record<string, unknown>).unlocked_until
+  return typeof value === 'string' ? value : ''
+}
+
+function readModerationEnabled(body: unknown): boolean {
+  if (!body || typeof body !== 'object') {
+    return false
+  }
+  return (body as Record<string, unknown>).enabled === true
+}
+
+/**
  * 拉本人待确认的提案。
  *
  * 后端按 `created_at` 倒序返回，并顺手把过期行落成 expired；只查本人

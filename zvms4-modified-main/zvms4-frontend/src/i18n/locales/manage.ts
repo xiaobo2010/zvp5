@@ -145,7 +145,31 @@ export const zhCN = {
     banReasonFallback: '管理员封禁',
     banDialogConfirm: '确认封禁',
     banPermanent: '永久',
-    banUntil: '到期：{time}'
+    banUntil: '到期：{time}',
+    primaryDevice: '主设备：{id}',
+    tempPassword: {
+      action: '签发临时密码',
+      confirmTitle: '签发临时密码',
+      confirm:
+        '确认为 {name} 签发一次性临时密码吗？密码 30 分钟内有效，签发后该用户此前的临时密码立即作废，明文只显示这一次。',
+      confirmButton: '签发',
+      dialogTitle: '一次性临时密码',
+      notice: '请立即复制并转达给该用户。此密码只显示这一次，30 分钟内有效，只能在一台设备上使用一次。',
+      expiresAt: '有效期至：{time}',
+      copy: '复制',
+      copied: '已复制',
+      acknowledge: '已转达',
+      failed: '签发临时密码失败'
+    },
+    clearDevice: {
+      action: '清除主设备',
+      title: '清除主设备',
+      confirm:
+        '确定要清除 {name} 的主学海设备绑定吗？这是换机或丢失旧平板时的人工出口，清除后绑定立即解除，该用户下次登录会被要求重新绑定。',
+      confirmButton: '清除',
+      done: '已清除 {name} 的主设备绑定',
+      failed: '清除主设备失败'
+    }
   },
   upload: {
     label: '上传',
@@ -348,6 +372,33 @@ export const zhCN = {
       rollbackMissing: '通知或目标版本不存在，请刷新后重试',
       rollbackNetwork: '网络异常，回滚未完成，请稍后重试',
       rollbackFailed: '回滚失败，请稍后重试'
+    },
+    changelog: {
+      title: '版本更新',
+      hint: '新增或修改版本条目后，会自动以 SYSTEM 名义向用户下发版本公告通知。',
+      add: '新增版本',
+      empty: '暂无版本记录',
+      columns: {
+        version: '版本号',
+        date: '发布日期',
+        items: '更新条目',
+        actions: '操作'
+      },
+      moreItems: '等 {count} 条',
+      dialog: {
+        createTitle: '新增版本',
+        editTitle: '编辑版本',
+        version: '版本号',
+        versionPlaceholder: '例如: v4.3.0-6',
+        date: '发布日期',
+        items: '更新条目',
+        itemsHint: '每行一条',
+        save: '保存'
+      },
+      deleteConfirm: '删除后该版本公告将同时从用户通知中撤下，确定删除？',
+      saved: '版本已保存，公告已自动下发',
+      deleted: '版本已删除',
+      saveFailed: '保存失败，请重试'
     }
   },
   banRules: {

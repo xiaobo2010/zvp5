@@ -91,8 +91,16 @@ async function loadModels(): Promise<void> {
   }
 }
 
+/** 内容审核拦截：用与智能体页一致的那句话，不落到通用错误文案。 */
+const MODERATION_REJECTED = 'AI_AGENT_MODERATION_REJECTED'
+
 function showError(caught: unknown): void {
-  error.value = aiErrorCopy(aiErrorCodeOf(caught), t)
+  const code = aiErrorCodeOf(caught)
+  if (code === MODERATION_REJECTED) {
+    error.value = { title: t('ai.agent.moderation.rejected'), hint: '' }
+    return
+  }
+  error.value = aiErrorCopy(code, t)
 }
 
 /** 流内 error 帧 → 展示文案；码表不认识的码优先用后端给的中文 message。 */

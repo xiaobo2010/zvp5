@@ -1205,7 +1205,7 @@ async def run(
             # 强制非流式：工具调用的完整参数只在整条响应里，流式边收边执行等于
             # 猜半个 JSON。
             "stream": False,
-            "tools": tool_specs(),
+            "tools": tool_specs(user),
         }
 
         started = time.monotonic()

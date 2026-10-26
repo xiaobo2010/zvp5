@@ -61,6 +61,7 @@ import {
   ensureDeviceUnlock
 } from '@/plugins/device-unlock'
 import { temporaryToken } from '@/plugins/short-token'
+import { pad } from '@/plugins/ua.ts'
 
 type RegistrationMode = Exclude<ActivityMode, 'hybrid'>
 type RowStatus = 'empty' | 'ok' | 'warning' | 'error' | 'saved'
@@ -2324,7 +2325,7 @@ onBeforeUnmount(() => {
       <section class="reg-card toolbar-card">
         <ElButton :icon="Plus" @click="addRow">新增行</ElButton>
         <ElButton :icon="CopyDocument" @click="pasteFromClipboard">从剪贴板粘贴</ElButton>
-        <ElButton :icon="UploadFilled" @click="triggerImport">导入表格</ElButton>
+        <ElButton v-if="!pad()" :icon="UploadFilled" @click="triggerImport">导入表格</ElButton>
         <ElButton :icon="Refresh" :loading="indexLoading || indexBooting" @click="refreshIndex()">
           同步名单
         </ElButton>

@@ -10,6 +10,7 @@ import { useWindowSize } from '@vueuse/core'
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import api from '@/api'
+import { pad } from '@/plugins/ua.ts'
 
 const user = useUserStore()
 const router = useRouter()
@@ -207,7 +208,8 @@ watch(search, refreshMembers)
               (user.position.includes('admin') ||
                 user.position.includes('department')) &&
               !wholesale &&
-              !selectable
+              !selectable &&
+              !pad()
             "
             class="no-print"
           >

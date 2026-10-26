@@ -8,9 +8,9 @@ import * as manage from './manage'
 import * as notificationCenter from './notificationCenter'
 import * as profile from './profile'
 import * as server from './server'
-import * as changelog from './changelog'
 import * as markdown from './markdown'
 import * as maintenance from './maintenance'
+import * as device from './device'
 
 export const zhCN = {
   about: about.zhCN,
@@ -23,7 +23,7 @@ export const zhCN = {
   notificationCenter: notificationCenter.zhCN,
   profile: profile.zhCN,
   server: server.zhCN,
-  changelog: changelog.zhCN,
   markdown: markdown.zhCN,
-  maintenance: maintenance.zhCN
+  maintenance: maintenance.zhCN,
+  device: device.zhCN
 }
