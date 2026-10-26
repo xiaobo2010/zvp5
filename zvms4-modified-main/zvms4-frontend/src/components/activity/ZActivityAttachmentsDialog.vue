@@ -8,11 +8,11 @@ import ZAttachmentUpload from '@/components/attachment/ZAttachmentUpload.vue'
 import * as attachmentApi from '@/api/attachment'
 import type { AttachmentListItem } from '@/../types'
 import { useUserStore } from '@/stores/user'
-import { getXuehaiId } from '@/plugins/ua'
+import { DEVICE_UNLOCK_REASON, deviceLocked, ensureDeviceUnlock } from '@/plugins/device-unlock'
 
 // 管理单个活动的义工单附件：列出、上传、删除。
-// 权限与 ZActivityStatsDialog 的入口不同：仅 manager（admin/department）
-// 且非学海设备可见（后端对附件 API 携带 Xuehai-Id 一律 403）。
+// 权限与 ZActivityStatsDialog 的入口不同：仅 manager（admin/department）可用；
+// 学海设备（平板）打开时先校验密码，换一张 5 分钟临时凭证再访问媒体库。
 const props = withDefaults(
   defineProps<{
     activityId?: string
@@ -37,18 +37,14 @@ const canManage = computed(
 const canOcr = computed(
   () => user.position.includes('admin') || user.position.includes('department')
 )
-const isXuehaiDevice = computed(() => getXuehaiId() > 0)
-const gateBlocked = computed(() => !canManage.value || isXuehaiDevice.value)
-const gateText = computed(() => {
-  if (isXuehaiDevice.value) {
-    return t('activity.form.volunteerOrder.deviceUnsupported')
-  }
-  return t('activity.form.volunteerOrder.noPermission')
-})
+const gateBlocked = computed(() => !canManage.value)
+const gateText = computed(() => t('activity.form.volunteerOrder.noPermission'))
 
 const open = ref(false)
 const loading = ref(false)
 const error = ref('')
+// 解锁被取消/失败：显示可重试的提示，而不是把入口藏起来
+const unlockRequired = ref(false)
 const oids = ref<string[]>([])
 // 默认关闭：自动识别会消耗 OCR 额度，必须由用户自己勾选。
 const autoOcr = ref(false)
@@ -63,6 +59,18 @@ async function load(force = false) {
   if (loading.value && !force) return
   loading.value = true
   error.value = ''
+  unlockRequired.value = false
+  try {
+    // 平板：先换 5 分钟临时凭证；用户取消就停在提示态，等他自己点重试
+    await ensureDeviceUnlock({ reason: DEVICE_UNLOCK_REASON })
+  } catch {
+    loading.value = false
+    unlockRequired.value = deviceLocked()
+    if (!unlockRequired.value) {
+      error.value = t('activity.form.volunteerOrder.loadFailed')
+    }
+    return
+  }
   try {
     const result = await attachmentApi.read.list('all', {
       entityType: 'activity',
@@ -117,6 +125,17 @@ watch(open, () => {
           />
         </div>
         <ElResult v-if="gateBlocked" icon="warning" :title="gateText" />
+        <ElResult
+          v-else-if="unlockRequired && !loading"
+          icon="warning"
+          :title="t('activity.form.volunteerOrder.unlockRequired')"
+        >
+          <template #extra>
+            <ElButton type="primary" @click="reload">
+              {{ t('activity.form.volunteerOrder.unlockRetry') }}
+            </ElButton>
+          </template>
+        </ElResult>
         <ElResult v-else-if="error && !loading" icon="error" :title="error" />
         <template v-else>
           <!-- 显式选择：默认关闭，开启后每张上传成功的图片自动走 OCR -->

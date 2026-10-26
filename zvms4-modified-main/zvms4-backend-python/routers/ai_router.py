@@ -785,8 +785,16 @@ async def list_prompt_audit(
     page: int = Query(1, ge=1, description="Page number (1-based)"),
     perpage: int = Query(20, ge=1, le=100, description="Items per page (max 100)"),
     user_oid: str | None = Query(None, description="Filter by user oid"),
+    purpose: str | None = Query(
+        None, description="Calling scene (chat | agent | markdown-assistant | ocr | ...)"
+    ),
     days: int = Query(
         PROMPT_LIST_DAYS, ge=1, le=PROMPT_MAX_DAYS, description="Window size in days"
+    ),
+    time_start: int | None = Query(None, description="created_at >= (epoch seconds)"),
+    time_end: int | None = Query(None, description="created_at <= (epoch seconds)"),
+    keyword: str | None = Query(
+        None, description="Substring match on the prompt body (literal, case-sensitive)"
     ),
     user=Depends(get_current_user),
 ):
@@ -797,19 +805,44 @@ async def list_prompt_audit(
     写访问审计。``prompt_chars`` 是库里的 ``LENGTH(PROMPT_TEXT)``，够判断「这条
     值不值得点开」。
 
-    ``days`` 是滚动窗口（现在往前 N 天，1–90），默认 7；``user_oid`` 非法形状
-    回 400（与 ``/logs`` 同口径）。
+    ``days`` 是滚动窗口（现在往前 N 天，1–90），默认 7；用户/场景/正文关键字与
+    ``/logs`` 同款过滤。``user_oid`` 非法形状回 400（与 ``/logs`` 同口径）。
+
+    ``time_start`` / ``time_end`` 与 ``/api/ai/logs`` 逐字同口径：epoch 秒、
+    闭区间、按本地时间比较。**给定时以显式范围为准，``days`` 不再参与**——即使
+    只给了 ``time_end`` 也不叠加「最近 7 天」，否则「查某天之前」会被默认窗口
+    悄悄截断，结果看起来像「没有匹配」。
+
+    ``keyword`` 是正文的**字面子串**匹配（``DBMS_LOB.INSTR``，大小写敏感，不是
+    ``LIKE`` 通配）：过滤在库里完成，正文不会进入列表响应。空串等于不过滤。
     """
     _require_admin(user)
 
     target = validate_object_id(user_oid) if user_oid else None
-    since = datetime.now() - timedelta(days=days)
+    start = _epoch_to_local(time_start)
+    end = _epoch_to_local(time_end)
+    # days 只是兼容捷径：显式给了任一时间边界就整段以显式为准（见 docstring）。
+    if start is None and end is None:
+        start = datetime.now() - timedelta(days=days)
+    pattern = (keyword or "").strip() or None
 
     repo = backends.get_ai_prompt_audit_repo()
     rows = await repo.list_page(
-        user_oid=target, since=since, page=page, page_size=perpage
+        user_oid=target,
+        purpose=purpose or None,
+        keyword=pattern,
+        since=start,
+        until=end,
+        page=page,
+        page_size=perpage,
     )
-    total = await repo.count(user_oid=target, since=since)
+    total = await repo.count(
+        user_oid=target,
+        purpose=purpose or None,
+        keyword=pattern,
+        since=start,
+        until=end,
+    )
 
     names = await get_user_display_names(
         [row["user_oid"] for row in rows if row.get("user_oid")]
@@ -819,6 +852,9 @@ async def list_prompt_audit(
         row["_id"] = oid
         row["oid"] = oid
         row["user_name"] = names.get(row.get("user_oid"), "未知用户")
+        # purpose 由仓储的元数据投影带出（列表按场景回显/筛选要用）；
+        # 这里只在缺失时补 None，保证响应字段集合稳定。
+        row.setdefault("purpose", None)
 
     return {
         "status": "ok",
@@ -944,6 +980,20 @@ async def delete_ocr_engine(
 # ---------------------------------------------------------------------------
 
 
+async def _target_roles(oid: str) -> list[str] | None:
+    """取目标用户的 ``roles``（只读窄投影，不搬 ``past``/``eligibility`` 两个 CLOB）。
+
+    查不到用户回 ``None``：管理端此时展示全局默认额度，并由 ``source`` 标明
+    ``global_default``。用空列表假装「这个人没有角色」也能得到同样的数值，但
+    ``None`` 让「用户不存在」与「角色为空」在服务层保持可区分，便于以后细分口径。
+    """
+    row = await backends.get_users_repo().get_for_auth(oid)
+    if not row:
+        return None
+    roles = row.get("roles")
+    return roles if isinstance(roles, list) else None
+
+
 @router.get("/quota")
 async def my_quota(user=Depends(get_current_user)):
     """当前用户本月额度快照：两种能力各一条，没有额度行就回默认上限。"""
@@ -960,10 +1010,22 @@ async def user_quota(user_oid: str, user=Depends(get_current_user)):
 
     ``ai_quota`` 没有指向用户的 FK，查无额度行是正常状态（本月还没用过），
     所以这里**不校验用户是否存在**，只校验 oid 形状。
+
+    展示的「默认上限」必须与真实扣费口径一致：扣费走
+    ``default_limit_for(用户的 roles, kind)``（admin 的 chat 是 1_000_000），所以
+    先查目标用户角色再算，不能拿管理端的 ``per`` 也不能停在全局
+    ``DEFAULT_QUOTA``（chat 200_000）——否则管理页会把一个 admin 的额度少显示
+    一个数量级。查不到用户时回落全局默认，响应里的 ``source`` 会标
+    ``global_default``，不编造角色。
     """
     _require_admin(user)
     target = validate_object_id(user_oid)
-    return {"status": "ok", "code": 200, "data": await quota.admin_snapshot(target)}
+    roles = await _target_roles(target)
+    return {
+        "status": "ok",
+        "code": 200,
+        "data": await quota.admin_snapshot(target, roles=roles),
+    }
 
 
 @router.put("/quota/{user_oid}")

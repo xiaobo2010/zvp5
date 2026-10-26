@@ -6,7 +6,6 @@ import { useI18n } from 'vue-i18n'
 import { ElPageHeader, ElSegmented, ElIcon } from 'element-plus'
 import {
   ArrowLeft,
-  ChatLineRound,
   Coin,
   Cpu,
   DataLine,
@@ -75,7 +74,7 @@ const tabs = ref<SegmentedTab[]>([
   {
     label: 'chat',
     value: 'chat',
-    icon: ChatLineRound
+    icon: Cpu
   },
   {
     label: 'quota',
@@ -147,9 +146,22 @@ watch(
 
 <style scoped>
 .yg-ai-home {
+  /* 撑满内容区：对话页要在视口内把「消息区 + 输入区」分完，
+     不让输入区被长消息顶到屏幕外。
+     扣掉的量 = 顶栏 + 内容区上内边距 + 内容区下内边距；
+     竖屏底部有悬浮药丸导航，--yg-content-bottom-inset 由外壳给值（横屏为 0），
+     所以下内边距取两者的较大值。 */
+  --yg-ai-viewport-inset: calc(
+    var(--yg-header-height) + env(safe-area-inset-top, 0px) + var(--yg-space-6) +
+      max(var(--yg-space-6), var(--yg-content-bottom-inset, 0px))
+  );
+
   display: flex;
   flex-direction: column;
   gap: var(--yg-space-4);
+  min-height: calc(100vh - var(--yg-ai-viewport-inset));
+  /* 动态视口高度：移动端浏览器收起地址栏时不留多余空白 */
+  min-height: calc(100dvh - var(--yg-ai-viewport-inset));
 }
 
 .yg-ai-home__tabs {
@@ -159,6 +171,8 @@ watch(
 .yg-ai-home__panel {
   display: flex;
   flex-direction: column;
+  /* 吃掉页面头部与页签剩下的高度，交给对话区自己分配 */
+  flex: 1 1 auto;
   min-width: 0;
 }
 </style>

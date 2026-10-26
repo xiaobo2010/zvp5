@@ -12,35 +12,45 @@ import {
   ElMessageBox,
   ElOption,
   ElProgress,
-  ElSelect
+  ElSelect,
+  ElTag
 } from 'element-plus'
 import { Refresh, Setting } from '@element-plus/icons-vue'
 import ZSelectPerson from '@/components/form/ZSelectPerson.vue'
 import {
   aiErrorCodeOf,
   aiErrorCopy,
+  aiQuotaSourceLabelKey,
   resetUserQuota,
   setUserLimit,
-  userQuota
+  userQuota,
+  type AiQuotaEntryView,
+  type AiQuotaSnapshotView
 } from '@/api/ai'
-import type { AiQuotaEntry, AiQuotaKind, AiQuotaSnapshot } from '@/../types/ai'
+import type { AiQuotaKind } from '@/../types/ai'
 
 const { t } = useI18n()
 
 const userOid = ref('')
 const loading = ref(false)
 const failed = ref(false)
-const snapshot = ref<AiQuotaSnapshot | null>(null)
+const snapshot = ref<AiQuotaSnapshotView | null>(null)
 
 const limitVisible = ref(false)
 const limitKind = ref<AiQuotaKind>('ocr')
 const limitValue = ref(0)
 const saving = ref(false)
 
-const ocr = computed<AiQuotaEntry | null>(() => snapshot.value?.ocr ?? null)
-const chat = computed<AiQuotaEntry | null>(() => snapshot.value?.chat ?? null)
+const ocr = computed<AiQuotaEntryView | null>(() => snapshot.value?.ocr ?? null)
+const chat = computed<AiQuotaEntryView | null>(() => snapshot.value?.chat ?? null)
 
-function percent(entry: AiQuotaEntry | null): number {
+/** 来源标签文案；后端没给 source（老版本）或给了未知值时返回 null，不渲染标签。 */
+function sourceLabel(entry: AiQuotaEntryView | null): string | null {
+  const key = aiQuotaSourceLabelKey(entry?.source)
+  return key ? t(key) : null
+}
+
+function percent(entry: AiQuotaEntryView | null): number {
   if (!entry || entry.limit <= 0) {
     return 0
   }
@@ -68,7 +78,7 @@ watch(userOid, () => {
   void load()
 })
 
-function openLimit(entry: AiQuotaEntry | null, kind: AiQuotaKind) {
+function openLimit(entry: AiQuotaEntryView | null, kind: AiQuotaKind) {
   limitKind.value = kind
   limitValue.value = entry?.limit ?? 0
   limitVisible.value = true
@@ -154,6 +164,8 @@ async function resetUsage(kind: AiQuotaKind) {
       </header>
 
       <div class="yg-card__body">
+        <!-- 自然月口径放在列表上方说明一次：管理员最常误读「设完下月又变回去」 -->
+        <p class="yg-text-xs yg-text-tertiary mb-3">{{ t('ai.quotaAdmin.monthlyNotice') }}</p>
         <div v-if="!userOid" class="py-8 text-center yg-text-sm yg-text-tertiary">
           {{ t('ai.quotaAdmin.noUser') }}
         </div>
@@ -174,6 +186,12 @@ async function resetUsage(kind: AiQuotaKind) {
               <span class="yg-text-xs yg-text-tertiary tabular-nums">
                 {{ t('ai.common.period') }}：{{ item.entry?.period ?? '—' }}
               </span>
+            </div>
+            <div class="flex items-center gap-2">
+              <!-- 次要色标签：来源只是解释数字怎么来的，不是需要警觉的状态 -->
+              <ElTag v-if="sourceLabel(item.entry)" type="info" size="small" effect="plain">
+                {{ sourceLabel(item.entry) }}
+              </ElTag>
             </div>
             <p class="yg-statistic__value">
               {{ item.entry?.used ?? 0 }}

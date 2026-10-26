@@ -28,6 +28,7 @@ from uuid import uuid4
 import settings
 
 from db import backends
+from services import settings_runtime
 from services.agent.tool_impl import AgentError
 
 # 会话类型与状态：与表上的 CHECK 逐字一致（写错只会在 Oracle 上变成 ORA-02290，
@@ -60,8 +61,9 @@ MODE_MISMATCH = "AI_CONVERSATION_MODE_MISMATCH"
 RUN_CONFLICT = "AI_RUN_CONFLICT"
 BAD_CURSOR = "AI_CONVERSATION_BAD_CURSOR"
 
-# 上下文上限的兜底：``AI_DEFAULT_CONTEXT_LIMIT`` 缺省 32768（保守值，见 §5.3）。
-CONTEXT_LIMIT_DEFAULT = 32768
+# 上下文上限的兜底：``AI_DEFAULT_CONTEXT_LIMIT`` 缺省 200000（见 §5.3）。压缩
+# 阈值仍是 0.75，所以约 150K 时触发一次摘要，不会等窗口真填满才动。
+CONTEXT_LIMIT_DEFAULT = 200_000
 
 Row = dict[str, Any]
 
@@ -129,8 +131,10 @@ def context_limit(model: object) -> int:
     """该模型的上下文上限（§5.3 的 ``limit``，视图里的分母）。
 
     默认值 + 按模型的覆盖表都从 ``settings`` 读：额度随模型变，属于部署知识，不该
-    硬编码在本文件。配置坏了就回落 32768——分母是展示用的，不能因为一个笔误让
-    会话页 500。
+    硬编码在本文件。默认值可以被运行期设置 ``ai.context_limit_default`` 覆盖（在线
+    改完即时生效），与 ``services/agent/context.context_limit`` 保持同一口径——同
+    一个窗口在两处算出不同分母，水位就会自相矛盾。配置坏了就回落 200000——分母是
+    展示用的，不能因为一个笔误让会话页 500。
     """
     limits = getattr(settings, "AI_MODEL_CONTEXT_LIMITS", None)
     if isinstance(limits, Mapping) and isinstance(model, str):
@@ -141,6 +145,9 @@ def context_limit(model: object) -> int:
             parsed = 0
         if parsed > 0:
             return parsed
+    override = settings_runtime.get_override("ai.context_limit_default")
+    if isinstance(override, int) and not isinstance(override, bool) and override > 0:
+        return override
     try:
         fallback = int(getattr(settings, "AI_DEFAULT_CONTEXT_LIMIT", CONTEXT_LIMIT_DEFAULT))
     except (TypeError, ValueError):

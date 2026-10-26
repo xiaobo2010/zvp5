@@ -336,7 +336,11 @@ async def test_create_rejects_unknown_mode(env) -> None:
 
 
 @pytest.mark.asyncio
-async def test_view_marks_compaction_and_clamps_ratio(env) -> None:
+async def test_view_marks_compaction_and_clamps_ratio(env, monkeypatch) -> None:
+    # 上限钉死成 1000：这个用例测的是「超限时 ratio 夹在 1.0」，不该随默认窗口
+    # 变大（32768 → 200000）而失效。
+    monkeypatch.setattr(conversations.settings, "AI_MODEL_CONTEXT_LIMITS", {}, raising=False)
+    monkeypatch.setattr(conversations.settings, "AI_DEFAULT_CONTEXT_LIMIT", 1000, raising=False)
     row = env.conv.seed(
         "a" * 32,
         summary="旧内容摘要",
@@ -352,6 +356,7 @@ async def test_view_marks_compaction_and_clamps_ratio(env) -> None:
     assert view["compaction"]["summarized"] is True
     assert view["compaction"]["degraded_at"].startswith("2026-10-01")
     # 超限时 ratio 夹在 1.0：进度条不该撑破容器。
+    assert view["context"]["limit"] == 1000
     assert view["context"]["ratio"] == 1.0
     assert view["message_count"] == 13
 

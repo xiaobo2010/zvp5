@@ -12,7 +12,6 @@ import {
   ElMessage,
   ElMessageBox,
   ElOption,
-  ElSegmented,
   ElSelect,
   ElTag
 } from 'element-plus'
@@ -26,8 +25,7 @@ import {
   fetchPendingProposals,
   fetchRunDetail,
   listModels,
-  rejectProposal,
-  streamConversationChat
+  rejectProposal
 } from '@/api/ai'
 import { useAiConversationsStore } from '@/stores/aiConversations'
 import ZSystemAuthDialog from '@/components/system/ZSystemAuthDialog.vue'
@@ -56,13 +54,6 @@ const PROPOSAL_TICK_MS = 30_000
 /** 侧栏折叠成抽屉的断点：窄屏放不下固定侧栏。 */
 const SIDEBAR_BREAKPOINT = 1024
 
-/** 对话 / 智能体：两者共用一套会话，区别只在会话建时的 mode。 */
-const mode = ref<'chat' | 'agent'>('chat')
-const modeOptions = computed(() => [
-  { label: t('ai.chat.modes.chat'), value: 'chat' },
-  { label: t('ai.chat.modes.agent'), value: 'agent' }
-])
-const isAgentMode = computed(() => mode.value === 'agent')
 const isNarrow = computed(() => width.value < SIDEBAR_BREAKPOINT)
 
 const models = ref<AiModelItem[]>([])
@@ -83,16 +74,13 @@ const renameOid = ref('')
 const renameTitle = ref('')
 const renaming = ref(false)
 
-/** 本地暂存的用户消息与流式正文：服务端落库前先显示，不让界面空等。 */
+/** 本地暂存的用户消息：服务端落库前先显示，不让界面空等。 */
 const pendingUser = ref('')
-const streamingText = ref('')
 
-/** 本轮出错的提示（对话流失败时展示）。 */
+/** 本轮出错的提示（提交或中止失败时展示）。 */
 const chatError = ref<{ code: string; title: string; hint: string } | null>(null)
-const chatStopped = ref(false)
-const chatInterrupted = ref(false)
 
-/** 待确认提案：进入智能体模式时拉一次；刷新页面后仍能看到没处理的写操作。 */
+/** 待确认提案：进页面拉一次；刷新页面后仍能看到没处理的写操作。 */
 const pendingProposals = ref<AgentProposalCard[]>([])
 const pendingLoading = ref(false)
 const pendingFailed = ref(false)
@@ -110,14 +98,22 @@ const replayFailed = ref<Record<string, boolean>>({})
 /** 双人动态码弹窗（复用系统页那一个，运维写操作要另一位管理员放行）。 */
 const authRef = ref<InstanceType<typeof ZSystemAuthDialog>>()
 
-let controller: AbortController | null = null
 let cooldownTimer: ReturnType<typeof setInterval> | null = null
 let proposalTimer: ReturnType<typeof setInterval> | null = null
 
 /** 提案倒计时用的「当前时间」：只在有 pending 提案时按 30 秒推进。 */
 const proposalNow = ref(Date.now())
 
-const listHeight = computed(() => Math.max(220, Math.round(height.value * 0.52)))
+/**
+ * 输入框行数：按视口高度给书写空间。
+ *
+ * 高屏（竖屏平板、桌面）多给两行，输入框不再是一行小框；
+ * 矮屏（横屏平板、横屏手机）少两行，输入区才挤不掉消息区。
+ */
+const composerRows = computed(() =>
+  height.value >= 900 ? { minRows: 4, maxRows: 12 } : { minRows: 3, maxRows: 8 }
+)
+
 const hasModels = computed(() => models.value.length > 0)
 
 /** 有活跃 run 时不能再提交：同一会话同时只允许一个后台任务。 */
@@ -180,7 +176,7 @@ const emptyDescription = computed(() => {
   if (!hasModels.value) {
     return t('ai.chat.modelsEmpty')
   }
-  return isAgentMode.value ? t('ai.agent.emptyHint') : t('ai.chat.emptyHint')
+  return t('ai.agent.emptyHint')
 })
 
 /** run 的终止原因：正常完成不算提示。 */
@@ -277,20 +273,20 @@ function stopCooldown() {
    --------------------------------------------------------------------------- */
 
 /**
- * 切到某个模式：找该类型下最近的一个会话，没有就建一个。
+ * 确保有一个可用的智能体会话：取最近的一个，没有就建一个。
  *
- * 会话的 mode 建完不可改，所以对话与智能体各有各的会话池。
+ * 对话模式已下线：历史的 chat 会话保留在库里，但不再出现在界面、也无法继续。
  */
-async function ensureConversation(target: 'chat' | 'agent'): Promise<void> {
+async function ensureConversation(): Promise<void> {
   const existing = store.conversations.find(
-    (item) => item.mode === target && item.status === 'active'
+    (item) => item.mode === 'agent' && item.status === 'active'
   )
   if (existing) {
     await store.selectConversation(existing.oid)
     return
   }
   try {
-    const created = await store.createConversation(target)
+    const created = await store.createConversation('agent')
     await store.selectConversation(created.oid)
   } catch {
     ElMessage.error(t('ai.chat.sessions.createFailed'))
@@ -306,7 +302,7 @@ async function selectSession(oid: string) {
 /** 新建会话：永远新建一个，不复用已有的（复用是「切换」的事）。 */
 async function createSession() {
   try {
-    const created = await store.createConversation(mode.value)
+    const created = await store.createConversation('agent')
     await store.selectConversation(created.oid)
   } catch {
     ElMessage.error(t('ai.chat.sessions.createFailed'))
@@ -342,7 +338,7 @@ async function archiveSession(oid: string) {
     await store.setConversationStatus(oid, 'archived')
     ElMessage.success(t('ai.chat.sessions.archivedNotice'))
     if (store.currentOid === oid) {
-      await ensureConversation(mode.value)
+      await ensureConversation()
     }
   } catch (error) {
     applyError(error)
@@ -368,7 +364,7 @@ async function removeSession(oid: string) {
   try {
     await store.removeConversation(oid)
     ElMessage.success(t('ai.chat.sessions.deletedNotice'))
-    await ensureConversation(mode.value)
+    await ensureConversation()
   } catch (error) {
     applyError(error)
   }
@@ -624,10 +620,6 @@ async function rejectCard(card: AgentProposalCard) {
 
 const listRef = ref<HTMLElement>()
 
-// 流式 delta 忠实度 vs 帧开销：SSE 几百个 chunk 若逐个写 DOM + 读 scrollHeight，
-// 每秒几十次强制同步布局。这里把 delta 攒到缓冲，rAF 每帧合并冲刷一次。
-let pendingDelta = ''
-let flushFrame = 0
 let autoScroll = true
 
 function listElement(): HTMLElement | undefined {
@@ -645,38 +637,6 @@ function scrollToBottom() {
   const element = listElement()
   if (!element || !autoScroll) return
   element.scrollTop = element.scrollHeight
-}
-
-function cancelFlush() {
-  if (flushFrame) {
-    cancelAnimationFrame(flushFrame)
-    flushFrame = 0
-  }
-}
-
-function applyBufferedDelta() {
-  if (!pendingDelta) return
-  streamingText.value += pendingDelta
-  pendingDelta = ''
-  void nextTick(scrollToBottom)
-}
-
-function scheduleDeltaFlush() {
-  if (flushFrame) return
-  if (typeof requestAnimationFrame !== 'function') {
-    applyBufferedDelta()
-    return
-  }
-  flushFrame = requestAnimationFrame(() => {
-    flushFrame = 0
-    applyBufferedDelta()
-  })
-}
-
-// 流结束 / 中断 / 报错时同步冲刷，保证终态立即可见（也让 vite 测试不必等帧）
-function flushDeltaNow() {
-  cancelFlush()
-  applyBufferedDelta()
 }
 
 /** 工具消息的展开态。 */
@@ -740,10 +700,6 @@ function applyError(error: unknown) {
   }
 }
 
-function isAbort(error: unknown): boolean {
-  return (error as { name?: string })?.name === 'AbortError'
-}
-
 /** 幂等键：同一次提交重试时不会重复写消息、重复计费。 */
 function clientMsgId(): string {
   const cryptoRef = globalThis.crypto as Crypto | undefined
@@ -778,87 +734,16 @@ async function send() {
   sending.value = true
   autoScroll = true
   chatError.value = null
-  chatStopped.value = false
-  chatInterrupted.value = false
   void nextTick(scrollToBottom)
 
-  if (isAgentMode.value) {
-    await sendAgentTurn(conversation, text)
-  } else {
-    await sendChatTurn(conversation, text)
-  }
+  await sendAgentTurn(conversation, text)
 
   sending.value = false
   void nextTick(scrollToBottom)
 }
 
 /**
- * 对话模式：走会话的 SSE。
- *
- * 历史与压缩摘要在服务端组装，请求体只有本次内容。流断在中途时
- * assistant 不落库，页面给一句「响应中断」。
- */
-async function sendChatTurn(conversation: AiConversation, text: string) {
-  pendingUser.value = text
-  streamingText.value = ''
-  controller = new AbortController()
-  try {
-    const result = await streamConversationChat({
-      conversationOid: conversation.oid,
-      content: text,
-      model: model.value || undefined,
-      signal: controller.signal,
-      onDelta: (delta) => {
-        pendingDelta += delta
-        scheduleDeltaFlush()
-      }
-    })
-    flushDeltaNow()
-    if (result.text) {
-      streamingText.value = result.text
-    }
-    if (result.error) {
-      chatError.value = {
-        code: result.error.code,
-        title: aiErrorCopy(result.error.code, t).title,
-        hint: aiErrorCopy(result.error.code, t).hint
-      }
-    } else if (result.interrupted) {
-      chatInterrupted.value = true
-    }
-    await store.refreshMessages()
-    // 服务端落库了同一条回答就撤掉本地副本，列表里那一条说了算。
-    if (
-      result.text &&
-      store.orderedMessages.some(
-        (message) => message.role === 'assistant' && message.content === result.text
-      )
-    ) {
-      streamingText.value = ''
-    }
-    if (userMessagePersisted(text)) {
-      pendingUser.value = ''
-    }
-  } catch (error) {
-    flushDeltaNow()
-    if (isAbort(error)) {
-      chatStopped.value = true
-    } else {
-      applyError(error)
-    }
-    await store.refreshMessages()
-    if (userMessagePersisted(text)) {
-      pendingUser.value = ''
-    }
-  } finally {
-    pendingDelta = ''
-    cancelFlush()
-    controller = null
-  }
-}
-
-/**
- * 智能体模式：提交一次后台执行。
+ * 智能体：提交一次后台执行。
  *
  * 服务端写完用户消息就回 202，任务在 worker 里继续跑。页面不等它跑完：
  * 提交成功后立刻显示「后台执行中」与轮次进度，由轮询推进。
@@ -879,16 +764,7 @@ async function sendAgentTurn(conversation: AiConversation, text: string) {
   }
 }
 
-/** 停止：对话模式中断流，智能体模式请求中止后台任务。 */
-function stop() {
-  if (isAgentMode.value) {
-    void cancelRun()
-    return
-  }
-  controller?.abort()
-  controller = null
-}
-
+/** 停止：请求中止当前后台任务。 */
 async function cancelRun() {
   try {
     await store.cancelCurrentRun()
@@ -901,17 +777,6 @@ async function cancelRun() {
 /* ---------------------------------------------------------------------------
    生命周期
    --------------------------------------------------------------------------- */
-
-// 切换模式：对话与智能体各有各的会话池；进入智能体时把待确认提案找回来。
-watch(mode, async (value) => {
-  if (store.current && store.current.mode === value) {
-    return
-  }
-  if (value === 'agent') {
-    void loadPendingProposals()
-  }
-  await ensureConversation(value)
-})
 
 // 换会话时把模型选择对齐到该会话最近用的模型。
 watch(
@@ -949,19 +814,14 @@ watch(
 
 onMounted(async () => {
   void loadModels()
+  // 刷新页面后没处理的写操作还在服务端：进页面先找回来。
+  void loadPendingProposals()
   await store.loadConversations()
   // 先问一次有没有在跑的任务：有就接管进度，不另起一轮。
   const runs = await store.loadActiveRuns()
   const active = runs.find((item) => item.status === 'queued' || item.status === 'running')
   if (active) {
     await store.adoptRun(active)
-    const adoptedMode = store.current?.mode
-    if (adoptedMode && adoptedMode !== mode.value) {
-      mode.value = adoptedMode
-    }
-    if (adoptedMode === 'agent') {
-      void loadPendingProposals()
-    }
     return
   }
   // 接着上一次那个会话：列表按更新时间倒序，第一个就是最近聊的。
@@ -971,14 +831,9 @@ onMounted(async () => {
     return
   }
   await store.selectConversation(latest.oid)
-  if (latest.mode !== mode.value) {
-    mode.value = latest.mode
-  }
 })
 
 onUnmounted(() => {
-  controller?.abort()
-  cancelFlush()
   stopCooldown()
   stopProposalTimer()
   store.stopPolling()
@@ -1028,13 +883,13 @@ onUnmounted(() => {
     </ElDrawer>
 
     <div class="ai-chat__main">
-      <ElCard shadow="never" v-loading="modelsLoading">
+      <ElCard shadow="never" class="ai-chat__settings" v-loading="modelsLoading">
         <template #header>
           <div class="flex flex-wrap items-center justify-between gap-3">
             <div class="flex flex-col gap-1">
-              <span>{{ isAgentMode ? t('ai.chat.modes.agent') : t('ai.chat.title') }}</span>
+              <span>{{ t('ai.agent.title') }}</span>
               <span class="text-xs font-normal" style="color: var(--yg-text-tertiary)">
-                {{ isAgentMode ? t('ai.agent.subtitle') : t('ai.chat.subtitle') }}
+                {{ t('ai.agent.subtitle') }}
               </span>
             </div>
             <div class="flex flex-wrap items-center gap-3">
@@ -1042,12 +897,6 @@ onUnmounted(() => {
                 <ElIcon class="mr-1"><Menu /></ElIcon>
                 {{ t('ai.chat.sessions.openDrawer') }}
               </ElButton>
-              <ElSegmented
-                v-model="mode"
-                class="ai-chat__mode"
-                :options="modeOptions"
-                :disabled="sending"
-              />
             </div>
           </div>
         </template>
@@ -1094,9 +943,9 @@ onUnmounted(() => {
         </div>
       </ElCard>
 
-      <ElCard shadow="never" class="ai-chat">
+      <ElCard shadow="never" class="ai-chat__conversation">
         <!-- 待确认提案入口：刷新页面后仍在这里等你处理 -->
-        <div v-if="isAgentMode" class="yg-card yg-card--narrow ai-agent__pending">
+        <div class="yg-card yg-card--narrow ai-agent__pending">
           <div class="yg-card__header ai-agent__pending-head">
             <div class="ai-agent__pending-title-group">
               <span class="yg-card__title ai-agent__pending-title">{{
@@ -1146,7 +995,6 @@ onUnmounted(() => {
         <div
           ref="listRef"
           class="ai-chat__list"
-          :style="{ maxHeight: `${listHeight}px` }"
           @scroll.passive="handleListScroll"
         >
           <div v-if="messageRows.length === 0 && !pendingUser" class="py-10">
@@ -1265,16 +1113,6 @@ onUnmounted(() => {
             </div>
           </div>
 
-          <!-- 流式正文 -->
-          <div v-if="streamingText" class="ai-chat__row assistant">
-            <div class="ai-chat__who yg-text-xs yg-text-tertiary">
-              {{ t('ai.chat.assistant') }}
-            </div>
-            <div class="ai-chat__bubble assistant">
-              <p class="ai-chat__text">{{ streamingText }}</p>
-            </div>
-          </div>
-
           <!-- 本轮出错 -->
           <div v-if="chatError" class="ai-chat__error">
             <div class="flex flex-wrap items-center gap-2">
@@ -1283,11 +1121,6 @@ onUnmounted(() => {
             </div>
             <p class="text-xs">{{ chatError.hint }}</p>
           </div>
-          <p v-else-if="chatInterrupted" class="ai-chat__notice">
-            {{ t('ai.chat.interrupted') }}
-            <span class="text-xs">{{ t('ai.chat.interruptedHint') }}</span>
-          </p>
-          <p v-else-if="chatStopped" class="ai-chat__notice">{{ t('ai.chat.stopped') }}</p>
 
           <!-- 后台执行：轮次进度 + 工具留痕 + 提案 -->
           <div v-if="store.activeRun" class="ai-agent__run">
@@ -1395,7 +1228,7 @@ onUnmounted(() => {
           <ElInput
             v-model="input"
             type="textarea"
-            :rows="3"
+            :autosize="composerRows"
             resize="none"
             :placeholder="t('ai.chat.inputPlaceholder')"
             :disabled="!hasModels || !store.current"
@@ -1417,7 +1250,7 @@ onUnmounted(() => {
               </template>
             </span>
             <div class="flex items-center gap-2">
-              <ElButton v-if="sending || runActive" type="danger" plain @click="stop">
+              <ElButton v-if="sending || runActive" type="danger" plain @click="cancelRun">
                 <ElIcon class="mr-1"><VideoPause /></ElIcon>
                 {{ t('ai.chat.stop') }}
               </ElButton>
@@ -1473,13 +1306,16 @@ onUnmounted(() => {
   gap: var(--yg-space-4);
   width: 100%;
   min-width: 0;
+  /* 吃掉页面面板剩下的高度：对话列自己再分「消息区 + 输入区」 */
+  flex: 1 1 auto;
 }
 
 /* 桌面侧栏：固定宽度，跟主区等高 */
 .ai-chat__sidebar {
   flex: none;
   width: 260px;
-  max-height: calc(100vh - 220px);
+  /* 高度跟着对话列走，不再按视口猜一个数 */
+  max-height: 100%;
   padding: var(--yg-space-3);
   border: 1px solid var(--yg-border-default);
   border-radius: var(--yg-radius-lg);
@@ -1494,7 +1330,33 @@ onUnmounted(() => {
   min-width: 0;
 }
 
+/* 模型选择与上下文水位：高度固定，不参与对话区的伸缩 */
+.ai-chat__settings {
+  flex: none;
+}
+
+/* 对话卡片：整列撑满剩余高度，消息区滚动、输入区常驻底部 */
+.ai-chat__conversation {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  /* 视口再矮也有一个能用的对话区，不让输入区被压没 */
+  min-height: 380px;
+}
+
+/* 卡片内容区跟卡片等高，消息区与输入区才能在里面分高度 */
+.ai-chat__conversation :deep(.el-card__body) {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
 .ai-chat__list {
+  /* 消息区吃掉所有剩余高度并自己滚动，输入区不参与伸缩。
+     min-height 保底：视口再矮也要露出几行消息，不能整个塌掉。 */
+  flex: 1 1 0;
+  min-height: 120px;
   overflow-y: auto;
   overscroll-behavior: contain;
   border: 1px solid var(--yg-border-default);
@@ -1555,17 +1417,17 @@ onUnmounted(() => {
   background: var(--yg-bg-surface);
 }
 
-.ai-chat__notice {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding-left: 8px;
-  border-left: 2px solid var(--yg-border-strong);
-  color: var(--yg-text-tertiary);
+/* 输入区：常驻对话卡片底部，消息再多也不压缩它 */
+.ai-chat__composer {
+  flex: none;
+  margin-top: var(--yg-space-3);
 }
 
-.ai-chat__composer {
-  margin-top: 12px;
+/* 书写区：内边距与行高走令牌，跟正文同一套字号层级 */
+.ai-chat__composer :deep(.el-textarea__inner) {
+  padding: var(--yg-space-3);
+  font-size: var(--yg-font-size-md);
+  line-height: var(--yg-line-height-normal);
 }
 
 /* 压缩点：一条虚线加一句说明，把被摘要的历史隔在下面 */
@@ -1624,10 +1486,6 @@ onUnmounted(() => {
    颜色/间距/圆角/动效全部走令牌（准则 2.2 / 2.7）；红色只给失败与写操作警示。
    --------------------------------------------------------------------------- */
 
-.ai-chat__mode {
-  flex: none;
-}
-
 .ai-agent__run {
   display: flex;
   flex-direction: column;
@@ -1668,6 +1526,8 @@ onUnmounted(() => {
 
 /* 待确认提案入口：常驻在对话区顶部，刷新页面后也能找回未处理的写操作 */
 .ai-agent__pending {
+  /* 高度固定：提案多的时候也不该把消息区与输入区挤没 */
+  flex: none;
   margin-bottom: var(--yg-space-3);
   border-left: 2px solid var(--yg-color-primary);
 }

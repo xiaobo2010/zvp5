@@ -15,11 +15,9 @@ import {
   listMessages,
   listModels,
   rejectProposal,
-  streamConversationChat,
   submitRun,
   updateConversation
 } from '@/api/ai'
-import { AiRequestError } from '@/api/ai/errors'
 import type { AiAgentProposal, AiConversation, AiRun } from '@/../types/ai'
 
 /**
@@ -35,7 +33,6 @@ vi.mock('@/api/ai', async (importOriginal) => {
   return {
     ...actual,
     listModels: vi.fn(),
-    streamConversationChat: vi.fn(),
     fetchPendingProposals: vi.fn(),
     confirmProposal: vi.fn(),
     rejectProposal: vi.fn(),
@@ -159,38 +156,6 @@ vi.mock('element-plus', async () => {
     }
   })
 
-  const ElSegmented = defineComponent({
-    name: 'ElSegmented',
-    props: {
-      modelValue: { type: [String, Number, Boolean], default: '' },
-      options: { type: Array, default: () => [] },
-      disabled: Boolean
-    },
-    emits: ['update:modelValue'],
-    setup(props, { emit }) {
-      return () =>
-        h(
-          'div',
-          { class: 'el-segmented-stub' },
-          (props.options as Array<{ label: string; value: string }>).map((option) =>
-            h(
-              'button',
-              {
-                class: 'el-segmented-stub__item',
-                'data-active': props.modelValue === option.value ? 'true' : 'false',
-                onClick: () => {
-                  if (!props.disabled) {
-                    emit('update:modelValue', option.value)
-                  }
-                }
-              },
-              option.label
-            )
-          )
-        )
-    }
-  })
-
   const ElDialog = defineComponent({
     name: 'ElDialog',
     props: { modelValue: Boolean, title: String },
@@ -221,7 +186,6 @@ vi.mock('element-plus', async () => {
     ElInput,
     ElSelect,
     ElSwitch,
-    ElSegmented,
     ElDialog,
     ElDrawer,
     ElIcon: defineComponent({
@@ -271,9 +235,9 @@ vi.mock('element-plus', async () => {
 
 function conversation(overrides: Partial<AiConversation> = {}): AiConversation {
   return {
-    oid: 'chat1',
-    mode: 'chat',
-    title: '问天气',
+    oid: 'agent1',
+    mode: 'agent',
+    title: '查图书馆',
     model: 'gpt-4o-mini',
     status: 'active',
     tokens: { prompt: 120, completion: 30, total: 150 },
@@ -351,15 +315,6 @@ function findButton(wrapper: VueWrapper, label: string) {
   return wrapper.findAll('button').find((button) => button.text() === label)
 }
 
-async function switchToAgent(wrapper: VueWrapper) {
-  const item = wrapper
-    .findAll('.el-segmented-stub__item')
-    .find((button) => button.text() === 'ai.chat.modes.agent')
-  expect(item).toBeTruthy()
-  await item!.trigger('click')
-  await settle()
-}
-
 async function sendText(wrapper: VueWrapper, text: string) {
   await wrapper.find('.el-input-stub').setValue(text)
   await findButton(wrapper, 'ai.chat.send')!.trigger('click')
@@ -369,7 +324,6 @@ async function sendText(wrapper: VueWrapper, text: string) {
 beforeEach(() => {
   vi.useFakeTimers()
   vi.mocked(listModels).mockReset()
-  vi.mocked(streamConversationChat).mockReset()
   vi.mocked(fetchPendingProposals).mockReset()
   vi.mocked(confirmProposal).mockReset()
   vi.mocked(rejectProposal).mockReset()
@@ -394,9 +348,13 @@ beforeEach(() => {
     data: [{ id: 'gpt-4o-mini', object: 'model', owned_by: 'shared' }]
   })
   vi.mocked(listConversations).mockResolvedValue({
-    conversations: [conversation(), conversation({ oid: 'agent1', mode: 'agent', title: '查图书馆' })],
+    conversations: [
+      conversation(),
+      conversation({ oid: 'agent2', title: '改一下时长' }),
+      conversation({ oid: 'legacy-chat', mode: 'chat', title: '历史对话' })
+    ],
     next_cursor: null,
-    size: 2
+    size: 3
   })
   vi.mocked(listMessages).mockResolvedValue({ messages: [], has_more: false, total: 0 })
   vi.mocked(fetchActiveRuns).mockResolvedValue([])
@@ -431,10 +389,12 @@ describe('会话栏', () => {
     await settle()
 
     const items = wrapper.findAll('.ai-sessions__item')
+    // 历史 chat 会话不再出现在界面（后端不删，前端筛掉）。
     expect(items).toHaveLength(2)
-    expect(items[0]!.text()).toContain('问天气')
+    expect(items[0]!.text()).toContain('查图书馆')
     expect(items[0]!.text()).toContain('ai.chat.sessions.tokens')
     expect(items[0]!.text()).toContain('150')
+    expect(wrapper.text()).not.toContain('历史对话')
 
     wrapper.unmount()
   })
@@ -468,7 +428,7 @@ describe('会话栏', () => {
     await findButton(wrapper, 'ai.chat.sessions.new')!.trigger('click')
     await settle()
 
-    expect(createConversation).toHaveBeenCalledWith('chat')
+    expect(createConversation).toHaveBeenCalledWith('agent')
     expect(listMessages).toHaveBeenCalledWith('new1', expect.objectContaining({ afterSeq: 0 }))
 
     wrapper.unmount()
@@ -482,7 +442,7 @@ describe('会话栏', () => {
     await wrapper.findAll('.ai-sessions__main')[1]!.trigger('click')
     await settle()
 
-    expect(listMessages).toHaveBeenCalledWith('agent1', expect.objectContaining({ afterSeq: 0 }))
+    expect(listMessages).toHaveBeenCalledWith('agent2', expect.objectContaining({ afterSeq: 0 }))
     expect(wrapper.findAll('.ai-sessions__item')[1]!.classes()).toContain('is-active')
 
     wrapper.unmount()
@@ -498,7 +458,7 @@ describe('会话栏', () => {
       .trigger('click')
     await settle()
 
-    expect(deleteConversation).toHaveBeenCalledWith('agent1')
+    expect(deleteConversation).toHaveBeenCalledWith('agent2')
     expect(elMessageSuccessSpy).toHaveBeenCalledWith('ai.chat.sessions.deletedNotice')
 
     wrapper.unmount()
@@ -573,51 +533,10 @@ describe('压缩分隔线', () => {
   })
 })
 
-describe('对话模式', () => {
-  it('走会话的 SSE：请求体只有本次内容', async () => {
-    vi.mocked(streamConversationChat).mockResolvedValue({
-      text: '今天晴。',
-      done: true,
-      interrupted: false,
-      error: null,
-      requestId: 'req-1',
-      conversationOid: 'chat1',
-      messageOid: 'm2'
-    })
-    const wrapper = mountPage()
-    await settle()
-
-    await sendText(wrapper, '天气怎么样')
-
-    expect(streamConversationChat).toHaveBeenCalledWith(
-      expect.objectContaining({ conversationOid: 'chat1', content: '天气怎么样' })
-    )
-    expect(wrapper.text()).toContain('今天晴。')
-
-    wrapper.unmount()
-  })
-
-  it('流失败时给人话说明与错误码', async () => {
-    vi.mocked(streamConversationChat).mockRejectedValue(
-      new AiRequestError({ status: 429, code: 'AI_RATE_LIMITED', retryAfter: 30 })
-    )
-    const wrapper = mountPage()
-    await settle()
-
-    await sendText(wrapper, '天气怎么样')
-
-    expect(wrapper.text()).toContain('ai.errors.AI_RATE_LIMITED.title')
-    expect(wrapper.text()).toContain('ai.chat.rateLimited')
-
-    wrapper.unmount()
-  })
-})
-
 describe('智能体模式', () => {
   it('提交后立刻返回，不等任务跑完', async () => {
     const wrapper = mountPage()
     await settle()
-    await switchToAgent(wrapper)
 
     await sendText(wrapper, '查一下图书馆')
 
@@ -636,7 +555,6 @@ describe('智能体模式', () => {
   it('轮询到终态就停：不再发请求', async () => {
     const wrapper = mountPage()
     await settle()
-    await switchToAgent(wrapper)
     await sendText(wrapper, '查一下图书馆')
 
     await vi.advanceTimersByTimeAsync(1500)
@@ -670,7 +588,6 @@ describe('智能体模式', () => {
     })
     const wrapper = mountPage()
     await settle()
-    await switchToAgent(wrapper)
     await sendText(wrapper, '查一下图书馆并改时长')
 
     await vi.advanceTimersByTimeAsync(1500)
@@ -690,7 +607,6 @@ describe('智能体模式', () => {
     vi.mocked(cancelRun).mockResolvedValue({ status: 'cancelled' })
     const wrapper = mountPage()
     await settle()
-    await switchToAgent(wrapper)
     await sendText(wrapper, '查一下图书馆')
 
     await findButton(wrapper, 'ai.agent.run.cancel')!.trigger('click')
@@ -723,14 +639,12 @@ describe('接回在跑的任务', () => {
 })
 
 describe('待确认提案', () => {
-  it('进入智能体模式时拉一次待确认提案', async () => {
+  it('进页面拉一次待确认提案', async () => {
     vi.mocked(fetchPendingProposals).mockResolvedValue({
       proposals: [proposal({ oid: '7'.repeat(32), tool_name: 'db_insert' })]
     })
     const wrapper = mountPage()
     await settle()
-
-    await switchToAgent(wrapper)
 
     expect(fetchPendingProposals).toHaveBeenCalledWith('proposed')
     expect(wrapper.text()).toContain('ai.agent.pending.count')
@@ -749,7 +663,6 @@ describe('待确认提案', () => {
     })
     const wrapper = mountPage()
     await settle()
-    await switchToAgent(wrapper)
 
     await findButton(wrapper, 'ai.agent.pending.entry')!.trigger('click')
     await settle()
@@ -775,7 +688,6 @@ describe('双人动态码', () => {
     })
     const wrapper = mountPage()
     await settle()
-    await switchToAgent(wrapper)
 
     await findButton(wrapper, 'ai.agent.pending.entry')!.trigger('click')
     await settle()
@@ -803,7 +715,6 @@ describe('双人动态码', () => {
     })
     const wrapper = mountPage()
     await settle()
-    await switchToAgent(wrapper)
 
     await findButton(wrapper, 'ai.agent.pending.entry')!.trigger('click')
     await settle()

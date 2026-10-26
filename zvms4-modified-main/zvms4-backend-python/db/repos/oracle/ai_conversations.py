@@ -270,7 +270,11 @@ def _delete_batched_stmt(oid: str, owner_oid: str, batch_size: int):
     )
 
 
-def _conversation_row(mapping: Any) -> Row:
+def _base_conversation_row(mapping: Any) -> Row:
+    """``_columns()`` 与 ``_list_columns()`` **共有**的列的映射。
+
+    只有两边都投影的列才允许出现在这里：往这里加一列就等于要求列表也带上它。
+    """
     return {
         "_id": mapping["oid"],
         "owner_oid": mapping["owner_oid"],
@@ -278,7 +282,6 @@ def _conversation_row(mapping: Any) -> Row:
         "title": mapping["title"],
         "model": mapping["model"],
         "status": mapping["status"],
-        "summary": mapping["summary"],
         "summary_upto_seq": int(mapping["summary_upto_seq"] or 0),
         "tokens_prompt": int(mapping["tokens_prompt"] or 0),
         "tokens_completion": int(mapping["tokens_completion"] or 0),
@@ -289,6 +292,30 @@ def _conversation_row(mapping: Any) -> Row:
         "created_at": mapping["created_at"],
         "updated_at": mapping["updated_at"],
     }
+
+
+def _conversation_row(mapping: Any) -> Row:
+    """详情行映射：``_columns()`` 全列投影，含 ``summary``（上下文组装要读它）。
+
+    只能喂详情投影的行。列表投影没有 ``summary`` 列，喂进来会抛
+    ``NoSuchColumnError``——列表走 :func:`_list_row`。
+    """
+    row = _base_conversation_row(mapping)
+    row["summary"] = mapping["summary"]
+    return row
+
+
+def _list_row(mapping: Any) -> Row:
+    """列表行映射：``_list_columns()`` 投影，**不含** ``summary``。
+
+    为什么列表不取 ``summary``：它是 CLOB，单会话 200 轮正文≈1.6MB，翻页时把它
+    一起 select 回来等于每次翻页读几 MB（见模块 docstring）。所以这里直接给占位
+    ``None``——与 ``create()`` 返回的新会话同口径——而不是去 ``mapping["summary"]``
+    讨一个列表投影里不存在的列（那正是历史上列表页 100% 500 的原因）。
+    """
+    row = _base_conversation_row(mapping)
+    row["summary"] = None
+    return row
 
 
 # ---------------------------------------------------------------------------
@@ -522,7 +549,7 @@ class OracleAIConversationsRepo:
         )
         async with _session_for(self._session) as (session, _owns):
             rows = (await session.execute(stmt)).all()
-        items = [_conversation_row(row._mapping) for row in rows]
+        items = [_list_row(row._mapping) for row in rows]
         # 下一页游标只在「取满一页」时给：不满说明到底了，也给游标只是让客户端多
         # 发一次空请求。
         if len(items) < _clamp_limit(limit):

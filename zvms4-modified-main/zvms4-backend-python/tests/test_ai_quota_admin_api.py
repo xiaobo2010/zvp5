@@ -23,7 +23,7 @@ from db import backends
 from db.repos.protocols import SHARED_OWNER_OID
 from routers import ai_router
 from services.ai import quota as quota_service
-from services.ai.config import DEFAULT_QUOTA
+from services.ai.config import DEFAULT_QUOTA, role_quota
 from util.object_id import get_current_user
 
 PREFIX = "/api/ai"
@@ -122,11 +122,28 @@ class _FakeLog:
         return None
 
 
+class _FakeUsersRepo:
+    """``UsersRepo`` 的最小替身：admin 额度视图只读 ``roles``。
+
+    映射里没有的 oid 就是「查不到用户」，回 ``None``（不能编造空角色）。
+    """
+
+    def __init__(self, roles: dict[str, list[str]] | None = None) -> None:
+        self.roles = dict(roles or {})
+
+    async def get_for_auth(self, oid: str):
+        if oid not in self.roles:
+            return None
+        return {"_id": oid, "roles": list(self.roles[oid])}
+
+
 @pytest.fixture
 def api(monkeypatch):
     repo = _FakeQuotaRepo()
+    users = _FakeUsersRepo({TARGET_OID: ["department"]})
     log = _FakeLog()
     monkeypatch.setattr(backends, "get_ai_quota_repo", lambda *a, **k: repo)
+    monkeypatch.setattr(backends, "get_users_repo", lambda *a, **k: users)
 
     app = FastAPI()
     app.include_router(ai_router.router, prefix=PREFIX)
@@ -158,6 +175,9 @@ def test_user_reads_own_quota(api) -> None:
     assert data["ocr"]["used"] == 0
     assert data["ocr"]["limit"] == DEFAULT_QUOTA["ocr"]
     assert data["chat"]["limit"] == DEFAULT_QUOTA["chat"]
+    # student 不在角色额度表里：默认值来自全局 AI_DEFAULT_*，不是角色表。
+    assert data["ocr"]["source"] == "global_default"
+    assert data["chat"]["source"] == "global_default"
 
 
 def test_admin_reads_other_user_quota(api) -> None:
@@ -171,7 +191,49 @@ def test_admin_reads_other_user_quota(api) -> None:
         "period": quota_service.period_now(),
         "used": 7,
         "limit": 20,
+        # 库里有行：上限是显式值，管理端展示时必须与扣费读到的同一个数。
+        "source": "explicit",
     }
+
+
+def test_admin_default_baseline_comes_from_the_target_users_roles(api) -> None:
+    """展示口径要与扣费口径一致：目标用户的 admin 角色 → ocr 500 / chat 1_000_000。
+
+    之前 ``admin_snapshot`` 不带 roles，管理页会回落到 ``DEFAULT_QUOTA``
+    （chat 200_000），比真实生效值少一个数量级。
+    """
+    client, _repo, _log = api
+    client.app.dependency_overrides[get_current_user] = lambda: ADMIN
+    # 让目标用户是 admin，而不是 fixture 默认的 department。
+    users = backends.get_users_repo()
+    users.roles[TARGET_OID] = ["admin"]
+
+    data = client.get(f"{PREFIX}/quota/{TARGET_OID}").json()["data"]
+
+    role_limits = role_quota()["admin"]
+    assert data["ocr"]["limit"] == role_limits["ocr"]
+    assert data["chat"]["limit"] == role_limits["chat"]
+    assert data["ocr"]["source"] == "role_default"
+    assert data["chat"]["source"] == "role_default"
+
+
+def test_snapshot_uses_roles_for_the_default_baseline(api) -> None:
+    """仓储行不存在时，``snapshot`` 直接吃 ``roles`` 算默认值（服务层契约）。"""
+    _client, _repo, _log = api
+
+    data = asyncio.run(quota_service.snapshot(TARGET_OID, roles=["admin"]))
+
+    assert data["ocr"] == {
+        "period": quota_service.period_now(),
+        "used": 0,
+        "limit": role_quota()["admin"]["ocr"],
+        "source": "role_default",
+    }
+    assert data["chat"]["limit"] == role_quota()["admin"]["chat"]
+    # 不传 roles（例如查不到用户）时回全局默认，而不是编一个角色。
+    fallback = asyncio.run(quota_service.snapshot(TARGET_OID))
+    assert fallback["ocr"]["limit"] == DEFAULT_QUOTA["ocr"]
+    assert fallback["chat"]["source"] == "global_default"
 
 
 def test_admin_reads_unknown_user_falls_back_to_defaults(api) -> None:
@@ -182,6 +244,9 @@ def test_admin_reads_unknown_user_falls_back_to_defaults(api) -> None:
     assert body["code"] == 200
     assert body["data"]["ocr"]["used"] == 0
     assert body["data"]["ocr"]["limit"] == DEFAULT_QUOTA["ocr"]
+    # 查不到用户：按全局默认展示，并标明来源，不能让管理页以为这是角色算出来的。
+    assert body["data"]["ocr"]["source"] == "global_default"
+    assert body["data"]["chat"]["source"] == "global_default"
 
 
 def test_non_admin_cannot_read_other_user_quota(api) -> None:

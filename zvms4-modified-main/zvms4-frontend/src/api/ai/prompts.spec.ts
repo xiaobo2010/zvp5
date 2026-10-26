@@ -101,6 +101,42 @@ describe('prompt 审阅 API 契约', () => {
     expect(paramsOf()).toMatchObject({ page: 1, perpage: AI_PROMPTS_PERPAGE_MAX })
   })
 
+  it('场景与关键字去空白后传给后端；空白值不落到 query string', async () => {
+    axiosMock.mockResolvedValueOnce(envelope([], 0))
+    await listAiPrompts({ purpose: ' ocr ', keyword: '  本月活动  ' })
+    expect(paramsOf()).toMatchObject({ purpose: 'ocr', keyword: '本月活动' })
+
+    axiosMock.mockReset()
+    axiosMock.mockResolvedValueOnce(envelope([], 0))
+    await listAiPrompts({ purpose: '  ', keyword: '   ' })
+    expect(paramsOf().purpose).toBeUndefined()
+    expect(paramsOf().keyword).toBeUndefined()
+  })
+
+  it('给了任一时间边界就整段忽略 days，边界折成 epoch 秒', async () => {
+    axiosMock.mockResolvedValueOnce(envelope([], 0))
+    await listAiPrompts({
+      days: 30,
+      time_start: new Date('2026-10-01T00:00:00Z'),
+      time_end: new Date('2026-10-24T00:00:00Z')
+    })
+
+    const params = paramsOf()
+    expect(params.days).toBeUndefined()
+    expect(params.time_start).toBe(
+      Math.floor(new Date('2026-10-01T00:00:00Z').getTime() / 1000)
+    )
+    expect(params.time_end).toBe(Math.floor(new Date('2026-10-24T00:00:00Z').getTime() / 1000))
+  })
+
+  it('只给一侧边界时同样不传 days', async () => {
+    axiosMock.mockResolvedValueOnce(envelope([], 0))
+    await listAiPrompts({ time_start: 1790812800 })
+
+    expect(paramsOf()).toMatchObject({ time_start: 1790812800 })
+    expect(paramsOf().days).toBeUndefined()
+  })
+
   it('metadata.size 作为总数读出', async () => {
     axiosMock.mockResolvedValueOnce(envelope([metaFixture], 137))
 

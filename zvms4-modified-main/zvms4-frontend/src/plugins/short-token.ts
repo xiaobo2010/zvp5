@@ -2,12 +2,13 @@ import { ElMessageBox } from 'element-plus'
 import api from '@/api'
 import i18n from '@/i18n'
 
-export function temporaryToken(userid: string): Promise<string> {
+export function temporaryToken(userid: string, reason?: string): Promise<string> {
   const locale = i18n.global.locale.value
   const locales = {
     'zh-CN': {
       title: '请输入密码',
-      message: '请确认您的密码。',
+      // 解锁场景由调用方给更具体的提示（如平板访问附件），默认保持原来的问法。
+      message: reason || '请确认您的密码。',
       confirm: '确认',
       cancel: '取消',
       validation: ''

@@ -83,12 +83,14 @@ declare module 'vue' {
     ZSelectClass: typeof import('./src/components/form/ZSelectClass.vue')['default']
     ZSelectPerson: typeof import('./src/components/form/ZSelectPerson.vue')['default']
     ZSystemAuthDialog: typeof import('./src/components/system/ZSystemAuthDialog.vue')['default']
+    ZSystemSettings: typeof import('./src/components/manage/ZSystemSettings.vue')['default']
     ZTime: typeof import('./src/components/tags/ZTime.vue')['default']
     ZTimeJudge: typeof import('./src/components/activity/ZTimeJudge.vue')['default']
     ZUploadFile: typeof import('./src/components/activity/ZUploadFile.vue')['default']
     ZUserGroup: typeof import('./src/components/tags/ZUserGroup.vue')['default']
     ZUserModification: typeof import('./src/components/group/ZUserModification.vue')['default']
     ZUserPosition: typeof import('./src/components/tags/ZUserPosition.vue')['default']
+    ZUserQuotaDialog: typeof import('./src/components/manage/ZUserQuotaDialog.vue')['default']
     ZUserTimeJudge: typeof import('./src/components/activity/ZUserTimeJudge.vue')['default']
   }
   export interface GlobalDirectives {

@@ -1,7 +1,7 @@
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import ZAiPromptAudit from './ZAiPromptAudit.vue'
-import { getAiPrompt, listAiPrompts } from '@/api/ai'
+import { AiRequestError, getAiPrompt, listAiPrompts } from '@/api/ai'
 import type { AiPromptAuditRecord } from '@/../types/ai'
 
 const { elMessageErrorSpy, elMessageSuccessSpy } = vi.hoisted(() => ({
@@ -25,6 +25,30 @@ vi.mock('vue-i18n', async (importOriginal) => {
     useI18n: () => ({
       t: (key: string, params?: Record<string, unknown>) =>
         params === undefined ? key : `${key} ${JSON.stringify(params)}`
+    })
+  }
+})
+
+vi.mock('@/components/form/ZSelectPerson.vue', async () => {
+  const { defineComponent, h } = await import('vue')
+  return {
+    default: defineComponent({
+      name: 'ZSelectPerson',
+      props: {
+        modelValue: { type: [String, Array], default: '' },
+        filterStart: Number,
+        fullWidth: Boolean
+      },
+      emits: ['update:modelValue'],
+      setup(props, { emit }) {
+        return () =>
+          h('input', {
+            class: 'z-select-person-stub',
+            value: typeof props.modelValue === 'string' ? props.modelValue : '',
+            onInput: (event: Event) =>
+              emit('update:modelValue', (event.target as HTMLInputElement).value)
+          })
+      }
     })
   }
 })
@@ -195,7 +219,11 @@ vi.mock('element-plus', async () => {
 
   const ElSelect = defineComponent({
     name: 'ElSelect',
-    props: { modelValue: { type: [String, Number], default: '' }, placeholder: String },
+    props: {
+      modelValue: { type: [String, Number], default: '' },
+      placeholder: String,
+      disabled: Boolean
+    },
     emits: ['update:modelValue'],
     setup(props, { emit }) {
       return () =>
@@ -203,6 +231,7 @@ vi.mock('element-plus', async () => {
           class: 'el-select-stub',
           value: props.modelValue,
           placeholder: props.placeholder,
+          disabled: props.disabled || undefined,
           onInput: (event: Event) =>
             emit('update:modelValue', (event.target as HTMLInputElement).value)
         })
@@ -222,6 +251,54 @@ vi.mock('element-plus', async () => {
           onInput: (event: Event) =>
             emit('update:modelValue', (event.target as HTMLInputElement).value)
         })
+    }
+  })
+
+  const ElDatePicker = defineComponent({
+    name: 'ElDatePicker',
+    props: {
+      modelValue: { type: [Array, Date, String, Number], default: null },
+      type: String,
+      placeholder: String
+    },
+    emits: ['update:modelValue'],
+    setup(props, { emit }) {
+      return () =>
+        h('input', {
+          class: 'el-date-picker-stub',
+          value: Array.isArray(props.modelValue)
+            ? (props.modelValue as Date[]).map((item) => item.toISOString()).join(',')
+            : '',
+          placeholder: props.placeholder,
+          onInput: (event: Event) => {
+            const raw = (event.target as HTMLInputElement).value
+            if (!raw) {
+              emit('update:modelValue', null)
+              return
+            }
+            emit('update:modelValue', [
+              new Date('2026-10-01T00:00:00Z'),
+              new Date('2026-10-24T00:00:00Z')
+            ])
+          }
+        })
+    }
+  })
+
+  const ElTooltip = defineComponent({
+    name: 'ElTooltip',
+    props: { content: String, disabled: Boolean, placement: String },
+    setup(props, { slots }) {
+      return () =>
+        h(
+          'div',
+          {
+            class: 'el-tooltip-stub',
+            'data-content': props.content ?? '',
+            'data-disabled': String(Boolean(props.disabled))
+          },
+          slots.default?.()
+        )
     }
   })
 
@@ -256,6 +333,8 @@ vi.mock('element-plus', async () => {
     ElButton,
     ElSelect,
     ElInput,
+    ElDatePicker,
+    ElTooltip,
     ElOption,
     ElIcon,
     ElEmpty,
@@ -290,6 +369,9 @@ const detailFixture = {
   created_at: '2026-10-24T08:00:00'
 }
 
+const RANGE_START_EPOCH = Math.floor(new Date('2026-10-01T00:00:00Z').getTime() / 1000)
+const RANGE_END_EPOCH = Math.floor(new Date('2026-10-24T00:00:00Z').getTime() / 1000)
+
 function mountPage(): VueWrapper {
   return mount(ZAiPromptAudit)
 }
@@ -297,6 +379,19 @@ function mountPage(): VueWrapper {
 function lastQuery() {
   const calls = vi.mocked(listAiPrompts).mock.calls
   return calls[calls.length - 1]![0]
+}
+
+/** 天数是第二个 ElSelect（第一个是场景）。 */
+function daysSelect(wrapper: VueWrapper) {
+  return wrapper.findAll('.el-select-stub')[1]!
+}
+
+function purposeSelect(wrapper: VueWrapper) {
+  return wrapper.findAll('.el-select-stub')[0]!
+}
+
+function buttonByText(wrapper: VueWrapper, text: string) {
+  return wrapper.findAll('.el-button-stub').find((item) => item.text() === text)!
 }
 
 beforeEach(() => {
@@ -308,7 +403,7 @@ beforeEach(() => {
   vi.mocked(getAiPrompt).mockResolvedValue(detailFixture)
 })
 
-describe('行为监控页', () => {
+describe('Prompt 审阅页', () => {
   it('列表渲染元数据列：时间、用户、角色快照、场景与字符数', async () => {
     const wrapper = mountPage()
     await flushPromises()
@@ -320,6 +415,15 @@ describe('行为监控页', () => {
     expect(table.text()).toContain('admin,department')
     expect(table.text()).toContain('chat')
     expect(table.text()).toContain('1280')
+
+    wrapper.unmount()
+  })
+
+  it('标题让人知道这里能查 Prompt', async () => {
+    const wrapper = mountPage()
+    await flushPromises()
+
+    expect(wrapper.find('.yg-card__title').text()).toBe('ai.prompts.title')
 
     wrapper.unmount()
   })
@@ -338,11 +442,13 @@ describe('行为监控页', () => {
     await flushPromises()
 
     expect(lastQuery()).toMatchObject({ page: 1, perpage: 20, days: 7 })
+    expect(lastQuery()?.time_start).toBeUndefined()
+    expect(lastQuery()?.time_end).toBeUndefined()
 
     wrapper.unmount()
   })
 
-  it('用户 oid 需要点「查询」才生效，并回到第一页', async () => {
+  it('选用户即刻重查并回到第一页（与调用日志页一致）', async () => {
     const wrapper = mountPage()
     await flushPromises()
 
@@ -350,11 +456,7 @@ describe('行为监控页', () => {
     await flushPromises()
     expect(lastQuery()).toMatchObject({ page: 2 })
 
-    await wrapper.find('.el-input-stub').setValue('  uid-9  ')
-    const queryButton = wrapper
-      .findAll('.el-button-stub')
-      .find((item) => item.text() === 'ai.prompts.query')!
-    await queryButton.trigger('click')
+    await wrapper.find('.z-select-person-stub').setValue(' uid-9 ')
     await flushPromises()
 
     expect(lastQuery()).toMatchObject({ page: 1, userOid: 'uid-9' })
@@ -362,14 +464,82 @@ describe('行为监控页', () => {
     wrapper.unmount()
   })
 
-  it('切换天数立刻按新窗口重新拉取', async () => {
+  it('场景筛选逐字传给后端', async () => {
     const wrapper = mountPage()
     await flushPromises()
 
-    await wrapper.find('.el-select-stub').setValue('30')
+    await purposeSelect(wrapper).setValue('ocr')
+    await flushPromises()
+
+    expect(lastQuery()).toMatchObject({ purpose: 'ocr' })
+
+    wrapper.unmount()
+  })
+
+  it('关键字按字面传给后端', async () => {
+    const wrapper = mountPage()
+    await flushPromises()
+
+    await wrapper.find('.el-input-stub').setValue('  本月活动 ')
+    await flushPromises()
+
+    expect(lastQuery()).toMatchObject({ keyword: '本月活动' })
+
+    wrapper.unmount()
+  })
+
+  it('自定义范围折成 epoch 秒，并整段忽略天数', async () => {
+    const wrapper = mountPage()
+    await flushPromises()
+
+    await wrapper.find('.el-date-picker-stub').setValue('range')
+    await flushPromises()
+
+    const query = lastQuery()!
+    expect(query.time_start).toBe(RANGE_START_EPOCH)
+    expect(query.time_end).toBe(RANGE_END_EPOCH)
+    expect(query.days).toBeUndefined()
+
+    wrapper.unmount()
+  })
+
+  it('有自定义范围时「最近 N 天」禁用并给 tooltip 说明', async () => {
+    const wrapper = mountPage()
+    await flushPromises()
+
+    expect(daysSelect(wrapper).attributes('disabled')).toBeUndefined()
+
+    await wrapper.find('.el-date-picker-stub').setValue('range')
+    await flushPromises()
+
+    expect(daysSelect(wrapper).attributes('disabled')).toBeDefined()
+    const tooltip = wrapper.find('.el-tooltip-stub')
+    expect(tooltip.attributes('data-content')).toBe('ai.prompts.daysDisabled')
+    expect(tooltip.attributes('data-disabled')).toBe('false')
+
+    wrapper.unmount()
+  })
+
+  it('重新选天数立刻按新窗口拉取', async () => {
+    const wrapper = mountPage()
+    await flushPromises()
+
+    await daysSelect(wrapper).setValue('30')
     await flushPromises()
 
     expect(lastQuery()).toMatchObject({ page: 1, days: '30' })
+
+    wrapper.unmount()
+  })
+
+  it('AI_LOGS_BAD_FILTER 给「时间范围无效」而不是泛化报错', async () => {
+    vi.mocked(listAiPrompts).mockRejectedValueOnce(
+      new AiRequestError({ status: 400, code: 'AI_LOGS_BAD_FILTER' })
+    )
+    const wrapper = mountPage()
+    await flushPromises()
+
+    expect(elMessageErrorSpy).toHaveBeenCalledWith('ai.prompts.badFilter')
 
     wrapper.unmount()
   })
@@ -383,8 +553,7 @@ describe('行为监控页', () => {
     expect(empty.text()).toContain('ai.prompts.loadFailed')
     expect(elMessageErrorSpy).toHaveBeenCalled()
 
-    const retry = empty.findAll('.el-button-stub').find((item) => item.text() === 'ai.prompts.retry')!
-    await retry.trigger('click')
+    await buttonByText(wrapper, 'ai.prompts.retry').trigger('click')
     await flushPromises()
 
     expect(vi.mocked(listAiPrompts).mock.calls.length).toBe(2)
@@ -416,10 +585,7 @@ describe('行为监控页', () => {
     const wrapper = mountPage()
     await flushPromises()
 
-    const viewButton = wrapper
-      .findAll('.el-button-stub')
-      .find((item) => item.text() === 'ai.prompts.view')!
-    await viewButton.trigger('click')
+    await buttonByText(wrapper, 'ai.prompts.view').trigger('click')
     await flushPromises()
 
     expect(getAiPrompt).toHaveBeenCalledTimes(1)
@@ -429,7 +595,8 @@ describe('行为监控页', () => {
     wrapper.unmount()
   })
 
-  it('正文加载失败时给错误态，可重试', async () => {    vi.mocked(getAiPrompt).mockRejectedValueOnce(new Error('boom'))
+  it('正文加载失败时给错误态，可重试', async () => {
+    vi.mocked(getAiPrompt).mockRejectedValueOnce(new Error('boom'))
     const wrapper = mountPage()
     await flushPromises()
 

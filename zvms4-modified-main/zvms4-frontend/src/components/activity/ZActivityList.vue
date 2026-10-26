@@ -22,7 +22,6 @@ import { ZActivityType, ZActivityStatus, ZActivityDuration, ZActivityCard } from
 import { displayStatus } from '@/utils/activityStatus'
 import { useRouter, useRoute } from 'vue-router'
 import ZDataExport from '@/components/utils/ZDataExport.vue'
-import { pad } from '@/plugins/ua.ts'
 import type { Activity } from '@/../types/v2'
 
 const { t } = useI18n()
@@ -245,9 +244,9 @@ watch(isPointerSwiping, (swiping) => {
           <ElButton type="primary" round class="px-1" text bg :icon="Refresh" @click="refresh">
             {{ t('activity.form.actions.refresh') }}
           </ElButton>
-          <ElDivider v-if="!pad()" direction="vertical" />
+          <ElDivider direction="vertical" />
           <ElButton
-            v-if="role === 'campus' && !pad()"
+            v-if="role === 'campus'"
             :icon="Box"
             @click="openExport = true"
             type="warning"

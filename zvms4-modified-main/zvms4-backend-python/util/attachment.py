@@ -330,11 +330,37 @@ def _prune_quota(today: str) -> None:
     _quota_day = today
 
 
+def effective_daily_limits(user_oid: str | None = None) -> tuple[int, int]:
+    """该用户当日的 ``(文件数上限, 字节上限)``。
+
+    优先级：``USER_QUOTA_OVERRIDES``（按用户覆盖）→ ``ops.upload_*``（在线设置
+    的全局默认）→ 本模块的硬编码常量。覆盖值是**按用户每日**语义，不是「一次性
+    额外额度」。
+
+    读的是 :mod:`services.settings_runtime` 的进程内快照（5 秒刷新），所以本函数
+    保持同步、不改调用方签名；管理员在设置中心改完，同进程立即生效。
+    ``settings_runtime`` 在函数内导入：它反过来要读本模块的 ``DAILY_MAX_*`` 作为
+    注册表默认值，模块级互相导入会成环。
+    """
+    from services import settings_runtime
+
+    files, total_bytes = settings_runtime.effective_daily_limits(user_oid)
+    # 注册表默认值就是下面两个常量；这里再兜一次「库/配置给出非法值」的情况。
+    files = files if isinstance(files, int) and files >= 0 else DAILY_MAX_FILES
+    total_bytes = (
+        total_bytes
+        if isinstance(total_bytes, int) and total_bytes >= 0
+        else DAILY_MAX_BYTES
+    )
+    return files, total_bytes
+
+
 def check_quota(user_oid: str) -> None:
     today = _today()
     _prune_quota(today)
     count, used = _quota.get((today, user_oid), [0, 0])
-    if count >= DAILY_MAX_FILES or used >= DAILY_MAX_BYTES:
+    files_limit, bytes_limit = effective_daily_limits(user_oid)
+    if count >= files_limit or used >= bytes_limit:
         raise QuotaExceeded("Daily upload quota exceeded")
 
 

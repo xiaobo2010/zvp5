@@ -102,6 +102,22 @@ describe('会话列表', () => {
     expect(store.listFailed).toBe(false)
   })
 
+  it('只留智能体会话：历史 chat 不在列表里', async () => {
+    mocks.listConversations.mockResolvedValue({
+      conversations: [
+        conversation(),
+        conversation({ oid: 'c2'.repeat(16), mode: 'chat', title: '历史对话' })
+      ],
+      next_cursor: null,
+      size: 2
+    })
+    const store = useAiConversationsStore()
+
+    await store.loadConversations()
+
+    expect(store.conversations.map((item) => item.oid)).toEqual([conversation().oid])
+  })
+
   it('拉列表失败时给出失败标记并清空列表', async () => {
     mocks.listConversations.mockRejectedValue(new Error('boom'))
     const store = useAiConversationsStore()

@@ -2,8 +2,8 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from config import MAX_QUERY_COUNT
 from db import backends
+from services import settings_runtime
 from util.object_id import get_current_user
 from util.user import get_user_display_names
 
@@ -23,7 +23,6 @@ async def read_logs(
     perpage: int = Query(10, ge=1, le=100, description="Items per page (max 100)"),
     query: str = Query(
         "",
-        max_length=MAX_QUERY_COUNT,
         description="Search query (url/data, case-insensitive contains)",
     ),
     type: str = Query("", description="Comma-separated log types"),
@@ -46,7 +45,9 @@ async def read_logs(
     if "admin" not in user["per"]:
         raise HTTPException(status_code=403, detail="Permission denied")
 
-    if len(query) > MAX_QUERY_COUNT:
+    # 上限走运行期设置（``ops.max_query_count``）：原先写在 ``Query(max_length=...)``
+    # 里是 import 期求值，改配置不可能生效。
+    if len(query) > settings_runtime.get_sync("ops.max_query_count"):
         raise HTTPException(status_code=400, detail="Query too long")
 
     types = [t.strip() for t in type.split(",") if t.strip()]

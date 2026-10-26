@@ -164,7 +164,62 @@ export const zhCN = {
       import: '导入',
       notifications: '通知',
       ban: '封禁',
-      logs: '日志'
+      logs: '日志',
+      settings: '设置'
+    }
+  },
+  settings: {
+    title: '系统设置',
+    subtitle: '这里修改的参数保存后立即生效，不需要重启服务。',
+    refresh: '刷新',
+    save: '保存改动',
+    discard: '放弃改动',
+    saved: '设置已保存',
+    saveFailed: '保存失败，请稍后重试',
+    loadFailed: '设置加载失败，请稍后重试',
+    empty: '后端还没有提供可在线修改的设置项',
+    pending: '待保存',
+    pendingCount: '共 {count} 项改动待保存',
+    itemCount: '{count} 项',
+    changed: '已改动，默认 {value}',
+    on: '开',
+    off: '关',
+    emptyValue: '（空）',
+    range: '取值范围 {min} ~ {max}',
+    updatedAt: '{time} 由 {actor} 修改',
+    updatedAtOnly: '{time} 修改',
+    updatedBy: '由 {actor} 修改',
+    groups: {
+      ai: 'AI 网关',
+      ops: '运维阈值',
+      other: '其他设置'
+    },
+    confirm: {
+      title: '保存设置改动',
+      summary: '共 {count} 项改动，保存后立即生效：',
+      ok: '确认保存',
+      cancel: '取消'
+    },
+    roleQuota: {
+      role: '角色',
+      actions: '操作',
+      addRow: '添加角色',
+      removeRow: '删除该行',
+      empty: '还没有角色额度行',
+      kinds: {
+        ocr: 'OCR 识别',
+        chat: '对话'
+      }
+    },
+    flatDict: {
+      empty: '后端还没有下发可调的能力项'
+    },
+    roles: {
+      student: '学生',
+      secretary: '团支书',
+      department: '学生会',
+      admin: '管理员',
+      teacher: '教师'
     }
   },
   roleManagement: {

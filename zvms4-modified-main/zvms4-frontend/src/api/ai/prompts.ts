@@ -1,5 +1,6 @@
 import type { AiPromptAuditDetail, AiPromptAuditRecord } from '@/../types/ai'
 import { aiRequest, aiRequestList } from './http'
+import { toEpochSeconds, type AiLogTimeInput } from './logs'
 
 /**
  * prompt 审阅（/ai/prompts）。仅 admin 可读，非 admin 返回 403 Permission denied。
@@ -25,8 +26,16 @@ export interface AiPromptsQuery {
   perpage?: number
   /** 用户 oid 精确过滤；空值不落到 query string。 */
   userOid?: string
-  /** 滚动窗口（现在往前 N 天），1..90。 */
+  /** 场景精确过滤（开放集合，后端逐字比对）。 */
+  purpose?: string
+  /** 滚动窗口（现在往前 N 天），1..90；给了任一时间边界时整段忽略。 */
   days?: number
+  /** 时间下界（epoch 秒，闭区间），与 logs 同口径。 */
+  time_start?: AiLogTimeInput
+  /** 时间上界（epoch 秒，闭区间）。 */
+  time_end?: AiLogTimeInput
+  /** 正文字面子串，大小写敏感；Service 层走 DBMS_LOB.INSTR，正文不进 SELECT。 */
+  keyword?: string
 }
 
 export interface AiPromptsPage {
@@ -54,13 +63,37 @@ function clampDays(value?: number): number {
 export async function listAiPrompts(query: AiPromptsQuery = {}): Promise<AiPromptsPage> {
   const params: Record<string, string | number> = {
     page: clampPage(query.page),
-    perpage: clampPerpage(query.perpage),
-    days: clampDays(query.days)
+    perpage: clampPerpage(query.perpage)
+  }
+
+  const timeStart = toEpochSeconds(query.time_start)
+  const timeEnd = toEpochSeconds(query.time_end)
+
+  // 显式给了任一时间边界时，后端整段忽略 days（不是取交集），这里干脆不传，
+  // 免得日志里同时出现两个互斥条件。
+  if (timeStart === undefined && timeEnd === undefined) {
+    params.days = clampDays(query.days)
+  }
+  if (timeStart !== undefined) {
+    params.time_start = timeStart
+  }
+  if (timeEnd !== undefined) {
+    params.time_end = timeEnd
   }
 
   const userOid = query.userOid?.trim()
   if (userOid) {
     params.user_oid = userOid
+  }
+
+  const purpose = query.purpose?.trim()
+  if (purpose) {
+    params.purpose = purpose
+  }
+
+  const keyword = query.keyword?.trim()
+  if (keyword) {
+    params.keyword = keyword
   }
 
   const result = await aiRequestList<AiPromptAuditRecord[]>({

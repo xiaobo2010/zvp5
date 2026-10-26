@@ -40,19 +40,53 @@ class FakePromptAuditRepo:
         self.count_calls: list[dict] = []
         self.detail_calls: list[str] = []
 
-    async def list_page(self, *, user_oid=None, since=None, until=None, page=1, page_size=20):
-        filters = {"user_oid": user_oid, "since": since, "until": until}
+    async def list_page(
+        self,
+        *,
+        user_oid=None,
+        purpose=None,
+        keyword=None,
+        since=None,
+        until=None,
+        page=1,
+        page_size=20,
+    ):
+        filters = {
+            "user_oid": user_oid,
+            "purpose": purpose,
+            "keyword": keyword,
+            "since": since,
+            "until": until,
+        }
         self.page_calls.append({**filters, "page": page, "page_size": page_size})
-        matched = [row for row in self.rows if _matches(row, user_oid, since, until)]
+        matched = [
+            row
+            for row in self.rows
+            if _matches(row, user_oid, since, until, purpose, keyword)
+        ]
         matched.sort(key=lambda row: (row["created_at"], row["_id"]), reverse=True)
         start = (page - 1) * page_size
         return [_meta(row) for row in matched[start : start + page_size]]
 
-    async def count(self, *, user_oid=None, since=None, until=None):
+    async def count(
+        self, *, user_oid=None, purpose=None, keyword=None, since=None, until=None
+    ):
         self.count_calls.append(
-            {"user_oid": user_oid, "since": since, "until": until}
+            {
+                "user_oid": user_oid,
+                "purpose": purpose,
+                "keyword": keyword,
+                "since": since,
+                "until": until,
+            }
         )
-        return len([row for row in self.rows if _matches(row, user_oid, since, until)])
+        return len(
+            [
+                row
+                for row in self.rows
+                if _matches(row, user_oid, since, until, purpose, keyword)
+            ]
+        )
 
     async def get_by_oid(self, oid: str):
         self.detail_calls.append(oid)
@@ -62,8 +96,14 @@ class FakePromptAuditRepo:
         return None
 
 
-def _matches(row: dict, user_oid, since, until) -> bool:
+def _matches(
+    row: dict, user_oid, since, until, purpose=None, keyword=None
+) -> bool:
     if user_oid is not None and row["user_oid"] != user_oid:
+        return False
+    if purpose is not None and row["purpose"] != purpose:
+        return False
+    if keyword is not None and keyword not in row["prompt_text"]:
         return False
     if since is not None and row["created_at"] < since:
         return False
@@ -219,6 +259,79 @@ def test_list_is_admin_only(repo, users):
 
     assert response.status_code == 403
     assert repo.page_calls == [] and repo.count_calls == []
+
+
+# ---------------------------------------------------------------------------
+# 列表：场景 / 时间范围 / 正文关键字（对齐 /logs 的查询口径）
+# ---------------------------------------------------------------------------
+
+
+def test_purpose_filter_is_exact_and_reaches_both_statements(repo, users):
+    repo.rows = [
+        _row(),
+        {**_row("b" * 24), "purpose": "agent"},
+    ]
+
+    body = _client().get("/api/ai/prompts", params={"purpose": "agent"}).json()
+
+    assert [row["purpose"] for row in body["data"]] == ["agent"]
+    assert repo.page_calls[0]["purpose"] == "agent"
+    # 总数与列表必须是同一组条件，否则分页数字对不上页内条数。
+    assert repo.count_calls[0]["purpose"] == "agent"
+    assert body["metadata"]["size"] == 1
+
+
+def test_explicit_time_range_beats_days(repo, users):
+    """显式范围优先：``days`` 不再叠加（否则「查某天之前」会被默认窗口截断）。"""
+    start = int((CREATED - timedelta(hours=1)).timestamp())
+    end = int((CREATED + timedelta(hours=1)).timestamp())
+
+    _client().get(
+        "/api/ai/prompts",
+        params={"days": 30, "time_start": start, "time_end": end},
+    )
+
+    sent = repo.page_calls[0]
+    assert sent["since"] == datetime.fromtimestamp(start)
+    assert sent["until"] == datetime.fromtimestamp(end)
+    assert repo.count_calls[0]["until"] == sent["until"]
+
+
+def test_only_one_bound_does_not_reintroduce_the_days_window(repo, users):
+    """只给 time_start 时上界留空；不因为 days 默认 7 天就补一个 since/until。"""
+    start = int((CREATED - timedelta(days=40)).timestamp())
+
+    _client().get("/api/ai/prompts", params={"time_start": start})
+
+    sent = repo.page_calls[0]
+    assert sent["since"] == datetime.fromtimestamp(start)
+    assert sent["until"] is None
+
+
+def test_keyword_filters_the_body_without_returning_it(repo, users):
+    repo.rows = [_row(), {**_row("c" * 24), "prompt_text": "运动会报名表"}]
+
+    body = _client().get("/api/ai/prompts", params={"keyword": " 运动会 "}).json()
+
+    assert len(body["data"]) == 1
+    assert "prompt_text" not in body["data"][0]
+    # 前后空白去掉：管理页输入框里带空格不该改变匹配结果。
+    assert repo.page_calls[0]["keyword"] == "运动会"
+    assert repo.count_calls[0]["keyword"] == "运动会"
+
+
+def test_blank_keyword_is_not_a_filter(repo, users):
+    _client().get("/api/ai/prompts", params={"keyword": "   "})
+
+    assert repo.page_calls[0]["keyword"] is None
+
+
+def test_bad_time_bound_is_400_without_touching_the_repo(repo, users):
+    response = _client().get("/api/ai/prompts", params={"time_start": 10**18})
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": "AI_LOGS_BAD_FILTER"}
+    assert repo.page_calls == []
 
 
 # ---------------------------------------------------------------------------

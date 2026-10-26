@@ -36,7 +36,6 @@ import { useUserStore } from '@/stores/user'
 import categories from './categories.json'
 import { composeDurationRecommendation } from './activityCategory'
 import ZAttachmentUpload from '@/components/attachment/ZAttachmentUpload.vue'
-import { getXuehaiId } from '@/plugins/ua'
 
 const { t, locale } = useI18n()
 const { height } = useWindowSize()
@@ -52,7 +51,6 @@ const { type } = toRefs(props)
 
 const activePage = ref<'info' | 'member' | 'volunteer_order' | 'review'>('info')
 
-const isXuehaiDevice = computed(() => getXuehaiId() > 0)
 const canManageAttachments = computed(
   () => userStore.position.includes('admin') || userStore.position.includes('department')
 )
@@ -338,12 +336,6 @@ function checkReviewAllowed() {
                 <ElAlert
                   v-else-if="!canManageAttachments"
                   :title="t('activity.form.volunteerOrder.noPermission')"
-                  type="warning"
-                  :closable="false"
-                />
-                <ElAlert
-                  v-else-if="isXuehaiDevice"
-                  :title="t('activity.form.volunteerOrder.deviceUnsupported')"
                   type="warning"
                   :closable="false"
                 />

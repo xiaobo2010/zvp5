@@ -42,10 +42,18 @@ AI_ROLE_QUOTA = {
 }
 # AI 调用日志保留天数（tasks/retention.py 读取，缺省 90）。
 AI_CALL_LOGS_RETENTION_DAYS = 90
+# 会话上下文窗口（token）。AI_DEFAULT_CONTEXT_LIMIT 是所有模型的兜底；
+# AI_MODEL_CONTEXT_LIMITS 按模型名覆盖，其中的 "*" 键是该字典的通配兜底。
+# 压缩阈值 AI_CONTEXT_COMPACT_RATIO 默认 0.75，即 200000 窗口下约 150K 触发摘要。
+# 注意：生产 settings.py 不随 rsync 同步，改窗口要手改服务器上的配置，或者改
+# services/agent/context.py 的代码默认值——只改这个模板不会影响线上。
+# AI_DEFAULT_CONTEXT_LIMIT = 200000
+# AI_MODEL_CONTEXT_LIMITS = {}  # 形如 {"gpt-x": 400000, "*": 128000}
 # 智能体：单次 run 的轮数上限与累计 token 预算（防死循环烧钱）。每一轮都是一次
-# 独立计费的上游调用，所以最坏成本 ≈ 轮数 × 单轮 token。
+# 独立计费的上游调用，所以最坏成本 ≈ 轮数 × 单轮 token。预算低于上下文窗口时，
+# agent 会在窗口填满之前先被预算掐断，所以默认值与窗口对齐（200000）。
 # AI_AGENT_MAX_ITERATIONS = 10
-# AI_AGENT_TOKEN_BUDGET = 100000
+# AI_AGENT_TOKEN_BUDGET = 200000
 # 单次 agent run 的 wall-clock 上限（秒）；超时返回已有结果并标 stop_reason=timeout。
 # AI_AGENT_RUN_TIMEOUT_SECONDS = 300
 # 写操作提案的有效期（秒）；过期后确认回 410。
@@ -54,8 +62,8 @@ AI_CALL_LOGS_RETENTION_DAYS = 90
 # 只服务显式 opt-in 的调用方（当前仅 agent 写操作确认）；0 = 关闭缓存，每次都要码。
 # DUAL_AUTH_CACHE_TTL_SECONDS = 1800
 # prompt 受控留存（AI_PROMPT_AUDIT）：只有这些角色（per 口径）的对话正文会被留
-# 一份。默认学生会（department）；写成空元组 () 等于关闭正文留存。
-# AI_PROMPT_CAPTURE_ROLES = ("department",)
+# 一份。默认学生会（department）与管理员（admin）；写成空元组 () 等于关闭正文留存。
+# AI_PROMPT_CAPTURE_ROLES = ("admin", "department")
 # 正文保留天数（日清任务清理，缺省 30）与单条字符上限（超出截断，缺省 8000）。
 # AI_PROMPT_RETENTION_DAYS = 30
 # AI_PROMPT_MAX_CHARS = 8000

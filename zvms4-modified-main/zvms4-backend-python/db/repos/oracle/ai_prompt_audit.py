@@ -28,7 +28,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Any, AsyncIterator
 
-from sqlalchemy import delete, func, insert, select, text
+from sqlalchemy import String, bindparam, delete, func, insert, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.ids import new_oid, normalize_oid
@@ -74,20 +74,54 @@ def _detail_columns() -> tuple[Any, ...]:
     )
 
 
+def _keyword_cond(keyword: str):
+    """正文子串过滤：``DBMS_LOB.INSTR`` 而不是 ``LIKE``。
+
+    两个理由（Oracle 对 CLOB 的 ``LIKE`` 本身可行，只是不够稳）：
+
+    * ``LIKE`` 会把用户输入里的 ``%`` / ``_`` 当通配符——管理端搜「50%」时结果
+      会变成「50 后面任意内容」，看起来像筛选坏了。``INSTR`` 是字面匹配。
+    * 模式串超过 4000 字节时 ``LIKE`` 还要走隐式转换；``DBMS_LOB.INSTR`` 就是
+      CLOB 的定位函数，没有这层顾虑。
+
+    这里是 **WHERE 条件**，正文不参与 ``SELECT``：过滤在库里完成，列表仍然只
+    搬 ``LENGTH(PROMPT_TEXT)``。
+    """
+    return text(
+        f"DBMS_LOB.INSTR({ai_prompt_audit_tbl.name}.prompt_text, :prompt_keyword) > 0"
+    ).bindparams(bindparam("prompt_keyword", value=keyword, type_=String))
+
+
 def _filters(
     *,
     user_oid: str | None = None,
+    purpose: str | None = None,
+    keyword: str | None = None,
     since: datetime | None = None,
     until: datetime | None = None,
+    time_start: datetime | None = None,
+    time_end: datetime | None = None,
 ) -> list[Any]:
-    """可选过滤；``None`` = 不过滤。时间边界是闭区间（与 ``AI_CALL_LOGS`` 一致）。"""
+    """可选过滤；``None`` = 不过滤。时间边界是闭区间（与 ``AI_CALL_LOGS`` 一致）。
+
+    ``since``/``time_start`` 是同一个下界、``until``/``time_end`` 是同一个上界，
+    保留两套名字只是为了兼容既有调用（``since``/``until`` 是仓储口径，
+    ``time_start``/``time_end`` 与 ``/api/ai/logs`` 的查询参数同名）。同时给出时
+    取**更紧**的一侧：交集语义，不会因为多传一个参数而放宽范围。
+    """
     conds: list[Any] = []
     if user_oid is not None:
         conds.append(ai_prompt_audit_tbl.c.user_oid == normalize_oid(user_oid))
-    if since is not None:
-        conds.append(ai_prompt_audit_tbl.c.created_at >= since)
-    if until is not None:
-        conds.append(ai_prompt_audit_tbl.c.created_at <= until)
+    if purpose is not None:
+        conds.append(ai_prompt_audit_tbl.c.purpose == purpose)
+    if keyword:
+        conds.append(_keyword_cond(keyword))
+    starts = [value for value in (since, time_start) if value is not None]
+    if starts:
+        conds.append(ai_prompt_audit_tbl.c.created_at >= max(starts))
+    ends = [value for value in (until, time_end) if value is not None]
+    if ends:
+        conds.append(ai_prompt_audit_tbl.c.created_at <= min(ends))
     return conds
 
 
@@ -195,13 +229,28 @@ class OracleAIPromptAuditRepo:
         self,
         *,
         user_oid: str | None = None,
+        purpose: str | None = None,
+        keyword: str | None = None,
         since: datetime | None = None,
         until: datetime | None = None,
+        time_start: datetime | None = None,
+        time_end: datetime | None = None,
         page: int = 1,
         page_size: int = 20,
     ) -> list[Row]:
-        """一页元数据（新记录在前），**不含正文**；``page`` 从 1 开始。"""
-        conds = _filters(user_oid=user_oid, since=since, until=until)
+        """一页元数据（新记录在前），**不含正文**；``page`` 从 1 开始。
+
+        ``keyword`` 只在 WHERE 里生效（``DBMS_LOB.INSTR``），正文不会被选出。
+        """
+        conds = _filters(
+            user_oid=user_oid,
+            purpose=purpose,
+            keyword=keyword,
+            since=since,
+            until=until,
+            time_start=time_start,
+            time_end=time_end,
+        )
         stmt = _page_stmt(conds, page, page_size)
         async with _session_for(self._session) as (session, _owns):
             rows = (await session.execute(stmt)).all()
@@ -211,11 +260,23 @@ class OracleAIPromptAuditRepo:
         self,
         *,
         user_oid: str | None = None,
+        purpose: str | None = None,
+        keyword: str | None = None,
         since: datetime | None = None,
         until: datetime | None = None,
+        time_start: datetime | None = None,
+        time_end: datetime | None = None,
     ) -> int:
         """与 :meth:`list_page` 同过滤条件的总数（分页的 ``metadata.size``）。"""
-        conds = _filters(user_oid=user_oid, since=since, until=until)
+        conds = _filters(
+            user_oid=user_oid,
+            purpose=purpose,
+            keyword=keyword,
+            since=since,
+            until=until,
+            time_start=time_start,
+            time_end=time_end,
+        )
         stmt = _count_stmt(conds)
         async with _session_for(self._session) as (session, _owns):
             total = (await session.execute(stmt)).scalar_one()

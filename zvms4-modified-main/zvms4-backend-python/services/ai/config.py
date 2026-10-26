@@ -13,6 +13,8 @@ from urllib.parse import urlsplit
 import config
 import settings
 
+from services import settings_runtime
+
 DEFAULT_QUOTA = {
     "ocr": config.AI_DEFAULT_OCR_MONTHLY_UNITS,
     "chat": config.AI_DEFAULT_CHAT_MONTHLY_UNITS,
@@ -71,7 +73,14 @@ def allowed_roles() -> frozenset[str]:
     默认值放 ``config`` 里（代码常量），这里只做 settings 覆盖：写成可配置是为了
     以后放开/收紧（比如只给学生会）不用改代码。空集合或类型不对一律回退到默认
     ——「配置写错」不该变成「谁都用不了」，也不该变成「谁都能用」。
+
+    运行期设置（``ai.allowed_roles``）优先于 ``settings.py``：在线改完即时生效，
+    且注册表已保证它是非空字符串数组，不需要再兜底。
     """
+    override = settings_runtime.get_override("ai.allowed_roles")
+    if isinstance(override, list) and override:
+        return frozenset(override)
+
     raw = getattr(settings, "AI_ALLOWED_ROLES", None)
     if isinstance(raw, str) or not isinstance(raw, (list, tuple, set, frozenset)):
         return frozenset(config.AI_ALLOWED_ROLES)
@@ -107,7 +116,10 @@ def rate_limit_per_minute(kind: str) -> int:
     if isinstance(fallback, bool) or not isinstance(fallback, int) or fallback < 0:
         fallback = 0
 
-    raw = getattr(settings, "AI_RATE_LIMIT_PER_MINUTE", None)
+    # 运行期设置优先（在线改完即时生效）；没有覆盖才看 settings.py 与 config。
+    raw = settings_runtime.get_override("ai.rate_limit_per_minute")
+    if not isinstance(raw, dict):
+        raw = getattr(settings, "AI_RATE_LIMIT_PER_MINUTE", None)
     if not isinstance(raw, dict) or kind not in raw:
         return fallback
     return _positive_int(raw.get(kind), fallback)
@@ -127,9 +139,12 @@ def role_quota() -> dict[str, dict[str, int]]:
 
     只保留 ``ocr``/``chat`` 两个 kind 与非负整数：拼错的 kind 写进额度表等于给
     一个永远不会被查询的行定上限，而且不会报错。整张表被 settings 换掉时按整表
-    替换（与 ``AI_ALLOWED_ROLES`` 同一语义），不合并。
+    替换（与 ``AI_ALLOWED_ROLES`` 同一语义），不合并。运行期设置
+    （``ai.role_quota``）优先于 ``settings.py``。
     """
-    raw = getattr(settings, "AI_ROLE_QUOTA", None)
+    raw = settings_runtime.get_override("ai.role_quota")
+    if not isinstance(raw, dict):
+        raw = getattr(settings, "AI_ROLE_QUOTA", None)
     if not isinstance(raw, dict):
         raw = config.AI_ROLE_QUOTA
 
@@ -346,7 +361,9 @@ def api_key_rate_limit_per_minute() -> int:
 
 
 _AGENT_MAX_ITERATIONS = 10
-_AGENT_TOKEN_BUDGET = 100_000
+# 与上下文窗口（``AI_DEFAULT_CONTEXT_LIMIT`` 默认 200000）对齐：预算低于窗口
+# 时，agent 会在窗口填满之前先被预算掐断，调大窗口等于白调。
+_AGENT_TOKEN_BUDGET = 200_000
 _AGENT_PROPOSAL_TTL_SECONDS = 600
 
 
@@ -363,12 +380,24 @@ def _agent_positive_int(name: str, fallback: int) -> int:
 
 
 def agent_max_iterations() -> int:
-    """一次 agent run 最多几轮工具调用（``settings.AI_AGENT_MAX_ITERATIONS``）。"""
+    """一次 agent run 最多几轮工具调用（``settings.AI_AGENT_MAX_ITERATIONS``）。
+
+    运行期设置 ``ai.agent_max_iterations`` 优先；在线改完即时生效。
+    """
+    override = settings_runtime.get_override("ai.agent_max_iterations")
+    if isinstance(override, int) and not isinstance(override, bool) and override > 0:
+        return override
     return _agent_positive_int("AI_AGENT_MAX_ITERATIONS", _AGENT_MAX_ITERATIONS)
 
 
 def agent_token_budget() -> int:
-    """一次 agent run 累计可消耗的 token 上限（含 prompt + completion）。"""
+    """一次 agent run 累计可消耗的 token 上限（含 prompt + completion）。
+
+    运行期设置 ``ai.agent_token_budget`` 优先；在线改完即时生效。
+    """
+    override = settings_runtime.get_override("ai.agent_token_budget")
+    if isinstance(override, int) and not isinstance(override, bool) and override > 0:
+        return override
     return _agent_positive_int("AI_AGENT_TOKEN_BUDGET", _AGENT_TOKEN_BUDGET)
 
 
@@ -410,7 +439,13 @@ def prompt_capture_roles() -> frozenset[str]:
     （空元组/空列表）表示一个角色都不留；类型写错（字符串、``None``）才回退
     默认集合。这与 :func:`allowed_roles` 有意不同——那边的空集合是「配置写坏」，
     这边空集合是最常见的隐私诉求，不该被静默改回「开着」。
+
+    运行期设置 ``ai.prompt_capture_roles`` 优先，且同样把空数组当成「关闭」。
     """
+    override = settings_runtime.get_override("ai.prompt_capture_roles")
+    if isinstance(override, list):
+        return frozenset(item for item in override if isinstance(item, str) and item)
+
     raw = getattr(settings, "AI_PROMPT_CAPTURE_ROLES", None)
     if isinstance(raw, str) or not isinstance(raw, (list, tuple, set, frozenset)):
         return frozenset(config.AI_PROMPT_CAPTURE_ROLES)
@@ -418,7 +453,13 @@ def prompt_capture_roles() -> frozenset[str]:
 
 
 def prompt_retention_days() -> int:
-    """正文保留天数；``config`` 是兜底，``settings`` 覆盖，非法值逐层回退。"""
+    """正文保留天数；``config`` 是兜底，``settings`` 覆盖，非法值逐层回退。
+
+    运行期设置 ``ai.prompt_retention_days`` 优先级最高。
+    """
+    override = settings_runtime.get_override("ai.prompt_retention_days")
+    if isinstance(override, int) and not isinstance(override, bool) and override > 0:
+        return override
     fallback = _config_positive_int("AI_PROMPT_RETENTION_DAYS", _PROMPT_RETENTION_DAYS)
     return _positive_int(
         getattr(settings, "AI_PROMPT_RETENTION_DAYS", fallback), fallback
@@ -426,7 +467,13 @@ def prompt_retention_days() -> int:
 
 
 def prompt_max_chars() -> int:
-    """单条正文留存上限（字符）；超长在服务端截断。"""
+    """单条正文留存上限（字符）；超长在服务端截断。
+
+    运行期设置 ``ai.prompt_max_chars`` 优先级最高。
+    """
+    override = settings_runtime.get_override("ai.prompt_max_chars")
+    if isinstance(override, int) and not isinstance(override, bool) and override > 0:
+        return override
     fallback = _config_positive_int("AI_PROMPT_MAX_CHARS", _PROMPT_MAX_CHARS)
     return _positive_int(getattr(settings, "AI_PROMPT_MAX_CHARS", fallback), fallback)
 
