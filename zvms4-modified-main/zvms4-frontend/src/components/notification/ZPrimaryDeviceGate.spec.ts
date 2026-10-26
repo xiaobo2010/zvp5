@@ -125,9 +125,19 @@ beforeEach(() => {
 })
 
 describe('主设备强制门', () => {
-  it('特权角色不弹门', async () => {
+  it('特权角色在学海设备上未绑定也要弹门', async () => {
     storeState.position = ['admin']
     vi.mocked(readMyDevice).mockResolvedValue(makeStatus())
+
+    const wrapper = await mountGate()
+
+    expect(wrapper.find('.el-dialog-stub').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('特权角色在 PC 上未绑定不弹门', async () => {
+    storeState.position = ['admin']
+    vi.mocked(readMyDevice).mockResolvedValue(makeStatus({ xuehai_id: '' }))
 
     const wrapper = await mountGate()
 
