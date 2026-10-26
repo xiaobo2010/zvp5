@@ -234,7 +234,10 @@ def _list_for_activity_stmt(
     )
     if query:
         stmt = stmt.where(
-            func.regexp_like(users_tbl.c.name, re.escape(query), "i")
+            or_(
+                func.regexp_like(users_tbl.c.name, re.escape(query), "i"),
+                func.regexp_like(users_tbl.c.business_id, re.escape(query), "i"),
+            )
         )
     return (
         stmt.order_by(members_tbl.c.oid.asc())
@@ -252,7 +255,10 @@ def _list_for_activity_count_stmt(activity_oid: str, query: str):
     ).where(members_tbl.c.activity_oid == activity_oid)
     if query:
         stmt = stmt.where(
-            func.regexp_like(users_tbl.c.name, re.escape(query), "i")
+            or_(
+                func.regexp_like(users_tbl.c.name, re.escape(query), "i"),
+                func.regexp_like(users_tbl.c.business_id, re.escape(query), "i"),
+            )
         )
     return stmt
 

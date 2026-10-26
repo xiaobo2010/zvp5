@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import axios from '@/plugins/axios'
-import { resetToInitial, useLongTermAuth } from './auth'
+import { resetToInitial, useLongTermAuth, useVerificationAuth } from './auth'
 
 vi.mock('@/plugins/axios', () => ({ default: vi.fn() }))
 vi.mock('element-plus', () => ({ ElNotification: vi.fn() }))
@@ -27,6 +27,16 @@ describe('authentication response contract', () => {
     request.mockResolvedValueOnce({ data: { token: 'proof', _id: 'user' } })
     expect((await useLongTermAuth('123', 'StrongPwd1!', 'long', 'verify')).token).toBe('proof')
     expect(localStorage.getItem('token')).toBe('existing')
+  })
+
+  it('issues a short-lived proof token for password re-verification', async () => {
+    request.mockResolvedValueOnce({ data: { status: 'ok', data: 'public-key' } })
+    request.mockResolvedValueOnce({ data: { token: 'proof', _id: 'user' } })
+    expect((await useVerificationAuth('123', 'StrongPwd1!')).token).toBe('proof')
+    expect(request.mock.calls[1][1]).toMatchObject({
+      method: 'POST',
+      data: { id: '123', mode: 'short', purpose: 'verify' }
+    })
   })
 
   it('reads initial-password resets from the response envelope', async () => {

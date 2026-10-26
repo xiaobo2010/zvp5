@@ -28,12 +28,15 @@ export async function insert(aid: string, member: ActivityMember) {
 export async function insertMany(
   aid: string,
   members: NewActivityMember[],
-  options: { overwrite?: boolean; timeout?: number } = {}
+  options: { overwrite?: boolean; rejectExisting?: boolean; timeout?: number } = {}
 ): Promise<void> {
   await axios(`/v3/activities/${aid}/members`, {
     method: 'post',
     data: members,
-    params: options.overwrite ? { overwrite: true } : undefined,
+    params:
+      options.overwrite || options.rejectExisting
+        ? { overwrite: Boolean(options.overwrite), reject_existing: Boolean(options.rejectExisting) }
+        : undefined,
     timeout: options.timeout
   })
 }

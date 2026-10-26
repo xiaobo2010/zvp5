@@ -88,6 +88,7 @@ export interface AiRequestConfig {
   data?: unknown
   /** 查询参数；值为 undefined 的键不会落到 query string。 */
   params?: Record<string, string | number | boolean>
+  headers?: Record<string, string>
 }
 
 /**
@@ -99,6 +100,7 @@ async function request(config: AiRequestConfig) {
     url: config.url,
     data: config.data,
     params: config.params,
+    headers: config.headers,
     validateStatus: () => true
   })
 

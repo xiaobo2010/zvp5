@@ -22,7 +22,7 @@ beforeEach(() => {
 
 describe('义工登记 OCR 流程', () => {
   it('拒绝非图片文件，不触发出站请求', async () => {
-    await expect(parseVolunteerSheet(sheetFile('application/pdf', 'sheet.pdf'))).rejects.toThrow(
+    await expect(parseVolunteerSheet(sheetFile('application/pdf', 'sheet.pdf'), 'short-lived')) .rejects.toThrow(
       '仅支持 JPG / PNG / WebP'
     )
     expect(upload).not.toHaveBeenCalled()
@@ -45,7 +45,7 @@ describe('义工登记 OCR 流程', () => {
     })
 
     const progress = vi.fn()
-    const result = await parseVolunteerSheet(sheetFile(), progress)
+    const result = await parseVolunteerSheet(sheetFile(), 'short-lived', progress)
 
     expect(upload).toHaveBeenCalledWith(
       expect.any(File),
@@ -54,7 +54,7 @@ describe('义工登记 OCR 流程', () => {
       undefined,
       expect.any(Function)
     )
-    expect(enqueueOcr).toHaveBeenCalledWith(OID)
+    expect(enqueueOcr).toHaveBeenCalledWith(OID, 'short-lived')
     expect(getOcr).toHaveBeenCalledWith(OID)
     expect(result.rows).toEqual([
       {
@@ -82,6 +82,6 @@ describe('义工登记 OCR 流程', () => {
     })
     vi.mocked(getOcr).mockResolvedValue({ status: 'failed' })
 
-    await expect(parseVolunteerSheet(sheetFile())).rejects.toThrow('OCR 识别失败')
+    await expect(parseVolunteerSheet(sheetFile(), 'short-lived')).rejects.toThrow('OCR 识别失败')
   })
 })

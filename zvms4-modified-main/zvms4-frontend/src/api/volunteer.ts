@@ -94,6 +94,7 @@ async function waitForResult(
  */
 export async function parseVolunteerSheet(
   file: File,
+  verificationToken: string,
   onProgress?: VolunteerOcrProgressHandler
 ): Promise<OcrVolunteerResponse> {
   validateFile(file)
@@ -116,7 +117,7 @@ export async function parseVolunteerSheet(
   }
 
   onProgress?.({ stage: 'queued' })
-  const queued = await enqueueOcr(attachment._id)
+  const queued = await enqueueOcr(attachment._id, verificationToken)
   onProgress?.({
     stage: 'recognizing',
     status: queued.status,
