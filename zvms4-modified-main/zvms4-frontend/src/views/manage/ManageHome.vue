@@ -21,29 +21,39 @@ interface SegmentedTab {
   icon: Component
 }
 
-const VALID_CURRENT = ['groups', 'users', 'roles', 'ban', 'logs', 'notifications', 'settings']
-
-/** 只有管理员能进的分区；其他人访问一律回落到群组列表。 */
-const ADMIN_ONLY = ['notifications', 'roles', 'settings']
-
 const route = useRoute()
 const router = useRouter()
 const userStore = useUserStore()
 const { t } = useI18n()
-const isAdmin = userStore.position.includes('admin')
 
-if (!(isAdmin || userStore.position.includes('department'))) {
+const isAdmin = userStore.position.includes('admin')
+const isDepartment = userStore.position.includes('department')
+/** 团支书：后端临时密码等能力限同班，前端只给「用户」分区并按班级列人。 */
+const isSecretary = userStore.position.includes('secretary')
+const secretaryOnly = isSecretary && !isAdmin && !isDepartment
+
+/** 只有管理员能进的分区；其他人访问一律回落到入口分区。 */
+const ADMIN_ONLY = ['notifications', 'roles', 'settings']
+
+const VALID_CURRENT = secretaryOnly
+  ? ['users']
+  : ['groups', 'users', 'roles', 'ban', 'logs', 'notifications', 'settings']
+
+/** 无参数或越权访问时的回退分区。 */
+const HOME_TAB = secretaryOnly ? 'users' : 'groups'
+
+if (!(isAdmin || isDepartment || isSecretary)) {
   router.replace('/not-found')
 }
 
 const curPage = route.params.action?.toString()
 
 if (curPage && ADMIN_ONLY.includes(curPage) && !isAdmin) {
-  router.replace('/manage/groups')
+  router.replace(`/manage/${HOME_TAB}`)
 }
 
 if (curPage && !VALID_CURRENT.includes(curPage)) {
-  router.replace('/manage/groups')
+  router.replace(`/manage/${HOME_TAB}`)
 }
 
 const current = ref(
@@ -51,21 +61,28 @@ const current = ref(
     VALID_CURRENT.includes(curPage) &&
     (!ADMIN_ONLY.includes(curPage) || isAdmin)
     ? curPage
-    : 'groups'
+    : HOME_TAB
 )
 
-const tabs = ref<SegmentedTab[]>([
-  {
-    label: 'Groups',
-    value: 'groups',
-    icon: Group
-  },
-  {
-    label: 'Users',
-    value: 'users',
-    icon: User
-  }
-])
+const tabs = ref<SegmentedTab[]>(
+  secretaryOnly
+    ? [{ label: 'Users', value: 'users', icon: User }]
+    : [
+        {
+          label: 'Groups',
+          value: 'groups',
+          icon: Group
+        },
+        {
+          label: 'Users',
+          value: 'users',
+          icon: User
+        }
+      ]
+)
+
+/** 「用户」分区：团支书按本班成员展示，admin/学生会看全校。 */
+const usersGroupId = secretaryOnly ? userStore.class_id || '' : ''
 
 if (isAdmin) {
   tabs.value[tabs.value.length] = {
@@ -104,12 +121,12 @@ watch(
   () => {
     const curPage = route.params.action?.toString()
     if (curPage && ADMIN_ONLY.includes(curPage) && !isAdmin) {
-      router.replace('/manage/groups')
-      current.value = 'groups'
+      router.replace(`/manage/${HOME_TAB}`)
+      current.value = HOME_TAB
     } else if (curPage && VALID_CURRENT.includes(curPage)) {
       current.value = curPage
     } else {
-      router.replace('/manage/groups')
+      router.replace(`/manage/${HOME_TAB}`)
     }
   }
 )
@@ -212,7 +229,7 @@ watch([current, compactTabs], () => {
     </nav>
 
     <ZGroupList v-if="current === 'groups'" />
-    <ZGroupUserList v-else-if="current === 'users'" id="" />
+    <ZGroupUserList v-else-if="current === 'users'" :id="usersGroupId" />
     <ManageRoles v-else-if="current === 'roles'" />
     <ZLogList v-else-if="current === 'logs'" id="" user="" />
     <ZBanRules v-else-if="current === 'ban'" />
