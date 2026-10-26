@@ -7,6 +7,7 @@ import {
   ElCheckbox,
   ElDialog,
   ElIcon,
+  ElInput,
   ElMessage,
   ElMessageBox,
   ElOption,
@@ -26,6 +27,7 @@ import {
   Refresh,
   RefreshLeft,
   RefreshRight,
+  Search,
   UploadFilled,
   View,
   WarningFilled
@@ -61,6 +63,9 @@ import { temporaryToken } from '@/plugins/short-token'
 
 type RegistrationMode = Exclude<ActivityMode, 'hybrid'>
 type RowStatus = 'empty' | 'ok' | 'warning' | 'error' | 'saved'
+// 两个栏目共用同一张表格组件：新增只写新成员，修改只覆盖已录入成员。
+// 两组行各自独立、各自封顶 100，切换栏目时另一组先存起来。
+type EditorMode = 'create' | 'edit'
 
 interface RegistrationRow {
   key: string
@@ -113,9 +118,10 @@ interface RowSnapshot {
   note: string
 }
 
-// 一条历史：快照 + 它所属的活动（撤回时可能要先把活动切回去）。
+// 一条历史：快照 + 它所属的活动和栏目（撤回时可能要先把活动和栏目切回去）。
 interface HistoryEntry {
   activityId: string
+  mode: EditorMode
   rows: RowSnapshot[]
 }
 
@@ -152,7 +158,7 @@ const MODES: RegistrationMode[] = ['on-campus', 'off-campus', 'social-practice']
 // 一次最多回溯 10 页（1000 人）；超出部分标记截断，提交命中时再确认覆盖。
 const EXISTING_PAGE_SIZE = 100
 const EXISTING_MEMBER_LIMIT = 1000
-// 表格总行数上限（= 单次新增上限）。粘贴/OCR/新增都走这个闸门，
+// 每一栏的行数上限（新增、修改各 100）。粘贴/OCR/新增行都走这个闸门，
 // 否则一次全量粘贴就会把每键重算和表格渲染拖到几万行的量级。
 const MAX_REGISTER_ROWS = 100
 // 单次提交人数上限：超过就拦下，让管理员分批提交，避免一次事务写入过大。
@@ -193,7 +199,16 @@ const activityLoading = ref(false)
 const selectedActivityId = ref('')
 const selectedActivity = ref<Activity | null>(null)
 
+// 当前显示的那一栏的行；另一栏的行存在 stashedRows 里，切换时换回来。
 const rows = ref<RegistrationRow[]>([])
+const editorMode = ref<EditorMode>('create')
+const stashedRows: Record<EditorMode, RegistrationRow[]> = { create: [], edit: [] }
+// 「修改已有」栏的服务器搜索：按姓名/学号查当前活动的成员，点「加入表格」进明细。
+const editSearchQuery = ref('')
+const editSearchLoading = ref(false)
+const editSearchResults = ref<ExistingMemberRow[]>([])
+const editSearchDone = ref(false)
+let editSearchSeq = 0
 const activeCell = ref<{ r: number; c: number } | null>(null)
 const submitLoading = ref(false)
 const ocrLoading = ref(false)
@@ -230,7 +245,7 @@ const undoStack = ref<HistoryEntry[]>([])
 const redoStack = ref<HistoryEntry[]>([])
 // 连续输入的防抖快照：首次击键时抓一份「改之前」的状态，600ms 后并入历史。
 let cellHistoryTimer: ReturnType<typeof setTimeout> | undefined
-let cellHistorySnapshot: RowSnapshot[] | null = null
+let cellHistorySnapshot: { mode: EditorMode; rows: RowSnapshot[] } | null = null
 // 覆盖确认弹窗的 Promise 回调。
 let overwriteResolver: ((confirmed: boolean) => void) | null = null
 
@@ -614,6 +629,13 @@ function revalidateRow(row: RegistrationRow) {
     row.mode = activityType as RegistrationMode
   }
 
+  // 「修改已有」栏只处理已在活动中的人：匹配到学生但活动里没有记录时，
+  // 直接标错并引导去新增栏，避免把修改提交成新增。
+  if (editorMode.value === 'edit' && !recorded && status === 'ok') {
+    status = 'error'
+    message = t('activity.register.notInActivity')
+  }
+
   row.baseStatus = status
   row.baseMessage = message
   applyDuplicateState(row)
@@ -769,12 +791,18 @@ function pushUndoStack(entry: HistoryEntry) {
 
 // 连续输入：先抓一份「改之前」的快照，600ms 内的后续击键并入同一条历史。
 function beginCellHistory() {
-  if (!cellHistorySnapshot) cellHistorySnapshot = snapshotRows()
+  if (!cellHistorySnapshot) {
+    cellHistorySnapshot = { mode: editorMode.value, rows: snapshotRows() }
+  }
   if (cellHistoryTimer) clearTimeout(cellHistoryTimer)
   cellHistoryTimer = setTimeout(() => {
     cellHistoryTimer = undefined
     if (!cellHistorySnapshot) return
-    pushUndoStack({ activityId: draftOwnerId, rows: cellHistorySnapshot })
+    pushUndoStack({
+      activityId: draftOwnerId,
+      mode: cellHistorySnapshot.mode,
+      rows: cellHistorySnapshot.rows
+    })
     cellHistorySnapshot = null
     redoStack.value = []
   }, CELL_HISTORY_DELAY)
@@ -787,14 +815,18 @@ function commitCellHistory() {
     cellHistoryTimer = undefined
   }
   if (!cellHistorySnapshot) return
-  pushUndoStack({ activityId: draftOwnerId, rows: cellHistorySnapshot })
+  pushUndoStack({
+    activityId: draftOwnerId,
+    mode: cellHistorySnapshot.mode,
+    rows: cellHistorySnapshot.rows
+  })
   cellHistorySnapshot = null
 }
 
 // 结构性操作：立刻入栈。
 function recordHistory() {
   commitCellHistory()
-  pushUndoStack({ activityId: draftOwnerId, rows: snapshotRows() })
+  pushUndoStack({ activityId: draftOwnerId, mode: editorMode.value, rows: snapshotRows() })
   redoStack.value = []
 }
 
@@ -803,10 +835,14 @@ async function undo() {
   if (!undoStack.value.length) return
   const entry = undoStack.value[undoStack.value.length - 1]
   undoStack.value = undoStack.value.slice(0, -1)
-  redoStack.value = [...redoStack.value, { activityId: draftOwnerId, rows: snapshotRows() }]
+  redoStack.value = [
+    ...redoStack.value,
+    { activityId: draftOwnerId, mode: editorMode.value, rows: snapshotRows() }
+  ]
   if (entry.activityId !== draftOwnerId) {
     await switchActivity(entry.activityId, false)
   }
+  if (entry.mode !== editorMode.value) switchEditorMode(entry.mode)
   restoreSnapshot(entry.rows)
 }
 
@@ -814,10 +850,14 @@ async function redo() {
   if (!redoStack.value.length) return
   const entry = redoStack.value[redoStack.value.length - 1]
   redoStack.value = redoStack.value.slice(0, -1)
-  undoStack.value = [...undoStack.value, { activityId: draftOwnerId, rows: snapshotRows() }]
+  undoStack.value = [
+    ...undoStack.value,
+    { activityId: draftOwnerId, mode: editorMode.value, rows: snapshotRows() }
+  ]
   if (entry.activityId !== draftOwnerId) {
     await switchActivity(entry.activityId, false)
   }
+  if (entry.mode !== editorMode.value) switchEditorMode(entry.mode)
   restoreSnapshot(entry.rows)
 }
 
@@ -1223,6 +1263,8 @@ async function onOcrFile(event: Event) {
       ElMessage.warning(result.warnings?.join('；') || 'OCR 未解析出学生行，请手动粘贴')
       return
     }
+    // OCR 识别的是新登记的人：识别完自动切到「新增」栏再铺数据。
+    if (editorMode.value !== 'create') switchEditorMode('create')
 
     const start = rows.value.findIndex((row) => !hasContent(row))
     const base = start < 0 ? rows.value.length : start
@@ -1327,13 +1369,14 @@ async function hydrateSelectedActivity() {
 // 已在活动中的人，提交时按「设置时长」覆盖；新面孔才走新增。
 async function fetchExistingMemberPage(
   aid: string,
-  page: number
+  page: number,
+  query = ''
 ): Promise<{ rows: ExistingMemberRow[]; total: number }> {
   const result = (await api.activity.member.reads_v3(
     aid,
     page,
     EXISTING_PAGE_SIZE,
-    '',
+    query,
     { timeout: BATCH_TIMEOUT }
   )) as unknown as { members?: ExistingMemberRow[]; total?: number }
   return { rows: result.members ?? [], total: Number(result.total) || 0 }
@@ -1406,19 +1449,129 @@ async function syncActivityContext(preselect = false) {
   await loadExistingMembers(activity._id)
 }
 
-// 换活动时把索引全部作废：旧的 member oid / sessionId 绝不能带到新活动里。
+// 换活动时把索引和搜索结果全部作废：旧的 member oid / sessionId 绝不能带到新活动里。
 function resetExistingIndex() {
   existingLoadSeq += 1
   existingMembers.value = new Map()
   existingLoading.value = false
   existingFetchFailed.value = false
   existingTruncated.value = false
+  resetEditSearch()
+}
+
+function resetEditSearch() {
+  editSearchSeq += 1
+  editSearchQuery.value = ''
+  editSearchResults.value = []
+  editSearchDone.value = false
+  editSearchLoading.value = false
+}
+
+// 「修改已有」栏的服务器搜索：按姓名或学号查当前活动的成员，最多取 200 条。
+async function searchEditMembers() {
+  const activity = selectedActivity.value
+  if (!activity) {
+    ElMessage.warning(t('activity.register.activityRequired'))
+    return
+  }
+  const query = editSearchQuery.value.trim()
+  if (!query) {
+    ElMessage.info(t('activity.register.searchPlaceholder'))
+    return
+  }
+  const seq = ++editSearchSeq
+  editSearchLoading.value = true
+  editSearchDone.value = false
+  try {
+    const found: ExistingMemberRow[] = []
+    for (let page = 1; page <= 2; page += 1) {
+      const { rows: members } = await fetchExistingMemberPage(activity._id, page, query)
+      if (seq !== editSearchSeq) return
+      found.push(...members)
+      if (members.length < EXISTING_PAGE_SIZE) break
+    }
+    editSearchResults.value = found
+  } catch {
+    if (seq !== editSearchSeq) return
+    editSearchResults.value = []
+    ElMessage.warning(t('activity.register.searchFailed'))
+  } finally {
+    if (seq === editSearchSeq) {
+      editSearchLoading.value = false
+      editSearchDone.value = true
+    }
+  }
+}
+
+function memberInEditGrid(item: ExistingMemberRow): boolean {
+  const memberOid = String(item.member ?? '')
+  const mode = normalizeMode(item.mode) ?? defaultMode()
+  return rows.value.some((row) => row.oid === memberOid && row.mode === mode)
+}
+
+// 搜索结果「加入表格」：带着现有身份和时长落一行，管理员只改时长。
+function addEditSearchResult(item: ExistingMemberRow) {
+  const activity = selectedActivity.value
+  if (!activity) return
+  const memberOid = String(item.member ?? '')
+  const mode = normalizeMode(item.mode) ?? defaultMode()
+  if (!memberOid) return
+  if (memberInEditGrid(item)) {
+    ElMessage.info(t('activity.register.alreadyInGrid'))
+    return
+  }
+  const blank = rows.value.find((row) => !hasContent(row))
+  if (!blank && rows.value.length >= MAX_REGISTER_ROWS) {
+    rowLimitWarning()
+    return
+  }
+  const key = existingKey(memberOid, mode)
+  const record: ExistingMemberRecord = existingMembers.value.get(key) ?? {
+    sessionId: String(item._id),
+    member: memberOid,
+    mode,
+    duration: Number(item.duration) || 0,
+    studentId: normalizeStudentId(String(item.user?.id ?? '')),
+    name: normalizePersonName(String(item.member_name ?? item.user?.name ?? ''))
+  }
+  existingMembers.value.set(key, record)
+  recordHistory()
+  const target = blank ?? createRow()
+  if (!blank) rows.value.push(target)
+  target.studentId = record.studentId
+  target.name = record.name
+  target.oid = record.member
+  target.duration = String(record.duration)
+  target.mode = record.mode
+  target.note = ''
+  target.candidates = []
+  revalidateRow(target)
+  markDuplicates()
+  scheduleDraft()
 }
 
 async function retryLoadExisting() {
   const activity = selectedActivity.value
   if (!activity || existingLoading.value) return
   await loadExistingMembers(activity._id)
+}
+
+// 两栏切换：当前行先收进 stashedRows，再把另一栏换出来。
+// 两栏各有自己的 100 行上限、自己的校验状态；活动、已录入索引和草稿共用。
+function switchEditorMode(next: EditorMode) {
+  if (next === editorMode.value) return
+  commitCellHistory()
+  stashedRows[editorMode.value] = rows.value
+  editorMode.value = next
+  rows.value = stashedRows[next]
+  if (!rows.value.length) {
+    rows.value = Array.from({ length: 8 }, () => createRow())
+  }
+  activeCell.value = null
+  rebuildDuplicateIndex()
+  revalidateAll()
+  applySavedState()
+  scheduleDraft()
 }
 
 // 切换活动：草稿按活动隔离，换活动必须从白纸开始。
@@ -1433,11 +1586,14 @@ async function switchActivity(nextId: string, record = true, preselect = false) 
   const previousId = draftOwnerId
   // 切走之前先把当前内容存回旧活动。
   persistDraftFor(previousId, buildDraftPayload(previousId))
+  const beforeMode = editorMode.value
   const beforeSwitch = snapshotRows()
 
   selectedActivityId.value = nextId
   draftOwnerId = nextId
   rows.value = []
+  stashedRows.create = []
+  stashedRows.edit = []
   rebuildDuplicateIndex()
   savedActivityId.value = ''
   savedCount.value = 0
@@ -1453,7 +1609,11 @@ async function switchActivity(nextId: string, record = true, preselect = false) 
     // 用户主动换活动：历史栈重开一条，撤回可以回到刚才那个活动。
     undoStack.value = []
     redoStack.value = []
-    pushUndoStack({ activityId: previousId, rows: beforeSwitch })
+    pushUndoStack({
+      activityId: previousId,
+      mode: beforeMode,
+      rows: beforeSwitch
+    })
   }
 
   await hydrateSelectedActivity()
@@ -1743,6 +1903,9 @@ async function submitRegistration() {
     }
     // 提交成功的人立刻退出登记表，页面只保留还没落库的行。
     pruneSavedRows()
+    // 搜索结果里的时长已经旧了：清掉，避免把过时的原时长显示成「当前值」。
+    editSearchResults.value = []
+    editSearchDone.value = false
 
     if (failures.length) {
       ElMessage.warning(
@@ -1827,28 +1990,28 @@ function statusLabel(status: RowStatus): string {
   return '待填写'
 }
 
+// 只清当前栏目：另一栏和活动选择都保留，避免误删正在改的另一批数据。
 async function clearAll() {
+  const label = editorMode.value === 'create' ? '新增' : '修改'
   try {
-    await ElMessageBox.confirm('清空后当前草稿不可恢复，确定继续？', '清空该登记明细？', {
-      confirmButtonText: '清空',
-      cancelButtonText: '取消',
-      confirmButtonClass: 'el-button--danger',
-      type: 'warning'
-    })
+    await ElMessageBox.confirm(
+      `清空后「${label}」栏当前内容不可恢复，确定继续？`,
+      '清空当前栏目？',
+      {
+        confirmButtonText: '清空',
+        cancelButtonText: '取消',
+        confirmButtonClass: 'el-button--danger',
+        type: 'warning'
+      }
+    )
   } catch {
     return
   }
   recordHistory()
-  localStorage.removeItem(draftKey(draftOwnerId))
-  draftOwnerId = ''
-  selectedActivityId.value = ''
-  selectedActivity.value = null
-  savedActivityId.value = ''
-  savedCount.value = 0
-  savedOids = new Set()
-  resetExistingIndex()
+  rows.value = []
   resetRows(8)
   revalidateAll()
+  scheduleDraft()
 }
 
 // ---------------------------------------------------------------------------
@@ -1858,7 +2021,11 @@ async function clearAll() {
 // 换活动时先写回旧活动的键，再读新活动的键，两个活动的行永远不会互相串。
 // ---------------------------------------------------------------------------
 interface DraftPayload {
+  mode?: EditorMode
+  // 新增栏（旧草稿没有 editRows，读回时就只有这一栏）。
   rows?: Partial<RegistrationRow>[]
+  // 修改栏。
+  editRows?: Partial<RegistrationRow>[]
   activityId?: string
   savedActivityId?: string
   savedCount?: number
@@ -1890,22 +2057,31 @@ function readLegacyDraft(): DraftPayload | null {
   }
 }
 
+function draftRowSnapshot(row: RegistrationRow): Partial<RegistrationRow> {
+  return {
+    studentId: row.studentId,
+    name: row.name,
+    classId: row.classId,
+    className: row.className,
+    oid: row.oid,
+    duration: row.duration,
+    mode: row.mode,
+    note: row.note
+  }
+}
+
 function buildDraftPayload(activityId: string): DraftPayload {
+  // 两栏各自独立存档：当前显示的一栏在 rows 里，另一栏在 stashedRows 里。
+  const createRows = editorMode.value === 'create' ? rows.value : stashedRows.create
+  const editRows = editorMode.value === 'edit' ? rows.value : stashedRows.edit
   return {
     activityId,
+    mode: editorMode.value,
     savedActivityId: savedActivityId.value,
     savedCount: savedCount.value,
     savedOids: [...savedOids],
-    rows: rows.value.map((row) => ({
-      studentId: row.studentId,
-      name: row.name,
-      classId: row.classId,
-      className: row.className,
-      oid: row.oid,
-      duration: row.duration,
-      mode: row.mode,
-      note: row.note
-    }))
+    rows: createRows.map(draftRowSnapshot),
+    editRows: editRows.map(draftRowSnapshot)
   }
 }
 
@@ -1929,25 +2105,30 @@ function applyDraft(payload: DraftPayload) {
       : []
   )
   // 旧版草稿可能存着超过上限的行，也可能还留着已提交的人：读回时一并剔除。
-  const source = Array.isArray(payload.rows) ? payload.rows : []
-  if (source.length > MAX_REGISTER_ROWS) {
-    rowLimitWarning(source.length - MAX_REGISTER_ROWS)
+  const mapDraftRows = (source: Partial<RegistrationRow>[]): RegistrationRow[] => {
+    if (source.length > MAX_REGISTER_ROWS) {
+      rowLimitWarning(source.length - MAX_REGISTER_ROWS)
+    }
+    return source
+      .filter((item) => !savedHas(String(item.oid ?? ''), normalizeMode(item.mode) ?? defaultMode()))
+      .slice(0, MAX_REGISTER_ROWS)
+      .map((item) =>
+        createRow({
+          studentId: normalizeStudentId(String(item.studentId ?? '')),
+          name: normalizePersonName(String(item.name ?? '')),
+          classId: String(item.classId ?? ''),
+          className: String(item.className ?? ''),
+          oid: String(item.oid ?? ''),
+          duration: cleanDuration(String(item.duration ?? '')),
+          mode: normalizeMode(item.mode) ?? defaultMode(),
+          note: String(item.note ?? '')
+        })
+      )
   }
-  const draftRows = source
-    .filter((item) => !savedHas(String(item.oid ?? ''), normalizeMode(item.mode) ?? defaultMode()))
-    .slice(0, MAX_REGISTER_ROWS)
-  rows.value = draftRows.map((item) =>
-    createRow({
-      studentId: normalizeStudentId(String(item.studentId ?? '')),
-      name: normalizePersonName(String(item.name ?? '')),
-      classId: String(item.classId ?? ''),
-      className: String(item.className ?? ''),
-      oid: String(item.oid ?? ''),
-      duration: cleanDuration(String(item.duration ?? '')),
-      mode: normalizeMode(item.mode) ?? defaultMode(),
-      note: String(item.note ?? '')
-    })
-  )
+  stashedRows.create = mapDraftRows(Array.isArray(payload.rows) ? payload.rows : [])
+  stashedRows.edit = mapDraftRows(Array.isArray(payload.editRows) ? payload.editRows : [])
+  editorMode.value = payload.mode === 'edit' ? 'edit' : 'create'
+  rows.value = editorMode.value === 'create' ? stashedRows.create : stashedRows.edit
   if (!rows.value.length) resetRows(8)
   rebuildDuplicateIndex()
   revalidateAll()
@@ -2256,6 +2437,85 @@ onBeforeUnmount(() => {
         </div>
       </section>
 
+      <!-- 两个栏目共用下面这张表：点哪个栏目就显示哪个，另一个先收起来 -->
+      <section class="reg-card editor-tabs-card">
+        <div class="editor-tabs" role="tablist" aria-label="登记栏目">
+          <button
+            type="button"
+            role="tab"
+            class="editor-tab"
+            :class="{ 'is-active': editorMode === 'create' }"
+            :aria-selected="editorMode === 'create'"
+            @click="switchEditorMode('create')"
+          >
+            <span class="editor-tab__title">新增义工</span>
+            <span class="editor-tab__desc">录入活动里还没有的人，每批最多 100 人</span>
+          </button>
+          <button
+            type="button"
+            role="tab"
+            class="editor-tab"
+            :class="{ 'is-active': editorMode === 'edit' }"
+            :aria-selected="editorMode === 'edit'"
+            @click="switchEditorMode('edit')"
+          >
+            <span class="editor-tab__title">修改已有</span>
+            <span class="editor-tab__desc">搜索或录入名单里的人，提交按填写时长覆盖，每批最多 100 人</span>
+          </button>
+        </div>
+      </section>
+
+      <!-- 修改栏专属：从服务器按姓名/学号查已录入成员，点「加入表格」后改时长 -->
+      <section v-if="editorMode === 'edit'" class="reg-card edit-search-card">
+        <div class="edit-search-head">
+          <div>
+            <div class="grid-title">搜索已录入义工</div>
+            <div class="muted">按姓名或学号搜索当前活动成员；也可以直接在下方表格里录入。</div>
+          </div>
+          <div class="edit-search-controls">
+            <ElInput
+              v-model="editSearchQuery"
+              class="edit-search-input"
+              :placeholder="t('activity.register.searchPlaceholder')"
+              clearable
+              :disabled="!selectedActivity"
+              @keydown.enter="searchEditMembers"
+            />
+            <ElButton
+              type="primary"
+              :icon="Search"
+              :loading="editSearchLoading"
+              :disabled="!selectedActivity"
+              @click="searchEditMembers"
+            >
+              搜索
+            </ElButton>
+          </div>
+        </div>
+        <div v-if="editSearchResults.length" class="edit-search-results">
+          <div v-for="item in editSearchResults" :key="item._id" class="edit-search-item">
+            <span class="edit-search-item__name">
+              {{ item.member_name || item.user?.name || '未知成员' }}
+            </span>
+            <span class="edit-search-item__id">{{ item.user?.id || item.member }}</span>
+            <ElTag size="small" effect="plain">{{ modeLabel(item.mode) }}</ElTag>
+            <span class="edit-search-item__duration">{{ item.duration }} 小时</span>
+            <ElButton
+              size="small"
+              type="primary"
+              plain
+              :disabled="memberInEditGrid(item)"
+              @click="addEditSearchResult(item)"
+            >
+              {{ memberInEditGrid(item) ? '已加入' : '加入表格' }}
+            </ElButton>
+          </div>
+        </div>
+        <div v-else-if="editSearchDone" class="edit-search-empty">
+          没有找到匹配的已录入成员
+        </div>
+      </section>
+
       <section class="reg-card toolbar-card">
         <ElButton :icon="Plus" @click="addRow">新增行</ElButton>
         <ElButton :icon="CopyDocument" @click="pasteFromClipboard">从剪贴板粘贴</ElButton>
@@ -2293,7 +2553,7 @@ onBeforeUnmount(() => {
           :disabled="!canSubmit"
           @click="submitRegistration"
         >
-          提交登记
+          {{ editorMode === 'create' ? '提交新增' : '提交修改' }}
         </ElButton>
         <input
           ref="importInput"
@@ -2314,12 +2574,16 @@ onBeforeUnmount(() => {
       <section class="reg-card grid-card">
         <div class="grid-head">
           <div>
-            <div class="grid-title">登记明细</div>
+            <div class="grid-title">
+              {{ editorMode === 'create' ? '新增明细' : '修改明细' }}
+            </div>
             <div class="grid-sub">
               支持从 Excel 复制多行粘贴；学号/姓名会自动互相补全并标出同名或不一致。{{
                 t('activity.register.overrideNotice')
               }}
-              新增和修改已录入成员用同一张表：直接录入已录入的人，提交时按填写的时长覆盖。
+              <template v-if="editorMode === 'edit'">
+                这里只处理已在活动中的成员：提交时按本行时长覆盖，未在活动中的行会标错。
+              </template>
             </div>
           </div>
           <div class="summary-strip">
@@ -2749,6 +3013,121 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: var(--yg-space-4) var(--yg-space-6);
   padding: var(--yg-space-4);
+}
+
+/* 两栏切换：选中项用主色描边 + 浅底，未选中保持平面，点哪个显示哪个 */
+.editor-tabs-card {
+  padding: var(--yg-space-2);
+}
+
+.editor-tabs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--yg-space-2);
+}
+
+.editor-tab {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: var(--yg-space-3) var(--yg-space-4);
+  border: 1px solid var(--yg-border-subtle);
+  border-radius: var(--yg-radius-md);
+  background: var(--yg-bg-surface);
+  color: var(--yg-text-secondary);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background-color 0.15s ease;
+}
+
+.editor-tab:hover {
+  border-color: var(--el-color-primary-light-5);
+}
+
+.editor-tab.is-active {
+  border-color: var(--el-color-primary);
+  background: var(--el-color-primary-light-9);
+  color: var(--yg-text-primary);
+  box-shadow: var(--yg-shadow-sm);
+}
+
+.editor-tab:focus-visible {
+  outline: 2px solid var(--el-color-primary);
+  outline-offset: 2px;
+}
+
+.editor-tab__title {
+  font-size: var(--yg-font-size-md);
+  font-weight: var(--yg-font-weight-semibold);
+}
+
+.editor-tab__desc {
+  font-size: var(--yg-font-size-xs);
+  color: var(--yg-text-tertiary);
+}
+
+/* 修改栏专属搜索：输入 + 结果行，一行一个「加入表格」 */
+.edit-search-card {
+  padding: var(--yg-space-4);
+}
+
+.edit-search-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--yg-space-3);
+  flex-wrap: wrap;
+}
+
+.edit-search-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--yg-space-2);
+}
+
+.edit-search-input {
+  width: min(20rem, 55vw);
+}
+
+.edit-search-results {
+  margin-top: var(--yg-space-3);
+  border: 1px solid var(--yg-border-subtle);
+  border-radius: var(--yg-radius-md);
+  overflow: hidden;
+}
+
+.edit-search-item {
+  display: flex;
+  align-items: center;
+  gap: var(--yg-space-3);
+  min-height: 2.5rem;
+  padding: var(--yg-space-1) var(--yg-space-3);
+  border-bottom: 1px solid var(--yg-border-subtle);
+}
+
+.edit-search-item:last-child {
+  border-bottom: none;
+}
+
+.edit-search-item__name {
+  min-width: 5rem;
+  font-weight: var(--yg-font-weight-medium);
+}
+
+.edit-search-item__id {
+  color: var(--yg-text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+.edit-search-item__duration {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+}
+
+.edit-search-empty {
+  padding: var(--yg-space-3) 0 0;
+  color: var(--yg-text-tertiary);
 }
 
 .activity-picker {
