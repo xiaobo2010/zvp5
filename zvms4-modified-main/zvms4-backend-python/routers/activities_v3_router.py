@@ -232,7 +232,7 @@ async def add_activity_member_v3(
                 if conflicts:
                     raise HTTPException(
                         status_code=409,
-                        detail=f"已有 {len(conflicts)} 条活动记录，请先搜索已录入义工后修改",
+                        detail=f"已有 {len(conflicts)} 条活动记录，确认后可按本次时长覆盖",
                     )
             for (oid, mode), duration in additions.items():
                 existing = existing_by_key.get((oid, mode))
