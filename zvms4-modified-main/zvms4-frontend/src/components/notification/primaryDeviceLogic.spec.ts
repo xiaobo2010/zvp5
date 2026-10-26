@@ -34,12 +34,28 @@ describe('primaryDeviceGateMode', () => {
     ).toBe('hidden')
   })
 
-  it.each(['admin', 'department', 'secretary', 'teacher'])('特权角色 %s 不弹门', (role) => {
-    expect(isPrivilegedRoles([role])).toBe(true)
-    expect(primaryDeviceGateMode({ isLogin: true, roles: [role], status: makeStatus() })).toBe(
-      'hidden'
-    )
-  })
+  it.each(['admin', 'department', 'secretary', 'teacher'])(
+    '特权角色 %s 在学海设备上未绑定也要绑',
+    (role) => {
+      expect(isPrivilegedRoles([role])).toBe(true)
+      expect(primaryDeviceGateMode({ isLogin: true, roles: [role], status: makeStatus() })).toBe(
+        'bindOnDevice'
+      )
+    }
+  )
+
+  it.each(['admin', 'department', 'secretary', 'teacher'])(
+    '特权角色 %s 在 PC 上未绑定不校验',
+    (role) => {
+      expect(
+        primaryDeviceGateMode({
+          isLogin: true,
+          roles: [role],
+          status: makeStatus({ xuehai_id: '' })
+        })
+      ).toBe('hidden')
+    }
+  )
 
   it('未绑定 + 本机是学海设备 → 在本机绑定', () => {
     expect(

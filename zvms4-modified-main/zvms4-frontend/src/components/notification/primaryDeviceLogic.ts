@@ -26,19 +26,23 @@ export interface PrimaryDeviceGateInput {
 /**
  * 门形态判定。
  *
- * 只有「已登录 + 非特权角色 + 读到了状态 + 确实未绑定」才拦人：
- * 读失败说明不了用户没绑定，此时弹一个无法关闭的窗等于把全站锁死，
- * 与后端登录 fail-open 的口径一致。
+ * 口径（2026-10-26 调整）：**学海设备上所有角色未绑定都必须绑**；PC（非学海设备）
+ * 上特权角色不做主设备校验（允许管理员/教师用电脑登录），普通学生只能退出登录
+ * 换平板。读取失败说明不了用户没绑定，fail-open 不锁人，与后端登录口径一致。
  */
 export function primaryDeviceGateMode(input: PrimaryDeviceGateInput): PrimaryDeviceGateMode {
-  if (!input.isLogin || isPrivilegedRoles(input.roles)) {
+  if (!input.isLogin) {
     return 'hidden'
   }
   const status = input.status
   if (!status || status.primary_xuehai_id !== null) {
     return 'hidden'
   }
-  return status.xuehai_id !== '' ? 'bindOnDevice' : 'logoutOnly'
+  const onXuehaiDevice = status.xuehai_id !== ''
+  if (!onXuehaiDevice && isPrivilegedRoles(input.roles)) {
+    return 'hidden'
+  }
+  return onXuehaiDevice ? 'bindOnDevice' : 'logoutOnly'
 }
 
 /** 卡片只读原因：none 可操作；notPrimary 本机不是主设备；notXuehai 本机不是学海设备。 */
