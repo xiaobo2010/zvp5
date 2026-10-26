@@ -6,7 +6,6 @@ import {
   ElButton,
   ElCheckbox,
   ElCheckboxGroup,
-  ElDialog,
   ElIcon,
   ElInput,
   ElMessage,
@@ -81,18 +80,6 @@ interface RegistrationRow {
   candidates: StudentRecord[]
 }
 
-// 服务端已存在的成员记录（`GET /v3/activities/{aid}/members` 的一行）。
-// 登记表不再自动装载这份索引（页面只显示本次新增），保留类型给旧的覆盖确认逻辑。
-// 不写进 localStorage 草稿，换成其他活动后自然失效。
-interface ExistingMemberRecord {
-  sessionId: string
-  member: string
-  mode: RegistrationMode
-  duration: number
-  studentId: string
-  name: string
-}
-
 interface ExistingMemberRow extends ActivityMember {
   member_name?: string
   user?: { id?: string; name?: string } | null
@@ -115,16 +102,6 @@ interface RowSnapshot {
 interface HistoryEntry {
   activityId: string
   rows: RowSnapshot[]
-}
-
-// 覆盖确认弹窗里的一行：姓名 / 学号 / 原时长 / 新时长 / 动作。
-interface OverwritePlanRow {
-  key: string
-  name: string
-  studentId: string
-  oldDuration: number
-  newDuration: number
-  changed: boolean
 }
 
 // 顶部可收起提示的一条。
@@ -158,9 +135,8 @@ const MAX_SUBMIT_ROWS = 100
 // 批量提交相关的请求超时（毫秒）：一次提交要串行/并发跑几十个写请求，
 // axios 实例默认的 12s 会在大活动上被中途掐断。
 const BATCH_TIMEOUT = 60000
-// 逐行 PUT 覆盖：同时最多 8 个在飞，避免一次点提交打爆后端。
+// 批量设时长：同时最多 8 个在飞，避免一次点提交打爆后端。
 const UPDATE_CONCURRENCY = 8
-const DURATION_EPSILON = 1e-6
 // 撤回/重做：历史栈深度，以及连续输入合并成一次快照的防抖时长。
 const HISTORY_LIMIT = 50
 const CELL_HISTORY_DELAY = 600
@@ -198,7 +174,6 @@ const ocrLoading = ref(false)
 const ocrStage = ref('')
 const savedActivityId = ref('')
 const savedCount = ref(0)
-const existingMembers = ref(new Map<string, ExistingMemberRecord>())
 const existingLoading = ref(false)
 const existingQuery = ref('')
 const existingResults = ref<ExistingMemberRow[]>([])
@@ -208,11 +183,6 @@ const existingSearchDone = ref(false)
 let ocrVerificationToken = ''
 // 服务器搜索失败：只影响搜索结果区，登记表本身不依赖它。
 const existingFetchFailed = ref(false)
-// 搜索结果被上限截断：老版本索引时代用于覆盖确认，现在保留以兼容既有弹窗逻辑。
-const existingTruncated = ref(false)
-// 覆盖确认弹窗。
-const overwriteDialogVisible = ref(false)
-const overwriteRows = ref<OverwritePlanRow[]>([])
 // 顶部提示：默认收起成一个图标按钮，勾选「不再提示」后写进 localStorage。
 const noticeVisible = ref(false)
 const dismissedNotices = ref<string[]>([])
@@ -231,8 +201,6 @@ const redoStack = ref<HistoryEntry[]>([])
 // 连续输入的防抖快照：首次击键时抓一份「改之前」的状态，600ms 后并入历史。
 let cellHistoryTimer: ReturnType<typeof setTimeout> | undefined
 let cellHistorySnapshot: RowSnapshot[] | null = null
-// 覆盖确认弹窗的 Promise 回调。
-let overwriteResolver: ((confirmed: boolean) => void) | null = null
 
 const modeOptions = computed(() => {
   const type = selectedActivity.value?.type
@@ -274,22 +242,18 @@ const stats = computed(() => {
   let warning = 0
   let error = 0
   let saved = 0
-  let existing = 0
   for (const row of nonEmptyRows.value) {
-    if (existingOf(row)) existing += 1
     if (row.status === 'ok') ready += 1
     else if (row.status === 'saved') saved += 1
     else if (row.status === 'error') error += 1
     else warning += 1
   }
-  return { total: nonEmptyRows.value.length, ready, warning, error, saved, existing }
+  return { total: nonEmptyRows.value.length, ready, warning, error, saved }
 })
 
 const canSubmit = computed(
   () =>
     Boolean(selectedActivityId.value) &&
-    // 已有成员索引没就绪就提交，会把「更新」误判成「新增」（v3 累加，时长翻倍）。
-    !existingLoading.value &&
     pendingRows.value.length > 0 &&
     stats.value.warning === 0 &&
     stats.value.error === 0
@@ -346,27 +310,6 @@ function existingKey(memberOid: string, mode: string): string {
 function savedHas(memberOid: string, mode: string): boolean {
   if (!memberOid) return false
   return savedOids.has(existingKey(memberOid, mode)) || savedOids.has(memberOid)
-}
-
-function existingOf(row: RegistrationRow): ExistingMemberRecord | undefined {
-  if (!row.oid) return undefined
-  return existingMembers.value.get(existingKey(row.oid, row.mode))
-}
-
-function existingDurationChanged(row: RegistrationRow, record: ExistingMemberRecord): boolean {
-  const value = durationValue(row)
-  if (value === null) return true
-  return Math.abs(value - record.duration) > DURATION_EPSILON
-}
-
-// 徽标文案：命中已有成员时显示「现有时长」，时长改过则说明会覆盖。
-function existingHint(row: RegistrationRow): string {
-  const record = existingOf(row)
-  if (!record || row.status === 'saved') return ''
-  if (!existingDurationChanged(row, record)) {
-    return t('activity.register.existingHintUnchanged')
-  }
-  return t('activity.register.existingHint', { duration: record.duration })
 }
 
 function isRecordableStatus(status: Activity['status'] | undefined): boolean {
@@ -547,8 +490,6 @@ function revalidateRow(row: RegistrationRow) {
 
   const match = matchRow(row.studentId, row.name)
   row.candidates = match.candidates
-  // 已在活动中、但不在本地名单里的成员（毕业/转学）以服务端记录为准，别把 oid 清掉。
-  const recorded = existingOf(row)
 
   if (match.record) {
     if (!row.studentId.trim()) row.studentId = match.record.studentId
@@ -556,9 +497,6 @@ function revalidateRow(row: RegistrationRow) {
     row.classId = match.record.classId
     row.className = match.record.className
     row.oid = match.record.oid
-  } else if (recorded) {
-    row.classId = ''
-    row.className = ''
   } else {
     row.oid = ''
     row.classId = ''
@@ -576,12 +514,8 @@ function revalidateRow(row: RegistrationRow) {
   let status: RowStatus = 'ok'
   let message = ''
   if (match.status === 'missing') {
-    if (recorded && row.oid) {
-      status = 'ok'
-    } else {
-      status = 'error'
-      message = match.message
-    }
+    status = 'error'
+    message = match.message
   } else if (match.status === 'ambiguous') {
     status = 'warning'
     message = match.message
@@ -600,7 +534,7 @@ function revalidateRow(row: RegistrationRow) {
   }
 
   const activityType = selectedActivity.value?.type
-  if (activityType && activityType !== 'hybrid' && !recorded) {
+  if (activityType && activityType !== 'hybrid') {
     row.mode = activityType as RegistrationMode
   }
 
@@ -793,49 +727,24 @@ async function redo() {
   restoreSnapshot(entry.rows)
 }
 
-// Ctrl/Cmd+Z 撤回，Ctrl/Cmd+Shift+Z 重做。
+// Ctrl/Cmd+Z 撤回，Ctrl/Cmd+Shift+Z 重做。表格单元格以外的输入框交给浏览器原生撤销。
 function onGlobalKeydown(event: KeyboardEvent) {
   if (!event.ctrlKey && !event.metaKey) return
   if (event.altKey) return
   const key = event.key.toLowerCase()
   if (key !== 'z' && key !== 'y') return
   if (key === 'y' && !event.shiftKey) return
+  const target = event.target as HTMLElement | null
+  const tag = target?.tagName
+  if (
+    (tag === 'INPUT' || tag === 'TEXTAREA' || target?.isContentEditable) &&
+    !target?.closest('[data-cell]')
+  ) {
+    return
+  }
   event.preventDefault()
   if (key === 'y' || event.shiftKey) void redo()
   else void undo()
-}
-
-// 同一个人同一模式只保留一行：粘贴/OCR/草稿行若命中已有成员，把用户新值并到
-// 已有行上（运行时只对它 PUT 一次），避免同一个人被更新两遍。
-function mergeExistingDuplicates() {
-  const kept = new Map<string, RegistrationRow>()
-  const dropped = new Set<RegistrationRow>()
-  for (const row of rows.value) {
-    if (!row.oid) continue
-    const key = existingKey(row.oid, row.mode)
-    if (!existingMembers.value.has(key)) continue
-    const first = kept.get(key)
-    if (!first) {
-      kept.set(key, row)
-      continue
-    }
-    // 上一轮已提交的行（saved）遇到用户新输入：让新行代表这个人，别把新值吞掉。
-    if (first.status === 'saved' && row.status !== 'saved') {
-      dropped.add(first)
-      kept.set(key, row)
-      continue
-    }
-    if (!first.studentId.trim() && row.studentId.trim()) first.studentId = row.studentId
-    if (!first.name.trim() && row.name.trim()) first.name = row.name
-    if (row.duration.trim()) first.duration = row.duration
-    if (row.note.trim() && !first.note.trim()) first.note = row.note
-    dropped.add(row)
-  }
-  if (!dropped.size) return
-  rows.value = rows.value.filter((row) => !dropped.has(row))
-  // 被合并掉的行必须退出重复索引，否则它会留在分组里把保留行误判成「名单内重复」。
-  for (const row of dropped) dropDuplicateIndex(row)
-  for (const row of kept.values()) revalidateRow(row)
 }
 
 function onIdInput(row: RegistrationRow, event: Event) {
@@ -1123,7 +1032,6 @@ function applyText(text: string, start: { r: number; c: number }) {
     }
     revalidateRow(row)
   })
-  mergeExistingDuplicates()
   markDuplicates()
   if (accepted.length < data.length) rowLimitWarning(data.length - accepted.length)
   ElMessage.success(`已填入 ${accepted.length} 行，请复核匹配结果`)
@@ -1247,7 +1155,6 @@ async function onOcrFile(event: Event) {
       applyOcrRow(row, item)
       revalidateRow(row)
     })
-    mergeExistingDuplicates()
     markDuplicates()
 
     if (result.warnings?.length) {
@@ -1335,22 +1242,29 @@ async function fetchExistingMembers(
   aid: string,
   query: string
 ): Promise<{ rows: ExistingMemberRow[]; total: number }> {
-  const found: ExistingMemberRow[] = []
-  let total = 0
-  for (let page = 1; page <= SEARCH_RESULT_LIMIT / EXISTING_PAGE_SIZE; page += 1) {
-    const result = (await api.activity.member.reads_v3(
-      aid,
-      page,
-      EXISTING_PAGE_SIZE,
-      query,
-      { timeout: BATCH_TIMEOUT }
-    )) as unknown as { members?: ExistingMemberRow[]; total?: number }
-    const members = result.members ?? []
-    found.push(...members)
-    total = Number(result.total) || total
-    if (members.length < EXISTING_PAGE_SIZE) break
+  type Page = { members?: ExistingMemberRow[]; total?: number }
+  const readPage = (page: number) =>
+    api.activity.member.reads_v3(aid, page, EXISTING_PAGE_SIZE, query, {
+      timeout: BATCH_TIMEOUT
+    }) as unknown as Promise<Page>
+
+  const first = await readPage(1)
+  const total = Number(first.total) || 0
+  const firstMembers = first.members ?? []
+  const maxPages = SEARCH_RESULT_LIMIT / EXISTING_PAGE_SIZE
+  let pageCount = maxPages
+  if (total > 0) pageCount = Math.min(Math.ceil(total / EXISTING_PAGE_SIZE), maxPages)
+  else if (firstMembers.length < EXISTING_PAGE_SIZE) pageCount = 1
+  if (pageCount <= 1) {
+    return { rows: firstMembers, total: total || firstMembers.length }
   }
-  return { rows: found, total }
+  // 其余页并行取，按页序拼接，保证结果顺序和串行翻页一致。
+  const rest = await Promise.all(
+    Array.from({ length: pageCount - 1 }, (_, index) => readPage(index + 2))
+  )
+  const found = [...firstMembers]
+  for (const page of rest) found.push(...(page.members ?? []))
+  return { rows: found, total: total || found.length }
 }
 
 // 搜索序号：换活动或重新搜索时递增，回来晚的旧请求不许覆盖新结果。
@@ -1421,7 +1335,7 @@ async function updateSelectedExisting() {
   if (!activity) return
   const duration = Number(existingDurationInput.value)
   if (!Number.isFinite(duration) || duration <= 0 || duration > 25) {
-    ElMessage.warning('请输入 0 到 25 小时之间的时长')
+    ElMessage.warning('请输入大于 0 且不超过 25 的时长')
     return
   }
   const selected = existingResults.value.filter((item) =>
@@ -1483,7 +1397,6 @@ async function syncActivityContext(preselect = false) {
   const activity = selectedActivity.value
   if (!activity) {
     existingFetchFailed.value = false
-    existingTruncated.value = false
     resetExistingSearch()
     revalidateAll()
     return
@@ -1492,7 +1405,6 @@ async function syncActivityContext(preselect = false) {
     selectedActivityId.value = ''
     selectedActivity.value = null
     existingFetchFailed.value = false
-    existingTruncated.value = false
     resetExistingSearch()
     ElMessage.warning(t('activity.register.blockedRecordNotice'))
     return
@@ -1536,9 +1448,7 @@ async function switchActivity(nextId: string, record = true, preselect = false) 
   savedActivityId.value = ''
   savedCount.value = 0
   savedOids = new Set()
-  existingMembers.value = new Map()
   existingFetchFailed.value = false
-  existingTruncated.value = false
 
   // 新活动自己的草稿；没有草稿就白纸起步。
   const payload = nextId ? readDraft(nextId) : null
@@ -1584,34 +1494,10 @@ function rowLabel(row: RegistrationRow): string {
   return row.studentId.trim() ? `${who}（${row.studentId.trim()}）` : who
 }
 
-// 覆盖确认：把「这次提交会动到哪些已有记录」摊开给用户看，确认后才写库。
-// 用户点取消就直接中止，一个字节都不写。
-function confirmOverwrite(hits: OverwritePlanRow[]): Promise<boolean> {
-  overwriteRows.value = hits
-  overwriteDialogVisible.value = true
-  return new Promise<boolean>((resolve) => {
-    overwriteResolver = resolve
-  })
-}
-
-function resolveOverwrite(confirmed: boolean) {
-  overwriteDialogVisible.value = false
-  const resolver = overwriteResolver
-  overwriteResolver = null
-  resolver?.(confirmed)
-}
-
 async function submitRegistration() {
-  // 覆盖确认弹窗还开着时不接受第二次提交，避免把上一次等待的 Promise 顶掉。
-  if (overwriteDialogVisible.value) return
   revalidateAll()
   if (!selectedActivity.value) {
     ElMessage.warning(t('activity.register.activityRequired'))
-    return
-  }
-  if (existingLoading.value) {
-    // 索引没拉完就提交，会把「改时长」误判成「新增」，v3 会累加导致时长翻倍。
-    ElMessage.info(t('activity.register.existingLoading'))
     return
   }
   if (!pendingRows.value.length) {
@@ -1637,108 +1523,28 @@ async function submitRegistration() {
   }
 
   const activity = selectedActivity.value
-  // 分流：命中已有成员且时长有变 → PUT 覆盖；命中但没变 → 跳过；没命中 → v3 批量新增。
-  const updates: Array<{ row: RegistrationRow; record: ExistingMemberRecord; duration: number }> =
-    []
-  const inserts: RegistrationRow[] = []
-  const skipped: RegistrationRow[] = []
-  const hits: OverwritePlanRow[] = []
-  for (const row of pendingRows.value) {
-    const record = existingOf(row)
-    const duration = durationValue(row) as number
-    if (!record) {
-      inserts.push(row)
-      continue
-    }
-    const changed = existingDurationChanged(row, record)
-    hits.push({
-      key: row.key,
-      name: row.name.trim() || row.studentId.trim(),
-      studentId: row.studentId.trim(),
-      oldDuration: record.duration,
-      newDuration: duration,
-      changed
-    })
-    if (!changed) {
-      skipped.push(row)
-      continue
-    }
-    updates.push({ row, record, duration })
-  }
-
-  if (!updates.length && !inserts.length) {
-    ElMessage.info(t('activity.register.nothingChanged'))
-    return
-  }
-
-  // 命中已有记录（或索引被截断、可能有没列出来的命中）→ 先给用户看对比再写。
-  if (hits.length || existingTruncated.value) {
-    const confirmed = await confirmOverwrite(hits)
-    if (!confirmed) return
-  }
+  const inserts = pendingRows.value
 
   submitLoading.value = true
-  const failures: Array<{ label: string; reason: string }> = []
-  let updated = 0
-  let added = 0
   try {
-    // PUT 逐行覆盖：小批并发，单行失败只影响自己，成功的不回滚。
-    for (let start = 0; start < updates.length; start += UPDATE_CONCURRENCY) {
-      const batch = updates.slice(start, start + UPDATE_CONCURRENCY)
-      const results = await Promise.allSettled(
-        batch.map((item) =>
-          api.activity.duration.modify(
-            item.record.sessionId,
-            activity._id,
-            item.duration,
-            item.row.mode,
-            { silent: true, timeout: BATCH_TIMEOUT }
-          )
-        )
-      )
-      results.forEach((result, index) => {
-        const item = batch[index]
-        if (result.status === 'fulfilled') {
-          updated += 1
-          existingMembers.value.set(existingKey(item.record.member, item.record.mode), {
-            ...item.record,
-            duration: item.duration
-          })
-          item.row.status = 'saved'
-          item.row.message = t('activity.register.updatedRow')
-          return
-        }
-        const reason = errorDetail(result.reason)
-        failures.push({ label: rowLabel(item.row), reason })
-        item.row.message = t('activity.register.updateFailed', { reason })
-      })
-    }
-
-    for (const row of skipped) {
+    const payload: NewActivityMember[] = inserts.map((row) => ({
+      member: row.oid,
+      mode: row.mode,
+      duration: durationValue(row) as number
+    }))
+    await api.activity.member.insertMany(activity._id, payload, {
+      overwrite: false,
+      rejectExisting: true,
+      timeout: BATCH_TIMEOUT
+    })
+    const added = payload.length
+    for (const row of inserts) {
       row.status = 'saved'
-      row.message = t('activity.register.skippedRow')
-    }
-
-    if (inserts.length) {
-      const payload: NewActivityMember[] = inserts.map((row) => ({
-        member: row.oid,
-        mode: row.mode,
-        duration: durationValue(row) as number
-      }))
-      await api.activity.member.insertMany(activity._id, payload, {
-        overwrite: false,
-        rejectExisting: true,
-        timeout: BATCH_TIMEOUT
-      })
-      added = payload.length
-      for (const row of inserts) {
-        row.status = 'saved'
-        row.message = t('activity.register.insertedRow')
-      }
+      row.message = t('activity.register.insertedRow')
     }
 
     savedActivityId.value = activity._id
-    savedCount.value += updated + added
+    savedCount.value += added
     // 记下已写进服务端的 (成员, 模式)：撤回/读草稿都不会把这些人重新显示出来。
     for (const row of rows.value) {
       if (row.status === 'saved' && row.oid) savedOids.add(existingKey(row.oid, row.mode))
@@ -1746,33 +1552,21 @@ async function submitRegistration() {
     // 提交成功的人立刻退出登记表，页面只保留还没落库的行。
     pruneSavedRows()
 
-    if (failures.length) {
-      ElMessage.warning(
-        t('activity.register.partialFailedSummary', {
-          updated,
-          added,
-          failed: failures.length
-        })
-      )
-      const lines = failures.slice(0, 10).map((item) => `${item.label}：${item.reason}`)
-      if (failures.length > lines.length) {
-        lines.push(t('activity.register.moreFailures', { count: failures.length - lines.length }))
-      }
-      await ElMessageBox.alert(lines.join('；'), t('activity.register.partialFailedTitle'), {
-        confirmButtonText: '知道了'
-      }).catch(() => undefined)
-      return
-    }
-
     ElMessage.success(
       t('activity.register.submitSummary', {
         activity: activity.name,
-        updated,
-        added,
-        skipped: skipped.length
+        added
       })
     )
   } catch (error) {
+    if ((error as { response?: { status?: number } })?.response?.status === 409) {
+      await ElMessageBox.alert(
+        `${errorDetail(error)}；请先在「修改已录入义工」里搜索并调整时长，或从登记表删掉这些人后重试`,
+        '有成员已在活动中',
+        { confirmButtonText: '知道了' }
+      ).catch(() => undefined)
+      return
+    }
     ElMessage.error(errorDetail(error) || '提交失败，请重试')
   } finally {
     submitLoading.value = false
@@ -1850,7 +1644,6 @@ async function clearAll() {
   savedCount.value = 0
   savedOids = new Set()
   existingFetchFailed.value = false
-  existingTruncated.value = false
   resetExistingSearch()
   resetRows(8)
   revalidateAll()
@@ -2116,6 +1909,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   window.removeEventListener('pagehide', flushDraft)
   window.removeEventListener('keydown', onGlobalKeydown)
+  if (cellHistoryTimer) clearTimeout(cellHistoryTimer)
   flushDraft()
 })
 </script>
@@ -2392,10 +2186,6 @@ onBeforeUnmount(() => {
               <span>总行数</span>
               <strong class="yg-text-num">{{ stats.total }}</strong>
             </div>
-            <div v-if="stats.existing" class="summary-item">
-              <span>{{ t('activity.register.existingBadge') }}</span>
-              <strong class="saved yg-text-num">{{ stats.existing }}</strong>
-            </div>
             <div class="summary-item">
               <span>待提交</span>
               <strong class="ok yg-text-num">{{ stats.ready }}</strong>
@@ -2535,13 +2325,7 @@ onBeforeUnmount(() => {
                   />
                 </td>
                 <td>
-                  <div v-if="existingOf(row)" class="mode-locked">
-                    <ElTag type="info" effect="plain" size="small">
-                      {{ modeLabel(row.mode) }}
-                    </ElTag>
-                  </div>
                   <select
-                    v-else
                     v-model="row.mode"
                     class="cell-select"
                     :data-cell="`${r}-3`"
@@ -2574,16 +2358,9 @@ onBeforeUnmount(() => {
                       <span class="status-pill" :class="`status-${row.status}`">
                         {{ statusLabel(row.status) }}
                       </span>
-                      <ElTag v-if="existingOf(row)" size="small" type="primary" effect="plain">
-                        {{ t('activity.register.existingBadge') }}
-                      </ElTag>
                     </div>
-                    <span
-                      v-if="existingHint(row) || row.message"
-                      class="status-msg"
-                      :title="[existingHint(row), row.message].filter(Boolean).join('；')"
-                    >
-                      {{ [existingHint(row), row.message].filter(Boolean).join('；') }}
+                    <span v-if="row.message" class="status-msg" :title="row.message">
+                      {{ row.message }}
                     </span>
                   </div>
                 </td>
@@ -2616,61 +2393,6 @@ onBeforeUnmount(() => {
         </div>
       </section>
     </div>
-
-    <!-- 覆盖确认：把这次提交会动到的已有记录摊开，确认后才写库 -->
-    <ElDialog
-      v-model="overwriteDialogVisible"
-      class="vr-overwrite-dialog"
-      width="560px"
-      :title="t('activity.register.overwriteConfirmTitle', { count: overwriteRows.length })"
-      @close="resolveOverwrite(false)"
-    >
-      <p class="overwrite-desc">{{ t('activity.register.overwriteConfirmDesc') }}</p>
-      <p v-if="existingTruncated" class="overwrite-truncated">
-        {{ t('activity.register.overwriteTruncatedNotice', { limit: SEARCH_RESULT_LIMIT }) }}
-      </p>
-      <div v-if="overwriteRows.length" class="overwrite-table-wrap">
-        <table class="overwrite-table">
-          <thead>
-            <tr>
-              <th>{{ t('activity.register.overwriteColName') }}</th>
-              <th>{{ t('activity.register.overwriteColStudentId') }}</th>
-              <th class="is-num">{{ t('activity.register.overwriteColOldDuration') }}</th>
-              <th class="is-num">{{ t('activity.register.overwriteColNewDuration') }}</th>
-              <th>{{ t('activity.register.overwriteColAction') }}</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="item in overwriteRows" :key="item.key">
-              <td>{{ item.name || '—' }}</td>
-              <td class="is-num">{{ item.studentId || '—' }}</td>
-              <td class="is-num">{{ item.oldDuration }}</td>
-              <td class="is-num">{{ item.newDuration }}</td>
-              <td>
-                <span
-                  class="overwrite-action"
-                  :class="item.changed ? 'is-overwrite' : 'is-skip'"
-                >
-                  {{
-                    item.changed
-                      ? t('activity.register.overwriteAction')
-                      : t('activity.register.overwriteSkipAction')
-                  }}
-                </span>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-      <template #footer>
-        <ElButton @click="resolveOverwrite(false)">
-          {{ t('activity.register.cancelAction') }}
-        </ElButton>
-        <ElButton type="danger" @click="resolveOverwrite(true)">
-          {{ t('activity.register.confirmOverwrite') }}
-        </ElButton>
-      </template>
-    </ElDialog>
   </div>
 </template>
 
@@ -2932,80 +2654,6 @@ onBeforeUnmount(() => {
   margin-right: var(--yg-space-2);
 }
 
-/* 覆盖确认弹窗内容 */
-.overwrite-desc {
-  margin: 0 0 var(--yg-space-3);
-  color: var(--yg-text-secondary);
-  font-size: var(--yg-font-size-md);
-  line-height: var(--yg-line-height-normal);
-}
-
-.overwrite-truncated {
-  margin: 0 0 var(--yg-space-3);
-  padding: var(--yg-space-2) var(--yg-space-3);
-  border-radius: var(--yg-radius-md);
-  background: var(--yg-color-warning-soft);
-  color: var(--yg-text-warning);
-  font-size: var(--yg-font-size-sm);
-  line-height: var(--yg-line-height-normal);
-}
-
-.overwrite-table-wrap {
-  max-height: 18rem;
-  overflow: auto;
-  border: 1px solid var(--yg-border-subtle);
-  border-radius: var(--yg-radius-md);
-}
-
-.overwrite-table {
-  width: 100%;
-  border-collapse: separate;
-  border-spacing: 0;
-  font-size: var(--yg-font-size-sm);
-}
-
-.overwrite-table th {
-  position: sticky;
-  top: 0;
-  z-index: var(--yg-z-sticky);
-  padding: var(--yg-space-2);
-  background: var(--yg-bg-surface-sunken);
-  color: var(--yg-text-tertiary);
-  font-weight: var(--yg-font-weight-medium);
-  text-align: left;
-  white-space: nowrap;
-}
-
-.overwrite-table td {
-  padding: var(--yg-space-2);
-  border-bottom: 1px solid var(--yg-border-subtle);
-  color: var(--yg-text-primary);
-}
-
-.overwrite-table .is-num {
-  text-align: right;
-  font-variant-numeric: tabular-nums;
-}
-
-.overwrite-action {
-  display: inline-block;
-  padding: 0 var(--yg-space-2);
-  border-radius: var(--yg-radius-xs);
-  font-size: var(--yg-font-size-xs);
-  line-height: var(--yg-line-height-normal);
-  white-space: nowrap;
-}
-
-.overwrite-action.is-overwrite {
-  color: var(--yg-text-danger);
-  background: var(--yg-color-danger-soft);
-}
-
-.overwrite-action.is-skip {
-  color: var(--yg-text-tertiary);
-  background: var(--yg-bg-surface-sunken);
-}
-
 .grid-card {
   overflow: hidden;
 }
@@ -3241,14 +2889,6 @@ onBeforeUnmount(() => {
   min-width: 0;
 }
 
-.mode-locked {
-  display: flex;
-  align-items: center;
-  height: var(--yg-control-height-md);
-  padding: 0 var(--yg-space-2);
-  overflow: hidden;
-}
-
 .status-pill {
   align-self: flex-start;
   padding: 0 var(--yg-space-2);
@@ -3376,9 +3016,7 @@ onBeforeUnmount(() => {
   .candidate-item,
   .status-pill,
   .list-hint,
-  .notice-item,
-  .overwrite-table-wrap,
-  .overwrite-action {
+  .notice-item {
     corner-shape: squircle;
   }
 }
@@ -3408,7 +3046,7 @@ onBeforeUnmount(() => {
 </style>
 
 <!--
-  弹层外壳（提示气泡 / 覆盖确认弹窗）被传送到 body，scoped 样式够不着，
+  弹层外壳（提示气泡）被传送到 body，scoped 样式够不着，
   这里用全局块补一层：面板必须是实色，禁止半透明与 backdrop-filter（准则第 6 章）。
 -->
 <style>
@@ -3424,14 +3062,5 @@ onBeforeUnmount(() => {
 .vr-notice-popper .el-popper__arrow::before {
   background: var(--yg-bg-surface-raised);
   border: 1px solid var(--yg-border-default);
-}
-
-.vr-overwrite-dialog.el-dialog {
-  background: var(--yg-bg-surface-raised);
-  border: 1px solid var(--yg-border-subtle);
-  border-radius: var(--yg-radius-xl);
-  box-shadow: var(--yg-shadow-lg);
-  -webkit-backdrop-filter: none;
-  backdrop-filter: none;
 }
 </style>
