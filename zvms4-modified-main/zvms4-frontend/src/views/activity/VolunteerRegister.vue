@@ -5,10 +5,8 @@ import { useI18n } from 'vue-i18n'
 import {
   ElButton,
   ElCheckbox,
-  ElCheckboxGroup,
   ElDialog,
   ElIcon,
-  ElInput,
   ElMessage,
   ElMessageBox,
   ElOption,
@@ -28,7 +26,6 @@ import {
   Refresh,
   RefreshLeft,
   RefreshRight,
-  Search,
   UploadFilled,
   View,
   WarningFilled
@@ -78,11 +75,17 @@ interface RegistrationRow {
   status: RowStatus
   message: string
   candidates: StudentRecord[]
+  // 名单内重复：同一 (成员, 模式) 出现多行。用派生标记而不是直接改写 status，
+  // 否则重复解除后无法恢复行原本的校验状态。
+  duplicate: boolean
+  // revalidateRow 算出的原始状态，重复标记只在其上叠加。
+  baseStatus: RowStatus
+  baseMessage: string
 }
 
 // 服务端已存在的成员记录（`GET /v3/activities/{aid}/members` 的一行）。
-// 登记表不再自动装载这份索引（页面只显示本次新增），保留类型给旧的覆盖确认逻辑。
-// 不写进 localStorage 草稿，换成其他活动后自然失效。
+// 选活动时按页载入成内存索引：表格里敲到已在活动中的成员时能立刻标「已录入」，
+// 提交时按「设置时长」覆盖而不是再新增一条。不写进 localStorage 草稿，换活动即失效。
 interface ExistingMemberRecord {
   sessionId: string
   member: string
@@ -145,10 +148,10 @@ const DRAFT_KEY_LEGACY = 'volunteer-register-draft-v1'
 const NOTICE_DISMISSED_KEY = 'volunteer-register-notice-dismissed'
 const INDEX_STALE_MS = 24 * 60 * 60 * 1000
 const MODES: RegistrationMode[] = ['on-campus', 'off-campus', 'social-practice']
-// v3 成员列表 size 上限 100；搜索结果最多回溯 5 页。
+// v3 成员列表 size 上限 100。选活动时按页载入已录入成员索引，
+// 一次最多回溯 10 页（1000 人）；超出部分标记截断，提交命中时再确认覆盖。
 const EXISTING_PAGE_SIZE = 100
-// 搜索结果上限：登记表只放本次新增，已录入成员必须显式搜索后才展示。
-const SEARCH_RESULT_LIMIT = 500
+const EXISTING_MEMBER_LIMIT = 1000
 // 表格总行数上限（= 单次新增上限）。粘贴/OCR/新增都走这个闸门，
 // 否则一次全量粘贴就会把每键重算和表格渲染拖到几万行的量级。
 const MAX_REGISTER_ROWS = 100
@@ -199,16 +202,14 @@ const savedActivityId = ref('')
 const savedCount = ref(0)
 const existingMembers = ref(new Map<string, ExistingMemberRecord>())
 const existingLoading = ref(false)
-const existingQuery = ref('')
-const existingResults = ref<ExistingMemberRow[]>([])
-const existingSelected = ref<string[]>([])
-const existingDurationInput = ref('')
-const existingSearchDone = ref(false)
 let ocrVerificationToken = ''
-// 服务器搜索失败：只影响搜索结果区，登记表本身不依赖它。
+// 索引拉取失败：不阻断提交（插入仍带 reject_existing，命中时后端 409 会触发二次确认），
+// 只把状态显示出来并给出重试入口。
 const existingFetchFailed = ref(false)
-// 搜索结果被上限截断：老版本索引时代用于覆盖确认，现在保留以兼容既有弹窗逻辑。
+// 索引被上限截断：允许提交，但覆盖确认弹窗里要说明可能还有没列出来的命中。
 const existingTruncated = ref(false)
+// 已录入成员索引的请求序号：换活动后回来晚的旧响应不许覆盖新活动的索引。
+let existingLoadSeq = 0
 // 覆盖确认弹窗。
 const overwriteDialogVisible = ref(false)
 const overwriteRows = ref<OverwritePlanRow[]>([])
@@ -274,14 +275,17 @@ const stats = computed(() => {
   let error = 0
   let saved = 0
   let existing = 0
+  let duplicate = 0
   for (const row of nonEmptyRows.value) {
     if (existingOf(row)) existing += 1
+    if (row.duplicate) duplicate += 1
     if (row.status === 'ok') ready += 1
     else if (row.status === 'saved') saved += 1
     else if (row.status === 'error') error += 1
-    else warning += 1
+    // 名单内重复单独计数：提交前会弹窗确认并用靠后一行覆盖，不算阻断性警告。
+    else if (!row.duplicate) warning += 1
   }
-  return { total: nonEmptyRows.value.length, ready, warning, error, saved, existing }
+  return { total: nonEmptyRows.value.length, ready, warning, error, saved, existing, duplicate }
 })
 
 const canSubmit = computed(
@@ -413,6 +417,9 @@ function createRow(partial: Partial<RegistrationRow> = {}): RegistrationRow {
     status: 'empty',
     message: '',
     candidates: [],
+    duplicate: false,
+    baseStatus: 'empty',
+    baseMessage: '',
     ...partial
   }
 }
@@ -534,20 +541,19 @@ function matchRow(studentId: string, name: string): StudentMatch {
 
 function revalidateRow(row: RegistrationRow) {
   if (!hasContent(row)) {
-    row.status = 'empty'
-    row.message = ''
+    row.baseStatus = 'empty'
+    row.baseMessage = ''
     row.candidates = []
     row.oid = ''
     row.classId = ''
     row.className = ''
+    applyDuplicateState(row)
     syncDuplicateIndex(row)
     return
   }
 
   const match = matchRow(row.studentId, row.name)
   row.candidates = match.candidates
-  // 已在活动中、但不在本地名单里的成员（毕业/转学）以服务端记录为准，别把 oid 清掉。
-  const recorded = existingOf(row)
 
   if (match.record) {
     if (!row.studentId.trim()) row.studentId = match.record.studentId
@@ -555,14 +561,19 @@ function revalidateRow(row: RegistrationRow) {
     row.classId = match.record.classId
     row.className = match.record.className
     row.oid = match.record.oid
-  } else if (recorded) {
-    row.classId = ''
-    row.className = ''
   } else {
-    row.oid = ''
+    // 本地名单匹配不上时，只有现有 oid 仍对应本活动的已录入记录（毕业/转学）才保留，
+    // 否则清除，避免把上一行的身份带进这一行。
+    const keepRecorded = Boolean(
+      row.oid && existingMembers.value.has(existingKey(row.oid, row.mode))
+    )
+    if (!keepRecorded) row.oid = ''
     row.classId = ''
     row.className = ''
   }
+
+  // 先解析出 oid 再判「已录入」：否则新敲进来的学号第一下拿不到徽标。
+  const recorded = existingOf(row)
 
   if (match.status === 'missing' && !row.candidates.length) {
     const field = row.studentId.trim() && !row.name.trim() ? 'id' : 'name'
@@ -603,8 +614,9 @@ function revalidateRow(row: RegistrationRow) {
     row.mode = activityType as RegistrationMode
   }
 
-  row.status = status
-  row.message = message
+  row.baseStatus = status
+  row.baseMessage = message
+  applyDuplicateState(row)
   syncDuplicateIndex(row)
 }
 
@@ -668,15 +680,32 @@ function rebuildDuplicateIndex() {
   for (const row of rows.value) syncDuplicateIndex(row)
 }
 
+// 重复标记是叠加在 baseStatus 上的派生状态：解除重复后能原样还原校验结果，
+// 反复击键也不会把「名单内重复」文案越拼越长。
+function applyDuplicateState(row: RegistrationRow) {
+  if (!row.duplicate) {
+    row.status = row.baseStatus
+    row.message = row.baseMessage
+    return
+  }
+  const reason = t('activity.register.duplicateInTable')
+  row.message = row.baseMessage ? `${row.baseMessage}；${reason}` : reason
+  // 本身就有错误的行保持错误（先改错再提交），其余降级成「待确认」。
+  row.status = row.baseStatus === 'error' ? 'error' : 'warning'
+}
+
 function markDuplicates() {
   // 按 (成员, 模式) 三元组去重：同一个人在同一活动里可以有不同模式的记录（hybrid）。
+  const duplicated = new Set<string>()
   for (const group of duplicateGroups.values()) {
     if (group.length < 2) continue
-    for (const row of group) {
-      row.status = 'error'
-      const reason = t('activity.register.duplicateInTable')
-      row.message = row.message ? `${row.message}；${reason}` : reason
-    }
+    for (const row of group) duplicated.add(row.key)
+  }
+  for (const row of rows.value) {
+    const isDuplicate = duplicated.has(row.key)
+    if (row.duplicate === isDuplicate) continue
+    row.duplicate = isDuplicate
+    applyDuplicateState(row)
   }
 }
 
@@ -802,39 +831,6 @@ function onGlobalKeydown(event: KeyboardEvent) {
   event.preventDefault()
   if (key === 'y' || event.shiftKey) void redo()
   else void undo()
-}
-
-// 同一个人同一模式只保留一行：粘贴/OCR/草稿行若命中已有成员，把用户新值并到
-// 已有行上（运行时只对它 PUT 一次），避免同一个人被更新两遍。
-function mergeExistingDuplicates() {
-  const kept = new Map<string, RegistrationRow>()
-  const dropped = new Set<RegistrationRow>()
-  for (const row of rows.value) {
-    if (!row.oid) continue
-    const key = existingKey(row.oid, row.mode)
-    if (!existingMembers.value.has(key)) continue
-    const first = kept.get(key)
-    if (!first) {
-      kept.set(key, row)
-      continue
-    }
-    // 上一轮已提交的行（saved）遇到用户新输入：让新行代表这个人，别把新值吞掉。
-    if (first.status === 'saved' && row.status !== 'saved') {
-      dropped.add(first)
-      kept.set(key, row)
-      continue
-    }
-    if (!first.studentId.trim() && row.studentId.trim()) first.studentId = row.studentId
-    if (!first.name.trim() && row.name.trim()) first.name = row.name
-    if (row.duration.trim()) first.duration = row.duration
-    if (row.note.trim() && !first.note.trim()) first.note = row.note
-    dropped.add(row)
-  }
-  if (!dropped.size) return
-  rows.value = rows.value.filter((row) => !dropped.has(row))
-  // 被合并掉的行必须退出重复索引，否则它会留在分组里把保留行误判成「名单内重复」。
-  for (const row of dropped) dropDuplicateIndex(row)
-  for (const row of kept.values()) revalidateRow(row)
 }
 
 function onIdInput(row: RegistrationRow, event: Event) {
@@ -1122,7 +1118,6 @@ function applyText(text: string, start: { r: number; c: number }) {
     }
     revalidateRow(row)
   })
-  mergeExistingDuplicates()
   markDuplicates()
   if (accepted.length < data.length) rowLimitWarning(data.length - accepted.length)
   ElMessage.success(`已填入 ${accepted.length} 行，请复核匹配结果`)
@@ -1246,7 +1241,6 @@ async function onOcrFile(event: Event) {
       applyOcrRow(row, item)
       revalidateRow(row)
     })
-    mergeExistingDuplicates()
     markDuplicates()
 
     if (result.warnings?.length) {
@@ -1328,190 +1322,103 @@ async function hydrateSelectedActivity() {
   }
 }
 
-// 服务器记录搜索：只在用户显式搜索时查，最多取 SEARCH_RESULT_LIMIT 条。
-// 登记表本身永远只装本次新增行，已录入成员不会被自动下载进表格。
-async function fetchExistingMembers(
+// 已录入成员索引：选活动时按页拉回 (memberOid, mode) → 记录，供表格即时判重。
+// 这里只建索引，不把成员填进表格——批量修改和新增走同一张表：管理员直接录入/粘贴
+// 已在活动中的人，提交时按「设置时长」覆盖；新面孔才走新增。
+async function fetchExistingMemberPage(
   aid: string,
-  query: string
+  page: number
 ): Promise<{ rows: ExistingMemberRow[]; total: number }> {
-  const found: ExistingMemberRow[] = []
-  let total = 0
-  for (let page = 1; page <= SEARCH_RESULT_LIMIT / EXISTING_PAGE_SIZE; page += 1) {
-    const result = (await api.activity.member.reads_v3(
-      aid,
-      page,
-      EXISTING_PAGE_SIZE,
-      query,
-      { timeout: BATCH_TIMEOUT }
-    )) as unknown as { members?: ExistingMemberRow[]; total?: number }
-    const members = result.members ?? []
-    found.push(...members)
-    total = Number(result.total) || total
-    if (members.length < EXISTING_PAGE_SIZE) break
-  }
-  return { rows: found, total }
+  const result = (await api.activity.member.reads_v3(
+    aid,
+    page,
+    EXISTING_PAGE_SIZE,
+    '',
+    { timeout: BATCH_TIMEOUT }
+  )) as unknown as { members?: ExistingMemberRow[]; total?: number }
+  return { rows: result.members ?? [], total: Number(result.total) || 0 }
 }
 
-// 搜索序号：换活动或重新搜索时递增，回来晚的旧请求不许覆盖新结果。
-let existingSearchSeq = 0
-
-async function searchExistingMembers() {
-  const activity = selectedActivity.value
-  if (!activity) {
-    ElMessage.warning('请先选择活动')
-    return
-  }
-  const query = existingQuery.value.trim()
-  if (query.length < 2) {
-    ElMessage.info('请输入至少两个字或学号进行搜索')
-    return
-  }
-  const seq = ++existingSearchSeq
-  existingQuery.value = query
+async function loadExistingMembers(aid: string): Promise<void> {
+  const seq = ++existingLoadSeq
   existingLoading.value = true
   existingFetchFailed.value = false
-  existingSearchDone.value = false
+  existingTruncated.value = false
   try {
-    const { rows: found, total } = await fetchExistingMembers(activity._id, query)
-    if (seq !== existingSearchSeq) return
-    existingResults.value = found
-    existingSelected.value = []
-    existingSearchDone.value = true
-    if (total > found.length) {
-      ElMessage.info(`命中 ${total} 条，仅显示前 ${found.length} 条，请补充关键字缩小范围`)
+    const next = new Map<string, ExistingMemberRecord>()
+    let page = 1
+    let total = 0
+    for (; page <= EXISTING_MEMBER_LIMIT / EXISTING_PAGE_SIZE; page += 1) {
+      const { rows: members, total: fetchedTotal } = await fetchExistingMemberPage(aid, page)
+      if (seq !== existingLoadSeq) return
+      total = fetchedTotal || total
+      for (const member of members) {
+        const mode = normalizeMode(member.mode)
+        if (!mode || !member.member || !member._id) continue
+        next.set(existingKey(String(member.member), mode), {
+          sessionId: String(member._id),
+          member: String(member.member),
+          mode,
+          duration: Number(member.duration) || 0,
+          studentId: normalizeStudentId(String(member.user?.id ?? '')),
+          name: normalizePersonName(String(member.member_name ?? member.user?.name ?? ''))
+        })
+      }
+      if (members.length < EXISTING_PAGE_SIZE) break
+    }
+    if (seq !== existingLoadSeq) return
+    existingMembers.value = next
+    // 还有下一页但已到回溯上限：标记截断，提交时若命中未列出的人再确认覆盖。
+    existingTruncated.value = total > next.size && page > EXISTING_MEMBER_LIMIT / EXISTING_PAGE_SIZE
+    if (existingTruncated.value) {
+      ElMessage.warning(t('activity.register.existingTruncated', { limit: EXISTING_MEMBER_LIMIT }))
     }
   } catch {
-    if (seq !== existingSearchSeq) return
-    existingResults.value = []
-    existingSelected.value = []
+    if (seq !== existingLoadSeq) return
+    existingMembers.value = new Map()
     existingFetchFailed.value = true
-    ElMessage.warning('服务器记录加载失败，请稍后重试')
+    ElMessage.warning(t('activity.register.existingLoadFailed'))
   } finally {
-    if (seq === existingSearchSeq) existingLoading.value = false
+    if (seq === existingLoadSeq) existingLoading.value = false
   }
+  revalidateAll()
 }
 
-const allExistingSelected = computed(
-  () =>
-    existingResults.value.length > 0 &&
-    existingSelected.value.length === existingResults.value.length
-)
-const someExistingSelected = computed(
-  () =>
-    existingSelected.value.length > 0 &&
-    existingSelected.value.length < existingResults.value.length
-)
-
-function toggleSelectAllExisting(value: boolean | string | number) {
-  existingSelected.value = value
-    ? existingResults.value.map((item) => String(item._id))
-    : []
-}
-
-function existingRowLabel(item: ExistingMemberRow): string {
-  const who = item.member_name || item.user?.name || item.member
-  const sid = item.user?.id
-  return sid ? `${who}（${sid}）` : String(who)
-}
-
-// 搜索结果批量改时长：逐条 PUT 覆盖，单条失败只影响自己。
-async function updateSelectedExisting() {
-  const activity = selectedActivity.value
-  if (!activity) return
-  const duration = Number(existingDurationInput.value)
-  if (!Number.isFinite(duration) || duration <= 0 || duration > 25) {
-    ElMessage.warning('请输入 0 到 25 小时之间的时长')
-    return
-  }
-  const selected = existingResults.value.filter((item) =>
-    existingSelected.value.includes(String(item._id))
-  )
-  if (!selected.length) {
-    ElMessage.info('请先选择要修改的记录')
-    return
-  }
-  try {
-    await ElMessageBox.confirm(
-      `将把 ${selected.length} 条记录的时长设为 ${duration} 小时，确定继续？`,
-      '批量设定时长',
-      { confirmButtonText: '确定修改', cancelButtonText: '取消', type: 'warning' }
-    )
-  } catch {
-    return
-  }
-  submitLoading.value = true
-  const failures: string[] = []
-  try {
-    for (let start = 0; start < selected.length; start += UPDATE_CONCURRENCY) {
-      const batch = selected.slice(start, start + UPDATE_CONCURRENCY)
-      const results = await Promise.allSettled(
-        batch.map((item) =>
-          api.activity.duration.modify(
-            String(item._id),
-            activity._id,
-            duration,
-            normalizeMode(item.mode) ?? defaultMode(),
-            { silent: true, timeout: BATCH_TIMEOUT }
-          )
-        )
-      )
-      results.forEach((result, index) => {
-        if (result.status === 'rejected') {
-          failures.push(`${existingRowLabel(batch[index])}：${errorDetail(result.reason)}`)
-        }
-      })
-    }
-    const updated = selected.length - failures.length
-    if (updated) ElMessage.success(`已更新 ${updated} 条记录`)
-    if (failures.length) {
-      await ElMessageBox.alert(
-        failures.slice(0, 10).join('；'),
-        `有 ${failures.length} 条修改失败`,
-        { confirmButtonText: '知道了' }
-      ).catch(() => undefined)
-    }
-    // 刷新结果，让页面显示服务端的真实值（失败的行也一并回读）。
-    await searchExistingMembers()
-  } finally {
-    submitLoading.value = false
-  }
-}
-
-// 活动选定后的统一收口：拦掉不可录入状态、清空搜索上下文、重算行状态。
+// 活动选定后的统一收口：拦掉不可录入状态、重建已录入索引、重算行状态。
 async function syncActivityContext(preselect = false) {
   const activity = selectedActivity.value
   if (!activity) {
-    existingFetchFailed.value = false
-    existingTruncated.value = false
-    resetExistingSearch()
+    resetExistingIndex()
     revalidateAll()
     return
   }
   if (!isRecordableStatus(activity.status)) {
     selectedActivityId.value = ''
     selectedActivity.value = null
-    existingFetchFailed.value = false
-    existingTruncated.value = false
-    resetExistingSearch()
+    resetExistingIndex()
     ElMessage.warning(t('activity.register.blockedRecordNotice'))
     return
   }
   if (preselect && activity.status === 'pending') {
     ElMessage.info(t('activity.register.pendingRecordNotice'))
   }
-  resetExistingSearch()
-  revalidateAll()
+  resetExistingIndex()
+  await loadExistingMembers(activity._id)
 }
 
-// 换活动时把搜索结果全部作废：旧的 member oid 绝不能带到新活动里。
-function resetExistingSearch() {
-  existingSearchSeq += 1
-  existingResults.value = []
-  existingSelected.value = []
-  existingQuery.value = ''
-  existingDurationInput.value = ''
-  existingSearchDone.value = false
+// 换活动时把索引全部作废：旧的 member oid / sessionId 绝不能带到新活动里。
+function resetExistingIndex() {
+  existingLoadSeq += 1
+  existingMembers.value = new Map()
   existingLoading.value = false
+  existingFetchFailed.value = false
+  existingTruncated.value = false
+}
+
+async function retryLoadExisting() {
+  const activity = selectedActivity.value
+  if (!activity || existingLoading.value) return
+  await loadExistingMembers(activity._id)
 }
 
 // 切换活动：草稿按活动隔离，换活动必须从白纸开始。
@@ -1535,9 +1442,7 @@ async function switchActivity(nextId: string, record = true, preselect = false) 
   savedActivityId.value = ''
   savedCount.value = 0
   savedOids = new Set()
-  existingMembers.value = new Map()
-  existingFetchFailed.value = false
-  existingTruncated.value = false
+  resetExistingIndex()
 
   // 新活动自己的草稿；没有草稿就白纸起步。
   const payload = nextId ? readDraft(nextId) : null
@@ -1600,6 +1505,84 @@ function resolveOverwrite(confirmed: boolean) {
   resolver?.(confirmed)
 }
 
+function duplicateRowGroups(): RegistrationRow[][] {
+  return [...duplicateGroups.values()].filter((group) => group.length > 1)
+}
+
+// 名单内重复（同一个人同一模式录了第二次）：先提示，确认后以靠后一行为准覆盖靠前行。
+// 拒绝时保持原样，用户可以自己删掉多余的行再提交。
+async function resolveDuplicateRows(): Promise<boolean> {
+  const groups = duplicateRowGroups()
+  if (!groups.length) return true
+  const names = groups
+    .map((group) => rowLabel(group[group.length - 1]))
+    .slice(0, 5)
+    .join('、')
+  try {
+    await ElMessageBox.confirm(
+      t('activity.register.duplicateConfirmDesc', { count: groups.length, names }),
+      t('activity.register.duplicateConfirmTitle'),
+      {
+        confirmButtonText: t('activity.register.duplicateConfirmAction'),
+        cancelButtonText: t('activity.register.cancelAction'),
+        type: 'warning'
+      }
+    )
+  } catch {
+    return false
+  }
+  collapseDuplicateRows()
+  return true
+}
+
+// 保留靠前那一行的位置，用靠后一行的时长/备注覆盖它；身份字段两边本来就一致。
+function collapseDuplicateRows() {
+  if (!duplicateRowGroups().length) return
+  recordHistory()
+  const kept = new Map<string, RegistrationRow>()
+  const dropped = new Set<RegistrationRow>()
+  for (const row of rows.value) {
+    const key = rowDuplicateKey(row)
+    if (!key) continue
+    const first = kept.get(key)
+    if (!first) {
+      kept.set(key, row)
+      continue
+    }
+    // 第二次录入即覆盖：靠后一行填了值就以它为准，没填则保留靠前一行已有的值。
+    if (row.duration.trim()) first.duration = row.duration
+    if (row.note.trim()) first.note = row.note
+    dropped.add(row)
+  }
+  if (!dropped.size) return
+  rows.value = rows.value.filter((row) => !dropped.has(row))
+  for (const row of dropped) dropDuplicateIndex(row)
+  revalidateAll()
+}
+
+// 后端 409：索引没覆盖到的已有记录（超过回溯上限，或索引加载失败）。
+function isConflictError(error: unknown): boolean {
+  return (error as { response?: { status?: number } })?.response?.status === 409
+}
+
+// 未在索引里的已有成员：确认后整批按「设置时长」覆盖，不再新增。
+async function confirmUnindexedOverwrite(count: number): Promise<boolean> {
+  try {
+    await ElMessageBox.confirm(
+      t('activity.register.conflictConfirmDesc', { count }),
+      t('activity.register.conflictConfirmTitle'),
+      {
+        confirmButtonText: t('activity.register.confirmOverwrite'),
+        cancelButtonText: t('activity.register.cancelAction'),
+        type: 'warning'
+      }
+    )
+    return true
+  } catch {
+    return false
+  }
+}
+
 async function submitRegistration() {
   // 覆盖确认弹窗还开着时不接受第二次提交，避免把上一次等待的 Promise 顶掉。
   if (overwriteDialogVisible.value) return
@@ -1613,6 +1596,8 @@ async function submitRegistration() {
     ElMessage.info(t('activity.register.existingLoading'))
     return
   }
+  // 同一个人在同一张表里录了第二次：提示并用靠后一行覆盖。
+  if (!(await resolveDuplicateRows())) return
   if (!pendingRows.value.length) {
     ElMessage.info(t('activity.register.noPending'))
     return
@@ -1636,11 +1621,10 @@ async function submitRegistration() {
   }
 
   const activity = selectedActivity.value
-  // 分流：命中已有成员且时长有变 → PUT 覆盖；命中但没变 → 跳过；没命中 → v3 批量新增。
+  // 分流：命中已有成员 → PUT 按设置语义覆盖；没命中 → v3 批量新增。
   const updates: Array<{ row: RegistrationRow; record: ExistingMemberRecord; duration: number }> =
     []
   const inserts: RegistrationRow[] = []
-  const skipped: RegistrationRow[] = []
   const hits: OverwritePlanRow[] = []
   for (const row of pendingRows.value) {
     const record = existingOf(row)
@@ -1658,10 +1642,8 @@ async function submitRegistration() {
       newDuration: duration,
       changed
     })
-    if (!changed) {
-      skipped.push(row)
-      continue
-    }
+    // 与现有时长一致也照写一次：「设置」语义下重写同样的值是幂等的，
+    // 这样第二次录入已有人时行为统一——确认覆盖，而不是悄悄跳过。
     updates.push({ row, record, duration })
   }
 
@@ -1713,26 +1695,43 @@ async function submitRegistration() {
       })
     }
 
-    for (const row of skipped) {
-      row.status = 'saved'
-      row.message = t('activity.register.skippedRow')
-    }
-
     if (inserts.length) {
       const payload: NewActivityMember[] = inserts.map((row) => ({
         member: row.oid,
         mode: row.mode,
         duration: durationValue(row) as number
       }))
-      await api.activity.member.insertMany(activity._id, payload, {
-        overwrite: false,
-        rejectExisting: true,
-        timeout: BATCH_TIMEOUT
-      })
-      added = payload.length
-      for (const row of inserts) {
-        row.status = 'saved'
-        row.message = t('activity.register.insertedRow')
+      let inserted = false
+      try {
+        await api.activity.member.insertMany(activity._id, payload, {
+          overwrite: false,
+          rejectExisting: true,
+          timeout: BATCH_TIMEOUT
+        })
+        inserted = true
+      } catch (error) {
+        if (!isConflictError(error)) throw error
+        // 索引没覆盖到的已有记录（超过回溯上限 / 索引加载失败）：
+        // 先确认，再把整批按「设置时长」写一遍，绝不静默累加。
+        if (await confirmUnindexedOverwrite(payload.length)) {
+          await api.activity.member.insertMany(activity._id, payload, {
+            overwrite: true,
+            timeout: BATCH_TIMEOUT
+          })
+          inserted = true
+        } else {
+          failures.push({
+            label: t('activity.register.newMembersLabel'),
+            reason: t('activity.register.conflictSkipped')
+          })
+        }
+      }
+      if (inserted) {
+        added = payload.length
+        for (const row of inserts) {
+          row.status = 'saved'
+          row.message = t('activity.register.insertedRow')
+        }
       }
     }
 
@@ -1767,8 +1766,7 @@ async function submitRegistration() {
       t('activity.register.submitSummary', {
         activity: activity.name,
         updated,
-        added,
-        skipped: skipped.length
+        added
       })
     )
   } catch (error) {
@@ -1848,9 +1846,7 @@ async function clearAll() {
   savedActivityId.value = ''
   savedCount.value = 0
   savedOids = new Set()
-  existingFetchFailed.value = false
-  existingTruncated.value = false
-  resetExistingSearch()
+  resetExistingIndex()
   resetRows(8)
   revalidateAll()
 }
@@ -2242,83 +2238,22 @@ onBeforeUnmount(() => {
             {{ t('activity.register.pendingSummary') }}
           </span>
           <span v-else class="muted">提交时写入该活动的成员时长</span>
+          <span v-if="existingLoading" class="muted existing-index-status" role="status">
+            {{ t('activity.register.existingLoading') }}
+          </span>
+          <span v-else-if="existingFetchFailed" class="existing-index-status is-error">
+            {{ t('activity.register.existingLoadFailedShort') }}
+            <ElButton link type="primary" size="small" @click="retryLoadExisting">
+              {{ t('activity.register.retryLoad') }}
+            </ElButton>
+          </span>
+          <span v-else-if="existingMembers.size" class="muted existing-index-status">
+            {{ t('activity.register.existingLoaded', { count: existingMembers.size }) }}
+          </span>
         </div>
         <div v-else class="activity-summary muted">
           选择活动后才能提交；未选择时仍可编辑、粘贴和导出。
         </div>
-      </section>
-
-      <section class="reg-card existing-search-card">
-        <div class="existing-search-heading">
-          <div>
-            <div class="grid-title">修改已录入义工</div>
-            <div class="muted">
-              登记表只显示本次新增（单次最多 100 人）。要修改已录入成员，先按姓名或学号从服务器搜索。
-            </div>
-          </div>
-          <div class="existing-search-controls">
-            <ElInput
-              v-model="existingQuery"
-              class="search-input"
-              placeholder="姓名或学号"
-              clearable
-              :disabled="!selectedActivity"
-              @keydown.enter="searchExistingMembers"
-            />
-            <ElButton
-              type="primary"
-              :icon="Search"
-              :loading="existingLoading"
-              :disabled="!selectedActivity"
-              @click="searchExistingMembers"
-            >
-              搜索
-            </ElButton>
-          </div>
-        </div>
-        <div v-if="existingResults.length" class="existing-results">
-          <div class="existing-batch-toolbar">
-            <ElCheckbox
-              :model-value="allExistingSelected"
-              :indeterminate="someExistingSelected"
-              @change="toggleSelectAllExisting"
-            >
-              全选
-            </ElCheckbox>
-            <span class="muted">共 {{ existingResults.length }} 条</span>
-            <span class="toolbar-spacer" />
-            <span class="muted">已选 {{ existingSelected.length }} 条</span>
-            <ElInput
-              v-model="existingDurationInput"
-              class="duration-batch-input"
-              inputmode="decimal"
-              placeholder="新时长"
-            />
-            <ElButton
-              type="primary"
-              :loading="submitLoading"
-              :disabled="!existingSelected.length"
-              @click="updateSelectedExisting"
-            >
-              批量设定时长
-            </ElButton>
-          </div>
-          <ElCheckboxGroup v-model="existingSelected" class="existing-checks">
-            <label v-for="item in existingResults" :key="item._id" class="existing-result">
-              <ElCheckbox :value="String(item._id)" />
-              <span class="existing-result__name">
-                {{ item.member_name || item.user?.name || '未知成员' }}
-              </span>
-              <span class="existing-result__id">{{ item.user?.id || item.member }}</span>
-              <ElTag size="small" effect="plain">{{ modeLabel(item.mode) }}</ElTag>
-              <span class="existing-result__duration">{{ item.duration }} 小时</span>
-            </label>
-          </ElCheckboxGroup>
-        </div>
-        <div v-else-if="existingFetchFailed" class="existing-empty existing-empty--error">
-          服务器记录加载失败，请重试
-        </div>
-        <div v-else-if="existingSearchDone" class="existing-empty">没有找到匹配记录</div>
       </section>
 
       <section class="reg-card toolbar-card">
@@ -2384,6 +2319,7 @@ onBeforeUnmount(() => {
               支持从 Excel 复制多行粘贴；学号/姓名会自动互相补全并标出同名或不一致。{{
                 t('activity.register.overrideNotice')
               }}
+              新增和修改已录入成员用同一张表：直接录入已录入的人，提交时按填写的时长覆盖。
             </div>
           </div>
           <div class="summary-strip">
@@ -2402,6 +2338,10 @@ onBeforeUnmount(() => {
             <div v-if="stats.saved" class="summary-item">
               <span>已提交</span>
               <strong class="saved yg-text-num">{{ stats.saved }}</strong>
+            </div>
+            <div v-if="stats.duplicate" class="summary-item">
+              <span>重复</span>
+              <strong class="warning yg-text-num">{{ stats.duplicate }}</strong>
             </div>
             <div class="summary-item">
               <span>待确认</span>
@@ -2626,7 +2566,7 @@ onBeforeUnmount(() => {
     >
       <p class="overwrite-desc">{{ t('activity.register.overwriteConfirmDesc') }}</p>
       <p v-if="existingTruncated" class="overwrite-truncated">
-        {{ t('activity.register.overwriteTruncatedNotice', { limit: SEARCH_RESULT_LIMIT }) }}
+        {{ t('activity.register.overwriteTruncatedNotice', { limit: EXISTING_MEMBER_LIMIT }) }}
       </p>
       <div v-if="overwriteRows.length" class="overwrite-table-wrap">
         <table class="overwrite-table">
@@ -2811,64 +2751,6 @@ onBeforeUnmount(() => {
   padding: var(--yg-space-4);
 }
 
-.existing-search-card {
-  padding: var(--yg-space-4);
-}
-
-.existing-search-heading {
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: var(--yg-space-3);
-  flex-wrap: wrap;
-}
-
-.existing-search-controls,
-.existing-batch-toolbar {
-  display: flex;
-  align-items: center;
-  gap: var(--yg-space-2);
-  flex-wrap: wrap;
-}
-
-.search-input { width: min(20rem, 55vw); }
-.duration-batch-input { width: 7rem; }
-
-.existing-results {
-  margin-top: var(--yg-space-3);
-  border: 1px solid var(--yg-border-subtle);
-  border-radius: var(--yg-radius-md);
-  overflow: hidden;
-}
-
-.existing-batch-toolbar {
-  padding: var(--yg-space-2) var(--yg-space-3);
-  background: var(--yg-bg-subtle, var(--yg-bg-surface));
-  border-bottom: 1px solid var(--yg-border-subtle);
-}
-
-.existing-checks {
-  display: grid;
-  max-height: 22rem;
-  overflow-y: auto;
-}
-
-.existing-result {
-  display: flex;
-  align-items: center;
-  gap: var(--yg-space-3);
-  min-height: 2.5rem;
-  padding: var(--yg-space-1) var(--yg-space-3);
-  border-bottom: 1px solid var(--yg-border-subtle);
-}
-
-.existing-result:last-child { border-bottom: none; }
-.existing-result__name { min-width: 5rem; font-weight: var(--yg-font-weight-medium); }
-.existing-result__id { color: var(--yg-text-tertiary); font-variant-numeric: tabular-nums; }
-.existing-result__duration { margin-left: auto; font-variant-numeric: tabular-nums; }
-.existing-empty { padding: var(--yg-space-3) 0 0; color: var(--yg-text-tertiary); }
-.existing-empty--error { color: var(--el-color-danger); }
-
 .activity-picker {
   display: flex;
   align-items: center;
@@ -2898,6 +2780,17 @@ onBeforeUnmount(() => {
 
 .activity-name {
   font-weight: var(--yg-font-weight-semibold);
+}
+
+/* 已录入成员索引的加载/失败/就绪状态：贴在活动摘要行尾，不额外占一张卡片。 */
+.existing-index-status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--yg-space-1);
+}
+
+.existing-index-status.is-error {
+  color: var(--el-color-danger);
 }
 
 .muted {
