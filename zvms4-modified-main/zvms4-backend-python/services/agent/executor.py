@@ -13,7 +13,7 @@
 四个成本 / 时间闸：
 
 * ``AI_AGENT_MAX_ITERATIONS``（默认 10）：轮数上限，防「模型反复调工具不收敛」；
-* ``AI_AGENT_TOKEN_BUDGET``（默认 100000）：累计 token 上限，防「单轮很长 × 很多轮」；
+* ``AI_AGENT_TOKEN_BUDGET``（默认 200000）：累计 token 上限，防「单轮很长 × 很多轮」；
   **在工具执行之前**判——超预算的那一轮不该再落任何业务写入；
 * ``AI_AGENT_RUN_TIMEOUT_SECONDS``（默认 300）：一次 run 的 wall-clock 上限。超时
   **不丢已有结果**：返回当前 ``content``（可能为 ""）+ ``stop_reason="timeout"``，

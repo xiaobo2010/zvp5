@@ -4,7 +4,8 @@ import {
   computed,
   watch,
   onUnmounted,
-  nextTick
+  nextTick,
+  type Ref
 } from 'vue'
 import {
   ElButton,
@@ -35,6 +36,7 @@ import { useUserStore } from '@/stores/user'
 import { enqueueOcr } from '@/api/ai/ocr'
 import { aiErrorCodeOf, aiErrorCopy } from '@/api/ai/errors'
 import { useAiOcrPolling } from '@/components/ai/useAiOcrPolling'
+import { DEVICE_UNLOCK_REASON, ensureDeviceUnlock } from '@/plugins/device-unlock'
 
 interface DisplayItem {
   // 服务端 oid；上传中时可能为空串
@@ -193,6 +195,21 @@ function onOcrClick(item: DisplayItem) {
 
 async function startOcr(item: DisplayItem, silentError = false) {
   if (!item.oid || ocrBusy.value.has(item.oid)) {
+    return
+  }
+  // 识别要先拿到附件的读取能力：平板同样需要先解锁
+  try {
+    await ensureDeviceUnlock({ reason: DEVICE_UNLOCK_REASON })
+  } catch {
+    item.ocr = { status: 'failed', error: '未验证密码，已取消识别' }
+    if (!silentError) {
+      ElMessage({
+        message: '未验证密码，已取消识别',
+        type: 'warning',
+        plain: true,
+        grouping: true
+      })
+    }
     return
   }
   ocrBusy.value.add(item.oid)
@@ -360,11 +377,28 @@ function syncModel() {
 }
 
 function triggerCamera() {
-  cameraInput.value?.click()
+  void openPicker(cameraInput)
 }
 
 function triggerGallery() {
-  galleryInput.value?.click()
+  void openPicker(galleryInput)
+}
+
+// 平板访问媒体库要先验密码（5 分钟有效）：先在点击手势里解锁，再唤起选择器。
+// 用户取消就中止这次动作，并给出明确提示，不静默失败。
+async function openPicker(input: Ref<HTMLInputElement | undefined>) {
+  try {
+    await ensureDeviceUnlock({ reason: DEVICE_UNLOCK_REASON })
+  } catch {
+    ElMessage({
+      message: '未验证密码，已取消本次上传',
+      type: 'warning',
+      plain: true,
+      grouping: true
+    })
+    return
+  }
+  input.value?.click()
 }
 
 async function onInputChange(evt: Event, source: 'camera' | 'gallery') {

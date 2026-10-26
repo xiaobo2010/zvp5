@@ -2,7 +2,7 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ElButton, ElEmpty, ElIcon } from 'element-plus'
-import { ChatLineRound, Cpu, Delete, Edit, FolderChecked, Plus } from '@element-plus/icons-vue'
+import { Delete, Edit, FolderChecked, Plus } from '@element-plus/icons-vue'
 import type { AiConversation } from '@/../types/ai'
 import { formatTokens, relativeTimeParts } from './conversationSession'
 
@@ -58,11 +58,6 @@ function relativeTime(value: string | null | undefined): string {
   }
   return t(`ai.chat.sessions.${parts.kind}Ago`, { count: parts.count })
 }
-
-/** 会话类型的中文标签。 */
-function modeLabel(mode: AiConversation['mode']): string {
-  return mode === 'agent' ? t('ai.chat.sessions.modeAgent') : t('ai.chat.sessions.modeChat')
-}
 </script>
 
 <template>
@@ -99,10 +94,6 @@ function modeLabel(mode: AiConversation['mode']): string {
             {{ item.title || t('ai.chat.sessions.untitled') }}
           </span>
           <span class="ai-sessions__meta">
-            <ElIcon class="ai-sessions__mode" :title="modeLabel(item.mode)">
-              <Cpu v-if="item.mode === 'agent'" />
-              <ChatLineRound v-else />
-            </ElIcon>
             <span class="tabular-nums">{{ relativeTime(item.updated_at) }}</span>
             <span class="tabular-nums">
               {{ t('ai.chat.sessions.tokens', { total: formatTokens(item.tokens.total) }) }}
@@ -254,10 +245,6 @@ function modeLabel(mode: AiConversation['mode']): string {
   gap: var(--yg-space-2);
   font-size: var(--yg-font-size-xs);
   color: var(--yg-text-tertiary);
-}
-
-.ai-sessions__mode {
-  flex: none;
 }
 
 .ai-sessions__actions {

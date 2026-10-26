@@ -12,7 +12,7 @@ Permission matrix (design §4):
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import (
     APIRouter,
@@ -32,13 +32,12 @@ from services.ai.routing import RouteError
 from typings.log import ZVMSLog, inject_log, xuehai_id_from
 from util.attachment import (
     ALLOWED_PURPOSES,
-    DAILY_MAX_BYTES,
-    DAILY_MAX_FILES,
     MAX_BYTES,
     AttachmentError,
     QuotaExceeded,
     can_read_attachment,
     check_quota,
+    effective_daily_limits,
     ext_for_mime,
     make_signed_url,
     process_upload,
@@ -49,27 +48,85 @@ from util.attachment import (
 )
 from util.attachment_ocr import process_ocr
 from util.ban import ban_is_active, raise_banned
+from util.cert import jwt_decode
 from util.object_id import get_current_user, optional_current_user, validate_object_id
 
 # ---------------------------------------------------------------------------
 # Device gate
 # ---------------------------------------------------------------------------
 
+# 学海设备的解锁窗口：临时凭证本身只有 5 分钟寿命，直链不能活得比它更久。
+XUEHAI_UNLOCK_TTL = 300
 
-async def reject_xuehai_device(request: Request) -> None:
-    """Policy gate: Xuehai devices may not touch the media library at all.
+DEVICE_LOCKED_DETAIL = "学海设备需要密码解锁后访问媒体库"
 
-    A request whose ``Xuehai-Id`` header parses to a positive integer is
-    treated as coming from a Xuehai device (the frontend only injects this
-    header when it self-identifies as one). Missing / empty / non-positive or
-    non-integer values pass through unchanged.
-    """
+
+def _is_xuehai_device(request: Request) -> bool:
+    """``Xuehai-Id`` 能解析成正整数才算学海设备。"""
     raw = xuehai_id_from(request)
-    if raw.isdecimal() and int(raw) > 0:
-        raise HTTPException(status_code=403, detail="学海设备不支持访问媒体库")
+    return raw.isdecimal() and int(raw) > 0
 
 
-router = APIRouter(dependencies=[Depends(reject_xuehai_device)])
+def _decode_quietly(token: str) -> dict | None:
+    """解码 JWT，任何异常都只是「无效」，绝不向调用方抛错。"""
+    try:
+        payload = jwt_decode(token)
+    except Exception:
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _valid_temporary_token(token: str, request: Request) -> bool:
+    """校验 5 分钟临时凭证：scope 正确、未过期、且与当前登录用户同一个人。
+
+    同人校验的意义：临时凭证是「证明你本人刚输入过密码」的票据，如果允许
+    拿 A 的票据给 B 的 access token 解锁，闸门就形同虚设。
+    """
+    payload = _decode_quietly(token)
+    if payload is None:
+        return False
+    if payload.get("scope") != "temporary_token":
+        return False
+    # PyJWT 默认已校验 exp，这里再判断一次，避免上游改配置后静默失效。
+    exp = payload.get("exp")
+    if not isinstance(exp, (int, float)):
+        return False
+    if exp <= datetime.now(timezone.utc).timestamp():
+        return False
+
+    authorization = (request.headers.get("Authorization") or "").strip()
+    if not authorization:
+        return True
+    scheme, _, access_token = authorization.partition(" ")
+    if scheme.lower() != "bearer" or not access_token.strip():
+        return False
+    access_payload = _decode_quietly(access_token.strip())
+    if access_payload is None:
+        return False
+    return str(access_payload.get("sub") or "") == str(payload.get("sub") or "")
+
+
+async def require_xuehai_unlock(request: Request) -> None:
+    """学海设备访问媒体库的门禁：无设备头放行，有设备头需要密码解锁。
+
+    放行条件（依次判断）：
+    * 请求不带 ``Xuehai-Id``：非学海设备，行为和以前完全一致；
+    * ``X-Device-Unlock`` 是有效的 5 分钟临时凭证：用户刚校验过密码；
+    * ``GET`` 且带 ``sign`` 查询参数：签名直链本身是解锁后换来的能力，
+      而 ``<img>`` 之类的加载没法带自定义请求头，端点会自行验签；
+    * 其余一律 403，前端据此提示输入密码。
+    """
+    if not _is_xuehai_device(request):
+        return
+    token = (request.headers.get("X-Device-Unlock") or "").strip()
+    if token and _valid_temporary_token(token, request):
+        return
+    if request.method == "GET" and (request.query_params.get("sign") or "").strip():
+        return
+    raise HTTPException(status_code=403, detail=DEVICE_LOCKED_DETAIL)
+
+
+router = APIRouter(dependencies=[Depends(require_xuehai_unlock)])
 
 # Only these statuses are ever served; deleted/quarantined/rejected are 410 even
 # with a valid signature (design §4 #2 / §6.2).
@@ -299,11 +356,14 @@ async def upload_attachment(
         raw = await read_capped(upload, MAX_BYTES)
         processed = await process_upload(raw)
     except QuotaExceeded:
+        # 文案里的数字必须与判定用的是同一组上限：用户级覆盖 / 在线设置改过的
+        # 值都要如实反映，否则「配额用尽」会报一个已经过期的默认数。
+        files_limit, bytes_limit = effective_daily_limits(user["id"])
         raise HTTPException(
             status_code=429,
             detail=(
-                f"今日上传配额已用尽（每日上限 {DAILY_MAX_FILES} 个 / "
-                f"{DAILY_MAX_BYTES // (1024 * 1024)} MB），请明天再试"
+                f"今日上传配额已用尽（每日上限 {files_limit} 个 / "
+                f"{bytes_limit // (1024 * 1024)} MB），请明天再试"
             ),
         )
     except AttachmentError as exc:
@@ -497,6 +557,7 @@ async def get_attachment_meta(
 @router.post("/{oid}/link")
 async def create_attachment_link(
     oid: str,
+    request: Request,
     user=Depends(get_current_user),
     log=Depends(inject_log),
     ttl: int = Query(3600),
@@ -507,6 +568,10 @@ async def create_attachment_link(
     if row is None:
         raise HTTPException(status_code=404, detail="Attachment not found")
     _require_owner_or_manager(user, row)
+
+    # 学海设备的直链只活到解锁窗口结束：否则一次解锁换来的 URL 能拿着用一小时。
+    if _is_xuehai_device(request):
+        ttl = min(ttl, XUEHAI_UNLOCK_TTL)
 
     url, expires_at = make_signed_url(oid, ttl)
     await repo.add_event(oid, user["id"], "link", row.get("status"), row.get("status"), "")

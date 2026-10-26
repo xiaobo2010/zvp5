@@ -1,5 +1,4 @@
 import type { UserPosition, CreateActivityType } from '@/../types'
-import { pad } from '@/plugins/ua.ts'
 
 export { default as ZActivityCreate } from './ZActivityCreate.vue'
 export { default as ZActivityDetails } from './ZActivityDetails.vue'
@@ -30,7 +29,7 @@ export function permissions(positions: UserPosition[]) {
     normal: upperStudent(positions),
     special: upperStudent(positions),
     merge: specialManagement(positions),
-    upload: positions.includes('admin') && !pad()
+    upload: positions.includes('admin')
   } as Record<CreateActivityType, boolean>
   return insert
 }

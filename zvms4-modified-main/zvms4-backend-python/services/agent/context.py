@@ -28,9 +28,10 @@ from typing import Any, Awaitable, Callable
 
 import settings
 
+from services import settings_runtime
 from services.ai.usage import CHARS_PER_TOKEN
 
-DEFAULT_CONTEXT_LIMIT = 32768
+DEFAULT_CONTEXT_LIMIT = 200_000
 DEFAULT_COMPACT_RATIO = 0.75
 DEFAULT_KEEP_TURNS = 6
 DEFAULT_SUMMARY_MAX_TOKENS = 800
@@ -93,11 +94,18 @@ def context_limit(model: str | None) -> int:
     优先 ``AI_MODEL_CONTEXT_LIMITS[model]``，其次该字典的 ``"*"`` 兜底键，最后
     ``AI_DEFAULT_CONTEXT_LIMIT``。非法值（0 / 负数 / bool / 字符串）一律当作没配，
     继续往下找——把 ``0`` 当真会让每次调用都被判超限，整条链路直接死掉。
+
+    默认值本身可以被运行期设置 ``ai.context_limit_default`` 覆盖（在线改完即时
+    生效）；没有覆盖时保持原来的 ``settings.AI_DEFAULT_CONTEXT_LIMIT`` 链路。
     """
-    default = _positive_int(
-        getattr(settings, DEFAULT_LIMIT_SETTING, DEFAULT_CONTEXT_LIMIT),
-        DEFAULT_CONTEXT_LIMIT,
-    )
+    override = settings_runtime.get_override("ai.context_limit_default")
+    if isinstance(override, int) and not isinstance(override, bool) and override > 0:
+        default = override
+    else:
+        default = _positive_int(
+            getattr(settings, DEFAULT_LIMIT_SETTING, DEFAULT_CONTEXT_LIMIT),
+            DEFAULT_CONTEXT_LIMIT,
+        )
     limits = getattr(settings, MODEL_LIMITS_SETTING, None)
     if not isinstance(limits, dict):
         return default

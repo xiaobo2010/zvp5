@@ -86,6 +86,8 @@ export const zhCN = {
       needCreateInfo: '请先完成基本信息，再上传义工单',
       noPermission: '您没有管理义工单的权限',
       deviceUnsupported: '学海设备不支持管理义工单，请使用其他设备操作',
+      unlockRequired: '平板访问义工单需要验证密码，已取消验证',
+      unlockRetry: '重新验证',
       loadFailed: '义工单加载失败，请重试'
     }
   },

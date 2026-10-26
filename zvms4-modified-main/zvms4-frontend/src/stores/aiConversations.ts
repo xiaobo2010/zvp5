@@ -152,14 +152,17 @@ export const useAiConversationsStore = defineStore('aiConversations', () => {
         status: 'active',
         cursor: options.cursor ?? null
       })
+      // 对话模式已下线：列表接口暂不支持按 mode 过滤，这里在客户端筛掉。
+      // chat 会话是历史遗留，保留在库里（不删、不改状态），只是不再出现在界面。
+      const agentOnly = page.conversations.filter((item) => item.mode === 'agent')
       if (options.cursor) {
         const known = new Set(conversations.value.map((item) => item.oid))
         conversations.value = [
           ...conversations.value,
-          ...page.conversations.filter((item) => !known.has(item.oid))
+          ...agentOnly.filter((item) => !known.has(item.oid))
         ]
       } else {
-        conversations.value = page.conversations
+        conversations.value = agentOnly
       }
       nextCursor.value = page.next_cursor
       listFailed.value = false

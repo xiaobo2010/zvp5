@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   cancelRun,
   createConversation,
@@ -74,10 +74,6 @@ function ok(data: unknown, status = 200) {
 
 beforeEach(() => {
   axiosMock.mockReset()
-})
-
-afterEach(() => {
-  vi.unstubAllGlobals()
 })
 
 describe('会话 CRUD', () => {
@@ -336,102 +332,5 @@ describe('后台执行', () => {
     const failure = await fetchRunDetail('missing').catch((error: unknown) => error)
 
     expect(failure).toMatchObject({ status: 404, code: 'AI_RUN_NOT_FOUND' })
-  })
-})
-
-describe('对话 SSE', () => {
-  function sseResponse(frames: string[], status = 200) {
-    const encoder = new TextEncoder()
-    const body = new ReadableStream({
-      start(controller) {
-        for (const frame of frames) {
-          controller.enqueue(encoder.encode(frame))
-        }
-        controller.close()
-      }
-    })
-    return {
-      ok: status >= 200 && status < 300,
-      status,
-      headers: { get: () => null },
-      body,
-      json: async () => ({})
-    }
-  }
-
-  it('逐帧吐出正文，首帧带会话与消息句柄', async () => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async () =>
-        sseResponse([
-          'data: {"conversation_oid":"c1","message_oid":"m2"}\n\n',
-          'data: {"choices":[{"delta":{"content":"你好"}}]}\n\n',
-          'data: [DONE]\n\n'
-        ])
-      )
-    )
-
-    const { streamConversationChat } = await import('./conversations')
-    const deltas: string[] = []
-    const result = await streamConversationChat({
-      conversationOid: 'c1',
-      content: '嗨',
-      model: 'gpt-4o-mini',
-      onDelta: (delta) => deltas.push(delta)
-    })
-
-    expect(deltas).toEqual(['你好'])
-    expect(result.text).toBe('你好')
-    expect(result.done).toBe(true)
-    expect(result.interrupted).toBe(false)
-    expect(result.messageOid).toBe('m2')
-  })
-
-  it('请求体只有本次内容与模型（历史在服务端组装）', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => sseResponse(['data: [DONE]\n\n'])))
-
-    const { streamConversationChat } = await import('./conversations')
-    await streamConversationChat({
-      conversationOid: 'c1',
-      content: '嗨',
-      model: 'gpt-4o-mini'
-    })
-
-    const [, init] = vi.mocked(fetch).mock.calls[0]!
-    const url = String(vi.mocked(fetch).mock.calls[0]![0])
-    expect(url).toContain('/ai/conversations/c1/chat')
-    expect(init?.method).toBe('POST')
-    expect(JSON.parse(String(init?.body))).toEqual({
-      content: '嗨',
-      model: 'gpt-4o-mini'
-    })
-  })
-
-  it('没有结束标记时标记为截断', async () => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async () => sseResponse(['data: {"choices":[{"delta":{"content":"半截"}}]}\n\n']))
-    )
-
-    const { streamConversationChat } = await import('./conversations')
-    const result = await streamConversationChat({ conversationOid: 'c1', content: '嗨' })
-
-    expect(result.text).toBe('半截')
-    expect(result.done).toBe(false)
-    expect(result.interrupted).toBe(true)
-  })
-
-  it('流内错误帧归一成错误码与说明', async () => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async () =>
-        sseResponse(['data: {"error":{"code":"AI_UPSTREAM_ERROR","message":"挂了"}}\n\n'])
-      )
-    )
-
-    const { streamConversationChat } = await import('./conversations')
-    const result = await streamConversationChat({ conversationOid: 'c1', content: '嗨' })
-
-    expect(result.error).toEqual({ code: 'AI_UPSTREAM_ERROR', message: '挂了' })
   })
 })

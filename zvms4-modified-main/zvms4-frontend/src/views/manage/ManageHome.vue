@@ -6,12 +6,13 @@ import { useI18n } from 'vue-i18n'
 import { useWindowSize } from '@vueuse/core'
 import { ElPageHeader, ElSegmented, ElIcon } from 'element-plus'
 import { ArrowLeft, Avatar, Bell } from '@element-plus/icons-vue'
-import { Block, Group, Log, User } from '@icon-park/vue-next'
+import { Block, Config, Group, Log, User } from '@icon-park/vue-next'
 import ZGroupUserList from '@/components/group/ZGroupUserList.vue'
 import ZGroupList from '@/components/group/ZGroupList.vue'
 import ZLogList from '@/components/log/ZLogList.vue'
 import ZBanRules from '@/components/manage/ZBanRules.vue'
 import ZNotificationAdmin from '@/components/manage/ZNotificationAdmin.vue'
+import ZSystemSettings from '@/components/manage/ZSystemSettings.vue'
 import ManageRoles from '@/views/manage/ManageRoles.vue'
 
 interface SegmentedTab {
@@ -20,7 +21,10 @@ interface SegmentedTab {
   icon: Component
 }
 
-const VALID_CURRENT = ['groups', 'users', 'roles', 'ban', 'logs', 'notifications']
+const VALID_CURRENT = ['groups', 'users', 'roles', 'ban', 'logs', 'notifications', 'settings']
+
+/** 只有管理员能进的分区；其他人访问一律回落到群组列表。 */
+const ADMIN_ONLY = ['notifications', 'roles', 'settings']
 
 const route = useRoute()
 const router = useRouter()
@@ -34,7 +38,7 @@ if (!(isAdmin || userStore.position.includes('department'))) {
 
 const curPage = route.params.action?.toString()
 
-if ((curPage === 'notifications' || curPage === 'roles') && !isAdmin) {
+if (curPage && ADMIN_ONLY.includes(curPage) && !isAdmin) {
   router.replace('/manage/groups')
 }
 
@@ -45,8 +49,7 @@ if (curPage && !VALID_CURRENT.includes(curPage)) {
 const current = ref(
   curPage &&
     VALID_CURRENT.includes(curPage) &&
-    (curPage !== 'notifications' || isAdmin) &&
-    (curPage !== 'roles' || isAdmin)
+    (!ADMIN_ONLY.includes(curPage) || isAdmin)
     ? curPage
     : 'groups'
 )
@@ -85,6 +88,11 @@ if (isAdmin) {
     value: 'logs',
     icon: Log
   }
+  tabs.value[tabs.value.length] = {
+    label: 'Settings',
+    value: 'settings',
+    icon: Config
+  }
 }
 
 watch(current, () => {
@@ -95,7 +103,7 @@ watch(
   () => route.params.action,
   () => {
     const curPage = route.params.action?.toString()
-    if ((curPage === 'notifications' || curPage === 'roles') && !isAdmin) {
+    if (curPage && ADMIN_ONLY.includes(curPage) && !isAdmin) {
       router.replace('/manage/groups')
       current.value = 'groups'
     } else if (curPage && VALID_CURRENT.includes(curPage)) {
@@ -209,6 +217,7 @@ watch([current, compactTabs], () => {
     <ZLogList v-else-if="current === 'logs'" id="" user="" />
     <ZBanRules v-else-if="current === 'ban'" />
     <ZNotificationAdmin v-else-if="current === 'notifications'" />
+    <ZSystemSettings v-else-if="current === 'settings'" />
   </div>
 </template>
 

@@ -52,6 +52,7 @@ import {
   type VolunteerOcrProgress
 } from '@/api/volunteer'
 import { aiErrorCodeOf, aiErrorCopy } from '@/api/ai/errors'
+import { DEVICE_UNLOCK_REASON, ensureDeviceUnlock } from '@/plugins/device-unlock'
 
 type RegistrationMode = Exclude<ActivityMode, 'hybrid'>
 type RowStatus = 'empty' | 'ok' | 'warning' | 'error' | 'saved'
@@ -1134,7 +1135,20 @@ function triggerImport() {
   importInput.value?.click()
 }
 
-function triggerOcr() {
+// 平板访问媒体库要先验密码（5 分钟有效）：先解锁再唤起拍照/相册，
+// 用户取消就中止本次识别并给出提示。
+async function triggerOcr() {
+  try {
+    await ensureDeviceUnlock({ reason: DEVICE_UNLOCK_REASON })
+  } catch {
+    ElMessage({
+      message: '未验证密码，已取消本次识别',
+      type: 'warning',
+      plain: true,
+      grouping: true
+    })
+    return
+  }
   ocrInput.value?.click()
 }
 

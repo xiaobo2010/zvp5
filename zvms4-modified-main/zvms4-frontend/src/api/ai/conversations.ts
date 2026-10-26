@@ -11,9 +11,6 @@ import type {
   AiRunSubmitResult
 } from '@/../types/ai'
 import { aiRequest, aiRequestList } from './http'
-import { AI_SCENE_HEADER, aiFetchRaw, aiResponseError, isMaintenanceResponse } from './http'
-import { AiRequestError } from './errors'
-import { extractDelta, extractStreamError, parseSseChunk, type AiStreamError } from './stream'
 
 /**
  * 持久会话面（/ai/conversations、/ai/runs）。
@@ -21,20 +18,11 @@ import { extractDelta, extractStreamError, parseSseChunk, type AiStreamError } f
  * 与 keys / quota 那几个 zvp 面接口同一套外壳：响应是
  * `{"status":"ok","data":{...}}`，错误是 `{"detail":"<code>"}`，
  * 所以这里走 `aiRequest` / `aiRequestList`（拆 envelope、错误归一成
- * AiRequestError）。只有对话的 SSE 走 fetch，因为流式不能被 axios 的
- * 12 秒超时腰斩。
+ * AiRequestError）。
  *
  * 契约见 docs/AI_CONVERSATION_DESIGN.md §3；字段名与后端视图逐字对齐，
  * 前端不自造字段。
  */
-
-/**
- * 审计场景名：后端把它落进 AI_CALL_LOGS.PURPOSE（只用于统计）。
- *
- * 会话化的对话仍然报 chat：调用日志页按 purpose 过滤，老的筛选口径不该
- * 因为会话化就失效。
- */
-export const AI_SCENE_CONVERSATION = 'chat'
 
 /** 会话列表默认条数与上限（后端 limit ≤ 100）。 */
 const CONVERSATION_LIST_LIMIT = 50
@@ -263,180 +251,5 @@ function emptyRun(runId: string): AiRun {
     created_at: '',
     started_at: null,
     finished_at: null
-  }
-}
-
-/* ---------------------------------------------------------------------------
-   对话（SSE）
-   --------------------------------------------------------------------------- */
-
-export interface AiConversationChatOptions {
-  conversationOid: string
-  content: string
-  model?: string
-  signal?: AbortSignal
-  /** 每收到一段增量文本回调一次。 */
-  onDelta?: (delta: string) => void
-}
-
-export interface AiConversationChatResult {
-  /** 累积的正文。 */
-  text: string
-  /** 是否收到 [DONE]。 */
-  done: boolean
-  /** 流已结束但没收到 [DONE]：回答被截断。 */
-  interrupted: boolean
-  /** 流内错误帧。 */
-  error: AiStreamError | null
-  requestId: string | null
-  /** 首帧带回的会话与消息句柄。 */
-  conversationOid: string | null
-  messageOid: string | null
-}
-
-/**
- * 在一个会话里发一条消息（SSE）。
- *
- * 历史与压缩摘要在服务端组装，请求体只有本次内容与模型。
- * 帧格式沿用 OpenAI 兼容面的 `data:` + `[DONE]`；首帧额外带
- * conversation_oid / message_oid。
- */
-export async function streamConversationChat(
-  options: AiConversationChatOptions
-): Promise<AiConversationChatResult> {
-  const response = await aiFetchRaw(
-    `/ai/conversations/${oid(options.conversationOid)}/chat`,
-    {
-      method: 'POST',
-      body: JSON.stringify({
-        content: options.content,
-        ...(options.model ? { model: options.model } : {})
-      }),
-      signal: options.signal,
-      headers: { [AI_SCENE_HEADER]: AI_SCENE_CONVERSATION }
-    }
-  )
-
-  if (!response.ok) {
-    if (await isMaintenanceResponse(response)) {
-      throw new AiRequestError({
-        status: 503,
-        code: 'AI_MAINTENANCE',
-        message: '系统维护中'
-      })
-    }
-    let body: unknown = null
-    try {
-      body = await response.json()
-    } catch {
-      body = null
-    }
-    throw aiResponseError(response, body)
-  }
-
-  const requestId = response.headers.get('X-AI-Request-Id')
-  const body = response.body
-  if (!body) {
-    return {
-      text: '',
-      done: false,
-      interrupted: false,
-      error: { code: 'AI_UPSTREAM_ERROR', message: '' },
-      requestId,
-      conversationOid: options.conversationOid,
-      messageOid: null
-    }
-  }
-
-  const reader = body.getReader()
-  const decoder = new TextDecoder()
-  let buffer = ''
-  let text = ''
-  let done = false
-  let error: AiStreamError | null = null
-  let conversationOid: string | null = null
-  let messageOid: string | null = null
-
-  const consume = (frames: string[]): void => {
-    for (const frame of frames) {
-      if (conversationOid === null || messageOid === null) {
-        const head = readStreamHead(frame)
-        conversationOid = conversationOid ?? head.conversationOid
-        messageOid = messageOid ?? head.messageOid
-      }
-      const failure = extractStreamError(frame)
-      if (failure) {
-        error = failure
-        continue
-      }
-      const delta = extractDelta(frame)
-      if (delta) {
-        text += delta
-        options.onDelta?.(delta)
-      }
-    }
-  }
-
-  try {
-    for (;;) {
-      const chunk = await reader.read()
-      if (chunk.value) {
-        buffer += decoder.decode(chunk.value, { stream: true })
-      }
-      if (chunk.done) {
-        buffer += decoder.decode()
-      }
-      const state = parseSseChunk(buffer, '')
-      buffer = state.buffer
-      consume(state.events)
-      if (state.done) {
-        done = true
-        break
-      }
-      if (error) {
-        break
-      }
-      if (chunk.done) {
-        const tail = parseSseChunk(`${buffer}\n\n`, '')
-        buffer = tail.buffer
-        consume(tail.events)
-        if (tail.done) {
-          done = true
-        }
-        break
-      }
-    }
-  } finally {
-    reader.releaseLock?.()
-  }
-
-  return {
-    text,
-    done,
-    interrupted: !done && !error,
-    error,
-    requestId,
-    conversationOid: conversationOid ?? options.conversationOid,
-    messageOid
-  }
-}
-
-/** 首帧里的会话与消息句柄；没有就给 null。 */
-function readStreamHead(frame: string): { conversationOid: string | null; messageOid: string | null } {
-  let payload: unknown
-  try {
-    payload = JSON.parse(frame)
-  } catch {
-    return { conversationOid: null, messageOid: null }
-  }
-  if (!payload || typeof payload !== 'object') {
-    return { conversationOid: null, messageOid: null }
-  }
-  const record = payload as Record<string, unknown>
-  const conversation = record.conversation_oid
-  const message = record.message_oid
-  return {
-    conversationOid: typeof conversation === 'string' && conversation ? conversation : null,
-    messageOid: typeof message === 'string' && message ? message : null
   }
 }

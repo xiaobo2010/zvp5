@@ -82,6 +82,24 @@ def _default_limit(kind: str) -> int:
         return 0
 
 
+def _role_default(roles: list[str] | None, kind: str) -> int | None:
+    """按角色表取默认月额度；没有任何角色命中时回 ``None``（调用方再回退全局）。
+
+    ``ocr_*`` 站点级 kind 与大类一样按 ``base`` 查找（站点额度没有角色维度，
+    最终会落到 :func:`_default_limit` 的站点口径）。
+    """
+    base = kind.split("_", 1)[0] if kind not in DEFAULT_QUOTA else kind
+    role_set = {item for item in (roles or []) if isinstance(item, str)}
+    table = role_quota()
+    for role in ROLE_QUOTA_PRIORITY:
+        if role not in role_set:
+            continue
+        value = (table.get(role) or {}).get(base)
+        if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+            return value
+    return None
+
+
 def default_limit_for(roles: list[str] | None, kind: str) -> int:
     """按角色取默认月额度；未列出的角色回退 ``AI_DEFAULT_*``。
 
@@ -97,25 +115,30 @@ def default_limit_for(roles: list[str] | None, kind: str) -> int:
     ``ocr_*`` 站点级 kind 与 ``_default_limit`` 一样回落到大类（站点额度没有角色
     维度，它是平台出资的）。
     """
-    base = kind.split("_", 1)[0] if kind not in DEFAULT_QUOTA else kind
-    role_set = {item for item in (roles or []) if isinstance(item, str)}
-    table = role_quota()
-    for role in ROLE_QUOTA_PRIORITY:
-        if role not in role_set:
-            continue
-        value = (table.get(role) or {}).get(base)
-        if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
-            return value
-    return _default_limit(kind)
+    hit = _role_default(roles, kind)
+    return hit if hit is not None else _default_limit(kind)
 
 
-def _row_values(
+def _row_state(
     row: dict | None, kind: str, roles: list[str] | None = None
-) -> tuple[int, int]:
-    """仓储行的字段名容错：``used``/``used_count`` 二选一，缺列按默认值。"""
-    default_limit = default_limit_for(roles, kind)
+) -> tuple[int, int, str]:
+    """读行的 ``(used, limit, source)``。
+
+    ``source`` 是**展示口径**，不影响扣费：
+
+    * ``explicit`` —— 库里已有该用户该月该能力的行，``limit_count`` 就是管理员
+      设置/历史落下的值（含 0）；扣费也读它。
+    * ``role_default`` / ``global_default`` —— 没有行（或行缺上限列），上限是按
+      角色表/全局默认算出来的。下次真实扣费时 ``consume`` 会把这个值写进新行，
+      所以此刻展示的就是「将要生效」的那一个。
+    """
+    # 只算一次角色表：``default_limit_for`` 与「来源标记」必须来自同一次判定，
+    # 否则两次调用之间配置变化会出现「值是角色的、来源写全局」的错配。
+    role_hit = _role_default(roles, kind)
+    default_limit = role_hit if role_hit is not None else _default_limit(kind)
+    default_source = "role_default" if role_hit is not None else "global_default"
     if not row:
-        return 0, default_limit
+        return 0, default_limit, default_source
     used = row.get("used")
     if used is None:
         used = row.get("used_count")
@@ -130,7 +153,16 @@ def _row_values(
         limit_value = int(limit if limit is not None else default_limit)
     except (TypeError, ValueError):
         limit_value = default_limit
-    return used_value, limit_value
+    source = "explicit" if limit is not None else default_source
+    return used_value, limit_value, source
+
+
+def _row_values(
+    row: dict | None, kind: str, roles: list[str] | None = None
+) -> tuple[int, int]:
+    """仓储行的字段名容错：``used``/``used_count`` 二选一，缺列按默认值。"""
+    used, limit, _source = _row_state(row, kind, roles)
+    return used, limit
 
 
 async def peek(
@@ -170,12 +202,25 @@ async def consume(
 
 
 async def snapshot(user_oid: str, *, roles: list[str] | None = None) -> dict:
+    """两种能力的月度快照。
+
+    ``roles`` 决定「没有额度行时」展示的默认上限：自助视图传当前登录人的
+    ``per``，管理端视图传**目标用户**的真实角色（``ai_router.user_quota`` 先查
+    再传）。不传就按全局 ``AI_DEFAULT_*`` 算——数值与真实生效值可能不同（admin
+    的 chat 是 1_000_000 而不是 200_000），所以每条都带 ``source`` 标明来路：
+    ``explicit``（库里有行）/ ``role_default``（角色表算出）/ ``global_default``。
+    """
     result: dict = {}
     period = period_now()
     for kind in ("ocr", "chat"):
         row = await backends.get_ai_quota_repo().get(user_oid, period, kind)
-        used, limit = _row_values(row, kind, roles)
-        result[kind] = {"period": period, "used": used, "limit": limit}
+        used, limit, source = _row_state(row, kind, roles)
+        result[kind] = {
+            "period": period,
+            "used": used,
+            "limit": limit,
+            "source": source,
+        }
     return result
 
 
@@ -184,9 +229,14 @@ def _entry(period: str, kind: str, used: int, limit: int) -> dict:
     return {"period": period, "kind": kind, "used": used, "limit": limit}
 
 
-async def admin_snapshot(user_oid: str) -> dict:
-    """admin 看别人：与自助视图同形（两种能力各一条），今天没有第二种口径。"""
-    return await snapshot(user_oid)
+async def admin_snapshot(user_oid: str, *, roles: list[str] | None = None) -> dict:
+    """admin 看别人：与自助视图同形（两种能力各一条），多出的 ``source`` 说明
+    该条上限是库里显式设置的值还是按角色/全局默认算出来的。
+
+    ``roles`` 必须是**目标用户**的角色（不是管理员的）；调用方查不到用户时传
+    ``None``，此时按全局默认展示并标 ``global_default``——不编造角色。
+    """
+    return await snapshot(user_oid, roles=roles)
 
 
 def _quota_owner(user_oid: str, kind: str) -> str:

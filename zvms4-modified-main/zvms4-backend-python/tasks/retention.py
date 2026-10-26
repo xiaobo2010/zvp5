@@ -201,15 +201,42 @@ def _positive_int(name: str, default: int) -> int:
 
 
 def app_logs_retention_days() -> int:
-    """Retention window for ``app_logs``, in days."""
+    """Retention window for ``app_logs``, in days.
+
+    运行期设置 ``ops.log_retention_days`` 优先（在线改完即时生效）；没有覆盖时
+    仍按 ``config.APP_LOGS_RETENTION_DAYS`` → 默认值的既有链路。
+    """
+    override = _runtime_override("ops.log_retention_days")
+    if override is not None:
+        return override
     return _positive_int("APP_LOGS_RETENTION_DAYS", DEFAULT_APP_LOGS_RETENTION_DAYS)
 
 
 def export_tasks_retention_days() -> int:
     """Retention window for finished ``export_tasks``, in days."""
+    override = _runtime_override("ops.export_retention_days")
+    if override is not None:
+        return override
     return _positive_int(
         "EXPORT_TASKS_RETENTION_DAYS", DEFAULT_EXPORT_TASKS_RETENTION_DAYS
     )
+
+
+def _runtime_override(key: str) -> int | None:
+    """读运行期设置里的正整数覆盖；缺失/非法/导入失败一律返回 ``None``。
+
+    清理任务是后台作业，配置层出问题不该让它起不来，所以这里把所有异常都收成
+    「没有覆盖」——回落 ``config`` 的行为与引入设置中心之前完全一致。
+    """
+    try:
+        from services import settings_runtime
+
+        value = settings_runtime.get_override(key)
+    except Exception:  # noqa: BLE001 - 配置层坏了不该让清理任务起不来
+        return None
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        return None
+    return value
 
 
 def ai_call_logs_retention_days() -> int:

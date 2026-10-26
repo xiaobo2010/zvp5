@@ -1507,6 +1507,54 @@ Index("ix_ai_runs_status_heartbeat", ai_runs.c.status, ai_runs.c.heartbeat_at)
 
 
 # ---------------------------------------------------------------------------
+# SYSTEM_SETTINGS  ← new (在线设置中心; V036)
+#   一个可调项一行，SETTING_KEY 直接做主键。VALUE_JSON 存 JSON 编码后的值
+#   （字符串/数字/布尔/数组/对象都可能），所以是**裸 CLOB** 而不是
+#   ``CLOB + IS JSON``：Oracle 19c 的 IS JSON 不接受标量，而标量是最常见的取值。
+#   编码/解析在仓储层（``db/repos/oracle/system_settings.py``）统一做。
+#   UPDATED_BY 可空：迁移/脚本写入时没有「谁改的」。
+# ---------------------------------------------------------------------------
+
+system_settings = Table(
+    "system_settings",
+    metadata,
+    Column("setting_key", VARCHAR2(64), primary_key=True),
+    Column("value_json", CLOB, nullable=False),
+    Column("updated_by", VARCHAR2(24), nullable=True),
+    Column("updated_at", oracle.TIMESTAMP, nullable=False),
+)
+
+
+# ---------------------------------------------------------------------------
+# USER_QUOTA_OVERRIDES  ← new (按用户覆盖每日上传配额; V036)
+#   两列 NULL 都是「继承全局设置」，不是 0：0 是真实的合法上限（一个都不许传）。
+#   不建外键：删用户时这行由应用层显式清理（与全库一致），外键只会挡住删除。
+# ---------------------------------------------------------------------------
+
+user_quota_overrides = Table(
+    "user_quota_overrides",
+    metadata,
+    Column("user_oid", VARCHAR2(24), primary_key=True),
+    Column("daily_max_files", NUMBER, nullable=True),
+    Column("daily_max_bytes", NUMBER, nullable=True),
+    Column("updated_by", VARCHAR2(24), nullable=True),
+    Column("updated_at", oracle.TIMESTAMP, nullable=False),
+    CheckConstraint(
+        "daily_max_files IS NULL OR daily_max_files >= 0",
+        name="ck_user_quota_overrides_files",
+    ),
+    CheckConstraint(
+        "daily_max_bytes IS NULL OR daily_max_bytes >= 0",
+        name="ck_user_quota_overrides_bytes",
+    ),
+)
+
+# AI_PROMPT_AUDIT 的唯一索引是 (user_oid, created_at)，前导列不匹配按时间做的
+# 全用户保留期清理；补一条单列索引（V036）。
+Index("ix_ai_prompt_audit_created", ai_prompt_audit.c.created_at)
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 

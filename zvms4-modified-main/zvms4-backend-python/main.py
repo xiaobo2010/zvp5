@@ -38,6 +38,7 @@ from routers import (
     ai_agent_router,
     ai_conversations_router,
     ai_chat_conversations_router,
+    system_settings_router,
 )
 import socketio
 from socketio.exceptions import ConnectionRefusedError as SocketIOConnectionRefusedError
@@ -56,6 +57,7 @@ from tasks.files_retention import purge_expired_attachments
 from tasks.retention import purge_expired_records
 from tasks.user_trash_gc import purge_expired_trash
 from services import perf_sampler
+from services import settings_runtime
 from services.agent import run_queue
 from services.api_metrics import ApiMetricsMiddleware
 
@@ -402,6 +404,20 @@ async def startup_event():
         misfire_grace_time=3600,
     )
 
+    # 在线设置中心：每 5 秒把 SYSTEM_SETTINGS / USER_QUOTA_OVERRIDES 读进进程内
+    # 快照。同步读取点（AI 配置视图、上下文窗口、上传配额）直接读内存，调用方
+    # 签名不变；``PUT /api/system/settings`` 会立刻改写快照，本任务只负责把**别的
+    # worker** 的修改在 5 秒内带过来。读库失败由 refresh() 内部吞掉并回落默认值。
+    scheduler.add_job(
+        settings_runtime.refresh,
+        "interval",
+        seconds=settings_runtime.REFRESH_SECONDS,
+        id="system_settings_refresh",
+        coalesce=True,
+        max_instances=1,
+        misfire_grace_time=2,
+    )
+
     # AI 会话的后台 run 队列（设计 §4.3）：先把上次进程遗留的 running 收敛成
     # interrupted（单 worker 下「刚启动」等价于「没有合法在跑的任务」），再起泵
     # 去领 queued 的。收敛失败不该挡住启动——watchdog 每 30s 还会再试一次。
@@ -469,6 +485,9 @@ app.include_router(
     attachments_router.router, prefix="/api/attachments", tags=["attachments"]
 )
 app.include_router(system_router, prefix="/api/system/maintenance", tags=["System"])
+app.include_router(
+    system_settings_router.router, prefix="/api/system", tags=["System"]
+)
 app.include_router(db_system_router.router, prefix="/api/system/db", tags=["System"])
 app.include_router(
     db_metrics_router.router, prefix="/api/system/db/metrics", tags=["System"]

@@ -5,6 +5,16 @@ from typing import Optional
 from config import MAX_ACTIVITY_DESCRIPTION_LENGTH
 
 
+def _description_max_length() -> int:
+    """活动描述长度上限：运行期设置 ``ops.activity_description_max_length`` 优先。"""
+    from services import settings_runtime
+
+    override = settings_runtime.get_override("ops.activity_description_max_length")
+    if isinstance(override, int) and not isinstance(override, bool) and override > 0:
+        return override
+    return MAX_ACTIVITY_DESCRIPTION_LENGTH
+
+
 def validate_activity_name(name: str):
     if not name.strip():
         return False, "Should not be empty"
@@ -25,10 +35,11 @@ def validate_activity_description(description: Optional[str]):
     if description is None:
         return True, ""
 
-    if len(description) > MAX_ACTIVITY_DESCRIPTION_LENGTH:
+    limit = _description_max_length()
+    if len(description) > limit:
         return (
             False,
-            f"Should be at most {MAX_ACTIVITY_DESCRIPTION_LENGTH} characters",
+            f"Should be at most {limit} characters",
         )
 
     return True, ""

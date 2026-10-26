@@ -223,6 +223,20 @@ def get_ai_runs_repo(session: Any = None) -> Any:
     return OracleAIRunsRepo(session)
 
 
+def get_system_settings_repo(session: Any = None) -> Any:
+    """Return the ``SystemSettingsRepo`` implementation (在线设置中心)."""
+    from db.repos.oracle.system_settings import OracleSystemSettingsRepo
+
+    return OracleSystemSettingsRepo(session)
+
+
+def get_user_quota_overrides_repo(session: Any = None) -> Any:
+    """Return the ``UserQuotaOverridesRepo`` implementation (按用户配额覆盖)."""
+    from db.repos.oracle.system_settings import OracleUserQuotaOverridesRepo
+
+    return OracleUserQuotaOverridesRepo(session)
+
+
 __all__ = [
     "get_users_repo",
     "get_groups_repo",
@@ -254,4 +268,6 @@ __all__ = [
     "get_ai_conversations_repo",
     "get_ai_messages_repo",
     "get_ai_runs_repo",
+    "get_system_settings_repo",
+    "get_user_quota_overrides_repo",
 ]

@@ -2,8 +2,8 @@
 
 这张表是「AI_CALL_LOGS 零正文」的唯一例外，所以每条都单独钉：
 
-* **谁留**：默认只有 ``department``（学生会）；admin 的调试对话不留；
-  捕获角色可配置，空集合 = 关闭。
+* **谁留**：默认 ``department``（学生会）与 ``admin``；admin 自查同样需要留痕。
+  捕获角色可配置，空集合 = 关闭；判定只看 roles 交集。
 * **留什么**：最后一条 ``role=user`` 的正文；content 数组取文本段。
 * **怎么留**：18 位身份证 / 11 位手机号先脱敏、再按 ``AI_PROMPT_MAX_CHARS`` 截断
   （顺序反了会切出半个号码，正则就再也遮不住）。
@@ -84,9 +84,20 @@ def test_department_prompt_is_captured(repo):
     assert row["roles_snapshot"] == "department"
 
 
-def test_admin_is_not_captured_by_default(repo):
-    assert _capture(user=ADMIN) is None
-    assert repo.rows == []
+def test_admin_prompt_is_captured_by_default(repo):
+    """默认集合含 admin：管理员自查也要留痕（否则「谁问过什么」会断在管理员这一环）。"""
+    assert _capture(user=ADMIN) == "a" * 24
+    (row,) = repo.rows
+    assert row["roles_snapshot"] == "admin"
+
+
+def test_capture_is_a_roles_intersection(repo):
+    """多角色账号命中任一捕获角色即留（只看交集，不按优先级取一个）。"""
+    both = {"id": USER, "per": ["admin", "department"]}
+
+    assert _capture(user=both) == "a" * 24
+    assert repo.rows[0]["roles_snapshot"] == "admin,department"
+    assert _capture(user={"id": USER, "per": ["student", "admin"]}) == "a" * 24
 
 
 def test_capture_roles_are_configurable(repo, monkeypatch):

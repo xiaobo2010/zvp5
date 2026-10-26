@@ -1,19 +1,20 @@
 <script setup lang="ts">
 /**
- * 行为监控（admin）：受控留存的 prompt 审阅。
+ * Prompt 审阅（admin）：受控留存的 prompt 审阅。
  *
  * 列表只拿元数据——后端在这一层刻意不 SELECT 正文；点开某一行才读正文，而详情
  * 端点会在同一次请求里写一条访问审计。所以抽屉顶部必须显式说明「这次查看会被
  * 记录」：不是吓人的警告，而是让管理员知道自己的操作留痕。
  *
- * 视觉与交互沿用 ZAiLogsAdmin：同款卡片/筛选栅格/ElTable + ZPagination，不另起
- * 一套页面语言。
+ * 筛选体验与 ZAiLogsAdmin 完全一致：同款卡片 / 筛选栅格 / ZSelectPerson /
+ * ElDatePicker / ElTable + ZPagination，条件改动即重查，不另起一套页面语言。
  */
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useWindowSize } from '@vueuse/core'
 import {
   ElButton,
+  ElDatePicker,
   ElDrawer,
   ElEmpty,
   ElIcon,
@@ -22,9 +23,11 @@ import {
   ElOption,
   ElSelect,
   ElTable,
-  ElTableColumn
+  ElTableColumn,
+  ElTooltip
 } from 'element-plus'
 import { CopyDocument, InfoFilled, Refresh, Search } from '@element-plus/icons-vue'
+import ZSelectPerson from '@/components/form/ZSelectPerson.vue'
 import ZPagination from '@/components/utils/ZPagination.vue'
 import {
   AI_PROMPT_DAYS_DEFAULT,
@@ -32,12 +35,19 @@ import {
   aiErrorCodeOf,
   aiErrorCopy,
   getAiPrompt,
-  listAiPrompts
+  listAiPrompts,
+  toEpochSeconds
 } from '@/api/ai'
 import { formatDateTime } from '@/utils/dateTime'
 import type { AiPromptAuditDetail, AiPromptAuditRecord } from '@/../types/ai'
 
 const { t } = useI18n()
+
+/**
+ * 场景是开放集合：后端没有可枚举的 purpose 来源，这里只列已知常见值作候选，
+ * 同时允许 allow-create 手填——新增场景不需要改前端才能筛。
+ */
+const PURPOSE_OPTIONS = ['chat', 'markdown-assistant', 'ocr', 'agent']
 
 const rows = ref<AiPromptAuditRecord[]>([])
 const total = ref(0)
@@ -46,21 +56,55 @@ const perpage = ref(20)
 const loading = ref(false)
 const loadFailed = ref(false)
 
-/**
- * 天数改动立刻生效（与统计概览的天数控件一致）；用户 oid 需要点「查询」才生效，
- * 否则每敲一个字符就打一次接口，且半截 oid 只会返回 400。
- */
 const filters = reactive({
   userOid: '',
-  days: AI_PROMPT_DAYS_DEFAULT
+  purpose: '',
+  keyword: '',
+  days: AI_PROMPT_DAYS_DEFAULT,
+  /** 自定义时间范围；有值时后端整段忽略 days。 */
+  range: undefined as [Date, Date] | undefined
 })
 
-/** 已经生效的 oid 过滤（查询时从 filters 抄一份）。 */
-const appliedUserOid = ref('')
+/** 自定义范围是否生效：决定「最近 N 天」是否禁用，以及请求里传不传 days。 */
+const hasRange = computed(() => Boolean(filters.range?.[0] && filters.range?.[1]))
+
+/** 过滤条件变动后回到第一页：签名串只在取值真的变了时才变。 */
+const filterSignature = computed(() =>
+  [
+    filters.userOid,
+    filters.purpose,
+    filters.keyword,
+    hasRange.value ? 0 : filters.days,
+    filters.range?.[0]?.getTime() ?? 0,
+    filters.range?.[1]?.getTime() ?? 0
+  ].join('|')
+)
 
 /** 依次递增的请求序号：慢响应回来时若已有更新的请求，直接丢弃。 */
 let listSeq = 0
 let detailSeq = 0
+
+function onUserChange(value: string | string[]) {
+  filters.userOid = typeof value === 'string' ? value : ''
+}
+
+function resetFilters() {
+  filters.userOid = ''
+  filters.purpose = ''
+  filters.keyword = ''
+  filters.days = AI_PROMPT_DAYS_DEFAULT
+  filters.range = undefined
+}
+
+/** 时间范围不合法是用户手选出来的，单独给一句能指导动作的提示。 */
+function reportLoadFailure(error: unknown) {
+  if (aiErrorCodeOf(error) === 'AI_LOGS_BAD_FILTER') {
+    ElMessage.error(t('ai.prompts.badFilter'))
+    return
+  }
+  const copy = aiErrorCopy(aiErrorCodeOf(error), t)
+  ElMessage.error(`${copy.title}：${copy.hint}`)
+}
 
 async function load() {
   const seq = ++listSeq
@@ -69,8 +113,14 @@ async function load() {
     const result = await listAiPrompts({
       page: page.value,
       perpage: perpage.value,
-      userOid: appliedUserOid.value || undefined,
-      days: filters.days
+      userOid: filters.userOid.trim() || undefined,
+      purpose: filters.purpose || undefined,
+      keyword: filters.keyword.trim() || undefined,
+      // 有自定义范围时 days 整段忽略（后端也是这么处理的，这里不传以免歧义）。
+      days: hasRange.value ? undefined : filters.days,
+      // 时间边界折成 epoch 秒再传给后端（闭区间）。
+      time_start: hasRange.value ? toEpochSeconds(filters.range?.[0]) : undefined,
+      time_end: hasRange.value ? toEpochSeconds(filters.range?.[1]) : undefined
     })
     if (seq !== listSeq) {
       return
@@ -85,19 +135,12 @@ async function load() {
     rows.value = []
     total.value = 0
     loadFailed.value = true
-    const copy = aiErrorCopy(aiErrorCodeOf(error), t)
-    ElMessage.error(`${copy.title}：${copy.hint}`)
+    reportLoadFailure(error)
   } finally {
     if (seq === listSeq) {
       loading.value = false
     }
   }
-}
-
-function query() {
-  appliedUserOid.value = filters.userOid.trim()
-  page.value = 1
-  void load()
 }
 
 function onPageChange(nextPage: number, nextSize: number) {
@@ -106,13 +149,10 @@ function onPageChange(nextPage: number, nextSize: number) {
   void load()
 }
 
-watch(
-  () => filters.days,
-  () => {
-    page.value = 1
-    void load()
-  }
-)
+watch(filterSignature, () => {
+  page.value = 1
+  void load()
+})
 
 const emptyDescription = computed(() =>
   loadFailed.value ? t('ai.prompts.loadFailed') : t('ai.prompts.empty')
@@ -200,6 +240,9 @@ onMounted(() => {
           <p class="yg-text-xs yg-text-tertiary">{{ t('ai.prompts.subtitle') }}</p>
         </div>
         <div class="yg-card__extra flex flex-wrap items-center gap-2">
+          <ElButton @click="resetFilters">
+            {{ t('ai.prompts.resetFilters') }}
+          </ElButton>
           <ElButton :loading="loading" @click="load">
             <ElIcon class="mr-1"><Refresh /></ElIcon>
             {{ t('ai.common.refresh') }}
@@ -208,34 +251,80 @@ onMounted(() => {
       </header>
 
       <div class="yg-card__body">
-        <div class="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+        <div class="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
           <div class="flex flex-col gap-1">
-            <span class="yg-text-xs yg-text-tertiary">{{ t('ai.prompts.userOid') }}</span>
-            <ElInput
-              v-model="filters.userOid"
+            <span class="yg-text-xs yg-text-tertiary">{{ t('ai.prompts.user') }}</span>
+            <ZSelectPerson
+              :model-value="filters.userOid"
+              :filter-start="6"
+              full-width
               clearable
-              :placeholder="t('ai.prompts.userOidPlaceholder')"
-              @keydown.enter="query"
+              :placeholder="t('ai.prompts.userAll')"
+              @update:model-value="onUserChange"
             />
           </div>
           <div class="flex flex-col gap-1">
-            <span class="yg-text-xs yg-text-tertiary">{{ t('ai.prompts.days') }}</span>
-            <ElSelect v-model="filters.days" class="ai-prompt-audit__days">
+            <span class="yg-text-xs yg-text-tertiary">{{ t('ai.prompts.purpose') }}</span>
+            <!-- allow-create：后端没有 purpose 枚举接口，候选只是常见值 -->
+            <ElSelect
+              v-model="filters.purpose"
+              class="w-full"
+              filterable
+              allow-create
+              default-first-option
+              clearable
+            >
+              <ElOption :label="t('ai.prompts.purposeAll')" value="" />
               <ElOption
-                v-for="item in AI_PROMPT_DAYS_OPTIONS"
+                v-for="item in PURPOSE_OPTIONS"
                 :key="item"
-                :label="`${item} ${t('ai.prompts.daysUnit')}`"
+                :label="item"
                 :value="item"
               />
             </ElSelect>
           </div>
-          <div class="flex items-end">
-            <ElButton type="primary" :loading="loading" :icon="Search" @click="query">
-              {{ t('ai.prompts.query') }}
-            </ElButton>
+          <div class="flex flex-col gap-1">
+            <span class="yg-text-xs yg-text-tertiary">{{ t('ai.prompts.timeRange') }}</span>
+            <ElDatePicker
+              v-model="filters.range"
+              type="datetimerange"
+              class="w-full"
+              :range-separator="t('ai.prompts.timeRangeTo')"
+              :start-placeholder="t('ai.prompts.timeRangeStart')"
+              :end-placeholder="t('ai.prompts.timeRangeEnd')"
+            />
+          </div>
+          <div class="flex flex-col gap-1">
+            <span class="yg-text-xs yg-text-tertiary">{{ t('ai.prompts.days') }}</span>
+            <!-- 自定义范围优先：禁掉天数并解释为什么不能改 -->
+            <ElTooltip
+              :disabled="!hasRange"
+              :content="t('ai.prompts.daysDisabled')"
+              placement="top"
+            >
+              <div class="ai-prompt-audit__days-wrap">
+                <ElSelect v-model="filters.days" class="w-full" :disabled="hasRange">
+                  <ElOption
+                    v-for="item in AI_PROMPT_DAYS_OPTIONS"
+                    :key="item"
+                    :label="`${item} ${t('ai.prompts.daysUnit')}`"
+                    :value="item"
+                  />
+                </ElSelect>
+              </div>
+            </ElTooltip>
+          </div>
+          <div class="flex flex-col gap-1">
+            <span class="yg-text-xs yg-text-tertiary">{{ t('ai.prompts.keyword') }}</span>
+            <ElInput
+              v-model="filters.keyword"
+              clearable
+              :prefix-icon="Search"
+              :placeholder="t('ai.prompts.keywordPlaceholder')"
+            />
           </div>
         </div>
-        <p class="yg-text-xs yg-text-tertiary mt-3">{{ t('ai.prompts.daysHint') }}</p>
+        <p class="yg-text-xs yg-text-tertiary mt-3">{{ t('ai.prompts.filterHint') }}</p>
       </div>
     </section>
 
@@ -363,8 +452,9 @@ onMounted(() => {
 </template>
 
 <style scoped>
-.ai-prompt-audit__days {
-  width: 110px;
+/* tooltip 需要包一层：禁用的 ElSelect 自身不派发鼠标事件 */
+.ai-prompt-audit__days-wrap {
+  width: 100%;
 }
 
 /* 元数据：左列标签、右列取值；长 oid 与角色快照允许换行，不撑破抽屉。 */

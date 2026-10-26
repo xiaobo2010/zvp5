@@ -7,6 +7,7 @@ import router from '@/router'
 import { useUserStore } from '@/stores/user'
 import { cacheGet, cacheSet } from '@/utils/idbCache'
 import { getXuehaiId } from '@/plugins/ua'
+import { DEVICE_LOCK_DETAIL, cachedUnlockToken, clearDeviceUnlock } from '@/plugins/device-unlock'
 import { trackRequest, releaseRequest, type TrackedRequestConfig } from '@/plugins/inflight'
 import { readBanInfo } from '@/utils/ban'
 import {
@@ -139,6 +140,13 @@ axiosInstance.interceptors.request.use(
     if (xuehaiId > 0 && !config.headers['Xuehai-Id']) {
       config.headers['Xuehai-Id'] = String(xuehaiId)
     }
+    // 平板解锁后带上临时凭证：只认缓存里仍在 5 分钟窗口内的那张
+    if (xuehaiId > 0 && !config.headers['X-Device-Unlock']) {
+      const unlockToken = cachedUnlockToken()
+      if (unlockToken) {
+        config.headers['X-Device-Unlock'] = unlockToken
+      }
+    }
     trackRequest(config)
     return config
   },
@@ -174,6 +182,15 @@ axiosInstance.interceptors.response.use(
       releaseRequest(config)
       if (axios.isCancel(error) || config?.signal?.aborted) {
         return Promise.reject(error)
+      }
+      // 平板解锁凭证被后端否掉（过期/吊销/换了账号）：清掉本地缓存，
+      // 下一次从入口重新弹密码框。这里不重试——自动重试会变成密码框风暴。
+      if (
+        error.response?.status === 403 &&
+        (error.response?.data as { detail?: unknown } | undefined)?.detail ===
+          DEVICE_LOCK_DETAIL
+      ) {
+        clearDeviceUnlock()
       }
       // 维护模式 503(响应体带 maintenance=true):跳维护页统一呈现。
       // 必须在重试/缓存回落之前拦截,避免维护期间对业务接口放大请求。

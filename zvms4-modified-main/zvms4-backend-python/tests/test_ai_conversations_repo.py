@@ -17,9 +17,14 @@ SQL 形状断言（编译时内联绑定值，断言实际会发给 Oracle 的�
 from __future__ import annotations
 
 import inspect
+from collections.abc import Iterator, Mapping
 from datetime import datetime
+from types import SimpleNamespace
+from typing import Any
 
+import pytest
 from sqlalchemy.dialects import oracle
+from sqlalchemy.exc import NoSuchColumnError
 
 from db.repos.oracle import ai_conversations as conversations_repo
 from db.repos.oracle import ai_runs as runs_repo
@@ -41,6 +46,78 @@ def _sql(stmt) -> str:
 def _source(func) -> str:
     """方法的源码，用来钉住「顺序」与「提交次数」这类只能看代码的事实。"""
     return inspect.getsource(func)
+
+
+def _list_projection_values() -> dict[str, Any]:
+    """按真实列表投影的列集合构造一行。
+
+    列名从 ``_list_columns()`` 反推而不是手抄：投影增删列时这里先炸，避免用例
+    自己漂移成一个「假投影」。
+    """
+    values: dict[str, Any] = {
+        "oid": CONV,
+        "owner_oid": OWNER,
+        "mode": "chat",
+        "title": "学期总结",
+        "model": "gpt-x",
+        "status": "active",
+        "summary_upto_seq": 3,
+        "tokens_prompt": 10,
+        "tokens_completion": 20,
+        "tokens_total": 30,
+        "context_tokens": 40,
+        "message_count": 7,
+        "compaction_degraded_at": None,
+        "created_at": TS,
+        "updated_at": TS,
+    }
+    keys = {column.key for column in conversations_repo._list_columns()}
+    assert keys == set(values), keys ^ set(values)
+    return values
+
+
+class _ProjectedMapping(Mapping[str, Any]):
+    """复刻 ``RowMapping`` 的失败语义：缺列时抛 ``NoSuchColumnError``。
+
+    这个复刻是必须的：普通 dict 缺键抛 ``KeyError``，而 SQLAlchemy 的
+    ``RowMapping`` 抛 ``NoSuchColumnError``。用 dict 测这个漏洞会「看起来通过」，
+    线上却照旧 500。
+    """
+
+    def __init__(self, data: dict[str, Any]) -> None:
+        self._data = data
+
+    def __getitem__(self, key: str) -> Any:
+        try:
+            return self._data[key]
+        except KeyError:
+            raise NoSuchColumnError(
+                f"Could not locate column in row for column '{key}'"
+            ) from None
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._data)
+
+    def __len__(self) -> int:
+        return len(self._data)
+
+
+class _FakeResult:
+    def __init__(self, rows: list[Any]) -> None:
+        self._rows = rows
+
+    def all(self) -> list[Any]:
+        return self._rows
+
+
+class _FakeSession:
+    """只够 ``list_page`` 用：``execute()`` 直接回放给定的行。"""
+
+    def __init__(self, rows: list[Any]) -> None:
+        self._rows = rows
+
+    async def execute(self, _stmt: Any) -> _FakeResult:
+        return _FakeResult(self._rows)
 
 
 # ---------------------------------------------------------------------------
@@ -68,6 +145,45 @@ def test_list_projection_never_selects_the_summary_clob() -> None:
         "updated_at",
     ):
         assert f"ai_conversations.{column}" in listed, column
+
+
+def test_list_projection_row_maps_without_the_summary_column() -> None:
+    """列表投影 → 行映射这一步必须不再依赖 ``summary``。
+
+    历史漏洞：``_list_columns()`` 剔了 ``summary``，但列表页用的是读
+    ``mapping["summary"]`` 的全列映射，于是只要列表里有会话就抛
+    ``NoSuchColumnError`` → ``GET /api/ai/conversations`` 100% 500（会话数为 0
+    时因为不进映射反而 200）。
+    """
+    mapping = _ProjectedMapping(_list_projection_values())
+
+    # 先证明这个双精度复刻确实能复现原漏洞：全列映射喂列表投影会炸。
+    with pytest.raises(NoSuchColumnError):
+        conversations_repo._conversation_row(mapping)
+
+    row = conversations_repo._list_row(mapping)
+    assert row["summary"] is None
+    assert row["_id"] == CONV
+    assert row["message_count"] == 7
+    assert row["tokens_total"] == 30
+    assert row["updated_at"] == TS
+
+
+@pytest.mark.asyncio
+async def test_list_page_maps_projection_rows_end_to_end() -> None:
+    """``list_page`` 的真实调用点：投影行进列表映射，不抛 ``NoSuchColumnError``。"""
+    mapping = _ProjectedMapping(_list_projection_values())
+    repo = conversations_repo.OracleAIConversationsRepo(
+        session=_FakeSession([SimpleNamespace(_mapping=mapping)])
+    )
+
+    items, cursor = await repo.list_page(OWNER, limit=10)
+
+    assert len(items) == 1
+    assert items[0]["summary"] is None
+    assert items[0]["_id"] == CONV
+    # 不满一页 → 没有下一页游标。
+    assert cursor is None
 
 
 def test_list_page_is_keyset_paginated_not_offset() -> None:

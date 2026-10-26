@@ -1927,3 +1927,57 @@ EXCEPTION
     IF SQLCODE NOT IN (-1, -955) THEN RAISE; END IF;
 END;
 /
+
+-- ----------------------------------------------------------------------------
+-- SYSTEM_SETTINGS  ← new (在线设置中心; V036)
+--   一个可调项一行，SETTING_KEY 直接做主键；VALUE_JSON 是 JSON 文本（裸 CLOB，
+--   因为标量值 "x"/1/true 在 Oracle 19c 的 IS JSON 下不合法）。
+-- ----------------------------------------------------------------------------
+BEGIN
+  EXECUTE IMMEDIATE '
+CREATE TABLE system_settings (
+  setting_key VARCHAR2(64 CHAR) NOT NULL,
+  value_json CLOB NOT NULL,
+  updated_by VARCHAR2(24 CHAR),
+  updated_at TIMESTAMP NOT NULL,
+  PRIMARY KEY (setting_key)
+)';
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE != -955 THEN RAISE; END IF;
+END;
+/
+
+-- ----------------------------------------------------------------------------
+-- USER_QUOTA_OVERRIDES  ← new (按用户覆盖每日上传配额; V036)
+--   两列 NULL = 继承全局设置（不是 0）。
+-- ----------------------------------------------------------------------------
+BEGIN
+  EXECUTE IMMEDIATE '
+CREATE TABLE user_quota_overrides (
+  user_oid VARCHAR2(24 CHAR) NOT NULL,
+  daily_max_files NUMBER,
+  daily_max_bytes NUMBER,
+  updated_by VARCHAR2(24 CHAR),
+  updated_at TIMESTAMP NOT NULL,
+  PRIMARY KEY (user_oid),
+  CONSTRAINT ck_user_quota_overrides_files
+    CHECK (daily_max_files IS NULL OR daily_max_files >= 0),
+  CONSTRAINT ck_user_quota_overrides_bytes
+    CHECK (daily_max_bytes IS NULL OR daily_max_bytes >= 0)
+)';
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE != -955 THEN RAISE; END IF;
+END;
+/
+
+-- AI_PROMPT_AUDIT 的单列时间索引（V036）：保留期清理按 created_at 扫。
+BEGIN
+  EXECUTE IMMEDIATE '
+CREATE INDEX ix_ai_prompt_audit_created ON ai_prompt_audit (created_at)';
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE NOT IN (-955, -1408) THEN RAISE; END IF;
+END;
+/

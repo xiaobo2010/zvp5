@@ -243,8 +243,8 @@ def test_text_field_named_file_is_still_rejected(monkeypatch) -> None:
     assert repo.created == []
 
 
-def test_xuehai_device_is_still_blocked(monkeypatch) -> None:
-    """The device gate (``reject_xuehai_device``) is untouched by the fix."""
+def test_xuehai_device_without_unlock_is_blocked(monkeypatch) -> None:
+    """设备闸仍在：学海设备不带临时凭证照样 403，且提示改成「需要密码解锁」。"""
     repo = _patch_repos(monkeypatch)
 
     response = _client().post(
@@ -254,7 +254,7 @@ def test_xuehai_device_is_still_blocked(monkeypatch) -> None:
     )
 
     assert response.status_code == 403
-    assert response.json() == {"detail": "学海设备不支持访问媒体库"}
+    assert response.json() == {"detail": "学海设备需要密码解锁后访问媒体库"}
     assert repo.created == []
 
 

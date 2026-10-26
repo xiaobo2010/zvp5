@@ -23,9 +23,10 @@ import { useGroupsStore } from '@/stores/groups'
 import type { User, Group } from '@/../types'
 import { ZUserGroup } from '@/components'
 import { useWindowSize } from '@vueuse/core'
-import { Box, Search, View } from '@element-plus/icons-vue'
+import { Box, Search, Setting, View } from '@element-plus/icons-vue'
 import { pad } from '@/plugins/ua.ts'
 import ZDataExport from '@/components/utils/ZDataExport.vue'
+import ZUserQuotaDialog from '@/components/manage/ZUserQuotaDialog.vue'
 
 const router = useRouter()
 const { width, height } = useWindowSize()
@@ -177,6 +178,28 @@ async function exportUserList() {
 function handleSelectionChange(val: string[]) {
   emits('update:modelValue', val)
 }
+
+// ---------------------------------------------------------------------------
+// 配额入口：只有 admin 能改（与 manage 里其他 admin-only 分区同一判定）
+// ---------------------------------------------------------------------------
+
+const canManageQuota = computed(() => userStore.position.includes('admin'))
+
+const quotaVisible = ref(false)
+const quotaUser = ref<{ oid: string; name: string } | null>(null)
+
+function openQuota(row: { _id: string; name: string }) {
+  quotaUser.value = { oid: row._id, name: row.name }
+  quotaVisible.value = true
+}
+
+/** 操作列宽随入口数量变化：窄屏两个图标、宽屏两个文字按钮 */
+const actionColumnWidth = computed(() => {
+  if (narrow.value) {
+    return canManageQuota.value ? 120 : 72
+  }
+  return canManageQuota.value ? 300 : 260
+})
 </script>
 
 <template>
@@ -296,7 +319,7 @@ function handleSelectionChange(val: string[]) {
             }}</span>
           </template>
         </ElTableColumn>
-        <ElTableColumn fixed="right" :min-width="narrow ? 72 : 260">
+        <ElTableColumn fixed="right" :min-width="actionColumnWidth">
           <template #header>
             <div v-if="!narrow">
               <ElInput
@@ -382,6 +405,32 @@ function handleSelectionChange(val: string[]) {
                 <ElIcon :size="18"><View /></ElIcon>
               </button>
             </ElTooltip>
+
+            <!-- 配额入口：与上面「详细信息」同一规格，不另造按钮样式 -->
+            <ElButton
+              v-if="canManageQuota && !selectable && !narrow"
+              type="primary"
+              text
+              bg
+              size="small"
+              @click="openQuota(row)"
+            >
+              {{ t('ai.userQuota.entry') }}
+            </ElButton>
+            <ElTooltip
+              v-else-if="canManageQuota && !selectable"
+              :content="t('ai.userQuota.entry')"
+              placement="top"
+            >
+              <button
+                type="button"
+                class="yg-icon-btn yg-icon-btn--lg group-user-action"
+                :aria-label="t('ai.userQuota.entry')"
+                @click="openQuota(row)"
+              >
+                <ElIcon :size="18"><Setting /></ElIcon>
+              </button>
+            </ElTooltip>
           </template>
         </ElTableColumn>
       </ElTable>
@@ -392,6 +441,8 @@ function handleSelectionChange(val: string[]) {
         :total="total"
       />
     </ElCard>
+
+    <ZUserQuotaDialog v-if="canManageQuota" v-model:visible="quotaVisible" :user="quotaUser" />
   </div>
 </template>
 
