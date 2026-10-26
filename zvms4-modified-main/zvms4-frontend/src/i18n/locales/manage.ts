@@ -120,8 +120,7 @@ export const zhCN = {
       student: '学生',
       secretary: '团支书',
       department: '学生会',
-      admin: '管理员',
-      teacher: '教师'
+      admin: '管理员'
     },
     deleteUser: '删除用户',
     deleteSelfForbidden: '不能删除自己',
@@ -242,8 +241,7 @@ export const zhCN = {
       student: '学生',
       secretary: '团支书',
       department: '学生会',
-      admin: '管理员',
-      teacher: '教师'
+      admin: '管理员'
     }
   },
   roleManagement: {
@@ -278,8 +276,7 @@ export const zhCN = {
       student: '学生',
       secretary: '团支书',
       department: '学生会',
-      admin: '管理员',
-      teacher: '教师'
+      admin: '管理员'
     }
   },
   notifications: {

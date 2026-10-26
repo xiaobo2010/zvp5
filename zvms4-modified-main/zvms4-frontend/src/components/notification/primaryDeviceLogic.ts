@@ -7,7 +7,7 @@ import type { MyDeviceStatus } from '@/api/user/device'
  */
 
 /** 不受主设备闸限制的角色（与 services/device_guard.py 的 PRIVILEGED_ROLES 一致）。 */
-export const PRIVILEGED_ROLES = ['admin', 'department', 'secretary', 'teacher'] as const
+export const PRIVILEGED_ROLES = ['admin', 'department', 'secretary'] as const
 
 export function isPrivilegedRoles(roles: readonly string[]): boolean {
   return PRIVILEGED_ROLES.some((role) => roles.includes(role))
@@ -27,7 +27,7 @@ export interface PrimaryDeviceGateInput {
  * 门形态判定。
  *
  * 口径（2026-10-26 调整）：**学海设备上所有角色未绑定都必须绑**；PC（非学海设备）
- * 上特权角色不做主设备校验（允许管理员/教师用电脑登录），普通学生只能退出登录
+ * 上特权角色不做主设备校验（允许特权账号用电脑登录），普通学生只能退出登录
  * 换平板。读取失败说明不了用户没绑定，fail-open 不锁人，与后端登录口径一致。
  */
 export function primaryDeviceGateMode(input: PrimaryDeviceGateInput): PrimaryDeviceGateMode {

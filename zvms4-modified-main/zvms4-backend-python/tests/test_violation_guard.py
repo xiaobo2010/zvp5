@@ -438,7 +438,7 @@ async def test_missing_rule_only_records(guard) -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("role", ["admin", "department", "secretary", "teacher"])
+@pytest.mark.parametrize("role", ["admin", "department", "secretary"])
 async def test_privileged_roles_are_never_recorded_nor_banned(guard, role) -> None:
     """豁免必须发生在入库之前：留下的记录会在换届后变成别人的处罚依据。"""
     repo, state, calls = guard

@@ -10,7 +10,7 @@ export interface User {
   banned?: boolean
 }
 
-export type UserPosition = 'system' | 'admin' | 'auditor' | 'department' | 'secretary' | 'student' | 'teacher'
+export type UserPosition = 'system' | 'admin' | 'auditor' | 'department' | 'secretary' | 'student'
 
 export type WithPassword<T> = {
   password: string
