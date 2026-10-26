@@ -177,54 +177,24 @@ export const zhCN = {
     pendingRecordNotice: '该活动仍在审核中，提交的成员时长将在审核通过后计入统计',
     blockedRecordNotice: '该活动已驳回或未提交审核，无法录入成员',
     pendingSummary: '审核中活动的成员不计入时长统计，直到审核通过',
-    overrideNotice: '已录入成员修改时长后提交将直接覆盖，不会叠加',
-    existingBadge: '已录入',
-    existingHint: '已在活动中，现有时长 {duration} 小时，提交将覆盖',
-    existingHintUnchanged: '与现有时长一致，提交时会跳过',
-    existingLoaded: '已载入 {count} 名已在活动中的成员',
-    existingLoading: '载入已在活动中的成员…',
-    existingTruncated: '仅载入前 {limit} 名已有成员，其余请在活动详情成员列表处理',
+    overrideNotice:
+      '登记表只提交本次新增成员；已在活动中的人请在下方「修改已录入义工」搜索后调整时长。',
     rowLimitReached: '表格最多 {limit} 行，请先提交或删除部分行后再新增',
     rowLimitTruncated: '已达 {limit} 行上限，本次丢弃 {dropped} 行，剩余部分请分批粘贴或识别',
-    existingLoadFailed: '载入已有成员失败，已暂停提交，请重试载入后再提交',
-    noPending: '没有待提交的行；已录入成员修改时长后提交会直接覆盖，不会叠加',
-    nothingChanged: '已录入成员的时长都没有变化，无需提交',
-    updatedRow: '时长已覆盖',
+    noPending: '没有待提交的行',
     insertedRow: '已新增',
-    skippedRow: '时长未变，已跳过',
-    updateFailed: '更新失败：{reason}',
-    submitSummary: '《{activity}》更新 {updated} 条 / 新增 {added} 条 / 跳过 {skipped} 条',
-    partialFailedTitle: '部分成员更新失败',
-    partialFailedSummary:
-      '本次更新 {updated} 条、新增 {added} 条，失败 {failed} 条；成功的部分不回滚，可修正后重试',
-    moreFailures: '等共 {count} 条',
+    submitSummary: '《{activity}》已新增 {added} 条',
     // —— 时长与行校验 ——
     durationRequired: '请填写时长',
-    durationOutOfRange: '时长需为 0–25 之间的数字',
+    durationOutOfRange: '时长需大于 0 且不超过 25',
     duplicateInTable: '名单内重复',
     invalidRowsRemain: '还有 {count} 行需要修正后再提交',
     activityRequired: '请先选择目标义工活动',
-    // —— 覆盖确认（提交是设置时长，不是累加）——
-    overwriteConfirmTitle: '确认覆盖 {count} 条已有记录？',
-    overwriteConfirmDesc: '提交是设置时长，不会累加：同一人的时长会被这次填写的值替换。',
-    overwriteTruncatedNotice:
-      '已有成员索引超过 {limit} 条被截断，部分成员没有列出；本次提交仍按设置时长写入，不会累加。',
-    overwriteColName: '姓名',
-    overwriteColStudentId: '学号',
-    overwriteColOldDuration: '原时长',
-    overwriteColNewDuration: '新时长',
-    overwriteColAction: '动作',
-    overwriteAction: '覆盖',
-    overwriteSkipAction: '未变跳过',
-    confirmOverwrite: '确认覆盖',
     cancelAction: '取消',
     deleteAction: '删除',
     ocrAction: 'OCR 识别',
-    // —— 提交限制与索引失败 ——
+    // —— 提交限制 ——
     submitLimitExceeded: '一次最多提交 {limit} 人，当前 {count} 人，请分批提交',
-    existingLoadFailedBlock:
-      '已有成员列表载入失败，暂时不能提交：否则会把「修改时长」当成「新增」，时长会翻倍。',
-    retryLoad: '重试',
     // —— 行删除确认 ——
     removeRowTitle: '删除该行？',
     removeRowConfirm: '「{name}」这一行的内容将不再提交，删除后可用「撤回」恢复。',
@@ -270,6 +240,7 @@ export const zhCN = {
     class: '班级',
     dialog: {
       title: '{name}的成员列表',
+      search: '搜索姓名或学号',
       actions: {
         name: '操作',
         add: '添加',
