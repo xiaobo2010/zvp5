@@ -109,6 +109,3 @@ async function UserLogin(
 }
 
 export { UserLogin as useLongTermAuth }
-export function useVerificationAuth(user: string, password: string) {
-  return UserLogin(user, password, 'short', 'verify')
-}
