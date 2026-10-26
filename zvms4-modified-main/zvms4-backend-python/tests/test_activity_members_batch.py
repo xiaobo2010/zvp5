@@ -572,6 +572,64 @@ async def test_bulk_import_overwrite_sets_duration_instead_of_accumulating(
 
 
 @pytest.mark.asyncio
+async def test_bulk_import_reject_existing_blocks_the_whole_batch(monkeypatch) -> None:
+    """``reject_existing=True``：命中既有三元组就整批 409，一行都不写。
+
+    登记表改成「只新增」后，前端靠这个参数兜住「没搜索就直接提交」的情况，
+    否则 v3 的累加语义会把同一个人同一模式的时长悄悄翻倍。
+    """
+    existing = {(MEMBER_OIDS[0], "on-campus"): 3.0}
+    state = _bulk(
+        monkeypatch,
+        existing=existing,
+        users={
+            MEMBER_OIDS[0]: _user_doc(MEMBER_OIDS[0]),
+            MEMBER_OIDS[1]: _user_doc(MEMBER_OIDS[1]),
+        },
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        await activities.add_activity_member_v3(
+            ACTIVITY_ID,
+            [
+                _new_member(MEMBER_OIDS[0], duration=2.0),
+                _new_member(MEMBER_OIDS[1], duration=1.0),
+            ],
+            MANAGER,
+            state["log"],
+            False,
+            True,
+        )
+
+    assert exc.value.status_code == 409
+    assert state["members"].writes == []
+    assert state["activities"].updates == []
+    assert state["log"].inserts == 0
+
+
+@pytest.mark.asyncio
+async def test_bulk_import_reject_existing_allows_new_members(monkeypatch) -> None:
+    """没命中既有记录时 ``reject_existing`` 不拦新增。"""
+    state = _bulk(
+        monkeypatch,
+        existing={},
+        users={MEMBER_OIDS[0]: _user_doc(MEMBER_OIDS[0])},
+    )
+
+    await activities.add_activity_member_v3(
+        ACTIVITY_ID,
+        [_new_member(MEMBER_OIDS[0], duration=2.0)],
+        MANAGER,
+        state["log"],
+        False,
+        True,
+    )
+
+    assert state["members"].writes == [("add", MEMBER_OIDS[0], "on-campus", 2.0)]
+    assert len(state["activities"].updates) == 1
+
+
+@pytest.mark.asyncio
 async def test_bulk_import_overwrite_takes_the_last_duplicate_row(
     monkeypatch,
 ) -> None:

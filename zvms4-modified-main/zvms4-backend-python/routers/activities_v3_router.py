@@ -159,12 +159,16 @@ class NewActivityMember(BaseModel):
 @router.post("/{activity_id}/members", status_code=204)
 async def add_activity_member_v3(
     activity_id: str,
-    members: list[NewActivityMember] = Body(min_length=1, max_length=1000),
+    members: list[NewActivityMember] = Body(min_length=1, max_length=100),
     user=Depends(get_current_user),
     log=Depends(inject_log),
     overwrite: bool = Query(
         False,
         description="已有 (member, mode) 记录时，用本次时长覆盖而非累加",
+    ),
+    reject_existing: bool = Query(
+        False,
+        description="已有 (member, mode) 记录时拒绝整批写入",
     ),
 ):
     """
@@ -186,6 +190,8 @@ async def add_activity_member_v3(
     # HTTP 请求经 FastAPI 校验后已是真正的 bool，原样通过。
     if not isinstance(overwrite, bool):
         overwrite = False
+    if not isinstance(reject_existing, bool):
+        reject_existing = False
 
     additions: dict[tuple[str, str], float] = {}
     for member in members:
@@ -221,6 +227,13 @@ async def add_activity_member_v3(
                     activity_id, [oid for oid, _mode in additions]
                 )
             }
+            if reject_existing:
+                conflicts = [key for key in additions if key in existing_by_key]
+                if conflicts:
+                    raise HTTPException(
+                        status_code=409,
+                        detail=f"已有 {len(conflicts)} 条活动记录，请先搜索已录入义工后修改",
+                    )
             for (oid, mode), duration in additions.items():
                 existing = existing_by_key.get((oid, mode))
                 if existing and overwrite:

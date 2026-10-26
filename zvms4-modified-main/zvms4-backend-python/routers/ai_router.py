@@ -103,9 +103,11 @@ def _stream_error_frame(code: str, message: str) -> bytes:
 
 class OcrRequest(BaseModel):
     attachment_oid: str
-    # 引擎 kind（``tencent`` / ``baidu`` / ...，**不是**模型名）：仅 admin 可用，
-    # 有值时只在该 kind 的引擎里选，站点额度照扣（见 ``services.ai.ocr.enqueue``）。
     provider: str | None = None
+
+
+class VolunteerOcrRequest(OcrRequest):
+    verification_token: str
 
 
 class KeyCreateRequest(BaseModel):
@@ -464,6 +466,24 @@ async def _reject_http(
 # ---------------------------------------------------------------------------
 # OCR
 # ---------------------------------------------------------------------------
+
+
+@router.post("/volunteer-ocr", status_code=202)
+async def request_volunteer_ocr(
+    payload: VolunteerOcrRequest,
+    background_tasks: BackgroundTasks,
+    user=Depends(get_current_user),
+    log=Depends(inject_log),
+):
+    verified = await _authenticate(payload.verification_token, "short", True)
+    if (
+        str(verified.get("id")) != str(user.get("id"))
+        or verified.get("purpose") != "verify"
+    ):
+        raise HTTPException(status_code=403, detail="AI_PASSWORD_VERIFICATION_REQUIRED")
+    return await request_ocr(
+        OcrRequest(attachment_oid=payload.attachment_oid), background_tasks, user, log
+    )
 
 
 @router.post("/ocr", status_code=202)

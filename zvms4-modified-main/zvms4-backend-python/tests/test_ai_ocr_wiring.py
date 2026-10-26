@@ -574,6 +574,83 @@ def test_enqueue_provider_without_matching_engine_is_503(
 
 
 # ---------------------------------------------------------------------------
+# 义工登记 OCR：必须带密码复核签发的短时令牌
+# ---------------------------------------------------------------------------
+
+
+def test_volunteer_ocr_requires_a_verification_token(engines):
+    """缺 verification_token 是 422：请求体契约先挡住，不进计价。"""
+    engines([_engine_row("primary", "tencent")])
+
+    response = _client().post(
+        "/api/ai/volunteer-ocr", json={"attachment_oid": ATTACHMENT}
+    )
+
+    assert response.status_code == 422
+
+
+def test_volunteer_ocr_rejects_token_of_another_user(
+    monkeypatch, files_repo, engines, quotas, audit_repo
+):
+    engines([_engine_row("primary", "tencent")])
+
+    async def other_user(*_args, **_kwargs):
+        return {"id": USER, "per": ["admin"], "purpose": "verify"}
+
+    monkeypatch.setattr(ai_router, "_authenticate", other_user)
+
+    response = _client().post(
+        "/api/ai/volunteer-ocr",
+        json={"attachment_oid": ATTACHMENT, "verification_token": "foreign"},
+    )
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "AI_PASSWORD_VERIFICATION_REQUIRED"
+    assert quotas["consume"].calls == []
+
+
+def test_volunteer_ocr_rejects_a_login_session_token(
+    monkeypatch, files_repo, engines, quotas, audit_repo
+):
+    """短时令牌必须是 purpose=verify：登录态 access token 不能顶替密码复核。"""
+    engines([_engine_row("primary", "tencent")])
+
+    async def login_token(*_args, **_kwargs):
+        return {"id": ADMIN, "per": ["admin"], "purpose": "login"}
+
+    monkeypatch.setattr(ai_router, "_authenticate", login_token)
+
+    response = _client().post(
+        "/api/ai/volunteer-ocr",
+        json={"attachment_oid": ATTACHMENT, "verification_token": "session"},
+    )
+
+    assert response.status_code == 403
+    assert quotas["consume"].calls == []
+
+
+def test_volunteer_ocr_accepts_verified_password(
+    monkeypatch, files_repo, engines, quotas, audit_repo
+):
+    engines([_engine_row("primary", "tencent")])
+
+    async def verified(*_args, **_kwargs):
+        return {"id": ADMIN, "per": ["admin"], "purpose": "verify"}
+
+    monkeypatch.setattr(ai_router, "_authenticate", verified)
+
+    response = _client().post(
+        "/api/ai/volunteer-ocr",
+        json={"attachment_oid": ATTACHMENT, "verification_token": "proof"},
+    )
+
+    assert response.status_code == 202
+    assert response.json()["data"]["status"] == "pending"
+    # 复核通过后与普通 OCR 同一条计价路径，不存在免费后门。
+    assert quotas["consume"].calls == [(ADMIN, "ocr", 1)]
+
+
+# ---------------------------------------------------------------------------
 # 后台识别：process_ocr
 # ---------------------------------------------------------------------------
 
