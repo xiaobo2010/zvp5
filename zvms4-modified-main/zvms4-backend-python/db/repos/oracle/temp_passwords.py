@@ -161,6 +161,12 @@ def _revoke_open_for_user_stmt(target_user_oid: str, now: datetime):
 
     只碰未用、未撤销、未过期的行：已经用掉/被撤销的码不改写，它们的原时间戳
     是审计证据。
+
+    ``NO_PARALLEL`` 不是性能调优，是正确性：生产 ADB 的会话带
+    ``pdml_enabled=YES``（``PARALLEL_DEGREE_POLICY=AUTO``），这条 UPDATE 会被
+    自动并行执行，随后同一事务里的 INSERT 立刻撞 ``ORA-12838``（签发临时密码
+    500 的真凶，空表也复现）。串行化这一条换取「作废+插入」仍在同一事务里，
+    比拆事务更安全——拆开会让两个并发签发都留下有效码。
     """
     return (
         update(temp_passwords_tbl)
@@ -171,6 +177,7 @@ def _revoke_open_for_user_stmt(target_user_oid: str, now: datetime):
             temp_passwords_tbl.c.expires_at > now,
         )
         .values(used_at=now)
+        .prefix_with("/*+ NO_PARALLEL */", dialect="oracle")
     )
 
 

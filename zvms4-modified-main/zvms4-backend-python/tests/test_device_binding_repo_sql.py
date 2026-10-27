@@ -315,7 +315,8 @@ def test_temp_password_revoke_open_for_user_replaces_previous_codes():
     """签发新码前的作废：只碰该用户「仍可用」的码，且写 used_at（被取代）。"""
     sql = _sql(temp_passwords_repo._revoke_open_for_user_stmt(USER_OID, UNTIL))
 
-    assert sql.startswith("UPDATE temp_login_passwords SET ")
+    # 生产 ADB 会话 pdml_enabled=YES：不串行化，同事务的 INSERT 会撞 ORA-12838。
+    assert sql.startswith("UPDATE /*+ NO_PARALLEL */ temp_login_passwords SET ")
     assert "used_at=TO_DATE('2026-11-01 00:00:00', 'YYYY-MM-DD HH24:MI:SS')" in sql
     assert f"temp_login_passwords.target_user_oid = '{USER_OID}'" in sql
     assert "temp_login_passwords.used_at IS NULL" in sql
