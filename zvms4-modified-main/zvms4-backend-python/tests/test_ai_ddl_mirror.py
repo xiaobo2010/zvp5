@@ -61,6 +61,14 @@ CACHE_TRACE_CHECK_EXPRS = {
     " and (cache_write_tokens is null or cache_write_tokens >= 0)"
 }
 
+# V037 把 ``ai_call_logs.status`` 的 CHECK 扩展到 ``'warning'``（无限制模式跳过
+# 审核的留痕）。V024 建表时还没有这个值，所以比较 OLD 形状时既要摘掉新表达式，
+# 也要断言迁移侧仍是旧五值——否则「扩枚举」这件事就没有任何东西守着。
+LEGACY_STATUS_CK = "status in ('success','error','timeout','rejected','busy')"
+MODERATION_STATUS_CK = (
+    "status in ('success','error','timeout','rejected','busy','warning')"
+)
+
 # ``ai_call_logs.key_scope`` 的 CHECK 规范化后的形态（ddl_check 会把大小写与空白
 # 折叠掉）。V024 建表时还没有这一列，它由 V025 的幂等 ALTER 补上——所以下面既断言
 # 「models/V001 里有它」，也断言「V024 里没有它」，把这次拆分本身钉住。
@@ -243,17 +251,22 @@ def test_ai_call_logs_migration_matches_models_minus_key_scope() -> None:
             ck
             for ck in expected["ck"]
             if ck != KEY_SCOPE_CK
+            and ck != MODERATION_STATUS_CK
             and ck not in TRACE_CHECK_EXPRS
             and ck not in AGENT_TRACE_CHECK_EXPRS
             and ck not in CACHE_TRACE_CHECK_EXPRS
         },
     }
-    assert gateway["tables"]["ai_call_logs"] == without_later
+    gateway_shape = dict(gateway["tables"]["ai_call_logs"])
+    gateway_shape["ck"] = gateway_shape["ck"] - {LEGACY_STATUS_CK}
+    assert gateway_shape == without_later
+    assert LEGACY_STATUS_CK in gateway["tables"]["ai_call_logs"]["ck"]
 
     # 全新实例走 V001，一次就拿到完整形状（含 key_scope 与 V031/V032/V033 的列）。
     assert v001["tables"]["ai_call_logs"] == expected
     assert "key_scope" in v001["tables"]["ai_call_logs"]["columns"]
     assert KEY_SCOPE_CK in v001["tables"]["ai_call_logs"]["ck"]
+    assert MODERATION_STATUS_CK in v001["tables"]["ai_call_logs"]["ck"]
     for column in TRACE_COLUMNS | AGENT_TRACE_COLUMNS | CACHE_TRACE_COLUMNS:
         assert column in v001["tables"]["ai_call_logs"]["columns"]
     for check in (

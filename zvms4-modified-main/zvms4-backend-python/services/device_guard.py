@@ -53,8 +53,7 @@ CUMULATIVE_TEMP_FAILURE_HOURS = 24
 RULE_CODE_FOREIGN_DEVICE = "foreign_device_login"
 
 # 团支书及以上：不受「必须学海设备」与主设备闸约束，可自由换设备登入。
-# teacher 也在此列——教师没有主学海设备，按学生口径要求会把教师账号整体锁死。
-PRIVILEGED_ROLES = frozenset({"admin", "department", "secretary", "teacher"})
+PRIVILEGED_ROLES = frozenset({"admin", "department", "secretary"})
 
 DEVICE_BANNED_MESSAGE = "这台设备由于违规使用，已被限制平台访问。"
 DEVICE_NOT_PRIMARY_MESSAGE = (

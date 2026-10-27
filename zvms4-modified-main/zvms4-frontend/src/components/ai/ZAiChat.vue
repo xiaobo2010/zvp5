@@ -13,6 +13,7 @@ import {
   ElMessageBox,
   ElOption,
   ElSelect,
+  ElSwitch,
   ElTag
 } from 'element-plus'
 import { Menu, Promotion, VideoPause, WarningFilled } from '@element-plus/icons-vue'
@@ -24,20 +25,27 @@ import {
   confirmProposal,
   fetchPendingProposals,
   fetchRunDetail,
+  getModerationUnrestricted,
   listModels,
-  rejectProposal
+  rejectProposal,
+  setModerationUnrestricted,
+  unlockAgent
 } from '@/api/ai'
 import { useAiConversationsStore } from '@/stores/aiConversations'
+import { useUserStore } from '@/stores/user'
 import ZSystemAuthDialog from '@/components/system/ZSystemAuthDialog.vue'
 import type { AiConversation, AiMessage, AiModelItem } from '@/../types/ai'
 import ZAiProposalCard from './ZAiProposalCard.vue'
 import ZAiSessionList from './ZAiSessionList.vue'
 import { contextPercent } from './conversationSession'
 import {
+  agentUnlockMinutesLeft,
   eventStatusTone,
+  isAgentUnlocked,
   markDualAuthCached,
   normalizeEventViews,
   normalizeProposals,
+  setAgentUnlockedUntil,
   toolLabelKey,
   type AgentEventView,
   type AgentProposalCard,
@@ -47,6 +55,9 @@ import {
 const { t } = useI18n()
 const { width, height } = useWindowSize()
 const store = useAiConversationsStore()
+const userStore = useUserStore()
+
+const isAdmin = computed(() => userStore.position.includes('admin'))
 
 /** 提案有效期的刷新间隔：后端按 10 分钟计，30 秒刷一次足够。 */
 const PROPOSAL_TICK_MS = 30_000
@@ -97,6 +108,17 @@ const replayFailed = ref<Record<string, boolean>>({})
 
 /** 双人动态码弹窗（复用系统页那一个，运维写操作要另一位管理员放行）。 */
 const authRef = ref<InstanceType<typeof ZSystemAuthDialog>>()
+
+/** 解锁授权窗口：只记到期时间，到点由定时器把状态刷掉。 */
+const unlockNow = ref(Date.now())
+const unlocked = computed(() => isAgentUnlocked(unlockNow.value))
+const unlockMinutes = computed(() => agentUnlockMinutesLeft(unlockNow.value))
+
+/** admin 的无限制模式开关：进页面读一次，改开关走 PUT。 */
+const unrestricted = ref(false)
+const unrestrictedLoading = ref(false)
+
+let unlockTimer: ReturnType<typeof setInterval> | null = null
 
 let cooldownTimer: ReturnType<typeof setInterval> | null = null
 let proposalTimer: ReturnType<typeof setInterval> | null = null
@@ -547,10 +569,11 @@ async function confirmCard(card: AgentProposalCard) {
     }
     card.state = 'confirming'
     try {
-      const result =
+      const result = await withUnlockRetry(() =>
         totpCode === undefined
-          ? await confirmProposal(card.oid)
-          : await confirmProposal(card.oid, totpCode)
+          ? confirmProposal(card.oid)
+          : confirmProposal(card.oid, totpCode)
+      )
       authRef.value?.succeed()
       card.state = 'confirmed'
       card.resultSummary = typeof result?.result_summary === 'string' ? result.result_summary : ''
@@ -561,6 +584,15 @@ async function confirmCard(card: AgentProposalCard) {
       ElMessage.success(t('ai.agent.proposal.confirmedNotice'))
       return
     } catch (error) {
+      if (error === UNLOCK_CANCELLED) {
+        // 取消解锁：卡片退回待确认，不是失败。
+        // 动态码已被取走、弹层还开着（submit 后不自动关），这里顺手收掉。
+        if (totpCode !== undefined) {
+          authRef.value?.succeed()
+        }
+        card.state = 'pending'
+        return
+      }
       if (isTotpRequired(error)) {
         // 授权窗口刚好过期：重新弹码要一次，别把它显示成失败。
         needCode = true
@@ -603,10 +635,14 @@ async function rejectCard(card: AgentProposalCard) {
   }
   card.state = 'rejecting'
   try {
-    await rejectProposal(card.oid)
+    await withUnlockRetry(() => rejectProposal(card.oid))
     card.state = 'rejected'
     ElMessage.success(t('ai.agent.proposal.rejectedNotice'))
   } catch (error) {
+    if (error === UNLOCK_CANCELLED) {
+      card.state = 'pending'
+      return
+    }
     applyProposalError(card, error)
     card.state = proposalErrorState(error)
   } finally {
@@ -686,6 +722,158 @@ async function toggleReplay(message: AiMessage) {
 }
 
 /* ---------------------------------------------------------------------------
+   解锁与内容审核
+   --------------------------------------------------------------------------- */
+
+/** 服务端要求先解锁的错误码：提交 run、确认 / 驳回提案都可能碰到。 */
+const UNLOCK_REQUIRED = 'AI_AGENT_UNLOCK_REQUIRED'
+
+/** 用户在解锁弹窗里取消：放弃当前动作，不落成一条错误。 */
+const UNLOCK_CANCELLED = Symbol('agent-unlock-cancelled')
+
+function isUnlockRequired(error: unknown): boolean {
+  return error instanceof AiRequestError && error.code === UNLOCK_REQUIRED
+}
+
+/** 解锁窗口的倒计时：只在有效期内转，过期自己停。 */
+function syncUnlockTimer() {
+  const active = isAgentUnlocked()
+  if (active && !unlockTimer) {
+    unlockNow.value = Date.now()
+    unlockTimer = setInterval(() => {
+      unlockNow.value = Date.now()
+      if (!isAgentUnlocked(unlockNow.value)) {
+        stopUnlockTimer()
+      }
+    }, PROPOSAL_TICK_MS)
+  } else if (!active && unlockTimer) {
+    stopUnlockTimer()
+  }
+}
+
+function stopUnlockTimer() {
+  if (unlockTimer) {
+    clearInterval(unlockTimer)
+    unlockTimer = null
+  }
+}
+
+/**
+ * 弹一次密码框并解锁；取消返回 false。
+ *
+ * 密码错时提示后重新弹，让用户原地重输；连错锁定直接收手——继续弹只会一直吃 429。
+ */
+async function promptUnlock(): Promise<boolean> {
+  for (;;) {
+    let password = ''
+    try {
+      const result = await ElMessageBox.prompt(
+        t('ai.agent.unlock.prompt'),
+        t('ai.agent.unlock.title'),
+        {
+          confirmButtonText: t('ai.common.confirm'),
+          cancelButtonText: t('ai.common.cancel'),
+          inputType: 'password',
+          closeOnClickModal: false
+        }
+      )
+      password = result.value ?? ''
+    } catch {
+      return false
+    }
+    if (!password) {
+      return false
+    }
+    try {
+      setAgentUnlockedUntil(await unlockAgent(password))
+      unlockNow.value = Date.now()
+      syncUnlockTimer()
+      return true
+    } catch (error) {
+      const aiError = error instanceof AiRequestError ? error : null
+      if (aiError?.code === 'AI_AGENT_UNLOCK_LOCKED' || aiError?.status === 429) {
+        ElMessage.error(t('ai.agent.unlock.locked'))
+        return false
+      }
+      if (aiError?.code === 'AI_AGENT_UNLOCK_FAILED' || aiError?.status === 403) {
+        ElMessage.error(t('ai.agent.unlock.wrong'))
+        continue
+      }
+      applyError(error)
+      return false
+    }
+  }
+}
+
+/**
+ * 遇到「需要解锁」就验证一次，然后原动作自动重试一次。
+ *
+ * 只重试一次：再失败说明授权没生效（或后端又改了契约），继续循环只会把用户困在弹窗里。
+ */
+async function withUnlockRetry<T>(action: () => Promise<T>): Promise<T> {
+  try {
+    return await action()
+  } catch (error) {
+    if (!isUnlockRequired(error)) {
+      throw error
+    }
+    if (!(await promptUnlock())) {
+      throw UNLOCK_CANCELLED
+    }
+    return await action()
+  }
+}
+
+/** 读 admin 的无限制模式开关；失败保持关闭，不阻挡对话。 */
+async function loadModerationState() {
+  try {
+    unrestricted.value = await getModerationUnrestricted()
+  } catch {
+    unrestricted.value = false
+  }
+}
+
+/**
+ * 切换无限制模式。
+ *
+ * 开启是危险操作：先弹红色确认，确认后才落库；关闭不需要二次确认。
+ * 服务端返回值是唯一真相，失败时开关保持原状。
+ */
+async function toggleUnrestricted(next: boolean) {
+  if (next) {
+    try {
+      await ElMessageBox.confirm(
+        t('ai.agent.unrestricted.confirm'),
+        t('ai.agent.unrestricted.confirmTitle'),
+        {
+          type: 'warning',
+          confirmButtonText: t('ai.common.confirm'),
+          cancelButtonText: t('ai.common.cancel'),
+          confirmButtonClass: 'el-button--danger',
+          closeOnClickModal: false
+        }
+      )
+    } catch {
+      return
+    }
+  }
+  unrestrictedLoading.value = true
+  try {
+    const enabled = await setModerationUnrestricted(next)
+    unrestricted.value = enabled
+    ElMessage.success(enabled ? t('ai.agent.unrestricted.onToast') : t('ai.agent.unrestricted.offToast'))
+  } catch (error) {
+    applyError(error)
+  } finally {
+    unrestrictedLoading.value = false
+  }
+}
+
+function onUnrestrictedChange(value: string | number | boolean) {
+  void toggleUnrestricted(value === true)
+}
+
+/* ---------------------------------------------------------------------------
    发送
    --------------------------------------------------------------------------- */
 
@@ -750,16 +938,28 @@ async function send() {
  */
 async function sendAgentTurn(conversation: AiConversation, text: string) {
   pendingUser.value = text
+  // 幂等键只生成一次：解锁后重试提交，不能重复落用户消息。
+  const msgId = clientMsgId()
   try {
-    await store.submitRun(conversation.oid, text, {
-      model: model.value || undefined,
-      clientMsgId: clientMsgId()
-    })
+    await withUnlockRetry(() =>
+      store.submitRun(conversation.oid, text, {
+        model: model.value || undefined,
+        clientMsgId: msgId
+      })
+    )
     await store.refreshMessages()
     if (userMessagePersisted(text)) {
       pendingUser.value = ''
     }
   } catch (error) {
+    if (error === UNLOCK_CANCELLED) {
+      // 取消解锁：把没发出去的内容还回输入框，别让用户白打一遍。
+      pendingUser.value = ''
+      if (!input.value) {
+        input.value = text
+      }
+      return
+    }
     applyError(error)
   }
 }
@@ -789,6 +989,13 @@ watch(
   }
 )
 
+// 角色可能是进页面后才就绪的：变成 admin 时补读一次开关状态。
+watch(isAdmin, (admin) => {
+  if (admin) {
+    void loadModerationState()
+  }
+})
+
 // run 的提案增量合并：已处理过的卡片状态不能被轮询冲掉。
 watch(
   () => store.runProposals,
@@ -814,6 +1021,11 @@ watch(
 
 onMounted(async () => {
   void loadModels()
+  // 解锁窗口可能还在（同一次访问里切过页面）：先让倒计时接上。
+  syncUnlockTimer()
+  if (isAdmin.value) {
+    void loadModerationState()
+  }
   // 刷新页面后没处理的写操作还在服务端：进页面先找回来。
   void loadPendingProposals()
   await store.loadConversations()
@@ -836,6 +1048,7 @@ onMounted(async () => {
 onUnmounted(() => {
   stopCooldown()
   stopProposalTimer()
+  stopUnlockTimer()
   store.stopPolling()
 })
 </script>
@@ -1225,6 +1438,17 @@ onUnmounted(() => {
         </div>
 
         <div class="ai-chat__composer">
+          <div v-if="isAdmin" class="ai-chat__unrestricted">
+            <span class="ai-chat__unrestricted-label">
+              {{ t('ai.agent.unrestricted.label') }}
+            </span>
+            <ElSwitch
+              :model-value="unrestricted"
+              size="small"
+              :loading="unrestrictedLoading"
+              @change="onUnrestrictedChange"
+            />
+          </div>
           <ElInput
             v-model="input"
             type="textarea"
@@ -1235,20 +1459,25 @@ onUnmounted(() => {
             @keydown.enter.exact.prevent="send"
           />
           <div class="flex flex-wrap items-center justify-between gap-2 mt-2">
-            <span class="text-xs" style="color: var(--yg-text-tertiary)">
-              <template v-if="cooldown > 0">
-                {{ t('ai.chat.rateLimited', { seconds: cooldown }) }}
-              </template>
-              <template v-else-if="!hasModels">
-                {{ modelsFailed ? t('ai.chat.modelsLoadFailed') : t('ai.chat.modelsEmpty') }}
-              </template>
-              <template v-else-if="!store.current">
-                {{ t('ai.chat.sessions.pickFirst') }}
-              </template>
-              <template v-else-if="runActive">
-                {{ t('ai.agent.run.background') }}
-              </template>
-            </span>
+            <div class="flex flex-wrap items-center gap-2">
+              <span class="text-xs" style="color: var(--yg-text-tertiary)">
+                <template v-if="cooldown > 0">
+                  {{ t('ai.chat.rateLimited', { seconds: cooldown }) }}
+                </template>
+                <template v-else-if="!hasModels">
+                  {{ modelsFailed ? t('ai.chat.modelsLoadFailed') : t('ai.chat.modelsEmpty') }}
+                </template>
+                <template v-else-if="!store.current">
+                  {{ t('ai.chat.sessions.pickFirst') }}
+                </template>
+                <template v-else-if="runActive">
+                  {{ t('ai.agent.run.background') }}
+                </template>
+              </span>
+              <span v-if="unlocked" class="ai-chat__unlock">
+                {{ t('ai.agent.unlock.status', { min: unlockMinutes }) }}
+              </span>
+            </div>
             <div class="flex items-center gap-2">
               <ElButton v-if="sending || runActive" type="danger" plain @click="cancelRun">
                 <ElIcon class="mr-1"><VideoPause /></ElIcon>
@@ -1428,6 +1657,27 @@ onUnmounted(() => {
   padding: var(--yg-space-3);
   font-size: var(--yg-font-size-md);
   line-height: var(--yg-line-height-normal);
+}
+
+/* 无限制模式开关：admin 专属，贴在输入框上方，小号弱化 */
+.ai-chat__unrestricted {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--yg-space-2);
+  margin-bottom: var(--yg-space-2);
+}
+
+.ai-chat__unrestricted-label {
+  font-size: var(--yg-font-size-xs);
+  color: var(--yg-text-tertiary);
+}
+
+/* 解锁窗口提示：细弱小字，过期自动消失 */
+.ai-chat__unlock {
+  font-size: var(--yg-font-size-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--yg-text-tertiary);
 }
 
 /* 压缩点：一条虚线加一句说明，把被摘要的历史隔在下面 */

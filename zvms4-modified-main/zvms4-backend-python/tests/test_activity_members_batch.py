@@ -280,13 +280,14 @@ class _BulkUsersRepo:
 
 
 class _ActivitiesRepo:
-    def __init__(self, atype: str = "hybrid") -> None:
-        self.atype, self.updates = atype, []
+    def __init__(self, atype: str = "hybrid", status: str = "effective") -> None:
+        self.atype, self.status, self.updates = atype, status, []
 
     async def get_for_update(self, activity_oid):
         return {
             "_id": activity_oid,
             "type": self.atype,
+            "status": self.status,
             "name": "支教活动",
         }
 
@@ -307,12 +308,12 @@ class _Log:
         self.inserts += 1
 
 
-def _bulk(monkeypatch, *, existing, users, atype="hybrid"):
+def _bulk(monkeypatch, *, existing, users, atype="hybrid", status="effective"):
     state = {
         "session": _Session(),
         "members": _BulkMembersRepo(existing),
         "users": _BulkUsersRepo(users),
-        "activities": _ActivitiesRepo(atype),
+        "activities": _ActivitiesRepo(atype, status),
         "log": _Log(),
     }
 
@@ -386,6 +387,26 @@ async def test_bulk_import_keeps_the_missing_member_error(monkeypatch) -> None:
     assert failure.value.status_code == 400
     assert failure.value.detail == "成员不存在"
     assert state["members"].writes == []  # 未发生写
+    assert state["activities"].updates == []
+
+
+@pytest.mark.asyncio
+async def test_bulk_import_rejects_refused_activity(monkeypatch) -> None:
+    state = _bulk(
+        monkeypatch,
+        existing={},
+        users={MEMBER_OIDS[0]: _user_doc(MEMBER_OIDS[0])},
+        status="refused",
+    )
+
+    with pytest.raises(HTTPException) as failure:
+        await activities.add_activity_member_v3(
+            ACTIVITY_ID, [_new_member()], MANAGER, state["log"]
+        )
+
+    assert failure.value.status_code == 400
+    assert failure.value.detail == "当前活动状态不允许登记成员"
+    assert state["members"].writes == []
     assert state["activities"].updates == []
     assert state["log"].inserts == 0
 
@@ -661,4 +682,3 @@ async def test_bulk_import_overwrite_takes_the_last_duplicate_row(
     assert state["log"].texts == [
         "用户 成员0a 为义工活动《支教活动》设置时长：成员0a on-campus 2.5"
     ]
-

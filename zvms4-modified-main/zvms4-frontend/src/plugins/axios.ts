@@ -47,11 +47,14 @@ function isCacheableGet(config?: InternalAxiosRequestConfig) {
     return false
   }
   const path = `${config.baseURL ?? ''}${config.url ?? ''}`.toLowerCase()
+  // 设备状态（me/device、ban/devices）必须每次新鲜：缓存会把 403/404 的错误体
+  // 也当数据回写，主设备绑定/解绑后的状态读取会被旧值挡住。
   return !(
     path.includes('/auth') ||
     path.includes('/totp') ||
     path.includes('/password') ||
-    path.includes('/system/')
+    path.includes('/system/') ||
+    path.includes('/device')
   )
 }
 
@@ -155,6 +158,27 @@ axiosInstance.interceptors.request.use(
     return Promise.reject(error)
   }
 )
+
+/**
+ * 登录设备闸的结构化 403 错误码（detail 是对象）。这批错误由登录页接管：
+ * 页内要按 code 切到「临时密码」模式、或弹设备封禁说明；拦截器再弹一条通用
+ * toast 只会把 JSON 原样甩给用户，和页内文案重复。
+ */
+const DEVICE_LOGIN_ERROR_CODES = new Set([
+  'DEVICE_REQUIRED',
+  'DEVICE_BANNED',
+  'DEVICE_NOT_PRIMARY',
+  'TEMP_PASSWORD_INVALID',
+  'DEVICE_CHALLENGE_MISMATCH'
+])
+
+function isDeviceLoginDetail(detail: unknown): boolean {
+  if (!detail || typeof detail !== 'object') {
+    return false
+  }
+  const code = (detail as { code?: unknown }).code
+  return typeof code === 'string' && DEVICE_LOGIN_ERROR_CODES.has(code)
+}
 
 // Response Interceptor
 
@@ -272,6 +296,12 @@ axiosInstance.interceptors.response.use(
           bannedStore.banReason = reason
           bannedStore.banUntil = until
         }
+      } else if (
+        error.response?.status === 403 &&
+        isDeviceLoginDetail(error.response?.data?.detail)
+      ) {
+        // 设备闸/临时密码登入失败：登录页按 detail.code 自行展示（临时密码引导、
+        // 设备封禁说明、重试提示），这里静默 reject，不再叠一条通用 toast。
       } else {
         if (!errorDisplayed) {
           errorDisplayed = true

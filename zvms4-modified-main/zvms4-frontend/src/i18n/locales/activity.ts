@@ -215,6 +215,7 @@ export const zhCN = {
     searchPlaceholder: '输入姓名或学号',
     searchFailed: '搜索已录入成员失败，请稍后重试',
     notInActivity: '该成员不在本活动中，请到「新增义工」栏登记',
+    otherModeRecorded: '该成员已按{mode}模式录入，请确认模式；修改已有成员请到「修改已有」栏处理',
     alreadyInGrid: '该成员已在表格中',
     invalidRowsRemain: '还有 {count} 行需要修正后再提交',
     activityRequired: '请先选择目标义工活动',

@@ -48,7 +48,7 @@ MAX_DETAIL_CHARS = 500
 #: 自动封禁的角色豁免。与 ``services.device_guard.PRIVILEGED_ROLES`` /
 #: ``services.violation_guard.NO_AUTO_BAN_ROLES`` 同一口径：这些角色的「高频」
 #: 多半是工作行为（批量导出、给全班签临时密码），可记录不可自动封。
-NO_AUTO_BAN_ROLES = ("admin", "department", "secretary", "teacher")
+NO_AUTO_BAN_ROLES = ("admin", "department", "secretary")
 
 #: 检查项 → 证据来源 + 产品默认 config。
 #: ``ltype`` 为 ``APP_LOGS.LTYPE``；``contains`` 在 ``DATA`` 摘要上做补充过滤

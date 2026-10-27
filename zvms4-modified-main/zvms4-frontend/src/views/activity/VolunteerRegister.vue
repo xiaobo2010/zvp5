@@ -179,9 +179,6 @@ const headerStore = useHeaderStore()
 const userStore = useUserStore()
 const { t } = useI18n()
 
-if (!(userStore.position.includes('admin') || userStore.position.includes('department'))) {
-  void router.replace('/not-found')
-}
 headerStore.setHeader(t('nav.register'))
 
 const indexState = ref<StudentIndexState>({
@@ -237,6 +234,8 @@ let draftTimer: ReturnType<typeof setTimeout> | undefined
 let draftIdleHandle: number | undefined
 let draftIdleTimer: ReturnType<typeof setTimeout> | undefined
 let draftReady = false
+// 草稿先于学生名单和活动成员索引恢复；索引齐备前不重算/覆盖草稿身份字段。
+let registrationContextReady = false
 let savedOids = new Set<string>()
 // 当前表格内容归属的活动：换活动时先把它写回旧活动的草稿键，再切到新活动。
 let draftOwnerId = ''
@@ -369,6 +368,13 @@ function savedHas(memberOid: string, mode: string): boolean {
 function existingOf(row: RegistrationRow): ExistingMemberRecord | undefined {
   if (!row.oid) return undefined
   return existingMembers.value.get(existingKey(row.oid, row.mode))
+}
+
+function existingInOtherMode(row: RegistrationRow): ExistingMemberRecord | undefined {
+  if (!row.oid) return undefined
+  return [...existingMembers.value.values()].find(
+    (record) => record.member === row.oid && record.mode !== row.mode
+  )
 }
 
 function existingDurationChanged(row: RegistrationRow, record: ExistingMemberRecord): boolean {
@@ -570,6 +576,13 @@ function revalidateRow(row: RegistrationRow) {
   const match = matchRow(row.studentId, row.name)
   row.candidates = match.candidates
 
+  // 非 hybrid 活动的模式先锁定，再按最终模式判断已有记录；否则用户从旧活动草稿切入时，
+  // 会先按旧模式查索引，随后才改成活动模式，导致已有成员被误判成新增。
+  const activityType = selectedActivity.value?.type
+  if (activityType && activityType !== 'hybrid') {
+    row.mode = activityType as RegistrationMode
+  }
+
   if (match.record) {
     if (!row.studentId.trim()) row.studentId = match.record.studentId
     if (!row.name.trim()) row.name = match.record.name
@@ -589,6 +602,7 @@ function revalidateRow(row: RegistrationRow) {
 
   // 先解析出 oid 再判「已录入」：否则新敲进来的学号第一下拿不到徽标。
   const recorded = existingOf(row)
+  const otherModeRecord = existingInOtherMode(row)
 
   if (match.status === 'missing' && !row.candidates.length) {
     const field = row.studentId.trim() && !row.name.trim() ? 'id' : 'name'
@@ -624,16 +638,17 @@ function revalidateRow(row: RegistrationRow) {
     message = message ? `${message}；${invalidDuration}` : invalidDuration
   }
 
-  const activityType = selectedActivity.value?.type
-  if (activityType && activityType !== 'hybrid' && !recorded) {
-    row.mode = activityType as RegistrationMode
-  }
-
   // 「修改已有」栏只处理已在活动中的人：匹配到学生但活动里没有记录时，
   // 直接标错并引导去新增栏，避免把修改提交成新增。
   if (editorMode.value === 'edit' && !recorded && status === 'ok') {
     status = 'error'
     message = t('activity.register.notInActivity')
+  }
+  if (otherModeRecord && !recorded && status === 'ok') {
+    status = 'warning'
+    message = t('activity.register.otherModeRecorded', {
+      mode: modeLabel(otherModeRecord.mode)
+    })
   }
 
   row.baseStatus = status
@@ -768,7 +783,7 @@ function restoreSnapshot(snapshot: RowSnapshot[]) {
     .map((item) => createRow({ ...item }))
   if (!rows.value.length) resetRows(8)
   rebuildDuplicateIndex()
-  revalidateAll()
+  if (registrationContextReady) revalidateAll()
   applySavedState()
 }
 
@@ -1229,7 +1244,14 @@ async function onImportFile(event: Event) {
       ElMessage.info('Excel 文件请先复制粘贴，或另存为 CSV 后导入')
       return
     }
-    applyText(await file.text(), { r: 0, c: 0 })
+    const buffer = await file.arrayBuffer()
+    const bytes = new Uint8Array(buffer)
+    const hasUtf8Bom = bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf
+    const utf8Text = new TextDecoder('utf-8').decode(buffer)
+    const text = hasUtf8Bom || !utf8Text.includes('\ufffd')
+      ? utf8Text
+      : new TextDecoder('gbk').decode(buffer)
+    applyText(text, { r: 0, c: 0 })
   } catch {
     ElMessage.error('读取文件失败')
   } finally {
@@ -1266,8 +1288,9 @@ async function onOcrFile(event: Event) {
     // OCR 识别的是新登记的人：识别完自动切到「新增」栏再铺数据。
     if (editorMode.value !== 'create') switchEditorMode('create')
 
-    const start = rows.value.findIndex((row) => !hasContent(row))
-    const base = start < 0 ? rows.value.length : start
+    // 从最后一条已有内容之后开始，避免中间空行导致 OCR 覆盖后面的人工录入。
+    const base =
+      rows.value.reduce((last, row, index) => (hasContent(row) ? index : last), -1) + 1
     // 行数封顶：OCR 一次可能吐出很多行，超出部分直接丢弃并提示。
     const room = Math.max(0, MAX_REGISTER_ROWS - base)
     const accepted = result.rows.slice(0, room)
@@ -1359,8 +1382,16 @@ async function hydrateSelectedActivity() {
     selectedActivity.value = detail.activity
     activityOptions.value = [detail.activity, ...activityOptions.value]
   } catch {
+    const failedActivityId = selectedActivityId.value
     selectedActivityId.value = ''
     selectedActivity.value = null
+    if (draftOwnerId === failedActivityId) {
+      draftOwnerId = ''
+      rows.value = []
+      stashedRows.create = []
+      stashedRows.edit = []
+      resetRows(8)
+    }
   }
 }
 
@@ -1412,7 +1443,8 @@ async function loadExistingMembers(aid: string): Promise<void> {
     if (seq !== existingLoadSeq) return
     existingMembers.value = next
     // 还有下一页但已到回溯上限：标记截断，提交时若命中未列出的人再确认覆盖。
-    existingTruncated.value = total > next.size && page > EXISTING_MEMBER_LIMIT / EXISTING_PAGE_SIZE
+    const fetchedRows = Math.min(page, EXISTING_MEMBER_LIMIT / EXISTING_PAGE_SIZE) * EXISTING_PAGE_SIZE
+    existingTruncated.value = total > fetchedRows && page >= EXISTING_MEMBER_LIMIT / EXISTING_PAGE_SIZE
     if (existingTruncated.value) {
       ElMessage.warning(t('activity.register.existingTruncated', { limit: EXISTING_MEMBER_LIMIT }))
     }
@@ -1432,13 +1464,21 @@ async function syncActivityContext(preselect = false) {
   const activity = selectedActivity.value
   if (!activity) {
     resetExistingIndex()
-    revalidateAll()
+    if (registrationContextReady) revalidateAll()
     return
   }
   if (!isRecordableStatus(activity.status)) {
+    const blockedActivityId = selectedActivityId.value
     selectedActivityId.value = ''
     selectedActivity.value = null
     resetExistingIndex()
+    if (draftOwnerId === blockedActivityId) {
+      draftOwnerId = ''
+      rows.value = []
+      stashedRows.create = []
+      stashedRows.edit = []
+      resetRows(8)
+    }
     ElMessage.warning(t('activity.register.blockedRecordNotice'))
     return
   }
@@ -1583,6 +1623,8 @@ function switchEditorMode(next: EditorMode) {
 // 第 1 步和第 2 步的先后决定了会不会「录串」——先写回再清空，反过来就会把上一个
 // 活动的行写进新活动的草稿。
 async function switchActivity(nextId: string, record = true, preselect = false) {
+  commitCellHistory()
+  registrationContextReady = false
   const previousId = draftOwnerId
   // 切走之前先把当前内容存回旧活动。
   persistDraftFor(previousId, buildDraftPayload(previousId))
@@ -1623,6 +1665,9 @@ async function switchActivity(nextId: string, record = true, preselect = false) 
     for (const row of rows.value) row.mode = mode
   }
   await syncActivityContext(preselect)
+  registrationContextReady = true
+  rebuildDuplicateIndex()
+  revalidateAll()
 }
 
 async function onActivityChange() {
@@ -1822,6 +1867,26 @@ async function submitRegistration() {
   const failures: Array<{ label: string; reason: string }> = []
   let updated = 0
   let added = 0
+  let finalized = false
+  const finalizeSavedRows = () => {
+    if (finalized || (!updated && !added)) return
+    finalized = true
+    savedActivityId.value = activity._id
+    savedCount.value += updated + added
+    for (const row of rows.value) {
+      if (row.status === 'saved' && row.oid) savedOids.add(existingKey(row.oid, row.mode))
+    }
+    pruneSavedRows()
+    editSearchResults.value = []
+    editSearchDone.value = false
+    if (added > 0 && activity.status === 'effective') {
+      const pending = { ...activity, status: 'pending' as const }
+      selectedActivity.value = pending
+      activityOptions.value = activityOptions.value.map((item) =>
+        item._id === pending._id ? pending : item
+      )
+    }
+  }
   try {
     // PUT 逐行覆盖：小批并发，单行失败只影响自己，成功的不回滚。
     for (let start = 0; start < updates.length; start += UPDATE_CONCURRENCY) {
@@ -1895,17 +1960,7 @@ async function submitRegistration() {
       }
     }
 
-    savedActivityId.value = activity._id
-    savedCount.value += updated + added
-    // 记下已写进服务端的 (成员, 模式)：撤回/读草稿都不会把这些人重新显示出来。
-    for (const row of rows.value) {
-      if (row.status === 'saved' && row.oid) savedOids.add(existingKey(row.oid, row.mode))
-    }
-    // 提交成功的人立刻退出登记表，页面只保留还没落库的行。
-    pruneSavedRows()
-    // 搜索结果里的时长已经旧了：清掉，避免把过时的原时长显示成「当前值」。
-    editSearchResults.value = []
-    editSearchDone.value = false
+    finalizeSavedRows()
 
     if (failures.length) {
       ElMessage.warning(
@@ -1933,7 +1988,19 @@ async function submitRegistration() {
       })
     )
   } catch (error) {
-    ElMessage.error(errorDetail(error) || '提交失败，请重试')
+    if (updated || added) {
+      failures.push({ label: t('activity.register.newMembersLabel'), reason: errorDetail(error) })
+      finalizeSavedRows()
+      ElMessage.warning(
+        t('activity.register.partialFailedSummary', {
+          updated,
+          added,
+          failed: failures.length
+        })
+      )
+    } else {
+      ElMessage.error(errorDetail(error) || '提交失败，请重试')
+    }
   } finally {
     submitLoading.value = false
   }
@@ -2131,7 +2198,7 @@ function applyDraft(payload: DraftPayload) {
   rows.value = editorMode.value === 'create' ? stashedRows.create : stashedRows.edit
   if (!rows.value.length) resetRows(8)
   rebuildDuplicateIndex()
-  revalidateAll()
+  if (registrationContextReady) revalidateAll()
   applySavedState()
 }
 
@@ -2206,7 +2273,7 @@ async function refreshIndex(showSuccess = true) {
       indexProgress.value = total ? `${loaded}/${total}` : String(loaded)
     })
     indexState.value = next
-    revalidateAll()
+    if (registrationContextReady) revalidateAll()
     if (next.error) ElMessage.warning(next.error)
     else if (showSuccess) ElMessage.success(`已同步 ${next.students.length} 名学生`)
   } catch {
@@ -2222,7 +2289,6 @@ async function initIndex() {
   try {
     const cached = await loadStudentIndex()
     indexState.value = cached
-    revalidateAll()
     if (!cached.students.length || Date.now() - cached.updatedAt > INDEX_STALE_MS) {
       await refreshIndex(false)
     }
@@ -2234,6 +2300,17 @@ async function initIndex() {
 }
 
 async function initPage() {
+  if (!userStore.isLogin) {
+    await router.replace('/user/login')
+    return
+  }
+  if (!(userStore.position.includes('admin') || userStore.position.includes('department'))) {
+    await userStore.refreshUser().catch(() => undefined)
+  }
+  if (!(userStore.position.includes('admin') || userStore.position.includes('department'))) {
+    await router.replace('/not-found')
+    return
+  }
   restoreDraft()
   await searchActivities('')
   // 先铺本地名单，再补已有成员：本地名单负责姓名/班级，服务端索引负责 sessionId
@@ -2247,6 +2324,9 @@ async function initPage() {
   }
   await hydrateSelectedActivity()
   await syncActivityContext(false)
+  registrationContextReady = true
+  rebuildDuplicateIndex()
+  revalidateAll()
 }
 
 function routeActivityId(): string {

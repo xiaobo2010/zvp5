@@ -59,7 +59,7 @@ async def get_user_v3(
     return {"status": "ok", "code": 200, "data": user_profile(target)}
 
 
-AllowedRole = Literal["student", "secretary", "department", "admin", "teacher"]
+AllowedRole = Literal["student", "secretary", "department", "admin"]
 
 
 class PutRolesRequest(BaseModel):
@@ -336,7 +336,7 @@ async def create_user_v3(
     # 造一个已知密码（学号）的 admin，再用它的 TOTP 给自己做双人审批。
     if "admin" in payload.roles:
         raise HTTPException(status_code=403, detail="不能通过创建账号直接授予管理员角色")
-    allowed_roles = {"student", "secretary", "department", "teacher"}
+    allowed_roles = {"student", "secretary", "department"}
     for role in payload.roles:
         if role not in allowed_roles:
             raise HTTPException(status_code=400, detail=f"无效角色：{role}")

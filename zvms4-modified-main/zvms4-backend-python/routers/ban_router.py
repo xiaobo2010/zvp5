@@ -59,7 +59,7 @@ TRIGGERS: tuple[dict, ...] = (
         "evaluation": "report",
         "description": (
             "客户端上报的违规信号（页面被嵌套、学海桥缺失、调试器/注入痕迹）；"
-            "窗口内累计到阈值才按梯度封号，管理员/学生会/教师只记录不封。"
+            "窗口内累计到阈值才按梯度封号，管理员/学生会/团支书只记录不封。"
         ),
         "config": {"threshold": 3, "window_hours": 24},
     },
