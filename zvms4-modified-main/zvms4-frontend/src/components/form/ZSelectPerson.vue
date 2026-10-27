@@ -1,9 +1,17 @@
 <script setup lang="ts">
 import { ElSelect, ElOption } from 'element-plus'
-import { ref, toRefs, watch } from 'vue'
+import { computed, onMounted, ref, toRefs, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import api from '@/api'
 import { extractHanCharacters, extractNonHanCharacters } from '@/utils/extraChars'
 import type { User } from '@/../types'
+
+interface PersonOption {
+  label: string
+  value: string
+  number: number
+  class: string
+}
 
 const props = defineProps<{
   modelValue: string | string[]
@@ -15,120 +23,186 @@ const props = defineProps<{
 }>()
 const emits = defineEmits<{
   (e: 'update:modelValue', value: string | string[]): void
+  (e: 'select', person: PersonOption | null): void
 }>()
 
+const { t } = useI18n()
 const { modelValue, filterStart, fullWidth, disabled, multiple, departmentOnly } = toRefs(props)
 
 const id = ref<string | string[]>(modelValue.value)
-watch(id, () => emits('update:modelValue', id.value), { immediate: true })
-watch(
-  () => id,
-  () => emits('update:modelValue', id.value),
-  { immediate: true }
-)
-const options = ref<
-  {
-    label: string
-    value: string
-    disabled?: boolean
-    number: number
-    class: string
-  }[]
->([])
-
+const options = ref<PersonOption[]>([])
+const selectedOptions = ref<PersonOption[]>([])
+const activeQuery = ref(false)
+const hint = ref('')
 const load = ref(false)
+
+const cache = new Map<string, PersonOption>()
+
+const emptyText = computed(() => {
+  if (load.value) {
+    return t('ai.select.searching')
+  }
+  return t(hint.value || 'ai.select.noMatch', { n: filterStart.value })
+})
+
+const displayOptions = computed<PersonOption[]>(() => {
+  if (activeQuery.value) {
+    return options.value
+  }
+  const kept = new Set(selectedOptions.value.map((item) => item.value))
+  return [...selectedOptions.value, ...options.value.filter((item) => !kept.has(item.value))]
+})
+
+function sameValue(a: string | string[], b: string | string[]) {
+  return Array.isArray(a) || Array.isArray(b)
+    ? JSON.stringify(a) === JSON.stringify(b)
+    : a === b
+}
 
 async function getUserGroups(user: User) {
   return await Promise.all(user.group.map(async (group) => api.group.readOne(group)))
 }
 
-async function filter(number: string) {
-  load.value = true
-  const extra = extractNonHanCharacters(number).replace(/[0-9]/g, '').length
-  const digits = number.replace(/[^0-9]/g, '').length
-  const han = extractHanCharacters(number).length
-  if (extra > 0 || (digits > 0 && han > 0)) {
-    load.value = false
-    return []
+async function toOption(user: User): Promise<PersonOption> {
+  let className = ''
+  try {
+    const groups = await getUserGroups(user)
+    className =
+      groups.filter((group) => group?._id).find((group) => group?.type === 'class')?.name || ''
+  } catch {
+    className = ''
   }
-  if (
-    filterStart.value &&
-    digits <= (filterStart.value ? filterStart.value : 5) &&
-    han < 2 &&
-    !departmentOnly.value &&
-    !modelValue.value
-  ) {
-    load.value = false
-    return []
-  }
-  const result0 = modelValue.value
-    ? null
-    : (await api.user.read(number, 1, departmentOnly.value ? 20 : 5))?.users
-  if (result0) {
-    const result = departmentOnly.value
-      ? result0.filter((x) => !!x.group.find((gr) => gr === '65e6fa210edc81d012ec41b6'))
-      : result0
-    options.value = await Promise.all(
-      result.map(
-        (x) =>
-          new Promise((resolve) => {
-            getUserGroups(x)
-              .then((groups) => {
-                const className =
-                  groups.filter((group) => group?._id).find((group) => group?.type === 'class')
-                    ?.name || ''
-                resolve({
-                  label: `${x.name}`,
-                  value: x._id,
-                  number: x.id,
-                  class: className
-                })
-              })
-              .catch(() =>
-                resolve({
-                  label: `${x.name}`,
-                  value: x._id,
-                  number: x.id,
-                  class: ''
-                })
-              )
-          })
-      ) as Promise<{
-        label: string
-        value: string
-        number: number
-        class: string
-      }>[]
-    )
-    load.value = false
-    return options
-  } else {
-    if (typeof modelValue.value === 'string') {
-      const userData = await api.user.readOne(modelValue.value)
-      if (userData) {
-        options.value = [
-          {
-            label: userData.name,
-            value: userData._id,
-            number: userData.id,
-            class: await getUserGroups(userData).then(
-              (groups) =>
-                groups.filter((group) => group?._id).find((group) => group?.type === 'class')
-                  ?.name || ''
-            )
-          }
-        ]
-      } else {
-        options.value = []
-      }
-      load.value = false
-      return options
-    }
-    options.value = []
-    load.value = false
-    return options
+  return {
+    label: user.name,
+    value: user._id,
+    number: user.id,
+    class: className
   }
 }
+
+function syncSelectedOptions() {
+  const values = Array.isArray(id.value) ? id.value : id.value ? [id.value] : []
+  selectedOptions.value = values
+    .map((value) => cache.get(value))
+    .filter((item): item is PersonOption => !!item)
+}
+
+async function readPerson(value: string): Promise<PersonOption | null> {
+  try {
+    const user = await api.user.readOne(value)
+    if (!user) {
+      return null
+    }
+    const option = await toOption(user)
+    cache.set(option.value, option)
+    return option
+  } catch {
+    return null
+  }
+}
+
+async function ensureSelected(value: string | string[]) {
+  const values = Array.isArray(value) ? value : value ? [value] : []
+  const missing = values.filter((item) => !cache.has(item))
+  if (missing.length) {
+    await Promise.all(missing.map(readPerson))
+  }
+  syncSelectedOptions()
+}
+
+let querySeq = 0
+
+async function filter(query: string) {
+  const keyword = query.trim()
+  if (!keyword) {
+    activeQuery.value = false
+    hint.value = ''
+    options.value = []
+    return
+  }
+  activeQuery.value = true
+  const extra = extractNonHanCharacters(keyword).replace(/[0-9]/g, '').length
+  const digits = keyword.replace(/[^0-9]/g, '').length
+  const han = extractHanCharacters(keyword).length
+  if (extra > 0 || (digits > 0 && han > 0)) {
+    options.value = []
+    hint.value = 'ai.select.invalidChars'
+    return
+  }
+  if (!departmentOnly.value && filterStart.value) {
+    if (digits > 0) {
+      if (digits < filterStart.value) {
+        options.value = []
+        hint.value = 'ai.select.needMoreDigits'
+        return
+      }
+    } else if (han < 2) {
+      options.value = []
+      hint.value = 'ai.select.needMoreName'
+      return
+    }
+  }
+  hint.value = ''
+  const seq = ++querySeq
+  load.value = true
+  try {
+    const result = await api.user.read(keyword, 1, departmentOnly.value ? 20 : 5)
+    if (seq !== querySeq) {
+      return
+    }
+    const users = result?.users ?? []
+    const filtered = departmentOnly.value
+      ? users.filter((user) => !!user.group.find((group) => group === '65e6fa210edc81d012ec41b6'))
+      : users
+    const mapped = await Promise.all(filtered.map(toOption))
+    if (seq !== querySeq) {
+      return
+    }
+    for (const option of mapped) {
+      cache.set(option.value, option)
+    }
+    options.value = mapped
+  } catch {
+    if (seq !== querySeq) {
+      return
+    }
+    hint.value = 'ai.select.searchFailed'
+  } finally {
+    if (seq === querySeq) {
+      load.value = false
+    }
+  }
+}
+
+function onChange(value: string | string[]) {
+  activeQuery.value = false
+  hint.value = ''
+  options.value = []
+  const values = Array.isArray(value) ? value : value ? [value] : []
+  const persons = values
+    .map((item) => cache.get(item))
+    .filter((item): item is PersonOption => !!item)
+  emits('select', Array.isArray(value) ? null : (persons[0] ?? null))
+}
+
+watch(id, (value) => {
+  const normalized: string | string[] = value ?? ''
+  if (!sameValue(normalized, modelValue.value)) {
+    emits('update:modelValue', normalized)
+  }
+  syncSelectedOptions()
+})
+
+watch(modelValue, (value) => {
+  if (!sameValue(value, id.value)) {
+    id.value = value
+  }
+  void ensureSelected(value)
+})
+
+onMounted(() => {
+  void ensureSelected(modelValue.value)
+})
 </script>
 
 <template>
@@ -146,10 +220,11 @@ async function filter(number: string) {
     remote-show-suffix
     popper-class="yg-select-person__selector"
     :popper-append-to-body="true"
+    @change="onChange"
     v-bind="$attrs"
   >
     <ElOption
-      v-for="item in options"
+      v-for="item in displayOptions"
       :key="item.value"
       :label="item.label"
       :value="item.value"
@@ -161,6 +236,9 @@ async function filter(number: string) {
         {{ item.number }}, {{ item.class }}
       </span>
     </ElOption>
+    <template #empty>
+      <p class="yg-select-person__hint">{{ emptyText }}</p>
+    </template>
     <template #prefix>
       <slot name="prepend"></slot>
     </template>
@@ -170,5 +248,11 @@ async function filter(number: string) {
 <style>
 .yg-select-person__selector .el-select-dropdown__wrap {
   max-height: 182px;
+}
+
+.yg-select-person__hint {
+  padding: 4px 12px;
+  font-size: var(--yg-font-size-sm);
+  color: var(--yg-text-tertiary);
 }
 </style>

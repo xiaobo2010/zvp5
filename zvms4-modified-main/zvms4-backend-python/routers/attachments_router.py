@@ -46,7 +46,7 @@ from util.attachment import (
     sanitize_filename,
     verify_signed,
 )
-from util.attachment_ocr import process_ocr
+from util.attachment_ocr import LINES_KEY, process_ocr
 from util.ban import ban_is_active, raise_banned
 from util.cert import jwt_decode
 from util.object_id import get_current_user, optional_current_user, validate_object_id
@@ -660,9 +660,23 @@ async def get_attachment_ocr(
             "engine_version": ocr.get("engine_version") if ocr else None,
             "text": ocr.get("text") if ocr else None,
             "confidence": ocr.get("confidence") if ocr else None,
+            "lines": _ocr_lines(ocr),
             "updated_at": _iso(ocr.get("updated_at")) if ocr else None,
         },
     }
+
+
+def _ocr_lines(ocr: dict | None) -> list[dict]:
+    """``file_ocr.raw`` 里的保留键；老数据（改版前落的行）没有这个键。
+
+    恒回列表而不是「没有就不出现字段」：客户端可以无条件 ``data.lines.map``，
+    不必区分「后端太旧」与「这张图没行」——两者对展示是同一件事。
+    """
+    if not ocr:
+        return []
+    raw = ocr.get("raw")
+    lines = raw.get(LINES_KEY) if isinstance(raw, dict) else None
+    return lines if isinstance(lines, list) else []
 
 
 # ---------------------------------------------------------------------------

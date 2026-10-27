@@ -84,6 +84,28 @@ async def list_engines() -> list[dict]:
     return [public_view(row) for row in rows]
 
 
+def summary_view(row: dict) -> dict:
+    """管理者视图：只够渲染引擎下拉，不含 ``config`` / ``key_hint``。
+
+    ``config`` 是运维参数（endpoint / model / language_type），``key_hint`` 是
+    账号标识的末四位——两者对「选一个引擎」都没用，回给非运维角色只是白送
+    内部拓扑。
+    """
+    return {
+        "oid": row.get("_id"),
+        "name": row.get("name"),
+        "kind": row.get("kind"),
+        "enabled": bool(row.get("enabled", True)),
+        "priority": int(row.get("priority") or 0),
+    }
+
+
+async def list_engine_summaries() -> list[dict]:
+    """非 admin 的只读清单（含 disabled，由调用方按 ``enabled`` 过滤）。"""
+    rows = await backends.get_ai_ocr_engines_repo().list_all()
+    return [summary_view(row) for row in rows]
+
+
 async def create_engine(
     *,
     name: object,

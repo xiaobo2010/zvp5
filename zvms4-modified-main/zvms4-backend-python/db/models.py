@@ -925,6 +925,23 @@ banned_devices = Table(
 
 
 # ---------------------------------------------------------------------------
+# DEVICE_BAN_COUNTERS  ← new (设备侧处罚梯度; V039)
+#   一台设备一行，``BAN_COUNT`` 是「这台机器被自动封过几次」，决定下一次用
+#   第几档 penalty——与 ``BAN_RECORDS`` 按账号计数是同一套梯度算法的两个维度。
+#   管理员解封设备**不**删这张表（历史违规仍在），只有显式
+#   ``reset-gradient`` 才清零。无外键：设备号是外部标识。
+# ---------------------------------------------------------------------------
+
+device_ban_counters = Table(
+    "device_ban_counters",
+    metadata,
+    Column("xuehai_id", VARCHAR2(32), primary_key=True),
+    Column("ban_count", NUMBER(5), nullable=False, server_default=text("0")),
+    Column("last_banned_at", oracle.TIMESTAMP, nullable=True),
+)
+
+
+# ---------------------------------------------------------------------------
 # BAN_VIOLATIONS  ← new (客户端上报的违规信号; V016 / V019)
 #   append-only：一条信号一行；**计数单位是批次而不是行**（V019 的 BATCH_ID），
 #   一次上报里的多个信号只算一次违规。无外键：违规记录是审计材料，必须比

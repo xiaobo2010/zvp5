@@ -267,7 +267,7 @@ async def _recognize(
             type(adapter).VERSION,
             str(result.get("text", "")),
             _confidence(result),
-            result.get("raw", {}),
+            _raw_payload(result),
         )
         await _audit_attempt(
             user_oid,
@@ -374,6 +374,43 @@ def _engine_label(row: dict, kind: str) -> str:
     return str(row.get("name") or kind)
 
 
+#: ``raw_json`` 里的保留键：逐行文本 + 置信度 + 坐标。厂商字段各叫各的
+#: （``TextDetections`` / ``words`` / ``prism_wordsInfo``），混进厂商 raw 里会让
+#: 「这是我们补的还是引擎给的」在排障时分不清；单独一个键，读方也不需要认识
+#: 六种厂商格式。
+LINES_KEY = "_zvms_lines"
+
+
+def _raw_payload(result: dict) -> dict:
+    """落库用的 raw：厂商 raw 原样 + 保留键 ``_zvms_lines``。
+
+    行数据在适配器出口本来就有（``_result`` 的 ``lines``），历史上写库时被丢掉，
+    于是「框选校对」这类需要坐标的功能无从下手。坐标结构保持引擎原样（腾讯是
+    ``{X,Y,Width,Height}``，阿里/百度是点集），前端按引擎区分渲染，这里不做归一。
+    """
+    raw = result.get("raw")
+    payload = dict(raw) if isinstance(raw, dict) else {}
+
+    lines: list[dict] = []
+    for line in result.get("lines") or []:
+        if not isinstance(line, dict):
+            continue
+        text = str(line.get("text") or "")
+        if not text:
+            # 空行没有可校对的内容，存下来只会让前端画一排看不见的框。
+            continue
+        confidence = line.get("confidence")
+        lines.append(
+            {
+                "text": text,
+                "confidence": None if confidence is None else float(confidence),
+                "box": line.get("box"),
+            }
+        )
+    payload[LINES_KEY] = lines
+    return payload
+
+
 def _confidence(result: dict) -> float:
     """统一结果没有顶层 confidence：按行取平均（全空则 0.0）。
 
@@ -394,6 +431,7 @@ __all__ = [
     "DEFAULT_ENGINE",
     "ERROR_ENGINE",
     "FatalOcrError",
+    "LINES_KEY",
     "NoopEngine",
     "OCR_DONE",
     "OCR_FAILED",

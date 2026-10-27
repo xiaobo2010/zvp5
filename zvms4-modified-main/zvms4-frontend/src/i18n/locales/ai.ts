@@ -282,6 +282,8 @@ export const zhCN = {
       label: '无限制模式',
       confirmTitle: '关闭内容审核？',
       confirm: '关闭后你在本会话中与智能体的交互将不再进行内容审核，该操作会记录警告并接受审计。',
+      verifyReason:
+        '关闭内容审核会跳过平台安全底线，请输入你自己的密码确认这是管理员本人的操作。',
       onToast: '已开启无限制模式，审核已跳过并记录',
       offToast: '已关闭无限制模式，恢复内容审核'
     }
@@ -425,7 +427,18 @@ export const zhCN = {
     resetConfirmTitle: '重置用量',
     savedNotice: '额度已更新',
     resetNotice: '用量已重置',
-    loadFailed: '额度加载失败'
+    loadFailed: '额度加载失败',
+    retry: '重试',
+    empty: '暂无额度数据',
+    currentUser: '当前用户'
+  },
+  select: {
+    needMoreDigits: '学号至少输入 {n} 位',
+    needMoreName: '姓名至少输入 2 个字',
+    invalidChars: '只支持学号或中文姓名',
+    searching: '搜索中…',
+    searchFailed: '搜索失败，请重试',
+    noMatch: '没有匹配的用户'
   },
   userQuota: {
     entry: '配额',

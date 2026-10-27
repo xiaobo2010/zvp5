@@ -33,7 +33,7 @@ import time
 from typing import Any, Mapping
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -64,6 +64,7 @@ from services.ai import moderation
 from services.ai import usage as ai_usage
 from services.ai.credentials import CredentialError
 from services.ai.routing import RouteError
+from typings.log import xuehai_id_from
 from util import agent_unlock
 from util.object_id import get_current_user
 
@@ -378,6 +379,7 @@ def _head_frame(conversation_oid: str, message_oid: str) -> bytes:
 async def chat_in_conversation(
     oid: str,
     payload: ChatRequest,
+    request: Request,
     user=Depends(get_current_user),
     scene: str | None = Depends(ai_scene),
 ):
@@ -437,6 +439,15 @@ async def chat_in_conversation(
             400, "AI_BAD_REQUEST", "content must not be empty", request_id=request_id
         )
 
+    # 正文留存必须在审核拒绝的 early-return 之前：被拦下的越狱原文本身就是
+    # 事后复核的证据。``capture`` 仍按角色白名单过滤，白名单外的角色不留。
+    await prompt_audit.capture(
+        user=dict(user),
+        purpose=purpose,
+        messages=[{"role": "user", "content": content}],
+        request_id=request_id,
+    )
+
     # 审核必须在 ``StreamingResponse`` 之前：响应头一旦发出，422 就只能藏在流里，
     # 前端按 ``error.code`` 的分支会全部失效。chat 不做密码门——它没有写工具。
     if agent_unlock.is_unrestricted(owner_oid):
@@ -456,7 +467,12 @@ async def chat_in_conversation(
                 "conversation chat 审核拦截 user=%s rule=%s", owner_oid, verdict.rule
             )
             try:
-                await violation_guard.record_agent_jailbreak(user)
+                await violation_guard.record_agent_jailbreak(
+                    user,
+                    xuehai_id=xuehai_id_from(request),
+                    rule=str(verdict.rule or ""),
+                    detail=content,
+                )
             except Exception:  # noqa: BLE001 - 证据入库失败不该把拒绝变成 500
                 _logger.exception("agent 越狱违规入库失败（本次仍然拒绝）")
             await _audit(
@@ -592,14 +608,6 @@ async def chat_in_conversation(
             conversation.get("summary"),
             history,
             [{"role": "user", "content": content}],
-        )
-        # prompt 受控留存（AI_PROMPT_AUDIT）与 ``/v1`` 同挂点：两条 chat 链路都
-        # 可能带着需要复核的正文，少挂一处就是一个看不见的入口。
-        await prompt_audit.capture(
-            user=dict(user),
-            purpose=purpose,
-            messages=messages,
-            request_id=request_id,
         )
         inserted = await conversations.append_user(
             str(oid), content, request_id=request_id

@@ -152,10 +152,11 @@ async function putUserStudentId(uid: string, studentId: string) {
   return response?.status >= 200 && response?.status < 300
 }
 
-async function deleteUserV3(uid: string) {
+async function deleteUserV3(uid: string, verificationToken?: string) {
   const response = await axios({
     method: 'delete',
-    url: `/v3/users/${uid}`
+    url: `/v3/users/${uid}`,
+    ...(verificationToken ? { data: { verification_token: verificationToken } } : {})
   })
   return response?.status >= 200 && response?.status < 300
 }

@@ -16,6 +16,7 @@ import {
   setMyPrimaryDevice,
   type MyDeviceStatus
 } from '@/api/user/device'
+import { isTemporaryTokenCancelled, withTemporaryToken } from '@/plugins/short-token'
 import {
   isValidXuehaiId,
   normalizeXuehaiId,
@@ -210,10 +211,21 @@ async function bindCurrentDevice() {
   }
   deviceBinding.value = true
   try {
-    await setMyPrimaryDevice(xuehaiId)
+    if (deviceStatus.value?.primary_xuehai_id) {
+      await withTemporaryToken(
+        String(user._id),
+        t('device.profile.verifyChangeReason'),
+        (token) => setMyPrimaryDevice(xuehaiId, token)
+      )
+    } else {
+      await setMyPrimaryDevice(xuehaiId)
+    }
     ElMessage.success(t('device.profile.bindSuccess'))
     await loadDevice()
   } catch (error) {
+    if (isTemporaryTokenCancelled(error)) {
+      return
+    }
     ElMessage.error(primaryDeviceErrorMessage(error, t('device.profile.bindFailed')))
   } finally {
     deviceBinding.value = false
@@ -234,11 +246,18 @@ async function submitChange() {
   }
   deviceSaving.value = true
   try {
-    await setMyPrimaryDevice(next)
+    await withTemporaryToken(
+      String(user._id),
+      t('device.profile.verifyChangeReason'),
+      (token) => setMyPrimaryDevice(next, token)
+    )
     changeDialogVisible.value = false
     ElMessage.success(t('device.profile.changeSuccess'))
     await loadDevice()
   } catch (error) {
+    if (isTemporaryTokenCancelled(error)) {
+      return
+    }
     changeError.value = primaryDeviceErrorMessage(error, t('device.profile.changeFailed'))
   } finally {
     deviceSaving.value = false
@@ -263,10 +282,17 @@ async function unbindPrimaryDevice() {
   }
   deviceSaving.value = true
   try {
-    await clearMyPrimaryDevice()
+    await withTemporaryToken(
+      String(user._id),
+      t('device.profile.verifyUnbindReason'),
+      (token) => clearMyPrimaryDevice(token)
+    )
     ElMessage.success(t('device.profile.unbindSuccess'))
     await loadDevice()
   } catch (error) {
+    if (isTemporaryTokenCancelled(error)) {
+      return
+    }
     ElMessage.error(primaryDeviceErrorMessage(error, t('device.profile.unbindFailed')))
   } finally {
     deviceSaving.value = false

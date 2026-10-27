@@ -163,6 +163,37 @@ async def _read_auth_user(oid: str):
     return await reader(oid)
 
 
+PASSWORD_VERIFICATION_REQUIRED = "需要密码验证后才能继续"
+
+
+async def require_password_verification(
+    verification_token: Optional[str],
+    user: dict,
+    *,
+    detail: str = PASSWORD_VERIFICATION_REQUIRED,
+) -> dict:
+    """高危操作的「密码再认证」闸：必须是一张**本人**的 ``purpose=verify`` 短令牌。
+
+    令牌由 ``POST /api/users/auth``（purpose='verify'）用密码换出，5 分钟有效。
+    这里沿用 ``_authenticate`` 的既有一切判定（签名、过期、scope、封禁、sid），
+    只把「缺令牌 / 无效 / 过期 / 伪造 / 不是本人」统一翻成 **403**：
+
+    前端 axios 拦截器把 401 当作「登录过期」，会清会话并跳登录页——密码框里打错
+    一次就把用户踢出去，属于明显的错误语义。403 只表示「这次动作缺一次复核」。
+
+    ``exception=False`` 让 ``_authenticate`` 返回 ``None`` 而不是抛 401；库不可用时
+    它仍会抛 503，那是完全不同的事实，不能被吞成 403。
+    """
+    verified = await _authenticate(verification_token, "short", False)
+    if (
+        verified is None
+        or str(verified.get("id")) != str(user.get("id"))
+        or verified.get("purpose") != "verify"
+    ):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=detail)
+    return verified
+
+
 async def _authenticate(
     token: Optional[str],
     scope: str,

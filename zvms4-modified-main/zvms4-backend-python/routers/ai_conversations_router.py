@@ -19,7 +19,7 @@ import re
 from typing import Any, Awaitable, Callable
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
@@ -28,6 +28,7 @@ from services.agent import run_queue
 from services.agent.tool_impl import AgentError
 from services.ai import audit
 from services.ai import conversations
+from typings.log import xuehai_id_from
 from util.object_id import get_current_user
 
 _logger = logging.getLogger(__name__)
@@ -329,6 +330,7 @@ async def list_messages(
 async def submit_run(
     oid: str,
     payload: RunCreate,
+    request: Request,
     user=Depends(get_current_user),
     scene: str | None = Depends(ai_scene),
 ):
@@ -346,6 +348,7 @@ async def submit_run(
             content=payload.content,
             model=payload.model,
             client_msg_id=payload.client_msg_id,
+            xuehai_id=xuehai_id_from(request),
         )
         await run_queue.kick()
         return data

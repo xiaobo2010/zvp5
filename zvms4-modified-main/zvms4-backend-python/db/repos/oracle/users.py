@@ -463,6 +463,15 @@ def _list_banned_by_xuehai_stmt(xuehai_id: str):
     )
 
 
+def _primary_owners_stmt(xuehai_ids: list[str]):
+    """批量查「这些设备号是谁的主设备」，供封禁列表一次取全 owner 摘要。"""
+    return select(
+        users_tbl.c.primary_xuehai_id,
+        users_tbl.c.oid,
+        users_tbl.c.name,
+    ).where(users_tbl.c.primary_xuehai_id.in_(xuehai_ids))
+
+
 def _primary_owned_by_other_stmt(xuehai_id: str, user_oid: str):
     """该设备号是否**挂在别人名下**的主设备（``EXISTS`` 语义，取一行即止）。
 
@@ -1283,6 +1292,22 @@ class OracleUsersRepo:
         async with _session_for(self._session) as (session, _owns):
             row = (await session.execute(stmt)).first()
         return row is not None
+
+    async def primary_owners(self, xuehai_ids: list[str]) -> dict[str, Row]:
+        """``{xuehai_id: {"user_oid", "name"}}``；不是主设备的号不出现在结果里。"""
+        unique = list(dict.fromkeys(xuehai_ids))
+        if not unique:
+            return {}
+        stmt = _primary_owners_stmt(unique)
+        async with _session_for(self._session) as (session, _owns):
+            rows = (await session.execute(stmt)).all()
+        return {
+            row._mapping["primary_xuehai_id"]: {
+                "user_oid": row._mapping["oid"],
+                "name": row._mapping["name"],
+            }
+            for row in rows
+        }
 
     async def set_class(self, user_oid: str, class_oid: str | None) -> None:
         class_value = normalize_oid(class_oid) if class_oid is not None else None

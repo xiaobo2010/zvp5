@@ -50,16 +50,24 @@ import {
 } from '@/utils/studentIndex'
 import {
   parseVolunteerSheet,
+  recognizeAttachment,
+  type OcrVolunteerLine,
+  type OcrVolunteerResponse,
   type OcrVolunteerRow,
-  type VolunteerOcrProgress
+  type VolunteerOcrProgress,
+  type VolunteerOcrRaw
 } from '@/api/volunteer'
 import { aiErrorCodeOf, aiErrorCopy } from '@/api/ai/errors'
+import { listOcrEngines } from '@/api/ai/engines'
+import { getBytes } from '@/api/attachment/read'
+import { parseOcrText } from '@/utils/ocrText'
+import { normalizeOcrBox, type OcrBoxRect } from '@/utils/ocrBox'
 import {
   DEVICE_UNLOCK_REASON,
   deviceLocked,
   ensureDeviceUnlock
 } from '@/plugins/device-unlock'
-import { temporaryToken } from '@/plugins/short-token'
+import { clearTemporaryToken, temporaryToken } from '@/plugins/short-token'
 
 type RegistrationMode = Exclude<ActivityMode, 'hybrid'>
 type RowStatus = 'empty' | 'ok' | 'warning' | 'error' | 'saved'
@@ -135,6 +143,15 @@ interface OverwritePlanRow {
   changed: boolean
 }
 
+// OCR 确认弹窗里的一行：原始文字 + 归一化后的框（没有坐标就是 null）。
+interface OcrReviewLine {
+  key: number
+  text: string
+  confidence: number | null
+  box: OcrBoxRect | null
+  selected: boolean
+}
+
 // 顶部可收起提示的一条。
 interface RegisterNotice {
   key: 'list' | 'type' | 'ocr'
@@ -205,6 +222,8 @@ const editSearchQuery = ref('')
 const editSearchLoading = ref(false)
 const editSearchResults = ref<ExistingMemberRow[]>([])
 const editSearchDone = ref(false)
+// 搜索结果被 200 条上限截断（两页都拉满）：提示用户收窄关键词。
+const editSearchTruncated = ref(false)
 let editSearchSeq = 0
 const activeCell = ref<{ r: number; c: number } | null>(null)
 const submitLoading = ref(false)
@@ -225,6 +244,21 @@ let existingLoadSeq = 0
 // 覆盖确认弹窗。
 const overwriteDialogVisible = ref(false)
 const overwriteRows = ref<OverwritePlanRow[]>([])
+// OCR 确认弹窗：图片框选 + 文字校对 + 换引擎重识别。
+const ocrEngine = ref('')
+const ocrEngineOptions = ref<Array<{ value: string; label: string }>>([])
+const ocrReviewVisible = ref(false)
+const ocrReviewLines = ref<OcrReviewLine[]>([])
+const ocrReviewImageUrl = ref('')
+const ocrReviewImageSize = ref({ width: 0, height: 0 })
+const ocrReviewImageFailed = ref(false)
+const ocrReviewAttachmentOid = ref('')
+const ocrReviewEngine = ref('')
+const ocrReviewConfidence = ref<number | undefined>(undefined)
+const ocrReviewWarnings = ref<string[]>([])
+const ocrReviewLoading = ref(false)
+let ocrLineSeq = 0
+let ocrImageObjectUrl = ''
 // 顶部提示：默认收起成一个图标按钮，勾选「不再提示」后写进 localStorage。
 const noticeVisible = ref(false)
 const dismissedNotices = ref<string[]>([])
@@ -315,6 +349,31 @@ const canSubmit = computed(
 const canUndo = computed(() => undoStack.value.length > 0)
 const canRedo = computed(() => redoStack.value.length > 0)
 
+const ocrReviewHasBox = computed(() => ocrReviewLines.value.some((line) => line.box))
+const ocrReviewSelectedCount = computed(
+  () => ocrReviewLines.value.filter((line) => line.selected).length
+)
+// 勾选的行按原顺序拼回纯文本，再走一遍和手动粘贴完全相同的解析器：
+// 弹窗里看到的预览就是「填入后表格会出现什么」。
+const ocrReviewText = computed(() =>
+  ocrReviewLines.value
+    .filter((line) => line.selected)
+    .map((line) => line.text)
+    .join('\n')
+)
+const ocrReviewRows = computed(() => parseOcrText(ocrReviewText.value))
+const ocrReviewOverLimit = computed(() => ocrReviewRows.value.length > MAX_REGISTER_ROWS)
+const ocrReviewCanApply = computed(
+  () => ocrReviewRows.value.length > 0 && !ocrReviewOverLimit.value
+)
+const ocrReviewEngineLabel = computed(() => {
+  if (!ocrReviewEngine.value) return ''
+  return (
+    ocrEngineOptions.value.find((option) => option.value === ocrReviewEngine.value)?.label ??
+    ocrReviewEngine.value
+  )
+})
+
 // 名单没就绪时常驻的紧凑提示：没名单就会录错人，这条不能被收起来。
 const listNoticeActive = computed(
   () => !indexBooting.value && !indexLoading.value && !students.value.length
@@ -370,11 +429,28 @@ function existingOf(row: RegistrationRow): ExistingMemberRecord | undefined {
   return existingMembers.value.get(existingKey(row.oid, row.mode))
 }
 
+// 成员 → 已登记模式。旧实现每行每次校验都全量拷贝一份 existingMembers 再 find，
+// 行数 × 索引人数变成平方级开销；这里从索引派生一次，查询降到 O(1)。
+const existingModesByMember = computed(() => {
+  const map = new Map<string, Set<RegistrationMode>>()
+  for (const record of existingMembers.value.values()) {
+    const modes = map.get(record.member)
+    if (modes) modes.add(record.mode)
+    else map.set(record.member, new Set([record.mode]))
+  }
+  return map
+})
+
 function existingInOtherMode(row: RegistrationRow): ExistingMemberRecord | undefined {
   if (!row.oid) return undefined
-  return [...existingMembers.value.values()].find(
-    (record) => record.member === row.oid && record.mode !== row.mode
-  )
+  const modes = existingModesByMember.value.get(row.oid)
+  if (!modes) return undefined
+  for (const mode of modes) {
+    if (mode === row.mode) continue
+    const record = existingMembers.value.get(existingKey(row.oid, mode))
+    if (record) return record
+  }
+  return undefined
 }
 
 function existingDurationChanged(row: RegistrationRow, record: ExistingMemberRecord): boolean {
@@ -393,8 +469,16 @@ function existingHint(row: RegistrationRow): string {
   return t('activity.register.existingHint', { duration: record.duration })
 }
 
+// 同一成员在 hybrid 活动的另一种模式已有记录：成员唯一键含模式，后端允许两种模式并存，
+// 所以只做行内提示，不降级行状态、不挡提交。
+function otherModeHint(row: RegistrationRow): string {
+  if (!row.oid || row.status === 'saved' || existingOf(row)) return ''
+  return existingInOtherMode(row) ? t('activity.register.otherModeRecorded') : ''
+}
+
 function isRecordableStatus(status: Activity['status'] | undefined): boolean {
-  // 后端加成员不校验活动状态，审核中的活动先录入、通过后计入统计是安全的缓冲带。
+  // 后端加成员只接受 pending / effective（activities_v3_router.py），前端保持同口径：
+  // 审核中的活动先录入、通过后计入统计是安全的缓冲带；驳回/草稿直接拦下。
   return status === 'effective' || status === 'pending'
 }
 
@@ -602,7 +686,6 @@ function revalidateRow(row: RegistrationRow) {
 
   // 先解析出 oid 再判「已录入」：否则新敲进来的学号第一下拿不到徽标。
   const recorded = existingOf(row)
-  const otherModeRecord = existingInOtherMode(row)
 
   if (match.status === 'missing' && !row.candidates.length) {
     const field = row.studentId.trim() && !row.name.trim() ? 'id' : 'name'
@@ -643,12 +726,6 @@ function revalidateRow(row: RegistrationRow) {
   if (editorMode.value === 'edit' && !recorded && status === 'ok') {
     status = 'error'
     message = t('activity.register.notInActivity')
-  }
-  if (otherModeRecord && !recorded && status === 'ok') {
-    status = 'warning'
-    message = t('activity.register.otherModeRecorded', {
-      mode: modeLabel(otherModeRecord.mode)
-    })
   }
 
   row.baseStatus = status
@@ -876,13 +953,21 @@ async function redo() {
   restoreSnapshot(entry.rows)
 }
 
-// Ctrl/Cmd+Z 撤回，Ctrl/Cmd+Shift+Z 重做。
+// Ctrl/Cmd+Z 撤回，Ctrl/Cmd+Shift+Z 重做。表格单元格以外的输入框交给浏览器原生撤销。
 function onGlobalKeydown(event: KeyboardEvent) {
   if (!event.ctrlKey && !event.metaKey) return
   if (event.altKey) return
   const key = event.key.toLowerCase()
   if (key !== 'z' && key !== 'y') return
   if (key === 'y' && !event.shiftKey) return
+  const target = event.target as HTMLElement | null
+  const tag = target?.tagName
+  if (
+    (tag === 'INPUT' || tag === 'TEXTAREA' || target?.isContentEditable) &&
+    !target?.closest('[data-cell]')
+  ) {
+    return
+  }
   event.preventDefault()
   if (key === 'y' || event.shiftKey) void redo()
   else void undo()
@@ -1209,20 +1294,24 @@ function triggerImport() {
 
 // OCR 属于 AI 操作，必须先用当前账号密码换一张 5 分钟、purpose=verify 的短时
 // 凭证；平板还要先解锁媒体库（同一套临时凭证），这里复用避免连弹两次密码框。
+async function acquireOcrProof(): Promise<string> {
+  const proof = deviceLocked()
+    ? await ensureDeviceUnlock({ reason: DEVICE_UNLOCK_REASON })
+    : await temporaryToken(
+        String(userStore._id || userStore.id),
+        'OCR 操作需要验证当前账号密码'
+      )
+  if (!proof) throw new Error('未取得验证凭证')
+  return proof
+}
+
 async function triggerOcr() {
   if (!selectedActivityId.value) {
     ElMessage.warning('请先选择活动')
     return
   }
   try {
-    const proof = deviceLocked()
-      ? await ensureDeviceUnlock({ reason: DEVICE_UNLOCK_REASON })
-      : await temporaryToken(
-          String(userStore._id || userStore.id),
-          'OCR 操作需要验证当前账号密码'
-        )
-    if (!proof) throw new Error('未取得验证凭证')
-    ocrVerificationToken = proof
+    ocrVerificationToken = await acquireOcrProof()
     ocrInput.value?.click()
   } catch {
     ocrVerificationToken = ''
@@ -1278,47 +1367,15 @@ async function onOcrFile(event: Event) {
     if (!ocrVerificationToken) throw new Error('请重新验证密码后使用 OCR')
     const verificationToken = ocrVerificationToken
     ocrVerificationToken = ''
-    const result = await parseVolunteerSheet(file, verificationToken, (progress) => {
-      ocrStage.value = describeOcrProgress(progress)
-    })
-    if (!result.rows.length) {
-      ElMessage.warning(result.warnings?.join('；') || 'OCR 未解析出学生行，请手动粘贴')
-      return
-    }
-    // OCR 识别的是新登记的人：识别完自动切到「新增」栏再铺数据。
-    if (editorMode.value !== 'create') switchEditorMode('create')
-
-    // 从最后一条已有内容之后开始，避免中间空行导致 OCR 覆盖后面的人工录入。
-    const base =
-      rows.value.reduce((last, row, index) => (hasContent(row) ? index : last), -1) + 1
-    // 行数封顶：OCR 一次可能吐出很多行，超出部分直接丢弃并提示。
-    const room = Math.max(0, MAX_REGISTER_ROWS - base)
-    const accepted = result.rows.slice(0, room)
-    if (!accepted.length) {
-      rowLimitWarning(result.rows.length)
-      return
-    }
-    ensureRows(base + accepted.length)
-    recordHistory()
-    accepted.forEach((item, offset) => {
-      const row = rows.value[base + offset]
-      if (!row) return
-      applyOcrRow(row, item)
-      revalidateRow(row)
-    })
-    markDuplicates()
-
-    if (result.warnings?.length) {
-      ElMessage.warning(result.warnings.join('；'))
-    }
-    if (result.confidence !== undefined && result.confidence > 0 && result.confidence < 0.6) {
-      ElMessage.warning('OCR 整体置信度较低，请逐行复核识别结果')
-    }
-    if (accepted.length < result.rows.length) {
-      rowLimitWarning(result.rows.length - accepted.length)
-    }
-    const engine = result.engine ? `（${result.engine}）` : ''
-    ElMessage.success(`OCR 识别 ${accepted.length} 行${engine}，已按本地名单校正`)
+    const result = await parseVolunteerSheet(
+      file,
+      verificationToken,
+      (progress) => {
+        ocrStage.value = describeOcrProgress(progress)
+      },
+      ocrEngine.value || undefined
+    )
+    openOcrReview(result)
   } catch (error) {
     const code = aiErrorCodeOf(error)
     if (code) {
@@ -1334,6 +1391,199 @@ async function onOcrFile(event: Event) {
   }
 }
 
+// 引擎清单只用于选择：403（无权限）或网络失败时静默隐藏下拉，页面只留「自动」。
+async function loadOcrEngines() {
+  try {
+    const engines = await listOcrEngines()
+    const options = new Map<string, string>()
+    for (const engine of engines) {
+      if (!engine.enabled || options.has(engine.kind)) continue
+      options.set(engine.kind, engine.name || engine.kind)
+    }
+    ocrEngineOptions.value = [...options.entries()].map(([value, label]) => ({ value, label }))
+  } catch {
+    ocrEngineOptions.value = []
+  }
+}
+
+function toOcrReviewLines(lines: OcrVolunteerLine[]): OcrReviewLine[] {
+  return lines.map((line) => ({
+    key: (ocrLineSeq += 1),
+    text: line.text,
+    confidence: line.confidence ?? null,
+    box: normalizeOcrBox(line.box),
+    selected: true
+  }))
+}
+
+function openOcrReview(result: OcrVolunteerResponse) {
+  ocrReviewLines.value = toOcrReviewLines(result.lines)
+  ocrReviewEngine.value = result.engine ?? ''
+  ocrReviewConfidence.value = result.confidence
+  ocrReviewWarnings.value = result.warnings ?? []
+  ocrReviewAttachmentOid.value = result.attachmentOid ?? ''
+  ocrReviewVisible.value = true
+  void loadOcrReviewImage(ocrReviewAttachmentOid.value)
+}
+
+function releaseOcrImage() {
+  if (ocrImageObjectUrl) {
+    URL.revokeObjectURL(ocrImageObjectUrl)
+    ocrImageObjectUrl = ''
+  }
+  ocrReviewImageUrl.value = ''
+  ocrReviewImageSize.value = { width: 0, height: 0 }
+}
+
+async function loadOcrReviewImage(oid: string) {
+  releaseOcrImage()
+  ocrReviewImageFailed.value = false
+  if (!oid) {
+    ocrReviewImageFailed.value = true
+    return
+  }
+  try {
+    const blob = await getBytes(oid)
+    if (ocrReviewAttachmentOid.value !== oid) return
+    ocrImageObjectUrl = URL.createObjectURL(blob)
+    ocrReviewImageUrl.value = ocrImageObjectUrl
+  } catch {
+    if (ocrReviewAttachmentOid.value === oid) ocrReviewImageFailed.value = true
+  }
+}
+
+function onOcrReviewImageLoad(event: Event) {
+  const image = event.target as HTMLImageElement
+  ocrReviewImageSize.value = { width: image.naturalWidth, height: image.naturalHeight }
+}
+
+// 坐标按原图尺寸换算成百分比：图片缩放后框仍然贴在字上。
+function ocrBoxStyle(box: OcrBoxRect): Record<string, string> {
+  const { width, height } = ocrReviewImageSize.value
+  if (!width || !height) return {}
+  const left = Math.max(0, Math.min(box.left, width))
+  const top = Math.max(0, Math.min(box.top, height))
+  const right = Math.min(width, Math.max(box.left + box.width, 0))
+  const bottom = Math.min(height, Math.max(box.top + box.height, 0))
+  return {
+    left: `${(left / width) * 100}%`,
+    top: `${(top / height) * 100}%`,
+    width: `${(Math.max(0, right - left) / width) * 100}%`,
+    height: `${(Math.max(0, bottom - top) / height) * 100}%`
+  }
+}
+
+function toggleOcrReviewLine(index: number) {
+  const line = ocrReviewLines.value[index]
+  if (line) line.selected = !line.selected
+}
+
+function setAllOcrReviewLines(selected: boolean) {
+  for (const line of ocrReviewLines.value) line.selected = selected
+}
+
+function closeOcrReview() {
+  ocrReviewVisible.value = false
+}
+
+function resetOcrReview() {
+  ocrReviewLines.value = []
+  ocrReviewWarnings.value = []
+  ocrReviewConfidence.value = undefined
+  ocrReviewEngine.value = ''
+  ocrReviewAttachmentOid.value = ''
+  ocrReviewImageFailed.value = false
+  releaseOcrImage()
+}
+
+function ocrVerificationRejected(error: unknown): boolean {
+  const status =
+    (error as { status?: unknown })?.status ??
+    (error as { response?: { status?: unknown } })?.response?.status
+  return status === 401 || status === 403
+}
+
+// 换引擎重识别：附件 oid 不变，只重新入队 + 轮询。凭证被否时清缓存重取一次，
+// 再失败就停手——继续重试只会把用户困在密码框里。
+async function rerunOcrReview() {
+  const oid = ocrReviewAttachmentOid.value
+  if (!oid || ocrReviewLoading.value) return
+  ocrReviewLoading.value = true
+  ocrStage.value = '准备重新识别…'
+  const reportProgress = (progress: VolunteerOcrProgress) => {
+    ocrStage.value = describeOcrProgress(progress)
+  }
+  try {
+    let proof = await acquireOcrProof()
+    let raw: VolunteerOcrRaw
+    try {
+      raw = await recognizeAttachment(oid, proof, ocrEngine.value || undefined, reportProgress)
+    } catch (error) {
+      if (!ocrVerificationRejected(error)) throw error
+      clearTemporaryToken(String(userStore._id || userStore.id))
+      proof = await acquireOcrProof()
+      raw = await recognizeAttachment(oid, proof, ocrEngine.value || undefined, reportProgress)
+    }
+    ocrReviewLines.value = toOcrReviewLines(raw.lines)
+    ocrReviewEngine.value = raw.engine ?? ''
+    ocrReviewConfidence.value = raw.confidence
+    ocrReviewWarnings.value = []
+    if (!raw.lines.length) {
+      ElMessage.warning(t('activity.register.ocrReviewNoText'))
+    }
+  } catch (error) {
+    const code = aiErrorCodeOf(error)
+    if (code) {
+      const copy = aiErrorCopy(code, t)
+      ElMessage.error(`${copy.title}：${copy.hint}`)
+    } else {
+      ElMessage.error(
+        t('activity.register.ocrReviewRerunFailed', {
+          reason: (error as Error)?.message || '未知错误'
+        })
+      )
+    }
+  } finally {
+    ocrReviewLoading.value = false
+    ocrStage.value = ''
+  }
+}
+
+// 把确认过的 OCR 行铺进表格。抽成独立函数：首次识别和「换引擎重识别」共用一条落表路径。
+function applyOcrRows(list: OcrVolunteerRow[], engineLabel?: string): boolean {
+  // OCR 识别的是新登记的人：识别完自动切到「新增」栏再铺数据。
+  if (editorMode.value !== 'create') switchEditorMode('create')
+
+  // 从最后一条已有内容之后开始，避免中间空行导致 OCR 覆盖后面的人工录入。
+  const base = rows.value.reduce((last, row, index) => (hasContent(row) ? index : last), -1) + 1
+  // 行数封顶：OCR 一次可能吐出很多行，超出部分直接丢弃并提示。
+  const room = Math.max(0, MAX_REGISTER_ROWS - base)
+  const accepted = list.slice(0, room)
+  if (!accepted.length) {
+    rowLimitWarning(list.length)
+    return false
+  }
+  ensureRows(base + accepted.length)
+  recordHistory()
+  accepted.forEach((item, offset) => {
+    const row = rows.value[base + offset]
+    if (!row) return
+    applyOcrRow(row, item)
+    revalidateRow(row)
+  })
+  markDuplicates()
+  if (accepted.length < list.length) rowLimitWarning(list.length - accepted.length)
+  const engine = engineLabel ? `（${engineLabel}）` : ''
+  ElMessage.success(`OCR 识别 ${accepted.length} 行${engine}，已按本地名单校正`)
+  return true
+}
+
+function confirmOcrReview() {
+  if (!ocrReviewCanApply.value) return
+  const applied = applyOcrRows(ocrReviewRows.value, ocrReviewEngineLabel.value)
+  if (applied) closeOcrReview()
+}
+
 function applyOcrRow(row: RegistrationRow, item: OcrVolunteerRow) {
   row.studentId = normalizeStudentId(String(item.studentId ?? ''))
   row.name = normalizePersonName(String(item.name ?? ''))
@@ -1346,7 +1596,7 @@ async function searchActivities(query: string) {
   activityLoading.value = true
   try {
     const result = await api.activity.read.campus('', 1, 30, query)
-    // 审核中的活动也允许录入：后端加成员不校验活动状态，时间聚合只看 effective，
+    // 审核中的活动也允许录入：后端加成员只接受 pending/effective，时间聚合只看 effective，
     // 数据上安全。只挡 refused/draft（draft 不在 status 枚举内，兜底同口径）。
     const merged = result.activities.filter((activity) => isRecordableStatus(activity.status))
     if (
@@ -1418,33 +1668,44 @@ async function loadExistingMembers(aid: string): Promise<void> {
   existingLoading.value = true
   existingFetchFailed.value = false
   existingTruncated.value = false
+  const maxPages = EXISTING_MEMBER_LIMIT / EXISTING_PAGE_SIZE
   try {
-    const next = new Map<string, ExistingMemberRecord>()
-    let page = 1
-    let total = 0
-    for (; page <= EXISTING_MEMBER_LIMIT / EXISTING_PAGE_SIZE; page += 1) {
-      const { rows: members, total: fetchedTotal } = await fetchExistingMemberPage(aid, page)
-      if (seq !== existingLoadSeq) return
-      total = fetchedTotal || total
-      for (const member of members) {
-        const mode = normalizeMode(member.mode)
-        if (!mode || !member.member || !member._id) continue
-        next.set(existingKey(String(member.member), mode), {
-          sessionId: String(member._id),
-          member: String(member.member),
-          mode,
-          duration: Number(member.duration) || 0,
-          studentId: normalizeStudentId(String(member.user?.id ?? '')),
-          name: normalizePersonName(String(member.member_name ?? member.user?.name ?? ''))
-        })
-      }
-      if (members.length < EXISTING_PAGE_SIZE) break
-    }
+    // 第 1 页顺带拿到 total，其余页按 total 算出的页数并行取：大活动不再串行等 10 次往返。
+    const first = await fetchExistingMemberPage(aid, 1)
     if (seq !== existingLoadSeq) return
+    const total = first.total
+    const firstRows = first.rows
+    let pageCount = maxPages
+    if (total > 0) pageCount = Math.min(Math.ceil(total / EXISTING_PAGE_SIZE), maxPages)
+    else if (firstRows.length < EXISTING_PAGE_SIZE) pageCount = 1
+    const rest =
+      pageCount > 1
+        ? await Promise.all(
+            Array.from({ length: pageCount - 1 }, (_, index) =>
+              fetchExistingMemberPage(aid, index + 2)
+            )
+          )
+        : []
+    if (seq !== existingLoadSeq) return
+    const next = new Map<string, ExistingMemberRecord>()
+    const rows = [...firstRows]
+    for (const page of rest) rows.push(...page.rows)
+    for (const member of rows) {
+      const mode = normalizeMode(member.mode)
+      if (!mode || !member.member || !member._id) continue
+      next.set(existingKey(String(member.member), mode), {
+        sessionId: String(member._id),
+        member: String(member.member),
+        mode,
+        duration: Number(member.duration) || 0,
+        studentId: normalizeStudentId(String(member.user?.id ?? '')),
+        name: normalizePersonName(String(member.member_name ?? member.user?.name ?? ''))
+      })
+    }
     existingMembers.value = next
     // 还有下一页但已到回溯上限：标记截断，提交时若命中未列出的人再确认覆盖。
-    const fetchedRows = Math.min(page, EXISTING_MEMBER_LIMIT / EXISTING_PAGE_SIZE) * EXISTING_PAGE_SIZE
-    existingTruncated.value = total > fetchedRows && page >= EXISTING_MEMBER_LIMIT / EXISTING_PAGE_SIZE
+    const fetchedRows = pageCount * EXISTING_PAGE_SIZE
+    existingTruncated.value = total > fetchedRows && pageCount >= maxPages
     if (existingTruncated.value) {
       ElMessage.warning(t('activity.register.existingTruncated', { limit: EXISTING_MEMBER_LIMIT }))
     }
@@ -1504,6 +1765,7 @@ function resetEditSearch() {
   editSearchQuery.value = ''
   editSearchResults.value = []
   editSearchDone.value = false
+  editSearchTruncated.value = false
   editSearchLoading.value = false
 }
 
@@ -1522,6 +1784,7 @@ async function searchEditMembers() {
   const seq = ++editSearchSeq
   editSearchLoading.value = true
   editSearchDone.value = false
+  editSearchTruncated.value = false
   try {
     const found: ExistingMemberRow[] = []
     for (let page = 1; page <= 2; page += 1) {
@@ -1531,6 +1794,8 @@ async function searchEditMembers() {
       if (members.length < EXISTING_PAGE_SIZE) break
     }
     editSearchResults.value = found
+    // 两页都拉满说明后面还有命中，结果被 200 条上限截断。
+    editSearchTruncated.value = found.length >= EXISTING_PAGE_SIZE * 2
   } catch {
     if (seq !== editSearchSeq) return
     editSearchResults.value = []
@@ -1765,6 +2030,23 @@ function collapseDuplicateRows() {
   revalidateAll()
 }
 
+// 两栏查询重复：同一个人同一模式同时出现在「新增」和「修改」栏时，先 PUT 覆盖再整批新增
+// 必然撞 409。duplicateGroups 只索引当前栏（collapseDuplicateRows 也只能跨单栏合并），
+// 跨栏没法自动合并成一行，所以在提交前拦下并指名，让管理员删掉一栏里的行。
+function findCrossColumnDuplicate(): RegistrationRow | null {
+  const otherMode: EditorMode = editorMode.value === 'create' ? 'edit' : 'create'
+  const other = new Map<string, RegistrationRow>()
+  for (const row of stashedRows[otherMode]) {
+    const key = rowDuplicateKey(row)
+    if (key) other.set(key, row)
+  }
+  for (const row of pendingRows.value) {
+    const key = rowDuplicateKey(row)
+    if (key && other.has(key)) return row
+  }
+  return null
+}
+
 // 后端 409：索引没覆盖到的已有记录（超过回溯上限，或索引加载失败）。
 function isConflictError(error: unknown): boolean {
   return (error as { response?: { status?: number } })?.response?.status === 409
@@ -1803,6 +2085,16 @@ async function submitRegistration() {
   }
   // 同一个人在同一张表里录了第二次：提示并用靠后一行覆盖。
   if (!(await resolveDuplicateRows())) return
+  const crossDuplicate = findCrossColumnDuplicate()
+  if (crossDuplicate) {
+    ElMessage.error(
+      t('activity.register.crossTabDuplicate', {
+        name: rowLabel(crossDuplicate),
+        mode: modeLabel(crossDuplicate.mode)
+      })
+    )
+    return
+  }
   if (!pendingRows.value.length) {
     ElMessage.info(t('activity.register.noPending'))
     return
@@ -1857,10 +2149,15 @@ async function submitRegistration() {
     return
   }
 
-  // 命中已有记录（或索引被截断、可能有没列出来的命中）→ 先给用户看对比再写。
-  if (hits.length || existingTruncated.value) {
+  // 命中已有记录 → 先给用户看对比再写。
+  if (hits.length > 0) {
     const confirmed = await confirmOverwrite(hits)
     if (!confirmed) return
+  } else if (existingTruncated.value) {
+    // 索引被截断但本次没有已列出的命中：不再弹空表确认框，只提示未载入部分可能有重复。
+    ElMessage.warning(
+      t('activity.register.submitUnindexedNotice', { limit: EXISTING_MEMBER_LIMIT })
+    )
   }
 
   submitLoading.value = true
@@ -1980,13 +2277,28 @@ async function submitRegistration() {
       return
     }
 
-    ElMessage.success(
-      t('activity.register.submitSummary', {
-        activity: activity.name,
-        updated,
-        added
-      })
-    )
+    // 成功提示区分「新增」与「覆盖已有」：两项相加就是本次写入的总条数。
+    // 全量成功时 updated 恒等于 hits.length，所以覆盖数直接用 hits.length。
+    const overwritten = hits.length
+    const inserted = Math.max(updated + added - overwritten, 0)
+    if (overwritten > 0) {
+      ElMessage.success(
+        t('activity.register.submitMixedSummary', {
+          activity: activity.name,
+          count: updated + added,
+          inserted,
+          overwritten
+        })
+      )
+    } else {
+      ElMessage.success(
+        t('activity.register.submitSummary', {
+          activity: activity.name,
+          updated,
+          added
+        })
+      )
+    }
   } catch (error) {
     if (updated || added) {
       failures.push({ label: t('activity.register.newMembersLabel'), reason: errorDetail(error) })
@@ -2365,6 +2677,7 @@ watch(selectedActivityId, scheduleDraft)
 onMounted(() => {
   loadDismissedNotices()
   void initPage()
+  void loadOcrEngines()
   window.addEventListener('pagehide', flushDraft)
   window.addEventListener('keydown', onGlobalKeydown)
 })
@@ -2372,6 +2685,8 @@ onMounted(() => {
 onBeforeUnmount(() => {
   window.removeEventListener('pagehide', flushDraft)
   window.removeEventListener('keydown', onGlobalKeydown)
+  if (cellHistoryTimer) clearTimeout(cellHistoryTimer)
+  releaseOcrImage()
   flushDraft()
 })
 </script>
@@ -2393,6 +2708,23 @@ onBeforeUnmount(() => {
           >
             {{ t('activity.register.ocrAction') }}
           </ElButton>
+          <!-- 引擎选择只影响 OCR 入队：留空表示按站点优先级自动回退 -->
+          <ElSelect
+            v-if="ocrEngineOptions.length"
+            v-model="ocrEngine"
+            class="ocr-engine-select"
+            size="small"
+            :aria-label="t('activity.register.ocrEngineLabel')"
+            :title="t('activity.register.ocrEngineLabel')"
+          >
+            <ElOption :label="t('activity.register.ocrAutoOption')" value="" />
+            <ElOption
+              v-for="engine in ocrEngineOptions"
+              :key="engine.value"
+              :label="engine.label"
+              :value="engine.value"
+            />
+          </ElSelect>
           <span v-if="ocrLoading && ocrStage" class="ocr-stage" role="status" aria-live="polite">
             {{ ocrStage }}
           </span>
@@ -2572,6 +2904,9 @@ onBeforeUnmount(() => {
             </ElButton>
           </div>
         </div>
+        <p v-if="editSearchTruncated" class="edit-search-truncated">
+          {{ t('activity.register.searchTruncated') }}
+        </p>
         <div v-if="editSearchResults.length" class="edit-search-results">
           <div v-for="item in editSearchResults" :key="item._id" class="edit-search-item">
             <span class="edit-search-item__name">
@@ -2861,6 +3196,14 @@ onBeforeUnmount(() => {
                         {{ t('activity.register.existingBadge') }}
                       </ElTag>
                     </div>
+                    <!-- 其他模式已有记录只提示不阻断：状态仍是可提交 -->
+                    <span
+                      v-if="otherModeHint(row)"
+                      class="status-msg status-msg--warning"
+                      :title="otherModeHint(row)"
+                    >
+                      {{ otherModeHint(row) }}
+                    </span>
                     <span
                       v-if="existingHint(row) || row.message"
                       class="status-msg"
@@ -2951,6 +3294,190 @@ onBeforeUnmount(() => {
         </ElButton>
         <ElButton type="danger" @click="resolveOverwrite(true)">
           {{ t('activity.register.confirmOverwrite') }}
+        </ElButton>
+      </template>
+    </ElDialog>
+
+    <!-- OCR 结果确认：左侧图片框选校对，右侧逐行改文字，底部是解析预览 -->
+    <ElDialog
+      v-model="ocrReviewVisible"
+      class="vr-ocr-dialog"
+      width="min(1100px, 96vw)"
+      top="6vh"
+      destroy-on-close
+      :close-on-click-modal="false"
+      :title="t('activity.register.ocrReviewTitle')"
+      @closed="resetOcrReview"
+    >
+      <div class="ocr-review">
+        <div class="ocr-review__head">
+          <span v-if="ocrReviewEngine" class="ocr-review__meta">
+            {{ t('ai.ocr.engine') }}：{{ ocrReviewEngineLabel }}
+          </span>
+          <span
+            v-if="ocrReviewConfidence !== undefined"
+            class="ocr-review__meta"
+            :class="{ 'is-low': ocrReviewConfidence > 0 && ocrReviewConfidence < 0.6 }"
+          >
+            {{ t('ai.ocr.confidence') }}：{{ Math.round(ocrReviewConfidence * 100) }}%
+          </span>
+          <span class="ocr-review__meta">
+            {{ t('activity.register.ocrReviewSelected', { count: ocrReviewSelectedCount }) }}
+          </span>
+          <span class="ocr-review__spacer" />
+          <ElSelect
+            v-model="ocrEngine"
+            class="ocr-review__engine"
+            size="small"
+            :disabled="ocrReviewLoading"
+            :aria-label="t('activity.register.ocrEngineLabel')"
+          >
+            <ElOption :label="t('activity.register.ocrAutoOption')" value="" />
+            <ElOption
+              v-for="engine in ocrEngineOptions"
+              :key="engine.value"
+              :label="engine.label"
+              :value="engine.value"
+            />
+          </ElSelect>
+          <ElButton
+            size="small"
+            :icon="Refresh"
+            :loading="ocrReviewLoading"
+            @click="rerunOcrReview"
+          >
+            {{ t('activity.register.ocrReviewRerun') }}
+          </ElButton>
+        </div>
+        <p v-if="ocrReviewLoading && ocrStage" class="ocr-review__stage" role="status">
+          {{ ocrStage }}
+        </p>
+
+        <div class="ocr-review__body">
+          <section class="ocr-review__pane">
+            <div class="ocr-review__pane-title">
+              {{ t('activity.register.ocrReviewImageTitle') }}
+            </div>
+            <div v-if="ocrReviewImageUrl" class="ocr-canvas">
+              <div class="ocr-canvas__frame">
+                <img
+                  :src="ocrReviewImageUrl"
+                  class="ocr-canvas__img"
+                  :alt="t('activity.register.ocrReviewImageAlt')"
+                  @load="onOcrReviewImageLoad"
+                />
+                <div v-if="ocrReviewImageSize.width" class="ocr-canvas__overlay">
+                  <button
+                    v-for="(line, index) in ocrReviewLines"
+                    v-show="line.box"
+                    :key="line.key"
+                    type="button"
+                    class="ocr-box"
+                    :class="{ 'is-selected': line.selected }"
+                    :style="line.box ? ocrBoxStyle(line.box) : undefined"
+                    :title="line.text"
+                    :aria-label="line.text"
+                    :aria-pressed="line.selected"
+                    @click="toggleOcrReviewLine(index)"
+                  />
+                </div>
+              </div>
+            </div>
+            <p v-else-if="ocrReviewImageFailed" class="ocr-review__hint">
+              {{ t('activity.register.ocrReviewImageFailed') }}
+            </p>
+            <p v-else class="ocr-review__hint">
+              {{ t('activity.register.ocrReviewImageLoading') }}
+            </p>
+            <p v-if="!ocrReviewHasBox" class="ocr-review__hint">
+              {{ t('activity.register.ocrReviewNoBox') }}
+            </p>
+          </section>
+
+          <section class="ocr-review__pane">
+            <div class="ocr-review__pane-title">
+              {{ t('activity.register.ocrReviewLinesTitle') }}
+              <span class="ocr-review__count">{{ ocrReviewLines.length }}</span>
+              <span class="ocr-review__spacer" />
+              <ElButton text size="small" @click="setAllOcrReviewLines(true)">
+                {{ t('activity.register.ocrReviewSelectAll') }}
+              </ElButton>
+              <ElButton text size="small" @click="setAllOcrReviewLines(false)">
+                {{ t('activity.register.ocrReviewClearAll') }}
+              </ElButton>
+            </div>
+            <div class="ocr-line-list">
+              <div
+                v-for="line in ocrReviewLines"
+                :key="line.key"
+                class="ocr-line"
+                :class="{ 'is-excluded': !line.selected }"
+              >
+                <ElCheckbox v-model="line.selected" />
+                <ElInput v-model="line.text" size="small" class="ocr-line__input" />
+                <span
+                  v-if="line.confidence !== null && line.confidence < 0.6"
+                  class="ocr-line__low"
+                >
+                  {{ Math.round(line.confidence * 100) }}%
+                </span>
+              </div>
+              <p v-if="!ocrReviewLines.length" class="ocr-review__hint">
+                {{ t('activity.register.ocrReviewNoText') }}
+              </p>
+            </div>
+          </section>
+        </div>
+
+        <section class="ocr-review__preview">
+          <div class="ocr-review__pane-title">
+            {{ t('activity.register.ocrReviewPreviewTitle') }}
+          </div>
+          <ul v-if="ocrReviewWarnings.length" class="ocr-review__warnings">
+            <li v-for="warning in ocrReviewWarnings" :key="warning">{{ warning }}</li>
+          </ul>
+          <p v-if="ocrReviewOverLimit" class="ocr-review__warn">
+            {{ t('activity.register.rowLimitReached', { limit: MAX_REGISTER_ROWS }) }}
+          </p>
+          <p v-else-if="!ocrReviewCanApply" class="ocr-review__hint">
+            {{ t('activity.register.ocrReviewEmpty') }}
+          </p>
+          <div v-if="ocrReviewRows.length" class="ocr-review__table-wrap">
+            <table class="ocr-review__table">
+              <thead>
+                <tr>
+                  <th class="is-num">#</th>
+                  <th>{{ t('activity.register.overwriteColStudentId') }}</th>
+                  <th>{{ t('activity.register.overwriteColName') }}</th>
+                  <th class="is-num">时长</th>
+                  <th>模式</th>
+                  <th>备注</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="(row, index) in ocrReviewRows" :key="index">
+                  <td class="is-num">{{ index + 1 }}</td>
+                  <td class="is-num">{{ row.studentId || '—' }}</td>
+                  <td>{{ row.name || '—' }}</td>
+                  <td class="is-num">{{ row.duration ?? '—' }}</td>
+                  <td>{{ row.mode ? modeLabel(row.mode) : '—' }}</td>
+                  <td>{{ row.note || '—' }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+      </div>
+      <template #footer>
+        <ElButton @click="closeOcrReview">
+          {{ t('activity.register.cancelAction') }}
+        </ElButton>
+        <ElButton
+          type="primary"
+          :disabled="!ocrReviewCanApply || ocrReviewLoading"
+          @click="confirmOcrReview"
+        >
+          {{ t('activity.register.ocrReviewApply') }}
         </ElButton>
       </template>
     </ElDialog>
@@ -3177,6 +3704,16 @@ onBeforeUnmount(() => {
   overflow: hidden;
 }
 
+.edit-search-truncated {
+  margin: var(--yg-space-3) 0 0;
+  padding: var(--yg-space-2) var(--yg-space-3);
+  border-radius: var(--yg-radius-md);
+  background: var(--yg-color-warning-soft);
+  color: var(--yg-text-warning);
+  font-size: var(--yg-font-size-sm);
+  line-height: var(--yg-line-height-normal);
+}
+
 .edit-search-item {
   display: flex;
   align-items: center;
@@ -3260,6 +3797,228 @@ onBeforeUnmount(() => {
 .ocr-stage {
   color: var(--yg-text-secondary);
   font-size: var(--yg-font-size-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.ocr-engine-select {
+  width: 11rem;
+}
+
+/* OCR 结果确认弹窗：左图右字、底部预览 */
+.ocr-review {
+  display: flex;
+  flex-direction: column;
+  gap: var(--yg-space-3);
+}
+
+.ocr-review__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--yg-space-3);
+  color: var(--yg-text-secondary);
+  font-size: var(--yg-font-size-sm);
+}
+
+.ocr-review__meta {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--yg-space-1);
+  font-variant-numeric: tabular-nums;
+}
+
+.ocr-review__meta.is-low {
+  color: var(--yg-text-warning);
+}
+
+.ocr-review__spacer {
+  flex: 1 1 var(--yg-space-4);
+}
+
+.ocr-review__engine {
+  width: 10rem;
+}
+
+.ocr-review__stage {
+  margin: 0;
+  color: var(--yg-text-secondary);
+  font-size: var(--yg-font-size-xs);
+}
+
+.ocr-review__body {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
+  gap: var(--yg-space-3);
+  align-items: start;
+}
+
+.ocr-review__pane {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--yg-space-2);
+  padding: var(--yg-space-2);
+  border: 1px solid var(--yg-border-subtle);
+  border-radius: var(--yg-radius-md);
+  background: var(--yg-bg-surface-sunken);
+}
+
+.ocr-review__pane-title {
+  display: flex;
+  align-items: center;
+  gap: var(--yg-space-2);
+  color: var(--yg-text-tertiary);
+  font-size: var(--yg-font-size-xs);
+  font-weight: var(--yg-font-weight-medium);
+}
+
+.ocr-review__count {
+  color: var(--yg-text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.ocr-canvas {
+  position: relative;
+  max-height: 26rem;
+  overflow: auto;
+  border-radius: var(--yg-radius-sm);
+  background: var(--yg-bg-surface-raised);
+}
+
+.ocr-canvas__img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.ocr-canvas__frame {
+  position: relative;
+}
+
+.ocr-canvas__overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.ocr-box {
+  position: absolute;
+  padding: 0;
+  border: 2px solid var(--yg-color-primary);
+  border-radius: 2px;
+  background: var(--yg-color-primary-soft);
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+/* 排除的行用虚线与低透明度：一眼能分清「要填」和「不要」 */
+.ocr-box:not(.is-selected) {
+  border-style: dashed;
+  border-color: var(--yg-text-tertiary);
+  background: transparent;
+  opacity: 0.35;
+}
+
+.ocr-box:focus-visible {
+  outline: none;
+  box-shadow: var(--yg-focus-ring);
+}
+
+.ocr-line-list {
+  display: flex;
+  min-height: 4rem;
+  max-height: 26rem;
+  flex-direction: column;
+  gap: var(--yg-space-1);
+  overflow: auto;
+}
+
+.ocr-line {
+  display: flex;
+  align-items: center;
+  gap: var(--yg-space-2);
+}
+
+.ocr-line.is-excluded {
+  opacity: 0.5;
+}
+
+.ocr-line__input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.ocr-line__low {
+  color: var(--yg-text-warning);
+  font-size: var(--yg-font-size-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.ocr-review__preview {
+  display: flex;
+  flex-direction: column;
+  gap: var(--yg-space-2);
+  padding-top: var(--yg-space-3);
+  border-top: 1px solid var(--yg-border-subtle);
+}
+
+.ocr-review__warnings {
+  margin: 0;
+  padding-left: var(--yg-space-4);
+  color: var(--yg-text-warning);
+  font-size: var(--yg-font-size-sm);
+}
+
+.ocr-review__hint {
+  margin: 0;
+  color: var(--yg-text-tertiary);
+  font-size: var(--yg-font-size-sm);
+  line-height: var(--yg-line-height-normal);
+}
+
+.ocr-review__warn {
+  margin: 0;
+  padding: var(--yg-space-2) var(--yg-space-3);
+  border-radius: var(--yg-radius-md);
+  background: var(--yg-color-warning-soft);
+  color: var(--yg-text-warning);
+  font-size: var(--yg-font-size-sm);
+}
+
+.ocr-review__table-wrap {
+  max-height: 12rem;
+  overflow: auto;
+  border: 1px solid var(--yg-border-subtle);
+  border-radius: var(--yg-radius-md);
+}
+
+.ocr-review__table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: var(--yg-font-size-sm);
+}
+
+.ocr-review__table th {
+  position: sticky;
+  top: 0;
+  z-index: var(--yg-z-sticky);
+  padding: var(--yg-space-2);
+  background: var(--yg-bg-surface-sunken);
+  color: var(--yg-text-tertiary);
+  font-weight: var(--yg-font-weight-medium);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.ocr-review__table td {
+  padding: var(--yg-space-2);
+  border-bottom: 1px solid var(--yg-border-subtle);
+  color: var(--yg-text-primary);
+}
+
+.ocr-review__table .is-num {
+  text-align: right;
   font-variant-numeric: tabular-nums;
 }
 
@@ -3642,6 +4401,11 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 
+/* 非阻断提示（其他模式已登记）：与错误/警告文字区同位置，只换配色。 */
+.status-msg--warning {
+  color: var(--yg-text-warning);
+}
+
 .row-actions {
   display: flex;
   align-items: center;
@@ -3755,6 +4519,15 @@ onBeforeUnmount(() => {
   .page-head {
     width: 100%;
   }
+
+  .ocr-review__body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .ocr-canvas,
+  .ocr-line-list {
+    max-height: 18rem;
+  }
 }
 </style>
 
@@ -3778,6 +4551,16 @@ onBeforeUnmount(() => {
 }
 
 .vr-overwrite-dialog.el-dialog {
+  background: var(--yg-bg-surface-raised);
+  border: 1px solid var(--yg-border-subtle);
+  border-radius: var(--yg-radius-xl);
+  box-shadow: var(--yg-shadow-lg);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+/* OCR 确认弹窗：宽 1100px 由 width 属性给（min() 收敛到窄屏），这里只管外壳材质 */
+.vr-ocr-dialog.el-dialog {
   background: var(--yg-bg-surface-raised);
   border: 1px solid var(--yg-border-subtle);
   border-radius: var(--yg-radius-xl);

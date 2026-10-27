@@ -337,7 +337,10 @@ async def _evaluate(
             "banned": False,
         }
 
-    reason = f"{window_hours} 小时内 {count} 次{spec['name']}（阈值 {threshold} 次）"
+    reason = (
+        f"{window_hours} 小时内 {count} 次{spec['name']}"
+        f"（阈值 {threshold} 次，规则 {rule_code}）"
+    )
     await device_guard.apply_account_ban(user_oid, rule_code, reason, now=at)
     await _log(user_oid, "risk_ban", f"自动封禁：{reason}", at)
 

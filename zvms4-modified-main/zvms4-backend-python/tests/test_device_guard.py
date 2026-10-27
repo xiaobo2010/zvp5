@@ -58,6 +58,7 @@ class Env:
         self.current_ban: dict | None = None
         self.bans: list[dict] = []
         self.records: list[dict] = []
+        self.counters: dict[str, int] = {}
         self.device_upserts: list[dict] = []
         self.scan_limits: list[int] = []
         self.logs: list[dict] = []
@@ -148,6 +149,24 @@ def env(monkeypatch) -> Env:
     async def count_for_user_rule(user_oid, rule_code):
         return state.history
 
+    async def counter_get(xuehai_id):
+        count = state.counters.get(xuehai_id)
+        return None if count is None else {"xuehai_id": xuehai_id, "ban_count": count}
+
+    async def counter_increment(xuehai_id, at=None):
+        state.counters[xuehai_id] = state.counters.get(xuehai_id, 0) + 1
+        return state.counters[xuehai_id]
+
+    async def counter_get_counts(xuehai_ids):
+        return {
+            xuehai_id: state.counters[xuehai_id]
+            for xuehai_id in xuehai_ids
+            if xuehai_id in state.counters
+        }
+
+    async def counter_delete(xuehai_id):
+        return 1 if state.counters.pop(xuehai_id, None) is not None else 0
+
     async def insert_record(user_oid, **kwargs):
         state.records.append({"user_oid": user_oid, **kwargs})
         return "rec"
@@ -155,7 +174,10 @@ def env(monkeypatch) -> Env:
     async def get_rule(code):
         if state.rule_error is not None:
             raise state.rule_error
-        if state.rule is None or code != state.rule["code"]:
+        if state.rule is None:
+            return None
+        # 设备梯度规则与 foreign_device_login 共用同一份 penalties 桩。
+        if code not in (state.rule["code"], device_guard.RULE_CODE_DEVICE_TEMP_PASSWORD):
             return None
         return state.rule
 
@@ -205,6 +227,16 @@ def env(monkeypatch) -> Env:
     )
     monkeypatch.setattr(
         backends,
+        "get_device_ban_counters_repo",
+        lambda *a, **k: SimpleNamespace(
+            get=counter_get,
+            increment=counter_increment,
+            get_counts=counter_get_counts,
+            delete=counter_delete,
+        ),
+    )
+    monkeypatch.setattr(
+        backends,
         "get_ban_records_repo",
         lambda *a, **k: SimpleNamespace(
             count_for_user_rule=count_for_user_rule, insert=insert_record
@@ -221,11 +253,16 @@ def env(monkeypatch) -> Env:
         lambda *a, **k: SimpleNamespace(insert=insert_log),
     )
 
-    async def count_recent_temp_failures(user_oid, since):
-        return sum(1 for row in state.logs if row["type"] == "temp_password_fail")
+    async def temp_failures_by_device(user_oid, since):
+        grouped: dict[str, int] = {}
+        for row in state.logs:
+            if row["type"] == "temp_password_fail":
+                key = row["xuehai_id"]
+                grouped[key] = grouped.get(key, 0) + 1
+        return sorted(grouped.items(), key=lambda item: (-item[1], item[0]))
 
     monkeypatch.setattr(
-        device_guard, "count_recent_temp_failures", count_recent_temp_failures
+        device_guard, "temp_failures_by_device", temp_failures_by_device
     )
     return state
 
@@ -477,7 +514,7 @@ async def test_wrong_code_counts_down_remaining(env) -> None:
 
 
 @pytest.mark.asyncio
-async def test_third_failure_bans_account_and_device(env) -> None:
+async def test_third_failure_bans_device_only(env) -> None:
     _add_password(env)
     token = await _challenge(env)
 
@@ -491,25 +528,24 @@ async def test_third_failure_bans_account_and_device(env) -> None:
 
     detail = failure.value.detail
     assert detail["code"] == "DEVICE_BAN_APPLIED"
+    # 设备梯度第 1 档：1 天，不是永久。
     assert detail["until"] == int((NOW + timedelta(days=1)).timestamp())
 
-    # 账号：按 foreign_device_login 梯度，第 1 档 1 天。
-    assert len(env.bans) == 1
-    assert env.bans[0]["rule_code"] == device_guard.RULE_CODE_FOREIGN_DEVICE
-    assert env.bans[0]["until"] == NOW + timedelta(days=1)
-    assert env.records[0]["permanent"] is False
+    # 账号完全不动：临时密码没校验通过，攻击者本来就没进来。
+    assert env.bans == []
+    assert env.records == []
 
-    # 设备：显式永久封。
     assert env.device_upserts == [
         {
             "xuehai_id": XUEHAI,
             "reason": env.device_upserts[0]["reason"],
-            "until": None,
+            "until": NOW + timedelta(days=1),
             "source": "rule",
-            "rule_code": device_guard.RULE_CODE_FOREIGN_DEVICE,
+            "rule_code": device_guard.RULE_CODE_DEVICE_TEMP_PASSWORD,
             "operator_oid": None,
         }
     ]
+    assert env.counters == {XUEHAI: 1}
     assert [row["type"] for row in env.logs] == [
         "temp_password_fail",
         "temp_password_fail",
@@ -517,10 +553,12 @@ async def test_third_failure_bans_account_and_device(env) -> None:
         "device_ban",
     ]
     assert env.logs[-1]["level"] == "warning"
+    assert "第 1 次" in env.logs[-1]["data"]
+    assert device_guard.RULE_CODE_DEVICE_TEMP_PASSWORD in env.logs[-1]["data"]
 
 
 @pytest.mark.asyncio
-async def test_third_failure_on_permanent_step_writes_permanent_record(env) -> None:
+async def test_third_failure_on_permanent_step_writes_permanent_device_ban(env) -> None:
     env.rule = _rule([None])
     _add_password(env)
     token = await _challenge(env)
@@ -529,9 +567,9 @@ async def test_third_failure_on_permanent_step_writes_permanent_record(env) -> N
         with pytest.raises(HTTPException):
             await device_guard.verify_temp_password(token, "00000000", now=NOW)
 
-    assert env.bans[0]["until"] is None
-    assert env.records[0]["permanent"] is True
-    assert env.records[0]["expires_at"] is None
+    assert env.bans == []
+    assert env.device_upserts[0]["until"] is None
+    assert env.device_upserts[0]["rule_code"] == device_guard.RULE_CODE_DEVICE_TEMP_PASSWORD
 
 
 @pytest.mark.asyncio
@@ -572,8 +610,8 @@ async def test_attempts_beyond_limit_never_repeat_the_ban(env) -> None:
             assert detail["code"] == "TEMP_PASSWORD_INVALID"
             assert detail["remaining"] == 0
 
-    assert len(env.bans) == 1
-    assert len(env.records) == 1
+    assert env.bans == []
+    assert env.records == []
     assert len(env.device_upserts) == 1
     log_types = [row["type"] for row in env.logs]
     assert log_types.count("temp_password_fail") == 6
@@ -582,9 +620,10 @@ async def test_attempts_beyond_limit_never_repeat_the_ban(env) -> None:
 
 @pytest.mark.asyncio
 async def test_device_ban_skipped_for_someone_elses_primary_device(env) -> None:
-    """请求头填他人的主设备号：只封账号，不写任何设备封禁。
+    """请求头填他人的主设备号：不写设备封禁，也不封账号。
 
-    设备号是客户端自报的，否则 3 次错密码就能把任意人永久锁在门外。
+    设备号是客户端自报的，否则 3 次错密码就能把任意人永久锁在门外；账号本来
+    就没被攻破，连坐封号只会制造第二个受害者。
     """
     env.other_primary.add(OTHER_DEVICE)
     _add_password(env)
@@ -594,7 +633,7 @@ async def test_device_ban_skipped_for_someone_elses_primary_device(env) -> None:
         with pytest.raises(HTTPException):
             await device_guard.verify_temp_password(token, "00000000", now=NOW)
 
-    assert len(env.bans) == 1
+    assert env.bans == []
     assert env.device_upserts == []
     assert OTHER_DEVICE not in env.device_bans
     assert [row["type"] for row in env.logs][-1] == "device_ban_skipped"
@@ -652,7 +691,7 @@ async def test_rule_config_raises_the_attempt_limit(env) -> None:
     with pytest.raises(HTTPException) as failure:
         await device_guard.verify_temp_password(token, "00000000", now=NOW)
     assert failure.value.detail["code"] == "DEVICE_BAN_APPLIED"
-    assert len(env.bans) == 1
+    assert len(env.device_upserts) == 1
 
 
 @pytest.mark.asyncio
@@ -676,7 +715,7 @@ async def test_bad_rule_config_falls_back_to_default_limit(env, config) -> None:
             await device_guard.verify_temp_password(token, "00000000", now=NOW)
 
     assert failure.value.detail["code"] == "DEVICE_BAN_APPLIED"
-    assert len(env.bans) == 1
+    assert len(env.device_upserts) == 1
 
 
 @pytest.mark.asyncio
@@ -691,7 +730,7 @@ async def test_rule_read_failure_still_bans_with_default_limit(env) -> None:
             await device_guard.verify_temp_password(token, "00000000", now=NOW)
 
     assert failure.value.detail["code"] == "DEVICE_BAN_APPLIED"
-    assert len(env.bans) == 1
+    assert len(env.device_upserts) == 1
     assert len(env.device_upserts) == 1
 
 
@@ -745,9 +784,8 @@ async def test_failures_accumulate_across_challenges(env) -> None:
         await device_guard.verify_temp_password(token, "00000000", now=NOW)
 
     assert failure.value.detail["code"] == "DEVICE_BAN_APPLIED"
-    assert len(env.bans) == 1
     assert len(env.device_upserts) == 1
-    assert "24 小时" in env.bans[0]["reason"]
+    assert "24 小时" in env.device_upserts[0]["reason"]
 
 
 @pytest.mark.asyncio
@@ -759,13 +797,14 @@ async def test_cumulative_ban_is_not_repeated(env) -> None:
         with pytest.raises(HTTPException):
             await device_guard.verify_temp_password(token, "00000000", now=NOW)
 
-    assert len(env.bans) == 1
+    assert env.bans == []
+    assert len(env.device_upserts) == 1
 
     token = await _challenge(env)
     with pytest.raises(HTTPException) as failure:
         await device_guard.verify_temp_password(token, "00000000", now=NOW)
     assert failure.value.detail["code"] == "TEMP_PASSWORD_INVALID"
-    assert len(env.bans) == 1
+    assert env.bans == []
     assert len(env.device_upserts) == 1
 
 
@@ -799,6 +838,59 @@ async def test_cumulative_ban_respects_disabled_rule(env) -> None:
     assert failure.value.detail["code"] == "TEMP_PASSWORD_INVALID"
     assert env.bans == []
     assert "ban_rule_skipped" in [row["type"] for row in env.logs]
+
+
+@pytest.mark.asyncio
+async def test_cumulative_bans_the_device_with_most_failures(env) -> None:
+    """跨阈封的是「穷举的那台机器」：不是当前请求设备，更不是账号主设备。"""
+    _add_password(env)
+    env.logs.extend(
+        {"type": "temp_password_fail", "xuehai_id": OTHER_DEVICE}
+        for _ in range(device_guard.CUMULATIVE_TEMP_FAILURES)
+    )
+
+    token = await _challenge(env)
+    with pytest.raises(HTTPException) as failure:
+        await device_guard.verify_temp_password(token, "00000000", now=NOW)
+
+    assert failure.value.detail["code"] == "DEVICE_BAN_APPLIED"
+    assert env.device_upserts[0]["xuehai_id"] == OTHER_DEVICE
+    assert XUEHAI not in env.device_bans
+    assert env.bans == []
+
+
+@pytest.mark.asyncio
+async def test_device_ban_gradient_walks_and_stays_permanent(env) -> None:
+    """设备侧梯度：1/3/7 天逐档，末档永久；重复违规不降级。"""
+    for expected_days in (1, 3, 7):
+        ban = await device_guard._ban_device_for_temp_password(
+            USER, XUEHAI, request_url="", now=NOW
+        )
+        assert ban["days"] == expected_days
+        assert ban["until"] == NOW + timedelta(days=expected_days)
+        assert env.device_upserts[-1]["until"] == NOW + timedelta(days=expected_days)
+
+    env.device_bans[XUEHAI] = {"until": None, "reason": "已永久"}
+    ban = await device_guard._ban_device_for_temp_password(
+        USER, XUEHAI, request_url="", now=NOW
+    )
+    assert ban["until"] is None
+    assert ban["permanent"] is True
+    assert env.device_upserts[-1]["until"] is None
+
+
+@pytest.mark.asyncio
+async def test_device_ban_never_downgrades_longer_existing_sentence(env) -> None:
+    later = NOW + timedelta(days=30)
+    env.device_bans[XUEHAI] = {"until": later, "reason": "管理员封禁"}
+
+    ban = await device_guard._ban_device_for_temp_password(
+        USER, XUEHAI, request_url="", now=NOW
+    )
+
+    assert ban["days"] == 1  # 本次梯度照实回报
+    assert ban["until"] == later
+    assert env.device_upserts[-1]["until"] == later
 
 
 # ---------------------------------------------------------------------------
@@ -918,3 +1010,59 @@ async def test_count_recent_temp_failures_reads_app_logs(monkeypatch) -> None:
     assert "app_logs.app_user = '000000000000000000000002'" in sql
     assert "app_logs.ltype = 'temp_password_fail'" in sql
     assert "app_logs.ts_raw >=" in sql
+
+
+@pytest.mark.asyncio
+async def test_count_recent_temp_failures_filters_by_device(monkeypatch) -> None:
+    """累计口径按 (user, xuehai_id)：同一账号的多台设备不能合并计数。"""
+    from contextlib import asynccontextmanager
+
+    import db.oracle.session as oracle_session
+
+    captured: dict[str, str] = {}
+
+    class FakeSession:
+        async def execute(self, stmt):
+            captured["sql"] = str(stmt.compile(compile_kwargs={"literal_binds": True}))
+            return SimpleNamespace(scalar_one=lambda: 2)
+
+    @asynccontextmanager
+    async def fake_scope():
+        yield FakeSession()
+
+    monkeypatch.setattr(oracle_session, "session_scope", fake_scope)
+
+    assert (
+        await device_guard.count_recent_temp_failures(USER, NOW, OTHER_DEVICE) == 2
+    )
+    assert "app_logs.xuehai_id = '20269999'" in captured["sql"].lower()
+
+
+@pytest.mark.asyncio
+async def test_temp_failures_by_device_groups_in_sql(monkeypatch) -> None:
+    from contextlib import asynccontextmanager
+
+    import db.oracle.session as oracle_session
+
+    captured: dict[str, str] = {}
+
+    class FakeSession:
+        async def execute(self, stmt):
+            captured["sql"] = str(stmt.compile(compile_kwargs={"literal_binds": True}))
+
+            class Row:
+                _mapping = {"xuehai_id": XUEHAI, "failures": 3}
+
+            return SimpleNamespace(all=lambda: [Row()])
+
+    @asynccontextmanager
+    async def fake_scope():
+        yield FakeSession()
+
+    monkeypatch.setattr(oracle_session, "session_scope", fake_scope)
+
+    assert await device_guard.temp_failures_by_device(USER, NOW) == [(XUEHAI, 3)]
+    sql = captured["sql"].lower()
+    assert "app_logs.xuehai_id" in sql
+    assert "group by" in sql
+    assert "order by" in sql

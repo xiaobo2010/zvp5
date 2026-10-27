@@ -8,11 +8,13 @@
   命中时**绝不封当前账号**——同一台机器可能马上有别人来登；
 * 账号闸仍由 ``util.ban`` / ``services.ban_rules`` 负责。
 
-**为什么不物理同步账号封禁与设备封禁**：只有「临时密码连错 3 次」这一类
-证据能确认「有人在这台机器上冒用身份」，才写显式 ``BANNED_DEVICES`` 行；
-普通的账号封禁（平台违规使用、管理员封禁）靠 :func:`device_ban_status` 的第二个
-条件**实时推导**（主设备=该机器且该用户此刻被封）。账号解封、用户换主设备后
-设备封禁自动消失，不需要任何反向同步任务，也就没有「两边不一致」的状态。
+**为什么不物理同步账号封禁与设备封禁**：只有「临时密码连错」这一类证据能确认
+「有人在这台机器上冒用身份」，才写显式 ``BANNED_DEVICES`` 行；而且只封**这台
+设备**，不动账号——临时密码本身没通过，攻击者进不来，误伤真实账号只会制造
+第二个受害者。普通的账号封禁（平台违规使用、管理员封禁）靠
+:func:`device_ban_status` 的第二个条件**实时推导**（主设备=该机器且该用户此刻
+被封）。账号解封、用户换主设备后设备封禁自动消失，不需要任何反向同步任务，
+也就没有「两边不一致」的状态。
 """
 
 from __future__ import annotations
@@ -51,6 +53,9 @@ MAX_TEMP_PASSWORDS_SCANNED = 20
 CUMULATIVE_TEMP_FAILURES = 5
 CUMULATIVE_TEMP_FAILURE_HOURS = 24
 RULE_CODE_FOREIGN_DEVICE = "foreign_device_login"
+# 设备侧梯度单独一条规则：连错证据属于 foreign_device_login（决定「试几次」），
+# 但「封这台机器多久」是另一个梯度，与账号处罚分开演进。
+RULE_CODE_DEVICE_TEMP_PASSWORD = "device_temp_password_abuse"
 
 # 团支书及以上：不受「必须学海设备」与主设备闸约束，可自由换设备登入。
 PRIVILEGED_ROLES = frozenset({"admin", "department", "secretary"})
@@ -67,8 +72,11 @@ DEVICE_REQUIRED_MESSAGE = (
 TEMP_PASSWORD_INVALID_MESSAGE = "临时密码错误或已失效"
 CHALLENGE_MISMATCH_MESSAGE = "临时密码只能在一台设备上使用"
 DEVICE_BAN_APPLIED_MESSAGE = (
-    f"临时密码连续输错 {MAX_TEMP_ATTEMPTS} 次，账号与这台设备已被封禁"
+    f"临时密码连续输错 {MAX_TEMP_ATTEMPTS} 次，这台设备已被封禁"
 )
+
+# 理由列宽即契约（BAN_RECORDS.REASON / BANNED_DEVICES.REASON = 512）。
+MAX_REASON_CHARS = 500
 
 Row = dict[str, Any]
 
@@ -144,6 +152,13 @@ def _expired(until: datetime | None, now: datetime) -> bool:
     if until is None:
         return False
     return not ban_is_active({"banned": True, "ban_until": until}, now)
+
+
+def _clip_reason(text: str) -> str:
+    """``BAN_RECORDS.REASON`` / ``BANNED_DEVICES.REASON`` 是 VARCHAR2(512)。"""
+    if len(text) <= MAX_REASON_CHARS:
+        return text
+    return text[: MAX_REASON_CHARS - 1] + "…"
 
 
 def _invalid_temp_password(remaining: int) -> HTTPException:
@@ -305,12 +320,47 @@ async def _temp_attempt_policy() -> tuple[int, bool, dict]:
     return _rule_max_attempts(rule), enabled, _config_of(rule)
 
 
-async def count_recent_temp_failures(user_oid: str, since: datetime) -> int:
-    """该用户在 ``since`` 之后写入的 ``temp_password_fail`` 审计条数。
+async def count_recent_temp_failures(
+    user_oid: str, since: datetime, xuehai_id: str | None = None
+) -> int:
+    """该用户（可限定设备）在 ``since`` 之后写入的 ``temp_password_fail`` 条数。
 
     只读查询直接落在 ``APP_LOGS`` 上（``ix_app_logs_user_ts`` 覆盖
     ``app_user`` + ``ts_raw``）：失败证据本来就在那张表里，为一次计数再加一张
     计数表只会多一份会漂移的状态。``ts_raw`` 是时间窗的权威列，与写入路径同源。
+
+    累计封禁按**设备**计档：同一账号可能被十台机器各试几次，按账号合并会把
+    「一台机器穷举」误判成「很多人手抖」。``xuehai_id=None`` 保留账号维度的
+    总量（诊断用），封禁路径一律传具体设备。
+    """
+    from sqlalchemy import func, select
+
+    from db.models import app_logs as app_logs_tbl
+    from db.oracle.session import session_scope
+
+    conditions = [
+        app_logs_tbl.c.app_user == user_oid,
+        app_logs_tbl.c.ltype == "temp_password_fail",
+        app_logs_tbl.c.ts_raw >= since.timestamp(),
+    ]
+    if xuehai_id is not None:
+        conditions.append(app_logs_tbl.c.xuehai_id == xuehai_id)
+    stmt = (
+        select(func.count())
+        .select_from(app_logs_tbl)
+        .where(*conditions)
+    )
+    async with session_scope() as session:
+        return int((await session.execute(stmt)).scalar_one())
+
+
+async def temp_failures_by_device(
+    user_oid: str, since: datetime
+) -> list[tuple[str, int]]:
+    """窗口内按设备分组的失败次数，次数降序。
+
+    累计封禁要回答的是「哪台机器在穷举」：跨阈时封的是这一组里次数最多的
+    设备，不是当前请求头自报的设备（两者可能不同，后者可伪造）。
     """
     from sqlalchemy import func, select
 
@@ -318,35 +368,46 @@ async def count_recent_temp_failures(user_oid: str, since: datetime) -> int:
     from db.oracle.session import session_scope
 
     stmt = (
-        select(func.count())
-        .select_from(app_logs_tbl)
+        select(app_logs_tbl.c.xuehai_id, func.count().label("failures"))
         .where(
             app_logs_tbl.c.app_user == user_oid,
             app_logs_tbl.c.ltype == "temp_password_fail",
             app_logs_tbl.c.ts_raw >= since.timestamp(),
+            app_logs_tbl.c.xuehai_id.is_not(None),
+            app_logs_tbl.c.xuehai_id != "",
         )
+        .group_by(app_logs_tbl.c.xuehai_id)
+        .order_by(func.count().desc(), app_logs_tbl.c.xuehai_id.asc())
     )
     async with session_scope() as session:
-        return int((await session.execute(stmt)).scalar_one())
+        rows = (await session.execute(stmt)).all()
+    return [
+        (str(row._mapping["xuehai_id"]), int(row._mapping["failures"]))
+        for row in rows
+    ]
 
 
-async def _recent_temp_failures(user_oid: str, since: datetime) -> int:
-    """计数失败一律按 0 处理：读不到审计只是少一道防线，不能让登录 500。"""
+async def _recent_temp_failures(
+    user_oid: str, since: datetime
+) -> list[tuple[str, int]]:
+    """计数失败一律按空处理：读不到审计只是少一道防线，不能让登录 500。"""
     try:
-        return await count_recent_temp_failures(user_oid, since)
+        return await temp_failures_by_device(user_oid, since)
     except Exception:
         _logger.exception("统计临时密码失败次数失败，本次跳过累计封禁判定")
-        return 0
+        return []
 
 
-async def _account_ban_active(user_oid: str, now: datetime) -> bool:
-    """该账号在 ``now`` 是否处于封禁中（读不到按未封禁处理）。"""
+async def _device_ban_active(xuehai_id: str, now: datetime) -> bool:
+    """这台设备在 ``now`` 是否已有一条生效中的显式封禁行。"""
     try:
-        doc = await backends.get_users_repo().get_by_oid(user_oid)
+        row = await backends.get_device_bans_repo().get(xuehai_id)
     except Exception:
-        _logger.exception("读取账号封禁状态失败，按未封禁处理")
+        _logger.exception("读取设备封禁状态失败，按未封禁处理")
         return False
-    return ban_is_active(doc, now)
+    if not row:
+        return False
+    return not _expired(_as_until(row.get("until")), now)
 
 
 async def verify_temp_password(
@@ -367,16 +428,16 @@ async def verify_temp_password(
        是「已尝试次数」而不是「已失败次数」；自增是语句级原子的，拿到的就是
        本次是第几次，并发请求不会数重；
     4. 遍历目标用户未过期/未使用/未撤销的临时密码，``bcrypt`` 逐个比对；
-    5. 本次失败后统计该用户窗口内的失败总次数（跨挑战累计）：换一张挑战就能
-       把 ``attempts`` 归零，只有累计条数能识别「一直在穷举」。
+    5. 本次失败后统计该账号窗口内**按设备分组**的失败次数（跨挑战累计）：换一张
+       挑战就能把 ``attempts`` 归零，只有累计条数能识别「一直在穷举」。
 
-    只有 ``attempts == 上限`` 那一次会**同时**动账号与设备，这是能确认「有人
-    在这台机器上冒用身份」的证据。``attempts > 上限`` 是同一张挑战被继续提交
-    （挑战失败后不消费，5 分钟内仍可用）：再封一次只会把账号梯度一路打到永久
-    （1→3→7→14→30→永久），所以那种请求只拒绝本次登入。
+    只有 ``attempts == 上限`` 那一次会自动封禁，而且封的是**这台设备**（挑战绑定
+    的 ``xuehai_id``），不动账号：临时密码本身没通过，账号并没有被攻破，把受害
+    账号一起封掉只会制造第二个受害者。``attempts > 上限`` 是同一张挑战被继续提交
+    （挑战失败后不消费，5 分钟内仍可用）：设备已经封着了，那种请求只拒绝本次登入。
 
-    累计路径同样「只在当前没有生效封禁时」落封：否则封禁期内每一次错密码都会
-    再推一档梯度，账号会被自己的错误次数打成永久封禁。
+    累计路径同样「只在设备当前没有生效封禁时」落封：否则封禁期内每一次错密码都
+    会再推一档设备梯度，机器会被自己的错误次数打成永久封禁。
     """
     at = now or datetime.now()
 
@@ -444,12 +505,11 @@ async def verify_temp_password(
             "until": None,
         }
         try:
-            ban = await _ban_account_and_device(
+            ban = await _ban_device_for_temp_password(
                 user_oid,
                 xuehai_id,
                 request_url=request_url,
                 now=at,
-                limit=limit,
             )
             detail["until"] = (
                 int(ban["until"].timestamp()) if ban.get("until") is not None else None
@@ -457,7 +517,7 @@ async def verify_temp_password(
         except Exception:
             # 封禁落库失败也仍然拒绝本次登入：错误次数已经用完，放行等于让人
             # 用穷举继续试。留痕给运维补写即可。
-            _logger.exception("临时密码连错后封禁落库失败（本次仍拒绝登入）")
+            _logger.exception("临时密码连错后设备封禁落库失败（本次仍拒绝登入）")
         raise HTTPException(status_code=403, detail=detail)
 
     raise _invalid_temp_password(limit - attempts)
@@ -466,7 +526,7 @@ async def verify_temp_password(
 def _ban_applied_message(limit: int) -> str:
     if limit == MAX_TEMP_ATTEMPTS:
         return DEVICE_BAN_APPLIED_MESSAGE
-    return f"临时密码连续输错 {limit} 次，账号与这台设备已被封禁"
+    return f"临时密码连续输错 {limit} 次，这台设备已被封禁"
 
 
 def _cumulative_policy(config: dict) -> tuple[int, int]:
@@ -489,50 +549,57 @@ async def _reject_on_cumulative_failures(
     rule_enabled: bool,
     at: datetime,
 ) -> None:
-    """窗口内失败总数到阈值就封账号+设备并拒绝；未到阈值时直接返回。
+    """窗口内某台设备的失败次数到阈值就封**那台设备**并拒绝。
 
     这条路径补的是「换挑战重置计数」的洞：``attempts`` 挂在挑战行上，攻击者
     每错 2 次就重新申请一张挑战，就能无限试下去。审计流水里的失败条数跨挑战
     存在，是唯一能累计的证据。
+
+    按设备分组而不是按账号合计：封的是「穷举的那台机器」，不是当前请求头自报
+    的设备（可伪造），更不是账号的主设备。``xuehai_id`` 为空的失败不参与设备
+    封禁，只做本次拒绝。
     """
     limit, hours = _cumulative_policy(config)
     since = at - timedelta(hours=hours)
     failures = await _recent_temp_failures(user_oid, since)
-    if failures < limit:
+    if not failures:
+        return
+    offender, count = failures[0]
+    if count < limit:
         return
 
     if not rule_enabled:
         await _log_rule_skipped(request_url, user_oid, xuehai_id, at)
         raise _invalid_temp_password(0)
 
-    if await _account_ban_active(user_oid, at):
-        # 封禁期内继续错密码：只拒绝本次登入，不再推梯度。
+    if await _device_ban_active(offender, at):
+        # 设备封禁期内继续错密码：只拒绝本次登入，不再推梯度。
         raise _invalid_temp_password(0)
 
     reason = (
-        f"{hours} 小时内累计 {failures} 次输入错误的临时密码（设备 {xuehai_id}）"
+        f"{hours} 小时内该设备累计 {count} 次输入错误的临时密码"
+        f"（设备 {offender}）"
     )
     detail: dict[str, Any] = {
         "code": "DEVICE_BAN_APPLIED",
         "message": (
-            f"{hours} 小时内临时密码输错 {failures} 次，账号与这台设备已被封禁"
+            f"{hours} 小时内临时密码输错 {count} 次，这台设备已被封禁"
         ),
         "until": None,
     }
     try:
-        ban = await _ban_account_and_device(
+        ban = await _ban_device_for_temp_password(
             user_oid,
-            xuehai_id,
+            offender,
             request_url=request_url,
             now=at,
-            limit=limit,
             reason=reason,
         )
         detail["until"] = (
             int(ban["until"].timestamp()) if ban.get("until") is not None else None
         )
     except Exception:
-        _logger.exception("临时密码累计连错后封禁落库失败（本次仍拒绝登入）")
+        _logger.exception("临时密码累计连错后设备封禁落库失败（本次仍拒绝登入）")
     raise HTTPException(status_code=403, detail=detail)
 
 
@@ -589,7 +656,7 @@ async def _log_rule_skipped(
             request_url,
             user_oid,
             f"规则 {RULE_CODE_FOREIGN_DEVICE} 已停用，"
-            f"临时密码连错不再封禁账号与设备（设备 {xuehai_id}）",
+            f"临时密码连错不再封禁设备（设备 {xuehai_id}）",
             at.timestamp(),
             type="ban_rule_skipped",
             level="warning",
@@ -614,54 +681,89 @@ async def _device_owned_by_other(xuehai_id: str, user_oid: str) -> bool:
         return True
 
 
-async def _ban_account_and_device(
+async def _ban_device_for_temp_password(
     user_oid: str,
     xuehai_id: str,
     *,
     request_url: str,
     now: datetime,
-    limit: int,
     reason: str | None = None,
 ) -> dict:
-    """第 ``limit`` 次失败（或累计到阈值）：账号按梯度封 + 该设备显式永久封 + 一条日志。
+    """临时密码连错：按设备梯度封**这台设备**，不动账号。
 
     设备封禁前先确认这台机器不是别人的主设备：设备号完全来自请求头，攻击者
-    填受害者的设备号就能借 3 次错密码把人永久锁在门外。命中时**只封账号**，
-    并留一条 ``device_ban_skipped`` 说明原因。
+    填受害者的设备号就能借错密码把人锁在门外。命中时只留一条
+    ``device_ban_skipped``——账号也不封（临时密码没通过，攻击者进不来）。
+
+    梯度来自 ``DEVICE_BAN_COUNTERS``：每次自动封禁 ``ban_count += 1``，档位用
+    ``ban_rules.penalty_expiry`` 取。已有更强封禁（含永久）时只保留强的那条，
+    重复违规不会把 30 天「降级」成 1 天。
     """
-    reason = reason or f"连续 {limit} 次输入错误的临时密码（设备 {xuehai_id}）"
-    ban = await apply_account_ban(user_oid, RULE_CODE_FOREIGN_DEVICE, reason, now=now)
+    reason = _clip_reason(
+        reason or f"连续输入错误的临时密码（设备 {xuehai_id}）"
+    )
 
     if await _device_owned_by_other(xuehai_id, user_oid):
         try:
             await ZVMSLog(
                 request_url,
                 user_oid,
-                f"设备 {xuehai_id} 是其他账号的主设备，跳过设备封禁（账号已按规则封禁）：{reason}",
+                f"设备 {xuehai_id} 是其他账号的主设备，跳过设备封禁：{reason}",
                 now.timestamp(),
                 type="device_ban_skipped",
                 level="warning",
                 xuehai_id=xuehai_id,
             ).insert_log()
         except Exception:
-            _logger.exception("写入 device_ban_skipped 日志失败（账号封禁已生效）")
-        return ban
+            _logger.exception("写入 device_ban_skipped 日志失败")
+        return {"until": None, "days": None, "offense": 0, "permanent": False,
+                "skipped": True}
 
-    # until=None：永久。管理员可在设备封禁列表里解除（设备有换主人的可能）。
-    await backends.get_device_bans_repo().upsert(
+    try:
+        offense = await backends.get_device_ban_counters_repo().increment(
+            xuehai_id, now
+        )
+    except Exception:
+        # 计数失败不该让封禁消失：按第一档处理，事后由运维补计数。
+        _logger.exception("读取/更新设备封禁计数失败，按第一档封禁")
+        offense = 1
+
+    try:
+        rule = await backends.get_ban_rules_repo().get_by_code(
+            RULE_CODE_DEVICE_TEMP_PASSWORD
+        )
+    except Exception:
+        _logger.exception(
+            "读取 %s 规则失败，按默认梯度封禁", RULE_CODE_DEVICE_TEMP_PASSWORD
+        )
+        rule = None
+    penalties = ban_rules.rule_penalties(rule)
+    until, days = ban_rules.penalty_expiry(penalties, offense, now)
+
+    repo = backends.get_device_bans_repo()
+    try:
+        existing = await repo.get(xuehai_id)
+    except Exception:
+        _logger.exception("读取设备既有封禁失败，按本次梯度写入")
+        existing = None
+    effective_until = _stronger_until(existing, until, now)
+
+    await repo.upsert(
         xuehai_id,
         reason=reason,
-        until=None,
+        until=effective_until,
         source="rule",
-        rule_code=RULE_CODE_FOREIGN_DEVICE,
+        rule_code=RULE_CODE_DEVICE_TEMP_PASSWORD,
         operator_oid=None,
     )
 
+    tier = "永久" if days is None else f"{days} 天"
     try:
         await ZVMSLog(
             request_url,
             user_oid,
-            f"设备 {xuehai_id} 被封禁：{reason}",
+            f"设备 {xuehai_id} 被封禁（规则 {RULE_CODE_DEVICE_TEMP_PASSWORD}，"
+            f"第 {offense} 次，{tier}）：{reason}",
             now.timestamp(),
             type="device_ban",
             level="warning",
@@ -670,7 +772,29 @@ async def _ban_account_and_device(
     except Exception:
         _logger.exception("写入 device_ban 日志失败（封禁已生效）")
 
-    return ban
+    return {
+        "reason": reason,
+        "until": effective_until,
+        "days": days,
+        "offense": offense,
+        "permanent": effective_until is None,
+    }
+
+
+def _stronger_until(
+    existing: Row | None, candidate: datetime | None, at: datetime
+) -> datetime | None:
+    """取更强的到期时刻：``None`` = 永久，过期行不算数（可被新判罚覆盖）。"""
+    if existing is None:
+        return candidate
+    current = _as_until(existing.get("until"))
+    if current is None:
+        return None
+    if _expired(current, at):
+        return candidate
+    if candidate is None:
+        return None
+    return max(current, candidate)
 
 
 async def apply_account_ban(
@@ -687,6 +811,7 @@ async def apply_account_ban(
     ``expires_at`` 必须同时表达这件事，否则管理页会把永久封禁显示成「无到期时间」。
     """
     at = now or datetime.now()
+    reason = _clip_reason(reason)
 
     try:
         rule = await backends.get_ban_rules_repo().get_by_code(rule_code)
@@ -745,7 +870,9 @@ __all__ = [
     "CUMULATIVE_TEMP_FAILURES",
     "CUMULATIVE_TEMP_FAILURE_HOURS",
     "RULE_CODE_FOREIGN_DEVICE",
+    "RULE_CODE_DEVICE_TEMP_PASSWORD",
     "DEVICE_BANNED_MESSAGE",
+    "MAX_REASON_CHARS",
     "DEVICE_NOT_PRIMARY_MESSAGE",
     "TEMP_PASSWORD_INVALID_MESSAGE",
     "CHALLENGE_MISMATCH_MESSAGE",
@@ -756,6 +883,7 @@ __all__ = [
     "issue_challenge",
     "verify_temp_password",
     "count_recent_temp_failures",
+    "temp_failures_by_device",
     "apply_account_ban",
     "generate_temp_password",
     "hash_temp_password",

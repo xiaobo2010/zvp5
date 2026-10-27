@@ -28,6 +28,7 @@ import services
 from db import backends
 from routers import users_v3_router
 from typings.log import inject_log
+from util.cert import jwt_encode
 from util.object_id import get_current_user
 
 PREFIX = "/api/v3/users"
@@ -231,6 +232,15 @@ def _act_as(api, oid: str, per: list[str]) -> None:
     api.app.dependency_overrides[get_current_user] = lambda: {"id": oid, "per": per}
 
 
+def _verify_token(oid: str) -> str:
+    """密码复核签发的 5 分钟短令牌（与线上同一条 ``jwt_encode`` 链路）。
+
+    短令牌的 ``scope`` 是 ``temporary_token``、``purpose`` 是 ``verify``；``sid``
+    用空串，因为本文件的仓储桩里用户没有 ``session_id``。
+    """
+    return jwt_encode(oid, [], [], "short", session_id="", purpose="verify")
+
+
 # ---------------------------------------------------------------------------
 # POST /{user_id}/temp-password —— 权限矩阵
 # ---------------------------------------------------------------------------
@@ -239,7 +249,10 @@ def _act_as(api, oid: str, per: list[str]) -> None:
 def test_secretary_can_create_for_same_class(api) -> None:
     _act_as(api, SECRETARY_OID, ["secretary"])
 
-    response = api.http.post(f"{PREFIX}/{MATE_OID}/temp-password")
+    response = api.http.post(
+        f"{PREFIX}/{MATE_OID}/temp-password",
+        json={"verification_token": _verify_token(SECRETARY_OID)},
+    )
 
     assert response.status_code == 200
     body = response.json()
@@ -266,7 +279,10 @@ def test_secretary_cross_class_is_forbidden(api) -> None:
 def test_department_covers_whole_school(api) -> None:
     _act_as(api, DEPARTMENT_OID, ["department"])
 
-    response = api.http.post(f"{PREFIX}/{OTHER_OID}/temp-password")
+    response = api.http.post(
+        f"{PREFIX}/{OTHER_OID}/temp-password",
+        json={"verification_token": _verify_token(DEPARTMENT_OID)},
+    )
 
     assert response.status_code == 200
     assert api.calls["inserts"][0]["target_oid"] == OTHER_OID
@@ -295,7 +311,10 @@ def test_department_cannot_target_admin_account(api) -> None:
     """校级但非 admin 的身份同样不能给别人手上的 admin 账号建码。"""
     _act_as(api, DEPARTMENT_OID, ["department"])
 
-    response = api.http.post(f"{PREFIX}/{ADMIN_TARGET_OID}/temp-password")
+    response = api.http.post(
+        f"{PREFIX}/{ADMIN_TARGET_OID}/temp-password",
+        json={"verification_token": _verify_token(DEPARTMENT_OID)},
+    )
 
     assert response.status_code == 403
     assert response.json()["detail"] == "不能为管理员账号创建临时密码"
@@ -305,7 +324,10 @@ def test_department_cannot_target_admin_account(api) -> None:
 def test_admin_can_target_admin_account(api) -> None:
     _act_as(api, ADMIN_OID, ["admin"])
 
-    response = api.http.post(f"{PREFIX}/{ADMIN_TARGET_OID}/temp-password")
+    response = api.http.post(
+        f"{PREFIX}/{ADMIN_TARGET_OID}/temp-password",
+        json={"verification_token": _verify_token(ADMIN_OID)},
+    )
 
     assert response.status_code == 200
 
@@ -322,7 +344,10 @@ def test_unknown_user_is_404(api) -> None:
 
 
 def test_code_is_eight_digits_and_stored_hashed(api) -> None:
-    data = api.http.post(f"{PREFIX}/{MATE_OID}/temp-password").json()["data"]
+    data = api.http.post(
+        f"{PREFIX}/{MATE_OID}/temp-password",
+        json={"verification_token": _verify_token(ADMIN_OID)},
+    ).json()["data"]
 
     code = data["code"]
     assert len(code) == 8
@@ -336,7 +361,10 @@ def test_code_is_eight_digits_and_stored_hashed(api) -> None:
 
 
 def test_expiry_is_thirty_minutes(api) -> None:
-    data = api.http.post(f"{PREFIX}/{MATE_OID}/temp-password").json()["data"]
+    data = api.http.post(
+        f"{PREFIX}/{MATE_OID}/temp-password",
+        json={"verification_token": _verify_token(ADMIN_OID)},
+    ).json()["data"]
 
     expires_at = api.calls["inserts"][0]["expires_at"]
     assert isinstance(expires_at, datetime)
@@ -349,7 +377,9 @@ def test_creator_and_header_are_recorded(api) -> None:
     _act_as(api, SECRETARY_OID, ["secretary"])
 
     api.http.post(
-        f"{PREFIX}/{MATE_OID}/temp-password", headers={"Xuehai-Id": "1234567890"}
+        f"{PREFIX}/{MATE_OID}/temp-password",
+        json={"verification_token": _verify_token(SECRETARY_OID)},
+        headers={"Xuehai-Id": "1234567890"},
     )
 
     stored = api.calls["inserts"][0]
@@ -358,7 +388,10 @@ def test_creator_and_header_are_recorded(api) -> None:
 
 
 def test_response_is_not_cacheable_and_logged(api) -> None:
-    response = api.http.post(f"{PREFIX}/{MATE_OID}/temp-password")
+    response = api.http.post(
+        f"{PREFIX}/{MATE_OID}/temp-password",
+        json={"verification_token": _verify_token(ADMIN_OID)},
+    )
 
     assert response.headers["cache-control"] == "no-store"
     entry = api.log.entries[-1]
@@ -441,7 +474,10 @@ def test_rebinding_only_from_current_primary(api) -> None:
 
     denied = api.http.put(
         f"{PREFIX}/me/primary-device",
-        json={"xuehai_id": "555"},
+        json={
+            "xuehai_id": "555",
+            "verification_token": _verify_token(STUDENT_OID),
+        },
         headers={"Xuehai-Id": "999"},
     )
     assert denied.status_code == 403
@@ -450,7 +486,10 @@ def test_rebinding_only_from_current_primary(api) -> None:
 
     ok = api.http.put(
         f"{PREFIX}/me/primary-device",
-        json={"xuehai_id": "555"},
+        json={
+            "xuehai_id": "555",
+            "verification_token": _verify_token(STUDENT_OID),
+        },
         headers={"Xuehai-Id": "1234567890"},
     )
     assert ok.status_code == 204
@@ -477,14 +516,20 @@ def test_unbind_requires_current_primary(api) -> None:
     api.users[STUDENT_OID]["primary_xuehai_id"] = "1234567890"
     _act_as(api, STUDENT_OID, ["student"])
 
-    denied = api.http.delete(
-        f"{PREFIX}/me/primary-device", headers={"Xuehai-Id": "999"}
+    denied = api.http.request(
+        "DELETE",
+        f"{PREFIX}/me/primary-device",
+        json={"verification_token": _verify_token(STUDENT_OID)},
+        headers={"Xuehai-Id": "999"},
     )
     assert denied.status_code == 403
     assert api.calls["clear_primary"] == []
 
-    ok = api.http.delete(
-        f"{PREFIX}/me/primary-device", headers={"Xuehai-Id": "1234567890"}
+    ok = api.http.request(
+        "DELETE",
+        f"{PREFIX}/me/primary-device",
+        json={"verification_token": _verify_token(STUDENT_OID)},
+        headers={"Xuehai-Id": "1234567890"},
     )
     assert ok.status_code == 204
     assert api.calls["clear_primary"] == [STUDENT_OID]
@@ -494,7 +539,11 @@ def test_unbind_requires_current_primary(api) -> None:
 def test_unbind_without_binding_is_409(api) -> None:
     _act_as(api, STUDENT_OID, ["student"])
 
-    response = api.http.delete(f"{PREFIX}/me/primary-device")
+    response = api.http.request(
+        "DELETE",
+        f"{PREFIX}/me/primary-device",
+        json={"verification_token": _verify_token(STUDENT_OID)},
+    )
 
     assert response.status_code == 409
     assert api.calls["clear_primary"] == []
@@ -508,7 +557,11 @@ def test_unbind_without_binding_is_409(api) -> None:
 def test_admin_clears_any_primary_device(api) -> None:
     api.users[OTHER_OID]["primary_xuehai_id"] = "777"
 
-    response = api.http.delete(f"{PREFIX}/{OTHER_OID}/primary-device")
+    response = api.http.request(
+        "DELETE",
+        f"{PREFIX}/{OTHER_OID}/primary-device",
+        json={"verification_token": _verify_token(ADMIN_OID)},
+    )
 
     assert response.status_code == 204
     assert api.calls["clear_primary"] == [OTHER_OID]
@@ -518,7 +571,11 @@ def test_admin_clears_any_primary_device(api) -> None:
 
 
 def test_admin_clear_is_idempotent(api) -> None:
-    response = api.http.delete(f"{PREFIX}/{OTHER_OID}/primary-device")
+    response = api.http.request(
+        "DELETE",
+        f"{PREFIX}/{OTHER_OID}/primary-device",
+        json={"verification_token": _verify_token(ADMIN_OID)},
+    )
 
     assert response.status_code == 204
     assert api.calls["clear_primary"] == []
@@ -574,7 +631,10 @@ def test_ban_records_reset_requires_admin(api) -> None:
 
 def test_new_code_revokes_previous_open_codes_first(api) -> None:
     """签发新码前先作废旧码：否则旧码正确也会因为不在扫描窗口里被判错。"""
-    response = api.http.post(f"{PREFIX}/{MATE_OID}/temp-password")
+    response = api.http.post(
+        f"{PREFIX}/{MATE_OID}/temp-password",
+        json={"verification_token": _verify_token(ADMIN_OID)},
+    )
 
     assert response.status_code == 200
     assert api.calls["revoked_open"][0][0] == MATE_OID
@@ -585,7 +645,10 @@ def test_new_code_revokes_previous_open_codes_first(api) -> None:
 def test_revocation_target_is_the_code_owner(api) -> None:
     _act_as(api, DEPARTMENT_OID, ["department"])
 
-    api.http.post(f"{PREFIX}/{OTHER_OID}/temp-password")
+    api.http.post(
+        f"{PREFIX}/{OTHER_OID}/temp-password",
+        json={"verification_token": _verify_token(DEPARTMENT_OID)},
+    )
 
     # 作废的是**目标用户**的旧码，不是签发人的。
     assert [oid for oid, _at in api.calls["revoked_open"]] == [OTHER_OID]

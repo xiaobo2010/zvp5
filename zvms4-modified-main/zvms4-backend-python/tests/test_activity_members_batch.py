@@ -388,6 +388,7 @@ async def test_bulk_import_keeps_the_missing_member_error(monkeypatch) -> None:
     assert failure.value.detail == "成员不存在"
     assert state["members"].writes == []  # 未发生写
     assert state["activities"].updates == []
+    assert state["log"].inserts == 0
 
 
 @pytest.mark.asyncio

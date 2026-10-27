@@ -36,7 +36,7 @@ from services import violation_guard
 from services.agent import executor, proposal as proposal_service
 from services.agent.tools import WRITE
 from services.agent.tool_impl import AgentError
-from services.ai import audit, conversations, moderation
+from services.ai import audit, conversations, moderation, prompt_audit
 from util import agent_unlock
 
 _logger = logging.getLogger(__name__)
@@ -233,6 +233,7 @@ async def submit(
     content: str,
     model: str | None = None,
     client_msg_id: str | None = None,
+    xuehai_id: str = "",
 ) -> dict:
     """把一条用户消息 + 一个 ``queued`` run 原子落库。
 
@@ -277,8 +278,20 @@ async def submit(
             _logger.warning(
                 "agent 输入审核拦截 user=%s rule=%s", owner_oid, verdict.rule
             )
+            # 被拦下的原文不留就永远查不到「他到底说了什么」；留存仍受
+            # ``ai.prompt_capture_roles`` 白名单约束（capture 内部判断）。
+            await prompt_audit.capture(
+                user=dict(user),
+                purpose=executor.PURPOSE_AGENT,
+                messages=[{"role": "user", "content": text}],
+            )
             try:
-                await violation_guard.record_agent_jailbreak(user)
+                await violation_guard.record_agent_jailbreak(
+                    user,
+                    xuehai_id=xuehai_id,
+                    rule=str(verdict.rule or ""),
+                    detail=text,
+                )
             except Exception:  # noqa: BLE001 - 证据入库失败不该把拒绝变成 500
                 _logger.exception("agent 越狱违规入库失败（本次仍然拒绝）")
             raise AgentError(

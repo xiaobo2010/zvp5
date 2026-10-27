@@ -40,6 +40,11 @@ ALLOWED_MIME = frozenset({"image/jpeg", "image/png", "image/webp"})
 # 的折中——每多试一个就多扣一次站点额度、多等一个上游超时。
 MAX_ENGINE_ATTEMPTS = 3
 
+# 允许指定 ``provider`` 的默认角色集合。入口不同权限就不同：``/api/ai/ocr`` 只给
+# admin，义工登记页（已过密码复核）把「可登记义工的管理者」也放进来——由调用方
+# 显式传入自己的集合，而不是在这里写死。
+ADMIN_PROVIDER_ROLES = frozenset({"admin"})
+
 _NO_ENGINE_MESSAGE = "no OCR engine is configured"
 _NO_SITE_QUOTA_MESSAGE = "every configured OCR engine is out of site quota"
 
@@ -49,21 +54,25 @@ async def enqueue(
     attachment_oid: str,
     *,
     provider: str | None = None,
+    provider_roles: frozenset[str] = ADMIN_PROVIDER_ROLES,
 ) -> dict:
     """把附件挂进 OCR 队列；``attachment_oid`` 已由路由校验为合法 oid。
 
     ``provider`` 是**引擎 kind**（``tencent`` / ``baidu`` / ...），不是模型名：
     有值时只在该 kind 的引擎里选，但**照常扣站点额度**——指定引擎是定向排障的
-    手段，不是免费通道。仅 admin 可用，其他人传了直接 403。
+    手段，不是免费通道。默认仅 admin 可用，其他人传了直接 403；``provider_roles``
+    让入口自报「哪些角色可以指定」（义工登记页的管理者集合与网关不同）。
 
     返回值里除了对外的 ``status`` / ``attachment_oid`` / ``engine``，还带一个
     ``engine_kind``：路由层要用它把**同一个**引擎传给后台任务。对外响应会把
     这个内部字段摘掉（见 ``routers/ai_router.request_ocr``）。
     """
-    # 门禁放在最前面：非 admin 拿 provider 试探，不该先泄露附件是否存在。
+    # 门禁放在最前面：没资格的人拿 provider 试探，不该先泄露附件是否存在。
     requested = (provider or "").strip().lower() or None
-    if requested is not None and "admin" not in (user.get("per") or []):
-        raise RouteError("AI_FORBIDDEN", "provider is admin-only", 403)
+    if requested is not None and not (
+        provider_roles & set(user.get("per") or [])
+    ):
+        raise RouteError("AI_FORBIDDEN", "provider is not allowed for your role", 403)
     engine_kind_filter = _requested_kind(requested)
 
     repo = backends.get_files_repo()

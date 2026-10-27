@@ -39,6 +39,8 @@ export const zhCN = {
     changeCancel: '取消',
     changeSuccess: '主设备已更换',
     changeFailed: '更换失败，请稍后重试',
+    verifyChangeReason:
+      '更换主设备会让旧平板立即失去登录权限，请输入密码确认这是你本人的操作。',
     unbind: '解绑主设备',
     unbindTitle: '解绑主设备？',
     unbindWarning: '解绑后账号回到未绑定状态，下次登录将被强制重新绑定。',
@@ -46,6 +48,8 @@ export const zhCN = {
     unbindCancel: '取消',
     unbindSuccess: '主设备已解绑',
     unbindFailed: '解绑失败，请稍后重试',
+    verifyUnbindReason:
+      '解绑主设备会让账号回到未绑定状态，任何平板都能重新抢占绑定，请输入密码确认这是你本人的操作。',
     notPrimaryHint: '只能在主设备上更换或解绑；设备丢失请联系管理员走临时密码流程。',
     notDeviceHint: '当前设备不是学海设备，只能在主设备上更换或解绑；设备丢失请联系管理员走临时密码流程。',
     bannedTitle: '本机设备已被限制',

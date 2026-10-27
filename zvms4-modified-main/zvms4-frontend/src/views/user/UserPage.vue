@@ -10,6 +10,7 @@ import { ArrowLeft, Edit } from '@element-plus/icons-vue'
 import type { User } from '@/../types'
 import api from '@/api'
 import { clearUserPrimaryDevice, issueTempPassword, type TempPasswordIssueResult } from '@/api/user/device'
+import { isTemporaryTokenCancelled, withTemporaryToken } from '@/plugins/short-token'
 import { aiErrorOf } from '@/api/ai/errors'
 import { useClipboard } from '@vueuse/core'
 import dayjs from '@/plugins/dayjs'
@@ -161,7 +162,23 @@ async function deleteUser() {
   } catch {
     return
   }
-  const result = await api.user.deleteUser(id.value)
+  let result: boolean
+  try {
+    result = await withTemporaryToken(
+      String(userStore._id),
+      t('manage.personalPanel.deleteVerifyReason'),
+      (token) => api.user.deleteUser(id.value, token)
+    )
+  } catch (error) {
+    if (isTemporaryTokenCancelled(error)) return
+    ElMessage({
+      message: describeDeviceError(error, 'manage.personalPanel.deleteFailed'),
+      type: 'error',
+      grouping: true,
+      plain: true
+    })
+    return
+  }
   if (result) {
     ElNotification({
       title: t('manage.personalPanel.deletedNotification', { name: user.value.name }),
@@ -226,9 +243,14 @@ async function issueTempPasswordForUser() {
   }
   tempPasswordIssuing.value = true
   try {
-    tempPasswordIssued.value = await issueTempPassword(id.value)
+    tempPasswordIssued.value = await withTemporaryToken(
+      String(userStore._id),
+      t('manage.personalPanel.tempPassword.verifyReason'),
+      (token) => issueTempPassword(id.value, token)
+    )
     tempPasswordDialogVisible.value = true
   } catch (error) {
+    if (isTemporaryTokenCancelled(error)) return
     ElMessage({
       message: describeDeviceError(error, 'manage.personalPanel.tempPassword.failed'),
       type: 'error',
@@ -268,13 +290,18 @@ async function clearPrimaryDevice() {
     return
   }
   try {
-    await clearUserPrimaryDevice(id.value)
+    await withTemporaryToken(
+      String(userStore._id),
+      t('manage.personalPanel.clearDevice.verifyReason'),
+      (token) => clearUserPrimaryDevice(id.value, token)
+    )
     ElNotification({
       title: t('manage.personalPanel.clearDevice.done', { name: user.value.name }),
       type: 'success'
     })
     await getUser()
   } catch (error) {
+    if (isTemporaryTokenCancelled(error)) return
     ElMessage({
       message: describeDeviceError(error, 'manage.personalPanel.clearDevice.failed'),
       type: 'error',

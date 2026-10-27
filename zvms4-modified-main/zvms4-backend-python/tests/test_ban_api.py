@@ -460,6 +460,7 @@ def test_triggers_lists_registered_checks(api) -> None:
         "login_success_churn",
         "device_switch_burst",
         "ai_chat_burst",
+        "device_temp_password_abuse",
     }
     for item in body["data"]:
         assert item["name"]
@@ -878,28 +879,65 @@ DEVICE_ROWS = [
 
 @pytest.fixture
 def devices_api(monkeypatch):
-    calls = {"pages": [], "deleted": []}
+    calls = {"pages": [], "deleted": [], "upserts": [], "counter_deletes": []}
+    counters = {"1234567890": 3}
 
-    async def list_page(page, size):
-        calls["pages"].append((page, size))
+    async def list_page(page, size, query=""):
+        calls["pages"].append((page, size, query))
         return DEVICE_ROWS, len(DEVICE_ROWS)
 
     async def delete(xuehai_id):
         calls["deleted"].append(xuehai_id)
         return 1 if xuehai_id == "1234567890" else 0
 
+    async def upsert(xuehai_id, *, reason, until, source, rule_code, operator_oid):
+        calls["upserts"].append(
+            {
+                "xuehai_id": xuehai_id,
+                "reason": reason,
+                "until": until,
+                "source": source,
+                "rule_code": rule_code,
+                "operator_oid": operator_oid,
+            }
+        )
+
+    async def get_counts(xuehai_ids):
+        return {key: counters[key] for key in xuehai_ids if key in counters}
+
+    async def counter_delete(xuehai_id):
+        calls["counter_deletes"].append(xuehai_id)
+        return 1 if counters.pop(xuehai_id, None) is not None else 0
+
     async def get_names(oids):
         return {oid: "管理员" for oid in oids}
+
+    async def primary_owners(xuehai_ids):
+        if "1234567890" in xuehai_ids:
+            return {"1234567890": {"user_oid": "000000000000000000000009", "name": "张三"}}
+        return {}
 
     monkeypatch.setattr(
         backends,
         "get_users_repo",
-        lambda *a, **k: SimpleNamespace(get_names=get_names),
+        lambda *a, **k: SimpleNamespace(
+            get_names=get_names, primary_owners=primary_owners
+        ),
     )
     monkeypatch.setattr(
         backends,
         "get_device_bans_repo",
-        lambda *a, **k: SimpleNamespace(list_page=list_page, delete=delete),
+        lambda *a, **k: SimpleNamespace(
+            list_page=list_page, delete=delete, upsert=upsert
+        ),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        backends,
+        "get_device_ban_counters_repo",
+        lambda *a, **k: SimpleNamespace(
+            get_counts=get_counts, delete=counter_delete
+        ),
         raising=False,
     )
     log = SimpleNamespace(
@@ -927,7 +965,9 @@ def test_banned_devices_shape(devices_api) -> None:
 
     assert body["code"] == 200
     assert body["metadata"] == {"size": 2, "page": 2, "perpage": 10}
-    assert calls["pages"] == [(2, 10)]
+    assert body["total"] == 2
+    assert body["devices"] == body["data"]
+    assert calls["pages"] == [(2, 10, "")]
     assert body["data"][0] == {
         "xuehai_id": "1234567890",
         "reason": "临时密码连续输错 3 次",
@@ -936,9 +976,69 @@ def test_banned_devices_shape(devices_api) -> None:
         "source": "rule",
         "rule_code": "foreign_device_login",
         "created_at": "2026-10-20T12:00:00",
+        "ban_count": 3,
+        "owner": {"user_oid": "000000000000000000000009", "name": "张三"},
     }
     assert body["data"][1]["permanent"] is False
     assert body["data"][1]["until"] == "2026-10-21T12:00:00"
+    assert body["data"][1]["ban_count"] == 0
+    assert body["data"][1]["owner"] is None
+
+
+def test_banned_devices_query_is_forwarded(devices_api) -> None:
+    http, calls, _log = devices_api
+    assert http.get(f"{PREFIX}/devices?query=1234").status_code == 200
+    assert calls["pages"] == [(1, 20, "1234")]
+
+
+def test_manual_device_ban_upserts_and_audits(devices_api) -> None:
+    http, calls, log = devices_api
+
+    response = http.post(
+        f"{PREFIX}/devices",
+        json={"xuehai_id": "1234567890", "reason": "  多次冒用  ", "until": None},
+    )
+
+    assert response.status_code == 200
+    assert calls["upserts"] == [
+        {
+            "xuehai_id": "1234567890",
+            "reason": "多次冒用",
+            "until": None,
+            "source": "admin",
+            "rule_code": None,
+            "operator_oid": ADMIN["id"],
+        }
+    ]
+    assert response.json()["data"]["ban_count"] == 3
+    assert log.entries[-1]["type"] == "ban_change"
+    assert "多次冒用" in log.entries[-1]["text"]
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"xuehai_id": ""},
+        {"xuehai_id": "abc"},
+        {"xuehai_id": "1" * 33},
+        {"xuehai_id": "123", "reason": "x" * 513},
+    ],
+)
+def test_manual_device_ban_validates_payload(devices_api, payload) -> None:
+    http, calls, log = devices_api
+    assert http.post(f"{PREFIX}/devices", json=payload).status_code == 422
+    assert calls["upserts"] == []
+    assert log.entries == []
+
+
+def test_reset_gradient_is_idempotent(devices_api) -> None:
+    http, calls, log = devices_api
+
+    assert http.post(f"{PREFIX}/devices/1234567890/reset-gradient").status_code == 204
+    assert http.post(f"{PREFIX}/devices/99999999/reset-gradient").status_code == 204
+
+    assert calls["counter_deletes"] == ["1234567890", "99999999"]
+    assert all(entry["type"] == "ban_change" for entry in log.entries)
 
 
 def test_unban_device_writes_ban_change_log(devices_api) -> None:
@@ -964,5 +1064,6 @@ def test_device_endpoints_require_admin(devices_api) -> None:
     http.app.dependency_overrides[get_current_user] = lambda: STUDENT
 
     assert http.get(f"{PREFIX}/devices").status_code == 403
+    assert http.post(f"{PREFIX}/devices", json={"xuehai_id": "123"}).status_code == 403
+    assert http.post(f"{PREFIX}/devices/123/reset-gradient").status_code == 403
     assert http.delete(f"{PREFIX}/devices/1234567890").status_code == 403
-

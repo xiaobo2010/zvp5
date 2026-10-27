@@ -182,6 +182,18 @@ describe('解锁与内容审核开关', () => {
     expect(init?.method).toBe('PUT')
     expect(JSON.parse(String(init?.body))).toEqual({ enabled: true })
   })
+
+  it('写无限制模式带 verify 短令牌时一并进 body', async () => {
+    stubFetch(jsonResponse({ enabled: false }))
+
+    await expect(setModerationUnrestricted(false, 'verify-token')).resolves.toBe(false)
+
+    const [, init] = vi.mocked(fetch).mock.calls[0]!
+    expect(JSON.parse(String(init?.body))).toEqual({
+      enabled: false,
+      verification_token: 'verify-token'
+    })
+  })
 })
 
 describe('待确认提案列表', () => {

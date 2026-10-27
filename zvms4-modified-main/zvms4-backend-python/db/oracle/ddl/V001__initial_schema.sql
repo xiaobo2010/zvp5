@@ -990,6 +990,27 @@ END;
 /
 
 -- ----------------------------------------------------------------------------
+-- DEVICE_BAN_COUNTERS  ← new (设备侧处罚梯度)
+--   一台设备一行：BAN_COUNT 决定下一次自动封禁用第几档 [1,3,7,14,30,null]。
+--   与 BANNED_DEVICES 分表：解封只删当前封禁行，历史违规次数留着；清零走
+--   管理员 reset-gradient。无外键：设备号是外部标识。
+--   也由 V039__device_ban_counters.sql 创建。
+-- ----------------------------------------------------------------------------
+BEGIN
+  EXECUTE IMMEDIATE '
+CREATE TABLE device_ban_counters (
+  xuehai_id VARCHAR2(32 CHAR) NOT NULL,
+  ban_count NUMBER(5) DEFAULT 0 NOT NULL,
+  last_banned_at TIMESTAMP,
+  PRIMARY KEY (xuehai_id)
+)';
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE != -955 THEN RAISE; END IF;
+END;
+/
+
+-- ----------------------------------------------------------------------------
 -- BAN_VIOLATIONS  ← new (客户端上报的违规信号)
 --   一条一行，append-only；命中「窗口内累计计数」后由规则梯度决定封禁。
 --   计数单位是 BATCH_ID（一次上报 = 一批，V019）：同一次页面加载里的
@@ -1471,6 +1492,28 @@ WHEN NOT MATCHED THEN INSERT
   VALUES (''0b0000000000000000000002'', ''foreign_device_login'', ''非主学海设备登录'',
           ''foreign_device_login'', 1, ''{"threshold":3}'',
           ''[1,3,7,14,30,null]'', 1, SYSTIMESTAMP, SYSTIMESTAMP)';
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE NOT IN (-1, -955) THEN RAISE; END IF;
+END;
+/
+
+-- ----------------------------------------------------------------------------
+-- BAN_RULES seed  ← 内置规则（临时密码滥用的设备梯度；也由 V039 mirror）
+--   连错次数阈值仍取 foreign_device_login，本规则只提供设备封禁的 penalties。
+--   trigger 与 code 同名：检查项唯一索引要求它独占一个值，求值按 code 取。
+-- ----------------------------------------------------------------------------
+BEGIN
+  EXECUTE IMMEDIATE '
+MERGE INTO ban_rules t
+USING (SELECT ''0b000000000000000000000d'' oid FROM dual) s
+ON (t.code = ''device_temp_password_abuse'')
+WHEN NOT MATCHED THEN INSERT
+  (oid, code, name, trigger_code, enabled, config, penalties, builtin, created_at, updated_at)
+  VALUES (''0b000000000000000000000d'', ''device_temp_password_abuse'',
+          ''临时密码滥用（设备）'', ''device_temp_password_abuse'', 1,
+          ''{"threshold":3,"window_hours":24}'', ''[1,3,7,14,30,null]'', 1,
+          SYSTIMESTAMP, SYSTIMESTAMP)';
 EXCEPTION
   WHEN OTHERS THEN
     IF SQLCODE NOT IN (-1, -955) THEN RAISE; END IF;

@@ -307,6 +307,14 @@ class UsersRepo(Protocol):
         """
         ...
 
+    async def primary_owners(self, xuehai_ids: list[str]) -> dict[str, Row]:
+        """``{xuehai_id: {"user_oid": str, "name": str}}`` in one round trip.
+
+        Only ids that are actually someone's primary device appear; the device
+        ban list uses this to avoid an N+1 owner lookup.
+        """
+        ...
+
 
 class GroupsRepo(Protocol):
     """Data access for ``zvms_new.groups`` (class groups only).
@@ -1778,11 +1786,38 @@ class DeviceBansRepo(Protocol):
         """Lift a device ban; returns the affected row count (``0`` = not banned)."""
         ...
 
-    async def list_page(self, page: int, size: int) -> tuple[list[Row], int]:
+    async def list_page(
+        self, page: int, size: int, query: str = ""
+    ) -> tuple[list[Row], int]:
         """Return ``(rows, total)`` for one page, newest ban first.
 
-        ``page`` is 1-based; ``total`` counts devices, not page size.
+        ``page`` is 1-based; ``total`` counts devices, not page size. A
+        non-empty ``query`` filters by device id containment.
         """
+        ...
+
+
+class DeviceBanCountersRepo(Protocol):
+    """Data access for ``DEVICE_BAN_COUNTERS`` (设备侧处罚梯度, V039).
+
+    Satisfied by ``db.repos.oracle.device_ban_counters.OracleDeviceBanCountersRepo``.
+    Rows are ``{"xuehai_id": str, "ban_count": int, "last_banned_at": datetime | None}``.
+    """
+
+    async def get(self, xuehai_id: str) -> Row | None:
+        """Return the device's counter row, or ``None`` when never banned."""
+        ...
+
+    async def increment(self, xuehai_id: str, at: datetime | None = None) -> int:
+        """Increment and return the new ``ban_count`` (first offence starts at 1)."""
+        ...
+
+    async def get_counts(self, xuehai_ids: list[str]) -> dict[str, int]:
+        """Batch ``{xuehai_id: ban_count}``; ids without a row are omitted."""
+        ...
+
+    async def delete(self, xuehai_id: str) -> int:
+        """Reset the gradient; returns the affected row count (``0`` = no row)."""
         ...
 
 
