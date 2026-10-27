@@ -230,6 +230,7 @@ class OracleBanRecordsRepo:
         started_at: datetime | None = None,
         expires_at: datetime | None = None,
         operator_oid: str | None = None,
+        session: AsyncSession | None = None,
     ) -> str:
         """追加一条封禁流水并返回新 ``_id``。
 
@@ -237,6 +238,10 @@ class OracleBanRecordsRepo:
         （例如补录）；两者语义不同：前者是「这行什么时候被写下」，后者是
         「封禁从什么时候生效」。调用方不传 ``started_at`` 时两者共用同一个
         ``now``：取两次时间会让同一行的两列差几毫秒，对账时没法判断谁对。
+
+        ``session`` 显式传入时复用调用方的事务（不 commit、不 close）：
+        ``USERS`` 状态与这条流水必须在同一次提交里落库，否则会留下
+        「已封但无梯度依据」的半状态。
         """
         oid = new_oid()
         now = datetime.now()
@@ -252,17 +257,27 @@ class OracleBanRecordsRepo:
             normalize_oid(operator_oid) if operator_oid is not None else None,
             now,
         )
-        async with _session_for(self._session) as (session, owns):
-            await session.execute(stmt)
+        async with _session_for(session or self._session) as (bound, owns):
+            await bound.execute(stmt)
             if owns:
-                await session.commit()
+                await bound.commit()
         return oid
 
-    async def count_for_user_rule(self, user_oid: str, rule_code: str) -> int:
-        """该用户在该规则下的历史封禁次数（升级处罚的档位索引）。"""
+    async def count_for_user_rule(
+        self,
+        user_oid: str,
+        rule_code: str,
+        *,
+        session: AsyncSession | None = None,
+    ) -> int:
+        """该用户在该规则下的历史封禁次数（升级处罚的档位索引）。
+
+        ``session`` 用于把「数档位」读进调用方的封禁事务（配合
+        ``users.ban_unit`` 的 ``FOR UPDATE``，并发两批不会读到同一个档位）。
+        """
         stmt = _count_for_user_rule_stmt(normalize_oid(user_oid), rule_code)
-        async with _session_for(self._session) as (session, _owns):
-            total = (await session.execute(stmt)).scalar_one()
+        async with _session_for(session or self._session) as (bound, _owns):
+            total = (await bound.execute(stmt)).scalar_one()
         return int(total)
 
     async def delete_for_user_rule(

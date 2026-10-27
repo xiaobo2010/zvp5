@@ -148,4 +148,29 @@ describe('附件管理 API 契约', () => {
       'already decided'
     )
   })
+
+  it('带密码复核令牌时把 verification_token 放进 body', async () => {
+    axiosMock.mockResolvedValueOnce(envelope(null, 0))
+
+    await decideAttachment('oid-1', { status: 'verified' }, 'verify-token-1')
+
+    expect(axiosMock).toHaveBeenCalledWith(
+      '/attachments/oid-1/status',
+      expect.objectContaining({
+        method: 'patch',
+        data: { status: 'verified', verification_token: 'verify-token-1' }
+      })
+    )
+  })
+
+  it('没有令牌时 body 里不出现 verification_token', async () => {
+    axiosMock.mockResolvedValueOnce(envelope(null, 0))
+
+    await decideAttachment('oid-1', { status: 'rejected', note: '缺材料' })
+
+    expect(axiosMock.mock.calls[0]![1].data).toEqual({
+      status: 'rejected',
+      note: '缺材料'
+    })
+  })
 })

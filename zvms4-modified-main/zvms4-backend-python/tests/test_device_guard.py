@@ -1066,3 +1066,298 @@ async def test_temp_failures_by_device_groups_in_sql(monkeypatch) -> None:
     assert "app_logs.xuehai_id" in sql
     assert "group by" in sql
     assert "order by" in sql
+
+
+# ---------------------------------------------------------------------------
+# P0-2 时区口径：aware 的 until/now 落库前折成本地 naive 墙钟
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def shanghai_tz():
+    """把进程时区钉到 Asia/Shanghai（时区回归必须可复现，不能看机器设置）。"""
+    import os
+    import time as _time
+
+    previous = os.environ.get("TZ")
+    os.environ["TZ"] = "Asia/Shanghai"
+    _time.tzset()
+    try:
+        yield
+    finally:
+        if previous is None:
+            os.environ.pop("TZ", None)
+        else:
+            os.environ["TZ"] = previous
+        _time.tzset()
+
+
+def test_to_local_naive_converts_utc_offset_to_local_wall_clock(shanghai_tz) -> None:
+    """``2026-10-28T14:01:17+00:00`` 在东八区是 22:01:17，不是 14:01:17。"""
+    from datetime import timezone
+
+    aware = datetime(2026, 10, 28, 14, 1, 17, tzinfo=timezone.utc)
+    converted = device_guard._to_local_naive(aware)
+
+    assert converted == datetime(2026, 10, 28, 22, 1, 17)
+    assert converted.tzinfo is None
+
+
+def test_to_local_naive_keeps_same_wall_clock_for_offset_input(shanghai_tz) -> None:
+    from datetime import timedelta, timezone
+
+    aware = datetime(2026, 10, 28, 22, 1, 17, tzinfo=timezone(timedelta(hours=8)))
+
+    assert device_guard._to_local_naive(aware) == datetime(2026, 10, 28, 22, 1, 17)
+
+
+def test_to_local_naive_passes_naive_and_none_through() -> None:
+    naive = datetime(2026, 10, 28, 14, 1, 17)
+
+    assert device_guard._to_local_naive(naive) is naive
+    assert device_guard._to_local_naive(None) is None
+
+
+@pytest.mark.asyncio
+async def test_apply_account_ban_normalizes_aware_now(env) -> None:
+    """调用方传 aware 的「此刻」时，落库的 until 仍是本地 naive。"""
+    from datetime import timezone
+
+    aware = datetime(2026, 10, 21, 12, 0, 0, tzinfo=timezone.utc)
+
+    result = await device_guard.apply_account_ban(
+        USER, device_guard.RULE_CODE_FOREIGN_DEVICE, "连续输错", now=aware
+    )
+
+    expected = device_guard._to_local_naive(aware) + timedelta(days=1)
+    assert result["until"] == expected
+    assert result["until"].tzinfo is None
+    assert env.bans[0]["until"] == expected
+
+
+# ---------------------------------------------------------------------------
+# P1-2/P1-3 封禁事务：锁目标行 + 档位/状态/流水同一次提交
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_ban_unit_locks_row_and_commits_once(monkeypatch) -> None:
+    """真实仓储的 ``ban_unit``：先 ``FOR UPDATE`` 锁行，退出时只 commit 一次。"""
+    from contextlib import asynccontextmanager
+
+    import db.repos.oracle.users as users_repo_mod
+
+    statements: list[str] = []
+    commits: list[int] = []
+
+    class FakeSession:
+        async def execute(self, stmt):
+            statements.append(str(stmt.compile(compile_kwargs={"literal_binds": True})))
+            return SimpleNamespace(first=lambda: None)
+
+        async def commit(self):
+            commits.append(1)
+
+    @asynccontextmanager
+    async def fake_scope():
+        yield FakeSession()
+
+    monkeypatch.setattr(users_repo_mod, "session_scope", fake_scope)
+
+    repo = users_repo_mod.OracleUsersRepo()
+    async with repo.ban_unit(USER) as session:
+        assert session is not None
+
+    assert statements and "FOR UPDATE" in statements[0].upper()
+    # Oracle 里 FOR UPDATE 与行限制子句不能同现（ORA-02014）。
+    assert "FETCH FIRST" not in statements[0].upper()
+    assert len(commits) == 1
+
+
+@pytest.mark.asyncio
+async def test_apply_account_ban_counts_and_writes_in_one_transaction(
+    env, monkeypatch
+) -> None:
+    """档位计数与两条写共用 ``ban_unit`` 的 session，只提交一次。"""
+    from contextlib import asynccontextmanager
+
+    session = object()
+    events: list[tuple] = []
+    commits: list[int] = []
+
+    @asynccontextmanager
+    async def ban_unit(oid):
+        events.append(("lock", oid))
+        yield session
+        commits.append(1)
+
+    async def set_ban_if_stronger(oid, *, reason, until, source, rule_code):
+        events.append(("ban", until, source, rule_code))
+        return until
+
+    async def count_for_user_rule(user_oid, rule_code):
+        events.append(("count", user_oid, rule_code))
+        return 2
+
+    async def insert(user_oid, **kwargs):
+        events.append(("record", kwargs["expires_at"]))
+        return "rec"
+
+    monkeypatch.setattr(
+        backends,
+        "get_users_repo",
+        lambda bound=None: (
+            SimpleNamespace(set_ban_if_stronger=set_ban_if_stronger)
+            if bound is session
+            else SimpleNamespace(ban_unit=ban_unit)
+        ),
+    )
+    monkeypatch.setattr(
+        backends,
+        "get_ban_records_repo",
+        lambda bound=None: SimpleNamespace(
+            count_for_user_rule=count_for_user_rule, insert=insert
+        ),
+    )
+
+    result = await device_guard.apply_account_ban(
+        USER, device_guard.RULE_CODE_FOREIGN_DEVICE, "连续输错", now=NOW
+    )
+
+    # history=2 → 第 3 次，梯度 [1,3,7,...] 取第 3 档 7 天。
+    assert result["offense"] == 3
+    assert result["until"] == NOW + timedelta(days=7)
+    assert events[0] == ("lock", USER)
+    assert ("count", USER, device_guard.RULE_CODE_FOREIGN_DEVICE) in events
+    assert ("record", NOW + timedelta(days=7)) in events
+    assert sum(1 for event in events if event[0] == "lock") == 1
+    # 两次写（users + 流水）落在同一个事务里，退出时一次提交。
+    assert commits == [1]
+    # 状态写入走会话内仓储（不是另开事务的 set_ban）。
+    assert [event[0] for event in events].count("ban") == 1
+
+
+@pytest.mark.asyncio
+async def test_apply_admin_ban_uses_one_transaction(monkeypatch) -> None:
+    from contextlib import asynccontextmanager
+
+    session = object()
+    events: list[tuple] = []
+    commits: list[int] = []
+
+    @asynccontextmanager
+    async def ban_unit(oid):
+        events.append(("lock", oid))
+        yield session
+        commits.append(1)
+
+    async def set_ban(oid, *, reason, until, source, rule_code):
+        events.append(("set_ban", reason, until, source, rule_code))
+
+    async def insert(user_oid, **kwargs):
+        events.append(("record", kwargs["source"], kwargs["permanent"], kwargs["started_at"]))
+        return "rec"
+
+    monkeypatch.setattr(
+        backends,
+        "get_users_repo",
+        lambda bound=None: (
+            SimpleNamespace(set_ban=set_ban)
+            if bound is session
+            else SimpleNamespace(ban_unit=ban_unit)
+        ),
+    )
+    monkeypatch.setattr(
+        backends,
+        "get_ban_records_repo",
+        lambda bound=None: SimpleNamespace(insert=insert),
+    )
+
+    await device_guard.apply_admin_ban(
+        USER, reason="多次刷分", operator_oid="000000000000000000000001", at=NOW
+    )
+
+    assert events[0] == ("lock", USER)
+    assert ("set_ban", "多次刷分", None, "admin", None) in events
+    assert ("record", "admin", True, NOW) in events
+    assert commits == [1]
+
+
+@pytest.mark.asyncio
+async def test_apply_admin_ban_falls_back_without_ban_unit(monkeypatch) -> None:
+    """测试替身/旧适配器没有 ``ban_unit``：退回两次独立写，语义不变。"""
+    events: list[tuple] = []
+
+    async def set_ban(oid, *, reason, until, source, rule_code):
+        events.append(("set_ban", oid, reason, until, source, rule_code))
+
+    async def insert(user_oid, **kwargs):
+        events.append(("record", user_oid, kwargs["started_at"]))
+        return "rec"
+
+    monkeypatch.setattr(
+        backends, "get_users_repo", lambda *a, **k: SimpleNamespace(set_ban=set_ban)
+    )
+    monkeypatch.setattr(
+        backends,
+        "get_ban_records_repo",
+        lambda *a, **k: SimpleNamespace(insert=insert),
+    )
+
+    await device_guard.apply_admin_ban(USER, reason="多次刷分", at=NOW)
+
+    assert events == [
+        ("set_ban", USER, "多次刷分", None, "admin", None),
+        ("record", USER, NOW),
+    ]
+
+
+# ---------------------------------------------------------------------------
+# P1-6 设备梯度计数：原子 upsert（并发首罚不丢计数）
+# ---------------------------------------------------------------------------
+
+
+def test_counter_increment_is_a_single_merge_statement() -> None:
+    from db.repos.oracle import device_ban_counters as counters_repo
+
+    sql = " ".join(str(counters_repo._merge_increment_stmt()).split())
+
+    assert sql.startswith("MERGE INTO device_ban_counters")
+    assert "WHEN MATCHED THEN UPDATE SET target.ban_count = target.ban_count + 1" in sql
+    assert "WHEN NOT MATCHED THEN INSERT" in sql
+
+
+@pytest.mark.asyncio
+async def test_counter_increment_recovers_from_unique_conflict() -> None:
+    """并发首罚撞主键：回读 + 累加，返回递增后的值而不是吞成 1。"""
+    from types import SimpleNamespace as NS
+
+    from sqlalchemy.exc import IntegrityError
+
+    from db.repos.oracle.device_ban_counters import OracleDeviceBanCountersRepo
+
+    executed: list[str] = []
+
+    class FakeSession:
+        async def execute(self, stmt, params=None):
+            executed.append(str(stmt))
+            if len(executed) == 1:
+                raise IntegrityError("MERGE", {}, Exception("ORA-00001"))
+            if len(executed) == 2:
+                return NS(rowcount=1)
+
+            class Row:
+                _mapping = {
+                    "xuehai_id": XUEHAI,
+                    "ban_count": 2,
+                    "last_banned_at": NOW,
+                }
+
+            return NS(first=lambda: Row())
+
+    session = FakeSession()
+    repo = OracleDeviceBanCountersRepo(session=session)
+
+    assert await repo.increment(XUEHAI, NOW) == 2
+    assert len(executed) == 3
+    assert executed[1].upper().startswith("UPDATE DEVICE_BAN_COUNTERS")

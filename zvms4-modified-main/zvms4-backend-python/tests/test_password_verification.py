@@ -23,7 +23,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
 from db import backends
-from routers import ai_agent_router, users_v3_router
+from routers import ai_agent_router, attachments_router, users_v3_router
 from typings.log import inject_log
 from util.cert import jwt_encode
 from util.object_id import (
@@ -36,6 +36,8 @@ CURRENT = "000000000000000000000001"
 OTHER = "000000000000000000000002"
 TARGET = "000000000000000000000003"
 PRIMARY = "1234567890"
+# 附件写端点的目标行：存在且未裁决，删除/裁决都能走到密码闸。
+FILE = "64b7f0c2e1a3b4c5d6e7fa10"
 
 USERS = {
     CURRENT: {
@@ -118,6 +120,37 @@ def world(monkeypatch):
     async def upsert(oid, xuehai_id, source, note):
         writes.append(("upsert", str(oid), xuehai_id, source, note))
 
+    # 附件写端点：行必须存在，且任何一个写调用都要记进 writes（拒绝时它必须为空）。
+    row = {"_id": FILE, "owner_oid": TARGET, "status": "stored", "purpose": "volunteer_order"}
+
+    async def get_meta(oid):
+        return dict(row) if str(oid) == FILE else None
+
+    async def set_status(oid, status):
+        writes.append(("file_set_status", str(oid), status))
+
+    async def set_entity(oid, entity_type, entity_oid):
+        writes.append(("file_set_entity", str(oid), entity_type, entity_oid))
+
+    async def soft_delete(oid):
+        writes.append(("file_soft_delete", str(oid)))
+
+    async def add_event(file_oid, actor_oid, action, from_status, to_status, detail):
+        writes.append(("file_event", str(file_oid), action))
+
+    monkeypatch.setattr(
+        backends,
+        "get_files_repo",
+        lambda *a, **k: SimpleNamespace(
+            get_meta=get_meta,
+            set_status=set_status,
+            set_entity=set_entity,
+            soft_delete=soft_delete,
+            add_event=add_event,
+        ),
+        raising=False,
+    )
+
     monkeypatch.setattr(
         backends,
         "get_users_repo",
@@ -141,6 +174,7 @@ def world(monkeypatch):
     app = FastAPI()
     app.include_router(users_v3_router.router, prefix="/api/v3/users")
     app.include_router(ai_agent_router.router, prefix="/api/ai/agent")
+    app.include_router(attachments_router.router, prefix="/api/attachments")
     app.dependency_overrides[get_current_user] = lambda: {
         "id": CURRENT,
         "per": ["admin"],
@@ -237,6 +271,30 @@ HIGH_RISK_ENDPOINTS = [
         "PUT",
         "/api/ai/agent/moderation/unrestricted",
         {"enabled": True},
+        {},
+    ),
+    (
+        "PATCH",
+        f"/api/attachments/{FILE}/status",
+        {"status": "verified"},
+        {},
+    ),
+    (
+        "DELETE",
+        f"/api/attachments/{FILE}",
+        {},
+        {},
+    ),
+    (
+        "POST",
+        f"/api/attachments/{FILE}/verify",
+        {"decision": "verified"},
+        {},
+    ),
+    (
+        "POST",
+        f"/api/attachments/{FILE}/bind",
+        {"entity_type": "activity", "entity_oid": TARGET},
         {},
     ),
 ]

@@ -332,6 +332,9 @@ PROTECTED_LTYPES = (
     # SSH 命令全文是 root 级操作的追责证据，写的是 level="info"
     # （routers/system_ssh_router.py），不进本元组就会被保留期批量清掉。
     "system_ssh_command",
+    # AI 起草的命令建议（脱敏后的前 200 字符）：它本身没被执行，但「谁让模型
+    # 起草了什么」是同一份运维责任链的上游一环，保留期与 system_ssh_command 同级。
+    "system_ssh_suggest",
 )
 
 # Warning-level rows are protected as well, whatever their type.

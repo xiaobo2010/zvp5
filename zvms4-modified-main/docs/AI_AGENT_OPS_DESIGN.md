@@ -257,3 +257,72 @@ npx vitest run src/components/ai src/api/ai
 
 功能（离线桩，不打真实上游）：读工具端到端、写工具提案 → TOTP 确认 → 执行、错码 403、
 重放 409、过期 410、并发确认 409、`stop_reason` 三态、拒绝路径有审计行。
+
+---
+
+## 9. 平台运维工具与「直接执行」写工具（`services/agent/tools_platform.py`）
+
+第一节的「写操作只出提案」有一个**受控例外**：巡检 agent 需要在管理员上线之前就把
+灌爆接口的账号关掉，等确认的窗口里攻击已经完成。例外只覆盖「封禁/解封」这一类
+可逆、且**只作用于非管理员**的动作。
+
+### 9.1 `ToolDef.direct`（框架层）
+
+```python
+direct: bool = False   # True → 过完 permission + guard + 参数收敛后直接调用 impl
+```
+
+注册期（`_register`，import 时执行）四条硬校验，任何一条不满足直接 `ValueError`：
+
+1. `direct=True` 只能用于 `kind=WRITE`；
+2. name 必须在 `tools.DIRECT_WRITE_TOOL_NAMES` 里（当前 = `user_ban` / `user_unban`
+   / `device_unban`）；
+3. 必须有 `guard`（现查库）与 `impl`；
+4. 不得同时声明 `dual_auth_action`（`direct` 与 TOTP 互斥，同时声明等于把双人
+   授权静默跳过）。
+
+执行期（`executor._run_tool`）：写工具若 `direct` 为真，跳过 `proposal.propose`，
+直接执行；事件仍是 `status='executed'`，但 `ARGS_SUMMARY` 里带 `"direct": true`
+（`_direct_args_text`），审计侧才能把「模型自己落库」与「用户确认过的提案」分开。
+`direct=False` 的写工具路径一个分支都没动。
+
+### 9.2 工具清单
+
+权限全部 `permission=_admin_only` + `guard=ops_auth.ensure_system_admin`（每次现查库、重算
+权限、封禁检查，fail closed）。
+
+| 工具 | kind | direct | 参数 | 数据源 / 实现 |
+|---|---|---|---|---|
+| `platform_logs` | read | — | `keyword?`, `ltype?`, `log_level?`, `user_oid?`, `xuehai_id?`, `time_start?`, `time_end?`, `limit≤50` | `app_logs.list_page` + 一条 `GROUP BY ltype` 聚合（Top 20） |
+| `db_diagnostics` | read | — | — | `db_monitor.collect_fast/collect_slow/collect_sessions` + 池状态 |
+| `backup_status` | read | — | — | `adb_backup.backup_snapshot()`（冻结结构 + `alerts`） |
+| `scheduler_status` | read | — | — | 函数内 `import main` 读 `scheduler.get_jobs()` |
+| `device_ban_list` | read | — | `query?`, `page`, `size≤100` | `device_bans.list_page` + `device_ban_counters.get_counts` |
+| `user_ban` | write | ✓ | `user_oid` 或 `business_id`、`reason`（必填）、`duration_days?`（空=永久） | `users.set_ban(source="agent")` + `ban_records.insert` + `app_logs(ban_change)` |
+| `user_unban` | write | ✓ | `user_oid` 或 `business_id`、`reason`（必填） | `users.clear_ban` + `ban_records.insert` + `app_logs` |
+| `device_unban` | write | ✓ | `xuehai_id`、`reason`（必填） | `device_bans.delete` + `device_ban_counters.delete` + `app_logs(device_ban)` |
+
+### 9.3 直接执行为什么不会被滥用
+
+五层，全部在服务端，prompt 只是话术：
+
+1. **能力声明层**：非 admin 的 tools 数组里根本没有这 8 个工具（`DEPARTMENT_TOOL_NAMES`
+   不含它们），模型连「有这个能力」都不知道；
+2. **注册期**：`direct` 只认三个名字（清单是代码常量，模型改不了）；
+3. **执行层 `permission`**：纯函数快速否决 `per` 里没 admin 的调用；`guard` 现查库
+   重算角色与封禁状态（token 里的 `per` 只是快照，撤权/封禁立刻生效，闸门自身故障
+   时 fail closed）；
+4. **目标层（`_assert_target_allowed`）**：不能是操作者自己；目标权限用
+   `get_user_permissions(库里 roles)` 重算，含 `admin` 一律 403 `AI_AGENT_FORBIDDEN`
+   ——模型无法用「自动封禁灌水账号」的名义把管理组关掉；
+5. **留痕**：每次执行写 `ban_records`（`source='agent'`、操作者 oid）+ `app_logs`
+   （`ban_change` / `device_ban` + `warning`，属 `PROTECTED_LTYPES` 不被保留期清理）
+   + agent 事件行（`direct: true`）。封禁与解封同级，二者都可逆。
+
+### 9.4 已知前置依赖
+
+`ban_records.source` 的 CHECK 目前只允许 `('admin','rule')`（`db/models.py` 与
+V013 DDL）。`source='agent'` 需要配套迁移把该约束放宽（`banned_devices.source`
+同理，虽然本层的 `device_unban` 只删行）。迁移落地前 `user_ban` / `user_unban`
+会在**状态变更之前**被数据库拒绝，并翻译成 503 `AI_AGENT_TOOL_FAILED`（流水先写、
+状态后写，所以拒绝时没有任何副作用残留）。

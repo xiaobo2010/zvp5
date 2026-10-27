@@ -13,7 +13,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
@@ -27,6 +27,19 @@ from util.object_id import get_current_user
 PREFIX = "/api/v3/ban"
 ADMIN = {"id": "000000000000000000000001", "per": ["admin"]}
 STUDENT = {"id": "000000000000000000000002", "per": ["student"]}
+
+
+def _compiled(stmt) -> str:
+    """把语句按 Oracle 方言编译成 SQL 文本（字面量内联，空白折叠）。"""
+    from sqlalchemy.dialects import oracle
+
+    return " ".join(
+        str(
+            stmt.compile(
+                dialect=oracle.dialect(), compile_kwargs={"literal_binds": True}
+            )
+        ).split()
+    )
 
 STARTED = datetime(2026, 10, 20, 12, 0, 0)
 UNTIL = datetime(2026, 10, 21, 12, 0, 0)
@@ -362,7 +375,7 @@ def test_penalties_rejects_null_before_the_end(api) -> None:
     "payload",
     [
         {"config": {"threshold": 1}},
-        {"config": {"threshold": 21}},
+        {"config": {"threshold": 201}},
         {"config": {"window_hours": 0}},
         {"config": {"window_hours": 169}},
         {"penalties": []},
@@ -461,10 +474,11 @@ def test_triggers_lists_registered_checks(api) -> None:
         "device_switch_burst",
         "ai_chat_burst",
         "device_temp_password_abuse",
+        "agent_jailbreak",
     }
     for item in body["data"]:
         assert item["name"]
-        assert item["evaluation"] in ("login", "report", "monitor")
+        assert item["evaluation"] in ("login", "report", "monitor", "ai_moderation")
         assert item["description"]
         # 新建规则的默认参数：阈值/窗口都必须是合法范围内的整数
         assert isinstance(item["config"]["threshold"], int)
@@ -592,7 +606,7 @@ def test_create_rule_rejects_unknown_trigger(api) -> None:
         {**NEW_RULE, "name": "   "},
         {**NEW_RULE, "name": "x" * 129},
         {**NEW_RULE, "config": {"threshold": 1}},
-        {**NEW_RULE, "config": {"threshold": 21}},
+        {**NEW_RULE, "config": {"threshold": 201}},
         {**NEW_RULE, "config": {"window_hours": 0}},
         {**NEW_RULE, "config": {"window_hours": 169}},
         {**NEW_RULE, "penalties": []},
@@ -788,8 +802,8 @@ BANNED_ROWS = [
 def banned_api(monkeypatch):
     calls: list[tuple] = []
 
-    async def list_banned_page(query, page, size):
-        calls.append((query, page, size))
+    async def list_banned_page(query, page, size, *, include_expired=False):
+        calls.append((query, page, size, include_expired))
         return BANNED_ROWS, len(BANNED_ROWS)
 
     monkeypatch.setattr(
@@ -822,8 +836,8 @@ def test_banned_users_shape_matches_frontend_contract(banned_api) -> None:
         "source": "admin",
         "rule_code": None,
     }
-    # 查询参数原样透传给仓储，顺序不参与契约
-    assert calls == [("2026", 1, 20)]
+    # 查询参数原样透传给仓储，顺序不参与契约；默认只列有效封禁。
+    assert calls == [("2026", 1, 20, False)]
 
 
 def test_banned_users_marks_timed_rule_ban(banned_api) -> None:
@@ -882,8 +896,8 @@ def devices_api(monkeypatch):
     calls = {"pages": [], "deleted": [], "upserts": [], "counter_deletes": []}
     counters = {"1234567890": 3}
 
-    async def list_page(page, size, query=""):
-        calls["pages"].append((page, size, query))
+    async def list_page(page, size, query="", *, include_expired=False):
+        calls["pages"].append((page, size, query, include_expired))
         return DEVICE_ROWS, len(DEVICE_ROWS)
 
     async def delete(xuehai_id):
@@ -965,9 +979,10 @@ def test_banned_devices_shape(devices_api) -> None:
 
     assert body["code"] == 200
     assert body["metadata"] == {"size": 2, "page": 2, "perpage": 10}
-    assert body["total"] == 2
-    assert body["devices"] == body["data"]
-    assert calls["pages"] == [(2, 10, "")]
+    # P2-b：单一形状 —— 只有 data + metadata，不再镜像 devices/total。
+    assert "devices" not in body
+    assert "total" not in body
+    assert calls["pages"] == [(2, 10, "", False)]
     assert body["data"][0] == {
         "xuehai_id": "1234567890",
         "reason": "临时密码连续输错 3 次",
@@ -988,7 +1003,7 @@ def test_banned_devices_shape(devices_api) -> None:
 def test_banned_devices_query_is_forwarded(devices_api) -> None:
     http, calls, _log = devices_api
     assert http.get(f"{PREFIX}/devices?query=1234").status_code == 200
-    assert calls["pages"] == [(1, 20, "1234")]
+    assert calls["pages"] == [(1, 20, "1234", False)]
 
 
 def test_manual_device_ban_upserts_and_audits(devices_api) -> None:
@@ -1067,3 +1082,351 @@ def test_device_endpoints_require_admin(devices_api) -> None:
     assert http.post(f"{PREFIX}/devices", json={"xuehai_id": "123"}).status_code == 403
     assert http.post(f"{PREFIX}/devices/123/reset-gradient").status_code == 403
     assert http.delete(f"{PREFIX}/devices/1234567890").status_code == 403
+
+
+# ---------------------------------------------------------------------------
+# P1-4 过期封禁默认不出现在「当前封禁」列表（include_expired 留口子）
+# ---------------------------------------------------------------------------
+
+
+def test_banned_users_forwards_include_expired(banned_api) -> None:
+    http, calls = banned_api
+
+    assert http.get(f"{PREFIX}/users?include_expired=1").status_code == 200
+
+    assert calls == [("", 1, 20, True)]
+
+
+def test_banned_devices_forwards_include_expired(devices_api) -> None:
+    http, calls, _log = devices_api
+
+    assert http.get(f"{PREFIX}/devices?include_expired=1").status_code == 200
+
+    assert calls["pages"] == [(1, 20, "", True)]
+
+
+def test_banned_users_sql_excludes_expired_by_default() -> None:
+    """``banned = 1`` 不等于「此刻还在封」：默认谓词必须看 ``ban_until``。"""
+    from db.repos.oracle import users as users_repo
+
+    default_sql = _compiled(users_repo._banned_page_stmt("", 1, 20, now=STARTED))
+    assert "users.banned = 1" in default_sql
+    assert "users.ban_until IS NULL OR users.ban_until >" in default_sql
+
+    count_sql = _compiled(users_repo._banned_count_stmt("", now=STARTED))
+    assert "users.ban_until IS NULL OR users.ban_until >" in count_sql
+
+    all_sql = _compiled(users_repo._banned_page_stmt("", 1, 20, True, STARTED))
+    assert "users.banned = 1" in all_sql
+    # 不过滤时 WHERE 只剩闸门列（ban_until 仍在投影里，不参与谓词）。
+    assert "WHERE users.banned = 1 ORDER BY" in all_sql
+
+
+def test_device_bans_sql_excludes_expired_by_default() -> None:
+    from db.repos.oracle import device_bans
+
+    default_sql = _compiled(device_bans._page_stmt(1, 20, now=STARTED))
+    assert "banned_devices.until IS NULL OR banned_devices.until >" in default_sql
+
+    count_sql = _compiled(device_bans._count_stmt(now=STARTED))
+    assert "banned_devices.until IS NULL OR banned_devices.until >" in count_sql
+
+    all_sql = _compiled(device_bans._page_stmt(1, 20, include_expired=True))
+    assert "banned_devices.until IS NULL" not in all_sql
+
+
+# ---------------------------------------------------------------------------
+# P1-5 阈值上限放宽到 200（ai_chat_burst 种子阈值 80）
+# ---------------------------------------------------------------------------
+
+
+def test_threshold_80_can_be_saved(api) -> None:
+    http, rules, _calls = api
+
+    response = http.put(
+        f"{PREFIX}/rules/foreign_device_login", json={"config": {"threshold": 80}}
+    )
+
+    assert response.status_code == 200
+    assert response.json()["data"]["config"]["threshold"] == 80
+    assert rules["foreign_device_login"]["config"].find('"threshold": 80') != -1
+
+
+def test_threshold_200_is_the_new_ceiling(api) -> None:
+    http, _rules, _calls = api
+
+    assert (
+        http.put(
+            f"{PREFIX}/rules/foreign_device_login", json={"config": {"threshold": 200}}
+        ).status_code
+        == 200
+    )
+    assert (
+        http.put(
+            f"{PREFIX}/rules/foreign_device_login", json={"config": {"threshold": 201}}
+        ).status_code
+        == 422
+    )
+
+
+# ---------------------------------------------------------------------------
+# P0-2 手动设备封禁：aware 的 until 折成本地墙钟再落库
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def shanghai_tz():
+    import os
+    import time as _time
+
+    previous = os.environ.get("TZ")
+    os.environ["TZ"] = "Asia/Shanghai"
+    _time.tzset()
+    try:
+        yield
+    finally:
+        if previous is None:
+            os.environ.pop("TZ", None)
+        else:
+            os.environ["TZ"] = previous
+        _time.tzset()
+
+
+def test_manual_device_ban_converts_utc_offset_to_local_wall_clock(
+    devices_api, shanghai_tz
+) -> None:
+    """``2026-10-28T14:01:17+00:00`` 存成东八区的 22:01:17（naive）。"""
+    http, calls, _log = devices_api
+
+    response = http.post(
+        f"{PREFIX}/devices",
+        json={"xuehai_id": "1234567890", "until": "2026-10-28T14:01:17+00:00"},
+    )
+
+    assert response.status_code == 200
+    stored = calls["upserts"][0]["until"]
+    assert stored == datetime(2026, 10, 28, 22, 1, 17)
+    assert stored.tzinfo is None
+    assert response.json()["data"]["until"] == "2026-10-28T22:01:17"
+
+
+def test_manual_device_ban_keeps_naive_until_untouched(devices_api) -> None:
+    http, calls, _log = devices_api
+
+    response = http.post(
+        f"{PREFIX}/devices",
+        json={"xuehai_id": "1234567890", "until": "2026-10-28T14:01:17"},
+    )
+
+    assert response.status_code == 200
+    assert calls["upserts"][0]["until"] == datetime(2026, 10, 28, 14, 1, 17)
+    assert response.json()["data"]["until"] == "2026-10-28T14:01:17"
+
+
+# ---------------------------------------------------------------------------
+# P0-1 目标侧保护：不能封另一个 admin（解封方向不拦）
+# ---------------------------------------------------------------------------
+
+USERS_PREFIX = "/api/v3/users"
+ACTOR = "000000000000000000000001"
+PEER_ADMIN = "000000000000000000000003"
+STUDENT_OID = "000000000000000000000002"
+
+
+@pytest.fixture
+def users_api(monkeypatch):
+    state = {"bans": [], "clears": [], "records": []}
+    docs = {
+        PEER_ADMIN: {"_id": PEER_ADMIN, "name": "同级管理员", "roles": ["admin"]},
+        STUDENT_OID: {"_id": STUDENT_OID, "name": "学生", "roles": ["student"]},
+    }
+
+    async def get_by_oid(oid):
+        return docs.get(oid)
+
+    async def get_names(oids):
+        return {oid: "管理员" for oid in oids}
+
+    async def set_ban(oid, *, reason, until, source, rule_code):
+        state["bans"].append(
+            {"oid": oid, "reason": reason, "until": until, "source": source}
+        )
+
+    async def clear_ban(oid):
+        state["clears"].append(oid)
+
+    async def insert(user_oid, **kwargs):
+        state["records"].append({"user_oid": user_oid, **kwargs})
+        return "rec"
+
+    monkeypatch.setattr(
+        backends,
+        "get_users_repo",
+        lambda *a, **k: SimpleNamespace(
+            get_by_oid=get_by_oid,
+            get_names=get_names,
+            set_ban=set_ban,
+            clear_ban=clear_ban,
+        ),
+    )
+    monkeypatch.setattr(
+        backends,
+        "get_ban_records_repo",
+        lambda *a, **k: SimpleNamespace(insert=insert),
+    )
+
+    class StubLog:
+        entries: list = []
+
+        def with_text(self, *args, **kwargs):
+            self.entries.append((args, kwargs))
+            return self
+
+        async def insert_log(self):
+            return None
+
+    from routers import users_v3_router
+    from typings.log import inject_log
+
+    app = FastAPI()
+    app.include_router(users_v3_router.router, prefix=USERS_PREFIX)
+    app.dependency_overrides[get_current_user] = lambda: {"id": ACTOR, "per": ["admin"]}
+    app.dependency_overrides[inject_log] = lambda: StubLog()
+    return TestClient(app), state
+
+
+def test_cannot_ban_another_admin(users_api) -> None:
+    """封禁会轮换 session_id：锁死同级 admin 等于绕过双人授权。"""
+    http, state = users_api
+
+    response = http.put(f"{USERS_PREFIX}/{PEER_ADMIN}/banned", json={"banned": True})
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "不能封禁管理员账号"
+    assert state["bans"] == []
+    assert state["records"] == []
+
+
+def test_unban_another_admin_is_allowed(users_api) -> None:
+    """解封只会恢复对方权限，没有自锁风险，不在保护范围内。"""
+    http, state = users_api
+
+    response = http.put(f"{USERS_PREFIX}/{PEER_ADMIN}/banned", json={"banned": False})
+
+    assert response.status_code == 200
+    assert state["clears"] == [PEER_ADMIN]
+    assert state["bans"] == []
+
+
+def test_can_ban_regular_user(users_api) -> None:
+    http, state = users_api
+
+    response = http.put(f"{USERS_PREFIX}/{STUDENT_OID}/banned", json={"banned": True})
+
+    assert response.status_code == 200
+    assert state["bans"][0]["oid"] == STUDENT_OID
+    assert state["records"][0]["user_oid"] == STUDENT_OID
+
+
+# ---------------------------------------------------------------------------
+# 管理员封禁时长：客户端只给天数，到期时刻在服务端按本地 naive 算
+# ---------------------------------------------------------------------------
+
+
+def test_ban_with_duration_days_sets_timed_until(users_api) -> None:
+    """``duration_days=7`` → ``ban_until ≈ now+7d``（naive），流水同步限时。"""
+    http, state = users_api
+
+    response = http.put(
+        f"{USERS_PREFIX}/{STUDENT_OID}/banned",
+        json={"banned": True, "reason": "限时封禁", "duration_days": 7},
+    )
+
+    assert response.status_code == 200
+    until = state["bans"][0]["until"]
+    assert until is not None
+    assert until.tzinfo is None
+    assert abs(until - (datetime.now() + timedelta(days=7))) < timedelta(seconds=60)
+
+    record = state["records"][0]
+    assert record["permanent"] is False
+    assert record["expires_at"] == until
+    assert record["started_at"].tzinfo is None
+
+    body = response.json()["data"]
+    assert body["banned"] is True
+    assert body["permanent"] is False
+    assert body["ban_until"] == until.isoformat()
+
+
+def test_ban_without_duration_stays_permanent(users_api) -> None:
+    """不传 ``duration_days`` = 永久：``ban_until IS NULL``、流水 ``permanent=1``。"""
+    http, state = users_api
+
+    response = http.put(f"{USERS_PREFIX}/{STUDENT_OID}/banned", json={"banned": True})
+
+    assert response.status_code == 200
+    assert state["bans"][0]["until"] is None
+    assert state["records"][0]["permanent"] is True
+    assert state["records"][0]["expires_at"] is None
+
+    body = response.json()["data"]
+    assert body["permanent"] is True
+    assert body["ban_until"] is None
+
+
+@pytest.mark.parametrize("days", [1, 36500])
+def test_ban_duration_boundaries_are_accepted(users_api, days) -> None:
+    http, state = users_api
+
+    response = http.put(
+        f"{USERS_PREFIX}/{STUDENT_OID}/banned",
+        json={"banned": True, "duration_days": days},
+    )
+
+    assert response.status_code == 200
+    assert state["bans"][0]["until"] is not None
+
+
+@pytest.mark.parametrize("days", [0, 36501])
+def test_ban_duration_boundaries_are_rejected(users_api, days) -> None:
+    http, state = users_api
+
+    response = http.put(
+        f"{USERS_PREFIX}/{STUDENT_OID}/banned",
+        json={"banned": True, "duration_days": days},
+    )
+
+    assert response.status_code == 422
+    assert state["bans"] == []
+    assert state["records"] == []
+
+
+def test_unban_rejects_duration_days(users_api) -> None:
+    """解封带时长是语义错误（解封没有到期时间），不许静默忽略。"""
+    http, state = users_api
+
+    response = http.put(
+        f"{USERS_PREFIX}/{STUDENT_OID}/banned",
+        json={"banned": False, "duration_days": 7},
+    )
+
+    assert response.status_code == 422
+    assert state["clears"] == []
+    assert state["bans"] == []
+
+
+def test_cannot_ban_another_admin_even_with_duration(users_api) -> None:
+    """加了时长不能绕过 P0-1 的 admin 目标侧保护。"""
+    http, state = users_api
+
+    response = http.put(
+        f"{USERS_PREFIX}/{PEER_ADMIN}/banned",
+        json={"banned": True, "duration_days": 7},
+    )
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "不能封禁管理员账号"
+    assert state["bans"] == []
+    assert state["records"] == []
+

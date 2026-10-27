@@ -6,12 +6,11 @@ import { useI18n } from 'vue-i18n'
 import { useWindowSize } from '@vueuse/core'
 import { ElPageHeader, ElSegmented, ElIcon } from 'element-plus'
 import { ArrowLeft, Avatar, Bell } from '@element-plus/icons-vue'
-import { Block, Config, Group, Lock, Log, Picture, User } from '@icon-park/vue-next'
+import { Block, Config, Group, Log, Picture, User } from '@icon-park/vue-next'
 import ZGroupUserList from '@/components/group/ZGroupUserList.vue'
 import ZGroupList from '@/components/group/ZGroupList.vue'
 import ZLogList from '@/components/log/ZLogList.vue'
 import ZBanRules from '@/components/manage/ZBanRules.vue'
-import ZDeviceBans from '@/components/manage/ZDeviceBans.vue'
 import ZAttachmentAudit from '@/components/manage/ZAttachmentAudit.vue'
 import ZNotificationAdmin from '@/components/manage/ZNotificationAdmin.vue'
 import ZSystemSettings from '@/components/manage/ZSystemSettings.vue'
@@ -35,7 +34,19 @@ const isSecretary = userStore.position.includes('secretary')
 const secretaryOnly = isSecretary && !isAdmin && !isDepartment
 
 /** 只有管理员能进的分区；其他人访问一律回落到入口分区。 */
-const ADMIN_ONLY = ['notifications', 'roles', 'settings', 'deviceBans', 'attachments']
+const ADMIN_ONLY = ['notifications', 'roles', 'settings', 'ban', 'attachments']
+
+/**
+ * 旧分区 → 现分区：设备封禁已并入封禁管理，旧深链/书签自动归一，不 404。
+ */
+const LEGACY_TAB_ALIAS: Record<string, string> = { deviceBans: 'ban' }
+
+function normalizeTab(value: string | undefined): string {
+  if (!value) {
+    return ''
+  }
+  return LEGACY_TAB_ALIAS[value] ?? value
+}
 
 const VALID_CURRENT = secretaryOnly
   ? ['users']
@@ -59,20 +70,22 @@ if (!(isAdmin || isDepartment || isSecretary)) {
 }
 
 const curPage = route.params.action?.toString()
+const curTab = normalizeTab(curPage)
 
-if (curPage && ADMIN_ONLY.includes(curPage) && !isAdmin) {
+if (curTab && ADMIN_ONLY.includes(curTab) && !isAdmin) {
   router.replace(`/manage/${HOME_TAB}`)
-}
-
-if (curPage && !VALID_CURRENT.includes(curPage)) {
+} else if (curTab && !VALID_CURRENT.includes(curTab)) {
   router.replace(`/manage/${HOME_TAB}`)
+} else if (curPage && curTab !== curPage) {
+  // 旧分区深链：归一到现分区（地址栏同步替换，历史书签继续可用）
+  router.replace(`/manage/${curTab}`)
 }
 
 const current = ref(
-  curPage &&
-    VALID_CURRENT.includes(curPage) &&
-    (!ADMIN_ONLY.includes(curPage) || isAdmin)
-    ? curPage
+  curTab &&
+    VALID_CURRENT.includes(curTab) &&
+    (!ADMIN_ONLY.includes(curTab) || isAdmin)
+    ? curTab
     : HOME_TAB
 )
 
@@ -113,11 +126,6 @@ if (isAdmin) {
     icon: Block
   }
   tabs.value[tabs.value.length] = {
-    label: 'DeviceBans',
-    value: 'deviceBans',
-    icon: Lock
-  }
-  tabs.value[tabs.value.length] = {
     label: 'Attachments',
     value: 'attachments',
     icon: Picture
@@ -141,12 +149,17 @@ watch(current, () => {
 watch(
   () => route.params.action,
   () => {
-    const curPage = route.params.action?.toString()
-    if (curPage && ADMIN_ONLY.includes(curPage) && !isAdmin) {
+    const raw = route.params.action?.toString()
+    const curTab = normalizeTab(raw)
+    if (curTab && ADMIN_ONLY.includes(curTab) && !isAdmin) {
       router.replace(`/manage/${HOME_TAB}`)
       current.value = HOME_TAB
-    } else if (curPage && VALID_CURRENT.includes(curPage)) {
-      current.value = curPage
+    } else if (curTab && VALID_CURRENT.includes(curTab)) {
+      current.value = curTab
+      if (raw && raw !== curTab) {
+        // 旧分区深链：归一到现分区，地址栏一并替换
+        router.replace(`/manage/${curTab}`)
+      }
     } else {
       router.replace(`/manage/${HOME_TAB}`)
     }
@@ -255,7 +268,6 @@ watch([current, compactTabs], () => {
     <ManageRoles v-else-if="current === 'roles'" />
     <ZLogList v-else-if="current === 'logs'" id="" user="" />
     <ZBanRules v-else-if="current === 'ban'" />
-    <ZDeviceBans v-else-if="current === 'deviceBans'" />
     <ZAttachmentAudit v-else-if="current === 'attachments'" />
     <ZNotificationAdmin v-else-if="current === 'notifications'" />
     <ZSystemSettings v-else-if="current === 'settings'" />

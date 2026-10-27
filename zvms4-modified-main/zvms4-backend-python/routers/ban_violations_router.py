@@ -27,6 +27,15 @@ from util.object_id import get_current_user
 
 router = APIRouter()
 
+#: 只能由服务端写入的信号。``agent_jailbreak`` 由 agent 输入审核命中时经
+#: ``services.violation_guard.record_agent_jailbreak`` 落库；让浏览器自报等于把
+#: 「越狱判定」交给被审核方，所以它在路由层被剔除。服务层的白名单保留它是因为
+#: 服务端入口要能写这条信号，两个口径的差别就落在这个过滤上。
+#:
+#: 未知信号仍然**原样透传**：服务层按白名单忽略未知值，「信号名拼错」不该让
+#: 同一批里的合法信号一起丢掉（见 ``tests/test_violation_api.py``）。
+_SERVER_ONLY_SIGNALS = frozenset({"agent_jailbreak"})
+
 
 def _require_admin(user: dict) -> None:
     """与 ``ban_router._require_admin`` 同口径的本地实现。
@@ -65,6 +74,10 @@ async def report_violations(
 
     返回形状按契约是扁平四字段（``recorded`` / ``duplicates`` / ``banned`` /
     ``rule_code``）：客户端只关心「有没有被记下」，不需要再解一层信封。
+
+    只拒绝 ``_SERVER_ONLY_SIGNALS``（``agent_jailbreak``）：它只能由服务端审核
+    写入，客户端提交的**静默剔除**——与「未知信号不 422」的既有风格一致，
+    一次上报里的合法信号不该因为夹带一个越权信号就整批丢掉。
     """
     signals = [
         {
@@ -76,6 +89,7 @@ async def report_violations(
             ),
         }
         for item in payload.signals
+        if item.signal not in _SERVER_ONLY_SIGNALS
     ]
     result = await violation_guard.record(user, signals, xuehai_id_from(request))
 

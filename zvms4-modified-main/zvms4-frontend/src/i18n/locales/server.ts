@@ -5,7 +5,9 @@ export const zhCN = {
     totp: '登录动态码',
     ssh: 'SSH 终端',
     files: '文件管理',
-    dbContent: '数据库内容'
+    dbContent: '数据库内容',
+    back: '返回',
+    tabsLabel: '服务器管理分区'
   },
   maintenance: {
     title: '系统维护模式',
@@ -314,6 +316,7 @@ export const zhCN = {
   auth: {
     title: '双人授权',
     scene: '目标操作',
+    sceneLine: '正在授权：{target}',
     codeLabel: '另一位管理员的动态码',
     codePlaceholder: '6 位数字',
     formatInvalid: '动态码格式错误：需为 6 位数字',
@@ -363,7 +366,45 @@ export const zhCN = {
       'root 下执行的任何操作不可撤销，会留下审计记录，可能造成服务中断或数据损坏；滥用将被追责。请确认本次操作内容后再继续。',
     riskCancel: '取消',
     riskAck: '我已知悉，继续',
-    scrollToBottom: '回到底部'
+    scrollToBottom: '回到底部',
+    suggest: {
+      title: 'AI 生成命令',
+      open: 'AI 生成命令',
+      intent: '想做什么',
+      intentPlaceholder: '用一句中文描述目标，例如：查看 5 分钟内的磁盘 IO 等待',
+      intentTooLong: '意图描述不能超过 1000 字',
+      intentRequired: '请先描述要执行的命令意图',
+      context: '上下文 / 目标路径（可选）',
+      contextPlaceholder: '如：/var/log，或当前环境补充信息',
+      contextHint: '最多 2000 字；仅作为生成参考',
+      model: '模型（可选）',
+      modelDefault: '默认模型',
+      generate: '生成',
+      empty: '生成结果会显示在这里',
+      result: '生成结果',
+      copy: '复制',
+      copied: '已复制',
+      copyFailed: '复制失败',
+      insert: '插入终端',
+      insertHint: '只写入命令，不回车；确认后自己按回车执行',
+      insertAndRun: '插入并回车',
+      confirmRun: '插入命令并立即回车执行？该命令会直接以 root 身份运行，不可撤销。',
+      confirmRunTitle: '确认执行命令',
+      insertDone: '命令已写入终端（未执行）',
+      insertRunDone: '命令已写入并回车执行',
+      insertNotConnected: '终端未连接，无法插入命令',
+      note: '生成结果仅供参考，执行前请逐字核对命令。',
+      error: {
+        noProvider: '后端未配置可用的 AI 供应商',
+        modelNotFound: '所选模型不存在，请换一个模型',
+        busy: 'AI 服务繁忙，请稍后重试',
+        quota: 'AI 额度不足，请稍后重试或联系管理员',
+        rateLimited: '请求过于频繁，请稍后重试',
+        timeout: 'AI 生成超时，请重试',
+        badArgument: '请求参数不合法，请检查意图与上下文',
+        unknown: 'AI 生成失败，请稍后重试'
+      }
+    }
   },
   files: {
     title: '文件管理',

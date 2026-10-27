@@ -20,6 +20,30 @@ export function createSshSession(totpCode: string) {
   })
 }
 
+// POST /api/system/ssh/suggest 的响应体:后端只生成命令文本,不执行任何东西。
+export interface SshSuggestData {
+  command: string
+  explanation: string
+  model: string
+  request_id: string
+}
+
+export interface SshSuggestResponse {
+  status: string
+  code: number
+  data: SshSuggestData
+}
+
+// 让 AI 依据自然语言意图生成一条 shell 命令(仅文本,不执行)。
+// 错误 detail 为 AI_* 码(AI_NO_PROVIDER / model_not_found / AI_BUSY …)。
+export function suggestSshCommand(intent: string, context?: string, model?: string) {
+  return axios.post<SshSuggestResponse>('/system/ssh/suggest', {
+    intent,
+    context: context || undefined,
+    model: model || undefined
+  })
+}
+
 // WS 实际路由为 /api/system/ssh/ws(后端 @router.websocket('/ws') +
 // main.py 挂载前缀 /api/system/ssh);ticket 走查询参数。
 // 浏览器握手带不了 Authorization 头,所以只认 ticket。

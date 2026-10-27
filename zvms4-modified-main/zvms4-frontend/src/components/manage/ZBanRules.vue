@@ -35,8 +35,20 @@ import {
   type BanViolation
 } from '@/api/ban'
 import ZPagination from '@/components/utils/ZPagination.vue'
+import ZDeviceBans from '@/components/manage/ZDeviceBans.vue'
 
 const { t } = useI18n()
+
+/** 页内二级分区：规则与违规 / 账号封禁 / 设备封禁 */
+type SectionKey = 'rules' | 'accounts' | 'devices'
+
+const SECTION_OPTIONS: Array<{ value: SectionKey; label: string }> = [
+  { value: 'rules', label: 'manage.banRules.sections.rules' },
+  { value: 'accounts', label: 'manage.banRules.sections.accounts' },
+  { value: 'devices', label: 'manage.banRules.sections.devices' }
+]
+
+const section = ref<SectionKey>('rules')
 
 const { width, height } = useWindowSize()
 
@@ -79,6 +91,13 @@ watch([width, height], () => {
 })
 
 onMounted(() => {
+  void nextTick(() => {
+    measureTables()
+  })
+})
+
+/** 切换页内分区后重新测高：新挂载的表格此时才有有效位置 */
+watch(section, () => {
   void nextTick(() => {
     measureTables()
   })
@@ -363,7 +382,7 @@ function searchViolations() {
   }
 }
 
-const KNOWN_SIGNALS = ['iframe', 'bridge', 'devtools']
+const KNOWN_SIGNALS = ['iframe', 'bridge', 'devtools', 'agent_jailbreak']
 
 function signalLabel(signal: string): string {
   // 未注册的新信号直接展示原始值,避免在模板里渲染一串 i18n key
@@ -620,7 +639,24 @@ function formatReason(user: BannedUser): string | null {
 
 <template>
   <div class="flex flex-col gap-4">
-    <ElCard shadow="never">
+    <!-- 页内二级分区：封禁规则/违规、账号封禁、设备封禁 -->
+    <nav class="ban-sections" role="tablist" :aria-label="t('manage.banRules.sections.label')">
+      <button
+        v-for="item in SECTION_OPTIONS"
+        :key="item.value"
+        type="button"
+        role="tab"
+        class="ban-sections__item"
+        :class="{ 'is-active': item.value === section }"
+        :aria-selected="item.value === section"
+        :data-section="item.value"
+        @click="section = item.value"
+      >
+        {{ t(item.label) }}
+      </button>
+    </nav>
+
+    <ElCard v-if="section === 'rules'" shadow="never">
       <template #header>
         <div class="flex items-center justify-between gap-2">
           <span>{{ t('manage.banRules.rulesTitle') }}</span>
@@ -731,7 +767,7 @@ function formatReason(user: BannedUser): string | null {
       </p>
     </ElCard>
 
-    <ElCard shadow="never">
+    <ElCard v-if="section === 'rules'" shadow="never">
       <template #header>
         <div class="flex flex-wrap items-center justify-between gap-2">
           <span>{{ t('manage.banRules.violations.title') }}</span>
@@ -827,7 +863,7 @@ function formatReason(user: BannedUser): string | null {
       />
     </ElCard>
 
-    <ElCard shadow="never">
+    <ElCard v-else-if="section === 'accounts'" shadow="never">
       <template #header>
         <div class="flex flex-wrap items-center justify-between gap-2">
           <span>{{ t('manage.banRules.usersTitle') }}</span>
@@ -915,6 +951,9 @@ function formatReason(user: BannedUser): string | null {
         :total="usersTotal"
       />
     </ElCard>
+
+    <!-- 设备封禁：复用独立组件的全部交互，仅去掉页面级外壳 -->
+    <ZDeviceBans v-else embedded />
 
     <ElDialog
       v-model="dialogVisible"
@@ -1020,3 +1059,68 @@ function formatReason(user: BannedUser): string | null {
     </ElDialog>
   </div>
 </template>
+
+<style scoped>
+/* 页内二级分区导航：胶囊药丸，与平台管理页的分区胶囊同一套令牌 */
+.ban-sections {
+  display: flex;
+  align-items: center;
+  gap: var(--yg-space-2);
+  width: fit-content;
+  max-width: 100%;
+  padding: var(--yg-space-1);
+  border: 1px solid var(--yg-border-subtle);
+  border-radius: var(--yg-radius-pill);
+  background-color: var(--yg-bg-surface-sunken);
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+
+.ban-sections::-webkit-scrollbar {
+  display: none;
+}
+
+.ban-sections__item {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  min-height: var(--yg-control-height-md);
+  padding: 0 var(--yg-space-4);
+  border: none;
+  border-radius: var(--yg-radius-pill);
+  background-color: transparent;
+  color: var(--yg-text-tertiary);
+  font-family: inherit;
+  font-size: var(--yg-font-size-md);
+  line-height: var(--yg-line-height-snug);
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    color var(--yg-dur-base) var(--yg-ease-out),
+    background-color var(--yg-dur-base) var(--yg-ease-out),
+    box-shadow var(--yg-dur-base) var(--yg-ease-out);
+}
+
+.ban-sections__item:hover {
+  color: var(--yg-text-primary);
+  background-color: var(--yg-bg-hover);
+}
+
+.ban-sections__item:active {
+  background-color: var(--yg-bg-active);
+}
+
+.ban-sections__item:focus-visible {
+  outline: none;
+  box-shadow: var(--yg-focus-ring);
+}
+
+.ban-sections__item.is-active {
+  color: var(--yg-color-primary);
+  background-color: var(--yg-color-primary-soft);
+  box-shadow: var(--yg-shadow-sm);
+  font-weight: var(--yg-font-weight-medium);
+}
+</style>

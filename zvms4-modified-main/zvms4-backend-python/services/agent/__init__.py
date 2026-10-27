@@ -12,5 +12,7 @@ HTTP 层在 ``routers/ai_agent_router.py``：只做协议翻译与门禁，不�
 
 from . import tools  # noqa: F401  (先注册活动域工具，ops_tools 依赖 TOOLS)
 from . import ops_tools  # noqa: F401  (导入即自注册运维工具：7 读 + 10 写)
+from . import tools_platform  # noqa: F401  (平台运维：5 读 + 3 直执行写)
+from . import tools_governance  # noqa: F401  (导入即自注册平台治理工具：5 读 + 4 写)
 
-__all__ = ["ops_tools", "tools"]
+__all__ = ["ops_tools", "tools", "tools_platform"]

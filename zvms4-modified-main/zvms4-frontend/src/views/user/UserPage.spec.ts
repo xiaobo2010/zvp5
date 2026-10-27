@@ -170,7 +170,8 @@ vi.mock('element-plus', async () => {
       placeholder: String,
       rows: Number,
       maxlength: [String, Number],
-      showWordLimit: Boolean
+      showWordLimit: Boolean,
+      inputmode: String
     },
     emits: ['update:modelValue', 'blur'],
     setup(props, { emit }) {
@@ -188,9 +189,38 @@ vi.mock('element-plus', async () => {
               class: 'el-input-stub',
               value: props.modelValue,
               placeholder: props.placeholder,
+              inputmode: props.inputmode,
               onInput
             })
       }
+    }
+  })
+
+  // 时长下拉:桩渲染成原生 select,测试用 setValue('7') 就能触发 update:modelValue。
+  const ElSelect = defineComponent({
+    name: 'ElSelect',
+    props: { modelValue: { type: [String, Number], default: '' } },
+    emits: ['update:modelValue'],
+    setup(props, { emit, slots }) {
+      return () =>
+        h(
+          'select',
+          {
+            class: 'el-select-stub',
+            value: props.modelValue,
+            onChange: (event: Event) =>
+              emit('update:modelValue', (event.target as HTMLSelectElement).value)
+          },
+          slots.default?.()
+        )
+    }
+  })
+
+  const ElOption = defineComponent({
+    name: 'ElOption',
+    props: { value: { type: [String, Number], default: '' }, label: String },
+    setup(props) {
+      return () => h('option', { value: props.value }, props.label)
     }
   })
 
@@ -203,6 +233,8 @@ vi.mock('element-plus', async () => {
     ElAlert,
     ElDialog,
     ElInput,
+    ElSelect,
+    ElOption,
     ElIcon: { name: 'ElIcon', template: '<span class="el-icon-stub"><slot /></span>' },
     ElLoading: { service: () => ({ close: () => undefined }) },
     ElMessage: messageMock,
@@ -254,13 +286,13 @@ it('opens the ban dialog and submits the ban reason', async () => {
   expect(dialog.exists()).toBe(true)
   expect(dialog.attributes('data-title')).toBe('manage.personalPanel.banDialogTitle')
   // 需求规定的说明文案必须出现在弹窗里(而不是走 confirm 弹框)
-  expect(dialog.text()).toContain('manage.personalPanel.banDialogNotice')
+  expect(dialog.text()).toContain('user.ban.dialogNotice')
 
   await dialog.find('.el-input-stub').setValue('同学号多设备登录')
   await buttonByText(wrapper, 'manage.personalPanel.banDialogConfirm')!.trigger('click')
   await flushPromises()
 
-  expect(updateBannedMock).toHaveBeenCalledWith('20240001', true, '同学号多设备登录')
+  expect(updateBannedMock).toHaveBeenCalledWith('20240001', true, '同学号多设备登录', null)
   expect(notificationMock).toHaveBeenCalledWith({
     title: 'manage.personalPanel.bannedNotification {"name":"张三"}',
     type: 'success'
@@ -303,6 +335,111 @@ it('shows the ban reason and permanent status for an already banned user', async
   expect(alert.attributes('data-type')).toBe('error')
   expect(alert.text()).toContain('manage.personalPanel.banReasonLabel：同学号多设备登录')
   expect(alert.text()).toContain('manage.personalPanel.banPermanent')
+  // 页头标签也要标出「永久」,不能只显示「已封禁」。
+  expect(wrapper.find('.el-tag-stub').text()).toContain('user.ban.periodPermanent')
+
+  wrapper.unmount()
+})
+
+it('shows the ban expiry on the header tag for a timed ban', async () => {
+  readOneV3Mock.mockResolvedValue({
+    ...structuredClone(userFixture),
+    banned: true,
+    ban_reason: '同学号多设备登录',
+    ban_permanent: false,
+    ban_until: '2026-11-01T12:00:00'
+  })
+  const wrapper = mountPage()
+  await flushPromises()
+
+  const tag = wrapper.find('.el-tag-stub').text()
+  expect(tag).toContain('manage.personalPanel.bannedTag')
+  expect(tag).toContain('user.ban.periodUntil {"time":"2026-11-01 12:00"}')
+
+  wrapper.unmount()
+})
+
+it('sends duration_days for a preset duration', async () => {
+  const wrapper = mountPage()
+  await flushPromises()
+
+  await buttonByText(wrapper, 'manage.personalPanel.ban')!.trigger('click')
+  const dialog = wrapper.find('.el-dialog-stub')
+  await dialog.find('.el-input-stub').setValue('同学号多设备登录')
+  // 默认「永久」:先验证旧行为没变,再切到 7 天。
+  expect(dialog.text()).toContain('user.ban.permanentHint')
+
+  await dialog.find('.el-select-stub').setValue('7')
+  await flushPromises()
+  expect(dialog.text()).toContain('user.ban.autoUnbanAt')
+
+  await buttonByText(wrapper, 'manage.personalPanel.banDialogConfirm')!.trigger('click')
+  await flushPromises()
+
+  expect(updateBannedMock).toHaveBeenCalledWith('20240001', true, '同学号多设备登录', 7)
+
+  wrapper.unmount()
+})
+
+it('sends no duration for a permanent ban', async () => {
+  const wrapper = mountPage()
+  await flushPromises()
+
+  await buttonByText(wrapper, 'manage.personalPanel.ban')!.trigger('click')
+  const dialog = wrapper.find('.el-dialog-stub')
+  await dialog.find('.el-input-stub').setValue('同学号多设备登录')
+
+  await buttonByText(wrapper, 'manage.personalPanel.banDialogConfirm')!.trigger('click')
+  await flushPromises()
+
+  // null = 永久,crud 层据此省略 duration_days 字段(不传时间戳)。
+  expect(updateBannedMock).toHaveBeenCalledWith('20240001', true, '同学号多设备登录', null)
+
+  wrapper.unmount()
+})
+
+it('blocks an out-of-range custom duration', async () => {
+  const wrapper = mountPage()
+  await flushPromises()
+
+  await buttonByText(wrapper, 'manage.personalPanel.ban')!.trigger('click')
+  const dialog = wrapper.find('.el-dialog-stub')
+  await dialog.find('.el-input-stub').setValue('同学号多设备登录')
+  await dialog.find('.el-select-stub').setValue('custom')
+  await flushPromises()
+
+  const inputs = dialog.findAll('.el-input-stub')
+  expect(inputs).toHaveLength(2)
+  await inputs[1].setValue('40000')
+  await flushPromises()
+
+  expect(dialog.text()).toContain('user.ban.customInvalid')
+
+  await buttonByText(wrapper, 'manage.personalPanel.banDialogConfirm')!.trigger('click')
+  await flushPromises()
+  expect(updateBannedMock).not.toHaveBeenCalled()
+
+  wrapper.unmount()
+})
+
+it('accepts a valid custom duration', async () => {
+  const wrapper = mountPage()
+  await flushPromises()
+
+  await buttonByText(wrapper, 'manage.personalPanel.ban')!.trigger('click')
+  const dialog = wrapper.find('.el-dialog-stub')
+  await dialog.find('.el-input-stub').setValue('同学号多设备登录')
+  await dialog.find('.el-select-stub').setValue('custom')
+  await flushPromises()
+
+  const inputs = dialog.findAll('.el-input-stub')
+  await inputs[1].setValue('45')
+  await flushPromises()
+  expect(dialog.text()).toContain('user.ban.autoUnbanAt')
+
+  await buttonByText(wrapper, 'manage.personalPanel.banDialogConfirm')!.trigger('click')
+  await flushPromises()
+  expect(updateBannedMock).toHaveBeenCalledWith('20240001', true, '同学号多设备登录', 45)
 
   wrapper.unmount()
 })

@@ -1,15 +1,24 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
 import { useDark } from '@vueuse/core'
-import { createSshSession, buildSshWsUrl } from '@/api/system/ssh.ts'
+import { createSshSession, buildSshWsUrl, suggestSshCommand } from '@/api/system/ssh.ts'
+import { listModels } from '@/api/ai/chat.ts'
 import ZSystemAuthDialog from '@/components/system/ZSystemAuthDialog.vue'
 import { useUserStore } from '@/stores/user.ts'
-import { ArrowDown, Connection, VideoPlay, SwitchButton, RefreshRight } from '@element-plus/icons-vue'
+import {
+  ArrowDown,
+  Connection,
+  VideoPlay,
+  SwitchButton,
+  RefreshRight,
+  MagicStick,
+  CopyDocument
+} from '@element-plus/icons-vue'
 
 const { t } = useI18n()
 const userStore = useUserStore()
@@ -499,6 +508,122 @@ function errorMessageOf(error: unknown): string {
   return t('server.auth.failed')
 }
 
+// ---- AI 命令生成面板 ----
+// 后端只返回命令文本,一句都不执行;真正的「写进终端」必须由人点按钮触发。
+const suggestVisible = ref(false)
+const suggestIntent = ref('')
+const suggestContext = ref('')
+const suggestModel = ref('')
+const aiModels = ref<string[]>([])
+const aiModelsLoaded = ref(false)
+const suggestLoading = ref(false)
+const suggestError = ref('')
+const suggestCommand = ref('')
+const suggestExplanation = ref('')
+const insertAndRun = ref(false)
+
+const AI_ERROR_KEYS: Record<string, string> = {
+  AI_NO_PROVIDER: 'server.ssh.suggest.error.noProvider',
+  model_not_found: 'server.ssh.suggest.error.modelNotFound',
+  AI_BUSY: 'server.ssh.suggest.error.busy',
+  insufficient_quota: 'server.ssh.suggest.error.quota',
+  AI_RATE_LIMITED: 'server.ssh.suggest.error.rateLimited',
+  AI_TIMEOUT: 'server.ssh.suggest.error.timeout',
+  AI_AGENT_BAD_ARGUMENT: 'server.ssh.suggest.error.badArgument'
+}
+
+function suggestErrorText(error: unknown): string {
+  const detail = (error as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail
+  const code = typeof detail === 'string' ? detail.trim() : ''
+  const key = AI_ERROR_KEYS[code]
+  // 机器可读的 AI_* 码不直接示人,一律翻成中文说明
+  return t(key ?? 'server.ssh.suggest.error.unknown')
+}
+
+// 模型列表只是加分项:取不到就隐藏下拉,生成仍走后端默认模型
+async function loadAiModels() {
+  if (aiModelsLoaded.value) return
+  aiModelsLoaded.value = true
+  try {
+    const list = await listModels()
+    aiModels.value = (list.data ?? []).map((item) => item.id).filter(Boolean)
+  } catch {
+    aiModels.value = []
+  }
+}
+
+watch(suggestVisible, (visible) => {
+  if (visible) void loadAiModels()
+})
+
+async function generateSuggestions() {
+  const intent = suggestIntent.value.trim()
+  if (!intent) {
+    suggestError.value = t('server.ssh.suggest.intentRequired')
+    return
+  }
+  if (intent.length > 1000) {
+    suggestError.value = t('server.ssh.suggest.intentTooLong')
+    return
+  }
+  suggestLoading.value = true
+  suggestError.value = ''
+  suggestCommand.value = ''
+  suggestExplanation.value = ''
+  try {
+    const res = await suggestSshCommand(
+      intent,
+      suggestContext.value.trim() || undefined,
+      suggestModel.value || undefined
+    )
+    suggestCommand.value = res.data?.data?.command ?? ''
+    suggestExplanation.value = res.data?.data?.explanation ?? ''
+  } catch (error) {
+    suggestError.value = suggestErrorText(error)
+  } finally {
+    suggestLoading.value = false
+  }
+}
+
+async function copySuggested() {
+  if (!suggestCommand.value) return
+  try {
+    await navigator.clipboard.writeText(suggestCommand.value)
+    ElMessage.success(t('server.ssh.suggest.copied'))
+  } catch {
+    ElMessage.error(t('server.ssh.suggest.copyFailed'))
+  }
+}
+
+// 写进终端的两条路径都只发一帧 input,且都不关面板、不动会话状态:
+// 默认 command(不回车);只有勾了「插入并回车」并二次确认才追加 \r。
+async function insertSuggested() {
+  if (status.value !== 'connected') {
+    suggestError.value = t('server.ssh.suggest.insertNotConnected')
+    return
+  }
+  const command = suggestCommand.value.trim()
+  if (!command) return
+  let runImmediately = false
+  if (insertAndRun.value) {
+    try {
+      await ElMessageBox.confirm(
+        t('server.ssh.suggest.confirmRun'),
+        t('server.ssh.suggest.confirmRunTitle'),
+        { type: 'warning' }
+      )
+      runImmediately = true
+    } catch {
+      return
+    }
+  }
+  sendFrame({ type: 'input', data: runImmediately ? command + '\r' : command })
+  term?.focus()
+  ElMessage.success(
+    t(runImmediately ? 'server.ssh.suggest.insertRunDone' : 'server.ssh.suggest.insertDone')
+  )
+}
+
 function onWindowResize() {
   if (resizeDebounce !== null) {
     window.clearTimeout(resizeDebounce)
@@ -533,6 +658,9 @@ onBeforeUnmount(() => {
             root@127.0.0.1
           </span>
           <div class="ml-auto flex flex-wrap items-center gap-2">
+            <ElButton size="large" :icon="MagicStick" @click="suggestVisible = true">
+              {{ t('server.ssh.suggest.open') }}
+            </ElButton>
             <ElSelect v-model="fontSize" class="w-24" :aria-label="t('server.ssh.fontLabel')">
               <ElOption v-for="size in FONT_SIZES" :key="size" :label="String(size)" :value="size" />
             </ElSelect>
@@ -637,6 +765,100 @@ onBeforeUnmount(() => {
         </ElButton>
       </template>
     </ElDialog>
+
+    <!-- AI 生成命令:只生成文本,写不写进终端由人点按钮决定 -->
+    <ElDialog
+      v-model="suggestVisible"
+      :title="t('server.ssh.suggest.title')"
+      :width="'min(520px, calc(100vw - 32px))'"
+      append-to-body
+    >
+      <div class="suggest">
+        <label class="suggest__label" for="ssh-suggest-intent">
+          {{ t('server.ssh.suggest.intent') }}
+        </label>
+        <ElInput
+          id="ssh-suggest-intent"
+          v-model="suggestIntent"
+          type="textarea"
+          :rows="3"
+          maxlength="1000"
+          show-word-limit
+          :placeholder="t('server.ssh.suggest.intentPlaceholder')"
+        />
+
+        <label class="suggest__label" for="ssh-suggest-context">
+          {{ t('server.ssh.suggest.context') }}
+        </label>
+        <ElInput
+          id="ssh-suggest-context"
+          v-model="suggestContext"
+          maxlength="2000"
+          show-word-limit
+          :placeholder="t('server.ssh.suggest.contextPlaceholder')"
+        />
+
+        <template v-if="aiModels.length">
+          <label class="suggest__label" for="ssh-suggest-model">
+            {{ t('server.ssh.suggest.model') }}
+          </label>
+          <ElSelect
+            id="ssh-suggest-model"
+            v-model="suggestModel"
+            clearable
+            class="suggest__select"
+            :placeholder="t('server.ssh.suggest.modelDefault')"
+          >
+            <ElOption v-for="id in aiModels" :key="id" :label="id" :value="id" />
+          </ElSelect>
+        </template>
+
+        <div class="suggest__actions">
+          <ElButton
+            type="primary"
+            :loading="suggestLoading"
+            :disabled="!suggestIntent.trim()"
+            @click="generateSuggestions"
+          >
+            {{ t('server.ssh.suggest.generate') }}
+          </ElButton>
+        </div>
+
+        <p v-if="suggestError" class="suggest__error" role="alert">{{ suggestError }}</p>
+
+        <div v-if="suggestCommand" class="suggest__result">
+          <span class="suggest__label">{{ t('server.ssh.suggest.result') }}</span>
+          <textarea
+            v-model="suggestCommand"
+            class="suggest__command"
+            rows="4"
+            spellcheck="false"
+          ></textarea>
+          <p class="suggest__explanation">{{ suggestExplanation }}</p>
+          <div class="suggest__actions">
+            <ElButton :icon="CopyDocument" @click="copySuggested">
+              {{ t('server.ssh.suggest.copy') }}
+            </ElButton>
+            <ElButton
+              type="primary"
+              :disabled="status !== 'connected'"
+              @click="insertSuggested"
+            >
+              {{ t('server.ssh.suggest.insert') }}
+            </ElButton>
+          </div>
+          <ElCheckbox v-model="insertAndRun" :disabled="status !== 'connected'">
+            {{ t('server.ssh.suggest.insertAndRun') }}
+          </ElCheckbox>
+          <span class="suggest__hint">{{ t('server.ssh.suggest.insertHint') }}</span>
+        </div>
+        <p v-else class="suggest__empty">
+          {{ suggestLoading ? t('server.ssh.statusConnecting') : t('server.ssh.suggest.empty') }}
+        </p>
+
+        <p class="suggest__hint">{{ t('server.ssh.suggest.note') }}</p>
+      </div>
+    </ElDialog>
   </div>
 </template>
 
@@ -645,6 +867,72 @@ onBeforeUnmount(() => {
 textarea,
 input {
   font-family: inherit;
+}
+
+/* ---------- AI 生成命令面板 ---------- */
+.suggest {
+  display: flex;
+  flex-direction: column;
+  gap: var(--yg-space-2);
+}
+
+.suggest__label {
+  font-size: var(--yg-font-size-xs);
+  color: var(--yg-text-tertiary);
+}
+
+.suggest__select {
+  width: 100%;
+}
+
+.suggest__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--yg-space-2);
+}
+
+.suggest__error {
+  margin: 0;
+  font-size: var(--yg-font-size-sm);
+  line-height: var(--yg-line-height-normal);
+  color: var(--yg-text-danger);
+}
+
+.suggest__result {
+  display: flex;
+  flex-direction: column;
+  gap: var(--yg-space-2);
+  margin-top: var(--yg-space-2);
+}
+
+/* 命令文本：等宽 + 可编辑，执行前逐字核对 */
+.suggest__command {
+  width: 100%;
+  padding: var(--yg-space-2) var(--yg-space-3);
+  border: 1px solid var(--yg-border-subtle);
+  border-radius: var(--yg-radius-md);
+  background: var(--yg-bg-surface-sunken);
+  color: var(--yg-text-primary);
+  font-family: var(--yg-font-mono);
+  font-size: var(--yg-font-size-sm);
+  line-height: var(--yg-line-height-normal);
+  resize: vertical;
+}
+
+.suggest__explanation {
+  margin: 0;
+  font-size: var(--yg-font-size-sm);
+  line-height: var(--yg-line-height-normal);
+  color: var(--yg-text-secondary);
+  white-space: pre-wrap;
+}
+
+.suggest__hint,
+.suggest__empty {
+  margin: 0;
+  font-size: var(--yg-font-size-xs);
+  line-height: var(--yg-line-height-normal);
+  color: var(--yg-text-tertiary);
 }
 
 /* ---------- 终端卡片:高度跟着实际可用空间走 ----------

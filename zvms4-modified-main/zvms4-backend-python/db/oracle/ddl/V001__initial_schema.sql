@@ -857,7 +857,7 @@ CREATE TABLE ban_records (
   created_at TIMESTAMP NOT NULL,
   PRIMARY KEY (oid),
   CONSTRAINT ck_ban_records_oid CHECK (REGEXP_LIKE(oid,''^[0-9a-f]{24}$'')),
-  CONSTRAINT ck_ban_records_source CHECK (source IN (''admin'',''rule'')),
+  CONSTRAINT ck_ban_records_source CHECK (source IN (''admin'',''rule'',''agent'')),
   CONSTRAINT ck_ban_records_permanent CHECK (permanent IN (0,1)),
   CONSTRAINT fk_ban_records_user FOREIGN KEY (user_oid) REFERENCES users (oid)
 )';
@@ -981,7 +981,7 @@ CREATE TABLE banned_devices (
   operator_oid VARCHAR2(24 CHAR),
   created_at TIMESTAMP NOT NULL,
   PRIMARY KEY (xuehai_id),
-  CONSTRAINT ck_banned_devices_source CHECK (source IN (''rule'',''admin''))
+  CONSTRAINT ck_banned_devices_source CHECK (source IN (''rule'',''admin'',''agent''))
 )';
 EXCEPTION
   WHEN OTHERS THEN
@@ -1054,6 +1054,41 @@ END;
 BEGIN
   EXECUTE IMMEDIATE
     'CREATE INDEX ix_ban_violations_batch ON ban_violations (user_oid, trigger_code, created_at, batch_id)';
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE NOT IN (-955, -1408) THEN RAISE; END IF;
+END;
+/
+
+-- ----------------------------------------------------------------------------
+-- USER_WARNINGS  ← new (警告账本; V041)
+--   每 (用户, 规则, 自然月) 最多一行；月度归零靠唯一索引，没有清理任务。
+--   唯一冲突是预期控制流（本月已警告过），由仓储层翻译成 False。
+--   也由 V041__user_warnings.sql 在存量实例上创建。
+-- ----------------------------------------------------------------------------
+BEGIN
+  EXECUTE IMMEDIATE '
+CREATE TABLE user_warnings (
+  oid VARCHAR2(24 CHAR) NOT NULL,
+  user_oid VARCHAR2(24 CHAR) NOT NULL,
+  rule_code VARCHAR2(64 CHAR) NOT NULL,
+  period CHAR(6 CHAR) NOT NULL,
+  reason VARCHAR2(512 CHAR),
+  detail VARCHAR2(500 CHAR),
+  created_at TIMESTAMP NOT NULL,
+  PRIMARY KEY (oid),
+  CONSTRAINT ck_user_warnings_oid CHECK (REGEXP_LIKE(oid,''^[0-9a-f]{24}$'')),
+  CONSTRAINT ck_user_warnings_period CHECK (REGEXP_LIKE(period,''^[0-9]{6}$''))
+)';
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE != -955 THEN RAISE; END IF;
+END;
+/
+
+BEGIN
+  EXECUTE IMMEDIATE
+    'CREATE UNIQUE INDEX ux_user_warnings_user_rule_period ON user_warnings (user_oid, rule_code, period)';
 EXCEPTION
   WHEN OTHERS THEN
     IF SQLCODE NOT IN (-955, -1408) THEN RAISE; END IF;

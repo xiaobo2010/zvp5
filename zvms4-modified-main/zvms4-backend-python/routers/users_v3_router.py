@@ -16,7 +16,7 @@ from sqlalchemy.exc import IntegrityError
 from db import backends
 from db.oracle.session import session_scope
 from db.repos.oracle.users import UserGoneError
-from services import risk_monitor
+from services import device_guard, risk_monitor
 from typings.log import inject_log, xuehai_id_from
 from util.cert import (
     generate_initial_password,
@@ -75,6 +75,9 @@ class PutBannedRequest(BaseModel):
     # 原因随请求一起落库（USERS.BAN_REASON + BAN_RECORDS），前端封禁弹窗可填；
     # 512 与 BAN_REASON / BAN_RECORDS.REASON 的列宽一致，超长在这里就 422。
     reason: Optional[str] = Field(default=None, max_length=512)
+    # 封禁时长（天）。None = 永久（与历史行为一致）；只收天数、不收客户端时间戳：
+    # 时间在服务端按本地时区算，避免浏览器时区把「7 天」折算成别的时刻。
+    duration_days: Optional[int] = Field(default=None, ge=1, le=36500)
 
 
 @router.put("/{user_id}/roles", status_code=204)
@@ -245,16 +248,35 @@ async def delete_user_v3(
     return
 
 
-@router.put("/{user_id}/banned", status_code=204)
+@router.put("/{user_id}/banned")
 async def set_user_banned_v3(
     user_id: str,
     payload: PutBannedRequest,
     user=Depends(get_current_user),
     log=Depends(inject_log),
 ):
+    """
+    封禁 / 解封一个账号。
+
+    Permission: admin only。两条目标侧保护（与 ``modify_user_roles_v3`` 的
+    ``role_change_forbidden`` 同一套「admin 级账号只认本人」逻辑）：
+
+    * 不能封自己——生效后唯一的管理入口被自己关掉，无自助恢复路径；
+    * 不能封**另一个** admin——封禁会轮换 ``session_id``，对方立即掉线且
+      无法登录，等于绕过双人授权把同级的复核通道掐断。目标是否 admin 用
+      **实时**角色（``get_user_permissions``）判定，不吃 JWT 快照。
+      解封方向不拦（放出来只会恢复对方权限），但仍需 admin 鉴权。
+
+    封禁时长由 ``duration_days`` 表达：不传 = 永久（历史行为），传了就按
+    服务端本地时区算到期时刻（客户端只给天数，避免时区漂移）。解封方向带
+    ``duration_days`` 是语义错误，直接 422。
+    """
     per = user.get("per") or []
     if "admin" not in per:
         raise HTTPException(status_code=403, detail="权限不足")
+
+    if not payload.banned and payload.duration_days is not None:
+        raise HTTPException(status_code=422, detail="解封请求不能指定封禁时长")
 
     oid = validate_object_id(user_id)
     repo = backends.get_users_repo()
@@ -263,29 +285,39 @@ async def set_user_banned_v3(
     if target is None:
         raise HTTPException(status_code=404, detail="用户不存在")
 
-    # 管理员不得封禁自己：一旦生效，唯一的管理入口会被自己关闭，需要人工介入
-    # 才能恢复（无自助解封路径）。仅拦截"封禁"方向，解封自己无风险不额外限制。
-    if payload.banned and str(oid) == str(user["id"]):
-        raise HTTPException(status_code=403, detail="不能封禁自己")
-
+    ban_until: Optional[datetime] = None
     if payload.banned:
+        # 管理员不得封禁自己：一旦生效，唯一的管理入口会被自己关闭，需要人工介入
+        # 才能恢复（无自助解封路径）。仅拦截"封禁"方向，解封自己无风险不额外限制。
+        if str(oid) == str(user["id"]):
+            raise HTTPException(status_code=403, detail="不能封禁自己")
+
+        # 目标侧保护与 ``modify_user_roles_v3`` 的等级闸同源：admin 级账号只认
+        # 本人。封禁会轮换 session_id，对方立即掉线，等于绕过双人授权把同级的
+        # 复核通道掐断。角色用**实时**读取（不吃 JWT 快照）。
+        target_per = await get_user_permissions(target)
+        if "admin" in (target_per or []):
+            raise HTTPException(status_code=403, detail="不能封禁管理员账号")
+
         reason = (payload.reason or "").strip() or "管理员封禁"
         now = datetime.now()
-        # 管理员封禁一律永久（until=None 就是「无到期」），与规则封禁的
-        # 限时处罚区分开：人工判定不需要自动解封。
-        await repo.set_ban(
-            str(oid), reason=reason, until=None, source="admin", rule_code=None
-        )
-        await backends.get_ban_records_repo().insert(
+        # 不传时长 = 永久（until=None 就是「无到期」）；传了就落本地 naive 墙钟值，
+        # 库里所有封禁时间列都是无时区的 TIMESTAMP，判定端用 datetime.now() 比较。
+        if payload.duration_days is not None:
+            ban_until = device_guard._to_local_naive(
+                now + timedelta(days=payload.duration_days)
+            )
+        # 「写状态 + 写流水」收敛为一个事务（``apply_admin_ban`` → users 仓储
+        # 的 ``ban_unit``）：流水写失败时不会留下「已封但无梯度/无审计」。
+        await device_guard.apply_admin_ban(
             str(oid),
-            source="admin",
             reason=reason,
-            permanent=True,
-            started_at=now,
-            expires_at=None,
             operator_oid=str(user["id"]),
+            at=now,
+            until=ban_until,
         )
-        action = f"封禁了用户 {target['name']}（原因：{reason}）"
+        suffix = "" if ban_until is None else f"，{payload.duration_days} 天后自动解封"
+        action = f"封禁了用户 {target['name']}（原因：{reason}{suffix}）"
     else:
         # 解封只清当前状态；历史事实由 BAN_RECORDS 流水承担（不删不写）。
         # 设备封禁不镜像账号状态：显式设备封禁由设备管理端点单独解除，
@@ -300,7 +332,17 @@ async def set_user_banned_v3(
     )
     await log.insert_log()
 
-    return
+    # 204 没有响应体，前端封禁后只能整页重拉才知道到期时间；这里回 200 带上
+    # ``ban_until``（None = 永久），弹窗可以直接提示「将于 … 自动解封」。
+    return {
+        "status": "ok",
+        "code": 200,
+        "data": {
+            "banned": payload.banned,
+            "ban_until": ban_until.isoformat() if ban_until is not None else None,
+            "permanent": payload.banned and ban_until is None,
+        },
+    }
 
 
 class NewUserRequest(BaseModel):

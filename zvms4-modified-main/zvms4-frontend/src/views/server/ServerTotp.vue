@@ -168,7 +168,7 @@ onUnmounted(() => {
 
 <template>
   <!-- 登录动态码:仅 admin 可见(域守卫),接口本身也只允许本人 -->
-  <ElCard v-if="otp" shadow="never" class="mt-8">
+  <ElCard v-if="otp" shadow="never">
     <template #header>
       <div class="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
         <span class="font-medium">{{ t(M + 'title') }}</span>
@@ -214,7 +214,7 @@ onUnmounted(() => {
   </ElCard>
 
   <!-- 首次加载 / 读取失败 -->
-  <ElCard v-else shadow="never" class="mt-8">
+  <ElCard v-else shadow="never">
     <template #header>
       <span class="font-medium">{{ t(M + 'title') }}</span>
     </template>

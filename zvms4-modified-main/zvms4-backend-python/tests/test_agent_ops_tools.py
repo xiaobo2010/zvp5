@@ -46,7 +46,18 @@ EXPECTED_WRITE = {
     "db_ddl",
     "ssh_exec",
 }
-OPS_TOOLS = EXPECTED_READ | EXPECTED_WRITE
+
+# 平台运维（``services.agent.tools_platform``）：读工具只查不发 SQL，写工具是
+# ``direct=True`` 的封禁/解封（过完 permission + guard + 参数收敛直接执行）。
+PLATFORM_READ = {
+    "platform_logs",
+    "db_diagnostics",
+    "backup_status",
+    "scheduler_status",
+    "device_ban_list",
+}
+PLATFORM_WRITE = {"user_ban", "user_unban", "device_unban"}
+OPS_TOOLS = EXPECTED_READ | EXPECTED_WRITE | PLATFORM_READ | PLATFORM_WRITE
 
 
 def _tool(name: str) -> tools.ToolDef:
@@ -90,18 +101,19 @@ def sessions(monkeypatch) -> list[_FakeSession]:
 def test_ops_tools_are_registered_with_frozen_kinds() -> None:
     """名字集合写死：加一个运维工具是一次要 review 的能力扩张。"""
     assert OPS_TOOLS <= set(tools.TOOLS)
-    for name in EXPECTED_READ:
+    for name in EXPECTED_READ | PLATFORM_READ:
         assert _tool(name).kind == tools.READ, name
-    for name in EXPECTED_WRITE:
+    for name in EXPECTED_WRITE | PLATFORM_WRITE:
         assert _tool(name).kind == tools.WRITE, name
 
 
 def test_read_tools_are_guarded_but_never_proposed() -> None:
     """读工具每次现查权限（``guard``），但不得带 ``prepare``/双人码（契约 §2）。"""
-    for name in EXPECTED_READ:
+    for name in EXPECTED_READ | PLATFORM_READ:
         tool = _tool(name)
         assert tool.prepare is None, name
         assert tool.dual_auth_action is None, name
+        assert tool.direct is False, name
         assert tool.guard is ops_auth.ensure_system_admin, name
         assert tool.permission is ops_tools._admin_only, name
 
@@ -113,7 +125,20 @@ def test_write_tools_are_previewed_proposals_with_dual_auth() -> None:
         assert tool.impl is not None, name
         assert tool.prepare is not None, name
         assert tool.dual_auth_action == ops_tools.WRITE_AUTH_ACTION, name
+        assert tool.direct is False, name
         assert tool.guard is ops_auth.ensure_system_admin, name
+
+
+def test_platform_write_tools_are_direct_but_guarded() -> None:
+    """直接执行的写工具：有 guard、无提案预览、无 TOTP，且都在允许清单里。"""
+    for name in PLATFORM_WRITE:
+        tool = _tool(name)
+        assert tool.impl is not None, name
+        assert tool.direct is True, name
+        assert tool.prepare is None, name
+        assert tool.dual_auth_action is None, name
+        assert tool.guard is ops_auth.ensure_system_admin, name
+        assert name in tools.DIRECT_WRITE_TOOL_NAMES, name
 
 
 def test_params_are_well_formed_json_schema() -> None:

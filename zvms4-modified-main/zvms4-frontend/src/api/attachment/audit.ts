@@ -132,15 +132,23 @@ export async function getAttachmentAudit(oid: string): Promise<AttachmentAuditDe
   return result.data
 }
 
-/** 裁决附件：通过（verified）或驳回（rejected），可附备注。 */
+/** 裁决附件：通过（verified）或驳回（rejected），可附备注。
+ *
+ * ``verificationToken`` 是密码再认证签发的 5 分钟短令牌（``purpose=verify``），
+ * 后端只认 body 里的 ``verification_token``；塞进 Authorization 会被当成登录态。
+ */
 export async function decideAttachment(
   oid: string,
-  payload: { status: AttachmentDecision; note?: string }
+  payload: { status: AttachmentDecision; note?: string },
+  verificationToken?: string
 ): Promise<void> {
   const result = (
     await axios(`/attachments/${oid}/status`, {
       method: 'patch',
-      data: payload
+      data: {
+        ...payload,
+        ...(verificationToken ? { verification_token: verificationToken } : {})
+      }
     })
   ).data as Response<unknown>
 

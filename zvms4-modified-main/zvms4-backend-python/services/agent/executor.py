@@ -8,6 +8,9 @@
    之前拿到完整的 ``tool_calls``，而 agent 的下一步取决于它）；
 3. 有 ``tool_calls`` → 逐个过白名单 + 权限（+ 现查库的 ``guard``）→ 执行（读）或
    生成提案（写）→ 结果按 OpenAI 的 ``role="tool"`` 消息追加 → 进入下一轮；
+   ``direct=True`` 的写工具（仅封禁/解封这一类，见 ``tools.DIRECT_WRITE_TOOL_NAMES``）
+   走的是「执行」而不是「提案」：巡检 agent 需要在管理员上线之前就把灌爆接口的
+   账号关掉，但仍然要过同一套 permission + guard + 参数收敛。
 4. 没有 ``tool_calls`` → 终止，返回 ``content``。
 
 四个成本 / 时间闸：
@@ -58,7 +61,7 @@ from . import context as agent_context
 from . import proposal, tool_impl
 from .prompt import PROMPT_VERSION, SYSTEM_PROMPT
 from .tool_impl import AgentError
-from .tools import READ, WRITE, get_tool, prepare_arguments, run_allowed, tool_specs
+from .tools import WRITE, get_tool, prepare_arguments, run_allowed, tool_specs
 
 _logger = logging.getLogger(__name__)
 
@@ -447,7 +450,7 @@ async def _run_tool(
             note,
         )
 
-    if tool.kind == WRITE:
+    if tool.kind == WRITE and not tool.direct:
         # 写操作**不执行**：生成提案，等用户确认。
         try:
             created = await proposal.propose(
@@ -500,6 +503,15 @@ async def _run_tool(
             note,
         )
 
+    # 走到这里的只有两种：读工具，以及 ``direct=True`` 的写工具（巡检通道）。
+    # 后者虽已过 permission + guard + 参数收敛，但**没有**人工确认，所以事件里
+    # 必须留痕（``args_summary`` 带 ``direct``，见 :func:`_direct_args_text`）：
+    # 事后要能一眼分出「哪些副作用是模型自己落库的」。``status`` 仍是
+    # ``executed``——这个枚举描述的是「工具真的跑了」，与读工具同义。
+    direct_write = tool.kind == WRITE
+    event_args = _direct_args_text(raw_args) if direct_write else args_text
+    tool_kind = tool.kind
+
     try:
         result = await tool.impl(user, **kwargs)
     except AgentError as exc:
@@ -508,8 +520,8 @@ async def _run_tool(
             request_id=request_id,
             round_no=round_no,
             tool_name=tool.name,
-            tool_kind=READ,
-            args_summary=args_text,
+            tool_kind=tool_kind,
+            args_summary=event_args,
             result_summary=note,
             status="failed",
             user_oid=user_oid,
@@ -528,8 +540,8 @@ async def _run_tool(
             request_id=request_id,
             round_no=round_no,
             tool_name=tool.name,
-            tool_kind=READ,
-            args_summary=args_text,
+            tool_kind=tool_kind,
+            args_summary=event_args,
             result_summary=note,
             status="failed",
             user_oid=user_oid,
@@ -546,13 +558,20 @@ async def _run_tool(
         request_id=request_id,
         round_no=round_no,
         tool_name=tool.name,
-        tool_kind=READ,
-        args_summary=args_text,
+        tool_kind=tool_kind,
+        args_summary=event_args,
         result_summary=note,
         status="executed",
         user_oid=user_oid,
     )
-    return (_tool_message(call_id, result), None, "executed", note)
+    # 直接执行的写工具要在 tool 消息里说清「已经落库了」：模型若以为是提案，
+    # 下一轮会重复调用（封禁是幂等的，但解封/设备操作不一定）。
+    payload = (
+        {"status": "executed", "direct": True, "result": result}
+        if direct_write
+        else result
+    )
+    return (_tool_message(call_id, payload), None, "executed", note)
 
 
 def _args_text(raw_args: object) -> str | None:
@@ -572,6 +591,27 @@ def _args_text(raw_args: object) -> str | None:
             return (masked if isinstance(masked, str) else raw_args)[:500]
         return tool_impl.to_json_text(proposal.redacted(parsed))[:500]
     return tool_impl.to_json_text(proposal.redacted(raw_args))[:500]
+
+
+def _direct_args_text(raw_args: object) -> str | None:
+    """直接执行的写工具在事件里的 ``ARGS_SUMMARY``：脱敏 JSON + ``direct`` 标记。
+
+    与 :func:`_args_text` 的唯一差别是多一个 ``"direct": true``。审计侧据此把
+    「模型自己落库的副作用」与「用户确认过的提案」分开统计——两者都写
+    ``status='executed'``，不标就分不出来。
+    """
+    base = _args_text(raw_args)
+    if base is None:
+        return '{"direct": true}'
+    try:
+        parsed = json.loads(base)
+    except ValueError:
+        # 原文已被截断/不是 JSON：打标记比丢掉更容易查。
+        return f"{base} [direct]"[:500]
+    if isinstance(parsed, dict):
+        parsed["direct"] = True
+        return tool_impl.to_json_text(parsed)[:500]
+    return f"{base} [direct]"[:500]
 
 
 def _summary_text(value: object) -> str:

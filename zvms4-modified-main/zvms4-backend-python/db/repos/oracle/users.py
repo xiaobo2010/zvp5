@@ -155,17 +155,47 @@ def _user_count_stmt(query: str, role: str):
     return stmt
 
 
-def _banned_filter(query: str) -> list[Any]:
-    """「当前被封禁」的谓词：闸门列 + 可选的姓名/学号包含匹配。
+def _local_now(now: datetime | None) -> datetime:
+    """「此刻」的落库口径：本地 naive（与 ``util.ban`` 的判定侧一致）。"""
+    if now is None:
+        return datetime.now()
+    if now.tzinfo is None or now.tzinfo.utcoffset(now) is None:
+        return now
+    return now.astimezone().replace(tzinfo=None)
+
+
+def _banned_filter(
+    query: str, include_expired: bool = False, now: datetime | None = None
+) -> list[Any]:
+    """「当前封禁」的谓词：闸门列 + 未到期 + 可选的姓名/学号包含匹配。
 
     复用 :func:`_user_filter` 的 ``query`` 语义（``re.escape`` + REGEXP_LIKE
     ``'i'``），只额外钉住 ``banned = 1``——两条列表的搜索行为必须一致，管理员
     才会觉得是同一个框。
+
+    ``banned = 1`` 本身**不等于**「此刻还在封」：到期封禁没有后台任务把闸门
+    翻回 0（见 ``util.ban.ban_is_active``），只钉闸门就会把刑满的人一直挂在
+    「当前封禁」列表上。默认因此再要求 ``ban_until IS NULL``（永久）或
+    ``ban_until > now``；``include_expired=True`` 是给管理端的查询口子。
     """
-    return [users_tbl.c.banned == 1, *_user_filter(query, "")]
+    conds: list[Any] = [users_tbl.c.banned == 1, *_user_filter(query, "")]
+    if not include_expired:
+        conds.append(
+            or_(
+                users_tbl.c.ban_until.is_(None),
+                users_tbl.c.ban_until > _local_now(now),
+            )
+        )
+    return conds
 
 
-def _banned_page_stmt(query: str, page: int, size: int):
+def _banned_page_stmt(
+    query: str,
+    page: int,
+    size: int,
+    include_expired: bool = False,
+    now: datetime | None = None,
+):
     """``list_banned_page`` 一页「当前被封」用户 + ``COUNT(*) OVER()`` 总数。
 
     与 ``_user_page_stmt`` 同一形状（LEFT JOIN ``GROUPS`` 取班级名、窗口计数、
@@ -190,7 +220,7 @@ def _banned_page_stmt(query: str, page: int, size: int):
                 groups_tbl, users_tbl.c.class_oid == groups_tbl.c.oid
             )
         )
-        .where(*_banned_filter(query))
+        .where(*_banned_filter(query, include_expired, now))
     )
     return (
         stmt.order_by(users_tbl.c.business_id.asc(), users_tbl.c.oid.asc())
@@ -199,12 +229,14 @@ def _banned_page_stmt(query: str, page: int, size: int):
     )
 
 
-def _banned_count_stmt(query: str):
+def _banned_count_stmt(
+    query: str, include_expired: bool = False, now: datetime | None = None
+):
     """越界页补总数用；不需要 join，``GROUPS`` 不参与过滤。"""
     return (
         select(func.count())
         .select_from(users_tbl)
-        .where(*_banned_filter(query))
+        .where(*_banned_filter(query, include_expired, now))
     )
 
 
@@ -243,6 +275,21 @@ def _get_by_oid_for_update_stmt(oid: str):
     """
     return (
         select(*_user_columns())
+        .where(users_tbl.c.oid == oid)
+        .with_for_update()
+    )
+
+
+def _lock_user_row_stmt(oid: str):
+    """``SELECT ... FOR UPDATE`` 锁住一行 ``USERS``（封禁事务的串行化点）。
+
+    只投 ``OID`` 一列：锁不需要 LOB 也不需要元数据，但必须**单独一条语句**，
+    且不能带 ``FETCH FIRST``——Oracle 里 ``FOR UPDATE`` 与行限制子句同时出现
+    是 ORA-02014，锁会直接变成 500。封禁档位的「先数后写」靠它串行化：
+    第二个并发事务会在这里等，读到前一笔提交后的流水数。
+    """
+    return (
+        select(users_tbl.c.oid)
         .where(users_tbl.c.oid == oid)
         .with_for_update()
     )
@@ -1066,16 +1113,24 @@ class OracleUsersRepo:
         return [_page_row(row._mapping) for row in rows], total
 
     async def list_banned_page(
-        self, query: str, page: int, size: int
+        self,
+        query: str,
+        page: int,
+        size: int,
+        include_expired: bool = False,
+        now: datetime | None = None,
     ) -> tuple[list[Row], int]:
-        """当前被封禁（``banned = 1``）用户的一页，``(rows, total)``。
+        """当前被封禁用户的一页，``(rows, total)``。
 
         「当前状态」以 ``USERS.BANNED`` 为准，不读 ``BAN_RECORDS``：流水是
         只增的历史账本（同一用户可能有多条、也可能被人工解封），拿它当列表
         会把已解封的人和重复封禁的次数一起显示出来。
+
+        ``include_expired=True`` 时连已刑满（``ban_until`` 在过去）的存量行
+        一起列出——管理端排查「为什么闸门还是 1」时才需要这个视角。
         """
-        page_stmt = _banned_page_stmt(query, page, size)
-        count_stmt = _banned_count_stmt(query)
+        page_stmt = _banned_page_stmt(query, page, size, include_expired, now)
+        count_stmt = _banned_count_stmt(query, include_expired, now)
         async with _session_for(self._session) as (session, _owns):
             rows = (await session.execute(page_stmt)).all()
             total = _total_of(rows)
@@ -1205,11 +1260,31 @@ class OracleUsersRepo:
         until: datetime | None,
         source: str,
         rule_code: str | None,
+        session: AsyncSession | None = None,
     ) -> None:
-        """封禁并记录原因/到期/来源（``banned = 1``），同一条写里轮换会话。"""
+        """封禁并记录原因/到期/来源（``banned = 1``），同一条写里轮换会话。
+
+        ``session`` 显式传入时复用调用方的事务（不 commit、不 close），
+        让「改状态 + 写流水」能落在同一次提交里。
+        """
         stmt = _set_ban_stmt(normalize_oid(oid), reason, until, source, rule_code)
+        async with _session_for(session or self._session) as (bound, owns):
+            await bound.execute(stmt)
+            if owns:
+                await bound.commit()
+
+    @asynccontextmanager
+    async def ban_unit(self, oid: str) -> AsyncIterator[AsyncSession]:
+        """封禁的**事务单元**：锁住用户行 → 交出 session → 退出时提交一次。
+
+        调用方在 ``yield`` 出来的 session 上完成「数档位 / 写状态 / 写流水」，
+        退出时只 commit 一次；中途抛异常则在 ``session_scope`` 关闭时整体回滚。
+        ``SELECT ... FOR UPDATE`` 是这里的并发闸：同一用户的两批封禁串行化，
+        后到者读到前一笔已提交的流水数，梯度不会跳档。
+        """
         async with _session_for(self._session) as (session, owns):
-            await session.execute(stmt)
+            await session.execute(_lock_user_row_stmt(normalize_oid(oid)))
+            yield session
             if owns:
                 await session.commit()
 
@@ -1221,6 +1296,7 @@ class OracleUsersRepo:
         until: datetime | None,
         source: str,
         rule_code: str | None,
+        session: AsyncSession | None = None,
     ) -> datetime | None:
         """Ban atomically only when ``until`` outranks the current sentence.
 
@@ -1229,25 +1305,27 @@ class OracleUsersRepo:
         """
         target = normalize_oid(oid)
         stmt = _set_ban_if_stronger_stmt(target, reason, until, source, rule_code)
-        async with _session_for(self._session) as (session, owns):
-            result = await session.execute(stmt)
+        async with _session_for(session or self._session) as (bound, owns):
+            result = await bound.execute(stmt)
             changed = int(result.rowcount or 0)
             if owns:
-                await session.commit()
+                await bound.commit()
             if changed:
                 return until
-            row = (await session.execute(_get_by_oid_stmt(target))).first()
+            row = (await bound.execute(_get_by_oid_stmt(target))).first()
             if row is None:
                 return None
             return row._mapping["ban_until"]
 
-    async def clear_ban(self, oid: str) -> None:
+    async def clear_ban(
+        self, oid: str, *, session: AsyncSession | None = None
+    ) -> None:
         """解封并清空元数据（``banned = 0``），同一条写里轮换会话。"""
         stmt = _clear_ban_stmt(normalize_oid(oid))
-        async with _session_for(self._session) as (session, owns):
-            await session.execute(stmt)
+        async with _session_for(session or self._session) as (bound, owns):
+            await bound.execute(stmt)
             if owns:
-                await session.commit()
+                await bound.commit()
 
     async def set_primary_xuehai(self, oid: str, xuehai_id: str) -> None:
         """绑定主学海设备（**不**轮换 ``session_id``，见语句构造器注释）。

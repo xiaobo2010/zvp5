@@ -8,6 +8,10 @@
  *
  * 缩略图走 blob + IntersectionObserver 懒加载：图片端点要 Bearer，直接把
  * URL 塞进 <img> 会 401；一次性把整页缩略图拉完又太重，滚到哪张取哪张。
+ *
+ * 进页即验：附件审计是查看学生证件与身份材料的高危动作，进页面先换一张
+ * 5 分钟的 verify 短令牌（``withTemporaryToken``）。读接口本身不带令牌，
+ * 令牌只用来证明「是本人刚输入过密码」；裁决与删除各自再包一层同一道闸。
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -30,7 +34,7 @@ import {
   ElTooltip
 } from 'element-plus'
 import type { TableInstance } from 'element-plus'
-import { Picture, Refresh, ScaleToOriginal, ZoomIn, ZoomOut } from '@element-plus/icons-vue'
+import { Lock, Picture, Refresh, ScaleToOriginal, ZoomIn, ZoomOut } from '@element-plus/icons-vue'
 import ZSelectPerson from '@/components/form/ZSelectPerson.vue'
 import ZPagination from '@/components/utils/ZPagination.vue'
 import {
@@ -41,6 +45,8 @@ import {
 } from '@/api/attachment/audit'
 import { getBytes, getThumb } from '@/api/attachment/read'
 import { deleteOne } from '@/api/attachment/manage'
+import { cachedTemporaryToken, isTemporaryTokenCancelled, withTemporaryToken } from '@/plugins/short-token'
+import { useUserStore } from '@/stores/user'
 import { normalizeOcrBox, type OcrBoxRect } from '@/utils/ocrBox'
 import { formatDateTime } from '@/utils/dateTime'
 import type {
@@ -50,6 +56,8 @@ import type {
 } from '@/../types'
 
 const { t } = useI18n()
+
+const userStore = useUserStore()
 
 const { width, height } = useWindowSize()
 
@@ -85,6 +93,89 @@ function measureTable() {
 watch([width, height], () => {
   measureTable()
 })
+
+// ---------------------------------------------------------------------------
+// 进页验证（密码再认证）
+// ---------------------------------------------------------------------------
+
+/** 后端 ``require_password_verification`` 的固定 detail：403 只表示缺一次复核。 */
+const PASSWORD_VERIFICATION_DETAIL = '需要密码验证后才能继续'
+
+/** 已拿到 5 分钟内的 verify 短令牌；false 时整页只渲染「需要密码验证」占位态。 */
+const verified = ref(false)
+/** 密码框正在等用户输入：按钮进 loading，避免重复触发第二条弹框。 */
+const verifying = ref(false)
+
+function verificationUser(): string {
+  return String(userStore._id ?? '')
+}
+
+/**
+ * 判断这次失败是不是「复核令牌不被接受」。
+ *
+ * 401 会被 axios 拦截器当成登录过期并清会话，所以后端一律 403；但 403 也可能是
+ * 「权限不足」「附件已裁决」，只有 detail 是密码闸那条才该退回验证占位态。
+ */
+function isPasswordVerificationRejected(error: unknown): boolean {
+  const response = (
+    error as { response?: { status?: number; data?: { detail?: unknown } } } | undefined
+  )?.response
+  return response?.status === 403 && response.data?.detail === PASSWORD_VERIFICATION_DETAIL
+}
+
+/**
+ * 取（或复用）verify 短令牌。缓存里有就直接放行；没有才弹一次密码框。
+ *
+ * 用户取消 / 密码错误都只停在占位态——**不**自动重弹，否则取消也会被下一次
+ * 挂载或刷新再次挡住，变成关不掉的弹框风暴。
+ */
+async function unlock(): Promise<void> {
+  if (verifying.value) {
+    return
+  }
+  const userid = verificationUser()
+  if (!userid) {
+    verified.value = false
+    return
+  }
+  if (cachedTemporaryToken(userid)) {
+    verified.value = true
+    return
+  }
+  verifying.value = true
+  try {
+    await withTemporaryToken(userid, t('manage.attachments.verifyReason'), async () => true)
+    verified.value = true
+  } catch {
+    // 取消 / 密码错误 / 网络失败：拦截器已经提示过，这里只留在占位态等用户重试。
+    verified.value = false
+  } finally {
+    verifying.value = false
+  }
+}
+
+/** 占位态的「重新验证」与进页共用：拿到令牌才拉列表。 */
+async function verifyAndLoad(): Promise<void> {
+  await unlock()
+  if (verified.value) {
+    void load()
+  }
+}
+
+/**
+ * 写操作失败出口：密码框被取消 → 静默回占位态；令牌仍被拒 → 回占位态等用户
+ * 重新验证；其余失败沿用 ``reportError`` 的统一提示。
+ */
+function handleWriteFailure(error: unknown, fallbackKey: string) {
+  if (isTemporaryTokenCancelled(error)) {
+    verified.value = false
+    return
+  }
+  if (isPasswordVerificationRejected(error)) {
+    verified.value = false
+  }
+  reportError(error, fallbackKey)
+}
 
 // ---------------------------------------------------------------------------
 // 筛选与列表
@@ -159,6 +250,9 @@ function reportError(error: unknown, fallbackKey: string) {
 }
 
 async function load() {
+  if (!verified.value) {
+    return
+  }
   const seq = ++listSeq
   loading.value = true
   try {
@@ -781,10 +875,16 @@ async function decide(status: AttachmentDecision) {
   }
   deciding.value = true
   try {
-    await decideAttachment(oid, {
-      status,
-      note: decisionNote.value.trim() || undefined
-    })
+    await withTemporaryToken(
+      verificationUser(),
+      t('manage.attachments.verifyReason'),
+      (token) =>
+        decideAttachment(
+          oid,
+          { status, note: decisionNote.value.trim() || undefined },
+          token
+        )
+    )
     ElMessage.success(
       t(status === 'verified' ? 'manage.attachments.detail.approved' : 'manage.attachments.detail.rejected')
     )
@@ -792,7 +892,7 @@ async function decide(status: AttachmentDecision) {
     void loadDetail(oid)
     void load()
   } catch (error) {
-    reportError(error, 'manage.attachments.detail.decideFailed')
+    handleWriteFailure(error, 'manage.attachments.detail.decideFailed')
   } finally {
     deciding.value = false
   }
@@ -816,17 +916,22 @@ async function confirmDelete(row: AttachmentAuditListItem) {
     return
   }
   try {
-    await deleteOne(row._id)
+    await withTemporaryToken(
+      verificationUser(),
+      t('manage.attachments.verifyReason'),
+      (token) => deleteOne(row._id, token)
+    )
     ElMessage.success(t('manage.attachments.delete.deleted'))
     void load()
   } catch (error) {
-    reportError(error, 'manage.attachments.delete.failed')
+    handleWriteFailure(error, 'manage.attachments.delete.failed')
   }
 }
 
 onMounted(() => {
-  void load()
   void loadOriginal(activeOid.value)
+  // 进页即验：缓存里有 5 分钟内的令牌就直接加载，否则先弹一次密码框。
+  void verifyAndLoad()
 })
 
 watch(activeOid, (oid) => {
@@ -841,8 +946,22 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="flex flex-col gap-4">
+    <!-- 未验证：不留白页，给一个可重试的占位态 -->
+    <ElCard v-if="!verified" shadow="never">
+      <div v-loading="verifying" class="attachment-audit__locked">
+        <ElIcon class="attachment-audit__locked-icon"><Lock /></ElIcon>
+        <p class="attachment-audit__locked-title">
+          {{ t('manage.attachments.verifyRequired') }}
+        </p>
+        <p class="attachment-audit__hint">{{ t('manage.attachments.verifyIntro') }}</p>
+        <ElButton type="primary" :loading="verifying" @click="verifyAndLoad">
+          {{ t('manage.attachments.verifyRetry') }}
+        </ElButton>
+      </div>
+    </ElCard>
+
     <!-- 筛选栏 -->
-    <ElCard shadow="never">
+    <ElCard v-if="verified" shadow="never">
       <template #header>
         <div class="flex flex-wrap items-center justify-between gap-2">
           <div class="flex min-w-0 flex-col gap-1">
@@ -968,7 +1087,7 @@ onBeforeUnmount(() => {
     </ElCard>
 
     <!-- 列表 -->
-    <ElCard shadow="never">
+    <ElCard v-if="verified" shadow="never">
       <template #header>
         <div class="flex items-center justify-between gap-2">
           <span>{{ t('manage.attachments.table.title') }}</span>
@@ -1098,7 +1217,7 @@ onBeforeUnmount(() => {
     </ElCard>
 
     <!-- 详情抽屉 -->
-    <ElDrawer v-model="drawerOpen" direction="rtl" :size="drawerSize" :title="detailTitle">
+    <ElDrawer v-if="verified" v-model="drawerOpen" direction="rtl" :size="drawerSize" :title="detailTitle">
       <div v-loading="detailLoading" class="attachment-audit__detail">
         <template v-if="detailFailed">
           <ElEmpty :description="t('manage.attachments.detail.loadFailed')" :image-size="90">
@@ -1304,6 +1423,28 @@ onBeforeUnmount(() => {
   color: var(--yg-text-tertiary);
   font-size: var(--yg-font-size-xs);
   line-height: var(--yg-line-height-normal);
+}
+
+/* 需要密码验证的占位态：卡片居中一张锁，不铺满整页留白 */
+.attachment-audit__locked {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--yg-space-2);
+  padding: var(--yg-space-8) var(--yg-space-4);
+  text-align: center;
+}
+
+.attachment-audit__locked-icon {
+  color: var(--yg-text-tertiary);
+  font-size: 32px;
+}
+
+.attachment-audit__locked-title {
+  margin: 0;
+  color: var(--yg-text-primary);
+  font-size: var(--yg-font-size-md);
+  font-weight: var(--yg-font-weight-medium);
 }
 
 .attachment-audit__name {

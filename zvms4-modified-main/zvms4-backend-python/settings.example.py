@@ -67,6 +67,10 @@ AI_CALL_LOGS_RETENTION_DAYS = 90
 # 正文保留天数（日清任务清理，缺省 30）与单条字符上限（超出截断，缺省 8000）。
 # AI_PROMPT_RETENTION_DAYS = 30
 # AI_PROMPT_MAX_CHARS = 8000
+# LLM 安全认证：department 提交对话前用一次模型调用判定「无关且破坏性」的请求。
+# 默认开启；上游持续抖动时可关掉退回纯关键词规则。超时按放行处理。
+# AI_SAFETY_GUARD_ENABLED = True
+# AI_SAFETY_GUARD_TIMEOUT_SECONDS = 8
 # Prompt Cache 注入策略。off = 一律不加字段；auto = 只给白名单 host 加
 # prompt_cache_key（路由提示，不改请求结构）；explicit = 额外给白名单 host 打
 # cache_control 断点（只有会翻译这个标记的兼容层能用）。

@@ -19,6 +19,11 @@
 漏掉「一次上报跨过阈值」的情形（3 条批次 > 阈值 2）。而 ``>=`` 本身会让阈值
 之后的每一批都再封一次，梯度被一路打到永久档——所以落封前先看当前是否已经
 有生效封禁，有就只记账不重复处罚。
+
+**agent 越狱是另一条语义：先警告、再梯度封禁**。证据层与 ``platform_misuse``
+共用（白名单/去重/批次号），但处罚多一层 ``USER_WARNINGS``：自然月内首次命中
+只落警告，同月第二次才交给 ``device_guard`` 走梯度。月度归零靠唯一索引，没有
+cron；同一次违规的重试（证据被去重）绝不升级处罚。
 """
 
 from __future__ import annotations
@@ -33,10 +38,15 @@ from db.ids import new_oid
 from services import ban_rules, device_guard
 from typings.log import ZVMSLog
 from util.ban import ban_is_active
+from util.period import period_now
 
 _logger = logging.getLogger(__name__)
 
 TRIGGER = "platform_misuse"
+
+# agent 越狱的检查项/规则 code：与 V037 种子的 ``code`` 一致。梯度由
+# ``device_guard.apply_account_ban`` 按 ``ban_records`` 的累计次数决定。
+AGENT_JAILBREAK_TRIGGER = "agent_jailbreak"
 
 # 信号白名单：客户端只能报「观察到了什么形态」，不能自己发明类别。
 # ``agent_jailbreak`` 由服务端在 agent 输入审核命中时上报，客户端仍不可传。
@@ -280,6 +290,82 @@ async def _log_ban(user_oid: str, reason: str, xuehai_id: str, at: datetime) -> 
         _logger.exception("写入 ban_rule 日志失败（封禁已生效）")
 
 
+async def _log_warning(
+    user_oid: str, period: str, detail: str | None, xuehai_id: str, at: datetime
+) -> None:
+    """月度首次警告的审计：警告账本写入成功后才记，失败不影响结论。"""
+    try:
+        await ZVMSLog(
+            "",
+            user_oid,
+            f"AI 越狱/提示注入首次警告（月份 {period}，详情：{detail or '无'}，"
+            f"设备 {xuehai_id or '未知'}）",
+            at.timestamp(),
+            type="agent_jailbreak_warning",
+            level="warning",
+            xuehai_id=xuehai_id,
+        ).insert_log()
+    except Exception:
+        _logger.exception("写入 agent_jailbreak_warning 日志失败（警告已生效）")
+
+
+async def _ingest_signals(
+    user_oid: str,
+    signals: list[dict] | None,
+    xuehai_id: str,
+    now: datetime,
+) -> dict:
+    """白名单过滤 → 逐条窗口去重 → 入库 + 审计。
+
+    抽成函数是为了让「平台违规」与「agent 越狱」共用同一份证据口径：两处各写
+    一遍，去重窗口与批次号迟早会漂。返回本批事实，``recorded == 0`` 表示整批都
+    被窗口挡掉（或没有合法信号）。
+    """
+    violations = backends.get_violations_repo()
+    batch_id = new_oid()
+    recorded = 0
+    duplicates = 0
+    triggers: set[str] = set()
+    names: list[str] = []
+    details: list[str] = []
+    for item in signals or []:
+        signal = (item or {}).get("signal")
+        if not isinstance(signal, str) or signal not in SIGNALS:
+            # 客户端拼错信号名不该让整批 422：忽略这一条，其余照记。
+            _logger.warning("忽略未知的平台违规信号 %r", signal)
+            continue
+
+        trigger = SIGNAL_TRIGGERS.get(signal, TRIGGER)
+        detail = _clean_detail((item or {}).get("detail"))
+        since = now - timedelta(seconds=dedup_window_seconds(signal))
+        if await violations.exists_recent(user_oid, signal, since):
+            duplicates += 1
+            continue
+
+        await violations.insert(
+            user_oid,
+            trigger,
+            signal,
+            xuehai_id=xuehai_id or None,
+            detail=detail,
+            batch_id=batch_id,
+        )
+        recorded += 1
+        triggers.add(trigger)
+        names.append(signal)
+        if detail:
+            details.append(detail)
+        await _log_violation(user_oid, signal, detail, xuehai_id, now)
+
+    return {
+        "recorded": recorded,
+        "duplicates": duplicates,
+        "triggers": triggers,
+        "signals": names,
+        "details": details,
+    }
+
+
 async def record(
     user: dict,
     signals: list[dict],
@@ -315,44 +401,14 @@ async def record(
         )
         return result
 
-    violations = backends.get_violations_repo()
-    batch_id = new_oid()
-    recorded = 0
-    duplicates = 0
-    recorded_triggers: set[str] = set()
-    recorded_signals: list[str] = []
-    recorded_details: list[str] = []
-    for item in signals or []:
-        signal = (item or {}).get("signal")
-        if not isinstance(signal, str) or signal not in SIGNALS:
-            # 客户端拼错信号名不该让整批 422：忽略这一条，其余照记。
-            _logger.warning("忽略未知的平台违规信号 %r", signal)
-            continue
-
-        trigger = SIGNAL_TRIGGERS.get(signal, TRIGGER)
-        detail = _clean_detail((item or {}).get("detail"))
-        since = now - timedelta(seconds=dedup_window_seconds(signal))
-        if await violations.exists_recent(user_oid, signal, since):
-            duplicates += 1
-            continue
-
-        await violations.insert(
-            user_oid,
-            trigger,
-            signal,
-            xuehai_id=xuehai_id or None,
-            detail=detail,
-            batch_id=batch_id,
-        )
-        recorded += 1
-        recorded_triggers.add(trigger)
-        recorded_signals.append(signal)
-        if detail:
-            recorded_details.append(detail)
-        await _log_violation(user_oid, signal, detail, xuehai_id, now)
+    ingested = await _ingest_signals(user_oid, signals, xuehai_id, now)
+    recorded = ingested["recorded"]
+    recorded_triggers = ingested["triggers"]
+    recorded_signals = ingested["signals"]
+    recorded_details = ingested["details"]
 
     result["recorded"] = recorded
-    result["duplicates"] = duplicates
+    result["duplicates"] = ingested["duplicates"]
     if recorded == 0:
         # 全是重复或非法信号：计数没有变化，没必要再读规则表。
         return result
@@ -372,6 +428,7 @@ async def record(
     threshold = config["threshold"]
     window_hours = config["window_hours"]
     since = now - timedelta(hours=window_hours)
+    violations = backends.get_violations_repo()
     count = await violations.count_batches_since(user_oid, rule_trigger, since)
     if count < threshold:
         return result
@@ -400,6 +457,22 @@ async def record(
     return result
 
 
+def _warning_reason(category: str) -> str:
+    text = (
+        f"AI 安全认证命中（{category or 'destructive_request'}）："
+        "本月首次警告，再犯将按梯度封禁"
+    )
+    return _clip_reason(text)
+
+
+def _jailbreak_ban_reason(category: str, detail: str | None) -> str:
+    text = f"AI 安全认证命中越狱/提示词注入（{category or 'destructive_request'}）"
+    excerpt = (detail or "").strip()[:REASON_DETAIL_CHARS]
+    if excerpt:
+        text += f"：{excerpt}"
+    return _clip_reason(text)
+
+
 async def record_agent_jailbreak(
     user: dict,
     *,
@@ -407,13 +480,39 @@ async def record_agent_jailbreak(
     rule: str = "",
     detail: str | None = None,
 ) -> dict:
-    """agent 输入审核命中：只上报 ``agent_jailbreak`` 一个信号。
+    """agent 越狱/提示注入命中：**每月首次只警告，同月再犯按梯度封号**。
+
+    为什么不是命中即封：LLM 审核有灰区，一次判定直接封号会把「正常提问被判错」
+    的成本抬到账号级别。第一次落警告账本（``USER_WARNINGS``，按自然月唯一），
+    同月第二次才交给 ``device_guard`` 走 ``ban_rules`` 的梯度。
+
+    为什么重试不能升级处罚：请求被拒后客户端可能原样重发，而证据层有 5 分钟
+    去重窗口。``recorded == 0``（本批全是重复）时绝不落封禁——否则一次网络
+    重试就能把用户从「警告」推到「封号」。
 
     ``xuehai_id`` 来自请求头（真实设备号），不再拿 ``users.id``（学号）冒充：
     违规证据要能回答「哪台机器在试图越狱」，学号是账号不是设备。
     ``detail`` 以 JSON 落库，含命中的规则名与用户输入摘要（前 200 字符）——
     越狱原文受角色白名单约束另存 ``AI_PROMPT_AUDIT``，这里只留复核所需的片段。
     """
+    user_oid = str(user["id"])
+    now = datetime.now()
+
+    result = {
+        "recorded": 0,
+        "duplicates": 0,
+        "warned": False,
+        "banned": False,
+        "rule_code": AGENT_JAILBREAK_TRIGGER,
+    }
+
+    exempt = _exempt_roles(_roles(user.get("per")), AGENT_JAILBREAK_EXEMPT_ROLES)
+    if exempt:
+        # admin 豁免：自动封管理员可能把平台锁死，且无限制模式已覆盖该场景。
+        await _log_exempt(user_oid, exempt, 1, xuehai_id, now)
+        result["exempt"] = True
+        return result
+
     evidence: dict[str, str] = {}
     if rule:
         evidence["rule"] = str(rule)
@@ -422,16 +521,75 @@ async def record_agent_jailbreak(
         evidence["input"] = excerpt
     payload = json.dumps(evidence, ensure_ascii=False) if evidence else None
 
-    return await record(
-        user,
+    ingested = await _ingest_signals(
+        user_oid,
         [{"signal": "agent_jailbreak", "detail": payload}],
         xuehai_id,
-        exempt_roles=AGENT_JAILBREAK_EXEMPT_ROLES,
+        now,
     )
+    result["recorded"] = ingested["recorded"]
+    result["duplicates"] = ingested["duplicates"]
+
+    if await _ban_active(user_oid):
+        # 已经封着：本次只是新证据，不再重复落封、也不再发警告。
+        result["banned"] = True
+        result["skipped"] = "already_banned"
+        return result
+
+    category = str(rule or AGENT_JAILBREAK_TRIGGER)
+    period = period_now(now)
+    repo = backends.get_user_warnings_repo()
+
+    if result["recorded"] == 0:
+        # 证据没新增 = 同一次违规的重试（窗口内去重）。已有本月警告就直接回
+        # 「已警告」，绝不升级；账本还没有时才补一条（兼容旧调用路径）。
+        existing = await repo.get(user_oid, AGENT_JAILBREAK_TRIGGER, period)
+        if existing is not None:
+            result["warned"] = True
+            result["duplicate"] = True
+            return result
+
+    try:
+        fresh = await repo.try_record(
+            user_oid,
+            AGENT_JAILBREAK_TRIGGER,
+            period,
+            _warning_reason(category),
+            payload,
+        )
+    except Exception:
+        # 账本写不进去时**不封号**：警告是封禁的前置事实，读不到它就没有
+        # 「同月第二次」这个结论，按 fail-open 放行这一次。
+        _logger.exception("写入 agent 越狱警告失败，本次不升级为封禁")
+        result["error"] = "warning_store_failed"
+        return result
+
+    if fresh:
+        result["warned"] = True
+        await _log_warning(user_oid, period, payload, xuehai_id, now)
+        return result
+
+    reason = _jailbreak_ban_reason(category, payload)
+    try:
+        ban = await device_guard.apply_account_ban(
+            user_oid, AGENT_JAILBREAK_TRIGGER, reason
+        )
+    except Exception:
+        # 封禁落库失败不回滚已入库的证据与警告：留痕给运维补封。
+        _logger.exception("agent 越狱封禁落库失败（证据与警告已入库）")
+        return result
+
+    result["banned"] = True
+    result["until"] = ban.get("until")
+    result["days"] = ban.get("days")
+    result["offense"] = ban.get("offense")
+    await _log_ban(user_oid, reason, xuehai_id, now)
+    return result
 
 
 __all__ = [
     "TRIGGER",
+    "AGENT_JAILBREAK_TRIGGER",
     "SIGNALS",
     "SIGNAL_TRIGGERS",
     "DEDUP_WINDOW_SECONDS",

@@ -44,7 +44,8 @@ from db import backends
 from db.repos.oracle.ai_scheduled_tasks import OracleAiScheduledTasksRepo  # noqa: F401 - 测试按符号打桩
 from db.repos.protocols import ActiveRunConflict
 from services.agent import run_queue
-from services.ai import conversations, credentials, moderation, quota
+from services.ai import conversations, credentials, moderation, quota, safety_guard
+from typings.log import ZVMSLog
 from util.ban import ban_is_active
 
 _logger = logging.getLogger(__name__)
@@ -65,6 +66,8 @@ STATUS_SKIPPED_NO_KEY = "skipped_no_key"
 STATUS_SKIPPED_QUOTA = "skipped_quota"
 STATUS_SKIPPED_OWNER = "skipped_owner"
 STATUS_SKIPPED_FLAGGED = "skipped_flagged"
+# LLM 安全认证拒绝：prompt 已被管理员审核过，这里只跳过，不计违规、不发警告。
+STATUS_SKIPPED_SAFETY = "skipped_safety"
 
 LAST_STATUS_MAX = 16
 LAST_ERROR_MAX = 512
@@ -98,6 +101,13 @@ class ScheduledError(Exception):
         self.code = code
         self.message = message
         self.status_code = status_code
+
+
+class SafetySkipped(ScheduledError):
+    """LLM 安全认证拒绝：本周期不提交 run，任务行已写 ``skipped_safety``。"""
+
+    def __init__(self, message: str) -> None:
+        super().__init__("AI_SCHEDULE_SAFETY_REJECTED", message, 422)
 
 
 def _clip(value: object, limit: int) -> str | None:
@@ -239,6 +249,69 @@ async def _conversation_for(task: Mapping[str, Any]) -> str:
     return str(created.get("oid") or "")
 
 
+def _owner_identity(owner_oid: str, owner: Mapping[str, Any] | None) -> dict:
+    """把用户文档归一成 ``safety_guard`` 认得的形状（``per`` = 原始角色）。
+
+    仓储给的是 ``roles``，JWT 给的是 ``per``；两者是同一份东西的两种字段名。
+    ``per`` 优先保留 E2 权限映射（如果将来用户文档真的带了它）。
+    """
+    raw = (owner or {}).get("per")
+    if not isinstance(raw, (list, tuple, set, frozenset)):
+        raw = (owner or {}).get("roles")
+    roles = [role for role in (raw or []) if isinstance(role, str)]
+    return {"id": owner_oid, "per": roles}
+
+
+async def _log_safety_skip(owner_oid: str, task_oid: str, reason: str) -> None:
+    """定时任务被安全认证跳过的审计（旁路：写失败不改变「不跑」的结论）。"""
+    try:
+        await ZVMSLog(
+            "",
+            owner_oid,
+            f"定时任务 {task_oid} 被 LLM 安全认证跳过：{reason}",
+            type="ai_safety_guard_scheduled_skip",
+            level="warning",
+        ).insert_log()
+    except Exception:  # noqa: BLE001 - 审计是旁路
+        _logger.exception("写入 ai_safety_guard_scheduled_skip 日志失败")
+
+
+async def _record_safety_skip(
+    task: Mapping[str, Any], verdict: Any, *, now: datetime
+) -> str | None:
+    """写 ``skipped_safety`` 并推进 ``next_run_at``；返回给用户的错误摘要。
+
+    只在任务**本来该跑**（``next_run_at <= now``）时改排程：``POST /{oid}/run-now``
+    可能在周期的中途手动触发，那种情况下拒绝一次不该把正常排程往后推。
+    """
+    task_oid = str(task["_id"])
+    owner_oid = str(task.get("owner_oid") or "")
+    category = str(getattr(verdict, "category", "") or "destructive_request")
+    reason = f"prompt rejected by AI safety guard ({category})"
+
+    await _log_safety_skip(owner_oid, task_oid, reason)
+
+    due = task.get("next_run_at")
+    if isinstance(due, datetime) and due > now:
+        return reason
+
+    try:
+        upcoming = next_run_at(task, after=now)
+    except Exception:  # noqa: BLE001 - 非法排程也要推进，否则每个 tick 重试
+        upcoming = now + timedelta(minutes=DEFAULT_INTERVAL_MINUTES)
+    try:
+        await _repo().mark_result(
+            task_oid,
+            last_status=STATUS_SKIPPED_SAFETY,
+            last_error=_clip(reason, LAST_ERROR_MAX),
+            next_run_at=upcoming,
+            counted=False,
+        )
+    except Exception:  # noqa: BLE001 - 写结论失败不改变「本次不提交」
+        _logger.exception("ai scheduled task: mark_result(skipped_safety) failed")
+    return reason
+
+
 async def submit_task_run(task: Mapping[str, Any], *, now: datetime) -> str:
     """把任务提交成一次 ``queued`` run；返回 run_id。
 
@@ -247,6 +320,24 @@ async def submit_task_run(task: Mapping[str, Any], *, now: datetime) -> str:
     """
     task_oid = str(task["_id"])
     owner_oid = str(task["owner_oid"])
+
+    # 灰区闸门：department owner 的 prompt 在提交前过一遍 LLM 安全认证。
+    # prompt 已经过管理员审核，所以这里**只跳过**：不写 ban_violations、不发
+    # 月度警告、不碰封禁梯度（否则一条凌晨文案就能把 owner 拉进处罚链）。
+    owner = await _users().get_by_oid(owner_oid)
+    identity = _owner_identity(owner_oid, owner)
+    if safety_guard.is_department(identity):
+        verdict = await safety_guard.screen(
+            identity,
+            str(task.get("prompt_text") or ""),
+            model_hint=(str(task.get("model")).strip() or None)
+            if task.get("model")
+            else None,
+        )
+        if not verdict.allowed:
+            reason = await _record_safety_skip(task, verdict, now=now)
+            raise SafetySkipped(reason or "prompt rejected by AI safety guard")
+
     conversation_oid = await _conversation_for(task)
     if not conversation_oid:
         raise ScheduledError(
@@ -328,6 +419,9 @@ async def _handle(repo: Any, task: Mapping[str, Any], now: datetime) -> tuple[st
 
     try:
         await submit_task_run(task, now=now)
+    except SafetySkipped as exc:
+        # 本周期不跑：tick 会在下游统一 mark_result（与 submit 里写的一致）。
+        return STATUS_SKIPPED_SAFETY, exc.message, False
     except ActiveRunConflict:
         return STATUS_SKIPPED_BUSY, "an active run already exists", False
     except ScheduledError as exc:

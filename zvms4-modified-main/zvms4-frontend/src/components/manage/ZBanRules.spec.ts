@@ -4,6 +4,7 @@ import ZBanRules from './ZBanRules.vue'
 import {
   createRule,
   deleteRule,
+  getBannedDevices,
   getBannedUsers,
   getRules,
   getTriggers,
@@ -25,7 +26,11 @@ vi.mock('@/api/ban', () => ({
   getTriggers: vi.fn(),
   createRule: vi.fn(),
   deleteRule: vi.fn(),
-  getViolations: vi.fn()
+  getViolations: vi.fn(),
+  getBannedDevices: vi.fn(),
+  banDevice: vi.fn(),
+  unbanDevice: vi.fn(),
+  resetDeviceGradient: vi.fn()
 }))
 
 vi.mock('vue-i18n', () => ({
@@ -428,11 +433,20 @@ function mockApi(options?: {
       }) as BanRule
   )
   vi.mocked(deleteRule).mockResolvedValue(true)
+  vi.mocked(getBannedDevices).mockResolvedValue({ devices: [], total: 0 })
   elMessageBoxConfirmSpy.mockResolvedValue('confirm')
 }
 
 function mountPage(): VueWrapper {
   return mount(ZBanRules)
+}
+
+/** 切换页内二级分区（规则与违规 / 账号封禁 / 设备封禁） */
+async function openSection(wrapper: VueWrapper, section: 'rules' | 'accounts' | 'devices') {
+  const button = wrapper.find(`[data-section="${section}"]`)
+  expect(button.exists()).toBe(true)
+  await button.trigger('click')
+  await flushPromises()
 }
 
 beforeEach(() => {
@@ -443,6 +457,7 @@ beforeEach(() => {
   vi.mocked(createRule).mockReset()
   vi.mocked(deleteRule).mockReset()
   vi.mocked(getViolations).mockReset()
+  vi.mocked(getBannedDevices).mockReset()
   elMessageErrorSpy.mockReset()
   elMessageSuccessSpy.mockReset()
   elMessageBoxConfirmSpy.mockReset()
@@ -543,13 +558,14 @@ it('renders banned users with pagination and re-queries on page change', async (
   mockApi({ usersSize: 25 })
   const wrapper = mountPage()
   await flushPromises()
+  await openSection(wrapper, 'accounts')
 
   expect(getBannedUsers).toHaveBeenCalledWith(1, 20, '')
   expect(wrapper.text()).toContain('张三')
   expect(wrapper.text()).toContain('高三8班')
   expect(wrapper.text()).toContain('manage.banRules.users.permanent')
 
-  const pagination = wrapper.findAll('.z-pagination-stub')[1]!
+  const pagination = wrapper.findAll('.z-pagination-stub')[0]!
   expect(pagination.attributes('data-total')).toBe('25')
   expect(pagination.attributes('data-page-size')).toBe('20')
 
@@ -565,8 +581,9 @@ it('searches banned users by name or student id', async () => {
   mockApi()
   const wrapper = mountPage()
   await flushPromises()
+  await openSection(wrapper, 'accounts')
 
-  const searchInput = wrapper.findAll('.el-input-stub')[1]!
+  const searchInput = wrapper.findAll('.el-input-stub')[0]!
   expect(searchInput.exists()).toBe(true)
   await searchInput.setValue('张三')
 
@@ -586,6 +603,7 @@ it('shows a clear empty state when no banned users exist', async () => {
   mockApi({ users: [], usersSize: 0 })
   const wrapper = mountPage()
   await flushPromises()
+  await openSection(wrapper, 'accounts')
 
   const empties = wrapper.findAll('.el-empty-stub')
   expect(empties.length).toBe(1)
@@ -614,8 +632,9 @@ it('falls back to the legacy-ban label when source is null and never prints an e
   })
   const wrapper = mountPage()
   await flushPromises()
+  await openSection(wrapper, 'accounts')
 
-  const usersTable = wrapper.findAll('.el-table-stub')[2]!
+  const usersTable = wrapper.findAll('.el-table-stub')[0]!
   expect(usersTable.text()).toContain('manage.banRules.users.sourceUnknown')
   expect(usersTable.text()).toContain('manage.banRules.users.reasonUnknown')
   expect(usersTable.text()).not.toBe('manage.banRules.users.sourceRule')
@@ -642,8 +661,9 @@ it('falls back to the legacy-ban label when source is rule without rule_code', a
   })
   const wrapper = mountPage()
   await flushPromises()
+  await openSection(wrapper, 'accounts')
 
-  expect(wrapper.findAll('.el-table-stub')[2]!.text()).toContain(
+  expect(wrapper.findAll('.el-table-stub')[0]!.text()).toContain(
     'manage.banRules.users.sourceUnknown'
   )
   expect(wrapper.text()).not.toContain('manage.banRules.users.sourceRule {')
@@ -659,8 +679,13 @@ it('shows empty states when both endpoints fail (e.g. 403)', async () => {
   await flushPromises()
 
   const empties = wrapper.findAll('.el-empty-stub')
-  expect(empties.length).toBe(3)
+  expect(empties.length).toBe(2)
   expect(empties.every((node) => node.text() === 'manage.banRules.loadFailed')).toBe(true)
+
+  await openSection(wrapper, 'accounts')
+  const accountEmpties = wrapper.findAll('.el-empty-stub')
+  expect(accountEmpties.length).toBe(1)
+  expect(accountEmpties[0]!.text()).toBe('manage.banRules.loadFailed')
 
   wrapper.unmount()
 })
@@ -889,6 +914,63 @@ it('disables delete for builtin rules with an explain tooltip', async () => {
   await flushPromises()
 
   expect(deleteRule).not.toHaveBeenCalled()
+
+  wrapper.unmount()
+})
+
+it('defaults to the rules section and keeps the account and device sections closed', async () => {
+  mockApi()
+  const wrapper = mountPage()
+  await flushPromises()
+
+  const nav = wrapper.find('.ban-sections')
+  expect(nav.exists()).toBe(true)
+  const items = nav.findAll('[data-section]')
+  expect(items.map((item) => item.attributes('data-section'))).toEqual([
+    'rules',
+    'accounts',
+    'devices'
+  ])
+  expect(items[0]!.classes()).toContain('is-active')
+  expect(items[0]!.attributes('aria-selected')).toBe('true')
+
+  // 默认只渲染规则表与违规记录表，设备列表不提前请求
+  expect(wrapper.findAll('.el-table-stub').length).toBe(2)
+  expect(wrapper.text()).toContain('manage.banRules.sections.rules')
+  expect(getBannedDevices).not.toHaveBeenCalled()
+
+  wrapper.unmount()
+})
+
+it('switches to the accounts section and renders the banned users table', async () => {
+  mockApi()
+  const wrapper = mountPage()
+  await flushPromises()
+  await openSection(wrapper, 'accounts')
+
+  const active = wrapper
+    .findAll('[data-section]')
+    .find((item) => item.classes().includes('is-active'))
+  expect(active!.attributes('data-section')).toBe('accounts')
+  expect(wrapper.findAll('.el-table-stub').length).toBe(1)
+  expect(wrapper.text()).toContain('张三')
+  expect(getBannedDevices).not.toHaveBeenCalled()
+
+  wrapper.unmount()
+})
+
+it('embeds the device bans section and loads the banned devices', async () => {
+  mockApi()
+  const wrapper = mountPage()
+  await flushPromises()
+  await openSection(wrapper, 'devices')
+
+  expect(getBannedDevices).toHaveBeenCalledWith(1, 20, '')
+  expect(wrapper.find('.device-bans').exists()).toBe(true)
+  expect(wrapper.findAll('.el-table-stub').length).toBe(1)
+  expect(wrapper.text()).toContain('manage.deviceBans.table.columns.xuehaiId')
+  expect(wrapper.text()).toContain('manage.deviceBans.manual.title')
+  expect(wrapper.text()).toContain('manage.deviceBans.manual.submit')
 
   wrapper.unmount()
 })

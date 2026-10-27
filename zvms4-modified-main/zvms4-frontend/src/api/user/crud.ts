@@ -161,15 +161,26 @@ async function deleteUserV3(uid: string, verificationToken?: string) {
   return response?.status >= 200 && response?.status < 300
 }
 
-async function putUserBanned(uid: string, banned: boolean, reason?: string) {
+async function putUserBanned(
+  uid: string,
+  banned: boolean,
+  reason?: string,
+  durationDays?: number | null
+) {
+  const data: Record<string, unknown> = { banned }
+  // 解封没有原因语义;封禁时只在真的填了原因才带 reason,避免把空串当"已填写"传下去,
+  // 让后端自己回退到默认原因。
+  if (banned && reason) data.reason = reason
+  // 时长只传天数(服务端按本地时区算到期时刻):null/undefined = 永久,字段直接省略,
+  // 老后端收到没有 duration_days 的 body 仍是永久封禁,兼容旧契约。
+  if (banned && durationDays != null) data.duration_days = durationDays
   const response = await axios({
     method: 'put',
     url: `/v3/users/${uid}/banned`,
-    // 解封没有原因语义;封禁时只在真的填了原因才带 reason,避免把空串当"已填写"传下去,
-    // 让后端自己回退到默认原因。
-    data: { banned, ...(banned && reason ? { reason } : {}) }
+    data
   })
-  return response?.status === 204
+  // 200 带 ban_until 响应体(便于提示到期时间);保留对 204 的兼容。
+  return response?.status >= 200 && response?.status < 300
 }
 
 async function createUserV3(

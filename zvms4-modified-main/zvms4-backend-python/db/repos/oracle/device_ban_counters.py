@@ -12,7 +12,8 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Any, AsyncIterator
 
-from sqlalchemy import delete, insert, select, update
+from sqlalchemy import delete, select, text, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import device_ban_counters as counters_tbl
@@ -40,6 +41,41 @@ def _get_stmt(xuehai_id: str):
     ).where(counters_tbl.c.xuehai_id == xuehai_id)
 
 
+#: ``ban_count += 1`` 的原子 upsert。Oracle 的 ``MERGE`` 是唯一能「不存在才插、
+#: 存在就加」的单语句写法：先查再插的写法在并发首罚时会让两个事务都看到「无行」，
+#: 一个插入成功、另一个撞主键——而调用方为了不让封禁消失把异常吞成第 1 档，
+#: 计数就永久少一次（梯度实际被压低一档）。
+_MERGE_INCREMENT = text(
+    """
+    MERGE INTO device_ban_counters target
+    USING (SELECT :xuehai_id AS xuehai_id FROM dual) source
+    ON (target.xuehai_id = source.xuehai_id)
+    WHEN MATCHED THEN
+        UPDATE SET target.ban_count = target.ban_count + 1,
+                   target.last_banned_at = :at
+    WHEN NOT MATCHED THEN
+        INSERT (xuehai_id, ban_count, last_banned_at)
+        VALUES (:xuehai_id, 1, :at)
+    """
+)
+
+
+def _merge_increment_stmt():
+    return _MERGE_INCREMENT
+
+
+def _increment_stmt(xuehai_id: str, at: datetime):
+    """``MERGE`` 撞唯一键后的补救：把这次计数补上（行已存在）。"""
+    return (
+        update(counters_tbl)
+        .where(counters_tbl.c.xuehai_id == xuehai_id)
+        .values(
+            ban_count=counters_tbl.c.ban_count + 1,
+            last_banned_at=at,
+        )
+    )
+
+
 def _row(mapping: Any) -> Row:
     return {
         "xuehai_id": mapping["xuehai_id"],
@@ -60,32 +96,31 @@ class OracleDeviceBanCountersRepo:
         return None if row is None else _row(row._mapping)
 
     async def increment(self, xuehai_id: str, at: datetime | None = None) -> int:
-        """``ban_count += 1`` 并返回新值；首次违规从 1 开始。"""
+        """``ban_count += 1`` 并返回新值；首次违规从 1 开始。
+
+        单语句 ``MERGE`` 保证并发首罚也只加一次：两个事务撞同一条「不存在」
+        时，后到者在主键上失败，转成 ``UPDATE ... ban_count + 1`` 重试，绝不
+        把异常吞成「第 1 档」（那等于让梯度永久少一档）。返回值一律**回读**
+        库里的行，不用「读到的旧值 + 1」推算。
+        """
         now = at or datetime.now()
         async with _session_for(self._session) as (session, owns):
-            existing = (await session.execute(_get_stmt(xuehai_id))).first()
-            if existing is None:
+            try:
                 await session.execute(
-                    insert(counters_tbl).values(
-                        xuehai_id=xuehai_id,
-                        ban_count=1,
-                        last_banned_at=now,
-                    )
+                    _merge_increment_stmt(),
+                    {"xuehai_id": xuehai_id, "at": now},
                 )
-                count = 1
-            else:
-                await session.execute(
-                    update(counters_tbl)
-                    .where(counters_tbl.c.xuehai_id == xuehai_id)
-                    .values(
-                        ban_count=counters_tbl.c.ban_count + 1,
-                        last_banned_at=now,
-                    )
-                )
-                count = int(existing._mapping["ban_count"] or 0) + 1
+            except IntegrityError:
+                # 并发首罚：另一个事务刚插入同一主键。语句级失败不影响事务，
+                # 直接补一次 UPDATE 即可。
+                await session.execute(_increment_stmt(xuehai_id, now))
+            row = (await session.execute(_get_stmt(xuehai_id))).first()
             if owns:
                 await session.commit()
-        return count
+        if row is None:
+            # 理论上不可达（MERGE 或 UPDATE 至少写成了行）；保守按首档返回。
+            return 1
+        return int(row._mapping["ban_count"] or 0)
 
     async def get_counts(self, xuehai_ids: list[str]) -> dict[str, int]:
         """批量取计数（列表页避免 N+1）；没有行的设备不出现在返回值里。"""
