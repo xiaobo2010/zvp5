@@ -68,14 +68,12 @@ import {
   ensureDeviceUnlock
 } from '@/plugins/device-unlock'
 import { clearTemporaryToken, temporaryToken } from '@/plugins/short-token'
-import { ZActivityMemberList } from '@/components'
 
 type RegistrationMode = Exclude<ActivityMode, 'hybrid'>
 type RowStatus = 'empty' | 'ok' | 'warning' | 'error' | 'saved'
 // 两个栏目共用同一张表格组件：新增只写新成员，修改只覆盖已录入成员。
 // 两组行各自独立、各自封顶 100，切换栏目时另一组先存起来。
 type EditorMode = 'create' | 'edit'
-type WorkspaceMode = 'members' | 'registration'
 
 interface RegistrationRow {
   key: string
@@ -214,7 +212,6 @@ const activityOptions = ref<Activity[]>([])
 const activityLoading = ref(false)
 const selectedActivityId = ref('')
 const selectedActivity = ref<Activity | null>(null)
-const workspaceMode = ref<WorkspaceMode>('members')
 
 // 当前显示的那一栏的行；另一栏的行存在 stashedRows 里，切换时换回来。
 const rows = ref<RegistrationRow[]>([])
@@ -1865,16 +1862,6 @@ async function retryLoadExisting() {
   await loadExistingMembers(activity._id)
 }
 
-function refreshMemberCount() {
-  const activityId = selectedActivityId.value
-  if (!activityId) return
-  void fetchExistingMemberPage(activityId, 1)
-    .then(({ total }) => {
-      if (selectedActivityId.value === activityId) savedCount.value = total
-    })
-    .catch(() => undefined)
-}
-
 // 两栏切换：当前行先收进 stashedRows，再把另一栏换出来。
 // 两栏各有自己的 100 行上限、自己的校验状态；活动、已录入索引和草稿共用。
 function switchEditorMode(next: EditorMode) {
@@ -2651,7 +2638,6 @@ async function initPage() {
   // 与「已录入」判定，两者都就绪后 revalidateAll 才能给出正确的行状态。
   await initIndex()
   const queryActivityId = routeActivityId()
-  if (queryActivityId) workspaceMode.value = 'registration'
   if (queryActivityId && queryActivityId !== draftOwnerId) {
     // 从活动详情/创建向导跳进来：切到这个活动，读它自己的草稿（不会带上前一个活动的行）
     await switchActivity(queryActivityId, false, true)
@@ -2872,44 +2858,6 @@ onBeforeUnmount(() => {
         </div>
       </section>
 
-      <section class="reg-card workspace-tabs-card">
-        <div class="workspace-tabs" role="tablist" aria-label="义工工作区">
-          <button
-            type="button"
-            role="tab"
-            class="workspace-tab"
-            :class="{ 'is-active': workspaceMode === 'members' }"
-            :aria-selected="workspaceMode === 'members'"
-            @click="workspaceMode = 'members'"
-          >
-            当前义工
-          </button>
-          <button
-            type="button"
-            role="tab"
-            class="workspace-tab"
-            :class="{ 'is-active': workspaceMode === 'registration' }"
-            :aria-selected="workspaceMode === 'registration'"
-            @click="workspaceMode = 'registration'"
-          >
-            新增 / 修改
-          </button>
-        </div>
-      </section>
-
-      <section v-if="workspaceMode === 'members'" class="reg-card members-card">
-        <ZActivityMemberList
-          v-if="selectedActivity"
-          :key="selectedActivity._id"
-          mode="inline"
-          :activity="selectedActivity"
-          :members-count="savedCount"
-          @refresh="refreshMemberCount"
-        />
-        <div v-else class="members-empty yg-empty">选择活动后查看该活动的义工</div>
-      </section>
-
-      <template v-if="workspaceMode === 'registration'">
       <!-- 两个栏目共用下面这张表：点哪个栏目就显示哪个，另一个先收起来 -->
       <section class="reg-card editor-tabs-card">
         <div class="editor-tabs" role="tablist" aria-label="登记栏目">
@@ -2993,6 +2941,7 @@ onBeforeUnmount(() => {
       </section>
 
       <section class="reg-card toolbar-card">
+        <ElButton :icon="Plus" @click="addRow">新增行</ElButton>
         <ElButton :icon="CopyDocument" @click="pasteFromClipboard">从剪贴板粘贴</ElButton>
         <ElButton :icon="UploadFilled" @click="triggerImport">导入表格</ElButton>
         <ElButton :icon="Refresh" :loading="indexLoading || indexBooting" @click="refreshIndex()">
@@ -3300,11 +3249,7 @@ onBeforeUnmount(() => {
             </tbody>
           </table>
         </div>
-        <div class="grid-foot">
-          <ElButton :icon="Plus" @click="addRow">新增行</ElButton>
-        </div>
       </section>
-      </template>
     </div>
 
     <!-- 覆盖确认：把这次提交会动到的已有记录摊开，确认后才写库 -->
@@ -3689,53 +3634,6 @@ onBeforeUnmount(() => {
 /* 两栏切换：选中项用主色描边 + 浅底，未选中保持平面，点哪个显示哪个 */
 .editor-tabs-card {
   padding: var(--yg-space-2);
-}
-
-.workspace-tabs-card {
-  padding: var(--yg-space-2);
-}
-
-.workspace-tabs {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: var(--yg-space-2);
-}
-
-.workspace-tab {
-  min-height: 44px;
-  border: 1px solid var(--yg-border-subtle);
-  border-radius: var(--yg-radius-md);
-  background: var(--yg-bg-surface);
-  color: var(--yg-text-secondary);
-  font: inherit;
-  font-weight: var(--yg-font-weight-medium);
-  cursor: pointer;
-}
-
-.workspace-tab:hover {
-  border-color: var(--yg-color-primary);
-}
-
-.workspace-tab.is-active {
-  border-color: var(--yg-color-primary);
-  background: var(--yg-color-primary-soft);
-  color: var(--yg-text-primary);
-  box-shadow: var(--yg-shadow-sm);
-}
-
-.workspace-tab:focus-visible {
-  outline: 2px solid var(--yg-color-primary);
-  outline-offset: 2px;
-}
-
-.members-card {
-  padding: var(--yg-space-3);
-}
-
-.members-empty {
-  min-height: 12rem;
-  display: grid;
-  place-items: center;
 }
 
 .editor-tabs {
@@ -4295,14 +4193,6 @@ onBeforeUnmount(() => {
   min-height: 15rem;
   max-height: calc(100vh - 22.5rem);
   overflow: auto;
-}
-
-.grid-foot {
-  display: flex;
-  justify-content: flex-start;
-  padding: var(--yg-space-3) var(--yg-space-4);
-  border-top: 1px solid var(--yg-border-subtle);
-  background: var(--yg-bg-surface);
 }
 
 .reg-grid {
