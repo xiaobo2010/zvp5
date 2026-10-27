@@ -11,7 +11,7 @@ import {
   ElEmpty,
   ElResult
 } from 'element-plus'
-import { nextTick, ref, toRefs, watch } from 'vue'
+import { nextTick, ref, toRefs, watch, type Ref } from 'vue'
 import type { TableInstance } from 'element-plus'
 import api from '@/api'
 import { useI18n } from 'vue-i18n'
@@ -55,7 +55,8 @@ function shortage(mode: TimeMode, value: number) {
   return (standards[mode] - value).toFixed(1)
 }
 
-const tableRef = ref<TableInstance>()
+/** 模板 ref 需以 Ref 形式传入，不能直接传实例类型 */
+const tableRef: Ref<TableInstance | undefined> = ref<TableInstance>()
 
 /** 分页行 + 卡片下边距 + 页面底部留白 */
 const BOTTOM_ROOM = 96
@@ -152,10 +153,10 @@ function handleSearch() {
 
 async function onSortChange(data: {
   column: unknown
-  prop: string
-  order?: 'ascending' | 'descending'
+  prop: string | null
+  order: 'ascending' | 'descending' | null
 }) {
-  if (data.order) {
+  if (data.order && data.prop) {
     sort.value = data.prop
     asc.value = data.order === 'ascending'
   } else {
