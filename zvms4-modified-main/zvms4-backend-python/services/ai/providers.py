@@ -21,7 +21,7 @@ from typing import AsyncIterator
 import httpx
 
 from . import config as ai_config
-from . import prompt_cache
+from . import credentials, prompt_cache
 from .routing import RouteError
 
 _logger = logging.getLogger(__name__)
@@ -175,7 +175,41 @@ def _upstream_error(name: str, status_code: int, body: str) -> RouteError:
     return RouteError("AI_UPSTREAM_REJECTED", "upstream rejected the request", 502)
 
 
+async def guard_endpoint(entry: dict) -> None:
+    """发请求前复核 ``base_url`` 当前解析到哪，挡住「录入时公网、请求时内网」。
+
+    录入侧的校验（``credentials._clean_base_url``）只看得到**写入那一刻**的 DNS；
+    之后把域名解析改成内网地址（DNS rebinding）就能让网关去打
+    ``169.254.169.254`` / ``127.0.0.1``。这里在每次上游调用前用同一套私网黑名单
+    再看一眼，判定带 60 秒缓存。
+
+    两条**不做**复核的快路径，都是为了不给正常请求加延迟：
+
+    * ``server`` 作用域 —— ``settings.AI_PROVIDERS`` 只由运维改，且可能是内网自建
+      网关（vLLM / LiteLLM），按「运维自己的配置」对待；
+    * host 命中 :func:`services.ai.config.upstream_host_allowlist`（官方域名）。
+
+    只记 host，不记完整 URL/上游报文：路径与 query 都可能带凭据。
+    """
+    if not isinstance(entry, dict):
+        return
+    if entry.get("scope") == credentials.SCOPE_SERVER:
+        return
+    host = _host(entry)
+    if not host:
+        return
+    allowed = ai_config.upstream_host_allowlist()
+    if "*" in allowed or host in allowed:
+        return
+    if await credentials.host_is_private(host):
+        _logger.warning("ai upstream %s blocked: resolves to a private address", host)
+        raise RouteError(
+            "AI_UPSTREAM_UNREACHABLE", "upstream endpoint is not reachable", 502
+        )
+
+
 async def chat_completion(payload: dict, entry: dict, api_key: str) -> dict:
+    await guard_endpoint(entry)
     client = _client_instance()
     try:
         response = await client.post(
@@ -205,6 +239,7 @@ async def chat_completion(payload: dict, entry: dict, api_key: str) -> dict:
 async def chat_completion_stream(
     payload: dict, entry: dict, api_key: str
 ) -> AsyncIterator[bytes]:
+    await guard_endpoint(entry)
     client = _client_instance()
     try:
         async with client.stream(

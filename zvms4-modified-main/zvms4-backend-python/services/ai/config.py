@@ -708,3 +708,107 @@ def _host_only(url: object) -> str:
         return urlsplit(url).hostname or ""
     except ValueError:
         return ""
+
+
+# ---------------------------------------------------------------------------
+# 请求体上限（``/v1/chat/completions``）
+# ---------------------------------------------------------------------------
+#
+# 网关以前收裸 dict：一个 100MB 的 body 会被 FastAPI 整个读进内存再解析，单 worker
+# 下这是「一个请求把进程内存打满」的入口。三档上限互相独立：
+#
+# * ``body_bytes`` —— 总字节（先看 Content-Length，再按实际读取二次校验）；
+# * ``messages`` —— 条数（防「一万条空消息」这种结构化膨胀）；
+# * ``content_chars`` —— 单条正文（``content`` 是字符串，或 multimodal 的 text 段）。
+_CHAT_MAX_BODY_BYTES = 4 * 1024 * 1024
+_CHAT_MAX_MESSAGES = 200
+_CHAT_MAX_CONTENT_CHARS = 120_000
+
+
+def _runtime_positive_int(override_key: str, setting_name: str, fallback: int) -> int:
+    """运行期设置优先（在线改完即时生效），非法值回退 ``config`` 里的常量。"""
+    override = settings_runtime.get_override(override_key)
+    if isinstance(override, int) and not isinstance(override, bool) and override > 0:
+        return override
+    return _positive_int(getattr(settings, setting_name, fallback), fallback)
+
+
+def chat_max_body_bytes() -> int:
+    """单次 chat 请求体的字节上限（默认 4MiB）。"""
+    return _runtime_positive_int(
+        "ai.chat_max_body_bytes", "AI_CHAT_MAX_BODY_BYTES", _CHAT_MAX_BODY_BYTES
+    )
+
+
+def chat_max_messages() -> int:
+    """单次 chat 请求 ``messages`` 的条数上限（默认 200）。"""
+    return _runtime_positive_int(
+        "ai.chat_max_messages", "AI_CHAT_MAX_MESSAGES", _CHAT_MAX_MESSAGES
+    )
+
+
+def chat_max_content_chars() -> int:
+    """单条 ``content`` 的字符上限（默认 120000）。"""
+    return _runtime_positive_int(
+        "ai.chat_max_content_chars",
+        "AI_CHAT_MAX_CONTENT_CHARS",
+        _CHAT_MAX_CONTENT_CHARS,
+    )
+
+
+# ---------------------------------------------------------------------------
+# 请求时 SSRF 复核的白名单快路径
+# ---------------------------------------------------------------------------
+#
+# 官方端点永远是公网 DNS：给它们留一条「一次 DNS 都不做」的快路径，正常请求的
+# 延迟与加固前完全一致。自建/中转上游要享受同样的快路径，用
+# ``settings.AI_SSRF_ALLOW_HOSTS`` 显式声明（``"*"`` = 全部跳过，只在「所有上游
+# 都在内网、由我们自己运维」的部署里使用）。
+_OFFICIAL_UPSTREAM_HOSTS = frozenset(
+    {
+        "api.openai.com",
+        "api.anthropic.com",
+        "api.deepseek.com",
+        "api.siliconflow.cn",
+        "api.moonshot.cn",
+        "api.mistral.ai",
+        "api.groq.com",
+        "api.together.xyz",
+        "openrouter.ai",
+        "open.bigmodel.cn",
+        "dashscope.aliyuncs.com",
+        "generativelanguage.googleapis.com",
+    }
+)
+
+
+def upstream_host_allowlist() -> frozenset[str]:
+    """请求时 SSRF 复核跳过 DNS 的 host 白名单（精确匹配，``"*"`` = 全部跳过）。
+
+    净化规则与 :func:`stream_usage_hosts` 同一份实现：带路径/端口/空格的条目逐个
+    丢弃——白名单是**放宽**安全判定，一条写歪的条目不该被当成通配符。
+    """
+    return _sanitised_hosts(
+        _OFFICIAL_UPSTREAM_HOSTS, getattr(settings, "AI_SSRF_ALLOW_HOSTS", None)
+    )
+
+
+# ---------------------------------------------------------------------------
+# 定时任务配额
+# ---------------------------------------------------------------------------
+
+# 学生会（department）能建几条定时任务。admin 不限（平台运维本来就要能造样例），
+# 其他角色连创建入口都没有（路由层 403）——所以这里只有 department 的数值。
+AI_SCHEDULE_QUOTA_DEPARTMENT = 1
+
+
+def schedule_quota_department() -> int:
+    """``ai.schedule_quota_department``：在线可调，默认 :data:`AI_SCHEDULE_QUOTA_DEPARTMENT`。
+
+    0 是合法取值（临时关闭学生会的创建能力），所以这里只排除负数与非整数，
+    不能像额度那样把 0 当非法值回退——那会让「关掉」这个意图变成「恢复默认 1」。
+    """
+    override = settings_runtime.get_override("ai.schedule_quota_department")
+    if isinstance(override, int) and not isinstance(override, bool) and override >= 0:
+        return override
+    return int(AI_SCHEDULE_QUOTA_DEPARTMENT)

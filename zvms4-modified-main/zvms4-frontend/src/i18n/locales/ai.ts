@@ -9,7 +9,8 @@ export const zhCN = {
     'quota-admin': '额度管理',
     health: '健康状态',
     logs: '调用日志',
-    monitor: '行为监控'
+    monitor: '行为监控',
+    scheduled: '定时任务'
   },
   common: {
     refresh: '刷新',
@@ -634,6 +635,147 @@ export const zhCN = {
       requestId: '请求编号'
     }
   },
+  schedule: {
+    title: '定时任务',
+    subtitle: '到点自动执行提示词，每跑一次都消耗你自己的额度。',
+    notice: '到期时执行管理员已审核通过的提示词',
+    noticeDesc:
+      '执行使用你自己的可用 Key，并计入你的本月额度；未通过审核的任务不会执行。',
+    noticeExtra: '间隔最小 15 分钟；修改提示词会让任务重新进入审核。',
+    quotaTitle: '任务配额',
+    quotaUnlimited: '不限',
+    quotaUsed: '已用 {used}/{limit}',
+    create: '新建任务',
+    loadMore: '加载更多',
+    refresh: '刷新',
+    retry: '重试',
+    empty: '还没有定时任务',
+    loadFailed: '任务列表加载失败',
+    quotaExceeded: '已达任务配额上限，请先删除一条再新建。',
+    formCreate: '新建定时任务',
+    formEdit: '编辑定时任务',
+    fields: {
+      name: '名称',
+      namePlaceholder: '一句话说明这条任务做什么',
+      prompt: '提示词',
+      promptPlaceholder: '写下到点要交给模型的内容',
+      promptCount: '{count} / {max} 字',
+      scheduleKind: '排程方式',
+      interval: '间隔（分钟）',
+      intervalHint: '最小 15 分钟；每跑一次都会消耗一次额度。',
+      cron: 'CRON 表达式',
+      cronPlaceholder: '0 9 * * *',
+      cronHint: '5 段式 crontab，按上海时区解释，例如 0 9 * * * 表示每天上午 9 点。',
+      model: '模型',
+      modelPlaceholder: '留空使用平台默认模型',
+      enabled: '启用'
+    },
+    kind: {
+      interval: '固定间隔',
+      cron: 'CRON 表达式'
+    },
+    promptChanged: '修改提示词将重新进入审核',
+    validation: {
+      nameRequired: '请填写名称',
+      nameTooLong: '名称最多 128 字',
+      promptRequired: '请填写提示词',
+      promptTooLong: '提示词最多 20000 字',
+      intervalInvalid: '间隔至少 15 分钟，且必须是整数',
+      cronInvalid: '不是合法的 5 段式 crontab'
+    },
+    createdNotice: '任务已提交审核',
+    savedNotice: '任务已保存',
+    deletedNotice: '任务已删除',
+    reviewNotice: '审核结论已保存',
+    runNotice: '已提交执行',
+    enabledOn: '任务已启用',
+    enabledOff: '任务已停用',
+    deleteConfirm: '确定删除任务「{name}」吗？删除后不再执行，已产生的运行记录会保留。',
+    deleteConfirmTitle: '删除该定时任务？',
+    runNow: '立即执行',
+    runNowHint: '只有审核通过的任务可以立即执行',
+    history: '执行历史',
+    reviewAction: '审核',
+    columns: {
+      name: '名称',
+      reviewStatus: '审核状态',
+      lastStatus: '最近状态',
+      plan: '排程',
+      nextRun: '下次执行',
+      runCount: '执行次数',
+      enabled: '启用',
+      actions: '操作',
+      owner: '所有者'
+    },
+    review: {
+      draft: '草稿',
+      pending: '待审核',
+      approved: '已通过',
+      rejected: '已驳回'
+    },
+    last: {
+      none: '尚未执行',
+      queued: '已入队',
+      skipped_review: '未审核跳过',
+      skipped_busy: '忙碌跳过',
+      skipped_no_key: '无可用凭据',
+      skipped_quota: '额度不足',
+      skipped_owner: '账号不可用',
+      skipped_flagged: '内容拦截',
+      failed: '执行失败'
+    },
+    lastHint: {
+      queued: '已进入执行队列，正在等待执行。',
+      skipped_review: '提示词尚未通过管理员审核，这一轮没有执行。',
+      skipped_busy: '你还有别的运行在进行中，这一轮被跳过。',
+      skipped_no_key: '你没有可用的 AI 凭据，任务无法执行。',
+      skipped_quota: '本月额度已用尽，这一轮被跳过。',
+      skipped_owner: '任务所有者不存在或已被封禁，这一轮被跳过。',
+      skipped_flagged: '提示词被内容规则拦截，这一轮没有执行。',
+      failed: '执行过程中出错，可在执行历史里看详情。'
+    },
+    plan: {
+      interval: '每 {minutes} 分钟',
+      cron: 'cron {expr}',
+      none: '未排期'
+    },
+    admin: {
+      title: '管理员视图',
+      hint: '默认列出全部用户的任务；选人可只看某人，审核状态由服务端过滤。',
+      owner: '按人查看',
+      ownerPlaceholder: '搜索姓名或学号',
+      reviewFilter: '审核状态',
+      filterAll: '全部',
+      filterPending: '待审核',
+      filterApproved: '已通过',
+      filterRejected: '已驳回',
+      filterDraft: '草稿'
+    },
+    reviewDialog: {
+      title: '审核任务',
+      approve: '通过',
+      reject: '驳回',
+      note: '备注',
+      notePlaceholder: '驳回时说明原因，便于对方修改',
+      submit: '提交结论'
+    },
+    runs: {
+      title: '执行历史',
+      empty: '这条任务还没有执行记录',
+      loadFailed: '执行历史加载失败',
+      status: '状态',
+      model: '模型',
+      startedAt: '开始',
+      finishedAt: '结束',
+      error: '错误',
+      statusQueued: '排队中',
+      statusRunning: '执行中',
+      statusSucceeded: '已完成',
+      statusFailed: '失败',
+      statusCancelled: '已中止',
+      statusInterrupted: '已中断'
+    }
+  },
   ocr: {
     action: '识别',
     running: '识别中',
@@ -860,6 +1002,70 @@ export const zhCN = {
     AI_CONTEXT_UNAVAILABLE: {
       title: '上下文暂不可用',
       hint: '压缩上下文失败，服务端已降级为截断处理，本次回答可能不完整。'
+    },
+    AI_SCHEDULE_FORBIDDEN: {
+      title: '没有操作该任务的权限',
+      hint: '定时任务只能由创建者或管理员操作。'
+    },
+    AI_SCHEDULE_NOT_FOUND: {
+      title: '任务不存在',
+      hint: '这条任务可能已被删除，请刷新列表。'
+    },
+    AI_SCHEDULE_BAD_OID: {
+      title: '任务标识不合法',
+      hint: '请重新选择要查看的用户。'
+    },
+    AI_SCHEDULE_BAD_STATUS: {
+      title: '审核状态取值不合法',
+      hint: '只能按待审核、已通过、已驳回或草稿筛选。'
+    },
+    AI_SCHEDULE_BAD_KIND: {
+      title: '排程方式不支持',
+      hint: '请选择固定间隔或 CRON 表达式。'
+    },
+    AI_SCHEDULE_BAD_DECISION: {
+      title: '审核结论不合法',
+      hint: '请选择通过或驳回。'
+    },
+    AI_SCHEDULE_BAD_CRON: {
+      title: 'CRON 表达式不合法',
+      hint: '请填写 5 段式 crontab，例如 0 9 * * *。'
+    },
+    AI_SCHEDULE_BAD_INTERVAL: {
+      title: '执行间隔不合法',
+      hint: '间隔至少 15 分钟，且必须是整数。'
+    },
+    AI_SCHEDULE_QUOTA_EXCEEDED: {
+      title: '任务配额已用完',
+      hint: '学生会角色最多保留 1 条定时任务，请先删除一条再新建。'
+    },
+    AI_SCHEDULE_NOT_APPROVED: {
+      title: '任务尚未通过审核',
+      hint: '只有审核通过的任务可以立即执行。'
+    },
+    AI_SCHEDULE_BUSY: {
+      title: '已有任务在执行',
+      hint: '你还有别的运行在进行，请等它结束后再试。'
+    },
+    AI_SCHEDULE_NO_OWNER: {
+      title: '任务所有者不可用',
+      hint: '所有者不存在或已被封禁，任务无法执行。'
+    },
+    AI_SCHEDULE_NO_PROVIDER: {
+      title: '没有可用凭据',
+      hint: '你没有可用的 AI Key，请先在 Key 管理里录入。'
+    },
+    AI_SCHEDULE_QUOTA_EXHAUSTED: {
+      title: '本月额度已用尽',
+      hint: '额度不足，任务无法执行。'
+    },
+    AI_SCHEDULE_MODERATION_REJECTED: {
+      title: '提示词被内容规则拦截',
+      hint: '请修改提示词后重新提交审核。'
+    },
+    AI_SCHEDULE_CONVERSATION_FAILED: {
+      title: '任务会话创建失败',
+      hint: '服务端没能为这条任务准备会话，请稍后重试。'
     },
     PERMISSION_DENIED: {
       title: '没有权限',

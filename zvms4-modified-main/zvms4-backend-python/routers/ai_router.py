@@ -26,7 +26,6 @@ from uuid import uuid4
 from fastapi import (
     APIRouter,
     BackgroundTasks,
-    Body,
     Depends,
     HTTPException,
     Query,
@@ -66,7 +65,14 @@ _logger = logging.getLogger(__name__)
 
 MAX_PROVIDER_ATTEMPTS = 2
 RETRYABLE_CODES = frozenset({"AI_UPSTREAM_RATE_LIMIT", "AI_UPSTREAM_ERROR", "AI_TIMEOUT"})
-REJECTED_CODES = frozenset({"AI_NO_PROVIDER", "AI_UPSTREAM_AUTH", "AI_UPSTREAM_REJECTED"})
+REJECTED_CODES = frozenset(
+    {
+        "AI_NO_PROVIDER",
+        "AI_UPSTREAM_AUTH",
+        "AI_UPSTREAM_REJECTED",
+        "AI_UPSTREAM_UNREACHABLE",
+    }
+)
 PERSONAL_SCOPE = credentials.SCOPE_PERSONAL
 
 # 场景来源：前端在 AI 调用封装里带一个 ``X-AI-Scene`` 头（`chat` /
@@ -86,6 +92,7 @@ STREAM_ERROR_MESSAGES = {
     "AI_UPSTREAM_RATE_LIMIT": "上游模型限流，请稍后重试。",
     "AI_UPSTREAM_REJECTED": "上游模型拒绝了本次请求，请检查模型与参数。",
     "AI_UPSTREAM_ERROR": "上游模型暂时不可用，请稍后重试。",
+    "AI_UPSTREAM_UNREACHABLE": "上游地址不可用，请联系管理员检查供应商配置。",
 }
 STREAM_ERROR_FALLBACK = "AI_UPSTREAM_ERROR"
 STREAM_DONE_FRAME = b"data: [DONE]\n\n"
@@ -980,6 +987,10 @@ async def create_ocr_engine(
     log=Depends(inject_log),
 ):
     _require_admin(user)
+    # 上游地址的私网校验必须在落库前：识别请求由**服务端**发、带管理员凭证，
+    # 允许指向 127.0.0.1/169.254.169.254 等于把网关变成内网跳板。
+    if await ocr_engines.blocked_endpoint(payload.config, payload.secret):
+        raise HTTPException(status_code=400, detail="AI_OCR_ENDPOINT_BLOCKED")
     try:
         view = await ocr_engines_admin.create_engine(**payload.model_dump())
     except RouteError as exc:
@@ -1001,6 +1012,10 @@ async def update_ocr_engine(
 ):
     _require_admin(user)
     target = validate_object_id(oid)
+    # 只校验**这次提交**的 config/secret：没传的字段不会被改动，存量行在写入时
+    # 已经过了同一道闸（否则「改个优先级」都要重新做一次 DNS）。
+    if await ocr_engines.blocked_endpoint(payload.config, payload.secret):
+        raise HTTPException(status_code=400, detail="AI_OCR_ENDPOINT_BLOCKED")
     try:
         view = await ocr_engines_admin.update_engine(
             target, payload.model_dump(exclude_unset=True)
@@ -1257,9 +1272,123 @@ async def list_models(user=Depends(get_ai_client)):
     }
 
 
+# ---------------------------------------------------------------------------
+# 请求体上限（OpenAI 兼容面）
+# ---------------------------------------------------------------------------
+
+# 错误码与 OpenAI 的形状保持一致：``413 + invalid_request_error`` 是客户端认得
+# 的那一套（SDK 会把它当「请求太大」而不是重试）。
+BODY_TOO_LARGE_CODE = "request_too_large"
+INVALID_BODY_CODE = "invalid_request_body"
+TOO_MANY_MESSAGES_CODE = "too_many_messages"
+MESSAGE_TOO_LONG_CODE = "message_too_long"
+
+
+def _too_large_error(limit: int, request_id: str) -> JSONResponse:
+    return _openai_error(
+        413,
+        BODY_TOO_LARGE_CODE,
+        f"request body must not exceed {limit} bytes",
+        request_id=request_id,
+    )
+
+
+async def _read_chat_payload(
+    request: Request, request_id: str
+) -> tuple[dict | None, JSONResponse | None]:
+    """流式读 body 并解析成 dict；超限/非法时返回 OpenAI 错误体。
+
+    ``Content-Length`` 只是**第一道**（能让 99% 的超大请求连读都不读）：它由客户端
+    自己声明，分块传输（chunked）时根本没有，撒谎也不会被校验——所以边读边累计
+    实际字节数，再比一次。
+    """
+    limit = ai_config.chat_max_body_bytes()
+    declared = request.headers.get("content-length")
+    if declared:
+        try:
+            if int(declared) > limit:
+                return None, _too_large_error(limit, request_id)
+        except ValueError:
+            # 声明一个非数字的 Content-Length 不改变结论：按实际读取量判定。
+            pass
+
+    chunks: list[bytes] = []
+    size = 0
+    async for chunk in request.stream():
+        size += len(chunk)
+        if size > limit:
+            return None, _too_large_error(limit, request_id)
+        chunks.append(chunk)
+
+    raw = b"".join(chunks)
+    try:
+        payload = json.loads(raw) if raw else None
+    except (ValueError, UnicodeDecodeError):
+        return None, _openai_error(
+            400,
+            INVALID_BODY_CODE,
+            "request body must be valid JSON",
+            request_id=request_id,
+        )
+    if not isinstance(payload, dict):
+        return None, _openai_error(
+            400,
+            INVALID_BODY_CODE,
+            "request body must be a JSON object",
+            request_id=request_id,
+        )
+    return payload, None
+
+
+def _content_chars(content: object) -> int:
+    """一条消息的正文长度；multimodal 数组只算 text 段（图片按字节由体积上限管）。"""
+    if isinstance(content, str):
+        return len(content)
+    if isinstance(content, list):
+        total = 0
+        for part in content:
+            if isinstance(part, str):
+                total += len(part)
+            elif isinstance(part, dict):
+                text = part.get("text")
+                if isinstance(text, str):
+                    total += len(text)
+        return total
+    return 0
+
+
+def _payload_limit_error(payload: dict, request_id: str) -> JSONResponse | None:
+    """条数/单条长度的结构上限。``messages`` 类型不对时**不在这里**判（照旧透传）。"""
+    messages = payload.get("messages")
+    if not isinstance(messages, list):
+        return None
+
+    max_messages = ai_config.chat_max_messages()
+    if len(messages) > max_messages:
+        return _openai_error(
+            400,
+            TOO_MANY_MESSAGES_CODE,
+            f"messages must contain at most {max_messages} items",
+            request_id=request_id,
+        )
+
+    max_chars = ai_config.chat_max_content_chars()
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        if _content_chars(message.get("content")) > max_chars:
+            return _openai_error(
+                400,
+                MESSAGE_TOO_LONG_CODE,
+                f"each message content must be at most {max_chars} characters",
+                request_id=request_id,
+            )
+    return None
+
+
 @router.post("/v1/chat/completions")
 async def chat_completions(
-    payload: dict = Body(...),
+    request: Request,
     user=Depends(get_ai_client),
     purpose: str | None = Depends(ai_scene),
 ):
@@ -1267,6 +1396,17 @@ async def chat_completions(
     user_oid = user["id"]
     # 角色快照只进审计（V033）：chat / OCR 不因它改变任何判定，缺省 NULL = 未采集。
     scene_roles = audit.roles_snapshot(user.get("per"))
+
+    # 体积/结构上限必须在读 body 之前定下来：``Body(...)`` 的形式里 FastAPI 会先把
+    # 整个请求体读进内存再解析，一个 500MB 的 body 就是「一个请求打满单 worker 的
+    # 内存」。这里改成自己流式读，边读边比上限。**不落审计**：这是解析前的拒绝，
+    # 落审计等于给「拿垃圾 body 刷 413」开了个写库放大器。
+    payload, limit_error = await _read_chat_payload(request, request_id)
+    if limit_error is not None:
+        return limit_error
+    structure_error = _payload_limit_error(payload, request_id)
+    if structure_error is not None:
+        return structure_error
 
     # prompt 受控留存（AI_PROMPT_AUDIT）：只在这里挂一次，覆盖 chat 与
     # markdown-assistant 两种 Scene（OCR 没有 prompt，不涉及）。是否真的留、留

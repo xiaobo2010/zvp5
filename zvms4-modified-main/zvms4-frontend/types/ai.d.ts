@@ -698,3 +698,106 @@ export interface AiConversationDeleteResult {
   /** 一并删掉的运行记录数。 */
   runs: number
 }
+
+/* ---------------------------------------------------------------------------
+   定时任务（/ai/scheduled-tasks）
+   契约见后端 routers/ai_schedule_router.py 与 services/ai/scheduled_runner.py。
+   字段名与后端 _view / _run_view 逐字对齐，前端不自造字段。
+   --------------------------------------------------------------------------- */
+
+/** 排程方式：固定间隔或 5 段式 crontab。 */
+export type AiScheduledScheduleKind = 'interval' | 'cron'
+
+/**
+ * 审核状态。
+ *
+ * draft 由「改了提示词」产生（上一轮的审核结论已失效）；
+ * pending 是新建后的初始状态；只有 approved 会被调度器真正执行。
+ */
+export type AiScheduledReviewStatus = 'draft' | 'pending' | 'approved' | 'rejected'
+
+/** 审核裁决。 */
+export type AiScheduledReviewDecision = 'approved' | 'rejected'
+
+/**
+ * 最近一次执行结论。
+ *
+ * queued = 已入队；failed = 执行出错；
+ * skipped_* = 前置检查拦下的那一轮（未审核 / 正在跑 / 没有可用凭据 /
+ * 额度用尽 / 所有者不可用 / 内容被规则拦截），后端在 last_error 里写明原因。
+ */
+export type AiScheduledLastStatus =
+  | 'queued'
+  | 'skipped_review'
+  | 'skipped_busy'
+  | 'skipped_no_key'
+  | 'skipped_quota'
+  | 'skipped_owner'
+  | 'skipped_flagged'
+  | 'failed'
+
+/** 一个定时任务的视图（列表、创建、更新、审核共用同一形状）。 */
+export interface AiScheduledTask {
+  oid: string
+  owner_oid: string
+  name: string
+  prompt_text: string
+  review_status: AiScheduledReviewStatus
+  reviewed_by_oid: string | null
+  reviewed_at: string | null
+  review_note: string | null
+  schedule_kind: AiScheduledScheduleKind
+  interval_minutes: number
+  cron_expr: string | null
+  enabled: boolean
+  /** null = 用服务端默认模型。 */
+  model: string | null
+  last_run_at: string | null
+  next_run_at: string | null
+  run_count: number
+  last_status: AiScheduledLastStatus | null
+  /** 最近一次失败或跳过的原因（后端截断到 512 字）。 */
+  last_error: string | null
+  created_at: string | null
+  updated_at: string | null
+}
+
+/** 建任务：审核状态由服务端决定（创建即 pending），前端不传。 */
+export interface AiScheduledTaskCreateInput {
+  name: string
+  prompt_text: string
+  schedule_kind: AiScheduledScheduleKind
+  interval_minutes: number
+  cron_expr?: string | null
+  model?: string | null
+}
+
+/** 部分更新：只传要改的字段；改 prompt_text 会把审核结论打回 draft。 */
+export interface AiScheduledTaskUpdateInput {
+  name?: string
+  prompt_text?: string
+  schedule_kind?: AiScheduledScheduleKind
+  interval_minutes?: number
+  cron_expr?: string | null
+  model?: string | null
+  enabled?: boolean
+}
+
+/** 一次执行记录。 */
+export interface AiScheduledTaskRun {
+  run_id: string
+  status: string
+  model: string | null
+  stop_reason: string | null
+  error_code: string | null
+  error_message: string | null
+  created_at: string | null
+  started_at: string | null
+  finished_at: string | null
+}
+
+/** 立即执行的受理结果。 */
+export interface AiScheduledRunNowResult {
+  run_id: string
+  status: 'queued'
+}

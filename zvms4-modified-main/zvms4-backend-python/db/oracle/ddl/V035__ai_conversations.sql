@@ -158,6 +158,7 @@ CREATE TABLE ai_runs (
   conversation_oid VARCHAR2(32 CHAR) NOT NULL,
   owner_oid VARCHAR2(24 CHAR) NOT NULL,
   client_msg_id VARCHAR2(64 CHAR),
+  task_oid VARCHAR2(24 CHAR),
   status VARCHAR2(16 CHAR) NOT NULL,
   model VARCHAR2(120 CHAR),
   stop_reason VARCHAR2(24 CHAR),

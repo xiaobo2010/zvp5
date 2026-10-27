@@ -1477,6 +1477,7 @@ ai_runs = Table(
     Column("client_msg_id", VARCHAR2(64), nullable=True),
     Column("status", VARCHAR2(16), nullable=False),
     Column("model", VARCHAR2(120), nullable=True),
+    Column("task_oid", VARCHAR2(24), nullable=True),
     Column("stop_reason", VARCHAR2(24), nullable=True),
     Column("rounds", _int3, nullable=True),
     Column("error_code", VARCHAR2(40), nullable=True),
@@ -1525,6 +1526,11 @@ Index(
     ai_runs.c.created_at.desc(),
 )
 Index("ix_ai_runs_status_heartbeat", ai_runs.c.status, ai_runs.c.heartbeat_at)
+Index(
+    "ix_ai_runs_task_created",
+    ai_runs.c.task_oid,
+    ai_runs.c.created_at.desc(),
+)
 
 
 # ---------------------------------------------------------------------------
@@ -1573,6 +1579,69 @@ user_quota_overrides = Table(
 # AI_PROMPT_AUDIT 的唯一索引是 (user_oid, created_at)，前导列不匹配按时间做的
 # 全用户保留期清理；补一条单列索引（V036）。
 Index("ix_ai_prompt_audit_created", ai_prompt_audit.c.created_at)
+
+
+# ---------------------------------------------------------------------------
+# AI_SCHEDULED_TASKS  ← new (用户自建的周期性智能体任务; V040)
+#   REVIEW_STATUS 与 ENABLED 是两个事实：改 prompt 要重新过审，但排程不必重建，
+#   所以不能合并成一个「是否可用」的字段。
+#   LAST_RUN_AT 兼作 claim 的 CAS 期望值：`WHERE ... AND last_run_at=:expected`
+#   让并发的两个 tick 只有一个能领取；进程崩溃也不会把任务卡死（下一次 tick
+#   重新读快照，expected 就是崩溃时写下的时间戳）。
+#   NEXT_RUN_AT 是调度器唯一的取数依据，执行/跳过/失败三条分支都必须推进它。
+#   PROMPT_TEXT 不复用 AI_PROMPT_AUDIT：那是按天清理的捕获日志，这里是用户资产。
+# ---------------------------------------------------------------------------
+
+ai_scheduled_tasks = Table(
+    "ai_scheduled_tasks",
+    metadata,
+    _oid_pk(),
+    Column("owner_oid", VARCHAR2(24), nullable=False),
+    Column("name", VARCHAR2(128), nullable=False),
+    Column("prompt_text", CLOB, nullable=False),
+    Column("review_status", VARCHAR2(16), nullable=False,
+           server_default=text("'draft'")),
+    Column("reviewed_by_oid", VARCHAR2(24), nullable=True),
+    Column("reviewed_at", oracle.TIMESTAMP, nullable=True),
+    Column("review_note", VARCHAR2(512), nullable=True),
+    Column("schedule_kind", VARCHAR2(8), nullable=False,
+           server_default=text("'interval'")),
+    Column("interval_minutes", NUMBER, nullable=False, server_default=text("1440")),
+    Column("cron_expr", VARCHAR2(64), nullable=True),
+    Column("enabled", NUMBER(1), nullable=False, server_default=text("1")),
+    Column("model", VARCHAR2(64), nullable=True),
+    Column("last_run_at", oracle.TIMESTAMP, nullable=True),
+    Column("next_run_at", oracle.TIMESTAMP, nullable=True),
+    Column("run_count", NUMBER, nullable=False, server_default=text("0")),
+    Column("last_status", VARCHAR2(16), nullable=True),
+    Column("last_error", VARCHAR2(512), nullable=True),
+    Column("created_at", oracle.TIMESTAMP, nullable=False),
+    Column("updated_at", oracle.TIMESTAMP, nullable=False),
+    _oid_check("ai_scheduled_tasks"),
+    CheckConstraint(
+        "review_status IN ('draft','pending','approved','rejected')",
+        name="ck_ai_scheduled_tasks_review",
+    ),
+    CheckConstraint(
+        "schedule_kind IN ('interval','cron')",
+        name="ck_ai_scheduled_tasks_kind",
+    ),
+    CheckConstraint(
+        "interval_minutes >= 15",
+        name="ck_ai_scheduled_tasks_interval",
+    ),
+    CheckConstraint("enabled IN (0,1)", name="ck_ai_scheduled_tasks_enabled"),
+)
+Index(
+    "ix_ai_scheduled_tasks_owner_created",
+    ai_scheduled_tasks.c.owner_oid,
+    ai_scheduled_tasks.c.created_at.desc(),
+)
+Index(
+    "ix_ai_scheduled_tasks_due",
+    ai_scheduled_tasks.c.enabled,
+    ai_scheduled_tasks.c.next_run_at,
+)
 
 
 # ---------------------------------------------------------------------------

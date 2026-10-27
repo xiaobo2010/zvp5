@@ -12,7 +12,7 @@ Permission matrix (design §4):
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from fastapi import (
     APIRouter,
@@ -132,6 +132,24 @@ router = APIRouter(dependencies=[Depends(require_xuehai_unlock)])
 # with a valid signature (design §4 #2 / §6.2).
 SERVE_STATUSES = {"stored", "ready", "verified"}
 
+# --- 管理员审计面（列表过滤 + 单条详情 + 状态裁决）---------------------------
+# 列表过滤的取值一律白名单校验：一个拼错的 ``kind`` 应当回 400，而不是静默
+# 返回空页（审计界面会把它当成「这批素材不存在」）。
+OCR_STATUSES = {"pending", "processing", "done", "failed"}
+FILE_KINDS = {"original", "thumb", "derived"}
+
+# 状态裁决只允许这两个终态；``deleted`` 不在其中——墓碑的字节可能已被保留期任务
+# 清空，把它改回 verified 会返回一个 410 的「已验证」附件。
+AUDIT_STATUSES = {"verified", "rejected"}
+AUDIT_ACTION_BY_STATUS = {"verified": "audit_verified", "rejected": "audit_rejected"}
+
+# ``FILE_EVENTS.detail`` 存的是 JSON/CLOB；审计备注必须截断，否则一条 10 万字
+# 的备注会跟着每次时间线读取一起回到前端。
+AUDIT_NOTE_MAX = 500
+
+# 单条审计详情的审计时间线窗口（最近 50 条，仍按时间正序返回）。
+AUDIT_EVENT_LIMIT = 50
+
 _BYTE_HEADERS = {
     "X-Content-Type-Options": "nosniff",
     "Cache-Control": "private",
@@ -142,6 +160,13 @@ _BYTE_HEADERS = {
 
 class VerifyRequest(BaseModel):
     decision: str
+    note: str = ""
+
+
+class StatusRequest(BaseModel):
+    """管理员裁决（``PATCH /{oid}/status``）。"""
+
+    status: str
     note: str = ""
 
 
@@ -215,16 +240,55 @@ def _serialize_meta(row: dict, *, include_sha: bool) -> dict:
         "status": row.get("status"),
         "ocr_status": row.get("ocr_status"),
         "created_at": _iso(row.get("created_at")),
+        "deleted_at": _iso(row.get("deleted_at")),
     }
     if include_sha:
         data["sha256"] = row.get("sha256")
     return data
 
 
-def _serialize_summary(row: dict) -> dict:
+def _serialize_summary(row: dict, *, has_ocr: bool) -> dict:
     data = _serialize_meta(row, include_sha=False)
     data["owner_oid"] = row.get("owner_oid")
+    data["has_ocr"] = bool(has_ocr)
     return data
+
+
+def _serialize_event(row: dict) -> dict:
+    return {
+        "_id": str(row.get("_id") or ""),
+        "actor_oid": row.get("actor_oid"),
+        "action": row.get("action"),
+        "from_status": row.get("from_status"),
+        "to_status": row.get("to_status"),
+        "detail": row.get("detail"),
+        "created_at": _iso(row.get("created_at")),
+    }
+
+
+def _parse_created_bound(raw: str | None, *, end: bool) -> datetime | None:
+    """解析列表的 ``created_from`` / ``created_to``（ISO 日期或时刻）。
+
+    日期的语义是**含当天**：``created_to=2026-10-01`` 会转成
+    ``2026-10-01T00:00 + 1 day`` 的上界（配合仓储的 ``created_at <`` 半开区间）。
+    带时刻的输入原样使用，因此 ``created_to`` 在仓储里始终是开区间上界——
+    这条约定写在一处，避免两个调用点各解一半。
+
+    任何解析失败都是 400：审计界面把「过滤条件无效」静默当成「没有数据」比报错
+    更危险。
+    """
+    if raw is None:
+        return None
+    text = raw.strip()
+    if not text:
+        return None
+    try:
+        value = datetime.fromisoformat(text)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date filter") from None
+    if end and len(text) == 10:
+        value += timedelta(days=1)
+    return value
 
 
 def _byte_headers(oid: str, row: dict) -> dict:
@@ -439,6 +503,11 @@ async def list_attachments(
     status: str | None = Query(None),
     entity_type: str | None = Query(None),
     entity_oid: str | None = Query(None),
+    owner_oid: str | None = Query(None),
+    created_from: str | None = Query(None),
+    created_to: str | None = Query(None),
+    ocr_status: str | None = Query(None),
+    kind: str | None = Query(None),
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
 ):
@@ -446,17 +515,45 @@ async def list_attachments(
         # Never trust the client param: gate `all` server-side (design §4 #4).
         if not _is_manager(user):
             raise HTTPException(status_code=403, detail="Permission denied")
-        owner: str | None = None
+        # ``owner_oid`` 是审计过滤（不是越权入口）：只有过了 manager 闸才会被读。
+        owner: str | None = validate_object_id(owner_oid) if owner_oid else None
     else:
+        # scope=mine 一律锁死本人：``owner_oid`` 在这里被忽略，不做「顺手换个
+        # owner」的隐式行为，否则同一个参数名会有两套语义。
         owner = user["id"]
 
-    rows, total = await backends.get_files_repo().list_page(
-        owner, purpose, status, entity_type, entity_oid, page, size
+    if ocr_status is not None and ocr_status not in OCR_STATUSES:
+        raise HTTPException(status_code=400, detail="Invalid ocr_status")
+    if kind is not None and kind not in FILE_KINDS:
+        raise HTTPException(status_code=400, detail="Invalid kind")
+
+    repo = backends.get_files_repo()
+    rows, total = await repo.list_page(
+        owner,
+        purpose,
+        status,
+        entity_type,
+        entity_oid,
+        page,
+        size,
+        created_from=_parse_created_bound(created_from, end=False),
+        created_to=_parse_created_bound(created_to, end=True),
+        ocr_status=ocr_status,
+        kind=kind,
     )
+
+    # ``has_ocr`` 整页一次聚合查询：逐行 ``get_ocr`` 会把每行的 CLOB 文本和
+    # raw JSON 全拉回来，只为回答一个布尔值。
+    oids = [str(row.get("_id") or "") for row in rows]
+    with_ocr = await repo.file_oids_with_ocr(oids) if oids else set()
+
     return {
         "status": "ok",
         "code": 200,
-        "data": [_serialize_summary(row) for row in rows],
+        "data": [
+            _serialize_summary(row, has_ocr=str(row.get("_id") or "") in with_ocr)
+            for row in rows
+        ],
         "metadata": {"size": total},
     }
 
@@ -546,6 +643,145 @@ async def get_attachment_meta(
         "status": "ok",
         "code": 200,
         "data": _serialize_meta(row, include_sha=include_sha),
+    }
+
+
+# ---------------------------------------------------------------------------
+# 3b. Administrative audit detail  /  3c. Status verdict
+# ---------------------------------------------------------------------------
+
+
+@router.get("/{oid}/audit")
+async def get_attachment_audit(
+    oid: str,
+    user=Depends(get_current_user),
+    log=Depends(inject_log),
+):
+    """单条附件的审计详情（admin | department）。
+
+    和 ``GET /{oid}/meta`` 的区别是「审核要看到的一切」：谁传的（学号/姓名）、
+    识别出了什么（文本 + ``_zvms_lines`` 坐标）、谁在什么时候动过它
+    （``FILE_EVENTS`` 最近 50 条）。
+
+    刻意不复用 ``GET /{oid}/ocr``：那个端点只回 ``lines``（前端画框用），也要
+    求登录用户是 owner 或 manager；审核面需要完整文本 + 事件线，且必须是
+    manager 闸，权限与字段都不同，硬复用会把两边都拧歪。
+    """
+    _require_manager(user)
+    oid = validate_object_id(oid)
+    repo = backends.get_files_repo()
+    row = await repo.get_meta(oid)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Attachment not found")
+
+    # owner 的学号/姓名：一次 ``get_by_oid``，不为了两个字段再拼一条聚合 SQL。
+    owner: dict | None = None
+    owner_doc: dict | None = None
+    owner_oid = str(row.get("owner_oid") or "")
+    if owner_oid:
+        owner_doc = await backends.get_users_repo().get_by_oid(owner_oid)
+        if owner_doc:
+            owner = {
+                "_id": str(owner_doc.get("_id") or owner_oid),
+                "student_id": owner_doc.get("id"),
+                "name": owner_doc.get("name"),
+            }
+
+    ocr = await repo.get_ocr(oid)
+    events = await repo.list_events(oid, limit=AUDIT_EVENT_LIMIT)
+    lines = _ocr_lines(ocr)
+
+    data = _serialize_meta(row, include_sha=_is_admin(user))
+    data.update(
+        {
+            # 上传者：嵌套形态给「还想拿别的字段」的调用方，``owner_*`` 扁平字段
+            # 与前端 ``types/attachment.d.ts`` 的 ``AttachmentAuditDetail`` 对齐。
+            "owner": owner,
+            "owner_name": owner["name"] if owner else None,
+            "owner_id": owner["student_id"] if owner else None,
+            "owner_xuehai_id": (
+                owner_doc.get("primary_xuehai_id") if owner_doc else None
+            ),
+            "has_ocr": ocr is not None,
+            # OCR：同样两种形态。``lines`` 是 ``raw_json._zvms_lines`` 的坐标，
+            # 前端按它画框；``ocr.text`` 给需要文本块的调用方。
+            "ocr_text": ocr.get("text") if ocr else None,
+            "ocr_engine": ocr.get("engine") if ocr else None,
+            "ocr_confidence": ocr.get("confidence") if ocr else None,
+            "lines": lines,
+            "ocr": {
+                "status": row.get("ocr_status"),
+                "engine": ocr.get("engine") if ocr else None,
+                "engine_version": ocr.get("engine_version") if ocr else None,
+                "text": ocr.get("text") if ocr else None,
+                "confidence": ocr.get("confidence") if ocr else None,
+                "lines": lines,
+                "updated_at": _iso(ocr.get("created_at")) if ocr else None,
+            },
+            "events": [_serialize_event(event) for event in events],
+            "events_limit": AUDIT_EVENT_LIMIT,
+        }
+    )
+    log.with_text(f"用户 {user['id']} 查看附件审计详情 {oid}")
+    await log.insert_log()
+    return {"status": "ok", "code": 200, "data": data}
+
+
+@router.patch("/{oid}/status")
+async def update_attachment_status(
+    oid: str,
+    payload: StatusRequest,
+    user=Depends(get_current_user),
+    log=Depends(inject_log),
+):
+    """管理员裁决：``verified`` / ``rejected``，并留一条 ``FILE_EVENTS``。
+
+    为什么另开一个端点而不是复用 ``POST /{oid}/verify``：那个端点写的是
+    ``action='verify'``，是给上传者自查证用的旧通道；审计面的裁决动作名必须是
+    ``audit_verified`` / ``audit_rejected``，否则「谁在审计里判的」和「谁自查证
+    的」在事件线里分不开。
+
+    两条拒绝语义：
+
+    * ``400`` — 状态不在白名单（客户端把 ``deleted`` 写进来也一样）；
+    * ``409`` — 已经是这个状态（重复裁决不是成功，否则事件线会被同一条裁决
+      刷屏）；墓碑（``deleted``）也不接受裁决，它的字节可能已被保留期任务清空。
+    """
+    _require_manager(user)
+    if payload.status not in AUDIT_STATUSES:
+        raise HTTPException(status_code=400, detail="Invalid status")
+    oid = validate_object_id(oid)
+    repo = backends.get_files_repo()
+    row = await repo.get_meta(oid)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Attachment not found")
+
+    previous = str(row.get("status") or "")
+    if previous == payload.status:
+        raise HTTPException(status_code=409, detail="Attachment already " + payload.status)
+    if previous == "deleted":
+        raise HTTPException(status_code=409, detail="Attachment is deleted")
+
+    note = (payload.note or "").strip()[:AUDIT_NOTE_MAX]
+    await repo.set_status(oid, payload.status)
+    await repo.add_event(
+        oid,
+        user["id"],
+        AUDIT_ACTION_BY_STATUS[payload.status],
+        previous,
+        payload.status,
+        note,
+    )
+    log.with_text(f"用户 {user['id']} 裁决附件 {oid} -> {payload.status}")
+    await log.insert_log()
+    return {
+        "status": "ok",
+        "code": 200,
+        "data": {
+            "status": payload.status,
+            "previous_status": previous,
+            "note": note,
+        },
     }
 
 

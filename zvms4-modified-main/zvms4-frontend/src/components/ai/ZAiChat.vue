@@ -35,6 +35,7 @@ import { useAiConversationsStore } from '@/stores/aiConversations'
 import { useUserStore } from '@/stores/user'
 import { isTemporaryTokenCancelled, withTemporaryToken } from '@/plugins/short-token'
 import ZSystemAuthDialog from '@/components/system/ZSystemAuthDialog.vue'
+import ZMarkdown from '@/components/markdown/ZMarkdown.vue'
 import type { AiConversation, AiMessage, AiModelItem } from '@/../types/ai'
 import ZAiProposalCard from './ZAiProposalCard.vue'
 import ZAiSessionList from './ZAiSessionList.vue'
@@ -657,7 +658,16 @@ async function rejectCard(card: AgentProposalCard) {
 
 const listRef = ref<HTMLElement>()
 
+/**
+ * 消息内容容器。
+ *
+ * 单独一层是为了盯它的高度：markdown 渲染是异步的（防抖 + v-html 替换），
+ * 高度变了才补一次贴底，否则回复渲染完会停在半空。
+ */
+const contentRef = ref<HTMLElement>()
+
 let autoScroll = true
+let resizeObserver: ResizeObserver | null = null
 
 function listElement(): HTMLElement | undefined {
   return listRef.value
@@ -674,6 +684,21 @@ function scrollToBottom() {
   const element = listElement()
   if (!element || !autoScroll) return
   element.scrollTop = element.scrollHeight
+}
+
+/**
+ * 盯住内容高度：内容一变高就补一次贴底。
+ *
+ * 用户手动上滑后 autoScroll 为 false，这里不再强拉回底部。
+ */
+function observeContent() {
+  const content = contentRef.value
+  if (!content || typeof ResizeObserver === 'undefined') return
+  resizeObserver?.disconnect()
+  resizeObserver = new ResizeObserver(() => {
+    scrollToBottom()
+  })
+  resizeObserver.observe(content)
 }
 
 /** 工具消息的展开态。 */
@@ -1027,10 +1052,23 @@ watch(
   { immediate: true }
 )
 
+// 消息换了就补一次贴底：markdown 渲染完会再由高度监听兜一次。
+watch(
+  () => {
+    const list = store.orderedMessages
+    const last = list[list.length - 1]
+    return `${list.length}:${last?.oid ?? ''}:${last?.content.length ?? 0}`
+  },
+  () => {
+    void nextTick(scrollToBottom)
+  }
+)
+
 onMounted(async () => {
   void loadModels()
   // 解锁窗口可能还在（同一次访问里切过页面）：先让倒计时接上。
   syncUnlockTimer()
+  observeContent()
   if (isAdmin.value) {
     void loadModerationState()
   }
@@ -1057,6 +1095,8 @@ onUnmounted(() => {
   stopCooldown()
   stopProposalTimer()
   stopUnlockTimer()
+  resizeObserver?.disconnect()
+  resizeObserver = null
   store.stopPolling()
 })
 </script>
@@ -1218,63 +1258,73 @@ onUnmounted(() => {
           class="ai-chat__list"
           @scroll.passive="handleListScroll"
         >
-          <div v-if="messageRows.length === 0 && !pendingUser" class="py-10">
-            <ElEmpty :description="emptyDescription" :image-size="90" />
-          </div>
-
-          <!-- 往上翻：把窗口前面那一段也加载进来 -->
-          <div v-if="store.earlierCount > 0" class="ai-chat__earlier">
-            <ElButton text size="small" :loading="store.messagesLoading" @click="store.loadEarlierMessages()">
-              {{ t('ai.chat.sessions.loadEarlier') }}（{{ store.earlierCount }}）
-            </ElButton>
-          </div>
-
-          <template v-for="row in messageRows" :key="row.key">
-            <!-- 压缩点：更早的消息已被摘要带走，原文仍在库里 -->
-            <div v-if="row.kind === 'compaction'" class="ai-chat__compaction">
-              <span class="ai-chat__compaction-line" aria-hidden="true" />
-              <span class="ai-chat__compaction-text">
-                {{ t('ai.chat.sessions.context.compacted', { count: row.compacted }) }}
-              </span>
-              <span class="ai-chat__compaction-line" aria-hidden="true" />
+          <!-- 内容单独一层：高度变化可观测，markdown 渲染完才知道该贴底 -->
+          <div ref="contentRef" class="ai-chat__content">
+            <div v-if="messageRows.length === 0 && !pendingUser" class="py-10">
+              <ElEmpty :description="emptyDescription" :image-size="90" />
             </div>
 
-            <div v-else class="ai-chat__row" :class="row.message!.role">
-              <div class="ai-chat__who yg-text-xs yg-text-tertiary">
-                {{
-                  row.message!.role === 'user'
-                    ? t('ai.chat.you')
-                    : row.message!.role === 'tool'
-                      ? t('ai.chat.sessions.toolRole')
-                      : t('ai.chat.assistant')
-                }}
-              </div>
-              <div class="ai-chat__bubble" :class="row.message!.role">
-                <!-- 工具消息：折叠成一行，点开才看结果全文 -->
-                <div v-if="row.message!.role === 'tool'" class="ai-chat__tool">
-                  <button
-                    type="button"
-                    class="ai-agent__event-row"
-                    :aria-expanded="toolExpanded(row.message!.oid)"
-                    @click="toggleTool(row.message!.oid)"
-                  >
-                    <span class="ai-agent__dot is-read" aria-hidden="true" />
-                    <span class="ai-agent__tool">{{
-                      t(toolLabelKey(row.message!.tool_name))
-                    }}</span>
-                    <span class="ai-agent__badge is-success">
-                      {{ t('ai.agent.status.executed') }}
-                    </span>
-                  </button>
-                  <div v-if="toolExpanded(row.message!.oid)" class="ai-agent__event-result">
-                    <span class="ai-agent__hint">{{ t('ai.agent.result') }}</span>
-                    <code class="ai-agent__result-text">{{ row.message!.content }}</code>
-                  </div>
-                </div>
+            <!-- 往上翻：把窗口前面那一段也加载进来 -->
+            <div v-if="store.earlierCount > 0" class="ai-chat__earlier">
+              <ElButton text size="small" :loading="store.messagesLoading" @click="store.loadEarlierMessages()">
+                {{ t('ai.chat.sessions.loadEarlier') }}（{{ store.earlierCount }}）
+              </ElButton>
+            </div>
 
-                <p v-else-if="row.message!.content" class="ai-chat__text">
-                  {{ row.message!.content }}
-                </p>
+            <template v-for="row in messageRows" :key="row.key">
+              <!-- 压缩点：更早的消息已被摘要带走，原文仍在库里 -->
+              <div v-if="row.kind === 'compaction'" class="ai-chat__compaction">
+                <span class="ai-chat__compaction-line" aria-hidden="true" />
+                <span class="ai-chat__compaction-text">
+                  {{ t('ai.chat.sessions.context.compacted', { count: row.compacted }) }}
+                </span>
+                <span class="ai-chat__compaction-line" aria-hidden="true" />
+              </div>
+
+              <div v-else class="ai-chat__row" :class="row.message!.role">
+                <div class="ai-chat__who yg-text-xs yg-text-tertiary">
+                  {{
+                    row.message!.role === 'user'
+                      ? t('ai.chat.you')
+                      : row.message!.role === 'tool'
+                        ? t('ai.chat.sessions.toolRole')
+                        : t('ai.chat.assistant')
+                  }}
+                </div>
+                <div class="ai-chat__bubble" :class="row.message!.role">
+                  <!-- 工具消息：折叠成一行，点开才看结果全文 -->
+                  <div v-if="row.message!.role === 'tool'" class="ai-chat__tool">
+                    <button
+                      type="button"
+                      class="ai-agent__event-row"
+                      :aria-expanded="toolExpanded(row.message!.oid)"
+                      @click="toggleTool(row.message!.oid)"
+                    >
+                      <span class="ai-agent__dot is-read" aria-hidden="true" />
+                      <span class="ai-agent__tool">{{
+                        t(toolLabelKey(row.message!.tool_name))
+                      }}</span>
+                      <span class="ai-agent__badge is-success">
+                        {{ t('ai.agent.status.executed') }}
+                      </span>
+                    </button>
+                    <div v-if="toolExpanded(row.message!.oid)" class="ai-agent__event-result">
+                      <span class="ai-agent__hint">{{ t('ai.agent.result') }}</span>
+                      <code class="ai-agent__result-text">{{ row.message!.content }}</code>
+                    </div>
+                  </div>
+
+                  <!-- 助手回复：走 Markdown（表格、列表、代码块都在里面） -->
+                  <ZMarkdown
+                    v-else-if="row.message!.role === 'assistant' && row.message!.content"
+                    :source="row.message!.content"
+                    class="ai-chat__markdown"
+                  />
+
+                  <!-- 用户气泡保持纯文本：用户写的内容不该被当成 Markdown 执行 -->
+                  <p v-else-if="row.message!.content" class="ai-chat__text">
+                    {{ row.message!.content }}
+                  </p>
 
                 <!-- 历史运行：回看这次运行的工具留痕 -->
                 <div v-if="row.message!.request_id" class="ai-agent__meta">
@@ -1326,121 +1376,122 @@ onUnmounted(() => {
             </div>
           </template>
 
-          <!-- 本地暂存的用户消息：服务端落库前先显示 -->
-          <div v-if="pendingUser" class="ai-chat__row user">
-            <div class="ai-chat__who yg-text-xs yg-text-tertiary">{{ t('ai.chat.you') }}</div>
-            <div class="ai-chat__bubble user">
-              <p class="ai-chat__text">{{ pendingUser }}</p>
-            </div>
-          </div>
-
-          <!-- 本轮出错 -->
-          <div v-if="chatError" class="ai-chat__error">
-            <div class="flex flex-wrap items-center gap-2">
-              <span class="font-medium">{{ chatError.title }}</span>
-              <ElTag v-if="chatError.code" type="danger" size="small">{{ chatError.code }}</ElTag>
-            </div>
-            <p class="text-xs">{{ chatError.hint }}</p>
-          </div>
-
-          <!-- 后台执行：轮次进度 + 工具留痕 + 提案 -->
-          <div v-if="store.activeRun" class="ai-agent__run">
-            <div v-if="runActive" class="ai-agent__running" role="status" aria-live="polite">
-              <span class="ai-agent__pulse" aria-hidden="true" />
-              <span>{{ t('ai.agent.run.background') }}</span>
-              <span class="ai-agent__hint tabular-nums">
-                {{ t('ai.agent.run.roundsDone', { rounds: store.activeRun.rounds }) }}
-              </span>
-              <ElButton text type="danger" size="small" @click="cancelRun">
-                {{ t('ai.agent.run.cancel') }}
-              </ElButton>
+            <!-- 本地暂存的用户消息：服务端落库前先显示 -->
+            <div v-if="pendingUser" class="ai-chat__row user">
+              <div class="ai-chat__who yg-text-xs yg-text-tertiary">{{ t('ai.chat.you') }}</div>
+              <div class="ai-chat__bubble user">
+                <p class="ai-chat__text">{{ pendingUser }}</p>
+              </div>
             </div>
 
-            <!-- 触顶 / 超时 / 出错是提示，不是弹窗 -->
-            <div
-              v-if="runStopReason && !runActive"
-              class="yg-alert yg-alert--warning ai-agent__stop"
-              role="status"
-            >
-              <ElIcon class="yg-alert__icon"><WarningFilled /></ElIcon>
-              <span class="yg-alert__title">{{
-                t(`ai.agent.stopReason.${runStopReason}`)
-              }}</span>
-              <span class="yg-alert__desc">{{
-                t(`ai.agent.stopReason.${runStopReason}Hint`)
-              }}</span>
-            </div>
-
-            <div v-if="runErrorCopy" class="ai-chat__error">
+            <!-- 本轮出错 -->
+            <div v-if="chatError" class="ai-chat__error">
               <div class="flex flex-wrap items-center gap-2">
-                <span class="font-medium">{{ runErrorCopy.title }}</span>
-                <ElTag type="danger" size="small">{{ runErrorCopy.code }}</ElTag>
+                <span class="font-medium">{{ chatError.title }}</span>
+                <ElTag v-if="chatError.code" type="danger" size="small">{{ chatError.code }}</ElTag>
               </div>
-              <p class="text-xs">{{ runErrorCopy.hint }}</p>
-              <p v-if="store.activeRun.error_message" class="text-xs">
-                {{ store.activeRun.error_message }}
-              </p>
+              <p class="text-xs">{{ chatError.hint }}</p>
             </div>
 
-            <!-- 工具调用时间线（一条调用一行，点开看结果） -->
-            <div v-if="runEventViews.length > 0" class="ai-agent__timeline">
-              <div class="ai-agent__timeline-head">
-                <span>{{ t('ai.agent.events') }}</span>
-                <span>{{ t('ai.agent.eventCount', { count: runEventViews.length }) }}</span>
+            <!-- 后台执行：轮次进度 + 工具留痕 + 提案 -->
+            <div v-if="store.activeRun" class="ai-agent__run">
+              <div v-if="runActive" class="ai-agent__running" role="status" aria-live="polite">
+                <span class="ai-agent__pulse" aria-hidden="true" />
+                <span>{{ t('ai.agent.run.background') }}</span>
+                <span class="ai-agent__hint tabular-nums">
+                  {{ t('ai.agent.run.roundsDone', { rounds: store.activeRun.rounds }) }}
+                </span>
+                <ElButton text type="danger" size="small" @click="cancelRun">
+                  {{ t('ai.agent.run.cancel') }}
+                </ElButton>
               </div>
-              <ul class="ai-agent__events">
-                <li v-for="(event, index) in runEventViews" :key="index" class="ai-agent__event">
-                  <button
-                    type="button"
-                    class="ai-agent__event-row"
-                    :aria-expanded="event.expanded"
-                    @click="toggleEvent(event)"
-                  >
-                    <span
-                      class="ai-agent__dot"
-                      :class="event.tool_kind === 'write' ? 'is-write' : 'is-read'"
-                      aria-hidden="true"
-                    />
-                    <span class="ai-agent__tool">{{ t(toolLabelKey(event.tool_name)) }}</span>
-                    <!-- 写操作不只靠色点区分：文字标签保证色觉障碍下也能读出来 -->
-                    <span v-if="event.tool_kind === 'write'" class="ai-agent__kind">
-                      {{ t('ai.agent.kindWrite') }}
-                    </span>
-                    <code v-if="event.args_summary" class="ai-agent__args">
-                      {{ event.args_summary }}
-                    </code>
-                    <span class="ai-agent__badge" :class="eventStatusTone(event.status)">
-                      {{ t(`ai.agent.status.${event.status}`) }}
-                    </span>
-                  </button>
-                  <div v-if="event.expanded" class="ai-agent__event-result">
-                    <span class="ai-agent__hint">{{ t('ai.agent.result') }}</span>
-                    <code class="ai-agent__result-text">{{ event.result_summary }}</code>
-                  </div>
-                </li>
-              </ul>
-            </div>
 
-            <!-- 写操作提案卡（确认才执行） -->
-            <ZAiProposalCard
-              v-for="card in proposalCards"
-              :key="card.oid"
-              :card="card"
-              :now="proposalNow"
-              @confirm="confirmCard(card)"
-              @reject="rejectCard(card)"
-            />
+              <!-- 触顶 / 超时 / 出错是提示，不是弹窗 -->
+              <div
+                v-if="runStopReason && !runActive"
+                class="yg-alert yg-alert--warning ai-agent__stop"
+                role="status"
+              >
+                <ElIcon class="yg-alert__icon"><WarningFilled /></ElIcon>
+                <span class="yg-alert__title">{{
+                  t(`ai.agent.stopReason.${runStopReason}`)
+                }}</span>
+                <span class="yg-alert__desc">{{
+                  t(`ai.agent.stopReason.${runStopReason}Hint`)
+                }}</span>
+              </div>
 
-            <div class="ai-agent__meta">
-              <span v-if="store.activeRun.rounds">{{
-                t('ai.agent.run.rounds', { rounds: store.activeRun.rounds })
-              }}</span>
-              <span v-if="store.activeRun.total_tokens > 0">{{
-                t('ai.agent.run.usage', { total: store.activeRun.total_tokens })
-              }}</span>
-              <span class="ai-agent__badge" :class="runActive ? 'is-info' : 'is-success'">
-                {{ t(`ai.agent.run.status.${store.activeRun.status}`) }}
-              </span>
+              <div v-if="runErrorCopy" class="ai-chat__error">
+                <div class="flex flex-wrap items-center gap-2">
+                  <span class="font-medium">{{ runErrorCopy.title }}</span>
+                  <ElTag type="danger" size="small">{{ runErrorCopy.code }}</ElTag>
+                </div>
+                <p class="text-xs">{{ runErrorCopy.hint }}</p>
+                <p v-if="store.activeRun.error_message" class="text-xs">
+                  {{ store.activeRun.error_message }}
+                </p>
+              </div>
+
+              <!-- 工具调用时间线（一条调用一行，点开看结果） -->
+              <div v-if="runEventViews.length > 0" class="ai-agent__timeline">
+                <div class="ai-agent__timeline-head">
+                  <span>{{ t('ai.agent.events') }}</span>
+                  <span>{{ t('ai.agent.eventCount', { count: runEventViews.length }) }}</span>
+                </div>
+                <ul class="ai-agent__events">
+                  <li v-for="(event, index) in runEventViews" :key="index" class="ai-agent__event">
+                    <button
+                      type="button"
+                      class="ai-agent__event-row"
+                      :aria-expanded="event.expanded"
+                      @click="toggleEvent(event)"
+                    >
+                      <span
+                        class="ai-agent__dot"
+                        :class="event.tool_kind === 'write' ? 'is-write' : 'is-read'"
+                        aria-hidden="true"
+                      />
+                      <span class="ai-agent__tool">{{ t(toolLabelKey(event.tool_name)) }}</span>
+                      <!-- 写操作不只靠色点区分：文字标签保证色觉障碍下也能读出来 -->
+                      <span v-if="event.tool_kind === 'write'" class="ai-agent__kind">
+                        {{ t('ai.agent.kindWrite') }}
+                      </span>
+                      <code v-if="event.args_summary" class="ai-agent__args">
+                        {{ event.args_summary }}
+                      </code>
+                      <span class="ai-agent__badge" :class="eventStatusTone(event.status)">
+                        {{ t(`ai.agent.status.${event.status}`) }}
+                      </span>
+                    </button>
+                    <div v-if="event.expanded" class="ai-agent__event-result">
+                      <span class="ai-agent__hint">{{ t('ai.agent.result') }}</span>
+                      <code class="ai-agent__result-text">{{ event.result_summary }}</code>
+                    </div>
+                  </li>
+                </ul>
+              </div>
+
+              <!-- 写操作提案卡（确认才执行） -->
+              <ZAiProposalCard
+                v-for="card in proposalCards"
+                :key="card.oid"
+                :card="card"
+                :now="proposalNow"
+                @confirm="confirmCard(card)"
+                @reject="rejectCard(card)"
+              />
+
+              <div class="ai-agent__meta">
+                <span v-if="store.activeRun.rounds">{{
+                  t('ai.agent.run.rounds', { rounds: store.activeRun.rounds })
+                }}</span>
+                <span v-if="store.activeRun.total_tokens > 0">{{
+                  t('ai.agent.run.usage', { total: store.activeRun.total_tokens })
+                }}</span>
+                <span class="ai-agent__badge" :class="runActive ? 'is-info' : 'is-success'">
+                  {{ t(`ai.agent.run.status.${store.activeRun.status}`) }}
+                </span>
+              </div>
             </div>
           </div>
         </div>
@@ -1643,6 +1694,17 @@ onUnmounted(() => {
   white-space: pre-wrap;
   word-break: break-word;
   line-height: 1.55;
+}
+
+/* 消息内容层：单独一层是为了观测高度，markdown 渲染完才知道要不要贴底 */
+.ai-chat__content {
+  min-width: 0;
+}
+
+/* 助手回复走 Markdown：排版交给 ZMarkdown，这里只保证长表格不撑破气泡 */
+.ai-chat__markdown {
+  min-width: 0;
+  max-width: 100%;
 }
 
 .ai-chat__error {

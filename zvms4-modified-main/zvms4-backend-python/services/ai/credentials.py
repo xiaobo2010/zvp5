@@ -77,6 +77,14 @@ _BLOCKED_NETWORKS = tuple(
 # 不做按用户失效——共享项对所有人可见，按用户失效反而容易漏。
 _cache: dict[str, tuple[float, list[dict]]] = {}
 
+# 请求时 SSRF 复核的解析缓存：host → (到期 monotonic, 是否私网)。
+# 没有它，每一次上游调用都要多一次 DNS（单 worker 下是纯浪费）；有它，同一个
+# host 在 60 秒内只解析一次，也让「录入时是公网、请求时变内网」这种 rebinding
+# 至少在一个 TTL 内保持判定稳定。
+_SSRF_CACHE_TTL = 60.0
+_SSRF_CACHE_MAX = 256
+_ssrf_cache: dict[str, tuple[float, bool]] = {}
+
 
 class CredentialError(Exception):
     """凭据相关的可预期错误，由路由层翻译成 HTTP 状态码。"""
@@ -764,21 +772,29 @@ async def _clean_base_url(value: object) -> str:
 
 def _resolve_host(host: str) -> list[ipaddress.IPv4Address | ipaddress.IPv6Address]:
     """DNS 解析放在线程里：``getaddrinfo`` 是同步阻塞调用，会卡住整个事件循环。"""
-    try:
-        infos = socket.getaddrinfo(host, None)
-    except socket.gaierror:
+    addresses = _lookup_addresses(host)
+    if not addresses:
         raise CredentialError(
             "AI_KEY_INVALID", "base_url host cannot be resolved", 400
-        ) from None
+        )
+    return addresses
+
+
+def _lookup_addresses(
+    host: str,
+) -> list[ipaddress.IPv4Address | ipaddress.IPv6Address] | None:
+    """解析失败返回 ``None``（而不是抛）：写入侧要报错、请求侧只是放过。"""
+    try:
+        infos = socket.getaddrinfo(host, None)
+    except (OSError, UnicodeError):
+        return None
     addresses = []
     for info in infos:
         try:
             addresses.append(ipaddress.ip_address(info[4][0]))
         except ValueError:
             continue
-    if not addresses:
-        raise CredentialError("AI_KEY_INVALID", "base_url host cannot be resolved", 400)
-    return addresses
+    return addresses or None
 
 
 def _is_blocked(address) -> bool:
@@ -792,6 +808,65 @@ def _is_blocked(address) -> bool:
     )
 
 
+def host_of_url(value: object) -> str:
+    """URL（或裸 host，如阿里 OCR 的 ``endpoint``）→ 小写 hostname；拿不到返回空串。
+
+    Tea SDK 的 endpoint 与百度/Groq 的 base_url 形状不同（前者常常没有 scheme），
+    所以没有 ``://`` 时按「裸 host[:port]」解析——少了这一步，``127.0.0.1:8080``
+    会被当成一个普通路径，私网判定直接失效。
+    """
+    if not isinstance(value, str) or not value.strip():
+        return ""
+    raw = value.strip()
+    candidate = raw if ("://" in raw or raw.startswith("//")) else "//" + raw
+    try:
+        parts = urlsplit(candidate)
+        return (parts.hostname or "").lower()
+    except ValueError:
+        return ""
+
+
+async def host_is_private(host: str) -> bool:
+    """``host`` 解析出来的地址里是否有私网/环回（结果缓存 60 秒）。
+
+    写入侧（:func:`_clean_base_url`）在**录入时**拦一次，这里给**请求时**再用一次：
+    两次之间 DNS 可能被换成内网地址（DNS rebinding），只靠录入校验是拦不住的。
+
+    解析失败返回 ``False``：那是 httpx 的错误路径（``AI_UPSTREAM_ERROR``），把它
+    当成「私网被拦」只会让「DNS 抖动」看起来像「有人在做 SSRF」。
+    """
+    key = (host or "").strip().strip("[]").lower()
+    if not key:
+        return False
+    try:
+        literal = ipaddress.ip_address(key)
+    except ValueError:
+        literal = None
+    if literal is not None:
+        # IP 字面量不需要 DNS：``http://2130706433`` 这类整数写法会走下面的解析。
+        return _is_blocked(literal)
+
+    now = time.monotonic()
+    cached = _ssrf_cache.get(key)
+    if cached is not None and cached[0] > now:
+        return cached[1]
+
+    addresses = await anyio.to_thread.run_sync(_lookup_addresses, key)
+    if addresses is None:
+        return False
+    blocked = any(_is_blocked(address) for address in addresses)
+    if len(_ssrf_cache) >= _SSRF_CACHE_MAX:
+        # 上界只是防「随机子域名轰炸」把 dict 撑爆；清空比 LRU 便宜。
+        _ssrf_cache.clear()
+    _ssrf_cache[key] = (now + _SSRF_CACHE_TTL, blocked)
+    return blocked
+
+
+def clear_ssrf_cache() -> None:
+    """测试与「改了 DNS/网络策略」后的手动失效入口。"""
+    _ssrf_cache.clear()
+
+
 __all__ = [
     "SHARED_OWNER",
     "SCOPE_PERSONAL",
@@ -799,8 +874,11 @@ __all__ = [
     "SCOPE_SERVER",
     "CredentialError",
     "catalog",
+    "clear_ssrf_cache",
     "create_entry",
     "delete_entry",
+    "host_is_private",
+    "host_of_url",
     "invalidate",
     "list_entries",
     "public_view",

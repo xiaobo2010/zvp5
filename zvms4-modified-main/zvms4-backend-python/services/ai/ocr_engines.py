@@ -51,6 +51,8 @@ from typing import Any, Mapping
 
 import anyio
 
+from . import credentials
+
 _logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -1393,6 +1395,42 @@ class ZhipuOcrEngine:
 
 
 # ---------------------------------------------------------------------------
+# 上游地址的私网校验（写入口）
+# ---------------------------------------------------------------------------
+#
+# 哪些字段是「用户可写的上游地址」：阿里/百度的 ``endpoint``（Tea SDK 的 endpoint
+# 常常不带 scheme）、Groq/智谱的 ``base_url``。腾讯按 region 由 SDK 拼地址、
+# rapidocr 纯本地，都没有可写地址。
+_ENDPOINT_FIELDS = ("base_url", "endpoint")
+
+
+def _endpoint_hosts(source: object) -> list[tuple[str, str]]:
+    if not isinstance(source, Mapping):
+        return []
+    hosts: list[tuple[str, str]] = []
+    for field in _ENDPOINT_FIELDS:
+        value = source.get(field)
+        host = credentials.host_of_url(value)
+        if host:
+            hosts.append((field, host))
+    return hosts
+
+
+async def blocked_endpoint(*sources: object) -> str | None:
+    """返回第一个指向私网的地址字段名；都干净则 ``None``。
+
+    写入口（``POST/PATCH /api/ai/ocr-engines``）用它把「把 OCR 引擎指向内网」挡在
+    落库之前：识别请求由**服务端**发出且带管理员凭证，等于一台可被 admin 驱使的
+    内网跳板，与 ``ai_credentials.base_url`` 是同一类风险。
+    """
+    for source in sources:
+        for field, host in _endpoint_hosts(source):
+            if await credentials.host_is_private(host):
+                return field
+    return None
+
+
+# ---------------------------------------------------------------------------
 # 注册表
 # ---------------------------------------------------------------------------
 
@@ -1432,6 +1470,7 @@ __all__ = [
     "DEFAULT_TIMEOUT",
     "OcrEngineError",
     "OcrEngineRateLimited",
+    "blocked_endpoint",
     "TencentOcrEngine",
     "AliyunOcrEngine",
     "BaiduOcrEngine",

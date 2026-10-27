@@ -1271,11 +1271,33 @@ class FilesRepo(Protocol):
 
     async def list_page(self, owner_oid: str | None, purpose: str | None, status: str | None,
                         entity_type: str | None, entity_oid: str | None,
-                        page: int, size: int) -> tuple[list[Row], int]:
+                        page: int, size: int, *,
+                        created_from: Any = None,
+                        created_to: Any = None,
+                        ocr_status: str | None = None,
+                        kind: str | None = None) -> tuple[list[Row], int]:
         """Return ``(rows, total)`` for one page, filtered by the given columns.
 
         ``None`` filters are "no filter"; ``page == -1`` means "no pagination".
-        Rows are metadata only (never ``content``).
+        Rows are metadata only (never ``content``). ``created_to`` is an open
+        upper bound (``created_at < created_to``).
+        """
+        ...
+
+    async def file_oids_with_ocr(self, oids: list[str]) -> set[str]:
+        """Return the subset of ``oids`` that has a ``FILE_OCR`` row.
+
+        One query for a whole page — never projects the OCR body.
+        """
+        ...
+
+    async def purge_ocr_uploads(self, cutoff: Any, batch_limit: int = 200) -> dict[str, int]:
+        """Hard-delete up to ``batch_limit`` expired OCR upload originals plus
+        their thumb / ``FILE_OCR`` / ``FILE_EVENTS`` rows.
+
+        Scope: ``purpose='volunteer_order' AND entity_type IS NULL AND
+        kind='original'`` with ``status NOT IN ('verified','rejected')``.
+        Returns ``{"originals", "thumbs", "ocr_rows", "events"}``.
         """
         ...
 
@@ -1318,8 +1340,11 @@ class FilesRepo(Protocol):
         """Append an audit event and return its new ``_id`` as a hex string."""
         ...
 
-    async def list_events(self, file_oid: str) -> list[Row]:
-        """Return ``file_oid``'s audit events in chronological order."""
+    async def list_events(self, file_oid: str, *, limit: int | None = None) -> list[Row]:
+        """Return ``file_oid``'s audit events in chronological order.
+
+        ``limit`` keeps the newest N rows but still returns them oldest-first.
+        """
         ...
 
 
@@ -3080,3 +3105,123 @@ class AIRunsRepo(Protocol):
         ...
 
 
+class AiScheduledTasksRepo(Protocol):
+    """Data access for ``AI_SCHEDULED_TASKS`` (AI 定时任务, V040).
+
+    Row shape (``_id`` 是 24 位 hex 的 ``OID``)::
+
+        {"_id": str, "owner_oid": str, "name": str, "prompt_text": str,
+         "review_status": "draft" | "pending" | "approved" | "rejected",
+         "reviewed_by_oid": str | None, "reviewed_at": datetime | None,
+         "review_note": str | None,
+         "schedule_kind": "interval" | "cron",
+         "interval_minutes": int, "cron_expr": str | None,
+         "enabled": bool, "model": str | None,
+         "last_run_at": datetime | None, "next_run_at": datetime | None,
+         "run_count": int, "last_status": str | None,
+         "last_error": str | None,
+         "created_at": datetime, "updated_at": datetime}
+
+    ``review_status`` 与 ``enabled`` 是两个独立事实：改 ``prompt_text`` 必须重新
+    过审（服务层把状态打回 ``draft``），但排程与启用状态不受影响。
+    """
+
+    async def create(
+        self,
+        *,
+        owner_oid: str,
+        name: str,
+        prompt_text: str,
+        schedule_kind: str,
+        interval_minutes: int,
+        cron_expr: str | None,
+        next_run_at: datetime | None,
+        run_at: datetime | None = None,
+        review_status: str = "draft",
+        model: str | None = None,
+    ) -> Row:
+        """Insert one task and return the full row (created 视图直接用它)."""
+        ...
+
+    async def get(self, oid: str) -> Row | None:
+        """Return one task regardless of owner, or ``None``."""
+        ...
+
+    async def list_for_owner(
+        self, owner_oid: str, *, limit: int = 200
+    ) -> list[Row]:
+        """This owner's tasks, newest first."""
+        ...
+
+    async def list_all(
+        self,
+        *,
+        owner_oid: str | None = None,
+        review_status: str | None = None,
+        limit: int = 200,
+        offset: int = 0,
+    ) -> list[Row]:
+        """Admin view: optionally filtered by owner and review status, newest first."""
+        ...
+
+    async def update(self, oid: str, values: Mapping[str, Any]) -> bool:
+        """Partial update (column whitelist); ``False`` = row absent."""
+        ...
+
+    async def delete(self, oid: str) -> bool:
+        """Delete one task; ``False`` = row absent."""
+        ...
+
+    async def count_active_for_owner(self, owner_oid: str) -> int:
+        """配额口径：``review_status != 'rejected'`` 的行数（驳回不占额度）。"""
+        ...
+
+    async def claim_due(
+        self, now: datetime, *, limit: int = 50
+    ) -> list[Row]:
+        """Snapshot due tasks, then CAS each one; losers are not returned.
+
+        ``claim`` 的期望值是快照里的 ``last_run_at``：并发的两个 tick 只有一个能
+        命中，而崩溃后的下一次 tick 用新快照自然重试，不会把任务卡死。
+        """
+        ...
+
+    async def claim(
+        self, oid: str, now: datetime, *, expected: datetime | None
+    ) -> bool:
+        """CAS one task: ``next_run_at <= now`` **and** ``last_run_at = expected``."""
+        ...
+
+    async def mark_result(
+        self,
+        oid: str,
+        *,
+        last_status: str,
+        next_run_at: datetime,
+        last_error: str | None = None,
+        counted: bool = False,
+    ) -> bool:
+        """Write the scheduling verdict and advance ``next_run_at``.
+
+        执行、跳过、失败都必须调用：``next_run_at`` 不推进会让坏任务被每个 tick
+        重试一次。``counted=True`` 才 ``run_count + 1``（跳过不加计数）。
+        """
+        ...
+
+    async def list_runs(
+        self, task_oid: str, *, page: int = 1, size: int = 20
+    ) -> tuple[list[Row], int]:
+        """``(runs, total)`` for one task, newest first.
+
+        run 行形状：``{"_id","status","model","stop_reason","error_code",
+        "error_message","created_at","started_at","finished_at"}``。
+        """
+        ...
+
+    async def last_conversation_oid(self, task_oid: str) -> str | None:
+        """该任务最近一次 run 的会话（复用它，别每次执行都新建会话）。"""
+        ...
+
+    async def attach_run_task(self, run_id: str, task_oid: str) -> bool:
+        """归因一次已入队的 run（``insert_queued`` 不认 ``task_oid``）。"""
+        ...
