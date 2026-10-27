@@ -2941,6 +2941,7 @@ onBeforeUnmount(() => {
       </section>
 
       <section class="reg-card toolbar-card">
+        <ElButton :icon="Plus" @click="addRow">新增行</ElButton>
         <ElButton :icon="CopyDocument" @click="pasteFromClipboard">从剪贴板粘贴</ElButton>
         <ElButton :icon="UploadFilled" @click="triggerImport">导入表格</ElButton>
         <ElButton :icon="Refresh" :loading="indexLoading || indexBooting" @click="refreshIndex()">
@@ -3247,9 +3248,6 @@ onBeforeUnmount(() => {
               </tr>
             </tbody>
           </table>
-        </div>
-        <div class="grid-foot">
-          <ElButton :icon="Plus" @click="addRow">新增行</ElButton>
         </div>
       </section>
     </div>
@@ -4195,14 +4193,6 @@ onBeforeUnmount(() => {
   min-height: 15rem;
   max-height: calc(100vh - 22.5rem);
   overflow: auto;
-}
-
-.grid-foot {
-  display: flex;
-  justify-content: flex-start;
-  padding: var(--yg-space-3) var(--yg-space-4);
-  border-top: 1px solid var(--yg-border-subtle);
-  background: var(--yg-bg-surface);
 }
 
 .reg-grid {
