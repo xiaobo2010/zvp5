@@ -348,7 +348,7 @@ def test_missing_or_empty_roles_is_treated_as_student(client, env, roles) -> Non
     assert response.json()["detail"]["code"] == "DEVICE_REQUIRED"
 
 
-@pytest.mark.parametrize("roles", [["secretary"], ["department"], ["admin"], ["teacher"]])
+@pytest.mark.parametrize("roles", [["secretary"], ["department"], ["admin"]])
 def test_privileged_roles_login_without_device_header(client, env, roles) -> None:
     _set_roles(env, roles)
 
@@ -368,7 +368,7 @@ def test_bad_role_type_is_treated_as_student(client, env, roles) -> None:
     assert response.json()["detail"]["code"] == "DEVICE_REQUIRED"
 
 
-@pytest.mark.parametrize("roles", [["secretary"], ["department"], ["admin"], ["teacher"]])
+@pytest.mark.parametrize("roles", [["secretary"], ["department"], ["admin"]])
 def test_privileged_roles_bypass_primary_device_gate(client, env, roles) -> None:
     """团支书及以上换了设备直接放行，不再走临时密码。"""
     _set_roles(env, roles)

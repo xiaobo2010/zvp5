@@ -53,15 +53,18 @@ from routers.ai_router import (
     _stream_error_frame,
     ai_scene,
 )
+from services import violation_guard
 from services.agent import context as agent_context
 from services.agent import prompt
 from services.agent.tool_impl import AgentError
 from services.ai import audit, credentials, prompt_audit, prompt_cache, providers
 from services.ai import config as ai_config
 from services.ai import conversations, quota, rate_limit, routing
+from services.ai import moderation
 from services.ai import usage as ai_usage
 from services.ai.credentials import CredentialError
 from services.ai.routing import RouteError
+from util import agent_unlock
 from util.object_id import get_current_user
 
 _logger = logging.getLogger(__name__)
@@ -433,6 +436,44 @@ async def chat_in_conversation(
         return _error(
             400, "AI_BAD_REQUEST", "content must not be empty", request_id=request_id
         )
+
+    # 审核必须在 ``StreamingResponse`` 之前：响应头一旦发出，422 就只能藏在流里，
+    # 前端按 ``error.code`` 的分支会全部失效。chat 不做密码门——它没有写工具。
+    if agent_unlock.is_unrestricted(owner_oid):
+        await _audit(
+            user_oid=owner_oid,
+            request_id=request_id,
+            purpose=purpose,
+            status="warning",
+            http_status=200,
+            error_code="AI_AGENT_MODERATION_SKIPPED",
+            roles_snapshot=snapshot,
+        )
+    else:
+        verdict = moderation.check(content)
+        if verdict.hit:
+            _logger.warning(
+                "conversation chat 审核拦截 user=%s rule=%s", owner_oid, verdict.rule
+            )
+            try:
+                await violation_guard.record_agent_jailbreak(user)
+            except Exception:  # noqa: BLE001 - 证据入库失败不该把拒绝变成 500
+                _logger.exception("agent 越狱违规入库失败（本次仍然拒绝）")
+            await _audit(
+                user_oid=owner_oid,
+                request_id=request_id,
+                purpose=purpose,
+                status="rejected",
+                http_status=422,
+                error_code="AI_AGENT_MODERATION_REJECTED",
+                roles_snapshot=snapshot,
+            )
+            return _error(
+                422,
+                "AI_AGENT_MODERATION_REJECTED",
+                moderation.REJECTED_MESSAGE,
+                request_id=request_id,
+            )
 
     try:
         model, entry = await _select_route(

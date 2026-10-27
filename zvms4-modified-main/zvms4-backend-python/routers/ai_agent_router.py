@@ -23,12 +23,14 @@ from __future__ import annotations
 
 import logging
 import re
+from datetime import datetime
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
+from db import backends
 from routers.ai_router import (
     AI_FORBIDDEN_MESSAGE,
     _error_type,
@@ -37,6 +39,9 @@ from routers.ai_router import (
 from services.agent import executor, proposal
 from services.agent.tool_impl import AgentError
 from services.ai import audit
+from typings.log import ZVMSLog
+from util import agent_unlock
+from util.cert import verify_password_async
 from util.object_id import get_current_user
 
 _logger = logging.getLogger(__name__)
@@ -124,6 +129,160 @@ async def _forbidden(user: dict, *, request_id: str) -> JSONResponse:
     return _error(403, "AI_FORBIDDEN", AI_FORBIDDEN_MESSAGE, request_id=request_id)
 
 
+def _is_admin(user: dict) -> bool:
+    return "admin" in (user.get("per") or [])
+
+
+async def _require_unlock(user: dict, *, request_id: str) -> JSONResponse | None:
+    """确认/驳回前的密码门；未解锁回 422（与双人码的 422 同形）。"""
+    user_oid = str(user.get("id") or "")
+    if agent_unlock.is_unlocked(user_oid):
+        return None
+    await _audit(
+        user,
+        request_id=request_id,
+        status="rejected",
+        code="AI_AGENT_UNLOCK_REQUIRED",
+        http_status=422,
+    )
+    return _error(
+        422,
+        "AI_AGENT_UNLOCK_REQUIRED",
+        "agent access requires an unlock with your account password",
+        request_id=request_id,
+    )
+
+
+async def _log_platform_unrestricted(user: dict, *, enabled: bool) -> None:
+    """平台日志：无限制模式的每一次开关都要在后台看得见（spec §6）。"""
+    state = "开启" if enabled else "关闭"
+    try:
+        await ZVMSLog(
+            "",
+            str(user.get("id") or ""),
+            f"管理员{state}了 agent 输入审核的无限制模式",
+            datetime.now().timestamp(),
+            type="ai_moderation_unrestricted",
+            level="info",
+        ).insert_log()
+    except Exception:  # noqa: BLE001 - 平台日志失败不改变开关本身的结论
+        _logger.exception("写入 ai_moderation_unrestricted 日志失败")
+
+
+class UnlockRequest(BaseModel):
+    """密码门入参；空密码交给校验层判失败（不在这里 422 出另一套错误体）。"""
+
+    password: str = Field(default="", max_length=200)
+
+
+class UnrestrictedRequest(BaseModel):
+    enabled: bool
+
+
+@router.post("/unlock")
+async def unlock(payload: UnlockRequest | None = None, user=Depends(get_current_user)):
+    """用本人账号密码换取 30 分钟 agent 授权。
+
+    失败语义：``403 AI_AGENT_UNLOCK_FAILED`` 密码错误、``429
+    AI_AGENT_UNLOCK_LOCKED`` 连错已锁（带 ``Retry-After``）。锁定判定在校验之前
+    ——锁内即使输对也拒，否则锁定就只是「慢一点」。
+    """
+    request_id = uuid4().hex
+    owner_oid = str(user.get("id") or "")
+
+    retry_after = agent_unlock.unlock_retry_after(owner_oid)
+    if retry_after > 0:
+        return _error(
+            429,
+            "AI_AGENT_UNLOCK_LOCKED",
+            "too many failed unlock attempts",
+            request_id=request_id,
+            headers={"Retry-After": str(retry_after)},
+        )
+
+    password = payload.password if payload is not None else ""
+    hashed = None
+    try:
+        row = await backends.get_users_repo().get_by_oid(owner_oid)
+        hashed = (row or {}).get("password")
+    except Exception:  # noqa: BLE001 - 读库失败按「密码错误」处理，不泄露内部状态
+        _logger.exception("读取用户密码哈希失败")
+    authenticated = bool(hashed) and await verify_password_async(password, hashed)
+
+    if not authenticated:
+        if agent_unlock.record_unlock_failure(owner_oid):
+            return _error(
+                429,
+                "AI_AGENT_UNLOCK_LOCKED",
+                "too many failed unlock attempts",
+                request_id=request_id,
+                headers={"Retry-After": str(agent_unlock.unlock_retry_after(owner_oid))},
+            )
+        return _error(
+            403,
+            "AI_AGENT_UNLOCK_FAILED",
+            "password is incorrect",
+            request_id=request_id,
+        )
+
+    unlocked_until = agent_unlock.mark_unlocked(owner_oid)
+    return JSONResponse(
+        status_code=200,
+        content={"unlocked_until": unlocked_until.isoformat()},
+        headers={"X-AI-Request-Id": request_id},
+    )
+
+
+@router.get("/moderation/unrestricted")
+async def get_unrestricted_mode(user=Depends(get_current_user)):
+    """管理员的「无限制模式」当前是否开着。仅 admin 可读。"""
+    request_id = uuid4().hex
+    if not _is_admin(user):
+        return await _forbidden(user, request_id=request_id)
+    return JSONResponse(
+        status_code=200,
+        content={"enabled": agent_unlock.is_unrestricted(str(user.get("id") or ""))},
+        headers={"X-AI-Request-Id": request_id},
+    )
+
+
+@router.put("/moderation/unrestricted")
+async def set_unrestricted_mode(
+    payload: UnrestrictedRequest, user=Depends(get_current_user)
+):
+    """开关「无限制模式」：跳过输入审核，但每一处跳过都要留痕。
+
+    开与关各写两行日志：网关侧 ``AI_CALL_LOGS.status='warning'``（回答了「这段
+    时间为什么没有拒绝」）与平台日志（回答了「谁改的」）。
+    """
+    request_id = uuid4().hex
+    if not _is_admin(user):
+        return await _forbidden(user, request_id=request_id)
+
+    enabled = bool(payload.enabled)
+    agent_unlock.set_unrestricted(str(user.get("id") or ""), enabled)
+    await audit.record(
+        user_oid=str(user.get("id") or ""),
+        capability="chat",
+        endpoint=audit.ENDPOINT_AGENT,
+        status="warning",
+        http_status=200,
+        error_code=(
+            "AI_AGENT_MODERATION_OFF" if enabled else "AI_AGENT_MODERATION_ON"
+        ),
+        latency_ms=0,
+        request_id=request_id,
+        purpose=executor.PURPOSE_AGENT,
+        roles_snapshot=audit.roles_snapshot(user.get("per")),
+    )
+    await _log_platform_unrestricted(user, enabled=enabled)
+    return JSONResponse(
+        status_code=200,
+        content={"enabled": enabled},
+        headers={"X-AI-Request-Id": request_id},
+    )
+
+
 @router.post("/proposals/{oid}/confirm")
 async def confirm_proposal(
     oid: str,
@@ -140,6 +299,10 @@ async def confirm_proposal(
 
     if not _has_ai_access(user):
         return await _forbidden(user, request_id=request_id)
+
+    denied = await _require_unlock(user, request_id=request_id)
+    if denied is not None:
+        return denied
 
     if not PROPOSAL_OID_PATTERN.match(str(oid)):
         return _error(
@@ -182,6 +345,10 @@ async def reject_proposal(oid: str, user=Depends(get_current_user)):
 
     if not _has_ai_access(user):
         return await _forbidden(user, request_id=request_id)
+
+    denied = await _require_unlock(user, request_id=request_id)
+    if denied is not None:
+        return denied
 
     if not PROPOSAL_OID_PATTERN.match(str(oid)):
         return _error(

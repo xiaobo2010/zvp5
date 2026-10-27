@@ -2,11 +2,11 @@
 import { ZButtonOrCard, ZActivityMember, ZActivityDuration } from '@/components'
 import type { ActivityMember, Activity } from '@/../types/v2'
 import { toRefs, watch } from 'vue'
-import { User as IconUser, Minus, EditPen } from '@element-plus/icons-vue'
+import { User as IconUser, Minus, EditPen, Search } from '@element-plus/icons-vue'
 import { useUserStore } from '@/stores/user'
 import { useI18n } from 'vue-i18n'
-import { ElTable, ElTableColumn, ElButton, ElIcon, ElEmpty, ElMessageBox } from 'element-plus'
-import { useWindowSize } from '@vueuse/core'
+import { ElTable, ElTableColumn, ElButton, ElIcon, ElEmpty, ElMessageBox, ElInput } from 'element-plus'
+import { useDebounceFn, useWindowSize } from '@vueuse/core'
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import api from '@/api'
@@ -72,22 +72,39 @@ function goRegister() {
   void router.push({ path: '/activity/register', query: { activity: id } })
 }
 
+let requestId = 0
+
 async function refreshMembers() {
+  const current = ++requestId
   pageLoading.value = true
-  const { members: membersResult, total } = await api.activity.member.reads_v3(
-    activity.value._id,
-    page.value,
-    perpage.value,
-    search.value
-  )
-  members.value = membersResult
-  size.value = total
-  pageLoading.value = false
-  if (mode.value === 'inline' && modified.value) {
-    modified.value = false
-    emits('refresh')
+  try {
+    const { members: membersResult, total } = await api.activity.member.reads_v3(
+      activity.value._id,
+      page.value,
+      perpage.value,
+      search.value
+    )
+    if (current !== requestId) return
+    members.value = membersResult
+    size.value = total
+    if (mode.value === 'inline' && modified.value) {
+      modified.value = false
+      emits('refresh')
+    }
+  } finally {
+    if (current === requestId) pageLoading.value = false
   }
 }
+
+function refreshFromFirstPage() {
+  if (page.value === 1) {
+    void refreshMembers()
+    return
+  }
+  page.value = 1
+}
+
+const debouncedRefresh = useDebounceFn(refreshFromFirstPage, 300)
 
 refreshMembers()
 
@@ -137,8 +154,8 @@ const show = ref(false)
 show.value = true
 
 watch(page, refreshMembers)
-watch(perpage, refreshMembers)
-watch(search, refreshMembers)
+watch(perpage, refreshFromFirstPage)
+watch(search, debouncedRefresh)
 </script>
 
 <template>
@@ -164,10 +181,30 @@ watch(search, refreshMembers)
           <ElIcon><IconUser /></ElIcon>
           {{ t('activity.member.inline.title') }}
         </p>
-        <span class="text-sm text-gray-500" style="font-variant-numeric: tabular-nums">
-          {{ t('activity.member.inline.count', { count: size }) }}
-        </span>
+        <div class="flex items-center gap-2 flex-wrap">
+          <ElInput
+            v-model="search"
+            :placeholder="t('activity.member.dialog.search')"
+            :prefix-icon="Search"
+            clearable
+            size="small"
+            style="width: 240px"
+          />
+          <span class="text-sm text-gray-500" style="font-variant-numeric: tabular-nums">
+            {{ t('activity.member.inline.count', { count: size }) }}
+          </span>
+        </div>
       </div>
+      <ElInput
+        v-if="mode !== 'inline'"
+        v-model="search"
+        :placeholder="t('activity.member.dialog.search')"
+        :prefix-icon="Search"
+        clearable
+        size="small"
+        class="pb-2"
+        style="width: 240px"
+      />
       <div v-if="show">
         <ElTable
           v-loading="pageLoading"
@@ -207,7 +244,7 @@ watch(search, refreshMembers)
               (user.position.includes('admin') ||
                 user.position.includes('department')) &&
               !wholesale &&
-              !selectable
+               !selectable
             "
             class="no-print"
           >

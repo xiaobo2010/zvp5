@@ -7,7 +7,8 @@ import {
   Moon,
   Management,
   Monitor,
-  ChatLineRound
+  ChatLineRound,
+  EditPen
 } from '@element-plus/icons-vue'
 import { ElTooltip, ElIcon } from 'element-plus'
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
@@ -73,6 +74,13 @@ const navs = computed<NavItem[]>(() => [
         !path.startsWith('/activity/create') &&
         !path.startsWith('/activity/register')) ||
       path.startsWith('/activities')
+  },
+  {
+    icon: EditPen,
+    name: 'register',
+    path: '/activity/register',
+    show: user.position.includes('admin') || user.position.includes('department'),
+    judge: (path) => path === '/activity/register'
   },
   {
     icon: CirclePlusFilled,

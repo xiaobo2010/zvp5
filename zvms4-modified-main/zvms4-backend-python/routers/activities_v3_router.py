@@ -210,6 +210,8 @@ async def add_activity_member_v3(
             target_activity = await activities_repo.get_for_update(activity_id)
             if not target_activity:
                 raise HTTPException(status_code=404, detail="Activity not found")
+            if target_activity.get("status", "effective") not in ("pending", "effective"):
+                raise HTTPException(status_code=400, detail="当前活动状态不允许登记成员")
             users_repo = backends.get_users_repo(session)
             known_users = await users_repo.get_many_by_oids(
                 [oid for oid, _mode in additions]
@@ -265,6 +267,10 @@ async def add_activity_member_v3(
             log.with_text(
                 f"用户 {performer} 为义工活动《{activity_name}》"
                 f"{'设置' if overwrite else '增加'}时长：{detail}",
-                type="activity_member_update",
+                type=(
+                    "activity_member_update"
+                    if overwrite or any(key in existing_by_key for key in additions)
+                    else "activity_member_add"
+                ),
             )
             await log.insert_log(session)

@@ -30,6 +30,13 @@ import {
   type NotificationRecord,
   type UpdateNotificationInput
 } from '@/api/notifications'
+import {
+  createChangelog,
+  deleteChangelog,
+  getChangelog,
+  updateChangelog,
+  type ChangelogEntry
+} from '@/api/changelog'
 
 const { t } = useI18n()
 
@@ -355,8 +362,139 @@ const dialogTitle = computed(() =>
     : t('manage.notifications.dialog.editTitle')
 )
 
+const changelogRows = ref<ChangelogEntry[]>([])
+const changelogLoading = ref(false)
+const changelogLoadFailed = ref(false)
+const changelogDialogVisible = ref(false)
+const changelogSaving = ref(false)
+const changelogDeletingId = ref('')
+const changelogEditingId = ref('')
+const changelogSaveFailed = ref(false)
+const changelogForm = reactive({
+  version: '',
+  date: '',
+  items: ''
+})
+
+const changelogDialogTitle = computed(() =>
+  changelogEditingId.value
+    ? t('manage.notifications.changelog.dialog.editTitle')
+    : t('manage.notifications.changelog.dialog.createTitle')
+)
+
+const changelogCanSave = computed(
+  () => Boolean(changelogForm.version.trim()) && Boolean(changelogForm.date.trim())
+)
+
+async function loadChangelog() {
+  changelogLoading.value = true
+  try {
+    const data = await getChangelog()
+    changelogRows.value = data ?? []
+    changelogLoadFailed.value = !data
+  } catch {
+    changelogRows.value = []
+    changelogLoadFailed.value = true
+  } finally {
+    changelogLoading.value = false
+  }
+}
+
+function openChangelogCreate() {
+  changelogEditingId.value = ''
+  changelogForm.version = ''
+  changelogForm.date = ''
+  changelogForm.items = ''
+  changelogSaveFailed.value = false
+  changelogDialogVisible.value = true
+}
+
+function openChangelogEdit(entry: ChangelogEntry) {
+  changelogEditingId.value = entry.id
+  changelogForm.version = entry.version
+  changelogForm.date = entry.date
+  changelogForm.items = entry.items.join('\n')
+  changelogSaveFailed.value = false
+  changelogDialogVisible.value = true
+}
+
+function parseChangelogItems(text: string): string[] {
+  return text
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+}
+
+function changelogFirstItem(entry: ChangelogEntry): string {
+  return entry.items[0] ?? '—'
+}
+
+async function submitChangelog() {
+  if (changelogSaving.value || !changelogCanSave.value) {
+    return
+  }
+  changelogSaving.value = true
+  changelogSaveFailed.value = false
+  try {
+    const payload = {
+      version: changelogForm.version.trim(),
+      date: changelogForm.date.trim(),
+      items: parseChangelogItems(changelogForm.items)
+    }
+    if (changelogEditingId.value) {
+      await updateChangelog(changelogEditingId.value, payload)
+    } else {
+      await createChangelog(payload)
+    }
+    changelogDialogVisible.value = false
+    ElMessage.success(t('manage.notifications.changelog.saved'))
+    await loadChangelog()
+    void loadNotifications()
+  } catch {
+    changelogSaveFailed.value = true
+    ElMessage.error(t('manage.notifications.changelog.saveFailed'))
+  } finally {
+    changelogSaving.value = false
+  }
+}
+
+async function removeChangelog(entry: ChangelogEntry) {
+  if (changelogDeletingId.value) {
+    return
+  }
+  changelogDeletingId.value = entry.id
+  try {
+    await ElMessageBox.confirm(
+      t('manage.notifications.changelog.deleteConfirm'),
+      t('manage.notifications.changelog.title'),
+      {
+        type: 'warning',
+        confirmButtonText: t('manage.notifications.delete'),
+        cancelButtonText: t('manage.notifications.cancel'),
+        confirmButtonClass: 'el-button--danger',
+        closeOnClickModal: false
+      }
+    )
+  } catch {
+    changelogDeletingId.value = ''
+    return
+  }
+
+  try {
+    await deleteChangelog(entry.id)
+    changelogRows.value = changelogRows.value.filter((row) => row.id !== entry.id)
+    ElMessage.success(t('manage.notifications.changelog.deleted'))
+    void loadNotifications()
+  } catch {
+    // 404/权限错误由 axios 统一提示。
+  } finally {
+    changelogDeletingId.value = ''
+  }
+}
+
 onMounted(() => {
   void loadNotifications()
+  void loadChangelog()
 })
 </script>
 
@@ -501,6 +639,109 @@ onMounted(() => {
       </p>
     </ElCard>
 
+    <ElCard shadow="never">
+      <template #header>
+        <div class="flex flex-wrap items-center justify-between gap-3">
+          <div class="flex flex-col gap-1">
+            <span>{{ t('manage.notifications.changelog.title') }}</span>
+            <span class="text-xs font-normal" style="color: var(--yg-text-tertiary)">
+              {{ t('manage.notifications.changelog.hint') }}
+            </span>
+          </div>
+          <div class="flex flex-wrap items-center gap-2">
+            <ElButton @click="loadChangelog">
+              {{ t('manage.notifications.refresh') }}
+            </ElButton>
+            <ElButton type="primary" @click="openChangelogCreate">
+              {{ t('manage.notifications.changelog.add') }}
+            </ElButton>
+          </div>
+        </div>
+      </template>
+
+      <ElTable
+        v-loading="changelogLoading"
+        :data="changelogRows"
+        row-key="id"
+        stripe
+        max-height="320"
+      >
+        <ElTableColumn
+          prop="version"
+          :label="t('manage.notifications.changelog.columns.version')"
+          width="140"
+          show-overflow-tooltip
+        />
+        <ElTableColumn
+          prop="date"
+          :label="t('manage.notifications.changelog.columns.date')"
+          width="120"
+        >
+          <template #default="{ row }">
+            <span class="tabular-nums">{{ row.date }}</span>
+          </template>
+        </ElTableColumn>
+        <ElTableColumn
+          :label="t('manage.notifications.changelog.columns.items')"
+          :min-width="narrow ? 180 : 320"
+        >
+          <template #default="{ row }">
+            <div class="flex items-center gap-2">
+              <span class="changelog-item-preview">{{ changelogFirstItem(row) }}</span>
+              <span
+                v-if="row.items.length > 1"
+                class="shrink-0 text-xs"
+                style="color: var(--yg-text-tertiary)"
+              >
+                {{
+                  t('manage.notifications.changelog.moreItems', { count: row.items.length - 1 })
+                }}
+              </span>
+            </div>
+          </template>
+        </ElTableColumn>
+        <ElTableColumn
+          :label="t('manage.notifications.changelog.columns.actions')"
+          width="150"
+          fixed="right"
+          align="right"
+        >
+          <template #default="{ row }">
+            <div class="flex flex-wrap justify-end gap-1">
+              <ElButton text type="primary" size="small" @click="openChangelogEdit(row)">
+                {{ t('manage.notifications.edit') }}
+              </ElButton>
+              <ElButton
+                text
+                type="danger"
+                size="small"
+                :loading="changelogDeletingId === row.id"
+                :disabled="Boolean(changelogDeletingId) && changelogDeletingId !== row.id"
+                @click="removeChangelog(row)"
+              >
+                {{ t('manage.notifications.delete') }}
+              </ElButton>
+            </div>
+          </template>
+        </ElTableColumn>
+        <template #empty>
+          <div class="flex flex-col items-center gap-2 py-3">
+            <ElEmpty
+              :description="
+                changelogLoadFailed
+                  ? t('manage.notifications.loadFailed')
+                  : t('manage.notifications.changelog.empty')
+              "
+              :image-size="72"
+            />
+            <ElButton v-if="changelogLoadFailed" size="small" @click="loadChangelog">
+              {{ t('manage.notifications.refresh') }}
+            </ElButton>
+          </div>
+        </template>
+      </ElTable>
+    </ElCard>
+
     <ElDialog
       v-model="dialogVisible"
       :title="dialogTitle"
@@ -586,11 +827,89 @@ onMounted(() => {
       @update:visible="historyVisible = $event"
       @refresh="loadNotifications"
     />
+
+    <ElDialog
+      v-model="changelogDialogVisible"
+      :title="changelogDialogTitle"
+      width="min(640px, 94vw)"
+      :close-on-click-modal="false"
+      :close-on-press-escape="!changelogSaving"
+      :show-close="!changelogSaving"
+      append-to-body
+    >
+      <ElForm
+        :model="changelogForm"
+        label-position="top"
+        class="notification-form"
+      >
+        <ElFormItem :label="t('manage.notifications.changelog.dialog.version')" required>
+          <ElInput
+            v-model="changelogForm.version"
+            :maxlength="32"
+            show-word-limit
+            :placeholder="t('manage.notifications.changelog.dialog.versionPlaceholder')"
+            :disabled="changelogSaving"
+          />
+        </ElFormItem>
+        <ElFormItem :label="t('manage.notifications.changelog.dialog.date')" required>
+          <ElInput
+            v-model="changelogForm.date"
+            :maxlength="16"
+            placeholder="YYYY-MM-DD"
+            :disabled="changelogSaving"
+          />
+        </ElFormItem>
+        <ElFormItem :label="t('manage.notifications.changelog.dialog.items')">
+          <ElInput
+            v-model="changelogForm.items"
+            type="textarea"
+            :rows="8"
+            :placeholder="t('manage.notifications.changelog.dialog.itemsHint')"
+            :disabled="changelogSaving"
+          />
+        </ElFormItem>
+      </ElForm>
+
+      <template #footer>
+        <div class="flex flex-wrap items-center justify-between gap-3">
+          <span
+            v-if="changelogSaveFailed"
+            class="text-xs"
+            style="color: var(--el-color-danger)"
+          >
+            {{ t('manage.notifications.changelog.saveFailed') }}
+          </span>
+          <span v-else class="text-xs" style="color: var(--yg-text-tertiary)">
+            {{ t('manage.notifications.changelog.dialog.itemsHint') }}
+          </span>
+          <div class="flex flex-wrap items-center justify-end gap-2">
+            <ElButton :disabled="changelogSaving" @click="changelogDialogVisible = false">
+              {{ t('manage.notifications.cancel') }}
+            </ElButton>
+            <ElButton
+              type="primary"
+              :loading="changelogSaving"
+              :disabled="!changelogCanSave"
+              @click="submitChangelog"
+            >
+              {{ t('manage.notifications.changelog.dialog.save') }}
+            </ElButton>
+          </div>
+        </div>
+      </template>
+    </ElDialog>
   </div>
 </template>
 
 <style scoped>
 .notification-form :deep(.el-form-item:last-child) {
   margin-bottom: 0;
+}
+
+.changelog-item-preview {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 </style>

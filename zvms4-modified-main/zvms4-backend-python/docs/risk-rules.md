@@ -46,7 +46,7 @@
 
 - 窗口计数 `count >= threshold` 才动手；已有**生效**封禁（`util.ban.ban_is_active`，
   到期即失效）时只记新证据，不再推梯度，避免被自己的重试打到永久档。
-- 角色豁免：`admin` / `department` / `secretary` / `teacher` 只告警不封禁
+- 角色豁免：`admin` / `department` / `secretary` 只告警不封禁
   （与设备闸、上报闸同一口径）。
 - 节流：同一 `(trigger, user_oid)` 60 秒内只评估一次，进程内表超过 4096 条先清
   过期项。调用点在每一次失败登录上，没有节流就是新的日志/查询风暴入口。

@@ -20,6 +20,7 @@ import { computed, watch, ref, onMounted, onUnmounted, h, reactive } from 'vue'
 import type { WatermarkFontType } from 'element-plus'
 import { zhCn } from 'element-plus/es/locale/index.mjs'
 import ZNotificationReminder from '@/components/notification/ZNotificationReminder.vue'
+import ZPrimaryDeviceGate from '@/components/notification/ZPrimaryDeviceGate.vue'
 import { useRegisterSW } from 'virtual:pwa-register/vue'
 import { CarbonCloudOffline } from '@/icons'
 // 直接从定义模块引入：绕过 @/views barrel，避免主 chunk 打包全部路由视图
@@ -318,7 +319,6 @@ watch(
       !userStore.isLogin &&
       !route.fullPath.endsWith('login') &&
       !route.fullPath.endsWith('about') &&
-      !route.fullPath.endsWith('changelog') &&
       !route.fullPath.endsWith('maintenance')
     ) {
       router.replace('/user/login')
@@ -522,6 +522,7 @@ onMounted(async () => {
       </div>
     </ElWatermark>
     <ZNotificationReminder />
+    <ZPrimaryDeviceGate />
   </ElConfigProvider>
 </template>
 

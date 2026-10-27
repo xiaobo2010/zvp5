@@ -3,8 +3,9 @@ import type { AiChatMessage } from '@/../types/ai'
 /**
  * AI 网关错误码 → 人话文案的映射。
  *
- * 后端两套协议面的错误体形状不同：zvp 面是 {"detail":"<code>"}，
- * OpenAI 面是 {"error":{"message","type","code"}}。两者最终都归一成
+ * 后端两套协议面的错误体形状不同：zvp 面是 {"detail":"<code>"}（结构化
+ * 错误为 {"detail":{"code","message"}}，设备闸 403 用后者），OpenAI 面是
+ * {"error":{"message","type","code"}}。两者最终都归一成
  * 一个错误码，由本模块给出「发生了什么 + 该做什么」。
  *
  * 这里只放 i18n key，不放文案本身：文案集中在 src/i18n/locales/ai.ts。
@@ -53,6 +54,10 @@ const ERROR_SECTIONS: Record<string, string> = {
   AI_AGENT_PROPOSAL_UNKNOWN_TOOL: 'AI_AGENT_PROPOSAL_UNKNOWN_TOOL',
   AI_AGENT_TOOL_FAILED: 'AI_AGENT_TOOL_FAILED',
   AI_AGENT_TOTP_REQUIRED: 'AI_AGENT_TOTP_REQUIRED',
+  AI_AGENT_UNLOCK_REQUIRED: 'AI_AGENT_UNLOCK_REQUIRED',
+  AI_AGENT_UNLOCK_FAILED: 'AI_AGENT_UNLOCK_FAILED',
+  AI_AGENT_UNLOCK_LOCKED: 'AI_AGENT_UNLOCK_LOCKED',
+  AI_AGENT_MODERATION_REJECTED: 'AI_AGENT_MODERATION_REJECTED',
   AI_CONVERSATION_NOT_FOUND: 'AI_CONVERSATION_NOT_FOUND',
   AI_CONVERSATION_MODE_MISMATCH: 'AI_CONVERSATION_MODE_MISMATCH',
   AI_RUN_CONFLICT: 'AI_RUN_CONFLICT',
@@ -149,8 +154,9 @@ export interface AiChatRequest {
 
 /**
  * 从错误体里取出错误码。
- * zvp 面是 {"detail":"<code>"}，OpenAI 面是 {"error":{"code","message"}}；
- * pydantic 的 422 校验错误是数组，代码层面无法定位字段，统一归成
+ * zvp 面是 {"detail":"<code>"} 或结构化 {"detail":{"code","message"}}（设备
+ * 闸 403 用后者），OpenAI 面是 {"error":{"code","message"}}；pydantic 的 422
+ * 校验错误是数组，代码层面无法定位字段，统一归成
  * AI_INVALID_REQUEST（页面给通用提示，不猜字段）。
  */
 export function parseAiCode(body: unknown): string {
@@ -168,6 +174,12 @@ export function parseAiCode(body: unknown): string {
   if (Array.isArray(detail)) {
     return 'AI_INVALID_REQUEST'
   }
+  if (detail && typeof detail === 'object') {
+    const code = (detail as Record<string, unknown>).code
+    if (typeof code === 'string' && code.trim()) {
+      return code.trim()
+    }
+  }
   const error = record.error
   if (typeof error === 'string') {
     return error.trim()
@@ -181,10 +193,17 @@ export function parseAiCode(body: unknown): string {
   return ''
 }
 
-/** 从错误体里取出后端给的人话 message（OpenAI 面才有）。 */
+/** 从错误体里取出后端给的人话 message（结构化 detail.message 或 OpenAI 面）。 */
 export function parseAiMessage(body: unknown): string {
   if (!body || typeof body !== 'object') {
     return ''
+  }
+  const detail = (body as Record<string, unknown>).detail
+  if (detail && typeof detail === 'object') {
+    const message = (detail as Record<string, unknown>).message
+    if (typeof message === 'string') {
+      return message
+    }
   }
   const error = (body as Record<string, unknown>).error
   if (error && typeof error === 'object') {

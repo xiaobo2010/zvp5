@@ -1564,6 +1564,7 @@ class NotificationsRepo(Protocol):
          "author_oid": str,
          "author_name": str,
          "version": int,
+         "source_ref": str | None,
          "created_at": datetime,
          "updated_at": datetime}
 
@@ -1632,6 +1633,16 @@ class NotificationsRepo(Protocol):
         """Return the notification with ``_id == oid``, or ``None``."""
         ...
 
+    async def get_by_source_ref(self, source_ref: str) -> Row | None:
+        """Return the notice generated from ``source_ref``, or ``None``.
+
+        ``source_ref`` is the oid of the object the notice was generated from
+        (``CHANGELOG.OID`` today, V038). Because ``uq_notifications_source_ref``
+        is unique, at most one row can match; hand-written notices have
+        ``source_ref IS NULL`` and never match a non-null value.
+        """
+        ...
+
     async def create(
         self,
         *,
@@ -1639,12 +1650,18 @@ class NotificationsRepo(Protocol):
         content: str,
         author_oid: str,
         author_name: str,
+        source_ref: str | None = None,
     ) -> tuple[Row, int]:
         """Insert an active notification and return ``(row, global_version)``.
 
         ``version`` starts at 1 and ``created_at == updated_at``. The state bump
         shares the insert's transaction, so a committed notification always has
         a committed version increment.
+
+        ``source_ref`` marks the notice as generated from another object (the
+        CHANGELOG oid, V038). It is ``None`` for admin-written notices; the
+        unique constraint allows any number of NULLs, so hand-written notices
+        are unaffected. One source may own at most one notice.
         """
         ...
 

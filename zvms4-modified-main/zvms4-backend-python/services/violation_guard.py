@@ -39,7 +39,12 @@ _logger = logging.getLogger(__name__)
 TRIGGER = "platform_misuse"
 
 # 信号白名单：客户端只能报「观察到了什么形态」，不能自己发明类别。
-SIGNALS = ("iframe", "bridge", "devtools")
+# ``agent_jailbreak`` 由服务端在 agent 输入审核命中时上报，客户端仍不可传。
+SIGNALS = ("iframe", "bridge", "devtools", "agent_jailbreak")
+
+# 信号 → 检查项（BAN_RULES.TRIGGER_CODE）。没列出的都归属 ``TRIGGER``；agent 越狱
+# 单独一条规则，因为它的梯度与「平台违规使用」不是同一件事。
+SIGNAL_TRIGGERS = {"agent_jailbreak": "agent_jailbreak"}
 
 # 去重窗口：同 (user, signal) 窗口内只记一条。``devtools`` 给更长窗口，因为
 # 它按采样上报（窗口尺寸差/计时器抖动），短时间内天然会连续命中。
@@ -54,7 +59,12 @@ MAX_DETAIL_CHARS = 500
 
 # 角色豁免：这些角色即使在别的账号视角下「违规」，也可能是工作行为。
 # 与 ``services.device_guard.PRIVILEGED_ROLES`` 对齐（团支书也在其中）。
-NO_AUTO_BAN_ROLES = ("admin", "department", "secretary", "teacher")
+NO_AUTO_BAN_ROLES = ("admin", "department", "secretary")
+
+# agent 越狱单独豁免口径：AI 门禁默认只放行 admin/department，若沿用上面的豁免，
+# 学生会的越狱证据永远只留审计、封禁规则形同虚设。admin 保留豁免——有无限制模式
+# 兜底，且自动封管理员可能把平台锁死。
+AGENT_JAILBREAK_EXEMPT_ROLES = ("admin",)
 
 Row = dict[str, Any]
 
@@ -121,21 +131,37 @@ def _roles(value: Any) -> tuple[str, ...]:
     return tuple(role for role in value if isinstance(role, str))
 
 
-def _exempt_roles(roles: tuple[str, ...]) -> tuple[str, ...]:
-    return tuple(role for role in roles if role in NO_AUTO_BAN_ROLES)
+def _exempt_roles(
+    roles: tuple[str, ...], allowed: tuple[str, ...] | None = None
+) -> tuple[str, ...]:
+    baseline = allowed if allowed is not None else NO_AUTO_BAN_ROLES
+    return tuple(role for role in roles if role in baseline)
 
 
-async def _rule() -> dict | None:
-    """``platform_misuse`` 规则；读表失败按「只记录」处理（fail-open）。
+async def _rule(trigger: str = TRIGGER) -> dict | None:
+    """按检查项取规则；读表失败按「只记录」处理（fail-open）。
 
     证据已经入库，规则表读不到是运维问题：让整批上报 500 只会丢掉客户端手里的
     事实，而重试还会被去重窗口挡掉，等于永久失去这条证据。
     """
     try:
-        return await ban_rules.get_rule_by_trigger(TRIGGER)
+        return await ban_rules.get_rule_by_trigger(trigger)
     except Exception:
-        _logger.exception("读取 %s 规则失败，本次只记录违规不判定封禁", TRIGGER)
+        _logger.exception("读取 %s 规则失败，本次只记录违规不判定封禁", trigger)
         return None
+
+
+def _rule_trigger(triggers: set[str]) -> str:
+    """一批证据归属哪条规则：单一种类的非默认信号才换检查项。
+
+    混合批次沿用 ``platform_misuse``：一次请求同时报「平台违规」与「越狱」时，
+    用默认规则比按先到先得挑一条更可预测。
+    """
+    if len(triggers) == 1:
+        only = next(iter(triggers))
+        if only != TRIGGER:
+            return only
+    return TRIGGER
 
 
 async def _ban_active(user_oid: str) -> bool:
@@ -214,7 +240,12 @@ async def _log_ban(user_oid: str, reason: str, xuehai_id: str, at: datetime) -> 
         _logger.exception("写入 ban_rule 日志失败（封禁已生效）")
 
 
-async def record(user: dict, signals: list[dict], xuehai_id: str = "") -> dict:
+async def record(
+    user: dict,
+    signals: list[dict],
+    xuehai_id: str = "",
+    exempt_roles: tuple[str, ...] | None = None,
+) -> dict:
     """记录一批平台违规信号，命中阈值当次按规则梯度封禁。
 
     流程（顺序即语义）：角色豁免 → 白名单过滤 → 逐条窗口去重 → 入库 + 审计 →
@@ -235,7 +266,7 @@ async def record(user: dict, signals: list[dict], xuehai_id: str = "") -> dict:
         "rule_code": TRIGGER,
     }
 
-    exempt = _exempt_roles(_roles(user.get("per")))
+    exempt = _exempt_roles(_roles(user.get("per")), exempt_roles)
     if exempt:
         # 豁免必须在计数之前：特权角色的记录留在窗口里，换届/降级后会被一条
         # 无关上报当成「累计违规」触发封禁。
@@ -248,6 +279,7 @@ async def record(user: dict, signals: list[dict], xuehai_id: str = "") -> dict:
     batch_id = new_oid()
     recorded = 0
     duplicates = 0
+    recorded_triggers: set[str] = set()
     for item in signals or []:
         signal = (item or {}).get("signal")
         if not isinstance(signal, str) or signal not in SIGNALS:
@@ -255,6 +287,7 @@ async def record(user: dict, signals: list[dict], xuehai_id: str = "") -> dict:
             _logger.warning("忽略未知的平台违规信号 %r", signal)
             continue
 
+        trigger = SIGNAL_TRIGGERS.get(signal, TRIGGER)
         detail = _clean_detail((item or {}).get("detail"))
         since = now - timedelta(seconds=dedup_window_seconds(signal))
         if await violations.exists_recent(user_oid, signal, since):
@@ -263,13 +296,14 @@ async def record(user: dict, signals: list[dict], xuehai_id: str = "") -> dict:
 
         await violations.insert(
             user_oid,
-            TRIGGER,
+            trigger,
             signal,
             xuehai_id=xuehai_id or None,
             detail=detail,
             batch_id=batch_id,
         )
         recorded += 1
+        recorded_triggers.add(trigger)
         await _log_violation(user_oid, signal, detail, xuehai_id, now)
 
     result["recorded"] = recorded
@@ -278,21 +312,22 @@ async def record(user: dict, signals: list[dict], xuehai_id: str = "") -> dict:
         # 全是重复或非法信号：计数没有变化，没必要再读规则表。
         return result
 
-    rule = await _rule()
+    rule_trigger = _rule_trigger(recorded_triggers)
+    rule = await _rule(rule_trigger)
     if rule is None or not rule.get("enabled"):
         return result
 
     # 梯度与流水必须按规则自己的 code 记：管理员新建的规则 code 可能不是
     # ``platform_misuse``，写死 trigger 会让 count_for_user_rule 与取梯度的
     # ``get_by_code`` 对不上，处罚回落成默认 [1]。
-    rule_code = str(rule.get("code") or TRIGGER)
+    rule_code = str(rule.get("code") or rule_trigger)
     result["rule_code"] = rule_code
 
     config = _config(rule)
     threshold = config["threshold"]
     window_hours = config["window_hours"]
     since = now - timedelta(hours=window_hours)
-    count = await violations.count_batches_since(user_oid, TRIGGER, since)
+    count = await violations.count_batches_since(user_oid, rule_trigger, since)
     if count < threshold:
         return result
 
@@ -316,9 +351,31 @@ async def record(user: dict, signals: list[dict], xuehai_id: str = "") -> dict:
     return result
 
 
+async def record_agent_jailbreak(user: dict) -> dict:
+    """agent 输入审核命中：只上报 ``agent_jailbreak`` 一个信号。
+
+    学号是「哪台设备/哪个学号在试图越狱」的证据，但不是封禁判定的一部分：读不到
+    该行时留空，违规照样入库（失败方向必须是「证据还在」，而不是「整批丢掉」）。
+    """
+    user_oid = str(user.get("id") or "")
+    xuehai_id = ""
+    try:
+        doc = await backends.get_users_repo().get_by_oid(user_oid)
+        xuehai_id = str((doc or {}).get("id") or "")
+    except Exception:
+        _logger.warning("读取用户学号失败，越狱违规按无设备入库")
+    return await record(
+        user,
+        [{"signal": "agent_jailbreak"}],
+        xuehai_id,
+        exempt_roles=AGENT_JAILBREAK_EXEMPT_ROLES,
+    )
+
+
 __all__ = [
     "TRIGGER",
     "SIGNALS",
+    "SIGNAL_TRIGGERS",
     "DEDUP_WINDOW_SECONDS",
     "DEVTOOLS_DEDUP_WINDOW_SECONDS",
     "DEFAULT_CONFIG",
@@ -326,4 +383,5 @@ __all__ = [
     "NO_AUTO_BAN_ROLES",
     "dedup_window_seconds",
     "record",
+    "record_agent_jailbreak",
 ]

@@ -164,3 +164,29 @@ it('keeps the fallback and the rejection when reading a Blob body throws', async
   expect(elMessageMock).toHaveBeenCalledTimes(1)
   expect(shownMessages()).toEqual(['未知错误'])
 })
+
+// --- 登录设备闸的结构化 403:登录页接管,拦截器不弹通用 toast ------------------
+
+const deviceDetailCodes = [
+  'DEVICE_REQUIRED',
+  'DEVICE_BANNED',
+  'DEVICE_NOT_PRIMARY',
+  'TEMP_PASSWORD_INVALID',
+  'DEVICE_CHALLENGE_MISMATCH'
+]
+
+it.each(deviceDetailCodes)('keeps a structured %s 403 silent and still rejects', async (code) => {
+  client.defaults.adapter = failingAdapter(403, {
+    detail: { code, message: '人话提示', challenge: 'ch-1' }
+  })
+  const error = await client.post('/users/auth', {}).catch((e) => e)
+  expect(error).toBeInstanceOf(AxiosError)
+  expect(error.response?.status).toBe(403)
+  expect(elMessageMock).not.toHaveBeenCalled()
+})
+
+it('still toasts a string-detail 403 (unchanged behavior)', async () => {
+  client.defaults.adapter = failingAdapter(403, { detail: 'WRONG_PASSWORD' })
+  await client.post('/users/auth', {}).catch((e) => e)
+  expect(shownMessages()).toEqual(['WRONG_PASSWORD'])
+})

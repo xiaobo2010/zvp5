@@ -29,6 +29,7 @@ from db import backends
 from db.repos.protocols import ActiveRunConflict
 from services.agent import run_queue
 from services.agent.tool_impl import AgentError
+from util import agent_unlock
 
 OWNER = "0" * 24
 OTHER = "1" * 24
@@ -449,8 +450,14 @@ def env(monkeypatch) -> SimpleNamespace:
 @pytest_asyncio.fixture(autouse=True)
 async def _fresh_queue():
     run_queue.reset()
+    # agent 提交现在自带 30 分钟密码门：本文件验证的是队列机制，不是门禁，
+    # 所以把两个参与者预置成已解锁（门禁本身由 test_agent_unlock 守着）。
+    agent_unlock.clear_state()
+    agent_unlock.mark_unlocked(OWNER)
+    agent_unlock.mark_unlocked(OTHER)
     yield
     run_queue.reset()
+    agent_unlock.clear_state()
     await asyncio.sleep(0)  # 让被 cancel 的泵真的结束，免得 loop 关闭时报 pending
 
 

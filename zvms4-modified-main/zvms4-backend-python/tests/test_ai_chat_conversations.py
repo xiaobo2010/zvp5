@@ -504,7 +504,7 @@ def test_compaction_summary_is_the_second_system_message(env, upstream):
     messages = state["payloads"][0]["messages"]
     # 稳定前缀：版本化提示在前，摘要在第二条 system（放尾部会让前缀指纹退化）。
     assert messages[0]["role"] == "system"
-    assert messages[0]["content"].startswith("[ops-v1]")
+    assert messages[0]["content"].startswith("[ops-v2]")
     assert messages[1]["role"] == "system"
     assert "早先聊过甲，结论是乙" in messages[1]["content"]
     # 摘要之前（seq <= summary_upto_seq）的原文不进上下文。
