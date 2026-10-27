@@ -127,6 +127,9 @@ export const zhCN = {
     deleteConfirm:
       '确定要删除用户 {name} 吗？此操作不可恢复，删除后 30 天内可由管理员从回收站恢复。',
     deletedNotification: '已删除用户 {name}，30 天内可从回收站恢复',
+    deleteFailed: '删除用户失败',
+    deleteVerifyReason:
+      '删除账号会让该用户立即失去全部数据访问权，请输入你自己的密码确认这是管理员本人的操作。',
     notFound: '无此用户',
     bannedTag: '已封禁',
     ban: '封禁账号',
@@ -158,7 +161,9 @@ export const zhCN = {
       copy: '复制',
       copied: '已复制',
       acknowledge: '已转达',
-      failed: '签发临时密码失败'
+      failed: '签发临时密码失败',
+      verifyReason:
+        '临时密码能直接登录目标账号，属于最高危操作，请输入你自己的密码确认身份。'
     },
     clearDevice: {
       action: '清除主设备',
@@ -167,7 +172,9 @@ export const zhCN = {
         '确定要清除 {name} 的主学海设备绑定吗？这是换机或丢失旧平板时的人工出口，清除后绑定立即解除，该用户下次登录会被要求重新绑定。',
       confirmButton: '清除',
       done: '已清除 {name} 的主设备绑定',
-      failed: '清除主设备失败'
+      failed: '清除主设备失败',
+      verifyReason:
+        '清除他人主设备等同于帮对方换机，请输入你自己的密码确认这是管理员本人的操作。'
     }
   },
   upload: {
@@ -187,6 +194,7 @@ export const zhCN = {
       import: '导入',
       notifications: '通知',
       ban: '封禁',
+      deviceBans: '设备封禁',
       logs: '日志',
       settings: '设置'
     }
@@ -513,6 +521,67 @@ export const zhCN = {
       },
       detailUnknown: '无详情',
       empty: '暂无违规记录'
+    }
+  },
+  deviceBans: {
+    hint: '设备封禁按设备号生效，与账号封禁是两份独立记录：解封只放出设备，账号封禁不会随之解除。重置梯度只清零该设备的违规次数，下一次违规从第一档重新计。',
+    refresh: '刷新',
+    loadFailed: '加载失败，请稍后重试',
+    cancel: '取消',
+    manual: {
+      title: '手动封禁',
+      xuehaiIdLabel: '设备号',
+      xuehaiIdPlaceholder: '请输入 1–32 位数字设备号',
+      xuehaiIdInvalid: '设备号须为 1 到 32 位数字',
+      reasonLabel: '封禁原因',
+      reasonPlaceholder: '例如：使用他人设备代刷考勤',
+      reasonRequired: '请填写封禁原因',
+      durationLabel: '封禁时长',
+      durations: {
+        day1: '1 天',
+        day7: '7 天',
+        day30: '30 天',
+        forever: '永久'
+      },
+      submit: '确认封禁',
+      confirmTitle: '封禁设备',
+      confirm: '确定要封禁设备 {xuehaiId}（{period}）吗？封禁后该设备将无法登录。',
+      confirmButton: '封禁',
+      bannedNotice: '已封禁设备 {xuehaiId}',
+      banFailed: '封禁失败，请稍后重试'
+    },
+    table: {
+      title: '已封禁设备',
+      searchPlaceholder: '按设备号搜索',
+      search: '搜索',
+      columns: {
+        xuehaiId: '设备号',
+        reason: '封禁原因',
+        source: '来源',
+        ruleCode: '规则',
+        until: '封禁至',
+        banCount: '梯度计数',
+        owner: '所属用户',
+        createdAt: '封禁时间',
+        actions: '操作'
+      },
+      sourceAdmin: '管理员',
+      sourceRule: '规则',
+      permanent: '永久',
+      reasonUnknown: '未记录原因',
+      empty: '当前没有被封禁的设备',
+      unban: '解封',
+      unbanConfirmTitle: '解封设备',
+      unbanConfirm: '确定要解除设备 {xuehaiId} 的封禁吗？解除后该设备可以立即登录。',
+      unbanConfirmButton: '解封',
+      unbannedNotice: '已解封设备 {xuehaiId}',
+      unbanFailed: '解封失败，请稍后重试',
+      reset: '重置梯度',
+      resetConfirmTitle: '重置违规梯度',
+      resetConfirm: '确定要重置设备 {xuehaiId} 的违规梯度吗？重置后该设备下次违规从第一档重新计。',
+      resetConfirmButton: '重置',
+      resetNotice: '已重置设备 {xuehaiId} 的违规梯度',
+      resetFailed: '重置失败，请稍后重试'
     }
   },
   exports: {

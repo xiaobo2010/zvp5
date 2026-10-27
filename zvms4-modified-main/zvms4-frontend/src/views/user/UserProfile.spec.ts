@@ -41,6 +41,12 @@ vi.mock('@/api/user/device', () => ({
   clearMyPrimaryDevice: vi.fn()
 }))
 
+vi.mock('@/plugins/short-token', () => ({
+  isTemporaryTokenCancelled: (error: unknown) => error === 'cancel',
+  withTemporaryToken: (_userid: string, _reason: string, action: (token: string) => unknown) =>
+    action('verify-token')
+}))
+
 vi.mock('@/api/notifications', () => ({
   listActive: vi.fn()
 }))
@@ -269,7 +275,7 @@ describe('我的页主设备卡', () => {
     await buttonByText(wrapper, 'device.profile.changeSubmit')!.trigger('click')
     await flushPromises()
 
-    expect(setMyPrimaryDevice).toHaveBeenCalledWith('2002')
+    expect(setMyPrimaryDevice).toHaveBeenCalledWith('2002', 'verify-token')
     expect(successSpy).toHaveBeenCalledWith('device.profile.changeSuccess')
 
     await buttonByText(wrapper, 'device.profile.unbind')!.trigger('click')

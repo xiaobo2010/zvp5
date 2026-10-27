@@ -634,3 +634,27 @@ def test_delete_for_user_rule_without_rule_keeps_admin_records():
     assert "source = 'rule'" in sql
     assert "rule_code" not in sql
 
+
+
+def test_device_bans_page_filters_by_query_with_escaped_wildcards() -> None:
+    from db.repos.oracle import device_bans
+
+    sql = _sql(device_bans._page_stmt(1, 20, "12%_3"))
+    assert "banned_devices.xuehai_id LIKE '%12\\%\\_3%' ESCAPE '\\'" in sql
+    assert "count(*) OVER () AS total_count" in sql
+
+
+def test_device_bans_count_matches_the_query_filter() -> None:
+    from db.repos.oracle import device_bans
+
+    sql = _sql(device_bans._count_stmt("2026"))
+    assert "SELECT count(*) AS count_1 FROM banned_devices" in sql
+    assert "banned_devices.xuehai_id LIKE '%2026%' ESCAPE '\\'" in sql
+
+
+def test_device_ban_counters_table_shape() -> None:
+    from db.models import device_ban_counters as counters_tbl
+
+    assert counters_tbl.primary_key.columns.keys() == ["xuehai_id"]
+    assert set(counters_tbl.c.keys()) == {"xuehai_id", "ban_count", "last_banned_at"}
+    assert counters_tbl.c.ban_count.nullable is False

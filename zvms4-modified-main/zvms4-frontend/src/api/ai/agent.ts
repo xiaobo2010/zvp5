@@ -80,10 +80,15 @@ export async function getModerationUnrestricted(): Promise<boolean> {
 }
 
 /** 写无限制模式开关（仅 admin）；返回服务端落库后的值。 */
-export async function setModerationUnrestricted(enabled: boolean): Promise<boolean> {
+export async function setModerationUnrestricted(
+  enabled: boolean,
+  verificationToken?: string
+): Promise<boolean> {
   const body = await aiFetchJson<unknown>('/ai/agent/moderation/unrestricted', {
     method: 'PUT',
-    body: JSON.stringify({ enabled })
+    body: JSON.stringify(
+      verificationToken ? { enabled, verification_token: verificationToken } : { enabled }
+    )
   })
   return readModerationEnabled(body)
 }

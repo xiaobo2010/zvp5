@@ -33,6 +33,7 @@ import {
 } from '@/api/ai'
 import { useAiConversationsStore } from '@/stores/aiConversations'
 import { useUserStore } from '@/stores/user'
+import { isTemporaryTokenCancelled, withTemporaryToken } from '@/plugins/short-token'
 import ZSystemAuthDialog from '@/components/system/ZSystemAuthDialog.vue'
 import type { AiConversation, AiMessage, AiModelItem } from '@/../types/ai'
 import ZAiProposalCard from './ZAiProposalCard.vue'
@@ -859,10 +860,17 @@ async function toggleUnrestricted(next: boolean) {
   }
   unrestrictedLoading.value = true
   try {
-    const enabled = await setModerationUnrestricted(next)
+    const enabled = await withTemporaryToken(
+      String(userStore._id),
+      t('ai.agent.unrestricted.verifyReason'),
+      (token) => setModerationUnrestricted(next, token)
+    )
     unrestricted.value = enabled
     ElMessage.success(enabled ? t('ai.agent.unrestricted.onToast') : t('ai.agent.unrestricted.offToast'))
   } catch (error) {
+    if (isTemporaryTokenCancelled(error)) {
+      return
+    }
     applyError(error)
   } finally {
     unrestrictedLoading.value = false

@@ -122,15 +122,19 @@ def _delete_stmt(xuehai_id: str):
     )
 
 
-def _page_stmt(page: int, size: int):
+def _page_stmt(page: int, size: int, query: str = ""):
     """一页 + ``COUNT(*) OVER()`` 总数，一次往返。
 
     ``created_at`` 倒序（新封禁在上），同一时刻再按设备号升序保证分页稳定——
     没有 oid 列可以兜底排序，设备号本身是主键，足够唯一。
     """
+    stmt = select(*_columns(), func.count().over().label("total_count"))
+    if query:
+        stmt = stmt.where(
+            banned_devices_tbl.c.xuehai_id.like(_like_pattern(query), escape="\\")
+        )
     return (
-        select(*_columns(), func.count().over().label("total_count"))
-        .order_by(
+        stmt.order_by(
             banned_devices_tbl.c.created_at.desc(),
             banned_devices_tbl.c.xuehai_id.asc(),
         )
@@ -139,8 +143,18 @@ def _page_stmt(page: int, size: int):
     )
 
 
-def _count_stmt():
-    return select(func.count()).select_from(banned_devices_tbl)
+def _like_pattern(query: str) -> str:
+    escaped = query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"%{escaped}%"
+
+
+def _count_stmt(query: str = ""):
+    stmt = select(func.count()).select_from(banned_devices_tbl)
+    if query:
+        stmt = stmt.where(
+            banned_devices_tbl.c.xuehai_id.like(_like_pattern(query), escape="\\")
+        )
+    return stmt
 
 
 def _ban_row(mapping: Any) -> Row:
@@ -224,10 +238,16 @@ class OracleDeviceBansRepo:
                 await session.commit()
         return int(result.rowcount)
 
-    async def list_page(self, page: int, size: int) -> tuple[list[Row], int]:
-        """返回 ``(rows, total)``，新封禁在前；``page`` 从 1 开始。"""
-        page_stmt = _page_stmt(page, size)
-        count_stmt = _count_stmt()
+    async def list_page(
+        self, page: int, size: int, query: str = ""
+    ) -> tuple[list[Row], int]:
+        """返回 ``(rows, total)``，新封禁在前；``page`` 从 1 开始。
+
+        ``query`` 非空时按设备号包含匹配（管理员按学号找一台机器）。
+        """
+        page_stmt = _page_stmt(page, size, query)
+        count_stmt = _count_stmt(query)
+
         async with _session_for(self._session) as (session, _owns):
             rows = (await session.execute(page_stmt)).all()
             total = _total_of(rows)

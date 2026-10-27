@@ -28,6 +28,12 @@ vi.mock('@/api/user/device', () => ({
   clearUserPrimaryDevice: clearUserPrimaryDeviceMock
 }))
 
+vi.mock('@/plugins/short-token', () => ({
+  isTemporaryTokenCancelled: (error: unknown) => error === 'cancel',
+  withTemporaryToken: (_userid: string, _reason: string, action: (token: string) => unknown) =>
+    action('verify-token')
+}))
+
 // 剪贴板在 jsdom 里不可用；页面只用 copy/copied 两个返回值。
 vi.mock('@vueuse/core', async () => {
   const { ref } = await import('vue')
@@ -314,7 +320,7 @@ it('confirms and issues a one-time temp password', async () => {
   await flushPromises()
 
   expect(confirmMock).toHaveBeenCalledTimes(1)
-  expect(issueTempPasswordMock).toHaveBeenCalledWith('20240001')
+  expect(issueTempPasswordMock).toHaveBeenCalledWith('20240001', 'verify-token')
 
   const dialog = wrapper.find('.el-dialog-stub')
   expect(dialog.exists()).toBe(true)
@@ -351,7 +357,7 @@ it('clears the primary device behind a danger confirmation', async () => {
     expect.any(String),
     expect.objectContaining({ confirmButtonClass: 'el-button--danger' })
   )
-  expect(clearUserPrimaryDeviceMock).toHaveBeenCalledWith('20240001')
+  expect(clearUserPrimaryDeviceMock).toHaveBeenCalledWith('20240001', 'verify-token')
   expect(notificationMock).toHaveBeenCalledWith({
     title: 'manage.personalPanel.clearDevice.done {"name":"张三"}',
     type: 'success'

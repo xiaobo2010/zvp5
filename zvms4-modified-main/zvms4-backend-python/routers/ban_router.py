@@ -22,7 +22,7 @@ from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
 
 from db import backends
@@ -151,6 +151,18 @@ TRIGGERS: tuple[dict, ...] = (
             "学生会（department）在豁免名单里，不会被这条规则自动封禁。"
         ),
         "config": {"threshold": 80, "window_hours": 1, "mode": "alert"},
+    },
+    {
+        "trigger": "device_temp_password_abuse",
+        "name": "临时密码滥用（设备）",
+        "evaluation": "login",
+        "description": (
+            "设备侧处罚梯度：临时密码连错时只封当事设备，按本规则 penalties "
+            "逐档加刑（1/3/7/14/30 天、末档永久）。触发阈值与窗口仍取"
+            "「非主学海设备登录」规则——这条规则只决定「封这台机器多久」，"
+            "不对应新的证据来源。"
+        ),
+        "config": {"threshold": 3, "window_hours": 24},
     },
 )
 
@@ -556,7 +568,7 @@ async def list_banned_users(
 # ---------------------------------------------------------------------------
 
 
-def _device_view(row: dict) -> dict:
+def _device_view(row: dict, ban_count: int = 0, owner: dict | None = None) -> dict:
     until = row.get("until")
     return {
         "xuehai_id": row["xuehai_id"],
@@ -567,23 +579,114 @@ def _device_view(row: dict) -> dict:
         "source": row.get("source"),
         "rule_code": row.get("rule_code"),
         "created_at": _iso(row.get("created_at")),
+        "ban_count": ban_count,
+        "owner": owner,
     }
+
+
+class PostDeviceBanRequest(BaseModel):
+    """手动封禁一台设备；``until`` 省略/NULL 即永久。"""
+
+    xuehai_id: str = Field(min_length=1, max_length=32, pattern=r"^\d+$")
+    reason: Optional[str] = Field(default=None, max_length=512)
+    until: Optional[datetime] = None
 
 
 @router.get("/devices")
 async def list_banned_devices(
     page: int = Query(1, ge=1),
     perpage: int = Query(20, ge=1, le=100),
+    query: str = Query("", max_length=128),
     user=Depends(get_current_user),
 ):
     _require_admin(user)
-    rows, total = await backends.get_device_bans_repo().list_page(page, perpage)
+    rows, total = await backends.get_device_bans_repo().list_page(
+        page, perpage, query
+    )
+    ids = [row["xuehai_id"] for row in rows]
+    counts = await backends.get_device_ban_counters_repo().get_counts(ids)
+    owners = await backends.get_users_repo().primary_owners(ids)
+    data = [
+        _device_view(
+            row,
+            ban_count=counts.get(row["xuehai_id"], 0),
+            owner=owners.get(row["xuehai_id"]),
+        )
+        for row in rows
+    ]
     return {
         "status": "ok",
         "code": 200,
-        "data": [_device_view(row) for row in rows],
+        "data": data,
+        # 前端设备管理页按 ``devices`` / ``total`` 读取；``data`` / ``metadata``
+        # 是既有契约，保留给其它调用方（同一份数据，不分叉）。
+        "devices": data,
+        "total": total,
         "metadata": {"size": total, "page": page, "perpage": perpage},
     }
+
+
+@router.post("/devices")
+async def ban_device(
+    payload: PostDeviceBanRequest,
+    user=Depends(get_current_user),
+    log=Depends(inject_log),
+):
+    """手动封禁一台设备（管理员判定，不动设备梯度计数器）。"""
+    _require_admin(user)
+
+    xuehai_id = payload.xuehai_id.strip()
+    reason = (payload.reason or "").strip() or "管理员封禁"
+    await backends.get_device_bans_repo().upsert(
+        xuehai_id,
+        reason=reason,
+        until=payload.until,
+        source="admin",
+        rule_code=None,
+        operator_oid=str(user["id"]),
+    )
+
+    until_text = _iso(payload.until) or "永久"
+    log.with_text(
+        f"管理员 {await get_user_display_name(user['id'])} 封禁了设备 {xuehai_id}"
+        f"（原因：{reason}，到期：{until_text}）",
+        type="ban_change",
+        level="warning",
+    )
+    await log.insert_log()
+
+    counts = await backends.get_device_ban_counters_repo().get_counts([xuehai_id])
+    return {
+        "status": "ok",
+        "code": 200,
+        "data": {
+            "xuehai_id": xuehai_id,
+            "reason": reason,
+            "permanent": payload.until is None,
+            "until": _iso(payload.until),
+            "source": "admin",
+            "rule_code": None,
+            "ban_count": counts.get(xuehai_id, 0),
+        },
+    }
+
+
+@router.post("/devices/{xuehai_id}/reset-gradient", status_code=204)
+async def reset_device_gradient(
+    xuehai_id: str,
+    user=Depends(get_current_user),
+    log=Depends(inject_log),
+):
+    """清零一台设备的处罚梯度（幂等：没有计数行也返回 204）。"""
+    _require_admin(user)
+
+    await backends.get_device_ban_counters_repo().delete(xuehai_id)
+    log.with_text(
+        f"管理员 {await get_user_display_name(user['id'])} 重置了设备 {xuehai_id} 的封禁梯度",
+        type="ban_change",
+        level="warning",
+    )
+    await log.insert_log()
 
 
 @router.delete("/devices/{xuehai_id}", status_code=204)

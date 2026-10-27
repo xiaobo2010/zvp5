@@ -14,13 +14,18 @@ import { aiRequest } from './http'
  */
 export async function enqueueOcr(
   attachmentOid: string,
-  verificationToken?: string
+  verificationToken?: string,
+  provider?: string
 ): Promise<AiOcrEnqueueResult> {
   return aiRequest<AiOcrEnqueueResult>({
     method: 'post',
     url: verificationToken ? '/ai/volunteer-ocr' : '/ai/ocr',
     data: verificationToken
-      ? { attachment_oid: attachmentOid, verification_token: verificationToken }
-      : { attachment_oid: attachmentOid }
+      ? {
+          attachment_oid: attachmentOid,
+          verification_token: verificationToken,
+          ...(provider ? { provider } : {})
+        }
+      : { attachment_oid: attachmentOid, ...(provider ? { provider } : {}) }
   })
 }

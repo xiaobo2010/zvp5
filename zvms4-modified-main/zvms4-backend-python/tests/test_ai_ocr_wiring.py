@@ -28,6 +28,7 @@ from services.ai import audit, config as ai_config, crypto, ocr_engines, quota
 from services.ai import rate_limit
 from typings.log import inject_log
 from util import attachment_ocr
+from util import object_id
 from util.object_id import get_current_user
 
 ADMIN = "000000000000000000000001"
@@ -77,6 +78,12 @@ class FakeFilesRepo:
             }
         )
         return "a" * 24
+
+    async def get_ocr(self, oid: str) -> dict | None:
+        if not self.ocr_rows:
+            return None
+        row = self.ocr_rows[-1]
+        return {**row, "updated_at": None}
 
 
 class FakeAuditRepo:
@@ -597,7 +604,9 @@ def test_volunteer_ocr_rejects_token_of_another_user(
     async def other_user(*_args, **_kwargs):
         return {"id": USER, "per": ["admin"], "purpose": "verify"}
 
-    monkeypatch.setattr(ai_router, "_authenticate", other_user)
+    # 三重校验已抽成 ``util.object_id.require_password_verification``，桩要打在它内部
+    # 读的 ``_authenticate`` 上（``ai_router._authenticate`` 在这个入口已不再被调用）。
+    monkeypatch.setattr(object_id, "_authenticate", other_user)
 
     response = _client().post(
         "/api/ai/volunteer-ocr",
@@ -618,7 +627,7 @@ def test_volunteer_ocr_rejects_a_login_session_token(
     async def login_token(*_args, **_kwargs):
         return {"id": ADMIN, "per": ["admin"], "purpose": "login"}
 
-    monkeypatch.setattr(ai_router, "_authenticate", login_token)
+    monkeypatch.setattr(object_id, "_authenticate", login_token)
 
     response = _client().post(
         "/api/ai/volunteer-ocr",
@@ -637,7 +646,7 @@ def test_volunteer_ocr_accepts_verified_password(
     async def verified(*_args, **_kwargs):
         return {"id": ADMIN, "per": ["admin"], "purpose": "verify"}
 
-    monkeypatch.setattr(ai_router, "_authenticate", verified)
+    monkeypatch.setattr(object_id, "_authenticate", verified)
 
     response = _client().post(
         "/api/ai/volunteer-ocr",
@@ -648,6 +657,112 @@ def test_volunteer_ocr_accepts_verified_password(
     assert response.json()["data"]["status"] == "pending"
     # 复核通过后与普通 OCR 同一条计价路径，不存在免费后门。
     assert quotas["consume"].calls == [(ADMIN, "ocr", 1)]
+
+
+def _verified_for(user_id: str):
+    async def verified(*_args, **_kwargs):
+        return {"id": user_id, "per": [], "purpose": "verify"}
+
+    return verified
+
+
+@pytest.mark.parametrize("role", ["admin", "department"])
+def test_volunteer_ocr_lets_managers_pick_the_engine(
+    role, monkeypatch, files_repo, engines, quotas, audit_repo
+):
+    """登记页的下拉要能真的选中引擎：``provider`` 必须传到选引擎那一步。"""
+    engines(
+        [
+            _engine_row("primary", "tencent", priority=10),
+            _engine_row("backup", "aliyun", priority=20),
+        ]
+    )
+    monkeypatch.setattr(object_id, "_authenticate", _verified_for(USER))
+
+    response = _client({"id": USER, "per": [role]}).post(
+        "/api/ai/volunteer-ocr",
+        json={
+            "attachment_oid": ATTACHMENT,
+            "verification_token": "proof",
+            "provider": "aliyun",
+        },
+    )
+
+    assert response.status_code == 202
+    # 指定了 kind：priority 让位，只扣那一个引擎的站点额度。
+    assert response.json()["data"]["engine"] == "backup"
+    assert quotas["site"].calls == [("aliyun", 1)]
+
+
+def test_volunteer_ocr_secretary_may_pick_the_engine(
+    monkeypatch, files_repo, engines, quotas, audit_repo
+):
+    """secretary 能不能进这个入口由 ``AI_ALLOWED_ROLES`` 决定；进来之后，provider
+    的门槛与 department 同级——否则登记页对团支书就是「下拉在、点了没用」。"""
+    engines([_engine_row("backup", "aliyun")])
+    monkeypatch.setattr(object_id, "_authenticate", _verified_for(USER))
+    monkeypatch.setattr(
+        ai_config,
+        "allowed_roles",
+        lambda: frozenset({"admin", "department", "secretary"}),
+    )
+
+    response = _client({"id": USER, "per": ["secretary"]}).post(
+        "/api/ai/volunteer-ocr",
+        json={
+            "attachment_oid": ATTACHMENT,
+            "verification_token": "proof",
+            "provider": "aliyun",
+        },
+    )
+
+    assert response.status_code == 202
+    assert response.json()["data"]["engine"] == "backup"
+
+
+def test_volunteer_ocr_provider_is_rejected_for_students(
+    monkeypatch, files_repo, engines, quotas, audit_repo
+):
+    engines([_engine_row("primary", "tencent")])
+    monkeypatch.setattr(object_id, "_authenticate", _verified_for(USER))
+
+    response = _client({"id": USER, "per": ["student"]}).post(
+        "/api/ai/volunteer-ocr",
+        json={
+            "attachment_oid": ATTACHMENT,
+            "verification_token": "proof",
+            "provider": "tencent",
+        },
+    )
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "AI_FORBIDDEN"
+    assert quotas["peek"].calls == []
+    assert quotas["site"].calls == []
+    assert [(row["status"], row["error_code"]) for row in audit_repo.rows] == [
+        ("rejected", "AI_FORBIDDEN")
+    ]
+
+
+def test_volunteer_ocr_provider_kind_is_validated(
+    monkeypatch, files_repo, engines, quotas, audit_repo
+):
+    """provider 不再被静默丢掉：拼错的 kind 现在是 400。"""
+    engines([_engine_row("primary", "tencent")])
+    monkeypatch.setattr(object_id, "_authenticate", _verified_for(USER))
+
+    response = _client({"id": USER, "per": ["department"]}).post(
+        "/api/ai/volunteer-ocr",
+        json={
+            "attachment_oid": ATTACHMENT,
+            "verification_token": "proof",
+            "provider": "tencent_typo",
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "AI_OCR_ENGINE_BAD_KIND"
+    assert quotas["site"].calls == []
 
 
 # ---------------------------------------------------------------------------
@@ -675,7 +790,12 @@ def test_process_ocr_success_writes_result(files_repo, engines, adapters):
     assert row["text"] == "Hello"
     # 多行时取平均：0.8 与 0.6 -> 0.7。
     assert row["confidence"] == pytest.approx(0.7)
-    assert row["raw"] == {"RequestId": "r-1"}
+    # 厂商 raw 原样保留，行数据另挂在保留键里（前端校对框要用坐标）。
+    assert row["raw"]["RequestId"] == "r-1"
+    assert row["raw"][attachment_ocr.LINES_KEY] == [
+        {"text": "Hello", "confidence": 0.8, "box": None},
+        {"text": "World", "confidence": 0.6, "box": None},
+    ]
     # mime 来自附件元数据，secret 为空（这行没配凭证）。
     assert StubAdapter.calls[0]["mime"] == "image/png"
     assert StubAdapter.calls[0]["secret"] == {}
@@ -926,6 +1046,142 @@ def test_attachment_manual_ocr_is_manager_only(files_repo, engines, adapters, qu
     # 权限在计价之前判定：被拒的请求不碰任何一份额度。
     assert quotas["peek"].calls == []
     assert quotas["site"].calls == []
+
+
+# ---------------------------------------------------------------------------
+# 落库：行数据（含 box）随 raw 一起存
+# ---------------------------------------------------------------------------
+
+
+class BoxedAdapter(StubAdapter):
+    """行里带坐标，另有一行空文本（不该落库）。"""
+
+    VERSION = "boxed-v1"
+
+    async def recognize(self, image, mime, secret, config):
+        return {
+            "text": "A\nB",
+            "lines": [
+                {
+                    "text": "A",
+                    "confidence": 0.9,
+                    "box": {"X": 1, "Y": 2, "Width": 3, "Height": 4},
+                },
+                {"text": "", "confidence": 0.5, "box": None},
+                {
+                    "text": "B",
+                    "confidence": None,
+                    "box": [[0, 0], [9, 0], [9, 9], [0, 9]],
+                },
+            ],
+            "engine": "tencent",
+            "raw": {"RequestId": "r-3"},
+        }
+
+
+def test_process_ocr_persists_line_boxes_in_raw(files_repo, engines, adapters):
+    """行坐标必须落库：前端框选校对只能从 ``raw`` 里拿。"""
+    engines([_engine_row("primary", "tencent")])
+    adapters["tencent"] = BoxedAdapter
+
+    anyio.run(attachment_ocr.process_ocr, ATTACHMENT, "tencent", "primary", ADMIN)
+
+    raw = files_repo.ocr_rows[0]["raw"]
+    # 厂商 raw 原样保留（排障仍按厂商字段名查）。
+    assert raw["RequestId"] == "r-3"
+    # 空文本行没有可校对的内容，过滤掉；box 保持引擎原始结构（各自不同）。
+    assert raw[attachment_ocr.LINES_KEY] == [
+        {
+            "text": "A",
+            "confidence": 0.9,
+            "box": {"X": 1, "Y": 2, "Width": 3, "Height": 4},
+        },
+        {"text": "B", "confidence": None, "box": [[0, 0], [9, 0], [9, 9], [0, 9]]},
+    ]
+
+
+def test_process_ocr_persists_lines_after_fallback(
+    files_repo, engines, adapters, quotas, audit_repo
+):
+    """回退成功走的是同一个落库口：第二条候选的行也要存下来。"""
+    engines([_engine_row("backup", "aliyun")])
+    adapters["aliyun"] = AlwaysOkAdapter
+
+    anyio.run(attachment_ocr.process_ocr, ATTACHMENT, "tencent", "primary", ADMIN)
+
+    raw = files_repo.ocr_rows[0]["raw"]
+    assert raw["RequestId"] == "r-2"
+    assert raw[attachment_ocr.LINES_KEY] == [
+        {"text": "Fallback", "confidence": 0.9, "box": None}
+    ]
+
+
+# ---------------------------------------------------------------------------
+# 读取：GET /api/attachments/{oid}/ocr 透出行
+# ---------------------------------------------------------------------------
+
+
+def test_get_attachment_ocr_returns_persisted_lines(
+    files_repo, engines, adapters
+):
+    engines([_engine_row("primary", "tencent")])
+    adapters["tencent"] = BoxedAdapter
+    files_repo.row["ocr_status"] = "done"
+    anyio.run(attachment_ocr.process_ocr, ATTACHMENT, "tencent", "primary", ADMIN)
+
+    response = _client(
+        {"id": USER, "per": ["student"]}, routers=("attachments",)
+    ).get(f"/api/attachments/{ATTACHMENT}/ocr")
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["lines"] == files_repo.ocr_rows[0]["raw"][attachment_ocr.LINES_KEY]
+    # 老字段一个都不能少（前端旧代码还在读），新字段只是追加。
+    assert set(data) == {
+        "status",
+        "engine",
+        "engine_version",
+        "text",
+        "confidence",
+        "lines",
+        "updated_at",
+    }
+
+
+def test_get_attachment_ocr_returns_empty_lines_for_legacy_rows(files_repo):
+    """改版前落的 raw 没有保留键：回空列表，不是 500、也不是缺字段。"""
+    files_repo.ocr_rows.append(
+        {
+            "file_oid": ATTACHMENT,
+            "engine": "primary",
+            "engine_version": "tencent-v0",
+            "text": "Hi",
+            "confidence": 0.5,
+            "raw": {"RequestId": "r-0"},
+        }
+    )
+
+    response = _client(
+        {"id": USER, "per": ["student"]}, routers=("attachments",)
+    ).get(f"/api/attachments/{ATTACHMENT}/ocr")
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["lines"] == []
+    assert data["text"] == "Hi"
+
+
+def test_get_attachment_ocr_without_any_row_reports_empty_lines(files_repo):
+    """还没识别过（``file_ocr`` 无行）：除 lines 外全部保持旧形状。"""
+    response = _client(
+        {"id": USER, "per": ["student"]}, routers=("attachments",)
+    ).get(f"/api/attachments/{ATTACHMENT}/ocr")
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["lines"] == []
+    assert data["engine"] is None
+    assert data["text"] is None
 
 
 # ---------------------------------------------------------------------------

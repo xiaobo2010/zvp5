@@ -24,11 +24,26 @@ export interface VolunteerOcrProgress {
 
 export type VolunteerOcrProgressHandler = (progress: VolunteerOcrProgress) => void
 
+export interface OcrVolunteerLine {
+  text: string
+  confidence?: number | null
+  box?: unknown
+}
+
 export interface OcrVolunteerResponse {
   rows: OcrVolunteerRow[]
   warnings?: string[]
   text?: string
   attachmentOid?: string
+  engine?: string
+  confidence?: number
+  lines: OcrVolunteerLine[]
+}
+
+/** 轮询结束后的原始结果：文字、逐行坐标与引擎信息，供确认弹窗做框选校对。 */
+export interface VolunteerOcrRaw {
+  lines: OcrVolunteerLine[]
+  text: string
   engine?: string
   confidence?: number
 }
@@ -88,6 +103,47 @@ async function waitForResult(
 }
 
 /**
+ * 对已上传的附件入队 + 轮询，返回原始文字与逐行坐标。
+ *
+ * 确认弹窗改文字后要换引擎重识别，走的就是这里：附件只传一次，重识别只换 provider。
+ */
+export async function recognizeAttachment(
+  attachmentOid: string,
+  verificationToken: string,
+  engine?: string,
+  onProgress?: VolunteerOcrProgressHandler
+): Promise<VolunteerOcrRaw> {
+  onProgress?.({ stage: 'queued' })
+  const queued = engine
+    ? await enqueueOcr(attachmentOid, verificationToken, engine)
+    : await enqueueOcr(attachmentOid, verificationToken)
+  const activeEngine = queued.engine ?? engine
+  onProgress?.({
+    stage: 'recognizing',
+    status: queued.status,
+    engine: activeEngine
+  })
+
+  const result = await waitForResult(attachmentOid, onProgress, activeEngine)
+  if (result.status === 'failed') {
+    throw new Error('OCR 识别失败，请换一张更清晰的图片或稍后重试')
+  }
+
+  const lines = (result.lines ?? []).map((line) => ({
+    text: line.text ?? '',
+    confidence: line.confidence ?? null,
+    box: line.box ?? null
+  }))
+  const text = result.text?.trim() ?? ''
+  return {
+    lines,
+    text: text || lines.map((line) => line.text).join('\n'),
+    engine: result.engine ?? activeEngine,
+    confidence: result.confidence
+  }
+}
+
+/**
  * 上传登记表图片并等待 OCR 文本，再在本地拆成登记行。
  *
  * 识别行只包含 OCR 能确定的字段；学号/姓名/时长仍由页面校验，不会静默落库。
@@ -95,7 +151,8 @@ async function waitForResult(
 export async function parseVolunteerSheet(
   file: File,
   verificationToken: string,
-  onProgress?: VolunteerOcrProgressHandler
+  onProgress?: VolunteerOcrProgressHandler,
+  engine?: string
 ): Promise<OcrVolunteerResponse> {
   validateFile(file)
 
@@ -116,20 +173,9 @@ export async function parseVolunteerSheet(
     throw new Error('图片上传失败：服务端没有返回附件标识')
   }
 
-  onProgress?.({ stage: 'queued' })
-  const queued = await enqueueOcr(attachment._id, verificationToken)
-  onProgress?.({
-    stage: 'recognizing',
-    status: queued.status,
-    engine: queued.engine
-  })
+  const raw = await recognizeAttachment(attachment._id, verificationToken, engine, onProgress)
+  const text = raw.text
 
-  const result = await waitForResult(attachment._id, onProgress, queued.engine)
-  if (result.status === 'failed') {
-    throw new Error('OCR 识别失败，请换一张更清晰的图片或稍后重试')
-  }
-
-  const text = result.text?.trim() ?? ''
   const warnings: string[] = []
   if (!text) {
     warnings.push('OCR 没有返回文字，请检查图片清晰度或手动粘贴')
@@ -145,7 +191,8 @@ export async function parseVolunteerSheet(
     warnings: warnings.length ? warnings : undefined,
     text,
     attachmentOid: attachment._id,
-    engine: result.engine ?? queued.engine,
-    confidence: result.confidence
+    engine: raw.engine,
+    confidence: raw.confidence,
+    lines: raw.lines
   }
 }

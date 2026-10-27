@@ -232,7 +232,7 @@ function updateIndicator(animate = true) {
   const active = root.querySelector<HTMLElement>('.yg-glass-nav__item.is-active')
   syncObservedActive(active)
 
-  /* 无激活项（如 /activity/register 不在任何 nav 的 judge 内）或是隐藏项
+  /* 无激活项（路径不在任何 nav 的 judge 内）或是隐藏项
      （宽度为 0，常见于首帧样式还没注入）时统一隐藏，避免残留上一次的位置。 */
   if (!active || active.offsetWidth === 0) {
     indicatorAnimation?.cancel()

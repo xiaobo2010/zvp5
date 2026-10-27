@@ -151,8 +151,32 @@ def _create(client: TestClient | None = None, **body):
 # ---------------------------------------------------------------------------
 
 
-def test_list_is_admin_only(repo):
+def test_list_is_closed_to_students(repo):
     assert _client({"id": USER, "per": []}).get("/api/ai/ocr-engines").status_code == 403
+
+
+@pytest.mark.parametrize("role", ["department", "secretary"])
+def test_list_is_readable_by_volunteer_managers_without_ops_fields(role, repo):
+    """登记页要渲染引擎下拉：管理者只拿得到公开字段，运维参数一概不给。"""
+    assert _create().status_code == 201
+
+    response = _client({"id": USER, "per": [role]}).get("/api/ai/ocr-engines")
+
+    assert response.status_code == 200
+    assert response.json()["data"] == [
+        {
+            "oid": next(iter(repo.rows)),
+            "name": "primary",
+            "kind": "tencent",
+            "enabled": True,
+            "priority": 10,
+        }
+    ]
+    # config 是运维参数（endpoint / model），key_hint / has_secret 是内部状态。
+    assert "config" not in response.text
+    assert "key_hint" not in response.text
+    assert "has_secret" not in response.text
+    assert TENCENT_SECRET["secret_key"] not in response.text
 
 
 def test_list_never_returns_secret_cipher(repo):

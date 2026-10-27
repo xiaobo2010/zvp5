@@ -244,7 +244,7 @@ watch(search, debouncedRefresh)
               (user.position.includes('admin') ||
                 user.position.includes('department')) &&
               !wholesale &&
-               !selectable
+              !selectable
             "
             class="no-print"
           >

@@ -66,4 +66,39 @@ describe('device api contract', () => {
     await clearUserPrimaryDevice('oid1')
     expect(requestVoid).toHaveBeenCalledWith({ method: 'delete', url: '/v3/users/oid1/primary-device' })
   })
+
+  it('高危写操作带上 verify 短令牌时进请求体', async () => {
+    requestVoid.mockResolvedValue(undefined)
+    request.mockResolvedValueOnce({
+      code: '12345678',
+      expires_at: null,
+      target: { _id: 'oid1' }
+    })
+
+    await setMyPrimaryDevice('102', 'verify-token')
+    await clearMyPrimaryDevice('verify-token')
+    await clearUserPrimaryDevice('oid1', 'verify-token')
+    await issueTempPassword('oid1', 'verify-token')
+
+    expect(requestVoid).toHaveBeenNthCalledWith(1, {
+      method: 'put',
+      url: '/v3/users/me/primary-device',
+      data: { xuehai_id: '102', verification_token: 'verify-token' }
+    })
+    expect(requestVoid).toHaveBeenNthCalledWith(2, {
+      method: 'delete',
+      url: '/v3/users/me/primary-device',
+      data: { verification_token: 'verify-token' }
+    })
+    expect(requestVoid).toHaveBeenNthCalledWith(3, {
+      method: 'delete',
+      url: '/v3/users/oid1/primary-device',
+      data: { verification_token: 'verify-token' }
+    })
+    expect(request).toHaveBeenCalledWith({
+      method: 'post',
+      url: '/v3/users/oid1/temp-password',
+      data: { verification_token: 'verify-token' }
+    })
+  })
 })

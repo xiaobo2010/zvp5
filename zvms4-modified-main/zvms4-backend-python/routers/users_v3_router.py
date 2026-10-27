@@ -24,7 +24,11 @@ from util.cert import (
     hash_password_async,
 )
 from util.group import get_user_permissions, is_in_a_same_class
-from util.object_id import compulsory_temporary_token, get_current_user
+from util.object_id import (
+    compulsory_temporary_token,
+    get_current_user,
+    require_password_verification,
+)
 from util.permission.user import credential_change_forbidden, role_change_forbidden
 from util.user import get_user_display_name, user_profile
 from utils import validate_object_id
@@ -180,9 +184,16 @@ async def modify_user_student_id_v3(
     return
 
 
+class DeleteUserRequest(BaseModel):
+    """硬删除的复核令牌：密码再认证签发的 5 分钟短令牌（缺失即 403）。"""
+
+    verification_token: Optional[str] = None
+
+
 @router.delete("/{user_id}", status_code=204)
 async def delete_user_v3(
     user_id: str,
+    payload: Optional[DeleteUserRequest] = None,
     user=Depends(get_current_user),
     log=Depends(inject_log),
 ):
@@ -210,6 +221,10 @@ async def delete_user_v3(
     if target is None:
         raise HTTPException(status_code=404, detail="用户不存在")
 
+    await require_password_verification(
+        payload.verification_token if payload is not None else None, user
+    )
+
     if str(oid) == str(user["id"]):
         raise HTTPException(status_code=403, detail="不能删除自己")
 
@@ -228,30 +243,6 @@ async def delete_user_v3(
     await log.insert_log()
 
     return
-
-
-async def _release_primary_device_ban(user_oid: str, target: dict) -> str:
-    """解封账号时连带解除其主设备的显式设备封禁，返回写进审计日志的说明。
-
-    「临时密码连错」落的是永久设备封，不随账号解封自动消失（``device_ban_status``
-    只推导账号联动那一支）。管理员解封账号的意图就是「这个人恢复使用」，把他
-    自己的平板继续锁在门外不是意图的一部分。没有主设备时无事可做。
-
-    解除失败不影响账号解封结果：账号状态是主事实，设备行可以事后单独处理，
-    但必须在同一条审计里说明失败，否则「为什么这台机器还登不进」无从追查。
-    """
-    primary = target.get("primary_xuehai_id")
-    if not primary:
-        return ""
-    masked = f"****{str(primary)[-4:]}"
-    try:
-        removed = await backends.get_device_bans_repo().delete(str(primary))
-    except Exception as exc:
-        _logger.exception("解封账号时解除设备封禁失败（账号已解封）")
-        return f"，但解除主学海设备 {masked} 的设备封禁失败（{type(exc).__name__}）"
-    if not removed:
-        return ""
-    return f"，并解除了主学海设备 {masked} 的设备封禁（{removed} 条）"
 
 
 @router.put("/{user_id}/banned", status_code=204)
@@ -297,11 +288,10 @@ async def set_user_banned_v3(
         action = f"封禁了用户 {target['name']}（原因：{reason}）"
     else:
         # 解封只清当前状态；历史事实由 BAN_RECORDS 流水承担（不删不写）。
+        # 设备封禁不镜像账号状态：显式设备封禁由设备管理端点单独解除，
+        # 账号解封不再连带删设备行（否则管理员解一个号会放走一台被判定违规的机器）。
         await repo.clear_ban(str(oid))
-        # 设备封禁不镜像账号状态，但「临时密码连错」写下的显式设备封是永久行：
-        # 只解账号会留下「账号能登、这台机器永远登不进」的死角。
-        device_note = await _release_primary_device_ban(str(oid), target)
-        action = f"解封了用户 {target['name']}{device_note}"
+        action = f"解封了用户 {target['name']}"
 
     log.with_text(
         f"管理员 {await get_user_display_name(user['id'])} {action}",
@@ -512,6 +502,13 @@ async def get_user_totp_v3(
 class PutBindingRequest(BaseModel):
     xuehai_id: str
     note: Optional[str] = None
+    verification_token: Optional[str] = None
+
+
+class DeleteBindingRequest(BaseModel):
+    """解绑的复核令牌（与绑定同一把密码再认证闸）。"""
+
+    verification_token: Optional[str] = None
 
 
 @router.get("/{user_id}/bindings")
@@ -570,6 +567,8 @@ async def set_user_binding_v3(
     if target is None:
         raise HTTPException(status_code=404, detail="用户不存在")
 
+    await require_password_verification(payload.verification_token, user)
+
     bindings = backends.get_bindings_repo()
     for row in await bindings.list_for_user(str(oid)):
         if row["status"] == "active" and row["xuehai_id"] != payload.xuehai_id:
@@ -589,6 +588,7 @@ async def set_user_binding_v3(
 async def delete_user_binding_v3(
     user_id: str,
     xuehai_id: str,
+    payload: Optional[DeleteBindingRequest] = None,
     user=Depends(get_current_user),
     log=Depends(inject_log),
 ):
@@ -605,6 +605,10 @@ async def delete_user_binding_v3(
     target = await backends.get_users_repo().get_by_oid(str(oid))
     if target is None:
         raise HTTPException(status_code=404, detail="用户不存在")
+
+    await require_password_verification(
+        payload.verification_token if payload is not None else None, user
+    )
 
     await backends.get_bindings_repo().revoke(str(oid), xuehai_id)
 
@@ -726,6 +730,13 @@ async def get_my_device_bindings(
 
 class PutPrimaryDeviceRequest(BaseModel):
     xuehai_id: str
+    verification_token: Optional[str] = None
+
+
+class ClearPrimaryDeviceRequest(BaseModel):
+    """解绑主设备的复核令牌：自助与管理员两条路径共用同一形状。"""
+
+    verification_token: Optional[str] = None
 
 
 @router.put("/me/primary-device", status_code=204)
@@ -746,6 +757,10 @@ async def set_my_primary_device(
       这条是把「谁能决定下一台主设备」锁在已受信任的设备上。
 
     写操作不轮换 ``session_id``（主设备不是身份凭证，换机不该把其他会话踢下线）。
+
+    换绑是「把账号入口迁到另一台机器」，所以**已绑定**时必须带一次密码再认证
+    （``verification_token``）；首次绑定没有可迁的入口，且在目标设备上发起，不额外
+    要求——否则新用户永远进不了绑定流程。
     """
     xuehai_id = _validated_device_id(payload.xuehai_id)
     header_xuehai_id = xuehai_id_from(request)
@@ -755,6 +770,9 @@ async def set_my_primary_device(
         raise HTTPException(status_code=404, detail="用户不存在")
 
     current_primary = current.get("primary_xuehai_id")
+
+    if current_primary is not None:
+        await require_password_verification(payload.verification_token, user)
 
     if current_primary is None:
         if header_xuehai_id != xuehai_id:
@@ -784,6 +802,7 @@ async def set_my_primary_device(
 @router.delete("/me/primary-device", status_code=204)
 async def clear_my_primary_device(
     request: Request,
+    payload: Optional[ClearPrimaryDeviceRequest] = None,
     user=Depends(get_current_user),
     log=Depends(inject_log),
 ):
@@ -792,7 +811,14 @@ async def clear_my_primary_device(
     只允许当前主设备发起：否则任何令牌持有者都能把受害者踢回未绑定态，再用
     自己手上的平板抢占绑定。没有主设备时返回 **409**——这是状态冲突（本来就没
     绑），不是请求格式错误，前端据此可以只提示而不弹输入框。
+
+    解绑一律要求密码再认证（``verification_token``）：把账号入口摘掉与换绑是同
+    一级别的动作，不因为「反正还有设备头」而放宽。
     """
+    await require_password_verification(
+        payload.verification_token if payload is not None else None, user
+    )
+
     current = await _get_zvms_new_user(user["id"])
     if current is None:
         raise HTTPException(status_code=404, detail="用户不存在")
@@ -819,12 +845,14 @@ async def clear_my_primary_device(
 @router.delete("/{user_id}/primary-device", status_code=204)
 async def admin_clear_user_primary_device(
     user_id: str,
+    payload: Optional[ClearPrimaryDeviceRequest] = None,
     user=Depends(get_current_user),
     log=Depends(inject_log),
 ):
     """管理员清空任意用户的主设备（用户换机丢了旧平板时的人工出口）。
 
     Permission: admin only。幂等：目标本来未绑定也返回 204，不写审计。
+    替别人摘掉入口是高危动作，一律要求管理员本人的密码再认证。
     """
     per = user.get("per") or []
     if "admin" not in per:
@@ -834,6 +862,10 @@ async def admin_clear_user_primary_device(
     target = await backends.get_users_repo().get_by_oid(str(oid))
     if target is None:
         raise HTTPException(status_code=404, detail="用户不存在")
+
+    await require_password_verification(
+        payload.verification_token if payload is not None else None, user
+    )
 
     previous = target.get("primary_xuehai_id")
     if previous is None:
@@ -898,11 +930,18 @@ async def reset_user_ban_records_v3(
     return {"status": "ok", "code": 200, "data": {"deleted": deleted}}
 
 
+class CreateTempPasswordRequest(BaseModel):
+    """签发人是本端点的操作者：临时密码等价于一次登录凭据，故要求密码再认证。"""
+
+    verification_token: Optional[str] = None
+
+
 @router.post("/{user_id}/temp-password")
 async def create_temp_password_v3(
     user_id: str,
     response: Response,
     request: Request,
+    payload: Optional[CreateTempPasswordRequest] = None,
     user=Depends(get_current_user),
     log=Depends(inject_log),
 ):
@@ -918,6 +957,9 @@ async def create_temp_password_v3(
     的「管理员凭据只能由管理员处置」口径）。
 
     明文只在本响应里出现一次；库里只留 bcrypt 哈希。
+
+    签发人要先过密码再认证（``verification_token``）：这张码能让持有人以目标
+    身份登录，等于替别人开门，不能只凭一个长期会话令牌发放。
     """
     per = user.get("per") or []
     target = await _get_zvms_new_user(user_id)
@@ -930,6 +972,10 @@ async def create_temp_password_v3(
             same_class = await is_in_a_same_class(user["id"], user_id)
         if same_class is not True:
             raise HTTPException(status_code=403, detail="权限不足")
+
+    await require_password_verification(
+        payload.verification_token if payload is not None else None, user
+    )
 
     target_per = await get_user_permissions(target)
     if "admin" in target_per and "admin" not in per:

@@ -56,6 +56,10 @@ DEFAULT_CONFIG = {"threshold": 3, "window_hours": 24}
 
 # DB 列宽即契约：超长详情在服务端截断，不让一次上报因为一个长字符串丢整批。
 MAX_DETAIL_CHARS = 500
+# BAN_RECORDS.REASON / USERS.BAN_REASON 都是 VARCHAR2(512)，留一点余量。
+MAX_REASON_CHARS = 500
+# 封禁理由里只放 detail 的摘要：整段详情已经在 ban_violations 里。
+REASON_DETAIL_CHARS = 120
 
 # 角色豁免：这些角色即使在别的账号视角下「违规」，也可能是工作行为。
 # 与 ``services.device_guard.PRIVILEGED_ROLES`` 对齐（团支书也在其中）。
@@ -85,6 +89,42 @@ def _clean_detail(detail: Any) -> str | None:
     if not text:
         return None
     return text[:MAX_DETAIL_CHARS]
+
+
+def _clip_reason(text: str) -> str:
+    if len(text) <= MAX_REASON_CHARS:
+        return text
+    return text[: MAX_REASON_CHARS - 1] + "…"
+
+
+def _detail_excerpt(details: list[str]) -> str:
+    """多信号合并后的详情摘要：去重、前 ``REASON_DETAIL_CHARS`` 字、超长加省略号。"""
+    joined = " | ".join(dict.fromkeys(details))
+    if len(joined) <= REASON_DETAIL_CHARS:
+        return joined
+    return joined[: REASON_DETAIL_CHARS - 1] + "…"
+
+
+def _ban_reason(
+    *,
+    window_hours: int,
+    count: int,
+    threshold: int,
+    rule_code: str,
+    signals: list[str],
+    details: list[str],
+) -> str:
+    """管理员在封禁列表里要能直接读出「哪条规则、哪个信号、什么内容」。"""
+    signal_text = "/".join(dict.fromkeys(signals)) or "unknown"
+    reason = (
+        f"{window_hours} 小时内累计 {count} 次平台违规使用"
+        f"（阈值 {threshold} 次，规则 {rule_code}，信号 {signal_text}"
+    )
+    excerpt = _detail_excerpt(details)
+    if excerpt:
+        reason += f"，详情：{excerpt}"
+    reason += "）"
+    return _clip_reason(reason)
 
 
 def _positive(value: Any, fallback: int) -> int:
@@ -280,6 +320,8 @@ async def record(
     recorded = 0
     duplicates = 0
     recorded_triggers: set[str] = set()
+    recorded_signals: list[str] = []
+    recorded_details: list[str] = []
     for item in signals or []:
         signal = (item or {}).get("signal")
         if not isinstance(signal, str) or signal not in SIGNALS:
@@ -304,6 +346,9 @@ async def record(
         )
         recorded += 1
         recorded_triggers.add(trigger)
+        recorded_signals.append(signal)
+        if detail:
+            recorded_details.append(detail)
         await _log_violation(user_oid, signal, detail, xuehai_id, now)
 
     result["recorded"] = recorded
@@ -335,9 +380,13 @@ async def record(
         # 已经封着：本批只是新证据，不该再推一档梯度。
         return result
 
-    reason = (
-        f"{window_hours} 小时内累计 {count} 次平台违规使用"
-        f"（阈值 {threshold} 次）"
+    reason = _ban_reason(
+        window_hours=window_hours,
+        count=count,
+        threshold=threshold,
+        rule_code=rule_code,
+        signals=recorded_signals,
+        details=recorded_details,
     )
     try:
         await device_guard.apply_account_ban(user_oid, rule_code, reason)
@@ -351,22 +400,31 @@ async def record(
     return result
 
 
-async def record_agent_jailbreak(user: dict) -> dict:
+async def record_agent_jailbreak(
+    user: dict,
+    *,
+    xuehai_id: str = "",
+    rule: str = "",
+    detail: str | None = None,
+) -> dict:
     """agent 输入审核命中：只上报 ``agent_jailbreak`` 一个信号。
 
-    学号是「哪台设备/哪个学号在试图越狱」的证据，但不是封禁判定的一部分：读不到
-    该行时留空，违规照样入库（失败方向必须是「证据还在」，而不是「整批丢掉」）。
+    ``xuehai_id`` 来自请求头（真实设备号），不再拿 ``users.id``（学号）冒充：
+    违规证据要能回答「哪台机器在试图越狱」，学号是账号不是设备。
+    ``detail`` 以 JSON 落库，含命中的规则名与用户输入摘要（前 200 字符）——
+    越狱原文受角色白名单约束另存 ``AI_PROMPT_AUDIT``，这里只留复核所需的片段。
     """
-    user_oid = str(user.get("id") or "")
-    xuehai_id = ""
-    try:
-        doc = await backends.get_users_repo().get_by_oid(user_oid)
-        xuehai_id = str((doc or {}).get("id") or "")
-    except Exception:
-        _logger.warning("读取用户学号失败，越狱违规按无设备入库")
+    evidence: dict[str, str] = {}
+    if rule:
+        evidence["rule"] = str(rule)
+    excerpt = (detail or "").strip()[:200]
+    if excerpt:
+        evidence["input"] = excerpt
+    payload = json.dumps(evidence, ensure_ascii=False) if evidence else None
+
     return await record(
         user,
-        [{"signal": "agent_jailbreak"}],
+        [{"signal": "agent_jailbreak", "detail": payload}],
         xuehai_id,
         exempt_roles=AGENT_JAILBREAK_EXEMPT_ROLES,
     )

@@ -39,12 +39,21 @@ export interface SignedLink {
   expires_at: string
 }
 
+export interface OcrLine {
+  text: string
+  confidence?: number | null
+  /** 坐标随引擎而变，前端用 utils/ocrBox 归一后再画框。 */
+  box?: unknown
+}
+
 export interface OcrResult {
   status: OcrStatus
   engine?: string
   engine_version?: string
   text?: string
   confidence?: number
+  /** 逐行识别结果：恒存在（后端无行时给 []），坐标/置信度可能为空。 */
+  lines?: OcrLine[]
   updated_at?: string
 }
 

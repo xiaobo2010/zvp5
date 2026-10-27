@@ -1,7 +1,7 @@
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import ZAiQuotaAdmin from './ZAiQuotaAdmin.vue'
-import { userQuota } from '@/api/ai'
+import { resetUserQuota, setUserLimit, userQuota } from '@/api/ai'
 import type { AiQuotaSnapshotView } from '@/api/ai'
 
 const { elMessageErrorSpy, elMessageSuccessSpy } = vi.hoisted(() => ({
@@ -220,6 +220,8 @@ function tags(wrapper: VueWrapper) {
 
 beforeEach(() => {
   vi.mocked(userQuota).mockReset()
+  vi.mocked(setUserLimit).mockReset()
+  vi.mocked(resetUserQuota).mockReset()
   elMessageErrorSpy.mockReset()
   elMessageSuccessSpy.mockReset()
   vi.mocked(userQuota).mockResolvedValue(snapshot('explicit', 'role_default'))
@@ -287,6 +289,37 @@ describe('额度管理页', () => {
     const wrapper = await mountWithUser()
 
     expect(tags(wrapper)).toEqual([])
+
+    wrapper.unmount()
+  })
+
+  it('选人→加载快照→设置额度的交互闭环', async () => {
+    vi.mocked(setUserLimit).mockResolvedValue({
+      kind: 'ocr',
+      period: '202610',
+      limit: 300,
+      used: 7
+    })
+    const wrapper = await mountWithUser()
+
+    const setLimitButton = wrapper
+      .findAll('button')
+      .find((item) => item.text() === 'ai.quotaAdmin.setLimit')
+    expect(setLimitButton).toBeDefined()
+    await setLimitButton!.trigger('click')
+    await flushPromises()
+
+    await wrapper.find('.el-input-number-stub').setValue('300')
+    const saveButton = wrapper
+      .findAll('button')
+      .find((item) => item.text() === 'ai.common.save')
+    expect(saveButton).toBeDefined()
+    await saveButton!.trigger('click')
+    await flushPromises()
+
+    expect(setUserLimit).toHaveBeenCalledWith('user-1', 'ocr', 300)
+    expect(userQuota).toHaveBeenCalledTimes(2)
+    expect(elMessageSuccessSpy).toHaveBeenCalledWith('ai.quotaAdmin.savedNotice')
 
     wrapper.unmount()
   })

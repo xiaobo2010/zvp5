@@ -56,6 +56,7 @@ from util.object_id import (
     _log_level_scope,
     get_current_user,
     oauth2_scheme,
+    require_password_verification,
     validate_object_id,
 )
 from util.user import get_user_display_name, get_user_display_names
@@ -468,6 +469,11 @@ async def _reject_http(
 # ---------------------------------------------------------------------------
 
 
+#: 义工登记页可选引擎的入口是「可登记义工的管理者」——比 ``/api/ai/ocr`` 宽一档
+#: （那边只有 admin）。入口不同门禁就不同，所以集合写在各自的入口旁边。
+VOLUNTEER_PROVIDER_ROLES = frozenset({"admin", "department", "secretary"})
+
+
 @router.post("/volunteer-ocr", status_code=202)
 async def request_volunteer_ocr(
     payload: VolunteerOcrRequest,
@@ -475,14 +481,17 @@ async def request_volunteer_ocr(
     user=Depends(get_current_user),
     log=Depends(inject_log),
 ):
-    verified = await _authenticate(payload.verification_token, "short", True)
-    if (
-        str(verified.get("id")) != str(user.get("id"))
-        or verified.get("purpose") != "verify"
-    ):
-        raise HTTPException(status_code=403, detail="AI_PASSWORD_VERIFICATION_REQUIRED")
-    return await request_ocr(
-        OcrRequest(attachment_oid=payload.attachment_oid), background_tasks, user, log
+    await require_password_verification(
+        payload.verification_token, user, detail="AI_PASSWORD_VERIFICATION_REQUIRED"
+    )
+    return await _enqueue_ocr(
+        OcrRequest(
+            attachment_oid=payload.attachment_oid, provider=payload.provider
+        ),
+        background_tasks,
+        user,
+        log,
+        provider_roles=VOLUNTEER_PROVIDER_ROLES,
     )
 
 
@@ -492,6 +501,17 @@ async def request_ocr(
     background_tasks: BackgroundTasks,
     user=Depends(get_current_user),
     log=Depends(inject_log),
+):
+    return await _enqueue_ocr(payload, background_tasks, user, log)
+
+
+async def _enqueue_ocr(
+    payload: OcrRequest,
+    background_tasks: BackgroundTasks,
+    user: dict,
+    log,
+    *,
+    provider_roles: frozenset[str] = ai_ocr.ADMIN_PROVIDER_ROLES,
 ):
     if not _has_ai_access(user):
         # 门禁拒绝也要留一行流水：否则「谁在没有权限的情况下反复试探 OCR」在
@@ -510,10 +530,12 @@ async def request_ocr(
         raise HTTPException(status_code=403, detail="AI_FORBIDDEN")
     oid = validate_object_id(payload.attachment_oid)
     try:
-        data = await ai_ocr.enqueue(user, oid, provider=payload.provider)
+        data = await ai_ocr.enqueue(
+            user, oid, provider=payload.provider, provider_roles=provider_roles
+        )
     except RouteError as exc:
         if exc.status_code == 403:
-            # 「非 admin 想指定引擎」也是拒绝路径：留一行流水，否则「有人在
+            # 「没资格的人想指定引擎」也是拒绝路径：留一行流水，否则「有人在
             # 反复试 provider 参数」这种探测在后台看不见。
             await _reject_http(
                 user_oid=user["id"],
@@ -930,9 +952,25 @@ async def get_prompt_audit(
 
 @router.get("/ocr-engines")
 async def list_ocr_engines(user=Depends(get_current_user)):
-    """全部引擎（含 disabled）。响应里没有 ``secret_cipher``，只有 ``key_hint``。"""
-    _require_admin(user)
-    return {"status": "ok", "code": 200, "data": await ocr_engines_admin.list_engines()}
+    """引擎清单。admin 拿完整视图（含 config / key_hint）；可登记义工的管理者
+    只拿渲染下拉所需的公开字段——``config`` 是运维参数（endpoint / model），
+    不该外泄给非运维角色。
+
+    响应里没有 ``secret_cipher``，只有 ``key_hint``。
+    """
+    if _is_admin(user):
+        return {
+            "status": "ok",
+            "code": 200,
+            "data": await ocr_engines_admin.list_engines(),
+        }
+    if not (VOLUNTEER_PROVIDER_ROLES & set(user.get("per") or [])):
+        raise HTTPException(status_code=403, detail="Permission denied")
+    return {
+        "status": "ok",
+        "code": 200,
+        "data": await ocr_engines_admin.list_engine_summaries(),
+    }
 
 
 @router.post("/ocr-engines", status_code=201)

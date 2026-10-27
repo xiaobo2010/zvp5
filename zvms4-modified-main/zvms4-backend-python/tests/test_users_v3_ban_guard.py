@@ -182,7 +182,7 @@ def test_self_unban_is_not_blocked(client):
 
 
 # ---------------------------------------------------------------------------
-# 解封连带解除主设备封禁（误封 B11）
+# 解封不再连带删除设备封禁行（设备统一走 /api/v3/ban/devices）
 # ---------------------------------------------------------------------------
 
 
@@ -190,30 +190,21 @@ def _last_log_text(state) -> str:
     return state["logs"][-1][0][0]
 
 
-def test_unban_also_lifts_primary_device_ban(client):
+def test_unban_leaves_device_bans_untouched(client) -> None:
+    """设备封禁是独立事实：解账号不能顺带放走一台被判定违规的机器。"""
     http, state = client
 
     assert http.put(f"/api/v3/users/{OTHER}/banned", json={"banned": False}).status_code == 204
 
     assert state["clears"] == [OTHER]
-    assert state["device_deletes"] == ["202600011234"]
+    assert state["device_deletes"] == []
     text = _last_log_text(state)
-    assert "解除了主学海设备" in text
-    assert "1 条" in text
-    # 设备号只留后四位，审计日志里不出现完整设备号。
-    assert "1234" in text
+    assert "主学海设备" not in text
     assert "202600011234" not in text
 
 
-def test_unban_without_primary_device_skips_device_row(client, monkeypatch):
-    http, state = client
-    state["device_deletes"].clear()
-
-    assert http.put(f"/api/v3/users/{SELF}/banned", json={"banned": False}).status_code == 204
-    assert state["device_deletes"] == []
-
-
-def test_unban_survives_device_delete_failure(client):
+def test_unban_still_succeeds_when_device_repo_would_fail(client) -> None:
+    """解封路径已经不再碰设备仓储：设备仓储故障也不影响账号解封。"""
     http, state = client
     state["device_rows"] = RuntimeError("oracle down")
 
@@ -221,16 +212,4 @@ def test_unban_survives_device_delete_failure(client):
 
     assert response.status_code == 204
     assert state["clears"] == [OTHER]
-    text = _last_log_text(state)
-    assert "失败" in text
-    assert "RuntimeError" in text
-    assert "202600011234" not in text
-
-
-def test_unban_without_device_ban_row_mentions_nothing(client):
-    http, state = client
-    state["device_rows"] = 0
-
-    assert http.put(f"/api/v3/users/{OTHER}/banned", json={"banned": False}).status_code == 204
-    assert state["device_deletes"] == ["202600011234"]
-    assert "主学海设备" not in _last_log_text(state)
+    assert state["device_deletes"] == []

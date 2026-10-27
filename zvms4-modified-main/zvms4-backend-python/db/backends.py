@@ -132,6 +132,13 @@ def get_device_bans_repo(session: Any = None) -> Any:
     return OracleDeviceBansRepo(session)
 
 
+def get_device_ban_counters_repo(session: Any = None) -> Any:
+    """Return the ``DeviceBanCountersRepo`` implementation (设备处罚梯度)."""
+    from db.repos.oracle.device_ban_counters import OracleDeviceBanCountersRepo
+
+    return OracleDeviceBanCountersRepo(session)
+
+
 def get_temp_passwords_repo(session: Any = None) -> Any:
     """Return the ``TempPasswordsRepo`` implementation (一次性临时密码)."""
     from db.repos.oracle.temp_passwords import OracleTempPasswordsRepo
@@ -255,6 +262,7 @@ __all__ = [
     "get_ban_records_repo",
     "get_notifications_repo",
     "get_device_bans_repo",
+    "get_device_ban_counters_repo",
     "get_temp_passwords_repo",
     "get_device_challenges_repo",
     "get_violations_repo",

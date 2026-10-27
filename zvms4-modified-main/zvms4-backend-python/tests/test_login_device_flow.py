@@ -59,6 +59,7 @@ class Env:
         self.marks: list[str] = []
         self.consumed: list[str] = []
         self.other_primary: set[str] = set()
+        self.counters: dict[str, int] = {}
 
 
 @pytest.fixture
@@ -81,6 +82,10 @@ def env(monkeypatch) -> Env:
 
     async def get_by_oid(oid):
         return state.users.get(oid)
+
+    async def counter_increment(xuehai_id, at=None):
+        state.counters[xuehai_id] = state.counters.get(xuehai_id, 0) + 1
+        return state.counters[xuehai_id]
 
     async def find_by_business_id(business_id):
         return next((u for u in state.users.values() if u["id"] == business_id), None)
@@ -190,11 +195,28 @@ def env(monkeypatch) -> Env:
     )
     monkeypatch.setattr(
         backends,
+        "get_device_ban_counters_repo",
+        lambda *a, **k: SimpleNamespace(increment=counter_increment),
+    )
+    monkeypatch.setattr(
+        backends,
         "get_ban_records_repo",
         lambda *a, **k: SimpleNamespace(
             count_for_user_rule=count_for_user_rule, insert=insert_record
         ),
     )
+    async def temp_failures_by_device(user_oid, since):
+        grouped: dict[str, int] = {}
+        for row in state.logs:
+            if row["type"] == "temp_password_fail":
+                key = row["xuehai_id"]
+                grouped[key] = grouped.get(key, 0) + 1
+        return sorted(grouped.items(), key=lambda item: (-item[1], item[0]))
+
+    monkeypatch.setattr(
+        device_guard, "temp_failures_by_device", temp_failures_by_device
+    )
+
     # 规则封禁（多设备）在本文件不测：直接返回 None，避免真去连库。
     monkeypatch.setattr(
         backends,
@@ -519,8 +541,10 @@ def test_third_wrong_temp_password_bans_device(client, env) -> None:
 
     assert final.status_code == 403
     assert final.json()["detail"]["code"] == "DEVICE_BAN_APPLIED"
-    assert env.device_upserts == [{"xuehai_id": OTHER, "until": None}]
-    assert len(env.bans) == 1
+    # 设备梯度规则缺失 → 默认第 1 档 1 天；账号不连坐。
+    assert [row["xuehai_id"] for row in env.device_upserts] == [OTHER]
+    assert env.device_upserts[0]["until"] is not None
+    assert env.bans == []
 
 
 def test_temp_login_refuses_banned_account(client, env) -> None:

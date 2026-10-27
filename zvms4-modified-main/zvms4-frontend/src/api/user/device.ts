@@ -31,25 +31,43 @@ export async function readMyDevice(): Promise<MyDeviceStatus> {
   return aiRequest<MyDeviceStatus>({ method: 'get', url: '/v3/users/me/device' })
 }
 
-export async function setMyPrimaryDevice(xuehaiId: string): Promise<void> {
+export async function setMyPrimaryDevice(xuehaiId: string, verificationToken?: string): Promise<void> {
   await aiRequestVoid({
     method: 'put',
     url: '/v3/users/me/primary-device',
-    data: { xuehai_id: xuehaiId }
+    data: {
+      xuehai_id: xuehaiId,
+      ...(verificationToken ? { verification_token: verificationToken } : {})
+    }
   })
 }
 
-export async function clearMyPrimaryDevice(): Promise<void> {
-  await aiRequestVoid({ method: 'delete', url: '/v3/users/me/primary-device' })
+export async function clearMyPrimaryDevice(verificationToken?: string): Promise<void> {
+  await aiRequestVoid({
+    method: 'delete',
+    url: '/v3/users/me/primary-device',
+    ...(verificationToken ? { data: { verification_token: verificationToken } } : {})
+  })
 }
 
-export async function issueTempPassword(userOid: string): Promise<TempPasswordIssueResult> {
+export async function issueTempPassword(
+  userOid: string,
+  verificationToken?: string
+): Promise<TempPasswordIssueResult> {
   return aiRequest<TempPasswordIssueResult>({
     method: 'post',
-    url: `/v3/users/${userOid}/temp-password`
+    url: `/v3/users/${userOid}/temp-password`,
+    ...(verificationToken ? { data: { verification_token: verificationToken } } : {})
   })
 }
 
-export async function clearUserPrimaryDevice(userOid: string): Promise<void> {
-  await aiRequestVoid({ method: 'delete', url: `/v3/users/${userOid}/primary-device` })
+export async function clearUserPrimaryDevice(
+  userOid: string,
+  verificationToken?: string
+): Promise<void> {
+  await aiRequestVoid({
+    method: 'delete',
+    url: `/v3/users/${userOid}/primary-device`,
+    ...(verificationToken ? { data: { verification_token: verificationToken } } : {})
+  })
 }

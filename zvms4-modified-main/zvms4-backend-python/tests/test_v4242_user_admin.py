@@ -50,6 +50,7 @@ from db.repos.oracle.users import (
 from routers import users_v3_router
 from tasks import user_trash_gc
 from typings.log import inject_log
+from util.cert import jwt_encode
 from util.object_id import get_current_user
 from util.permission.user import role_change_forbidden
 
@@ -155,6 +156,11 @@ def env(monkeypatch):
         ids=ids,
         new_student_id=ids[4],
     )
+
+
+def _verify_token(oid: str) -> str:
+    """密码复核签发的 5 分钟短令牌（硬删除要求「是本人坐在这」）。"""
+    return jwt_encode(oid, [], [], "short", session_id="", purpose="verify")
 
 
 def _login_as(env, per, oid=SELF):
@@ -285,7 +291,11 @@ def test_set_roles_stmt_rotates_session():
 
 
 def test_cannot_delete_self(env):
-    response = env.client.delete(f"/api/v3/users/{SELF}")
+    response = env.client.request(
+        "DELETE",
+        f"/api/v3/users/{SELF}",
+        json={"verification_token": _verify_token(SELF)},
+    )
     assert response.status_code == 403
     assert response.json()["detail"] == "不能删除自己"
     assert env.repo.delete_calls == []
@@ -300,7 +310,11 @@ def test_non_admin_cannot_delete(env):
 
 
 def test_delete_user_writes_warning_audit(env):
-    response = env.client.delete(f"/api/v3/users/{OTHER}")
+    response = env.client.request(
+        "DELETE",
+        f"/api/v3/users/{OTHER}",
+        json={"verification_token": _verify_token(SELF)},
+    )
     assert response.status_code == 204
     assert env.repo.delete_calls == [(OTHER, SELF)]
     audit = env.log.calls[0]
@@ -311,7 +325,11 @@ def test_delete_user_writes_warning_audit(env):
 
 def test_delete_user_gone_is_404_and_not_logged(env):
     env.repo.fail_delete = True
-    response = env.client.delete(f"/api/v3/users/{OTHER}")
+    response = env.client.request(
+        "DELETE",
+        f"/api/v3/users/{OTHER}",
+        json={"verification_token": _verify_token(SELF)},
+    )
     assert response.status_code == 404
     assert env.log.calls == []
 

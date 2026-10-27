@@ -29,9 +29,15 @@ import {
 } from '@/api/ai'
 import type { AiQuotaKind } from '@/../types/ai'
 
+interface SelectedPerson {
+  label: string
+  number: number
+}
+
 const { t } = useI18n()
 
 const userOid = ref('')
+const selectedPerson = ref<SelectedPerson | null>(null)
 const loading = ref(false)
 const failed = ref(false)
 const snapshot = ref<AiQuotaSnapshotView | null>(null)
@@ -40,6 +46,7 @@ const limitVisible = ref(false)
 const limitKind = ref<AiQuotaKind>('ocr')
 const limitValue = ref(0)
 const saving = ref(false)
+const resetting = ref<AiQuotaKind | ''>('')
 
 const ocr = computed<AiQuotaEntryView | null>(() => snapshot.value?.ocr ?? null)
 const chat = computed<AiQuotaEntryView | null>(() => snapshot.value?.chat ?? null)
@@ -57,24 +64,47 @@ function percent(entry: AiQuotaEntryView | null): number {
   return Math.min(100, Math.round((entry.used / entry.limit) * 100))
 }
 
+function onPersonSelect(person: { label: string; number: number } | null) {
+  selectedPerson.value = person ? { label: person.label, number: person.number } : null
+}
+
+let loadSeq = 0
+
 async function load() {
-  if (!userOid.value) {
+  const oid = userOid.value
+  if (!oid) {
+    loadSeq += 1
     snapshot.value = null
+    failed.value = false
+    loading.value = false
     return
   }
+  const seq = ++loadSeq
   loading.value = true
   failed.value = false
   try {
-    snapshot.value = await userQuota(userOid.value)
+    const result = await userQuota(oid)
+    if (seq !== loadSeq) {
+      return
+    }
+    snapshot.value = result
   } catch {
+    if (seq !== loadSeq) {
+      return
+    }
     snapshot.value = null
     failed.value = true
   } finally {
-    loading.value = false
+    if (seq === loadSeq) {
+      loading.value = false
+    }
   }
 }
 
-watch(userOid, () => {
+watch(userOid, (value) => {
+  if (!value) {
+    selectedPerson.value = null
+  }
   void load()
 })
 
@@ -103,7 +133,7 @@ async function submitLimit() {
 }
 
 async function resetUsage(kind: AiQuotaKind) {
-  if (!userOid.value) {
+  if (!userOid.value || resetting.value) {
     return
   }
   try {
@@ -121,6 +151,7 @@ async function resetUsage(kind: AiQuotaKind) {
   } catch {
     return
   }
+  resetting.value = kind
   try {
     await resetUserQuota(userOid.value, kind)
     ElMessage.success(t('ai.quotaAdmin.resetNotice'))
@@ -128,6 +159,8 @@ async function resetUsage(kind: AiQuotaKind) {
   } catch (error) {
     const copy = aiErrorCopy(aiErrorCodeOf(error), t)
     ElMessage.error(`${copy.title}：${copy.hint}`)
+  } finally {
+    resetting.value = ''
   }
 }
 </script>
@@ -141,7 +174,7 @@ async function resetUsage(kind: AiQuotaKind) {
           <p class="yg-text-xs yg-text-tertiary">{{ t('ai.quotaAdmin.subtitle') }}</p>
         </div>
         <div class="yg-card__extra">
-          <ElButton :disabled="!userOid" @click="load">
+          <ElButton :disabled="!userOid" :loading="loading" @click="load">
             <ElIcon class="mr-1"><Refresh /></ElIcon>
             {{ t('ai.common.refresh') }}
           </ElButton>
@@ -152,7 +185,14 @@ async function resetUsage(kind: AiQuotaKind) {
         <div class="flex flex-wrap items-center gap-3">
           <span class="yg-text-xs yg-text-tertiary">{{ t('ai.quotaAdmin.pickUser') }}</span>
           <div class="w-72">
-            <ZSelectPerson v-model="userOid" :filter-start="6" full-width />
+            <ZSelectPerson
+              v-model="userOid"
+              :filter-start="2"
+              :placeholder="t('ai.quotaAdmin.pickUserPlaceholder')"
+              clearable
+              full-width
+              @select="onPersonSelect"
+            />
           </div>
         </div>
       </div>
@@ -160,7 +200,14 @@ async function resetUsage(kind: AiQuotaKind) {
 
     <section class="yg-card" v-loading="loading">
       <header class="yg-card__header">
-        <h2 class="yg-statistic__title">{{ t('ai.quotaAdmin.title') }}</h2>
+        <div class="flex flex-col gap-1 min-w-0">
+          <h2 class="yg-statistic__title">{{ t('ai.quotaAdmin.title') }}</h2>
+          <p v-if="selectedPerson" class="yg-text-xs yg-text-tertiary tabular-nums">
+            {{ t('ai.quotaAdmin.currentUser') }}：{{ selectedPerson.label }}（{{
+              selectedPerson.number
+            }}）
+          </p>
+        </div>
       </header>
 
       <div class="yg-card__body">
@@ -169,10 +216,13 @@ async function resetUsage(kind: AiQuotaKind) {
         <div v-if="!userOid" class="py-8 text-center yg-text-sm yg-text-tertiary">
           {{ t('ai.quotaAdmin.noUser') }}
         </div>
-        <p v-else-if="failed" class="py-8 text-center yg-text-sm yg-text-danger">
-          {{ t('ai.quotaAdmin.loadFailed') }}
-        </p>
-        <div v-else class="grid gap-4 sm:grid-cols-2">
+        <div v-else-if="failed" class="py-8 flex flex-col items-center gap-3">
+          <p class="yg-text-sm yg-text-danger">{{ t('ai.quotaAdmin.loadFailed') }}</p>
+          <ElButton size="small" :loading="loading" @click="load">
+            {{ t('ai.quotaAdmin.retry') }}
+          </ElButton>
+        </div>
+        <div v-else-if="snapshot" class="grid gap-4 sm:grid-cols-2">
           <div
             v-for="item in [
               { kind: 'ocr' as AiQuotaKind, title: t('ai.quotaAdmin.ocrTitle'), entry: ocr },
@@ -200,16 +250,32 @@ async function resetUsage(kind: AiQuotaKind) {
             <ElProgress :percentage="percent(item.entry)" :stroke-width="6" />
             <div class="flex flex-wrap items-center justify-end gap-2">
               <!-- 清空计数属于破坏性操作：红字按钮 + 二次确认（准则 5.1 / 5.2） -->
-              <ElButton size="small" text type="danger" @click="resetUsage(item.kind)">
+              <ElButton
+                size="small"
+                text
+                type="danger"
+                :loading="resetting === item.kind"
+                :disabled="!!resetting || saving"
+                @click="resetUsage(item.kind)"
+              >
                 {{ t('ai.quotaAdmin.reset') }}
               </ElButton>
-              <ElButton size="small" type="primary" plain @click="openLimit(item.entry, item.kind)">
+              <ElButton
+                size="small"
+                type="primary"
+                plain
+                :disabled="!!resetting || saving"
+                @click="openLimit(item.entry, item.kind)"
+              >
                 <ElIcon class="mr-1"><Setting /></ElIcon>
                 {{ t('ai.quotaAdmin.setLimit') }}
               </ElButton>
             </div>
           </div>
         </div>
+        <p v-else-if="!loading" class="py-8 text-center yg-text-sm yg-text-tertiary">
+          {{ t('ai.quotaAdmin.empty') }}
+        </p>
       </div>
     </section>
 
@@ -224,13 +290,13 @@ async function resetUsage(kind: AiQuotaKind) {
     >
       <ElForm label-position="top">
         <ElFormItem :label="t('ai.quotaAdmin.limitKind')">
-          <ElSelect v-model="limitKind" class="w-full">
+          <ElSelect v-model="limitKind" class="w-full" :disabled="saving">
             <ElOption :label="t('ai.quotaAdmin.ocrTitle')" value="ocr" />
             <ElOption :label="t('ai.quotaAdmin.chatTitle')" value="chat" />
           </ElSelect>
         </ElFormItem>
         <ElFormItem :label="t('ai.quotaAdmin.limitValue')">
-          <ElInputNumber v-model="limitValue" :min="0" :step="10" class="w-full" />
+          <ElInputNumber v-model="limitValue" :min="0" :step="10" class="w-full" :disabled="saving" />
           <p class="yg-text-xs yg-text-tertiary mt-1">{{ t('ai.quotaAdmin.limitHint') }}</p>
         </ElFormItem>
       </ElForm>

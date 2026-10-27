@@ -26,7 +26,7 @@ import re
 from datetime import datetime
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
@@ -42,7 +42,7 @@ from services.ai import audit
 from typings.log import ZVMSLog
 from util import agent_unlock
 from util.cert import verify_password_async
-from util.object_id import get_current_user
+from util.object_id import get_current_user, require_password_verification
 
 _logger = logging.getLogger(__name__)
 
@@ -177,6 +177,8 @@ class UnlockRequest(BaseModel):
 
 class UnrestrictedRequest(BaseModel):
     enabled: bool
+    # 密码再认证签发的 5 分钟短令牌：关掉审核等于关掉一道防线。
+    verification_token: str | None = None
 
 
 @router.post("/unlock")
@@ -254,10 +256,27 @@ async def set_unrestricted_mode(
 
     开与关各写两行日志：网关侧 ``AI_CALL_LOGS.status='warning'``（回答了「这段
     时间为什么没有拒绝」）与平台日志（回答了「谁改的」）。
+
+    关掉审核前要先过密码再认证（``verification_token``）：这是把一个安全开关
+    交给本次操作者的动作，长期会话令牌不足以证明「是本人坐在这」。
+
+    拒绝体沿用本路由的 OpenAI 形状（``{"error": {...}}`` + ``X-AI-Request-Id``），
+    但状态码必须是 **403**：前端把 401 当登录过期并清会话，密码输错一次就会把
+    管理员踢回登录页。
     """
     request_id = uuid4().hex
     if not _is_admin(user):
         return await _forbidden(user, request_id=request_id)
+
+    try:
+        await require_password_verification(payload.verification_token, user)
+    except HTTPException:
+        return _error(
+            403,
+            "AI_PASSWORD_VERIFICATION_REQUIRED",
+            "需要密码验证后才能继续",
+            request_id=request_id,
+        )
 
     enabled = bool(payload.enabled)
     agent_unlock.set_unrestricted(str(user.get("id") or ""), enabled)
