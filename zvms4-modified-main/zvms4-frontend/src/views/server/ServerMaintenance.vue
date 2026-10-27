@@ -122,7 +122,7 @@ if (isAdmin) {
 
 <template>
   <!-- 系统维护模式:仅 admin 可见 -->
-  <ElCard v-if="isAdmin" shadow="never" class="mt-8">
+  <ElCard v-if="isAdmin" shadow="never">
     <template #header>
       <span class="font-medium">{{ t(M + 'title') }}</span>
     </template>

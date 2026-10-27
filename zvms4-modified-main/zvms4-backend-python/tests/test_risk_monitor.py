@@ -501,3 +501,75 @@ async def test_every_registered_trigger_is_kept_in_the_router_registry() -> None
     for trigger in risk_monitor.TRIGGERS:
         entry = ban_router.TRIGGER_REGISTRY[trigger]
         assert entry["evaluation"] == "monitor"
+
+
+# ---------------------------------------------------------------------------
+# P1-1 封禁期重试是「已在封禁中」短路的唯一例外
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_ban_evasion_retry_escalates_while_banned(env) -> None:
+    """``ban_evasion_retry`` 的证据只在封禁期内产生：短路会让它永不触发。"""
+    env.rule = _rule("ban_evasion_retry", mode="ban", threshold=5)
+    env.counts[("login_fail", "banned")] = 7
+    env.user_doc = {"roles": ["student"], "banned": True, "ban_until": None}
+
+    result = await risk_monitor.evaluate("ban_evasion_retry", USER, now=NOW)
+
+    assert result == {
+        "trigger": "ban_evasion_retry",
+        "count": 7,
+        "threshold": 5,
+        "mode": "ban",
+        "banned": True,
+    }
+    # 证据照写：管理员在违规列表里要能看到「封禁期内又试了 7 次」。
+    assert len(env.violations) == 1
+    assert env.violations[0]["signal"] == "ban_evasion_retry"
+    # 加刑走 apply_account_ban（内部只加不减），不是重复首次处罚。
+    assert env.bans == [
+        {
+            "user_oid": USER,
+            "rule_code": "ban_evasion_retry",
+            "reason": env.bans[0]["reason"],
+        }
+    ]
+    assert _log_types(env) == ["risk_alert", "risk_ban"]
+
+
+@pytest.mark.asyncio
+async def test_ban_evasion_retry_does_not_downgrade_existing_ban(env) -> None:
+    """加刑入口必须是 ``set_ban_if_stronger`` 语义：永久封禁不被改成限时。"""
+    env.rule = _rule("ban_evasion_retry", mode="ban", threshold=2)
+    env.counts[("login_fail", "banned")] = 3
+    env.user_doc = {
+        "roles": ["student"],
+        "banned": True,
+        "ban_until": NOW + timedelta(days=30),
+    }
+
+    result = await risk_monitor.evaluate("ban_evasion_retry", USER, now=NOW)
+
+    # 判定模块只负责「到量就再判一次」，不自己比较刑期：
+    # 真正的只加不减由 device_guard.apply_account_ban → set_ban_if_stronger 保证。
+    assert result is not None and result["banned"] is True
+    assert env.bans[0]["rule_code"] == "ban_evasion_retry"
+
+
+@pytest.mark.asyncio
+async def test_other_triggers_still_skip_while_banned(env) -> None:
+    """除封禁期重试外，其余检查项在封禁中仍然只跳过（不推梯度）。"""
+    assert risk_monitor.ESCALATE_WHILE_BANNED == {"ban_evasion_retry"}
+    env.user_doc = {"roles": ["student"], "banned": True, "ban_until": None}
+
+    for trigger in ("login_failure_burst", "export_burst"):
+        risk_monitor._THROTTLE.clear()
+        env.rule = _rule(trigger, mode="ban", threshold=1)
+        env.counts[("login_fail", None)] = 5
+        env.counts[("export", None)] = 5
+
+        assert await risk_monitor.evaluate(trigger, USER, now=NOW) is None
+
+    assert env.violations == []
+    assert env.bans == []

@@ -57,6 +57,15 @@ PLATFORM_HELP_TOOL = "platform_help"
 # 非管理员看到的 = 义工管理 10 个 + 平台帮助。帮助文档对所有 AI 可用角色开放。
 DEPARTMENT_TOOL_NAMES = VOLUNTEER_TOOL_NAMES | {PLATFORM_HELP_TOOL}
 
+# 允许「直接执行」（不建提案、不过 TOTP）的写工具名单。**模块级常量**而不是
+# ``ToolDef`` 上的自由开关：哪种写操作能绕过人工确认是一份需要 review 的清单，
+# 加一个名字就得改这里，改不动就是定义错误（注册期直接抛）。
+#
+# 只收「封禁/解封」这类**可逆、且只作用于非管理员**的动作：巡检 agent 发现
+# 账号被灌爆时，等一位管理员上线点确认的窗口里攻击已经完成了。真正的护栏不在
+# 提案层，而在工具实现里（不能碰自己、不能碰 admin、每次现查库、全量审计）。
+DIRECT_WRITE_TOOL_NAMES = frozenset({"user_ban", "user_unban", "device_unban"})
+
 
 @dataclass(frozen=True)
 class ToolDef:
@@ -79,6 +88,11 @@ class ToolDef:
     ``dual_auth_action``
         非空 → 确认这条提案时必须由**另一位**管理员提供 6 位动态码，
         ``action`` 原样传给 ``util.dual_auth.require_dual_auth``。
+    ``direct``
+        ``True`` → 这个写工具**直接执行**：过完 ``permission`` / ``guard`` /
+        参数收敛后立即调用 ``impl``，不建提案、不要 TOTP。仅限
+        :data:`DIRECT_WRITE_TOOL_NAMES` 里的名字（见那里的理由），默认 ``False``
+        ——既有写工具的行为一个字节都不变。
     """
 
     name: str
@@ -90,6 +104,7 @@ class ToolDef:
     prepare: Callable[..., Awaitable["ProposalDraft"]] | None = None
     guard: Callable[[dict], Awaitable[None]] | None = None
     dual_auth_action: str | None = None
+    direct: bool = False
 
 
 def _always(user: dict) -> bool:
@@ -155,9 +170,29 @@ def _register(tool: ToolDef) -> ToolDef:
             raise ValueError(
                 f"tool {tool.name}: read tools cannot declare dual_auth_action"
             )
+        if tool.direct:
+            raise ValueError(f"tool {tool.name}: only write tools can be direct")
     else:
         if tool.impl is None:
             raise ValueError(f"tool {tool.name}: write tools must declare impl")
+        if tool.direct:
+            # 「直接执行」是绕过人工确认的能力，三条同时成立才允许：
+            # 名字在模块级清单里、有现查库的 guard（否则只靠 token 里的 per
+            # 快照）、有 impl（不然没东西可执行）。任何一条缺失都是定义错误。
+            if tool.name not in DIRECT_WRITE_TOOL_NAMES:
+                raise ValueError(
+                    f"tool {tool.name}: direct write is not in DIRECT_WRITE_TOOL_NAMES"
+                )
+            if tool.guard is None:
+                raise ValueError(
+                    f"tool {tool.name}: direct write tools need a guard"
+                )
+            if tool.dual_auth_action is not None:
+                # direct 与 TOTP 是互斥语义：executor 先看 direct，声明了两者
+                # 会静默跳过双人授权——那是把安全开关写成了摆设。
+                raise ValueError(
+                    f"tool {tool.name}: direct write cannot declare dual_auth_action"
+                )
         # 运维写工具的判据就是 dual_auth_action：它有 TOTP 就意味着
         # 「确认时必须有东西给用户看（prepare）+ 执行前必须现查库（guard）」。
         if tool.dual_auth_action is not None and (
@@ -705,6 +740,7 @@ def run_allowed(tool: ToolDef, user: dict) -> bool:
 
 __all__ = [
     "DEPARTMENT_TOOL_NAMES",
+    "DIRECT_WRITE_TOOL_NAMES",
     "PLATFORM_HELP_TOOL",
     "READ",
     "TOOLS",

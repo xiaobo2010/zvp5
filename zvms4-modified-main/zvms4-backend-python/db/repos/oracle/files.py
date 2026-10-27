@@ -390,10 +390,14 @@ def _clamp_batch_limit(batch_limit: int) -> int:
     return max(1, min(value, _OCR_UPLOAD_PURGE_MAX_BATCH))
 
 
-def _ocr_upload_candidates_stmt(cutoff: Any, limit: int):
-    """One batch of OCR upload originals that are safe to hard-delete.
+def _ocr_upload_candidate_predicates(cutoff: Any) -> tuple[Any, ...]:
+    """The whole OCR upload retention predicate, shared by SELECT and COUNT.
 
-    The predicate is the whole contract (see ``tasks/ocr_upload_gc.py``):
+    One definition, two consumers: :func:`_ocr_upload_candidates_stmt` picks the
+    batch to delete, :func:`_ocr_upload_candidates_count_stmt` answers "how many
+    would that be" for the read-only GC preview. A preview computed from a
+    second copy of these conditions would eventually promise a different set
+    than the delete performs — worse than having no preview at all.
 
     * ``purpose='volunteer_order'`` — the only purpose the upload API produces
       today; nothing else is auto-generated material;
@@ -416,17 +420,105 @@ def _ocr_upload_candidates_stmt(cutoff: Any, limit: int):
         .where(child.c.parent_oid == files_tbl.c.oid, child.c.kind != "thumb")
     )
     return (
+        files_tbl.c.purpose == "volunteer_order",
+        files_tbl.c.entity_type.is_(None),
+        files_tbl.c.kind == "original",
+        files_tbl.c.created_at < cutoff,
+        files_tbl.c.status.notin_(_AUDIT_SETTLED_STATUSES),
+        ~referenced,
+    )
+
+
+def _ocr_upload_candidates_stmt(cutoff: Any, limit: int):
+    """One batch of OCR upload originals that are safe to hard-delete.
+
+    The predicate lives in :func:`_ocr_upload_candidate_predicates` (its
+    docstring is the whole contract, mirrored by ``tasks/ocr_upload_gc.py``).
+    """
+    return (
         select(files_tbl.c.oid)
-        .where(
-            files_tbl.c.purpose == "volunteer_order",
-            files_tbl.c.entity_type.is_(None),
-            files_tbl.c.kind == "original",
-            files_tbl.c.created_at < cutoff,
-            files_tbl.c.status.notin_(_AUDIT_SETTLED_STATUSES),
-            ~referenced,
-        )
+        .where(*_ocr_upload_candidate_predicates(cutoff))
         .order_by(files_tbl.c.created_at.asc(), files_tbl.c.oid.asc())
         .limit(limit)
+    )
+
+
+def _ocr_upload_candidates_count_stmt(cutoff: Any):
+    """How many rows :func:`_ocr_upload_candidates_stmt` would select (no batch cap).
+
+    Used by the read-only GC preview only; the delete path keeps its batch
+    ``limit`` because an unbounded delete is exactly what the batch loop avoids.
+    """
+    return select(func.count()).select_from(files_tbl).where(
+        *_ocr_upload_candidate_predicates(cutoff)
+    )
+
+
+def _snapshot_groups_stmt():
+    """One grouped scan for the governance dashboard (no ``CONTENT`` selected).
+
+    Grouping by the four low-cardinality columns yields a handful of rows no
+    matter how large ``FILES`` grows — the dashboard never materialises the
+    table, and ``SIZE_BYTES`` sum keeps the byte total off the BLOBs.
+    """
+    return (
+        select(
+            files_tbl.c.kind,
+            files_tbl.c.purpose,
+            files_tbl.c.status,
+            files_tbl.c.ocr_status,
+            func.count().label("files"),
+            func.coalesce(func.sum(files_tbl.c.size_bytes), 0).label("bytes"),
+        ).group_by(
+            files_tbl.c.kind,
+            files_tbl.c.purpose,
+            files_tbl.c.status,
+            files_tbl.c.ocr_status,
+        )
+    )
+
+
+def _orphan_thumb_count_stmt():
+    """Thumbnails whose ``parent_oid`` names a row that no longer exists.
+
+    The schema has no FK, so a hard delete can leave these behind; they can never
+    be served (the parent drives the serve gate) and they hold bytes nobody can
+    reach. One ``NOT EXISTS`` against the parent by primary key.
+    """
+    parent = files_tbl.alias("orphan_parent")
+    return (
+        select(func.count())
+        .select_from(files_tbl)
+        .where(
+            files_tbl.c.kind == "thumb",
+            ~exists(
+                select(1)
+                .select_from(parent)
+                .where(parent.c.oid == files_tbl.c.parent_oid)
+            ),
+        )
+    )
+
+
+def _original_without_thumb_count_stmt():
+    """Originals with no ``kind='thumb'`` child.
+
+    A pointer, not a defect list: non-image uploads legitimately have no
+    thumbnail, which is why the tool labels this count rather than treating it
+    as orphaned bytes.
+    """
+    thumb = files_tbl.alias("original_thumb")
+    return (
+        select(func.count())
+        .select_from(files_tbl)
+        .where(
+            files_tbl.c.kind == "original",
+            ~exists(
+                select(1)
+                .select_from(thumb)
+                .where(thumb.c.parent_oid == files_tbl.c.oid, thumb.c.kind == "thumb")
+            ),
+        )
     )
 
 
@@ -897,6 +989,55 @@ class OracleFilesRepo:
             if owns:
                 await session.commit()
         return counts
+
+    async def count_snapshot(self, *, gc_cutoff: Any = None) -> dict[str, Any]:
+        """Read-only aggregate counts over ``FILES`` (AI governance tools).
+
+        Two mutually exclusive modes, because both are pure counts and neither
+        may ever write:
+
+        * ``gc_cutoff`` given — ``{"gc": {"candidates": n}}``: how many
+          originals :meth:`purge_ocr_uploads` would select right now, computed
+          from the **same** predicate
+          (:func:`_ocr_upload_candidate_predicates`), so a preview cannot
+          disagree with the delete;
+        * otherwise — ``{"groups": [...], "orphans": {...}}`` for the storage
+          dashboard: ``(kind, purpose, status, ocr_status)`` buckets with row
+          counts and byte sums, plus the two orphan counts.
+
+        ``CONTENT`` is never selected: the byte total comes from ``SIZE_BYTES``,
+        and a snapshot must not materialise a single BLOB.
+        """
+        if gc_cutoff is not None:
+            stmt = _ocr_upload_candidates_count_stmt(gc_cutoff)
+            async with _session_for(self._session) as (session, _owns):
+                total = (await session.execute(stmt)).scalar_one()
+            return {"gc": {"candidates": int(total or 0)}}
+
+        groups_stmt = _snapshot_groups_stmt()
+        orphan_thumb_stmt = _orphan_thumb_count_stmt()
+        missing_thumb_stmt = _original_without_thumb_count_stmt()
+        async with _session_for(self._session) as (session, _owns):
+            groups = (await session.execute(groups_stmt)).all()
+            orphan_thumbs = (await session.execute(orphan_thumb_stmt)).scalar_one()
+            missing_thumbs = (await session.execute(missing_thumb_stmt)).scalar_one()
+        return {
+            "groups": [
+                {
+                    "kind": row[0],
+                    "purpose": row[1],
+                    "status": row[2],
+                    "ocr_status": row[3],
+                    "files": int(row[4] or 0),
+                    "bytes": int(row[5] or 0),
+                }
+                for row in groups
+            ],
+            "orphans": {
+                "thumb_without_parent": int(orphan_thumbs or 0),
+                "original_without_thumb": int(missing_thumbs or 0),
+            },
+        }
 
     async def add_ocr(
         self,

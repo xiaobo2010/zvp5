@@ -935,3 +935,72 @@ CAS `proposed → executing → confirmed|failed`。
 `AI_AGENT_PROPOSAL_DENIED`(403) `AI_AGENT_PROPOSAL_TAMPERED`(409)
 `AI_AGENT_PROPOSAL_UNKNOWN_TOOL`(409) `AI_AGENT_TOOL_FAILED`(502)
 `AI_AGENT_INTERNAL_ERROR`(500)
+
+---
+
+## 15. Web SSH 命令起草 `/api/system/ssh/suggest`
+
+管理员用自然语言描述想做什么，网关起草一条命令**文本**。它是 Web 终端
+（`routers/system_ssh_router.py` 的 `/session` + `/ws`）的辅助入口，不是执行入口。
+
+### 15.1 端点
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| POST | `/api/system/ssh/suggest` | `{intent, context?, model?}` → `{command, explanation, model, request_id}` |
+
+- 鉴权：登录态 + 现查库的严格 admin（`_require_system_admin`）。**不要求**双人码：
+  本端点不批准也不执行任何动作。
+- 体量：`intent` 1–1000 字符，`context` ≤ 2000，`model` ≤ 64。
+- 频控与额度：与 `/api/ai/v1/chat/completions` 同口径——`rate_limit`(chat) +
+  `quota.peek` 预检 + 成功后 `quota.consume`(**仅**共享/服务端 key；个人 key 不计费)。
+
+```json
+// 请求
+{"intent": "看看 caddy 容器还活着没", "context": "宿主 Ubuntu 22.04，容器名 caddy"}
+
+// 响应
+{"status": "ok", "code": 200,
+ "data": {"command": "docker ps --filter name=caddy --format '{{.Status}}'",
+          "explanation": "只读查询 caddy 容器状态，不改动任何东西。",
+          "model": "gpt-x", "request_id": "3f1c…"}}
+```
+
+### 15.2 错误码
+
+| code | HTTP | 触发条件 |
+|---|---|---|
+| `AI_DISABLED` | 503 | 网关关闭 |
+| `AI_NO_PROVIDER` | 503 | 目录为空 / 模型对应 provider 全在冷却 |
+| `model_not_found` | 404 | `model` 不在本人可见模型集合里 |
+| `AI_RATE_LIMITED` | 429 | 本地分钟级频控 |
+| `insufficient_quota` | 429 | 本月 chat 额度耗尽（仅计费 key） |
+| `AI_BUSY` | 429 | 并发闸门满 |
+| `AI_TIMEOUT` | 504 | 上游超时 |
+| `AI_UPSTREAM_*` / `AI_CREDENTIAL_UNREADABLE` | 502 | 上游失败 / 凭据解不开 |
+| `AI_AGENT_BAD_ARGUMENT` | 400 | 生成的命令超过 1024 字符 |
+
+### 15.3 生成不等于执行（安全边界）
+
+1. **没有执行路径**。服务层 `services/ai/textgen.py` 不 import `ssh_bridge` /
+   `ssh_exec`，端到端点也不发 ticket、不开 WS；命令只会以字符串形式回到浏览器。
+2. **执行仍然在终端里**。真正落地只有两条既有路径：人把命令粘进已过双人 TOTP 的
+   `/ws` 终端并亲自回车；或 agent 的 `ssh_exec` 提案（另一位管理员的 6 位码）。
+3. **system prompt 是服务端常量**。客户端只能给 `intent` / `context` / `model`，
+   无法替换规则段。规则明确禁止交互式/长驻/TTY 程序（`vim`/`top`/`less`/`tail -f`、
+   交互 shell、无 `-c`/`-e` 的 REPL、需确认的 `apt`/`passwd`）、禁止无差别破坏
+   （`rm -rf /`、写块设备的 `dd`/`mkfs`、fork bomb、`shutdown`），并要求绝对路径、
+   凭据用占位符。
+4. **输出被收敛**。去 ``` 围栏；`json.loads` 失败则整段当命令（解释留空）；多行压成
+   单行（换行粘进终端等于隐式回车）；空命令按上游故障 502；超过 1024 字符 400。
+5. **审计双写、都不含命令全文之外的敏感物**：
+   - `ai_call_logs` 一行（`capability=chat`、`purpose=system-ssh-suggest`、`units`、
+     `key_scope`、失败含 `error_code`）——只有元数据，没有命令文本；
+   - `app_logs` 一行 `type=system_ssh_suggest`（`intent_len` / `model` /
+     `command_head`），`command_head` 是**脱敏后**的前 200 字符
+     （`services.agent.ops_tools.redact`：`--password=` / `-p` / `ENV=value` / 超长串）。
+     该 ltype 已加入 `PROTECTED_LTYPES`，与 `system_ssh_command` 同享保留期豁免。
+6. **前端也必须「不自动回车」**：抽屉里生成的文本要经过人编辑、点插入，才写进终端。
+
+> 已知边界：生成质量取决于上游模型；prompt 只能降低、不能消除「产出危险命令」的概率。
+> 因此**人审阅是唯一的强制闸**，本端点在任何情况下都不提供「一键执行」。

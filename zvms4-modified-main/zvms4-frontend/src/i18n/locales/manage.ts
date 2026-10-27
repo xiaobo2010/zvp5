@@ -187,13 +187,15 @@ export const zhCN = {
     }
   },
   manage: {
+    back: '返回',
+    tabsLabel: '平台管理分区',
     tabs: {
       groups: '群组',
       users: '用户',
       roles: '角色',
       import: '导入',
       notifications: '通知',
-      ban: '封禁',
+      ban: '封禁管理',
       deviceBans: '设备封禁',
       attachments: '附件管理',
       logs: '日志',
@@ -415,6 +417,12 @@ export const zhCN = {
     savedNotice: '已保存',
     saveFailed: '保存失败',
     revertedNotice: '保存失败，已还原',
+    sections: {
+      label: '封禁管理分区',
+      rules: '规则与违规',
+      accounts: '账号封禁',
+      devices: '设备封禁'
+    },
     rule: {
       columns: {
         name: '规则名称',
@@ -518,7 +526,8 @@ export const zhCN = {
       signals: {
         iframe: '被 iframe 嵌套',
         bridge: '客户端桥缺失',
-        devtools: '调试器痕迹'
+        devtools: '调试器痕迹',
+        agent_jailbreak: 'agent 越狱/提示词注入'
       },
       detailUnknown: '无详情',
       empty: '暂无违规记录'
@@ -597,6 +606,11 @@ export const zhCN = {
     cancel: '取消',
     loadFailed: '加载失败，请稍后重试',
     empty: '当前没有符合条件的附件',
+    verifyReason: '查看与审计附件属于高危操作，请输入密码完成再认证。',
+    verifyRequired: '需要密码验证',
+    verifyIntro:
+      '附件里是学生证件与身份材料，进入审计页前需要再输入一次密码。验证 5 分钟内有效，过期后下一次裁决或删除会再问一次。',
+    verifyRetry: '重新验证',
     filterFields: {
       purpose: '用途',
       purposeAll: '全部用途',

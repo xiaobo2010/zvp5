@@ -19,7 +19,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime
+from datetime import datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
@@ -31,6 +31,7 @@ from db.repos.oracle import files as files_repo
 from db.repos.oracle.files import OracleFilesRepo
 from routers import attachments_router
 from typings.log import inject_log
+from util.cert import jwt_encode
 from util.object_id import get_current_user
 
 PREFIX = "/api/attachments"
@@ -41,6 +42,11 @@ OWNER_OID = "64b7f0c2e1a3b4c5d6e7fa04"
 OTHER_OID = "64b7f0c2e1a3b4c5d6e7fa05"
 
 CREATED = datetime(2026, 10, 1, 9, 30, 0)
+
+
+def _token(oid: str = ADMIN_OID) -> str:
+    """密码再认证签发的 5 分钟短令牌（与线上 ``POST /api/users/auth`` 同链路）。"""
+    return jwt_encode(oid, [], [], "short", session_id="", purpose="verify")
 
 
 class _FakeLog:
@@ -470,7 +476,7 @@ def test_verdict_writes_status_and_event(harness):
     oid = _seed_audit_rows(harness)
 
     response = harness.client.patch(
-        f"{PREFIX}/{oid}/status", json={"status": "verified", "note": "清楚可辨"}
+        f"{PREFIX}/{oid}/status", json={"status": "verified", "note": "清楚可辨", "verification_token": _token()}
     )
 
     assert response.status_code == 200, response.text
@@ -496,7 +502,7 @@ def test_rejection_uses_its_own_action(harness):
     oid = _seed_audit_rows(harness)
 
     response = harness.client.patch(
-        f"{PREFIX}/{oid}/status", json={"status": "rejected"}
+        f"{PREFIX}/{oid}/status", json={"status": "rejected", "verification_token": _token()}
     )
 
     assert response.status_code == 200, response.text
@@ -509,7 +515,7 @@ def test_note_is_truncated_to_500(harness):
     oid = _seed_audit_rows(harness)
 
     response = harness.client.patch(
-        f"{PREFIX}/{oid}/status", json={"status": "verified", "note": "x" * 600}
+        f"{PREFIX}/{oid}/status", json={"status": "verified", "note": "x" * 600, "verification_token": _token()}
     )
 
     assert response.status_code == 200, response.text
@@ -522,7 +528,7 @@ def test_invalid_verdict_is_400_without_side_effects(harness, status):
     oid = _seed_audit_rows(harness)
 
     response = harness.client.patch(
-        f"{PREFIX}/{oid}/status", json={"status": status}
+        f"{PREFIX}/{oid}/status", json={"status": status, "verification_token": _token()}
     )
 
     assert response.status_code == 400, response.text
@@ -536,7 +542,7 @@ def test_repeated_verdict_is_409(harness, current):
     harness.repo.meta[oid]["status"] = current
 
     response = harness.client.patch(
-        f"{PREFIX}/{oid}/status", json={"status": current}
+        f"{PREFIX}/{oid}/status", json={"status": current, "verification_token": _token()}
     )
 
     assert response.status_code == 409, response.text
@@ -549,7 +555,7 @@ def test_deleted_row_cannot_be_adjudicated(harness):
     harness.repo.meta[oid]["status"] = "deleted"
 
     response = harness.client.patch(
-        f"{PREFIX}/{oid}/status", json={"status": "verified"}
+        f"{PREFIX}/{oid}/status", json={"status": "verified", "verification_token": _token()}
     )
 
     assert response.status_code == 409, response.text
@@ -568,9 +574,24 @@ def test_verdict_requires_manager(harness):
     assert harness.repo.status_writes == []
 
 
+def test_verdict_requires_password_verification(harness):
+    """缺令牌一律 403，且拒绝必须发生在任何业务写之前。"""
+    oid = _seed_audit_rows(harness)
+
+    response = harness.client.patch(
+        f"{PREFIX}/{oid}/status", json={"status": "verified"}
+    )
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "需要密码验证后才能继续"
+    assert harness.repo.status_writes == []
+    assert harness.repo.events_written == []
+
+
 def test_verdict_missing_row_is_404(harness):
     response = harness.client.patch(
-        f"{PREFIX}/64b7f0c2e1a3b4c5d6e7fa99/status", json={"status": "verified"}
+        f"{PREFIX}/64b7f0c2e1a3b4c5d6e7fa99/status",
+        json={"status": "verified", "verification_token": _token()},
     )
 
     assert response.status_code == 404
@@ -582,7 +603,7 @@ def test_verdict_on_switching_between_verdicts_is_allowed(harness):
     harness.repo.meta[oid]["status"] = "verified"
 
     response = harness.client.patch(
-        f"{PREFIX}/{oid}/status", json={"status": "rejected", "note": "复核推翻"}
+        f"{PREFIX}/{oid}/status", json={"status": "rejected", "note": "复核推翻", "verification_token": _token()}
     )
 
     assert response.status_code == 200, response.text

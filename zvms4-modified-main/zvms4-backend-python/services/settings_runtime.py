@@ -302,6 +302,27 @@ def _build_registry() -> None:
             max=2_000_000,
         ),
         SettingSpec(
+            key="ai.safety_guard_enabled",
+            type="bool",
+            default=bool(ai_config.AI_SAFETY_GUARD_ENABLED),
+            group=GROUP_AI,
+            label="LLM 安全认证",
+            description=(
+                "学生会（department）提交对话前用一次模型调用判定「无关且破坏性」"
+                "的请求；关闭后零额外开销"
+            ),
+        ),
+        SettingSpec(
+            key="ai.safety_guard_timeout_seconds",
+            type="int",
+            default=int(ai_config.AI_SAFETY_GUARD_TIMEOUT_SECONDS),
+            group=GROUP_AI,
+            label="LLM 安全认证超时",
+            description="单次安全判定调用的超时秒数；超时按放行处理",
+            min=1,
+            max=60,
+        ),
+        SettingSpec(
             key="ops.upload_daily_max_files",
             type="int",
             default=int(attachment.DAILY_MAX_FILES),

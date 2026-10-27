@@ -22,7 +22,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Any, AsyncIterator
 
-from sqlalchemy import delete, func, insert, select, update
+from sqlalchemy import delete, func, insert, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import banned_devices as banned_devices_tbl
@@ -122,17 +122,52 @@ def _delete_stmt(xuehai_id: str):
     )
 
 
-def _page_stmt(page: int, size: int, query: str = ""):
+def _local_now(now: datetime | None) -> datetime:
+    """「此刻」的落库口径：本地 naive（与 ``util.ban`` 的判定侧一致）。"""
+    if now is None:
+        return datetime.now()
+    if now.tzinfo is None or now.tzinfo.utcoffset(now) is None:
+        return now
+    return now.astimezone().replace(tzinfo=None)
+
+
+def _active_filter(include_expired: bool, now: datetime | None) -> list[Any]:
+    """「此刻仍生效」的设备封禁谓词。
+
+    ``until IS NULL`` 是永久；有时刻的比较本地墙钟。默认只列生效中的行：
+    到期封禁没有后台任务删行（``device_ban_status`` 用 ``ban_is_active``
+    判定，行本身留着），只钉主键就会把刑满的机器一直挂在「当前封禁」上。
+    """
+    if include_expired:
+        return []
+    return [
+        or_(
+            banned_devices_tbl.c.until.is_(None),
+            banned_devices_tbl.c.until > _local_now(now),
+        )
+    ]
+
+
+def _page_stmt(
+    page: int,
+    size: int,
+    query: str = "",
+    include_expired: bool = False,
+    now: datetime | None = None,
+):
     """一页 + ``COUNT(*) OVER()`` 总数，一次往返。
 
     ``created_at`` 倒序（新封禁在上），同一时刻再按设备号升序保证分页稳定——
     没有 oid 列可以兜底排序，设备号本身是主键，足够唯一。
     """
     stmt = select(*_columns(), func.count().over().label("total_count"))
+    conds = _active_filter(include_expired, now)
     if query:
-        stmt = stmt.where(
+        conds.append(
             banned_devices_tbl.c.xuehai_id.like(_like_pattern(query), escape="\\")
         )
+    if conds:
+        stmt = stmt.where(*conds)
     return (
         stmt.order_by(
             banned_devices_tbl.c.created_at.desc(),
@@ -148,12 +183,19 @@ def _like_pattern(query: str) -> str:
     return f"%{escaped}%"
 
 
-def _count_stmt(query: str = ""):
+def _count_stmt(
+    query: str = "",
+    include_expired: bool = False,
+    now: datetime | None = None,
+):
     stmt = select(func.count()).select_from(banned_devices_tbl)
+    conds = _active_filter(include_expired, now)
     if query:
-        stmt = stmt.where(
+        conds.append(
             banned_devices_tbl.c.xuehai_id.like(_like_pattern(query), escape="\\")
         )
+    if conds:
+        stmt = stmt.where(*conds)
     return stmt
 
 
@@ -239,14 +281,21 @@ class OracleDeviceBansRepo:
         return int(result.rowcount)
 
     async def list_page(
-        self, page: int, size: int, query: str = ""
+        self,
+        page: int,
+        size: int,
+        query: str = "",
+        include_expired: bool = False,
+        now: datetime | None = None,
     ) -> tuple[list[Row], int]:
         """返回 ``(rows, total)``，新封禁在前；``page`` 从 1 开始。
 
         ``query`` 非空时按设备号包含匹配（管理员按学号找一台机器）。
+        默认只列**此刻仍生效**的封禁；``include_expired=True`` 用于排查
+        「行还在但设备已能登录」的存量数据。
         """
-        page_stmt = _page_stmt(page, size, query)
-        count_stmt = _count_stmt(query)
+        page_stmt = _page_stmt(page, size, query, include_expired, now)
+        count_stmt = _count_stmt(query, include_expired, now)
 
         async with _session_for(self._session) as (session, _owns):
             rows = (await session.execute(page_stmt)).all()

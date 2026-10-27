@@ -57,6 +57,7 @@ PROTECTED_TYPES = (
     "system_maintenance_enable",
     "system_maintenance_disable",
     "system_ssh_command",
+    "system_ssh_suggest",
 )
 FINISHED_STATUSES = ("completed", "failed")
 
@@ -156,7 +157,7 @@ def test_app_logs_protected_types_are_excluded_by_not_in() -> None:
     op, values = predicates[0]
     assert op == "NOT IN", f"protected types must be excluded, got {op}"
     assert values == frozenset(PROTECTED_TYPES), values
-    assert len(PROTECTED_TYPES) == 16
+    assert len(PROTECTED_TYPES) == 17
 
 
 def test_app_logs_warning_level_is_protected() -> None:

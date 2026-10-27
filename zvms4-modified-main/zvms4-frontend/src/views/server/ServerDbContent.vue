@@ -473,7 +473,7 @@ void loadSchema()
 </script>
 
 <template>
-  <div class="flex h-[calc(100vh-260px)] min-h-[560px] gap-4 pb-2">
+  <div class="flex flex-1 min-h-0 gap-4 pb-2">
     <!-- 左:表清单 -->
     <ElCard class="w-72 shrink-0" body-class="table-list-body">
       <span class="yg-text-xs yg-text-tertiary mb-2 block tabular-nums">{{ t('server.dbContent.schemaCount', { count: filteredSchema.length }) }}</span>

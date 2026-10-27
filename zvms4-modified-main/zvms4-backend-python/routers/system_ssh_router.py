@@ -5,6 +5,9 @@
 ``Authorization`` 头，所以 WS 侧只认 ticket —— ticket 的发放已经过完整 HTTP
 鉴权，且 120 秒内单次有效。
 
+``POST /suggest`` 只让 AI 起草一条命令文本（生成 ≠ 执行）：它不发 ticket、不开
+连接、不执行任何东西，执行仍然只发生在 ``/ws`` 里，由人粘贴并亲自回车。
+
 连接目标固定来自服务端配置（``services/ssh_bridge.py``），本文件不接受客户端
 指定 host/port/user。
 """
@@ -24,10 +27,12 @@ from fastapi import (
     WebSocket,
     WebSocketDisconnect,
 )
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from db import backends
 from services import ssh_bridge
+from services.ai import routing as ai_routing
+from services.ai import textgen
 from services.ssh_command_log import CommandLineBuffer
 from typings.log import ZVMSLog
 from util.dual_auth import (
@@ -106,6 +111,100 @@ async def create_ssh_session(
         "code": 200,
         "data": {"ticket": ticket, "expires_in": expires_in},
     }
+
+
+class SuggestRequest(BaseModel):
+    """AI 起草命令的入参。
+
+    这里**没有** host/port/user/command 字段：能生成什么只由意图文本决定，落点
+    永远由服务端配置决定。``intent`` 与 ``context`` 的长度上限是「别把网关当
+    长文入口」的硬边界，不是安全边界（真正的安全边界在 system prompt 与人工审阅）。
+    """
+
+    intent: str = Field(min_length=1, max_length=1000)
+    context: str | None = Field(default=None, max_length=2000)
+    model: str | None = Field(default=None, max_length=64)
+
+
+#: 审计里只留命令的头部：足够复盘「生成的是不是危险命令」，又不至于把整条命令
+#: （可能带密码）复制到第二张表里。
+SUGGEST_HEAD_CHARS = 200
+
+
+def _command_head(command: str) -> str:
+    """脱敏后的命令头部（``redact`` 见 ``services.agent.ops_tools``）。
+
+    截断放在脱敏之前：``redact`` 对超过 200 字符的字符串直接换成 ``<len N>``，
+    先截再抹才能保住「前 200 字符」这个可读的复核窗口。
+    """
+    # 局部导入：路由模块加载时不必拉起整张 agent 工具注册表。
+    from services.agent.ops_tools import redact
+
+    return str(redact(command[:SUGGEST_HEAD_CHARS]))
+
+
+async def _write_suggest_audit(
+    operator_oid: str, intent_len: int, model: str, command: str
+) -> None:
+    """落一条「AI 生成过一次命令建议」。
+
+    与 ``system_ssh_command``（真的被执行过的命令）分开存：生成不等于执行，混在
+    一起会让「谁执行过什么」失真。写失败只打印——审计是旁路。
+    """
+    try:
+        await ZVMSLog(
+            url="system:web_ssh",
+            user=operator_oid,
+            data=json.dumps(
+                {
+                    "intent_len": intent_len,
+                    "model": model,
+                    "command_head": _command_head(command),
+                },
+                ensure_ascii=False,
+            ),
+            type="system_ssh_suggest",
+            level="info",
+        ).insert_log()
+    except Exception as exc:  # noqa: BLE001 - 审计失败不改变本请求结论
+        logger.error("web ssh suggest audit failed: %s", type(exc).__name__)
+
+
+@router.post("/suggest")
+async def suggest_ssh_command(
+    payload: SuggestRequest,
+    user=Depends(get_current_user),
+):
+    """让 AI 起草一条 SSH 命令，**只返回文本**。
+
+    本端点不建立 SSH 连接、不执行命令、不发 ticket：执行只发生在已过双人 TOTP
+    的终端（``/ws``）里，由人把命令插进去并亲自按回车。也因此这里不要 TOTP——
+    没有可被批准的动作；但频控与月额度照旧，避免它变成免费的上游用量入口。
+    """
+    me = await _require_system_admin(user)
+    operator_oid = str(me.get("_id") or user["id"])
+    # 额度默认值按「有效权限」算（admin 的 chat 额度比学生高），而 ``me`` 是库文档、
+    # 不含 ``per``；认证态里的 ``per`` 已经过 ``_require_system_admin`` 复核，直
+    # 接用，缺了再查一次权限表。
+    actor = {
+        **me,
+        "per": list(user.get("per") or await get_user_permissions(me)),
+    }
+
+    try:
+        data = await textgen.suggest_ssh_command(
+            actor,
+            intent=payload.intent,
+            context=payload.context,
+            model=payload.model,
+        )
+    except ai_routing.RouteError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.code) from None
+
+    await _write_suggest_audit(
+        operator_oid, len(payload.intent), data["model"], data["command"]
+    )
+    return {"status": "ok", "code": 200, "data": data}
 
 
 async def _send(websocket: WebSocket, payload: dict) -> None:

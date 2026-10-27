@@ -121,7 +121,7 @@ def test_admin_cannot_ban_self(client):
 
 def test_admin_can_ban_other_user_with_default_reason(client):
     http, state = client
-    assert http.put(f"/api/v3/users/{OTHER}/banned", json={"banned": True}).status_code == 204
+    assert http.put(f"/api/v3/users/{OTHER}/banned", json={"banned": True}).status_code == 200
 
     ban = state["bans"][0]
     assert ban["oid"] == OTHER
@@ -145,7 +145,7 @@ def test_admin_reason_is_trimmed_and_forwarded(client):
         f"/api/v3/users/{OTHER}/banned",
         json={"banned": True, "reason": "  多次刷分  "},
     )
-    assert response.status_code == 204
+    assert response.status_code == 200
     assert state["bans"][0]["reason"] == "多次刷分"
     assert state["records"][0]["reason"] == "多次刷分"
 
@@ -157,7 +157,7 @@ def test_blank_reason_falls_back_to_default(client):
             f"/api/v3/users/{OTHER}/banned",
             json={"banned": True, "reason": "   "},
         ).status_code
-        == 204
+        == 200
     )
     assert state["bans"][0]["reason"] == "管理员封禁"
 
@@ -174,7 +174,7 @@ def test_too_long_reason_is_rejected(client):
 
 def test_self_unban_is_not_blocked(client):
     http, state = client
-    assert http.put(f"/api/v3/users/{SELF}/banned", json={"banned": False}).status_code == 204
+    assert http.put(f"/api/v3/users/{SELF}/banned", json={"banned": False}).status_code == 200
     assert state["clears"] == [SELF]
     assert state["bans"] == []
     # 解封不写流水：历史事实已经由封禁时的行承担，解封不能追加「负封禁」。
@@ -194,7 +194,7 @@ def test_unban_leaves_device_bans_untouched(client) -> None:
     """设备封禁是独立事实：解账号不能顺带放走一台被判定违规的机器。"""
     http, state = client
 
-    assert http.put(f"/api/v3/users/{OTHER}/banned", json={"banned": False}).status_code == 204
+    assert http.put(f"/api/v3/users/{OTHER}/banned", json={"banned": False}).status_code == 200
 
     assert state["clears"] == [OTHER]
     assert state["device_deletes"] == []
@@ -210,6 +210,6 @@ def test_unban_still_succeeds_when_device_repo_would_fail(client) -> None:
 
     response = http.put(f"/api/v3/users/{OTHER}/banned", json={"banned": False})
 
-    assert response.status_code == 204
+    assert response.status_code == 200
     assert state["clears"] == [OTHER]
     assert state["device_deletes"] == []

@@ -2,7 +2,8 @@ import { mount, flushPromises, type VueWrapper } from '@vue/test-utils'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { h, watch, type SetupContext } from 'vue'
 import ServerSsh from './ServerSsh.vue'
-import { createSshSession } from '@/api/system/ssh.ts'
+import { createSshSession, suggestSshCommand } from '@/api/system/ssh.ts'
+import { listModels } from '@/api/ai/chat.ts'
 
 const {
   openSpy,
@@ -10,6 +11,7 @@ const {
   failSpy,
   elMessageErrorSpy,
   elMessageWarningSpy,
+  elMessageBoxConfirmSpy,
   elementComponents,
   terminalInstances
 } = vi.hoisted(() => {
@@ -65,12 +67,27 @@ const {
     template: '<div class="el-select-stub" />'
   }
   const ElOption = { name: 'ElOption', template: '<div />' }
+  const ElInput = {
+    name: 'ElInput',
+    props: { modelValue: [String, Number] },
+    emits: ['update:modelValue'],
+    template:
+      '<textarea class="el-input-stub" :value="modelValue" @input="$emit(\'update:modelValue\', $event.target.value)" />'
+  }
+  const ElCheckbox = {
+    name: 'ElCheckbox',
+    props: { modelValue: Boolean, disabled: Boolean },
+    emits: ['update:modelValue'],
+    template:
+      '<label class="el-checkbox-stub"><input type="checkbox" :checked="modelValue" :disabled="disabled" @change="$emit(\'update:modelValue\', $event.target.checked)" /><slot /></label>'
+  }
   return {
     openSpy: vi.fn<(scene: string) => Promise<string | null>>(),
     succeedSpy: vi.fn(),
     failSpy: vi.fn(),
     elMessageErrorSpy: vi.fn(),
     elMessageWarningSpy: vi.fn(),
+    elMessageBoxConfirmSpy: vi.fn(),
     elementComponents: {
       ElButton,
       ElDialog,
@@ -80,7 +97,9 @@ const {
       ElSkeleton,
       ElIcon,
       ElSelect,
-      ElOption
+      ElOption,
+      ElInput,
+      ElCheckbox
     },
     terminalInstances: [] as Array<{
       buffer: { active: { type: string; viewportY: number; length: number } }
@@ -104,7 +123,8 @@ vi.mock('element-plus', () => ({
     success: vi.fn(),
     info: vi.fn(),
     closeAll: vi.fn()
-  })
+  }),
+  ElMessageBox: { confirm: elMessageBoxConfirmSpy }
 }))
 
 vi.mock('vue-router', () => ({
@@ -124,7 +144,12 @@ vi.mock('vue-i18n', () => ({
 
 vi.mock('@/api/system/ssh.ts', () => ({
   createSshSession: vi.fn(),
+  suggestSshCommand: vi.fn(),
   buildSshWsUrl: vi.fn((ticket: string) => `ws://test/system/ssh/ws?ticket=${ticket}`)
+}))
+
+vi.mock('@/api/ai/chat.ts', () => ({
+  listModels: vi.fn()
 }))
 
 vi.mock('@/components/system/ZSystemAuthDialog.vue', () => ({
@@ -214,6 +239,40 @@ function buttonByText(wrapper: VueWrapper, text: string) {
   return button
 }
 
+const SUGGEST = {
+  command: 'df -h',
+  explanation: '列出各挂载点的磁盘使用情况',
+  model: 'gpt-test',
+  request_id: 'req-1'
+}
+
+/** 打开 AI 面板并填入意图 + 点生成,返回面板内文案。 */
+async function openSuggestPanel(wrapper: VueWrapper, intent = '看磁盘占用') {
+  await buttonByText(wrapper, 'server.ssh.suggest.open').trigger('click')
+  await flushPromises()
+  await wrapper.find('#ssh-suggest-intent').setValue(intent)
+  await buttonByText(wrapper, 'server.ssh.suggest.generate').trigger('click')
+  await flushPromises()
+}
+
+/** 走完授权 + 建连,并把 WS 置为已连接。 */
+async function connectTerminal(wrapper: VueWrapper) {
+  localStorage.setItem(WARNED_KEY, '1')
+  openSpy.mockResolvedValue(CODE)
+  vi.mocked(createSshSession).mockResolvedValue({
+    data: { status: 'ok', code: 200, data: { ticket: 'ticket-1', expires_in: 120 } }
+  } as never)
+
+  await emptyStateButton(wrapper).trigger('click')
+  await flushPromises()
+
+  const ws = WebSocketStub.instances[0]!
+  ws.readyState = WebSocketStub.OPEN
+  ws.onopen?.()
+  await flushPromises()
+  return ws
+}
+
 beforeEach(() => {
   localStorage.clear()
   WebSocketStub.instances = []
@@ -224,6 +283,11 @@ beforeEach(() => {
   vi.mocked(createSshSession).mockReset()
   elMessageErrorSpy.mockReset()
   elMessageWarningSpy.mockReset()
+  elMessageBoxConfirmSpy.mockReset()
+  elMessageBoxConfirmSpy.mockResolvedValue(undefined)
+  vi.mocked(suggestSshCommand).mockReset()
+  vi.mocked(listModels).mockReset()
+  vi.mocked(listModels).mockRejectedValue(new Error('no models'))
   vi.stubGlobal('WebSocket', WebSocketStub)
   vi.stubGlobal(
     'ResizeObserver',
@@ -450,6 +514,93 @@ it('resets to idle without calling the API when the auth dialog resolves null', 
   expect(wrapper.text()).not.toContain('server.ssh.statusConnecting')
   expect(wrapper.find('.el-skeleton-stub').exists()).toBe(false)
   expect(emptyStateButton(wrapper).attributes('disabled')).toBeUndefined()
+
+  wrapper.unmount()
+})
+
+// ---------- AI 生成命令面板 ----------
+it('shows the generated command and its explanation in the panel', async () => {
+  vi.mocked(suggestSshCommand).mockResolvedValue({
+    data: { status: 'ok', code: 200, data: SUGGEST }
+  } as never)
+
+  const wrapper = mountPage()
+  await flushPromises()
+
+  await openSuggestPanel(wrapper, '看磁盘占用')
+
+  expect(suggestSshCommand).toHaveBeenCalledTimes(1)
+  expect(suggestSshCommand).toHaveBeenCalledWith('看磁盘占用', undefined, undefined)
+  expect((wrapper.find('.suggest__command').element as HTMLTextAreaElement).value).toBe('df -h')
+  expect(wrapper.text()).toContain(SUGGEST.explanation)
+
+  wrapper.unmount()
+})
+
+it('sends no input frame until the insert button is clicked', async () => {
+  vi.mocked(suggestSshCommand).mockResolvedValue({
+    data: { status: 'ok', code: 200, data: SUGGEST }
+  } as never)
+
+  const wrapper = mountPage()
+  await flushPromises()
+  const ws = await connectTerminal(wrapper)
+
+  await openSuggestPanel(wrapper)
+
+  // 生成只落面板文本,一帧都不往终端发
+  const inputFrames = () =>
+    ws.send.mock.calls
+      .map(([raw]) => JSON.parse(String(raw)) as { type?: string })
+      .filter((frame) => frame.type === 'input')
+  expect(inputFrames()).toHaveLength(0)
+
+  await buttonByText(wrapper, 'server.ssh.suggest.insert').trigger('click')
+  await flushPromises()
+
+  const frames = ws.send.mock.calls
+    .map(([raw]) => JSON.parse(String(raw)) as { type?: string; data?: string })
+    .filter((frame) => frame.type === 'input')
+  expect(frames).toHaveLength(1)
+  // 默认只写入,不回车
+  expect(frames[0]!.data).toBe('df -h')
+  expect(frames[0]!.data).not.toContain('\r')
+
+  wrapper.unmount()
+})
+
+it('disables the insert button while the terminal is not connected', async () => {
+  vi.mocked(suggestSshCommand).mockResolvedValue({
+    data: { status: 'ok', code: 200, data: SUGGEST }
+  } as never)
+
+  const wrapper = mountPage()
+  await flushPromises()
+
+  await openSuggestPanel(wrapper)
+
+  expect(buttonByText(wrapper, 'server.ssh.suggest.insert').attributes('disabled')).toBeDefined()
+
+  wrapper.unmount()
+})
+
+it('shows a localized error for a rate-limited suggest request and keeps the session', async () => {
+  vi.mocked(suggestSshCommand).mockRejectedValue({
+    response: { status: 429, data: { detail: 'AI_RATE_LIMITED' } }
+  })
+
+  const wrapper = mountPage()
+  await flushPromises()
+
+  await openSuggestPanel(wrapper)
+
+  const text = wrapper.text()
+  expect(text).toContain('server.ssh.suggest.error.rateLimited')
+  expect(text).not.toContain('AI_RATE_LIMITED')
+  expect(wrapper.find('.suggest__command').exists()).toBe(false)
+  // 会话状态未被这次失败改动
+  expect(wrapper.text()).toContain('server.ssh.statusIdle')
+  expect(WebSocketStub.instances).toHaveLength(0)
 
   wrapper.unmount()
 })

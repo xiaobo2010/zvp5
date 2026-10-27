@@ -36,7 +36,7 @@ from pydantic import BaseModel, Field
 
 from db import backends
 from db.ids import is_valid_oid
-from services import risk_monitor
+from services import risk_monitor, violation_guard
 from services.ai import api_keys, audit, credentials, quota, rate_limit, routing
 from services.ai import config as ai_config
 from services.ai import ocr as ai_ocr
@@ -45,10 +45,11 @@ from services.ai import ocr_engines_admin
 from services.ai import prompt_audit
 from services.ai import prompt_cache
 from services.ai import providers
+from services.ai import safety_guard
 from services.ai import usage as ai_usage
 from services.ai.credentials import CredentialError
 from services.ai.routing import RouteError
-from typings.log import inject_log
+from typings.log import inject_log, xuehai_id_from
 from util.attachment_ocr import process_ocr
 from util.object_id import (
     _authenticate,
@@ -1386,6 +1387,92 @@ def _payload_limit_error(payload: dict, request_id: str) -> JSONResponse | None:
     return None
 
 
+def _last_user_text(messages: object) -> str:
+    """OpenAI ``messages`` 里最后一条 user 的纯文本。
+
+    multimodal 数组只拼 ``text`` 段（图片没有用户文本可审）；找不到 user 消息时
+    返回空串，调用方据此跳过安全认证——判定一个空请求没有意义，而拒绝它会让
+    「只带 system 的合规调用」被误伤。
+    """
+    if not isinstance(messages, list):
+        return ""
+    for message in reversed(messages):
+        if not isinstance(message, dict) or message.get("role") != "user":
+            continue
+        content = message.get("content")
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            parts: list[str] = []
+            for part in content:
+                if isinstance(part, str):
+                    parts.append(part)
+                elif isinstance(part, dict) and isinstance(part.get("text"), str):
+                    parts.append(part["text"])
+            return "\n".join(parts)
+        return ""
+    return ""
+
+
+async def _screen_chat_request(
+    *,
+    user: dict,
+    payload: dict,
+    user_oid: str,
+    request: Request,
+    request_id: str,
+    purpose: str | None,
+    scene_roles: str | None,
+) -> JSONResponse | None:
+    """department 的 LLM 安全认证：放行返回 ``None``，拒绝返回 OpenAI 错误体。
+
+    位置固定在「角色/开关门禁之后、候选选择与频控/额度之前」：被拒请求不能花掉
+    上游调用，也不该占用用户或 API key 的分钟窗口。非 department（含 admin）连
+    ``safety_guard.screen`` 都不会调，零额外开销。
+
+    ``zvk_`` 平台 key 与 JWT 走同一套判定：``get_ai_client`` 已经把 key 换成
+    与 ``get_current_user`` 同形的 user dict（``per`` = owner 的原始角色），所以
+    这里不需要再查一次库。
+    """
+    if not safety_guard.is_department(user):
+        return None
+
+    text = _last_user_text(payload.get("messages"))
+    if not text.strip():
+        return None
+
+    model_name = str(payload.get("model") or "") or None
+    verdict = await safety_guard.screen(user, text, model_hint=model_name)
+    if verdict.allowed:
+        return None
+
+    code = "AI_SAFETY_WARNED"
+    try:
+        outcome = await violation_guard.record_agent_jailbreak(
+            user,
+            xuehai_id=xuehai_id_from(request),
+            rule=str(verdict.category or ""),
+            detail=text,
+        )
+        if outcome.get("banned"):
+            code = "AI_SAFETY_BANNED"
+    except Exception:  # noqa: BLE001 - 证据入库失败不该把拒绝变成 500
+        _logger.exception("AI 安全认证违规入库失败（本次仍然拒绝）")
+
+    await _reject_http(
+        user_oid=user_oid,
+        model=model_name,
+        request_id=request_id,
+        status_code=403,
+        code=code,
+        purpose=purpose,
+        roles_snapshot=scene_roles,
+    )
+    return _openai_error(
+        403, code, safety_guard.REJECTED_MESSAGE, request_id=request_id
+    )
+
+
 @router.post("/v1/chat/completions")
 async def chat_completions(
     request: Request,
@@ -1447,6 +1534,20 @@ async def chat_completions(
         return _openai_error(
             503, "AI_DISABLED", "ai gateway is disabled", request_id=request_id
         )
+
+    # 灰区闸门：department 的「无关 + 破坏性」请求在选路/频控/额度之前挡掉。
+    # 被拒时这里已经落过审计行（``_reject_http`` 写 status=rejected）。
+    safety_error = await _screen_chat_request(
+        user=user,
+        payload=payload,
+        user_oid=user_oid,
+        request=request,
+        request_id=request_id,
+        purpose=purpose,
+        scene_roles=scene_roles,
+    )
+    if safety_error is not None:
+        return safety_error
 
     model = payload.get("model")
     entries = await credentials.catalog(user_oid)

@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { RouterView, useRoute, useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user.ts'
-import { computed, nextTick, onMounted, ref, watch, type Component } from 'vue'
+import { computed, nextTick, ref, watch, type Component } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { useMediaQuery } from '@vueuse/core'
-import { ElButton, ElSegmented, ElIcon } from 'element-plus'
+import { useWindowSize } from '@vueuse/core'
+import { ElPageHeader, ElSegmented, ElIcon } from 'element-plus'
 import { ArrowLeft, Setting, DataLine, Key, Connection, Folder, Grid } from '@element-plus/icons-vue'
 
 interface SegmentedTab {
@@ -24,7 +24,7 @@ if (!userStore.position.includes('admin')) {
 
 const current = ref('maintenance')
 
-const tabs = ref<SegmentedTab[]>([
+const tabs: SegmentedTab[] = [
   {
     label: 'Maintenance',
     value: 'maintenance',
@@ -54,80 +54,155 @@ const tabs = ref<SegmentedTab[]>([
     label: 'Content',
     value: 'dbContent',
     icon: Grid
-  },
-])
+  }
+]
+
+/** 合法分区；非法深链一律回落 maintenance，不把脏值写回地址栏。 */
+const VALID_TABS = new Set(tabs.map((tab) => tab.value))
+const HOME_TAB = 'maintenance'
+
+function tabOfPath(path: string): string {
+  const seg = path.split('/')
+  if (seg[1] !== 'server' || !seg[2]) return HOME_TAB
+  const value = seg[2] === 'db' && seg[3] === 'content' ? 'dbContent' : seg[2]
+  return VALID_TABS.has(value) ? value : HOME_TAB
+}
+
+function pathOfTab(value: string): string {
+  return value === 'dbContent' ? '/server/db/content' : '/server/' + value
+}
 
 // 分段导航与子路由双向同步:子页 path 即 tab value
 watch(
   () => route.path,
-  () => {
-    const seg = route.path.split('/')
-    const isDbContent = seg[1] === 'server' && seg[2] === 'db' && seg[3] === 'content'
-    current.value = seg[1] === 'server' && seg[2] ? (isDbContent ? 'dbContent' : seg[2]) : 'maintenance'
+  (path) => {
+    const tab = tabOfPath(path)
+    if (current.value !== tab) {
+      current.value = tab
+      return
+    }
+    // 非法深链:地址栏归一到入口分区
+    if (path !== pathOfTab(tab)) {
+      router.replace(pathOfTab(tab))
+    }
   },
   { immediate: true }
 )
 
-watch(current, () => {
-  if (current.value === 'dbContent') {
-    router.replace('/server/db/content')
-    return
+watch(current, (value) => {
+  const target = pathOfTab(value)
+  if (route.path !== target) {
+    router.replace(target)
   }
-  router.replace('/server/' + current.value)
 })
 
-// 竖屏判定与 App.vue / UserNav.vue 同阈值(宽高比 ≤ 6/5):
-// 竖屏时底部换成悬浮药丸导航,页面必须给它让位;
-// 横屏是左侧玻璃栏,底部没有遮挡,留白按桌面观感走。
-const isPortrait = useMediaQuery('(max-aspect-ratio: 6/5)')
+/* 与 App.vue / UserNav 同一判定：宽 < 高 × 1.2 即竖屏 */
+const { width, height } = useWindowSize()
+const verticalMode = computed(() => width.value < height.value * 1.2)
 
-// 只有终端与文件两页在竖屏下需要吃满可用高度:
+/** 竖屏或窄屏一律改用胶囊导航；≥1024 的横屏保留原分段控件 */
+const compactTabs = computed(() => verticalMode.value || width.value < 1024)
+
+// 只有终端与文件两页在紧凑布局下需要吃满可用高度：
 // 高度交给 flex 按实际可用空间分配,不再拍脑袋算 100vh - 固定 rem。
 const FILL_ROUTES = new Set(['ssh', 'files'])
-const isFill = computed(() => isPortrait.value && FILL_ROUTES.has(current.value))
+const isFill = computed(() => compactTabs.value && FILL_ROUTES.has(current.value))
 
-const shellRef = ref<HTMLElement>()
+const tabsNavRef = ref<HTMLElement | null>(null)
 
-// 竖屏下分段导航是一条横向可滚动的胶囊带,选中项可能在可视区外,滚进来
-function revealActiveTab() {
-  const el = shellRef.value?.querySelector<HTMLElement>('.el-segmented__item.is-selected')
-  el?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+/** 当前项自动滚入可视区（横向居中，不影响页面纵向滚动） */
+function scrollActiveTabIntoView() {
+  const nav = tabsNavRef.value
+  if (!nav) {
+    return
+  }
+  const active = nav.querySelector<HTMLElement>('.server-tabs__pill.is-active')
+  if (!active) {
+    return
+  }
+  const target = active.offsetLeft - (nav.clientWidth - active.offsetWidth) / 2
+  const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
+  // 老浏览器的 Element.scrollTo 缺失时直接跳过,不影响 tab 切换本身
+  nav.scrollTo?.({ left: Math.max(0, target), behavior: reduced ? 'auto' : 'smooth' })
 }
 
-onMounted(() => {
-  revealActiveTab()
-})
-
-watch(isPortrait, () => {
-  nextTick(revealActiveTab)
-})
-
-watch(current, () => {
-  nextTick(revealActiveTab)
-})
+watch(
+  [current, compactTabs],
+  () => {
+    void nextTick(() => {
+      scrollActiveTabIntoView()
+    })
+  },
+  { immediate: true }
+)
 </script>
 
 <template>
   <div
-    ref="shellRef"
-    class="server-shell px-4 py-4"
-    :class="{ 'server-shell--fill': isFill }"
+    class="server-shell"
+    :class="[compactTabs ? 'px-4 py-3' : 'px-6 py-4', { 'server-shell--fill': isFill }]"
   >
-    <div class="server-tabs mb-4 flex items-center gap-3">
-      <ElButton text bg :icon="ArrowLeft" class="server-tabs__back" @click="() => router.back()" />
-      <ElSegmented v-model="current" :options="tabs" class="server-tabs__seg min-w-0 flex-1">
-        <template #default="props">
-          <div class="server-tabs__item">
-            <ElIcon :size="18" class="server-tabs__icon">
-              <Component :is="(props.item as SegmentedTab).icon" />
-            </ElIcon>
-            <span class="server-tabs__label">
-              {{ t(('server.tabs.' + (props.item as SegmentedTab).value) as string) }}
-            </span>
-          </div>
-        </template>
-      </ElSegmented>
-    </div>
+    <!-- 紧凑布局：页头（返回 + 标题）与胶囊导航分两行 -->
+    <template v-if="compactTabs">
+      <header class="server-head">
+        <button
+          type="button"
+          class="yg-icon-btn server-head__back"
+          :aria-label="t('server.tabs.back')"
+          @click="router.back()"
+        >
+          <ElIcon :size="20">
+            <ArrowLeft />
+          </ElIcon>
+        </button>
+        <h1 class="server-head__title">
+          {{ t(('server.tabs.' + current) as string) }}
+        </h1>
+      </header>
+
+      <nav
+        ref="tabsNavRef"
+        class="server-tabs yg-liquid-glass"
+        role="tablist"
+        :aria-label="t('server.tabs.tabsLabel')"
+      >
+        <button
+          v-for="tab in tabs"
+          :key="tab.value"
+          type="button"
+          role="tab"
+          class="server-tabs__pill"
+          :class="{ 'is-active': tab.value === current }"
+          :aria-selected="tab.value === current"
+          @click="current = tab.value"
+        >
+          <ElIcon :size="18">
+            <Component :is="tab.icon" />
+          </ElIcon>
+          <span class="server-tabs__label">{{ t(('server.tabs.' + tab.value) as string) }}</span>
+        </button>
+      </nav>
+    </template>
+
+    <!-- 桌面：页头标题 + 右侧分段控件 -->
+    <ElPageHeader v-else :icon="ArrowLeft" class="py-4" @back="() => router.back()">
+      <template #content>
+        {{ t(('server.tabs.' + current) as string) }}
+      </template>
+      <template #extra>
+        <ElSegmented v-model="current" :options="tabs">
+          <template #default="props">
+            <div class="server-tabs__seg-item">
+              <ElIcon :size="18" class="server-tabs__seg-icon">
+                <Component :is="(props.item as SegmentedTab).icon" />
+              </ElIcon>
+              <span>{{ t(('server.tabs.' + (props.item as SegmentedTab).value) as string) }}</span>
+            </div>
+          </template>
+        </ElSegmented>
+      </template>
+    </ElPageHeader>
+
     <div class="server-body">
       <RouterView />
     </div>
@@ -145,24 +220,9 @@ watch(current, () => {
      该变量随 DOM 继承,本页(及子页)直接 var(--yg-content-bottom-inset) 即可。 */
 }
 
-/* 竖屏:底部是悬浮药丸,页面整体收紧留白 */
-@media (max-aspect-ratio: 6/5) {
-  .server-shell {
-    /* 外壳内容区已经有 24px 内边距,这里只留 8px,避免双份留白 */
-    padding: var(--yg-space-2);
-  }
-}
-
-/* 填满模式:竖屏下终端/文件页吃满内容区,高度由 flex 分配。
+/* 填满模式:紧凑布局下终端/文件页吃满内容区,高度由 flex 分配。
    外壳的 padding-bottom 已经把药丸占位让出来,页面只要填满剩下的盒子,
-   底边必然在药丸上方。
-
-   高度来源有两条,互为冗余:
-   1) height:100% —— 外壳 .yg-layout__content 是 flex:1 的弹性项,
-      高度确定(不是靠 min-height 撑出来的),所以百分比能解析成确定高度。
-   2) min-height —— 万一百分比链断了(外壳改成 height:auto、或换布局),
-      这一行仍然给出确定高度,终端/表格不会塌成 min-height 下限。
-      视口基准:100vh 起,支持 dvh 的浏览器改用 100dvh(移动端地址栏收起时更准)。 */
+   底边必然在药丸上方。 */
 .server-shell--fill {
   height: 100%;
   min-height: calc(
@@ -190,19 +250,95 @@ watch(current, () => {
   }
 }
 
-.server-tabs {
+/* 紧凑页头：返回按钮与标题同行 */
+.server-head {
+  display: flex;
+  align-items: center;
+  gap: var(--yg-space-3);
+  margin-bottom: var(--yg-space-3);
+}
+
+.server-head__back {
   flex: 0 0 auto;
 }
 
-.server-body {
-  display: flex;
-  flex-direction: column;
-  flex: 1 1 auto;
-  min-height: 0;
+.server-head__title {
+  margin: 0;
+  font-size: var(--yg-font-size-xl);
+  font-weight: var(--yg-font-weight-semibold);
+  line-height: var(--yg-line-height-tight);
+  color: var(--yg-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-/* ---------- 分段导航 ---------- */
-.server-tabs__item {
+/* 胶囊导航：横向可滚动，当前项自动滚入可视区 */
+.server-tabs {
+  display: flex;
+  align-items: center;
+  gap: var(--yg-space-2);
+  margin-bottom: var(--yg-space-4);
+  padding: var(--yg-space-1);
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+  border: none;
+  border-radius: var(--yg-radius-pill);
+  -webkit-backdrop-filter: blur(var(--yg-glass-blur-sm)) saturate(180%);
+  backdrop-filter: blur(var(--yg-glass-blur-sm)) saturate(180%);
+}
+
+.server-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.server-tabs__pill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--yg-space-2);
+  flex: 0 0 auto;
+  min-height: var(--yg-control-height-lg);
+  padding: 0 var(--yg-space-4);
+  border: none;
+  border-radius: var(--yg-radius-pill);
+  background-color: transparent;
+  color: var(--yg-text-tertiary);
+  font-family: inherit;
+  font-size: var(--yg-font-size-md);
+  line-height: var(--yg-line-height-snug);
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    color var(--yg-dur-base) var(--yg-ease-out),
+    background-color var(--yg-dur-base) var(--yg-ease-out),
+    box-shadow var(--yg-dur-base) var(--yg-ease-out);
+}
+
+.server-tabs__pill:hover {
+  color: var(--yg-text-primary);
+  background-color: var(--yg-bg-hover);
+}
+
+.server-tabs__pill:active {
+  background-color: var(--yg-bg-active);
+}
+
+.server-tabs__pill:focus-visible {
+  outline: none;
+  box-shadow: var(--yg-focus-ring);
+}
+
+.server-tabs__pill.is-active {
+  color: var(--yg-color-primary);
+  background-color: var(--yg-color-primary-soft);
+  box-shadow: var(--yg-shadow-sm);
+  font-weight: var(--yg-font-weight-medium);
+}
+
+/* 桌面分段控件里的单项：图标在上、文字在下 */
+.server-tabs__seg-item {
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -210,59 +346,14 @@ watch(current, () => {
   padding: var(--yg-space-2);
 }
 
-.server-tabs__icon {
+.server-tabs__seg-icon {
   margin-top: var(--yg-space-2);
 }
 
-/* 竖屏:六项导航压成一条横向可滚动的胶囊带,不换行、不溢出 */
-@media (max-aspect-ratio: 6/5) {
-  .server-tabs {
-    gap: var(--yg-space-2);
-    margin-bottom: var(--yg-space-2);
-  }
-
-  .server-tabs__back {
-    flex: 0 0 auto;
-    width: 44px;
-    height: 44px;
-  }
-
-  .server-tabs__seg {
-    overflow-x: auto;
-    overflow-y: hidden;
-    -webkit-overflow-scrolling: touch;
-    scrollbar-width: none;
-  }
-
-  .server-tabs__seg::-webkit-scrollbar {
-    display: none;
-  }
-
-  .server-tabs__seg :deep(.el-segmented__group) {
-    width: max-content;
-    min-width: 100%;
-  }
-
-  .server-tabs__seg :deep(.el-segmented__item) {
-    flex: 0 0 auto;
-    min-height: 44px;
-  }
-
-  .server-tabs__seg :deep(.el-segmented__item-label) {
-    flex: 0 0 auto;
-    overflow: visible;
-  }
-
-  .server-tabs__item {
-    flex-direction: row;
-    align-items: center;
-    gap: var(--yg-space-1);
-    padding: 0 var(--yg-space-1);
-    white-space: nowrap;
-  }
-
-  .server-tabs__icon {
-    margin-top: 0;
-  }
+.server-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
 }
 </style>

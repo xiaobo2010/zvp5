@@ -146,7 +146,7 @@ CREATE TABLE banned_devices (
   operator_oid VARCHAR2(24 CHAR),
   created_at TIMESTAMP NOT NULL,
   PRIMARY KEY (xuehai_id),
-  CONSTRAINT ck_banned_devices_source CHECK (source IN (''rule'',''admin''))
+  CONSTRAINT ck_banned_devices_source CHECK (source IN (''rule'',''admin'',''agent''))
 )';
 EXCEPTION
   WHEN OTHERS THEN

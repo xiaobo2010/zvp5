@@ -26,6 +26,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
 
 from db import backends
+from services import device_guard
 from typings.log import inject_log
 from util.object_id import get_current_user
 from util.user import get_user_display_name
@@ -161,6 +162,17 @@ TRIGGERS: tuple[dict, ...] = (
             "逐档加刑（1/3/7/14/30 天、末档永久）。触发阈值与窗口仍取"
             "「非主学海设备登录」规则——这条规则只决定「封这台机器多久」，"
             "不对应新的证据来源。"
+        ),
+        "config": {"threshold": 3, "window_hours": 24},
+    },
+    {
+        "trigger": "agent_jailbreak",
+        "name": "agent 越狱/提示词注入",
+        "evaluation": "ai_moderation",
+        "description": (
+            "证据来源：agent 输入的关键词规则命中与服务端 LLM 安全认证拒绝"
+            "（信号 agent_jailbreak）。首次违规只记当月警告（USER_WARNINGS），"
+            "同月再犯按本规则 penalties 梯度封号；admin 豁免。"
         ),
         "config": {"threshold": 3, "window_hours": 24},
     },
@@ -363,7 +375,7 @@ async def create_ban_rule(
     config = dict(entry["config"])
     if payload.config is not None:
         if payload.config.threshold is not None:
-            _check_range("threshold", payload.config.threshold, 2, 20)
+            _check_range("threshold", payload.config.threshold, 2, 200)
             config["threshold"] = payload.config.threshold
         if payload.config.window_hours is not None:
             _check_range("window_hours", payload.config.window_hours, 1, 168)
@@ -472,7 +484,7 @@ async def update_ban_rule(
         # 避免「只传 window_hours」把 threshold 冲掉。
         merged = dict(_rule_config(rule))
         if payload.config.threshold is not None:
-            _check_range("threshold", payload.config.threshold, 2, 20)
+            _check_range("threshold", payload.config.threshold, 2, 200)
             merged["threshold"] = payload.config.threshold
         if payload.config.window_hours is not None:
             _check_range("window_hours", payload.config.window_hours, 1, 168)
@@ -526,15 +538,20 @@ async def list_banned_users(
     page: int = Query(1, ge=1),
     perpage: int = Query(20, ge=1, le=100),
     query: str = Query("", max_length=128),
+    include_expired: int = Query(0, ge=0, le=1),
     user=Depends(get_current_user),
 ):
-    """当前被封禁的用户（``USERS.BANNED = 1``），不是流水。
+    """当前被封禁的用户（``USERS.BANNED = 1`` 且未刑满），不是流水。
 
     ``/records`` 是只增的封禁历史，一屏「封禁管理」要看的是「现在谁进不来」：
-    人工解封后流水仍留着，照流水显示会把已解封的人继续挂在列表上。
+    人工解封后流水仍留着，照流水显示会把已解封的人继续挂在列表上。到期封禁
+    的闸门列也不会自动归零，所以默认再排除 ``ban_until`` 已过期的存量行；
+    ``include_expired=1`` 保留全量视角，供管理员排查脏数据。
     """
     _require_admin(user)
-    rows, total = await backends.get_users_repo().list_banned_page(query, page, perpage)
+    rows, total = await backends.get_users_repo().list_banned_page(
+        query, page, perpage, include_expired=bool(include_expired)
+    )
     data = [
         {
             "oid": row["_id"],
@@ -597,11 +614,17 @@ async def list_banned_devices(
     page: int = Query(1, ge=1),
     perpage: int = Query(20, ge=1, le=100),
     query: str = Query("", max_length=128),
+    include_expired: int = Query(0, ge=0, le=1),
     user=Depends(get_current_user),
 ):
+    """当前生效的设备封禁（``until`` 为空=永久，或尚未到期）。
+
+    ``include_expired=1`` 连已刑满的行一起列（行不会自动删，只由判定层用
+    ``ban_is_active`` 排除），供管理员排查存量数据。
+    """
     _require_admin(user)
     rows, total = await backends.get_device_bans_repo().list_page(
-        page, perpage, query
+        page, perpage, query, include_expired=bool(include_expired)
     )
     ids = [row["xuehai_id"] for row in rows]
     counts = await backends.get_device_ban_counters_repo().get_counts(ids)
@@ -618,10 +641,6 @@ async def list_banned_devices(
         "status": "ok",
         "code": 200,
         "data": data,
-        # 前端设备管理页按 ``devices`` / ``total`` 读取；``data`` / ``metadata``
-        # 是既有契约，保留给其它调用方（同一份数据，不分叉）。
-        "devices": data,
-        "total": total,
         "metadata": {"size": total, "page": page, "perpage": perpage},
     }
 
@@ -637,16 +656,20 @@ async def ban_device(
 
     xuehai_id = payload.xuehai_id.strip()
     reason = (payload.reason or "").strip() or "管理员封禁"
+    # 客户端 ``toISOString()`` 送来的 aware 时间必须折成本地 naive 再落库：
+    # 列是 TIMESTAMP（无时区），直接绑定时驱动只丢 tzinfo、保留 UTC 墙钟，
+    # 东八区下「封 24 小时」会被判定端读成只剩 16 小时。
+    until = device_guard._to_local_naive(payload.until)
     await backends.get_device_bans_repo().upsert(
         xuehai_id,
         reason=reason,
-        until=payload.until,
+        until=until,
         source="admin",
         rule_code=None,
         operator_oid=str(user["id"]),
     )
 
-    until_text = _iso(payload.until) or "永久"
+    until_text = _iso(until) or "永久"
     log.with_text(
         f"管理员 {await get_user_display_name(user['id'])} 封禁了设备 {xuehai_id}"
         f"（原因：{reason}，到期：{until_text}）",
@@ -662,8 +685,8 @@ async def ban_device(
         "data": {
             "xuehai_id": xuehai_id,
             "reason": reason,
-            "permanent": payload.until is None,
-            "until": _iso(payload.until),
+            "permanent": until is None,
+            "until": _iso(until),
             "source": "admin",
             "rule_code": None,
             "ban_count": counts.get(xuehai_id, 0),

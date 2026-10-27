@@ -11,6 +11,7 @@ import * as server from './server'
 import * as markdown from './markdown'
 import * as maintenance from './maintenance'
 import * as device from './device'
+import * as user from './user'
 
 export const zhCN = {
   about: about.zhCN,
@@ -25,5 +26,6 @@ export const zhCN = {
   server: server.zhCN,
   markdown: markdown.zhCN,
   maintenance: maintenance.zhCN,
-  device: device.zhCN
+  device: device.zhCN,
+  user: user.zhCN
 }

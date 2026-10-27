@@ -61,6 +61,7 @@ from services.ai import audit, credentials, prompt_audit, prompt_cache, provider
 from services.ai import config as ai_config
 from services.ai import conversations, quota, rate_limit, routing
 from services.ai import moderation
+from services.ai import safety_guard
 from services.ai import usage as ai_usage
 from services.ai.credentials import CredentialError
 from services.ai.routing import RouteError
@@ -504,6 +505,43 @@ async def chat_in_conversation(
                 moderation.REJECTED_MESSAGE,
                 request_id=request_id,
             )
+
+    # 灰区闸门：关键词规则之后、路由/扣费之前。只对 department 生效（admin 在
+    # ``safety_guard.is_department`` 里已豁免），非 department 不触达网络。
+    # 拒绝时不选路由、不扣额度、不落用户消息之外任何东西。
+    screened = await safety_guard.screen(
+        user,
+        content,
+        model_hint=payload.model or conversation.get("model"),
+    )
+    if not screened.allowed:
+        try:
+            outcome = await violation_guard.record_agent_jailbreak(
+                user,
+                xuehai_id=xuehai_id_from(request),
+                rule=str(screened.category or ""),
+                detail=content,
+            )
+        except Exception:  # noqa: BLE001 - 证据入库失败不该把拒绝变成 500
+            _logger.exception("AI 安全认证违规入库失败（本次仍然拒绝）")
+            outcome = {}
+        code = "AI_SAFETY_BANNED" if outcome.get("banned") else "AI_SAFETY_WARNED"
+        await _audit(
+            user_oid=owner_oid,
+            request_id=request_id,
+            purpose=purpose,
+            status="rejected",
+            http_status=422,
+            error_code=code,
+            model=str(payload.model or conversation.get("model") or "") or None,
+            roles_snapshot=snapshot,
+        )
+        return _error(
+            422,
+            code,
+            safety_guard.REJECTED_MESSAGE,
+            request_id=request_id,
+        )
 
     try:
         model, entry = await _select_route(

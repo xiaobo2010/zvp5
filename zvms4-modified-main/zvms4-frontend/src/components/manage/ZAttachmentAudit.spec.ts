@@ -31,6 +31,25 @@ vi.mock('@/api/attachment/manage', () => ({
   deleteOne: vi.fn()
 }))
 
+// 密码再认证：组件只关心「有没有令牌 / 取消 / 一次重弹」，插件内部逻辑另有归属。
+const shortToken = vi.hoisted(() => ({
+  cached: vi.fn(),
+  withToken: vi.fn(),
+  cancelled: vi.fn()
+}))
+
+vi.mock('@/plugins/short-token', () => ({
+  cachedTemporaryToken: shortToken.cached,
+  withTemporaryToken: shortToken.withToken,
+  isTemporaryTokenCancelled: shortToken.cancelled,
+  clearTemporaryToken: vi.fn(),
+  temporaryToken: vi.fn()
+}))
+
+vi.mock('@/stores/user', () => ({
+  useUserStore: () => ({ _id: 'admin-oid' })
+}))
+
 vi.mock('vue-i18n', () => ({
   useI18n: () => ({
     t: (key: string, params?: Record<string, unknown>) =>
@@ -411,6 +430,18 @@ function findButton(wrapper: VueWrapper, label: string) {
 
 beforeEach(() => {
   mockApi()
+  // 默认：缓存里已有未过期的令牌，进页直接加载（各用例按需覆盖）。
+  shortToken.cached.mockReset().mockReturnValue('tok-cached')
+  shortToken.cancelled.mockReset().mockImplementation((error: unknown) => error === 'cancel')
+  shortToken.withToken
+    .mockReset()
+    .mockImplementation(
+      async (
+        _userid: string,
+        _reason: string,
+        action: (token: string) => Promise<unknown>
+      ) => action('tok-fresh')
+    )
   elMessageErrorSpy.mockReset()
   elMessageSuccessSpy.mockReset()
   elMessageBoxConfirmSpy.mockReset()
@@ -560,10 +591,14 @@ it('decides an attachment through the PATCH status contract', async () => {
   await findButton(wrapper, 'manage.attachments.detail.approve')!.trigger('click')
   await flushPromises()
 
-  expect(decideAttachment).toHaveBeenCalledWith(rowFixture._id, {
-    status: 'verified',
-    note: '材料齐全'
-  })
+  expect(decideAttachment).toHaveBeenCalledWith(
+    rowFixture._id,
+    {
+      status: 'verified',
+      note: '材料齐全'
+    },
+    'tok-fresh'
+  )
   expect(elMessageSuccessSpy).toHaveBeenCalledWith('manage.attachments.detail.approved')
 
   wrapper.unmount()
@@ -580,10 +615,14 @@ it('asks for a confirmation before rejecting an attachment', async () => {
   await flushPromises()
 
   expect(elMessageBoxConfirmSpy).toHaveBeenCalledTimes(1)
-  expect(decideAttachment).toHaveBeenCalledWith(rowFixture._id, {
-    status: 'rejected',
-    note: undefined
-  })
+  expect(decideAttachment).toHaveBeenCalledWith(
+    rowFixture._id,
+    {
+      status: 'rejected',
+      note: undefined
+    },
+    'tok-fresh'
+  )
 
   wrapper.unmount()
 })
@@ -613,7 +652,7 @@ it('deletes an attachment only after the confirmation and refreshes the list', a
   await flushPromises()
 
   expect(elMessageBoxConfirmSpy).toHaveBeenCalledTimes(1)
-  expect(deleteOne).toHaveBeenCalledWith(rowFixture._id)
+  expect(deleteOne).toHaveBeenCalledWith(rowFixture._id, 'tok-fresh')
   expect(elMessageSuccessSpy).toHaveBeenCalledWith('manage.attachments.delete.deleted')
   expect(vi.mocked(listAuditAttachments).mock.calls.length).toBeGreaterThan(callsBefore)
 
@@ -630,6 +669,133 @@ it('does not delete when the confirmation is cancelled', async () => {
 
   expect(deleteOne).not.toHaveBeenCalled()
   expect(elMessageSuccessSpy).not.toHaveBeenCalled()
+
+  wrapper.unmount()
+})
+
+// ---------------------------------------------------------------------------
+// 进页验证（密码再认证）
+// ---------------------------------------------------------------------------
+
+/** 模拟真实 withTemporaryToken：凭证被否后清缓存、重换一张、只重试一次。 */
+function withOneRetry(tokens: [string, string]) {
+  shortToken.withToken.mockImplementation(
+    async (
+      _userid: string,
+      _reason: string,
+      action: (token: string) => Promise<unknown>
+    ) => {
+      try {
+        return await action(tokens[0])
+      } catch (error) {
+        return action(tokens[1])
+      }
+    }
+  )
+}
+
+it('asks for the password on entry and loads the list once the token arrives', async () => {
+  shortToken.cached.mockReturnValue('')
+
+  const wrapper = mountPage()
+  await flushPromises()
+
+  expect(shortToken.cached).toHaveBeenCalledWith('admin-oid')
+  expect(shortToken.withToken).toHaveBeenCalledTimes(1)
+  expect(shortToken.withToken.mock.calls[0]![0]).toBe('admin-oid')
+  expect(shortToken.withToken.mock.calls[0]![1]).toBe('manage.attachments.verifyReason')
+  expect(listAuditAttachments).toHaveBeenCalledTimes(1)
+  expect(wrapper.find('.el-table-stub').exists()).toBe(true)
+
+  wrapper.unmount()
+})
+
+it('shows the verification placeholder without any request when the prompt is cancelled', async () => {
+  shortToken.cached.mockReturnValue('')
+  shortToken.withToken.mockRejectedValue('cancel')
+
+  const wrapper = mountPage()
+  await flushPromises()
+
+  expect(shortToken.withToken).toHaveBeenCalledTimes(1)
+  expect(listAuditAttachments).not.toHaveBeenCalled()
+  expect(wrapper.find('.el-table-stub').exists()).toBe(false)
+
+  const locked = wrapper.find('.attachment-audit__locked')
+  expect(locked.exists()).toBe(true)
+  expect(locked.text()).toContain('manage.attachments.verifyRequired')
+  expect(locked.text()).toContain('manage.attachments.verifyIntro')
+  expect(findButton(wrapper, 'manage.attachments.verifyRetry')).toBeTruthy()
+
+  wrapper.unmount()
+})
+
+it('does not loop the prompt until the user clicks retry', async () => {
+  shortToken.cached.mockReturnValue('')
+  shortToken.withToken.mockRejectedValue('cancel')
+
+  const wrapper = mountPage()
+  await flushPromises()
+  expect(shortToken.withToken).toHaveBeenCalledTimes(1)
+
+  // 取消后仍只停在占位态：没有任何自动重弹
+  await flushPromises()
+  expect(shortToken.withToken).toHaveBeenCalledTimes(1)
+
+  shortToken.withToken.mockImplementation(
+    async (_userid: string, _reason: string, action: (token: string) => Promise<unknown>) =>
+      action('tok-fresh')
+  )
+  await findButton(wrapper, 'manage.attachments.verifyRetry')!.trigger('click')
+  await flushPromises()
+
+  expect(shortToken.withToken).toHaveBeenCalledTimes(2)
+  expect(listAuditAttachments).toHaveBeenCalledTimes(1)
+  expect(wrapper.find('.attachment-audit__locked').exists()).toBe(false)
+
+  wrapper.unmount()
+})
+
+it('renews the token once after a 403 and sends the new one on the retry', async () => {
+  withOneRetry(['tok-expired', 'tok-renewed'])
+  vi.mocked(decideAttachment)
+    .mockRejectedValueOnce({ response: { status: 403 } })
+    .mockResolvedValueOnce(undefined)
+
+  const wrapper = mountPage()
+  await flushPromises()
+
+  await findButton(wrapper, 'manage.attachments.table.view')!.trigger('click')
+  await flushPromises()
+  await findButton(wrapper, 'manage.attachments.detail.approve')!.trigger('click')
+  await flushPromises()
+
+  expect(decideAttachment).toHaveBeenCalledTimes(2)
+  expect(vi.mocked(decideAttachment).mock.calls[0]![2]).toBe('tok-expired')
+  expect(vi.mocked(decideAttachment).mock.calls[1]![2]).toBe('tok-renewed')
+  expect(elMessageSuccessSpy).toHaveBeenCalledWith('manage.attachments.detail.approved')
+
+  wrapper.unmount()
+})
+
+it('falls back to the verification placeholder when the retry is rejected again', async () => {
+  withOneRetry(['tok-expired', 'tok-renewed'])
+  vi.mocked(decideAttachment).mockRejectedValue({
+    response: { status: 403, data: { detail: '需要密码验证后才能继续' } }
+  })
+
+  const wrapper = mountPage()
+  await flushPromises()
+
+  await findButton(wrapper, 'manage.attachments.table.view')!.trigger('click')
+  await flushPromises()
+  await findButton(wrapper, 'manage.attachments.detail.approve')!.trigger('click')
+  await flushPromises()
+
+  expect(decideAttachment).toHaveBeenCalledTimes(2)
+  expect(elMessageSuccessSpy).not.toHaveBeenCalled()
+  expect(wrapper.find('.attachment-audit__locked').exists()).toBe(true)
+  expect(wrapper.find('.el-drawer-stub').exists()).toBe(false)
 
   wrapper.unmount()
 })

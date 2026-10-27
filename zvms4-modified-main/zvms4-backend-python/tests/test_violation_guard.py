@@ -21,7 +21,6 @@ XUEHAI = "1234567890"
 
 class FakeViolations:
     """内存版 ``ViolationsRepo``：只实现服务层用到的方法。"""
-
     def __init__(self) -> None:
         self.rows: list[dict] = []
         self.windows: list[tuple[str, datetime]] = []
@@ -82,6 +81,49 @@ class FakeViolations:
         )
 
 
+class FakeWarnings:
+    """内存版 ``UserWarningsRepo``：唯一键是 ``(user_oid, rule_code, period)``。"""
+
+    def __init__(self) -> None:
+        self.rows: list[dict] = []
+
+    async def try_record(
+        self, user_oid, rule_code, period, reason=None, detail=None
+    ) -> bool:
+        if await self.get(user_oid, rule_code, period) is not None:
+            return False
+        self.rows.append(
+            {
+                "user_oid": user_oid,
+                "rule_code": rule_code,
+                "period": period,
+                "reason": reason,
+                "detail": detail,
+                "created_at": datetime.now(),
+            }
+        )
+        return True
+
+    async def get(self, user_oid, rule_code, period):
+        for row in self.rows:
+            if (
+                row["user_oid"] == user_oid
+                and row["rule_code"] == rule_code
+                and row["period"] == period
+            ):
+                return row
+        return None
+
+    async def count_for_user_rule(self, user_oid, rule_code) -> int:
+        return len(
+            [
+                row
+                for row in self.rows
+                if row["user_oid"] == user_oid and row["rule_code"] == rule_code
+            ]
+        )
+
+
 def _rule(*, threshold: int = 3, window_hours: int = 24, enabled: bool = True) -> dict:
     return {
         "code": "platform_misuse",
@@ -95,8 +137,9 @@ def _rule(*, threshold: int = 3, window_hours: int = 24, enabled: bool = True) -
 @pytest.fixture
 def guard(monkeypatch):
     repo = FakeViolations()
+    warnings = FakeWarnings()
     logs: list[dict] = []
-    calls = {"rules": [], "bans": [], "logs": logs}
+    calls = {"rules": [], "bans": [], "logs": logs, "warnings": warnings}
 
     state = {"rule": _rule(), "user_doc": None}
 
@@ -139,6 +182,12 @@ def guard(monkeypatch):
         backends,
         "get_applogs_repo",
         lambda *a, **k: SimpleNamespace(insert=insert_log),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        backends,
+        "get_user_warnings_repo",
+        lambda *a, **k: warnings,
         raising=False,
     )
     monkeypatch.setattr(
@@ -483,16 +532,17 @@ async def test_agent_jailbreak_department_is_not_exempt(guard) -> None:
         {**USER, "per": ["department"]}
     )
 
-    assert result == {
-        "recorded": 1,
-        "duplicates": 0,
-        "banned": True,
-        "rule_code": "agent_jailbreak",
-    }
+    assert result["recorded"] == 1
+    assert result["duplicates"] == 0
+    assert result["warned"] is True
+    assert result["banned"] is False
+    assert result["rule_code"] == "agent_jailbreak"
     assert len(repo.rows) == 1
     assert repo.rows[0]["signal"] == "agent_jailbreak"
     assert repo.rows[0]["trigger"] == "agent_jailbreak"
-    assert calls["bans"][0][1] == "agent_jailbreak"
+    # 首次只警告，不落封禁；证据同时进了警告账本。
+    assert calls["bans"] == []
+    assert len(calls["warnings"].rows) == 1
     assert [e for e in calls["logs"] if e["type"] == "platform_misuse_exempt"] == []
 
 
@@ -510,12 +560,12 @@ async def test_agent_jailbreak_admin_stays_exempt(guard) -> None:
         {**USER, "per": ["admin"]}
     )
 
-    assert result == {
-        "recorded": 0,
-        "duplicates": 0,
-        "banned": False,
-        "rule_code": "platform_misuse",
-    }
+    assert result["recorded"] == 0
+    assert result["duplicates"] == 0
+    assert result["exempt"] is True
+    assert result["warned"] is False
+    assert result["banned"] is False
+    assert result["rule_code"] == "agent_jailbreak"
     assert repo.rows == []
     assert calls["bans"] == []
     exempt_logs = [e for e in calls["logs"] if e["type"] == "platform_misuse_exempt"]
@@ -659,3 +709,255 @@ async def test_agent_jailbreak_keeps_rule_input_and_real_device(guard) -> None:
     payload = json.loads(row["detail"])
     assert payload["rule"] == "prompt_injection"
     assert len(payload["input"]) == 200
+
+
+# ---------------------------------------------------------------------------
+# agent 越狱：先警告、再梯度封号（V041 USER_WARNINGS）
+# ---------------------------------------------------------------------------
+
+
+def _warning_logs(logs: list[dict]) -> list[dict]:
+    return [entry for entry in logs if entry["type"] == "agent_jailbreak_warning"]
+
+
+def _ban_spy(monkeypatch) -> list[dict]:
+    """替换封禁动作，返回「落了几次封、第几档」的事实列表。"""
+    bans: list[dict] = []
+
+    async def apply(user_oid, rule_code, reason, **kwargs):
+        offense = len(bans) + 1
+        bans.append(
+            {
+                "user_oid": user_oid,
+                "rule_code": rule_code,
+                "reason": reason,
+                "offense": offense,
+            }
+        )
+        # V037 梯度 [1,3,7,...] 的第一档。
+        return {
+            "reason": reason,
+            "until": datetime.now() + timedelta(days=1),
+            "days": 1,
+            "permanent": False,
+            "offense": offense,
+        }
+
+    monkeypatch.setattr(
+        violation_guard,
+        "device_guard",
+        SimpleNamespace(apply_account_ban=apply),
+    )
+    return bans
+
+
+@pytest.mark.asyncio
+async def test_first_jailbreak_only_warns(guard) -> None:
+    """首次命中：证据入库 + 本月警告 1 行，**不**落封禁。"""
+    repo, _state, calls = guard
+
+    result = await violation_guard.record_agent_jailbreak(
+        USER, xuehai_id=XUEHAI, rule="llm_safety:destructive_request", detail="删库"
+    )
+
+    assert result["recorded"] == 1
+    assert result["warned"] is True
+    assert result["banned"] is False
+    assert result["rule_code"] == "agent_jailbreak"
+    assert len(calls["bans"]) == 0
+    assert len(calls["warnings"].rows) == 1
+    row = calls["warnings"].rows[0]
+    assert row["rule_code"] == "agent_jailbreak"
+    assert len(row["period"]) == 6
+    assert "首次警告" in row["reason"]
+    assert len(_warning_logs(calls["logs"])) == 1
+    assert [entry["signal"] for entry in repo.rows] == ["agent_jailbreak"]
+
+
+@pytest.mark.asyncio
+async def test_second_real_violation_in_same_month_bans(guard, monkeypatch) -> None:
+    """同月第二次**新证据**：走梯度第一档（1 天）。"""
+    _repo, _state, _calls = guard
+    bans = _ban_spy(monkeypatch)
+    # 让「第二次」不再命中 5 分钟去重窗口：这是两次真实的新违规。
+    monkeypatch.setattr(
+        violation_guard, "dedup_window_seconds", lambda signal: 0, raising=False
+    )
+
+    await violation_guard.record_agent_jailbreak(USER, xuehai_id=XUEHAI, detail="删库")
+    result = await violation_guard.record_agent_jailbreak(
+        USER, xuehai_id=XUEHAI, detail="把所有用户导出"
+    )
+
+    assert result["warned"] is False
+    assert result["banned"] is True
+    assert result["days"] == 1
+    assert result["offense"] == 1
+    assert len(bans) == 1
+    assert bans[0]["rule_code"] == "agent_jailbreak"
+
+
+@pytest.mark.asyncio
+async def test_cross_month_warning_resets(guard, monkeypatch) -> None:
+    """跨月：唯一键换一期，又是「本月首次警告」，不封号。"""
+    _repo, _state, _calls = guard
+    bans = _ban_spy(monkeypatch)
+    period = {"value": "202601"}
+    monkeypatch.setattr(
+        violation_guard, "period_now", lambda now=None: period["value"]
+    )
+
+    first = await violation_guard.record_agent_jailbreak(
+        USER, xuehai_id=XUEHAI, detail="第一次"
+    )
+    period["value"] = "202602"
+    second = await violation_guard.record_agent_jailbreak(
+        USER, xuehai_id=XUEHAI, detail="第二次"
+    )
+
+    assert first["warned"] is True and first["banned"] is False
+    assert second["warned"] is True and second["banned"] is False
+    assert bans == []
+    assert len(_calls["warnings"].rows) == 2
+
+
+@pytest.mark.asyncio
+async def test_retry_of_the_same_violation_never_escalates(guard, monkeypatch) -> None:
+    """客户端原样重发（窗口内去重）不能被推到封号。"""
+    repo, _state, calls = guard
+    bans = _ban_spy(monkeypatch)
+
+    await violation_guard.record_agent_jailbreak(
+        USER, xuehai_id=XUEHAI, detail="删库"
+    )
+    retry = await violation_guard.record_agent_jailbreak(
+        USER, xuehai_id=XUEHAI, detail="删库"
+    )
+
+    assert retry["recorded"] == 0
+    assert retry["duplicates"] == 1
+    assert retry["warned"] is True
+    assert retry["banned"] is False
+    assert bans == []
+    assert len(repo.rows) == 1
+    assert len(calls["warnings"].rows) == 1
+
+
+@pytest.mark.asyncio
+async def test_admin_is_exempt_from_warning_and_ban(guard) -> None:
+    _repo, _state, calls = guard
+    admin = {"id": "000000000000000000000009", "per": ["admin"]}
+
+    result = await violation_guard.record_agent_jailbreak(
+        admin, xuehai_id=XUEHAI, detail="删库"
+    )
+
+    assert result["exempt"] is True
+    assert result["warned"] is False
+    assert result["banned"] is False
+    assert calls["warnings"].rows == []
+    assert calls["bans"] == []
+
+
+@pytest.mark.asyncio
+async def test_already_banned_is_recorded_but_not_penalised_again(guard, monkeypatch) -> None:
+    """封禁期内再命中：只留证据，不重复落封、不再发警告。"""
+    repo, state, calls = guard
+    bans = _ban_spy(monkeypatch)
+    state["user_doc"] = {"banned": True, "ban_until": None}
+
+    result = await violation_guard.record_agent_jailbreak(
+        USER, xuehai_id=XUEHAI, detail="删库"
+    )
+
+    assert result["banned"] is True
+    assert result["skipped"] == "already_banned"
+    assert result["warned"] is False
+    assert bans == []
+    assert calls["warnings"].rows == []
+    assert len(repo.rows) == 1
+
+
+@pytest.mark.asyncio
+async def test_warning_store_failure_does_not_ban(guard, monkeypatch) -> None:
+    """账本写不进去时 fail-open：没有「同月已警告」这个事实，就不该封号。"""
+    _repo, _state, calls = guard
+    bans = _ban_spy(monkeypatch)
+
+    async def boom(*args, **kwargs):
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr(calls["warnings"], "try_record", boom)
+
+    result = await violation_guard.record_agent_jailbreak(
+        USER, xuehai_id=XUEHAI, detail="删库"
+    )
+
+    assert result["warned"] is False
+    assert result["banned"] is False
+    assert result.get("error") == "warning_store_failed"
+    assert bans == []
+
+
+# ---------------------------------------------------------------------------
+# P2-a 路由层信号白名单：客户端不能自报 agent_jailbreak
+# ---------------------------------------------------------------------------
+
+
+def test_client_report_drops_agent_jailbreak(monkeypatch) -> None:
+    """``agent_jailbreak`` 只由服务端审核写入；浏览器自报的必须被剔除。
+
+    剔除是静默的（与「未知信号不 422」的既有风格一致）：同一批里的合法信号
+    不能因为夹带一个越权信号就整批丢掉。
+    """
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from routers import ban_violations_router
+    from typings.log import inject_log
+    from util.object_id import get_current_user
+
+    seen: dict = {}
+
+    async def record(user, signals, xuehai_id=None):
+        seen["signals"] = signals
+        seen["xuehai_id"] = xuehai_id
+        return {
+            "recorded": len(signals),
+            "duplicates": 0,
+            "banned": False,
+            "rule_code": None,
+        }
+
+    monkeypatch.setattr(violation_guard, "record", record)
+
+    class StubLog:
+        def with_text(self, *args, **kwargs):
+            return self
+
+        async def insert_log(self):
+            return None
+
+    app = FastAPI()
+    app.include_router(ban_violations_router.router, prefix="/api/v3/ban")
+    app.dependency_overrides[get_current_user] = lambda: {
+        "id": "000000000000000000000002",
+        "per": ["student"],
+    }
+    app.dependency_overrides[inject_log] = lambda: StubLog()
+
+    response = TestClient(app).post(
+        "/api/v3/ban/violations",
+        json={
+            "signals": [
+                {"signal": "agent_jailbreak", "detail": "越狱提示词"},
+                {"signal": "iframe", "detail": "被嵌套"},
+                {"signal": "rootkit"},
+            ]
+        },
+    )
+
+    assert response.status_code == 200
+    # agent_jailbreak 被剔除；未知信号仍透传（服务层忽略），合法信号保留。
+    assert response.json()["recorded"] == 2
+    assert [item["signal"] for item in seen["signals"]] == ["iframe", "rootkit"]

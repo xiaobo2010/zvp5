@@ -49,7 +49,12 @@ from util.attachment import (
 from util.attachment_ocr import LINES_KEY, process_ocr
 from util.ban import ban_is_active, raise_banned
 from util.cert import jwt_decode
-from util.object_id import get_current_user, optional_current_user, validate_object_id
+from util.object_id import (
+    get_current_user,
+    optional_current_user,
+    require_password_verification,
+    validate_object_id,
+)
 
 # ---------------------------------------------------------------------------
 # Device gate
@@ -161,6 +166,8 @@ _BYTE_HEADERS = {
 class VerifyRequest(BaseModel):
     decision: str
     note: str = ""
+    # 密码再认证签发的 5 分钟短令牌（缺失即 403）。管理端写操作都必须复核。
+    verification_token: str | None = None
 
 
 class StatusRequest(BaseModel):
@@ -168,11 +175,19 @@ class StatusRequest(BaseModel):
 
     status: str
     note: str = ""
+    verification_token: str | None = None
 
 
 class BindRequest(BaseModel):
     entity_type: str
     entity_oid: str
+    verification_token: str | None = None
+
+
+class DeleteRequest(BaseModel):
+    """软删除的复核令牌；``DELETE`` 也走 body，与 ``users_v3_router`` 一致。"""
+
+    verification_token: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -748,6 +763,7 @@ async def update_attachment_status(
       刷屏）；墓碑（``deleted``）也不接受裁决，它的字节可能已被保留期任务清空。
     """
     _require_manager(user)
+    await require_password_verification(payload.verification_token, user)
     if payload.status not in AUDIT_STATUSES:
         raise HTTPException(status_code=400, detail="Invalid status")
     oid = validate_object_id(oid)
@@ -928,6 +944,7 @@ async def verify_attachment(
     log=Depends(inject_log),
 ):
     _require_manager(user)
+    await require_password_verification(payload.verification_token, user)
     if payload.decision not in ("verified", "rejected"):
         raise HTTPException(status_code=400, detail="Invalid decision")
     oid = validate_object_id(oid)
@@ -954,6 +971,7 @@ async def bind_attachment(
     log=Depends(inject_log),
 ):
     _require_manager(user)
+    await require_password_verification(payload.verification_token, user)
     if not payload.entity_type or not payload.entity_oid:
         raise HTTPException(status_code=400, detail="entity_type and entity_oid required")
     oid = validate_object_id(oid)
@@ -986,6 +1004,7 @@ async def bind_attachment(
 @router.delete("/{oid}")
 async def delete_attachment(
     oid: str,
+    payload: DeleteRequest | None = None,
     user=Depends(get_current_user),
     log=Depends(inject_log),
 ):
@@ -1006,6 +1025,10 @@ async def delete_attachment(
         "rejected",
     ):
         raise HTTPException(status_code=403, detail="Attachment is verified")
+
+    await require_password_verification(
+        payload.verification_token if payload is not None else None, user
+    )
 
     previous = row.get("status")
     await repo.soft_delete(oid)

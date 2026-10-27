@@ -4,7 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user.ts'
 import { computed, ref, watch, type Component } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ElPageHeader, ElSegmented, ElLoading, ElIcon, ElButton, ElTag, ElMessage, ElMessageBox, ElNotification, ElTooltip, ElDialog, ElInput, ElAlert } from 'element-plus'
+import { ElPageHeader, ElSegmented, ElLoading, ElIcon, ElButton, ElTag, ElMessage, ElMessageBox, ElNotification, ElTooltip, ElDialog, ElInput, ElSelect, ElOption, ElAlert } from 'element-plus'
 import { ZActivityList } from '@/components'
 import { ArrowLeft, Edit } from '@element-plus/icons-vue'
 import type { User } from '@/../types'
@@ -72,6 +72,50 @@ const banReason = ref('')
 const banReasonTouched = ref(false)
 const banSubmitting = ref(false)
 
+// 封禁时长:预设天数 + 自定义,默认「永久」= 从前「管理员封禁一律永久」的旧行为。
+// 只把天数交给后端,到期时刻由服务端按本地时区算,浏览器时区不影响落库。
+type BanDurationChoice = '1' | '3' | '7' | '14' | '30' | 'permanent' | 'custom'
+const BAN_DURATION_PRESETS = ['1', '3', '7', '14', '30'] as const
+const BAN_DURATION_MAX_DAYS = 36500
+
+const banDuration = ref<BanDurationChoice>('permanent')
+const banCustomDays = ref('')
+
+const banDurationOptions = computed(() => [
+  ...BAN_DURATION_PRESETS.map((value) => ({
+    value,
+    label: t('user.ban.durationDays', { n: Number(value) })
+  })),
+  { value: 'permanent', label: t('user.ban.durationPermanent') },
+  { value: 'custom', label: t('user.ban.durationCustom') }
+])
+
+const banCustomDaysNumber = computed(() => {
+  const raw = banCustomDays.value.trim()
+  if (!/^\d+$/.test(raw)) return null
+  const days = Number(raw)
+  return days >= 1 && days <= BAN_DURATION_MAX_DAYS ? days : null
+})
+
+// 自定义天数非法(空/小数/越界)时整张表单不可提交,不让坏值落到后端换 422。
+const banDurationValid = computed(
+  () => banDuration.value !== 'custom' || banCustomDaysNumber.value !== null
+)
+
+const banDurationDays = computed<number | null>(() => {
+  if (banDuration.value === 'permanent') return null
+  if (banDuration.value === 'custom') return banCustomDaysNumber.value
+  return Number(banDuration.value)
+})
+
+const banUntilPreview = computed(() => {
+  if (!banDurationValid.value) return ''
+  if (banDurationDays.value === null) return t('user.ban.permanentHint')
+  return t('user.ban.autoUnbanAt', {
+    time: dayjs().add(banDurationDays.value, 'day').format('YYYY-MM-DD HH:mm')
+  })
+})
+
 const banReasonTrimmed = computed(() => banReason.value.trim())
 const banReasonValid = computed(() => {
   const length = banReasonTrimmed.value.length
@@ -93,18 +137,42 @@ const banUntilText = computed(() => {
   return expiresAt.format('YYYY-MM-DD HH:mm')
 })
 
+// 封禁标签上的期限:限时封禁显示「至 YYYY-MM-DD HH:mm」,永久就写「永久」,
+// 让管理员在页头一眼看出这号会不会自己解封。
+const banPeriodText = computed(() => {
+  const banned = user.value as UserWithBan | undefined
+  if (!banned?.banned) return ''
+  if (banned.ban_permanent) return t('user.ban.periodPermanent')
+  if (!banned.ban_until) return ''
+  const expiresAt = dayjs(banned.ban_until)
+  if (!expiresAt.isValid()) return ''
+  return t('user.ban.periodUntil', { time: expiresAt.format('YYYY-MM-DD HH:mm') })
+})
+
+const banTagText = computed(() => {
+  const tag = t('manage.personalPanel.bannedTag')
+  return banPeriodText.value ? `${tag} · ${banPeriodText.value}` : tag
+})
+
 function openBanDialog() {
   banReason.value = ''
   banReasonTouched.value = false
+  banDuration.value = 'permanent'
+  banCustomDays.value = ''
   banDialogVisible.value = true
 }
 
 async function submitBan() {
   banReasonTouched.value = true
-  if (!user.value || banSubmitting.value || !banReasonValid.value) return
+  if (!user.value || banSubmitting.value || !banReasonValid.value || !banDurationValid.value) return
   banSubmitting.value = true
   try {
-    const result = await api.user.updateBanned(id.value, true, banReasonTrimmed.value)
+    const result = await api.user.updateBanned(
+      id.value,
+      true,
+      banReasonTrimmed.value,
+      banDurationDays.value
+    )
     if (result) {
       banDialogVisible.value = false
       ElNotification({
@@ -368,7 +436,7 @@ watch(
       <template #content>
         {{ user?.name }}
         <ElTag v-if="user?.banned" type="danger" class="ml-2">
-          {{ t('manage.personalPanel.bannedTag') }}
+          {{ banTagText }}
         </ElTag>
       </template>
       <template #extra>
@@ -451,7 +519,7 @@ watch(
       align-center
       append-to-body
     >
-      <p class="text-sm mb-3">{{ t('manage.personalPanel.banDialogNotice') }}</p>
+      <p class="text-sm mb-3">{{ t('user.ban.dialogNotice') }}</p>
       <label class="block text-sm mb-1">{{ t('manage.personalPanel.banReasonLabel') }}</label>
       <ElInput
         v-model="banReason"
@@ -465,11 +533,33 @@ watch(
       <p v-if="banReasonTouched && !banReasonValid" class="text-xs text-red-500 mt-1">
         {{ t('manage.personalPanel.banReasonInvalid') }}
       </p>
+      <label class="block text-sm mb-1 mt-3">{{ t('user.ban.durationLabel') }}</label>
+      <ElSelect v-model="banDuration" class="w-full">
+        <ElOption
+          v-for="option in banDurationOptions"
+          :key="option.value"
+          :label="option.label"
+          :value="option.value"
+        />
+      </ElSelect>
+      <div v-if="banDuration === 'custom'" class="mt-2 flex items-center gap-2">
+        <ElInput v-model="banCustomDays" inputmode="numeric" class="flex-1" />
+        <span class="text-sm">{{ t('user.ban.customUnit') }}</span>
+      </div>
+      <p
+        v-if="banDuration === 'custom' && banCustomDays.trim() && !banDurationValid"
+        class="text-xs text-red-500 mt-1"
+      >
+        {{ t('user.ban.customInvalid') }}
+      </p>
+      <p v-else-if="banUntilPreview" class="text-xs text-gray-500 mt-1">
+        {{ banUntilPreview }}
+      </p>
       <template #footer>
         <ElButton @click="banDialogVisible = false">
           {{ t('action.cancel', '取消') }}
         </ElButton>
-        <ElButton type="danger" :disabled="!banReasonValid" :loading="banSubmitting" @click="submitBan">
+        <ElButton type="danger" :disabled="!banReasonValid || !banDurationValid" :loading="banSubmitting" @click="submitBan">
           {{ t('manage.personalPanel.banDialogConfirm') }}
         </ElButton>
       </template>

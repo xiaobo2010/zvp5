@@ -50,6 +50,12 @@ MAX_DETAIL_CHARS = 500
 #: 多半是工作行为（批量导出、给全班签临时密码），可记录不可自动封。
 NO_AUTO_BAN_ROLES = ("admin", "department", "secretary")
 
+#: 「已封禁就不再处罚」的唯一例外：这条检查项**只在封禁期内**有证据
+#: （``ltype=login_fail`` 且摘要含 ``banned``）。按通用短路跳过，它永远不会
+#: 触发——等于规则写了一个永不成立的条件。其余检查项照旧短路，否则 ``>=``
+#: 语义会把梯度一路推到永久档。
+ESCALATE_WHILE_BANNED = frozenset({"ban_evasion_retry"})
+
 #: 检查项 → 证据来源 + 产品默认 config。
 #: ``ltype`` 为 ``APP_LOGS.LTYPE``；``contains`` 在 ``DATA`` 摘要上做补充过滤
 #: （登录失败与封禁期重试共享 ``login_fail``，靠 ``banned`` 标记区分）。
@@ -298,7 +304,7 @@ async def _evaluate(
         return None
 
     doc = await _user_doc(user_oid)
-    if ban_is_active(doc, at):
+    if ban_is_active(doc, at) and trigger_code not in ESCALATE_WHILE_BANNED:
         # 已经在封禁中：新证据照记，但不再推一档梯度（否则会一路打到永久）。
         _logger.debug("用户 %s 已在封禁中，%s 不再重复处罚", user_oid, trigger_code)
         return None
@@ -358,6 +364,7 @@ __all__ = [
     "THROTTLE_SECONDS",
     "THROTTLE_MAX_ENTRIES",
     "MAX_DETAIL_CHARS",
+    "ESCALATE_WHILE_BANNED",
     "NO_AUTO_BAN_ROLES",
     "TRIGGERS",
     "evaluate",

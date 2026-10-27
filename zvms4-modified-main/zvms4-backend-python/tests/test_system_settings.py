@@ -47,6 +47,8 @@ EXPECTED_KEYS = {
     "ai.chat_max_body_bytes",
     "ai.chat_max_messages",
     "ai.chat_max_content_chars",
+    "ai.safety_guard_enabled",
+    "ai.safety_guard_timeout_seconds",
     "ops.upload_daily_max_files",
     "ops.upload_daily_max_bytes",
     "ops.max_query_count",

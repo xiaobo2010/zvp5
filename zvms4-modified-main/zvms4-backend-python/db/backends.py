@@ -251,6 +251,13 @@ def get_user_quota_overrides_repo(session: Any = None) -> Any:
     return OracleUserQuotaOverridesRepo(session)
 
 
+def get_user_warnings_repo(session: Any = None) -> Any:
+    """Return the ``UserWarningsRepo`` implementation (警告账本)."""
+    from db.repos.oracle.user_warnings import OracleUserWarningsRepo
+
+    return OracleUserWarningsRepo(session)
+
+
 __all__ = [
     "get_users_repo",
     "get_groups_repo",
@@ -285,4 +292,5 @@ __all__ = [
     "get_ai_runs_repo",
     "get_system_settings_repo",
     "get_user_quota_overrides_repo",
+    "get_user_warnings_repo",
 ]

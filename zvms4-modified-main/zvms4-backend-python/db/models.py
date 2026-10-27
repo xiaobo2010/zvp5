@@ -735,7 +735,9 @@ ban_records = Table(
     Column("operator_oid", VARCHAR2(24), nullable=True),
     Column("created_at", oracle.TIMESTAMP, nullable=False),
     _oid_check("ban_records"),
-    CheckConstraint("source IN ('admin','rule')", name="ck_ban_records_source"),
+    CheckConstraint(
+        "source IN ('admin','rule','agent')", name="ck_ban_records_source"
+    ),
     CheckConstraint("permanent IN (0,1)", name="ck_ban_records_permanent"),
     ForeignKeyConstraint(["user_oid"], ["users.oid"], name="fk_ban_records_user"),
 )
@@ -920,7 +922,9 @@ banned_devices = Table(
     Column("rule_code", VARCHAR2(64), nullable=True),
     Column("operator_oid", VARCHAR2(24), nullable=True),
     Column("created_at", oracle.TIMESTAMP, nullable=False),
-    CheckConstraint("source IN ('rule','admin')", name="ck_banned_devices_source"),
+    CheckConstraint(
+        "source IN ('rule','admin','agent')", name="ck_banned_devices_source"
+    ),
 )
 
 
@@ -974,6 +978,38 @@ Index(
     ban_violations.c.trigger_code,
     ban_violations.c.created_at,
     ban_violations.c.batch_id,
+)
+
+
+# ---------------------------------------------------------------------------
+# USER_WARNINGS  ← new (警告账本; V041)
+#   每 (用户, 规则, 自然月) 最多一行：月度归零靠唯一索引天然完成，**没有 cron**。
+#   唯一冲突是预期的控制流（「本月已警告过」），仓储层把 ORA-00001 翻成 False。
+#   PERIOD 与 AI_QUOTA 同口径（YYYYMM 文本）；无外键：警告是审计材料。
+# ---------------------------------------------------------------------------
+
+user_warnings = Table(
+    "user_warnings",
+    metadata,
+    _oid_pk(),
+    Column("user_oid", VARCHAR2(24), nullable=False),
+    Column("rule_code", VARCHAR2(64), nullable=False),
+    Column("period", oracle.CHAR(6), nullable=False),
+    Column("reason", VARCHAR2(512), nullable=True),
+    Column("detail", VARCHAR2(500), nullable=True),
+    Column("created_at", oracle.TIMESTAMP, nullable=False),
+    _oid_check("user_warnings"),
+    CheckConstraint(
+        "REGEXP_LIKE(period,'^[0-9]{6}$')",
+        name="ck_user_warnings_period",
+    ),
+)
+Index(
+    "ux_user_warnings_user_rule_period",
+    user_warnings.c.user_oid,
+    user_warnings.c.rule_code,
+    user_warnings.c.period,
+    unique=True,
 )
 
 

@@ -65,13 +65,22 @@ class UsersRepo(Protocol):
         ...
 
     async def list_banned_page(
-        self, query: str, page: int, size: int
+        self,
+        query: str,
+        page: int,
+        size: int,
+        include_expired: bool = False,
+        now: datetime | None = None,
     ) -> tuple[list[Row], int]:
         """Return ``(rows, total)`` for one page of currently banned users.
 
         Source of truth is the ``banned`` gate on the user row (not the
         ``BAN_RECORDS`` ledger), so a user who was unbanned is absent even
         though the ledger still holds their history.
+
+        ``include_expired=False``（默认）会把 ``ban_until`` 已过期的存量行
+        排除：它们仍然 ``banned=1``，但实际已经能登录，算「当前封禁」会让
+        管理员看到一张永远清不空的表。
         """
         ...
 
@@ -1301,6 +1310,18 @@ class FilesRepo(Protocol):
         """
         ...
 
+    async def count_snapshot(self, *, gc_cutoff: Any = None) -> dict:
+        """Read-only aggregate counts over ``FILES`` (governance dashboard).
+
+        ``gc_cutoff`` given → ``{"gc": {"candidates": n}}`` computed from the
+        same predicate as :meth:`purge_ocr_uploads`; otherwise
+        ``{"groups": [{kind, purpose, status, ocr_status, files, bytes}],
+        "orphans": {"thumb_without_parent", "original_without_thumb"}}``.
+
+        Never reads ``CONTENT``; never writes.
+        """
+        ...
+
     async def thumb_for(self, parent_oid: str) -> Row | None:
         """Return the thumbnail row whose ``parent_oid`` is the given original, or ``None``."""
         ...
@@ -1812,12 +1833,18 @@ class DeviceBansRepo(Protocol):
         ...
 
     async def list_page(
-        self, page: int, size: int, query: str = ""
+        self,
+        page: int,
+        size: int,
+        query: str = "",
+        include_expired: bool = False,
+        now: datetime | None = None,
     ) -> tuple[list[Row], int]:
         """Return ``(rows, total)`` for one page, newest ban first.
 
         ``page`` is 1-based; ``total`` counts devices, not page size. A
         non-empty ``query`` filters by device id containment.
+        ``include_expired=False``（默认）只列仍然生效的封禁。
         """
         ...
 
@@ -3224,4 +3251,33 @@ class AiScheduledTasksRepo(Protocol):
 
     async def attach_run_task(self, run_id: str, task_oid: str) -> bool:
         """归因一次已入队的 run（``insert_queued`` 不认 ``task_oid``）。"""
+        ...
+
+
+class UserWarningsRepo(Protocol):
+    """Data access for ``USER_WARNINGS``（每月首次警告账本, V041）。
+
+    Row shape: ``{"_id", "user_oid", "rule_code", "period", "reason",
+    "detail", "created_at"}``。``period`` 是 ``YYYYMM``；唯一键
+    ``(user_oid, rule_code, period)`` 让「月初清零」不需要定时任务，也
+    正是 :meth:`try_record` 能把冲突翻译成 ``False`` 的原因。
+    """
+
+    async def try_record(
+        self,
+        user_oid: str,
+        rule_code: str,
+        period: str,
+        reason: str | None = None,
+        detail: str | None = None,
+    ) -> bool:
+        """写入本月第一条警告；本月已有则返回 ``False``。"""
+        ...
+
+    async def get(self, user_oid: str, rule_code: str, period: str) -> Row | None:
+        """该用户该规则该月的警告行，没有则 ``None``。"""
+        ...
+
+    async def count_for_user_rule(self, user_oid: str, rule_code: str) -> int:
+        """该用户该规则历史累计警告数。"""
         ...

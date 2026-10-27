@@ -36,7 +36,7 @@ from services import violation_guard
 from services.agent import executor, proposal as proposal_service
 from services.agent.tools import WRITE
 from services.agent.tool_impl import AgentError
-from services.ai import audit, conversations, moderation, prompt_audit
+from services.ai import audit, conversations, moderation, prompt_audit, safety_guard
 from util import agent_unlock
 
 _logger = logging.getLogger(__name__)
@@ -226,6 +226,34 @@ async def _audit_moderation_skipped(
     )
 
 
+async def _reject_unsafe(
+    user: Mapping[str, Any],
+    *,
+    text: str,
+    xuehai_id: str,
+    category: str,
+) -> None:
+    """LLM 安全认证拒绝：先落证据与处罚结论，再抛 422。
+
+    处罚结论决定前端文案：``banned`` 说明这是同月第二次（已按梯度封号），
+    否则是本月首次警告。证据入库失败不回滚拒绝：本次请求已经被判定为
+    「无关且破坏性」，放行它比丢一条证据更糟。
+    """
+    code = "AI_SAFETY_WARNED"
+    try:
+        outcome = await violation_guard.record_agent_jailbreak(
+            user,
+            xuehai_id=xuehai_id,
+            rule=str(category or ""),
+            detail=text,
+        )
+        if outcome.get("banned"):
+            code = "AI_SAFETY_BANNED"
+    except Exception:  # noqa: BLE001 - 证据入库失败不该把拒绝变成 500
+        _logger.exception("AI 安全认证违规入库失败（本次仍然拒绝）")
+    raise AgentError(code, safety_guard.REJECTED_MESSAGE, 422)
+
+
 async def submit(
     *,
     user: Mapping[str, Any],
@@ -300,6 +328,21 @@ async def submit(
                 422,
             )
 
+    # 灰区闸门：关键词规则之后、入队之前。只对 department 生效（admin 在
+    # ``safety_guard.is_department`` 里已豁免），非 department 不触达网络。
+    # 顺序固定：任何一步拒绝都不产生 run，也不扣额度。
+    verdict = await safety_guard.screen(
+        user,
+        text,
+        model_hint=(str(model).strip() or None) if model else conversation.get("model"),
+    )
+    if not verdict.allowed:
+        await _reject_unsafe(
+            user,
+            text=text,
+            xuehai_id=xuehai_id,
+            category=verdict.category,
+        )
     if client_msg_id is None:
         # 第一道闸：应用层先看着像冲突就回 409（省一次必然失败的插入）。第二道是
         # 数据库的函数唯一索引，两道都要有。

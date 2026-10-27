@@ -812,3 +812,42 @@ def schedule_quota_department() -> int:
     if isinstance(override, int) and not isinstance(override, bool) and override >= 0:
         return override
     return int(AI_SCHEDULE_QUOTA_DEPARTMENT)
+
+
+# ---------------------------------------------------------------------------
+# LLM 安全认证（department 专属的灰区闸门）
+# ---------------------------------------------------------------------------
+
+# 默认开启：这是一道「只在学生会提交时多一次调用」的闸门，关掉等于放弃灰区
+# 识别；但它必须是**在线可关**的——上游持续抖动时运维要能一键退回关键词规则。
+AI_SAFETY_GUARD_ENABLED = True
+# 判定跑在用户等待的同步路径上，8 秒是「宁可放行也不要让对话卡住」的上限。
+AI_SAFETY_GUARD_TIMEOUT_SECONDS = 8
+
+
+def safety_guard_enabled() -> bool:
+    """``ai.safety_guard_enabled``：在线可调，默认 :data:`AI_SAFETY_GUARD_ENABLED`。
+
+    只认真正的布尔值：``settings.py`` 里写成字符串 ``"false"`` 会被当成默认
+    （开启），因为 ``bool("false") == True`` 会让「关掉」这个意图静默失效。
+    """
+    override = settings_runtime.get_override("ai.safety_guard_enabled")
+    if isinstance(override, bool):
+        return override
+    raw = getattr(settings, "AI_SAFETY_GUARD_ENABLED", AI_SAFETY_GUARD_ENABLED)
+    return raw if isinstance(raw, bool) else AI_SAFETY_GUARD_ENABLED
+
+
+def safety_guard_timeout_seconds() -> float:
+    """``ai.safety_guard_timeout_seconds``：单次判定调用的超时秒数。"""
+    override = settings_runtime.get_override("ai.safety_guard_timeout_seconds")
+    if isinstance(override, int) and not isinstance(override, bool) and override > 0:
+        return float(override)
+    raw = getattr(
+        settings,
+        "AI_SAFETY_GUARD_TIMEOUT_SECONDS",
+        AI_SAFETY_GUARD_TIMEOUT_SECONDS,
+    )
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)) or raw <= 0:
+        raw = AI_SAFETY_GUARD_TIMEOUT_SECONDS
+    return float(raw)

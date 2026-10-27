@@ -29,6 +29,12 @@ import ZPagination from '@/components/utils/ZPagination.vue'
 
 const { t } = useI18n()
 
+/**
+ * 嵌入模式：组件被放进「封禁管理」页的页内分区里，
+ * 不再自带页面级外壳（标题/最大宽度/额外上边距都由外层承担）。
+ */
+const props = withDefaults(defineProps<{ embedded?: boolean }>(), { embedded: false })
+
 const { width, height } = useWindowSize()
 
 const narrow = computed(() => width.value <= 768)
@@ -307,7 +313,10 @@ async function confirmReset(device: BannedDevice) {
 </script>
 
 <template>
-  <div class="flex flex-col gap-4">
+  <div
+    class="device-bans flex flex-col gap-4"
+    :class="{ 'device-bans--embedded': props.embedded }"
+  >
     <p class="device-bans__hint">{{ t('manage.deviceBans.hint') }}</p>
 
     <ElCard shadow="never">
@@ -512,6 +521,16 @@ async function confirmReset(device: BannedDevice) {
 </template>
 
 <style scoped>
+/* 组件根：撑满外层容器宽度，不自带页面级最大宽度 */
+.device-bans {
+  width: 100%;
+}
+
+/* 嵌入外层分区时不再叠加上边距，间距由外层的 flex gap 统一控制 */
+.device-bans--embedded {
+  margin-top: 0;
+}
+
 .device-bans__hint {
   margin: 0;
   color: var(--yg-text-tertiary);

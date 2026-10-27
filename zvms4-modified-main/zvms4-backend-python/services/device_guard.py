@@ -147,6 +147,25 @@ def _as_until(value: Any) -> datetime | None:
     return value if isinstance(value, datetime) else None
 
 
+def _to_local_naive(value: datetime | None) -> datetime | None:
+    """把「带时区的时刻」折成落库用的**本地 naive 墙钟值**。
+
+    库里所有封禁时间列（``BANNED_DEVICES.UNTIL`` / ``BAN_RECORDS.EXPIRES_AT`` /
+    ``USERS.BAN_UNTIL``）都是 ``TIMESTAMP``（无时区），判定端一律用
+    ``datetime.now()``（本地 naive）比较。客户端 ``toISOString()`` 送来的是
+    aware UTC，直接绑定到 naive 列时驱动只会丢掉 ``tzinfo``、**保留 UTC 墙钟**：
+    东八区下「封 24 小时」被读成「已过去 8 小时」，实际只封 16 小时。
+
+    所以所有接受外部 ``until`` 的写入口都必须先过这里：aware → 本地时区 →
+    去 tzinfo；naive 原样返回（调用方已经按本地时间表达）。
+    """
+    if value is None:
+        return None
+    if value.tzinfo is None or value.tzinfo.utcoffset(value) is None:
+        return value
+    return value.astimezone().replace(tzinfo=None)
+
+
 def _expired(until: datetime | None, now: datetime) -> bool:
     """``until=None`` 是永久（不算过期）；其余交给 ``ban_is_active`` 比时区口径。"""
     if until is None:
@@ -702,6 +721,9 @@ async def _ban_device_for_temp_password(
     reason = _clip_reason(
         reason or f"连续输入错误的临时密码（设备 {xuehai_id}）"
     )
+    # 落库前统一折成本地 naive：调用方可能传 aware 的「此刻」，
+    # 梯度算出的 until 会继承它的时区，绑到 TIMESTAMP 列就整体偏移。
+    now = _to_local_naive(now) or datetime.now()
 
     if await _device_owned_by_other(xuehai_id, user_oid):
         try:
@@ -797,6 +819,95 @@ def _stronger_until(
     return max(current, candidate)
 
 
+async def _set_rule_ban_if_stronger(
+    user_oid: str,
+    *,
+    reason: str,
+    until: datetime | None,
+    rule_code: str,
+    session: Any,
+) -> datetime | None:
+    """在**给定事务**里落规则封禁，只加刑不减刑；返回库里实际生效的 ``until``。
+
+    与 :func:`services.ban_rules.set_ban_unless_stronger` 同一语义，区别只在于
+    必须复用调用方的 session：档位计数、``USERS`` 写入与流水必须是同一个事务，
+    否则并发两批会各自读到同一档位（跳档）或出现「已封但无流水」。
+    """
+    repo = backends.get_users_repo(session)
+    effective = await repo.set_ban_if_stronger(
+        user_oid,
+        reason=reason,
+        until=until,
+        source="rule",
+        rule_code=rule_code,
+    )
+    if effective != until:
+        _logger.warning(
+            "用户 %s 已有更强封禁，规则 %s 的 until=%s 未写入（保留 %s）",
+            user_oid,
+            rule_code,
+            until,
+            effective,
+        )
+    return effective
+
+
+async def apply_admin_ban(
+    user_oid: str,
+    *,
+    reason: str,
+    operator_oid: str | None = None,
+    at: datetime | None = None,
+    until: datetime | None = None,
+) -> datetime | None:
+    """管理员封禁（默认永久，可限时）+ 流水：**同一 session 一次提交**。
+
+    两次独立提交的老路径会留下「已封但无流水」的半状态：流水写失败时账号
+    进不来，梯度与审计却什么都没有。这里把两件事收进一个事务，任一步失败
+    整体回滚（``ban_unit`` 未走到 commit）。
+
+    ``until=None`` = 永久；给定时先过 :func:`_to_local_naive`（库里是本地
+    naive ``TIMESTAMP``），并且流水的 ``permanent`` / ``expires_at`` 必须与
+    状态列同步表达——只写 ``USERS.BAN_UNTIL`` 会让封禁列表把限时封禁显示成
+    「无到期时间的永久」。返回实际写入的到期时刻（``None`` = 永久）。
+    """
+    started = _to_local_naive(at) or datetime.now()
+    expires_at = _to_local_naive(until)
+    permanent = expires_at is None
+    repo = backends.get_users_repo()
+    unit = getattr(repo, "ban_unit", None)
+    if unit is None:
+        # 兼容测试替身 / 旧适配器：退回两次独立写，语义与旧实现一致。
+        await repo.set_ban(
+            user_oid, reason=reason, until=expires_at, source="admin", rule_code=None
+        )
+        await backends.get_ban_records_repo().insert(
+            user_oid,
+            source="admin",
+            reason=reason,
+            permanent=permanent,
+            started_at=started,
+            expires_at=expires_at,
+            operator_oid=operator_oid,
+        )
+        return expires_at
+
+    async with unit(user_oid) as session:
+        await backends.get_users_repo(session).set_ban(
+            user_oid, reason=reason, until=expires_at, source="admin", rule_code=None
+        )
+        await backends.get_ban_records_repo(session).insert(
+            user_oid,
+            source="admin",
+            reason=reason,
+            permanent=permanent,
+            started_at=started,
+            expires_at=expires_at,
+            operator_oid=operator_oid,
+        )
+    return expires_at
+
+
 async def apply_account_ban(
     user_oid: str,
     rule_code: str,
@@ -809,8 +920,13 @@ async def apply_account_ban(
     与 ``services.violation_guard`` 共用 :func:`services.ban_rules.penalty_expiry`：
     梯度末位 ``None`` → ``until=None``（永久），流水的 ``permanent`` 与
     ``expires_at`` 必须同时表达这件事，否则管理页会把永久封禁显示成「无到期时间」。
+
+    **档位与写入在同一个事务里**（真实仓储提供 ``ban_unit``）：先
+    ``SELECT ... FOR UPDATE`` 锁住目标用户行，再数历史流水定档，最后写
+    ``USERS`` 与 ``BAN_RECORDS`` 并只 commit 一次。并发两批同规则封禁因此
+    串行化——否则两边都读到 ``count = N``，各写一条流水，梯度直接跳一档。
     """
-    at = now or datetime.now()
+    at = _to_local_naive(now) or datetime.now()
     reason = _clip_reason(reason)
 
     try:
@@ -820,28 +936,53 @@ async def apply_account_ban(
         _logger.exception("读取 %s 规则失败，按默认梯度封禁", rule_code)
         rule = None
     penalties = ban_rules.rule_penalties(rule)
-    records = backends.get_ban_records_repo()
-    offense = await records.count_for_user_rule(user_oid, rule_code) + 1
 
-    until, days = ban_rules.penalty_expiry(penalties, offense, at)
-
-    # 规则封禁只加刑不减刑：管理员已落的永久/更长封禁保留，流水照落。
-    effective_until = await ban_rules.set_ban_unless_stronger(
-        user_oid,
-        reason=reason,
-        until=until,
-        rule_code=rule_code,
-    )
-    await records.insert(
-        user_oid,
-        source="rule",
-        rule_code=rule_code,
-        reason=reason,
-        permanent=effective_until is None,
-        started_at=at,
-        expires_at=effective_until,
-        operator_oid=None,
-    )
+    unit = getattr(backends.get_users_repo(), "ban_unit", None)
+    if unit is None:
+        # 兼容测试替身 / 旧适配器：三次独立写（计数 → 状态 → 流水）。
+        records = backends.get_ban_records_repo()
+        offense = await records.count_for_user_rule(user_oid, rule_code) + 1
+        until, days = ban_rules.penalty_expiry(penalties, offense, at)
+        effective_until = await ban_rules.set_ban_unless_stronger(
+            user_oid,
+            reason=reason,
+            until=until,
+            rule_code=rule_code,
+        )
+        await records.insert(
+            user_oid,
+            source="rule",
+            rule_code=rule_code,
+            reason=reason,
+            permanent=effective_until is None,
+            started_at=at,
+            expires_at=effective_until,
+            operator_oid=None,
+        )
+    else:
+        async with unit(user_oid) as session:
+            records = backends.get_ban_records_repo(session)
+            offense = await records.count_for_user_rule(user_oid, rule_code) + 1
+            until, days = ban_rules.penalty_expiry(
+                penalties, offense, at
+            )
+            effective_until = await _set_rule_ban_if_stronger(
+                user_oid,
+                reason=reason,
+                until=until,
+                rule_code=rule_code,
+                session=session,
+            )
+            await records.insert(
+                user_oid,
+                source="rule",
+                rule_code=rule_code,
+                reason=reason,
+                permanent=effective_until is None,
+                started_at=at,
+                expires_at=effective_until,
+                operator_oid=None,
+            )
 
     return {
         "reason": reason,
@@ -879,12 +1020,14 @@ __all__ = [
     "DEVICE_BAN_APPLIED_MESSAGE",
     "DeviceBanned",
     "device_ban_status",
+    "_to_local_naive",
     "challenge_device",
     "issue_challenge",
     "verify_temp_password",
     "count_recent_temp_failures",
     "temp_failures_by_device",
     "apply_account_ban",
+    "apply_admin_ban",
     "generate_temp_password",
     "hash_temp_password",
     "hash_temp_password_async",
