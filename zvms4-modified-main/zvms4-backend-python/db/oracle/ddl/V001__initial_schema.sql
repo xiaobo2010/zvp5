@@ -1878,6 +1878,7 @@ CREATE TABLE ai_runs (
   client_msg_id VARCHAR2(64 CHAR),
   status VARCHAR2(16 CHAR) NOT NULL,
   model VARCHAR2(120 CHAR),
+  task_oid VARCHAR2(24 CHAR),
   stop_reason VARCHAR2(24 CHAR),
   rounds NUMBER(3),
   error_code VARCHAR2(40 CHAR),
@@ -1949,6 +1950,16 @@ END;
 BEGIN
   EXECUTE IMMEDIATE '
 CREATE INDEX ix_ai_runs_status_heartbeat ON ai_runs (status, heartbeat_at)';
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE NOT IN (-955, -1408) THEN RAISE; END IF;
+END;
+/
+
+-- 某条定时任务的执行历史（V040）：TASK_OID 可空，非空行才是定时任务产物。
+BEGIN
+  EXECUTE IMMEDIATE '
+CREATE INDEX ix_ai_runs_task_created ON ai_runs (task_oid, created_at DESC)';
 EXCEPTION
   WHEN OTHERS THEN
     IF SQLCODE NOT IN (-955, -1408) THEN RAISE; END IF;
@@ -2037,6 +2048,67 @@ CREATE TABLE user_quota_overrides (
 EXCEPTION
   WHEN OTHERS THEN
     IF SQLCODE != -955 THEN RAISE; END IF;
+END;
+/
+
+-- ----------------------------------------------------------------------------
+-- AI_SCHEDULED_TASKS  ← new (AI 定时任务; V040)
+--   REVIEW_STATUS 与 ENABLED 分开：改 prompt 要重新过审，但排程不必重建。
+--   LAST_RUN_AT 兼作 claim 的 CAS 期望值（见 V040 头注释）。
+--   NEXT_RUN_AT 是调度器唯一取数依据，任何分支都必须推进它。
+--   也由 V040__ai_scheduled_tasks.sql 在存量实例上创建。
+-- ----------------------------------------------------------------------------
+BEGIN
+  EXECUTE IMMEDIATE '
+CREATE TABLE ai_scheduled_tasks (
+  oid VARCHAR2(24 CHAR) NOT NULL,
+  owner_oid VARCHAR2(24 CHAR) NOT NULL,
+  name VARCHAR2(128 CHAR) NOT NULL,
+  prompt_text CLOB NOT NULL,
+  review_status VARCHAR2(16 CHAR) DEFAULT ''draft'' NOT NULL,
+  reviewed_by_oid VARCHAR2(24 CHAR),
+  reviewed_at TIMESTAMP,
+  review_note VARCHAR2(512 CHAR),
+  schedule_kind VARCHAR2(8 CHAR) DEFAULT ''interval'' NOT NULL,
+  interval_minutes NUMBER DEFAULT 1440 NOT NULL,
+  cron_expr VARCHAR2(64 CHAR),
+  enabled NUMBER(1) DEFAULT 1 NOT NULL,
+  model VARCHAR2(64 CHAR),
+  last_run_at TIMESTAMP,
+  next_run_at TIMESTAMP,
+  run_count NUMBER DEFAULT 0 NOT NULL,
+  last_status VARCHAR2(16 CHAR),
+  last_error VARCHAR2(512 CHAR),
+  created_at TIMESTAMP NOT NULL,
+  updated_at TIMESTAMP NOT NULL,
+  PRIMARY KEY (oid),
+  CONSTRAINT ck_ai_scheduled_tasks_oid CHECK (REGEXP_LIKE(oid,''^[0-9a-f]{24}$'')),
+  CONSTRAINT ck_ai_scheduled_tasks_review CHECK (review_status IN (''draft'',''pending'',''approved'',''rejected'')),
+  CONSTRAINT ck_ai_scheduled_tasks_kind CHECK (schedule_kind IN (''interval'',''cron'')),
+  CONSTRAINT ck_ai_scheduled_tasks_interval CHECK (interval_minutes >= 15),
+  CONSTRAINT ck_ai_scheduled_tasks_enabled CHECK (enabled IN (0,1))
+)';
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE != -955 THEN RAISE; END IF;
+END;
+/
+
+BEGIN
+  EXECUTE IMMEDIATE '
+CREATE INDEX ix_ai_scheduled_tasks_owner_created ON ai_scheduled_tasks (owner_oid, created_at DESC)';
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE NOT IN (-955, -1408) THEN RAISE; END IF;
+END;
+/
+
+BEGIN
+  EXECUTE IMMEDIATE '
+CREATE INDEX ix_ai_scheduled_tasks_due ON ai_scheduled_tasks (enabled, next_run_at)';
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE NOT IN (-955, -1408) THEN RAISE; END IF;
 END;
 /
 

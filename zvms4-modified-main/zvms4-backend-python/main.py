@@ -38,6 +38,7 @@ from routers import (
     ai_agent_router,
     ai_conversations_router,
     ai_chat_conversations_router,
+    ai_schedule_router,
     system_settings_router,
 )
 import socketio
@@ -54,11 +55,13 @@ from util.object_id import _authenticate, is_admin_token
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from tasks.compute_time import rebuild_statistics, generate_reports
 from tasks.files_retention import purge_expired_attachments
+from tasks.ocr_upload_gc import run_ocr_upload_gc
 from tasks.retention import purge_expired_records
 from tasks.user_trash_gc import purge_expired_trash
 from services import perf_sampler
 from services import settings_runtime
 from services.agent import run_queue
+from services.ai import scheduled_runner
 from services.api_metrics import ApiMetricsMiddleware
 
 scheduler = AsyncIOScheduler()
@@ -325,6 +328,22 @@ async def startup_event():
         misfire_grace_time=3600,
     )
 
+    # OCR 上传图（义工登记表）保留 3 天：到点硬删原图 + 缩略图 + OCR 行 + 事件，
+    # 活动绑定的义工单不在此列（entity_type='activity' 是证据）。05:00 避开
+    # 03:00 的附件墓碑清理与 03:30 的留存清理，三件事不同表但都要 ADB 写额度。
+    scheduler.add_job(
+        run_ocr_upload_gc,
+        "cron",
+        hour=5,
+        minute=0,
+        second=0,
+        timezone="Asia/Hong_Kong",
+        id="daily_ocr_upload_gc",
+        coalesce=True,
+        max_instances=1,
+        misfire_grace_time=3600,
+    )
+
     # Delete expired app_logs / export_tasks rows daily at 03:30 HKT (UTC+8).
     # minute=30: hour=3 is taken by daily_purge_files above.
     scheduler.add_job(
@@ -440,6 +459,18 @@ async def startup_event():
         misfire_grace_time=10,
     )
 
+    # AI 定时任务：每分钟扫一次到期任务。claim 是 CAS（见 scheduled_runner），
+    # 所以这里的 max_instances=1 只是省重复扫描，不是正确性依赖。
+    scheduler.add_job(
+        scheduled_runner.tick,
+        "interval",
+        seconds=60,
+        id="ai_schedule_tick",
+        coalesce=True,
+        max_instances=1,
+        misfire_grace_time=30,
+    )
+
     try:
         await run_queue.kick()
     except Exception:  # noqa: BLE001 - 起泵失败只影响后台执行，接口仍可用
@@ -524,6 +555,9 @@ app.include_router(
 )
 app.include_router(
     ai_chat_conversations_router.router, prefix="/api/ai", tags=["ai"]
+)
+app.include_router(
+    ai_schedule_router.router, prefix="/api/ai/scheduled-tasks", tags=["ai"]
 )
 
 

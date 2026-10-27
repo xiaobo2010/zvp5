@@ -638,6 +638,50 @@ describe('接回在跑的任务', () => {
   })
 })
 
+describe('回复渲染', () => {
+  it('助手回复走 markdown，用户气泡保持纯文本', async () => {
+    vi.mocked(listMessages).mockResolvedValue({
+      messages: [
+        {
+          oid: 'm1',
+          seq: 1,
+          role: 'user',
+          content: '**别当 markdown**',
+          created_at: '2026-10-25T00:00:00'
+        },
+        {
+          oid: 'm2',
+          seq: 2,
+          role: 'assistant',
+          content: '| 项目 | 数量 |\n| --- | --- |\n| 活动 | 3 |',
+          created_at: '2026-10-25T00:01:00'
+        }
+      ],
+      has_more: false,
+      total: 2
+    })
+    const wrapper = mountPage()
+    await settle()
+    // markdown 渲染有 150ms 防抖，等它落定。
+    await vi.advanceTimersByTimeAsync(200)
+    await settle()
+
+    // 助手回复：表格被渲染出来了。
+    const markdown = wrapper.find('.ai-chat__markdown')
+    expect(markdown.exists()).toBe(true)
+    expect(markdown.find('table').exists()).toBe(true)
+    expect(markdown.find('td').text()).toBe('活动')
+
+    // 用户气泡：还是纯文本，没被当成 markdown 渲染。
+    const userText = wrapper.find('.ai-chat__row.user .ai-chat__text')
+    expect(userText.exists()).toBe(true)
+    expect(userText.find('strong').exists()).toBe(false)
+    expect(userText.text()).toContain('**别当 markdown**')
+
+    wrapper.unmount()
+  })
+})
+
 describe('待确认提案', () => {
   it('进页面拉一次待确认提案', async () => {
     vi.mocked(fetchPendingProposals).mockResolvedValue({

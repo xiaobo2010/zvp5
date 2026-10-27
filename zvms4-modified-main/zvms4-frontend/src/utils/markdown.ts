@@ -2,11 +2,42 @@ import MarkdownIt from 'markdown-it'
 import DOMPurify, { type Config } from 'dompurify'
 import { isXuehaiAvailable } from '@/plugins/ua.ts'
 
+/**
+ * 渲染上限：超过这个长度的文本只渲染前半截。
+ *
+ * 超长正文（AI 长回复、整篇文件预览）全量 parse + sanitize 一次要几十毫秒，
+ * 还会把 DOM 撑到几千个节点；截断 + 一句提示更划算。
+ */
+export const MARKDOWN_MAX_CHARS = 20_000
+
 const md = new MarkdownIt({
   html: false,
   linkify: true,
   breaks: true
 })
+
+/**
+ * 表格对齐。
+ *
+ * markdown-it 默认把对齐写成 style="text-align:center"，而 style 不能进净化
+ * 白名单（放开它等于放开任意样式注入）。这里改写成 align 属性：视觉等价，
+ * 白名单不放松。class / style / script / iframe 一律仍然挡在门外。
+ */
+function cellAlignment(attrs: Array<[string, string]> | null): string {
+  const style = attrs?.find(([name]) => name === 'style')?.[1] ?? ''
+  const matched = /text-align\s*:\s*(left|center|right)/.exec(style)
+  return matched?.[1] ?? ''
+}
+
+md.renderer.rules.th_open = (tokens, idx) => {
+  const align = cellAlignment(tokens[idx]?.attrs ?? null)
+  return `<th${align ? ` align="${align}"` : ''}>`
+}
+
+md.renderer.rules.td_open = (tokens, idx) => {
+  const align = cellAlignment(tokens[idx]?.attrs ?? null)
+  return `<td${align ? ` align="${align}"` : ''}>`
+}
 
 const ALLOWED_TAGS = [
   'p',
@@ -31,10 +62,18 @@ const ALLOWED_TAGS = [
   'li',
   'a',
   'hr',
-  'img'
+  'img',
+  // 表格：AI 回复里的对比表很常见，缺了这些标签整张表会被削平成一串段落
+  'table',
+  'thead',
+  'tbody',
+  'tfoot',
+  'tr',
+  'th',
+  'td'
 ]
 
-const ALLOWED_ATTR = ['href', 'title', 'target', 'rel', 'src', 'alt']
+const ALLOWED_ATTR = ['href', 'title', 'target', 'rel', 'src', 'alt', 'align']
 
 const purifyConfig: Config = {
   ALLOWED_TAGS,

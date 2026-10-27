@@ -6,12 +6,13 @@ import { useI18n } from 'vue-i18n'
 import { useWindowSize } from '@vueuse/core'
 import { ElPageHeader, ElSegmented, ElIcon } from 'element-plus'
 import { ArrowLeft, Avatar, Bell } from '@element-plus/icons-vue'
-import { Block, Config, Group, Lock, Log, User } from '@icon-park/vue-next'
+import { Block, Config, Group, Lock, Log, Picture, User } from '@icon-park/vue-next'
 import ZGroupUserList from '@/components/group/ZGroupUserList.vue'
 import ZGroupList from '@/components/group/ZGroupList.vue'
 import ZLogList from '@/components/log/ZLogList.vue'
 import ZBanRules from '@/components/manage/ZBanRules.vue'
 import ZDeviceBans from '@/components/manage/ZDeviceBans.vue'
+import ZAttachmentAudit from '@/components/manage/ZAttachmentAudit.vue'
 import ZNotificationAdmin from '@/components/manage/ZNotificationAdmin.vue'
 import ZSystemSettings from '@/components/manage/ZSystemSettings.vue'
 import ManageRoles from '@/views/manage/ManageRoles.vue'
@@ -34,11 +35,21 @@ const isSecretary = userStore.position.includes('secretary')
 const secretaryOnly = isSecretary && !isAdmin && !isDepartment
 
 /** 只有管理员能进的分区；其他人访问一律回落到入口分区。 */
-const ADMIN_ONLY = ['notifications', 'roles', 'settings', 'deviceBans']
+const ADMIN_ONLY = ['notifications', 'roles', 'settings', 'deviceBans', 'attachments']
 
 const VALID_CURRENT = secretaryOnly
   ? ['users']
-  : ['groups', 'users', 'roles', 'ban', 'deviceBans', 'logs', 'notifications', 'settings']
+  : [
+      'groups',
+      'users',
+      'roles',
+      'ban',
+      'deviceBans',
+      'attachments',
+      'logs',
+      'notifications',
+      'settings'
+    ]
 
 /** 无参数或越权访问时的回退分区。 */
 const HOME_TAB = secretaryOnly ? 'users' : 'groups'
@@ -105,6 +116,11 @@ if (isAdmin) {
     label: 'DeviceBans',
     value: 'deviceBans',
     icon: Lock
+  }
+  tabs.value[tabs.value.length] = {
+    label: 'Attachments',
+    value: 'attachments',
+    icon: Picture
   }
   tabs.value[tabs.value.length] = {
     label: 'Logs',
@@ -240,6 +256,7 @@ watch([current, compactTabs], () => {
     <ZLogList v-else-if="current === 'logs'" id="" user="" />
     <ZBanRules v-else-if="current === 'ban'" />
     <ZDeviceBans v-else-if="current === 'deviceBans'" />
+    <ZAttachmentAudit v-else-if="current === 'attachments'" />
     <ZNotificationAdmin v-else-if="current === 'notifications'" />
     <ZSystemSettings v-else-if="current === 'settings'" />
   </div>

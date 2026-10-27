@@ -195,6 +195,7 @@ export const zhCN = {
       notifications: '通知',
       ban: '封禁',
       deviceBans: '设备封禁',
+      attachments: '附件管理',
       logs: '日志',
       settings: '设置'
     }
@@ -582,6 +583,126 @@ export const zhCN = {
       resetConfirmButton: '重置',
       resetNotice: '已重置设备 {xuehaiId} 的违规梯度',
       resetFailed: '重置失败，请稍后重试'
+    }
+  },
+  attachments: {
+    title: '附件管理',
+    subtitle:
+      '核查学生上传的附件：看原图与 OCR 文本，再决定通过还是驳回。裁决与删除都会写进审计时间线。',
+    refresh: '刷新',
+    resetFilters: '清空筛选',
+    filters: '筛选',
+    filterHint:
+      '默认只列原图：缩略图与派生文件是原图的附属行，需要逐条核对时可在「类型」里放开。',
+    cancel: '取消',
+    loadFailed: '加载失败，请稍后重试',
+    empty: '当前没有符合条件的附件',
+    filterFields: {
+      purpose: '用途',
+      purposeAll: '全部用途',
+      status: '状态',
+      statusAll: '全部状态',
+      ocrStatus: 'OCR 状态',
+      ocrStatusAll: '全部 OCR 状态',
+      kind: '类型',
+      kindAll: '全部类型',
+      owner: '上传者',
+      ownerAll: '全部上传者',
+      range: '上传时间',
+      rangeTo: '至',
+      rangeStart: '开始时间',
+      rangeEnd: '结束时间'
+    },
+    status: {
+      stored: '已存储',
+      processing: '处理中',
+      ready: '就绪',
+      verified: '已通过',
+      rejected: '已驳回',
+      quarantined: '已隔离',
+      deleted: '已删除'
+    },
+    ocrStatus: {
+      pending: '待识别',
+      processing: '识别中',
+      done: '已完成',
+      failed: '失败'
+    },
+    kind: {
+      original: '原图',
+      thumb: '缩略图',
+      derived: '派生文件'
+    },
+    purpose: {
+      volunteer_order: '义工登记单'
+    },
+    eventActions: {
+      upload: '上传',
+      audit_verified: '裁决通过',
+      audit_rejected: '裁决驳回',
+      verify: '查证',
+      bind: '绑定对象',
+      link: '签发外链',
+      delete: '删除',
+      ocr_start: '开始识别',
+      ocr_done: '识别完成',
+      ocr_failed: '识别失败'
+    },
+    columns: {
+      thumbnail: '缩略图',
+      file: '文件',
+      purpose: '用途',
+      binding: '绑定对象',
+      status: '状态',
+      owner: '上传者',
+      createdAt: '上传时间'
+    },
+    table: {
+      title: '附件列表',
+      count: '共 {count} 条',
+      unbound: '未绑定',
+      view: '查看',
+      decide: '裁决',
+      delete: '删除'
+    },
+    detail: {
+      title: '附件详情',
+      retry: '重试',
+      loadFailed: '详情加载失败，请稍后重试',
+      original: '原图',
+      imageLoading: '原图加载中…',
+      imageFailed: '原图加载失败，可能是文件已被清理。',
+      ocrText: 'OCR 文本',
+      noOcr: '该附件没有 OCR 结果',
+      lines: '识别行',
+      noLines: '没有可逐行对照的识别结果',
+      noBox: '无坐标',
+      events: '审计时间线',
+      noEvents: '暂无审计记录',
+      meta: {
+        owner: '上传者',
+        mime: '类型',
+        size: '大小',
+        dimensions: '尺寸',
+        purpose: '用途',
+        status: '状态',
+        createdAt: '上传时间'
+      },
+      notePlaceholder: '裁决备注（可选）',
+      approve: '通过',
+      reject: '驳回',
+      rejectConfirmTitle: '驳回附件',
+      rejectConfirm: '确定要驳回该附件吗？驳回后附件不再对外可用。',
+      approved: '已通过该附件',
+      rejected: '已驳回该附件',
+      decideFailed: '裁决失败，请稍后重试'
+    },
+    delete: {
+      confirmTitle: '删除附件',
+      confirm: '确定要删除附件「{name}」吗？删除后该附件不再可读。',
+      confirmButton: '删除',
+      deleted: '已删除附件',
+      failed: '删除失败，请稍后重试'
     }
   },
   exports: {

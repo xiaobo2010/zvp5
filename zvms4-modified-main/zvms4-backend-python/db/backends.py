@@ -195,6 +195,13 @@ def get_ai_api_keys_repo(session: Any = None) -> Any:
     return OracleAIApiKeysRepo(session)
 
 
+def get_ai_scheduled_tasks_repo(session: Any = None) -> Any:
+    """Return the ``AiScheduledTasksRepo`` implementation (AI 定时任务)."""
+    from db.repos.oracle.ai_scheduled_tasks import OracleAiScheduledTasksRepo
+
+    return OracleAiScheduledTasksRepo(session)
+
+
 def get_ai_agent_events_repo(session: Any = None) -> Any:
     """Return the ``AIAgentEventsRepo`` implementation (agent 工具调用留痕)."""
     from db.repos.oracle.ai_agent_events import OracleAIAgentEventsRepo

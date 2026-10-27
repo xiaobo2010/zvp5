@@ -86,7 +86,6 @@ CHAT_ROUND_NO = 1
 
 # 历史回放的上限：与 ``services/agent/run_queue`` 同口径。chat 的上下文靠压缩
 # 摘要收口，这里只是兜住「一次把上万条 CLOB 拉进内存」的病态情形。
-HISTORY_PAGE = 100
 HISTORY_MAX = 400
 
 # 中断/落库失败时写进审计的错误码。前端码表里没有它们，但这两条**不可能**出现在
@@ -243,27 +242,42 @@ def _replay(row: Mapping[str, Any]) -> dict:
     return {"role": "user", "content": content}
 
 
-async def _history(user: Mapping[str, Any], conversation: Mapping[str, Any]) -> list[dict]:
-    """``seq > summary_upto_seq`` 的历史，按页翻到上限为止（§5.1 第 3 段）。
+async def _history(conversation: Mapping[str, Any]) -> list[dict]:
+    """``seq > summary_upto_seq`` 的历史，按仓库的单页上限翻到 400 条为止（§5.1）。
 
     摘要之前的内容**不进上下文**：它已经在第二条 system 里，再带原文等于把压缩
     白花的钱又花一次。
+
+    归属闸由调用方（``chat_in_conversation`` 的 ``fetch_row``）做过，所以这里不再走
+    ``list_messages``：那条路径每页都多一次 ``require_row``（每翻 4 页 = 4 次多余的
+    归属查询），而且把「翻到上限」写成了 4 次固定往返。
+
+    查询次数（仓库对 ``list_after`` 的行数封顶是 ``MESSAGE_LIMIT_MAX``，不能靠「一次
+    要 400 行」绕过去）：
+
+    * 常见情况（历史 ≤ 100 条，绝大多数会话）—— **1 次**查询；
+    * 400 条满额—— 4 次，是仓库单页上限决定的物理下限；
+    * 改造前同一场景是 8 次（4 页 × (归属 + 取行)）。
     """
     conversation_oid = str(conversation.get("_id") or "")
     after = max(0, _int(conversation.get("summary_upto_seq")))
     rows: list[dict] = []
     while len(rows) < HISTORY_MAX:
-        page = await conversations.list_messages(
-            user=user, oid=conversation_oid, after_seq=after, limit=HISTORY_PAGE
+        page = await conversations._messages().list_after(
+            conversation_oid, after, limit=conversations.MESSAGE_LIMIT_MAX
         )
-        items = page.get("messages") or []
-        if not items:
+        if not page:
             break
-        rows.extend(items)
-        after = max(after, _int(items[-1].get("seq")))
-        if not page.get("has_more"):
+        rows.extend(page)
+        last = max(after, _int(page[-1].get("seq")))
+        if len(page) < conversations.MESSAGE_LIMIT_MAX or last <= after:
+            # 取不满一页 = 已经没有下一页；``last <= after`` 是防御：seq 不动时
+            # 再翻一次只会拿到同一页。
             break
-    return [_replay(row) for row in rows[:HISTORY_MAX]]
+        after = last
+    return [
+        _replay(conversations.message_view(row)) for row in rows[:HISTORY_MAX]
+    ]
 
 
 def _int(value: object) -> int:
@@ -602,7 +616,7 @@ async def chat_in_conversation(
         return _error(exc.status_code, exc.code, exc.message, request_id=request_id)
 
     try:
-        history = await _history(user, conversation)
+        history = await _history(conversation)
         messages = agent_context.build_messages(
             prompt.SYSTEM_PROMPT,
             conversation.get("summary"),

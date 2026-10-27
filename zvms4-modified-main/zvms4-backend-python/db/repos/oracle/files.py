@@ -35,7 +35,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Any, AsyncIterator
 
-from sqlalchemy import func, insert, select, update
+from sqlalchemy import delete, exists, func, insert, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.ids import new_oid, normalize_oid
@@ -77,6 +77,18 @@ _SERVE_STATUSES = ("stored", "ready", "verified")
 # would silently hide any future in-flight status from the listing, which is the
 # opposite of what a listing is for. Adding a status here is a product decision.
 _DEAD_STATUSES = ("deleted", "rejected", "quarantined")
+
+# 管理员已经给出结论的状态。保留期清理**永不**删除这些行：它们既是审计证据，
+# 也是 ``DELETE /api/attachments/{oid}`` 拒绝的对象（design §4 #11）。
+_AUDIT_SETTLED_STATUSES = ("verified", "rejected")
+
+# OCR 上传图清理的单批上限。Oracle 的 ``IN (...)`` 硬上限是 1000 项，一批原图
+# 及其缩略图最多 2×200 项，两个列表都留足余量。
+_OCR_UPLOAD_PURGE_MAX_BATCH = 200
+
+# ``file_oids_with_ocr`` 的 ``IN`` 分片（同 ``db/repos/oracle/users.py`` 的
+# ``_OID_CHUNK``：Oracle 一条 ``IN`` 最多 1000 项，超了是 ORA-01795）。
+_OID_CHUNK = 500
 
 
 @asynccontextmanager
@@ -202,6 +214,11 @@ def _list_conds(
     status: str | None,
     entity_type: str | None,
     entity_oid: str | None,
+    *,
+    created_from: Any = None,
+    created_to: Any = None,
+    ocr_status: str | None = None,
+    kind: str | None = None,
 ) -> list[Any]:
     """WHERE conditions shared by :func:`_list_page_stmt` and :func:`_count_stmt`.
 
@@ -215,6 +232,12 @@ def _list_conds(
     Because both the page query and the count query build their WHERE from this
     one helper, the paged rows and the reported total always share the same
     filter.
+
+    The administrative filters (``created_from`` / ``created_to`` /
+    ``ocr_status`` / ``kind``) are half-open on the upper edge: a row is kept
+    when ``created_from <= created_at < created_to``. The HTTP layer turns a
+    date-only ``created_to`` into the next midnight, so "up to 2026-10-01" means
+    "including everything created on 2026-10-01".
     """
     conds: list[Any] = []
     if owner_oid is not None:
@@ -229,6 +252,14 @@ def _list_conds(
         conds.append(files_tbl.c.entity_type == entity_type)
     if entity_oid is not None:
         conds.append(files_tbl.c.entity_oid == entity_oid)
+    if created_from is not None:
+        conds.append(files_tbl.c.created_at >= created_from)
+    if created_to is not None:
+        conds.append(files_tbl.c.created_at < created_to)
+    if ocr_status is not None:
+        conds.append(files_tbl.c.ocr_status == ocr_status)
+    if kind is not None:
+        conds.append(files_tbl.c.kind == kind)
     return conds
 
 
@@ -240,9 +271,24 @@ def _list_page_stmt(
     entity_oid: str | None,
     page: int,
     size: int,
+    *,
+    created_from: Any = None,
+    created_to: Any = None,
+    ocr_status: str | None = None,
+    kind: str | None = None,
 ):
     stmt = select(*_meta_columns())
-    conds = _list_conds(owner_oid, purpose, status, entity_type, entity_oid)
+    conds = _list_conds(
+        owner_oid,
+        purpose,
+        status,
+        entity_type,
+        entity_oid,
+        created_from=created_from,
+        created_to=created_to,
+        ocr_status=ocr_status,
+        kind=kind,
+    )
     if conds:
         stmt = stmt.where(*conds)
     return (
@@ -258,9 +304,24 @@ def _count_stmt(
     status: str | None,
     entity_type: str | None,
     entity_oid: str | None,
+    *,
+    created_from: Any = None,
+    created_to: Any = None,
+    ocr_status: str | None = None,
+    kind: str | None = None,
 ):
     stmt = select(func.count()).select_from(files_tbl)
-    conds = _list_conds(owner_oid, purpose, status, entity_type, entity_oid)
+    conds = _list_conds(
+        owner_oid,
+        purpose,
+        status,
+        entity_type,
+        entity_oid,
+        created_from=created_from,
+        created_to=created_to,
+        ocr_status=ocr_status,
+        kind=kind,
+    )
     if conds:
         stmt = stmt.where(*conds)
     return stmt
@@ -315,6 +376,98 @@ def _purge_deleted_stmt(before: Any):
     )
 
 
+def _clamp_batch_limit(batch_limit: int) -> int:
+    """Clamp a caller-supplied batch size into ``1.._OCR_UPLOAD_PURGE_MAX_BATCH``.
+
+    Defensive on purpose: the retention task reads its batch size from a
+    deployment config file, and a ``0``/negative/garbage value there would
+    otherwise turn one batch into "delete nothing" or "delete everything".
+    """
+    try:
+        value = int(batch_limit)
+    except (TypeError, ValueError):
+        return _OCR_UPLOAD_PURGE_MAX_BATCH
+    return max(1, min(value, _OCR_UPLOAD_PURGE_MAX_BATCH))
+
+
+def _ocr_upload_candidates_stmt(cutoff: Any, limit: int):
+    """One batch of OCR upload originals that are safe to hard-delete.
+
+    The predicate is the whole contract (see ``tasks/ocr_upload_gc.py``):
+
+    * ``purpose='volunteer_order'`` — the only purpose the upload API produces
+      today; nothing else is auto-generated material;
+    * ``entity_type IS NULL`` — never touches an image bound to an activity (the
+      volunteer-order images carry ``entity_type='activity'``);
+    * ``kind='original'`` — thumbnails are deleted *through* their parent, never
+      selected on their own (otherwise a thumb could be orphaned mid-batch);
+    * ``created_at < cutoff`` — the retention window;
+    * ``status NOT IN ('verified','rejected')`` — an administrative verdict is
+      evidence, and the delete endpoint already refuses those rows for everyone;
+    * **no non-thumb child** referencing it through ``parent_oid``. Only
+      thumbnails are expected to reference an original today, but a future
+      ``kind='derived'`` row would make the original load-bearing: skip it
+      rather than leave the derived row dangling (there is no FK to cascade).
+    """
+    child = files_tbl.alias("child")
+    referenced = exists(
+        select(1)
+        .select_from(child)
+        .where(child.c.parent_oid == files_tbl.c.oid, child.c.kind != "thumb")
+    )
+    return (
+        select(files_tbl.c.oid)
+        .where(
+            files_tbl.c.purpose == "volunteer_order",
+            files_tbl.c.entity_type.is_(None),
+            files_tbl.c.kind == "original",
+            files_tbl.c.created_at < cutoff,
+            files_tbl.c.status.notin_(_AUDIT_SETTLED_STATUSES),
+            ~referenced,
+        )
+        .order_by(files_tbl.c.created_at.asc(), files_tbl.c.oid.asc())
+        .limit(limit)
+    )
+
+
+def _children_stmt(parent_oids: list[str]):
+    return select(files_tbl.c.oid, files_tbl.c.kind).where(
+        files_tbl.c.parent_oid.in_(parent_oids)
+    )
+
+
+def _delete_originals_stmt(oids: list[str]):
+    """Delete the selected originals, re-asserting the "no verdict" guard.
+
+    ``SELECT`` → ``DELETE`` is not a single statement: an adjudication could land
+    in between (Oracle forbids ``FOR UPDATE`` together with ``FETCH FIRST``, so
+    the candidate query cannot lock its rows). Re-checking the two predicates
+    that matter for evidence — ``kind`` and the settled statuses — keeps a row
+    that was just verified/rejected alive; the residual window is the couple of
+    statements between the side-table deletes and this one, inside one
+    transaction.
+    """
+    return delete(files_tbl).where(
+        files_tbl.c.oid.in_(oids),
+        files_tbl.c.kind == "original",
+        files_tbl.c.status.notin_(_AUDIT_SETTLED_STATUSES),
+    )
+
+
+def _delete_thumb_children_stmt(parent_oids: list[str]):
+    return delete(files_tbl).where(
+        files_tbl.c.kind == "thumb", files_tbl.c.parent_oid.in_(parent_oids)
+    )
+
+
+def _delete_ocr_rows_stmt(file_oids: list[str]):
+    return delete(file_ocr_tbl).where(file_ocr_tbl.c.file_oid.in_(file_oids))
+
+
+def _delete_file_events_stmt(file_oids: list[str]):
+    return delete(file_events_tbl).where(file_events_tbl.c.file_oid.in_(file_oids))
+
+
 def _ocr_columns() -> tuple[Any, ...]:
     return (
         file_ocr_tbl.c.oid,
@@ -358,6 +511,21 @@ def _get_ocr_stmt(file_oid: str):
     )
 
 
+def _ocr_oids_stmt(oids: list[str]):
+    """Which of ``oids`` have at least one ``FILE_OCR`` row (one round trip).
+
+    Used by the listing to fill ``has_ocr`` for a whole page: the per-row
+    :meth:`OracleFilesRepo.get_ocr` would pull every OCR text/raw JSON (a CLOB
+    plus a JSON document per row) just to answer a boolean, i.e. the classic
+    N+1 with a payload.
+    """
+    return (
+        select(file_ocr_tbl.c.file_oid)
+        .where(file_ocr_tbl.c.file_oid.in_(oids))
+        .distinct()
+    )
+
+
 def _event_columns() -> tuple[Any, ...]:
     return (
         file_events_tbl.c.oid,
@@ -392,12 +560,26 @@ def _insert_event_stmt(
     )
 
 
-def _list_events_stmt(file_oid: str):
-    return (
+def _list_events_stmt(file_oid: str, *, limit: int | None = None):
+    """Chronological timeline; ``limit`` keeps the **newest** N rows.
+
+    ``DESC`` + ``LIMIT`` is what makes "the newest 50" cheap on a row with a
+    long audit history; the rows are reversed back to chronological order by
+    the caller. Oracle's ``FETCH FIRST`` supports ``ORDER BY`` fine (only
+    ``DELETE`` lacks it — see ``_purge_trash_stmt`` in ``users.py``).
+    """
+    if limit is None:
+        order = (file_events_tbl.c.created_at.asc(), file_events_tbl.c.oid.asc())
+    else:
+        order = (file_events_tbl.c.created_at.desc(), file_events_tbl.c.oid.desc())
+    stmt = (
         select(*_event_columns())
         .where(file_events_tbl.c.file_oid == file_oid)
-        .order_by(file_events_tbl.c.created_at.asc(), file_events_tbl.c.oid.asc())
+        .order_by(*order)
     )
+    if limit is not None:
+        stmt = stmt.limit(limit)
+    return stmt
 
 
 # ---------------------------------------------------------------------------
@@ -561,15 +743,57 @@ class OracleFilesRepo:
         entity_oid: str | None,
         page: int,
         size: int,
+        *,
+        created_from: Any = None,
+        created_to: Any = None,
+        ocr_status: str | None = None,
+        kind: str | None = None,
     ) -> tuple[list[Row], int]:
         page_stmt = _list_page_stmt(
-            owner_oid, purpose, status, entity_type, entity_oid, page, size
+            owner_oid,
+            purpose,
+            status,
+            entity_type,
+            entity_oid,
+            page,
+            size,
+            created_from=created_from,
+            created_to=created_to,
+            ocr_status=ocr_status,
+            kind=kind,
         )
-        count_stmt = _count_stmt(owner_oid, purpose, status, entity_type, entity_oid)
+        count_stmt = _count_stmt(
+            owner_oid,
+            purpose,
+            status,
+            entity_type,
+            entity_oid,
+            created_from=created_from,
+            created_to=created_to,
+            ocr_status=ocr_status,
+            kind=kind,
+        )
         async with _session_for(self._session) as (session, _owns):
             total = (await session.execute(count_stmt)).scalar_one()
             rows = (await session.execute(page_stmt)).all()
         return [_file_row(row._mapping) for row in rows], int(total)
+
+    async def file_oids_with_ocr(self, oids: list[str]) -> set[str]:
+        """Return the subset of ``oids`` that has any ``FILE_OCR`` row.
+
+        One statement per ≤:data:`_OID_CHUNK` ids, no payload columns: this is
+        the listing's ``has_ocr`` flag, not an OCR read.
+        """
+        unique = list(dict.fromkeys(normalize_oid(oid) for oid in oids))
+        if not unique:
+            return set()
+        found: set[str] = set()
+        async with _session_for(self._session) as (session, _owns):
+            for start in range(0, len(unique), _OID_CHUNK):
+                chunk = unique[start : start + _OID_CHUNK]
+                rows = (await session.execute(_ocr_oids_stmt(chunk))).all()
+                found.update(str(row[0]) for row in rows)
+        return found
 
     async def thumb_for(self, parent_oid: str) -> Row | None:
         stmt = _thumb_for_stmt(normalize_oid(parent_oid))
@@ -616,6 +840,63 @@ class OracleFilesRepo:
             if owns:
                 await session.commit()
         return int(result.rowcount)
+
+    async def purge_ocr_uploads(
+        self, cutoff: Any, batch_limit: int = _OCR_UPLOAD_PURGE_MAX_BATCH
+    ) -> dict[str, int]:
+        """Hard-delete one batch of expired OCR upload images and their children.
+
+        Selection: :func:`_ocr_upload_candidates_stmt` (see its docstring for the
+        full predicate). For every selected original this also removes
+
+        * its ``kind='thumb'`` children (same ``FILES`` table, linked by
+          ``parent_oid`` — the schema has no FK, so nothing cascades);
+        * the ``FILE_OCR`` rows of the original **and** of its thumbnails;
+        * the ``FILE_EVENTS`` audit rows of the same set (a hard delete leaves no
+          row to attach history to).
+
+        Deleting the audit rows is deliberate: the retention rule is about
+        transient upload material that nobody adjudicated, and keeping
+        ``FILE_EVENTS`` rows pointing at a vanished ``FILES`` row would create
+        exactly the dangling references this method avoids elsewhere.
+
+        Ordering matters — children and side tables first, the originals last,
+        so an interrupted batch never leaves a thumb/OCR row whose parent is
+        already gone. Everything runs in the caller's session when one was
+        injected, otherwise in one owned transaction (one commit per batch, the
+        ``tasks/user_trash_gc.py`` discipline). The final ``DELETE`` re-asserts
+        ``kind='original'`` + "no verdict yet" (see :func:`_delete_originals_stmt`).
+
+        Returns ``{"originals", "thumbs", "ocr_rows", "events"}`` deleted counts.
+        """
+        limit = _clamp_batch_limit(batch_limit)
+        counts = {"originals": 0, "thumbs": 0, "ocr_rows": 0, "events": 0}
+        async with _session_for(self._session) as (session, owns):
+            candidates = (
+                await session.execute(_ocr_upload_candidates_stmt(cutoff, limit))
+            ).all()
+            originals = [str(row[0]) for row in candidates]
+            if not originals:
+                return counts
+
+            children = (await session.execute(_children_stmt(originals))).all()
+            thumbs = [str(row[0]) for row in children if str(row[1]) == "thumb"]
+
+            file_oids = originals + thumbs
+            ocr_result = await session.execute(_delete_ocr_rows_stmt(file_oids))
+            events_result = await session.execute(_delete_file_events_stmt(file_oids))
+            thumbs_result = await session.execute(
+                _delete_thumb_children_stmt(originals)
+            )
+            originals_result = await session.execute(_delete_originals_stmt(originals))
+
+            counts["ocr_rows"] = max(0, int(ocr_result.rowcount))
+            counts["events"] = max(0, int(events_result.rowcount))
+            counts["thumbs"] = max(0, int(thumbs_result.rowcount))
+            counts["originals"] = max(0, int(originals_result.rowcount))
+            if owns:
+                await session.commit()
+        return counts
 
     async def add_ocr(
         self,
@@ -675,11 +956,19 @@ class OracleFilesRepo:
                 await session.commit()
         return oid
 
-    async def list_events(self, file_oid: str) -> list[Row]:
-        stmt = _list_events_stmt(normalize_oid(file_oid))
+    async def list_events(self, file_oid: str, *, limit: int | None = None) -> list[Row]:
+        """Return ``file_oid``'s audit events, oldest first.
+
+        ``limit`` keeps only the **newest** ``limit`` events (still returned
+        oldest-first, so the client renders a chronological timeline).
+        """
+        stmt = _list_events_stmt(normalize_oid(file_oid), limit=limit)
         async with _session_for(self._session) as (session, _owns):
             rows = (await session.execute(stmt)).all()
-        return [_event_row(row._mapping) for row in rows]
+        events = [_event_row(row._mapping) for row in rows]
+        if limit is not None:
+            events.reverse()
+        return events
 
 
 __all__ = ["OracleFilesRepo"]

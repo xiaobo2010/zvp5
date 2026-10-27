@@ -5,6 +5,7 @@ import { ref, watch, type Component } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ElPageHeader, ElSegmented, ElIcon } from 'element-plus'
 import {
+  AlarmClock,
   ArrowLeft,
   Coin,
   Cpu,
@@ -22,6 +23,7 @@ import ZAiQuotaAdmin from '@/components/ai/ZAiQuotaAdmin.vue'
 import ZAiHealthPanel from '@/components/ai/ZAiHealthPanel.vue'
 import ZAiLogsAdmin from '@/components/ai/ZAiLogsAdmin.vue'
 import ZAiPromptAudit from '@/components/ai/ZAiPromptAudit.vue'
+import ZAiScheduledTasks from '@/components/ai/ZAiScheduledTasks.vue'
 
 interface SegmentedTab {
   label: string
@@ -32,6 +34,7 @@ interface SegmentedTab {
 const VALID_CURRENT = [
   'chat',
   'quota',
+  'scheduled',
   'keys',
   'engines',
   'quota-admin',
@@ -80,6 +83,11 @@ const tabs = ref<SegmentedTab[]>([
     label: 'quota',
     value: 'quota',
     icon: Coin
+  },
+  {
+    label: 'scheduled',
+    value: 'scheduled',
+    icon: AlarmClock
   }
 ])
 
@@ -134,6 +142,7 @@ watch(
     <div class="yg-ai-home__panel">
       <ZAiChat v-if="current === 'chat'" />
       <ZAiQuotaPanel v-else-if="current === 'quota'" />
+      <ZAiScheduledTasks v-else-if="current === 'scheduled'" />
       <ZAiKeysAdmin v-else-if="current === 'keys'" />
       <ZAiOcrEnginesAdmin v-else-if="current === 'engines'" />
       <ZAiQuotaAdmin v-else-if="current === 'quota-admin'" />

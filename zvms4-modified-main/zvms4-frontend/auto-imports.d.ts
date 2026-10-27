@@ -6,5 +6,6 @@
 // biome-ignore lint: disable
 export {}
 declare global {
+  const ElFormItem: typeof import('element-plus/es')['ElFormItem']
   const ElNotification: (typeof import('element-plus/es'))['ElNotification']
 }
