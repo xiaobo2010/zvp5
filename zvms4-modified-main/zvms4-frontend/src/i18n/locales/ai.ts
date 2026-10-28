@@ -2,7 +2,7 @@ export const zhCN = {
   title: 'AI 网关',
   subtitle: '模型转发、OCR 识别与月度额度。',
   tabs: {
-    chat: '智能体',
+    chat: 'ZVAgent',
     quota: '我的额度',
     keys: 'Key 管理',
     engines: 'OCR 引擎',
@@ -39,7 +39,13 @@ export const zhCN = {
   },
   chat: {
     model: '模型',
-    modelPlaceholder: '选择模型',
+    modelLocked: '模型在建会话时确定',
+    thinking: '思考强度',
+    thinkingDefault: '默认',
+    thinkingLow: '低',
+    thinkingMedium: '中',
+    thinkingHigh: '高',
+    safetyRejected: '该请求未通过内容安全审核。',
     modelsEmpty: '暂无可用模型，请联系管理员配置 Key。',
     modelsLoadFailed: '模型列表加载失败。',
     input: '输入内容',
@@ -50,7 +56,7 @@ export const zhCN = {
     copyRequestId: '复制请求编号',
     rateLimited: '请在 {seconds} 秒后重试',
     you: '我',
-    assistant: '助手',
+    assistant: 'ZVAgent',
     sessions: {
       title: '会话',
       subtitle: '会话按最近使用排序，回来可以接着聊。',
@@ -72,6 +78,9 @@ export const zhCN = {
       unarchive: '取消归档',
       archived: '已归档',
       archivedNotice: '会话已归档',
+      archivedEmpty: '还没有归档的会话',
+      restore: '恢复',
+      unarchivedNotice: '会话已恢复',
       remove: '删除会话',
       deleteConfirm: '确定删除该会话吗？会话内的消息与运行记录会一并删除，无法恢复。',
       deleteConfirmTitle: '删除会话',
@@ -96,7 +105,7 @@ export const zhCN = {
     }
   },
   agent: {
-    title: '智能体',
+    title: 'ZVAgent',
     subtitle: '模型会调用平台工具查数据；写操作先生成提案，确认后才执行。',
     emptyHint: '输入问题后，模型会自己选择合适的工具查询。',
     running: '正在执行工具…',
@@ -271,7 +280,7 @@ export const zhCN = {
     },
     unlock: {
       title: '输入密码以继续',
-      prompt: '与智能体交互需要验证你的账号密码，验证后 30 分钟内无需重复输入。',
+      prompt: '与 ZVAgent 交互需要验证你的账号密码，验证后 30 分钟内无需重复输入。',
       wrong: '密码不正确，请重试',
       locked: '尝试次数过多，请稍后再试',
       status: '已解锁，{min} 分钟内有效'
@@ -282,21 +291,12 @@ export const zhCN = {
     risk: {
       title: '使用前请阅读',
       power:
-        '智能体拥有真实的写权限：可以封禁账号、删除数据、改动平台配置。它不会替你复核后果，一次误用就可能造成不可逆的损失。',
-      ban: '平台会记录你与智能体的全部交互。若被判定为越狱、提示词注入或滥用工具，将计入违规梯度：本自然月首次警告，再次违规直接封号。',
+        'ZVAgent 拥有真实的写权限：可以封禁账号、删除数据、改动平台配置。它不会替你复核后果，一次误用就可能造成不可逆的损失。',
+      ban: '平台会记录你与 ZVAgent 的全部交互。若被判定为越狱、提示词注入或滥用工具，将立即记录违规并按封禁规则处罚：警告并直接封号。',
       audit:
         '所有工具调用都会留痕审计：谁、何时、调用了哪个工具、传了什么参数、结果如何，全部可回溯，事后无法删除。',
       cancel: '取消',
       ack: '我已知悉'
-    },
-    unrestricted: {
-      label: '无限制模式',
-      confirmTitle: '关闭内容审核？',
-      confirm: '关闭后你在本会话中与智能体的交互将不再进行内容审核，该操作会记录警告并接受审计。',
-      verifyReason:
-        '关闭内容审核会跳过平台安全底线，请输入你自己的密码确认这是管理员本人的操作。',
-      onToast: '已开启无限制模式，审核已跳过并记录',
-      offToast: '已关闭无限制模式，恢复内容审核'
     }
   },
   quota: {
@@ -333,6 +333,7 @@ export const zhCN = {
   keys: {
     title: 'Key 管理',
     subtitle: '凭据只显示末四位提示，明文密钥不会回显。',
+    reauthReason: '管理 AI 凭据属于高危操作，请输入密码完成再认证。',
     create: '新建凭据',
     edit: '编辑凭据',
     scope: '类型',
@@ -347,6 +348,9 @@ export const zhCN = {
     baseUrlPlaceholder: '例如 https://api.example.com',
     models: '模型',
     modelsPlaceholder: '多个模型用逗号分隔',
+    modelContext: '上下文窗口',
+    modelContextPlaceholder: '留空表示未知，如 128000',
+    modelContextHint: '按模型逐个选填上下文窗口（token 数）；留空按未知处理，填了会升级为带上下文的模型对象。',
     apiKey: '密钥',
     apiKeyPlaceholder: '至少 8 位',
     apiKeyHint: '留空表示不修改，填写即轮换密钥。',
@@ -383,6 +387,7 @@ export const zhCN = {
       apiKeyLength: '密钥长度需在 8 到 512 位之间',
       modelsTooMany: '模型最多 20 个',
       modelTooLong: '单个模型名称不能超过 80 个字符',
+      modelContextInvalid: '上下文窗口需为正整数',
       expiresInPast: '到期时间必须晚于当前时间',
       headerNameRequired: '请填写请求头名称'
     }
@@ -708,6 +713,15 @@ export const zhCN = {
     copyBody: '复制正文',
     copyBlocked: '浏览器不允许自动复制，请手动选择正文',
     noBody: '该条记录没有正文',
+    answer: '回复',
+    noAnswer: '该条记录没有留存回复',
+    toolCalls: '工具调用',
+    noToolCalls: '该次调用没有工具调用',
+    toolStatus: '状态',
+    toolArgs: '参数',
+    toolResult: '结果',
+    refused: '已拒答',
+    warned: '已警告',
     detailFailed: '正文加载失败，请重试',
     detail: {
       user: '用户',
@@ -1067,7 +1081,7 @@ export const zhCN = {
     },
     AI_AGENT_UNLOCK_REQUIRED: {
       title: '需要先验证密码',
-      hint: '与智能体交互前需要验证账号密码，验证后 30 分钟内无需重复输入。'
+      hint: '与 ZVAgent 交互前需要验证账号密码，验证后 30 分钟内无需重复输入。'
     },
     AI_AGENT_UNLOCK_FAILED: {
       title: '密码验证失败',
@@ -1080,14 +1094,6 @@ export const zhCN = {
     AI_AGENT_MODERATION_REJECTED: {
       title: '请求已被内容审核拦截',
       hint: '该请求已被内容审核拦截。多次尝试将按平台封禁规则处理。'
-    },
-    AI_SAFETY_WARNED: {
-      title: '请求未通过安全认证（首次警告）',
-      hint: '该请求与平台管理/义工管理无关且要求破坏性操作，本次已记录本月警告；本月再次出现将按封禁梯度处理。'
-    },
-    AI_SAFETY_BANNED: {
-      title: '已触发封禁',
-      hint: '同月内再次出现违规请求，账号已按封禁梯度处罚。请联系管理员申诉或等待解封。'
     },
     AI_CONVERSATION_NOT_FOUND: {
       title: '会话不存在',

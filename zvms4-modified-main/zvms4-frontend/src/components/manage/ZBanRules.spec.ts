@@ -1,23 +1,26 @@
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
-import { afterEach, beforeEach, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import ZBanRules from './ZBanRules.vue'
 import {
   createRule,
   deleteRule,
   getBannedDevices,
+  unbanDevice,
   getBannedUsers,
   getRules,
   getTriggers,
   getViolations,
   updateRule
 } from '@/api/ban'
-import type { BannedUser, BanRule, BanTrigger, BanViolation } from '@/api/ban'
+import type { BannedDevice, BannedUser, BanRule, BanTrigger, BanViolation } from '@/api/ban'
 
-const { elMessageErrorSpy, elMessageSuccessSpy, elMessageBoxConfirmSpy } = vi.hoisted(() => ({
-  elMessageErrorSpy: vi.fn(),
-  elMessageSuccessSpy: vi.fn(),
-  elMessageBoxConfirmSpy: vi.fn()
-}))
+const { elMessageErrorSpy, elMessageSuccessSpy, elMessageInfoSpy, elMessageBoxConfirmSpy } =
+  vi.hoisted(() => ({
+    elMessageErrorSpy: vi.fn(),
+    elMessageSuccessSpy: vi.fn(),
+    elMessageInfoSpy: vi.fn(),
+    elMessageBoxConfirmSpy: vi.fn()
+  }))
 
 vi.mock('@/api/ban', () => ({
   getRules: vi.fn(),
@@ -31,6 +34,13 @@ vi.mock('@/api/ban', () => ({
   banDevice: vi.fn(),
   unbanDevice: vi.fn(),
   resetDeviceGradient: vi.fn()
+}))
+
+const reauth = vi.hoisted(() => ({ withToken: vi.fn(), cancelled: vi.fn() }))
+
+vi.mock('@/plugins/reauth', () => ({
+  withReauth: reauth.withToken,
+  isReauthCancelled: reauth.cancelled
 }))
 
 vi.mock('vue-i18n', () => ({
@@ -289,7 +299,7 @@ vi.mock('element-plus', async () => {
       error: elMessageErrorSpy,
       success: elMessageSuccessSpy,
       warning: vi.fn(),
-      info: vi.fn()
+      info: elMessageInfoSpy
     }),
     ElMessageBox: Object.assign(vi.fn(), {
       confirm: elMessageBoxConfirmSpy
@@ -458,8 +468,15 @@ beforeEach(() => {
   vi.mocked(deleteRule).mockReset()
   vi.mocked(getViolations).mockReset()
   vi.mocked(getBannedDevices).mockReset()
+  reauth.withToken.mockReset()
+  reauth.cancelled.mockReset()
+  reauth.withToken.mockImplementation(
+    async (_reason: string, action: (token: string) => Promise<unknown>) => action('verify-token')
+  )
+  reauth.cancelled.mockImplementation((error: unknown) => error === 'cancel')
   elMessageErrorSpy.mockReset()
   elMessageSuccessSpy.mockReset()
+  elMessageInfoSpy.mockReset()
   elMessageBoxConfirmSpy.mockReset()
 })
 
@@ -494,7 +511,7 @@ it('toggling the enabled switch calls updateRule and reflects the new state', as
   await wrapper.find('.el-switch-stub').trigger('click')
   await flushPromises()
 
-  expect(updateRule).toHaveBeenCalledWith('foreign_device_login', { enabled: false })
+  expect(updateRule).toHaveBeenCalledWith('foreign_device_login', { enabled: false }, 'verify-token')
   expect(wrapper.find('.el-switch-stub').attributes('data-checked')).toBe('false')
 
   wrapper.unmount()
@@ -508,7 +525,7 @@ it('rolls the switch back and shows an error when the update fails', async () =>
   await wrapper.find('.el-switch-stub').trigger('click')
   await flushPromises()
 
-  expect(updateRule).toHaveBeenCalledWith('foreign_device_login', { enabled: false })
+  expect(updateRule).toHaveBeenCalledWith('foreign_device_login', { enabled: false }, 'verify-token')
   expect(wrapper.find('.el-switch-stub').attributes('data-checked')).toBe('true')
   expect(elMessageErrorSpy).toHaveBeenCalledWith('manage.banRules.revertedNotice')
 
@@ -544,10 +561,14 @@ it('submits edited rule config and penalties via updateRule', async () => {
   await saveButton!.trigger('click')
   await flushPromises()
 
-  expect(updateRule).toHaveBeenCalledWith('foreign_device_login', {
-    config: { threshold: 4, window_hours: 48 },
-    penalties: [2, 5]
-  })
+  expect(updateRule).toHaveBeenCalledWith(
+    'foreign_device_login',
+    {
+      config: { threshold: 4, window_hours: 48 },
+      penalties: [2, 5]
+    },
+    'verify-token'
+  )
   expect(elMessageSuccessSpy).toHaveBeenCalledWith('manage.banRules.savedNotice')
   expect(wrapper.find('.el-dialog-stub').exists()).toBe(false)
 
@@ -724,10 +745,14 @@ it('keeps the permanent grade when saving an untouched gradient', async () => {
   await findButton(wrapper, 'manage.banRules.dialog.save')!.trigger('click')
   await flushPromises()
 
-  expect(updateRule).toHaveBeenCalledWith('permanent_gradient', {
-    config: { threshold: 3, window_hours: 24 },
-    penalties: [1, 3, null]
-  })
+  expect(updateRule).toHaveBeenCalledWith(
+    'permanent_gradient',
+    {
+      config: { threshold: 3, window_hours: 24 },
+      penalties: [1, 3, null]
+    },
+    'verify-token'
+  )
   expect(elMessageSuccessSpy).toHaveBeenCalledWith('manage.banRules.savedNotice')
 
   wrapper.unmount()
@@ -752,17 +777,25 @@ it('accepts 0 as the permanent grade only in the last position', async () => {
 
   await openEditDialog(wrapper)
   await submitPenaltiesInput(wrapper, '0')
-  expect(updateRule).toHaveBeenLastCalledWith('permanent_gradient', {
-    config: { threshold: 3, window_hours: 24 },
-    penalties: [null]
-  })
+  expect(updateRule).toHaveBeenLastCalledWith(
+    'permanent_gradient',
+    {
+      config: { threshold: 3, window_hours: 24 },
+      penalties: [null]
+    },
+    'verify-token'
+  )
 
   await openEditDialog(wrapper)
   await submitPenaltiesInput(wrapper, '1,0')
-  expect(updateRule).toHaveBeenLastCalledWith('permanent_gradient', {
-    config: { threshold: 3, window_hours: 24 },
-    penalties: [1, null]
-  })
+  expect(updateRule).toHaveBeenLastCalledWith(
+    'permanent_gradient',
+    {
+      config: { threshold: 3, window_hours: 24 },
+      penalties: [1, null]
+    },
+    'verify-token'
+  )
 
   wrapper.unmount()
 })
@@ -834,14 +867,17 @@ it('creates a rule via createRule from the create dialog', async () => {
   await findButton(wrapper, 'manage.banRules.dialog.create')!.trigger('click')
   await flushPromises()
 
-  expect(createRule).toHaveBeenCalledWith({
-    code: 'late_homework',
-    name: '迟交作业封号',
-    trigger: 'platform_misuse',
-    config: { threshold: 3, window_hours: 24 },
-    penalties: [1, 3],
-    enabled: true
-  })
+  expect(createRule).toHaveBeenCalledWith(
+    {
+      code: 'late_homework',
+      name: '迟交作业封号',
+      trigger: 'platform_misuse',
+      config: { threshold: 3, window_hours: 24 },
+      penalties: [1, 3],
+      enabled: true
+    },
+    'verify-token'
+  )
   expect(elMessageSuccessSpy).toHaveBeenCalledWith('manage.banRules.rule.createdNotice')
   expect(wrapper.find('.el-dialog-stub').exists()).toBe(false)
 
@@ -881,7 +917,7 @@ it('deletes a non-builtin rule after confirmation and refreshes the list', async
   await flushPromises()
 
   expect(elMessageBoxConfirmSpy).toHaveBeenCalledTimes(1)
-  expect(deleteRule).toHaveBeenCalledWith('foreign_device_login')
+  expect(deleteRule).toHaveBeenCalledWith('foreign_device_login', 'verify-token')
   expect(elMessageSuccessSpy).toHaveBeenCalledWith('manage.banRules.rule.deletedNotice')
   expect(vi.mocked(getRules).mock.calls.length).toBeGreaterThan(callsBefore)
 
@@ -973,4 +1009,116 @@ it('embeds the device bans section and loads the banned devices', async () => {
   expect(wrapper.text()).toContain('manage.deviceBans.manual.submit')
 
   wrapper.unmount()
+})
+
+describe('密码再认证', () => {
+  it('启停规则先过再认证，令牌过期后换一张重试成功', async () => {
+    mockApi()
+    reauth.withToken.mockImplementation(
+      async (_reason: string, action: (token: string) => Promise<unknown>) => {
+        try {
+          return await action('stale-token')
+        } catch {
+          return action('fresh-token')
+        }
+      }
+    )
+    vi.mocked(updateRule)
+      .mockRejectedValueOnce(Object.assign(new Error('forbidden'), { status: 403 }))
+      .mockResolvedValueOnce({ ...ruleFixture, enabled: false })
+
+    const wrapper = mountPage()
+    await flushPromises()
+
+    await wrapper.find('.el-switch-stub').trigger('click')
+    await flushPromises()
+
+    expect(reauth.withToken).toHaveBeenCalledWith('manage.banRules.reauthReason', expect.any(Function))
+    expect(vi.mocked(updateRule).mock.calls[0]).toEqual([
+      'foreign_device_login',
+      { enabled: false },
+      'stale-token'
+    ])
+    expect(vi.mocked(updateRule).mock.calls[1]).toEqual([
+      'foreign_device_login',
+      { enabled: false },
+      'fresh-token'
+    ])
+    expect(wrapper.find('.el-switch-stub').attributes('data-checked')).toBe('false')
+    expect(elMessageErrorSpy).not.toHaveBeenCalled()
+
+    wrapper.unmount()
+  })
+
+  it('取消密码框时还原开关并只给一条信息提示', async () => {
+    mockApi()
+    reauth.withToken.mockRejectedValue('cancel')
+
+    const wrapper = mountPage()
+    await flushPromises()
+
+    await wrapper.find('.el-switch-stub').trigger('click')
+    await flushPromises()
+
+    expect(updateRule).not.toHaveBeenCalled()
+    expect(wrapper.find('.el-switch-stub').attributes('data-checked')).toBe('true')
+    expect(elMessageInfoSpy).toHaveBeenCalledWith('manage.reauth.cancelled')
+    expect(elMessageErrorSpy).not.toHaveBeenCalled()
+
+    wrapper.unmount()
+  })
+})
+
+describe('设备封禁的密码再认证', () => {
+  const deviceFixture: BannedDevice = {
+    xuehai_id: '100200300',
+    reason: '机房多设备登录',
+    until: null,
+    source: 'admin',
+    rule_code: null,
+    created_at: '2026-10-20T10:00:00',
+    ban_count: 2,
+    owner: { id: 'oid-1', name: '张三' }
+  }
+
+  it('解封设备先过再认证，令牌过期后换一张重试成功', async () => {
+    mockApi()
+    vi.mocked(getBannedDevices).mockResolvedValue({ devices: [deviceFixture], total: 1 })
+    reauth.withToken.mockImplementation(
+      async (_reason: string, action: (token: string) => Promise<unknown>) => {
+        try {
+          return await action('stale-token')
+        } catch {
+          return action('fresh-token')
+        }
+      }
+    )
+    vi.mocked(unbanDevice)
+      .mockRejectedValueOnce(Object.assign(new Error('forbidden'), { status: 403 }))
+      .mockResolvedValueOnce(true)
+
+    const wrapper = mountPage()
+    await flushPromises()
+    await openSection(wrapper, 'devices')
+
+    const unbanButton = wrapper
+      .findAll('button')
+      .find((button) => button.text() === 'manage.deviceBans.table.unban')
+    expect(unbanButton).toBeDefined()
+    await unbanButton!.trigger('click')
+    await flushPromises()
+
+    expect(reauth.withToken).toHaveBeenCalledWith(
+      'manage.deviceBans.reauthReason',
+      expect.any(Function)
+    )
+    expect(vi.mocked(unbanDevice).mock.calls[0]).toEqual(['100200300', 'stale-token'])
+    expect(vi.mocked(unbanDevice).mock.calls[1]).toEqual(['100200300', 'fresh-token'])
+    expect(elMessageSuccessSpy).toHaveBeenCalledWith(
+      'manage.deviceBans.table.unbannedNotice {"xuehaiId":"100200300"}'
+    )
+    expect(elMessageErrorSpy).not.toHaveBeenCalled()
+
+    wrapper.unmount()
+  })
 })

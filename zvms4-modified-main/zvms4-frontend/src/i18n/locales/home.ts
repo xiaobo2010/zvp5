@@ -50,11 +50,11 @@ export const zhCN = {
       page: '第 {page} 页，共 {total} 项'
     },
     agent: {
-      title: 'Agent 执行结果',
+      title: 'ZVAgent 执行结果',
       description: '最近的后台执行记录',
       empty: '暂无执行记录',
-      emptyDescription: '你发起的 Agent 执行结果会显示在这里。',
-      loadFailed: 'Agent 执行结果加载失败',
+      emptyDescription: '你发起的 ZVAgent 执行结果会显示在这里。',
+      loadFailed: 'ZVAgent 执行结果加载失败',
       retry: '重新加载',
       rounds: '{count} 轮',
       statuses: {

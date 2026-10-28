@@ -12,11 +12,11 @@ import {
   ElMessage,
   ElMessageBox,
   ElOption,
+  ElSegmented,
   ElSelect,
-  ElSwitch,
   ElTag
 } from 'element-plus'
-import { Menu, Promotion, VideoPause, WarningFilled } from '@element-plus/icons-vue'
+import { Lock, Menu, Promotion, VideoPause, WarningFilled } from '@element-plus/icons-vue'
 import { useWindowSize } from '@vueuse/core'
 import {
   AiRequestError,
@@ -25,18 +25,15 @@ import {
   confirmProposal,
   fetchPendingProposals,
   fetchRunDetail,
-  getModerationUnrestricted,
   listModels,
   rejectProposal,
-  setModerationUnrestricted,
   unlockAgent
 } from '@/api/ai'
 import { useAiConversationsStore } from '@/stores/aiConversations'
 import { useUserStore } from '@/stores/user'
-import { isTemporaryTokenCancelled, withTemporaryToken } from '@/plugins/short-token'
 import ZSystemAuthDialog from '@/components/system/ZSystemAuthDialog.vue'
 import ZMarkdown from '@/components/markdown/ZMarkdown.vue'
-import type { AiConversation, AiConversationMode, AiMessage, AiModelItem } from '@/../types/ai'
+import type { AiConversation, AiMessage, AiModelItem, AiThinkingLevel } from '@/../types/ai'
 import ZAiProposalCard from './ZAiProposalCard.vue'
 import ZAiSessionList from './ZAiSessionList.vue'
 import { contextPercent } from './conversationSession'
@@ -60,12 +57,9 @@ const store = useAiConversationsStore()
 const userStore = useUserStore()
 
 /**
- * 当前面板模式。对话模式（chat）已下线，默认就是智能体；
- * 风险警示只对智能体弹——只有它会调用带真实写权限的工具。
+ * 风险警示只对 ZVAgent 弹——只有它会调用带真实写权限的工具。
+ * 对话模式已下线，本组件只剩智能体一种形态。
  */
-const props = withDefaults(defineProps<{ mode?: AiConversationMode }>(), { mode: 'agent' })
-
-const isAdmin = computed(() => userStore.position.includes('admin'))
 
 /** 提案有效期的刷新间隔：后端按 10 分钟计，30 秒刷一次足够。 */
 const PROPOSAL_TICK_MS = 30_000
@@ -78,7 +72,22 @@ const isNarrow = computed(() => width.value < SIDEBAR_BREAKPOINT)
 const models = ref<AiModelItem[]>([])
 const modelsLoading = ref(false)
 const modelsFailed = ref(false)
+/** 新建会话用的模型：取 allowed 列表第一个，建完会话再改不了。 */
 const model = ref('')
+
+/** 思考强度：'' = 服务端默认档；改动即 PATCH 会话。 */
+const thinkingChoice = ref<AiThinkingLevel | ''>('')
+const thinkingSaving = ref(false)
+
+const thinkingOptions = computed(() => [
+  { label: t('ai.chat.thinkingDefault'), value: '' },
+  { label: t('ai.chat.thinkingLow'), value: 'low' },
+  { label: t('ai.chat.thinkingMedium'), value: 'medium' },
+  { label: t('ai.chat.thinkingHigh'), value: 'high' }
+])
+
+/** 当前会话锁定的模型：建会话时确定，这里只读展示。 */
+const currentModel = computed(() => store.current?.model ?? model.value)
 
 const input = ref('')
 const sending = ref(false)
@@ -122,10 +131,6 @@ const unlockNow = ref(Date.now())
 const unlocked = computed(() => isAgentUnlocked(unlockNow.value))
 const unlockMinutes = computed(() => agentUnlockMinutesLeft(unlockNow.value))
 
-/** admin 的无限制模式开关：进页面读一次，改开关走 PUT。 */
-const unrestricted = ref(false)
-const unrestrictedLoading = ref(false)
-
 let unlockTimer: ReturnType<typeof setInterval> | null = null
 
 let cooldownTimer: ReturnType<typeof setInterval> | null = null
@@ -153,7 +158,6 @@ const runActive = computed(
 const canSend = computed(
   () =>
     hasModels.value &&
-    Boolean(model.value) &&
     !sending.value &&
     cooldown.value <= 0 &&
     Boolean(store.current) &&
@@ -218,11 +222,17 @@ const runStopReason = computed(() => {
   return reason
 })
 
-/** run 失败时的错误码与人话说明。 */
+/** 内容安全拦截的统一错误码：只给一句固定文案，不再展开处罚梯度。 */
+const SAFETY_REJECTED = 'AI_SAFETY_REJECTED'
+
+/** run 失败时的错误码与人话说明；安全拦截不展开解释，也不显示错误码。 */
 const runErrorCopy = computed(() => {
   const code = store.activeRun?.error_code ?? null
   if (!code) {
     return null
+  }
+  if (code === SAFETY_REJECTED) {
+    return { code: '', title: t('ai.chat.safetyRejected'), hint: '' }
   }
   const copy = aiErrorCopy(code, t)
   return { code, title: copy.title, hint: copy.hint }
@@ -322,9 +332,9 @@ function ackRisk() {
   closeRisk(true)
 }
 
-/** 智能体门禁：非 agent 模式或本账号已确认直接放行；未确认就弹框，取消返回 false。 */
+/** 智能体门禁：本账号已确认直接放行；未确认就弹框，取消返回 false。 */
 async function passRiskGate(): Promise<boolean> {
-  if (props.mode !== 'agent' || riskAcked()) {
+  if (riskAcked()) {
     return true
   }
   return await openRisk()
@@ -401,7 +411,7 @@ async function ensureConversation(): Promise<void> {
     return
   }
   try {
-    const created = await store.createConversation('agent')
+    const created = await store.createConversation('agent', model.value || undefined)
     await store.selectConversation(created.oid)
   } catch {
     ElMessage.error(t('ai.chat.sessions.createFailed'))
@@ -423,12 +433,29 @@ async function createSession() {
     return
   }
   try {
-    const created = await store.createConversation('agent')
+    const created = await store.createConversation('agent', model.value || undefined)
     await store.selectConversation(created.oid)
   } catch {
     ElMessage.error(t('ai.chat.sessions.createFailed'))
   }
   drawerOpen.value = false
+}
+
+/** 改思考强度：默认档传 null，服务端按自家默认走。 */
+async function saveThinking(value: AiThinkingLevel | '') {
+  const conversation = store.current
+  if (!conversation) {
+    return
+  }
+  thinkingSaving.value = true
+  try {
+    await store.setConversationThinking(conversation.oid, value === '' ? null : value)
+  } catch (error) {
+    thinkingChoice.value = conversation.thinking ?? ''
+    applyError(error)
+  } finally {
+    thinkingSaving.value = false
+  }
 }
 
 function openRename(oid: string) {
@@ -461,6 +488,15 @@ async function archiveSession(oid: string) {
     if (store.currentOid === oid) {
       await ensureConversation()
     }
+  } catch (error) {
+    applyError(error)
+  }
+}
+
+async function unarchiveSession(oid: string) {
+  try {
+    await store.unarchiveConversation(oid)
+    ElMessage.success(t('ai.chat.sessions.unarchivedNotice'))
   } catch (error) {
     applyError(error)
   }
@@ -542,6 +578,9 @@ function stopProposalTimer() {
 
 /** 提案错误的文案：已知错误码沿用全局映射，未知的按状态码给明确说法。 */
 function proposalErrorCopy(code: string | null, status: number | null) {
+  if (code === SAFETY_REJECTED) {
+    return { title: t('ai.chat.safetyRejected'), hint: '' }
+  }
   if (code === 'AI_AGENT_TOTP_REQUIRED') {
     return {
       title: t('ai.agent.proposalErrors.totpRequired'),
@@ -947,70 +986,18 @@ async function withUnlockRetry<T>(action: () => Promise<T>): Promise<T> {
   }
 }
 
-/** 读 admin 的无限制模式开关；失败保持关闭，不阻挡对话。 */
-async function loadModerationState() {
-  try {
-    unrestricted.value = await getModerationUnrestricted()
-  } catch {
-    unrestricted.value = false
-  }
-}
-
-/**
- * 切换无限制模式。
- *
- * 开启是危险操作：先弹红色确认，确认后才落库；关闭不需要二次确认。
- * 服务端返回值是唯一真相，失败时开关保持原状。
- */
-async function toggleUnrestricted(next: boolean) {
-  if (next) {
-    try {
-      await ElMessageBox.confirm(
-        t('ai.agent.unrestricted.confirm'),
-        t('ai.agent.unrestricted.confirmTitle'),
-        {
-          type: 'warning',
-          confirmButtonText: t('ai.common.confirm'),
-          cancelButtonText: t('ai.common.cancel'),
-          confirmButtonClass: 'el-button--danger',
-          closeOnClickModal: false
-        }
-      )
-    } catch {
-      return
-    }
-  }
-  unrestrictedLoading.value = true
-  try {
-    const enabled = await withTemporaryToken(
-      String(userStore._id),
-      t('ai.agent.unrestricted.verifyReason'),
-      (token) => setModerationUnrestricted(next, token)
-    )
-    unrestricted.value = enabled
-    ElMessage.success(enabled ? t('ai.agent.unrestricted.onToast') : t('ai.agent.unrestricted.offToast'))
-  } catch (error) {
-    if (isTemporaryTokenCancelled(error)) {
-      return
-    }
-    applyError(error)
-  } finally {
-    unrestrictedLoading.value = false
-  }
-}
-
-function onUnrestrictedChange(value: string | number | boolean) {
-  void toggleUnrestricted(value === true)
-}
-
 /* ---------------------------------------------------------------------------
    发送
    --------------------------------------------------------------------------- */
 
-/** 通用错误处理：错误码 + 人话说明。 */
+/** 通用错误处理：错误码 + 人话说明；安全拦截只留那句固定文案。 */
 function applyError(error: unknown) {
   const aiError = error instanceof AiRequestError ? error : null
   const code = aiError?.code ?? null
+  if (code === SAFETY_REJECTED) {
+    chatError.value = { code: '', title: t('ai.chat.safetyRejected'), hint: '' }
+    return
+  }
   const copy = aiErrorCopy(code, t)
   chatError.value = { code: code ?? '', title: copy.title, hint: copy.hint }
   if (code === 'AI_RATE_LIMITED' && aiError?.retryAfter) {
@@ -1076,7 +1063,6 @@ async function sendAgentTurn(conversation: AiConversation, text: string) {
   try {
     await withUnlockRetry(() =>
       store.submitRun(conversation.oid, text, {
-        model: model.value || undefined,
         clientMsgId: msgId
       })
     )
@@ -1111,22 +1097,24 @@ async function cancelRun() {
    生命周期
    --------------------------------------------------------------------------- */
 
-// 换会话时把模型选择对齐到该会话最近用的模型。
+// 换会话时把思考强度对齐到该会话当前值。
 watch(
   () => store.currentOid,
   () => {
-    const current = store.current
-    if (current?.model && models.value.some((item) => item.id === current.model)) {
-      model.value = current.model
-    }
+    thinkingChoice.value = store.current?.thinking ?? ''
   }
 )
 
-// 角色可能是进页面后才就绪的：变成 admin 时补读一次开关状态。
-watch(isAdmin, (admin) => {
-  if (admin) {
-    void loadModerationState()
+// 思考强度改动即落库；值没变（例如切会话时的对齐）不发请求。
+watch(thinkingChoice, (value) => {
+  const conversation = store.current
+  if (!conversation) {
+    return
   }
+  if ((conversation.thinking ?? '') === value) {
+    return
+  }
+  void saveThinking(value)
 })
 
 // run 的提案增量合并：已处理过的卡片状态不能被轮询冲掉。
@@ -1171,9 +1159,6 @@ onMounted(async () => {
   // 解锁窗口可能还在（同一次访问里切过页面）：先让倒计时接上。
   syncUnlockTimer()
   observeContent()
-  if (isAdmin.value) {
-    void loadModerationState()
-  }
   // 刷新页面后没处理的写操作还在服务端：进页面先找回来。
   void loadPendingProposals()
   await store.loadConversations()
@@ -1217,12 +1202,17 @@ onUnmounted(() => {
         :loading="store.listLoading"
         :failed="store.listFailed"
         :has-more="Boolean(store.nextCursor)"
+        :archived="store.archivedConversations"
+        :archived-loading="store.archivedLoading"
+        :archived-failed="store.archivedFailed"
         @select="selectSession"
         @create="createSession"
         @rename="openRename"
         @archive="archiveSession"
+        @unarchive="unarchiveSession"
         @remove="removeSession"
         @load-more="store.loadMoreConversations()"
+        @load-archived="store.loadArchivedConversations()"
       />
     </aside>
 
@@ -1240,12 +1230,17 @@ onUnmounted(() => {
         :loading="store.listLoading"
         :failed="store.listFailed"
         :has-more="Boolean(store.nextCursor)"
+        :archived="store.archivedConversations"
+        :archived-loading="store.archivedLoading"
+        :archived-failed="store.archivedFailed"
         @select="selectSession"
         @create="createSession"
         @rename="openRename"
         @archive="archiveSession"
+        @unarchive="unarchiveSession"
         @remove="removeSession"
         @load-more="store.loadMoreConversations()"
+        @load-archived="store.loadArchivedConversations()"
       />
     </ElDrawer>
 
@@ -1270,15 +1265,25 @@ onUnmounted(() => {
 
         <div class="flex flex-wrap items-center gap-3">
           <span class="yg-text-xs yg-text-tertiary">{{ t('ai.chat.model') }}</span>
+          <ElIcon class="ai-chat__model-lock-icon"><Lock /></ElIcon>
           <ElSelect
-            v-model="model"
-            class="w-64"
-            :placeholder="t('ai.chat.modelPlaceholder')"
-            :disabled="!hasModels"
+            class="w-64 ai-chat__model-lock"
+            :model-value="currentModel"
+            disabled
           >
             <ElOption v-for="item in models" :key="item.id" :label="item.id" :value="item.id" />
           </ElSelect>
+          <span class="yg-text-xs yg-text-tertiary">{{ t('ai.chat.modelLocked') }}</span>
           <ElButton text @click="loadModels">{{ t('ai.common.refresh') }}</ElButton>
+        </div>
+
+        <div class="flex flex-wrap items-center gap-3 ai-chat__thinking">
+          <span class="yg-text-xs yg-text-tertiary">{{ t('ai.chat.thinking') }}</span>
+          <ElSegmented
+            v-model="thinkingChoice"
+            :options="thinkingOptions"
+            :disabled="!store.current || thinkingSaving"
+          />
         </div>
 
         <!-- 上下文水位：接近上限时换警示色 -->
@@ -1490,13 +1495,13 @@ onUnmounted(() => {
               </div>
             </div>
 
-            <!-- 本轮出错 -->
+            <!-- 本轮出错：安全拦截只有一句固定文案，不展开解释 -->
             <div v-if="chatError" class="ai-chat__error">
               <div class="flex flex-wrap items-center gap-2">
                 <span class="font-medium">{{ chatError.title }}</span>
                 <ElTag v-if="chatError.code" type="danger" size="small">{{ chatError.code }}</ElTag>
               </div>
-              <p class="text-xs">{{ chatError.hint }}</p>
+              <p v-if="chatError.hint" class="text-xs">{{ chatError.hint }}</p>
             </div>
 
             <!-- 后台执行：轮次进度 + 工具留痕 + 提案 -->
@@ -1530,10 +1535,12 @@ onUnmounted(() => {
               <div v-if="runErrorCopy" class="ai-chat__error">
                 <div class="flex flex-wrap items-center gap-2">
                   <span class="font-medium">{{ runErrorCopy.title }}</span>
-                  <ElTag type="danger" size="small">{{ runErrorCopy.code }}</ElTag>
+                  <ElTag v-if="runErrorCopy.code" type="danger" size="small">{{
+                    runErrorCopy.code
+                  }}</ElTag>
                 </div>
-                <p class="text-xs">{{ runErrorCopy.hint }}</p>
-                <p v-if="store.activeRun.error_message" class="text-xs">
+                <p v-if="runErrorCopy.hint" class="text-xs">{{ runErrorCopy.hint }}</p>
+                <p v-if="store.activeRun.error_message && runErrorCopy.code" class="text-xs">
                   {{ store.activeRun.error_message }}
                 </p>
               </div>
@@ -1603,17 +1610,6 @@ onUnmounted(() => {
         </div>
 
         <div class="ai-chat__composer">
-          <div v-if="isAdmin" class="ai-chat__unrestricted">
-            <span class="ai-chat__unrestricted-label">
-              {{ t('ai.agent.unrestricted.label') }}
-            </span>
-            <ElSwitch
-              :model-value="unrestricted"
-              size="small"
-              :loading="unrestrictedLoading"
-              @change="onUnrestrictedChange"
-            />
-          </div>
           <ElInput
             v-model="input"
             type="textarea"
@@ -1858,18 +1854,18 @@ onUnmounted(() => {
   line-height: var(--yg-line-height-normal);
 }
 
-/* 无限制模式开关：admin 专属，贴在输入框上方，小号弱化 */
-.ai-chat__unrestricted {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: var(--yg-space-2);
-  margin-bottom: var(--yg-space-2);
+/* 模型锁定展示：只读，锁图标点明「建会话时定的」 */
+.ai-chat__model-lock {
+  pointer-events: none;
 }
 
-.ai-chat__unrestricted-label {
-  font-size: var(--yg-font-size-xs);
+.ai-chat__model-lock-icon {
   color: var(--yg-text-tertiary);
+}
+
+/* 思考强度：贴着模型行下面一行，与上下文水位同一条竖排节奏 */
+.ai-chat__thinking {
+  margin-top: var(--yg-space-3);
 }
 
 /* 解锁窗口提示：细弱小字，过期自动消失 */

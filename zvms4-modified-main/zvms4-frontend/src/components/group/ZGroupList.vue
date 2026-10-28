@@ -5,6 +5,9 @@ import {
   ElTableColumn,
   ElCard,
   ElButton,
+  ElDialog,
+  ElForm,
+  ElFormItem,
   ElIcon,
   ElInput,
   ElMessage,
@@ -18,7 +21,7 @@ import type { Group } from '@/../types'
 import { useWindowSize } from '@vueuse/core'
 import { useUserStore } from '@/stores/user.ts'
 import ZUserPosition from '../tags/ZUserPosition.vue'
-import { Delete, Search, View } from '@element-plus/icons-vue'
+import { Delete, Plus, Search, View } from '@element-plus/icons-vue'
 import { useI18n } from 'vue-i18n'
 
 const groups = ref<Group[]>([])
@@ -123,15 +126,75 @@ async function remove(id: string, name: string) {
   ElMessage.success(t('manage.groupList.delete.deletedNotice'))
   refresh()
 }
+
+/** 添加班级：与平台管理其他弹窗同一范式，只填名称，前后端都要求必填 */
+const createVisible = ref(false)
+const createName = ref('')
+const createError = ref('')
+const creating = ref(false)
+
+function openCreate() {
+  createName.value = ''
+  createError.value = ''
+  createVisible.value = true
+}
+
+function closeCreate() {
+  if (creating.value) {
+    return
+  }
+  createVisible.value = false
+}
+
+/** 后端 4xx 的 detail 直接透传，其它情况落到通用失败文案 */
+function createErrorMessage(error: unknown): string {
+  const detail = (error as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail
+  if (typeof detail === 'string' && detail.trim()) {
+    return detail
+  }
+  return t('manage.groupList.create.failed')
+}
+
+async function submitCreate() {
+  if (creating.value) {
+    return
+  }
+  const name = createName.value.trim()
+  if (!name) {
+    createError.value = t('manage.groupList.create.required')
+    return
+  }
+  createError.value = ''
+  creating.value = true
+  try {
+    const id = await api.group.createGroupV3(name)
+    if (!id) {
+      throw new Error('create failed')
+    }
+    createVisible.value = false
+    ElMessage.success(t('manage.groupList.create.createdNotice', { name }))
+    if (page.value === 1) {
+      refresh()
+    } else {
+      page.value = 1
+    }
+  } catch (error) {
+    ElMessage.error(createErrorMessage(error))
+  } finally {
+    creating.value = false
+  }
+}
 </script>
 
 <template>
   <div class="px-2">
     <ElCard shadow="never">
-      <!-- 窄屏：搜索框移到表格上方，避免被固定操作列挤出可视区 -->
-      <div v-if="narrow" class="group-toolbar">
+      <!-- 工具栏：窄屏搜索框与「添加班级」同一行，宽屏只有按钮且靠右 -->
+      <div class="group-toolbar">
         <ElInput
+          v-if="narrow"
           v-model="search"
+          class="group-toolbar__search"
           size="small"
           clearable
           :placeholder="t('manage.groupList.columns.search')"
@@ -140,6 +203,10 @@ async function remove(id: string, name: string) {
           @keyup.enter="handleSearch"
           @clear="handleSearch"
         />
+        <ElButton class="group-toolbar__add" type="primary" size="small" @click="openCreate">
+          <ElIcon class="mr-1"><Plus /></ElIcon>
+          {{ t('manage.groupList.create.action') }}
+        </ElButton>
       </div>
 
       <!-- 加载遮罩只盖数据区：搜索工具栏与分页保持可交互 -->
@@ -188,9 +255,6 @@ async function remove(id: string, name: string) {
               >
                 {{ t('manage.groupList.columns.view') }}
               </ElButton>
-              <ElButton type="info" size="small" text bg disabled>
-                {{ t('manage.groupList.columns.rename') }}
-              </ElButton>
               <ElButton
                 type="danger"
                 size="small"
@@ -236,13 +300,63 @@ async function remove(id: string, name: string) {
         :total="total"
       />
     </ElCard>
+
+    <ElDialog
+      v-model="createVisible"
+      :title="t('manage.groupList.create.title')"
+      :close-on-click-modal="!creating"
+      :close-on-press-escape="!creating"
+      :show-close="!creating"
+      width="min(520px, 92vw)"
+    >
+      <ElForm v-loading="creating" @submit.prevent="submitCreate">
+        <ElFormItem
+          :label="t('manage.groupList.create.name')"
+          :error="createError"
+          :required="true"
+        >
+          <ElInput
+            v-model="createName"
+            :placeholder="t('manage.groupList.create.placeholder')"
+            maxlength="40"
+            clearable
+            @keyup.enter="submitCreate"
+          />
+        </ElFormItem>
+      </ElForm>
+      <template #footer>
+        <ElButton :disabled="creating" @click="closeCreate">
+          {{ t('manage.groupList.create.cancel') }}
+        </ElButton>
+        <ElButton type="primary" :loading="creating" @click="submitCreate">
+          {{
+            creating
+              ? t('manage.groupList.create.creating')
+              : t('manage.groupList.create.confirm')
+          }}
+        </ElButton>
+      </template>
+    </ElDialog>
   </div>
 </template>
 
 <style scoped>
-/* 窄屏工具栏：搜索框独占一行，间距走 4px 网格 */
+/* 工具栏：窄屏搜索框与「添加班级」同一行，间距走 4px 网格 */
 .group-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--yg-space-2);
   margin-bottom: var(--yg-space-3);
+}
+
+.group-toolbar__search {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* 宽屏没有搜索框时按钮靠右，与操作列表头搜索框同一视觉流 */
+.group-toolbar__add {
+  margin-left: auto;
 }
 
 .group-actions {

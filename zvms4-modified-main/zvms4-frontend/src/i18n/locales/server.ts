@@ -328,6 +328,9 @@ export const zhCN = {
   },
   ssh: {
     title: 'Web SSH 终端',
+    analysis: {
+      open: '智能分析'
+    },
     startButton: '开启终端',
     reconnect: '重新连接',
     disconnect: '断开',
@@ -406,6 +409,32 @@ export const zhCN = {
       }
     }
   },
+  aiScene: {
+    title: '智能分析',
+    instruction: '分析指令',
+    instructionPlaceholder: '用一句中文说清要做什么，例如：这些报错说明什么，怎么修',
+    instructionRequired: '请先填写分析指令',
+    instructionTooLong: '分析指令不能超过 4000 字，请精简后再提交',
+    reference: '参考内容',
+    referenceEmpty: '没有取到可用的参考内容，可以补一段到下方',
+    referenceTruncated: '参考内容超过 8000 字符，已只保留头尾各 4000 字符',
+    extra: '补充片段（可选）',
+    extraPlaceholder: '可再贴一段日志或代码作为补充',
+    extraMarker: '【补充片段】',
+    result: '分析结果',
+    running: '分析中…',
+    empty: '填写指令后开始分析',
+    submit: '开始分析',
+    rerun: '重新分析',
+    copy: '复制',
+    copied: '已复制到剪贴板',
+    copyFailed: '复制失败',
+    close: '关闭',
+    failed: '分析失败，请稍后重试',
+    runFailed: '分析未完成，请稍后重试',
+    permissionDenied: '需要管理员权限才能使用智能分析',
+    readonlyNote: '结果只读：不会自动执行任何命令，也不会写回文件。'
+  },
   files: {
     title: '文件管理',
     pathLabel: '路径',
@@ -433,6 +462,7 @@ export const zhCN = {
     parent: '上一级',
     totalEntries: '共 {count} 条',
     absolutePathOnly: '仅接受绝对路径',
+    rootForbidden: '仅允许访问 /www/zvms4 与 /home 两个根目录',
     mkdirScene: '新建目录',
     mkdirPromptTitle: '新建目录',
     renameScene: '重命名（输入新路径名）',
@@ -461,7 +491,7 @@ export const zhCN = {
     deleteDone: '已删除',
     deleteFailed: '删除失败',
     chmodDone: '权限已修改',
-    protectedNote: '受保护目录（/etc /root /proc 等）读写全禁',
+    protectedNote: '只开放 /www/zvms4 与 /home 两个根目录，其余路径一律拒绝',
     preview: {
       title: '文件预览',
       loading: '正在读取预览…',
@@ -483,6 +513,13 @@ export const zhCN = {
       rendered: '预览',
       source: '源码',
       zoomHint: '点击图片可放大',
+      ocr: '识别文字',
+      ocrRunning: '识别中…',
+      ocrResult: '识别结果',
+      ocrFailed: '文字识别失败',
+      ocrEmpty: '未识别到文字',
+      ocrForbidden: '需要 AI 文字识别权限',
+      aiAnalyze: 'AI 分析',
       edit: '编辑',
       editSave: '保存',
       editCancel: '取消',

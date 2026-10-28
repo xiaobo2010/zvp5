@@ -104,7 +104,7 @@ const tabs = ref<SegmentedTab[]>(
     ? [{ label: 'Users', value: 'users', icon: User }]
     : [
         {
-          label: 'Groups',
+          label: t('manage.manage.tabs.groups'),
           value: 'groups',
           icon: Group
         },

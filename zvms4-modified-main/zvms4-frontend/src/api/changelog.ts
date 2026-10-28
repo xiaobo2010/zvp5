@@ -21,29 +21,32 @@ export async function getChangelog(): Promise<ChangelogEntry[] | undefined> {
 }
 
 export async function createChangelog(
-  payload: { version: string; date: string; items: string[] }
+  payload: { version: string; date: string; items: string[] },
+  verificationToken?: string
 ): Promise<void> {
   await axios({
     method: 'post',
     url: '/changelog',
-    data: payload
+    data: { ...payload, ...(verificationToken ? { verification_token: verificationToken } : {}) }
   })
 }
 
 export async function updateChangelog(
   id: string,
-  payload: { version: string; date: string; items: string[] }
+  payload: { version: string; date: string; items: string[] },
+  verificationToken?: string
 ): Promise<void> {
   await axios({
     method: 'put',
     url: `/changelog/${id}`,
-    data: payload
+    data: { ...payload, ...(verificationToken ? { verification_token: verificationToken } : {}) }
   })
 }
 
-export async function deleteChangelog(id: string): Promise<void> {
+export async function deleteChangelog(id: string, verificationToken?: string): Promise<void> {
   await axios({
     method: 'delete',
-    url: `/changelog/${id}`
+    url: `/changelog/${id}`,
+    ...(verificationToken ? { data: { verification_token: verificationToken } } : {})
   })
 }

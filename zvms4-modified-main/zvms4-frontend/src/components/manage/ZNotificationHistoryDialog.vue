@@ -13,6 +13,7 @@ import {
   type NotificationVersionItem,
   type NotificationVersionsData
 } from '@/api/notifications'
+import { isReauthCancelled, withReauth } from '@/plugins/reauth'
 
 const props = defineProps<{
   notification: NotificationRecord | null
@@ -176,11 +177,17 @@ async function rollback() {
 
   rollingBack.value = true
   try {
-    const data = await rollbackNotification(notification.id, item.version)
+    const data = await withReauth(t('manage.notifications.history.reauthReason'), (token) =>
+      rollbackNotification(notification.id, item.version, token)
+    )
     ElMessage.success(t('manage.notifications.history.rollbackDone', { version: data.version }))
     emit('refresh')
     await loadHistory()
   } catch (error) {
+    if (isReauthCancelled(error)) {
+      ElMessage.info(t('manage.reauth.cancelled'))
+      return
+    }
     const status = httpStatusOf(error)
     if (status === 403) {
       ElMessage.error(t('manage.notifications.history.rollbackForbidden'))

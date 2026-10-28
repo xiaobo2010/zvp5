@@ -69,43 +69,12 @@ export async function unlockAgent(password: string): Promise<string> {
   return readUnlockedUntil(body)
 }
 
-/**
- * 读当前的无限制模式开关（仅 admin）。
- *
- * 开关是账号级设置，不是本会话的临时状态：进页面读一次，之后由 PUT 的结果对齐。
- */
-export async function getModerationUnrestricted(): Promise<boolean> {
-  const body = await aiFetchJson<unknown>('/ai/agent/moderation/unrestricted')
-  return readModerationEnabled(body)
-}
-
-/** 写无限制模式开关（仅 admin）；返回服务端落库后的值。 */
-export async function setModerationUnrestricted(
-  enabled: boolean,
-  verificationToken?: string
-): Promise<boolean> {
-  const body = await aiFetchJson<unknown>('/ai/agent/moderation/unrestricted', {
-    method: 'PUT',
-    body: JSON.stringify(
-      verificationToken ? { enabled, verification_token: verificationToken } : { enabled }
-    )
-  })
-  return readModerationEnabled(body)
-}
-
 function readUnlockedUntil(body: unknown): string {
   if (!body || typeof body !== 'object') {
     return ''
   }
   const value = (body as Record<string, unknown>).unlocked_until
   return typeof value === 'string' ? value : ''
-}
-
-function readModerationEnabled(body: unknown): boolean {
-  if (!body || typeof body !== 'object') {
-    return false
-  }
-  return (body as Record<string, unknown>).enabled === true
 }
 
 /**

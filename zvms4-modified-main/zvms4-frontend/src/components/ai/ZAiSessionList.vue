@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ElButton, ElEmpty, ElIcon } from 'element-plus'
+import { ElButton, ElEmpty, ElIcon, ElSegmented } from 'element-plus'
 import { Delete, Edit, FolderChecked, Plus } from '@element-plus/icons-vue'
 import type { AiConversation } from '@/../types/ai'
 import { formatTokens, relativeTimeParts } from './conversationSession'
@@ -17,13 +17,19 @@ const props = withDefaults(
   defineProps<{
     conversations: AiConversation[]
     currentOid: string
+    archived?: AiConversation[]
     loading?: boolean
     failed?: boolean
+    archivedLoading?: boolean
+    archivedFailed?: boolean
     hasMore?: boolean
   }>(),
   {
+    archived: () => [],
     loading: false,
     failed: false,
+    archivedLoading: false,
+    archivedFailed: false,
     hasMore: false
   }
 )
@@ -33,11 +39,28 @@ const emit = defineEmits<{
   (event: 'create'): void
   (event: 'rename', oid: string): void
   (event: 'archive', oid: string): void
+  (event: 'unarchive', oid: string): void
   (event: 'remove', oid: string): void
   (event: 'loadMore'): void
+  (event: 'loadArchived'): void
 }>()
 
 const { t } = useI18n()
+
+/** 当前视图：活动会话 / 已归档。 */
+const view = ref<'active' | 'archived'>('active')
+
+const viewOptions = computed(() => [
+  { label: t('ai.chat.sessions.title'), value: 'active' },
+  { label: t('ai.chat.sessions.archived'), value: 'archived' }
+])
+
+/** 切到归档视图时才去拉归档列表。 */
+watch(view, (next) => {
+  if (next === 'archived') {
+    emit('loadArchived')
+  }
+})
 
 /** 空态文案：列表空是因为没有会话，还是因为拉失败。 */
 const emptyDescription = computed(() => {
@@ -45,6 +68,13 @@ const emptyDescription = computed(() => {
     return t('ai.chat.sessions.loadFailed')
   }
   return t('ai.chat.sessions.empty')
+})
+
+const archivedEmptyDescription = computed(() => {
+  if (props.archivedFailed) {
+    return t('ai.chat.sessions.loadFailed')
+  }
+  return t('ai.chat.sessions.archivedEmpty')
 })
 
 /** 相对时间：刚刚 / N 分钟前 / N 小时前 / N 天前 / 具体日期。 */
@@ -63,7 +93,7 @@ function relativeTime(value: string | null | undefined): string {
 <template>
   <div class="ai-sessions">
     <div class="ai-sessions__head">
-      <span class="ai-sessions__title">{{ t('ai.chat.sessions.title') }}</span>
+      <ElSegmented v-model="view" size="small" :options="viewOptions" />
       <ElButton size="small" text type="primary" @click="emit('create')">
         <ElIcon class="mr-1"><Plus /></ElIcon>
         {{ t('ai.chat.sessions.new') }}
@@ -72,7 +102,7 @@ function relativeTime(value: string | null | undefined): string {
 
     <p class="ai-sessions__hint">{{ t('ai.chat.sessions.subtitle') }}</p>
 
-    <div class="ai-sessions__list">
+    <div v-if="view === 'active'" class="ai-sessions__list">
       <p v-if="loading && conversations.length === 0" class="ai-sessions__hint">
         {{ t('ai.common.refresh') }}…
       </p>
@@ -150,6 +180,46 @@ function relativeTime(value: string | null | undefined): string {
         </ElButton>
       </ElEmpty>
     </div>
+
+    <div v-else class="ai-sessions__list">
+      <p v-if="archivedLoading && archived.length === 0" class="ai-sessions__hint">
+        {{ t('ai.common.refresh') }}…
+      </p>
+
+      <div
+        v-for="item in archived"
+        :key="item.oid"
+        class="ai-sessions__item ai-sessions__item--archived"
+      >
+        <div class="ai-sessions__main ai-sessions__main--static">
+          <span class="ai-sessions__name" :title="item.title || t('ai.chat.sessions.untitled')">
+            {{ item.title || t('ai.chat.sessions.untitled') }}
+          </span>
+          <span class="ai-sessions__meta">
+            <span class="tabular-nums">
+              {{ t('ai.chat.sessions.archived') }} · {{ relativeTime(item.updated_at) }}
+            </span>
+          </span>
+        </div>
+        <div class="ai-sessions__actions">
+          <ElButton
+            text
+            type="primary"
+            size="small"
+            :title="t('ai.chat.sessions.unarchive')"
+            @click="emit('unarchive', item.oid)"
+          >
+            {{ t('ai.chat.sessions.restore') }}
+          </ElButton>
+        </div>
+      </div>
+
+      <ElEmpty
+        v-if="!archivedLoading && archived.length === 0"
+        :description="archivedEmptyDescription"
+        :image-size="72"
+      />
+    </div>
   </div>
 </template>
 
@@ -167,12 +237,6 @@ function relativeTime(value: string | null | undefined): string {
   align-items: center;
   justify-content: space-between;
   gap: var(--yg-space-2);
-}
-
-.ai-sessions__title {
-  font-size: var(--yg-font-size-sm);
-  font-weight: var(--yg-font-weight-medium);
-  color: var(--yg-text-primary);
 }
 
 .ai-sessions__hint {
@@ -231,6 +295,11 @@ function relativeTime(value: string | null | undefined): string {
   box-shadow: var(--yg-focus-ring);
 }
 
+/* 归档行不可切换会话，只留「恢复」。 */
+.ai-sessions__main--static {
+  cursor: default;
+}
+
 .ai-sessions__name {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -263,6 +332,11 @@ function relativeTime(value: string | null | undefined): string {
 
 .ai-sessions__item:hover .ai-sessions__actions :deep(.el-button),
 .ai-sessions__item:focus-within .ai-sessions__actions :deep(.el-button) {
+  opacity: 1;
+}
+
+/* 归档行只有「恢复」这一个动作，常显。 */
+.ai-sessions__item--archived .ai-sessions__actions :deep(.el-button) {
   opacity: 1;
 }
 

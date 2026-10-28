@@ -4,6 +4,8 @@ import { h, watch, type SetupContext } from 'vue'
 import ServerSsh from './ServerSsh.vue'
 import { createSshSession, suggestSshCommand } from '@/api/system/ssh.ts'
 import { listModels } from '@/api/ai/chat.ts'
+import { submitSceneRun } from '@/api/ai/scenes.ts'
+import { fetchRunDetail } from '@/api/ai/conversations.ts'
 
 const {
   openSpy,
@@ -152,6 +154,18 @@ vi.mock('@/api/ai/chat.ts', () => ({
   listModels: vi.fn()
 }))
 
+vi.mock('@/api/ai/scenes.ts', () => ({
+  SCENE_CONTENT_LIMIT: 4000,
+  SCENE_CONTEXT_LIMIT: 8000,
+  submitSceneRun: vi.fn(),
+  ocrFile: vi.fn()
+}))
+
+vi.mock('@/api/ai/conversations.ts', () => ({
+  fetchRunDetail: vi.fn(),
+  listMessages: vi.fn()
+}))
+
 vi.mock('@/components/system/ZSystemAuthDialog.vue', () => ({
   default: {
     name: 'ZSystemAuthDialogStub',
@@ -169,7 +183,16 @@ vi.mock('@xterm/xterm', () => ({
     cols = 80
     rows = 24
     options: Record<string, unknown> = {}
-    buffer = { active: { type: 'normal', viewportY: 0, length: 24 } }
+    buffer = {
+      active: {
+        type: 'normal',
+        viewportY: 0,
+        length: 3,
+        getLine: (index: number) => ({
+          translateToString: () => ['$ ls', 'a.txt b.txt', '$'][index] ?? ''
+        })
+      }
+    }
     modes = { mouseTrackingMode: 'none' as const }
     open = vi.fn()
     write = vi.fn()
@@ -601,6 +624,87 @@ it('shows a localized error for a rate-limited suggest request and keeps the ses
   // 会话状态未被这次失败改动
   expect(wrapper.text()).toContain('server.ssh.statusIdle')
   expect(WebSocketStub.instances).toHaveLength(0)
+
+  wrapper.unmount()
+})
+
+// ---------- 智能分析 ----------
+it('submits the recent terminal buffer to the terminal scene and shows the reply', async () => {
+  vi.mocked(submitSceneRun).mockResolvedValue({
+    run_id: 'run-9',
+    conversation_oid: 'conv-9'
+  } as never)
+  vi.mocked(fetchRunDetail).mockResolvedValue({
+    run: { oid: 'run-9', conversation_oid: 'conv-9', status: 'succeeded' },
+    events: [],
+    proposals: [],
+    messages: [
+      { oid: 'm1', seq: 1, role: 'user', content: '帮我看看这些输出', created_at: '' },
+      { oid: 'm2', seq: 2, role: 'assistant', content: '磁盘满了，先清 /var/log', created_at: '' }
+    ]
+  } as never)
+
+  const wrapper = mountPage()
+  await flushPromises()
+  const ws = await connectTerminal(wrapper)
+
+  await buttonByText(wrapper, 'server.ssh.analysis.open').trigger('click')
+  await flushPromises()
+
+  const dialog = wrapper.find('.scene-run__body')
+  expect(dialog.exists()).toBe(true)
+  expect(wrapper.find('.el-dialog-stub[data-title="server.aiScene.title"]').exists()).toBe(true)
+  expect(dialog.text()).toContain('a.txt b.txt')
+
+  await dialog.find('.el-input-stub').setValue('帮我看看这些输出')
+  await buttonByText(wrapper, 'server.aiScene.submit').trigger('click')
+  await flushPromises()
+
+  expect(submitSceneRun).toHaveBeenCalledTimes(1)
+  const [scene, content, context] = vi.mocked(submitSceneRun).mock.calls[0]!
+  expect(scene).toBe('terminal')
+  expect(content).toBe('帮我看看这些输出')
+  expect(context).toContain('a.txt b.txt')
+  expect(wrapper.find('.scene-run__result').text()).toContain('磁盘满了')
+
+  // 只读语义:分析结果不写成任何输入帧
+  const inputFrames = ws.send.mock.calls
+    .map(([raw]) => JSON.parse(String(raw)) as { type?: string })
+    .filter((frame) => frame.type === 'input')
+  expect(inputFrames).toHaveLength(0)
+
+  wrapper.unmount()
+})
+
+it('sends no reference when the terminal buffer is unavailable', async () => {
+  vi.mocked(submitSceneRun).mockResolvedValue({
+    run_id: 'run-10',
+    conversation_oid: 'conv-10'
+  } as never)
+  vi.mocked(fetchRunDetail).mockResolvedValue({
+    run: { oid: 'run-10', conversation_oid: 'conv-10', status: 'succeeded' },
+    events: [],
+    proposals: [],
+    messages: [
+      { oid: 'm1', seq: 1, role: 'assistant', content: '先看一眼 df -h', created_at: '' }
+    ]
+  } as never)
+
+  const wrapper = mountPage()
+  await flushPromises()
+
+  await buttonByText(wrapper, 'server.ssh.analysis.open').trigger('click')
+  await flushPromises()
+
+  const dialog = wrapper.find('.scene-run__body')
+  expect(dialog.text()).toContain('server.aiScene.referenceEmpty')
+
+  await dialog.find('.el-input-stub').setValue('怎么排查磁盘满')
+  await buttonByText(wrapper, 'server.aiScene.submit').trigger('click')
+  await flushPromises()
+
+  expect(submitSceneRun).toHaveBeenCalledWith('terminal', '怎么排查磁盘满', undefined)
+  expect(wrapper.find('.scene-run__result').text()).toContain('df -h')
 
   wrapper.unmount()
 })

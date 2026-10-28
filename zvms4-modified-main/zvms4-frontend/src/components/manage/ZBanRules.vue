@@ -36,6 +36,7 @@ import {
 } from '@/api/ban'
 import ZPagination from '@/components/utils/ZPagination.vue'
 import ZDeviceBans from '@/components/manage/ZDeviceBans.vue'
+import { isReauthCancelled, withReauth } from '@/plugins/reauth'
 
 const { t } = useI18n()
 
@@ -457,10 +458,16 @@ async function toggleRule(rule: BanRule, enabled: string | number | boolean) {
   const previous = rule.enabled
   rule.enabled = next
   try {
-    const updated = await updateRule(rule.code, { enabled: next })
+    const updated = await withReauth(t('manage.banRules.reauthReason'), (token) =>
+      updateRule(rule.code, { enabled: next }, token)
+    )
     replaceRule(updated)
-  } catch {
+  } catch (error) {
     rule.enabled = previous
+    if (isReauthCancelled(error)) {
+      ElMessage.info(t('manage.reauth.cancelled'))
+      return
+    }
     ElMessage.error(t('manage.banRules.revertedNotice'))
   }
 }
@@ -494,14 +501,24 @@ async function submitEdit() {
   }
   saving.value = true
   try {
-    const updated = await updateRule(editingCode.value, {
-      config: { threshold: form.threshold, window_hours: form.window_hours },
-      penalties
-    })
+    const updated = await withReauth(t('manage.banRules.reauthReason'), (token) =>
+      updateRule(
+        editingCode.value,
+        {
+          config: { threshold: form.threshold, window_hours: form.window_hours },
+          penalties
+        },
+        token
+      )
+    )
     replaceRule(updated)
     dialogVisible.value = false
     ElMessage.success(t('manage.banRules.savedNotice'))
-  } catch {
+  } catch (error) {
+    if (isReauthCancelled(error)) {
+      ElMessage.info(t('manage.reauth.cancelled'))
+      return
+    }
     ElMessage.error(t('manage.banRules.saveFailed'))
   } finally {
     saving.value = false
@@ -537,18 +554,27 @@ async function submitCreate() {
   }
   creating.value = true
   try {
-    await createRule({
-      code: createForm.code,
-      name: createForm.name.trim(),
-      trigger: createForm.trigger,
-      config: { threshold: createForm.threshold, window_hours: createForm.window_hours },
-      penalties,
-      enabled: true
-    })
+    await withReauth(t('manage.banRules.reauthReason'), (token) =>
+      createRule(
+        {
+          code: createForm.code,
+          name: createForm.name.trim(),
+          trigger: createForm.trigger,
+          config: { threshold: createForm.threshold, window_hours: createForm.window_hours },
+          penalties,
+          enabled: true
+        },
+        token
+      )
+    )
     createDialogVisible.value = false
     ElMessage.success(t('manage.banRules.rule.createdNotice'))
     void loadRules()
-  } catch {
+  } catch (error) {
+    if (isReauthCancelled(error)) {
+      ElMessage.info(t('manage.reauth.cancelled'))
+      return
+    }
     ElMessage.error(t('manage.banRules.rule.createFailed'))
   } finally {
     creating.value = false
@@ -565,10 +591,14 @@ async function removeRule(rule: BanRule) {
     return
   }
   try {
-    await deleteRule(rule.code)
+    await withReauth(t('manage.banRules.reauthReason'), (token) => deleteRule(rule.code, token))
     ElMessage.success(t('manage.banRules.rule.deletedNotice'))
     void loadRules()
   } catch (err) {
+    if (isReauthCancelled(err)) {
+      ElMessage.info(t('manage.reauth.cancelled'))
+      return
+    }
     // 内置规则被并发删除/409 拒绝时给出专门文案
     const message = (err as { message?: string }).message
     if (rule.builtin || (message ?? '').includes('内置')) {

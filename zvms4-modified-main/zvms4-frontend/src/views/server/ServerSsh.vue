@@ -8,7 +8,9 @@ import '@xterm/xterm/css/xterm.css'
 import { useDark } from '@vueuse/core'
 import { createSshSession, buildSshWsUrl, suggestSshCommand } from '@/api/system/ssh.ts'
 import { listModels } from '@/api/ai/chat.ts'
+import { SCENE_CONTEXT_LIMIT } from '@/api/ai/scenes.ts'
 import ZSystemAuthDialog from '@/components/system/ZSystemAuthDialog.vue'
+import ZSceneRunDialog from '@/components/server/ZSceneRunDialog.vue'
 import { useUserStore } from '@/stores/user.ts'
 import {
   ArrowDown,
@@ -624,6 +626,50 @@ async function insertSuggested() {
   )
 }
 
+// ---- 场景智能分析 ----
+// 只读语义:结果展示在弹窗里,既不自动执行命令,也不写回任何文件。
+const analysisVisible = ref(false)
+const analysisContext = ref('')
+
+interface BufferLineLike {
+  translateToString?: (trimRight?: boolean) => string
+}
+
+interface BufferLike {
+  length: number
+  getLine?: (index: number) => BufferLineLike | undefined
+}
+
+// 取终端缓冲最近的内容作参考;取不到(未连接 / stub)就给空,弹窗会提示补一段
+function terminalContext(limit = SCENE_CONTEXT_LIMIT): string {
+  if (!term) return ''
+  try {
+    const buffer = term.buffer.active as unknown as BufferLike
+    if (!buffer || typeof buffer.getLine !== 'function') return ''
+    const getLine = buffer.getLine.bind(buffer)
+    const collected: string[] = []
+    let total = 0
+    for (let index = buffer.length - 1; index >= 0 && total < limit; index -= 1) {
+      const line = getLine(index)
+      const raw = line && typeof line.translateToString === 'function'
+        ? line.translateToString(true)
+        : ''
+      const text = raw.replace(/\s+$/, '')
+      if (!text) continue
+      collected.unshift(text)
+      total += text.length + 1
+    }
+    return collected.join('\n').slice(-limit)
+  } catch {
+    return ''
+  }
+}
+
+function openAnalysis() {
+  analysisContext.value = terminalContext()
+  analysisVisible.value = true
+}
+
 function onWindowResize() {
   if (resizeDebounce !== null) {
     window.clearTimeout(resizeDebounce)
@@ -660,6 +706,9 @@ onBeforeUnmount(() => {
           <div class="ml-auto flex flex-wrap items-center gap-2">
             <ElButton size="large" :icon="MagicStick" @click="suggestVisible = true">
               {{ t('server.ssh.suggest.open') }}
+            </ElButton>
+            <ElButton size="large" :icon="MagicStick" @click="openAnalysis">
+              {{ t('server.ssh.analysis.open') }}
             </ElButton>
             <ElSelect v-model="fontSize" class="w-24" :aria-label="t('server.ssh.fontLabel')">
               <ElOption v-for="size in FONT_SIZES" :key="size" :label="String(size)" :value="size" />
@@ -859,6 +908,13 @@ onBeforeUnmount(() => {
         <p class="suggest__hint">{{ t('server.ssh.suggest.note') }}</p>
       </div>
     </ElDialog>
+
+    <ZSceneRunDialog
+      v-model="analysisVisible"
+      scene="terminal"
+      :title="t('server.aiScene.title')"
+      :context="analysisContext"
+    />
   </div>
 </template>
 

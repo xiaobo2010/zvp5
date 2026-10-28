@@ -37,6 +37,7 @@ import {
   updateChangelog,
   type ChangelogEntry
 } from '@/api/changelog'
+import { isReauthCancelled, withReauth } from '@/plugins/reauth'
 
 const { t } = useI18n()
 
@@ -267,7 +268,9 @@ async function submit() {
       if (!(await confirmSend())) {
         return
       }
-      const data = await createNotification({ title, content })
+      const data = await withReauth(t('manage.notifications.reauthReason'), (token) =>
+        createNotification({ title, content }, token)
+      )
       replaceRow(data.notification)
       dialogVisible.value = false
       ElMessage.success(t('manage.notifications.createdNotice'))
@@ -292,11 +295,17 @@ async function submit() {
       return
     }
 
-    const data = await updateNotification(original.id, payload)
+    const data = await withReauth(t('manage.notifications.reauthReason'), (token) =>
+      updateNotification(original.id, payload, token)
+    )
     replaceRow(data.notification)
     dialogVisible.value = false
     ElMessage.success(t('manage.notifications.savedNotice'))
-  } catch {
+  } catch (error) {
+    if (isReauthCancelled(error)) {
+      ElMessage.info(t('manage.reauth.cancelled'))
+      return
+    }
     // axios 拦截器已给出后端 422/403 等错误提示，保留弹窗内容供修改与重试。
   } finally {
     submitting.value = false
@@ -310,12 +319,18 @@ async function toggleActive(row: NotificationRecord) {
   togglingId.value = row.id
   const next = !row.active
   try {
-    const data = await updateNotification(row.id, { active: next })
+    const data = await withReauth(t('manage.notifications.reauthReason'), (token) =>
+      updateNotification(row.id, { active: next }, token)
+    )
     replaceRow(data.notification)
     ElMessage.success(
       next ? t('manage.notifications.activatedNotice') : t('manage.notifications.deactivatedNotice')
     )
-  } catch {
+  } catch (error) {
+    if (isReauthCancelled(error)) {
+      ElMessage.info(t('manage.reauth.cancelled'))
+      return
+    }
     // 保持原状态；错误提示由 axios 拦截器统一给出。
   } finally {
     togglingId.value = ''
@@ -346,10 +361,16 @@ async function remove(row: NotificationRecord) {
   }
 
   try {
-    await deleteNotification(row.id)
+    await withReauth(t('manage.notifications.reauthReason'), (token) =>
+      deleteNotification(row.id, token)
+    )
     rows.value = rows.value.filter((item) => item.id !== row.id)
     ElMessage.success(t('manage.notifications.deletedNotice'))
-  } catch {
+  } catch (error) {
+    if (isReauthCancelled(error)) {
+      ElMessage.info(t('manage.reauth.cancelled'))
+      return
+    }
     // 404/权限错误由 axios 统一提示。
   } finally {
     deletingId.value = ''
@@ -442,15 +463,23 @@ async function submitChangelog() {
       items: parseChangelogItems(changelogForm.items)
     }
     if (changelogEditingId.value) {
-      await updateChangelog(changelogEditingId.value, payload)
+      await withReauth(t('manage.notifications.changelog.reauthReason'), (token) =>
+        updateChangelog(changelogEditingId.value, payload, token)
+      )
     } else {
-      await createChangelog(payload)
+      await withReauth(t('manage.notifications.changelog.reauthReason'), (token) =>
+        createChangelog(payload, token)
+      )
     }
     changelogDialogVisible.value = false
     ElMessage.success(t('manage.notifications.changelog.saved'))
     await loadChangelog()
     void loadNotifications()
-  } catch {
+  } catch (error) {
+    if (isReauthCancelled(error)) {
+      ElMessage.info(t('manage.reauth.cancelled'))
+      return
+    }
     changelogSaveFailed.value = true
     ElMessage.error(t('manage.notifications.changelog.saveFailed'))
   } finally {
@@ -481,11 +510,17 @@ async function removeChangelog(entry: ChangelogEntry) {
   }
 
   try {
-    await deleteChangelog(entry.id)
+    await withReauth(t('manage.notifications.changelog.reauthReason'), (token) =>
+      deleteChangelog(entry.id, token)
+    )
     changelogRows.value = changelogRows.value.filter((row) => row.id !== entry.id)
     ElMessage.success(t('manage.notifications.changelog.deleted'))
     void loadNotifications()
-  } catch {
+  } catch (error) {
+    if (isReauthCancelled(error)) {
+      ElMessage.info(t('manage.reauth.cancelled'))
+      return
+    }
     // 404/权限错误由 axios 统一提示。
   } finally {
     changelogDeletingId.value = ''

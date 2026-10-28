@@ -4,7 +4,13 @@ import api from '@/api'
 import { clearCache } from '@/utils/idbCache'
 import { useUserStore } from './user'
 
-vi.mock('@/api', () => ({ default: { user: { auth: { useLongTermAuth: vi.fn() } } } }))
+vi.mock('@/api', () => ({
+  default: {
+    user: {
+      auth: { useLongTermAuth: vi.fn(), logout: vi.fn().mockResolvedValue(undefined) }
+    }
+  }
+}))
 vi.mock('@/utils/idbCache', () => ({ clearCache: vi.fn().mockResolvedValue(undefined) }))
 
 beforeEach(() => { setActivePinia(createPinia()); localStorage.clear() })
@@ -35,4 +41,18 @@ it('clears identity and hours immediately while cache cleanup is pending', async
   expect(localStorage.getItem('token')).toBeNull()
   finish()
   await logout
+})
+
+it('revokes the server session and still clears locally when it fails', async () => {
+  vi.mocked(api.user.auth.logout).mockRejectedValueOnce(new Error('network down'))
+  const store = useUserStore()
+  store._id = 'old'
+  store.isLogin = true
+  localStorage.setItem('token', 'old-token')
+
+  await store.removeUser()
+
+  expect(api.user.auth.logout).toHaveBeenCalled()
+  expect(localStorage.getItem('token')).toBeNull()
+  expect(store.isLogin).toBe(false)
 })

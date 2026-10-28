@@ -326,6 +326,15 @@ vi.mock('element-plus', async () => {
     }
   })
 
+  const ElTag = defineComponent({
+    name: 'ElTag',
+    props: { type: String, size: String },
+    setup(_, { slots, attrs }) {
+      return () =>
+        h('span', { class: 'el-tag-stub', ...attrs }, slots.default?.())
+    }
+  })
+
   return {
     ElTable,
     ElTableColumn,
@@ -338,6 +347,7 @@ vi.mock('element-plus', async () => {
     ElOption,
     ElIcon,
     ElEmpty,
+    ElTag,
     ElLoadingDirective: { name: 'loading', mounted() {}, updated() {} },
     ElMessage: Object.assign(vi.fn(), {
       error: elMessageErrorSpy,
@@ -366,6 +376,10 @@ const detailFixture = {
   purpose: 'chat',
   roles_snapshot: 'admin,department',
   prompt_text: '你好，帮我查一下本月活动。',
+  answer_text: null,
+  tool_calls: null,
+  refused: 0,
+  warned: 0,
   created_at: '2026-10-24T08:00:00'
 }
 
@@ -591,6 +605,62 @@ describe('Prompt 审阅页', () => {
     expect(getAiPrompt).toHaveBeenCalledTimes(1)
     expect(getAiPrompt).toHaveBeenCalledWith('oid-1')
     expect(wrapper.find('.el-drawer-stub').exists()).toBe(true)
+
+    wrapper.unmount()
+  })
+
+  it('回复文本、工具调用与拒答/警告标记一并展示', async () => {
+    vi.mocked(getAiPrompt).mockResolvedValue({
+      ...detailFixture,
+      answer_text: '本月共有 3 场活动。',
+      tool_calls: JSON.stringify([
+        {
+          name: 'query_activities',
+          args_summary: '月份=10',
+          result_summary: '3 条',
+          status: 'success'
+        }
+      ]),
+      refused: 1,
+      warned: 1
+    })
+    const wrapper = mountPage()
+    await flushPromises()
+
+    await wrapper.find('.el-table-stub__row').trigger('click')
+    await flushPromises()
+
+    const drawer = wrapper.find('.el-drawer-stub')
+    expect(drawer.text()).toContain('本月共有 3 场活动。')
+    expect(drawer.text()).toContain('query_activities')
+    expect(drawer.text()).toContain('月份=10')
+    expect(drawer.text()).toContain('3 条')
+    expect(drawer.text()).toContain('success')
+    expect(drawer.find('[data-flag="refused"]').text()).toBe('ai.prompts.refused')
+    expect(drawer.find('[data-flag="warned"]').text()).toBe('ai.prompts.warned')
+
+    wrapper.unmount()
+  })
+
+  it('tool_calls 解析失败按原文展示，标记位为 0 时不出现', async () => {
+    vi.mocked(getAiPrompt).mockResolvedValue({
+      ...detailFixture,
+      answer_text: null,
+      tool_calls: '{broken json',
+      refused: 0,
+      warned: 0
+    })
+    const wrapper = mountPage()
+    await flushPromises()
+
+    await wrapper.find('.el-table-stub__row').trigger('click')
+    await flushPromises()
+
+    const drawer = wrapper.find('.el-drawer-stub')
+    expect(drawer.text()).toContain('{broken json')
+    expect(drawer.text()).toContain('ai.prompts.noAnswer')
+    expect(drawer.find('[data-flag="refused"]').exists()).toBe(false)
+    expect(drawer.find('[data-flag="warned"]').exists()).toBe(false)
 
     wrapper.unmount()
   })

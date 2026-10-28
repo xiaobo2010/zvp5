@@ -85,12 +85,12 @@ export async function getTriggers() {
   return result.data
 }
 
-export async function createRule(payload: BanRuleCreate) {
+export async function createRule(payload: BanRuleCreate, verificationToken?: string) {
   const result = (
     await axios({
       method: 'post',
       url: '/v3/ban/rules',
-      data: payload
+      data: { ...payload, ...(verificationToken ? { verification_token: verificationToken } : {}) }
     })
   ).data as Response<BanRule>
   if (result.status === 'error') {
@@ -99,11 +99,12 @@ export async function createRule(payload: BanRuleCreate) {
   return result.data
 }
 
-export async function deleteRule(code: string) {
+export async function deleteRule(code: string, verificationToken?: string) {
   const result = (
     await axios({
       method: 'delete',
-      url: `/v3/ban/rules/${code}`
+      url: `/v3/ban/rules/${code}`,
+      ...(verificationToken ? { data: { verification_token: verificationToken } } : {})
     })
   ).data as Response<null>
   if (result.status === 'error') {
@@ -137,12 +138,16 @@ export async function getViolations(page: number = 1, perpage: number = 20, quer
   }
 }
 
-export async function updateRule(code: string, payload: BanRuleUpdate) {
+export async function updateRule(
+  code: string,
+  payload: BanRuleUpdate,
+  verificationToken?: string
+) {
   const result = (
     await axios({
       method: 'put',
       url: `/v3/ban/rules/${code}`,
-      data: payload
+      data: { ...payload, ...(verificationToken ? { verification_token: verificationToken } : {}) }
     })
   ).data as Response<BanRule>
   if (result.status === 'error') {
@@ -269,27 +274,29 @@ export async function getBannedDevices(
   }
 }
 
-export async function banDevice(payload: DeviceBanPayload) {
+export async function banDevice(payload: DeviceBanPayload, verificationToken?: string) {
   await axios({
     method: 'post',
     url: '/v3/ban/devices',
-    data: payload
+    data: { ...payload, ...(verificationToken ? { verification_token: verificationToken } : {}) }
   })
   return true
 }
 
-export async function unbanDevice(xuehaiId: string) {
+export async function unbanDevice(xuehaiId: string, verificationToken?: string) {
   await axios({
     method: 'delete',
-    url: `/v3/ban/devices/${encodeURIComponent(xuehaiId)}`
+    url: `/v3/ban/devices/${encodeURIComponent(xuehaiId)}`,
+    ...(verificationToken ? { data: { verification_token: verificationToken } } : {})
   })
   return true
 }
 
-export async function resetDeviceGradient(xuehaiId: string) {
+export async function resetDeviceGradient(xuehaiId: string, verificationToken?: string) {
   await axios({
     method: 'post',
-    url: `/v3/ban/devices/${encodeURIComponent(xuehaiId)}/reset-gradient`
+    url: `/v3/ban/devices/${encodeURIComponent(xuehaiId)}/reset-gradient`,
+    ...(verificationToken ? { data: { verification_token: verificationToken } } : {})
   })
   return true
 }

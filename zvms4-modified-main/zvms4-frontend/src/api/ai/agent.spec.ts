@@ -2,9 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   confirmProposal,
   fetchPendingProposals,
-  getModerationUnrestricted,
   rejectProposal,
-  setModerationUnrestricted,
   unlockAgent
 } from './agent'
 import { AiRequestError } from './errors'
@@ -111,7 +109,7 @@ describe('提案的确认与驳回', () => {
   })
 })
 
-describe('解锁与内容审核开关', () => {
+describe('解锁', () => {
   it('unlock 走 /ai/agent/unlock，body 是 {password}', async () => {
     stubFetch(jsonResponse({ unlocked_until: '2026-10-25T12:30:00' }))
 
@@ -154,45 +152,6 @@ describe('解锁与内容审核开关', () => {
     expect(error).toBeInstanceOf(AiRequestError)
     expect((error as AiRequestError).code).toBe('AI_AGENT_UNLOCK_LOCKED')
     expect((error as AiRequestError).retryAfter).toBe(60)
-  })
-
-  it('读无限制模式走 GET', async () => {
-    stubFetch(jsonResponse({ enabled: true }))
-
-    await expect(getModerationUnrestricted()).resolves.toBe(true)
-
-    const [url, init] = vi.mocked(fetch).mock.calls[0]!
-    expect(String(url)).toContain('/ai/agent/moderation/unrestricted')
-    expect(init?.method ?? 'GET').toBe('GET')
-  })
-
-  it('响应缺 enabled 时按关闭处理', async () => {
-    stubFetch(jsonResponse({}))
-
-    await expect(getModerationUnrestricted()).resolves.toBe(false)
-  })
-
-  it('写无限制模式走 PUT，body 是 {enabled}', async () => {
-    stubFetch(jsonResponse({ enabled: true }))
-
-    await expect(setModerationUnrestricted(true)).resolves.toBe(true)
-
-    const [url, init] = vi.mocked(fetch).mock.calls[0]!
-    expect(String(url)).toContain('/ai/agent/moderation/unrestricted')
-    expect(init?.method).toBe('PUT')
-    expect(JSON.parse(String(init?.body))).toEqual({ enabled: true })
-  })
-
-  it('写无限制模式带 verify 短令牌时一并进 body', async () => {
-    stubFetch(jsonResponse({ enabled: false }))
-
-    await expect(setModerationUnrestricted(false, 'verify-token')).resolves.toBe(false)
-
-    const [, init] = vi.mocked(fetch).mock.calls[0]!
-    expect(JSON.parse(String(init?.body))).toEqual({
-      enabled: false,
-      verification_token: 'verify-token'
-    })
   })
 })
 

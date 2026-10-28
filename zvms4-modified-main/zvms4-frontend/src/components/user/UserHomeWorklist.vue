@@ -18,7 +18,7 @@ const LOG_TYPE_LABELS: Record<string, string> = {
   risk_ban: '风险封禁',
   security_alert: '安全告警',
   platform_misuse_violation: '平台违规告警',
-  agent_jailbreak_warning: 'Agent 越狱告警'
+  agent_jailbreak_warning: 'ZVAgent 越狱告警'
 }
 
 const page = ref(1)

@@ -75,12 +75,13 @@ export async function listSettings(): Promise<SystemSettingsData> {
  * 校验失败时后端返回 400，detail 是可直接展示给人看的说明。
  */
 export async function updateSettings(
-  items: SystemSettingUpdate[]
+  items: SystemSettingUpdate[],
+  verificationToken?: string
 ): Promise<SystemSettingsData> {
   return aiRequest<SystemSettingsData>({
     method: 'put',
     url: '/system/settings',
-    data: { items }
+    data: { items, ...(verificationToken ? { verification_token: verificationToken } : {}) }
   })
 }
 
