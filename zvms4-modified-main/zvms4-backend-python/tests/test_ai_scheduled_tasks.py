@@ -614,7 +614,9 @@ def test_review_is_admin_only(api):
 def test_list_scoped_to_owner(api):
     _as(api, ADMIN, ["admin"])
     oid = _create(api).json()["data"]["oid"]
-    _as(api, OTHER, ["student"])
+    # 用 department（不是 student）当「另一个用户」：`ai.schedule` 开关落地后 student
+    # 默认全关，list 会在角色之后先吃 403，那样就测不到 owner 隔离了。
+    _as(api, OTHER, ["department"])
     assert api.get(PREFIX).json()["data"] == []
     forbidden = api.get(PREFIX, params={"owner_oid": ADMIN})
     assert forbidden.status_code == 403

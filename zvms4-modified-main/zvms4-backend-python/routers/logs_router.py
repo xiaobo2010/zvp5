@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from db import backends
 from services import settings_runtime
 from util.object_id import get_current_user
+from util.permission.features import has_feature
 from util.user import get_user_display_names
 
 router = APIRouter()
@@ -42,7 +43,7 @@ async def read_logs(
     黑名单（该类是风控计数数据源，量大且对管理员无事可做）；显式
     ``type=login_fail`` 仍然按白名单查询，账号排查入口保留。
     """
-    if "admin" not in user["per"]:
+    if "admin" not in (user.get("per") or []) and not has_feature(user, "logs.read"):
         raise HTTPException(status_code=403, detail="Permission denied")
 
     # 上限走运行期设置（``ops.max_query_count``）：原先写在 ``Query(max_length=...)``

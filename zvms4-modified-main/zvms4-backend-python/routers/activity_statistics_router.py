@@ -11,6 +11,7 @@ from util.activity_statistics import (
     empty_analysis_payload,
 )
 from util.object_id import get_current_user
+from util.permission.features import ensure_feature
 
 router = APIRouter()
 
@@ -52,6 +53,8 @@ def _require_statistics_reader(user: dict) -> None:
     """Statistics are readable by 团支书及以上的角色 only."""
     if not ({"admin", "department", "secretary"} & set(user.get("per") or [])):
         raise HTTPException(status_code=403, detail="权限不足")
+    # 角色策略闸：`activity.stats` 关掉时连团支书也读不到（默认值等价改造前）。
+    ensure_feature(user, "activity.stats")
 
 
 @router.get("/{activity_id}/description")

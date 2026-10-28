@@ -29,6 +29,7 @@ from services import ban_rules
 from services.agent import run_queue
 from services.agent.tool_impl import AgentError
 from services.ai import moderation
+from services.roles import policy
 from util import agent_unlock
 from util.cert import jwt_encode
 from util.object_id import get_current_user
@@ -382,6 +383,10 @@ def chat_client(monkeypatch, world):
     monkeypatch.setattr(
         chat_router.ai_config, "allowed_roles", lambda: {"student"}, raising=False
     )
+    # 角色的「功能开关」（V043）与角色白名单是两条独立的轴：这里放开了
+    # ``ai.allowed_roles``（student 能进 AI 面），也得把 student 的 ``ai.chat``
+    # 打开——否则会先撞 403，测不到审核/无限制分支（本文件的主题）。
+    monkeypatch.setitem(policy._features, ("student", "ai.chat"), True)
     monkeypatch.setattr(chat_router.credentials, "catalog", no_catalog, raising=False)
     monkeypatch.setattr(
         chat_router.ai_config, "prompt_capture_roles", lambda: {"student"}, raising=False

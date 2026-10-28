@@ -7,7 +7,9 @@
   ``不再显示`` 完全是客户端本地状态，不调用服务端，也不推进任何版本号。
 * ``GET /admin``、``POST ""``、``PUT /{oid}``、``DELETE /{oid}`` —— 管理端。
   服务端每个请求都从数据库重新解析当前角色（``get_current_user``），
-  ``_require_admin`` 只认**当前**的 ``admin``，不信任 JWT 里的旧快照。
+  ``_require_admin`` 只认**当前**的 ``admin``，不信任 JWT 里的旧快照；
+  额外放行 ``notify.publish`` 开关已开（``ROLE_FEATURES``）的角色，默认关 =
+  改造前只有 admin 能进。
 
 版本语义：
 
@@ -34,6 +36,7 @@ from db import backends
 from db.repos.oracle.notifications import notification_content_hash
 from typings.log import inject_log
 from util.object_id import get_current_user
+from util.permission.features import has_feature
 from util.user import get_user_display_name
 from utils import validate_object_id
 
@@ -54,9 +57,17 @@ class NotificationUpdateRequest(BaseModel):
     active: Optional[bool] = None
 
 
-def _require_admin(user: dict) -> None:
-    if "admin" not in (user.get("per") or []):
-        raise HTTPException(status_code=403, detail="权限不足")
+def _require_admin(user: dict, feature: str | None = None) -> None:
+    """严格 ``admin``；给了 ``feature`` 时，该角色开关已开启也放行（V043）。
+
+    ``GET /notifications/{oid}/versions`` 不传 ``feature``：修订历史含被删除
+    的正文快照，它与「发布通知」不是同一种能力。
+    """
+    if "admin" in (user.get("per") or []):
+        return
+    if feature is not None and has_feature(user, feature):
+        return
+    raise HTTPException(status_code=403, detail="权限不足")
 
 
 def _iso(value) -> Optional[str]:
@@ -141,7 +152,7 @@ async def read_notifications(user=Depends(get_current_user)):
 @router.get("/admin")
 async def read_notifications_admin(user=Depends(get_current_user)):
     """Admin management list: active and inactive rows, newest first."""
-    _require_admin(user)
+    _require_admin(user, "notify.publish")
     rows, version = await backends.get_notifications_repo().list_all()
     return _envelope(rows, version)
 
@@ -152,7 +163,7 @@ async def create_notification(
     user=Depends(get_current_user),
     log=Depends(inject_log),
 ):
-    _require_admin(user)
+    _require_admin(user, "notify.publish")
 
     title = _clean_text(payload.title, "标题", _TITLE_MAX)
     content = _clean_text(payload.content, "内容", _CONTENT_MAX)
@@ -189,7 +200,7 @@ async def update_notification(
     user=Depends(get_current_user),
     log=Depends(inject_log),
 ):
-    _require_admin(user)
+    _require_admin(user, "notify.publish")
     validate_object_id(oid)
 
     title = (
@@ -238,7 +249,7 @@ async def delete_notification(
     user=Depends(get_current_user),
     log=Depends(inject_log),
 ):
-    _require_admin(user)
+    _require_admin(user, "notify.publish")
     validate_object_id(oid)
 
     actor_name = await get_user_display_name(user["id"])
@@ -286,7 +297,7 @@ async def rollback_notification(
     log=Depends(inject_log),
 ):
     """Restore an earlier revision; a deleted notice is revived under its oid."""
-    _require_admin(user)
+    _require_admin(user, "notify.publish")
     validate_object_id(oid)
 
     target = payload.get("version")

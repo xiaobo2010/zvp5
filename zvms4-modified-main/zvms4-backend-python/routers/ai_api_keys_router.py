@@ -16,6 +16,7 @@ from pydantic import BaseModel
 from services.ai import api_keys
 from typings.log import inject_log
 from util.object_id import get_current_user, validate_object_id
+from util.permission.features import ensure_feature
 
 router = APIRouter()
 
@@ -83,6 +84,7 @@ async def create_api_key(
     log=Depends(inject_log),
 ):
     """签发一把 key：``data.token`` 是**唯一一次**能看到明文的机会。"""
+    ensure_feature(user, "ai.keys")
     try:
         view = await api_keys.create(user["id"], payload.name, payload.expires_at)
     except api_keys.ApiKeyError as exc:
@@ -104,6 +106,7 @@ async def update_api_key(
     log=Depends(inject_log),
 ):
     """改名字 / 启停 / 到期时间；owner 或 admin。"""
+    ensure_feature(user, "ai.keys")
     target = validate_object_id(oid)
     try:
         view = await api_keys.update(

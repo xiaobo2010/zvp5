@@ -43,6 +43,7 @@ from typings.log import ZVMSLog
 from util import agent_unlock
 from util.cert import verify_password_async
 from util.object_id import get_current_user, require_password_verification
+from util.permission.features import ensure_feature
 
 _logger = logging.getLogger(__name__)
 
@@ -133,6 +134,24 @@ def _is_admin(user: dict) -> bool:
     return "admin" in (user.get("per") or [])
 
 
+def _feature_denied(user: dict, key: str, *, request_id: str) -> JSONResponse | None:
+    """功能开关门禁（``ROLE_FEATURES``）的拒绝体，与角色门禁同形。
+
+    与 :func:`_forbidden` 的区别：这里**不**写 ``AI_CALL_LOGS``。角色白名单拒绝是
+    「这个身份不该出现在 AI 面」，属于要审计的探测信号；开关拒绝只是管理员收起了
+    某项能力，不该给运维刷噪音。
+
+    位置恒在既有角色/密码判定**之后**：先角色（文案不变），再开关。
+    """
+    try:
+        ensure_feature(user, key)
+    except HTTPException as exc:
+        return _error(
+            exc.status_code, "AI_FORBIDDEN", str(exc.detail), request_id=request_id
+        )
+    return None
+
+
 async def _require_unlock(user: dict, *, request_id: str) -> JSONResponse | None:
     """确认/驳回前的密码门；未解锁回 422（与双人码的 422 同形）。"""
     user_oid = str(user.get("id") or "")
@@ -192,6 +211,13 @@ async def unlock(payload: UnlockRequest | None = None, user=Depends(get_current_
     request_id = uuid4().hex
     owner_oid = str(user.get("id") or "")
 
+    # 解锁本身也要过开关：否则「用密码换了授权，却什么都干不了」——前端会拿着一
+    # 个看起来成功的凭据去撞所有端点。放在锁定/密码判定之前，不给被收权的角色留
+    # 一条「继续撞密码」的路径。
+    denied = _feature_denied(user, "ai.agent", request_id=request_id)
+    if denied is not None:
+        return denied
+
     retry_after = agent_unlock.unlock_retry_after(owner_oid)
     if retry_after > 0:
         return _error(
@@ -241,6 +267,9 @@ async def get_unrestricted_mode(user=Depends(get_current_user)):
     request_id = uuid4().hex
     if not _is_admin(user):
         return await _forbidden(user, request_id=request_id)
+    denied = _feature_denied(user, "ai.agent", request_id=request_id)
+    if denied is not None:
+        return denied
     return JSONResponse(
         status_code=200,
         content={"enabled": agent_unlock.is_unrestricted(str(user.get("id") or ""))},
@@ -267,6 +296,9 @@ async def set_unrestricted_mode(
     request_id = uuid4().hex
     if not _is_admin(user):
         return await _forbidden(user, request_id=request_id)
+    denied = _feature_denied(user, "ai.agent", request_id=request_id)
+    if denied is not None:
+        return denied
 
     try:
         await require_password_verification(payload.verification_token, user)
@@ -319,6 +351,10 @@ async def confirm_proposal(
     if not _has_ai_access(user):
         return await _forbidden(user, request_id=request_id)
 
+    denied = _feature_denied(user, "ai.agent", request_id=request_id)
+    if denied is not None:
+        return denied
+
     denied = await _require_unlock(user, request_id=request_id)
     if denied is not None:
         return denied
@@ -364,6 +400,10 @@ async def reject_proposal(oid: str, user=Depends(get_current_user)):
 
     if not _has_ai_access(user):
         return await _forbidden(user, request_id=request_id)
+
+    denied = _feature_denied(user, "ai.agent", request_id=request_id)
+    if denied is not None:
+        return denied
 
     denied = await _require_unlock(user, request_id=request_id)
     if denied is not None:
@@ -417,6 +457,10 @@ async def list_proposals(
 
     if not _has_ai_access(user):
         return await _forbidden(user, request_id=request_id)
+
+    denied = _feature_denied(user, "ai.agent", request_id=request_id)
+    if denied is not None:
+        return denied
 
     try:
         items = await proposal.list_mine(

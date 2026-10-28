@@ -20,6 +20,7 @@ from services.agent.prompt import SYSTEM_PROMPT
 from services.agent.tool_impl import AgentError
 from services.ai import config as ai_config
 from services.ai import credentials, providers, rate_limit, routing
+from services.roles import policy
 
 USER = "000000000000000000000003"
 ADMIN = {"id": USER, "per": ["admin"]}
@@ -430,6 +431,10 @@ async def test_unknown_tool_is_denied_and_the_run_continues(monkeypatch, env) ->
 @pytest.mark.asyncio
 async def test_permission_denied_tool_is_logged_as_denied(monkeypatch, env) -> None:
     _audit, events, _quota, _activities = env
+    # 这个用例测的是「学生的写工具被拒」，不是额度：V043 把学生的角色级 chat
+    # 额度默认降到 0，不额外给一格额度的话请求会先撞 ``insufficient_quota``，
+    # 连工具都走不到。额度只放宽到「够跑这一轮」，权限判定不动。
+    monkeypatch.setitem(policy._quotas, ("student", "chat"), 1000)
     upstream = ScriptedUpstream(
         [
             _completion(

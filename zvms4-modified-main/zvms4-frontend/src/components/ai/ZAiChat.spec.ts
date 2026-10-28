@@ -1,7 +1,8 @@
 import { mount, type VueWrapper } from '@vue/test-utils'
-import { createPinia } from 'pinia'
+import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import ZAiChat from './ZAiChat.vue'
+import { useUserStore } from '@/stores/user'
 import {
   cancelRun,
   confirmProposal,
@@ -85,7 +86,7 @@ vi.mock('vue-i18n', async (importOriginal) => {
 })
 
 vi.mock('element-plus', async () => {
-  const { defineComponent, h } = await import('vue')
+  const { defineComponent, h, nextTick, watch } = await import('vue')
 
   const ElButton = defineComponent({
     name: 'ElButton',
@@ -159,11 +160,24 @@ vi.mock('element-plus', async () => {
   const ElDialog = defineComponent({
     name: 'ElDialog',
     props: { modelValue: Boolean, title: String },
-    emits: ['update:modelValue'],
-    setup(props, { emit, slots }) {
+    emits: ['update:modelValue', 'closed'],
+    setup(props, { emit, slots, attrs }) {
+      // 真实 ElDialog 在离场动画结束后抛 closed；桩里退化成下一拍，
+      // 用来验证「结论只在 closed 才结算」这条约定。
+      watch(
+        () => props.modelValue,
+        (open, prev) => {
+          if (prev && !open) {
+            void nextTick(() => emit('closed'))
+          }
+        }
+      )
       return () =>
         props.modelValue
-          ? h('div', { class: 'el-dialog-stub' }, [slots.default?.(), slots.footer?.()])
+          ? h('div', { class: ['el-dialog-stub', attrs.class] }, [
+              slots.default?.(),
+              slots.footer?.()
+            ])
           : null
     }
   })
@@ -296,6 +310,9 @@ function serverTime(offsetMs: number): string {
   )
 }
 
+/** 账号 u1 的风险确认标识（按账号隔离）。 */
+const RISK_KEY = 'zvms.agent.riskAck.u1'
+
 /* ---------------------------------------------------------------------------
    工具
    --------------------------------------------------------------------------- */
@@ -307,8 +324,12 @@ async function settle(times = 8): Promise<void> {
   }
 }
 
-function mountPage(): VueWrapper {
-  return mount(ZAiChat, { global: { plugins: [createPinia()] } })
+function mountPage(props: Record<string, unknown> = {}): VueWrapper {
+  const pinia = createPinia()
+  setActivePinia(pinia)
+  // 账号固定成 u1：风险标识按账号隔离，key 才有确定的形状
+  useUserStore(pinia)._id = 'u1'
+  return mount(ZAiChat, { props, global: { plugins: [pinia] } })
 }
 
 function findButton(wrapper: VueWrapper, label: string) {
@@ -323,6 +344,10 @@ async function sendText(wrapper: VueWrapper, text: string) {
 
 beforeEach(() => {
   vi.useFakeTimers()
+  // 风险标识默认已确认：既有用例不被首次使用弹窗挡住；
+  // 要验证弹窗的用例自己在挂载前把它清掉。
+  localStorage.clear()
+  localStorage.setItem(RISK_KEY, '1')
   vi.mocked(listModels).mockReset()
   vi.mocked(fetchPendingProposals).mockReset()
   vi.mocked(confirmProposal).mockReset()
@@ -715,6 +740,96 @@ describe('待确认提案', () => {
 
     expect(confirmProposal).toHaveBeenCalledWith('6'.repeat(32))
     expect(wrapper.text()).toContain('ai.agent.proposal.confirmed')
+
+    wrapper.unmount()
+  })
+})
+
+describe('首次使用风险警示', () => {
+  it('首次进入智能体：先弹警示，确认前不建会话、不切会话', async () => {
+    localStorage.clear()
+    const wrapper = mountPage()
+    await settle()
+
+    const dialog = wrapper.find('.ai-agent__risk-dialog')
+    expect(dialog.exists()).toBe(true)
+    expect(dialog.text()).toContain('ai.agent.risk.power')
+    expect(dialog.text()).toContain('ai.agent.risk.ban')
+    expect(dialog.text()).toContain('ai.agent.risk.audit')
+
+    // 门禁没放行：既没建会话，也没把最近的会话选进来
+    expect(createConversation).not.toHaveBeenCalled()
+    expect(listMessages).not.toHaveBeenCalled()
+
+    wrapper.unmount()
+  })
+
+  it('点「我已知悉」：写标记、关弹窗、正常进入，再进不再弹', async () => {
+    localStorage.clear()
+    const wrapper = mountPage()
+    await settle()
+
+    await findButton(wrapper, 'ai.agent.risk.ack')!.trigger('click')
+    await settle()
+    await wrapper.vm.$nextTick()
+
+    expect(localStorage.getItem(RISK_KEY)).toBe('1')
+    expect(wrapper.find('.ai-agent__risk-dialog').exists()).toBe(false)
+    // 门禁放行后接回最近会话
+    expect(listMessages).toHaveBeenCalledWith('agent1', expect.objectContaining({ afterSeq: 0 }))
+    wrapper.unmount()
+
+    // 同一账号再进：标记还在，不弹
+    const again = mountPage()
+    await settle()
+    expect(again.find('.ai-agent__risk-dialog').exists()).toBe(false)
+    again.unmount()
+  })
+
+  it('点取消：不写标记、不建会话、不提交，下次动作还能再弹', async () => {
+    localStorage.clear()
+    const wrapper = mountPage()
+    await settle()
+
+    await findButton(wrapper, 'ai.agent.risk.cancel')!.trigger('click')
+    await settle()
+    await wrapper.vm.$nextTick()
+
+    expect(localStorage.getItem(RISK_KEY)).toBeNull()
+    expect(wrapper.find('.ai-agent__risk-dialog').exists()).toBe(false)
+    expect(createConversation).not.toHaveBeenCalled()
+    expect(submitRun).not.toHaveBeenCalled()
+
+    // 取消后点「新建会话」：门禁重新弹框，依然不建
+    await findButton(wrapper, 'ai.chat.sessions.new')!.trigger('click')
+    await settle()
+    expect(wrapper.find('.ai-agent__risk-dialog').exists()).toBe(true)
+    expect(createConversation).not.toHaveBeenCalled()
+
+    wrapper.unmount()
+  })
+
+  it('已有本账号标记：进页面不弹', async () => {
+    const wrapper = mountPage()
+    await settle()
+
+    expect(wrapper.find('.ai-agent__risk-dialog').exists()).toBe(false)
+    expect(listMessages).toHaveBeenCalledWith('agent1', expect.objectContaining({ afterSeq: 0 }))
+
+    wrapper.unmount()
+  })
+
+  it('普通对话模式：不弹，也不拦建会话', async () => {
+    localStorage.clear()
+    const wrapper = mountPage({ mode: 'chat' })
+    await settle()
+
+    expect(wrapper.find('.ai-agent__risk-dialog').exists()).toBe(false)
+
+    await findButton(wrapper, 'ai.chat.sessions.new')!.trigger('click')
+    await settle()
+
+    expect(createConversation).toHaveBeenCalledWith('agent')
 
     wrapper.unmount()
   })

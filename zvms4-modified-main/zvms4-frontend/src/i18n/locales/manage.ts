@@ -290,6 +290,143 @@ export const zhCN = {
       admin: '管理员'
     }
   },
+  rolePolicies: {
+    tabsLabel: '角色管理分区',
+    tabs: {
+      policy: '角色策略',
+      users: '用户角色'
+    },
+    title: '角色策略',
+    subtitle: '按角色控制功能开关与月度配额；保存时需要另一位管理员的动态码确认。',
+    refresh: '刷新',
+    save: '保存',
+    saving: '保存中',
+    loading: '策略加载中…',
+    empty: '后端还没有提供可配置的角色策略',
+    loadFailed: '策略加载失败，请稍后重试',
+    saveFailed: '保存失败，请稍后重试',
+    forbidden: '没有权限修改角色策略（仅管理员可用）',
+    notFound: '角色不存在或策略接口尚未开放，请刷新后重试',
+    unauthorized: '登录已过期，请重新登录后重试',
+    saved: '角色策略已保存',
+    pending: '有未保存的改动',
+    adminLocked: '管理员固定全量权限',
+    readOnly: '该角色不可编辑，如需调整请联系管理员',
+    guestRole: '未知角色',
+    quotaPlaceholder: '留空用默认',
+    authUnavailable: '授权弹窗不可用，请刷新页面后重试',
+    authScene: '保存「{role}」的角色策略',
+    unsavedTitle: '切换角色',
+    unsavedConfirm:
+      '当前角色有未保存的改动，切换后这些改动不会保存到服务器（草稿仍保留在本次会话中）。确定切换角色？',
+    unsavedOk: '切换',
+    unsavedCancel: '留在此页',
+    updatedAt: '最后修改：{time}',
+    updatedBy: '由 {actor} 修改',
+    sections: {
+      features: '功能权限',
+      featuresHint: '关闭后该角色看不到对应入口，接口也会拒绝这类请求。',
+      quotas: '月度配额',
+      quotasHint: '0 表示不开放，留空表示沿用系统默认；两者含义不同，不要混用。'
+    },
+    featureGroups: {
+      ai: 'AI 能力',
+      activity: '活动与数据',
+      ops: '运维只读'
+    },
+    features: {
+      ai: {
+        chat: {
+          label: 'LLM 对话',
+          hint: '允许在 AI 助手里发起多轮对话'
+        },
+        ocr: {
+          label: '文字识别(OCR)',
+          hint: '允许上传图片做文字识别与取词'
+        },
+        agent: {
+          label: '智能体',
+          hint: '允许使用可自主调用工具的智能体模式'
+        },
+        schedule: {
+          label: 'AI 定时任务',
+          hint: '允许创建按时间自动执行的 AI 任务'
+        },
+        keys: {
+          label: '自助 API Key',
+          hint: '允许自己创建与吊销 API Key'
+        }
+      },
+      activity: {
+        stats: {
+          label: '活动统计',
+          hint: '查看活动出勤与达标统计'
+        }
+      },
+      attachment: {
+        manage: {
+          label: '附件审核',
+          hint: '审核学生上传的证明材料与 OCR 结果'
+        }
+      },
+      export: {
+        time: {
+          label: '工时导出',
+          hint: '导出工时明细为 CSV / Excel'
+        }
+      },
+      import: {
+        activity: {
+          label: '活动导入',
+          hint: '从模板批量导入活动记录'
+        }
+      },
+      logs: {
+        read: {
+          label: '业务日志查看',
+          hint: '查看操作日志与审计记录'
+        }
+      },
+      notify: {
+        publish: {
+          label: '通知发布',
+          hint: '向全站用户发布通知'
+        }
+      },
+      ban: {
+        read: {
+          label: '封禁名单查看',
+          hint: '查看封禁名单与违规记录'
+        }
+      },
+      quota: {
+        manage: {
+          label: '用户配额管理',
+          hint: '调整单个用户的 AI 配额'
+        }
+      }
+    },
+    quotas: {
+      chat: {
+        label: 'LLM 额度',
+        hint: '每月对话额度，每 1000 token = 1 单位'
+      },
+      ocr: {
+        label: 'OCR 次数/月',
+        hint: '每月可发起的文字识别次数'
+      },
+      schedule: {
+        label: 'AI 定时任务条数',
+        hint: '当前规则：学生会 1 条；0 表示不允许创建'
+      }
+    },
+    roles: {
+      student: '学生',
+      secretary: '团支书',
+      department: '学生会',
+      admin: '管理员'
+    }
+  },
   notifications: {
     title: '通知管理',
     subtitle: '创建后立即发送给所有已登录用户；用户端按本地已阅状态逐条提醒。',

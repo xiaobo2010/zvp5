@@ -10,6 +10,7 @@ from datetime import datetime
 
 from db import backends
 from db.repos.protocols import SHARED_OWNER_OID
+from services.roles import policy as role_policy
 
 from .config import (
     DEFAULT_QUOTA,
@@ -87,8 +88,17 @@ def _role_default(roles: list[str] | None, kind: str) -> int | None:
 
     ``ocr_*`` 站点级 kind 与大类一样按 ``base`` 查找（站点额度没有角色维度，
     最终会落到 :func:`_default_limit` 的站点口径）。
+
+    顺序：**角色策略表（``ROLE_QUOTAS``, V043）** → 运行期 ``ai.role_quota`` /
+    ``settings.AI_ROLE_QUOTA`` / ``config.AI_ROLE_QUOTA`` → 全局默认。新表排在
+    前面是因为它才是管理员在「角色策略」页真正编辑的那一份；后两者保留是为了
+    「策略表没覆盖这个角色」时行为与改造前一致（也保住既有的配置回退路径）。
     """
     base = kind.split("_", 1)[0] if kind not in DEFAULT_QUOTA else kind
+    hit = role_policy.monthly_limit(roles, base)
+    if hit is not None:
+        return hit
+
     role_set = {item for item in (roles or []) if isinstance(item, str)}
     table = role_quota()
     for role in ROLE_QUOTA_PRIORITY:

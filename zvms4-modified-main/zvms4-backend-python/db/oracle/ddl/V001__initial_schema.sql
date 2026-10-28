@@ -2147,6 +2147,51 @@ EXCEPTION
 END;
 /
 
+-- ----------------------------------------------------------------------------
+-- ROLE_FEATURES  ← new (角色 -> 功能开关; V043)
+--   稀疏覆盖层：没有行 = 按 services.roles.policy.DEFAULTS。role 是封闭枚举，
+--   admin 不落库（管理员永远全开，是代码里的短路）。
+-- ----------------------------------------------------------------------------
+BEGIN
+  EXECUTE IMMEDIATE '
+CREATE TABLE role_features (
+  role VARCHAR2(32 CHAR) NOT NULL,
+  feature_key VARCHAR2(48 CHAR) NOT NULL,
+  enabled NUMBER(1) DEFAULT 1 NOT NULL,
+  updated_at TIMESTAMP,
+  updated_by CHAR(24 CHAR),
+  PRIMARY KEY (role, feature_key),
+  CONSTRAINT ck_role_features_enabled CHECK (enabled IN (0,1)),
+  CONSTRAINT ck_role_features_role CHECK (role IN (''department'',''secretary'',''student''))
+)';
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE != -955 THEN RAISE; END IF;
+END;
+/
+
+-- ----------------------------------------------------------------------------
+-- ROLE_QUOTAS  ← new (角色 -> 每月额度; V043)
+--   只有 chat / ocr / schedule 三种角色级额度；缺行 = 按代码默认。
+-- ----------------------------------------------------------------------------
+BEGIN
+  EXECUTE IMMEDIATE '
+CREATE TABLE role_quotas (
+  role VARCHAR2(32 CHAR) NOT NULL,
+  kind VARCHAR2(16 CHAR) NOT NULL,
+  monthly_limit NUMBER(12),
+  updated_at TIMESTAMP,
+  updated_by CHAR(24 CHAR),
+  PRIMARY KEY (role, kind),
+  CONSTRAINT ck_role_quotas_kind CHECK (kind IN (''chat'',''ocr'',''schedule'')),
+  CONSTRAINT ck_role_quotas_limit CHECK (monthly_limit >= 0)
+)';
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE != -955 THEN RAISE; END IF;
+END;
+/
+
 -- AI_PROMPT_AUDIT 的单列时间索引（V036）：保留期清理按 created_at 扫。
 BEGIN
   EXECUTE IMMEDIATE '

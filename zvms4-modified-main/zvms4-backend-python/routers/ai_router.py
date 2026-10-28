@@ -59,6 +59,7 @@ from util.object_id import (
     require_password_verification,
     validate_object_id,
 )
+from util.permission.features import ensure_feature
 from util.user import get_user_display_name, get_user_display_names
 
 router = APIRouter()
@@ -344,6 +345,25 @@ def _require_ai_access(user: dict) -> None:
 AI_FORBIDDEN_MESSAGE = "ai service is not available for your role"
 
 
+def _feature_error(user: dict, key: str, *, request_id: str) -> JSONResponse | None:
+    """OpenAI 兼容面的功能开关门禁（``ROLE_FEATURES``）。
+
+    拒绝体必须是 ``{"error": {...}}``：客户端是 OpenAI SDK，它不认识 ``detail``。
+    ``code`` 沿用既有的 ``AI_FORBIDDEN``（前端已有对应文案），``message`` 用开关层
+    的文案，与角色白名单的 ``AI_FORBIDDEN_MESSAGE`` 区分开——「这个角色不该用 AI」
+    与「这个角色没被授予这项功能」是两件事。
+
+    位置恒在既有角色判定**之后**：先判角色（报错文案不变），再判开关。
+    """
+    try:
+        ensure_feature(user, key)
+    except HTTPException as exc:
+        return _openai_error(
+            exc.status_code, "AI_FORBIDDEN", str(exc.detail), request_id=request_id
+        )
+    return None
+
+
 def _credential_error(exc: CredentialError) -> HTTPException:
     """服务层错误码 → HTTP。``detail`` 用 code 而不是长句：客户端按 code 分支，
     人话写在 code 里（``AI_KEY_DUPLICATE`` 比一段英文更好 grep）。"""
@@ -536,6 +556,9 @@ async def _enqueue_ocr(
             roles_snapshot=audit.roles_snapshot(user.get("per")),
         )
         raise HTTPException(status_code=403, detail="AI_FORBIDDEN")
+    # 角色白名单之后再过功能开关：``/ocr`` 与 ``/volunteer-ocr`` 共用这条入队路径，
+    # 两个入口各自原有的人口径（含密码再认证）都保留不变。
+    ensure_feature(user, "ai.ocr")
     oid = validate_object_id(payload.attachment_oid)
     try:
         data = await ai_ocr.enqueue(
@@ -1093,6 +1116,7 @@ async def user_quota(user_oid: str, user=Depends(get_current_user)):
     ``global_default``，不编造角色。
     """
     _require_admin(user)
+    ensure_feature(user, "quota.manage")
     target = validate_object_id(user_oid)
     roles = await _target_roles(target)
     return {
@@ -1111,6 +1135,7 @@ async def set_user_quota(
 ):
     """管理员设额：只改上限，已用量保持不变。"""
     _require_admin(user)
+    ensure_feature(user, "quota.manage")
     target = validate_object_id(user_oid)
     try:
         data = await quota.set_user_limit(target, payload.kind, payload.limit_count)
@@ -1134,6 +1159,7 @@ async def reset_user_quota(
 ):
     """管理员重置某能力当月已用量：``used`` 归零，上限保留。"""
     _require_admin(user)
+    ensure_feature(user, "quota.manage")
     target = validate_object_id(user_oid)
     try:
         data = await quota.reset_used(target, payload.kind)
@@ -1252,11 +1278,15 @@ async def ai_health(
 @router.get("/v1/models")
 async def list_models(user=Depends(get_ai_client)):
     """只列这个用户真的能调的模型：个人 key 的模型不该出现在别人的列表里。"""
+    request_id = uuid4().hex
     if not _has_ai_access(user):
         # OpenAI 兼容面不能抛 detail：客户端只认 {"error": {...}}。
         return _openai_error(
-            403, "AI_FORBIDDEN", AI_FORBIDDEN_MESSAGE, request_id=uuid4().hex
+            403, "AI_FORBIDDEN", AI_FORBIDDEN_MESSAGE, request_id=request_id
         )
+    denied = _feature_error(user, "ai.chat", request_id=request_id)
+    if denied is not None:
+        return denied
     entries = await credentials.catalog(user["id"])
     owners: dict[str, str] = {}
     for entry in entries:
@@ -1520,6 +1550,12 @@ async def chat_completions(
         return _openai_error(
             403, "AI_FORBIDDEN", AI_FORBIDDEN_MESSAGE, request_id=request_id
         )
+
+    # 角色白名单之后再加一道「功能开关」：department 默认开着，等价改造前行为；
+    # 管理员在开关层恒为 True（policy 的短路），不会因为关掉开关而掉线。
+    denied = _feature_error(user, "ai.chat", request_id=request_id)
+    if denied is not None:
+        return denied
 
     if not ai_config.is_enabled():
         await _reject_http(

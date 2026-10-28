@@ -1681,6 +1681,55 @@ Index(
 
 
 # ---------------------------------------------------------------------------
+# ROLE_FEATURES  ← new (角色 -> 功能开关; V043)
+#   稀疏覆盖层，不是完整矩阵：(role, feature_key) 没有行 = 按
+#   ``services.roles.policy.DEFAULTS``。所以新库这两张表是空的，行为与改造前
+#   一致，管理员只写他真正要改的格子。
+#   ROLE 是封闭枚举（三个可编辑角色）；``admin`` **不落库** —— 管理员永远全开
+#   且无限额，那是代码里的短路，写成数据行只会让人以为「取消勾选能关掉管理员」。
+#   UPDATED_AT / UPDATED_BY 可空：手工补数据时不必编造审计字段。
+# ---------------------------------------------------------------------------
+
+role_features = Table(
+    "role_features",
+    metadata,
+    Column("role", VARCHAR2(32), primary_key=True),
+    Column("feature_key", VARCHAR2(48), primary_key=True),
+    Column("enabled", NUMBER(1), nullable=False, server_default=text("1")),
+    Column("updated_at", oracle.TIMESTAMP, nullable=True),
+    Column("updated_by", oracle.CHAR(24), nullable=True),
+    CheckConstraint("enabled IN (0,1)", name="ck_role_features_enabled"),
+    CheckConstraint(
+        "role IN ('department','secretary','student')",
+        name="ck_role_features_role",
+    ),
+)
+
+
+# ---------------------------------------------------------------------------
+# ROLE_QUOTAS  ← new (角色 -> 每月额度; V043)
+#   KIND 只有 chat / ocr / schedule 三种「角色级」额度；站点级 ``ocr_<engine>``
+#   不在这里（那是平台出资的口径，与角色无关，见 services/ai/quota.py）。
+#   缺行 = 按代码默认；MONTHLY_LIMIT 可空但不为空 —— 0 是「一个都不给」的合法
+#   结论，NULL 只服务人工补数据时的「没填」。
+# ---------------------------------------------------------------------------
+
+role_quotas = Table(
+    "role_quotas",
+    metadata,
+    Column("role", VARCHAR2(32), primary_key=True),
+    Column("kind", VARCHAR2(16), primary_key=True),
+    Column("monthly_limit", NUMBER(12), nullable=True),
+    Column("updated_at", oracle.TIMESTAMP, nullable=True),
+    Column("updated_by", oracle.CHAR(24), nullable=True),
+    CheckConstraint(
+        "kind IN ('chat','ocr','schedule')", name="ck_role_quotas_kind"
+    ),
+    CheckConstraint("monthly_limit >= 0", name="ck_role_quotas_limit"),
+)
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 

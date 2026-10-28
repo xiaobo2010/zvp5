@@ -1,9 +1,10 @@
 """agent 工具的数据层（共享查询实现）。
 
-这一层是**纯数据**：不判权限、不写审计、不拼 OpenAI 消息。权限在
+这一层是**纯数据**：不判权限、不判计费、不拼 OpenAI 消息。权限在
 ``services.agent.tools`` 的注册表里（能力限制在工具定义层，而不是靠 prompt），
 循环与计费在 ``services.agent.executor``，写操作的提案在
-``services.agent.proposal``。
+``services.agent.proposal``。唯一的例外是活动域两个写操作成功后追加的审计旁路
+（:func:`_audit_member_write`）：它是「已落库」的补记，失败不影响业务结论。
 
 为什么把查询逻辑单独放这里而不是直接让工具调用路由函数：MCP 端点
 （``routers/mcp_router``）与 agent 工具必须回答**同一份数据**。两边各写一遍
@@ -20,6 +21,8 @@ from __future__ import annotations
 import json
 import logging
 import re
+from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import date, datetime
 from decimal import Decimal
 
@@ -27,6 +30,7 @@ from db import backends
 from db.repos.oracle.members import escape_oracle_regex
 from util.activity_statistics import describe_durations, to_mcp_statistics
 from util.calculate import calculate_user_time
+from util.dual_auth import audit_system_op
 
 _logger = logging.getLogger(__name__)
 
@@ -372,8 +376,48 @@ async def _refresh_member_time(member_oid: str) -> None:
         )
 
 
+# 活动域写操作的审计 ltype 沿用 REST 端点（``activities_v2_router``）的既有取值，
+# 这样日志页按 ltype 过滤时，agent 改的时长/状态与人工操作落在同一栏。
+AUDIT_TYPE_MEMBER_DURATION = "activity_member_update"
+AUDIT_TYPE_MEMBER_REVIEW = "activity_member_review"
+
+
+# 本层两个写函数的 ``user`` 参数是**可选**的：``tools.py`` 现有实现只把
+# (activity, member) 传下来，没有转传 user。审计需要「是谁」，所以由调用 impl 的
+# 那一层（``executor`` / ``proposal``）用 ContextVar 把操作者带进来，缺参时兜底；
+# 两者都没有（脚本直调）时 operator 为空，日志里不会冒出别人的 oid。
+# 与 ``util.object_id.log_level_floor`` 同款做法。
+_OPERATOR: ContextVar[dict | None] = ContextVar("zvms_agent_operator", default=None)
+
+
+@contextmanager
+def operator_context(user: dict | None):
+    """在 ``with`` 范围内把当前操作者暴露给数据层（嵌套安全，退出即还原）。"""
+    token = _OPERATOR.set(user)
+    try:
+        yield
+    finally:
+        _OPERATOR.reset(token)
+
+
+async def _audit_member_write(
+    user: dict | None, action: str, detail: str, log_type: str
+) -> None:
+    """写操作落库后补一条系统审计（旁路：失败只记 warning，不改结论）。"""
+    operator = user or _OPERATOR.get() or {}
+    try:
+        await audit_system_op(
+            str(operator.get("id") or ""),
+            action=action,
+            detail=detail[:500],
+            log_type=log_type,
+        )
+    except Exception:  # noqa: BLE001 - 审计是旁路，写失败不改变业务结论
+        _logger.warning("agent %s audit write failed", action, exc_info=True)
+
+
 async def apply_member_duration(
-    *, activity_id: str, member_id: str, duration: float
+    *, activity_id: str, member_id: str, duration: float, user: dict | None = None
 ) -> dict:
     """设定成员的时长（小时，非负）。
 
@@ -406,6 +450,12 @@ async def apply_member_duration(
         member_id, {"duration": value, "mode": mode}
     )
     await _refresh_member_time(str(member["member"]))
+    await _audit_member_write(
+        user,
+        "agent_member_duration",
+        f"activity={activity_id} member={member_id} duration={value}",
+        AUDIT_TYPE_MEMBER_DURATION,
+    )
     return {
         "id": member_id,
         "activity_id": activity_id,
@@ -415,7 +465,7 @@ async def apply_member_duration(
 
 
 async def apply_member_status(
-    *, activity_id: str, member_id: str, status: str
+    *, activity_id: str, member_id: str, status: str, user: dict | None = None
 ) -> dict:
     """审核成员的参与状态（effective / pending / refused）。"""
     if status not in MEMBER_STATUSES:
@@ -433,6 +483,12 @@ async def apply_member_status(
 
     await backends.get_members_repo().update_fields(member_id, {"status": status})
     await _refresh_member_time(str(member["member"]))
+    await _audit_member_write(
+        user,
+        "agent_member_status",
+        f"activity={activity_id} member={member_id} status={status}",
+        AUDIT_TYPE_MEMBER_REVIEW,
+    )
     return {
         "id": member_id,
         "activity_id": activity_id,
@@ -455,6 +511,7 @@ __all__ = [
     "list_activity_members",
     "list_groups",
     "normalize_activity_types",
+    "operator_context",
     "search_activities",
     "to_json_text",
     "user_activities",

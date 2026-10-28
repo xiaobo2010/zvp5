@@ -428,7 +428,7 @@ async def _impl_update_member_duration(
     user: dict, activity_id: str, member_id: str, duration: float
 ) -> dict:
     return await tool_impl.apply_member_duration(
-        activity_id=activity_id, member_id=member_id, duration=duration
+        activity_id=activity_id, member_id=member_id, duration=duration, user=user
     )
 
 
@@ -463,7 +463,7 @@ async def _impl_set_member_status(
     user: dict, activity_id: str, member_id: str, status: str
 ) -> dict:
     return await tool_impl.apply_member_status(
-        activity_id=activity_id, member_id=member_id, status=status
+        activity_id=activity_id, member_id=member_id, status=status, user=user
     )
 
 

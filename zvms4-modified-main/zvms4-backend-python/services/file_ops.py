@@ -59,8 +59,20 @@ PROTECTED_BASENAMES: frozenset[str] = frozenset(
         "truststore.jks",
         "id_rsa",
         "id_ed25519",
+        ".env",
+        ".envrc",
+        ".git-credentials",
+        ".npmrc",
+        ".pypirc",
+        ".pgpass",
+        ".my.cnf",
+        "credentials",
+        "credentials.json",
     }
 )
+# 前缀形式（``.env.local`` / ``.env.production`` …）：精确集合列不全所有变体，
+# 只要以 ``.env.`` 开头一律按凭据处理。
+PROTECTED_BASENAME_PREFIXES: tuple[str, ...] = (".env.",)
 PROTECTED_PATH_SEGMENTS: frozenset[str] = frozenset({".oci", "adb-wallet"})
 
 
@@ -68,6 +80,8 @@ def _is_protected_secret(path: str) -> bool:
     """True when ``path`` names an application/credential artifact."""
     name = os.path.basename(path).lower()
     if name in PROTECTED_BASENAMES:
+        return True
+    if name.startswith(PROTECTED_BASENAME_PREFIXES):
         return True
     segments = {part.lower() for part in path.split(os.sep) if part}
     return bool(segments & PROTECTED_PATH_SEGMENTS)

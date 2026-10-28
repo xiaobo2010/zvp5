@@ -25,6 +25,7 @@ from util.object_id import (
     validate_object_id,
     compulsory_temporary_token,
 )
+from util.permission.features import has_feature
 from datetime import datetime, timedelta
 from db import backends
 from db.models import export_tasks as _tasks_tbl
@@ -312,7 +313,7 @@ async def export_time(
     user=Depends(get_current_user),
     log=Depends(inject_log),
 ):
-    if "admin" not in user["per"]:
+    if "admin" not in user["per"] and not has_feature(user, "export.time"):
         raise HTTPException(status_code=403, detail="Permission denied")
     start, end = _export_date(properties.start), _export_date(properties.end)
     if start is not None and end is not None:

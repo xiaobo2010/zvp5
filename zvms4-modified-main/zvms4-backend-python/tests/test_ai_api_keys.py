@@ -298,7 +298,9 @@ def test_same_name_for_different_users_is_fine(repo, users):
     users.rows[OTHER] = _user_row(OTHER)
 
     assert _client().post("/api/ai/api-keys", json={"name": "ci"}).status_code == 201
-    response = _client({"id": OTHER, "per": ["student"]}).post(
+    # V043 的 ``ai.keys`` 默认对 student 关闭（学生本来也进不了 AI 网关），所以
+    # 这里的「另一个用户」用 department：测的是重名隔离，不是角色策略。
+    response = _client({"id": OTHER, "per": ["department"]}).post(
         "/api/ai/api-keys", json={"name": "ci"}
     )
 
@@ -359,7 +361,7 @@ def test_owner_can_disable_and_rename_other_users_cannot(repo, users):
     created = _client().post("/api/ai/api-keys", json={"name": "ci"}).json()["data"]
     users.rows[OTHER] = _user_row(OTHER, roles=["student"])
 
-    stranger = _client({"id": OTHER, "per": ["student"]})
+    stranger = _client({"id": OTHER, "per": ["department"]})
     denied = stranger.patch(f"/api/ai/api-keys/{created['oid']}", json={"enabled": False})
     assert denied.status_code == 403
     assert denied.json()["detail"] == "AI_FORBIDDEN"
@@ -374,9 +376,9 @@ def test_owner_can_disable_and_rename_other_users_cannot(repo, users):
 
 
 def test_admin_sees_and_manages_other_users_keys(repo, users):
-    users.rows[OTHER] = _user_row(OTHER, roles=["student"])
+    users.rows[OTHER] = _user_row(OTHER, roles=["department"])
     created = (
-        _client({"id": OTHER, "per": ["student"]})
+        _client({"id": OTHER, "per": ["department"]})
         .post("/api/ai/api-keys", json={"name": "student-key"})
         .json()["data"]
     )
