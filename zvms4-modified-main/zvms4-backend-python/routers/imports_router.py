@@ -12,6 +12,7 @@ from db.ids import normalize_oid
 from db.oracle.session import session_scope
 from typings.log import inject_log
 from util.object_id import get_current_user
+from util.permission.features import has_feature
 from util.validation import validate_activity_description, validate_activity_name
 
 router = APIRouter()
@@ -72,7 +73,7 @@ async def upload_activity_excel(
     user=Depends(get_current_user),
     log=Depends(inject_log),
 ):
-    if "admin" not in (user.get("per") or []):
+    if "admin" not in (user.get("per") or []) and not has_feature(user, "import.activity"):
         raise HTTPException(status_code=403, detail="权限不足")
     for validator, value in ((validate_activity_name, name), (validate_activity_description, desc)):
         valid, reason = validator(value)

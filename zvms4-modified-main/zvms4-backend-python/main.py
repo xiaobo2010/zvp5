@@ -40,6 +40,7 @@ from routers import (
     ai_chat_conversations_router,
     ai_schedule_router,
     system_settings_router,
+    system_role_policies_router,
 )
 import socketio
 from socketio.exceptions import ConnectionRefusedError as SocketIOConnectionRefusedError
@@ -60,6 +61,7 @@ from tasks.retention import purge_expired_records
 from tasks.user_trash_gc import purge_expired_trash
 from services import perf_sampler
 from services import settings_runtime
+from services.roles import policy as role_policy
 from services.agent import run_queue
 from services.ai import scheduled_runner
 from services.api_metrics import ApiMetricsMiddleware
@@ -437,6 +439,19 @@ async def startup_event():
         misfire_grace_time=2,
     )
 
+    # 角色功能开关与额度（V043）：每 5 秒把 ROLE_FEATURES / ROLE_QUOTAS 读进快照。
+    # 功能闸（util.permission.features.has_feature）与额度预检都是同步判定，不刷
+    # 就会一直按代码默认值判；管理页保存后也只对处理该请求的 worker 生效。
+    scheduler.add_job(
+        role_policy.refresh,
+        "interval",
+        seconds=role_policy.REFRESH_SECONDS,
+        id="role_policy_refresh",
+        coalesce=True,
+        max_instances=1,
+        misfire_grace_time=2,
+    )
+
     # AI 会话的后台 run 队列（设计 §4.3）：先把上次进程遗留的 running 收敛成
     # interrupted（单 worker 下「刚启动」等价于「没有合法在跑的任务」），再起泵
     # 去领 queued 的。收敛失败不该挡住启动——watchdog 每 30s 还会再试一次。
@@ -532,6 +547,11 @@ app.include_router(
 app.include_router(
     system_db_content_router.router,
     prefix="/api/system/db/content",
+    tags=["System"],
+)
+app.include_router(
+    system_role_policies_router.router,
+    prefix="/api/system/role-policies",
     tags=["System"],
 )
 app.include_router(ban_router.router, prefix="/api/v3/ban", tags=["ban"])

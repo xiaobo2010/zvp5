@@ -443,7 +443,8 @@ async def confirm(
         )
 
     try:
-        result = await tool.impl(user, **kwargs)
+        with tool_impl.operator_context(user):
+            result = await tool.impl(user, **kwargs)
     except AgentError as exc:
         await repo.update_status(
             str(oid),

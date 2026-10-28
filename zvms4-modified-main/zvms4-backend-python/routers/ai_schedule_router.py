@@ -33,6 +33,7 @@ from services.ai import config as ai_config
 from services.ai import scheduled_runner as runner
 from services.ai.scheduled_runner import ScheduledError
 from util.object_id import get_current_user
+from util.permission.features import ensure_feature
 
 router = APIRouter()
 
@@ -215,6 +216,7 @@ async def list_tasks(
 ):
     """本人的任务；admin 可带 ``?owner_oid=`` 看别人的，或用 ``?all_tasks=1``
     看审核队列（可再叠 ``?review_status=pending``）。"""
+    ensure_feature(user, "ai.schedule")
     repo = runner.repo()
 
     wants_admin_view = all_tasks or review_status is not None
@@ -253,6 +255,7 @@ async def list_tasks(
 async def create_task(payload: TaskCreate, user=Depends(get_current_user)):
     """建任务（``review_status='pending'``，等 admin 审核后才可能执行）。"""
     _require_creator(user)
+    ensure_feature(user, "ai.schedule")
     repo = runner.repo()
 
     if not _is_admin(user):
@@ -298,6 +301,7 @@ async def update_task(oid: str, payload: TaskUpdate, user=Depends(get_current_us
     repo = runner.repo()
     task = await _require_task(repo, _oid(oid))
     _require_owner_or_admin(user, task)
+    ensure_feature(user, "ai.schedule")
 
     values: dict[str, Any] = {}
     fields = payload.model_dump(exclude_unset=True)
@@ -362,6 +366,7 @@ async def delete_task(oid: str, user=Depends(get_current_user)):
     repo = runner.repo()
     task = await _require_task(repo, _oid(oid))
     _require_owner_or_admin(user, task)
+    ensure_feature(user, "ai.schedule")
     await repo.delete(task["_id"])
     return None
 
@@ -375,6 +380,7 @@ async def review_task(oid: str, payload: ReviewRequest, user=Depends(get_current
     """
     if not _is_admin(user):
         raise HTTPException(status_code=403, detail="AI_SCHEDULE_FORBIDDEN")
+    ensure_feature(user, "ai.schedule")
 
     decision = str(payload.decision or "").strip().lower()
     if decision not in DECISIONS:
@@ -408,6 +414,7 @@ async def run_task_now(oid: str, user=Depends(get_current_user)):
     repo = runner.repo()
     task = await _require_task(repo, _oid(oid))
     _require_owner_or_admin(user, task)
+    ensure_feature(user, "ai.schedule")
     try:
         run_id = await runner.run_now(task)
     except ScheduledError as exc:
@@ -441,6 +448,7 @@ async def list_task_runs(
     repo = runner.repo()
     task = await _require_task(repo, _oid(oid))
     _require_owner_or_admin(user, task)
+    ensure_feature(user, "ai.schedule")
     rows, total = await repo.list_runs(task["_id"], page=page, size=size)
     data = [_run_view(row) for row in rows]
     return {

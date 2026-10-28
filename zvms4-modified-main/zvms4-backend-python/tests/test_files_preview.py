@@ -111,7 +111,7 @@ def test_text_without_extension_is_sniffed(harness, tmp_path):
     assert data["mime"] == "text/plain"
 
 
-@pytest.mark.parametrize("name", [".gitignore", ".env", "Dockerfile"])
+@pytest.mark.parametrize("name", [".gitignore", "Dockerfile"])
 def test_dotfiles_and_bare_names_are_text(harness, tmp_path, name):
     source = tmp_path / name
     source.write_text("VALUE=1\n", encoding="utf-8")
@@ -120,6 +120,18 @@ def test_dotfiles_and_bare_names_are_text(harness, tmp_path, name):
 
     assert data["kind"] == "text"
     assert data["content"] == "VALUE=1\n"
+
+
+@pytest.mark.parametrize("name", [".env", ".env.production", ".envrc"])
+def test_env_files_are_never_previewed(harness, tmp_path, name):
+    """凭据类点文件不属于「用户文件」：预览必须拒绝，不能把密钥读出来。"""
+    source = tmp_path / name
+    source.write_text("SECRET=1\n", encoding="utf-8")
+
+    response = harness.client.get(f"{PREFIX}/preview", params={"path": str(source)})
+
+    assert response.status_code == 403, response.text
+    assert "SECRET=1" not in response.text
 
 
 # ---------------------------------------------------------------------------

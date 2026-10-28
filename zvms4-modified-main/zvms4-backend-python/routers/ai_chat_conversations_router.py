@@ -33,7 +33,7 @@ import time
 from typing import Any, Mapping
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -68,6 +68,7 @@ from services.ai.routing import RouteError
 from typings.log import xuehai_id_from
 from util import agent_unlock
 from util.object_id import get_current_user
+from util.permission.features import ensure_feature
 
 _logger = logging.getLogger(__name__)
 
@@ -167,6 +168,27 @@ def _error(
     return _openai_error(
         status_code, code, message, request_id=request_id, headers=headers
     )
+
+
+def _feature_denied(user: dict, key: str, *, request_id: str):
+    """功能开关门禁（V043 ``ROLE_FEATURES``）：不满足回 403，满足回 ``None``。
+
+    与 ``/v1/chat/completions`` 同一条优先级（角色白名单 → 功能开关 → 其余），
+    错误码沿用 ``AI_FORBIDDEN``（前端已有文案），message 用开关层的话——「这个
+    角色不该用 AI」与「这个角色没被授予这项功能」是两件事。
+
+    **不落审计行**：角色白名单拒绝是探测信号，必须留痕；开关拒绝只是管理员收起
+    了能力，写流水只会把审计冲成噪音（与 ``ai_router._feature_error`` /
+    ``ai_agent_router._feature_denied`` 同一口径）。
+
+    位置在 ``fetch_row`` / prompt 留存 / 审核 / 扣费之前：关掉开关时连一次库、
+    一次上游都不该碰，也不该留下半条「被拦请求」的正文。
+    """
+    try:
+        ensure_feature(user, key)
+    except HTTPException as exc:
+        return _error(403, "AI_FORBIDDEN", str(exc.detail), request_id=request_id)
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -428,6 +450,12 @@ async def chat_in_conversation(
             roles_snapshot=snapshot,
         )
         return _error(503, "AI_DISABLED", "ai gateway is disabled", request_id=request_id)
+
+    # 功能开关在角色门禁之后、会话归属/正文留存/审核/扣费之前。走同步 SSE 的只有
+    # chat 语义（mode 不是 chat 的会话在下面 409），所以这里静态判 ``ai.chat``。
+    denied = _feature_denied(user, "ai.chat", request_id=request_id)
+    if denied is not None:
+        return denied
 
     # 归属闸一次就够：``fetch_row`` 只认本人的行，非本人与不存在回同一个 404
     # （否则 oid 就成了探针）。这类 404/409 是正常控制流，不落审计。

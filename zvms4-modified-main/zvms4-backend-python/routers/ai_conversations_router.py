@@ -19,7 +19,7 @@ import re
 from typing import Any, Awaitable, Callable
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
@@ -30,6 +30,7 @@ from services.ai import audit
 from services.ai import conversations
 from typings.log import xuehai_id_from
 from util.object_id import get_current_user
+from util.permission.features import ensure_feature, has_feature
 
 _logger = logging.getLogger(__name__)
 
@@ -153,6 +154,64 @@ async def _forbidden(user: dict, *, scene: str | None, request_id: str) -> JSONR
     return _error(403, "AI_FORBIDDEN", AI_FORBIDDEN_MESSAGE, request_id=request_id)
 
 
+# ---------------------------------------------------------------------------
+# 功能开关（V043 ``ROLE_FEATURES``）
+# ---------------------------------------------------------------------------
+
+# 会话 ``mode`` → 开关 key。同一个 router 同时服务两种语义，所以开关必须按**这一条
+# 会话**（或这次请求要建的会话）的 mode 判，而不是按端点一律取 ``ai.chat``：混用
+# 的结果是「关掉 ai.agent 之后仍能在 agent 会话里提交 run」。
+_FEATURE_BY_MODE = {"chat": "ai.chat", "agent": "ai.agent"}
+
+
+def _feature_key(mode: object) -> str | None:
+    """未知 ``mode`` 回 ``None``：模式校验归服务层（400），不在这里另造一套口径。"""
+    return _FEATURE_BY_MODE.get(str(mode or "").strip().lower())
+
+
+def _require_feature(user: dict, key: str) -> None:
+    """功能开关不满足即抛 403，由 :func:`_dispatch` 翻译成既有的 ``AI_FORBIDDEN``。
+
+    为什么抛 ``AgentError`` 而不是像 ``ai_agent_router`` 那样返回 ``JSONResponse``：
+    这里的判定发生在 ``action()`` 内部（要先把会话行读出来才知道 mode），抛出去
+    才能保证「闸门恒在任何写入之前」——包括不建会话、不写 ``AI_CALL_LOGS``、不入
+    run 队列。开关拒绝**不落审计**：角色白名单拒绝是探测信号，开关拒绝只是管理员
+    收起了能力，记流水只会把审计冲成噪音（与 ``ai_agent_router._feature_denied``
+    同一口径）。
+    """
+    try:
+        ensure_feature(user, key)
+    except HTTPException as exc:
+        raise AgentError("AI_FORBIDDEN", str(exc.detail), 403) from exc
+
+
+def _require_mode_feature(user: dict, mode: object) -> None:
+    key = _feature_key(mode)
+    if key is not None:
+        _require_feature(user, key)
+
+
+def _allowed_mode(user: dict, mode: object) -> bool:
+    key = _feature_key(mode)
+    return key is None or has_feature(user, key)
+
+
+def _filter_modes(user: dict, page: dict) -> dict:
+    """列表按**逐条** mode 过滤，与详情/消息端点同一口径：单条不可用就不出现。
+
+    为什么不做「查询参数过滤」：``GET /conversations`` 的契约里没有 ``mode`` 参数，
+    加一个会让游标分页分叉（同一个游标在两种 mode 下指向不同位置）。代价是整页都
+    被滤掉时仍可能回一个非空 ``next_cursor``——前端拿到空页会停，而这一页本来就
+    全是这个人当前用不了的会话。
+    """
+    page["conversations"] = [
+        row
+        for row in page.get("conversations") or []
+        if _allowed_mode(user, row.get("mode"))
+    ]
+    return page
+
+
 async def _dispatch(
     action: Callable[[], Awaitable[Any]],
     *,
@@ -210,9 +269,14 @@ async def create_conversation(
     user=Depends(get_current_user),
     scene: str | None = Depends(ai_scene),
 ):
-    """建会话；``mode`` 建完不可改（``chat`` 走同步 SSE，``agent`` 走后台任务）。"""
+    """建会话；``mode`` 建完不可改（``chat`` 走同步 SSE，``agent`` 走后台任务）。
+
+    开关按 ``payload.mode`` 判：关掉 ``ai.chat`` 时建 chat 会话就该在
+    ``conversations.create`` 之前被拒（否则禁用后还能持续制造 chat 会话）。
+    """
 
     async def action() -> dict:
+        _require_mode_feature(user, payload.mode)
         return await conversations.create(
             user=user, mode=payload.mode, title=payload.title, model=payload.model
         )
@@ -235,9 +299,10 @@ async def list_conversations(
     """
 
     async def action() -> dict:
-        return await conversations.list_page(
+        page = await conversations.list_page(
             user=user, status=status, cursor=cursor, limit=limit
         )
+        return _filter_modes(user, page)
 
     return await _dispatch(action, user=user, scene=scene)
 
@@ -249,10 +314,12 @@ async def get_conversation(
     scene: str | None = Depends(ai_scene),
 ):
     async def action() -> dict:
-        return await conversations.get(
+        row = await conversations.require_row(
             user=user,
             oid=_require_oid(oid, code=conversations.NOT_FOUND, message="conversation not found"),
         )
+        _require_mode_feature(user, row.get("mode"))
+        return conversations.conversation_view(row)
 
     return await _dispatch(action, user=user, scene=scene)
 
@@ -264,7 +331,11 @@ async def update_conversation(
     user=Depends(get_current_user),
     scene: str | None = Depends(ai_scene),
 ):
-    """改名 / 归档 / 换模型（``model: null`` = 清空回服务端默认）。"""
+    """改名 / 归档 / 换模型（``model: null`` = 清空回服务端默认）。
+
+    故意不接功能开关：改名/归档不是 AI 能力调用，关掉 ``ai.chat`` 之后用户仍该
+    能收拾自己的历史（否则会话变成删不掉也改不了的遗留数据）。
+    """
     fields = payload.model_dump(exclude_unset=True)
 
     async def action() -> dict:
@@ -290,6 +361,8 @@ async def delete_conversation(
 
     存在活跃 run 时 409：先 cancel 再删，否则 worker 会在一个已经不存在的会话上
     继续写消息。删除前会把该会话的待确认提案作废（服务层做，§3.1）。
+
+    与 ``PATCH`` 同理不接功能开关：删除是清理自己的数据，不是 AI 能力调用。
     """
 
     async def action() -> dict:
@@ -312,9 +385,14 @@ async def list_messages(
     """``seq > after_seq`` 的增量消息（刷新与轮询同一条路径）。"""
 
     async def action() -> dict:
+        conversation_oid = _require_oid(
+            oid, code=conversations.NOT_FOUND, message="conversation not found"
+        )
+        row = await conversations.require_row(user=user, oid=conversation_oid)
+        _require_mode_feature(user, row.get("mode"))
         return await conversations.list_messages(
             user=user,
-            oid=_require_oid(oid, code=conversations.NOT_FOUND, message="conversation not found"),
+            oid=conversation_oid,
             after_seq=after_seq,
             limit=limit,
         )
@@ -337,14 +415,22 @@ async def submit_run(
     """提交一次后台执行：一个事务写用户消息 + ``queued`` run，立刻 202。
 
     紧接着 ``kick()`` 让泵去领：提交与执行解耦，浏览器关掉也跑完（§4）。
+
+    开关按会话的 mode 判，且必须在 ``run_queue.submit`` 之前：``submit`` 内部是
+    密码门 → 审核 → 灰区闸门 → 入队的固定顺序（不能在这里插一道），而开关拒绝
+    要保证「一个 run 都不入队」。多出来的这次会话读是一次索引查询，换「关掉
+    ``ai.agent`` 之后不可能再有新 run」这条结论，值得。
     """
 
     async def action() -> dict:
+        conversation_oid = _require_oid(
+            oid, code=conversations.NOT_FOUND, message="conversation not found"
+        )
+        row = await conversations.require_row(user=user, oid=conversation_oid)
+        _require_mode_feature(user, row.get("mode"))
         data = await run_queue.submit(
             user=user,
-            conversation_oid=_require_oid(
-                oid, code=conversations.NOT_FOUND, message="conversation not found"
-            ),
+            conversation_oid=conversation_oid,
             content=payload.content,
             model=payload.model,
             client_msg_id=payload.client_msg_id,
@@ -366,9 +452,13 @@ async def list_runs(
 
     ``active`` 只在契约里出现过 ``=1`` 这一个取值；本期没有「历史 run 列表」的
     需求（历史从消息增量读），所以 ``active=0`` 回空表而不是另一种语义。
+
+    run 只存在于 agent 模式会话（``run_queue.submit`` 用 409 挡住其余），所以这里
+    按 ``ai.agent`` 静态判，不必先读会话。
     """
 
     async def action() -> dict:
+        _require_feature(user, "ai.agent")
         if not active:
             return {"runs": []}
         rows = await run_queue.list_active(str(user.get("id") or ""))
@@ -391,6 +481,7 @@ async def get_run(
     """
 
     async def action() -> dict:
+        _require_feature(user, "ai.agent")
         return await run_queue.run_detail(
             user=user,
             run_id=_require_oid(run_id, code=run_queue.RUN_NOT_FOUND, message="run not found"),
@@ -409,6 +500,7 @@ async def cancel_run(
     """请求中止：``queued`` 直接进终态，``running`` 由 worker 在轮边界收手。"""
 
     async def action() -> dict:
+        _require_feature(user, "ai.agent")
         return await run_queue.cancel(
             user=user,
             run_id=_require_oid(run_id, code=run_queue.RUN_NOT_FOUND, message="run not found"),

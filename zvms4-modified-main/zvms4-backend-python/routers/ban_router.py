@@ -1,4 +1,9 @@
-"""封禁规则与封禁流水的管理端点（前缀 ``/api/v3/ban``，admin only）。
+"""封禁规则与封禁流水的管理端点（前缀 ``/api/v3/ban``）。
+
+权限口径：**写**端点（新建/修改/删除规则、封禁/解封用户与设备）只认
+``admin``；**只读**端点（``/rules`` ``/triggers`` ``/users`` ``/devices``
+``/records``）在 ``ban.read`` 开关打开时也对相应角色开放（默认关 = 改造前
+admin only）。
 
 为什么规则要有管理端点：规则的阈值/时间窗/处罚梯度全部在 ``BAN_RULES`` 里，
 改一次就影响整条判定闸门。把它们暴露成「只改 tunables」的接口
@@ -29,6 +34,7 @@ from db import backends
 from services import device_guard
 from typings.log import inject_log
 from util.object_id import get_current_user
+from util.permission.features import has_feature
 from util.user import get_user_display_name
 
 router = APIRouter()
@@ -185,9 +191,17 @@ TRIGGER_REGISTRY: dict[str, dict] = {item["trigger"]: item for item in TRIGGERS}
 RULE_CODE_PATTERN = re.compile(r"^[a-z][a-z0-9_]{2,63}$")
 
 
-def _require_admin(user: dict) -> None:
-    if "admin" not in (user.get("per") or []):
-        raise HTTPException(status_code=403, detail="权限不足")
+def _require_admin(user: dict, feature: str | None = None) -> None:
+    """严格 ``admin``；给了 ``feature`` 时，该角色开关已开启也放行（V043）。
+
+    开关只用于**只读**端点。写端点一律不传 ``feature``：封禁是会改用户状态
+    的操作，下放它不该只是「勾一个勾选框」。
+    """
+    if "admin" in (user.get("per") or []):
+        return
+    if feature is not None and has_feature(user, feature):
+        return
+    raise HTTPException(status_code=403, detail="权限不足")
 
 
 
@@ -311,7 +325,7 @@ def _validated_penalties(penalties: list[Optional[int]]) -> list[Optional[int]]:
 
 @router.get("/rules")
 async def list_ban_rules(user=Depends(get_current_user)):
-    _require_admin(user)
+    _require_admin(user, "ban.read")
     rules = await backends.get_ban_rules_repo().list_all()
     return {
         "status": "ok",
@@ -327,7 +341,7 @@ async def list_triggers(user=Depends(get_current_user)):
     返回 ``config`` 是**默认参数**，不是某条规则的现值——表单需要一个合理的
     初值，而现值属于 ``GET /rules``。
     """
-    _require_admin(user)
+    _require_admin(user, "ban.read")
     return {"status": "ok", "code": 200, "data": list(TRIGGERS)}
 
 
@@ -548,7 +562,7 @@ async def list_banned_users(
     的闸门列也不会自动归零，所以默认再排除 ``ban_until`` 已过期的存量行；
     ``include_expired=1`` 保留全量视角，供管理员排查脏数据。
     """
-    _require_admin(user)
+    _require_admin(user, "ban.read")
     rows, total = await backends.get_users_repo().list_banned_page(
         query, page, perpage, include_expired=bool(include_expired)
     )
@@ -622,7 +636,7 @@ async def list_banned_devices(
     ``include_expired=1`` 连已刑满的行一起列（行不会自动删，只由判定层用
     ``ban_is_active`` 排除），供管理员排查存量数据。
     """
-    _require_admin(user)
+    _require_admin(user, "ban.read")
     rows, total = await backends.get_device_bans_repo().list_page(
         page, perpage, query, include_expired=bool(include_expired)
     )
@@ -745,7 +759,7 @@ async def list_ban_records(
     query: str = Query("", max_length=128),
     user=Depends(get_current_user),
 ):
-    _require_admin(user)
+    _require_admin(user, "ban.read")
     rows, total = await backends.get_ban_records_repo().list_page(page, perpage, query)
     data = [
         {

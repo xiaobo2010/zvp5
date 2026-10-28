@@ -173,11 +173,11 @@ def test_user_reads_own_quota(api) -> None:
     data = body["data"]
     assert set(data) == {"ocr", "chat"}
     assert data["ocr"]["used"] == 0
-    assert data["ocr"]["limit"] == DEFAULT_QUOTA["ocr"]
-    assert data["chat"]["limit"] == DEFAULT_QUOTA["chat"]
-    # student 不在角色额度表里：默认值来自全局 AI_DEFAULT_*，不是角色表。
-    assert data["ocr"]["source"] == "global_default"
-    assert data["chat"]["source"] == "global_default"
+    assert data["ocr"]["limit"] == 0
+    assert data["chat"]["limit"] == 0
+    # student 是 V043 角色策略表里的角色，默认额度为 0（不开放）。
+    assert data["ocr"]["source"] == "role_default"
+    assert data["chat"]["source"] == "role_default"
 
 
 def test_admin_reads_other_user_quota(api) -> None:

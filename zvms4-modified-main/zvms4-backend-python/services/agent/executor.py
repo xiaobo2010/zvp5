@@ -513,7 +513,8 @@ async def _run_tool(
     tool_kind = tool.kind
 
     try:
-        result = await tool.impl(user, **kwargs)
+        with tool_impl.operator_context(user):
+            result = await tool.impl(user, **kwargs)
     except AgentError as exc:
         note = _summary_text(f"执行失败：{exc.message}")
         await _write_event(

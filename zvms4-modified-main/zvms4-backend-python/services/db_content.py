@@ -98,6 +98,22 @@ _SENSITIVE_COLUMNS: frozenset[str] = frozenset(
     {"PASSWORD_HASH", "SESSION_ID", "CODE_HASH", "TOKEN_HASH", "PAYLOAD"}
 )
 
+# 列名判定挡不住别名（``SELECT TOKEN_HASH AS x`` 的返回列名就是 ``x``），所以
+# 再加一层**按值**兜底：形状本身就是凭据的值，无论在哪一列都脱敏。
+# 刻意不收 24 位 hex：那是业务对象 oid（活动/成员/用户），脱敏了就不可用。
+_CREDENTIAL_VALUE_PATTERNS: tuple[re.Pattern[str], ...] = (
+    # bcrypt / argon2 口令散列
+    re.compile(r"^\$2[aby]\$"),
+    re.compile(r"^\$argon2"),
+    # JWT（header 恒以 eyJ 开头：{"alg":...
+    re.compile(r"^eyJ[A-Za-z0-9_-]{8,}\."),
+    # sha256 / 密钥指纹（64 位 hex）与 md5 级摘要（32 位 hex）
+    re.compile(r"^[0-9a-fA-F]{64}$"),
+    re.compile(r"^[0-9a-fA-F]{32}$"),
+    # 常见 API key 前缀与 Authorization 头
+    re.compile(r"(?i)^(?:sk-|zvk_|bearer\s+\S)"),
+)
+
 # Data-dictionary / system objects. The console is for the application schema;
 # reading SYS/DBA_/V$ tables is how a "read-only" admin query becomes a
 # cross-schema dump or a DB-host SSRF primitive.
@@ -185,11 +201,24 @@ def _is_sensitive_column(name: str) -> bool:
     )
 
 
+def _looks_like_credential(value: str) -> bool:
+    """值的形状就是凭据（散列 / JWT / 长 hex 指纹 / token 前缀）。"""
+    return any(pattern.match(value) is not None for pattern in _CREDENTIAL_VALUE_PATTERNS)
+
+
 def _redact_cell(column: str, value: Any) -> Any:
-    """Hide credential material while keeping the row/column shape stable."""
+    """Hide credential material while keeping the row/column shape stable.
+
+    列名命中之外再按值兜底：别名（``SELECT TOKEN_HASH AS x``）会把敏感列伪装成
+    普通列名，只有值本身还能说明它是凭据。
+    """
     if value is None:
         return None
-    return "***" if _is_sensitive_column(column) else value
+    if _is_sensitive_column(column):
+        return "***"
+    if isinstance(value, str) and _looks_like_credential(value):
+        return "***"
+    return value
 
 
 # --------------------------------------------------------------------------- #

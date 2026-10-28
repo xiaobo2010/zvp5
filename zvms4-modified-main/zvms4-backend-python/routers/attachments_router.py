@@ -55,6 +55,7 @@ from util.object_id import (
     require_password_verification,
     validate_object_id,
 )
+from util.permission.features import ensure_feature
 
 # ---------------------------------------------------------------------------
 # Device gate
@@ -392,6 +393,7 @@ async def upload_attachment(
     # (the activity-creation form and the attachment dialog) are manager-only,
     # so enforce the same rule here instead of relying on the UI alone.
     _require_manager(user)
+    ensure_feature(user, "attachment.manage")
 
     declared = request.headers.get("content-length")
     if declared is not None:
@@ -683,6 +685,7 @@ async def get_attachment_audit(
     manager 闸，权限与字段都不同，硬复用会把两边都拧歪。
     """
     _require_manager(user)
+    ensure_feature(user, "attachment.manage")
     oid = validate_object_id(oid)
     repo = backends.get_files_repo()
     row = await repo.get_meta(oid)
@@ -763,6 +766,7 @@ async def update_attachment_status(
       刷屏）；墓碑（``deleted``）也不接受裁决，它的字节可能已被保留期任务清空。
     """
     _require_manager(user)
+    ensure_feature(user, "attachment.manage")
     await require_password_verification(payload.verification_token, user)
     if payload.status not in AUDIT_STATUSES:
         raise HTTPException(status_code=400, detail="Invalid status")
@@ -859,6 +863,7 @@ async def request_attachment_ocr(
     ``priority`` 顺序回退，回退的每一次尝试另扣一份对应的站点额度。
     """
     _require_manager(user)
+    ensure_feature(user, "attachment.manage")
     oid = validate_object_id(oid)
 
     try:
@@ -944,6 +949,7 @@ async def verify_attachment(
     log=Depends(inject_log),
 ):
     _require_manager(user)
+    ensure_feature(user, "attachment.manage")
     await require_password_verification(payload.verification_token, user)
     if payload.decision not in ("verified", "rejected"):
         raise HTTPException(status_code=400, detail="Invalid decision")
@@ -971,6 +977,7 @@ async def bind_attachment(
     log=Depends(inject_log),
 ):
     _require_manager(user)
+    ensure_feature(user, "attachment.manage")
     await require_password_verification(payload.verification_token, user)
     if not payload.entity_type or not payload.entity_oid:
         raise HTTPException(status_code=400, detail="entity_type and entity_oid required")

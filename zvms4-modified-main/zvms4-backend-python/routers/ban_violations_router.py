@@ -24,6 +24,7 @@ from db import backends
 from services import violation_guard
 from typings.log import inject_log, xuehai_id_from
 from util.object_id import get_current_user
+from util.permission.features import has_feature
 
 router = APIRouter()
 
@@ -37,14 +38,18 @@ router = APIRouter()
 _SERVER_ONLY_SIGNALS = frozenset({"agent_jailbreak"})
 
 
-def _require_admin(user: dict) -> None:
+def _require_admin(user: dict, feature: str | None = None) -> None:
     """与 ``ban_router._require_admin`` 同口径的本地实现。
 
     刻意不 import 那个私有函数：两个路由文件的鉴权规则可以独立演进，跨模块
-    依赖一个下划线名字只是「看起来复用」。
+    依赖一个下划线名字只是「看起来复用」。``feature`` 的语义同那边：只给只读
+    端点用，写端点（信号上报）永远只认 ``admin``。
     """
-    if "admin" not in (user.get("per") or []):
-        raise HTTPException(status_code=403, detail="权限不足")
+    if "admin" in (user.get("per") or []):
+        return
+    if feature is not None and has_feature(user, feature):
+        return
+    raise HTTPException(status_code=403, detail="权限不足")
 
 
 def _iso(value) -> Optional[str]:
@@ -113,7 +118,7 @@ async def list_violations(
     user=Depends(get_current_user),
 ):
     """违规记录列表（证据视角，不是当前封禁状态）。"""
-    _require_admin(user)
+    _require_admin(user, "ban.read")
     rows, total = await backends.get_violations_repo().list_page(query, page, perpage)
     data = [
         {

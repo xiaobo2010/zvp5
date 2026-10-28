@@ -36,7 +36,7 @@ import { useUserStore } from '@/stores/user'
 import { isTemporaryTokenCancelled, withTemporaryToken } from '@/plugins/short-token'
 import ZSystemAuthDialog from '@/components/system/ZSystemAuthDialog.vue'
 import ZMarkdown from '@/components/markdown/ZMarkdown.vue'
-import type { AiConversation, AiMessage, AiModelItem } from '@/../types/ai'
+import type { AiConversation, AiConversationMode, AiMessage, AiModelItem } from '@/../types/ai'
 import ZAiProposalCard from './ZAiProposalCard.vue'
 import ZAiSessionList from './ZAiSessionList.vue'
 import { contextPercent } from './conversationSession'
@@ -58,6 +58,12 @@ const { t } = useI18n()
 const { width, height } = useWindowSize()
 const store = useAiConversationsStore()
 const userStore = useUserStore()
+
+/**
+ * 当前面板模式。对话模式（chat）已下线，默认就是智能体；
+ * 风险警示只对智能体弹——只有它会调用带真实写权限的工具。
+ */
+const props = withDefaults(defineProps<{ mode?: AiConversationMode }>(), { mode: 'agent' })
 
 const isAdmin = computed(() => userStore.position.includes('admin'))
 
@@ -243,6 +249,88 @@ const runEventViews = computed<AgentEventView[]>(() =>
 const expandedTools = ref<string[]>([])
 
 /* ---------------------------------------------------------------------------
+   首次使用风险警示
+   --------------------------------------------------------------------------- */
+
+/**
+ * 按账号隔离：同一台机器换账号时，旧账号的确认不会替新账号放行。
+ */
+function riskAckKey(): string {
+  return `zvms.agent.riskAck.${String(userStore._id || 'unknown')}`
+}
+
+/** 隐私模式/配额满时 localStorage 会抛异常：读不到就按「未确认」处理。 */
+function riskAcked(): boolean {
+  try {
+    return Boolean(localStorage.getItem(riskAckKey()))
+  } catch {
+    return false
+  }
+}
+
+const riskVisible = ref(false)
+/** 风险框的结论先暂存，等 @closed 再结算；null 表示当前没有待结算的结论。 */
+let riskVerdict: boolean | null = null
+/** 门禁 promise：建会话、切换、提交共用同一次弹框，不叠罗汉。 */
+let riskGate: Promise<boolean> | null = null
+let riskResolver: ((ok: boolean) => void) | null = null
+
+function openRisk(): Promise<boolean> {
+  if (riskGate) {
+    return riskGate
+  }
+  riskGate = new Promise<boolean>((resolve) => {
+    riskResolver = resolve
+  })
+  riskVerdict = null
+  riskVisible.value = true
+  return riskGate
+}
+
+// 只决定结论并让框离场，不 resolve：
+// 真正的结算必须等 @closed（离场动画结束、DOM 已移除）。否则风险框会和紧随其后的
+// 密码解锁框 / 动态码框同批渲染，overlay 刚建好就被拆掉，表现为「点了却什么也没发生」。
+function closeRisk(ok: boolean) {
+  riskVerdict = ok
+  riskVisible.value = false
+}
+
+// ElDialog 关闭动画结束后触发。resolver 只消费一次，重复 closed 直接忽略（防重入）；
+// 取消后门禁清空，下次进入/下次动作还能再弹。
+function onRiskClosed() {
+  if (!riskResolver) {
+    return
+  }
+  const verdict = riskVerdict ?? false // 右上角 X / ESC 不会走 ack/cancel，按取消结算
+  const resolve = riskResolver
+  riskResolver = null
+  riskVerdict = null
+  riskGate = null
+  resolve(verdict)
+}
+
+function cancelRisk() {
+  closeRisk(false)
+}
+
+function ackRisk() {
+  try {
+    localStorage.setItem(riskAckKey(), '1')
+  } catch {
+    /* 写不进去也要放行：不能让隐私模式把对话卡死 */
+  }
+  closeRisk(true)
+}
+
+/** 智能体门禁：非 agent 模式或本账号已确认直接放行；未确认就弹框，取消返回 false。 */
+async function passRiskGate(): Promise<boolean> {
+  if (props.mode !== 'agent' || riskAcked()) {
+    return true
+  }
+  return await openRisk()
+}
+
+/* ---------------------------------------------------------------------------
    基础数据
    --------------------------------------------------------------------------- */
 
@@ -302,6 +390,9 @@ function stopCooldown() {
  * 对话模式已下线：历史的 chat 会话保留在库里，但不再出现在界面、也无法继续。
  */
 async function ensureConversation(): Promise<void> {
+  if (!(await passRiskGate())) {
+    return
+  }
   const existing = store.conversations.find(
     (item) => item.mode === 'agent' && item.status === 'active'
   )
@@ -318,6 +409,9 @@ async function ensureConversation(): Promise<void> {
 }
 
 async function selectSession(oid: string) {
+  if (!(await passRiskGate())) {
+    return
+  }
   await store.selectConversation(oid)
   drawerOpen.value = false
   void nextTick(scrollToBottom)
@@ -325,6 +419,9 @@ async function selectSession(oid: string) {
 
 /** 新建会话：永远新建一个，不复用已有的（复用是「切换」的事）。 */
 async function createSession() {
+  if (!(await passRiskGate())) {
+    return
+  }
   try {
     const created = await store.createConversation('agent')
     await store.selectConversation(created.oid)
@@ -939,6 +1036,9 @@ function userMessagePersisted(text: string): boolean {
 }
 
 async function send() {
+  if (!(await passRiskGate())) {
+    return
+  }
   if (!canSend.value) {
     return
   }
@@ -1065,6 +1165,8 @@ watch(
 )
 
 onMounted(async () => {
+  // 首次进入智能体：先把风险提示摆出来，确认前不建会话、不切换、不提交。
+  void passRiskGate()
   void loadModels()
   // 解锁窗口可能还在（同一次访问里切过页面）：先让倒计时接上。
   syncUnlockTimer()
@@ -1086,6 +1188,10 @@ onMounted(async () => {
   const latest = store.conversations.find((item) => item.status === 'active')
   if (!latest) {
     // 一个会话都没有时不偷偷建：侧栏给空态引导，用户点了「新建会话」再建。
+    return
+  }
+  if (!(await passRiskGate())) {
+    // 没确认风险提示：停在空态，什么都没动
     return
   }
   await store.selectConversation(latest.oid)
@@ -1582,6 +1688,29 @@ onUnmounted(() => {
       </template>
     </ElDialog>
 
+    <!-- 智能体首次使用警示：确认后按账号记入 localStorage，之后不再出现 -->
+    <ElDialog
+      v-model="riskVisible"
+      class="ai-agent__risk-dialog"
+      :title="t('ai.agent.risk.title')"
+      width="min(520px, calc(100vw - 32px))"
+      :close-on-click-modal="false"
+      append-to-body
+      @closed="onRiskClosed"
+    >
+      <div class="ai-agent__risk-body">
+        <p>{{ t('ai.agent.risk.power') }}</p>
+        <p class="ai-agent__risk-ban">{{ t('ai.agent.risk.ban') }}</p>
+        <p>{{ t('ai.agent.risk.audit') }}</p>
+      </div>
+      <template #footer>
+        <ElButton size="large" @click="cancelRisk">{{ t('ai.agent.risk.cancel') }}</ElButton>
+        <ElButton size="large" type="primary" @click="ackRisk">
+          {{ t('ai.agent.risk.ack') }}
+        </ElButton>
+      </template>
+    </ElDialog>
+
     <!-- 双人动态码：运维写操作确认时弹出（复用系统页同一个组件） -->
     <ZSystemAuthDialog ref="authRef" />
   </div>
@@ -1891,6 +2020,23 @@ onUnmounted(() => {
 
 .ai-agent__stop {
   margin-bottom: var(--yg-space-2);
+}
+
+/* 首次使用风险警示：三条要点逐行读，封号那条单独用警示色 */
+.ai-agent__risk-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--yg-space-3);
+  font-size: var(--yg-font-size-sm);
+  line-height: var(--yg-line-height-normal);
+}
+
+.ai-agent__risk-body p {
+  margin: 0;
+}
+
+.ai-agent__risk-ban {
+  color: var(--yg-text-danger);
 }
 
 .ai-agent__timeline {

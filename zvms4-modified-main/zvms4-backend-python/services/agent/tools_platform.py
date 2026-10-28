@@ -587,9 +587,12 @@ async def _insert_record(
 ) -> None:
     """写 ``ban_records`` 流水（``source=agent``，操作者 = 当前管理员）。
 
-    ``source=agent`` 目前**不在** ``ck_ban_records_source`` 的白名单里
-    （``('admin','rule')``，见 ``db/models.py`` 与 V013 DDL）。迁移落地前这里会
-    被数据库拒绝——所以调用方把流水写在状态之前：拒绝时一个字节都没改。
+    ``source=agent`` 由 V042 显式加进 ``ck_ban_records_source`` 白名单
+    （``('admin','rule','agent')``，见 ``db/models.py`` 与 V042 DDL），生产已应用；
+    未应用该迁移的实例仍会被数据库拒绝，那种情况照旧 503。
+
+    流水写在**状态之前**：被约束拒绝时用户行的 ban 字段一个字节都没改，调用方
+    只需把 503 原样抛给模型。
     """
     try:
         await backends.get_ban_records_repo().insert(

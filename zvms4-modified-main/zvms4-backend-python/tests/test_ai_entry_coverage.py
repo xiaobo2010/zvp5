@@ -13,6 +13,12 @@ review 记住「新入口要过闸」不可靠——漏掉的那一刻不会有�
 
 这份扫描只看「有没有调用」，不判断逻辑对错；调用点内部是否真的调用了
 ``screen`` 由各入口自己的用例负责。
+
+同一个文件里还有第二条同类守卫（见「功能开关（V043 ROLE_FEATURES）覆盖性」）：
+``routers/`` 下每个 import 了 AI 接缝（providers / run_queue / executor /
+scheduled_runner / textgen / OCR）的模块，必须调用 ``ensure_feature`` /
+``has_feature``，或在 ``FEATURE_GATE_EXEMPT`` 写明理由。会话主入口曾经只过角色
+白名单、漏了 ``ai.chat`` / ``ai.agent``，靠人工 review 记住是不可靠的。
 """
 
 from __future__ import annotations
@@ -368,3 +374,242 @@ def test_ignores_unrelated_functions_with_the_same_name(tmp_path: Path) -> None:
     )
 
     assert scan_call_sites(root) == []
+
+
+# ---------------------------------------------------------------------------
+# 功能开关（V043 ROLE_FEATURES）覆盖性：只接安全认证不够，还得接开关
+# ---------------------------------------------------------------------------
+#
+# 为什么再加一条：``safety_guard`` 守的是「说了什么」，``ROLE_FEATURES`` 守的是
+# 「这个角色能不能用」。会话主入口（``ai_conversations_router`` /
+# ``ai_chat_conversations_router``）曾经只过角色白名单：管理员在「角色策略」页关掉
+# ``ai.chat`` / ``ai.agent``，用户照样能建会话、发消息、提 run。漏接的那一刻同样
+# 没有任何报错，所以这里把「谁能把请求送到模型」也做成静态清单。
+
+FEATURES_MODULE = "util.permission.features"
+FEATURE_APIS = frozenset({"ensure_feature", "has_feature", "require_feature"})
+
+#: 「能把请求真的送到模型 / 入队」的接缝模块：import 它们就等于这个 router 是
+#: 一个 AI 入口。OCR 也算（``ai.ocr`` 是同一套开关）。
+AI_SEAM_MODULES = frozenset(
+    {
+        "services.ai.providers",
+        "services.ai.scheduled_runner",
+        "services.ai.textgen",
+        "services.ai.ocr",
+        "services.ai.ocr_engines",
+        "services.ai.ocr_engines_admin",
+        "services.agent.run_queue",
+        "services.agent.executor",
+        "services.agent.proposal",
+    }
+)
+
+#: ``from <父包> import <接缝>`` 的写法（``from services.ai import providers``）。
+AI_SEAM_PARENTS: dict[str, frozenset[str]] = {
+    "services.ai": frozenset(
+        {"providers", "scheduled_runner", "textgen", "ocr", "ocr_engines", "ocr_engines_admin"}
+    ),
+    "services.agent": frozenset({"run_queue", "executor", "proposal"}),
+}
+
+#: 有正当理由**不**接开关的 AI 入口（理由必填）。
+#:
+#: 目前只有一条：SSH 命令起草（``/api/system/ssh/suggest``）是「严格 admin +
+#: 即时查库复核」的端点（``system_ssh_router._require_system_admin``）。策略层
+#: ``admin`` 恒为 True（``policy.feature_enabled`` 的代码短路），在这里挂开关等于
+#: 挂一个恒真的判断——审查者应该把它当「已由更强的角色闸门覆盖」，不是漏接。
+FEATURE_GATE_EXEMPT: dict[str, str] = {
+    "routers/system_ssh_router.py": (
+        "SSH 命令起草：_require_system_admin 要求严格 admin + 即时查库复核；"
+        "策略层 admin 恒 True，接开关只会得到恒真判断"
+    ),
+}
+
+
+@dataclass(frozen=True)
+class AiEntry:
+    """一个 AI 入口模块：它用到的接缝 + 它调用的开关 API。"""
+
+    path: str
+    seams: tuple[str, ...]
+    gates: tuple[str, ...]
+
+    def __str__(self) -> str:
+        return (
+            f"{self.path} (接缝: {', '.join(self.seams)}; "
+            f"开关: {', '.join(self.gates) or '无'})"
+        )
+
+
+def _ai_seams(tree: ast.AST) -> set[str]:
+    """本模块 import 了哪些 AI 接缝。"""
+    found: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module:
+            if node.module in AI_SEAM_MODULES:
+                found.add(node.module)
+            parents = AI_SEAM_PARENTS.get(node.module, frozenset())
+            for alias in node.names:
+                child = f"{node.module}.{alias.name}"
+                if child in AI_SEAM_MODULES or alias.name in parents:
+                    found.add(child)
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name in AI_SEAM_MODULES:
+                    found.add(alias.name)
+    return found
+
+
+def _feature_gate_calls(tree: ast.AST) -> set[str]:
+    """本模块真的调用了哪些开关 API（``ensure_feature`` / ``has_feature`` / ...）。
+
+    只看调用、不看 import：``from util.permission.features import ensure_feature``
+    之后一次都没用，等于没接闸门。
+    """
+    direct: dict[str, str] = {}
+    modules: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            if node.module == FEATURES_MODULE:
+                for alias in node.names:
+                    if alias.name in FEATURE_APIS:
+                        direct[alias.asname or alias.name] = alias.name
+            elif node.module == "util.permission":
+                for alias in node.names:
+                    if alias.name == "features":
+                        modules.add(alias.asname or "features")
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name == FEATURES_MODULE:
+                    modules.add(alias.asname or FEATURES_MODULE)
+
+    calls: set[str] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if isinstance(func, ast.Name) and func.id in direct:
+            calls.add(direct[func.id])
+        elif isinstance(func, ast.Attribute) and func.attr in FEATURE_APIS:
+            if ".".join(_chain(func.value)) in modules:
+                calls.add(func.attr)
+    return calls
+
+
+def scan_ai_entries(root: Path) -> list[AiEntry]:
+    """扫描 ``root/routers/**/*.py``，返回所有触达 AI 的模块及其开关接入情况。"""
+    entries: list[AiEntry] = []
+    base = root / "routers"
+    if not base.is_dir():
+        return entries
+    for path in sorted(base.rglob("*.py")):
+        relpath = path.relative_to(root).as_posix()
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=relpath)
+        seams = _ai_seams(tree)
+        if not seams:
+            continue
+        entries.append(
+            AiEntry(relpath, tuple(sorted(seams)), tuple(sorted(_feature_gate_calls(tree))))
+        )
+    return entries
+
+
+def ungated_ai_entries(
+    root: Path, *, exempt: dict[str, str] | None = None
+) -> list[AiEntry]:
+    """找出「是 AI 入口但一次开关都没调、也没登记豁免」的模块。"""
+    allowed = FEATURE_GATE_EXEMPT if exempt is None else exempt
+    return [entry for entry in scan_ai_entries(root) if not entry.gates and entry.path not in allowed]
+
+
+def test_every_ai_router_entry_calls_a_feature_gate() -> None:
+    missing = ungated_ai_entries(BACKEND_ROOT)
+    assert missing == [], (
+        "发现没接功能开关的 AI 入口——新增入口必须调用 ensure_feature / has_feature"
+        "（或 require_feature 依赖），或在 FEATURE_GATE_EXEMPT 写明豁免理由：\n"
+        + "\n".join(f"  - {entry}" for entry in missing)
+    )
+
+
+def test_ai_router_entries_are_actually_found() -> None:
+    """扫描要有产出：零命中说明规则写坏了，等于永远绿。"""
+    paths = {entry.path for entry in scan_ai_entries(BACKEND_ROOT)}
+    assert {
+        "routers/ai_router.py",
+        "routers/ai_agent_router.py",
+        "routers/ai_schedule_router.py",
+        "routers/ai_conversations_router.py",
+        "routers/ai_chat_conversations_router.py",
+        "routers/attachments_router.py",
+    } <= paths
+
+
+def test_conversation_entries_are_gated() -> None:
+    """会话主入口是这条守卫存在的原因：它们必须一直在扫描结果里且带闸门。"""
+    entries = {entry.path: entry for entry in scan_ai_entries(BACKEND_ROOT)}
+
+    for path in (
+        "routers/ai_conversations_router.py",
+        "routers/ai_chat_conversations_router.py",
+    ):
+        assert path in entries, f"扫描没看见 {path}"
+        assert entries[path].gates, f"{path} 没接功能开关"
+
+
+def test_feature_gate_exemptions_have_reasons() -> None:
+    for path, reason in FEATURE_GATE_EXEMPT.items():
+        assert reason.strip(), f"FEATURE_GATE_EXEMPT 缺少理由：{path}"
+
+
+def test_new_ai_entry_without_a_gate_fails_the_feature_guard(tmp_path: Path) -> None:
+    """负例：新 router import 了 providers 但没用开关 → 必须报出来。"""
+    root = _temp_tree(
+        tmp_path,
+        {
+            "routers/brand_new_entry.py": (
+                "from services.ai import providers\n"
+                "async def handler(p, e, k):\n"
+                "    return await providers.chat_completion(p, e, k)\n"
+            ),
+        },
+    )
+
+    missing = ungated_ai_entries(root, exempt={})
+
+    assert [(entry.path, entry.seams) for entry in missing] == [
+        ("routers/brand_new_entry.py", ("services.ai.providers",))
+    ]
+
+
+def test_ai_entry_with_a_gate_or_an_exemption_passes(tmp_path: Path) -> None:
+    """正例：接上闸门，或写进豁免清单，都不再报错。"""
+    gated = _temp_tree(
+        tmp_path / "gated",
+        {
+            "routers/entry.py": (
+                "from services.agent import run_queue\n"
+                "from util.permission.features import ensure_feature\n"
+                "async def handler(user):\n"
+                "    ensure_feature(user, 'ai.agent')\n"
+                "    return await run_queue.submit(user=user)\n"
+            ),
+        },
+    )
+    exempt = _temp_tree(
+        tmp_path / "exempt",
+        {
+            "routers/entry.py": (
+                "from services.ai import textgen\n"
+                "async def handler():\n"
+                "    return await textgen.draft()\n"
+            ),
+        },
+    )
+
+    assert ungated_ai_entries(gated) == []
+    assert ungated_ai_entries(exempt) == [
+        AiEntry("routers/entry.py", ("services.ai.textgen",), ())
+    ]
+    assert ungated_ai_entries(exempt, exempt={"routers/entry.py": "内部自检，没有 HTTP 入口"}) == []
+

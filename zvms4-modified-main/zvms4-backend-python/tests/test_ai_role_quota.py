@@ -81,9 +81,12 @@ def test_admin_wins_when_both_roles_are_present():
     assert quota_service.default_limit_for(["department", "admin"], "chat") == 1_000_000
 
 
-def test_unlisted_roles_fall_back_to_the_default():
+def test_roles_outside_the_tables_fall_back_to_the_default():
+    # ``student`` / ``secretary`` 现在由角色策略表（V043）显式覆盖，不再是
+    # 「未列出的角色」：它们的 DEFAULTS 就是 0（学生不开放聊天额度）。
+    assert quota_service.default_limit_for(["student"], "ocr") == 0
     assert (
-        quota_service.default_limit_for(["student"], "ocr")
+        quota_service.default_limit_for(["teacher"], "ocr")
         == DEFAULT_QUOTA["ocr"]
     )
     assert quota_service.default_limit_for(None, "chat") == DEFAULT_QUOTA["chat"]
@@ -138,21 +141,26 @@ def test_peek_uses_the_role_default_when_no_row_exists(repo):
     assert (allowed, used, limit) == (True, 0, 500)
 
 
-def test_settings_can_replace_the_role_table(monkeypatch, repo):
+def test_settings_only_govern_roles_the_policy_table_leaves_alone(monkeypatch, repo):
+    """``ai.role_quota`` 仍是 admin 的配置入口；三个可编辑角色归 V043 管。
+
+    角色策略表（``ROLE_QUOTAS``）排在 ``ai.role_quota`` 之前：管理员在「角色策略」
+    页改的是它，让一张整表 JSON 把它悄悄覆盖掉会出现「页面显示 A、实际扣 B」。
+    """
     monkeypatch.setattr(
         settings,
         "AI_ROLE_QUOTA",
-        {"department": {"ocr": 42}, "broken": {"ocr": True, "chat": "many"}},
+        {"admin": {"ocr": 42}, "broken": {"ocr": True, "chat": "many"}},
         raising=False,
     )
 
     table = role_quota()
 
-    assert table["department"] == {"ocr": 42}
+    assert table["admin"] == {"ocr": 42}
     assert "broken" not in table  # bool 与字符串都被丢弃
-    assert quota_service.default_limit_for(["department"], "ocr") == 42
-    # 整表替换而非合并：admin 不在覆盖表里，回退默认值
-    assert quota_service.default_limit_for(["admin"], "ocr") == DEFAULT_QUOTA["ocr"]
+    assert quota_service.default_limit_for(["admin"], "ocr") == 42
+    # 角色策略表有意见的角色不再被这张 JSON 覆盖。
+    assert quota_service.default_limit_for(["department"], "ocr") == 100
 
 
 def test_broken_settings_fall_back_to_the_code_table(monkeypatch, repo):

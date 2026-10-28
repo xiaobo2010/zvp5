@@ -3281,3 +3281,42 @@ class UserWarningsRepo(Protocol):
     async def count_for_user_rule(self, user_oid: str, rule_code: str) -> int:
         """该用户该规则历史累计警告数。"""
         ...
+
+
+class RolePoliciesRepo(Protocol):
+    """Data access for ``ROLE_FEATURES`` / ``ROLE_QUOTAS``（角色策略, V043）。
+
+    两张表是**稀疏覆盖层**：``(role, key)`` 没有行就等于「按代码内置
+    ``services.roles.policy.DEFAULTS``」。所以 :meth:`get_role` 不返回 ``None``
+    ——「这个角色配过没有」不是调用方关心的问题，「这个 key 有没有覆盖」才是，
+    而后者就是 ``features`` / ``quotas`` 字典里有没有该键。
+
+    Row shape（``list_all``）::
+
+        {"features": [{"role", "feature_key", "enabled", "updated_at",
+                       "updated_by"}, ...],
+         "quotas":   [{"role", "kind", "monthly_limit", "updated_at",
+                       "updated_by"}, ...]}
+
+    ``enabled`` 已由 ``NUMBER(1)`` 翻成 ``bool``；``monthly_limit`` 是
+    ``int | None``。``get_role`` / :meth:`upsert_role` 返回
+    ``{"role", "features", "quotas", "updated_at", "updated_by"}``。
+    """
+
+    async def list_all(self) -> dict[str, list[Row]]:
+        """两张全表一次取回（供进程内快照缓存）。"""
+        ...
+
+    async def get_role(self, role: str) -> Row:
+        """某角色库里实际存在的覆盖行；没配过则是空 ``features``/``quotas``。"""
+        ...
+
+    async def upsert_role(
+        self,
+        role: str,
+        features: dict[str, bool],
+        quotas: dict[str, int | None],
+        actor: str | None = None,
+    ) -> Row:
+        """**单事务全量替换**：没出现的 key 被删除，``None`` 额度不落行。"""
+        ...

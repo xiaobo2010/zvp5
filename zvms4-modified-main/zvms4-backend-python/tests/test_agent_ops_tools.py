@@ -45,6 +45,10 @@ EXPECTED_WRITE = {
     "db_delete",
     "db_ddl",
     "ssh_exec",
+    # 运维补充（``tools_ops_extra``）的写面：proposal + dual_auth + guard。
+    "backup_run",
+    "maintenance_mode",
+    "scheduler_control",
 }
 
 # 平台运维（``services.agent.tools_platform``）：读工具只查不发 SQL，写工具是
@@ -55,6 +59,11 @@ PLATFORM_READ = {
     "backup_status",
     "scheduler_status",
     "device_ban_list",
+    # 运维补充（``tools_ops_extra``）的只读面：注册期形状与上面 5 个完全一致。
+    "settings_snapshot",
+    "scheduler_jobs",
+    "ai_call_logs",
+    "agent_queue_status",
 }
 PLATFORM_WRITE = {"user_ban", "user_unban", "device_unban"}
 OPS_TOOLS = EXPECTED_READ | EXPECTED_WRITE | PLATFORM_READ | PLATFORM_WRITE
