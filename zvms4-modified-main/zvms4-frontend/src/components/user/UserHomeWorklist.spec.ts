@@ -125,6 +125,7 @@ describe('UserHomeWorklist', () => {
   })
 
   it('loads suspicious logs only for admins and requests only risk types', async () => {
+    pendingMock.mockClear()
     pendingMock.mockResolvedValue({ activities: [], total: 0 })
     recentMock.mockResolvedValue([])
     logsMock.mockResolvedValue({
@@ -155,5 +156,7 @@ describe('UserHomeWorklist', () => {
     )
     expect(wrapper.text()).toContain('风险告警')
     expect(wrapper.text()).toContain('异常登录')
+    expect(pendingMock).not.toHaveBeenCalled()
+    expect(wrapper.text()).not.toContain('home.panels.review.title')
   })
 })
