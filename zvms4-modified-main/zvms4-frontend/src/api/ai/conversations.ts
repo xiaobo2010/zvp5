@@ -69,12 +69,18 @@ export async function createConversation(
  * 列表不含消息正文，也不含活跃 run（那部分走 `GET /ai/runs?active=1`），
  * 所以翻页的载荷始终很小。
  */
-export async function listConversations(options: {
-  status?: AiConversationStatus
-  limit?: number
-  cursor?: string | null
-} = {}): Promise<AiConversationPage> {
-  const limit = clampLimit(options.limit ?? CONVERSATION_LIST_LIMIT, CONVERSATION_LIST_LIMIT_MAX, CONVERSATION_LIST_LIMIT)
+export async function listConversations(
+  options: {
+    status?: AiConversationStatus
+    limit?: number
+    cursor?: string | null
+  } = {}
+): Promise<AiConversationPage> {
+  const limit = clampLimit(
+    options.limit ?? CONVERSATION_LIST_LIMIT,
+    CONVERSATION_LIST_LIMIT_MAX,
+    CONVERSATION_LIST_LIMIT
+  )
   const { data, metadata } = await aiRequestList<{
     conversations?: AiConversation[]
     next_cursor?: string | null
@@ -89,7 +95,8 @@ export async function listConversations(options: {
   })
   return {
     conversations: Array.isArray(data?.conversations) ? data.conversations : [],
-    next_cursor: typeof data?.next_cursor === 'string' && data.next_cursor ? data.next_cursor : null,
+    next_cursor:
+      typeof data?.next_cursor === 'string' && data.next_cursor ? data.next_cursor : null,
     size: metadata.size
   }
 }
@@ -194,10 +201,7 @@ export async function submitRun(
  *
  * `afterRound` 之外的事件才回：轮询的载荷随轮次线性增长，而不是平方。
  */
-export async function fetchRunDetail(
-  runId: string,
-  afterRound = 0
-): Promise<AiRunDetail> {
+export async function fetchRunDetail(runId: string, afterRound = 0): Promise<AiRunDetail> {
   const data = await aiRequest<{
     run?: AiRun
     events?: AiRunDetail['events']
@@ -228,6 +232,19 @@ export async function fetchActiveRuns(): Promise<AiRun[]> {
     method: 'get',
     url: '/ai/runs',
     params: { active: 1 }
+  })
+  return Array.isArray(data?.runs) ? data.runs : []
+}
+
+/**
+ * 当前用户最近的后台执行记录。历史列表由首页摘要使用，服务端只返回本人记录。
+ */
+export async function listRecentRuns(limit = 5): Promise<AiRun[]> {
+  const safeLimit = Math.min(10, Math.max(1, Math.trunc(limit)))
+  const data = await aiRequest<{ runs?: AiRun[] }>({
+    method: 'get',
+    url: '/ai/runs',
+    params: { active: 0, limit: safeLimit }
   })
   return Array.isArray(data?.runs) ? data.runs : []
 }

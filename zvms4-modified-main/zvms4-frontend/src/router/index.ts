@@ -1,5 +1,26 @@
-import { createRouter, createWebHistory } from 'vue-router'
+import {
+  createRouter,
+  createWebHistory,
+  type LocationQuery,
+  type RouteLocationRaw
+} from 'vue-router'
 import { maintenanceGuard } from './maintenanceGuard'
+
+// 登记入口页的分流：带 activity 的深链（活动详情、旧书签）直达「添加义工」，
+// 并把整份 query 原样带走，避免 activity/session 等参数在分流时丢失。
+export function registerEntryTarget(query: LocationQuery): RouteLocationRaw | null {
+  const raw = query.activity
+  const activity = Array.isArray(raw)
+    ? raw.find((value): value is string => typeof value === 'string' && value.trim().length > 0)
+    : raw
+  if (typeof activity !== 'string' || !activity.trim()) return null
+  return {
+    name: 'activity-register-mode',
+    params: { mode: 'create' },
+    query,
+    replace: true
+  }
+}
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -57,8 +78,17 @@ const router = createRouter({
       ]
     },
     {
+      // 登记入口：先选「添加义工」还是「修改义工」，再进入同一个编辑器。
+      // 旧深链 /activity/register?activity=ID 在 beforeEnter 里直达添加模式并保留 query。
       path: '/activity/register',
       name: 'activity-register',
+      component: () => import('../views/activity/VolunteerRegisterEntry.vue'),
+      beforeEnter: (to) => registerEntryTarget(to.query) ?? true
+    },
+    {
+      // 登记编辑器：URL 是模式的唯一事实来源，create/edit 各自可分享、可前进后退。
+      path: '/activity/register/:mode(create|edit)',
+      name: 'activity-register-mode',
       component: () => import('../views/activity/VolunteerRegister.vue')
     },
     {

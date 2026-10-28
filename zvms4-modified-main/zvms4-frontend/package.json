@@ -55,7 +55,8 @@
     "vue": "^3.5.17",
     "vue-chartjs": "^5.3.2",
     "vue-router": "^4.5.1",
-    "workbox-window": "7.3.0"
+    "workbox-window": "7.3.0",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
   },
   "devDependencies": {
     "@element-plus/icons-vue": "^2.3.1",

@@ -97,6 +97,8 @@ const exports = {
     ascending: boolean = false
   ) => getAllActivities({ type: filter }, page, perpage, query, sortField, ascending),
   campus_v3: getAllActivitiesV3,
+  pending: (page: number = 1, size: number = 10, query: string = '') =>
+    getAllActivitiesV3(page, size, query, '', 'pending'),
   class: (
     page: number = 1,
     perpage: number = 10,

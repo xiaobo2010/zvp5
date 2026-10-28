@@ -211,11 +211,13 @@ COMMIT
 | GET | `/runs/{run_id}?after_round=0` | — | `{run, events, proposals}` |
 | POST | `/runs/{run_id}/cancel` | — | `{status}` |
 | GET | `/runs?active=1` | — | `{runs:[...]}` |
+| GET | `/runs?active=0&limit=5` | `limit` 1..10，默认 5 | `{runs:[...]}`（任意状态，`created_at` 倒序） |
 
 - 提交：一个事务（§2.3）→ `worker.kick()` → 立即 202，不等待执行。
 - `GET /runs/{id}`：`events` 只回 `round_no > after_round` 的增量（同轮重发按 oid 去重），轮询载荷随轮次线性而非平方增长。
 - 取消：置 `cancel_requested=1`；`queued` 直接 CAS 成 `cancelled`；worker 在轮边界和工具执行前检查。已执行工具不可回滚，消息照常落库。
-- `GET /runs?active=1`：重连横幅用。
+- `GET /runs?active=1`：重连横幅用（在飞 run，`created_at` 升序；`limit` 在该支忽略）。
+- `GET /runs?active=0&limit=N`：个人首页的「最近 run」。**任意状态**（含失败/取消）、`created_at` 倒序、只查 `owner_oid=当前用户`；`limit` 1..10（默认 5，越界 422）。视图与 `active=1` 相同（`run_view`）。
 
 ### 3.3 对话（同步 SSE，新增）
 

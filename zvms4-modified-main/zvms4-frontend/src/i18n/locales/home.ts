@@ -37,6 +37,51 @@ export const zhCN = {
       least: '{type}: 至少 {least} 小时',
       lack: '还差',
       exceed: '超出'
+    },
+    review: {
+      title: '待审核活动',
+      description: '需要审核的义工活动',
+      empty: '暂无待审核活动',
+      emptyDescription: '新的活动提交后会显示在这里。',
+      loadFailed: '待审核活动加载失败',
+      retry: '重新加载',
+      creator: '发起人',
+      date: '活动日期',
+      page: '第 {page} 页，共 {total} 项'
+    },
+    agent: {
+      title: 'Agent 执行结果',
+      description: '最近的后台执行记录',
+      empty: '暂无执行记录',
+      emptyDescription: '你发起的 Agent 执行结果会显示在这里。',
+      loadFailed: 'Agent 执行结果加载失败',
+      retry: '重新加载',
+      rounds: '{count} 轮',
+      statuses: {
+        queued: '排队中',
+        running: '执行中',
+        succeeded: '已完成',
+        failed: '失败',
+        cancelled: '已取消',
+        interrupted: '已中断'
+      },
+      stopReasons: {
+        completed: '正常完成',
+        max_iterations: '达到轮数上限',
+        token_budget: '达到 Token 上限',
+        timeout: '执行超时',
+        cancelled: '已取消',
+        error: '执行错误'
+      }
+    },
+    suspiciousLogs: {
+      title: '可疑日志',
+      description: '最近的风险与安全告警',
+      empty: '暂无可疑日志',
+      emptyDescription: '当前没有需要关注的风险事件。',
+      loadFailed: '可疑日志加载失败',
+      retry: '重新加载',
+      viewAll: '查看日志'
     }
   }
 }

@@ -445,13 +445,23 @@ async def submit_run(
 @router.get("/runs")
 async def list_runs(
     active: int = Query(default=1, ge=0, le=1),
+    limit: int = Query(
+        default=run_queue.RECENT_LIMIT_DEFAULT,
+        ge=1,
+        le=run_queue.RECENT_LIMIT_MAX,
+    ),
     user=Depends(get_current_user),
     scene: str | None = Depends(ai_scene),
 ):
-    """本人的在飞 run（重连横幅用）。
+    """本人的 run 列表；``active`` 决定语义，``limit`` 只对 ``active=0`` 生效。
 
-    ``active`` 只在契约里出现过 ``=1`` 这一个取值；本期没有「历史 run 列表」的
-    需求（历史从消息增量读），所以 ``active=0`` 回空表而不是另一种语义。
+    * ``active=1``（默认）：在飞 ``queued|running`` run，``created_at`` 升序。
+      重连横幅用它恢复任务；在飞 run 每用户最多一条，``limit`` 在这里没有意义
+      （忽略，不报错，老客户端继续可用）。
+    * ``active=0``：最近 ``limit`` 条 run（任意状态），``created_at`` 倒序。
+      个人首页用这一支——「最近发生了什么」不能只有成功的那几条。
+
+    两支都只查 ``owner_oid = 当前用户``，越权读取没有参数可传。
 
     run 只存在于 agent 模式会话（``run_queue.submit`` 用 409 挡住其余），所以这里
     按 ``ai.agent`` 静态判，不必先读会话。
@@ -459,9 +469,11 @@ async def list_runs(
 
     async def action() -> dict:
         _require_feature(user, "ai.agent")
-        if not active:
-            return {"runs": []}
-        rows = await run_queue.list_active(str(user.get("id") or ""))
+        owner_oid = str(user.get("id") or "")
+        if active:
+            rows = await run_queue.list_active(owner_oid)
+        else:
+            rows = await run_queue.list_recent(owner_oid, limit=limit)
         return {"runs": [run_queue.run_view(row) for row in rows]}
 
     return await _dispatch(action, user=user, scene=scene)

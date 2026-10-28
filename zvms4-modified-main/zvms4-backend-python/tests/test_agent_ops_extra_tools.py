@@ -35,6 +35,7 @@ EXTRA_READ = {
     "ai_call_logs",
     "agent_queue_status",
     "user_lookup",
+    "ban_history",
     "server_time",
 }
 EXTRA_WRITE = {"backup_run", "maintenance_mode", "scheduler_control"}
@@ -911,3 +912,406 @@ async def test_agent_queue_status_reports_counts_and_stale(monkeypatch) -> None:
     assert data["limits"]["stale_seconds"] == 360
     assert data["limits"]["concurrency"] == tools_ops_extra.run_queue.concurrency()
     assert isinstance(data["pump_alive"], bool)
+
+
+# ---------------------------------------------------------------------------
+# ban_history
+# ---------------------------------------------------------------------------
+
+
+class _FakeHistoryUsersRepo:
+    def __init__(self, row: dict | None = None) -> None:
+        self.row = row
+        self.calls: list[tuple] = []
+
+    async def get_by_oid(self, oid: str):
+        self.calls.append(("get_by_oid", oid))
+        return self.row
+
+    async def find_by_business_id(self, business_id: str):
+        self.calls.append(("find_by_business_id", business_id))
+        return self.row
+
+
+class _FakeRulesRepo:
+    def __init__(self, rows: list[dict] | None = None) -> None:
+        self.rows = rows or []
+
+    async def list_all(self):
+        return self.rows
+
+
+class _FakeBindingsRepo:
+    def __init__(self, rows: list[dict] | None = None) -> None:
+        self.rows = rows or []
+
+    async def get_active_for_user(self, user_oid: str):
+        return self.rows
+
+
+class _FakeCountersRepo:
+    def __init__(self, row: dict | None = None) -> None:
+        self.row = row
+        self.asked: list[str] = []
+
+    async def get(self, xuehai_id: str):
+        self.asked.append(xuehai_id)
+        return self.row
+
+
+_HISTORY_USER = {
+    "_id": "a" * 24,
+    "id": "2023010101",
+    "name": "张三",
+    "banned": True,
+    "ban_until": datetime(2026, 2, 1, 8, 0, 0),
+    "password": "hash-should-not-leak",
+    "session_id": "sid-should-not-leak",
+    "totp_secret": "totp-should-not-leak",
+}
+
+_RULES = [
+    {
+        "_id": "b" * 24,
+        "code": "tamper",
+        "name": "篡改客户端",
+        "trigger": "devtools",
+        "enabled": True,
+        "config": "{}",
+        "penalties": '["1d","7d","30d"]',
+        "builtin": True,
+    },
+    {
+        "_id": "c" * 24,
+        "code": "flood",
+        "name": "刷接口",
+        "trigger": "iframe",
+        "enabled": False,
+        "config": "{}",
+        "penalties": '["1d"]',
+        "builtin": True,
+    },
+]
+
+
+def _record_row(
+    oid: str,
+    *,
+    rule_code: str | None,
+    started_at: datetime,
+    source: str = "rule",
+    rule_name: str | None = None,
+    operator_name: str | None = None,
+) -> "_Row":
+    return _Row(
+        {
+            "oid": oid,
+            "source": source,
+            "rule_code": rule_code,
+            "reason": "证据充分",
+            "permanent": False,
+            "started_at": started_at,
+            "expires_at": started_at + timedelta(days=7),
+            "operator_oid": None,
+            "created_at": started_at,
+            "rule_name": rule_name,
+            "operator_name": operator_name,
+        }
+    )
+
+
+def _tier_row(rule_code: str, count: int, last_at: datetime) -> "_Row":
+    return _Row({"rule_code": rule_code, "ban_count": count, "last_at": last_at})
+
+
+def _violation_row(trigger: str, batches: int, last_at: datetime) -> "_Row":
+    return _Row({"trigger_code": trigger, "batches": batches, "last_at": last_at})
+
+
+class _CapturingSession(_FakeSession):
+    """记录每次 execute 的语句，供「SQL 确实倒序/去重/分组」的断言使用。"""
+
+    def __init__(self, results) -> None:
+        super().__init__(results)
+        self.statements: list = []
+
+    async def execute(self, stmt):
+        self.statements.append(stmt)
+        return await super().execute(stmt)
+
+
+def _use_history(monkeypatch, *, session, users=None, rules=None, bindings=None,
+                 counters=None) -> None:
+    monkeypatch.setattr(
+        tools_ops_extra, "session_scope", lambda: _history_scope(session)
+    )
+    monkeypatch.setattr(
+        tools_ops_extra.backends,
+        "get_users_repo",
+        lambda session=None: users or _FakeHistoryUsersRepo(dict(_HISTORY_USER)),
+    )
+    monkeypatch.setattr(
+        tools_ops_extra.backends,
+        "get_ban_rules_repo",
+        lambda session=None: rules or _FakeRulesRepo([dict(item) for item in _RULES]),
+    )
+    monkeypatch.setattr(
+        tools_ops_extra.backends,
+        "get_bindings_repo",
+        lambda session=None: bindings or _FakeBindingsRepo(),
+    )
+    monkeypatch.setattr(
+        tools_ops_extra.backends,
+        "get_device_ban_counters_repo",
+        lambda session=None: counters or _FakeCountersRepo(),
+    )
+
+
+def _history_scope(session):
+    @contextlib.asynccontextmanager
+    async def _scope():
+        yield session
+
+    return _scope()
+
+
+def _history_session(records=None, tiers=None, violations=None) -> _CapturingSession:
+    return _CapturingSession(
+        [
+            _Result(records or []),
+            _Result(tiers or []),
+            _Result(violations or []),
+        ]
+    )
+
+
+async def _impl_history(**kwargs):
+    """``_impl`` 的 ``name`` 形参与工具入参同名，直接绕开它调 impl。"""
+    return await _tool("ban_history").impl(ADMIN, **kwargs)
+
+
+def test_ban_history_is_registered_read_only() -> None:
+    tool = _tool("ban_history")
+    assert tool.kind == tools.READ
+    assert tool.permission is tools_ops_extra._admin_only
+    assert tool.guard is not None
+    assert tool.prepare is None
+    assert tool.dual_auth_action is None
+    assert tool.direct is False
+
+
+@pytest.mark.asyncio
+async def test_ban_history_accepts_oid(monkeypatch) -> None:
+    now = datetime(2026, 1, 1, 12, 0, 0)
+    users = _FakeHistoryUsersRepo(dict(_HISTORY_USER))
+    session = _history_session(
+        records=[_record_row("d" * 24, rule_code="tamper", started_at=now)],
+        tiers=[_tier_row("tamper", 1, now)],
+    )
+    _use_history(monkeypatch, session=session, users=users)
+
+    data = await _impl_history(user_oid="A" * 24)
+
+    assert users.calls == [("get_by_oid", "A" * 24)]
+    assert data["user"] == {
+        "oid": "a" * 24,
+        "name": "张三",
+        "business_id": "2023010101",
+        "banned": True,
+        "ban_until": "2026-02-01 08:00:00",
+    }
+
+
+@pytest.mark.asyncio
+async def test_ban_history_accepts_business_id(monkeypatch) -> None:
+    users = _FakeHistoryUsersRepo(dict(_HISTORY_USER))
+    _use_history(monkeypatch, session=_history_session(), users=users)
+
+    data = await _impl_history(business_id="2023010101")
+
+    assert users.calls == [("find_by_business_id", "2023010101")]
+    assert data["user"]["business_id"] == "2023010101"
+
+
+@pytest.mark.asyncio
+async def test_ban_history_rejects_missing_ambiguous_or_bad_arguments(
+    monkeypatch,
+) -> None:
+    users = _FakeHistoryUsersRepo(dict(_HISTORY_USER))
+    _use_history(monkeypatch, session=_history_session(), users=users)
+
+    for kwargs, reason in (
+        ({"user_oid": "a" * 24, "business_id": "2023010101"}, "both"),
+        ({}, "neither"),
+        ({"user_oid": "not-an-oid"}, "bad oid"),
+        ({"business_id": "2023010101", "limit": 0}, "limit low"),
+        ({"business_id": "2023010101", "limit": 21}, "limit high"),
+    ):
+        with pytest.raises(AgentError) as caught:
+            await _impl_history(**kwargs)
+        assert caught.value.code == "AI_AGENT_BAD_ARGUMENT", reason
+        assert caught.value.status_code == 400, reason
+    assert users.calls == []  # 一个查询都没发出去
+
+
+@pytest.mark.asyncio
+async def test_ban_history_unknown_user_is_404(monkeypatch) -> None:
+    _use_history(
+        monkeypatch, session=_history_session(), users=_FakeHistoryUsersRepo(None)
+    )
+
+    with pytest.raises(AgentError) as caught:
+        await _impl_history(user_oid="a" * 24)
+
+    assert caught.value.code == "AI_AGENT_NOT_FOUND"
+    assert caught.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_ban_history_records_are_newest_first_limited_and_null_safe(
+    monkeypatch,
+) -> None:
+    now = datetime(2026, 1, 1, 12, 0, 0)
+    older = _record_row("d" * 24, rule_code="tamper", started_at=now - timedelta(days=3))
+    newer = _record_row(
+        "e" * 24,
+        rule_code="tamper",
+        started_at=now,
+        source="admin",
+        operator_name="管理员甲",
+    )
+    session = _history_session(records=[newer, older])
+    _use_history(monkeypatch, session=session)
+
+    data = await _impl_history(business_id="2023010101", limit=2)
+
+    records = data["records"]
+    assert [item["oid"] for item in records] == ["e" * 24, "d" * 24]
+    assert [item["started_at"] for item in records] == [
+        "2026-01-01 12:00:00",
+        "2025-12-29 12:00:00",
+    ]
+    # 规则名从 BAN_RULES 补齐；operator 缺失（规则封禁）给 null
+    assert records[0]["rule_name"] == "篡改客户端"
+    assert records[0]["operator_name"] == "管理员甲"
+    assert records[1]["operator_name"] is None
+    assert set(records[0]) == set(tools_ops_extra.RECORD_FIELDS)
+
+    record_stmt = str(session.statements[0])
+    assert "ORDER BY ban_records.started_at DESC" in record_stmt
+    assert session.statements[0]._limit_clause.value == 2
+
+
+@pytest.mark.asyncio
+async def test_ban_history_tiers_aggregate_by_rule_code(monkeypatch) -> None:
+    now = datetime(2026, 1, 1, 12, 0, 0)
+    session = _history_session(
+        tiers=[
+            _tier_row("tamper", 3, now),
+            _tier_row("flood", 1, now - timedelta(days=20)),
+        ]
+    )
+    _use_history(monkeypatch, session=session)
+
+    data = await _impl_history(business_id="2023010101")
+
+    assert data["tiers"] == [
+        {"rule_code": "tamper", "count": 3, "last_at": "2026-01-01 12:00:00"},
+        {"rule_code": "flood", "count": 1, "last_at": "2025-12-12 12:00:00"},
+    ]
+    tier_stmt = str(session.statements[1])
+    assert "GROUP BY ban_records.rule_code" in tier_stmt
+
+
+@pytest.mark.asyncio
+async def test_ban_history_violations_count_batches_not_rows(monkeypatch) -> None:
+    now = datetime(2026, 1, 1, 12, 0, 0)
+    session = _history_session(
+        violations=[_violation_row("devtools", 2, now)]
+    )
+    _use_history(monkeypatch, session=session)
+
+    data = await _impl_history(business_id="2023010101")
+
+    assert data["violations"] == [
+        {"trigger_code": "devtools", "batches": 2, "last_at": "2026-01-01 12:00:00"}
+    ]
+    violation_stmt = str(session.statements[2]).lower()
+    # 同一批次多行只算一次：COUNT(DISTINCT COALESCE(batch_id, oid))
+    assert "count(distinct" in violation_stmt
+    assert "coalesce(ban_violations.batch_id, ban_violations.oid)" in violation_stmt
+
+
+@pytest.mark.asyncio
+async def test_ban_history_rules_expose_penalties_verbatim(monkeypatch) -> None:
+    _use_history(monkeypatch, session=_history_session())
+
+    data = await _impl_history(business_id="2023010101")
+
+    assert [item["code"] for item in data["rules"]] == ["tamper"]
+    assert set(data["rules"][0]) == set(tools_ops_extra.RULE_FIELDS)
+    assert data["rules"][0]["trigger_code"] == "devtools"
+    assert isinstance(data["rules"][0]["penalties"], str)
+    assert data["rules"][0]["penalties"] == '["1d","7d","30d"]'
+
+
+@pytest.mark.asyncio
+async def test_ban_history_masks_device_xuehai_id(monkeypatch) -> None:
+    raw = "XUEHAI-RAW-8891"
+    counters = _FakeCountersRepo(
+        {"xuehai_id": raw, "ban_count": 4, "last_banned_at": datetime(2025, 12, 1, 9, 0)}
+    )
+    _use_history(
+        monkeypatch,
+        session=_history_session(),
+        bindings=_FakeBindingsRepo([{"xuehai_id": raw, "status": "active"}]),
+        counters=counters,
+    )
+
+    data = await _impl_history(business_id="2023010101")
+
+    assert counters.asked == [raw]
+    assert data["device"] == {
+        "xuehai_id_masked": "XUE**********91",
+        "ban_count": 4,
+        "last_banned_at": "2025-12-01 09:00:00",
+    }
+    assert set(data["device"]) == set(tools_ops_extra.DEVICE_FIELDS)
+    assert raw not in str(data)
+
+
+@pytest.mark.asyncio
+async def test_ban_history_device_is_null_without_binding(monkeypatch) -> None:
+    counters = _FakeCountersRepo({"ban_count": 9})
+    _use_history(
+        monkeypatch, session=_history_session(), counters=counters
+    )
+
+    data = await _impl_history(business_id="2023010101")
+
+    assert data["device"] is None
+    assert counters.asked == []
+
+
+@pytest.mark.asyncio
+async def test_ban_history_payload_is_whitelisted(monkeypatch) -> None:
+    _use_history(
+        monkeypatch,
+        session=_history_session(
+            records=[_record_row("d" * 24, rule_code="tamper", started_at=datetime.now())],
+            tiers=[_tier_row("tamper", 1, datetime.now())],
+            violations=[_violation_row("devtools", 1, datetime.now())],
+        ),
+    )
+
+    data = await _impl_history(user_oid="a" * 24)
+
+    assert set(data) == set(tools_ops_extra.BAN_HISTORY_FIELDS)
+    assert set(data["user"]) == set(tools_ops_extra.USER_FIELDS)
+    assert set(data["tiers"][0]) == set(tools_ops_extra.TIER_FIELDS)
+    assert set(data["violations"][0]) == set(tools_ops_extra.VIOLATION_FIELDS)
+    assert data["note"]
+    rendered = str(data)
+    for leak in ("hash-should-not-leak", "sid-should-not-leak",
+                 "totp-should-not-leak"):
+        assert leak not in rendered

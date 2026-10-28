@@ -34,6 +34,7 @@ declare module 'vue' {
     ElTag: typeof import('element-plus/es')['ElTag']
     RouterLink: typeof import('vue-router')['RouterLink']
     RouterView: typeof import('vue-router')['RouterView']
+    UserHomeWorklist: typeof import('./src/components/user/UserHomeWorklist.vue')['default']
     ZActivityAttachmentsDialog: typeof import('./src/components/activity/ZActivityAttachmentsDialog.vue')['default']
     ZActivityCard: typeof import('./src/components/activity/ZActivityCard.vue')['default']
     ZActivityCreate: typeof import('./src/components/activity/ZActivityCreate.vue')['default']
