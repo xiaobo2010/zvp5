@@ -106,7 +106,9 @@ html.dark .yg-glass-nav--portrait {
   margin-top: auto;
 }
 
-/* 弹性滑动指示器（液态玻璃高亮药丸） */
+/* 弹性滑动指示器（液态玻璃高亮药丸）
+   位移与尺寸走同一段 CSS transition：每次切换只播一次弹簧，下一次切换会直接
+   打断上一段（符合「可打断、不重复弹跳」），时长/曲线全部取自设计令牌。 */
 .yg-glass-nav__indicator {
   position: absolute;
   left: 0;
@@ -116,9 +118,18 @@ html.dark .yg-glass-nav--portrait {
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.55),
     0 2px 8px rgba(14, 165, 233, 0.25);
-  /* 位移由 UserNav 的 WAAPI 弹簧驱动，这里不能加 transform transition，否则会互相抢值 */
-  transition: opacity 0.2s ease-out;
+  transition:
+    transform var(--yg-dur-page) var(--yg-ease-spring),
+    width var(--yg-dur-page) var(--yg-ease-spring),
+    height var(--yg-dur-page) var(--yg-ease-spring),
+    opacity var(--yg-dur-base) var(--yg-ease-out);
   pointer-events: none;
+}
+
+/* 首帧/字体就绪/尺寸校正：UserNav 在同一帧挂上本类再写位置，避免药丸从 (0,0)
+   飞入或在缩放、横竖屏重排时拖着虚影走；下一帧即移除，切页恢复弹簧。 */
+.yg-glass-nav__indicator.is-instant {
+  transition: none;
 }
 
 html.dark .yg-glass-nav__indicator {
@@ -181,14 +192,15 @@ html.dark .yg-glass-nav__indicator {
   margin: 4px 0;
 }
 
-/* 主题切换按钮：点击旋转一整圈，旋转中图标随整屏快照交叉淡化 */
+/* 主题切换按钮：点击旋转一整圈，旋转中图标随整屏快照交叉淡化
+   时长与 View Transitions 共用 --yg-dur-page，解锁时机由 animationend 反推，
+   JS 侧不再写死毫秒数。 */
 .yg-glass-nav__theme-icon {
   display: inline-flex;
-  transition: transform 0.6s var(--yg-ease-spring);
 }
 
 .yg-glass-nav__theme-icon.spinning {
-  animation: yg-theme-spin 0.6s var(--yg-ease-spring);
+  animation: yg-theme-spin var(--yg-dur-page) var(--yg-ease-spring);
 }
 
 @keyframes yg-theme-spin {
@@ -203,11 +215,15 @@ html.dark .yg-glass-nav__indicator {
   }
 }
 
-/* 深浅色整屏过渡：View Transitions 快照交叉淡化（非线性缓动） */
-::view-transition-old(root),
-::view-transition-new(root) {
-  animation-duration: 480ms;
-  animation-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+/* 深浅色整屏过渡：View Transitions 快照交叉淡化（非线性缓动）
+   用 :root 收窄伪元素（::view-transition-* 挂在文档元素上）是为了稳压 flat.css
+   里同名的 480ms 字面量规则——它在 main.ts 中晚于本文件引入，特异性相同时会
+   覆盖这里。这样主题时长/曲线只有「--yg-* 令牌」这一处事实来源；flat.css 的
+   重复段应在其归属改动中删除，别在这里继续加特异性。 */
+:root::view-transition-old(root),
+:root::view-transition-new(root) {
+  animation-duration: var(--yg-dur-page);
+  animation-timing-function: var(--yg-ease-in-out);
   mix-blend-mode: normal;
 }
 
@@ -217,4 +233,14 @@ html.dark .yg-glass-nav__indicator {
 
 ::view-transition-new(root) {
   z-index: 2147483646;
+}
+
+/* 减少动效：View Transitions 的伪元素不在 base.css 的 `*` 降级范围内，
+   这里显式关掉快照动画，等价于原来的 reduceMotion() 判断（瞬时换肤）。 */
+@media (prefers-reduced-motion: reduce) {
+  :root::view-transition-group(root),
+  :root::view-transition-old(root),
+  :root::view-transition-new(root) {
+    animation: none;
+  }
 }
