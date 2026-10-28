@@ -34,6 +34,7 @@ from routers import (
     notifications_router,
     ban_violations_router,
     ai_router,
+    ai_quota_requests_router,
     ai_api_keys_router,
     ai_agent_router,
     ai_conversations_router,
@@ -562,6 +563,12 @@ app.include_router(
 )
 app.include_router(
     ban_violations_router.router, prefix="/api/v3/ban", tags=["ban"]
+)
+# 必须先于 ai_router 注册：``ai_router`` 的 ``GET /quota/{user_oid}`` 会把
+# ``/api/ai/quota/requests`` 与 ``/api/ai/quota/users`` 当成 oid 匹配掉（FastAPI
+# 按注册顺序匹配），回一个与业务无关的 400 Invalid Object ID。
+app.include_router(
+    ai_quota_requests_router.router, prefix="/api/ai/quota", tags=["ai"]
 )
 app.include_router(ai_router.router, prefix="/api/ai", tags=["ai"])
 app.include_router(

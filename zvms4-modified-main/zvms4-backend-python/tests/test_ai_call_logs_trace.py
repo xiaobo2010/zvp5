@@ -274,14 +274,18 @@ def test_non_stream_partial_usage_keeps_the_missing_keys_null(
 def test_retry_chain_numbers_each_attempt_from_one(
     catalog, credentials_ok, quotas, upstream, audit_repo
 ):
-    """第一次可重试失败、第二次成功 ⇒ 两行，attempt_no = 1 / 2，同一个 request_id。"""
+    """第一次可重试失败、第二次成功 ⇒ 两行，attempt_no = 1 / 2，同一个 request_id。
+
+    两家渠道都提供 ``gpt-x``，所以必须用合格 ID（``team/gpt-x``）指定首选渠道——
+    裸名在这里是歧义的，而这条用例要验的正是「首选失败后兜底到第二家」。
+    """
     catalog.set([_entry(), _entry("backup", "c" * 24)])
     upstream(
         routing.RouteError("AI_UPSTREAM_ERROR", "upstream failed", 502),
         {"usage": {"total_tokens": 10}},
     )
 
-    response = _post()
+    response = _post(_chat(model="team/gpt-x"))
 
     assert response.status_code == 200
     assert [row["attempt_no"] for row in audit_repo.rows] == [1, 2]
@@ -301,7 +305,8 @@ def test_non_retryable_failure_after_a_retry_keeps_its_attempt_number(
         routing.RouteError("AI_UPSTREAM_REJECTED", "bad request", 502),
     )
 
-    response = _post()
+    # 同名模型要用合格 ID 才能指定首选渠道（裸名两家都有 = 歧义）。
+    response = _post(_chat(model="team/gpt-x"))
 
     assert response.status_code == 502
     assert [row["attempt_no"] for row in audit_repo.rows] == [1, 2]

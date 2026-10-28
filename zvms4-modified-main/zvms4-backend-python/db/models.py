@@ -1730,6 +1730,66 @@ role_quotas = Table(
 
 
 # ---------------------------------------------------------------------------
+# AI_QUOTA_REQUESTS  ← new (AI 配额重置申请; V044)
+#   「额度用尽 → 学生会/团支书申请 → 管理员审批」的账本，一行一次申请。
+#   PERIOD 与 AI_QUOTA 同口径（YYYYMM 文本，本地时区）：申请只对**当月**有效 ——
+#   下个月额度本来就重置，不需要「跨月继承」这种隐藏语义。
+#   REQUESTED_LIMIT 可空：NULL = 只要求重置已用量，非 NULL = 顺便把上限提到这个
+#   数；0 是合法值（「本月到此为止」），所以不能用 0 顶替 NULL。
+#   DECIDED_BY / DECIDED_AT / DECISION_NOTE 可空：pending 行还没有审批人，用 NULL
+#   表达「还没决定」比编一个哨兵诚实。无外键：申请是审计材料，要比账号活得久
+#   （同 AI_CALL_LOGS）。
+#   「同一用户同一 period 同一 kind 只有一条 pending」由服务层查重，不建函数唯一
+#   索引：把终态行排除在外的 CASE 索引收益不抵复杂度，并发双提交的极小窗口由
+#   审批端「非 pending 再批 → 409」兜住。
+# ---------------------------------------------------------------------------
+
+ai_quota_requests = Table(
+    "ai_quota_requests",
+    metadata,
+    Column("oid", oracle.CHAR(24), primary_key=True),
+    Column("user_oid", oracle.CHAR(24), nullable=False),
+    Column("period", oracle.CHAR(6), nullable=False),
+    Column("kind", VARCHAR2(16), nullable=False),
+    Column("status", VARCHAR2(16), nullable=False, server_default=text("'pending'")),
+    Column("reason", VARCHAR2(500), nullable=True),
+    Column("requested_limit", NUMBER(12), nullable=True),
+    Column("decided_by", oracle.CHAR(24), nullable=True),
+    Column("decided_at", oracle.TIMESTAMP, nullable=True),
+    Column("decision_note", VARCHAR2(500), nullable=True),
+    Column("created_at", oracle.TIMESTAMP, nullable=False),
+    Column("updated_at", oracle.TIMESTAMP, nullable=False),
+    _oid_check("ai_quota_requests"),
+    CheckConstraint(
+        "REGEXP_LIKE(period,'^[0-9]{6}$')",
+        name="ck_ai_quota_requests_period",
+    ),
+    CheckConstraint(
+        "kind IN ('chat','ocr')", name="ck_ai_quota_requests_kind"
+    ),
+    CheckConstraint(
+        "status IN ('pending','approved','rejected','cancelled')",
+        name="ck_ai_quota_requests_status",
+    ),
+    CheckConstraint(
+        "requested_limit >= 0", name="ck_ai_quota_requests_limit"
+    ),
+)
+Index(
+    "ix_ai_quota_requests_user_period",
+    ai_quota_requests.c.user_oid,
+    ai_quota_requests.c.period,
+    ai_quota_requests.c.kind,
+    ai_quota_requests.c.status,
+)
+Index(
+    "ix_ai_quota_requests_status",
+    ai_quota_requests.c.status,
+    ai_quota_requests.c.created_at,
+)
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 

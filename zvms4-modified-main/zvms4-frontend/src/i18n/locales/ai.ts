@@ -313,7 +313,22 @@ export const zhCN = {
     rulePersonal: '个人 Key 的对话不占用本页额度。',
     ruleShared: '共享与服务端 Key 的对话占用本人额度。',
     refresh: '刷新额度',
-    loadFailed: '额度加载失败，请稍后重试。'
+    loadFailed: '额度加载失败，请稍后重试。',
+    request: {
+      apply: '申请重置额度',
+      applied: '已申请，等待审批',
+      dialogTitle: '申请重置额度',
+      kind: '能力',
+      reason: '说明',
+      reasonPlaceholder: '简要说明为什么需要重置（可留空）',
+      requestedLimit: '期望额度',
+      requestedLimitHint: '可留空；填写后只是给审批人的参考，最终由管理员决定。',
+      submit: '提交申请',
+      submitted: '申请已提交，等待审批',
+      submitFailed: '申请提交失败，请稍后重试。',
+      pendingTitle: '待审批的申请',
+      loadFailed: '申请记录加载失败'
+    }
   },
   keys: {
     title: 'Key 管理',
@@ -418,7 +433,7 @@ export const zhCN = {
   },
   quotaAdmin: {
     title: '额度管理',
-    subtitle: '先选择用户，再查看与调整其本月额度。',
+    subtitle: '表格查看每个人的本月额度，并处理额度重置申请。',
     pickUser: '选择用户',
     pickUserPlaceholder: '输入姓名或学号搜索',
     noUser: '尚未选择用户',
@@ -441,7 +456,64 @@ export const zhCN = {
     loadFailed: '额度加载失败',
     retry: '重试',
     empty: '暂无额度数据',
-    currentUser: '当前用户'
+    currentUser: '当前用户',
+    searchPlaceholder: '搜索姓名或学号',
+    search: '搜索',
+    noPermission: '当前账号没有额度管理权限',
+    noPermissionHint: '只有管理员或拥有 quota.manage 权限的角色可以访问这一页。',
+    saveFailed: '额度保存失败',
+    resetFailed: '重置失败',
+    quickLookup: '按 oid 精确操作',
+    quickLookupTitle: '按用户 oid 查看额度',
+    quickLookupOid: '用户 oid',
+    quickLookupPlaceholder: '粘贴或输入用户 oid',
+    quickLookupHint: '查询结果会置顶显示在表格首行。',
+    quickLookupDone: '已载入该用户的额度',
+    quickLookupFailed: '查询失败，请检查 oid 是否正确',
+    usersLoadFailed: '用户配额列表加载失败',
+    users: {
+      title: '用户配额',
+      hint: '按姓名或学号搜索；分页由服务端处理。',
+      user: '用户',
+      chat: 'LLM 已用 / 上限',
+      ocr: 'OCR 已用 / 上限',
+      source: '来源',
+      chatShort: 'LLM',
+      ocrShort: 'OCR',
+      pendingBadge: '有待审批申请',
+      changeChatLimit: '改 LLM 上限',
+      changeOcrLimit: '改 OCR 上限',
+      resetChat: '清零 LLM 用量',
+      resetOcr: '清零 OCR 用量',
+      empty: '没有匹配的用户'
+    },
+    requests: {
+      title: '重置申请',
+      hint: '学生与学生会提交的额度重置申请，批准即清零本月用量。',
+      user: '申请人',
+      kind: '能力',
+      reason: '说明',
+      createdAt: '申请时间',
+      requestedLimit: '期望额度',
+      approve: '批准',
+      reject: '拒绝',
+      approveTitle: '批准重置申请',
+      rejectTitle: '拒绝重置申请',
+      approveMode: '处理方式',
+      approveResetOnly: '仅清零用量',
+      approveResetLimit: '清零并设新上限',
+      newLimit: '新上限',
+      newLimitHint: '批准后该能力本月上限改成这个值。',
+      approveHint: '批准会立即清零该能力的本月已用量，无法撤销。',
+      approveLimitRequired: '请填写大于 0 的新上限',
+      rejectNote: '拒绝理由',
+      rejectNotePlaceholder: '可选；填写后会一并告知申请人',
+      empty: '没有待审批的申请',
+      loadFailed: '申请列表加载失败',
+      approvedNotice: '申请已批准',
+      rejectedNotice: '申请已拒绝',
+      decisionFailed: '审批失败，请稍后重试'
+    }
   },
   select: {
     needMoreDigits: '学号至少输入 {n} 位',
@@ -924,6 +996,30 @@ export const zhCN = {
     AI_QUOTA_BAD_LIMIT: {
       title: '额度上限不合法',
       hint: '上限必须是零或正整数。'
+    },
+    AI_QUOTA_REQUEST_BAD_KIND: {
+      title: '申请的能力类型不对',
+      hint: '只能对 LLM 对话或 OCR 识别申请额度重置。'
+    },
+    AI_QUOTA_REQUEST_BAD_LIMIT: {
+      title: '期望额度不合法',
+      hint: '期望额度必须是零或正整数，或留空表示只重置用量。'
+    },
+    AI_QUOTA_REQUEST_BAD_STATUS: {
+      title: '筛选条件不合法',
+      hint: '审批列表只支持按待审批 / 已通过 / 已拒绝筛选。'
+    },
+    AI_QUOTA_REQUEST_PENDING: {
+      title: '已有待审批的申请',
+      hint: '同一能力本月只需申请一次，请等待管理员处理。'
+    },
+    AI_QUOTA_REQUEST_NOT_FOUND: {
+      title: '申请不存在',
+      hint: '这条申请可能已被处理或删除，刷新列表后再试。'
+    },
+    AI_QUOTA_REQUEST_NOT_PENDING: {
+      title: '申请已被处理',
+      hint: '同一条申请只能批准或拒绝一次，请刷新列表。'
     },
     AI_INVALID_REQUEST: {
       title: '请求参数不合法',

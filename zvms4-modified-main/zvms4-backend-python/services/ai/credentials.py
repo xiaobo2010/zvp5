@@ -22,6 +22,7 @@ import json
 import re
 import socket
 import time
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 from urllib.parse import urlsplit
@@ -237,6 +238,143 @@ def _ordered(rows: list[dict]) -> list[dict]:
         rows or [],
         key=lambda row: 0 if str(row.get("scope") or "") == SCOPE_PERSONAL else 1,
     )
+
+
+# ---------------------------------------------------------------------------
+# 模型解析（合格 ID = ``provider/model``）
+# ---------------------------------------------------------------------------
+#
+# 为什么需要合格 ID：不同渠道可以给出同名模型（两个 provider 都有
+# ``gpt-4o-mini``）。只按裸名选路时，「先出现者胜」把另一个渠道彻底变成不可达
+# 的死配置——而目录顺序（personal → shared → server）是遮蔽规则，不是路由意图。
+# 所以对外标识改成 ``provider/model``，裸名只作为**旧数据**的兼容别名保留。
+
+
+@dataclass(frozen=True)
+class ResolvedModel:
+    """一次解析的结果：命中哪个 entry，上游真实模型名是什么。"""
+
+    entry: dict
+    #: 发给上游的模型名（去掉 provider 前缀）。
+    model: str
+    #: 对外/落库的合格 ID。
+    qualified: str
+
+
+class ModelAmbiguous(Exception):
+    """裸名在目录里命中多个 provider：调用方必须要求客户端改用合格 ID。
+
+    不用「返回一个魔法字符串」表达歧义：调用方拿到异常时天然带着候选列表，
+    而且不会有人误把它当成一个正常的 entry。
+    """
+
+    def __init__(self, model: str, candidates: list[str]):
+        self.model = model
+        self.candidates = list(candidates)
+        self.message = (
+            f"model '{model}' is ambiguous, use " + " or ".join(self.candidates)
+        )
+        super().__init__(self.message)
+
+
+def qualified_model_id(entry: dict, model: str) -> str:
+    """``entry + 上游模型名`` → 对外的合格 ID。"""
+    return f"{entry.get('name')}/{model}"
+
+
+def catalog_models(entries: list[dict] | None) -> list[tuple[dict, str, str]]:
+    """目录 → ``[(entry, 上游模型名, 合格 ID)]``（保持目录顺序，逐 provider 展开）。"""
+    rows: list[tuple[dict, str, str]] = []
+    for entry in entries or []:
+        for model in entry.get("models") or []:
+            if isinstance(model, str) and model:
+                rows.append((entry, model, qualified_model_id(entry, model)))
+    return rows
+
+
+def resolve_model(entries: list[dict] | None, model: object) -> ResolvedModel | None:
+    """把客户端给的 model 解析成 ``(entry, 上游模型名)``。
+
+    规则（顺序固定）：
+
+    1. 含 ``/`` 且第一段能（大小写不敏感地）匹配某个 entry 的 ``name`` —— 按
+       ``provider/model`` 解释，只认这个 provider。该 provider 没有这个模型时
+       返回 ``None``：**不**退化成裸名再去别的 provider 里猜，否则「我明确指定了
+       渠道」会被静默改写成另一个渠道。
+    2. 否则按裸名在目录里精确匹配：唯一命中用它；多个命中抛
+       :class:`ModelAmbiguous`；零命中返回 ``None``。
+    3. 第一段不是任何 provider 名（模型 id 自己带 ``/``，如
+       ``Qwen/Qwen2.5-7B-Instruct``）时同样按裸名整串匹配。
+    """
+    name = str(model or "").strip()
+    if not name:
+        return None
+    entries = list(entries or [])
+
+    prefix, sep, rest = name.partition("/")
+    if sep:
+        by_name = {
+            str(entry.get("name") or "").lower(): entry
+            for entry in entries
+            if entry.get("name")
+        }
+        matched = by_name.get(prefix.lower())
+        if matched is not None:
+            models = [m for m in matched.get("models") or [] if isinstance(m, str)]
+            if not rest or rest not in models:
+                return None
+            # 前缀大小写不敏感，但落库/回显统一用目录里的规范名。
+            return ResolvedModel(
+                entry=matched, model=rest, qualified=qualified_model_id(matched, rest)
+            )
+
+    hits = [
+        (entry, bare)
+        for entry, bare, _qualified in catalog_models(entries)
+        if bare == name
+    ]
+    if not hits:
+        return None
+    if len(hits) > 1:
+        raise ModelAmbiguous(
+            name, [qualified_model_id(entry, bare) for entry, bare in hits]
+        )
+    entry, bare = hits[0]
+    return ResolvedModel(
+        entry=entry, model=bare, qualified=qualified_model_id(entry, bare)
+    )
+
+
+def route_candidates(candidates: list[dict] | None, resolved: ResolvedModel) -> list[dict]:
+    """在「未冷却的候选」里挑出能跑这个模型的项，命中的 provider 排最前。
+
+    命中项一定在最前：合格 ID 指定了渠道就是首选，不会被目录顺序改写。其余提供
+    **同一上游模型名**的渠道保留在后面，只用于「可重试的上游错误」兜底（与改造前
+    的多 provider 重试同一语义），而不是把「用户明确指定 A」悄悄变成「跑在 B」。
+    """
+    items = list(candidates or [])
+    head = [entry for entry in items if entry is resolved.entry]
+    tail = [
+        entry
+        for entry in items
+        if entry is not resolved.entry
+        and resolved.model in (entry.get("models") or [])
+    ]
+    return head + tail
+
+
+def upstream_model_name(entries: list[dict] | None, model: object) -> str:
+    """合格 ID → 发给上游的真实模型名；解析不了就原样返回。
+
+    只给「手上已经有合格 ID、马上要拼请求体」的场景用（agent 的每轮 payload）。
+    原样返回是刻意的：调用方在这之前已经做过一次 ``resolve_model`` 的校验，这里
+    再抛一次只会把一条已通过门禁的请求变成 500。
+    """
+    try:
+        resolved = resolve_model(entries, model)
+    except ModelAmbiguous:
+        return str(model or "")
+    return resolved.model if resolved is not None else str(model or "")
 
 
 async def resolve_api_key(entry: dict) -> str:
@@ -873,7 +1011,10 @@ __all__ = [
     "SCOPE_SHARED",
     "SCOPE_SERVER",
     "CredentialError",
+    "ModelAmbiguous",
+    "ResolvedModel",
     "catalog",
+    "catalog_models",
     "clear_ssrf_cache",
     "create_entry",
     "delete_entry",
@@ -882,6 +1023,10 @@ __all__ = [
     "invalidate",
     "list_entries",
     "public_view",
+    "qualified_model_id",
     "resolve_api_key",
+    "resolve_model",
+    "route_candidates",
     "update_entry",
+    "upstream_model_name",
 ]

@@ -53,6 +53,20 @@ def roles_snapshot(roles: object) -> str | None:
     return text[:ROLES_SNAPSHOT_MAX]
 
 
+#: ``AI_CALL_LOGS.MODEL`` 的列宽。合格 ID（``provider/model``）比裸模型名长，
+#: 超长 INSERT 会是 ORA-12899，而审计失败被吞掉 —— 那次调用就完全没有流水了。
+MODEL_MAX = 80
+
+
+def _model_value(model: str | None) -> str | None:
+    """模型列：只按列宽截断。截断只可能发生在「provider 名 + 模型名」都很长时；
+    调用方已经拿到的结论不受影响（审计是旁路）。"""
+    if not model:
+        return None
+    text = str(model)
+    return text if len(text) <= MODEL_MAX else text[:MODEL_MAX]
+
+
 async def record(
     *,
     user_oid: str,
@@ -104,7 +118,7 @@ async def record(
             capability=capability,
             endpoint=endpoint,
             provider=provider,
-            model=model,
+            model=_model_value(model),
             status=status,
             http_status=http_status,
             error_code=error_code,

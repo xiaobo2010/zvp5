@@ -50,6 +50,7 @@ DEPT = "000000000000000000000002"
 SECRETARY = "000000000000000000000003"
 ATTACHMENT = "f" * 24
 MODEL = "gpt-x"
+QUALIFIED_MODEL = f"acme/{MODEL}"
 SECRET = "sk-unit-test-0123456789abcdef"
 
 AI_KEYS = ("ai.chat", "ai.ocr", "ai.agent", "ai.schedule", "ai.keys", "quota.manage")
@@ -254,7 +255,7 @@ def test_unknown_key_does_not_disturb_an_existing_endpoint(gateway, monkeypatch)
     response = gateway.client.get("/api/ai/v1/models")
 
     assert response.status_code == 200
-    assert [row["id"] for row in response.json()["data"]] == [MODEL]
+    assert [row["id"] for row in response.json()["data"]] == [QUALIFIED_MODEL]
 
 
 # ---------------------------------------------------------------------------
@@ -312,7 +313,7 @@ def test_models_switch_on_lists_the_same_models(gateway):
     response = gateway.client.get("/api/ai/v1/models")
 
     assert response.status_code == 200
-    assert [row["id"] for row in response.json()["data"]] == [MODEL]
+    assert [row["id"] for row in response.json()["data"]] == [QUALIFIED_MODEL]
 
 
 # ---------------------------------------------------------------------------
