@@ -34,7 +34,6 @@ vi.mock('@element-plus/icons-vue', () => {
   return {
     Avatar: icon,
     HomeFilled: icon,
-    CirclePlusFilled: icon,
     Sunny: icon,
     Moon: icon,
     Management: icon,
@@ -112,6 +111,8 @@ it('高亮登记子路由（选择器/编辑页）并保持单一高亮', () => 
 
   expect(active).toHaveLength(1)
   expect(active[0].attributes('aria-label')).toBe('nav.register')
+  expect(wrapper.findAll('[aria-label="nav.register"]')).toHaveLength(1)
+  expect(wrapper.findAll('[aria-label="nav.create"]')).toHaveLength(0)
   wrapper.unmount()
 })
 

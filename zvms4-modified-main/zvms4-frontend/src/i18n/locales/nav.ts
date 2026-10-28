@@ -6,7 +6,7 @@ export const zhCN = {
   server: '服务器管理',
   ai: 'AI 网关',
   create: '创建义工',
-  register: '义工登记',
+  register: '添加/修改义工',
   registerHint:
     '前往义工登记页即可选择「添加义工」录入新成员，或选择「修改义工」按新时长覆盖已录入成员；从活动详情进入会自动带上本活动。',
   // /activity/register 操作选择页：先把「加人」和「改时长」分开，再进同一个登记编辑器。

@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import {
   Avatar,
-  CirclePlusFilled,
   HomeFilled,
   Sunny,
   Moon,
@@ -80,16 +79,8 @@ const navs = computed<NavItem[]>(() => [
     name: 'register',
     path: '/activity/register',
     show: user.position.includes('admin') || user.position.includes('department'),
-    /* 用 startsWith 覆盖登记入口下的子路由（选择器 /activity/register 与
-       编辑子路由 /activity/register/:mode），否则进入子路由时整条导航没有高亮。 */
+    /* 添加/修改义工共用一个选择入口；编辑子路由也保持同一条导航高亮。 */
     judge: (path) => path.startsWith('/activity/register')
-  },
-  {
-    icon: CirclePlusFilled,
-    name: 'create',
-    path: '/activity/create',
-    show: user.position.includes('admin') || user.position.includes('department'),
-    judge: (path) => path.startsWith('/activity/create')
   },
   {
     icon: Management,
@@ -176,9 +167,7 @@ let observedActive: HTMLElement | null = null
 function syncObservedActive(active?: HTMLElement | null) {
   if (!resizeObserver) return
   const next =
-    active ??
-    itemsRef.value?.querySelector<HTMLElement>('.yg-glass-nav__item.is-active') ??
-    null
+    active ?? itemsRef.value?.querySelector<HTMLElement>('.yg-glass-nav__item.is-active') ?? null
   if (next === observedActive) return
   if (observedActive) resizeObserver.unobserve(observedActive)
   if (next) resizeObserver.observe(next)

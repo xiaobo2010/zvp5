@@ -127,7 +127,7 @@ function logTypeLabel(type?: string): string {
 }
 
 onMounted(() => {
-  void loadActivities()
+  if (!props.isAdmin) void loadActivities()
   void loadRuns()
   if (props.isAdmin) void loadLogs()
 })
@@ -135,7 +135,7 @@ onMounted(() => {
 
 <template>
   <div class="home-worklist">
-    <ElCard shadow="never" class="home-worklist__card">
+    <ElCard v-if="!isAdmin" shadow="never" class="home-worklist__card">
       <header class="home-worklist__header">
         <div>
           <h2>{{ t('home.panels.review.title') }}</h2>
@@ -337,7 +337,7 @@ onMounted(() => {
 .home-worklist__header h2 {
   margin: 0;
   color: var(--yg-text-primary, #111827);
-  font-size: 1.125rem;
+  font-size: var(--yg-font-size-2xl, 1.25rem);
   font-weight: 650;
 }
 
