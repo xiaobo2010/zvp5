@@ -726,7 +726,10 @@ class StubAppLogsRepo:
     def __init__(self):
         self.rows = []
 
-    async def insert(self, url, user, data, timestamp, ltype, level, xuehai_id):
+    async def insert(
+        self, url, user, data, timestamp, ltype, level, xuehai_id,
+        client_ip="", user_agent="",
+    ):
         self.rows.append(
             {
                 "url": url,
@@ -736,6 +739,8 @@ class StubAppLogsRepo:
                 "ltype": ltype,
                 "level": level,
                 "xuehai_id": xuehai_id,
+                "client_ip": client_ip,
+                "user_agent": user_agent,
             }
         )
 

@@ -73,6 +73,18 @@ class _FakeLog:
         return None
 
 
+async def _allow_reauth(*_args, **_kwargs):
+    """本文件只验业务语义；再认证本身由 ``test_admin_reauth_gate`` 专测。"""
+    return None
+
+
+@pytest.fixture(autouse=True)
+def _no_reauth(monkeypatch):
+    monkeypatch.setattr(ban_router, "require_password_verification", _allow_reauth)
+    monkeypatch.setattr(notifications_router, "require_password_verification", _allow_reauth)
+    monkeypatch.setattr(system_settings_router, "require_password_verification", _allow_reauth)
+
+
 def _app(router, prefix: str, user: dict) -> TestClient:
     app = FastAPI()
     app.include_router(router, prefix=prefix)

@@ -23,7 +23,6 @@ from __future__ import annotations
 
 import logging
 import re
-from datetime import datetime
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -39,10 +38,9 @@ from routers.ai_router import (
 from services.agent import executor, proposal
 from services.agent.tool_impl import AgentError
 from services.ai import audit
-from typings.log import ZVMSLog
 from util import agent_unlock
 from util.cert import verify_password_async
-from util.object_id import get_current_user, require_password_verification
+from util.object_id import get_current_user
 from util.permission.features import ensure_feature
 
 _logger = logging.getLogger(__name__)
@@ -130,10 +128,6 @@ async def _forbidden(user: dict, *, request_id: str) -> JSONResponse:
     return _error(403, "AI_FORBIDDEN", AI_FORBIDDEN_MESSAGE, request_id=request_id)
 
 
-def _is_admin(user: dict) -> bool:
-    return "admin" in (user.get("per") or [])
-
-
 def _feature_denied(user: dict, key: str, *, request_id: str) -> JSONResponse | None:
     """功能开关门禁（``ROLE_FEATURES``）的拒绝体，与角色门禁同形。
 
@@ -172,32 +166,10 @@ async def _require_unlock(user: dict, *, request_id: str) -> JSONResponse | None
     )
 
 
-async def _log_platform_unrestricted(user: dict, *, enabled: bool) -> None:
-    """平台日志：无限制模式的每一次开关都要在后台看得见（spec §6）。"""
-    state = "开启" if enabled else "关闭"
-    try:
-        await ZVMSLog(
-            "",
-            str(user.get("id") or ""),
-            f"管理员{state}了 agent 输入审核的无限制模式",
-            datetime.now().timestamp(),
-            type="ai_moderation_unrestricted",
-            level="info",
-        ).insert_log()
-    except Exception:  # noqa: BLE001 - 平台日志失败不改变开关本身的结论
-        _logger.exception("写入 ai_moderation_unrestricted 日志失败")
-
-
 class UnlockRequest(BaseModel):
     """密码门入参；空密码交给校验层判失败（不在这里 422 出另一套错误体）。"""
 
     password: str = Field(default="", max_length=200)
-
-
-class UnrestrictedRequest(BaseModel):
-    enabled: bool
-    # 密码再认证签发的 5 分钟短令牌：关掉审核等于关掉一道防线。
-    verification_token: str | None = None
 
 
 @router.post("/unlock")
@@ -257,79 +229,6 @@ async def unlock(payload: UnlockRequest | None = None, user=Depends(get_current_
     return JSONResponse(
         status_code=200,
         content={"unlocked_until": unlocked_until.isoformat()},
-        headers={"X-AI-Request-Id": request_id},
-    )
-
-
-@router.get("/moderation/unrestricted")
-async def get_unrestricted_mode(user=Depends(get_current_user)):
-    """管理员的「无限制模式」当前是否开着。仅 admin 可读。"""
-    request_id = uuid4().hex
-    if not _is_admin(user):
-        return await _forbidden(user, request_id=request_id)
-    denied = _feature_denied(user, "ai.agent", request_id=request_id)
-    if denied is not None:
-        return denied
-    return JSONResponse(
-        status_code=200,
-        content={"enabled": agent_unlock.is_unrestricted(str(user.get("id") or ""))},
-        headers={"X-AI-Request-Id": request_id},
-    )
-
-
-@router.put("/moderation/unrestricted")
-async def set_unrestricted_mode(
-    payload: UnrestrictedRequest, user=Depends(get_current_user)
-):
-    """开关「无限制模式」：跳过输入审核，但每一处跳过都要留痕。
-
-    开与关各写两行日志：网关侧 ``AI_CALL_LOGS.status='warning'``（回答了「这段
-    时间为什么没有拒绝」）与平台日志（回答了「谁改的」）。
-
-    关掉审核前要先过密码再认证（``verification_token``）：这是把一个安全开关
-    交给本次操作者的动作，长期会话令牌不足以证明「是本人坐在这」。
-
-    拒绝体沿用本路由的 OpenAI 形状（``{"error": {...}}`` + ``X-AI-Request-Id``），
-    但状态码必须是 **403**：前端把 401 当登录过期并清会话，密码输错一次就会把
-    管理员踢回登录页。
-    """
-    request_id = uuid4().hex
-    if not _is_admin(user):
-        return await _forbidden(user, request_id=request_id)
-    denied = _feature_denied(user, "ai.agent", request_id=request_id)
-    if denied is not None:
-        return denied
-
-    try:
-        await require_password_verification(payload.verification_token, user)
-    except HTTPException:
-        return _error(
-            403,
-            "AI_PASSWORD_VERIFICATION_REQUIRED",
-            "需要密码验证后才能继续",
-            request_id=request_id,
-        )
-
-    enabled = bool(payload.enabled)
-    agent_unlock.set_unrestricted(str(user.get("id") or ""), enabled)
-    await audit.record(
-        user_oid=str(user.get("id") or ""),
-        capability="chat",
-        endpoint=audit.ENDPOINT_AGENT,
-        status="warning",
-        http_status=200,
-        error_code=(
-            "AI_AGENT_MODERATION_OFF" if enabled else "AI_AGENT_MODERATION_ON"
-        ),
-        latency_ms=0,
-        request_id=request_id,
-        purpose=executor.PURPOSE_AGENT,
-        roles_snapshot=audit.roles_snapshot(user.get("per")),
-    )
-    await _log_platform_unrestricted(user, enabled=enabled)
-    return JSONResponse(
-        status_code=200,
-        content={"enabled": enabled},
         headers={"X-AI-Request-Id": request_id},
     )
 

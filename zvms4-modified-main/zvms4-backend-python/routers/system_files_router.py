@@ -10,7 +10,9 @@
    管理员的 TOTP（``util/dual_auth.require_dual_auth``）；``edit`` / ``delete``
    不再要求双人码，只写审计。需求明确取消这两类的双人审批（日常改文本、清临时
    文件太频繁，双人码把流程卡成瓶颈），留痕由 ``system_file`` 审计承担。
-   读操作不过双人码，但同样不能访问 ``/proc``、``/sys`` 虚拟文件系统。
+   读操作不过双人码，但同样受根目录 jail 约束（``services.file_ops.ALLOWED_ROOTS``：
+   只有站点根与家目录可访问，越界回 403 ``FILES_ROOT_FORBIDDEN``），``/proc``、
+   ``/sys`` 两个虚拟文件系统另有单独拒绝面。
 
 同步文件 IO 一律经 ``asyncio.to_thread`` 执行：本服务是单 uvicorn worker，直接在
 async 端点里 ``scandir``/``stat``/``write`` 会把事件循环连同 SSH WS 心跳一起卡住。
@@ -123,14 +125,21 @@ async def _audit(
 
 
 def _translates_file_errors(handler):
-    """把 ``FileOpError`` 翻译成 HTTP 错误；服务层因此不必依赖 FastAPI。"""
+    """把 ``FileOpError`` 翻译成 HTTP 错误；服务层因此不必依赖 FastAPI。
+
+    带错误码的拒绝（``FILES_ROOT_FORBIDDEN``）用 ``{"code","message"}`` 形状，与
+    ``DEVICE_BANNED`` / ``TEMP_PASSWORD_INVALID`` 同一口径；其余仍是中文一句话。
+    """
 
     @functools.wraps(handler)
     async def wrapper(*args, **kwargs):
         try:
             return await handler(*args, **kwargs)
         except file_ops.FileOpError as exc:
-            raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+            detail = (
+                {"code": exc.code, "message": exc.detail} if exc.code else exc.detail
+            )
+            raise HTTPException(status_code=exc.status_code, detail=detail) from exc
 
     return wrapper
 

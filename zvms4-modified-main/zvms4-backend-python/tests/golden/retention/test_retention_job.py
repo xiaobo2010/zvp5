@@ -286,6 +286,28 @@ def _fake_repos(
 
 
 @pytest.fixture(autouse=True)
+def _no_append_only_purge(monkeypatch):
+    """只增表的清理直连库：本文件只桩了五个仓储，这里把它一并桩掉。"""
+
+    async def _none(now=None):
+        return {}
+
+    monkeypatch.setattr(retention, "run_append_only_retention", _none)
+
+
+@pytest.fixture(autouse=True)
+def _no_scene_conversation_purge(monkeypatch):
+    """只读场景会话（终端 / 文件编辑）的清理走真实会话仓储：本文件不验证它，
+    统一桩成「0 条」，让编排仍走完同一段路径（场景窗口由
+    ``tests/test_ai_scene_conversations.py`` 单独钉住）。"""
+
+    async def _none(now=None):
+        return {"cutoff": "", "deleted": 0, "scanned": 0, "remaining": 0}
+
+    monkeypatch.setattr(retention, "purge_stale_scene_conversations", _none)
+
+
+@pytest.fixture(autouse=True)
 def _release_lock():
     """Never leave the process-wide lock held across tests."""
     yield

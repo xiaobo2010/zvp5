@@ -181,7 +181,9 @@ def env(monkeypatch) -> Env:
             return None
         return state.rule
 
-    async def insert_log(url, user, data, timestamp, ltype, level, xuehai_id):
+    async def insert_log(
+        url, user, data, timestamp, ltype, level, xuehai_id, client_ip="", user_agent=""
+    ):
         state.logs.append(
             {
                 "url": url,

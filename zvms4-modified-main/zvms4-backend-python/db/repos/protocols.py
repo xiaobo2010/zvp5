@@ -122,6 +122,10 @@ class UsersRepo(Protocol):
         """Replace a user's ``roles`` whitelist."""
         ...
 
+    async def rotate_session(self, oid: str) -> None:
+        """Rotate ``session_id`` so every token carrying the old ``sid`` is void."""
+        ...
+
     async def set_banned(self, oid: str, banned: int) -> None:
         """Set a user's ``banned`` flag (``1`` to ban, ``0`` to unban).
 
@@ -2771,7 +2775,7 @@ class AIConversationsRepo(Protocol):
     Row shape::
 
         {"_id": <32 hex>, "owner_oid": str, "mode": "chat" | "agent",
-         "title": str | None, "model": str | None,
+         "title": str | None, "model": str | None, "scene": str | None,
          "status": "active" | "archived", "summary": str | None,
          "summary_upto_seq": int, "tokens_prompt": int,
          "tokens_completion": int, "tokens_total": int, "context_tokens": int,
@@ -2794,11 +2798,13 @@ class AIConversationsRepo(Protocol):
         mode: str,
         title: str | None = None,
         model: str | None = None,
+        scene: str | None = None,
     ) -> Row:
         """Insert a conversation and return the row (``status='active'``).
 
         ``oid`` 由调用方给：``POST /conversations`` 要在同一个响应里返回句柄，
-        等数据库生成就得多一次查询。
+        等数据库生成就得多一次查询。``scene`` 非空 = 只读场景会话
+        （``terminal`` / ``file_edit``），``None`` = 普通会话。
         """
         ...
 
@@ -2827,6 +2833,9 @@ class AIConversationsRepo(Protocol):
 
         **Rows here never carry ``summary``**（CLOB）：列表只要元数据，单会话 200
         轮 ≈1.6MB，把 CLOB 拉进列表等于每次翻页读几 MB。
+
+        **只返回普通会话**（``scene IS NULL``）：场景会话有自己的入口，混进左栏
+        列表等于让用户看到自己没建过的会话。
         """
         ...
 
@@ -2893,6 +2902,20 @@ class AIConversationsRepo(Protocol):
         删除回执与列表都用它：为了一个数字去扫 CLOB 表不值得。真实条数以
         :meth:`AIMessagesRepo.count` 为准（对账时用）。
         """
+        ...
+
+    async def latest_by_scene(self, owner_oid: str, scene: str) -> Row | None:
+        """The owner's newest conversation of ``scene``; ``None`` = 还没建过。"""
+        ...
+
+    async def list_stale_scenes(
+        self, cutoff: datetime, *, limit: int = 500
+    ) -> list[Row]:
+        """Scene conversations with ``updated_at < cutoff`` (oldest first)."""
+        ...
+
+    async def count_stale_scenes(self, cutoff: datetime) -> int:
+        """How many scene conversations are past the retention window."""
         ...
 
     async def delete_batched(

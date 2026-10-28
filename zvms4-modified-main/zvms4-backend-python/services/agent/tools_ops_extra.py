@@ -1548,7 +1548,7 @@ _register(
     ToolDef(
         name="agent_queue_status",
         description=(
-            "查看智能体 run 队列快照（排队数、运行中、最久等待、僵尸候选）与并发/心跳阈值。只读。"
+            "查看 ZVAgent run 队列快照（排队数、运行中、最久等待、僵尸候选）与并发/心跳阈值。只读。"
         ),
         kind=READ,
         params=_params({}, ()),

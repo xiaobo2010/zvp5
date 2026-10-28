@@ -32,11 +32,12 @@ import settings
 
 from db import backends
 from db.repos.protocols import ActiveRunConflict
-from services import violation_guard
+from services import log_events, violation_guard
 from services.agent import executor, proposal as proposal_service
 from services.agent.tools import WRITE
 from services.agent.tool_impl import AgentError
 from services.ai import audit, conversations, moderation, prompt_audit, safety_guard
+from typings.log import ZVMSLog
 from util import agent_unlock
 
 _logger = logging.getLogger(__name__)
@@ -209,13 +210,13 @@ def run_view(row: Mapping[str, Any]) -> dict:
 # 入队（§2.3 提交事务的调用侧）
 # ---------------------------------------------------------------------------
 
-async def _audit_moderation_skipped(
-    user: Mapping[str, Any], *, http_status: int, purpose: str | None = None
+async def _audit_admin_bypass(
+    user: Mapping[str, Any], *, http_status: int
 ) -> None:
-    """无限制模式跳过审核的留痕（``AI_CALL_LOGS.status='warning'``）。
+    """管理员旁路审核的留痕：网关流水 + 平台日志（``ai_moderation_unrestricted``）。
 
-    审计是旁路：``services.ai.audit.record`` 内部吞掉写入异常，这里的调用不会
-    改变提交结论。
+    旁路不是「审核通过」，是「审核没跑」：事后必须能把这段时间的 run 与正常
+    放行区分开。两处写入都是旁路，失败不改变提交结论。
     """
     await audit.record(
         user_oid=str(user.get("id") or ""),
@@ -226,9 +227,27 @@ async def _audit_moderation_skipped(
         error_code="AI_AGENT_MODERATION_SKIPPED",
         latency_ms=0,
         request_id=uuid4().hex,
-        purpose=purpose or executor.PURPOSE_AGENT,
+        purpose=executor.PURPOSE_AGENT,
         roles_snapshot=audit.roles_snapshot(user.get("per")),
     )
+    try:
+        await ZVMSLog(
+            "",
+            str(user.get("id") or ""),
+            "管理员提交 agent run，按角色旁路内容审核",
+            type=log_events.AI_MODERATION_UNRESTRICTED,
+            level="info",
+        ).insert_log()
+    except Exception:  # noqa: BLE001 - 平台日志失败不改变提交结论
+        _logger.exception("写入 ai_moderation_unrestricted 日志失败")
+
+
+def is_admin(user: Mapping[str, Any] | dict) -> bool:
+    """管理员天然旁路内容审核（不再有「无限制模式」开关）。"""
+    per = (user or {}).get("per")
+    if not isinstance(per, (list, tuple, set, frozenset)):
+        return False
+    return "admin" in per
 
 
 async def _reject_unsafe(
@@ -237,26 +256,36 @@ async def _reject_unsafe(
     text: str,
     xuehai_id: str,
     category: str,
+    unavailable: bool = False,
+    audit_oid: str | None = None,
 ) -> None:
-    """LLM 安全认证拒绝：先落证据与处罚结论，再抛 422。
+    """内容审核拒绝：判定成立时先记违规+警告+首档封号，再抛 422。
 
-    处罚结论决定前端文案：``banned`` 说明这是同月第二次（已按梯度封号），
-    否则是本月首次警告。证据入库失败不回滚拒绝：本次请求已经被判定为
-    「无关且破坏性」，放行它比丢一条证据更糟。
+    对外只有一个错误码与一句固定文案：不区分警告/封禁，也不解释处罚梯度。
+    ``unavailable`` 是「判定没跑起来」——只拒绝本次回答，不写任何证据。
+
+    ``audit_oid`` 是留存行（``AI_PROMPT_AUDIT``）的句柄：被拒的问题同样要标
+    ``REFUSED=1``，发了警告再标 ``WARNED=1``——否则「他被拒过几次」只能靠猜
+    错误码去对时间。
     """
-    code = "AI_SAFETY_WARNED"
-    try:
-        outcome = await violation_guard.record_agent_jailbreak(
-            user,
-            xuehai_id=xuehai_id,
-            rule=str(category or ""),
-            detail=text,
-        )
-        if outcome.get("banned"):
-            code = "AI_SAFETY_BANNED"
-    except Exception:  # noqa: BLE001 - 证据入库失败不该把拒绝变成 500
-        _logger.exception("AI 安全认证违规入库失败（本次仍然拒绝）")
-    raise AgentError(code, safety_guard.REJECTED_MESSAGE, 422)
+    warned = False
+    if not unavailable:
+        try:
+            outcome = await violation_guard.record_agent_jailbreak(
+                user,
+                xuehai_id=xuehai_id,
+                rule=str(category or ""),
+                detail=text,
+            )
+            warned = bool((outcome or {}).get("warned"))
+        except Exception:  # noqa: BLE001 - 证据入库失败不该把拒绝变成 500
+            _logger.exception("AI 安全认证违规入库失败（本次仍然拒绝）")
+    await prompt_audit.record_outcome(
+        audit_oid, refused=True, warned=True if warned else None
+    )
+    raise AgentError(
+        safety_guard.REJECTED_CODE, safety_guard.REJECTED_MESSAGE, 422
+    )
 
 
 async def submit(
@@ -267,6 +296,8 @@ async def submit(
     model: str | None = None,
     client_msg_id: str | None = None,
     xuehai_id: str = "",
+    conversation: Mapping[str, Any] | None = None,
+    reference: str | None = None,
 ) -> dict:
     """把一条用户消息 + 一个 ``queued`` run 原子落库。
 
@@ -276,9 +307,20 @@ async def submit(
     幂等：带 ``client_msg_id`` 时**不做**活跃 run 预检，直接交给仓储。预检会把
     「客户端重试同一个键」也判成冲突，而 ``insert_queued`` 能区分这两种冲突
     （撞幂等键 → 返回已有 run；撞活跃唯一索引 → :class:`ActiveRunConflict`）。
+
+    ``model`` 只是**记录**（写进 ``AI_RUNS.model`` 备查）：实际执行用的模型一律
+    取 ``conversation.model``（R2）。``conversation`` 是调用方刚读过的那一行——
+    传进来就省掉一次同为「会话 + 归属」的查询，不传则自己查（语义完全一样）。
+
+    ``reference`` 是只读场景的参考内容（已脱敏）：**不落消息表**，只在进程内随
+    run_id 交给执行器（单 worker，与队列本身同一个前提），并由执行器随 prompt
+    留存一起留档。
     """
     owner_oid = str(user.get("id") or "")
-    conversation = await conversations.require_row(user=user, oid=str(conversation_oid))
+    if conversation is None:
+        conversation = await conversations.require_row(
+            user=user, oid=str(conversation_oid)
+        )
     if str(conversation.get("mode")) != "agent":
         # 往 chat 会话提交后台任务等于把同步 SSE 的产物换成任务流：语义不同，
         # 必须拒绝（§3.4）。
@@ -294,18 +336,23 @@ async def submit(
 
     # 密码门在审核之前：没有解锁的人连「被审核的机会」都不该有——否则审核命中
     # 会把一次未授权的探测写进违规证据里，处罚依据就不干净了。
-    if not agent_unlock.is_unlocked(owner_oid):
-        raise AgentError(
-            "AI_AGENT_UNLOCK_REQUIRED",
-            "agent access requires an unlock with your account password",
-            422,
-        )
+    # **只读场景豁免**（oracle 条件）：终端 / 文件编辑场景只声明读工具、入口只对
+    # admin 开放，风险面与「能改数据」的普通 agent 不同；再要一次密码只是让
+    # 「看一眼日志」多一步，挡不住任何真实风险。豁免条件写死在这里，不开放成
+    # 参数——那等于给调用方一个「跳过门禁」的开关。
+    if not (conversations.is_readonly_scene(conversation.get("scene")) and is_admin(user)):
+        if not agent_unlock.is_unlocked(owner_oid):
+            raise AgentError(
+                "AI_AGENT_UNLOCK_REQUIRED",
+                "agent access requires an unlock with your account password",
+                422,
+            )
 
-    if agent_unlock.is_unrestricted(owner_oid):
-        # 无限制模式不是「审核通过」，是「审核没跑」：必须留一行 warning，事后
-        # 才能把这一段时间的 run 与正常放行区分开。
-        await _audit_moderation_skipped(user, http_status=202)
+    if is_admin(user):
+        # 管理员天然旁路：不是「审核通过」，是「审核没跑」，必须留一行痕迹。
+        await _audit_admin_bypass(user, http_status=202)
     else:
+        audit_oid: str | None = None
         verdict = moderation.check(text)
         if verdict.hit:
             _logger.warning(
@@ -313,41 +360,44 @@ async def submit(
             )
             # 被拦下的原文不留就永远查不到「他到底说了什么」；留存仍受
             # ``ai.prompt_capture_roles`` 白名单约束（capture 内部判断）。
-            await prompt_audit.capture(
+            audit_oid = await prompt_audit.capture(
                 user=dict(user),
                 purpose=executor.PURPOSE_AGENT,
                 messages=[{"role": "user", "content": text}],
             )
-            try:
-                await violation_guard.record_agent_jailbreak(
-                    user,
-                    xuehai_id=xuehai_id,
-                    rule=str(verdict.rule or ""),
-                    detail=text,
-                )
-            except Exception:  # noqa: BLE001 - 证据入库失败不该把拒绝变成 500
-                _logger.exception("agent 越狱违规入库失败（本次仍然拒绝）")
-            raise AgentError(
-                "AI_AGENT_MODERATION_REJECTED",
-                moderation.REJECTED_MESSAGE,
-                422,
+            await _reject_unsafe(
+                user,
+                text=text,
+                xuehai_id=xuehai_id,
+                category=str(verdict.rule or ""),
+                audit_oid=audit_oid,
             )
 
-    # 灰区闸门：关键词规则之后、入队之前。只对 department 生效（admin 在
-    # ``safety_guard.is_department`` 里已豁免），非 department 不触达网络。
-    # 顺序固定：任何一步拒绝都不产生 run，也不扣额度。
-    verdict = await safety_guard.screen(
-        user,
-        text,
-        model_hint=(str(model).strip() or None) if model else conversation.get("model"),
-    )
-    if not verdict.allowed:
-        await _reject_unsafe(
+        # 灰区闸门：关键词规则之后、入队之前。只对 department 生效（admin 上面
+        # 已旁路），非 department 不触达网络。判定跑不起来时拒绝回答但不记违规。
+        # 顺序固定：任何一步拒绝都不产生 run，也不扣额度。
+        verdict = await safety_guard.screen(
             user,
-            text=text,
-            xuehai_id=xuehai_id,
-            category=verdict.category,
+            text,
+            model_hint=(str(model).strip() or None) if model else conversation.get("model"),
         )
+        if not verdict.allowed:
+            if audit_oid is None:
+                # 灰区拒绝的原文同样要留：它是「模型看到了什么」的唯一证据，
+                # 也受同一条角色白名单约束（capture 内部判断）。
+                audit_oid = await prompt_audit.capture(
+                    user=dict(user),
+                    purpose=executor.PURPOSE_AGENT,
+                    messages=[{"role": "user", "content": text}],
+                )
+            await _reject_unsafe(
+                user,
+                text=text,
+                xuehai_id=xuehai_id,
+                category=verdict.category,
+                unavailable=verdict.unavailable,
+                audit_oid=audit_oid,
+            )
     if client_msg_id is None:
         # 第一道闸：应用层先看着像冲突就回 409（省一次必然失败的插入）。第二道是
         # 数据库的函数唯一索引，两道都要有。
@@ -393,7 +443,65 @@ async def submit(
     }
     if not created:
         payload["deduped"] = True
+    else:
+        _remember_reference(payload["run_id"], reference)
     return payload
+
+
+# ---------------------------------------------------------------------------
+# 只读场景（终端 / 文件编辑）
+#
+# 参考内容（用户在终端里选中的输出 / 正在看的文件片段）**不落 AI_MESSAGES**：
+# 它不是用户说的话，写进消息表会让历史回放把它当对话。它随 run_id 在进程内交给
+# 执行器，再由执行器随 ``AI_PROMPT_AUDIT`` 一起留档。
+#
+# 进程内传递的前提与队列本身相同：单 worker（见模块 docstring）。真丢了（进程
+# 重启后 queued 的 run 继续跑）也只是「这一轮没有参考内容」，不会丢消息、不会
+# 影响计费——所以不值得为它加一列 CLOB。
+# ---------------------------------------------------------------------------
+_REFERENCES: dict[str, str] = {}
+REFERENCES_MAX = 64
+
+
+def _remember_reference(run_id: str, reference: str | None) -> None:
+    text = reference.strip() if isinstance(reference, str) else ""
+    if not text:
+        return
+    while len(_REFERENCES) >= REFERENCES_MAX:
+        _REFERENCES.pop(next(iter(_REFERENCES)))
+    _REFERENCES[str(run_id)] = text
+
+
+def _take_reference(run_id: str) -> str | None:
+    return _REFERENCES.pop(str(run_id), None)
+
+
+async def submit_scene(
+    *,
+    user: Mapping[str, Any],
+    scene: str,
+    content: str,
+    context: str | None = None,
+    xuehai_id: str = "",
+) -> dict:
+    """只读场景的一次提问：复用该用户的场景会话，入队并返回 ``{run_id, conversation_oid}``。
+
+    会话复用、参考内容脱敏都在这一层决定：路由层只做协议翻译，不自己拼 prompt。
+    ``context`` 先脱敏再交给 ``submit``（脱敏必须在入库/入 prompt 之前，见
+    :func:`services.ai.conversations.scene_reference`）。
+    """
+    conversation = await conversations.ensure_scene(user=user, scene=scene)
+    reference = conversations.scene_reference(context)
+    conversation_oid = str(conversation.get("_id") or "")
+    data = await submit(
+        user=user,
+        conversation_oid=conversation_oid,
+        content=content,
+        xuehai_id=xuehai_id,
+        conversation=conversation,
+        reference=reference,
+    )
+    return {"run_id": data["run_id"], "conversation_oid": conversation_oid}
 
 
 # ---------------------------------------------------------------------------
@@ -591,6 +699,9 @@ async def _execute(run: Mapping[str, Any], semaphore: asyncio.Semaphore) -> None
     run_id = str(run.get("_id") or "")
     conversation_oid = str(run.get("conversation_oid") or "")
     owner_oid = str(run.get("owner_oid") or "")
+    # 参考内容随 run 一次性取走：即使这次执行在读到会话前就失败，也不会在进程里
+    # 留一份没人认领的终端/文件片段。
+    reference = _take_reference(run_id)
     state: dict[str, Any] = {
         "rounds": 0,
         "result_message_oid": None,
@@ -614,10 +725,14 @@ async def _execute(run: Mapping[str, Any], semaphore: asyncio.Semaphore) -> None
             )
             return
         messages, summary = await _executor_messages(conversation)
+        scene = conversations.scene_of(conversation)
         result = await executor.run(
             user=user,
             messages=messages,
-            model=run.get("model"),
+            # 模型与思考强度都取**会话**（R2/R3）：``AI_RUNS.model`` 只是提交时的
+            # 记录，不是执行依据。
+            model=conversation.get("model"),
+            thinking=conversation.get("thinking"),
             request_id=run_id,
             # 摘要**不走 messages**（executor 只允许 user/assistant/tool，客户端
             # 塞 system 一律 400）：它由 executor 按 §5.1 拼成第二条 system。
@@ -625,6 +740,9 @@ async def _execute(run: Mapping[str, Any], semaphore: asyncio.Semaphore) -> None
             on_round=_on_round(run_id, conversation_oid, owner_oid, state),
             should_stop=_should_stop(run_id, owner_oid, state),
             on_summary=_on_summary(conversation, conversation_oid, state),
+            # 场景决定工具声明的裁剪与 system 追加句；参考内容只在本次 run 内有效。
+            scene=scene,
+            reference=reference,
         )
         status, stop_reason = _outcome(result, state)
         await _finish(
@@ -792,17 +910,28 @@ async def _heartbeat_loop(run_id: str, stop: asyncio.Event, state: dict) -> None
 # ---------------------------------------------------------------------------
 
 def _should_stop(run_id: str, owner_oid: str, state: dict):
-    """executor 的闸：轮边界 + 每次工具执行前调用（**必须 await**）。"""
+    """executor 的闸：轮边界 + 每次工具执行前调用（**必须 await**）。
+
+    查库**每轮一次**：同一轮里的第 2..N 个工具复用这一行，轮收尾（``on_round``）
+    把缓存清掉，于是下一轮的第一次检查必然重新读库——取消/中断仍然「每轮可见」，
+    只是不再「每个工具一次」（单轮 5 个工具 = 从 5 次查询降到 1 次）。
+    """
 
     async def should_stop() -> bool:
         if state.get("cancelled") or state.get("interrupted"):
             return True
-        try:
-            row = await _runs().get(run_id, owner_oid)
-        except Exception:  # noqa: BLE001 - 读不到就继续：多跑一轮好过丢掉整次执行
-            _logger.warning("ai run %s cancel check failed", run_id)
-            return False
-        if row is None or str(row.get("status")) != "running":
+        row = state.get("run_check")
+        if row is None:
+            try:
+                row = await _runs().get(run_id, owner_oid)
+            except Exception:  # noqa: BLE001 - 读不到就继续：多跑一轮好过丢掉整次执行
+                _logger.warning("ai run %s cancel check failed", run_id)
+                return False
+            # ``None`` 也要缓存（存成空 dict）：否则「行不见了」会变成每个工具
+            # 都去查一次，而结论永远是同一个。
+            row = row or {}
+            state["run_check"] = row
+        if not row or str(row.get("status")) != "running":
             state["interrupted"] = True
             return True
         if row.get("cancel_requested"):
@@ -827,6 +956,8 @@ def _on_round(run_id: str, conversation_oid: str, owner_oid: str, state: dict):
         round_no = int(payload["round_no"])
         if round_no <= 0:
             return
+        # 一轮结束 = 下一轮该重新读一次 run 状态（取消检查的可见性边界）。
+        state.pop("run_check", None)
         if state.get("cancelled") or state.get("interrupted"):
             # 终态行上不再写消息（评审 P0-2）。
             return
@@ -1150,12 +1281,22 @@ async def list_recent(owner_oid: str, *, limit: int = RECENT_LIMIT_DEFAULT) -> l
 
 
 async def run_detail(
-    *, user: Mapping[str, Any], run_id: str, after_round: int = 0
+    *,
+    user: Mapping[str, Any],
+    run_id: str,
+    after_round: int = 0,
+    since_msg_seq: int | None = None,
 ) -> dict:
-    """``GET /runs/{id}``：状态 + 增量事件 + 本次 run 的提案。
+    """``GET /runs/{id}``：状态 + 增量事件 + 本次 run 的提案（+ 可选增量消息）。
 
     ``after_round`` 只回 ``round_no > after_round`` 的事件：轮询载荷随轮次线性
     增长，而不是平方（每次把整条时间线重发一遍）。
+
+    ``since_msg_seq`` 是**轮级**增量：给了就额外回 ``seq > since_msg_seq`` 的消息，
+    与 ``GET /conversations/{oid}/messages`` **同一形状、同一顺序**（升序、同一份
+    view）。为什么不复用它：一次轮询里客户端要的是「run 进度 + 这轮新增了哪些
+    消息」，两条请求会让「run 已结束、消息还没拉」变成一个可观测的中间态。
+    不传则不返回该键——老客户端拿到的响应逐字不变。
     """
     owner_oid = str(user.get("id") or "")
     row = await _runs().get(str(run_id), owner_oid)
@@ -1163,7 +1304,11 @@ async def run_detail(
         raise AgentError(RUN_NOT_FOUND, "run not found", 404)
 
     floor = max(0, int(after_round or 0))
-    events = await proposal_service.run_events(request_id=str(run_id), user=dict(user))
+    # 事件与提案是**同一张表**的两种视图：一次查询喂两处，别再各查一遍。
+    rows = await _events().list_for_request(str(run_id))
+    events = await proposal_service.run_events(
+        request_id=str(run_id), user=dict(user), rows=rows
+    )
     seen: set[str] = set()
     incremental: list[dict] = []
     for event in events:
@@ -1177,20 +1322,26 @@ async def run_detail(
             seen.add(oid)
         incremental.append(event)
 
-    return {
+    detail = {
         "run": run_view(row),
         "events": incremental,
-        "proposals": await _run_proposals(str(run_id), owner_oid),
+        "proposals": _run_proposals(rows, owner_oid),
     }
+    if since_msg_seq is not None:
+        detail["messages"] = await conversations.messages_since(
+            str(row.get("conversation_oid") or ""),
+            max(0, int(since_msg_seq)),
+            limit=conversations.MESSAGE_LIMIT_MAX,
+        )
+    return detail
 
 
-async def _run_proposals(run_id: str, owner_oid: str) -> list[dict]:
-    """一次 run 的写工具提案，复用事件仓储的 ``request_id`` 查询。
+def _run_proposals(rows: Sequence[Mapping[str, Any]], owner_oid: str) -> list[dict]:
+    """一次 run 的写工具提案（调用方已经取过这张表）。
 
     视图形状直接借 ``services.agent.proposal._list_item``：提案卡片的字段（preview
     的解析、双人码标记、过期时间）只该有一份实现，复制一遍就会和确认路径漂移。
     """
-    rows = await _events().list_for_request(str(run_id))
     proposals: list[dict] = []
     seen: set[str] = set()
     for row in rows:

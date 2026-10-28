@@ -412,6 +412,11 @@ async def test_backfill_is_idempotent_and_keeps_activation(
 # ---------------------------------------------------------------------------
 
 
+async def _allow_reauth(*_args, **_kwargs):
+    """本文件只验业务语义；再认证本身由 ``test_admin_reauth_gate`` 专测。"""
+    return None
+
+
 @pytest.fixture
 def api(monkeypatch):
     repo = _use_changelog(
@@ -437,6 +442,9 @@ def api(monkeypatch):
         changelog_router, "deactivate_changelog_notification", fake_deactivate
     )
     monkeypatch.setattr(changelog_router, "get_user_display_name", display_name)
+    monkeypatch.setattr(
+        changelog_router, "require_password_verification", _allow_reauth
+    )
 
     app = FastAPI()
     app.include_router(changelog_router.router, prefix="/api/changelog")

@@ -22,6 +22,7 @@ import logging
 from typing import Any, Iterable
 
 from db import backends
+from services import log_events
 from util.dual_auth import audit_system_op
 
 from . import quota
@@ -291,9 +292,11 @@ async def _audit(
         approver_oid,
         action=f"ai_quota_request_{status}",
         detail=_audit_detail(row, status, limit),
-        # 复用既有 ltype：额度审批与「在线设置」是同一类改动（改系统行为、需要事后
-        # 回答是谁批的），不新造一个只有这里会写的日志类型。
-        log_type="system_settings_update",
+        # 审批/拒绝各有自己的 ltype：复用 ``system_settings_update`` 会让「本月
+        # 谁批了谁的额度」混在在线设置里检索不出来（该类事件量大且语义无关）。
+        log_type=log_events.QUOTA_DECISION_EVENTS.get(
+            status, log_events.SYSTEM_SETTINGS_UPDATE
+        ),
     )
 
 

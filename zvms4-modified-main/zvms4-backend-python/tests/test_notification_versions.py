@@ -314,7 +314,12 @@ def test_v017_migration_mirrors_models_and_v001() -> None:
     v001 = ddl_check.parse_v001()
 
     expected = modeled["tables"]["notification_versions"]
-    assert v017["tables"]["notification_versions"] == expected
+    # V047 起 created_at 带 DEFAULT SYSTIMESTAMP；V017 是历史事实，不追新目标态。
+    legacy = {
+        **expected,
+        "columns": {**expected["columns"], "created_at": ("timestamp", True, None)},
+    }
+    assert v017["tables"]["notification_versions"] == legacy
     assert v001["tables"]["notification_versions"] == expected
 
     index = ("notification_versions", False, ("notification_oid", "version"))

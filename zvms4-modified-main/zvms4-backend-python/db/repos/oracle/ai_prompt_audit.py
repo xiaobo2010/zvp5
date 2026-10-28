@@ -28,7 +28,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Any, AsyncIterator
 
-from sqlalchemy import String, bindparam, delete, func, insert, select, text
+from sqlalchemy import String, bindparam, delete, func, insert, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.ids import new_oid, normalize_oid
@@ -70,6 +70,10 @@ def _detail_columns() -> tuple[Any, ...]:
         ai_prompt_audit_tbl.c.purpose,
         ai_prompt_audit_tbl.c.roles_snapshot,
         ai_prompt_audit_tbl.c.prompt_text,
+        ai_prompt_audit_tbl.c.answer_text,
+        ai_prompt_audit_tbl.c.tool_calls,
+        ai_prompt_audit_tbl.c.refused,
+        ai_prompt_audit_tbl.c.warned,
         ai_prompt_audit_tbl.c.created_at,
     )
 
@@ -184,6 +188,10 @@ def _detail_row(mapping: Any) -> Row:
         "purpose": mapping["purpose"],
         "roles_snapshot": mapping["roles_snapshot"],
         "prompt_text": mapping["prompt_text"],
+        "answer_text": mapping["answer_text"],
+        "tool_calls": mapping["tool_calls"],
+        "refused": bool(mapping["refused"]),
+        "warned": bool(mapping["warned"]),
         "created_at": mapping["created_at"],
     }
 
@@ -202,12 +210,16 @@ class OracleAIPromptAuditRepo:
         roles_snapshot: str | None = None,
         purpose: str | None = None,
         prompt_text: str | None = None,
+        answer_text: str | None = None,
+        tool_calls: str | None = None,
+        refused: bool = False,
+        warned: bool = False,
     ) -> str:
         """追加一条正文留存并返回新 ``_id``（写入时刻由本层生成）。
 
-        ``prompt_text`` 已经过调用方的脱敏与截断：本层不再改内容——兜底改写会
-        让「表里存的就是调用方认为该存的」这条假设失效，而审阅端点是按表里的
-        原文给管理员看的。
+        ``prompt_text`` / ``answer_text`` 已经过调用方的脱敏与截断：本层不再改
+        内容——兜底改写会让「表里存的就是调用方认为该存的」这条假设失效，而审阅
+        端点是按表里的原文给管理员看的。
         """
         oid = new_oid()
         stmt = insert(ai_prompt_audit_tbl).values(
@@ -217,6 +229,10 @@ class OracleAIPromptAuditRepo:
             roles_snapshot=roles_snapshot,
             purpose=purpose,
             prompt_text=prompt_text,
+            answer_text=answer_text,
+            tool_calls=tool_calls,
+            refused=1 if refused else 0,
+            warned=1 if warned else 0,
             created_at=datetime.now(),
         )
         async with _session_for(self._session) as (session, owns):
@@ -224,6 +240,42 @@ class OracleAIPromptAuditRepo:
             if owns:
                 await session.commit()
         return oid
+
+    async def update_outcome(
+        self,
+        oid: str,
+        *,
+        answer_text: str | None = None,
+        tool_calls: str | None = None,
+        refused: bool | None = None,
+        warned: bool | None = None,
+    ) -> bool:
+        """补写「回答侧」的四个字段（``None`` = 不改）；返回是否命中一行。
+
+        回答在提问之后才产生，所以只能二次写。这不是「改历史」：PROMPT_TEXT 一旦
+        落库就不再被触碰，这里只填同一行里当时还不存在的事实。
+        """
+        values: dict[str, Any] = {}
+        if answer_text is not None:
+            values["answer_text"] = answer_text
+        if tool_calls is not None:
+            values["tool_calls"] = tool_calls
+        if refused is not None:
+            values["refused"] = 1 if refused else 0
+        if warned is not None:
+            values["warned"] = 1 if warned else 0
+        if not values:
+            return True
+        stmt = (
+            update(ai_prompt_audit_tbl)
+            .where(ai_prompt_audit_tbl.c.oid == str(oid))
+            .values(**values)
+        )
+        async with _session_for(self._session) as (session, owns):
+            result = await session.execute(stmt)
+            if owns:
+                await session.commit()
+        return bool(result.rowcount)
 
     async def list_page(
         self,

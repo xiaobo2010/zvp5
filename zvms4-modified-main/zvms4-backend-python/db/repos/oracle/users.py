@@ -395,6 +395,14 @@ def _set_banned_stmt(oid: str, banned: int):
     )
 
 
+def _rotate_session_stmt(oid: str):
+    return (
+        update(users_tbl)
+        .where(users_tbl.c.oid == oid)
+        .values(session_id=new_oid())
+    )
+
+
 def _set_ban_stmt(
     oid: str,
     reason: str,
@@ -1203,6 +1211,14 @@ class OracleUsersRepo:
         层的友好提示，约束才是最终裁决者。
         """
         stmt = _set_business_id_stmt(normalize_oid(oid), business_id)
+        async with _session_for(self._session) as (session, owns):
+            await session.execute(stmt)
+            if owns:
+                await session.commit()
+
+    async def rotate_session(self, oid: str) -> None:
+        """轮换 ``session_id``：旧 token 上的 ``sid`` 立刻对不上，即被撤销。"""
+        stmt = _rotate_session_stmt(normalize_oid(oid))
         async with _session_for(self._session) as (session, owns):
             await session.execute(stmt)
             if owns:

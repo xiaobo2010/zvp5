@@ -21,19 +21,23 @@ from __future__ import annotations
 import base64
 import binascii
 import json
-from datetime import datetime
+import re
+from datetime import datetime, timedelta
 from typing import Any, Awaitable, Callable, Mapping, Sequence
 from uuid import uuid4
 
 import settings
 
 from db import backends
-from services import settings_runtime
+from services import db_content, settings_runtime
 from services.agent.tool_impl import AgentError
+from services.ai import prompt_audit
 
 # 会话类型与状态：与表上的 CHECK 逐字一致（写错只会在 Oracle 上变成 ORA-02290，
-# 而那时事务已经开了一半）。
-MODES = ("chat", "agent")
+# 而那时事务已经开了一半）。``chat`` 已下线，只为存量数据保留常量：老会话不能
+# 再跑 run（调用方回 409），而不是被当成新数据继续使用。
+MODES = ("agent",)
+LEGACY_MODES = ("chat",)
 STATUSES = ("active", "archived")
 
 # 列宽配额：``title`` VARCHAR2(120)。超了是 ORA-12899，不如在这里截断。
@@ -60,6 +64,36 @@ NOT_FOUND = "AI_CONVERSATION_NOT_FOUND"
 MODE_MISMATCH = "AI_CONVERSATION_MODE_MISMATCH"
 RUN_CONFLICT = "AI_RUN_CONFLICT"
 BAD_CURSOR = "AI_CONVERSATION_BAD_CURSOR"
+# 模型只在建会话时确定；PATCH 试图改它就是这个码（R2）。
+MODEL_LOCKED = "AI_CONVERSATION_MODEL_LOCKED"
+
+# 思考强度：三档，``None`` = 不加任何上游字段（用它自己的默认）。
+THINKING_LEVELS = ("low", "medium", "high")
+
+# 只读场景会话（V048 ``AI_CONVERSATIONS.SCENE``）：终端与文件编辑共用会话 + run
+# 管线，但工具声明按 ``kind='read'`` 裁剪，写工具在场景里根本不存在。``None`` =
+# 普通会话；列表查询固定过滤它，场景会话只经 ``/api/ai/scenes/{scene}/runs`` 触达。
+SCENES = ("terminal", "file_edit")
+SCENE_TITLES = {"terminal": "终端智能", "file_edit": "文件编辑智能"}
+# 场景会话的保留窗口（天）：一次性排障记录，内容含终端/文件片段，比普通会话激进。
+SCENE_RETENTION_DAYS = 14
+# 一轮清理最多扫多少条（批删循环上限，防「删的同时有人一直建」把作业挂死）。
+SCENE_PURGE_BATCH = 50
+SCENE_PURGE_MAX_BATCHES = 20
+SCENE_BAD = "AI_SCENE_UNKNOWN"
+# 参考内容（终端输出 / 文件片段）的入参上限：与 prompt 留存的上限同量级，
+# 再长也没有「参考」的意义，只会挤占上下文。
+SCENE_CONTEXT_MAX = 8000
+
+# 键值形态的凭据：``password=...`` / ``token: ...``。值一律替换成 ``***``，
+# 保留键名——「这里本来有个 token」本身是读代码需要的信息。
+_CREDENTIAL_ASSIGNMENT_RE = re.compile(
+    r"(?i)(?<![A-Za-z0-9_.-])([A-Za-z0-9_.-]{0,32}(?:password|passwd|pwd|secret|"
+    r"token|api[_-]?key|access[_-]?key|private[_-]?key|authorization))"
+    r"(\s*[:=]\s*)(\S+)"
+)
+# 值形态的凭据（散列 / JWT / sk- 前缀）：按空白切词逐个判，命中即整词替换。
+_TOKEN_SPLIT_RE = re.compile(r"(\s+)")
 
 # 上下文上限的兜底：``AI_DEFAULT_CONTEXT_LIMIT`` 缺省 200000（见 §5.3）。压缩
 # 阈值仍是 0.75，所以约 150K 时触发一次摘要，不会等窗口真填满才动。
@@ -118,6 +152,49 @@ def _clip_title(title: object) -> str:
     return str(title or "").strip()[:TITLE_MAX]
 
 
+def _clean_thinking(value: object) -> str | None:
+    """思考强度归一：``low`` / ``medium`` / ``high``，其余 400。
+
+    不做「未知值当默认」的宽容：前端拼错一个档位时，静默变成「默认」会让用户以为
+    设置生效了，而实际行为一直是默认。
+    """
+    text = str(value or "").strip().lower()
+    if not text:
+        return None
+    if text not in THINKING_LEVELS:
+        raise AgentError(
+            "AI_BAD_REQUEST",
+            "thinking must be low, medium, high or null",
+            400,
+        )
+    return text
+
+
+def scene_of(row: Mapping[str, Any]) -> str | None:
+    """会话行的场景标记；``None`` = 普通会话（空串也归一成 ``None``）。"""
+    value = str(row.get("scene") or "").strip().lower()
+    return value or None
+
+
+def is_readonly_scene(value: object) -> bool:
+    """是否是只读场景（``terminal`` / ``file_edit``）。拼错的值一律按「不是」处理。"""
+    return str(value or "").strip().lower() in SCENES
+
+
+def _clean_scene(value: object) -> str | None:
+    """场景归一：``terminal`` / ``file_edit`` / ``None``，其余 400。
+
+    与思考强度同一条纪律：拼错的场景不能静默当成普通会话——那会让一个本该裁掉
+    写工具的 run 拿到完整工具集，安全边界变成「拼写对了才有」。
+    """
+    text = str(value or "").strip().lower()
+    if not text:
+        return None
+    if text not in SCENES:
+        raise AgentError(SCENE_BAD, "scene must be terminal or file_edit", 400)
+    return text
+
+
 def title_from(content: object) -> str:
     """首条用户消息 → 会话标题（§2.1）。
 
@@ -130,13 +207,22 @@ def title_from(content: object) -> str:
 def context_limit(model: object) -> int:
     """该模型的上下文上限（§5.3 的 ``limit``，视图里的分母）。
 
-    默认值 + 按模型的覆盖表都从 ``settings`` 读：额度随模型变，属于部署知识，不该
-    硬编码在本文件。默认值可以被运行期设置 ``ai.context_limit_default`` 覆盖（在线
-    改完即时生效），与 ``services/agent/context.context_limit`` 保持同一口径——同
-    一个窗口在两处算出不同分母，水位就会自相矛盾。配置坏了就回落 200000——分母是
-    展示用的，不能因为一个笔误让会话页 500。
+    顺序与 :func:`services.agent.context.context_limit` 完全一致：**模型级**
+    上下文（凭据里的 ``context``）→ ``AI_MODEL_CONTEXT_LIMITS`` → 默认值。同一个
+    窗口在两处算出不同分母，水位就会自相矛盾。
+
+    默认值可以被运行期设置 ``ai.context_limit_default`` 覆盖（在线改完即时生效）。
+    配置坏了就回落 200000——分母是展示用的，不能因为一个笔误让会话页 500。
     """
+    from . import credentials as ai_credentials
+
+    if isinstance(model, str):
+        exact = ai_credentials.model_context(model)
+        if exact:
+            return exact
+
     limits = getattr(settings, "AI_MODEL_CONTEXT_LIMITS", None)
+
     if isinstance(limits, Mapping) and isinstance(model, str):
         # 会话里存的可能是合格 ID（``provider/model``）：窗口是上游模型的属性，
         # 运维配的是裸名，所以先按原值查，再按去掉 provider 前缀的名字查一次。
@@ -197,6 +283,10 @@ def conversation_view(row: Mapping[str, Any]) -> dict:
         "mode": row.get("mode"),
         "title": str(row.get("title") or ""),
         "model": row.get("model"),
+        # 思考强度（low|medium|high）；``None`` = 上游默认，前端据此显示「默认」。
+        "thinking": row.get("thinking"),
+        # 只读场景（terminal | file_edit）；``None`` = 普通会话。
+        "scene": row.get("scene"),
         "status": row.get("status"),
         "tokens": tokens,
         "context": {
@@ -278,28 +368,154 @@ async def require_row(*, user: Mapping[str, Any], oid: str) -> Row:
 async def create(
     *,
     user: Mapping[str, Any],
-    mode: str,
+    mode: str = "agent",
     title: str | None = None,
     model: str | None = None,
+    thinking: str | None = None,
+    scene: str | None = None,
 ) -> dict:
     """建一个会话（``status='active'``，``summary_upto_seq=0``）。
 
-    ``mode`` 在这里定死：它决定后续走同步 SSE 还是后台任务，事后改它等于把一段
-    历史变成另一种语义（数据层也没有这条更新路径）。
+    只保留 agent 语义：``chat`` 模式已下线，建它回 409（存量 chat 会话仍然可以
+    读取/改名/删除，但不能跑 run——那是另一种产物）。
+
+    **模型在这里定死**（R2）：缺省取该用户可见目录的第一个模型。之后 PATCH 改
+    模型一律 409——一次会话里换模型会让历史重放的缓存前缀与计费口径都换一套，
+    而用户看到的只是「同一段对话」。取目录是 best-effort：拿不到（没配 provider /
+    目录查询失败）就留 ``None``，executor 执行时会再按同一条规则回落。
     """
-    normalized = str(mode or "").strip().lower()
+    normalized = str(mode or "").strip().lower() or "agent"
+    if normalized in LEGACY_MODES:
+        raise AgentError(MODE_MISMATCH, "chat mode is no longer supported", 409)
     if normalized not in MODES:
-        raise AgentError(
-            "AI_BAD_REQUEST", "mode must be chat or agent", 400
-        )
+        raise AgentError("AI_BAD_REQUEST", "mode must be agent", 400)
+    chosen = (str(model).strip() or None) if model else None
+    if chosen is None:
+        chosen = await _default_model(user)
     row = await _repo().create(
         oid=uuid4().hex,
         owner_oid=str(user.get("id") or ""),
         mode=normalized,
         title=_clip_title(title) or None,
-        model=(str(model).strip() or None) if model else None,
+        model=chosen,
+        thinking=_clean_thinking(thinking),
+        scene=_clean_scene(scene),
     )
     return conversation_view(row)
+
+
+async def _default_model(user: Mapping[str, Any]) -> str | None:
+    """目录里的第一个模型（合格 ID）；目录不可用时 ``None``。"""
+    from . import config as ai_config
+
+    try:
+        available = await ai_config.allowed_models_for(str(user.get("id") or ""))
+    except Exception:  # noqa: BLE001 - 建会话不该因为一次目录查询失败而 500
+        return None
+    return next(iter(available), None)
+
+
+async def ensure_scene(*, user: Mapping[str, Any], scene: str) -> Row:
+    """取 (user, scene) 的最近一条会话，没有就建一条。
+
+    复用而不是「每次新建」：终端 / 文件编辑是**持续的**一次排查过程，同一场景下
+    的前文（刚读过哪个文件、哪条命令的输出）就是下一问的上下文；每问一次建一条
+    会话等于把 agent 降级成单轮问答。
+
+    并发建会话的窗口（同一管理员连点两次）可能留下两条场景会话：下一次取到的是
+    ``updated_at`` 最新的那条，多余的由 14 天保留期收走——不值得为此加唯一索引，
+    那会让「历史被删除后重建」变成一次 ORA-00001。
+    """
+    normalized = _clean_scene(scene)
+    if normalized is None:
+        raise AgentError(SCENE_BAD, "scene must be terminal or file_edit", 400)
+    owner = str(user.get("id") or "")
+    row = await _repo().latest_by_scene(owner, normalized)
+    if row is not None:
+        return row
+    return await _repo().create(
+        oid=uuid4().hex,
+        owner_oid=owner,
+        mode="agent",
+        title=SCENE_TITLES[normalized],
+        model=await _default_model(user),
+        thinking=None,
+        scene=normalized,
+    )
+
+
+def scene_reference(context: object) -> str | None:
+    """终端输出 / 文件片段 → 可安全入库与进 prompt 的「参考内容」。
+
+    三道处理顺序固定：**先脱敏再截断**（反过来会把凭据切成半截，正则再也认不出
+    完整的散列/JWT），最后才给长度上限。脱敏复用两处既有实现：
+
+    * ``password=`` / ``token:`` 这类键值形态按键保留、按值替换（读代码时仍能
+      看出「这里本来有个 token」）；
+    * 值形态的凭据（bcrypt / JWT / 32·64 位 hex / ``sk-`` 前缀）用
+      ``services.db_content`` 的同一个判定，避免「文件管理里遮、AI 参考段里不遮」；
+    * 身份证与手机号走 ``services.ai.prompt_audit.mask_pii``（与 prompt 留存同口径）。
+
+    返回 ``None`` = 没有参考内容（不产生空的参考段）。
+    """
+    text = context.strip() if isinstance(context, str) else ""
+    if not text:
+        return None
+    text = _mask_credentials(text)
+    text = prompt_audit.mask_pii(text)
+    return text[:SCENE_CONTEXT_MAX]
+
+
+def _mask_credentials(text: str) -> str:
+    text = _CREDENTIAL_ASSIGNMENT_RE.sub(r"\1\2***", text)
+    parts = _TOKEN_SPLIT_RE.split(text)
+    for index, part in enumerate(parts):
+        if not part or part.isspace():
+            continue
+        if db_content._looks_like_credential(part):
+            parts[index] = "***"
+    return "".join(parts)
+
+
+async def purge_stale_scenes(
+    *, days: int = SCENE_RETENTION_DAYS, now: datetime | None = None
+) -> dict:
+    """删除 ``updated_at`` 早于保留期的场景会话（走既有级联删除链）。
+
+    与用户点「删除会话」是同一条路径（作废提案 → 批删 messages → runs → 会话），
+    所以不会留下孤儿消息或还能被确认的提案。仍有活跃 run 的会话跳过：worker 正在
+    上面跑，删掉本体只会让它在半路失败；下一轮（明天）再来收。
+
+    返回 ``{cutoff, deleted, remaining}``，与 ``tasks/retention`` 的只增表口径一致。
+    """
+    moment = now or datetime.now()
+    cutoff = moment - timedelta(days=max(1, int(days)))
+    deleted = 0
+    scanned = 0
+    for _ in range(SCENE_PURGE_MAX_BATCHES):
+        rows = await _repo().list_stale_scenes(cutoff, limit=SCENE_PURGE_BATCH)
+        if not rows:
+            break
+        scanned += len(rows)
+        for row in rows:
+            owner = str(row.get("owner_oid") or "")
+            try:
+                await delete(user={"id": owner}, oid=str(row.get("_id") or ""))
+            except AgentError:
+                # 活跃 run / 并发删除：都是「这一轮删不了」，不是清理失败。
+                continue
+            deleted += 1
+        if len(rows) < SCENE_PURGE_BATCH:
+            break
+    # 扫满批次上限说明还有剩：跳过的那几条（活跃 run）也算剩余。
+    remaining = int(await _repo().count_stale_scenes(cutoff))
+    return {
+        "cutoff": cutoff.isoformat(sep=" ", timespec="seconds"),
+        "deleted": deleted,
+        "scanned": scanned,
+        "remaining": remaining,
+    }
+
 
 
 async def list_page(
@@ -337,15 +553,23 @@ async def update(
     oid: str,
     title: str | None = None,
     status: str | None = None,
+    thinking: str | None = None,
+    clear_thinking: bool = False,
     model: str | None = None,
     clear_model: bool = False,
 ) -> dict:
-    """改名 / 归档 / 换模型。
+    """改名 / 归档 / 调思考强度。
 
-    ``model=None`` 在仓储层表示「不改」，所以「清空模型（回到服务端默认）」必须
-    由调用方用 ``clear_model`` 显式表达——否则 PATCH 里写 ``model: null`` 只会得到
-    一次静默 no-op。
+    **模型不可改**（R2）：它在建会话时定死。``model`` / ``clear_model`` 留在签名
+    里只为把「试图改模型」变成一个明确的 409（``AI_CONVERSATION_MODEL_LOCKED``），
+    而不是被静默忽略——静默忽略会让前端以为改成功了，实际下一轮仍跑旧模型。
     """
+    if model is not None or clear_model:
+        raise AgentError(
+            MODEL_LOCKED,
+            "model is fixed when the conversation is created",
+            409,
+        )
     owner = str(user.get("id") or "")
     await require_row(user=user, oid=str(oid))
     values: dict[str, Any] = {}
@@ -356,16 +580,17 @@ async def update(
         if normalized not in STATUSES:
             raise AgentError("AI_BAD_REQUEST", "status must be active or archived", 400)
         values["status"] = normalized
-    if model is not None:
-        values["model"] = str(model).strip() or None
+    if thinking is not None or clear_thinking:
+        values["thinking"] = _clean_thinking(thinking)
     changed = await _repo().update(
         str(oid),
         owner,
         title=values.get("title"),
         status=values.get("status"),
-        model=values.get("model"),
-        clear_model=bool(clear_model) and model is None,
+        thinking=values.get("thinking"),
+        clear_thinking=bool(clear_thinking and values.get("thinking") is None),
     )
+
     if not changed:
         # 归属闸刚放行、随即 0 行：只可能是并发删除。按「不存在」回，客户端重试
         # 一次就能拿到一致的结论。
@@ -473,14 +698,28 @@ async def list_messages(
     """
     conversation = await require_row(user=user, oid=oid)
     size = max(1, min(int(limit or MESSAGE_LIMIT_DEFAULT), MESSAGE_LIMIT_MAX))
-    rows = await _messages().list_after(
-        str(oid), max(0, int(after_seq or 0)), limit=size
-    )
+    views = await messages_since(str(oid), max(0, int(after_seq or 0)), limit=size)
     return {
-        "messages": [message_view(row) for row in rows],
-        "has_more": len(rows) >= size,
+        "messages": views,
+        "has_more": len(views) >= size,
         "total": _int(conversation.get("message_count")),
     }
+
+
+async def messages_since(
+    conversation_oid: str, after_seq: int, *, limit: int = MESSAGE_LIMIT_DEFAULT
+) -> list[dict]:
+    """``seq > after_seq`` 的消息视图（升序）。
+
+    调用方**必须**先过归属闸：消息表没有 owner 列，这条函数只按会话 oid 查。
+    ``run_detail`` 复用它是为了让「run 增量」与「消息增量」的序列化形状严格一致
+    —— 两处各写一份 view，哪怕只差一个字段，前端也要写两套解析。
+    """
+    size = max(1, min(int(limit or MESSAGE_LIMIT_DEFAULT), MESSAGE_LIMIT_MAX))
+    rows = await _messages().list_after(
+        str(conversation_oid), max(0, int(after_seq or 0)), limit=size
+    )
+    return [message_view(row) for row in rows]
 
 
 async def append_user(
@@ -538,13 +777,22 @@ __all__ = [
     "DELETED_PROPOSAL_SUMMARY",
     "LIST_LIMIT_DEFAULT",
     "LIST_LIMIT_MAX",
+    "LEGACY_MODES",
     "MESSAGE_LIMIT_DEFAULT",
     "MESSAGE_LIMIT_MAX",
     "MODES",
+    "MODEL_LOCKED",
     "MODE_MISMATCH",
     "NOT_FOUND",
     "RUN_CONFLICT",
+    "SCENE_BAD",
+    "SCENE_CONTEXT_MAX",
+    "SCENE_PURGE_BATCH",
+    "SCENE_RETENTION_DAYS",
+    "SCENES",
+    "SCENE_TITLES",
     "STATUSES",
+    "THINKING_LEVELS",
     "TITLE_MAX",
     "append_round",
     "append_user",
@@ -554,13 +802,19 @@ __all__ = [
     "decode_cursor",
     "delete",
     "encode_cursor",
+    "ensure_scene",
     "fetch_row",
     "get",
+    "is_readonly_scene",
     "list_messages",
     "list_page",
     "message_view",
+    "messages_since",
+    "purge_stale_scenes",
     "require_row",
     "retitle",
+    "scene_reference",
+    "scene_of",
     "title_from",
     "update",
 ]

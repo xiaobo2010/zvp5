@@ -433,7 +433,11 @@ def test_v014_creates_the_three_new_tables_with_the_modeled_columns():
     modeled = ddl_check.parse_models()["tables"]
     for name in ("temp_login_passwords", "device_challenges", "banned_devices"):
         assert name in v014, f"V014 缺少表 {name}"
-        assert v014[name]["columns"] == modeled[name]["columns"], name
+        # V047 起 models 的 created_at 带 DEFAULT SYSTIMESTAMP；V014 是历史事实。
+        assert v014[name]["columns"] == {
+            **modeled[name]["columns"],
+            "created_at": ("timestamp", True, None),
+        }, name
         assert v014[name]["pk"] == modeled[name]["pk"], name
         assert v014[name]["ck"] == modeled[name]["ck"], name
 

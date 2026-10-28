@@ -26,6 +26,7 @@ from util.object_id import (
     compulsory_temporary_token,
 )
 from util.permission.features import has_feature
+from util.read_throttle import read_budget
 from datetime import datetime, timedelta
 from db import backends
 from db.models import export_tasks as _tasks_tbl
@@ -440,6 +441,7 @@ async def get_export_file(
     language: str = "en",
     user=Depends(get_current_user),
     log=Depends(inject_log),
+    _budget=Depends(read_budget),
 ):
     if "admin" not in user["per"]:
         raise HTTPException(status_code=403, detail="Permission denied")

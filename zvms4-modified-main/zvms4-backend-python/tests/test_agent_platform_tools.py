@@ -149,7 +149,10 @@ class FakeAppLogsRepo:
         self.pages.append(kwargs)
         return list(self.rows), self.total
 
-    async def insert(self, url, user, data, timestamp, ltype, level, xuehai_id):
+    async def insert(
+        self, url, user, data, timestamp, ltype, level, xuehai_id,
+        client_ip="", user_agent="",
+    ):
         self.inserted.append(
             {
                 "url": url,

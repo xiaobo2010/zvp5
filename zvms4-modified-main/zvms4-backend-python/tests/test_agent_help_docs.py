@@ -49,7 +49,7 @@ def test_section_shape(section) -> None:
         ("怎么报名活动", "signup"),
         ("批量登记怎么用", "batch"),
         ("平板传不了附件", "upload"),
-        ("AI 智能体怎么用", "ai-agent"),
+        ("ZVAgent 怎么用", "ai-agent"),
         ("主设备换绑", "login"),
         ("这个平台是什么", "overview"),
     ],

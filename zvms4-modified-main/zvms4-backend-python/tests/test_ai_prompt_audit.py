@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
+import pytest
 from sqlalchemy.dialects import oracle
 
 from db.repos.oracle import ai_prompt_audit as prompt_repo
@@ -219,3 +220,180 @@ def test_created_at_range_is_index_friendly() -> None:
     assert "TO_CHAR" not in where.upper()
     assert "TRUNC(" not in where.upper()
     assert ">= TO_DATE('2026-10-01 00:00:00'" in where
+
+
+# ---------------------------------------------------------------------------
+# R5：回答侧四字段（detail 投影 / capture 扩签名 / 补写）
+# ---------------------------------------------------------------------------
+
+
+def test_detail_projection_carries_the_answer_side_columns() -> None:
+    """审阅端点透出 ANSWER_TEXT / TOOL_CALLS / REFUSED / WARNED（R5）。"""
+    row = prompt_repo._detail_row(
+        {
+            "oid": "c" * 24,
+            "request_id": "req-1",
+            "user_oid": USER_OID,
+            "purpose": "agent",
+            "roles_snapshot": "department",
+            "prompt_text": "帮我查成绩",
+            "answer_text": "已为你查到",
+            "tool_calls": '[{"name": "search_activities"}]',
+            "refused": 1,
+            "warned": 0,
+            "created_at": START,
+        }
+    )
+
+    assert row["answer_text"] == "已为你查到"
+    assert row["tool_calls"] == '[{"name": "search_activities"}]'
+    # NUMBER(1) → bool：前端按布尔分支，不该再去比 0/1。
+    assert row["refused"] is True
+    assert row["warned"] is False
+
+
+def test_answer_side_columns_are_in_the_detail_select() -> None:
+    from sqlalchemy.dialects import oracle
+
+    sql = " ".join(
+        str(
+            __import__("sqlalchemy").select(*prompt_repo._detail_columns()).compile(
+                dialect=oracle.dialect()
+            )
+        ).split()
+    )
+    for column in ("ANSWER_TEXT", "TOOL_CALLS", "REFUSED", "WARNED"):
+        assert column in sql.upper()
+
+
+def test_meta_projection_stays_without_the_answer_body() -> None:
+    """列表仍然只搬元数据：回答正文只走单条审阅（会写 APP_LOGS 的那条路）。"""
+    selected = _page().split(" FROM ", 1)[0].upper()
+
+    assert "ANSWER_TEXT" not in selected
+    assert "TOOL_CALLS" not in selected
+
+
+# ---------------------------------------------------------------------------
+# R5：服务层（capture 扩签名 / record_outcome / 摘要形状）
+# ---------------------------------------------------------------------------
+
+class FakeAuditRepo:
+    def __init__(self) -> None:
+        self.inserts: list[dict] = []
+        self.updates: list[dict] = []
+
+    async def insert(self, **fields) -> str:
+        self.inserts.append(fields)
+        return "d" * 24
+
+    async def update_outcome(self, oid, **fields) -> bool:
+        self.updates.append({"oid": str(oid), **fields})
+        return True
+
+
+@pytest.fixture
+def audit_repo(monkeypatch):
+    from db import backends
+    from services.ai import prompt_audit
+
+    fake = FakeAuditRepo()
+    monkeypatch.setattr(
+        backends, "get_ai_prompt_audit_repo", lambda session=None: fake
+    )
+    monkeypatch.setattr(
+        prompt_audit.ai_config,
+        "prompt_capture_roles",
+        lambda: frozenset({"department"}),
+    )
+    return fake
+
+
+@pytest.mark.asyncio
+async def test_capture_writes_the_answer_side_fields(audit_repo) -> None:
+    from services.ai import prompt_audit
+
+    oid = await prompt_audit.capture(
+        user={"id": USER_OID, "per": ["department"]},
+        purpose="markdown-assistant",
+        messages=[{"role": "user", "content": "帮我查 13812345678 的成绩"}],
+        request_id="req-9",
+        answer_text="已为 13812345678 查到成绩",
+        tool_calls=[{"name": "list_groups", "args_summary": "{}", "status": "executed"}],
+        refused=True,
+        warned=True,
+    )
+
+    assert oid == "d" * 24
+    row = audit_repo.inserts[0]
+    # 提问与回答都过同一套脱敏。
+    assert "13812345678" not in row["prompt_text"]
+    assert "13812345678" not in row["answer_text"]
+    assert row["refused"] is True
+    assert row["warned"] is True
+    assert '"name": "list_groups"' in row["tool_calls"]
+
+
+@pytest.mark.asyncio
+async def test_record_outcome_updates_the_same_row(audit_repo) -> None:
+    from services.ai import prompt_audit
+
+    await prompt_audit.record_outcome(
+        "e" * 24,
+        answer_text="结论",
+        tool_calls=[{"tool_name": "fs_read", "status": "executed"}],
+        refused=False,
+        warned=None,
+    )
+
+    assert audit_repo.updates == [
+        {
+            "oid": "e" * 24,
+            "answer_text": "结论",
+            "tool_calls": '[{"name": "fs_read", "args_summary": null, '
+            '"result_summary": null, "status": "executed"}]',
+            "refused": False,
+            "warned": None,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_record_outcome_without_an_oid_is_a_noop(audit_repo) -> None:
+    """没有留存行（角色不在白名单）时不该产生任何写操作。"""
+    from services.ai import prompt_audit
+
+    await prompt_audit.record_outcome(None, answer_text="x", refused=True)
+
+    assert audit_repo.updates == []
+
+
+def test_tool_calls_payload_keeps_only_the_documented_shape() -> None:
+    from services.ai import prompt_audit
+
+    payload = prompt_audit.tool_calls_payload(
+        [
+            {
+                "name": "fs_read",
+                "args_summary": "{}",
+                "result_summary": "ok",
+                "status": "executed",
+                "round_no": 1,
+                "tool_kind": "read",
+            },
+            "垃圾",
+        ]
+    )
+
+    import json
+
+    assert json.loads(payload) == [
+        {
+            "name": "fs_read",
+            "args_summary": "{}",
+            "result_summary": "ok",
+            "status": "executed",
+        }
+    ]
+    assert prompt_audit.tool_calls_payload([]) is None
+    assert prompt_audit.tool_calls_payload(None) is None

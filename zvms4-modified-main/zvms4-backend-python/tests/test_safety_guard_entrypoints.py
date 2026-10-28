@@ -1,11 +1,11 @@
-"""``safety_guard`` 在新接入入口上的行为：``/v1/chat/completions`` 与定时任务。
+"""``safety_guard`` 在各接入入口上的行为：``/v1/chat/completions`` 与定时任务。
 
-两条链路各钉住「拒绝发生在产生副作用之前」：
+两条链路各钉住两件事：
 
-* OpenAI 兼容面：403 + OpenAI 错误信封，**不调上游、不扣额度、不占频控窗口**；
-  ``zvk_`` 平台 key 用的是 owner 的角色，与 JWT 同一套判定。
-* 定时任务：被拒只写 ``skipped_safety`` 并推进 ``next_run_at``，**不产生 run**，
-  也**不**写 ``user_warnings`` / 不封号（prompt 已经过管理员审核）。
+* **拒绝发生在产生副作用之前**：OpenAI 兼容面 403 + OpenAI 错误信封，不调上游、
+  不扣额度、不占频控窗口；定时任务跳过本周期、不产生 run。
+* **两种拒绝对外同一个错误码**（``AI_SAFETY_REJECTED``），对内只有「判定成立」
+  才写违规证据；「判定跑不起来」只拒绝回答。
 
 外部依赖全部打桩：不连库、不出网。
 """
@@ -58,10 +58,6 @@ class ChatEnv:
         self.guard = safety_guard.ScreenResult(
             allowed=False, reason="rm -rf", category="destructive_request"
         )
-        self.outcome: dict = {"warned": True, "banned": False}
-
-    def screen(self):
-        return safety_guard.ScreenResult(allowed=True)
 
 
 @pytest.fixture
@@ -101,7 +97,7 @@ def chat_env(monkeypatch, quiet_ai_governance):
 
     async def record(user, *, xuehai_id="", rule="", detail=None):
         env.recorded.append({"user": dict(user), "rule": rule, "detail": detail})
-        return dict(env.outcome)
+        return {"warned": True, "banned": True, "recorded": 1}
 
     monkeypatch.setattr(ai_router.credentials, "catalog", catalog)
     monkeypatch.setattr(ai_router.credentials, "resolve_api_key", resolve_api_key)
@@ -141,7 +137,8 @@ def test_department_jwt_is_rejected_before_any_upstream_call(chat_env) -> None:
 
     assert response.status_code == 403
     body = response.json()
-    assert body["error"]["code"] == "AI_SAFETY_WARNED"
+    assert body["error"]["code"] == "AI_SAFETY_REJECTED"
+    assert body["error"]["message"] == safety_guard.REJECTED_MESSAGE
     assert body["error"]["type"] == "invalid_request_error"
 
     # 未调上游、未选路/频控/扣额度：拒绝必须发生在这些副作用之前。
@@ -162,17 +159,21 @@ def test_department_jwt_is_rejected_before_any_upstream_call(chat_env) -> None:
     assert chat_env.screen_calls[0]["text"] == DESTRUCTIVE
     # 拒绝了也要在 AI_CALL_LOGS 里看得见。
     rejected = [row for row in chat_env.audit if row.get("status") == "rejected"]
-    assert rejected and rejected[0]["error_code"] == "AI_SAFETY_WARNED"
+    assert rejected and rejected[0]["error_code"] == "AI_SAFETY_REJECTED"
 
 
-def test_same_month_second_hit_returns_banned_code(chat_env) -> None:
-    chat_env.outcome = {"warned": False, "banned": True}
+def test_unavailable_screen_rejects_without_recording(chat_env) -> None:
+    """判定跑不起来：同一个错误码、同样不调上游，但不写违规证据。"""
+    chat_env.guard = safety_guard.unavailable()
 
     response = _chat(_client({"id": DEPARTMENT_OID, "per": ["department"]}))
 
     assert response.status_code == 403
-    assert response.json()["error"]["code"] == "AI_SAFETY_BANNED"
+    assert response.json()["error"]["code"] == "AI_SAFETY_REJECTED"
+    assert chat_env.recorded == []
     assert chat_env.chat_calls == []
+    rejected = [row for row in chat_env.audit if row.get("status") == "rejected"]
+    assert rejected and rejected[0]["error_code"] == "AI_SAFETY_REJECTED"
 
 
 def test_admin_is_not_screened_and_passes(chat_env, monkeypatch) -> None:
@@ -200,7 +201,7 @@ def test_api_key_owner_department_is_rejected(chat_env) -> None:
     response = _chat(_client(key_user))
 
     assert response.status_code == 403
-    assert response.json()["error"]["code"] == "AI_SAFETY_WARNED"
+    assert response.json()["error"]["code"] == "AI_SAFETY_REJECTED"
     assert chat_env.chat_calls == []
     assert chat_env.consume_calls == []
 
@@ -303,11 +304,12 @@ class FakeUsers:
 @pytest.fixture
 def scheduled_env(monkeypatch):
     logs: list[dict] = []
-    state = {"roles": ["department"], "allowed": False, "category": "destructive_request"}
+    state = {"roles": ["department"], "allowed": False, "unavailable": False}
     repo = FakeTaskRepo(_task())
     runs = FakeRuns()
     runs.forbid = True
     screen_calls: list[dict] = []
+    recorded: list[dict] = []
 
     async def catalog(_owner_oid):
         return [dict(ENTRY)]
@@ -317,19 +319,25 @@ def scheduled_env(monkeypatch):
 
     def check(_text):
         return SimpleNamespace(hit=False, rule=None)
+
     async def screen(user, text, *, model_hint=None):
         screen_calls.append({"user": dict(user), "text": text, "model_hint": model_hint})
         if state["allowed"]:
             return safety_guard.ScreenResult(allowed=True)
+        if state["unavailable"]:
+            return safety_guard.unavailable()
         return safety_guard.ScreenResult(
-            allowed=False, reason="rm -rf", category=state["category"]
+            allowed=False, reason="rm -rf", category="destructive_request"
         )
 
-    async def insert_log(url, user, data, timestamp, ltype, level, xuehai_id):
-        logs.append({"user": user, "data": data, "type": ltype, "level": level})
+    async def record(user, *, xuehai_id="", rule="", detail=None):
+        recorded.append({"user": dict(user), "rule": rule, "detail": detail})
+        return {"warned": True, "banned": True, "recorded": 1}
 
-    async def forbidden(*args, **kwargs):
-        raise AssertionError("定时任务被拒时不该进入违规/封禁链路")
+    async def insert_log(
+        url, user, data, timestamp, ltype, level, xuehai_id, client_ip="", user_agent=""
+    ):
+        logs.append({"user": user, "data": data, "type": ltype, "level": level})
 
     monkeypatch.setattr(runner, "_repo", lambda: repo)
     monkeypatch.setattr(runner, "_runs", lambda: runs)
@@ -339,29 +347,26 @@ def scheduled_env(monkeypatch):
     monkeypatch.setattr(runner.moderation, "check", check)
     monkeypatch.setattr(runner.safety_guard, "screen", screen)
     monkeypatch.setattr(
+        runner.violation_guard, "record_agent_jailbreak", record
+    )
+    monkeypatch.setattr(
         backends,
         "get_applogs_repo",
         lambda *a, **k: SimpleNamespace(insert=insert_log),
         raising=False,
     )
-    monkeypatch.setattr(
-        violation_guard, "record_agent_jailbreak", forbidden, raising=False
-    )
-    monkeypatch.setattr(
-        backends,
-        "get_user_warnings_repo",
-        lambda *a, **k: (_ for _ in ()).throw(AssertionError("不该写警告账本")),
-        raising=False,
-    )
     return SimpleNamespace(
-        repo=repo, runs=runs, state=state, logs=logs, screen_calls=screen_calls
+        repo=repo,
+        runs=runs,
+        state=state,
+        logs=logs,
+        screen_calls=screen_calls,
+        recorded=recorded,
     )
 
 
 @pytest.mark.asyncio
-async def test_scheduled_skip_does_not_submit_and_advances_next_run(
-    scheduled_env,
-) -> None:
+async def test_scheduled_rejection_records_violation_and_skips(scheduled_env) -> None:
     with pytest.raises(runner.SafetySkipped) as excinfo:
         await runner.submit_task_run(_task(), now=NOW)
 
@@ -373,13 +378,33 @@ async def test_scheduled_skip_does_not_submit_and_advances_next_run(
     assert row["last_error"] and "safety" in row["last_error"].lower()
     assert row["next_run_at"] == NOW + timedelta(minutes=60)
     assert scheduled_env.runs.inserted == []
-    # 只留审计，不计违规、不发警告。
+    # 任务内容是 owner 写的：记违规（警告与首档封号在 violation_guard 里）。
+    assert scheduled_env.recorded == [
+        {
+            "user": {"id": DEPARTMENT_OID, "per": ["department"]},
+            "rule": "destructive_request",
+            "detail": DESTRUCTIVE,
+        }
+    ]
     assert [log["type"] for log in scheduled_env.logs] == [
         "ai_safety_guard_scheduled_skip"
     ]
     # model_hint 用任务自己的模型，且已升格成合格 ID（provider/model）。
     assert scheduled_env.screen_calls[0]["model_hint"] == "acme/gpt-x"
     assert scheduled_env.screen_calls[0]["text"] == DESTRUCTIVE
+
+
+@pytest.mark.asyncio
+async def test_scheduled_unavailable_skips_without_recording(scheduled_env) -> None:
+    scheduled_env.state["unavailable"] = True
+
+    with pytest.raises(runner.SafetySkipped) as excinfo:
+        await runner.submit_task_run(_task(), now=NOW)
+
+    assert excinfo.value.code == "AI_SCHEDULE_SAFETY_REJECTED"
+    assert scheduled_env.recorded == []
+    assert scheduled_env.runs.inserted == []
+    assert scheduled_env.repo.task["last_status"] == "skipped_safety"
 
 
 @pytest.mark.asyncio

@@ -36,6 +36,17 @@ API_KEYS_FILE = "V030__add_ai_api_keys.sql"
 TRACE_FILE = "V031__add_ai_call_logs_trace.sql"
 AGENT_FILE = "V033__agent_and_prompt_audit.sql"
 PROPOSAL_FILE = "V034__agent_proposal_payload.sql"
+CONTROL_FILE = "V046__agent_control_and_audit.sql"
+SCENE_FILE = "V048__scene_conversations.sql"
+
+# V046 给两张老表补的列。V033 / V035 是历史事实（建表时没有这些），后续迁移
+# 只做增量，所以比较那两份文件的形状时要把这些列摘掉。
+CONTROL_AUDIT_COLUMNS = {"answer_text", "tool_calls", "refused", "warned"}
+CONTROL_CONVERSATION_COLUMNS = {"thinking"}
+# V048 给 ai_conversations 补的只读场景标记。与 V046 同理：V035 建表时还没有它，
+# 比较那份历史文件时摘掉。
+SCENE_CONVERSATION_COLUMNS = {"scene"}
+LATER_CONVERSATION_COLUMNS = CONTROL_CONVERSATION_COLUMNS | SCENE_CONVERSATION_COLUMNS
 
 # V033 给 ai_call_logs 补的两列（agent 轮次 + 角色快照），全部 nullable。
 AGENT_TRACE_COLUMNS = {"round_no", "roles_snapshot"}
@@ -129,6 +140,31 @@ def _migration(name: str) -> Path:
     path = DDL_DIR / name
     assert path.is_file(), f"AI migration {name} is missing from {DDL_DIR}"
     return path
+
+
+def _without_columns(shape: dict, columns: set[str]) -> dict:
+    """去掉后续迁移补的列，得到「这份迁移当时的形状」。"""
+    trimmed = dict(shape)
+    trimmed["columns"] = {
+        name: spec for name, spec in shape["columns"].items() if name not in columns
+    }
+    return trimmed
+
+
+def _without_created_at_default(shape: dict) -> dict:
+    """摘掉 ``created_at`` 的默认值，得到「V047 之前的形状」。
+
+    V047 起 models/V001 的 ``created_at`` 统一带 ``DEFAULT SYSTIMESTAMP``；历史迁移
+    不追新目标态（同 ``_without_columns`` 的约定），所以比较它们时只看「有没有默认
+    值」之外的部分。
+    """
+    column = shape["columns"].get("created_at")
+    if column is None:
+        return shape
+    trimmed = dict(shape)
+    trimmed["columns"] = dict(shape["columns"])
+    trimmed["columns"]["created_at"] = (column[0], column[1], None)
+    return trimmed
 
 
 def _parsed(path: Path) -> dict:
@@ -259,7 +295,7 @@ def test_ai_call_logs_migration_matches_models_minus_key_scope() -> None:
     }
     gateway_shape = dict(gateway["tables"]["ai_call_logs"])
     gateway_shape["ck"] = gateway_shape["ck"] - {LEGACY_STATUS_CK}
-    assert gateway_shape == without_later
+    assert gateway_shape == _without_created_at_default(without_later)
     assert LEGACY_STATUS_CK in gateway["tables"]["ai_call_logs"]["ck"]
 
     # 全新实例走 V001，一次就拿到完整形状（含 key_scope 与 V031/V032/V033 的列）。
@@ -334,8 +370,12 @@ def test_agent_migration_matches_models_and_v001() -> None:
     modeled = ddl_check.parse_models()
     v001 = ddl_check.parse_v001()
 
-    assert agent["tables"]["ai_prompt_audit"] == modeled["tables"]["ai_prompt_audit"]
-    assert v001["tables"]["ai_prompt_audit"] == modeled["tables"]["ai_prompt_audit"]
+    expected_audit = modeled["tables"]["ai_prompt_audit"]
+    # V001（全新实例）拿的是最新形状；V033 是历史事实，要摘掉 V046 的增量。
+    assert v001["tables"]["ai_prompt_audit"] == expected_audit
+    assert agent["tables"]["ai_prompt_audit"] == _without_created_at_default(
+        _without_columns(expected_audit, CONTROL_AUDIT_COLUMNS)
+    )
 
     expected_events = modeled["tables"]["ai_agent_events"]
     before_proposal_v2 = {
@@ -349,7 +389,9 @@ def test_agent_migration_matches_models_and_v001() -> None:
         "fk": set(expected_events["fk"]),
         "ck": (expected_events["ck"] - {AGENT_STATUS_CK}) | {LEGACY_AGENT_STATUS_CK},
     }
-    assert agent["tables"]["ai_agent_events"] == before_proposal_v2
+    assert agent["tables"]["ai_agent_events"] == _without_created_at_default(
+        before_proposal_v2
+    )
 
     # 全新实例走 V001，一次就拿到完整形状（含 V034 的四列与 executing）。
     assert v001["tables"]["ai_agent_events"] == expected_events
@@ -482,7 +524,9 @@ def test_ai_credentials_migration_matches_models_and_v001() -> None:
         "fk": set(expected["fk"]),
         "ck": expected["ck"] - {HEADERS_JSON_CK},
     }
-    assert credentials["tables"]["ai_credentials"] == before_headers
+    assert credentials["tables"]["ai_credentials"] == _without_created_at_default(
+        before_headers
+    )
 
     # 全新实例走 V001，一次就拿到完整形状（含 headers_json / api_path /
     # expires_at）。
@@ -537,7 +581,9 @@ def test_ocr_migration_matches_models_and_v001() -> None:
         "fk": set(expected["fk"]),
         "ck": (expected["ck"] - {OCR_KIND_CK}) | {LEGACY_OCR_KIND_CK},
     }
-    assert ocr["tables"]["ai_ocr_engines"] == before_kind_extension
+    assert ocr["tables"]["ai_ocr_engines"] == _without_created_at_default(
+        before_kind_extension
+    )
 
     # 全新实例走 V001，一次就拿到五值集合。
     assert v001["tables"]["ai_ocr_engines"] == expected
@@ -885,11 +931,20 @@ def test_conversations_migration_matches_models_and_v001() -> None:
     assert set(migration["tables"]) == CONVERSATION_TABLES
 
     for table in sorted(CONVERSATION_TABLES):
-        assert migration["tables"][table] == modeled["tables"][table], table
+        expected = modeled["tables"][table]
+        if table == "ai_conversations":
+            # V046 的 THINKING / V048 的 SCENE：比较 V035 当时的形状时都摘掉。
+            expected = _without_columns(expected, LATER_CONVERSATION_COLUMNS)
+        assert migration["tables"][table] == _without_created_at_default(expected), table
         # 全新实例走 V001，一次就拿到同一形状。
         assert v001["tables"][table] == modeled["tables"][table], table
-        assert migration["indexes"] <= modeled["indexes"], table
-        assert migration["indexes"] <= v001["indexes"], table
+        # V047 删掉了 ix_ai_messages_conv_created（没有任何查询按 created_at 读
+        # ai_messages）；V035 是历史事实，仍带着它，所以从比较里摘掉。
+        historical = migration["indexes"] - {
+            ("ai_messages", False, ("conversation_oid", "created_at"))
+        }
+        assert historical <= modeled["indexes"], table
+        assert historical <= v001["indexes"], table
 
 
 def test_active_run_uniqueness_is_a_function_unique_index() -> None:
@@ -1033,3 +1088,83 @@ def test_conversations_migration_is_idempotent_on_existing_objects() -> None:
         assert code in text
     # 每个对象各自一段 BEGIN/EXCEPTION：一个对象存在不该连带跳过其它对象。
     assert text.count("WHEN OTHERS THEN") == text.count("EXECUTE IMMEDIATE '")
+
+
+# ---------------------------------------------------------------------------
+# V046：会话思考强度 + 合规审计扩字段（R3 / R5）
+# ---------------------------------------------------------------------------
+
+def _control_text() -> str:
+    return _migration(CONTROL_FILE).read_text(encoding="utf-8")
+
+
+def test_control_migration_adds_exactly_the_documented_columns() -> None:
+    """V046 只补 5 列（1 + 4），且每列的形状与 models 逐字一致。"""
+    extracted = ddl_check.extract_execute_immediate(_control_text())
+    modeled = ddl_check.parse_models()["tables"]
+
+    added = re.findall(
+        r"ALTER TABLE (ai_[a-z_]+) ADD \((.*)\)\s*$",
+        extracted,
+        re.IGNORECASE | re.MULTILINE,
+    )
+    assert added, extracted
+    assert {table.lower() for table, _frag in added} == {
+        "ai_conversations",
+        "ai_prompt_audit",
+    }
+
+    per_table: dict[str, dict[str, tuple]] = {}
+    for table, frag in added:
+        name, type_, notnull, default = ddl_check._parse_column(frag)
+        per_table.setdefault(table.lower(), {})[name] = (type_, notnull, default)
+
+    assert set(per_table["ai_conversations"]) == CONTROL_CONVERSATION_COLUMNS
+    assert set(per_table["ai_prompt_audit"]) == CONTROL_AUDIT_COLUMNS
+    for table, columns in per_table.items():
+        for name, shape in columns.items():
+            assert modeled[table]["columns"][name] == shape, (table, name)
+
+
+def _scene_text() -> str:
+    return _migration(SCENE_FILE).read_text(encoding="utf-8")
+
+
+def test_scene_migration_adds_exactly_one_column() -> None:
+    """V048 只在 ai_conversations 上补 SCENE，形状与 models 逐字一致。"""
+    extracted = ddl_check.extract_execute_immediate(_scene_text())
+    modeled = ddl_check.parse_models()["tables"]
+
+    added = re.findall(
+        r"ALTER TABLE (ai_[a-z_]+) ADD \((.*)\)\s*$",
+        extracted,
+        re.IGNORECASE | re.MULTILINE,
+    )
+    assert {table.lower() for table, _frag in added} == {"ai_conversations"}
+
+    name, type_, notnull, default = ddl_check._parse_column(added[0][1])
+    assert name == "scene"
+    assert modeled["ai_conversations"]["columns"][name] == (type_, notnull, default)
+
+
+def test_scene_migration_is_idempotent_on_existing_columns() -> None:
+    text = _scene_text()
+    for code in ("-1430", "-942"):
+        assert code in text
+    assert text.count("WHEN OTHERS THEN") == text.count("EXECUTE IMMEDIATE '")
+
+
+def test_control_migration_is_idempotent_on_existing_columns() -> None:
+    """重跑不能炸：列已存在 → -1430，表不存在 → -942。"""
+    text = _control_text()
+
+    for code in ("-1430", "-942"):
+        assert code in text
+    assert text.count("WHEN OTHERS THEN") == text.count("EXECUTE IMMEDIATE '")
+
+
+def test_thinking_column_is_nullable_and_narrow() -> None:
+    """``thinking`` 存的是三个字面量：NULL=上游默认，不是空串、也不是 0。"""
+    columns = ddl_check.parse_models()["tables"]["ai_conversations"]["columns"]
+
+    assert columns["thinking"] == ("varchar2(16)", False, None)

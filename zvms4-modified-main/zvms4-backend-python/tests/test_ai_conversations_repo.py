@@ -60,6 +60,8 @@ def _list_projection_values() -> dict[str, Any]:
         "mode": "chat",
         "title": "学期总结",
         "model": "gpt-x",
+        "thinking": "medium",
+        "scene": None,
         "status": "active",
         "summary_upto_seq": 3,
         "tokens_prompt": 10,
@@ -284,14 +286,21 @@ def test_delete_batched_uses_rownum_and_the_owner_predicate() -> None:
 def test_update_values_skip_absent_fields_and_bump_updated_at() -> None:
     at = TS
     assert conversations_repo._update_values(
-        title=None, status=None, model=None, at=at
+        title=None, status=None, thinking=None, at=at
     ) == {}
     values = conversations_repo._update_values(
-        title="新标题", status="archived", model=None, at=at
+        title="新标题", status="archived", thinking=None, at=at
     )
     assert values == {"title": "新标题", "status": "archived", "updated_at": at}
-    # model=None 表示「不改」：它的显式清空走 clear_model 专用开关。
-    assert "model" not in values
+    # thinking=None 表示「不改」：显式清空走 clear_thinking 专用开关。
+    assert "thinking" not in values
+
+    thinking = conversations_repo._update_values(
+        title=None, status=None, thinking="high", at=at
+    )
+    assert thinking == {"thinking": "high", "updated_at": at}
+    # 模型不在这张表的更新语句里：它在建会话时定死（PATCH 想改直接 409）。
+    assert "model" not in thinking
 
 
 # ---------------------------------------------------------------------------

@@ -178,6 +178,8 @@ def _isolated_gateway(monkeypatch):
     monkeypatch.setenv(crypto._SECRET_ENV, "unit-test-master-secret")
     monkeypatch.setattr(crypto, "_master_key", None)
     monkeypatch.setattr(settings, "AI_PROVIDERS", {}, raising=False)
+    # 单测一律不碰网络：保存时的 ``/models`` 探测默认关掉（专测探测的用例自己开）。
+    monkeypatch.setattr(settings, "AI_MODEL_PROBE_TIMEOUT_SECONDS", 0, raising=False)
     yield
     credentials._cache.clear()
     crypto._master_key = None
@@ -673,3 +675,128 @@ async def test_catalog_cache_is_real_so_invalidation_has_meaning(repo, monkeypat
 
     await credentials.invalidate()
     assert [entry["name"] for entry in await credentials.catalog(ADMIN)] == ["renamed"]
+
+
+# ---------------------------------------------------------------------------
+# 模型条目的两种形态 + 上下文窗口自动填充（R4）
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_models_accept_objects_with_context_and_keep_the_shape(
+    repo, monkeypatch
+) -> None:
+    """``{"id", "context"}`` 与字符串混用：原形态落库，视图拆成 ids + contexts。"""
+    _offline_resolver(monkeypatch)
+
+    view = await credentials.create_entry(
+        user_oid=ADMIN,
+        scope="shared",
+        name="lab",
+        base_url="https://api.example.com/v1",
+        models=["gpt-x", {"id": "gpt-y", "context": 128000}],
+        api_key=SECRET,
+    )
+
+    assert view["models"] == ["gpt-x", "gpt-y"]
+    assert view["model_contexts"] == {"gpt-x": None, "gpt-y": 128000}
+    stored = repo.rows[view["oid"]]["models"]
+    # 字符串还是字符串：把老数据改写成对象没有收益。
+    assert stored == ["gpt-x", {"id": "gpt-y", "context": 128000}]
+
+
+@pytest.mark.asyncio
+async def test_bad_model_context_is_a_400(repo, monkeypatch) -> None:
+    _offline_resolver(monkeypatch)
+
+    with pytest.raises(credentials.CredentialError) as failure:
+        await credentials.create_entry(
+            user_oid=ADMIN,
+            scope="shared",
+            name="lab",
+            base_url="https://api.example.com/v1",
+            models=[{"id": "gpt-x", "context": "big"}],
+            api_key=SECRET,
+        )
+
+    assert failure.value.code == "AI_KEY_INVALID"
+
+
+@pytest.mark.asyncio
+async def test_saving_fills_context_from_the_upstream_models_endpoint(
+    repo, monkeypatch
+) -> None:
+    """探测成功 → 空窗口被补上；管理员手填的值不被覆盖。"""
+    _offline_resolver(monkeypatch)
+    monkeypatch.setattr(settings, "AI_MODEL_PROBE_TIMEOUT_SECONDS", 2.0, raising=False)
+    seen: dict = {}
+
+    async def fake_discover(*, base_url, api_key, headers=None):
+        seen["base_url"] = base_url
+        return {"gpt-x": 64000, "gpt-y": 32000}
+
+    monkeypatch.setattr(credentials, "_discover_model_contexts", fake_discover)
+
+    view = await credentials.create_entry(
+        user_oid=ADMIN,
+        scope="shared",
+        name="lab",
+        base_url="https://api.example.com/v1",
+        models=["gpt-x", {"id": "gpt-y", "context": 999}],
+        api_key=SECRET,
+    )
+
+    assert seen["base_url"] == "https://api.example.com/v1"
+    assert view["model_contexts"] == {"gpt-x": 64000, "gpt-y": 999}
+
+
+@pytest.mark.asyncio
+async def test_failed_probe_keeps_the_models_untouched(repo, monkeypatch) -> None:
+    _offline_resolver(monkeypatch)
+    monkeypatch.setattr(settings, "AI_MODEL_PROBE_TIMEOUT_SECONDS", 2.0, raising=False)
+
+    async def fake_discover(*, base_url, api_key, headers=None):
+        return {}
+
+    monkeypatch.setattr(credentials, "_discover_model_contexts", fake_discover)
+
+    view = await credentials.create_entry(
+        user_oid=ADMIN,
+        scope="shared",
+        name="lab",
+        base_url="https://api.example.com/v1",
+        models=["gpt-x"],
+        api_key=SECRET,
+    )
+
+    assert view["models"] == ["gpt-x"]
+    assert view["model_contexts"] == {"gpt-x": None}
+    assert repo.rows[view["oid"]]["models"] == ["gpt-x"]
+
+
+@pytest.mark.asyncio
+async def test_catalog_parses_object_models_and_exposes_model_context(
+    repo, monkeypatch
+) -> None:
+    """目录把两种形态都摊平成「模型名 + 窗口」，同步查询 ``model_context`` 可用。"""
+    _offline_resolver(monkeypatch)
+    repo.rows = {
+        "a" * 24: dict(
+            _row(oid="a" * 24, scope="shared", owner_oid=SHARED_OWNER, name="lab"),
+            models=["gpt-x", {"id": "gpt-y", "context": 128000}],
+        )
+    }
+
+    entries = await credentials.catalog(ADMIN)
+
+    assert entries[0]["models"] == ["gpt-x", "gpt-y"]
+    assert entries[0]["model_contexts"] == {"gpt-x": None, "gpt-y": 128000}
+    assert credentials.model_context("lab/gpt-y") == 128000
+    assert credentials.model_context("gpt-y") == 128000
+    assert credentials.model_context("lab/gpt-x") is None
+    assert set(await ai_config.allowed_models_for(ADMIN)) == {
+        "lab/gpt-x",
+        "lab/gpt-y",
+        "gpt-x",
+        "gpt-y",
+    }

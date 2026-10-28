@@ -261,10 +261,11 @@ def test_admin_comes_from_current_roles_not_jwt_snapshot(
 def test_auth_payload_token_is_invisible_to_handshake_layer(
     client: TestClient, account
 ) -> None:
-    """已知前向约束：token 只在 socket.io ``auth`` 载荷里时，握手层仍 503。
+    """token 只在 socket.io ``auth`` 载荷里时，握手层看不到（已知前向约束）。
 
     ``auth`` 载荷随 CONNECT 包（``40{"token": ...}``）到达，早于它的 Engine.IO
-    握手读不到；同一 token 走 query / header 才被准入层认出来。
+    握手读不到；握手层只认 ``Authorization`` 头——query 传 token 会落进反代
+    access log，已明确不再支持。
     """
     enable()
     token = admin_token()
@@ -272,7 +273,12 @@ def test_auth_payload_token_is_invisible_to_handshake_layer(
     rejected = client.get(POLLING_URL, headers=MOZ)
     assert rejected.status_code == 503
 
-    allowed = client.get(POLLING_URL + f"&token={token}", headers=MOZ)
+    rejected_with_query = client.get(POLLING_URL + f"&token={token}", headers=MOZ)
+    assert rejected_with_query.status_code == 503
+
+    allowed = client.get(
+        POLLING_URL, headers={**MOZ, "Authorization": f"Bearer {token}"}
+    )
     assert allowed.status_code == 200
 
     # ``connect`` 处理器那一层（CONNECT 包之后）能读到 auth 载荷。

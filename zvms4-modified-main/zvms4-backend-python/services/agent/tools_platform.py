@@ -669,7 +669,7 @@ async def _impl_user_ban(
     await _audit(
         user,
         (
-            f"AI 智能体（操作者 {operator}）封禁了用户 {target.get('name')}"
+            f"ZVAgent（操作者 {operator}）封禁了用户 {target.get('name')}"
             f"（学号 {target.get('id')}，原因：{reason_text}，{sentence}）"
         ),
         log_type=AUDIT_TYPE_BAN,
@@ -730,7 +730,7 @@ async def _impl_user_unban(
     await _audit(
         user,
         (
-            f"AI 智能体（操作者 {operator}）解封了用户 {target.get('name')}"
+            f"ZVAgent（操作者 {operator}）解封了用户 {target.get('name')}"
             f"（学号 {target.get('id')}，原因：{reason_text}）"
         ),
         log_type=AUDIT_TYPE_BAN,
@@ -793,7 +793,7 @@ async def _impl_device_unban(
     await _audit(
         user,
         (
-            f"AI 智能体（操作者 {operator}）解除了设备 {xid} 的封禁"
+            f"ZVAgent（操作者 {operator}）解除了设备 {xid} 的封禁"
             f"（原因：{reason_text}）"
         ),
         log_type=AUDIT_TYPE_DEVICE,

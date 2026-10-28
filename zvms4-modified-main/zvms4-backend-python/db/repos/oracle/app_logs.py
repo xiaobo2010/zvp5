@@ -5,8 +5,9 @@ The Oracle-safe column renames (``user``→``APP_USER``, ``type``→``LTYPE``,
 ``level``→``LOG_LEVEL``, ``timestamp``→``TS_AT``/``TS_RAW``) are translated back
 to the Mongo document shape on read.
 
-``TS_RAW`` keeps the original float epoch seconds (authoritative for ordering and
-the time-range filter); ``TS_AT`` is its derived naive ``TIMESTAMP``.
+``TS_RAW`` keeps the original float epoch seconds (authoritative for ordering, the
+time-range filter **and** the retention purge); ``TS_AT`` is its derived naive
+``TIMESTAMP`` and is kept as data only (no index).
 
 Session ownership mirrors :mod:`db.repos.oracle.users`: with no injected session
 each method opens its own through :func:`db.oracle.session.session_scope`, and
@@ -76,6 +77,8 @@ def _log_columns() -> tuple[Any, ...]:
         app_logs_tbl.c.ltype,
         app_logs_tbl.c.log_level,
         app_logs_tbl.c.xuehai_id,
+        app_logs_tbl.c.client_ip,
+        app_logs_tbl.c.user_agent,
         users_tbl.c.name.label("user_name"),
         users_tbl.c.business_id.label("user_id"),
     )
@@ -100,6 +103,8 @@ def _insert_stmt(
     ltype: str,
     log_level: str,
     xuehai_id: str,
+    client_ip: str,
+    user_agent: str,
 ):
     return insert(app_logs_tbl).values(
         oid=oid,
@@ -111,6 +116,8 @@ def _insert_stmt(
         ltype=ltype,
         log_level=log_level,
         xuehai_id=xuehai_id,
+        client_ip=client_ip,
+        user_agent=user_agent,
     )
 
 
@@ -344,10 +351,19 @@ PROTECTED_LEVEL = "warning"
 def _expired_conds(cutoff: Any) -> list[Any]:
     """WHERE shared by the expiry count and the batched purge (design §2).
 
-    ``TS_AT`` is the only indexed time column (``ix_app_logs_ts_at``) and is
-    derived from ``TS_RAW`` on insert (``app_logs.py`` write path), so the two
-    agree. Rows whose ``TS_AT`` is NULL are never touched: a comparison against
-    NULL is never true.
+    ``TS_RAW`` (BINARY_DOUBLE epoch seconds) is the time source of truth: the write
+    path stores the epoch and derives ``TS_AT`` from it
+    (``datetime.fromtimestamp``), and the admin page orders/filters on ``TS_RAW`` as
+    well. Purging on the same column keeps one semantic instead of two — ``TS_AT``
+    is a naive local timestamp, so it would drift with a server timezone change
+    while ``TS_RAW`` would not. ``ix_app_logs_ts_raw`` serves the range scan;
+    ``TS_AT`` is data only, with no index.
+
+    ``cutoff`` is the naive local ``datetime`` the caller builds
+    (``tasks.retention``); ``.timestamp()`` interprets it the same way
+    ``datetime.fromtimestamp`` did when ``TS_AT`` was written, so the boundary is
+    unchanged. Rows whose ``TS_RAW`` is NULL are never touched: a comparison
+    against NULL is never true.
 
     The ``IS NULL OR`` branches are load-bearing: Oracle treats ``''`` as NULL
     and :class:`typings.log.ZVMSLog` defaults ``type``/``level`` to ``""``, so a
@@ -355,7 +371,7 @@ def _expired_conds(cutoff: Any) -> list[Any]:
     row forever.
     """
     return [
-        app_logs_tbl.c.ts_at < cutoff,
+        app_logs_tbl.c.ts_raw < float(cutoff.timestamp()),
         or_(
             app_logs_tbl.c.ltype.is_(None),
             app_logs_tbl.c.ltype.not_in(PROTECTED_LTYPES),
@@ -455,6 +471,8 @@ def _log_row(mapping: Any) -> Row:
         "type": mapping["ltype"],
         "level": mapping["log_level"],
         "xuehai_id": mapping["xuehai_id"],
+        "client_ip": mapping.get("client_ip"),
+        "user_agent": mapping.get("user_agent"),
     }
 
 
@@ -473,6 +491,8 @@ class OracleAppLogsRepo:
         ltype: str,
         level: str,
         xuehai_id: str,
+        client_ip: str = "",
+        user_agent: str = "",
     ) -> None:
         ts_raw = float(timestamp) if timestamp is not None else None
         ts_at = datetime.fromtimestamp(ts_raw) if ts_raw is not None else None
@@ -481,7 +501,8 @@ class OracleAppLogsRepo:
                 stmt = _insert_stmt(
                     new_oid(), _fit_utf8(url, 512), _fit_utf8(user, 64), chunk,
                     ts_at, ts_raw, _fit_utf8(ltype, 64), _fit_utf8(level, 32),
-                    _fit_utf8(xuehai_id, 32),
+                    _fit_utf8(xuehai_id, 32), _fit_utf8(client_ip, 45),
+                    _fit_utf8(user_agent, 256),
                 )
                 await session.execute(stmt)
             if owns:

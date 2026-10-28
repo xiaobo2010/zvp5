@@ -1,23 +1,22 @@
 """会话 / run 入口的角色功能开关（V043 ``ROLE_FEATURES``）闸门。
 
-``routers/ai_conversations_router`` 与 ``routers/ai_chat_conversations_router`` 是
-AI 的**会话主入口**：``/v1/chat/completions`` 与 ``/agent/run`` 早就接了开关，但
-「建会话 → 发消息 / 提交 run」这条路之前只过角色白名单。结果是管理员在「角色策略」
-页关掉 ``ai.chat`` / ``ai.agent`` 之后，用户仍然能在会话里用 AI——开关形同虚设。
+``routers/ai_conversations_router`` 是 AI 的**会话主入口**：``/v1/chat/completions``
+与 ``/agent/run`` 早就接了开关，但「建会话 → 提交 run」这条路之前只过角色白名单。
+结果是管理员在「角色策略」页关掉 ``ai.agent`` 之后，用户仍然能在会话里用 AI——
+开关形同虚设。
 
-口径与 ``test_role_feature_gates_ai.py`` 一致，**只加不删**：
+口径与 ``test_role_feature_gates_ai.py`` 一致：
 
-* 开关按**这条会话的 mode** 判，而不是按端点一律取 ``ai.chat``：同一个 router
-  同时服务两种语义，混用就会「关掉 ai.agent 仍能在 agent 会话里提交 run」；
-* 关掉 → 403 且**零副作用**：不建会话、不写 ``AI_CALL_LOGS``、不入 run 队列、
-  不打上游、不扣额度；
-* 开着（``department`` 默认全开）→ 行为与改造前逐条一致；只关一个不误伤另一个；
-* ``admin`` 在策略层恒真（全部开关关掉也不影响管理员）。
+* 会话只剩 agent 语义，能力开关固定取 ``ai.agent``（``ai.chat`` 只服务 ``/v1``）；
+* 关掉 → 403 且**零副作用**：不建会话、不写 ``AI_CALL_LOGS``、不入 run 队列；
+* 开着（``department`` 默认开）→ 行为与改造前逐条一致；
+* ``admin`` 在策略层恒真（开关关掉也不影响管理员）；
+* 存量 ``chat`` 会话仍可读取/删除，但不能建新的、也不能跑 run（409）。
 
-两个 router 的错误体都是平台自有信封（``{"error": {"code", "message"}}``，不是
-``detail``），所以这里断言 ``error.code == "AI_FORBIDDEN"`` 与开关层文案。
+错误体是平台自有信封（``{"error": {"code", "message"}}``，不是 ``detail``），所以
+这里断言 ``error.code == "AI_FORBIDDEN"`` 与开关层文案。
 
-离线：会话 / 消息 / run / 审计仓储全部内存桩，上游与额度也打桩，不连 ADB、不出网。
+离线：会话 / 消息 / run / 审计仓储全部内存桩，不连 ADB、不出网。
 """
 
 from __future__ import annotations
@@ -30,10 +29,9 @@ from fastapi.testclient import TestClient
 
 import settings  # noqa: F401  (导入顺序与其它 AI 用例一致)
 from db import backends
-from routers import ai_chat_conversations_router as chat_router
 from routers import ai_conversations_router as conv_router
 from services.agent import run_queue
-from services.ai import credentials, providers, quota, rate_limit, routing, safety_guard
+from services.ai import credentials, rate_limit, routing
 from services.roles import policy
 from util.object_id import get_current_user
 
@@ -104,9 +102,22 @@ class FakeConversationsRepo:
         self.rows[oid] = row
         return row
 
-    async def create(self, *, oid, owner_oid, mode, title=None, model=None) -> dict:
-        self.creates.append({"oid": oid, "mode": mode, "title": title, "model": model})
-        return dict(self.seed(oid, owner_oid=owner_oid, mode=mode, title=title, model=model))
+    async def create(self, *, oid, owner_oid, mode, title=None, model=None,
+                     thinking=None, scene=None) -> dict:
+        self.creates.append(
+            {"oid": oid, "mode": mode, "title": title, "model": model,
+             "thinking": thinking, "scene": scene}
+        )
+        return dict(
+            self.seed(
+                oid,
+                owner_oid=owner_oid,
+                mode=mode,
+                title=title,
+                model=model,
+                thinking=thinking,
+            )
+        )
 
     async def get(self, oid: str, owner_oid: str) -> dict | None:
         row = self.rows.get(str(oid))
@@ -120,8 +131,8 @@ class FakeConversationsRepo:
             items = [row for row in items if row["status"] == status]
         return [dict(row) for row in items[:limit]], None
 
-    async def update(self, oid, owner_oid, *, title=None, status=None, model=None,
-                     clear_model=False) -> bool:
+    async def update(self, oid, owner_oid, *, title=None, status=None,
+                     thinking=None, clear_thinking=False) -> bool:
         self.updates.append({"oid": oid, "title": title})
         row = self.rows.get(str(oid))
         if row is None or str(row["owner_oid"]) != str(owner_oid):
@@ -200,7 +211,6 @@ def _deny_all(monkeypatch) -> None:
 def _client(user: dict) -> TestClient:
     app = FastAPI()
     app.include_router(conv_router.router, prefix="/api/ai")
-    app.include_router(chat_router.router, prefix="/api/ai")
     app.dependency_overrides[get_current_user] = lambda: user
     return TestClient(app)
 
@@ -257,55 +267,18 @@ def env(monkeypatch) -> SimpleNamespace:
     )
 
 
-@pytest.fixture
-def upstream(monkeypatch):
-    """chat 面的最小环境：目录 / 上游 / 额度 / 安全闸全部内存桩。"""
-    state = {"streams": []}
-
-    async def _catalog(_user_oid: str) -> list[dict]:
-        return [_entry()]
-
-    async def _resolve(_entry_row):
-        return SECRET
-
-    async def _allowed(*_args, **_kwargs):
-        return safety_guard.ALLOWED
-
-    async def _stream(payload, entry, api_key):
-        state["streams"].append(payload)
-        yield b'data: {"choices":[{"delta":{"content":"hi"},"finish_reason":null}]}\n\n'
-        yield (
-            b'data: {"choices":[{"delta":{},"finish_reason":"stop"}],'
-            b'"usage":{"prompt_tokens":3,"completion_tokens":1,"total_tokens":4}}\n\n'
-        )
-        yield b"data: [DONE]\n\n"
-
-    monkeypatch.setattr(credentials, "catalog", _catalog)
-    monkeypatch.setattr(credentials, "resolve_api_key", _resolve)
-    monkeypatch.setattr(safety_guard, "screen", _allowed)
-    monkeypatch.setattr(providers, "chat_completion_stream", _stream)
-    monkeypatch.setattr(quota, "peek", Recorder((True, 0, 100)))
-    monkeypatch.setattr(quota, "consume", Recorder((True, 1, 100)))
-    return state
-
-
 # ---------------------------------------------------------------------------
 # 建会话：按 payload.mode 判
 # ---------------------------------------------------------------------------
 
 
-def test_chat_create_is_denied_without_touching_the_repository(env, monkeypatch):
-    _deny(monkeypatch, "department", "ai.chat")
-
+def test_chat_mode_is_no_longer_creatable(env) -> None:
+    """``chat`` 已下线：建它回 409，且不落任何一行。"""
     response = _client(DEPT).post("/api/ai/conversations", json={"mode": "chat"})
 
-    assert response.status_code == 403, response.text
-    body = response.json()
-    assert body["error"]["code"] == "AI_FORBIDDEN"
-    assert body["error"]["message"] == FEATURE_DENIED
-    # 零副作用：不建会话、不写 AI_CALL_LOGS。
+    assert response.status_code == 409, response.text
+    assert response.json()["error"]["code"] == "AI_CONVERSATION_MODE_MISMATCH"
     assert env.conv.creates == []
-    assert env.conv.rows == {}
     assert env.audit.rows == []
 
 
@@ -320,27 +293,13 @@ def test_agent_create_is_denied_when_ai_agent_is_off(env, monkeypatch):
     assert env.audit.rows == []
 
 
-def test_each_mode_is_gated_on_its_own_switch(env, monkeypatch):
-    _deny(monkeypatch, "department", "ai.agent")
+def test_create_defaults_to_agent(env, monkeypatch):
+    """不传 ``mode`` 就是 agent：前端不必再显式声明。"""
+    response = _client(DEPT).post("/api/ai/conversations", json={})
 
-    chat = _client(DEPT).post("/api/ai/conversations", json={"mode": "chat"})
-
-    assert chat.status_code == 201, chat.text
-    assert [row["mode"] for row in env.conv.creates] == ["chat"]
-
-    _deny(monkeypatch, "department", "ai.agent")
-    monkeypatch.setitem(policy._features, ("department", "ai.chat"), False)
-
-    agent = _client(DEPT).post("/api/ai/conversations", json={"mode": "agent"})
-
-    # ai.chat 关、ai.agent 关 → agent 也不通；把 ai.agent 打开只放行 agent。
-    assert agent.status_code == 403, agent.text
-    monkeypatch.setitem(policy._features, ("department", "ai.agent"), True)
-
-    reopened = _client(DEPT).post("/api/ai/conversations", json={"mode": "agent"})
-
-    assert reopened.status_code == 201, reopened.text
-    assert [row["mode"] for row in env.conv.creates] == ["chat", "agent"]
+    assert response.status_code == 201, response.text
+    assert response.json()["data"]["mode"] == "agent"
+    assert [row["mode"] for row in env.conv.creates] == ["agent"]
 
 
 def test_unknown_mode_is_still_a_400(env, monkeypatch):
@@ -359,33 +318,29 @@ def test_unknown_mode_is_still_a_400(env, monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_list_hides_only_the_disabled_mode(env, monkeypatch):
+def test_list_is_not_filtered_by_mode(env, monkeypatch) -> None:
+    """存量 chat 会话照常出现在列表里：数据还得让人收拾。"""
     env.conv.seed(CHAT_OID, mode="chat")
     env.conv.seed(AGENT_OID, mode="agent")
 
     both = _client(DEPT).get("/api/ai/conversations")
 
     assert both.status_code == 200, both.text
-    assert {row["mode"] for row in both.json()["data"]["conversations"]} == {"chat", "agent"}
-
-    _deny(monkeypatch, "department", "ai.chat")
-
-    filtered = _client(DEPT).get("/api/ai/conversations")
-
-    assert filtered.status_code == 200, filtered.text
-    body = filtered.json()
-    assert [row["oid"] for row in body["data"]["conversations"]] == [AGENT_OID]
-    # metadata.size 跟着过滤后的列表走：前端读它当「本页条数」。
-    assert body["metadata"]["size"] == 1
+    assert {row["mode"] for row in both.json()["data"]["conversations"]} == {
+        "chat",
+        "agent",
+    }
+    assert both.json()["metadata"]["size"] == 2
     assert env.audit.rows == []
 
 
-def test_get_and_messages_of_a_chat_conversation_are_denied(env, monkeypatch):
+def test_legacy_chat_conversation_is_gated_on_ai_agent(env, monkeypatch) -> None:
+    """读取/消息统一按 ``ai.agent`` 判：关掉之后连历史都读不出来。"""
     env.conv.seed(CHAT_OID, mode="chat")
     env.msgs.rows.append(
         {"conversation_oid": CHAT_OID, "seq": 1, "role": "user", "content": "机密"}
     )
-    _deny(monkeypatch, "department", "ai.chat")
+    _deny(monkeypatch, "department", "ai.agent")
 
     detail = _client(DEPT).get(f"/api/ai/conversations/{CHAT_OID}")
     messages = _client(DEPT).get(f"/api/ai/conversations/{CHAT_OID}/messages")
@@ -406,11 +361,6 @@ def test_agent_conversation_detail_survives_chat_switch(env, monkeypatch):
 
     assert response.status_code == 200, response.text
     assert response.json()["data"]["mode"] == "agent"
-
-
-# ---------------------------------------------------------------------------
-# run：按会话 mode 判（提交）/ 静态按 ai.agent 判（在飞 run 三个端点）
-# ---------------------------------------------------------------------------
 
 
 def test_agent_run_submit_is_denied_without_queueing_anything(env, monkeypatch):
@@ -472,75 +422,32 @@ def test_run_endpoints_still_work_when_only_chat_is_off(env, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# 同步 SSE（chat 面）：开关必须先于上游、留存、审核、扣费
-# ---------------------------------------------------------------------------
-
-
-def test_chat_sse_is_denied_before_the_upstream_call(env, upstream, monkeypatch):
-    env.conv.seed(CHAT_OID, mode="chat")
-    _deny(monkeypatch, "department", "ai.chat")
-
-    response = _client(DEPT).post(
-        f"/api/ai/conversations/{CHAT_OID}/chat", json={"content": "你好"}
-    )
-
-    assert response.status_code == 403, response.text
-    body = response.json()
-    assert body["error"]["code"] == "AI_FORBIDDEN"
-    assert body["error"]["message"] == FEATURE_DENIED
-    # 零副作用：不上游、不落消息、不写审计。
-    assert upstream["streams"] == []
-    assert env.msgs.batches == []
-    assert env.msgs.rows == []
-    assert env.audit.rows == []
-
-
-def test_chat_sse_still_works_when_only_agent_is_off(env, upstream, monkeypatch):
-    env.conv.seed(CHAT_OID, mode="chat")
-    _deny(monkeypatch, "department", "ai.agent")
-
-    response = _client(DEPT).post(
-        f"/api/ai/conversations/{CHAT_OID}/chat", json={"content": "你好"}
-    )
-
-    assert response.status_code == 200, response.text
-    assert "hi" in response.text
-    assert len(upstream["streams"]) == 1
-    # 用户消息 + assistant 各一条（改造前的写入行为不变）。
-    assert [row["role"] for row in env.msgs.rows] == ["user", "assistant"]
-
-
-# ---------------------------------------------------------------------------
 # admin 短路：全部开关关掉也照旧
 # ---------------------------------------------------------------------------
 
 
-def test_admin_keeps_every_entry_when_all_switches_are_off(env, upstream, monkeypatch):
+def test_admin_keeps_every_entry_when_all_switches_are_off(env, monkeypatch):
     _deny_all(monkeypatch)
     env.conv.seed(AGENT_OID, owner_oid=ADMIN_OID, mode="agent")
     client = _client(ADMIN)
 
-    chat = client.post("/api/ai/conversations", json={"mode": "chat"})
     agent = client.post("/api/ai/conversations", json={"mode": "agent"})
     runs = client.post(f"/api/ai/conversations/{AGENT_OID}/runs", json={"content": "跑"})
     listed = client.get("/api/ai/runs?active=1")
 
-    assert chat.status_code == 201, chat.text
     assert agent.status_code == 201, agent.text
     assert runs.status_code == 202, runs.text
     assert listed.status_code == 200, listed.text
     assert len(env.submit.calls) == 1
 
 
-def test_department_defaults_are_the_pre_change_behaviour(env):
-    """``department`` 默认两个开关都开：这条路必须与改造前完全一致。"""
+def test_department_defaults_keep_ai_agent_on(env):
+    """``department`` 默认开着 ``ai.agent``：这条路必须与改造前一致。"""
     department = policy.DEFAULTS["department"]["features"]
-    assert department["ai.chat"] is True
     assert department["ai.agent"] is True
 
     client = _client(DEPT)
 
-    assert client.post("/api/ai/conversations", json={"mode": "chat"}).status_code == 201
     assert client.post("/api/ai/conversations", json={"mode": "agent"}).status_code == 201
     assert client.get("/api/ai/runs?active=1").status_code == 200
     assert env.audit.rows == []

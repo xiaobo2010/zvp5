@@ -35,7 +35,7 @@ from pydantic import BaseModel, Field
 from db import backends
 from db.repos.oracle.notifications import notification_content_hash
 from typings.log import inject_log
-from util.object_id import get_current_user
+from util.object_id import get_current_user, require_password_verification
 from util.permission.features import has_feature
 from util.user import get_user_display_name
 from utils import validate_object_id
@@ -49,12 +49,20 @@ _CONTENT_MAX = 4000
 class NotificationCreateRequest(BaseModel):
     title: str = Field(min_length=1, max_length=_TITLE_MAX)
     content: str = Field(min_length=1, max_length=_CONTENT_MAX)
+    verification_token: Optional[str] = None
 
 
 class NotificationUpdateRequest(BaseModel):
     title: Optional[str] = Field(default=None, min_length=1, max_length=_TITLE_MAX)
     content: Optional[str] = Field(default=None, min_length=1, max_length=_CONTENT_MAX)
     active: Optional[bool] = None
+    verification_token: Optional[str] = None
+
+
+class NotificationDeleteRequest(BaseModel):
+    """删除的复核令牌；``DELETE`` 也走 body，与附件/用户端点一致。"""
+
+    verification_token: Optional[str] = None
 
 
 def _require_admin(user: dict, feature: str | None = None) -> None:
@@ -164,6 +172,7 @@ async def create_notification(
     log=Depends(inject_log),
 ):
     _require_admin(user, "notify.publish")
+    await require_password_verification(payload.verification_token, user)
 
     title = _clean_text(payload.title, "标题", _TITLE_MAX)
     content = _clean_text(payload.content, "内容", _CONTENT_MAX)
@@ -201,6 +210,7 @@ async def update_notification(
     log=Depends(inject_log),
 ):
     _require_admin(user, "notify.publish")
+    await require_password_verification(payload.verification_token, user)
     validate_object_id(oid)
 
     title = (
@@ -246,10 +256,14 @@ async def update_notification(
 @router.delete("/{oid}", status_code=204)
 async def delete_notification(
     oid: str,
+    payload: NotificationDeleteRequest | None = None,
     user=Depends(get_current_user),
     log=Depends(inject_log),
 ):
     _require_admin(user, "notify.publish")
+    await require_password_verification(
+        payload.verification_token if payload is not None else None, user
+    )
     validate_object_id(oid)
 
     actor_name = await get_user_display_name(user["id"])
@@ -298,6 +312,7 @@ async def rollback_notification(
 ):
     """Restore an earlier revision; a deleted notice is revived under its oid."""
     _require_admin(user, "notify.publish")
+    await require_password_verification(payload.get("verification_token"), user)
     validate_object_id(oid)
 
     target = payload.get("version")

@@ -15,8 +15,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+import os
 import re
 import time
 from datetime import datetime, timedelta
@@ -36,7 +38,7 @@ from pydantic import BaseModel, Field
 
 from db import backends
 from db.ids import is_valid_oid
-from services import risk_monitor, violation_guard
+from services import file_ops, risk_monitor, violation_guard
 from services.ai import api_keys, audit, credentials, quota, rate_limit, routing
 from services.ai import config as ai_config
 from services.ai import ocr as ai_ocr
@@ -60,6 +62,7 @@ from util.object_id import (
     validate_object_id,
 )
 from util.permission.features import ensure_feature
+from util.read_throttle import read_budget
 from util.user import get_user_display_name, get_user_display_names
 
 router = APIRouter()
@@ -99,6 +102,9 @@ STREAM_ERROR_MESSAGES = {
 STREAM_ERROR_FALLBACK = "AI_UPSTREAM_ERROR"
 STREAM_DONE_FRAME = b"data: [DONE]\n\n"
 
+# 流式回答留存的上限：超过它只丢尾部（正文早已发给客户端，留存只是审计）。
+STREAM_CAPTURE_MAX_BYTES = 64 * 1024
+
 
 def _stream_error_frame(code: str, message: str) -> bytes:
     """一帧 ``data: {"error": {...}}``：流内报错的唯一通道（形状对齐 OpenAI 面）。"""
@@ -113,6 +119,17 @@ def _stream_error_frame(code: str, message: str) -> bytes:
 
 class OcrRequest(BaseModel):
     attachment_oid: str
+    provider: str | None = None
+
+
+class FileOcrRequest(BaseModel):
+    """文件路径 OCR 的入参（预览里的图片没有附件 oid）。
+
+    ``path`` 由 ``services.file_ops`` 解析（绝对路径 + 根目录 jail + 凭据名拦截），
+    这里不再重复路径规则：两处各写一套只会漂移。
+    """
+
+    path: str = Field(min_length=1, max_length=4096)
     provider: str | None = None
 
 
@@ -139,6 +156,7 @@ class KeyCreateRequest(BaseModel):
     # ISO 8601 字符串；不传 = 永不过期。解析与「必须晚于现在」的口径全在
     # ``credentials._clean_expires_at``（错误码 AI_KEY_BAD_EXPIRY）。
     expires_at: str | None = None
+    verification_token: str | None = None
 
 
 class KeyUpdateRequest(BaseModel):
@@ -157,6 +175,13 @@ class KeyUpdateRequest(BaseModel):
     headers: dict[str, str] | None = None
     api_path: str | None = None
     expires_at: str | None = None
+    verification_token: str | None = None
+
+
+class KeyDeleteRequest(BaseModel):
+    """删除凭据的复核令牌；``DELETE`` 也走 body，与附件/用户端点一致。"""
+
+    verification_token: str | None = None
 
 
 class OcrEngineCreateRequest(BaseModel):
@@ -607,6 +632,94 @@ async def _enqueue_ocr(
     return {"status": "ok", "code": 202, "data": data}
 
 
+#: 文件 OCR 认的扩展名 → MIME。与 ``services.ai.ocr.ALLOWED_MIME`` 一一对应：
+#: 扩展名是「用户看得见的类型」，MIME 是引擎要的口径，两者都在这里收敛。
+OCR_FILE_MIME_TYPES: dict[str, str] = {
+    "jpg": "image/jpeg",
+    "jpeg": "image/jpeg",
+    "png": "image/png",
+    "webp": "image/webp",
+}
+
+
+def _read_ocr_image(path: str) -> tuple[bytes, str]:
+    """路径 → ``(字节, mime)``：解析、类型、体积三道闸，全部复用既有口径。
+
+    同步 IO：调用方用 ``asyncio.to_thread`` 包一层（与系统文件端点同一条纪律）。
+    ``FileOpError`` 原样抛出，由端点的错误翻译统一成 ``detail=<错误码>``——jail
+    越界在这里就是 403 ``FILES_ROOT_FORBIDDEN``，不会走到读字节。
+    """
+    resolved = file_ops.resolve_path(path)
+    extension = os.path.splitext(resolved)[1].lower().lstrip(".")
+    mime = OCR_FILE_MIME_TYPES.get(extension)
+    if mime is None:
+        raise HTTPException(status_code=400, detail="AI_UNSUPPORTED_MEDIA")
+
+    handle, size, _name = file_ops.open_download(resolved)
+    try:
+        if size > ai_config.max_ocr_image_bytes():
+            raise HTTPException(status_code=400, detail="AI_OCR_IMAGE_TOO_LARGE")
+        return handle.read(), mime
+    finally:
+        handle.close()
+
+
+@router.post("/ocr/file")
+async def request_file_ocr(
+    payload: FileOcrRequest,
+    user=Depends(get_current_user),
+    log=Depends(inject_log),
+):
+    """对站点内的图片文件做一次同步 OCR，``data`` 是 ``{"text": ...}``。
+
+    只读路径 + admin：这个入口服务于「文件预览里点一下识别」，没有附件 oid、也不
+    产生附件配额。计费走与附件入口完全相同的一条路径（频控 + 用户额度 + 站点额度
+    + 每次尝试的审计），不是第二条免费通道。
+    """
+    if "admin" not in (user.get("per") or []):
+        await _reject_http(
+            user_oid=user["id"],
+            model=None,
+            request_id=uuid4().hex,
+            status_code=403,
+            code="AI_FORBIDDEN",
+            purpose=SCENE_OCR,
+            capability="ocr",
+            endpoint=audit.ENDPOINT_OCR,
+            roles_snapshot=audit.roles_snapshot(user.get("per")),
+        )
+        raise HTTPException(status_code=403, detail="AI_FORBIDDEN")
+    ensure_feature(user, "ai.ocr")
+
+    try:
+        image, mime = await asyncio.to_thread(_read_ocr_image, payload.path)
+    except file_ops.FileOpError as exc:
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail=exc.code or "AI_OCR_FILE_UNREADABLE",
+        ) from None
+
+    try:
+        result = await ai_ocr.recognize_bytes(
+            user, image, mime=mime, provider=payload.provider
+        )
+    except RouteError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.code) from None
+
+    log.with_text(
+        f"AI OCR 文件识别 {payload.path}（引擎 {result.get('engine') or '-'}，"
+        f"{len(image)} 字节）",
+        type="ai_ocr_enqueue",
+    )
+    await log.insert_log()
+
+    return {
+        "status": "ok",
+        "code": 200,
+        "data": {"text": result.get("text") or ""},
+    }
+
+
 # ---------------------------------------------------------------------------
 # 凭据管理（admin）
 # ---------------------------------------------------------------------------
@@ -630,6 +743,9 @@ async def create_key(
     log=Depends(inject_log),
 ):
     _require_admin(user)
+    await require_password_verification(
+        payload.verification_token, user, detail="AI_PASSWORD_VERIFICATION_REQUIRED"
+    )
     try:
         view = await credentials.create_entry(
             user_oid=user["id"],
@@ -662,11 +778,16 @@ async def update_key(
 ):
     _require_admin(user)
     target = validate_object_id(oid)
+    await require_password_verification(
+        payload.verification_token, user, detail="AI_PASSWORD_VERIFICATION_REQUIRED"
+    )
     try:
         view = await credentials.update_entry(
             oid=target,
             actor=user,
-            fields=payload.model_dump(exclude_unset=True),
+            fields=payload.model_dump(
+                exclude_unset=True, exclude={"verification_token"}
+            ),
         )
     except CredentialError as exc:
         raise _credential_error(exc) from None
@@ -681,11 +802,17 @@ async def update_key(
 @router.delete("/keys/{oid}", status_code=204)
 async def delete_key(
     oid: str,
+    payload: KeyDeleteRequest | None = None,
     user=Depends(get_current_user),
     log=Depends(inject_log),
 ):
     _require_admin(user)
     target = validate_object_id(oid)
+    await require_password_verification(
+        payload.verification_token if payload is not None else None,
+        user,
+        detail="AI_PASSWORD_VERIFICATION_REQUIRED",
+    )
     try:
         await credentials.delete_entry(oid=target, actor=user)
     except CredentialError as exc:
@@ -743,6 +870,7 @@ async def list_call_logs(
     time_start: int | None = Query(None, description="created_at >= (epoch seconds)"),
     time_end: int | None = Query(None, description="created_at <= (epoch seconds)"),
     user=Depends(get_current_user),
+    _budget=Depends(read_budget),
 ):
     """AI 调用流水（新调用在前），仅 admin。
 
@@ -870,6 +998,7 @@ async def list_prompt_audit(
         None, description="Substring match on the prompt body (literal, case-sensitive)"
     ),
     user=Depends(get_current_user),
+    _budget=Depends(read_budget),
 ):
     """受控留存的 prompt **元数据**列表（新记录在前），仅 admin。
 
@@ -1294,12 +1423,21 @@ async def list_models(user=Depends(get_ai_client)):
         return denied
     entries = await credentials.catalog(user["id"])
     owners: dict[str, str] = {}
-    for entry, _model, qualified in credentials.catalog_models(entries):
+    contexts: dict[str, int | None] = {}
+    for entry, model, qualified in credentials.catalog_models(entries):
         owners.setdefault(qualified, str(entry.get("name") or ""))
+        # 上下文窗口来自凭据里的模型级配置（R4）；没配就是 NULL——「不知道」
+        # 不能用一个猜出来的数字顶替。
+        contexts.setdefault(qualified, (entry.get("model_contexts") or {}).get(model))
     return {
         "object": "list",
         "data": [
-            {"id": qualified, "object": "model", "owned_by": owner}
+            {
+                "id": qualified,
+                "object": "model",
+                "owned_by": owner,
+                "context": contexts.get(qualified),
+            }
             for qualified, owner in owners.items()
         ],
     }
@@ -1455,12 +1593,16 @@ async def _screen_chat_request(
     request_id: str,
     purpose: str | None,
     scene_roles: str | None,
+    audit_oid: str | None = None,
 ) -> JSONResponse | None:
     """department 的 LLM 安全认证：放行返回 ``None``，拒绝返回 OpenAI 错误体。
 
     位置固定在「角色/开关门禁之后、候选选择与频控/额度之前」：被拒请求不能花掉
     上游调用，也不该占用用户或 API key 的分钟窗口。非 department（含 admin）连
     ``safety_guard.screen`` 都不会调，零额外开销。
+
+    对外只有一个错误码 ``AI_SAFETY_REJECTED`` 与一句固定文案；判定成立才写违规
+    证据（记违规+警告+首档封号），判定跑不起来只拒绝回答。
 
     ``zvk_`` 平台 key 与 JWT 走同一套判定：``get_ai_client`` 已经把 key 换成
     与 ``get_current_user`` 同形的 user dict（``per`` = owner 的原始角色），所以
@@ -1478,18 +1620,24 @@ async def _screen_chat_request(
     if verdict.allowed:
         return None
 
-    code = "AI_SAFETY_WARNED"
-    try:
-        outcome = await violation_guard.record_agent_jailbreak(
-            user,
-            xuehai_id=xuehai_id_from(request),
-            rule=str(verdict.category or ""),
-            detail=text,
-        )
-        if outcome.get("banned"):
-            code = "AI_SAFETY_BANNED"
-    except Exception:  # noqa: BLE001 - 证据入库失败不该把拒绝变成 500
-        _logger.exception("AI 安全认证违规入库失败（本次仍然拒绝）")
+    code = safety_guard.REJECTED_CODE
+    warned = False
+    if not verdict.unavailable:
+        try:
+            outcome = await violation_guard.record_agent_jailbreak(
+                user,
+                xuehai_id=xuehai_id_from(request),
+                rule=str(verdict.category or ""),
+                detail=text,
+            )
+            warned = bool((outcome or {}).get("warned"))
+        except Exception:  # noqa: BLE001 - 证据入库失败不该把拒绝变成 500
+            _logger.exception("AI 安全认证违规入库失败（本次仍然拒绝）")
+    # 合规审计：被拒也要在留存行上标出来（refused / warned），否则「谁被拒过」
+    # 只能靠 AI_CALL_LOGS 的错误码去对时间。
+    await prompt_audit.record_outcome(
+        audit_oid, refused=True, warned=True if warned else None
+    )
 
     await _reject_http(
         user_oid=user_oid,
@@ -1532,7 +1680,7 @@ async def chat_completions(
     # 多少、怎么脱敏都由 services.ai.prompt_audit 决定，且它是旁路——任何失败
     # 都不会改变本请求的返回。放在门禁之前是有意的：被拒的请求同样可能带着
     # 需要复核的正文（「这个人反复尝试问什么」本身就是治理信号）。
-    await prompt_audit.capture(
+    audit_oid = await prompt_audit.capture(
         user=user,
         purpose=purpose,
         messages=payload.get("messages"),
@@ -1583,6 +1731,7 @@ async def chat_completions(
         request_id=request_id,
         purpose=purpose,
         scene_roles=scene_roles,
+        audit_oid=audit_oid,
     )
     if safety_error is not None:
         return safety_error
@@ -1739,6 +1888,7 @@ async def chat_completions(
             request_id,
             user.get("per"),
             purpose=purpose,
+            audit_oid=audit_oid,
         )
 
     return await _blocking_completion(
@@ -1749,7 +1899,49 @@ async def chat_completions(
         request_id,
         user.get("per"),
         purpose=purpose,
+        audit_oid=audit_oid,
     )
+
+
+def _answer_text(result: object) -> str | None:
+    """上游响应里的第一条 assistant 正文（只为 ``AI_PROMPT_AUDIT.ANSWER_TEXT``）。"""
+    if not isinstance(result, dict):
+        return None
+    choices = result.get("choices")
+    if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
+        return None
+    message = choices[0].get("message")
+    content = message.get("content") if isinstance(message, dict) else None
+    return content if isinstance(content, str) and content else None
+
+
+def _stream_answer_text(raw: bytes) -> str | None:
+    """SSE 帧里的 content 增量拼成完整回答（只为留存，不参与响应）。
+
+    解析失败一律跳过该帧：留存是旁路，不能因为上游吐了一帧坏 JSON 就把一次已经
+    成功返回的响应变成 500。
+    """
+    parts: list[str] = []
+    for line in raw.decode("utf-8", "replace").splitlines():
+        line = line.strip()
+        if not line.startswith("data:"):
+            continue
+        payload = line[5:].strip()
+        if not payload or payload == "[DONE]":
+            continue
+        try:
+            frame = json.loads(payload)
+        except ValueError:
+            continue
+        choices = frame.get("choices") if isinstance(frame, dict) else None
+        if not isinstance(choices, list) or not choices:
+            continue
+        first = choices[0] if isinstance(choices[0], dict) else {}
+        delta = first.get("delta") if isinstance(first.get("delta"), dict) else {}
+        content = delta.get("content")
+        if isinstance(content, str) and content:
+            parts.append(content)
+    return "".join(parts) or None
 
 
 async def _blocking_completion(
@@ -1760,6 +1952,7 @@ async def _blocking_completion(
     request_id: str,
     roles: list[str] | None = None,
     purpose: str | None = None,
+    audit_oid: str | None = None,
 ) -> JSONResponse:
     started = time.monotonic()
     last_error: RouteError | None = None
@@ -1856,6 +2049,9 @@ async def _blocking_completion(
         )
         # 请求完成处评估突发规则（流水已落库，计数才包含这一次）。
         await _evaluate_burst(user_oid)
+        await prompt_audit.record_outcome(
+            audit_oid, answer_text=_answer_text(result)
+        )
         return JSONResponse(
             status_code=200,
             content=result,
@@ -1878,6 +2074,7 @@ async def _stream_completion(
     request_id: str,
     roles: list[str] | None = None,
     purpose: str | None = None,
+    audit_oid: str | None = None,
 ):
     name = str(entry.get("name") or "")
     key = str(entry.get("key") or "")
@@ -1933,6 +2130,9 @@ async def _stream_completion(
         "status": "success",
         "error_code": None,
         "first_token_ms": None,
+        # 回答正文只为一件事被留下来：``AI_PROMPT_AUDIT.ANSWER_TEXT``（合规审计）。
+        # 有上限：流式理论上可以吐很久，留存区分不出「长回答」与「上游失控」。
+        "answer": bytearray(),
     }
 
     async def generate():
@@ -1945,6 +2145,8 @@ async def _stream_completion(
                     state["first_token_ms"] = _elapsed_ms(started)
                 state["chars"] += len(chunk)
                 tracker.feed(chunk)
+                if audit_oid and len(state["answer"]) < STREAM_CAPTURE_MAX_BYTES:
+                    state["answer"].extend(chunk[: STREAM_CAPTURE_MAX_BYTES - len(state["answer"])])
                 yield chunk
         except Exception as exc:  # noqa: BLE001 - 已开始输出，只能收尾
             # 走到这里说明响应头（200 + text/event-stream）早就发出去了，状态码
@@ -2010,6 +2212,9 @@ async def _stream_completion(
                 await _charge(user_oid, units, roles)
             # 流式请求的「完成」就在生成器收尾：此时流水已落库，计数包含本次。
             await _evaluate_burst(user_oid)
+            await prompt_audit.record_outcome(
+                audit_oid, answer_text=_stream_answer_text(bytes(state["answer"]))
+            )
             await guard.__aexit__(None, None, None)
 
     return StreamingResponse(

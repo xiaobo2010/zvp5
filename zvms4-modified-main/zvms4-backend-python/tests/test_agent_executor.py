@@ -19,8 +19,11 @@ from services.agent import context as agent_context
 from services.agent.prompt import SYSTEM_PROMPT
 from services.agent.tool_impl import AgentError
 from services.ai import config as ai_config
-from services.ai import credentials, providers, rate_limit, routing
+from services.ai import credentials, prompt_audit, providers, rate_limit, routing
 from services.roles import policy
+
+# ``quiet_ai_governance`` 会把 capture 换成 no-op；验证留存形状的用例要拿回真的那个。
+REAL_CAPTURE = prompt_audit.capture
 
 USER = "000000000000000000000003"
 ADMIN = {"id": USER, "per": ["admin"]}
@@ -108,6 +111,37 @@ class FakeAgentEventsRepo:
         if status:
             rows = [row for row in rows if row.get("status") == status]
         return rows[:limit]
+
+
+class FakePromptAuditRepo:
+    """``AI_PROMPT_AUDIT``：只实现本车道用到的两个写口。"""
+
+    def __init__(self) -> None:
+        self.rows: list[dict] = []
+
+    async def insert(self, **fields) -> str:
+        oid = "b" * 24
+        row = {"oid": oid, "refused": 0, "warned": 0, "answer_text": None,
+               "tool_calls": None}
+        row.update(fields)
+        self.rows.append(row)
+        return oid
+
+    async def update_outcome(self, oid, *, answer_text=None, tool_calls=None,
+                             refused=None, warned=None) -> bool:
+        for row in self.rows:
+            if row["oid"] != str(oid):
+                continue
+            if answer_text is not None:
+                row["answer_text"] = answer_text
+            if tool_calls is not None:
+                row["tool_calls"] = tool_calls
+            if refused is not None:
+                row["refused"] = 1 if refused else 0
+            if warned is not None:
+                row["warned"] = 1 if warned else 0
+            return True
+        return False
 
 
 class FakeQuotaRepo:
@@ -221,6 +255,7 @@ def env(monkeypatch):
     events = FakeAgentEventsRepo()
     quota_repo = FakeQuotaRepo()
     activities = FakeActivitiesRepo()
+    prompt_audit = FakePromptAuditRepo()
 
     monkeypatch.setattr(backends, "get_ai_call_logs_repo", lambda session=None: audit)
     monkeypatch.setattr(
@@ -228,10 +263,13 @@ def env(monkeypatch):
     )
     monkeypatch.setattr(backends, "get_ai_quota_repo", lambda session=None: quota_repo)
     monkeypatch.setattr(
+        backends, "get_ai_prompt_audit_repo", lambda session=None: prompt_audit
+    )
+    monkeypatch.setattr(
         backends, "get_activities_repo", lambda session=None: activities
     )
     monkeypatch.setattr(backends, "get_members_repo", lambda session=None: FakeMembersRepo())
-    return audit, events, quota_repo, activities
+    return audit, events, quota_repo, activities, prompt_audit
 
 
 async def _run(**kwargs):
@@ -247,7 +285,7 @@ async def _run(**kwargs):
 
 @pytest.mark.asyncio
 async def test_plain_answer_ends_the_loop_after_one_round(monkeypatch, env) -> None:
-    audit, events, quota_repo, _activities = env
+    audit, events, quota_repo, _activities, _capture = env
     upstream = ScriptedUpstream([_completion("你好，我是助手。")])
     monkeypatch.setattr(providers, "chat_completion", upstream)
 
@@ -268,7 +306,7 @@ async def test_plain_answer_ends_the_loop_after_one_round(monkeypatch, env) -> N
 
 @pytest.mark.asyncio
 async def test_model_defaults_to_the_first_visible_one(monkeypatch, env) -> None:
-    _audit, _events, _quota, _activities = env
+    _audit, _events, _quota, _activities, _capture = env
     upstream = ScriptedUpstream([_completion("ok")])
     monkeypatch.setattr(providers, "chat_completion", upstream)
 
@@ -280,7 +318,7 @@ async def test_model_defaults_to_the_first_visible_one(monkeypatch, env) -> None
 
 @pytest.mark.asyncio
 async def test_unknown_model_is_a_404(monkeypatch, env) -> None:
-    _audit, _events, _quota, _activities = env
+    _audit, _events, _quota, _activities, _capture = env
     upstream = ScriptedUpstream([])
     monkeypatch.setattr(providers, "chat_completion", upstream)
 
@@ -328,7 +366,7 @@ async def test_client_system_message_is_refused(env) -> None:
 
 @pytest.mark.asyncio
 async def test_server_system_prompt_is_prepended(monkeypatch, env) -> None:
-    _audit, _events, _quota, _activities = env
+    _audit, _events, _quota, _activities, _capture = env
     upstream = ScriptedUpstream([_completion("ok")])
     monkeypatch.setattr(providers, "chat_completion", upstream)
 
@@ -344,7 +382,7 @@ async def test_server_system_prompt_is_prepended(monkeypatch, env) -> None:
 
 @pytest.mark.asyncio
 async def test_run_reports_stop_reason_rounds_and_usage(monkeypatch, env) -> None:
-    _audit, _events, _quota, _activities = env
+    _audit, _events, _quota, _activities, _capture = env
     upstream = ScriptedUpstream(
         [
             _completion("", tool_calls=[_tool_call("list_groups", {})], total_tokens=100),
@@ -372,7 +410,7 @@ async def test_run_reports_stop_reason_rounds_and_usage(monkeypatch, env) -> Non
 
 @pytest.mark.asyncio
 async def test_tool_result_is_appended_as_an_openai_tool_message(monkeypatch, env) -> None:
-    audit, events, _quota, activities = env
+    audit, events, _quota, activities, _capture = env
     upstream = ScriptedUpstream(
         [
             _completion(
@@ -409,7 +447,7 @@ async def test_tool_result_is_appended_as_an_openai_tool_message(monkeypatch, en
 
 @pytest.mark.asyncio
 async def test_unknown_tool_is_denied_and_the_run_continues(monkeypatch, env) -> None:
-    _audit, events, _quota, _activities = env
+    _audit, events, _quota, _activities, _capture = env
     upstream = ScriptedUpstream(
         [
             _completion("", tool_calls=[_tool_call("drop_all_tables", {})]),
@@ -430,7 +468,7 @@ async def test_unknown_tool_is_denied_and_the_run_continues(monkeypatch, env) ->
 
 @pytest.mark.asyncio
 async def test_permission_denied_tool_is_logged_as_denied(monkeypatch, env) -> None:
-    _audit, events, _quota, _activities = env
+    _audit, events, _quota, _activities, _capture = env
     # 这个用例测的是「学生的写工具被拒」，不是额度：V043 把学生的角色级 chat
     # 额度默认降到 0，不额外给一格额度的话请求会先撞 ``insufficient_quota``，
     # 连工具都走不到。额度只放宽到「够跑这一轮」，权限判定不动。
@@ -469,7 +507,7 @@ async def test_permission_denied_tool_is_logged_as_denied(monkeypatch, env) -> N
 
 @pytest.mark.asyncio
 async def test_max_iterations_truncates_the_loop(monkeypatch, env) -> None:
-    audit, events, _quota, _activities = env
+    audit, events, _quota, _activities, _capture = env
     monkeypatch.setattr(ai_config, "agent_max_iterations", lambda: 2)
     upstream = ScriptedUpstream(
         [
@@ -490,7 +528,7 @@ async def test_max_iterations_truncates_the_loop(monkeypatch, env) -> None:
 
 @pytest.mark.asyncio
 async def test_token_budget_stops_before_the_next_round(monkeypatch, env) -> None:
-    audit, _events, quota_repo, _activities = env
+    audit, _events, quota_repo, _activities, _capture = env
     monkeypatch.setattr(ai_config, "agent_token_budget", lambda: 50)
     upstream = ScriptedUpstream(
         [_completion("", tool_calls=[_tool_call("list_groups", {})], total_tokens=100)]
@@ -513,7 +551,7 @@ async def test_token_budget_stops_before_the_next_round(monkeypatch, env) -> Non
 
 @pytest.mark.asyncio
 async def test_each_round_writes_one_billed_audit_row(monkeypatch, env) -> None:
-    audit, _events, quota_repo, _activities = env
+    audit, _events, quota_repo, _activities, _capture = env
     upstream = ScriptedUpstream(
         [
             _completion("", tool_calls=[_tool_call("list_groups", {})]),
@@ -544,7 +582,7 @@ async def test_each_round_writes_one_billed_audit_row(monkeypatch, env) -> None:
 async def test_rate_limit_rejection_is_audited_and_surfaces_retry_after(
     monkeypatch, env
 ) -> None:
-    audit, _events, _quota, _activities = env
+    audit, _events, _quota, _activities, _capture = env
 
     def _boom(*_args, **_kwargs):
         raise rate_limit.RateLimitError(7, "too many requests, retry later")
@@ -566,7 +604,7 @@ async def test_rate_limit_rejection_is_audited_and_surfaces_retry_after(
 
 @pytest.mark.asyncio
 async def test_upstream_failure_is_audited_as_error(monkeypatch, env) -> None:
-    audit, _events, _quota, _activities = env
+    audit, _events, _quota, _activities, _capture = env
     from services.ai.routing import RouteError
 
     async def _fail(payload, entry, api_key):
@@ -593,7 +631,7 @@ async def test_token_budget_falls_back_to_prompt_plus_completion(
     monkeypatch, env
 ) -> None:
     """上游只报 ``prompt_tokens`` / ``completion_tokens`` 时预算闸仍然生效。"""
-    audit, _events, _quota, _activities = env
+    audit, _events, _quota, _activities, _capture = env
     monkeypatch.setattr(ai_config, "agent_token_budget", lambda: 50)
 
     response = _completion("", tool_calls=[_tool_call("list_groups", {})])
@@ -612,7 +650,7 @@ async def test_token_budget_falls_back_to_prompt_plus_completion(
 @pytest.mark.asyncio
 async def test_token_budget_falls_back_to_characters(monkeypatch, env) -> None:
     """完全没有 ``usage`` 时按字符 / 4 估算：预算闸永不为 0。"""
-    _audit, _events, _quota, _activities = env
+    _audit, _events, _quota, _activities, _capture = env
     monkeypatch.setattr(ai_config, "agent_token_budget", lambda: 1)
 
     response = _completion("x" * 400, tool_calls=[_tool_call("list_groups", {})])
@@ -630,7 +668,7 @@ async def test_token_budget_falls_back_to_characters(monkeypatch, env) -> None:
 @pytest.mark.asyncio
 async def test_budget_is_checked_before_tool_execution(monkeypatch, env) -> None:
     """超预算的那一轮**不执行**工具（不能既超预算又落业务副作用）。"""
-    _audit, events, _quota, activities = env
+    _audit, events, _quota, activities, _capture = env
     monkeypatch.setattr(ai_config, "agent_token_budget", lambda: 10)
     upstream = ScriptedUpstream(
         [
@@ -652,7 +690,7 @@ async def test_budget_is_checked_before_tool_execution(monkeypatch, env) -> None
 @pytest.mark.asyncio
 async def test_sixth_tool_call_in_one_round_is_not_executed(monkeypatch, env) -> None:
     """单轮上限 5：第 6 个起不执行，但仍要回 tool 消息并记 denied 事件。"""
-    _audit, events, _quota, activities = env
+    _audit, events, _quota, activities, _capture = env
     calls = [
         _tool_call("search_activities", {"query": "x"}, f"call_{index}")
         for index in range(6)
@@ -682,7 +720,7 @@ async def test_sixth_tool_call_in_one_round_is_not_executed(monkeypatch, env) ->
 async def test_proposal_creation_failure_is_recorded_as_failed_event(
     monkeypatch, env
 ) -> None:
-    _audit, events, _quota, _activities = env
+    _audit, events, _quota, _activities, _capture = env
 
     async def boom(**_kwargs):
         raise AgentError("AI_AGENT_PREVIEW_FAILED", "preview failed", 400)
@@ -722,7 +760,7 @@ async def test_run_timeout_keeps_partial_content_and_audits(
     monkeypatch, env
 ) -> None:
     """run 级超时：不丢已有 content，落一行 ``timeout`` 审计，不发新一轮。"""
-    audit, _events, _quota, _activities = env
+    audit, _events, _quota, _activities, _capture = env
     monkeypatch.setattr(executor, "run_timeout_seconds", lambda: 1)
 
     first = _completion("先查一下", tool_calls=[_tool_call("list_groups", {})])
@@ -766,7 +804,7 @@ async def test_run_timeout_setting_falls_back_to_the_default(monkeypatch) -> Non
 @pytest.mark.asyncio
 async def test_tool_guard_is_checked_on_every_read(monkeypatch, env) -> None:
     """``guard`` 现查库：读工具执行前也要过（失败即 denied，不执行 impl）。"""
-    _audit, events, _quota, _activities = env
+    _audit, events, _quota, _activities, _capture = env
     checked: list[str] = []
     executed: list[dict] = []
 
@@ -809,7 +847,7 @@ async def test_prompt_cache_key_is_forwarded_into_the_round_audit(
     monkeypatch, env
 ) -> None:
     """``prompt_cache.request_body`` 的返回值要进上游 body 与审计行。"""
-    audit, _events, _quota, _activities = env
+    audit, _events, _quota, _activities, _capture = env
     seen: dict = {}
 
     def fake_request_body(payload, entry):
@@ -832,7 +870,7 @@ async def test_prompt_cache_key_is_forwarded_into_the_round_audit(
 @pytest.mark.asyncio
 async def test_event_summaries_are_redacted(monkeypatch, env) -> None:
     """正文不落事件摘要：文件内容与密钥都只留下长度/占位符（契约 §0.7）。"""
-    _audit, events, _quota, _activities = env
+    _audit, events, _quota, _activities, _capture = env
     body = "机密内容" * 2000
 
     async def impl(_user, **_kwargs):
@@ -875,7 +913,7 @@ async def test_event_summaries_are_redacted(monkeypatch, env) -> None:
 @pytest.mark.asyncio
 async def test_usage_accumulates_the_cache_columns(monkeypatch, env) -> None:
     """缓存两列也按全轮累计（``None`` = 上游没报，不能被 0 顶替）。"""
-    _audit, _events, _quota, _activities = env
+    _audit, _events, _quota, _activities, _capture = env
     first = _completion("", tool_calls=[_tool_call("search_activities", {"query": "x"})])
     first["usage"]["prompt_tokens_details"] = {"cached_tokens": 64}
     second = _completion("好了")
@@ -921,7 +959,7 @@ def _context_settings(monkeypatch, *, limit: int = 1000, ratio: float = 0.75) ->
 @pytest.mark.asyncio
 async def test_on_round_reports_each_round_once_with_usage(monkeypatch, env) -> None:
     """每轮收尾一次回调：assistant / tools / usage / units 都是**本轮**口径。"""
-    _audit, _events, _quota, _activities = env
+    _audit, _events, _quota, _activities, _capture = env
     rounds: list[dict] = []
     upstream = ScriptedUpstream(
         [
@@ -966,7 +1004,7 @@ async def test_on_round_reports_each_round_once_with_usage(monkeypatch, env) -> 
 async def test_should_stop_at_round_entry_cancels_before_any_upstream_call(
     monkeypatch, env
 ) -> None:
-    _audit, _events, _quota, _activities = env
+    _audit, _events, _quota, _activities, _capture = env
     upstream = ScriptedUpstream([])
     monkeypatch.setattr(providers, "chat_completion", upstream)
 
@@ -977,10 +1015,45 @@ async def test_should_stop_at_round_entry_cancels_before_any_upstream_call(
     assert upstream.payloads == []
 
 
+def _probe_tool(
+    name: str = "fake_probe_read",
+    *,
+    prepare=None,
+) -> tuple[tools.ToolDef, dict]:
+    """一个可控的读工具 + 它的并发探针（记录峰值并发与调用顺序）。"""
+    state = {"active": 0, "peak": 0, "order": [], "delay": 0.05}
+
+    async def impl(_user, **kwargs):
+        state["active"] += 1
+        state["peak"] = max(state["peak"], state["active"])
+        state["order"].append(kwargs["path"])
+        await asyncio.sleep(state["delay"])
+        state["active"] -= 1
+        return {"path": kwargs["path"], "ok": True}
+
+    tool = tools.ToolDef(
+        name=name,
+        description="x",
+        kind=tools.READ,
+        params={
+            "type": "object",
+            "properties": {"path": {"type": "string", "description": "x"}},
+            "required": ["path"],
+        },
+        permission=tools._always,
+        impl=impl,
+        prepare=prepare,
+    )
+    return tool, state
+
+
 @pytest.mark.asyncio
-async def test_should_stop_before_each_tool_execution(monkeypatch, env) -> None:
-    """工具执行前逐个判：命中后不再执行后续工具，但已完成的轮/工具照常交付。"""
-    _audit, events, _quota, activities = env
+async def test_should_stop_before_each_tool_segment(monkeypatch, env) -> None:
+    """取消在**每段工具开工前**判：命中后不再执行后面的段，已完成的照常交付。
+
+    并发只改变同批只读工具的调度；「已经点取消之后还去跑下一段」仍然必须拦住。
+    """
+    _audit, events, _quota, activities, _capture = env
     checks = 0
     rounds: list[dict] = []
 
@@ -996,6 +1069,8 @@ async def test_should_stop_before_each_tool_execution(monkeypatch, env) -> None:
                 tool_calls=[
                     _tool_call("search_activities", {"query": "a"}, "call_1"),
                     _tool_call("search_activities", {"query": "b"}, "call_2"),
+                    # 白名单外 → 不可并发 → 单独一段（正是这一步要被取消拦住）。
+                    _tool_call("drop_all_tables", {}, "call_3"),
                 ],
             )
         ]
@@ -1004,16 +1079,89 @@ async def test_should_stop_before_each_tool_execution(monkeypatch, env) -> None:
 
     result = await _run(model=MODEL, should_stop=should_stop, on_round=rounds.append)
 
-    # 轮入口 1 次 + 工具 2 次：第 3 次命中，第二个工具没跑。
+    # 轮入口 1 次 + 只读批 1 次 + 串行段 1 次：第 3 次命中，第三个别跑了。
     assert checks == 3
     assert len(upstream.payloads) == 1
-    assert len(activities.calls) == 1
-    assert activities.calls[0]["search"] == "a"
-    assert [row["status"] for row in events.rows] == ["executed"]
+    # 同批的两个只读工具都跑了（批已发出，撤不回）。
+    assert [call["search"] for call in activities.calls] == ["a", "b"]
+    assert [row["status"] for row in events.rows] == ["executed", "executed"]
     assert result["stop_reason"] == "cancelled"
     assert result["rounds"] == 1
-    assert len(rounds) == 1
-    assert len(rounds[0]["tools"]) == 1
+    assert [item["tool_name"] for item in rounds[0]["tools"]] == [
+        "search_activities",
+        "search_activities",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_read_tools_in_one_round_run_concurrently_in_call_order(
+    monkeypatch, env
+) -> None:
+    """同轮多个只读工具并发执行，结果仍按模型给的调用顺序组装。"""
+    _audit, events, _quota, _activities, _capture = env
+    tool, state = _probe_tool()
+    monkeypatch.setitem(tools.TOOLS, tool.name, tool)
+    # 第一批会同时进入 impl：慢一点，确保「串行」确实会让 peak 停在 1。
+    upstream = ScriptedUpstream(
+        [
+            _completion(
+                "",
+                tool_calls=[
+                    _tool_call(tool.name, {"path": "/a"}, "call_1"),
+                    _tool_call(tool.name, {"path": "/b"}, "call_2"),
+                ],
+            ),
+            _completion("读完了"),
+        ]
+    )
+    monkeypatch.setattr(providers, "chat_completion", upstream)
+
+    result = await _run(model=MODEL, on_round=lambda _payload: None)
+
+    assert state["peak"] == 2
+    assert result["content"] == "读完了"
+    # 顺序按 tool_calls，不按完成顺序。
+    tool_messages = [
+        message
+        for message in upstream.payloads[1]["messages"]
+        if message["role"] == "tool"
+    ]
+    assert [message["tool_call_id"] for message in tool_messages] == ["call_1", "call_2"]
+    assert '"/a"' in tool_messages[0]["content"]
+    assert '"/b"' in tool_messages[1]["content"]
+    assert [row["status"] for row in events.rows] == ["executed", "executed"]
+    assert result["events"][0]["tool_name"] == tool.name
+
+
+@pytest.mark.asyncio
+async def test_tools_that_need_a_proposal_stay_serial(monkeypatch, env) -> None:
+    """带 ``prepare`` 的（提案流）工具不并发：提案顺序就是用户看到的顺序。"""
+
+    async def _prepare(_user, **kwargs):
+        return None
+
+    _audit, events, _quota, _activities, _capture = env
+    tool, state = _probe_tool(prepare=_prepare)
+    monkeypatch.setitem(tools.TOOLS, tool.name, tool)
+    upstream = ScriptedUpstream(
+        [
+            _completion(
+                "",
+                tool_calls=[
+                    _tool_call(tool.name, {"path": "/a"}, "call_1"),
+                    _tool_call(tool.name, {"path": "/b"}, "call_2"),
+                ],
+            ),
+            _completion("好了"),
+        ]
+    )
+    monkeypatch.setattr(providers, "chat_completion", upstream)
+
+    await _run(model=MODEL)
+
+    assert state["peak"] == 1
+    assert state["order"] == ["/a", "/b"]
+    assert [row["status"] for row in events.rows] == ["executed", "executed"]
 
 
 @pytest.mark.asyncio
@@ -1021,7 +1169,7 @@ async def test_compaction_runs_once_rebuilds_the_conversation_and_is_not_budgete
     monkeypatch, env
 ) -> None:
     """压缩成功后：在飞上下文换短、summary 回调一次、审计 purpose=compact、不计预算。"""
-    audit, _events, quota_repo, _activities = env
+    audit, _events, quota_repo, _activities, _capture = env
     _context_settings(monkeypatch)
     # 预算只允许「两轮真实调用」：若压缩的 999 token 计进来，第二轮就不会发。
     monkeypatch.setattr(ai_config, "agent_token_budget", lambda: 1000)
@@ -1085,7 +1233,7 @@ async def test_compaction_failure_degrades_to_hard_truncate_without_failing_the_
     monkeypatch, env
 ) -> None:
     """摘要调用两次都失败 → 硬截断兜底，run 继续跑完。"""
-    audit, _events, _quota, _activities = env
+    audit, _events, _quota, _activities, _capture = env
     _context_settings(monkeypatch)
     from services.ai.routing import RouteError
 
@@ -1178,7 +1326,7 @@ async def test_should_stop_may_be_a_coroutine(monkeypatch, env) -> None:
 
     ``bool(coroutine)`` 恒为真——不 await 就等于「每一轮都被取消」。
     """
-    _audit, _events, _quota, _activities = env
+    _audit, _events, _quota, _activities, _capture = env
     upstream = ScriptedUpstream([_completion("ok")])
     monkeypatch.setattr(providers, "chat_completion", upstream)
 
@@ -1195,7 +1343,7 @@ async def test_should_stop_may_be_a_coroutine(monkeypatch, env) -> None:
 @pytest.mark.asyncio
 async def test_compaction_is_skipped_when_messages_carry_no_seq(monkeypatch, env) -> None:
     """没有 ``seq`` 就没有「压到第几条」：不花摘要调用，也不静默丢历史。"""
-    _audit, _events, _quota, _activities = env
+    _audit, _events, _quota, _activities, _capture = env
     _context_settings(monkeypatch)
     seen: list[tuple[str, int]] = []
     upstream = ScriptedUpstream([_completion("ok", total_tokens=900)])
@@ -1237,7 +1385,7 @@ def _tool_history() -> list[dict]:
 @pytest.mark.asyncio
 async def test_tool_history_is_accepted_and_forwarded_verbatim(monkeypatch, env) -> None:
     """含工具历史的历史能进第二轮：tool_calls / tool_call_id 原样，seq 不上线。"""
-    _audit, _events, _quota, _activities = env
+    _audit, _events, _quota, _activities, _capture = env
     history = _tool_history()
     upstream = ScriptedUpstream([_completion("好了")])
     monkeypatch.setattr(providers, "chat_completion", upstream)
@@ -1354,7 +1502,7 @@ async def test_system_message_is_still_refused_after_a_tool_chain(
 @pytest.mark.asyncio
 async def test_plain_user_assistant_history_is_unchanged(monkeypatch, env) -> None:
     """旧调用（纯 user/assistant）行为不变：顺序、正文原样，seq 同样不上线。"""
-    _audit, _events, _quota, _activities = env
+    _audit, _events, _quota, _activities, _capture = env
     upstream = ScriptedUpstream([_completion("ok")])
     monkeypatch.setattr(providers, "chat_completion", upstream)
 
@@ -1374,3 +1522,119 @@ async def test_plain_user_assistant_history_is_unchanged(monkeypatch, env) -> No
         {"role": "assistant", "content": "第一答"},
         {"role": "user", "content": "第二问"},
     ]
+
+
+# ---------------------------------------------------------------------------
+# R3：思考强度按 provider 翻译
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_thinking_is_translated_to_reasoning_effort_for_openai_compat(
+    monkeypatch, env
+) -> None:
+    _audit, _events, _quota, _activities, _capture = env
+    upstream = ScriptedUpstream([_completion("ok")])
+    monkeypatch.setattr(providers, "chat_completion", upstream)
+
+    await _run(model=MODEL, thinking="high")
+
+    body = upstream.payloads[0]
+    assert body["reasoning_effort"] == "high"
+    # 智谱的字段不该出现在 openai_compat 系上（未知字段会被上游 400）。
+    assert "thinking" not in body
+
+
+@pytest.mark.asyncio
+async def test_thinking_is_translated_to_a_switch_for_zhipu(monkeypatch, env) -> None:
+    _audit, _events, _quota, _activities, _capture = env
+
+    async def catalog(_user_oid):
+        entry = _entry()
+        entry.update(
+            name="zhipu",
+            base_url="https://open.bigmodel.cn/api/paas/v4",
+            models=["glm-4.6"],
+        )
+        return [entry]
+
+    async def allowed(_user_oid):
+        return {"zhipu/glm-4.6": "zhipu"}
+
+    monkeypatch.setattr(credentials, "catalog", catalog)
+    monkeypatch.setattr(ai_config, "allowed_models_for", allowed)
+    upstream = ScriptedUpstream([_completion("ok"), _completion("ok")])
+    monkeypatch.setattr(providers, "chat_completion", upstream)
+
+    await _run(model="zhipu/glm-4.6", thinking="low")
+    await _run(model="zhipu/glm-4.6", thinking="high")
+
+    # 智谱只有开关语义：low → 关，medium/high → 开。
+    assert upstream.payloads[0]["thinking"] == {"type": "disabled"}
+    assert upstream.payloads[1]["thinking"] == {"type": "enabled"}
+    assert "reasoning_effort" not in upstream.payloads[0]
+
+
+@pytest.mark.asyncio
+async def test_no_thinking_means_no_field_at_all(monkeypatch, env) -> None:
+    """NULL = 上游默认：不给模型塞一个它可能不认识的字段。"""
+    _audit, _events, _quota, _activities, _capture = env
+    upstream = ScriptedUpstream([_completion("ok")])
+    monkeypatch.setattr(providers, "chat_completion", upstream)
+
+    await _run(model=MODEL)
+
+    assert "reasoning_effort" not in upstream.payloads[0]
+    assert "thinking" not in upstream.payloads[0]
+
+
+# ---------------------------------------------------------------------------
+# R5：留存行的回答侧
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_run_records_the_final_answer_and_tool_calls(monkeypatch, env) -> None:
+    """一次 run 只留一行，收尾时补上 ANSWER_TEXT 与 TOOL_CALLS（摘要形状）。"""
+    _audit, _events, _quota, _activities, capture = env
+    monkeypatch.setattr(prompt_audit, "capture", REAL_CAPTURE)
+    upstream = ScriptedUpstream(
+        [
+            _completion(
+                "", tool_calls=[_tool_call("search_activities", {"query": "图书馆"})]
+            ),
+            _completion("找到了 1 个活动。"),
+        ]
+    )
+    monkeypatch.setattr(providers, "chat_completion", upstream)
+
+    result = await _run(model=MODEL)
+
+    assert len(capture.rows) == 1
+    row = capture.rows[0]
+    assert row["answer_text"] == "找到了 1 个活动。"
+    assert row["purpose"] == executor.PURPOSE_AGENT
+    assert row["request_id"] == result["request_id"]
+    calls = json.loads(row["tool_calls"])
+    assert [item["name"] for item in calls] == ["search_activities"]
+    assert calls[0]["status"] == "executed"
+    assert set(calls[0]) == {"name", "args_summary", "result_summary", "status"}
+
+
+@pytest.mark.asyncio
+async def test_select_model_reads_the_catalog_once_per_run(monkeypatch, env) -> None:
+    """目录与「可见模型映射」同源：一次 run 只查一次目录（R4 的性能面）。"""
+    _audit, _events, _quota, _activities, _capture = env
+    calls: list[str] = []
+
+    async def catalog(user_oid):
+        calls.append(str(user_oid))
+        return [_entry()]
+
+    monkeypatch.setattr(credentials, "catalog", catalog)
+    upstream = ScriptedUpstream([_completion("ok")])
+    monkeypatch.setattr(providers, "chat_completion", upstream)
+
+    await _run(model=MODEL)
+
+    assert calls == [USER]

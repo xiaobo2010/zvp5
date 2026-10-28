@@ -80,9 +80,18 @@ def test_v040_matches_models():
     expected = ddl_check.parse_models()
 
     assert "ai_scheduled_tasks" in parsed["tables"]
+    # V047 起 models 的 created_at 带 DEFAULT SYSTIMESTAMP；V040 是历史事实。
+    modeled = expected["tables"]["ai_scheduled_tasks"]
+    legacy = {
+        **modeled,
+        "columns": {
+            **modeled["columns"],
+            "created_at": ("timestamp", True, None),
+        },
+    }
     problems = ddl_check._diff_table(
         "ai_scheduled_tasks",
-        expected["tables"]["ai_scheduled_tasks"],
+        legacy,
         parsed["tables"]["ai_scheduled_tasks"],
     )
     assert problems == []

@@ -9,9 +9,11 @@
 * 输入必须是绝对路径；``os.path.realpath`` 先展开 ``..`` 与符号链接，**再**判定
   虚拟文件系统。顺序不能反：``/proc/self/../self/environ``、``/tmp/link -> /proc``
   这类只有在解析之后才看得出真实落点。
-* 全盘放开（``/etc`` / ``/root`` / ``/usr`` / ``/dev`` / ``/var/lib/*`` 等都可读写），
-  实际能不能操作由 OS 权限决定：进程是 ``www``，写不动自然得到 403。
-* 唯一保留的拒绝面是 ``/proc``、``/sys`` 两个**虚拟文件系统**：``/proc/self/environ``
+* **根目录 jail**：只有 :data:`ALLOWED_ROOTS` 之下的路径可读写（站点根与家目录）。
+  判定同样在 ``realpath`` **之后**做，按路径段比较（``/home2`` 不会被 ``/home``
+  放行），于是 ``..`` 与符号链接都逃不出去。``/etc`` / ``/root`` / ``/usr`` 这些
+  以前「靠 OS 权限裁决」的路径现在直接 403。
+* ``/proc``、``/sys`` 两个**虚拟文件系统**单独保留一条拒绝面：``/proc/self/environ``
   之类会泄露后端进程的环境变量（含数据库口令），不属于「用户文件」。按「路径段」
   匹配（``/proc`` 命中 ``/proc`` 与 ``/proc/self/environ``，但不命中 ``/procfs``）。
 * 拒绝 NUL / 换行：路径最终会进系统调用与审计日志，控制字符只会带来歧义。
@@ -37,6 +39,14 @@ from typing import Awaitable, BinaryIO, Callable
 # 不属于「用户文件」；``/sys`` 同属内核虚拟视图，一起保留。
 # 其余路径（``/etc``、``/root``、``/usr``、``/dev``、``/var/lib/*`` …）由 OS 权限裁决。
 VIRTUAL_FS_PREFIXES: tuple[str, ...] = ("/proc", "/sys")
+
+# 「用户文件」只有两块：站点根与家目录。两者之外的路径一律 403——文件管理端点
+# 与 agent 的 fs_* 工具共用这里的判定，所以「谁能读全盘」这件事只在一处决定。
+ALLOWED_ROOTS: tuple[str, ...] = ("/www/zvms4", "/home")
+
+# 越界错误码：路由层与前端按它分支（中文一句话在 ``detail`` 里）。
+ROOT_FORBIDDEN_CODE = "FILES_ROOT_FORBIDDEN"
+ROOT_FORBIDDEN_DETAIL = "路径不在允许的根目录范围内"
 
 # Application/runtime secrets live on the same disk as user files. Full-disk
 # access is deliberate for the admin file manager, but these names are never
@@ -158,10 +168,12 @@ _EDIT_TEMP_PREFIX = ".zvms-edit-"
 class FileOpError(Exception):
     """文件动作被拒；路由层翻译成 ``HTTPException(status_code, detail)``。"""
 
-    def __init__(self, status_code: int, detail: str) -> None:
+    def __init__(self, status_code: int, detail: str, *, code: str | None = None) -> None:
         super().__init__(detail)
         self.status_code = status_code
         self.detail = detail
+        # 对外错误码（缺省 ``None`` = 沿既有「只有中文一句话」的口径）。
+        self.code = code
 
 
 def _reject_illegal_input(raw: str) -> None:
@@ -181,6 +193,25 @@ def _is_virtual_fs(path: str) -> bool:
     return False
 
 
+def _is_under_allowed_root(path: str) -> bool:
+    """``path`` 是否落在 :data:`ALLOWED_ROOTS` 之内（根自身算在内）。
+
+    比较用 ``root + os.sep`` 而不是裸前缀：``/home2`` 不能因为以 ``/home`` 开头
+    就被放行。``path`` 必须是 ``realpath`` 的结果——软链与 ``..`` 已经在调用方
+    展开，这里只看真实落点。
+    """
+    for root in ALLOWED_ROOTS:
+        if path == root or path.startswith(root + os.sep):
+            return True
+    return False
+
+
+def _reject_outside_roots(path: str) -> None:
+    """根目录 jail：越界即 403（``FILES_ROOT_FORBIDDEN``）。"""
+    if not _is_under_allowed_root(path):
+        raise FileOpError(403, ROOT_FORBIDDEN_DETAIL, code=ROOT_FORBIDDEN_CODE)
+
+
 def resolve_path(raw: str) -> str:
     """把请求路径解析成真实绝对路径，并拦截虚拟文件系统。"""
     _reject_illegal_input(raw)
@@ -195,6 +226,7 @@ def resolve_path(raw: str) -> str:
     # ``/sys`` 的路径在这里被拦下（例如 ``/tmp/../../../proc/self/environ``）。
     if _is_virtual_fs(resolved):
         raise FileOpError(403, "虚拟文件系统不可访问")
+    _reject_outside_roots(resolved)
     if _is_protected_secret(resolved):
         raise FileOpError(403, "受保护的应用密钥/凭据不可访问")
     return resolved
@@ -210,6 +242,7 @@ def resolve_entry_path(raw: str) -> tuple[str, str]:
     _reject_illegal_input(raw)
     stripped = raw.rstrip("/") or "/"
     if stripped == "/":
+        _reject_outside_roots("/")
         return "/", "/"
 
     name = os.path.basename(stripped)
@@ -221,14 +254,17 @@ def resolve_entry_path(raw: str) -> tuple[str, str]:
     parent = os.path.realpath(os.path.dirname(stripped))
     if not os.path.isabs(parent):
         raise FileOpError(400, "仅接受绝对路径")
-    if _is_virtual_fs(parent):
-        raise FileOpError(403, "虚拟文件系统不可访问")
 
     entry = os.path.join(parent, name)
     target = os.path.realpath(entry)
     # 链接目标同样要过虚拟文件系统检查：``/tmp/link -> /proc`` 不允许借链接绕过。
     if _is_virtual_fs(target):
         raise FileOpError(403, "虚拟文件系统不可访问")
+    # jail 按「条目路径」与「真实目标」各判一次：父目录在根内、链接指向根外
+    # （``/home/u/link -> /etc/passwd``）时，删除/改名/stat 作用的是真实目标。
+    # 只看父目录会放过它，只看目标会拦掉「根内的正常条目」（目标就是它自己）。
+    _reject_outside_roots(entry)
+    _reject_outside_roots(target)
     if _is_protected_secret(target) or _is_protected_secret(entry):
         raise FileOpError(403, "受保护的应用密钥/凭据不可访问")
     return entry, target

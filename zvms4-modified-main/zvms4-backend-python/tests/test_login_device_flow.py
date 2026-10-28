@@ -141,8 +141,12 @@ def env(monkeypatch) -> Env:
         state.records.append({"user_oid": user_oid, **kwargs})
         return "rec"
 
-    async def insert_log(url, user, data, timestamp, ltype, level, xuehai_id):
-        state.logs.append({"type": ltype, "level": level, "user": user})
+    async def insert_log(
+        url, user, data, timestamp, ltype, level, xuehai_id, client_ip="", user_agent=""
+    ):
+        state.logs.append(
+            {"type": ltype, "level": level, "user": user, "client_ip": client_ip}
+        )
 
     async def no_rule(code):
         # 只认「非主学海设备登录」规则；多设备规则返回 None，避免真去连库。

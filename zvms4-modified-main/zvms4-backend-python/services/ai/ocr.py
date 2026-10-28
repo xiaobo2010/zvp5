@@ -20,8 +20,11 @@
 
 from __future__ import annotations
 
+import json
 import logging
+import time
 from collections.abc import Iterable
+from uuid import uuid4
 
 from fastapi import HTTPException
 
@@ -29,7 +32,7 @@ from db import backends
 from services.ai.routing import RouteError
 from util.attachment import can_read_attachment
 
-from . import audit, config as ai_config, ocr_engines, quota, rate_limit
+from . import audit, config as ai_config, crypto, ocr_engines, quota, rate_limit
 
 _logger = logging.getLogger(__name__)
 
@@ -47,6 +50,12 @@ ADMIN_PROVIDER_ROLES = frozenset({"admin"})
 
 _NO_ENGINE_MESSAGE = "no OCR engine is configured"
 _NO_SITE_QUOTA_MESSAGE = "every configured OCR engine is out of site quota"
+
+#: 引擎全部失败时的错误码（与后台任务写进审计的是同一个字面量）。
+ERROR_ENGINE = "AI_OCR_ENGINE_ERROR"
+
+#: 文件路径入口的审计端点名（与挂载前缀一致，便于和附件入口分开统计）。
+FILE_ENDPOINT = audit.ENDPOINT_OCR + "/file"
 
 
 async def enqueue(
@@ -192,7 +201,7 @@ async def enqueue(
 
 async def _audit_reject(
     user_oid: str,
-    attachment_oid: str,
+    attachment_oid: str | None,
     *,
     status_code: int,
     code: str,
@@ -215,6 +224,227 @@ async def _audit_reject(
         purpose="ocr",
         attachment_oid=attachment_oid,
     )
+
+
+async def recognize_bytes(
+    user: dict,
+    image: bytes,
+    *,
+    mime: str,
+    provider: str | None = None,
+    provider_roles: frozenset[str] = ADMIN_PROVIDER_ROLES,
+) -> dict:
+    """对**内存里的图片字节**做一次 OCR，返回 ``{"text", "engine", "engine_kind"}``。
+
+    附件入口（:func:`enqueue`）把活交给后台任务并按附件的状态机推进；文件预览里的
+    图片没有附件 oid，走这条同步入口。两边的**记账口径完全相同**（频控 → 用户额度
+    peek → 站点额度选引擎 → 用户额度 consume → 每次尝试一条审计），差别只在
+    「字节从哪来、结果往哪去」。
+
+    同步返回而不是排队：一次识别本来就是一个上游请求，调用方（文件预览的 admin）
+    就是在等这段文本；排成任务只会多一次「再查一次」的往返。
+    """
+    requested = (provider or "").strip().lower() or None
+    if requested is not None and not (provider_roles & set(user.get("per") or [])):
+        raise RouteError("AI_FORBIDDEN", "provider is not allowed for your role", 403)
+    engine_kind_filter = _requested_kind(requested)
+
+    normalized = str(mime or "").lower()
+    if normalized not in ALLOWED_MIME:
+        raise HTTPException(status_code=400, detail="AI_UNSUPPORTED_MEDIA")
+    if len(image) > ai_config.max_ocr_image_bytes():
+        raise HTTPException(status_code=400, detail="AI_OCR_IMAGE_TOO_LARGE")
+
+    try:
+        rate_limit.check(user["id"], "ocr")
+    except rate_limit.RateLimitError as exc:
+        await _audit_reject(user["id"], None, status_code=429, code="AI_RATE_LIMITED")
+        raise HTTPException(
+            status_code=429,
+            detail="AI_RATE_LIMITED",
+            headers={"Retry-After": str(exc.retry_after)},
+        ) from None
+
+    allowed, used, limit = await quota.peek(
+        user["id"], "ocr", 1, roles=user.get("per")
+    )
+    if not allowed:
+        await _audit_reject(
+            user["id"],
+            None,
+            status_code=429,
+            code="AI_QUOTA_EXCEEDED",
+            input_bytes=len(image),
+        )
+        raise _quota_exceeded(used, limit)
+
+    try:
+        engine = await select_engine(engine_kind=engine_kind_filter)
+    except RouteError as exc:
+        await _audit_reject(
+            user["id"],
+            None,
+            status_code=exc.status_code,
+            code=exc.code,
+            input_bytes=len(image),
+        )
+        raise
+
+    allowed, used, limit = await quota.consume(
+        user["id"], "ocr", 1, roles=user.get("per")
+    )
+    if not allowed:
+        await _refund_site(engine["kind"])
+        await _audit_reject(
+            user["id"],
+            None,
+            status_code=429,
+            code="AI_QUOTA_EXCEEDED",
+            input_bytes=len(image),
+        )
+        raise _quota_exceeded(used, limit)
+
+    await audit.record(
+        user_oid=user["id"],
+        capability="ocr",
+        endpoint=FILE_ENDPOINT,
+        provider=engine["name"],
+        model=engine["name"],
+        status="success",
+        units=1,
+        input_bytes=len(image),
+        key_scope="server",
+        purpose="ocr",
+        engine_kind=engine["kind"],
+        attempt_no=1,
+    )
+    return await _recognize_bytes(
+        user, image, normalized, engine, request_id=uuid4().hex
+    )
+
+
+async def _recognize_bytes(
+    user: dict,
+    image: bytes,
+    mime: str,
+    engine: dict,
+    *,
+    request_id: str,
+) -> dict:
+    """按 ``priority`` 跑候选引擎；成功的那个返回文本，全失败才抛。
+
+    回退候选由 :func:`select_engine` 给出（同一顺序、同样扣那一份站点额度）——
+    与后台任务用的是同一份逻辑，只是这里不写附件状态机。
+    """
+    tried: set[str] = set()
+    last_error: BaseException | None = None
+    row = engine["row"]
+
+    for attempt in range(MAX_ENGINE_ATTEMPTS):
+        if attempt > 0:
+            try:
+                row = (await select_engine(exclude=tried))["row"]
+            except RouteError as exc:
+                last_error = last_error or exc
+                break
+        kind = str(row.get("kind") or engine["kind"])
+        label = _display_name(row, kind)
+        tried.add(label)
+        started = time.monotonic()
+        try:
+            adapter = ocr_engines.ENGINES[kind]()
+            result = await adapter.recognize(
+                image, mime, _engine_secret(row), row.get("config") or {}
+            )
+        except Exception as exc:  # noqa: BLE001 - 换下一个引擎，失败写审计
+            last_error = exc
+            _logger.warning(
+                "ocr file attempt %s failed on %s: %s",
+                attempt + 1,
+                label,
+                type(exc).__name__,
+            )
+            await _audit_attempt(
+                user["id"],
+                label,
+                status="error",
+                error_code=ERROR_ENGINE,
+                latency_ms=_elapsed_ms(started),
+                engine_kind=kind,
+                request_id=request_id,
+                attempt_no=attempt + 1,
+                input_bytes=len(image),
+            )
+            continue
+
+        await _audit_attempt(
+            user["id"],
+            label,
+            status="success",
+            latency_ms=_elapsed_ms(started),
+            engine_kind=kind,
+            request_id=request_id,
+            attempt_no=attempt + 1,
+            input_bytes=len(image),
+        )
+        return {
+            "text": str(result.get("text") or ""),
+            "engine": label,
+            "engine_kind": kind,
+        }
+
+    _logger.warning(
+        "ocr file failed for all engines: %s",
+        type(last_error).__name__ if last_error else "RouteError",
+    )
+    raise RouteError(ERROR_ENGINE, "no OCR engine could handle the image", 502)
+
+
+def _engine_secret(row: dict) -> dict:
+    """``secret_cipher`` → 凭证 dict；``None`` = 本地引擎，不需要凭证。"""
+    cipher = row.get("secret_cipher")
+    if not cipher:
+        return {}
+    parsed = json.loads(crypto.decrypt_secret(str(cipher)))
+    if not isinstance(parsed, dict):
+        raise RouteError(ERROR_ENGINE, "stored OCR credential is not an object", 502)
+    return parsed
+
+
+async def _audit_attempt(
+    user_oid: str,
+    engine: str,
+    *,
+    status: str,
+    error_code: str | None = None,
+    latency_ms: int | None = None,
+    engine_kind: str | None = None,
+    request_id: str | None = None,
+    attempt_no: int | None = None,
+    input_bytes: int | None = None,
+) -> None:
+    """一次尝试一条流水（``units=0``）：额度事实已在入口那条 ``units=1`` 记过。"""
+    await audit.record(
+        user_oid=user_oid,
+        capability="ocr",
+        endpoint=FILE_ENDPOINT,
+        provider=engine,
+        model=engine,
+        status=status,
+        error_code=error_code,
+        latency_ms=latency_ms,
+        units=0,
+        input_bytes=input_bytes,
+        key_scope="server",
+        purpose="ocr",
+        engine_kind=engine_kind,
+        request_id=request_id,
+        attempt_no=attempt_no,
+    )
+
+
+def _elapsed_ms(started: float) -> int:
+    return max(0, int((time.monotonic() - started) * 1000))
 
 
 def _requested_kind(provider: str | None) -> str | None:
@@ -332,4 +562,13 @@ def _display_name(row: dict, kind: str) -> str:
     return str(row.get("name") or kind)
 
 
-__all__ = ["ALLOWED_MIME", "MAX_ENGINE_ATTEMPTS", "enqueue", "select_engine"]
+__all__ = [
+    "ALLOWED_MIME",
+    "ERROR_ENGINE",
+    "FILE_ENDPOINT",
+    "MAX_ENGINE_ATTEMPTS",
+    "enqueue",
+    "recognize_bytes",
+    "select_engine",
+]
+

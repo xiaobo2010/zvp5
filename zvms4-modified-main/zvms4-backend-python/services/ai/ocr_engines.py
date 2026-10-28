@@ -52,6 +52,7 @@ from typing import Any, Mapping
 import anyio
 
 from . import credentials
+from . import thinking as thinking_param
 
 _logger = logging.getLogger(__name__)
 
@@ -1188,9 +1189,9 @@ class GroqOcrEngine:
                 },
             },
         }
-        if reasoning_effort:
-            # 非推理模型收到未知字段会 400；想彻底不传就把 config 里设成 ""。
-            body["reasoning_effort"] = reasoning_effort
+        # 非推理模型收到未知字段会 400；想彻底不传就把 config 里设成 ""。
+        # 字段名与值域的翻译与 agent 共用一份（services.ai.thinking）。
+        body.update(thinking_param.fields(reasoning_effort, {"name": KIND_GROQ}))
         # 不传 temperature：Groq 会把 0 静默改成 1e-8，传了等于没传，还多一个
         # 让人误以为「已锁定确定性」的假象。不传 logprobs：直接 400。
 
@@ -1330,11 +1331,12 @@ class ZhipuOcrEngine:
         # 设成 false 就退回纯 prompt 约束，而不是让整条链路吃 400。
         if config.get("json_mode", True):
             body["response_format"] = {"type": "json_object"}
-        thinking = config.get("thinking", "disabled")
-        thinking = "" if thinking is None else str(thinking).strip()
-        if thinking:
-            # 4.6V 可开关；换到强制思考的型号时把 config 里设成 "" 来省略该字段。
-            body["thinking"] = {"type": thinking}
+        # 4.6V 可开关；换到强制思考的型号时把 config 里设成 "" 来省略该字段。
+        body.update(
+            thinking_param.fields(
+                config.get("thinking", "disabled"), {"name": KIND_ZHIPU}
+            )
+        )
 
         headers = {"Authorization": f"Bearer {api_key}"}
         response = None

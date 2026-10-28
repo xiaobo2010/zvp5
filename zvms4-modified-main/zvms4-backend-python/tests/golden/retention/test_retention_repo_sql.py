@@ -4,8 +4,9 @@ The two predicates pinned here are the *only* guard on irreversible deletion, so
 they are asserted as the compiler emits them (operator + values), never as a
 hand-written SQL substring:
 
-* ``app_logs`` — ``TS_AT`` before the cutoff, minus the protected log types and
-  minus warning-level rows. The ``IS NULL OR`` branches are load-bearing:
+* ``app_logs`` — ``TS_RAW`` (epoch seconds; the same column the admin page sorts
+  and filters on) before the cutoff, minus the protected log types and minus
+  warning-level rows. The ``IS NULL OR`` branches are load-bearing:
   Oracle treats ``''`` as NULL and :class:`typings.log.ZVMSLog` defaults
   ``type``/``level`` to ``''``, so a bare ``NOT (ltype IN ...)`` evaluates to
   NULL and would keep every ordinary row forever (oracle review M1).
@@ -127,11 +128,11 @@ def _tasks_count_sql() -> str:
 
 
 def test_app_logs_delete_is_the_frozen_predicate() -> None:
-    """``DELETE FROM app_logs`` filtered on the indexed ``TS_AT`` and capped."""
+    """``DELETE FROM app_logs`` filtered on the indexed ``TS_RAW`` and capped."""
     sql = _logs_delete_sql()
 
     assert sql.startswith("DELETE FROM app_logs")
-    assert "app_logs.ts_at < " in sql
+    assert "app_logs.ts_raw < " in sql
     assert "ROWNUM <= 5000" in sql
     # The batch size is a bind, not a string splice: it must be the only place
     # the number appears.
@@ -144,9 +145,9 @@ def test_app_logs_null_branches_are_explicit() -> None:
 
     assert "(app_logs.ltype IS NULL OR (" in sql
     assert "(app_logs.log_level IS NULL OR " in sql
-    # Third branch: a NULL ``TS_AT`` row is excluded by the comparison itself
+    # Third branch: a NULL ``TS_RAW`` row is excluded by the comparison itself
     # (never true), not by a branch — it must not be resurrected by one.
-    assert "app_logs.ts_at IS NULL" not in sql
+    assert "app_logs.ts_raw IS NULL" not in sql
 
 
 def test_app_logs_protected_types_are_excluded_by_not_in() -> None:
@@ -167,15 +168,15 @@ def test_app_logs_warning_level_is_protected() -> None:
     assert predicates == [("!=", "warning")], predicates
 
 
-def test_app_logs_never_uses_ts_raw_or_a_whitelist() -> None:
-    """Only ``TS_AT`` is filtered, and nothing re-admits a protected row."""
+def test_app_logs_never_uses_ts_at_or_a_whitelist() -> None:
+    """Only ``TS_RAW`` is filtered, and nothing re-admits a protected row."""
     sql = _logs_delete_sql()
 
-    assert "ts_raw" not in sql, "TS_RAW has no index; TS_AT is the purge column"
+    assert "ts_at" not in sql, "TS_AT is data only (no index); TS_RAW is the purge column"
     assert "ltype IN (" not in sql
     assert "log_level IN (" not in sql
     # A row exactly at the cutoff is not deleted: ``<``, never ``<=``.
-    assert "app_logs.ts_at <=" not in sql
+    assert "app_logs.ts_raw <=" not in sql
 
 
 def test_app_logs_delete_uses_rownum_not_fetch_first() -> None:
@@ -194,7 +195,7 @@ def test_app_logs_count_shares_the_predicate_but_is_not_capped() -> None:
     assert sql.startswith("SELECT count(*)")
     assert "ROWNUM" not in sql.upper()
     for fragment in (
-        "app_logs.ts_at < ",
+        "app_logs.ts_raw < ",
         "(app_logs.ltype IS NULL OR (",
         "(app_logs.log_level IS NULL OR ",
     ):

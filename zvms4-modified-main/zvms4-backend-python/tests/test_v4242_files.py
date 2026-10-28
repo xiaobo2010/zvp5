@@ -348,17 +348,22 @@ def test_segment_matching_holds_on_a_real_filesystem(harness, tmp_path, monkeypa
     assert allowed.status_code == 200
 
 
-def test_former_system_directories_are_no_longer_blocked(harness):
-    # 回归：/etc/passwd 曾经被黑名单 403。现在只允许因 OS 权限/不存在返回别的码，
-    # 不能再出现「该路径受保护」或虚拟文件系统的拒绝。
-    assert file_ops.resolve_path("/etc/passwd") == "/etc/passwd"
-    assert file_ops.resolve_entry_path("/etc/passwd")[0] == "/etc/passwd"
+def test_paths_outside_the_allowed_roots_are_forbidden(harness):
+    # 契约变更（2026-10）：根目录 jail 之后 ``/etc`` / ``/root`` 一律 403。
+    # 拒绝理由必须是「不在允许的根目录范围内」，不是虚拟文件系统/凭据名。
+    with pytest.raises(file_ops.FileOpError) as excinfo:
+        file_ops.resolve_path("/etc/passwd")
+    assert excinfo.value.status_code == 403
+    assert excinfo.value.code == file_ops.ROOT_FORBIDDEN_CODE
+    assert excinfo.value.detail == file_ops.ROOT_FORBIDDEN_DETAIL
 
     response = harness.client.get(f"{PREFIX}/stat", params={"path": "/etc/passwd"})
-    assert response.status_code in {200, 403, 404}
-    detail = response.json().get("detail", "")
-    assert detail != "该路径受保护，禁止访问"
-    assert "虚拟文件系统" not in detail
+    assert response.status_code == 403
+    detail = response.json()["detail"]
+    assert detail == {
+        "code": file_ops.ROOT_FORBIDDEN_CODE,
+        "message": file_ops.ROOT_FORBIDDEN_DETAIL,
+    }
 
 
 @pytest.mark.parametrize("path", ["etc/passwd", "tmp/../etc/passwd", "./etc"])

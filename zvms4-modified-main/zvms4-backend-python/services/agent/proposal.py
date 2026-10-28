@@ -584,9 +584,16 @@ async def list_mine(
     return out[:limit]
 
 
-async def run_events(*, request_id: str, user: dict) -> list[dict]:
-    """一次 run 的工具事件时间线（只回本人的行）。"""
-    rows = await backends.get_ai_agent_events_repo().list_for_request(str(request_id))
+async def run_events(
+    *, request_id: str, user: dict, rows: list[dict] | None = None
+) -> list[dict]:
+    """一次 run 的工具事件时间线（只回本人的行）。
+
+    ``rows`` 允许调用方把已经取到的 ``list_for_request`` 结果传进来：run 详情同时
+    要事件与提案，两处各查一遍同一张表是一次纯粹的重复往返。
+    """
+    if rows is None:
+        rows = await backends.get_ai_agent_events_repo().list_for_request(str(request_id))
     actor = str(user.get("id") or "")
     rows = [row for row in rows if str(row.get("actor_oid") or "") == actor]
     return [

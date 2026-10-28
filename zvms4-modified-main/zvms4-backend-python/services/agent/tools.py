@@ -512,7 +512,7 @@ _register(
         name=PLATFORM_HELP_TOOL,
         description=(
             "查询平台使用帮助（怎么报名、临时密码、义工时长规则、批量登记、附件上传、"
-            "AI 智能体、封禁申诉等）。用户询问平台用法时先调用它，并按 answer 的内容作答。"
+            "ZVAgent、封禁申诉等）。用户询问平台用法时先调用它，并按 answer 的内容作答。"
         ),
         kind=READ,
         params=_schema(
@@ -570,22 +570,34 @@ def _build_specs(names: frozenset[str] | set[str]) -> list[dict]:
     ]
 
 
-def tool_specs(user: dict) -> list[dict]:
+def tool_specs(user: dict, *, scene: str | None = None) -> list[dict]:
     """当前用户可见的工具声明（按角色裁剪，结果按 ``name`` 排序）。
 
     缓存键除角色外还带注册表规模：注册表是开放集合（``ops_tools`` 在导入时追加），
     测试里也会临时注册/移除工具；只按角色缓存会让「加了工具却看不到」变成一个
     无法复现的幽灵问题。
 
+    ``scene`` 非空 = 只读场景会话（终端 / 文件编辑）：只声明 ``kind == READ`` 的
+    工具。这是**能力边界**，不是提示词约束——写工具、提案流、``ssh_exec`` 与数据库
+    DML/DDL 都不出现在 ``tools`` 数组里，模型连「有这个能力」都不知道。
+
     返回浅拷贝：调用方（executor、上游适配层）不该能把缓存里的列表改掉。
     """
     is_admin = _is_admin(user)
-    key = "admin" if is_admin else "department"
+    key = ("admin" if is_admin else "department") + (f"|{scene}" if scene else "")
     revision = len(TOOLS)
     cached = _SPECS_CACHE.get(key)
     if cached is None or cached[0] != revision:
         names = set(TOOLS) if is_admin else DEPARTMENT_TOOL_NAMES
-        cached = (revision, _build_specs(names))
+        specs = _build_specs(names)
+        if scene:
+            specs = [
+                spec
+                for spec in specs
+                if (tool := TOOLS.get(spec["function"]["name"])) is not None
+                and tool.kind == READ
+            ]
+        cached = (revision, specs)
         _SPECS_CACHE[key] = cached
     return list(cached[1])
 

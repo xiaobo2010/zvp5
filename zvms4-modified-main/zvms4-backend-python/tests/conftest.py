@@ -17,6 +17,7 @@ conftest 需要 import ``db`` 时也不会因找不到包而崩。
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -61,3 +62,43 @@ def _isolated_state_db(tmp_path_factory, monkeypatch) -> Path:
     # 缓存按库路径区分，正常不会串味；这里再显式失效一次，保证「换库即重读」。
     system_state.invalidate_cache()
     return path
+
+
+@pytest.fixture(autouse=True)
+def _files_jail_allows_tmp(monkeypatch) -> None:
+    """文件根目录 jail 的测试豁免：用例都在 pytest 的 tmp 目录里造文件。
+
+    生产白名单仍是 ``services.file_ops.ALLOWED_ROOTS``（站点根 + 家目录）；这里只
+    把系统临时目录并进来，否则所有 ``tmp_path`` 用例都会撞 403
+    ``FILES_ROOT_FORBIDDEN``。jail 的边界用例（/etc、/root、/home2、软链逃逸）
+    不受影响：它们断言的是白名单**之外**的路径。
+    """
+    import tempfile
+
+    from services import file_ops
+
+    monkeypatch.setattr(
+        file_ops,
+        "ALLOWED_ROOTS",
+        (*file_ops.ALLOWED_ROOTS, os.path.realpath(tempfile.gettempdir())),
+    )
+
+
+@pytest.fixture(autouse=True)
+def _fresh_login_throttle():
+    """登录频控的窗口是进程内的：不清就会让用例之间互相把额度用光。"""
+    from util import login_throttle
+
+    login_throttle.reset_state()
+    yield
+    login_throttle.reset_state()
+
+
+@pytest.fixture(autouse=True)
+def _fresh_read_budget():
+    """重查询读预算同样是进程内窗口，用例之间不该互相扣除额度。"""
+    from util import read_throttle
+
+    read_throttle.reset_state()
+    yield
+    read_throttle.reset_state()

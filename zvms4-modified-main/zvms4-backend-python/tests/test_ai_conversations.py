@@ -68,8 +68,19 @@ class FakeConversationsRepo:
         self.rows[oid] = row
         return row
 
-    async def create(self, *, oid, owner_oid, mode, title=None, model=None) -> dict:
-        return dict(self.seed(oid, owner_oid=owner_oid, mode=mode, title=title, model=model))
+    async def create(self, *, oid, owner_oid, mode, title=None, model=None,
+                     thinking=None, scene=None) -> dict:
+        return dict(
+            self.seed(
+                oid,
+                owner_oid=owner_oid,
+                mode=mode,
+                title=title,
+                model=model,
+                thinking=thinking,
+                scene=scene,
+            )
+        )
 
     async def get(self, oid: str, owner_oid: str) -> dict | None:
         row = self.rows.get(str(oid))
@@ -97,8 +108,8 @@ class FakeConversationsRepo:
             return page, None
         return page, (page[-1]["updated_at"], page[-1]["_id"])
 
-    async def update(self, oid, owner_oid, *, title=None, status=None, model=None,
-                     clear_model=False) -> bool:
+    async def update(self, oid, owner_oid, *, title=None, status=None,
+                     thinking=None, clear_thinking=False) -> bool:
         row = self.rows.get(str(oid))
         if row is None or str(row["owner_oid"]) != str(owner_oid):
             return False
@@ -106,10 +117,10 @@ class FakeConversationsRepo:
             row["title"] = title
         if status is not None:
             row["status"] = status
-        if model is not None:
-            row["model"] = model
-        if clear_model:
-            row["model"] = None
+        if thinking is not None:
+            row["thinking"] = thinking
+        if clear_thinking:
+            row["thinking"] = None
         row["updated_at"] = _now(999)
         return True
 
@@ -443,18 +454,24 @@ async def test_get_foreign_conversation_is_not_found(env) -> None:
 
 
 @pytest.mark.asyncio
-async def test_update_clears_model_only_when_asked(env) -> None:
+async def test_model_is_locked_after_creation(env) -> None:
+    """模型只在建会话时定：改它（含清空）一律 409，不是静默 no-op（R2）。"""
     env.conv.seed("a" * 32, model="gpt-x", title="旧名")
 
     kept = await conversations.update(user=ADMIN, oid="a" * 32, title="新名")
 
     assert kept["title"] == "新名"
-    # 不传 model = 不改，不是清空。
+    # 不传 model = 不改。
     assert kept["model"] == "gpt-x"
 
-    cleared = await conversations.update(user=ADMIN, oid="a" * 32, clear_model=True)
+    with pytest.raises(AgentError) as caught:
+        await conversations.update(user=ADMIN, oid="a" * 32, model="gpt-y")
+    assert caught.value.code == conversations.MODEL_LOCKED
+    assert caught.value.status_code == 409
 
-    assert cleared["model"] is None
+    with pytest.raises(AgentError) as cleared:
+        await conversations.update(user=ADMIN, oid="a" * 32, clear_model=True)
+    assert cleared.value.code == conversations.MODEL_LOCKED
 
 
 @pytest.mark.asyncio
@@ -617,3 +634,74 @@ async def test_delete_of_foreign_conversation_is_404(env) -> None:
 
     assert caught.value.status_code == 404
     assert env.conv.rows["a" * 32]["owner_oid"] == OTHER
+
+
+# ---------------------------------------------------------------------------
+# R2 / R3：模型在创建时定死、思考强度可改
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_create_defaults_to_the_first_visible_model(env, monkeypatch) -> None:
+    from services.ai import config as ai_config
+
+    async def allowed(_user_oid):
+        return {"lab/gpt-x": "lab", "lab/gpt-y": "lab"}
+
+    monkeypatch.setattr(ai_config, "allowed_models_for", allowed)
+
+    view = await conversations.create(user=ADMIN, mode="agent")
+
+    assert view["model"] == "lab/gpt-x"
+
+
+@pytest.mark.asyncio
+async def test_create_keeps_an_explicit_model(env, monkeypatch) -> None:
+    from services.ai import config as ai_config
+
+    async def allowed(_user_oid):
+        return {"lab/gpt-x": "lab"}
+
+    monkeypatch.setattr(ai_config, "allowed_models_for", allowed)
+
+    view = await conversations.create(user=ADMIN, mode="agent", model=" lab/gpt-y ")
+
+    assert view["model"] == "lab/gpt-y"
+
+
+@pytest.mark.asyncio
+async def test_create_survives_a_broken_model_catalog(env, monkeypatch) -> None:
+    """目录查不到就留 NULL：建会话不该因为一次目录查询失败而 500。"""
+    from services.ai import config as ai_config
+
+    async def boom(_user_oid):
+        raise RuntimeError("catalog down")
+
+    monkeypatch.setattr(ai_config, "allowed_models_for", boom)
+
+    view = await conversations.create(user=ADMIN, mode="agent")
+
+    assert view["model"] is None
+
+
+@pytest.mark.asyncio
+async def test_thinking_can_be_set_and_cleared(env) -> None:
+    env.conv.seed("a" * 32, model="gpt-x")
+
+    updated = await conversations.update(user=ADMIN, oid="a" * 32, thinking="High")
+    assert updated["thinking"] == "high"
+
+    cleared = await conversations.update(
+        user=ADMIN, oid="a" * 32, clear_thinking=True
+    )
+    assert cleared["thinking"] is None
+
+
+@pytest.mark.asyncio
+async def test_unknown_thinking_level_is_a_400(env) -> None:
+    env.conv.seed("a" * 32, model="gpt-x")
+
+    with pytest.raises(AgentError) as caught:
+        await conversations.update(user=ADMIN, oid="a" * 32, thinking="max")
+
+    assert caught.value.status_code == 400

@@ -116,7 +116,7 @@ CREATE TABLE activities (
   name VARCHAR2(256 CHAR) NOT NULL,
   description VARCHAR2(1000 CHAR),
   activity_date TIMESTAMP NOT NULL,
-  created_at TIMESTAMP NOT NULL,
+  created_at TIMESTAMP DEFAULT SYSTIMESTAMP NOT NULL,
   updated_at TIMESTAMP NOT NULL,
   appointee_oid VARCHAR2(24 CHAR) NOT NULL,
   approver VARCHAR2(24 CHAR),
@@ -250,14 +250,6 @@ EXCEPTION
 END;
 /
 
-BEGIN
-  EXECUTE IMMEDIATE 'CREATE INDEX ix_time_academic_year_user_oid ON time_academic_year (user_oid)';
-EXCEPTION
-  WHEN OTHERS THEN
-    IF SQLCODE NOT IN (-955, -1408) THEN RAISE; END IF;
-END;
-/
-
 -- ----------------------------------------------------------------------------
 -- TIME_WITH_ORIGIN  ← zvms_new.time_with_origin
 -- ----------------------------------------------------------------------------
@@ -359,45 +351,12 @@ BEGIN
   EXECUTE IMMEDIATE '
 CREATE TABLE daily_exports (
   oid VARCHAR2(24 CHAR) NOT NULL,
-  created_at TIMESTAMP NOT NULL,
+  created_at TIMESTAMP DEFAULT SYSTIMESTAMP NOT NULL,
   status VARCHAR2(16 CHAR) NOT NULL,
   data CLOB DEFAULT ''[]'' NOT NULL,
   PRIMARY KEY (oid),
   CONSTRAINT ck_daily_exports_oid CHECK (REGEXP_LIKE(oid,''^[0-9a-f]{24}$'')),
   CONSTRAINT ck_daily_exports_data_json CHECK (data IS JSON)
-)';
-EXCEPTION
-  WHEN OTHERS THEN
-    IF SQLCODE != -955 THEN RAISE; END IF;
-END;
-/
-
--- ----------------------------------------------------------------------------
--- LOGS  ← zvms_new.logs
---   NOTE: zvms_new.logs is a dead device schema (zero references in this repo).
---   Runtime logs currently write to the LEGACY zvms.logs collection. Whether to
---   ETL this device data or introduce a separate APP_LOGS table is a pending
---   policy decision (spec §2/§7) - it does NOT block this schema round.
--- ----------------------------------------------------------------------------
-BEGIN
-  EXECUTE IMMEDIATE '
-CREATE TABLE logs (
-  oid VARCHAR2(24 CHAR) NOT NULL,
-  xuehai_id NUMBER(18),
-  net_session CLOB,
-  request CLOB,
-  user_info CLOB,
-  ltype VARCHAR2(64 CHAR),
-  log_level VARCHAR2(32 CHAR),
-  summary VARCHAR2(1000 CHAR),
-  ts_at TIMESTAMP,
-  ts_raw CLOB,
-  PRIMARY KEY (oid),
-  CONSTRAINT ck_logs_oid CHECK (REGEXP_LIKE(oid,''^[0-9a-f]{24}$'')),
-  CONSTRAINT ck_logs_net_session_json CHECK (net_session IS JSON),
-  CONSTRAINT ck_logs_request_json CHECK (request IS JSON),
-  CONSTRAINT ck_logs_user_info_json CHECK (user_info IS JSON),
-  CONSTRAINT ck_logs_ts_raw_json CHECK (ts_raw IS JSON)
 )';
 EXCEPTION
   WHEN OTHERS THEN
@@ -430,7 +389,9 @@ END;
 -- ----------------------------------------------------------------------------
 -- APP_LOGS  ← zvms_new.app_logs   (runtime app logs; written by typings/log.py)
 --   `user`/`type`/`level` are Oracle-awkward keys -> renamed APP_USER /
---   LTYPE / LOG_LEVEL, mirroring the LOGS table.
+--   LTYPE / LOG_LEVEL.  TS_RAW (epoch seconds) is the authoritative time column:
+--   ordering, range filters and the retention purge all use it; TS_AT is only the
+--   derived naive TIMESTAMP kept as data.
 -- ----------------------------------------------------------------------------
 BEGIN
   EXECUTE IMMEDIATE '
@@ -444,20 +405,14 @@ CREATE TABLE app_logs (
   ltype VARCHAR2(64 CHAR),
   log_level VARCHAR2(32 CHAR),
   xuehai_id VARCHAR2(32 CHAR),
+  client_ip VARCHAR2(45 CHAR),
+  user_agent VARCHAR2(256 CHAR),
   PRIMARY KEY (oid),
   CONSTRAINT ck_app_logs_oid CHECK (REGEXP_LIKE(oid,''^[0-9a-f]{24}$''))
 )';
 EXCEPTION
   WHEN OTHERS THEN
     IF SQLCODE != -955 THEN RAISE; END IF;
-END;
-/
-
-BEGIN
-  EXECUTE IMMEDIATE 'CREATE INDEX ix_app_logs_ts_at ON app_logs (ts_at)';
-EXCEPTION
-  WHEN OTHERS THEN
-    IF SQLCODE NOT IN (-955, -1408) THEN RAISE; END IF;
 END;
 /
 
@@ -591,7 +546,7 @@ CREATE TABLE files (
   status VARCHAR2(16 CHAR) NOT NULL,
   ocr_status VARCHAR2(16 CHAR) NOT NULL,
   ocr_retry NUMBER(3) DEFAULT 0 NOT NULL,
-  created_at TIMESTAMP NOT NULL,
+  created_at TIMESTAMP DEFAULT SYSTIMESTAMP NOT NULL,
   updated_at TIMESTAMP,
   deleted_at TIMESTAMP,
   PRIMARY KEY (oid),
@@ -669,7 +624,7 @@ CREATE TABLE file_ocr (
   ocr_text CLOB,
   confidence BINARY_DOUBLE,
   raw_json CLOB,
-  created_at TIMESTAMP NOT NULL,
+  created_at TIMESTAMP DEFAULT SYSTIMESTAMP NOT NULL,
   PRIMARY KEY (oid),
   CONSTRAINT ck_file_ocr_oid CHECK (REGEXP_LIKE(oid,''^[0-9a-f]{24}$'')),
   CONSTRAINT ck_file_ocr_raw_json CHECK (raw_json IS JSON)
@@ -703,7 +658,7 @@ CREATE TABLE file_events (
   from_status VARCHAR2(16 CHAR),
   to_status VARCHAR2(16 CHAR),
   detail CLOB,
-  created_at TIMESTAMP NOT NULL,
+  created_at TIMESTAMP DEFAULT SYSTIMESTAMP NOT NULL,
   PRIMARY KEY (oid),
   CONSTRAINT ck_file_events_oid CHECK (REGEXP_LIKE(oid,''^[0-9a-f]{24}$'')),
   CONSTRAINT ck_file_events_detail CHECK (detail IS JSON)
@@ -741,7 +696,7 @@ CREATE TABLE user_device_bindings (
   source VARCHAR2(16 CHAR) DEFAULT ''auto'' NOT NULL,
   status VARCHAR2(16 CHAR) DEFAULT ''active'' NOT NULL,
   note VARCHAR2(256 CHAR),
-  created_at TIMESTAMP NOT NULL,
+  created_at TIMESTAMP DEFAULT SYSTIMESTAMP NOT NULL,
   updated_at TIMESTAMP NOT NULL,
   PRIMARY KEY (oid),
   CONSTRAINT ck_udb_oid CHECK (REGEXP_LIKE(oid,''^[0-9a-f]{24}$'')),
@@ -780,7 +735,7 @@ CREATE TABLE dual_auth_uses (
   otp_counter NUMBER(19) NOT NULL,
   action VARCHAR2(64 CHAR) NOT NULL,
   operator_oid VARCHAR2(24 CHAR) NOT NULL,
-  created_at TIMESTAMP NOT NULL,
+  created_at TIMESTAMP DEFAULT SYSTIMESTAMP NOT NULL,
   PRIMARY KEY (oid),
   CONSTRAINT uq_dual_approver_counter UNIQUE (approver_oid, otp_counter)
 )';
@@ -811,7 +766,7 @@ CREATE TABLE ban_rules (
   config VARCHAR2(2000 CHAR) NOT NULL,
   penalties VARCHAR2(2000 CHAR) NOT NULL,
   builtin NUMBER(1) DEFAULT 0 NOT NULL,
-  created_at TIMESTAMP NOT NULL,
+  created_at TIMESTAMP DEFAULT SYSTIMESTAMP NOT NULL,
   updated_at TIMESTAMP NOT NULL,
   PRIMARY KEY (oid),
   CONSTRAINT ck_ban_rules_oid CHECK (REGEXP_LIKE(oid,''^[0-9a-f]{24}$'')),
@@ -854,7 +809,7 @@ CREATE TABLE ban_records (
   started_at TIMESTAMP NOT NULL,
   expires_at TIMESTAMP,
   operator_oid VARCHAR2(24 CHAR),
-  created_at TIMESTAMP NOT NULL,
+  created_at TIMESTAMP DEFAULT SYSTIMESTAMP NOT NULL,
   PRIMARY KEY (oid),
   CONSTRAINT ck_ban_records_oid CHECK (REGEXP_LIKE(oid,''^[0-9a-f]{24}$'')),
   CONSTRAINT ck_ban_records_source CHECK (source IN (''admin'',''rule'',''agent'')),
@@ -901,7 +856,7 @@ CREATE TABLE temp_login_passwords (
   expires_at TIMESTAMP NOT NULL,
   used_at TIMESTAMP,
   revoked_at TIMESTAMP,
-  created_at TIMESTAMP NOT NULL,
+  created_at TIMESTAMP DEFAULT SYSTIMESTAMP NOT NULL,
   PRIMARY KEY (oid),
   CONSTRAINT ck_temp_login_passwords_oid CHECK (REGEXP_LIKE(oid,''^[0-9a-f]{24}$''))
 )';
@@ -936,7 +891,7 @@ CREATE TABLE device_challenges (
   attempts NUMBER(3) DEFAULT 0 NOT NULL,
   expires_at TIMESTAMP NOT NULL,
   consumed_at TIMESTAMP,
-  created_at TIMESTAMP NOT NULL,
+  created_at TIMESTAMP DEFAULT SYSTIMESTAMP NOT NULL,
   PRIMARY KEY (oid),
   CONSTRAINT ck_device_challenges_oid CHECK (REGEXP_LIKE(oid,''^[0-9a-f]{24}$''))
 )';
@@ -979,7 +934,7 @@ CREATE TABLE banned_devices (
   source VARCHAR2(16 CHAR) NOT NULL,
   rule_code VARCHAR2(64 CHAR),
   operator_oid VARCHAR2(24 CHAR),
-  created_at TIMESTAMP NOT NULL,
+  created_at TIMESTAMP DEFAULT SYSTIMESTAMP NOT NULL,
   PRIMARY KEY (xuehai_id),
   CONSTRAINT ck_banned_devices_source CHECK (source IN (''rule'',''admin'',''agent''))
 )';
@@ -1017,10 +972,12 @@ END;
 --   iframe+bridge+devtools 只该算一次违规。无外键：违规记录是审计材料，
 --   必须比账号活得久（用户被硬删除后仍要能回答「他当时因为什么被封」）。
 --   SIGNAL 是 iframe / bridge / devtools，DETAIL 存判定时的原始依据。
---   (user_oid, trigger_code, created_at) 的组合索引服务「窗口内计数」这条热路径，
---   第二个索引把 BATCH_ID 带进同一条访问路径（COUNT(DISTINCT ...) 不必回表）。
+--   (user_oid, trigger_code, created_at, batch_id) 的组合索引服务「窗口内计数」
+--   这条热路径，BATCH_ID 作为第四列让 COUNT(DISTINCT ...) 不必回表；
+--   created_at 单列索引服务管理页的「全表按时间倒序」。两者不重叠：
+--   前者以 user_oid 打头，排序场景只能走后者。
 --   也由 V016__rule_engine_and_violations.sql / V019__harden_ban_engine.sql 在
---   存量实例上创建。
+--   存量实例上创建（V047 把前缀冗余的 ix_ban_violations_user 换成本索引）。
 -- ----------------------------------------------------------------------------
 BEGIN
   EXECUTE IMMEDIATE '
@@ -1032,7 +989,7 @@ CREATE TABLE ban_violations (
   xuehai_id VARCHAR2(32 CHAR),
   detail VARCHAR2(500 CHAR),
   batch_id VARCHAR2(32 CHAR),
-  created_at TIMESTAMP NOT NULL,
+  created_at TIMESTAMP DEFAULT SYSTIMESTAMP NOT NULL,
   PRIMARY KEY (oid),
   CONSTRAINT ck_ban_violations_oid CHECK (REGEXP_LIKE(oid,''^[0-9a-f]{24}$''))
 )';
@@ -1044,7 +1001,7 @@ END;
 
 BEGIN
   EXECUTE IMMEDIATE
-    'CREATE INDEX ix_ban_violations_user ON ban_violations (user_oid, trigger_code, created_at)';
+    'CREATE INDEX ix_ban_violations_batch ON ban_violations (user_oid, trigger_code, created_at, batch_id)';
 EXCEPTION
   WHEN OTHERS THEN
     IF SQLCODE NOT IN (-955, -1408) THEN RAISE; END IF;
@@ -1053,7 +1010,7 @@ END;
 
 BEGIN
   EXECUTE IMMEDIATE
-    'CREATE INDEX ix_ban_violations_batch ON ban_violations (user_oid, trigger_code, created_at, batch_id)';
+    'CREATE INDEX ix_ban_violations_created ON ban_violations (created_at)';
 EXCEPTION
   WHEN OTHERS THEN
     IF SQLCODE NOT IN (-955, -1408) THEN RAISE; END IF;
@@ -1075,7 +1032,7 @@ CREATE TABLE user_warnings (
   period CHAR(6 CHAR) NOT NULL,
   reason VARCHAR2(512 CHAR),
   detail VARCHAR2(500 CHAR),
-  created_at TIMESTAMP NOT NULL,
+  created_at TIMESTAMP DEFAULT SYSTIMESTAMP NOT NULL,
   PRIMARY KEY (oid),
   CONSTRAINT ck_user_warnings_oid CHECK (REGEXP_LIKE(oid,''^[0-9a-f]{24}$'')),
   CONSTRAINT ck_user_warnings_period CHECK (REGEXP_LIKE(period,''^[0-9]{6}$''))
@@ -1116,7 +1073,7 @@ CREATE TABLE notifications (
   author_name VARCHAR2(128 CHAR) NOT NULL,
   version NUMBER(19) DEFAULT 1 NOT NULL,
   source_ref VARCHAR2(24 CHAR),
-  created_at TIMESTAMP NOT NULL,
+  created_at TIMESTAMP DEFAULT SYSTIMESTAMP NOT NULL,
   updated_at TIMESTAMP NOT NULL,
   PRIMARY KEY (oid),
   CONSTRAINT ck_notifications_oid CHECK (REGEXP_LIKE(oid,''^[0-9a-f]{24}$'')),
@@ -1199,7 +1156,7 @@ CREATE TABLE notification_versions (
   content_hash VARCHAR2(64 CHAR) NOT NULL,
   author_oid VARCHAR2(24 CHAR),
   author_name VARCHAR2(128 CHAR) NOT NULL,
-  created_at TIMESTAMP NOT NULL,
+  created_at TIMESTAMP DEFAULT SYSTIMESTAMP NOT NULL,
   PRIMARY KEY (oid),
   CONSTRAINT uq_notification_versions UNIQUE (notification_oid, version)
 )';
@@ -1256,7 +1213,7 @@ CREATE TABLE ai_call_logs (
   cache_read_tokens NUMBER(10),
   cache_write_tokens NUMBER(10),
   cache_key VARCHAR2(64 CHAR),
-  created_at TIMESTAMP NOT NULL,
+  created_at TIMESTAMP DEFAULT SYSTIMESTAMP NOT NULL,
   PRIMARY KEY (oid),
   CONSTRAINT ck_ai_call_logs_oid CHECK (REGEXP_LIKE(oid,''^[0-9a-f]{24}$'')),
   CONSTRAINT ck_ai_call_logs_capability CHECK (capability IN (''ocr'',''chat'')),
@@ -1292,6 +1249,14 @@ END;
 
 BEGIN
   EXECUTE IMMEDIATE 'CREATE INDEX ix_ai_call_logs_endpoint_status ON ai_call_logs (endpoint, status, created_at)';
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE NOT IN (-955, -1408) THEN RAISE; END IF;
+END;
+/
+
+BEGIN
+  EXECUTE IMMEDIATE 'CREATE INDEX ix_ai_call_logs_status_created ON ai_call_logs (status, created_at)';
 EXCEPTION
   WHEN OTHERS THEN
     IF SQLCODE NOT IN (-955, -1408) THEN RAISE; END IF;
@@ -1372,7 +1337,7 @@ CREATE TABLE ai_credentials (
   api_key_cipher VARCHAR2(2000 CHAR) NOT NULL,
   key_hint VARCHAR2(16 CHAR),
   enabled NUMBER(1) DEFAULT 1 NOT NULL,
-  created_at TIMESTAMP NOT NULL,
+  created_at TIMESTAMP DEFAULT SYSTIMESTAMP NOT NULL,
   updated_at TIMESTAMP NOT NULL,
   expires_at TIMESTAMP,
   PRIMARY KEY (oid),
@@ -1434,7 +1399,7 @@ CREATE TABLE ai_ocr_engines (
   key_hint VARCHAR2(16 CHAR),
   enabled NUMBER(1) DEFAULT 1 NOT NULL,
   priority NUMBER(3) DEFAULT 100 NOT NULL,
-  created_at TIMESTAMP NOT NULL,
+  created_at TIMESTAMP DEFAULT SYSTIMESTAMP NOT NULL,
   updated_at TIMESTAMP NOT NULL,
   CONSTRAINT pk_ai_ocr_engines PRIMARY KEY (oid),
   CONSTRAINT ck_ai_ocr_engines_oid CHECK (REGEXP_LIKE(oid,''^[0-9a-f]{24}$'')),
@@ -1745,7 +1710,7 @@ CREATE TABLE ai_agent_events (
   actor_oid VARCHAR2(32 CHAR),
   approver_oid VARCHAR2(32 CHAR),
   confirmed_at TIMESTAMP,
-  created_at TIMESTAMP NOT NULL,
+  created_at TIMESTAMP DEFAULT SYSTIMESTAMP NOT NULL,
   PRIMARY KEY (oid),
   CONSTRAINT ck_ai_agent_events_tool_kind CHECK (tool_kind IS NULL OR tool_kind IN (''read'',''write'')),
   CONSTRAINT ck_ai_agent_events_status CHECK (status IN (''executed'',''proposed'',''executing'',''confirmed'',''rejected'',''expired'',''failed'',''denied''))
@@ -1786,7 +1751,11 @@ CREATE TABLE ai_prompt_audit (
   roles_snapshot VARCHAR2(64 CHAR),
   purpose VARCHAR2(24 CHAR),
   prompt_text CLOB,
-  created_at TIMESTAMP NOT NULL,
+  answer_text CLOB,
+  tool_calls CLOB,
+  refused NUMBER(1) DEFAULT 0 NOT NULL,
+  warned NUMBER(1) DEFAULT 0 NOT NULL,
+  created_at TIMESTAMP DEFAULT SYSTIMESTAMP NOT NULL,
   PRIMARY KEY (oid)
 )';
 EXCEPTION
@@ -1810,6 +1779,8 @@ END;
 --   SUMMARY / SUMMARY_UPTO_SEQ 是压缩水位（0 = 从未压缩）；摘要只存会话行，
 --   所以 AI_MESSAGES 没有 summary 角色。计数字段 DEFAULT 0 NOT NULL（累加器），
 --   上游 token 在 AI_MESSAGES 上仍可空（NULL = 上游没报）。也由 V035 创建。
+--   THINKING 是会话级思考强度（V046）；SCENE 是只读场景标记（V048）：
+--   terminal | file_edit，NULL = 普通会话（列表查询只取 NULL）。
 -- ----------------------------------------------------------------------------
 BEGIN
   EXECUTE IMMEDIATE '
@@ -1819,6 +1790,8 @@ CREATE TABLE ai_conversations (
   "MODE" VARCHAR2(8 CHAR) NOT NULL,
   title VARCHAR2(120 CHAR),
   model VARCHAR2(120 CHAR),
+  thinking VARCHAR2(16 CHAR),
+  scene VARCHAR2(16 CHAR),
   status VARCHAR2(12 CHAR) DEFAULT ''active'' NOT NULL,
   summary CLOB,
   summary_upto_seq NUMBER(10) DEFAULT 0 NOT NULL,
@@ -1828,7 +1801,7 @@ CREATE TABLE ai_conversations (
   context_tokens NUMBER(12) DEFAULT 0 NOT NULL,
   message_count NUMBER(10) DEFAULT 0 NOT NULL,
   compaction_degraded_at TIMESTAMP,
-  created_at TIMESTAMP NOT NULL,
+  created_at TIMESTAMP DEFAULT SYSTIMESTAMP NOT NULL,
   updated_at TIMESTAMP NOT NULL,
   PRIMARY KEY (oid),
   CONSTRAINT ck_ai_conversations_mode CHECK ("MODE" IN (''chat'',''agent'')),
@@ -1874,7 +1847,7 @@ CREATE TABLE ai_messages (
   total_tokens NUMBER(10),
   cache_read_tokens NUMBER(10),
   cache_write_tokens NUMBER(10),
-  created_at TIMESTAMP NOT NULL,
+  created_at TIMESTAMP DEFAULT SYSTIMESTAMP NOT NULL,
   PRIMARY KEY (oid),
   CONSTRAINT uq_ai_messages_conv_seq UNIQUE (conversation_oid, seq),
   CONSTRAINT ck_ai_messages_role CHECK (role IN (''user'',''assistant'',''tool'')),
@@ -1884,15 +1857,6 @@ CREATE TABLE ai_messages (
 EXCEPTION
   WHEN OTHERS THEN
     IF SQLCODE != -955 THEN RAISE; END IF;
-END;
-/
-
-BEGIN
-  EXECUTE IMMEDIATE '
-CREATE INDEX ix_ai_messages_conv_created ON ai_messages (conversation_oid, created_at)';
-EXCEPTION
-  WHEN OTHERS THEN
-    IF SQLCODE NOT IN (-955, -1408) THEN RAISE; END IF;
 END;
 /
 
@@ -1924,7 +1888,7 @@ CREATE TABLE ai_runs (
   total_tokens NUMBER(12),
   cancel_requested NUMBER(1) DEFAULT 0 NOT NULL,
   heartbeat_at TIMESTAMP,
-  created_at TIMESTAMP NOT NULL,
+  created_at TIMESTAMP DEFAULT SYSTIMESTAMP NOT NULL,
   started_at TIMESTAMP,
   finished_at TIMESTAMP,
   PRIMARY KEY (oid),
@@ -2114,7 +2078,7 @@ CREATE TABLE ai_scheduled_tasks (
   run_count NUMBER DEFAULT 0 NOT NULL,
   last_status VARCHAR2(16 CHAR),
   last_error VARCHAR2(512 CHAR),
-  created_at TIMESTAMP NOT NULL,
+  created_at TIMESTAMP DEFAULT SYSTIMESTAMP NOT NULL,
   updated_at TIMESTAMP NOT NULL,
   PRIMARY KEY (oid),
   CONSTRAINT ck_ai_scheduled_tasks_oid CHECK (REGEXP_LIKE(oid,''^[0-9a-f]{24}$'')),
@@ -2223,7 +2187,7 @@ CREATE TABLE ai_quota_requests (
   decided_by CHAR(24 CHAR),
   decided_at TIMESTAMP,
   decision_note VARCHAR2(500 CHAR),
-  created_at TIMESTAMP NOT NULL,
+  created_at TIMESTAMP DEFAULT SYSTIMESTAMP NOT NULL,
   updated_at TIMESTAMP NOT NULL,
   PRIMARY KEY (oid),
   CONSTRAINT ck_ai_quota_requests_oid CHECK (REGEXP_LIKE(oid,''^[0-9a-f]{24}$'')),

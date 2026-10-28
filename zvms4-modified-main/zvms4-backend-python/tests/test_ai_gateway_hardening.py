@@ -8,9 +8,8 @@
   黑名单再看一眼；官方域名与服务端作用域走「一次 DNS 都不做」的快路径，命中结果
   按主机缓存 60 秒。全部用桩 DNS，不出网。
 * **OCR 引擎地址**：写入口拒绝指向私网的 ``base_url``/``endpoint``。
-* **历史回放**：去掉「每页一次归属查询」的重复，并把「翻到 400 条」从固定 4 轮
-  往返压到「取不满一页就停」（≤100 条的历史只要 1 次查询）；返回的消息序列必须与
-  改造前逐条相同（用改造前的翻页算法在测试里做对照实现）。
+* **会话面下线**：``chat`` 模式已移除，历史回放只走 agent 的 run 队列（这部分
+  用例随之删除，agent 侧仍由 ``test_ai_run_queue`` 覆盖）。
 
 仓储与上游全部内存桩：不连库、不出网。
 """
@@ -26,11 +25,10 @@ from fastapi.testclient import TestClient
 
 import settings  # noqa: F401  (导入顺序与其它 AI 用例一致)
 from db import backends
-from routers import ai_chat_conversations_router as chat_router
 from routers import ai_router
 from services import settings_runtime
 from services.ai import config as ai_config
-from services.ai import conversations, credentials, ocr_engines, providers
+from services.ai import credentials, ocr_engines, providers
 from services.ai.routing import RouteError
 from typings.log import inject_log
 from util.object_id import get_current_user
@@ -485,115 +483,3 @@ def test_ocr_engine_public_endpoint_is_accepted(monkeypatch):
 def test_ocr_endpoint_check_ignores_engines_without_urls():
     assert asyncio.run(ocr_engines.blocked_endpoint({"model": "x"}, None)) is None
     assert asyncio.run(ocr_engines.blocked_endpoint(None, None)) is None
-
-
-# ---------------------------------------------------------------------------
-# 历史回放：1 次查询 + 与改造前等价
-# ---------------------------------------------------------------------------
-
-
-class FakeMessagesRepo:
-    """``list_after`` 的内存版：行数封顶与 Oracle 仓储一致（``LIST_LIMIT_MAX=100``）。"""
-
-    def __init__(self, rows: list[dict] | None = None) -> None:
-        self.rows = list(rows or [])
-        self.queries: list[tuple[int, int]] = []
-
-    async def list_after(self, conversation_oid, after_seq=0, *, limit=50):
-        self.queries.append((after_seq, limit))
-        size = max(1, min(int(limit), conversations.MESSAGE_LIMIT_MAX))
-        rows = [
-            dict(row)
-            for row in self.rows
-            if row["conversation_oid"] == conversation_oid and row["seq"] > after_seq
-        ]
-        rows.sort(key=lambda row: row["seq"])
-        return rows[:size]
-
-
-def _message(seq: int, *, role: str = "user", content: str = "hi") -> dict:
-    return {
-        "_id": f"m{seq:031d}",
-        "conversation_oid": CONVERSATION,
-        "seq": seq,
-        "role": role,
-        "content": f"{content}-{seq}",
-        "tool_calls": None,
-        "tool_call_id": None,
-        "tool_name": None,
-        "round_no": None,
-        "finish_reason": None,
-        "request_id": None,
-        "prompt_tokens": None,
-        "completion_tokens": None,
-        "total_tokens": None,
-        "cache_read_tokens": None,
-        "cache_write_tokens": None,
-        "created_at": None,
-    }
-
-
-async def _paged_reference(repo, conversation, *, page: int, maximum: int):
-    """改造前的算法（每页 ``page`` 条、翻到 ``maximum``）：作为等价性对照。"""
-    after = max(0, int(conversation.get("summary_upto_seq") or 0))
-    rows: list[dict] = []
-    while len(rows) < maximum:
-        items = await repo.list_after(
-            str(conversation.get("_id") or ""), after, limit=page
-        )
-        if not items:
-            break
-        rows.extend(items)
-        after = max(after, int(items[-1].get("seq") or 0))
-        if len(items) < page:
-            break
-    return [
-        chat_router._replay(conversations.message_view(row))
-        for row in rows[:maximum]
-    ]
-
-
-def test_history_matches_the_old_paging_result(monkeypatch):
-    rows = [
-        _message(seq, role="user" if seq % 2 else "assistant") for seq in range(1, 251)
-    ]
-    repo = FakeMessagesRepo(rows)
-    monkeypatch.setattr(backends, "get_ai_messages_repo", lambda session=None: repo)
-    conversation = {"_id": CONVERSATION, "summary_upto_seq": 0}
-
-    history = asyncio.run(chat_router._history(conversation))
-    # 250 条 = 100 + 100 + 50 三页（仓库单页上限 100，不能靠「一次要 400」绕过），
-    # 改造前的同一场景是 6 次查询（每页多一次 require_row）。
-    assert repo.queries == [(0, 100), (100, 100), (200, 100)]
-
-    reference = asyncio.run(_paged_reference(repo, conversation, page=100, maximum=400))
-
-    assert history == reference
-    assert len(history) == 250
-
-
-def test_short_history_costs_a_single_query(monkeypatch):
-    """常见情况（≤100 条）一次查询搞定：这是「每请求 4 次往返」真正被砍掉的部分。"""
-    rows = [_message(seq) for seq in range(1, 31)]
-    repo = FakeMessagesRepo(rows)
-    monkeypatch.setattr(backends, "get_ai_messages_repo", lambda session=None: repo)
-
-    history = asyncio.run(chat_router._history({"_id": CONVERSATION}))
-
-    assert len(history) == 30
-    assert repo.queries == [(0, 100)]
-
-
-def test_history_respects_summary_cut_and_cap(monkeypatch):
-    rows = [_message(seq) for seq in range(1, 501)]
-    repo = FakeMessagesRepo(rows)
-    monkeypatch.setattr(backends, "get_ai_messages_repo", lambda session=None: repo)
-
-    history = asyncio.run(
-        chat_router._history({"_id": CONVERSATION, "summary_upto_seq": 100})
-    )
-
-    assert history[0]["content"] == "hi-101"
-    assert len(history) == chat_router.HISTORY_MAX == 400
-    # 400 条 = 4 页，正好在封顶处停下，不多打一次空查询。
-    assert repo.queries == [(100, 100), (200, 100), (300, 100), (400, 100)]

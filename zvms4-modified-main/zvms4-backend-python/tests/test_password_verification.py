@@ -268,12 +268,6 @@ HIGH_RISK_ENDPOINTS = [
         {"Xuehai-Id": PRIMARY},
     ),
     (
-        "PUT",
-        "/api/ai/agent/moderation/unrestricted",
-        {"enabled": True},
-        {},
-    ),
-    (
         "PATCH",
         f"/api/attachments/{FILE}/status",
         {"status": "verified"},

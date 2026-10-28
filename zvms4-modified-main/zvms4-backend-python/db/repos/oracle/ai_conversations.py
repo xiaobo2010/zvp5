@@ -80,6 +80,8 @@ def _columns() -> tuple[Any, ...]:
         tbl.c.mode,
         tbl.c.title,
         tbl.c.model,
+        tbl.c.thinking,
+        tbl.c.scene,
         tbl.c.status,
         tbl.c.summary,
         tbl.c.summary_upto_seq,
@@ -120,9 +122,17 @@ def _list_page_stmt(
     OFFSET 分页在「一边翻页一边有新消息」时会把行从第 2 页挤到第 3 页（正确性），
     也会随页数变慢（性能）。``oid`` 是同一毫秒内的定序补充键：``updated_at`` 精度
     到秒，同一秒建的两个会话只按时间排会翻页丢行。
+
+    ``scene IS NULL`` 是固定的：列表是普通会话的列表，场景会话（终端 / 文件编辑）
+    只经 `/api/ai/scenes/{scene}/runs` 触达，混进来会让 ZAiChat 的左栏凭空多出几条
+    不是用户建的会话。
     """
     tbl = ai_conversations_tbl
-    stmt = select(*_list_columns()).select_from(tbl).where(tbl.c.owner_oid == owner_oid)
+    stmt = (
+        select(*_list_columns())
+        .select_from(tbl)
+        .where(tbl.c.owner_oid == owner_oid, tbl.c.scene.is_(None))
+    )
     if status:
         stmt = stmt.where(tbl.c.status == status)
     if cursor is not None:
@@ -145,6 +155,8 @@ def _insert_stmt(
     mode: str,
     title: str | None,
     model: str | None,
+    thinking: str | None,
+    scene: str | None,
     created_at: datetime,
 ):
     tbl = ai_conversations_tbl
@@ -154,6 +166,8 @@ def _insert_stmt(
         mode=mode,
         title=title,
         model=model,
+        thinking=thinking,
+        scene=scene,
         status="active",
         summary=None,
         summary_upto_seq=0,
@@ -181,20 +195,24 @@ def _update_values(
     *,
     title: str | None,
     status: str | None,
-    model: str | None,
+    thinking: str | None,
     at: datetime,
 ) -> dict[str, Any]:
-    """只收「传了的字段」；``None`` = 不改（``model`` 的清空走 ``set_model(None)``
-    这条显式路径，见 :meth:`OracleAIConversationsRepo.update`）。"""
+    """只收「传了的字段」；``None`` = 不改（``thinking`` 的清空走
+    ``clear_thinking``，见 :meth:`OracleAIConversationsRepo.update`）。
+
+    模型不在这张表里：它在建会话时定死（R2），PATCH 想改就直接 409，不该走到
+    仓储层。
+    """
     values: dict[str, Any] = {}
     if title is not None:
         values["title"] = title
     if status is not None:
         values["status"] = status
-    if model is not None:
-        values["model"] = model
+    if thinking is not None:
+        values["thinking"] = thinking
     if values:
-        # 改名/归档/换模型都算「这条会话动过」，列表按 updated_at 排序。
+        # 改名/归档/调思考强度都算「这条会话动过」，列表按 updated_at 排序。
         values["updated_at"] = at
     return values
 
@@ -204,6 +222,39 @@ def _touch_stmt(oid: str, at: datetime):
         update(ai_conversations_tbl)
         .where(ai_conversations_tbl.c.oid == oid)
         .values(updated_at=at)
+    )
+
+
+def _latest_scene_stmt(owner_oid: str, scene: str):
+    """某用户某个场景的最近一条会话（复用即「不新建」）。"""
+    tbl = ai_conversations_tbl
+    return (
+        select(*_list_columns())
+        .select_from(tbl)
+        .where(tbl.c.owner_oid == owner_oid, tbl.c.scene == scene)
+        .order_by(tbl.c.updated_at.desc(), tbl.c.oid.desc())
+        .fetch(1)
+    )
+
+
+def _stale_scene_rows_stmt(cutoff: datetime, limit: int):
+    """场景会话的保留期清理候选（最旧的先删，批量出去）。"""
+    tbl = ai_conversations_tbl
+    return (
+        select(*_list_columns())
+        .select_from(tbl)
+        .where(tbl.c.scene.is_not(None), tbl.c.updated_at < cutoff)
+        .order_by(tbl.c.updated_at.asc())
+        .fetch(int(limit))
+    )
+
+
+def _count_stale_scene_rows_stmt(cutoff: datetime):
+    tbl = ai_conversations_tbl
+    return (
+        select(func.count())
+        .select_from(tbl)
+        .where(tbl.c.scene.is_not(None), tbl.c.updated_at < cutoff)
     )
 
 
@@ -281,6 +332,8 @@ def _base_conversation_row(mapping: Any) -> Row:
         "mode": mapping["mode"],
         "title": mapping["title"],
         "model": mapping["model"],
+        "thinking": mapping["thinking"],
+        "scene": mapping["scene"],
         "status": mapping["status"],
         "summary_upto_seq": int(mapping["summary_upto_seq"] or 0),
         "tokens_prompt": int(mapping["tokens_prompt"] or 0),
@@ -496,6 +549,8 @@ class OracleAIConversationsRepo:
         mode: str,
         title: str | None = None,
         model: str | None = None,
+        thinking: str | None = None,
+        scene: str | None = None,
     ) -> Row:
         now = _now()
         stmt = _insert_stmt(
@@ -504,6 +559,8 @@ class OracleAIConversationsRepo:
             mode=str(mode),
             title=title,
             model=model,
+            thinking=thinking,
+            scene=scene,
             created_at=now,
         )
         async with _session_for(self._session) as (session, owns):
@@ -516,6 +573,8 @@ class OracleAIConversationsRepo:
             "mode": str(mode),
             "title": title,
             "model": model,
+            "thinking": thinking,
+            "scene": scene,
             "status": "active",
             "summary": None,
             "summary_upto_seq": 0,
@@ -564,20 +623,19 @@ class OracleAIConversationsRepo:
         *,
         title: str | None = None,
         status: str | None = None,
-        model: str | None = None,
-        clear_model: bool = False,
+        thinking: str | None = None,
+        clear_thinking: bool = False,
     ) -> bool:
-        """改名 / 归档 / 换模型；``False`` = 会话不存在或不属于此人。
+        """改名 / 归档 / 调思考强度；``False`` = 会话不存在或不属于此人。
 
-        ``clear_model`` 是「显式清空模型（回到服务端默认）」的专用开关：
-        ``model=None`` 在别处表示「不改」，两种意图必须能分开，否则 PATCH 里想
-        清空模型的人只会得到一次静默的 no-op。
+        ``clear_thinking`` 是「显式清空思考强度（回到上游默认）」的专用开关：
+        ``thinking=None`` 在别处表示「不改」，两种意图必须能分开。
         """
         values = _update_values(
-            title=title, status=status, model=model, at=_now()
+            title=title, status=status, thinking=thinking, at=_now()
         )
-        if clear_model:
-            values["model"] = None
+        if clear_thinking:
+            values["thinking"] = None
             values.setdefault("updated_at", _now())
         if not values:
             return True
@@ -643,6 +701,33 @@ class OracleAIConversationsRepo:
     async def count_messages(self, oid: str) -> int:
         async with _session_for(self._session) as (session, _owns):
             value = (await session.execute(_count_messages_stmt(str(oid)))).scalar()
+        return int(value or 0)
+
+    async def latest_by_scene(self, owner_oid: str, scene: str) -> Row | None:
+        """某用户某个场景的最近一条会话；没有就 ``None``（调用方新建）。"""
+        async with _session_for(self._session) as (session, _owns):
+            row = (
+                await session.execute(
+                    _latest_scene_stmt(str(owner_oid), str(scene))
+                )
+            ).first()
+        return _list_row(row._mapping) if row is not None else None
+
+    async def list_stale_scenes(
+        self, cutoff: datetime, *, limit: int = DELETE_BATCH
+    ) -> list[Row]:
+        """``updated_at < cutoff`` 的场景会话（最旧的先给，供级联删除）。"""
+        async with _session_for(self._session) as (session, _owns):
+            rows = (
+                await session.execute(_stale_scene_rows_stmt(cutoff, limit))
+            ).all()
+        return [_list_row(row._mapping) for row in rows]
+
+    async def count_stale_scenes(self, cutoff: datetime) -> int:
+        async with _session_for(self._session) as (session, _owns):
+            value = (
+                await session.execute(_count_stale_scene_rows_stmt(cutoff))
+            ).scalar()
         return int(value or 0)
 
     async def delete_batched(

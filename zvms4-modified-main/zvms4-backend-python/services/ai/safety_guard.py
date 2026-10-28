@@ -2,13 +2,14 @@
 
 **为什么这一层只对 department 生效**：学生会的日常就是平台管理与义工管理，
 关键词规则挡不住「换个说法」的破坏性请求（删库、批量封号、导全站数据）。
-admin 有无限制模式与人工复核兜底，学生没有；给全体学生加一次上游调用既贵
-又慢，收益还不明确。所以这是一道**按角色开启**的灰区闸门，不是全站门禁。
+admin 天然旁路（``is_admin`` 直接跳过审核），学生没有；给全体学生加一次上游
+调用既贵又慢，收益还不明确。所以这是一道**按角色开启**的灰区闸门，不是全站
+门禁。
 
-**为什么 fail-open**：安全闸自己挂掉（无凭据 / 超时 / 上游 5xx / 坏 JSON）时
-必须放行并留一条 warning 日志。把正常用户的请求挡在一个「可能坏了」的分类器
-后面，等于让安全功能成为可用性的单点故障；而被漏掉的灰区请求仍然受关键词
-规则与月度警告/封禁梯度约束。
+**为什么 fail-closed**：安全闸自己跑不起来（无凭据 / 超时 / 上游 5xx / 坏
+JSON）时**拒绝本次回答**，但**不记违规、不封号**——没有判定结论就没有证据。
+这类结论用 ``ScreenResult.unavailable`` 与「真的判定为破坏性请求」区分开：
+对外同一个错误码，对内只有后者能进违规链路。空文本例外（无内容可审，放行）。
 
 **为什么只判一次、温度 0、限 200 token**：这一步在用户等待的同步路径上
 （提交 run / 发一条对话），延迟预算只有几秒。判定要可复现，就不要采样；
@@ -27,13 +28,17 @@ from typing import Any, Mapping
 from services.ai import config as ai_config
 from services.ai import credentials, providers, routing
 from services.ai.credentials import CredentialError
+from services.ai.moderation import REJECTED_MESSAGE
 from services.ai.routing import RouteError
 from typings.log import ZVMSLog
 
 _logger = logging.getLogger(__name__)
 
-# 对外固定文案：不回传内部判定细节，避免攻击者按差异调参。
-REJECTED_MESSAGE = "该请求未通过内容安全认证。"
+# 判定跑不起来时的内部分类：调用方据此**不写违规证据**（对外仍是同一个错误码）。
+SAFETY_UNAVAILABLE = "safety_unavailable"
+
+# 对外唯一错误码：不再区分「已警告」与「已封禁」。
+REJECTED_CODE = "AI_SAFETY_REJECTED"
 
 # 正文送给判定模型的长度上限：判定只需要意图，不需要全文（长上下文既贵又会
 # 把真正的意图埋掉）。2000 字符足够覆盖一次完整提问。
@@ -56,14 +61,26 @@ _JSON_BLOCK = re.compile(r"\{.*\}", re.DOTALL)
 
 @dataclass(frozen=True)
 class ScreenResult:
-    """认证结论；``allowed`` 为 False 时 ``category`` 非空。"""
+    """认证结论；``allowed`` 为 False 时 ``category`` 非空。
+
+    ``unavailable`` 区分两种拒绝：``True`` = 判定没跑起来（无凭据/超时/坏
+    JSON），只拒绝本次回答；``False`` = 判定确认是破坏性请求，属于违规证据。
+    """
 
     allowed: bool
     reason: str = ""
     category: str = ""
+    unavailable: bool = False
 
 
 ALLOWED = ScreenResult(allowed=True)
+
+
+def unavailable() -> ScreenResult:
+    """判定跑不起来：拒绝本次回答，但不构成任何违规证据。"""
+    return ScreenResult(
+        allowed=False, category=SAFETY_UNAVAILABLE, unavailable=True
+    )
 
 
 def is_department(user: Mapping[str, Any] | dict) -> bool:
@@ -107,7 +124,7 @@ def _as_bool(value: Any) -> bool:
 
 
 async def _log_warning(user_oid: str, message: str) -> None:
-    """安全闸自身的故障留痕；写日志失败不影响放行结论。"""
+    """安全闸自身的故障留痕；写日志失败不影响拒绝结论。"""
     try:
         await ZVMSLog(
             "",
@@ -126,12 +143,11 @@ async def _pick_route(
     """选一条可用凭据与模型；没有可用项返回 ``None``。
 
     优先级：显式 ``model_hint``（合格 ID 或裸名，且目录里确实有 provider 提供它）
-    → 目录里第一个可用 provider 的第一个模型。与
-    ``routers.ai_chat_conversations_router`` 的选择口径一致，避免「判定用的模型」
-    与「真正回答的模型」跨到另一家上游。
+    → 目录里第一个可用 provider 的第一个模型。与 ``services.agent.executor`` 的
+    选择口径一致，避免「判定用的模型」与「真正回答的模型」跨到另一家上游。
 
-    这里**不**把歧义当错误往外抛：安全认证是 fail-open 的旁路，裸名命中多家时退回
-    「目录里第一个可用」并照常判定，比让用户的请求因为分类器选路问题被拒好。
+    这里**不**把歧义当错误往外抛：裸名命中多家时退回「目录里第一个可用」并照常
+    判定，比让用户的请求因为分类器选路问题被拒好。
     """
     entries = await credentials.catalog(user_oid)
     if not entries:
@@ -170,7 +186,8 @@ async def screen(
     """对 department 用户做一次 LLM 安全认证。
 
     非 department 或开关关闭时**直接放行且不触达网络**（零额外开销）。
-    其余任何异常都按放行处理，并写 ``ai_safety_guard_error`` 日志。
+    其余任何「判定没跑起来」的情形都返回 :func:`unavailable`（拒绝回答、不记
+    违规），并写 ``ai_safety_guard_error`` 日志；空文本无内容可审，放行。
     """
     if not is_department(user):
         return ALLOWED
@@ -186,17 +203,17 @@ async def screen(
     try:
         route = await _pick_route(user_oid, model_hint)
     except Exception:  # noqa: BLE001 - 目录读取失败按无凭据处理
-        _logger.exception("读取 AI 凭据目录失败，安全认证放行")
+        _logger.exception("读取 AI 凭据目录失败，安全认证无法判定")
     if route is None:
-        await _log_warning(user_oid, "AI 安全认证无可用凭据/模型，本次放行")
-        return ALLOWED
+        await _log_warning(user_oid, "AI 安全认证无可用凭据/模型，本次拒绝回答")
+        return unavailable()
 
     entry, model = route
     try:
         api_key = await credentials.resolve_api_key(entry)
     except CredentialError:
-        await _log_warning(user_oid, "AI 安全认证凭据不可用，本次放行")
-        return ALLOWED
+        await _log_warning(user_oid, "AI 安全认证凭据不可用，本次拒绝回答")
+        return unavailable()
 
     payload = {
         "model": model,
@@ -215,15 +232,17 @@ async def screen(
             providers.chat_completion(payload, entry, api_key), timeout=timeout
         )
     except asyncio.TimeoutError:
-        await _log_warning(user_oid, f"AI 安全认证超时（{timeout:.0f}s），本次放行")
-        return ALLOWED
+        await _log_warning(user_oid, f"AI 安全认证超时（{timeout:.0f}s），本次拒绝回答")
+        return unavailable()
     except RouteError as exc:
-        await _log_warning(user_oid, f"AI 安全认证上游失败（{exc.code}），本次放行")
-        return ALLOWED
-    except Exception:  # noqa: BLE001 - 任何异常都不该挡住正常用户
-        _logger.exception("AI 安全认证调用异常，本次放行")
-        await _log_warning(user_oid, "AI 安全认证调用异常，本次放行")
-        return ALLOWED
+        await _log_warning(
+            user_oid, f"AI 安全认证上游失败（{exc.code}），本次拒绝回答"
+        )
+        return unavailable()
+    except Exception:  # noqa: BLE001 - 判定跑不起来就拒绝，绝不冒充「通过」
+        _logger.exception("AI 安全认证调用异常，本次拒绝回答")
+        await _log_warning(user_oid, "AI 安全认证调用异常，本次拒绝回答")
+        return unavailable()
 
     try:
         message = (response.get("choices") or [{}])[0].get("message") or {}
@@ -233,8 +252,8 @@ async def screen(
 
     verdict = _extract_json(str(body))
     if verdict is None:
-        await _log_warning(user_oid, "AI 安全认证返回无法解析的结论，本次放行")
-        return ALLOWED
+        await _log_warning(user_oid, "AI 安全认证返回无法解析的结论，本次拒绝回答")
+        return unavailable()
 
     related = _as_bool(verdict.get("related"))
     destructive = _as_bool(verdict.get("destructive"))
@@ -249,9 +268,12 @@ async def screen(
 __all__ = [
     "ALLOWED",
     "MAX_SCREEN_CHARS",
+    "REJECTED_CODE",
     "REJECTED_MESSAGE",
+    "SAFETY_UNAVAILABLE",
     "SYSTEM_PROMPT",
     "ScreenResult",
     "is_department",
     "screen",
+    "unavailable",
 ]

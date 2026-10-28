@@ -472,11 +472,6 @@ def test_ban_violations_columns_and_index_cover_the_counting_path():
         index.name: [col.name for col in index.columns]
         for index in ban_violations_tbl.indexes
     }
-    assert indexes["ix_ban_violations_user"] == [
-        "user_oid",
-        "trigger_code",
-        "created_at",
-    ]
     # 批次去重（COUNT(DISTINCT ...)）必须能只走索引。
     assert indexes["ix_ban_violations_batch"] == [
         "user_oid",
@@ -484,6 +479,9 @@ def test_ban_violations_columns_and_index_cover_the_counting_path():
         "created_at",
         "batch_id",
     ]
+    # 前缀冗余的单索引已删；管理页的「全表按时间倒序」只由 created_at 服务。
+    assert "ix_ban_violations_user" not in indexes
+    assert indexes["ix_ban_violations_created"] == ["created_at"]
 
 
 def test_ban_violations_insert_writes_the_batch_id():

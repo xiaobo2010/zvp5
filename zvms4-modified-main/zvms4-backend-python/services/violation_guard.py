@@ -20,10 +20,11 @@
 之后的每一批都再封一次，梯度被一路打到永久档——所以落封前先看当前是否已经
 有生效封禁，有就只记账不重复处罚。
 
-**agent 越狱是另一条语义：先警告、再梯度封禁**。证据层与 ``platform_misuse``
-共用（白名单/去重/批次号），但处罚多一层 ``USER_WARNINGS``：自然月内首次命中
-只落警告，同月第二次才交给 ``device_guard`` 走梯度。月度归零靠唯一索引，没有
-cron；同一次违规的重试（证据被去重）绝不升级处罚。
+**agent 越狱是另一条语义：记违规 + 发警告 + 立即首档封号**。证据层与
+``platform_misuse`` 共用（白名单/去重/批次号），处罚多一层 ``USER_WARNINGS``
+（自然月内一条，作为警告的账本）；不再有「本自然月首次只警告」的宽大分支：
+只要判定成立（LLM 拒绝或关键词命中），本次调用就按 ``BAN_RULES.penalties``
+的首档落封。同一次违规的重试（证据被去重）不会重复处罚。
 """
 
 from __future__ import annotations
@@ -76,8 +77,8 @@ REASON_DETAIL_CHARS = 120
 NO_AUTO_BAN_ROLES = ("admin", "department", "secretary")
 
 # agent 越狱单独豁免口径：AI 门禁默认只放行 admin/department，若沿用上面的豁免，
-# 学生会的越狱证据永远只留审计、封禁规则形同虚设。admin 保留豁免——有无限制模式
-# 兜底，且自动封管理员可能把平台锁死。
+# 学生会的越狱证据永远只留审计、封禁规则形同虚设。admin 保留豁免——审核层已按
+# ``is_admin`` 直接旁路，这里做保险；自动封管理员可能把平台锁死。
 AGENT_JAILBREAK_EXEMPT_ROLES = ("admin",)
 
 Row = dict[str, Any]
@@ -293,7 +294,7 @@ async def _log_ban(user_oid: str, reason: str, xuehai_id: str, at: datetime) -> 
 async def _log_warning(
     user_oid: str, period: str, detail: str | None, xuehai_id: str, at: datetime
 ) -> None:
-    """月度首次警告的审计：警告账本写入成功后才记，失败不影响结论。"""
+    """月度警告的审计：警告账本写入成功后才记，失败不影响结论。"""
     try:
         await ZVMSLog(
             "",
@@ -460,7 +461,7 @@ async def record(
 def _warning_reason(category: str) -> str:
     text = (
         f"AI 安全认证命中（{category or 'destructive_request'}）："
-        "本月首次警告，再犯将按梯度封禁"
+        "已记录违规并按首档封禁"
     )
     return _clip_reason(text)
 
@@ -480,15 +481,16 @@ async def record_agent_jailbreak(
     rule: str = "",
     detail: str | None = None,
 ) -> dict:
-    """agent 越狱/提示注入命中：**每月首次只警告，同月再犯按梯度封号**。
+    """agent 越狱/提示注入命中：记违规 + 发警告 + **立即按首档封号**。
 
-    为什么不是命中即封：LLM 审核有灰区，一次判定直接封号会把「正常提问被判错」
-    的成本抬到账号级别。第一次落警告账本（``USER_WARNINGS``，按自然月唯一），
-    同月第二次才交给 ``device_guard`` 走 ``ban_rules`` 的梯度。
+    为什么不再「首次只警告」：警告给不出任何阻止力（判定成立后人还在用平台），
+    而每一次命中的原文都已经是可复核的证据。判定成立即按
+    ``ban_rules.penalties`` 的第一档落封，梯度由 ``device_guard`` 按历史流水算，
+    所以第二次违规自然进第二档。
 
-    为什么重试不能升级处罚：请求被拒后客户端可能原样重发，而证据层有 5 分钟
-    去重窗口。``recorded == 0``（本批全是重复）时绝不落封禁——否则一次网络
-    重试就能把用户从「警告」推到「封号」。
+    为什么重试不能重复处罚：请求被拒后客户端可能原样重发，而证据层有 5 分钟
+    去重窗口。``recorded == 0``（本批全是重复）时直接返回——同一份证据只处罚
+    一次；已经在封禁中也只记新证据，不再推梯度。
 
     ``xuehai_id`` 来自请求头（真实设备号），不再拿 ``users.id``（学号）冒充：
     违规证据要能回答「哪台机器在试图越狱」，学号是账号不是设备。
@@ -508,7 +510,7 @@ async def record_agent_jailbreak(
 
     exempt = _exempt_roles(_roles(user.get("per")), AGENT_JAILBREAK_EXEMPT_ROLES)
     if exempt:
-        # admin 豁免：自动封管理员可能把平台锁死，且无限制模式已覆盖该场景。
+        # admin 豁免：审核层已旁路，自动封管理员可能把平台锁死。
         await _log_exempt(user_oid, exempt, 1, xuehai_id, now)
         result["exempt"] = True
         return result
@@ -530,6 +532,11 @@ async def record_agent_jailbreak(
     result["recorded"] = ingested["recorded"]
     result["duplicates"] = ingested["duplicates"]
 
+    if result["recorded"] == 0:
+        # 同一份证据的重试：不再发一次警告，也不再重复落封。
+        result["duplicate"] = True
+        return result
+
     if await _ban_active(user_oid):
         # 已经封着：本次只是新证据，不再重复落封、也不再发警告。
         result["banned"] = True
@@ -540,15 +547,6 @@ async def record_agent_jailbreak(
     period = period_now(now)
     repo = backends.get_user_warnings_repo()
 
-    if result["recorded"] == 0:
-        # 证据没新增 = 同一次违规的重试（窗口内去重）。已有本月警告就直接回
-        # 「已警告」，绝不升级；账本还没有时才补一条（兼容旧调用路径）。
-        existing = await repo.get(user_oid, AGENT_JAILBREAK_TRIGGER, period)
-        if existing is not None:
-            result["warned"] = True
-            result["duplicate"] = True
-            return result
-
     try:
         fresh = await repo.try_record(
             user_oid,
@@ -558,16 +556,13 @@ async def record_agent_jailbreak(
             payload,
         )
     except Exception:
-        # 账本写不进去时**不封号**：警告是封禁的前置事实，读不到它就没有
-        # 「同月第二次」这个结论，按 fail-open 放行这一次。
-        _logger.exception("写入 agent 越狱警告失败，本次不升级为封禁")
-        result["error"] = "warning_store_failed"
-        return result
+        # 警告账本写不进去不改变处罚结论：证据已入库，封禁照落。
+        _logger.exception("写入 agent 越狱警告失败，本次仍按首档封禁")
+        fresh = False
 
     if fresh:
         result["warned"] = True
         await _log_warning(user_oid, period, payload, xuehai_id, now)
-        return result
 
     reason = _jailbreak_ban_reason(category, payload)
     try:
@@ -577,6 +572,7 @@ async def record_agent_jailbreak(
     except Exception:
         # 封禁落库失败不回滚已入库的证据与警告：留痕给运维补封。
         _logger.exception("agent 越狱封禁落库失败（证据与警告已入库）")
+        result["error"] = "ban_failed"
         return result
 
     result["banned"] = True

@@ -91,14 +91,28 @@ def _messages_of(value: Any) -> list[dict]:
 def context_limit(model: str | None) -> int:
     """模型上下文上限（token）。
 
-    优先 ``AI_MODEL_CONTEXT_LIMITS[model]``，其次该字典的 ``"*"`` 兜底键，最后
-    ``AI_DEFAULT_CONTEXT_LIMIT``。非法值（0 / 负数 / bool / 字符串）一律当作没配，
-    继续往下找——把 ``0`` 当真会让每次调用都被判超限，整条链路直接死掉。
+    顺序固定：**模型级配置**（凭据里 ``MODELS_JSON`` 的 ``context``，见
+    :func:`services.ai.credentials.model_context`）→ ``AI_MODEL_CONTEXT_LIMITS``
+    （精确键，其次 ``"*"``）→ ``AI_DEFAULT_CONTEXT_LIMIT``。非法值（0 / 负数 /
+    bool / 字符串）一律当作没配，继续往下找——把 ``0`` 当真会让每次调用都被判
+    超限，整条链路直接死掉。
+
+    为什么模型级优先：那是**上游事实**（这个模型真能收多少 token），而 settings
+    里的那张表是部署知识的历史遗留（同一个模型在新渠道换了窗口，改一处就够了）。
 
     默认值本身可以被运行期设置 ``ai.context_limit_default`` 覆盖（在线改完即时
     生效）；没有覆盖时保持原来的 ``settings.AI_DEFAULT_CONTEXT_LIMIT`` 链路。
     """
+    # 延迟导入：``services.ai.credentials`` 会拉起 db 层，而本模块在压缩路径上
+    # 是纯函数库，不该为了一个数字把整条导入链变重。
+    from services.ai import credentials as ai_credentials
+
+    exact_context = ai_credentials.model_context(model)
+    if exact_context:
+        return exact_context
+
     override = settings_runtime.get_override("ai.context_limit_default")
+
     if isinstance(override, int) and not isinstance(override, bool) and override > 0:
         default = override
     else:
@@ -235,11 +249,18 @@ def build_messages(
     summary: str | None,
     history: list[dict],
     pending: list[dict],
+    *,
+    scene_prompt: str | None = None,
+    reference: str | None = None,
 ) -> list[dict]:
-    """按 §5.1 的固定顺序组装：system → 摘要 system → 历史 → 本轮。
+    """按 §5.1 的固定顺序组装：system → 场景说明 → 参考内容 → 摘要 → 历史 → 本轮。
 
     摘要单独占一条 system 而不是拼进尾部，是为了让前缀指纹（只看 leading
     system）在「同一摘要」下保持稳定；两次未压缩调用之间则完全同前缀。
+
+    场景说明与参考内容同样各占一条 system，且**排在摘要之前**：它们属于「这次
+    调用是什么场景、模型看到了什么」，比压缩出来的历史摘要更靠前；参考内容由
+    executor 脱敏并标注「仅供只读分析」后才传进来（这里不再加工）。
 
     历史与本轮一起做残链清理：跨边界的一条工具链（assistant 在历史里、tool 落在
     本轮的极端情况）也必须整体判定，否则切一半仍然是 400。
@@ -249,6 +270,12 @@ def build_messages(
     messages: list[dict] = []
     if isinstance(system_prompt, str) and system_prompt:
         messages.append({"role": "system", "content": system_prompt})
+
+    if isinstance(scene_prompt, str) and scene_prompt:
+        messages.append({"role": "system", "content": scene_prompt})
+
+    if isinstance(reference, str) and reference:
+        messages.append({"role": "system", "content": reference})
 
     text = summary.strip() if isinstance(summary, str) else ""
     if text:
