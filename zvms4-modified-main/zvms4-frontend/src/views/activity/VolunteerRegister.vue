@@ -62,12 +62,9 @@ import { aiErrorCodeOf, aiErrorCopy } from '@/api/ai/errors'
 import { listOcrEngines } from '@/api/ai/engines'
 import { getBytes } from '@/api/attachment/read'
 import { parseOcrText } from '@/utils/ocrText'
+import { parseVolunteerXlsx, volunteerRowsToTsv } from '@/utils/volunteerSheet'
 import { normalizeOcrBox, type OcrBoxRect } from '@/utils/ocrBox'
-import {
-  DEVICE_UNLOCK_REASON,
-  deviceLocked,
-  ensureDeviceUnlock
-} from '@/plugins/device-unlock'
+import { DEVICE_UNLOCK_REASON, deviceLocked, ensureDeviceUnlock } from '@/plugins/device-unlock'
 import { clearTemporaryToken, temporaryToken } from '@/plugins/short-token'
 
 type RegistrationMode = Exclude<ActivityMode, 'hybrid'>
@@ -1187,7 +1184,7 @@ function parseDelimitedLine(line: string, delimiter: string): string[] {
 }
 
 function isNumericCell(value: string): boolean {
-  return /^-?\d+(?:\.\d+)?$/.test(value.trim())
+  return /^\d/.test(value.trim())
 }
 
 function detectMapping(first: string[], startColumn: number): Record<number, number> {
@@ -1296,7 +1293,17 @@ const importInput = ref<HTMLInputElement | null>(null)
 const ocrInput = ref<HTMLInputElement | null>(null)
 
 function triggerImport() {
-  importInput.value?.click()
+  void ElMessageBox.confirm(
+    '支持 .xlsx、.xls、.csv 和从 Excel 复制粘贴。表格前三列按“学号/姓名/时长”或“姓名/学号/时长”排列，第三列始终按时长读取；有标题行也可以导入。',
+    '导入格式提醒',
+    {
+      confirmButtonText: '选择文件',
+      cancelButtonText: '取消',
+      type: 'info'
+    }
+  )
+    .then(() => importInput.value?.click())
+    .catch(() => undefined)
 }
 
 // OCR 属于 AI 操作，必须先用当前账号密码换一张 5 分钟、purpose=verify 的短时
@@ -1304,10 +1311,7 @@ function triggerImport() {
 async function acquireOcrProof(): Promise<string> {
   const proof = deviceLocked()
     ? await ensureDeviceUnlock({ reason: DEVICE_UNLOCK_REASON })
-    : await temporaryToken(
-        String(userStore._id || userStore.id),
-        'OCR 操作需要验证当前账号密码'
-      )
+    : await temporaryToken(String(userStore._id || userStore.id), 'OCR 操作需要验证当前账号密码')
   if (!proof) throw new Error('未取得验证凭证')
   return proof
 }
@@ -1336,17 +1340,21 @@ async function onImportFile(event: Event) {
   const file = input.files?.[0]
   if (!file) return
   try {
-    if (file.name.toLowerCase().endsWith('.xlsx') || file.name.toLowerCase().endsWith('.xls')) {
-      ElMessage.info('Excel 文件请先复制粘贴，或另存为 CSV 后导入')
+    const buffer = await file.arrayBuffer()
+    if (/\.(xlsx|xls)$/i.test(file.name)) {
+      const rows = parseVolunteerXlsx(buffer)
+      if (!rows.length) {
+        ElMessage.info('表格中没有可导入的数据')
+        return
+      }
+      applyText(volunteerRowsToTsv(rows), { r: 0, c: 0 })
       return
     }
-    const buffer = await file.arrayBuffer()
     const bytes = new Uint8Array(buffer)
     const hasUtf8Bom = bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf
     const utf8Text = new TextDecoder('utf-8').decode(buffer)
-    const text = hasUtf8Bom || !utf8Text.includes('\ufffd')
-      ? utf8Text
-      : new TextDecoder('gbk').decode(buffer)
+    const text =
+      hasUtf8Bom || !utf8Text.includes('\ufffd') ? utf8Text : new TextDecoder('gbk').decode(buffer)
     applyText(text, { r: 0, c: 0 })
   } catch {
     ElMessage.error('读取文件失败')
@@ -1660,13 +1668,9 @@ async function fetchExistingMemberPage(
   page: number,
   query = ''
 ): Promise<{ rows: ExistingMemberRow[]; total: number }> {
-  const result = (await api.activity.member.reads_v3(
-    aid,
-    page,
-    EXISTING_PAGE_SIZE,
-    query,
-    { timeout: BATCH_TIMEOUT }
-  )) as unknown as { members?: ExistingMemberRow[]; total?: number }
+  const result = (await api.activity.member.reads_v3(aid, page, EXISTING_PAGE_SIZE, query, {
+    timeout: BATCH_TIMEOUT
+  })) as unknown as { members?: ExistingMemberRow[]; total?: number }
   return { rows: result.members ?? [], total: Number(result.total) || 0 }
 }
 
@@ -2525,7 +2529,9 @@ function applyDraft(payload: DraftPayload) {
       rowLimitWarning(source.length - MAX_REGISTER_ROWS)
     }
     return source
-      .filter((item) => !savedHas(String(item.oid ?? ''), normalizeMode(item.mode) ?? defaultMode()))
+      .filter(
+        (item) => !savedHas(String(item.oid ?? ''), normalizeMode(item.mode) ?? defaultMode())
+      )
       .slice(0, MAX_REGISTER_ROWS)
       .map((item) =>
         createRow({
@@ -2948,7 +2954,9 @@ onBeforeUnmount(() => {
             @keydown="onEditorTabKeydown($event, 'edit')"
           >
             <span class="editor-tab__title">{{ t('nav.registerEntry.edit.title') }}</span>
-            <span class="editor-tab__desc">搜索或录入名单里的人，提交按填写时长覆盖，每批最多 100 人</span>
+            <span class="editor-tab__desc"
+              >搜索或录入名单里的人，提交按填写时长覆盖，每批最多 100 人</span
+            >
           </button>
         </div>
       </section>
@@ -3002,9 +3010,7 @@ onBeforeUnmount(() => {
             </ElButton>
           </div>
         </div>
-        <div v-else-if="editSearchDone" class="edit-search-empty">
-          没有找到匹配的已录入成员
-        </div>
+        <div v-else-if="editSearchDone" class="edit-search-empty">没有找到匹配的已录入成员</div>
       </section>
 
       <section class="reg-card toolbar-card">
@@ -3049,7 +3055,7 @@ onBeforeUnmount(() => {
         <input
           ref="importInput"
           type="file"
-          accept=".csv,.tsv,.txt,text/csv,text/tab-separated-values,text/plain"
+          accept=".xlsx,.xls,.csv,.tsv,.txt,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv,text/tab-separated-values,text/plain"
           hidden
           @change="onImportFile"
         />
@@ -3349,10 +3355,7 @@ onBeforeUnmount(() => {
               <td class="is-num">{{ item.oldDuration }}</td>
               <td class="is-num">{{ item.newDuration }}</td>
               <td>
-                <span
-                  class="overwrite-action"
-                  :class="item.changed ? 'is-overwrite' : 'is-skip'"
-                >
+                <span class="overwrite-action" :class="item.changed ? 'is-overwrite' : 'is-skip'">
                   {{
                     item.changed
                       ? t('activity.register.overwriteAction')

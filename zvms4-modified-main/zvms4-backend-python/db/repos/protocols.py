@@ -3098,6 +3098,15 @@ class AIRunsRepo(Protocol):
         """
         ...
 
+    async def list_recent(self, owner_oid: str, limit: int) -> list[Row]:
+        """The newest ``limit`` runs of this owner, any status, ``created_at`` desc.
+
+        个人首页（``GET /runs?active=0&limit=N``）用：只按 ``owner_oid`` 过滤，
+        别人的 run 不可能出现在结果里。``limit`` 由服务层夹到 1..10，仓储不再
+        做第二套边界判断（它只是 SQL 的 ``FETCH FIRST``）。
+        """
+        ...
+
     async def interrupt_running(
         self,
         *,

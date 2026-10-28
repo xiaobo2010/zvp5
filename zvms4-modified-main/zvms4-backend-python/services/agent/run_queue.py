@@ -53,6 +53,11 @@ STALE_MARGIN_SECONDS = 60
 DEFAULT_HISTORY_MESSAGES = 400
 HISTORY_PAGE = 100
 
+# 个人首页的「最近 run」：默认 5 条，最多 10 条。上限写死在这里而不是交给查询串：
+# 首页是一条横幅，没有翻页需求，放开只会让同一份数据被无限次拉取。
+RECENT_LIMIT_DEFAULT = 5
+RECENT_LIMIT_MAX = 10
+
 # 工具结果落库长度与模型看到的同长（executor 侧已按 8000 截断，这里再兜一次）。
 MAX_TOOL_CONTENT_CHARS = 8000
 # ``ai_runs.error_message`` 是 VARCHAR2(500)，超了是 ORA-12899。
@@ -1127,6 +1132,23 @@ async def list_active(owner_oid: str) -> list[dict]:
     return await _runs().list_active(str(owner_oid))
 
 
+def recent_limit(limit: object) -> int:
+    """把调用方给的 ``limit`` 夹进 1..10（协议层已校验，这里兜服务层其它入口）。"""
+    try:
+        parsed = int(limit)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return RECENT_LIMIT_DEFAULT
+    return max(1, min(RECENT_LIMIT_MAX, parsed))
+
+
+async def list_recent(owner_oid: str, *, limit: int = RECENT_LIMIT_DEFAULT) -> list[dict]:
+    """本人最近的 run（任意状态，``created_at`` 倒序，最多 10 条）。
+
+    个人首页用；``owner_oid`` 是唯一的过滤条件，越权读取在这一层没有入口。
+    """
+    return await _runs().list_recent(str(owner_oid), recent_limit(limit))
+
+
 async def run_detail(
     *, user: Mapping[str, Any], run_id: str, after_round: int = 0
 ) -> dict:
@@ -1318,12 +1340,16 @@ __all__ = [
     "DEFAULT_HEARTBEAT_SECONDS",
     "DEFAULT_MAX_RUNS_PER_USER",
     "DEFAULT_STALE_SECONDS",
+    "RECENT_LIMIT_DEFAULT",
+    "RECENT_LIMIT_MAX",
     "cancel",
     "concurrency",
     "heartbeat_seconds",
     "kick",
     "list_active",
+    "list_recent",
     "max_runs_per_user",
+    "recent_limit",
     "recover_on_startup",
     "reset",
     "run_detail",
