@@ -1,5 +1,5 @@
-"""运维补充工具（6 读 + 3 写）：设置快照 / 调度器 / AI 流水 / run 队列 /
-用户查找 / 服务器时间 + 备份 / 维护模式 / 调度开关。
+"""运维补充工具（7 读 + 3 写）：设置快照 / 调度器 / AI 流水 / run 队列 /
+用户查找 / 封禁历史 / 服务器时间 + 备份 / 维护模式 / 调度开关。
 
 注册表语义与 ``ops_tools`` / ``tools_platform`` / ``tools_governance`` 完全一致，
 本模块不另立一套：
@@ -39,6 +39,10 @@ from sqlalchemy import func, select
 
 from db import backends, system_state
 from db.models import ai_runs as ai_runs_table
+from db.models import ban_records as ban_records_table
+from db.models import ban_rules as ban_rules_table
+from db.models import ban_violations as ban_violations_table
+from db.models import users as users_table
 from db.oracle.session import session_scope
 from services import adb_backup, db_content, settings_runtime
 from services.ai import config as ai_config
@@ -1077,7 +1081,310 @@ async def _impl_user_lookup(
 
 
 # --------------------------------------------------------------------------- #
-# 读工具 6：server_time
+# 读工具 6：ban_history
+# --------------------------------------------------------------------------- #
+
+# 封禁流水一次最多回 20 条：档位判断看的是「最近几次 + 按规则汇总」，不是全量。
+BAN_HISTORY_LIMIT_MAX = 20
+BAN_HISTORY_LIMIT_DEFAULT = 10
+# 违规信号只看最近 30 天：与规则里的窗口档位同量级，更早的信号已不该再抬档。
+VIOLATION_WINDOW_DAYS = 30
+
+BAN_HISTORY_FIELDS = (
+    "kind",
+    "user",
+    "records",
+    "tiers",
+    "violations",
+    "rules",
+    "device",
+    "note",
+)
+USER_FIELDS = ("oid", "name", "business_id", "banned", "ban_until")
+RECORD_FIELDS = (
+    "oid",
+    "source",
+    "rule_code",
+    "rule_name",
+    "reason",
+    "permanent",
+    "started_at",
+    "expires_at",
+    "operator_oid",
+    "operator_name",
+    "created_at",
+)
+TIER_FIELDS = ("rule_code", "count", "last_at")
+VIOLATION_FIELDS = ("trigger_code", "batches", "last_at")
+RULE_FIELDS = ("code", "name", "trigger_code", "penalties", "enabled")
+DEVICE_FIELDS = ("xuehai_id_masked", "ban_count", "last_banned_at")
+
+BAN_HISTORY_NOTE = (
+    "tiers 是「该用户在该 rule_code 下已被封过的次数」：在 rules.penalties "
+    "（JSON 数组，原样透出）里取第 count+1 个元素即本次应执行的档位；"
+    "超出数组长度时按最后一档处理。violations 的计数单位是批次"
+    "（同一 batch 的多行信号只算一次），用于确认 30 天内违规是否仍在累积。"
+)
+
+
+def _history_args(
+    user_oid: Any, business_id: Any, limit: Any
+) -> tuple[str, str, int]:
+    """``user_oid`` / ``business_id`` 恰好一个；``limit`` 收敛到 1..20。"""
+    raw = {"user_oid": user_oid, "business_id": business_id}
+    given = [
+        key for key, value in raw.items() if isinstance(value, str) and value.strip()
+    ]
+    if not given:
+        raise AgentError(
+            "AI_AGENT_BAD_ARGUMENT",
+            "provide exactly one of: user_oid / business_id",
+            400,
+        )
+    if len(given) > 1:
+        raise AgentError(
+            "AI_AGENT_BAD_ARGUMENT",
+            f"provide only one of user_oid / business_id (got {', '.join(given)})",
+            400,
+        )
+    mode = given[0]
+    value = str(raw[mode]).strip()
+    if mode == "user_oid" and not _OID_RE.match(value):
+        raise AgentError(
+            "AI_AGENT_BAD_ARGUMENT", "user_oid must be a 24-char hex id", 400
+        )
+    size = _int(limit, BAN_HISTORY_LIMIT_DEFAULT)
+    if size < 1 or size > BAN_HISTORY_LIMIT_MAX:
+        raise AgentError(
+            "AI_AGENT_BAD_ARGUMENT",
+            f"limit must be between 1 and {BAN_HISTORY_LIMIT_MAX}",
+            400,
+        )
+    return mode, value, size
+
+
+def _mask_xuehai(value: Any) -> str | None:
+    """学海 ID 打码到「前 3 + 后 2」，中间固定为 ``*``；太短就全遮。
+
+    打码后的长度不携带原值长度以外的信息，且短 ID 不做「前 3 后 2」——
+    那等于把 5 位以内的原值整段交出去。
+    """
+    text = str(value or "").strip()
+    if not text:
+        return None
+    if len(text) <= 5:
+        return "*" * max(3, len(text))
+    return f"{text[:3]}{'*' * (len(text) - 5)}{text[-2:]}"
+
+
+def _record_item(row: Any, rule_names: dict[str, str]) -> dict:
+    """白名单投影：只挑 ``RECORD_FIELDS``，行里别的东西进不来。"""
+    mapping = row._mapping
+    rule_code = mapping.get("rule_code")
+    return {
+        "oid": str(mapping.get("oid") or ""),
+        "source": mapping.get("source"),
+        "rule_code": rule_code,
+        "rule_name": mapping.get("rule_name") or rule_names.get(rule_code),
+        "reason": mapping.get("reason"),
+        "permanent": bool(mapping.get("permanent")),
+        "started_at": _iso(mapping.get("started_at")),
+        "expires_at": _iso(mapping.get("expires_at")),
+        "operator_oid": mapping.get("operator_oid"),
+        "operator_name": mapping.get("operator_name"),
+        "created_at": _iso(mapping.get("created_at")),
+    }
+
+
+def _records_stmt(user_oid: str, size: int):
+    """最近 ``size`` 条封禁流水，``started_at`` 倒序（同一时刻按 oid 稳定）。
+
+    ``rule_name`` 用 ``BAN_RULES.code`` 左连（规则被删后仍显示流水，名字退回
+    null）；``operator_name`` 用 ``USERS`` 别名 ``op`` 左连——规则封禁没有
+    ``operator_oid``，不能因此丢掉整行。
+    """
+    operator = users_table.alias("op")
+    return (
+        select(
+            ban_records_table.c.oid,
+            ban_records_table.c.source,
+            ban_records_table.c.rule_code,
+            ban_records_table.c.reason,
+            ban_records_table.c.permanent,
+            ban_records_table.c.started_at,
+            ban_records_table.c.expires_at,
+            ban_records_table.c.operator_oid,
+            ban_records_table.c.created_at,
+            ban_rules_table.c.name.label("rule_name"),
+            operator.c.name.label("operator_name"),
+        )
+        .select_from(
+            ban_records_table.outerjoin(
+                ban_rules_table, ban_records_table.c.rule_code == ban_rules_table.c.code
+            ).outerjoin(
+                operator, ban_records_table.c.operator_oid == operator.c.oid
+            )
+        )
+        .where(ban_records_table.c.user_oid == user_oid)
+        .order_by(
+            ban_records_table.c.started_at.desc(), ban_records_table.c.oid.desc()
+        )
+        .limit(size)
+    )
+
+
+def _tiers_stmt(user_oid: str):
+    """按 ``rule_code`` 汇总历史封禁次数与最近一次时间（累犯档位的直接依据）。
+
+    管理员手动封禁的 ``rule_code IS NULL``，不参与梯度计数，直接过滤掉。
+    """
+    last_at = func.max(ban_records_table.c.started_at)
+    return (
+        select(
+            ban_records_table.c.rule_code,
+            func.count().label("ban_count"),
+            last_at.label("last_at"),
+        )
+        .where(
+            ban_records_table.c.user_oid == user_oid,
+            ban_records_table.c.rule_code.is_not(None),
+        )
+        .group_by(ban_records_table.c.rule_code)
+        .order_by(func.count().desc(), last_at.desc())
+    )
+
+
+def _violations_stmt(user_oid: str, since: datetime):
+    """30 天内按 trigger 聚合的**批次**数：``COALESCE(batch_id, oid)`` 去重。
+
+    与 ``violations.count_batches_since`` 同一口径：一次上报的多个信号只算
+    一次违规；V019 之前的存量行没有批次，用主键顶替（每行一批）。
+    """
+    batch = func.coalesce(ban_violations_table.c.batch_id, ban_violations_table.c.oid)
+    return (
+        select(
+            ban_violations_table.c.trigger_code,
+            func.count(func.distinct(batch)).label("batches"),
+            func.max(ban_violations_table.c.created_at).label("last_at"),
+        )
+        .where(
+            ban_violations_table.c.user_oid == user_oid,
+            ban_violations_table.c.created_at >= since,
+        )
+        .group_by(ban_violations_table.c.trigger_code)
+        .order_by(func.max(ban_violations_table.c.created_at).desc())
+    )
+
+
+async def _device_history(user_oid: str) -> dict | None:
+    """绑定设备的处罚梯度；没有绑定或查不到计数一律 ``None``（不是 0）。
+
+    只回打码后的学海 ID：调用方要判断的是「这台机器被封过几次」，原值对
+    推断档位没有增量信息，却会扩大泄露面。
+    """
+    try:
+        bindings = await backends.get_bindings_repo().get_active_for_user(user_oid)
+    except Exception:  # noqa: BLE001 - 设备是加分项，不是查询本身
+        logger.warning("agent ban_history binding lookup failed", exc_info=True)
+        return None
+    xuehai_id = next(
+        (str(row.get("xuehai_id")) for row in bindings if row.get("xuehai_id")), ""
+    )
+    if not xuehai_id:
+        return None
+    counter = await backends.get_device_ban_counters_repo().get(xuehai_id)
+    return {
+        "xuehai_id_masked": _mask_xuehai(xuehai_id),
+        "ban_count": _int(counter.get("ban_count")) if counter else 0,
+        "last_banned_at": _iso(counter.get("last_banned_at")) if counter else None,
+    }
+
+
+async def _impl_ban_history(
+    user: dict,
+    user_oid: str | None = None,
+    business_id: str | None = None,
+    limit: int = BAN_HISTORY_LIMIT_DEFAULT,
+) -> dict:
+    mode, value, size = _history_args(user_oid, business_id, limit)
+    repo = backends.get_users_repo()
+    if mode == "user_oid":
+        row = await repo.get_by_oid(value)
+    else:
+        row = await repo.find_by_business_id(value)
+    if not row:
+        raise AgentError("AI_AGENT_NOT_FOUND", "user not found", 404)
+
+    target_oid = str(row.get("_id") or "")
+    if not target_oid:
+        raise AgentError("AI_AGENT_NOT_FOUND", "user not found", 404)
+
+    all_rules = await backends.get_ban_rules_repo().list_all()
+    rule_names = {
+        str(item.get("code")): str(item.get("name"))
+        for item in all_rules
+        if item.get("code") and item.get("name")
+    }
+    rules = [
+        {
+            "code": item.get("code"),
+            "name": item.get("name"),
+            "trigger_code": item.get("trigger"),
+            "penalties": item.get("penalties"),
+            "enabled": bool(item.get("enabled")),
+        }
+        for item in all_rules
+        if item.get("enabled")
+    ]
+
+    since = datetime.now() - timedelta(days=VIOLATION_WINDOW_DAYS)
+    async with session_scope() as session:
+        record_rows = (await session.execute(_records_stmt(target_oid, size))).all()
+        tier_rows = (await session.execute(_tiers_stmt(target_oid))).all()
+        violation_rows = (
+            await session.execute(_violations_stmt(target_oid, since))
+        ).all()
+
+    records = [_record_item(item, rule_names) for item in record_rows]
+    tiers = [
+        {
+            "rule_code": item._mapping.get("rule_code"),
+            "count": _int(item._mapping.get("ban_count")),
+            "last_at": _iso(item._mapping.get("last_at")),
+        }
+        for item in tier_rows
+    ]
+    violations = [
+        {
+            "trigger_code": item._mapping.get("trigger_code"),
+            "batches": _int(item._mapping.get("batches")),
+            "last_at": _iso(item._mapping.get("last_at")),
+        }
+        for item in violation_rows
+    ]
+
+    return _cap(
+        {
+            "kind": "ban_history",
+            "user": {
+                "oid": target_oid,
+                "name": row.get("name"),
+                "business_id": row.get("id"),
+                "banned": bool(row.get("banned")),
+                "ban_until": _iso(row.get("ban_until")),
+            },
+            "records": records,
+            "tiers": tiers,
+            "violations": violations,
+            "rules": rules,
+            "device": await _device_history(target_oid),
+            "note": BAN_HISTORY_NOTE,
+        }
+    )
+
+
+# --------------------------------------------------------------------------- #
+# 读工具 7：server_time
 # --------------------------------------------------------------------------- #
 
 _WEEKDAYS = (
@@ -1143,7 +1450,7 @@ async def _impl_server_time(user: dict) -> dict:
 
 
 # --------------------------------------------------------------------------- #
-# 注册（6 读 + 3 写）
+# 注册（7 读 + 3 写）
 # --------------------------------------------------------------------------- #
 
 _STR = {"type": "string"}
@@ -1378,6 +1685,44 @@ _register(
 
 _register(
     ToolDef(
+        name="ban_history",
+        description=(
+            "封号前查历史：最近封禁流水（含规则名/操作人）、按 rule_code 的历史"
+            "封禁次数与时间、30 天内按批次的违规信号、启用规则及其 penalties 梯度、"
+            "绑定设备的封禁计数（学海 ID 打码）。用于推断本次该用第几档。只读。"
+        ),
+        kind=READ,
+        params=_params(
+            {
+                "user_oid": {
+                    **_STR,
+                    "description": "用户 oid（24 位 hex）；与 business_id 二选一",
+                },
+                "business_id": {
+                    **_STR,
+                    "description": "学号（精确匹配）；与 user_oid 二选一",
+                },
+                "limit": {
+                    **_INT,
+                    "minimum": 1,
+                    "maximum": BAN_HISTORY_LIMIT_MAX,
+                    "description": (
+                        f"最近封禁流水条数（1-{BAN_HISTORY_LIMIT_MAX}，默认 "
+                        f"{BAN_HISTORY_LIMIT_DEFAULT}）"
+                    ),
+                },
+            },
+            (),
+        ),
+        permission=_admin_only,
+        impl=_impl_ban_history,
+        guard=ops_auth.ensure_system_admin,
+    )
+)
+
+
+_register(
+    ToolDef(
         name="server_time",
         description=(
             "读取服务器权威时间（带偏移的 ISO / 时区名 / epoch / 星期，以及封禁落库"
@@ -1393,6 +1738,9 @@ _register(
 
 
 __all__ = [
+    "BAN_HISTORY_FIELDS",
+    "BAN_HISTORY_LIMIT_DEFAULT",
+    "BAN_HISTORY_LIMIT_MAX",
     "CALL_LOG_STATUSES",
     "LOG_ROWS_MAX",
     "LOG_WINDOW_MAX_DAYS",

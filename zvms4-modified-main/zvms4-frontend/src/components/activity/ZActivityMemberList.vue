@@ -69,7 +69,8 @@ watch(
 function goRegister() {
   const id = activity.value._id
   if (!id) return
-  void router.push({ path: '/activity/register', query: { activity: id } })
+  // 活动详情的「义工登记」直接进添加栏；带上 activity，编辑器打开即定位到该活动。
+  void router.push({ path: '/activity/register/create', query: { activity: id } })
 }
 
 let requestId = 0

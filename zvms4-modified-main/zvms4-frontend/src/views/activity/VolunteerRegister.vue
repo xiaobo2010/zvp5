@@ -37,6 +37,7 @@ import { useHeaderStore } from '@/stores/header'
 import { useUserStore } from '@/stores/user'
 import type { ActivityMode } from '@/../types'
 import type { Activity, ActivityMember, NewActivityMember } from '@/../types/v2'
+import { ensureRegisterAccess } from './registerAccess'
 import {
   loadStudentIndex,
   matchStudentRow,
@@ -61,12 +62,9 @@ import { aiErrorCodeOf, aiErrorCopy } from '@/api/ai/errors'
 import { listOcrEngines } from '@/api/ai/engines'
 import { getBytes } from '@/api/attachment/read'
 import { parseOcrText } from '@/utils/ocrText'
+import { parseVolunteerXlsx, volunteerRowsToTsv } from '@/utils/volunteerSheet'
 import { normalizeOcrBox, type OcrBoxRect } from '@/utils/ocrBox'
-import {
-  DEVICE_UNLOCK_REASON,
-  deviceLocked,
-  ensureDeviceUnlock
-} from '@/plugins/device-unlock'
+import { DEVICE_UNLOCK_REASON, deviceLocked, ensureDeviceUnlock } from '@/plugins/device-unlock'
 import { clearTemporaryToken, temporaryToken } from '@/plugins/short-token'
 
 type RegistrationMode = Exclude<ActivityMode, 'hybrid'>
@@ -196,8 +194,6 @@ const headerStore = useHeaderStore()
 const userStore = useUserStore()
 const { t } = useI18n()
 
-headerStore.setHeader(t('nav.register'))
-
 const indexState = ref<StudentIndexState>({
   students: [],
   updatedAt: 0,
@@ -215,8 +211,16 @@ const selectedActivity = ref<Activity | null>(null)
 
 // 当前显示的那一栏的行；另一栏的行存在 stashedRows 里，切换时换回来。
 const rows = ref<RegistrationRow[]>([])
-const editorMode = ref<EditorMode>('create')
+// 首帧就按 URL 定栏目：避免 /edit 深链先以「添加」标题闪一下。
+const editorMode = ref<EditorMode>(modeFromRoute())
 const stashedRows: Record<EditorMode, RegistrationRow[]> = { create: [], edit: [] }
+
+// 标题跟随 URL 模式：同一个编辑器承载「添加义工 / 修改义工」两件事，
+// 顶栏与浏览器标题必须和当前 URL 一致。
+const pageTitle = computed(() =>
+  t(editorMode.value === 'edit' ? 'nav.registerEntry.edit.title' : 'nav.registerEntry.create.title')
+)
+watch(pageTitle, (value) => headerStore.setHeader(value), { immediate: true })
 // 「修改已有」栏的服务器搜索：按姓名/学号查当前活动的成员，点「加入表格」进明细。
 const editSearchQuery = ref('')
 const editSearchLoading = ref(false)
@@ -1180,7 +1184,7 @@ function parseDelimitedLine(line: string, delimiter: string): string[] {
 }
 
 function isNumericCell(value: string): boolean {
-  return /^-?\d+(?:\.\d+)?$/.test(value.trim())
+  return /^\d/.test(value.trim())
 }
 
 function detectMapping(first: string[], startColumn: number): Record<number, number> {
@@ -1289,7 +1293,17 @@ const importInput = ref<HTMLInputElement | null>(null)
 const ocrInput = ref<HTMLInputElement | null>(null)
 
 function triggerImport() {
-  importInput.value?.click()
+  void ElMessageBox.confirm(
+    '支持 .xlsx、.xls、.csv 和从 Excel 复制粘贴。表格前三列按“学号/姓名/时长”或“姓名/学号/时长”排列，第三列始终按时长读取；有标题行也可以导入。',
+    '导入格式提醒',
+    {
+      confirmButtonText: '选择文件',
+      cancelButtonText: '取消',
+      type: 'info'
+    }
+  )
+    .then(() => importInput.value?.click())
+    .catch(() => undefined)
 }
 
 // OCR 属于 AI 操作，必须先用当前账号密码换一张 5 分钟、purpose=verify 的短时
@@ -1297,10 +1311,7 @@ function triggerImport() {
 async function acquireOcrProof(): Promise<string> {
   const proof = deviceLocked()
     ? await ensureDeviceUnlock({ reason: DEVICE_UNLOCK_REASON })
-    : await temporaryToken(
-        String(userStore._id || userStore.id),
-        'OCR 操作需要验证当前账号密码'
-      )
+    : await temporaryToken(String(userStore._id || userStore.id), 'OCR 操作需要验证当前账号密码')
   if (!proof) throw new Error('未取得验证凭证')
   return proof
 }
@@ -1329,17 +1340,21 @@ async function onImportFile(event: Event) {
   const file = input.files?.[0]
   if (!file) return
   try {
-    if (file.name.toLowerCase().endsWith('.xlsx') || file.name.toLowerCase().endsWith('.xls')) {
-      ElMessage.info('Excel 文件请先复制粘贴，或另存为 CSV 后导入')
+    const buffer = await file.arrayBuffer()
+    if (/\.(xlsx|xls)$/i.test(file.name)) {
+      const rows = parseVolunteerXlsx(buffer)
+      if (!rows.length) {
+        ElMessage.info('表格中没有可导入的数据')
+        return
+      }
+      applyText(volunteerRowsToTsv(rows), { r: 0, c: 0 })
       return
     }
-    const buffer = await file.arrayBuffer()
     const bytes = new Uint8Array(buffer)
     const hasUtf8Bom = bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf
     const utf8Text = new TextDecoder('utf-8').decode(buffer)
-    const text = hasUtf8Bom || !utf8Text.includes('\ufffd')
-      ? utf8Text
-      : new TextDecoder('gbk').decode(buffer)
+    const text =
+      hasUtf8Bom || !utf8Text.includes('\ufffd') ? utf8Text : new TextDecoder('gbk').decode(buffer)
     applyText(text, { r: 0, c: 0 })
   } catch {
     ElMessage.error('读取文件失败')
@@ -1653,13 +1668,9 @@ async function fetchExistingMemberPage(
   page: number,
   query = ''
 ): Promise<{ rows: ExistingMemberRow[]; total: number }> {
-  const result = (await api.activity.member.reads_v3(
-    aid,
-    page,
-    EXISTING_PAGE_SIZE,
-    query,
-    { timeout: BATCH_TIMEOUT }
-  )) as unknown as { members?: ExistingMemberRow[]; total?: number }
+  const result = (await api.activity.member.reads_v3(aid, page, EXISTING_PAGE_SIZE, query, {
+    timeout: BATCH_TIMEOUT
+  })) as unknown as { members?: ExistingMemberRow[]; total?: number }
   return { rows: result.members ?? [], total: Number(result.total) || 0 }
 }
 
@@ -1864,8 +1875,16 @@ async function retryLoadExisting() {
 
 // 两栏切换：当前行先收进 stashedRows，再把另一栏换出来。
 // 两栏各有自己的 100 行上限、自己的校验状态；活动、已录入索引和草稿共用。
-function switchEditorMode(next: EditorMode) {
-  if (next === editorMode.value) return
+//
+// 只要 editorMode 真的变了，就把 URL 同步到对应模式（replace，不新增历史）：
+// 用户点栏目、undo/redo 恢复历史栏目、OCR 识别完自动切到「添加」栏都算，
+// 保证刷新/分享后打开的还是当前看到的那一栏。
+// 唯一的例外是 route watch：URL 本身就是触发源，传入 syncUrl=false 避免回头再写一次。
+function switchEditorMode(next: EditorMode, syncUrl = true) {
+  if (next === editorMode.value) {
+    if (syncUrl) replaceModeUrl(next)
+    return
+  }
   commitCellHistory()
   stashedRows[editorMode.value] = rows.value
   editorMode.value = next
@@ -1878,6 +1897,18 @@ function switchEditorMode(next: EditorMode) {
   revalidateAll()
   applySavedState()
   scheduleDraft()
+  if (syncUrl) replaceModeUrl(next)
+}
+
+// 栏目是 tablist：左右方向键在两栏之间移动，并把焦点跟到新栏目上。
+function onEditorTabKeydown(event: KeyboardEvent, current: EditorMode) {
+  if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
+  event.preventDefault()
+  const next: EditorMode = current === 'create' ? 'edit' : 'create'
+  switchEditorMode(next)
+  void nextTick(() => {
+    document.querySelector<HTMLElement>(`[data-editor-tab="${next}"]`)?.focus()
+  })
 }
 
 // 切换活动：草稿按活动隔离，换活动必须从白纸开始。
@@ -2498,7 +2529,9 @@ function applyDraft(payload: DraftPayload) {
       rowLimitWarning(source.length - MAX_REGISTER_ROWS)
     }
     return source
-      .filter((item) => !savedHas(String(item.oid ?? ''), normalizeMode(item.mode) ?? defaultMode()))
+      .filter(
+        (item) => !savedHas(String(item.oid ?? ''), normalizeMode(item.mode) ?? defaultMode())
+      )
       .slice(0, MAX_REGISTER_ROWS)
       .map((item) =>
         createRow({
@@ -2515,7 +2548,8 @@ function applyDraft(payload: DraftPayload) {
   }
   stashedRows.create = mapDraftRows(Array.isArray(payload.rows) ? payload.rows : [])
   stashedRows.edit = mapDraftRows(Array.isArray(payload.editRows) ? payload.editRows : [])
-  editorMode.value = payload.mode === 'edit' ? 'edit' : 'create'
+  // 当前栏目由 URL 决定，草稿只负责铺两栏的行。旧草稿里的 mode 不能把
+  // 直接访问 /activity/register/edit 的用户又拽回「添加」栏。
   rows.value = editorMode.value === 'create' ? stashedRows.create : stashedRows.edit
   if (!rows.value.length) resetRows(8)
   rebuildDuplicateIndex()
@@ -2621,17 +2655,11 @@ async function initIndex() {
 }
 
 async function initPage() {
-  if (!userStore.isLogin) {
-    await router.replace('/user/login')
-    return
-  }
-  if (!(userStore.position.includes('admin') || userStore.position.includes('department'))) {
-    await userStore.refreshUser().catch(() => undefined)
-  }
-  if (!(userStore.position.includes('admin') || userStore.position.includes('department'))) {
-    await router.replace('/not-found')
-    return
-  }
+  // 准入判断与选择页共用同一套 helper（登录 + admin/department），
+  // 未登录跳登录页、无权限跳 404 的行为与改造前一致。
+  if (!(await ensureRegisterAccess(router))) return
+  // URL 先定栏目，再读草稿：直接打开 /activity/register/edit 时不会被草稿带回「添加」。
+  editorMode.value = modeFromRoute()
   restoreDraft()
   await searchActivities('')
   // 先铺本地名单，再补已有成员：本地名单负责姓名/班级，服务端索引负责 sessionId
@@ -2654,6 +2682,29 @@ function routeActivityId(): string {
   const raw = route.query.activity
   const id = Array.isArray(raw) ? raw[0] : raw
   return typeof id === 'string' ? id.trim() : ''
+}
+
+// URL → 栏目。/activity/register/:mode(create|edit) 把模式写进路径，
+// 分享链接、刷新、前进后退都能还原到同一栏。
+function modeFromRoute(): EditorMode {
+  const raw = route.params.mode
+  const value = Array.isArray(raw) ? raw[0] : raw
+  return value === 'edit' ? 'edit' : 'create'
+}
+
+// 栏目 → URL。用 replace 而不是 push：在同一个编辑器里切栏目不该堆历史，
+// 但地址栏必须立刻反映当前栏目；query（activity 等）原样保留。
+function replaceModeUrl(next: EditorMode) {
+  if (modeFromRoute() === next) return
+  const query = { ...route.query }
+  // 页面内换过活动时，URL 里的 activity 跟着当前选择走：
+  // 否则从 B 活动切到修改栏后，地址栏还挂着进入页面时的 A。
+  if (selectedActivityId.value) query.activity = selectedActivityId.value
+  void router.replace({
+    name: 'activity-register-mode',
+    params: { mode: next },
+    query
+  })
 }
 
 // 顶部提示的「不再提示」：勾选后写进 localStorage，下次进来不再出现。
@@ -2683,6 +2734,18 @@ function dismissNotice(key: string) {
 watch(rows, scheduleDraft, { deep: true })
 watch(selectedActivityId, scheduleDraft)
 
+// 浏览器前进/后退或直接改地址栏时，把 URL 里的栏目同步回编辑器。
+// URL 已经是触发源，传 syncUrl=false：不再回头 replace 一次，避免自我循环。
+watch(
+  () => route.params.mode,
+  () => {
+    // 离开编辑器（例如被重定向到 404）时 params 会变空，不应再动栏目和草稿。
+    if (route.name !== 'activity-register-mode') return
+    const next = modeFromRoute()
+    if (next !== editorMode.value) switchEditorMode(next, false)
+  }
+)
+
 onMounted(() => {
   loadDismissedNotices()
   void initPage()
@@ -2702,10 +2765,14 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="register-page">
-    <ElPageHeader class="yg-page-header" :icon="ArrowLeft" @back="router.back()">
+    <ElPageHeader
+      class="yg-page-header"
+      :icon="ArrowLeft"
+      @back="router.push({ name: 'activity-register', query: route.query })"
+    >
       <template #content>
         <div class="page-head">
-          <span class="page-title yg-page-header__title">批量义工登记</span>
+          <span class="page-title yg-page-header__title">{{ pageTitle }}</span>
           <!-- OCR 是页面的第一入口：放在左上角、蓝色实心、比其它按钮更显眼 -->
           <ElButton
             class="page-head__ocr"
@@ -2860,16 +2927,19 @@ onBeforeUnmount(() => {
 
       <!-- 两个栏目共用下面这张表：点哪个栏目就显示哪个，另一个先收起来 -->
       <section class="reg-card editor-tabs-card">
-        <div class="editor-tabs" role="tablist" aria-label="登记栏目">
+        <div class="editor-tabs" role="tablist" aria-label="义工登记栏目">
           <button
             type="button"
             role="tab"
             class="editor-tab"
             :class="{ 'is-active': editorMode === 'create' }"
             :aria-selected="editorMode === 'create'"
+            :tabindex="editorMode === 'create' ? 0 : -1"
+            data-editor-tab="create"
             @click="switchEditorMode('create')"
+            @keydown="onEditorTabKeydown($event, 'create')"
           >
-            <span class="editor-tab__title">新增义工</span>
+            <span class="editor-tab__title">{{ t('nav.registerEntry.create.title') }}</span>
             <span class="editor-tab__desc">录入活动里还没有的人，每批最多 100 人</span>
           </button>
           <button
@@ -2878,10 +2948,15 @@ onBeforeUnmount(() => {
             class="editor-tab"
             :class="{ 'is-active': editorMode === 'edit' }"
             :aria-selected="editorMode === 'edit'"
+            :tabindex="editorMode === 'edit' ? 0 : -1"
+            data-editor-tab="edit"
             @click="switchEditorMode('edit')"
+            @keydown="onEditorTabKeydown($event, 'edit')"
           >
-            <span class="editor-tab__title">修改已有</span>
-            <span class="editor-tab__desc">搜索或录入名单里的人，提交按填写时长覆盖，每批最多 100 人</span>
+            <span class="editor-tab__title">{{ t('nav.registerEntry.edit.title') }}</span>
+            <span class="editor-tab__desc"
+              >搜索或录入名单里的人，提交按填写时长覆盖，每批最多 100 人</span
+            >
           </button>
         </div>
       </section>
@@ -2935,9 +3010,7 @@ onBeforeUnmount(() => {
             </ElButton>
           </div>
         </div>
-        <div v-else-if="editSearchDone" class="edit-search-empty">
-          没有找到匹配的已录入成员
-        </div>
+        <div v-else-if="editSearchDone" class="edit-search-empty">没有找到匹配的已录入成员</div>
       </section>
 
       <section class="reg-card toolbar-card">
@@ -2982,7 +3055,7 @@ onBeforeUnmount(() => {
         <input
           ref="importInput"
           type="file"
-          accept=".csv,.tsv,.txt,text/csv,text/tab-separated-values,text/plain"
+          accept=".xlsx,.xls,.csv,.tsv,.txt,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv,text/tab-separated-values,text/plain"
           hidden
           @change="onImportFile"
         />
@@ -3282,10 +3355,7 @@ onBeforeUnmount(() => {
               <td class="is-num">{{ item.oldDuration }}</td>
               <td class="is-num">{{ item.newDuration }}</td>
               <td>
-                <span
-                  class="overwrite-action"
-                  :class="item.changed ? 'is-overwrite' : 'is-skip'"
-                >
+                <span class="overwrite-action" :class="item.changed ? 'is-overwrite' : 'is-skip'">
                   {{
                     item.changed
                       ? t('activity.register.overwriteAction')
@@ -3646,41 +3716,80 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 2px;
+  gap: var(--yg-space-1);
+  min-height: var(--yg-control-height-lg);
   padding: var(--yg-space-3) var(--yg-space-4);
-  border: 1px solid var(--yg-border-subtle);
+  border: 1px solid var(--yg-border-default);
   border-radius: var(--yg-radius-md);
   background: var(--yg-bg-surface);
   color: var(--yg-text-secondary);
   text-align: left;
   cursor: pointer;
-  transition: border-color 0.15s ease, background-color 0.15s ease;
+  transition:
+    border-color var(--yg-dur-base) var(--yg-ease-out),
+    background-color var(--yg-dur-base) var(--yg-ease-out),
+    box-shadow var(--yg-dur-base) var(--yg-ease-out);
 }
 
 .editor-tab:hover {
-  border-color: var(--el-color-primary-light-5);
+  border-color: var(--yg-border-strong);
+  background: var(--yg-bg-hover);
+}
+
+.editor-tab:active {
+  background: var(--yg-bg-active);
+  box-shadow: var(--yg-shadow-inset);
 }
 
 .editor-tab.is-active {
-  border-color: var(--el-color-primary);
-  background: var(--el-color-primary-light-9);
+  border-color: var(--yg-color-primary);
+  background: var(--yg-color-primary-soft);
   color: var(--yg-text-primary);
   box-shadow: var(--yg-shadow-sm);
 }
 
 .editor-tab:focus-visible {
-  outline: 2px solid var(--el-color-primary);
-  outline-offset: 2px;
+  outline: none;
+  box-shadow: var(--yg-focus-ring);
+}
+
+.editor-tab:disabled,
+.editor-tab.is-disabled {
+  border-color: var(--yg-border-subtle);
+  background: var(--yg-bg-surface-sunken);
+  color: var(--yg-text-disabled-control);
+  cursor: not-allowed;
+  box-shadow: none;
 }
 
 .editor-tab__title {
-  font-size: var(--yg-font-size-md);
+  font-size: var(--yg-font-size-lg);
   font-weight: var(--yg-font-weight-semibold);
+  line-height: var(--yg-line-height-snug);
 }
 
 .editor-tab__desc {
-  font-size: var(--yg-font-size-xs);
+  font-size: var(--yg-font-size-sm);
+  line-height: var(--yg-line-height-normal);
   color: var(--yg-text-tertiary);
+}
+
+@media (max-width: 768px) {
+  .editor-tabs {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .editor-tab {
+    transition: none;
+  }
+}
+
+@supports (corner-shape: squircle) {
+  .editor-tab {
+    corner-shape: squircle;
+  }
 }
 
 /* 修改栏专属搜索：输入 + 结果行，一行一个「加入表格」 */

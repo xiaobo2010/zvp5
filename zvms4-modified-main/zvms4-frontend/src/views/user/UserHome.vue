@@ -10,7 +10,7 @@ import {
 } from 'element-plus'
 import { Refresh } from '@element-plus/icons-vue'
 import dayjs from '@/plugins/dayjs'
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { useHeaderStore } from '@/stores/header'
 import { useI18n } from 'vue-i18n'
 import { reactive, watch } from 'vue'
@@ -19,12 +19,16 @@ import ZUserPosition from '@/components/tags/ZUserPosition.vue'
 import ZUserTimeJudge from '@/components/activity/ZUserTimeJudge.vue'
 import { useWindowSize } from '@vueuse/core'
 import { useRouter } from 'vue-router'
+import UserHomeWorklist from '@/components/user/UserHomeWorklist.vue'
 
 const header = useHeaderStore()
 const user = useUserStore()
 const { t } = useI18n()
 const { width, height } = useWindowSize()
 const router = useRouter()
+const showWorklist = computed(
+  () => user.position.includes('admin') || user.position.includes('department')
+)
 
 if (!user.isLogin) {
   router.replace('/user/login')
@@ -111,6 +115,7 @@ watch(
         </div>
       </ElCard>
     </div>
+    <UserHomeWorklist v-if="showWorklist" :is-admin="user.position.includes('admin')" />
     <div :class="['py-2', user.shouldResetPassword ? 'yg-blur' : '']">
       <ZUserTimeJudge
         :user="user._id"
