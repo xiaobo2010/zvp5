@@ -1,5 +1,7 @@
 # ZVP5 · 项目总览与开发状态
 
+> **2026-10-29 状态更新**：运行时数据库为 **Oracle Autonomous Database**（MongoDB 已退役，下文 §三 仅保留为历史对齐依据）；AI 能力统一命名为 **ZVAgent**（原「智能体 / AI 助手」）；安全面已收口（内容审核 fail-closed、登录与重查询频控、管理写操作再认证、文件根目录 jail）。能力清单见 §九，细节契约见 `zvms4-modified-main/docs/` 与 `zvms4-modified-main/zvms4-backend-python/README.md`。
+
 > 本文件是 `xiaobo2010/zvp5` 仓库的**权威文档**，由以下四份原零散文档合并而成（内容**全文保留**于对应章节）：
 >
 > | 原文件 | 并入章节 | 原文件去向 |
@@ -37,9 +39,9 @@
 
 | 层 | 栈 |
 |---|---|
-| 后端 | FastAPI + Motor(async MongoDB) + Pydantic（可选 socket.io / APScheduler） |
+| 后端 | FastAPI + SQLAlchemy 2.0 async + Pydantic（socket.io / APScheduler） |
 | 前端 | Vue3 + Vite + TypeScript + Element Plus + Pinia |
-| 数据库 | MongoDB，双库并存：`zvms`（遗留）+ `zvms_new`（现役主库），见 §三 |
+| 数据库 | Oracle Autonomous Database（ADB，python-oracledb thin 模式），唯一运行时数据库；§三 的 MongoDB 双库为历史对齐依据 |
 
 ### 文档地图
 
@@ -1168,3 +1170,19 @@ XH：`/xh/api`（`api/xh.js`）
 - 日志采集：`zvp-latest/backend/util/log.py:36`、`util/logify.py:26-30`
 - 学海登录：`zvp5-gitlab/schemas.py:20-32`、`routers/v1/platform.py:72-99`
 - 主线剥离记录：`zvms4-modified-main/STATUS.md`（§红线剥离 / 终局 grep）、`zvms4-adb-migration:zvms4-modified-main/docs/ADB_SCHEMA_SPEC.md`（LOGS.XUEHAI_ID）
+
+---
+
+## 九、ZVAgent 与安全收敛（2026-10-29）
+
+AI 能力统一以 **ZVAgent** 对外（代码与文档中的「智能体 / AI 助手 / Agent」同指此产品；「AI 网关」仍是模块名）。本轮的实现与契约以代码为准，文档入口如下：
+
+| 主题 | 结论 | 文档 |
+|---|---|---|
+| 内容安全 | 提交瞬间做规则审核 + 灰区 LLM 判定，**fail-closed**：判定跑不起来就拒绝本次回答；对外统一 `AI_SAFETY_REJECTED`（run 提交 422、`/v1` 403）。判定成立即记违规 + 警告 + 按 `BAN_RULES.penalties` **首档立即封号**（原「首次只警告」语义废除）；admin 天然旁路并写 `ai_moderation_unrestricted` | `zvms4-modified-main/docs/AI_AGENT_OPS_DESIGN.md` §10、`zvms4-modified-main/docs/AI_GATEWAY_API.md` §8.5 |
+| 会话 | 模型在**建会话时锁定**（PATCH 改模型 409 `AI_CONVERSATION_MODEL_LOCKED`）；会话级思考强度 `low/medium/high`；`chat` 会话模式下线（存量只读，新建 409）；`/v1/chat/completions` 保留为无状态兼容面 | `zvms4-modified-main/docs/AI_CONVERSATION_DESIGN.md` §12 |
+| 只读场景 | `POST /api/ai/scenes/{scene}/runs`（`terminal` / `file_edit`）：admin + `ai.agent`，工具只声明只读集，参考内容脱敏后进 prompt 但不落消息表，跳过 30 分钟密码门，场景会话 14 天保留 | `zvms4-modified-main/docs/AI_GATEWAY_API.md` §16 |
+| 文件 | `/api/system/files` 与 agent `fs_*` 共同受根目录 jail：只允许 `/www/zvms4` 与 `/home`，越界 403 `FILES_ROOT_FORBIDDEN`；预览图片新增 `POST /api/ai/ocr/file` 路径桥 | `zvms4-modified-main/docs/FILES_API_DESIGN.md` §13、`zvms4-modified-main/docs/AI_GATEWAY_API.md` §2.5 |
+| 账号与应用安全 | 登录频控（账号 5 次/分 + IP 60 次/分 → 429 `AUTH_RATE_LIMITED`）、登出轮换 `session_id`、管理写操作密码再认证、重查询读预算 60 次/分/用户（429 `READ_RATE_LIMITED`）、安全响应头 + CSP、shield 418 追责采集、socket.io 仅认 `Authorization` 头与 auth 载荷 | `zvms4-modified-main/zvms4-backend-python/README.md` |
+| 日志与审计 | `APP_LOGS` 新增 `client_ip` / `user_agent`（V045）；事件常量集中在 `services/log_events.py`；`AI_PROMPT_AUDIT` 扩 `answer_text` / `tool_calls` / `refused` / `warned`（V046） | `zvms4-modified-main/docs/AI_GATEWAY_API.md` §6.8、`zvms4-modified-main/zvms4-backend-python/docs/database-status.md` |
+| 前端 | 会话运行中逐轮见回复、模型只读展示、思考强度三档、归档会话视图与恢复、平台管理可添加班级、日志卡片展示 IP/UA、文件预览 OCR / 编辑器「AI 分析」/ 终端「智能分析」 | `zvms4-modified-main/zvms4-frontend/README.md` |

@@ -57,3 +57,18 @@
    禁止硬编码色值与魔法数值，禁止 `!important`。
 3. **类名规范**：前缀 `yg-`，BEM 风格 `yg-block__element--modifier`，
    状态用 `.is-*`；新增组件必须在准则第 4 章登记类名后方可编写样式。
+
+## 后端设计文档索引
+
+本目录同时收纳后端契约与迁移设计（前端准则见上）：
+
+| 文档 | 内容 |
+|---|---|
+| `ADB_MIGRATION.md` / `ADB_SCHEMA_SPEC.md` | MongoDB → Oracle ADB 迁移记录与 schema 规格 |
+| `AI_GATEWAY_API.md` | AI 网关：OCR（含 `/api/ai/ocr/file`）、凭据、额度、流水、OpenAI 兼容面、ZVAgent 工具、会话与只读场景 |
+| `AI_CONVERSATION_DESIGN.md` | 会话 / 消息 / run 数据模型与契约（含模型锁定、思考强度、归档、`since_msg_seq`） |
+| `AI_AGENT_OPS_DESIGN.md` | ZVAgent 运维能力（文件 / SSH / 数据库）、写操作提案、`ban_history`、内容安全语义 |
+| `FILES_API_DESIGN.md` | 附件 API，以及系统文件管理的根目录 jail（§13） |
+| `DEVICE_TRACKING_DESIGN.md` | `APP_LOGS` 学海 ID 采集 |
+| `DB_PERF_MAINTENANCE_DESIGN.md` | 数据库性能与保留期维护 |
+| `V4242_*` / `REFERENCE_TREES_ALIGNMENT.md` | 阶段契约与参考树对账记录 |

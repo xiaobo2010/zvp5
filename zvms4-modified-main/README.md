@@ -19,6 +19,7 @@
 > **改动方向六（2026-10-11 起）：后端可用状态落地——shield 请求加固中间件按 zvp 语义改写移植（剥离设备会话/学海面），运行缺口修复（依赖缺失 / example 配置字段缺失 / RSA 1024 / 关停竞态），并完成真实运行时端到端验证（41/41 断言），见 `STATUS.md` Part 8。**
 > **改动方向七（2026-10-12 起）：双库断裂面系统性收敛——群组与用户读取全面双库合并（权限组列表与成员、用户搜索去重、roles 合并、班级选择器修复），PWA SW 即时接管修复旧客户端首页 404，见 `STATUS.md` Part 10。**
 > **改动方向八（2026-10-14 起，10-15 修）：设备追踪——`APP_LOGS` 记录请求设备的学海 ID（前端 `Xuehai-Id` 头 → `xuehai_id` 列），`GET /api/logs` 新增 `xuehai_id` 过滤 + `ix_app_logs_xuehai_id` 索引；前端取 ID 支持**双客户端**（学海浏览器 `xhBrowserJava` 桥 + 资料中心 App UA `userId/`，修复此前只读桥导致资料中心一条都采不到）；设计见 `docs/DEVICE_TRACKING_DESIGN.md`。**
+> **改动方向九（2026-10-28 起）：ZVAgent 会话整合 + 安全收敛——内容审核 fail-closed 与立即封号、管理写操作密码再认证、登录/重查询频控、文件根目录 jail、只读场景（终端 / 文件编辑）与 OCR 路径桥；AI 能力统一命名 **ZVAgent**。**
 > 其余前端 UI 与后端业务逻辑仍以上游 zvms4 为基准，不采用 zvp 的代码（zvp 代码经检查存在漏洞与后门，仅提取其数据结构；义工管理与用户管理移植面经扫描确认无外链 / 外呼 / 越权代码，范围外危险代码一律未引入，上游自带的设备采集 / 外呼代码已在用户管理面上清除）。**学海 ID 设备采集为 2026-10-13 起另行设计并落地的独立能力**（仅将请求头写入 `APP_LOGS.XUEHAI_ID`，不恢复 zvp 的设备会话 / 登录绑定 / 外呼面），见 `docs/DEVICE_TRACKING_DESIGN.md`。
 >
 > **文件位置变更（2026-10-12）**：本目录原 `DB_ALIGNMENT.md`（数据库对齐 Ground Truth）已并入**仓库根 `README.md` §三**，本目录不再有该文件。下文出现的 `DB_ALIGNMENT.md` / `DB_ALIGNMENT §N` 一律对应**根 README §三 / §三.N**。
@@ -158,3 +159,17 @@ uvicorn main:app --host 0.0.0.0 --port 8000
 2. **配色**：整体定位为天蓝色（义工管理子 Tab 的高亮色）+ 黑 / 白 + Logo 色。
 3. **实用性优先**：保持当前行距；页面卡片之间的间隙适当扩大。
 4. **扁平化**：减少立体按钮；需要体现立体感时用阴影，方便融入其他设计。
+
+## 8. 本轮新增能力（2026-10-29）
+
+- **ZVAgent 命名**：对外统一称 **ZVAgent**；「AI 网关」仍是模块名（`/api/ai/*`）。持久会话、任务化 run、工具白名单与写操作提案都在这一产品面内。
+- **内容安全**：提交路径先过关键词规则再过一个严格判定的 LLM 灰区闸；**fail-closed**（判定跑不起来 → 拒绝本次回答，不记违规）。判定成立时对外只有 `AI_SAFETY_REJECTED` 与固定文案「该请求未通过内容安全审核。」（run 提交 422 / `/v1` 网关 403），对内记违规 + 警告 + 按 `BAN_RULES` **首档立即封号**。admin 天然旁路（审计 `ai_moderation_unrestricted`）。
+- **账号与应用安全**：登录频控（账号 5 次/分、IP 60 次/分，429 `AUTH_RATE_LIMITED`）；`POST /api/users/auth/logout` 轮换 `session_id` 让旧 token 立即失效；管理写操作要求 body `verification_token`（5 分钟密码再认证短令牌）；重查询读预算 60 次/分/用户（429 `READ_RATE_LIMITED`）；安全响应头 + CSP；shield 418 记录原因 / referer / origin / XFF / UA；socket.io 只认 `Authorization` 头与 auth 载荷。
+- **日志/审计**：`APP_LOGS` 增 `client_ip` / `user_agent`（V045），登录类事件统一带 IP/UA；事件常量收进 `services/log_events.py`（新增 `user_logout`、`ai_quota_request_approve/reject`）；`AI_PROMPT_AUDIT` 扩 `answer_text` / `tool_calls` / `refused` / `warned`（V046），`GET /api/ai/prompts/{oid}` 一并透出。
+- **引擎与模型**：run 详情支持 `since_msg_seq` 增量消息；会话模型建时锁定（PATCH → 409 `AI_CONVERSATION_MODEL_LOCKED`）；会话级思考强度 `low/medium/high`；模型上下文窗口支持 `{"id","context"}` 形态并在保存时 best-effort 探测上游 `/models`，`/v1/models` 每项带 `context`（可 null）。
+- **ZVAgent 工具**：新增只读 `ban_history`（封禁流水、按规则历史档位、30 天违规批次、规则 penalties 梯度、绑定设备计数，学海 ID 打码）。
+- **数据库**：V045–V048（`app_logs` 两列、`ai_conversations.thinking` / `scene`、`ai_prompt_audit` 四列、索引与死表 `logs` 下线、保留窗口与 `created_at` 默认值）。细节见 `zvms4-backend-python/docs/database-status.md`。
+- **文件与场景**：系统文件与 agent `fs_*` 共同受根目录 jail（`/www/zvms4`、`/home`，越界 403 `FILES_ROOT_FORBIDDEN`），前端快捷目录同步收敛；`POST /api/ai/ocr/file` 支持按站点路径同步识别预览图片；`POST /api/ai/scenes/{scene}/runs` 提供只读场景（`terminal` / `file_edit`）。
+- **前端**：会话运行中逐轮见回复、模型只读展示、思考强度三档、归档会话视图与恢复、平台管理添加班级（`POST /api/v3/groups`）、日志卡片 IP/UA 与事件 label 对齐、文件预览 OCR / 编辑器「AI 分析」/ 终端「智能分析」。
+
+契约细节：`docs/AI_GATEWAY_API.md`、`docs/AI_CONVERSATION_DESIGN.md`、`docs/AI_AGENT_OPS_DESIGN.md`、`docs/FILES_API_DESIGN.md`。

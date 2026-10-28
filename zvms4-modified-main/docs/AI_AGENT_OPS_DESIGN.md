@@ -1,7 +1,8 @@
-# AI 运维 Agent 设计（文件 / SSH / 数据库）
+# ZVAgent 运维设计（文件 / SSH / 数据库）
 
 > 状态：**契约冻结**。基线：`feature/agent-core` 工作区（活动域 agent 已落地并通过 101 项测试）。
 > 本文只定义「扩到运维」的增量与不可协商的不变量；活动域既有行为不改变。
+> **2026-10-29 命名与安全修订**：AI 产品统一称 **ZVAgent**（「智能体 / AI 助手 / Agent」同指此产品，「AI 网关」仍是模块名）；新增只读 `ban_history`、只读场景与 fail-closed 审核语义，见 §10。
 
 ---
 
@@ -326,3 +327,59 @@ V013 DDL）。`source='agent'` 需要配套迁移把该约束放宽（`banned_de
 同理，虽然本层的 `device_unban` 只删行）。迁移落地前 `user_ban` / `user_unban`
 会在**状态变更之前**被数据库拒绝，并翻译成 503 `AI_AGENT_TOOL_FAILED`（流水先写、
 状态后写，所以拒绝时没有任何副作用残留）。
+
+---
+
+## 10. ZVAgent 命名与安全语义（2026-10-29）
+
+### 10.1 命名
+
+AI 产品对外统一称 **ZVAgent**。文档、界面文案、日志描述里的「智能体 / AI 助手 / Agent」都是同一产品的旧称，不再混用；「AI 网关」指 `/api/ai/*` 这一模块，不是产品名。
+
+### 10.2 内容安全：fail-closed + 立即封号
+
+`run_queue.submit` 的审核顺序固定：**密码门（只读场景豁免）→ 关键词规则 → LLM 灰区闸 → 入队**。任何一步拒绝都不产生 run，也不扣额度。
+
+| 情形 | 对外 | 对内 |
+|---|---|---|
+| 规则命中 / 灰区判定为破坏性 | 422 `AI_SAFETY_REJECTED` + 固定文案「该请求未通过内容安全审核。」 | 记 `ban_violations` 证据（5 分钟去重）+ 警告账本 + 按 `BAN_RULES.penalties` **首档立即封号** |
+| 判定跑不起来（无凭据 / 超时 / 5xx / 坏 JSON） | 同样 422 `AI_SAFETY_REJECTED` | **不记违规、不封号**：没有判定结论就没有证据 |
+| 已在封禁中 / 同一份证据重试 | 同样 422 | 只记新证据，不再推梯度、不重复处罚 |
+| admin | 直接放行 | 写一条 `ai_moderation_unrestricted` 审计（「审核没跑」这个事实必须留痕） |
+
+对外不区分「警告」与「封禁」，也不解释处罚梯度：回给攻击者的差异就是调参信号。「首次只警告」的旧语义已废除——警告给不出阻止力，而命中的原文本身已是可复核证据。
+
+实现：`services/ai/moderation.py`（规则）、`services/ai/safety_guard.py`（灰区判定）、`services/violation_guard.py:record_agent_jailbreak`（证据与封禁）、`services/agent/run_queue.py:_reject_unsafe`（协议翻译）。
+
+### 10.3 只读场景（`terminal` / `file_edit`）
+
+终端页与文件编辑器通过 `POST /api/ai/scenes/{scene}/runs` 提问，与普通 ZVAgent 会话共用会话 + run 管线，但：
+
+1. **工具只读**：执行器按 `scene` 把 `tool_specs` 裁到 `kind='read'`；写工具、提案流、`ssh_exec`、数据库 DML/DDL 都不在 `tools` 数组里。这不是提示词约束，模型连能力声明都看不到。
+2. **参考内容不落消息表**：`context`（≤8000）先脱敏再截断，只注入 prompt 与 prompt 留存；`ai_messages` 里只有用户问题本身。
+3. **跳过 30 分钟密码门**：只读 + admin 的风险面是「能看」而不是「能改」；豁免条件写死在 `run_queue.submit`，不开放成参数——那等于给调用方一个跳过门禁的开关。
+4. **会话隔离与保留**：`ai_conversations.scene` 非空即场景会话，普通列表固定 `scene IS NULL`；14 天保留，级联删除 messages / runs。
+
+### 10.4 新增只读工具 `ban_history`
+
+`services/agent/tools_ops_extra.py`。参数 `user_oid` 或 `business_id` 恰好一个，`limit` 1–20（默认 10）。返回：
+
+| 字段 | 内容 |
+|---|---|
+| `user` | `oid` / `name` / `business_id` / `banned` / `ban_until` |
+| `records` | 最近封禁流水（`source` / `rule_code` / `reason` / `permanent` / `started_at` / `expires_at` / 操作者） |
+| `tiers` | 该用户在每个 `rule_code` 下已被封过的次数与最近时间 |
+| `violations` | 最近 30 天违规信号按 `trigger_code` 的**批次**计数（同一 batch 多行只算一次） |
+| `rules` | 启用规则的 `penalties` 梯度（原样透出） |
+| `device` | 绑定设备的 `xuehai_id_masked` / `ban_count` / `last_banned_at` |
+| `note` | 解释「`tiers.count + 1` 档即本次应执行档位，超出数组按最后一档」 |
+
+它是**只读**工具，直接执行并落 `ai_agent_events`；权限镜像 `admin` + 现查库。学海 ID 打码后再返回，避免把设备标识写进对话。
+
+### 10.5 文件根目录 jail 与 agent 工具
+
+`fs_list` / `fs_stat` / `fs_read` / `fs_write` / `fs_mkdir` / `fs_rename` / `fs_delete` / `fs_chmod` 全部走 `services/file_ops`，与 HTTP 文件管理端点共用同一条边界：
+
+- 只允许 `ALLOWED_ROOTS = ("/www/zvms4", "/home")`；判定在 `realpath` **之后**按路径段比较（`/home2` 不会被 `/home` 放行），`..` 与符号链接都逃不出去。
+- 越界 → 403 `FILES_ROOT_FORBIDDEN`；`/proc` / `/sys` 与凭据文件黑名单仍是独立拒绝面。
+- 因此「agent 能读全盘」不再成立：它能读的范围与管理员在文件管理器里能点的范围完全一致。

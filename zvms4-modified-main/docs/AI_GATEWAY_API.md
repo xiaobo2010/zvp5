@@ -1,12 +1,15 @@
 # AI 网关 API
 
-适用代码：`zvms4-backend-python` @ `d25417b`（2026-10-24）
+适用代码：`zvms4-backend-python` @ `dce53af`（2026-10-29）
 挂载点：`main.py` → `app.include_router(ai_router.router, prefix="/api/ai")`
 + `app.include_router(ai_api_keys_router.router, prefix="/api/ai/api-keys")`
 + `app.include_router(ai_agent_router.router, prefix="/api/ai/agent")`
++ `app.include_router(ai_conversations_router.router, prefix="/api/ai")`
++ `app.include_router(ai_scenes_router.router, prefix="/api/ai")`
 
-网关有四件事：**LLM 对话**（OpenAI 兼容面）、**OCR**（多引擎池）、**智能体**（工具白名单 + 写操作人工确认）、**运维面**（凭据 / 引擎 / 额度 / 流水 / 健康）。
-OCR 还有一条附件侧入口 `POST /api/attachments/{oid}/ocr`，与 `/api/ai/ocr` 共用同一套计价。
+网关有四件事：**LLM 对话**（OpenAI 兼容面）、**OCR**（多引擎池）、**ZVAgent 会话/工具**（工具白名单 + 写操作人工确认）、**运维面**（凭据 / 引擎 / 额度 / 流水 / 健康）。
+OCR 还有两条旁路入口：附件侧 `POST /api/attachments/{oid}/ocr`，以及站点文件预览用的 `POST /api/ai/ocr/file`（见 2.5），两者与 `/api/ai/ocr` 共用同一套计价。
+AI 产品对外统一称 **ZVAgent**；「会话模式 `chat`」已下线，`/v1/chat/completions` 仍保留为**无状态**兼容面（见 8.2）。
 
 ---
 
@@ -70,16 +73,33 @@ API key 详见 §8；它**不能**打开管理面（`/keys`、`/quota`、`/logs`
 |---|---|
 | 200 | 成功 / 已在处理中（幂等） |
 | 201 | 资源已创建 |
-| 202 | 已受理，后台异步执行（OCR 入队） |
+| 202 | 已受理，后台异步执行（OCR 入队 / agent run / 只读场景 run） |
 | 204 | 删除成功，空体 |
 | 400 | 参数 / 类型不合法（`AI_*` 错误码） |
-| 403 | 角色不足或没有该附件的读权限 |
+| 403 | 角色不足、没有该附件的读权限，或内容安全拒绝（`AI_SAFETY_REJECTED`） |
 | 404 | 资源不存在 |
-| 409 | 唯一性冲突（重名） |
+| 409 | 唯一性冲突（重名 / 会话模型锁定 / 活跃 run） |
+| 422 | 请求语义不成立（如未解锁 agent、内容安全拒绝的 run 提交） |
 | 429 | 频控或额度耗尽 |
 | 502 | 上游故障（鉴权失败 / 拒绝 / 5xx / 不可读凭证） |
 | 503 | 网关不可用（未启用 / 无可用上游 / 无可用 OCR 引擎 / 站点额度全满） |
 | 504 | 上游超时 |
+
+### 1.5 管理写操作的密码再认证
+
+以下端点要求请求体带 `verification_token`（`POST /api/users/auth` 的 `purpose=verify` 用密码换出的 **5 分钟**短令牌，scope=`temporary_token`）。缺失、过期、伪造、非本人一律 403，`detail` 为 `需要密码验证后才能继续`：
+
+| 端点 | 方法 |
+|---|---|
+| `/api/ai/keys`、`/api/ai/keys/{oid}` | POST / PATCH / DELETE |
+| `/api/ai/api-keys`、`/api/ai/api-keys/{oid}` | POST / PATCH / DELETE |
+| `/api/v3/ban/rules`、`/api/v3/ban/rules/{code}` | POST / PUT / DELETE（DELETE 走 body） |
+| `/api/v3/ban/devices`、`/api/v3/ban/devices/{xuehai_id}`、`.../reset-gradient` | POST / DELETE / POST（均走 body） |
+| `/api/v3/notifications`、`/{oid}`、`/{oid}/rollback` | POST / PUT / DELETE / POST |
+| `/api/changelog`、`/api/changelog/{oid}` | POST / PUT / DELETE |
+| `/api/system/settings` | PUT |
+
+再认证令牌与登录令牌走同一条 `_authenticate` 判定（签名、过期、scope、封禁、`sid`），只把失败统一翻成 403——前端 axios 把 401 当「登录过期」会清会话并跳登录页，密码框里打错一次就把人踢出去属于错误语义。
 
 ---
 
@@ -175,6 +195,39 @@ Content-Type: application/json
 | `zhipu` | `api_key` | **无** | **无** | 429 + 1302/1305 重试 3 次（2s/5s），1308 不重试 |
 
 统一返回 `{text, lines:[{text, confidence, box}], engine, raw}`；无 bbox 的引擎 `box` 恒为 `null`。
+
+### 2.5 POST /api/ai/ocr/file —— 站点文件路径识别
+
+文件管理器的图片预览需要一个「点一下识别」的入口，而预览图片没有附件 oid。本端点接受**站点内绝对路径**，同步返回识别文本；它不是免费通道，计费与附件 OCR 完全同源。
+
+```http
+POST /api/ai/ocr/file
+Content-Type: application/json
+
+{ "path": "/www/zvms4/uploads/2026/order.png", "provider": "tencent" }
+```
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `path` | string | 是 | 1–4096 字符，绝对路径；经 `services/file_ops.resolve_path` 解析（根目录 jail + 凭据名拦截） |
+| `provider` | string \| null | 否 | 引擎 kind；语义与 `/api/ai/ocr` 的 `provider` 相同（仅 admin，且不减免站点额度） |
+
+- **权限**：严格 `admin` + 功能开关 `ai.ocr`。
+- **类型**：按扩展名收敛到 `jpg` / `jpeg` / `png` / `webp`（大小写不敏感）；其它 → 400 `AI_UNSUPPORTED_MEDIA`。
+- **体积**：与附件 OCR 同一个上限（默认 20MB，`AI_OCR_MAX_IMAGE_BYTES` 可覆盖），超限 400 `AI_OCR_IMAGE_TOO_LARGE`。
+- **执行**：同步识别（不落 `file_ocr`、不产生附件配额），返回 `{"status":"ok","code":200,"data":{"text":"..."}}`。
+- **路径 jail**：越界 → 403 `FILES_ROOT_FORBIDDEN`（根目录只允许 `/www/zvms4` 与 `/home`，见 `docs/FILES_API_DESIGN.md` §13）；未命中路径也走同一套错误翻译。
+- **计价与审计**：频控（`ocr`）+ 用户 `ocr` 月额度 + 站点额度 + 每次尝试的 `ai_call_logs`，与 §2.1/§2.3 同一套规则；成功另写一条 `APP_LOGS`（`type=ai_ocr_enqueue`）。
+
+| 状态 | `detail` | 触发 |
+|---|---|---|
+| 400 | `AI_UNSUPPORTED_MEDIA` | 扩展名不在白名单 |
+| 400 | `AI_OCR_IMAGE_TOO_LARGE` | 文件超过单图上限 |
+| 403 | `AI_FORBIDDEN` | 非 admin / 未开通 `ai.ocr` |
+| 403 | `FILES_ROOT_FORBIDDEN` | 路径不在允许的根目录内 |
+| 404 | `AI_OCR_FILE_UNREADABLE` | 文件不存在或不可读（`FileOpError` 无专用码时的兜底） |
+| 429 | `AI_RATE_LIMITED` / `AI_QUOTA_EXCEEDED` | 频控 / 月额度 |
+| 503 | `AI_OCR_NO_ENGINE` / `AI_OCR_SITE_QUOTA_EXHAUSTED` | 引擎或站点额度不可用 |
 
 ---
 
@@ -301,6 +354,8 @@ Content-Type: application/json
 | GET | `/api/ai/logs/stats` | admin |
 | GET | `/api/ai/prompts` | admin（见 6.8） |
 | GET | `/api/ai/prompts/{oid}` | admin（读正文会写访问审计） |
+
+> **读预算**：`GET /api/ai/logs` 与 `GET /api/ai/prompts` 属于「重查询」，与 `GET /api/logs`、`GET /api/exports/{id}/file` 共用每用户 60 次/分钟的滑动窗口（`util/read_throttle.py`）。超限返回 429 且 `detail={"code":"READ_RATE_LIMITED","message":"查询过于频繁，请稍后再试"}`，并带 `Retry-After`；管理员与普通用户同一档位。
 
 ### 6.1 GET /api/ai/logs —— 明细
 
@@ -456,11 +511,12 @@ run 的两面）与 `AI_PROMPT_AUDIT`（`AI_PROMPT_RETENTION_DAYS`，默认 30 �
 | 事项 | 口径 |
 |---|---|
 | 捕获条件 | 调用者 `per` 与 `AI_PROMPT_CAPTURE_ROLES`（默认 `("department",)`）相交；覆盖 `chat` / `markdown-assistant` / `agent` 三种场景（OCR 没有 prompt） |
-| 捕获内容 | `messages` 中**最后一条** `role=user` 的正文（多轮对话的每一轮请求各留一条，不重复存历史轮次） |
+| 捕获内容 | `messages` 中**最后一条** `role=user` 的正文（多轮对话的每一轮请求各留一条，不重复存历史轮次）；run 收尾时回填 `ANSWER_TEXT`（最终 assistant 文本）与 `TOOL_CALLS`（工具调用摘要 JSON 数组，只存 `name/args_summary/result_summary/status`，不存参数原文） |
+| 结果标记 | `REFUSED` / `WARNED`（`NUMBER(1)`，默认 0）：内容安全拒绝与警告都会标在留存行上，不必回查 `AI_CALL_LOGS` 的错误码 |
 | 脱敏 | 18 位身份证（含 `X` 校验位）→ 前 3 位 + `*`×11 + 后 4 位；11 位手机号（`1[3-9]` 开头）→ 前 3 位 + `*`×6 + 后 2 位。正则在服务端，先脱敏后截断 |
 | 上限 / 保留 | 单条截断至 `AI_PROMPT_MAX_CHARS`（默认 8000 字符）；保留 `AI_PROMPT_RETENTION_DAYS`（默认 30 天） |
 | 写入失败 | 只记一条 **不含正文** 的 WARNING，绝不影响主请求 |
-| 读取 | 只有 `GET /api/ai/prompts`（元数据）与 `GET /api/ai/prompts/{oid}`（正文）；后者每次读取写一条 `APP_LOGS`（`type=ai_prompt_access`、`level=info`，随日志保留期清理） |
+| 读取 | 只有 `GET /api/ai/prompts`（元数据）与 `GET /api/ai/prompts/{oid}`（正文 + `answer_text` / `tool_calls` / `refused` / `warned`）；后者每次读取写一条 `APP_LOGS`（`type=ai_prompt_access`、`level=info`，随日志保留期清理） |
 
 `AI_PROMPT_CAPTURE_ROLES = ()` 表示关闭正文留存（空集合是显式关闭，不是配置写坏）。
 
@@ -469,7 +525,7 @@ run 的两面）与 `AI_PROMPT_AUDIT`（`AI_PROMPT_RETENTION_DAYS`，默认 30 �
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | GET | `/api/ai/prompts?user_oid=&days=&page=&perpage=` | admin。**只回元数据**：`oid`、`user_oid`、`user_name`、`purpose`、`roles_snapshot`、`created_at`、`prompt_chars`（库里 `LENGTH` 算，不回正文）。`days` 1–90 默认 7（滚动窗口），`page` ≥1，`perpage` 1–100 |
-| GET | `/api/ai/prompts/{oid}` | admin。回完整正文（含 `request_id`）；每次调用写一条访问审计（目标 oid + 目标 user_oid，**不记正文**）。oid 形状非法或不存在一律 `404 AI_PROMPT_NOT_FOUND` |
+| GET | `/api/ai/prompts/{oid}` | admin。回完整正文（含 `request_id`）与回填的 `answer_text` / `tool_calls` / `refused` / `warned`；每次调用写一条访问审计（目标 oid + 目标 user_oid，**不记正文**）。oid 形状非法或不存在一律 `404 AI_PROMPT_NOT_FOUND` |
 
 **`ai_chat_burst` 风控规则**（种子随 `V033` 落库，只告警不封禁）：
 
@@ -523,10 +579,12 @@ run 的两面）与 `AI_PROMPT_AUDIT`（`AI_PROMPT_RETENTION_DAYS`，默认 30 �
 ### 8.1 GET /api/ai/v1/models
 
 ```json
-{ "object": "list", "data": [{ "id": "glm-4.6v-flash", "object": "model", "owned_by": "..." }] }
+{ "object": "list", "data": [{ "id": "team/glm-4.6v-flash", "object": "model", "owned_by": "team", "context": 128000 }] }
 ```
 
-只列当前用户可见凭据里声明的模型。
+只列当前用户可见凭据里声明的模型。`id` 是合格 ID `provider/model`；`context` 是该模型的上下文窗口（token），来自凭据 `MODELS_JSON` 的模型级配置——**没配就是 `null`**，不拿猜测值顶替。
+
+模型清单支持两种写法：字符串数组（旧）与对象数组 `[{"id":"gpt-x","context":128000}]`。保存凭据时服务端 best-effort 请求一次上游 `/models` 补全缺失的 `context`，管理员手填的值优先；管理端也可直接编辑。
 
 ### 8.2 POST /api/ai/v1/chat/completions
 
@@ -555,6 +613,7 @@ OpenAI 兼容面里，严格校验请求体的网关会直接 400——为了多
 |---|---|---|
 | 401 | `AI_API_KEY_INVALID` | 用了 API key 但无效（不存在/已禁用/已过期/用户已删） |
 | 403 | `AI_FORBIDDEN` | 角色无 AI 权限 |
+| 403 | `AI_SAFETY_REJECTED` | 内容安全判定成立或判定不可用（fail-closed），固定文案「该请求未通过内容安全审核。」 |
 | 403 | `USER_BANNED` | 账号处于封禁中（带 `X-Ban-Reason` / `X-Ban-Until`） |
 | 404 | `model_not_found` | 没有任何可见凭据声明该模型 |
 | 429 | `AI_RATE_LIMITED` | 用户维度超过 20 次/分钟，或单把 API key 超过 60 次/分钟 |
@@ -594,6 +653,17 @@ print(client.chat.completions.create(
 - 失败上游进入冷却（秒数见 `/health` 的 `cooldown_seconds`，作用域 `process`），冷却期内不再当选。
 - 频控、熔断、凭据缓存、API key 校验缓存都是**进程内**状态（见 `/health` 的 `worker_count` / `rate_limit_per_minute`）。
 
+### 8.5 内容安全（fail-closed）
+
+请求在「角色/开关门禁之后、候选选择与频控/额度之前」过内容安全闸，因此被拒请求不花上游调用、不占分钟窗口、不扣额度。
+
+1. **规则层**（`services/ai/moderation.py`）：命令式越狱/提示注入/凭据窃取等规则，纯函数、无 IO；只对 `department` 生效。
+2. **灰区 LLM 判定**（`services/ai/safety_guard.py`）：温度 0、限 200 token、只判最后一条 user 文本；**判定不可用（无凭据/超时/5xx/坏 JSON）也拒绝本次回答**，但**不记违规、不封号**——没有判定结论就没有证据。
+3. **对外唯一错误码** `AI_SAFETY_REJECTED` + 固定文案「该请求未通过内容安全审核。」：run 提交 422，`/v1/chat/completions` 403。不区分「警告」与「封禁」，避免攻击者按差异调参。
+4. **判定成立**：记违规证据（`ban_violations`，5 分钟去重）+ 警告账本 + 按 `BAN_RULES.penalties` **首档立即封号**；重试同一份证据不会重复处罚，已在封禁中也只记新证据。
+5. **admin 天然旁路**：管理员本来就掌握运维能力，审核只针对 `department`；每次旁路提交写一条 `APP_LOGS`（`type=ai_moderation_unrestricted`）。「管理员无限制模式」开关已整体下线。
+6. 被拒的原文仍按 `AI_PROMPT_CAPTURE_ROLES` 受控留存，并在留存行标 `REFUSED=1`（发了警告再标 `WARNED=1`）。
+
 ---
 
 ## 9. 独立 API key `/api/ai/api-keys`
@@ -627,6 +697,8 @@ print(client.chat.completions.create(
 视图字段：`{oid, name, key_hint, enabled, expires_at, last_used_at, created_at}`，
 **永不回 `token` 或 `token_hash`**。`last_used_at` 是采样写（最多每 60 秒一次），
 不是精确审计。
+
+> **密码再认证**：`POST` / `PATCH` / `DELETE` 均要求 body 带 `verification_token`（由 `POST /api/users/auth` 的 `purpose=verify` 用密码换出的 5 分钟短令牌）。缺失、过期、伪造或非本人 → 403 `需要密码验证后才能继续`。同一规则见 §3（`/keys`）。
 
 错误：`400 AI_API_KEY_BAD_NAME` / `AI_API_KEY_BAD_EXPIRY`、`401 AI_API_KEY_INVALID`、
 `403 AI_FORBIDDEN`（不是 owner 也不是 admin）、`404 AI_API_KEY_NOT_FOUND`、
@@ -755,6 +827,12 @@ client = OpenAI(
 | code | HTTP | 含义 |
 |---|---|---|
 | `AI_FORBIDDEN` | 403 | 角色无 AI 权限 |
+| `AI_SAFETY_REJECTED` | 422 / 403 | 内容安全拒绝（run 提交 / `/v1` 网关）；固定文案「该请求未通过内容安全审核。」 |
+| `AI_CONVERSATION_MODEL_LOCKED` | 409 | 试图修改已锁定（建会话时确定）的模型 |
+| `AI_SCENE_UNKNOWN` | 400 | 场景名不是 `terminal` / `file_edit` |
+| `AI_AGENT_UNLOCK_REQUIRED` | 422 | 普通 agent 会话未通过 30 分钟密码解锁（只读场景豁免） |
+| `READ_RATE_LIMITED` | 429 | 重查询读预算超限（日志 / prompt / 导出下载） |
+| `FILES_ROOT_FORBIDDEN` | 403 | 文件路径不在 `/www/zvms4`、`/home` 之内 |
 | `AI_DISABLED` | 503 | 网关未启用 |
 | `AI_RATE_LIMITED` | 429 | 本地频控超限 |
 | `AI_QUOTA_EXCEEDED` / `insufficient_quota` | 429 | 用户月额度耗尽 |
@@ -796,7 +874,7 @@ client = OpenAI(
 | `AI_AGENT_NOT_WRITE_TOOL` / `AI_AGENT_ARGS_TOO_LARGE` | 400 | 提案参数问题 |
 | `AI_AGENT_TOOL_FAILED` | 502 | 工具执行内部失败 |
 | `AI_CONVERSATION_NOT_FOUND` | 404 | 会话不存在或不属于本人 |
-| `AI_CONVERSATION_MODE_MISMATCH` | 409 | 会话类型与端点不符（chat 会话提交 agent run，或反之） |
+| `AI_CONVERSATION_MODE_MISMATCH` | 409 | 会话模式与端点不符（`chat` 模式已下线：新建回 409，存量只可读/归档/删除） |
 | `AI_RUN_CONFLICT` | 409 | 同会话/同用户已有活跃 run；删除有活跃 run 的会话 |
 | `AI_RUN_NOT_FOUND` | 404 | run 不存在或不属于本人 |
 | `AI_RUN_NOT_CANCELLABLE` | 409 | run 已是终态 |
@@ -863,7 +941,9 @@ client = OpenAI(
 | `AI_PROMPT_RETENTION_DAYS` | `config.py` / `settings` | 正文保留 30 天（日清任务） |
 | `AI_PROMPT_MAX_CHARS` | `config.py` / `settings` | 单条正文上限 8000 字符（超出截断） |
 
-相关表：`ai_credentials`、`ai_ocr_engines`、`ai_api_keys`、`ai_quota`、`ai_call_logs`、`ai_agent_events`、`ai_prompt_audit`、`file_ocr`（迁移 `V024`–`V033`）。
+相关表：`ai_credentials`、`ai_ocr_engines`、`ai_api_keys`、`ai_quota`、`ai_call_logs`、`ai_agent_events`、`ai_prompt_audit`、`ai_conversations` / `ai_messages` / `ai_runs`、`file_ocr`（迁移 `V024`–`V048`）。
+
+> `V045`–`V048` 摘要：`app_logs` 加 `client_ip` / `user_agent`；`ai_conversations` 加 `thinking` / `scene`；`ai_prompt_audit` 加 `answer_text` / `tool_calls` / `refused` / `warned`；`V047` 为 `ban_violations(created_at)`、`ai_call_logs(status,created_at)` 建索引，删 4 条冗余索引与死表 `logs`。完整口径见 `zvms4-backend-python/docs/database-status.md`。
 
 ---
 
@@ -902,7 +982,7 @@ CAS `proposed → executing → confirmed|failed`。
 - 活动域两条写工具（`update_member_duration` / `set_member_status`）保持无 TOTP，
   行为不变。
 
-### 14.3 工具集（封闭白名单，27 个）
+### 14.3 工具集（封闭白名单，37 个）
 
 | 域 | 读（自动执行） | 写（提案 + TOTP） |
 |---|---|---|
@@ -910,10 +990,14 @@ CAS `proposed → executing → confirmed|failed`。
 | 文件 | `fs_list` `fs_stat` `fs_read` | `fs_write` `fs_mkdir` `fs_rename` `fs_delete` `fs_chmod` |
 | 数据库 | `db_schema` `db_columns` `db_rows` `db_query` | `db_insert` `db_update` `db_delete` `db_ddl` |
 | SSH | — | `ssh_exec`（固定目标 `root@127.0.0.1:22`，一次 `exec`，输出 8KB 截断） |
+| 平台读 | `platform_logs` `db_diagnostics` `backup_status` `scheduler_status` `device_ban_list` `user_lookup` `ban_history` `settings_snapshot` `scheduler_jobs` `ai_call_logs` `agent_queue_status` `server_time` `ai_gateway_status` `ai_prompt_audit_list` `attachment_stats` `attachment_gc_preview` `volunteer_audit` | — |
+| 平台写 | — | `user_ban` `user_unban` `device_unban`（`direct`，可逆且目标不得为管理员）；`notify_send` `maintenance_mode` `scheduler_control` `backup_run` `ai_api_key_revoke` `ai_quota_set` `attachment_gc_run` 走提案 |
+
+`ban_history` 是本轮新增的只读工具：按 `user_oid` 或 `business_id` 返回封禁流水（最近 ≤20 条）、按 `rule_code` 的历史档位与最近时间、最近 30 天违规批次、启用规则的 `penalties` 梯度、绑定设备的封禁计数（学海 ID 打码）。它的 `note` 字段说明「`tiers.count + 1` 档即本次应执行档位，超出数组按最后一档」，让模型解释处罚时不需要自己猜梯度。
 
 运维工具权限镜像 REST：`per` 含 `admin` + 每次执行现查库（`ban_is_active` 与权限重算），
 不信任 token 快照。`db_query` 走只读 SQL 校验；`db_ddl` 先跑 DDL 校验（含
-`confirm=表名`）；文件路径仍过 `realpath` + `/proc`/`/sys` + 敏感文件黑名单。
+`confirm=表名`）；文件路径仍过 `realpath` + 根目录 jail（`/www/zvms4`、`/home`）+ `/proc`/`/sys` + 敏感文件黑名单。
 
 ### 14.4 成本闸
 
@@ -1004,3 +1088,52 @@ CAS `proposed → executing → confirmed|failed`。
 
 > 已知边界：生成质量取决于上游模型；prompt 只能降低、不能消除「产出危险命令」的概率。
 > 因此**人审阅是唯一的强制闸**，本端点在任何情况下都不提供「一键执行」。
+
+---
+
+## 16. 持久会话、run 与只读场景
+
+会话与 run 的完整设计见 `docs/AI_CONVERSATION_DESIGN.md`。本节只列网关侧的协议事实。
+
+### 16.1 端点
+
+| 方法 | 路径 | 权限 | 说明 |
+|---|---|---|---|
+| POST | `/api/ai/conversations` | AI 可用角色 + `ai.agent` | `{mode?,model?,thinking?,title?}` → 201；`mode` 只剩 `agent`（`chat` 回 409） |
+| GET | `/api/ai/conversations?status=active&limit=&cursor=` | 本人 | `updated_at` 倒序游标分页；不含消息正文 |
+| PATCH | `/api/ai/conversations/{oid}` | 本人 | `{title?,status?,thinking?}`；**`model` 不可改** → 409 `AI_CONVERSATION_MODEL_LOCKED` |
+| DELETE | `/api/ai/conversations/{oid}` | 本人 | 硬删；有活跃 run → 409 `AI_RUN_CONFLICT` |
+| GET | `/api/ai/conversations/{oid}/messages?after_seq=&limit=` | 本人 | `seq > after_seq` 的增量消息 |
+| POST | `/api/ai/conversations/{oid}/runs` | 本人 + 解锁 | `{content, client_msg_id?}` → **202** `{run_id,message_oid,status:"queued"}`；**不收 `model`** |
+| GET | `/api/ai/runs/{run_id}?after_round=&since_msg_seq=` | 本人 | `{run,events,proposals}`；传 `since_msg_seq` 时额外带 `messages` |
+| POST | `/api/ai/runs/{run_id}/cancel` | 本人 | 请求中止 |
+| POST | `/api/ai/scenes/{scene}/runs` | admin + `ai.agent` | 见 16.3 |
+
+### 16.2 `since_msg_seq` —— 轮级增量消息
+
+```http
+GET /api/ai/runs/9f2c...?after_round=2&since_msg_seq=17
+```
+
+- 给了 `since_msg_seq`：响应多一个 `messages` 数组，内容是 `seq > since_msg_seq`、升序、形状与 `GET /conversations/{oid}/messages` **完全一致**（同一份 `message_view`）。
+- 不传：响应与改造前逐字相同，**没有 `messages` 键**——老客户端不需要改。
+- 为什么复用 run 端点：一次轮询同时拿「run 进度」与「这轮新增的消息」，不会出现「run 已结束、消息还没拉」的中间态。
+- 上限与消息端点相同（一次最多 `MESSAGE_LIMIT_MAX` 条）；缺失的消息由下一次轮询按最新 `seq` 续拉。
+
+### 16.3 只读场景 `POST /api/ai/scenes/{scene}/runs`
+
+终端页与文件编辑器需要「就当前内容问一句」，但不需要写能力。场景会话复用同一套会话 + run 管线，只在服务层收紧三处：
+
+| 项 | 规则 |
+|---|---|
+| `scene` | 只能是 `terminal` / `file_edit`；拼错 400 `AI_SCENE_UNKNOWN` |
+| 请求体 | `{content: 1–4000, context?: ≤8000}`；`context` 是选中的终端输出 / 文件片段 |
+| 门禁 | 严格 `admin` + 功能开关 `ai.agent`；**故意不挂 30 分钟密码门**（只读 + admin，`run_queue.submit` 里有显式豁免条件） |
+| 会话 | 按 `(user, scene)` 复用最近一条，标题固定「终端智能」/「文件编辑智能」；不出现在普通会话列表（`scene IS NULL` 过滤） |
+| 工具 | 执行器按 `scene` 把工具声明裁到 `kind='read'`：写工具、提案流、`ssh_exec`、数据库 DML/DDL 都不在 `tools` 数组里（不是靠提示词约束） |
+| `context` 处理 | 先脱敏再截断：键值形态凭据按键保留、值替换为 `***`；bcrypt/JWT/hex/`sk-` 与身份证/手机号走同一套脱敏。**只进 prompt 与 prompt 留存，不写消息表** |
+| 响应 | **202** `{"status":"ok","code":202,"data":{"run_id":"...","conversation_oid":"..."}}`，用 16.1 的 `GET /runs/{run_id}` 轮询 |
+| 错误体 | `{"error":{message,type,code}}` + `X-AI-Request-Id`（与 `/api/ai/conversations` 同一套解析） |
+| 保留期 | 场景会话 14 天（`scene_conversations` 清理项），级联删除 messages / runs |
+
+错误码：`AI_FORBIDDEN`(403)、`AI_SCENE_UNKNOWN`(400)、`AI_SAFETY_REJECTED`(422)、`AI_AGENT_INTERNAL_ERROR`(500)。
