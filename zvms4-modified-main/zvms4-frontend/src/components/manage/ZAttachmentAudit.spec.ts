@@ -10,11 +10,13 @@ import { getBytes, getThumb } from '@/api/attachment/read'
 import { deleteOne } from '@/api/attachment/manage'
 import type { AttachmentAuditDetail, AttachmentAuditListItem } from '@/../types'
 
-const { elMessageErrorSpy, elMessageSuccessSpy, elMessageBoxConfirmSpy } = vi.hoisted(() => ({
-  elMessageErrorSpy: vi.fn(),
-  elMessageSuccessSpy: vi.fn(),
-  elMessageBoxConfirmSpy: vi.fn()
-}))
+const { elMessageErrorSpy, elMessageSuccessSpy, elMessageWarningSpy, elMessageBoxConfirmSpy } =
+  vi.hoisted(() => ({
+    elMessageErrorSpy: vi.fn(),
+    elMessageSuccessSpy: vi.fn(),
+    elMessageWarningSpy: vi.fn(),
+    elMessageBoxConfirmSpy: vi.fn()
+  }))
 
 vi.mock('@/api/attachment/audit', () => ({
   listAuditAttachments: vi.fn(),
@@ -48,6 +50,18 @@ vi.mock('@/plugins/short-token', () => ({
 
 vi.mock('@/stores/user', () => ({
   useUserStore: () => ({ _id: 'admin-oid' })
+}))
+
+// 设备闸：平板请求头缺 X-Device-Unlock 时后端整条 403，进页必须先解锁。
+const deviceUnlock = vi.hoisted(() => ({ ensure: vi.fn() }))
+
+vi.mock('@/plugins/device-unlock', () => ({
+  ensureDeviceUnlock: deviceUnlock.ensure,
+  deviceLocked: () => false,
+  cachedUnlockToken: () => '',
+  clearDeviceUnlock: vi.fn(),
+  DEVICE_LOCK_DETAIL: '学海设备需要密码解锁后访问媒体库',
+  DEVICE_UNLOCK_REASON: '平板访问附件需要验证密码，解锁后 5 分钟内有效'
 }))
 
 vi.mock('vue-i18n', () => ({
@@ -299,7 +313,7 @@ vi.mock('element-plus', async () => {
     ElMessage: Object.assign(vi.fn(), {
       error: elMessageErrorSpy,
       success: elMessageSuccessSpy,
-      warning: vi.fn(),
+      warning: elMessageWarningSpy,
       info: vi.fn()
     }),
     ElMessageBox: Object.assign(vi.fn(), {
@@ -430,6 +444,8 @@ function findButton(wrapper: VueWrapper, label: string) {
 
 beforeEach(() => {
   mockApi()
+  // 默认：设备已解锁（非平板 / 平板已输入过密码）。
+  deviceUnlock.ensure.mockReset().mockResolvedValue('')
   // 默认：缓存里已有未过期的令牌，进页直接加载（各用例按需覆盖）。
   shortToken.cached.mockReset().mockReturnValue('tok-cached')
   shortToken.cancelled.mockReset().mockImplementation((error: unknown) => error === 'cancel')
@@ -444,6 +460,7 @@ beforeEach(() => {
     )
   elMessageErrorSpy.mockReset()
   elMessageSuccessSpy.mockReset()
+  elMessageWarningSpy.mockReset()
   elMessageBoxConfirmSpy.mockReset()
 })
 
@@ -796,6 +813,65 @@ it('falls back to the verification placeholder when the retry is rejected again'
   expect(elMessageSuccessSpy).not.toHaveBeenCalled()
   expect(wrapper.find('.attachment-audit__locked').exists()).toBe(true)
   expect(wrapper.find('.el-drawer-stub').exists()).toBe(false)
+
+  wrapper.unmount()
+})
+
+// ---------------------------------------------------------------------------
+// 平板设备闸（X-Device-Unlock）
+// ---------------------------------------------------------------------------
+
+it('unlocks the device before requesting the list', async () => {
+  const wrapper = mountPage()
+  await flushPromises()
+
+  expect(deviceUnlock.ensure).toHaveBeenCalledTimes(1)
+  expect(deviceUnlock.ensure).toHaveBeenCalledWith({
+    reason: 'manage.attachments.deviceUnlockReason'
+  })
+  expect(listAuditAttachments).toHaveBeenCalledTimes(1)
+  // 顺序必须是先解锁设备、再拉数据：反了就是整条 403。
+  const unlockOrder = deviceUnlock.ensure.mock.invocationCallOrder[0]!
+  const listOrder = vi.mocked(listAuditAttachments).mock.invocationCallOrder[0]!
+  expect(unlockOrder).toBeLessThan(listOrder)
+
+  wrapper.unmount()
+})
+
+it('stays on the placeholder with a hint when the device unlock is cancelled', async () => {
+  deviceUnlock.ensure.mockRejectedValue('cancel')
+
+  const wrapper = mountPage()
+  await flushPromises()
+
+  expect(deviceUnlock.ensure).toHaveBeenCalledTimes(1)
+  expect(shortToken.withToken).not.toHaveBeenCalled()
+  expect(listAuditAttachments).not.toHaveBeenCalled()
+  expect(wrapper.find('.el-table-stub').exists()).toBe(false)
+
+  expect(elMessageWarningSpy).toHaveBeenCalledWith('manage.attachments.deviceUnlockRequired')
+  const locked = wrapper.find('.attachment-audit__locked')
+  expect(locked.exists()).toBe(true)
+  expect(locked.find('[data-testid="device-unlock-hint"]').text()).toContain(
+    'manage.attachments.deviceUnlockRequired'
+  )
+
+  wrapper.unmount()
+})
+
+it('retries the device unlock on the retry button', async () => {
+  deviceUnlock.ensure.mockRejectedValueOnce('cancel').mockResolvedValue('')
+
+  const wrapper = mountPage()
+  await flushPromises()
+  expect(listAuditAttachments).not.toHaveBeenCalled()
+
+  await findButton(wrapper, 'manage.attachments.verifyRetry')!.trigger('click')
+  await flushPromises()
+
+  expect(deviceUnlock.ensure).toHaveBeenCalledTimes(2)
+  expect(listAuditAttachments).toHaveBeenCalledTimes(1)
+  expect(wrapper.find('.attachment-audit__locked').exists()).toBe(false)
 
   wrapper.unmount()
 })

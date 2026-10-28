@@ -64,6 +64,9 @@ PLATFORM_READ = {
     "scheduler_jobs",
     "ai_call_logs",
     "agent_queue_status",
+    # 封号前的只读侦察：目标确认 + 权威时间基准。
+    "user_lookup",
+    "server_time",
 }
 PLATFORM_WRITE = {"user_ban", "user_unban", "device_unban"}
 OPS_TOOLS = EXPECTED_READ | EXPECTED_WRITE | PLATFORM_READ | PLATFORM_WRITE

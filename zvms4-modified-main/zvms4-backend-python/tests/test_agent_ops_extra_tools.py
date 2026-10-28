@@ -4,7 +4,7 @@
 ``system_state`` / ``adb_backup`` / ``session_scope`` 全部换成替身，验的是**工具层
 自己负责的那部分**：
 
-* 注册表形状（4 读 + 3 写）：读工具带 guard、无 prepare/双人码；写工具三件套齐；
+* 注册表形状（6 读 + 3 写）：读工具带 guard、无 prepare/双人码；写工具三件套齐；
 * 严格 admin：department 连 permission 都过不了；
 * 白名单投影：设置快照不含密钥原值、调用流水不含正文；
 * 拒绝要早：备份忙、维护模式缺原因、未知 job、非法动作、超窗/超量一律拒。
@@ -13,7 +13,9 @@
 from __future__ import annotations
 
 import contextlib
+import os
 import sys
+import time
 from datetime import datetime, timedelta
 from types import SimpleNamespace
 
@@ -32,6 +34,8 @@ EXTRA_READ = {
     "scheduler_jobs",
     "ai_call_logs",
     "agent_queue_status",
+    "user_lookup",
+    "server_time",
 }
 EXTRA_WRITE = {"backup_run", "maintenance_mode", "scheduler_control"}
 EXTRA_TOOLS = EXTRA_READ | EXTRA_WRITE
@@ -621,6 +625,196 @@ async def test_maintenance_mode_rejects_unknown_action(maintenance) -> None:
     with pytest.raises(AgentError) as caught:
         await _prepare("maintenance_mode", action="reboot")
     assert caught.value.code == "AI_AGENT_BAD_ARGUMENT"
+
+
+# ---------------------------------------------------------------------------
+# user_lookup
+# ---------------------------------------------------------------------------
+
+# 仓储 `_user_doc` 真实回的形状：凭据类字段**都在**，工具必须自己投影掉。
+_FULL_ROW = {
+    "_id": "a" * 24,
+    "id": "2023010101",
+    "name": "张三",
+    "password": "$2b$12$hash-should-not-leak",
+    "session_id": "sid-should-not-leak",
+    "totp_secret": "totp-should-not-leak",
+    "roles": ["student"],
+    "class_id": "c" * 24,
+    "banned": True,
+    "ban_until": datetime(2026, 1, 2, 3, 4, 5),
+    "primary_xuehai_id": "DEVICE-FINGERPRINT-RAW",
+}
+
+
+class _FakeLookupUsersRepo:
+    def __init__(self, rows: list[dict] | None = None, one: dict | None = None) -> None:
+        self.rows = rows or []
+        self.one = one
+        self.calls: list[tuple] = []
+
+    async def get_by_oid(self, oid: str):
+        self.calls.append(("get_by_oid", oid))
+        return self.one
+
+    async def find_by_business_id(self, business_id: str):
+        self.calls.append(("find_by_business_id", business_id))
+        return self.one
+
+    async def list_by_name_or_id(self, pattern: str):
+        self.calls.append(("list_by_name_or_id", pattern))
+        return self.rows
+
+
+class _FakeLookupGroupsRepo:
+    def __init__(self, names: dict[str, str] | None = None) -> None:
+        self.names = names or {}
+
+    async def get(self, oid: str):
+        name = self.names.get(oid)
+        return {"_id": oid, "name": name, "description": ""} if name else None
+
+
+async def _impl_lookup(**kwargs):
+    """``_impl`` 的 ``name`` 形参与工具入参同名，直接绕开它调 impl。"""
+    return await _tool("user_lookup").impl(ADMIN, **kwargs)
+
+
+def _use_lookup_repos(monkeypatch, users, groups=None) -> None:
+    monkeypatch.setattr(
+        tools_ops_extra.backends, "get_users_repo", lambda session=None: users
+    )
+    monkeypatch.setattr(
+        tools_ops_extra.backends,
+        "get_groups_repo",
+        lambda session=None: groups or _FakeLookupGroupsRepo(),
+    )
+
+
+@pytest.mark.asyncio
+async def test_user_lookup_by_name_projects_whitelist(monkeypatch) -> None:
+    users = _FakeLookupUsersRepo(rows=[dict(_FULL_ROW)])
+    _use_lookup_repos(
+        monkeypatch, users, _FakeLookupGroupsRepo({"c" * 24: "软件工程 2301"})
+    )
+
+    data = await _impl_lookup(name="张")
+
+    assert users.calls == [("list_by_name_or_id", "张")]
+    item = data["users"][0]
+    assert set(item) == set(tools_ops_extra.LOOKUP_FIELDS)
+    assert item["oid"] == "a" * 24
+    assert item["business_id"] == "2023010101"
+    assert item["class_name"] == "软件工程 2301"
+    assert item["banned"] is True
+    assert item["ban_until"] == "2026-01-02 03:04:05"
+    # 已绑主设备只回布尔，原值不外带
+    assert item["device_bound"] is True
+    rendered = str(data)
+    for leak in ("hash-should-not-leak", "sid-should-not-leak",
+                 "totp-should-not-leak", "DEVICE-FINGERPRINT-RAW"):
+        assert leak not in rendered
+
+
+@pytest.mark.asyncio
+async def test_user_lookup_by_business_id_is_exact(monkeypatch) -> None:
+    users = _FakeLookupUsersRepo(one=dict(_FULL_ROW))
+    _use_lookup_repos(monkeypatch, users)
+
+    data = await _impl_lookup(business_id="2023010101")
+
+    assert users.calls == [("find_by_business_id", "2023010101")]
+    assert data["query"] == {"business_id": "2023010101"}
+    assert data["count"] == 1
+    assert data["users"][0]["device_bound"] is True
+    assert data["users"][0]["class_name"] is None  # 班级名取不到不失败
+
+
+@pytest.mark.asyncio
+async def test_user_lookup_by_oid_is_exact(monkeypatch) -> None:
+    users = _FakeLookupUsersRepo(one=dict(_FULL_ROW))
+    _use_lookup_repos(monkeypatch, users)
+
+    data = await _impl_lookup(oid="A" * 24)
+
+    assert users.calls == [("get_by_oid", "A" * 24)]
+    assert data["count"] == 1
+    assert data["truncated"] is False
+
+
+@pytest.mark.asyncio
+async def test_user_lookup_rejects_missing_or_ambiguous_arguments(monkeypatch) -> None:
+    users = _FakeLookupUsersRepo(rows=[dict(_FULL_ROW)])
+    _use_lookup_repos(monkeypatch, users)
+
+    with pytest.raises(AgentError) as caught:
+        await _impl_lookup()
+    assert caught.value.code == "AI_AGENT_BAD_ARGUMENT"
+    assert caught.value.status_code == 400
+
+    with pytest.raises(AgentError) as caught:
+        await _impl_lookup(name="张", business_id="2023010101")
+    assert caught.value.code == "AI_AGENT_BAD_ARGUMENT"
+
+    with pytest.raises(AgentError) as caught:
+        await _impl_lookup(oid="not-an-oid")
+    assert caught.value.code == "AI_AGENT_BAD_ARGUMENT"
+    assert users.calls == []  # 一个查询都没发出去
+
+
+@pytest.mark.asyncio
+async def test_user_lookup_truncates_at_twenty(monkeypatch) -> None:
+    rows = [
+        {**_FULL_ROW, "_id": f"{index:024x}", "name": f"张{index}"} for index in range(25)
+    ]
+    _use_lookup_repos(monkeypatch, _FakeLookupUsersRepo(rows=rows))
+
+    data = await _impl_lookup(name="张")
+
+    assert data["count"] == tools_ops_extra.LOOKUP_LIMIT == 20
+    assert data["truncated"] is True
+    assert len(data["users"]) == 20
+
+
+# ---------------------------------------------------------------------------
+# server_time
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def shanghai_tz(monkeypatch):
+    """固定进程时区（``datetime.now().astimezone()`` 与 ``_to_local_naive`` 都读它）。"""
+    original = os.environ.get("TZ")
+    monkeypatch.setenv("TZ", "Asia/Shanghai")
+    time.tzset()
+    try:
+        yield "Asia/Shanghai"
+    finally:
+        if original is None:
+            os.environ.pop("TZ", None)
+        else:
+            os.environ["TZ"] = original
+        time.tzset()
+
+
+@pytest.mark.asyncio
+async def test_server_time_uses_local_naive_ban_basis(shanghai_tz) -> None:
+    from services.device_guard import _to_local_naive
+
+    data = await _impl("server_time")
+
+    now_iso = datetime.fromisoformat(data["now_iso"])
+    assert now_iso.utcoffset() == timedelta(hours=8)
+    assert data["timezone"] == "Asia/Shanghai"
+    assert data["epoch_seconds"] == int(now_iso.timestamp())
+    assert data["weekday"] == "星期" + "一二三四五六日"[now_iso.weekday()]
+
+    # 本地墙钟 naive 必须与封禁落库同口径（±2s 容忍取整）
+    naive = datetime.fromisoformat(data["local_naive"])
+    assert naive.tzinfo is None
+    expected = _to_local_naive(datetime.now().astimezone())
+    assert abs((naive - expected).total_seconds()) <= 2
+    assert naive.date() == now_iso.date()
 
 
 # ---------------------------------------------------------------------------

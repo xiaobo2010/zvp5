@@ -79,9 +79,13 @@ def _columns() -> tuple[Any, ...]:
 
 
 def _list_active_stmt():
+    # 用户侧公告列表：排除 CHANGELOG 同步生成的版本公告（``source_ref`` = CHANGELOG
+    # oid，作者是 SYSTEM 哨兵）。每发一版都会多一条，数量随发版线性增长，会把真
+    # 正的管理员公告淹掉。管理端 ``list_all`` 不筛，仍可停用/回滚这些条目。
     return (
         select(*_columns())
         .where(notifications_tbl.c.active == 1)
+        .where(notifications_tbl.c.source_ref.is_(None))
         .order_by(
             notifications_tbl.c.created_at.desc(),
             notifications_tbl.c.oid.desc(),
