@@ -150,11 +150,15 @@ def run_timeout_seconds() -> int:
 
 
 async def _select_model(user_oid: str, model: object) -> tuple[str, list[dict]]:
-    """确定这次 run 用的模型与候选 provider。
+    """确定这次 run 用的模型（合格 ID）与候选 provider。
 
     ``model`` 缺省时取目录里第一个可用模型：前端不该为了「随便用」而先发一次
     ``/v1/models``；显式指定的模型必须在**该用户可见目录**里（个人 key 只对本人
     可见，不能靠猜名字用别人的模型）。
+
+    返回值是**合格 ID**（``provider/model``）：同名模型在多渠道上只有它能把
+    「用哪家」表达清楚。裸名仍接受（老会话/老定时任务存的就是裸名），但只在这家
+    唯一提供它时成立，否则报 ``model_ambiguous`` 并列出候选。
     """
     entries = await credentials.catalog(user_oid)
     if not entries:
@@ -164,11 +168,12 @@ async def _select_model(user_oid: str, model: object) -> tuple[str, list[dict]]:
     if not available:
         raise AgentError("AI_NO_PROVIDER", routing.NO_PROVIDER_MESSAGE, 503)
 
-    if model is None or model == "":
-        chosen = next(iter(available))
-    elif isinstance(model, str) and model in available:
-        chosen = model
-    else:
+    wanted = next(iter(available)) if model is None or model == "" else model
+    try:
+        resolved = credentials.resolve_model(entries, wanted)
+    except credentials.ModelAmbiguous as ambiguous:
+        raise AgentError("model_ambiguous", ambiguous.message, 400) from None
+    if resolved is None:
         raise AgentError(
             "model_not_found", "the requested model is not available", 404
         )
@@ -178,13 +183,13 @@ async def _select_model(user_oid: str, model: object) -> tuple[str, list[dict]]:
     except RouteError as exc:
         raise AgentError(exc.code, exc.message, exc.status_code) from None
 
-    candidates = [
-        entry for entry in selected if chosen in (entry.get("models") or [])
-    ][:MAX_PROVIDER_ATTEMPTS]
+    candidates = credentials.route_candidates(selected, resolved)[
+        :MAX_PROVIDER_ATTEMPTS
+    ]
     if not candidates:
         # 模型在目录里但 provider 正在冷却。
         raise AgentError("AI_NO_PROVIDER", routing.NO_PROVIDER_MESSAGE, 503)
-    return chosen, candidates
+    return resolved.qualified, candidates
 
 
 def _attach_entry(exc: AgentError, entry: dict | None) -> AgentError:
@@ -1037,7 +1042,8 @@ async def _summarize_history(
                 )
 
         payload = {
-            "model": model,
+            # ``model`` 是合格 ID（审计用），上游要的是裸模型名。
+            "model": credentials.upstream_model_name(candidates, model),
             "messages": prompt_messages,
             "stream": False,
             "max_tokens": max_tokens,
@@ -1241,7 +1247,8 @@ async def run(
                 raise rejection
 
         payload = {
-            "model": chosen,
+            # 合格 ID 是我们自己的命名空间；上游只认裸模型名。
+            "model": credentials.upstream_model_name(candidates, chosen),
             "messages": _wire(conversation),
             # 强制非流式：工具调用的完整参数只在整条响应里，流式边收边执行等于
             # 猜半个 JSON。

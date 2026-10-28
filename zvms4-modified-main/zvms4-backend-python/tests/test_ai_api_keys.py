@@ -624,7 +624,8 @@ def test_models_endpoint_accepts_an_api_key(repo, users, gateway):
     )
 
     assert response.status_code == 200
-    assert [item["id"] for item in response.json()["data"]] == ["gpt-x"]
+    # 对外 id 是合格 ID（provider/model），不再回裸名。
+    assert [item["id"] for item in response.json()["data"]] == ["team/gpt-x"]
 
 
 def test_expired_key_is_rejected_by_the_v1_endpoint(repo, users, gateway):

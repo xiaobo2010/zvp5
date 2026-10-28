@@ -523,19 +523,36 @@ def credentials_cache_ttl() -> float:
 async def allowed_models_for(user_oid: str) -> dict[str, str]:
     """该用户可见的 model -> 提供它的 entry key。
 
-    目录按用户算（个人 key 只对本人可见），所以这里必须 async 且带 user_oid；
-    同名 model 出现在多个 provider 上时保留目录里先出现的那个（个人 > 共享 >
-    服务端），与遮蔽规则一致。
+    目录按用户算（个人 key 只对本人可见），所以这里必须 async 且带 user_oid。
+
+    键有**两种**：
+
+    * **合格 ID** ``provider/model`` —— 每个 provider 的每个模型各一条，同名模型
+      因此不会互相遮蔽（前端下拉、``/v1/models``、新落库的数据都用它）；
+    * **裸名别名** —— 只在「整个目录里只有这一个 provider 提供它」时才给。老数据
+      （会话、定时任务、历史调用记录）存的是裸名，靠这条别名继续能调到；同名多
+      渠道时**不给**别名，否则又回到「先出现者胜」那条死路，歧义必须在
+      ``credentials.resolve_model`` 里显式报出来。
+
+    合格 ID 先写入、裸名别名只做 ``setdefault``：万一某个裸名恰好等于另一个渠道
+    的合格 ID，以合格 ID 为准（确定性优先）。
     """
     # 延迟导入：credentials 依赖本模块的 providers()/is_configured()，
     # 模块级互相导入会成环。
     from . import credentials
 
+    entries = await credentials.catalog(user_oid)
+    rows = credentials.catalog_models(entries)
+
     mapping: dict[str, str] = {}
-    for entry in await credentials.catalog(user_oid):
-        for model in entry.get("models") or []:
-            if isinstance(model, str) and model:
-                mapping.setdefault(model, entry["key"])
+    bare_counts: dict[str, int] = {}
+    for entry, model, qualified in rows:
+        mapping.setdefault(qualified, entry["key"])
+        bare_counts[model] = bare_counts.get(model, 0) + 1
+
+    for entry, model, _qualified in rows:
+        if bare_counts.get(model) == 1:
+            mapping.setdefault(model, entry["key"])
     return mapping
 
 

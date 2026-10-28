@@ -83,7 +83,7 @@ def _audit_status(code: str) -> str:
     if code == "AI_BUSY":
         return "busy"
     if code in ("AI_NO_PROVIDER", "AI_DISABLED", "model_not_found",
-                "AI_UPSTREAM_AUTH", "AI_UPSTREAM_REJECTED",
+                "model_ambiguous", "AI_UPSTREAM_AUTH", "AI_UPSTREAM_REJECTED",
                 "AI_UPSTREAM_UNREACHABLE"):
         return "rejected"
     if code in ("AI_RATE_LIMITED", "insufficient_quota"):
@@ -251,13 +251,23 @@ async def suggest_ssh_command(
         )
 
     selected_model = model or next(iter(available))
-    if selected_model not in available:
+    try:
+        resolved = credentials.resolve_model(entries, selected_model)
+    except credentials.ModelAmbiguous as ambiguous:
+        await reject(
+            routing.RouteError("model_ambiguous", ambiguous.message, 400),
+            model_name=selected_model,
+        )
+    if resolved is None:
         await reject(
             routing.RouteError(
                 "model_not_found", "the requested model is not available", 404
             ),
             model_name=selected_model,
         )
+    # 对外/审计用合格 ID，发给上游的是裸模型名。
+    selected_model = resolved.qualified
+    upstream_model = resolved.model
 
     # 熔断中的 provider 不出现在 candidates 里；模型在目录里但没有可用 provider
     # 时与 chat 面一致报 AI_NO_PROVIDER。
@@ -265,14 +275,7 @@ async def suggest_ssh_command(
         selected = routing.candidates(entries)
     except routing.RouteError as exc:
         await reject(exc, model_name=selected_model)
-    entry = next(
-        (
-            item
-            for item in selected
-            if selected_model in (item.get("models") or [])
-        ),
-        None,
-    )
+    entry = next(iter(credentials.route_candidates(selected, resolved)), None)
     if entry is None:
         await reject(
             routing.RouteError("AI_NO_PROVIDER", routing.NO_PROVIDER_MESSAGE, 503),
@@ -305,7 +308,7 @@ async def suggest_ssh_command(
             )
 
     payload = {
-        "model": selected_model,
+        "model": upstream_model,
         "messages": [
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": _user_message(intent, context)},

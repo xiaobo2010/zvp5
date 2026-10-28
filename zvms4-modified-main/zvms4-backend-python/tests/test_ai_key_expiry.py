@@ -507,4 +507,5 @@ def test_models_endpoint_hides_models_of_expired_keys(repo):
     response = _client().get("/api/ai/v1/models")
 
     assert response.status_code == 200
-    assert [item["id"] for item in response.json()["data"]] == ["gpt-new"]
+    # 对外 id 是合格 ID（provider/model）。
+    assert [item["id"] for item in response.json()["data"]] == ["fresh/gpt-new"]

@@ -284,7 +284,8 @@ def test_suggest_returns_command_explanation_model(env):
     data = body["data"]
     assert data["command"] == GOOD_COMMAND
     assert data["explanation"] == "查看服务状态"
-    assert data["model"] == "gpt-x"
+    # 对外回显的是合格 ID（provider/model），不再是裸名。
+    assert data["model"] == "team/gpt-x"
     assert isinstance(data["request_id"], str) and len(data["request_id"]) == 32
 
 
@@ -293,6 +294,7 @@ def test_suggest_uses_server_side_system_prompt(env):
     _post(env, context="caddy 在 docker 里，宿主是 ubuntu 22.04")
 
     payload = env.upstream[0]["payload"]
+    # 上游请求体只要裸模型名：合格 ID 是网关自己的命名空间。
     assert payload["model"] == "gpt-x"
     assert payload["stream"] is False
     assert payload["messages"][0] == {
@@ -308,7 +310,8 @@ def test_suggest_accepts_explicit_model(env):
     response = _post(env, model="gpt-y")
 
     assert response.status_code == 200
-    assert response.json()["data"]["model"] == "gpt-y"
+    # 传裸名也接受（唯一命中），回显统一升格成合格 ID。
+    assert response.json()["data"]["model"] == "team/gpt-y"
 
 
 def test_suggest_writes_suggest_audit_log(env):
@@ -319,7 +322,8 @@ def test_suggest_writes_suggest_audit_log(env):
     assert log["level"] == "info"
     data = json.loads(log["data"])
     assert data["intent_len"] == len("看一下 caddy 的状态")
-    assert data["model"] == "gpt-x"
+    # 审计里的 model 与接口回显同口径：合格 ID。
+    assert data["model"] == "team/gpt-x"
     assert data["command_head"] == GOOD_COMMAND
 
 

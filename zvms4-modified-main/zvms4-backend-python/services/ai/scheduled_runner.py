@@ -312,6 +312,28 @@ async def _record_safety_skip(
     return reason
 
 
+async def _canonical_model(owner_oid: str, model: object) -> str | None:
+    """定时任务里存的模型 → 合格 ID（``provider/model``）。
+
+    任务行是**用户写的**（可能还是老数据里的裸名），新产生的 run 行要统一口径，
+    所以提交时解析一次。解析不了（未知模型 / 有歧义 / 目录读失败）就原样保留：
+    这里不是拒绝用户任务的地方，执行期遇到问题会给出 ``model_ambiguous`` /
+    ``model_not_found``，比在凌晨的 tick 里静默改选一个渠道好排障。
+    """
+    text = str(model).strip() if model else ""
+    if not text:
+        return None
+    try:
+        entries = await credentials.catalog(owner_oid)
+        resolved = credentials.resolve_model(entries, text)
+    except credentials.ModelAmbiguous:
+        return text
+    except Exception:  # noqa: BLE001 - 目录读失败不该让任务不跑
+        _logger.warning("ai scheduled task model resolve failed", exc_info=True)
+        return text
+    return resolved.qualified if resolved is not None else text
+
+
 async def submit_task_run(task: Mapping[str, Any], *, now: datetime) -> str:
     """把任务提交成一次 ``queued`` run；返回 run_id。
 
@@ -320,6 +342,7 @@ async def submit_task_run(task: Mapping[str, Any], *, now: datetime) -> str:
     """
     task_oid = str(task["_id"])
     owner_oid = str(task["owner_oid"])
+    stored_model = await _canonical_model(owner_oid, task.get("model"))
 
     # 灰区闸门：department owner 的 prompt 在提交前过一遍 LLM 安全认证。
     # prompt 已经过管理员审核，所以这里**只跳过**：不写 ban_violations、不发
@@ -330,9 +353,7 @@ async def submit_task_run(task: Mapping[str, Any], *, now: datetime) -> str:
         verdict = await safety_guard.screen(
             identity,
             str(task.get("prompt_text") or ""),
-            model_hint=(str(task.get("model")).strip() or None)
-            if task.get("model")
-            else None,
+            model_hint=stored_model,
         )
         if not verdict.allowed:
             reason = await _record_safety_skip(task, verdict, now=now)
@@ -352,7 +373,7 @@ async def submit_task_run(task: Mapping[str, Any], *, now: datetime) -> str:
         message_oid=uuid4().hex,
         content=str(task.get("prompt_text") or ""),
         client_msg_id=f"sched:{task_oid}:{now.strftime('%Y%m%d%H%M')}",
-        model=(str(task.get("model")).strip() or None) if task.get("model") else None,
+        model=stored_model,
     )
     run_id = str(row.get("_id") or run_id)
     # 归因必须在 kick 之前：泵一起来就可能开跑，晚写会出现 task_oid 为空的窗口。

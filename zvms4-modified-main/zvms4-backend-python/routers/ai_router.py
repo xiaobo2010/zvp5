@@ -1277,7 +1277,12 @@ async def ai_health(
 
 @router.get("/v1/models")
 async def list_models(user=Depends(get_ai_client)):
-    """只列这个用户真的能调的模型：个人 key 的模型不该出现在别人的列表里。"""
+    """只列这个用户真的能调的模型：个人 key 的模型不该出现在别人的列表里。
+
+    ``id`` 是合格 ID ``provider/model``：不同渠道可以有同名模型，按裸名去重等于
+    把排在后面的渠道从列表里抹掉（客户端永远看不到、也就永远调不到）。``owned_by``
+    回 provider 名，客户端据此知道这条 ID 的前缀该写什么。
+    """
     request_id = uuid4().hex
     if not _has_ai_access(user):
         # OpenAI 兼容面不能抛 detail：客户端只认 {"error": {...}}。
@@ -1289,16 +1294,13 @@ async def list_models(user=Depends(get_ai_client)):
         return denied
     entries = await credentials.catalog(user["id"])
     owners: dict[str, str] = {}
-    for entry in entries:
-        for model in entry.get("models") or []:
-            if isinstance(model, str) and model:
-                # 先出现的胜出：目录已按 personal → shared → server 排好序。
-                owners.setdefault(model, str(entry.get("name") or ""))
+    for entry, _model, qualified in credentials.catalog_models(entries):
+        owners.setdefault(qualified, str(entry.get("name") or ""))
     return {
         "object": "list",
         "data": [
-            {"id": model, "object": "model", "owned_by": owner}
-            for model, owner in owners.items()
+            {"id": qualified, "object": "model", "owned_by": owner}
+            for qualified, owner in owners.items()
         ],
     }
 
@@ -1600,11 +1602,28 @@ async def chat_completions(
             roles_snapshot=scene_roles,
         )
 
-    available = await ai_config.allowed_models_for(user_oid)
-    if not isinstance(model, str) or model not in available:
+    # 客户端给的是合格 ID（``provider/model``）或老数据里的裸名，统一在这里解析：
+    # 同名模型只能靠合格 ID 区分，裸名有多家命中时要求客户端明确指定渠道。
+    requested = model
+    try:
+        resolved = credentials.resolve_model(entries, model)
+    except credentials.ModelAmbiguous as ambiguous:
         await _reject_http(
             user_oid=user_oid,
-            model=str(model or "") or None,
+            model=str(requested or "") or None,
+            request_id=request_id,
+            status_code=400,
+            code="model_ambiguous",
+            purpose=purpose,
+            roles_snapshot=scene_roles,
+        )
+        return _openai_error(
+            400, "model_ambiguous", ambiguous.message, request_id=request_id
+        )
+    if resolved is None:
+        await _reject_http(
+            user_oid=user_oid,
+            model=str(requested or "") or None,
             request_id=request_id,
             status_code=404,
             code="model_not_found",
@@ -1617,6 +1636,9 @@ async def chat_completions(
             "the requested model is not available",
             request_id=request_id,
         )
+    # 对外/审计/回显用合格 ID，发给上游的仍是裸模型名。
+    model = resolved.qualified
+    upstream_model = resolved.model
 
     # ``provider`` 不是 OpenAI 协议字段，只有 admin 能拿它做定向调试；普通用户
     # 传了也忽略（报错会让第三方 SDK 多一个必填字段，得不偿失）。
@@ -1637,9 +1659,7 @@ async def chat_completions(
             roles_snapshot=scene_roles,
         )
 
-    candidates = [
-        entry for entry in selected if model in (entry.get("models") or [])
-    ][:MAX_PROVIDER_ATTEMPTS]
+    candidates = credentials.route_candidates(selected, resolved)[:MAX_PROVIDER_ATTEMPTS]
     if not candidates:
         # 模型在目录里但对应 provider 正在冷却。
         return await _reject(
@@ -1706,9 +1726,13 @@ async def chat_completions(
                 },
             )
 
+    # 上游只认裸模型名：``provider/model`` 是我们自己的命名空间。``payload`` 是
+    # 客户端原文，这里用一份浅拷贝改写，避免把合格 ID 发出去。
+    upstream_payload = {**payload, "model": upstream_model}
+
     if bool(payload.get("stream")):
         return await _stream_completion(
-            payload,
+            upstream_payload,
             model,
             candidates[0],
             user_oid,
@@ -1718,7 +1742,7 @@ async def chat_completions(
         )
 
     return await _blocking_completion(
-        payload,
+        upstream_payload,
         model,
         candidates,
         user_oid,

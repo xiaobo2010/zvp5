@@ -125,9 +125,13 @@ async def _pick_route(
 ) -> tuple[dict, str] | None:
     """选一条可用凭据与模型；没有可用项返回 ``None``。
 
-    优先级：显式 ``model_hint``（且目录里确实有 provider 提供它）→ 目录里第一个
-    可用 provider 的第一个模型。与 ``routers.ai_chat_conversations_router`` 的
-    选择口径一致，避免「判定用的模型」与「真正回答的模型」跨到另一家上游。
+    优先级：显式 ``model_hint``（合格 ID 或裸名，且目录里确实有 provider 提供它）
+    → 目录里第一个可用 provider 的第一个模型。与
+    ``routers.ai_chat_conversations_router`` 的选择口径一致，避免「判定用的模型」
+    与「真正回答的模型」跨到另一家上游。
+
+    这里**不**把歧义当错误往外抛：安全认证是 fail-open 的旁路，裸名命中多家时退回
+    「目录里第一个可用」并照常判定，比让用户的请求因为分类器选路问题被拒好。
     """
     entries = await credentials.catalog(user_oid)
     if not entries:
@@ -141,9 +145,12 @@ async def _pick_route(
 
     hint = str(model_hint).strip() if isinstance(model_hint, str) else ""
     if hint:
-        for entry in candidates:
-            if hint in (entry.get("models") or []):
-                return entry, hint
+        try:
+            resolved = credentials.resolve_model(candidates, hint)
+        except credentials.ModelAmbiguous:
+            resolved = None
+        if resolved is not None:
+            return resolved.entry, resolved.model
 
     for entry in candidates:
         models = entry.get("models") or []

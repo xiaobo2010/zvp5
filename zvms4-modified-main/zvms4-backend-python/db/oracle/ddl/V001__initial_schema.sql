@@ -2201,3 +2201,57 @@ EXCEPTION
     IF SQLCODE NOT IN (-955, -1408) THEN RAISE; END IF;
 END;
 /
+
+-- ----------------------------------------------------------------------------
+-- AI_QUOTA_REQUESTS  ← new (AI 配额重置申请; V044)
+--   一行一次申请：提交即 pending，审批后落 approved / rejected。
+--   PERIOD 与 AI_QUOTA 同口径（YYYYMM）：申请只对当月有效。
+--   REQUESTED_LIMIT 可空：NULL = 只要求重置已用量，非 NULL = 顺便把上限提到这个数；
+--   0 是合法值（「本月到此为止」），不能用 0 顶替 NULL。
+--   DECIDED_* 可空：pending 行还没有审批人。无外键：申请是审计材料。
+-- ----------------------------------------------------------------------------
+BEGIN
+  EXECUTE IMMEDIATE '
+CREATE TABLE ai_quota_requests (
+  oid CHAR(24 CHAR) NOT NULL,
+  user_oid CHAR(24 CHAR) NOT NULL,
+  period CHAR(6 CHAR) NOT NULL,
+  kind VARCHAR2(16 CHAR) NOT NULL,
+  status VARCHAR2(16 CHAR) DEFAULT ''pending'' NOT NULL,
+  reason VARCHAR2(500 CHAR),
+  requested_limit NUMBER(12),
+  decided_by CHAR(24 CHAR),
+  decided_at TIMESTAMP,
+  decision_note VARCHAR2(500 CHAR),
+  created_at TIMESTAMP NOT NULL,
+  updated_at TIMESTAMP NOT NULL,
+  PRIMARY KEY (oid),
+  CONSTRAINT ck_ai_quota_requests_oid CHECK (REGEXP_LIKE(oid,''^[0-9a-f]{24}$'')),
+  CONSTRAINT ck_ai_quota_requests_period CHECK (REGEXP_LIKE(period,''^[0-9]{6}$'')),
+  CONSTRAINT ck_ai_quota_requests_kind CHECK (kind IN (''chat'',''ocr'')),
+  CONSTRAINT ck_ai_quota_requests_status CHECK (status IN (''pending'',''approved'',''rejected'',''cancelled'')),
+  CONSTRAINT ck_ai_quota_requests_limit CHECK (requested_limit >= 0)
+)';
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE != -955 THEN RAISE; END IF;
+END;
+/
+
+BEGIN
+  EXECUTE IMMEDIATE '
+CREATE INDEX ix_ai_quota_requests_user_period ON ai_quota_requests (user_oid, period, kind, status)';
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE NOT IN (-955, -1408) THEN RAISE; END IF;
+END;
+/
+
+BEGIN
+  EXECUTE IMMEDIATE '
+CREATE INDEX ix_ai_quota_requests_status ON ai_quota_requests (status, created_at)';
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE NOT IN (-955, -1408) THEN RAISE; END IF;
+END;
+/

@@ -377,8 +377,8 @@ async def test_scheduled_skip_does_not_submit_and_advances_next_run(
     assert [log["type"] for log in scheduled_env.logs] == [
         "ai_safety_guard_scheduled_skip"
     ]
-    # model_hint 用任务自己的模型。
-    assert scheduled_env.screen_calls[0]["model_hint"] == "gpt-x"
+    # model_hint 用任务自己的模型，且已升格成合格 ID（provider/model）。
+    assert scheduled_env.screen_calls[0]["model_hint"] == "acme/gpt-x"
     assert scheduled_env.screen_calls[0]["text"] == DESTRUCTIVE
 
 

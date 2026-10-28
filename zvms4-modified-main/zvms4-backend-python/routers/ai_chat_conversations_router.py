@@ -197,12 +197,16 @@ def _feature_denied(user: dict, key: str, *, request_id: str):
 
 async def _select_route(
     owner_oid: str, payload_model: object, conversation_model: object
-) -> tuple[str, dict]:
-    """``(model, entry)``：显式模型 → 会话模型 → 目录里第一个可用。
+) -> tuple[str, str, dict]:
+    """``(合格 ID, 上游模型名, entry)``：显式模型 → 会话模型 → 目录里第一个可用。
 
     与 ``services/agent/executor._select_model`` 同一条优先级：前端不该为了「随便
     用」先发一次 ``/v1/models``；显式指定的模型必须在该用户**可见目录**里，否则
     就是靠猜名字用别人的模型（个人 key 只对本人可见）。
+
+    返回的 ``model`` 是合格 ID（``provider/model``）：同名模型只能靠它区分渠道。
+    裸名（老会话里存的那种）仍然可用，但**只在这家唯一提供它**时；
+    多家都有时回 ``model_ambiguous`` 并列出候选，客户端改用合格 ID 即可。
     """
     entries = await credentials.catalog(owner_oid)
     if not entries:
@@ -219,11 +223,12 @@ async def _select_route(
             wanted = text
             break
 
-    if wanted is None:
-        chosen = next(iter(available))
-    elif wanted in available:
-        chosen = wanted
-    else:
+    chosen = wanted or next(iter(available))
+    try:
+        resolved = credentials.resolve_model(entries, chosen)
+    except credentials.ModelAmbiguous as ambiguous:
+        raise AgentError("model_ambiguous", ambiguous.message, 400) from None
+    if resolved is None:
         raise AgentError("model_not_found", "the requested model is not available", 404)
 
     try:
@@ -232,8 +237,10 @@ async def _select_route(
         raise AgentError(exc.code, exc.message, exc.status_code) from None
 
     for entry in selected:
-        if chosen in (entry.get("models") or []):
-            return chosen, entry
+        if entry.get("key") == resolved.entry.get("key") and entry.get(
+            "name"
+        ) == resolved.entry.get("name"):
+            return resolved.qualified, resolved.model, entry
     # 模型在目录里但对应 provider 全在冷却。
     raise AgentError("AI_NO_PROVIDER", routing.NO_PROVIDER_MESSAGE, 503)
 
@@ -572,7 +579,7 @@ async def chat_in_conversation(
         )
 
     try:
-        model, entry = await _select_route(
+        model, upstream_model, entry = await _select_route(
             owner_oid, payload.model, conversation.get("model")
         )
     except AgentError as exc:
@@ -718,7 +725,8 @@ async def chat_in_conversation(
             request_id=request_id,
         )
 
-    upstream_payload = {"model": model, "messages": messages, "stream": True}
+    # 合格 ID 是我们自己的命名空间；上游只认裸模型名。
+    upstream_payload = {"model": upstream_model, "messages": messages, "stream": True}
     # 缓存注入只改「发给上游的 body」：``upstream_payload`` 还要用来估算字符数。
     body, cache_key = prompt_cache.request_body(upstream_payload, entry)
 

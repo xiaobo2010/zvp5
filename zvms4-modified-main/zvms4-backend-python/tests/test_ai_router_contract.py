@@ -405,7 +405,8 @@ def test_health_does_not_echo_the_dead_routes_config(catalog):
 # ---------------------------------------------------------------------------
 
 
-def test_models_endpoint_is_the_deduplicated_union(catalog):
+def test_models_endpoint_lists_every_provider_model(catalog):
+    """同名模型不再去重：两个渠道的 ``m2`` 都要出现，各自带自己的合格 ID。"""
     catalog(
         [
             _entry("mine", "a" * 24, scope="personal", models=("m1", "m2")),
@@ -419,9 +420,19 @@ def test_models_endpoint_is_the_deduplicated_union(catalog):
     assert response.status_code == 200
     body = response.json()
     assert body["object"] == "list"
-    assert [item["id"] for item in body["data"]] == ["m1", "m2", "m3"]
-    # 先出现的胜出：目录已按 personal → shared 排好，owned_by 就是遮蔽结果。
-    assert [item["owned_by"] for item in body["data"]] == ["mine", "mine", "team"]
+    assert [item["id"] for item in body["data"]] == [
+        "mine/m1",
+        "mine/m2",
+        "team/m2",
+        "team/m3",
+    ]
+    # owned_by 是 provider 名：客户端据此知道该 ID 的前缀写什么。
+    assert [item["owned_by"] for item in body["data"]] == [
+        "mine",
+        "mine",
+        "team",
+        "team",
+    ]
     assert all(item["object"] == "model" for item in body["data"])
 
 
@@ -521,6 +532,11 @@ def test_chat_quota_exhausted_is_429_with_headers(catalog, upstream, monkeypatch
 
 
 def test_chat_fails_over_on_upstream_5xx(catalog, upstream, monkeypatch, audit_repo):
+    """合格 ID 指定 first 时它是首选，可重试错误仍会兜底到同一模型名的第二家。
+
+    裸名在这里是**不可用**的：两家都叫 ``gpt-x``，按裸名选等于让目录顺序决定渠道
+    （另一个渠道永远调不到），所以客户端要用 ``first/gpt-x``。
+    """
     catalog(
         [
             _entry("first", "a" * 24, scope="shared"),
@@ -539,16 +555,41 @@ def test_chat_fails_over_on_upstream_5xx(catalog, upstream, monkeypatch, audit_r
         {"id": "second-ok", "usage": {"total_tokens": 1}},
     )
 
-    response = _chat()
+    response = _chat(model="first/gpt-x")
 
     assert response.status_code == 200
     assert response.json()["id"] == "second-ok"
     assert [call["entry"]["name"] for call in calls] == ["first", "second"]
+    # 上游请求体里永远是裸模型名：合格 ID 是我们自己的命名空间。
+    assert [call["payload"]["model"] for call in calls] == ["gpt-x", "gpt-x"]
     # 第一次失败也要留审计（否则「用户说慢」时看不到中间那次 502）。
     assert [(row["provider"], row["status"]) for row in audit_repo.rows] == [
         ("first", "error"),
         ("second", "success"),
     ]
+
+
+def test_chat_bare_name_shared_by_two_providers_is_400_model_ambiguous(
+    catalog, upstream, audit_repo
+):
+    """裸名命中多家 → 400 并列出候选；不允许「先出现者胜」再决定渠道。"""
+    catalog(
+        [
+            _entry("first", "a" * 24, scope="shared"),
+            _entry("second", "b" * 24, scope="shared"),
+        ]
+    )
+    calls = upstream()
+
+    response = _chat()
+
+    assert response.status_code == 400
+    error = response.json()["error"]
+    assert error["code"] == "model_ambiguous"
+    assert "first/gpt-x" in error["message"]
+    assert "second/gpt-x" in error["message"]
+    assert calls == []  # 歧义不该让任何一家先花钱
+    assert [row["error_code"] for row in audit_repo.rows] == ["model_ambiguous"]
 
 
 def test_chat_does_not_fail_over_on_401(catalog, upstream, monkeypatch, audit_repo):
@@ -567,7 +608,7 @@ def test_chat_does_not_fail_over_on_401(catalog, upstream, monkeypatch, audit_re
     monkeypatch.setattr(quota, "consume", Recorder((True, 1, 100)))
     calls = upstream(routing.RouteError("AI_UPSTREAM_AUTH", "upstream rejected", 502))
 
-    response = _chat()
+    response = _chat(model="first/gpt-x")
 
     assert response.status_code == 502
     assert response.json()["error"]["code"] == "AI_UPSTREAM_AUTH"
@@ -709,7 +750,8 @@ def test_models_allows_department(catalog):
     response = _role_client("department").get("/api/ai/v1/models")
 
     assert response.status_code == 200
-    assert [item["id"] for item in response.json()["data"]] == ["gpt-x"]
+    # 对外 id 是合格 ID（provider/model）：同名模型分渠道时只有它不歧义。
+    assert [item["id"] for item in response.json()["data"]] == ["team/gpt-x"]
 
 
 def test_gate_roles_are_configurable(catalog, monkeypatch):

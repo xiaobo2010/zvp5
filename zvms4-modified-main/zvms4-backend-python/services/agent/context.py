@@ -113,9 +113,12 @@ def context_limit(model: str | None) -> int:
     if isinstance(model, str):
         key = model.strip()
         if key:
-            exact = _positive_int(limits.get(key), 0)
-            if exact:
-                return exact
+            # 合格 ID（``provider/model``）落到这里时要再试一次裸名：上下文窗口是
+            # 上游模型的属性，``AI_MODEL_CONTEXT_LIMITS`` 里配的是裸名。
+            for candidate in (key, key.partition("/")[2]):
+                exact = _positive_int(limits.get(candidate), 0) if candidate else 0
+                if exact:
+                    return exact
     wildcard = _positive_int(limits.get(FALLBACK_MODEL_KEY), 0)
     if wildcard:
         return wildcard

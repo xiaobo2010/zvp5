@@ -138,13 +138,16 @@ def context_limit(model: object) -> int:
     """
     limits = getattr(settings, "AI_MODEL_CONTEXT_LIMITS", None)
     if isinstance(limits, Mapping) and isinstance(model, str):
-        value = limits.get(model)
-        try:
-            parsed = int(value)  # type: ignore[arg-type]
-        except (TypeError, ValueError):
-            parsed = 0
-        if parsed > 0:
-            return parsed
+        # 会话里存的可能是合格 ID（``provider/model``）：窗口是上游模型的属性，
+        # 运维配的是裸名，所以先按原值查，再按去掉 provider 前缀的名字查一次。
+        for key in (model, model.partition("/")[2]):
+            value = limits.get(key) if key else None
+            try:
+                parsed = int(value)  # type: ignore[arg-type]
+            except (TypeError, ValueError):
+                parsed = 0
+            if parsed > 0:
+                return parsed
     override = settings_runtime.get_override("ai.context_limit_default")
     if isinstance(override, int) and not isinstance(override, bool) and override > 0:
         return override
