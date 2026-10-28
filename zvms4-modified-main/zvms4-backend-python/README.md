@@ -56,3 +56,16 @@ Linux/macOS 可将上述 Python 路径换为 `.venv/bin/python`。
 登录接口尚无跨实例速率限制，生产环境应在反向代理或共享存储层补充。前端已迁移到
 ESLint 9 flat config，根级 CI 会执行后端测试、前端单测、lint 和类型检查；
 Cypress 浏览器二进制未默认安装，因此浏览器端 e2e 仍需单独安装后运行。
+
+## ZVAgent 与安全基线（2026-10-29）
+
+AI 产品统一称 **ZVAgent**（`/api/ai/*`；「AI 网关」是模块名）。本轮的安全与引擎能力：
+
+- **内容审核 fail-closed**：`services/ai/moderation.py` 的命令式规则 + `services/ai/safety_guard.py` 的 LLM 灰区判定。判定不可用时拒绝本次回答但不记违规；判定成立时对外只回 `AI_SAFETY_REJECTED` 与固定文案「该请求未通过内容安全审核。」（run 提交 422、`/v1` 403），对内记违规 + 警告 + 按 `BAN_RULES.penalties` **首档立即封号**（`services/violation_guard.py:record_agent_jailbreak`）。admin 天然旁路，审计事件 `ai_moderation_unrestricted`。
+- **安全与频控**：登录端点账号 5 次/分 + IP 60 次/分（`util/login_throttle.py`，429 `AUTH_RATE_LIMITED`）；重查询端点（`GET /api/logs`、`/api/ai/logs`、`/api/ai/prompts`、`GET /api/exports/{id}/file`）60 次/分/用户（`util/read_throttle.py`，429 `READ_RATE_LIMITED`）；`POST /api/users/auth/logout` 轮换 `session_id`；`require_password_verification` 为管理写操作提供 5 分钟再认证令牌（缺/错 → 403 `需要密码验证后才能继续`）。
+- **响应头与门禁**：`main.py:SECURITY_RESPONSE_HEADERS` 统一加 nosniff / DENY / Referrer-Policy / HSTS / CSP；shield 418 采集命中原因、referer、origin、XFF、UA；socket.io 只认 `Authorization` 头与 auth 载荷。
+- **引擎**：会话模型建时锁定，思考强度 `low/medium/high` 按上游翻译（`openai_compat → reasoning_effort`、智谱 `thinking`）；模型上下文窗口支持 `MODELS_JSON` 的 `{"id","context"}` 形态并 best-effort 探测上游 `/models`。
+- **只读场景**：`routers/ai_scenes_router.py` 提供 `POST /api/ai/scenes/{scene}/runs`（`terminal` / `file_edit`），工具裁到只读集、参考内容脱敏后不落消息表、场景会话 14 天保留；`ban_history` 为新增只读工具。
+- **文件 jail**：`services/file_ops.py:ALLOWED_ROOTS` 只放行 `/www/zvms4` 与 `/home`（realpath 后按路径段比较），HTTP 文件管理端点与 agent `fs_*` 共用；越界 403 `FILES_ROOT_FORBIDDEN`。
+
+迁移与保留期见 `docs/database-status.md`；API 契约见仓库根 `docs/AI_GATEWAY_API.md`。

@@ -5,6 +5,8 @@
 > 来源：三只读勘察泳道（Oracle 持久化约定 / 上传·鉴权·前端现状 / 照片上传最佳实践）+ 一轮 oracle 安全审计。
 
 > **路径策略变更（2026-10-19）**：本文档只覆盖附件上传（Oracle BLOB），不涉及系统文件管理。另行修订：`/api/system/files` 的**系统目录黑名单已放开**（`/etc`、`/root`、`/usr`、`/dev`、`/var/lib/*` 等由 OS 权限裁决），仅保留 `/proc`、`/sys` 两个虚拟文件系统保护。详见 `V4242_STAGE2_CONTRACT.md` §3.3。
+>
+> **2026-10-29 取代上一条**：黑名单方案改为**根目录白名单 jail**——系统文件管理只允许 `/www/zvms4` 与 `/home`，越界 403 `FILES_ROOT_FORBIDDEN`。见 §13；附件 API 本身不受影响。
 
 ---
 
@@ -328,3 +330,30 @@ oracle 审计追加确认：`file_links` 吊销表**不需要**；`owner_oid` **
 - Caddy `request_body` — https://caddyserver.com/docs/caddyfile/directives/request_body ；413/502 — https://github.com/caddyserver/caddy/issues/5652
 - Pillow `MAX_IMAGE_PIXELS` / `verify()` / `exif_transpose` — https://github.com/python-pillow/pillow/blob/main/src/PIL/Image.py
 - MDN `X-Content-Type-Options` — https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/X-Content-Type-Options
+
+---
+
+## 13. 系统文件管理的根目录 jail（2026-10-29）
+
+系统文件管理（`/api/system/files`）与 ZVAgent 的 `fs_*` 工具共享同一个路径判定器 `services/file_ops.py`。本轮把「靠 OS 权限裁决」改成**显式白名单**：
+
+```python
+ALLOWED_ROOTS = ("/www/zvms4", "/home")
+ROOT_FORBIDDEN_CODE = "FILES_ROOT_FORBIDDEN"
+```
+
+判定顺序（不可调换）：
+
+1. 输入必须是绝对路径；拒绝 NUL / 换行。
+2. `os.path.realpath` 展开 `..` 与符号链接。
+3. 真实路径必须等于某个根，或以 `root + os.sep` 开头——按**路径段**比较，`/home2` 不会因为以 `/home` 开头被放行。
+4. 再判 `/proc` / `/sys` 虚拟文件系统与凭据文件黑名单（`aes_key.txt`、`*.pem`、`settings.py`、`.env*`、wallet 等）。
+
+效果：
+
+- `..` 与符号链接都逃不出这两个根；`/etc`、`/root`、`/usr`、`/var/lib/*` 等以前由 OS 权限裁决的路径现在直接 403。
+- 越界响应：`403`，`detail` 为错误码 `FILES_ROOT_FORBIDDEN`（人类可读句在服务层，路由层统一翻译）。
+- 同一判定同时约束 HTTP 端点和 agent 工具：不存在「文件管理器进不去、agent 能读」的缝隙。
+- 前端快捷目录与路径跳转同步收敛到这两个根，越界在提交前就被拦（后端仍是最终裁决）。
+
+受影响的端点：`/api/system/files` 的 list / stat / preview / download / upload / mkdir / rename / delete / chmod / edit，以及 `/api/ai/ocr/file`（路径桥，见 `docs/AI_GATEWAY_API.md` §2.5）。

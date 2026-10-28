@@ -32,3 +32,12 @@ pnpm build
 `pnpm lint` 使用 ESLint 9 flat config；`pnpm lint:fix` 才会写入修复。
 `pnpm-workspace.yaml` 默认未安装 Cypress 浏览器二进制；需要运行
 `pnpm exec cypress install` 后再执行 `pnpm test:e2e`。
+
+## ZVAgent 相关界面（2026-10-29）
+
+AI 侧统一以 **ZVAgent** 呈现，本轮新增/调整：
+
+- **会话**：运行中的 run 逐轮显示回复（`GET /api/ai/runs/{run_id}?since_msg_seq=` 增量拉取）；模型只读展示（创建时锁定，`PATCH` 改模型会被 409 拒绝）；思考强度三档（`low` / `medium` / `high`）；归档会话独立视图并支持恢复。
+- **三个轻量场景**：文件预览的图片「识别文字」（`POST /api/ai/ocr/file`）、编辑器的「AI 分析」（`scene=file_edit`）、终端页的「智能分析」（`scene=terminal`），共用 `ZSceneRunDialog` 弹窗与 1.5s 轮询。
+- **文件管理**：根目录收敛到 `/www/zvms4` 与 `/home`，越界由前端预校验 + 后端 403 `FILES_ROOT_FORBIDDEN` 双重拦截。
+- **管理端**：日志卡片展示 `client_ip` / `user_agent`，事件 label 与后端 `services/log_events.py` 对齐；平台管理支持添加班级（`POST /api/v3/groups`）。

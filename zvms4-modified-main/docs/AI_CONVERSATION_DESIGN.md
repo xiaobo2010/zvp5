@@ -1,6 +1,7 @@
 # AI 会话管理 + 公开渠道 — 契约（冻结稿 v2）
 
 > 状态：**已冻结并实施**（2026-10-25）。车道 A/B/C/D/E 全部收口，后端 2581 passed、前端 426 passed。
+> **v3 修订（2026-10-29）**：模型锁定 / 会话级思考强度 / 归档恢复 / `chat` 会话模式下线 / run 增量消息 `since_msg_seq` / 只读场景 `scene`。见 §12。
 > v2 修订：并入 oracle 评审的 P0×3 / P1×4 / P2×4（并发唯一性、watchdog 语义、删除门禁、
 > 压缩在飞重建、压缩计费豁免、消息原子配对、幂等边界）。
 > 关联：`docs/AI_GATEWAY_API.md`、`docs/AI_AGENT_OPS_DESIGN.md`。
@@ -64,9 +65,11 @@
 |---|---|---|
 | `oid` | VARCHAR2(32) | PK，`uuid4().hex` |
 | `owner_oid` | VARCHAR2(24) | NOT NULL；只有本人可见 |
-| `mode` | VARCHAR2(8) | CHECK `IN ('chat','agent')`；建会话时定，不可改 |
+| `mode` | VARCHAR2(8) | CHECK `IN ('chat','agent')`；建会话时定，不可改。**`chat` 已下线**：存量行仍可读/归档/删除，新建回 409 |
 | `title` | VARCHAR2(120) | 首条用户消息截断生成；可手动改 |
-| `model` | VARCHAR2(120) | 最近使用的模型；NULL = 服务端默认 |
+| `model` | VARCHAR2(120) | **建会话时锁定**（缺省取用户可见目录第一个）；NULL = 当时无法确定，执行时按同一规则回落；PATCH 改它一律 409 |
+| `thinking` | VARCHAR2(16) | `low` / `medium` / `high` / NULL（NULL = 不给上游附带字段）；会话级，PATCH 可调（V046） |
+| `scene` | VARCHAR2(16) | `terminal` / `file_edit` / NULL；非空即场景会话，普通列表固定过滤 `scene IS NULL`（V048） |
 | `status` | VARCHAR2(12) | CHECK `IN ('active','archived')`，默认 `active` |
 | `summary` | CLOB | 压缩摘要正文；NULL = 从未压缩 |
 | `summary_upto_seq` | NUMBER(10) | 已压入摘要的最大 seq；0 = 未压缩 |
@@ -165,10 +168,10 @@ COMMIT
 
 | 方法 | 路径 | 入参 | 出参 |
 |---|---|---|---|
-| POST | `/conversations` | `{mode, model?, title?}` | `{conversation}` |
-| GET | `/conversations?status=active&limit=50&cursor=` | — | `{conversations:[...], next_cursor}` |
+| POST | `/conversations` | `{mode?, model?, thinking?, title?}` | `{conversation}`（201；`chat` → 409） |
+| GET | `/conversations?status=active&limit=50&cursor=` | — | `{conversations:[...], next_cursor}`；`status=archived` 即归档视图 |
 | GET | `/conversations/{oid}` | — | `{conversation}` |
-| PATCH | `/conversations/{oid}` | `{title?, status?, model?}` | `{conversation}` |
+| PATCH | `/conversations/{oid}` | `{title?, status?, thinking?}` | `{conversation}`；`status` 在 `active` / `archived` 间切换即归档与恢复。传 `model`（含显式 `null`）→ 409 `AI_CONVERSATION_MODEL_LOCKED` |
 | DELETE | `/conversations/{oid}` | — | `{deleted:true, messages:N, runs:N}`（硬删） |
 | GET | `/conversations/{oid}/messages?after_seq=0&limit=50` | — | `{messages:[...], has_more, total}` |
 
@@ -207,8 +210,8 @@ COMMIT
 
 | 方法 | 路径 | 入参 | 出参 |
 |---|---|---|---|
-| POST | `/conversations/{oid}/runs` | `{content, model?, client_msg_id?}` | **202** `{run_id, message_oid, status:"queued", deduped?:true}` |
-| GET | `/runs/{run_id}?after_round=0` | — | `{run, events, proposals}` |
+| POST | `/conversations/{oid}/runs` | `{content, client_msg_id?}` | **202** `{run_id, message_oid, status:"queued", deduped?:true}`。**不收 `model`**：执行模型一律取会话行；老客户端多传的 `model` 被忽略（不是 422） |
+| GET | `/runs/{run_id}?after_round=0&since_msg_seq=` | — | `{run, events, proposals}`；给 `since_msg_seq` 时额外带 `messages`（§12.5） |
 | POST | `/runs/{run_id}/cancel` | — | `{status}` |
 | GET | `/runs?active=1` | — | `{runs:[...]}` |
 | GET | `/runs?active=0&limit=5` | `limit` 1..10，默认 5 | `{runs:[...]}`（任意状态，`created_at` 倒序） |
@@ -219,17 +222,15 @@ COMMIT
 - `GET /runs?active=1`：重连横幅用（在飞 run，`created_at` 升序；`limit` 在该支忽略）。
 - `GET /runs?active=0&limit=N`：个人首页的「最近 run」。**任意状态**（含失败/取消）、`created_at` 倒序、只查 `owner_oid=当前用户`；`limit` 1..10（默认 5，越界 422）。视图与 `active=1` 相同（`run_view`）。
 
-### 3.3 对话（同步 SSE，新增）
+### 3.3 对话（`chat` 会话模式已下线）
 
-`POST /conversations/{oid}/chat`（`mode='chat'`，SSE）：
+`POST /conversations/{oid}/chat`（同步 SSE）与 `mode='chat'` 一并**下线**：
 
-- 入参 `{content, model?}`；服务端从 DB 取历史 + 压缩摘要组装。
-- 沿用 `src/api/ai/stream.ts` 的 `data:` 帧与 `[DONE]`；首帧附 `conversation_oid`/`message_oid`。
-- 完成后 assistant 消息落库 + 会话用量与水位更新；流中断则 assistant 不落库，`ai_call_logs` 记 `error`。
+- 新建 `mode='chat'` → 409 `AI_CONVERSATION_MODE_MISMATCH`；存量 chat 会话仍可读取 / 改名 / 归档 / 删除，但不能跑 run。
+- `/api/ai/v1/chat/completions` **保留**，语义是**无状态** OpenAI 兼容面（不读写会话），服务外部 `zvk_` 客户端与第三方 SDK。
+- 前端的普通问答已并入 ZVAgent 会话：一次提问 = 一次后台 run，逐轮消息通过 §12.5 的增量接口到达。
 
-`/api/ai/v1/chat/completions` **保持无状态**，不读写会话。
-
-**旧端点删除**：`POST /api/ai/agent/run` 本期**直接删除**，前端同一批改造切到 `POST /conversations/{oid}/runs`。不做兼容层；发布窗口内未升级的旧前端会 404，这是已裁定代价。
+**旧端点删除**：`POST /api/ai/agent/run` 已直接删除，前端同批切到 `POST /conversations/{oid}/runs`。不做兼容层；发布窗口内未升级的旧前端会 404，这是已裁定代价。
 
 ### 3.4 错误码（新增）
 
@@ -444,3 +445,60 @@ executor 内不碰会话表；`on_round` 由 `run_queue` 提供。
 6. 压缩：连续对话触发一次压缩，历史仍可上翻，`context_tokens` 回落，缓存只在压缩轮失效。
 7. 删除：存在活跃 run 时会话删不掉；删除后其待确认提案变 `failed` 且 confirm 返回 404。
 8. SiliconFlow 模型出现在选择器并能流式回答，`ai_call_logs.provider` 记到渠道名。
+
+---
+
+## 12. v3 修订（2026-10-29）
+
+### 12.1 模型锁定
+
+模型在**建会话时确定**：缺省取该用户可见目录（`config.allowed_models_for`）的第一个。`POST /conversations/{oid}/runs` 不再接受 `model`（老客户端多传会被 pydantic 忽略，不报 422）。
+
+`PATCH /conversations/{oid}` 传非空 `model` 或显式 `null` 一律 **409 `AI_CONVERSATION_MODEL_LOCKED`**：一次会话里换模型会让历史重放的缓存前缀与计费口径整体换一套，而用户看到的只是「同一段对话」。把不支持的意图静默忽略会让前端以为改成功了，所以选择显式报错。
+
+目录查询是 best-effort：拿不到（没配 provider / 目录查询失败）时 `model` 留 `NULL`，executor 执行时按同一规则回落。
+
+### 12.2 思考强度（`thinking`）
+
+- 取值 `low` / `medium` / `high` / `NULL`；NULL = **不给上游附带任何字段**（不是 `low`，上游默认档只有它自己知道）。
+- 会话级而非 run 级：同一次会话中途换档会让「同一段历史、不同档位」的缓存前缀整体失效，而那正是长会话的主要成本。
+- 上游翻译：`openai_compat` → `reasoning_effort`；智谱（zhipu）→ `thinking`，其中 `low` 映射为 `disabled`。
+- `PATCH` 可改；传 `null` = 清空（回到上游默认）。
+
+### 12.3 归档与恢复
+
+- `PATCH {status:'archived'}` 归档，`PATCH {status:'active'}` 恢复；列表按 `status` 过滤，前端左侧栏有独立的「已归档」视图。
+- 归档不是删除：消息、run、提案都在；恢复后历史照常可上翻。
+- 保留期仍只清「`archived` 且超过 `AI_CONVERSATION_RETENTION_DAYS`（默认 180）」的会话，`active` 不动。
+
+### 12.4 `chat` 模式下线与存量数据
+
+- `mode='chat'` 新建 → 409；存量 chat 会话可读、可改名/归档/删除，**不能提交 run**（`submit` 只接受 `mode='agent'`）。
+- `GET /conversations`、`PATCH`、`DELETE` 不检查功能开关：关掉 AI 能力之后，用户仍该能收拾自己的历史。
+- `/api/ai/v1/chat/completions` 不变：无状态兼容面。
+
+### 12.5 run 增量消息契约
+
+```http
+GET /api/ai/runs/{run_id}?after_round=2&since_msg_seq=17
+```
+
+- `since_msg_seq` 可选、`ge=0`；给了就在响应里多一个 `messages` 数组。
+- 内容是 `seq > since_msg_seq` 的消息，**升序**，与 `GET /conversations/{oid}/messages` 同一份 `message_view`、同一个上限（`MESSAGE_LIMIT_MAX`）。
+- 不传则响应**没有 `messages` 键**：老客户端字节级兼容。
+- 轮询建议：客户端持有 `last_seq`，每次把 `last_seq` 作为 `since_msg_seq`；取回后推进到数组最后一条的 `seq`。`events` 与 `messages` 在同一次响应里到达，避免「run 已结束、消息还没拉」的中间态。
+
+### 12.6 只读场景（`scene`）
+
+`POST /api/ai/scenes/{scene}/runs`（`terminal` / `file_edit`）复用会话 + run 管线，服务层收紧：
+
+| 项 | 规则 |
+|---|---|
+| 会话 | 按 `(user, scene)` 复用最近一条；标题固定「终端智能」/「文件编辑智能」 |
+| 列表 | 普通会话列表固定 `scene IS NULL`；场景会话不出现在侧栏 |
+| 工具 | 执行器按 `scene` 裁到 `kind='read'`，写工具 / 提案流 / `ssh_exec` / DML-DDL 都不在数组里 |
+| 参考内容 | `context` ≤8000，**先脱敏再截断**，只进 prompt 与 prompt 留存，**不落 `ai_messages`** |
+| 门禁 | admin + `ai.agent`；跳过 30 分钟密码门（只读 + admin，显式条件写在 `run_queue.submit`） |
+| 保留期 | 14 天（`retention` 的 `scene_conversations`），级联删除 messages / runs |
+
+> 为什么用列而不是单独一张表：消息、run、提案、摘要水位、级联删除全挂在 `ai_conversations` 上；另起一张表等于把整条链路复制一遍。

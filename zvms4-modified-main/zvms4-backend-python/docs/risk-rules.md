@@ -75,3 +75,17 @@
 `db/oracle/ddl/V021__add_risk_and_export_indexes.sql` 给 `challenge_flood` 的
 计数路径补 `device_challenges (user_oid, created_at)`，没有它每次擦边登录都要
 全表扫这张只增不减的表；同一迁移给导出列表补 `export_tasks (task_start)`。
+
+## AI 越狱规则的立即封号（2026-10-29）
+
+内置规则 `agent_jailbreak`（`trigger=agent_jailbreak`，默认 `mode=ban`）不再有「首次只警告」：
+
+- **判定成立即封**：`services/violation_guard.py:record_agent_jailbreak` 在证据入库后直接调 `device_guard.apply_account_ban`，档位取该规则 `penalties` 的**第一档**；第二次违规自然进第二档（梯度由历史流水算出）。
+- **警告仍写**：`USER_WARNINGS` 账本与 `agent_jailbreak_warning` 审计照写，但它是记录，不是「这次先放过」。
+- **证据去重**：同一份信号 5 分钟内重复到达（客户端重发原请求）只算一次；`recorded == 0` 时直接返回，不重复处罚。
+- **已在封禁中**：只记新证据，不再落封、不再发警告（否则重试会把自己推到永久档）。
+- **豁免角色**：`admin` 在 `AGENT_JAILBREAK_EXEMPT_ROLES` 里——审核层本就旁路 admin，自动封管理员可能把平台锁死。`department` 不在豁免名单内。
+- **失败语义**：证据/警告写库失败不改变「本次拒绝」；封禁落库失败也不回滚已入库证据，只记异常等运维补封。
+- **对外**：只有 `AI_SAFETY_REJECTED` 与固定文案，不暴露档位、天数或规则名（规则名只进 `ban_violations` 的内部证据）。
+
+审核侧语义（fail-closed、判定不可用时不记违规）见仓库根 `docs/AI_AGENT_OPS_DESIGN.md` §10.2。

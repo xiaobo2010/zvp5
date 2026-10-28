@@ -152,12 +152,15 @@ Content-Type: application/json
 
 {
   "title": "标题（1–200 字符）",
-  "content": "正文（1–4000 字符，且 UTF-8 编码后不超过 4000 字节）"
+  "content": "正文（1–4000 字符，且 UTF-8 编码后不超过 4000 字节）",
+  "verification_token": "<5 分钟密码再认证令牌>"
 }
 ```
 
 需要 `admin`。创建即为发送（`active = true`），全局版本 +1，单条版本为 1。
 `author_id` / `author_name` 由服务端从当前登录用户解析，不接受客户端传入。
+
+> **密码再认证**：`verification_token` 由 `POST /api/users/auth` 的 `purpose=verify` 用密码换出，5 分钟有效。缺失、过期、伪造或非本人 → `403 {"detail":"需要密码验证后才能继续"}`。下文的编辑、删除、回滚同理。
 
 成功 `201`：
 
@@ -181,7 +184,8 @@ Content-Type: application/json
 {
   "title": "可选，新标题",
   "content": "可选，新正文",
-  "active": false
+  "active": false,
+  "verification_token": "<5 分钟密码再认证令牌>"
 }
 ```
 
@@ -212,9 +216,12 @@ Content-Type: application/json
 
 ```
 DELETE /api/v3/notifications/{oid}
+Content-Type: application/json
+
+{ "verification_token": "<5 分钟密码再认证令牌>" }
 ```
 
-需要 `admin`。硬删除，成功返回 `204 No Content`；全局版本 +1。审计日志仍保留
+需要 `admin` + 密码再认证（`DELETE` 也走 body，与附件/用户端点一致；缺令牌 → 403）。硬删除，成功返回 `204 No Content`；全局版本 +1。审计日志仍保留
 删除动作和当时标题。通知不存在时 `404`，版本不变。
 
 > 管理界面如果希望保留历史记录，请使用 `PUT {"active": false}` 停用，而不是
@@ -270,10 +277,10 @@ GET /api/v3/notifications/{oid}/versions
 POST /api/v3/notifications/{oid}/rollback
 Content-Type: application/json
 
-{ "version": 2 }
+{ "version": 2, "verification_token": "<5 分钟密码再认证令牌>" }
 ```
 
-需要 `admin`。把 `title` / `content` / `active` 还原成目标快照的内容：
+需要 `admin` + 密码再认证。把 `title` / `content` / `active` 还原成目标快照的内容：
 
 - 通知仍存在 → 与编辑同路径（行锁 + `version += 1`）；
 - 通知已被删除 → 用**原 `oid`** 重新插入，`version` = 该通知历史最大版本 + 1。
