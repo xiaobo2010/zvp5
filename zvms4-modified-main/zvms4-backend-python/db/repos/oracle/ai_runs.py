@@ -284,6 +284,22 @@ def _list_active_stmt(owner_oid: str):
     )
 
 
+def _list_recent_stmt(owner_oid: str, limit: int):
+    """本人最近 ``limit`` 条 run（不分状态），``created_at`` 倒序。
+
+    个人首页只读「最近发生了什么」：不按状态过滤，失败/取消的 run 同样要出现，
+    否则用户点了取消之后首页会像什么都没发生过。同毫秒的两行再用 ``oid`` 兜底，
+    排序才是确定的（分页语义不依赖它，但测试与人工排查依赖）。
+    """
+    return (
+        select(*_columns())
+        .select_from(ai_runs_tbl)
+        .where(ai_runs_tbl.c.owner_oid == owner_oid)
+        .order_by(ai_runs_tbl.c.created_at.desc(), ai_runs_tbl.c.oid.desc())
+        .fetch(int(limit))
+    )
+
+
 def _interrupt_values(
     *, error_code: str, message: str, at: datetime
 ) -> dict[str, Any]:
@@ -550,6 +566,15 @@ class OracleAIRunsRepo:
         async with _session_for(self._session) as (session, _owns):
             rows = (
                 await session.execute(_list_active_stmt(str(owner_oid)))
+            ).all()
+        return [_run_row(row._mapping) for row in rows]
+
+    async def list_recent(self, owner_oid: str, limit: int) -> list[Row]:
+        async with _session_for(self._session) as (session, _owns):
+            rows = (
+                await session.execute(
+                    _list_recent_stmt(str(owner_oid), int(limit))
+                )
             ).all()
         return [_run_row(row._mapping) for row in rows]
 
