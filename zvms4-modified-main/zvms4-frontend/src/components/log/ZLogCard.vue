@@ -10,14 +10,23 @@ const props = defineProps<{
 
 const { log } = toRefs(props)
 
+type LogWithClient = Log & { client_ip?: string | null; user_agent?: string | null }
+
+const clientIp = computed(() => (log.value as LogWithClient).client_ip ?? '')
+const userAgent = computed(() => (log.value as LogWithClient).user_agent ?? '')
+
 const typeLabels: Record<string, string> = {
   user_login: '登录',
+  user_logout: '登出',
   user_verify: '身份验证',
+  login_fail: '登录失败',
   passwd_change: '密码修改',
   totp_view: '动态码查看',
   user_create: '用户创建',
+  user_hard_delete: '用户彻底删除',
   role_change: '角色变更',
   past_change: '历史身份变更',
+  student_id_change: '学号变更',
   group_create: '班级创建',
   group_update: '班级修改',
   group_delete: '班级删除',
@@ -29,21 +38,29 @@ const typeLabels: Record<string, string> = {
   activity_member_add: '义工成员添加',
   activity_member_update: '义工成员修改',
   activity_member_remove: '义工成员移除',
+  activity_member_review: '义工成员审核',
   import_excel: '数据导入',
   export: '数据导出',
   otp: '动态码验证',
-  student_id_change: '学号变更',
   attachment: '附件',
+  attachment_ocr_enqueue: '附件 OCR 排队',
   changelog_create: '更新日志创建',
   changelog_update: '更新日志修改',
   changelog_delete: '更新日志删除',
+  notification_create: '通知创建',
+  notification_update: '通知修改',
+  notification_delete: '通知删除',
+  notification_rollback: '通知回滚',
   ban_change: '封禁变更',
   ban_rule: '封禁规则',
+  ban_rule_skipped: '封禁规则跳过',
   binding_mismatch: '设备绑定不符',
   device_bind: '设备绑定',
   device_unbind: '设备解绑',
   device_ban: '设备封禁',
+  device_ban_skipped: '设备封禁跳过',
   device_mismatch: '设备不匹配',
+  device_required: '缺少学海设备',
   security_alert: '安全告警',
   auth_maintenance_blocked: '维护期间登录拦截',
   system_maintenance_enable: '开启维护模式',
@@ -52,15 +69,39 @@ const typeLabels: Record<string, string> = {
   system_op: '系统操作',
   system_ssh: 'Web SSH',
   system_ssh_command: 'SSH 指令',
-  system_files: '文件管理',
+  system_ssh_suggest: 'SSH 指令建议',
   system_file: '文件操作',
-  system_db_content: '资料中心',
+  system_db_read: '数据库查询',
+  system_db_query: '数据库查询',
   system_db_dml: '数据库操作',
   system_db_ddl: '数据库结构变更',
+  system_settings_update: '系统设置变更',
+  system_user_quota_update: '用户额度修改',
   temp_password_create: '临时密码创建',
   temp_password_login: '临时密码登录',
   temp_password_fail: '临时密码错误',
-  user_hard_delete: '用户彻底删除'
+  ai_api_key_create: 'AI 凭据新增',
+  ai_api_key_update: 'AI 凭据修改',
+  ai_api_key_delete: 'AI 凭据删除',
+  ai_key_create: 'AI 凭据新增',
+  ai_key_update: 'AI 凭据修改',
+  ai_key_delete: 'AI 凭据删除',
+  ai_ocr_engine_create: 'OCR 引擎新增',
+  ai_ocr_engine_update: 'OCR 引擎修改',
+  ai_ocr_engine_delete: 'OCR 引擎删除',
+  ai_ocr_enqueue: 'OCR 排队',
+  ai_prompt_access: '提示词查看',
+  ai_quota_set: 'AI 额度设置',
+  ai_quota_reset: 'AI 额度重置',
+  ai_quota_request_approve: '配额申请通过',
+  ai_quota_request_reject: '配额申请拒绝',
+  ai_moderation_unrestricted: '关闭内容审核',
+  ai_safety_guard_error: '安全守卫异常',
+  ai_safety_guard_scheduled_skip: '安全守卫跳过',
+  agent_jailbreak_warning: '越狱提示拦截',
+  platform_misuse_report: '平台滥用举报',
+  platform_misuse_violation: '平台滥用认定',
+  platform_misuse_exempt: '平台滥用豁免'
 }
 
 const levelLabels: Record<string, string> = {
@@ -76,8 +117,6 @@ const AUDIT_TYPES = new Set([
   'system_dual_auth',
   'system_op',
   'system_ssh',
-  'system_files',
-  'system_db_content',
   'system_ssh_command'
 ])
 
@@ -172,6 +211,12 @@ const auditDetail = computed(() => {
         </ElFormItem>
         <ElFormItem v-if="log.xuehai_id" label="学海 ID">
           {{ log.xuehai_id }}
+        </ElFormItem>
+        <ElFormItem v-if="clientIp" label="IP">
+          {{ clientIp }}
+        </ElFormItem>
+        <ElFormItem v-if="userAgent" label="UA" style="overflow-wrap: break-word">
+          <span :title="userAgent">{{ userAgent }}</span>
         </ElFormItem>
         <ElFormItem label="日期">
           {{ dayjs.unix(log.timestamp).format('YYYY-MM-DD HH:mm:ss') }}

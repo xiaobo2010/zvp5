@@ -1,4 +1,5 @@
 import axios from '@/plugins/axios'
+import { baseURL } from '@/plugins/axios'
 import type { Response, LoginResult } from '@/../types'
 import { ElNotification } from 'element-plus'
 import { byteArrayToHex } from './utils'
@@ -109,6 +110,28 @@ async function UserLogin(
 }
 
 export { UserLogin as useLongTermAuth }
+
+/**
+ * 退出登录：服务端轮换 session_id，让这张 token 立刻作废。
+ *
+ * 刻意绕开 axios 实例：登出路由失败（token 已过期/网络抖动）不该弹错误提示、
+ * 也不该再走一遍 401 的「登录已过期」清理链——本地清理是调用方的事。
+ */
+export async function logout(): Promise<void> {
+  const token = localStorage.getItem('token')
+  if (!token) {
+    return
+  }
+  try {
+    await fetch(`${baseURL}/users/auth/logout`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(3000)
+    })
+  } catch {
+    return
+  }
+}
 
 /**
  * 临时密码登入（异设备登录的唯一正路）。

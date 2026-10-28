@@ -110,23 +110,9 @@ export async function createGroupV3(name: string) {
     })
   ).data as { id: string }
   if (response?.id) {
-    ElNotification({
-      title: 'Success',
-      message: 'Group created successfully: ' + response.id,
-      type: 'success'
-    })
     return response.id
   }
   return false
-}
-
-export async function renameGroupV3(gid: string, name: string) {
-  const response = await axios({
-    method: 'put',
-    url: `/v3/groups/${gid}/name`,
-    data: { name }
-  })
-  return response?.status === 204
 }
 
 export async function addGroupUserV3(gid: string, uid: string) {

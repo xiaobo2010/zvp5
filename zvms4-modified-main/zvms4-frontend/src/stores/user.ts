@@ -95,6 +95,7 @@ export const useUserStore = defineStore('user', {
       }
     },
     async removeUser() {
+      void api.user.auth.logout().catch(() => {})
       localStorage.removeItem('token')
       this._id = ''
       this.id = 0

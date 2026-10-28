@@ -176,3 +176,72 @@ it('falls back to the raw type for types without a label', () => {
 
   wrapper.unmount()
 })
+
+// 后端实际会写的类型都必须有中文标签:漏一个就在页面上透出英文原始值
+it('labels every event type the backend actually writes', () => {
+  const realTypes = [
+    'user_login',
+    'user_logout',
+    'user_verify',
+    'login_fail',
+    'device_required',
+    'device_ban_skipped',
+    'ban_rule_skipped',
+    'system_settings_update',
+    'system_user_quota_update',
+    'system_ssh_suggest',
+    'system_db_read',
+    'system_db_query',
+    'notification_rollback',
+    'attachment_ocr_enqueue',
+    'ai_quota_set',
+    'ai_quota_reset',
+    'ai_quota_request_approve',
+    'ai_quota_request_reject',
+    'ai_api_key_delete',
+    'ai_prompt_access',
+    'agent_jailbreak_warning',
+    'platform_misuse_report',
+    'activity_member_review'
+  ]
+
+  for (const type of realTypes) {
+    const wrapper = mountCard(logFixture({ type }))
+    expect(wrapper.find('.el-form-item-stub[data-label="类型"]').text()).not.toContain(type)
+    wrapper.unmount()
+  }
+})
+
+// 幻影键(后端从未写入的类型)不该再占着 label map
+it('does not keep labels for log types no code path writes', () => {
+  for (const phantom of ['system_db_content', 'system_files']) {
+    const wrapper = mountCard(logFixture({ type: phantom }))
+    expect(wrapper.find('.el-form-item-stub[data-label="类型"]').text()).toContain(phantom)
+    wrapper.unmount()
+  }
+})
+
+it('shows client ip and user agent when the log carries them', () => {
+  const wrapper = mountCard(
+    logFixture({
+      type: 'user_login',
+      data: '登录成功',
+      client_ip: '203.0.113.7',
+      user_agent: 'Mozilla/5.0 (X11; Linux x86_64)'
+    } as Partial<Log>)
+  )
+
+  expect(wrapper.find('.el-form-item-stub[data-label="IP"]').text()).toContain('203.0.113.7')
+  expect(wrapper.find('.el-form-item-stub[data-label="UA"]').text()).toContain('Mozilla/5.0')
+
+  wrapper.unmount()
+})
+
+it('hides the ip and user agent rows for logs written before the columns existed', () => {
+  const wrapper = mountCard(logFixture({ type: 'user_login', data: '登录成功' }))
+
+  expect(wrapper.find('.el-form-item-stub[data-label="IP"]').exists()).toBe(false)
+  expect(wrapper.find('.el-form-item-stub[data-label="UA"]').exists()).toBe(false)
+
+  wrapper.unmount()
+})

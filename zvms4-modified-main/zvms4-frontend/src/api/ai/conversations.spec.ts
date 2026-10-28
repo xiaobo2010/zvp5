@@ -95,11 +95,11 @@ describe('会话 CRUD', () => {
   it('建会话：给了标题与模型才带上这两个字段', async () => {
     axiosMock.mockResolvedValueOnce(ok(conversationFixture, 201))
 
-    await createConversation('chat', '标题', 'gpt-4o-mini')
+    await createConversation('agent', '标题', 'gpt-4o-mini')
 
     expect(axiosMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        data: { mode: 'chat', title: '标题', model: 'gpt-4o-mini' }
+        data: { mode: 'agent', title: '标题', model: 'gpt-4o-mini' }
       })
     )
   })
@@ -166,6 +166,21 @@ describe('会话 CRUD', () => {
         method: 'patch',
         url: `/ai/conversations/${conversationFixture.oid}`,
         data: { title: '新标题' }
+      })
+    )
+  })
+
+  it('改思考强度：PATCH 只带 thinking', async () => {
+    axiosMock.mockResolvedValueOnce(ok({ ...conversationFixture, thinking: 'high' }))
+
+    const result = await updateConversation(conversationFixture.oid, { thinking: 'high' })
+
+    expect(result.thinking).toBe('high')
+    expect(axiosMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        method: 'patch',
+        url: `/ai/conversations/${conversationFixture.oid}`,
+        data: { thinking: 'high' }
       })
     )
   })
@@ -238,15 +253,12 @@ describe('消息增量', () => {
 })
 
 describe('后台执行', () => {
-  it('提交：POST /ai/conversations/{oid}/runs，202 受理', async () => {
+  it('提交：POST /ai/conversations/{oid}/runs，202 受理，不带 model', async () => {
     axiosMock.mockResolvedValueOnce(
       ok({ run_id: runFixture.oid, message_oid: messageFixture.oid, status: 'queued' }, 202)
     )
 
-    const result = await submitRun(conversationFixture.oid, '查一下', {
-      model: 'gpt-4o-mini',
-      clientMsgId: 'abc'
-    })
+    const result = await submitRun(conversationFixture.oid, '查一下', { clientMsgId: 'abc' })
 
     expect(result.run_id).toBe(runFixture.oid)
     expect(result.status).toBe('queued')
@@ -254,30 +266,42 @@ describe('后台执行', () => {
       expect.objectContaining({
         method: 'post',
         url: `/ai/conversations/${conversationFixture.oid}/runs`,
-        data: { content: '查一下', model: 'gpt-4o-mini', client_msg_id: 'abc' }
+        data: { content: '查一下', client_msg_id: 'abc' }
       })
     )
   })
 
-  it('查询：GET /ai/runs/{id}?after_round=，回 run 与增量事件', async () => {
+  it('查询：GET /ai/runs/{id} 回 after_round 与 since_msg_seq 之外的增量', async () => {
     axiosMock.mockResolvedValueOnce(
       ok({
         run: runFixture,
         events: [{ round_no: 3, tool_name: 'fs_list', tool_kind: 'read', status: 'executed' }],
-        proposals: []
+        proposals: [],
+        messages: [messageFixture]
       })
     )
 
-    const detail = await fetchRunDetail(runFixture.oid, 2)
+    const detail = await fetchRunDetail(runFixture.oid, 2, 7)
 
     expect(detail.run.rounds).toBe(2)
     expect(detail.events).toHaveLength(1)
+    expect(detail.messages).toEqual([messageFixture])
     expect(axiosMock).toHaveBeenCalledWith(
       expect.objectContaining({
         method: 'get',
         url: `/ai/runs/${runFixture.oid}`,
-        params: { after_round: 2 }
+        params: { after_round: 2, since_msg_seq: 7 }
       })
+    )
+  })
+
+  it('查询：没传 since_msg_seq 时不带这个参数', async () => {
+    axiosMock.mockResolvedValueOnce(ok({ run: runFixture, events: [], proposals: [] }))
+
+    await fetchRunDetail(runFixture.oid)
+
+    expect(axiosMock).toHaveBeenCalledWith(
+      expect.objectContaining({ params: { after_round: 0 } })
     )
   })
 

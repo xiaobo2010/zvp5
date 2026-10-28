@@ -8,7 +8,8 @@ import type {
   AiMessagePage,
   AiRun,
   AiRunDetail,
-  AiRunSubmitResult
+  AiRunSubmitResult,
+  AiThinkingLevel
 } from '@/../types/ai'
 import { aiRequest, aiRequestList } from './http'
 
@@ -109,13 +110,13 @@ export async function getConversation(conversationOid: string): Promise<AiConver
   })
 }
 
-/** 改会话：标题、状态、模型至少给一个。 */
+/** 改会话：标题、状态、思考强度至少给一个；模型建完不可改。 */
 export async function updateConversation(
   conversationOid: string,
   payload: {
     title?: string
     status?: AiConversationStatus
-    model?: string | null
+    thinking?: AiThinkingLevel | null
   }
 ): Promise<AiConversation> {
   return aiRequest<AiConversation>({
@@ -183,14 +184,13 @@ export async function listMessages(
 export async function submitRun(
   conversationOid: string,
   content: string,
-  options: { model?: string; clientMsgId?: string } = {}
+  options: { clientMsgId?: string } = {}
 ): Promise<AiRunSubmitResult> {
   return aiRequest<AiRunSubmitResult>({
     method: 'post',
     url: `/ai/conversations/${oid(conversationOid)}/runs`,
     data: {
       content,
-      ...(options.model ? { model: options.model } : {}),
       ...(options.clientMsgId ? { client_msg_id: options.clientMsgId } : {})
     }
   })
@@ -200,21 +200,32 @@ export async function submitRun(
  * 取一次 run 的状态与增量事件。
  *
  * `afterRound` 之外的事件才回：轮询的载荷随轮次线性增长，而不是平方。
+ * `sinceMsgSeq` 之外的会话消息一并回（`messages`）：运行中就能逐轮看到文本，
+ * 不必等终态再拉一次消息。
  */
-export async function fetchRunDetail(runId: string, afterRound = 0): Promise<AiRunDetail> {
+export async function fetchRunDetail(
+  runId: string,
+  afterRound = 0,
+  sinceMsgSeq?: number
+): Promise<AiRunDetail> {
   const data = await aiRequest<{
     run?: AiRun
     events?: AiRunDetail['events']
     proposals?: AiRunDetail['proposals']
+    messages?: AiMessage[]
   }>({
     method: 'get',
     url: `/ai/runs/${oid(runId)}`,
-    params: { after_round: afterRound }
+    params: {
+      after_round: afterRound,
+      ...(typeof sinceMsgSeq === 'number' ? { since_msg_seq: sinceMsgSeq } : {})
+    }
   })
   return {
     run: data?.run ?? emptyRun(runId),
     events: Array.isArray(data?.events) ? data.events : [],
-    proposals: Array.isArray(data?.proposals) ? data.proposals : []
+    proposals: Array.isArray(data?.proposals) ? data.proposals : [],
+    messages: Array.isArray(data?.messages) ? data.messages : []
   }
 }
 

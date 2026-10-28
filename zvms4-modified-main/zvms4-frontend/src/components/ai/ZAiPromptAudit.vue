@@ -24,6 +24,7 @@ import {
   ElSelect,
   ElTable,
   ElTableColumn,
+  ElTag,
   ElTooltip
 } from 'element-plus'
 import { CopyDocument, InfoFilled, Refresh, Search } from '@element-plus/icons-vue'
@@ -173,6 +174,53 @@ const { width } = useWindowSize()
 const drawerSize = computed(() => (width.value < 768 ? '100%' : '48%'))
 
 const detailText = computed(() => detail.value?.prompt_text ?? '')
+const detailAnswer = computed(() => detail.value?.answer_text ?? '')
+const isRefused = computed(() => detail.value?.refused === 1)
+const isWarned = computed(() => detail.value?.warned === 1)
+
+interface ToolCallEntry {
+  name: string
+  status: string
+  args: string
+  result: string
+}
+
+function toText(value: unknown): string {
+  if (typeof value === 'string') {
+    return value
+  }
+  if (value === null || value === undefined) {
+    return ''
+  }
+  return JSON.stringify(value)
+}
+
+function toToolCall(item: unknown): ToolCallEntry {
+  const record = (item && typeof item === 'object' ? item : {}) as Record<string, unknown>
+  return {
+    name: toText(record.name) || '—',
+    status: toText(record.status),
+    args: toText(record.args_summary),
+    result: toText(record.result_summary)
+  }
+}
+
+/** tool_calls 是 JSON 数组文本；解析失败就按原文展示，不吞内容。 */
+const parsedToolCalls = computed<{ entries: ToolCallEntry[]; raw: string }>(() => {
+  const raw = detail.value?.tool_calls?.trim() ?? ''
+  if (!raw) {
+    return { entries: [], raw: '' }
+  }
+  try {
+    const parsed: unknown = JSON.parse(raw)
+    if (!Array.isArray(parsed)) {
+      return { entries: [], raw }
+    }
+    return { entries: parsed.map(toToolCall), raw: '' }
+  } catch {
+    return { entries: [], raw }
+  }
+})
 
 async function loadDetail(oid: string) {
   const seq = ++detailSeq
@@ -408,6 +456,15 @@ onMounted(() => {
           <span class="yg-alert__desc">{{ t('ai.prompts.accessNoticeHint') }}</span>
         </div>
 
+        <div v-if="isRefused || isWarned" class="flex flex-wrap items-center gap-2">
+          <ElTag v-if="isRefused" type="danger" size="small" data-flag="refused">
+            {{ t('ai.prompts.refused') }}
+          </ElTag>
+          <ElTag v-if="isWarned" type="warning" size="small" data-flag="warned">
+            {{ t('ai.prompts.warned') }}
+          </ElTag>
+        </div>
+
         <div class="ai-prompt-audit__meta">
           <span class="ai-prompt-audit__meta-label">{{ t('ai.prompts.detail.user') }}</span>
           <span class="ai-prompt-audit__meta-value">
@@ -446,6 +503,43 @@ onMounted(() => {
           </p>
           <pre v-else class="ai-prompt-audit__text">{{ detailText }}</pre>
         </div>
+
+        <template v-if="detail && !detailFailed">
+          <div class="flex items-center justify-between gap-2">
+            <h3 class="yg-text-sm">{{ t('ai.prompts.answer') }}</h3>
+          </div>
+          <pre v-if="detailAnswer" class="ai-prompt-audit__text">{{ detailAnswer }}</pre>
+          <p v-else class="yg-text-sm yg-text-tertiary">{{ t('ai.prompts.noAnswer') }}</p>
+
+          <h3 class="yg-text-sm">{{ t('ai.prompts.toolCalls') }}</h3>
+          <pre v-if="parsedToolCalls.raw" class="ai-prompt-audit__text">{{ parsedToolCalls.raw }}</pre>
+          <p
+            v-else-if="!parsedToolCalls.entries.length"
+            class="yg-text-sm yg-text-tertiary"
+          >
+            {{ t('ai.prompts.noToolCalls') }}
+          </p>
+          <ul v-else class="ai-prompt-audit__tools">
+            <li
+              v-for="(call, index) in parsedToolCalls.entries"
+              :key="index"
+              class="ai-prompt-audit__tool"
+            >
+              <div class="flex flex-wrap items-center gap-2">
+                <span class="yg-text-sm">{{ call.name }}</span>
+                <ElTag v-if="call.status" type="info" size="small">
+                  {{ t('ai.prompts.toolStatus') }}：{{ call.status }}
+                </ElTag>
+              </div>
+              <span class="yg-text-xs yg-text-tertiary">
+                {{ t('ai.prompts.toolArgs') }}：{{ call.args || '—' }}
+              </span>
+              <span class="yg-text-xs yg-text-tertiary">
+                {{ t('ai.prompts.toolResult') }}：{{ call.result || '—' }}
+              </span>
+            </li>
+          </ul>
+        </template>
       </div>
     </ElDrawer>
   </div>
@@ -502,5 +596,24 @@ onMounted(() => {
   line-height: var(--yg-line-height-relaxed);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+/* 工具调用：一条一张卡片，参数与结果各占一行 */
+.ai-prompt-audit__tools {
+  display: flex;
+  flex-direction: column;
+  gap: var(--yg-space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ai-prompt-audit__tool {
+  display: flex;
+  flex-direction: column;
+  gap: var(--yg-space-1);
+  padding: var(--yg-space-3);
+  border-radius: var(--yg-radius-md);
+  background: var(--yg-bg-surface-sunken);
 }
 </style>

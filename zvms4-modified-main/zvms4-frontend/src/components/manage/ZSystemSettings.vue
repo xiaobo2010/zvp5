@@ -25,6 +25,7 @@ import {
   type SettingValue,
   type SystemSettingItem
 } from '@/api/system/settings'
+import { isReauthCancelled, withReauth } from '@/plugins/reauth'
 import {
   addRoleRow,
   allowsFreeEntry,
@@ -335,10 +336,19 @@ async function save() {
   }
 
   try {
-    await updateSettings(pending.map((change) => ({ key: change.key, value: change.to })))
+    await withReauth(t('manage.settings.reauthReason'), (token) =>
+      updateSettings(
+        pending.map((change) => ({ key: change.key, value: change.to })),
+        token
+      )
+    )
     ElMessage.success(t('manage.settings.saved'))
     await load()
   } catch (error) {
+    if (isReauthCancelled(error)) {
+      ElMessage.info(t('manage.reauth.cancelled'))
+      return
+    }
     if (settingErrorStatus(error) === 403) {
       forbidden.value = true
     }

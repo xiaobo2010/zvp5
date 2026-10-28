@@ -84,6 +84,7 @@ declare module 'vue' {
     ZNotificationReminder: typeof import('./src/components/notification/ZNotificationReminder.vue')['default']
     ZPagination: typeof import('./src/components/utils/ZPagination.vue')['default']
     ZPrimaryDeviceGate: typeof import('./src/components/notification/ZPrimaryDeviceGate.vue')['default']
+    ZSceneRunDialog: typeof import('./src/components/server/ZSceneRunDialog.vue')['default']
     ZSelectActivityMode: typeof import('./src/components/form/ZSelectActivityMode.vue')['default']
     ZSelectClass: typeof import('./src/components/form/ZSelectClass.vue')['default']
     ZSelectPerson: typeof import('./src/components/form/ZSelectPerson.vue')['default']

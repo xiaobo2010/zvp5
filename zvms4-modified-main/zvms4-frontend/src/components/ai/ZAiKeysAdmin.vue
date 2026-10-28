@@ -23,7 +23,8 @@ import {
 import { Delete, Edit, Plus, Refresh } from '@element-plus/icons-vue'
 import type { FormInstance, FormRules } from 'element-plus'
 import { AiRequestError, aiErrorCodeOf, aiErrorCopy, createKey, deleteKey, listKeys, updateKey } from '@/api/ai'
-import type { AiKeyRecord, AiKeyScope, AiKeyUpdateInput } from '@/../types/ai'
+import { isReauthCancelled, withReauth } from '@/plugins/reauth'
+import type { AiKeyModelRef, AiKeyRecord, AiKeyScope, AiKeyUpdateInput } from '@/../types/ai'
 
 const { t } = useI18n()
 
@@ -56,6 +57,8 @@ const form = reactive({
   name: '',
   baseUrl: '',
   models: '',
+  contexts: {} as Record<string, string>,
+  objectModels: {} as Record<string, boolean>,
   apiKey: '',
   apiPath: '',
   enabled: true,
@@ -79,6 +82,72 @@ function parseModels(text: string): string[] {
     }
   }
   return seen
+}
+
+/** 表单里被拆成模型 ID 文本，逐行给一个可选的上下文窗口输入。 */
+const modelRows = computed(() => parseModels(form.models))
+
+function modelIdOf(entry: AiKeyModelRef): string {
+  return typeof entry === 'string' ? entry : entry.id
+}
+
+function modelContextOf(entry: AiKeyModelRef): number | null {
+  return typeof entry === 'string' ? null : entry.context ?? null
+}
+
+/** 128000 -> 128k，1048576 -> 1M；小数值原样显示。 */
+function formatContext(value: number): string {
+  if (value >= 1000000) {
+    return `${(value / 1000000).toFixed(1).replace(/\.0$/, '')}M`
+  }
+  if (value >= 1000) {
+    return `${Math.round(value / 1000)}k`
+  }
+  return String(value)
+}
+
+function contextOf(id: string): string {
+  return form.contexts[id] ?? ''
+}
+
+function setContext(id: string, value: string | number) {
+  form.contexts[id] = String(value ?? '')
+}
+
+/** 字符串形态只写 ID；填了上下文或原本就是对象形态时提交对象。 */
+function buildModels(): AiKeyModelRef[] {
+  return modelRows.value.map((id) => {
+    const raw = contextOf(id).trim()
+    if (raw) {
+      return { id, context: Math.trunc(Number(raw)) }
+    }
+    return form.objectModels[id] ? { id, context: null } : id
+  })
+}
+
+function modelsSignature(models: AiKeyModelRef[]): string {
+  return models
+    .map((entry) =>
+      typeof entry === 'string'
+        ? `s:${entry}`
+        : `o:${entry.id}:${entry.context === null ? 'null' : entry.context}`
+    )
+    .join('|')
+}
+
+function validateContexts(): boolean {
+  for (const id of modelRows.value) {
+    const raw = contextOf(id).trim()
+    if (!raw) {
+      continue
+    }
+    const value = Number(raw)
+    if (!Number.isInteger(value) || value <= 0) {
+      fieldError.value = { ...fieldError.value, models: t('ai.keys.validation.modelContextInvalid') }
+      return false
+    }
+  }
+  return true
 }
 
 function validateName(_rule: unknown, value: unknown, callback: (error?: Error) => void) {
@@ -169,6 +238,8 @@ function resetForm() {
   form.name = ''
   form.baseUrl = ''
   form.models = ''
+  form.contexts = {}
+  form.objectModels = {}
   form.apiKey = ''
   form.apiPath = ''
   form.enabled = true
@@ -192,7 +263,18 @@ function openEdit(row: AiKeyRecord) {
   resetForm()
   form.name = row.name
   form.baseUrl = row.base_url
-  form.models = row.models.join(', ')
+  form.models = row.models.map(modelIdOf).join(', ')
+  const contexts: Record<string, string> = {}
+  const objectModels: Record<string, boolean> = {}
+  for (const entry of row.models) {
+    if (typeof entry === 'string') {
+      continue
+    }
+    objectModels[entry.id] = true
+    contexts[entry.id] = entry.context === null || entry.context === undefined ? '' : String(entry.context)
+  }
+  form.contexts = contexts
+  form.objectModels = objectModels
   form.apiPath = row.api_path ?? ''
   form.enabled = row.enabled
   form.expiresAt = row.expires_at ? new Date(row.expires_at) : undefined
@@ -264,9 +346,13 @@ async function submit() {
 
     const name = form.name.trim()
     const baseUrl = form.baseUrl.trim()
-    const models = parseModels(form.models)
     const apiKey = form.apiKey.trim()
     const headers = collectHeaders()
+
+    if (!validateContexts()) {
+      return
+    }
+    const models = buildModels()
 
     if (form.expiresAt && form.expiresAt.getTime() <= Date.now()) {
       fieldError.value = { expiresAt: t('ai.keys.validation.expiresInPast') }
@@ -274,17 +360,22 @@ async function submit() {
     }
 
     if (mode.value === 'create') {
-      await createKey({
-        scope: form.scope,
-        name,
-        base_url: baseUrl,
-        models,
-        api_key: apiKey,
-        enabled: form.enabled,
-        ...(headers ? { headers } : {}),
-        ...(form.apiPath.trim() ? { api_path: form.apiPath.trim() } : {}),
-        ...(form.expiresAt ? { expires_at: expiryPayload() } : {})
-      })
+      await withReauth(t('ai.keys.reauthReason'), (token) =>
+        createKey(
+          {
+            scope: form.scope,
+            name,
+            base_url: baseUrl,
+            models,
+            api_key: apiKey,
+            enabled: form.enabled,
+            ...(headers ? { headers } : {}),
+            ...(form.apiPath.trim() ? { api_path: form.apiPath.trim() } : {}),
+            ...(form.expiresAt ? { expires_at: expiryPayload() } : {})
+          },
+          token
+        )
+      )
       dialogVisible.value = false
       ElMessage.success(t('ai.keys.createdNotice'))
     } else {
@@ -300,7 +391,7 @@ async function submit() {
       if (baseUrl !== original.base_url) {
         payload.base_url = baseUrl
       }
-      if (models.join(',') !== original.models.join(',')) {
+      if (modelsSignature(models) !== modelsSignature(original.models)) {
         payload.models = models
       }
       if (apiKey) {
@@ -318,12 +409,18 @@ async function submit() {
       }
       // 到期时间不做差异比较：编辑提交时永远带上（值或 null，null = 清除到期）。
       payload.expires_at = expiryPayload()
-      await updateKey(editingId.value, payload)
+      await withReauth(t('ai.keys.reauthReason'), (token) =>
+        updateKey(editingId.value, payload, token)
+      )
       dialogVisible.value = false
       ElMessage.success(t('ai.keys.savedNotice'))
     }
     await load()
   } catch (error) {
+    if (isReauthCancelled(error)) {
+      ElMessage.info(t('manage.reauth.cancelled'))
+      return
+    }
     applyServerError(error)
   } finally {
     submitting.value = false
@@ -336,12 +433,18 @@ async function toggleEnabled(row: AiKeyRecord) {
   }
   togglingId.value = row.oid
   try {
-    const updated = await updateKey(row.oid, { enabled: !row.enabled })
+    const updated = await withReauth(t('ai.keys.reauthReason'), (token) =>
+      updateKey(row.oid, { enabled: !row.enabled }, token)
+    )
     const index = rows.value.findIndex((item) => item.oid === row.oid)
     if (index >= 0) {
       rows.value[index] = updated
     }
   } catch (error) {
+    if (isReauthCancelled(error)) {
+      ElMessage.info(t('manage.reauth.cancelled'))
+      return
+    }
     applyServerError(error)
   } finally {
     togglingId.value = ''
@@ -366,10 +469,14 @@ async function remove(row: AiKeyRecord) {
     return
   }
   try {
-    await deleteKey(row.oid)
+    await withReauth(t('ai.keys.reauthReason'), (token) => deleteKey(row.oid, token))
     rows.value = rows.value.filter((item) => item.oid !== row.oid)
     ElMessage.success(t('ai.keys.deletedNotice'))
   } catch (error) {
+    if (isReauthCancelled(error)) {
+      ElMessage.info(t('manage.reauth.cancelled'))
+      return
+    }
     applyServerError(error)
   } finally {
     deletingId.value = ''
@@ -377,7 +484,13 @@ async function remove(row: AiKeyRecord) {
 }
 
 function modelPreview(row: AiKeyRecord): string {
-  return row.models.join(', ')
+  return row.models
+    .map((entry) => {
+      const id = modelIdOf(entry)
+      const context = modelContextOf(entry)
+      return context === null ? id : `${id} · ${formatContext(context)}`
+    })
+    .join(', ')
 }
 
 function formatTime(value?: string | null): string {
@@ -592,7 +705,33 @@ onMounted(() => {
         </ElFormItem>
 
         <ElFormItem :label="t('ai.keys.models')" prop="models">
-          <ElInput v-model="form.models" :placeholder="t('ai.keys.modelsPlaceholder')" />
+          <div class="flex w-full flex-col gap-2">
+            <ElInput v-model="form.models" :placeholder="t('ai.keys.modelsPlaceholder')" />
+            <div v-if="modelRows.length" class="ai-keys__models">
+              <div
+                v-for="id in modelRows"
+                :key="id"
+                class="flex flex-wrap items-center gap-2"
+              >
+                <span class="ai-keys__model-id">{{ id }}</span>
+                <ElInput
+                  class="ai-keys__context-input w-40"
+                  :model-value="contextOf(id)"
+                  :placeholder="t('ai.keys.modelContextPlaceholder')"
+                  @update:model-value="setContext(id, $event)"
+                />
+                <span class="text-xs" style="color: var(--yg-text-tertiary)">
+                  {{ t('ai.keys.modelContext') }}
+                </span>
+              </div>
+            </div>
+            <p class="text-xs" style="color: var(--yg-text-tertiary)">
+              {{ t('ai.keys.modelContextHint') }}
+            </p>
+            <p v-if="fieldError.models" class="text-xs" style="color: var(--el-color-danger)">
+              {{ fieldError.models }}
+            </p>
+          </div>
         </ElFormItem>
 
         <ElFormItem :label="t('ai.keys.apiKey')" prop="apiKey">
@@ -691,5 +830,20 @@ onMounted(() => {
   flex-direction: column;
   align-items: center;
   gap: var(--yg-space-1);
+}
+
+/* 逐模型的上下文窗口：ID 定宽、输入贴右侧，长模型名不挤掉输入框 */
+.ai-keys__models {
+  display: flex;
+  flex-direction: column;
+  gap: var(--yg-space-2);
+}
+
+.ai-keys__model-id {
+  flex: 1 1 8rem;
+  min-width: 0;
+  font-family: var(--yg-font-mono);
+  font-size: var(--yg-font-size-xs);
+  overflow-wrap: anywhere;
 }
 </style>

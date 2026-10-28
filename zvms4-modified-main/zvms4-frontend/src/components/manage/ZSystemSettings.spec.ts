@@ -16,17 +16,26 @@ import type { SystemSettingsData } from '@/api/system/settings'
  * 分组渲染、待保存标记、只提交改动项、403 给出明确说明而不是空白页。
  */
 
-const { elMessageErrorSpy, elMessageSuccessSpy, elMessageBoxConfirmSpy } = vi.hoisted(() => ({
-  elMessageErrorSpy: vi.fn(),
-  elMessageSuccessSpy: vi.fn(),
-  elMessageBoxConfirmSpy: vi.fn()
-}))
+const { elMessageErrorSpy, elMessageSuccessSpy, elMessageInfoSpy, elMessageBoxConfirmSpy } =
+  vi.hoisted(() => ({
+    elMessageErrorSpy: vi.fn(),
+    elMessageSuccessSpy: vi.fn(),
+    elMessageInfoSpy: vi.fn(),
+    elMessageBoxConfirmSpy: vi.fn()
+  }))
 
 vi.mock('@/api/system/settings', () => ({
   listSettings: vi.fn(),
   updateSettings: vi.fn(),
   settingErrorMessage: vi.fn(() => '后端说：值不合法'),
   settingErrorStatus: vi.fn(() => null)
+}))
+
+const reauth = vi.hoisted(() => ({ withToken: vi.fn(), cancelled: vi.fn() }))
+
+vi.mock('@/plugins/reauth', () => ({
+  withReauth: reauth.withToken,
+  isReauthCancelled: reauth.cancelled
 }))
 
 vi.mock('vue-i18n', () => ({
@@ -189,7 +198,7 @@ vi.mock('element-plus', async () => {
       error: elMessageErrorSpy,
       success: elMessageSuccessSpy,
       warning: vi.fn(),
-      info: vi.fn()
+      info: elMessageInfoSpy
     }),
     ElMessageBox: Object.assign(vi.fn(), {
       confirm: elMessageBoxConfirmSpy
@@ -269,8 +278,15 @@ beforeEach(() => {
   vi.mocked(settingErrorStatus).mockReset()
   vi.mocked(settingErrorMessage).mockReturnValue('后端说：值不合法')
   vi.mocked(settingErrorStatus).mockReturnValue(null)
+  reauth.withToken.mockReset()
+  reauth.cancelled.mockReset()
+  reauth.withToken.mockImplementation(
+    async (_reason: string, action: (token: string) => Promise<unknown>) => action('verify-token')
+  )
+  reauth.cancelled.mockImplementation((error: unknown) => error === 'cancel')
   elMessageErrorSpy.mockReset()
   elMessageSuccessSpy.mockReset()
+  elMessageInfoSpy.mockReset()
   elMessageBoxConfirmSpy.mockReset()
   elMessageBoxConfirmSpy.mockResolvedValue('confirm')
   vi.mocked(listSettings).mockResolvedValue(SETTINGS)
@@ -318,9 +334,10 @@ describe('设置页', () => {
     await flushPromises()
 
     expect(elMessageBoxConfirmSpy).toHaveBeenCalledTimes(1)
-    expect(vi.mocked(updateSettings)).toHaveBeenCalledWith([
-      { key: 'ai.rate_limit_per_minute', value: 120 }
-    ])
+    expect(vi.mocked(updateSettings)).toHaveBeenCalledWith(
+      [{ key: 'ai.rate_limit_per_minute', value: 120 }],
+      'verify-token'
+    )
     expect(elMessageSuccessSpy).toHaveBeenCalled()
   })
 
@@ -411,8 +428,68 @@ describe('设置页', () => {
     await buttonByText(wrapper, 'manage.settings.save').trigger('click')
     await flushPromises()
 
-    expect(vi.mocked(updateSettings)).toHaveBeenCalledWith([
-      { key: 'ai.rate_limit_per_minute', value: { ocr: 10, chat: 50 } }
+    expect(vi.mocked(updateSettings)).toHaveBeenCalledWith(
+      [{ key: 'ai.rate_limit_per_minute', value: { ocr: 10, chat: 50 } }],
+      'verify-token'
+    )
+  })
+})
+
+describe('密码再认证', () => {
+  it('保存先过再认证，令牌过期后换一张重试成功', async () => {
+    reauth.withToken.mockImplementation(
+      async (_reason: string, action: (token: string) => Promise<unknown>) => {
+        try {
+          return await action('stale-token')
+        } catch {
+          return action('fresh-token')
+        }
+      }
+    )
+    vi.mocked(updateSettings)
+      .mockRejectedValueOnce(Object.assign(new Error('forbidden'), { status: 403 }))
+      .mockResolvedValueOnce(SETTINGS)
+
+    const wrapper = mountPage()
+    await flushPromises()
+
+    await wrapper.findAll('.el-input-number-stub')[0]!.setValue('120')
+    await flushPromises()
+    await buttonByText(wrapper, 'manage.settings.save').trigger('click')
+    await flushPromises()
+
+    expect(reauth.withToken).toHaveBeenCalledWith(
+      'manage.settings.reauthReason',
+      expect.any(Function)
+    )
+    expect(vi.mocked(updateSettings).mock.calls[0]).toEqual([
+      [{ key: 'ai.rate_limit_per_minute', value: 120 }],
+      'stale-token'
     ])
+    expect(vi.mocked(updateSettings).mock.calls[1]).toEqual([
+      [{ key: 'ai.rate_limit_per_minute', value: 120 }],
+      'fresh-token'
+    ])
+    expect(elMessageSuccessSpy).toHaveBeenCalled()
+
+    wrapper.unmount()
+  })
+
+  it('取消密码框时不提交，只给一条信息提示', async () => {
+    reauth.withToken.mockRejectedValue('cancel')
+
+    const wrapper = mountPage()
+    await flushPromises()
+
+    await wrapper.findAll('.el-input-number-stub')[0]!.setValue('120')
+    await flushPromises()
+    await buttonByText(wrapper, 'manage.settings.save').trigger('click')
+    await flushPromises()
+
+    expect(updateSettings).not.toHaveBeenCalled()
+    expect(elMessageInfoSpy).toHaveBeenCalledWith('manage.reauth.cancelled')
+    expect(elMessageErrorSpy).not.toHaveBeenCalled()
+
+    wrapper.unmount()
   })
 })

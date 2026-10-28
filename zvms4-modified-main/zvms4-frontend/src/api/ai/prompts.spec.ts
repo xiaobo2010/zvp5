@@ -190,6 +190,28 @@ describe('prompt 正文 API 契约', () => {
     expect(result.prompt_text).toBe('')
   })
 
+  it('回复与工具调用字段缺失时给出可渲染的默认值', async () => {
+    axiosMock.mockResolvedValueOnce(
+      envelope(
+        {
+          ...detailFixture,
+          answer_text: null,
+          tool_calls: null,
+          refused: undefined,
+          warned: undefined
+        },
+        1
+      )
+    )
+
+    const result = await getAiPrompt(detailFixture.oid)
+
+    expect(result.answer_text).toBe('')
+    expect(result.tool_calls).toBeNull()
+    expect(result.refused).toBe(0)
+    expect(result.warned).toBe(0)
+  })
+
   it('记录不存在抛出 404 AI_PROMPT_NOT_FOUND', async () => {
     axiosMock.mockResolvedValueOnce({
       status: 404,

@@ -14,6 +14,15 @@ export type AiLogStatus = 'success' | 'error' | 'timeout' | 'rejected' | 'busy'
 
 export type AiLogKeyScope = 'personal' | 'shared' | 'server'
 
+/** 模型条目的对象形态：context 为模型上下文窗口，未知时为 null。 */
+export interface AiKeyModelEntry {
+  id: string
+  context: number | null
+}
+
+/** 模型条目两种形态都合法：纯字符串，或带上下文窗口的对象。 */
+export type AiKeyModelRef = string | AiKeyModelEntry
+
 export interface AiKeyRecord {
   oid: string
   scope: AiKeyScope
@@ -21,7 +30,7 @@ export interface AiKeyRecord {
   name: string
   kind: string
   base_url: string
-  models: string[]
+  models: AiKeyModelRef[]
   /** 头名 → 恒为 ****，服务端不回显头值。 */
   headers: Record<string, string>
   api_path: string | null
@@ -40,7 +49,7 @@ export interface AiKeyCreateInput {
   scope: AiKeyScope
   name: string
   base_url: string
-  models?: string[]
+  models?: AiKeyModelRef[]
   api_key: string
   enabled?: boolean
   headers?: Record<string, string>
@@ -52,7 +61,7 @@ export interface AiKeyCreateInput {
 export interface AiKeyUpdateInput {
   name?: string
   base_url?: string
-  models?: string[]
+  models?: AiKeyModelRef[]
   /** 传入即轮换密钥，不传表示保持不变。 */
   api_key?: string
   enabled?: boolean
@@ -180,6 +189,14 @@ export interface AiPromptAuditDetail {
   roles_snapshot: string | null
   /** 已脱敏、截断后的正文；null 表示库里就是空的。 */
   prompt_text: string | null
+  /** assistant 最终回复文本；null 表示没有留存。 */
+  answer_text: string | null
+  /** 工具调用 JSON 数组文本（[{name,args_summary,result_summary,status}]）；null 表示没有。 */
+  tool_calls: string | null
+  /** 1 表示该次调用被安全策略拒答。 */
+  refused: number
+  /** 1 表示该次调用命中了安全警告。 */
+  warned: number
   created_at: string
 }
 
@@ -271,6 +288,8 @@ export interface AiModelItem {
   id: string
   object: string
   owned_by: string
+  /** 上下文窗口；后端未填或暂未探测到时为 null。 */
+  context?: number | null
 }
 
 export interface AiModelList {
@@ -561,13 +580,18 @@ export interface AiConversationCompaction {
   degraded_at: string | null
 }
 
+/** 会话的思考强度；null = 服务端默认档。 */
+export type AiThinkingLevel = 'low' | 'medium' | 'high'
+
 /** 一个会话的视图（列表与详情共用；列表不含消息正文与活跃 run）。 */
 export interface AiConversation {
   oid: string
   mode: AiConversationMode
   title: string
-  /** 最近使用的模型；null = 服务端默认。 */
+  /** 建会话时确定的模型；null = 服务端默认。 */
   model: string | null
+  /** 思考强度；null = 默认档。 */
+  thinking?: AiThinkingLevel | null
   status: AiConversationStatus
   tokens: AiConversationTokens
   context: AiConversationContext
@@ -682,12 +706,14 @@ export interface AiRunSubmitResult {
   deduped?: boolean
 }
 
-/** 一次 run 的详情：状态 + 增量事件 + 提案。 */
+/** 一次 run 的详情：状态 + 增量事件 + 提案 + 增量消息。 */
 export interface AiRunDetail {
   run: AiRun
   /** 只含 round_no > after_round 的增量。 */
   events: AiAgentEvent[]
   proposals: AiAgentProposal[]
+  /** 只含 seq > since_msg_seq 的会话消息（没传该参数时为空）。 */
+  messages?: AiMessage[]
 }
 
 /** 硬删会话的结果。 */
@@ -800,4 +826,23 @@ export interface AiScheduledTaskRun {
 export interface AiScheduledRunNowResult {
   run_id: string
   status: 'queued'
+}
+
+/* ---------------------------------------------------------------------------
+   场景智能（/ai/scenes/{scene}/runs）
+   契约：admin-only，202 返回 run_id 与场景会话 oid，轮询复用 GET /ai/runs/{run_id}。
+   --------------------------------------------------------------------------- */
+
+/** 支持的场景：终端辅助与文件编辑辅助。 */
+export type AiSceneName = 'terminal' | 'file_edit'
+
+/** 场景提交的受理结果（202）。场景会话不出现在普通会话列表。 */
+export interface AiSceneRunSubmitResult {
+  run_id: string
+  conversation_oid: string
+}
+
+/** POST /ai/ocr/file 的同步识别结果。 */
+export interface AiOcrFileResult {
+  text: string
 }

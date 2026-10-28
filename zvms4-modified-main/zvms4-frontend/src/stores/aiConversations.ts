@@ -19,7 +19,8 @@ import type {
   AiMessage,
   AiMessagePage,
   AiRun,
-  AiRunDetail
+  AiRunDetail,
+  AiThinkingLevel
 } from '@/../types/ai'
 
 /**
@@ -71,6 +72,11 @@ export const useAiConversationsStore = defineStore('aiConversations', () => {
   const nextCursor = ref<string | null>(null)
   const listLoading = ref(false)
   const listFailed = ref(false)
+
+  /** 已归档会话：与活动列表分开存，切视图时才拉。 */
+  const archivedConversations = ref<AiConversation[]>([])
+  const archivedLoading = ref(false)
+  const archivedFailed = ref(false)
 
   /* --------------------------------------------------------------------- */
   /* 当前会话与消息                                                         */
@@ -185,11 +191,52 @@ export const useAiConversationsStore = defineStore('aiConversations', () => {
     await loadConversations({ cursor: nextCursor.value })
   }
 
-  /** 建一个会话并插到列表最前。 */
-  async function createConversation(mode: AiConversationMode): Promise<AiConversation> {
-    const created = await createConversationApi(mode)
+  /** 拉已归档会话；归档视图打开时才拉，不与活动列表混存。 */
+  async function loadArchivedConversations(): Promise<void> {
+    if (archivedLoading.value) {
+      return
+    }
+    archivedLoading.value = true
+    try {
+      const page = await listConversations({ status: 'archived' })
+      archivedConversations.value = page.conversations.filter((item) => item.mode === 'agent')
+      archivedFailed.value = false
+    } catch {
+      archivedConversations.value = []
+      archivedFailed.value = true
+    } finally {
+      archivedLoading.value = false
+    }
+  }
+
+  /** 取消归档：回到活动列表，并从归档列表里摘掉。 */
+  async function unarchiveConversation(conversationOid: string): Promise<AiConversation> {
+    const updated = await setConversationStatus(conversationOid, 'active')
+    archivedConversations.value = archivedConversations.value.filter(
+      (item) => item.oid !== conversationOid
+    )
+    await loadConversations()
+    return updated
+  }
+
+  /** 建一个会话并插到列表最前；模型在这里一次性定下，之后不可改。 */
+  async function createConversation(
+    mode: AiConversationMode,
+    model?: string
+  ): Promise<AiConversation> {
+    const created = await createConversationApi(mode, undefined, model)
     conversations.value = [created, ...conversations.value.filter((item) => item.oid !== created.oid)]
     return created
+  }
+
+  /** 改思考强度；成功后同步列表与当前会话。 */
+  async function setConversationThinking(
+    conversationOid: string,
+    thinking: AiThinkingLevel | null
+  ): Promise<AiConversation> {
+    const updated = await updateConversation(conversationOid, { thinking })
+    applyConversation(updated)
+    return updated
   }
 
   /** 改标题；成功后同步列表与当前会话。 */
@@ -218,6 +265,9 @@ export const useAiConversationsStore = defineStore('aiConversations', () => {
   async function removeConversation(conversationOid: string): Promise<void> {
     await deleteConversationApi(conversationOid)
     conversations.value = conversations.value.filter((item) => item.oid !== conversationOid)
+    archivedConversations.value = archivedConversations.value.filter(
+      (item) => item.oid !== conversationOid
+    )
     if (currentOid.value === conversationOid) {
       clearCurrent()
     }
@@ -305,14 +355,32 @@ export const useAiConversationsStore = defineStore('aiConversations', () => {
     }
   }
 
+  /** 当前窗口里最大的 seq：增量口径的统一入口。 */
+  function lastMessageSeq(): number {
+    return messages.value.reduce((max, item) => Math.max(max, item.seq), 0)
+  }
+
+  /** 把一批消息并进来：按 seq 去重，保持升序。 */
+  function appendMessages(incoming: AiMessage[]): void {
+    if (incoming.length === 0) {
+      return
+    }
+    const known = new Set(messages.value.map((item) => item.seq))
+    const fresh = incoming.filter((item) => !known.has(item.seq))
+    if (fresh.length === 0) {
+      return
+    }
+    messages.value = [...messages.value, ...fresh].sort((a, b) => a.seq - b.seq)
+    totalMessages.value += fresh.length
+  }
+
   /** 增量补最新消息（run 落库后用）。 */
   async function refreshMessages(): Promise<void> {
     const conversationOid = currentOid.value
     if (!conversationOid) {
       return
     }
-    const last = messages.value.reduce((max, item) => Math.max(max, item.seq), 0)
-    await loadMessages(conversationOid, { afterSeq: last })
+    await loadMessages(conversationOid, { afterSeq: lastMessageSeq() })
   }
 
   /**
@@ -362,7 +430,7 @@ export const useAiConversationsStore = defineStore('aiConversations', () => {
   async function submitRun(
     conversationOid: string,
     content: string,
-    options: { model?: string; clientMsgId?: string } = {}
+    options: { clientMsgId?: string } = {}
   ): Promise<void> {
     const result = await submitRunApi(conversationOid, content, options)
     resetRun()
@@ -370,7 +438,7 @@ export const useAiConversationsStore = defineStore('aiConversations', () => {
       oid: result.run_id,
       conversation_oid: conversationOid,
       status: result.status,
-      model: options.model ?? null,
+      model: current.value?.model ?? null,
       stop_reason: null,
       rounds: 0,
       error_code: null,
@@ -426,10 +494,10 @@ export const useAiConversationsStore = defineStore('aiConversations', () => {
     startPolling(run.oid)
   }
 
-  /** 拉一次 run 详情，把增量并进来。 */
+  /** 拉一次 run 详情，把增量并进来（含运行中刚落的会话消息）。 */
   async function refreshRun(runId: string): Promise<AiRunDetail | null> {
     try {
-      const detail = await fetchRunDetail(runId, runAfterRound.value)
+      const detail = await fetchRunDetail(runId, runAfterRound.value, lastMessageSeq())
       applyRunDetail(detail)
       return detail
     } catch {
@@ -437,9 +505,10 @@ export const useAiConversationsStore = defineStore('aiConversations', () => {
     }
   }
 
-  /** 合并一次 run 的详情：事件与提案按去重键增量追加。 */
+  /** 合并一次 run 的详情：消息、事件与提案都按各自的键增量追加。 */
   function applyRunDetail(detail: AiRunDetail): void {
     activeRun.value = detail.run
+    appendMessages(detail.messages ?? [])
     if (detail.events.length > 0) {
       const seen = new Set(runEvents.value.map(eventKey))
       const fresh = detail.events.filter((event) => !seen.has(eventKey(event)))
@@ -496,7 +565,7 @@ export const useAiConversationsStore = defineStore('aiConversations', () => {
     }
     if (isTerminalRun(detail.run.status)) {
       stopPolling()
-      // 终态后 assistant 消息已落库：补一次增量消息。
+      // 终态后 assistant 消息已落库：再补一次增量做兜底，接着不用轮询了。
       await refreshMessages()
       return
     }
@@ -520,6 +589,9 @@ export const useAiConversationsStore = defineStore('aiConversations', () => {
     nextCursor,
     listLoading,
     listFailed,
+    archivedConversations,
+    archivedLoading,
+    archivedFailed,
     // 当前会话与消息
     currentOid,
     current,
@@ -543,9 +615,12 @@ export const useAiConversationsStore = defineStore('aiConversations', () => {
     // 动作
     loadConversations,
     loadMoreConversations,
+    loadArchivedConversations,
+    unarchiveConversation,
     createConversation,
     renameConversation,
     setConversationStatus,
+    setConversationThinking,
     removeConversation,
     selectConversation,
     loadMessages,

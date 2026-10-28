@@ -26,6 +26,7 @@ import {
   type BannedDevice
 } from '@/api/ban'
 import ZPagination from '@/components/utils/ZPagination.vue'
+import { isReauthCancelled, withReauth } from '@/plugins/reauth'
 
 const { t } = useI18n()
 
@@ -241,11 +242,16 @@ async function submitBan() {
   }
   banning.value = true
   try {
-    await banDevice({
-      xuehai_id: xuehaiId,
-      reason: form.reason.trim(),
-      until: untilOf(form.duration)
-    })
+    await withReauth(t('manage.deviceBans.reauthReason'), (token) =>
+      banDevice(
+        {
+          xuehai_id: xuehaiId,
+          reason: form.reason.trim(),
+          until: untilOf(form.duration)
+        },
+        token
+      )
+    )
     ElMessage.success(t('manage.deviceBans.manual.bannedNotice', { xuehaiId }))
     form.xuehai_id = ''
     form.reason = ''
@@ -253,6 +259,10 @@ async function submitBan() {
     void nextTick(() => formRef.value?.clearValidate())
     searchDevices()
   } catch (err) {
+    if (isReauthCancelled(err)) {
+      ElMessage.info(t('manage.reauth.cancelled'))
+      return
+    }
     ElMessage.error(detailOf(err) || t('manage.deviceBans.manual.banFailed'))
   } finally {
     banning.value = false
@@ -277,10 +287,16 @@ async function confirmUnban(device: BannedDevice) {
     return
   }
   try {
-    await unbanDevice(xuehaiId)
+    await withReauth(t('manage.deviceBans.reauthReason'), (token) =>
+      unbanDevice(xuehaiId, token)
+    )
     ElMessage.success(t('manage.deviceBans.table.unbannedNotice', { xuehaiId }))
     void loadDevices()
   } catch (err) {
+    if (isReauthCancelled(err)) {
+      ElMessage.info(t('manage.reauth.cancelled'))
+      return
+    }
     ElMessage.error(detailOf(err) || t('manage.deviceBans.table.unbanFailed'))
   }
 }
@@ -303,10 +319,16 @@ async function confirmReset(device: BannedDevice) {
     return
   }
   try {
-    await resetDeviceGradient(xuehaiId)
+    await withReauth(t('manage.deviceBans.reauthReason'), (token) =>
+      resetDeviceGradient(xuehaiId, token)
+    )
     ElMessage.success(t('manage.deviceBans.table.resetNotice', { xuehaiId }))
     void loadDevices()
   } catch (err) {
+    if (isReauthCancelled(err)) {
+      ElMessage.info(t('manage.reauth.cancelled'))
+      return
+    }
     ElMessage.error(detailOf(err) || t('manage.deviceBans.table.resetFailed'))
   }
 }

@@ -76,12 +76,13 @@ export async function listAll(): Promise<NotificationListData> {
 
 /** 创建即为发送；发布人由服务端从当前登录用户解析。 */
 export async function createNotification(
-  input: CreateNotificationInput
+  input: CreateNotificationInput,
+  verificationToken?: string
 ): Promise<NotificationMutationData> {
   const response = await axios({
     method: 'post',
     url: '/v3/notifications',
-    data: input
+    data: { ...input, ...(verificationToken ? { verification_token: verificationToken } : {}) }
   })
   return unwrap(response.data as Response<NotificationMutationData>)
 }
@@ -89,21 +90,23 @@ export async function createNotification(
 /** 部分更新标题/正文/启停状态。 */
 export async function updateNotification(
   id: string,
-  input: UpdateNotificationInput
+  input: UpdateNotificationInput,
+  verificationToken?: string
 ): Promise<NotificationMutationData> {
   const response = await axios({
     method: 'put',
     url: `/v3/notifications/${id}`,
-    data: input
+    data: { ...input, ...(verificationToken ? { verification_token: verificationToken } : {}) }
   })
   return unwrap(response.data as Response<NotificationMutationData>)
 }
 
 /** 硬删除。管理界面通常优先停用，以保留通知记录。 */
-export async function deleteNotification(id: string): Promise<void> {
+export async function deleteNotification(id: string, verificationToken?: string): Promise<void> {
   await axios({
     method: 'delete',
-    url: `/v3/notifications/${id}`
+    url: `/v3/notifications/${id}`,
+    ...(verificationToken ? { data: { verification_token: verificationToken } } : {})
   })
 }
 
@@ -157,12 +160,13 @@ export async function listVersions(id: string): Promise<NotificationVersionsData
 /** 回滚到指定版本：产生一个新版本，不改写历史。 */
 export async function rollbackNotification(
   id: string,
-  version: number
+  version: number,
+  verificationToken?: string
 ): Promise<NotificationRollbackData> {
   const response = await axios({
     method: 'post',
     url: `/v3/notifications/${id}/rollback`,
-    data: { version }
+    data: { version, ...(verificationToken ? { verification_token: verificationToken } : {}) }
   })
   return unwrap(response.data as Response<NotificationRollbackData>)
 }

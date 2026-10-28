@@ -3,9 +3,12 @@ import { computed, nextTick, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { AxiosError } from 'axios'
 import { ElImageViewer, ElMessage, ElMessageBox } from 'element-plus'
-import { CopyDocument, Download, EditPen, Refresh } from '@element-plus/icons-vue'
+import { CopyDocument, Document, Download, EditPen, MagicStick, Refresh } from '@element-plus/icons-vue'
 import { previewFile, downloadFile, editFile, type FilePreviewData } from '@/api/system/files.ts'
+import { ocrFile } from '@/api/ai/scenes.ts'
+import { aiErrorCodeOf, aiErrorCopy, aiErrorOf } from '@/api/ai/errors.ts'
 import ZMarkdown from '@/components/markdown/ZMarkdown.vue'
+import ZSceneRunDialog from '@/components/server/ZSceneRunDialog.vue'
 
 const SMALL_TEXT_LIMIT = 200 * 1024
 const MAX_ROWS = 5000
@@ -15,6 +18,9 @@ const MAX_EDIT_BYTES = 512 * 1024
 // 拿它写回会把原始字节换成另一串字节,等于破坏文件,所以只读。
 const EDIT_ENCODINGS = ['utf-8', 'gbk'] as const
 type EditEncoding = (typeof EDIT_ENCODINGS)[number]
+
+// 后端 OCR 只吃这三种,按扩展名决定「识别文字」按钮显隐(gif/bmp/ico/svg 一律不给)
+const OCR_EXTENSIONS = new Set(['png', 'jpg', 'webp'])
 
 // 这些扩展名前端直接按 binary 呈现,不发 preview 请求
 const BINARY_EXTENSIONS = new Set([
@@ -66,6 +72,55 @@ const imageSrc = computed(() =>
 )
 const isMdFile = computed(() => props.name.toLowerCase().endsWith('.md'))
 const showRendered = computed(() => isMdFile.value && sourceMode.value === 'rendered')
+
+// —— OCR / 智能分析 ——
+const ocrLoading = ref(false)
+const ocrText = ref('')
+const ocrError = ref('')
+const analysisVisible = ref(false)
+
+const fileExtension = computed(() => {
+  const index = props.name.lastIndexOf('.')
+  return index >= 0 ? props.name.slice(index + 1).toLowerCase() : ''
+})
+const canOcr = computed(() => isImage.value && OCR_EXTENSIONS.has(fileExtension.value))
+
+function aiErrorMessage(error: unknown, fallback: string): string {
+  const request = aiErrorOf(error)
+  if (!request) return fallback
+  if (request.status === 403) return t('server.files.preview.ocrForbidden')
+  const code = aiErrorCodeOf(error)
+  // 后端给的是中文一句话时原样展示,机器码才翻成人话
+  if (code && /[\u4e00-\u9fff]/.test(code)) return code
+  return aiErrorCopy(code, t).title || fallback
+}
+
+async function runOcr() {
+  if (ocrLoading.value) return
+  ocrLoading.value = true
+  ocrError.value = ''
+  ocrText.value = ''
+  try {
+    const data = await ocrFile(props.path)
+    ocrText.value = (data?.text ?? '').trim()
+    if (!ocrText.value) ocrError.value = t('server.files.preview.ocrEmpty')
+  } catch (error) {
+    ocrError.value = aiErrorMessage(error, t('server.files.preview.ocrFailed'))
+  } finally {
+    ocrLoading.value = false
+  }
+}
+
+async function copyOcrText() {
+  if (!ocrText.value) return
+  try {
+    await navigator.clipboard.writeText(ocrText.value)
+    ElMessage.success(t('server.files.preview.copied'))
+  } catch {
+    ElMessage.error(t('server.files.preview.copyFailed'))
+  }
+}
+
 const large = computed(
   () => isText.value && (preview.value?.truncated || text.value.length > SMALL_TEXT_LIMIT)
 )
@@ -167,6 +222,9 @@ async function fetchPreview() {
   sourceMode.value = 'rendered'
   dimensions.value = null
   resetEdit()
+  ocrLoading.value = false
+  ocrText.value = ''
+  ocrError.value = ''
   if (props.name.includes('.') && BINARY_EXTENSIONS.has(props.name.split('.').pop()!.toLowerCase())) {
     skipped.value = true
     loading.value = false
@@ -392,6 +450,9 @@ async function saveEdit() {
             <span class="min-w-0 flex-1" />
             <span class="yg-text-xs yg-text-tertiary tabular-nums">{{ editStats }}</span>
             <span class="yg-text-xs yg-text-tertiary">{{ t('server.files.preview.editLimitHint') }}</span>
+            <ElButton size="small" :icon="MagicStick" @click="analysisVisible = true">
+              {{ t('server.files.preview.aiAnalyze') }}
+            </ElButton>
           </div>
           <ElAlert
             v-if="saveError"
@@ -452,6 +513,23 @@ async function saveEdit() {
               <span v-if="dimensions">{{ dimensions.w }} × {{ dimensions.h }} px · </span>{{ sizeLabel }}
               <span>· {{ t('server.files.preview.zoomHint') }}</span>
             </div>
+            <div v-if="ocrLoading || ocrText || ocrError" class="ocr-result">
+              <div class="ocr-result__head">
+                <span class="yg-text-xs yg-text-tertiary">{{ t('server.files.preview.ocrResult') }}</span>
+                <ElButton
+                  v-if="ocrText"
+                  text
+                  bg
+                  size="small"
+                  :icon="CopyDocument"
+                  @click="copyOcrText"
+                >
+                  {{ t('server.files.preview.copy') }}
+                </ElButton>
+              </div>
+              <p v-if="ocrError" class="ocr-result__error">{{ ocrError }}</p>
+              <pre v-else class="ocr-result__text">{{ ocrLoading ? t('server.files.preview.ocrRunning') : ocrText }}</pre>
+            </div>
           </div>
 
           <div v-else-if="isText && showRendered" class="preview-scroll rendered">
@@ -490,6 +568,9 @@ async function saveEdit() {
         </ElButton>
       </template>
       <template v-else>
+        <ElButton v-if="canOcr" :icon="Document" :loading="ocrLoading" :disabled="ocrLoading" @click="runOcr">
+          {{ t('server.files.preview.ocr') }}
+        </ElButton>
         <ElButton v-if="isText" :icon="CopyDocument" @click="copyText">
           {{ t('server.files.preview.copy') }}
         </ElButton>
@@ -507,6 +588,13 @@ async function saveEdit() {
       </template>
     </template>
   </ElDialog>
+
+  <ZSceneRunDialog
+    v-model="analysisVisible"
+    scene="file_edit"
+    :title="t('server.files.preview.aiAnalyze')"
+    :context="draft"
+  />
 
   <ElImageViewer
     v-if="lightbox"
@@ -642,4 +730,42 @@ async function saveEdit() {
 .blob.whitespace-pre-wrap {
   white-space: pre-wrap;
   overflow-x: hidden;
+}
+
+/* 识别结果：贴图片下方,与预览区同样的发丝边框,长文本内部滚动 */
+.ocr-result {
+  align-self: stretch;
+  width: 100%;
+  max-height: 220px;
+  margin-top: var(--yg-space-2);
+  padding: var(--yg-space-2) var(--yg-space-3);
+  border: 1px solid var(--yg-border-subtle);
+  border-radius: var(--yg-radius-md);
+  background: var(--yg-bg-surface-sunken);
+  overflow: auto;
+}
+
+.ocr-result__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--yg-space-2);
+  padding-bottom: var(--yg-space-1);
+}
+
+.ocr-result__text {
+  margin: 0;
+  font-family: var(--yg-font-mono);
+  font-size: var(--yg-font-size-sm);
+  line-height: var(--yg-line-height-normal);
+  color: var(--yg-text-primary);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.ocr-result__error {
+  margin: 0;
+  font-size: var(--yg-font-size-sm);
+  line-height: var(--yg-line-height-normal);
+  color: var(--yg-text-danger);
 }</style>

@@ -526,7 +526,7 @@ describe('角色策略', () => {
     expect(wrapper.text()).toContain('活动与数据')
     expect(wrapper.text()).toContain('运维只读')
     expect(wrapper.text()).toContain('LLM 对话')
-    expect(wrapper.text()).toContain('允许在 AI 助手里发起多轮对话')
+    expect(wrapper.text()).toContain('允许在 ZVAgent 里发起多轮对话')
     expect(wrapper.text()).toContain('每月对话额度，每 1000 token = 1 单位')
     expect(wrapper.text()).toContain('当前规则：学生会 1 条；0 表示不允许创建')
   })

@@ -1,4 +1,7 @@
 export const zhCN = {
+  reauth: {
+    cancelled: '已取消密码再认证，本次没有做任何修改。'
+  },
   merge: {
     title: '合并义工',
     form: {
@@ -34,6 +37,18 @@ export const zhCN = {
       confirm: '删除',
       cancel: '取消',
       deletedNotice: '已删除群组'
+    },
+    create: {
+      action: '添加班级',
+      title: '添加班级',
+      name: '班级名称',
+      placeholder: '例如：高一（3）班',
+      required: '请输入班级名称',
+      confirm: '创建',
+      cancel: '取消',
+      creating: '创建中…',
+      createdNotice: '已创建班级「{name}」',
+      failed: '创建失败，请稍后重试'
     }
   },
   groupDetails: {
@@ -205,6 +220,7 @@ export const zhCN = {
   settings: {
     title: '系统设置',
     subtitle: '这里修改的参数保存后立即生效，不需要重启服务。',
+    reauthReason: '修改系统设置属于高危操作，请输入密码完成再认证。',
     refresh: '刷新',
     save: '保存改动',
     discard: '放弃改动',
@@ -338,15 +354,15 @@ export const zhCN = {
       ai: {
         chat: {
           label: 'LLM 对话',
-          hint: '允许在 AI 助手里发起多轮对话'
+          hint: '允许在 ZVAgent 里发起多轮对话'
         },
         ocr: {
           label: '文字识别(OCR)',
           hint: '允许上传图片做文字识别与取词'
         },
         agent: {
-          label: '智能体',
-          hint: '允许使用可自主调用工具的智能体模式'
+          label: 'ZVAgent',
+          hint: '允许使用可自主调用工具的 ZVAgent 模式'
         },
         schedule: {
           label: 'AI 定时任务',
@@ -430,6 +446,7 @@ export const zhCN = {
   notifications: {
     title: '通知管理',
     subtitle: '创建后立即发送给所有已登录用户；用户端按本地已阅状态逐条提醒。',
+    reauthReason: '发布或修改全站通知属于高危操作，请输入密码完成再认证。',
     create: '撰写通知',
     refresh: '刷新',
     edit: '编辑',
@@ -487,6 +504,7 @@ export const zhCN = {
       contentTooManyBytes: '正文按 UTF-8 编码后不能超过 {max} 字节（中文约 3 字节/字）'
     },
     history: {
+      reauthReason: '回滚通知版本属于高危操作，请输入密码完成再认证。',
       entry: '历史',
       title: '修改历史',
       empty: '暂无历史版本',
@@ -521,6 +539,7 @@ export const zhCN = {
     changelog: {
       title: '版本更新',
       hint: '新增或修改版本条目后，会自动以 SYSTEM 名义向用户下发版本公告通知。',
+      reauthReason: '修改版本更新记录会向全站下发公告，请输入密码完成再认证。',
       add: '新增版本',
       empty: '暂无版本记录',
       columns: {
@@ -549,6 +568,7 @@ export const zhCN = {
   banRules: {
     rulesTitle: '规则列表',
     usersTitle: '当前被封用户',
+    reauthReason: '修改封禁规则属于高危操作，请输入密码完成再认证。',
     refresh: '刷新',
     loadFailed: '加载失败，请稍后重试',
     savedNotice: '已保存',
@@ -672,6 +692,7 @@ export const zhCN = {
   },
   deviceBans: {
     hint: '设备封禁按设备号生效，与账号封禁是两份独立记录：解封只放出设备，账号封禁不会随之解除。重置梯度只清零该设备的违规次数，下一次违规从第一档重新计。',
+    reauthReason: '封禁或解封设备属于高危操作，请输入密码完成再认证。',
     refresh: '刷新',
     loadFailed: '加载失败，请稍后重试',
     cancel: '取消',

@@ -34,7 +34,8 @@ import {
 const { t } = useI18n()
 
 const DEFAULT_PAGE_SIZE = 200
-const QUICK_DIRS = ['/', '/www', '/www/zvms4', '/etc', '/home', '/var/log', '/tmp']
+// 后端只放行这两个根,页面的快捷入口与手输校验都以此为唯一口径
+const QUICK_DIRS = ['/www/zvms4', '/home']
 
 // 竖屏判定与 App.vue / UserNav.vue 同阈值(宽高比 ≤ 6/5):
 // 竖屏底部是悬浮药丸导航,左侧目录栏会让表格只剩几十像素,必须改为上下排布。
@@ -44,8 +45,8 @@ const isPortrait = useMediaQuery('(max-aspect-ratio: 6/5)')
 // 窄屏表格总宽装不下,固定列会像盖子一样压在修改时间上。
 const wideTable = useMediaQuery('(min-width: 1280px)')
 
-const currentPath = ref('/')
-const pathInput = ref('/')
+const currentPath = ref('/www/zvms4')
+const pathInput = ref('/www/zvms4')
 const entries = ref<FileEntry[]>([])
 const total = ref(0)
 const page = ref(1)
@@ -139,14 +140,35 @@ async function load() {
   }
 }
 
+// 与后端同一判定:/home 放行、/home2 不放行(前缀必须落在分隔符边界上)
+function isAllowedPath(path: string): boolean {
+  return QUICK_DIRS.some((root) => path === root || path.startsWith(`${root}/`))
+}
+
+function rootOf(path: string): string {
+  return QUICK_DIRS.find((root) => path === root || path.startsWith(`${root}/`)) ?? QUICK_DIRS[0]
+}
+
+function normalizePath(raw: string): string {
+  const absolute = raw.startsWith('/') ? raw : `/${raw}`
+  const collapsed = absolute.replace(/\/{2,}/g, '/')
+  return collapsed.length > 1 ? collapsed.replace(/\/+$/, '') : collapsed
+}
+
 async function jumpPath() {
-  let raw = pathInput.value.trim()
-  if (!raw) raw = '/'
-  if (!raw.startsWith('/')) {
+  const input = pathInput.value.trim()
+  if (input && !input.startsWith('/')) {
     ElMessage({ message: t('server.files.absolutePathOnly'), type: 'warning', grouping: true, plain: true })
     return
   }
-  currentPath.value = raw
+  const target = normalizePath(input)
+  if (!isAllowedPath(target)) {
+    ElMessage({ message: t('server.files.rootForbidden'), type: 'warning', grouping: true, plain: true })
+    pathInput.value = currentPath.value
+    return
+  }
+  currentPath.value = target
+  pathInput.value = target
   page.value = 1
   await load()
 }
@@ -165,6 +187,8 @@ function goCrumb(path: string | null) {
 function goParent() {
   const stripped = currentPath.value.replace(/\/+$/, '') || '/'
   const parent = stripped.slice(0, stripped.lastIndexOf('/')) || '/'
+  // 已经在根目录时父级不在白名单内,静默停在原地,不弹「越界」提示
+  if (!isAllowedPath(parent)) return
   pathInput.value = parent
   void jumpPath()
 }
@@ -190,11 +214,14 @@ function openEntry(entry: FileEntry) {
   }
 }
 
+// 面包屑从白名单根开始,根以上的祖先点不进去,不再渲染成死链
 function crumbs(): { name: string; path: string | null }[] {
+  const root = rootOf(currentPath.value)
   const parts = currentPath.value.split('/').filter(Boolean)
-  const acc: { name: string; path: string | null }[] = [{ name: '/', path: null }]
-  let prefix = ''
-  for (const part of parts) {
+  const depth = root.split('/').filter(Boolean).length
+  const acc: { name: string; path: string | null }[] = [{ name: root, path: root }]
+  let prefix = root
+  for (const part of parts.slice(depth)) {
     prefix += '/' + part
     acc.push({ name: part, path: prefix })
   }

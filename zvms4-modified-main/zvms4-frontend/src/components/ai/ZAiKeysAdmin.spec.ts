@@ -1,4 +1,4 @@
-import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
+import { flushPromises, mount, type DOMWrapper, type VueWrapper } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import ZAiKeysAdmin from './ZAiKeysAdmin.vue'
 import { createKey, listKeys, updateKey } from '@/api/ai'
@@ -21,6 +21,13 @@ vi.mock('@/api/ai', async (importOriginal) => {
     deleteKey: vi.fn()
   }
 })
+
+const reauth = vi.hoisted(() => ({ withToken: vi.fn(), cancelled: vi.fn() }))
+
+vi.mock('@/plugins/reauth', () => ({
+  withReauth: reauth.withToken,
+  isReauthCancelled: reauth.cancelled
+}))
 
 vi.mock('vue-i18n', async (importOriginal) => {
   const actual = await importOriginal<typeof import('vue-i18n')>()
@@ -380,10 +387,20 @@ function findButton(wrapper: VueWrapper, label: string) {
   return wrapper.findAll('button').find((button) => button.text() === label)
 }
 
+function inputByPlaceholder(scope: VueWrapper | DOMWrapper<Element>, placeholder: string) {
+  return scope.find(`input[placeholder="${placeholder}"]`)
+}
+
 beforeEach(() => {
   vi.mocked(listKeys).mockReset()
   vi.mocked(createKey).mockReset()
   vi.mocked(updateKey).mockReset()
+  reauth.withToken.mockReset()
+  reauth.cancelled.mockReset()
+  reauth.withToken.mockImplementation(
+    async (_reason: string, action: (token: string) => Promise<unknown>) => action('verify-token')
+  )
+  reauth.cancelled.mockImplementation((error: unknown) => error === 'cancel')
   elMessageErrorSpy.mockReset()
   elMessageSuccessSpy.mockReset()
   elMessageBoxConfirmSpy.mockReset()
@@ -476,20 +493,56 @@ describe('Key 管理', () => {
     await inputs[0]!.setValue('demo-key')
     await inputs[1]!.setValue('https://api.example.com')
     await inputs[2]!.setValue('gpt-4o-mini')
-    await inputs[3]!.setValue('sk-1234567890')
+    await inputByPlaceholder(dialog, 'ai.keys.apiKeyPlaceholder').setValue('sk-1234567890')
 
     await findButton(wrapper, 'ai.common.create')!.trigger('click')
     await flushPromises()
 
-    expect(createKey).toHaveBeenCalledWith({
-      scope: 'shared',
-      name: 'demo-key',
-      base_url: 'https://api.example.com',
-      models: ['gpt-4o-mini'],
-      api_key: 'sk-1234567890',
-      enabled: true
-    })
+    expect(createKey).toHaveBeenCalledWith(
+      {
+        scope: 'shared',
+        name: 'demo-key',
+        base_url: 'https://api.example.com',
+        models: ['gpt-4o-mini'],
+        api_key: 'sk-1234567890',
+        enabled: true
+      },
+      'verify-token'
+    )
     expect(elMessageSuccessSpy).toHaveBeenCalledWith('ai.keys.createdNotice')
+
+    wrapper.unmount()
+  })
+
+  it('模型填了上下文时提交对象形态，没填的保持字符串', async () => {
+    vi.mocked(createKey).mockResolvedValue(shared)
+    const wrapper = mountPage()
+    await flushPromises()
+
+    await findButton(wrapper, 'ai.keys.create')!.trigger('click')
+    const dialog = wrapper.find('.el-dialog-stub')
+    await inputByPlaceholder(dialog, 'ai.keys.namePlaceholder').setValue('demo-key')
+    await inputByPlaceholder(dialog, 'ai.keys.baseUrlPlaceholder').setValue(
+      'https://api.example.com'
+    )
+    await inputByPlaceholder(dialog, 'ai.keys.modelsPlaceholder').setValue(
+      'gpt-4o-mini, gpt-4o'
+    )
+    await inputByPlaceholder(dialog, 'ai.keys.apiKeyPlaceholder').setValue('sk-1234567890')
+
+    const contexts = dialog.findAll('.ai-keys__context-input')
+    expect(contexts.length).toBe(2)
+    await contexts[1]!.setValue('128000')
+
+    await findButton(wrapper, 'ai.common.create')!.trigger('click')
+    await flushPromises()
+
+    expect(createKey).toHaveBeenCalledWith(
+      expect.objectContaining({
+        models: ['gpt-4o-mini', { id: 'gpt-4o', context: 128000 }]
+      }),
+      'verify-token'
+    )
 
     wrapper.unmount()
   })
@@ -513,6 +566,41 @@ describe('Key 管理', () => {
 
     expect(wrapper.find('.el-dialog-stub').text()).toContain('AI_KEY_DUPLICATE')
     expect(wrapper.find('.el-dialog-stub').exists()).toBe(true)
+
+    wrapper.unmount()
+  })
+
+  it('编辑时对象模型的上下文可清空，清空回 null 而非字符串', async () => {
+    const withContext: AiKeyRecord = {
+      ...shared,
+      models: [{ id: 'gpt-4o', context: 128000 }, 'gpt-4o-mini']
+    }
+    vi.mocked(listKeys).mockResolvedValue([withContext])
+    vi.mocked(updateKey).mockResolvedValue(withContext)
+
+    const wrapper = mountPage()
+    await flushPromises()
+
+    expect(wrapper.find('.el-table-stub').text()).toContain('gpt-4o · 128k')
+
+    const row = wrapper.findAll('.el-table-stub__row')[0]!
+    const editButton = row.findAll('button').find((button) => button.text() === 'ai.common.edit')!
+    await editButton.trigger('click')
+
+    const contexts = wrapper.findAll('.ai-keys__context-input')
+    expect((contexts[0]!.element as HTMLInputElement).value).toBe('128000')
+    await contexts[0]!.setValue('')
+
+    await findButton(wrapper, 'ai.common.save')!.trigger('click')
+    await flushPromises()
+
+    expect(updateKey).toHaveBeenCalledWith(
+      'oid-shared',
+      expect.objectContaining({
+        models: [{ id: 'gpt-4o', context: null }, 'gpt-4o-mini']
+      }),
+      'verify-token'
+    )
 
     wrapper.unmount()
   })
@@ -575,7 +663,11 @@ describe('Key 到期', () => {
     await findButton(wrapper, 'ai.common.save')!.trigger('click')
     await flushPromises()
 
-    expect(updateKey).toHaveBeenCalledWith('oid-shared', expect.objectContaining({ expires_at: null }))
+    expect(updateKey).toHaveBeenCalledWith(
+      'oid-shared',
+      expect.objectContaining({ expires_at: null }),
+      'verify-token'
+    )
 
     wrapper.unmount()
   })
@@ -597,7 +689,8 @@ describe('Key 到期', () => {
 
     expect(updateKey).toHaveBeenCalledWith(
       'oid-shared',
-      expect.objectContaining({ expires_at: '2030-01-01T00:00:00.000Z' })
+      expect.objectContaining({ expires_at: '2030-01-01T00:00:00.000Z' }),
+      'verify-token'
     )
 
     wrapper.unmount()
@@ -623,6 +716,45 @@ describe('Key 到期', () => {
     const expiresItem = wrapper.find('[data-prop="expiresAt"]')
     expect(expiresItem.text()).toContain('AI_KEY_BAD_EXPIRY')
     expect(wrapper.find('.el-dialog-stub').exists()).toBe(true)
+
+    wrapper.unmount()
+  })
+})
+
+describe('密码再认证', () => {
+  it('启停写操作先过再认证，令牌过期后换一张重试成功', async () => {
+    reauth.withToken.mockImplementation(
+      async (_reason: string, action: (token: string) => Promise<unknown>) => {
+        try {
+          return await action('stale-token')
+        } catch {
+          return action('fresh-token')
+        }
+      }
+    )
+    vi.mocked(updateKey)
+      .mockRejectedValueOnce(Object.assign(new Error('forbidden'), { status: 403 }))
+      .mockResolvedValueOnce({ ...shared, enabled: false })
+
+    const wrapper = mountPage()
+    await flushPromises()
+
+    const switchButton = wrapper.findAll('.el-switch-stub')[1]!
+    await switchButton.trigger('click')
+    await flushPromises()
+
+    expect(reauth.withToken).toHaveBeenCalledWith('ai.keys.reauthReason', expect.any(Function))
+    expect(vi.mocked(updateKey).mock.calls[0]).toEqual([
+      'oid-shared',
+      { enabled: false },
+      'stale-token'
+    ])
+    expect(vi.mocked(updateKey).mock.calls[1]).toEqual([
+      'oid-shared',
+      { enabled: false },
+      'fresh-token'
+    ])
+    expect(elMessageErrorSpy).not.toHaveBeenCalled()
 
     wrapper.unmount()
   })

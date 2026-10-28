@@ -118,6 +118,10 @@ export async function getAiPrompt(oid: string): Promise<AiPromptAuditDetail> {
   return {
     ...result,
     // 正文为空与正文缺失在展示上是同一件事（都是「没有内容可看」），收敛成空串。
-    prompt_text: result.prompt_text ?? ''
+    prompt_text: result.prompt_text ?? '',
+    answer_text: result.answer_text ?? '',
+    tool_calls: result.tool_calls ?? null,
+    refused: result.refused ?? 0,
+    warned: result.warned ?? 0
   }
 }
