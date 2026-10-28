@@ -156,7 +156,7 @@ def guard(monkeypatch):
         return state["user_doc"]
 
     async def insert_log(
-        url, user, data, timestamp, ltype, level, xuehai_id
+        url, user, data, timestamp, ltype, level, xuehai_id, client_ip="", user_agent=""
     ):  # noqa: A002 - 与 ZVMSLog.insert_log 的形参名保持一致
         logs.append(
             {
@@ -166,6 +166,8 @@ def guard(monkeypatch):
                 "type": ltype,
                 "level": level,
                 "xuehai_id": xuehai_id,
+                "client_ip": client_ip,
+                "user_agent": user_agent,
             }
         )
 
@@ -535,20 +537,20 @@ async def test_agent_jailbreak_department_is_not_exempt(guard) -> None:
     assert result["recorded"] == 1
     assert result["duplicates"] == 0
     assert result["warned"] is True
-    assert result["banned"] is False
+    assert result["banned"] is True
     assert result["rule_code"] == "agent_jailbreak"
     assert len(repo.rows) == 1
     assert repo.rows[0]["signal"] == "agent_jailbreak"
     assert repo.rows[0]["trigger"] == "agent_jailbreak"
-    # 首次只警告，不落封禁；证据同时进了警告账本。
-    assert calls["bans"] == []
+    # 判定成立即按首档落封；证据同时进了警告账本。
+    assert len(calls["bans"]) == 1
     assert len(calls["warnings"].rows) == 1
     assert [e for e in calls["logs"] if e["type"] == "platform_misuse_exempt"] == []
 
 
 @pytest.mark.asyncio
 async def test_agent_jailbreak_admin_stays_exempt(guard) -> None:
-    """admin 保留豁免：自动封管理员可能把平台锁死，且有无限制模式兜底。"""
+    """admin 保留豁免：审核层已按 ``is_admin`` 旁路，这里做保险。"""
     repo, state, calls = guard
     state["rule"] = {
         **_rule(threshold=1),
@@ -712,7 +714,7 @@ async def test_agent_jailbreak_keeps_rule_input_and_real_device(guard) -> None:
 
 
 # ---------------------------------------------------------------------------
-# agent 越狱：先警告、再梯度封号（V041 USER_WARNINGS）
+# agent 越狱：记违规 + 警告 + 立即首档封号（V041 USER_WARNINGS）
 # ---------------------------------------------------------------------------
 
 
@@ -752,8 +754,8 @@ def _ban_spy(monkeypatch) -> list[dict]:
 
 
 @pytest.mark.asyncio
-async def test_first_jailbreak_only_warns(guard) -> None:
-    """首次命中：证据入库 + 本月警告 1 行，**不**落封禁。"""
+async def test_first_jailbreak_bans_first_tier_immediately(guard) -> None:
+    """首次命中：证据入库 + 本月警告 1 行 + **本次就按首档封号**。"""
     repo, _state, calls = guard
 
     result = await violation_guard.record_agent_jailbreak(
@@ -762,49 +764,57 @@ async def test_first_jailbreak_only_warns(guard) -> None:
 
     assert result["recorded"] == 1
     assert result["warned"] is True
-    assert result["banned"] is False
+    assert result["banned"] is True
     assert result["rule_code"] == "agent_jailbreak"
-    assert len(calls["bans"]) == 0
+    assert len(calls["bans"]) == 1
+    assert calls["bans"][0][1] == "agent_jailbreak"
     assert len(calls["warnings"].rows) == 1
     row = calls["warnings"].rows[0]
     assert row["rule_code"] == "agent_jailbreak"
     assert len(row["period"]) == 6
-    assert "首次警告" in row["reason"]
+    assert "首档封禁" in row["reason"]
     assert len(_warning_logs(calls["logs"])) == 1
+    assert len([e for e in calls["logs"] if e["type"] == "ban_rule"]) == 1
     assert [entry["signal"] for entry in repo.rows] == ["agent_jailbreak"]
 
 
 @pytest.mark.asyncio
-async def test_second_real_violation_in_same_month_bans(guard, monkeypatch) -> None:
-    """同月第二次**新证据**：走梯度第一档（1 天）。"""
-    _repo, _state, _calls = guard
-    bans = _ban_spy(monkeypatch)
+async def test_second_real_violation_in_same_month_is_not_repunished(
+    guard, monkeypatch
+) -> None:
+    """同月第二次**新证据**：封禁已生效，只记证据，不再重复落封、不再发警告。"""
+    repo, _state, _calls = guard
     # 让「第二次」不再命中 5 分钟去重窗口：这是两次真实的新违规。
     monkeypatch.setattr(
         violation_guard, "dedup_window_seconds", lambda signal: 0, raising=False
     )
 
-    await violation_guard.record_agent_jailbreak(USER, xuehai_id=XUEHAI, detail="删库")
-    result = await violation_guard.record_agent_jailbreak(
+    first = await violation_guard.record_agent_jailbreak(
+        USER, xuehai_id=XUEHAI, detail="删库"
+    )
+    second = await violation_guard.record_agent_jailbreak(
         USER, xuehai_id=XUEHAI, detail="把所有用户导出"
     )
 
-    assert result["warned"] is False
-    assert result["banned"] is True
-    assert result["days"] == 1
-    assert result["offense"] == 1
-    assert len(bans) == 1
-    assert bans[0]["rule_code"] == "agent_jailbreak"
+    assert first["banned"] is True
+    assert second["banned"] is True
+    assert second["skipped"] == "already_banned"
+    assert second["warned"] is False
+    assert len(_calls["bans"]) == 1
+    assert len(repo.rows) == 2
 
 
 @pytest.mark.asyncio
-async def test_cross_month_warning_resets(guard, monkeypatch) -> None:
-    """跨月：唯一键换一期，又是「本月首次警告」，不封号。"""
+async def test_cross_month_records_a_new_warning(guard, monkeypatch) -> None:
+    """跨月：警告账本换一期（新的一行），封禁状态仍然让它不重复处罚。"""
     _repo, _state, _calls = guard
     bans = _ban_spy(monkeypatch)
     period = {"value": "202601"}
     monkeypatch.setattr(
         violation_guard, "period_now", lambda now=None: period["value"]
+    )
+    monkeypatch.setattr(
+        violation_guard, "dedup_window_seconds", lambda signal: 0, raising=False
     )
 
     first = await violation_guard.record_agent_jailbreak(
@@ -815,15 +825,15 @@ async def test_cross_month_warning_resets(guard, monkeypatch) -> None:
         USER, xuehai_id=XUEHAI, detail="第二次"
     )
 
-    assert first["warned"] is True and first["banned"] is False
-    assert second["warned"] is True and second["banned"] is False
-    assert bans == []
+    assert first["warned"] is True and first["banned"] is True
+    assert second["warned"] is True and second["banned"] is True
+    assert len(bans) == 2
     assert len(_calls["warnings"].rows) == 2
 
 
 @pytest.mark.asyncio
-async def test_retry_of_the_same_violation_never_escalates(guard, monkeypatch) -> None:
-    """客户端原样重发（窗口内去重）不能被推到封号。"""
+async def test_retry_of_the_same_violation_is_punished_once(guard, monkeypatch) -> None:
+    """客户端原样重发（窗口内去重）不会重复处罚，也不会重复发警告。"""
     repo, _state, calls = guard
     bans = _ban_spy(monkeypatch)
 
@@ -836,9 +846,10 @@ async def test_retry_of_the_same_violation_never_escalates(guard, monkeypatch) -
 
     assert retry["recorded"] == 0
     assert retry["duplicates"] == 1
-    assert retry["warned"] is True
+    assert retry["duplicate"] is True
+    assert retry["warned"] is False
     assert retry["banned"] is False
-    assert bans == []
+    assert len(bans) == 1
     assert len(repo.rows) == 1
     assert len(calls["warnings"].rows) == 1
 
@@ -879,8 +890,8 @@ async def test_already_banned_is_recorded_but_not_penalised_again(guard, monkeyp
 
 
 @pytest.mark.asyncio
-async def test_warning_store_failure_does_not_ban(guard, monkeypatch) -> None:
-    """账本写不进去时 fail-open：没有「同月已警告」这个事实，就不该封号。"""
+async def test_warning_store_failure_still_bans(guard, monkeypatch) -> None:
+    """账本写不进去不改变处罚结论：证据已入库，封禁照落。"""
     _repo, _state, calls = guard
     bans = _ban_spy(monkeypatch)
 
@@ -894,9 +905,8 @@ async def test_warning_store_failure_does_not_ban(guard, monkeypatch) -> None:
     )
 
     assert result["warned"] is False
-    assert result["banned"] is False
-    assert result.get("error") == "warning_store_failed"
-    assert bans == []
+    assert result["banned"] is True
+    assert len(bans) == 1
 
 
 # ---------------------------------------------------------------------------

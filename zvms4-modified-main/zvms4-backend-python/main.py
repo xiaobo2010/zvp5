@@ -2,12 +2,13 @@ from fastapi import Request, FastAPI, HTTPException
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, RedirectResponse
 import asyncio
+import json
 import logging
 import os
 import re
 import threading
 from datetime import datetime
-from typings.log import ZVMSLog, xuehai_id_from
+from typings.log import ZVMSLog, client_ip_from, user_agent_from, xuehai_id_from
 from routers import (
     users_router,
     groups_router,
@@ -38,7 +39,7 @@ from routers import (
     ai_api_keys_router,
     ai_agent_router,
     ai_conversations_router,
-    ai_chat_conversations_router,
+    ai_scenes_router,
     ai_schedule_router,
     system_settings_router,
     system_role_policies_router,
@@ -169,6 +170,7 @@ MAINTENANCE_EXEMPT_PATHS = {
     "/api",
     "/api/",
     "/api/users/auth",
+    "/api/users/auth/logout",
     "/api/cert",
     "/api/version",
     "/api/health",
@@ -226,28 +228,68 @@ async def maintenance_middleware(request: Request, call_next):
     return await call_next(request)
 
 
+SECURITY_RESPONSE_HEADERS = {
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "strict-origin-when-cross-origin",
+    "Strict-Transport-Security": "max-age=31536000",
+    "Content-Security-Policy": (
+        "default-src 'self'; script-src 'self'; "
+        "style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; "
+        "font-src 'self' data:; connect-src 'self'; object-src 'none'; "
+        "base-uri 'self'; frame-ancestors 'none'"
+    ),
+}
+
+
+@app.middleware("http")
+async def security_headers_middleware(request: Request, call_next):
+    response = await call_next(request)
+    for name, value in SECURITY_RESPONSE_HEADERS.items():
+        response.headers.setdefault(name, value)
+    return response
+
+
+SHIELD_BLOCKED_MESSAGE = "您的请求被服务器判定为非法访问。已经记录您的IP和UA数据，管理员将进行安全追责。"
+
+
 @app.middleware("http")
 async def shield_middleware(request: Request, call_next):
-    if (
-        SEC_PATTERN.search(request.url.path)
-        or (
-            "Mozilla" not in request.headers.get("User-Agent", "")
-            and not request.url.path.startswith(AI_OPENAI_PREFIX)
-        )
-        or str(request.method).upper() not in allowed_methods
-    ):
+    pattern_hit = SEC_PATTERN.search(request.url.path)
+    bad_ua = (
+        "Mozilla" not in request.headers.get("User-Agent", "")
+        and not request.url.path.startswith(AI_OPENAI_PREFIX)
+    )
+    bad_method = str(request.method).upper() not in allowed_methods
+    if pattern_hit or bad_ua or bad_method:
+        payload = {
+            "reason": (
+                "path_pattern"
+                if pattern_hit
+                else ("user_agent" if bad_ua else "method")
+            ),
+            "match": pattern_hit.group(0)[:64] if pattern_hit else None,
+            "method": request.method,
+            "referer": request.headers.get("Referer"),
+            "origin": request.headers.get("Origin"),
+            "xff": request.headers.get("X-Forwarded-For"),
+            "content_length": request.headers.get("Content-Length"),
+            "accept_language": request.headers.get("Accept-Language"),
+        }
         _spawn_security_audit(
             ZVMSLog(
                 url=str(request.url),
                 user="",
-                data="系统检测到异常请求",
+                data=json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
                 timestamp=datetime.now().timestamp(),
                 type="security_alert",
                 level="warning",
                 xuehai_id=xuehai_id_from(request),
+                client_ip=client_ip_from(request),
+                user_agent=user_agent_from(request),
             )
         )
-        return JSONResponse(status_code=418, content="请求已被拦截")
+        return JSONResponse(status_code=418, content=SHIELD_BLOCKED_MESSAGE)
     return await call_next(request)
 
 
@@ -581,7 +623,7 @@ app.include_router(
     ai_conversations_router.router, prefix="/api/ai", tags=["ai"]
 )
 app.include_router(
-    ai_chat_conversations_router.router, prefix="/api/ai", tags=["ai"]
+    ai_scenes_router.router, prefix="/api/ai", tags=["ai"]
 )
 app.include_router(
     ai_schedule_router.router, prefix="/api/ai/scheduled-tasks", tags=["ai"]

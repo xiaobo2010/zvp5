@@ -150,7 +150,7 @@ def _insert_stmt(
     name: str,
     kind: str,
     base_url: str,
-    models: list[str],
+    models: list[str | dict],
     api_key_cipher: str,
     key_hint: str | None,
     enabled: bool,
@@ -189,7 +189,7 @@ def _update_values(
     *,
     name: str | None = None,
     base_url: str | None = None,
-    models: list[str] | None = None,
+    models: list[str | dict] | None = None,
     api_key_cipher: str | None = None,
     key_hint: str | None = None,
     enabled: bool | None = None,
@@ -251,8 +251,13 @@ def _delete_stmt(oid: str):
 # row mapping
 # ---------------------------------------------------------------------------
 
-def _models_list(raw: Any) -> list[str]:
-    """``MODELS_JSON`` → ``list[str]``（CLOB 可能以 LOB / str / list 形态回来）。"""
+def _models_list(raw: Any) -> list[str | dict]:
+    """``MODELS_JSON`` → ``["model-id" | {"id", "context"}]``（CLOB 可能以 LOB / str / list 形态回来）。
+
+    两种形态都要原样保留：字符串是老数据，对象带 ``context``（上下文窗口）。
+    在这里把对象 ``str()`` 掉会把窗口变成一串 Python repr，而 ``context`` 是
+    唯一能自动推导压缩水位的东西。
+    """
     if raw is None:
         return []
     if hasattr(raw, "read"):
@@ -271,7 +276,7 @@ def _models_list(raw: Any) -> list[str]:
         parsed = raw
     if not isinstance(parsed, (list, tuple)):
         return []
-    return [str(item) for item in parsed]
+    return [item for item in parsed if isinstance(item, (str, dict))]
 
 
 def _row(mapping: Any) -> Row:
@@ -330,7 +335,7 @@ class OracleAICredentialsRepo:
         name: str,
         kind: str,
         base_url: str,
-        models: list[str],
+        models: list[str | dict],
         api_key_cipher: str,
         key_hint: str | None = None,
         enabled: bool = True,
@@ -382,7 +387,7 @@ class OracleAICredentialsRepo:
         *,
         name: str | None = None,
         base_url: str | None = None,
-        models: list[str] | None = None,
+        models: list[str | dict] | None = None,
         api_key_cipher: str | None = None,
         key_hint: str | None = None,
         enabled: bool | None = None,

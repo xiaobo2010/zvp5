@@ -65,6 +65,8 @@ class _RecordingLog:
         type: str = "",
         level: str = "info",
         xuehai_id: str = "",
+        client_ip: str = "",
+        user_agent: str = "",
     ) -> None:
         self.url = url
         self.user = user
@@ -73,6 +75,8 @@ class _RecordingLog:
         self.type = type
         self.level = level
         self.xuehai_id = xuehai_id
+        self.client_ip = client_ip
+        self.user_agent = user_agent
         _LOG_CALLS.append({"kind": "construct", "type": type, "data": data})
 
     def with_text(self, text: str, type: str = "", level: str = "") -> "_RecordingLog":

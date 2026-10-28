@@ -65,7 +65,7 @@ def test_openai_ua_is_still_shielded_outside_the_v1_prefix(client):
     )
 
     assert response.status_code == 418
-    assert response.json() == "请求已被拦截"
+    assert response.json() == main.SHIELD_BLOCKED_MESSAGE
 
 
 def test_openai_ua_does_not_bypass_the_suspicious_path_pattern(client):

@@ -174,6 +174,30 @@ def test_estimate_tokens_empty_and_dirty_input():
 # --------------------------------------------------------------- context_limit
 
 
+@pytest.fixture(autouse=True)
+def _no_model_level_context(monkeypatch):
+    """默认没有「模型级上下文」索引：别的用例建过目录会把它填上，跨文件串味。"""
+    from services.ai import credentials
+
+    monkeypatch.setattr(credentials, "_model_contexts", {})
+
+
+def test_context_limit_prefers_the_model_level_context(monkeypatch):
+    """顺序：模型级（凭据里配的）→ AI_MODEL_CONTEXT_LIMITS → 默认值（R4）。"""
+    from services.ai import credentials
+
+    monkeypatch.setattr(credentials, "_model_contexts", {"lab/gpt-x": 64000})
+    monkeypatch.setattr(settings, "AI_MODEL_CONTEXT_LIMITS", {"gpt-x": 128000}, raising=False)
+    monkeypatch.setattr(settings, "AI_DEFAULT_CONTEXT_LIMIT", 4096, raising=False)
+
+    # 合格 ID 与裸名都要命中：窗口是模型的属性，不是渠道的。
+    assert context.context_limit("lab/gpt-x") == 64000
+    assert context.context_limit("gpt-x") == 64000
+    # 没配的模型继续走配置表 / 默认值。
+    assert context.context_limit("lab/gpt-z") == 4096
+
+
+
 def test_context_limit_exact_model_wins(monkeypatch):
     monkeypatch.setattr(settings, "AI_MODEL_CONTEXT_LIMITS", {"gpt-x": 128000, "*": 8000}, raising=False)
     monkeypatch.setattr(settings, "AI_DEFAULT_CONTEXT_LIMIT", 4096, raising=False)

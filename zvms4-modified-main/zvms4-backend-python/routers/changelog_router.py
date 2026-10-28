@@ -7,7 +7,7 @@ from services.changelog_notifications import (
     sync_changelog_notification,
 )
 from typings.log import inject_log
-from util.object_id import get_current_user
+from util.object_id import get_current_user, require_password_verification
 from util.user import get_user_display_name
 from utils import validate_object_id
 
@@ -18,6 +18,13 @@ class ChangelogEntryRequest(BaseModel):
     version: str
     date: str
     items: list[str]
+    verification_token: str | None = None
+
+
+class ChangelogDeleteRequest(BaseModel):
+    """删除的复核令牌；``DELETE`` 也走 body，与附件/用户端点一致。"""
+
+    verification_token: str | None = None
 
 
 def _require_admin(user: dict) -> None:
@@ -47,6 +54,7 @@ async def create_changelog(
     log=Depends(inject_log),
 ):
     _require_admin(user)
+    await require_password_verification(payload.verification_token, user)
 
     repo = backends.get_changelog_repo()
     new_id = await repo.create(payload.version, payload.date, list(payload.items))
@@ -80,6 +88,7 @@ async def update_changelog(
     log=Depends(inject_log),
 ):
     _require_admin(user)
+    await require_password_verification(payload.verification_token, user)
     validate_object_id(oid)
     repo = backends.get_changelog_repo()
     await repo.update(oid, payload.version, payload.date, list(payload.items))
@@ -103,10 +112,14 @@ async def update_changelog(
 @router.delete("/{oid}", status_code=204)
 async def delete_changelog(
     oid: str,
+    payload: ChangelogDeleteRequest | None = None,
     user=Depends(get_current_user),
     log=Depends(inject_log),
 ):
     _require_admin(user)
+    await require_password_verification(
+        payload.verification_token if payload is not None else None, user
+    )
     validate_object_id(oid)
     repo = backends.get_changelog_repo()
     entry = await repo.get_by_oid(oid)

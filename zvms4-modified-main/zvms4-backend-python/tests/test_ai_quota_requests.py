@@ -544,10 +544,10 @@ def test_approve_resets_used_and_marks_approved(api) -> None:
     assert quota_repo.rows[(STUDENT_OID, quota_service.period_now(), "chat")][
         "used"
     ] == 0
-    # 审批留痕：ltype 复用既有约定，detail 带申请 oid 与被操作用户。
+    # 审批留痕：走专用 ltype，不再混进 system_settings_update（检索要能分开）。
     assert audits and audits[-1]["operator"] == ADMIN_OID
     assert audits[-1]["action"] == "ai_quota_request_approved"
-    assert audits[-1]["log_type"] == "system_settings_update"
+    assert audits[-1]["log_type"] == "ai_quota_request_approve"
     assert f"request={row['_id']}" in audits[-1]["detail"]
     assert f"user={STUDENT_OID}" in audits[-1]["detail"]
 
@@ -665,6 +665,7 @@ def test_reject_marks_rejected_and_leaves_the_quota_alone(api) -> None:
         "used"
     ] == 100
     assert audits[-1]["action"] == "ai_quota_request_rejected"
+    assert audits[-1]["log_type"] == "ai_quota_request_reject"
 
 
 def test_rejecting_an_already_rejected_request_is_a_conflict(api) -> None:
@@ -830,9 +831,15 @@ def test_v044_matches_models_and_v001() -> None:
     v001 = ddl_check.parse_v001()
 
     assert set(migration["tables"]) == {"ai_quota_requests"}
-    assert migration["tables"]["ai_quota_requests"] == modeled["tables"][
-        "ai_quota_requests"
-    ]
+    # V047 起 models/V001 的 created_at 带 DEFAULT SYSTIMESTAMP；V044 是历史事实，
+    # 不追新目标态。
+    expected = modeled["tables"]["ai_quota_requests"]
+    migrated = migration["tables"]["ai_quota_requests"]
+    assert migrated["columns"]["created_at"] == ("timestamp", True, None)
+    assert migrated == {
+        **expected,
+        "columns": {**expected["columns"], "created_at": ("timestamp", True, None)},
+    }
     assert v001["tables"]["ai_quota_requests"] == modeled["tables"][
         "ai_quota_requests"
     ]

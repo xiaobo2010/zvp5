@@ -15,7 +15,11 @@ from pydantic import BaseModel
 
 from services.ai import api_keys
 from typings.log import inject_log
-from util.object_id import get_current_user, validate_object_id
+from util.object_id import (
+    get_current_user,
+    require_password_verification,
+    validate_object_id,
+)
 from util.permission.features import ensure_feature
 
 router = APIRouter()
@@ -30,6 +34,7 @@ class ApiKeyCreateRequest(BaseModel):
 
     name: str
     expires_at: str | None = None
+    verification_token: str | None = None
 
 
 class ApiKeyUpdateRequest(BaseModel):
@@ -42,6 +47,13 @@ class ApiKeyUpdateRequest(BaseModel):
     name: str | None = None
     enabled: bool | None = None
     expires_at: str | None = None
+    verification_token: str | None = None
+
+
+class ApiKeyDeleteRequest(BaseModel):
+    """吊销的复核令牌；``DELETE`` 也走 body，与附件/用户端点一致。"""
+
+    verification_token: str | None = None
 
 
 def _is_admin(user: dict) -> bool:
@@ -85,6 +97,9 @@ async def create_api_key(
 ):
     """签发一把 key：``data.token`` 是**唯一一次**能看到明文的机会。"""
     ensure_feature(user, "ai.keys")
+    await require_password_verification(
+        payload.verification_token, user, detail="AI_PASSWORD_VERIFICATION_REQUIRED"
+    )
     try:
         view = await api_keys.create(user["id"], payload.name, payload.expires_at)
     except api_keys.ApiKeyError as exc:
@@ -108,9 +123,14 @@ async def update_api_key(
     """改名字 / 启停 / 到期时间；owner 或 admin。"""
     ensure_feature(user, "ai.keys")
     target = validate_object_id(oid)
+    await require_password_verification(
+        payload.verification_token, user, detail="AI_PASSWORD_VERIFICATION_REQUIRED"
+    )
     try:
         view = await api_keys.update(
-            target, user, payload.model_dump(exclude_unset=True)
+            target,
+            user,
+            payload.model_dump(exclude_unset=True, exclude={"verification_token"}),
         )
     except api_keys.ApiKeyError as exc:
         raise _api_key_error(exc) from None
@@ -126,11 +146,17 @@ async def update_api_key(
 @router.delete("/{oid}", status_code=204)
 async def delete_api_key(
     oid: str,
+    payload: ApiKeyDeleteRequest | None = None,
     user=Depends(get_current_user),
     log=Depends(inject_log),
 ):
     """吊销一把 key：立即从进程内校验缓存里消失（别的 worker 最晚一个 TTL 后）。"""
     target = validate_object_id(oid)
+    await require_password_verification(
+        payload.verification_token if payload is not None else None,
+        user,
+        detail="AI_PASSWORD_VERIFICATION_REQUIRED",
+    )
     try:
         await api_keys.delete(target, user)
     except api_keys.ApiKeyError as exc:

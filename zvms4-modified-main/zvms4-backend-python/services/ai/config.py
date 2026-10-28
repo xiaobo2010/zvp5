@@ -542,6 +542,20 @@ async def allowed_models_for(user_oid: str) -> dict[str, str]:
     from . import credentials
 
     entries = await credentials.catalog(user_oid)
+    return allowed_models_from(entries)
+
+
+def allowed_models_from(entries: list[dict] | None) -> dict[str, str]:
+    """目录条目 → ``model -> entry key``（:func:`allowed_models_for` 的纯函数内核）。
+
+    单独拆出来是给「手上已经有目录」的调用方用的：agent 的选模型路径在同一次
+    请求里既要用目录、又要用这份映射，两次 ``catalog`` 在缓存未命中时就是两遍
+    同样的查询。
+    """
+    from . import credentials
+
+    if not entries:
+        return {}
     rows = credentials.catalog_models(entries)
 
     mapping: dict[str, str] = {}
@@ -556,6 +570,7 @@ async def allowed_models_for(user_oid: str) -> dict[str, str]:
     return mapping
 
 
+
 def public_provider_view() -> list[dict]:
     """供 ``/api/ai/health`` 的脱敏视图：只留 host，不含 key、不含完整路径。"""
     view: list[dict] = []
@@ -568,7 +583,11 @@ def public_provider_view() -> list[dict]:
                 "name": name,
                 "kind": cfg.get("kind"),
                 "base_url": _host_only(cfg.get("base_url")),
-                "models": [m for m in models if isinstance(m, str)] if isinstance(models, list) else [],
+                "models": (
+                    [m for m in models if isinstance(m, str)]
+                    if isinstance(models, list)
+                    else []
+                ),
                 "configured": is_configured(cfg),
             }
         )

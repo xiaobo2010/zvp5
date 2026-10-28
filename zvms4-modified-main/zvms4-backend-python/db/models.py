@@ -204,7 +204,12 @@ activities = Table(
     Column("name", VARCHAR2(256), nullable=False),
     Column("description", VARCHAR2(1000), nullable=True),
     Column("activity_date", oracle.TIMESTAMP, nullable=False),
-    Column("created_at", oracle.TIMESTAMP, nullable=False),
+    Column(
+        "created_at",
+        oracle.TIMESTAMP,
+        nullable=False,
+        server_default=text("SYSTIMESTAMP"),
+    ),
     Column("updated_at", oracle.TIMESTAMP, nullable=False),
     Column("appointee_oid", VARCHAR2(24), nullable=False),
     Column("approver", VARCHAR2(24), nullable=True),
@@ -317,7 +322,6 @@ time_academic_year = Table(
         ["user_oid"], ["users.oid"], name="fk_time_academic_year_user_oid"
     ),
 )
-Index("ix_time_academic_year_user_oid", time_academic_year.c.user_oid)
 
 
 # ---------------------------------------------------------------------------
@@ -409,36 +413,16 @@ daily_exports = Table(
     "daily_exports",
     metadata,
     _oid_pk(),
-    Column("created_at", oracle.TIMESTAMP, nullable=False),
+    Column(
+        "created_at",
+        oracle.TIMESTAMP,
+        nullable=False,
+        server_default=text("SYSTIMESTAMP"),
+    ),
     Column("status", VARCHAR2(16), nullable=False),
     _json("daily_exports", "data", nullable=False, default="'[]'"),
     _oid_check("daily_exports"),
     _json_check("daily_exports", "data"),
-)
-
-
-# ---------------------------------------------------------------------------
-# LOGS  (zvms_new device schema; see spec §2/§7 for pending policy)
-# ---------------------------------------------------------------------------
-
-logs = Table(
-    "logs",
-    metadata,
-    _oid_pk(),
-    Column("xuehai_id", NUMBER(18), nullable=True),
-    _json("logs", "net_session", nullable=True),
-    _json("logs", "request", nullable=True),
-    _json("logs", "user_info", nullable=True),
-    Column("ltype", VARCHAR2(64), nullable=True),
-    Column("log_level", VARCHAR2(32), nullable=True),
-    Column("summary", VARCHAR2(1000), nullable=True),
-    Column("ts_at", oracle.TIMESTAMP, nullable=True),
-    _json("logs", "ts_raw", nullable=True),
-    _oid_check("logs"),
-    _json_check("logs", "net_session"),
-    _json_check("logs", "request"),
-    _json_check("logs", "user_info"),
-    _json_check("logs", "ts_raw"),
 )
 
 
@@ -475,15 +459,17 @@ app_logs = Table(
     Column("ltype", VARCHAR2(64), nullable=True),
     Column("log_level", VARCHAR2(32), nullable=True),
     Column("xuehai_id", VARCHAR2(32), nullable=True),
+    Column("client_ip", VARCHAR2(45), nullable=True),
+    Column("user_agent", VARCHAR2(256), nullable=True),
     _oid_check("app_logs"),
 )
-Index("ix_app_logs_ts_at", app_logs.c.ts_at)
 Index("ix_app_logs_xuehai_id", app_logs.c.xuehai_id)
 # 规则封禁要按「用户 + 时间窗」数不同学海设备（COUNT(DISTINCT xuehai_id)）；
 # 单列索引只能吃到 APP_USER 一半，复合索引让时间窗过滤留在索引里。
 Index("ix_app_logs_user_ts", app_logs.c.app_user, app_logs.c.ts_raw)
 # 管理端日志页按 ts_raw 倒序分页，并按类型/级别过滤后再排序；两条索引分别
-# 服务「无过滤」与「type(±level) + 时间窗」两种查询形状。
+# 服务「无过滤」与「type(±level) + 时间窗」两种查询形状。保留期清理用的是
+# 同一列（ts_raw），所以 ts_at 只留数据、不建索引。
 Index("ix_app_logs_ts_raw", app_logs.c.ts_raw)
 Index("ix_app_logs_type_level_ts", app_logs.c.ltype, app_logs.c.log_level, app_logs.c.ts_raw)
 
@@ -562,7 +548,12 @@ files = Table(
     Column("status", VARCHAR2(16), nullable=False),
     Column("ocr_status", VARCHAR2(16), nullable=False),
     Column("ocr_retry", NUMBER(3), nullable=False, server_default=text("0")),
-    Column("created_at", oracle.TIMESTAMP, nullable=False),
+    Column(
+        "created_at",
+        oracle.TIMESTAMP,
+        nullable=False,
+        server_default=text("SYSTIMESTAMP"),
+    ),
     Column("updated_at", oracle.TIMESTAMP, nullable=True),
     Column("deleted_at", oracle.TIMESTAMP, nullable=True),
     _oid_check("files"),
@@ -602,7 +593,12 @@ file_ocr = Table(
     Column("ocr_text", CLOB, nullable=True),
     Column("confidence", BINARY_DOUBLE, nullable=True),
     _json("file_ocr", "raw_json", nullable=True),
-    Column("created_at", oracle.TIMESTAMP, nullable=False),
+    Column(
+        "created_at",
+        oracle.TIMESTAMP,
+        nullable=False,
+        server_default=text("SYSTIMESTAMP"),
+    ),
     _oid_check("file_ocr"),
     _json_check("file_ocr", "raw_json"),
 )
@@ -623,7 +619,12 @@ file_events = Table(
     Column("from_status", VARCHAR2(16), nullable=True),
     Column("to_status", VARCHAR2(16), nullable=True),
     _json("file_events", "detail", nullable=True),
-    Column("created_at", oracle.TIMESTAMP, nullable=False),
+    Column(
+        "created_at",
+        oracle.TIMESTAMP,
+        nullable=False,
+        server_default=text("SYSTIMESTAMP"),
+    ),
     _oid_check("file_events"),
     _json_check("file_events", "detail"),
 )
@@ -647,7 +648,12 @@ user_device_bindings = Table(
     Column("source", VARCHAR2(16), nullable=False, server_default=text("'auto'")),
     Column("status", VARCHAR2(16), nullable=False, server_default=text("'active'")),
     Column("note", VARCHAR2(256), nullable=True),
-    Column("created_at", oracle.TIMESTAMP, nullable=False),
+    Column(
+        "created_at",
+        oracle.TIMESTAMP,
+        nullable=False,
+        server_default=text("SYSTIMESTAMP"),
+    ),
     Column("updated_at", oracle.TIMESTAMP, nullable=False),
     CheckConstraint(f"REGEXP_LIKE(oid,'{OID_REGEX}')", name="ck_udb_oid"),
     CheckConstraint("source IN ('auto','admin')", name="ck_udb_source"),
@@ -673,7 +679,12 @@ dual_auth_uses = Table(
     Column("otp_counter", NUMBER(19), nullable=False),
     Column("action", VARCHAR2(64), nullable=False),
     Column("operator_oid", VARCHAR2(24), nullable=False),
-    Column("created_at", oracle.TIMESTAMP, nullable=False),
+    Column(
+        "created_at",
+        oracle.TIMESTAMP,
+        nullable=False,
+        server_default=text("SYSTIMESTAMP"),
+    ),
     UniqueConstraint("approver_oid", "otp_counter", name="uq_dual_approver_counter"),
 )
 
@@ -701,7 +712,12 @@ ban_rules = Table(
     Column("config", VARCHAR2(2000), nullable=False),
     Column("penalties", VARCHAR2(2000), nullable=False),
     Column("builtin", NUMBER(1), nullable=False, server_default=text("0")),
-    Column("created_at", oracle.TIMESTAMP, nullable=False),
+    Column(
+        "created_at",
+        oracle.TIMESTAMP,
+        nullable=False,
+        server_default=text("SYSTIMESTAMP"),
+    ),
     Column("updated_at", oracle.TIMESTAMP, nullable=False),
     _oid_check("ban_rules"),
     CheckConstraint("enabled IN (0,1)", name="ck_ban_rules_enabled"),
@@ -733,7 +749,12 @@ ban_records = Table(
     Column("started_at", oracle.TIMESTAMP, nullable=False),
     Column("expires_at", oracle.TIMESTAMP, nullable=True),
     Column("operator_oid", VARCHAR2(24), nullable=True),
-    Column("created_at", oracle.TIMESTAMP, nullable=False),
+    Column(
+        "created_at",
+        oracle.TIMESTAMP,
+        nullable=False,
+        server_default=text("SYSTIMESTAMP"),
+    ),
     _oid_check("ban_records"),
     CheckConstraint(
         "source IN ('admin','rule','agent')", name="ck_ban_records_source"
@@ -769,7 +790,12 @@ notifications = Table(
     # V038：来源对象 oid（当前只有 CHANGELOG.OID）。NULL = 管理员手写通知；
     # 非空 = 由某个对象自动同步生成，一个来源最多一条公告。
     Column("source_ref", VARCHAR2(24), nullable=True),
-    Column("created_at", oracle.TIMESTAMP, nullable=False),
+    Column(
+        "created_at",
+        oracle.TIMESTAMP,
+        nullable=False,
+        server_default=text("SYSTIMESTAMP"),
+    ),
     Column("updated_at", oracle.TIMESTAMP, nullable=False),
     _oid_check("notifications"),
     CheckConstraint("active IN (0,1)", name="ck_notifications_active"),
@@ -803,7 +829,12 @@ temp_login_passwords = Table(
     Column("expires_at", oracle.TIMESTAMP, nullable=False),
     Column("used_at", oracle.TIMESTAMP, nullable=True),
     Column("revoked_at", oracle.TIMESTAMP, nullable=True),
-    Column("created_at", oracle.TIMESTAMP, nullable=False),
+    Column(
+        "created_at",
+        oracle.TIMESTAMP,
+        nullable=False,
+        server_default=text("SYSTIMESTAMP"),
+    ),
     _oid_check("temp_login_passwords"),
 )
 Index(
@@ -859,7 +890,12 @@ notification_versions = Table(
     Column("content_hash", VARCHAR2(64), nullable=False),
     Column("author_oid", VARCHAR2(24), nullable=True),
     Column("author_name", VARCHAR2(128), nullable=False),
-    Column("created_at", oracle.TIMESTAMP, nullable=False),
+    Column(
+        "created_at",
+        oracle.TIMESTAMP,
+        nullable=False,
+        server_default=text("SYSTIMESTAMP"),
+    ),
     UniqueConstraint("notification_oid", "version", name="uq_notification_versions"),
 )
 Index(
@@ -887,7 +923,12 @@ device_challenges = Table(
     Column("attempts", NUMBER(3), nullable=False, server_default=text("0")),
     Column("expires_at", oracle.TIMESTAMP, nullable=False),
     Column("consumed_at", oracle.TIMESTAMP, nullable=True),
-    Column("created_at", oracle.TIMESTAMP, nullable=False),
+    Column(
+        "created_at",
+        oracle.TIMESTAMP,
+        nullable=False,
+        server_default=text("SYSTIMESTAMP"),
+    ),
     _oid_check("device_challenges"),
 )
 Index(
@@ -921,7 +962,12 @@ banned_devices = Table(
     Column("source", VARCHAR2(16), nullable=False),
     Column("rule_code", VARCHAR2(64), nullable=True),
     Column("operator_oid", VARCHAR2(24), nullable=True),
-    Column("created_at", oracle.TIMESTAMP, nullable=False),
+    Column(
+        "created_at",
+        oracle.TIMESTAMP,
+        nullable=False,
+        server_default=text("SYSTIMESTAMP"),
+    ),
     CheckConstraint(
         "source IN ('rule','admin','agent')", name="ck_banned_devices_source"
     ),
@@ -963,14 +1009,13 @@ ban_violations = Table(
     Column("xuehai_id", VARCHAR2(32), nullable=True),
     Column("detail", VARCHAR2(500), nullable=True),
     Column("batch_id", VARCHAR2(32), nullable=True),
-    Column("created_at", oracle.TIMESTAMP, nullable=False),
+    Column(
+        "created_at",
+        oracle.TIMESTAMP,
+        nullable=False,
+        server_default=text("SYSTIMESTAMP"),
+    ),
     _oid_check("ban_violations"),
-)
-Index(
-    "ix_ban_violations_user",
-    ban_violations.c.user_oid,
-    ban_violations.c.trigger_code,
-    ban_violations.c.created_at,
 )
 Index(
     "ix_ban_violations_batch",
@@ -979,6 +1024,9 @@ Index(
     ban_violations.c.created_at,
     ban_violations.c.batch_id,
 )
+# 管理页按 created_at 倒序分页、无其它过滤：上面两条复合索引都以 user_oid 打头，
+# 服务不了「全表按时间排序」这一种形状。
+Index("ix_ban_violations_created", ban_violations.c.created_at)
 
 
 # ---------------------------------------------------------------------------
@@ -997,7 +1045,12 @@ user_warnings = Table(
     Column("period", oracle.CHAR(6), nullable=False),
     Column("reason", VARCHAR2(512), nullable=True),
     Column("detail", VARCHAR2(500), nullable=True),
-    Column("created_at", oracle.TIMESTAMP, nullable=False),
+    Column(
+        "created_at",
+        oracle.TIMESTAMP,
+        nullable=False,
+        server_default=text("SYSTIMESTAMP"),
+    ),
     _oid_check("user_warnings"),
     CheckConstraint(
         "REGEXP_LIKE(period,'^[0-9]{6}$')",
@@ -1080,7 +1133,12 @@ ai_call_logs = Table(
     # 我们算的稳定前缀哈希（sha256 前 16 位，形如 ``zvp:1a2b3c4d5e6f7890``），
     # **不含用户内容**：只用来把「同一段前缀」的调用归到一起看命中率。
     Column("cache_key", VARCHAR2(64), nullable=True),
-    Column("created_at", oracle.TIMESTAMP, nullable=False),
+    Column(
+        "created_at",
+        oracle.TIMESTAMP,
+        nullable=False,
+        server_default=text("SYSTIMESTAMP"),
+    ),
     _oid_check("ai_call_logs"),
     CheckConstraint("capability IN ('ocr','chat')", name="ck_ai_call_logs_capability"),
     CheckConstraint(
@@ -1118,6 +1176,13 @@ Index(
     ai_call_logs.c.created_at,
 )
 Index("ix_ai_call_logs_created", ai_call_logs.c.created_at)
+# 管理页按 status（以及 provider）过滤后按 created_at 倒序：既有复合索引以
+# endpoint 打头，单 status 过滤吃不到；这两列的组合索引才是那种形状的访问路径。
+Index(
+    "ix_ai_call_logs_status_created",
+    ai_call_logs.c.status,
+    ai_call_logs.c.created_at,
+)
 Index(
     "ix_ai_call_logs_endpoint_status",
     ai_call_logs.c.endpoint,
@@ -1201,7 +1266,12 @@ ai_credentials = Table(
     Column("api_key_cipher", VARCHAR2(2000), nullable=False),
     Column("key_hint", VARCHAR2(16), nullable=True),
     Column("enabled", NUMBER(1), nullable=False, server_default=text("1")),
-    Column("created_at", oracle.TIMESTAMP, nullable=False),
+    Column(
+        "created_at",
+        oracle.TIMESTAMP,
+        nullable=False,
+        server_default=text("SYSTIMESTAMP"),
+    ),
     Column("updated_at", oracle.TIMESTAMP, nullable=False),
     # 这把 key 的到期时间；NULL = 永不过期（存量行不回填：它们本来就该一直有效）。
     # 过期条目在服务层与 disabled 走同一条「不进生效目录」的路径，所以路由与
@@ -1257,7 +1327,12 @@ ai_ocr_engines = Table(
     Column("key_hint", VARCHAR2(16), nullable=True),
     Column("enabled", NUMBER(1), nullable=False, server_default=text("1")),
     Column("priority", NUMBER(3), nullable=False, server_default=text("100")),
-    Column("created_at", oracle.TIMESTAMP, nullable=False),
+    Column(
+        "created_at",
+        oracle.TIMESTAMP,
+        nullable=False,
+        server_default=text("SYSTIMESTAMP"),
+    ),
     Column("updated_at", oracle.TIMESTAMP, nullable=False),
     _oid_check("ai_ocr_engines"),
     CheckConstraint(
@@ -1354,7 +1429,12 @@ ai_agent_events = Table(
     Column("actor_oid", VARCHAR2(32), nullable=True),
     Column("approver_oid", VARCHAR2(32), nullable=True),
     Column("confirmed_at", oracle.TIMESTAMP, nullable=True),
-    Column("created_at", oracle.TIMESTAMP, nullable=False),
+    Column(
+        "created_at",
+        oracle.TIMESTAMP,
+        nullable=False,
+        server_default=text("SYSTIMESTAMP"),
+    ),
     CheckConstraint(
         "tool_kind IS NULL OR tool_kind IN ('read','write')",
         name="ck_ai_agent_events_tool_kind",
@@ -1391,7 +1471,17 @@ ai_prompt_audit = Table(
     Column("roles_snapshot", VARCHAR2(64), nullable=True),
     Column("purpose", VARCHAR2(24), nullable=True),
     Column("prompt_text", CLOB, nullable=True),
-    Column("created_at", oracle.TIMESTAMP, nullable=False),
+    # 合规审计扩字段（V046）：最终回答、本轮工具调用摘要、拒绝/警告标记。
+    Column("answer_text", CLOB, nullable=True),
+    Column("tool_calls", CLOB, nullable=True),
+    Column("refused", NUMBER(1), nullable=False, server_default=text("0")),
+    Column("warned", NUMBER(1), nullable=False, server_default=text("0")),
+    Column(
+        "created_at",
+        oracle.TIMESTAMP,
+        nullable=False,
+        server_default=text("SYSTIMESTAMP"),
+    ),
 )
 Index("ix_ai_prompt_audit_user_created", ai_prompt_audit.c.user_oid, ai_prompt_audit.c.created_at)
 
@@ -1406,6 +1496,10 @@ Index("ix_ai_prompt_audit_user_created", ai_prompt_audit.c.user_oid, ai_prompt_a
 #   TOKENS_* 是**累加器**（DEFAULT 0 NOT NULL）：0 是真实的「还没用过」，不是
 #   未知；CONTEXT_TOKENS 是最近一次请求的 prompt token，用来画上下文水位条。
 #   MESSAGE_COUNT 是冗余计数：列表页与删除回执都不该去 COUNT 百万行 CLOB 表。
+#   THINKING 是会话级思考强度（low|medium|high，NULL=上游默认）：它随会话走而不是
+#   随 run 走——同一次会话里中途换档会让「同一段历史不同档位」的缓存前缀失效。
+#   SCENE 非空 = 只读场景会话（terminal | file_edit），NULL = 普通会话；普通列表
+#   查询固定 `scene IS NULL`，场景会话只经 `/api/ai/scenes/{scene}/runs` 触达。
 #   LIST 查询不投影 SUMMARY（CLOB）：列表只要元数据。
 # ---------------------------------------------------------------------------
 
@@ -1420,6 +1514,11 @@ ai_conversations = Table(
     Column("MODE", VARCHAR2(8), key="mode", nullable=False),
     Column("title", VARCHAR2(120), nullable=True),
     Column("model", VARCHAR2(120), nullable=True),
+    # 思考强度（low|medium|high）；NULL = 上游默认，不给上游附带任何字段。
+    Column("thinking", VARCHAR2(16), nullable=True),
+    # 只读场景（terminal | file_edit）；NULL = 普通会话。列表查询固定过滤 NULL：
+    # 场景会话有自己的入口，不该污染普通会话列表。
+    Column("scene", VARCHAR2(16), nullable=True),
     Column("status", VARCHAR2(12), nullable=False, server_default=text("'active'")),
     Column("summary", CLOB, nullable=True),
     Column("summary_upto_seq", NUMBER(10), nullable=False, server_default=text("0")),
@@ -1429,7 +1528,12 @@ ai_conversations = Table(
     Column("context_tokens", NUMBER(12), nullable=False, server_default=text("0")),
     Column("message_count", NUMBER(10), nullable=False, server_default=text("0")),
     Column("compaction_degraded_at", oracle.TIMESTAMP, nullable=True),
-    Column("created_at", oracle.TIMESTAMP, nullable=False),
+    Column(
+        "created_at",
+        oracle.TIMESTAMP,
+        nullable=False,
+        server_default=text("SYSTIMESTAMP"),
+    ),
     Column("updated_at", oracle.TIMESTAMP, nullable=False),
     # CHECK 里同样要带引号：Oracle 的表达式解析器对保留字一视同仁（ORA-00904），
     # 而 ddl_check 逐字比较表达式，两侧必须写同一个形状。
@@ -1475,16 +1579,16 @@ ai_messages = Table(
     Column("total_tokens", NUMBER(10), nullable=True),
     Column("cache_read_tokens", NUMBER(10), nullable=True),
     Column("cache_write_tokens", NUMBER(10), nullable=True),
-    Column("created_at", oracle.TIMESTAMP, nullable=False),
+    Column(
+        "created_at",
+        oracle.TIMESTAMP,
+        nullable=False,
+        server_default=text("SYSTIMESTAMP"),
+    ),
     UniqueConstraint("conversation_oid", "seq", name="uq_ai_messages_conv_seq"),
     CheckConstraint("role IN ('user','assistant','tool')", name="ck_ai_messages_role"),
     CheckConstraint("seq >= 1", name="ck_ai_messages_seq"),
     CheckConstraint("round_no IS NULL OR round_no >= 1", name="ck_ai_messages_round_no"),
-)
-Index(
-    "ix_ai_messages_conv_created",
-    ai_messages.c.conversation_oid,
-    ai_messages.c.created_at,
 )
 
 
@@ -1524,7 +1628,12 @@ ai_runs = Table(
     Column("total_tokens", NUMBER(12), nullable=True),
     Column("cancel_requested", NUMBER(1), nullable=False, server_default=text("0")),
     Column("heartbeat_at", oracle.TIMESTAMP, nullable=True),
-    Column("created_at", oracle.TIMESTAMP, nullable=False),
+    Column(
+        "created_at",
+        oracle.TIMESTAMP,
+        nullable=False,
+        server_default=text("SYSTIMESTAMP"),
+    ),
     Column("started_at", oracle.TIMESTAMP, nullable=True),
     Column("finished_at", oracle.TIMESTAMP, nullable=True),
     CheckConstraint(
@@ -1651,7 +1760,12 @@ ai_scheduled_tasks = Table(
     Column("run_count", NUMBER, nullable=False, server_default=text("0")),
     Column("last_status", VARCHAR2(16), nullable=True),
     Column("last_error", VARCHAR2(512), nullable=True),
-    Column("created_at", oracle.TIMESTAMP, nullable=False),
+    Column(
+        "created_at",
+        oracle.TIMESTAMP,
+        nullable=False,
+        server_default=text("SYSTIMESTAMP"),
+    ),
     Column("updated_at", oracle.TIMESTAMP, nullable=False),
     _oid_check("ai_scheduled_tasks"),
     CheckConstraint(
@@ -1757,7 +1871,12 @@ ai_quota_requests = Table(
     Column("decided_by", oracle.CHAR(24), nullable=True),
     Column("decided_at", oracle.TIMESTAMP, nullable=True),
     Column("decision_note", VARCHAR2(500), nullable=True),
-    Column("created_at", oracle.TIMESTAMP, nullable=False),
+    Column(
+        "created_at",
+        oracle.TIMESTAMP,
+        nullable=False,
+        server_default=text("SYSTIMESTAMP"),
+    ),
     Column("updated_at", oracle.TIMESTAMP, nullable=False),
     _oid_check("ai_quota_requests"),
     CheckConstraint(

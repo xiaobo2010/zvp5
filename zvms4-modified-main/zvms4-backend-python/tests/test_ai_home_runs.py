@@ -258,3 +258,60 @@ def test_role_gate_still_applies(api, repo) -> None:
 
     assert response.status_code == 403
     assert response.json()["error"]["code"] == "AI_FORBIDDEN"
+
+
+# ---------------------------------------------------------------------------
+# run 详情：R1 的 since_msg_seq / R2 的「提交时忽略 model」
+# ---------------------------------------------------------------------------
+
+
+def test_run_detail_forwards_since_msg_seq(api, monkeypatch) -> None:
+    """``since_msg_seq`` 原样下传；不传就是 ``None``（响应里没有 messages 键）。"""
+    seen: list[dict] = []
+
+    async def fake_detail(*, user, run_id, after_round=0, since_msg_seq=None):
+        seen.append({"run_id": run_id, "since_msg_seq": since_msg_seq})
+        return {"run": {}, "events": [], "proposals": []}
+
+    monkeypatch.setattr(ai_conversations_router.run_queue, "run_detail", fake_detail)
+
+    first = api.get(f"{PREFIX}/runs/{'b' * 32}", params={"since_msg_seq": 7})
+    second = api.get(f"{PREFIX}/runs/{'b' * 32}")
+
+    assert first.status_code == 200, first.text
+    assert second.status_code == 200, second.text
+    assert seen == [
+        {"run_id": "b" * 32, "since_msg_seq": 7},
+        {"run_id": "b" * 32, "since_msg_seq": None},
+    ]
+    # 负数由协议层挡掉：seq 从 1 起，永远没有「-1 之后」。
+    assert (
+        api.get(f"{PREFIX}/runs/{'b' * 32}", params={"since_msg_seq": -1}).status_code
+        == 422
+    )
+
+
+def test_submit_run_ignores_the_legacy_model_field(api, monkeypatch) -> None:
+    """老客户端仍会带 ``model``：忽略它，且把刚读到的会话行交给 submit（R2）。"""
+    seen: dict = {}
+
+    async def fake_require_row(*, user, oid):
+        return {"_id": oid, "mode": "agent", "model": "lab/gpt-x"}
+
+    async def fake_submit(**kwargs):
+        seen.update(kwargs)
+        return {"run_id": "c" * 32, "message_oid": "d" * 32, "status": "queued"}
+
+    monkeypatch.setattr(
+        ai_conversations_router.conversations, "require_row", fake_require_row
+    )
+    monkeypatch.setattr(ai_conversations_router.run_queue, "submit", fake_submit)
+
+    response = api.post(
+        f"{PREFIX}/conversations/{'a' * 32}/runs",
+        json={"content": "跑一下", "model": "lab/gpt-evil"},
+    )
+
+    assert response.status_code == 202, response.text
+    assert "model" not in seen
+    assert seen["conversation"]["_id"] == "a" * 32

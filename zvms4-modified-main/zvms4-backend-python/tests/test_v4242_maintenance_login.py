@@ -43,7 +43,10 @@ class StubLogs:
         self.rows: list[dict] = []
         self._exc = exc
 
-    async def insert(self, url, user, data, timestamp, ltype, level, xuehai_id):
+    async def insert(
+        self, url, user, data, timestamp, ltype, level, xuehai_id,
+        client_ip="", user_agent="",
+    ):
         if self._exc is not None:
             raise self._exc
         self.rows.append(
@@ -55,6 +58,8 @@ class StubLogs:
                 "type": ltype,
                 "level": level,
                 "xuehai_id": xuehai_id,
+                "client_ip": client_ip,
+                "user_agent": user_agent,
             }
         )
 

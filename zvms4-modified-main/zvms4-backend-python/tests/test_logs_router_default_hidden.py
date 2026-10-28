@@ -100,6 +100,38 @@ def test_explicit_other_type_does_not_apply_the_blacklist(monkeypatch):
     assert repo.calls[0]["exclude_types"] is None
 
 
+def test_list_response_exposes_client_ip_and_user_agent(monkeypatch):
+    """仓储带回的两列必须原样出现在 ``GET /api/logs`` 的 data 里。
+
+    路由只补 ``_id``/``user_name``，不做字段白名单——一旦哪天加了白名单，
+    这两列就会被静默吞掉，前端「IP / UA」行永远空着。
+    """
+    repo = _StubRepo()
+    row = {
+        "_id": "a" * 24,
+        "url": "/api/x",
+        "user": "",
+        "data": "{}",
+        "timestamp": 1.0,
+        "type": "user_login",
+        "level": "info",
+        "xuehai_id": "",
+        "client_ip": "203.0.113.7",
+        "user_agent": "Mozilla/5.0",
+    }
+
+    async def list_page(**kwargs):
+        repo.calls.append(kwargs)
+        return [row], 1
+
+    repo.list_page = list_page
+
+    body = _client(monkeypatch, repo).get("/api/logs").json()
+
+    assert body["data"][0]["client_ip"] == "203.0.113.7"
+    assert body["data"][0]["user_agent"] == "Mozilla/5.0"
+
+
 def test_default_sql_excludes_login_fail_and_keeps_null_types():
     # 带一个额外谓词，验证 OR 被括号圈住（否则 OR 会吃掉 AND，把过滤打穿）。
     sql = _sql(

@@ -5,6 +5,13 @@ from db import backends
 from util.object_id import authenticated_log_user, log_level_floor
 
 
+#: ``APP_LOGS.USER_AGENT`` 的列宽（``VARCHAR2(256 CHAR)``）。
+USER_AGENT_MAX_LEN = 256
+
+#: ``APP_LOGS.CLIENT_IP`` 的列宽；45 是 IPv6 文本最长形式的长度。
+CLIENT_IP_MAX_LEN = 45
+
+
 class ZVMSLog:
     url: str
     user: str
@@ -13,6 +20,8 @@ class ZVMSLog:
     type: str
     level: str
     xuehai_id: str
+    client_ip: str
+    user_agent: str
 
     def __init__(
         self,
@@ -23,6 +32,8 @@ class ZVMSLog:
         type: str = "",
         level: str = "info",
         xuehai_id: str = "",
+        client_ip: str = "",
+        user_agent: str = "",
     ):
         self.url = url
         self.user = user
@@ -31,6 +42,8 @@ class ZVMSLog:
         self.type = type
         self.level = level
         self.xuehai_id = xuehai_id
+        self.client_ip = client_ip
+        self.user_agent = user_agent
 
     def model_dump(self) -> dict:
         return {
@@ -41,6 +54,8 @@ class ZVMSLog:
             "type": self.type,
             "level": self.level,
             "xuehai_id": self.xuehai_id,
+            "client_ip": self.client_ip,
+            "user_agent": self.user_agent,
         }
 
     def with_text(self, text: str, type: str = "", level: str = "") -> "ZVMSLog":
@@ -74,12 +89,40 @@ class ZVMSLog:
             self.type,
             self.effective_level(),
             self.xuehai_id,
+            self.client_ip,
+            self.user_agent,
         )
 
 
 def xuehai_id_from(request: Request) -> str:
     value = (request.headers.get("Xuehai-Id") or "").strip()
     return value if value.isascii() and value.isdecimal() and len(value) <= 32 else ""
+
+
+def client_ip_from(request: Request) -> str:
+    """请求来源 IP（字符串）；取不到时返回空串。
+
+    生产在 nginx 后面（uvicorn 只听 ``127.0.0.1:8018``），``request.client.host``
+    永远是回环地址，真实来源只在 ``X-Forwarded-For`` 里。取链条上**第一个非空
+    段**：那是 nginx 侧记下的原始客户端，后面的段是各级代理。没有该头（直连/
+    测试）才回落到 socket 对端地址。
+
+    返回值只用于审计展示，不做任何信任判定——转发头可以被客户端伪造，但「谁
+    声称自己从哪来」本身就是需要留痕的事实。
+    """
+    forwarded = request.headers.get("X-Forwarded-For") or ""
+    for part in forwarded.split(","):
+        candidate = part.strip()
+        if candidate:
+            return candidate[:CLIENT_IP_MAX_LEN]
+    peer = getattr(request, "client", None)
+    host = getattr(peer, "host", "") if peer is not None else ""
+    return (host or "")[:CLIENT_IP_MAX_LEN]
+
+
+def user_agent_from(request: Request) -> str:
+    """请求 UA（截断到列宽）；缺失时返回空串。"""
+    return (request.headers.get("User-Agent") or "").strip()[:USER_AGENT_MAX_LEN]
 
 
 def inject_log(
@@ -91,4 +134,12 @@ def inject_log(
     data = ""
     timestamp = datetime.timestamp(datetime.now())
     xuehai_id = xuehai_id_from(request)
-    return ZVMSLog(url, user, data, timestamp, xuehai_id=xuehai_id)
+    return ZVMSLog(
+        url,
+        user,
+        data,
+        timestamp,
+        xuehai_id=xuehai_id,
+        client_ip=client_ip_from(request),
+        user_agent=user_agent_from(request),
+    )

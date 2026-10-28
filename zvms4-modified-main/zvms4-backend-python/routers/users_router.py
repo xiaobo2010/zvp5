@@ -8,7 +8,13 @@ from pydantic import BaseModel
 from bcrypt import hashpw, gensalt
 import asyncio
 from util.activity_signoff import user_activity_signoff
-from typings.log import inject_log, ZVMSLog, xuehai_id_from
+from typings.log import (
+    inject_log,
+    ZVMSLog,
+    client_ip_from,
+    user_agent_from,
+    xuehai_id_from,
+)
 from typings.user import User
 from util.calculate import calculate_user_time
 from util.group import get_user_permissions, is_in_a_same_class
@@ -27,8 +33,9 @@ from util.permission.user import (
 from db import backends
 from db.oracle.session import session_scope
 from db.system_state import is_enabled_fresh
-from services import device_guard, risk_monitor
+from services import device_guard, log_events, risk_monitor
 from util.ban import ban_headers, ban_is_active, raise_banned
+from util import login_throttle
 from util.cert import (
     get_hashed_password_by_cert,
     jwt_encode,
@@ -98,9 +105,11 @@ async def _note_login_failure(
             user_oid,
             f"登录失败（{summary}）",
             now,
-            type="login_fail",
+            type=log_events.LOGIN_FAIL,
             level="info",
             xuehai_id=xuehai_id,
+            client_ip=client_ip_from(request),
+            user_agent=user_agent_from(request),
         ).insert_log()
     except Exception:
         _logger.exception("写入 login_fail 日志失败")
@@ -196,9 +205,11 @@ async def _log_device_mismatch_then_evaluate(
             f"用户 {log_name} 尝试在非主学海设备 {xuehai_id} 上登录"
             f"（主设备 {primary}）",
             datetime.timestamp(datetime.now()),
-            type="device_mismatch",
+            type=log_events.DEVICE_MISMATCH,
             level="warning",
             xuehai_id=xuehai_id,
+            client_ip=client_ip_from(request),
+            user_agent=user_agent_from(request),
         ).insert_log()
     except Exception:
         _logger.exception("写入 device_mismatch 日志失败")
@@ -221,9 +232,11 @@ async def _bind_device_and_log(
             user_oid,
             f"用户 {log_name} 首次绑定了学海设备 {xuehai_id}",
             datetime.timestamp(datetime.now()),
-            type="device_bind",
+            type=log_events.DEVICE_BIND,
             level="info",
             xuehai_id=xuehai_id,
+            client_ip=client_ip_from(request),
+            user_agent=user_agent_from(request),
         ).insert_log()
     except Exception:
         _logger.exception("首次绑定学海设备失败")
@@ -239,9 +252,11 @@ async def _log_binding_mismatch(
             user_oid,
             f"用户 {log_name} 登录设备 {xuehai_id} 与已绑定设备 {bound} 不一致",
             datetime.timestamp(datetime.now()),
-            type="binding_mismatch",
+            type=log_events.BINDING_MISMATCH,
             level="warning",
             xuehai_id=xuehai_id,
+            client_ip=client_ip_from(request),
+            user_agent=user_agent_from(request),
         ).insert_log()
     except Exception:
         _logger.exception("写入 binding_mismatch 日志失败")
@@ -374,9 +389,11 @@ async def _guard_primary_device(
                 user_oid,
                 f"用户 {log_name} 未使用学海设备，登录被拒绝（普通用户）",
                 datetime.timestamp(datetime.now()),
-                type="device_required",
+                type=log_events.DEVICE_REQUIRED,
                 level="warning",
                 xuehai_id=xuehai_id,
+                client_ip=client_ip_from(request),
+                user_agent=user_agent_from(request),
             ).insert_log()
         except Exception:
             _logger.exception("写入 device_required 日志失败")
@@ -427,6 +444,15 @@ async def auth_user(auth: AuthUser, request: Request, response: Response):
     # typo can never mint a long-lived session token.
     is_login = auth.purpose == "login"
     xuehai_id = xuehai_id_from(request)
+
+    try:
+        login_throttle.check(id, client_ip_from(request))
+    except login_throttle.LoginRateLimited as exc:
+        raise HTTPException(
+            status_code=429,
+            detail={"code": exc.code, "message": exc.message},
+            headers={"Retry-After": str(exc.retry_after)},
+        )
 
     # 整条认证链共用**一个** session：每次 repo 调用各开一个 session 就是一次
     # checkout（跨洋 138ms），而这里连着读的其实是同一批表。共享 session 只
@@ -522,9 +548,11 @@ async def auth_user(auth: AuthUser, request: Request, response: Response):
                     id,
                     f"维护模式拒绝用户 {log_name} 登录（非管理员）",
                     datetime.timestamp(datetime.now()),
-                    type="auth_maintenance_blocked",
+                    type=log_events.AUTH_MAINTENANCE_BLOCKED,
                     level="warning",
                     xuehai_id=xuehai_id,
+                    client_ip=client_ip_from(request),
+                    user_agent=user_agent_from(request),
                 ).insert_log()
             except Exception:
                 # 审计写失败不得把 503 变成 500：拒绝本身仍然生效。
@@ -546,11 +574,11 @@ async def auth_user(auth: AuthUser, request: Request, response: Response):
                 log_text = f"用户 {log_name} 登录了系统（密码强度不足，仅发放临时授权）"
             else:
                 log_text = f"用户 {log_name} 登录了系统"
-            log_type = "user_login"
+            log_type = log_events.USER_LOGIN
         else:
             credential_kind = "动态码" if is_otp else "密码"
             log_text = f"用户 {log_name} 完成了身份验证（{credential_kind}）"
-            log_type = "user_verify"
+            log_type = log_events.USER_VERIFY
         log = ZVMSLog(
             str(request.url),
             id,
@@ -558,6 +586,8 @@ async def auth_user(auth: AuthUser, request: Request, response: Response):
             datetime.timestamp(datetime.now()),
             type=log_type,
             xuehai_id=xuehai_id,
+            client_ip=client_ip_from(request),
+            user_agent=user_agent_from(request),
         )
 
         # 登录成功的审计与 churn 风控都不决定响应内容，挪到响应之后。
@@ -582,6 +612,38 @@ async def auth_user(auth: AuthUser, request: Request, response: Response):
             "weak_password": weak_password,
             "binding_mismatch": binding_mismatch,
         }
+
+
+@router.post("/auth/logout")
+async def logout_user(
+    request: Request,
+    response: Response,
+    user=Depends(get_current_user),
+):
+    """退出登录：轮换该用户的 ``session_id``，旧 token 即刻失效。
+
+    轮换而不是「删掉 token」：JWT 无状态，服务端能做的唯一撤销就是让每请求
+    实时校验的 ``sid`` 与库里的 ``session_id`` 对不上（见
+    ``util.object_id._authenticate``）。代价是同一账号的其他登录会话同时下线，
+    这是既定口径——sid 是账号级而非设备级。
+    """
+    await backends.get_users_repo().rotate_session(user["id"])
+    try:
+        await ZVMSLog(
+            str(request.url),
+            user["id"],
+            "用户退出登录",
+            datetime.timestamp(datetime.now()),
+            type=log_events.USER_LOGOUT,
+            level="info",
+            xuehai_id=xuehai_id_from(request),
+            client_ip=client_ip_from(request),
+            user_agent=user_agent_from(request),
+        ).insert_log()
+    except Exception:
+        _logger.exception("写入 user_logout 日志失败")
+    response.headers["Cache-Control"] = "no-store"
+    return {"status": "ok"}
 
 
 @router.post("/auth/device")
@@ -646,9 +708,11 @@ async def auth_user_by_temp_password(
             user_oid,
             f"用户 {log_name} 使用临时密码在设备 {challenge_xuehai} 登入",
             datetime.timestamp(datetime.now()),
-            type="temp_password_login",
+            type=log_events.TEMP_PASSWORD_LOGIN,
             level="warning",
             xuehai_id=xuehai_id or challenge_xuehai,
+            client_ip=client_ip_from(request),
+            user_agent=user_agent_from(request),
         ).insert_log()
     except Exception:
         # 审计写失败不能把「已验证成功的临时密码」变成登录失败：密码是一次性

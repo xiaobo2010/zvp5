@@ -29,6 +29,10 @@
 ``ban_violations``）。这里是另一种取舍：审核在创建/审核阶段已经由管理员做过，
 运行期再过一遍违规记录等于让一条文案在半夜把任务 owner 拉进封禁梯度。运行期只
 做拦截（``skipped_flagged``），不产生处罚证据。
+
+**LLM 安全认证是例外**：判定成立时任务内容确实是 owner 写的，责任归 owner——
+记违规、发警告、按首档封号，然后跳过本周期；判定跑不起来（``unavailable``）
+只跳过 + ``ai_safety_guard_error``，不碰违规表。
 """
 
 from __future__ import annotations
@@ -43,6 +47,7 @@ from apscheduler.triggers.cron import CronTrigger
 from db import backends
 from db.repos.oracle.ai_scheduled_tasks import OracleAiScheduledTasksRepo  # noqa: F401 - 测试按符号打桩
 from db.repos.protocols import ActiveRunConflict
+from services import violation_guard
 from services.agent import run_queue
 from services.ai import conversations, credentials, moderation, quota, safety_guard
 from typings.log import ZVMSLog
@@ -345,8 +350,8 @@ async def submit_task_run(task: Mapping[str, Any], *, now: datetime) -> str:
     stored_model = await _canonical_model(owner_oid, task.get("model"))
 
     # 灰区闸门：department owner 的 prompt 在提交前过一遍 LLM 安全认证。
-    # prompt 已经过管理员审核，所以这里**只跳过**：不写 ban_violations、不发
-    # 月度警告、不碰封禁梯度（否则一条凌晨文案就能把 owner 拉进处罚链）。
+    # 任务内容是 owner 自己写的，判定成立就由 owner 承担：记违规 + 警告 + 首档
+    # 封号；判定跑不起来（无凭据/超时/坏 JSON）只跳过本周期，不产生证据。
     owner = await _users().get_by_oid(owner_oid)
     identity = _owner_identity(owner_oid, owner)
     if safety_guard.is_department(identity):
@@ -356,6 +361,15 @@ async def submit_task_run(task: Mapping[str, Any], *, now: datetime) -> str:
             model_hint=stored_model,
         )
         if not verdict.allowed:
+            if not verdict.unavailable:
+                try:
+                    await violation_guard.record_agent_jailbreak(
+                        identity,
+                        rule=str(verdict.category or ""),
+                        detail=str(task.get("prompt_text") or ""),
+                    )
+                except Exception:  # noqa: BLE001 - 入库失败不改变「本周期不跑」
+                    _logger.exception("定时任务安全认证违规入库失败（本次仍然跳过）")
             reason = await _record_safety_skip(task, verdict, now=now)
             raise SafetySkipped(reason or "prompt rejected by AI safety guard")
 

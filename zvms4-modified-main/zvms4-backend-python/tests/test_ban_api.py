@@ -65,6 +65,11 @@ def _rule_row(
     }
 
 
+async def _allow_reauth(*_args, **_kwargs):
+    """本文件只验业务语义；再认证本身由 ``test_admin_reauth_gate`` 专测。"""
+    return None
+
+
 @pytest.fixture
 def api(monkeypatch):
     rules = {"foreign_device_login": _rule_row()}
@@ -223,6 +228,7 @@ def api(monkeypatch):
     log.insert_log = insert_log
     calls["log"] = log
 
+    monkeypatch.setattr(ban_router, "require_password_verification", _allow_reauth)
     app = FastAPI()
     app.include_router(ban_router.router, prefix=PREFIX)
     app.dependency_overrides[get_current_user] = lambda: ADMIN
@@ -966,6 +972,7 @@ def devices_api(monkeypatch):
 
     log.insert_log = insert_log
 
+    monkeypatch.setattr(ban_router, "require_password_verification", _allow_reauth)
     app = FastAPI()
     app.include_router(ban_router.router, prefix=PREFIX)
     app.dependency_overrides[get_current_user] = lambda: ADMIN

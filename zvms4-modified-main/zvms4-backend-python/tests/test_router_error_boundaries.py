@@ -44,6 +44,16 @@ class StubLog:
         return None
 
 
+async def _allow_reauth(*_args, **_kwargs):
+    """本文件只验业务语义；再认证本身由 ``test_admin_reauth_gate`` 专测。"""
+    return None
+
+
+@pytest.fixture(autouse=True)
+def _no_reauth(monkeypatch):
+    monkeypatch.setattr(ban_router, "require_password_verification", _allow_reauth)
+
+
 def _client(router, prefix: str, user: dict | None = None) -> TestClient:
     app = FastAPI()
     app.include_router(router, prefix=prefix)

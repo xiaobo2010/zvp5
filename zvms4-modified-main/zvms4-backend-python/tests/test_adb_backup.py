@@ -409,6 +409,8 @@ class _FakeLogsRepo:
         ltype: str,
         level: str,
         xuehai_id: str,
+        client_ip: str = "",
+        user_agent: str = "",
     ) -> None:
         self.inserted.append(
             {

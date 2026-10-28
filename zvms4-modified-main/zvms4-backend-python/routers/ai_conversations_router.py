@@ -30,7 +30,7 @@ from services.ai import audit
 from services.ai import conversations
 from typings.log import xuehai_id_from
 from util.object_id import get_current_user
-from util.permission.features import ensure_feature, has_feature
+from util.permission.features import ensure_feature
 
 _logger = logging.getLogger(__name__)
 
@@ -45,23 +45,30 @@ ENDPOINT_CONVERSATIONS = "/api/ai/conversations"
 
 
 class ConversationCreate(BaseModel):
-    """建会话。``title`` 可省（首条用户消息会补上，§2.1）；``model`` 可省（服务端默认）。"""
+    """建会话。``mode`` 只剩 ``agent``（缺省即它）。
 
-    mode: str = Field(max_length=8)
+    ``model`` 可省：缺省取该用户可见目录的第一个。**模型只在这里定**（R2），
+    之后的 PATCH 想改它会拿到 409。``thinking`` 是可选思考强度（low|medium|high）。
+    """
+
+    mode: str = Field(default="agent", max_length=8)
     model: str | None = Field(default=None, max_length=120)
+    thinking: str | None = Field(default=None, max_length=16)
     title: str | None = Field(default=None, max_length=400)
 
 
 class ConversationUpdate(BaseModel):
     """部分更新：只改传了的字段。
 
-    ``model`` 的三种意图靠 ``exclude_unset`` 区分：不传 = 不改，传字符串 = 设置，
-    显式 ``null`` = 清空（回到服务端默认）。
+    ``model`` 仍然收进 DTO 但**只为了报错**：传非空 = 「想改模型」，显式
+    ``null`` = 「想清空模型」，两者都回 409 ``AI_CONVERSATION_MODEL_LOCKED``
+    ——把不支持的意图静默忽略会让前端以为改成功了。
     """
 
     title: str | None = Field(default=None, max_length=400)
     status: str | None = Field(default=None, max_length=12)
     model: str | None = Field(default=None, max_length=120)
+    thinking: str | None = Field(default=None, max_length=16)
 
 
 class RunCreate(BaseModel):
@@ -69,10 +76,13 @@ class RunCreate(BaseModel):
 
     ``client_msg_id`` 是幂等键：客户端重试同一个键会拿回同一个 run，不会重复写
     消息、也不会重复计费（§2.3）。
+
+    **没有 ``model``**：一次 run 用哪个模型由会话决定（R2）。老客户端仍会带这个
+    字段，pydantic 会忽略未知键——「不再接受」不等于「报错」，否则一次灰度就
+    会把所有老前端打成 422。
     """
 
     content: str = Field(min_length=1, max_length=20000)
-    model: str | None = Field(default=None, max_length=120)
     client_msg_id: str | None = Field(default=None, max_length=64)
 
 
@@ -158,58 +168,25 @@ async def _forbidden(user: dict, *, scene: str | None, request_id: str) -> JSONR
 # 功能开关（V043 ``ROLE_FEATURES``）
 # ---------------------------------------------------------------------------
 
-# 会话 ``mode`` → 开关 key。同一个 router 同时服务两种语义，所以开关必须按**这一条
-# 会话**（或这次请求要建的会话）的 mode 判，而不是按端点一律取 ``ai.chat``：混用
-# 的结果是「关掉 ai.agent 之后仍能在 agent 会话里提交 run」。
-_FEATURE_BY_MODE = {"chat": "ai.chat", "agent": "ai.agent"}
+# 会话只服务 agent 语义：能力开关固定取 ``ai.agent``（``ai.chat`` 只剩
+# ``/v1/chat/completions`` 那条无状态链路在用）。
+AGENT_FEATURE = "ai.agent"
 
 
-def _feature_key(mode: object) -> str | None:
-    """未知 ``mode`` 回 ``None``：模式校验归服务层（400），不在这里另造一套口径。"""
-    return _FEATURE_BY_MODE.get(str(mode or "").strip().lower())
-
-
-def _require_feature(user: dict, key: str) -> None:
+def _require_agent_feature(user: dict) -> None:
     """功能开关不满足即抛 403，由 :func:`_dispatch` 翻译成既有的 ``AI_FORBIDDEN``。
 
     为什么抛 ``AgentError`` 而不是像 ``ai_agent_router`` 那样返回 ``JSONResponse``：
-    这里的判定发生在 ``action()`` 内部（要先把会话行读出来才知道 mode），抛出去
-    才能保证「闸门恒在任何写入之前」——包括不建会话、不写 ``AI_CALL_LOGS``、不入
-    run 队列。开关拒绝**不落审计**：角色白名单拒绝是探测信号，开关拒绝只是管理员
-    收起了能力，记流水只会把审计冲成噪音（与 ``ai_agent_router._feature_denied``
-    同一口径）。
+    这里的判定发生在 ``action()`` 内部，抛出去才能保证「闸门恒在任何写入之前」——
+    包括不建会话、不写 ``AI_CALL_LOGS``、不入 run 队列。开关拒绝**不落审计**：
+    角色白名单拒绝是探测信号，开关拒绝只是管理员收起了能力，记流水只会把审计
+    冲成噪音（与 ``ai_agent_router._feature_denied`` 同一口径）。
     """
     try:
-        ensure_feature(user, key)
+        ensure_feature(user, AGENT_FEATURE)
     except HTTPException as exc:
         raise AgentError("AI_FORBIDDEN", str(exc.detail), 403) from exc
 
-
-def _require_mode_feature(user: dict, mode: object) -> None:
-    key = _feature_key(mode)
-    if key is not None:
-        _require_feature(user, key)
-
-
-def _allowed_mode(user: dict, mode: object) -> bool:
-    key = _feature_key(mode)
-    return key is None or has_feature(user, key)
-
-
-def _filter_modes(user: dict, page: dict) -> dict:
-    """列表按**逐条** mode 过滤，与详情/消息端点同一口径：单条不可用就不出现。
-
-    为什么不做「查询参数过滤」：``GET /conversations`` 的契约里没有 ``mode`` 参数，
-    加一个会让游标分页分叉（同一个游标在两种 mode 下指向不同位置）。代价是整页都
-    被滤掉时仍可能回一个非空 ``next_cursor``——前端拿到空页会停，而这一页本来就
-    全是这个人当前用不了的会话。
-    """
-    page["conversations"] = [
-        row
-        for row in page.get("conversations") or []
-        if _allowed_mode(user, row.get("mode"))
-    ]
-    return page
 
 
 async def _dispatch(
@@ -269,16 +246,19 @@ async def create_conversation(
     user=Depends(get_current_user),
     scene: str | None = Depends(ai_scene),
 ):
-    """建会话；``mode`` 建完不可改（``chat`` 走同步 SSE，``agent`` 走后台任务）。
+    """建一个 agent 会话（``mode`` 缺省即 ``agent``，``chat`` 回 409）。
 
-    开关按 ``payload.mode`` 判：关掉 ``ai.chat`` 时建 chat 会话就该在
-    ``conversations.create`` 之前被拒（否则禁用后还能持续制造 chat 会话）。
+    开关在 ``conversations.create`` 之前判：关掉 ``ai.agent`` 之后连会话都建不出来。
     """
 
     async def action() -> dict:
-        _require_mode_feature(user, payload.mode)
+        _require_agent_feature(user)
         return await conversations.create(
-            user=user, mode=payload.mode, title=payload.title, model=payload.model
+            user=user,
+            mode=payload.mode,
+            title=payload.title,
+            model=payload.model,
+            thinking=payload.thinking,
         )
 
     return await _dispatch(action, user=user, scene=scene, status_code=201)
@@ -302,7 +282,7 @@ async def list_conversations(
         page = await conversations.list_page(
             user=user, status=status, cursor=cursor, limit=limit
         )
-        return _filter_modes(user, page)
+        return page
 
     return await _dispatch(action, user=user, scene=scene)
 
@@ -318,7 +298,7 @@ async def get_conversation(
             user=user,
             oid=_require_oid(oid, code=conversations.NOT_FOUND, message="conversation not found"),
         )
-        _require_mode_feature(user, row.get("mode"))
+        _require_agent_feature(user)
         return conversations.conversation_view(row)
 
     return await _dispatch(action, user=user, scene=scene)
@@ -331,7 +311,10 @@ async def update_conversation(
     user=Depends(get_current_user),
     scene: str | None = Depends(ai_scene),
 ):
-    """改名 / 归档 / 换模型（``model: null`` = 清空回服务端默认）。
+    """改名 / 归档 / 调思考强度。
+
+    改模型一律 409（``AI_CONVERSATION_MODEL_LOCKED``）：模型在建会话时定死，
+    见 ``conversations.update``。
 
     故意不接功能开关：改名/归档不是 AI 能力调用，关掉 ``ai.chat`` 之后用户仍该
     能收拾自己的历史（否则会话变成删不掉也改不了的遗留数据）。
@@ -344,6 +327,8 @@ async def update_conversation(
             oid=_require_oid(oid, code=conversations.NOT_FOUND, message="conversation not found"),
             title=fields.get("title"),
             status=fields.get("status"),
+            thinking=fields.get("thinking"),
+            clear_thinking="thinking" in fields and fields["thinking"] is None,
             model=fields.get("model"),
             clear_model="model" in fields and fields["model"] is None,
         )
@@ -388,8 +373,8 @@ async def list_messages(
         conversation_oid = _require_oid(
             oid, code=conversations.NOT_FOUND, message="conversation not found"
         )
-        row = await conversations.require_row(user=user, oid=conversation_oid)
-        _require_mode_feature(user, row.get("mode"))
+        await conversations.require_row(user=user, oid=conversation_oid)
+        _require_agent_feature(user)
         return await conversations.list_messages(
             user=user,
             oid=conversation_oid,
@@ -416,25 +401,26 @@ async def submit_run(
 
     紧接着 ``kick()`` 让泵去领：提交与执行解耦，浏览器关掉也跑完（§4）。
 
-    开关按会话的 mode 判，且必须在 ``run_queue.submit`` 之前：``submit`` 内部是
-    密码门 → 审核 → 灰区闸门 → 入队的固定顺序（不能在这里插一道），而开关拒绝
-    要保证「一个 run 都不入队」。多出来的这次会话读是一次索引查询，换「关掉
-    ``ai.agent`` 之后不可能再有新 run」这条结论，值得。
+    功能开关必须在 ``run_queue.submit`` 之前：``submit`` 内部是密码门 → 审核 →
+    灰区闸门 → 入队的固定顺序（不能在这里插一道），而开关拒绝要保证「一个 run
+    都不入队」。多出来的这次会话读是一次索引查询，换「关掉 ``ai.agent`` 之后
+    不可能再有新 run」这条结论，值得。
     """
 
     async def action() -> dict:
         conversation_oid = _require_oid(
             oid, code=conversations.NOT_FOUND, message="conversation not found"
         )
-        row = await conversations.require_row(user=user, oid=conversation_oid)
-        _require_mode_feature(user, row.get("mode"))
+        conversation = await conversations.require_row(user=user, oid=conversation_oid)
+        _require_agent_feature(user)
         data = await run_queue.submit(
             user=user,
             conversation_oid=conversation_oid,
             content=payload.content,
-            model=payload.model,
             client_msg_id=payload.client_msg_id,
             xuehai_id=xuehai_id_from(request),
+            # 刚读过的行直接交下去：submit 不必再查一遍同一条会话。
+            conversation=conversation,
         )
         await run_queue.kick()
         return data
@@ -468,7 +454,7 @@ async def list_runs(
     """
 
     async def action() -> dict:
-        _require_feature(user, "ai.agent")
+        _require_agent_feature(user)
         owner_oid = str(user.get("id") or "")
         if active:
             rows = await run_queue.list_active(owner_oid)
@@ -483,21 +469,27 @@ async def list_runs(
 async def get_run(
     run_id: str,
     after_round: int = Query(default=0, ge=0),
+    since_msg_seq: int | None = Query(default=None, ge=0),
     user=Depends(get_current_user),
     scene: str | None = Depends(ai_scene),
 ):
-    """run 状态 + 增量事件 + 提案。
+    """run 状态 + 增量事件 + 提案（+ 可选增量消息）。
 
     ``after_round`` 只回 ``round_no > after_round`` 的事件：轮询 1.5s 一次时，载荷
     随轮次线性增长而不是平方（§3.2）。
+
+    ``since_msg_seq`` 给了就额外带 ``messages``（``seq > since_msg_seq``，升序，
+    形状与 ``GET /conversations/{oid}/messages`` 一致）——一轮的工具消息与最终
+    回答因此能在同一次轮询里到达；不传则响应与改造前逐字相同。
     """
 
     async def action() -> dict:
-        _require_feature(user, "ai.agent")
+        _require_agent_feature(user)
         return await run_queue.run_detail(
             user=user,
             run_id=_require_oid(run_id, code=run_queue.RUN_NOT_FOUND, message="run not found"),
             after_round=after_round,
+            since_msg_seq=since_msg_seq,
         )
 
     return await _dispatch(action, user=user, scene=scene)
@@ -512,7 +504,7 @@ async def cancel_run(
     """请求中止：``queued`` 直接进终态，``running`` 由 worker 在轮边界收手。"""
 
     async def action() -> dict:
-        _require_feature(user, "ai.agent")
+        _require_agent_feature(user)
         return await run_queue.cancel(
             user=user,
             run_id=_require_oid(run_id, code=run_queue.RUN_NOT_FOUND, message="run not found"),

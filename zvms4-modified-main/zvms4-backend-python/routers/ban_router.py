@@ -33,7 +33,7 @@ from sqlalchemy.exc import IntegrityError
 from db import backends
 from services import device_guard
 from typings.log import inject_log
-from util.object_id import get_current_user
+from util.object_id import get_current_user, require_password_verification
 from util.permission.features import has_feature
 from util.user import get_user_display_name
 
@@ -275,6 +275,7 @@ class PutRuleRequest(BaseModel):
     config: Optional[PutRuleConfig] = None
     # 末位 ``null`` = 永久处罚（梯度用尽后不再累计天数）。
     penalties: Optional[list[Optional[int]]] = None
+    verification_token: Optional[str] = None
 
 
 class PostRuleRequest(BaseModel):
@@ -285,6 +286,13 @@ class PostRuleRequest(BaseModel):
     # 省略的项取注册表默认值（前端表单初值就是它），显式传的必须过范围校验。
     config: Optional[PutRuleConfig] = None
     penalties: list[Optional[int]]
+    verification_token: Optional[str] = None
+
+
+class BanReauthRequest(BaseModel):
+    """删除/梯度重置的复核令牌；``DELETE`` 也走 body，与附件/用户端点一致。"""
+
+    verification_token: Optional[str] = None
 
 
 def _check_range(name: str, value: int, low: int, high: int) -> None:
@@ -358,6 +366,7 @@ async def create_ban_rule(
     按哪条梯度封」取决于查询顺序，封禁天数就不可复现了。
     """
     _require_admin(user)
+    await require_password_verification(payload.verification_token, user)
 
     if not RULE_CODE_PATTERN.match(payload.code or ""):
         raise HTTPException(
@@ -434,6 +443,7 @@ async def create_ban_rule(
 @router.delete("/rules/{code}", status_code=204)
 async def delete_ban_rule(
     code: str,
+    payload: BanReauthRequest | None = None,
     user=Depends(get_current_user),
     log=Depends(inject_log),
 ):
@@ -443,6 +453,9 @@ async def delete_ban_rule(
     删掉后那条链路会「静默不封」，管理员在界面上看不出区别，只会以为策略还在。
     """
     _require_admin(user)
+    await require_password_verification(
+        payload.verification_token if payload is not None else None, user
+    )
 
     repo = backends.get_ban_rules_repo()
     rule = await repo.get_by_code(code)
@@ -472,6 +485,7 @@ async def update_ban_rule(
     log=Depends(inject_log),
 ):
     _require_admin(user)
+    await require_password_verification(payload.verification_token, user)
     repo = backends.get_ban_rules_repo()
     rule = await repo.get_by_code(code)
     if rule is None:
@@ -621,6 +635,7 @@ class PostDeviceBanRequest(BaseModel):
     xuehai_id: str = Field(min_length=1, max_length=32, pattern=r"^\d+$")
     reason: Optional[str] = Field(default=None, max_length=512)
     until: Optional[datetime] = None
+    verification_token: Optional[str] = None
 
 
 @router.get("/devices")
@@ -667,6 +682,7 @@ async def ban_device(
 ):
     """手动封禁一台设备（管理员判定，不动设备梯度计数器）。"""
     _require_admin(user)
+    await require_password_verification(payload.verification_token, user)
 
     xuehai_id = payload.xuehai_id.strip()
     reason = (payload.reason or "").strip() or "管理员封禁"
@@ -711,11 +727,15 @@ async def ban_device(
 @router.post("/devices/{xuehai_id}/reset-gradient", status_code=204)
 async def reset_device_gradient(
     xuehai_id: str,
+    payload: BanReauthRequest | None = None,
     user=Depends(get_current_user),
     log=Depends(inject_log),
 ):
     """清零一台设备的处罚梯度（幂等：没有计数行也返回 204）。"""
     _require_admin(user)
+    await require_password_verification(
+        payload.verification_token if payload is not None else None, user
+    )
 
     await backends.get_device_ban_counters_repo().delete(xuehai_id)
     log.with_text(
@@ -729,6 +749,7 @@ async def reset_device_gradient(
 @router.delete("/devices/{xuehai_id}", status_code=204)
 async def unban_device(
     xuehai_id: str,
+    payload: BanReauthRequest | None = None,
     user=Depends(get_current_user),
     log=Depends(inject_log),
 ):
@@ -738,6 +759,9 @@ async def unban_device(
     ——账号解封后它们自动恢复。
     """
     _require_admin(user)
+    await require_password_verification(
+        payload.verification_token if payload is not None else None, user
+    )
 
     deleted = await backends.get_device_bans_repo().delete(xuehai_id)
     if deleted == 0:

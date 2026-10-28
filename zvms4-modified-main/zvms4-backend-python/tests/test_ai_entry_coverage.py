@@ -53,17 +53,14 @@ GATED_CALL_SITES: dict[str, str] = {
         "OpenAI 兼容面 /v1/chat/completions：_screen_chat_request 在候选选择与"
         "频控/额度之前拦截 department（JWT 与 zvk_ key 的 owner 同一套判定）"
     ),
-    "routers/ai_chat_conversations_router.py": (
-        "会话 chat：moderation 之后、_select_route/扣费之前接 safety_guard.screen"
-    ),
     "services/agent/run_queue.py": (
         "agent 提交入口：submit() 在入队前接 safety_guard.screen（本文件不直接调"
         "providers，登记它是因为它才是真正的用户入口）"
     ),
     "services/ai/scheduled_runner.py": (
         "定时任务提交入口：submit_task_run() 在入队前按 department owner 过一遍"
-        "安全认证；被拒只写 skipped_safety 并推进排程，不计违规（本文件不直接调"
-        "providers）"
+        "安全认证；判定成立记违规并跳过本周期，判定跑不起来只跳过（本文件不直接"
+        "调 providers）"
     ),
     "services/agent/executor.py": (
         "agent 每轮上游调用：已在 run_queue.submit 的提交入口拦截，执行期不再重复"
@@ -255,7 +252,6 @@ def test_required_entries_are_present() -> None:
     gated = set(GATED_CALL_SITES)
     assert {
         "routers/ai_router.py",
-        "routers/ai_chat_conversations_router.py",
         "services/agent/run_queue.py",
         "services/agent/executor.py",
         "services/ai/textgen.py",
@@ -267,7 +263,6 @@ def test_scan_finds_the_real_entry_points() -> None:
     paths = {site.path for site in scan_call_sites(BACKEND_ROOT)}
     assert {
         "routers/ai_router.py",
-        "routers/ai_chat_conversations_router.py",
         "services/agent/executor.py",
         "services/ai/textgen.py",
         "services/ai/safety_guard.py",
@@ -381,10 +376,9 @@ def test_ignores_unrelated_functions_with_the_same_name(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 #
 # 为什么再加一条：``safety_guard`` 守的是「说了什么」，``ROLE_FEATURES`` 守的是
-# 「这个角色能不能用」。会话主入口（``ai_conversations_router`` /
-# ``ai_chat_conversations_router``）曾经只过角色白名单：管理员在「角色策略」页关掉
-# ``ai.chat`` / ``ai.agent``，用户照样能建会话、发消息、提 run。漏接的那一刻同样
-# 没有任何报错，所以这里把「谁能把请求送到模型」也做成静态清单。
+# 「这个角色能不能用」。会话主入口（``ai_conversations_router``）曾经只过角色
+# 白名单：管理员在「角色策略」页关掉 ``ai.agent``，用户照样能建会话、提 run。
+# 漏接的那一刻同样没有任何报错，所以这里把「谁能把请求送到模型」也做成静态清单。
 
 FEATURES_MODULE = "util.permission.features"
 FEATURE_APIS = frozenset({"ensure_feature", "has_feature", "require_feature"})
@@ -540,7 +534,6 @@ def test_ai_router_entries_are_actually_found() -> None:
         "routers/ai_agent_router.py",
         "routers/ai_schedule_router.py",
         "routers/ai_conversations_router.py",
-        "routers/ai_chat_conversations_router.py",
         "routers/attachments_router.py",
     } <= paths
 
@@ -549,10 +542,7 @@ def test_conversation_entries_are_gated() -> None:
     """会话主入口是这条守卫存在的原因：它们必须一直在扫描结果里且带闸门。"""
     entries = {entry.path: entry for entry in scan_ai_entries(BACKEND_ROOT)}
 
-    for path in (
-        "routers/ai_conversations_router.py",
-        "routers/ai_chat_conversations_router.py",
-    ):
+    for path in ("routers/ai_conversations_router.py",):
         assert path in entries, f"扫描没看见 {path}"
         assert entries[path].gates, f"{path} 没接功能开关"
 

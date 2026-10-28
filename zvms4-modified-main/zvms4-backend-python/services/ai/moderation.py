@@ -40,7 +40,8 @@ RULE_TOOL_PRIVILEGE = "tool_privilege"
 RULE_OBFUSCATION = "obfuscation"
 
 # 对外只回一句固定中文：命中规则属于内部判定，回给用户会让攻击者按差异调参。
-REJECTED_MESSAGE = "该请求已被内容审核拦截。"
+# 这句话是全平台内容拒绝的唯一文案（LLM 判定与规则命中共用）。
+REJECTED_MESSAGE = "该请求未通过内容安全审核。"
 
 _GAP = r"[^。！？；\n]{0,12}"
 

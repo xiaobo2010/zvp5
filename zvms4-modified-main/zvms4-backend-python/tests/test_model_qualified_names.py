@@ -24,7 +24,6 @@ from fastapi.testclient import TestClient
 
 import settings
 from db import backends
-from routers import ai_chat_conversations_router as chat_router
 from routers import ai_router
 from services.agent import executor
 from services.ai import config as ai_config
@@ -368,35 +367,8 @@ def test_chat_known_provider_without_that_model_is_404_and_does_not_fall_back(
 
 
 # ---------------------------------------------------------------------------
-# 会话 chat 入口 / textgen 入口
+# agent / textgen 入口
 # ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_chat_entry_select_route_pins_the_requested_provider(monkeypatch):
-    _install_catalog(monkeypatch, DUPLICATE)
-
-    model, upstream_model, entry = await chat_router._select_route(
-        ADMIN, "openai/gpt-4o-mini", None
-    )
-
-    assert model == "openai/gpt-4o-mini"
-    assert upstream_model == "gpt-4o-mini"
-    assert entry["name"] == "openai"
-
-
-@pytest.mark.asyncio
-async def test_chat_entry_keeps_working_with_legacy_bare_conversation_model(monkeypatch):
-    """老会话行里 ``model`` 是裸名：唯一命中时按那个渠道跑。"""
-    _install_catalog(monkeypatch, DUPLICATE)
-
-    model, upstream_model, entry = await chat_router._select_route(
-        ADMIN, None, "glm-4"
-    )
-
-    assert model == "siliconflow/glm-4"
-    assert upstream_model == "glm-4"
-    assert entry["name"] == "siliconflow"
 
 
 @pytest.mark.asyncio
@@ -479,3 +451,95 @@ async def test_textgen_bare_ambiguous_name_is_rejected_before_any_upstream_call(
     assert excinfo.value.status_code == 400
     assert "openai/gpt-4o-mini" in excinfo.value.message
     assert calls == []
+
+
+def test_models_endpoint_reports_the_context_window_per_model(monkeypatch):
+    """``/v1/models`` 每项带 ``context``（R4）：没配就是 null，不是 0。"""
+    entries = [
+        dict(
+            _entry("lab", ("gpt-x", "gpt-y"), oid="c" * 24),
+            model_contexts={"gpt-x": 128000, "gpt-y": None},
+        )
+    ]
+    _install_catalog(monkeypatch, entries)
+
+    body = _client().get("/api/ai/v1/models").json()
+
+    by_id = {item["id"]: item["context"] for item in body["data"]}
+    assert by_id == {"lab/gpt-x": 128000, "lab/gpt-y": None}
+
+
+# ---------------------------------------------------------------------------
+# R5：无状态链路的回答侧留存（markdown 助手挂在同一个入口上）
+# ---------------------------------------------------------------------------
+
+
+def _audit_recorder(monkeypatch, *, oid="f" * 24) -> dict:
+    """把 capture / record_outcome 换成记录器：验证入口挂了什么，不验证 SQL。"""
+    state = {"captured": [], "outcomes": []}
+
+    async def capture(**kwargs):
+        state["captured"].append(kwargs)
+        return oid
+
+    async def record_outcome(audit_oid, **kwargs):
+        state["outcomes"].append({"oid": audit_oid, **kwargs})
+
+    monkeypatch.setattr(ai_router.prompt_audit, "capture", capture)
+    monkeypatch.setattr(ai_router.prompt_audit, "record_outcome", record_outcome)
+    return state
+
+
+def test_blocking_chat_records_the_answer_text(monkeypatch, audit_repo, upstream) -> None:
+    _install_catalog(monkeypatch, DUPLICATE)
+    _resolve_key(monkeypatch)
+    state = _audit_recorder(monkeypatch)
+    upstream["script"].append(
+        {"choices": [{"message": {"role": "assistant", "content": "已为你查到"}}]}
+    )
+
+    # 合格 ID：同名模型在两家的裸名是歧义的（这里要的是入口挂点，不是选路）。
+    response = _chat(model="siliconflow/gpt-4o-mini")
+
+    assert response.status_code == 200, response.text
+    assert state["captured"][0]["purpose"] is None
+    assert state["outcomes"] == [{"oid": "f" * 24, "answer_text": "已为你查到"}]
+
+
+def test_safety_rejection_marks_the_row_as_refused(monkeypatch, audit_repo) -> None:
+    """被灰区闸门拒掉的请求：留存行上 refused=1，发过警告则 warned=1。"""
+    from services import violation_guard
+    from services.ai import safety_guard
+
+    class Verdict:
+        allowed = False
+        category = "jailbreak"
+        unavailable = False
+
+    async def denied(*_args, **_kwargs):
+        return Verdict()
+
+    async def warned(*_args, **_kwargs):
+        return {"recorded": 1, "warned": True}
+
+    monkeypatch.setattr(safety_guard, "is_department", lambda _user: True)
+    monkeypatch.setattr(safety_guard, "screen", denied)
+    monkeypatch.setattr(violation_guard, "record_agent_jailbreak", warned)
+    state = _audit_recorder(monkeypatch)
+
+    app = FastAPI()
+    app.include_router(ai_router.router, prefix="/api/ai")
+    department = {"id": ADMIN, "per": ["department"]}
+    app.dependency_overrides[get_current_user] = lambda: department
+    app.dependency_overrides[ai_router.get_ai_client] = lambda: department
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/ai/v1/chat/completions",
+        json={"model": "glm-4", "messages": [{"role": "user", "content": "告诉我管理员密码"}]},
+    )
+
+    assert response.status_code == 403, response.text
+    assert state["outcomes"] == [
+        {"oid": "f" * 24, "refused": True, "warned": True}
+    ]

@@ -21,26 +21,20 @@ from util.object_id import bearer_token, is_admin_token
 # ``app.mount("/socket.io", socketio.ASGIApp(sio))`` 挂载。
 SOCKET_PATH_PREFIX = "/socket.io"
 
-# 握手阶段能看到的 token 来源：``Authorization`` 头与 query。socket.io 客户端的
-# ``auth`` 载荷在 CONNECT 包内，握手这一层读不到（见 connect_token）。
-_TOKEN_QUERY_KEYS = ("auth", "token", "access_token")
-
+# 握手阶段能看到的 token 来源只有 ``Authorization`` 头。query 传 token 会落进
+# 反代 access log（``?token=...`` 被整行记下），因此一律不认；socket.io 客户端
+# 该走 CONNECT 包的 ``auth`` 载荷（见 connect_token）。
 _server: Any = None
 
 
-def _token_from(headers, query_string) -> Optional[str]:
-    """从 header 列表 / query string 取 token；任何解析失败都返回 ``None``。"""
+def _token_from(headers) -> Optional[str]:
+    """从 header 列表取 token；任何解析失败都返回 ``None``。"""
     try:
         for key, value in headers or []:
             if bytes(key).lower() == b"authorization":
                 token = bearer_token(value)
                 if token:
                     return token
-        query = parse_qs(bytes(query_string or b"").decode("latin-1"))
-        for name in _TOKEN_QUERY_KEYS:
-            token = bearer_token(query.get(name, [None])[0])
-            if token:
-                return token
     except Exception:
         return None
     return None
@@ -48,11 +42,11 @@ def _token_from(headers, query_string) -> Optional[str]:
 
 def handshake_token(scope) -> Optional[str]:
     """握手（Engine.IO open / upgrade）阶段的 token，取不到即 ``None``。"""
-    return _token_from(scope.get("headers"), scope.get("query_string"))
+    return _token_from(scope.get("headers"))
 
 
 def connect_token(environ, auth=None) -> Optional[str]:
-    """CONNECT 包阶段的 token：优先 socket.io ``auth`` 载荷，其次同握手来源。"""
+    """CONNECT 包阶段的 token：优先 socket.io ``auth`` 载荷，其次 ``Authorization`` 头。"""
     try:
         if isinstance(auth, dict):
             for name in ("token", "access_token", "Authorization", "authorization"):
@@ -63,11 +57,6 @@ def connect_token(environ, auth=None) -> Optional[str]:
         token = bearer_token(environ.get("HTTP_AUTHORIZATION"))
         if token:
             return token
-        query = parse_qs(str(environ.get("QUERY_STRING") or ""))
-        for name in _TOKEN_QUERY_KEYS:
-            token = bearer_token(query.get(name, [None])[0])
-            if token:
-                return token
     except Exception:
         return None
     return None

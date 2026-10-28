@@ -6,6 +6,7 @@ from db import backends
 from services import settings_runtime
 from util.object_id import get_current_user
 from util.permission.features import has_feature
+from util.read_throttle import read_budget
 from util.user import get_user_display_names
 
 router = APIRouter()
@@ -32,6 +33,7 @@ async def read_logs(
     time_end: Optional[int] = Query(None, description="End timestamp (seconds)"),
     xuehai_id: str = Query("", description="Filter by 学海设备 ID (Xuehai-Id header)"),
     user=Depends(get_current_user),
+    _budget=Depends(read_budget),
 ):
     """管理端日志列表。
 

@@ -168,6 +168,11 @@ def repos(monkeypatch):
     return settings, quotas
 
 
+async def _allow_reauth(*_args, **_kwargs):
+    """本文件只验业务语义；再认证本身由 ``test_admin_reauth_gate`` 专测。"""
+    return None
+
+
 def _api(monkeypatch, settings, quotas) -> tuple[TestClient, _FakeLog]:
     async def _allow(_user):
         return {"_id": ADMIN_OID}
@@ -176,6 +181,9 @@ def _api(monkeypatch, settings, quotas) -> tuple[TestClient, _FakeLog]:
         return "管理员"
 
     monkeypatch.setattr(system_settings_router, "_require_system_admin", _allow)
+    monkeypatch.setattr(
+        system_settings_router, "require_password_verification", _allow_reauth
+    )
     monkeypatch.setattr(system_settings_router, "get_user_display_name", _name)
 
     log = _FakeLog()

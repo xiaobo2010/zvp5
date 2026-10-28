@@ -23,6 +23,7 @@ docstring 写明了这是合规决定）。这张表是**唯一**的例外，理
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 from typing import Any
@@ -40,6 +41,10 @@ ID_CARD_MASK_RULE = "18 位身份证：前 3 位与后 4 位明文，中间 11 �
 #: 手机号掩码口径：前 3 位（号段）+ 6 个 ``*`` + 后 2 位。
 MOBILE_MASK_RULE = "11 位手机号（1[3-9] 开头）：前 3 位与后 2 位明文，中间 6 位替换为 *"
 
+#: ``TOOL_CALLS`` 的长度上限（字符）。一次 run 最多 5×轮数 条摘要，正常远小于它；
+#: 超限只截断，不丢整行——「有哪些工具被调过」比「每条的完整摘要」更重要。
+TOOL_CALLS_MAX_CHARS = 8000
+
 _ID_CARD_RE = re.compile(r"(?<!\d)(\d{17}[0-9Xx])(?!\d)")
 _MOBILE_RE = re.compile(r"(?<!\d)(1[3-9]\d{9})(?!\d)")
 
@@ -50,8 +55,11 @@ __all__ = [
     "capture",
     "last_user_text",
     "mask_pii",
+    "TOOL_CALLS_MAX_CHARS",
     "prepare_prompt",
+    "record_outcome",
     "should_capture",
+    "tool_calls_payload",
 ]
 
 
@@ -126,6 +134,11 @@ async def capture(
     purpose: str | None,
     messages: Any,
     request_id: str | None = None,
+    answer_text: str | None = None,
+    tool_calls: Any = None,
+    refused: bool = False,
+    warned: bool = False,
+    reference: str | None = None,
 ) -> str | None:
     """按捕获规则留一份正文，返回新 oid；不需要留 / 留失败回 ``None``。
 
@@ -135,6 +148,15 @@ async def capture(
     挂点只有两处：``routers.ai_router.chat_completions``（覆盖 chat 与
     markdown-assistant）与 ``services.agent.executor.run``（一次 run 一次）。
     每轮重复捕获 agent 的 prompt 会把同一段话存十遍，也把配额成本变成存储成本。
+
+    ``answer_text`` / ``tool_calls`` / ``refused`` / ``warned`` 是同一行的回答侧
+    事实：同步链路（chat）在调用时就已知回答，可以直接一起写；agent 的回答要等到
+    收尾，用 :func:`record_outcome` 补写。返回值（oid）就是补写用的句柄。
+
+    ``reference`` 是只读场景（终端 / 文件编辑）的参考内容。它**不落**
+    ``AI_MESSAGES``——那段内容不是用户说的话，写进消息表会让历史回放把它当对话；
+    但它必须留档（合规要能还原「模型看到了什么」），所以拼在 ``prompt_text`` 的
+    尾部：提问在前，被截断时先丢参考内容，不会丢掉「他问了什么」。
     """
     try:
         if not should_capture(user):
@@ -145,14 +167,72 @@ async def capture(
         text = last_user_text(messages)
         if not text or not text.strip():
             return None
+        extra = reference.strip() if isinstance(reference, str) else ""
+        prompt = f"{text}\n\n[参考内容]\n{extra}" if extra else text
         return await backends.get_ai_prompt_audit_repo().insert(
             request_id=request_id,
             user_oid=user_oid,
             roles_snapshot=audit.roles_snapshot(user.get("per")),
             purpose=purpose,
-            prompt_text=prepare_prompt(text),
+            prompt_text=prepare_prompt(prompt),
+            answer_text=prepare_prompt(answer_text) if answer_text else None,
+            tool_calls=tool_calls_payload(tool_calls),
+            refused=refused,
+            warned=warned,
         )
     except Exception as exc:  # noqa: BLE001 - 留存失败不影响主请求
         # 只留异常类名：异常 message 可能带上数据库连接串或 SQL 片段。
         _logger.warning("ai prompt audit capture failed: %s", type(exc).__name__)
         return None
+
+
+def tool_calls_payload(items: Any) -> str | None:
+    """工具调用摘要 → JSON 数组文本（``[{name,args_summary,result_summary,status}]``）。
+
+    摘要本身已经是脱敏过的（``executor`` 的事件口径），这里只做形状收敛与长度
+    上限：CLOB 不是垃圾桶，一次 run 最多 5×轮数 条，超过就截断并保留前缀。
+    """
+    if not isinstance(items, (list, tuple)):
+        return None
+    rows: list[dict] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        rows.append(
+            {
+                "name": str(item.get("name") or item.get("tool_name") or ""),
+                "args_summary": item.get("args_summary"),
+                "result_summary": item.get("result_summary"),
+                "status": item.get("status"),
+            }
+        )
+    if not rows:
+        return None
+    return json.dumps(rows, ensure_ascii=False)[:TOOL_CALLS_MAX_CHARS]
+
+
+async def record_outcome(
+    audit_oid: str | None,
+    *,
+    answer_text: str | None = None,
+    tool_calls: Any = None,
+    refused: bool | None = None,
+    warned: bool | None = None,
+) -> None:
+    """补写一行留存的回答侧字段（``None`` = 不改）；旁路，任何失败只记 warning。
+
+    ``answer_text`` 与提问走同一套脱敏与截断：回答里常常复述手机号/身份证
+    （「已为 138**** 的账号解封」），不遮蔽等于把掩码做在错的地方。
+    """
+    if not audit_oid:
+        return
+    try:
+        await backends.get_ai_prompt_audit_repo().update_outcome(
+            str(audit_oid),
+            answer_text=prepare_prompt(answer_text) if answer_text else None,
+            tool_calls=tool_calls_payload(tool_calls),
+            refused=refused,
+            warned=warned,
+        )
+    except Exception as exc:  # noqa: BLE001 - 留存失败不影响主请求
+        _logger.warning("ai prompt audit outcome failed: %s", type(exc).__name__)

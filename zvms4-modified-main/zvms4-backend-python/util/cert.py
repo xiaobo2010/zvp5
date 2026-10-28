@@ -12,7 +12,10 @@ import math
 import datetime
 import hashlib
 import hmac
+import logging
+import os
 import secrets
+import stat
 import string
 import struct
 from Crypto.Hash import SHA256
@@ -21,6 +24,10 @@ from db import backends
 from db.ids import new_oid
 from util.ban import ban_is_active, raise_banned
 from util.group import get_user_permissions
+
+PLATFORM_KEY_PATH = "aes_key.txt"
+
+_logger = logging.getLogger(__name__)
 
 
 class Auth:
@@ -100,7 +107,30 @@ def pwd_strength(password: str) -> int:
 
 public_key = RSA.import_key(open("rsa_public_key.pem", "rb").read())
 private_key = RSA.import_key(open("rsa_private_key.pem", "rb").read())
-jwt_private_key = open("aes_key.txt", "r").read()
+
+
+def read_platform_key(path: str = PLATFORM_KEY_PATH) -> str:
+    """读平台密钥（JWT / TOTP 的派生源），顺手收紧过宽的权限位。
+
+    组/其他可读意味着同机任何账号都能签出合法 token，等于全站身份可伪造。
+    发现就 chmod 0600 并告警；收紧失败也只告警——密钥读不到就没法启动，
+    权限问题却可以留给运维处理。
+    """
+    try:
+        mode = os.stat(path).st_mode
+    except OSError:
+        mode = 0
+    if mode & (stat.S_IRGRP | stat.S_IROTH):
+        try:
+            os.chmod(path, 0o600)
+            _logger.warning("密钥文件 %s 权限过宽，已收紧为 0600", path)
+        except OSError as exc:
+            _logger.warning("密钥文件 %s 权限过宽且无法收紧：%s", path, exc)
+    with open(path, "r") as handle:
+        return handle.read()
+
+
+jwt_private_key = read_platform_key()
 
 
 def rsa_encrypt(plaintext):

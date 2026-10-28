@@ -1,4 +1,4 @@
-"""agent 的 30 分钟解锁门（进程内），以及管理员的「无限制模式」开关。
+"""agent 的 30 分钟解锁门（进程内）。
 
 **为什么是进程内**：部署是单 worker（``config/supervisor.conf`` 没有 ``--workers``），
 与 ``util.dual_auth`` 的授权缓存同一个前提。多 worker 时每个进程各自计时，效果是
@@ -31,8 +31,6 @@ _failures: dict[str, list[float]] = {}
 # user_oid -> 锁定到期时刻（monotonic）
 _locked: dict[str, float] = {}
 
-# user_oid -> True；只由管理员端点写入
-_unrestricted: dict[str, bool] = {}
 
 
 def _env_number(name: str, fallback: float) -> float:
@@ -114,24 +112,11 @@ def record_unlock_failure(user_oid: str, now: float | None = None) -> bool:
     return False
 
 
-def is_unrestricted(user_oid: str) -> bool:
-    return bool(_unrestricted.get(str(user_oid)))
-
-
-def set_unrestricted(user_oid: str, enabled: bool) -> None:
-    oid = str(user_oid)
-    if enabled:
-        _unrestricted[oid] = True
-    else:
-        _unrestricted.pop(oid, None)
-
-
 def clear_state() -> None:
     """清空全部进程内状态（测试与「立即失效」场景用）。"""
     _unlocked.clear()
     _failures.clear()
     _locked.clear()
-    _unrestricted.clear()
 
 
 __all__ = [
@@ -140,10 +125,8 @@ __all__ = [
     "AGENT_UNLOCK_TTL_SECONDS",
     "clear_state",
     "is_unlocked",
-    "is_unrestricted",
     "mark_unlocked",
     "record_unlock_failure",
-    "set_unrestricted",
     "unlock_lock_seconds",
     "unlock_max_attempts",
     "unlock_retry_after",

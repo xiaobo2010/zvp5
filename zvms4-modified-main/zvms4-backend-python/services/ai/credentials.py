@@ -24,10 +24,13 @@ import socket
 import time
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import Any, Mapping
 from urllib.parse import urlsplit
 
 import anyio
+import httpx
+
+import settings
 
 from db import backends
 from db.repos.protocols import SHARED_OWNER_OID
@@ -56,6 +59,26 @@ _HEADER_NAME_PATTERN = re.compile(r"^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$")
 _HEADERS_MAX = 16
 _HEADER_VALUE_MAX = 512
 _API_PATH_MAX = 200
+
+# 上游 ``/models`` 探测的超时（秒）。``0`` / 负数 = 关闭（离线环境与单测用）：
+# 探测是**加分项**，不能因为它把一次保存变慢或变失败。
+PROBE_TIMEOUT_SETTING = "AI_MODEL_PROBE_TIMEOUT_SECONDS"
+PROBE_TIMEOUT_DEFAULT = 2.0
+
+# 上游报上下文窗口的字段名（各家不同，按顺序取第一个能解析成正整数的）。
+CONTEXT_KEYS = (
+    "context_length",
+    "context_window",
+    "max_context_tokens",
+    "context_size",
+    "max_input_tokens",
+    "max_model_len",
+)
+
+# ``model id`` → 上下文窗口（token）。来源是「最近一次构建的目录」：视图与压缩
+# 水位都要求一个**同步**的窗口分母，而目录是 async 的。刷新发生在 ``_build``，
+# 也就是每次目录构建时——TTL 之内多个用户看到的是同一份事实。
+_model_contexts: dict[str, int] = {}
 
 # 内网/环回：允许管理员把 base_url 指到内网，等于把网关变成一台可被任意 admin
 # 驱使的内网 SSRF 跳板（云上 169.254.169.254 尤其危险）。
@@ -100,6 +123,104 @@ class CredentialError(Exception):
 # ---------------------------------------------------------------------------
 # 目录
 # ---------------------------------------------------------------------------
+
+
+def model_entries(value: object) -> list[dict]:
+    """``MODELS_JSON`` 的两种形态 → ``[{"id": str, "context": int | None}]``。
+
+    兼容是**硬要求**：库里既有 ``["gpt-4o-mini"]`` 这种字符串数组，也有新写入的
+    ``[{"id": "gpt-4o-mini", "context": 128000}]``。两种都要能读，否则一次列结构
+    演进就会让全部老凭据的模型列表变成空。
+    """
+    if isinstance(value, str):
+        # 老仓储可能直接把 JSON 文本交出来。
+        try:
+            value = json.loads(value)
+        except (TypeError, ValueError):
+            return []
+    if not isinstance(value, (list, tuple)):
+        return []
+
+    items: list[dict] = []
+    seen: set[str] = set()
+    for raw in value:
+        if isinstance(raw, str):
+            model, context = raw.strip(), None
+        elif isinstance(raw, Mapping):
+            model = str(raw.get("id") or "").strip()
+            context = _positive_int(raw.get("context"))
+        else:
+            continue
+        if not model or model in seen:
+            continue
+        seen.add(model)
+        items.append({"id": model, "context": context})
+    return items
+
+
+def model_ids(value: object) -> list[str]:
+    """只要模型名（目录、下拉、别名规则的输入都是它）。"""
+    return [item["id"] for item in model_entries(value)]
+
+
+def model_contexts(value: object) -> dict[str, int | None]:
+    """模型名 → 上下文窗口（没填就是 ``None``，不是 0）。"""
+    return {item["id"]: item["context"] for item in model_entries(value)}
+
+
+def _positive_int(value: object) -> int | None:
+    """正整数的宽容解析：``bool`` 是 ``int`` 的子类，必须先排除。"""
+    if isinstance(value, bool) or value is None:
+        return None
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
+
+
+def _refresh_model_contexts(entries: list[dict]) -> None:
+    """把这一次目录里的「模型级上下文」灌进进程内索引（供同步查询用）。"""
+    global _model_contexts
+    index: dict[str, int] = {}
+    for entry in entries:
+        for model in entry.get("models") or []:
+            if not isinstance(model, str):
+                continue
+            value = (entry.get("model_contexts") or {}).get(model)
+            if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+                continue
+            index[qualified_model_id(entry, model)] = value
+            # 裸名只做 setdefault：同名多渠道时以目录顺序第一个为准（与别名规则同向）。
+            index.setdefault(model, value)
+    _model_contexts = index
+
+
+def model_context(model: object) -> int | None:
+    """该模型**目录里配的**上下文窗口（token）；没有就是 ``None``。
+
+    合格 ID 先查，再退裸名：``provider/model`` 才是唯一键，裸名只是老数据的形状。
+    反向也要能查（裸名 → 合格 ID）：同名多渠道且窗口不一致时返回 ``None``——
+    猜一个窗口比不给更危险（压缩水位会按错的数字算）。索引为空（还没构建过目录）
+    时同样返回 ``None``，调用方继续走配置表兜底。
+    """
+    name = str(model or "").strip()
+    if not name:
+        return None
+    value = _model_contexts.get(name)
+    if value is None:
+        bare = name.partition("/")[2]
+        if bare:
+            value = _model_contexts.get(bare)
+    if value is None and "/" not in name:
+        hits = {
+            context
+            for qualified, context in _model_contexts.items()
+            if qualified.partition("/")[2] == name
+        }
+        if len(hits) == 1:
+            value = hits.pop()
+    return value
 
 
 async def catalog(user_oid: str) -> list[dict]:
@@ -155,7 +276,8 @@ async def _build(user_oid: str) -> list[dict]:
                 "name": name,
                 "kind": str(row.get("kind") or config.OPENAI_COMPAT),
                 "base_url": row.get("base_url"),
-                "models": [m for m in (row.get("models") or []) if isinstance(m, str)],
+                "models": model_ids(row.get("models")),
+                "model_contexts": model_contexts(row.get("models")),
                 "headers": _stored_headers(row.get("headers_json")),
                 "api_path": _stored_api_path(row.get("api_path")),
                 "api_key_cipher": row.get("api_key_cipher"),
@@ -183,9 +305,8 @@ async def _build(user_oid: str) -> list[dict]:
                 "name": name,
                 "kind": str(cfg.get("kind") or config.OPENAI_COMPAT),
                 "base_url": cfg.get("base_url"),
-                "models": [m for m in models if isinstance(m, str)]
-                if isinstance(models, list)
-                else [],
+                "models": model_ids(models),
+                "model_contexts": {},
                 "headers": _stored_headers(cfg.get("headers")),
                 "api_path": _stored_api_path(cfg.get("api_path")),
                 "api_key_cipher": None,
@@ -200,6 +321,7 @@ async def _build(user_oid: str) -> list[dict]:
             }
         )
 
+    _refresh_model_contexts(entries)
     return entries
 
 
@@ -238,6 +360,109 @@ def _ordered(rows: list[dict]) -> list[dict]:
         rows or [],
         key=lambda row: 0 if str(row.get("scope") or "") == SCOPE_PERSONAL else 1,
     )
+
+
+def _probe_timeout() -> float:
+    """上游 ``/models`` 探测的超时；``<= 0`` 表示关掉（离线/单测）。"""
+    raw = getattr(settings, PROBE_TIMEOUT_SETTING, PROBE_TIMEOUT_DEFAULT)
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return PROBE_TIMEOUT_DEFAULT
+    if value <= 0:
+        return 0.0
+    return value
+
+
+def _context_of(row: object) -> int | None:
+    """``/models`` 的一个条目 → 上下文窗口；认不出就是 ``None``（不猜）。"""
+    if not isinstance(row, Mapping):
+        return None
+    for key in CONTEXT_KEYS:
+        value = _positive_int(row.get(key))
+        if value is not None:
+            return value
+    return None
+
+
+def _models_payload(discovered: Mapping[str, int], models: object) -> list:
+    """把探测到的窗口并回原有列表，**保持原顺序**；没有窗口的仍留字符串。
+
+    已知 context 的条目只补空缺：管理员手填的值比上游报的更可信（有些兼容层会
+    报成上游母模型的窗口，比实际可用的大）。字符串原样保留是为了让「这次保存到底
+    改了什么」在库里的 diff 上一眼看得出。
+    """
+    items: list = []
+    for item in model_entries(models):
+        context = item["context"] or discovered.get(item["id"])
+        items.append({"id": item["id"], "context": context} if context else item["id"])
+    return items
+
+
+async def _discover_model_contexts(
+    *, base_url: object, api_key: str | None, headers: Mapping[str, Any] | None = None
+) -> dict[str, int]:
+    """best-effort 问一次上游 ``/models``，回 ``{model: context}``（可能为空）。
+
+    为什么放在保存路径：模型窗口是上游事实，让管理员为每个模型手抄一遍数字既不
+    可靠也不会有第二次。探测失败一律当作「没探到」——保存本身不能因此失败。
+    """
+    timeout = _probe_timeout()
+    url = str(base_url or "").strip().rstrip("/")
+    if timeout <= 0 or not url or not api_key:
+        return {}
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.get(
+                f"{url}/models",
+                headers={"Authorization": f"Bearer {api_key}", **dict(headers or {})},
+            )
+        if response.status_code != 200:
+            return {}
+        payload = response.json()
+    except Exception:  # noqa: BLE001 - 探测是加分项，任何失败都只是「没探到」
+        return {}
+
+    rows = payload.get("data") if isinstance(payload, Mapping) else payload
+    if not isinstance(rows, list):
+        return {}
+    found: dict[str, int] = {}
+    for row in rows:
+        model = str((row or {}).get("id") or "").strip() if isinstance(row, Mapping) else ""
+        context = _context_of(row)
+        if model and context is not None:
+            found[model] = context
+    return found
+
+
+async def _autofill_model_contexts(
+    repo: Any,
+    oid: str,
+    *,
+    base_url: object,
+    api_key: str | None,
+    models: object,
+    headers: Mapping[str, Any] | None = None,
+) -> list:
+    """探测 → 补 ``context`` → 若确有新增就写回库；返回最终要回显的 models 列表。"""
+    items = model_entries(models)
+    if not items or _probe_timeout() <= 0:
+        return items
+    discovered = await _discover_model_contexts(
+        base_url=base_url, api_key=api_key, headers=headers
+    )
+    if not discovered:
+        return items
+    filled = _models_payload(discovered, models)
+    before = [item["context"] for item in items]
+    after = [item["context"] for item in filled]
+    if before == after:
+        return items
+    try:
+        await repo.update(oid, models=filled)
+    except Exception:  # noqa: BLE001 - 回写失败不该让保存失败（下次保存再试）
+        return items
+    return filled
 
 
 # ---------------------------------------------------------------------------
@@ -408,6 +633,20 @@ async def resolve_api_key(entry: dict) -> str:
         ) from None
 
 
+async def _entry_secret(row: Mapping[str, Any]) -> str | None:
+    """探测用明文 key：拿不到就 ``None``（探测跳过，保存不受影响）。"""
+    if row.get("scope") == SCOPE_SERVER:
+        cfg = config.providers().get(str(row.get("name") or "")) or {}
+        return config.provider_api_key(cfg)
+    token = row.get("api_key_cipher")
+    if not token:
+        return None
+    try:
+        return crypto.decrypt_secret(str(token))
+    except ValueError:
+        return None
+
+
 def public_view(entry: dict) -> dict:
     """对外视图：永远不含 api_key / api_key_cipher。
 
@@ -422,7 +661,10 @@ def public_view(entry: dict) -> dict:
         "name": entry.get("name"),
         "kind": entry.get("kind"),
         "base_url": entry.get("base_url"),
-        "models": list(entry.get("models") or []),
+        # 模型名与窗口分开给：下拉/多选只要名字，表单要的「每个模型的窗口」是
+        # 另一张表，混在一个数组里会让所有既有消费方都要改。
+        "models": model_ids(entry.get("models")),
+        "model_contexts": model_contexts(entry.get("models")),
         "headers": {
             str(name): "****"
             for name in (entry.get("headers") or {})
@@ -481,7 +723,7 @@ async def create_entry(
     scope: str,
     name: str,
     base_url: str,
-    models: list[str],
+    models: list[str | dict],
     api_key: str,
     enabled: bool = True,
     headers: dict | None = None,
@@ -525,6 +767,14 @@ async def create_entry(
 
     await invalidate()
     row = await repo.get(oid)
+    final_models = await _autofill_model_contexts(
+        repo,
+        oid,
+        base_url=clean_url,
+        api_key=secret,
+        models=clean_models,
+        headers=clean_headers,
+    )
     view = public_view(
         {
             "oid": oid,
@@ -533,7 +783,7 @@ async def create_entry(
             "name": clean_name,
             "kind": config.OPENAI_COMPAT,
             "base_url": clean_url,
-            "models": clean_models,
+            "models": final_models,
             "headers": clean_headers,
             "api_path": clean_path,
             "key_hint": crypto.key_hint(secret),
@@ -604,6 +854,21 @@ async def update_entry(
         await invalidate()
 
     fresh = await repo.get(oid) or row
+    # 只在「可能影响模型窗口」的字段变了才探测：改个名字不该打一次上游。
+    if {"models", "base_url", "api_key_cipher"} & set(changes):
+        final_models = await _autofill_model_contexts(
+            repo,
+            oid,
+            base_url=fresh.get("base_url"),
+            api_key=(
+                _clean_api_key(fields["api_key"])
+                if fields.get("api_key") is not None
+                else await _entry_secret(fresh)
+            ),
+            models=fresh.get("models"),
+            headers=_stored_headers(fresh.get("headers_json")),
+        )
+        fresh = dict(fresh, models=final_models)
     view = public_view(
         {
             "oid": oid,
@@ -691,24 +956,48 @@ def _clean_api_key(value: object) -> str:
     return key
 
 
-def _clean_models(value: object) -> list[str]:
+def _clean_models(value: object) -> list[str | dict]:
+    """``models`` 两种形态入库校验：``"model-id"`` 或 ``{"id", "context"}``。
+
+    原形态原样落库（字符串还是字符串）：把老行悄悄改写成对象没有收益，反而让
+    「这条 context 是管理员填的还是上游报的」变得不可判。``context`` 只收正整数
+    或 ``null``——``0`` 与负数不是「未知」，是错的输入，直接 400 比留个假窗口好。
+    """
     if value is None:
         return []
     if not isinstance(value, (list, tuple)):
         raise CredentialError("AI_KEY_INVALID", "models must be a list", 400)
-    models: list[str] = []
+    models: list[str | dict] = []
+    seen: set[str] = set()
     for item in value:
-        if not isinstance(item, str):
-            raise CredentialError("AI_KEY_INVALID", "models must be strings", 400)
-        model = item.strip()
+        context: int | None = None
+        if isinstance(item, str):
+            model = item.strip()
+            shaped: str | dict = model
+        elif isinstance(item, Mapping):
+            model = str(item.get("id") or "").strip()
+            raw_context = item.get("context")
+            if raw_context is not None:
+                context = _positive_int(raw_context)
+                if context is None:
+                    raise CredentialError(
+                        "AI_KEY_INVALID", "model context must be a positive integer", 400
+                    )
+            shaped = {"id": model, "context": context}
+        else:
+            raise CredentialError(
+                "AI_KEY_INVALID", "models must be strings or {id, context} objects", 400
+            )
         if not 1 <= len(model) <= _MODEL_MAX_LEN:
             raise CredentialError(
                 "AI_KEY_INVALID",
                 f"each model must be 1..{_MODEL_MAX_LEN} characters",
                 400,
             )
-        if model not in models:  # 去重：同一个模型写两遍只会让候选列表变长
-            models.append(model)
+        if model in seen:  # 去重：同一个模型写两遍只会让候选列表变长
+            continue
+        seen.add(model)
+        models.append(shaped)
     if len(models) > _MODELS_MAX:
         raise CredentialError(
             "AI_KEY_INVALID", f"at most {_MODELS_MAX} models per credential", 400

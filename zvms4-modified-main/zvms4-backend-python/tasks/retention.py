@@ -1,5 +1,8 @@
 """Data-retention purge for ``app_logs``, ``export_tasks``, ``ai_call_logs``,
-``ai_agent_events`` and ``ai_prompt_audit`` (design §2).
+``ai_agent_events`` and ``ai_prompt_audit`` (design §2), plus the four
+append-only tables ``ban_records`` / ``ban_violations`` /
+``notification_versions`` / ``file_events`` (see
+:func:`run_append_only_retention`).
 
 Five tables grow without bound and had no cleanup path at all:
 
@@ -74,12 +77,28 @@ from typing import Awaitable, Callable
 import config
 import realtime
 from db import backends, system_state
+from db.models import (
+    ban_records as ban_records_tbl,
+    ban_violations as ban_violations_tbl,
+    file_events as file_events_tbl,
+    notification_versions as notification_versions_tbl,
+)
+from db.oracle.session import session_scope
+from sqlalchemy import delete, func, select, text
 
 # Fallbacks for a host whose ``config.py`` predates these keys (design §1).
 DEFAULT_APP_LOGS_RETENTION_DAYS = 90
 DEFAULT_EXPORT_TASKS_RETENTION_DAYS = 30
 DEFAULT_AI_CALL_LOGS_RETENTION_DAYS = 90
 DEFAULT_AI_PROMPT_RETENTION_DAYS = 30
+DEFAULT_BAN_RECORDS_RETENTION_DAYS = 730
+DEFAULT_BAN_VIOLATIONS_RETENTION_DAYS = 365
+DEFAULT_NOTIFICATION_VERSIONS_RETENTION_DAYS = 90
+DEFAULT_FILE_EVENTS_RETENTION_DAYS = 180
+# 只读场景会话（终端 / 文件编辑）的保留窗口：一次性排障记录，比普通会话激进。
+# 与 ``services.ai.conversations.SCENE_RETENTION_DAYS`` 同值（那里是口径来源，
+# 这里是「部署配置缺键」的兜底，不 import 以避免循环）。
+DEFAULT_SCENE_CONVERSATION_RETENTION_DAYS = 14
 DEFAULT_RETENTION_BATCH_SIZE = 5000
 DEFAULT_RETENTION_MAX_BATCHES = 20
 
@@ -271,6 +290,68 @@ def ai_prompt_retention_days() -> int:
     except Exception:  # noqa: BLE001 - 配置层坏了不该让清理任务起不来
         return DEFAULT_AI_PROMPT_RETENTION_DAYS
     return days if days > 0 else DEFAULT_AI_PROMPT_RETENTION_DAYS
+
+
+def ban_records_retention_days() -> int:
+    """``ban_records``（封禁流水）保留期，默认 730 天。
+
+    这张表是累犯梯度的**唯一**历史依据：同一 ``(user_oid, rule_code)`` 的行数决定
+    下一次用第几档 penalty。窗口短于两年，一个两年没犯的惯犯就会在档案里退回
+    「初犯」档，所以这里的值不是运营口味，是判罚正确性的一部分。
+    """
+    return _positive_int(
+        "BAN_RECORDS_RETENTION_DAYS", DEFAULT_BAN_RECORDS_RETENTION_DAYS
+    )
+
+
+def ban_violations_retention_days() -> int:
+    """``ban_violations``（违规信号证据）保留期，默认 365 天。
+
+    规则窗口最长按天计（``window_hours`` 级别），一年足够回答「这条封禁当时凭什么
+    判」，同时让 append-only 表不再无限增长。
+    """
+    return _positive_int(
+        "BAN_VIOLATIONS_RETENTION_DAYS", DEFAULT_BAN_VIOLATIONS_RETENTION_DAYS
+    )
+
+
+def notification_versions_retention_days() -> int:
+    """``notification_versions``（通知内容快照）保留期，默认 90 天。
+
+    快照只用于「这条公告什么时候被谁改成了什么」，回滚也只回退到当前版本的上一版；
+    90 天覆盖了管理员实际追溯的跨度，再长只是把 N 份 4000 字符正文留在库里。
+    """
+    return _positive_int(
+        "NOTIFICATION_VERSIONS_RETENTION_DAYS",
+        DEFAULT_NOTIFICATION_VERSIONS_RETENTION_DAYS,
+    )
+
+
+def file_events_retention_days() -> int:
+    """``file_events``（附件操作留痕）保留期，默认 180 天。
+
+    附件本身有回收站窗口（``USER_TRASH_RETENTION_DAYS``）与删除保留期，事件行要比
+    它们活得久一点才能解释「这个文件是怎么没的」，但不需要永久。
+    """
+    return _positive_int(
+        "FILE_EVENTS_RETENTION_DAYS", DEFAULT_FILE_EVENTS_RETENTION_DAYS
+    )
+
+
+#: 只增表（append-only）的保留窗口：``(表名, Table, 天数读取函数)``。
+#: 这几张表没有仓储级 ``purge_batch``（它们的仓储只写不删），所以清理语句就放在
+#: 本模块：按 ``created_at < cutoff`` 批量删，形态与其它表完全一致（每批一条
+#: ``DELETE`` + ``ROWNUM`` 上限，批次上限共用 ``RETENTION_MAX_BATCHES``）。
+_APPEND_ONLY_WINDOWS = (
+    ("ban_records", ban_records_tbl, ban_records_retention_days),
+    ("ban_violations", ban_violations_tbl, ban_violations_retention_days),
+    (
+        "notification_versions",
+        notification_versions_tbl,
+        notification_versions_retention_days,
+    ),
+    ("file_events", file_events_tbl, file_events_retention_days),
+)
 
 
 def retention_batch_size() -> int:
@@ -505,6 +586,96 @@ async def run_retention(on_progress: ProgressCallback | None = None) -> dict:
     }
 
 
+# ---------------------------------------------------------------------------
+# 只增表（append-only）的保留期清理
+#
+# 四张表都只有一种查询形状：按 ``created_at`` 从新到旧读（管理页）或按时间窗过滤
+# （规则判定）。它们没有仓储级 ``purge_batch``，所以语句在这里就地构造：与其它表
+# 完全相同的一条 ``DELETE`` + ``ROWNUM`` 上限，批次上限复用
+# ``RETENTION_MAX_BATCHES``。调度点也复用 ``daily_retention_purge``（本模块的
+# ``_orchestrate`` 在同一个作业里调用），**不新增**调度项。
+# ---------------------------------------------------------------------------
+
+
+def _purge_append_only_stmt(table, cutoff: datetime, batch_size: int):
+    """One bounded ``DELETE`` on ``table.created_at`` (``ROWNUM``, not ``FETCH``)."""
+    return delete(table).where(
+        table.c.created_at < cutoff,
+        text("ROWNUM <= :batch_size").bindparams(batch_size=int(batch_size)),
+    )
+
+
+def _count_append_only_stmt(table, cutoff: datetime):
+    """How many rows the next batch would eventually delete (read-only)."""
+    return (
+        select(func.count())
+        .select_from(table)
+        .where(table.c.created_at < cutoff)
+    )
+
+
+async def _purge_append_only_batch(table, cutoff: datetime, batch_size: int) -> int:
+    """Delete at most ``batch_size`` rows of ``table`` older than ``cutoff``."""
+    stmt = _purge_append_only_stmt(table, cutoff, batch_size)
+    async with session_scope() as session:
+        result = await session.execute(stmt)
+        await session.commit()
+    return int(result.rowcount or 0)
+
+
+async def _count_append_only(table, cutoff: datetime) -> int:
+    stmt = _count_append_only_stmt(table, cutoff)
+    async with session_scope() as session:
+        return int((await session.execute(stmt)).scalar_one())
+
+
+async def run_append_only_retention(now: datetime | None = None) -> dict:
+    """Drain the four append-only tables; ``{table: {cutoff, deleted, remaining}}``.
+
+    与 :func:`run_retention` 同一份 ``now``、同一个批量大小/批次上限，逐表串行
+    drain。它由 ``_orchestrate`` 在同一个作业里调用（因此定时与手动两个入口都会
+    覆盖到），返回的字典追加进作业结果的 ``append_only`` 键。
+    """
+    batch_size = retention_batch_size()
+    max_batches = retention_max_batches()
+    moment = datetime.now() if now is None else now
+
+    results: dict = {}
+    for name, table, days_getter in _APPEND_ONLY_WINDOWS:
+        cutoff = retention_cutoff(moment, days_getter())
+        deleted, _batches = await _drain(
+            lambda c, b, tbl=table: _purge_append_only_batch(tbl, c, b),
+            cutoff,
+            batch_size,
+            max_batches,
+        )
+        results[name] = {
+            "cutoff": cutoff.isoformat(),
+            "deleted": deleted,
+            "remaining": int(await _count_append_only(table, cutoff)),
+        }
+    return results
+
+
+async def purge_stale_scene_conversations(now: datetime | None = None) -> dict:
+    """只读场景会话（终端 / 文件编辑）的保留期清理。
+
+    窗口读法与其他表一致（``getattr`` + 代码默认）：部署侧的 ``config.py`` 可能比
+    仓库旧，缺键时不能把整个进程卡在导入阶段。删除走 ``services.ai.conversations``
+    的级联链（作废提案 → messages → runs → 会话本体），这里不重写一条 DELETE。
+
+    ``conversations`` 是**函数内导入**：``services.ai.conversations`` →
+    ``services.agent`` → ``run_queue`` → 又回到 ``conversations``，模块级导入会在
+    「先 import tasks.retention」的进程里形成半初始化环（golden 用例就会踩到）。
+    """
+    from services.ai import conversations
+
+    days = _positive_int(
+        "AI_SCENE_CONVERSATION_RETENTION_DAYS", DEFAULT_SCENE_CONVERSATION_RETENTION_DAYS
+    )
+    return await conversations.purge_stale_scenes(days=days, now=now)
+
+
 async def purge_now(actor: str = SCHEDULER_USER) -> dict:
     """Manual (synchronous) entry point: :func:`run_retention` under the
     process-wide lock, wrapped in the maintenance orchestration.
@@ -525,13 +696,26 @@ def audit_message(result: dict) -> str:
     ai = result["ai_call_logs"]
     events = result["ai_agent_events"]
     prompts = result["ai_prompt_audit"]
-    return (
+    message = (
         f"数据保留期清理：app_logs 删除 {logs['deleted']} 行（剩余 {logs['remaining']} 行），"
         f"export_tasks 删除 {tasks['deleted']} 行（剩余 {tasks['remaining']} 行），"
         f"ai_call_logs 删除 {ai['deleted']} 行（剩余 {ai['remaining']} 行），"
         f"ai_agent_events 删除 {events['deleted']} 行（剩余 {events['remaining']} 行），"
         f"ai_prompt_audit 删除 {prompts['deleted']} 行（剩余 {prompts['remaining']} 行）"
     )
+    append_only = result.get("append_only")
+    if append_only:
+        message += "；只增表：" + "，".join(
+            f"{table} 删除 {counts['deleted']} 行（剩余 {counts['remaining']} 行）"
+            for table, counts in append_only.items()
+        )
+    scenes = result.get("scene_conversations")
+    if scenes:
+        message += (
+            f"；只读场景会话删除 {scenes['deleted']} 条"
+            f"（剩余 {scenes['remaining']} 条）"
+        )
+    return message
 
 
 async def write_audit_row(result: dict, user: str) -> None:
@@ -592,6 +776,11 @@ async def purge_expired_records() -> int:
         + result["ai_call_logs"]["deleted"]
         + result["ai_agent_events"]["deleted"]
         + result["ai_prompt_audit"]["deleted"]
+        + int((result.get("scene_conversations") or {}).get("deleted") or 0)
+        + sum(
+            counts["deleted"]
+            for counts in result.get("append_only", {}).values()
+        )
     )
     print(
         f"purge_expired_records: deleted {deleted} row(s); "
@@ -753,6 +942,11 @@ async def _orchestrate(job: dict) -> dict:
             print(f"retention: disconnect_all_clients failed: {exc!r}")
 
         result = await run_retention(on_progress=_progress_recorder(job))
+        # 只增表在同一个作业、同一段维护态里清理：调度点不变，只是多 drain 四张表。
+        result["append_only"] = await run_append_only_retention()
+        # 只读场景会话（终端 / 文件编辑）：走既有会话级联删除，14 天窗口比普通
+        # 会话激进——它们是一次性排障记录，内容还含终端/文件片段。
+        result["scene_conversations"] = await purge_stale_scene_conversations()
         with _job_lock:
             job["result"] = result
         return result

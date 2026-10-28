@@ -76,6 +76,6 @@ def test_audit_failure_does_not_change_the_418(monkeypatch):
         client.close()
 
     assert blocked.status_code == 418
-    assert blocked.json() == "请求已被拦截"
+    assert blocked.json() == main.SHIELD_BLOCKED_MESSAGE
     assert pattern.status_code == 418
     assert allowed.status_code == 404

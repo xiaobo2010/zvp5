@@ -23,7 +23,7 @@ from db.ids import InvalidOid, normalize_oid
 from routers.system_router import _require_system_admin
 from services import settings_runtime
 from typings.log import inject_log
-from util.object_id import get_current_user
+from util.object_id import get_current_user, require_password_verification
 from util.permission.features import has_feature
 from util.user import get_user_display_name
 
@@ -41,6 +41,7 @@ class SettingItem(BaseModel):
 
 class SettingsUpdateRequest(BaseModel):
     items: list[SettingItem]
+    verification_token: str | None = None
 
 
 class UserQuotaUpdateRequest(BaseModel):
@@ -119,6 +120,7 @@ async def update_settings(
 ):
     """批量修改：先全量校验，全部通过才落库；返回**本次改的**键。"""
     await _require_system_admin(user)
+    await require_password_verification(payload.verification_token, user)
 
     if not payload.items:
         raise HTTPException(status_code=400, detail="items 不能为空")

@@ -252,6 +252,11 @@ class FakeLog:
         self.insert_count += 1
 
 
+async def _allow_reauth(*_args, **_kwargs):
+    """本文件只验业务语义；再认证本身由 ``test_admin_reauth_gate`` 专测。"""
+    return None
+
+
 @pytest.fixture
 def api(monkeypatch):
     repo = FakeNotificationsRepo()
@@ -265,6 +270,9 @@ def api(monkeypatch):
     )
     monkeypatch.setattr(notifications_router, "get_user_display_name", display_name)
 
+    monkeypatch.setattr(
+        notifications_router, "require_password_verification", _allow_reauth
+    )
     app = FastAPI()
     app.include_router(notifications_router.router, prefix=PREFIX)
     app.dependency_overrides[get_current_user] = lambda: ADMIN
