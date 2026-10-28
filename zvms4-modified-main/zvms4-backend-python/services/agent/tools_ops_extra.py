@@ -1,4 +1,5 @@
-"""运维补充工具（4 读 + 3 写）：设置快照 / 调度器 / AI 流水 / run 队列 + 备份 / 维护模式 / 调度开关。
+"""运维补充工具（6 读 + 3 写）：设置快照 / 调度器 / AI 流水 / run 队列 /
+用户查找 / 服务器时间 + 备份 / 维护模式 / 调度开关。
 
 注册表语义与 ``ops_tools`` / ``tools_platform`` / ``tools_governance`` 完全一致，
 本模块不另立一套：
@@ -28,8 +29,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import re
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy import func, select
@@ -921,7 +924,226 @@ async def _impl_scheduler_control(user: dict, job_id: str, action: str) -> dict:
 
 
 # --------------------------------------------------------------------------- #
-# 注册（4 读 + 3 写）
+# 读工具 5：user_lookup
+# --------------------------------------------------------------------------- #
+
+# 一次最多回 20 个目标：封号决策要的是「确认是谁」，不是导全班通讯录。
+LOOKUP_LIMIT = 20
+LOOKUP_NAME_MAX = 32
+LOOKUP_FIELDS = (
+    "oid",
+    "name",
+    "business_id",
+    "class_id",
+    "class_name",
+    "roles",
+    "banned",
+    "ban_until",
+    "device_bound",
+)
+
+_OID_RE = re.compile(r"^[0-9a-fA-F]{24}$")
+
+
+def _lookup_mode(
+    name: Any, business_id: Any, oid: Any
+) -> tuple[str, str]:
+    """三选一：恰好给一个查询键，回 ``(mode, value)``。
+
+    多给不是「更精确」，而是**口径不明**：``name`` 模糊命中 20 个、``business_id``
+    精确命中 1 个时该以谁为准？让模型二选一，比替它猜一个更安全。
+    """
+    raw = {"name": name, "business_id": business_id, "oid": oid}
+    given = [
+        key for key, value in raw.items() if isinstance(value, str) and value.strip()
+    ]
+    if not given:
+        raise AgentError(
+            "AI_AGENT_BAD_ARGUMENT",
+            "provide exactly one of: name / business_id / oid",
+            400,
+        )
+    if len(given) > 1:
+        raise AgentError(
+            "AI_AGENT_BAD_ARGUMENT",
+            f"provide only one of name / business_id / oid (got {', '.join(given)})",
+            400,
+        )
+    mode = given[0]
+    value = str(raw[mode]).strip()
+    if mode == "name" and len(value) > LOOKUP_NAME_MAX:
+        raise AgentError(
+            "AI_AGENT_BAD_ARGUMENT",
+            f"name must be at most {LOOKUP_NAME_MAX} characters",
+            400,
+        )
+    if mode == "oid" and not _OID_RE.match(value):
+        raise AgentError(
+            "AI_AGENT_BAD_ARGUMENT", "oid must be a 24-char hex id", 400
+        )
+    return mode, value
+
+
+async def _class_names(class_ids: list[str]) -> dict[str, str]:
+    """``{class_oid: name}``；单个班级查不到只影响 ``class_name``，不失败。"""
+    unique = list(dict.fromkeys(cid for cid in class_ids if cid))
+    if not unique:
+        return {}
+    repo = backends.get_groups_repo()
+    names: dict[str, str] = {}
+    for class_id in unique:
+        try:
+            group = await repo.get(class_id)
+        except Exception:  # noqa: BLE001 - 班级名是加分项，不是查询本身
+            logger.warning("agent user_lookup class lookup failed", exc_info=True)
+            continue
+        if isinstance(group, dict) and group.get("name"):
+            names[class_id] = str(group["name"])
+    return names
+
+
+def _lookup_view(row: Any, class_names: dict[str, str]) -> dict:
+    """**白名单投影**：只挑这 9 个键，仓储回什么都进不来。
+
+    ``password`` / ``session_id`` / ``eligibility`` / ``past`` 等一律不读；
+    主设备只回「有没有绑」的布尔，原值（设备指纹）不外带。
+    """
+    class_id = row.get("class_id")
+    class_id = str(class_id) if class_id else None
+    ban_until = row.get("ban_until")
+    return {
+        "oid": str(row.get("_id") or ""),
+        "name": row.get("name"),
+        "business_id": row.get("id"),
+        "class_id": class_id,
+        "class_name": class_names.get(class_id) if class_id else None,
+        "roles": [str(role) for role in (row.get("roles") or [])],
+        "banned": bool(row.get("banned")),
+        # 永久封禁在仓储里是「没有 ban_until 这个键」；这里显式给 null，
+        # 让模型看到 ``banned=true, ban_until=null`` 这一对。
+        "ban_until": _iso(ban_until),
+        "device_bound": "primary_xuehai_id" in row,
+    }
+
+
+async def _impl_user_lookup(
+    user: dict,
+    name: str | None = None,
+    business_id: str | None = None,
+    oid: str | None = None,
+) -> dict:
+    mode, value = _lookup_mode(name, business_id, oid)
+    repo = backends.get_users_repo()
+
+    if mode == "oid":
+        row = await repo.get_by_oid(value)
+        rows = [row] if row else []
+    elif mode == "business_id":
+        row = await repo.find_by_business_id(value)
+        rows = [row] if row else []
+    else:
+        # 仓储的模糊查同时匹配 name/id；这里再按姓名收一次，免得用纯数字
+        # 姓名查到一串学号。服务端已经筛过一遍，多这一层不增加往返。
+        pattern = re.escape(value)
+        needle = value.lower()
+        rows = [
+            row
+            for row in await repo.list_by_name_or_id(pattern)
+            if needle in str(row.get("name") or "").lower()
+        ]
+
+    truncated = len(rows) > LOOKUP_LIMIT
+    picked = rows[:LOOKUP_LIMIT]
+    class_names = await _class_names(
+        [str(row["class_id"]) for row in picked if row.get("class_id")]
+    )
+    users = [_lookup_view(row, class_names) for row in picked]
+
+    return _cap(
+        {
+            "kind": "user_lookup",
+            "query": {mode: value},
+            "count": len(users),
+            "truncated": truncated,
+            "users": users,
+            "fields": list(LOOKUP_FIELDS),
+            "note": (
+                "白名单投影：不含密码/会话/totp/设备指纹原值。banned 是登录闸的"
+                "原始值（到期未解封仍为 true），ban_until=null 且 banned=true 表示"
+                "永久封禁；时长判断请用 server_time 的时间基准。"
+            ),
+        }
+    )
+
+
+# --------------------------------------------------------------------------- #
+# 读工具 6：server_time
+# --------------------------------------------------------------------------- #
+
+_WEEKDAYS = (
+    "星期一",
+    "星期二",
+    "星期三",
+    "星期四",
+    "星期五",
+    "星期六",
+    "星期日",
+)
+
+
+def _zone_name(aware: datetime) -> str:
+    """进程当前时区名（``Asia/Shanghai`` 这种），拿不到就退 ``tzname()``。
+
+    顺序：``TZ`` 环境变量 → ``/etc/timezone`` → ``/etc/localtime`` 软链 →
+    ``tzname()``。前三个给的是 IANA 名，告诉模型「这是东八区」比 ``CST`` 这种
+    可能被误读成北美中部的缩写可靠。
+    """
+    env = os.environ.get("TZ", "").strip().lstrip(":")
+    if env:
+        return env
+    try:
+        text = Path("/etc/timezone").read_text(encoding="utf-8").strip()
+    except OSError:
+        text = ""
+    if text:
+        return text
+    try:
+        target = str(Path("/etc/localtime").resolve())
+    except OSError:
+        target = ""
+    if "zoneinfo/" in target:
+        return target.split("zoneinfo/", 1)[1]
+    return aware.tzname() or "UTC"
+
+
+async def _impl_server_time(user: dict) -> dict:
+    """权威时间基准。**naive 侧走 ``device_guard._to_local_naive`` 同一口径**：
+    封禁落库的 ``USERS.BAN_UNTIL`` 是本地墙钟 naive，直接喂 aware UTC 会差出一个
+    时区偏移（东八区「封 24 小时」实际只封 16 小时）。
+    """
+    from services.device_guard import _to_local_naive
+
+    aware = datetime.now().astimezone()
+    naive = _to_local_naive(aware) or datetime.now()
+    return _cap(
+        {
+            "kind": "server_time",
+            "now_iso": aware.isoformat(timespec="seconds"),
+            "timezone": _zone_name(aware),
+            "epoch_seconds": int(aware.timestamp()),
+            "weekday": _WEEKDAYS[naive.weekday()],
+            # 与封禁落库同口径的墙钟值：给「封到几点」时直接用它加时长。
+            "local_naive": naive.isoformat(sep=" ", timespec="seconds"),
+            "note": (
+                "local_naive 是本地墙钟 naive（与 BAN_UNTIL 落库口径一致）；"
+                "now_iso 带时区偏移。两者指向同一时刻。"
+            ),
+        }
+    )
+
+
+# --------------------------------------------------------------------------- #
+# 注册（6 读 + 3 写）
 # --------------------------------------------------------------------------- #
 
 _STR = {"type": "string"}
@@ -1118,10 +1340,65 @@ _register(
 )
 
 
+_register(
+    ToolDef(
+        name="user_lookup",
+        description=(
+            "按姓名（模糊）/学号（精确）/oid（精确）查用户，用于确认封号目标；"
+            "只回白名单字段（oid/姓名/学号/班级/角色/是否封禁/到期/是否绑主设备），"
+            "不含任何凭据。只读。"
+        ),
+        kind=READ,
+        params=_params(
+            {
+                "name": {
+                    **_STR,
+                    "maxLength": LOOKUP_NAME_MAX,
+                    "description": (
+                        f"姓名（部分匹配，≤{LOOKUP_NAME_MAX} 字）；与 business_id/oid 三选一"
+                    ),
+                },
+                "business_id": {
+                    **_STR,
+                    "description": "学号（精确匹配）；与 name/oid 三选一",
+                },
+                "oid": {
+                    **_STR,
+                    "description": "用户 oid（24 位 hex，精确匹配）；与 name/business_id 三选一",
+                },
+            },
+            (),
+        ),
+        permission=_admin_only,
+        impl=_impl_user_lookup,
+        guard=ops_auth.ensure_system_admin,
+    )
+)
+
+
+_register(
+    ToolDef(
+        name="server_time",
+        description=(
+            "读取服务器权威时间（带偏移的 ISO / 时区名 / epoch / 星期，以及封禁落库"
+            "同口径的本地墙钟 naive），用于换算封禁时长与时区。只读。"
+        ),
+        kind=READ,
+        params=_params({}, ()),
+        permission=_admin_only,
+        impl=_impl_server_time,
+        guard=ops_auth.ensure_system_admin,
+    )
+)
+
+
 __all__ = [
     "CALL_LOG_STATUSES",
     "LOG_ROWS_MAX",
     "LOG_WINDOW_MAX_DAYS",
+    "LOOKUP_FIELDS",
+    "LOOKUP_LIMIT",
+    "LOOKUP_NAME_MAX",
     "MAINTENANCE_ACTIONS",
     "MAINTENANCE_REASON_MAX",
     "SCHEDULER_ACTIONS",

@@ -34,7 +34,21 @@ const isSecretary = userStore.position.includes('secretary')
 const secretaryOnly = isSecretary && !isAdmin && !isDepartment
 
 /** 只有管理员能进的分区；其他人访问一律回落到入口分区。 */
-const ADMIN_ONLY = ['notifications', 'roles', 'settings', 'ban', 'attachments']
+const ADMIN_ONLY = ['notifications', 'roles', 'settings', 'ban']
+
+/** 管理员与学生会（department）共用的分区：后端 ``_is_manager`` 同样认这两个角色。 */
+const MANAGER_ONLY = ['attachments']
+
+/** 当前角色能不能进这个分区（未列出的分区对所有 manage 角色开放）。 */
+function accessibleTab(tab: string): boolean {
+  if (ADMIN_ONLY.includes(tab)) {
+    return isAdmin
+  }
+  if (MANAGER_ONLY.includes(tab)) {
+    return isAdmin || isDepartment
+  }
+  return true
+}
 
 /**
  * 旧分区 → 现分区：设备封禁已并入封禁管理，旧深链/书签自动归一，不 404。
@@ -72,7 +86,7 @@ if (!(isAdmin || isDepartment || isSecretary)) {
 const curPage = route.params.action?.toString()
 const curTab = normalizeTab(curPage)
 
-if (curTab && ADMIN_ONLY.includes(curTab) && !isAdmin) {
+if (curTab && !accessibleTab(curTab)) {
   router.replace(`/manage/${HOME_TAB}`)
 } else if (curTab && !VALID_CURRENT.includes(curTab)) {
   router.replace(`/manage/${HOME_TAB}`)
@@ -82,11 +96,7 @@ if (curTab && ADMIN_ONLY.includes(curTab) && !isAdmin) {
 }
 
 const current = ref(
-  curTab &&
-    VALID_CURRENT.includes(curTab) &&
-    (!ADMIN_ONLY.includes(curTab) || isAdmin)
-    ? curTab
-    : HOME_TAB
+  curTab && VALID_CURRENT.includes(curTab) && accessibleTab(curTab) ? curTab : HOME_TAB
 )
 
 const tabs = ref<SegmentedTab[]>(
@@ -125,11 +135,18 @@ if (isAdmin) {
     value: 'ban',
     icon: Block
   }
+}
+
+// 学生会上传/核查材料同样要进附件管理：与后端 _is_manager 对齐。
+if (isAdmin || isDepartment) {
   tabs.value[tabs.value.length] = {
     label: 'Attachments',
     value: 'attachments',
     icon: Picture
   }
+}
+
+if (isAdmin) {
   tabs.value[tabs.value.length] = {
     label: 'Logs',
     value: 'logs',
@@ -151,7 +168,7 @@ watch(
   () => {
     const raw = route.params.action?.toString()
     const curTab = normalizeTab(raw)
-    if (curTab && ADMIN_ONLY.includes(curTab) && !isAdmin) {
+    if (curTab && !accessibleTab(curTab)) {
       router.replace(`/manage/${HOME_TAB}`)
       current.value = HOME_TAB
     } else if (curTab && VALID_CURRENT.includes(curTab)) {

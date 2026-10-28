@@ -182,6 +182,15 @@ def test_active_list_filters_and_orders_newest_first() -> None:
     assert "ORDER BY notifications.created_at DESC, notifications.oid DESC" in sql
 
 
+def test_active_list_hides_changelog_synced_notices() -> None:
+    """CHANGELOG 同步出来的公告不进用户侧列表（否则每发一版多一条，淹掉真公告）。"""
+    active = _sql(notifications_repo._list_active_stmt())
+    admin = _sql(notifications_repo._list_all_stmt())
+
+    assert "notifications.source_ref IS NULL" in active
+    assert "notifications.source_ref IS NULL" not in admin
+
+
 def test_admin_list_has_no_active_filter() -> None:
     sql = _sql(notifications_repo._list_all_stmt())
     assert "FROM notifications" in sql

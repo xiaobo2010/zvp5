@@ -12,6 +12,8 @@
  * 进页即验：附件审计是查看学生证件与身份材料的高危动作，进页面先换一张
  * 5 分钟的 verify 短令牌（``withTemporaryToken``）。读接口本身不带令牌，
  * 令牌只用来证明「是本人刚输入过密码」；裁决与删除各自再包一层同一道闸。
+ * 平板（学海设备）还要先过设备闸：``ensureDeviceUnlock`` 不通过，路由级守卫
+ * 会把列表、缩略图与详情全部挡成 403，所以顺序是先解锁设备、再做密码再认证。
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -46,6 +48,7 @@ import {
 import { getBytes, getThumb } from '@/api/attachment/read'
 import { deleteOne } from '@/api/attachment/manage'
 import { cachedTemporaryToken, isTemporaryTokenCancelled, withTemporaryToken } from '@/plugins/short-token'
+import { ensureDeviceUnlock } from '@/plugins/device-unlock'
 import { useUserStore } from '@/stores/user'
 import { normalizeOcrBox, type OcrBoxRect } from '@/utils/ocrBox'
 import { formatDateTime } from '@/utils/dateTime'
@@ -106,6 +109,31 @@ const verified = ref(false)
 /** 密码框正在等用户输入：按钮进 loading，避免重复触发第二条弹框。 */
 const verifying = ref(false)
 
+/**
+ * 设备解锁（平板）状态。
+ *
+ * 非学海设备 ``ensureDeviceUnlock`` 直接放行，这里恒为 true；平板没解锁时请求头
+ * 缺 ``X-Device-Unlock``，附件路由会整条 403，所以必须先解锁再拉数据。
+ */
+const deviceUnlocked = ref(false)
+/** 解锁被取消：占位态补一句「先解锁设备」，否则用户会以为是密码本身错了。 */
+const deviceUnlockCancelled = ref(false)
+
+async function ensureUnlocked(): Promise<boolean> {
+  if (deviceUnlocked.value) {
+    return true
+  }
+  try {
+    await ensureDeviceUnlock({ reason: t('manage.attachments.deviceUnlockReason') })
+    deviceUnlocked.value = true
+    deviceUnlockCancelled.value = false
+    return true
+  } catch {
+    deviceUnlockCancelled.value = true
+    return false
+  }
+}
+
 function verificationUser(): string {
   return String(userStore._id ?? '')
 }
@@ -154,8 +182,12 @@ async function unlock(): Promise<void> {
   }
 }
 
-/** 占位态的「重新验证」与进页共用：拿到令牌才拉列表。 */
+/** 占位态的「重新验证」与进页共用：先解锁设备，再拿到令牌才拉列表。 */
 async function verifyAndLoad(): Promise<void> {
+  if (!(await ensureUnlocked())) {
+    ElMessage.warning(t('manage.attachments.deviceUnlockRequired'))
+    return
+  }
   await unlock()
   if (verified.value) {
     void load()
@@ -930,7 +962,7 @@ async function confirmDelete(row: AttachmentAuditListItem) {
 
 onMounted(() => {
   void loadOriginal(activeOid.value)
-  // 进页即验：缓存里有 5 分钟内的令牌就直接加载，否则先弹一次密码框。
+  // 进页即验：平板先解锁设备，缓存里有 5 分钟内的令牌则直接加载，否则弹密码框。
   void verifyAndLoad()
 })
 
@@ -954,6 +986,9 @@ onBeforeUnmount(() => {
           {{ t('manage.attachments.verifyRequired') }}
         </p>
         <p class="attachment-audit__hint">{{ t('manage.attachments.verifyIntro') }}</p>
+        <p v-if="deviceUnlockCancelled" class="attachment-audit__hint" data-testid="device-unlock-hint">
+          {{ t('manage.attachments.deviceUnlockRequired') }}
+        </p>
         <ElButton type="primary" :loading="verifying" @click="verifyAndLoad">
           {{ t('manage.attachments.verifyRetry') }}
         </ElButton>

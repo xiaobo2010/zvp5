@@ -748,6 +748,9 @@ export const zhCN = {
     verifyIntro:
       '附件里是学生证件与身份材料，进入审计页前需要再输入一次密码。验证 5 分钟内有效，过期后下一次裁决或删除会再问一次。',
     verifyRetry: '重新验证',
+    deviceUnlockReason: '平板访问附件需要验证密码，解锁后 5 分钟内有效。',
+    deviceUnlockRequired: '当前设备尚未解锁，请完成设备验证后重试。',
+    deleteVerifyReason: '删除附件前需要再输入一次密码确认。',
     filterFields: {
       purpose: '用途',
       purposeAll: '全部用途',

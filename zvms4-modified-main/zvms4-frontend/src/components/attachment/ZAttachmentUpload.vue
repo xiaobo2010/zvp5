@@ -37,6 +37,7 @@ import { enqueueOcr } from '@/api/ai/ocr'
 import { aiErrorCodeOf, aiErrorCopy } from '@/api/ai/errors'
 import { useAiOcrPolling } from '@/components/ai/useAiOcrPolling'
 import { DEVICE_UNLOCK_REASON, ensureDeviceUnlock } from '@/plugins/device-unlock'
+import { isTemporaryTokenCancelled, withTemporaryToken } from '@/plugins/short-token'
 
 interface DisplayItem {
   // 服务端 oid；上传中时可能为空串
@@ -279,10 +280,18 @@ watch(
     }
     items.value = items.value.filter((i) => wanted.has(i.oid))
     const current = new Set(items.value.map((i) => i.oid))
-    for (const oid of oids) {
-      if (!current.has(oid)) {
-        await loadStored(oid)
+    const pending = oids.filter((oid) => !current.has(oid))
+    if (pending.length) {
+      // 平板带 Xuehai-Id 读附件同样要先解锁，否则 getMeta/getThumb 整批 403。
+      // 在循环外做一次：解锁缓存有效期内只弹一次密码框。
+      try {
+        await ensureDeviceUnlock({ reason: DEVICE_UNLOCK_REASON })
+      } catch {
+        return
       }
+    }
+    for (const oid of pending) {
+      await loadStored(oid)
     }
   },
   { immediate: true, deep: true }
@@ -494,15 +503,24 @@ async function uploadSingle(file: File, replaceIndex?: number) {
 async function removeItem(item: DisplayItem) {
   if (props.disabled || props.readonly) return
   if (item.oid) {
-    // 附件没了，它的识别轮询也没有意义，先停表。
-    polling.stop(item.oid)
+    // 删除是留痕动作：后端无条件要求密码再认证，令牌走 DELETE 的 body。
     try {
-      await attachmentApi.manage.deleteOne(item.oid)
-      emit('deleted', item.oid)
+      await withTemporaryToken(
+        user._id,
+        t('manage.attachments.deleteVerifyReason'),
+        (token) => attachmentApi.manage.deleteOne(item.oid, token)
+      )
     } catch (err) {
+      // 用户取消密码框：不发请求、不当作错误处理，条目原样留着。
+      if (isTemporaryTokenCancelled(err)) {
+        return
+      }
       emit('error', err)
       return
     }
+    // 附件没了，它的识别轮询也没有意义，停表。
+    polling.stop(item.oid)
+    emit('deleted', item.oid)
   }
   const index = items.value.indexOf(item)
   if (index !== -1) {
@@ -524,6 +542,8 @@ async function openPreview(item: DisplayItem) {
     previewUrl.value = item.fullUrl
   } else if (item.oid) {
     try {
+      // 平板读原文同样要先解锁（与缩略图、OCR 同一条设备闸）
+      await ensureDeviceUnlock({ reason: DEVICE_UNLOCK_REASON })
       const blob = await attachmentApi.read.getBytes(item.oid)
       item.fullUrl = URL.createObjectURL(blob)
       previewUrl.value = item.fullUrl
