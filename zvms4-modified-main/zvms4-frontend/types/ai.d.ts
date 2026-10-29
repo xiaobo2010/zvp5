@@ -370,6 +370,25 @@ export interface AiModelPatch {
   provider?: string | null
 }
 
+/** `POST /ai/models/discover` 的一行：上游某个模型与本地渠道的对照。 */
+export interface AiModelDiscoverRow {
+  /** 上游返回的模型标识。 */
+  model: string
+  /** 上游给出的上下文窗口；null = 上游未提供。 */
+  context_length: number | null
+  /** 该模型是否已在当前渠道的声明里。 */
+  in_credential: boolean
+  /** 本次是否已把上下文长度写回（apply=false 时一律 false）。 */
+  applied: boolean
+}
+
+export interface AiModelDiscoverResult {
+  provider: string
+  models: AiModelDiscoverRow[]
+  /** 实际写回上下文长度的行数。 */
+  applied: number
+}
+
 export type AiChatRole = 'system' | 'user' | 'assistant'
 
 export interface AiChatMessage {
@@ -908,8 +927,8 @@ export interface AiScheduledRunNowResult {
    契约：admin-only，202 返回 run_id 与场景会话 oid，轮询复用 GET /ai/runs/{run_id}。
    --------------------------------------------------------------------------- */
 
-/** 支持的场景：终端辅助与文件编辑辅助。 */
-export type AiSceneName = 'terminal' | 'file_edit'
+/** 支持的场景：终端辅助、文件编辑辅助与只读的义工分析。 */
+export type AiSceneName = 'terminal' | 'file_edit' | 'volunteer'
 
 /** 场景提交的受理结果（202）。场景会话不出现在普通会话列表。 */
 export interface AiSceneRunSubmitResult {

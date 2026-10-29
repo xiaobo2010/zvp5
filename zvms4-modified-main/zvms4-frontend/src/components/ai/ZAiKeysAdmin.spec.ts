@@ -5,11 +5,13 @@ import { createKey, listKeys, updateKey } from '@/api/ai'
 import { AiRequestError } from '@/api/ai/errors'
 import type { AiKeyRecord } from '@/../types/ai'
 
-const { elMessageErrorSpy, elMessageSuccessSpy, elMessageBoxConfirmSpy } = vi.hoisted(() => ({
-  elMessageErrorSpy: vi.fn(),
-  elMessageSuccessSpy: vi.fn(),
-  elMessageBoxConfirmSpy: vi.fn()
-}))
+const { elMessageErrorSpy, elMessageSuccessSpy, elMessageBoxConfirmSpy, expiryHandleCloseSpy } =
+  vi.hoisted(() => ({
+    elMessageErrorSpy: vi.fn(),
+    elMessageSuccessSpy: vi.fn(),
+    elMessageBoxConfirmSpy: vi.fn(),
+    expiryHandleCloseSpy: vi.fn()
+  }))
 
 vi.mock('@/api/ai', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/api/ai')>()
@@ -42,7 +44,7 @@ vi.mock('vue-i18n', async (importOriginal) => {
 
 // element-plus 整包 mock：真实包会连带引入 theme-chalk 的 .css，node ESM 下无法加载。
 vi.mock('element-plus', async () => {
-  const { defineComponent, Fragment, h, ref } = await import('vue')
+  const { defineComponent, Fragment, h, ref, watch } = await import('vue')
 
   const ElTable = defineComponent({
     name: 'ElTable',
@@ -134,7 +136,13 @@ vi.mock('element-plus', async () => {
 
   const ElButton = defineComponent({
     name: 'ElButton',
-    props: { type: String, size: String, loading: Boolean, disabled: Boolean },
+    props: {
+      type: String,
+      size: String,
+      loading: Boolean,
+      disabled: Boolean,
+      nativeType: { type: String, default: 'button' }
+    },
     emits: ['click'],
     setup(props, { emit, slots }) {
       return () =>
@@ -142,6 +150,7 @@ vi.mock('element-plus', async () => {
           'button',
           {
             class: 'el-button-stub',
+            type: props.nativeType,
             disabled: props.disabled || undefined,
             onClick: () => {
               if (props.disabled) {
@@ -155,16 +164,33 @@ vi.mock('element-plus', async () => {
     }
   })
 
+  // 弹窗桩保留内容（真实 el-dialog 不销毁内容），这样「关闭后再打开」能复现面板状态残留。
   const ElDialog = defineComponent({
     name: 'ElDialog',
     props: { modelValue: Boolean, title: String },
     setup(props, { slots }) {
+      const rendered = ref(false)
+      watch(
+        () => props.modelValue,
+        (val) => {
+          if (val) {
+            rendered.value = true
+          }
+        },
+        { immediate: true }
+      )
       return () =>
-        props.modelValue
-          ? h('div', { class: 'el-dialog-stub', 'data-title': props.title }, [
-            ...(slots.default?.() ?? []),
-            ...(slots.footer?.() ?? [])
-          ])
+        rendered.value
+          ? h(
+              'div',
+              {
+                class: 'el-dialog-stub',
+                'data-title': props.title,
+                'data-open': String(props.modelValue),
+                style: props.modelValue ? '' : 'display: none'
+              },
+              [...(slots.default?.() ?? []), ...(slots.footer?.() ?? [])]
+            )
           : null
     }
   })
@@ -255,20 +281,38 @@ vi.mock('element-plus', async () => {
     }
   })
 
+  // 日期选择器桩按 Element Plus 的真实行为建模：面板默认挂在 body（teleported）上，
+  // 输入框一拿到焦点就展开；handleClose 才会收面板。
   const ElDatePicker = defineComponent({
     name: 'ElDatePicker',
     props: {
       modelValue: { type: [Date, Array, String, Number], default: null },
       type: String,
-      placeholder: String
+      placeholder: String,
+      teleported: { type: Boolean, default: true }
     },
-    emits: ['update:modelValue'],
-    setup(props, { emit }) {
+    emits: ['update:modelValue', 'focus', 'blur'],
+    setup(props, { emit, expose }) {
+      const open = ref(false)
+      expose({
+        handleOpen: () => {
+          open.value = true
+        },
+        handleClose: () => {
+          open.value = false
+          expiryHandleCloseSpy()
+        },
+        isOpen: () => open.value,
+        focus: () => undefined,
+        blur: () => undefined
+      })
       return () =>
         h('input', {
           class: 'el-date-picker-stub',
           value: props.modelValue instanceof Date ? props.modelValue.toISOString() : '',
           placeholder: props.placeholder,
+          'data-teleported': String(props.teleported),
+          'data-open': String(open.value),
           onInput: (event: Event) => {
             const raw = (event.target as HTMLInputElement).value
             if (!raw) {
@@ -277,6 +321,13 @@ vi.mock('element-plus', async () => {
             }
             const parsed = new Date(raw)
             emit('update:modelValue', Number.isNaN(parsed.getTime()) ? null : parsed)
+          },
+          onFocus: (event: FocusEvent) => {
+            open.value = true
+            emit('focus', event)
+          },
+          onBlur: (event: FocusEvent) => {
+            emit('blur', event)
           }
         })
     }
@@ -404,6 +455,7 @@ beforeEach(() => {
   elMessageErrorSpy.mockReset()
   elMessageSuccessSpy.mockReset()
   elMessageBoxConfirmSpy.mockReset()
+  expiryHandleCloseSpy.mockReset()
   vi.mocked(listKeys).mockResolvedValue([personalOther, shared, personalMine])
 })
 
@@ -716,6 +768,123 @@ describe('Key 到期', () => {
     const expiresItem = wrapper.find('[data-prop="expiresAt"]')
     expect(expiresItem.text()).toContain('AI_KEY_BAD_EXPIRY')
     expect(wrapper.find('.el-dialog-stub').exists()).toBe(true)
+
+    wrapper.unmount()
+  })
+})
+
+describe('到期时间面板', () => {
+  function pickerOf(wrapper: VueWrapper) {
+    return wrapper.find('.el-date-picker-stub')
+  }
+
+  it('面板留在弹窗内渲染，不再挂到 body 上', async () => {
+    const wrapper = mountPage()
+    await flushPromises()
+
+    await findButton(wrapper, 'ai.keys.create')!.trigger('click')
+    await flushPromises()
+
+    expect(pickerOf(wrapper).attributes('data-teleported')).toBe('false')
+
+    wrapper.unmount()
+  })
+
+  it('焦点被弹窗回填时面板不会自己弹出来，用户主动点开才展开', async () => {
+    const wrapper = mountPage()
+    await flushPromises()
+
+    await findButton(wrapper, 'ai.keys.create')!.trigger('click')
+    await flushPromises()
+
+    const picker = pickerOf(wrapper)
+    // 焦点陷阱把焦点还给日期输入框（没有用户按下）：面板不能被点亮
+    await picker.trigger('focus')
+    await flushPromises()
+    expect(picker.attributes('data-open')).toBe('false')
+
+    // 用户自己按下日期输入框：面板照常展开
+    await picker.trigger('mousedown')
+    await picker.trigger('focus')
+    await flushPromises()
+    expect(picker.attributes('data-open')).toBe('true')
+
+    wrapper.unmount()
+  })
+
+  it('点击确认后日期面板不处于打开状态', async () => {
+    vi.mocked(createKey).mockResolvedValue(shared)
+    const wrapper = mountPage()
+    await flushPromises()
+
+    await findButton(wrapper, 'ai.keys.create')!.trigger('click')
+    const dialog = wrapper.find('.el-dialog-stub')
+    const picker = pickerOf(wrapper)
+
+    // 面板先被打开（用户点过日期框）
+    await picker.trigger('mousedown')
+    await picker.trigger('focus')
+    await flushPromises()
+    expect(picker.attributes('data-open')).toBe('true')
+
+    const inputs = dialog.findAll('.el-input-stub')
+    await inputs[0]!.setValue('demo-key')
+    await inputs[1]!.setValue('https://api.example.com')
+    await inputs[3]!.setValue('sk-1234567890')
+
+    await findButton(wrapper, 'ai.common.create')!.trigger('click')
+    await flushPromises()
+
+    expect(createKey).toHaveBeenCalled()
+    // 提交时先把面板收掉，弹窗关闭后不会留一个浮在页面上的日期面板
+    expect(expiryHandleCloseSpy).toHaveBeenCalled()
+    expect(pickerOf(wrapper).attributes('data-open')).toBe('false')
+    expect(wrapper.find('.el-dialog-stub').attributes('data-open')).toBe('false')
+
+    wrapper.unmount()
+  })
+
+  it('关闭弹窗后重新打开，面板默认关闭', async () => {
+    const wrapper = mountPage()
+    await flushPromises()
+
+    await findButton(wrapper, 'ai.keys.create')!.trigger('click')
+    await flushPromises()
+
+    // 用户点开面板后关闭弹窗
+    await pickerOf(wrapper).trigger('mousedown')
+    await pickerOf(wrapper).trigger('focus')
+    await flushPromises()
+    expect(pickerOf(wrapper).attributes('data-open')).toBe('true')
+
+    await findButton(wrapper, 'ai.common.cancel')!.trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.el-dialog-stub').attributes('data-open')).toBe('false')
+
+    // 重新打开（编辑同一行）：面板默认收起
+    const row = wrapper.findAll('.el-table-stub__row').find((item) =>
+      item.text().includes('shared-key')
+    )!
+    const editButton = row.findAll('button').find((button) => button.text() === 'ai.common.edit')!
+    await editButton.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('.el-dialog-stub').attributes('data-open')).toBe('true')
+    expect(pickerOf(wrapper).attributes('data-open')).toBe('false')
+    expect(expiryHandleCloseSpy).toHaveBeenCalled()
+
+    wrapper.unmount()
+  })
+
+  it('确认按钮是 type=button，回车不会被转发给日期框', async () => {
+    const wrapper = mountPage()
+    await flushPromises()
+
+    await findButton(wrapper, 'ai.keys.create')!.trigger('click')
+    await flushPromises()
+
+    const confirm = findButton(wrapper, 'ai.common.create')!
+    expect(confirm.attributes('type')).toBe('button')
 
     wrapper.unmount()
   })

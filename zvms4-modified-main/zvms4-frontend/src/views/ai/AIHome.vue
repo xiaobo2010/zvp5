@@ -179,17 +179,35 @@ watch(
 }
 
 /*
- * 对话页：高度锁死在视口里。
+ * 对话页：高度锁在内容区里。
  *
  * 只给 min-height 时，消息一长整页就会滚起来，输入区被顶到屏幕外；
  * 这里把高度定死、外层不滚，滚动交给消息区自己。
+ *
+ * max-height: 100% 以真实容器（.yg-layout__content 的内容盒）为准：
+ * 离线横幅一出现，内容区就比视口矮，此时对话区必须跟着容器缩，
+ * 而不是继续按视口算的高度把外层撑出滚动条。
  */
 .yg-ai-home--chat {
   height: calc(100vh - var(--yg-ai-viewport-inset));
   height: calc(100dvh - var(--yg-ai-viewport-inset));
-  max-height: calc(100dvh - var(--yg-ai-viewport-inset));
+  max-height: 100%;
   min-height: 0;
   overflow: hidden;
+}
+
+/*
+ * 页头与页签是固定件：不参与纵向压缩。
+ *
+ * 页签容器是横向滚动容器（overflow-x: auto），在 flex 里它的自动最小尺寸是 0，
+ * 视口一矮就会被压成半截甚至整条消失——这里锁死它们的高度。
+ * 只作用于横屏：竖屏与桌面保持原有观感。
+ */
+@media (orientation: landscape) and (max-height: 820px) {
+  .yg-ai-home__header,
+  .yg-ai-home__tabs {
+    flex: none;
+  }
 }
 
 .yg-ai-home__tabs {
@@ -208,5 +226,15 @@ watch(
 .yg-ai-home--chat .yg-ai-home__panel {
   min-height: 0;
   overflow: hidden;
+}
+
+/*
+ * 极矮横屏（横放手机、横屏小窗）：纵向像素是最稀缺的资源。
+ * 页头与页签之间的间距先让出来，剩下的全部留给对话区。
+ */
+@media (orientation: landscape) and (max-height: 600px) {
+  .yg-ai-home {
+    gap: var(--yg-space-2);
+  }
 }
 </style>

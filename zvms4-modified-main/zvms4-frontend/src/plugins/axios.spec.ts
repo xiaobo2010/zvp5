@@ -6,8 +6,15 @@ import { cacheGet, cacheSet } from '@/utils/idbCache'
 
 const { elMessageMock } = vi.hoisted(() => ({ elMessageMock: vi.fn() }))
 
+const { abortAllAiRunsMock } = vi.hoisted(() => ({ abortAllAiRunsMock: vi.fn() }))
+
 vi.mock('@/router', () => ({ default: { currentRoute: { value: { path: '/' } }, push: vi.fn(), replace: vi.fn() } }))
 vi.mock('@/stores/user', () => ({ useUserStore: () => ({ removeUser: vi.fn().mockResolvedValue(undefined) }) }))
+vi.mock('@/api/ai/activeRuns', () => ({
+  abortAllAiRuns: abortAllAiRunsMock,
+  registerAiAbort: vi.fn(() => () => {}),
+  activeAiRunCount: vi.fn(() => 0)
+}))
 vi.mock('@/utils/idbCache', () => ({ cacheGet: vi.fn().mockResolvedValue(null), cacheSet: vi.fn() }))
 vi.mock('@/plugins/ua', () => ({ getXuehaiId: () => 0 }))
 vi.mock('element-plus', () => ({ ElMessage: elMessageMock }))
@@ -189,4 +196,35 @@ it('still toasts a string-detail 403 (unchanged behavior)', async () => {
   client.defaults.adapter = failingAdapter(403, { detail: 'WRONG_PASSWORD' })
   await client.post('/users/auth', {}).catch((e) => e)
   expect(shownMessages()).toEqual(['WRONG_PASSWORD'])
+})
+
+// --- 封禁 403:除遮罩/store 之外,必须中止在途 AI 请求 -------------------------
+
+it('aborts in-flight AI runs when a 403 USER_BANNED lands', async () => {
+  client.defaults.adapter = failingAdapter(403, { detail: 'USER_BANNED' })
+  const error = await client.get('/activities').catch((e) => e)
+
+  expect(error).toBeInstanceOf(AxiosError)
+  expect(error.response?.status).toBe(403)
+  expect(abortAllAiRunsMock).toHaveBeenCalledWith('banned')
+  // 封禁分支保持静默:不弹通用 toast。
+  expect(elMessageMock).not.toHaveBeenCalled()
+})
+
+it('does not touch AI runs for an ordinary 403', async () => {
+  client.defaults.adapter = failingAdapter(403, { detail: 'WRONG_PASSWORD' })
+  await client.post('/users/auth', {}).catch((e) => e)
+  expect(abortAllAiRunsMock).not.toHaveBeenCalled()
+})
+
+it('keeps the ban branch and the rejection when aborting throws', async () => {
+  abortAllAiRunsMock.mockImplementationOnce(() => {
+    throw new Error('abort exploded')
+  })
+  client.defaults.adapter = failingAdapter(403, { detail: 'USER_BANNED' })
+  const error = await client.get('/activities').catch((e) => e)
+
+  expect(error).toBeInstanceOf(AxiosError)
+  expect(error.response?.status).toBe(403)
+  expect(elMessageMock).not.toHaveBeenCalled()
 })

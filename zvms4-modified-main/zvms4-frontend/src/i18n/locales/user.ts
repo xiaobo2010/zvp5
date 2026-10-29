@@ -17,5 +17,10 @@ export const zhCN = {
     // 已封禁标签/说明里的到期表达
     periodUntil: '至 {time}',
     periodPermanent: '永久'
+  },
+  volunteerAnalysis: {
+    action: 'AI 分析',
+    title: '义工分析',
+    partialFailed: '部分资料未能获取，分析参考内容可能不完整'
   }
 }

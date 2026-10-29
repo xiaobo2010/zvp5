@@ -14,6 +14,7 @@ import {
   updateConversation
 } from '@/api/ai'
 import type { AiConversationCompactResult } from '@/api/ai'
+import { abortAllAiRuns, registerAiAbort } from '@/api/ai/activeRuns'
 import type {
   AiConversation,
   AiConversationMode,
@@ -110,9 +111,13 @@ export const useAiConversationsStore = defineStore('aiConversations', () => {
   const activeRuns = ref<AiRun[]>([])
   /** 轮询是否在跑。 */
   const polling = ref(false)
+  /** 最近一次提交 run 的失败原因（AiRequestError 或其它）；成功提交/切换会话时清空。 */
+  const runError = ref<unknown>(null)
 
   let pollTimer: ReturnType<typeof setTimeout> | null = null
   let pollingRunId = ''
+  /** 轮询期间登记到全局中止表里的注销函数：停轮询就摘掉。 */
+  let unregisterPollAbort: (() => void) | null = null
   /** 已经成功拉过消息的会话（用来判断「要不要重拉」）。 */
   let loadedOid = ''
 
@@ -472,12 +477,26 @@ export const useAiConversationsStore = defineStore('aiConversations', () => {
   /* 后台执行                                                               */
   /* --------------------------------------------------------------------- */
 
-  /** 清掉当前会话上的 run 状态。 */
+  /** 清掉当前会话上的 run 状态（消息与已落库内容不动）。 */
   function resetRun(): void {
     activeRun.value = null
     runEvents.value = []
     runProposals.value = []
     runAfterRound.value = 0
+    runError.value = null
+  }
+
+  /**
+   * 中止当前全部 AI 活动：停轮询、中止在途流式连接、复位 run 状态。
+   *
+   * 用于「整条链路已经失效」的场景（封禁 403）：只把界面上的执行痕迹收干净，
+   * **不动** 已落库的消息——那些是服务端的既成事实，重进页面还要看。
+   */
+  function abortAllRuns(reason = 'aborted'): void {
+    // 先停轮询再复位：避免下一拍 tick 把刚清掉的 activeRun 又填回来。
+    stopPolling()
+    resetRun()
+    abortAllAiRuns(reason)
   }
 
   /** 提交一次后台执行；拿到受理结果后立刻开始轮询。 */
@@ -486,27 +505,36 @@ export const useAiConversationsStore = defineStore('aiConversations', () => {
     content: string,
     options: { clientMsgId?: string } = {}
   ): Promise<void> {
-    const result = await submitRunApi(conversationOid, content, options)
-    resetRun()
-    activeRun.value = {
-      oid: result.run_id,
-      conversation_oid: conversationOid,
-      status: result.status,
-      model: current.value?.model ?? null,
-      stop_reason: null,
-      rounds: 0,
-      error_code: null,
-      error_message: null,
-      result_message_oid: null,
-      prompt_tokens: 0,
-      completion_tokens: 0,
-      total_tokens: 0,
-      cancel_requested: false,
-      created_at: '',
-      started_at: null,
-      finished_at: null
+    try {
+      const result = await submitRunApi(conversationOid, content, options)
+      resetRun()
+      activeRun.value = {
+        oid: result.run_id,
+        conversation_oid: conversationOid,
+        status: result.status,
+        model: current.value?.model ?? null,
+        stop_reason: null,
+        rounds: 0,
+        error_code: null,
+        error_message: null,
+        result_message_oid: null,
+        prompt_tokens: 0,
+        completion_tokens: 0,
+        total_tokens: 0,
+        cancel_requested: false,
+        created_at: '',
+        started_at: null,
+        finished_at: null
+      }
+      startPolling(result.run_id)
+    } catch (error) {
+      // 失败必须收敛：留着上一轮的 activeRun 与轮询，界面会一直显示「后台执行中」，
+      // 而且没有任何一条路径会再去停它。错误本身交给调用方呈现（原样抛出）。
+      stopPolling()
+      resetRun()
+      runError.value = error
+      throw error
     }
-    startPolling(result.run_id)
   }
 
   /** 中止当前 run。 */
@@ -581,6 +609,11 @@ export const useAiConversationsStore = defineStore('aiConversations', () => {
     stopPolling()
     pollingRunId = runId
     polling.value = true
+    // 轮询也要能被全局中止（封禁后继续轮询只是把注定失败的请求刷一遍）。
+    unregisterPollAbort = registerAiAbort(() => {
+      stopPolling()
+      resetRun()
+    })
     schedulePoll()
   }
 
@@ -589,6 +622,10 @@ export const useAiConversationsStore = defineStore('aiConversations', () => {
     if (pollTimer) {
       clearTimeout(pollTimer)
       pollTimer = null
+    }
+    if (unregisterPollAbort) {
+      unregisterPollAbort()
+      unregisterPollAbort = null
     }
     pollingRunId = ''
     polling.value = false
@@ -660,6 +697,7 @@ export const useAiConversationsStore = defineStore('aiConversations', () => {
     runAfterRound,
     activeRuns,
     polling,
+    runError,
     // 派生
     orderedMessages,
     contextRatio,
@@ -684,6 +722,7 @@ export const useAiConversationsStore = defineStore('aiConversations', () => {
     refreshMessages,
     submitRun,
     cancelCurrentRun,
+    abortAllRuns,
     loadActiveRuns,
     adoptRun,
     refreshRun,

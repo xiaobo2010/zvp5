@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { VNodeChild } from 'vue'
 import ZAiModelsAdmin from './ZAiModelsAdmin.vue'
 import { AiRequestError } from '@/api/ai/errors'
-import type { AiModelRow } from '@/../types/ai'
+import type { AiModelDiscoverRow, AiModelRow } from '@/../types/ai'
 
 /**
  * 模型管理页。
@@ -29,6 +29,14 @@ const { axiosMock, elMessageErrorSpy, elMessageSuccessSpy, elMessageBoxConfirmSp
 )
 
 vi.mock('@/plugins/axios', () => ({ default: axiosMock, baseURL: '' }))
+
+// 裸 reauth 会走 short-token → ElMessageBox.prompt（本文件只 mock 了 confirm），
+// 这里直接给一张固定令牌，断言也只关心它被带进请求体。
+vi.mock('@/plugins/reauth', () => ({
+  withReauth: (_reason: string, action: (token: string) => Promise<unknown>) =>
+    action('verify-token'),
+  isReauthCancelled: () => false
+}))
 
 vi.mock('vue-i18n', async (importOriginal) => {
   const actual = await importOriginal<typeof import('vue-i18n')>()
@@ -103,6 +111,38 @@ vi.mock('element-plus', async () => {
     props: { label: String },
     setup(props, { slots }) {
       return () => h('div', { class: 'el-form-item-stub' }, [props.label, slots.default?.()])
+    }
+  })
+
+  const ElSelect = defineComponent({
+    name: 'ElSelect',
+    props: {
+      modelValue: { type: String, default: '' },
+      placeholder: String,
+      disabled: Boolean
+    },
+    emits: ['update:modelValue'],
+    setup(props, { emit, slots }) {
+      return () =>
+        h(
+          'select',
+          {
+            class: 'el-select-stub',
+            value: props.modelValue,
+            disabled: props.disabled || undefined,
+            onChange: (event: Event) =>
+              emit('update:modelValue', (event.target as HTMLSelectElement).value)
+          },
+          slots.default?.()
+        )
+    }
+  })
+
+  const ElOption = defineComponent({
+    name: 'ElOption',
+    props: { label: String, value: String },
+    setup(props) {
+      return () => h('option', { value: props.value ?? '' }, props.label ?? '')
     }
   })
 
@@ -222,6 +262,8 @@ vi.mock('element-plus', async () => {
     ElFormItem,
     ElInput,
     ElInputNumber,
+    ElSelect,
+    ElOption,
     ElSwitch,
     ElTag,
     ElIcon,
@@ -271,6 +313,11 @@ function envelope<T>(data: T): unknown {
 let models: AiModelRow[]
 let modelsResult: () => Promise<unknown>
 
+/** discover 上游返回：预览与回写共用一个桩，`applied` 只在 apply=true 时生效。 */
+let discoverRows: AiModelDiscoverRow[]
+let discoverApplied: number
+let discoverFailure: unknown
+
 beforeEach(() => {
   axiosMock.mockReset()
   elMessageErrorSpy.mockReset()
@@ -280,10 +327,30 @@ beforeEach(() => {
 
   models = [catalogRow, manualRow]
   modelsResult = async () => envelope({ models })
+  discoverRows = [
+    { model: 'gpt-4o', context_length: 128000, in_credential: true, applied: false },
+    { model: 'o3-preview', context_length: null, in_credential: false, applied: false }
+  ]
+  discoverApplied = 0
+  discoverFailure = null
 
   axiosMock.mockImplementation(async (config: AxiosCall) => {
     if (config.method === 'get' && config.url === '/ai/models') {
       return modelsResult()
+    }
+    if (config.method === 'post' && config.url === '/ai/models/discover') {
+      if (discoverFailure) {
+        throw discoverFailure
+      }
+      const body = config.data as { provider: string; apply?: boolean }
+      return envelope({
+        provider: body.provider,
+        models: discoverRows.map((row) => ({
+          ...row,
+          applied: body.apply === true && row.applied
+        })),
+        applied: body.apply === true ? discoverApplied : 0
+      })
     }
     if (config.method === 'put' && config.url.startsWith('/ai/models/')) {
       const model = decodeURIComponent(config.url.slice('/ai/models/'.length))
@@ -463,6 +530,140 @@ describe('模型管理页', () => {
     expect(wrapper.text()).toContain('模型列表暂不可用')
     expect(buttonByText(wrapper, 'ai.models.retry')).toBeDefined()
     expect(wrapper.find('.el-table-stub').exists()).toBe(false)
+
+    wrapper.unmount()
+  })
+})
+
+async function openDiscoverDialog(wrapper: VueWrapper) {
+  await buttonByText(wrapper, 'ai.models.discover.open')!.trigger('click')
+  await flushPromises()
+}
+
+async function fetchPreview(wrapper: VueWrapper) {
+  await buttonByText(wrapper, 'ai.models.discover.fetch')!.trigger('click')
+  await flushPromises()
+}
+
+function discoverApplyButton(wrapper: VueWrapper) {
+  return buttonByText(wrapper, 'ai.models.discover.apply')!
+}
+
+function discoverCalls() {
+  return axiosMock.mock.calls
+    .filter(([call]) => call.url === '/ai/models/discover')
+    .map(([call]) => call.data as Record<string, unknown>)
+}
+
+describe('从上游获取模型元数据', () => {
+  it('打开弹窗，渠道选项是当前行 providers 的并集', async () => {
+    const wrapper = await mountPage()
+
+    await openDiscoverDialog(wrapper)
+
+    expect(wrapper.find('.el-dialog-stub').attributes('data-title')).toBe(
+      'ai.models.discover.title'
+    )
+    const options = wrapper.findAll('.el-select-stub option').map((item) => item.text())
+    // openai / azure 来自目录行的 providers，local 来自手工行的 provider，且不重复
+    expect(options).toEqual(['openai', 'azure', 'local'])
+    expect(wrapper.text()).toContain('ai.models.discover.idle')
+
+    wrapper.unmount()
+  })
+
+  it('预览渲染上游上下文长度，「未提供」与状态标签', async () => {
+    const wrapper = await mountPage()
+
+    await openDiscoverDialog(wrapper)
+    await wrapper.find('.el-select-stub').setValue('azure')
+    await fetchPreview(wrapper)
+
+    const dialogText = wrapper.find('.el-dialog-stub').text()
+    expect(dialogText).toContain('gpt-4o')
+    expect(dialogText).toContain('128000')
+    expect(dialogText).toContain('o3-preview')
+    expect(dialogText).toContain('ai.models.discover.contextMissing')
+    expect(dialogText).toContain('ai.models.discover.statusPending')
+    expect(dialogText).toContain('ai.models.discover.yes')
+    expect(dialogText).toContain('ai.models.discover.no')
+
+    expect(discoverCalls()).toEqual([
+      { provider: 'azure', apply: false, verification_token: 'verify-token' }
+    ])
+
+    wrapper.unmount()
+  })
+
+  it('上游没有返回模型时显示空态，且回写按钮禁用', async () => {
+    discoverRows = []
+    const wrapper = await mountPage()
+
+    await openDiscoverDialog(wrapper)
+    await fetchPreview(wrapper)
+
+    expect(wrapper.find('.el-dialog-stub').text()).toContain('ai.models.discover.empty')
+    expect(discoverApplyButton(wrapper).attributes('disabled')).toBeDefined()
+
+    wrapper.unmount()
+  })
+
+  it('获取失败展示后端 detail，并可重试', async () => {
+    discoverFailure = new AiRequestError({
+      status: 404,
+      code: 'AI_HTTP_404',
+      message: '渠道不存在'
+    })
+    const wrapper = await mountPage()
+
+    await openDiscoverDialog(wrapper)
+    await fetchPreview(wrapper)
+
+    const dialogText = wrapper.find('.el-dialog-stub').text()
+    expect(dialogText).toContain('渠道不存在')
+    expect(buttonByText(wrapper, 'ai.models.discover.retry')).toBeDefined()
+    expect(discoverApplyButton(wrapper).attributes('disabled')).toBeDefined()
+
+    wrapper.unmount()
+  })
+
+  it('回写成功后提示 applied 数量并重新拉取列表', async () => {
+    discoverRows = [
+      { model: 'gpt-4o', context_length: 128000, in_credential: true, applied: true },
+      { model: 'o3-preview', context_length: 64000, in_credential: false, applied: true }
+    ]
+    discoverApplied = 2
+    const wrapper = await mountPage()
+
+    await openDiscoverDialog(wrapper)
+    await fetchPreview(wrapper)
+    await discoverApplyButton(wrapper).trigger('click')
+    await flushPromises()
+
+    expect(elMessageSuccessSpy).toHaveBeenCalledWith(
+      'ai.models.discover.applyOk {"count":2}'
+    )
+    expect(wrapper.find('.el-dialog-stub').text()).toContain('ai.models.discover.statusApplied')
+
+    const calls = discoverCalls()
+    expect(calls[1]).toEqual({ provider: 'openai', apply: true, verification_token: 'verify-token' })
+
+    const gets = axiosMock.mock.calls.filter(
+      ([call]) => call.method === 'get' && call.url === '/ai/models'
+    )
+    expect(gets.length).toBe(2)
+
+    wrapper.unmount()
+  })
+
+  it('没有预览时回写按钮不可用', async () => {
+    const wrapper = await mountPage()
+
+    await openDiscoverDialog(wrapper)
+    expect(discoverApplyButton(wrapper).attributes('disabled')).toBeDefined()
+
+    await fetchPreview(wrapper)
+    expect(discoverApplyButton(wrapper).attributes('disabled')).toBeUndefined()
 
     wrapper.unmount()
   })

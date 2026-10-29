@@ -11,7 +11,11 @@ const {
   messageMock,
   issueTempPasswordMock,
   clearUserPrimaryDeviceMock,
-  copyMock
+  copyMock,
+  userTimeReadMock,
+  userActivityReadMock,
+  // 权限判定要能在同一次运行里切角色,所以 store 用一个可变对象而不是字面量。
+  userStoreState
 } = vi.hoisted(() => ({
   updateBannedMock: vi.fn(),
   readOneV3Mock: vi.fn(),
@@ -20,7 +24,10 @@ const {
   messageMock: vi.fn(),
   issueTempPasswordMock: vi.fn(),
   clearUserPrimaryDeviceMock: vi.fn(),
-  copyMock: vi.fn()
+  copyMock: vi.fn(),
+  userTimeReadMock: vi.fn(),
+  userActivityReadMock: vi.fn(),
+  userStoreState: { _id: 'admin-oid', position: ['admin'] as string[], class_id: '' }
 }))
 
 vi.mock('@/api/user/device', () => ({
@@ -44,7 +51,9 @@ vi.mock('@/api', () => ({
   default: {
     user: {
       readOne_v3: readOneV3Mock,
-      updateBanned: updateBannedMock
+      updateBanned: updateBannedMock,
+      time: { read: userTimeReadMock },
+      activity: { read: userActivityReadMock }
     }
   }
 }))
@@ -57,7 +66,7 @@ vi.mock('vue-router', () => ({
 
 // 页面靠 position 判权限,靠 _id 判「不能封禁自己」——管理员查看他人即可通过两条守卫。
 vi.mock('@/stores/user', () => ({
-  useUserStore: () => ({ _id: 'admin-oid', position: ['admin'], class_id: '' })
+  useUserStore: () => userStoreState
 }))
 
 vi.mock('vue-i18n', () => ({
@@ -81,6 +90,28 @@ vi.mock('@/components/group/ZUserModification.vue', () => ({
 vi.mock('@/components/log/ZLogList.vue', () => ({
   default: { name: 'ZLogList', template: '<div class="log-list-stub" />' }
 }))
+// 场景弹窗内部有轮询/模型列表,这里只关心页面传进去的 scene/title/context。
+vi.mock('@/components/server/ZSceneRunDialog.vue', async () => {
+  const { defineComponent, h } = await import('vue')
+  return {
+    default: defineComponent({
+      name: 'ZSceneRunDialog',
+      props: { modelValue: Boolean, scene: String, title: String, context: String },
+      emits: ['update:modelValue'],
+      setup(props) {
+        return () =>
+          props.modelValue
+            ? h('div', {
+                class: 'scene-run-dialog-stub',
+                'data-scene': props.scene,
+                'data-title': props.title,
+                'data-context': props.context
+              })
+            : null
+      }
+    })
+  }
+})
 vi.mock('@icon-park/vue-next', async () => {
   const { defineComponent, h } = await import('vue')
   const stub = (name: string) =>
@@ -270,6 +301,30 @@ beforeEach(() => {
   clearUserPrimaryDeviceMock.mockReset().mockResolvedValue(undefined)
   copyMock.mockReset().mockResolvedValue(undefined)
   confirmMock.mockReset().mockResolvedValue('confirm')
+  userStoreState.position = ['admin']
+  userTimeReadMock.mockReset().mockResolvedValue({
+    'on-campus': 12,
+    'off-campus': 3.5,
+    'social-practice': 2
+  })
+  userActivityReadMock.mockReset().mockResolvedValue({
+    activities: [
+      {
+        _id: 'activity-1',
+        name: '图书馆整理',
+        status: 'effective',
+        date: '2026-09-01T08:00:00',
+        mine: {
+          _id: 'member-1',
+          member: 'target-oid',
+          status: 'effective',
+          mode: 'on-campus',
+          duration: 3
+        }
+      }
+    ],
+    total: 1
+  })
 })
 
 afterEach(() => {
@@ -514,6 +569,105 @@ it('shows the bound primary device on the info tab', async () => {
   await flushPromises()
 
   expect(wrapper.text()).toContain('manage.personalPanel.primaryDevice {"id":"149"}')
+
+  wrapper.unmount()
+})
+
+it('shows the AI analysis entry for admins only', async () => {
+  const admin = mountPage()
+  await flushPromises()
+  expect(buttonByText(admin, 'user.volunteerAnalysis.action')).toBeTruthy()
+  admin.unmount()
+
+  // volunteer 场景严格 admin-only,department 不该看到入口(否则点了只有 403)。
+  userStoreState.position = ['department']
+  const department = mountPage()
+  await flushPromises()
+  expect(buttonByText(department, 'user.volunteerAnalysis.action')).toBeUndefined()
+  department.unmount()
+})
+
+it('opens the volunteer scene dialog with the assembled context', async () => {
+  const wrapper = mountPage()
+  await flushPromises()
+
+  await buttonByText(wrapper, 'user.volunteerAnalysis.action')!.trigger('click')
+  await flushPromises()
+
+  const dialog = wrapper.find('.scene-run-dialog-stub')
+  expect(dialog.exists()).toBe(true)
+  expect(dialog.attributes('data-scene')).toBe('volunteer')
+  expect(dialog.attributes('data-title')).toBe('user.volunteerAnalysis.title')
+
+  const context = dialog.attributes('data-context') ?? ''
+  expect(context).toContain('张三')
+  expect(context).toContain('20240001')
+  expect(context).toContain('target-oid')
+  expect(context).toContain('Z2024-1')
+  expect(context).toContain('校内：12')
+  expect(context).toContain('校外：3.5')
+  expect(context).toContain('社会实践：2')
+  expect(context).toContain('图书馆整理')
+  expect(context).toContain('关联义工按『共同参加活动』或『同班同学』口径')
+  expect(context).toContain('不存在独立关联实体')
+  expect(userActivityReadMock).toHaveBeenCalledWith('20240001', 1, 8)
+
+  wrapper.unmount()
+})
+
+it('degrades to placeholder copy when the auxiliary data sources fail', async () => {
+  userTimeReadMock.mockRejectedValueOnce(new Error('time down'))
+  userActivityReadMock.mockRejectedValueOnce(new Error('activity down'))
+  const wrapper = mountPage()
+  await flushPromises()
+
+  await buttonByText(wrapper, 'user.volunteerAnalysis.action')!.trigger('click')
+  await flushPromises()
+
+  // 失败不阻塞弹窗,但只提示一次。
+  const dialog = wrapper.find('.scene-run-dialog-stub')
+  expect(dialog.exists()).toBe(true)
+  const context = dialog.attributes('data-context') ?? ''
+  expect(context).toContain('校内：（未能获取）')
+  expect(context).toContain('（未能获取）')
+  expect(context).toContain('张三')
+  expect(messageMock).toHaveBeenCalledTimes(1)
+  expect(messageMock).toHaveBeenCalledWith(
+    expect.objectContaining({ type: 'warning', message: 'user.volunteerAnalysis.partialFailed' })
+  )
+
+  wrapper.unmount()
+})
+
+it('truncates the activity list instead of the leading sections', async () => {
+  userActivityReadMock.mockResolvedValue({
+    activities: Array.from({ length: 8 }, (_, index) => ({
+      _id: `activity-${index}`,
+      name: '超长活动名称'.repeat(200),
+      status: 'effective',
+      date: '2026-09-01T08:00:00',
+      mine: {
+        _id: `member-${index}`,
+        member: 'target-oid',
+        status: 'effective',
+        mode: 'on-campus',
+        duration: 1
+      }
+    })),
+    total: 8
+  })
+  const wrapper = mountPage()
+  await flushPromises()
+
+  await buttonByText(wrapper, 'user.volunteerAnalysis.action')!.trigger('click')
+  await flushPromises()
+
+  const context = wrapper.find('.scene-run-dialog-stub').attributes('data-context') ?? ''
+  expect(context.length).toBeLessThanOrEqual(7500)
+  // 身份/工时段落与末尾口径说明必须留着,只砍活动明细。
+  expect(context).toContain('# 目标义工')
+  expect(context).toContain('校内：12')
+  expect(context).toContain('不存在独立关联实体')
 
   wrapper.unmount()
 })
