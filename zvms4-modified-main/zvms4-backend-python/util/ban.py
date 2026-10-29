@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from typing import NoReturn
 from urllib.parse import quote
@@ -23,6 +24,36 @@ from fastapi import HTTPException
 # 封禁原因缺失时的兜底文案：老数据（V013 之前的封禁）没有原因列，
 # 不能让前端展示空白警告。
 DEFAULT_BAN_REASON = "违反平台使用规定"
+
+# 审核分类 code → 中文名。写入侧与读侧共用同一份映射：写侧据此生成原因，
+# 读侧据此翻译历史数据里残留的英文 code。未登记的 code 原样返回（见
+# :func:`humanize_ban_reason`）——宁可露出一个陌生 code，也不要把原因吞成空白。
+CATEGORY_LABELS: dict[str, str] = {
+    "sexual": "色情内容",
+    "violence": "暴力伤害",
+    "weapons": "武器或爆炸物制作",
+    "substances": "毒品",
+    "gambling": "赌博",
+    "self_harm": "自伤",
+    "jailbreak": "越狱或提示词注入",
+    "prompt_injection": "提示词注入",
+    "instruction_override": "越权指令",
+}
+
+# 原因里只放原文摘要，完整证据在 BAN_VIOLATIONS.
+REASON_EXCERPT_CHARS = 120
+
+_BAN_HEADLINE = "AI 安全认证命中"
+_FALLBACK_HEADLINE = "AI 安全认证命中违规内容"
+
+# 不能用 ``json.loads`` 解历史原因：写入侧曾把 ``json.dumps(evidence)`` 截到
+# 120 字再拼进原因，库里大量是**半截非法 JSON**，``json.loads`` 会直接抛异常
+# 而丢掉整条原因。所以按字段名做正则提取，允许缺右引号/缺右括号。
+_RULE_RE = re.compile(r'"rule"\s*:\s*"([^"]*)"?')
+_INPUT_RE = re.compile(r'"input"\s*:\s*"([^"]{0,%d})' % REASON_EXCERPT_CHARS)
+# 证据 JSON 的两个键名：判据是「这段看起来像 JSON 且带证据键」，避免把用户
+# 原文里的普通花括号（``详情：{略}``）当成证据。
+_EVIDENCE_KEYS = ('"rule"', '"input"')
 
 BAN_REASON_HEADER = "X-Ban-Reason"
 BAN_UNTIL_HEADER = "X-Ban-Until"
@@ -90,11 +121,82 @@ def ban_outranks(existing: dict | None, until: datetime | None) -> bool:
     return _naive_until(current) > _naive_until(until)
 
 
+def _clean_excerpt(value: str) -> str:
+    """摘要只留纯文本：换行折叠成空格，引号/反斜杠去掉，超长截断。"""
+    text = value.replace("\\n", " ").replace("\\r", " ").replace("\\t", " ")
+    text = text.replace('\\"', "").replace('"', "").replace("\\", " ")
+    text = re.sub(r"\s+", " ", text).strip()
+    return text[:REASON_EXCERPT_CHARS]
+
+
+def _humanize_payload(fragment: str) -> str:
+    """从（可能被截断的）证据 JSON 片段生成中文原因；不像证据则返回空串。"""
+    if not any(key in fragment for key in _EVIDENCE_KEYS):
+        return ""
+    rule_match = _RULE_RE.search(fragment)
+    input_match = _INPUT_RE.search(fragment)
+    rule = _clean_excerpt(rule_match.group(1)) if rule_match else ""
+    excerpt = _clean_excerpt(input_match.group(1)) if input_match else ""
+    if rule:
+        head = f"{_BAN_HEADLINE}{CATEGORY_LABELS.get(rule, rule)}"
+    else:
+        head = _FALLBACK_HEADLINE
+    return f"{head}：{excerpt}" if excerpt else head
+
+
+def _json_fragment_bounds(text: str) -> tuple[int, int] | None:
+    """定位文本里夹带的那段证据 JSON；找不到（或不含证据键）返回 ``None``。"""
+    starts = [pos for pos in (text.find("{"), text.find("[")) if pos >= 0]
+    if not starts:
+        return None
+    start = min(starts)
+    end = max(text.rfind("}"), text.rfind("]")) + 1
+    if end <= start:
+        # 半截 JSON：从起始符一直吃到字符串末尾。
+        end = len(text)
+    if not any(key in text[start:end] for key in _EVIDENCE_KEYS):
+        return None
+    return start, end
+
+
+def humanize_ban_reason(text) -> str:
+    """把历史封禁原因里的证据 JSON 翻成可读中文。
+
+    三种形态都要能处理：
+
+    * 整段就是合法 JSON：``{"rule": "prompt_injection", "input": "..."}``；
+    * 整段是被 120 字截断的非法 JSON（缺右引号/右括号）——这条是主力路径；
+    * JSON 片段夹在中文里：``详情：{"rule": ...}``，只替换片段，前后中文保留。
+
+    非 JSON 文本原样返回；空值返回 ``""``，由调用方决定兜底文案（403 头要的是
+    :data:`DEFAULT_BAN_REASON`，列表接口要的是「没有原因」）。
+    """
+    if text is None:
+        return ""
+    raw = text if isinstance(text, str) else str(text)
+    raw = raw.strip()
+    if not raw:
+        return ""
+
+    if raw[0] in "{[":
+        # 整段是 JSON（含被截断的）：能识别成证据就翻译，否则原样保留。
+        return _humanize_payload(raw) or raw
+
+    bounds = _json_fragment_bounds(raw)
+    if bounds is None:
+        return raw
+    start, end = bounds
+    translated = _humanize_payload(raw[start:end])
+    if not translated:
+        return raw
+    return f"{raw[:start]}{translated}{raw[end:]}".strip()
+
+
 def ban_reason_of(doc: dict | None) -> str:
     """封禁原因；缺失/空白时回退到 :data:`DEFAULT_BAN_REASON`。"""
     reason = (doc or {}).get("ban_reason")
     if isinstance(reason, str) and reason.strip():
-        return reason.strip()
+        return humanize_ban_reason(reason) or DEFAULT_BAN_REASON
     return DEFAULT_BAN_REASON
 
 
@@ -132,6 +234,9 @@ __all__ = [
     "DEFAULT_BAN_REASON",
     "BAN_REASON_HEADER",
     "BAN_UNTIL_HEADER",
+    "CATEGORY_LABELS",
+    "REASON_EXCERPT_CHARS",
+    "humanize_ban_reason",
     "ban_is_active",
     "ban_outranks",
     "ban_reason_of",

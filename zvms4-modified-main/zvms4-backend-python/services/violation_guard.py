@@ -38,7 +38,7 @@ from db import backends
 from db.ids import new_oid
 from services import ban_rules, device_guard
 from typings.log import ZVMSLog
-from util.ban import ban_is_active
+from util.ban import CATEGORY_LABELS, ban_is_active, humanize_ban_reason
 from util.period import period_now
 
 _logger = logging.getLogger(__name__)
@@ -116,6 +116,20 @@ def _detail_excerpt(details: list[str]) -> str:
     return joined[: REASON_DETAIL_CHARS - 1] + "…"
 
 
+def _human_excerpt(text: str) -> str:
+    """详情若本身是证据 JSON（历史写入路径），先翻成中文再进原因。
+
+    库里的 ``BAN_VIOLATIONS.DETAIL`` 有历史行整段就是 ``{"rule": ...}``；原样
+    拼进原因会变成「详情：{"rule": ...}」这种管理员读不懂的字符串。认不出来
+    的机器数据（不是证据 JSON）整段丢掉——省略比把花括号塞给管理员好。
+    """
+    picked = text.strip()
+    if picked[:1] not in ("{", "["):
+        return text
+    translated = humanize_ban_reason(picked)
+    return "" if translated.strip() == picked else translated
+
+
 def _ban_reason(
     *,
     window_hours: int,
@@ -131,7 +145,7 @@ def _ban_reason(
         f"{window_hours} 小时内累计 {count} 次平台违规使用"
         f"（阈值 {threshold} 次，规则 {rule_code}，信号 {signal_text}"
     )
-    excerpt = _detail_excerpt(details)
+    excerpt = _human_excerpt(_detail_excerpt(details))
     if excerpt:
         reason += f"，详情：{excerpt}"
     reason += "）"
@@ -466,11 +480,26 @@ def _warning_reason(category: str) -> str:
     return _clip_reason(text)
 
 
-def _jailbreak_ban_reason(category: str, detail: str | None) -> str:
-    text = f"AI 安全认证命中越狱/提示词注入（{category or 'destructive_request'}）"
-    excerpt = (detail or "").strip()[:REASON_DETAIL_CHARS]
-    if excerpt:
-        text += f"：{excerpt}"
+def _reason_excerpt(text: str | None) -> str:
+    """写进原因的原文摘要：折叠换行、去掉引号与花括号，只留前 120 字。"""
+    cleaned = " ".join((text or "").split())
+    for char in ('"', "{", "}"):
+        cleaned = cleaned.replace(char, " ")
+    return " ".join(cleaned.split())[:REASON_DETAIL_CHARS]
+
+
+def _jailbreak_ban_reason(category: str, excerpt: str | None) -> str:
+    """越狱封号原因：**纯中文**，不含证据 JSON。
+
+    证据（``{"rule": ..., "input": ...}``）仍然整段落 ``BAN_VIOLATIONS.DETAIL``，
+    供复核与追溯；原因只留人能一眼读懂的类别 + 原文摘要。曾经把 payload 直接
+    拼进来，120 字截断后常是半截非法 JSON，管理员看到的就是一串花括号。
+    """
+    label = CATEGORY_LABELS.get(category) or CATEGORY_LABELS["jailbreak"]
+    text = f"AI 安全认证命中{label}"
+    summary = _reason_excerpt(excerpt)
+    if summary:
+        text += f"：{summary}"
     return _clip_reason(text)
 
 
@@ -564,7 +593,8 @@ async def record_agent_jailbreak(
         result["warned"] = True
         await _log_warning(user_oid, period, payload, xuehai_id, now)
 
-    reason = _jailbreak_ban_reason(category, payload)
+    # payload 是证据（含 JSON），只进 BAN_VIOLATIONS；原因用同一份原文摘要。
+    reason = _jailbreak_ban_reason(category, evidence.get("input"))
     try:
         ban = await device_guard.apply_account_ban(
             user_oid, AGENT_JAILBREAK_TRIGGER, reason

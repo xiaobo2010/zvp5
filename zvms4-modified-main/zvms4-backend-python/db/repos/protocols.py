@@ -328,6 +328,16 @@ class UsersRepo(Protocol):
         """
         ...
 
+    async def is_admin_primary_device(self, xuehai_id: str) -> bool:
+        """Whether ``xuehai_id`` is **any admin's** 主学海设备.
+
+        Read-only exemption probe used by the device ban gate: a rule-written
+        device ban and an account-derived ban must not lock an admin's own
+        tablet. Manual admin bans (``source="admin"``) are unaffected — the
+        caller decides, this method only answers ownership.
+        """
+        ...
+
 
 class GroupsRepo(Protocol):
     """Data access for ``zvms_new.groups`` (class groups only).

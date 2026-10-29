@@ -33,6 +33,7 @@ from sqlalchemy.exc import IntegrityError
 from db import backends
 from services import device_guard
 from typings.log import inject_log
+from util.ban import humanize_ban_reason
 from util.object_id import get_current_user, require_password_verification
 from util.permission.features import has_feature
 from util.user import get_user_display_name
@@ -587,7 +588,9 @@ async def list_banned_users(
             # 与 /records 同一命名约定：对外叫 user_id，值是学号。
             "user_id": row.get("id"),
             "class_name": row.get("class_name"),
-            "reason": row.get("ban_reason"),
+            # 历史原因里可能残留证据 JSON，出口统一 humanize（保留 None 语义：
+            # 没有原因就是没有，别用空串冒充一条原因）。
+            "reason": humanize_ban_reason(row.get("ban_reason")) or None,
             # ban_until 为 NULL 且 banned=1 就是永久封禁。
             "permanent": row.get("ban_until") is None,
             "until": _iso(row.get("ban_until")),
@@ -794,7 +797,7 @@ async def list_ban_records(
             "user_id": row.get("user_business_id"),
             "source": row["source"],
             "rule_code": row.get("rule_code"),
-            "reason": row.get("reason"),
+            "reason": humanize_ban_reason(row.get("reason")) or None,
             "permanent": bool(row.get("permanent")),
             "started_at": _iso(row.get("started_at")),
             "expires_at": _iso(row.get("expires_at")),

@@ -70,11 +70,17 @@ MODEL_LOCKED = "AI_CONVERSATION_MODEL_LOCKED"
 # 思考强度：三档，``None`` = 不加任何上游字段（用它自己的默认）。
 THINKING_LEVELS = ("low", "medium", "high")
 
-# 只读场景会话（V048 ``AI_CONVERSATIONS.SCENE``）：终端与文件编辑共用会话 + run
-# 管线，但工具声明按 ``kind='read'`` 裁剪，写工具在场景里根本不存在。``None`` =
-# 普通会话；列表查询固定过滤它，场景会话只经 ``/api/ai/scenes/{scene}/runs`` 触达。
-SCENES = ("terminal", "file_edit")
-SCENE_TITLES = {"terminal": "终端智能", "file_edit": "文件编辑智能"}
+# 只读场景会话（V048 ``AI_CONVERSATIONS.SCENE``）：终端 / 文件编辑 / 义工分析
+# 共用会话 + run 管线，但工具声明按 ``kind='read'`` 裁剪，写工具在场景里根本不存
+# 在。``None`` = 普通会话；列表查询固定过滤它，场景会话只经
+# ``/api/ai/scenes/{scene}/runs`` 触达。值域只在这里（DDL 无 CHECK），加场景只改
+# 本元组 + ``SCENE_TITLES`` + 执行器的 ``SCENE_PROMPTS``。
+SCENES = ("terminal", "file_edit", "volunteer")
+SCENE_TITLES = {
+    "terminal": "终端智能",
+    "file_edit": "文件编辑智能",
+    "volunteer": "义工分析",
+}
 # 场景会话的保留窗口（天）：一次性排障记录，内容含终端/文件片段，比普通会话激进。
 SCENE_RETENTION_DAYS = 14
 # 一轮清理最多扫多少条（批删循环上限，防「删的同时有人一直建」把作业挂死）。
@@ -176,13 +182,22 @@ def scene_of(row: Mapping[str, Any]) -> str | None:
     return value or None
 
 
+def scene_hint() -> str:
+    """场景的合法取值提示（按 ``SCENES`` 现拼）。
+
+    不写死名字：以前这里手写过 ``terminal or file_edit``，每加一个场景就得记着改
+    三处；漏一处的后果是「合法场景被 400 拒掉」，而错误文案本身就是排查线索。
+    """
+    return "scene must be one of: " + ", ".join(SCENES)
+
+
 def is_readonly_scene(value: object) -> bool:
-    """是否是只读场景（``terminal`` / ``file_edit``）。拼错的值一律按「不是」处理。"""
+    """是否是只读场景（``SCENES`` 全员）。拼错的值一律按「不是」处理。"""
     return str(value or "").strip().lower() in SCENES
 
 
 def _clean_scene(value: object) -> str | None:
-    """场景归一：``terminal`` / ``file_edit`` / ``None``，其余 400。
+    """场景归一：``SCENES`` 里的值或 ``None``，其余 400。
 
     与思考强度同一条纪律：拼错的场景不能静默当成普通会话——那会让一个本该裁掉
     写工具的 run 拿到完整工具集，安全边界变成「拼写对了才有」。
@@ -191,7 +206,7 @@ def _clean_scene(value: object) -> str | None:
     if not text:
         return None
     if text not in SCENES:
-        raise AgentError(SCENE_BAD, "scene must be terminal or file_edit", 400)
+        raise AgentError(SCENE_BAD, scene_hint(), 400)
     return text
 
 
@@ -285,7 +300,7 @@ def conversation_view(row: Mapping[str, Any]) -> dict:
         "model": row.get("model"),
         # 思考强度（low|medium|high）；``None`` = 上游默认，前端据此显示「默认」。
         "thinking": row.get("thinking"),
-        # 只读场景（terminal | file_edit）；``None`` = 普通会话。
+        # 只读场景（见 ``SCENES``）；``None`` = 普通会话。
         "scene": row.get("scene"),
         "status": row.get("status"),
         "tokens": tokens,
@@ -425,13 +440,18 @@ async def ensure_scene(*, user: Mapping[str, Any], scene: str) -> Row:
     的前文（刚读过哪个文件、哪条命令的输出）就是下一问的上下文；每问一次建一条
     会话等于把 agent 降级成单轮问答。
 
+    已知取舍：会话键只有 ``(owner, scene)``，**不含目标对象**。所以义工分析场景
+    里连续问两个不同义工共用同一条历史，旧对象会残留在上下文里。按义工 oid 分键
+    需要改会话仓储（唯一键/查询都变），本轮不做；缓解手段在执行器的
+    ``SCENE_PROMPTS['volunteer']``：以本轮参考内容为准，并要求回答里确认对象。
+
     并发建会话的窗口（同一管理员连点两次）可能留下两条场景会话：下一次取到的是
     ``updated_at`` 最新的那条，多余的由 14 天保留期收走——不值得为此加唯一索引，
     那会让「历史被删除后重建」变成一次 ORA-00001。
     """
     normalized = _clean_scene(scene)
     if normalized is None:
-        raise AgentError(SCENE_BAD, "scene must be terminal or file_edit", 400)
+        raise AgentError(SCENE_BAD, scene_hint(), 400)
     owner = str(user.get("id") or "")
     row = await _repo().latest_by_scene(owner, normalized)
     if row is not None:
@@ -822,6 +842,7 @@ __all__ = [
     "fetch_row",
     "get",
     "is_readonly_scene",
+    "scene_hint",
     "list_messages",
     "list_page",
     "message_view",

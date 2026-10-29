@@ -527,6 +527,22 @@ def _primary_owners_stmt(xuehai_ids: list[str]):
     ).where(users_tbl.c.primary_xuehai_id.in_(xuehai_ids))
 
 
+def _is_admin_primary_device_stmt(xuehai_id: str):
+    """该设备号是否挂在任一 admin 名下（``EXISTS`` 语义，取一行即止）。
+
+    设备闸豁免只关心「有没有」：设备号本身是外部标识，不唯一归属某个人，
+    所以这里不按 oid 收敛，任意一个 admin 认领过就算管理员主设备。
+    """
+    return (
+        select(users_tbl.c.oid)
+        .where(
+            users_tbl.c.primary_xuehai_id == xuehai_id,
+            text(_ROLE_EXISTS).bindparams(role_value="admin"),
+        )
+        .limit(1)
+    )
+
+
 def _primary_owned_by_other_stmt(xuehai_id: str, user_oid: str):
     """该设备号是否**挂在别人名下**的主设备（``EXISTS`` 语义，取一行即止）。
 
@@ -1402,6 +1418,17 @@ class OracleUsersRepo:
             }
             for row in rows
         }
+
+    async def is_admin_primary_device(self, xuehai_id: str) -> bool:
+        """``xuehai_id`` 是否是**任一 admin** 的主设备（设备闸豁免用）。
+
+        只回答「有没有 admin 认领这台机器」，不读封禁状态、不返回 owner 信息：
+        调用方只需要一个是否豁免的布尔值，少搬一列就少一份泄露面。
+        """
+        stmt = _is_admin_primary_device_stmt(xuehai_id)
+        async with _session_for(self._session) as (session, _owns):
+            row = (await session.execute(stmt)).first()
+        return row is not None
 
     async def set_class(self, user_oid: str, class_oid: str | None) -> None:
         class_value = normalize_oid(class_oid) if class_oid is not None else None

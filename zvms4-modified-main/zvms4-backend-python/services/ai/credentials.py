@@ -28,7 +28,6 @@ from typing import Any, Mapping
 from urllib.parse import urlsplit
 
 import anyio
-import httpx
 
 import settings
 
@@ -148,7 +147,7 @@ def model_entries(value: object) -> list[dict]:
             model, context = raw.strip(), None
         elif isinstance(raw, Mapping):
             model = str(raw.get("id") or "").strip()
-            context = _positive_int(raw.get("context"))
+            context = positive_int(raw.get("context"))
         else:
             continue
         if not model or model in seen:
@@ -168,8 +167,13 @@ def model_contexts(value: object) -> dict[str, int | None]:
     return {item["id"]: item["context"] for item in model_entries(value)}
 
 
-def _positive_int(value: object) -> int | None:
-    """正整数的宽容解析：``bool`` 是 ``int`` 的子类，必须先排除。"""
+def positive_int(value: object) -> int | None:
+    """正整数的宽容解析：``bool`` 是 ``int`` 的子类，必须先排除。
+
+    公开是给 :func:`services.ai.providers.context_window` 用的：``/models`` 的
+    字段解析与 ``MODELS_JSON`` 的读取必须用同一份口径（``0`` / 负数 / 布尔都
+    不是合法窗口），否则同一个上游数字会在两条路径上得到不同结论。
+    """
     if isinstance(value, bool) or value is None:
         return None
     try:
@@ -362,8 +366,12 @@ def _ordered(rows: list[dict]) -> list[dict]:
     )
 
 
-def _probe_timeout() -> float:
-    """上游 ``/models`` 探测的超时；``<= 0`` 表示关掉（离线/单测）。"""
+def probe_timeout() -> float:
+    """上游 ``/models`` 探测的超时；``<= 0`` 表示关掉（离线/单测）。
+
+    公开是因为 ``providers.list_models`` 也要用它：探测超时只该有一个配置入口
+    （``AI_MODEL_PROBE_TIMEOUT_SECONDS``），两处各读一遍迟早漂。
+    """
     raw = getattr(settings, PROBE_TIMEOUT_SETTING, PROBE_TIMEOUT_DEFAULT)
     try:
         value = float(raw)
@@ -372,17 +380,6 @@ def _probe_timeout() -> float:
     if value <= 0:
         return 0.0
     return value
-
-
-def _context_of(row: object) -> int | None:
-    """``/models`` 的一个条目 → 上下文窗口；认不出就是 ``None``（不猜）。"""
-    if not isinstance(row, Mapping):
-        return None
-    for key in CONTEXT_KEYS:
-        value = _positive_int(row.get(key))
-        if value is not None:
-            return value
-    return None
 
 
 def _models_payload(discovered: Mapping[str, int], models: object) -> list:
@@ -404,34 +401,39 @@ async def _discover_model_contexts(
 ) -> dict[str, int]:
     """best-effort 问一次上游 ``/models``，回 ``{model: context}``（可能为空）。
 
+    实现委托 :func:`services.ai.providers.list_models`：请求超时、SSRF 复核、
+    鉴权头与连接池都归调用层，这里只保留「探测失败 = 没探到」这条保存路径语义。
+
     为什么放在保存路径：模型窗口是上游事实，让管理员为每个模型手抄一遍数字既不
     可靠也不会有第二次。探测失败一律当作「没探到」——保存本身不能因此失败。
     """
-    timeout = _probe_timeout()
-    url = str(base_url or "").strip().rstrip("/")
-    if timeout <= 0 or not url or not api_key:
+    if probe_timeout() <= 0 or not api_key:
         return {}
+    url = str(base_url or "").strip()
+    if not url:
+        return {}
+
+    # 延迟导入：``providers`` 在模块级导入本模块（取 SCOPE_SERVER / context 解析），
+    # 这里再顶层导入就成环了。
+    from . import providers
+
     try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            response = await client.get(
-                f"{url}/models",
-                headers={"Authorization": f"Bearer {api_key}", **dict(headers or {})},
-            )
-        if response.status_code != 200:
-            return {}
-        payload = response.json()
+        rows = await providers.list_models(
+            {"name": "", "base_url": url, "headers": dict(headers or {})},
+            api_key,
+        )
     except Exception:  # noqa: BLE001 - 探测是加分项，任何失败都只是「没探到」
         return {}
 
-    rows = payload.get("data") if isinstance(payload, Mapping) else payload
-    if not isinstance(rows, list):
-        return {}
     found: dict[str, int] = {}
     for row in rows:
-        model = str((row or {}).get("id") or "").strip() if isinstance(row, Mapping) else ""
-        context = _context_of(row)
-        if model and context is not None:
-            found[model] = context
+        # 兼容非 dict 行与缺键：这里在保存路径上，任何一行怪形状都不该让保存失败。
+        if not isinstance(row, Mapping):
+            continue
+        model = row.get("id")
+        value = positive_int(row.get("context"))
+        if isinstance(model, str) and model and value is not None:
+            found.setdefault(model, value)
     return found
 
 
@@ -446,7 +448,7 @@ async def _autofill_model_contexts(
 ) -> list:
     """探测 → 补 ``context`` → 若确有新增就写回库；返回最终要回显的 models 列表。"""
     items = model_entries(models)
-    if not items or _probe_timeout() <= 0:
+    if not items or probe_timeout() <= 0:
         return items
     discovered = await _discover_model_contexts(
         base_url=base_url, api_key=api_key, headers=headers
@@ -715,6 +717,58 @@ async def list_entries(user: dict) -> list[dict]:
         )
         views.append(view)
     return views
+
+
+async def entry_for_name(name: str) -> dict | None:
+    """按名字取**一条**凭据条目（admin 视角、含密文行），供需要真 key 的维护动作。
+
+    遮蔽顺序与 :func:`catalog` 同向：**生效中的**个人项优先于生效中的共享项，
+    同名多渠道时拿到的就是「目录里真正会生效的那一条」。禁用/过期的行仍然返回
+    （排在生效行之后），只是不再抢遮蔽位——管理员要修一条停用的渠道时，仍然得
+    先看到它自己的 key。服务端作用域不在本表里，返回 ``None``——调用方据此区分
+    「没有这个渠道」（404）与「运维配置不可回写」（400）。
+
+    返回的是内部形状（含 ``api_key_cipher``），**不能**直接回给客户端；它只给
+    「从上游拉取模型元数据」这条需要 ``resolve_api_key`` + 真实请求的路径用。
+    """
+    clean = str(name or "").strip()
+    if not clean:
+        return None
+    rows = await backends.get_ai_credentials_repo().list_all()
+    ordered = sorted(
+        rows or [],
+        key=lambda row: (
+            0
+            if bool(row.get("enabled", True))
+            and not _is_expired(row.get("expires_at"))
+            else 1,
+            0 if str(row.get("scope") or "") == SCOPE_PERSONAL else 1,
+        ),
+    )
+    matches = [row for row in ordered if str(row.get("name") or "") == clean]
+    if not matches:
+        return None
+    row = matches[0]
+    return {
+        "key": f"{row.get('scope')}:{row.get('_id') or clean}",
+        "scope": str(row.get("scope") or ""),
+        "owner_oid": row.get("owner_oid"),
+        "name": clean,
+        "kind": str(row.get("kind") or config.OPENAI_COMPAT),
+        "base_url": row.get("base_url"),
+        "models": model_ids(row.get("models")),
+        "model_contexts": model_contexts(row.get("models")),
+        "headers": _stored_headers(row.get("headers_json")),
+        "api_path": _stored_api_path(row.get("api_path")),
+        "api_key_cipher": row.get("api_key_cipher"),
+        "api_key": None,
+        "key_hint": row.get("key_hint"),
+        "enabled": bool(row.get("enabled", True)),
+        "oid": row.get("_id"),
+        "created_at": row.get("created_at"),
+        "updated_at": row.get("updated_at"),
+        "expires_at": row.get("expires_at"),
+    }
 
 
 async def create_entry(
@@ -995,7 +1049,7 @@ def _clean_models(value: object) -> list[str | dict]:
             model = raw_id.strip()
             raw_context = item.get("context")
             if raw_context is not None:
-                context = _positive_int(raw_context)
+                context = positive_int(raw_context)
                 if context is None:
                     raise CredentialError(
                         "AI_KEY_INVALID", "模型的 context 必须是正整数", 400

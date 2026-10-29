@@ -111,6 +111,17 @@ def has_privileged_role(roles: Any) -> bool:
     return bool(PRIVILEGED_ROLES & {role for role in roles if isinstance(role, str)})
 
 
+def has_admin_role(roles: Any) -> bool:
+    """只认 ``admin``：设备封禁豁免的边界比主设备闸窄。
+
+    ``PRIVILEGED_ROLES`` 里的团支书/部门管理员仍可能被设备规则拦下——
+    设备豁免是「管理员的平板被别人的封禁波及」的兜底，不是通用特权。
+    """
+    if not isinstance(roles, (list, tuple, set, frozenset)):
+        return False
+    return "admin" in {role for role in roles if isinstance(role, str)}
+
+
 def _token_hash(token: str) -> str:
     """challenge 只存 SHA-256：明文 token 泄露等于交出一次登入机会。
 
@@ -196,6 +207,27 @@ def _invalid_temp_password(remaining: int) -> HTTPException:
 # ---------------------------------------------------------------------------
 
 
+async def _admin_primary_device_exempt(xuehai_id: str, rule_code: Any) -> bool:
+    """该设备是否是**任一 admin** 的主学海设备（豁免判定）。
+
+    只在「本来就要拒绝」的分支上调用：正常放行路径不许多一次查询。
+    查询失败按无豁免处理（判成受限是收窄权限，不会把封禁判丢）。
+    """
+    try:
+        exempt = await backends.get_users_repo().is_admin_primary_device(xuehai_id)
+    except Exception:
+        _logger.exception("查询管理员主设备失败，按无豁免处理")
+        return False
+    if not exempt:
+        return False
+    _logger.info(
+        "设备闸豁免：设备 %s 是管理员主设备（rule_code=%s）",
+        xuehai_id,
+        rule_code if rule_code else "account_ban",
+    )
+    return True
+
+
 async def device_ban_status(
     xuehai_id: str, *, now: datetime | None = None
 ) -> tuple[bool, str | None, datetime | None]:
@@ -206,6 +238,10 @@ async def device_ban_status(
     1. 显式 ``BANNED_DEVICES`` 行（``until`` 为空=永久，或尚未到期）；
     2. 主设备 = 本机 且该用户**此刻**处于封禁中（``ban_is_active``；``banned``
        列到期不归零，脏行必须由判定层排除）。
+
+    两个来源都带同一条豁免：设备若是**任一 admin 账号的主设备**，自动规则
+    （``source="rule"``）与账号推导的连带封禁都不生效；管理员手工封禁
+    （``source="admin"``）仍然有效——人工决定优先于脚本判定。
 
     空 ``xuehai_id`` 一律放行：没有设备号就没有设备证据，老客户端也不带这个头。
     """
@@ -218,12 +254,29 @@ async def device_ban_status(
     if row:
         until = _as_until(row.get("until"))
         if not _expired(until, at):
+            source = row.get("source")
+            rule_code = row.get("rule_code")
+            if source == "rule" and await _admin_primary_device_exempt(
+                xuehai_id, rule_code
+            ):
+                return False, None, None
             reason = row.get("reason")
             reason = reason.strip() if isinstance(reason, str) and reason.strip() else None
             return True, reason or DEFAULT_BAN_REASON, until
 
     for user in await backends.get_users_repo().list_banned_by_xuehai(xuehai_id):
         if ban_is_active(user, at):
+            if has_admin_role(user.get("roles")):
+                _logger.info(
+                    "设备闸豁免：设备 %s 是管理员主设备（rule_code=%s）",
+                    xuehai_id,
+                    user.get("ban_rule") or "account_ban",
+                )
+                continue
+            if await _admin_primary_device_exempt(
+                xuehai_id, user.get("ban_rule")
+            ):
+                return False, None, None
             return True, ban_reason_of(user), _as_until(user.get("ban_until"))
 
     return False, None, None
@@ -418,7 +471,12 @@ async def _recent_temp_failures(
 
 
 async def _device_ban_active(xuehai_id: str, now: datetime) -> bool:
-    """这台设备在 ``now`` 是否已有一条生效中的显式封禁行。"""
+    """这台设备在 ``now`` 是否已有一条生效中的显式封禁行。
+
+    与 :func:`device_ban_status` 同一豁免口径：管理员主设备上的自动规则封禁
+    （``source="rule"``）不算生效，否则临时密码路径会在「已经豁免」的机器上
+    继续推梯度。管理员手工封禁（``source="admin"``）仍然生效。
+    """
     try:
         row = await backends.get_device_bans_repo().get(xuehai_id)
     except Exception:
@@ -426,7 +484,13 @@ async def _device_ban_active(xuehai_id: str, now: datetime) -> bool:
         return False
     if not row:
         return False
-    return not _expired(_as_until(row.get("until")), now)
+    if _expired(_as_until(row.get("until")), now):
+        return False
+    if row.get("source") == "rule" and await _admin_primary_device_exempt(
+        xuehai_id, row.get("rule_code")
+    ):
+        return False
+    return True
 
 
 async def verify_temp_password(

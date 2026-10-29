@@ -343,9 +343,12 @@ async def _evaluate(
             "banned": False,
         }
 
+    # 原因给管理员看：只留中文规则名、次数、阈值与窗口，不塞 ASCII 规则码
+    # （规则码在 ``BAN_RECORDS.RULE_CODE`` 列里已经有了，重复出现在文案里
+    # 只会让人读到一串下划线英文）。
     reason = (
         f"{window_hours} 小时内 {count} 次{spec['name']}"
-        f"（阈值 {threshold} 次，规则 {rule_code}）"
+        f"（阈值 {threshold} 次）"
     )
     await device_guard.apply_account_ban(user_oid, rule_code, reason, now=at)
     await _log(user_oid, "risk_ban", f"自动封禁：{reason}", at)

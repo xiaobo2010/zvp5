@@ -36,8 +36,16 @@ from services import violation_guard
 from services.agent import executor, proposal as proposal_service
 from services.agent.tools import WRITE
 from services.agent.tool_impl import AgentError
-from services.ai import conversations, moderation, prompt_audit, safety_guard
+from services.ai import (
+    ban_state,
+    conversations,
+    moderation,
+    prompt_audit,
+    safety_guard,
+)
+from typings.log import ZVMSLog
 from util import agent_unlock
+from util.ban import ban_is_active
 
 _logger = logging.getLogger(__name__)
 
@@ -72,6 +80,10 @@ RUN_NOT_CANCELLABLE = "AI_RUN_NOT_CANCELLABLE"
 RUN_CONFLICT = conversations.RUN_CONFLICT
 INTERRUPTED_CODE = "AI_RUN_INTERRUPTED"
 INTERRUPTED_MESSAGE = "执行进程失去心跳"
+# 执行期封禁与 ``util.ban`` 的 detail 同字面量（前端按它分流到「账号封禁」页）；
+# 消息进 ``AI_RUNS.error_message``（VARCHAR2(500)），所以只写一句人话。
+USER_BANNED_CODE = "USER_BANNED"
+USER_BANNED_MESSAGE = "该账号当前处于封禁状态，本次任务已中止。"
 
 # ---------------------------------------------------------------------------
 # 进程内状态
@@ -225,18 +237,22 @@ async def _reject_unsafe(
     category: str,
     unavailable: bool = False,
     audit_oid: str | None = None,
+    penalize: bool = True,
 ) -> None:
     """内容审核拒绝：判定成立时先记违规+警告+首档封号，再抛 422。
 
     对外只有一个错误码与一句固定文案：不区分警告/封禁，也不解释处罚梯度。
     ``unavailable`` 是「判定没跑起来」——只拒绝本次回答，不写任何证据。
+    ``penalize=False`` 是「违规成立但不该处罚」：请求落在平台业务域内
+    （举报/申诉/业务咨询里的敏感词），那句话的对象是业务而不是索取内容，按
+    「向平台索取违法内容」封号是最贵的一类误伤。
 
     ``audit_oid`` 是留存行（``AI_PROMPT_AUDIT``）的句柄：被拒的问题同样要标
     ``REFUSED=1``，发了警告再标 ``WARNED=1``——否则「他被拒过几次」只能靠猜
     错误码去对时间。
     """
     warned = False
-    if not unavailable:
+    if penalize and not unavailable:
         try:
             outcome = await violation_guard.record_agent_jailbreak(
                 user,
@@ -245,6 +261,9 @@ async def _reject_unsafe(
                 detail=text,
             )
             warned = bool((outcome or {}).get("warned"))
+            if (outcome or {}).get("banned"):
+                # 刚落的封禁必须立刻对执行期可见（should_stop 的缓存不能等 TTL）。
+                ban_state.invalidate(str(user.get("id") or ""))
         except Exception:  # noqa: BLE001 - 证据入库失败不该把拒绝变成 500
             _logger.exception("AI 安全认证违规入库失败（本次仍然拒绝）")
     await prompt_audit.record_outcome(
@@ -328,7 +347,10 @@ async def submit(
         verdict = moderation.check(text)
         if verdict.hit:
             _logger.warning(
-                "agent 输入审核拦截 user=%s rule=%s", owner_oid, verdict.rule
+                "agent 输入审核拦截 user=%s rule=%s scope=%s",
+                owner_oid,
+                verdict.rule,
+                getattr(verdict, "scope", None),
             )
             # 被拦下的原文不留就永远查不到「他到底说了什么」；留存仍受
             # ``ai.prompt_capture_roles`` 白名单约束（capture 内部判断）。
@@ -341,8 +363,14 @@ async def submit(
                 user,
                 text=text,
                 xuehai_id=xuehai_id,
+                # 审计仍记**规则名**（``instruction_override`` / ``content_weapons``）：
+                # 这是证据表的既有字段，改成分类会让历史数据与代码对不上。
                 category=str(verdict.rule or ""),
                 audit_oid=audit_oid,
+                # 业务域内的违规只拒绝：举报/申诉里的敏感词不是「索取违法内容」。
+                # 缺 ``scope``（只实现了旧字段的桩）按「照旧处罚」处理。
+                penalize=getattr(verdict, "scope", None)
+                != moderation.SCOPE_PLATFORM,
             )
 
         # 灰区闸门：关键词规则之后、入队之前。只对 department 生效（admin 上面
@@ -789,6 +817,8 @@ def reset() -> None:
     _in_flight.clear()
     # run 级进程内状态一并清掉：测试里上一个用例的覆盖不能带进下一个用例。
     _OVERRIDES.clear()
+    # 封禁态缓存同属进程内状态：上一条用例造出来的「已封」不能跟着 TTL 漏进来。
+    ban_state.invalidate()
     if _pump_task is not None and not _pump_task.done():
         _pump_task.cancel()
     _pump_task = None
@@ -823,6 +853,19 @@ async def _execute(run: Mapping[str, Any], semaphore: asyncio.Semaphore) -> None
     )
     try:
         user = await _owner_user(owner_oid)
+        # 提交到执行之间可能已经落封（提交时审核命中、管理员手工封、并发的另一
+        # 条请求触发梯度）。已封就不发起上游调用：一次 run 能跑几十轮工具，让
+        # 它跑完等于给被封账号继续执行写操作的机会。
+        if user.get("banned"):
+            await _log_banned_run(run_id, owner_oid)
+            await _finish(
+                run_id,
+                status="failed",
+                stop_reason="error",
+                error_code=USER_BANNED_CODE,
+                error_message=USER_BANNED_MESSAGE,
+            )
+            return
         conversation = await conversations.fetch_row(owner_oid, conversation_oid)
         if conversation is None:
             await _finish(
@@ -858,15 +901,26 @@ async def _execute(run: Mapping[str, Any], semaphore: asyncio.Semaphore) -> None
             reference=reference,
         )
         status, stop_reason = _outcome(result, state)
+        # 执行期被封：终态与错误码以封禁为准（``_outcome`` 只会说「cancelled」，
+        # 而「用户自己点的取消」与「账号被封」对运维与前端是两件事）。
+        banned = bool(state.get("banned"))
         await _finish(
             run_id,
-            status=status,
-            stop_reason=stop_reason,
+            status="failed" if banned else status,
+            stop_reason="error" if banned else stop_reason,
             rounds=state["rounds"] or _int((result or {}).get("rounds")),
             result_message_oid=state["result_message_oid"],
             usage=state["usage"],
-            error_code=INTERRUPTED_CODE if status == "interrupted" else None,
-            error_message="执行已被中止" if status == "interrupted" else None,
+            error_code=(
+                USER_BANNED_CODE
+                if banned
+                else INTERRUPTED_CODE if status == "interrupted" else None
+            ),
+            error_message=(
+                USER_BANNED_MESSAGE
+                if banned
+                else "执行已被中止" if status == "interrupted" else None
+            ),
         )
     except asyncio.CancelledError:
         # watchdog 或进程退出：终态通常已经由 watchdog 写好，这里补一次 CAS
@@ -914,10 +968,32 @@ async def _owner_user(owner_oid: str) -> dict:
 
     角色可能在这几秒里被改掉（提案/额度/频控都按角色算），拿旧快照跑完一整次
     run 等于用过期权限执行写工具。
+
+    ``banned`` 一并留下来（提交与执行之间可能已经落封）；判定走
+    ``ban_is_active``——``banned`` 列到期不会自动归零，只看列会把刑满用户也拦下。
     """
     row = await _users().get_for_auth(owner_oid)
     roles = list(row.get("roles") or []) if isinstance(row, Mapping) else []
-    return {"id": owner_oid, "per": roles}
+    banned = ban_is_active(row) if isinstance(row, Mapping) else False
+    return {"id": owner_oid, "per": roles, "banned": banned}
+
+
+async def _log_banned_run(run_id: str, owner_oid: str) -> None:
+    """已封账号被拒执行：留一行审计（与违规证据同一张日志表）。
+
+    写日志失败不影响终态：run 已经写了 ``failed`` + ``USER_BANNED``，那才是事实。
+    """
+    try:
+        await ZVMSLog(
+            "",
+            owner_oid,
+            f"AI run 因账号封禁被拒执行（run {run_id}）",
+            datetime.now().timestamp(),
+            type="ai_run_banned",
+            level="warning",
+        ).insert_log()
+    except Exception:  # noqa: BLE001 - 审计是旁路
+        _logger.exception("写入 ai_run_banned 日志失败（run 已按失败收尾）")
 
 
 def _outcome(result: Mapping[str, Any] | None, state: Mapping[str, Any]) -> tuple[str, str | None]:
@@ -1028,10 +1104,18 @@ def _should_stop(run_id: str, owner_oid: str, state: dict):
     查库**每轮一次**：同一轮里的第 2..N 个工具复用这一行，轮收尾（``on_round``）
     把缓存清掉，于是下一轮的第一次检查必然重新读库——取消/中断仍然「每轮可见」，
     只是不再「每个工具一次」（单轮 5 个工具 = 从 5 次查询降到 1 次）。
+
+    封禁**不共用这份缓存**：它是别处写入的事实（违规梯度/管理员），所以在每次
+    调用时都问一遍 ``ban_state``（自带 1 秒 TTL，频率有上界）。命中就把 run 标成
+    ``banned``，终态按 ``USER_BANNED`` 收尾——「被封之后还在继续跑轮次」正是要修
+    的那个缺陷。
     """
 
     async def should_stop() -> bool:
         if state.get("cancelled") or state.get("interrupted"):
+            return True
+        if await ban_state.is_banned(owner_oid):
+            state["banned"] = True
             return True
         row = state.get("run_check")
         if row is None:

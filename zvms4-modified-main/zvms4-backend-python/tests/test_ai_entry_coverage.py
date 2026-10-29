@@ -418,6 +418,12 @@ FEATURE_GATE_EXEMPT: dict[str, str] = {
         "SSH 命令起草：_require_system_admin 要求严格 admin + 即时查库复核；"
         "策略层 admin 恒 True，接开关只会得到恒真判断"
     ),
+    "routers/ai_models_router.py": (
+        "模型目录管理是 admin 配置面（_require_admin），写路径另有密码再验证；"
+        "POST /discover 只是代管渠道去调它自己的 /models 取元数据（上下文窗口），"
+        "不产出任何内容、不下发 prompt。按功能开关拦截会形成死锁：关掉 AI 功能后"
+        "管理员就再也无法配置/修复模型目录，连重新打开功能所需的渠道信息都配不了。"
+    ),
 }
 
 

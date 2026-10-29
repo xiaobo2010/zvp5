@@ -53,6 +53,7 @@ class Env:
         self.rule = _rule()
         self.rule_error: Exception | None = None
         self.other_primary: set[str] = set()
+        self.admin_primary: set[str] = set()
         self.history = 0
         # 当前 USERS 行上的封禁状态：``apply_account_ban`` 会先读它避免降级。
         self.current_ban: dict | None = None
@@ -89,6 +90,9 @@ def env(monkeypatch) -> Env:
 
     async def primary_owned_by_other(xuehai_id, user_oid):
         return xuehai_id in state.other_primary
+
+    async def is_admin_primary_device(xuehai_id):
+        return xuehai_id in state.admin_primary
 
     async def set_ban(oid, *, reason, until, source, rule_code):
         state.bans.append(
@@ -208,6 +212,7 @@ def env(monkeypatch) -> Env:
             get_by_oid=get_by_oid,
             list_banned_by_xuehai=list_banned_by_xuehai,
             primary_owned_by_other=primary_owned_by_other,
+            is_admin_primary_device=is_admin_primary_device,
         ),
     )
     monkeypatch.setattr(

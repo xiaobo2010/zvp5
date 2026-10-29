@@ -36,7 +36,7 @@ from db.models import app_logs as app_logs_table
 from db.oracle.session import session_scope
 from services import adb_backup, db_monitor
 from typings.log import ZVMSLog
-from util.ban import ban_is_active
+from util.ban import ban_is_active, humanize_ban_reason
 from util.group import get_user_permissions
 from util.user import get_user_display_name
 
@@ -562,7 +562,7 @@ def _ban_state(doc: dict | None) -> dict:
     return {
         "banned": bool(doc.get("banned")),
         "active": ban_is_active(doc),
-        "reason": doc.get("ban_reason"),
+        "reason": humanize_ban_reason(doc.get("ban_reason")) or None,
         "until": doc.get("ban_until"),
         "source": doc.get("ban_source"),
         "rule": doc.get("ban_rule"),

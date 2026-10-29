@@ -1,4 +1,4 @@
-"""只读场景（终端 / 文件编辑）：会话复用、只读工具子集、密码门豁免、
+"""只读场景（终端 / 文件编辑 / 义工分析）：会话复用、只读工具子集、密码门豁免、
 列表隐藏、14 天窗口、参考内容脱敏且不落消息表。
 
 三条 oracle 条件的落点都能在这里找到：
@@ -278,7 +278,40 @@ def test_scene_titles_are_the_frozen_copy() -> None:
     assert conversations.SCENE_TITLES == {
         "terminal": "终端智能",
         "file_edit": "文件编辑智能",
+        "volunteer": "义工分析",
     }
+
+
+@pytest.mark.asyncio
+async def test_volunteer_is_a_valid_readonly_scene(repos) -> None:
+    assert "volunteer" in conversations.SCENES
+    assert conversations.is_readonly_scene("volunteer") is True
+
+    created = await conversations.ensure_scene(user=ADMIN, scene="volunteer")
+
+    assert created["scene"] == "volunteer"
+    assert created["title"] == "义工分析"
+    assert created["mode"] == "agent"
+    assert [row["scene"] for row in repos.conv.creates] == ["volunteer"]
+
+
+def test_volunteer_scene_prompt_pins_the_current_subject() -> None:
+    """会话键不带义工 oid：prompt 必须把「本轮 reference 优先」和对象确认写死。"""
+    prompt = executor.SCENE_PROMPTS["volunteer"]
+
+    assert "义工分析" in prompt
+    assert "reference" in prompt
+    assert "以本轮参考内容为准" in prompt
+    assert "确认" in prompt
+    # 关系定义只允许两种，避免模型编造亲属/上下级。
+    assert "共同参加过活动" in prompt
+    assert "同班同学" in prompt
+    # 工具口径必须与真实注册一致：没有任何工具能直接列出班级成员名单。
+    assert "list_groups" in prompt
+    assert "没有成员名单" in prompt
+    # 数字口径：不足就说缺什么，工时按小时。
+    assert "不要猜数字" in prompt
+    assert "小时" in prompt
 
 
 @pytest.mark.asyncio
@@ -288,6 +321,17 @@ async def test_ensure_scene_rejects_unknown_scenes(repos) -> None:
     assert caught.value.code == conversations.SCENE_BAD
     assert caught.value.status_code == 400
     assert repos.conv.creates == []
+
+
+def test_unknown_scene_message_lists_every_scene_including_volunteer() -> None:
+    """错误文案按 ``SCENES`` 现拼：加场景不该再手改字符串。"""
+    with pytest.raises(AgentError) as caught:
+        conversations._clean_scene("terminal2")
+
+    message = caught.value.message
+    for scene in conversations.SCENES:
+        assert scene in message
+    assert "volunteer" in message
 
 
 def test_scene_conversations_are_hidden_from_the_normal_list() -> None:
@@ -493,6 +537,18 @@ def test_scene_specs_only_declare_read_tools() -> None:
         assert TOOLS[name].kind == READ, name
     # 读工具仍然在（场景的用途就是「读」）。
     assert {"fs_read", "fs_list", "db_query"} <= scene_names
+
+
+def test_volunteer_scene_specs_only_declare_read_tools() -> None:
+    volunteer = {
+        spec["function"]["name"] for spec in tool_specs(ADMIN, scene="volunteer")
+    }
+
+    for name in volunteer:
+        assert TOOLS[name].kind == READ, name
+    assert {"fs_write", "fs_delete", "ssh_exec", "db_dml", "db_ddl"} & volunteer == set()
+    # 义工分析要用的三件读工具必须在。
+    assert {"user_volunteer_time", "user_activities", "list_activity_members"} <= volunteer
 
 
 @pytest.mark.asyncio
@@ -709,8 +765,39 @@ def test_unknown_scene_is_a_400(submitted) -> None:
     )
 
     assert response.status_code == 400
-    assert response.json()["error"]["code"] == conversations.SCENE_BAD
+    body = response.json()["error"]
+    assert body["code"] == conversations.SCENE_BAD
+    # 文案里必须带上 volunteer：新场景加了却忘了文案，前端会照着提示填错。
+    assert "volunteer" in body["message"]
     assert submitted.calls == []
+
+
+def test_volunteer_scene_end_to_end_declares_only_read_tools(submitted) -> None:
+    """端到端：admin 提交义工分析 run → 202 + 正确的 scene/context；工具只有读。"""
+    reference = "oid: 000000000000000000000000，姓名：张三，工时：12"
+    response = _client(ADMIN).post(
+        "/api/ai/scenes/volunteer/runs",
+        json={
+            "content": "这个义工今年做了哪些活动",
+            "context": reference,
+            "model": "lab/gpt-picked",
+            "thinking": "high",
+        },
+    )
+
+    assert response.status_code == 202, response.text
+    assert response.json()["data"] == {"run_id": "f" * 32, "conversation_oid": CONV}
+    call = submitted.calls[0]
+    assert call["scene"] == "volunteer"
+    assert call["context"] == reference
+    assert call["model"] == "lab/gpt-picked"
+    assert call["thinking"] == "high"
+    assert submitted.kicks == [1]
+
+    specs = tool_specs(ADMIN, scene="volunteer")
+    assert specs
+    for spec in specs:
+        assert TOOLS[spec["function"]["name"]].kind == READ
 
 
 def test_payload_limits_are_enforced(submitted) -> None:
