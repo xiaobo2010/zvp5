@@ -1,4 +1,5 @@
 import type { MyDeviceStatus } from '@/api/user/device'
+import { resolveErrorMessageOr } from '@/utils/errorMessage'
 
 /**
  * 主设备自助面的纯逻辑：强制门形态、卡片动作矩阵、错误与封禁文案。
@@ -107,16 +108,9 @@ function isInternalCode(value: string): boolean {
  * 结构化 detail 则把 message 填好。两者都优先透出，只有内部代号才回落兜底文案。
  */
 export function primaryDeviceErrorMessage(error: unknown, fallback: string): string {
-  if (error && typeof error === 'object') {
-    const record = error as Record<string, unknown>
-    const message = typeof record.message === 'string' ? record.message.trim() : ''
-    if (message && !isInternalCode(message)) {
-      return message
-    }
-    const code = typeof record.code === 'string' ? record.code.trim() : ''
-    if (code && !isInternalCode(code)) {
-      return code
-    }
+  const message = resolveErrorMessageOr(error, '').trim()
+  if (message && !isInternalCode(message)) {
+    return message
   }
   return fallback
 }

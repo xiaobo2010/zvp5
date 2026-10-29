@@ -40,7 +40,11 @@ export const zhCN = {
   chat: {
     model: '模型',
     modelLocked: '模型在建会话时确定',
+    modelChangeable: '空会话可更换模型，发出第一条消息后锁定',
     thinking: '思考强度',
+    thinkingSection: '思考过程',
+    foldSettings: '收起设置',
+    expandSettings: '展开设置',
     thinkingDefault: '默认',
     thinkingLow: '低',
     thinkingMedium: '中',
@@ -597,6 +601,7 @@ export const zhCN = {
     statusTimeout: '超时',
     statusRejected: '已拒绝',
     statusBusy: '繁忙',
+    statusAdminBypass: '管理员旁路',
     keyScope: '密钥来源',
     keyScopeAll: '全部来源',
     keyScopePersonal: '个人',
@@ -647,6 +652,7 @@ export const zhCN = {
     columns: {
       createdAt: '时间',
       user: '用户',
+      adminBadge: '管理员',
       capability: '能力',
       endpoint: '接口',
       provider: '服务商',

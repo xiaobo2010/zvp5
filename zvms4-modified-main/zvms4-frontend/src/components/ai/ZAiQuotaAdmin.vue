@@ -33,10 +33,6 @@ import {
 import { Refresh, Search, Setting } from '@element-plus/icons-vue'
 import ZPagination from '@/components/utils/ZPagination.vue'
 import {
-  AI_ERROR_FALLBACK_SECTION,
-  aiErrorCopy,
-  aiErrorOf,
-  aiErrorSection,
   aiQuotaSourceLabelKey,
   approveQuotaRequest,
   listQuotaRequests,
@@ -53,6 +49,7 @@ import {
 import { getMyRolePolicy } from '@/api/system/rolePolicies'
 import { useUserStore } from '@/stores/user'
 import { formatDateTime } from '@/utils/dateTime'
+import { resolveErrorMessage } from '@/utils/errorMessage'
 import type { AiQuotaKind } from '@/../types/ai'
 
 type DecisionMode = 'approve' | 'reject'
@@ -118,7 +115,7 @@ async function loadUsers(page = usersPage.value) {
   } catch (error) {
     users.value = []
     usersTotal.value = 0
-    usersError.value = errorText(error, 'ai.quotaAdmin.usersLoadFailed')
+    usersError.value = resolveErrorMessage(error, 'ai.quotaAdmin.usersLoadFailed')
   } finally {
     usersLoading.value = false
   }
@@ -159,7 +156,7 @@ async function loadRequests(page = requestsPage.value) {
   } catch (error) {
     requests.value = []
     requestsTotal.value = 0
-    requestsError.value = errorText(error, 'ai.quotaAdmin.requests.loadFailed')
+    requestsError.value = resolveErrorMessage(error, 'ai.quotaAdmin.requests.loadFailed')
   } finally {
     requestsLoading.value = false
   }
@@ -172,22 +169,6 @@ function onRequestsPageChange(page: number) {
 
 async function refreshAll() {
   await Promise.all([loadUsers(), loadRequests()])
-}
-
-function errorText(error: unknown, fallbackKey: string): string {
-  const aiError = aiErrorOf(error)
-  if (!aiError) {
-    return error instanceof Error && error.message ? error.message : t(fallbackKey)
-  }
-  if (aiError.message) {
-    return aiError.message
-  }
-  // 申请相关错误码还没有人话映射：展示后端 detail 原文，别折叠成通用文案。
-  if (aiErrorSection(aiError.code) === AI_ERROR_FALLBACK_SECTION) {
-    return aiError.code
-  }
-  const copy = aiErrorCopy(aiError.code, t)
-  return `${copy.title}：${copy.hint}`
 }
 
 // ---------------------------------------------------------------------------
@@ -223,7 +204,7 @@ async function submitLimit() {
     ElMessage.success(t('ai.quotaAdmin.savedNotice'))
     await refreshAll()
   } catch (error) {
-    ElMessage.error(errorText(error, 'ai.quotaAdmin.saveFailed'))
+    ElMessage.error(resolveErrorMessage(error, 'ai.quotaAdmin.saveFailed'))
   } finally {
     limitSaving.value = false
   }
@@ -250,7 +231,7 @@ async function resetUsage(row: AiQuotaUserRow, kind: AiQuotaKind) {
     ElMessage.success(t('ai.quotaAdmin.resetNotice'))
     await refreshAll()
   } catch (error) {
-    ElMessage.error(errorText(error, 'ai.quotaAdmin.resetFailed'))
+    ElMessage.error(resolveErrorMessage(error, 'ai.quotaAdmin.resetFailed'))
   }
 }
 
@@ -280,7 +261,7 @@ async function submitQuickLookup() {
     quickLookupVisible.value = false
     ElMessage.success(t('ai.quotaAdmin.quickLookupDone'))
   } catch (error) {
-    ElMessage.error(errorText(error, 'ai.quotaAdmin.quickLookupFailed'))
+    ElMessage.error(resolveErrorMessage(error, 'ai.quotaAdmin.quickLookupFailed'))
   } finally {
     quickLookupLoading.value = false
   }
@@ -341,7 +322,7 @@ async function submitDecision() {
     decisionVisible.value = false
     await refreshAll()
   } catch (error) {
-    ElMessage.error(errorText(error, 'ai.quotaAdmin.requests.decisionFailed'))
+    ElMessage.error(resolveErrorMessage(error, 'ai.quotaAdmin.requests.decisionFailed'))
   } finally {
     deciding.value = false
   }

@@ -6,7 +6,7 @@ import { useI18n } from 'vue-i18n'
 import { ElCard, ElForm, ElFormItem, ElInput, ElButton, ElAlert, ElMessage, ElMessageBox } from 'element-plus'
 import type { FormInstance, FormRules } from 'element-plus'
 import dayjs from '@/plugins/dayjs'
-import { isAxiosError } from 'axios'
+import { errorDetailOf, resolveErrorMessage } from '@/utils/errorMessage'
 import {
   getMaintenanceStatus,
   enableMaintenance,
@@ -44,15 +44,6 @@ const sinceText = computed(() => {
   return dayjs(since * 1000).format('YYYY-MM-DD HH:mm:ss')
 })
 
-// 从后端错误里提取 detail 用于展示
-function detailOf(err: unknown): string {
-  if (isAxiosError(err)) {
-    const detail = (err.response?.data as { detail?: unknown } | undefined)?.detail
-    return typeof detail === 'string' ? detail : ''
-  }
-  return ''
-}
-
 async function refreshStatus() {
   statusLoading.value = true
   try {
@@ -81,9 +72,9 @@ async function onEnable() {
     form.announcement = ''
     await refreshStatus()
   } catch (err) {
-    const detail = detailOf(err)
-    if (detail) {
-      ElMessage.error(detail)
+    // 只有后端给了 detail 才叠一条本页 toast，避免和全局拦截器重复刷屏。
+    if (errorDetailOf(err)) {
+      ElMessage.error(resolveErrorMessage(err))
     }
   } finally {
     submitting.value = false
@@ -104,9 +95,9 @@ async function onDisable() {
     form.announcement = ''
     await refreshStatus()
   } catch (err) {
-    const detail = detailOf(err)
-    if (detail) {
-      ElMessage.error(detail)
+    // 只有后端给了 detail 才叠一条本页 toast，避免和全局拦截器重复刷屏。
+    if (errorDetailOf(err)) {
+      ElMessage.error(resolveErrorMessage(err))
     }
   } finally {
     submitting.value = false

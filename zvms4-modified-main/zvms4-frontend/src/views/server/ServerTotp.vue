@@ -7,6 +7,7 @@ import { ElCard, ElButton, ElProgress } from 'element-plus'
 import { Refresh, View, Hide } from '@element-plus/icons-vue'
 import { isAxiosError } from 'axios'
 import { getMyTotp } from '@/api/system/totp.ts'
+import { errorDetailOf, resolveErrorMessage } from '@/utils/errorMessage'
 
 const router = useRouter()
 const userStore = useUserStore()
@@ -33,15 +34,6 @@ let timer: ReturnType<typeof setInterval> | undefined
 // 每个过期窗口(以 exp 标识)最多自动续期一次;失败后 exp 不变,因此不会重试,
 // 避免 60s 一次的错误风暴。服务器时钟偏差导致新 exp 仍已过期时同样不会循环。
 let autoRefreshedForExp: number | null = null
-
-// 从后端错误里提取 detail 用于展示
-function detailOf(err: unknown): string {
-  if (isAxiosError(err)) {
-    const detail = (err.response?.data as { detail?: unknown } | undefined)?.detail
-    return typeof detail === 'string' ? detail : ''
-  }
-  return ''
-}
 
 // 时间以响应式值推进:timer 更新 now,依赖它的 computed 随之失效重算(computed 内不直接取 Date.now())
 const now = ref(Date.now())
@@ -136,7 +128,7 @@ async function refresh() {
     // 403:封禁时后端返回 403 + detail='USER_BANNED'(机器可读协议,不直接展示),
     // 由全局遮罩接管,页面级不跳转、不落错误态;其余 403 = 非本人,兜底跳 404 页
     if (isAxiosError(err) && err.response?.status === 403) {
-      if (detailOf(err) === 'USER_BANNED') {
+      if (errorDetailOf(err) === 'USER_BANNED') {
         stopTimer()
       } else {
         router.replace('/not-found')
@@ -148,7 +140,7 @@ async function refresh() {
       stopTimer()
       return
     }
-    loadError.value = detailOf(err) || t(M + 'loadFailed')
+    loadError.value = resolveErrorMessage(err, M + 'loadFailed')
     stopTimer()
   } finally {
     loading.value = false

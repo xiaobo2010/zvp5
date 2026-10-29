@@ -22,6 +22,7 @@ import {
   type DbMetricsHostData, type BackupProgressData
 } from '@/api/system/db.ts'
 import DbPerfTrendChart from '@/components/server/DbPerfTrendChart.vue'
+import { resolveErrorMessage } from '@/utils/errorMessage'
 
 const router = useRouter()
 const userStore = useUserStore()
@@ -60,15 +61,6 @@ const applicationTablespaces = computed(() => {
   return (tablespaces.value?.items ?? []).filter((ts) => ts.is_application === true)
 })
 
-// 从后端错误里提取 detail 用于展示
-function detailOf(err: unknown): string {
-  if (isAxiosError(err)) {
-    const detail = (err.response?.data as { detail?: unknown } | undefined)?.detail
-    return typeof detail === 'string' ? detail : ''
-  }
-  return ''
-}
-
 // 各新端点的 403 处理与页面守卫口径一致:token 对应账号已无 admin 权限
 function redirectIfForbidden(err: unknown): boolean {
   if (isAxiosError(err) && err.response?.status === 403) {
@@ -91,7 +83,7 @@ async function refresh() {
       router.replace('/not-found')
       return
     }
-    loadError.value = detailOf(err) || t(M + 'loadFailed')
+    loadError.value = resolveErrorMessage(err, M + 'loadFailed')
   } finally {
     loading.value = false
   }
@@ -178,7 +170,7 @@ async function previewRetentionNow() {
     retentionPreview.value = res.data.data
   } catch (err) {
     if (redirectIfForbidden(err)) return
-    retentionError.value = { type: 'error', text: detailOf(err) || t(M + 'retentionPreviewFailed') }
+    retentionError.value = { type: 'error', text: resolveErrorMessage(err, M + 'retentionPreviewFailed') }
   } finally {
     previewLoading.value = false
   }
@@ -217,10 +209,10 @@ async function onRunRetention() {
     if (redirectIfForbidden(err)) return
     if (isAxiosError(err) && err.response?.status === 409) {
       // 409:已有清理在跑,转进度轮询向用户展示当前阶段
-      retentionError.value = { type: 'warning', text: detailOf(err) || t(M + 'retentionBusy') }
+      retentionError.value = { type: 'warning', text: resolveErrorMessage(err, M + 'retentionBusy') }
       void refreshProgress()
     } else {
-      retentionError.value = { type: 'error', text: detailOf(err) || t(M + 'retentionRunFailed') }
+      retentionError.value = { type: 'error', text: resolveErrorMessage(err, M + 'retentionRunFailed') }
     }
   } finally {
     runLoading.value = false
@@ -407,7 +399,7 @@ async function onRunBackup() {
     void refreshBackupProgress()
   } catch (err) {
     if (redirectIfForbidden(err)) return
-    backupError.value = detailOf(err) || t(M + 'backupRunFailed')
+    backupError.value = resolveErrorMessage(err, M + 'backupRunFailed')
   } finally {
     backupRunLoading.value = false
   }

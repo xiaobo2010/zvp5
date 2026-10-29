@@ -239,6 +239,36 @@ export const useAiConversationsStore = defineStore('aiConversations', () => {
     return updated
   }
 
+  /**
+   * 改模型：只对空会话有效（后端在有消息时回 409）。
+   *
+   * 先乐观改本地，失败再回滚——选模型是「点一下就该变」的操作，等一圈网络
+   * 回来才刷新会让选择器看起来卡住。
+   */
+  async function setConversationModel(
+    conversationOid: string,
+    model: string
+  ): Promise<AiConversation> {
+    const target =
+      currentOid.value === conversationOid
+        ? current.value
+        : conversations.value.find((item) => item.oid === conversationOid) ?? null
+    const previous = target?.model ?? null
+    if (target) {
+      target.model = model
+    }
+    try {
+      const updated = await updateConversation(conversationOid, { model })
+      applyConversation(updated)
+      return updated
+    } catch (error) {
+      if (target) {
+        target.model = previous
+      }
+      throw error
+    }
+  }
+
   /** 改标题；成功后同步列表与当前会话。 */
   async function renameConversation(conversationOid: string, title: string): Promise<AiConversation> {
     const updated = await updateConversation(conversationOid, { title })
@@ -621,6 +651,7 @@ export const useAiConversationsStore = defineStore('aiConversations', () => {
     renameConversation,
     setConversationStatus,
     setConversationThinking,
+    setConversationModel,
     removeConversation,
     selectConversation,
     loadMessages,

@@ -10,6 +10,7 @@ import { getXuehaiId } from '@/plugins/ua'
 import { DEVICE_LOCK_DETAIL, cachedUnlockToken, clearDeviceUnlock } from '@/plugins/device-unlock'
 import { trackRequest, releaseRequest, type TrackedRequestConfig } from '@/plugins/inflight'
 import { readBanInfo } from '@/utils/ban'
+import { resolveDetailMessage, resolveErrorMessage } from '@/utils/errorMessage'
 import {
   memoryGet,
   memorySet,
@@ -308,7 +309,7 @@ axiosInstance.interceptors.response.use(
           let detail: unknown = error.response?.data?.detail
           const rawData = error.response?.data
           // 缩略图/字节类请求(responseType: 'blob' / 'arraybuffer')失败时 data 是二进制,
-          // data.detail 取不到会一律落到「未知错误」。此处按需把二进制读成文本再尝试解析。
+          // data.detail 取不到就只能走通用兜底。此处按需把二进制读成文本再尝试解析。
           if (rawData instanceof Blob || rawData instanceof ArrayBuffer) {
             try {
               const text =
@@ -330,9 +331,7 @@ axiosInstance.interceptors.response.use(
             }
           }
           ElMessage({
-            message: detail
-              ? '' + (typeof detail === 'string' ? detail : JSON.stringify(detail))
-              : '未知错误',
+            message: resolveDetailMessage(detail) || resolveErrorMessage(error),
             type: 'error',
             grouping: true,
             plain: true
@@ -343,7 +342,7 @@ axiosInstance.interceptors.response.use(
       if (!errorDisplayed) {
         errorDisplayed = true
         ElMessage({
-          message: error.message ? '错误: ' + error.message : '未知错误',
+          message: resolveErrorMessage(error),
           type: 'error',
           grouping: true,
           plain: true

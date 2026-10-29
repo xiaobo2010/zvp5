@@ -67,6 +67,9 @@ const PROPOSAL_TICK_MS = 30_000
 /** 侧栏折叠成抽屉的断点：窄屏放不下固定侧栏。 */
 const SIDEBAR_BREAKPOINT = 1024
 
+/** 短视口的判定线：低于它就算「高度紧张」（横屏平板、笔记本半屏）。 */
+const SHORT_VIEWPORT_HEIGHT = 760
+
 const isNarrow = computed(() => width.value < SIDEBAR_BREAKPOINT)
 
 const models = ref<AiModelItem[]>([])
@@ -86,8 +89,53 @@ const thinkingOptions = computed(() => [
   { label: t('ai.chat.thinkingHigh'), value: 'high' }
 ])
 
-/** 当前会话锁定的模型：建会话时确定，这里只读展示。 */
+/** 当前会话锁定的模型：建会话时确定，只有空会话还能改。 */
 const currentModel = computed(() => store.current?.model ?? model.value)
+
+/**
+ * 能不能换模型。
+ *
+ * 没有当前会话（还没建、或停在上一次的空态）时随便选，选中的值会在建会话时带上；
+ * 有当前会话时只有「一条消息都没有」的空会话能改——后端在有消息后直接 409。
+ */
+const canChangeModel = computed(() => !store.current || store.totalMessages === 0)
+/** 有消息之后模型就锁定了：选择器禁用 + 锁定文案。 */
+const modelLocked = computed(() => !canChangeModel.value)
+const modelSaving = ref(false)
+
+/** 换模型：无当前会话时只改本地预选，有当前会话时空会话走 PATCH。 */
+async function changeModel(value: string) {
+  if (!canChangeModel.value || !value || value === currentModel.value) {
+    return
+  }
+  const conversation = store.current
+  if (!conversation) {
+    model.value = value
+    return
+  }
+  modelSaving.value = true
+  try {
+    await store.setConversationModel(conversation.oid, value)
+    // 记住这次选择：下一次「新建会话」沿用，不必再选一遍。
+    model.value = value
+  } catch (error) {
+    applyError(error)
+  } finally {
+    modelSaving.value = false
+  }
+}
+
+/** 短视口（横屏平板 / 笔记本半屏）：设置卡收成一行摘要。 */
+const isShortViewport = computed(() => height.value < SHORT_VIEWPORT_HEIGHT)
+/** 用户手动展开过：短视口下也允许临时摊开看全部设置。 */
+const settingsExpanded = ref(false)
+const settingsFolded = computed(() => isShortViewport.value && !settingsExpanded.value)
+
+/** 收起态摘要里的思考强度：跟随会话当前值。 */
+const thinkingLabel = computed(() => {
+  const value = store.current?.thinking ?? thinkingChoice.value ?? ''
+  return thinkingOptions.value.find((item) => item.value === value)?.label ?? ''
+})
 
 const input = ref('')
 const sending = ref(false)
@@ -143,11 +191,18 @@ const proposalNow = ref(Date.now())
  * 输入框行数：按视口高度给书写空间。
  *
  * 高屏（竖屏平板、桌面）多给两行，输入框不再是一行小框；
- * 矮屏（横屏平板、横屏手机）少两行，输入区才挤不掉消息区。
+ * 矮屏（横屏平板、横屏手机）少两行，输入区才挤不掉消息区；
+ * 极矮（短视口）只留 2 行，把高度让给消息。
  */
-const composerRows = computed(() =>
-  height.value >= 900 ? { minRows: 4, maxRows: 12 } : { minRows: 3, maxRows: 8 }
-)
+const composerRows = computed(() => {
+  if (height.value >= 900) {
+    return { minRows: 4, maxRows: 12 }
+  }
+  if (height.value < SHORT_VIEWPORT_HEIGHT) {
+    return { minRows: 2, maxRows: 4 }
+  }
+  return { minRows: 3, maxRows: 8 }
+})
 
 const hasModels = computed(() => models.value.length > 0)
 
@@ -257,6 +312,24 @@ const runEventViews = computed<AgentEventView[]>(() =>
 
 /** 工具消息的展开态。 */
 const expandedTools = ref<string[]>([])
+
+/**
+ * 思考过程的折叠态：记的是「被用户收起」的消息。
+ *
+ * 默认展开——思考内容是新信息，默认藏起来等于没做；收起一次就够，
+ * 轮询刷新同一条消息不会把它重新弹开（按 oid 记）。
+ */
+const collapsedReasoning = ref<string[]>([])
+
+function reasoningOpen(oid: string): boolean {
+  return !collapsedReasoning.value.includes(oid)
+}
+
+function toggleReasoning(oid: string) {
+  collapsedReasoning.value = reasoningOpen(oid)
+    ? [...collapsedReasoning.value, oid]
+    : collapsedReasoning.value.filter((item) => item !== oid)
+}
 
 /* ---------------------------------------------------------------------------
    首次使用风险警示
@@ -1245,7 +1318,12 @@ onUnmounted(() => {
     </ElDrawer>
 
     <div class="ai-chat__main">
-      <ElCard shadow="never" class="ai-chat__settings" v-loading="modelsLoading">
+      <ElCard
+        shadow="never"
+        class="ai-chat__settings"
+        :class="{ 'is-folded': settingsFolded }"
+        v-loading="modelsLoading"
+      >
         <template #header>
           <div class="flex flex-wrap items-center justify-between gap-3">
             <div class="flex flex-col gap-1">
@@ -1259,59 +1337,82 @@ onUnmounted(() => {
                 <ElIcon class="mr-1"><Menu /></ElIcon>
                 {{ t('ai.chat.sessions.openDrawer') }}
               </ElButton>
+              <!-- 短视口：设置卡默认收成一行摘要，要改再摊开 -->
+              <ElButton
+                v-if="isShortViewport"
+                text
+                size="small"
+                :aria-expanded="!settingsFolded"
+                @click="settingsExpanded = !settingsExpanded"
+              >
+                {{ settingsFolded ? t('ai.chat.expandSettings') : t('ai.chat.foldSettings') }}
+              </ElButton>
             </div>
           </div>
         </template>
 
-        <div class="flex flex-wrap items-center gap-3">
-          <span class="yg-text-xs yg-text-tertiary">{{ t('ai.chat.model') }}</span>
-          <ElIcon class="ai-chat__model-lock-icon"><Lock /></ElIcon>
-          <ElSelect
-            class="w-64 ai-chat__model-lock"
-            :model-value="currentModel"
-            disabled
-          >
-            <ElOption v-for="item in models" :key="item.id" :label="item.id" :value="item.id" />
-          </ElSelect>
-          <span class="yg-text-xs yg-text-tertiary">{{ t('ai.chat.modelLocked') }}</span>
-          <ElButton text @click="loadModels">{{ t('ai.common.refresh') }}</ElButton>
-        </div>
+        <!-- 收起态：一行摘要，够看清现在跑哪个模型、哪档思考 -->
+        <p v-if="settingsFolded" class="ai-chat__settings-summary">
+          <span>{{ t('ai.chat.model') }}：{{ currentModel || '—' }}</span>
+          <span class="ai-chat__settings-dot" aria-hidden="true">·</span>
+          <span>{{ t('ai.chat.thinking') }}：{{ thinkingLabel }}</span>
+        </p>
 
-        <div class="flex flex-wrap items-center gap-3 ai-chat__thinking">
-          <span class="yg-text-xs yg-text-tertiary">{{ t('ai.chat.thinking') }}</span>
-          <ElSegmented
-            v-model="thinkingChoice"
-            :options="thinkingOptions"
-            :disabled="!store.current || thinkingSaving"
-          />
-        </div>
-
-        <!-- 上下文水位：接近上限时换警示色 -->
-        <div v-if="contextLimit > 0" class="ai-chat__context">
-          <div class="ai-chat__context-head">
-            <span>{{ t('ai.chat.sessions.context.label') }}</span>
-            <span class="tabular-nums">
-              {{ t('ai.chat.sessions.context.usage', { used: contextTokens, limit: contextLimit }) }}
-            </span>
-          </div>
-          <div
-            class="yg-progress yg-progress--sm"
-            :class="{ 'yg-progress--warning': contextWarn }"
-            role="progressbar"
-            :aria-valuenow="contextPercentValue"
-            aria-valuemin="0"
-            aria-valuemax="100"
-          >
-            <div
-              class="yg-progress__rail"
-              :style="{ '--yg-progress-value': contextPercentValue }"
+        <div v-show="!settingsFolded" class="ai-chat__settings-body">
+          <div class="flex flex-wrap items-center gap-3">
+            <span class="yg-text-xs yg-text-tertiary">{{ t('ai.chat.model') }}</span>
+            <ElIcon v-if="modelLocked" class="ai-chat__model-lock-icon"><Lock /></ElIcon>
+            <ElSelect
+              class="w-64"
+              :class="{ 'ai-chat__model-lock': modelLocked }"
+              :model-value="currentModel"
+              :disabled="modelLocked || modelSaving"
+              @update:model-value="changeModel"
             >
-              <div class="yg-progress__bar" />
-            </div>
+              <ElOption v-for="item in models" :key="item.id" :label="item.id" :value="item.id" />
+            </ElSelect>
+            <span class="yg-text-xs yg-text-tertiary">
+              {{ modelLocked ? t('ai.chat.modelLocked') : t('ai.chat.modelChangeable') }}
+            </span>
+            <ElButton text @click="loadModels">{{ t('ai.common.refresh') }}</ElButton>
           </div>
-          <p v-if="contextWarn" class="ai-chat__context-warn">
-            {{ t('ai.chat.sessions.context.warning') }}
-          </p>
+
+          <div class="flex flex-wrap items-center gap-3 ai-chat__thinking">
+            <span class="yg-text-xs yg-text-tertiary">{{ t('ai.chat.thinking') }}</span>
+            <ElSegmented
+              v-model="thinkingChoice"
+              :options="thinkingOptions"
+              :disabled="!store.current || thinkingSaving"
+            />
+          </div>
+
+          <!-- 上下文水位：接近上限时换警示色 -->
+          <div v-if="contextLimit > 0" class="ai-chat__context">
+            <div class="ai-chat__context-head">
+              <span>{{ t('ai.chat.sessions.context.label') }}</span>
+              <span class="tabular-nums">
+                {{ t('ai.chat.sessions.context.usage', { used: contextTokens, limit: contextLimit }) }}
+              </span>
+            </div>
+            <div
+              class="yg-progress yg-progress--sm"
+              :class="{ 'yg-progress--warning': contextWarn }"
+              role="progressbar"
+              :aria-valuenow="contextPercentValue"
+              aria-valuemin="0"
+              aria-valuemax="100"
+            >
+              <div
+                class="yg-progress__rail"
+                :style="{ '--yg-progress-value': contextPercentValue }"
+              >
+                <div class="yg-progress__bar" />
+              </div>
+            </div>
+            <p v-if="contextWarn" class="ai-chat__context-warn">
+              {{ t('ai.chat.sessions.context.warning') }}
+            </p>
+          </div>
         </div>
       </ElCard>
 
@@ -1425,15 +1526,38 @@ onUnmounted(() => {
                     </div>
                   </div>
 
+                  <!-- 思考过程：只有 assistant 且模型真给了 reasoning 才渲染整块 -->
+                  <div
+                    v-if="row.message!.role === 'assistant' && row.message!.reasoning"
+                    class="ai-chat__reasoning"
+                    :class="{ 'is-collapsed': !reasoningOpen(row.message!.oid) }"
+                  >
+                    <button
+                      type="button"
+                      class="ai-chat__reasoning-head"
+                      :aria-expanded="reasoningOpen(row.message!.oid)"
+                      @click="toggleReasoning(row.message!.oid)"
+                    >
+                      <span class="ai-chat__reasoning-chevron" aria-hidden="true" />
+                      <span>{{ t('ai.chat.thinkingSection') }}</span>
+                    </button>
+                    <p v-if="reasoningOpen(row.message!.oid)" class="ai-chat__reasoning-text">
+                      {{ row.message!.reasoning }}
+                    </p>
+                  </div>
+
                   <!-- 助手回复：走 Markdown（表格、列表、代码块都在里面） -->
                   <ZMarkdown
-                    v-else-if="row.message!.role === 'assistant' && row.message!.content"
+                    v-if="row.message!.role === 'assistant' && row.message!.content"
                     :source="row.message!.content"
                     class="ai-chat__markdown"
                   />
 
                   <!-- 用户气泡保持纯文本：用户写的内容不该被当成 Markdown 执行 -->
-                  <p v-else-if="row.message!.content" class="ai-chat__text">
+                  <p
+                    v-else-if="row.message!.role === 'user' && row.message!.content"
+                    class="ai-chat__text"
+                  >
                     {{ row.message!.content }}
                   </p>
 
@@ -1719,6 +1843,8 @@ onUnmounted(() => {
   gap: var(--yg-space-4);
   width: 100%;
   min-width: 0;
+  /* 父级高度锁死时允许被压缩：滚动只发生在消息区里 */
+  min-height: 0;
   /* 吃掉页面面板剩下的高度：对话列自己再分「消息区 + 输入区」 */
   flex: 1 1 auto;
 }
@@ -1753,8 +1879,9 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   flex: 1 1 auto;
-  /* 视口再矮也有一个能用的对话区，不让输入区被压没 */
-  min-height: 380px;
+  /* 视口再矮也要留一个能用的对话区，但下限跟着视口走：
+     380px 的硬下限在横屏 / 半屏窗口里会把输入区顶出视口。 */
+  min-height: min(380px, 46dvh);
 }
 
 /* 卡片内容区跟卡片等高，消息区与输入区才能在里面分高度 */
@@ -1861,6 +1988,75 @@ onUnmounted(() => {
 
 .ai-chat__model-lock-icon {
   color: var(--yg-text-tertiary);
+}
+
+/* 短视口收起态：一行摘要，替代摊开的模型 / 思考 / 水位三行 */
+.ai-chat__settings-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--yg-space-1);
+  margin: 0;
+  font-size: var(--yg-font-size-xs);
+  color: var(--yg-text-secondary);
+}
+
+.ai-chat__settings-dot {
+  color: var(--yg-text-tertiary);
+}
+
+.ai-chat__settings-body {
+  display: flex;
+  flex-direction: column;
+}
+
+/* 思考过程：弱于正文的旁注；等宽字号略小，默认展开、点标题收起 */
+.ai-chat__reasoning {
+  margin-bottom: var(--yg-space-2);
+  padding: var(--yg-space-2);
+  border-left: 2px solid var(--yg-border-default);
+  border-radius: var(--yg-radius-sm);
+  background: var(--yg-bg-surface-sunken);
+}
+
+.ai-chat__reasoning-head {
+  display: flex;
+  align-items: center;
+  gap: var(--yg-space-1);
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font-size: var(--yg-font-size-xs);
+  color: var(--yg-text-tertiary);
+  text-align: left;
+  cursor: pointer;
+}
+
+/* 折叠指示：小三角，展开时朝下 */
+.ai-chat__reasoning-chevron {
+  width: 0;
+  height: 0;
+  border-top: 4px solid currentColor;
+  border-right: 4px solid transparent;
+  border-left: 4px solid transparent;
+  transform: rotate(-90deg);
+  transition: transform 0.15s ease;
+}
+
+.ai-chat__reasoning-head[aria-expanded='true'] .ai-chat__reasoning-chevron {
+  transform: rotate(0deg);
+}
+
+.ai-chat__reasoning-text {
+  margin: var(--yg-space-1) 0 0;
+  font-size: var(--yg-font-size-xs);
+  line-height: var(--yg-line-height-normal);
+  color: var(--yg-text-secondary);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 240px;
+  overflow-y: auto;
 }
 
 /* 思考强度：贴着模型行下面一行，与上下文水位同一条竖排节奏 */
@@ -2236,6 +2432,59 @@ onUnmounted(() => {
 
   .ai-agent__replay-round {
     min-width: var(--yg-space-5);
+  }
+}
+
+/* 中等宽度（1024–1280）：侧栏收窄，把宽度让给消息区 */
+@media (min-width: 1024px) and (max-width: 1280px) {
+  .ai-chat__sidebar {
+    width: 220px;
+  }
+}
+
+/*
+ * 横屏且高度紧张（笔记本半屏、横屏平板 / 手机）：
+ * 高度是稀缺资源——对话区下限收紧、间距压小、输入区让路。
+ * 设置卡折叠与输入框行数由脚本按视口高度决定（settingsFolded / composerRows）。
+ */
+@media (orientation: landscape) and (max-height: 820px) {
+  .ai-chat,
+  .ai-chat__main {
+    gap: var(--yg-space-2);
+  }
+
+  .ai-chat__conversation {
+    min-height: clamp(220px, 38dvh, 320px);
+  }
+
+  .ai-chat__list {
+    min-height: 96px;
+    padding: var(--yg-space-2);
+  }
+
+  .ai-chat__composer {
+    margin-top: var(--yg-space-2);
+  }
+
+  .ai-chat__composer :deep(.el-textarea__inner) {
+    padding: var(--yg-space-2);
+  }
+
+  .ai-chat__settings-body {
+    gap: var(--yg-space-1);
+  }
+
+  .ai-chat__thinking {
+    margin-top: var(--yg-space-2);
+  }
+
+  .ai-chat__context {
+    margin-top: var(--yg-space-2);
+    padding-top: var(--yg-space-2);
+  }
+
+  .ai-chat__reasoning-text {
+    max-height: 140px;
   }
 }
 

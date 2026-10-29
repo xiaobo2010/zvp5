@@ -21,6 +21,7 @@ import type { Group } from '@/../types'
 import { useWindowSize } from '@vueuse/core'
 import { useUserStore } from '@/stores/user.ts'
 import ZUserPosition from '../tags/ZUserPosition.vue'
+import { resolveErrorMessage } from '@/utils/errorMessage'
 import { Delete, Plus, Search, View } from '@element-plus/icons-vue'
 import { useI18n } from 'vue-i18n'
 
@@ -146,15 +147,6 @@ function closeCreate() {
   createVisible.value = false
 }
 
-/** 后端 4xx 的 detail 直接透传，其它情况落到通用失败文案 */
-function createErrorMessage(error: unknown): string {
-  const detail = (error as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail
-  if (typeof detail === 'string' && detail.trim()) {
-    return detail
-  }
-  return t('manage.groupList.create.failed')
-}
-
 async function submitCreate() {
   if (creating.value) {
     return
@@ -179,7 +171,7 @@ async function submitCreate() {
       page.value = 1
     }
   } catch (error) {
-    ElMessage.error(createErrorMessage(error))
+    ElMessage.error(resolveErrorMessage(error, 'manage.groupList.create.failed'))
   } finally {
     creating.value = false
   }

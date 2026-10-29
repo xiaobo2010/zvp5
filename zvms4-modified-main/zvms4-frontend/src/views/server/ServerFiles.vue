@@ -208,6 +208,7 @@ function openEntry(entry: FileEntry) {
     return
   }
   if (entry.type === 'file') {
+    // 文本文件由 ZFilePreview 内的 Z-IDE 接管(自动升全屏),图片等仍走窗口态预览
     previewPath.value = entryPath(entry.name)
     previewName.value = entry.name
     previewVisible.value = true
@@ -583,7 +584,7 @@ void load()
               </ElTableColumn>
               <ElTableColumn
                 :label="t('server.files.colActions')"
-                :width="wideTable ? 250 : 124"
+                :width="wideTable ? 320 : 124"
                 align="right"
                 :fixed="wideTable ? 'right' : false"
               >

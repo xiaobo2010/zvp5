@@ -60,6 +60,21 @@ const { elMessageSuccessSpy, elMessageErrorSpy, authOpenSpy, authSucceedSpy, aut
     authFailSpy: vi.fn()
   }))
 
+/**
+ * 视口尺寸：jsdom 里没有真实布局，而组件按宽高决定侧栏形态、输入框行数
+ * 与设置卡是否折叠。这里给一个可控的视口，默认 1024×768（桌面）。
+ */
+const viewport = vi.hoisted(() => ({ width: 1024, height: 768 }))
+
+vi.mock('@vueuse/core', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@vueuse/core')>()
+  const { ref } = await import('vue')
+  return {
+    ...actual,
+    useWindowSize: () => ({ width: ref(viewport.width), height: ref(viewport.height) })
+  }
+})
+
 // 动态码弹窗复用系统页那一个（它内部用 ElDialog，本文件的 element-plus 桩里没有），
 // 这里换成可控的桩：open 返回动态码，succeed/fail 记录调用。
 vi.mock('@/components/system/ZSystemAuthDialog.vue', async () => {
@@ -115,12 +130,20 @@ vi.mock('element-plus', async () => {
 
   const ElInput = defineComponent({
     name: 'ElInput',
-    props: { modelValue: { type: [String, Number], default: '' }, type: String },
+    props: {
+      modelValue: { type: [String, Number], default: '' },
+      type: String,
+      autosize: { type: [Object, Boolean], default: undefined }
+    },
     emits: ['update:modelValue'],
     setup(props, { emit }) {
       return () =>
         h('textarea', {
           class: 'el-input-stub',
+          // 输入框行数由组件按视口算：把 minRows 透出来，短视口用例才断言得到
+          'data-rows': props.autosize
+            ? String((props.autosize as { minRows?: number }).minRows ?? '')
+            : '',
           value: props.modelValue,
           onInput: (event: Event) =>
             emit('update:modelValue', (event.target as HTMLTextAreaElement).value)
@@ -372,6 +395,9 @@ async function sendText(wrapper: VueWrapper, text: string) {
 
 beforeEach(() => {
   vi.useFakeTimers()
+  // 视口回到默认桌面尺寸：短视口用例自己改，别污染其他用例。
+  viewport.width = 1024
+  viewport.height = 768
   // 风险标识默认已确认：既有用例不被首次使用弹窗挡住；
   // 要验证弹窗的用例自己在挂载前把它清掉。
   localStorage.clear()
@@ -737,6 +763,139 @@ describe('回复渲染', () => {
   })
 })
 
+describe('思考过程展示', () => {
+  it('assistant 的 reasoning 在正文上方单独成块，默认展开、点标题收起', async () => {
+    vi.mocked(listMessages).mockResolvedValue({
+      messages: [
+        {
+          oid: 'm2',
+          seq: 2,
+          role: 'assistant',
+          content: '结论：图书馆还有位',
+          reasoning: '先看用户角色，再查活动名额',
+          created_at: '2026-10-25T00:01:00'
+        }
+      ],
+      has_more: false,
+      total: 1
+    })
+    const wrapper = mountPage()
+    await settle()
+    await vi.advanceTimersByTimeAsync(200)
+    await settle()
+
+    const block = wrapper.find('.ai-chat__reasoning')
+    expect(block.exists()).toBe(true)
+    expect(block.text()).toContain('ai.chat.thinkingSection')
+    // 默认展开：内容直接可见
+    expect(block.find('.ai-chat__reasoning-head').attributes('aria-expanded')).toBe('true')
+    expect(block.find('.ai-chat__reasoning-text').text()).toBe('先看用户角色，再查活动名额')
+
+    // 思考块排在正文之前
+    const bubble = block.element.parentElement!
+    expect(bubble.firstElementChild!.className).toContain('ai-chat__reasoning')
+
+    await block.find('.ai-chat__reasoning-head').trigger('click')
+
+    expect(wrapper.find('.ai-chat__reasoning-head').attributes('aria-expanded')).toBe('false')
+    expect(wrapper.find('.ai-chat__reasoning-text').exists()).toBe(false)
+    // 收起思考不影响正文
+    expect(wrapper.text()).toContain('结论：图书馆还有位')
+
+    wrapper.unmount()
+  })
+
+  it('没有 reasoning 的回复不渲染任何壳', async () => {
+    vi.mocked(listMessages).mockResolvedValue({
+      messages: [
+        {
+          oid: 'm2',
+          seq: 2,
+          role: 'assistant',
+          content: '普通回答',
+          reasoning: null,
+          created_at: '2026-10-25T00:01:00'
+        }
+      ],
+      has_more: false,
+      total: 1
+    })
+    const wrapper = mountPage()
+    await settle()
+    await vi.advanceTimersByTimeAsync(200)
+    await settle()
+
+    expect(wrapper.find('.ai-chat__reasoning').exists()).toBe(false)
+    expect(wrapper.text()).toContain('普通回答')
+
+    wrapper.unmount()
+  })
+
+  it('用户消息即使带了 reasoning 也不展示', async () => {
+    vi.mocked(listMessages).mockResolvedValue({
+      messages: [
+        { oid: 'm1', seq: 1, role: 'user', content: '查一下', reasoning: '不该出现', created_at: '2026-10-25T00:00:00' }
+      ],
+      has_more: false,
+      total: 1
+    })
+    const wrapper = mountPage()
+    await settle()
+
+    expect(wrapper.find('.ai-chat__reasoning').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('不该出现')
+
+    wrapper.unmount()
+  })
+})
+
+describe('视口适配', () => {
+  it('默认桌面视口：设置卡摊开，输入框 3 行起', async () => {
+    const wrapper = mountPage()
+    await settle()
+
+    expect(wrapper.find('.ai-chat__settings').classes()).not.toContain('is-folded')
+    expect(wrapper.find('.ai-chat__settings-summary').exists()).toBe(false)
+    expect(wrapper.find('.el-input-stub').attributes('data-rows')).toBe('3')
+
+    wrapper.unmount()
+  })
+
+  it('短视口（1280×700）：设置卡收成一行摘要，输入框 2 行起', async () => {
+    viewport.width = 1280
+    viewport.height = 700
+    const wrapper = mountPage()
+    await settle()
+
+    const card = wrapper.find('.ai-chat__settings')
+    expect(card.classes()).toContain('is-folded')
+    const summary = wrapper.find('.ai-chat__settings-summary')
+    expect(summary.exists()).toBe(true)
+    expect(summary.text()).toContain('gpt-4o-mini')
+    expect(wrapper.find('.el-input-stub').attributes('data-rows')).toBe('2')
+
+    // 想看全部设置：点标题栏的「展开设置」，摘要让位给完整设置
+    await findButton(wrapper, 'ai.chat.expandSettings')!.trigger('click')
+    await settle()
+
+    expect(wrapper.find('.ai-chat__settings').classes()).not.toContain('is-folded')
+    expect(wrapper.find('.ai-chat__settings-summary').exists()).toBe(false)
+
+    wrapper.unmount()
+  })
+
+  it('高视口（≥900）：输入框给 4 行', async () => {
+    viewport.width = 1440
+    viewport.height = 1000
+    const wrapper = mountPage()
+    await settle()
+
+    expect(wrapper.find('.el-input-stub').attributes('data-rows')).toBe('4')
+
+    wrapper.unmount()
+  })
+})
+
 describe('待确认提案', () => {
   it('进页面拉一次待确认提案', async () => {
     vi.mocked(fetchPendingProposals).mockResolvedValue({
@@ -902,18 +1061,93 @@ describe('双人动态码', () => {
   })
 })
 
-describe('模型锁定', () => {
-  it('模型只读展示：带锁，没有改模型的入口', async () => {
+describe('模型切换', () => {
+  it('空会话可切换：带锁图标消失，选择后 PATCH 会话的 model', async () => {
+    vi.mocked(updateConversation).mockResolvedValue(conversation({ model: 'gpt-4.1' }))
     const wrapper = mountPage()
     await settle()
 
-    const lock = wrapper.find('.ai-chat__model-lock')
-    expect(lock.exists()).toBe(true)
-    expect((lock.element as HTMLInputElement).value).toBe('gpt-4o-mini')
-    expect(lock.attributes('disabled')).toBeDefined()
-    expect(wrapper.text()).toContain('ai.chat.modelLocked')
-    // 没有任何 PATCH 改模型的路径：进页面不该发请求。
+    const select = wrapper.find('.el-select-stub')
+    expect(select.attributes('disabled')).toBeUndefined()
+    expect(wrapper.find('.ai-chat__model-lock-icon').exists()).toBe(false)
+    expect(wrapper.text()).toContain('ai.chat.modelChangeable')
+    expect(wrapper.text()).not.toContain('ai.chat.modelLocked')
+
+    await select.setValue('gpt-4.1')
+    await settle()
+
+    expect(updateConversation).toHaveBeenCalledWith('agent1', { model: 'gpt-4.1' })
+    expect((wrapper.find('.el-select-stub').element as HTMLInputElement).value).toBe('gpt-4.1')
+
+    wrapper.unmount()
+  })
+
+  it('没有当前会话时只改本地预选：新建会话带上这个模型', async () => {
+    vi.mocked(listConversations).mockResolvedValue({
+      conversations: [],
+      next_cursor: null,
+      size: 0
+    })
+    vi.mocked(listModels).mockResolvedValue({
+      object: 'list',
+      data: [
+        { id: 'gpt-4o-mini', object: 'model', owned_by: 'shared' },
+        { id: 'gpt-4.1', object: 'model', owned_by: 'shared' }
+      ]
+    })
+    const wrapper = mountPage()
+    await settle()
+
+    await wrapper.find('.el-select-stub').setValue('gpt-4.1')
+    await settle()
+    // 还没有会话：不该有 PATCH，只把预选值记下来
     expect(updateConversation).not.toHaveBeenCalled()
+
+    await findButton(wrapper, 'ai.chat.sessions.new')!.trigger('click')
+    await settle()
+
+    expect(createConversation).toHaveBeenCalledWith('agent', undefined, 'gpt-4.1')
+
+    wrapper.unmount()
+  })
+
+  it('发过消息就锁定：选择器禁用 + 锁定文案，点它也不发 PATCH', async () => {
+    vi.mocked(listMessages).mockResolvedValue({
+      messages: [
+        { oid: 'm1', seq: 1, role: 'user', content: '查一下图书馆', created_at: '2026-10-25T00:00:00' }
+      ],
+      has_more: false,
+      total: 1
+    })
+    const wrapper = mountPage()
+    await settle()
+
+    const select = wrapper.find('.el-select-stub')
+    expect(select.attributes('disabled')).toBeDefined()
+    expect(wrapper.find('.ai-chat__model-lock-icon').exists()).toBe(true)
+    expect(wrapper.text()).toContain('ai.chat.modelLocked')
+    expect((select.element as HTMLInputElement).value).toBe('gpt-4o-mini')
+
+    // 锁定态下即使桩仍然发出 update:modelValue，也不该走 PATCH
+    await select.setValue('gpt-4.1')
+    await settle()
+    expect(updateConversation).not.toHaveBeenCalled()
+
+    wrapper.unmount()
+  })
+
+  it('切换失败（409 MODEL_LOCKED）：回滚成旧模型并提示', async () => {
+    vi.mocked(updateConversation).mockRejectedValue(
+      new AiRequestError({ status: 409, code: 'AI_CONVERSATION_MODEL_LOCKED' })
+    )
+    const wrapper = mountPage()
+    await settle()
+
+    await wrapper.find('.el-select-stub').setValue('gpt-4.1')
+    await settle()
+
+    expect((wrapper.find('.el-select-stub').element as HTMLInputElement).value).toBe('gpt-4o-mini')
+    expect(wrapper.find('.ai-chat__error').exists()).toBe(true)
 
     wrapper.unmount()
   })

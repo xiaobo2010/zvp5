@@ -521,6 +521,35 @@ describe('模型锁定与思考强度', () => {
     expect(mocks.createConversation).toHaveBeenCalledWith('agent', undefined, 'gpt-4o-mini')
   })
 
+  it('空会话换模型：PATCH model 并同步当前会话', async () => {
+    mocks.updateConversation.mockResolvedValue(conversation({ model: 'gpt-4.1' }))
+    const store = useAiConversationsStore()
+    await store.loadConversations()
+    await store.selectConversation(conversation().oid)
+
+    await store.setConversationModel(conversation().oid, 'gpt-4.1')
+
+    expect(mocks.updateConversation).toHaveBeenCalledWith(conversation().oid, {
+      model: 'gpt-4.1'
+    })
+    expect(store.current?.model).toBe('gpt-4.1')
+    expect(store.conversations[0]!.model).toBe('gpt-4.1')
+  })
+
+  it('换模型失败（有消息后 409）：本地先乐观改，失败回滚成旧值', async () => {
+    mocks.updateConversation.mockRejectedValue(new Error('AI_CONVERSATION_MODEL_LOCKED'))
+    const store = useAiConversationsStore()
+    await store.loadConversations()
+    await store.selectConversation(conversation().oid)
+
+    await expect(store.setConversationModel(conversation().oid, 'gpt-4.1')).rejects.toThrow(
+      'AI_CONVERSATION_MODEL_LOCKED'
+    )
+
+    expect(store.current?.model).toBe('gpt-4o-mini')
+    expect(store.conversations[0]!.model).toBe('gpt-4o-mini')
+  })
+
   it('改思考强度：PATCH 会话并同步当前值', async () => {
     mocks.updateConversation.mockResolvedValue(conversation({ thinking: 'medium' }))
     const store = useAiConversationsStore()
@@ -620,6 +649,40 @@ describe('回复及时同步', () => {
         limit: 50
       })
       expect(store.orderedMessages.map((item) => item.seq)).toEqual([1, 2])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('轮询合并时 reasoning 原样保留：不因合并丢字段', async () => {
+    vi.useFakeTimers()
+    try {
+      mocks.submitRun.mockResolvedValue({
+        run_id: run().oid,
+        message_oid: 'm1'.repeat(16),
+        status: 'queued'
+      })
+      mocks.fetchRunDetail.mockResolvedValue({
+        run: run(),
+        events: [],
+        proposals: [],
+        messages: [
+          message(2, {
+            role: 'assistant',
+            content: '结论',
+            reasoning: '先看用户角色'
+          })
+        ]
+      })
+      const store = useAiConversationsStore()
+      await store.loadConversations()
+      await store.selectConversation(conversation().oid)
+      await store.submitRun(conversation().oid, '查一下')
+
+      await vi.advanceTimersByTimeAsync(1500)
+
+      const assistant = store.orderedMessages.find((item) => item.seq === 2)
+      expect(assistant?.reasoning).toBe('先看用户角色')
     } finally {
       vi.useRealTimers()
     }

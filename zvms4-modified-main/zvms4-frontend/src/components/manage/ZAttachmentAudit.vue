@@ -1227,9 +1227,9 @@ onBeforeUnmount(() => {
           </template>
         </ElTableColumn>
 
-        <ElTableColumn fixed="right" :width="narrow ? 150 : 180" align="right">
+        <ElTableColumn fixed="right" :width="narrow ? 190 : 215" align="right">
           <template #default="{ row }">
-            <div class="flex items-center justify-end gap-1">
+            <div class="attachment-audit__row-actions">
               <ElButton text type="primary" size="small" @click="openDetail(row)">
                 {{ t('manage.attachments.table.view') }}
               </ElButton>
@@ -1492,6 +1492,23 @@ onBeforeUnmount(() => {
   font-family: var(--yg-font-mono);
   font-size: var(--yg-font-size-xs);
   color: var(--yg-text-secondary);
+}
+
+/* 操作列三个文字按钮必须在一行里排开：固定列本身会 overflow:hidden，
+   一旦内部内容超宽，「查看」就会被左溢裁掉。这里显式 nowrap + 收紧间距，
+   并清掉 Element Plus 相邻按钮默认的 12px 左外边距。 */
+.attachment-audit__row-actions {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 2px;
+  white-space: nowrap;
+}
+
+.attachment-audit__row-actions :deep(.el-button) {
+  margin-left: 0;
+  padding-inline: 6px;
 }
 
 /* 筛选栅格：按可用宽度自动分列，窄屏退化成单列 */

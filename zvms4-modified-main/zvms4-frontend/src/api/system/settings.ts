@@ -1,4 +1,5 @@
 import { aiRequest } from '@/api/ai/http'
+import { resolveErrorMessageOr } from '@/utils/errorMessage'
 
 /**
  * 在线设置中心（/system/settings）。
@@ -95,11 +96,9 @@ function isInternalCode(message: string): boolean {
  * 后端 400 的 detail 是人话，直接原样透出；取不到才回落兜底文案。
  */
 export function settingErrorMessage(error: unknown, fallback: string): string {
-  if (error instanceof Error) {
-    const message = error.message?.trim()
-    if (message && !isInternalCode(message)) {
-      return message
-    }
+  const message = resolveErrorMessageOr(error, '').trim()
+  if (message && !isInternalCode(message)) {
+    return message
   }
   return fallback
 }
