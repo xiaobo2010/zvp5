@@ -10,7 +10,8 @@
   把模型从目录里删掉。
 
 门禁只有 ``admin``（``_require_admin``），**不走**双人 TOTP：这里改的是展示与计费
-口径，不是密钥。
+口径，不是密钥。唯一例外是 ``POST /discover``——它会解密凭据里的上游 key 去打
+真实请求，所以额外挂密码再认证（见该端点 docstring）。
 
 计费换算（rate → Agent Fuel）在另一条车道：本模块只负责把 rate 存对、读对。
 """
@@ -24,8 +25,11 @@ from pydantic import BaseModel, Field
 
 from db import backends
 from routers.ai_router import _require_admin
-from services.ai import credentials, model_rates
-from util.object_id import get_current_user
+from services.ai import config as ai_config
+from services.ai import credentials, model_rates, providers
+from services.ai.credentials import CredentialError
+from services.ai.routing import RouteError
+from util.object_id import get_current_user, require_password_verification
 
 router = APIRouter()
 
@@ -66,6 +70,19 @@ class ModelUpdateRequest(BaseModel):
     rate: float | None = Field(default=None, strict=True)
     enabled: bool | None = None
     notes: str | None = None
+
+
+class DiscoverRequest(BaseModel):
+    """「从上游拉取模型元数据」的请求体。
+
+    ``apply=False`` 只预览（不写库）；``apply=True`` 才把上游的上下文窗口合并回
+    凭据。``verification_token`` 与凭据写路径同形：这条动作会解密并使用真实上游
+    密钥，属于高危操作。
+    """
+
+    provider: str
+    apply: bool = False
+    verification_token: str | None = None
 
 
 def _repo():
@@ -245,6 +262,116 @@ async def update_model(
         "status": "ok",
         "code": 200,
         "data": _shape_row(row, model=name, providers=providers, contexts=contexts),
+    }
+
+
+@router.post("/discover")
+async def discover_models(
+    payload: DiscoverRequest,
+    user=Depends(get_current_user),
+):
+    """从上游 ``/models`` 拉取模型元数据（当前重点是上下文窗口）。
+
+    **与其它端点的门禁差异**：本模块其它端点只改展示/计费口径、从不碰密钥，所以
+    只挂 ``admin``；这一条会解密凭据里的上游 key 并发真实请求，因此与凭据写路径
+    同级——``admin`` + :func:`require_password_verification`（密码再认证）。
+
+    ``apply=False`` 是纯预览：不写库，只回「上游怎么说 / 是否已在凭据里」。
+    ``apply=True`` 才回写，且**只动** ``MODELS_JSON`` 里已有模型的 ``context``：
+    不新增模型、不改顺序、不超过凭据的模型上限。手填值与上游不一致时以上游为准
+    （这正是管理员点「应用」的意图，预览里已经看得到差异）。
+
+    不碰 ``AI_MODELS``：那张表是稀疏覆盖层，``CONTEXT_LENGTH`` 的展示回落逻辑
+    保持原样。
+    """
+    _require_admin(user)
+    await require_password_verification(
+        payload.verification_token, user, detail="AI_PASSWORD_VERIFICATION_REQUIRED"
+    )
+
+    name = str(payload.provider or "").strip()
+    if not name:
+        raise _bad("渠道名不能为空")
+
+    entry = await credentials.entry_for_name(name)
+    if entry is None:
+        if name in ai_config.providers():
+            # 服务端项来自 settings/env，没有 DB 行可回写；让管理员去改配置文件。
+            raise _bad("服务端作用域的渠道不支持回写")
+        raise HTTPException(status_code=404, detail="渠道不存在")
+
+    try:
+        api_key = await credentials.resolve_api_key(entry)
+    except CredentialError:
+        raise HTTPException(
+            status_code=502, detail="凭据不可用，无法向上游请求模型列表"
+        ) from None
+
+    try:
+        upstream = await providers.list_models(entry, api_key)
+    except RouteError:
+        # 只回 host：路径/query 可能带凭据，报文里可能回显请求头。
+        host = credentials.host_of_url(entry.get("base_url"))
+        raise HTTPException(
+            status_code=502,
+            detail=f"上游模型列表获取失败（{host}）" if host else "上游模型列表获取失败",
+        ) from None
+
+    discovered = {
+        row["id"]: row.get("context")
+        for row in upstream
+        if isinstance(row.get("id"), str) and row["id"]
+    }
+    configured = set(entry.get("models") or [])
+    applied_ids: set[str] = set()
+
+    if payload.apply:
+        contexts = entry.get("model_contexts") or {}
+        filled: list[str | dict] = []
+        for model in entry.get("models") or []:
+            context = contexts.get(model)
+            upstream_context = discovered.get(model)
+            if upstream_context is not None and upstream_context != context:
+                context = upstream_context
+                applied_ids.add(model)
+            # 与原 ``_models_payload`` 同形：没有窗口的仍留字符串，diff 才看得出改了什么。
+            filled.append({"id": model, "context": context} if context else model)
+        if applied_ids:
+            try:
+                updated = await backends.get_ai_credentials_repo().update(
+                    entry["oid"], models=filled
+                )
+            except Exception:  # noqa: BLE001 - 写库失败统一翻成 502，不要把栈回给前端
+                raise HTTPException(
+                    status_code=502, detail="模型上下文回写失败"
+                ) from None
+            if not updated:
+                raise HTTPException(
+                    status_code=502, detail="模型上下文回写失败：凭据已不存在"
+                )
+            # 目录缓存里存的是密文行 + 解析后的 model_contexts，必须立刻失效，
+            # 否则新窗口要等 TTL 才被压缩水位看到。
+            await credentials.invalidate()
+        else:
+            applied_ids = set()
+
+    models = [
+        {
+            "model": row["id"],
+            "context_length": row.get("context"),
+            "in_credential": row["id"] in configured,
+            "applied": row["id"] in applied_ids,
+        }
+        for row in upstream
+    ]
+    return {
+        "status": "ok",
+        "code": 200,
+        "data": {
+            "provider": name,
+            "models": models,
+            "applied": len(applied_ids),
+        },
     }
 
 

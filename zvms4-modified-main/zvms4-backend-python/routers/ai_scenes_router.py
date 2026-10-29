@@ -1,16 +1,17 @@
-"""只读场景面（``/api/ai/scenes``）：终端 / 文件编辑的一次提问。
+"""只读场景面（``/api/ai/scenes``）：终端 / 文件编辑 / 义工分析的一次提问。
 
-两个场景共用会话 + run 管线（``run_queue.submit_scene`` → 同一个泵、同一套计费与
+三个场景共用会话 + run 管线（``run_queue.submit_scene`` → 同一个泵、同一套计费与
 审计），差别只有三处，且都落在服务层：
 
-* 会话按 ``(user, scene)`` 复用，标题固定「终端智能」/「文件编辑智能」；
+* 会话按 ``(user, scene)`` 复用，标题固定「终端智能」/「文件编辑智能」/「义工分析」；
 * 工具声明按 ``kind='read'`` 裁剪（执行器侧），写工具、提案流、``ssh_exec`` 与
   数据库 DML/DDL 都不存在；
 * 场景会话不出现在普通会话列表里（``AI_CONVERSATIONS.SCENE IS NULL`` 过滤）。
 
-门禁：``admin`` + ``ai.agent`` 功能开关。**故意不挂密码门**（30 分钟解锁）：只读
-场景的风险面是「能看」，不是「能改」，而 ``submit`` 里也把这条豁免写成了
-「只读场景 + admin」的显式条件（测试钉住），不是靠路由层不调用。
+门禁：``admin`` + ``ai.agent`` 功能开关，**对三个场景一视同仁**（新增场景不放宽
+权限）。**故意不挂密码门**（30 分钟解锁）：只读场景的风险面是「能看」，不是
+「能改」，而 ``submit`` 里也把这条豁免写成了「只读场景 + admin」的显式条件（测试
+钉住），不是靠路由层不调用。
 
 协议壳与 ``/api/ai/conversations`` 逐字一致（``{"status","code","data"}`` / 错误体
 ``{"error":{...}}`` + ``X-AI-Request-Id``），前端同一套解析。
@@ -44,7 +45,8 @@ AGENT_FEATURE = "ai.agent"
 
 
 class SceneRunCreate(BaseModel):
-    """一次场景提问。``content`` 是问题，``context`` 是选中的终端输出/文件片段。
+    """一次场景提问。``content`` 是问题，``context`` 是参考内容（终端输出 / 文件片段 /
+    目标义工资料）。
 
     两个上限都是**入参**上限：``content`` 比普通会话窄（场景是一问一查，不是写
     长文），``context`` 与留存上限同量级——再长的「参考内容」只会挤占上下文。
@@ -201,9 +203,7 @@ async def submit_scene_run(
     async def action() -> dict:
         _require_admin(user)
         if normalized not in conversations.SCENES:
-            raise AgentError(
-                conversations.SCENE_BAD, "scene must be terminal or file_edit", 400
-            )
+            raise AgentError(conversations.SCENE_BAD, conversations.scene_hint(), 400)
         thinking = _clean_thinking(payload.thinking)
         model = str(payload.model or "").strip() or None
         _require_feature(user)

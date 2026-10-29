@@ -659,8 +659,9 @@ async def test_pump_claims_and_finishes_the_queued_run(env, monkeypatch) -> None
     assert row["status"] == "succeeded"
     assert row["stop_reason"] == "completed"
     assert row["finished_at"] is not None
-    # 执行身份是**执行时刻**的角色，不是提交时的 token 快照。
-    assert calls[0]["user"] == {"id": OWNER, "per": ["admin"]}
+    # 执行身份是**执行时刻**的角色，不是提交时的 token 快照；``banned`` 是这次
+    # 新增的执行期封禁事实（提交到执行之间可能已经落封）。
+    assert calls[0]["user"] == {"id": OWNER, "per": ["admin"], "banned": False}
     assert calls[0]["request_id"] == submitted["run_id"]
     # 历史里带着刚写进去的那条用户消息。
     assert calls[0]["messages"][-1]["role"] == "user"

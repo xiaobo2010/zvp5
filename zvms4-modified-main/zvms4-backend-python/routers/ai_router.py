@@ -39,9 +39,10 @@ from pydantic import BaseModel, Field
 from db import backends
 from db.ids import is_valid_oid
 from services import file_ops, risk_monitor, violation_guard
-from services.ai import api_keys, audit, credentials, quota, rate_limit, routing
+from services.ai import api_keys, audit, ban_state, credentials, quota, rate_limit, routing
 from services.ai import config as ai_config
 from services.ai import model_rates
+from services.ai import moderation
 from services.ai import ocr as ai_ocr
 from services.ai import ocr_engines
 from services.ai import ocr_engines_admin
@@ -102,6 +103,17 @@ STREAM_ERROR_MESSAGES = {
 }
 STREAM_ERROR_FALLBACK = "AI_UPSTREAM_ERROR"
 STREAM_DONE_FRAME = b"data: [DONE]\n\n"
+
+# 执行期封禁的对外错误码：字面量与 ``util.ban`` 的 detail 一致（前端按它分流到
+# 「账号封禁」页）。403 用在「响应尚未开始」的两个位置（流式首帧前、非流式收稿
+# 后），已经吐过正文的流只能在流内补一帧同码错误——见 ``_stream_completion``。
+USER_BANNED_CODE = "USER_BANNED"
+USER_BANNED_MESSAGE = "该账号当前处于封禁状态，暂时无法使用 AI 功能。"
+
+# 流式生成器里查封禁的间隔（chunk 数）。上游一次 yield 是一段 SSE 字节，通常
+# 几十字节；32 个 chunk 约等于「用户已经看到一两句话」，而查询被 TTL 缓存兜在
+# 每秒一次以内。取不到这个粒度就意味着「封了还继续吐整篇回答」。
+BAN_CHECK_EVERY_CHUNKS = 32
 
 # 流式回答留存的上限：超过它只丢尾部（正文早已发给客户端，留存只是审计）。
 STREAM_CAPTURE_MAX_BYTES = 64 * 1024
@@ -1691,6 +1703,32 @@ def _last_user_text(messages: object) -> str:
     return ""
 
 
+async def _record_violation(
+    user: dict, *, request: Request, text: str, rule: str
+) -> bool:
+    """记违规 + 警告 + 首档封禁；返回本次是否发了警告。
+
+    落封后立刻 ``ban_state.invalidate``：同一次请求里后续的流式 chunk 检查要能
+    看到「刚封的这个人」，不能等 TTL 到期。
+
+    证据入库失败只记日志（拒绝照旧）：取证链坏掉是运维问题，不该把一次内容拒绝
+    变成 500。
+    """
+    try:
+        outcome = await violation_guard.record_agent_jailbreak(
+            user,
+            xuehai_id=xuehai_id_from(request),
+            rule=rule,
+            detail=text,
+        )
+    except Exception:  # noqa: BLE001 - 证据入库失败不该把拒绝变成 500
+        _logger.exception("AI 安全认证违规入库失败（本次仍然拒绝）")
+        return False
+    if (outcome or {}).get("banned"):
+        ban_state.invalidate(str(user.get("id") or ""))
+    return bool((outcome or {}).get("warned"))
+
+
 async def _screen_chat_request(
     *,
     user: dict,
@@ -1702,27 +1740,72 @@ async def _screen_chat_request(
     scene_roles: str | None,
     audit_oid: str | None = None,
 ) -> JSONResponse | None:
-    """department 的 LLM 安全认证：放行返回 ``None``，拒绝返回 OpenAI 错误体。
+    """chat 面的内容审核：放行返回 ``None``，拒绝返回 OpenAI 错误体。
+
+    两道闸，顺序固定：
+
+    1. **关键词层**（``moderation.check``）：纯函数、无 IO，所以对**所有角色**生效。
+       过去学生在这个面完全不被审查（``safety_guard`` 只对 department），而这一层
+       的成本只是几次正则。
+    2. **灰区层**（``safety_guard.screen``）：只对 department，一次上游调用，专门
+       抓「换了说法的破坏性请求」。admin 与学生都不触达网络。
 
     位置固定在「角色/开关门禁之后、候选选择与频控/额度之前」：被拒请求不能花掉
-    上游调用，也不该占用用户或 API key 的分钟窗口。非 department（含 admin）连
-    ``safety_guard.screen`` 都不会调，零额外开销。
+    上游调用，也不该占用用户或 API key 的分钟窗口。
 
-    对外只有一个错误码 ``AI_SAFETY_REJECTED`` 与一句固定文案；判定成立才写违规
-    证据（记违规+警告+首档封号），判定跑不起来只拒绝回答。
+    ``scope`` 决定**处罚**而不是判定：``off_platform``（向平台索取违法内容）→ 记
+    违规 + 警告 + 首档封号；``platform``（举报/申诉/业务咨询里的敏感词）→ 只拒绝
+    本次请求。两类的对外响应逐字节相同（403 + ``AI_SAFETY_REJECTED`` + 固定文案），
+    攻击者无法按差异调参。
 
     ``zvk_`` 平台 key 与 JWT 走同一套判定：``get_ai_client`` 已经把 key 换成
     与 ``get_current_user`` 同形的 user dict（``per`` = owner 的原始角色），所以
     这里不需要再查一次库。
     """
-    if not safety_guard.is_department(user):
-        return None
-
     text = _last_user_text(payload.get("messages"))
     if not text.strip():
         return None
 
     model_name = str(payload.get("model") or "") or None
+
+    keyword = moderation.check(text)
+    if keyword.violation:
+        _logger.warning(
+            "chat 关键词审核拦截 user=%s rule=%s scope=%s",
+            user_oid,
+            keyword.rule,
+            keyword.scope,
+        )
+        warned = False
+        if keyword.scope != moderation.SCOPE_PLATFORM:
+            warned = await _record_violation(
+                user,
+                request=request,
+                text=text,
+                rule=str(keyword.category or keyword.reason or ""),
+            )
+        await prompt_audit.record_outcome(
+            audit_oid, refused=True, warned=True if warned else None
+        )
+        await _reject_http(
+            user_oid=user_oid,
+            model=model_name,
+            request_id=request_id,
+            status_code=403,
+            code=safety_guard.REJECTED_CODE,
+            purpose=purpose,
+            roles_snapshot=scene_roles,
+        )
+        return _openai_error(
+            403,
+            safety_guard.REJECTED_CODE,
+            moderation.REJECTED_MESSAGE,
+            request_id=request_id,
+        )
+
+    if not safety_guard.is_department(user):
+        return None
+
     verdict = await safety_guard.screen(user, text, model_hint=model_name)
     if verdict.allowed:
         return None
@@ -1730,16 +1813,9 @@ async def _screen_chat_request(
     code = safety_guard.REJECTED_CODE
     warned = False
     if not verdict.unavailable:
-        try:
-            outcome = await violation_guard.record_agent_jailbreak(
-                user,
-                xuehai_id=xuehai_id_from(request),
-                rule=str(verdict.category or ""),
-                detail=text,
-            )
-            warned = bool((outcome or {}).get("warned"))
-        except Exception:  # noqa: BLE001 - 证据入库失败不该把拒绝变成 500
-            _logger.exception("AI 安全认证违规入库失败（本次仍然拒绝）")
+        warned = await _record_violation(
+            user, request=request, text=text, rule=str(verdict.category or "")
+        )
     # 合规审计：被拒也要在留存行上标出来（refused / warned），否则「谁被拒过」
     # 只能靠 AI_CALL_LOGS 的错误码去对时间。
     await prompt_audit.record_outcome(
@@ -2129,6 +2205,27 @@ async def _blocking_completion(
             )
             continue
 
+        # 上游已经答完，但这个人可能在这几秒里被封了：内容一律丢弃，不回给被封
+        # 账号（否则「封禁」只挡下一次请求，这一次的答案照样到手）。响应头还没发，
+        # 这里能给一个干净的 403。上游本身是成功的，不能记成上游故障。
+        if await ban_state.is_banned(user_oid):
+            routing.mark_success(key)
+            _logger.warning(
+                "chat completion discarded: user %s became banned", user_oid
+            )
+            await _reject_http(
+                user_oid=user_oid,
+                model=model,
+                request_id=request_id,
+                status_code=403,
+                code=USER_BANNED_CODE,
+                purpose=purpose,
+                roles_snapshot=snapshot,
+            )
+            return _openai_error(
+                403, USER_BANNED_CODE, USER_BANNED_MESSAGE, request_id=request_id
+            )
+
         routing.mark_success(key)
         # 上游回了 usage 就把 token 列一并落库：它们与 units 同源，报表才能分清
         # 「实扣」与「估算」（token 列全 NULL ⟺ units 是估算值）。AF = 千 token ×
@@ -2194,6 +2291,22 @@ async def _stream_completion(
     key = str(entry.get("key") or "")
     snapshot = audit.roles_snapshot(roles)
 
+    # 上游请求发出前最后看一眼封禁：响应头还没发，这里还能给一个干净的 403。
+    # 入口闸只在请求开始时判过一次，而排队/换 provider 的这段时间足够落下一次封禁。
+    if await ban_state.is_banned(user_oid):
+        await _reject_http(
+            user_oid=user_oid,
+            model=model,
+            request_id=request_id,
+            status_code=403,
+            code=USER_BANNED_CODE,
+            purpose=purpose,
+            roles_snapshot=snapshot,
+        )
+        return _openai_error(
+            403, USER_BANNED_CODE, USER_BANNED_MESSAGE, request_id=request_id
+        )
+
     try:
         api_key = await credentials.resolve_api_key(entry)
     except CredentialError as exc:
@@ -2251,6 +2364,7 @@ async def _stream_completion(
 
     async def generate():
         started = time.monotonic()
+        chunks = 0
         try:
             async for chunk in providers.chat_completion_stream(body, entry, api_key):
                 if state["first_token_ms"] is None and chunk:
@@ -2262,6 +2376,24 @@ async def _stream_completion(
                 if audit_oid and len(state["answer"]) < STREAM_CAPTURE_MAX_BYTES:
                     state["answer"].extend(chunk[: STREAM_CAPTURE_MAX_BYTES - len(state["answer"])])
                 yield chunk
+                chunks += 1
+                if chunks % BAN_CHECK_EVERY_CHUNKS == 0 and await ban_state.is_banned(
+                    user_oid
+                ):
+                    # 已经吐出去的正文只能留在客户端，但**不能继续生成**：多吐的每
+                    # 一句都是被封账号拿到的内容（「先违规后合法、两个回答都输出」
+                    # 的机制缺陷就出在这里）。error 帧 + [DONE] 让客户端知道是中止，
+                    # 而不是以为模型说完了。
+                    state["status"] = _audit_status(USER_BANNED_CODE)
+                    state["error_code"] = USER_BANNED_CODE
+                    _logger.warning(
+                        "ai stream aborted mid-flight: user %s became banned", user_oid
+                    )
+                    # 上游本身是成功的（内容与连接都正常），不能记成上游故障。
+                    routing.mark_success(key)
+                    yield _stream_error_frame(USER_BANNED_CODE, USER_BANNED_MESSAGE)
+                    yield STREAM_DONE_FRAME
+                    return
         except Exception as exc:  # noqa: BLE001 - 已开始输出，只能收尾
             # 走到这里说明响应头（200 + text/event-stream）早就发出去了，状态码
             # 改不了。以前只写一条 warning 就结束生成器，客户端拿到的是

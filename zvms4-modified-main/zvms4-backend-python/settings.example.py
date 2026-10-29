@@ -44,11 +44,15 @@ AI_ROLE_QUOTA = {
 AI_CALL_LOGS_RETENTION_DAYS = 90
 # 会话上下文窗口（token）。AI_DEFAULT_CONTEXT_LIMIT 是所有模型的兜底；
 # AI_MODEL_CONTEXT_LIMITS 按模型名覆盖，其中的 "*" 键是该字典的通配兜底。
-# 压缩阈值 AI_CONTEXT_COMPACT_RATIO 默认 0.75，即 200000 窗口下约 150K 触发摘要。
+# 压缩阈值 AI_CONTEXT_COMPACT_RATIO 默认 0.80，即 200000 窗口下约 160K 触发摘要
+# （也可在「系统设置」里按运行期键 ai.context_compact_ratio 覆盖）。
 # 注意：生产 settings.py 不随 rsync 同步，改窗口要手改服务器上的配置，或者改
 # services/agent/context.py 的代码默认值——只改这个模板不会影响线上。
 # AI_DEFAULT_CONTEXT_LIMIT = 200000
 # AI_MODEL_CONTEXT_LIMITS = {}  # 形如 {"gpt-x": 400000, "*": 128000}
+# 保存渠道、或管理端点从上游拉取模型元数据时，探测 GET {base_url}/models 的超时
+# （秒）。<= 0 表示彻底关闭探测：保存时不再联网补上下文，/discover 也直接拒绝发包。
+# AI_MODEL_PROBE_TIMEOUT_SECONDS = 2
 # 智能体：单次 run 的轮数上限与累计 token 预算（防死循环烧钱）。每一轮都是一次
 # 独立计费的上游调用，所以最坏成本 ≈ 轮数 × 单轮 token。预算低于上下文窗口时，
 # agent 会在窗口填满之前先被预算掐断，所以默认值与窗口对齐（200000）。

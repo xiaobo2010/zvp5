@@ -59,6 +59,7 @@ class Env:
         self.marks: list[str] = []
         self.consumed: list[str] = []
         self.other_primary: set[str] = set()
+        self.admin_primary: set[str] = set()
         self.counters: dict[str, int] = {}
 
 
@@ -79,6 +80,9 @@ def env(monkeypatch) -> Env:
 
     async def primary_owned_by_other(xuehai_id, user_oid):
         return xuehai_id in state.other_primary
+
+    async def is_admin_primary_device(xuehai_id):
+        return xuehai_id in state.admin_primary
 
     async def get_by_oid(oid):
         return state.users.get(oid)
@@ -173,6 +177,7 @@ def env(monkeypatch) -> Env:
             set_ban=set_ban,
             list_banned_by_xuehai=list_banned_by_xuehai,
             primary_owned_by_other=primary_owned_by_other,
+            is_admin_primary_device=is_admin_primary_device,
         ),
     )
     monkeypatch.setattr(

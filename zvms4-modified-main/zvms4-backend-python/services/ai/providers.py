@@ -16,7 +16,7 @@ settings：凭据目录已经决定「这次该打谁」，这里只负责把请
 from __future__ import annotations
 
 import logging
-from typing import AsyncIterator
+from typing import AsyncIterator, Mapping
 
 import httpx
 
@@ -31,6 +31,11 @@ READ_TIMEOUT = 120.0
 BODY_LOG_LIMIT = 500
 MAX_CONNECTIONS = 32
 MAX_KEEPALIVE_CONNECTIONS = 16
+
+#: 上游模型列表路径。与 ``_endpoint`` 的 ``/chat/completions`` 同源：只拼
+#: ``base_url``，**不**吃 ``api_path``——后者是聊天的完整路径，拿来当列表路径会
+#: 得到 ``/v1/messages/models`` 这种不存在的地址。
+MODEL_LIST_PATH = "/models"
 
 _client: httpx.AsyncClient | None = None
 
@@ -66,6 +71,35 @@ def _timeout(entry: dict) -> httpx.Timeout:
     except (TypeError, ValueError):
         read, connect = READ_TIMEOUT, CONNECT_TIMEOUT
     return httpx.Timeout(read, connect=connect)
+
+
+def _probe_timeout() -> httpx.Timeout:
+    """``/models`` 探测的超时，与保存路径共用 ``AI_MODEL_PROBE_TIMEOUT_SECONDS``。
+
+    ``<= 0`` 是运维的「关掉探测」开关（离线环境/单测）：显式拉取同样遵守它，而不是
+    偷偷用默认值把请求发出去——这条路径会解密 key，开关必须真的有效。
+    """
+    value = credentials.probe_timeout()
+    if value <= 0:
+        raise RouteError(
+            "AI_UPSTREAM_ERROR", "model probe is disabled by configuration", 502
+        )
+    return httpx.Timeout(value, connect=min(CONNECT_TIMEOUT, value))
+
+
+def context_window(row: object) -> int | None:
+    """``/models`` 的一个条目 → 上下文窗口（token）；认不出就是 ``None``（不猜）。
+
+    字段名各家不同，按 :data:`services.ai.credentials.CONTEXT_KEYS` 的顺序取第一个
+    能解析成正整数的。正整数口径与 ``MODELS_JSON`` 的解析共用一份实现。
+    """
+    if not isinstance(row, Mapping):
+        return None
+    for key in credentials.CONTEXT_KEYS:
+        value = credentials.positive_int(row.get(key))
+        if value is not None:
+            return value
+    return None
 
 
 def _endpoint(entry: dict) -> str:
@@ -159,10 +193,8 @@ def _headers(entry: dict, api_key: str) -> dict[str, str]:
     return headers
 
 
-def _upstream_error(name: str, status_code: int, body: str) -> RouteError:
-    _logger.warning(
-        "ai upstream %s returned %s: %s", name, status_code, body[:BODY_LOG_LIMIT]
-    )
+def _status_error(status_code: int) -> RouteError:
+    """HTTP 状态码 → 带语义的 ``RouteError``（聊天与 ``/models`` 共用一份映射）。"""
     if status_code in (401, 403):
         # 鉴权失败换 provider 也没意义：同一把 key 到哪都是错。
         return RouteError("AI_UPSTREAM_AUTH", "upstream rejected the credentials", 502)
@@ -173,6 +205,13 @@ def _upstream_error(name: str, status_code: int, body: str) -> RouteError:
     if status_code >= 500:
         return RouteError("AI_UPSTREAM_ERROR", "upstream failed", 502)
     return RouteError("AI_UPSTREAM_REJECTED", "upstream rejected the request", 502)
+
+
+def _upstream_error(name: str, status_code: int, body: str) -> RouteError:
+    _logger.warning(
+        "ai upstream %s returned %s: %s", name, status_code, body[:BODY_LOG_LIMIT]
+    )
+    return _status_error(status_code)
 
 
 async def guard_endpoint(entry: dict) -> None:
@@ -206,6 +245,81 @@ async def guard_endpoint(entry: dict) -> None:
         raise RouteError(
             "AI_UPSTREAM_UNREACHABLE", "upstream endpoint is not reachable", 502
         )
+
+
+async def list_models(entry: dict, api_key: str | None = None) -> list[dict]:
+    """问一次上游 ``/models``，回 ``[{"id": str, "context": int | None}]``。
+
+    为什么和聊天走同一个模块级 client：连接池、``trust_env=False``、
+    ``follow_redirects=False`` 这三条硬规则只该有一份实现；一次探测多建一个
+    ``AsyncClient`` 等于把「凭据会不会跟着重定向发去别的主机」重新赌一遍。
+
+    ``base_url`` 与聊天共用同一个录入校验，但录入之后 DNS 仍可能被改成内网地址
+    （DNS rebinding），所以发请求前**必须**走 :func:`guard_endpoint`——server
+    作用域与官方 host 白名单两条快路径由它自己判，这里不另立规则。
+
+    失败抛 :class:`RouteError`（本模块既有的上游异常类型）：调用方可以把它当
+    「没探到」吞掉（保存路径），也可以翻成 502（管理端显式拉取）。日志只记 host，
+    不记 URL/报文/密钥——``base_url`` 的路径段可能是带凭据的网关前缀。
+    """
+    key = api_key if api_key is not None else str(entry.get("api_key") or "")
+    base = str(entry.get("base_url") or "").strip().rstrip("/")
+    if not base or not key:
+        raise RouteError("AI_UPSTREAM_ERROR", "upstream endpoint is not configured", 502)
+
+    await guard_endpoint(entry)
+    client = _client_instance()
+    try:
+        response = await client.get(
+            base + MODEL_LIST_PATH,
+            headers=_headers(entry, key),
+            timeout=_probe_timeout(),
+        )
+    except httpx.TimeoutException:
+        _logger.warning("ai models probe %s timed out", _host(entry) or "-")
+        raise RouteError("AI_TIMEOUT", "upstream timed out", 504) from None
+    except httpx.InvalidURL:
+        # ``InvalidURL`` 不是 ``HTTPError`` 的子类；漏掉它会让坏 base_url 变成 500。
+        # 异常文本里带着完整 URL，所以只记 host。
+        _logger.warning("ai models probe %s has an invalid url", _host(entry) or "-")
+        raise RouteError(
+            "AI_UPSTREAM_ERROR", "upstream endpoint is invalid", 502
+        ) from None
+    except httpx.HTTPError:
+        _logger.warning("ai models probe %s is unreachable", _host(entry) or "-")
+        raise RouteError("AI_UPSTREAM_ERROR", "upstream is unreachable", 502) from None
+
+    if response.status_code < 200 or response.status_code >= 300:
+        # 不走 ``_upstream_error``：那条路径会把响应体写进日志，而 ``/models`` 的
+        # 报错体可能回显整段请求头。这里只留状态码与 host。
+        _logger.warning(
+            "ai models probe %s returned %s",
+            _host(entry) or "-",
+            response.status_code,
+        )
+        raise _status_error(response.status_code)
+
+    try:
+        payload = response.json()
+    except ValueError:
+        raise RouteError(
+            "AI_UPSTREAM_ERROR", "upstream returned malformed json", 502
+        ) from None
+
+    rows = payload.get("data") if isinstance(payload, Mapping) else payload
+    if not isinstance(rows, list):
+        return []
+    models: list[dict] = []
+    seen: set[str] = set()
+    for row in rows:
+        if not isinstance(row, Mapping):
+            continue
+        model = str(row.get("id") or "").strip()
+        if not model or model in seen:
+            continue
+        seen.add(model)
+        models.append({"id": model, "context": context_window(row)})
+    return models
 
 
 async def chat_completion(payload: dict, entry: dict, api_key: str) -> dict:
