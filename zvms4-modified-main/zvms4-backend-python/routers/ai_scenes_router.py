@@ -48,10 +48,34 @@ class SceneRunCreate(BaseModel):
 
     两个上限都是**入参**上限：``content`` 比普通会话窄（场景是一问一查，不是写
     长文），``context`` 与留存上限同量级——再长的「参考内容」只会挤占上下文。
+
+    ``model`` / ``thinking`` 是**按次覆盖**（空值 = 沿用会话现有值）：场景会话是
+    「一问一查」的，卡片上换模型/档位不该改写那条固定会话——否则下一次提问会莫名
+    沿用上一次的临时选择。档位合法性在端点里判（400 中文），不在这里用 pydantic
+    枚举：那会变成 422，前端拿不到可读的中文原因。
     """
 
     content: str = Field(min_length=1, max_length=4000)
     context: str | None = Field(default=None, max_length=8000)
+    model: str | None = Field(default=None, max_length=120)
+    thinking: str | None = Field(default=None, max_length=16)
+
+
+def _clean_thinking(value: object) -> str | None:
+    """思考强度归一：``low`` / ``medium`` / ``high``，空串/None → ``None``。
+
+    未知档位一律 400（不静默退默认）：前端拼错一个档位时，静默成功会让人以为设置
+    生效了，而实际行为一直是默认。判定口径与会话侧（``conversations``）同一份
+    常量，只是文案用中文。
+    """
+    text = str(value or "").strip().lower()
+    if not text:
+        return None
+    if text not in conversations.THINKING_LEVELS:
+        raise AgentError(
+            "AI_BAD_REQUEST", "思考强度只能是 low、medium、high，或留空", 400
+        )
+    return text
 
 
 def _error(
@@ -180,6 +204,8 @@ async def submit_scene_run(
             raise AgentError(
                 conversations.SCENE_BAD, "scene must be terminal or file_edit", 400
             )
+        thinking = _clean_thinking(payload.thinking)
+        model = str(payload.model or "").strip() or None
         _require_feature(user)
         data = await run_queue.submit_scene(
             user=user,
@@ -187,6 +213,8 @@ async def submit_scene_run(
             content=payload.content,
             context=payload.context,
             xuehai_id=xuehai_id,
+            model=model,
+            thinking=thinking,
         )
         await run_queue.kick()
         return data

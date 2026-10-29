@@ -2011,7 +2011,8 @@ class AICallLogsRepo(Protocol):
     write, and nothing here updates a row. The one deletion path is
     :meth:`purge_batch` (保留期清理, called by :mod:`tasks.retention`), which
     removes whole expired rows in bounded batches — irreversibly, one commit per
-    batch. ``units`` is the quota amount this call consumed, so the ledger and
+    batch. ``units`` is the **Agent Fuel (AF)** this call consumed
+    (``max(1, ceil(total_tokens / 1000 × model rate))``), so the ledger and
     ``AI_QUOTA.used`` can be reconciled against each other.
     ``key_scope`` records which kind of key paid for the call, so "platform
     spend" and "admin's own key" stay separable in the same report.
@@ -2065,6 +2066,9 @@ class AICallLogsRepo(Protocol):
 
         The token columns are ``None`` unless the upstream reported ``usage``;
         ``None`` is the marker for "this row's ``units`` is an estimate".
+        ``units`` itself is Agent Fuel (AF), not raw tokens: one AF is 1000
+        tokens at the base price, scaled by ``AI_MODELS.RATE`` for the model
+        that served the call (OCR is flat 1 AF per enqueue/recognition).
         ``attempt_no`` is 1-based within one request. ``purpose`` is the calling
         scene (open set: ``chat`` / ``markdown-assistant`` / ``ocr`` / ...), and
         ``engine_kind`` / ``attachment_oid`` are OCR-only trace fields.
@@ -2185,6 +2189,30 @@ class AICallLogsRepo(Protocol):
         the total and the breakdowns disagree across a minute boundary, and the
         cache hit rate's denominator (``prompt_tokens``) would no longer match
         its numerator.
+        """
+        ...
+
+    async def usage_breakdown(
+        self,
+        *,
+        user_oid: str,
+        since: datetime,
+        until: datetime,
+    ) -> list[dict[str, Any]]:
+        """One user's calls in ``[since, until)`` grouped by provider + model.
+
+        Returns ``[{"provider": str | None, "model": str | None, "calls": int,
+        "units": int, "prompt_tokens": int, "completion_tokens": int,
+        "total_tokens": int}]``, ordered by ``calls`` desc then provider/model
+        asc so the caller can render it as-is. ``provider`` / ``model`` keep
+        their per-row NULL (OCR engines and unlabelled calls) instead of being
+        dropped or merged into a string bucket.
+
+        ``calls`` counts every row in the window (failures included — the quota
+        page shows attempts, not just successes). The sums are ``COALESCE(..., 0)``
+        so a window with no usage-reported rows reads 0, while the per-row NULL
+        still means "unknown". The window is half-open on purpose: two adjacent
+        periods must not both count a call made at midnight.
         """
         ...
 
@@ -3433,3 +3461,50 @@ class AIQuotaRequestsRepo(Protocol):
         一次 ``IN`` 查询取代逐个用户各查一次。
         """
         ...
+
+
+class AIModelsRepo(Protocol):
+    """Data access for ``AI_MODELS``（模型目录覆盖层, V050）。
+
+    Rows use the plain document shape (model 是主键，没有 ``_id``）::
+
+        {"model": str, "display_name": str | None, "provider": str | None,
+         "context_length": int | None, "rate": float, "enabled": bool,
+         "notes": str | None, "updated_at": datetime,
+         "updated_by": str | None}
+
+    这张表**只存覆盖**：缺少某模型的行意味着「用默认口径（rate=1、
+    enabled=True）」，不是「这个模型不存在」——模型是否存在由
+    ``AI_CREDENTIALS.MODELS_JSON`` 决定。
+
+    :meth:`upsert` 的 ``fields`` 只携带**调用方明确给了的**字段：没出现的键保持
+    原值（新行则落默认值）。所以「不改倍率、只改展示名」不会把倍率重置成 1。
+    """
+
+    async def list_all(self) -> list[Row]:
+        """全部覆盖行，按模型名升序。"""
+        ...
+
+    async def get(self, model: str) -> Row | None:
+        """取单个模型的覆盖行；没有配置过返回 ``None``。"""
+        ...
+
+    async def upsert(
+        self,
+        model: str,
+        *,
+        fields: Mapping[str, Any],
+        actor: str | None = None,
+    ) -> Row:
+        """按模型名插入或部分更新，返回落库后的行。
+
+        ``fields`` 可含 ``display_name`` / ``provider`` / ``context_length`` /
+        ``rate`` / ``enabled`` / ``notes``；``updated_at`` 与 ``updated_by`` 由
+        本层维护。校验（rate 区间、长度、正整数）属于路由层，这一层不重复判断。
+        """
+        ...
+
+    async def delete(self, model: str) -> bool:
+        """删除一个覆盖行（不动凭据里的模型）；``True`` 表示真的删掉了。"""
+        ...
+

@@ -314,6 +314,57 @@ def test_suggest_accepts_explicit_model(env):
     assert response.json()["data"]["model"] == "team/gpt-y"
 
 
+# ---------------------------------------------------------------------------
+# 思考强度：字段名随 provider 变（与 chat 面同一套规则）
+# ---------------------------------------------------------------------------
+
+
+def test_suggest_injects_reasoning_effort_for_openai_compat(env):
+    response = _post(env, thinking="high")
+
+    assert response.status_code == 200
+    payload = env.upstream[0]["payload"]
+    assert payload["reasoning_effort"] == "high"
+    # 智谱的字段不该出现在 openai_compat 系上（未知字段会被上游 400）。
+    assert "thinking" not in payload
+
+
+def test_suggest_translates_thinking_to_a_switch_for_zhipu(env):
+    env.catalog_state["entries"] = [_entry(name="zhipu", models=("glm-4.6",))]
+
+    _post(env, thinking="low")
+
+    assert env.upstream[0]["payload"]["thinking"] == {"type": "disabled"}
+    assert "reasoning_effort" not in env.upstream[0]["payload"]
+
+
+def test_suggest_without_thinking_sends_no_field(env):
+    """空 = 上游默认：不给模型塞一个它可能不认识的字段。"""
+    _post(env)
+
+    payload = env.upstream[0]["payload"]
+    assert "reasoning_effort" not in payload and "thinking" not in payload
+
+
+@pytest.mark.parametrize("value", ["", "   "])
+def test_suggest_blank_thinking_is_the_same_as_absent(env, value):
+    response = _post(env, thinking=value)
+
+    assert response.status_code == 200
+    assert "reasoning_effort" not in env.upstream[0]["payload"]
+
+
+def test_suggest_rejects_an_unknown_thinking_level(env):
+    response = _post(env, thinking="max")
+
+    assert response.status_code == 400
+    assert "思考强度" in response.json()["detail"]
+    # 参数错误在打上游之前就断掉：不花额度、不写生成审计。
+    assert env.upstream == []
+    assert env.consume.calls == []
+    assert env.logs == []
+
+
 def test_suggest_writes_suggest_audit_log(env):
     _post(env)
 

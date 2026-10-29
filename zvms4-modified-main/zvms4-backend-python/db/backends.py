@@ -181,6 +181,13 @@ def get_ai_credentials_repo(session: Any = None) -> Any:
     return OracleAICredentialsRepo(session)
 
 
+def get_ai_models_repo(session: Any = None) -> Any:
+    """Return the ``AIModelsRepo`` implementation (AI 模型目录覆盖层, V050)."""
+    from db.repos.oracle.ai_models import OracleAIModelsRepo
+
+    return OracleAIModelsRepo(session)
+
+
 def get_ai_ocr_engines_repo(session: Any = None) -> Any:
     """Return the ``AIOcrEnginesRepo`` implementation (OCR 引擎注册表)."""
     from db.repos.oracle.ai_ocr_engines import OracleAIOcrEnginesRepo
@@ -283,6 +290,7 @@ __all__ = [
     "get_ai_call_logs_repo",
     "get_ai_quota_repo",
     "get_ai_credentials_repo",
+    "get_ai_models_repo",
     "get_ai_ocr_engines_repo",
     "get_ai_api_keys_repo",
     "get_ai_agent_events_repo",

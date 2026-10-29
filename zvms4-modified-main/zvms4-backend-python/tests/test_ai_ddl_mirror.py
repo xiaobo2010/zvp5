@@ -38,6 +38,7 @@ AGENT_FILE = "V033__agent_and_prompt_audit.sql"
 PROPOSAL_FILE = "V034__agent_proposal_payload.sql"
 CONTROL_FILE = "V046__agent_control_and_audit.sql"
 SCENE_FILE = "V048__scene_conversations.sql"
+MODELS_FILE = "V050__ai_models.sql"
 
 # V046 给两张老表补的列。V033 / V035 是历史事实（建表时没有这些），后续迁移
 # 只做增量，所以比较那两份文件的形状时要把这些列摘掉。
@@ -1175,3 +1176,68 @@ def test_thinking_column_is_nullable_and_narrow() -> None:
     columns = ddl_check.parse_models()["tables"]["ai_conversations"]["columns"]
 
     assert columns["thinking"] == ("varchar2(16)", False, None)
+
+
+# ---------------------------------------------------------------------------
+# V050：AI_MODELS（模型目录覆盖层：Agent Fuel 倍率 + 元数据）
+# ---------------------------------------------------------------------------
+
+def _models_text() -> str:
+    return _migration(MODELS_FILE).read_text(encoding="utf-8")
+
+
+def test_ai_models_migration_matches_models_and_v001() -> None:
+    """V050 建的表 + 索引必须与 models / V001 逐字段一致。
+
+    V050 是**新表**（不是增量迁移），所以三处比的是同一份目标形状，没有「摘掉
+    后续增量」这一步：存量实例走 V050、全新实例走 V001，两条路径必须长出同一张表。
+    """
+    migration = _parsed(_migration(MODELS_FILE))
+    modeled = ddl_check.parse_models()
+    v001 = ddl_check.parse_v001()
+
+    assert set(migration["tables"]) == {"ai_models"}
+    expected = modeled["tables"]["ai_models"]
+    assert migration["tables"]["ai_models"] == expected
+    assert v001["tables"]["ai_models"] == expected
+
+    index = ("ai_models", False, ("provider",))
+    assert index in migration["indexes"]
+    assert index in modeled["indexes"]
+    assert index in v001["indexes"]
+
+
+def test_ai_models_columns_carry_the_documented_shape() -> None:
+    """列的「形状」是这张表的核心：倍率与开关的默认值决定了缺行时的口径。"""
+    columns = ddl_check.parse_models()["tables"]["ai_models"]["columns"]
+
+    # 模型名是主键，不是 oid：80 字符与渠道里的 model id 同量级。
+    assert columns["model"] == ("varchar2(80)", True, None)
+    # 可空的元数据：NULL = 没填（不是空串、也不是 0）。
+    assert columns["display_name"] == ("varchar2(120)", False, None)
+    assert columns["provider"] == ("varchar2(40)", False, None)
+    assert columns["context_length"] == ("number(10)", False, None)
+    assert columns["notes"] == ("varchar2(400)", False, None)
+    # 倍率 DEFAULT 1 NOT NULL：缺行 = 基准价，不是「没配就不计费」。
+    assert columns["rate"] == ("number(10,4)", True, "1")
+    # 开关 DEFAULT 1 NOT NULL：加表不让存量模型消失。
+    assert columns["enabled"] == ("number(1)", True, "1")
+    assert columns["updated_at"] == ("timestamp", True, None)
+    assert columns["updated_by"] == ("char(24)", False, None)
+
+    ck = ddl_check.parse_models()["tables"]["ai_models"]["ck"]
+    assert "rate > 0" in ck
+    assert "enabled in (0,1)" in ck
+    # 无外键：模型名来自 JSON 列，凭据删掉后这一行仍是审计/回滚材料。
+    assert ddl_check.parse_models()["tables"]["ai_models"]["fk"] == set()
+
+
+def test_ai_models_migration_is_idempotent_on_existing_objects() -> None:
+    """重跑不能炸：表已存在 → -955，索引已存在 → -1408。"""
+    text = _models_text()
+
+    assert "EXECUTE IMMEDIATE" in text
+    for code in ("-955", "-1408"):
+        assert code in text
+    # 每个对象各自一段 BEGIN/EXCEPTION：一个对象存在不该连带跳过另一个。
+    assert text.count("WHEN OTHERS THEN") == text.count("EXECUTE IMMEDIATE '")

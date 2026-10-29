@@ -962,11 +962,16 @@ def _clean_models(value: object) -> list[str | dict]:
     原形态原样落库（字符串还是字符串）：把老行悄悄改写成对象没有收益，反而让
     「这条 context 是管理员填的还是上游报的」变得不可判。``context`` 只收正整数
     或 ``null``——``0`` 与负数不是「未知」，是错的输入，直接 400 比留个假窗口好。
+
+    路由层的 Pydantic schema 是 ``list[str | dict]``（对象形态必须过 HTTP 层，否则
+    「按模型填上下文」会 422）；**形状校验留在这里**：``dict`` 只认 ``id`` /
+    ``context`` 两个键，``id`` 必须是非空字符串。错误文案是中文——它直接进
+    管理端的提示框。
     """
     if value is None:
         return []
     if not isinstance(value, (list, tuple)):
-        raise CredentialError("AI_KEY_INVALID", "models must be a list", 400)
+        raise CredentialError("AI_KEY_INVALID", "models 必须是数组", 400)
     models: list[str | dict] = []
     seen: set[str] = set()
     for item in value:
@@ -975,23 +980,37 @@ def _clean_models(value: object) -> list[str | dict]:
             model = item.strip()
             shaped: str | dict = model
         elif isinstance(item, Mapping):
-            model = str(item.get("id") or "").strip()
+            extra = set(item) - {"id", "context"}
+            if extra:
+                raise CredentialError(
+                    "AI_KEY_INVALID",
+                    "models 里的对象只支持 id 与 context 两个字段",
+                    400,
+                )
+            raw_id = item.get("id")
+            if not isinstance(raw_id, str):
+                raise CredentialError(
+                    "AI_KEY_INVALID", "models 里的对象必须有字符串 id", 400
+                )
+            model = raw_id.strip()
             raw_context = item.get("context")
             if raw_context is not None:
                 context = _positive_int(raw_context)
                 if context is None:
                     raise CredentialError(
-                        "AI_KEY_INVALID", "model context must be a positive integer", 400
+                        "AI_KEY_INVALID", "模型的 context 必须是正整数", 400
                     )
             shaped = {"id": model, "context": context}
         else:
             raise CredentialError(
-                "AI_KEY_INVALID", "models must be strings or {id, context} objects", 400
+                "AI_KEY_INVALID",
+                "models 只能是字符串或 {id, context} 对象",
+                400,
             )
         if not 1 <= len(model) <= _MODEL_MAX_LEN:
             raise CredentialError(
                 "AI_KEY_INVALID",
-                f"each model must be 1..{_MODEL_MAX_LEN} characters",
+                f"每个模型名长度必须在 1..{_MODEL_MAX_LEN} 之间",
                 400,
             )
         if model in seen:  # 去重：同一个模型写两遍只会让候选列表变长
@@ -1000,7 +1019,7 @@ def _clean_models(value: object) -> list[str | dict]:
         models.append(shaped)
     if len(models) > _MODELS_MAX:
         raise CredentialError(
-            "AI_KEY_INVALID", f"at most {_MODELS_MAX} models per credential", 400
+            "AI_KEY_INVALID", f"每个凭据最多 {_MODELS_MAX} 个模型", 400
         )
     return models
 

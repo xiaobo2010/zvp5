@@ -22,6 +22,8 @@ from uuid import uuid4
 
 from . import audit, credentials, providers, quota, rate_limit, routing, usage
 from . import config as ai_config
+from . import model_rates
+from . import thinking as thinking_param
 
 logger = logging.getLogger(__name__)
 
@@ -209,10 +211,15 @@ async def suggest_ssh_command(
     intent: str,
     context: str | None = None,
     model: str | None = None,
+    thinking: str | None = None,
 ) -> dict:
     """起草一条 SSH 命令。返回 ``{command, explanation, model, request_id}``。
 
     这里**没有**任何「执行」出口：调用方拿到的是字符串，最多能把它显示给人看。
+
+    ``thinking`` 是平台档位（``low`` / ``medium`` / ``high``，空 = 上游默认）。字段
+    名随 provider 变（``reasoning_effort`` / 智谱的 ``thinking``），所以翻译必须等
+    「这一条候选」确定之后：与 chat 面共用 :mod:`services.ai.thinking` 的同一套规则。
     """
     user_oid = str(user.get("_id") or user["id"])
     roles = user.get("per")
@@ -327,6 +334,10 @@ async def suggest_ssh_command(
             model_name=selected_model,
         )
 
+    # 档位 → 上游字段：只有拿到这一条候选才知道该发 ``reasoning_effort`` 还是 ``thinking``
+    # （空档不加任何字段，交给上游默认）。
+    thinking_param.apply(payload, thinking, entry)
+
     key = str(entry.get("key") or "")
     try:
         async with routing.slot():
@@ -357,7 +368,15 @@ async def suggest_ssh_command(
     tokens = usage.token_fields(
         result.get("usage") if isinstance(result, dict) else None
     )
-    units = usage.units_from_total_tokens(tokens["total_tokens"])
+    # AF = 千 token × 模型倍率；没拿到 usage 时按字符估算（同一公式）。
+    total_tokens = tokens["total_tokens"]
+    if total_tokens is None:
+        total_tokens = usage.estimate_tokens_from_chars(
+            usage.prompt_chars(payload), len(command)
+        )
+    units = usage.af_units(
+        total_tokens, await model_rates.resolve_rate(selected_model)
+    )
     if billable:
         try:
             await quota.consume(user_oid, "chat", units, roles=roles)

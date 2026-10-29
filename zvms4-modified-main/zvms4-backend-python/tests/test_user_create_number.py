@@ -8,7 +8,9 @@
 3. 不含空白与控制字符（登录表单与审计日志的脏数据来源）。
 
 唯一性（预检 409 + ``uq_users_business_id`` 兜底）、班级存在性、角色白名单全部
-保持不变，这里一并回归。改学号端点仍走 ``validate_number``，不在本文件范围内。
+保持不变，这里一并回归。改学号端点现在也走同一套 ``_normalize_student_id``
+（不再做 8 位数字/年份窗口/班号座号格式闸），相关回归见
+``tests/test_v4242_user_admin.py``。
 
 全离线：真跑 ``routers.users_v3_router``（真 bcrypt），只把 users repo 换成内存
 假实现、``inject_log`` 换成桩。需从仓库根运行 pytest（import 时读密钥文件）。

@@ -48,6 +48,14 @@ from db.repos.oracle.users import _search_filter
 
 Row = dict[str, Any]
 
+# 生产 ADB 的会话带 ``pdml_enabled=YES``（``PARALLEL_DEGREE_POLICY=AUTO``）：
+# 这里的 ``DELETE`` 会被自动并行执行，随后同一事务里对**同一张表**的 ``INSERT``
+# 立刻撞 ``ORA-12838``（``cannot read/modify an object after modifying it in
+# parallel``，空表也复现）。所以每个「删完马上插回同表」的 DELETE 都带
+# ``NO_PARALLEL``：这是正确性，不是性能调优。同款修法见
+# :mod:`db.repos.oracle.temp_passwords`。
+_NO_PARALLEL = "/*+ NO_PARALLEL */"
+
 
 @asynccontextmanager
 async def _session_for(
@@ -103,7 +111,11 @@ def _get_for_user_stmt(user_oid: str):
 
 
 def _delete_for_user_stmt(user_oid: str):
-    return delete(time_tbl).where(time_tbl.c.user_oid == user_oid)
+    return (
+        delete(time_tbl)
+        .where(time_tbl.c.user_oid == user_oid)
+        .prefix_with(_NO_PARALLEL, dialect="oracle")
+    )
 
 
 def _insert_for_user_stmt(
@@ -136,7 +148,11 @@ def _get_with_origin_stmt(user_oid: str):
 
 
 def _delete_with_origin_stmt(user_oid: str):
-    return delete(origin_tbl).where(origin_tbl.c.user_oid == user_oid)
+    return (
+        delete(origin_tbl)
+        .where(origin_tbl.c.user_oid == user_oid)
+        .prefix_with(_NO_PARALLEL, dialect="oracle")
+    )
 
 
 def _insert_with_origin_stmt(oid: str, user_oid: str, data: Any):
@@ -292,7 +308,11 @@ def _list_with_origin_stmt(user_oids: list[str]):
 
 
 def _delete_with_origin_stat_stmt(stat_key: str):
-    return delete(stat_tbl).where(stat_tbl.c.stat_key == stat_key)
+    return (
+        delete(stat_tbl)
+        .where(stat_tbl.c.stat_key == stat_key)
+        .prefix_with(_NO_PARALLEL, dialect="oracle")
+    )
 
 
 def _insert_with_origin_stat_stmt(
@@ -646,7 +666,9 @@ class OracleTimeRepo:
         commits — the caller owns the unit of work.
         """
         session = self._require_session()
-        await session.execute(delete(time_tbl))
+        await session.execute(
+            delete(time_tbl).prefix_with(_NO_PARALLEL, dialect="oracle")
+        )
         rows = (await session.execute(_rebuild_user_time_stmt())).all()
         ts = now or datetime.now()
         payload = [
@@ -673,7 +695,9 @@ class OracleTimeRepo:
         counted. Never commits.
         """
         session = self._require_session()
-        await session.execute(delete(ay_tbl))
+        await session.execute(
+            delete(ay_tbl).prefix_with(_NO_PARALLEL, dialect="oracle")
+        )
         agg_rows = (await session.execute(_academic_year_agg_stmt())).all()
         agg_map = {
             (str(row._mapping["member_oid"]), int(row._mapping["academic_year"])): row._mapping
@@ -754,7 +778,9 @@ class OracleTimeRepo:
         ``updated_at`` are minted here. Never commits.
         """
         session = self._require_session()
-        await session.execute(delete(origin_tbl))
+        await session.execute(
+            delete(origin_tbl).prefix_with(_NO_PARALLEL, dialect="oracle")
+        )
         ts = now or datetime.now()
         payload = [
             {
@@ -780,7 +806,9 @@ class OracleTimeRepo:
         commits.
         """
         session = self._require_session()
-        await session.execute(delete(stat_tbl))
+        await session.execute(
+            delete(stat_tbl).prefix_with(_NO_PARALLEL, dialect="oracle")
+        )
         ts = now or datetime.now()
         payload = [
             {
@@ -810,7 +838,11 @@ class OracleTimeRepo:
         social_practice: float,
     ) -> None:
         user = normalize_oid(user_oid)
-        delete_stmt = delete(ay_tbl).where(ay_tbl.c.user_oid == user)
+        delete_stmt = (
+            delete(ay_tbl)
+            .where(ay_tbl.c.user_oid == user)
+            .prefix_with(_NO_PARALLEL, dialect="oracle")
+        )
         insert_stmt = insert(ay_tbl).values(
             oid=new_oid(),
             user_oid=user,

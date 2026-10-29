@@ -3,7 +3,7 @@
 覆盖契约 §3.3A 的四条后端能力：
 
 * ``PUT /api/v3/users/{id}/roles`` 的**目标侧保护**（禁改其他 admin / 禁改自己）；
-* 新增 ``PUT /api/v3/users/{id}/student-id``（格式闸 / 409 / 轮换 session_id）；
+* 新增 ``PUT /api/v3/users/{id}/student-id``（轻校验 / 409 / 轮换 session_id）；
 * 新增 ``DELETE /api/v3/users/{id}``（单事务归档 + 清理 + 删行，失败整体回滚）；
 * ``tasks/user_trash_gc.py``（30 天保留期、可配、只清过期行、写审计）。
 
@@ -68,10 +68,10 @@ def _params(stmt):
 
 
 def _valid_student_id(seat: int) -> str:
-    """当前年份下 ``validate_number`` 认得出来的学号。
+    """当前学年起点的「平台常见格式」学号，只用来给替身用户造互不冲突的编号。
 
-    窗口随日历滚动（8 月 1 日切学年），写死年份的用例明年就会变红，所以在用例里
-    按 ``validate_number`` 的口径现算。
+    学号格式闸已经移除（改学号端点与建号共用轻校验），这里保留这个形状只是让
+    用例数据看起来像真的学号；唯一性仍是必须满足的条件。
     """
     now = datetime.now()
     year = now.year if now.month >= 8 else now.year - 1
@@ -239,10 +239,65 @@ def test_student_id_success_writes_audit(env):
     assert env.log.calls[0]["type"] == "student_id_change"
 
 
-def test_student_id_invalid_format_is_400(env):
-    for bad in ("123", "abcdefgh", "2019010a", "00010101"):
+def test_student_id_unusual_format_is_accepted(env):
+    """学号格式闸已移除：非常规形状（非 8 位 / 2019 年段 / 含字母）都放行。
+
+    班级内建号的编号规则由班级自定，改学号端点必须与建号口同口径——否则会
+    「建得出来却改不回去」。
+    """
+    for unusual in ("2019", "201901011", "abcdefgh", "2019-1-01", "cs2019A"):
+        response = env.client.put(
+            f"/api/v3/users/{OTHER}/student-id", json={"id": unusual}
+        )
+        assert response.status_code == 204, unusual
+    assert [call[1] for call in env.repo.set_business_id_calls] == [
+        "2019",
+        "201901011",
+        "abcdefgh",
+        "2019-1-01",
+        "cs2019A",
+    ]
+    assert env.log.calls[-1]["type"] == "student_id_change"
+
+
+def test_student_id_is_stripped_before_write(env):
+    """首尾空白是输入噪音，strip 后再落库（登录名不该带不可见字符）。"""
+    response = env.client.put(
+        f"/api/v3/users/{OTHER}/student-id", json={"id": "  cs2019A  "}
+    )
+    assert response.status_code == 204
+    assert env.repo.set_business_id_calls == [(OTHER, "cs2019A")]
+
+
+def test_student_id_blank_is_400(env):
+    for blank in ("", "   ", "\t\n"):
+        response = env.client.put(f"/api/v3/users/{OTHER}/student-id", json={"id": blank})
+        assert response.status_code == 400, blank
+        assert response.json()["detail"] == "学号不能为空"
+    assert env.repo.set_business_id_calls == []
+    assert env.log.calls == []
+
+
+def test_student_id_too_long_is_400(env):
+    response = env.client.put(
+        f"/api/v3/users/{OTHER}/student-id", json={"id": "a" * 33}
+    )
+    assert response.status_code == 400
+    assert response.json()["detail"] == "学号长度不能超过 32 个字符"
+    assert env.repo.set_business_id_calls == []
+
+    # 边界：正好 32 字符是列宽上限，必须放行（否则等于把 33 的错算到 32 头上）。
+    response = env.client.put(
+        f"/api/v3/users/{OTHER}/student-id", json={"id": "b" * 32}
+    )
+    assert response.status_code == 204
+
+
+def test_student_id_with_space_or_control_char_is_400(env):
+    for bad in ("2019 01", "2019\u000101", "2019\u007f01"):
         response = env.client.put(f"/api/v3/users/{OTHER}/student-id", json={"id": bad})
-        assert response.status_code == 400, bad
+        assert response.status_code == 400, repr(bad)
+        assert response.json()["detail"] == "学号不能包含空白或控制字符"
     assert env.repo.set_business_id_calls == []
     assert env.log.calls == []
 

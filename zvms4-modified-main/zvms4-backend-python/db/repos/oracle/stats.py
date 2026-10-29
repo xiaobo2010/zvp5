@@ -78,7 +78,10 @@ def _get_indicators_stmt():
 
 
 def _delete_indicators_stmt():
-    return delete(indicators_tbl)
+    # ``NO_PARALLEL`` 是正确性不是调优：ADB 会话带 ``pdml_enabled=YES``，这条
+    # 全表 DELETE 会被自动并行，随后同一事务里的 INSERT 撞 ``ORA-12838``。
+    # 同款修法见 :mod:`db.repos.oracle.temp_passwords`。
+    return delete(indicators_tbl).prefix_with("/*+ NO_PARALLEL */", dialect="oracle")
 
 
 def _insert_indicators_stmt(
@@ -97,7 +100,12 @@ def _list_group_indicators_stmt():
 
 
 def _delete_group_indicators_stmt(group_oid: str):
-    return delete(group_tbl).where(group_tbl.c.group_oid == group_oid)
+    # 同 ``_delete_indicators_stmt``：删完马上插回同一张表，必须串行。
+    return (
+        delete(group_tbl)
+        .where(group_tbl.c.group_oid == group_oid)
+        .prefix_with("/*+ NO_PARALLEL */", dialect="oracle")
+    )
 
 
 def _insert_group_indicators_stmt(
@@ -186,7 +194,9 @@ class OracleStatsCacheRepo:
         dicts; oids and ``updated_at`` are minted here. Never commits.
         """
         session = self._require_session()
-        await session.execute(delete(group_tbl))
+        await session.execute(
+            delete(group_tbl).prefix_with("/*+ NO_PARALLEL */", dialect="oracle")
+        )
         ts = now or datetime.now()
         payload = [
             {

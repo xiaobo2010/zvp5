@@ -399,6 +399,56 @@ def json_dumps(value) -> str:
     return json.dumps(value, ensure_ascii=False, default=str)
 
 
+# ---------------------------------------------------------------------------
+# 按次覆盖：模型 / 思考强度只作用于这一次 run
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_submit_scene_registers_the_override_for_that_run_only(
+    repos, monkeypatch
+) -> None:
+    """覆盖随 run_id 在进程内传递，会话行（场景的固定值）不被改写。"""
+    row = repos.conv.seed(CONV, scene="terminal")
+
+    async def _insert_queued(**kwargs):
+        return ({"_id": kwargs["run_id"], "message_oid": kwargs["message_oid"]}, True)
+
+    monkeypatch.setattr(repos.runs, "insert_queued", _insert_queued)
+
+    data = await run_queue.submit_scene(
+        user=ADMIN,
+        scene="terminal",
+        content="看看磁盘",
+        model="lab/gpt-picked",
+        thinking="high",
+    )
+
+    assert run_queue._OVERRIDES[data["run_id"]] == {
+        "model": "lab/gpt-picked",
+        "thinking": "high",
+    }
+    assert repos.conv.rows[CONV]["model"] == row["model"] == "vendor/model"
+    assert repos.conv.rows[CONV]["thinking"] is None
+
+
+@pytest.mark.asyncio
+async def test_submit_scene_without_overrides_touches_no_run_state(
+    repos, monkeypatch
+) -> None:
+    """不传 = 与今天完全一致：没有覆盖登记，执行器照旧读会话值。"""
+    repos.conv.seed(CONV, scene="terminal")
+
+    async def _insert_queued(**kwargs):
+        return ({"_id": kwargs["run_id"], "message_oid": kwargs["message_oid"]}, True)
+
+    monkeypatch.setattr(repos.runs, "insert_queued", _insert_queued)
+
+    await run_queue.submit_scene(user=ADMIN, scene="terminal", content="看看")
+
+    assert run_queue._OVERRIDES == {}
+
+
 @pytest.mark.asyncio
 async def test_plain_submit_still_needs_the_password_gate(repos, monkeypatch) -> None:
     """同一个管理员、普通会话：门禁照旧（豁免只对只读场景生效）。"""
@@ -601,6 +651,46 @@ def test_scene_endpoint_returns_the_run_handle(submitted) -> None:
     assert submitted.calls[0]["scene"] == "terminal"
     assert submitted.calls[0]["context"] == "df -h 输出"
     assert submitted.kicks == [1]
+    # 不传覆盖 → 两个字段都是 None（执行器据此沿用会话值）。
+    assert submitted.calls[0]["model"] is None
+    assert submitted.calls[0]["thinking"] is None
+
+
+def test_scene_endpoint_forwards_the_per_run_override(submitted) -> None:
+    response = _client(ADMIN).post(
+        "/api/ai/scenes/terminal/runs",
+        json={"content": "看看磁盘", "model": "lab/gpt-picked", "thinking": "High"},
+    )
+
+    assert response.status_code == 202, response.text
+    assert submitted.calls[0]["model"] == "lab/gpt-picked"
+    # 档位归一成小写：前端传 High 也认。
+    assert submitted.calls[0]["thinking"] == "high"
+
+
+def test_scene_endpoint_treats_blank_overrides_as_null(submitted) -> None:
+    """空串 = 不覆盖（与不传完全等价），不许变成「用空模型」。"""
+    response = _client(ADMIN).post(
+        "/api/ai/scenes/terminal/runs",
+        json={"content": "看看", "model": "   ", "thinking": ""},
+    )
+
+    assert response.status_code == 202, response.text
+    assert submitted.calls[0]["model"] is None
+    assert submitted.calls[0]["thinking"] is None
+
+
+def test_scene_endpoint_rejects_an_unknown_thinking_level(submitted) -> None:
+    response = _client(ADMIN).post(
+        "/api/ai/scenes/terminal/runs",
+        json={"content": "看看", "thinking": "max"},
+    )
+
+    assert response.status_code == 400
+    body = response.json()["error"]
+    assert body["code"] == "AI_BAD_REQUEST"
+    assert "思考强度" in body["message"]
+    assert submitted.calls == []
 
 
 def test_scene_endpoint_is_admin_only(submitted) -> None:

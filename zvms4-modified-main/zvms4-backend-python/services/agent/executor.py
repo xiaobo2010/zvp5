@@ -52,6 +52,7 @@ from db import backends
 from services import risk_monitor
 from services.ai import audit, credentials, providers, quota, rate_limit, routing
 from services.ai import config as ai_config
+from services.ai import model_rates
 from services.ai import prompt_audit, prompt_cache
 from services.ai import thinking as thinking_param
 from services.ai import usage as ai_usage
@@ -107,6 +108,11 @@ PURPOSE_COMPACT = "compact"
 
 # 压缩失败时的候选重试次数（§5.5：换候选重试 1 次 = 共 2 次机会）。
 COMPACT_ATTEMPTS = 2
+
+# 一次 run 最多压几次。原来「一次 run 只压一次」是为了防抖动，但长 run（10 轮工具
+# 循环 + 大工具结果）压完一次还会再越过水位，硬锁会让后半程又把全量历史发上去。
+# 上限保留是因为「每次都压」会变成病态循环：旧段每次都很小却每次都要花一次摘要调用。
+MAX_COMPACTIONS_PER_RUN = 4
 
 # 送上游的 messages 只允许这些字段。会话化之后消息会带 ``seq`` 等存储侧字段，
 # 原样发出去轻则被上游忽略、重则被严格实现判 400；``seq`` 只服务于压缩切点。
@@ -1023,7 +1029,31 @@ def _compact_budget(limit: int) -> int:
     return max(1, math.ceil(limit * agent_context.compact_ratio()))
 
 
-async def _compact_context(
+def _context_size(prompt_tokens: int | None, messages: list[dict]) -> int:
+    """当前 prompt 规模的已知值：实测（上一轮 usage / 会话行）优先，没有就估算。"""
+    if (
+        isinstance(prompt_tokens, int)
+        and not isinstance(prompt_tokens, bool)
+        and prompt_tokens >= 0
+    ):
+        return prompt_tokens
+    return agent_context.estimate_tokens(messages)
+
+
+def _compaction_result(reason: str, tokens: int) -> dict:
+    """未发生压缩的结果（形状与成功时一致：端点直接把它当响应体）。"""
+    return {
+        "compacted": False,
+        "upto_seq": None,
+        "tokens_before": tokens,
+        "tokens_after": tokens,
+        "degraded": False,
+        "reason": reason,
+        "summary": None,
+    }
+
+
+async def compact_history(
     *,
     conversation: list[dict],
     model: str,
@@ -1032,17 +1062,39 @@ async def _compact_context(
     roles,
     request_id: str,
     snapshot: str | None,
-    prompt_tokens: int | None,
-    on_summary,
-) -> tuple[list[dict], bool]:
-    """判断并执行一次压缩（含降级）。返回 ``(重建后的对话, 是否动过)``。
+    prompt_tokens: int | None = None,
+    force: bool = False,
+    raise_quota: bool = False,
+    thinking: str | None = None,
+) -> tuple[list[dict], dict]:
+    """压缩一次上下文，返回 ``(重建后的对话, 结果)``。
 
-    「动过」包括压缩成功与降级到硬截断：一次 run 只允许压一次（§5.3 防抖动），
-    否则每轮都在阈值边缘反复触发，既贵又抖。
+    **自动与手动共用这一份实现**：自动路径（run 内越过水位）用 ``force=False``，
+    手动端点用 ``force=True`` 绕过阈值。路由层不许直接调私有函数，所以入口就是
+    这里（经 :func:`compact_messages`）。
+
+    结果字典的字段是手动压缩端点的响应契约，别改名：
+
+    ``compacted`` / ``upto_seq`` / ``tokens_before`` / ``tokens_after`` /
+    ``degraded`` / ``reason``（+ 内部用的 ``summary``：调用方负责落库）。
+
+    ``reason`` 取值：``below_threshold``（自动路径没到水位）、``nothing_to_compact``
+    （user 轮数 ≤ keep_turns 或旧段是残链）、``no_seq``（消息没有 seq，写不了水位）、
+    ``degraded``（摘要失败，已硬截断）、``None``（成功）。
+
+    ``raise_quota=True``：额度不足**不**降级而是抛 ``insufficient_quota``。手动压缩
+    是用户主动点的动作，「额度不够」必须走既有的 429 映射，而不是偷偷把历史截掉。
+    自动路径保持降级（run 不能因为压缩失败整体 500，§5.5-4）。
+
+    ``thinking`` 是**本次 run 的思考强度覆盖**：压缩轮也是一次真实上游调用，必须与
+    常规轮用同一个档位，否则「这次 run 用 high」在压缩时变成上游默认。
     """
     limit = agent_context.context_limit(model)
-    if not agent_context.needs_compaction(prompt_tokens, conversation, limit):
-        return conversation, False
+    before = _context_size(prompt_tokens, conversation)
+    if not force and not agent_context.needs_compaction(
+        prompt_tokens, conversation, limit
+    ):
+        return conversation, _compaction_result("below_threshold", before)
 
     head = 0
     while head < len(conversation) and conversation[head].get("role") in (
@@ -1050,19 +1102,27 @@ async def _compact_context(
         "developer",
     ):
         head += 1
-    older, recent = agent_context.plan_compaction(
-        conversation[head:], agent_context.configured_keep_turns()
-    )
+    # 上一份摘要：既用于「多次压缩必须累积」，也用于下面的保留窗口回退。
+    previous_summary = agent_context.existing_summary(conversation)
+
+    keep_turns = agent_context.configured_keep_turns()
+    older, recent = agent_context.plan_compaction(conversation[head:], keep_turns)
+    if not older and previous_summary and keep_turns > 1:
+        # 已经压过一次：近段就是上一次保留下来的 N 轮，长 run 再顶到水位时按 N 轮切
+        # 永远切不出来（切点会落在下标 0）。把窗口缩到 1 轮再试——它只压「上次刻意
+        # 留着的那几轮最近原文」，切点仍落在 user 之前，工具链不会被切开。
+        # 只在有摘要时回退：首次压缩仍然遵守「轮数 ≤ keep_turns 就不压」的契约。
+        older, recent = agent_context.plan_compaction(conversation[head:], 1)
     if not older:
         # 切不出来（轮数不够 / 旧段本身是残链）：宁可不压，也不切一条坏历史。
-        return conversation, False
+        return conversation, _compaction_result("nothing_to_compact", before)
 
     upto_seq = _last_seq(older)
     if upto_seq is None:
         # 契约把压缩限定在「消息带 seq」的会话化调用上：没有 seq 就写不了
         # ``summary_upto_seq``，摘要会在下一轮被重新发一遍全量历史，等于白花钱。
         # 这里也不硬截断——没有 seq 的场景（旧的无状态调用）不该被静默丢历史。
-        return conversation, False
+        return conversation, _compaction_result("no_seq", before)
 
     summary_text = ""
     for attempt in range(COMPACT_ATTEMPTS):
@@ -1078,9 +1138,18 @@ async def _compact_context(
                 roles=roles,
                 request_id=request_id,
                 snapshot=snapshot,
+                previous_summary=previous_summary,
+                thinking=thinking,
             )
             break
         except Exception as exc:  # noqa: BLE001 - 压缩失败必须降级，不能打挂 run
+            if (
+                raise_quota
+                and isinstance(exc, AgentError)
+                and exc.code == "insufficient_quota"
+            ):
+                # 额度不足不是瞬态故障：重试没意义，而且手动端点必须如实回 429。
+                raise
             _logger.warning(
                 "ai agent compaction attempt %s failed: %s",
                 attempt + 1,
@@ -1089,23 +1158,46 @@ async def _compact_context(
 
     if not summary_text:
         _logger.warning("ai agent compaction degraded to hard truncate")
-        return _hard_truncate(conversation, limit), True
+        rebuilt = _hard_truncate(conversation, limit)
+        result = {
+            "compacted": True,
+            "upto_seq": upto_seq,
+            "tokens_before": before,
+            "tokens_after": agent_context.estimate_tokens(rebuilt),
+            "degraded": True,
+            "reason": "degraded",
+            "summary": None,
+        }
+        return rebuilt, result
 
     rebuilt = agent_context.build_messages(SYSTEM_PROMPT, summary_text, recent, [])
     # 场景说明与参考段也是 system：重建时必须原样带回去，否则压缩一次就把
     # 「只读」与「这些是参考内容」的护栏从上下文里抹掉了。
+    # 旧摘要不带：新摘要已经是累积的（见 previous_summary），再叠一条只会白占窗口，
+    # 还会让模型看到两段互相覆盖的「更早部分」。
     extras = [
         dict(item)
         for item in conversation[1:head]
         if item.get("role") in ("system", "developer")
+        and not (
+            isinstance(item.get("content"), str)
+            and item["content"].startswith(agent_context.SUMMARY_HEADER)
+        )
     ]
     if extras:
         rebuilt = [rebuilt[0], *extras, *rebuilt[1:]]
     # 摘要之后仍超限（旧段本身很小但最近 N 轮就很大）：截断补齐（§5.5-3）。
     if agent_context.needs_compaction(None, rebuilt, limit):
         rebuilt = _hard_truncate(rebuilt, limit)
-    await _emit(on_summary, summary_text, upto_seq)
-    return rebuilt, True
+    return rebuilt, {
+        "compacted": True,
+        "upto_seq": upto_seq,
+        "tokens_before": before,
+        "tokens_after": agent_context.estimate_tokens(rebuilt),
+        "degraded": False,
+        "reason": None,
+        "summary": summary_text,
+    }
 
 
 def _hard_truncate(conversation: list[dict], limit: int) -> list[dict]:
@@ -1116,7 +1208,7 @@ def _hard_truncate(conversation: list[dict], limit: int) -> list[dict]:
 async def _maybe_compact(
     *,
     conversation: list[dict],
-    compacted: bool,
+    attempts: int,
     model: str,
     candidates: list[dict],
     user_oid: str,
@@ -1125,16 +1217,25 @@ async def _maybe_compact(
     snapshot: str | None,
     prompt_tokens: int | None,
     on_summary,
-) -> tuple[list[dict], bool]:
-    """压缩判定的兜底外壳：全链路异常不外溢（§5.5-4）。
+    on_compaction=None,
+    thinking: str | None = None,
+) -> tuple[list[dict], dict]:
+    """自动路径的兜底外壳：全链路异常不外溢（§5.5-4），并限制单 run 压缩次数。
 
-    返回未改动的对话 + ``True``：这次尝试算「用掉了唯一一次机会」，避免每轮都在
-    同一个坏输入上重试（既贵又可能把上下文切碎）。
+    返回 ``(对话, 结果)``。调用方只在 ``result["compacted"]`` 或 ``reason == "error"``
+    时给 ``attempts`` 加一：没到水位/切不出来不该消耗次数，否则一次「历史还不够长」
+    的 run 会被几次空判定耗光配额。
     """
-    if compacted:
-        return conversation, True
+    limit = MAX_COMPACTIONS_PER_RUN
+    if attempts >= limit:
+        _logger.info(
+            "ai agent compaction limit reached (%s) for run %s", limit, run_id
+        )
+        return conversation, _compaction_result(
+            "limit_reached", _context_size(prompt_tokens, conversation)
+        )
     try:
-        return await _compact_context(
+        rebuilt, result = await compact_history(
             conversation=conversation,
             model=model,
             candidates=candidates,
@@ -1143,11 +1244,22 @@ async def _maybe_compact(
             request_id=run_id,
             snapshot=snapshot,
             prompt_tokens=prompt_tokens,
-            on_summary=on_summary,
+            force=False,
+            thinking=thinking,
         )
     except Exception:  # noqa: BLE001 - 压缩是旁路，不能打挂 run
         _logger.warning("ai agent context compaction failed", exc_info=True)
-        return conversation, True
+        return conversation, _compaction_result(
+            "error", _context_size(prompt_tokens, conversation)
+        )
+
+    if result["compacted"]:
+        # 摘要落库（run 侧写 summary + summary_upto_seq）；降级时没有摘要可写，
+        # 但仍要通知调用方：水位变了，且要补一条「降级」事实。
+        if result.get("summary"):
+            await _emit(on_summary, result["summary"], result["upto_seq"])
+        await _emit(on_compaction, result)
+    return rebuilt, result
 
 
 async def _summarize_history(
@@ -1160,12 +1272,29 @@ async def _summarize_history(
     roles,
     request_id: str,
     snapshot: str | None,
+    previous_summary: str = "",
+    thinking: str | None = None,
 ) -> str:
     """摘要调用：计费照扣、审计 ``purpose='compact'``、``round_no=NULL``。
 
     契约 §5.4：压缩是**用户额度**里的真实成本，但不计入 run 的 token 预算（省下来
     的上下文还没用上就先被预算掐死，等于白花钱）。
+
+    ``previous_summary`` 非空时作为**旧段的第一条**一起喂给摘要器：多次压缩要累积，
+    新摘要必须包含上一份摘要的结论（落库只有一个 ``summary`` 槽位）。
+
+    ``thinking`` 与常规轮同一个档位：压缩轮也是真实上游调用，「按次覆盖」必须贯穿
+    整个 run（审计里的 ``purpose='compact'`` 行记录的也是同一次覆盖后的模型）。
     """
+    items = list(older)
+    if previous_summary:
+        items.insert(
+            0,
+            {
+                "role": "system",
+                "content": agent_context.SUMMARY_HEADER + previous_summary,
+            },
+        )
 
     async def complete(prompt_messages: list[dict], max_tokens: int) -> str:
         if _billable(candidates[0]):
@@ -1186,7 +1315,9 @@ async def _summarize_history(
         }
         started = time.monotonic()
         try:
-            result, entry, cache_key = await _call_upstream(payload, candidates)
+            result, entry, cache_key = await _call_upstream(
+                payload, candidates, thinking=thinking
+            )
         except AgentError as exc:
             last_entry = getattr(exc, "entry", None) or (
                 candidates[0] if candidates else None
@@ -1209,7 +1340,11 @@ async def _summarize_history(
 
         text, _calls, _thought = _message_of(result)
         tokens = ai_usage.token_fields(result.get("usage"))
-        units = ai_usage.units_from_total_tokens(tokens["total_tokens"])
+        # 压缩调用的 AF：与常规轮同一个公式（千 token × 倍率），估算兜底同源。
+        units = ai_usage.af_units(
+            _round_tokens(tokens, payload, text),
+            await model_rates.resolve_rate(model),
+        )
         if _billable(entry):
             try:
                 await quota.consume(user_oid, "chat", units, roles=roles)
@@ -1236,7 +1371,53 @@ async def _summarize_history(
         )
         return text
 
-    return await agent_context.compact(older, recent, complete=complete)
+    return await agent_context.compact(items, recent, complete=complete)
+
+
+async def compact_messages(
+    *,
+    user: dict,
+    messages: list[dict],
+    summary: str | None = None,
+    model: str | None = None,
+    request_id: str | None = None,
+    prompt_tokens: int | None = None,
+    scene: str | None = None,
+    force: bool = True,
+) -> tuple[list[dict], dict]:
+    """**手动压缩**的公开入口：把一段已回放的历史压成摘要上下文。
+
+    与 run 内自动压缩共用 :func:`compact_history`（只有 ``force`` 不同），所以切点
+    规则、残链防御、计费/审计口径、降级策略全都只有一份实现。落库留给调用方：
+    本函数不碰会话表（执行器保持「不写库」这条边界），返回值里带 ``summary``。
+
+    ``messages`` 必须是 ``run_queue._replay`` 的形状（带 ``seq``）：没有 seq 就写不了
+    ``summary_upto_seq``，结果会是 ``compacted=False / reason="no_seq"``。
+    """
+    user_oid = str(user.get("id") or "")
+    snapshot = audit.roles_snapshot(user.get("per"))
+    client_messages = _validate_messages(messages)
+    scene_prompt = SCENE_PROMPTS.get(str(scene)) if scene else None
+    conversation = agent_context.build_messages(
+        SYSTEM_PROMPT,
+        summary,
+        client_messages,
+        [],
+        scene_prompt=scene_prompt,
+    )
+    chosen, candidates = await _select_model(user_oid, model)
+    return await compact_history(
+        conversation=conversation,
+        model=chosen,
+        candidates=candidates,
+        user_oid=user_oid,
+        roles=user.get("per"),
+        request_id=request_id or uuid4().hex,
+        snapshot=snapshot,
+        prompt_tokens=prompt_tokens,
+        force=force,
+        raise_quota=True,
+    )
 
 
 async def run(
@@ -1252,6 +1433,8 @@ async def run(
     on_summary: Callable[[str, int], None] | None = None,
     scene: str | None = None,
     reference: str | None = None,
+    context_tokens: int | None = None,
+    on_compaction: Callable | None = None,
 ) -> dict:
     """跑完一次 agent 会话。
 
@@ -1259,12 +1442,21 @@ async def run(
 
     会话化之后本函数仍是**纯执行器**：不写会话表、不分配 ``seq``。每轮收尾通过
     ``on_round`` 交出去（落库/计费口径都在那一侧），压缩结果通过 ``on_summary``
-    交出去（``upto_seq`` = 摘要覆盖到哪条消息）。
+    交出去（``upto_seq`` = 摘要覆盖到哪条消息）；``on_compaction`` 额外收到压缩的
+    完整结果（tokens 前后、是否降级），供落库侧刷新会话水位与降级标记。
+
+    ``context_tokens`` 是会话行记录的上一次 prompt 规模：**第一个上游请求之前**的
+    预检用它判水位，避免新 run 先把全量历史发一遍再压缩。``None`` 时退回估算。
 
     ``scene`` 非空 = 只读场景（终端 / 文件编辑）：工具声明裁到 ``kind == READ``，
     并在 system 段追加一句场景说明。``reference`` 是**已脱敏**的参考内容（终端
     输出 / 文件片段），拼成 system 与历史之间的一条 system 消息——它不落
     ``AI_MESSAGES``，只随 prompt 留存一起留档。
+
+    ``model`` / ``thinking`` 是**本次 run 的执行参数**（调用方可以从会话行取，也可
+    以按次覆盖）：同一个档位贯穿整个 run 的所有上游调用——常规轮
+    （``_call_upstream``）与压缩轮（``_summarize_history``）都读同一份
+    ``thinking``，审计行记录的 ``model`` 也始终是解析后的合格 ID。
     """
     user_oid = user["id"]
     roles = user.get("per")
@@ -1324,7 +1516,29 @@ async def run(
     stop_reason: str | None = None
     # 压缩判水位优先用上一轮实测 ``prompt_tokens``（估算只是下界）。
     last_prompt_tokens: int | None = None
-    compacted = False
+    # 单 run 压缩次数：成功/降级/内部异常各算一次（上限见 MAX_COMPACTIONS_PER_RUN）。
+    compactions = 0
+
+    # 0) 请求前预检：用会话行记录的 prompt 规模判一次水位。不做这一步的话，新 run
+    #    的第一个请求会把「已经 90% 占用的全量历史」整段发上去，压完全白花一次
+    #    （而且可能直接被上游 400 掉）。``context_tokens`` 缺省时退回估算。
+    if on_summary is not None:
+        conversation, preflight = await _maybe_compact(
+            conversation=conversation,
+            attempts=compactions,
+            model=chosen,
+            candidates=candidates,
+            user_oid=user_oid,
+            roles=roles,
+            run_id=run_id,
+            snapshot=snapshot,
+            prompt_tokens=context_tokens,
+            on_summary=on_summary,
+            on_compaction=on_compaction,
+            thinking=thinking,
+        )
+        if preflight.get("compacted") or preflight.get("reason") == "error":
+            compactions += 1
 
     for round_no in range(1, max_iterations + 1):
         # 0) 取消 / 中断：轮边界判一次（工具循环里每次执行前再判）。
@@ -1458,7 +1672,6 @@ async def run(
 
         rounds += 1
         tokens = ai_usage.token_fields(result.get("usage"))
-        units = ai_usage.units_from_total_tokens(tokens["total_tokens"])
         usage = _add_usage(usage, tokens)
 
         # 先解析再记账：响应体形状不对时，这一轮应该是一行 error（没产出任何
@@ -1484,8 +1697,14 @@ async def run(
             exc.audited = True  # type: ignore[attr-defined]
             raise
 
-        total_tokens += _round_tokens(tokens, payload, content)
+        round_tokens = _round_tokens(tokens, payload, content)
+        total_tokens += round_tokens
         last_prompt_tokens = tokens.get("prompt_tokens")
+        # 本轮的 AF：与预算闸同一口径（实测 → prompt+completion → 字符估算），
+        # 再乘模型倍率。放在解析之后是为了让估算也能算上本轮回答的字符数。
+        units = ai_usage.af_units(
+            round_tokens, await model_rates.resolve_rate(chosen)
+        )
 
         if _billable(entry):
             # 后置扣减是 best-effort：回写失败不能丢掉已经生成的答案。
@@ -1530,11 +1749,11 @@ async def run(
                     units=units,
                 ),
             )
-            # 最后一轮也可能把水位顶到阈值：收尾后仍判一次（每 run 最多压一次）。
-            if on_summary is not None and not compacted:
-                conversation, compacted = await _maybe_compact(
+            # 最后一轮也可能把水位顶到阈值：收尾后仍判一次（单 run 有次数上限）。
+            if on_summary is not None:
+                conversation, info = await _maybe_compact(
                     conversation=conversation,
-                    compacted=compacted,
+                    attempts=compactions,
                     model=chosen,
                     candidates=candidates,
                     user_oid=user_oid,
@@ -1543,7 +1762,11 @@ async def run(
                     snapshot=snapshot,
                     prompt_tokens=last_prompt_tokens,
                     on_summary=on_summary,
+                    on_compaction=on_compaction,
+                    thinking=thinking,
                 )
+                if info.get("compacted") or info.get("reason") == "error":
+                    compactions += 1
             stop_reason = None
             break
 
@@ -1697,10 +1920,10 @@ async def run(
             stop_reason = "cancelled"
             break
 
-        if on_summary is not None and not compacted:
-            conversation, compacted = await _maybe_compact(
+        if on_summary is not None:
+            conversation, info = await _maybe_compact(
                 conversation=conversation,
-                compacted=compacted,
+                attempts=compactions,
                 model=chosen,
                 candidates=candidates,
                 user_oid=user_oid,
@@ -1709,7 +1932,11 @@ async def run(
                 snapshot=snapshot,
                 prompt_tokens=last_prompt_tokens,
                 on_summary=on_summary,
+                on_compaction=on_compaction,
+                thinking=thinking,
             )
+            if info.get("compacted") or info.get("reason") == "error":
+                compactions += 1
     else:
         # for-else：跑满 max_iterations 仍在要求工具 → 截断。
         stop_reason = "max_iterations"

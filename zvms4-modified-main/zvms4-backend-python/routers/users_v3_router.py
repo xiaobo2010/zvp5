@@ -32,7 +32,7 @@ from util.object_id import (
 from util.permission.user import credential_change_forbidden, role_change_forbidden
 from util.user import get_user_display_name, user_profile
 from utils import validate_object_id
-from util.validation import validate_number, validate_student_name
+from util.validation import validate_student_name
 
 router = APIRouter()
 
@@ -145,10 +145,15 @@ async def modify_user_student_id_v3(
     """
     修改用户的学号（``users.business_id``，登录名）。
 
-    Permission: admin only。校验三层：``validate_number`` 格式闸（年级/班号/
-    座号区间）+ 唯一性闸（重复 → **409**，与创建用户的既有契约一致）+
-    数据库唯一约束 ``uq_users_business_id`` 兜底（并发窗口下的写入被约束拒绝时
-    同样转 409，不再冒泡成 500）。
+    Permission: admin only。**不校验学号格式**，只保三件事：非空 / 长度不超过
+    列宽 / 唯一。格式校验与建号口共用同一套轻校验
+    :func:`_normalize_student_id`（strip、≤32 字符、禁空白与控制字符）——班级
+    自定的编号规则不该被平台的 8 位数字约定拦住。
+
+    校验三层：轻校验（失败 → **400**，文案见 :func:`_normalize_student_id`）+
+    唯一性闸（重复 → **409**，与创建用户的既有契约一致）+ 数据库唯一约束
+    ``uq_users_business_id`` 兜底（并发窗口下的写入被约束拒绝时同样转 409，
+    不再冒泡成 500）。
 
     学号是登录名，改完轮换 ``session_id``（交给 repo 的写语句），旧 token 立即
     失效——目标用户需用新学号重新登录，与改角色/改密码同一行为。
@@ -164,22 +169,20 @@ async def modify_user_student_id_v3(
     if target is None:
         raise HTTPException(status_code=404, detail="用户不存在")
 
-    valid, message = validate_number(payload.id)
-    if not valid:
-        raise HTTPException(status_code=400, detail=message)
+    student_id = _normalize_student_id(payload.id)
 
-    existing = await repo.find_by_business_id(payload.id)
+    existing = await repo.find_by_business_id(student_id)
     if existing is not None and str(existing["_id"]) != str(oid):
         raise HTTPException(status_code=409, detail="学号已存在")
 
     try:
-        await repo.set_business_id(str(oid), payload.id)
+        await repo.set_business_id(str(oid), student_id)
     except IntegrityError:
         # 预检与写入之间的并发抢占：唯一约束是最终裁决者。
         raise HTTPException(status_code=409, detail="学号已存在")
 
     log.with_text(
-        f"管理员 {await get_user_display_name(user['id'])} 将用户 {target['name']} 的学号由 {target['id']} 改为 {payload.id}",
+        f"管理员 {await get_user_display_name(user['id'])} 将用户 {target['name']} 的学号由 {target['id']} 改为 {student_id}",
         type="student_id_change",
     )
     await log.insert_log()
@@ -359,7 +362,7 @@ _MAX_STUDENT_ID_LEN = 32
 
 
 def _normalize_student_id(raw: str) -> str:
-    """建号口对学号的**轻校验**：只保证「存得下、查得回、能当登录名」。
+    """建号 / 改学号两处共用的**轻校验**：只保证「存得下、查得回、能当登录名」。
 
     刻意不再套 ``validate_number``（8 位纯数字 / 年份窗口 / 班号 1-25 / 座号
     1-60）：班级内建号的学号由各班级自定义编号规则，格式限制由管理员承担。
@@ -418,7 +421,8 @@ async def create_user_v3(
         raise HTTPException(status_code=400, detail=message)
 
     # 建号不套班级/年级级的学号格式闸（validate_number），只做「能存能登」轻校验。
-    # 改学号端点仍走 validate_number——那是纠错入口，格式由平台约定。
+    # 改学号端点用的是同一个 _normalize_student_id——它是纠错入口，口径必须与
+    # 建号一致，否则「建得出来却改不回去」。
     student_id = _normalize_student_id(payload.id)
 
     repo = backends.get_users_repo()

@@ -132,6 +132,11 @@ class OracleSystemSettingsRepo:
                         updated_by=actor_oid,
                         updated_at=now,
                     )
+                    # ``NO_PARALLEL`` 是正确性不是调优：ADB 会话带
+                    # ``pdml_enabled=YES``，UPDATE 可能被自动并行，紧接着
+                    # （rowcount=0 时）对同一张表的 INSERT 就撞 ``ORA-12838``。
+                    # 同款修法见 :mod:`db.repos.oracle.temp_passwords`。
+                    .prefix_with("/*+ NO_PARALLEL */", dialect="oracle")
                 )
                 if result.rowcount:
                     continue
@@ -250,6 +255,10 @@ class OracleUserQuotaOverridesRepo:
                 return
 
             now = _now()
+            # ``NO_PARALLEL`` 是正确性不是调优：ADB 会话带 ``pdml_enabled=YES``，
+            # 这条 UPDATE 会被自动并行，紧接着（rowcount=0 时）对同一张表的
+            # INSERT 就撞 ``ORA-12838``。同款修法见
+            # :mod:`db.repos.oracle.temp_passwords`。
             result = await session.execute(
                 update(quotas_tbl)
                 .where(quotas_tbl.c.user_oid == target)
@@ -259,6 +268,7 @@ class OracleUserQuotaOverridesRepo:
                     updated_by=actor_oid,
                     updated_at=now,
                 )
+                .prefix_with("/*+ NO_PARALLEL */", dialect="oracle")
             )
             if not result.rowcount:
                 try:

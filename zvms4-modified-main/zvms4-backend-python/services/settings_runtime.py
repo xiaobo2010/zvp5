@@ -136,6 +136,23 @@ def _validate_rate_limit(value: Any) -> dict[str, int]:
     return out
 
 
+def _validate_compact_ratio(value: Any) -> float:
+    """压缩阈值：``0 < ratio <= 1``。数字与数字字符串都收（文本框可能回传 "0.8"）。"""
+    if isinstance(value, bool):
+        raise ValueError("压缩阈值必须是 0 到 1 之间的小数")
+    if isinstance(value, str):
+        try:
+            value = float(value.strip())
+        except (TypeError, ValueError):
+            raise ValueError("压缩阈值必须是 0 到 1 之间的小数") from None
+    if not isinstance(value, (int, float)):
+        raise ValueError("压缩阈值必须是 0 到 1 之间的小数")
+    ratio = float(value)
+    if not 0.0 < ratio <= 1.0:
+        raise ValueError("压缩阈值必须大于 0 且不超过 1")
+    return ratio
+
+
 def _validate_role_quota(value: Any) -> dict[str, dict[str, int]]:
     from services.ai import config as ai_config
 
@@ -228,6 +245,16 @@ def _build_registry() -> None:
             description="未在 AI_MODEL_CONTEXT_LIMITS 中列出的模型使用的上下文窗口（token）",
             min=1000,
             max=2_000_000,
+        ),
+        SettingSpec(
+            key=agent_context.RUNTIME_COMPACT_RATIO,
+            # 类型只用于展示：前端对未知类型回落到文本框，值由 coerce 严格校验。
+            type="float",
+            default=float(agent_context.DEFAULT_COMPACT_RATIO),
+            group=GROUP_AI,
+            label="上下文压缩阈值",
+            description="会话占用达到窗口的该比例时自动压缩（0~1 的小数，如 0.8 表示 80%）",
+            coerce=_validate_compact_ratio,
         ),
         SettingSpec(
             key="ai.agent_token_budget",
