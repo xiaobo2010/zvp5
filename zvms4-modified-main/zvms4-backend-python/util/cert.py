@@ -346,7 +346,8 @@ async def validate_by_cert(
     Authenticate a login credential.
 
     Returns `(token, weak_password)`. When the proven password is weak
-    (initial state, or failing the strength rule) and a long-term token is
+    (initial state, failing the strength rule, or equal to the account's student
+    number — the initial password) and a long-term token is
     requested, only a 5-minute temporary token is issued so the client is
     forced through the password-change loop; the `weak_password` flag lets
     the frontend react accordingly. Short-term requests stay allowed so
@@ -382,7 +383,17 @@ async def validate_by_cert(
             eligibility = user["eligibility"]
         else:
             eligibility = []
-        weak = user["password"] is None or pwd_strength(auth_field["password"]) < 3
+        # 「密码就是学号」（建号初始密码）→ 无条件走强制改密，不看 pwd_strength：
+        # 学号规则放宽后班级可能取到 8-14 位、≥3 字符类的值（如 ``Abc12345``），
+        # 形状判定会把它当强密码，从而跳过强制改密。旧规则下 8 位纯数字恒为 1 类、
+        # 必然 <3，所以这条前置判定只是把旧语义显式化，对任意学号形状都成立。
+        # 精确字符串比较即可：business_id 落库前已 strip。
+        password_is_student_id = auth_field["password"] == user.get("id")
+        weak = (
+            user["password"] is None
+            or password_is_student_id
+            or pwd_strength(auth_field["password"]) < 3
+        )
         if weak:
             return (
                 jwt_encode(id, eligibility, await get_user_permissions(user), "short",

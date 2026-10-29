@@ -196,13 +196,14 @@ def _update_values(
     title: str | None,
     status: str | None,
     thinking: str | None,
+    model: str | None,
     at: datetime,
 ) -> dict[str, Any]:
-    """只收「传了的字段」；``None`` = 不改（``thinking`` 的清空走
-    ``clear_thinking``，见 :meth:`OracleAIConversationsRepo.update`）。
+    """只收「传了的字段」；``None`` = 不改（``thinking`` / ``model`` 的清空走各自的
+    ``clear_*`` 开关，见 :meth:`OracleAIConversationsRepo.update`）。
 
-    模型不在这张表里：它在建会话时定死（R2），PATCH 想改就直接 409，不该走到
-    仓储层。
+    ``model`` 的准入（只在空会话上放行）是服务层的判断：仓储只负责把值写下去，
+    不重复一遍业务规则——两处各判一次，迟早有一处先漂。
     """
     values: dict[str, Any] = {}
     if title is not None:
@@ -211,8 +212,10 @@ def _update_values(
         values["status"] = status
     if thinking is not None:
         values["thinking"] = thinking
+    if model is not None:
+        values["model"] = model
     if values:
-        # 改名/归档/调思考强度都算「这条会话动过」，列表按 updated_at 排序。
+        # 改名/归档/调思考强度/空会话改模型都算「这条会话动过」，列表按 updated_at 排序。
         values["updated_at"] = at
     return values
 
@@ -383,6 +386,7 @@ def _message_columns() -> tuple[Any, ...]:
         tbl.c.seq,
         tbl.c.role,
         tbl.c.content,
+        tbl.c.reasoning,
         tbl.c.tool_calls,
         tbl.c.tool_call_id,
         tbl.c.tool_name,
@@ -434,6 +438,8 @@ def _insert_message_stmt(*, seq: int, created_at: datetime, **fields: Any):    r
         seq=seq,
         role=fields["role"],
         content=fields.get("content"),
+        # 思考过程：只对 assistant 行有值；tool/user 行留 NULL。
+        reasoning=fields.get("reasoning"),
         tool_calls=fields.get("tool_calls"),
         tool_call_id=fields.get("tool_call_id"),
         tool_name=fields.get("tool_name"),
@@ -513,6 +519,7 @@ def _message_row(mapping: Any) -> Row:
         "seq": int(mapping["seq"]),
         "role": mapping["role"],
         "content": mapping["content"],
+        "reasoning": mapping["reasoning"],
         "tool_calls": mapping["tool_calls"],
         "tool_call_id": mapping["tool_call_id"],
         "tool_name": mapping["tool_name"],
@@ -625,17 +632,25 @@ class OracleAIConversationsRepo:
         status: str | None = None,
         thinking: str | None = None,
         clear_thinking: bool = False,
+        model: str | None = None,
+        clear_model: bool = False,
     ) -> bool:
-        """改名 / 归档 / 调思考强度；``False`` = 会话不存在或不属于此人。
+        """改名 / 归档 / 调思考强度 / 空会话改模型；``False`` = 会话不存在或不属于此人。
 
-        ``clear_thinking`` 是「显式清空思考强度（回到上游默认）」的专用开关：
-        ``thinking=None`` 在别处表示「不改」，两种意图必须能分开。
+        ``clear_thinking`` / ``clear_model`` 是「显式清空（回到上游默认）」的专用开
+        关：``None`` 在别处表示「不改」，两种意图必须能分开。
+
+        ``model`` 的准入条件（``message_count == 0``）由
+        :func:`services.ai.conversations.update` 判定——仓储不重复业务规则。
         """
         values = _update_values(
-            title=title, status=status, thinking=thinking, at=_now()
+            title=title, status=status, thinking=thinking, model=model, at=_now()
         )
         if clear_thinking:
             values["thinking"] = None
+            values.setdefault("updated_at", _now())
+        if clear_model:
+            values["model"] = None
             values.setdefault("updated_at", _now())
         if not values:
             return True
@@ -780,6 +795,7 @@ class OracleAIMessagesRepo:
                         "seq": seq,
                         "role": item["role"],
                         "content": item.get("content"),
+                        "reasoning": item.get("reasoning"),
                         "tool_calls": item.get("tool_calls"),
                         "tool_call_id": item.get("tool_call_id"),
                         "tool_name": item.get("tool_name"),

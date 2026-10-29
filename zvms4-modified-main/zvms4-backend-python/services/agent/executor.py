@@ -273,8 +273,13 @@ async def _call_upstream(
     )
 
 
-def _message_of(result: object) -> tuple[str, list[dict]]:
-    """从上游响应里取第一条 choice 的 content / tool_calls。"""
+def _message_of(result: object) -> tuple[str, list[dict], str | None]:
+    """从上游响应里取第一条 choice 的 content / tool_calls / reasoning_content。
+
+    思考过程只在部分上游出现（OpenAI 兼容的 ``reasoning_content``、智谱 GLM 同
+    名字段）；缺失、非字符串、全空白一律归一成 ``None``——空串会让前端渲染出一
+    个「空思考块」，和「这一轮没思考」是两件事。
+    """
     if not isinstance(result, dict):
         raise AgentError(
             "AI_UPSTREAM_ERROR", "upstream returned an unexpected payload", 502
@@ -291,9 +296,12 @@ def _message_of(result: object) -> tuple[str, list[dict]]:
         )
     content = message.get("content")
     calls = message.get("tool_calls")
+    reasoning = message.get("reasoning_content")
+    thought = reasoning.strip() if isinstance(reasoning, str) else ""
     return (
         content if isinstance(content, str) else "",
         [call for call in calls if isinstance(call, dict)] if isinstance(calls, list) else [],
+        thought or None,
     )
 
 
@@ -974,6 +982,7 @@ def _round_payload(
     *,
     round_no: int,
     content: str,
+    reasoning: str | None,
     finish_reason: str | None,
     tool_calls: list[dict],
     tools: list[dict],
@@ -983,12 +992,14 @@ def _round_payload(
     """一轮收尾交给 ``on_round`` 的载荷（executor 自己**不写库**）。
 
     只会出现本轮的 usage：落库侧要把它写到该轮的 assistant/tool 行上，累计值由
-    会话行自己加——两处都算累计会重复。
+    会话行自己加——两处都算累计会重复。``reasoning`` 是上游这一轮的思考过程
+    （``None`` = 上游没返回），只属于 assistant 那一行。
     """
     return {
         "round_no": round_no,
         "assistant": {
             "content": content,
+            "reasoning": reasoning,
             "tool_calls": tool_calls,
             "finish_reason": finish_reason,
         },
@@ -1196,7 +1207,7 @@ async def _summarize_history(
             )
             raise
 
-        text, _calls = _message_of(result)
+        text, _calls, _thought = _message_of(result)
         tokens = ai_usage.token_fields(result.get("usage"))
         units = ai_usage.units_from_total_tokens(tokens["total_tokens"])
         if _billable(entry):
@@ -1453,7 +1464,7 @@ async def run(
         # 先解析再记账：响应体形状不对时，这一轮应该是一行 error（没产出任何
         # 可用结果），而不是「success + 答案丢失」。
         try:
-            content, tool_calls = _message_of(result)
+            content, tool_calls, reasoning = _message_of(result)
         except AgentError as exc:
             await _audit_round(
                 user_oid=user_oid,
@@ -1511,6 +1522,7 @@ async def run(
                 _round_payload(
                     round_no=round_no,
                     content=content,
+                    reasoning=reasoning,
                     finish_reason=finish_reason,
                     tool_calls=[],
                     tools=[],
@@ -1542,6 +1554,7 @@ async def run(
                 _round_payload(
                     round_no=round_no,
                     content=content,
+                    reasoning=reasoning,
                     finish_reason=finish_reason,
                     tool_calls=tool_calls,
                     tools=[],
@@ -1670,6 +1683,7 @@ async def run(
             _round_payload(
                 round_no=round_no,
                 content=content,
+                reasoning=reasoning,
                 finish_reason=finish_reason,
                 tool_calls=tool_calls,
                 tools=handled_tools,

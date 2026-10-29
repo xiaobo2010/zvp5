@@ -900,6 +900,10 @@ RUN_STATUS_CK = (
     "status in ('queued','running','succeeded','failed','cancelled','interrupted')"
 )
 
+# V049 给 ai_messages 补的思考过程。与 V046 的 THINKING / V048 的 SCENE 同理：
+# V035 建表时还没有它，比较那份历史文件时摘掉。
+LATER_MESSAGE_COLUMNS = {"reasoning"}
+
 
 def _conversations() -> dict:
     return _parsed(_migration(CONVERSATIONS_FILE))
@@ -935,6 +939,9 @@ def test_conversations_migration_matches_models_and_v001() -> None:
         if table == "ai_conversations":
             # V046 的 THINKING / V048 的 SCENE：比较 V035 当时的形状时都摘掉。
             expected = _without_columns(expected, LATER_CONVERSATION_COLUMNS)
+        if table == "ai_messages":
+            # V049 的 REASONING：同理，V035 建表时还没有它。
+            expected = _without_columns(expected, LATER_MESSAGE_COLUMNS)
         assert migration["tables"][table] == _without_created_at_default(expected), table
         # 全新实例走 V001，一次就拿到同一形状。
         assert v001["tables"][table] == modeled["tables"][table], table

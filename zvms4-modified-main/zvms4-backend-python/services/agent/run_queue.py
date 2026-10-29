@@ -32,12 +32,11 @@ import settings
 
 from db import backends
 from db.repos.protocols import ActiveRunConflict
-from services import log_events, violation_guard
+from services import violation_guard
 from services.agent import executor, proposal as proposal_service
 from services.agent.tools import WRITE
 from services.agent.tool_impl import AgentError
-from services.ai import audit, conversations, moderation, prompt_audit, safety_guard
-from typings.log import ZVMSLog
+from services.ai import conversations, moderation, prompt_audit, safety_guard
 from util import agent_unlock
 
 _logger = logging.getLogger(__name__)
@@ -210,38 +209,6 @@ def run_view(row: Mapping[str, Any]) -> dict:
 # 入队（§2.3 提交事务的调用侧）
 # ---------------------------------------------------------------------------
 
-async def _audit_admin_bypass(
-    user: Mapping[str, Any], *, http_status: int
-) -> None:
-    """管理员旁路审核的留痕：网关流水 + 平台日志（``ai_moderation_unrestricted``）。
-
-    旁路不是「审核通过」，是「审核没跑」：事后必须能把这段时间的 run 与正常
-    放行区分开。两处写入都是旁路，失败不改变提交结论。
-    """
-    await audit.record(
-        user_oid=str(user.get("id") or ""),
-        capability="chat",
-        endpoint=audit.ENDPOINT_AGENT,
-        status="warning",
-        http_status=http_status,
-        error_code="AI_AGENT_MODERATION_SKIPPED",
-        latency_ms=0,
-        request_id=uuid4().hex,
-        purpose=executor.PURPOSE_AGENT,
-        roles_snapshot=audit.roles_snapshot(user.get("per")),
-    )
-    try:
-        await ZVMSLog(
-            "",
-            str(user.get("id") or ""),
-            "管理员提交 agent run，按角色旁路内容审核",
-            type=log_events.AI_MODERATION_UNRESTRICTED,
-            level="info",
-        ).insert_log()
-    except Exception:  # noqa: BLE001 - 平台日志失败不改变提交结论
-        _logger.exception("写入 ai_moderation_unrestricted 日志失败")
-
-
 def is_admin(user: Mapping[str, Any] | dict) -> bool:
     """管理员天然旁路内容审核（不再有「无限制模式」开关）。"""
     per = (user or {}).get("per")
@@ -348,10 +315,10 @@ async def submit(
                 422,
             )
 
-    if is_admin(user):
-        # 管理员天然旁路：不是「审核通过」，是「审核没跑」，必须留一行痕迹。
-        await _audit_admin_bypass(user, http_status=202)
-    else:
+    # 管理员天然旁路审核（不再是「无限制模式」开关）：审核分支根本不进入，也就
+    # 没有「跳过了审核」这条记录——正常的管理员 run 只留 executor 每轮的审计行
+    # （``roles_snapshot`` 带 admin，事后仍能区分是谁提的）。
+    if not is_admin(user):
         audit_oid: str | None = None
         verdict = moderation.check(text)
         if verdict.hit:
@@ -1166,6 +1133,8 @@ def _round_rows(
         else []
     )
     content = str(assistant.get("content") or "")
+    raw_reasoning = assistant.get("reasoning")
+    reasoning = raw_reasoning if isinstance(raw_reasoning, str) and raw_reasoning else None
     has_usage = any(value is not None for value in tokens.values())
     if not content and not calls and not tools and not has_usage:
         # 空轮（超时/超预算在工具前就截断，且没有任何产物）：不写一条空气泡；但
@@ -1178,6 +1147,9 @@ def _round_rows(
             "oid": uuid4().hex,
             "role": "assistant",
             "content": content,
+            # 思考过程只属于 assistant 行：它不参与回放（见 V049 的说明），
+            # 落库只为「刷新页面后仍能看到这一轮想了什么」。
+            "reasoning": reasoning,
             # 原文进库（§2.2）：回放时要原样交还上游，解析再序列化会改形状。
             "tool_calls": json.dumps(calls, ensure_ascii=False) if calls else None,
             # 有工具调用就记 ``tool_calls``：上游常把带工具的一轮也报成 ``stop``，

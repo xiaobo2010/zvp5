@@ -27,6 +27,7 @@ from pydantic import BaseModel
 from starlette.datastructures import UploadFile
 
 from db import backends
+from services import log_events
 from services.ai import ocr as ai_ocr
 from services.ai.routing import RouteError
 from typings.log import ZVMSLog, inject_log, xuehai_id_from
@@ -327,7 +328,7 @@ async def _log_byte_access(request: Request, user: dict | None, oid: str) -> Non
             url=request.url.path,
             user=(user or {}).get("id", ""),
             timestamp=datetime.timestamp(datetime.now()),
-            type="attachment",
+            type=log_events.ATTACHMENT_VIEW,
             xuehai_id=xuehai_id_from(request),
         )
         log.with_text(f"读取附件字节 {oid}")
@@ -458,7 +459,10 @@ async def upload_attachment(
     except Exception:
         existing = None
     if existing is not None:
-        log.with_text(f"用户 {user['id']} 命中去重附件 {existing.get('_id')}")
+        log.with_text(
+            f"用户 {user['id']} 命中去重附件 {existing.get('_id')}",
+            type=log_events.ATTACHMENT_UPLOAD,
+        )
         await log.insert_log()
         return {
             "status": "ok",
@@ -497,7 +501,9 @@ async def upload_attachment(
     await repo.add_event(oid, user["id"], "upload", None, "stored", "")
     record_upload(user["id"], processed.size)
 
-    log.with_text(f"用户 {user['id']} 上传附件 {oid}")
+    log.with_text(
+        f"用户 {user['id']} 上传附件 {oid}", type=log_events.ATTACHMENT_UPLOAD
+    )
     await log.insert_log()
 
     row = await repo.get_meta(oid)
@@ -740,7 +746,10 @@ async def get_attachment_audit(
             "events_limit": AUDIT_EVENT_LIMIT,
         }
     )
-    log.with_text(f"用户 {user['id']} 查看附件审计详情 {oid}")
+    log.with_text(
+        f"用户 {user['id']} 查看附件审计详情 {oid}",
+        type=log_events.ATTACHMENT_AUDIT,
+    )
     await log.insert_log()
     return {"status": "ok", "code": 200, "data": data}
 
@@ -792,7 +801,10 @@ async def update_attachment_status(
         payload.status,
         note,
     )
-    log.with_text(f"用户 {user['id']} 裁决附件 {oid} -> {payload.status}")
+    log.with_text(
+        f"用户 {user['id']} 裁决附件 {oid} -> {payload.status}",
+        type=log_events.ATTACHMENT_STATUS,
+    )
     await log.insert_log()
     return {
         "status": "ok",
@@ -831,7 +843,9 @@ async def create_attachment_link(
 
     url, expires_at = make_signed_url(oid, ttl)
     await repo.add_event(oid, user["id"], "link", row.get("status"), row.get("status"), "")
-    log.with_text(f"用户 {user['id']} 签发附件外链 {oid}")
+    log.with_text(
+        f"用户 {user['id']} 签发附件外链 {oid}", type=log_events.ATTACHMENT_LINK
+    )
     await log.insert_log()
     return {
         "status": "ok",
@@ -964,7 +978,10 @@ async def verify_attachment(
     await repo.add_event(
         oid, user["id"], "verify", previous, payload.decision, payload.note or ""
     )
-    log.with_text(f"用户 {user['id']} 查证附件 {oid} -> {payload.decision}")
+    log.with_text(
+        f"用户 {user['id']} 查证附件 {oid} -> {payload.decision}",
+        type=log_events.ATTACHMENT_VERIFY,
+    )
     await log.insert_log()
     return {"status": "ok", "code": 200, "data": {"status": payload.decision}}
 
@@ -991,7 +1008,9 @@ async def bind_attachment(
     await repo.add_event(
         oid, user["id"], "bind", row.get("status"), row.get("status"), payload.entity_oid
     )
-    log.with_text(f"用户 {user['id']} 绑定附件 {oid}")
+    log.with_text(
+        f"用户 {user['id']} 绑定附件 {oid}", type=log_events.ATTACHMENT_BIND
+    )
     await log.insert_log()
     return {
         "status": "ok",
@@ -1040,6 +1059,8 @@ async def delete_attachment(
     previous = row.get("status")
     await repo.soft_delete(oid)
     await repo.add_event(oid, user["id"], "delete", previous, "deleted", "")
-    log.with_text(f"用户 {user['id']} 删除附件 {oid}")
+    log.with_text(
+        f"用户 {user['id']} 删除附件 {oid}", type=log_events.ATTACHMENT_DELETE
+    )
     await log.insert_log()
     return {"status": "ok", "code": 200, "data": {"status": "deleted"}}

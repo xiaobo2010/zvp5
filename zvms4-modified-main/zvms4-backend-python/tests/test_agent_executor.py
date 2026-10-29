@@ -198,10 +198,14 @@ class ScriptedUpstream:
         return self.responses.pop(0)
 
 
-def _completion(content: str = "", *, tool_calls=None, total_tokens: int = 120) -> dict:
+def _completion(
+    content: str = "", *, tool_calls=None, total_tokens: int = 120, reasoning: str | None = None
+) -> dict:
     message: dict = {"role": "assistant", "content": content}
     if tool_calls is not None:
         message["tool_calls"] = tool_calls
+    if reasoning is not None:
+        message["reasoning_content"] = reasoning
     return {
         "choices": [{"index": 0, "message": message, "finish_reason": "stop"}],
         "usage": {
@@ -998,6 +1002,34 @@ async def test_on_round_reports_each_round_once_with_usage(monkeypatch, env) -> 
     # 最后一轮没有工具：tools 是空列表（不是缺字段）。
     assert rounds[1]["assistant"]["content"] == "找到了 1 个活动。"
     assert rounds[1]["tools"] == []
+
+
+@pytest.mark.asyncio
+async def test_on_round_carries_upstream_reasoning_content(monkeypatch, env) -> None:
+    """上游的 ``reasoning_content`` 必须原样出现在这一轮的 payload 里。
+
+    漏掉它，run 详情与消息接口就永远拿不到思考过程——「显示模型 thinking」这件事
+    只能靠当前进程的内存，刷新即丢。
+    """
+    _audit, _events, _quota, _activities, _capture = env
+    rounds: list[dict] = []
+    upstream = ScriptedUpstream(
+        [
+            _completion(
+                "",
+                tool_calls=[_tool_call("search_activities", {"query": "图书馆"})],
+                reasoning="先看活动表，再按时间排序。",
+            ),
+            _completion("无思考的回答"),
+        ]
+    )
+    monkeypatch.setattr(providers, "chat_completion", upstream)
+
+    await _run(model=MODEL, on_round=rounds.append)
+
+    assert rounds[0]["assistant"]["reasoning"] == "先看活动表，再按时间排序。"
+    # 上游没返回 → None（不是空串：空串会让前端渲染出空思考块）。
+    assert rounds[1]["assistant"]["reasoning"] is None
 
 
 @pytest.mark.asyncio

@@ -46,7 +46,7 @@ class _FakeLog:
     def __init__(self) -> None:
         self.texts: list[str] = []
 
-    def with_text(self, text: str):
+    def with_text(self, text: str, type: str = "", **_kwargs):
         self.texts.append(text)
         return self
 

@@ -109,7 +109,8 @@ class FakeConversationsRepo:
         return page, (page[-1]["updated_at"], page[-1]["_id"])
 
     async def update(self, oid, owner_oid, *, title=None, status=None,
-                     thinking=None, clear_thinking=False) -> bool:
+                     thinking=None, clear_thinking=False,
+                     model=None, clear_model=False) -> bool:
         row = self.rows.get(str(oid))
         if row is None or str(row["owner_oid"]) != str(owner_oid):
             return False
@@ -121,6 +122,10 @@ class FakeConversationsRepo:
             row["thinking"] = thinking
         if clear_thinking:
             row["thinking"] = None
+        if model is not None:
+            row["model"] = model
+        if clear_model:
+            row["model"] = None
         row["updated_at"] = _now(999)
         return True
 
@@ -147,6 +152,7 @@ class FakeMessagesRepo:
             "seq": seq,
             "role": role,
             "content": content,
+            "reasoning": None,
             "tool_calls": None,
             "tool_call_id": None,
             "tool_name": None,
@@ -454,14 +460,29 @@ async def test_get_foreign_conversation_is_not_found(env) -> None:
 
 
 @pytest.mark.asyncio
-async def test_model_is_locked_after_creation(env) -> None:
-    """模型只在建会话时定：改它（含清空）一律 409，不是静默 no-op（R2）。"""
-    env.conv.seed("a" * 32, model="gpt-x", title="旧名")
+async def test_model_is_editable_until_the_first_message(env) -> None:
+    """空会话可改模型（建完才发现选错是唯一修复窗口）；发过消息后一律 409（R2）。"""
+    env.conv.seed("a" * 32, model="gpt-x", title="旧名", message_count=0)
+
+    changed = await conversations.update(user=ADMIN, oid="a" * 32, model="gpt-y")
+
+    assert changed["model"] == "gpt-y"
+    # 不传 model = 不改。
+    kept = await conversations.update(user=ADMIN, oid="a" * 32, title="新名")
+    assert kept["model"] == "gpt-y"
+    # 显式 null = 清空（执行期回落目录第一个）。
+    cleared = await conversations.update(user=ADMIN, oid="a" * 32, clear_model=True)
+    assert cleared["model"] is None
+
+
+@pytest.mark.asyncio
+async def test_model_is_locked_after_the_first_message(env) -> None:
+    """已有消息再改模型（含清空）一律 409，不是静默 no-op（R2）。"""
+    env.conv.seed("a" * 32, model="gpt-x", title="旧名", message_count=2)
 
     kept = await conversations.update(user=ADMIN, oid="a" * 32, title="新名")
 
     assert kept["title"] == "新名"
-    # 不传 model = 不改。
     assert kept["model"] == "gpt-x"
 
     with pytest.raises(AgentError) as caught:
@@ -512,6 +533,18 @@ async def test_list_messages_is_incremental_with_usage(env) -> None:
     assert message["tool_calls"][0]["id"] == "c1"
     assert message["usage"]["total_tokens"] == 15
     assert page["has_more"] is False
+
+
+@pytest.mark.asyncio
+async def test_message_view_carries_reasoning_only_when_upstream_returned_it(env) -> None:
+    """思考过程随消息回传；没返回的轮次是 ``None``（不是空串）。"""
+    env.conv.seed("a" * 32, message_count=2)
+    env.msg.seed("a" * 32, seq=1, role="assistant", content="答案", reasoning="先查再答")
+    env.msg.seed("a" * 32, seq=2, role="assistant", content="普通回答")
+
+    page = await conversations.list_messages(user=ADMIN, oid="a" * 32)
+
+    assert [row["reasoning"] for row in page["messages"]] == ["先查再答", None]
 
 
 @pytest.mark.asyncio

@@ -384,7 +384,12 @@ async def test_submit_rejects_jailbreak_and_records_signal(world) -> None:
 
 
 @pytest.mark.asyncio
-async def test_admin_bypasses_moderation_and_leaves_audit(world) -> None:
+async def test_admin_bypasses_moderation_without_a_warning_record(world) -> None:
+    """admin 旁路审核：不记违规、不写「跳过审核」告警行，run 照常入队。
+
+    旁路是行为（``is_admin`` 让审核分支根本不进入），留痕由 executor 每轮审计的
+    ``roles_snapshot`` 承担；入队阶段不再产出 ``status='warning'`` 流水与平台日志。
+    """
     agent_unlock.mark_unlocked(ADMIN)
 
     result = await run_queue.submit(
@@ -393,17 +398,9 @@ async def test_admin_bypasses_moderation_and_leaves_audit(world) -> None:
 
     assert result["status"] == "queued"
     assert world.violations.rows == []
-    skipped = [
-        row
-        for row in world.audit.rows
-        if row.get("error_code") == "AI_AGENT_MODERATION_SKIPPED"
-    ]
-    assert len(skipped) == 1
-    assert skipped[0]["status"] == "warning"
-    assert skipped[0]["endpoint"] == "/api/ai/agent/run"
-    assert [log["type"] for log in world.platform_logs] == [
-        "ai_moderation_unrestricted"
-    ]
+    assert world.audit.rows == []
+    assert world.platform_logs == []
+    assert len(world.runs.inserted) == 1
 
 
 @pytest.mark.asyncio

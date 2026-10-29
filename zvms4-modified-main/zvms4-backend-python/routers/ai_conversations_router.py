@@ -47,8 +47,9 @@ ENDPOINT_CONVERSATIONS = "/api/ai/conversations"
 class ConversationCreate(BaseModel):
     """建会话。``mode`` 只剩 ``agent``（缺省即它）。
 
-    ``model`` 可省：缺省取该用户可见目录的第一个。**模型只在这里定**（R2），
-    之后的 PATCH 想改它会拿到 409。``thinking`` 是可选思考强度（low|medium|high）。
+    ``model`` 可省：缺省取该用户可见目录的第一个。**模型在这里定，发过消息后
+    就不能再改**（空会话仍允许 PATCH 纠正）。``thinking`` 是可选思考强度
+    （low|medium|high）。
     """
 
     mode: str = Field(default="agent", max_length=8)
@@ -60,9 +61,9 @@ class ConversationCreate(BaseModel):
 class ConversationUpdate(BaseModel):
     """部分更新：只改传了的字段。
 
-    ``model`` 仍然收进 DTO 但**只为了报错**：传非空 = 「想改模型」，显式
-    ``null`` = 「想清空模型」，两者都回 409 ``AI_CONVERSATION_MODEL_LOCKED``
-    ——把不支持的意图静默忽略会让前端以为改成功了。
+    ``model`` 只在**空会话**（``message_count == 0``）上生效：已有消息时会被
+    服务层回 409 ``AI_CONVERSATION_MODEL_LOCKED``——把不支持的意图静默忽略会让
+    前端以为改成功了。显式 ``null`` = 「清空模型」（执行期回落目录第一个）。
     """
 
     title: str | None = Field(default=None, max_length=400)
@@ -311,10 +312,12 @@ async def update_conversation(
     user=Depends(get_current_user),
     scene: str | None = Depends(ai_scene),
 ):
-    """改名 / 归档 / 调思考强度。
+    """改名 / 归档 / 调思考强度 / 空会话改模型。
 
-    改模型一律 409（``AI_CONVERSATION_MODEL_LOCKED``）：模型在建会话时定死，
-    见 ``conversations.update``。
+    已有消息（``message_count > 0``）的会话改模型一律 409
+    （``AI_CONVERSATION_MODEL_LOCKED``）：换模型会让历史回放的缓存前缀与计费口
+    径都换一套。空会话则放行——那是「建完发现选错模型」的唯一修复窗口，见
+    ``conversations.update``。
 
     故意不接功能开关：改名/归档不是 AI 能力调用，关掉 ``ai.chat`` 之后用户仍该
     能收拾自己的历史（否则会话变成删不掉也改不了的遗留数据）。

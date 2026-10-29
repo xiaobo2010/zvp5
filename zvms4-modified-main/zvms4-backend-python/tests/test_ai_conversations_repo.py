@@ -286,21 +286,25 @@ def test_delete_batched_uses_rownum_and_the_owner_predicate() -> None:
 def test_update_values_skip_absent_fields_and_bump_updated_at() -> None:
     at = TS
     assert conversations_repo._update_values(
-        title=None, status=None, thinking=None, at=at
+        title=None, status=None, thinking=None, model=None, at=at
     ) == {}
     values = conversations_repo._update_values(
-        title="新标题", status="archived", thinking=None, at=at
+        title="新标题", status="archived", thinking=None, model=None, at=at
     )
     assert values == {"title": "新标题", "status": "archived", "updated_at": at}
     # thinking=None 表示「不改」：显式清空走 clear_thinking 专用开关。
     assert "thinking" not in values
 
     thinking = conversations_repo._update_values(
-        title=None, status=None, thinking="high", at=at
+        title=None, status=None, thinking="high", model=None, at=at
     )
     assert thinking == {"thinking": "high", "updated_at": at}
-    # 模型不在这张表的更新语句里：它在建会话时定死（PATCH 想改直接 409）。
-    assert "model" not in thinking
+
+    # 空会话改模型：准入由服务层判（message_count == 0），仓储只负责写。
+    model = conversations_repo._update_values(
+        title=None, status=None, thinking=None, model="gpt-y", at=at
+    )
+    assert model == {"model": "gpt-y", "updated_at": at}
 
 
 # ---------------------------------------------------------------------------
@@ -357,6 +361,41 @@ def test_message_insert_binds_usage_and_tool_identity_explicitly() -> None:
     assert f"'{RUN}'" in sql
     # 该轮的 token 列没给 → NULL（上游没报 ≠ 0）。
     assert "'tool', '全文', NULL" in sql
+
+
+def test_message_insert_binds_reasoning_on_the_assistant_row() -> None:
+    """思考过程与 content 同列类型（CLOB）：落库、投影、回传三处都必须有它。"""
+    sql = _sql(
+        conversations_repo._insert_message_stmt(
+            seq=4,
+            created_at=TS,
+            oid="b" * 32,
+            conversation_oid=CONV,
+            role="assistant",
+            content="答案",
+            reasoning="先读日志再定位",
+            round_no=2,
+            request_id=RUN,
+        )
+    )
+
+    assert "'先读日志再定位'" in sql
+    # 没给的轮次写 NULL（上游没返回 ≠ 空串）。
+    tool_sql = _sql(
+        conversations_repo._insert_message_stmt(
+            seq=5,
+            created_at=TS,
+            oid="c" * 32,
+            conversation_oid=CONV,
+            role="tool",
+            content="{}",
+            round_no=2,
+            request_id=RUN,
+        )
+    )
+    assert "'tool', '{}', NULL" in tool_sql
+    # 投影列与行映射都带上它，否则 message_view 永远拿不到。
+    assert "ai_messages.reasoning" in _sql(conversations_repo._list_after_stmt(CONV, 0, 10))
 
 
 def test_append_batch_bumps_the_conversation_in_the_same_transaction() -> None:

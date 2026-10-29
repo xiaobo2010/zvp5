@@ -1556,6 +1556,7 @@ Index(
 #   ROLE 只有 user/assistant/tool —— **没有** summary：摘要是会话级水位，不是一条
 #   消息，UI 用 SUMMARY_UPTO_SEQ 画分隔线。
 #   CONTENT / TOOL_CALLS 是 CLOB：工具结果全文 ≤8000 字符，超过 VARCHAR2 上限。
+#   REASONING（V049）与 CONTENT 同类型：思考过程可能比答案还长；NULL = 上游没返回。
 #   ROUND_NO 与 ai_call_logs(request_id, round_no) 对齐，逐轮 provider/cache/
 #   units 可 join；token 列 NULL = 上游没报（同 ai_call_logs 口径），不是 0。
 # ---------------------------------------------------------------------------
@@ -1568,6 +1569,7 @@ ai_messages = Table(
     Column("seq", NUMBER(10), nullable=False),
     Column("role", VARCHAR2(12), nullable=False),
     Column("content", CLOB, nullable=True),
+    Column("reasoning", CLOB, nullable=True),
     Column("tool_calls", CLOB, nullable=True),
     Column("tool_call_id", VARCHAR2(64), nullable=True),
     Column("tool_name", VARCHAR2(64), nullable=True),

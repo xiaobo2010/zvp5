@@ -172,7 +172,7 @@ def test_unlock_window_matches_temporary_token_lifetime() -> None:
 
 
 class _FakeLog:
-    def with_text(self, text):
+    def with_text(self, text, type: str = "", **_kwargs):
         return self
 
     async def insert_log(self):
