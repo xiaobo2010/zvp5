@@ -723,6 +723,7 @@ async def test_on_round_payload_writes_assistant_and_every_tool(env, monkeypatch
                 "round_no": 1,
                 "assistant": {
                     "content": "",
+                    "reasoning": "先查活动再回答",
                     "finish_reason": "stop",
                     "tool_calls": [
                         {
@@ -784,6 +785,9 @@ async def test_on_round_payload_writes_assistant_and_every_tool(env, monkeypatch
     assert assistant["cache_write_tokens"] is None
     assert assistant["round_no"] == 1
     assert assistant["request_id"] == submitted["run_id"]
+    # 思考过程落在 assistant 行上（tool 行恒为 NULL）：刷新页面后仍能看到。
+    assert assistant["reasoning"] == "先查活动再回答"
+    assert all(row.get("reasoning") is None for row in first["rows"][1:])
     # tool 行的身份直接来自 payload，不再反查 tool_calls。
     assert [row["tool_call_id"] for row in first["rows"][1:]] == ["call_1", "call_2"]
     assert [row["tool_name"] for row in first["rows"][1:]] == [
@@ -797,6 +801,8 @@ async def test_on_round_payload_writes_assistant_and_every_tool(env, monkeypatch
     # 最后的 assistant（无工具）就是 run 的最终回答。
     final = env.msg.batches[1]["rows"][0]
     assert final["finish_reason"] == "stop"
+    # 这一轮的 payload 没带 reasoning → NULL（不是空串：两者的 UI 含义不同）。
+    assert final["reasoning"] is None
     assert env.runs.rows[submitted["run_id"]]["result_message_oid"] == final["oid"]
     assert env.conv.rows[CONV]["tokens_total"] == 120 + 137
     assert env.conv.rows[CONV]["context_tokens"] == 130

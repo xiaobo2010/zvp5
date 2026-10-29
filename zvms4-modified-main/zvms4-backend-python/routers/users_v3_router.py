@@ -352,6 +352,46 @@ class NewUserRequest(BaseModel):
     class_id: Optional[str] = None
 
 
+# users.business_id 是 VARCHAR2(32 CHAR)（DDL ``V001__initial_schema.sql``、镜像
+# ``db/models.py``）。宽于列宽的学号在 Oracle 侧会抛 ORA-12899（value too large），
+# 那是 500 而不是可读的 400，所以入口先按列宽挡一次。
+_MAX_STUDENT_ID_LEN = 32
+
+
+def _normalize_student_id(raw: str) -> str:
+    """建号口对学号的**轻校验**：只保证「存得下、查得回、能当登录名」。
+
+    刻意不再套 ``validate_number``（8 位纯数字 / 年份窗口 / 班号 1-25 / 座号
+    1-60）：班级内建号的学号由各班级自定义编号规则，格式限制由管理员承担。
+    这里只挡三类会真的炸后端的输入：
+
+    * strip 后为空 —— 空登录名既无法登录也无法被 ``find_by_business_id`` 命中；
+    * 超出列宽 —— Oracle 抛 ORA-12899 变成 500；
+    * 含空白或控制字符 —— 学号是登录名，前后/中间空白在登录表单里只会表现为
+      「密码明明对却登不上」，控制字符则会污染审计日志与导出。
+
+    字符集保持宽松（字母 / 数字 / 常见符号都放行），唯一性仍由下方
+    ``find_by_business_id`` + ``uq_users_business_id`` 兜底。
+
+    返回 strip 后的学号，调用方一律使用返回值。
+    """
+    student_id = raw.strip()
+    if not student_id:
+        raise HTTPException(status_code=400, detail="学号不能为空")
+    if len(student_id) > _MAX_STUDENT_ID_LEN:
+        raise HTTPException(
+            status_code=400,
+            detail=f"学号长度不能超过 {_MAX_STUDENT_ID_LEN} 个字符",
+        )
+    for char in student_id:
+        code = ord(char)
+        if char.isspace() or code < 32 or code == 127 or 0x80 <= code <= 0x9F:
+            raise HTTPException(
+                status_code=400, detail="学号不能包含空白或控制字符"
+            )
+    return student_id
+
+
 @router.post("", status_code=201)
 async def create_user_v3(
     payload: NewUserRequest,
@@ -373,16 +413,16 @@ async def create_user_v3(
         if role not in allowed_roles:
             raise HTTPException(status_code=400, detail=f"无效角色：{role}")
 
-    valid, message = validate_number(payload.id)
-    if not valid:
-        raise HTTPException(status_code=400, detail=message)
-
     valid, message = validate_student_name(payload.name)
     if not valid:
         raise HTTPException(status_code=400, detail=message)
 
+    # 建号不套班级/年级级的学号格式闸（validate_number），只做「能存能登」轻校验。
+    # 改学号端点仍走 validate_number——那是纠错入口，格式由平台约定。
+    student_id = _normalize_student_id(payload.id)
+
     repo = backends.get_users_repo()
-    if await repo.find_by_business_id(payload.id):
+    if await repo.find_by_business_id(student_id):
         raise HTTPException(status_code=409, detail="学号已存在")
 
     class_oid = None
@@ -396,13 +436,14 @@ async def create_user_v3(
             raise HTTPException(status_code=404, detail="班级不存在")
 
     # 建号初始密码 = 学号（平台运营要求新生可用学号直接登录；可枚举风险已确认接受）。
-    # 学号 pwd_strength=1<3，登录仍走「弱密码 → 5 分钟临时令牌 → 强制改密」闭环。
-    initial_password = payload.id
+    # 8 位纯数学号 pwd_strength=1<3，登录仍走「弱密码 → 5 分钟临时令牌 → 强制改密」
+    # 闭环；非 8 位学号同样 <3（长度不达 8 或只有单一字符类），见 util.cert.pwd_strength。
+    initial_password = student_id
     password = (await hash_password_async(initial_password)).decode("utf-8")
 
     try:
         new_id = await repo.create(
-            payload.id,
+            student_id,
             payload.name,
             list(payload.roles),
             password,
@@ -412,7 +453,7 @@ async def create_user_v3(
         raise HTTPException(status_code=409, detail="学号已存在")
 
     log.with_text(
-        f"管理员 {await get_user_display_name(user['id'])} 创建了用户 {payload.name}（学号 {payload.id}），初始密码为学号",
+        f"管理员 {await get_user_display_name(user['id'])} 创建了用户 {payload.name}（学号 {student_id}），初始密码为学号",
         type="user_create",
     )
     await log.insert_log()

@@ -15,6 +15,7 @@ from types import SimpleNamespace
 import pytest
 
 from db import backends
+from services.ai import audit as ai_audit
 from services.ai import config as ai_config
 from services.ai import credentials, providers, safety_guard
 from services.ai.routing import RouteError
@@ -466,18 +467,17 @@ async def test_moderation_hit_is_same_rejection_and_records(monkeypatch) -> None
 
 
 @pytest.mark.asyncio
-async def test_admin_bypasses_screening_and_leaves_audit(monkeypatch) -> None:
-    """admin 天然旁路：不跑关键词规则、不跑 LLM 判定，但仍留一行审计。"""
+async def test_admin_bypasses_screening_without_a_warning_record(monkeypatch) -> None:
+    """admin 天然旁路：不跑关键词规则、不跑 LLM 判定，也不写「跳过审核」告警行。
+
+    旁路本身是行为（判定条件在 ``is_admin``），不是一条 ``status='warning'`` 的
+    流水——后者会把正常的管理员操作渲染成安全告警。
+    """
     from services.agent import run_queue
     from services.agent.tool_impl import AgentError
 
-    audits: list[dict] = []
-
     async def require_row(*, user, oid):
         return {"mode": "agent", "model": None, "title": ""}
-
-    async def audit_record(**kwargs):
-        audits.append(kwargs)
 
     async def boom(*args, **kwargs):
         raise AssertionError("admin 不该触达审核")
@@ -489,8 +489,10 @@ async def test_admin_bypasses_screening_and_leaves_audit(monkeypatch) -> None:
     monkeypatch.setattr(run_queue.agent_unlock, "is_unlocked", lambda oid: True)
     monkeypatch.setattr(run_queue.moderation, "check", boom)
     monkeypatch.setattr(run_queue.safety_guard, "screen", boom)
-    monkeypatch.setattr(run_queue.audit, "record", audit_record)
+    monkeypatch.setattr(run_queue.prompt_audit, "capture", boom)
     monkeypatch.setattr(run_queue, "_runs", _runs)
+    # 网关流水也不再写：入队阶段的「跳过审核」告警行已移除。
+    monkeypatch.setattr(ai_audit, "record", boom)
 
     with pytest.raises(AgentError):
         await run_queue.submit(
@@ -499,4 +501,4 @@ async def test_admin_bypasses_screening_and_leaves_audit(monkeypatch) -> None:
             content="删除全部用户数据",
         )
 
-    assert [row["error_code"] for row in audits] == ["AI_AGENT_MODERATION_SKIPPED"]
+    # 正常 run 的审计由 executor 每轮 roles_snapshot 承担，入队阶段零写入。

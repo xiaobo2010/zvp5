@@ -52,8 +52,12 @@ def _token(oid: str = ADMIN_OID) -> str:
 class _FakeLog:
     def __init__(self) -> None:
         self.texts: list[str] = []
+        self.type = ""
 
-    def with_text(self, text: str, **_kwargs):
+    def with_text(self, text: str, type: str = "", **_kwargs):
+        # 与 ``ZVMSLog.with_text`` 同语义：空 ``type`` 不覆盖已有值。
+        if type:
+            self.type = type
         self.texts.append(text)
         return self
 
@@ -175,10 +179,11 @@ def harness(monkeypatch):
     app = FastAPI()
     app.include_router(attachments_router.router, prefix=PREFIX)
     app.dependency_overrides[get_current_user] = lambda: state["user"]
-    app.dependency_overrides[inject_log] = lambda: _FakeLog()
+    fake_log = _FakeLog()
+    app.dependency_overrides[inject_log] = lambda: fake_log
 
     return SimpleNamespace(
-        client=TestClient(app), repo=repo, users=users, state=state
+        client=TestClient(app), repo=repo, users=users, state=state, log=fake_log
     )
 
 
@@ -419,6 +424,17 @@ def test_audit_detail_returns_owner_ocr_and_timeline(harness):
     # 时间线窗口固定 50 条（最近的 50 条，仍按时间正序返回）。
     assert data["events_limit"] == 50
     assert harness.repo.event_calls == [(oid, 50)]
+
+
+def test_audit_detail_writes_its_own_log_type(harness):
+    """审计详情不能落空 type：线上要靠它筛「谁在翻素材」。"""
+    oid = _seed_audit_rows(harness)
+
+    response = harness.client.get(f"{PREFIX}/{oid}/audit")
+
+    assert response.status_code == 200, response.text
+    assert harness.log.type == "attachment_audit"
+    assert harness.log.texts[-1] == f"用户 {ADMIN_OID} 查看附件审计详情 {oid}"
 
 
 def test_audit_detail_does_not_leak_sha_to_department(harness):

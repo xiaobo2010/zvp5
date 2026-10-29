@@ -1836,6 +1836,7 @@ CREATE TABLE ai_messages (
   seq NUMBER(10) NOT NULL,
   role VARCHAR2(12 CHAR) NOT NULL,
   content CLOB,
+  reasoning CLOB,
   tool_calls CLOB,
   tool_call_id VARCHAR2(64 CHAR),
   tool_name VARCHAR2(64 CHAR),

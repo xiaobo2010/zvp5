@@ -334,6 +334,8 @@ def message_view(row: Mapping[str, Any]) -> dict:
         "seq": _int(row.get("seq")),
         "role": row.get("role"),
         "content": str(row.get("content") or ""),
+        # 思考过程（上游的 ``reasoning_content``）；NULL = 这一轮没有/上游不返回。
+        "reasoning": row.get("reasoning"),
         "tool_calls": _json(row.get("tool_calls")),
         "tool_call_id": row.get("tool_call_id"),
         "tool_name": row.get("tool_name"),
@@ -379,10 +381,11 @@ async def create(
     只保留 agent 语义：``chat`` 模式已下线，建它回 409（存量 chat 会话仍然可以
     读取/改名/删除，但不能跑 run——那是另一种产物）。
 
-    **模型在这里定死**（R2）：缺省取该用户可见目录的第一个模型。之后 PATCH 改
-    模型一律 409——一次会话里换模型会让历史重放的缓存前缀与计费口径都换一套，
-    而用户看到的只是「同一段对话」。取目录是 best-effort：拿不到（没配 provider /
-    目录查询失败）就留 ``None``，executor 执行时会再按同一条规则回落。
+    **模型在这里定**（R2）：缺省取该用户可见目录的第一个模型。之后只有在会话还
+    没有任何消息（``message_count == 0``）时才能 PATCH 改它——发过消息后换模型会
+    让历史重放的缓存前缀与计费口径都换一套，而用户看到的只是「同一段对话」。取目
+    录是 best-effort：拿不到（没配 provider / 目录查询失败）就留 ``None``，
+    executor 执行时会再按同一条规则回落。
     """
     normalized = str(mode or "").strip().lower() or "agent"
     if normalized in LEGACY_MODES:
@@ -558,20 +561,19 @@ async def update(
     model: str | None = None,
     clear_model: bool = False,
 ) -> dict:
-    """改名 / 归档 / 调思考强度。
+    """改名 / 归档 / 调思考强度 / 空会话改模型。
 
-    **模型不可改**（R2）：它在建会话时定死。``model`` / ``clear_model`` 留在签名
-    里只为把「试图改模型」变成一个明确的 409（``AI_CONVERSATION_MODEL_LOCKED``），
+    **模型在会话发过消息后定死**（R2）：已有消息时换模型会让历史重放的缓存前缀
+    与计费口径都换一套，而用户看到的只是「同一段对话」。所以 ``message_count > 0``
+    时 ``model`` / ``clear_model`` 一律 409（``AI_CONVERSATION_MODEL_LOCKED``），
     而不是被静默忽略——静默忽略会让前端以为改成功了，实际下一轮仍跑旧模型。
+
+    空会话（``message_count == 0``，刚建出来还没提交过内容）允许改：那时还没有
+    可回放的历史，换模型不产生任何「同一段对话两种口径」的事实，而「建完才发现
+    选错模型」是唯一的修复窗口。
     """
-    if model is not None or clear_model:
-        raise AgentError(
-            MODEL_LOCKED,
-            "model is fixed when the conversation is created",
-            409,
-        )
     owner = str(user.get("id") or "")
-    await require_row(user=user, oid=str(oid))
+    row = await require_row(user=user, oid=str(oid))
     values: dict[str, Any] = {}
     if title is not None:
         values["title"] = _clip_title(title)
@@ -582,6 +584,18 @@ async def update(
         values["status"] = normalized
     if thinking is not None or clear_thinking:
         values["thinking"] = _clean_thinking(thinking)
+    clear_model_value = False
+    if model is not None or clear_model:
+        if _int(row.get("message_count")) > 0:
+            raise AgentError(
+                MODEL_LOCKED,
+                "model is fixed when the conversation is created",
+                409,
+            )
+        # 空串等同「清空」：两者都让执行期回落到目录里的第一个模型。
+        chosen = str(model).strip() if model is not None else ""
+        values["model"] = chosen or None
+        clear_model_value = not chosen
     changed = await _repo().update(
         str(oid),
         owner,
@@ -589,6 +603,8 @@ async def update(
         status=values.get("status"),
         thinking=values.get("thinking"),
         clear_thinking=bool(clear_thinking and values.get("thinking") is None),
+        model=values.get("model"),
+        clear_model=clear_model_value,
     )
 
     if not changed:
