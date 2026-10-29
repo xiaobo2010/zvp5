@@ -1225,6 +1225,13 @@ async function sendAgentTurn(conversation: AiConversation, text: string) {
       }
       return
     }
+    // 提交失败：store 侧已在 catch 里停轮询并复位 run。这里必须清掉那条
+    // 还没落库的乐观气泡，否则它会和下一轮的回答并列显示（封禁/拒绝时尤其明显）；
+    // 内容还回输入框，避免用户重打。
+    pendingUser.value = ''
+    if (!input.value) {
+      input.value = text
+    }
     applyError(error)
   }
 }
@@ -1959,6 +1966,9 @@ onUnmounted(() => {
   flex-direction: column;
   gap: var(--yg-space-4);
   min-width: 0;
+  /* 这一列的高度完全交给面板分配：里面的两张卡有各自的下限，
+     断掉这层最小尺寸链，压不进面板时才会溢出到面板外。 */
+  min-height: 0;
 }
 
 /* 模型选择与上下文水位：高度固定，不参与对话区的伸缩 */
@@ -2591,6 +2601,65 @@ onUnmounted(() => {
 
   .ai-chat__reasoning-text {
     max-height: 140px;
+  }
+}
+
+/*
+ * 极矮横屏（手机横放、375–600px 高）：
+ * 纵向只够「页头 + 页签 + 一条设置 + 输入区」，消息区是最后让位的那一块。
+ * 设置卡压成横排的一条，消息区不再保底高度——输入区必须完整可见、可点到。
+ */
+@media (orientation: landscape) and (max-height: 600px) {
+  .ai-chat__settings {
+    /* 标题与摘要并排成一条，不再上下叠两行 */
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: var(--yg-space-2);
+  }
+
+  .ai-chat__settings :deep(.el-card__header) {
+    flex: 0 1 auto;
+    min-width: 0;
+    padding: var(--yg-space-1) var(--yg-space-2);
+    border-bottom: none;
+  }
+
+  .ai-chat__settings :deep(.el-card__body) {
+    flex: 1 1 auto;
+    min-width: 0;
+    padding: var(--yg-space-1) var(--yg-space-2);
+  }
+
+  /* 标题与副标题并排，卡片高度再降一档 */
+  .ai-chat__settings :deep(.el-card__header > div > div:first-child) {
+    flex-direction: row;
+    align-items: baseline;
+    gap: var(--yg-space-2);
+  }
+
+  .ai-chat__conversation {
+    /* 会话卡让位：高度全部由消息区与输入区分配 */
+    min-height: 0;
+  }
+
+  /* 卡片内边距收紧：flat.css 固定了 .el-card__body 的 padding，这里直接压掉 */
+  .ai-chat__conversation :deep(.el-card__body) {
+    padding: var(--yg-space-2);
+  }
+
+  .ai-chat__list {
+    /* 消息区让位：输入区必须完整可见，消息区高度由剩余空间决定 */
+    min-height: 0;
+    padding: var(--yg-space-1);
+  }
+
+  .ai-chat__composer {
+    margin-top: var(--yg-space-1);
+  }
+
+  .ai-chat__composer :deep(.el-textarea__inner) {
+    padding: var(--yg-space-1) var(--yg-space-2);
   }
 }
 

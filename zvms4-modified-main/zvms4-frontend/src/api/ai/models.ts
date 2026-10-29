@@ -1,4 +1,9 @@
-import type { AiModelPatch, AiModelRow } from '@/../types/ai'
+import type {
+  AiModelDiscoverResult,
+  AiModelDiscoverRow,
+  AiModelPatch,
+  AiModelRow
+} from '@/../types/ai'
 import { aiRequest, aiRequestVoid } from './http'
 
 /**
@@ -75,4 +80,43 @@ export async function updateAiModel(model: string, patch: AiModelPatch): Promise
 /** 删除覆盖行；成功返回 204，没有响应体。 */
 export async function deleteAiModel(model: string): Promise<void> {
   await aiRequestVoid({ method: 'delete', url: `/ai/models/${encodeURIComponent(model)}` })
+}
+
+function normalizeDiscoverRow(value: unknown): AiModelDiscoverRow {
+  const row = asRecord(value)
+  return {
+    model: textOf(row.model) ?? '',
+    context_length: numberOf(row.context_length),
+    in_credential: row.in_credential === true,
+    applied: row.applied === true
+  }
+}
+
+/**
+ * 从渠道上游读模型元数据（`POST /ai/models/discover`）。
+ *
+ * apply=false 只做预览；apply=true 顺带把上游给的上下文长度写回库内。
+ * 该端点与凭据写路径使用同一套密码再验证，因此可带一张 verify 短令牌。
+ */
+export async function discoverAiModels(
+  provider: string,
+  apply = false,
+  verificationToken?: string
+): Promise<AiModelDiscoverResult> {
+  const data = await aiRequest<unknown>({
+    method: 'post',
+    url: '/ai/models/discover',
+    data: {
+      provider,
+      apply,
+      ...(verificationToken ? { verification_token: verificationToken } : {})
+    }
+  })
+  const record = asRecord(data)
+  const models = Array.isArray(record.models) ? record.models.map(normalizeDiscoverRow) : []
+  return {
+    provider: textOf(record.provider) ?? provider,
+    models,
+    applied: numberOf(record.applied) ?? 0
+  }
 }

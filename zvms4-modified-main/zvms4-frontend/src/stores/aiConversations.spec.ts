@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { useAiConversationsStore } from './aiConversations'
+import { registerAiAbort } from '@/api/ai/activeRuns'
 import type { AiConversation, AiMessage, AiRun } from '@/../types/ai'
 
 /**
@@ -470,6 +471,90 @@ describe('后台执行', () => {
     await store.cancelCurrentRun()
 
     expect(mocks.cancelRun).toHaveBeenCalledWith('r1'.repeat(16))
+  })
+
+  it('提交失败：轮询停掉、run 复位、错误留给调用方，不留下「执行中」假态', async () => {
+    mocks.submitRun.mockResolvedValueOnce({
+      run_id: 'r1'.repeat(16),
+      message_oid: 'm1'.repeat(16),
+      status: 'queued'
+    })
+    const store = useAiConversationsStore()
+    await store.loadConversations()
+    await store.selectConversation(conversation().oid)
+    await store.submitRun(conversation().oid, '查一下')
+    expect(store.polling).toBe(true)
+
+    const failure = Object.assign(new Error('AI_RUN_CONFLICT'), {
+      status: 409,
+      code: 'AI_RUN_CONFLICT'
+    })
+    mocks.submitRun.mockRejectedValueOnce(failure)
+
+    await expect(store.submitRun(conversation().oid, '再查一下')).rejects.toBe(failure)
+
+    expect(store.activeRun).toBeNull()
+    expect(store.polling).toBe(false)
+    expect(store.runEvents).toEqual([])
+    expect(store.runError).toBe(failure)
+    // 已落库的消息不受影响。
+    expect(store.orderedMessages.map((item) => item.seq)).toEqual([1])
+  })
+
+  it('abortAllRuns：停轮询 + 复位 run + 中止在途流，已落库消息保留', async () => {
+    mocks.submitRun.mockResolvedValue({
+      run_id: 'r1'.repeat(16),
+      message_oid: 'm1'.repeat(16),
+      status: 'queued'
+    })
+    const store = useAiConversationsStore()
+    await store.loadConversations()
+    await store.selectConversation(conversation().oid)
+    await store.submitRun(conversation().oid, '查一下')
+    expect(store.polling).toBe(true)
+    expect(store.activeRun?.oid).toBe('r1'.repeat(16))
+
+    const aborted: Array<string | undefined> = []
+    const off = registerAiAbort((reason) => aborted.push(reason))
+    try {
+      store.abortAllRuns('banned')
+    } finally {
+      off()
+    }
+
+    expect(aborted).toEqual(['banned'])
+    expect(store.polling).toBe(false)
+    expect(store.activeRun).toBeNull()
+    // 消息是服务端的既成事实：中止执行不清消息。
+    expect(store.orderedMessages.map((item) => item.seq)).toEqual([1])
+    // 中止后再调一次也不炸（幂等）。
+    expect(() => store.abortAllRuns()).not.toThrow()
+  })
+
+  it('abortAllRuns 之后不会再重排轮询（封禁不该继续刷必定失败的请求）', async () => {
+    vi.useFakeTimers()
+    try {
+      mocks.submitRun.mockResolvedValue({
+        run_id: 'r1'.repeat(16),
+        message_oid: 'm1'.repeat(16),
+        status: 'queued'
+      })
+      const store = useAiConversationsStore()
+      await store.loadConversations()
+      await store.selectConversation(conversation().oid)
+      await store.submitRun(conversation().oid, '查一下')
+      const calls = mocks.fetchRunDetail.mock.calls.length
+
+      store.abortAllRuns('banned')
+      await vi.advanceTimersByTimeAsync(1500)
+      await vi.advanceTimersByTimeAsync(5000)
+
+      expect(mocks.fetchRunDetail.mock.calls.length).toBe(calls)
+      expect(store.polling).toBe(false)
+      expect(store.activeRun).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
 

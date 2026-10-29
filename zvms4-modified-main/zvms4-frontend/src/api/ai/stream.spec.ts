@@ -6,6 +6,19 @@ import {
   parseSseChunk,
   streamChatCompletion
 } from './stream'
+import { abortAllAiRuns, activeAiRunCount, registerAiAbort } from './activeRuns'
+import { AiRequestError } from './errors'
+
+const { storeMock } = vi.hoisted(() => ({
+  storeMock: {
+    isLogin: true,
+    bannedNoticeAt: 0,
+    banReason: '',
+    banUntil: 0
+  }
+}))
+
+vi.mock('@/stores/user', () => ({ useUserStore: () => storeMock }))
 
 describe('SSE 帧解析', () => {
   it('解析单帧并保留空缓冲', () => {
@@ -273,3 +286,174 @@ describe('streamChatCompletion 收尾判定', () => {
     expect(out.error).toBeNull()
   })
 })
+
+/* ---------------------------------------------------------------------------
+   全局中止（封禁）：按「用户取消」收尾，不当网络错误
+   --------------------------------------------------------------------------- */
+
+function abortError(): DOMException {
+  return new DOMException('aborted', 'AbortError')
+}
+
+/** 一个会跟随 signal 中止的 fetch 替身：连接还没建立就中止。 */
+function pendingFetch() {
+  return vi.fn(
+    (_url: string, init: RequestInit = {}) =>
+      new Promise<Response>((_resolve, reject) => {
+        const signal = init.signal as AbortSignal | undefined
+        if (!signal) {
+          return
+        }
+        if (signal.aborted) {
+          reject(abortError())
+          return
+        }
+        signal.addEventListener('abort', () => reject(abortError()), { once: true })
+      })
+  )
+}
+
+/** 发了一帧正文之后挂住，直到 signal 中止才 reject 的响应。 */
+function abortableResponse(signal: AbortSignal) {
+  const encoder = new TextEncoder()
+  let sent = false
+  const reader = {
+    read() {
+      if (!sent) {
+        sent = true
+        return Promise.resolve({
+          done: false,
+          value: encoder.encode('data: {"choices":[{"delta":{"content":"半"}}]}\n\n')
+        })
+      }
+      return new Promise<never>((_resolve, reject) => {
+        if (signal.aborted) {
+          reject(abortError())
+          return
+        }
+        signal.addEventListener('abort', () => reject(abortError()), { once: true })
+      })
+    },
+    releaseLock() {}
+  }
+  return {
+    ok: true,
+    status: 200,
+    headers: { get: () => null },
+    body: { getReader: () => reader }
+  }
+}
+
+describe('全局中止', () => {
+  it('连接建立前被中止：抛 AbortError，不当成网络错误', async () => {
+    vi.stubGlobal('fetch', pendingFetch())
+
+    const pending = streamChatCompletion({
+      model: 'gpt-x',
+      messages: [{ role: 'user', content: 'hi' }]
+    })
+    // 请求已发出、还挂在 fetch 上。
+    await Promise.resolve()
+    expect(activeAiRunCount()).toBe(1)
+
+    abortAllAiRuns('banned')
+
+    const error = await pending.catch((caught) => caught)
+    expect((error as Error).name).toBe('AbortError')
+    expect(error).not.toBeInstanceOf(AiRequestError)
+    // 收尾时注销：登记表不残留。
+    expect(activeAiRunCount()).toBe(0)
+  })
+
+  it('流到一半被中止：已收到的增量保留，收尾仍是 AbortError 且不登记残留', async () => {
+    const deltas: string[] = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: string, init: RequestInit = {}) =>
+        abortableResponse(init.signal as AbortSignal)
+      )
+    )
+
+    const pending = streamChatCompletion({
+      model: 'gpt-x',
+      messages: [{ role: 'user', content: 'hi' }],
+      onDelta: (delta) => deltas.push(delta)
+    })
+    await vi.waitFor(() => expect(deltas).toEqual(['半']))
+
+    abortAllAiRuns()
+
+    const error = await pending.catch((caught) => caught)
+    expect((error as Error).name).toBe('AbortError')
+    expect(error).not.toBeInstanceOf(AiRequestError)
+    expect(activeAiRunCount()).toBe(0)
+  })
+
+  it('正常结束后不再持有中止登记：封禁不会去中止已完成的流', async () => {
+    stubFetch(fakeResponse(['data: [DONE]\n\n']))
+
+    const out = await streamChatCompletion({
+      model: 'gpt-x',
+      messages: [{ role: 'user', content: 'hi' }]
+    })
+
+    expect(out.done).toBe(true)
+    expect(activeAiRunCount()).toBe(0)
+  })
+})
+
+/* ---------------------------------------------------------------------------
+   流内封禁帧：响应头已是 200，拦截器看不见，走与 axios 相同的封禁扇出
+   --------------------------------------------------------------------------- */
+
+describe('流内 USER_BANNED 帧', () => {
+  it('命中同一套扇出：写 ban 状态并中止（含自身），错误帧照旧返回', async () => {
+    storeMock.isLogin = true
+    storeMock.bannedNoticeAt = 0
+    storeMock.banReason = ''
+    storeMock.banUntil = 0
+
+    // 额外登记一个中止点：证明封禁扇出真的喊了 abortAllAiRuns('banned')。
+    const onAbort = vi.fn()
+    const release = registerAiAbort(onAbort)
+
+    try {
+      const out = await run([
+        'data: {"choices":[{"delta":{"content":"你不"}}]}\n\n',
+        'data: {"error":{"code":"USER_BANNED","message":"账号已被封禁"}}\n\n'
+      ])
+
+      // 已收到的正文保留，错误码原样交给上层。
+      expect(out.text).toBe('你不')
+      expect(out.error).toEqual({ code: 'USER_BANNED', message: '账号已被封禁' })
+      expect(onAbort).toHaveBeenCalledWith('banned')
+      expect(storeMock.bannedNoticeAt).toBeGreaterThan(0)
+      // 封禁帧不带 ban 头时回落「空原因 + 永久」。
+      expect(storeMock.banReason).toBe('')
+      expect(storeMock.banUntil).toBe(0)
+    } finally {
+      release()
+    }
+  })
+
+  it('重复命中不重置倒计时（幂等）', async () => {
+    storeMock.bannedNoticeAt = 222
+
+    await run([
+      'data: {"error":{"code":"USER_BANNED","message":"还是封禁"}}\n\n',
+      'data: {"error":{"code":"USER_BANNED","message":"重复"}}\n\n'
+    ])
+
+    expect(storeMock.bannedNoticeAt).toBe(222)
+  })
+
+  it('非封禁错误帧不触发扇出', async () => {
+    storeMock.bannedNoticeAt = 0
+
+    await run(['data: {"error":{"code":"AI_UPSTREAM_REJECTED","message":"上游拒绝"}}\n\n'])
+
+    expect(storeMock.bannedNoticeAt).toBe(0)
+    expect(storeMock.banReason).toBe('')
+  })
+})
+

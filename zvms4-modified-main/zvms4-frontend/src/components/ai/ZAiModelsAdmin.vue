@@ -19,15 +19,18 @@ import {
   ElInputNumber,
   ElMessage,
   ElMessageBox,
+  ElOption,
+  ElSelect,
   ElSwitch,
   ElTable,
   ElTableColumn,
   ElTag
 } from 'element-plus'
-import { Delete, Edit, Refresh, Search } from '@element-plus/icons-vue'
-import { deleteAiModel, fetchAiModels, updateAiModel } from '@/api/ai/models'
+import { Delete, Download, Edit, Refresh, Search } from '@element-plus/icons-vue'
+import { deleteAiModel, discoverAiModels, fetchAiModels, updateAiModel } from '@/api/ai/models'
+import { isReauthCancelled, withReauth } from '@/plugins/reauth'
 import { resolveErrorMessage } from '@/utils/errorMessage'
-import type { AiModelPatch, AiModelRow } from '@/../types/ai'
+import type { AiModelDiscoverResult, AiModelPatch, AiModelRow } from '@/../types/ai'
 
 interface EditForm {
   display_name: string
@@ -98,6 +101,96 @@ async function load() {
     loadError.value = resolveErrorMessage(error, 'ai.models.loadFailed')
   } finally {
     loading.value = false
+  }
+}
+
+/* ------------------------------------------------------------------ 从上游获取 */
+
+const discoverVisible = ref(false)
+const discoverProvider = ref('')
+const discoverLoading = ref(false)
+const discoverError = ref('')
+const discoverResult = ref<AiModelDiscoverResult | null>(null)
+const discoverApplying = ref(false)
+
+/** 渠道选项：当前行数据里 providers 的并集；老数据只有 provider，providersOf 已兜底。 */
+const providerOptions = computed<string[]>(() => {
+  const seen = new Set<string>()
+  for (const row of rows.value) {
+    for (const provider of providersOf(row)) {
+      const name = provider.trim()
+      if (name) {
+        seen.add(name)
+      }
+    }
+  }
+  return [...seen]
+})
+
+const discoverBusy = computed(() => discoverLoading.value || discoverApplying.value)
+const discoverHasRows = computed(() => Boolean(discoverResult.value?.models.length))
+
+function contextText(value: number | null): string {
+  return value === null ? t('ai.models.discover.contextMissing') : String(value)
+}
+
+function openDiscover() {
+  discoverError.value = ''
+  discoverResult.value = null
+  discoverProvider.value = providerOptions.value[0] ?? ''
+  discoverVisible.value = true
+}
+
+/** 预览：只读上游，不改库；密码再验证与凭据写路径共用同一张短令牌。 */
+async function loadPreview() {
+  if (discoverBusy.value) {
+    return
+  }
+  const provider = discoverProvider.value.trim()
+  if (!provider) {
+    discoverResult.value = null
+    discoverError.value = t('ai.models.discover.providerRequired')
+    return
+  }
+  discoverLoading.value = true
+  discoverError.value = ''
+  try {
+    discoverResult.value = await withReauth(t('ai.models.discover.reauthReason'), (token) =>
+      discoverAiModels(provider, false, token)
+    )
+  } catch (error) {
+    if (isReauthCancelled(error)) {
+      return
+    }
+    discoverResult.value = null
+    discoverError.value = resolveErrorMessage(error, 'ai.models.discover.failed')
+  } finally {
+    discoverLoading.value = false
+  }
+}
+
+/** 回写：把上游给出的上下文长度合并进渠道凭据，然后刷新列表看生效结果。 */
+async function applyContexts() {
+  if (discoverBusy.value || !discoverResult.value) {
+    return
+  }
+  const provider = discoverProvider.value.trim() || discoverResult.value.provider
+  discoverApplying.value = true
+  discoverError.value = ''
+  try {
+    const result = await withReauth(t('ai.models.discover.reauthReason'), (token) =>
+      discoverAiModels(provider, true, token)
+    )
+    discoverResult.value = result
+    ElMessage.success(t('ai.models.discover.applyOk', { count: result.applied }))
+    await load()
+  } catch (error) {
+    if (isReauthCancelled(error)) {
+      return
+    }
+    ElMessage.error(resolveErrorMessage(error, 'ai.models.discover.applyFailed'))
+  } finally {
+    discoverApplying.value = false
   }
 }
 
@@ -221,6 +314,10 @@ onMounted(() => {
         <p class="yg-text-xs yg-text-tertiary">{{ t('ai.models.subtitle') }}</p>
       </div>
       <div class="yg-card__extra">
+        <ElButton :disabled="discoverBusy" @click="openDiscover">
+          <ElIcon class="mr-1"><Download /></ElIcon>
+          {{ t('ai.models.discover.open') }}
+        </ElButton>
         <ElButton :loading="loading" @click="load">
           <ElIcon class="mr-1"><Refresh /></ElIcon>
           {{ t('ai.common.refresh') }}
@@ -417,6 +514,149 @@ onMounted(() => {
         </div>
       </template>
     </ElDialog>
+
+    <ElDialog
+      v-model="discoverVisible"
+      :title="t('ai.models.discover.title')"
+      width="min(720px, 94vw)"
+      :close-on-click-modal="false"
+      :close-on-press-escape="!discoverBusy"
+      :show-close="!discoverBusy"
+      append-to-body
+    >
+      <div class="flex flex-col gap-3">
+        <p class="yg-text-xs yg-text-tertiary">{{ t('ai.models.discover.hint') }}</p>
+
+        <div class="flex flex-wrap items-end gap-2">
+          <div class="flex-1 min-w-0">
+            <p class="yg-text-xs yg-text-tertiary mb-1">{{ t('ai.models.discover.provider') }}</p>
+            <ElSelect
+              v-if="providerOptions.length"
+              v-model="discoverProvider"
+              class="w-full"
+              :placeholder="t('ai.models.discover.providerPlaceholder')"
+              :disabled="discoverBusy"
+            >
+              <ElOption
+                v-for="provider in providerOptions"
+                :key="provider"
+                :label="provider"
+                :value="provider"
+              />
+            </ElSelect>
+            <!-- 列表里还没有任何渠道：没有可选项，只能手填凭据里登记的渠道名 -->
+            <template v-else>
+              <ElInput
+                v-model="discoverProvider"
+                :placeholder="t('ai.models.discover.providerPlaceholder')"
+                :disabled="discoverBusy"
+              />
+              <p class="yg-text-xs yg-text-tertiary mt-1">
+                {{ t('ai.models.discover.providerManualHint') }}
+              </p>
+            </template>
+          </div>
+          <ElButton
+            type="primary"
+            :loading="discoverLoading"
+            :disabled="discoverApplying"
+            @click="loadPreview"
+          >
+            <ElIcon class="mr-1"><Search /></ElIcon>
+            {{ t('ai.models.discover.fetch') }}
+          </ElButton>
+        </div>
+
+        <div v-if="discoverError" class="py-6 flex flex-col items-center gap-3">
+          <p class="yg-text-sm yg-text-danger">{{ discoverError }}</p>
+          <ElButton
+            size="small"
+            :loading="discoverLoading"
+            :disabled="discoverApplying"
+            @click="loadPreview"
+          >
+            {{ t('ai.models.discover.retry') }}
+          </ElButton>
+        </div>
+
+        <p
+          v-else-if="discoverResult && !discoverHasRows"
+          class="py-8 text-center yg-text-sm yg-text-tertiary"
+        >
+          {{ t('ai.models.discover.empty') }}
+        </p>
+
+        <div
+          v-else-if="discoverResult"
+          v-loading="discoverLoading"
+          class="ai-models__discover-scroll"
+        >
+          <ElTable :data="discoverResult.models" row-key="model" stripe>
+            <ElTableColumn :label="t('ai.models.discover.columns.model')" min-width="200">
+              <template #default="{ row }">
+                <span class="ai-models__ellipsis tabular-nums" :title="row.model">
+                  {{ row.model }}
+                </span>
+              </template>
+            </ElTableColumn>
+            <ElTableColumn
+              :label="t('ai.models.discover.columns.contextLength')"
+              width="150"
+              align="right"
+            >
+              <template #default="{ row }">
+                <span class="tabular-nums">{{ contextText(row.context_length) }}</span>
+              </template>
+            </ElTableColumn>
+            <ElTableColumn
+              :label="t('ai.models.discover.columns.inCredential')"
+              width="140"
+              align="center"
+            >
+              <template #default="{ row }">
+                <ElTag :type="row.in_credential ? 'success' : 'info'" size="small" effect="plain">
+                  {{ row.in_credential ? t('ai.models.discover.yes') : t('ai.models.discover.no') }}
+                </ElTag>
+              </template>
+            </ElTableColumn>
+            <ElTableColumn :label="t('ai.models.discover.columns.status')" width="110" align="center">
+              <template #default="{ row }">
+                <ElTag :type="row.applied ? 'primary' : 'info'" size="small">
+                  {{
+                    row.applied
+                      ? t('ai.models.discover.statusApplied')
+                      : t('ai.models.discover.statusPending')
+                  }}
+                </ElTag>
+              </template>
+            </ElTableColumn>
+          </ElTable>
+        </div>
+
+        <p v-else class="py-8 text-center yg-text-sm yg-text-tertiary">
+          {{ t('ai.models.discover.idle') }}
+        </p>
+      </div>
+
+      <template #footer>
+        <div class="flex flex-wrap items-center justify-end gap-2">
+          <p v-if="discoverHasRows" class="yg-text-xs yg-text-tertiary mr-auto">
+            {{ t('ai.models.discover.applyHint') }}
+          </p>
+          <ElButton :disabled="discoverApplying" @click="discoverVisible = false">
+            {{ t('ai.common.cancel') }}
+          </ElButton>
+          <ElButton
+            type="primary"
+            :loading="discoverApplying"
+            :disabled="!discoverHasRows || discoverLoading"
+            @click="applyContexts"
+          >
+            {{ t('ai.models.discover.apply') }}
+          </ElButton>
+        </div>
+      </template>
+    </ElDialog>
   </section>
 </template>
 
@@ -428,6 +668,15 @@ onMounted(() => {
 
 .ai-models__scroll :deep(.el-table) {
   min-width: 960px;
+}
+
+.ai-models__discover-scroll {
+  overflow: auto;
+  max-height: 320px;
+}
+
+.ai-models__discover-scroll :deep(.el-table) {
+  min-width: 600px;
 }
 
 .ai-models__ellipsis {

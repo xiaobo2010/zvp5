@@ -9,7 +9,7 @@ import { cacheGet, cacheSet } from '@/utils/idbCache'
 import { getXuehaiId } from '@/plugins/ua'
 import { DEVICE_LOCK_DETAIL, cachedUnlockToken, clearDeviceUnlock } from '@/plugins/device-unlock'
 import { trackRequest, releaseRequest, type TrackedRequestConfig } from '@/plugins/inflight'
-import { readBanInfo } from '@/utils/ban'
+import { handleUserBanned } from '@/api/ai/banSignal'
 import { resolveDetailMessage, resolveErrorMessage } from '@/utils/errorMessage'
 import {
   memoryGet,
@@ -282,21 +282,10 @@ axiosInstance.interceptors.response.use(
         error.response?.status === 403 &&
         error.response?.data?.detail === 'USER_BANNED'
       ) {
-        // 封禁信号:仅首次命中写入检测时间戳(userStore.bannedNoticeAt),供 App.vue
-        // 全屏封禁警告与倒计时使用;isLogin 守卫防止登出后 in-flight 响应复活遮罩;
-        // 重复命中不会重置倒计时、不弹原始串、不触发任何跳转,只有原因/到期按响应头刷新。
-        const bannedStore = useUserStore()
-        if (bannedStore.isLogin) {
-          if (!bannedStore.bannedNoticeAt) {
-            bannedStore.bannedNoticeAt = Date.now()
-          }
-          // 原因/到期每次命中都刷新(幂等):同一次登录里可能先被规则临时封禁、再被管理员改判永久。
-          // 解析细节见 utils/ban.ts;这里一次性取两个值,避免两处解码逻辑漂移。
-          // 头缺失时回落「空原因 + 永久(0)」,与后端 USER_BANNED 必带这两条头的契约一致。
-          const { reason, until } = readBanInfo(error.response?.headers)
-          bannedStore.banReason = reason
-          bannedStore.banUntil = until
-        }
+        // 封禁信号：写 ban 状态（供 App.vue 全屏遮罩倒计时）+ 中止所有在途 AI 请求。
+        // 具体逻辑与 AI 面共用，见 api/ai/banSignal.ts；本函数保证不抛错，
+        // 因此下方统一 reject 的行为不受影响。
+        handleUserBanned({ headers: error.response?.headers })
       } else if (
         error.response?.status === 403 &&
         isDeviceLoginDetail(error.response?.data?.detail)

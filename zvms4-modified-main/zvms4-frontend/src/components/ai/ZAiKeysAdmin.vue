@@ -21,7 +21,7 @@ import {
   ElTag
 } from 'element-plus'
 import { Delete, Edit, Plus, Refresh } from '@element-plus/icons-vue'
-import type { FormInstance, FormRules } from 'element-plus'
+import type { DatePickerInstance, FormInstance, FormItemInstance, FormRules } from 'element-plus'
 import { AiRequestError, aiErrorCodeOf, aiErrorCopy, createKey, deleteKey, listKeys, updateKey } from '@/api/ai'
 import { isReauthCancelled, withReauth } from '@/plugins/reauth'
 import type { AiKeyModelRef, AiKeyRecord, AiKeyScope, AiKeyUpdateInput } from '@/../types/ai'
@@ -46,6 +46,8 @@ const dialogVisible = ref(false)
 const editingId = ref('')
 const submitting = ref(false)
 const formRef = ref<FormInstance>()
+const expiryPickerRef = ref<DatePickerInstance>()
+const expiryItemRef = ref<FormItemInstance>()
 
 interface HeaderRow {
   name: string
@@ -233,7 +235,45 @@ function canMutate(row: AiKeyRecord): boolean {
   return row.scope === 'shared' || row.owned
 }
 
+/**
+ * 到期时间面板只允许用户主动打开。
+ * Element Plus 的日期选择器是「拿到焦点就展开」，而弹窗与再认证弹框都带焦点陷阱：
+ * 关闭时会把焦点还给上一个聚焦元素，焦点一回来面板就自己弹出来（用户反馈的误弹）。
+ * 这里只在用户真的按下了到期时间输入框时才放行，其余来源的聚焦一律立刻收面板。
+ */
+let expiryPointerIntent = false
+
+function closeExpiryPanel() {
+  expiryPickerRef.value?.handleClose()
+}
+
+/** 指针落在到期时间这一栏里才算用户主动操作。 */
+function onFormPointerDown(event: Event) {
+  const target = event.target
+  const itemEl = expiryItemRef.value?.$el as HTMLElement | undefined
+  expiryPointerIntent = Boolean(itemEl && target instanceof Node && itemEl.contains(target))
+}
+
+function onExpiryFocus() {
+  if (expiryPointerIntent) {
+    expiryPointerIntent = false
+    return
+  }
+  void nextTick(() => closeExpiryPanel())
+}
+
+function onExpiryBlur() {
+  expiryPointerIntent = false
+}
+
+/** 关闭弹窗前先收面板：不收的话面板状态会带到下一次打开。 */
+function closeDialog() {
+  closeExpiryPanel()
+  dialogVisible.value = false
+}
+
 function resetForm() {
+  closeExpiryPanel()
   form.scope = 'shared'
   form.name = ''
   form.baseUrl = ''
@@ -376,12 +416,12 @@ async function submit() {
           token
         )
       )
-      dialogVisible.value = false
+      closeDialog()
       ElMessage.success(t('ai.keys.createdNotice'))
     } else {
       const original = rows.value.find((row) => row.oid === editingId.value)
       if (!original) {
-        dialogVisible.value = false
+        closeDialog()
         return
       }
       const payload: AiKeyUpdateInput = {}
@@ -412,7 +452,7 @@ async function submit() {
       await withReauth(t('ai.keys.reauthReason'), (token) =>
         updateKey(editingId.value, payload, token)
       )
-      dialogVisible.value = false
+      closeDialog()
       ElMessage.success(t('ai.keys.savedNotice'))
     }
     await load()
@@ -673,6 +713,7 @@ onMounted(() => {
       :close-on-press-escape="!submitting"
       :show-close="!submitting"
       append-to-body
+      @closed="closeExpiryPanel"
     >
       <ElForm
         ref="formRef"
@@ -680,6 +721,9 @@ onMounted(() => {
         :rules="formRules"
         label-position="top"
         class="ai-keys-form"
+        @submit.prevent
+        @pointerdown.capture="onFormPointerDown"
+        @mousedown.capture="onFormPointerDown"
       >
         <div class="grid gap-x-4 sm:grid-cols-2">
           <ElFormItem
@@ -748,12 +792,16 @@ onMounted(() => {
           <ElInput v-model="form.apiPath" :placeholder="t('ai.keys.apiPathPlaceholder')" />
         </ElFormItem>
 
-        <ElFormItem :label="t('ai.keys.expiresLabel')" prop="expiresAt">
+        <ElFormItem ref="expiryItemRef" :label="t('ai.keys.expiresLabel')" prop="expiresAt">
           <ElDatePicker
+            ref="expiryPickerRef"
             v-model="form.expiresAt"
             type="datetime"
             class="w-full"
+            :teleported="false"
             :placeholder="t('ai.keys.expiresPlaceholder')"
+            @focus="onExpiryFocus"
+            @blur="onExpiryBlur"
           />
           <p v-if="fieldError.expiresAt" class="text-xs mt-1" style="color: var(--el-color-danger)">
             {{ fieldError.expiresAt }}
@@ -807,10 +855,10 @@ onMounted(() => {
 
       <template #footer>
         <div class="flex items-center justify-end gap-2">
-          <ElButton :disabled="submitting" @click="dialogVisible = false">
+          <ElButton :disabled="submitting" @click="closeDialog">
             {{ t('ai.common.cancel') }}
           </ElButton>
-          <ElButton type="primary" :loading="submitting" @click="submit">
+          <ElButton native-type="button" type="primary" :loading="submitting" @click="submit">
             {{ mode === 'create' ? t('ai.common.create') : t('ai.common.save') }}
           </ElButton>
         </div>

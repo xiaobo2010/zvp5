@@ -1,6 +1,7 @@
 import axios, { baseURL } from '@/plugins/axios'
 import type { Response as AiEnvelope } from '@/../types'
 import { AiRequestError, parseAiCode, parseAiMessage } from './errors'
+import { handleUserBanned, isUserBannedResponse } from './banSignal'
 
 /**
  * AI 网关的请求层。
@@ -126,9 +127,15 @@ async function request(config: AiRequestConfig) {
   }
 
   if (status < 200 || status >= 300) {
+    const code = parseAiCode(body) || `AI_HTTP_${status}`
+    // AI 面自己撞上封禁：validateStatus 放开的代价是本文件看不到拦截器的 403 分支，
+    // 这里补上同一套扇出（写 ban 状态 + 中止在途请求）。仍按原样抛 AiRequestError。
+    if (isUserBannedResponse(status, code)) {
+      handleUserBanned({ headers: response.headers })
+    }
     throw new AiRequestError({
       status,
-      code: parseAiCode(body) || `AI_HTTP_${status}`,
+      code,
       message: parseAiMessage(body),
       requestId: readHeader(response.headers, 'X-AI-Request-Id'),
       retryAfter: readNumberHeader(response.headers, 'Retry-After'),
@@ -245,9 +252,15 @@ export async function aiFetchRaw(path: string, init: RequestInit = {}): Promise<
 
 /** 非 2xx 响应 → AiRequestError（携带请求编号、退避与额度头）。 */
 export function aiResponseError(response: Response, body: unknown): AiRequestError {
+  const code = parseAiCode(body) || `AI_HTTP_${response.status}`
+  // OpenAI 面（fetch）不经过 axios 拦截器：封禁 403 也要在这里扇出一次，
+  // 否则 aiFetchJson / 流式建连被拒时界面仍以为账号可用。
+  if (isUserBannedResponse(response.status, code)) {
+    handleUserBanned({ headers: response.headers })
+  }
   return new AiRequestError({
     status: response.status,
-    code: parseAiCode(body) || `AI_HTTP_${response.status}`,
+    code,
     message: parseAiMessage(body),
     requestId: response.headers.get('X-AI-Request-Id'),
     retryAfter: readNumberHeader(response.headers, 'Retry-After'),

@@ -1,6 +1,8 @@
 import type { AiChatMessage } from '@/../types/ai'
+import { registerAiAbort } from './activeRuns'
 import { AiRequestError } from './errors'
 import { AI_SCENE_HEADER, aiFetchRaw, aiResponseError, isMaintenanceResponse } from './http'
+import { handleUserBanned, isUserBannedCode } from './banSignal'
 import type { AiChatScene } from './chat'
 
 /**
@@ -235,8 +237,36 @@ export function extractStreamError(frame: string): AiStreamError | null {
  *
  * 失败一律抛 AiRequestError（带 status / code / 请求编号 / 退避与额度头）；
  * 调用方自己决定怎么呈现。已经发出 200 之后的失败不抛，走返回值里的 error。
+ *
+ * 中止有两条来源：调用方自己的 signal（「用户点停止」）与全局中止表
+ * （封禁等整条链路失效）。两者都收敛成 AbortError 抛出——这就是既有的
+ * 「用户取消」路径，调用方据此静默收尾，不会当成网络错误再弹一条错。
  */
 export async function streamChatCompletion(options: AiStreamOptions): Promise<AiStreamResult> {
+  const controller = new AbortController()
+  const forwardAbort = () => controller.abort()
+  if (options.signal) {
+    // 调用方可能在进来之前就已经中止了（组件卸载后才挂上监听）。
+    if (options.signal.aborted) {
+      controller.abort()
+    } else {
+      options.signal.addEventListener('abort', forwardAbort, { once: true })
+    }
+  }
+  const unregister = registerAiAbort(() => controller.abort())
+  try {
+    return await consumeStream(options, controller.signal)
+  } finally {
+    unregister()
+    options.signal?.removeEventListener('abort', forwardAbort)
+  }
+}
+
+/** 真正跑流：signal 由 streamChatCompletion 统一持有（调用方 signal 的转发目标）。 */
+async function consumeStream(
+  options: AiStreamOptions,
+  signal: AbortSignal
+): Promise<AiStreamResult> {
   const payload = {
     model: options.model,
     messages: options.messages,
@@ -246,7 +276,7 @@ export async function streamChatCompletion(options: AiStreamOptions): Promise<Ai
   const response = await aiFetchRaw('/ai/v1/chat/completions', {
     method: 'POST',
     body: JSON.stringify(payload),
-    signal: options.signal,
+    signal,
     // 审计元数据，不进请求体：后端读 X-AI-Scene 落 AI_CALL_LOGS.PURPOSE。
     ...(options.scene ? { headers: { [AI_SCENE_HEADER]: options.scene } } : {})
   })
@@ -296,6 +326,11 @@ export async function streamChatCompletion(options: AiStreamOptions): Promise<Ai
       const failure = extractStreamError(frame)
       if (failure) {
         error = failure
+        // 封禁帧：走到这里说明响应头已经是 200（拦截器/请求层都看不见它），
+        // 与 axios / zvp 面共用同一套扇出。通常此时请求已被中止，扇出幂等。
+        if (isUserBannedCode(failure.code)) {
+          handleUserBanned({ headers: response.headers })
+        }
         continue
       }
       const thought = extractReasoningDelta(frame)

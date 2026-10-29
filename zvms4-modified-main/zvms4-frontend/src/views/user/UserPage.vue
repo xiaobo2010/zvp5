@@ -17,6 +17,11 @@ import dayjs from '@/plugins/dayjs'
 import ZUserModification from '@/components/group/ZUserModification.vue'
 import { Info, Log, ViewList } from '@icon-park/vue-next'
 import ZLogList from '@/components/log/ZLogList.vue'
+import ZSceneRunDialog from '@/components/server/ZSceneRunDialog.vue'
+import {
+  VOLUNTEER_ACTIVITY_LIMIT,
+  buildVolunteerContextMarkdown
+} from '@/utils/volunteerAnalysis'
 
 /**
  * 封禁元数据由 `GET /v3/users/{id}` 附带返回;共享的 User 类型还没声明这几个字段,
@@ -379,6 +384,48 @@ async function clearPrimaryDevice() {
   }
 }
 
+// ---- 义工智能分析 ----
+// volunteer 场景是只读的：结果只展示在弹窗里，没有可写回的对象，因此不监听
+// ZSceneRunDialog 的 apply，弹窗会自动隐藏「写回」按钮。
+const analysisVisible = ref(false)
+const analysisContext = ref('')
+const analysisLoading = ref(false)
+
+// 工时与活动都是「锦上添花」的参考：任一失败只降级成占位文案 + 一次轻提示，
+// 不能挡住弹窗（身份信息本身已在页面上）。
+async function buildVolunteerContext(): Promise<string> {
+  const [timeResult, activitiesResult] = await Promise.allSettled([
+    api.user.time.read(id.value),
+    api.user.activity.read(id.value, 1, VOLUNTEER_ACTIVITY_LIMIT)
+  ])
+
+  const time = timeResult.status === 'fulfilled' ? timeResult.value : null
+  const activities =
+    activitiesResult.status === 'fulfilled' ? (activitiesResult.value?.activities ?? []) : null
+
+  if (timeResult.status === 'rejected' || activitiesResult.status === 'rejected') {
+    ElMessage({
+      message: t('user.volunteerAnalysis.partialFailed'),
+      type: 'warning',
+      grouping: true,
+      plain: true
+    })
+  }
+
+  return buildVolunteerContextMarkdown({ user: user.value, time, activities })
+}
+
+async function openVolunteerAnalysis() {
+  if (analysisLoading.value) return
+  analysisLoading.value = true
+  try {
+    analysisContext.value = await buildVolunteerContext()
+    analysisVisible.value = true
+  } finally {
+    analysisLoading.value = false
+  }
+}
+
 getUser().then(() => {
   if (!(userStore.position.includes('admin') || userStore.position.includes('department') || userStore.position.includes('secretary') && user.value?.group[0] === userStore.class_id)) {
     router.replace('/not-found')
@@ -450,7 +497,12 @@ watch(
             </div>
           </template>
         </ElSegmented>
-        <span v-if="canIssueTempPassword && user" class="ml-4 inline-flex">
+        <span v-if="isAdmin && user" class="ml-4 inline-flex">
+          <ElButton text bg :loading="analysisLoading" @click="openVolunteerAnalysis">
+            {{ t('user.volunteerAnalysis.action') }}
+          </ElButton>
+        </span>
+        <span v-if="canIssueTempPassword && user" class="ml-2 inline-flex">
           <ElButton text bg :loading="tempPasswordIssuing" @click="issueTempPasswordForUser">
             {{ t('manage.personalPanel.tempPassword.action') }}
           </ElButton>
@@ -600,5 +652,11 @@ watch(
         </ElButton>
       </template>
     </ElDialog>
+    <ZSceneRunDialog
+      v-model="analysisVisible"
+      scene="volunteer"
+      :title="t('user.volunteerAnalysis.title')"
+      :context="analysisContext"
+    />
   </div>
 </template>
