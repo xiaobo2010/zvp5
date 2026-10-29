@@ -10,6 +10,10 @@ import UserNav from './UserNav.vue'
    结束解锁，防止 spinning 把主题开关永久锁死。 */
 
 const darkRef = ref(false)
+/* 路由路径必须可变且是真正的 ref：「切到我的」的弹簧动画回归用例要在 /user ↔ /me
+   之间往返，组件内部 watch 依赖 route.path；静态字符串会让第二次切换根本不触发重算。
+   用 holder 中转是因为 vi.mock 的工厂会被提升到 import 之前，不能直接引用模块常量。 */
+const routeHolder = vi.hoisted(() => ({ ref: null as null | { value: string } }))
 
 vi.mock('element-plus', async () => {
   const { defineComponent } = await import('vue')
@@ -43,11 +47,20 @@ vi.mock('@element-plus/icons-vue', () => {
   }
 })
 
-vi.mock('vue-router', () => ({
-  useRouter: () => ({ push: vi.fn() }),
-  /* 登记子路由：上一版 judge 用 path === '/activity/register' 时这里整条导航无高亮 */
-  useRoute: () => ({ path: '/activity/register/create' })
-}))
+vi.mock('vue-router', async () => {
+  const { ref } = await import('vue')
+  routeHolder.ref = ref('/activity/register/create')
+  return {
+    useRouter: () => ({ push: vi.fn() }),
+    /* 登记子路由：上一版 judge 用 path === '/activity/register' 时这里整条导航无高亮。
+       getter 让 computed/watch 能追踪路径 ref 的变化。 */
+    useRoute: () => ({
+      get path() {
+        return routeHolder.ref?.value ?? '/activity/register/create'
+      }
+    })
+  }
+})
 
 vi.mock('vue-i18n', () => ({
   useI18n: () => ({ t: (key: string, fallback?: string) => fallback ?? key })
@@ -86,6 +99,7 @@ function mountNav(): VueWrapper {
 
 beforeEach(() => {
   darkRef.value = false
+  if (routeHolder.ref) routeHolder.ref.value = '/activity/register/create'
   vi.stubGlobal(
     'ResizeObserver',
     class {
@@ -101,8 +115,21 @@ afterEach(() => {
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
   Reflect.deleteProperty(document, 'startViewTransition')
+  Reflect.deleteProperty(Element.prototype, 'animate')
   darkRef.value = false
 })
+
+/* jsdom 没有布局：offset* 全是 0，指示器会把自己判成「隐藏项」。这里按 DOM 顺序
+   给每个导航项铺一份假几何，让 updateIndicator 真的算出位移。 */
+function stubItemGeometry(wrapper: VueWrapper) {
+  wrapper.findAll('.yg-glass-nav__item').forEach((item, index) => {
+    const el = item.element as HTMLElement
+    Object.defineProperty(el, 'offsetLeft', { configurable: true, value: index * 46 })
+    Object.defineProperty(el, 'offsetTop', { configurable: true, value: 8 })
+    Object.defineProperty(el, 'offsetWidth', { configurable: true, value: 44 })
+    Object.defineProperty(el, 'offsetHeight', { configurable: true, value: 44 })
+  })
+}
 
 it('高亮登记子路由（选择器/编辑页）并保持单一高亮', () => {
   stubReducedMotion(false)
@@ -182,5 +209,73 @@ it('ViewTransition.finished 也会解锁（与 animationend 互补）', async ()
 
   await theme.trigger('click')
   expect(darkRef.value).toBe(false)
+  wrapper.unmount()
+})
+
+it('每次切到「我的」都播放弹簧动画，重复进入也不例外', async () => {
+  /* 回归：CSS transition 版本在导航到 /me 时会被页面挂载的样式重算取消
+     （transitioncancel），表现为第一次有动画、之后再点直接跳过去。
+     指示器改为显式 WAAPI 弹簧后，每一次高亮变化都必须新建动画。 */
+  stubReducedMotion(false)
+  const animate = vi.fn(() => ({ finished: Promise.resolve(), cancel: vi.fn() }))
+  Object.defineProperty(Element.prototype, 'animate', {
+    configurable: true,
+    value: animate
+  })
+  vi.spyOn(window, 'getComputedStyle').mockImplementation(((el: Element) => {
+    const style = (el as HTMLElement).style
+    return {
+      transform: style?.transform || 'none',
+      getPropertyValue: (name: string) =>
+        name === '--yg-dur-page'
+          ? '450ms'
+          : name === '--yg-ease-spring'
+            ? 'cubic-bezier(0.34, 1.56, 0.64, 1)'
+            : ''
+    } as unknown as CSSStyleDeclaration
+  }) as typeof window.getComputedStyle)
+
+  const wrapper = mountNav()
+  stubItemGeometry(wrapper)
+  await flushPromises()
+
+  for (let round = 0; round < 3; round += 1) {
+    routeHolder.ref!.value = '/user'
+    await flushPromises()
+    routeHolder.ref!.value = '/me'
+    await flushPromises()
+  }
+
+  /* 每轮往返各一次（首页、我的），共 6 次；这里只盯「切到我的」那 3 次：
+     起点必须是上一项（首页 = x 0），终点是「我的」（x 184），
+     且重复进入也照样播放，不能退化成瞬移。 */
+  const toProfile = (animate.mock.calls as unknown as [frames: { transform: string }[]][])
+    .map((call) => call[0])
+    .filter((frames) => frames[1]?.transform === 'translate3d(184px, 8px, 0)')
+  expect(toProfile).toHaveLength(3)
+  for (const frames of toProfile) {
+    // 起点是上一项（首页），终点是「我的」：有真实位移才可能有弹簧
+    expect(frames[0].transform).toBe('translate3d(0px, 8px, 0)')
+  }
+
+  wrapper.unmount()
+})
+
+it('减少动效时切页直接落位、不新建动画', async () => {
+  stubReducedMotion(true)
+  const animate = vi.fn()
+  Object.defineProperty(Element.prototype, 'animate', {
+    configurable: true,
+    value: animate
+  })
+
+  const wrapper = mountNav()
+  stubItemGeometry(wrapper)
+  await flushPromises()
+
+  routeHolder.ref!.value = '/me'
+  await flushPromises()
+
+  expect(animate).not.toHaveBeenCalled()
   wrapper.unmount()
 })

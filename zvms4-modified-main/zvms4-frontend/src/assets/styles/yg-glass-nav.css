@@ -107,8 +107,10 @@ html.dark .yg-glass-nav--portrait {
 }
 
 /* 弹性滑动指示器（液态玻璃高亮药丸）
-   位移与尺寸走同一段 CSS transition：每次切换只播一次弹簧，下一次切换会直接
-   打断上一段（符合「可打断、不重复弹跳」），时长/曲线全部取自设计令牌。 */
+   位移弹簧由 UserNav.vue 用 Web Animation 显式播放（读当前渲染位移 → 弹簧到目标项）：
+   CSS transition 版本在切到 /me 时会被页面挂载期间的样式重算取消（transitioncancel），
+   表现为「第一次有动画、之后直接跳过去」。这里只保留透明度过渡，尺寸/位移一律交给
+   显式动画或行内样式，避免两套机制互相打断。 */
 .yg-glass-nav__indicator {
   position: absolute;
   left: 0;
@@ -118,18 +120,9 @@ html.dark .yg-glass-nav--portrait {
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.55),
     0 2px 8px rgba(14, 165, 233, 0.25);
-  transition:
-    transform var(--yg-dur-page) var(--yg-ease-spring),
-    width var(--yg-dur-page) var(--yg-ease-spring),
-    height var(--yg-dur-page) var(--yg-ease-spring),
-    opacity var(--yg-dur-base) var(--yg-ease-out);
+  transition: opacity var(--yg-dur-base) var(--yg-ease-out);
   pointer-events: none;
-}
-
-/* 首帧/字体就绪/尺寸校正：UserNav 在同一帧挂上本类再写位置，避免药丸从 (0,0)
-   飞入或在缩放、横竖屏重排时拖着虚影走；下一帧即移除，切页恢复弹簧。 */
-.yg-glass-nav__indicator.is-instant {
-  transition: none;
+  will-change: transform;
 }
 
 html.dark .yg-glass-nav__indicator {
