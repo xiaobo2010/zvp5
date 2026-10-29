@@ -129,7 +129,7 @@ export const zhCN = {
     createdNotification: '用户创建成功',
     modifiedNotification: '用户已修改',
     reloginNotice: '身份已修改：该用户需重新登录才能继续使用。',
-    studentIdInvalid: '学号格式不正确：必须为 8 位数字',
+    studentIdInvalid: '学号不能为空，且不超过 32 个字符',
     roles: {
       title: '身份',
       student: '学生',

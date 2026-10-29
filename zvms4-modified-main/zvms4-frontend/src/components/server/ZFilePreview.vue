@@ -245,6 +245,15 @@ function openAnalysis(content: string) {
   analysisVisible.value = true
 }
 
+// file_edit 的「写回编辑器」：交给 Z-IDE 落地（它负责切编辑态、刷新 dirty 与状态栏）。
+// 这里只负责保持弹窗焦点在当前文件，并把「已写入」告诉用户。
+async function onApplyResult(payload: { text: string }) {
+  const ide = ideRef.value
+  if (!ide) return
+  const applied = await ide.applyContent(payload.text, 'replace')
+  if (applied) ElMessage.success(t('server.files.preview.aiApplied'))
+}
+
 // 关闭弹窗(X / ESC)时若还有未保存的修改,先问一句再放行
 async function onBeforeClose(done: () => void) {
   const ide = ideRef.value
@@ -381,6 +390,7 @@ async function onBeforeClose(done: () => void) {
     scene="file_edit"
     :title="t('server.files.preview.aiAnalyze')"
     :context="analysisContext"
+    @apply="onApplyResult"
   />
 
   <ElImageViewer

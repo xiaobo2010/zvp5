@@ -147,6 +147,45 @@ export async function deleteConversation(
 }
 
 /**
+ * 手动压缩上下文的结果。
+ *
+ * 字段名与后端响应逐字对齐；`compacted=false` 表示这次没有可压缩的内容
+ * （不是失败），失败一律以 AiRequestError 抛出。
+ */
+export interface AiConversationCompactResult {
+  compacted: boolean
+  upto_seq: number | null
+  tokens_before: number
+  tokens_after: number
+  degraded: boolean
+  reason: string | null
+}
+
+/**
+ * 压缩一次会话的上下文（把更早的消息摘要掉）。
+ *
+ * 只回压缩结果，会话的新水位要另取详情：返回值里的 token 数是本次动作的
+ * 口径，界面按 `GET /ai/conversations/{oid}` 刷新后的 context 为准。
+ * 有活跃 run 时后端回 409 AI_RUN_CONFLICT。
+ */
+export async function compactConversation(
+  conversationOid: string
+): Promise<AiConversationCompactResult> {
+  const data = await aiRequest<Partial<AiConversationCompactResult> | null>({
+    method: 'post',
+    url: `/ai/conversations/${oid(conversationOid)}/compact`
+  })
+  return {
+    compacted: data?.compacted === true,
+    upto_seq: typeof data?.upto_seq === 'number' ? data.upto_seq : null,
+    tokens_before: Number(data?.tokens_before ?? 0),
+    tokens_after: Number(data?.tokens_after ?? 0),
+    degraded: data?.degraded === true,
+    reason: typeof data?.reason === 'string' && data.reason ? data.reason : null
+  }
+}
+
+/**
  * 拉会话内的消息。
  *
  * `afterSeq` 是增量口径：只回 seq 更大的那些，轮询与刷新都用它，

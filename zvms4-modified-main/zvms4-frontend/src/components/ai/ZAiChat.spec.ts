@@ -5,6 +5,7 @@ import ZAiChat from './ZAiChat.vue'
 import { useUserStore } from '@/stores/user'
 import {
   cancelRun,
+  compactConversation,
   confirmProposal,
   createConversation,
   deleteConversation,
@@ -47,18 +48,28 @@ vi.mock('@/api/ai', async (importOriginal) => {
     deleteConversation: vi.fn(),
     submitRun: vi.fn(),
     cancelRun: vi.fn(),
-    fetchActiveRuns: vi.fn()
+    fetchActiveRuns: vi.fn(),
+    compactConversation: vi.fn()
   }
 })
 
-const { elMessageSuccessSpy, elMessageErrorSpy, authOpenSpy, authSucceedSpy, authFailSpy } =
-  vi.hoisted(() => ({
-    elMessageSuccessSpy: vi.fn(),
-    elMessageErrorSpy: vi.fn(),
-    authOpenSpy: vi.fn(),
-    authSucceedSpy: vi.fn(),
-    authFailSpy: vi.fn()
-  }))
+const {
+  elMessageSuccessSpy,
+  elMessageErrorSpy,
+  elMessageWarningSpy,
+  authOpenSpy,
+  authSucceedSpy,
+  authFailSpy,
+  authCancelSpy
+} = vi.hoisted(() => ({
+  elMessageSuccessSpy: vi.fn(),
+  elMessageErrorSpy: vi.fn(),
+  elMessageWarningSpy: vi.fn(),
+  authOpenSpy: vi.fn(),
+  authSucceedSpy: vi.fn(),
+  authFailSpy: vi.fn(),
+  authCancelSpy: vi.fn()
+}))
 
 /**
  * 视口尺寸：jsdom 里没有真实布局，而组件按宽高决定侧栏形态、输入框行数
@@ -76,14 +87,19 @@ vi.mock('@vueuse/core', async (importOriginal) => {
 })
 
 // 动态码弹窗复用系统页那一个（它内部用 ElDialog，本文件的 element-plus 桩里没有），
-// 这里换成可控的桩：open 返回动态码，succeed/fail 记录调用。
+// 这里换成可控的桩：open 返回动态码，succeed/fail/cancel 记录调用。
 vi.mock('@/components/system/ZSystemAuthDialog.vue', async () => {
   const { h } = await import('vue')
   return {
     default: {
       name: 'ZSystemAuthDialogStub',
       setup(_props: unknown, { expose }: { expose: (api: Record<string, unknown>) => void }) {
-        expose({ open: authOpenSpy, succeed: authSucceedSpy, fail: authFailSpy })
+        expose({
+          open: authOpenSpy,
+          succeed: authSucceedSpy,
+          fail: authFailSpy,
+          cancel: authCancelSpy
+        })
         return () => h('div', { class: 'auth-dialog-stub' })
       }
     }
@@ -284,7 +300,7 @@ vi.mock('element-plus', async () => {
     ElMessage: Object.assign(vi.fn(), {
       error: elMessageErrorSpy,
       success: elMessageSuccessSpy,
-      warning: vi.fn(),
+      warning: elMessageWarningSpy,
       info: vi.fn()
     }),
     ElMessageBox: Object.assign(vi.fn(), {
@@ -416,11 +432,14 @@ beforeEach(() => {
   vi.mocked(submitRun).mockReset()
   vi.mocked(cancelRun).mockReset()
   vi.mocked(fetchActiveRuns).mockReset()
+  vi.mocked(compactConversation).mockReset()
   authOpenSpy.mockReset()
   authSucceedSpy.mockReset()
   authFailSpy.mockReset()
+  authCancelSpy.mockReset()
   elMessageSuccessSpy.mockReset()
   elMessageErrorSpy.mockReset()
+  elMessageWarningSpy.mockReset()
 
   vi.mocked(listModels).mockResolvedValue({
     object: 'list',
@@ -545,11 +564,11 @@ describe('会话栏', () => {
 })
 
 describe('上下文水位', () => {
-  it('按 token / limit 画比例，90% 起换警示色', async () => {
+  it('按 token / limit 画比例，80% 起换警示色', async () => {
     vi.mocked(listConversations).mockResolvedValue({
       conversations: [
         conversation({
-          context: { tokens: 900, limit: 1000, ratio: 0.9 },
+          context: { tokens: 800, limit: 1000, ratio: 0.8 },
           compaction: { upto_seq: 0, summarized: false, degraded_at: null }
         })
       ],
@@ -561,9 +580,30 @@ describe('上下文水位', () => {
 
     const rail = wrapper.find('.ai-chat__context .yg-progress__rail')
     expect(rail.exists()).toBe(true)
-    expect(rail.attributes('style')).toContain('--yg-progress-value: 90')
+    expect(rail.attributes('style')).toContain('--yg-progress-value: 80')
     expect(wrapper.find('.ai-chat__context .yg-progress--warning').exists()).toBe(true)
     expect(wrapper.text()).toContain('ai.chat.sessions.context.warning')
+
+    wrapper.unmount()
+  })
+
+  it('79% 还没到线：仍是中性色，只显示自动压缩提示', async () => {
+    vi.mocked(listConversations).mockResolvedValue({
+      conversations: [
+        conversation({
+          context: { tokens: 790, limit: 1000, ratio: 0.79 },
+          compaction: { upto_seq: 0, summarized: false, degraded_at: null }
+        })
+      ],
+      next_cursor: null,
+      size: 1
+    })
+    const wrapper = mountPage()
+    await settle()
+
+    expect(wrapper.find('.ai-chat__context .yg-progress--warning').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('ai.chat.sessions.context.warning')
+    expect(wrapper.text()).toContain('ai.chat.sessions.context.autoCompactHint')
 
     wrapper.unmount()
   })
@@ -575,6 +615,142 @@ describe('上下文水位', () => {
     const rail = wrapper.find('.ai-chat__context .yg-progress__rail')
     expect(rail.attributes('style')).toContain('--yg-progress-value: 0')
     expect(wrapper.find('.ai-chat__context .yg-progress--warning').exists()).toBe(false)
+
+    wrapper.unmount()
+  })
+})
+
+describe('手动压缩上下文', () => {
+  /** 水位接近上限的会话：上下文卡片与压缩按钮都在。 */
+  function highWaterConversation() {
+    return conversation({
+      context: { tokens: 900, limit: 1000, ratio: 0.9 },
+      compaction: { upto_seq: 0, summarized: false, degraded_at: null }
+    })
+  }
+
+  it('上下文卡片里有压缩按钮；没有当前会话时不渲染', async () => {
+    vi.mocked(listConversations).mockResolvedValue({
+      conversations: [highWaterConversation()],
+      next_cursor: null,
+      size: 1
+    })
+    const wrapper = mountPage()
+    await settle()
+
+    const button = findButton(wrapper, 'ai.chat.sessions.context.compact')!
+    expect(button).toBeTruthy()
+    expect(button.attributes('disabled')).toBeUndefined()
+
+    wrapper.unmount()
+
+    // 还没有会话：没有水位卡片，也就没有压缩入口
+    vi.mocked(listConversations).mockResolvedValue({
+      conversations: [],
+      next_cursor: null,
+      size: 0
+    })
+    const empty = mountPage()
+    await settle()
+
+    expect(empty.find('.ai-chat__context').exists()).toBe(false)
+    expect(findButton(empty, 'ai.chat.sessions.context.compact')).toBeUndefined()
+
+    empty.unmount()
+  })
+
+  it('压缩成功：提示带 token 前后值，并按重拉的详情回落进度条', async () => {
+    vi.mocked(listConversations).mockResolvedValue({
+      conversations: [highWaterConversation()],
+      next_cursor: null,
+      size: 1
+    })
+    vi.mocked(compactConversation).mockResolvedValue({
+      compacted: true,
+      upto_seq: 8,
+      tokens_before: 900,
+      tokens_after: 200,
+      degraded: false,
+      reason: null
+    })
+    vi.mocked(getConversation).mockResolvedValue(
+      conversation({
+        context: { tokens: 200, limit: 1000, ratio: 0.2 },
+        compaction: { upto_seq: 8, summarized: true, degraded_at: null }
+      })
+    )
+    const wrapper = mountPage()
+    await settle()
+
+    await findButton(wrapper, 'ai.chat.sessions.context.compact')!.trigger('click')
+    await settle()
+
+    expect(compactConversation).toHaveBeenCalledWith('agent1')
+    expect(getConversation).toHaveBeenCalledWith('agent1')
+    expect(elMessageSuccessSpy).toHaveBeenCalledWith(
+      'ai.chat.sessions.context.compactOkTokens {"before":900,"after":200}'
+    )
+    const rail = wrapper.find('.ai-chat__context .yg-progress__rail')
+    expect(rail.attributes('style')).toContain('--yg-progress-value: 20')
+    // 压完就不再是警示态
+    expect(wrapper.find('.ai-chat__context .yg-progress--warning').exists()).toBe(false)
+
+    wrapper.unmount()
+  })
+
+  it('没有可压缩内容：提示一句，不刷新详情', async () => {
+    vi.mocked(compactConversation).mockResolvedValue({
+      compacted: false,
+      upto_seq: null,
+      tokens_before: 120,
+      tokens_after: 120,
+      degraded: false,
+      reason: 'nothing_to_compact'
+    })
+    const wrapper = mountPage()
+    await settle()
+
+    await findButton(wrapper, 'ai.chat.sessions.context.compact')!.trigger('click')
+    await settle()
+
+    expect(elMessageWarningSpy).toHaveBeenCalledWith('ai.chat.sessions.context.nothingToCompact')
+    expect(elMessageSuccessSpy).not.toHaveBeenCalled()
+    // 只有进页面时那一次详情兜底？没有：空会话不拉详情。这里是零次。
+    expect(getConversation).not.toHaveBeenCalled()
+
+    wrapper.unmount()
+  })
+
+  it('有活跃 run（409）：提示稍后再压，不刷新', async () => {
+    vi.mocked(compactConversation).mockRejectedValue(
+      new AiRequestError({ status: 409, code: 'AI_RUN_CONFLICT' })
+    )
+    const wrapper = mountPage()
+    await settle()
+
+    await findButton(wrapper, 'ai.chat.sessions.context.compact')!.trigger('click')
+    await settle()
+
+    expect(elMessageWarningSpy).toHaveBeenCalledWith('ai.chat.sessions.context.compactBusy')
+    expect(elMessageErrorSpy).not.toHaveBeenCalled()
+    expect(getConversation).not.toHaveBeenCalled()
+
+    wrapper.unmount()
+  })
+
+  it('其它错误：走统一错误文案，按钮能再点', async () => {
+    vi.mocked(compactConversation).mockRejectedValue(
+      new Error('Request failed with status code 500')
+    )
+    const wrapper = mountPage()
+    await settle()
+
+    await findButton(wrapper, 'ai.chat.sessions.context.compact')!.trigger('click')
+    await settle()
+
+    expect(elMessageErrorSpy).toHaveBeenCalledWith('上下文压缩失败')
+    const again = findButton(wrapper, 'ai.chat.sessions.context.compact')!
+    expect(again.attributes('disabled')).toBeUndefined()
 
     wrapper.unmount()
   })
@@ -1056,6 +1232,69 @@ describe('双人动态码', () => {
 
     expect(authOpenSpy).not.toHaveBeenCalled()
     expect(confirmProposal).toHaveBeenCalledWith('f'.repeat(32))
+
+    wrapper.unmount()
+  })
+
+  it('确认时后端 500：拿过码就必须回话，弹层被 fail 收口并收起', async () => {
+    authOpenSpy.mockResolvedValue('123456')
+    vi.mocked(fetchPendingProposals).mockResolvedValue({
+      proposals: [proposal({ oid: 'd'.repeat(32), tool_name: 'fs_write', requires_dual_auth: true })]
+    })
+    vi.mocked(confirmProposal).mockRejectedValue(
+      new AiRequestError({ status: 500, code: 'AI_AGENT_INTERNAL' })
+    )
+    const wrapper = mountPage()
+    await settle()
+
+    await findButton(wrapper, 'ai.agent.pending.entry')!.trigger('click')
+    await settle()
+    await findButton(wrapper, 'ai.agent.proposal.confirm')!.trigger('click')
+    await settle()
+
+    expect(confirmProposal).toHaveBeenCalledTimes(1)
+    // 非鉴权错误也不能让弹层一直转：恰好一次 fail 释放 loading
+    expect(authFailSpy).toHaveBeenCalledTimes(1)
+    expect(authFailSpy.mock.calls[0][0]).toContain('ai.agent.proposalErrors.generic')
+    // 卡片落失败态后弹层收起，不做无意义的重试
+    expect(authCancelSpy).toHaveBeenCalled()
+    expect(wrapper.text()).toContain('ai.agent.proposal.error')
+
+    wrapper.unmount()
+  })
+
+  it('三次都鉴权失败：循环收尾并收起弹层，再点确认能重新发起', async () => {
+    authOpenSpy.mockResolvedValue('000000')
+    vi.mocked(fetchPendingProposals).mockResolvedValue({
+      proposals: [proposal({ oid: 'b'.repeat(32), tool_name: 'fs_write', requires_dual_auth: true })]
+    })
+    vi.mocked(confirmProposal)
+      .mockRejectedValueOnce(new AiRequestError({ status: 403, code: 'AI_AGENT_TOTP_INVALID' }))
+      .mockRejectedValueOnce(new AiRequestError({ status: 403, code: 'AI_AGENT_TOTP_INVALID' }))
+      .mockRejectedValueOnce(new AiRequestError({ status: 403, code: 'AI_AGENT_TOTP_INVALID' }))
+      .mockResolvedValue({ status: 'confirmed', dual_auth_cached: false })
+    const wrapper = mountPage()
+    await settle()
+
+    await findButton(wrapper, 'ai.agent.pending.entry')!.trigger('click')
+    await settle()
+    await findButton(wrapper, 'ai.agent.proposal.confirm')!.trigger('click')
+    await settle()
+
+    expect(authOpenSpy).toHaveBeenCalledTimes(3)
+    expect(confirmProposal).toHaveBeenCalledTimes(3)
+    // 每次都回话（换码重试），循环退出时再把弹层收掉
+    expect(authFailSpy).toHaveBeenCalledTimes(3)
+    expect(authCancelSpy).toHaveBeenCalledTimes(1)
+
+    // loading 已释放：卡片回到可确认态，再点一次能重新发起
+    const again = findButton(wrapper, 'ai.agent.proposal.confirm')!
+    expect(again.attributes('disabled')).toBeUndefined()
+    await again.trigger('click')
+    await settle()
+
+    expect(confirmProposal).toHaveBeenCalledTimes(4)
+    expect(wrapper.text()).toContain('ai.agent.proposal.confirmed')
 
     wrapper.unmount()
   })

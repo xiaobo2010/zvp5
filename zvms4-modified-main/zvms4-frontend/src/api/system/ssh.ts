@@ -1,5 +1,6 @@
 import axios from '@/plugins/axios.ts'
 import { baseURL } from '@/plugins/axios.ts'
+import type { AiThinkingLevel } from '@/../types/ai'
 
 // POST /api/system/ssh/session 的响应体(后端 routers/system_ssh_router.py:74)
 export interface SshSessionData {
@@ -36,11 +37,18 @@ export interface SshSuggestResponse {
 
 // 让 AI 依据自然语言意图生成一条 shell 命令(仅文本,不执行)。
 // 错误 detail 为 AI_* 码(AI_NO_PROVIDER / model_not_found / AI_BUSY …)。
-export function suggestSshCommand(intent: string, context?: string, model?: string) {
+// thinking 为空时不下发,后端取默认档。
+export function suggestSshCommand(
+  intent: string,
+  context?: string,
+  model?: string,
+  thinking?: AiThinkingLevel | null
+) {
   return axios.post<SshSuggestResponse>('/system/ssh/suggest', {
     intent,
     context: context || undefined,
-    model: model || undefined
+    model: model || undefined,
+    thinking: thinking || undefined
   })
 }
 

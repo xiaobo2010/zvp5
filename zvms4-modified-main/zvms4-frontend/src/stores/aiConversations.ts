@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import {
   cancelRun as cancelRunApi,
+  compactConversation as compactConversationApi,
   createConversation as createConversationApi,
   deleteConversation as deleteConversationApi,
   fetchActiveRuns as fetchActiveRunsApi,
@@ -12,6 +13,7 @@ import {
   submitRun as submitRunApi,
   updateConversation
 } from '@/api/ai'
+import type { AiConversationCompactResult } from '@/api/ai'
 import type {
   AiConversation,
   AiConversationMode,
@@ -44,6 +46,9 @@ const TERMINAL_RUN_STATUS = new Set(['succeeded', 'failed', 'cancelled', 'interr
 
 /** 消息一页的条数：与服务端默认一致。 */
 const MESSAGE_PAGE_SIZE = 50
+
+/** 自动压缩阈值：上下文水位到这里就该压，界面同一阈值起警示。 */
+export const AUTO_COMPACT_RATIO = 0.8
 
 /** 轮询间隔：页面不可见时降频。 */
 export function pollIntervalMs(): number {
@@ -132,8 +137,8 @@ export const useAiConversationsStore = defineStore('aiConversations', () => {
     return Math.min(1, context.tokens / context.limit)
   })
 
-  /** 水位达到 90% 就该警示。 */
-  const contextWarning = computed(() => contextRatio.value >= 0.9)
+  /** 水位达到 80% 就该警示：服务端在同一阈值上自动压缩。 */
+  const contextWarning = computed(() => contextRatio.value >= AUTO_COMPACT_RATIO)
 
   /** 已压缩掉的消息条数（压缩点之前）。 */
   const compactedCount = computed(() => current.value?.compaction.upto_seq ?? 0)
@@ -301,6 +306,25 @@ export const useAiConversationsStore = defineStore('aiConversations', () => {
     if (currentOid.value === conversationOid) {
       clearCurrent()
     }
+  }
+
+  /**
+   * 手动压缩上下文。
+   *
+   * `compacted=true` 说明后端真的压了：水位与压缩点都由服务端重算，所以重拉
+   * 一次详情，让进度条按后端口径回落，不用返回值手工拼 context。
+   * `compacted=false` 是「没有可压的内容」，不是失败：不刷新，把原因交回组件。
+   * 409（有活跃 run）与其它错误原样抛给调用方提示。
+   */
+  async function compactConversation(
+    conversationOid: string
+  ): Promise<AiConversationCompactResult> {
+    const result = await compactConversationApi(conversationOid)
+    if (result.compacted) {
+      const detail = await getConversationApi(conversationOid)
+      applyConversation(detail)
+    }
+    return result
   }
 
   /** 把服务端返回的会话视图同步进列表与当前会话。 */
@@ -653,6 +677,7 @@ export const useAiConversationsStore = defineStore('aiConversations', () => {
     setConversationThinking,
     setConversationModel,
     removeConversation,
+    compactConversation,
     selectConversation,
     loadMessages,
     loadEarlierMessages,

@@ -1,4 +1,12 @@
-import type { AiQuotaEntry, AiQuotaKind, AiQuotaMutation } from '@/../types/ai'
+import type {
+  AiQuotaEntry,
+  AiQuotaKind,
+  AiQuotaModelUsageRow,
+  AiQuotaMutation,
+  AiQuotaProviderUsageRow,
+  AiQuotaUsage,
+  AiQuotaUsageRow
+} from '@/../types/ai'
 import { aiRequest, aiRequestList } from './http'
 
 /**
@@ -51,6 +59,35 @@ export function aiQuotaSourceLabelKey(source?: AiQuotaSource | null): string | n
 /** 当前用户本月额度自查。 */
 export async function myQuota(): Promise<AiQuotaSnapshotView> {
   return aiRequest<AiQuotaSnapshotView>({ method: 'get', url: '/ai/quota' })
+}
+
+/**
+ * 本人当月用量统计（/ai/quota/usage）。
+ *
+ * period 省略时后端按当月统计；传 `202610` 这类周期串可回看历史月份。
+ * 后端按渠道（凭据名 / OCR 引擎名）与模型两个维度各给一份小计，
+ * 维度值缺失时是 null，由页面显示占位文案。
+ */
+export async function fetchQuotaUsage(period?: string): Promise<AiQuotaUsage> {
+  const params: Record<string, string | number> = {}
+  const wanted = period?.trim()
+  if (wanted) {
+    params.period = wanted
+  }
+  const data = await aiRequest<unknown>({
+    method: 'get',
+    url: '/ai/quota/usage',
+    params
+  })
+  const record = asRecord(data)
+  return {
+    period: textOf(record.period) ?? '',
+    total: normalizeUsageRow(record.total),
+    by_provider: Array.isArray(record.by_provider)
+      ? record.by_provider.map(normalizeProviderUsage)
+      : [],
+    by_model: Array.isArray(record.by_model) ? record.by_model.map(normalizeModelUsage) : []
+  }
 }
 
 /** admin 查看某个用户的额度。 */
@@ -285,13 +322,41 @@ function normalizeUserRow(value: unknown): AiQuotaUserRow {
   }
 }
 
+/** 用量数值的五项小计：后端字段名与前端逐字一致，缺省按 0。 */
+function normalizeUsageRow(value: unknown): AiQuotaUsageRow {
+  const row = asRecord(value)
+  return {
+    calls: numberOf(row.calls),
+    units: numberOf(row.units),
+    prompt_tokens: numberOf(row.prompt_tokens),
+    completion_tokens: numberOf(row.completion_tokens),
+    total_tokens: numberOf(row.total_tokens)
+  }
+}
+
+function normalizeProviderUsage(value: unknown): AiQuotaProviderUsageRow {
+  const row = asRecord(value)
+  return {
+    provider: textOf(row.provider),
+    ...normalizeUsageRow(row)
+  }
+}
+
+function normalizeModelUsage(value: unknown): AiQuotaModelUsageRow {
+  const row = asRecord(value)
+  return {
+    provider: textOf(row.provider),
+    model: textOf(row.model),
+    ...normalizeUsageRow(row)
+  }
+}
+
 /**
  * 拆分页响应。
  *
  * 后端两种形态都能落地：`{items,total,page,size}` 整包，或 items 放在 data
  * 里、total 走 metadata.size 的列表约定。这里都接受，缺字段按空值兜底。
- */
-function readPage(data: unknown, metadata?: { size?: number }): {
+ */function readPage(data: unknown, metadata?: { size?: number }): {
   items: unknown[]
   total: number
   page: number

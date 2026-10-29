@@ -1,6 +1,6 @@
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import type { PropType } from 'vue'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import ZSystemAuthDialog from './ZSystemAuthDialog.vue'
 
 /**
@@ -9,7 +9,15 @@ import ZSystemAuthDialog from './ZSystemAuthDialog.vue'
  * 守住的是「调用方视角」的契约：open() 返回 Promise、submit 后弹层不自动关、
  * 失败由父级 fail() 回填错误并保留弹层、取消 resolve(null)。视觉上的输入规格
  * （只留数字、满 6 位自动提交、回车提交、loading 期间禁用）一并锁在这里。
+ *
+ * 另外三条兜底契约：父级一直不回话时超时必须放开 loading、弹层还开着时二次
+ * open 不能留下悬空 Promise、关掉再打开必须是干净的初始态。
+ *
+ * 只假 setTimeout/clearTimeout：flushPromises 依赖 setImmediate，假掉会卡死。
  */
+const FAKE_TIMER_APIS: Parameters<typeof vi.useFakeTimers>[0] = {
+  toFake: ['setTimeout', 'clearTimeout']
+}
 
 vi.mock('vue-i18n', async (importOriginal) => {
   const actual = await importOriginal<typeof import('vue-i18n')>()
@@ -153,10 +161,15 @@ function buttonByText(wrapper: VueWrapper, text: string) {
   return button
 }
 
+beforeEach(() => {
+  vi.useFakeTimers(FAKE_TIMER_APIS)
+})
+
 afterEach(() => {
   while (wrappers.length > 0) {
     wrappers.pop()?.unmount()
   }
+  vi.useRealTimers()
 })
 
 describe('ZSystemAuthDialog', () => {
@@ -298,5 +311,80 @@ describe('ZSystemAuthDialog', () => {
 
     await expect(pending).resolves.toBe('123456')
     expect(wrapper.find('.el-dialog-stub').exists()).toBe(false)
+  })
+
+  it('父级不回话：30 秒兜底放开 loading 并收起弹层，重开后仍是干净初始态', async () => {
+    const wrapper = mountDialog()
+    api(wrapper).open('删除 /srv/app')
+    await flushPromises()
+
+    await codeInput(wrapper).setValue('123456')
+    await flushPromises()
+
+    // 已经交给父级，等它回话：按钮转圈
+    expect(buttonByText(wrapper, 'server.auth.verifying').attributes('data-loading')).toBe('true')
+
+    // 父级一直不回话 → 兜底到点
+    await vi.advanceTimersByTimeAsync(30_000)
+    await flushPromises()
+
+    // 不再假死：弹层收起，用户可以重新发起
+    expect(wrapper.find('.el-dialog-stub').exists()).toBe(false)
+
+    const again = api(wrapper).open('删除 /srv/app')
+    await flushPromises()
+    const confirmButton = buttonByText(wrapper, 'server.auth.confirm')
+    expect(confirmButton.attributes('data-loading')).toBe('false')
+    expect(confirmButton.attributes('disabled')).toBeUndefined()
+
+    // 重开后照常可用：新码正常 resolve
+    await codeInput(wrapper).setValue('654321')
+    await flushPromises()
+    await expect(again).resolves.toBe('654321')
+  })
+
+  it('弹层还开着时二次 open：旧 Promise 按取消结掉，不悬空', async () => {
+    const wrapper = mountDialog()
+    const first = api(wrapper).open('删除 /srv/a')
+    await flushPromises()
+
+    const second = api(wrapper).open('删除 /srv/b')
+    await flushPromises()
+
+    // 上一次的 await 不能悬着
+    await expect(first).resolves.toBeNull()
+    expect(wrapper.find('.el-dialog-stub').text()).toContain('删除 /srv/b')
+
+    await codeInput(wrapper).setValue('123456')
+    await flushPromises()
+    await expect(second).resolves.toBe('123456')
+  })
+
+  it('关闭后重开：loading、错误提示与输入都复位', async () => {
+    const wrapper = mountDialog()
+    api(wrapper).open('删除 /srv/a')
+    await flushPromises()
+
+    await codeInput(wrapper).setValue('123456')
+    await flushPromises()
+    api(wrapper).fail('动态码无效或已过期')
+    await flushPromises()
+    expect(wrapper.find('.auth-error').text()).toBe('动态码无效或已过期')
+
+    api(wrapper).cancel()
+    await flushPromises()
+    expect(wrapper.find('.el-dialog-stub').exists()).toBe(false)
+
+    const next = api(wrapper).open('删除 /srv/b')
+    await flushPromises()
+    const confirmButton = buttonByText(wrapper, 'server.auth.confirm')
+    expect(confirmButton.attributes('data-loading')).toBe('false')
+    expect(confirmButton.attributes('disabled')).toBeUndefined()
+    expect(wrapper.find('.auth-error').text()).toBe('')
+    expect((codeInput(wrapper).element as HTMLInputElement).value).toBe('')
+
+    await codeInput(wrapper).setValue('112233')
+    await flushPromises()
+    await expect(next).resolves.toBe('112233')
   })
 })

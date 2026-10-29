@@ -20,6 +20,8 @@ import {
   ElOption,
   ElProgress,
   ElSelect,
+  ElTable,
+  ElTableColumn,
   ElTag
 } from 'element-plus'
 import { Refresh } from '@element-plus/icons-vue'
@@ -27,6 +29,7 @@ import {
   aiErrorOf,
   aiQuotaSourceLabelKey,
   createQuotaRequest,
+  fetchQuotaUsage,
   myQuota,
   myQuotaRequests,
   type AiQuotaEntryView,
@@ -35,7 +38,7 @@ import {
 } from '@/api/ai'
 import { formatDateTime } from '@/utils/dateTime'
 import { resolveErrorMessage } from '@/utils/errorMessage'
-import type { AiQuotaKind } from '@/../types/ai'
+import type { AiQuotaKind, AiQuotaUsage } from '@/../types/ai'
 
 /** 说明的字数上限：与后端字段的 200 字约束对齐。 */
 const REASON_MAX = 200
@@ -50,6 +53,12 @@ const chat = ref<AiQuotaEntryView | null>(null)
 const requestsFailed = ref(false)
 /** 每个能力最多一条待审批申请：同能力重复提交没有意义。 */
 const pending = ref<Partial<Record<AiQuotaKind, AiQuotaRequest>>>({})
+
+/* 当月用量统计：与额度卡分开取数、分开报错，互不阻塞。 */
+const usageLoading = ref(false)
+const usageFailed = ref(false)
+const usageError = ref('')
+const usage = ref<AiQuotaUsage | null>(null)
 
 const dialogVisible = ref(false)
 const requestKind = ref<AiQuotaKind>('chat')
@@ -86,6 +95,19 @@ function sourceLabel(entry: AiQuotaEntryView | null): string | null {
   const key = aiQuotaSourceLabelKey(entry?.source)
   return key ? t(key) : null
 }
+
+/** 渠道 / 模型的空值占位：后端可能是 null，也可能是空串。 */
+function usageLabel(value: string | null): string {
+  return value ? value : t('ai.quota.usage.unlabeled')
+}
+
+/** 一行记录都没有才算空态：total.calls 为 0 但维度有行时仍要渲染表格。 */
+const usageEmpty = computed(() => {
+  const data = usage.value
+  return (
+    !!data && data.total.calls === 0 && !data.by_provider.length && !data.by_model.length
+  )
+})
 
 const tiles = computed(() => [
   {
@@ -161,6 +183,24 @@ async function loadRequests() {
   }
 }
 
+/** 用量统计单独加载：失败只让这张卡降级，上面的额度卡照常显示。 */
+async function loadUsage() {
+  if (usageLoading.value) {
+    return
+  }
+  usageLoading.value = true
+  usageFailed.value = false
+  try {
+    usage.value = await fetchQuotaUsage()
+  } catch (error) {
+    usage.value = null
+    usageFailed.value = true
+    usageError.value = resolveErrorMessage(error, 'ai.quota.usage.loadFailed')
+  } finally {
+    usageLoading.value = false
+  }
+}
+
 function openRequest(kind: AiQuotaKind) {
   if (hasPending(kind) || submitting.value) {
     return
@@ -209,6 +249,7 @@ async function submitRequest() {
 onMounted(() => {
   void load()
   void loadRequests()
+  void loadUsage()
 })
 </script>
 
@@ -292,6 +333,121 @@ onMounted(() => {
         </p>
         <p v-if="requestsFailed" class="yg-text-xs yg-text-danger mt-1">
           {{ t('ai.quota.request.loadFailed') }}
+        </p>
+      </div>
+    </section>
+
+    <section class="yg-card" v-loading="usageLoading">
+      <header class="yg-card__header">
+        <div class="flex flex-col gap-1 min-w-0">
+          <h2 class="yg-card__title">{{ t('ai.quota.usage.title') }}</h2>
+          <p class="yg-text-xs yg-text-tertiary">{{ t('ai.quota.usage.subtitle') }}</p>
+        </div>
+        <div class="yg-card__extra">
+          <ElButton :disabled="usageLoading" @click="loadUsage">
+            <ElIcon class="mr-1"><Refresh /></ElIcon>
+            {{ t('ai.common.refresh') }}
+          </ElButton>
+        </div>
+      </header>
+
+      <div class="yg-card__body">
+        <div v-if="usageFailed" class="py-6 flex flex-col items-center gap-3">
+          <p class="yg-text-sm yg-text-danger">{{ usageError }}</p>
+          <ElButton size="small" :loading="usageLoading" @click="loadUsage">
+            {{ t('ai.quota.usage.retry') }}
+          </ElButton>
+        </div>
+
+        <template v-else-if="usage && !usageEmpty">
+          <p class="yg-text-xs yg-text-tertiary tabular-nums">
+            {{ t('ai.common.period') }}：{{ usage.period || '—' }}
+          </p>
+
+          <div class="grid gap-4 sm:grid-cols-3 mt-3">
+            <div class="yg-tile p-4">
+              <span class="yg-statistic__title">{{ t('ai.quota.usage.calls') }}</span>
+              <p class="yg-statistic__value">{{ usage.total.calls }}</p>
+            </div>
+            <div class="yg-tile p-4">
+              <span class="yg-statistic__title">{{ t('ai.quota.usage.tokens') }}</span>
+              <p class="yg-statistic__value">{{ usage.total.total_tokens }}</p>
+            </div>
+            <div class="yg-tile p-4">
+              <span class="yg-statistic__title">{{ t('ai.quota.usage.units') }}</span>
+              <p class="yg-statistic__value">{{ usage.total.units }}</p>
+            </div>
+          </div>
+
+          <div class="mt-4 flex flex-col gap-1">
+            <h3 class="yg-statistic__title">{{ t('ai.quota.usage.byProvider') }}</h3>
+            <p
+              v-if="!usage.by_provider.length"
+              class="py-4 text-center yg-text-sm yg-text-tertiary"
+            >
+              {{ t('ai.quota.usage.empty') }}
+            </p>
+            <ElTable v-else :data="usage.by_provider" class="w-full">
+              <ElTableColumn :label="t('ai.quota.usage.provider')" min-width="160">
+                <template #default="{ row }">
+                  <span class="yg-text-sm">{{ usageLabel(row.provider) }}</span>
+                </template>
+              </ElTableColumn>
+              <ElTableColumn :label="t('ai.quota.usage.calls')" min-width="100" align="right">
+                <template #default="{ row }">
+                  <span class="tabular-nums">{{ row.calls }}</span>
+                </template>
+              </ElTableColumn>
+              <ElTableColumn :label="t('ai.quota.usage.tokens')" min-width="120" align="right">
+                <template #default="{ row }">
+                  <span class="tabular-nums">{{ row.total_tokens }}</span>
+                </template>
+              </ElTableColumn>
+              <ElTableColumn :label="t('ai.quota.usage.units')" min-width="100" align="right">
+                <template #default="{ row }">
+                  <span class="tabular-nums">{{ row.units }}</span>
+                </template>
+              </ElTableColumn>
+            </ElTable>
+          </div>
+
+          <div class="mt-4 flex flex-col gap-1">
+            <h3 class="yg-statistic__title">{{ t('ai.quota.usage.byModel') }}</h3>
+            <p v-if="!usage.by_model.length" class="py-4 text-center yg-text-sm yg-text-tertiary">
+              {{ t('ai.quota.usage.empty') }}
+            </p>
+            <ElTable v-else :data="usage.by_model" class="w-full">
+              <ElTableColumn :label="t('ai.quota.usage.provider')" min-width="160">
+                <template #default="{ row }">
+                  <span class="yg-text-sm">{{ usageLabel(row.provider) }}</span>
+                </template>
+              </ElTableColumn>
+              <ElTableColumn :label="t('ai.quota.usage.model')" min-width="180">
+                <template #default="{ row }">
+                  <span class="yg-text-sm">{{ usageLabel(row.model) }}</span>
+                </template>
+              </ElTableColumn>
+              <ElTableColumn :label="t('ai.quota.usage.calls')" min-width="100" align="right">
+                <template #default="{ row }">
+                  <span class="tabular-nums">{{ row.calls }}</span>
+                </template>
+              </ElTableColumn>
+              <ElTableColumn :label="t('ai.quota.usage.tokens')" min-width="120" align="right">
+                <template #default="{ row }">
+                  <span class="tabular-nums">{{ row.total_tokens }}</span>
+                </template>
+              </ElTableColumn>
+              <ElTableColumn :label="t('ai.quota.usage.units')" min-width="100" align="right">
+                <template #default="{ row }">
+                  <span class="tabular-nums">{{ row.units }}</span>
+                </template>
+              </ElTableColumn>
+            </ElTable>
+          </div>
+        </template>
+
+        <p v-else-if="usageEmpty" class="py-8 text-center yg-text-sm yg-text-tertiary">
+          {{ t('ai.quota.usage.empty') }}
         </p>
       </div>
     </section>

@@ -1,9 +1,18 @@
 <script setup lang="ts">
-import { nextTick, ref, watch } from 'vue'
+import { nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ElButton, ElDialog, ElInput } from 'element-plus'
 
 const { t } = useI18n()
+
+/**
+ * 父级多久不回话就认为这次授权已失联（毫秒）。
+ *
+ * 提交后 loading 只能由父级的 succeed()/fail() 释放；父级拼错分支、请求悬挂、
+ * 组件被销毁都可能让它永远转下去。超时后按取消语义收口，弹层可以再次打开。
+ * 传 0 或负数关闭兜底（老调用方不需要感知这个 prop）。
+ */
+const props = withDefaults(defineProps<{ timeoutMs?: number }>(), { timeoutMs: 30_000 })
 
 const visible = ref(false)
 const scene = ref('')
@@ -33,11 +42,67 @@ const dialogWidth = 'min(420px, calc(100vw - 32px))'
  */
 let resolveFn: ((code: string | null) => void) | null = null
 
-function open(target: string): Promise<string | null> {
-  scene.value = target
-  code.value = ''
+/** 父级回话的兜底计时器:提交后开始跑,任何一次收口都会清掉。 */
+let timeoutTimer: ReturnType<typeof setTimeout> | null = null
+
+function clearTimeoutTimer() {
+  if (timeoutTimer !== null) {
+    clearTimeout(timeoutTimer)
+    timeoutTimer = null
+  }
+}
+
+/**
+ * 恰好结掉当前这一次 open() 的 Promise。
+ *
+ * resolveFn 先摘下来再调用,所以后续任何 succeed/cancel/超时都不会重复触发
+ * 同一轮的后续逻辑（Promise 本身也只认第一次 resolve）。
+ */
+function settle(code: string | null) {
+  clearTimeoutTimer()
+  const resolve = resolveFn
+  resolveFn = null
+  resolve?.(code)
+}
+
+/** 关层/卸载时把内部状态放回初始值,保证下一次 open() 是可用的。 */
+function resetState() {
+  clearTimeoutTimer()
+  resolveFn = null
   loading.value = false
   errorMessage.value = ''
+  code.value = ''
+}
+
+/**
+ * 提交后的兜底:父级一直不回话就把 loading 放开并收起弹层。
+ *
+ * 这里用 resolve(null) 而不是 reject:所有调用方都按 `if (!code) return`
+ * 处理取消,reject 会在没有 try/catch 的调用方里变成 unhandled rejection。
+ * 弹层收起后用户可以直接重新发起,不会卡在转圈上。
+ */
+function armTimeout() {
+  clearTimeoutTimer()
+  const ms = props.timeoutMs
+  if (!(ms > 0)) {
+    return
+  }
+  timeoutTimer = setTimeout(() => {
+    timeoutTimer = null
+    if (!loading.value) {
+      return
+    }
+    loading.value = false
+    settle(null)
+    visible.value = false
+  }, ms)
+}
+
+function open(target: string): Promise<string | null> {
+  // 上一次调用还没被回话就又 open():先按取消语义结掉,别留悬空 Promise
+  settle(null)
+  resetState()
+  scene.value = target
   visible.value = true
   return new Promise((resolve) => {
     resolveFn = resolve
@@ -45,12 +110,17 @@ function open(target: string): Promise<string | null> {
 }
 
 function succeed() {
-  resolveFn?.(code.value)
+  clearTimeoutTimer()
+  const resolve = resolveFn
   resolveFn = null
+  loading.value = false
+  resolve?.(code.value)
   visible.value = false
 }
 
 function fail(message: string) {
+  // 父级回话了:兜底计时器该停了,否则 30s 后会把这条错误顶掉
+  clearTimeoutTimer()
   loading.value = false
   errorMessage.value = message || t('server.auth.failed')
   // 校验失败保留弹层：把原值选中，用户直接敲新码覆盖
@@ -58,8 +128,7 @@ function fail(message: string) {
 }
 
 function cancel() {
-  resolveFn?.(null)
-  resolveFn = null
+  settle(null)
   visible.value = false
 }
 
@@ -75,11 +144,17 @@ function submit() {
     errorMessage.value = t('server.auth.formatInvalid')
     return
   }
+  if (!resolveFn) {
+    // 没有任何父级在等这次输入（上一轮已经 fail/超时/取消收口过）:
+    // 再进 loading 只会假死,直接收起弹层,让用户重新发起操作。
+    visible.value = false
+    return
+  }
   errorMessage.value = ''
   loading.value = true
   // resolve 交给父级发起请求;请求失败它会回 fail(),成功回 succeed()
-  resolveFn?.(value)
-  resolveFn = null
+  settle(value)
+  armTimeout()
 }
 
 function focusInput() {
@@ -91,6 +166,19 @@ watch(code, (value) => {
   if (value.length === 6) {
     submit()
   }
+})
+
+// 弹层关掉就把内部状态复位（取消/成功/超时都会走到这里）
+watch(visible, (value) => {
+  if (!value) {
+    resetState()
+  }
+})
+
+onBeforeUnmount(() => {
+  // 组件没了,父级的 await 不能悬着:按取消语义结掉
+  settle(null)
+  resetState()
 })
 
 defineExpose({ open, succeed, fail, cancel })
