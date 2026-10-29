@@ -31,9 +31,11 @@ import {
 } from '@/api/ai'
 import { useAiConversationsStore } from '@/stores/aiConversations'
 import { useUserStore } from '@/stores/user'
+import { resolveErrorMessage } from '@/utils/errorMessage'
 import ZSystemAuthDialog from '@/components/system/ZSystemAuthDialog.vue'
 import ZMarkdown from '@/components/markdown/ZMarkdown.vue'
 import type { AiConversation, AiMessage, AiModelItem, AiThinkingLevel } from '@/../types/ai'
+import type { AiConversationCompactResult } from '@/api/ai'
 import ZAiProposalCard from './ZAiProposalCard.vue'
 import ZAiSessionList from './ZAiSessionList.vue'
 import { contextPercent } from './conversationSession'
@@ -231,6 +233,56 @@ const contextTokens = computed(() => store.current?.context.tokens ?? 0)
 const contextLimit = computed(() => store.current?.context.limit ?? 0)
 const contextPercentValue = computed(() => contextPercent(store.contextRatio))
 const contextWarn = computed(() => store.contextWarning)
+
+/** 手动压缩中：按钮转圈，连点不再发请求。 */
+const compacting = ref(false)
+
+/** 409 / AI_RUN_CONFLICT：有活跃 run，压缩被挡下。 */
+function isRunConflict(error: unknown): boolean {
+  return (
+    error instanceof AiRequestError &&
+    (error.status === 409 || error.code === 'AI_RUN_CONFLICT')
+  )
+}
+
+/** 压缩成功的提示：两端 token 都拿到时附上「约 X → Y」。 */
+function compactNotice(result: AiConversationCompactResult): string {
+  const { tokens_before: before, tokens_after: after } = result
+  if (before > 0 && after >= 0 && after < before) {
+    return t('ai.chat.sessions.context.compactOkTokens', { before, after })
+  }
+  return t('ai.chat.sessions.context.compactOk')
+}
+
+/**
+ * 手动压缩当前会话的上下文。
+ *
+ * 成功由 store 重拉会话详情（进度条按后端口径回落），这里只负责提示；
+ * 没有可压的内容不是错误，单独给一句说明。
+ */
+async function compactContext() {
+  const conversation = store.current
+  if (!conversation || compacting.value) {
+    return
+  }
+  compacting.value = true
+  try {
+    const result = await store.compactConversation(conversation.oid)
+    if (!result.compacted) {
+      ElMessage.warning(t('ai.chat.sessions.context.nothingToCompact'))
+      return
+    }
+    ElMessage.success(compactNotice(result))
+  } catch (error) {
+    if (isRunConflict(error)) {
+      ElMessage.warning(t('ai.chat.sessions.context.compactBusy'))
+      return
+    }
+    ElMessage.error(resolveErrorMessage(error, 'ai.chat.sessions.context.compactFailed'))
+  } finally {
+    compacting.value = false
+  }
+}
 
 /** 消息行：普通消息与「压缩点」分隔线混排。 */
 interface MessageRow {
@@ -760,72 +812,93 @@ const MAX_CONFIRM_ATTEMPTS = 3
  * 运维写操作（文件 / 数据库 / SSH）要另一位管理员放行：第一次弹动态码框，拿到码再
  * 带码确认。授权在 30 分钟窗口内有效——命中缓存（dual_auth_cached）时直接确认、不再
  * 弹框；窗口刚好过期时服务端回 422 AI_AGENT_TOTP_REQUIRED，这时重新弹码，不当失败。
+ *
+ * 动态码弹层提交后只有父级回话（succeed/fail）才会退出 loading，所以这里的每个出口
+ * 都必须收口：成功 → succeed；鉴权失败 → fail（换个码重试）；非鉴权失败（如 500）
+ * → fail + 卡片错误态；重试次数耗尽 → 最后一次 fail 之后把弹层关掉。finally 兜一层，
+ * 保证任何异常/提前 return 都不会把弹层留在转圈状态。
  */
 async function confirmCard(card: AgentProposalCard) {
   if (card.state !== 'pending') {
     return
   }
   let needCode = card.requiresDualAuth && !card.dualAuthCached
-  for (let attempt = 0; attempt < MAX_CONFIRM_ATTEMPTS; attempt += 1) {
-    let totpCode: string | undefined
-    if (needCode) {
-      // 弹层开着时按钮禁用，避免重复打开同一个弹层。
-      card.state = 'confirming'
-      const code = await requestTotp(card)
-      if (!code) {
-        card.state = 'pending'
-        return
-      }
-      totpCode = code
-    }
-    card.state = 'confirming'
-    try {
-      const result = await withUnlockRetry(() =>
-        totpCode === undefined
-          ? confirmProposal(card.oid)
-          : confirmProposal(card.oid, totpCode)
-      )
-      authRef.value?.succeed()
-      card.state = 'confirmed'
-      card.resultSummary = typeof result?.result_summary === 'string' ? result.result_summary : ''
-      if (card.requiresDualAuth) {
-        // 这一次授权已生效：同列表里其余待确认的运维写卡片在窗口内都免码。
-        applyDualAuthCache()
-      }
-      ElMessage.success(t('ai.agent.proposal.confirmedNotice'))
-      return
-    } catch (error) {
-      if (error === UNLOCK_CANCELLED) {
-        // 取消解锁：卡片退回待确认，不是失败。
-        // 动态码已被取走、弹层还开着（submit 后不自动关），这里顺手收掉。
-        if (totpCode !== undefined) {
-          authRef.value?.succeed()
+  /** 本轮是否真的向弹层要过码：只有拿过码才需要关它（没码时它自己就关着）。 */
+  let codeTaken = false
+  try {
+    for (let attempt = 0; attempt < MAX_CONFIRM_ATTEMPTS; attempt += 1) {
+      let totpCode: string | undefined
+      if (needCode) {
+        // 弹层开着时按钮禁用，避免重复打开同一个弹层。
+        card.state = 'confirming'
+        const code = await requestTotp(card)
+        if (!code) {
+          // 用户取消 / 弹层超时收口：都不算失败，卡片退回待确认
+          card.state = 'pending'
+          return
         }
-        card.state = 'pending'
+        codeTaken = true
+        totpCode = code
+      }
+      card.state = 'confirming'
+      try {
+        const result = await withUnlockRetry(() =>
+          totpCode === undefined
+            ? confirmProposal(card.oid)
+            : confirmProposal(card.oid, totpCode)
+        )
+        authRef.value?.succeed()
+        card.state = 'confirmed'
+        card.resultSummary = typeof result?.result_summary === 'string' ? result.result_summary : ''
+        if (card.requiresDualAuth) {
+          // 这一次授权已生效：同列表里其余待确认的运维写卡片在窗口内都免码。
+          applyDualAuthCache()
+        }
+        ElMessage.success(t('ai.agent.proposal.confirmedNotice'))
         return
+      } catch (error) {
+        if (error === UNLOCK_CANCELLED) {
+          // 取消解锁：卡片退回待确认，不是失败。
+          // 动态码已被取走、弹层还开着（submit 后不自动关），这里顺手收掉。
+          if (totpCode !== undefined) {
+            authRef.value?.succeed()
+          }
+          card.state = 'pending'
+          return
+        }
+        if (isTotpRequired(error)) {
+          // 授权窗口刚好过期：重新弹码要一次，别把它显示成失败。
+          needCode = true
+          card.state = 'pending'
+          card.errorCode = ''
+          card.errorTitle = ''
+          card.errorHint = ''
+          continue
+        }
+        applyProposalError(card, error)
+        if (totpCode !== undefined) {
+          const message = `${card.errorTitle}：${card.errorHint}`
+          // 拿过码就必须回话：鉴权失败留在待确认让用户换码，其它错误落卡片终态。
+          authRef.value?.fail(message)
+          if (isAuthFailure(error)) {
+            ElMessage.error(message)
+            card.state = 'pending'
+            continue
+          }
+        }
+        card.state = proposalErrorState(error)
+        return
+      } finally {
+        syncProposalTimer()
+        void nextTick(scrollToBottom)
       }
-      if (isTotpRequired(error)) {
-        // 授权窗口刚好过期：重新弹码要一次，别把它显示成失败。
-        needCode = true
-        card.state = 'pending'
-        card.errorCode = ''
-        card.errorTitle = ''
-        card.errorHint = ''
-        continue
-      }
-      applyProposalError(card, error)
-      if (totpCode !== undefined && isAuthFailure(error)) {
-        const message = `${card.errorTitle}：${card.errorHint}`
-        authRef.value?.fail(message)
-        ElMessage.error(message)
-        card.state = 'pending'
-        continue
-      }
-      card.state = proposalErrorState(error)
-      return
-    } finally {
-      syncProposalTimer()
-      void nextTick(scrollToBottom)
+    }
+    // 三次都用到头：还有可重试的余地（卡片回到待确认），弹层由下面的 finally 收掉
+    card.state = 'pending'
+  } finally {
+    // 拿过码就走完了这一轮：弹层不能再留在打开/loading 状态
+    if (codeTaken) {
+      authRef.value?.cancel()
     }
   }
 }
@@ -1412,6 +1485,25 @@ onUnmounted(() => {
             <p v-if="contextWarn" class="ai-chat__context-warn">
               {{ t('ai.chat.sessions.context.warning') }}
             </p>
+            <!-- 手动压缩：自动压缩在 80% 触发，这里给一个随时可用的入口 -->
+            <div class="ai-chat__context-foot">
+              <span v-if="!contextWarn" class="ai-chat__context-hint">
+                {{ t('ai.chat.sessions.context.autoCompactHint') }}
+              </span>
+              <ElButton
+                text
+                size="small"
+                :loading="compacting"
+                :disabled="!store.current || compacting"
+                @click="compactContext"
+              >
+                {{
+                  compacting
+                    ? t('ai.chat.sessions.context.compacting')
+                    : t('ai.chat.sessions.context.compact')
+                }}
+              </ElButton>
+            </div>
           </div>
         </div>
       </ElCard>
@@ -2120,6 +2212,20 @@ onUnmounted(() => {
   margin: var(--yg-space-1) 0 0;
   font-size: var(--yg-font-size-xs);
   color: var(--yg-text-warning);
+}
+
+/* 警示文案与「压缩上下文」按钮同一行：说明在左，动作在右 */
+.ai-chat__context-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--yg-space-2);
+  margin-top: var(--yg-space-1);
+}
+
+.ai-chat__context-hint {
+  font-size: var(--yg-font-size-xs);
+  color: var(--yg-text-tertiary);
 }
 
 /* ---------------------------------------------------------------------------

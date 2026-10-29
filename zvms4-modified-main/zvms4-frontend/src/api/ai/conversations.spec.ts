@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   cancelRun,
+  compactConversation,
   createConversation,
   deleteConversation,
   fetchActiveRuns,
@@ -222,6 +223,88 @@ describe('会话 CRUD', () => {
     })
 
     const failure = await deleteConversation(conversationFixture.oid).catch(
+      (error: unknown) => error
+    )
+
+    expect(failure).toBeInstanceOf(AiRequestError)
+    expect(failure).toMatchObject({ status: 409, code: 'AI_RUN_CONFLICT' })
+  })
+})
+
+describe('压缩上下文', () => {
+  it('POST /ai/conversations/{oid}/compact，不带请求体', async () => {
+    axiosMock.mockResolvedValueOnce(
+      ok({
+        compacted: true,
+        upto_seq: 12,
+        tokens_before: 9000,
+        tokens_after: 1200,
+        degraded: false,
+        reason: null
+      })
+    )
+
+    const result = await compactConversation(conversationFixture.oid)
+
+    expect(result).toEqual({
+      compacted: true,
+      upto_seq: 12,
+      tokens_before: 9000,
+      tokens_after: 1200,
+      degraded: false,
+      reason: null
+    })
+    expect(axiosMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        method: 'post',
+        url: `/ai/conversations/${conversationFixture.oid}/compact`
+      })
+    )
+    expect(vi.mocked(axiosMock).mock.calls[0]![0]).toMatchObject({ data: undefined })
+  })
+
+  it('没有可压缩内容：compacted=false 带上原因', async () => {
+    axiosMock.mockResolvedValueOnce(
+      ok({
+        compacted: false,
+        upto_seq: null,
+        tokens_before: 300,
+        tokens_after: 300,
+        degraded: false,
+        reason: 'nothing_to_compact'
+      })
+    )
+
+    const result = await compactConversation(conversationFixture.oid)
+
+    expect(result.compacted).toBe(false)
+    expect(result.upto_seq).toBeNull()
+    expect(result.reason).toBe('nothing_to_compact')
+  })
+
+  it('外壳缺字段时给安全默认值，不抛错', async () => {
+    axiosMock.mockResolvedValueOnce(ok({}))
+
+    const result = await compactConversation(conversationFixture.oid)
+
+    expect(result).toEqual({
+      compacted: false,
+      upto_seq: null,
+      tokens_before: 0,
+      tokens_after: 0,
+      degraded: false,
+      reason: null
+    })
+  })
+
+  it('有活跃 run 时抛 409 AI_RUN_CONFLICT', async () => {
+    axiosMock.mockResolvedValueOnce({
+      status: 409,
+      data: { detail: 'AI_RUN_CONFLICT' },
+      headers: {}
+    })
+
+    const failure = await compactConversation(conversationFixture.oid).catch(
       (error: unknown) => error
     )
 

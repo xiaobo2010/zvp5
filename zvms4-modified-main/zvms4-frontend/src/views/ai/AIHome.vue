@@ -7,6 +7,7 @@ import { ElPageHeader, ElSegmented, ElIcon } from 'element-plus'
 import {
   AlarmClock,
   ArrowLeft,
+  Box,
   Coin,
   Cpu,
   DataLine,
@@ -19,6 +20,7 @@ import ZAiChat from '@/components/ai/ZAiChat.vue'
 import ZAiQuotaPanel from '@/components/ai/ZAiQuotaPanel.vue'
 import ZAiKeysAdmin from '@/components/ai/ZAiKeysAdmin.vue'
 import ZAiOcrEnginesAdmin from '@/components/ai/ZAiOcrEnginesAdmin.vue'
+import ZAiModelsAdmin from '@/components/ai/ZAiModelsAdmin.vue'
 import ZAiQuotaAdmin from '@/components/ai/ZAiQuotaAdmin.vue'
 import ZAiHealthPanel from '@/components/ai/ZAiHealthPanel.vue'
 import ZAiLogsAdmin from '@/components/ai/ZAiLogsAdmin.vue'
@@ -37,12 +39,13 @@ const VALID_CURRENT = [
   'scheduled',
   'keys',
   'engines',
+  'models',
   'quota-admin',
   'health',
   'logs',
   'monitor'
 ]
-const ADMIN_ONLY = ['keys', 'engines', 'quota-admin', 'health', 'logs', 'monitor']
+const ADMIN_ONLY = ['keys', 'engines', 'models', 'quota-admin', 'health', 'logs', 'monitor']
 
 const route = useRoute()
 const router = useRouter()
@@ -94,6 +97,7 @@ const tabs = ref<SegmentedTab[]>([
 if (isAdmin) {
   tabs.value.push({ label: 'keys', value: 'keys', icon: Key })
   tabs.value.push({ label: 'engines', value: 'engines', icon: Cpu })
+  tabs.value.push({ label: 'models', value: 'models', icon: Box })
   tabs.value.push({ label: 'quota-admin', value: 'quota-admin', icon: DataLine })
   tabs.value.push({ label: 'health', value: 'health', icon: Odometer })
   tabs.value.push({ label: 'logs', value: 'logs', icon: Tickets })
@@ -145,6 +149,7 @@ watch(
       <ZAiScheduledTasks v-else-if="current === 'scheduled'" />
       <ZAiKeysAdmin v-else-if="current === 'keys'" />
       <ZAiOcrEnginesAdmin v-else-if="current === 'engines'" />
+      <ZAiModelsAdmin v-else-if="current === 'models'" />
       <ZAiQuotaAdmin v-else-if="current === 'quota-admin'" />
       <ZAiHealthPanel v-else-if="current === 'health'" />
       <ZAiLogsAdmin v-else-if="current === 'logs'" />

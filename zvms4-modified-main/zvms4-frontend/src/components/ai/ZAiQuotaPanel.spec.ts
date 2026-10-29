@@ -1,5 +1,6 @@
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import type { VNodeChild } from 'vue'
 import ZAiQuotaPanel from './ZAiQuotaPanel.vue'
 import { AiRequestError } from '@/api/ai/errors'
 import type { AiQuotaRequest, AiQuotaSnapshotView } from '@/api/ai'
@@ -172,6 +173,52 @@ vi.mock('element-plus', async () => {
     }
   })
 
+  // ElTable / ElTableColumn 桩：真实表格会连带引入 theme-chalk 的 css。
+  // 这里保留「表头 + 每行单元格」的最小结构，单元格仍走各列的作用域插槽。
+  const ElTable = defineComponent({
+    name: 'ElTable',
+    props: { data: { type: Array, default: () => [] } },
+    setup(props, { slots }) {
+      return () => {
+        const columns = slots.default?.() ?? []
+        const labelOf = (column: (typeof columns)[number]) =>
+          String((column.props as { label?: string } | null)?.label ?? '')
+        const cellOf = (column: (typeof columns)[number], row: unknown) => {
+          const cellSlots = column.children as
+            | { default?: (scope: { row: unknown }) => VNodeChild }
+            | null
+          return cellSlots?.default?.({ row }) ?? []
+        }
+        return h('table', { class: 'el-table-stub' }, [
+          h('thead', [
+            h(
+              'tr',
+              columns.map((column, index) => h('th', { key: index }, labelOf(column)))
+            )
+          ]),
+          h(
+            'tbody',
+            (props.data as unknown[]).map((row, rowIndex) =>
+              h(
+                'tr',
+                { key: rowIndex },
+                columns.map((column, index) => h('td', { key: index }, cellOf(column, row)))
+              )
+            )
+          )
+        ])
+      }
+    }
+  })
+
+  const ElTableColumn = defineComponent({
+    name: 'ElTableColumn',
+    props: { label: String, minWidth: [String, Number], align: String },
+    setup() {
+      return () => null
+    }
+  })
+
   return {
     ElButton,
     ElDialog,
@@ -184,6 +231,8 @@ vi.mock('element-plus', async () => {
     ElTag,
     ElProgress,
     ElIcon,
+    ElTable,
+    ElTableColumn,
     ElLoadingDirective: { name: 'loading', mounted() {}, updated() {} },
     ElMessage: Object.assign(vi.fn(), {
       error: elMessageErrorSpy,
@@ -220,9 +269,63 @@ function pendingRequest(kind: 'chat' | 'ocr'): AiQuotaRequest {
   }
 }
 
+/** 当月用量统计的样例：两个渠道（其中一个未标注）+ 一个模型。 */
+function usageFixture() {
+  return {
+    period: '202610',
+    total: {
+      calls: 12,
+      units: 12,
+      prompt_tokens: 900,
+      completion_tokens: 300,
+      total_tokens: 1200
+    },
+    by_provider: [
+      {
+        provider: 'openai-main',
+        calls: 5,
+        units: 5,
+        prompt_tokens: 900,
+        completion_tokens: 300,
+        total_tokens: 1200
+      },
+      {
+        provider: null,
+        calls: 7,
+        units: 7,
+        prompt_tokens: 0,
+        completion_tokens: 0,
+        total_tokens: 0
+      }
+    ],
+    by_model: [
+      {
+        provider: 'openai-main',
+        model: 'gpt-4o-mini',
+        calls: 5,
+        units: 5,
+        prompt_tokens: 900,
+        completion_tokens: 300,
+        total_tokens: 1200
+      },
+      {
+        provider: 'openai-main',
+        model: null,
+        calls: 2,
+        units: 2,
+        prompt_tokens: 0,
+        completion_tokens: 0,
+        total_tokens: 0
+      }
+    ]
+  }
+}
+
 let quota: AiQuotaSnapshotView
 let mine: unknown[]
 let createResult: () => Promise<unknown>
+let usage: unknown
+let usageResult: () => Promise<unknown>
 
 beforeEach(() => {
   axiosMock.mockReset()
@@ -231,6 +334,8 @@ beforeEach(() => {
 
   quota = snapshot(7, 500)
   mine = []
+  usage = usageFixture()
+  usageResult = async () => envelope(usage)
   createResult = async () => {
     throw new AiRequestError({ status: 500, code: 'AI_HTTP_500', message: 'unexpected' })
   }
@@ -238,6 +343,9 @@ beforeEach(() => {
   axiosMock.mockImplementation(async (config: AxiosCall) => {
     if (config.method === 'get' && config.url === '/ai/quota') {
       return envelope(quota)
+    }
+    if (config.method === 'get' && config.url === '/ai/quota/usage') {
+      return usageResult()
     }
     if (config.method === 'get' && config.url === '/ai/quota/requests/mine') {
       return envelope({ items: mine })
@@ -406,5 +514,109 @@ describe('我的额度面板', () => {
     expect(buttonByText(wrapper, 'ai.quota.request.apply')).toBeDefined()
 
     wrapper.unmount()
+  })
+
+  describe('本月用量', () => {
+    function usageCard(wrapper: VueWrapper) {
+      return wrapper
+        .findAll('section')
+        .find((item) => item.text().includes('ai.quota.usage.title'))
+    }
+
+    it('渲染汇总数字与按渠道、按模型两张表', async () => {
+      const wrapper = await mountPanel()
+      const card = usageCard(wrapper)!
+
+      expect(card).toBeDefined()
+      expect(card.text()).toContain('202610')
+      expect(card.text()).toContain('ai.quota.usage.calls')
+      expect(card.text()).toContain('1200')
+      expect(card.text()).toContain('ai.quota.usage.units')
+
+      const tables = card.findAll('.el-table-stub')
+      expect(tables.length).toBe(2)
+
+      const providerTable = tables[0]
+      expect(providerTable.findAll('thead th').map((th) => th.text())).toEqual([
+        'ai.quota.usage.provider',
+        'ai.quota.usage.calls',
+        'ai.quota.usage.tokens',
+        'ai.quota.usage.units'
+      ])
+      expect(providerTable.findAll('tbody tr').length).toBe(2)
+      expect(providerTable.text()).toContain('openai-main')
+      // provider 为 null 时显示占位文案，不是空白或 "null"
+      expect(providerTable.text()).toContain('ai.quota.usage.unlabeled')
+
+      const modelTable = tables[1]
+      expect(modelTable.findAll('thead th').map((th) => th.text())).toEqual([
+        'ai.quota.usage.provider',
+        'ai.quota.usage.model',
+        'ai.quota.usage.calls',
+        'ai.quota.usage.tokens',
+        'ai.quota.usage.units'
+      ])
+      expect(modelTable.findAll('tbody tr').length).toBe(2)
+      expect(modelTable.text()).toContain('gpt-4o-mini')
+      expect(modelTable.text()).toContain('ai.quota.usage.unlabeled')
+
+      // period 省略时请求不带查询参数
+      expect(axiosMock).toHaveBeenCalledWith(
+        expect.objectContaining({ method: 'get', url: '/ai/quota/usage', params: {} })
+      )
+
+      wrapper.unmount()
+    })
+
+    it('没有任何记录时显示空态', async () => {
+      usage = {
+        period: '202610',
+        total: {
+          calls: 0,
+          units: 0,
+          prompt_tokens: 0,
+          completion_tokens: 0,
+          total_tokens: 0
+        },
+        by_provider: [],
+        by_model: []
+      }
+      const wrapper = await mountPanel()
+      const card = usageCard(wrapper)!
+
+      expect(card.text()).toContain('ai.quota.usage.empty')
+      expect(card.findAll('.el-table-stub').length).toBe(0)
+      expect(card.findAll('button').some((item) => item.text() === 'ai.quota.usage.retry')).toBe(
+        false
+      )
+
+      wrapper.unmount()
+    })
+
+    it('加载失败只降级用量卡，不阻塞上方额度卡', async () => {
+      usageResult = async () => {
+        throw new AiRequestError({
+          status: 502,
+          code: 'AI_UPSTREAM_ERROR',
+          message: '用量统计暂不可用'
+        })
+      }
+      const wrapper = await mountPanel()
+
+      const card = usageCard(wrapper)!
+      expect(card.text()).toContain('用量统计暂不可用')
+      expect(card.findAll('.el-table-stub').length).toBe(0)
+      expect(card.findAll('button').some((item) => item.text() === 'ai.quota.usage.retry')).toBe(
+        true
+      )
+
+      // 额度卡照常显示：失败被限制在用量卡内部
+      const quotaCard = wrapper
+        .findAll('section')
+        .find((item) => item.text().includes('ai.quota.title'))!
+      expect(quotaCard.text()).toContain('500')
+
+      wrapper.unmount()
+    })
   })
 })

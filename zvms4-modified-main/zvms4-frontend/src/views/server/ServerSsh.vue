@@ -9,6 +9,8 @@ import { useDark } from '@vueuse/core'
 import { createSshSession, buildSshWsUrl, suggestSshCommand } from '@/api/system/ssh.ts'
 import { listModels } from '@/api/ai/chat.ts'
 import { SCENE_CONTEXT_LIMIT } from '@/api/ai/scenes.ts'
+import type { AiThinkingLevel } from '@/../types/ai'
+import ZAiModelThinkingPicker from '@/components/ai/ZAiModelThinkingPicker.vue'
 import ZSystemAuthDialog from '@/components/system/ZSystemAuthDialog.vue'
 import ZSceneRunDialog from '@/components/server/ZSceneRunDialog.vue'
 import { resolveErrorMessage } from '@/utils/errorMessage'
@@ -20,7 +22,8 @@ import {
   SwitchButton,
   RefreshRight,
   MagicStick,
-  CopyDocument
+  CopyDocument,
+  Download
 } from '@element-plus/icons-vue'
 
 const { t } = useI18n()
@@ -510,6 +513,7 @@ const suggestVisible = ref(false)
 const suggestIntent = ref('')
 const suggestContext = ref('')
 const suggestModel = ref('')
+const suggestThinking = ref<AiThinkingLevel | ''>('')
 const aiModels = ref<string[]>([])
 const aiModelsLoaded = ref(false)
 const suggestLoading = ref(false)
@@ -570,7 +574,8 @@ async function generateSuggestions() {
     const res = await suggestSshCommand(
       intent,
       suggestContext.value.trim() || undefined,
-      suggestModel.value || undefined
+      suggestModel.value || undefined,
+      suggestThinking.value || undefined
     )
     suggestCommand.value = res.data?.data?.command ?? ''
     suggestExplanation.value = res.data?.data?.explanation ?? ''
@@ -588,6 +593,45 @@ async function copySuggested() {
     ElMessage.success(t('server.ssh.suggest.copied'))
   } catch {
     ElMessage.error(t('server.ssh.suggest.copyFailed'))
+  }
+}
+
+/** 本地时间戳，只用于文件名（YYYYMMDD-HHmmss）。 */
+function suggestStamp(date = new Date()): string {
+  const pad = (value: number) => String(value).padStart(2, '0')
+  return (
+    `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}` +
+    `-${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`
+  )
+}
+
+// 把建议拼成一个可直接审阅的 .sh：注释写清来源与说明，正文只有那一条命令。
+// 纯前端生成，不经过后端，也不需要终端已连接。
+function downloadSuggestedSh() {
+  const command = suggestCommand.value.trim()
+  if (!command) return
+  try {
+    const notes = [
+      'AI 生成的 SSH 命令建议；执行前请逐字核对，脚本不会自动执行。',
+      ...(suggestExplanation.value.trim() ? suggestExplanation.value.trim().split('\n') : [])
+    ]
+    const body = [
+      '#!/usr/bin/env bash',
+      ...notes.map((line) => `# ${line}`),
+      '',
+      command,
+      ''
+    ].join('\n')
+    const blob = new Blob([body], { type: 'text/x-shellscript;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.download = `ssh-suggest-${suggestStamp()}.sh`
+    anchor.click()
+    setTimeout(() => URL.revokeObjectURL(url), 3000)
+    ElMessage.success(t('server.ssh.suggest.downloadShDone'))
+  } catch {
+    ElMessage.error(t('server.ssh.suggest.downloadShFailed'))
   }
 }
 
@@ -841,20 +885,14 @@ onBeforeUnmount(() => {
           :placeholder="t('server.ssh.suggest.contextPlaceholder')"
         />
 
-        <template v-if="aiModels.length">
-          <label class="suggest__label" for="ssh-suggest-model">
-            {{ t('server.ssh.suggest.model') }}
-          </label>
-          <ElSelect
-            id="ssh-suggest-model"
-            v-model="suggestModel"
-            clearable
-            class="suggest__select"
-            :placeholder="t('server.ssh.suggest.modelDefault')"
-          >
-            <ElOption v-for="id in aiModels" :key="id" :label="id" :value="id" />
-          </ElSelect>
-        </template>
+        <ZAiModelThinkingPicker
+          :models="aiModels"
+          :model="suggestModel"
+          :thinking="suggestThinking"
+          :disabled="suggestLoading"
+          @update:model="suggestModel = $event"
+          @update:thinking="suggestThinking = $event"
+        />
 
         <div class="suggest__actions">
           <ElButton
@@ -881,6 +919,9 @@ onBeforeUnmount(() => {
           <div class="suggest__actions">
             <ElButton :icon="CopyDocument" @click="copySuggested">
               {{ t('server.ssh.suggest.copy') }}
+            </ElButton>
+            <ElButton :icon="Download" @click="downloadSuggestedSh">
+              {{ t('server.ssh.suggest.downloadSh') }}
             </ElButton>
             <ElButton
               type="primary"

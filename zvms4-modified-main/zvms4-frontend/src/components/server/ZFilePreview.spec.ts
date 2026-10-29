@@ -4,10 +4,14 @@ import { h } from 'vue'
 import ZFilePreview from './ZFilePreview.vue'
 import { previewFile } from '@/api/system/files.ts'
 import { ocrFile, submitSceneRun } from '@/api/ai/scenes.ts'
+import { listModels } from '@/api/ai/chat.ts'
 import { fetchRunDetail } from '@/api/ai/conversations.ts'
 import { AiRequestError } from '@/api/ai/errors.ts'
 
-const { elMessageSpy } = vi.hoisted(() => ({ elMessageSpy: vi.fn() }))
+const { elMessageSpy, applyContentSpy } = vi.hoisted(() => ({
+  elMessageSpy: vi.fn(),
+  applyContentSpy: vi.fn()
+}))
 
 const elementComponents = vi.hoisted(() => {
   const ElDialog = {
@@ -49,6 +53,10 @@ const elementComponents = vi.hoisted(() => {
     template: '<div class="el-result-stub">{{ title }}<slot name="extra" /></div>'
   }
   const ElImageViewer = { name: 'ElImageViewer', template: '<div />' }
+  // 场景弹窗里的模型/思考选择器会用到；模型列表取不到时它不渲染，但导入不能是 undefined
+  const ElSelect = { name: 'ElSelect', template: '<div class="el-select-stub" />' }
+  const ElOption = { name: 'ElOption', template: '<div />' }
+  const ElSegmented = { name: 'ElSegmented', template: '<div class="el-segmented-stub" />' }
   return {
     ElDialog,
     ElButton,
@@ -58,7 +66,10 @@ const elementComponents = vi.hoisted(() => {
     ElInput,
     ElAlert,
     ElResult,
-    ElImageViewer
+    ElImageViewer,
+    ElSelect,
+    ElOption,
+    ElSegmented
   }
 })
 
@@ -92,6 +103,10 @@ vi.mock('@/api/ai/scenes.ts', () => ({
   ocrFile: vi.fn()
 }))
 
+vi.mock('@/api/ai/chat.ts', () => ({
+  listModels: vi.fn()
+}))
+
 vi.mock('@/api/ai/conversations.ts', () => ({
   fetchRunDetail: vi.fn(),
   listMessages: vi.fn()
@@ -117,7 +132,12 @@ vi.mock('@/components/server/ZIde.vue', () => ({
       props: { content?: string },
       { emit, expose }: { emit: (event: string, ...args: unknown[]) => void; expose: (api: Record<string, unknown>) => void }
     ) {
-      expose({ confirmLeave: async () => true, reset: () => undefined, isDirty: () => false })
+      expose({
+        confirmLeave: async () => true,
+        reset: () => undefined,
+        isDirty: () => false,
+        applyContent: applyContentSpy
+      })
       return () =>
         h('div', { class: 'zide-stub' }, [
           h('pre', { class: 'zide-stub__content' }, props.content ?? ''),
@@ -182,6 +202,10 @@ beforeEach(() => {
   vi.mocked(ocrFile).mockReset()
   vi.mocked(submitSceneRun).mockReset()
   vi.mocked(fetchRunDetail).mockReset()
+  vi.mocked(listModels).mockReset()
+  vi.mocked(listModels).mockRejectedValue(new Error('no models'))
+  applyContentSpy.mockReset()
+  applyContentSpy.mockResolvedValue(true)
   elMessageSpy.mockReset()
 })
 
@@ -261,9 +285,44 @@ it('submits the editor content to the file_edit scene and shows the reply', asyn
   await flushPromises()
 
   expect(submitSceneRun).toHaveBeenCalledTimes(1)
-  expect(submitSceneRun).toHaveBeenCalledWith('file_edit', '看看这段配置', 'listen 8080')
+  expect(submitSceneRun).toHaveBeenCalledWith('file_edit', '看看这段配置', 'listen 8080', {
+    model: null,
+    thinking: null
+  })
   expect(fetchRunDetail).toHaveBeenCalledWith('run-1', 0, 0)
   expect(wrapper.find('.scene-run__result').text()).toContain('监听端口写错了')
+
+  wrapper.unmount()
+})
+
+it('writes the file_edit result back into the editor', async () => {
+  vi.mocked(submitSceneRun).mockResolvedValue({
+    run_id: 'run-2',
+    conversation_oid: 'conv-2'
+  } as never)
+  vi.mocked(fetchRunDetail).mockResolvedValue({
+    run: { oid: 'run-2', conversation_oid: 'conv-2', status: 'succeeded' },
+    events: [],
+    proposals: [],
+    messages: [
+      { oid: 'm3', seq: 2, role: 'assistant', content: 'listen 9090', created_at: '' }
+    ]
+  } as never)
+
+  const wrapper = await openPreview('app.conf', textPreview('listen 8080'))
+  await wrapper.find('.zide-stub__analyze').trigger('click')
+  await flushPromises()
+
+  await wrapper.findAll('.el-input-stub')[0].setValue('改成 9090')
+  await buttonByText(wrapper, 'server.aiScene.submit').trigger('click')
+  await flushPromises()
+
+  await buttonByText(wrapper, 'server.aiScene.apply').trigger('click')
+  await flushPromises()
+
+  expect(applyContentSpy).toHaveBeenCalledTimes(1)
+  expect(applyContentSpy).toHaveBeenCalledWith('listen 9090', 'replace')
+  expect(elMessageSpy).toHaveBeenCalledWith('server.files.preview.aiApplied')
 
   wrapper.unmount()
 })

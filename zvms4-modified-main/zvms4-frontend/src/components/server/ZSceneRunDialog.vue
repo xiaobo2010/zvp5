@@ -1,12 +1,14 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, getCurrentInstance, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
-import { CopyDocument } from '@element-plus/icons-vue'
-import type { AiMessage, AiRunStatus, AiSceneName } from '@/../types/ai'
+import { CopyDocument, Download, EditPen } from '@element-plus/icons-vue'
+import type { AiMessage, AiRunStatus, AiSceneName, AiThinkingLevel } from '@/../types/ai'
+import { listModels } from '@/api/ai/chat.ts'
 import { fetchRunDetail, listMessages } from '@/api/ai/conversations.ts'
 import { aiErrorCodeOf, aiErrorCopy, aiErrorOf } from '@/api/ai/errors.ts'
 import { SCENE_CONTENT_LIMIT, SCENE_CONTEXT_LIMIT, submitSceneRun } from '@/api/ai/scenes.ts'
+import ZAiModelThinkingPicker from '@/components/ai/ZAiModelThinkingPicker.vue'
 
 const props = defineProps<{
   modelValue: boolean
@@ -16,9 +18,14 @@ const props = defineProps<{
   context: string
 }>()
 
-const emit = defineEmits<{ (e: 'update:modelValue', value: boolean): void }>()
+const emit = defineEmits<{
+  (e: 'update:modelValue', value: boolean): void
+  /** 把结果写回调用方的编辑器；没人监听时结果区就不出「写回」按钮。 */
+  (e: 'apply', payload: { text: string }): void
+}>()
 
 const { t } = useI18n()
+const instance = getCurrentInstance()
 
 /** 轮询节奏参照仓内既有 run 轮询，1.5 秒一档。 */
 const POLL_INTERVAL_MS = 1500
@@ -38,6 +45,33 @@ const extra = ref('')
 const running = ref(false)
 const result = ref('')
 const error = ref('')
+
+// 模型 / 思考强度：与场景会话一样只是这次 run 的请求参数，空值 = 后端默认。
+const models = ref<string[]>([])
+const modelsLoading = ref(false)
+const model = ref('')
+const thinking = ref<AiThinkingLevel | ''>('')
+let modelsLoaded = false
+
+/** 没人监听 apply 时（比如终端分析）只展示结果，不给「写回」按钮。 */
+const canApply = computed(() => typeof instance?.vnode.props?.onApply === 'function')
+
+async function loadModels(): Promise<void> {
+  if (modelsLoaded) return
+  modelsLoaded = true
+  modelsLoading.value = true
+  try {
+    const list = await listModels()
+    const items = Array.isArray(list?.data) ? list.data : []
+    models.value = items.map((item) => item.id).filter(Boolean)
+  } catch {
+    // 取不到模型只是少了选择器，生成仍走后端默认模型；下次打开再试一次
+    models.value = []
+    modelsLoaded = false
+  } finally {
+    modelsLoading.value = false
+  }
+}
 
 let runId = ''
 let conversationOid = ''
@@ -82,6 +116,7 @@ watch(
       return
     }
     reset()
+    void loadModels()
   }
 )
 
@@ -151,7 +186,10 @@ async function submit(): Promise<void> {
   assistantText = ''
   lastSeq = 0
   try {
-    const submitted = await submitSceneRun(props.scene, content, payload.value || undefined)
+    const submitted = await submitSceneRun(props.scene, content, payload.value || undefined, {
+      model: model.value || null,
+      thinking: thinking.value || null
+    })
     if (token !== pollToken) return
     runId = submitted.run_id
     conversationOid = submitted.conversation_oid
@@ -172,6 +210,32 @@ async function copyResult(): Promise<void> {
     ElMessage.error(t('server.aiScene.copyFailed'))
   }
 }
+
+/** 本地时间戳，只用于文件名（YYYYMMDD-HHmmss）。 */
+function stamp(date = new Date()): string {
+  const pad = (value: number) => String(value).padStart(2, '0')
+  return (
+    `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}` +
+    `-${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`
+  )
+}
+
+// 下载完全走浏览器：结果只是一段文本，不必再向后端要一次文件
+function downloadResult(): void {
+  if (!result.value) return
+  const blob = new Blob([result.value], { type: 'text/markdown;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = `scene-${stamp()}.md`
+  anchor.click()
+  setTimeout(() => URL.revokeObjectURL(url), 3000)
+}
+
+function applyResult(): void {
+  if (!result.value) return
+  emit('apply', { text: result.value })
+}
 </script>
 
 <template>
@@ -184,6 +248,17 @@ async function copyResult(): Promise<void> {
     class="scene-run"
   >
     <div class="scene-run__body">
+      <ZAiModelThinkingPicker
+        v-if="models.length"
+        :models="models"
+        :model="model"
+        :thinking="thinking"
+        :loading="modelsLoading"
+        :disabled="running"
+        @update:model="model = $event"
+        @update:thinking="thinking = $event"
+      />
+
       <span class="scene-run__label">{{ t('server.aiScene.instruction') }}</span>
       <ElInput
         v-model="instruction"
@@ -219,9 +294,24 @@ async function copyResult(): Promise<void> {
       <div class="scene-run__section">
         <div class="scene-run__section-head">
           <span class="scene-run__label">{{ t('server.aiScene.result') }}</span>
-          <ElButton v-if="result" text bg size="small" :icon="CopyDocument" @click="copyResult">
-            {{ t('server.aiScene.copy') }}
-          </ElButton>
+          <div v-if="result" class="scene-run__actions">
+            <ElButton text bg size="small" :icon="CopyDocument" @click="copyResult">
+              {{ t('server.aiScene.copy') }}
+            </ElButton>
+            <ElButton
+              v-if="canApply"
+              text
+              bg
+              size="small"
+              :icon="EditPen"
+              @click="applyResult"
+            >
+              {{ t('server.aiScene.apply') }}
+            </ElButton>
+            <ElButton text bg size="small" :icon="Download" @click="downloadResult">
+              {{ t('server.aiScene.download') }}
+            </ElButton>
+          </div>
         </div>
         <pre v-if="result" class="scene-run__result">{{ result }}</pre>
         <p v-else class="scene-run__empty">
@@ -231,7 +321,9 @@ async function copyResult(): Promise<void> {
 
       <ElAlert v-if="error" type="error" :closable="false" show-icon :title="error" />
 
-      <p class="scene-run__hint">{{ t('server.aiScene.readonlyNote') }}</p>
+      <p class="scene-run__hint">
+        {{ t(canApply ? 'server.aiScene.readonlyNoteApply' : 'server.aiScene.readonlyNote') }}
+      </p>
     </div>
 
     <template #footer>
@@ -273,6 +365,13 @@ async function copyResult(): Promise<void> {
   align-items: center;
   justify-content: space-between;
   gap: var(--yg-space-2);
+}
+
+.scene-run__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--yg-space-1);
 }
 
 .scene-run__reference,

@@ -23,7 +23,13 @@ const env = vi.hoisted(() => {
     focus: () => undefined,
     layout: () => undefined,
     dispose: () => undefined,
-    getModel: () => ({ getLineCount: () => editorState.value.split('\n').length })
+    getModel: () => ({ getLineCount: () => editorState.value.split('\n').length }),
+    getSelection: () => null,
+    // insert 模式把文本追加到末尾（stub 不做真实范围运算，够验证「不整体覆盖」）
+    executeEdits: (_source: string, edits: Array<{ text: string }>) => {
+      for (const edit of edits) editorState.value += edit.text
+      for (const listener of listeners) listener()
+    }
   }
   return {
     editorState,
@@ -289,6 +295,80 @@ it('reports language, cursor and dirty state in the status bar', async () => {
   await flushPromises()
 
   expect(wrapper.find('.zide__dirty').text()).toContain('server.files.ide.dirty')
+
+  wrapper.unmount()
+})
+
+// ---------- applyContent：AI 结果写回 ----------
+type ApplyApi = { applyContent: (text: string, mode?: 'replace' | 'insert') => Promise<boolean> }
+
+function applyApi(wrapper: VueWrapper): ApplyApi {
+  return wrapper.vm as unknown as ApplyApi
+}
+
+it('applies AI text over the whole file and switches to edit mode', async () => {
+  const wrapper = mountIde()
+  expect(env.editorState.readOnly).toBe(true)
+
+  const applied = await applyApi(wrapper).applyContent('listen 9090\n', 'replace')
+  await flushPromises()
+
+  expect(applied).toBe(true)
+  expect(env.editorState.value).toBe('listen 9090\n')
+  expect(env.editorState.readOnly).toBe(false)
+  expect(wrapper.find('.zide__dirty').exists()).toBe(true)
+  expect(wrapper.text()).toContain('server.files.ide.stats')
+
+  wrapper.unmount()
+})
+
+it('inserts AI text without dropping the existing content', async () => {
+  const wrapper = mountIde()
+  await buttonByText(wrapper, 'server.files.ide.edit').trigger('click')
+
+  const applied = await applyApi(wrapper).applyContent('\n# tail', 'insert')
+  await flushPromises()
+
+  expect(applied).toBe(true)
+  expect(env.editorState.value).toBe('listen 8080\n# tail')
+
+  wrapper.unmount()
+})
+
+it('asks before replacing unsaved changes and keeps them when cancelled', async () => {
+  const wrapper = mountIde()
+  await buttonByText(wrapper, 'server.files.ide.edit').trigger('click')
+  env.type('listen 9090')
+  await flushPromises()
+
+  env.messageBoxConfirm.mockRejectedValueOnce(new Error('cancel'))
+  const cancelled = await applyApi(wrapper).applyContent('listen 7070', 'replace')
+  await flushPromises()
+
+  expect(env.messageBoxConfirm).toHaveBeenCalledTimes(1)
+  expect(cancelled).toBe(false)
+  expect(env.editorState.value).toBe('listen 9090')
+
+  env.messageBoxConfirm.mockResolvedValueOnce(undefined)
+  const applied = await applyApi(wrapper).applyContent('listen 7070', 'replace')
+  await flushPromises()
+
+  expect(applied).toBe(true)
+  expect(env.editorState.value).toBe('listen 7070')
+
+  wrapper.unmount()
+})
+
+it('refuses to apply into a file that cannot be written back', async () => {
+  const wrapper = mountIde({ editable: false })
+
+  const applied = await applyApi(wrapper).applyContent('listen 7070', 'replace')
+  await flushPromises()
+
+  expect(applied).toBe(false)
+  expect(env.editorState.readOnly).toBe(true)
+  expect(env.editorState.value).toBe('listen 8080')
+  expect(env.elMessageSpy).toHaveBeenCalledWith('server.files.ide.applyReadonly')
 
   wrapper.unmount()
 })

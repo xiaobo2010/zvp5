@@ -371,6 +371,75 @@ async function save() {
   }
 }
 
+/**
+ * 把外部文本写进编辑器（AI 场景的「写回编辑器」走这里）。
+ *
+ * replace 整体覆盖、insert 落到当前光标/选区；两者都会把编辑器切到可编辑态，
+ * 但不改保存语义——写完还是要用户自己点保存。
+ *
+ * 返回 false 表示没有写入（只读、或覆盖确认被取消）。
+ */
+async function applyContent(
+  text: string,
+  mode: 'replace' | 'insert' = 'replace'
+): Promise<boolean> {
+  if (!props.editable) {
+    ElMessage.error(t('server.files.ide.applyReadonly'))
+    return false
+  }
+  // 覆盖会吃掉未保存的修改，先确认；插入是叠加，没有可丢的东西
+  if (mode === 'replace' && dirty.value) {
+    try {
+      await ElMessageBox.confirm(
+        t('server.files.ide.applyReplaceConfirm'),
+        t('server.files.ide.applyReplaceTitle'),
+        { type: 'warning' }
+      )
+    } catch {
+      return false
+    }
+  }
+  if (!editing.value) startEdit()
+  rendered.value = false
+  error.value = ''
+
+  const instance = editor.value
+  if (!instance) {
+    value.value = mode === 'replace' ? text : value.value + text
+    lineCount.value = value.value.split('\n').length
+    dirty.value = value.value !== props.content
+    ElMessage.success(t('server.files.ide.applied'))
+    return true
+  }
+
+  if (mode === 'replace') {
+    instance.setValue(text)
+  } else {
+    // 没有选区时落到末行行首之外：列号给一个大数，由 Monaco 自己夹到行尾
+    const line = instance.getModel()?.getLineCount() ?? 1
+    const fallback = {
+      startLineNumber: line,
+      startColumn: 1,
+      endLineNumber: line,
+      endColumn: 1
+    }
+    instance.executeEdits('zide-apply-content', [
+      {
+        range: instance.getSelection() ?? fallback,
+        text,
+        forceMoveMarkers: true
+      }
+    ])
+  }
+
+  syncFromEditor(instance)
+  await nextTick()
+  instance.focus()
+  instance.layout()
+  ElMessage.success(t('server.files.ide.applied'))
+  return true
+}
+
 function toggleWrap() {
   wrap.value = !wrap.value
   editor.value?.updateOptions({ wordWrap: wrap.value ? 'on' : 'off' })
@@ -398,7 +467,7 @@ function reset() {
   instance.updateOptions({ readOnly: true })
 }
 
-defineExpose({ confirmLeave, reset, isDirty: () => dirty.value })
+defineExpose({ confirmLeave, reset, isDirty: () => dirty.value, applyContent })
 </script>
 
 <template>

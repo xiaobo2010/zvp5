@@ -396,6 +396,9 @@ export const zhCN = {
       insertDone: '命令已写入终端（未执行）',
       insertRunDone: '命令已写入并回车执行',
       insertNotConnected: '终端未连接，无法插入命令',
+      downloadSh: '下载 .sh',
+      downloadShDone: '已开始下载脚本',
+      downloadShFailed: '生成脚本失败',
       note: '生成结果仅供参考，执行前请逐字核对命令。',
       error: {
         noProvider: '后端未配置可用的 AI 供应商',
@@ -433,7 +436,13 @@ export const zhCN = {
     failed: '分析失败，请稍后重试',
     runFailed: '分析未完成，请稍后重试',
     permissionDenied: '需要管理员权限才能使用智能分析',
-    readonlyNote: '结果只读：不会自动执行任何命令，也不会写回文件。'
+    apply: '写回编辑器',
+    download: '下载',
+    readonlyNote: '结果只读：不会自动执行任何命令，也不会写回文件。',
+    readonlyNoteApply: '结果不会自动执行；写回前请自行核对，写入后需手动保存。'
+  },
+  aiPicker: {
+    modelPlaceholder: '默认模型'
   },
   files: {
     title: '文件管理',
@@ -520,6 +529,7 @@ export const zhCN = {
       ocrEmpty: '未识别到文字',
       ocrForbidden: '需要 AI 文字识别权限',
       aiAnalyze: 'AI 分析',
+      aiApplied: '已写入编辑器，请确认后保存',
       edit: '编辑',
       editSave: '保存',
       editCancel: '取消',
@@ -563,7 +573,11 @@ export const zhCN = {
       stats: '字符 {chars} · 字节 {bytes}',
       statsApprox: '字符 {chars} · 字节约 {bytes}',
       limitHint: '已超 512KB 保存上限',
-      tooLarge: '内容已超过 512KB 保存上限，后端会拒绝写入'
+      tooLarge: '内容已超过 512KB 保存上限，后端会拒绝写入',
+      applyReadonly: '当前文件不可编辑，无法写回 AI 结果',
+      applyReplaceConfirm: '当前有未保存的修改，AI 结果会整体覆盖内容。确定继续吗？',
+      applyReplaceTitle: '覆盖未保存修改',
+      applied: 'AI 结果已写入编辑器，确认后请保存'
     }
   },
   dbContent: {

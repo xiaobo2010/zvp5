@@ -261,6 +261,35 @@ export interface AiQuotaMutation {
   limit: number
 }
 
+/** 用量统计的一行小计（/ai/quota/usage 的 total 与各维度共用的数值部分）。 */
+export interface AiQuotaUsageRow {
+  calls: number
+  units: number
+  prompt_tokens: number
+  completion_tokens: number
+  total_tokens: number
+}
+
+/** 按渠道聚合的一行：provider 是凭据名或 OCR 引擎名，未标注时为 null。 */
+export interface AiQuotaProviderUsageRow extends AiQuotaUsageRow {
+  provider: string | null
+}
+
+/** 按模型聚合的一行：provider 与 model 都可能为 null。 */
+export interface AiQuotaModelUsageRow extends AiQuotaUsageRow {
+  provider: string | null
+  model: string | null
+}
+
+/** GET /ai/quota/usage 的响应 data。 */
+export interface AiQuotaUsage {
+  /** 统计周期，形如 202610。 */
+  period: string
+  total: AiQuotaUsageRow
+  by_provider: AiQuotaProviderUsageRow[]
+  by_model: AiQuotaModelUsageRow[]
+}
+
 export interface AiProviderView {
   name: string
   kind: string
@@ -306,6 +335,39 @@ export interface AiModelItem {
 export interface AiModelList {
   object: string
   data: AiModelItem[]
+}
+
+/* ---------------------------------------------------------------------------
+   模型管理（/ai/models，仅 admin）
+   契约：GET 返回 {models: [...]}；PUT /{model} 部分更新并回单行；DELETE 204。
+   in_catalog 表示该行来自渠道目录（而非手工登记），只有这类行能删除覆盖。
+   --------------------------------------------------------------------------- */
+
+export interface AiModelRow {
+  /** 模型标识，同时是 PUT / DELETE 的路径参数。 */
+  model: string
+  display_name: string | null
+  /** 主要渠道名；老数据可能只有它而没有 providers。 */
+  provider: string | null
+  /** 声明了该模型的全部渠道名。 */
+  providers: string[]
+  /** 上下文窗口；null = 未知。 */
+  context_length: number | null
+  /** 倍率：乘在每次调用的 AF 消耗上；null = 未覆盖。 */
+  rate: number | null
+  enabled: boolean
+  in_catalog: boolean
+  notes: string | null
+  updated_at: string | null
+}
+
+export interface AiModelPatch {
+  display_name?: string | null
+  context_length?: number | null
+  rate?: number | null
+  enabled?: boolean
+  notes?: string | null
+  provider?: string | null
 }
 
 export type AiChatRole = 'system' | 'user' | 'assistant'

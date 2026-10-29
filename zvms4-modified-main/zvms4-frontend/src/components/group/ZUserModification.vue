@@ -55,9 +55,21 @@ const originalRoles = ref('')
 const originalStudentId = ref('')
 const person = ref<User>()
 const submission = ref(false)
-const modification = reactive<User>({
+
+/**
+ * 学号按字符串承载。
+ *
+ * 后端口径是「非空、≤32 字符、不限数字」（types/user.d.ts 的 `id: number` 是历史形态）：
+ * number 装不下 >16 位的学号，也会把 `cs2019A` 这类非数字学号挡在输入阶段，
+ * 所以草稿对象的 id 单独放宽成 string，提交时原样下发。
+ */
+interface UserDraft extends Omit<User, 'id'> {
+  id: string
+}
+
+const modification = reactive<UserDraft>({
   _id: id.value,
-  id: '' as unknown as number,
+  id: '',
   name: '',
   group: [],
   sex: 'unknown',
@@ -92,7 +104,8 @@ function refresh() {
         if (res) {
           userGroups.value = res.group ?? []
           modification.name = res.name
-          modification.id = Number(res.id)
+          // 学号原样保留成字符串：数字形态会被 Number 截断或转成科学计数法
+          modification.id = String(res.id ?? '')
           classGroupID.value = res.class_id || ''
           originalClassID.value = res.class_id || ''
           originalStudentId.value = String(res.id ?? '')
@@ -140,8 +153,9 @@ async function submit() {
   }
   try {
     if (mode.value === 'create') {
+      // 学号原样进请求体（字符串，不数字化）：create_v3 的第一参就是学号
       const created = await api.user.create_v3(
-        modification.id.toString(),
+        modification.id,
         modification.name,
         classGroupID.value
       )
@@ -155,9 +169,10 @@ async function submit() {
     } else {
       // 零改动不提交、不提示"已修改"（v4.2.4-2 R3）
       let changed = false
-      const nextStudentId = String(modification.id ?? '').trim()
+      const nextStudentId = modification.id.trim()
       if (nextStudentId !== originalStudentId.value) {
-        if (!/^\d{8}$/.test(nextStudentId)) {
+        // 后端口径：非空、不超过 32 字符、不含空白字符（不再限定 8 位数字）。
+        if (!nextStudentId || nextStudentId.length > 32 || /\s/.test(nextStudentId)) {
           ElMessage({
             message: t('manage.personalPanel.studentIdInvalid'),
             type: 'warning',
@@ -246,7 +261,7 @@ async function remoteFetchClass(search: string) {
           <ElInput v-model="modification.name" :disabled="mode === 'modify'" />
         </ElFormItem>
         <ElFormItem :label="t('manage.groupDetails.userList.columns.id')" required>
-          <ElInput v-model.number="modification.id" />
+          <ElInput v-model="modification.id" />
         </ElFormItem>
         <ElFormItem v-if="mode === 'modify'" :label="t('manage.groupDetails.userList.columns.classid')" required>
           <ElSelect

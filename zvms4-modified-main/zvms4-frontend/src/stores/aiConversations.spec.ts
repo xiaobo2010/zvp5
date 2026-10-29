@@ -12,6 +12,7 @@ import type { AiConversation, AiMessage, AiRun } from '@/../types/ai'
 
 const mocks = vi.hoisted(() => ({
   cancelRun: vi.fn(),
+  compactConversation: vi.fn(),
   createConversation: vi.fn(),
   deleteConversation: vi.fn(),
   fetchActiveRuns: vi.fn(),
@@ -473,7 +474,7 @@ describe('后台执行', () => {
 })
 
 describe('派生状态', () => {
-  it('上下文比例按 token / limit 算，90% 起警示', async () => {
+  it('上下文比例按 token / limit 算，80% 起警示', async () => {
     mocks.listConversations.mockResolvedValue({
       conversations: [
         conversation({
@@ -490,8 +491,12 @@ describe('派生状态', () => {
     expect(store.contextRatio).toBeCloseTo(0.3)
     expect(store.contextWarning).toBe(false)
 
-    store.current = conversation({ context: { tokens: 900, limit: 1000, ratio: 0.9 } })
+    // 80% 就是阈值：刚好到线就警示（服务端在这一档自动压缩）。
+    store.current = conversation({ context: { tokens: 800, limit: 1000, ratio: 0.8 } })
     expect(store.contextWarning).toBe(true)
+
+    store.current = conversation({ context: { tokens: 790, limit: 1000, ratio: 0.79 } })
+    expect(store.contextWarning).toBe(false)
   })
 
   it('压缩点条数来自会话的 upto_seq', async () => {
@@ -507,6 +512,89 @@ describe('派生状态', () => {
     await store.selectConversation(conversation().oid)
 
     expect(store.compactedCount).toBe(12)
+  })
+})
+
+describe('手动压缩上下文', () => {
+  it('compacted=true：重拉会话详情，进度条按后端口径回落', async () => {
+    mocks.compactConversation.mockResolvedValue({
+      compacted: true,
+      upto_seq: 8,
+      tokens_before: 900,
+      tokens_after: 200,
+      degraded: false,
+      reason: null
+    })
+    mocks.getConversation.mockResolvedValue(
+      conversation({
+        context: { tokens: 200, limit: 1000, ratio: 0.2 },
+        compaction: { upto_seq: 8, summarized: true, degraded_at: null }
+      })
+    )
+    const store = useAiConversationsStore()
+    await store.loadConversations()
+    await store.selectConversation(conversation().oid)
+
+    const result = await store.compactConversation(conversation().oid)
+
+    expect(mocks.compactConversation).toHaveBeenCalledWith(conversation().oid)
+    expect(mocks.getConversation).toHaveBeenCalledWith(conversation().oid)
+    expect(result.compacted).toBe(true)
+    expect(store.current?.context.tokens).toBe(200)
+    expect(store.contextRatio).toBeCloseTo(0.2)
+    expect(store.contextWarning).toBe(false)
+    expect(store.compactedCount).toBe(8)
+  })
+
+  it('compacted=false：不刷新详情，原样把原因交回调用方', async () => {
+    mocks.compactConversation.mockResolvedValue({
+      compacted: false,
+      upto_seq: null,
+      tokens_before: 120,
+      tokens_after: 120,
+      degraded: false,
+      reason: 'nothing_to_compact'
+    })
+    const store = useAiConversationsStore()
+    await store.loadConversations()
+    await store.selectConversation(conversation().oid)
+    mocks.getConversation.mockClear()
+
+    const result = await store.compactConversation(conversation().oid)
+
+    expect(mocks.getConversation).not.toHaveBeenCalled()
+    expect(result.compacted).toBe(false)
+    expect(result.reason).toBe('nothing_to_compact')
+    expect(store.current?.context.tokens).toBe(120)
+  })
+
+  it('失败：把错误抛给调用方，当前会话不动', async () => {
+    mocks.compactConversation.mockRejectedValue(new Error('boom'))
+    const store = useAiConversationsStore()
+    await store.loadConversations()
+    await store.selectConversation(conversation().oid)
+    mocks.getConversation.mockClear()
+
+    await expect(store.compactConversation(conversation().oid)).rejects.toThrow('boom')
+
+    expect(mocks.getConversation).not.toHaveBeenCalled()
+    expect(store.current?.context.tokens).toBe(120)
+  })
+
+  it('409 有活跃 run：冲突原样传播，不吞成「无内容可压」', async () => {
+    const conflict = Object.assign(new Error('AI_RUN_CONFLICT'), {
+      status: 409,
+      code: 'AI_RUN_CONFLICT'
+    })
+    mocks.compactConversation.mockRejectedValue(conflict)
+    const store = useAiConversationsStore()
+    await store.loadConversations()
+    await store.selectConversation(conversation().oid)
+
+    await expect(store.compactConversation(conversation().oid)).rejects.toMatchObject({
+      status: 409,
+      code: 'AI_RUN_CONFLICT'
+    })
   })
 })
 

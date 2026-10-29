@@ -1,4 +1,9 @@
-import type { AiOcrFileResult, AiSceneName, AiSceneRunSubmitResult } from '@/../types/ai'
+import type {
+  AiOcrFileResult,
+  AiSceneName,
+  AiSceneRunSubmitResult,
+  AiThinkingLevel
+} from '@/../types/ai'
 import { aiRequest } from './http'
 
 /**
@@ -15,17 +20,26 @@ export const SCENE_CONTENT_LIMIT = 4000
 /** 参考内容上限（后端 context ≤ 8000）。 */
 export const SCENE_CONTEXT_LIMIT = 8000
 
+/** 场景 run 的可选执行参数：空值一律不落请求体，交给后端取默认。 */
+export interface AiSceneRunOptions {
+  model?: string | null
+  thinking?: AiThinkingLevel | null
+}
+
 export async function submitSceneRun(
   scene: AiSceneName,
   content: string,
-  context?: string
+  context?: string,
+  opts: AiSceneRunOptions = {}
 ): Promise<AiSceneRunSubmitResult> {
   return aiRequest<AiSceneRunSubmitResult>({
     method: 'post',
     url: `/ai/scenes/${scene}/runs`,
     data: {
       content,
-      ...(context ? { context } : {})
+      ...(context ? { context } : {}),
+      ...(opts.model ? { model: opts.model } : {}),
+      ...(opts.thinking ? { thinking: opts.thinking } : {})
     }
   })
 }

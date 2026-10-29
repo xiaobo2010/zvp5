@@ -83,6 +83,14 @@ const {
     template:
       '<label class="el-checkbox-stub"><input type="checkbox" :checked="modelValue" :disabled="disabled" @change="$emit(\'update:modelValue\', $event.target.checked)" /><slot /></label>'
   }
+  // 思考强度分段控件：每个档位渲染成一个按钮，点一下就把值抛上去
+  const ElSegmented = {
+    name: 'ElSegmented',
+    props: { modelValue: [String, Number], options: { type: Array, default: () => [] }, disabled: Boolean },
+    emits: ['update:modelValue'],
+    template:
+      '<div class="el-segmented-stub"><button v-for="opt in options" :key="opt.value" :class="[\'seg\', \'seg-\' + (opt.value || \'default\')]" :disabled="disabled" @click="$emit(\'update:modelValue\', opt.value)">{{ opt.label }}</button></div>'
+  }
   return {
     openSpy: vi.fn<(scene: string) => Promise<string | null>>(),
     succeedSpy: vi.fn(),
@@ -101,7 +109,8 @@ const {
       ElSelect,
       ElOption,
       ElInput,
-      ElCheckbox
+      ElCheckbox,
+      ElSegmented
     },
     terminalInstances: [] as Array<{
       buffer: { active: { type: string; viewportY: number; length: number } }
@@ -553,7 +562,7 @@ it('shows the generated command and its explanation in the panel', async () => {
   await openSuggestPanel(wrapper, '看磁盘占用')
 
   expect(suggestSshCommand).toHaveBeenCalledTimes(1)
-  expect(suggestSshCommand).toHaveBeenCalledWith('看磁盘占用', undefined, undefined)
+  expect(suggestSshCommand).toHaveBeenCalledWith('看磁盘占用', undefined, undefined, undefined)
   expect((wrapper.find('.suggest__command').element as HTMLTextAreaElement).value).toBe('df -h')
   expect(wrapper.text()).toContain(SUGGEST.explanation)
 
@@ -703,8 +712,75 @@ it('sends no reference when the terminal buffer is unavailable', async () => {
   await buttonByText(wrapper, 'server.aiScene.submit').trigger('click')
   await flushPromises()
 
-  expect(submitSceneRun).toHaveBeenCalledWith('terminal', '怎么排查磁盘满', undefined)
+  expect(submitSceneRun).toHaveBeenCalledWith('terminal', '怎么排查磁盘满', undefined, {
+    model: null,
+    thinking: null
+  })
   expect(wrapper.find('.scene-run__result').text()).toContain('df -h')
+
+  wrapper.unmount()
+})
+
+// ---------- 思考强度 / 下载脚本 ----------
+it('passes the chosen thinking level to the suggest request', async () => {
+  vi.mocked(suggestSshCommand).mockResolvedValue({
+    data: { status: 'ok', code: 200, data: SUGGEST }
+  } as never)
+
+  const wrapper = mountPage()
+  await flushPromises()
+
+  await buttonByText(wrapper, 'server.ssh.suggest.open').trigger('click')
+  await flushPromises()
+  await wrapper.find('#ssh-suggest-intent').setValue('看磁盘占用')
+
+  // 模型列表取不到时下拉隐藏，但思考强度照样可选
+  expect(wrapper.find('.ai-picker .el-select-stub').exists()).toBe(false)
+  expect(wrapper.find('.ai-picker .el-segmented-stub').exists()).toBe(true)
+  await wrapper.find('.seg-high').trigger('click')
+  await flushPromises()
+
+  await buttonByText(wrapper, 'server.ssh.suggest.generate').trigger('click')
+  await flushPromises()
+
+  expect(suggestSshCommand).toHaveBeenCalledWith('看磁盘占用', undefined, undefined, 'high')
+
+  wrapper.unmount()
+})
+
+it('downloads the suggestion as a local .sh script', async () => {
+  const createObjectURL = vi.fn((_blob: Blob) => 'blob:sh')
+  const revokeObjectURL = vi.fn()
+  vi.stubGlobal('URL', { createObjectURL, revokeObjectURL })
+  const click = vi
+    .spyOn(HTMLAnchorElement.prototype, 'click')
+    .mockImplementation(() => undefined)
+  vi.mocked(suggestSshCommand).mockResolvedValue({
+    data: { status: 'ok', code: 200, data: SUGGEST }
+  } as never)
+
+  const wrapper = mountPage()
+  await flushPromises()
+  await openSuggestPanel(wrapper)
+
+  await buttonByText(wrapper, 'server.ssh.suggest.downloadSh').trigger('click')
+  await flushPromises()
+
+  expect(createObjectURL).toHaveBeenCalledTimes(1)
+  const blob = createObjectURL.mock.calls[0]![0] as unknown as Blob
+  expect(blob).toBeInstanceOf(Blob)
+  const text = await new Promise<string>((resolve) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result))
+    reader.readAsText(blob)
+  })
+  expect(text).toContain('#!/usr/bin/env bash')
+  expect(text).toContain('df -h')
+  expect(text).toContain(SUGGEST.explanation)
+
+  expect(click).toHaveBeenCalledTimes(1)
+  const anchor = (click.mock.instances as unknown as HTMLAnchorElement[])[0]!
+  expect(anchor.download).toMatch(/^ssh-suggest-\d{8}-\d{6}\.sh$/)
 
   wrapper.unmount()
 })
