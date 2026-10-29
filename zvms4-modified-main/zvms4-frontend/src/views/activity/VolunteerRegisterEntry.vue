@@ -3,13 +3,13 @@ import { onMounted } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ElIcon } from 'element-plus'
-import { ArrowLeft, EditPen, InfoFilled, Plus } from '@element-plus/icons-vue'
+import { ArrowLeft, CirclePlusFilled, EditPen, InfoFilled, Plus } from '@element-plus/icons-vue'
 import { useHeaderStore } from '@/stores/header'
 import { ensureRegisterAccess } from './registerAccess'
 
 // /activity/register 的操作选择页：原登记页拆成「添加义工 / 修改义工」两个入口，
-// 两者进入同一个编辑器，只是预选栏目不同。带 activity 的深链会由路由守卫直接分流，
-// 不会停留在本页。
+// 两者进入同一个编辑器，只是预选栏目不同；「创建义工」另外通往活动创建页。
+// 带 activity 的深链会由路由守卫直接分流，不会停留在本页。
 
 const route = useRoute()
 const router = useRouter()
@@ -103,6 +103,26 @@ onMounted(async () => {
           {{ t('nav.registerEntry.edit.action') }}
         </span>
       </RouterLink>
+
+      <RouterLink
+        class="yg-register-entry__choice yg-register-entry__choice--create-activity"
+        :to="{ name: 'activity-create' }"
+      >
+        <span class="yg-register-entry__choice-icon" aria-hidden="true">
+          <ElIcon><CirclePlusFilled /></ElIcon>
+        </span>
+        <span class="yg-register-entry__choice-body">
+          <span class="yg-register-entry__choice-title">
+            {{ t('nav.registerEntry.createActivity.title') }}
+          </span>
+          <span class="yg-register-entry__choice-desc">
+            {{ t('nav.registerEntry.createActivity.desc') }}
+          </span>
+        </span>
+        <span class="yg-register-entry__choice-action">
+          {{ t('nav.registerEntry.createActivity.action') }}
+        </span>
+      </RouterLink>
     </div>
 
     <p class="yg-register-entry__hint">
@@ -124,7 +144,7 @@ onMounted(async () => {
 
 .yg-register-entry__choices {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: var(--yg-space-5);
 }
 
@@ -195,10 +215,16 @@ onMounted(async () => {
   font-size: var(--yg-font-size-3xl);
 }
 
-/* 修改入口用中性底：两个操作都安全，只有主色留给「添加义工」。 */
+/* 修改入口用中性底：三个操作都安全，只有主色留给「添加义工」。
+   创建义工同样是中性底，但图标保留主色，和纯中性的「修改义工」区分开。 */
 .yg-register-entry__choice--edit .yg-register-entry__choice-icon {
   background: var(--yg-bg-surface-sunken);
   color: var(--yg-text-secondary);
+}
+
+.yg-register-entry__choice--create-activity .yg-register-entry__choice-icon {
+  background: var(--yg-bg-surface-sunken);
+  color: var(--yg-color-primary);
 }
 
 .yg-register-entry__choice-body {
@@ -259,7 +285,8 @@ onMounted(async () => {
   font-size: var(--yg-font-size-lg);
 }
 
-@media (max-width: 768px) {
+/* 三张卡片在平板竖屏/窄窗口下一列排开：并排会把描述挤成多行，失去留白节奏。 */
+@media (max-width: 1024px) {
   .yg-register-entry__choices {
     grid-template-columns: 1fr;
     gap: var(--yg-space-4);
