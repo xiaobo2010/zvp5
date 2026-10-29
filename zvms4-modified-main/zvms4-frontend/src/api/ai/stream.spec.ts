@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { extractDelta, extractStreamError, parseSseChunk, streamChatCompletion } from './stream'
+import {
+  extractDelta,
+  extractReasoningDelta,
+  extractStreamError,
+  parseSseChunk,
+  streamChatCompletion
+} from './stream'
 
 describe('SSE 帧解析', () => {
   it('解析单帧并保留空缓冲', () => {
@@ -62,6 +68,27 @@ describe('增量文本提取', () => {
     expect(extractDelta('not json')).toBe('')
     expect(extractDelta('{"choices":[]}')).toBe('')
     expect(extractDelta('{}')).toBe('')
+  })
+})
+
+describe('思考增量提取', () => {
+  it('取 delta.reasoning_content', () => {
+    expect(extractReasoningDelta('{"choices":[{"delta":{"reasoning_content":"先查用户"}}]}')).toBe(
+      '先查用户'
+    )
+  })
+
+  it('同一帧里思考与正文各自可读', () => {
+    const frame = '{"choices":[{"delta":{"reasoning_content":"想一下","content":"答案"}}]}'
+    expect(extractReasoningDelta(frame)).toBe('想一下')
+    expect(extractDelta(frame)).toBe('答案')
+  })
+
+  it('没有 reasoning_content / 类型不对 / 坏帧都返回 undefined（不报错）', () => {
+    expect(extractReasoningDelta('{"choices":[{"delta":{"content":"答案"}}]}')).toBeUndefined()
+    expect(extractReasoningDelta('{"choices":[{"delta":{"reasoning_content":123}}]}')).toBeUndefined()
+    expect(extractReasoningDelta('{"choices":[]}')).toBeUndefined()
+    expect(extractReasoningDelta('not json')).toBeUndefined()
   })
 })
 
@@ -164,6 +191,34 @@ describe('审计场景头', () => {
 })
 
 describe('streamChatCompletion 收尾判定', () => {
+  it('思考增量单独累计，正文不受影响', async () => {
+    const thoughts: string[] = []
+    stubFetch(
+      fakeResponse([
+        'data: {"choices":[{"delta":{"reasoning_content":"先看"}}]}\n\n',
+        'data: {"choices":[{"delta":{"reasoning_content":"用户"}}]}\n\n',
+        'data: {"choices":[{"delta":{"content":"结论"}}]}\n\n',
+        'data: [DONE]\n\n'
+      ])
+    )
+    const out = await streamChatCompletion({
+      model: 'gpt-x',
+      messages: [{ role: 'user', content: 'hi' }],
+      onReasoningDelta: (delta) => thoughts.push(delta)
+    })
+
+    expect(out.reasoning).toBe('先看用户')
+    expect(out.text).toBe('结论')
+    expect(thoughts).toEqual(['先看', '用户'])
+  })
+
+  it('没有思考内容的流：reasoning 是空串，不报错', async () => {
+    const out = await run(['data: {"choices":[{"delta":{"content":"好"}}]}\n\n', 'data: [DONE]\n\n'])
+
+    expect(out.reasoning).toBe('')
+    expect(out.text).toBe('好')
+  })
+
   it('收到 error 帧：保留已生成文本，error 有值且不算截断', async () => {
     const out = await run([
       'data: {"choices":[{"delta":{"content":"你好"}}]}\n\n',

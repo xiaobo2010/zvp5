@@ -80,21 +80,21 @@ it('preserves error rejection for unauthorized responses', async () => {
 
 // --- 非 blob 的 JSON 错误体:既有行为不得回归 ---------------------------------
 
-it('stringifies a non-string JSON detail (unchanged behavior)', async () => {
+it('shows the localized message of a structured JSON detail', async () => {
   const detail = { code: 'GONE', message: 'Attachment unavailable' }
   client.defaults.adapter = failingAdapter(410, { detail })
   const error = await client.get('/attachments/abc/thumb').catch((e) => e)
   expect(error).toBeInstanceOf(AxiosError)
   expect(error.response?.status).toBe(410)
   expect(elMessageMock).toHaveBeenCalledTimes(1)
-  expect(shownMessages()).toEqual([JSON.stringify(detail)])
+  expect(shownMessages()).toEqual(['附件暂不可用'])
 })
 
-it("falls back to '未知错误' when a JSON error body carries no detail (unchanged behavior)", async () => {
+it('falls back to the generic Chinese hint when a JSON error body carries no detail', async () => {
   client.defaults.adapter = failingAdapter(400, { message: 'no detail field here' })
   await client.get('/activities').catch((e) => e)
   expect(elMessageMock).toHaveBeenCalledTimes(1)
-  expect(shownMessages()).toEqual(['未知错误'])
+  expect(shownMessages()).toEqual(['请求失败，请稍后重试'])
 })
 
 it('emits exactly one grouped error toast for an ordinary JSON failure', async () => {
@@ -121,7 +121,7 @@ it('unwraps a Blob JSON error body to its detail and still rejects', async () =>
   expect(error.response?.status).toBe(410)
   expect(error.response?.data).toBe(body)
   expect(elMessageMock).toHaveBeenCalledTimes(1)
-  expect(shownMessages()).toEqual(['Attachment unavailable'])
+  expect(shownMessages()).toEqual(['附件暂不可用'])
 })
 
 it('unwraps an ArrayBuffer JSON error body to its detail and still rejects', async () => {
@@ -133,7 +133,7 @@ it('unwraps an ArrayBuffer JSON error body to its detail and still rejects', asy
   expect(error.response?.status).toBe(410)
   expect(error.response?.data).toBe(body)
   expect(elMessageMock).toHaveBeenCalledTimes(1)
-  expect(shownMessages()).toEqual(['Attachment unavailable'])
+  expect(shownMessages()).toEqual(['附件暂不可用'])
 })
 
 it('uses short non-JSON Blob body text as the message', async () => {
@@ -144,14 +144,14 @@ it('uses short non-JSON Blob body text as the message', async () => {
   expect(shownMessages()).toEqual(['boom'])
 })
 
-it("falls back to '未知错误' for a long non-JSON Blob body (>300 chars)", async () => {
+it('falls back to the generic Chinese hint for a long non-JSON Blob body (>300 chars)', async () => {
   useSpecCompliantBlob()
   const html = '<!doctype html><html><body>' + 'filler '.repeat(60) + '</body></html>'
   expect(html.length).toBeGreaterThan(300)
   client.defaults.adapter = failingAdapter(410, new Blob([html], { type: 'text/html' }))
   await client.get('/attachments/abc/thumb', { responseType: 'blob' }).catch((e) => e)
   expect(elMessageMock).toHaveBeenCalledTimes(1)
-  expect(shownMessages()).toEqual(['未知错误'])
+  expect(shownMessages()).toEqual(['请求失败，请稍后重试'])
 })
 
 it('keeps the fallback and the rejection when reading a Blob body throws', async () => {
@@ -162,7 +162,7 @@ it('keeps the fallback and the rejection when reading a Blob body throws', async
   expect(error).toBeInstanceOf(AxiosError)
   expect(error.response?.status).toBe(410)
   expect(elMessageMock).toHaveBeenCalledTimes(1)
-  expect(shownMessages()).toEqual(['未知错误'])
+  expect(shownMessages()).toEqual(['请求失败，请稍后重试'])
 })
 
 // --- 登录设备闸的结构化 403:登录页接管,拦截器不弹通用 toast ------------------

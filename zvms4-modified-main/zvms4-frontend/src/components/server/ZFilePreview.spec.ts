@@ -1,5 +1,6 @@
 import { mount, flushPromises, type VueWrapper } from '@vue/test-utils'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
+import { h } from 'vue'
 import ZFilePreview from './ZFilePreview.vue'
 import { previewFile } from '@/api/system/files.ts'
 import { ocrFile, submitSceneRun } from '@/api/ai/scenes.ts'
@@ -98,6 +99,39 @@ vi.mock('@/api/ai/conversations.ts', () => ({
 
 vi.mock('@/components/markdown/ZMarkdown.vue', () => ({
   default: { name: 'ZMarkdownStub', template: '<div />' }
+}))
+
+// Monaco 在 jsdom 里跑不起来,文本分支用轻量 stub 顶替;只保留「AI 分析」入口这一处交互。
+vi.mock('@/components/server/ZIde.vue', () => ({
+  default: {
+    name: 'ZIdeStub',
+    props: {
+      content: String,
+      encoding: String,
+      editable: Boolean,
+      readonlyReason: String,
+      markdown: Boolean
+    },
+    emits: ['saved', 'analyze', 'close'],
+    setup(
+      props: { content?: string },
+      { emit, expose }: { emit: (event: string, ...args: unknown[]) => void; expose: (api: Record<string, unknown>) => void }
+    ) {
+      expose({ confirmLeave: async () => true, reset: () => undefined, isDirty: () => false })
+      return () =>
+        h('div', { class: 'zide-stub' }, [
+          h('pre', { class: 'zide-stub__content' }, props.content ?? ''),
+          h(
+            'button',
+            {
+              class: 'zide-stub__analyze',
+              onClick: () => emit('analyze', props.content ?? '')
+            },
+            'server.files.ide.analyze'
+          )
+        ])
+    }
+  }
 }))
 
 const PATH = '/www/zvms4/data/sample.png'
@@ -215,10 +249,7 @@ it('submits the editor content to the file_edit scene and shows the reply', asyn
   } as never)
 
   const wrapper = await openPreview('app.conf', textPreview('listen 8080'))
-  await buttonByText(wrapper, 'server.files.preview.edit').trigger('click')
-  await flushPromises()
-
-  await buttonByText(wrapper, 'server.files.preview.aiAnalyze').trigger('click')
+  await wrapper.find('.zide-stub__analyze').trigger('click')
   await flushPromises()
 
   const dialog = wrapper.find('.scene-run__body')

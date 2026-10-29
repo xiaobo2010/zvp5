@@ -24,10 +24,7 @@ import {
 } from 'element-plus'
 import { Refresh } from '@element-plus/icons-vue'
 import {
-  AI_ERROR_FALLBACK_SECTION,
-  aiErrorCopy,
   aiErrorOf,
-  aiErrorSection,
   aiQuotaSourceLabelKey,
   createQuotaRequest,
   myQuota,
@@ -37,6 +34,7 @@ import {
   type AiQuotaSubmitInput
 } from '@/api/ai'
 import { formatDateTime } from '@/utils/dateTime'
+import { resolveErrorMessage } from '@/utils/errorMessage'
 import type { AiQuotaKind } from '@/../types/ai'
 
 /** 说明的字数上限：与后端字段的 200 字约束对齐。 */
@@ -112,24 +110,6 @@ const pendingList = computed<AiQuotaRequest[]>(() =>
     .map((kind) => pending.value[kind])
     .filter((item): item is AiQuotaRequest => Boolean(item))
 )
-
-/** 提交失败时优先展示后端 detail，再回落到错误码的人话文案。 */
-function errorDetail(error: unknown): string {
-  const aiError = aiErrorOf(error)
-  if (!aiError) {
-    return error instanceof Error ? error.message : t('ai.quota.request.submitFailed')
-  }
-  if (aiError.message) {
-    return aiError.message
-  }
-  // 新申请接口的错误码还没有人话映射：直接把后端的 detail 原文交给用户，
-  // 比统一折叠成「请求失败」更有排查价值。
-  if (aiErrorSection(aiError.code) === AI_ERROR_FALLBACK_SECTION) {
-    return aiError.code
-  }
-  const copy = aiErrorCopy(aiError.code, t)
-  return `${copy.title}：${copy.hint}`
-}
 
 /** 本地补一条待审批占位：409 时后端不会回请求体，但状态必须立刻切过去。 */
 function pendingPlaceholder(kind: AiQuotaKind): AiQuotaRequest {
@@ -220,7 +200,7 @@ async function submitRequest() {
       dialogVisible.value = false
       return
     }
-    ElMessage.error(errorDetail(error))
+    ElMessage.error(resolveErrorMessage(error, 'ai.quota.request.submitFailed'))
   } finally {
     submitting.value = false
   }

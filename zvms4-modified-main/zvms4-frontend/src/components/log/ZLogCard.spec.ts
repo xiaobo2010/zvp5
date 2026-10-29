@@ -165,6 +165,45 @@ it('translates known log types like ban_change into Chinese', () => {
   wrapper.unmount()
 })
 
+// 附件各写入点拆分后,每个细类型都要命中自己的中文标签,不能退化成「附件」
+it('labels each attachment log type separately', () => {
+  const labels: Record<string, string> = {
+    attachment_view: '附件查看',
+    attachment_audit: '附件审计',
+    attachment_upload: '附件上传',
+    attachment_status: '附件裁决',
+    attachment_link: '附件外链',
+    attachment_verify: '附件查证',
+    attachment_bind: '附件绑定',
+    attachment_delete: '附件删除'
+  }
+
+  for (const [type, label] of Object.entries(labels)) {
+    const wrapper = mountCard(logFixture({ type }))
+    expect(wrapper.find('.el-form-item-stub[data-label="类型"]').text()).toContain(label)
+    wrapper.unmount()
+  }
+})
+
+// 风险监控与定时任务写日志时不经过请求上下文,漏标签同样会在页面上透出英文
+it('labels risk monitor and scheduled job log types', () => {
+  const labels: Record<string, string> = {
+    risk_alert: '风险告警',
+    risk_ban: '风险封禁',
+    retention_purge: '留存清理',
+    user_trash_gc: '用户回收站清理',
+    adb_backup: 'ADB 备份',
+    ai_governance: 'AI 治理',
+    ai_ops_extra: 'AI 运维操作'
+  }
+
+  for (const [type, label] of Object.entries(labels)) {
+    const wrapper = mountCard(logFixture({ type }))
+    expect(wrapper.find('.el-form-item-stub[data-label="类型"]').text()).toContain(label)
+    wrapper.unmount()
+  }
+})
+
 // 未知类型回落原值,不出「未知」也不猜
 it('falls back to the raw type for types without a label', () => {
   const futureType = 'future_new_type'
@@ -194,6 +233,21 @@ it('labels every event type the backend actually writes', () => {
     'system_db_query',
     'notification_rollback',
     'attachment_ocr_enqueue',
+    'attachment_view',
+    'attachment_audit',
+    'attachment_upload',
+    'attachment_status',
+    'attachment_link',
+    'attachment_verify',
+    'attachment_bind',
+    'attachment_delete',
+    'risk_alert',
+    'risk_ban',
+    'retention_purge',
+    'user_trash_gc',
+    'adb_backup',
+    'ai_governance',
+    'ai_ops_extra',
     'ai_quota_set',
     'ai_quota_reset',
     'ai_quota_request_approve',
@@ -214,7 +268,7 @@ it('labels every event type the backend actually writes', () => {
 
 // 幻影键(后端从未写入的类型)不该再占着 label map
 it('does not keep labels for log types no code path writes', () => {
-  for (const phantom of ['system_db_content', 'system_files']) {
+  for (const phantom of ['system_db_content', 'system_files', 'otp']) {
     const wrapper = mountCard(logFixture({ type: phantom }))
     expect(wrapper.find('.el-form-item-stub[data-label="类型"]').text()).toContain(phantom)
     wrapper.unmount()

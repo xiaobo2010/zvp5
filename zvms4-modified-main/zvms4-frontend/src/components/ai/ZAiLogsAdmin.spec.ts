@@ -367,6 +367,7 @@ const ocrRow: AiLogRecord = {
   first_token_ms: null,
   engine_kind: 'baidu',
   attachment_oid: 'att-1',
+  roles_snapshot: 'admin,department',
   created_at: '2026-10-24T08:00:00'
 }
 
@@ -394,6 +395,7 @@ const chatRow: AiLogRecord = {
   first_token_ms: 240,
   engine_kind: null,
   attachment_oid: null,
+  roles_snapshot: 'department',
   created_at: '2026-10-24T09:00:00'
 }
 
@@ -526,6 +528,43 @@ describe('调用日志页', () => {
 
     expect(wrapper.find('[data-status="success"]').text()).toBe('ai.logs.statusSuccess')
     expect(wrapper.find('[data-status="timeout"]').text()).toBe('ai.logs.statusTimeout')
+
+    wrapper.unmount()
+  })
+
+  it('角色快照含 admin 的用户旁挂「管理员」标识，非管理员不挂', async () => {
+    const wrapper = mountPage()
+    await flushPromises()
+
+    const rows = wrapper.findAll('.el-table-stub__row')
+    expect(rows[0]!.find('.ai-log-user__admin').exists()).toBe(true)
+    expect(rows[0]!.find('.ai-log-user__admin').text()).toBe('ai.logs.columns.adminBadge')
+    expect(rows[1]!.find('.ai-log-user__admin').exists()).toBe(false)
+
+    wrapper.unmount()
+  })
+
+  it('历史 warning 行（管理员旁路）：状态列翻成「管理员旁路」而不是原样英文', async () => {
+    vi.mocked(listAiLogs).mockResolvedValue({
+      rows: [
+        {
+          ...ocrRow,
+          oid: 'oid-3',
+          status: 'warning',
+          error_code: 'AI_AGENT_MODERATION_SKIPPED',
+          roles_snapshot: 'admin'
+        }
+      ],
+      total: 1
+    })
+    const wrapper = mountPage()
+    await flushPromises()
+
+    const tag = wrapper.find('[data-status="warning"]')
+    expect(tag.exists()).toBe(true)
+    expect(tag.text()).toBe('ai.logs.statusAdminBypass')
+    // 管理员标识与历史状态可以同时出现：旁路就是管理员做的。
+    expect(wrapper.find('.ai-log-user__admin').exists()).toBe(true)
 
     wrapper.unmount()
   })

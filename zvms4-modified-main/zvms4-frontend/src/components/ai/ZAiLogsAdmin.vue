@@ -42,13 +42,14 @@ const KEY_SCOPE_OPTIONS: AiLogKeyScope[] = ['personal', 'shared', 'server']
 const PURPOSE_OPTIONS = ['chat', 'markdown-assistant', 'ocr']
 const STATS_DAYS_OPTIONS = [7, 30, 90]
 
-/** 五种状态各自的配色：成功绿、错误红、超时橙、拒绝灰、繁忙橙描边。 */
+/** 五种状态各自的配色：成功绿、错误红、超时橙、拒绝灰、繁忙橙描边；历史 warning 走橙色。 */
 const STATUS_TAG_TYPE: Record<AiLogStatus, 'success' | 'danger' | 'warning' | 'info'> = {
   success: 'success',
   error: 'danger',
   timeout: 'warning',
   rejected: 'info',
-  busy: 'warning'
+  busy: 'warning',
+  warning: 'warning'
 }
 
 const rows = ref<AiLogRecord[]>([])
@@ -261,9 +262,27 @@ function statusLabel(status: AiLogStatus): string {
     error: t('ai.logs.statusError'),
     timeout: t('ai.logs.statusTimeout'),
     rejected: t('ai.logs.statusRejected'),
-    busy: t('ai.logs.statusBusy')
+    busy: t('ai.logs.statusBusy'),
+    // 历史行：管理员旁路内容审核留的痕（不是「调用成功」）
+    warning: t('ai.logs.statusAdminBypass')
   }
   return map[status] ?? status
+}
+
+/**
+ * 角色快照里有没有 admin。
+ *
+ * 后端 audit.roles_snapshot 存的是排序去重、逗号连接的字符串（`admin,department`）；
+ * 兼容早期工具留痕里的 JSON 数组形态（`["admin"]`），顺手把括号引号去掉。
+ */
+function isAdminSnapshot(snapshot: string | null | undefined): boolean {
+  if (!snapshot) {
+    return false
+  }
+  return snapshot
+    .replace(/[[\]"]/g, '')
+    .split(',')
+    .some((role) => role.trim() === 'admin')
 }
 
 function keyScopeLabel(scope: AiLogKeyScope): string {
@@ -632,7 +651,17 @@ onMounted(() => {
           <ElTableColumn :label="t('ai.logs.columns.user')" min-width="140">
             <template #default="{ row }">
               <div class="flex flex-col">
-                <span class="yg-text-sm">{{ row.user_name || '—' }}</span>
+                <div class="ai-log-user">
+                  <span class="yg-text-sm">{{ row.user_name || '—' }}</span>
+                  <ElTag
+                    v-if="isAdminSnapshot(row.roles_snapshot)"
+                    type="info"
+                    size="small"
+                    class="ai-log-user__admin"
+                  >
+                    {{ t('ai.logs.columns.adminBadge') }}
+                  </ElTag>
+                </div>
                 <span class="yg-text-xs yg-text-tertiary">{{ row.user_oid }}</span>
               </div>
             </template>
@@ -817,6 +846,18 @@ onMounted(() => {
 </template>
 
 <style scoped>
+/* 用户列：名字与「管理员」标识同排，标识弱化不抢行 */
+.ai-log-user {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--yg-space-1);
+}
+
+.ai-log-user__admin {
+  flex: none;
+}
+
 /* 繁忙态用描边橙，与超时的实心橙区分开：tag 的配色走同名 CSS 变量，这里只改变量。 */
 .ai-log-status--busy.el-tag {
   --el-tag-bg-color: var(--yg-bg-surface);

@@ -38,6 +38,7 @@ import { useUserStore } from '@/stores/user'
 import type { ActivityMode } from '@/../types'
 import type { Activity, ActivityMember, NewActivityMember } from '@/../types/v2'
 import { ensureRegisterAccess } from './registerAccess'
+import { resolveErrorMessage } from '@/utils/errorMessage'
 import {
   loadStudentIndex,
   matchStudentRow,
@@ -1397,7 +1398,7 @@ async function onOcrFile(event: Event) {
       const copy = aiErrorCopy(code, t)
       ElMessage.error(`${copy.title}：${copy.hint}`)
     } else {
-      ElMessage.error((error as Error)?.message || 'OCR 识别失败，请稍后重试')
+      ElMessage.error(resolveErrorMessage(error, 'activity.register.ocrReviewRerunFailed'))
     }
   } finally {
     ocrLoading.value = false
@@ -1554,7 +1555,7 @@ async function rerunOcrReview() {
     } else {
       ElMessage.error(
         t('activity.register.ocrReviewRerunFailed', {
-          reason: (error as Error)?.message || '未知错误'
+          reason: resolveErrorMessage(error)
         })
       )
     }
@@ -1978,13 +1979,6 @@ function viewSavedActivity() {
   }
 }
 
-function errorDetail(error: unknown): string {
-  const detail = (error as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail
-  if (typeof detail === 'string' && detail.trim()) return detail
-  const message = (error as Error)?.message
-  return message || '未知错误'
-}
-
 function rowLabel(row: RegistrationRow): string {
   const who = row.name.trim() || row.studentId.trim() || '未匹配成员'
   return row.studentId.trim() ? `${who}（${row.studentId.trim()}）` : who
@@ -2250,7 +2244,7 @@ async function submitRegistration() {
           item.row.message = t('activity.register.updatedRow')
           return
         }
-        const reason = errorDetail(result.reason)
+        const reason = resolveErrorMessage(result.reason)
         failures.push({ label: rowLabel(item.row), reason })
         item.row.message = t('activity.register.updateFailed', { reason })
       })
@@ -2340,7 +2334,7 @@ async function submitRegistration() {
     }
   } catch (error) {
     if (updated || added) {
-      failures.push({ label: t('activity.register.newMembersLabel'), reason: errorDetail(error) })
+      failures.push({ label: t('activity.register.newMembersLabel'), reason: resolveErrorMessage(error) })
       finalizeSavedRows()
       ElMessage.warning(
         t('activity.register.partialFailedSummary', {
@@ -2350,7 +2344,7 @@ async function submitRegistration() {
         })
       )
     } else {
-      ElMessage.error(errorDetail(error) || '提交失败，请重试')
+      ElMessage.error(resolveErrorMessage(error))
     }
   } finally {
     submitLoading.value = false

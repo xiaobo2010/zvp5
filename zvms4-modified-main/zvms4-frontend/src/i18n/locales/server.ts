@@ -539,6 +539,31 @@ export const zhCN = {
       editTooLarge: '内容已超过 512KB 保存上限，后端会拒绝写入',
       editReadonlyTruncated: '预览只显示前 512KB，内容已截断；保存会覆盖文件尾部，故不可编辑。',
       editReadonlyEncoding: '该文件按 latin-1 解码（预览兜底），写回会破坏原始字节，故不可编辑。'
+    },
+    ide: {
+      edit: '编辑',
+      cancel: '取消',
+      save: '保存',
+      saving: '保存中…',
+      saved: '保存成功',
+      saveFailed: '保存失败',
+      saveFailedDetail: '保存失败：{detail}',
+      close: '关闭',
+      analyze: 'AI 分析',
+      rendered: '渲染预览',
+      source: '源码',
+      wrap: '折行',
+      noWrap: '不折行',
+      readonly: '只读',
+      dirty: '未保存',
+      discardConfirm: '放弃未保存的修改？',
+      discardTitle: '放弃修改',
+      position: '行 {line}，列 {column}',
+      lines: '{count} 行',
+      stats: '字符 {chars} · 字节 {bytes}',
+      statsApprox: '字符 {chars} · 字节约 {bytes}',
+      limitHint: '已超 512KB 保存上限',
+      tooLarge: '内容已超过 512KB 保存上限，后端会拒绝写入'
     }
   },
   dbContent: {

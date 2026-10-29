@@ -59,6 +59,10 @@ const instruction = ref('')
 const models = ref<string[]>([])
 const model = ref('')
 const result = ref('')
+/** 思考过程（上游 reasoning_content 边流边累计）；空串表示这次没有思考内容。 */
+const reasoning = ref('')
+/** 思考区块的折叠态：默认展开，用户收起后本次不再自动弹开。 */
+const reasoningOpen = ref(true)
 /** 预览用的文本：流式期间节流刷新，结束后与 result 完全一致。 */
 const previewSource = ref('')
 /** 结果区视图：原文（可改）还是渲染后的预览。 */
@@ -192,6 +196,8 @@ async function run(): Promise<void> {
   }
   result.value = ''
   previewSource.value = ''
+  reasoning.value = ''
+  reasoningOpen.value = true
   lastPreviewAt = 0
   error.value = null
   interrupted.value = false
@@ -212,6 +218,9 @@ async function run(): Promise<void> {
       onDelta: (delta) => {
         result.value += delta
         syncPreview()
+      },
+      onReasoningDelta: (delta) => {
+        reasoning.value += delta
       }
     })
     const final = stripWrappingFence(out.text || result.value).trim()
@@ -311,6 +320,21 @@ function apply(): void {
           </ElButtonGroup>
         </div>
 
+        <!-- 思考过程：弱化配色、默认展开，与智能体页同一套观感 -->
+        <div v-if="reasoning" class="yg-markdown-ai__reasoning">
+          <button
+            type="button"
+            class="yg-markdown-ai__reasoning-head"
+            :aria-expanded="reasoningOpen"
+            @click="reasoningOpen = !reasoningOpen"
+          >
+            <span class="yg-markdown-ai__reasoning-chevron" aria-hidden="true" />
+            <span>{{ t('ai.chat.thinkingSection') }}</span>
+            <span v-if="loading" class="yg-markdown-ai__reasoning-live" aria-hidden="true" />
+          </button>
+          <p v-if="reasoningOpen" class="yg-markdown-ai__reasoning-text">{{ reasoning }}</p>
+        </div>
+
         <!-- 原文：可以直接改，改完再应用 -->
         <ElInput
           v-if="resultView === 'text'"
@@ -407,5 +431,81 @@ function apply(): void {
   border-radius: var(--el-border-radius-base);
   background: var(--yg-bg-surface-sunken);
   overflow-y: auto;
+}
+
+/* 思考过程：弱化的旁注，不与正文抢注意力 */
+.yg-markdown-ai__reasoning {
+  padding: 0.5rem 0.625rem;
+  border: 1px solid var(--el-border-color-lighter);
+  border-left: 2px solid var(--el-border-color);
+  border-radius: var(--el-border-radius-base);
+  background: var(--yg-bg-surface-sunken);
+}
+
+.yg-markdown-ai__reasoning-head {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font-size: 0.75rem;
+  color: var(--el-text-color-secondary);
+  text-align: left;
+  cursor: pointer;
+}
+
+/* 折叠指示：一个小三角，展开时朝下 */
+.yg-markdown-ai__reasoning-chevron {
+  width: 0;
+  height: 0;
+  border-top: 4px solid currentColor;
+  border-right: 4px solid transparent;
+  border-left: 4px solid transparent;
+  transform: rotate(-90deg);
+  transition: transform 0.15s ease;
+}
+
+.yg-markdown-ai__reasoning-head[aria-expanded='true'] .yg-markdown-ai__reasoning-chevron {
+  transform: rotate(0deg);
+}
+
+/* 还在生成：一个小圆点，暗示后面还有内容 */
+.yg-markdown-ai__reasoning-live {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: yg-markdown-ai-pulse 1.2s ease-in-out infinite;
+}
+
+.yg-markdown-ai__reasoning-text {
+  margin: 0.375rem 0 0;
+  font-size: 0.75rem;
+  line-height: 1.6;
+  color: var(--el-text-color-secondary);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+@keyframes yg-markdown-ai-pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+
+  50% {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .yg-markdown-ai__reasoning-live {
+    animation: none;
+    opacity: 1;
+  }
 }
 </style>

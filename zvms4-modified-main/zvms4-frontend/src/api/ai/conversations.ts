@@ -110,13 +110,19 @@ export async function getConversation(conversationOid: string): Promise<AiConver
   })
 }
 
-/** 改会话：标题、状态、思考强度至少给一个；模型建完不可改。 */
+/**
+ * 改会话：标题、状态、思考强度、模型至少给一个。
+ *
+ * 模型只有空会话（message_count == 0）能改；有消息之后后端回 409
+ * AI_CONVERSATION_MODEL_LOCKED，前端据此回滚。
+ */
 export async function updateConversation(
   conversationOid: string,
   payload: {
     title?: string
     status?: AiConversationStatus
     thinking?: AiThinkingLevel | null
+    model?: string
   }
 ): Promise<AiConversation> {
   return aiRequest<AiConversation>({

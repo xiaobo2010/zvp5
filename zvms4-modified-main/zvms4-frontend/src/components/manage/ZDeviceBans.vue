@@ -26,6 +26,7 @@ import {
   type BannedDevice
 } from '@/api/ban'
 import ZPagination from '@/components/utils/ZPagination.vue'
+import { resolveErrorMessage } from '@/utils/errorMessage'
 import { isReauthCancelled, withReauth } from '@/plugins/reauth'
 
 const { t } = useI18n()
@@ -117,11 +118,6 @@ function validateReason(_rule: unknown, value: unknown, callback: (error?: Error
 const formRules: FormRules = {
   xuehai_id: [{ validator: validateXuehaiId, trigger: 'blur' }] as FormItemRule[],
   reason: [{ validator: validateReason, trigger: 'blur' }] as FormItemRule[]
-}
-
-function detailOf(err: unknown): string {
-  const detail = (err as { response?: { data?: { detail?: unknown } } }).response?.data?.detail
-  return typeof detail === 'string' ? detail : ''
 }
 
 function untilOf(duration: string): string | null {
@@ -263,7 +259,7 @@ async function submitBan() {
       ElMessage.info(t('manage.reauth.cancelled'))
       return
     }
-    ElMessage.error(detailOf(err) || t('manage.deviceBans.manual.banFailed'))
+    ElMessage.error(resolveErrorMessage(err, 'manage.deviceBans.manual.banFailed'))
   } finally {
     banning.value = false
   }
@@ -297,7 +293,7 @@ async function confirmUnban(device: BannedDevice) {
       ElMessage.info(t('manage.reauth.cancelled'))
       return
     }
-    ElMessage.error(detailOf(err) || t('manage.deviceBans.table.unbanFailed'))
+    ElMessage.error(resolveErrorMessage(err, 'manage.deviceBans.table.unbanFailed'))
   }
 }
 
@@ -329,7 +325,7 @@ async function confirmReset(device: BannedDevice) {
       ElMessage.info(t('manage.reauth.cancelled'))
       return
     }
-    ElMessage.error(detailOf(err) || t('manage.deviceBans.table.resetFailed'))
+    ElMessage.error(resolveErrorMessage(err, 'manage.deviceBans.table.resetFailed'))
   }
 }
 </script>

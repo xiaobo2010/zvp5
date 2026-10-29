@@ -42,7 +42,16 @@ const { elMessageSpy, elementComponents } = vi.hoisted(() => {
     template: '<span class="crumb-stub" @click="$emit(\'click\')"><slot /></span>'
   }
   const ElTable = { name: 'ElTable', template: '<div class="el-table-stub"><slot /></div>' }
-  const ElTableColumn = { name: 'ElTableColumn', template: '<div />' }
+  const ElTableColumn = {
+    name: 'ElTableColumn',
+    props: {
+      label: String,
+      width: [Number, String],
+      minWidth: [Number, String],
+      fixed: [String, Boolean]
+    },
+    template: '<div class="el-table-column-stub" :data-label="label" :data-width="width" />'
+  }
   const ElDropdown = { name: 'ElDropdown', template: '<div><slot /><slot name="dropdown" /></div>' }
   const ElDropdownMenu = { name: 'ElDropdownMenu', template: '<div><slot /></div>' }
   const ElDropdownItem = { name: 'ElDropdownItem', template: '<div><slot /></div>' }
@@ -83,6 +92,11 @@ vi.mock('element-plus', () => ({
 
 vi.mock('vue-i18n', () => ({
   useI18n: () => ({ t: (key: string) => key })
+}))
+
+// jsdom 没有 matchMedia:宽屏断点恒为真,竖屏断点恒为假,表格走完整五列分支。
+vi.mock('@vueuse/core', () => ({
+  useMediaQuery: (query: string) => query.includes('min-width')
 }))
 
 vi.mock('@/api/system/files.ts', () => ({
@@ -203,6 +217,22 @@ it('follows a typed path under /home', async () => {
   expect(listFiles).toHaveBeenCalledTimes(2)
   expect(listFiles).toHaveBeenLastCalledWith('/home/logs', 0, 200)
   expect((input.element as HTMLInputElement).value).toBe('/home/logs')
+
+  wrapper.unmount()
+})
+
+// 宽屏四个带 icon 的文字按钮(下载/重命名/权限/删除)约 265px 宽,
+// 旧的 250px 列宽 + overflow:hidden 会把最左边的「下载」裁掉一半。
+it('reserves enough width for the four wide-screen row actions', async () => {
+  const wrapper = mountPage()
+  await flushPromises()
+
+  const column = wrapper
+    .findAll('.el-table-column-stub')
+    .find((item) => item.attributes('data-label') === 'server.files.colActions')
+
+  expect(column).toBeTruthy()
+  expect(column!.attributes('data-width')).toBe('320')
 
   wrapper.unmount()
 })

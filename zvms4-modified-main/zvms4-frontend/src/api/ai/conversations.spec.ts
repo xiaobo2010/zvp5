@@ -185,6 +185,21 @@ describe('会话 CRUD', () => {
     )
   })
 
+  it('空会话换模型：PATCH 只带 model', async () => {
+    axiosMock.mockResolvedValueOnce(ok({ ...conversationFixture, model: 'gpt-4.1' }))
+
+    const result = await updateConversation(conversationFixture.oid, { model: 'gpt-4.1' })
+
+    expect(result.model).toBe('gpt-4.1')
+    expect(axiosMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        method: 'patch',
+        url: `/ai/conversations/${conversationFixture.oid}`,
+        data: { model: 'gpt-4.1' }
+      })
+    )
+  })
+
   it('删除：DELETE 拿回删掉的消息与运行条数', async () => {
     axiosMock.mockResolvedValueOnce(ok({ deleted: true, messages: 4, runs: 1 }))
 

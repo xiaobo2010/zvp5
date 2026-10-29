@@ -2,7 +2,6 @@
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ElMessage, ElDialog } from 'element-plus'
-import type { AxiosError } from 'axios'
 import {
   getSchema,
   getColumns,
@@ -23,6 +22,7 @@ import {
   type ColumnDef
 } from '@/api/system/dbContent.ts'
 import ZSystemAuthDialog from '@/components/system/ZSystemAuthDialog.vue'
+import { resolveErrorMessage } from '@/utils/errorMessage'
 import { Plus } from '@element-plus/icons-vue'
 
 const { t } = useI18n()
@@ -102,7 +102,7 @@ async function loadRows() {
     rowsData.value = res.data?.data ?? null
   } catch (error) {
     rowsData.value = null
-    dataErrorNote.value = errorMessageOf(error)
+    dataErrorNote.value = resolveErrorMessage(error, 'server.auth.failed')
   } finally {
     rowsLoading.value = false
   }
@@ -281,13 +281,6 @@ async function openAuth(scene: string): Promise<string | null> {
   return code
 }
 
-function errorMessageOf(error: unknown): string {
-  const err = error as AxiosError<{ detail?: unknown }>
-  const detail = err?.response?.data?.detail
-  if (typeof detail === 'string' && detail) return detail
-  return t('server.auth.failed')
-}
-
 async function submitRowChange() {
   const table = selectedTable.value
   const { values, missingPk } = valuesOf()
@@ -322,7 +315,7 @@ async function submitRowChange() {
     ElMessage.success(t('server.dbContent.rowSaved'))
     await loadRows()
   } catch (error) {
-    authRef.value?.fail(errorMessageOf(error))
+    authRef.value?.fail(resolveErrorMessage(error, 'server.auth.failed'))
     return
   } finally {
     submitting.value = false
@@ -348,7 +341,7 @@ async function doDelete(row: Record<string, CellValue>) {
     }
     await loadRows()
   } catch (error) {
-    authRef.value?.fail(errorMessageOf(error))
+    authRef.value?.fail(resolveErrorMessage(error, 'server.auth.failed'))
     return
   } finally {
     submitting.value = false
@@ -389,7 +382,7 @@ async function executeQuery() {
     queryResult.value = res.data?.data ?? null
   } catch (error) {
     queryResult.value = null
-    queryError.value = errorMessageOf(error)
+    queryError.value = resolveErrorMessage(error, 'server.auth.failed')
   } finally {
     sqlRunning.value = false
   }
@@ -463,7 +456,7 @@ async function executeDdl() {
     ddlResult.value = res.data?.data ?? null
     ddlNote.value = t('server.dbContent.ddlCommitted')
   } catch (error) {
-    ddlError.value = errorMessageOf(error)
+    ddlError.value = resolveErrorMessage(error, 'server.auth.failed')
   } finally {
     ddlRunning.value = false
   }

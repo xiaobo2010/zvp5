@@ -101,24 +101,10 @@ export function parseSseChunk(buffer: string, chunk: string): SseParseResult {
 
 /** 从一帧 OpenAI 兼容 JSON 里取出增量文本；形状不认识就当没有内容。 */
 export function extractDelta(frame: string): string {
-  let payload: unknown
-  try {
-    payload = JSON.parse(frame)
-  } catch {
+  const record = firstChoice(frame)
+  if (!record) {
     return ''
   }
-  if (!payload || typeof payload !== 'object') {
-    return ''
-  }
-  const choices = (payload as { choices?: unknown }).choices
-  if (!Array.isArray(choices) || choices.length === 0) {
-    return ''
-  }
-  const first = choices[0]
-  if (!first || typeof first !== 'object') {
-    return ''
-  }
-  const record = first as Record<string, unknown>
   const delta = record.delta
   if (delta && typeof delta === 'object') {
     const content = (delta as Record<string, unknown>).content
@@ -139,6 +125,50 @@ export function extractDelta(frame: string): string {
   return ''
 }
 
+/**
+ * 从同一帧里取出思考增量（上游的 ``reasoning_content``）。
+ *
+ * 缺失 / 类型不对回 ``undefined``：绝大多数帧没有思考内容，这不是异常；
+ * 与 ``extractDelta`` 分开是因为两条流要各自累计、分别渲染。
+ */
+export function extractReasoningDelta(frame: string): string | undefined {
+  const record = firstChoice(frame)
+  if (!record) {
+    return undefined
+  }
+  const delta = record.delta
+  if (!delta || typeof delta !== 'object') {
+    return undefined
+  }
+  const reasoning = (delta as Record<string, unknown>).reasoning_content
+  if (typeof reasoning === 'string') {
+    return reasoning
+  }
+  return undefined
+}
+
+/** 取 choices[0]；帧坏掉或没有 choices 时给 null。 */
+function firstChoice(frame: string): Record<string, unknown> | null {
+  let payload: unknown
+  try {
+    payload = JSON.parse(frame)
+  } catch {
+    return null
+  }
+  if (!payload || typeof payload !== 'object') {
+    return null
+  }
+  const choices = (payload as { choices?: unknown }).choices
+  if (!Array.isArray(choices) || choices.length === 0) {
+    return null
+  }
+  const first = choices[0]
+  if (!first || typeof first !== 'object') {
+    return null
+  }
+  return first as Record<string, unknown>
+}
+
 export interface AiStreamOptions {
   model: string
   messages: AiChatMessage[]
@@ -147,6 +177,8 @@ export interface AiStreamOptions {
   scene?: AiChatScene
   /** 每收到一段增量文本回调一次。 */
   onDelta?: (delta: string) => void
+  /** 每收到一段思考增量（reasoning_content）回调一次；没有该字段的帧不回调。 */
+  onReasoningDelta?: (delta: string) => void
 }
 
 /** 流开始后上游才失败时，后端写在流里的错误帧。 */
@@ -157,6 +189,8 @@ export interface AiStreamError {
 
 export interface AiStreamResult {
   text: string
+  /** 思考过程全文（reasoning_content 累计）；上游没给就是空串或缺失。 */
+  reasoning?: string
   /** 是否收到 [DONE]。 */
   done: boolean
   /** 流已结束但没收到 [DONE]：回答被截断。 */
@@ -241,6 +275,7 @@ export async function streamChatCompletion(options: AiStreamOptions): Promise<Ai
     // 现在后端会把失败写成流内 error 帧；这里只是兜住新的或异常的网关。
     return {
       text: '',
+      reasoning: '',
       done: false,
       interrupted: false,
       error: { code: 'AI_UPSTREAM_ERROR', message: '' },
@@ -252,6 +287,7 @@ export async function streamChatCompletion(options: AiStreamOptions): Promise<Ai
   const decoder = new TextDecoder()
   let buffer = ''
   let text = ''
+  let reasoning = ''
   let done = false
   let error: AiStreamError | null = null
 
@@ -261,6 +297,11 @@ export async function streamChatCompletion(options: AiStreamOptions): Promise<Ai
       if (failure) {
         error = failure
         continue
+      }
+      const thought = extractReasoningDelta(frame)
+      if (thought) {
+        reasoning += thought
+        options.onReasoningDelta?.(thought)
       }
       const delta = extractDelta(frame)
       if (delta) {
@@ -307,5 +348,5 @@ export async function streamChatCompletion(options: AiStreamOptions): Promise<Ai
     reader.releaseLock?.()
   }
 
-  return { text, done, interrupted: !done && !error, error, requestId }
+  return { text, reasoning, done, interrupted: !done && !error, error, requestId }
 }

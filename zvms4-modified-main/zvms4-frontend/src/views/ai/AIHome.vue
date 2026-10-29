@@ -118,7 +118,7 @@ watch(
 </script>
 
 <template>
-  <div class="yg-ai-home">
+  <div class="yg-ai-home" :class="{ 'yg-ai-home--chat': current === 'chat' }">
     <ElPageHeader :icon="ArrowLeft" @back="() => router.back()" class="yg-ai-home__header">
       <template #content>
         {{ t('ai.tabs.' + current) }}
@@ -173,6 +173,20 @@ watch(
   min-height: calc(100dvh - var(--yg-ai-viewport-inset));
 }
 
+/*
+ * 对话页：高度锁死在视口里。
+ *
+ * 只给 min-height 时，消息一长整页就会滚起来，输入区被顶到屏幕外；
+ * 这里把高度定死、外层不滚，滚动交给消息区自己。
+ */
+.yg-ai-home--chat {
+  height: calc(100vh - var(--yg-ai-viewport-inset));
+  height: calc(100dvh - var(--yg-ai-viewport-inset));
+  max-height: calc(100dvh - var(--yg-ai-viewport-inset));
+  min-height: 0;
+  overflow: hidden;
+}
+
 .yg-ai-home__tabs {
   overflow-x: auto;
 }
@@ -183,5 +197,11 @@ watch(
   /* 吃掉页面头部与页签剩下的高度，交给对话区自己分配 */
   flex: 1 1 auto;
   min-width: 0;
+}
+
+/* 对话页的面板不参与整页滚动：溢出只能发生在消息区里 */
+.yg-ai-home--chat .yg-ai-home__panel {
+  min-height: 0;
+  overflow: hidden;
 }
 </style>

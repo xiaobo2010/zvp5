@@ -73,6 +73,7 @@ declare module 'vue' {
     ZGroupTimeStatistics: typeof import('./src/components/group/ZGroupTimeStatistics.vue')['default']
     ZGroupUserList: typeof import('./src/components/group/ZGroupUserList.vue')['default']
     ZGroupUserTimeList: typeof import('./src/components/group/ZGroupUserTimeList.vue')['default']
+    ZIde: typeof import('./src/components/server/ZIde.vue')['default']
     ZInputDuration: typeof import('./src/components/form/ZInputDuration.vue')['default']
     ZLogCard: typeof import('./src/components/log/ZLogCard.vue')['default']
     ZLogList: typeof import('./src/components/log/ZLogList.vue')['default']

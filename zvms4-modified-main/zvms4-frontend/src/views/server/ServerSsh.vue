@@ -11,6 +11,7 @@ import { listModels } from '@/api/ai/chat.ts'
 import { SCENE_CONTEXT_LIMIT } from '@/api/ai/scenes.ts'
 import ZSystemAuthDialog from '@/components/system/ZSystemAuthDialog.vue'
 import ZSceneRunDialog from '@/components/server/ZSceneRunDialog.vue'
+import { resolveErrorMessage } from '@/utils/errorMessage'
 import { useUserStore } from '@/stores/user.ts'
 import {
   ArrowDown,
@@ -497,17 +498,10 @@ async function openTerminal() {
     startTerminal(ticket)
     armConnectTimeout()
   } catch (error) {
-    const message = errorMessageOf(error)
+    const message = resolveErrorMessage(error, 'server.auth.failed')
     dialog.fail(message)
     ElMessage.error(message)
   }
-}
-
-function errorMessageOf(error: unknown): string {
-  const anyErr = error as { response?: { data?: { detail?: unknown } } }
-  const detail = anyErr?.response?.data?.detail
-  if (typeof detail === 'string' && detail) return detail
-  return t('server.auth.failed')
 }
 
 // ---- AI 命令生成面板 ----

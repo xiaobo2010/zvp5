@@ -10,7 +10,13 @@ export type AiQuotaKind = 'ocr' | 'chat'
 
 export type AiLogCapability = 'ocr' | 'chat'
 
-export type AiLogStatus = 'success' | 'error' | 'timeout' | 'rejected' | 'busy'
+/**
+ * 调用状态。
+ *
+ * `warning` 不是上游结果，是历史行：管理员旁路内容审核时留下的留痕
+ * （error_code=AI_AGENT_MODERATION_SKIPPED）。保留它只为把旧流水读出来。
+ */
+export type AiLogStatus = 'success' | 'error' | 'timeout' | 'rejected' | 'busy' | 'warning'
 
 export type AiLogKeyScope = 'personal' | 'shared' | 'server'
 
@@ -102,6 +108,11 @@ export interface AiLogRecord {
   engine_kind: string | null
   /** OCR 针对的附件 oid。 */
   attachment_oid: string | null
+  /**
+   * 调用时的角色快照（后端 audit.roles_snapshot）：排序去重、逗号连接的字符串
+   * （如 `admin,department`）；null = 当时没采集到角色。
+   */
+  roles_snapshot: string | null
   created_at: string
 }
 
@@ -631,6 +642,8 @@ export interface AiMessage {
   content: string
   /** assistant 的 tool_calls 原文；其它角色为 null。 */
   tool_calls?: unknown
+  /** assistant 的思考过程（上游 reasoning_content）；没有就是 null。 */
+  reasoning?: string | null
   /** role='tool' 时对应那次调用。 */
   tool_call_id?: string | null
   /** role='tool' 时工具名（折叠标题用）。 */
