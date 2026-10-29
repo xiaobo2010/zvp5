@@ -130,33 +130,98 @@ function routeTo(page: string) {
   }
 }
 
-/* ---- 弹性滑动指示器：单段 CSS 弹簧 ----
+/* ---- 弹性滑动指示器：显式弹簧动画（WAAPI），不依赖 CSS transition ----
    高亮真源仍是 route.path（乐观路径只补「点击后、路由尚未落地」的窗口期），
-   这里只负责把药丸量到激活项上。位移与尺寸的弹簧交给 yg-glass-nav.css 的
-   transition（--yg-dur-page + --yg-ease-spring）播放：一段动画、可被下一次
-   切换直接打断，不会出现预览 + 正式两段动画来回弹。
-   首帧、字体就绪与尺寸校正走 instant：同一帧内禁用过渡写入新位置、下一帧再
-   交还 CSS，否则药丸会从 (0,0) 飞进来，或在缩放/重排时拖着虚影走。 */
-const itemsRef = ref<HTMLElement>()
-const indicator = ref({ x: 0, y: 0, w: 0, h: 0, visible: false })
-const indicatorInstant = ref(false)
-let instantRelease = 0
+   这里只负责把药丸量到激活项上并播放一段弹簧。
 
-/** 首帧类校正：同一帧禁用过渡写下新位置，下一帧再交还 CSS */
-function markInstant() {
-  indicatorInstant.value = true
-  if (instantRelease) cancelAnimationFrame(instantRelease)
-  instantRelease = requestAnimationFrame(() => {
-    instantRelease = 0
-    indicatorInstant.value = false
-  })
+   为什么不用 CSS transition：实测切到 /me 时，页面挂载过程中的样式重算会把在途的
+   transform transition 直接取消（transitioncancel + 瞬间落到终点），表现正是
+   「第一次有动画、之后再点没有」。改为每次高亮变化都显式读当前渲染位移、新建一个
+   Web Animation：动画实例独立于样式重算，只有下一次切换才会主动取消它，任何导航项
+   都能稳定播放。时长/曲线仍取 --yg-dur-page / --yg-ease-spring，减少动效时不播放。
+   首帧、字体就绪与尺寸校正走 instant：取消动画并直接写入位置，避免药丸从 (0,0) 飞入。 */
+const itemsRef = ref<HTMLElement>()
+const pillRef = ref<HTMLElement>()
+const indicator = ref({ x: 0, y: 0, w: 0, h: 0, visible: false })
+let indicatorAnimation: Animation | null = null
+
+/** 与 --yg-* 令牌同源；读不到就退回内置默认值，不能让动画因令牌缺失而消失 */
+function tokenMs(name: string, fallback: number): number {
+  const raw = getComputedStyle(document.documentElement).getPropertyValue(name).trim()
+  const value = Number.parseFloat(raw)
+  if (!Number.isFinite(value) || value <= 0) return fallback
+  if (raw.endsWith('ms')) return value
+  if (raw.endsWith('s')) return value * 1000
+  return fallback
 }
 
-/** 真正切页：确保过渡处于开启状态，即使上一帧的校正还没解除 */
-function clearInstant() {
-  if (instantRelease) cancelAnimationFrame(instantRelease)
-  instantRelease = 0
-  indicatorInstant.value = false
+function tokenEasing(name: string, fallback: string): string {
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback
+}
+
+/** 读取当前「已经渲染出来的」位移：动画进行中也能拿到中间态，作为下一次弹簧的起点 */
+function renderedTranslate(el: HTMLElement): { x: number; y: number } {
+  const raw = getComputedStyle(el).transform
+  if (!raw || raw === 'none') return { x: 0, y: 0 }
+  /* 真实浏览器给的是 matrix(...)；测试/降级环境可能原样返回 translate3d(...) */
+  const translateBody = /^translate3?d?\(([^)]+)\)/.exec(raw)?.[1]
+  if (translateBody) {
+    const [x, y] = translateBody.split(',').map((part) => Number.parseFloat(part))
+    return { x: Number.isFinite(x) ? x : 0, y: Number.isFinite(y) ? y : 0 }
+  }
+  const body = /matrix3?d?\(([^)]+)\)/.exec(raw)?.[1]
+  if (!body) return { x: 0, y: 0 }
+  const parts = body.split(',').map((part) => Number.parseFloat(part))
+  const [x, y] = raw.startsWith('matrix3d')
+    ? [parts[12] ?? 0, parts[13] ?? 0]
+    : [parts[4] ?? 0, parts[5] ?? 0]
+  return { x: Number.isFinite(x) ? x : 0, y: Number.isFinite(y) ? y : 0 }
+}
+
+function translate(x: number, y: number): string {
+  return `translate3d(${x}px, ${y}px, 0)`
+}
+
+function stopIndicatorAnimation() {
+  indicatorAnimation?.cancel()
+  indicatorAnimation = null
+}
+
+/** 从当前渲染位置弹簧到目标项；目标没变就不打扰在途动画 */
+function playIndicator(target: { x: number; y: number }) {
+  const pill = pillRef.value
+  /* jsdom / 老浏览器没有 WAAPI，或用户在系统里关掉了动效：直接落到终点 */
+  if (!pill) return
+  if (reduceMotion() || typeof pill.animate !== 'function') {
+    stopIndicatorAnimation()
+    return
+  }
+
+  const from = renderedTranslate(pill)
+  if (Math.abs(from.x - target.x) < 0.5 && Math.abs(from.y - target.y) < 0.5) return
+
+  stopIndicatorAnimation()
+  const animation = pill.animate(
+    [{ transform: translate(from.x, from.y) }, { transform: translate(target.x, target.y) }],
+    {
+      duration: tokenMs('--yg-dur-page', 450),
+      easing: tokenEasing('--yg-ease-spring', 'cubic-bezier(0.34, 1.56, 0.64, 1)'),
+      fill: 'forwards'
+    }
+  )
+  indicatorAnimation = animation
+  animation.finished.then(
+    () => {
+      /* 已被更晚的一次切换取代时不要动它 */
+      if (indicatorAnimation !== animation) return
+      indicatorAnimation = null
+      /* 交还给行内样式（此时已等于终点），避免动画长期驻留 */
+      animation.cancel()
+    },
+    () => {
+      /* 被下一次切页取消属预期 */
+    }
+  )
 }
 
 /* 指示器只关心两个盒子的尺寸/位置：导航容器（换行、横竖屏重排）与当前高亮项
@@ -184,17 +249,14 @@ function updateIndicator(instant = false) {
      （宽度为 0，常见于首帧样式还没注入）时统一隐藏，避免残留上一次的位置。 */
   if (!active || active.offsetWidth === 0) {
     if (indicator.value.visible) {
+      stopIndicatorAnimation()
       indicator.value = { ...indicator.value, visible: false }
     }
     return
   }
 
-  /* 目标位置只认「已经写进 style 的那一份」：ResizeObserver 每次 observe 新目标
-     都会先投递一条初始通知，而切页时正好刚 observe 了新激活的按钮——这条通知
-     落在过渡起步的下一帧，量到的目标与已写入的目标完全一致。若把它当成尺寸
-     变化去 request instant，就会把刚开始的弹簧掐断（药丸瞬移到终点 = 没有动画）。
-     因此 instant 只在几何真的变了（字体/换行/横竖屏/缩放导致的位移或尺寸变化）
-     时生效；目标没变就整段跳过，连 style 都不重写，绝不打断在途过渡。 */
+  /* ResizeObserver 每次 observe 新目标都会先投递一条初始通知，量到的位置与刚写入的
+     目标完全一致。目标没变就整段跳过，绝不取消在途弹簧。 */
   const prev = indicator.value
   const next = {
     x: active.offsetLeft,
@@ -209,23 +271,22 @@ function updateIndicator(instant = false) {
     prev.w !== next.w ||
     prev.h !== next.h
 
-  if (!geometryChanged) {
-    /* 切页但目标没变：只需要把过渡拉回开启状态（上一帧校正可能还没解除） */
-    if (!instant) clearInstant()
+  if (!geometryChanged) return
+
+  indicator.value = { ...next, visible: true }
+  if (instant) {
+    stopIndicatorAnimation()
     return
   }
-
-  if (instant) markInstant()
-  else clearInstant()
-  indicator.value = { ...next, visible: true }
+  playIndicator(next)
 }
 
-/* transform 必须由这里输出：过渡分支与 instant 分支都写同一组 inline 值，
-   高亮类挂到哪一项，药丸就落在哪一项，不存在「只改尺寸不改位移」的不同步。 */
+/* 尺寸/位置始终由这里输出；动画只覆写 transform 的中间帧，终点与行内样式一致，
+   高亮类挂到哪一项，药丸就落在哪一项。 */
 const indicatorStyle = computed(() => ({
   width: indicator.value.w + 'px',
   height: indicator.value.h + 'px',
-  transform: `translate3d(${indicator.value.x}px, ${indicator.value.y}px, 0)`,
+  transform: translate(indicator.value.x, indicator.value.y),
   opacity: indicator.value.visible ? 1 : 0
 }))
 
@@ -239,12 +300,12 @@ let disposed = false
 onMounted(() => {
   /* 这里统一传 instant：真正的尺寸变化（换行、横竖屏、字体、缩放）即时校正；
      observe 新激活项带来的那条初始通知会因为「几何没变」被判据吸收，不会打断
-     正在播放的切页过渡（判据见 updateIndicator）。 */
+     正在播放的弹簧（判据见 updateIndicator）。 */
   resizeObserver = new ResizeObserver(() => updateIndicator(true))
   if (itemsRef.value) resizeObserver.observe(itemsRef.value)
   window.addEventListener('resize', onResize)
 
-  /* 首帧兜底：mounted + nextTick 时字体、Vite 异步注入的 yg-glass-nav.css、ElIcon
+  /* 首帧兜底：mounted 后连续两帧时字体、Vite 异步注入的 yg-glass-nav.css、ElIcon
      里的 svg 都可能还没参与布局，offset* 会读到 0，小圈就贴在左上角。这里连续两帧、
      以及字体就绪后再各校一次（字体变化会改变图标/项宽，位置会整体平移）。 */
   rafHandles = [
@@ -269,8 +330,7 @@ onUnmounted(() => {
   resizeObserver = null
   observedActive = null
   window.removeEventListener('resize', onResize)
-  if (instantRelease) cancelAnimationFrame(instantRelease)
-  instantRelease = 0
+  stopIndicatorAnimation()
   window.clearTimeout(spinTimer)
   spinTimer = 0
 })
@@ -280,11 +340,10 @@ const navSignature = computed(() =>
 )
 
 watch(
-  /* flush: 'post' 保证回调跑在 DOM 已经切到新高亮项之后：CSS transition 的起点
-     取自元素当前的 computed 位移（含正在播放的中间态），因此不需要在 pre 时机
-     抢读旧 .is-active。依赖里补上「内容签名」而非 length，长度不变但换了项
-     （如 admin 的活动↔创建）同样要重算；user.position 变化会改变 show，
-     进而补齐/移除导航项。 */
+  /* flush: 'post' 保证回调跑在 DOM 已经切到新高亮项之后：弹簧的起点取自元素当前
+     的 computed 位移（含正在播放的中间态），因此不需要在 pre 时机抢读旧 .is-active。
+     依赖里补上「内容签名」而非 length，长度不变但换了项（如 admin 的活动↔创建）
+     同样要重算；user.position 变化会改变 show，进而补齐/移除导航项。 */
   [highlightPath, verticalMode, navSignature, () => user.position.join('|')],
   () => updateIndicator(),
   { flush: 'post' }
@@ -350,8 +409,8 @@ const showThemeToggle = !pad() || getTabletType() === 'p615' || getTabletType() 
   >
     <div ref="itemsRef" class="yg-glass-nav__items">
       <span
+        ref="pillRef"
         class="yg-glass-nav__indicator"
-        :class="{ 'is-instant': indicatorInstant }"
         :style="indicatorStyle"
         aria-hidden="true"
       />

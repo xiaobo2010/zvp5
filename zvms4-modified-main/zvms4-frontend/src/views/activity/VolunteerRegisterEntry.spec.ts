@@ -7,7 +7,7 @@ import { defineComponent, h } from 'vue'
 import { zhCN } from '@/i18n/locales'
 import VolunteerRegisterEntry from './VolunteerRegisterEntry.vue'
 
-// 操作选择页只负责分流：这里锁住两个入口的文案与目标 URL、
+// 操作选择页只负责分流：这里锁住三个入口的文案与目标 URL、
 // query 的保留，以及「没有应用内上一页时」的安全回退。
 vi.mock('./registerAccess', () => ({
   ensureRegisterAccess: vi.fn(async () => true)
@@ -25,6 +25,7 @@ function buildRouter() {
         name: 'activity-register-mode',
         component: Page
       },
+      { path: '/activity/create', name: 'activity-create', component: Page },
       { path: '/activities/mine', name: 'activity', component: Page }
     ]
   })
@@ -47,18 +48,22 @@ function backButton(wrapper: VueWrapper) {
 }
 
 describe('VolunteerRegisterEntry', () => {
-  it('offers one visible choice per mode', async () => {
+  it('offers one visible choice per action', async () => {
     const { wrapper } = await mountEntry()
 
     expect(wrapper.text()).toContain(zhCN.nav.registerEntry.create.title)
     expect(wrapper.text()).toContain(zhCN.nav.registerEntry.edit.title)
+    expect(wrapper.text()).toContain(zhCN.nav.registerEntry.createActivity.title)
 
     const links = wrapper.findAll('a.yg-register-entry__choice')
-    expect(links).toHaveLength(2)
+    expect(links).toHaveLength(3)
     expect(links[0].classes()).toContain('yg-register-entry__choice--create')
     expect(links[1].classes()).toContain('yg-register-entry__choice--edit')
+    expect(links[2].classes()).toContain('yg-register-entry__choice--create-activity')
     expect(links[0].attributes('href')).toBe('/activity/register/create')
     expect(links[1].attributes('href')).toBe('/activity/register/edit')
+    // 创建义工是新建活动，不继承登记页的活动/会话 query。
+    expect(links[2].attributes('href')).toBe('/activity/create')
   })
 
   it('keeps the query when moving into the editor', async () => {
@@ -67,6 +72,7 @@ describe('VolunteerRegisterEntry', () => {
     const links = wrapper.findAll('a.yg-register-entry__choice')
     expect(links[0].attributes('href')).toBe('/activity/register/create?from=list&session=s1')
     expect(links[1].attributes('href')).toBe('/activity/register/edit?from=list&session=s1')
+    expect(links[2].attributes('href')).toBe('/activity/create')
   })
 
   it('falls back to the activity list when there is no in-app history', async () => {
