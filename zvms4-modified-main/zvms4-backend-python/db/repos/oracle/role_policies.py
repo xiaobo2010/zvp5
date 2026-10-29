@@ -219,14 +219,38 @@ class OracleRolePoliciesRepo:
         ]
 
         async with _session_for(self._session) as (session, owns):
+            # ``NO_PARALLEL`` 不是性能调优，是正确性：生产 ADB 的会话带
+            # ``pdml_enabled=YES``（``PARALLEL_DEGREE_POLICY=AUTO``），这两条
+            # DELETE 会被自动并行执行，随后同一事务里对**同一张表**的 INSERT
+            # 立刻撞 ``ORA-12838``（``cannot read/modify an object after
+            # modifying it in parallel``；空表也复现，2026-10-29 12:55 双人闸
+            # 通过后的 500 就是它）。四条语句全部串行化，换取「删+插」仍留在
+            # 同一个事务里——拆开会在读者眼里出现角色矩阵的空窗期，比慢一点点
+            # 糟得多。同款修法见 :mod:`db.repos.oracle.temp_passwords`。
             await session.execute(
-                delete(features_tbl).where(features_tbl.c.role == role)
+                delete(features_tbl)
+                .where(features_tbl.c.role == role)
+                .prefix_with("/*+ NO_PARALLEL */", dialect="oracle")
             )
-            await session.execute(delete(quotas_tbl).where(quotas_tbl.c.role == role))
+            await session.execute(
+                delete(quotas_tbl)
+                .where(quotas_tbl.c.role == role)
+                .prefix_with("/*+ NO_PARALLEL */", dialect="oracle")
+            )
             if feature_values:
-                await session.execute(insert(features_tbl), feature_values)
+                await session.execute(
+                    insert(features_tbl).prefix_with(
+                        "/*+ NO_PARALLEL */", dialect="oracle"
+                    ),
+                    feature_values,
+                )
             if quota_values:
-                await session.execute(insert(quotas_tbl), quota_values)
+                await session.execute(
+                    insert(quotas_tbl).prefix_with(
+                        "/*+ NO_PARALLEL */", dialect="oracle"
+                    ),
+                    quota_values,
+                )
             if owns:
                 await session.commit()
 

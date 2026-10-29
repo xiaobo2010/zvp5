@@ -265,6 +265,7 @@ async def submit(
     xuehai_id: str = "",
     conversation: Mapping[str, Any] | None = None,
     reference: str | None = None,
+    overrides: Mapping[str, Any] | None = None,
 ) -> dict:
     """把一条用户消息 + 一个 ``queued`` run 原子落库。
 
@@ -282,6 +283,10 @@ async def submit(
     ``reference`` 是只读场景的参考内容（已脱敏）：**不落消息表**，只在进程内随
     run_id 交给执行器（单 worker，与队列本身同一个前提），并由执行器随 prompt
     留存一起留档。
+
+    ``overrides`` 是只读场景的**按次覆盖**（``model`` / ``thinking``）：同样只在
+    进程内随 run_id 传递，执行器用它覆盖会话行上的固定值。登记放在插入之前——
+    行一旦可见，泵随时可能领走它，晚一步就会先按会话值跑一轮。
     """
     owner_oid = str(user.get("id") or "")
     if conversation is None:
@@ -378,6 +383,12 @@ async def submit(
             raise AgentError(RUN_CONFLICT, "too many active runs", 409)
 
     run_id = uuid4().hex
+    # 覆盖先登记、后插入：行可见之后泵随时可能 `claim_next` 到它。
+    _remember_override(
+        run_id,
+        model=(overrides or {}).get("model"),
+        thinking=(overrides or {}).get("thinking"),
+    )
     try:
         row, created = await _runs().insert_queued(
             run_id=run_id,
@@ -389,9 +400,14 @@ async def submit(
             model=(str(model).strip() or None) if model else None,
         )
     except ActiveRunConflict as exc:
+        # 没入队就没有 run 能消费这份覆盖：留着会污染同一会话的下一次 run。
+        _OVERRIDES.pop(run_id, None)
         raise AgentError(
             RUN_CONFLICT, "an active run already exists", 409
         ) from exc
+    except BaseException:
+        _OVERRIDES.pop(run_id, None)
+        raise
 
     # 首条用户消息定标题（§2.1）。只在「还没有标题」时写一次：之后改名是用户的
     # 事，重试或第二条消息都不该把标题改回去。
@@ -410,6 +426,8 @@ async def submit(
     }
     if not created:
         payload["deduped"] = True
+        # 命中的是**已有**的 run：覆盖登记在本次新生成的 run_id 上，没人会消费它。
+        _OVERRIDES.pop(run_id, None)
     else:
         _remember_reference(payload["run_id"], reference)
     return payload
@@ -443,6 +461,34 @@ def _take_reference(run_id: str) -> str | None:
     return _REFERENCES.pop(str(run_id), None)
 
 
+#: 按次覆盖的模型 / 思考强度（只读场景）：同样随 run_id 在进程内传递。
+#:
+#: 为什么不写进 ``AI_RUNS``：该表只有 ``MODEL`` 一列，``THINKING`` 没有列，而 DDL
+#: 本期不动。与参考内容同一前提（单 worker），进程重启后 queued 的 run 续跑时
+#: 覆盖丢失 → 退回会话现有值（不会丢消息、不会改变计费口径）。
+_OVERRIDES: dict[str, dict[str, str]] = {}
+OVERRIDES_MAX = 64
+
+
+def _remember_override(
+    run_id: str, model: str | None = None, thinking: str | None = None
+) -> None:
+    values = {
+        key: value
+        for key, value in (("model", model), ("thinking", thinking))
+        if isinstance(value, str) and value.strip()
+    }
+    if not values:
+        return
+    while len(_OVERRIDES) >= OVERRIDES_MAX:
+        _OVERRIDES.pop(next(iter(_OVERRIDES)))
+    _OVERRIDES[str(run_id)] = values
+
+
+def _take_override(run_id: str) -> dict[str, str]:
+    return _OVERRIDES.pop(str(run_id), {})
+
+
 async def submit_scene(
     *,
     user: Mapping[str, Any],
@@ -450,12 +496,18 @@ async def submit_scene(
     content: str,
     context: str | None = None,
     xuehai_id: str = "",
+    model: str | None = None,
+    thinking: str | None = None,
 ) -> dict:
     """只读场景的一次提问：复用该用户的场景会话，入队并返回 ``{run_id, conversation_oid}``。
 
     会话复用、参考内容脱敏都在这一层决定：路由层只做协议翻译，不自己拼 prompt。
     ``context`` 先脱敏再交给 ``submit``（脱敏必须在入库/入 prompt 之前，见
     :func:`services.ai.conversations.scene_reference`）。
+
+    ``model`` / ``thinking`` 是**按次覆盖**：只作用于这一次 run，不改写场景会话行上的
+    固定值（不传 = 与今天完全一致，沿用会话值）。覆盖在入队前登记，所以在泵领到
+    这一行之前就已经就位——不存在「先跑一轮默认档再用覆盖档」的中间态。
     """
     conversation = await conversations.ensure_scene(user=user, scene=scene)
     reference = conversations.scene_reference(context)
@@ -467,6 +519,10 @@ async def submit_scene(
         xuehai_id=xuehai_id,
         conversation=conversation,
         reference=reference,
+        # ``AI_RUNS.model`` 记「这一次请求指定的模型」（可空）：实际执行用它，审计里
+        # 落的是解析后的合格 ID（``services.agent.executor._audit_round``）。
+        model=model,
+        overrides={"model": model, "thinking": thinking},
     )
     return {"run_id": data["run_id"], "conversation_oid": conversation_oid}
 
@@ -504,6 +560,87 @@ async def cancel(*, user: Mapping[str, Any], run_id: str) -> dict:
 
     latest = await _runs().get(str(run_id), owner_oid) or row
     return {"status": str(latest.get("status"))}
+
+
+async def compact_conversation(*, user: Mapping[str, Any], conversation_oid: str) -> dict:
+    """手动压缩一次会话（``POST /conversations/{oid}/compact`` 的服务层）。
+
+    顺序固定，每一步都省不得：
+
+    1. **归属**：``require_row`` 只认 ``owner_oid``，别人的 oid 一律 404（不做探针）；
+    2. **活跃 run**：同会话还有 ``queued|running`` 就 409 ``AI_RUN_CONFLICT``。并发
+       压缩会与 worker 的 ``set_summary`` / ``context_tokens`` 打架，而 worker 手里的
+       上下文是压缩前那一份——两边都赢不了；
+    3. **回放历史**：与 run 启动同一条路径（摘要水位之后、带 ``seq``）。空会话直接
+       回 ``nothing_to_compact``，不当错误；
+    4. **压缩**：``executor.compact_messages(force=True)``——绕过阈值，与自动路径共用
+       同一份实现；
+    5. **落库**：摘要 + ``summary_upto_seq``，然后 ``set_context_tokens`` 把水位拉下来
+       （前端占用条据此回落），降级时补 ``compaction_degraded_at``。
+
+    额度不足时 :func:`services.agent.executor.compact_messages` 抛
+    ``insufficient_quota``（429），由路由层的 ``_dispatch`` 翻成既有错误体——手动
+    压缩不能像自动路径那样悄悄硬截断用户的上下文。
+    """
+    owner_oid = str(user.get("id") or "")
+    oid = str(conversation_oid)
+    conversation = await conversations.require_row(user=dict(user), oid=oid)
+
+    for row in await _runs().list_active(owner_oid):
+        if str(row.get("conversation_oid")) == oid:
+            raise AgentError(
+                RUN_CONFLICT, "this conversation already has an active run", 409
+            )
+
+    history = await _history_rows(oid, _int(conversation.get("summary_upto_seq")))
+    messages = _replay(history)
+    if not messages:
+        return {
+            "compacted": False,
+            "upto_seq": None,
+            "tokens_before": 0,
+            "tokens_after": 0,
+            "degraded": False,
+            "reason": "nothing_to_compact",
+        }
+
+    summary = conversation.get("summary")
+    text = summary.strip() if isinstance(summary, str) else ""
+    rebuilt, result = await executor.compact_messages(
+        user=dict(user),
+        messages=messages,
+        summary=text or None,
+        model=conversation.get("model"),
+        request_id=uuid4().hex,
+        prompt_tokens=_optional_int(conversation.get("context_tokens")),
+        scene=conversations.scene_of(conversation),
+        force=True,
+    )
+    del rebuilt  # 只用来算 tokens_after；会话原文不动，回放靠 summary 水位跳过
+
+    if result.get("compacted"):
+        upto = _optional_int(result.get("upto_seq"))
+        if result.get("summary") and upto:
+            await _conversations().set_summary(
+                oid, str(result["summary"]), int(upto)
+            )
+        after = _optional_int(result.get("tokens_after"))
+        if after is not None:
+            await _conversations().set_context_tokens(oid, after)
+        if result.get("degraded"):
+            await _conversations().mark_compaction_degraded(oid)
+
+    return {
+        key: result.get(key)
+        for key in (
+            "compacted",
+            "upto_seq",
+            "tokens_before",
+            "tokens_after",
+            "degraded",
+            "reason",
+        )
+    }
 
 
 async def recover_on_startup() -> int:
@@ -650,6 +787,8 @@ def reset() -> None:
         if task is not None and not task.done():
             task.cancel()
     _in_flight.clear()
+    # run 级进程内状态一并清掉：测试里上一个用例的覆盖不能带进下一个用例。
+    _OVERRIDES.clear()
     if _pump_task is not None and not _pump_task.done():
         _pump_task.cancel()
     _pump_task = None
@@ -669,6 +808,8 @@ async def _execute(run: Mapping[str, Any], semaphore: asyncio.Semaphore) -> None
     # 参考内容随 run 一次性取走：即使这次执行在读到会话前就失败，也不会在进程里
     # 留一份没人认领的终端/文件片段。
     reference = _take_reference(run_id)
+    # 按次覆盖同样一次性取走：它只属于这一次 run，取不到就退回会话行上的值。
+    overrides = _take_override(run_id)
     state: dict[str, Any] = {
         "rounds": 0,
         "result_message_oid": None,
@@ -696,10 +837,11 @@ async def _execute(run: Mapping[str, Any], semaphore: asyncio.Semaphore) -> None
         result = await executor.run(
             user=user,
             messages=messages,
-            # 模型与思考强度都取**会话**（R2/R3）：``AI_RUNS.model`` 只是提交时的
-            # 记录，不是执行依据。
-            model=conversation.get("model"),
-            thinking=conversation.get("thinking"),
+            # 模型与思考强度默认取**会话**（R2/R3）：``AI_RUNS.model`` 只是提交时的
+            # 记录，不是执行依据。只读场景可以**按次覆盖**（终端/文件编辑卡片上的
+            # 模型与档位选择），覆盖只活这一次 run，不改写会话行。
+            model=overrides.get("model") or conversation.get("model"),
+            thinking=overrides.get("thinking") or conversation.get("thinking"),
             request_id=run_id,
             # 摘要**不走 messages**（executor 只允许 user/assistant/tool，客户端
             # 塞 system 一律 400）：它由 executor 按 §5.1 拼成第二条 system。
@@ -707,6 +849,10 @@ async def _execute(run: Mapping[str, Any], semaphore: asyncio.Semaphore) -> None
             on_round=_on_round(run_id, conversation_oid, owner_oid, state),
             should_stop=_should_stop(run_id, owner_oid, state),
             on_summary=_on_summary(conversation, conversation_oid, state),
+            on_compaction=_on_compaction(conversation_oid, state),
+            # 上一个 run 的实测 prompt 规模：executor 用它做「请求前预检」，避免新
+            # run 先把全量历史发上去再压缩。
+            context_tokens=_optional_int(conversation.get("context_tokens")),
             # 场景决定工具声明的裁剪与 system 追加句；参考内容只在本次 run 内有效。
             scene=scene,
             reference=reference,
@@ -964,6 +1110,10 @@ def _on_summary(conversation: dict, conversation_oid: str, state: dict):
     里的会话行：下一次 run 组装历史时才会跳过 ``seq <= upto_seq`` 的原文。写失败
     只记日志——压缩本身已经完成，丢掉这条摘要的代价是「下一轮再压一次」，而不是
     这次 run 的结果不对。
+
+    水位只许**向前**：一次 run 现在可以压多次（长 run 会再次越过阈值），但落库只有
+    一个 ``summary`` + ``summary_upto_seq``。``seq`` 不退让是硬条件——把水位往回写
+    会让已经摘要过的原文重新进入上下文（重复计费），也可能让摘要与水位错位。
     """
 
     async def on_summary(summary: object, upto_seq: object) -> None:
@@ -971,9 +1121,11 @@ def _on_summary(conversation: dict, conversation_oid: str, state: dict):
         seq = _optional_int(upto_seq)
         if not text or not seq:
             return
-        if state.get("compacted"):
-            # 一次 run 只压一次（§5.3 防抖动）：重复写入只会把水位往后推，而摘要
-            # 还是那份摘要，下次组装会多丢一段原文。
+        previous = _optional_int(state.get("summary_upto"))
+        if previous is None:
+            previous = _optional_int(conversation.get("summary_upto_seq")) or 0
+        if seq <= previous:
+            # 同一个水位/更早的水位：重复写入只会把水位往后推，而摘要还是那份摘要。
             return
         try:
             await _conversations().set_summary(conversation_oid, text, seq)
@@ -982,9 +1134,51 @@ def _on_summary(conversation: dict, conversation_oid: str, state: dict):
             return
         conversation["summary"] = text
         conversation["summary_upto_seq"] = seq
+        state["summary_upto"] = seq
         state["compacted"] = True
 
     return on_summary
+
+
+def _on_compaction(conversation_oid: str, state: dict):
+    """压缩完成后的会话水位刷新（自动路径）。
+
+    两件事必须落库，否则前端的占用条会一直停在压缩前的水位、运维也看不到降级：
+
+    * ``context_tokens`` 用**压缩后**的估算值覆盖（仓储里 ``set_context_tokens``
+      一直没人调用，这里接上它）。下一次 ``_on_round`` 会用实测 prompt 再覆盖一次，
+      所以这里只是「在 compression 的那一刻」把条拉下来；
+    * 降级（硬截断）记一行 ``compaction_degraded_at``：那是事实而不是开关，不清零。
+
+    两个写都是旁路：失败只记日志，压缩已经完成，run 不该因此失败。
+    """
+
+    async def on_compaction(result: dict) -> None:
+        if not isinstance(result, dict) or not result.get("compacted"):
+            return
+        state["compaction"] = {
+            key: result.get(key)
+            for key in (
+                "upto_seq",
+                "tokens_before",
+                "tokens_after",
+                "degraded",
+                "reason",
+            )
+        }
+        after = _optional_int(result.get("tokens_after"))
+        if after is not None:
+            try:
+                await _conversations().set_context_tokens(conversation_oid, after)
+            except Exception:  # noqa: BLE001 - 水位刷新是旁路
+                _logger.exception("ai conversation context tokens refresh failed")
+        if result.get("degraded"):
+            try:
+                await _conversations().mark_compaction_degraded(conversation_oid)
+            except Exception:  # noqa: BLE001 - 降级标记同样不该打挂 run
+                _logger.exception("ai conversation compaction degraded mark failed")
+
+    return on_compaction
 
 
 # executor 的 ``_round_payload`` 用短键（prompt/completion/total/cache_read/
@@ -1466,6 +1660,7 @@ __all__ = [
     "RECENT_LIMIT_DEFAULT",
     "RECENT_LIMIT_MAX",
     "cancel",
+    "compact_conversation",
     "concurrency",
     "heartbeat_seconds",
     "kick",

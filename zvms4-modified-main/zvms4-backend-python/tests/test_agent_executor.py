@@ -952,6 +952,17 @@ def _history(*, padded: bool = False) -> list[dict]:
     return items
 
 
+def _turns(count: int) -> list[dict]:
+    """``count`` 轮带 ``seq`` 的历史（user/assistant 交替，seq 从 1 开始）。"""
+    items: list[dict] = []
+    for index in range(count):
+        items.append({"role": "user", "content": f"第{2 * index + 1}条历史", "seq": 2 * index + 1})
+        items.append(
+            {"role": "assistant", "content": f"第{2 * index + 2}条历史", "seq": 2 * index + 2}
+        )
+    return items
+
+
 def _context_settings(monkeypatch, *, limit: int = 1000, ratio: float = 0.75) -> None:
     """压缩阈值收窄到可触发的小水位（生产默认 32768 / 0.75）。"""
     monkeypatch.setattr(settings, "AI_DEFAULT_CONTEXT_LIMIT", limit, raising=False)
@@ -1264,13 +1275,17 @@ async def test_compaction_runs_once_rebuilds_the_conversation_and_is_not_budgete
 async def test_compaction_failure_degrades_to_hard_truncate_without_failing_the_run(
     monkeypatch, env
 ) -> None:
-    """摘要调用两次都失败 → 硬截断兜底，run 继续跑完。"""
+    """摘要调用两次都失败 → 硬截断兜底，run 继续跑完（预检阶段压不动也不打挂）。
+
+    现在的顺序是「请求前预检」先压：所以这里第 1/2 次是压缩的两次候选尝试，第 3 次
+    才是真正的 agent 轮次。
+    """
     audit, _events, _quota, _activities, _capture = env
     _context_settings(monkeypatch)
     from services.ai.routing import RouteError
 
     class FlakyCompact:
-        """第 1 次是真实轮次，第 2/3 次是压缩的两次候选尝试，第 4 次收尾。"""
+        """第 1/2 次是压缩的两次候选尝试（预检），第 3 次是唯一一轮。"""
 
         def __init__(self) -> None:
             self.payloads: list[dict] = []
@@ -1278,13 +1293,7 @@ async def test_compaction_failure_degrades_to_hard_truncate_without_failing_the_
         async def __call__(self, payload, entry, api_key):
             self.payloads.append(payload)
             index = len(self.payloads)
-            if index == 1:
-                return _completion(
-                    "",
-                    tool_calls=[_tool_call("search_activities", {"query": "图书馆"})],
-                    total_tokens=900,
-                )
-            if index in (2, 3):
+            if index in (1, 2):
                 raise RouteError("AI_UPSTREAM_ERROR", "compact boom", 502)
             return _completion("完成", total_tokens=120)
 
@@ -1300,28 +1309,140 @@ async def test_compaction_failure_degrades_to_hard_truncate_without_failing_the_
     )
 
     assert result["content"] == "完成"
-    assert result["rounds"] == 2
+    assert result["rounds"] == 1
     assert result["stop_reason"] is None
     assert seen == []  # 没有摘要可交付
-    assert len(upstream.payloads) == 4  # 1 轮 + 2 次压缩尝试 + 1 轮
-    # 降级：旧段被硬截断，上下文确实变短了（且没有残链）。
-    assert len(upstream.payloads[3]["messages"]) < len(upstream.payloads[0]["messages"])
+    assert len(upstream.payloads) == 3  # 2 次压缩尝试 + 1 轮
+    # 降级：旧段被硬截断，真正发出去的第一轮上下文确实变短了（且没有残链）。
+    sent = upstream.payloads[2]["messages"]
     assert all(
-        "第1条历史" not in str(message.get("content"))
-        for message in upstream.payloads[3]["messages"]
+        "第1条历史" not in str(message.get("content")) for message in sent
     )
     assert [row["purpose"] for row in audit.rows] == [
-        "agent",
         "compact",
         "compact",
         "agent",
     ]
-    assert [row["status"] for row in audit.rows] == [
-        "success",
-        "error",
-        "error",
-        "success",
-    ]
+    assert [row["status"] for row in audit.rows] == ["error", "error", "success"]
+
+
+@pytest.mark.asyncio
+async def test_preflight_compacts_with_the_row_water_line_before_any_upstream_call(
+    monkeypatch, env
+) -> None:
+    """会话行记录的 prompt 规模越过阈值 → **第一个请求之前**就压。
+
+    只靠 ``estimate_tokens`` 判不出来的场景：这条历史很小（估算远低于阈值），但上一
+    轮实测已经 900/1000。不预检的话，新 run 会先把 90% 的上下文整段发上去。
+    """
+    _audit, _events, _quota, _activities, _capture = env
+    _context_settings(monkeypatch)
+    seen: list[tuple[str, int]] = []
+    upstream = ScriptedUpstream(
+        [_completion("摘要正文", total_tokens=50), _completion("完成", total_tokens=60)]
+    )
+    monkeypatch.setattr(providers, "chat_completion", upstream)
+
+    result = await executor.run(
+        user=ADMIN,
+        messages=_history(),
+        model=MODEL,
+        on_summary=lambda text, upto: seen.append((text, upto)),
+        context_tokens=900,
+    )
+
+    assert seen == [("摘要正文", 6)]
+    # 第 1 次上游调用就是摘要，不是全量历史。
+    assert upstream.payloads[0]["messages"][0]["content"] == (
+        agent_context.SUMMARY_SYSTEM_PROMPT
+    )
+    sent = upstream.payloads[1]["messages"]
+    assert [message["role"] for message in sent] == ["system", "system", "user"]
+    assert "摘要正文" in sent[1]["content"]
+    assert sent[2]["content"] == "第7条历史"
+    assert result["content"] == "完成"
+
+
+@pytest.mark.asyncio
+async def test_a_long_run_may_compact_more_than_once_and_summaries_accumulate(
+    monkeypatch, env
+) -> None:
+    """取消「单 run 只压一次」：第二次越过阈值仍能再压，且新摘要包含旧摘要。
+
+    默认保留窗口是 6 轮，第一次压缩后近段正好只剩 6 轮——按 6 轮切永远切不出旧段，
+    所以只看「有摘要」时才把窗口缩到 1 轮（切点仍落在 user 之前）。
+    """
+    audit, _events, quota_repo, _activities, _capture = env
+    _context_settings(monkeypatch)
+    monkeypatch.setattr(settings, "AI_CONTEXT_KEEP_TURNS", 6, raising=False)
+    monkeypatch.setattr(ai_config, "agent_token_budget", lambda: 100_000)
+
+    seen: list[tuple[str, int]] = []
+    applied: list[dict] = []
+    upstream = ScriptedUpstream(
+        [
+            _completion("", tool_calls=[_tool_call("search_activities", {"query": "a"})], total_tokens=900),
+            _completion("摘要一", total_tokens=50),
+            _completion("", tool_calls=[_tool_call("search_activities", {"query": "b"})], total_tokens=900),
+            _completion("摘要二", total_tokens=50),
+            _completion("完成", total_tokens=60),
+        ]
+    )
+    monkeypatch.setattr(providers, "chat_completion", upstream)
+
+    result = await executor.run(
+        user=ADMIN,
+        messages=_turns(10),
+        model=MODEL,
+        on_summary=lambda text, upto: seen.append((text, upto)),
+        on_compaction=applied.append,
+    )
+
+    assert result["content"] == "完成"
+    # 水位两次都向前推：8 → 18（第二次把「留着的那几轮」也压进去了）。
+    assert seen == [("摘要一", 8), ("摘要二", 18)]
+    assert [item["upto_seq"] for item in applied] == [8, 18]
+    # 累计：第二次摘要的输入里带着上一份摘要。
+    assert "摘要一" in upstream.payloads[3]["messages"][1]["content"]
+    # 最终发出的上下文：system + 第二次摘要 + 最后一次压缩保留的近段原文。
+    final = upstream.payloads[4]["messages"]
+    assert [message["role"] for message in final[:3]] == ["system", "system", "user"]
+    assert "摘要二" in final[1]["content"]
+    # 旧摘要不再叠一条（新摘要已经累积），更早的原文也真的不在了。
+    assert final[1]["content"].count("摘要") <= 2
+    assert all("第9条历史" not in str(message.get("content")) for message in final)
+    assert "第19条历史" in str(final[2]["content"])
+    # 两次压缩各扣一次额度、各写一行 compact 审计。
+    assert [row["purpose"] for row in audit.rows].count("compact") == 2
+    assert len(quota_repo.consumed) == 5
+
+
+@pytest.mark.asyncio
+async def test_compaction_attempts_are_capped_per_run(monkeypatch, env) -> None:
+    """到达单 run 上限后不再尝试（既不花摘要调用，也不动上下文）。"""
+
+    def _boom(**_kwargs):
+        raise AssertionError("compaction must not run past the per-run cap")
+
+    monkeypatch.setattr(executor, "compact_history", _boom)
+
+    conversation = [{"role": "user", "content": "hi", "seq": 1}]
+    rebuilt, result = await executor._maybe_compact(
+        conversation=conversation,
+        attempts=executor.MAX_COMPACTIONS_PER_RUN,
+        model=MODEL,
+        candidates=[_entry()],
+        user_oid=USER,
+        roles=["admin"],
+        run_id="r" * 32,
+        snapshot=None,
+        prompt_tokens=999_999,
+        on_summary=lambda *_args: None,
+    )
+
+    assert rebuilt is conversation
+    assert result["compacted"] is False
+    assert result["reason"] == "limit_reached"
 
 
 @pytest.mark.asyncio
@@ -1617,6 +1738,39 @@ async def test_no_thinking_means_no_field_at_all(monkeypatch, env) -> None:
     await _run(model=MODEL)
 
     assert "reasoning_effort" not in upstream.payloads[0]
+
+
+@pytest.mark.asyncio
+async def test_thinking_also_covers_the_compaction_round(monkeypatch, env) -> None:
+    """压缩轮也是真实上游调用：同一次 run 的档位必须贯穿它（含请求前预检）。
+
+    漏掉这一处，「这次用 high」在压缩时会悄悄退回上游默认——而压缩往往是这次 run
+    里唯一一次「思考」得最久的调用。
+    """
+    audit, _events, _quota, _activities, _capture = env
+    _context_settings(monkeypatch)
+    upstream = ScriptedUpstream(
+        [_completion("摘要正文", total_tokens=50), _completion("完成", total_tokens=60)]
+    )
+    monkeypatch.setattr(providers, "chat_completion", upstream)
+
+    await executor.run(
+        user=ADMIN,
+        messages=_history(),
+        model=MODEL,
+        thinking="high",
+        on_summary=lambda *_args: None,
+        context_tokens=900,
+    )
+
+    # 第 1 次是预检压缩，第 2 次是常规轮：两次都带同一个档位。
+    assert [row["purpose"] for row in audit.rows][0] == "compact"
+    assert [payload["reasoning_effort"] for payload in upstream.payloads] == [
+        "high",
+        "high",
+    ]
+    # 审计里记录的模型是解析后的合格 ID（与实际发出去的一致）。
+    assert {row["model"] for row in audit.rows} == {"lab/gpt-x"}
     assert "thinking" not in upstream.payloads[0]
 
 

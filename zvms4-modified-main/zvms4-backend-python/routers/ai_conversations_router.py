@@ -431,6 +431,34 @@ async def submit_run(
     return await _dispatch(action, user=user, scene=scene, status_code=202)
 
 
+@router.post("/conversations/{oid}/compact")
+async def compact_conversation(
+    oid: str,
+    user=Depends(get_current_user),
+    scene: str | None = Depends(ai_scene),
+):
+    """手动压缩一次会话上下文（返回是否真的压了 + 水位前后）。
+
+    与自动压缩（会话占用越过阈值时在 run 内触发）共用同一份实现，区别只有
+    ``force=True``：用户点了就要压，不判阈值。
+
+    两道闸的顺序是「功能开关 → 归属（服务层 require_row）」：关掉 ``ai.agent`` 之后
+    连压缩都不该发生（它会花一次真实上游调用并扣额度）。活跃 run 的处理在服务层：
+    409 ``AI_RUN_CONFLICT``，与「同会话已有 run」用同一个错误码。
+    """
+
+    async def action() -> dict:
+        _require_agent_feature(user)
+        return await run_queue.compact_conversation(
+            user=user,
+            conversation_oid=_require_oid(
+                oid, code=conversations.NOT_FOUND, message="conversation not found"
+            ),
+        )
+
+    return await _dispatch(action, user=user, scene=scene)
+
+
 @router.get("/runs")
 async def list_runs(
     active: int = Query(default=1, ge=0, le=1),

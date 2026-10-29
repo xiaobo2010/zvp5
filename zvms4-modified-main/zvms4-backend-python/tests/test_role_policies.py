@@ -383,6 +383,36 @@ def test_upsert_role_with_empty_maps_wipes_the_role(monkeypatch) -> None:
     assert len(session.calls) == 2
 
 
+def test_upsert_role_serialises_every_statement_with_no_parallel(monkeypatch) -> None:
+    """生产 ADB 的 ``pdml_enabled=YES`` 会把 DELETE 自动并行 → 同事务里对同一
+    张表的 INSERT 撞 ``ORA-12838``（2026-10-29 双人闸后的 500）。
+
+    四条语句都必须带 ``NO_PARALLEL``，且 hint 必须在语句头（不是注释里的字符串）：
+    这是回归钉，删掉任意一条都会让生产重新冒 500。
+    """
+    from sqlalchemy.dialects import oracle
+
+    repository, session = _repo_with_recorder(monkeypatch)
+    asyncio.run(
+        repository.upsert_role(
+            "student", {"ai.ocr": True}, {"chat": 7, "ocr": 5, "schedule": 0}, "actor"
+        )
+    )
+
+    dialect = oracle.dialect()
+    compiled = [
+        str(statement.compile(dialect=dialect)) for statement, _ in session.calls
+    ]
+
+    assert len(compiled) == 4
+    for sql in compiled:
+        assert "NO_PARALLEL" in sql, sql
+        # hint 必须在语句头：Oracle 只认那个位置的 hint，避免被当成注释字符串。
+        assert sql.lstrip().startswith(
+            ("DELETE /*+ NO_PARALLEL */", "INSERT /*+ NO_PARALLEL */")
+        ), sql
+
+
 # --------------------------------------------------------------------------- #
 # 端点：管理视图
 # --------------------------------------------------------------------------- #
@@ -570,6 +600,60 @@ def test_put_replaces_matrix_and_audits(app, repo, audits) -> None:
     assert "role=student" in audit["detail"]
     assert "ai.ocr" in audit["detail"]
     assert APPROVER_OID in audit["detail"]
+
+
+# --------------------------------------------------------------------------- #
+# 端点：落库失败（库抖动 ≠ 请求写错）
+# --------------------------------------------------------------------------- #
+
+
+def _sqlalchemy_db_error() -> BaseException:
+    from sqlalchemy.exc import DatabaseError as SADatabaseError
+
+    return SADatabaseError(
+        "DELETE FROM role_features", {}, Exception("ORA-12838: cannot read/modify")
+    )
+
+
+def _driver_db_error() -> BaseException:
+    import oracledb
+
+    return oracledb.DatabaseError("ORA-12838: cannot read/modify an object")
+
+
+@pytest.mark.parametrize("error_factory", [_sqlalchemy_db_error, _driver_db_error])
+def test_put_turns_a_database_failure_into_503(
+    error_factory, app, repo, audits, monkeypatch, caplog
+) -> None:
+    """双人闸通过后落库失败 = 可重试的 503，不是 500，也不写审计。
+
+    生产那次是 ADB 上的 ``ORA-12838``：请求本身没错，错的是库。冒成 500 只会
+    让管理员以为「提交的数据有问题」而反复重试；503 + 中文提示才是事实。
+    """
+
+    async def _boom(*args, **kwargs):
+        raise error_factory()
+
+    monkeypatch.setattr(policy, "replace_role", _boom)
+    caplog.set_level("WARNING", logger=role_router.logger.name)
+
+    response = _client(app, ADMIN).put(
+        "/api/system/role-policies/student",
+        json={
+            "features": {"ai.ocr": True},
+            "quotas": {"chat": 0, "ocr": 5, "schedule": 0},
+            "totp_code": "123456",
+        },
+    )
+
+    assert response.status_code == 503, response.text
+    assert response.json()["detail"] == "数据库暂时不可用，请稍后重试"
+    # 没写成功就不写审计：审计记的是「谁改了什么」，不是「谁试过」。
+    assert audits == []
+    assert repo.upserts == []
+    # 日志要能回答「谁改哪个角色时库挂了」，且不吞栈。
+    assert "role=student" in caplog.text
+    assert any(record.exc_info for record in caplog.records)
 
 
 # --------------------------------------------------------------------------- #

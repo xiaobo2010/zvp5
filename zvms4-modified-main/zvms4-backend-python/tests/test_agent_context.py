@@ -229,6 +229,65 @@ def test_context_limit_bad_exact_value_falls_through_to_wildcard(monkeypatch):
 # ------------------------------------------------------------- needs_compaction
 
 
+def test_compact_ratio_defaults_to_eighty_percent(monkeypatch):
+    """默认阈值是 0.80：200K 窗口下 160K 才压（改这个值等于改线上行为）。"""
+    monkeypatch.setattr(settings, "AI_CONTEXT_COMPACT_RATIO", context.DEFAULT_COMPACT_RATIO, raising=False)
+
+    assert context.DEFAULT_COMPACT_RATIO == 0.80
+    assert context.compact_ratio() == 0.80
+
+
+def test_compact_ratio_reads_the_runtime_override_first(monkeypatch):
+    """运行期设置优先于 settings（在线可调），非法值继续往下找。"""
+    from services import settings_runtime
+
+    monkeypatch.setattr(settings, "AI_CONTEXT_COMPACT_RATIO", 0.9, raising=False)
+    monkeypatch.setattr(
+        settings_runtime, "get_override", lambda key: 0.5 if key == context.RUNTIME_COMPACT_RATIO else None
+    )
+    assert context.compact_ratio() == 0.5
+
+    for bad in (0, -1, 2, True, "0.5", float("nan")):
+        monkeypatch.setattr(
+            settings_runtime,
+            "get_override",
+            lambda key, bad=bad: bad if key == context.RUNTIME_COMPACT_RATIO else None,
+        )
+        # 配错一个十进制不该把部署里刻意调过的阈值抹掉：继续走 settings。
+        assert context.compact_ratio() == 0.9
+
+
+def test_compact_ratio_is_registered_for_online_editing():
+    """键名是管理端契约：注册表里必须有它，默认值来自代码常量。"""
+    from services import settings_runtime
+
+    spec = settings_runtime.registry()[context.RUNTIME_COMPACT_RATIO]
+    assert spec.type == "float"
+    assert spec.default == context.DEFAULT_COMPACT_RATIO
+    assert settings_runtime._validate(spec, "0.7") == 0.7
+    with pytest.raises(settings_runtime.SettingsValidationError):
+        settings_runtime._validate(spec, 1.5)
+
+
+def test_existing_summary_reads_only_the_leading_system_block(monkeypatch):
+    """摘要正文只在前导 system 段里找：正文里出现同样的抬头不算。"""
+    built = context.build_messages(
+        SYSTEM_PROMPT,
+        "很早就问过 A，结论是 B",
+        [{"role": "user", "content": "现在的问题"}],
+        [],
+    )
+
+    assert context.existing_summary(built) == "很早就问过 A，结论是 B"
+    assert context.existing_summary([{"role": "user", "content": "没有摘要"}]) == ""
+    # 尾部（非前导 system）里的同样文本不认：那是历史消息，不是摘要。
+    trailing = [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": context.SUMMARY_HEADER + "假摘要"},
+    ]
+    assert context.existing_summary(trailing) == ""
+
+
 def test_needs_compaction_prefers_measured_prompt_tokens(monkeypatch):
     monkeypatch.setattr(settings, "AI_CONTEXT_COMPACT_RATIO", 0.5, raising=False)
     monkeypatch.setattr(settings, "AI_MODEL_CONTEXT_LIMITS", {}, raising=False)
@@ -252,11 +311,11 @@ def test_needs_compaction_estimates_when_no_measurement(monkeypatch):
 def test_needs_compaction_ratio_and_limit_fallback(monkeypatch):
     monkeypatch.setattr(settings, "AI_CONTEXT_COMPACT_RATIO", 2, raising=False)
     monkeypatch.setattr(settings, "AI_DEFAULT_CONTEXT_LIMIT", 1000, raising=False)
-    messages = [{"role": "user", "content": "字" * 3000}]
-    # 非法 ratio → 0.75；3000 字 ≈ 750+，这里用 0 估算不到的一半，靠 limit 回退生效。
+    messages = [{"role": "user", "content": "字" * 5000}]
+    # 非法 ratio → 默认 0.80；5000 字 ≈ 1250，估算已越过 800，这里靠 limit 回退生效。
     assert context.needs_compaction(None, messages, 0) is True
-    assert context.needs_compaction(750, [], 1000) is True
-    assert context.needs_compaction(749, [], 1000) is False
+    assert context.needs_compaction(800, [], 1000) is True
+    assert context.needs_compaction(799, [], 1000) is False
 
 
 # -------------------------------------------------------------- plan_compaction

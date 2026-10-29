@@ -18,17 +18,38 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
+from sqlalchemy.exc import DatabaseError, InterfaceError, OperationalError
 
 from routers.system_router import _require_system_admin
 from services.roles import policy
 from util.dual_auth import DualAuthError, audit_system_op, require_dual_auth
-from util.object_id import get_current_user
+from util.object_id import DB_UNAVAILABLE_DETAIL, get_current_user
 
 router = APIRouter()
+
+logger = logging.getLogger(__name__)
+
+try:  # 驱动层异常可能没被 SQLAlchemy 包成 DBAPIError（如连接中途断开）
+    import oracledb
+
+    _DRIVER_ERRORS: tuple[type[BaseException], ...] = (oracledb.Error,)
+except ImportError:  # pragma: no cover - oracledb 是硬依赖，仅为导入路径兜底
+    _DRIVER_ERRORS = ()
+
+# 落库失败 = 库暂时不可用（可重试），不是请求写错了：这一层唯一的写动作是
+# 「单事务全量替换」，除库抖动外没有第二种失败形态。
+_DB_UNAVAILABLE_ERRORS: tuple[type[BaseException], ...] = (
+    OperationalError,
+    DatabaseError,
+    InterfaceError,
+    *_DRIVER_ERRORS,
+)
+
 
 # 单个角色单项月额度的上限。取得太大等于「无限」但又不是无限（admin 才是），
 # 超过这个数一律 400：多半是前端把「不限」编码成了一个大数字。
@@ -161,7 +182,21 @@ async def update_role_policy(
     except DualAuthError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
 
-    data = await policy.replace_role(role, features, quotas, user["id"])
+    try:
+        data = await policy.replace_role(role, features, quotas, user["id"])
+    except _DB_UNAVAILABLE_ERRORS as exc:
+        # 鉴权全部通过之后才碰库，所以失败点只可能是库本身（例如 ADB 上的
+        # ``ORA-12838``）。不回 500：前端拿到的应当是一句「稍后重试」。
+        # 日志带角色名与操作人并保留栈——事后要能回答「谁改哪个角色时库挂了」。
+        logger.warning(
+            "role_policy write failed: role=%s operator=%s",
+            role,
+            user.get("id"),
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=503, detail=DB_UNAVAILABLE_DETAIL
+        ) from exc
 
     await audit_system_op(
         user["id"],

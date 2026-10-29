@@ -200,30 +200,59 @@ def test_cache_only_usage_is_not_counted_as_reported_usage() -> None:
         (2500, 3),
     ],
 )
-def test_units_from_total_tokens_keeps_the_historical_formula(total, units) -> None:
+def test_units_from_total_tokens_is_af_at_base_rate(total, units) -> None:
+    """legacy 别名 = ``af_units(total, 1.0)``：基准价下公式与改造前一致。"""
     assert usage.units_from_total_tokens(total) == units
+    assert usage.af_units(total) == units
 
 
-def test_estimate_units_counts_chars_without_the_thousand_divisor() -> None:
-    """**现行**估算口径：``ceil(prompt_chars/4 + completion_chars/4)``。
+@pytest.mark.parametrize(
+    ("total", "rate", "af"),
+    [
+        (1000, 1.0, 1),
+        (1000, 2.0, 2),
+        (1500, 2.0, 3),
+        (1200, 0.5, 1),  # 0.6 → 1（下限）
+        (10_000, 0.01, 1),  # 0.1 → 1
+        (2000, 0, 2),  # rate<=0 视为 1
+        (2000, -3, 2),
+        (2000, float("nan"), 2),
+        (2000, float("inf"), 2),
+        (333, "2", 1),  # 非数字倍率回 1.0
+    ],
+)
+def test_af_units_multiplies_by_rate_and_never_drops_below_one(
+    total, rate, af
+) -> None:
+    assert usage.af_units(total, rate) == af
 
-    注意它与实测口径的量纲不同（估算 = token 量级，实测 = 每 1000 token 一个
-    单位）。这是本轮刻意不改的历史行为（``units`` 语义不动），已在
-    ``docs/AI_GATEWAY_API.md`` §6 记为已知差异：回填/比较时不能把两种行直接相加。
-    """
-    assert usage.estimate_units(0, 0) == 1
-    assert usage.estimate_units(4, 0) == 1
-    assert usage.estimate_units(4000, 4000) == 2000
+
+def test_af_units_does_not_lose_a_unit_to_float_dust() -> None:
+    """``round(..., 9)`` 防浮点尘：本应整除的组合不能多收 1 AF。"""
+    assert usage.af_units(3000, 1.0) == 3
+    assert usage.af_units(700, 1.4) == 1  # 0.98
+    assert usage.af_units(5000, 0.2) == 1  # 1.0000000000000002 的诱饵
+    assert usage.af_units(10_000, 0.1) == 1
 
 
-def test_estimate_units_stays_identical_to_the_previous_inline_formula() -> None:
-    """逐字节复刻改造前 router 里的那行 ``max(1, ceil(p/4 + c/4))``。"""
+def test_estimate_af_uses_the_same_thousand_token_divisor() -> None:
+    """估算口径与实测口径**同量纲**（旧实现差 1000 倍，本版修掉）。"""
+    assert usage.estimate_tokens_from_chars(4000, 4000) == 2000
+    assert usage.estimate_af(0, 0) == 1
+    assert usage.estimate_af(4, 0) == 1  # 1 token → 1 AF
+    assert usage.estimate_af(4000, 4000) == 2  # 2000 token → 2 AF
+    assert usage.estimate_af(4000, 4000) == usage.af_units(2000, 1.0)
+    assert usage.estimate_af(4000, 4000, rate=2.0) == 4
+
+
+def test_estimate_units_is_an_alias_of_estimate_af() -> None:
+    """旧函数名保留，但返回值改成了 AF。"""
     for prompt_chars in (0, 1, 3, 999, 12345):
         for completion_chars in (0, 7, 4000):
-            expected = max(
-                1, math.ceil(prompt_chars / 4 + completion_chars / 4)
-            )
-            assert usage.estimate_units(prompt_chars, completion_chars) == expected
+            for rate in (1.0, 0.5, 2.5):
+                assert usage.estimate_units(
+                    prompt_chars, completion_chars, rate
+                ) == usage.estimate_af(prompt_chars, completion_chars, rate)
 
 
 def test_prompt_chars_serialises_messages_and_never_stores_them() -> None:

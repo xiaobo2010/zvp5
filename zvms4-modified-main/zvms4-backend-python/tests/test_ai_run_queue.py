@@ -16,6 +16,7 @@ executor 是 mock：本车道只验证「怎么调」与「回调怎么写库」
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import time
 from datetime import datetime, timedelta
@@ -49,6 +50,8 @@ class FakeConversationsRepo:
     def __init__(self) -> None:
         self.rows: dict[str, dict] = {}
         self.summaries: list[tuple[str, str, int]] = []
+        self.context_updates: list[tuple[str, int | None]] = []
+        self.degraded_marks: list[str] = []
 
     def seed(self, oid: str = CONV, *, owner_oid: str = OWNER, mode: str = "agent") -> dict:
         row = {
@@ -84,6 +87,18 @@ class FakeConversationsRepo:
         if row is not None:
             row["summary"] = summary
             row["summary_upto_seq"] = int(upto_seq)
+
+    async def set_context_tokens(self, oid, tokens) -> None:
+        self.context_updates.append((str(oid), tokens))
+        row = self.rows.get(str(oid))
+        if row is not None:
+            row["context_tokens"] = 0 if tokens is None else int(tokens)
+
+    async def mark_compaction_degraded(self, oid, *, at=None) -> None:
+        self.degraded_marks.append(str(oid))
+        row = self.rows.get(str(oid))
+        if row is not None:
+            row["compaction_degraded_at"] = at or _now()
 
     async def update(self, oid, owner_oid, *, title=None, status=None,
                      thinking=None, clear_thinking=False) -> bool:
@@ -512,7 +527,8 @@ def install_executor(monkeypatch, handler):
 
     async def run(*, user, messages, model=None, thinking=None, request_id=None,
                   summary=None, on_round=None, should_stop=None, on_summary=None,
-                  scene=None, reference=None):
+                  scene=None, reference=None, context_tokens=None,
+                  on_compaction=None):
         record = {
             "user": user,
             "messages": messages,
@@ -522,14 +538,21 @@ def install_executor(monkeypatch, handler):
             "summary": summary,
             "scene": scene,
             "reference": reference,
+            "context_tokens": context_tokens,
+            "on_compaction": on_compaction,
         }
         calls.append(record)
-        return await handler(
-            on_round=on_round,
-            should_stop=should_stop,
-            on_summary=on_summary,
-            record=record,
-        )
+        forwarded = {
+            "on_round": on_round,
+            "should_stop": should_stop,
+            "on_summary": on_summary,
+            "record": record,
+        }
+        # 老用例的 handler 不收 ``on_compaction``：只在它愿意接的时候透传，避免
+        # 「给所有 handler 加一个参数」的机械改动把测试意图冲淡。
+        if "on_compaction" in inspect.signature(handler).parameters:
+            forwarded["on_compaction"] = on_compaction
+        return await handler(**forwarded)
 
     monkeypatch.setattr(run_queue.executor, "run", run)
     return calls
@@ -873,13 +896,17 @@ async def test_replay_carries_seq_and_tool_chain(env, monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_on_summary_persists_once_per_run(env, monkeypatch) -> None:
-    """``on_summary`` 落库 summary + upto_seq，并同步内存会话行；同一次 run 只写一次。"""
+async def test_on_summary_persists_monotonically(env, monkeypatch) -> None:
+    """``on_summary`` 落库 summary + upto_seq，水位只许向前（单 run 可压多次）。"""
 
     async def handler(*, on_round, should_stop, on_summary=None, record):
         await on_summary("压缩后的摘要", 6)
-        # executor 本身保证每 run 只压一次；这里再调一次不能把水位往后推。
-        await on_summary("第二次摘要", 9)
+        # 同一水位重放：忽略（同一份摘要写两遍没有意义）。
+        await on_summary("压缩后的摘要", 6)
+        # 水位倒退：同样忽略。往回写会让已摘要过的原文重新进上下文。
+        await on_summary("更旧的摘要", 4)
+        # 长 run 再压一次：水位推进，摘要覆盖到更后面（累积，不是替换成片段）。
+        await on_summary("更完整的摘要", 9)
         return {"stop_reason": None, "rounds": 1}
 
     install_executor(monkeypatch, handler)
@@ -888,9 +915,71 @@ async def test_on_summary_persists_once_per_run(env, monkeypatch) -> None:
     await run_queue.kick()
     await wait_idle()
 
-    assert env.conv.summaries == [(CONV, "压缩后的摘要", 6)]
-    assert env.conv.rows[CONV]["summary"] == "压缩后的摘要"
-    assert env.conv.rows[CONV]["summary_upto_seq"] == 6
+    assert env.conv.summaries == [(CONV, "压缩后的摘要", 6), (CONV, "更完整的摘要", 9)]
+    assert env.conv.rows[CONV]["summary"] == "更完整的摘要"
+    assert env.conv.rows[CONV]["summary_upto_seq"] == 9
+
+
+@pytest.mark.asyncio
+async def test_on_compaction_refreshes_context_tokens_and_marks_degraded(
+    env, monkeypatch
+) -> None:
+    """压缩回调负责把会话水位拉下来，并在降级时补一条事实。"""
+    env.conv.seed(CONV)
+    env.conv.rows[CONV]["context_tokens"] = 180_000
+
+    async def handler(*, on_round, should_stop, on_summary=None, on_compaction=None,
+                      record):
+        await on_compaction(
+            {
+                "compacted": True,
+                "upto_seq": 6,
+                "tokens_before": 180_000,
+                "tokens_after": 24_000,
+                "degraded": True,
+                "reason": "degraded",
+                "summary": None,
+            }
+        )
+        return {"stop_reason": None, "rounds": 1}
+
+    install_executor(monkeypatch, handler)
+    submitted = await run_queue.submit(user=ADMIN, conversation_oid=CONV, content="长会话")
+
+    await run_queue.kick()
+    await wait_idle()
+
+    # 前端占用条据此回落：压缩后写回的是压缩后的规模，不是压缩前的。
+    assert env.conv.context_updates == [(CONV, 24_000)]
+    assert env.conv.rows[CONV]["context_tokens"] == 24_000
+    assert env.conv.degraded_marks == [CONV]
+    assert env.runs.rows[submitted["run_id"]]["status"] == "succeeded"
+
+
+@pytest.mark.asyncio
+async def test_on_compaction_failure_does_not_fail_the_run(env, monkeypatch) -> None:
+    """水位刷新失败只记日志：压缩已经完成，run 的结果不该因此变成 failed。"""
+
+    async def boom(oid, tokens):
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr(env.conv, "set_context_tokens", boom)
+
+    async def handler(*, on_round, should_stop, on_summary=None, on_compaction=None,
+                      record):
+        await on_compaction(
+            {"compacted": True, "upto_seq": 3, "tokens_after": 900_000,
+             "tokens_before": 5, "degraded": False, "reason": None}
+        )
+        return {"stop_reason": None, "rounds": 1}
+
+    install_executor(monkeypatch, handler)
+    submitted = await run_queue.submit(user=ADMIN, conversation_oid=CONV, content="长会话")
+
+    await run_queue.kick()
+    await wait_idle()
+
+    assert env.runs.rows[submitted["run_id"]]["status"] == "succeeded"
 
 
 @pytest.mark.asyncio
@@ -913,6 +1002,190 @@ async def test_on_summary_failure_does_not_fail_the_run(env, monkeypatch) -> Non
     await wait_idle()
 
     assert env.runs.rows[submitted["run_id"]]["status"] == "succeeded"
+
+
+# ---------------------------------------------------------------------------
+# 手动压缩（POST /conversations/{oid}/compact 的服务层）
+# ---------------------------------------------------------------------------
+
+
+def _install_compact(monkeypatch, result: dict, *, rebuilt=None):
+    """把 ``executor.compact_messages`` 换成可控实现，返回调用记录。"""
+    calls: list[dict] = []
+
+    async def compact_messages(**kwargs):
+        calls.append(kwargs)
+        return (rebuilt or [], dict(result))
+
+    monkeypatch.setattr(run_queue.executor, "compact_messages", compact_messages)
+    return calls
+
+
+def _seed_history(env, turns: int = 4) -> None:
+    """``turns`` 轮 user/assistant 历史（seq 1..2*turns）。"""
+    for index in range(turns):
+        env.msg.seed(seq=2 * index + 1, role="user", content=f"问题 {index + 1}")
+        env.msg.seed(seq=2 * index + 2, role="assistant", content=f"回答 {index + 1}")
+    env.conv.rows[CONV]["message_count"] = 2 * turns
+
+
+@pytest.mark.asyncio
+async def test_manual_compact_forces_preflight_and_refreshes_the_water_line(
+    env, monkeypatch
+) -> None:
+    """手动压缩：绕过阈值（force=True），落摘要 + 把会话水位改成压缩后的规模。"""
+    _seed_history(env)
+    env.conv.rows[CONV]["model"] = "gpt-x"
+    env.conv.rows[CONV]["context_tokens"] = 180_000
+    calls = _install_compact(
+        monkeypatch,
+        {
+            "compacted": True,
+            "upto_seq": 6,
+            "tokens_before": 180_000,
+            "tokens_after": 21_000,
+            "degraded": False,
+            "reason": None,
+            "summary": "早期结论摘要",
+        },
+    )
+
+    data = await run_queue.compact_conversation(user=ADMIN, conversation_oid=CONV)
+
+    assert data == {
+        "compacted": True,
+        "upto_seq": 6,
+        "tokens_before": 180_000,
+        "tokens_after": 21_000,
+        "degraded": False,
+        "reason": None,
+    }
+    # 与自动路径共用实现：force=True + 会话行水位当作已知 prompt 规模。
+    assert calls[0]["force"] is True
+    assert calls[0]["prompt_tokens"] == 180_000
+    assert calls[0]["model"] == "gpt-x"
+    assert [message["seq"] for message in calls[0]["messages"]] == [1, 2, 3, 4, 5, 6, 7, 8]
+    assert env.conv.summaries == [(CONV, "早期结论摘要", 6)]
+    # 前端占用条的依据：压缩后写回的是压缩后的规模。
+    assert env.conv.context_updates == [(CONV, 21_000)]
+    assert env.conv.degraded_marks == []
+
+
+@pytest.mark.asyncio
+async def test_manual_compact_rejects_an_active_run(env, monkeypatch) -> None:
+    """同会话还有在飞 run → 409，且不花一次摘要调用（worker 手里的上下文会打架）。"""
+    _seed_history(env)
+    env.runs.seed(status="running")
+    calls = _install_compact(monkeypatch, {"compacted": True})
+
+    with pytest.raises(AgentError) as caught:
+        await run_queue.compact_conversation(user=ADMIN, conversation_oid=CONV)
+
+    assert caught.value.status_code == 409
+    assert caught.value.code == "AI_RUN_CONFLICT"
+    assert calls == []
+    assert env.conv.summaries == []
+
+
+@pytest.mark.asyncio
+async def test_manual_compact_reports_nothing_to_compact_without_writes(
+    env, monkeypatch
+) -> None:
+    """轮数不够（user 轮 ≤ keep_turns）→ 200 + compacted=false，不写任何东西。"""
+    _seed_history(env)
+    calls = _install_compact(
+        monkeypatch,
+        {
+            "compacted": False,
+            "upto_seq": None,
+            "tokens_before": 900,
+            "tokens_after": 900,
+            "degraded": False,
+            "reason": "nothing_to_compact",
+            "summary": None,
+        },
+    )
+
+    data = await run_queue.compact_conversation(user=ADMIN, conversation_oid=CONV)
+
+    assert data["compacted"] is False
+    assert data["reason"] == "nothing_to_compact"
+    assert calls and calls[0]["force"] is True
+    assert env.conv.summaries == []
+    assert env.conv.context_updates == []
+
+
+@pytest.mark.asyncio
+async def test_manual_compact_of_an_empty_conversation_is_not_an_error(
+    env, monkeypatch
+) -> None:
+    """空会话没有可压的历史：直接回 nothing_to_compact，不调上游。"""
+    calls = _install_compact(monkeypatch, {"compacted": True})
+
+    data = await run_queue.compact_conversation(user=ADMIN, conversation_oid=CONV)
+
+    assert data["compacted"] is False
+    assert data["reason"] == "nothing_to_compact"
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_manual_compact_marks_degraded_and_still_refreshes_tokens(
+    env, monkeypatch
+) -> None:
+    """降级（硬截断）也要把水位拉下来，并补一条降级事实；返回 degraded=True。"""
+    _seed_history(env)
+    env.conv.rows[CONV]["context_tokens"] = 190_000
+    _install_compact(
+        monkeypatch,
+        {
+            "compacted": True,
+            "upto_seq": 8,
+            "tokens_before": 190_000,
+            "tokens_after": 12_000,
+            "degraded": True,
+            "reason": "degraded",
+            "summary": None,
+        },
+    )
+
+    data = await run_queue.compact_conversation(user=ADMIN, conversation_oid=CONV)
+
+    assert (data["degraded"], data["reason"]) == (True, "degraded")
+    assert env.conv.summaries == []  # 没有摘要可写
+    assert env.conv.context_updates == [(CONV, 12_000)]
+    assert env.conv.degraded_marks == [CONV]
+
+
+@pytest.mark.asyncio
+async def test_manual_compact_surfaces_insufficient_quota(env, monkeypatch) -> None:
+    """额度不足不是瞬态故障：手动压缩如实抛 429，而不是偷偷硬截断。"""
+    _seed_history(env)
+
+    async def boom(**_kwargs):
+        raise AgentError("insufficient_quota", "monthly chat quota is exhausted", 429)
+
+    monkeypatch.setattr(run_queue.executor, "compact_messages", boom)
+
+    with pytest.raises(AgentError) as caught:
+        await run_queue.compact_conversation(user=ADMIN, conversation_oid=CONV)
+
+    assert caught.value.code == "insufficient_quota"
+    assert caught.value.status_code == 429
+    assert env.conv.context_updates == []
+
+
+@pytest.mark.asyncio
+async def test_manual_compact_is_owner_scoped(env, monkeypatch) -> None:
+    """别人的会话一律 404（不区分「没有」与「不是你的」）。"""
+    _seed_history(env)
+    calls = _install_compact(monkeypatch, {"compacted": True})
+
+    with pytest.raises(AgentError) as caught:
+        await run_queue.compact_conversation(user={"id": OTHER, "per": ["admin"]}, conversation_oid=CONV)
+
+    assert caught.value.status_code == 404
+    assert calls == []
 
 
 @pytest.mark.asyncio
@@ -1283,9 +1556,116 @@ async def test_executor_receives_the_conversation_thinking(env, monkeypatch) -> 
 
 
 # ---------------------------------------------------------------------------
-# R5：被拒的问题在留存行上留痕
+# R3+：只读场景的**按次覆盖**（覆盖一次 run，不改会话行）
 # ---------------------------------------------------------------------------
 
+
+@pytest.mark.asyncio
+async def test_run_overrides_win_over_the_conversation_values(env, monkeypatch) -> None:
+    """``overrides`` 只作用于这一次 run：模型与档位都换掉，会话行原样不动。"""
+    env.conv.rows[CONV]["model"] = "lab/gpt-conv"
+    env.conv.rows[CONV]["thinking"] = "low"
+    calls = install_executor(
+        monkeypatch,
+        lambda **_: _async({"stop_reason": None, "rounds": 1, "content": "done"}),
+    )
+
+    submitted = await run_queue.submit(
+        user=ADMIN,
+        conversation_oid=CONV,
+        content="看看磁盘",
+        overrides={"model": "lab/gpt-picked", "thinking": "high"},
+    )
+    await run_queue.kick()
+    await wait_idle()
+
+    assert calls[0]["model"] == "lab/gpt-picked"
+    assert calls[0]["thinking"] == "high"
+    # 会话行是「固定值」，按次覆盖不许回落成持久选择。
+    assert env.conv.rows[CONV]["model"] == "lab/gpt-conv"
+    assert env.conv.rows[CONV]["thinking"] == "low"
+    # 覆盖随 run 一次性取走：进程内不留残留（下一个 run 不会莫名沿用）。
+    assert run_queue._OVERRIDES == {}
+    # 审计的 model 列与执行无关（提交记录口径不变）。
+    assert env.runs.rows[submitted["run_id"]]["model"] is None
+
+
+@pytest.mark.asyncio
+async def test_run_overrides_do_not_leak_into_the_next_run(env, monkeypatch) -> None:
+    env.conv.rows[CONV]["model"] = "lab/gpt-conv"
+    calls = install_executor(
+        monkeypatch,
+        lambda **_: _async({"stop_reason": None, "rounds": 1, "content": "done"}),
+    )
+
+    await run_queue.submit(
+        user=ADMIN,
+        conversation_oid=CONV,
+        content="第一次",
+        overrides={"model": "lab/gpt-picked", "thinking": "high"},
+    )
+    await run_queue.kick()
+    await wait_idle()
+
+    await run_queue.submit(user=ADMIN, conversation_oid=CONV, content="第二次")
+    await run_queue.kick()
+    await wait_idle()
+
+    assert calls[0]["model"] == "lab/gpt-picked"
+    # 不传覆盖 = 与今天行为一致（沿用会话值），不是「沿用上一次覆盖」。
+    assert calls[1]["model"] == "lab/gpt-conv"
+    assert calls[1]["thinking"] is None
+
+
+@pytest.mark.asyncio
+async def test_empty_overrides_are_not_registered(env, monkeypatch) -> None:
+    """空串/None 的覆盖 = 不覆盖（等价于不传），不占进程内表。"""
+    calls = install_executor(
+        monkeypatch,
+        lambda **_: _async({"stop_reason": None, "rounds": 1, "content": "done"}),
+    )
+
+    await run_queue.submit(
+        user=ADMIN,
+        conversation_oid=CONV,
+        content="跑",
+        overrides={"model": "  ", "thinking": None},
+    )
+    await run_queue.kick()
+    await wait_idle()
+
+    assert calls[0]["model"] is None
+    assert run_queue._OVERRIDES == {}
+
+
+@pytest.mark.asyncio
+async def test_a_deduped_submit_drops_the_override_it_registered(env, monkeypatch) -> None:
+    """幂等命中的是**已有** run：新生成的 run_id 上的覆盖没人会取，必须清掉。"""
+    install_executor(
+        monkeypatch,
+        lambda **_: _async({"stop_reason": None, "rounds": 1, "content": "done"}),
+    )
+    await run_queue.submit(
+        user=ADMIN, conversation_oid=CONV, content="查一下", client_msg_id="c-1"
+    )
+    await run_queue.kick()
+    await wait_idle()
+
+    again = await run_queue.submit(
+        user=ADMIN,
+        conversation_oid=CONV,
+        content="查一下",
+        client_msg_id="c-1",
+        overrides={"thinking": "high"},
+    )
+
+    assert again.get("deduped") is True
+    assert run_queue._OVERRIDES == {}
+
+
+# ---------------------------------------------------------------------------
+# R5：被拒的问题在留存行上留痕
+# ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
 async def test_keyword_rejection_marks_the_capture_as_refused(env) -> None:

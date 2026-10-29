@@ -1911,6 +1911,39 @@ Index(
 
 
 # ---------------------------------------------------------------------------
+# AI_MODELS  ← new (模型目录覆盖层：Agent Fuel 倍率 + 元数据; V050)
+#   模型名本身来自 AI_CREDENTIALS.MODELS_JSON（哪个模型配在哪个渠道里）；这张表
+#   只存管理员额外声明的展示名、上下文窗口、倍率与开关，是**稀疏覆盖层**。
+#   缺行 = 按默认口径（RATE=1、ENABLED=1），所以加这张表不会让存量渠道的模型
+#   目录变空，也不需要回填。
+#   MODEL 直接做主键而不是再造一个 oid：模型名就是业务标识，写入路径是「按模型
+#   名 upsert」；多一个 oid 只会多一次查询，还得再维护 (model) 的唯一索引。
+#   RATE 是 Agent Fuel 倍率（1 = 基准价），CHECK 要求 > 0：0 或负数不是「配置不
+#   精确」而是让计量变成免费/倒扣，属于数据损坏。
+#   ENABLED 只表达启用状态，不删行：停用一个模型不该连同配好的倍率一起丢掉。
+#   NOTES 是给人看的口径说明（为什么这个模型贵一倍），不参与任何计算。
+#   无外键：模型名来自 JSON 列，凭据删掉后这一行仍是审计与回滚材料。
+# ---------------------------------------------------------------------------
+
+ai_models = Table(
+    "ai_models",
+    metadata,
+    Column("model", VARCHAR2(80), primary_key=True),
+    Column("display_name", VARCHAR2(120), nullable=True),
+    Column("provider", VARCHAR2(40), nullable=True),
+    Column("context_length", NUMBER(10), nullable=True),
+    Column("rate", NUMBER(10, 4), nullable=False, server_default=text("1")),
+    Column("enabled", NUMBER(1), nullable=False, server_default=text("1")),
+    Column("notes", VARCHAR2(400), nullable=True),
+    Column("updated_at", oracle.TIMESTAMP, nullable=False),
+    Column("updated_by", oracle.CHAR(24), nullable=True),
+    CheckConstraint("enabled IN (0,1)", name="ck_ai_models_enabled"),
+    CheckConstraint("rate > 0", name="ck_ai_models_rate"),
+)
+Index("ix_ai_models_provider", ai_models.c.provider)
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 

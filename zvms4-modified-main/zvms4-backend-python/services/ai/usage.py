@@ -5,8 +5,10 @@
 * **把 usage 读成三个 token 数**：非流式从响应体的 ``usage`` 读，流式从最后一
   帧（``stream_options.include_usage``）里读。两处口径不同（dict / SSE 字节流），
   但落到库里的语义必须一样，否则同一张报表里两种行没法比。
-* **token → 额度单位（units）的折算**：``UNITS`` 是扣额度用的整数，而 token 是
-  上游报的实数；折算规则一变，历史与新增的行就不能相加了。
+* **token → Agent Fuel（AF）的折算**：``UNITS`` 是扣额度用的整数，语义是「本次
+  消耗的 AF」，``AF = max(1, ceil(total_tokens / 1000 × 模型倍率))``。倍率来自
+  ``AI_MODELS.RATE``（默认 1）；换算规则一变，历史与新增的行就不能直接相加了
+  （本版由「每 1000 token 1 unit」改为乘倍率，**不做历史换算**）。
 
 不变式（写在这里是因为它同时是读侧的解释规则）：
 
@@ -164,25 +166,78 @@ def has_tokens(fields: dict[str, int | None]) -> bool:
     return any(fields.get(key) is not None for key in _CORE_TOKEN_KEYS)
 
 
-def units_from_total_tokens(total_tokens: int | None) -> int:
-    """token 总数 → 额度单位：每 1000 token 一个单位，至少 1。
+def _clean_rate(rate: object) -> float:
+    """倍率兜底：非数字 / 非有限值 / ``<= 0`` 一律按 1（基准价）算。
 
-    至少 1 是刻意的：一次调用要留下「用过」的痕迹，0 单位会让额度表看起来
-    什么都没发生（历史行为，本轮不改语义）。
+    ``rate`` 来自 ``AI_MODELS.RATE``（管理员可编辑），坏值不该让一次已经成功的
+    上游调用变成 500——更不该算出 0 AF（等于白送）。
+    """
+    if isinstance(rate, bool) or not isinstance(rate, (int, float)):
+        return 1.0
+    value = float(rate)
+    if not math.isfinite(value) or value <= 0:
+        return 1.0
+    return value
+
+
+def af_units(total_tokens: int | None, rate: float = 1.0) -> int:
+    """token 总数 × 模型倍率 → **Agent Fuel（AF）**，至少 1。
+
+    公式（唯一口径，实测与估算共用）::
+
+        AF = max(1, ceil(total_tokens / 1000 × rate))
+
+    ``rate`` 是模型的价格倍率（``AI_MODELS.RATE``，默认 1 = 基准价）：1 AF 即
+    1000 token 的基准成本。``rate <= 0`` / 非有限值 / 非数字都按 1 处理。
+
+    至少 1 是刻意的：一次调用要留下「用过」的痕迹，0 AF 会让额度表看起来什么
+    都没发生。``total_tokens=None``（上游没报 usage）同样给 1——**调用方在能
+    估算时应先估算再进来**（见 :func:`estimate_af`），这里的 1 只是最后兜底。
+
+    结尾的 ``round(..., 9)`` 是防浮点尘：``2.4 × 1.0`` 之类本应整除的组合在
+    二进制浮点下可能算成 ``3.0000000000000004``，直接 ``ceil`` 会多收 1 AF。
     """
     total = max(0, int(total_tokens or 0))
-    return max(1, math.ceil(total / 1000))
+    return max(1, math.ceil(round(total / 1000 * _clean_rate(rate), 9)))
 
 
-def estimate_units(prompt_chars: int, completion_chars: int) -> int:
-    """流式没有 usage 时的估算：按字符 / 4 折算，至少 1。
+def units_from_total_tokens(total_tokens: int | None) -> int:
+    """**legacy 别名**：等价于 ``af_units(total_tokens, 1.0)``。
 
-    与 :func:`units_from_total_tokens` 的关系是「同一把尺子的两个来源」：估算值
-    与实测值都折算成单位数再写 ``UNITS``，所以两行历史数据可以相加。
+    ``UNITS`` 列的语义自本版起统一为 AF（见 :func:`af_units`），这个函数保留是
+    为了不打断既有调用点与历史文档；新代码请直接用 :func:`af_units` 并显式传
+    模型倍率，否则贵模型会被按基准价计费。
     """
-    prompt_tokens = max(0, int(prompt_chars)) / CHARS_PER_TOKEN
-    completion_tokens = max(0, int(completion_chars)) / CHARS_PER_TOKEN
-    return max(1, math.ceil(prompt_tokens + completion_tokens))
+    return af_units(total_tokens, 1.0)
+
+
+def estimate_tokens_from_chars(prompt_chars: int, completion_chars: int) -> int:
+    """字符数 → token 估算（4 字符 ≈ 1 token，向上取整）。
+
+    ``0 字符`` 就是 ``0 token``：这里不抬到 1，抬下限是 :func:`af_units` 的职责。
+    """
+    chars = max(0, int(prompt_chars)) + max(0, int(completion_chars))
+    return math.ceil(chars / CHARS_PER_TOKEN)
+
+
+def estimate_af(prompt_chars: int, completion_chars: int, rate: float = 1.0) -> int:
+    """没有 usage 时的 AF 估算：先按字符估 token，再走**同一个** AF 公式。
+
+    这是本版修掉的口径分裂：旧 ``estimate_units`` 返回的是 token 量级（少了
+    ``/1000``），实测路径返回的是千 token 量级，两者差了 1000 倍却写进同一列。
+    """
+    return af_units(estimate_tokens_from_chars(prompt_chars, completion_chars), rate)
+
+
+def estimate_units(
+    prompt_chars: int, completion_chars: int, rate: float = 1.0
+) -> int:
+    """**AF 口径**的估算（与 :func:`estimate_af` 完全等价，保留旧函数名）。
+
+    注意返回值变了：改造前是 ``ceil(p/4 + c/4)``（token 个数），现在是 AF——
+    与实测路径同量纲，两者相加才有意义。
+    """
+    return estimate_af(prompt_chars, completion_chars, rate)
 
 
 def prompt_chars(payload: dict[str, Any] | Any) -> int:
@@ -318,6 +373,9 @@ __all__ = [
     "CHARS_PER_TOKEN",
     "MAX_BUFFER_BYTES",
     "StreamUsageTracker",
+    "af_units",
+    "estimate_af",
+    "estimate_tokens_from_chars",
     "estimate_units",
     "has_tokens",
     "prompt_chars",

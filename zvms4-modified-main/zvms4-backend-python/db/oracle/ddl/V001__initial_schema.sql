@@ -2220,3 +2220,44 @@ EXCEPTION
     IF SQLCODE NOT IN (-955, -1408) THEN RAISE; END IF;
 END;
 /
+
+-- ----------------------------------------------------------------------------
+-- AI_MODELS  ← new (模型目录覆盖层：Agent Fuel 倍率 + 元数据; V050)
+--   模型名本身来自 AI_CREDENTIALS.MODELS_JSON；这张表只存管理员额外声明的展示
+--   名、上下文窗口、倍率与开关。缺行 = 默认口径（RATE=1、ENABLED=1），因此加
+--   这张表不会让存量渠道的模型目录变空。
+--   MODEL 直接做主键：模型名就是业务标识（写入路径是按模型名 upsert）。
+--   RATE 是 Agent Fuel 倍率，CHECK 要求 > 0；0 或负数会让计量变成免费/倒扣。
+--   ENABLED 只表达启用状态，不删行：停用不该连同配好的倍率一起丢掉。
+--   无外键：模型名来自 JSON 列，凭据删掉后这一行仍是审计/回滚材料。
+-- ----------------------------------------------------------------------------
+BEGIN
+  EXECUTE IMMEDIATE '
+CREATE TABLE ai_models (
+  model VARCHAR2(80 CHAR) NOT NULL,
+  display_name VARCHAR2(120 CHAR),
+  provider VARCHAR2(40 CHAR),
+  context_length NUMBER(10),
+  rate NUMBER(10,4) DEFAULT 1 NOT NULL,
+  enabled NUMBER(1) DEFAULT 1 NOT NULL,
+  notes VARCHAR2(400 CHAR),
+  updated_at TIMESTAMP NOT NULL,
+  updated_by CHAR(24 CHAR),
+  PRIMARY KEY (model),
+  CONSTRAINT ck_ai_models_enabled CHECK (enabled IN (0,1)),
+  CONSTRAINT ck_ai_models_rate CHECK (rate > 0)
+)';
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE != -955 THEN RAISE; END IF;
+END;
+/
+
+BEGIN
+  EXECUTE IMMEDIATE '
+CREATE INDEX ix_ai_models_provider ON ai_models (provider)';
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE NOT IN (-955, -1408) THEN RAISE; END IF;
+END;
+/

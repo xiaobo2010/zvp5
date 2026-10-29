@@ -41,6 +41,7 @@ from db.ids import is_valid_oid
 from services import file_ops, risk_monitor, violation_guard
 from services.ai import api_keys, audit, credentials, quota, rate_limit, routing
 from services.ai import config as ai_config
+from services.ai import model_rates
 from services.ai import ocr as ai_ocr
 from services.ai import ocr_engines
 from services.ai import ocr_engines_admin
@@ -148,7 +149,11 @@ class KeyCreateRequest(BaseModel):
     scope: str
     name: str
     base_url: str
-    models: list[str] = Field(default_factory=list)
+    # 两种形态并存（与 ``AI_CREDENTIALS.MODELS_JSON`` 一致）：裸模型名，或
+    # ``{"id": "gpt-4o-mini", "context": 128000}``（按模型填上下文窗口）。形状
+    # 校验在 ``credentials._clean_models``：非法对象回 400 而不是 Pydantic 的
+    # 422，前端才能拿到中文文案。
+    models: list[str | dict] = Field(default_factory=list)
     api_key: str = Field(min_length=8, max_length=512)
     enabled: bool = True
     headers: dict[str, str] | None = None
@@ -169,7 +174,9 @@ class KeyUpdateRequest(BaseModel):
 
     name: str | None = None
     base_url: str | None = None
-    models: list[str] | None = None
+    # 同 ``KeyCreateRequest.models``：字符串或 ``{id, context}`` 对象都收，
+    # 形状校验留给 ``credentials._clean_models``（400 + 中文文案）。
+    models: list[str | dict] | None = None
     api_key: str | None = Field(default=None, min_length=8, max_length=512)
     enabled: bool | None = None
     headers: dict[str, str] | None = None
@@ -1230,6 +1237,106 @@ async def my_quota(user=Depends(get_current_user)):
     }
 
 
+#: 个人用量小计的数值列。顺序即响应里的键顺序，``total`` / ``by_provider`` /
+#: ``by_model`` 三处共用同一组，避免某一处漏算一列。
+_USAGE_KEYS = ("calls", "units", "prompt_tokens", "completion_tokens", "total_tokens")
+
+# 月份标签：与 ``ai_quota.period`` / ``quota.period_now()`` 同一口径（``YYYYMM``）。
+_PERIOD_RE = re.compile(r"^(\d{4})(\d{2})$")
+
+
+def _quota_period_bounds(period: str | None) -> tuple[str, datetime, datetime]:
+    """``period`` → ``(标签, 当月首日 00:00, 次月首日 00:00)``。
+
+    缺省取本月（``quota.period_now()``）。非法格式一律 400：静默回落到本月会让
+    「传错了」看起来像「这个月真的没用量」，而这两种情况在页面上都是 0。
+    """
+    label = period if period is not None else quota.period_now()
+    match = _PERIOD_RE.match(label or "")
+    if match is None:
+        raise HTTPException(status_code=400, detail="period 必须是 YYYYMM 格式")
+    year, month = int(match.group(1)), int(match.group(2))
+    if not 1 <= month <= 12:
+        raise HTTPException(status_code=400, detail="period 必须是 YYYYMM 格式")
+    try:
+        start = datetime(year, month, 1)
+        end = datetime(year + month // 12, month % 12 + 1, 1)
+    except ValueError:
+        # year 0000 / 9999-12 的次月：日期本身不存在，与格式错误同类处理。
+        raise HTTPException(status_code=400, detail="period 必须是 YYYYMM 格式")
+    return label, start, end
+
+
+@router.get("/quota/usage")
+async def my_quota_usage(
+    period: str | None = Query(
+        None, description="YYYYMM（缺省 = 本月，与 /quota 的 period 同口径）"
+    ),
+    user=Depends(get_current_user),
+):
+    """本人某个自然月的用量统计：总数 + 按 provider / model 分解。
+
+    **只统计自己**：没有 ``user_oid`` 入参，条件里写死 ``user["id"]``。admin 想看
+    别人的用量走 ``/api/ai/logs``（那条是审计面，带门禁与脱敏口径），这里是用户
+    自助面——两张报表的服务对象不同，就不该共用一个参数。
+
+    注册顺序有要求：本路由必须排在 ``/quota/{user_oid}``（admin 视角）**之前**，
+    否则 ``GET /api/ai/quota/usage`` 会被动态段先匹配，``user_oid="usage"`` 再
+    撞上 oid 形状校验变成 422/400。
+
+    口径（与 ``ai_call_logs`` 的列语义一一对应）：
+
+    * 窗口 = ``period`` 首日 00:00 起、次月首日 00:00 止的**半开区间**——闭区间
+      会让跨月那一刻的调用被相邻两个月各算一次；
+    * ``calls`` = ``COUNT(*)``：成功、失败、被拒都算一次调用；
+    * ``units`` / 三组 token 是 ``COALESCE(SUM(...), 0)``：窗口内没上报过 usage
+      时给 0（「这段时间一共观测到 0 个 token」），与逐行 NULL 的「没报」不同；
+    * ``provider`` / ``model`` 的 NULL（OCR 或未标注）保留成独立分组，不丢行也
+      不并进空串。
+
+    ``period`` 缺省取 ``quota.period_now()``（本地时区的 ``YYYYMM``）；格式非法
+    回 400，而不是静默回落到本月——回落的「一片 0」会被读成「这个月没用量」。
+    """
+    label, start, end = _quota_period_bounds(period)
+    rows = await backends.get_ai_call_logs_repo().usage_breakdown(
+        user_oid=str(user["id"]), since=start, until=end
+    )
+
+    total = dict.fromkeys(_USAGE_KEYS, 0)
+    providers: dict[str | None, dict[str, int]] = {}
+    by_model: list[dict] = []
+    for row in rows:
+        counts = {key: int(row.get(key) or 0) for key in _USAGE_KEYS}
+        for key, value in counts.items():
+            total[key] += value
+        bucket = providers.setdefault(row["provider"], dict.fromkeys(_USAGE_KEYS, 0))
+        for key, value in counts.items():
+            bucket[key] += value
+        by_model.append(
+            {"provider": row["provider"], "model": row["model"], **counts}
+        )
+
+    # provider 维度在 Python 里汇总（SQL 只有一条 GROUP BY provider, model）。
+    # 排序与 SQL 同口径：调用多的在前，同次数按名字定序；NULL 排最前（``or ""``）。
+    by_provider = [
+        {"provider": provider, **counts}
+        for provider, counts in sorted(
+            providers.items(), key=lambda item: (-item[1]["calls"], item[0] or "")
+        )
+    ]
+
+    return {
+        "status": "ok",
+        "code": 200,
+        "data": {
+            "period": label,
+            "total": total,
+            "by_provider": by_provider,
+            "by_model": by_model,
+        },
+    }
+
+
 @router.get("/quota/{user_oid}")
 async def user_quota(user_oid: str, user=Depends(get_current_user)):
     """admin 视角的同一份快照。
@@ -2024,9 +2131,16 @@ async def _blocking_completion(
 
         routing.mark_success(key)
         # 上游回了 usage 就把 token 列一并落库：它们与 units 同源，报表才能分清
-        # 「实扣」与「估算」（token 列全 NULL ⟺ units 是估算值）。
+        # 「实扣」与「估算」（token 列全 NULL ⟺ units 是估算值）。AF = 千 token ×
+        # 模型倍率；没拿到 usage 就按字符估算走同一公式，不再出现量纲分裂。
         tokens = _usage_fields(result.get("usage"))
-        units = ai_usage.units_from_total_tokens(tokens["total_tokens"])
+        rate = await model_rates.resolve_rate(model)
+        total_tokens = tokens["total_tokens"]
+        if total_tokens is None:
+            total_tokens = ai_usage.estimate_tokens_from_chars(
+                ai_usage.prompt_chars(payload), len(_answer_text(result) or "")
+            )
+        units = ai_usage.af_units(total_tokens, rate)
         if _billable(entry):
             await _charge(user_oid, units, roles)
         await audit.record(
@@ -2180,13 +2294,14 @@ async def _stream_completion(
                 "cache_read_tokens": tracker.cache_read_tokens,
                 "cache_write_tokens": tracker.cache_write_tokens,
             }
+            rate = await model_rates.resolve_rate(model)
             if tracker.captured:
-                units = ai_usage.units_from_total_tokens(tokens["total_tokens"])
+                units = ai_usage.af_units(tokens["total_tokens"], rate)
             else:
-                # 没有 usage：token 列留 NULL，units 按字符估算。这是「NULL ⟺
-                # 估算」不变式的另一半。
-                units = ai_usage.estimate_units(
-                    estimated_prompt_chars, state["chars"]
+                # 没有 usage：token 列留 NULL，units 按字符估算后走**同一个** AF
+                # 公式。这是「NULL ⟺ 估算」不变式的另一半。
+                units = ai_usage.estimate_af(
+                    estimated_prompt_chars, state["chars"], rate
                 )
             await audit.record(
                 user_oid=user_oid,

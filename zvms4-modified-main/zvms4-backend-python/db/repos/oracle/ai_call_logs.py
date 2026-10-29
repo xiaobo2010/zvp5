@@ -448,6 +448,65 @@ def _stats_cache_stmt(conds: list[Any]):
     )
 
 
+def _usage_group_stmt(conds: list[Any]):
+    """按 ``(provider, model)`` 分组的个人用量小计，给 ``GET /api/ai/quota/usage``。
+
+    一条查询同时喂两个维度：``by_model`` 直接用行本身，``by_provider`` 在调用方
+    按 ``provider`` 再汇总（provider/model 的基数只有十几个量级，多跑第二条
+    ``GROUP BY provider`` 只会让两张表有机会落在不同快照上）。
+
+    ``SUM`` 一律套 ``COALESCE(..., 0)``：窗口内所有行都没报 usage 时 ``SUM`` 回
+    NULL，而这里的 0 是**聚合值**「这段时间一共观测到 0 个 token」——诚实的答案，
+    与逐行 NULL（「这次上游没报」）不是同一件事。
+
+    ``calls`` 用 ``COUNT(*)``：成功、失败、被拒都算一次调用，运营看的是「用了
+    几次」，不是「成了几次」（后者在 ``/logs/stats`` 的 ``errors`` 里）。
+
+    排序 ``calls DESC, provider ASC, model ASC``：调用多的在前，同次数按名字定序，
+    翻页/对比时顺序不会因为执行计划变化而漂移。NULL（OCR 或未标注的 provider /
+    model）保留成独立分组，不并入空串——「不知道是谁」本身就是要看见的信息。
+    """
+    provider = ai_call_logs_tbl.c.provider
+    model = ai_call_logs_tbl.c.model
+    calls = func.count()
+    stmt = (
+        select(
+            provider.label("provider"),
+            model.label("model"),
+            calls.label("calls"),
+            func.coalesce(func.sum(ai_call_logs_tbl.c.units), 0).label("units"),
+            func.coalesce(func.sum(ai_call_logs_tbl.c.prompt_tokens), 0).label(
+                "prompt_tokens"
+            ),
+            func.coalesce(func.sum(ai_call_logs_tbl.c.completion_tokens), 0).label(
+                "completion_tokens"
+            ),
+            func.coalesce(func.sum(ai_call_logs_tbl.c.total_tokens), 0).label(
+                "total_tokens"
+            ),
+        )
+        .select_from(ai_call_logs_tbl)
+        .group_by(provider, model)
+        .order_by(calls.desc(), provider.asc(), model.asc())
+    )
+    if conds:
+        stmt = stmt.where(*conds)
+    return stmt
+
+
+def _usage_row(mapping: Any) -> Row:
+    """``usage_breakdown`` 的一行；``provider`` / ``model`` 允许 NULL 并原样保留。"""
+    return {
+        "provider": mapping["provider"],
+        "model": mapping["model"],
+        "calls": _as_int(mapping["calls"]) or 0,
+        "units": _as_int(mapping["units"]) or 0,
+        "prompt_tokens": _as_int(mapping["prompt_tokens"]) or 0,
+        "completion_tokens": _as_int(mapping["completion_tokens"]) or 0,
+        "total_tokens": _as_int(mapping["total_tokens"]) or 0,
+    }
+
+
 def _as_int(value: Any) -> int | None:
     """Oracle 的 ``SUM``/``COUNT`` 回 ``Decimal``；统一成 int，``None`` 保留。"""
     if value is None:
@@ -807,6 +866,33 @@ class OracleAICallLogsRepo:
             "by_status": [_status_row(row._mapping) for row in by_status],
             "cache": _cache_row(cache._mapping),
         }
+
+    async def usage_breakdown(
+        self,
+        *,
+        user_oid: str,
+        since: datetime,
+        until: datetime,
+    ) -> list[Row]:
+        """某个用户在 ``[since, until)`` 内的用量小计，按 ``(provider, model)`` 分组。
+
+        与 :meth:`stats` 的两点区别都是刻意的：
+
+        * **只统计一个人的**：个人用量页只该看见自己的调用，条件里写死
+          ``user_oid``，不接受「顺便看全站」；
+        * **半开区间**：``stats`` 的时间边界是闭区间（排查时要含端点那一秒），
+          这里按自然月切片——闭区间会让 ``10-31 23:59:59`` 与 ``11-01 00:00:00``
+          两端互相重叠的写法各算一遍，跨月那一刻的调用就会被算两次。
+
+        返回按 ``calls DESC, provider ASC, model ASC`` 排序的分组行（见
+        :func:`_usage_group_stmt`）；窗口内没有调用时回空列表，总数由调用方补 0。
+        """
+        conds = _filters(user_oid=user_oid, time_start=since)
+        conds.append(ai_call_logs_tbl.c.created_at < until)
+        stmt = _usage_group_stmt(conds)
+        async with _session_for(self._session) as (session, _owns):
+            rows = (await session.execute(stmt)).all()
+        return [_usage_row(row._mapping) for row in rows]
 
     async def count_expired(self, cutoff: datetime) -> int:
         """``created_at < cutoff`` 的行数（只读，与 :meth:`purge_batch` 同谓词）。"""

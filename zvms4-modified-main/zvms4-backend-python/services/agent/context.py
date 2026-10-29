@@ -32,7 +32,7 @@ from services import settings_runtime
 from services.ai.usage import CHARS_PER_TOKEN
 
 DEFAULT_CONTEXT_LIMIT = 200_000
-DEFAULT_COMPACT_RATIO = 0.75
+DEFAULT_COMPACT_RATIO = 0.80
 DEFAULT_KEEP_TURNS = 6
 DEFAULT_SUMMARY_MAX_TOKENS = 800
 
@@ -42,6 +42,11 @@ MODEL_LIMITS_SETTING = "AI_MODEL_CONTEXT_LIMITS"
 DEFAULT_LIMIT_SETTING = "AI_DEFAULT_CONTEXT_LIMIT"
 COMPACT_RATIO_SETTING = "AI_CONTEXT_COMPACT_RATIO"
 KEEP_TURNS_SETTING = "AI_CONTEXT_KEEP_TURNS"
+
+# 运行期设置键（``services/settings_runtime.py`` 的注册表键名）。存在的理由：
+# 改 ``AI_CONTEXT_COMPACT_RATIO`` 要动 ``settings.py`` + 重启，而「占用多少该压」
+# 是运营参数，应该在设置中心在线调。有覆盖走覆盖，没有覆盖继续走 ``settings``。
+RUNTIME_COMPACT_RATIO = "ai.context_compact_ratio"
 
 FALLBACK_MODEL_KEY = "*"
 
@@ -139,16 +144,30 @@ def context_limit(model: str | None) -> int:
     return default
 
 
-def compact_ratio() -> float:
-    """压缩阈值比例（``0 < ratio <= 1``），非法值回退 0.75。"""
-    raw = getattr(settings, COMPACT_RATIO_SETTING, DEFAULT_COMPACT_RATIO)
+def _valid_ratio(raw: Any) -> float | None:
+    """``0 < ratio <= 1`` 才算合法；非法值返回 ``None``（调用方继续往下找）。"""
     if isinstance(raw, bool) or not isinstance(raw, (int, float)):
-        return DEFAULT_COMPACT_RATIO
+        return None
     ratio = float(raw)
     # NaN 与 0 / 负数 / >1 都没意义：前者比较恒 False，后两者会把水位钉死在边界。
     if not 0.0 < ratio <= 1.0:
-        return DEFAULT_COMPACT_RATIO
+        return None
     return ratio
+
+
+def compact_ratio() -> float:
+    """压缩阈值比例（``0 < ratio <= 1``），非法值回退 :data:`DEFAULT_COMPACT_RATIO`。
+
+    优先级：运行期设置 ``ai.context_compact_ratio`` → ``settings.AI_CONTEXT_COMPACT_RATIO``
+    → 代码默认值。运行期设置是「在线可调」的那一份；它写了非法值时**继续**往下找，
+    而不是直接回落默认——管理员配错一个十进制不该把部署里刻意调过的 thresholds 抹掉。
+    """
+    override = _valid_ratio(settings_runtime.get_override(RUNTIME_COMPACT_RATIO))
+    if override is not None:
+        return override
+    return _valid_ratio(
+        getattr(settings, COMPACT_RATIO_SETTING, DEFAULT_COMPACT_RATIO)
+    ) or DEFAULT_COMPACT_RATIO
 
 
 def configured_keep_turns() -> int:
@@ -283,6 +302,25 @@ def build_messages(
 
     messages.extend(dict(item) for item in tail)
     return messages
+
+
+def existing_summary(messages: list[dict]) -> str:
+    """从已组装的对话里取出当前摘要正文（``""`` = 还没有摘要）。
+
+    只在前导 system 段里找：``build_messages`` 把摘要固定成 ``SUMMARY_HEADER + 正文``
+    的那条 system，正文里出现同样的抬头不算（消息是结构化的，不是一段拼接文本）。
+
+    为什么要取它：一次 run 允许压多次（长 run 会再次越过水位），而落库只有一个
+    ``summary`` + ``summary_upto_seq``。第二次压缩如果不把上一份摘要喂进摘要器，
+    新摘要只覆盖「最近这一段」，写库时就把更早的内容整段抹掉了。
+    """
+    for item in _messages_of(messages):
+        if item.get("role") not in _SYSTEM_ROLES:
+            break
+        content = item.get("content")
+        if isinstance(content, str) and content.startswith(SUMMARY_HEADER):
+            return content[len(SUMMARY_HEADER) :].strip()
+    return ""
 
 
 def needs_compaction(

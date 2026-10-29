@@ -40,6 +40,8 @@ EXPECTED_KEYS = {
     "ai.prompt_retention_days",
     "ai.prompt_max_chars",
     "ai.context_limit_default",
+    # 压缩阈值（0~1 小数）：默认 0.80 是线上行为的一部分，改它要过设置中心。
+    "ai.context_compact_ratio",
     "ai.agent_token_budget",
     "ai.agent_max_iterations",
     "ai.role_quota",
@@ -225,6 +227,7 @@ def test_registry_defaults_come_from_the_code_constants() -> None:
     assert defaults["ai.prompt_retention_days"] == config.AI_PROMPT_RETENTION_DAYS
     assert defaults["ai.prompt_max_chars"] == config.AI_PROMPT_MAX_CHARS
     assert defaults["ai.context_limit_default"] == agent_context.DEFAULT_CONTEXT_LIMIT
+    assert defaults["ai.context_compact_ratio"] == agent_context.DEFAULT_COMPACT_RATIO
     assert defaults["ai.agent_token_budget"] == ai_config._AGENT_TOKEN_BUDGET
     assert defaults["ai.agent_max_iterations"] == ai_config._AGENT_MAX_ITERATIONS
     assert defaults["ai.role_quota"] == config.AI_ROLE_QUOTA
@@ -243,7 +246,8 @@ def test_every_spec_has_group_label_and_description() -> None:
     for spec in settings_runtime.registry().values():
         assert spec.group in {"ai", "ops"}, spec.key
         assert spec.label and spec.description, spec.key
-        assert spec.type in {"int", "bool", "str", "list", "dict"}, spec.key
+        # ``float`` 只有压缩阈值一个：值本身是 0~1 的小数，用 int 表达会丢掉精度。
+        assert spec.type in {"int", "bool", "str", "list", "dict", "float"}, spec.key
 
 
 # ---------------------------------------------------------------------------

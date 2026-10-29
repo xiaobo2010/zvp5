@@ -35,6 +35,7 @@ from routers import (
     notifications_router,
     ban_violations_router,
     ai_router,
+    ai_models_router,
     ai_quota_requests_router,
     ai_api_keys_router,
     ai_agent_router,
@@ -613,6 +614,11 @@ app.include_router(
     ai_quota_requests_router.router, prefix="/api/ai/quota", tags=["ai"]
 )
 app.include_router(ai_router.router, prefix="/api/ai", tags=["ai"])
+# 模型目录独立挂载在 /api/ai/models 下：``ai_router`` 的同级路由没有这个前缀，
+# 两者互不遮蔽（``/api/ai/v1/models`` 是 OpenAI 兼容面，仍然归 ai_router）。
+app.include_router(
+    ai_models_router.router, prefix="/api/ai/models", tags=["ai"]
+)
 app.include_router(
     ai_api_keys_router.router, prefix="/api/ai/api-keys", tags=["ai"]
 )

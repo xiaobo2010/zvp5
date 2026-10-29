@@ -33,6 +33,7 @@ from db import backends
 from services import ssh_bridge
 from services.ai import routing as ai_routing
 from services.ai import textgen
+from services.ai import thinking as ai_thinking
 from services.ssh_command_log import CommandLineBuffer
 from typings.log import ZVMSLog
 from util.dual_auth import (
@@ -119,11 +120,31 @@ class SuggestRequest(BaseModel):
     这里**没有** host/port/user/command 字段：能生成什么只由意图文本决定，落点
     永远由服务端配置决定。``intent`` 与 ``context`` 的长度上限是「别把网关当
     长文入口」的硬边界，不是安全边界（真正的安全边界在 system prompt 与人工审阅）。
+
+    ``thinking`` 是平台档位（``low`` / ``medium`` / ``high``，空 = 上游默认）：档位
+    合法性在端点里判（400 中文），不用 pydantic 枚举——那会变成 422。
     """
 
     intent: str = Field(min_length=1, max_length=1000)
     context: str | None = Field(default=None, max_length=2000)
     model: str | None = Field(default=None, max_length=64)
+    thinking: str | None = Field(default=None, max_length=16)
+
+
+def _clean_thinking(value: object) -> str | None:
+    """思考强度归一：``low`` / ``medium`` / ``high``，空串/None → ``None``。
+
+    与会话/场景面同一份档位常量（:data:`services.ai.thinking.LEVELS`），未知值 400：
+    静默退默认会让管理员以为「这次用了 high」。
+    """
+    text = str(value or "").strip().lower()
+    if not text:
+        return None
+    if text not in ai_thinking.LEVELS:
+        raise HTTPException(
+            status_code=400, detail="思考强度只能是 low、medium、high，或留空"
+        )
+    return text
 
 
 #: 审计里只留命令的头部：足够复盘「生成的是不是危险命令」，又不至于把整条命令
@@ -183,6 +204,7 @@ async def suggest_ssh_command(
     """
     me = await _require_system_admin(user)
     operator_oid = str(me.get("_id") or user["id"])
+    thinking = _clean_thinking(payload.thinking)
     # 额度默认值按「有效权限」算（admin 的 chat 额度比学生高），而 ``me`` 是库文档、
     # 不含 ``per``；认证态里的 ``per`` 已经过 ``_require_system_admin`` 复核，直
     # 接用，缺了再查一次权限表。
@@ -197,6 +219,7 @@ async def suggest_ssh_command(
             intent=payload.intent,
             context=payload.context,
             model=payload.model,
+            thinking=thinking,
         )
     except ai_routing.RouteError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.code) from None
