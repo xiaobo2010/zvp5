@@ -11,9 +11,9 @@ import { aiRequest } from '@/api/ai/http'
  * 「只判状态码 + 拆 envelope + 401 跳登录 + 维护模式跳转 + 把后端 detail
  * 原文带进异常」，这里不再另造一套 envelope 拆法。
  *
- * 配额单位：`chat` 是额度单位（后端每 1000 token 记 1 单位），`ocr` 是每月
- * 次数，`schedule` 是 AI 定时任务条数。三者都用 null 表示「用系统默认」，
- * 0 表示「该角色不开放」——0 与 null 语义不同，不要互相折叠。
+ * 配额单位：`af` 是统一的 AI 额度单位（后端每 1000 token 记 1 单位，OCR 每次
+ * 入队扣 1 单位），`schedule` 是 AI 定时任务条数。两者都用 null 表示「用系统
+ * 默认」，0 表示「该角色不开放」——0 与 null 语义不同，不要互相折叠。
  */
 
 /**
@@ -41,8 +41,8 @@ export const ROLE_FEATURE_KEYS = [
 /** 单个功能 key。 */
 export type RoleFeatureKey = (typeof ROLE_FEATURE_KEYS)[number]
 
-/** 三类月度配额。 */
-export type RoleQuotaKind = 'chat' | 'ocr' | 'schedule'
+/** 两类月度配额：统一的 AI 额度与定时任务条数。 */
+export type RoleQuotaKind = 'af' | 'schedule'
 
 /** 月度配额；null = 用系统默认，0 = 不开放。 */
 export type RoleQuotas = Record<RoleQuotaKind, number | null>

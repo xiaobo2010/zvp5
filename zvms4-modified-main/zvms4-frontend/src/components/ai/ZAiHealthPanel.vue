@@ -86,10 +86,7 @@ onMounted(() => {
             <div class="yg-tile p-3 flex flex-col gap-1">
               <span class="yg-statistic__title">{{ t('ai.health.quotaDefaults') }}</span>
               <span class="yg-text-sm tabular-nums">
-                {{ t('ai.health.defaultOcr') }}：{{ data.quota_defaults.ocr }}
-              </span>
-              <span class="yg-text-sm tabular-nums">
-                {{ t('ai.health.defaultChat') }}：{{ data.quota_defaults.chat }}
+                {{ t('ai.health.defaultAf') }}：{{ data.quota_defaults.af }}
               </span>
             </div>
           </div>

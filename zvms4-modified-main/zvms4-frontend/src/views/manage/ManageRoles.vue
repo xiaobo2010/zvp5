@@ -85,7 +85,7 @@ const FEATURE_GROUPS: FeatureGroup[] = [
   { id: 'ops', keys: ['logs.read', 'notify.publish', 'ban.read', 'quota.manage'] }
 ]
 
-const QUOTA_KINDS: RoleQuotaKind[] = ['chat', 'ocr', 'schedule']
+const QUOTA_KINDS: RoleQuotaKind[] = ['af', 'schedule']
 
 /** 胶囊顺序：团支书 → 学生会 → 学生 → 管理员，其余角色追加在后。 */
 const ROLE_PREFERENCE = ['secretary', 'department', 'student', 'admin']
@@ -100,7 +100,7 @@ const savedDrafts = ref<Record<string, RolePolicyInput>>({})
 const authRef = ref<InstanceType<typeof ZSystemAuthDialog>>()
 
 function emptyQuotas(): RoleQuotas {
-  return { chat: null, ocr: null, schedule: null }
+  return { af: null, schedule: null }
 }
 
 function emptyInput(): RolePolicyInput {
@@ -124,10 +124,16 @@ function normalizeFeatures(features: Record<string, boolean> | undefined): Recor
   return result
 }
 
+/**
+ * 归一化月度配额。
+ *
+ * 用户侧额度统一成了 `af`；后端若还下发 V051 之前的 `chat` / `ocr`（历史数据
+ * 或未迁移的旧接口），一律兜底显示为 `af`，别让页面因为少一个字段就炸掉。
+ */
 function normalizeQuotas(quotas: Partial<RoleQuotas> | undefined): RoleQuotas {
+  const legacy = quotas as (Partial<RoleQuotas> & { chat?: number | null; ocr?: number | null }) | undefined
   return {
-    chat: quotas?.chat ?? null,
-    ocr: quotas?.ocr ?? null,
+    af: quotas?.af ?? legacy?.chat ?? legacy?.ocr ?? null,
     schedule: quotas?.schedule ?? null
   }
 }
@@ -190,9 +196,7 @@ function inputEquals(a: RolePolicyInput, b: RolePolicyInput): boolean {
     }
   }
   return (
-    a.quotas.chat === b.quotas.chat &&
-    a.quotas.ocr === b.quotas.ocr &&
-    a.quotas.schedule === b.quotas.schedule
+    a.quotas.af === b.quotas.af && a.quotas.schedule === b.quotas.schedule
   )
 }
 

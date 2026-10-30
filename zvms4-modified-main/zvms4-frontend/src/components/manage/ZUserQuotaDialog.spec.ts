@@ -136,8 +136,7 @@ vi.mock('element-plus', async () => {
 })
 
 const aiFixture = {
-  ocr: { period: '202610', used: 7, limit: 500, source: 'explicit' as const },
-  chat: { period: '202610', used: 0, limit: 1000000, source: 'role_default' as const }
+  af: { period: '202610', used: 7, limit: 500, source: 'explicit' as const }
 }
 
 const uploadFixture: UserQuotaView = {
@@ -155,7 +154,7 @@ async function mountDialog(): Promise<VueWrapper> {
   return wrapper
 }
 
-/** ElInputNumber 的渲染顺序：OCR 上限、对话上限、每日文件数、每日容量(MB)。 */
+/** ElInputNumber 的渲染顺序：AF 上限、每日文件数、每日容量(MB)。 */
 function numberInputs(wrapper: VueWrapper) {
   return wrapper.findAll('.el-input-number-stub')
 }
@@ -185,13 +184,13 @@ beforeEach(() => {
   vi.mocked(setUserQuota).mockResolvedValue(uploadFixture)
   vi.mocked(setUserLimit).mockResolvedValue({
     period: '202610',
-    kind: 'ocr',
+    kind: 'af',
     used: 7,
     limit: 800
   })
   vi.mocked(resetUserQuota).mockResolvedValue({
     period: '202610',
-    kind: 'ocr',
+    kind: 'af',
     used: 0,
     limit: 500
   })
@@ -214,13 +213,9 @@ describe('用户配额对话框', () => {
 
     const text = wrapper.find('.el-dialog-stub').text()
     expect(text).toContain('7 / 500')
-    expect(text).toContain('0 / 1000000')
 
     const tags = wrapper.findAll('.el-tag-stub').map((item) => item.text())
-    expect(tags).toEqual([
-      'ai.quotaAdmin.sourceExplicit',
-      'ai.quotaAdmin.sourceRoleDefault'
-    ])
+    expect(tags).toEqual(['ai.quotaAdmin.sourceExplicit'])
     expect(wrapper.find('.el-tag-stub').attributes('data-type')).toBe('info')
 
     wrapper.unmount()
@@ -239,8 +234,8 @@ describe('用户配额对话框', () => {
   it('MB 输入转换成字节提交（32MB → 33554432 字节）', async () => {
     const wrapper = await mountDialog()
 
-    await numberInputs(wrapper)[2]!.setValue('12')
-    await numberInputs(wrapper)[3]!.setValue('32')
+    await numberInputs(wrapper)[1]!.setValue('12')
+    await numberInputs(wrapper)[2]!.setValue('32')
     await saveButtons(wrapper).upload.trigger('click')
     await flushPromises()
 
@@ -255,8 +250,8 @@ describe('用户配额对话框', () => {
   it('清空两个输入即提交 null（清除覆盖、继承全局）', async () => {
     const wrapper = await mountDialog()
 
+    await numberInputs(wrapper)[1]!.setValue('')
     await numberInputs(wrapper)[2]!.setValue('')
-    await numberInputs(wrapper)[3]!.setValue('')
     await saveButtons(wrapper).upload.trigger('click')
     await flushPromises()
 
@@ -275,7 +270,7 @@ describe('用户配额对话框', () => {
     await saveButtons(wrapper).first.trigger('click')
     await flushPromises()
 
-    expect(setUserLimit).toHaveBeenCalledWith('user-1', 'ocr', 800)
+    expect(setUserLimit).toHaveBeenCalledWith('user-1', 'af', 800)
 
     wrapper.unmount()
   })
@@ -290,7 +285,7 @@ describe('用户配额对话框', () => {
     await flushPromises()
 
     expect(confirmSpy).toHaveBeenCalled()
-    expect(resetUserQuota).toHaveBeenCalledWith('user-1', 'ocr')
+    expect(resetUserQuota).toHaveBeenCalledWith('user-1', 'af')
 
     wrapper.unmount()
   })

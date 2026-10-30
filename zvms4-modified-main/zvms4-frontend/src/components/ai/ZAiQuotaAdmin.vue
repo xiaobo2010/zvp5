@@ -3,7 +3,8 @@
  * 额度管理（管理员 / quota.manage）。
  *
  * 三块内容：
- * 1. 用户配额表格：姓名/学号搜索 + 分页，直接看每个人的 LLM 与 OCR 用量；
+ * 1. 用户配额表格：姓名/学号搜索 + 分页，直接看每个人的 AF 用量（对话与 OCR
+ *    共用一个池子，只有这一列）；
  * 2. 重置申请审批：学生提交的申请在下方列表里逐条批准或驳回；
  * 3. 按 oid 精确操作：保留旧入口，查到的用户落在表格首行。
  *
@@ -22,10 +23,8 @@ import {
   ElInputNumber,
   ElMessage,
   ElMessageBox,
-  ElOption,
   ElRadio,
   ElRadioGroup,
-  ElSelect,
   ElTable,
   ElTableColumn,
   ElTag
@@ -50,10 +49,13 @@ import { getMyRolePolicy } from '@/api/system/rolePolicies'
 import { useUserStore } from '@/stores/user'
 import { formatDateTime } from '@/utils/dateTime'
 import { resolveErrorMessage } from '@/utils/errorMessage'
-import type { AiQuotaKind } from '@/../types/ai'
+import type { AiQuotaKind, AiQuotaRequestKind } from '@/../types/ai'
 
 type DecisionMode = 'approve' | 'reject'
 type ApproveMode = 'reset' | 'reset_limit'
+
+/** 用户侧唯一的额度池 kind。 */
+const AF_KIND: AiQuotaKind = 'af'
 
 const { t } = useI18n()
 const userStore = useUserStore()
@@ -87,7 +89,8 @@ const displayUsers = computed<AiQuotaUserRow[]>(() => {
   return [quick, ...users.value.filter((row) => row.oid !== quick.oid)]
 })
 
-function kindLabel(kind: AiQuotaKind): string {
+/** 申请行的消耗类型文案（chat / ocr）：它标记这次是哪类消耗，不是额度池。 */
+function kindLabel(kind: AiQuotaRequestKind): string {
   return kind === 'chat' ? t('ai.quotaAdmin.chatTitle') : t('ai.quotaAdmin.ocrTitle')
 }
 
@@ -178,18 +181,17 @@ async function refreshAll() {
 const limitVisible = ref(false)
 const limitOid = ref('')
 const limitUserLabel = ref('')
-const limitKind = ref<AiQuotaKind>('chat')
+/** 用户侧只有一个额度池：改上限与清零都作用在它上面。 */
 const limitValue = ref(0)
 const limitSaving = ref(false)
 const quickLookupVisible = ref(false)
 const quickLookupOid = ref('')
 const quickLookupLoading = ref(false)
 
-function openLimit(row: AiQuotaUserRow, kind: AiQuotaKind) {
+function openLimit(row: AiQuotaUserRow) {
   limitOid.value = row.oid
   limitUserLabel.value = row.name
-  limitKind.value = kind
-  limitValue.value = row.quotas[kind]?.limit ?? 0
+  limitValue.value = row.quotas.af?.limit ?? 0
   limitVisible.value = true
 }
 
@@ -199,7 +201,7 @@ async function submitLimit() {
   }
   limitSaving.value = true
   try {
-    await setUserLimit(limitOid.value, limitKind.value, limitValue.value)
+    await setUserLimit(limitOid.value, AF_KIND, limitValue.value)
     limitVisible.value = false
     ElMessage.success(t('ai.quotaAdmin.savedNotice'))
     await refreshAll()
@@ -210,7 +212,7 @@ async function submitLimit() {
   }
 }
 
-async function resetUsage(row: AiQuotaUserRow, kind: AiQuotaKind) {
+async function resetUsage(row: AiQuotaUserRow) {
   try {
     await ElMessageBox.confirm(
       t('ai.quotaAdmin.resetConfirm'),
@@ -227,7 +229,7 @@ async function resetUsage(row: AiQuotaUserRow, kind: AiQuotaKind) {
     return
   }
   try {
-    await resetUserQuota(row.oid, kind)
+    await resetUserQuota(row.oid, AF_KIND)
     ElMessage.success(t('ai.quotaAdmin.resetNotice'))
     await refreshAll()
   } catch (error) {
@@ -253,8 +255,7 @@ async function submitQuickLookup() {
       name: oid,
       business_id: null,
       quotas: {
-        chat: { used: snapshot.chat.used, limit: snapshot.chat.limit, source: snapshot.chat.source },
-        ocr: { used: snapshot.ocr.used, limit: snapshot.ocr.limit, source: snapshot.ocr.source }
+        af: { used: snapshot.af.used, limit: snapshot.af.limit, source: snapshot.af.source }
       },
       pending_request: false
     }
@@ -435,56 +436,35 @@ onMounted(async () => {
                 </div>
               </template>
             </ElTableColumn>
-            <ElTableColumn :label="t('ai.quotaAdmin.users.chat')" min-width="110">
+            <ElTableColumn :label="t('ai.quotaAdmin.users.af')" min-width="120">
               <template #default="{ row }">
                 <span class="tabular-nums">
-                  {{ row.quotas.chat.used }} / {{ row.quotas.chat.limit }}
+                  {{ row.quotas.af.used }} / {{ row.quotas.af.limit }}
                 </span>
               </template>
             </ElTableColumn>
-            <ElTableColumn :label="t('ai.quotaAdmin.users.ocr')" min-width="110">
-              <template #default="{ row }">
-                <span class="tabular-nums">
-                  {{ row.quotas.ocr.used }} / {{ row.quotas.ocr.limit }}
-                </span>
-              </template>
-            </ElTableColumn>
-            <ElTableColumn :label="t('ai.quotaAdmin.users.source')" min-width="150">
+            <ElTableColumn :label="t('ai.quotaAdmin.users.source')" min-width="120">
               <template #default="{ row }">
                 <div class="flex flex-wrap items-center gap-1">
                   <ElTag
-                    v-if="sourceLabel(row.quotas.chat)"
+                    v-if="sourceLabel(row.quotas.af)"
                     type="info"
                     size="small"
                     effect="plain"
                   >
-                    {{ t('ai.quotaAdmin.users.chatShort') }}：{{ sourceLabel(row.quotas.chat) }}
-                  </ElTag>
-                  <ElTag
-                    v-if="sourceLabel(row.quotas.ocr)"
-                    type="info"
-                    size="small"
-                    effect="plain"
-                  >
-                    {{ t('ai.quotaAdmin.users.ocrShort') }}：{{ sourceLabel(row.quotas.ocr) }}
+                    {{ t('ai.quotaAdmin.users.afShort') }}：{{ sourceLabel(row.quotas.af) }}
                   </ElTag>
                 </div>
               </template>
             </ElTableColumn>
-            <ElTableColumn :label="t('ai.common.actions')" min-width="240">
+            <ElTableColumn :label="t('ai.common.actions')" min-width="160">
               <template #default="{ row }">
                 <div class="flex flex-wrap items-center gap-1">
-                  <ElButton size="small" text type="primary" @click="openLimit(row, 'chat')">
-                    {{ t('ai.quotaAdmin.users.changeChatLimit') }}
+                  <ElButton size="small" text type="primary" @click="openLimit(row)">
+                    {{ t('ai.quotaAdmin.users.changeAfLimit') }}
                   </ElButton>
-                  <ElButton size="small" text type="primary" @click="openLimit(row, 'ocr')">
-                    {{ t('ai.quotaAdmin.users.changeOcrLimit') }}
-                  </ElButton>
-                  <ElButton size="small" text type="danger" @click="resetUsage(row, 'chat')">
-                    {{ t('ai.quotaAdmin.users.resetChat') }}
-                  </ElButton>
-                  <ElButton size="small" text type="danger" @click="resetUsage(row, 'ocr')">
-                    {{ t('ai.quotaAdmin.users.resetOcr') }}
+                  <ElButton size="small" text type="danger" @click="resetUsage(row)">
+                    {{ t('ai.quotaAdmin.users.resetAf') }}
                   </ElButton>
                 </div>
               </template>
@@ -600,10 +580,8 @@ onMounted(async () => {
           </span>
         </ElFormItem>
         <ElFormItem :label="t('ai.quotaAdmin.limitKind')">
-          <ElSelect v-model="limitKind" class="w-full" :disabled="limitSaving">
-            <ElOption :label="t('ai.quotaAdmin.chatTitle')" value="chat" />
-            <ElOption :label="t('ai.quotaAdmin.ocrTitle')" value="ocr" />
-          </ElSelect>
+          <span class="yg-text-sm">{{ t('ai.quotaAdmin.afTitle') }}</span>
+          <p class="yg-text-xs yg-text-tertiary mt-1">{{ t('ai.quotaAdmin.afHint') }}</p>
         </ElFormItem>
         <ElFormItem :label="t('ai.quotaAdmin.limitValue')">
           <ElInputNumber

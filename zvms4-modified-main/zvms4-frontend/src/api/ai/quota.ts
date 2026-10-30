@@ -4,6 +4,7 @@ import type {
   AiQuotaModelUsageRow,
   AiQuotaMutation,
   AiQuotaProviderUsageRow,
+  AiQuotaRequestKind,
   AiQuotaUsage,
   AiQuotaUsageRow
 } from '@/../types/ai'
@@ -11,6 +12,13 @@ import { aiRequest, aiRequestList } from './http'
 
 /**
  * 额度（/ai/quota）。
+ *
+ * **用户侧只有一个额度池 `af`**：对话与 OCR 都记在它上面（后端 V051 起
+ * `KINDS = ("af",)`）。前端不要再出现「对话额度 + OCR 额度 = 总额度」的算法——
+ * 那是同一个池子，加起来会翻倍。
+ *
+ * 唯一的例外是**重置申请**：后端申请接口仍按消耗类型收 `chat` / `ocr`
+ * （用来标记这次是哪类消耗），但两条都落到同一个 AF 池。
  *
  * 个人视角看自己的月度额度；管理端有两种形态：
  * 1. 「先选人，再查看与调整」——按 oid 精确查（GET /ai/quota/{user_oid}）；
@@ -35,8 +43,8 @@ export interface AiQuotaEntryView extends AiQuotaEntry {
 }
 
 export interface AiQuotaSnapshotView {
-  ocr: AiQuotaEntryView
-  chat: AiQuotaEntryView
+  /** 唯一的额度池：对话与 OCR 共用。 */
+  af: AiQuotaEntryView
 }
 
 /**
@@ -58,7 +66,8 @@ export function aiQuotaSourceLabelKey(source?: AiQuotaSource | null): string | n
 
 /** 当前用户本月额度自查。 */
 export async function myQuota(): Promise<AiQuotaSnapshotView> {
-  return aiRequest<AiQuotaSnapshotView>({ method: 'get', url: '/ai/quota' })
+  const data = await aiRequest<unknown>({ method: 'get', url: '/ai/quota' })
+  return normalizeSnapshot(data)
 }
 
 /**
@@ -92,10 +101,18 @@ export async function fetchQuotaUsage(period?: string): Promise<AiQuotaUsage> {
 
 /** admin 查看某个用户的额度。 */
 export async function userQuota(userOid: string): Promise<AiQuotaSnapshotView> {
-  return aiRequest<AiQuotaSnapshotView>({ method: 'get', url: `/ai/quota/${userOid}` })
+  const data = await aiRequest<unknown>({
+    method: 'get',
+    url: `/ai/quota/${userOid}`
+  })
+  return normalizeSnapshot(data)
 }
 
-/** 设置某能力的月上限；请求字段是 limit_count，响应字段是 limit。 */
+/**
+ * 设置月上限；请求字段是 limit_count，响应字段是 limit。
+ *
+ * kind 现在只有 `af`：用户侧就一个池子，没有「按能力分开设上限」这回事了。
+ */
 export async function setUserLimit(
   userOid: string,
   kind: AiQuotaKind,
@@ -108,7 +125,7 @@ export async function setUserLimit(
   })
 }
 
-/** 重置某能力本月已用量（上限保留）。 */
+/** 重置本月已用量（上限保留）。 */
 export async function resetUserQuota(
   userOid: string,
   kind: AiQuotaKind
@@ -124,17 +141,25 @@ export async function resetUserQuota(
    额度重置申请（/ai/quota/requests）
    学生与学生会自己没有改额度的权限，只能提交一条申请，由管理员（或拥有
    quota.manage 的角色）批准。契约见后端 routers/ai_quota_router.py。
+
+   **申请的 kind 是消耗类型，不是额度池**：后端只收 `chat` / `ocr`，两条都落
+   到同一个 AF 池。所以 UI 上要写明「计入统一 AF 池」，别让人以为批了对话
+   申请就多出一个额度池。
    --------------------------------------------------------------------------- */
 
 /** 申请状态：pending 等待审批，approved / rejected 是终态。 */
 export type AiQuotaRequestStatus = 'pending' | 'approved' | 'rejected'
+
+/** 申请可选的消耗类型（后端封闭集合）。 */
+export const AI_QUOTA_REQUEST_KINDS: AiQuotaRequestKind[] = ['chat', 'ocr']
 
 /** 本人的一条申请（GET /ai/quota/requests/mine）。 */
 export interface AiQuotaRequest {
   oid: string
   /** 计费周期，形如 202610。 */
   period: string
-  kind: AiQuotaKind
+  /** 消耗类型（chat / ocr）；落到额度上都是同一个 AF 池。 */
+  kind: AiQuotaRequestKind
   status: AiQuotaRequestStatus
   reason: string | null
   /** 申请人希望的月上限；null = 没提要求。 */
@@ -163,14 +188,16 @@ export interface AiQuotaUserRow {
   oid: string
   name: string
   business_id: string | null
-  quotas: { chat: AiQuotaUsageView; ocr: AiQuotaUsageView }
+  /** 只有一个池子：对话与 OCR 共用，所以只有 af。 */
+  quotas: { af: AiQuotaUsageView }
   /** 该用户当前是否有待审批申请。 */
   pending_request: boolean
 }
 
 /** POST /ai/quota/requests 的请求体。 */
 export interface AiQuotaSubmitInput {
-  kind: AiQuotaKind
+  /** 消耗类型（chat / ocr），不是额度池。 */
+  kind: AiQuotaRequestKind
   /** 可选说明，后端按 200 字截断。 */
   reason?: string
   /** 可选期望额度；不传表示「只求清零」。 */
@@ -243,7 +270,8 @@ function numberOf(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : 0
 }
 
-function requestKindOf(value: unknown): AiQuotaKind {
+/** 申请里的消耗类型：后端封闭集合 chat / ocr，认不出来的按 ocr 兜底。 */
+function requestKindOf(value: unknown): AiQuotaRequestKind {
   return value === 'chat' ? 'chat' : 'ocr'
 }
 
@@ -301,11 +329,29 @@ function normalizeUsage(value: unknown): AiQuotaUsageView {
   }
 }
 
+/** 额度池的一格：period / used / limit / source，缺字段按空值兜底。 */
+function normalizeEntry(value: unknown): AiQuotaEntryView {
+  const row = asRecord(value)
+  return {
+    period: textOf(row.period) ?? '',
+    used: numberOf(row.used),
+    limit: numberOf(row.limit),
+    source: sourceOf(row.source)
+  }
+}
+
+/** 额度快照：后端只回 `{"af": {...}}` 一个池子。 */
+function normalizeSnapshot(value: unknown): AiQuotaSnapshotView {
+  const row = asRecord(value)
+  return { af: normalizeEntry(row.af) }
+}
+
 /**
  * 用户表格行的归一化。
  *
- * 既接受 `quotas: {chat, ocr}` 的契约形态，也接受后端实际下发的扁平形态
- * （`chat` / `ocr` 直接挂在行上，`id` 是学号）。
+ * `/ai/quota/users` 的兼容层仍下发 `chat` / `ocr` 两个别名，**它们是同一个
+ * AF 池**（后端 V051 起只查 `af`）。这里任取其一即可——绝不相加，加起来会
+ * 翻倍。等后端改成直接下发 `af` 就不用挑别名了。
  */
 function normalizeUserRow(value: unknown): AiQuotaUserRow {
   const row = asRecord(value)
@@ -315,8 +361,7 @@ function normalizeUserRow(value: unknown): AiQuotaUserRow {
     name: textOf(row.name) ?? '',
     business_id: textOf(row.business_id) ?? textOf(row.id),
     quotas: {
-      chat: normalizeUsage(quotas.chat ?? row.chat),
-      ocr: normalizeUsage(quotas.ocr ?? row.ocr)
+      af: normalizeUsage(quotas.af ?? row.af ?? row.chat ?? row.ocr)
     },
     pending_request: row.pending_request === true
   }
@@ -453,7 +498,7 @@ export async function approveQuotaRequest(
   const record = asRecord(data)
   return {
     request: normalizeRequest(record.request),
-    quota: record.quota as AiQuotaSnapshotView
+    quota: normalizeSnapshot(record.quota)
   }
 }
 
