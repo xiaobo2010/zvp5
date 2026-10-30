@@ -2,9 +2,15 @@
 /**
  * 我的额度。
  *
+ * **只有一个额度池 AF**：对话与 OCR 都记在它上面，页面只展示一格，不做
+ * 「对话 + OCR」的加法（同一个池子，加起来会翻倍）。
+ *
  * 额度用尽时学生没有改额度的权限，只能提交「重置申请」等管理员批准；
  * 所以这一页除了展示用量，还要把「已申请、等待审批」这个中间态说清楚：
- * 提交后按钮立刻变成 disabled，同一能力不会重复提交（后端也会用 409 兜底）。
+ * 提交后按钮立刻变成 disabled（后端也会用 409 兜底）。
+ *
+ * 申请里的「消耗类型」（对话 / OCR）只是告诉管理员这次是哪类消耗，
+ * 批了之后动的仍然是同一个 AF 池。
  */
 import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -26,6 +32,7 @@ import {
 } from 'element-plus'
 import { Refresh } from '@element-plus/icons-vue'
 import {
+  AI_QUOTA_REQUEST_KINDS,
   aiErrorOf,
   aiQuotaSourceLabelKey,
   createQuotaRequest,
@@ -38,7 +45,7 @@ import {
 } from '@/api/ai'
 import { formatDateTime } from '@/utils/dateTime'
 import { resolveErrorMessage } from '@/utils/errorMessage'
-import type { AiQuotaKind, AiQuotaUsage } from '@/../types/ai'
+import type { AiQuotaRequestKind, AiQuotaUsage } from '@/../types/ai'
 
 /** 说明的字数上限：与后端字段的 200 字约束对齐。 */
 const REASON_MAX = 200
@@ -47,12 +54,12 @@ const { t } = useI18n()
 
 const loading = ref(false)
 const failed = ref(false)
-const ocr = ref<AiQuotaEntryView | null>(null)
-const chat = ref<AiQuotaEntryView | null>(null)
+/** 唯一的额度池。 */
+const af = ref<AiQuotaEntryView | null>(null)
 
 const requestsFailed = ref(false)
-/** 每个能力最多一条待审批申请：同能力重复提交没有意义。 */
-const pending = ref<Partial<Record<AiQuotaKind, AiQuotaRequest>>>({})
+/** 每个消耗类型最多一条待审批申请：同类型重复提交没有意义。 */
+const pending = ref<Partial<Record<AiQuotaRequestKind, AiQuotaRequest>>>({})
 
 /* 当月用量统计：与额度卡分开取数、分开报错，互不阻塞。 */
 const usageLoading = ref(false)
@@ -61,7 +68,7 @@ const usageError = ref('')
 const usage = ref<AiQuotaUsage | null>(null)
 
 const dialogVisible = ref(false)
-const requestKind = ref<AiQuotaKind>('chat')
+const requestKind = ref<AiQuotaRequestKind>('chat')
 const requestReason = ref('')
 const requestLimit = ref<number | null>(null)
 const submitting = ref(false)
@@ -73,21 +80,19 @@ function percent(entry: AiQuotaEntryView | null): number {
   return Math.min(100, Math.round((entry.used / entry.limit) * 100))
 }
 
-function entryOf(kind: AiQuotaKind): AiQuotaEntryView | null {
-  return kind === 'chat' ? chat.value : ocr.value
-}
-
 /** limit <= 0 表示没设上限，不算用尽。 */
-function isExhausted(kind: AiQuotaKind): boolean {
-  const entry = entryOf(kind)
+function isExhausted(): boolean {
+  const entry = af.value
   return !!entry && entry.limit > 0 && entry.used >= entry.limit
 }
 
-function hasPending(kind: AiQuotaKind): boolean {
-  return Boolean(pending.value[kind])
+/** 已有待审批申请：任何一条 pending 都让按钮进入禁用态（同一个池子，没必要再提一条）。 */
+function hasPending(): boolean {
+  return pendingList.value.length > 0
 }
 
-function kindLabel(kind: AiQuotaKind): string {
+/** 消耗类型的展示文案；它是申请口径，不是额度池。 */
+function kindLabel(kind: AiQuotaRequestKind): string {
   return kind === 'chat' ? t('ai.quota.chatTitle') : t('ai.quota.ocrTitle')
 }
 
@@ -109,35 +114,18 @@ const usageEmpty = computed(() => {
   )
 })
 
-const tiles = computed(() => [
-  {
-    kind: 'ocr' as AiQuotaKind,
-    title: t('ai.quota.ocrTitle'),
-    unit: t('ai.quota.ocrUnit'),
-    entry: ocr.value,
-    percent: percent(ocr.value)
-  },
-  {
-    kind: 'chat' as AiQuotaKind,
-    title: t('ai.quota.chatTitle'),
-    unit: t('ai.quota.chatUnit'),
-    entry: chat.value,
-    percent: percent(chat.value)
-  }
-])
-
-/** 顶部待审批区：只列 pending，且每个能力只出现一次。 */
+/** 顶部待审批区：只列 pending，同一消耗类型只出现一次。 */
 const pendingList = computed<AiQuotaRequest[]>(() =>
-  (['chat', 'ocr'] as AiQuotaKind[])
-    .map((kind) => pending.value[kind])
-    .filter((item): item is AiQuotaRequest => Boolean(item))
+  AI_QUOTA_REQUEST_KINDS.map((kind) => pending.value[kind]).filter(
+    (item): item is AiQuotaRequest => Boolean(item)
+  )
 )
 
 /** 本地补一条待审批占位：409 时后端不会回请求体，但状态必须立刻切过去。 */
-function pendingPlaceholder(kind: AiQuotaKind): AiQuotaRequest {
+function pendingPlaceholder(kind: AiQuotaRequestKind): AiQuotaRequest {
   return {
     oid: '',
-    period: entryOf(kind)?.period ?? '',
+    period: af.value?.period ?? '',
     kind,
     status: 'pending',
     reason: null,
@@ -156,11 +144,9 @@ async function load() {
   failed.value = false
   try {
     const data = await myQuota()
-    ocr.value = data.ocr
-    chat.value = data.chat
+    af.value = data.af
   } catch {
-    ocr.value = null
-    chat.value = null
+    af.value = null
     failed.value = true
   } finally {
     loading.value = false
@@ -171,7 +157,7 @@ async function loadRequests() {
   requestsFailed.value = false
   try {
     const items = await myQuotaRequests()
-    const next: Partial<Record<AiQuotaKind, AiQuotaRequest>> = {}
+    const next: Partial<Record<AiQuotaRequestKind, AiQuotaRequest>> = {}
     for (const item of items) {
       if (item.status === 'pending' && !next[item.kind]) {
         next[item.kind] = item
@@ -201,11 +187,11 @@ async function loadUsage() {
   }
 }
 
-function openRequest(kind: AiQuotaKind) {
-  if (hasPending(kind) || submitting.value) {
+function openRequest() {
+  if (hasPending() || submitting.value) {
     return
   }
-  requestKind.value = kind
+  requestKind.value = 'chat'
   requestReason.value = ''
   requestLimit.value = null
   dialogVisible.value = true
@@ -293,35 +279,33 @@ onMounted(() => {
           </ul>
         </div>
 
-        <div class="grid gap-4 sm:grid-cols-2" :class="{ 'mt-4': pendingList.length }">
-          <div v-for="tile in tiles" :key="tile.kind" class="yg-tile p-4">
+        <div class="grid gap-4" :class="{ 'mt-4': pendingList.length }">
+          <div class="yg-tile p-4">
             <div class="flex items-baseline justify-between gap-2">
-              <span class="yg-statistic__title">{{ tile.title }}</span>
-              <span class="yg-text-xs yg-text-tertiary">{{ tile.unit }}</span>
+              <span class="yg-statistic__title">{{ t('ai.quota.afTitle') }}</span>
+              <span class="yg-text-xs yg-text-tertiary">{{ t('ai.quota.afUnit') }}</span>
             </div>
-            <div v-if="sourceLabel(tile.entry)" class="flex items-center gap-2 mt-1">
-              <ElTag type="info" size="small" effect="plain">{{ sourceLabel(tile.entry) }}</ElTag>
+            <div v-if="sourceLabel(af)" class="flex items-center gap-2 mt-1">
+              <ElTag type="info" size="small" effect="plain">{{ sourceLabel(af) }}</ElTag>
             </div>
             <p class="yg-statistic__value">
-              {{ tile.entry?.used ?? 0 }}
-              <span class="yg-statistic__suffix">/ {{ tile.entry?.limit ?? 0 }}</span>
+              {{ af?.used ?? 0 }}
+              <span class="yg-statistic__suffix">/ {{ af?.limit ?? 0 }}</span>
             </p>
-            <ElProgress :percentage="tile.percent" :stroke-width="6" class="mt-2" />
+            <ElProgress :percentage="percent(af)" :stroke-width="6" class="mt-2" />
             <p class="yg-text-xs yg-text-tertiary mt-2 tabular-nums">
-              {{ t('ai.common.period') }}：{{ tile.entry?.period ?? '—' }}
+              {{ t('ai.common.period') }}：{{ af?.period ?? '—' }}
             </p>
-            <div v-if="isExhausted(tile.kind)" class="flex justify-end mt-3">
+            <div v-if="isExhausted()" class="flex justify-end mt-3">
               <ElButton
                 size="small"
                 type="primary"
                 plain
-                :disabled="hasPending(tile.kind) || submitting"
-                @click="openRequest(tile.kind)"
+                :disabled="hasPending() || submitting"
+                @click="openRequest"
               >
                 {{
-                  hasPending(tile.kind)
-                    ? t('ai.quota.request.applied')
-                    : t('ai.quota.request.apply')
+                  hasPending() ? t('ai.quota.request.applied') : t('ai.quota.request.apply')
                 }}
               </ElButton>
             </div>
@@ -458,6 +442,7 @@ onMounted(() => {
       </header>
       <div class="yg-card__body">
         <ul class="yg-text-sm yg-text-secondary flex flex-col gap-1">
+          <li>{{ t('ai.quota.ruleUnified') }}</li>
           <li>{{ t('ai.quota.ruleOcr') }}</li>
           <li>{{ t('ai.quota.rulePersonal') }}</li>
           <li>{{ t('ai.quota.ruleShared') }}</li>
@@ -477,9 +462,12 @@ onMounted(() => {
       <ElForm label-position="top">
         <ElFormItem :label="t('ai.quota.request.kind')">
           <ElSelect v-model="requestKind" class="w-full" :disabled="submitting">
-            <ElOption :label="t('ai.quota.ocrTitle')" value="ocr" />
             <ElOption :label="t('ai.quota.chatTitle')" value="chat" />
+            <ElOption :label="t('ai.quota.ocrTitle')" value="ocr" />
           </ElSelect>
+          <p class="yg-text-xs yg-text-tertiary mt-1">
+            {{ t('ai.quota.request.kindHint') }}
+          </p>
         </ElFormItem>
         <ElFormItem :label="t('ai.quota.request.reason')">
           <ElInput

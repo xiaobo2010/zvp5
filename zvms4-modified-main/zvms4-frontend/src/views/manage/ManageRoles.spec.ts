@@ -396,28 +396,28 @@ const POLICIES: RolePoliciesData = {
     {
       role: 'secretary',
       features: { ...ALL_ON },
-      quotas: { chat: 300, ocr: 100, schedule: 1 },
+      quotas: { af: 300, schedule: 1 },
       updated_at: '2026-10-01T09:30:00',
       updated_by: 'oid-admin'
     },
     {
       role: 'department',
       features: { ...ALL_ON, 'ai.agent': false },
-      quotas: { chat: 600, ocr: 200, schedule: 1 },
+      quotas: { af: 600, schedule: 1 },
       updated_at: null,
       updated_by: null
     },
     {
       role: 'student',
       features: { ...ALL_ON, 'ai.chat': false, 'ai.agent': false },
-      quotas: { chat: null, ocr: null, schedule: 0 },
+      quotas: { af: null, schedule: 0 },
       updated_at: null,
       updated_by: null
     },
     {
       role: 'admin',
       features: { ...ALL_ON },
-      quotas: { chat: null, ocr: null, schedule: null },
+      quotas: { af: null, schedule: null },
       updated_at: null,
       updated_by: null
     }
@@ -512,7 +512,7 @@ describe('角色策略', () => {
     await flushPromises()
 
     expect(wrapper.findAll('.el-switch-stub')).toHaveLength(13)
-    expect(wrapper.findAll('.el-input-number-stub')).toHaveLength(3)
+    expect(wrapper.findAll('.el-input-number-stub')).toHaveLength(2)
     expect(wrapper.find('[data-role="secretary"]').exists()).toBe(true)
     expect(wrapper.find('[data-role="department"]').exists()).toBe(true)
     expect(wrapper.find('[data-role="student"]').exists()).toBe(true)
@@ -527,7 +527,7 @@ describe('角色策略', () => {
     expect(wrapper.text()).toContain('运维只读')
     expect(wrapper.text()).toContain('LLM 对话')
     expect(wrapper.text()).toContain('允许在 ZVAgent 里发起多轮对话')
-    expect(wrapper.text()).toContain('每月对话额度，每 1000 token = 1 单位')
+    expect(wrapper.text()).toContain('每月统一额度：对话与 OCR 记在同一个池子')
     expect(wrapper.text()).toContain('当前规则：学生会 1 条；0 表示不允许创建')
   })
 
@@ -592,7 +592,7 @@ describe('角色策略', () => {
 
     await switchOf(wrapper, 'ai.chat').trigger('click')
     await flushPromises()
-    await quotaOf(wrapper, 'chat').setValue('800')
+    await quotaOf(wrapper, 'af').setValue('800')
     await flushPromises()
 
     await wrapper.find('.policy-save').trigger('click')
@@ -610,13 +610,13 @@ describe('角色策略', () => {
     expect(body.totp_code).toBe('123456')
     expect(Object.keys(body.features)).toHaveLength(13)
     expect(body.features['ai.chat']).toBe(false)
-    expect(body.quotas).toEqual({ chat: 800, ocr: 100, schedule: 1 })
+    expect(body.quotas).toEqual({ af: 800, schedule: 1 })
 
     expect(succeedSpy).toHaveBeenCalled()
     expect(elMessageSuccessSpy).toHaveBeenCalledWith('角色策略已保存')
     // 回填后不再有未保存标记
     expect(wrapper.text()).not.toContain('有未保存的改动')
-    expect(quotaOf(wrapper, 'chat').attributes('value')).toBe('800')
+    expect(quotaOf(wrapper, 'af').attributes('value')).toBe('800')
   })
 
   it('保存失败时把后端 detail 交给授权弹层，不弹成功提示', async () => {

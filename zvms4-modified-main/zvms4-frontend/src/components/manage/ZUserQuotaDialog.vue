@@ -3,9 +3,10 @@
  * 用户配额对话框（用户管理页的行内入口）。
  *
  * 两块内容各自独立保存：
- * a. AI 额度：OCR / chat 两行，改 limit_count 走 PUT /ai/quota/{oid}，重置用量走
- *    POST /ai/quota/{oid}/reset（破坏性，二次确认）。额度按自然月计算，设置只影响
- *    当月，换月按角色默认重建 —— 这句必须写在界面上。
+ * a. AI 额度：只有 AF 一行（对话与 OCR 共用同一个池子），改 limit_count 走
+ *    PUT /ai/quota/{oid}，重置用量走 POST /ai/quota/{oid}/reset（破坏性，
+ *    二次确认）。额度按自然月计算，设置只影响当月，换月按角色默认重建 ——
+ *    这句必须写在界面上。
  * b. 附件每日上传：daily_max_files / daily_max_bytes，空值表示继承全局；字节与 MB
  *    的换算在 userQuotaUnits.ts 里，组件只负责取值。
  *
@@ -41,6 +42,8 @@ import {
 import { bytesToMb, formatMb, mbToBytes } from './userQuotaUnits'
 import type { AiQuotaKind } from '@/../types/ai'
 
+/** 用户侧唯一的额度池。 */
+const AF_KIND: AiQuotaKind = 'af'
 const props = defineProps<{
   visible: boolean
   /** 目标用户：oid 用于接口，name 只用于标题区展示。 */
@@ -62,18 +65,16 @@ const aiQuota = ref<AiQuotaSnapshotView | null>(null)
 const uploadQuota = ref<UserQuotaView | null>(null)
 
 /** 上限草稿；null = 输入框被清空（提交前会被拦下）。 */
-const limitDraft = ref<Record<AiQuotaKind, number | null>>({ ocr: 0, chat: 0 })
-const savingKind = ref<AiQuotaKind | ''>('')
+const limitDraft = ref<number | null>(0)
+const savingLimit = ref(false)
 
 /** 覆盖值草稿：null 表示留空 → 提交 null → 继承全局。 */
 const filesDraft = ref<number | null>(null)
 const bytesMbDraft = ref<number | null>(null)
 const savingUpload = ref(false)
 
-const aiRows = computed(() => [
-  { kind: 'ocr' as AiQuotaKind, title: t('ai.quotaAdmin.ocrTitle'), entry: aiQuota.value?.ocr },
-  { kind: 'chat' as AiQuotaKind, title: t('ai.quotaAdmin.chatTitle'), entry: aiQuota.value?.chat }
-])
+/** AI 额度只有 AF 一行：对话与 OCR 共用同一个池子。 */
+const aiEntry = computed(() => aiQuota.value?.af ?? null)
 
 const effectiveText = computed(() => {
   const effective = uploadQuota.value?.effective
@@ -107,7 +108,7 @@ async function load() {
   try {
     const ai = await userQuota(oid)
     aiQuota.value = ai
-    limitDraft.value = { ocr: ai.ocr.limit, chat: ai.chat.limit }
+    limitDraft.value = ai.af.limit
   } catch (error) {
     aiQuota.value = null
     failed.value = true
@@ -130,10 +131,10 @@ async function load() {
   }
 }
 
-async function saveLimit(kind: AiQuotaKind) {
+async function saveLimit() {
   const oid = props.user?.oid
-  const value = limitDraft.value[kind]
-  if (!oid || savingKind.value) {
+  const value = limitDraft.value
+  if (!oid || savingLimit.value) {
     return
   }
   if (value === null || value === undefined || !Number.isFinite(value) || value < 0) {
@@ -142,19 +143,19 @@ async function saveLimit(kind: AiQuotaKind) {
     )
     return
   }
-  savingKind.value = kind
+  savingLimit.value = true
   try {
-    await setUserLimit(oid, kind, Math.trunc(value))
+    await setUserLimit(oid, AF_KIND, Math.trunc(value))
     ElMessage.success(t('ai.userQuota.savedAi'))
     await load()
   } catch (error) {
     reportError(error)
   } finally {
-    savingKind.value = ''
+    savingLimit.value = false
   }
 }
 
-async function resetUsage(kind: AiQuotaKind) {
+async function resetUsage() {
   const oid = props.user?.oid
   if (!oid) {
     return
@@ -175,7 +176,7 @@ async function resetUsage(kind: AiQuotaKind) {
     return
   }
   try {
-    await resetUserQuota(oid, kind)
+    await resetUserQuota(oid, AF_KIND)
     ElMessage.success(t('ai.quotaAdmin.resetNotice'))
     await load()
   } catch (error) {
@@ -256,19 +257,19 @@ watch(
           <h3 class="user-quota__heading">{{ t('ai.userQuota.aiSection') }}</h3>
           <p class="yg-text-xs yg-text-tertiary">{{ t('ai.userQuota.monthlyNotice') }}</p>
 
-          <div v-for="item in aiRows" :key="item.kind" class="user-quota__row">
+          <div class="user-quota__row">
             <div class="user-quota__row-head">
-              <span class="yg-text-sm">{{ item.title }}</span>
-              <ElTag v-if="sourceLabel(item.entry)" type="info" size="small" effect="plain">
-                {{ sourceLabel(item.entry) }}
+              <span class="yg-text-sm">{{ t('ai.quotaAdmin.afTitle') }}</span>
+              <ElTag v-if="sourceLabel(aiEntry)" type="info" size="small" effect="plain">
+                {{ sourceLabel(aiEntry) }}
               </ElTag>
               <span class="user-quota__usage tabular-nums">
-                {{ t('ai.quota.used') }} {{ item.entry?.used ?? 0 }} / {{ item.entry?.limit ?? 0 }}
+                {{ t('ai.quota.used') }} {{ aiEntry?.used ?? 0 }} / {{ aiEntry?.limit ?? 0 }}
               </span>
             </div>
             <div class="user-quota__row-body">
               <ElInputNumber
-                v-model="limitDraft[item.kind]"
+                v-model="limitDraft"
                 :min="0"
                 :step="10"
                 :precision="0"
@@ -276,15 +277,15 @@ watch(
               />
               <div class="flex items-center justify-end gap-2">
                 <!-- 清零属于破坏性操作：红字 + 二次确认 -->
-                <ElButton size="small" text type="danger" @click="resetUsage(item.kind)">
+                <ElButton size="small" text type="danger" @click="resetUsage">
                   {{ t('ai.quotaAdmin.reset') }}
                 </ElButton>
                 <ElButton
                   size="small"
                   type="primary"
                   plain
-                  :loading="savingKind === item.kind"
-                  @click="saveLimit(item.kind)"
+                  :loading="savingLimit"
+                  @click="saveLimit"
                 >
                   {{ t('ai.common.save') }}
                 </ElButton>

@@ -247,10 +247,10 @@ function envelope<T>(data: T): unknown {
   return { status: 200, data: { status: 'ok', data }, headers: {} }
 }
 
-function snapshot(ocrUsed: number, ocrLimit: number, chatUsed = 0, chatLimit = 1000000) {
+/** 唯一额度池：对话与 OCR 都记在它上面。 */
+function snapshot(used: number, limit: number) {
   const view: AiQuotaSnapshotView = {
-    ocr: { period: '202610', used: ocrUsed, limit: ocrLimit, source: 'explicit' },
-    chat: { period: '202610', used: chatUsed, limit: chatLimit, source: 'role_default' }
+    af: { period: '202610', used, limit, source: 'explicit' }
   }
   return view
 }
@@ -375,12 +375,13 @@ describe('我的额度面板', () => {
     expect(text).toContain('7')
     expect(text).toContain('500')
     expect(text).toContain('ai.quotaAdmin.sourceExplicit')
+    expect(text).toContain('ai.quota.afTitle')
     expect(buttonByText(wrapper, 'ai.quota.request.apply')).toBeUndefined()
 
     wrapper.unmount()
   })
 
-  it('某个能力用尽时，只在该行出现「申请重置额度」', async () => {
+  it('AF 池用尽时出现「申请重置额度」', async () => {
     quota = snapshot(500, 500)
     const wrapper = await mountPanel()
 
@@ -403,7 +404,7 @@ describe('我的额度面板', () => {
 
   it('提交申请时发出 kind / reason / requested_limit', async () => {
     quota = snapshot(500, 500)
-    createResult = async () => envelope(pendingRequest('ocr'))
+    createResult = async () => envelope(pendingRequest('chat'))
     const wrapper = await mountPanel()
 
     await buttonByText(wrapper, 'ai.quota.request.apply')!.trigger('click')
@@ -419,10 +420,33 @@ describe('我的额度面板', () => {
       expect.objectContaining({
         method: 'post',
         url: '/ai/quota/requests',
-        data: { kind: 'ocr', reason: '活动报名要用', requested_limit: 800 }
+        data: { kind: 'chat', reason: '活动报名要用', requested_limit: 800 }
       })
     )
     expect(elMessageSuccessSpy).toHaveBeenCalledWith('ai.quota.request.submitted')
+
+    wrapper.unmount()
+  })
+
+  it('消耗类型可切换：换成 OCR 后按 ocr 提交（额度仍落在同一个 AF 池）', async () => {
+    quota = snapshot(500, 500)
+    createResult = async () => envelope(pendingRequest('ocr'))
+    const wrapper = await mountPanel()
+
+    await buttonByText(wrapper, 'ai.quota.request.apply')!.trigger('click')
+    await flushPromises()
+    await wrapper.find('.el-select-stub').setValue('ocr')
+    await flushPromises()
+    await buttonByText(wrapper, 'ai.quota.request.submit')!.trigger('click')
+    await flushPromises()
+
+    expect(axiosMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        method: 'post',
+        url: '/ai/quota/requests',
+        data: { kind: 'ocr' }
+      })
+    )
 
     wrapper.unmount()
   })

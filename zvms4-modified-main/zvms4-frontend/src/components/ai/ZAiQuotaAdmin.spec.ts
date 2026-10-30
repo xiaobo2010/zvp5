@@ -311,8 +311,7 @@ const userRow: AiQuotaUserRow = {
   name: '张三',
   business_id: '2024001',
   quotas: {
-    chat: { used: 100, limit: 1000, source: 'explicit' },
-    ocr: { used: 5, limit: 500, source: 'role_default' }
+    af: { used: 100, limit: 1000, source: 'explicit' }
   },
   pending_request: true
 }
@@ -366,26 +365,25 @@ beforeEach(() => {
       return requestsResponse
     }
     if (config.method === 'put' && config.url === '/ai/quota/u1') {
-      return envelope({ period: '202610', kind: 'chat', used: 100, limit: 2000 })
+      return envelope({ period: '202610', kind: 'af', used: 100, limit: 2000 })
     }
     if (config.method === 'post' && config.url === '/ai/quota/u1/reset') {
-      return envelope({ period: '202610', kind: 'ocr', used: 0, limit: 500 })
+      return envelope({ period: '202610', kind: 'af', used: 0, limit: 1000 })
     }
     if (config.method === 'get' && config.url === '/ai/quota/u1') {
       const snapshot: AiQuotaSnapshotView = {
-        chat: { period: '202610', used: 100, limit: 1000, source: 'explicit' },
-        ocr: { period: '202610', used: 5, limit: 500, source: 'role_default' }
+        af: { period: '202610', used: 100, limit: 1000, source: 'explicit' }
       }
       return envelope(snapshot)
     }
     if (config.method === 'post' && config.url.startsWith('/ai/quota/requests/')) {
-      return envelope({ request: requestRow, quota: { chat: userRow.quotas.chat, ocr: userRow.quotas.ocr } })
+      return envelope({ request: requestRow, quota: { af: userRow.quotas.af } })
     }
     if (config.method === 'get' && config.url === '/system/role-policies/me') {
       return envelope({
         role: 'student',
         features: { 'quota.manage': false },
-        quotas: { chat: null, ocr: null, schedule: null },
+        quotas: { af: null, schedule: null },
         updated_at: null,
         updated_by: null
       })
@@ -419,8 +417,9 @@ function lastCall(): AxiosCall {
 }
 
 describe('额度管理页', () => {
-  it('渲染用户配额表格：姓名、学号、双能力用量与来源徽标', async () => {
+  it('渲染用户配额表格：姓名、学号、单一 AF 用量与来源徽标', async () => {
     // 后端实际下发的是扁平行（chat/ocr 直接挂行上，id 是学号），这里按真实形状验一遍。
+    // chat 与 ocr 是同一个 AF 池的两个别名：页面只出一列，绝不相加。
     usersResponse = envelope({
       items: [
         {
@@ -431,7 +430,7 @@ describe('额度管理页', () => {
           class_id: 'c1',
           period: '202610',
           chat: { period: '202610', used: 100, limit: 1000, source: 'explicit' },
-          ocr: { period: '202610', used: 5, limit: 500, source: 'role_default' },
+          ocr: { period: '202610', used: 100, limit: 1000, source: 'explicit' },
           pending_request: true
         }
       ],
@@ -445,9 +444,9 @@ describe('额度管理页', () => {
     expect(text).toContain('张三')
     expect(text).toContain('2024001')
     expect(text).toContain('100 / 1000')
-    expect(text).toContain('5 / 500')
+    // 相加会翻倍，这里不能出现 200 / 2000
+    expect(text).not.toContain('200 / 2000')
     expect(text).toContain('ai.quotaAdmin.sourceExplicit')
-    expect(text).toContain('ai.quotaAdmin.sourceRoleDefault')
     expect(text).toContain('ai.quotaAdmin.users.pendingBadge')
 
     wrapper.unmount()
@@ -469,7 +468,7 @@ describe('额度管理页', () => {
   it('改上限走 PUT /ai/quota/{oid}，body 是 kind + limit_count', async () => {
     const wrapper = await mountPage()
 
-    await buttonByText(wrapper, 'ai.quotaAdmin.users.changeChatLimit')!.trigger('click')
+    await buttonByText(wrapper, 'ai.quotaAdmin.users.changeAfLimit')!.trigger('click')
     await flushPromises()
     expect(wrapper.find('.el-dialog-stub').exists()).toBe(true)
 
@@ -479,7 +478,7 @@ describe('额度管理页', () => {
 
     expect(called({ method: 'put', url: '/ai/quota/u1' })).toBe(true)
     const putCall = axiosMock.mock.calls.find(([call]) => call.method === 'put')![0]
-    expect(putCall.data).toEqual({ kind: 'chat', limit_count: 2000 })
+    expect(putCall.data).toEqual({ kind: 'af', limit_count: 2000 })
     expect(elMessageSuccessSpy).toHaveBeenCalledWith('ai.quotaAdmin.savedNotice')
 
     wrapper.unmount()
@@ -488,13 +487,13 @@ describe('额度管理页', () => {
   it('清零用量二次确认后走 POST reset', async () => {
     const wrapper = await mountPage()
 
-    await buttonByText(wrapper, 'ai.quotaAdmin.users.resetOcr')!.trigger('click')
+    await buttonByText(wrapper, 'ai.quotaAdmin.users.resetAf')!.trigger('click')
     await flushPromises()
 
     expect(elMessageBoxConfirmSpy).toHaveBeenCalled()
     expect(called({ method: 'post', url: '/ai/quota/u1/reset' })).toBe(true)
     const resetCall = axiosMock.mock.calls.find(([call]) => call.url === '/ai/quota/u1/reset')![0]
-    expect(resetCall.data).toEqual({ kind: 'ocr' })
+    expect(resetCall.data).toEqual({ kind: 'af' })
 
     wrapper.unmount()
   })
@@ -503,7 +502,7 @@ describe('额度管理页', () => {
     elMessageBoxConfirmSpy.mockRejectedValue(new Error('cancel'))
     const wrapper = await mountPage()
 
-    await buttonByText(wrapper, 'ai.quotaAdmin.users.resetChat')!.trigger('click')
+    await buttonByText(wrapper, 'ai.quotaAdmin.users.resetAf')!.trigger('click')
     await flushPromises()
 
     expect(called({ url: '/ai/quota/u1/reset' })).toBe(false)

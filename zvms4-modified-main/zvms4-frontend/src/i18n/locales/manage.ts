@@ -423,13 +423,9 @@ export const zhCN = {
       }
     },
     quotas: {
-      chat: {
-        label: 'LLM 额度',
-        hint: '每月对话额度，每 1000 token = 1 单位'
-      },
-      ocr: {
-        label: 'OCR 次数/月',
-        hint: '每月可发起的文字识别次数'
+      af: {
+        label: 'AF 额度',
+        hint: '每月统一额度：对话与 OCR 记在同一个池子'
       },
       schedule: {
         label: 'AI 定时任务条数',

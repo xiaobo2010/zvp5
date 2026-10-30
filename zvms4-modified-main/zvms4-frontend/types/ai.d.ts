@@ -6,7 +6,18 @@ export type AiKeyScope = 'personal' | 'shared'
 
 export type AiOcrEngineKind = 'tencent' | 'aliyun' | 'baidu' | 'rapidocr' | 'groq' | 'zhipu'
 
-export type AiQuotaKind = 'ocr' | 'chat'
+/**
+ * 用户侧额度 kind：V051 起只剩 AF 一个池（对话与 OCR 共用）。
+ */
+export type AiQuotaKind = 'af'
+
+/**
+ * 重置申请的「消耗类型」口径。
+ *
+ * 后端申请接口仍收 chat / ocr，用来区分这次是哪类消耗；两者最终落到同一个
+ * AF 池，所以它不是额度 kind，别拿它当池子用。
+ */
+export type AiQuotaRequestKind = 'chat' | 'ocr'
 
 export type AiLogCapability = 'ocr' | 'chat'
 
@@ -250,8 +261,8 @@ export interface AiQuotaEntry {
 }
 
 export interface AiQuotaSnapshot {
-  ocr: AiQuotaEntry
-  chat: AiQuotaEntry
+  /** 唯一额度池：对话与 OCR 都记在它上面。 */
+  af: AiQuotaEntry
 }
 
 export interface AiQuotaMutation {
@@ -315,7 +326,7 @@ export interface AiHealthData {
   /** 供应商 → 熔断剩余秒数。 */
   cooldown_seconds: Record<string, number>
   models: string[]
-  quota_defaults: { ocr: number; chat: number }
+  quota_defaults: { af: number }
   credentials: {
     personal: number
     shared: number
@@ -927,8 +938,8 @@ export interface AiScheduledRunNowResult {
    契约：admin-only，202 返回 run_id 与场景会话 oid，轮询复用 GET /ai/runs/{run_id}。
    --------------------------------------------------------------------------- */
 
-/** 支持的场景：终端辅助、文件编辑辅助与只读的义工分析。 */
-export type AiSceneName = 'terminal' | 'file_edit' | 'volunteer'
+/** 支持的场景：终端辅助、文件编辑辅助、义工分析与活动分析。 */
+export type AiSceneName = 'terminal' | 'file_edit' | 'volunteer' | 'activity'
 
 /** 场景提交的受理结果（202）。场景会话不出现在普通会话列表。 */
 export interface AiSceneRunSubmitResult {
