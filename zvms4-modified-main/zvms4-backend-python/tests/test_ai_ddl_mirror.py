@@ -1311,11 +1311,16 @@ def test_v051_merges_the_source_rows_into_one_af_row() -> None:
         < text.index("ADD CONSTRAINT ck_ai_quota_kind")
     )
 
-    # 上限：chat 行优先，没有 chat 行才用 ocr 行。
-    assert "AND kind = 'chat'" in text
-    assert "AND kind = 'ocr'" in text
-    # 已用量：chat + ocr × AI_OCR_AF_COST(=1)。
-    assert "NVL(SUM(CASE WHEN kind = 'chat' THEN used ELSE used * 1 END), 0)" in text
+    # 上限：chat 行优先，没有 chat 行才用 ocr 行，都没有则 0（NVL 只吃两参，
+    # 三参兜底必须用 COALESCE——写成 NVL 会 ORA-00909）。
+    assert "COALESCE(MAX(CASE WHEN kind = 'chat' THEN limit_count END)," in text
+    assert "MAX(CASE WHEN kind = 'ocr' THEN limit_count END)," in text
+    # 已用量：chat + ocr × AI_OCR_AF_COST(=1)，set-based 归并直接收 SUM。
+    assert "SUM(used) AS used_sum" in text
+    # 重跑 no-op：已有 af 行的 (user, period) 不再重复插入。
+    assert "AND a.kind = 'af'" in text
+    # 生产实测：同事务对同一对象混用并行/串行修改会 ORA-12839，归并段前先关并行 DML。
+    assert "ALTER SESSION DISABLE PARALLEL DML" in text
     # oid 必须满足 ck_ai_quota_oid（24 位小写 hex）。
     assert "SUBSTR(LOWER(RAWTOHEX(SYS_GUID())), 1, 24)" in text
     # 源行在归并后删除：这既是「只留一个池」的落点，也是重跑 no-op 的前提。
