@@ -18,6 +18,10 @@
 回了 usage，则 token 列与 UNITS 都来自 usage。不要用 0 代替 NULL：0 是一个真实
 的 token 数，会把「不知道」伪装成观测值。
 
+估算的**完成侧字符数**只数解析出来的正文（``delta.content`` +
+``delta.reasoning_content``），不数 SSE 原始字节：帧壳（``data: ``、``choices``、
+``delta`` 这些固定开销）每块几十字节，按字节估会把额度放大一到两个数量级。
+
 缓存列（``cache_read_tokens`` / ``cache_write_tokens``）沿用同一条 NULL 语义：
 NULL = 上游没报缓存用量（或这个上游压根没有缓存计费），不是「0 个缓存 token」。
 同一行的 ``prompt_tokens`` **已经包含**命中部分（OpenAI 与 DeepSeek 都是这个口径），
@@ -159,7 +163,7 @@ def has_tokens(fields: dict[str, int | None]) -> bool:
     只认 ``_CORE_TOKEN_KEYS``，缓存列不参与。理由：调用方用这个判断决定「token
     列落值还是留 NULL、units 走实测还是估算」。若一帧只带
     ``prompt_tokens_details.cached_tokens`` 而三个核心列全空，把它算成「拿到
-    usage」会让 units 从「按字符估算」退化成 ``units_from_total_tokens(None)`` 的
+    usage」会让 units 从「按字符估算」退化成 ``af_units(None, rate)`` 的
     恒定 1，额度被系统性低估；同时该行出现「有 token 值但 units 是估算值」的
     混合态，读侧的不变式就失效了。
     """
@@ -199,16 +203,6 @@ def af_units(total_tokens: int | None, rate: float = 1.0) -> int:
     """
     total = max(0, int(total_tokens or 0))
     return max(1, math.ceil(round(total / 1000 * _clean_rate(rate), 9)))
-
-
-def units_from_total_tokens(total_tokens: int | None) -> int:
-    """**legacy 别名**：等价于 ``af_units(total_tokens, 1.0)``。
-
-    ``UNITS`` 列的语义自本版起统一为 AF（见 :func:`af_units`），这个函数保留是
-    为了不打断既有调用点与历史文档；新代码请直接用 :func:`af_units` 并显式传
-    模型倍率，否则贵模型会被按基准价计费。
-    """
-    return af_units(total_tokens, 1.0)
 
 
 def estimate_tokens_from_chars(prompt_chars: int, completion_chars: int) -> int:
@@ -255,8 +249,8 @@ def prompt_chars(payload: dict[str, Any] | Any) -> int:
         return 0
 
 
-def _frame_usage(frame: str) -> dict[str, int | None] | None:
-    """从一帧 SSE 的 ``data:`` 载荷里取 usage；没有就返回 None。"""
+def _frame_payload(frame: str) -> dict[str, Any] | None:
+    """一帧 SSE 的 ``data:`` 载荷 → JSON 对象；不是数据帧/解析失败就 ``None``。"""
     data = frame.strip()
     if not data.startswith("data:"):
         return None
@@ -267,10 +261,28 @@ def _frame_usage(frame: str) -> dict[str, int | None] | None:
         payload = json.loads(data)
     except ValueError:
         return None
-    if not isinstance(payload, dict):
-        return None
-    fields = token_fields(payload.get("usage"))
-    return fields if has_tokens(fields) else None
+    return payload if isinstance(payload, dict) else None
+
+
+def _delta_chars(payload: dict[str, Any]) -> int:
+    """一帧载荷里的**正文**字符数（``delta.content`` + ``delta.reasoning_content``）。
+
+    这就是估算口径唯一该数的东西：SSE 帧壳（``data: {"choices":[{"delta":{...}}]}``
+    的固定开销）每个 chunk 几十字节，按原始字节估 token 会把额度放大一到两个数量级。
+    """
+    choices = payload.get("choices")
+    if not isinstance(choices, list) or not choices:
+        return 0
+    first = choices[0] if isinstance(choices[0], dict) else {}
+    delta = first.get("delta")
+    if not isinstance(delta, dict):
+        return 0
+    total = 0
+    for name in ("content", "reasoning_content"):
+        value = delta.get(name)
+        if isinstance(value, str):
+            total += len(value)
+    return total
 
 
 class StreamUsageTracker:
@@ -281,7 +293,9 @@ class StreamUsageTracker:
     切，处理完就丢，缓冲区只保留「还没闭合的那一帧」。
 
     一帧可能被 TCP 切成多段、也可能多帧挤在一段里——这与前端
-    ``parseSseChunk`` 面对的是同一个问题，但后端只需要 usage，不需要内容。
+    ``parseSseChunk`` 面对的是同一个问题。解析出来的东西有两样：``usage``
+    （计费实测值）与**正文字符数**（没 usage 时的估算口径，见
+    :attr:`content_chars`）。两者共用同一次 ``json.loads``，不再各自切帧。
 
     usage 帧语义上只会出现一次（OpenAI 兼容面的最后一帧，``choices`` 为空、
     ``usage`` 有值）；后到的覆盖先到的，是为了容忍「上游逐帧都带累计 usage」的
@@ -290,6 +304,7 @@ class StreamUsageTracker:
 
     def __init__(self) -> None:
         self._buffer = b""
+        self._content_chars = 0
         self._fields: dict[str, int | None] = {
             "prompt_tokens": None,
             "completion_tokens": None,
@@ -322,6 +337,14 @@ class StreamUsageTracker:
     def captured(self) -> bool:
         """是否拿到过 usage（决定 token 列落值还是留 NULL）。"""
         return has_tokens(self._fields)
+
+    @property
+    def content_chars(self) -> int:
+        """流里已解析出的**正文**字符数（``delta.content`` + 思考链）。
+
+        估算 units 只看这个数，不看上游吐了多少字节：帧壳不是回答。
+        """
+        return self._content_chars
 
     def feed(self, chunk: bytes) -> None:
         """喂一段上游字节；只有完整的帧会被解析。"""
@@ -364,9 +387,14 @@ class StreamUsageTracker:
         for line in text.replace("\r\n", "\n").split("\n"):
             if not line.startswith("data:"):
                 continue
-            found = _frame_usage(line)
-            if found is not None:
-                self._fields = found
+            payload = _frame_payload(line)
+            if payload is None:
+                continue
+            # 一帧只解析一次：usage 与正文字符数走同一个 json.loads。
+            fields = token_fields(payload.get("usage"))
+            if has_tokens(fields):
+                self._fields = fields
+            self._content_chars += _delta_chars(payload)
 
 
 __all__ = [
@@ -380,5 +408,4 @@ __all__ = [
     "has_tokens",
     "prompt_chars",
     "token_fields",
-    "units_from_total_tokens",
 ]

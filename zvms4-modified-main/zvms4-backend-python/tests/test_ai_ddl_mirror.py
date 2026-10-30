@@ -39,6 +39,7 @@ PROPOSAL_FILE = "V034__agent_proposal_payload.sql"
 CONTROL_FILE = "V046__agent_control_and_audit.sql"
 SCENE_FILE = "V048__scene_conversations.sql"
 MODELS_FILE = "V050__ai_models.sql"
+UNIFY_AF_FILE = "V051__unify_af_quota.sql"
 
 # V046 给两张老表补的列。V033 / V035 是历史事实（建表时没有这些），后续迁移
 # 只做增量，所以比较那两份文件的形状时要把这些列摘掉。
@@ -117,10 +118,17 @@ CREDENTIAL_INDEXES = {
     ("ai_credentials", False, ("scope", "enabled")),
 }
 
-# V024 建 ai_quota 时 KIND 是枚举，V026 把它放宽成前缀式（'ocr' / 'chat' /
-# 'ocr_<engine>'）。两个表达式都写死在这里：它们是这次迁移的实质内容。
+# ai_quota.kind 的 CHECK 有三代，全部写死在这里（迁移是历史事实）：
+#   V024 枚举（ocr / chat） → V026 放宽成前缀式（+ ocr_*）→ V051 收敛成
+#   「af 或 ocr_*」（用户侧只剩统一 AF 池，站点级按引擎分开记）。
 LEGACY_QUOTA_KIND_CK = "kind in ('ocr','chat')"
-QUOTA_KIND_CK = "kind in ('ocr','chat') or kind like 'ocr\\_%' escape '\\'"
+V026_QUOTA_KIND_CK = (
+    "kind in ('ocr','chat') or kind like 'ocr\\_%' escape '\\'"
+)
+QUOTA_KIND_CK = "kind = 'af' or kind like 'ocr\\_%' escape '\\'"
+
+# V051 同时把 role_quotas.kind 收敛成 af / schedule（chat → af，ocr 删除）。
+ROLE_QUOTA_KIND_CK = "kind in ('af','schedule')"
 
 # V026 给 ai_credentials 补的两列与它们的 IS JSON 约束。
 HEADER_COLUMNS = ("headers_json", "api_path")
@@ -236,7 +244,7 @@ def test_ai_quota_migration_matches_models_and_v001() -> None:
     v001 = ddl_check.parse_v001()
 
     expected = modeled["tables"]["ai_quota"]
-    # V024 建表时 KIND 还是枚举；V026 才把它放宽成前缀式。
+    # V024 建表时 KIND 还是枚举；V026 放宽成前缀式、V051 再收敛成 af + ocr_*。
     before_widening = {
         "columns": expected["columns"],
         "pk": expected["pk"],
@@ -250,7 +258,8 @@ def test_ai_quota_migration_matches_models_and_v001() -> None:
     assert v001["tables"]["ai_quota"] == expected
     assert QUOTA_KIND_CK in expected["ck"]
 
-    # V026 重建的约束必须与 models/V001 的表达式逐字一致（含 ESCAPE）。
+    # V026 重建的约束必须与它那个年代的表达式逐字一致（含 ESCAPE）。
+    # 之后 V051 才把它收紧；历史迁移不追新目标态。
     extracted = ddl_check.extract_execute_immediate(_ocr_text())
     rebuilt = re.search(
         r"ALTER TABLE ai_quota ADD CONSTRAINT (\w+) CHECK \((.*)\)\s*$",
@@ -261,7 +270,7 @@ def test_ai_quota_migration_matches_models_and_v001() -> None:
     parsed = ddl_check._parse_constraint(
         f"constraint {rebuilt.group(1)} check ({rebuilt.group(2)})"
     )
-    assert parsed == ("ck", QUOTA_KIND_CK)
+    assert parsed == ("ck", V026_QUOTA_KIND_CK)
 
 
 def test_ai_call_logs_migration_matches_models_minus_key_scope() -> None:
@@ -1241,3 +1250,103 @@ def test_ai_models_migration_is_idempotent_on_existing_objects() -> None:
         assert code in text
     # 每个对象各自一段 BEGIN/EXCEPTION：一个对象存在不该连带跳过另一个。
     assert text.count("WHEN OTHERS THEN") == text.count("EXECUTE IMMEDIATE '")
+
+
+# ---------------------------------------------------------------------------
+# V051：统一 AF 额度（chat / ocr → af，站点级 ocr_<engine> 不动）
+# ---------------------------------------------------------------------------
+
+
+def _unify_text() -> str:
+    return _migration(UNIFY_AF_FILE).read_text(encoding="utf-8")
+
+
+def _added_checks(extracted: str, table: str) -> list[str]:
+    """按出现顺序取某表所有 ``ADD CONSTRAINT ... CHECK`` 的规范化表达式。"""
+    found = re.findall(
+        rf"ALTER TABLE {table} ADD CONSTRAINT (\w+) CHECK \((.*)\)\s*$",
+        extracted,
+        re.IGNORECASE | re.MULTILINE,
+    )
+    return [
+        ddl_check._parse_constraint(f"constraint {name} check ({expr})")[1]
+        for name, expr in found
+    ]
+
+
+def test_v051_converges_the_quota_kind_checks() -> None:
+    """V051 的终态必须与 models / V001 逐字一致：af + ocr_* 与 af/schedule。"""
+    extracted = ddl_check.extract_execute_immediate(_unify_text())
+
+    ai_quota_checks = _added_checks(extracted, "ai_quota")
+    # 先宽后紧：中间那条宽 CK 是「迁数据时 af 能写进去」的前提，不能省。
+    assert ai_quota_checks[0] == (
+        "kind in ('af','ocr','chat') or kind like 'ocr\\_%' escape '\\'"
+    )
+    assert ai_quota_checks[-1] == QUOTA_KIND_CK
+
+    role_quota_checks = _added_checks(extracted, "role_quotas")
+    assert role_quota_checks[-1] == ROLE_QUOTA_KIND_CK
+
+    modeled = ddl_check.parse_models()["tables"]
+    v001 = ddl_check.parse_v001()["tables"]
+    for parsed in (modeled, v001):
+        assert QUOTA_KIND_CK in parsed["ai_quota"]["ck"]
+        assert ROLE_QUOTA_KIND_CK in parsed["role_quotas"]["ck"]
+        # 历史 kind 不能再出现在任何一处的 CHECK 里（哪怕是「允许」）。
+        assert LEGACY_QUOTA_KIND_CK not in parsed["ai_quota"]["ck"]
+        assert "kind in ('chat','ocr','schedule')" not in parsed["role_quotas"]["ck"]
+
+
+def test_v051_merges_the_source_rows_into_one_af_row() -> None:
+    """归并口径要能一眼核对：used 相加、上限优先 chat、删源行、24 位 oid。"""
+    text = _unify_text()
+
+    # 备份段先落：没有它，「归并算错了」就是不可回滚的数据损坏。
+    assert "CREATE TABLE ai_quota_bak_v051 AS SELECT * FROM ai_quota" in text
+    # 备份必须在任何 ADD CONSTRAINT 之前（文件头还提到这四个字，所以比 ADD 而不是
+    # 比 DROP：注释里的回滚步骤不算执行顺序）。
+    assert (
+        text.index("CREATE TABLE ai_quota_bak_v051")
+        < text.index("ADD CONSTRAINT ck_ai_quota_kind")
+    )
+
+    # 上限：chat 行优先，没有 chat 行才用 ocr 行。
+    assert "AND kind = 'chat'" in text
+    assert "AND kind = 'ocr'" in text
+    # 已用量：chat + ocr × AI_OCR_AF_COST(=1)。
+    assert "NVL(SUM(CASE WHEN kind = 'chat' THEN used ELSE used * 1 END), 0)" in text
+    # oid 必须满足 ck_ai_quota_oid（24 位小写 hex）。
+    assert "SUBSTR(LOWER(RAWTOHEX(SYS_GUID())), 1, 24)" in text
+    # 源行在归并后删除：这既是「只留一个池」的落点，也是重跑 no-op 的前提。
+    assert "DELETE FROM ai_quota" in text
+    assert "kind IN ('chat','ocr')" in text
+
+
+def test_v051_converges_role_quotas_before_tightening_the_check() -> None:
+    """角色表必须「放宽 → 改数据 → 收紧」：先 UPDATE 会被旧 CK 拒掉（ORA-02290）。"""
+    text = _unify_text()
+    lowered = text.lower()
+
+    update_at = lowered.index("update role_quotas set kind = ''af''")
+    delete_at = lowered.index("delete from role_quotas where kind = ''ocr''")
+    widen_at = lowered.index(
+        "check (kind in (''af'',''chat'',''ocr'',''schedule''))"
+    )
+    tighten_at = lowered.index("check (kind in (''af'',''schedule''))")
+
+    assert widen_at < update_at < tighten_at
+    assert widen_at < delete_at < tighten_at
+
+
+def test_v051_is_idempotent() -> None:
+    """重跑不能炸，也不能把备份表覆盖成「迁移后的样子」。"""
+    text = _unify_text()
+
+    assert "EXECUTE IMMEDIATE" in text
+    # 表已存在 → -955；约束名已占用 → -2264；约束不存在 → -2443；表不存在 → -942。
+    for code in ("-955", "-2264", "-2443", "-942"):
+        assert code in text
+    # 备份段只吞 -955（重跑时保留第一次的原始快照）。
+    backup_block = text[text.index("CREATE TABLE ai_quota_bak_v051") - 200 :]
+    assert "IF SQLCODE != -955 THEN RAISE; END IF;" in backup_block[:600]

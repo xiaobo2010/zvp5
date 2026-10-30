@@ -200,10 +200,9 @@ def test_cache_only_usage_is_not_counted_as_reported_usage() -> None:
         (2500, 3),
     ],
 )
-def test_units_from_total_tokens_is_af_at_base_rate(total, units) -> None:
-    """legacy 别名 = ``af_units(total, 1.0)``：基准价下公式与改造前一致。"""
-    assert usage.units_from_total_tokens(total) == units
-    assert usage.af_units(total) == units
+def test_af_units_at_base_rate_is_the_pre_change_formula(total, units) -> None:
+    """基准价下与改造前一致：``max(1, ceil(total / 1000))``。"""
+    assert usage.af_units(total, 1.0) == units
 
 
 @pytest.mark.parametrize(
@@ -404,5 +403,51 @@ def test_end_to_end_units_match_the_formula() -> None:
     tracker.feed(USAGE_FRAME)
     tracker.close()
 
-    assert usage.units_from_total_tokens(tracker.total_tokens) == 1
+    assert usage.af_units(tracker.total_tokens, 1.0) == 1
     assert math.ceil(12 / 1000) == 1
+
+
+# ---------------------------------------------------------------------------
+# 完成侧字符数：只数正文，不数 SSE 帧壳
+# ---------------------------------------------------------------------------
+
+
+def test_tracker_counts_only_the_content_delta_chars() -> None:
+    """估算口径的正确来源：``delta.content`` 的字符数（帧壳不算）。"""
+    tracker = usage.StreamUsageTracker()
+    tracker.feed(DELTA_FRAME)  # content = "hi"
+    tracker.feed(
+        'data: {"choices":[{"delta":{"reasoning_content":"想一想"}}]}\n\n'.encode()
+    )
+    tracker.feed(DONE_FRAME)
+    tracker.close()
+
+    assert tracker.content_chars == 2 + 3
+
+
+def test_tracker_content_chars_ignores_frame_overhead() -> None:
+    """同样的正文，帧壳越大 ``content_chars`` 不变（按字节估会翻好几倍）。"""
+    fat = b'data: {"id":"x","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":null}]}\n\n'
+    lean = b'data: {"choices":[{"delta":{"content":"ok"}}]}\n\n'
+
+    fat_tracker = usage.StreamUsageTracker()
+    fat_tracker.feed(fat)
+    fat_tracker.close()
+    lean_tracker = usage.StreamUsageTracker()
+    lean_tracker.feed(lean)
+    lean_tracker.close()
+
+    assert fat_tracker.content_chars == lean_tracker.content_chars == 2
+    assert fat_tracker.content_chars < len(fat)
+
+
+def test_tracker_content_chars_tolerates_usage_and_done_frames() -> None:
+    """usage 帧 / ``[DONE]`` / 坏 JSON 都不贡献字符数。"""
+    tracker = usage.StreamUsageTracker()
+    tracker.feed(USAGE_FRAME)
+    tracker.feed(b"data: {not json}\n\n")
+    tracker.feed(b": keep-alive\n\n")
+    tracker.feed(DONE_FRAME)
+    tracker.close()
+
+    assert tracker.content_chars == 0

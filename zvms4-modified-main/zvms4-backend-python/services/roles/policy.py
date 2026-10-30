@@ -67,7 +67,9 @@ FEATURE_KEYS: tuple[str, ...] = (
 EDITABLE_ROLES: tuple[str, ...] = ("department", "secretary", "student")
 
 #: 角色级月额度的能力集合。与 ``ck_role_quotas_kind`` 完全一致。
-QUOTA_KINDS: tuple[str, ...] = ("chat", "ocr", "schedule")
+#: V051 起用户侧的 ``chat`` / ``ocr`` 归并成统一 AF 池 ``af``（一次 OCR 折
+#: ``AI_OCR_AF_COST`` AF），``schedule`` 是「能建几条定时任务」，与 AF 无关。
+QUOTA_KINDS: tuple[str, ...] = ("af", "schedule")
 
 #: 额度取数的角色优先级（第一个命中的角色说了算，不叠加、不取最大值）。
 QUOTA_ROLE_PRIORITY: tuple[str, ...] = EDITABLE_ROLES
@@ -90,17 +92,19 @@ DEFAULTS: dict[str, dict[str, Any]] = {
         "features": {
             key: key not in ADMIN_ONLY_FEATURE_KEYS for key in FEATURE_KEYS
         },
-        "quotas": {"chat": 200_000, "ocr": 100, "schedule": 1},
+        # af 取改造前 ``chat`` 的口径：OCR 现在也吃这个池子，原 ``ocr: 100``
+        # 的独立额度已无处可加（合并后 1 AF 就是「一次识别或 1k token 对话」）。
+        "quotas": {"af": 200_000, "schedule": 1},
     },
     "secretary": {
         "features": {
             key: key in ("activity.stats", "ai.ocr") for key in FEATURE_KEYS
         },
-        "quotas": {"chat": 0, "ocr": 100, "schedule": 0},
+        "quotas": {"af": 0, "schedule": 0},
     },
     "student": {
         "features": {key: False for key in FEATURE_KEYS},
-        "quotas": {"chat": 0, "ocr": 0, "schedule": 0},
+        "quotas": {"af": 0, "schedule": 0},
     },
 }
 
@@ -262,8 +266,9 @@ def monthly_limit(roles: Iterable[str] | None, kind: str) -> int | None:
 
     * ``admin`` → ``None``：调用方按「无限」处理（:func:`effective_policy` 会把它
       显式翻成 ``unlimited=True``）。
-    * ``kind`` 不在 :data:`QUOTA_KINDS` 里（例如站点级 ``ocr_tencent``）→ ``None``：
-      站点额度是平台出资的口径，与角色无关，调用方继续走自己的链路。
+    * ``kind`` 不在 :data:`QUOTA_KINDS` 里（例如站点级 ``ocr_tencent``，或 V051
+      之前的历史 kind ``chat`` / ``ocr``）→ ``None``：站点额度是平台出资的口径，
+      与角色无关，调用方继续走自己的链路。
     * 其余按 :data:`QUOTA_ROLE_PRIORITY` 取**第一个命中**的角色；没有任何角色
       命中时 ``None``（调用方回落全局默认）。
     """

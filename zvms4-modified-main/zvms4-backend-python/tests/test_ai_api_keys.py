@@ -725,4 +725,4 @@ def test_api_key_identity_carries_the_user_quota(repo, users, gateway, monkeypat
     )
 
     assert response.status_code == 200
-    assert consume.calls[0][0] == (OWNER, "chat", 1)
+    assert consume.calls[0][0] == (OWNER, "af", 1)

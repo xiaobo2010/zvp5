@@ -483,14 +483,14 @@ def test_department_with_the_feature_can_read_the_queue(api) -> None:
 def test_student_cannot_approve_even_with_a_pending_row(api) -> None:
     client, repo, quota_repo, audits, _users = api
     row = repo.seed(STUDENT_OID, "chat")
-    quota_repo.seed(STUDENT_OID, "chat", used=100, limit=100)
+    quota_repo.seed(STUDENT_OID, "af", used=100, limit=100)
     _as(client, STUDENT)
 
     response = client.post(f"{PREFIX}/requests/{row['_id']}/approve", json={})
 
     assert response.status_code == 403
     assert repo.rows[row["_id"]]["status"] == "pending"
-    assert quota_repo.rows[(STUDENT_OID, quota_service.period_now(), "chat")][
+    assert quota_repo.rows[(STUDENT_OID, quota_service.period_now(), "af")][
         "used"
     ] == 100
     assert audits == []
@@ -527,7 +527,7 @@ def test_non_admin_cannot_read_the_user_table(api) -> None:
 def test_approve_resets_used_and_marks_approved(api) -> None:
     client, repo, quota_repo, audits, _users = api
     row = repo.seed(STUDENT_OID, "chat")
-    quota_repo.seed(STUDENT_OID, "chat", used=100, limit=100)
+    quota_repo.seed(STUDENT_OID, "af", used=100, limit=100)
 
     body = client.post(f"{PREFIX}/requests/{row['_id']}/approve", json={}).json()
 
@@ -536,12 +536,13 @@ def test_approve_resets_used_and_marks_approved(api) -> None:
     assert data["request"]["decided_by"] == ADMIN_OID
     assert data["request"]["decided_at"] is not None
     # 走的是既有额度封装：reset_used 被调用，used 归零、上限保留。
+    # 申请口径仍是 ``chat``，但落到额度上是统一 AF 池（V051）。
     assert quota_repo.resets == [
-        (STUDENT_OID, quota_service.period_now(), "chat")
+        (STUDENT_OID, quota_service.period_now(), "af")
     ]
-    assert data["quota"]["chat"]["used"] == 0
-    assert data["quota"]["chat"]["limit"] == 100
-    assert quota_repo.rows[(STUDENT_OID, quota_service.period_now(), "chat")][
+    assert data["quota"]["af"]["used"] == 0
+    assert data["quota"]["af"]["limit"] == 100
+    assert quota_repo.rows[(STUDENT_OID, quota_service.period_now(), "af")][
         "used"
     ] == 0
     # 审批留痕：走专用 ltype，不再混进 system_settings_update（检索要能分开）。
@@ -555,24 +556,24 @@ def test_approve_resets_used_and_marks_approved(api) -> None:
 def test_approve_with_limit_sets_the_new_ceiling(api) -> None:
     client, repo, quota_repo, _audits, _users = api
     row = repo.seed(STUDENT_OID, "chat")
-    quota_repo.seed(STUDENT_OID, "chat", used=100, limit=100)
+    quota_repo.seed(STUDENT_OID, "af", used=100, limit=100)
 
     data = client.post(
         f"{PREFIX}/requests/{row['_id']}/approve", json={"limit": 500}
     ).json()["data"]
 
     assert quota_repo.limits == [
-        (STUDENT_OID, quota_service.period_now(), "chat", 500)
+        (STUDENT_OID, quota_service.period_now(), "af", 500)
     ]
-    assert data["quota"]["chat"]["limit"] == 500
+    assert data["quota"]["af"]["limit"] == 500
     # 默认 reset=true：设额不该把「重置」这件事吞掉。
-    assert data["quota"]["chat"]["used"] == 0
+    assert data["quota"]["af"]["used"] == 0
 
 
 def test_approve_without_reset_keeps_the_usage(api) -> None:
     client, repo, quota_repo, _audits, _users = api
     row = repo.seed(STUDENT_OID, "ocr")
-    quota_repo.seed(STUDENT_OID, "ocr", used=42, limit=100)
+    quota_repo.seed(STUDENT_OID, "af", used=42, limit=100)
 
     data = client.post(
         f"{PREFIX}/requests/{row['_id']}/approve",
@@ -580,8 +581,9 @@ def test_approve_without_reset_keeps_the_usage(api) -> None:
     ).json()["data"]
 
     assert quota_repo.resets == []
-    assert data["quota"]["ocr"]["used"] == 42
-    assert data["quota"]["ocr"]["limit"] == 200
+    # OCR 申请与对话申请共用同一个池：批的是 af。
+    assert data["quota"]["af"]["used"] == 42
+    assert data["quota"]["af"]["limit"] == 200
 
 
 def test_approve_uses_the_target_users_roles_for_the_snapshot(api) -> None:
@@ -593,8 +595,8 @@ def test_approve_uses_the_target_users_roles_for_the_snapshot(api) -> None:
         "data"
     ]
 
-    assert data["quota"]["chat"]["source"] == "role_default"
-    assert data["quota"]["chat"]["limit"] == 200_000  # department 的默认 chat
+    assert data["quota"]["af"]["source"] == "role_default"
+    assert data["quota"]["af"]["limit"] == 200_000  # department 的默认 af
 
 
 def test_approving_twice_is_a_conflict(api) -> None:
@@ -620,7 +622,7 @@ def test_approving_a_missing_request_is_404(api) -> None:
 def test_approve_rejects_a_negative_limit(api) -> None:
     client, repo, quota_repo, _audits, _users = api
     row = repo.seed(STUDENT_OID, "chat")
-    quota_repo.seed(STUDENT_OID, "chat", used=10, limit=10)
+    quota_repo.seed(STUDENT_OID, "af", used=10, limit=10)
 
     response = client.post(
         f"{PREFIX}/requests/{row['_id']}/approve", json={"limit": -1}
@@ -649,7 +651,7 @@ def test_approve_rejects_a_malformed_oid(api) -> None:
 def test_reject_marks_rejected_and_leaves_the_quota_alone(api) -> None:
     client, repo, quota_repo, audits, _users = api
     row = repo.seed(STUDENT_OID, "chat")
-    quota_repo.seed(STUDENT_OID, "chat", used=100, limit=100)
+    quota_repo.seed(STUDENT_OID, "af", used=100, limit=100)
 
     data = client.post(
         f"{PREFIX}/requests/{row['_id']}/reject", json={"note": "本月预算已用尽"}
@@ -661,7 +663,7 @@ def test_reject_marks_rejected_and_leaves_the_quota_alone(api) -> None:
     # 拒绝就是拒绝：不清用量、不改上限。
     assert quota_repo.resets == []
     assert quota_repo.limits == []
-    assert quota_repo.rows[(STUDENT_OID, quota_service.period_now(), "chat")][
+    assert quota_repo.rows[(STUDENT_OID, quota_service.period_now(), "af")][
         "used"
     ] == 100
     assert audits[-1]["action"] == "ai_quota_request_rejected"
@@ -739,8 +741,8 @@ def test_approval_queue_rejects_an_unknown_status(api) -> None:
 
 def test_user_table_carries_quota_and_pending_flag(api) -> None:
     client, repo, quota_repo, _audits, _users = api
-    quota_repo.seed(STUDENT_OID, "chat", used=7, limit=10)
-    quota_repo.seed(STUDENT_OID, "ocr", used=0, limit=0)
+    # 只有一条 af 行：chat / ocr 两列都读这个池子（形状不变）。
+    quota_repo.seed(STUDENT_OID, "af", used=7, limit=10)
     repo.seed(STUDENT_OID, "chat")
 
     data = client.get(f"{PREFIX}/users").json()["data"]

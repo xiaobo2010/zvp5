@@ -35,10 +35,11 @@ AI_ALLOWED_ROLES = ("admin", "department")
 # 每用户每分钟调用上限（滑动窗口）；0 或缺省 kind 表示不限。
 AI_RATE_LIMIT_PER_MINUTE = {"ocr": 10, "chat": 20}
 AI_RATE_LIMIT_WINDOW_SECONDS = 60
-# 按角色的月额度；未列出的角色回退 AI_DEFAULT_*。个人 key 不占额度。
+# 按角色的月额度（统一 AF 池：OCR 与对话共用）；未列出的角色回退
+# AI_DEFAULT_AF_MONTHLY_UNITS。个人 key 不占额度。
 AI_ROLE_QUOTA = {
-    "admin": {"ocr": 500, "chat": 1000000},
-    "department": {"ocr": 100, "chat": 200000},
+    "admin": {"af": 1000000},
+    "department": {"af": 200000},
 }
 # AI 调用日志保留天数（tasks/retention.py 读取，缺省 90）。
 AI_CALL_LOGS_RETENTION_DAYS = 90

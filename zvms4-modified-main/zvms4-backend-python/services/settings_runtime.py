@@ -168,7 +168,8 @@ def _validate_role_quota(value: Any) -> dict[str, dict[str, int]]:
             raise ValueError(f"角色 {role} 的额度必须是对象")
         entry: dict[str, int] = {}
         for kind, limit in limits.items():
-            if kind not in ai_config.RATE_LIMIT_KINDS:
+            # 额度 kind 与频控 kind 不是同一套：用户侧额度只有 ``af``（V051）。
+            if kind not in ai_config.QUOTA_KINDS:
                 raise ValueError(f"角色 {role} 出现未知能力 {kind!r}")
             entry[str(kind)] = _require_int(
                 limit, 0, _ROLE_QUOTA_MAX, f"角色 {role} 的 {kind} 额度"
@@ -295,7 +296,7 @@ def _build_registry() -> None:
             },
             group=GROUP_AI,
             label="按角色月额度",
-            description="角色 -> 每月可用的 ocr / chat 额度；未列出的角色走默认额度",
+            description="角色 -> 每月可用的 AF 额度（OCR 与对话共用）；未列出的角色走默认额度",
             coerce=_validate_role_quota,
         ),
         SettingSpec(

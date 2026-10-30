@@ -1200,9 +1200,10 @@ Index("ix_ai_call_logs_request_id", ai_call_logs.c.request_id)
 #   `UPDATE ... WHERE used + :amount <= limit_count`：并发由数据库串行化，
 #   没有读后写、不会超卖。PERIOD 是 CHAR(6) 的 YYYYMM —— 月份是计费口径，
 #   不是时间点，用 CHAR 避免「按哪个时区截断月初」的隐式规则。
-#   KIND 是前缀式：'ocr' / 'chat' / 'ocr_<engine>'。OCR 引擎类型会持续增加，
-#   枚举式 CHECK 会让每加一个引擎都要改 DDL；前缀让「某引擎的月度额度」直接
-#   是合法 kind。ESCAPE '\' 必须带上：LIKE 的 '_' 是单字符通配符。
+#   KIND 自 V051 起用户侧只有 'af'（OCR 与对话共用一个 AF 池）；站点级
+#   'ocr_<engine>' 仍按引擎分开记（平台出资，与用户池正交）。OCR 引擎类型会
+#   持续增加，枚举式 CHECK 会让每加一个引擎都要改 DDL；前缀让「某引擎的月度
+#   额度」直接是合法 kind。ESCAPE '\' 必须带上：LIKE 的 '_' 是单字符通配符。
 # ---------------------------------------------------------------------------
 
 ai_quota = Table(
@@ -1218,7 +1219,7 @@ ai_quota = Table(
     _oid_check("ai_quota"),
     CheckConstraint("REGEXP_LIKE(period,'^[0-9]{6}$')", name="ck_ai_quota_period"),
     CheckConstraint(
-        "kind IN ('ocr','chat') OR kind LIKE 'ocr\\_%' ESCAPE '\\'",
+        "kind = 'af' OR kind LIKE 'ocr\\_%' ESCAPE '\\'",
         name="ck_ai_quota_kind",
     ),
     CheckConstraint("used >= 0", name="ck_ai_quota_used"),
@@ -1824,8 +1825,9 @@ role_features = Table(
 
 # ---------------------------------------------------------------------------
 # ROLE_QUOTAS  ← new (角色 -> 每月额度; V043)
-#   KIND 只有 chat / ocr / schedule 三种「角色级」额度；站点级 ``ocr_<engine>``
-#   不在这里（那是平台出资的口径，与角色无关，见 services/ai/quota.py）。
+#   KIND 只有 af / schedule 两种「角色级」额度（V051 把 chat / ocr 归并成统一
+#   AF 池）；站点级 ``ocr_<engine>`` 不在这里（那是平台出资的口径，与角色无关，
+#   见 services/ai/quota.py）。
 #   缺行 = 按代码默认；MONTHLY_LIMIT 可空但不为空 —— 0 是「一个都不给」的合法
 #   结论，NULL 只服务人工补数据时的「没填」。
 # ---------------------------------------------------------------------------
@@ -1839,7 +1841,7 @@ role_quotas = Table(
     Column("updated_at", oracle.TIMESTAMP, nullable=True),
     Column("updated_by", oracle.CHAR(24), nullable=True),
     CheckConstraint(
-        "kind IN ('chat','ocr','schedule')", name="ck_role_quotas_kind"
+        "kind IN ('af','schedule')", name="ck_role_quotas_kind"
     ),
     CheckConstraint("monthly_limit >= 0", name="ck_role_quotas_limit"),
 )

@@ -21,7 +21,14 @@ from .config import (
 )
 from .ocr_engines import ENGINE_KINDS
 
-KINDS = ("ocr", "chat")
+KINDS = ("af",)
+"""用户侧额度 kind（封闭集合，与 ``ck_ai_quota_kind`` 一致）。
+
+V051 起 OCR 与对话共用一个 AF 池：一次识别折 ``AI_OCR_AF_COST`` 点 AF，一次
+对话按 token × 倍率折 AF。历史 kind ``chat`` / ``ocr`` 只在迁移的归并段里出现，
+代码不再读写它们。站点级 ``ocr_<engine>`` 是**另一条链路**（平台出资），见
+:data:`SITE_KINDS`。
+"""
 
 
 class QuotaError(Exception):
@@ -37,7 +44,7 @@ class QuotaError(Exception):
 def check_kind(kind: object) -> str:
     """能力名是封闭集合（与 ``ck_ai_quota_kind`` 一致），别把拼错的 key 写进库。
 
-    除 ``ocr`` / ``chat`` 两个大类外，**还放行站点级 ``ocr_<engine>``**：管理端要能
+    用户侧只有一个 kind ``af``；此外**还放行站点级 ``ocr_<engine>``**：管理端要能
     给单条引擎设站点月额度（``PUT /api/ai/quota/{oid}`` → ``set_user_limit``），而
     ``site_consume`` 内部本来就拿这些 kind 记账。不放行的话，管理员只能靠
     ``settings.AI_SITE_QUOTA`` 重启生效，管理接口等于对站点额度失效。
@@ -69,16 +76,18 @@ def _default_limit(kind: str) -> int:
 
     站点级 ``ocr_*`` 走**站点口径**（``settings.AI_SITE_QUOTA`` → 兜底
     ``AI_DEFAULT_SITE_OCR_MONTHLY_UNITS``），**不**回落到用户的
-    ``DEFAULT_QUOTA["ocr"]``：后者是「一个用户每月免费几次」，前者是「平台愿意
-    为全站垫多少上游调用」，两者差一个数量级。回落会让几十个用户一天打满站点
+    ``DEFAULT_QUOTA["af"]``：后者是「一个用户每月能用多少 AF」，前者是「平台愿意
+    为全站垫多少上游调用」，两者不是同一个维度。回落会让几十个用户一天打满站点
     额度，之后全站 OCR 一起 503（2026-10-24 上线实测 limit=100 就是这个坑）。
+
+    用户侧只有 ``af`` 一个 kind，没有「按前缀回落到大类」这回事了（V051 之前的
+    ``ocr`` / ``chat`` 已归并）。
     """
     if kind in SITE_KINDS:
         override = site_quota().get(kind)
         return override if override is not None else default_site_ocr_limit()
-    base = kind.split("_", 1)[0] if kind not in DEFAULT_QUOTA else kind
     try:
-        return int(DEFAULT_QUOTA.get(kind, DEFAULT_QUOTA.get(base, 0)))
+        return int(DEFAULT_QUOTA.get(kind, 0))
     except (TypeError, ValueError):
         return 0
 
@@ -86,16 +95,16 @@ def _default_limit(kind: str) -> int:
 def _role_default(roles: list[str] | None, kind: str) -> int | None:
     """按角色表取默认月额度；没有任何角色命中时回 ``None``（调用方再回退全局）。
 
-    ``ocr_*`` 站点级 kind 与大类一样按 ``base`` 查找（站点额度没有角色维度，
-    最终会落到 :func:`_default_limit` 的站点口径）。
-
     顺序：**角色策略表（``ROLE_QUOTAS``, V043）** → 运行期 ``ai.role_quota`` /
     ``settings.AI_ROLE_QUOTA`` / ``config.AI_ROLE_QUOTA`` → 全局默认。新表排在
     前面是因为它才是管理员在「角色策略」页真正编辑的那一份；后两者保留是为了
     「策略表没覆盖这个角色」时行为与改造前一致（也保住既有的配置回退路径）。
+
+    站点级 ``ocr_*`` 在这里天然落空：两个角色表都只认用户侧 kind（``af`` /
+    ``schedule``），所以最终仍走 :func:`_default_limit` 的站点口径——站点额度没有
+    角色维度，它是平台出资的。
     """
-    base = kind.split("_", 1)[0] if kind not in DEFAULT_QUOTA else kind
-    hit = role_policy.monthly_limit(roles, base)
+    hit = role_policy.monthly_limit(roles, kind)
     if hit is not None:
         return hit
 
@@ -104,7 +113,7 @@ def _role_default(roles: list[str] | None, kind: str) -> int | None:
     for role in ROLE_QUOTA_PRIORITY:
         if role not in role_set:
             continue
-        value = (table.get(role) or {}).get(base)
+        value = (table.get(role) or {}).get(kind)
         if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
             return value
     return None
@@ -212,17 +221,20 @@ async def consume(
 
 
 async def snapshot(user_oid: str, *, roles: list[str] | None = None) -> dict:
-    """两种能力的月度快照。
+    """用户侧额度的月度快照（V051 起只有一条 ``af``）。
 
     ``roles`` 决定「没有额度行时」展示的默认上限：自助视图传当前登录人的
     ``per``，管理端视图传**目标用户**的真实角色（``ai_router.user_quota`` 先查
     再传）。不传就按全局 ``AI_DEFAULT_*`` 算——数值与真实生效值可能不同（admin
-    的 chat 是 1_000_000 而不是 200_000），所以每条都带 ``source`` 标明来路：
+    的 af 是 1_000_000 而不是 200_000），所以每条都带 ``source`` 标明来路：
     ``explicit``（库里有行）/ ``role_default``（角色表算出）/ ``global_default``。
+
+    形状保持 ``{kind: {period, used, limit, source}}``：前端与管理页按 kind 取
+    字段，收敛后只是 kind 从两个变成一个。
     """
     result: dict = {}
     period = period_now()
-    for kind in ("ocr", "chat"):
+    for kind in KINDS:
         row = await backends.get_ai_quota_repo().get(user_oid, period, kind)
         used, limit, source = _row_state(row, kind, roles)
         result[kind] = {
@@ -240,7 +252,7 @@ def _entry(period: str, kind: str, used: int, limit: int) -> dict:
 
 
 async def admin_snapshot(user_oid: str, *, roles: list[str] | None = None) -> dict:
-    """admin 看别人：与自助视图同形（两种能力各一条），多出的 ``source`` 说明
+    """admin 看别人：与自助视图同形（``af`` 一条），多出的 ``source`` 说明
     该条上限是库里显式设置的值还是按角色/全局默认算出来的。
 
     ``roles`` 必须是**目标用户**的角色（不是管理员的）；调用方查不到用户时传
@@ -297,9 +309,10 @@ async def reset_used(user_oid: str, kind: object) -> dict:
 # 站点级（平台出资）OCR 额度
 # ---------------------------------------------------------------------------
 
-# ``ocr_`` 是 V026 放宽后的 kind 前缀：``ck_ai_quota_kind`` 允许 ``ocr`` /
-# ``chat`` / ``ocr_*``。站点级额度按**引擎**分开计，走的是 ``ocr_<engine_kind>``
-# 这一族，与用户自己的 ``ocr`` 额度互不挤占。
+# ``ocr_`` 是 V026 放宽后的 kind 前缀：``ck_ai_quota_kind`` 现在是
+# ``af`` 或 ``ocr_*``（V051 起用户侧只剩 ``af``，裸 ``ocr`` 已归并）。站点级额度
+# 按**引擎**分开计，走的是 ``ocr_<engine_kind>`` 这一族，与用户自己的 ``af``
+# 额度互不挤占。
 SITE_KIND_PREFIX = "ocr_"
 
 # 白名单：只有注册表里的引擎能成为站点级 kind。收成常量而不是现算，是为了让

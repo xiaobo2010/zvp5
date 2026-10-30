@@ -89,7 +89,9 @@ VOLUNTEER_SCAN_MAX = 30
 VOLUNTEER_ITEMS_PER_BUCKET = 10
 
 QUOTA_LIMIT_MAX = 100_000
-QUOTA_KINDS = ("chat", "ocr")
+# 用户侧额度只有一个 AF 池（V051）：agent 的 ai_quota_set 只认 ``af``，
+# 站点级 ``ocr_<engine>`` 是平台出资的另一条链路，不在这里设。
+QUOTA_KINDS = ("af",)
 
 NOTIFY_RECIPIENTS_MAX = 200
 NOTIFY_TITLE_MAX = 200  # NOTIFICATIONS.TITLE 是 VARCHAR2(200)
@@ -369,11 +371,11 @@ async def _impl_ai_gateway_status(
         snapshot = await quota.admin_snapshot(
             target_oid, roles=list(target.get("roles") or [])
         )
+        # V051 起用户侧只有一个 AF 池：不再分 chat / ocr 两列（都读同一行）。
         quota_view["user"] = {
             "user_oid": target_oid,
             "roles": list(target.get("roles") or []),
-            "chat": snapshot.get("chat"),
-            "ocr": snapshot.get("ocr"),
+            "af": snapshot.get("af"),
         }
 
     by_status = list(stats.get("by_status") or [])
@@ -1224,7 +1226,7 @@ _register(
     ToolDef(
         name="ai_quota_set",
         description=(
-            "设置某用户某能力（chat/ocr）的月度额度上限，不清已用量。"
+            "设置某用户统一 AF 池（af）的月度额度上限，不清已用量。"
             "写操作：先生成提案，另一位管理员确认后执行。"
         ),
         kind=WRITE,
@@ -1234,7 +1236,7 @@ _register(
                 "kind": {
                     **_STR,
                     "enum": list(QUOTA_KINDS),
-                    "description": "能力（chat/ocr）",
+                    "description": "能力（af：OCR 与对话共用的 AF 池）",
                 },
                 "limit_count": {
                     **_INT,
