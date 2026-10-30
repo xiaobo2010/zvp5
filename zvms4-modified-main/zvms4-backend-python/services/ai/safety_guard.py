@@ -1,14 +1,20 @@
-"""LLM 安全认证：用一次严格判定的模型调用识别「无关且破坏性」的请求。
+"""LLM 安全认证：用一次严格判定的模型调用识别「与平台职能无关」的请求。
+
+**判定口径是白名单**：zvms4 是学校的志愿服务（义工）管理平台，ZVAgent 只是平台
+内部的运维助手，仅服务义工管理、活动组织、班级学业事务、设备与系统运维、账号
+权限。与这些功能无关的请求一律拒绝——用户拍板「拦截所有和平台运维和义工管理
+无关的内容」，不相关即拒绝并按首档封号处理。``related`` 因此是唯一的放行条件，
+``destructive`` 只进证据，不参与判定。
 
 **为什么这一层只对 department 生效**：学生会的日常就是平台管理与义工管理，
-关键词规则挡不住「换个说法」的破坏性请求（删库、批量封号、导全站数据）。
+关键词规则挡不住「换个说法」的越界请求（删库、批量封号、导全站数据、跑私活）。
 admin 天然旁路（``is_admin`` 直接跳过审核），学生没有；给全体学生加一次上游
-调用既贵又慢，收益还不明确。所以这是一道**按角色开启**的灰区闸门，不是全站
+调用既贵又慢，收益还不明确。所以这是一道**按角色开启**的判定闸门，不是全站
 门禁。
 
 **为什么 fail-closed**：安全闸自己跑不起来（无凭据 / 超时 / 上游 5xx / 坏
 JSON）时**拒绝本次回答**，但**不记违规、不封号**——没有判定结论就没有证据。
-这类结论用 ``ScreenResult.unavailable`` 与「真的判定为破坏性请求」区分开：
+这类结论用 ``ScreenResult.unavailable`` 与「真的判定为无关请求」区分开：
 对外同一个错误码，对内只有后者能进违规链路。空文本例外（无内容可审，放行）。
 
 **为什么只判一次、温度 0、限 200 token**：这一步在用户等待的同步路径上
@@ -45,12 +51,18 @@ REJECTED_CODE = "AI_SAFETY_REJECTED"
 MAX_SCREEN_CHARS = 2000
 
 SYSTEM_PROMPT = (
-    "你是平台的内容安全判定器。平台的两类合法业务是：\n"
-    "1) 平台管理：用户/权限/封禁/公告/AI 网关/数据库/服务器运维/日志审计；\n"
-    "2) 义工管理：活动、报名、义工时长、登记、附件凭据。\n"
-    "判断用户请求：related 表示是否属于上述业务范畴，destructive 表示是否在"
-    "要求破坏性、不可逆或越权操作（删库、清空数据、批量封号、提权、窃取凭据、"
-    "绕过审核等）。\n"
+    "zvms4 是学校的志愿服务（义工）管理平台。平台内的 ZVAgent 是平台自身的运维"
+    "助手，只有一种用途：处理与平台功能相关的请求。\n"
+    "合法范围仅限：\n"
+    "1) 义工管理：活动、报名、签到签退、义工时长/工时、登记、附件凭据；\n"
+    "2) 平台管理：用户/权限/封禁/公告/AI 网关/数据库/服务器运维/日志审计；\n"
+    "3) 班级与学业事务；\n"
+    "4) 账号与权限问题。\n"
+    "related 表示请求内容是否与上述平台功能相关。与平台功能无关的一律"
+    " related=false，例如闲聊、常识问答、写作、翻译、编程求助、角色扮演/cosplay、"
+    "情感陪伴、娱乐内容——即使这些请求本身无害。\n"
+    "destructive 只作证据记录：请求是否在要求破坏性、不可逆或越权操作（删库、"
+    "清空数据、批量封号、提权、窃取凭据、绕过审核等），它不决定放行与否。\n"
     "只输出一行 JSON，不要解释、不要代码块：\n"
     '{"related": true|false, "destructive": true|false, '
     '"category": "短标签", "reason": "一句话"}'
@@ -64,7 +76,8 @@ class ScreenResult:
     """认证结论；``allowed`` 为 False 时 ``category`` 非空。
 
     ``unavailable`` 区分两种拒绝：``True`` = 判定没跑起来（无凭据/超时/坏
-    JSON），只拒绝本次回答；``False`` = 判定确认是破坏性请求，属于违规证据。
+    JSON），只拒绝本次回答；``False`` = 判定确认请求与平台职能无关，属于违规
+    证据。
     """
 
     allowed: bool
@@ -256,9 +269,9 @@ async def screen(
         return unavailable()
 
     related = _as_bool(verdict.get("related"))
-    destructive = _as_bool(verdict.get("destructive"))
-    if destructive and not related:
-        category = str(verdict.get("category") or "destructive_request")[:64]
+    if not related:
+        # 白名单口径（用户拍板）：与平台职能无关即拒绝，不再要求 destructive。
+        category = str(verdict.get("category") or "unrelated_request")[:64]
         reason = str(verdict.get("reason") or "")[:200]
         return ScreenResult(allowed=False, reason=reason, category=category)
 
