@@ -1276,10 +1276,11 @@ END;
 --   三元组唯一（ux_ai_quota_user_period_kind），所以额度扣减可以用单条
 --   UPDATE ... WHERE used + :amount <= limit_count 原子完成，不读后写、不超卖。
 --   PERIOD 是 CHAR(6) 的 YYYYMM：月份是计费口径而不是时间点。
---   KIND 是前缀式（'ocr' / 'chat' / 'ocr_<engine>'）：OCR 引擎会持续增加，
---   前缀让「某引擎的月度额度」不必每次改 DDL 约束；ESCAPE '\' 是必须的，
---   LIKE 的 '_' 是单字符通配符。
---   也由 V024__add_ai_gateway.sql 在存量实例上创建（V026 把 KIND 放宽为前缀式）。
+--   KIND 的用户侧只有一个 'af'（OCR 与对话共用一个 AF 池，V051 归并）；
+--   站点级 'ocr_<engine>' 仍按引擎分开记。前缀让「某引擎的月度额度」不必每次
+--   改 DDL 约束；ESCAPE '\' 是必须的，LIKE 的 '_' 是单字符通配符。
+--   也由 V024__add_ai_gateway.sql 在存量实例上创建（V026 放宽为前缀式，
+--   V051 收敛成 af + ocr_<engine>）。
 -- ----------------------------------------------------------------------------
 BEGIN
   EXECUTE IMMEDIATE '
@@ -1294,7 +1295,7 @@ CREATE TABLE ai_quota (
   PRIMARY KEY (oid),
   CONSTRAINT ck_ai_quota_oid CHECK (REGEXP_LIKE(oid,''^[0-9a-f]{24}$'')),
   CONSTRAINT ck_ai_quota_period CHECK (REGEXP_LIKE(period,''^[0-9]{6}$'')),
-  CONSTRAINT ck_ai_quota_kind CHECK (kind IN (''ocr'',''chat'') OR kind LIKE ''ocr\_%'' ESCAPE ''\''),
+  CONSTRAINT ck_ai_quota_kind CHECK (kind = ''af'' OR kind LIKE ''ocr\_%'' ESCAPE ''\''),
   CONSTRAINT ck_ai_quota_used CHECK (used >= 0),
   CONSTRAINT ck_ai_quota_limit CHECK (limit_count >= 0)
 )';
@@ -2137,7 +2138,8 @@ END;
 
 -- ----------------------------------------------------------------------------
 -- ROLE_QUOTAS  ← new (角色 -> 每月额度; V043)
---   只有 chat / ocr / schedule 三种角色级额度；缺行 = 按代码默认。
+--   只有 af / schedule 两种角色级额度（V051 把 chat / ocr 归并成 AF 池）；
+--   缺行 = 按代码默认。
 -- ----------------------------------------------------------------------------
 BEGIN
   EXECUTE IMMEDIATE '
@@ -2148,7 +2150,7 @@ CREATE TABLE role_quotas (
   updated_at TIMESTAMP,
   updated_by CHAR(24 CHAR),
   PRIMARY KEY (role, kind),
-  CONSTRAINT ck_role_quotas_kind CHECK (kind IN (''chat'',''ocr'',''schedule'')),
+  CONSTRAINT ck_role_quotas_kind CHECK (kind IN (''af'',''schedule'')),
   CONSTRAINT ck_role_quotas_limit CHECK (monthly_limit >= 0)
 )';
 EXCEPTION

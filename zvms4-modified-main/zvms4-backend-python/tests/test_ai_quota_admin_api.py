@@ -171,23 +171,38 @@ def test_user_reads_own_quota(api) -> None:
     assert body["status"] == "ok"
     assert body["code"] == 200
     data = body["data"]
-    assert set(data) == {"ocr", "chat"}
-    assert data["ocr"]["used"] == 0
-    assert data["ocr"]["limit"] == 0
-    assert data["chat"]["limit"] == 0
+    # V051 起用户侧只有一条 af（OCR 与对话共用）。
+    assert set(data) == {"af"}
+    assert data["af"]["used"] == 0
+    assert data["af"]["limit"] == 0
     # student 是 V043 角色策略表里的角色，默认额度为 0（不开放）。
-    assert data["ocr"]["source"] == "role_default"
-    assert data["chat"]["source"] == "role_default"
+    assert data["af"]["source"] == "role_default"
+
+
+def test_snapshot_only_returns_the_unified_af_pool(api) -> None:
+    """V051 收敛后快照只有一条 ``af``；库里的历史 kind 行不再出现在视图里。"""
+    _client, repo, _log = api
+    repo.seed(TARGET_OID, "af", used=9, limit=100)
+    # 手工塞一条历史行（迁移已归并，这里模拟「有人绕过代码写回 chat」）。
+    repo.seed(TARGET_OID, "chat", used=5, limit=50)
+
+    data = asyncio.run(quota_service.snapshot(TARGET_OID, roles=["department"]))
+
+    assert set(data) == {"af"}
+    assert data["af"]["used"] == 9
+    assert data["af"]["limit"] == 100
+    assert data["af"]["source"] == "explicit"
+    assert data["af"]["period"] == quota_service.period_now()
 
 
 def test_admin_reads_other_user_quota(api) -> None:
     client, repo, _log = api
-    repo.seed(TARGET_OID, "ocr", used=7, limit=20)
+    repo.seed(TARGET_OID, "af", used=7, limit=20)
 
     body = client.get(f"{PREFIX}/quota/{TARGET_OID}").json()
 
     assert body["code"] == 200
-    assert body["data"]["ocr"] == {
+    assert body["data"]["af"] == {
         "period": quota_service.period_now(),
         "used": 7,
         "limit": 20,
@@ -197,10 +212,10 @@ def test_admin_reads_other_user_quota(api) -> None:
 
 
 def test_admin_default_baseline_comes_from_the_target_users_roles(api) -> None:
-    """展示口径要与扣费口径一致：目标用户的 admin 角色 → ocr 500 / chat 1_000_000。
+    """展示口径要与扣费口径一致：目标用户的 admin 角色 → af 1_000_000。
 
     之前 ``admin_snapshot`` 不带 roles，管理页会回落到 ``DEFAULT_QUOTA``
-    （chat 200_000），比真实生效值少一个数量级。
+    （af 200_000），比真实生效值少一个数量级。
     """
     client, _repo, _log = api
     client.app.dependency_overrides[get_current_user] = lambda: ADMIN
@@ -211,10 +226,8 @@ def test_admin_default_baseline_comes_from_the_target_users_roles(api) -> None:
     data = client.get(f"{PREFIX}/quota/{TARGET_OID}").json()["data"]
 
     role_limits = role_quota()["admin"]
-    assert data["ocr"]["limit"] == role_limits["ocr"]
-    assert data["chat"]["limit"] == role_limits["chat"]
-    assert data["ocr"]["source"] == "role_default"
-    assert data["chat"]["source"] == "role_default"
+    assert data["af"]["limit"] == role_limits["af"]
+    assert data["af"]["source"] == "role_default"
 
 
 def test_snapshot_uses_roles_for_the_default_baseline(api) -> None:
@@ -223,17 +236,17 @@ def test_snapshot_uses_roles_for_the_default_baseline(api) -> None:
 
     data = asyncio.run(quota_service.snapshot(TARGET_OID, roles=["admin"]))
 
-    assert data["ocr"] == {
+    assert set(data) == {"af"}
+    assert data["af"] == {
         "period": quota_service.period_now(),
         "used": 0,
-        "limit": role_quota()["admin"]["ocr"],
+        "limit": role_quota()["admin"]["af"],
         "source": "role_default",
     }
-    assert data["chat"]["limit"] == role_quota()["admin"]["chat"]
     # 不传 roles（例如查不到用户）时回全局默认，而不是编一个角色。
     fallback = asyncio.run(quota_service.snapshot(TARGET_OID))
-    assert fallback["ocr"]["limit"] == DEFAULT_QUOTA["ocr"]
-    assert fallback["chat"]["source"] == "global_default"
+    assert fallback["af"]["limit"] == DEFAULT_QUOTA["af"]
+    assert fallback["af"]["source"] == "global_default"
 
 
 def test_admin_reads_unknown_user_falls_back_to_defaults(api) -> None:
@@ -242,11 +255,10 @@ def test_admin_reads_unknown_user_falls_back_to_defaults(api) -> None:
     body = client.get(f"{PREFIX}/quota/{MISSING_OID}").json()
 
     assert body["code"] == 200
-    assert body["data"]["ocr"]["used"] == 0
-    assert body["data"]["ocr"]["limit"] == DEFAULT_QUOTA["ocr"]
+    assert body["data"]["af"]["used"] == 0
+    assert body["data"]["af"]["limit"] == DEFAULT_QUOTA["af"]
     # 查不到用户：按全局默认展示，并标明来源，不能让管理页以为这是角色算出来的。
-    assert body["data"]["ocr"]["source"] == "global_default"
-    assert body["data"]["chat"]["source"] == "global_default"
+    assert body["data"]["af"]["source"] == "global_default"
 
 
 def test_non_admin_cannot_read_other_user_quota(api) -> None:
@@ -266,20 +278,20 @@ def test_non_admin_cannot_read_other_user_quota(api) -> None:
 
 def test_admin_set_limit_keeps_used(api) -> None:
     client, repo, log = api
-    repo.seed(TARGET_OID, "ocr", used=3, limit=10)
+    repo.seed(TARGET_OID, "af", used=3, limit=10)
 
     body = client.put(
-        f"{PREFIX}/quota/{TARGET_OID}", json={"kind": "ocr", "limit_count": 5}
+        f"{PREFIX}/quota/{TARGET_OID}", json={"kind": "af", "limit_count": 5}
     ).json()
 
     assert body["code"] == 200
     assert body["data"] == {
         "period": quota_service.period_now(),
-        "kind": "ocr",
+        "kind": "af",
         "used": 3,
         "limit": 5,
     }
-    assert repo.rows[(TARGET_OID, quota_service.period_now(), "ocr")]["used"] == 3
+    assert repo.rows[(TARGET_OID, quota_service.period_now(), "af")]["used"] == 3
     assert log.entries[-1]["type"] == "ai_quota_set"
 
 
@@ -322,9 +334,9 @@ def test_site_level_quota_does_not_leak_into_the_user_view(api) -> None:
 
     data = client.get(f"{PREFIX}/quota/{TARGET_OID}").json()["data"]
 
-    # 管理端的用户视图只有用户级两种能力：站点额度不是「这个人的额度」。
-    assert set(data) == {"ocr", "chat"}
-    assert data["ocr"]["limit"] == DEFAULT_QUOTA["ocr"]
+    # 管理端的用户视图只有用户级那一条：站点额度不是「这个人的额度」。
+    assert set(data) == {"af"}
+    assert data["af"]["limit"] == DEFAULT_QUOTA["af"]
 
 
 def test_admin_can_reset_site_level_used(api) -> None:
@@ -366,15 +378,15 @@ def test_set_limit_then_consume_honours_new_ceiling(api) -> None:
     client, _repo, _log = api
 
     client.put(
-        f"{PREFIX}/quota/{TARGET_OID}", json={"kind": "ocr", "limit_count": 2}
+        f"{PREFIX}/quota/{TARGET_OID}", json={"kind": "af", "limit_count": 2}
     )
 
     allowed, used, limit = asyncio.run(
-        quota_service.consume(TARGET_OID, "ocr", 2)
+        quota_service.consume(TARGET_OID, "af", 2)
     )
     assert (allowed, used, limit) == (True, 2, 2)
 
-    allowed, used, limit = asyncio.run(quota_service.consume(TARGET_OID, "ocr", 1))
+    allowed, used, limit = asyncio.run(quota_service.consume(TARGET_OID, "af", 1))
     assert (allowed, used, limit) == (False, 2, 2)
 
 
@@ -382,12 +394,12 @@ def test_set_limit_creates_row_for_new_user(api) -> None:
     client, repo, _log = api
 
     body = client.put(
-        f"{PREFIX}/quota/{MISSING_OID}", json={"kind": "chat", "limit_count": 0}
+        f"{PREFIX}/quota/{MISSING_OID}", json={"kind": "af", "limit_count": 0}
     ).json()
 
     assert body["data"]["used"] == 0
     assert body["data"]["limit"] == 0
-    assert repo.rows[(MISSING_OID, quota_service.period_now(), "chat")][
+    assert repo.rows[(MISSING_OID, quota_service.period_now(), "af")][
         "limit_count"
     ] == 0
 
@@ -397,7 +409,7 @@ def test_non_admin_cannot_set_limit(api) -> None:
     _as(client, STUDENT)
 
     response = client.put(
-        f"{PREFIX}/quota/{TARGET_OID}", json={"kind": "ocr", "limit_count": 5}
+        f"{PREFIX}/quota/{TARGET_OID}", json={"kind": "af", "limit_count": 5}
     )
 
     assert response.status_code == 403
@@ -411,16 +423,16 @@ def test_non_admin_cannot_set_limit(api) -> None:
 
 def test_reset_zeroes_used_and_keeps_limit(api) -> None:
     client, repo, log = api
-    repo.seed(TARGET_OID, "chat", used=42, limit=100)
+    repo.seed(TARGET_OID, "af", used=42, limit=100)
 
     body = client.post(
-        f"{PREFIX}/quota/{TARGET_OID}/reset", json={"kind": "chat"}
+        f"{PREFIX}/quota/{TARGET_OID}/reset", json={"kind": "af"}
     ).json()
 
     assert body["code"] == 200
     assert body["data"] == {
         "period": quota_service.period_now(),
-        "kind": "chat",
+        "kind": "af",
         "used": 0,
         "limit": 100,
     }
@@ -431,13 +443,13 @@ def test_reset_missing_row_is_idempotent(api) -> None:
     client, repo, _log = api
 
     response = client.post(
-        f"{PREFIX}/quota/{MISSING_OID}/reset", json={"kind": "ocr"}
+        f"{PREFIX}/quota/{MISSING_OID}/reset", json={"kind": "af"}
     )
 
     assert response.status_code == 200
     data = response.json()["data"]
     assert data["used"] == 0
-    assert data["limit"] == DEFAULT_QUOTA["ocr"]
+    assert data["limit"] == DEFAULT_QUOTA["af"]
     # 幂等不等于建行：没用量就不该凭空造一条额度记录。
     assert repo.rows == {}
 
@@ -445,14 +457,14 @@ def test_reset_missing_row_is_idempotent(api) -> None:
 def test_non_admin_cannot_reset(api) -> None:
     client, repo, _log = api
     _as(client, STUDENT)
-    repo.seed(TARGET_OID, "ocr", used=1, limit=10)
+    repo.seed(TARGET_OID, "af", used=1, limit=10)
 
     response = client.post(
-        f"{PREFIX}/quota/{TARGET_OID}/reset", json={"kind": "ocr"}
+        f"{PREFIX}/quota/{TARGET_OID}/reset", json={"kind": "af"}
     )
 
     assert response.status_code == 403
-    assert repo.rows[(TARGET_OID, quota_service.period_now(), "ocr")]["used"] == 1
+    assert repo.rows[(TARGET_OID, quota_service.period_now(), "af")]["used"] == 1
 
 
 # ---------------------------------------------------------------------------
@@ -460,7 +472,7 @@ def test_non_admin_cannot_reset(api) -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("kind", ["image", "", "OCR", "chat "])
+@pytest.mark.parametrize("kind", ["image", "", "OCR", "chat ", "chat", "ocr"])
 def test_set_limit_rejects_bad_kind(api, kind: str) -> None:
     client, _repo, _log = api
 
@@ -490,7 +502,7 @@ def test_set_limit_rejects_negative_limit(api, limit_count: int) -> None:
 
     response = client.put(
         f"{PREFIX}/quota/{TARGET_OID}",
-        json={"kind": "ocr", "limit_count": limit_count},
+        json={"kind": "af", "limit_count": limit_count},
     )
 
     assert response.status_code == 400
@@ -501,7 +513,7 @@ def test_set_limit_accepts_zero(api) -> None:
     client, _repo, _log = api
 
     response = client.put(
-        f"{PREFIX}/quota/{TARGET_OID}", json={"kind": "ocr", "limit_count": 0}
+        f"{PREFIX}/quota/{TARGET_OID}", json={"kind": "af", "limit_count": 0}
     )
 
     assert response.status_code == 200

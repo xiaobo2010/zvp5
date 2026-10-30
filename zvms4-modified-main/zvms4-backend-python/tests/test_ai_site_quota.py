@@ -1,9 +1,12 @@
 """站点级 OCR 额度的默认口径。
 
-背景（2026-10-24 上线实测）：站点额度曾经回落到 ``DEFAULT_QUOTA["ocr"]``（100），
-于是 tencent/rapidocr 的月额度一建就是 100 —— 几十个用户一天就能打满，之后全站
-OCR 一起 503。站点额度是「平台愿意为全站垫多少上游调用」，与「单个用户免费几次」
-不是一个口径，必须分开。
+背景（2026-10-24 上线实测）：站点额度曾经回落到用户级的 OCR 默认额度（当时
+``DEFAULT_QUOTA["ocr"]`` = 100），于是 tencent/rapidocr 的月额度一建就是 100 ——
+几十个用户一天就能打满，之后全站 OCR 一起 503。站点额度是「平台愿意为全站垫多少
+上游调用」，与「单个用户能用多少」不是一个口径，必须分开。
+
+V051 起用户侧只有统一 AF 池（``DEFAULT_QUOTA["af"]``）：站点 kind 更不能回落到
+它——两个池子连着不同出资方。
 """
 
 from __future__ import annotations
@@ -14,7 +17,7 @@ from services.ai import ocr_engines, quota
 
 
 def test_site_kind_uses_the_site_default_not_the_user_quota() -> None:
-    user_quota = ai_config.DEFAULT_QUOTA["ocr"]
+    user_quota = ai_config.DEFAULT_QUOTA["af"]
 
     assert quota.default_limit_for(None, "ocr_tencent") == 1000
     # 关键断言：站点额度不能等于用户额度（回落就是那个 bug）。
@@ -64,6 +67,8 @@ def test_invalid_override_falls_back_to_the_default(monkeypatch) -> None:
 
 
 def test_user_level_kinds_still_use_the_user_default() -> None:
-    """用户级 kind 不受站点口径影响。"""
-    assert quota.default_limit_for(None, "ocr") == ai_config.DEFAULT_QUOTA["ocr"]
-    assert quota.default_limit_for(None, "chat") == ai_config.DEFAULT_QUOTA["chat"]
+    """用户级 kind（V051 起只有 ``af``）不受站点口径影响。"""
+    assert quota.default_limit_for(None, "af") == ai_config.DEFAULT_QUOTA["af"]
+    # 历史 kind 不会被「猜」成站点口径：它们没有默认值（0），扣费会立刻暴露。
+    assert quota.default_limit_for(None, "ocr") == 0
+    assert quota.default_limit_for(None, "chat") == 0

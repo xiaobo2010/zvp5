@@ -30,8 +30,20 @@ from . import quota
 logger = logging.getLogger(__name__)
 
 #: 可申请的能力。与 ``ck_ai_quota_requests_kind`` 一致——站点级 ``ocr_<engine>``
-#: 是平台出资的口径，个人申请没有意义，所以**不**复用 ``quota.KINDS`` 之外的东西。
+#: 是平台出资的口径，个人申请没有意义。
+#:
+#: 申请表保留 ``chat`` / ``ocr`` 两个历史词汇（审计要看得出当时申请的是哪一类
+#: 消耗），但它们**落到额度上都是同一个 AF 池**（V051），见 :data:`QUOTA_KIND`。
 KINDS: tuple[str, ...] = ("chat", "ocr")
+
+#: 申请口径 → 额度 kind。V051 起用户侧只有 ``af``：批了 ``chat`` 申请就是给 AF
+#: 池提额/清零，批了 ``ocr`` 申请也是同一个池子（OCR 与对话共用）。
+QUOTA_KIND: dict[str, str] = {"chat": "af", "ocr": "af"}
+
+
+def _quota_kind(request_kind: object) -> str:
+    """申请表里的 kind → 真正落的额度 kind（未知值原样交给额度层去拒）。"""
+    return QUOTA_KIND.get(str(request_kind), str(request_kind))
 
 #: 申请状态机。``cancelled`` 留了位置（用户自己撤回）但当前没有端点写它。
 STATUSES: tuple[str, ...] = ("pending", "approved", "rejected", "cancelled")
@@ -237,7 +249,8 @@ async def decide(
 
     target_limit = check_limit(limit)
     user_oid = str(row["user_oid"])
-    kind = str(row["kind"])
+    # 审计记申请口径（``chat`` / ``ocr``），额度操作走统一 AF 池。
+    kind = _quota_kind(row["kind"])
 
     if approve:
         if reset:
@@ -326,7 +339,9 @@ async def _user_labels(
 async def list_users_with_quota(
     query: str = "", page: object = 1, size: object = DEFAULT_PAGE_SIZE
 ) -> dict:
-    """管理端「配额管理」表格的一页：用户 + 当月 chat/ocr 额度 + 是否有待审申请。
+    """管理端「配额管理」表格的一页：用户 + 当月 AF 额度 + 是否有待审申请。
+
+    ``chat`` / ``ocr`` 两列在 V051 之后读的是同一个 AF 池（形状不变）。
 
     口径与真实扣费一致：``quota.snapshot`` 必须吃**目标用户**的 ``roles``（admin
     的 chat 默认是 1_000_000，按全局默认算会少一个数量级），所以这里再取一次完整
@@ -381,8 +396,10 @@ async def list_users_with_quota(
                 "business_id": row.get("id"),
                 "class_id": row.get("class_id"),
                 "period": period,
-                "chat": (snap or {}).get("chat"),
-                "ocr": (snap or {}).get("ocr"),
+                # 两列都读同一个 AF 池：合并后「对话额度」与「OCR 额度」是同一个
+                # 数字，响应形状保持不变（前端仍是 chat / ocr 两列）。
+                "chat": (snap or {}).get(_quota_kind("chat")),
+                "ocr": (snap or {}).get(_quota_kind("ocr")),
                 "pending_request": oid in pending,
             }
         )
@@ -391,6 +408,7 @@ async def list_users_with_quota(
 
 __all__ = [
     "KINDS",
+    "QUOTA_KIND",
     "MAX_PAGE_SIZE",
     "MAX_REASON_CHARS",
     "MINE_LIMIT",

@@ -78,8 +78,8 @@ LAST_STATUS_MAX = 16
 LAST_ERROR_MAX = 512
 NAME_MAX = 128
 
-# 定时任务的 chat 额度口径：与交互式对话同一个 kind（agent 不单列）。
-QUOTA_KIND = "chat"
+# 定时任务的额度口径：与交互式对话同一个 AF 池（agent 不单列）。
+QUOTA_KIND = "af"
 
 _TZ = None
 

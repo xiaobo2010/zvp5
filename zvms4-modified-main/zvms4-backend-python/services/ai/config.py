@@ -16,13 +16,18 @@ import settings
 from services import settings_runtime
 
 DEFAULT_QUOTA = {
-    "ocr": config.AI_DEFAULT_OCR_MONTHLY_UNITS,
-    "chat": config.AI_DEFAULT_CHAT_MONTHLY_UNITS,
+    "af": config.AI_DEFAULT_AF_MONTHLY_UNITS,
 }
 
-# 站点级 OCR 额度的默认值。**不能**回落到 ``DEFAULT_QUOTA["ocr"]``：那个 100 是
-# 「单个用户每月能免费用几次」的口径，站点额度是「平台愿意为所有用户垫多少上游
-# 调用」——两者差一个数量级。回落到 100 的结果是：几十个用户一天就把站点额度
+# OCR 一次识别折多少 AF：OCR 与对话共用用户侧 AF 池（V051），所以「识别一次」
+# 需要一个兑换率。取 1 = 一次识别约等于 1k token 的对话成本，与此前用户级
+# ``ocr`` 默认 100 次/月 的量级意图一致（合并时 ``used = chat + ocr * 1``）。
+# 站点级 ``ocr_<engine>`` 额度不走这张表：那是平台出资的另一条链路。
+AI_OCR_AF_COST = 1
+
+# 站点级 OCR 额度的默认值。**不能**回落到 ``DEFAULT_QUOTA["af"]``：那个值是
+# 「单个用户每月能用多少 AF」的口径，站点额度是「平台愿意为所有用户垫多少上游
+# 调用」——两者不是同一个维度。回落到用户额度只会让几十个用户一天就把站点额度
 # 打满，之后全站 OCR 一起 503。
 _DEFAULT_SITE_OCR_MONTHLY_UNITS = 1000
 
@@ -88,7 +93,15 @@ def allowed_roles() -> frozenset[str]:
     return frozenset(roles) if roles else frozenset(config.AI_ALLOWED_ROLES)
 
 
+#: 频控能力的封闭集合（每分钟调用次数）。**不是**额度 kind：OCR 与对话各有
+#: 自己的瞬时频控，而月额度已经收敛成一个 AF 池（见 :data:`QUOTA_KINDS`）。
 RATE_LIMIT_KINDS = ("ocr", "chat")
+
+#: 额度 kind 的封闭集合（用户侧）：V051 起 OCR 与对话共用 ``af``。角色月额度表
+#: （``AI_ROLE_QUOTA`` / ``ai.role_quota``）只认这些键；站点级 ``ocr_<engine>``
+#: 由平台出资，不在角色表里。
+QUOTA_KINDS = ("af",)
+
 ROLE_QUOTA_PRIORITY = ("admin", "department")
 
 
@@ -137,7 +150,7 @@ def rate_limit_window_seconds() -> float:
 def role_quota() -> dict[str, dict[str, int]]:
     """``role -> {kind: 月额度}`` 的规范化视图（settings 可覆盖默认表）。
 
-    只保留 ``ocr``/``chat`` 两个 kind 与非负整数：拼错的 kind 写进额度表等于给
+    只保留 :data:`QUOTA_KINDS`（``af``）与非负整数：拼错的 kind 写进额度表等于给
     一个永远不会被查询的行定上限，而且不会报错。整张表被 settings 换掉时按整表
     替换（与 ``AI_ALLOWED_ROLES`` 同一语义），不合并。运行期设置
     （``ai.role_quota``）优先于 ``settings.py``。
@@ -153,7 +166,7 @@ def role_quota() -> dict[str, dict[str, int]]:
         if not isinstance(role, str) or not isinstance(limits, dict):
             continue
         entry: dict[str, int] = {}
-        for kind in RATE_LIMIT_KINDS:
+        for kind in QUOTA_KINDS:
             value = limits.get(kind)
             if isinstance(value, bool) or not isinstance(value, int) or value < 0:
                 continue

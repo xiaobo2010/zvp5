@@ -357,7 +357,7 @@ async def test_ai_gateway_status_reports_quota_stats_and_key_anomalies(
     # 模型按调用量降序，只留前 5
     assert result["calls"]["by_model"][0]["model"] == "m-big"
     assert [row["user_oid"] for row in result["top_callers"]] == ["u2", "u1"]
-    assert result["quota"]["user"]["chat"]["limit"] == 200
+    assert result["quota"]["user"]["af"]["limit"] == 200
     assert result["quota"]["site"], "站点额度快照不该为空"
 
     anomalies = result["api_keys"]["anomalies"]
@@ -384,9 +384,9 @@ async def test_ai_gateway_status_reports_quota_stats_and_key_anomalies(
 
 
 def _snapshot() -> dict:
+    # V051 起用户侧只有一个 AF 池：快照只有一条（形状不变）。
     return {
-        "chat": {"period": "202610", "used": 5, "limit": 200, "source": "role_default"},
-        "ocr": {"period": "202610", "used": 1, "limit": 100, "source": "explicit"},
+        "af": {"period": "202610", "used": 5, "limit": 200, "source": "role_default"},
     }
 
 
@@ -664,7 +664,7 @@ async def test_quota_set_prepare_reports_transition(monkeypatch) -> None:
         tools_governance.quota, "admin_snapshot", _admin_snapshot
     )
 
-    draft = await _prepare("ai_quota_set", user_oid=TARGET["_id"], kind="chat", limit_count=50)
+    draft = await _prepare("ai_quota_set", user_oid=TARGET["_id"], kind="af", limit_count=50)
 
     assert draft.preview["from"]["limit"] == 200
     assert draft.preview["to"]["limit"] == 50
@@ -683,10 +683,10 @@ async def test_quota_set_impl_calls_service_and_audits(monkeypatch, audits) -> N
     monkeypatch.setattr(tools_governance.quota, "set_user_limit", _set_limit)
 
     result = await _impl(
-        "ai_quota_set", user_oid=TARGET["_id"], kind="chat", limit_count=50
+        "ai_quota_set", user_oid=TARGET["_id"], kind="af", limit_count=50
     )
 
-    assert seen == [(TARGET["_id"], "chat", 50)]
+    assert seen == [(TARGET["_id"], "af", 50)]
     assert result["limit"] == 50
     assert audits[0]["action"] == "agent_ai_quota_set"
 

@@ -265,7 +265,7 @@ def test_admin_short_circuits_features_and_quotas() -> None:
     """管理员永远全开、无限额：这是代码短路，不是数据行。"""
     assert policy.feature_enabled(["admin"], "logs.read") is True
     assert policy.feature_enabled(["admin"], "no.such.key") is True
-    assert policy.monthly_limit(["admin"], "chat") is None
+    assert policy.monthly_limit(["admin"], "af") is None
     assert policy.monthly_limit(["admin"], "no_such_kind") is None
 
 
@@ -279,13 +279,18 @@ def test_features_are_a_union_across_roles() -> None:
 
 
 def test_monthly_limit_takes_the_first_hit_role() -> None:
-    assert policy.monthly_limit(["department"], "chat") == 200_000
-    assert policy.monthly_limit(["student"], "chat") == 0
-    assert policy.monthly_limit(["secretary"], "ocr") == 100
+    assert policy.monthly_limit(["department"], "af") == 200_000
+    assert policy.monthly_limit(["student"], "af") == 0
+    # secretary 的 af 取改造前 chat 的口径（0）：AF 池同时管对话与 OCR，
+    # 原来单列的 ocr 额度已无处可加。
+    assert policy.monthly_limit(["secretary"], "af") == 0
     assert policy.monthly_limit(["student"], "schedule") == 0
     # 多角色取第一个命中（department 优先于 student），不叠加、不取最大值。
-    assert policy.monthly_limit(["student", "department"], "chat") == 200_000
-    assert policy.monthly_limit(None, "chat") is None
+    assert policy.monthly_limit(["student", "department"], "af") == 200_000
+    assert policy.monthly_limit(None, "af") is None
+    # 历史 kind 不再有角色额度（V051 归并），交回调用方。
+    assert policy.monthly_limit(["department"], "chat") is None
+    assert policy.monthly_limit(["department"], "ocr") is None
     # 站点级/未知 kind 没有角色维度：交回调用方。
     assert policy.monthly_limit(["department"], "ocr_tencent") is None
 
@@ -299,7 +304,7 @@ def test_snapshot_falls_back_to_defaults_when_the_table_is_empty(repo) -> None:
 
     department = view["roles"][0]
     assert department["features"]["ai.chat"] is True
-    assert department["quotas"] == {"chat": 200_000, "ocr": 100, "schedule": 1}
+    assert department["quotas"] == {"af": 200_000, "schedule": 1}
     assert view["roles"][2]["features"]["ai.chat"] is False
     # 空表 = 从没配过：没有「最后修改人」可报。
     assert department["updated_at"] is None
@@ -316,7 +321,7 @@ def test_rows_for_unknown_roles_or_keys_are_ignored(repo) -> None:
 
     assert policy.feature_enabled(["teacher"], "ai.chat") is False
     assert policy.feature_enabled(["student"], "no.such.key") is False
-    assert policy.monthly_limit(["student"], "chat") == 0
+    assert policy.monthly_limit(["student"], "af") == 0
 
 
 def test_repo_failure_falls_back_to_defaults_instead_of_raising(repo) -> None:
@@ -325,7 +330,7 @@ def test_repo_failure_falls_back_to_defaults_instead_of_raising(repo) -> None:
     asyncio.run(policy.refresh())
 
     assert policy.feature_enabled(["department"], "ai.chat") is True
-    assert policy.monthly_limit(["department"], "chat") == 200_000
+    assert policy.monthly_limit(["department"], "af") == 200_000
 
 
 # --------------------------------------------------------------------------- #
@@ -351,7 +356,7 @@ def test_upsert_role_replaces_whole_matrix_in_one_transaction(monkeypatch) -> No
 
     asyncio.run(
         repository.upsert_role(
-            "student", {"ai.ocr": True}, {"chat": 7, "ocr": 5, "schedule": 0}, "actor"
+            "student", {"ai.ocr": True}, {"af": 7, "schedule": 0}, "actor"
         )
     )
 
@@ -370,7 +375,7 @@ def test_upsert_role_replaces_whole_matrix_in_one_transaction(monkeypatch) -> No
     feature_params = session.calls[2][1]
     quota_params = session.calls[3][1]
     assert [row["feature_key"] for row in feature_params] == ["ai.ocr"]
-    assert [row["kind"] for row in quota_params] == ["chat", "ocr", "schedule"]
+    assert [row["kind"] for row in quota_params] == ["af", "schedule"]
 
 
 def test_upsert_role_with_empty_maps_wipes_the_role(monkeypatch) -> None:
@@ -395,7 +400,7 @@ def test_upsert_role_serialises_every_statement_with_no_parallel(monkeypatch) ->
     repository, session = _repo_with_recorder(monkeypatch)
     asyncio.run(
         repository.upsert_role(
-            "student", {"ai.ocr": True}, {"chat": 7, "ocr": 5, "schedule": 0}, "actor"
+            "student", {"ai.ocr": True}, {"af": 7, "schedule": 0}, "actor"
         )
     )
 
@@ -445,7 +450,7 @@ def test_get_returns_matrix_and_catalog(app, repo) -> None:
 def test_put_rejects_non_admin(app, repo, audits) -> None:
     response = _client(app, STUDENT).put(
         "/api/system/role-policies/student",
-        json={"features": {}, "quotas": {"chat": 0, "ocr": 0, "schedule": 0}},
+        json={"features": {}, "quotas": {"af": 0, "schedule": 0}},
     )
 
     assert response.status_code == 403
@@ -457,7 +462,7 @@ def test_put_rejects_non_admin(app, repo, audits) -> None:
 def test_put_rejects_role_outside_the_editable_set(role, app, repo) -> None:
     response = _client(app, ADMIN).put(
         f"/api/system/role-policies/{role}",
-        json={"features": {}, "quotas": {"chat": 0, "ocr": 0, "schedule": 0}},
+        json={"features": {}, "quotas": {"af": 0, "schedule": 0}},
     )
 
     assert response.status_code in (400, 307, 404), response.text
@@ -469,7 +474,7 @@ def test_put_rejects_unknown_feature_key(app, repo) -> None:
         "/api/system/role-policies/student",
         json={
             "features": {"ai.chat": True, "ai.teleport": True},
-            "quotas": {"chat": 0, "ocr": 0, "schedule": 0},
+            "quotas": {"af": 0, "schedule": 0},
         },
     )
 
@@ -481,7 +486,7 @@ def test_put_rejects_unknown_feature_key(app, repo) -> None:
 def test_put_rejects_non_boolean_feature(app, repo) -> None:
     response = _client(app, ADMIN).put(
         "/api/system/role-policies/student",
-        json={"features": {"ai.chat": 1}, "quotas": {"chat": 0, "ocr": 0, "schedule": 0}},
+        json={"features": {"ai.chat": 1}, "quotas": {"af": 0, "schedule": 0}},
     )
 
     assert response.status_code == 400
@@ -492,11 +497,11 @@ def test_put_rejects_partial_quota_map(app, repo) -> None:
     """额度是整表提交：缺一个 kind 会被当作 0 还是「不变」说不清，直接拒。"""
     response = _client(app, ADMIN).put(
         "/api/system/role-policies/student",
-        json={"features": {}, "quotas": {"chat": 10}},
+        json={"features": {}, "quotas": {"af": 10}},
     )
 
     assert response.status_code == 400
-    assert "ocr" in response.json()["detail"]
+    assert "schedule" in response.json()["detail"]
     assert repo.upserts == []
 
 
@@ -510,15 +515,15 @@ def test_put_treats_a_null_quota_as_no_override(app, repo) -> None:
         "/api/system/role-policies/student",
         json={
             "features": {"ai.ocr": True},
-            "quotas": {"chat": None, "ocr": 5, "schedule": None},
+            "quotas": {"af": None, "schedule": None},
             "totp_code": "123456",
         },
     )
 
     assert response.status_code == 200, response.text
-    assert repo.quotas == {("student", "ocr"): 5}
-    # chat / schedule 没有覆盖行 → 显示 student 的默认值 0。
-    assert response.json()["data"]["quotas"] == {"chat": 0, "ocr": 5, "schedule": 0}
+    assert repo.quotas == {}
+    # af / schedule 都没有覆盖行 → 显示 student 的默认值 0。
+    assert response.json()["data"]["quotas"] == {"af": 0, "schedule": 0}
 
 
 @pytest.mark.parametrize("limit", [-1, 100_000_001, True, "10"])
@@ -527,7 +532,7 @@ def test_put_rejects_out_of_range_or_mistyped_quota(limit, app, repo) -> None:
         "/api/system/role-policies/student",
         json={
             "features": {},
-            "quotas": {"chat": limit, "ocr": 0, "schedule": 0},
+            "quotas": {"af": limit, "schedule": 0},
         },
     )
 
@@ -545,7 +550,7 @@ def test_put_requires_dual_auth(app, repo, audits, monkeypatch) -> None:
         "/api/system/role-policies/student",
         json={
             "features": {"ai.ocr": True},
-            "quotas": {"chat": 0, "ocr": 5, "schedule": 0},
+            "quotas": {"af": 5, "schedule": 0},
             "totp_code": "000000",
         },
     )
@@ -562,7 +567,7 @@ def test_put_replaces_matrix_and_audits(app, repo, audits) -> None:
         "/api/system/role-policies/student",
         json={
             "features": {"ai.ocr": True},
-            "quotas": {"chat": 7, "ocr": 5, "schedule": 0},
+            "quotas": {"af": 7, "schedule": 0},
             "totp_code": "123456",
         },
     )
@@ -570,7 +575,7 @@ def test_put_replaces_matrix_and_audits(app, repo, audits) -> None:
     assert response.status_code == 200, response.text
     data = response.json()["data"]
     assert data["role"] == "student"
-    assert data["quotas"] == {"chat": 7, "ocr": 5, "schedule": 0}
+    assert data["quotas"] == {"af": 7, "schedule": 0}
     # 回的是**生效矩阵**（13 个键全在），不是请求里那份稀疏覆盖：前端
     # ``normalizeFeatures`` 把缺省键当 true，回半张表会让保存后的界面全亮。
     assert set(data["features"]) == set(policy.FEATURE_KEYS)
@@ -582,14 +587,14 @@ def test_put_replaces_matrix_and_audits(app, repo, audits) -> None:
         {
             "role": "student",
             "features": {"ai.ocr": True},
-            "quotas": {"chat": 7, "ocr": 5, "schedule": 0},
+            "quotas": {"af": 7, "schedule": 0},
             "actor": ADMIN_OID,
         }
     ]
     # 写后立刻生效（本进程下一次 guard 判断就是新值）。
     assert policy.feature_enabled(["student"], "ai.ocr") is True
     assert policy.feature_enabled(["student"], "ai.chat") is False
-    assert policy.monthly_limit(["student"], "chat") == 7
+    assert policy.monthly_limit(["student"], "af") == 7
 
     assert len(audits) == 1
     audit = audits[0]
@@ -641,7 +646,7 @@ def test_put_turns_a_database_failure_into_503(
         "/api/system/role-policies/student",
         json={
             "features": {"ai.ocr": True},
-            "quotas": {"chat": 0, "ocr": 5, "schedule": 0},
+            "quotas": {"af": 5, "schedule": 0},
             "totp_code": "123456",
         },
     )
@@ -664,7 +669,7 @@ def test_put_turns_a_database_failure_into_503(
 def test_me_returns_only_my_policy(app, repo) -> None:
     # 库里给 department 配了全开，student 没配：/me 不该看到别人的格子。
     repo.features[("department", "logs.read")] = True
-    repo.quotas[("department", "chat")] = 999
+    repo.quotas[("department", "af")] = 999
 
     response = _client(app, STUDENT).get("/api/system/role-policies/me")
 
@@ -673,7 +678,7 @@ def test_me_returns_only_my_policy(app, repo) -> None:
     assert set(data) == {"features", "quotas", "unlimited"}
     assert data["unlimited"] is False
     assert data["features"]["logs.read"] is False
-    assert data["quotas"] == {"chat": 0, "ocr": 0, "schedule": 0}
+    assert data["quotas"] == {"af": 0, "schedule": 0}
 
 
 def test_me_for_admin_is_unlimited(app) -> None:
@@ -682,20 +687,20 @@ def test_me_for_admin_is_unlimited(app) -> None:
     assert response.status_code == 200, response.text
     data = response.json()["data"]
     assert data["unlimited"] is True
-    assert data["quotas"] == {"chat": None, "ocr": None, "schedule": None}
+    assert data["quotas"] == {"af": None, "schedule": None}
     assert all(data["features"].values())
 
 
 def test_me_reflects_the_role_table(app, repo) -> None:
     repo.features[("secretary", "export.time")] = True
-    repo.quotas[("secretary", "chat")] = 42
+    repo.quotas[("secretary", "af")] = 42
 
     response = _client(app, SECRETARY).get("/api/system/role-policies/me")
 
     assert response.status_code == 200, response.text
     data = response.json()["data"]
     assert data["features"]["export.time"] is True
-    assert data["quotas"]["chat"] == 42
+    assert data["quotas"]["af"] == 42
 
 
 # --------------------------------------------------------------------------- #
@@ -704,25 +709,25 @@ def test_me_reflects_the_role_table(app, repo) -> None:
 
 
 def test_quota_prefers_the_role_policy_table(repo) -> None:
-    repo.quotas[("department", "chat")] = 7
+    repo.quotas[("department", "af")] = 7
 
     asyncio.run(policy.refresh())
 
-    assert quota_service.default_limit_for(["department"], "chat") == 7
+    assert quota_service.default_limit_for(["department"], "af") == 7
 
 
 def test_quota_falls_back_to_global_defaults_when_policy_is_silent(repo) -> None:
     asyncio.run(policy.refresh())
 
-    assert quota_service.default_limit_for(None, "chat") == DEFAULT_QUOTA["chat"]
-    assert quota_service.default_limit_for([], "chat") == DEFAULT_QUOTA["chat"]
+    assert quota_service.default_limit_for(None, "af") == DEFAULT_QUOTA["af"]
+    assert quota_service.default_limit_for([], "af") == DEFAULT_QUOTA["af"]
 
 
 def test_quota_keeps_the_legacy_table_for_admin(repo) -> None:
     """``admin`` 在策略层是 None（无限），额度层继续用既有的管理员口径。"""
     asyncio.run(policy.refresh())
 
-    assert quota_service.default_limit_for(["admin"], "chat") == 1_000_000
+    assert quota_service.default_limit_for(["admin"], "af") == 1_000_000
 
 
 # --------------------------------------------------------------------------- #

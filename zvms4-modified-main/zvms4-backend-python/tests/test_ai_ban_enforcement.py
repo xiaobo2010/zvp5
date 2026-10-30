@@ -238,7 +238,7 @@ def test_student_keyword_hit_is_rejected_in_chat(
     """学生（非 department）在 chat 面同样被关键词层拦下，且不花一次上游调用。"""
     calls: list[dict] = []
 
-    async def _stream(payload, entry, api_key):
+    async def _stream(payload, entry, api_key, *, meta=None):
         calls.append(payload)  # pragma: no cover - 被拒绝时不会迭代到这里
         yield b"data: {}\n\n"
 
@@ -299,7 +299,7 @@ def test_banned_user_is_rejected_before_the_stream_starts(
     users.ban_forever()
     calls: list[dict] = []
 
-    async def _stream(payload, entry, api_key):
+    async def _stream(payload, entry, api_key, *, meta=None):
         calls.append(payload)  # pragma: no cover - 不该被迭代
         yield b"data: {}\n\n"
 
@@ -322,7 +322,7 @@ def test_mid_stream_ban_emits_user_banned_frame_and_stops(
     produced: list[int] = []
     total = 40
 
-    async def _stream(payload, entry, api_key):
+    async def _stream(payload, entry, api_key, *, meta=None):
         for index in range(total):
             produced.append(index)
             yield f'data: {{"choices":[{{"delta":{{"content":"{index}"}}}}]}}\n\n'.encode()

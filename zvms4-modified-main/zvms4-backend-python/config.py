@@ -14,8 +14,9 @@ RETENTION_MAX_BATCHES = 20
 OCR_UPLOAD_RETENTION_DAYS = 3
 
 # AI 网关默认月额度（未在 AI_QUOTA 表里单独设限时使用）。
-AI_DEFAULT_OCR_MONTHLY_UNITS = 100
-AI_DEFAULT_CHAT_MONTHLY_UNITS = 200000
+# 用户侧只有统一 AF 池：OCR 与对话共用同一条 ``af`` 额度行（V051）。站点级
+# ``ocr_<engine>`` 是平台出资的另一条链路，不吃这里的默认值。
+AI_DEFAULT_AF_MONTHLY_UNITS = 200000
 AI_OCR_MAX_IMAGE_BYTES = 20 * 1024 * 1024
 
 # 部署的 worker 进程数（``None`` = 按环境变量自动探测 WEB_CONCURRENCY /
@@ -42,9 +43,11 @@ AI_RATE_LIMIT_WINDOW_SECONDS = 60
 AI_CALL_LOGS_RETENTION_DAYS = 90
 
 # 按角色的月额度；未列出的角色回退 AI_DEFAULT_*。个人 key 仍不占额度。
+# 键只有 ``af``：OCR 与对话在用户侧共用一个 AF 池（V051 起 ``chat``/``ocr``
+# 两种用户级 kind 已收敛），取值沿用改造前各自的 chat 口径。
 AI_ROLE_QUOTA = {
-    "admin": {"ocr": 500, "chat": 1_000_000},
-    "department": {"ocr": 100, "chat": 200_000},
+    "admin": {"af": 1_000_000},
+    "department": {"af": 200_000},
 }
 
 # agent（智能体）执行的硬上限，防「死循环烧钱」（Denial of Wallet）。

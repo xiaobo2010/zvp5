@@ -308,7 +308,7 @@ async def test_agent_round_is_charged_in_af_with_the_model_rate(monkeypatch, env
     await executor.run(user=ADMIN, messages=[{"role": "user", "content": "hi"}],
                        model=MODEL)
 
-    assert env.quota.consumed == [(USER, "chat", 3)]
+    assert env.quota.consumed == [(USER, "af", 3)]
     assert env.audit.rows[0]["units"] == 3
 
 
@@ -323,7 +323,7 @@ async def test_agent_round_defaults_to_base_rate_when_the_model_is_unpriced(
     await executor.run(user=ADMIN, messages=[{"role": "user", "content": "hi"}],
                        model=MODEL)
 
-    assert env.quota.consumed == [(USER, "chat", 2)]
+    assert env.quota.consumed == [(USER, "af", 2)]
 
 
 @pytest.mark.asyncio

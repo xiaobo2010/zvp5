@@ -302,7 +302,7 @@ def test_chat_switch_on_keeps_the_department_behaviour(gateway):
 
     assert response.status_code == 200
     assert len(gateway.upstream.calls) == 1
-    assert gateway.consume.calls[0][0][:3] == (DEPT, "chat", 1)
+    assert gateway.consume.calls[0][0][:3] == (DEPT, "af", 1)
     assert [(row["status"], row["http_status"]) for row in gateway.audit.rows] == [
         ("success", 200)
     ]
