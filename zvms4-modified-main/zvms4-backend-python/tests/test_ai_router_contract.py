@@ -20,7 +20,7 @@ import settings
 from db import backends
 from routers import ai_router
 from services.ai import config as ai_config
-from services.ai import credentials, providers, quota, rate_limit, routing
+from services.ai import credentials, providers, quota, rate_limit, routing, safety_guard
 from typings.log import inject_log
 from util.object_id import get_current_user
 
@@ -761,6 +761,138 @@ def test_gate_roles_are_configurable(catalog, monkeypatch):
 
     assert _role_client("department").get("/api/ai/v1/models").status_code == 403
     assert _role_client("admin").get("/api/ai/v1/models").status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# chat 面的角色门：只对学生会及以上开放（用户拍板）
+# ---------------------------------------------------------------------------
+#
+# 「chat 也是 AI 功能」：学生 / 团支书一律进不来（403 ``AI_FORBIDDEN``，OpenAI
+# 错误壳），学生会（department）进来之后走一次 LLM 前置判定，管理员天然旁路。
+# 角色口径只有 ``AI_ALLOWED_ROLES`` 一处，不另抄一份表。
+
+
+def _key_client() -> TestClient:
+    """不覆盖 ``get_ai_client`` 的客户端：``install_api_key`` 走真实 key 分支。"""
+    app = FastAPI()
+    app.include_router(ai_router.router, prefix="/api/ai")
+    # 管理面（非 ``/v1``）仍需要 JWT 身份；本组用例只打 ``/v1/chat/completions``。
+    app.dependency_overrides[get_current_user] = lambda: {"id": USER, "per": []}
+    app.dependency_overrides[inject_log] = lambda: StubLog()
+    return TestClient(app)
+
+
+def _key_chat(client: TestClient, token: str):
+    return client.post(
+        "/api/ai/v1/chat/completions",
+        json={"model": "gpt-x", "messages": [{"role": "user", "content": "hi"}]},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+
+def test_chat_denies_secretary_in_openai_error_shape(catalog, upstream, audit_repo):
+    """团支书不是「学生会及以上」：能读附件（ai.ocr）不等于能用 chat。"""
+    catalog([_entry("team", "b" * 24, models=("gpt-x",))])
+    calls = upstream()
+
+    response = _role_client("secretary").post(
+        "/api/ai/v1/chat/completions",
+        json={"model": "gpt-x", "messages": [{"role": "user", "content": "hi"}]},
+    )
+
+    assert response.status_code == 403
+    body = response.json()
+    assert body["error"]["code"] == "AI_FORBIDDEN"
+    assert "detail" not in body  # SDK 只认 error 壳
+    assert calls == []
+    assert [row["status"] for row in audit_repo.rows] == ["rejected"]
+
+
+def test_chat_denies_student_api_key_owner(
+    catalog, upstream, monkeypatch, audit_repo
+):
+    """``zvk_`` key 用 owner 的 ``per`` 判定：student 的 key 同样进不来。"""
+    catalog([_entry("team", "b" * 24, models=("gpt-x",))])
+    calls = upstream()
+
+    async def _authenticate(_token):
+        return {
+            "id": USER,
+            "per": ["student"],
+            "perm": [],
+            "class_id": None,
+            "api_key_oid": "k" * 24,
+            "api_key_name": "cli",
+        }
+
+    monkeypatch.setattr(ai_router.api_keys, "authenticate", _authenticate)
+
+    response = _key_chat(_key_client(), "zvk_" + "a" * 43)
+
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "AI_FORBIDDEN"
+    assert calls == []
+    assert [row["status"] for row in audit_repo.rows] == ["rejected"]
+
+
+def test_chat_department_is_screened_by_the_llm(
+    catalog, upstream, monkeypatch, audit_repo
+):
+    """学生会进来之后走一次 LLM 前置判定：无关即 403 + 记证据，不打上游。"""
+    catalog([_entry("team", "b" * 24, models=("gpt-x",))])
+    calls = upstream()
+    seen: list[dict] = []
+
+    async def _screen(user, text, *, model_hint=None):
+        seen.append({"user": dict(user), "text": text, "model_hint": model_hint})
+        # 判定成立：这是「真的无关」，不是「判定跑不起来」，所以会写违规证据。
+        return safety_guard.ScreenResult(
+            allowed=False, category="unrelated_request", reason="与平台无关"
+        )
+
+    recorded = Recorder({"recorded": 1, "warned": True, "banned": True})
+    monkeypatch.setattr(ai_router.safety_guard, "screen", _screen)
+    monkeypatch.setattr(ai_router.violation_guard, "record_agent_jailbreak", recorded)
+
+    response = _role_client("department").post(
+        "/api/ai/v1/chat/completions",
+        json={"model": "gpt-x", "messages": [{"role": "user", "content": "陪我聊聊电影"}]},
+    )
+
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == safety_guard.REJECTED_CODE
+    assert seen == [
+        {
+            "user": {"id": USER, "per": ["department"]},
+            "text": "陪我聊聊电影",
+            "model_hint": "gpt-x",
+        }
+    ]
+    assert [call[1]["rule"] for call in recorded.calls] == ["unrelated_request"]
+    assert calls == []
+
+
+def test_chat_admin_bypasses_the_llm_screen(catalog, upstream, monkeypatch):
+    """管理员天然旁路：不跑判定，正常调用照旧。"""
+
+    async def boom(*_args, **_kwargs):
+        raise AssertionError("admin 不该触发安全判定")
+
+    catalog([_entry("team", "b" * 24, models=("gpt-x",))])
+    upstream({"id": "ok", "usage": {"total_tokens": 10}})
+
+    async def _resolve(entry):
+        return SECRET
+
+    monkeypatch.setattr(ai_router.safety_guard, "screen", boom)
+    monkeypatch.setattr(credentials, "resolve_api_key", _resolve)
+    monkeypatch.setattr(quota, "peek", Recorder((True, 0, 100)))
+    monkeypatch.setattr(quota, "consume", Recorder((True, 1, 100)))
+
+    response = _chat(_client({"id": ADMIN, "per": ["admin"]}))
+
+    assert response.status_code == 200
+    assert response.json()["id"] == "ok"
 
 
 def test_denied_chat_does_not_charge_or_call_upstream_but_leaves_an_audit_row(

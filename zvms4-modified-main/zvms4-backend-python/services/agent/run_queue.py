@@ -39,7 +39,6 @@ from services.agent.tool_impl import AgentError
 from services.ai import (
     ban_state,
     conversations,
-    moderation,
     prompt_audit,
     safety_guard,
 )
@@ -237,22 +236,18 @@ async def _reject_unsafe(
     category: str,
     unavailable: bool = False,
     audit_oid: str | None = None,
-    penalize: bool = True,
 ) -> None:
     """内容审核拒绝：判定成立时先记违规+警告+首档封号，再抛 422。
 
     对外只有一个错误码与一句固定文案：不区分警告/封禁，也不解释处罚梯度。
     ``unavailable`` 是「判定没跑起来」——只拒绝本次回答，不写任何证据。
-    ``penalize=False`` 是「违规成立但不该处罚」：请求落在平台业务域内
-    （举报/申诉/业务咨询里的敏感词），那句话的对象是业务而不是索取内容，按
-    「向平台索取违法内容」封号是最贵的一类误伤。
 
     ``audit_oid`` 是留存行（``AI_PROMPT_AUDIT``）的句柄：被拒的问题同样要标
     ``REFUSED=1``，发了警告再标 ``WARNED=1``——否则「他被拒过几次」只能靠猜
     错误码去对时间。
     """
     warned = False
-    if penalize and not unavailable:
+    if not unavailable:
         try:
             outcome = await violation_guard.record_agent_jailbreak(
                 user,
@@ -353,54 +348,24 @@ async def submit(
     # 管理员天然旁路审核（不再是「无限制模式」开关）：审核分支根本不进入，也就
     # 没有「跳过了审核」这条记录——正常的管理员 run 只留 executor 每轮的审计行
     # （``roles_snapshot`` 带 admin，事后仍能区分是谁提的）。
+    #
+    # 内容安全**只有一道判据**：:func:`services.ai.safety_guard.screen`——用当前
+    # 会话的模型在入队前判一次「是否属于平台事务」，无关即拒绝并走首档封号。规则
+    # 词表不再参与门禁（词表本体保留在 :mod:`services.ai.moderation` 备查）。
     if not is_admin(user):
-        audit_oid: str | None = None
-        verdict = moderation.check(text)
-        if verdict.hit:
-            _logger.warning(
-                "agent 输入审核拦截 user=%s rule=%s scope=%s",
-                owner_oid,
-                verdict.rule,
-                getattr(verdict, "scope", None),
-            )
-            # 被拦下的原文不留就永远查不到「他到底说了什么」；留存仍受
-            # ``ai.prompt_capture_roles`` 白名单约束（capture 内部判断）。
-            audit_oid = await prompt_audit.capture(
-                user=dict(user),
-                purpose=executor.PURPOSE_AGENT,
-                messages=[{"role": "user", "content": text}],
-            )
-            await _reject_unsafe(
-                user,
-                text=text,
-                xuehai_id=xuehai_id,
-                # 审计仍记**规则名**（``instruction_override`` / ``content_weapons``）：
-                # 这是证据表的既有字段，改成分类会让历史数据与代码对不上。
-                category=str(verdict.rule or ""),
-                audit_oid=audit_oid,
-                # 业务域内的违规只拒绝：举报/申诉里的敏感词不是「索取违法内容」。
-                # 缺 ``scope``（只实现了旧字段的桩）按「照旧处罚」处理。
-                penalize=getattr(verdict, "scope", None)
-                != moderation.SCOPE_PLATFORM,
-            )
-
-        # 灰区闸门：关键词规则之后、入队之前。只对 department 生效（admin 上面
-        # 已旁路），非 department 不触达网络。判定跑不起来时拒绝回答但不记违规。
-        # 顺序固定：任何一步拒绝都不产生 run，也不扣额度。
         verdict = await safety_guard.screen(
             user,
             text,
             model_hint=(str(model).strip() or None) if model else conversation.get("model"),
         )
         if not verdict.allowed:
-            if audit_oid is None:
-                # 灰区拒绝的原文同样要留：它是「模型看到了什么」的唯一证据，
-                # 也受同一条角色白名单约束（capture 内部判断）。
-                audit_oid = await prompt_audit.capture(
-                    user=dict(user),
-                    purpose=executor.PURPOSE_AGENT,
-                    messages=[{"role": "user", "content": text}],
-                )
+            # 被拒原文不留就永远查不到「他到底说了什么」；留存仍受
+            # ``ai.prompt_capture_roles`` 白名单约束（capture 内部判断）。
+            audit_oid = await prompt_audit.capture(
+                user=dict(user),
+                purpose=executor.PURPOSE_AGENT,
+                messages=[{"role": "user", "content": text}],
+            )
             await _reject_unsafe(
                 user,
                 text=text,

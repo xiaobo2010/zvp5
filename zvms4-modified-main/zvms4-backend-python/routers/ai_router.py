@@ -42,7 +42,6 @@ from services import file_ops, risk_monitor, violation_guard
 from services.ai import api_keys, audit, ban_state, credentials, quota, rate_limit, routing
 from services.ai import config as ai_config
 from services.ai import model_rates
-from services.ai import moderation
 from services.ai import ocr as ai_ocr
 from services.ai import ocr_engines
 from services.ai import ocr_engines_admin
@@ -1826,21 +1825,17 @@ async def _screen_chat_request(
 ) -> JSONResponse | None:
     """chat 面的内容审核：放行返回 ``None``，拒绝返回 OpenAI 错误体。
 
-    两道闸，顺序固定：
-
-    1. **关键词层**（``moderation.check``）：纯函数、无 IO，所以对**所有角色**生效。
-       过去学生在这个面完全不被审查（``safety_guard`` 只对 department），而这一层
-       的成本只是几次正则。
-    2. **灰区层**（``safety_guard.screen``）：只对 department，一次上游调用，专门
-       抓「换了说法的破坏性请求」。admin 与学生都不触达网络。
+    内容安全**只有一道判据**：``safety_guard.screen``——用当前会话的模型（``model``
+    即本次请求声明的模型，作为 ``model_hint``）在调上游之前判一次「是否属于平台
+    事务」，无关即拒绝并记违规/首档封号。规则词表不参与门禁（词表本体保留在
+    :mod:`services.ai.moderation` 备查）；过去的关键词层对所有角色生效，现在同一
+    口径交给 LLM 判定，不再有「正则与模型各判一半」的分裂。
 
     位置固定在「角色/开关门禁之后、候选选择与频控/额度之前」：被拒请求不能花掉
     上游调用，也不该占用用户或 API key 的分钟窗口。
 
-    ``scope`` 决定**处罚**而不是判定：``off_platform``（向平台索取违法内容）→ 记
-    违规 + 警告 + 首档封号；``platform``（举报/申诉/业务咨询里的敏感词）→ 只拒绝
-    本次请求。两类的对外响应逐字节相同（403 + ``AI_SAFETY_REJECTED`` + 固定文案），
-    攻击者无法按差异调参。
+    判定跑不起来（无凭据/超时/上游失败/坏 JSON）时只拒绝本次回答、不写证据：
+    对外同一个 403 + ``AI_SAFETY_REJECTED`` + 固定文案，攻击者无法按差异调参。
 
     ``zvk_`` 平台 key 与 JWT 走同一套判定：``get_ai_client`` 已经把 key 换成
     与 ``get_current_user`` 同形的 user dict（``per`` = owner 的原始角色），所以
@@ -1851,41 +1846,6 @@ async def _screen_chat_request(
         return None
 
     model_name = str(payload.get("model") or "") or None
-
-    keyword = moderation.check(text)
-    if keyword.violation:
-        _logger.warning(
-            "chat 关键词审核拦截 user=%s rule=%s scope=%s",
-            user_oid,
-            keyword.rule,
-            keyword.scope,
-        )
-        warned = False
-        if keyword.scope != moderation.SCOPE_PLATFORM:
-            warned = await _record_violation(
-                user,
-                request=request,
-                text=text,
-                rule=str(keyword.category or keyword.reason or ""),
-            )
-        await prompt_audit.record_outcome(
-            audit_oid, refused=True, warned=True if warned else None
-        )
-        await _reject_http(
-            user_oid=user_oid,
-            model=model_name,
-            request_id=request_id,
-            status_code=403,
-            code=safety_guard.REJECTED_CODE,
-            purpose=purpose,
-            roles_snapshot=scene_roles,
-        )
-        return _openai_error(
-            403,
-            safety_guard.REJECTED_CODE,
-            moderation.REJECTED_MESSAGE,
-            request_id=request_id,
-        )
 
     if not safety_guard.is_department(user):
         return None
