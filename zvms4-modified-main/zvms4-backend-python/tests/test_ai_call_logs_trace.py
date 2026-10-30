@@ -173,7 +173,7 @@ def upstream(monkeypatch):
 @pytest.fixture
 def stream_upstream(monkeypatch):
     def install(*items):
-        async def _stream(payload: dict, entry: dict, api_key: str):
+        async def _stream(payload: dict, entry: dict, api_key: str, *, meta=None):
             for item in items:
                 if isinstance(item, BaseException):
                     raise item
@@ -600,7 +600,7 @@ def test_stream_options_never_reach_a_provider_that_did_not_opt_in(
     """端到端：白名单外的上游收到的请求体里没有 ``stream_options``。"""
     captured: list[dict] = []
 
-    async def _stream(payload: dict, entry: dict, api_key: str):
+    async def _stream(payload: dict, entry: dict, api_key: str, *, meta=None):
         captured.append(providers.stream_request_body(payload, entry))
         yield DELTA
 

@@ -672,7 +672,7 @@ def test_site_consume_books_against_the_shared_owner(monkeypatch) -> None:
     # 传给仓储的 default_limit 必须是**站点口径**：回落到用户额度（100）会让站点
     # 额度一建就满，几十个用户一天打满、之后全站 OCR 503（2026-10-24 上线实测）。
     assert default_limit == quota._default_limit("ocr_aliyun")
-    assert default_limit != DEFAULT_QUOTA["ocr"]
+    assert default_limit != DEFAULT_QUOTA["af"]
 
 
 def test_site_consume_rejects_unknown_engine_before_touching_the_repo(monkeypatch) -> None:
@@ -728,11 +728,14 @@ def test_refund_statement_clamps_used_at_zero() -> None:
 
 
 def test_default_limit_uses_site_quota_for_site_kinds() -> None:
-    # 站点 kind 走站点口径（默认 1000），用户级 kind 才走 DEFAULT_QUOTA。
+    # 站点 kind 走站点口径（默认 1000），用户级 kind（V051 起只有 af）才走
+    # DEFAULT_QUOTA。
     assert quota._default_limit("ocr_tencent") == 1000
-    assert quota._default_limit("ocr_tencent") != DEFAULT_QUOTA["ocr"]
-    assert quota._default_limit("ocr") == DEFAULT_QUOTA["ocr"]
-    assert quota._default_limit("chat") == DEFAULT_QUOTA["chat"]
+    assert quota._default_limit("ocr_tencent") != DEFAULT_QUOTA["af"]
+    assert quota._default_limit("af") == DEFAULT_QUOTA["af"]
+    # 历史 kind 没有默认值：谁把调用点的 kind 写回 chat/ocr 会立刻得到 0。
+    assert quota._default_limit("ocr") == 0
+    assert quota._default_limit("chat") == 0
     assert quota._default_limit("unknown_kind") == 0
 
 
