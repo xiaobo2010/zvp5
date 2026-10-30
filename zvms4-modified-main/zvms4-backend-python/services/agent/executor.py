@@ -110,6 +110,24 @@ SCENE_PROMPTS = {
         "的成员，需要时按共同活动成员反推，并说明这个口径。\n"
         "信息不足时明确说明缺什么，不要猜数字；工时单位是小时。"
     ),
+    # 与 volunteer 同因：会话键只有 (owner, scene)，不同活动共用一条历史，所以
+    # 「本轮对象」必须压过历史残留，并让模型开头复述活动名 + oid，串号时能一眼发现。
+    "activity": (
+        "当前为「义工活动分析」只读场景：不得执行任何写操作（改数据、建活动、报名、"
+        "审批、删除都不行），只能调用只读工具。\n"
+        "本轮分析对象以随本轮用户消息传入的参考内容（reference）为准，其中包含目标"
+        "活动的 oid 与名称。历史对话里可能残留其它活动的讨论；凡与本轮参考内容不一致"
+        "的，一律以本轮参考内容为准，并在回答开头先复述你分析的活动名称与活动 OID。\n"
+        "可用工具均为只读：get_activity 查单个活动详情、activity_statistics 查活动"
+        "统计、list_activity_members 查活动成员、list_activities 列活动、"
+        "search_activities 按关键词搜活动、list_groups 查班级与权限组清单（只有名称，"
+        "没有成员名单）。\n"
+        "口径：报名数不等于签到数，只有 status 为 effective 的报名才算有效参与；"
+        "时长单位是小时；出勤率 = 签到人数 / 报名人数，算不出来就说算不出来。\n"
+        "护栏：不对成员个体下评价性结论（不评判谁积极谁消极、不推测动机），不输出"
+        "名单以外的个人信息（联系方式、住址、成绩等一律不提）。\n"
+        "信息不足时明确说明缺什么，不要编造数字或活动。"
+    ),
 }
 # 参考内容的标注（oracle 条件②）：明确「这不是用户的话、也不是历史」，避免模型
 # 把终端输出里的指令当作用户新要求执行。
@@ -1315,7 +1333,7 @@ async def _summarize_history(
     async def complete(prompt_messages: list[dict], max_tokens: int) -> str:
         if _billable(candidates[0]):
             allowed, _used, _limit = await quota.peek(
-                user_oid, "chat", 1, roles=roles
+                user_oid, "af", 1, roles=roles
             )
             if not allowed:
                 raise AgentError(
@@ -1363,7 +1381,7 @@ async def _summarize_history(
         )
         if _billable(entry):
             try:
-                await quota.consume(user_oid, "chat", units, roles=roles)
+                await quota.consume(user_oid, "af", units, roles=roles)
             except Exception as exc:  # noqa: BLE001 - 回写失败不能丢掉摘要
                 _logger.warning(
                     "ai agent compact quota write-back failed: %s",
@@ -1603,7 +1621,7 @@ async def run(
         # 2) 额度预检：明显超额的请求不该先花掉上游成本再被拒。
         if _billable(candidates[0]):
             allowed, used, limit = await quota.peek(
-                user_oid, "chat", 1, roles=roles
+                user_oid, "af", 1, roles=roles
             )
             if not allowed:
                 rejection = AgentError(
@@ -1725,7 +1743,7 @@ async def run(
         if _billable(entry):
             # 后置扣减是 best-effort：回写失败不能丢掉已经生成的答案。
             try:
-                await quota.consume(user_oid, "chat", units, roles=roles)
+                await quota.consume(user_oid, "af", units, roles=roles)
             except Exception as exc:  # noqa: BLE001 - 回写失败不能丢掉答案
                 _logger.warning(
                     "ai agent quota write-back failed: %s", type(exc).__name__

@@ -10,9 +10,11 @@ import {
   ElMessage,
   ElTag
 } from 'element-plus'
-import { Calendar, ArrowRight, Delete, Edit } from '@element-plus/icons-vue'
+import { Calendar, ArrowRight, Delete, Edit, MagicStick } from '@element-plus/icons-vue'
 import dayjs from '@/plugins/dayjs'
 import { useUserStore } from '@/stores/user'
+import ZSceneRunDialog from '@/components/server/ZSceneRunDialog.vue'
+import { buildActivityContextMarkdown } from '@/utils/activityAnalysis'
 import {
   ZActivityDuration,
   ZActivityMember,
@@ -104,6 +106,44 @@ async function deleteActivity(id: string) {
 }
 
 const refresh = () => emits('refresh')
+
+// AI 分析：活动标识、基本信息与聚合统计作为参考内容交给场景会话。
+// 统计与组织人是「锦上添花」：取不到就降级成占位文案，不挡入口。
+const analysisVisible = ref(false)
+const analysisContext = ref('')
+const analysisLoading = ref(false)
+
+async function openActivityAnalysis() {
+  if (analysisLoading.value) {
+    return
+  }
+  analysisLoading.value = true
+  try {
+    const aid = activity.value._id
+    const [detail, stats, creator] = await Promise.allSettled([
+      api.activity.read.single(aid),
+      api.activity.stats.analysis(aid),
+      api.user.readOne(activity.value.creator)
+    ])
+    if (detail.status === 'rejected' || stats.status === 'rejected') {
+      ElMessage({
+        message: t('activity.analysis.partialFailed'),
+        type: 'warning',
+        grouping: true,
+        plain: true
+      })
+    }
+    analysisContext.value = buildActivityContextMarkdown({
+      activity: activity.value,
+      membersCount: detail.status === 'fulfilled' ? detail.value.members_count : null,
+      creatorName: creator.status === 'fulfilled' ? creator.value?.name : null,
+      statistics: stats.status === 'fulfilled' ? stats.value : null
+    })
+    analysisVisible.value = true
+  } finally {
+    analysisLoading.value = false
+  }
+}
 </script>
 
 <template>
@@ -198,6 +238,23 @@ const refresh = () => emits('refresh')
           @refresh="refresh"
         />
         <ZActivityStatsDialog v-if="canViewStats" :aid="activity._id" @refresh="refresh" />
+        <ElButton
+          v-if="canModify"
+          class="px-2"
+          text
+          bg
+          round
+          size="small"
+          type="primary"
+          :icon="MagicStick"
+          :loading="analysisLoading"
+          :disabled="analysisLoading"
+          :aria-label="t('activity.analysis.action')"
+          :title="t('activity.analysis.hint')"
+          @click="openActivityAnalysis"
+        >
+          {{ t('activity.analysis.action') }}
+        </ElButton>
         <ZActivityAttachmentsDialog
           v-if="canModify"
           class="px-2"
@@ -232,6 +289,13 @@ const refresh = () => emits('refresh')
           </template>
         </ElPopconfirm>
       </div>
+
+      <ZSceneRunDialog
+        v-model="analysisVisible"
+        scene="activity"
+        :title="t('activity.analysis.title')"
+        :context="analysisContext"
+      />
     </div>
   </ZButtonOrCard>
 </template>

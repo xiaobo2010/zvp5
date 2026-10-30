@@ -298,7 +298,11 @@ export const zhCN = {
   },
   analysis: {
     pendingNote: '本页有 {count} 项审核中的时长尚未计入累计时长，审核通过后会计入。',
-    pendingTip: '审核中的时长尚未计入累计时长，审核通过后会计入。'
+    pendingTip: '审核中的时长尚未计入累计时长，审核通过后会计入。',
+    action: 'AI 分析',
+    title: '活动分析',
+    hint: '参考内容含活动标识、基本信息与聚合统计，不含成员名单',
+    partialFailed: '部分资料未能获取，分析参考内容可能不完整'
   },
   member: {
     name: '姓名',

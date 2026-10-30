@@ -327,11 +327,22 @@ async def submit(
 
     # 密码门在审核之前：没有解锁的人连「被审核的机会」都不该有——否则审核命中
     # 会把一次未授权的探测写进违规证据里，处罚依据就不干净了。
-    # **只读场景豁免**（oracle 条件）：终端 / 文件编辑场景只声明读工具、入口只对
-    # admin 开放，风险面与「能改数据」的普通 agent 不同；再要一次密码只是让
-    # 「看一眼日志」多一步，挡不住任何真实风险。豁免条件写死在这里，不开放成
-    # 参数——那等于给调用方一个「跳过门禁」的开关。
-    if not (conversations.is_readonly_scene(conversation.get("scene")) and is_admin(user)):
+    # **只读场景豁免**（oracle 条件）：只读场景（终端 / 文件编辑 / 义工分析 /
+    # 活动分析）只声明读工具，风险面与「能改数据」的普通 agent 不同；再要一次
+    # 密码只是让「看一眼日志」多一步，挡不住任何真实风险。
+    #
+    # 豁免判据用 :func:`services.ai.conversations.scene_allows` 而不是写死
+    # ``is_admin``：场景的准入角色是 ``SCENE_MIN_ROLES`` 一个地方的事，密码门跟着
+    # 同一张表走，「谁进得了场景」与「谁免密码」才不会漂移——写死 admin 时
+    # ``activity`` 对 ``department`` 放开，部门提交照样 422，路由层放行变成空话。
+    # 判据仍然是「**只读场景** 且 **该场景允许的角色**」：非只读场景一律要解锁，
+    # 未知场景 ``scene_allows`` fail-closed，拼错不会变成跳过门禁。
+    # 条件写死在这里，不开放成参数——那等于给调用方一个「跳过门禁」的开关。
+    scene = conversation.get("scene")
+    if not (
+        conversations.is_readonly_scene(scene)
+        and conversations.scene_allows(user, scene)
+    ):
         if not agent_unlock.is_unlocked(owner_oid):
             raise AgentError(
                 "AI_AGENT_UNLOCK_REQUIRED",

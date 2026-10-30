@@ -1,17 +1,27 @@
-"""只读场景面（``/api/ai/scenes``）：终端 / 文件编辑 / 义工分析的一次提问。
+"""只读场景面（``/api/ai/scenes``）：终端 / 文件编辑 / 义工分析 / 义工活动分析。
 
-三个场景共用会话 + run 管线（``run_queue.submit_scene`` → 同一个泵、同一套计费与
+四个场景共用会话 + run 管线（``run_queue.submit_scene`` → 同一个泵、同一套计费与
 审计），差别只有三处，且都落在服务层：
 
-* 会话按 ``(user, scene)`` 复用，标题固定「终端智能」/「文件编辑智能」/「义工分析」；
+* 会话按 ``(user, scene)`` 复用，标题固定「终端智能」/「文件编辑智能」/「义工分析」/
+  「义工活动分析」；
 * 工具声明按 ``kind='read'`` 裁剪（执行器侧），写工具、提案流、``ssh_exec`` 与
   数据库 DML/DDL 都不存在；
 * 场景会话不出现在普通会话列表里（``AI_CONVERSATIONS.SCENE IS NULL`` 过滤）。
 
-门禁：``admin`` + ``ai.agent`` 功能开关，**对三个场景一视同仁**（新增场景不放宽
-权限）。**故意不挂密码门**（30 分钟解锁）：只读场景的风险面是「能看」，不是
-「能改」，而 ``submit`` 里也把这条豁免写成了「只读场景 + admin」的显式条件（测试
-钉住），不是靠路由层不调用。
+门禁分两层：第一层是 AI 面的角色白名单（``_has_ai_access``，admin + department），
+第二层是**场景级角色门槛**（``conversations.SCENE_MIN_ROLES``）。终端 / 文件编辑 /
+义工分析仍只有 admin 能进，部门角色拿不到；活动分析面向单个活动的公开信息，对
+学生会的 ``department`` 开放。映射缺省一律按「仅 admin」收紧，未知场景谁都不放行。
+
+门禁顺序固定：角色白名单 → 场景枚举（400）→ 场景级角色（403，**落审计**）→
+功能开关 ``ai.agent``。枚举先于角色与开关，是因为「场景名拼错」是参数错误，不是
+「没权限」也不是「能力被关掉」：三者混成一个码，运维会去查权限或开关配置，而问题
+其实在 URL 里。
+
+**故意不挂密码门**（30 分钟解锁）：只读场景的风险面是「能看」，不是「能改」，而
+``submit`` 里也把这条豁免写成了「只读场景 + admin」的显式条件（测试钉住），不是靠
+路由层不调用。
 
 协议壳与 ``/api/ai/conversations`` 逐字一致（``{"status","code","data"}`` / 错误体
 ``{"error":{...}}`` + ``X-AI-Request-Id``），前端同一套解析。
@@ -123,10 +133,29 @@ async def _audit(
     )
 
 
-def _require_admin(user: dict) -> None:
-    """严格 admin：只读场景能读到站点文件与库里数据，不该按「AI 可用角色」放行。"""
-    if "admin" not in (user.get("per") or []):
-        raise AgentError("AI_FORBIDDEN", AI_FORBIDDEN_MESSAGE, 403)
+async def _require_scene_access(
+    user: dict, scene: str, *, request_id: str
+) -> None:
+    """场景级角色门槛：不满足即 403 + 审计。
+
+    门槛本身在服务层（``conversations.scene_allows``），这里只负责把「谁在什么时候
+    被哪个场景挡下」写进 ``AI_CALL_LOGS``（``_audit``）——与第一层白名单拒绝同一条
+    审计路径，否则「部门试了终端场景」这种探测在流水里看不到。
+
+    拒绝落审计、功能开关拒绝不落审计，是刻意的分工：前者是权限边界（可能有探测），
+    后者是管理员主动收起能力（不是信号）。
+    """
+    if conversations.scene_allows(user, scene):
+        return
+    await _audit(
+        user,
+        scene=scene,
+        request_id=request_id,
+        status="rejected",
+        code="AI_FORBIDDEN",
+        http_status=403,
+    )
+    raise AgentError("AI_FORBIDDEN", AI_FORBIDDEN_MESSAGE, 403)
 
 
 def _require_feature(user: dict) -> None:
@@ -138,11 +167,12 @@ def _require_feature(user: dict) -> None:
 
 
 async def _dispatch(
-    action: Callable[[], Awaitable[Any]],
+    action: Callable[[str], Awaitable[Any]],
     *,
     user: dict,
     scene: str | None,
 ) -> JSONResponse:
+    """跑一次场景请求，协议壳统一（``action`` 收到本次 request_id 以便自行落审计）。"""
     request_id = uuid4().hex
     if not _has_ai_access(user):
         await _audit(
@@ -155,7 +185,7 @@ async def _dispatch(
         )
         return _error(403, "AI_FORBIDDEN", AI_FORBIDDEN_MESSAGE, request_id=request_id)
     try:
-        data = await action()
+        data = await action(request_id)
     except AgentError as exc:
         return _error(
             exc.status_code, exc.code, exc.message, request_id=request_id
@@ -192,18 +222,19 @@ async def submit_scene_run(
 ):
     """提交一次只读场景 run：立刻 202，用既有 ``GET /ai/runs/{run_id}`` 轮询。
 
-    门禁顺序：admin → 场景枚举 → 功能开关 → 入队。枚举先于开关，是因为「场景名
-    拼错」是参数错误（400），不是「能力被关掉」（403）；两者混成一个码，运维会
-    去查开关配置而问题其实在 URL 里。
+    门禁顺序：角色白名单（``_dispatch`` 里）→ 场景枚举 → 场景级角色 → 功能开关 →
+    入队。枚举先于角色，是因为「场景名拼错」是参数错误（400），不是「场景进不去」
+    （403）；角色先于开关，是因为「这个场景不给你」与「这项能力被关掉」是两件事，
+    后者是管理员的配置，不该盖住前者。
     """
 
     normalized = str(scene or "").strip().lower()
     xuehai_id = xuehai_id_from(request)
 
-    async def action() -> dict:
-        _require_admin(user)
+    async def action(request_id: str) -> dict:
         if normalized not in conversations.SCENES:
             raise AgentError(conversations.SCENE_BAD, conversations.scene_hint(), 400)
+        await _require_scene_access(user, normalized, request_id=request_id)
         thinking = _clean_thinking(payload.thinking)
         model = str(payload.model or "").strip() or None
         _require_feature(user)

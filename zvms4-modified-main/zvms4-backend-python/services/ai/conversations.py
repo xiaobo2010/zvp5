@@ -70,16 +70,30 @@ MODEL_LOCKED = "AI_CONVERSATION_MODEL_LOCKED"
 # 思考强度：三档，``None`` = 不加任何上游字段（用它自己的默认）。
 THINKING_LEVELS = ("low", "medium", "high")
 
-# 只读场景会话（V048 ``AI_CONVERSATIONS.SCENE``）：终端 / 文件编辑 / 义工分析
-# 共用会话 + run 管线，但工具声明按 ``kind='read'`` 裁剪，写工具在场景里根本不存
-# 在。``None`` = 普通会话；列表查询固定过滤它，场景会话只经
+# 只读场景会话（V048 ``AI_CONVERSATIONS.SCENE``）：终端 / 文件编辑 / 义工分析 /
+# 义工活动分析共用会话 + run 管线，但工具声明按 ``kind='read'`` 裁剪，写工具在场景
+# 里根本不存在。``None`` = 普通会话；列表查询固定过滤它，场景会话只经
 # ``/api/ai/scenes/{scene}/runs`` 触达。值域只在这里（DDL 无 CHECK），加场景只改
-# 本元组 + ``SCENE_TITLES`` + 执行器的 ``SCENE_PROMPTS``。
-SCENES = ("terminal", "file_edit", "volunteer")
+# 本元组 + ``SCENE_TITLES`` + ``SCENE_MIN_ROLES`` + 执行器的 ``SCENE_PROMPTS``。
+SCENES = ("terminal", "file_edit", "volunteer", "activity")
 SCENE_TITLES = {
     "terminal": "终端智能",
     "file_edit": "文件编辑智能",
     "volunteer": "义工分析",
+    "activity": "义工活动分析",
+}
+# 场景级角色门槛：能「看」到的范围按场景分级。终端 / 文件编辑 / 义工分析面向站点
+# 文件、全库数据与单个义工档案，历史上就是严格 admin；活动分析只读单个活动的公开
+# 信息，学生会（``department``）也该用，所以单独放宽这一项。
+#
+# **fail-closed**：映射里没有条目 = 仅 ``admin``（见 :func:`scene_min_roles`），
+# 而不是「谁都能进」——新增场景忘了登记，后果必须是「部门看不到」，不是「全校
+# 都能读站点文件」。
+SCENE_MIN_ROLES: dict[str, tuple[str, ...]] = {
+    "terminal": ("admin",),
+    "file_edit": ("admin",),
+    "volunteer": ("admin",),
+    "activity": ("admin", "department"),
 }
 # 场景会话的保留窗口（天）：一次性排障记录，内容含终端/文件片段，比普通会话激进。
 SCENE_RETENTION_DAYS = 14
@@ -194,6 +208,33 @@ def scene_hint() -> str:
 def is_readonly_scene(value: object) -> bool:
     """是否是只读场景（``SCENES`` 全员）。拼错的值一律按「不是」处理。"""
     return str(value or "").strip().lower() in SCENES
+
+
+def scene_min_roles(scene: object) -> tuple[str, ...]:
+    """该场景的门槛角色（``per`` 口径）；``()` = 谁都不放行。
+
+    两处缺省都按 fail-closed：
+
+    * **未知场景**（不在 ``SCENES`` 里）→ 空元组。能走到这里的未知值只可能来自绕
+      过枚举校验的调用方，那时「admin 也放行」等于把拼写错误变成一次放行。
+    * **已知但映射没登记** → 仅 ``admin``。新场景忘了登记时收紧而不是放开。
+    """
+    text = str(scene or "").strip().lower()
+    if text not in SCENES:
+        return ()
+    return SCENE_MIN_ROLES.get(text, ("admin",))
+
+
+def scene_allows(user: Mapping[str, Any], scene: object) -> bool:
+    """该用户的角色集合是否能进入这个场景（纯函数，不查库、不抛异常）。
+
+    只看 ``user['per']``（原始角色），与 ``_has_ai_access`` 同口径；``perm`` 是 V2
+    的映射权限，拿它判会把「有某个 V2 权限的人」也放进场景。
+    """
+    roles = scene_min_roles(scene)
+    if not roles:
+        return False
+    return bool(set(user.get("per") or []) & set(roles))
 
 
 def _clean_scene(value: object) -> str | None:
@@ -823,6 +864,7 @@ __all__ = [
     "RUN_CONFLICT",
     "SCENE_BAD",
     "SCENE_CONTEXT_MAX",
+    "SCENE_MIN_ROLES",
     "SCENE_PURGE_BATCH",
     "SCENE_RETENTION_DAYS",
     "SCENES",
@@ -842,7 +884,9 @@ __all__ = [
     "fetch_row",
     "get",
     "is_readonly_scene",
+    "scene_allows",
     "scene_hint",
+    "scene_min_roles",
     "list_messages",
     "list_page",
     "message_view",
