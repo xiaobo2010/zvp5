@@ -169,12 +169,19 @@ vi.mock('element-plus', async () => {
 
   const ElSelect = defineComponent({
     name: 'ElSelect',
-    props: { modelValue: { type: [String, Number], default: '' }, placeholder: String },
+    props: {
+      modelValue: { type: [String, Number], default: '' },
+      placeholder: String,
+      disabled: Boolean,
+      size: String,
+      clearable: Boolean
+    },
     emits: ['update:modelValue'],
     setup(props, { emit }) {
       return () =>
         h('input', {
           class: 'el-select-stub',
+          disabled: props.disabled || undefined,
           value: props.modelValue,
           placeholder: props.placeholder,
           onInput: (event: Event) =>
@@ -603,7 +610,11 @@ describe('上下文水位', () => {
 
     expect(wrapper.find('.ai-chat__context .yg-progress--warning').exists()).toBe(false)
     expect(wrapper.text()).not.toContain('ai.chat.sessions.context.warning')
-    expect(wrapper.text()).toContain('ai.chat.sessions.context.autoCompactHint')
+    // 横排里只留一句短提示，长解释挂在 title 上
+    expect(wrapper.text()).toContain('ai.chat.sessions.context.autoCompactHintShort')
+    expect(wrapper.find('.ai-chat__context-hint').attributes('title')).toContain(
+      'ai.chat.sessions.context.autoCompactHint'
+    )
 
     wrapper.unmount()
   })
@@ -805,6 +816,143 @@ describe('智能体模式', () => {
     // 提交就结束了：按钮不再处于加载态，页面显示「后台执行中」。
     expect(findButton(wrapper, 'ai.chat.send')!.attributes('data-loading')).toBe('false')
     expect(wrapper.text()).toContain('ai.agent.run.background')
+
+    wrapper.unmount()
+  })
+
+  it('思考期间先占一个位置：有正文后占位消失', async () => {
+    vi.mocked(fetchRunDetail).mockResolvedValue({
+      run: run({ status: 'running', rounds: 1 }),
+      events: [],
+      proposals: [],
+      messages: [
+        {
+          oid: 'm2',
+          seq: 2,
+          role: 'assistant',
+          content: '第一轮结论',
+          created_at: '2026-10-25T00:00:05'
+        }
+      ]
+    })
+    const wrapper = mountPage()
+    await settle()
+    await sendText(wrapper, '查一下图书馆')
+
+    // 还没出正文：占位气泡在
+    const placeholder = wrapper.find('.ai-chat__pending-reply')
+    expect(placeholder.exists()).toBe(true)
+    expect(placeholder.text()).toContain('ai.chat.thinkingPlaceholder')
+
+    // 正文到了：占位让位给真实回复
+    await vi.advanceTimersByTimeAsync(600)
+    await settle()
+
+    expect(wrapper.find('.ai-chat__pending-reply').exists()).toBe(false)
+    expect(wrapper.text()).toContain('第一轮结论')
+
+    wrapper.unmount()
+  })
+
+  it('提交后先用快节奏探首帧，再回落到常规间隔', async () => {
+    vi.mocked(fetchRunDetail).mockResolvedValue({
+      run: run({ status: 'running', rounds: 1 }),
+      events: [],
+      proposals: []
+    })
+    const wrapper = mountPage()
+    await settle()
+    await sendText(wrapper, '查一下图书馆')
+
+    await vi.advanceTimersByTimeAsync(500)
+    await settle()
+    expect(vi.mocked(fetchRunDetail).mock.calls.length).toBe(1)
+
+    // 快探期内每隔 500ms 一次
+    await vi.advanceTimersByTimeAsync(500)
+    await settle()
+    expect(vi.mocked(fetchRunDetail).mock.calls.length).toBe(2)
+
+    // 快探用完（4 次）之后回落到 1.5 秒：500ms 与 1000ms 之后都不再发请求
+    await vi.advanceTimersByTimeAsync(1000)
+    await settle()
+    expect(vi.mocked(fetchRunDetail).mock.calls.length).toBe(4)
+
+    await vi.advanceTimersByTimeAsync(1000)
+    await settle()
+    expect(vi.mocked(fetchRunDetail).mock.calls.length).toBe(4)
+
+    wrapper.unmount()
+  })
+
+  it('中文输入法组字中按回车：不发送', async () => {
+    const wrapper = mountPage()
+    await settle()
+
+    const input = wrapper.find('.el-input-stub')
+    await input.setValue('查一下图书馆')
+    await input.trigger('compositionstart')
+    await input.trigger('keydown', { key: 'Enter' })
+    await settle()
+
+    expect(submitRun).not.toHaveBeenCalled()
+
+    // 组字结束：回车照常发送
+    await input.trigger('compositionend')
+    await input.trigger('keydown', { key: 'Enter' })
+    await settle()
+
+    expect(submitRun).toHaveBeenCalledTimes(1)
+
+    wrapper.unmount()
+  })
+
+  it('任务在跑时按回车：给明确提示，不静默丢弃', async () => {
+    const wrapper = mountPage()
+    await settle()
+    await sendText(wrapper, '查一下图书馆')
+
+    const input = wrapper.find('.el-input-stub')
+    await input.setValue('再查一下')
+    await input.trigger('keydown', { key: 'Enter' })
+    await settle()
+
+    expect(submitRun).toHaveBeenCalledTimes(1)
+    expect(wrapper.find('.ai-chat__blocked').exists()).toBe(true)
+    expect(wrapper.find('.ai-chat__blocked').text()).toContain('ai.chat.sendingBlocked')
+    // 输入框仍然可写：下一句先存在这儿
+    expect((input.element as HTMLTextAreaElement).value).toBe('再查一下')
+
+    wrapper.unmount()
+  })
+
+  it('提交失败后重发：沿用同一个幂等键，内容改了才换新键', async () => {
+    vi.mocked(submitRun).mockRejectedValue(new AiRequestError({ status: 500, code: 'AI_AGENT_INTERNAL' }))
+    const wrapper = mountPage()
+    await settle()
+
+    await sendText(wrapper, '查一下图书馆')
+    const firstId = vi.mocked(submitRun).mock.calls[0]![2]!.clientMsgId
+
+    // 失败后内容还回输入框，重发用的是同一个键
+    await sendText(wrapper, '查一下图书馆')
+    const secondId = vi.mocked(submitRun).mock.calls[1]![2]!.clientMsgId
+    expect(secondId).toBe(firstId)
+
+    // 内容改了就是新的一条消息：换新键
+    await sendText(wrapper, '换个问题')
+    const thirdId = vi.mocked(submitRun).mock.calls[2]![2]!.clientMsgId
+    expect(thirdId).not.toBe(firstId)
+
+    wrapper.unmount()
+  })
+
+  it('没有在跑的任务：不显示停止按钮', async () => {
+    const wrapper = mountPage()
+    await settle()
+
+    expect(findButton(wrapper, 'ai.chat.stop')).toBeUndefined()
+    expect(elMessageSuccessSpy).not.toHaveBeenCalledWith('ai.agent.run.cancelNotice')
 
     wrapper.unmount()
   })
@@ -1033,6 +1181,23 @@ describe('视口适配', () => {
     expect(wrapper.find('.ai-chat__settings').classes()).not.toContain('is-folded')
     expect(wrapper.find('.ai-chat__settings-summary').exists()).toBe(false)
     expect(wrapper.find('.el-input-stub').attributes('data-rows')).toBe('3')
+
+    wrapper.unmount()
+  })
+
+  it('设置内容横排成一条：模型 / 思考 / 上下文在一行里', async () => {
+    const wrapper = mountPage()
+    await settle()
+
+    const row = wrapper.find('.ai-chat__settings-row')
+    expect(row.exists()).toBe(true)
+    // 共享选择器接管模型与思考强度
+    expect(wrapper.find('.ai-picker').exists()).toBe(true)
+    // 下拉不再写死宽度
+    expect(wrapper.find('.w-64').exists()).toBe(false)
+    // 上下文水位与压缩入口也在这行里
+    expect(row.find('.ai-chat__context').exists()).toBe(true)
+    expect(row.text()).toContain('ai.chat.sessions.context.label')
 
     wrapper.unmount()
   })
@@ -1308,9 +1473,9 @@ describe('模型切换', () => {
 
     const select = wrapper.find('.el-select-stub')
     expect(select.attributes('disabled')).toBeUndefined()
-    expect(wrapper.find('.ai-chat__model-lock-icon').exists()).toBe(false)
-    expect(wrapper.text()).toContain('ai.chat.modelChangeable')
-    expect(wrapper.text()).not.toContain('ai.chat.modelLocked')
+    expect(wrapper.find('.ai-picker__lock').exists()).toBe(false)
+    expect(wrapper.text()).toContain('ai.chat.modelChangeableShort')
+    expect(wrapper.text()).not.toContain('ai.chat.modelLockedShort')
 
     await select.setValue('gpt-4.1')
     await settle()
@@ -1363,8 +1528,12 @@ describe('模型切换', () => {
 
     const select = wrapper.find('.el-select-stub')
     expect(select.attributes('disabled')).toBeDefined()
-    expect(wrapper.find('.ai-chat__model-lock-icon').exists()).toBe(true)
-    expect(wrapper.text()).toContain('ai.chat.modelLocked')
+    expect(wrapper.find('.ai-picker__lock').exists()).toBe(true)
+    expect(wrapper.text()).toContain('ai.chat.modelLockedShort')
+    // 长解释挂在 title 上：横排里只留一句短话
+    expect(wrapper.find('.ai-chat__settings-hint').attributes('title')).toContain(
+      'ai.chat.modelLocked'
+    )
     expect((select.element as HTMLInputElement).value).toBe('gpt-4o-mini')
 
     // 锁定态下即使桩仍然发出 update:modelValue，也不该走 PATCH

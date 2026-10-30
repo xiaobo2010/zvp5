@@ -39,6 +39,12 @@ import type {
 /** 前台轮询间隔（毫秒）。 */
 export const POLL_INTERVAL_MS = 1_500
 
+/** 提交之后的快探间隔（毫秒）：先抢首帧，别让人干等。 */
+export const POLL_FAST_INTERVAL_MS = 500
+
+/** 快探次数：连着快探这么多次之后回落到常规间隔。 */
+export const POLL_FAST_TICKS = 4
+
 /** 页面不可见时的轮询间隔（毫秒）。 */
 export const POLL_INTERVAL_HIDDEN_MS = 5_000
 
@@ -53,10 +59,15 @@ export const AUTO_COMPACT_RATIO = 0.8
 
 /** 轮询间隔：页面不可见时降频。 */
 export function pollIntervalMs(): number {
-  if (typeof document !== 'undefined' && document.hidden) {
+  if (isDocumentHidden()) {
     return POLL_INTERVAL_HIDDEN_MS
   }
   return POLL_INTERVAL_MS
+}
+
+/** 页面是否在后台（标签页不可见）。 */
+export function isDocumentHidden(): boolean {
+  return typeof document !== 'undefined' && document.hidden
 }
 
 /** 是不是终态（终态即停轮询）。 */
@@ -116,6 +127,8 @@ export const useAiConversationsStore = defineStore('aiConversations', () => {
 
   let pollTimer: ReturnType<typeof setTimeout> | null = null
   let pollingRunId = ''
+  /** 还剩几次快探：提交后先用 500ms 抢首帧，再回落到 1.5s。 */
+  let fastPollBudget = 0
   /** 轮询期间登记到全局中止表里的注销函数：停轮询就摘掉。 */
   let unregisterPollAbort: (() => void) | null = null
   /** 已经成功拉过消息的会话（用来判断「要不要重拉」）。 */
@@ -609,6 +622,8 @@ export const useAiConversationsStore = defineStore('aiConversations', () => {
     stopPolling()
     pollingRunId = runId
     polling.value = true
+    // 提交后的头几拍用快节奏：首帧早到 0.5 秒，人不用盯着空消息区干等。
+    fastPollBudget = POLL_FAST_TICKS
     // 轮询也要能被全局中止（封禁后继续轮询只是把注定失败的请求刷一遍）。
     unregisterPollAbort = registerAiAbort(() => {
       stopPolling()
@@ -635,10 +650,16 @@ export const useAiConversationsStore = defineStore('aiConversations', () => {
     if (!pollingRunId) {
       return
     }
+    // 页面在后台时不做快探：直接走隐藏档（5 秒）。
+    const fast = fastPollBudget > 0 && !isDocumentHidden()
+    if (fast) {
+      fastPollBudget -= 1
+    }
+    const delay = fast ? POLL_FAST_INTERVAL_MS : pollIntervalMs()
     pollTimer = setTimeout(() => {
       pollTimer = null
       void tick()
-    }, pollIntervalMs())
+    }, delay)
   }
 
   async function tick(): Promise<void> {

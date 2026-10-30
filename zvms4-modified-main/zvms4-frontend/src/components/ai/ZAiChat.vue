@@ -11,12 +11,9 @@ import {
   ElInput,
   ElMessage,
   ElMessageBox,
-  ElOption,
-  ElSegmented,
-  ElSelect,
   ElTag
 } from 'element-plus'
-import { Lock, Menu, Promotion, VideoPause, WarningFilled } from '@element-plus/icons-vue'
+import { Menu, Promotion, VideoPause, WarningFilled } from '@element-plus/icons-vue'
 import { useWindowSize } from '@vueuse/core'
 import {
   AiRequestError,
@@ -38,6 +35,7 @@ import type { AiConversation, AiMessage, AiModelItem, AiThinkingLevel } from '@/
 import type { AiConversationCompactResult } from '@/api/ai'
 import ZAiProposalCard from './ZAiProposalCard.vue'
 import ZAiSessionList from './ZAiSessionList.vue'
+import ZAiModelThinkingPicker from './ZAiModelThinkingPicker.vue'
 import { contextPercent } from './conversationSession'
 import {
   agentUnlockMinutesLeft,
@@ -83,6 +81,9 @@ const model = ref('')
 /** 思考强度：'' = 服务端默认档；改动即 PATCH 会话。 */
 const thinkingChoice = ref<AiThinkingLevel | ''>('')
 const thinkingSaving = ref(false)
+
+/** 模型下拉的候选项（共享选择器只收字符串）。 */
+const modelOptions = computed(() => models.value.map((item) => item.id))
 
 const thinkingOptions = computed(() => [
   { label: t('ai.chat.thinkingDefault'), value: '' },
@@ -155,6 +156,21 @@ const renaming = ref(false)
 /** 本地暂存的用户消息：服务端落库前先显示，不让界面空等。 */
 const pendingUser = ref('')
 
+/** 中文输入法组字中：候选确认那一下不能当发送。 */
+const composing = ref(false)
+
+/** 上一次「未确认成功」的幂等键：重发时复用它，服务端不会重复落库。 */
+const pendingClientMsgId = ref<string | null>(null)
+/** 该幂等键对应的文本：内容改了就得换新键。 */
+const pendingClientText = ref('')
+
+/** 发送被拦时的提示（跑着的时候又按了回车）。 */
+const blockedNotice = ref('')
+/** 输入区被拦时的抖动标记：让用户知道这次没发出去。 */
+const composerShaking = ref(false)
+
+let blockedTimer: ReturnType<typeof setTimeout> | null = null
+
 /** 本轮出错的提示（提交或中止失败时展示）。 */
 const chatError = ref<{ code: string; title: string; hint: string } | null>(null)
 
@@ -219,6 +235,44 @@ const canSend = computed(
     cooldown.value <= 0 &&
     Boolean(store.current) &&
     !runActive.value
+)
+
+/**
+ * 本轮还没有正文：先占一个位置。
+ *
+ * ZVAgent 不走流式，正文要等轮询回来才有。没有这块占位，消息区在思考期间
+ * 是空的——用户只看到「后台执行中」，不知道模型到底动没动。
+ */
+const pendingReplyVisible = computed(() => {
+  if (!runActive.value) {
+    return false
+  }
+  const list = store.orderedMessages
+  let lastUserIndex = -1
+  for (let index = list.length - 1; index >= 0; index -= 1) {
+    if (list[index]!.role === 'user') {
+      lastUserIndex = index
+      break
+    }
+  }
+  return !list
+    .slice(lastUserIndex + 1)
+    .some((message) => message.role === 'assistant' && message.content.trim().length > 0)
+})
+
+/** 占位文案：还没跑完一轮就说「正在思考」，跑过了就带上轮次。 */
+const pendingReplyText = computed(() => {
+  const rounds = store.activeRun?.rounds ?? 0
+  return rounds > 0
+    ? t('ai.chat.thinkingPlaceholderRounds', { rounds })
+    : t('ai.chat.thinkingPlaceholder')
+})
+
+/**
+ * 输入框提示：跑着的时候允许继续写下一句，但说清楚这一句暂时发不出去。
+ */
+const composerPlaceholder = computed(() =>
+  runActive.value ? t('ai.chat.inputPlaceholderRunning') : t('ai.chat.inputPlaceholder')
 )
 
 /** 待确认提案数：会话内的提案 + 顶部待确认入口的提案。 */
@@ -581,6 +635,11 @@ async function saveThinking(value: AiThinkingLevel | '') {
   } finally {
     thinkingSaving.value = false
   }
+}
+
+/** 共享选择器是受控的：只把新值接住，落库交给 thinkingChoice 的 watcher。 */
+function onThinkingChange(value: AiThinkingLevel | '') {
+  thinkingChoice.value = value
 }
 
 function openRename(oid: string) {
@@ -1168,11 +1227,63 @@ function userMessagePersisted(text: string): boolean {
   )
 }
 
+/** 发送被拦：给一句明确的话，别让这次按回车石沉大海。 */
+function notifySendBlocked(): void {
+  blockedNotice.value = t('ai.chat.sendingBlocked')
+  composerShaking.value = true
+  if (blockedTimer) {
+    clearTimeout(blockedTimer)
+  }
+  blockedTimer = setTimeout(() => {
+    composerShaking.value = false
+    blockedNotice.value = ''
+    blockedTimer = null
+  }, 2400)
+}
+
+/** 输入法组字开始：这时候的回车是选词，不是发送。 */
+function onCompositionStart(): void {
+  composing.value = true
+}
+
+/** 输入法组字结束：回到正常输入。 */
+function onCompositionEnd(): void {
+  composing.value = false
+}
+
+/**
+ * 回车发送：中文输入法组字中的那一下不算。
+ *
+ * 组字期间（compositionstart → compositionend）按回车是「选词」；不挡住的话，
+ * 刚打完一句中文，候选词一确认消息就飞出去了。
+ */
+function onComposerKeydown(event: Event | KeyboardEvent): void {
+  const keyEvent = event as KeyboardEvent
+  if (
+    keyEvent.key !== 'Enter' ||
+    keyEvent.shiftKey ||
+    keyEvent.ctrlKey ||
+    keyEvent.metaKey ||
+    keyEvent.altKey
+  ) {
+    return
+  }
+  if (composing.value || keyEvent.isComposing) {
+    return
+  }
+  keyEvent.preventDefault()
+  void send()
+}
+
 async function send() {
   if (!(await passRiskGate())) {
     return
   }
   if (!canSend.value) {
+    // 跑着的时候又按回车：说清楚为什么没发出去。
+    if (runActive.value || sending.value) {
+      notifySendBlocked()
+    }
     return
   }
   const text = input.value.trim()
@@ -1184,13 +1295,19 @@ async function send() {
     return
   }
 
+  // 幂等键：上一次没确认成功且内容没改，就沿用同一个键；
+  // 确认成功（或内容改了）才重新生成。
+  const reuseId =
+    pendingClientMsgId.value && pendingClientText.value === text ? pendingClientMsgId.value : null
+  const msgId = reuseId ?? clientMsgId()
+
   input.value = ''
   sending.value = true
   autoScroll = true
   chatError.value = null
   void nextTick(scrollToBottom)
 
-  await sendAgentTurn(conversation, text)
+  await sendAgentTurn(conversation, text, msgId)
 
   sending.value = false
   void nextTick(scrollToBottom)
@@ -1202,16 +1319,17 @@ async function send() {
  * 服务端写完用户消息就回 202，任务在 worker 里继续跑。页面不等它跑完：
  * 提交成功后立刻显示「后台执行中」与轮次进度，由轮询推进。
  */
-async function sendAgentTurn(conversation: AiConversation, text: string) {
+async function sendAgentTurn(conversation: AiConversation, text: string, msgId: string) {
   pendingUser.value = text
-  // 幂等键只生成一次：解锁后重试提交，不能重复落用户消息。
-  const msgId = clientMsgId()
   try {
     await withUnlockRetry(() =>
       store.submitRun(conversation.oid, text, {
         clientMsgId: msgId
       })
     )
+    // 提交成功：这条已经落库，下一条消息用新键。
+    pendingClientMsgId.value = null
+    pendingClientText.value = ''
     await store.refreshMessages()
     if (userMessagePersisted(text)) {
       pendingUser.value = ''
@@ -1232,12 +1350,18 @@ async function sendAgentTurn(conversation: AiConversation, text: string) {
     if (!input.value) {
       input.value = text
     }
+    // 这次没确认成功：幂等键留着，重发时服务端认得同一条消息，不会重复落库。
+    pendingClientMsgId.value = msgId
+    pendingClientText.value = text
     applyError(error)
   }
 }
 
-/** 停止：请求中止当前后台任务。 */
+/** 停止：请求中止当前后台任务。没有在跑的任务就不假装中止成功。 */
 async function cancelRun() {
+  if (!runActive.value) {
+    return
+  }
   try {
     await store.cancelCurrentRun()
     ElMessage.success(t('ai.agent.run.cancelNotice'))
@@ -1255,6 +1379,9 @@ watch(
   () => store.currentOid,
   () => {
     thinkingChoice.value = store.current?.thinking ?? ''
+    // 幂等键跟着会话走：上一条会话里没确认成功的那次提交，不该带到新会话。
+    pendingClientMsgId.value = null
+    pendingClientText.value = ''
   }
 )
 
@@ -1314,9 +1441,9 @@ onMounted(async () => {
   observeContent()
   // 刷新页面后没处理的写操作还在服务端：进页面先找回来。
   void loadPendingProposals()
-  await store.loadConversations()
+  // 会话列表与活跃 run 互不依赖：并行拉，首屏少等一个来回。
+  const [, runs] = await Promise.all([store.loadConversations(), store.loadActiveRuns()])
   // 先问一次有没有在跑的任务：有就接管进度，不另起一轮。
-  const runs = await store.loadActiveRuns()
   const active = runs.find((item) => item.status === 'queued' || item.status === 'running')
   if (active) {
     await store.adoptRun(active)
@@ -1339,6 +1466,10 @@ onUnmounted(() => {
   stopCooldown()
   stopProposalTimer()
   stopUnlockTimer()
+  if (blockedTimer) {
+    clearTimeout(blockedTimer)
+    blockedTimer = null
+  }
   resizeObserver?.disconnect()
   resizeObserver = null
   store.stopPolling()
@@ -1405,14 +1536,14 @@ onUnmounted(() => {
         v-loading="modelsLoading"
       >
         <template #header>
-          <div class="flex flex-wrap items-center justify-between gap-3">
-            <div class="flex flex-col gap-1">
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <div class="flex items-baseline gap-2 min-w-0">
               <span>{{ t('ai.agent.title') }}</span>
-              <span class="text-xs font-normal" style="color: var(--yg-text-tertiary)">
+              <span class="text-xs font-normal ai-chat__settings-subtitle">
                 {{ t('ai.agent.subtitle') }}
               </span>
             </div>
-            <div class="flex flex-wrap items-center gap-3">
+            <div class="flex flex-wrap items-center gap-2">
               <ElButton v-if="isNarrow" text @click="drawerOpen = true">
                 <ElIcon class="mr-1"><Menu /></ElIcon>
                 {{ t('ai.chat.sessions.openDrawer') }}
@@ -1438,65 +1569,74 @@ onUnmounted(() => {
           <span>{{ t('ai.chat.thinking') }}：{{ thinkingLabel }}</span>
         </p>
 
+        <!-- 摊开态：模型、思考强度、上下文水位挤在一条横线上 -->
         <div v-show="!settingsFolded" class="ai-chat__settings-body">
-          <div class="flex flex-wrap items-center gap-3">
-            <span class="yg-text-xs yg-text-tertiary">{{ t('ai.chat.model') }}</span>
-            <ElIcon v-if="modelLocked" class="ai-chat__model-lock-icon"><Lock /></ElIcon>
-            <ElSelect
-              class="w-64"
-              :class="{ 'ai-chat__model-lock': modelLocked }"
-              :model-value="currentModel"
-              :disabled="modelLocked || modelSaving"
-              @update:model-value="changeModel"
+          <div class="ai-chat__settings-row">
+            <ZAiModelThinkingPicker
+              class="ai-chat__settings-models"
+              :models="modelOptions"
+              :model="currentModel"
+              :thinking="thinkingChoice"
+              :model-locked="modelLocked"
+              :model-disabled="modelSaving"
+              :thinking-disabled="!store.current || thinkingSaving"
+              :clearable="false"
+              model-width="auto"
+              @update:model="changeModel"
+              @update:thinking="onThinkingChange"
             >
-              <ElOption v-for="item in models" :key="item.id" :label="item.id" :value="item.id" />
-            </ElSelect>
-            <span class="yg-text-xs yg-text-tertiary">
-              {{ modelLocked ? t('ai.chat.modelLocked') : t('ai.chat.modelChangeable') }}
-            </span>
-            <ElButton text @click="loadModels">{{ t('ai.common.refresh') }}</ElButton>
-          </div>
+              <template #model-extra>
+                <span
+                  class="ai-chat__settings-hint"
+                  :title="modelLocked ? t('ai.chat.modelLocked') : t('ai.chat.modelChangeable')"
+                >
+                  {{
+                    modelLocked ? t('ai.chat.modelLockedShort') : t('ai.chat.modelChangeableShort')
+                  }}
+                </span>
+                <ElButton text size="small" :loading="modelsLoading" @click="loadModels">
+                  {{ t('ai.common.refresh') }}
+                </ElButton>
+              </template>
+            </ZAiModelThinkingPicker>
 
-          <div class="flex flex-wrap items-center gap-3 ai-chat__thinking">
-            <span class="yg-text-xs yg-text-tertiary">{{ t('ai.chat.thinking') }}</span>
-            <ElSegmented
-              v-model="thinkingChoice"
-              :options="thinkingOptions"
-              :disabled="!store.current || thinkingSaving"
-            />
-          </div>
+            <!-- 分隔：把「选什么」和「用得怎么样」分开 -->
+            <span class="ai-chat__settings-sep" aria-hidden="true" />
 
-          <!-- 上下文水位：接近上限时换警示色 -->
-          <div v-if="contextLimit > 0" class="ai-chat__context">
-            <div class="ai-chat__context-head">
-              <span>{{ t('ai.chat.sessions.context.label') }}</span>
-              <span class="tabular-nums">
+            <!-- 上下文水位：接近上限时换警示色 -->
+            <div v-if="contextLimit > 0" class="ai-chat__context">
+              <span class="ai-chat__context-label">{{
+                t('ai.chat.sessions.context.label')
+              }}</span>
+              <span class="tabular-nums ai-chat__context-usage">
                 {{ t('ai.chat.sessions.context.usage', { used: contextTokens, limit: contextLimit }) }}
               </span>
-            </div>
-            <div
-              class="yg-progress yg-progress--sm"
-              :class="{ 'yg-progress--warning': contextWarn }"
-              role="progressbar"
-              :aria-valuenow="contextPercentValue"
-              aria-valuemin="0"
-              aria-valuemax="100"
-            >
               <div
-                class="yg-progress__rail"
-                :style="{ '--yg-progress-value': contextPercentValue }"
+                class="yg-progress yg-progress--sm"
+                :class="{ 'yg-progress--warning': contextWarn }"
+                role="progressbar"
+                :aria-valuenow="contextPercentValue"
+                aria-valuemin="0"
+                aria-valuemax="100"
               >
-                <div class="yg-progress__bar" />
+                <div
+                  class="yg-progress__rail"
+                  :style="{ '--yg-progress-value': contextPercentValue }"
+                >
+                  <div class="yg-progress__bar" />
+                </div>
               </div>
-            </div>
-            <p v-if="contextWarn" class="ai-chat__context-warn">
-              {{ t('ai.chat.sessions.context.warning') }}
-            </p>
-            <!-- 手动压缩：自动压缩在 80% 触发，这里给一个随时可用的入口 -->
-            <div class="ai-chat__context-foot">
-              <span v-if="!contextWarn" class="ai-chat__context-hint">
-                {{ t('ai.chat.sessions.context.autoCompactHint') }}
+              <span v-if="contextWarn" class="ai-chat__context-warn">
+                {{ t('ai.chat.sessions.context.warning') }}
               </span>
+              <span
+                v-else
+                class="ai-chat__context-hint"
+                :title="t('ai.chat.sessions.context.autoCompactHint')"
+              >
+                {{ t('ai.chat.sessions.context.autoCompactHintShort') }}
+              </span>
+              <!-- 手动压缩：自动压缩在 80% 触发，这里给一个随时可用的入口 -->
               <ElButton
                 text
                 size="small"
@@ -1718,6 +1858,19 @@ onUnmounted(() => {
               </div>
             </div>
 
+            <!-- 占位：这一轮还没出正文，先占个位置，别让消息区空着 -->
+            <div v-if="pendingReplyVisible" class="ai-chat__row assistant">
+              <div class="ai-chat__who yg-text-xs yg-text-tertiary">{{ t('ai.chat.assistant') }}</div>
+              <div
+                class="ai-chat__bubble assistant ai-chat__pending-reply"
+                role="status"
+                aria-live="polite"
+              >
+                <span class="ai-agent__pulse" aria-hidden="true" />
+                <span>{{ pendingReplyText }}</span>
+              </div>
+            </div>
+
             <!-- 本轮出错：安全拦截只有一句固定文案，不展开解释 -->
             <div v-if="chatError" class="ai-chat__error">
               <div class="flex flex-wrap items-center gap-2">
@@ -1832,15 +1985,17 @@ onUnmounted(() => {
           </div>
         </div>
 
-        <div class="ai-chat__composer">
+        <div class="ai-chat__composer" :class="{ 'is-shaking': composerShaking }">
           <ElInput
             v-model="input"
             type="textarea"
             :autosize="composerRows"
             resize="none"
-            :placeholder="t('ai.chat.inputPlaceholder')"
+            :placeholder="composerPlaceholder"
             :disabled="!hasModels || !store.current"
-            @keydown.enter.exact.prevent="send"
+            @compositionstart="onCompositionStart"
+            @compositionend="onCompositionEnd"
+            @keydown="onComposerKeydown"
           />
           <div class="flex flex-wrap items-center justify-between gap-2 mt-2">
             <div class="flex flex-wrap items-center gap-2">
@@ -1858,12 +2013,14 @@ onUnmounted(() => {
                   {{ t('ai.agent.run.background') }}
                 </template>
               </span>
+              <!-- 发送被拦：把「为什么没发出去」摆在明面上 -->
+              <span v-if="blockedNotice" class="ai-chat__blocked">{{ blockedNotice }}</span>
               <span v-if="unlocked" class="ai-chat__unlock">
                 {{ t('ai.agent.unlock.status', { min: unlockMinutes }) }}
               </span>
             </div>
             <div class="flex items-center gap-2">
-              <ElButton v-if="sending || runActive" type="danger" plain @click="cancelRun">
+              <ElButton v-if="runActive" type="danger" plain @click="cancelRun">
                 <ElIcon class="mr-1"><VideoPause /></ElIcon>
                 {{ t('ai.chat.stop') }}
               </ElButton>
@@ -1981,9 +2138,9 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   flex: 1 1 auto;
-  /* 视口再矮也要留一个能用的对话区，但下限跟着视口走：
-     380px 的硬下限在横屏 / 半屏窗口里会把输入区顶出视口。 */
-  min-height: min(380px, 46dvh);
+  /* 不设硬下限：空间不够时消息区先让位，输入区必须始终留在容器里。
+     之前的 min(380px, 46dvh) 会把整列撑出面板，底部输入区被裁掉。 */
+  min-height: 0;
 }
 
 /* 卡片内容区跟卡片等高，消息区与输入区才能在里面分高度 */
@@ -1996,9 +2153,9 @@ onUnmounted(() => {
 
 .ai-chat__list {
   /* 消息区吃掉所有剩余高度并自己滚动，输入区不参与伸缩。
-     min-height 保底：视口再矮也要露出几行消息，不能整个塌掉。 */
+     min-height 只保一个很小的底：再矮也是消息区先让位，输入区不能被顶出去。 */
   flex: 1 1 0;
-  min-height: 120px;
+  min-height: 56px;
   overflow-y: auto;
   overscroll-behavior: contain;
   border: 1px solid var(--yg-border-default);
@@ -2055,6 +2212,15 @@ onUnmounted(() => {
   min-width: 0;
 }
 
+/* 占位气泡：这一轮还没出正文，先占住助手的位置 */
+.ai-chat__pending-reply {
+  display: flex;
+  align-items: center;
+  gap: var(--yg-space-2);
+  font-size: var(--yg-font-size-sm);
+  color: var(--yg-text-secondary);
+}
+
 /* 助手回复走 Markdown：排版交给 ZMarkdown，这里只保证长表格不撑破气泡 */
 .ai-chat__markdown {
   min-width: 0;
@@ -2083,13 +2249,45 @@ onUnmounted(() => {
   line-height: var(--yg-line-height-normal);
 }
 
-/* 模型锁定展示：只读，锁图标点明「建会话时定的」 */
-.ai-chat__model-lock {
-  pointer-events: none;
+/* 设置卡内容：一行横排，窄了再折行 */
+.ai-chat__settings-body {
+  display: flex;
+  flex-direction: column;
 }
 
-.ai-chat__model-lock-icon {
+.ai-chat__settings-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--yg-space-2) var(--yg-space-3);
+}
+
+/* 模型与思考强度那一组 */
+.ai-chat__settings-models {
+  min-width: 0;
+}
+
+/* 分隔线：把「选什么」和「用得怎么样」在视觉上分开 */
+.ai-chat__settings-sep {
+  flex: none;
+  width: 1px;
+  height: 16px;
+  background: var(--yg-border-subtle);
+}
+
+/* 锁定提示：短句挂在选择器后面，长解释走 title */
+.ai-chat__settings-hint {
+  font-size: var(--yg-font-size-xs);
   color: var(--yg-text-tertiary);
+  white-space: nowrap;
+}
+
+.ai-chat__settings-subtitle {
+  color: var(--yg-text-tertiary);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* 短视口收起态：一行摘要，替代摊开的模型 / 思考 / 水位三行 */
@@ -2161,16 +2359,35 @@ onUnmounted(() => {
   overflow-y: auto;
 }
 
-/* 思考强度：贴着模型行下面一行，与上下文水位同一条竖排节奏 */
-.ai-chat__thinking {
-  margin-top: var(--yg-space-3);
-}
-
 /* 解锁窗口提示：细弱小字，过期自动消失 */
 .ai-chat__unlock {
   font-size: var(--yg-font-size-xs);
   font-variant-numeric: tabular-nums;
   color: var(--yg-text-tertiary);
+}
+
+/* 发送被拦的提示：跟在状态行后面，说清楚这次没发出去 */
+.ai-chat__blocked {
+  font-size: var(--yg-font-size-xs);
+  color: var(--yg-text-warning);
+}
+
+/* 输入区被拦：抖一下，让用户看见「刚才那下没生效」 */
+.ai-chat__composer.is-shaking {
+  animation: ai-chat-shake 0.4s var(--yg-ease-out);
+}
+
+@keyframes ai-chat-shake {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  25% {
+    transform: translateX(-4px);
+  }
+  75% {
+    transform: translateX(4px);
+  }
 }
 
 /* 压缩点：一条虚线加一句说明，把被摘要的历史隔在下面 */
@@ -2201,41 +2418,37 @@ onUnmounted(() => {
   padding-bottom: var(--yg-space-2);
 }
 
-/* 上下文水位：贴着模型选择器下面，像一条细刻度 */
+/* 上下文水位：跟模型、思考强度并排，像一条细刻度 */
 .ai-chat__context {
-  margin-top: var(--yg-space-3);
-  padding-top: var(--yg-space-3);
-  border-top: 1px solid var(--yg-border-subtle);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--yg-space-2);
+  min-width: 0;
 }
 
-.ai-chat__context-head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: var(--yg-space-2);
-  margin-bottom: var(--yg-space-1);
+.ai-chat__context-label,
+.ai-chat__context-usage {
   font-size: var(--yg-font-size-xs);
   color: var(--yg-text-tertiary);
+  white-space: nowrap;
+}
+
+/* 水位条压成一小段：横排里只占一个身位 */
+.ai-chat__context .yg-progress {
+  flex: none;
+  width: 88px;
 }
 
 .ai-chat__context-warn {
-  margin: var(--yg-space-1) 0 0;
   font-size: var(--yg-font-size-xs);
   color: var(--yg-text-warning);
-}
-
-/* 警示文案与「压缩上下文」按钮同一行：说明在左，动作在右 */
-.ai-chat__context-foot {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--yg-space-2);
-  margin-top: var(--yg-space-1);
 }
 
 .ai-chat__context-hint {
   font-size: var(--yg-font-size-xs);
   color: var(--yg-text-tertiary);
+  white-space: nowrap;
 }
 
 /* ---------------------------------------------------------------------------
@@ -2324,6 +2537,9 @@ onUnmounted(() => {
   flex-direction: column;
   gap: var(--yg-space-2);
   padding-top: 0;
+  /* 提案多的时候自己滚：这一块不能把输入区顶出容器 */
+  max-height: 40vh;
+  overflow-y: auto;
 }
 
 .ai-agent__stop {
@@ -2560,7 +2776,7 @@ onUnmounted(() => {
 
 /*
  * 横屏且高度紧张（笔记本半屏、横屏平板 / 手机）：
- * 高度是稀缺资源——对话区下限收紧、间距压小、输入区让路。
+ * 高度是稀缺资源——间距压小、输入区让路。
  * 设置卡折叠与输入框行数由脚本按视口高度决定（settingsFolded / composerRows）。
  */
 @media (orientation: landscape) and (max-height: 820px) {
@@ -2570,11 +2786,12 @@ onUnmounted(() => {
   }
 
   .ai-chat__conversation {
-    min-height: clamp(220px, 38dvh, 320px);
+    /* 不留硬下限：横屏高度紧张时消息区先让位，输入区必须完整可见 */
+    min-height: 0;
   }
 
   .ai-chat__list {
-    min-height: 96px;
+    min-height: 48px;
     padding: var(--yg-space-2);
   }
 
@@ -2586,17 +2803,8 @@ onUnmounted(() => {
     padding: var(--yg-space-2);
   }
 
-  .ai-chat__settings-body {
-    gap: var(--yg-space-1);
-  }
-
-  .ai-chat__thinking {
-    margin-top: var(--yg-space-2);
-  }
-
-  .ai-chat__context {
-    margin-top: var(--yg-space-2);
-    padding-top: var(--yg-space-2);
+  .ai-chat__settings-row {
+    gap: var(--yg-space-1) var(--yg-space-2);
   }
 
   .ai-chat__reasoning-text {
@@ -2667,6 +2875,10 @@ onUnmounted(() => {
   .ai-agent__pulse {
     animation: none;
     opacity: 1;
+  }
+
+  .ai-chat__composer.is-shaking {
+    animation: none;
   }
 
   .ai-agent__event-row {
