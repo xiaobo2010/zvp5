@@ -46,6 +46,15 @@
 -- chat/ocr 两个申请口径，审批时映射到 af，见 services/ai/quota_requests.py）。
 -- ============================================================================
 
+-- 归并段对同一对象既有 DML 又有约束变更，先关掉并行 DML，避免 ORA-12839。
+-- 包成匿名块：迁移按 '/' 分段执行，裸 ALTER SESSION 会和后面的块粘成一条语句。
+BEGIN
+  EXECUTE IMMEDIATE 'ALTER SESSION DISABLE PARALLEL DML';
+EXCEPTION
+  WHEN OTHERS THEN NULL;  -- 权限受限的库忽略：串行 DML 本身不会因此失败
+END;
+/
+
 -- ----------------------------------------------------------------------------
 -- 段零：备份
 --   CTAS 不复制约束/索引（本来也不需要：它是只读的还原材料）。含当前已用量
@@ -84,83 +93,50 @@ END;
 
 -- ----------------------------------------------------------------------------
 -- 段二：数据归并（按 user_oid + period，覆盖所有月份）
---   * 上限：优先 chat 行（对话额度是主口径）；没有 chat 行才用 ocr 行的。
+--   * 上限：优先 chat 行（对话额度是主口径）；没有 chat 行才用 ocr 行的，都没有则 0。
 --   * 已用量：chat.used + ocr.used × 1。
---   * 已有 af 行（理论上不存在，重跑/手工造数才会遇到）→ 改成累加 used，
---     上限保持 af 行自己的值，不去覆盖别人后来的设置。
+--   * 已有 af 行（理论上不存在，重跑/手工造数才会遇到）→ NOT EXISTS 跳过，
+--     不去覆盖别人后来的设置；重跑时源行已删，两条语句都是 no-op。
 --   * oid 必须是 24 位小写 hex（ck_ai_quota_oid），SYS_GUID 是 32 位，截断。
---   * 循环里 DELETE 自己正在扫的表是安全的：隐式游标带 GROUP BY，结果集在取第一
---     行前就已算完（不会被后续 DELETE 改写），而且整段没有 COMMIT——不存在
---     「游标被提交失效（ORA-01002）」的窗口。
+--
+-- 为什么是两条 set-based DML 而不是 PL/SQL 循环：生产实测（24 行的小库也一样）
+-- 在同一匿名块里先 INSERT 再 DELETE 同一张表会报
+--   ORA-12839: cannot modify an object in parallel after modifying it
+-- 拆成两条独立语句后正常。另外 MAX(...) 的兜底只能用 COALESCE——
+-- Oracle 的 NVL 只接受两个参数，写三参会得到 ORA-00909。
 -- ----------------------------------------------------------------------------
-DECLARE
-  v_used  NUMBER;
-  v_limit NUMBER;
 BEGIN
-  FOR r IN (
-    SELECT user_oid, period
-      FROM ai_quota
-     WHERE kind IN ('chat','ocr')
-     GROUP BY user_oid, period
-  ) LOOP
-    BEGIN
-      SELECT limit_count
-        INTO v_limit
-        FROM ai_quota
-       WHERE user_oid = r.user_oid
-         AND period = r.period
-         AND kind = 'chat';
-    EXCEPTION
-      WHEN NO_DATA_FOUND THEN
-        BEGIN
-          SELECT limit_count
-            INTO v_limit
+  INSERT INTO ai_quota (oid, user_oid, period, kind, used, limit_count, updated_at)
+  SELECT SUBSTR(LOWER(RAWTOHEX(SYS_GUID())), 1, 24),
+         q.user_oid,
+         q.period,
+         'af',
+         q.used_sum,
+         q.limit_pick,
+         SYSTIMESTAMP
+    FROM (
+          SELECT user_oid,
+                 period,
+                 SUM(used) AS used_sum,
+                 COALESCE(MAX(CASE WHEN kind = 'chat' THEN limit_count END),
+                          MAX(CASE WHEN kind = 'ocr' THEN limit_count END),
+                          0) AS limit_pick
             FROM ai_quota
-           WHERE user_oid = r.user_oid
-             AND period = r.period
-             AND kind = 'ocr';
-        EXCEPTION
-          WHEN NO_DATA_FOUND THEN v_limit := 0;
-        END;
-    END;
+           WHERE kind IN ('chat','ocr')
+           GROUP BY user_oid, period
+         ) q
+   WHERE NOT EXISTS (
+          SELECT 1
+            FROM ai_quota a
+           WHERE a.user_oid = q.user_oid
+             AND a.period = q.period
+             AND a.kind = 'af'
+         );
+END;
+/
 
-    SELECT NVL(SUM(CASE WHEN kind = 'chat' THEN used ELSE used * 1 END), 0)
-      INTO v_used
-      FROM ai_quota
-     WHERE user_oid = r.user_oid
-       AND period = r.period
-       AND kind IN ('chat','ocr');
-
-    BEGIN
-      INSERT INTO ai_quota (oid, user_oid, period, kind, used, limit_count, updated_at)
-      VALUES (
-        SUBSTR(LOWER(RAWTOHEX(SYS_GUID())), 1, 24),
-        r.user_oid,
-        r.period,
-        'af',
-        v_used,
-        v_limit,
-        SYSTIMESTAMP
-      );
-    EXCEPTION
-      WHEN DUP_VAL_ON_INDEX THEN
-        UPDATE ai_quota
-           SET used = used + v_used,
-               updated_at = SYSTIMESTAMP
-         WHERE user_oid = r.user_oid
-           AND period = r.period
-           AND kind = 'af';
-    END;
-
-    DELETE FROM ai_quota
-     WHERE user_oid = r.user_oid
-       AND period = r.period
-       AND kind IN ('chat','ocr');
-  END LOOP;
-EXCEPTION
-  -- -942: 表还不存在（迁移顺序问题），交给后续基线收敛。
-  WHEN OTHERS THEN
-    IF SQLCODE != -942 THEN RAISE; END IF;
+BEGIN
+  DELETE FROM ai_quota WHERE kind IN ('chat','ocr');
 END;
 /
 
