@@ -305,7 +305,7 @@ async def test_plain_answer_ends_the_loop_after_one_round(monkeypatch, env) -> N
         __import__("services.agent.tools", fromlist=["TOOLS"]).TOOLS
     )
     assert len(audit.rows) == 1
-    assert quota_repo.consumed == [(USER, "chat", 1)]
+    assert quota_repo.consumed == [(USER, "af", 1)]
 
 
 @pytest.mark.asyncio
@@ -473,10 +473,10 @@ async def test_unknown_tool_is_denied_and_the_run_continues(monkeypatch, env) ->
 @pytest.mark.asyncio
 async def test_permission_denied_tool_is_logged_as_denied(monkeypatch, env) -> None:
     _audit, events, _quota, _activities, _capture = env
-    # 这个用例测的是「学生的写工具被拒」，不是额度：V043 把学生的角色级 chat
+    # 这个用例测的是「学生的写工具被拒」，不是额度：V043 把学生的角色级 AF
     # 额度默认降到 0，不额外给一格额度的话请求会先撞 ``insufficient_quota``，
     # 连工具都走不到。额度只放宽到「够跑这一轮」，权限判定不动。
-    monkeypatch.setitem(policy._quotas, ("student", "chat"), 1000)
+    monkeypatch.setitem(policy._quotas, ("student", "af"), 1000)
     upstream = ScriptedUpstream(
         [
             _completion(
@@ -545,7 +545,7 @@ async def test_token_budget_stops_before_the_next_round(monkeypatch, env) -> Non
     assert "预算" in result["content"]
     assert len(audit.rows) == 1
     # 已经花掉的这一轮仍然按 usage 扣一次额度。
-    assert quota_repo.consumed == [(USER, "chat", 1)]
+    assert quota_repo.consumed == [(USER, "af", 1)]
 
 
 # ---------------------------------------------------------------------------

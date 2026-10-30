@@ -279,6 +279,7 @@ def test_scene_titles_are_the_frozen_copy() -> None:
         "terminal": "终端智能",
         "file_edit": "文件编辑智能",
         "volunteer": "义工分析",
+        "activity": "义工活动分析",
     }
 
 
@@ -807,3 +808,268 @@ def test_payload_limits_are_enforced(submitted) -> None:
 
     assert response.status_code == 422
     assert submitted.calls == []
+
+
+# ---------------------------------------------------------------------------
+# 场景级角色门槛：activity 对 department 开放，其余三个仍只有 admin
+# ---------------------------------------------------------------------------
+
+
+def test_scene_allows_is_a_pure_role_intersection() -> None:
+    admin = {"id": OWNER, "per": ["admin"]}
+    department = {"id": DEPARTMENT, "per": ["department"]}
+
+    assert all(conversations.scene_allows(admin, scene) for scene in conversations.SCENES)
+    # 学生会（department）只拿到活动分析这一项。
+    assert conversations.scene_allows(department, "activity") is True
+    for scene in ("terminal", "file_edit", "volunteer"):
+        assert conversations.scene_allows(department, scene) is False
+
+
+def test_scene_allows_is_fail_closed_for_unknown_scenes() -> None:
+    """不在 ``SCENES`` 里的值谁都进不去（admin 也不行）：拼错不该变成放行。"""
+    admin = {"per": ["admin"]}
+
+    assert conversations.scene_allows(admin, "terminal2") is False
+    assert conversations.scene_allows(admin, "") is False
+    assert conversations.scene_allows(admin, None) is False
+
+
+def test_unregistered_scene_falls_back_to_admin_only(monkeypatch) -> None:
+    """已知场景但映射没登记 → 仅 admin（新场景忘了登记时收紧而不是放开）。"""
+    monkeypatch.setattr(
+        conversations,
+        "SCENE_MIN_ROLES",
+        {
+            "terminal": ("admin",),
+            "file_edit": ("admin",),
+            "volunteer": ("admin",),
+        },
+    )
+
+    assert conversations.scene_min_roles("activity") == ("admin",)
+    assert conversations.scene_allows({"per": ["admin"]}, "activity") is True
+    assert conversations.scene_allows({"per": ["department"]}, "activity") is False
+
+
+def test_department_reaches_the_activity_scene(submitted) -> None:
+    response = _client({"id": DEPARTMENT, "per": ["department"]}).post(
+        "/api/ai/scenes/activity/runs",
+        json={"content": "这个活动有哪些人参加", "context": "活动 oid: 1"},
+    )
+
+    assert response.status_code == 202, response.text
+    assert submitted.calls[0]["scene"] == "activity"
+    assert submitted.calls[0]["context"] == "活动 oid: 1"
+
+
+@pytest.mark.parametrize("scene", ["terminal", "file_edit", "volunteer"])
+def test_department_still_cannot_reach_the_admin_only_scenes(
+    submitted, scene: str
+) -> None:
+    """放宽 activity 不许顺手把另外三个也放出去：角色集合逐场景钉住。"""
+    response = _client({"id": DEPARTMENT, "per": ["department"]}).post(
+        f"/api/ai/scenes/{scene}/runs", json={"content": "看看"}
+    )
+
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "AI_FORBIDDEN"
+    assert submitted.calls == []
+
+
+def test_scene_role_rejection_is_audited(submitted, monkeypatch) -> None:
+    """场景级 403 必须留流水：``department`` 试终端是探测信号，不能静默。"""
+    rows: list[dict] = []
+
+    class _FakeCallLogs:
+        async def insert(self, **fields):
+            rows.append(fields)
+            return "l" * 24
+
+    monkeypatch.setattr(backends, "get_ai_call_logs_repo", lambda session=None: _FakeCallLogs())
+
+    response = _client({"id": DEPARTMENT, "per": ["department"]}).post(
+        "/api/ai/scenes/terminal/runs", json={"content": "看看"}
+    )
+
+    assert response.status_code == 403
+    assert len(rows) == 1
+    assert rows[0]["status"] == "rejected"
+    assert rows[0]["http_status"] == 403
+    assert rows[0]["error_code"] == "AI_FORBIDDEN"
+    assert rows[0]["purpose"] == "terminal"
+    assert rows[0]["roles_snapshot"] == "department"
+
+
+@pytest.mark.parametrize("scene", list(conversations.SCENES))
+def test_admin_reaches_every_scene(submitted, scene: str) -> None:
+    response = _client(ADMIN).post(
+        f"/api/ai/scenes/{scene}/runs", json={"content": "看看"}
+    )
+
+    assert response.status_code == 202, response.text
+    assert submitted.calls[0]["scene"] == scene
+
+
+def test_unknown_scene_is_a_400_before_the_role_gate(submitted) -> None:
+    """枚举先于场景角色：拼错的 URL 是「参数错」，不是「没权限」。"""
+    response = _client({"id": DEPARTMENT, "per": ["department"]}).post(
+        "/api/ai/scenes/activity2/runs", json={"content": "看看"}
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == conversations.SCENE_BAD
+    assert submitted.calls == []
+
+
+# ---------------------------------------------------------------------------
+# 队列层密码门：豁免判据跟着 SCENE_MIN_ROLES 走，不再写死 admin
+# ---------------------------------------------------------------------------
+
+DEPARTMENT_USER = {"id": DEPARTMENT, "per": ["department"]}
+
+
+def _stub_run_insert(repos, monkeypatch) -> list[dict]:
+    """接住 ``insert_queued``：这一层只关心「有没有走到入队」。"""
+    inserted: list[dict] = []
+
+    async def _insert_queued(**kwargs):
+        inserted.append(kwargs)
+        return ({"_id": kwargs["run_id"], "message_oid": kwargs["message_oid"]}, True)
+
+    monkeypatch.setattr(repos.runs, "insert_queued", _insert_queued)
+    return inserted
+
+
+def _allow_screen(monkeypatch) -> None:
+    """department 走到灰区闸门会联网：这里直接放行，只测密码门。"""
+
+    async def _screen(*args, **kwargs):
+        return SimpleNamespace(allowed=True, category=None, unavailable=False)
+
+    monkeypatch.setattr(run_queue.safety_guard, "screen", _screen)
+
+
+@pytest.mark.asyncio
+async def test_department_activity_submit_passes_the_password_gate(
+    repos, monkeypatch
+) -> None:
+    """路由层放行 + 队列层写死 admin = 部门提交仍 422；两层判据必须同一张表。
+
+    这里直接进 ``run_queue.submit``（不经路由），断言未被
+    ``AI_AGENT_UNLOCK_REQUIRED`` 拦下、run 真的入队。
+    """
+    _allow_screen(monkeypatch)
+    repos.conv.seed(
+        CONV, owner_oid=DEPARTMENT, scene="activity", title="义工活动分析"
+    )
+    inserted = _stub_run_insert(repos, monkeypatch)
+    agent_unlock.clear_state()
+
+    result = await run_queue.submit(
+        user=DEPARTMENT_USER,
+        conversation_oid=CONV,
+        content="这个活动有哪些人参加",
+    )
+
+    assert result["status"] == "queued"
+    assert len(inserted) == 1
+    assert inserted[0]["owner_oid"] == DEPARTMENT
+    # 只读场景的豁免不打开解锁状态：门禁是「跳过」而不是「解锁」。
+    assert agent_unlock.is_unlocked(DEPARTMENT) is False
+
+
+@pytest.mark.parametrize("scene", ["terminal", "file_edit", "volunteer"])
+@pytest.mark.asyncio
+async def test_department_admin_only_scenes_still_need_the_unlock(
+    repos, monkeypatch, scene: str
+) -> None:
+    """放宽 activity 不许顺手放宽另外三个：即使绕过路由直进队列，也仍要求解锁。"""
+    repos.conv.seed(CONV, owner_oid=DEPARTMENT, scene=scene, title="场景会话")
+    agent_unlock.clear_state()
+
+    with pytest.raises(AgentError) as caught:
+        await run_queue.submit(
+            user=DEPARTMENT_USER, conversation_oid=CONV, content="看看"
+        )
+
+    assert caught.value.code == "AI_AGENT_UNLOCK_REQUIRED"
+    assert caught.value.status_code == 422
+
+
+@pytest.mark.parametrize("scene", ["terminal", "file_edit", "volunteer", "activity"])
+def test_department_reaches_only_activity_at_the_router(
+    submitted, scene: str
+) -> None:
+    """两层对齐的正面表述：路由层与队列层对「谁能进」给出同一个答案。"""
+    response = _client(DEPARTMENT_USER).post(
+        f"/api/ai/scenes/{scene}/runs", json={"content": "看看"}
+    )
+
+    if scene == "activity":
+        assert response.status_code == 202, response.text
+    else:
+        assert response.status_code == 403
+        assert response.json()["error"]["code"] == "AI_FORBIDDEN"
+        assert submitted.calls == []
+
+
+@pytest.mark.asyncio
+async def test_admin_activity_submit_is_unchanged(repos, monkeypatch) -> None:
+    """admin 行为不变：场景里免密码、入队照旧。"""
+    repos.conv.seed(CONV, scene="activity", title="义工活动分析")
+    inserted = _stub_run_insert(repos, monkeypatch)
+    agent_unlock.clear_state()
+
+    result = await run_queue.submit(
+        user=ADMIN, conversation_oid=CONV, content="这个活动有多少人报名"
+    )
+
+    assert result["status"] == "queued"
+    assert len(inserted) == 1
+
+
+@pytest.mark.asyncio
+async def test_unknown_scene_at_the_queue_layer_is_fail_closed(repos, monkeypatch) -> None:
+    """DDL 无 CHECK：行里可能是拼错的场景。拼错 = 不是只读场景 = 要解锁。"""
+    repos.conv.seed(CONV, owner_oid=DEPARTMENT, scene="activity2", title="拼错了")
+    agent_unlock.clear_state()
+
+    with pytest.raises(AgentError) as caught:
+        await run_queue.submit(
+            user=DEPARTMENT_USER, conversation_oid=CONV, content="看看"
+        )
+
+    assert caught.value.code == "AI_AGENT_UNLOCK_REQUIRED"
+
+
+def test_activity_scene_prompt_pins_read_only_and_the_current_activity() -> None:
+    """会话键只有 (owner, scene)：prompt 必须钉住「只读」与「本轮活动」两条。"""
+    prompt = executor.SCENE_PROMPTS["activity"]
+
+    assert "义工活动分析" in prompt
+    # 只读声明。
+    assert "只读" in prompt
+    assert "不得执行任何写操作" in prompt
+    # 对象锚定：本轮 reference 优先，回答开头复述活动名 + OID。
+    assert "reference" in prompt
+    assert "以本轮参考内容为准" in prompt
+    assert "OID" in prompt
+    # 可用工具的自然语言版必须与真实注册一致。
+    for name in (
+        "get_activity",
+        "activity_statistics",
+        "list_activity_members",
+        "list_activities",
+        "search_activities",
+        "list_groups",
+    ):
+        assert name in prompt, name
+    # 口径：报名 ≠ 签到、小时、出勤率。
+    assert "effective" in prompt
+    assert "出勤率" in prompt
+    assert "小时" in prompt
+    # 护栏：不评价个体、不外泄名单外信息、不编造。
+    assert "评价性结论" in prompt
+    assert "个人信息" in prompt
+    assert "信息不足时明确说明缺什么" in prompt
