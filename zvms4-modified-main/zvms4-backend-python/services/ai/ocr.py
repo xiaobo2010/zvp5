@@ -6,8 +6,9 @@
 
 步骤顺序不能变：先鉴权再扣配额——先扣后拒等于白扣用户额度。两份额度也分先后：
 
-* **用户额度**（``ocr``）先 ``peek`` 后 ``consume``：预检不花代价，真扣留在
-  「引擎已选中」之后，避免「没有可用引擎」也把用户额度扣掉；
+* **用户额度**（统一 AF 池 ``af``，一次识别折 ``AI_OCR_AF_COST`` AF）先 ``peek``
+  后 ``consume``：预检不花代价，真扣留在「引擎已选中」之后，避免「没有可用引擎」
+  也把用户额度扣掉；
 * **站点额度**（``ocr_<engine>``）在选引擎时按 ``priority`` 逐个尝试，第一个
   ``allowed`` 的胜出——被拒的那次不扣（仓储是原子条件自增），所以轮换无副作用。
 
@@ -118,7 +119,7 @@ async def enqueue(
 
     # 预检用户额度：不足就直接拒，别先去占一份站点额度。
     allowed, used, limit = await quota.peek(
-        user["id"], "ocr", 1, roles=user.get("per")
+        user["id"], "af", ai_config.AI_OCR_AF_COST, roles=user.get("per")
     )
     if not allowed:
         await _audit_reject(
@@ -145,7 +146,7 @@ async def enqueue(
         raise
 
     allowed, used, limit = await quota.consume(
-        user["id"], "ocr", 1, roles=user.get("per")
+        user["id"], "af", ai_config.AI_OCR_AF_COST, roles=user.get("per")
     )
     if not allowed:
         # 预检与真扣之间的竞态：另一个并发请求刚把额度用完。站点额度已经占了
@@ -266,7 +267,7 @@ async def recognize_bytes(
         ) from None
 
     allowed, used, limit = await quota.peek(
-        user["id"], "ocr", 1, roles=user.get("per")
+        user["id"], "af", ai_config.AI_OCR_AF_COST, roles=user.get("per")
     )
     if not allowed:
         await _audit_reject(
@@ -291,7 +292,7 @@ async def recognize_bytes(
         raise
 
     allowed, used, limit = await quota.consume(
-        user["id"], "ocr", 1, roles=user.get("per")
+        user["id"], "af", ai_config.AI_OCR_AF_COST, roles=user.get("per")
     )
     if not allowed:
         await _refund_site(engine["kind"])

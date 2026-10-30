@@ -346,7 +346,27 @@ def test_enqueue_picks_first_engine_by_priority(
     # engine_kind 是路由层与后台任务之间的内部字段，不进 HTTP 响应。
     assert "engine_kind" not in data
     assert quotas["site"].calls == [("tencent", 1)]
-    assert quotas["consume"].calls == [(ADMIN, "ocr", 1)]
+    assert quotas["consume"].calls == [(ADMIN, "af", ai_config.AI_OCR_AF_COST)]
+
+
+def test_enqueue_charges_the_user_af_pool_with_the_ocr_cost(
+    monkeypatch, files_repo, engines, quotas, audit_repo
+):
+    """OCR 扣用户侧统一 AF 池，金额来自 ``AI_OCR_AF_COST``（不是写死的 1）。
+
+    站点级 ``ocr_<engine>`` 仍按引擎单独记（同一用例里一起钉住）：两条额度链路
+    的出资方不同，合并用户侧不该把站点侧也并进去。
+    """
+    monkeypatch.setattr(ai_config, "AI_OCR_AF_COST", 3)
+    engines([_engine_row("primary", "tencent")])
+
+    response = _post_ocr()
+
+    assert response.status_code == 202
+    assert quotas["peek"].calls == [(ADMIN, "af", 3)]
+    assert quotas["consume"].calls == [(ADMIN, "af", 3)]
+    # 站点额度仍是「一次识别一份」，与兑换率无关。
+    assert quotas["site"].calls == [("tencent", 1)]
 
 
 def test_enqueue_rotates_when_site_quota_exhausted(
@@ -366,7 +386,7 @@ def test_enqueue_rotates_when_site_quota_exhausted(
     assert response.json()["data"]["engine"] == "backup"
     assert [call[0] for call in quotas["site"].calls] == ["tencent", "aliyun"]
     # 用户额度只扣一次：轮换发生在站点额度层，不该碰用户额度。
-    assert quotas["consume"].calls == [(ADMIN, "ocr", 1)]
+    assert quotas["consume"].calls == [(ADMIN, "af", ai_config.AI_OCR_AF_COST)]
 
 
 def test_enqueue_all_site_quota_exhausted_is_503(
@@ -420,7 +440,7 @@ def test_enqueue_consume_race_is_429_and_refunds_site_quota(
 
     assert response.status_code == 429
     assert response.json()["detail"] == "AI_QUOTA_EXCEEDED"
-    assert quotas["peek"].calls == [(ADMIN, "ocr", 1)]
+    assert quotas["peek"].calls == [(ADMIN, "af", ai_config.AI_OCR_AF_COST)]
     # 站点额度已经扣过一次，必须原样退回去：这次识别根本不会发生。
     assert quotas["site"].calls == [("tencent", 1)]
     assert quotas["refund"].calls == [("tencent",)]
@@ -530,7 +550,7 @@ def test_enqueue_provider_pins_the_engine_kind(
     assert response.json()["data"]["engine"] == "backup"
     # 指定引擎不等于免费：照样扣那一份站点额度，且不碰 tencent 的。
     assert quotas["site"].calls == [("aliyun", 1)]
-    assert quotas["consume"].calls == [(ADMIN, "ocr", 1)]
+    assert quotas["consume"].calls == [(ADMIN, "af", ai_config.AI_OCR_AF_COST)]
 
 
 def test_enqueue_provider_is_admin_only(files_repo, engines, quotas, audit_repo):
@@ -656,7 +676,7 @@ def test_volunteer_ocr_accepts_verified_password(
     assert response.status_code == 202
     assert response.json()["data"]["status"] == "pending"
     # 复核通过后与普通 OCR 同一条计价路径，不存在免费后门。
-    assert quotas["consume"].calls == [(ADMIN, "ocr", 1)]
+    assert quotas["consume"].calls == [(ADMIN, "af", ai_config.AI_OCR_AF_COST)]
 
 
 def _verified_for(user_id: str):
@@ -972,8 +992,8 @@ def test_attachment_manual_ocr_uses_engine_pool(
     assert response.json()["data"]["engine"] == "primary"
     assert files_repo.ocr_rows and files_repo.ocr_rows[0]["engine"] == "primary"
     # 用户额度与站点额度各扣一次，没有「manager 免费」这回事。
-    assert quotas["peek"].calls == [(ADMIN, "ocr", 1)]
-    assert quotas["consume"].calls == [(ADMIN, "ocr", 1)]
+    assert quotas["peek"].calls == [(ADMIN, "af", ai_config.AI_OCR_AF_COST)]
+    assert quotas["consume"].calls == [(ADMIN, "af", ai_config.AI_OCR_AF_COST)]
     assert quotas["site"].calls == [("tencent", 1)]
     # 记账口径与网关一致：引擎凭证是站点级的 → server。
     assert audit_repo.rows and audit_repo.rows[-1]["key_scope"] == "server"

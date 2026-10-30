@@ -29,6 +29,9 @@ _logger = logging.getLogger(__name__)
 CONNECT_TIMEOUT = 5.0
 READ_TIMEOUT = 120.0
 BODY_LOG_LIMIT = 500
+# 交给路由层判定「不支持流式」的错误体上限。错误体可能回显请求里的 prompt，
+# 所以只留够判定的一小段（短于它的 body 原样保留）。
+STREAM_META_BODY_LIMIT = 512
 MAX_CONNECTIONS = 32
 MAX_KEEPALIVE_CONNECTIONS = 16
 
@@ -350,9 +353,32 @@ async def chat_completion(payload: dict, entry: dict, api_key: str) -> dict:
         ) from None
 
 
+def _header(response: object, name: str) -> str:
+    """响应头读成字符串；桩对象没有 ``headers`` 时给空串（不猜）。"""
+    headers = getattr(response, "headers", None)
+    if headers is None:
+        return ""
+    try:
+        return str(headers.get(name) or "")
+    except Exception:  # noqa: BLE001 - 头部形状异常不该让一次成功调用变 500
+        return ""
+
+
 async def chat_completion_stream(
-    payload: dict, entry: dict, api_key: str
+    payload: dict,
+    entry: dict,
+    api_key: str,
+    *,
+    meta: dict | None = None,
 ) -> AsyncIterator[bytes]:
+    """把上游 SSE 字节逐段透传。
+
+    ``meta`` 是**调用方观察窗口**（可选）：本函数往里面填 ``status_code`` /
+    ``content_type``，非 2xx 时再填 ``error_body``（截断后的响应体）。路由层靠它
+    判定「上游不支持流式」（需要状态码 + 错误体）和「200 但不是 SSE」（需要
+    Content-Type）——这两件事字节流本身表达不了。默认 ``None``：老调用点一行不改，
+    也不多读一个字节。
+    """
     await guard_endpoint(entry)
     client = _client_instance()
     try:
@@ -363,13 +389,21 @@ async def chat_completion_stream(
             headers=_headers(entry, api_key),
             timeout=_timeout(entry),
         ) as response:
+            if meta is not None:
+                meta["status_code"] = response.status_code
+                meta["content_type"] = _header(response, "content-type")
             if response.status_code < 200 or response.status_code >= 300:
                 # 流式响应的错误体不在 status 里，必须先读出来才能判定/记日志。
                 body = await response.aread()
+                text = body.decode("utf-8", "replace")
+                if meta is not None:
+                    # 只留判定「不支持流式」用得上的那一小段：错误体可能回显请求
+                    # 里的 prompt，不该跟着进审计或日志。
+                    meta["error_body"] = text[:STREAM_META_BODY_LIMIT]
                 raise _upstream_error(
                     str(entry.get("name") or ""),
                     response.status_code,
-                    body.decode("utf-8", "replace"),
+                    text,
                 )
             # 双保险：就算上游无视 ``Accept-Encoding: identity`` 仍然压了，
             # ``aiter_bytes()`` 会按 Content-Encoding 解压后再给我们；``aiter_raw()``

@@ -301,7 +301,7 @@ async def suggest_ssh_command(
     billable = _billable(entry)
     if billable:
         allowed, used, limit = await quota.peek(
-            user_oid, "chat", 1, roles=roles
+            user_oid, "af", 1, roles=roles
         )
         if not allowed:
             await reject(
@@ -379,7 +379,7 @@ async def suggest_ssh_command(
     )
     if billable:
         try:
-            await quota.consume(user_oid, "chat", units, roles=roles)
+            await quota.consume(user_oid, "af", units, roles=roles)
         except Exception as exc:  # noqa: BLE001 - 回写失败不能丢掉已生成的答案
             logger.warning("ssh suggest quota write-back failed: %s", type(exc).__name__)
 
