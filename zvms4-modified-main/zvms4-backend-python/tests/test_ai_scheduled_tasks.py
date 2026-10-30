@@ -922,6 +922,68 @@ async def test_tick_skips_when_quota_exhausted(env):
 
 
 @pytest.mark.asyncio
+async def test_tick_ignores_quota_when_owner_has_a_personal_key(env, monkeypatch):
+    """个人 key 不占平台 AF 额度（与 ``executor._billable`` 同口径）：
+
+    额度用尽也不该挡住「用自己的 key」的定时任务——执行期压根不会 peek/consume。
+    """
+    task = _seed(env.repo)
+    env.catalog[:] = [
+        {"name": "mine", "scope": "personal", "models": ["m1"], "enabled": True}
+    ]
+    env.quota.update({"allowed": False, "used": 100, "limit": 100})
+
+    async def no_peek(*_args, **_kwargs):
+        raise AssertionError("有个人凭据时不该再查平台额度")
+
+    monkeypatch.setattr(runner.quota, "peek", no_peek)
+
+    summary = await runner.tick(NOW)
+
+    assert summary["queued"] == 1
+    assert summary["skipped"] == 0
+    row = env.repo.rows[task["_id"]]
+    assert row["last_status"] == runner.STATUS_QUEUED
+    assert len(env.runs.inserted) == 1
+
+
+@pytest.mark.asyncio
+async def test_tick_still_bills_shared_or_server_keys(env):
+    """共享/服务端凭据花的是平台额度：AF 用尽照旧 skip。"""
+    task = _seed(env.repo)
+    env.catalog[:] = [
+        {"name": "team", "scope": "shared", "models": ["m1"], "enabled": True},
+        {"name": "server", "scope": "server", "models": ["m1"], "enabled": True},
+    ]
+    env.quota.update({"allowed": False, "used": 100, "limit": 100})
+
+    await runner.tick(NOW)
+
+    row = env.repo.rows[task["_id"]]
+    assert row["last_status"] == runner.STATUS_SKIPPED_QUOTA
+    assert env.runs.inserted == []
+
+
+@pytest.mark.asyncio
+async def test_tick_does_not_exempt_a_disabled_personal_key(env):
+    """disabled 的 personal 不进生效目录（``catalog`` 已滤掉），只剩 shared：
+
+    这种 owner 执行期会扣平台额度，预检照旧要挡。
+    """
+    task = _seed(env.repo)
+    env.catalog[:] = [
+        {"name": "team", "scope": "shared", "models": ["m1"], "enabled": True}
+    ]
+    env.quota.update({"allowed": False, "used": 100, "limit": 100})
+
+    await runner.tick(NOW)
+
+    row = env.repo.rows[task["_id"]]
+    assert row["last_status"] == runner.STATUS_SKIPPED_QUOTA
+    assert env.runs.inserted == []
+
+
+@pytest.mark.asyncio
 async def test_tick_survives_a_broken_task(env, monkeypatch):
     """一条任务抛异常不能影响同批其它任务，也不能把 next_run_at 留在过去。"""
     broken = _seed(env.repo, _id="a" * 24)

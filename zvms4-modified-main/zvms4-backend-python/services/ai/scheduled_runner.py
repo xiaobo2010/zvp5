@@ -400,6 +400,14 @@ async def submit_task_run(task: Mapping[str, Any], *, now: datetime) -> str:
 # 前置检查
 # ---------------------------------------------------------------------------
 
+def _has_personal_key(entries: list[dict]) -> bool:
+    """生效目录里是否含个人凭据（``catalog`` 已滤掉 disabled/过期项）。"""
+    return any(
+        str(entry.get("scope") or "") == credentials.SCOPE_PERSONAL
+        for entry in entries
+    )
+
+
 async def _preflight(task: Mapping[str, Any]) -> tuple[str | None, str | None]:
     """返回 ``(跳过状态, 原因)``；``(None, None)`` 表示可以提交。
 
@@ -428,12 +436,18 @@ async def _preflight(task: Mapping[str, Any]) -> tuple[str | None, str | None]:
         return STATUS_SKIPPED_NO_KEY, "owner has no usable AI credential"
 
     roles = list(owner.get("roles") or [])
-    allowed, used, limit = await quota.peek(owner_oid, QUOTA_KIND, 1, roles=roles)
-    if not allowed:
-        return (
-            STATUS_SKIPPED_QUOTA,
-            f"monthly {QUOTA_KIND} quota exhausted ({used}/{limit})",
+    # 个人 key 不占平台 AF 额度（与 ``executor._billable`` 同一口径）：执行期对
+    # personal 凭据 peek/consume 双侧豁免，预检若按平台额度挡下，就成了「用自己的
+    # key 却被配额拦住」。判定对象是凭据 scope，不是 owner 角色。
+    if not _has_personal_key(entries):
+        allowed, used, limit = await quota.peek(
+            owner_oid, QUOTA_KIND, 1, roles=roles
         )
+        if not allowed:
+            return (
+                STATUS_SKIPPED_QUOTA,
+                f"monthly {QUOTA_KIND} quota exhausted ({used}/{limit})",
+            )
 
     verdict = moderation.check(str(task.get("prompt_text") or ""))
     if verdict.hit:
