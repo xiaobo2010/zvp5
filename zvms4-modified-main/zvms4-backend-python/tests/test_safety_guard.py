@@ -40,6 +40,11 @@ def _response(content: str) -> dict:
     return {"choices": [{"message": {"content": content}}]}
 
 
+async def _always_unlocked(_oid: str) -> bool:
+    """``agent_unlock.is_unlocked`` 现在是 async，打桩也要等价的协程。"""
+    return True
+
+
 @pytest.fixture
 def env(monkeypatch):
     """安全认证的外部世界：凭据目录、明文 key、上游调用、app_logs。"""
@@ -379,7 +384,7 @@ async def test_rejected_submit_creates_no_run(monkeypatch) -> None:
         raise AssertionError("被拒绝的提交不该触碰 run 仓储")
 
     monkeypatch.setattr(run_queue.conversations, "require_row", require_row)
-    monkeypatch.setattr(run_queue.agent_unlock, "is_unlocked", lambda oid: True)
+    monkeypatch.setattr(run_queue.agent_unlock, "is_unlocked", _always_unlocked)
     monkeypatch.setattr(run_queue.safety_guard, "screen", screen)
     monkeypatch.setattr(
         run_queue.violation_guard, "record_agent_jailbreak", record
@@ -430,7 +435,7 @@ async def test_whitelist_rejection_reaches_the_ban_path(env, monkeypatch) -> Non
         raise AssertionError("被拒绝的提交不该触碰 run 仓储")
 
     monkeypatch.setattr(run_queue.conversations, "require_row", require_row)
-    monkeypatch.setattr(run_queue.agent_unlock, "is_unlocked", lambda oid: True)
+    monkeypatch.setattr(run_queue.agent_unlock, "is_unlocked", _always_unlocked)
     monkeypatch.setattr(run_queue.prompt_audit, "capture", capture)
     monkeypatch.setattr(
         run_queue.violation_guard, "record_agent_jailbreak", record
@@ -470,7 +475,7 @@ async def test_unavailable_screen_rejects_without_recording(monkeypatch) -> None
         return {}
 
     monkeypatch.setattr(run_queue.conversations, "require_row", require_row)
-    monkeypatch.setattr(run_queue.agent_unlock, "is_unlocked", lambda oid: True)
+    monkeypatch.setattr(run_queue.agent_unlock, "is_unlocked", _always_unlocked)
     monkeypatch.setattr(run_queue.safety_guard, "screen", screen)
     monkeypatch.setattr(
         run_queue.violation_guard, "record_agent_jailbreak", record
@@ -509,7 +514,7 @@ async def test_admin_bypasses_screening_without_a_warning_record(monkeypatch) ->
         raise AgentError("AI_RUN_CONFLICT", "stop here", 409)
 
     monkeypatch.setattr(run_queue.conversations, "require_row", require_row)
-    monkeypatch.setattr(run_queue.agent_unlock, "is_unlocked", lambda oid: True)
+    monkeypatch.setattr(run_queue.agent_unlock, "is_unlocked", _always_unlocked)
     monkeypatch.setattr(run_queue.safety_guard, "screen", boom)
     monkeypatch.setattr(run_queue.prompt_audit, "capture", boom)
     monkeypatch.setattr(run_queue, "_runs", _runs)

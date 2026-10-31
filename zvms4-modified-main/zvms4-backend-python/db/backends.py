@@ -4,6 +4,13 @@ The application runs exclusively on Oracle Autonomous Database (ADB): every
 factory here returns the Oracle implementation of the matching
 :mod:`db.repos.protocols` interface.
 
+The hot read paths (users / groups / activities / AI conversations) are wrapped
+in the Redis read-through proxies from :mod:`db.cached_repos`. The wrapper is
+transparent: it forwards unknown attributes, bypasses the cache entirely when a
+caller-owned ``session`` is passed in, and degrades to the plain repository when
+no ``REDIS_URI`` is configured. Tests that monkeypatch these factories keep
+bypassing the cache on purpose.
+
 Implementations are imported lazily so that importing this module never
 creates an engine, a session, or a connection.
 """
@@ -14,24 +21,27 @@ from typing import Any
 
 
 def get_users_repo(session: Any = None) -> Any:
-    """Return the ``UsersRepo`` implementation."""
+    """Return the ``UsersRepo`` implementation (Redis read-through)."""
+    from db.cached_repos import CachedUsersRepo
     from db.repos.oracle.users import OracleUsersRepo
 
-    return OracleUsersRepo(session)
+    return CachedUsersRepo(OracleUsersRepo(session), use_cache=session is None)
 
 
 def get_groups_repo(session: Any = None) -> Any:
-    """Return the ``GroupsRepo`` implementation (class side)."""
+    """Return the ``GroupsRepo`` implementation (class side, Redis read-through)."""
+    from db.cached_repos import CachedGroupsRepo
     from db.repos.oracle.groups import OracleGroupsRepo
 
-    return OracleGroupsRepo(session)
+    return CachedGroupsRepo(OracleGroupsRepo(session), use_cache=session is None)
 
 
 def get_activities_repo(session: Any = None) -> Any:
-    """Return the ``ActivitiesRepo`` implementation."""
+    """Return the ``ActivitiesRepo`` implementation (Redis read-through)."""
+    from db.cached_repos import CachedActivitiesRepo
     from db.repos.oracle.activities import OracleActivitiesRepo
 
-    return OracleActivitiesRepo(session)
+    return CachedActivitiesRepo(OracleActivitiesRepo(session), use_cache=session is None)
 
 
 def get_members_repo(session: Any = None) -> Any:
@@ -224,10 +234,13 @@ def get_ai_prompt_audit_repo(session: Any = None) -> Any:
 
 
 def get_ai_conversations_repo(session: Any = None) -> Any:
-    """Return the ``AIConversationsRepo`` implementation (持久会话)."""
+    """Return the ``AIConversationsRepo`` implementation (持久会话, Redis 读穿)."""
+    from db.cached_repos import CachedAIConversationsRepo
     from db.repos.oracle.ai_conversations import OracleAIConversationsRepo
 
-    return OracleAIConversationsRepo(session)
+    return CachedAIConversationsRepo(
+        OracleAIConversationsRepo(session), use_cache=session is None
+    )
 
 
 def get_ai_messages_repo(session: Any = None) -> Any:

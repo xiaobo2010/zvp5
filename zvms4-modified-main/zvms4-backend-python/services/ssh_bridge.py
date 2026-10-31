@@ -4,9 +4,9 @@
 并把「连接」抽成可注入的工厂，测试用替身连接就能覆盖泵、分片、限制逻辑，
 不需要真 sshd，也不会让私钥路径进入测试。
 
-单 worker 前提：ticket 与并发计数都在进程内存里（与 ``util/dual_auth`` 的失败
-限流同一前提）。多 worker 部署时每个进程各有一份，ticket 会在别的 worker 上
-失效，必须先换成共享存储。
+单 worker 前提：ticket 与并发计数都在进程内存里（``util/dual_auth`` 的失败限流
+已迁到 Redis，但 ticket 仍需共享存储）。多 worker 部署时每个进程各有一份，
+ticket 会在别的 worker 上失效，必须先换成共享存储。
 """
 
 from __future__ import annotations

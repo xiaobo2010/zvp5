@@ -279,7 +279,7 @@ async def suggest_ssh_command(
     # 熔断中的 provider 不出现在 candidates 里；模型在目录里但没有可用 provider
     # 时与 chat 面一致报 AI_NO_PROVIDER。
     try:
-        selected = routing.candidates(entries)
+        selected = await routing.candidates(entries)
     except routing.RouteError as exc:
         await reject(exc, model_name=selected_model)
     entry = next(iter(credentials.route_candidates(selected, resolved)), None)
@@ -290,7 +290,7 @@ async def suggest_ssh_command(
         )
 
     try:
-        rate_limit.check(user_oid, "chat")
+        await rate_limit.check(user_oid, "chat")
     except rate_limit.RateLimitError as exc:
         await reject(
             routing.RouteError("AI_RATE_LIMITED", exc.message, 429),
@@ -348,9 +348,9 @@ async def suggest_ssh_command(
     except routing.RouteError as exc:
         # 并发闸门满不是上游的错：算进熔断会把健康供应商也熔掉（同 chat 面）。
         if exc.code != "AI_BUSY":
-            routing.mark_failure(key)
+            await routing.mark_failure(key)
         await reject(exc, entry, model_name=selected_model)
-    routing.mark_success(key)
+    await routing.mark_success(key)
 
     command, explanation = parse_output(_content_of(result))
     if len(command) > MAX_COMMAND_CHARS:

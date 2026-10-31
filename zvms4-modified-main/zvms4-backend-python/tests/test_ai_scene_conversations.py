@@ -247,11 +247,11 @@ def repos(monkeypatch):
 async def _clean_queue():
     run_queue.reset()
     run_queue._REFERENCES.clear()
-    agent_unlock.clear_state()
+    await agent_unlock.clear_state()
     yield
     run_queue.reset()
     run_queue._REFERENCES.clear()
-    agent_unlock.clear_state()
+    await agent_unlock.clear_state()
 
 
 # ---------------------------------------------------------------------------
@@ -411,7 +411,7 @@ async def test_submit_scene_reuses_the_conversation_and_skips_the_password_gate(
 ) -> None:
     """admin + 只读场景：没解锁也能提交（0 次解锁调用），消息只存提问本身。"""
     repos.conv.seed(CONV, scene="file_edit", title="文件编辑智能")
-    agent_unlock.clear_state()
+    await agent_unlock.clear_state()
 
     async def _insert_queued(**kwargs):
         # 真实仓储在一个事务里写「用户消息 + queued run」；这里只复刻可见结果。
@@ -498,7 +498,7 @@ async def test_submit_scene_without_overrides_touches_no_run_state(
 async def test_plain_submit_still_needs_the_password_gate(repos, monkeypatch) -> None:
     """同一个管理员、普通会话：门禁照旧（豁免只对只读场景生效）。"""
     repos.conv.seed(CONV, scene=None)
-    agent_unlock.clear_state()
+    await agent_unlock.clear_state()
 
     with pytest.raises(AgentError) as caught:
         await run_queue.submit(user=ADMIN, conversation_oid=CONV, content="查一下")
@@ -512,7 +512,7 @@ async def test_read_only_scene_does_not_exempt_non_admins(repos, monkeypatch) ->
     """非 admin 即使落在场景会话上也要解锁：豁免条件是「只读场景 **且** admin」。"""
     user = {"id": DEPARTMENT, "per": ["department"]}
     repos.conv.seed(CONV, owner_oid=DEPARTMENT, scene="terminal")
-    agent_unlock.clear_state()
+    await agent_unlock.clear_state()
 
     with pytest.raises(AgentError) as caught:
         await run_queue.submit(user=user, conversation_oid=CONV, content="看看")
@@ -964,7 +964,7 @@ async def test_department_activity_submit_passes_the_password_gate(
         CONV, owner_oid=DEPARTMENT, scene="activity", title="义工活动分析"
     )
     inserted = _stub_run_insert(repos, monkeypatch)
-    agent_unlock.clear_state()
+    await agent_unlock.clear_state()
 
     result = await run_queue.submit(
         user=DEPARTMENT_USER,
@@ -976,7 +976,7 @@ async def test_department_activity_submit_passes_the_password_gate(
     assert len(inserted) == 1
     assert inserted[0]["owner_oid"] == DEPARTMENT
     # 只读场景的豁免不打开解锁状态：门禁是「跳过」而不是「解锁」。
-    assert agent_unlock.is_unlocked(DEPARTMENT) is False
+    assert await agent_unlock.is_unlocked(DEPARTMENT) is False
 
 
 @pytest.mark.parametrize("scene", ["terminal", "file_edit", "volunteer"])
@@ -986,7 +986,7 @@ async def test_department_admin_only_scenes_still_need_the_unlock(
 ) -> None:
     """放宽 activity 不许顺手放宽另外三个：即使绕过路由直进队列，也仍要求解锁。"""
     repos.conv.seed(CONV, owner_oid=DEPARTMENT, scene=scene, title="场景会话")
-    agent_unlock.clear_state()
+    await agent_unlock.clear_state()
 
     with pytest.raises(AgentError) as caught:
         await run_queue.submit(
@@ -1019,7 +1019,7 @@ async def test_admin_activity_submit_is_unchanged(repos, monkeypatch) -> None:
     """admin 行为不变：场景里免密码、入队照旧。"""
     repos.conv.seed(CONV, scene="activity", title="义工活动分析")
     inserted = _stub_run_insert(repos, monkeypatch)
-    agent_unlock.clear_state()
+    await agent_unlock.clear_state()
 
     result = await run_queue.submit(
         user=ADMIN, conversation_oid=CONV, content="这个活动有多少人报名"
@@ -1033,7 +1033,7 @@ async def test_admin_activity_submit_is_unchanged(repos, monkeypatch) -> None:
 async def test_unknown_scene_at_the_queue_layer_is_fail_closed(repos, monkeypatch) -> None:
     """DDL 无 CHECK：行里可能是拼错的场景。拼错 = 不是只读场景 = 要解锁。"""
     repos.conv.seed(CONV, owner_oid=DEPARTMENT, scene="activity2", title="拼错了")
-    agent_unlock.clear_state()
+    await agent_unlock.clear_state()
 
     with pytest.raises(AgentError) as caught:
         await run_queue.submit(

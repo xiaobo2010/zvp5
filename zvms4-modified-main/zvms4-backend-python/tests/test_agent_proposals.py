@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 from datetime import datetime, timedelta
@@ -42,11 +43,11 @@ MODEL = "gpt-x"
 def _agent_unlocked():
     """确认/驳回的 HTTP 面现在有 30 分钟密码门：本文件验证的是提案语义，门禁由
     ``test_agent_unlock`` 守着，所以把两个参与者预置成已解锁。"""
-    agent_unlock.clear_state()
-    agent_unlock.mark_unlocked(ADMIN_ID)
-    agent_unlock.mark_unlocked(STUDENT_ID)
+    asyncio.run(agent_unlock.clear_state())
+    asyncio.run(agent_unlock.mark_unlocked(ADMIN_ID))
+    asyncio.run(agent_unlock.mark_unlocked(STUDENT_ID))
     yield
-    agent_unlock.clear_state()
+    asyncio.run(agent_unlock.clear_state())
 
 
 class FakeAgentEventsRepo:

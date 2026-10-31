@@ -149,7 +149,7 @@ def _feature_denied(user: dict, key: str, *, request_id: str) -> JSONResponse | 
 async def _require_unlock(user: dict, *, request_id: str) -> JSONResponse | None:
     """确认/驳回前的密码门；未解锁回 422（与双人码的 422 同形）。"""
     user_oid = str(user.get("id") or "")
-    if agent_unlock.is_unlocked(user_oid):
+    if await agent_unlock.is_unlocked(user_oid):
         return None
     await _audit(
         user,
@@ -190,7 +190,7 @@ async def unlock(payload: UnlockRequest | None = None, user=Depends(get_current_
     if denied is not None:
         return denied
 
-    retry_after = agent_unlock.unlock_retry_after(owner_oid)
+    retry_after = await agent_unlock.unlock_retry_after(owner_oid)
     if retry_after > 0:
         return _error(
             429,
@@ -210,13 +210,15 @@ async def unlock(payload: UnlockRequest | None = None, user=Depends(get_current_
     authenticated = bool(hashed) and await verify_password_async(password, hashed)
 
     if not authenticated:
-        if agent_unlock.record_unlock_failure(owner_oid):
+        if await agent_unlock.record_unlock_failure(owner_oid):
             return _error(
                 429,
                 "AI_AGENT_UNLOCK_LOCKED",
                 "too many failed unlock attempts",
                 request_id=request_id,
-                headers={"Retry-After": str(agent_unlock.unlock_retry_after(owner_oid))},
+                headers={
+                    "Retry-After": str(await agent_unlock.unlock_retry_after(owner_oid))
+                },
             )
         return _error(
             403,
@@ -225,7 +227,7 @@ async def unlock(payload: UnlockRequest | None = None, user=Depends(get_current_
             request_id=request_id,
         )
 
-    unlocked_until = agent_unlock.mark_unlocked(owner_oid)
+    unlocked_until = await agent_unlock.mark_unlocked(owner_oid)
     return JSONResponse(
         status_code=200,
         content={"unlocked_until": unlocked_until.isoformat()},

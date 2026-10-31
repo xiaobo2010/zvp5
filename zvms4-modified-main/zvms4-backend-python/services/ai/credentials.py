@@ -31,7 +31,7 @@ import anyio
 
 import settings
 
-from db import backends
+from db import backends, state
 from db.repos.protocols import SHARED_OWNER_OID
 
 from . import config, crypto
@@ -96,16 +96,20 @@ _BLOCKED_NETWORKS = tuple(
     )
 )
 
-# 进程内缓存：单 worker（与 routing 的熔断状态同一前提）。任何 CRUD 直接清空，
-# 不做按用户失效——共享项对所有人可见，按用户失效反而容易漏。
+# 目录缓存：配了 Redis 就写 ``ai:cred:<user_oid>``，任何 CRUD 直接清空，不做
+# 按用户失效——共享项对所有人可见，按用户失效反而容易漏。Redis 不可用时回退到
+# 下面这份进程内 dict（原实现，语义不变）。
+_CRED_CACHE_PREFIX = "ai:cred:"
 _cache: dict[str, tuple[float, list[dict]]] = {}
 
 # 请求时 SSRF 复核的解析缓存：host → (到期 monotonic, 是否私网)。
 # 没有它，每一次上游调用都要多一次 DNS（单 worker 下是纯浪费）；有它，同一个
 # host 在 60 秒内只解析一次，也让「录入时是公网、请求时变内网」这种 rebinding
-# 至少在一个 TTL 内保持判定稳定。
+# 至少在一个 TTL 内保持判定稳定。同样的取舍搬到 Redis（``ai:ssrf:<host>``），
+# 让多 worker / 多机共享同一份判定；Redis 不可用时仍是这份进程内 dict。
 _SSRF_CACHE_TTL = 60.0
 _SSRF_CACHE_MAX = 256
+_SSRF_CACHE_PREFIX = "ai:ssrf:"
 _ssrf_cache: dict[str, tuple[float, bool]] = {}
 
 
@@ -233,14 +237,24 @@ async def catalog(user_oid: str) -> list[dict]:
     缓存里存的已经是「未过期」的条目，但 TTL 窗口内条目仍可能到期：所以读缓存
     之后还要按当前时刻再筛一遍（这是「缓存消费处」的过滤点）。不这么做，一把
     5 分钟前到期的 key 会一直出现在 ``/v1/models`` 里，直到缓存自然过期。
+
+    缓存位置：配了 Redis 就写 ``ai:cred:<user_oid>``（跨 worker 共享）；Redis
+    不可用/写失败时退回进程内 dict。读的时候顺序相反：先 Redis，再本地。
     """
-    now = time.monotonic()
-    cached = _cache.get(user_oid)
-    if cached is not None and cached[0] > now:
-        return _live_entries(cached[1])
+    key = f"{_CRED_CACHE_PREFIX}{user_oid}"
+    cached = await state.kv_get(key)
+    if cached is None:
+        now = time.monotonic()
+        local = _cache.get(user_oid)
+        if local is not None and local[0] > now:
+            cached = local[1]
+    if isinstance(cached, list):
+        return _live_entries(cached)
 
     entries = await _build(user_oid)
-    _cache[user_oid] = (now + config.credentials_cache_ttl(), entries)
+    ttl = config.credentials_cache_ttl()
+    if not await state.kv_set(key, entries, ttl):
+        _cache[user_oid] = (time.monotonic() + ttl, entries)
     return _live_entries(entries)
 
 
@@ -248,8 +262,12 @@ async def invalidate(user_oid: str | None = None) -> None:
     """清空目录缓存。
 
     ``user_oid`` 保留在签名里是为了调用方语义清晰；实现上总是全清：共享项的
-    变更影响所有人，按用户失效迟早漏掉一条路径。
+    变更影响所有人，按用户失效迟早漏掉一条路径。Redis 里的同前缀 key 与进程内
+    dict 一起清（两种部署的失效语义必须一致）。
     """
+    keys = await state.kv_scan(_CRED_CACHE_PREFIX)
+    if keys:
+        await state.kv_delete(*keys)
     _cache.clear()
 
 
@@ -1347,23 +1365,31 @@ async def host_is_private(host: str) -> bool:
         return _is_blocked(literal)
 
     now = time.monotonic()
-    cached = _ssrf_cache.get(key)
-    if cached is not None and cached[0] > now:
-        return cached[1]
+    cache_key = f"{_SSRF_CACHE_PREFIX}{key}"
+    cached = await state.kv_get(cache_key)
+    if isinstance(cached, bool):
+        return cached
+    local = _ssrf_cache.get(key)
+    if local is not None and local[0] > now:
+        return local[1]
 
     addresses = await anyio.to_thread.run_sync(_lookup_addresses, key)
     if addresses is None:
         return False
     blocked = any(_is_blocked(address) for address in addresses)
-    if len(_ssrf_cache) >= _SSRF_CACHE_MAX:
-        # 上界只是防「随机子域名轰炸」把 dict 撑爆；清空比 LRU 便宜。
-        _ssrf_cache.clear()
-    _ssrf_cache[key] = (now + _SSRF_CACHE_TTL, blocked)
+    if not await state.kv_set(cache_key, blocked, _SSRF_CACHE_TTL):
+        if len(_ssrf_cache) >= _SSRF_CACHE_MAX:
+            # 上界只是防「随机子域名轰炸」把 dict 撑爆；清空比 LRU 便宜。
+            _ssrf_cache.clear()
+        _ssrf_cache[key] = (now + _SSRF_CACHE_TTL, blocked)
     return blocked
 
 
-def clear_ssrf_cache() -> None:
-    """测试与「改了 DNS/网络策略」后的手动失效入口。"""
+async def clear_ssrf_cache() -> None:
+    """测试与「改了 DNS/网络策略」后的手动失效入口（Redis + 进程内 dict）。"""
+    keys = await state.kv_scan(_SSRF_CACHE_PREFIX)
+    if keys:
+        await state.kv_delete(*keys)
     _ssrf_cache.clear()
 
 

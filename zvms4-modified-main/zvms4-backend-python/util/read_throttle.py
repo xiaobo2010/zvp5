@@ -1,8 +1,11 @@
-"""重查询端点的进程内读预算（每用户 60 次/分钟滑动窗口）。
+"""重查询端点的读预算（每用户 60 次/分钟滑动窗口）。
 
-与 ``util.login_throttle`` 同一前提：单 worker 部署时它就是全局限制，多 worker
-时每进程各算各的窗口；时间基准用 ``time.monotonic()``。管理员与普通用户同一
-档位——读预算挡的是「一个账号把库拖死」，与权限高低无关。
+**状态位置**：``settings.REDIS_URI`` 配置了就写 Redis 的滑动窗口
+（``db.state.window_hit``，键 ``read:<oid>``），此时 ``LIMIT`` 就是全局限额；
+Redis 未配置或命令失败时回退到进程内 deque（改造前的实现，语义不变）——单
+worker 下即为全局限制，多 worker 时每进程各算各的窗口。时间基准用
+``time.monotonic()``。管理员与普通用户同一档位——读预算挡的是「一个账号把库
+拖死」，与权限高低无关。
 """
 
 from __future__ import annotations
@@ -13,6 +16,7 @@ from collections import deque
 
 from fastapi import Depends, HTTPException
 
+from db import state
 from util.object_id import get_current_user
 
 LIMIT = 60
@@ -37,8 +41,23 @@ class ReadRateLimited(Exception):
 _buckets: dict[str, deque[float]] = {}
 
 
-def check(user_oid: str) -> None:
+async def check(user_oid: str) -> None:
     """记一次重查询；超限抛 :class:`ReadRateLimited`（此时不计数）。"""
+    key = str(user_oid).strip()
+    if not key:
+        return
+    if state.redis_configured():
+        result = await state.window_hit(f"read:{key}", LIMIT, WINDOW_SECONDS)
+        if result is not None:
+            allowed, retry_after = result
+            if not allowed:
+                raise ReadRateLimited(retry_after)
+            return
+    _local_check(key)
+
+
+def _local_check(user_oid: str) -> None:
+    """Redis 未配置/不可用时的进程内滑动窗口（改造前的实现，语义不变）。"""
     key = str(user_oid).strip()
     if not key:
         return
@@ -71,7 +90,7 @@ def reset_state() -> None:
 async def read_budget(user=Depends(get_current_user)) -> None:
     """重查询端点的依赖闸：超限 429 + ``Retry-After``。"""
     try:
-        check(str(user.get("id") or ""))
+        await check(str(user.get("id") or ""))
     except ReadRateLimited as exc:
         raise HTTPException(
             status_code=429,

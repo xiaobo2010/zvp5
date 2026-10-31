@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 
 import pytest
@@ -417,7 +418,7 @@ def test_ocr_keeps_the_password_and_role_gates_in_front(ocr_env, monkeypatch):
 
 @pytest.fixture
 def agent_env(monkeypatch):
-    agent_unlock.clear_state()
+    asyncio.run(agent_unlock.clear_state())
     state = {"user": DEPT_USER}
 
     class _UsersRepo:
@@ -435,7 +436,7 @@ def agent_env(monkeypatch):
     app.include_router(ai_agent_router.router, prefix="/api/ai/agent")
     app.dependency_overrides[get_current_user] = lambda: state["user"]
     yield SimpleNamespace(client=TestClient(app), state=state, audit=audit)
-    agent_unlock.clear_state()
+    asyncio.run(agent_unlock.clear_state())
 
 
 def test_agent_switch_off_blocks_unlock_and_does_not_authorise(agent_env, monkeypatch):
@@ -450,7 +451,7 @@ def test_agent_switch_off_blocks_unlock_and_does_not_authorise(agent_env, monkey
     assert body["error"]["code"] == "AI_FORBIDDEN"
     assert body["error"]["message"] == FEATURE_DENIED
     # 解锁没发生：不给「解锁了却不能用」留下半截状态。
-    assert agent_unlock.is_unlocked(DEPT) is False
+    assert asyncio.run(agent_unlock.is_unlocked(DEPT)) is False
     assert agent_env.audit.rows == []
 
 
@@ -489,7 +490,7 @@ def test_agent_switch_on_keeps_unlock_and_the_unlock_gate(agent_env, monkeypatch
 
     unlocked = agent_env.client.post("/api/ai/agent/unlock", json={"password": "pw"})
     assert unlocked.status_code == 200
-    assert agent_unlock.is_unlocked(DEPT) is True
+    assert asyncio.run(agent_unlock.is_unlocked(DEPT)) is True
 
     ok = agent_env.client.get("/api/ai/agent/proposals")
     assert ok.status_code == 200

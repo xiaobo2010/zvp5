@@ -237,7 +237,7 @@ async def _select_model(user_oid: str, model: object) -> tuple[str, list[dict]]:
         )
 
     try:
-        selected = routing.candidates(entries)
+        selected = await routing.candidates(entries)
     except RouteError as exc:
         raise AgentError(exc.code, exc.message, exc.status_code) from None
 
@@ -281,7 +281,7 @@ async def _call_upstream(
         try:
             api_key = await credentials.resolve_api_key(entry)
         except CredentialError as exc:
-            routing.mark_failure(key)
+            await routing.mark_failure(key)
             raise _attach_entry(
                 AgentError(exc.code, exc.message, exc.status_code), entry
             ) from None
@@ -294,7 +294,7 @@ async def _call_upstream(
         except RouteError as exc:
             # 并发闸门满不是上游故障，不计入熔断（与 chat 面一致）。
             if exc.code != "AI_BUSY":
-                routing.mark_failure(key)
+                await routing.mark_failure(key)
             if exc.code not in RETRYABLE_CODES:
                 raise _attach_entry(
                     AgentError(exc.code, exc.message, exc.status_code), entry
@@ -302,7 +302,7 @@ async def _call_upstream(
             last_error = exc
             continue
 
-        routing.mark_success(key)
+        await routing.mark_success(key)
         return result, entry, cache_key
 
     failure = last_error or RouteError(
@@ -1593,7 +1593,7 @@ async def run(
 
         # 1) 频控：每一轮都各记一次窗口（一轮是一次真实上游调用）。
         try:
-            rate_limit.check(user_oid, "chat")
+            await rate_limit.check(user_oid, "chat")
         except rate_limit.RateLimitError as exc:
             rejection = AgentError(
                 "AI_RATE_LIMITED",

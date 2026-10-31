@@ -4,13 +4,12 @@
 进程内引擎、chat 走外部上游，但两者都会占事件循环与并发槽，光有月额度挡不住
 突发。
 
-**进程内前提**：状态全在进程内存里（与 ``routing`` 的熔断、``credentials``
-的目录缓存同一前提）。生产是单 worker，所以这就是全局限额；一旦用
-``uvicorn --workers N`` 部署，每个进程各算各的窗口，实际上限会变成 N 倍。
-:func:`effective_limit` 按 :func:`services.ai.config.worker_count` 把每进程阈值
-折算成 ``ceil(limit / N)``，让**全局**上限尽量贴近配置值；``/health`` 回显
-折算后的数字与 worker 数，导入时也会打一条 WARNING。
-真要横跨进程精确限流，这层必须换成 Redis 的滑动窗口/令牌桶。
+**状态位置**：``settings.REDIS_URI`` 配置了就写 Redis 的滑动窗口
+（``db.state.window_hit``），此时限额就是全局限额，不再按 worker 数折算。
+Redis 未配置或读取失败时回退到进程内 deque —— 单 worker 下即为全局限额；
+多 worker 且没有 Redis 时，:func:`effective_limit` 仍按
+:func:`services.ai.config.worker_count` 把每进程阈值折算成
+``ceil(limit / N)``，让**全局**上限尽量贴近配置值。
 
 时间基准用 ``time.monotonic()`` 而不是 wall clock：NTP 校时/手工改时间会让
 ``time.time()`` 跳变，窗口可能瞬间变成负长度或几十年，用户要么被无故放行要么
@@ -23,6 +22,8 @@ import logging
 import math
 import time
 from collections import deque
+
+from db import state
 
 from . import config
 
@@ -62,29 +63,32 @@ _buckets: dict[tuple[str, str], deque[float]] = {}
 
 
 def effective_limit(kind: str) -> int:
-    """**本进程**的实际阈值 = ``ceil(全局阈值 / worker 数)``，至少 1；0 = 不限。
+    """实际阈值：Redis 共享时即全局阈值；否则按 worker 数折算。
 
-    单 worker 时逐字节等于 ``config.rate_limit_per_minute(kind)``。向上取整而不是
-    向下：向下会把「全局 10 次 / 3 worker」压成每进程 3 次（全局 9），比配置更紧；
-    取整后最坏是全局略超一点，但不会因为除不尽而悄悄收紧额度。
+    无 Redis 的多 worker 部署下，本进程阈值 = ``ceil(全局阈值 / worker 数)``，
+    至少 1；0 = 不限。向上取整而不是向下：向下会把「全局 10 次 / 3 worker」
+    压成每进程 3 次（全局 9），比配置更紧；取整后最坏是全局略超一点，但不会
+    因为除不尽而悄悄收紧额度。
     """
     limit = config.rate_limit_per_minute(kind)
     if limit <= 0:
         return 0
+    if state.redis_configured():
+        return limit
     workers = config.worker_count()
     if workers <= 1:
         return limit
     return max(1, math.ceil(limit / workers))
 
 
-def check(user_oid: str, kind: str, *, limit: int | None = None) -> None:
+async def check(user_oid: str, kind: str, *, limit: int | None = None) -> None:
     """记一次调用；超限抛 :class:`RateLimitError`（此时**不**计数）。
 
     「超限不计数」是刻意的：被拒的请求不该把自己的窗口越推越长，否则一个客户端
     疯狂重试就能把自己永久锁在 429 上，而它其实只成功调用过 limit 次。
 
-    ``limit`` 非空时覆盖配置阈值（仍按 worker 数折算）：独立 API key 的
-    「60 次/分钟」不是全局配置里那种按能力划分的额度，而是另一条维度。
+    ``limit`` 非空时覆盖配置阈值（无 Redis 时仍按 worker 数折算）：独立 API key
+    的「60 次/分钟」不是全局配置里那种按能力划分的额度，而是另一条维度。
     ``user_oid`` 只当作**桶名**，调用方可以把复合键（``user:key_oid``）传进来。
     """
     limit = effective_limit(kind) if limit is None else _per_process(limit)
@@ -92,6 +96,18 @@ def check(user_oid: str, kind: str, *, limit: int | None = None) -> None:
         return
 
     window = config.rate_limit_window_seconds()
+    if state.redis_configured():
+        result = await state.window_hit(f"ai:{user_oid}:{kind}", limit, window)
+        if result is not None:
+            allowed, retry_after = result
+            if not allowed:
+                raise RateLimitError(retry_after)
+            return
+    _local_check(str(user_oid), str(kind), limit, window)
+
+
+def _local_check(user_oid: str, kind: str, limit: int, window: float) -> None:
+    """Redis 未配置/不可用时的进程内滑动窗口（改造前的实现，语义不变）。"""
     now = time.monotonic()
     key = (str(user_oid), str(kind))
 

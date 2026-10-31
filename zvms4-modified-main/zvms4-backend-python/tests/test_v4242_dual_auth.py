@@ -88,10 +88,10 @@ class StubRepo:
 @pytest.fixture(autouse=True)
 def _reset_limiter():
     dual_auth._failures.clear()
-    dual_auth.clear_grants()
+    asyncio.run(dual_auth.clear_grants())
     yield
     dual_auth._failures.clear()
-    dual_auth.clear_grants()
+    asyncio.run(dual_auth.clear_grants())
 
 
 @pytest.fixture
@@ -430,7 +430,9 @@ def test_expired_grant_is_dropped(install, audits):
     key = (OPERATOR, "agent_write")
     dual_auth._grants[key] = (APPROVER, time.monotonic() - 1)
 
-    assert dual_auth.cached_approval({"id": OPERATOR}, action="agent_write") is None
+    assert asyncio.run(
+        dual_auth.cached_approval({"id": OPERATOR}, action="agent_write")
+    ) is None
     assert key not in dual_auth._grants
     with pytest.raises(DualAuthError):
         _cached({"id": OPERATOR}, "")
@@ -455,7 +457,9 @@ def test_failed_verification_does_not_create_a_grant(install, audits):
     with pytest.raises(DualAuthError):
         _cached({"id": OPERATOR}, _wrong_code())
 
-    assert dual_auth.cached_approval({"id": OPERATOR}, action="agent_write") is None
+    assert asyncio.run(
+        dual_auth.cached_approval({"id": OPERATOR}, action="agent_write")
+    ) is None
 
 
 def test_ttl_is_capped_at_one_day(monkeypatch):

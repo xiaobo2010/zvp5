@@ -75,11 +75,11 @@ class FakeEngineRepo:
 @pytest.fixture(autouse=True)
 def _isolated_state(monkeypatch, quiet_ai_governance):
     credentials._cache.clear()
-    credentials.clear_ssrf_cache()
+    asyncio.run(credentials.clear_ssrf_cache())
     monkeypatch.setattr(settings, "AI_PROVIDERS", {}, raising=False)
     yield
     credentials._cache.clear()
-    credentials.clear_ssrf_cache()
+    asyncio.run(credentials.clear_ssrf_cache())
 
 
 def _client(user: dict | None = None) -> TestClient:

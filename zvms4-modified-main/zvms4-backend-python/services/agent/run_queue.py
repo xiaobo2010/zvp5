@@ -338,7 +338,7 @@ async def submit(
         conversations.is_readonly_scene(scene)
         and conversations.scene_allows(user, scene)
     ):
-        if not agent_unlock.is_unlocked(owner_oid):
+        if not await agent_unlock.is_unlocked(owner_oid):
             raise AgentError(
                 "AI_AGENT_UNLOCK_REQUIRED",
                 "agent access requires an unlock with your account password",
