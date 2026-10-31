@@ -338,7 +338,9 @@ uvicorn main:app --host 0.0.0.0 --port 8000
 | `frontend/src/utils/constants.ts:2,4` | 外部图标 URL | 不移植 |
 | `backend/routers/xh_router.py`、`routers/v1/platform.py` | 学海代理 / 平台登录体系 | 不在义工管理范围，未触碰 |
 
-**部署注意（上游既有配置，本次未动）**：`zvms4-frontend/src/plugins/axios.ts:21` `baseURL = 'https://zvp.xiaobopisces.top/api/'` 指向现役 zvp 域名——替换上线时必须改为相对路径 `/api/` 或新域名。
+**部署注意**：API 域名通过部署环境的 `VITE_API_BASE` 在构建时注入，不在源码中写死。
+本地开发未设置该变量时使用同源 `/api`，并由 Vite 代理到本机后端；生产构建应注入
+指定环境对应的 API 基址（例如 `https://api.example.com/api`）。
 
 #### 6. 验证记录
 
