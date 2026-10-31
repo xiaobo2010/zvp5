@@ -19,6 +19,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 
 import pytest
@@ -277,29 +278,37 @@ def test_stream_unsupported_only_scans_the_head_of_the_body(monkeypatch) -> None
 
 
 # ---------------------------------------------------------------------------
-# 进程内负缓存
+# 负缓存（Redis 共享，进程内兜底）
 # ---------------------------------------------------------------------------
+
+
+def _mark(key: str, model: str) -> None:
+    asyncio.run(ai_router._mark_stream_unsupported(key, model))
+
+
+def _cached(key: str, model: str) -> bool:
+    return asyncio.run(ai_router._stream_unsupported_cached(key, model))
 
 
 def test_negative_cache_expires_after_the_ttl(monkeypatch) -> None:
     now = {"value": 1000.0}
     monkeypatch.setattr(ai_router, "_stream_clock", lambda: now["value"])
 
-    ai_router._mark_stream_unsupported("shared:b", "team/gpt-x")
+    _mark("shared:b", "team/gpt-x")
 
-    assert ai_router._stream_unsupported_cached("shared:b", "team/gpt-x") is True
+    assert _cached("shared:b", "team/gpt-x") is True
     now["value"] += ai_router.STREAM_UNSUPPORTED_TTL_SECONDS - 1
-    assert ai_router._stream_unsupported_cached("shared:b", "team/gpt-x") is True
+    assert _cached("shared:b", "team/gpt-x") is True
     now["value"] += 2
-    assert ai_router._stream_unsupported_cached("shared:b", "team/gpt-x") is False
+    assert _cached("shared:b", "team/gpt-x") is False
 
 
 def test_negative_cache_is_keyed_by_credential_and_model() -> None:
     """同一个 key 换模型、或同一个模型换 key，都不能串味。"""
-    ai_router._mark_stream_unsupported("shared:b", "team/gpt-x")
+    _mark("shared:b", "team/gpt-x")
 
-    assert ai_router._stream_unsupported_cached("shared:b", "team/other") is False
-    assert ai_router._stream_unsupported_cached("shared:c", "team/gpt-x") is False
+    assert _cached("shared:b", "team/other") is False
+    assert _cached("shared:c", "team/gpt-x") is False
 
 
 # ---------------------------------------------------------------------------
@@ -330,7 +339,7 @@ def test_unsupported_stream_falls_back_to_blocking_and_remembers_the_key(
     assert "stream_options" not in calls["payloads"][0]
 
     # 负缓存：这个 (凭据, 模型) 一小时内不必再试流式。
-    assert ai_router._stream_unsupported_cached(entry["key"], _qualified(entry))
+    assert _cached(entry["key"], _qualified(entry))
     # 两次上游尝试都留了流水：流式那一跳 rejected，非流式那一跳 success。
     assert [(row["provider"], row["status"]) for row in audit_repo.rows] == [
         ("team", "rejected"),
@@ -344,7 +353,7 @@ def test_negative_cache_hit_starts_with_the_blocking_call(
     """负缓存命中：一次流式调用都不该发生（上游明确说过不支持）。"""
     entry = _entry()
     catalog([entry])
-    ai_router._mark_stream_unsupported(entry["key"], _qualified(entry))
+    _mark(entry["key"], _qualified(entry))
 
     async def _boom(payload, entry, api_key, *, meta=None):
         raise AssertionError("负缓存命中后不得再尝试流式")
@@ -376,7 +385,7 @@ def test_timeout_before_first_chunk_falls_back_without_caching(
 
     assert response.status_code == 200
     assert _frames(response.text)[-1] == "[DONE]"
-    assert ai_router._stream_unsupported_cached(entry["key"], _qualified(entry)) is False
+    assert _cached(entry["key"], _qualified(entry)) is False
 
 
 def test_blocking_fallback_that_is_still_retryable_moves_to_the_next_candidate(

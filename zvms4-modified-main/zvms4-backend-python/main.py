@@ -543,6 +543,12 @@ async def shutdown_event():
     print("Shutting down...")
     await mark_all_tasks_failed()
     scheduler.shutdown()
+    try:
+        from db import cache as db_cache
+
+        await db_cache.aclose()
+    except Exception:  # noqa: BLE001 - 缓存连接关不掉不影响进程退出
+        pass
     print("Application shut down.")
 
 

@@ -106,7 +106,7 @@ async def enqueue(
     # 先频控再扣额度：分钟窗口挡突发，月额度挡长期滥用。顺序反了的话，被频控
     # 拒掉的请求已经扣过额度，用户会看到「没成功但额度少了」。
     try:
-        rate_limit.check(user["id"], "ocr")
+        await rate_limit.check(user["id"], "ocr")
     except rate_limit.RateLimitError as exc:
         await _audit_reject(
             user["id"], attachment_oid, status_code=429, code="AI_RATE_LIMITED"
@@ -257,7 +257,7 @@ async def recognize_bytes(
         raise HTTPException(status_code=400, detail="AI_OCR_IMAGE_TOO_LARGE")
 
     try:
-        rate_limit.check(user["id"], "ocr")
+        await rate_limit.check(user["id"], "ocr")
     except rate_limit.RateLimitError as exc:
         await _audit_reject(user["id"], None, status_code=429, code="AI_RATE_LIMITED")
         raise HTTPException(

@@ -37,6 +37,7 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 
 from db import backends
+from db import state
 from db.ids import is_valid_oid
 from services import file_ops, risk_monitor, violation_guard
 from services.ai import api_keys, audit, ban_state, credentials, quota, rate_limit, routing
@@ -189,8 +190,16 @@ def _stream_unsupported(status: object, body: object) -> bool:
     return bool(_STREAM_UNSUPPORTED_HINT.search(text[:STREAM_UNSUPPORTED_BODY_MAX]))
 
 
-def _stream_unsupported_cached(key: str, model: str) -> bool:
-    """这个 ``(key, model)`` 还在负缓存里吗（过期即清）。"""
+async def _stream_unsupported_cached(key: str, model: str) -> bool:
+    """这个 ``(key, model)`` 还在负缓存里吗（Redis 共享，进程内兜底）。"""
+    if state.redis_configured():
+        cached = await state.kv_get(f"ai:stream:{key}:{model}")
+        if cached is not None:
+            return bool(cached)
+    return _local_stream_unsupported_cached(key, model)
+
+
+def _local_stream_unsupported_cached(key: str, model: str) -> bool:
     cache_key = (key, model)
     expiry = _stream_unsupported_cache.get(cache_key)
     if expiry is None:
@@ -201,8 +210,13 @@ def _stream_unsupported_cached(key: str, model: str) -> bool:
     return True
 
 
-def _mark_stream_unsupported(key: str, model: str) -> None:
+async def _mark_stream_unsupported(key: str, model: str) -> None:
     """记下「这个 provider 的这个模型不吃流式」，TTL 见常量。"""
+    if state.redis_configured():
+        if await state.kv_set(
+            f"ai:stream:{key}:{model}", True, STREAM_UNSUPPORTED_TTL_SECONDS
+        ):
+            return
     _stream_unsupported_cache[(key, model)] = (
         _stream_clock() + STREAM_UNSUPPORTED_TTL_SECONDS
     )
@@ -1585,10 +1599,9 @@ async def ai_health(
                 "key_hosts": sorted(ai_config.prompt_cache_key_hosts()),
                 "breakpoint_hosts": sorted(ai_config.prompt_cache_breakpoint_hosts()),
             },
-            # 冷却状态是**进程内**的：多 worker 各熔各的，所以显式标出作用域，
-            # 免得运维把它当成全局事实。
-            "cooldown_seconds": routing.cooldown_state(),
-            "cooldown_scope": "process",
+            # 冷却状态的可见范围：配了 Redis 就是全局共享的，否则只有本进程。
+            "cooldown_seconds": await routing.cooldown_state(),
+            "cooldown_scope": routing.cooldown_scope(),
             "models": sorted(models),
             "quota_defaults": dict(ai_config.DEFAULT_QUOTA),
             "credentials": {
@@ -2021,7 +2034,7 @@ async def chat_completions(
     forced = payload.get("provider") if _is_admin(user) else None
 
     try:
-        selected = routing.candidates(
+        selected = await routing.candidates(
             entries, forced=str(forced) if forced else None
         )
     except RouteError as exc:
@@ -2054,12 +2067,12 @@ async def chat_completions(
     try:
         key_oid = user.get("api_key_oid")
         if key_oid:
-            rate_limit.check(
+            await rate_limit.check(
                 f"{user_oid}:{key_oid}",
                 "chat",
                 limit=ai_config.api_key_rate_limit_per_minute(),
             )
-        rate_limit.check(user_oid, "chat")
+        await rate_limit.check(user_oid, "chat")
     except rate_limit.RateLimitError as exc:
         # 被自家频控挡下也是「有一次调用没成」：落 rejected，http_status 记 429。
         # 上游限流才是 busy —— 两者混起来会让「我们挡的」看起来像「上游挂了」。
@@ -2192,7 +2205,7 @@ async def _blocking_completion(
         except CredentialError as exc:
             # 解不开是库里的数据坏了（换过主密钥 / 密文被改），换 provider 也救不了
             # 这一条，直接给结论。
-            routing.mark_failure(key)
+            await routing.mark_failure(key)
             return await _reject(
                 RouteError(exc.code, exc.message, exc.status_code),
                 user_oid=user_oid,
@@ -2216,7 +2229,7 @@ async def _blocking_completion(
             # AI_BUSY 是我们自己的并发闸门，不是上游的错：算进熔断会把健康供应商
             # 也熔掉。
             if exc.code != "AI_BUSY":
-                routing.mark_failure(key)
+                await routing.mark_failure(key)
             if exc.code not in RETRYABLE_CODES:
                 return await _reject(
                     exc,
@@ -2253,7 +2266,7 @@ async def _blocking_completion(
         # 账号（否则「封禁」只挡下一次请求，这一次的答案照样到手）。响应头还没发，
         # 这里能给一个干净的 403。上游本身是成功的，不能记成上游故障。
         if await ban_state.is_banned(user_oid):
-            routing.mark_success(key)
+            await routing.mark_success(key)
             _logger.warning(
                 "chat completion discarded: user %s became banned", user_oid
             )
@@ -2270,7 +2283,7 @@ async def _blocking_completion(
                 403, USER_BANNED_CODE, USER_BANNED_MESSAGE, request_id=request_id
             )
 
-        routing.mark_success(key)
+        await routing.mark_success(key)
         # 上游回了 usage 就把 token 列一并落库：它们与 units 同源，报表才能分清
         # 「实扣」与「估算」（token 列全 NULL ⟺ units 是估算值）。AF = 千 token ×
         # 模型倍率；没拿到 usage 就按字符估算走同一公式，不再出现量纲分裂。
@@ -2443,7 +2456,7 @@ async def _stream_completion(
         except CredentialError as exc:
             # 解不开是库里的数据坏了（换过主密钥 / 密文被改），换 provider 也救不了
             # 这一条，直接给结论。
-            routing.mark_failure(key)
+            await routing.mark_failure(key)
             return await _reject(
                 RouteError(exc.code, exc.message, exc.status_code),
                 user_oid=user_oid,
@@ -2482,7 +2495,7 @@ async def _stream_completion(
         # 这里不重复补（两处都补会覆盖客户端自己的 stream_options 取值）。
         body, cache_key = prompt_cache.request_body(payload, entry)
 
-        if _stream_unsupported_cached(key, model):
+        if await _stream_unsupported_cached(key, model):
             # 负缓存命中：一小时内的第二次请求。这个上游明确不吃流式，别再拿一次
             # 必废的流式调用去试——直接以非流式起步（结果照样包成 SSE 帧）。
             await guard.__aexit__(None, None, None)
@@ -2523,11 +2536,11 @@ async def _stream_completion(
             if unsupported:
                 # 上游根本不支持流式：记住它（含 model），后续直接非流式起步。
                 # 超时/连不上走不到这里（没有状态码），所以不会被误记。
-                _mark_stream_unsupported(key, model)
+                await _mark_stream_unsupported(key, model)
             if code != "AI_BUSY" and not unsupported:
                 # 「不支持流式」不是上游故障（它非流式好好儿的），不计入熔断：
                 # 否则三个模型各探一次就把它整家熔断 60 秒，非流式也跟着遭殃。
-                routing.mark_failure(key)
+                await routing.mark_failure(key)
             if (
                 unsupported
                 or code in RETRYABLE_CODES
@@ -2677,7 +2690,7 @@ async def _stream_completion(
                                 user_oid,
                             )
                             # 上游本身是成功的（内容与连接都正常），不能记成上游故障。
-                            routing.mark_success(key)
+                            await routing.mark_success(key)
                             yield _stream_error_frame(
                                 USER_BANNED_CODE, USER_BANNED_MESSAGE
                             )
@@ -2691,7 +2704,7 @@ async def _stream_completion(
                 code = _stream_failure_code(exc)
                 state["status"] = _audit_status(code)
                 state["error_code"] = code
-                routing.mark_failure(key)
+                await routing.mark_failure(key)
                 # 只记异常类名与码：异常 message 可能带上游原文，不能进日志。
                 _logger.warning(
                     "ai stream failed on %s: %s (%s)", name, type(exc).__name__, code
@@ -2699,7 +2712,7 @@ async def _stream_completion(
                 yield _stream_error_frame(code, STREAM_ERROR_MESSAGES[code])
                 yield STREAM_DONE_FRAME
             else:
-                routing.mark_success(key)
+                await routing.mark_success(key)
             finally:
                 # 客户端断开/中途返回时也要把上游连接关掉（httpx 的 stream 上下文
                 # 由生成器的 aclose 驱动）。

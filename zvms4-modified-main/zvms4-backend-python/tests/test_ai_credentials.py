@@ -15,11 +15,12 @@
 from __future__ import annotations
 
 import ipaddress
+from datetime import datetime, timedelta
 
 import pytest
 
 import settings
-from db import backends
+from db import backends, state
 from services.ai import config as ai_config
 from services.ai import credentials, crypto
 
@@ -675,6 +676,65 @@ async def test_catalog_cache_is_real_so_invalidation_has_meaning(repo, monkeypat
 
     await credentials.invalidate()
     assert [entry["name"] for entry in await credentials.catalog(ADMIN)] == ["renamed"]
+
+
+@pytest.mark.asyncio
+async def test_catalog_cache_is_shared_through_redis_and_invalidate_clears_it(
+    repo, monkeypatch
+):
+    """配了 Redis 时目录缓存落 ``ai:cred:<user_oid>``：命中不回源，失效立刻双清。"""
+    from db import cache as db_cache
+    from fake_redis import FakeRedis
+
+    client = FakeRedis()
+    db_cache._install_client_for_tests(client)
+    monkeypatch.setattr(ai_config, "credentials_cache_ttl", lambda: 300.0)
+    repo.rows = {
+        "c" * 24: _row(oid="c" * 24, scope="shared", owner_oid=SHARED_OWNER, name="team")
+    }
+
+    assert [entry["name"] for entry in await credentials.catalog(ADMIN)] == ["team"]
+    assert f"zvms:state:kv:ai:cred:{ADMIN}" in client.kv
+    # 进程内 dict 不该同时留一份：真相只有一个。
+    assert credentials._cache == {}
+    reads = repo.calls.count("list_visible")
+
+    repo.rows["c" * 24]["name"] = "renamed"
+    assert [entry["name"] for entry in await credentials.catalog(ADMIN)] == ["team"]
+    assert repo.calls.count("list_visible") == reads  # 命中缓存，没回源
+
+    await credentials.invalidate()
+    assert f"zvms:state:kv:ai:cred:{ADMIN}" not in client.kv
+    assert [entry["name"] for entry in await credentials.catalog(ADMIN)] == ["renamed"]
+
+
+@pytest.mark.asyncio
+async def test_redis_cached_entries_are_still_filtered_at_read_time(repo, monkeypatch):
+    """Redis 往返会把 ``datetime`` 编成字符串，出口过滤的口径不能因此变松。"""
+    from db import cache as db_cache
+    from fake_redis import FakeRedis
+
+    client = FakeRedis()
+    db_cache._install_client_for_tests(client)
+    monkeypatch.setattr(ai_config, "credentials_cache_ttl", lambda: 300.0)
+
+    def _cached(oid: str, name: str, expires_at) -> dict:
+        return {
+            **_row(oid=oid, scope="shared", owner_oid=SHARED_OWNER, name=name),
+            "expires_at": expires_at,
+        }
+
+    entries = [
+        _cached("a" * 24, "old", datetime.now() - timedelta(seconds=1)),
+        _cached("b" * 24, "fresh", datetime.now() + timedelta(days=1)),
+        _cached("c" * 24, "forever", None),
+    ]
+    assert await state.kv_set(f"ai:cred:{USER}", entries, 300.0)
+
+    served = await credentials.catalog(USER)
+
+    assert [entry["name"] for entry in served] == ["fresh", "forever"]
+    assert repo.calls == []  # 命中缓存，没有回源
 
 
 # ---------------------------------------------------------------------------

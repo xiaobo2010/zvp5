@@ -12,7 +12,9 @@ Stage 2 的三块能力（Web SSH 终端 / 全盘文件管理 / 数据库内容�
 * 防重放由 ``dual_auth_uses`` 的唯一约束 ``(approver_oid, otp_counter)`` 做
   原子裁决，**不做「先查后插」**：并发两个请求在同一窗口用同一个码时，先查后插
   会双双读到「未使用」。
-* 失败限流是**进程内**计数，前提是单 worker 部署（见 :data:`_FAIL_LIMIT`）。
+* 失败限流与 30 分钟授权缓存写 Redis（``db.state`` 的 KV 原语），多 worker /
+  多机是同一份计数与授权；Redis 未配置或不可用时退回进程内实现（见
+  :data:`_FAIL_LIMIT` 与 :func:`cached_approval`）。
 """
 
 from __future__ import annotations
@@ -24,7 +26,7 @@ import time
 
 from sqlalchemy.exc import IntegrityError
 
-from db import backends
+from db import backends, state
 from typings.log import ZVMSLog
 from util.cert import match_totp_counter
 
@@ -35,11 +37,13 @@ logger = logging.getLogger(__name__)
 _CODE_RE = re.compile(r"^[0-9]{6}$")
 
 _FAIL_WINDOW_SECONDS = 60.0
-# 单 worker 前提：计数存在进程内存里，多 worker / 多机部署时每个进程各自计数，
-# 实际阈值会按进程数放大。真要横向扩容，把这里换成共享存储（Redis / DB）再谈。
 _FAIL_LIMIT = 5
 
+# 失败计数键：``dual:fail:<operator_oid>``（Redis 侧走 ``kv_incr`` + TTL）。
+_FAIL_KEY = "dual:fail:"
+
 # operator_oid -> 最近失败时刻（time.monotonic，不受系统时间跳变影响）。
+# Redis 可用时它只是回退副本：写入照旧，读优先取共享计数。
 _failures: dict[str, list[float]] = {}
 
 # ---------------------------------------------------------------------------
@@ -52,16 +56,18 @@ _failures: dict[str, list[float]] = {}
 # * 键是 ``(operator_oid, action)``：换人 / 换动作都不继承（``agent_write`` 的
 #   授权不会顺带解锁 ``web_ssh``）；
 # * 只记**成功**的校验；失败仍然走 ``_failures`` 限流，且不会刷新缓存；
-# * TTL 用 ``time.monotonic``，系统时间跳变不会把窗口拉长；
+# * TTL 由共享键的 TTL（Redis）或 ``time.monotonic``（进程内回退）承担，系统时间
+#   跳变不会把窗口拉长；
 # * ``DUAL_AUTH_CACHE_TTL_SECONDS=0`` 可整体关闭（回到「每次都验」）；
 # * 每次命中缓存都写一条 ``system_dual_auth`` 审计并标 ``cached``：事后必须能
 #   区分「这次真的输了码」与「这次吃的是 30 分钟内的授权」。
 #
-# 进程内存储与 ``_failures`` / SSH ticket 同一个前提（单 worker）。多 worker 时
-# 每个进程各自缓存，窗口行为会变成「命中率降低」而不是「越权」——保守方向。
+# 键是 ``dual:grant:<operator_oid>:<action>``，值是审批人 oid。Redis 可用时它是
+# 唯一真相（读不到就要求重新输码，方向保守）；未配置/不可用时用进程内字典。
 # ---------------------------------------------------------------------------
 _GRANT_TTL_DEFAULT_SECONDS = 1800  # 30 分钟
 _GRANT_TTL_MAX_SECONDS = 86_400  # 配置写大了也不超过一天
+_GRANT_KEY = "dual:grant:"
 
 # (operator_oid, action) -> (approver_oid, 到期时刻 monotonic)
 _grants: dict[tuple[str, str], tuple[str, float]] = {}
@@ -83,20 +89,35 @@ def _operator_oid(operator: dict) -> str:
     return str(value)
 
 
-def _recent_failures(operator_oid: str, now: float) -> list[float]:
-    stamps = [t for t in _failures.get(operator_oid, ()) if now - t < _FAIL_WINDOW_SECONDS]
+async def _recent_failures(operator_oid: str, now: float) -> int:
+    """窗口内的失败次数：Redis 可用时读共享计数，否则用进程内时间戳。
+
+    ``kv_get`` 在「计数不存在」与「Redis 刚降级」两种情况下都返回 ``None``，
+    这里一律回落到进程内实现 —— 单 worker 下两者等价，降级时也不会凭空放大阈值。
+    """
+    if state.redis_configured():
+        raw = await state.kv_get(f"{_FAIL_KEY}{operator_oid}")
+        if isinstance(raw, int) and not isinstance(raw, bool):
+            return max(0, raw)
+    stamps = [
+        t for t in _failures.get(operator_oid, ()) if now - t < _FAIL_WINDOW_SECONDS
+    ]
     if stamps:
         _failures[operator_oid] = stamps
     else:
         _failures.pop(operator_oid, None)
-    return stamps
+    return len(stamps)
 
 
-def _record_failure(operator_oid: str) -> None:
+async def _record_failure(operator_oid: str) -> None:
     now = time.monotonic()
-    stamps = _recent_failures(operator_oid, now)
+    stamps = [
+        t for t in _failures.get(operator_oid, ()) if now - t < _FAIL_WINDOW_SECONDS
+    ]
     stamps.append(now)
     _failures[operator_oid] = stamps
+    if state.redis_configured():
+        await state.kv_incr(f"{_FAIL_KEY}{operator_oid}", _FAIL_WINDOW_SECONDS)
 
 
 def _is_unique_violation(exc: BaseException) -> bool:
@@ -134,11 +155,17 @@ def dual_auth_cache_ttl_seconds() -> int:
     return min(raw, _GRANT_TTL_MAX_SECONDS)
 
 
-def cached_approval(operator: dict, *, action: str) -> str | None:
+async def cached_approval(operator: dict, *, action: str) -> str | None:
     """``(operator, action)`` 仍在窗口内则返回审批人 oid；否则 ``None``。"""
     if dual_auth_cache_ttl_seconds() <= 0:
         return None
-    key = (_operator_oid(operator), str(action))
+    operator_oid = _operator_oid(operator)
+    action = str(action)
+    if state.redis_configured():
+        # 共享键是唯一真相：读不到（含过期的 TTL）就要求重新输码。
+        approver = await state.kv_get(f"{_GRANT_KEY}{operator_oid}:{action}")
+        return None if approver is None else str(approver)
+    key = (operator_oid, action)
     entry = _grants.get(key)
     if entry is None:
         return None
@@ -149,22 +176,26 @@ def cached_approval(operator: dict, *, action: str) -> str | None:
     return approver_oid
 
 
-def remember_approval(
+async def remember_approval(
     operator: dict, *, action: str, approver_oid: str, ttl: float | None = None
 ) -> None:
     """记下一次成功的双人授权（只由 :func:`require_dual_auth_cached` 调用）。"""
     seconds = float(dual_auth_cache_ttl_seconds() if ttl is None else ttl)
     if seconds <= 0:
         return
-    _grants[(_operator_oid(operator), str(action))] = (
-        str(approver_oid),
-        time.monotonic() + seconds,
-    )
+    operator_oid = _operator_oid(operator)
+    action = str(action)
+    if state.redis_configured():
+        await state.kv_set(f"{_GRANT_KEY}{operator_oid}:{action}", str(approver_oid), seconds)
+        return
+    _grants[(operator_oid, action)] = (str(approver_oid), time.monotonic() + seconds)
 
 
-def clear_grants() -> None:
+async def clear_grants() -> None:
     """清空授权缓存（测试与「立即失效」场景用）。"""
     _grants.clear()
+    if state.redis_configured():
+        await state.kv_delete(*await state.kv_scan(_GRANT_KEY))
 
 
 async def require_dual_auth_cached(
@@ -177,7 +208,7 @@ async def require_dual_auth_cached(
     「需要二次验证」）。缓存命中也会写一条审计并标 ``cached=true``，否则事后
     无法区分「真输了码」与「吃缓存」。
     """
-    approver_oid = cached_approval(operator, action=action)
+    approver_oid = await cached_approval(operator, action=action)
     if approver_oid is not None:
         await _write_audit(
             action=action,
@@ -188,7 +219,7 @@ async def require_dual_auth_cached(
         return approver_oid, True
 
     approver_oid = await require_dual_auth(operator, code, action=action)
-    remember_approval(operator, action=action, approver_oid=approver_oid)
+    await remember_approval(operator, action=action, approver_oid=approver_oid)
     return approver_oid, False
 
 
@@ -299,7 +330,7 @@ async def require_dual_auth(operator: dict, code: str, *, action: str) -> str:
         raise DualAuthError(403, "动态码无效或已过期")
 
     now = time.monotonic()
-    if len(_recent_failures(operator_oid, now)) >= _FAIL_LIMIT:
+    if await _recent_failures(operator_oid, now) >= _FAIL_LIMIT:
         await _write_audit(action=action, operator_oid=operator_oid, reason="失败次数超限")
         raise DualAuthError(429, "尝试过于频繁，请稍后再试")
 
@@ -333,7 +364,7 @@ async def require_dual_auth(operator: dict, code: str, *, action: str) -> str:
         return approver_oid
 
     # 码对不上（或根本没有第二位管理员）：对外提示完全一致，只有审计里区分原因。
-    _record_failure(operator_oid)
+    await _record_failure(operator_oid)
     await _write_audit(
         action=action,
         operator_oid=operator_oid,

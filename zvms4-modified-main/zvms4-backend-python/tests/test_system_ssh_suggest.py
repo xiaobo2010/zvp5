@@ -72,13 +72,13 @@ def _completion(
 
 
 class SyncRecorder:
-    """同步调用记录器（``rate_limit.check`` 是同步函数）。"""
+    """异步调用记录器（``rate_limit.check`` 现在要 await）。"""
 
     def __init__(self) -> None:
         self.calls: list[tuple] = []
         self.error: BaseException | None = None
 
-    def __call__(self, *args, **kwargs):
+    async def __call__(self, *args, **kwargs):
         self.calls.append((args, kwargs))
         if self.error is not None:
             raise self.error

@@ -166,7 +166,7 @@ async def _pick_route(
     if not entries:
         return None
     try:
-        candidates = routing.candidates(entries)
+        candidates = await routing.candidates(entries)
     except RouteError:
         return None
     if not candidates:

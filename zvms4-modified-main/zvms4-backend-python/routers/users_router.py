@@ -446,7 +446,7 @@ async def auth_user(auth: AuthUser, request: Request, response: Response):
     xuehai_id = xuehai_id_from(request)
 
     try:
-        login_throttle.check(id, client_ip_from(request))
+        await login_throttle.check(id, client_ip_from(request))
     except login_throttle.LoginRateLimited as exc:
         raise HTTPException(
             status_code=429,

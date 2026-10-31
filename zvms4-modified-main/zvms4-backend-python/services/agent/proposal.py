@@ -347,7 +347,7 @@ async def _require_dual_auth(
     if not action:
         return None, False
     code = totp_code.strip() if isinstance(totp_code, str) else ""
-    if not code and dual_auth.cached_approval(user, action=action) is None:
+    if not code and await dual_auth.cached_approval(user, action=action) is None:
         raise AgentError(
             "AI_AGENT_TOTP_REQUIRED",
             "this proposal requires a 6-digit code from another administrator",
@@ -562,23 +562,23 @@ async def list_mine(
     now = datetime.now()
     out: list[dict] = []
 
-    def _item(row: dict) -> dict:
+    async def _item(row: dict) -> dict:
         tool = get_tool(row.get("tool_name"))
         action = tool.dual_auth_action if tool is not None else None
         cached = bool(
-            action and dual_auth.cached_approval(user, action=action) is not None
+            action and await dual_auth.cached_approval(user, action=action) is not None
         )
         return _list_item(row, cached_dual_auth=cached)
 
     for row in rows:
         if row.get("status") != STATUS_PROPOSED:
-            out.append(_item(row))
+            out.append(await _item(row))
             continue
         created_at = row.get("created_at")
         if not isinstance(created_at, datetime) or now >= _expires_at(created_at):
             await _mark_expired(str(row.get("_id") or row.get("oid") or ""))
             continue
-        out.append(_item(row))
+        out.append(await _item(row))
         if len(out) >= limit:
             break
     return out[:limit]

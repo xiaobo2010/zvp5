@@ -1,4 +1,4 @@
-"""登录端点频控：按账号 5 次/分钟 + 按 IP 60 次/分钟（进程内滑动窗口）。
+"""登录端点频控：按账号 5 次/分钟 + 按 IP 60 次/分钟（Redis 共享，进程内回退）。
 
 钉住的契约：
 
@@ -17,6 +17,8 @@ from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
 from db import backends
+from db import cache
+from fake_redis import FakeRedis
 from routers import users_router
 from util import login_throttle
 
@@ -78,6 +80,14 @@ def _auth(client: TestClient, ident: str, ip: str = "10.0.0.1"):
     )
 
 
+@pytest.fixture()
+def fake_redis():
+    client = FakeRedis()
+    cache._install_client_for_tests(client)
+    yield client
+    cache._reset_for_tests()
+
+
 def test_account_window_blocks_one_more_attempt(client: TestClient) -> None:
     for _ in range(login_throttle.ACCOUNT_LIMIT):
         assert _auth(client, OID).status_code == 403
@@ -125,3 +135,43 @@ def test_other_account_is_not_affected_by_one_noisy_account(client: TestClient) 
         _auth(client, OID, ip="10.0.0.2")
 
     assert _auth(client, "64b7f0c2e1a3b4c5d6e7f802", ip="10.0.0.3").status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_shared_window_is_used_when_redis_is_configured(fake_redis):
+    for _ in range(login_throttle.ACCOUNT_LIMIT):
+        await login_throttle.check(OID, "10.0.0.1")
+
+    with pytest.raises(login_throttle.LoginRateLimited) as exc:
+        await login_throttle.check(OID, "10.0.0.1")
+    assert exc.value.retry_after >= 1
+
+    # 两档都写进了共享窗口（账号档 + IP 档），被拒的那次不计数。
+    account_key = f"zvms:state:win:login:acct:{OID}"
+    ip_key = "zvms:state:win:login:ip:10.0.0.1"
+    assert len(fake_redis.zsets[account_key]) == login_throttle.ACCOUNT_LIMIT
+    assert ip_key in fake_redis.zsets
+    # 共享状态生效时不双写进程内窗口。
+    assert login_throttle._buckets == {}
+
+
+@pytest.mark.asyncio
+async def test_account_key_is_case_insensitive(fake_redis):
+    for _ in range(login_throttle.ACCOUNT_LIMIT):
+        await login_throttle.check(OID.lower(), "10.0.0.1")
+
+    with pytest.raises(login_throttle.LoginRateLimited):
+        await login_throttle.check(OID.upper(), "10.0.0.1")
+
+
+@pytest.mark.asyncio
+async def test_falls_back_to_local_window_when_redis_fails(fake_redis):
+    fake_redis.fail = True
+
+    for _ in range(login_throttle.ACCOUNT_LIMIT):
+        await login_throttle.check(OID, "10.0.0.1")
+    with pytest.raises(login_throttle.LoginRateLimited):
+        await login_throttle.check(OID, "10.0.0.1")
+
+    assert fake_redis.zsets == {}
+    assert len(login_throttle._buckets[("account", OID.lower())]) == login_throttle.ACCOUNT_LIMIT

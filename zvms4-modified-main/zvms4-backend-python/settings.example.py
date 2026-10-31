@@ -17,6 +17,12 @@ ORACLE_TEST_WALLET_DIR = ""  # test: wallet directory (thin mode config_dir)
 ORACLE_WALLET_PASSWORD = ""  # prod: wallet password
 ORACLE_TEST_WALLET_PASSWORD = ""  # test: wallet password
 
+# 可选 Redis 读穿缓存（db/cache.py + db/cached_repos.py）。留空 = 关闭，所有
+# 仓储直读 ADB，行为与未接缓存时完全一致；填了但连不上也自动降级。
+# 只给本机用就绑 127.0.0.1，例如 redis://127.0.0.1:6379/0。
+# 注意：进程内限流/熔断仍不跨进程，Redis 目前只承载仓储读缓存。
+REDIS_URI = ""
+
 # AI gateway (services/ai). 密钥不写在这里：api_key_env 指向环境变量名，
 # 值走进程环境（settings 同名属性只作为测试兜底）。
 AI_ENABLED = True

@@ -531,6 +531,57 @@ def test_revocation_takes_effect_immediately(repo, users):
         asyncio.run(api_keys.authenticate(token))
 
 
+def test_cache_hit_is_shared_through_redis(repo, users, monkeypatch):
+    """配了 Redis 时校验缓存落 ``ai:key:<digest>``：命中就不再读库（跨 worker 共享）。"""
+    import asyncio
+
+    from db import cache as db_cache
+    from fake_redis import FakeRedis
+
+    client = FakeRedis()
+    db_cache._install_client_for_tests(client)
+
+    token, _oid = _issue(repo, users)
+    digest = api_keys.hash_token(token)
+    calls = {"n": 0}
+    original = repo.get_by_hash
+
+    async def _counting(token_hash: str):
+        calls["n"] += 1
+        return await original(token_hash)
+
+    monkeypatch.setattr(repo, "get_by_hash", _counting)
+
+    asyncio.run(api_keys.authenticate(token))
+    # 缓存进 Redis，进程内 dict 不再留第二份真相。
+    assert f"zvms:state:kv:ai:key:{digest}" in client.kv
+    assert api_keys._cache == {}
+
+    asyncio.run(api_keys.authenticate(token))
+
+    assert calls["n"] == 1
+
+
+def test_last_used_sampling_is_shared_through_redis(repo, users, monkeypatch):
+    """采样计时放 Redis：多进程也只会在一个 TTL 窗口里写一次库。"""
+    import asyncio
+
+    from db import cache as db_cache
+    from fake_redis import FakeRedis
+
+    client = FakeRedis()
+    db_cache._install_client_for_tests(client)
+
+    token, oid = _issue(repo, users)
+    asyncio.run(api_keys.authenticate(token))
+    asyncio.run(api_keys.authenticate(token))
+    asyncio.run(api_keys.authenticate(token))
+
+    assert repo.touches == [oid]
+    assert f"zvms:state:kv:ai:key:used:{oid}" in client.kv
+    assert api_keys._touched == {}
+
+
 def test_cache_hit_skips_the_database(repo, users, monkeypatch):
     import asyncio
 

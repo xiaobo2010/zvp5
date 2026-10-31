@@ -28,6 +28,15 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from db import system_state  # noqa: E402  (sys.path 引导之后再导入)
+from db import cache as _db_cache  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _redis_isolated() -> None:
+    """每个用例前后都清掉测试注入的 Redis 替身，避免跨用例串味。"""
+    _db_cache._reset_for_tests()
+    yield
+    _db_cache._reset_for_tests()
 
 
 @pytest.fixture

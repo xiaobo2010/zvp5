@@ -25,7 +25,7 @@ import secrets
 import time
 from datetime import datetime
 
-from db import backends
+from db import backends, state
 from util.ban import ban_is_active, raise_banned
 from util.group import get_user_permissions
 
@@ -47,9 +47,12 @@ _NAME_MAX = 64
 # ``last_used_at`` 的采样间隔：每个请求都 UPDATE 一次会把这张表变成写热点。
 TOUCH_INTERVAL_SECONDS = 60.0
 
-# 进程内缓存：token_hash → (过期时刻, 行)。命中就不必每个请求读库；CRUD 主动
-# 失效。多 worker 时各进程各有一份，最坏是「吊销后另一个进程最多晚 TTL 才生效」
-# ——与 credentials 目录缓存同一取舍（/health 的 worker_count 会提示这一点）。
+# 校验缓存：token_hash → (过期时刻, 行)。配了 Redis 就写 ``ai:key:<digest>``
+# （TTL 由 ``config.api_key_cache_ttl()`` 决定），命中就不必每个请求读库；CRUD
+# 主动失效。**无 Redis / Redis 故障时**回退到下面这份进程内 dict（原实现，
+# 语义不变）：多 worker 下最坏是「吊销后另一个进程最多晚 TTL 才生效」。
+_CACHE_PREFIX = "ai:key:"
+_TOUCH_PREFIX = "ai:key:used:"
 _cache: dict[str, tuple[float, dict]] = {}
 _touched: dict[str, float] = {}
 
@@ -91,8 +94,13 @@ async def invalidate(oid: str | None = None) -> None:
     """清空校验缓存与 ``last_used_at`` 的采样计时。
 
     ``oid`` 保留在签名里是为了调用方语义清晰；实现上总是全清：缓存以 token_hash
-    为键，按 oid 反查要多一次「hash → oid」的映射，而 CRUD 是低频操作。
+    为键，按 oid 反查要多一次「hash → oid」的映射，而 CRUD 是低频操作。Redis
+    里的同名 key 与进程内 dict 一起清：否则无 Redis 时能立刻生效、有 Redis 时
+    却要等 TTL，两种部署的吊销语义就分叉了。
     """
+    keys = await state.kv_scan(_CACHE_PREFIX)
+    if keys:
+        await state.kv_delete(*keys)
     _cache.clear()
     _touched.clear()
 
@@ -269,29 +277,47 @@ def key_hint(token: str) -> str:
 
 
 async def _cached_row(digest: str) -> dict | None:
-    """按 hash 取行；命中缓存就不读库。``None`` 不缓存（防探测刷缓存）。"""
+    """按 hash 取行；命中缓存就不读库。``None`` 不缓存（防探测刷缓存）。
+
+    先问 Redis（多 worker / 多机共享同一份校验结果），再退回进程内 dict；写回
+    时 Redis 写成功就不再写本地——两处都写只会让「到底哪份是真相」变成两个答案。
+    """
+    key = f"{_CACHE_PREFIX}{digest}"
+    cached = await state.kv_get(key)
+    if isinstance(cached, dict):
+        return dict(cached)
+
     now = time.monotonic()
-    cached = _cache.get(digest)
-    if cached is not None and cached[0] > now:
-        return dict(cached[1])
+    local = _cache.get(digest)
+    if local is not None and local[0] > now:
+        return dict(local[1])
 
     row = await backends.get_ai_api_keys_repo().get_by_hash(digest)
     if row is None:
         return None
-    _cache[digest] = (now + config.api_key_cache_ttl(), dict(row))
+    ttl = config.api_key_cache_ttl()
+    if not await state.kv_set(key, dict(row), ttl):
+        _cache[digest] = (now + ttl, dict(row))
     return row
 
 
 async def _touch(row: dict) -> None:
-    """采样写 ``last_used_at``：每把 key 最多每 60 秒一次 UPDATE。"""
+    """采样写 ``last_used_at``：每把 key 最多每 60 秒一次 UPDATE。
+
+    采样计时放 Redis（``SET NX PX``）做分布式去重：多 worker 下每个进程各自计时
+    会让 UPDATE 次数按进程数放大。``None`` = Redis 不可用，退回进程内 dict。
+    """
     oid = str(row.get("_id") or "")
     if not oid:
         return
-    now = time.monotonic()
-    last = _touched.get(oid, 0.0)
-    if now - last < TOUCH_INTERVAL_SECONDS:
+    sampled = await state.kv_set_nx(f"{_TOUCH_PREFIX}{oid}", 1, TOUCH_INTERVAL_SECONDS)
+    if sampled is None:
+        now = time.monotonic()
+        if now - _touched.get(oid, 0.0) < TOUCH_INTERVAL_SECONDS:
+            return
+        _touched[oid] = now
+    elif not sampled:
         return
-    _touched[oid] = now
     try:
         await backends.get_ai_api_keys_repo().touch(oid)
     except Exception as exc:  # noqa: BLE001 - 统计字段写失败不影响鉴权

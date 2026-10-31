@@ -48,98 +48,106 @@ def _limits(monkeypatch, per_minute: int, window: float = 60.0) -> FakeTime:
     return clock
 
 
-def test_third_call_is_rejected_with_retry_after(monkeypatch):
+@pytest.mark.asyncio
+async def test_third_call_is_rejected_with_retry_after(monkeypatch):
     _limits(monkeypatch, 2)
 
-    rate_limit.check(USER, "ocr")
-    rate_limit.check(USER, "ocr")
+    await rate_limit.check(USER, "ocr")
+    await rate_limit.check(USER, "ocr")
 
     with pytest.raises(rate_limit.RateLimitError) as info:
-        rate_limit.check(USER, "ocr")
+        await rate_limit.check(USER, "ocr")
 
     assert info.value.code == "AI_RATE_LIMITED"
     assert info.value.retry_after >= 1
 
 
-def test_window_slides_and_lets_the_user_back_in(monkeypatch):
+@pytest.mark.asyncio
+async def test_window_slides_and_lets_the_user_back_in(monkeypatch):
     clock = _limits(monkeypatch, 1, window=0.05)
 
-    rate_limit.check(USER, "ocr")
+    await rate_limit.check(USER, "ocr")
     with pytest.raises(rate_limit.RateLimitError):
-        rate_limit.check(USER, "ocr")
+        await rate_limit.check(USER, "ocr")
 
     clock.now += 0.06
-    rate_limit.check(USER, "ocr")  # 窗口滑过去，重新放行
+    await rate_limit.check(USER, "ocr")  # 窗口滑过去，重新放行
 
 
-def test_rejected_call_does_not_extend_the_window(monkeypatch):
+@pytest.mark.asyncio
+async def test_rejected_call_does_not_extend_the_window(monkeypatch):
     """连续被拒不该把等待时间越推越长：拒绝不计数。"""
     clock = _limits(monkeypatch, 1, window=10.0)
 
-    rate_limit.check(USER, "ocr")
+    await rate_limit.check(USER, "ocr")
     with pytest.raises(rate_limit.RateLimitError) as first:
-        rate_limit.check(USER, "ocr")
+        await rate_limit.check(USER, "ocr")
     clock.now += 1.0
     with pytest.raises(rate_limit.RateLimitError) as second:
-        rate_limit.check(USER, "ocr")
+        await rate_limit.check(USER, "ocr")
 
     assert second.value.retry_after <= first.value.retry_after
 
 
-def test_users_and_kinds_are_independent(monkeypatch):
+@pytest.mark.asyncio
+async def test_users_and_kinds_are_independent(monkeypatch):
     _limits(monkeypatch, 1)
 
-    rate_limit.check(USER, "ocr")
-    rate_limit.check(OTHER, "ocr")
-    rate_limit.check(USER, "chat")
+    await rate_limit.check(USER, "ocr")
+    await rate_limit.check(OTHER, "ocr")
+    await rate_limit.check(USER, "chat")
 
     with pytest.raises(rate_limit.RateLimitError):
-        rate_limit.check(USER, "ocr")
+        await rate_limit.check(USER, "ocr")
     with pytest.raises(rate_limit.RateLimitError):
-        rate_limit.check(USER, "chat")
+        await rate_limit.check(USER, "chat")
 
 
-def test_zero_limit_means_unlimited(monkeypatch):
+@pytest.mark.asyncio
+async def test_zero_limit_means_unlimited(monkeypatch):
     _limits(monkeypatch, 0)
 
     for _ in range(100):
-        rate_limit.check(USER, "chat")
+        await rate_limit.check(USER, "chat")
 
     assert rate_limit._buckets == {}
 
 
-def test_unknown_kind_is_not_limited(monkeypatch):
+@pytest.mark.asyncio
+async def test_unknown_kind_is_not_limited(monkeypatch):
     """``rate_limit_per_minute`` 对未知 kind 返回 0，频控层不该替它兜底。"""
     monkeypatch.setattr(rate_limit, "time", FakeTime())
 
     for _ in range(50):
-        rate_limit.check(USER, "embedding")
+        await rate_limit.check(USER, "embedding")
 
     assert rate_limit._buckets == {}
 
 
-def test_reset_state_clears_every_bucket(monkeypatch):
+@pytest.mark.asyncio
+async def test_reset_state_clears_every_bucket(monkeypatch):
     _limits(monkeypatch, 1)
 
-    rate_limit.check(USER, "ocr")
+    await rate_limit.check(USER, "ocr")
     with pytest.raises(rate_limit.RateLimitError):
-        rate_limit.check(USER, "ocr")
+        await rate_limit.check(USER, "ocr")
 
     rate_limit.reset_state()
 
-    rate_limit.check(USER, "ocr")  # 清空后重新计数
+    await rate_limit.check(USER, "ocr")  # 清空后重新计数
 
 
-def test_buckets_are_pruned_when_the_table_grows(monkeypatch):
+@pytest.mark.asyncio
+async def test_buckets_are_pruned_when_the_table_grows(monkeypatch):
     """key 数触顶时清掉过期桶，不让字典无限长大。"""
     clock = _limits(monkeypatch, 1, window=1.0)
 
     for index in range(rate_limit.MAX_KEYS):
-        rate_limit.check(f"user-{index}", "ocr")
+        await rate_limit.check(f"user-{index}", "ocr")
     assert len(rate_limit._buckets) == rate_limit.MAX_KEYS
 
     clock.now += 2.0  # 全部过期
-    rate_limit.check("late-user", "ocr")
+    await rate_limit.check("late-user", "ocr")
 
     assert len(rate_limit._buckets) < rate_limit.MAX_KEYS
     assert ("late-user", "ocr") in rate_limit._buckets
@@ -196,7 +204,8 @@ def test_worker_count_falls_back_to_one_on_garbage(monkeypatch, value):
     assert ai_config.worker_count() == 1
 
 
-def test_effective_limit_is_unchanged_for_one_worker(monkeypatch):
+@pytest.mark.asyncio
+async def test_effective_limit_is_unchanged_for_one_worker(monkeypatch):
     _limits(monkeypatch, 10)
     _workers(monkeypatch, 1)
     monkeypatch.setattr(rate_limit, "time", FakeTime())
@@ -204,9 +213,9 @@ def test_effective_limit_is_unchanged_for_one_worker(monkeypatch):
     assert rate_limit.effective_limit("ocr") == 10
 
     for _ in range(10):
-        rate_limit.check(USER, "ocr")
+        await rate_limit.check(USER, "ocr")
     with pytest.raises(rate_limit.RateLimitError):
-        rate_limit.check(USER, "ocr")
+        await rate_limit.check(USER, "ocr")
 
 
 def test_effective_limit_rounds_up_per_worker(monkeypatch):
@@ -231,19 +240,21 @@ def test_zero_limit_stays_unlimited_regardless_of_workers(monkeypatch):
     assert rate_limit.effective_limit("chat") == 0
 
 
-def test_per_worker_threshold_is_what_check_enforces(monkeypatch):
+@pytest.mark.asyncio
+async def test_per_worker_threshold_is_what_check_enforces(monkeypatch):
     clock = _limits(monkeypatch, 6)
     _workers(monkeypatch, 3)
     monkeypatch.setattr(rate_limit, "time", clock)
 
     # ceil(6 / 3) = 2 次/进程。
-    rate_limit.check(USER, "chat")
-    rate_limit.check(USER, "chat")
+    await rate_limit.check(USER, "chat")
+    await rate_limit.check(USER, "chat")
     with pytest.raises(rate_limit.RateLimitError):
-        rate_limit.check(USER, "chat")
+        await rate_limit.check(USER, "chat")
 
 
-def test_explicit_limit_is_scaled_too(monkeypatch):
+@pytest.mark.asyncio
+async def test_explicit_limit_is_scaled_too(monkeypatch):
     """独立 API key 的绝对阈值（60/min）同样按 worker 数折算。"""
     _limits(monkeypatch, 0)
     _workers(monkeypatch, 4)
@@ -251,6 +262,6 @@ def test_explicit_limit_is_scaled_too(monkeypatch):
 
     assert rate_limit.effective_limit("chat") == 0
     for _ in range(15):  # ceil(60 / 4) = 15
-        rate_limit.check("user:key", "chat", limit=60)
+        await rate_limit.check("user:key", "chat", limit=60)
     with pytest.raises(rate_limit.RateLimitError):
-        rate_limit.check("user:key", "chat", limit=60)
+        await rate_limit.check("user:key", "chat", limit=60)

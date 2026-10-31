@@ -412,7 +412,10 @@ async def test_textgen_calls_the_requested_provider(monkeypatch):
     monkeypatch.setattr(textgen.audit, "record", _audit)
     monkeypatch.setattr(quota, "peek", Recorder((True, 0, 100)))
     monkeypatch.setattr(quota, "consume", Recorder((True, 1, 100)))
-    monkeypatch.setattr(rate_limit, "check", lambda *a, **k: None)
+    async def _no_limit(*_a, **_k):
+        return None
+
+    monkeypatch.setattr(rate_limit, "check", _no_limit)
 
     result = await textgen.suggest_ssh_command(
         {"id": ADMIN, "per": ["admin"]}, intent="看下 caddy 状态", model="openai/gpt-4o-mini"

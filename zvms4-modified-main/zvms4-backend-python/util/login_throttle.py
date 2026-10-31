@@ -1,11 +1,16 @@
-"""登录端点的进程内滑动窗口频控。
+"""登录端点的滑动窗口频控（Redis 共享，进程内回退）。
 
 按「账号 + 来源 IP」两条维度同时计数：账号档挡单账号暴破，IP 档挡同段
 轮换账号的撞库。校园网整班共享出口 IP，IP 档因此明显宽松。
 
-进程内状态与 ``services.ai.rate_limit`` 同一前提：单 worker 部署时它就是全局
-限制；多 worker 时每进程各算各的窗口。时间基准用 ``time.monotonic()``，
-避免 NTP 跳变把窗口拉成负长度。
+**状态位置**：``settings.REDIS_URI`` 配置了就写 Redis 的滑动窗口
+（``db.state.window_hit``，键 ``login:acct:<account>`` / ``login:ip:<ip>``），
+此时两档限额就是**全局**限额，多 worker 共享同一份计数。Redis 未配置或命令
+失败时回退到进程内 deque（:func:`_local_check`，改造前的实现，语义不变）——
+单 worker 下它就是全局限制；多 worker 且没有 Redis 时每进程各算各的窗口。
+
+时间基准用 ``time.monotonic()``，避免 NTP 跳变把窗口拉成负长度（Redis 路径的
+时间基准由 ``db.state`` 统一，同样是拒绝不计数）。
 """
 
 from __future__ import annotations
@@ -13,6 +18,8 @@ from __future__ import annotations
 import math
 import time
 from collections import deque
+
+from db import state
 
 ACCOUNT_LIMIT = 5
 IP_LIMIT = 60
@@ -40,8 +47,46 @@ def _key(scope: str, value: str) -> tuple[str, str]:
     return (scope, value.strip().lower())
 
 
-def check(account: str, client_ip: str) -> None:
-    """记一次登录尝试；超限抛 :class:`LoginRateLimited`（此时不计数）。"""
+async def check(account: str, client_ip: str) -> None:
+    """记一次登录尝试；超限抛 :class:`LoginRateLimited`（此时不计数）。
+
+    两档都要过：账号档先判（被拒时只有已经拦下的账号档被消耗，不会连累同出口
+    IP 的其他同学），IP 档后判。任一档超限即整次拒绝。
+    """
+    if state.redis_configured():
+        result = await _shared_check(account, client_ip)
+        if result is not None:
+            allowed, retry_after = result
+            if not allowed:
+                raise LoginRateLimited(retry_after)
+            return
+    _local_check(account, client_ip)
+
+
+async def _shared_check(account: str, client_ip: str) -> tuple[bool, int] | None:
+    """走 ``db.state.window_hit`` 判两档；任一档不可用返回 ``None``（交给本地实现）。"""
+    tiers = (
+        (
+            f"login:acct:{account.strip().lower()}",
+            ACCOUNT_LIMIT,
+            bool(account.strip()),
+        ),
+        (f"login:ip:{client_ip.strip().lower()}", IP_LIMIT, bool(client_ip.strip())),
+    )
+    for key, limit, present in tiers:
+        if not present:
+            continue
+        result = await state.window_hit(key, limit, WINDOW_SECONDS)
+        if result is None:
+            return None
+        allowed, retry_after = result
+        if not allowed:
+            return False, retry_after
+    return True, 0
+
+
+def _local_check(account: str, client_ip: str) -> None:
+    """Redis 未配置/不可用时的进程内滑动窗口（改造前的实现，语义不变）。"""
     now = time.monotonic()
     limits = (
         (_key("account", account), ACCOUNT_LIMIT, bool(account.strip())),

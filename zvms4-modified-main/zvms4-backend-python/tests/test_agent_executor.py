@@ -588,7 +588,7 @@ async def test_rate_limit_rejection_is_audited_and_surfaces_retry_after(
 ) -> None:
     audit, _events, _quota, _activities, _capture = env
 
-    def _boom(*_args, **_kwargs):
+    async def _boom(*_args, **_kwargs):
         raise rate_limit.RateLimitError(7, "too many requests, retry later")
 
     monkeypatch.setattr(rate_limit, "check", _boom)
