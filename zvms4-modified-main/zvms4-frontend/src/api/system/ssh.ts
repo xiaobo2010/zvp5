@@ -55,10 +55,19 @@ export function suggestSshCommand(
 // WS 实际路由为 /api/system/ssh/ws(后端 @router.websocket('/ws') +
 // main.py 挂载前缀 /api/system/ssh);ticket 走查询参数。
 // 浏览器握手带不了 Authorization 头,所以只认 ticket。
+export function buildSshWsUrlFor(
+  apiBase: string,
+  ticket: string,
+  pageOrigin = window.location.origin
+): string {
+  const apiUrl = new URL(apiBase || '/api', pageOrigin)
+  const path = `${apiUrl.pathname.replace(/\/+$/, '')}/system/ssh/ws`
+  const url = new URL(path, apiUrl.origin)
+  url.protocol = apiUrl.protocol === 'https:' ? 'wss:' : 'ws:'
+  url.searchParams.set('ticket', ticket)
+  return url.toString()
+}
+
 export function buildSshWsUrl(ticket: string): string {
-  const apiBase = baseURL || '/api'
-  const path = `${apiBase.replace(/\/+$/, '')}/system/ssh/ws`
-  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-  const host = window.location.host
-  return `${protocol}//${host}${path}?ticket=${encodeURIComponent(ticket)}`
+  return buildSshWsUrlFor(baseURL || '/api', ticket)
 }

@@ -1,81 +1,300 @@
-# 内容站 / API 拆分部署（2026-10-31）
+# 内容站 / API 直连拆分部署
 
-后端从 `zvp-frontend` 迁到 `zvp-backend`，前端仍由 `zvp-frontend` 分发；浏览器继续同源访问
-`/api`，由内容站 nginx 反代到 API 域名。
+本文档描述目标拓扑：主站负责页面和静态资源，浏览器对 `/api` 的请求直接发送到
+靠近数据库的 API 域名。内容站 **不转发** `/api`，避免每次请求增加内容站到 API
+机的跨机房往返。
 
-## 拓扑
+文中 `<content-domain>`、`<api-domain>` 是部署期占位符，仓库不保存生产域名。
 
-| 角色 | 域名 | 机器 | 进程 |
-|---|---|---|---|
-| 内容站（前端 dist） | `zvp.xiaobopisces.top` | zvp-frontend `<FRONTEND_IP>` | nginx（宝塔），root `/www/zvms4/frontend-dist` |
-| API | `zvpapi.xiaobopisces.top` | zvp-backend `<BACKEND_IP>` | nginx → uvicorn `127.0.0.1:8018` |
+## 1. 拓扑
 
-- DNS：Cloudflare zone `xiaobopisces.top`，`zvpapi` 为 **A 记录 · 灰云**（`proxied=false`）。
-  之所以没开橙云：该 zone 的 SSL 模式是 `flexible`，橙云会把回源请求打到 80 端口，
-  与 80→443 的跳转形成循环；而用 Config Rule 给单域名切 `strict` 需要当前 token
-  没有的权限（返回 `request is not authorized`）。要开橙云，先在控制台把 zone 的
-  SSL 模式改为 Full (strict)，或加一条 `http_config_settings` 规则再把记录改橙。
-- TLS：两台都用 Let's Encrypt；zvp-backend 的证书在
-  `/etc/letsencrypt/live/zvpapi.xiaobopisces.top/`，`certbot.timer` 负责续期。
-
-## zvp-backend（API 机）
-
-- 代码：`/www/zvms4/backend`，systemd `zvms4.service`，`User=www-data`。
-- 数据库：从 zvp-frontend 复制了生产配置与钱包
-  （`/www/zvms4/adb-wallet`，`ORACLE_ACTIVE="prod"`），必须保持 `www-data` 可读
-  （本次踩过：wallet 属主是 `lighthouse` 导致 `DPY-4026 tnsnames.ora unreadable`）。
-- Redis：`redis-server` 本机 6379，256MB、`allkeys-lru`、无持久化；
-  `settings.py` 里 `REDIS_URI = "redis://127.0.0.1:6379/0"`。
-- CORS：`/etc/systemd/system/zvms4.service.d/cors.conf`
-  ```
-  Environment="ZVMS_CORS_ALLOWED_ORIGINS=https://zvp.xiaobopisces.top,https://zvpapi.xiaobopisces.top"
-  ```
-  浏览器实际走同源（见下），这条主要给直连 API 的客户端/工具用。
-- nginx：`/etc/nginx/sites-available/zvpapi`
-  - 80：ACME challenge + 301 到 443
-  - 443：`/api/`（`proxy_buffering off`，SSE 必需）、`/api/system/ssh/ws`（Upgrade）、
-    `/socket.io/`（Upgrade），其余路径 404
-- 资源参考：常驻内存约 155MB，CPU <1%。
-
-## zvp-frontend（内容站）
-
-前端 dist 未变（仍按相对路径 `/api` 构建），本次只改 vhost 反代：
-
-```nginx
-upstream zvpapi_backend {
-    server <BACKEND_IP>:443;
-    keepalive 32;
-}
-
-location /api/ {
-    proxy_pass https://zvpapi_backend;
-    proxy_http_version 1.1;
-    proxy_set_header Connection "";        # 保住 keepalive
-    proxy_ssl_server_name on;
-    proxy_ssl_name zvpapi.xiaobopisces.top;
-    proxy_ssl_verify off;
-    ...
-}
-location /api/system/ssh/ws { ... Upgrade ... }
-location /socket.io/ { ... Upgrade ... }
+```text
+浏览器
+  ├─ GET /、/assets/* ───────────────→ 内容站：静态文件
+  └─ GET/POST /api/*（绝对 API 地址）→ API 站：nginx → uvicorn
 ```
 
-- 配置备份：`zpv.xiaobopisces.top.conf.bak-pre-api-split-*`
-- 旧后端已 `systemctl disable --now zvms4`（避免两个实例同时跑 APScheduler
-  定时任务）；要回滚：改回 `proxy_pass http://127.0.0.1:8018` + `systemctl enable --now zvms4`。
+| 角色 | 页面 Origin | 请求目标 | 职责 |
+|---|---|---|---|
+| 内容站 | `https://<content-domain>` | 同源 | HTML、JS、CSS、图标、PWA 文件 |
+| API 站 | 不作为页面 Origin | `https://<api-domain>/api/*` | FastAPI、SSE、上传、WebSocket |
 
-## 为什么值得拆
+浏览器发出的 API 请求是跨域请求。浏览器 Origin 必须是内容站 Origin，不能填 API
+域名；CORS 白名单配置的是“谁在调用 API”，不是“API 自己在哪里”。
 
-| 指标 | zvp-frontend（旧） | zvp-backend（新） |
-|---|---|---|
-| ADB 查询往返 | ~570 ms | ~24 ms |
-| 浏览器 → 内容站 | 直连 | 直连（未变） |
-| 内容站 → API（keepalive 命中） | 本机 ~2 ms | ~165 ms |
+## 2. 必须配置的环境变量
 
-用户请求仍只经历「浏览器 → 内容站」一段公网延迟；多出来的是机房之间 165ms 的
-反代，而被抵消的是每次 ADB 查询 500ms+ 的跨洋往返。DB 查询越多的端点收益越大。
+### 内容站前端构建
 
-## 已知注意事项
+```text
+VITE_API_BASE=https://<api-domain>/api
+```
+
+- 必须是绝对 HTTPS URL。
+- 必须以 `/api` 结尾。
+- 不得带用户名、密码、query 或 fragment。
+- `vite build` 会校验以上条件；缺失或不合法时直接失败，不再静默回退到同源
+  `/api`。
+- 本地 `vite dev` 不需要该变量，仍由 Vite 代理 `/api` 到 `127.0.0.1:8000`。
+
+模板见 `zvms4-frontend/.env.production.example`。实际值应来自部署系统，不要提交到
+仓库。
+
+### API 后端 CORS
+
+```text
+ZVMS_CORS_ALLOWED_ORIGINS=https://<content-domain>
+```
+
+- 逗号分隔多个完整 Origin。
+- 只写 scheme + host + port，不能带路径或末尾斜杠。
+- 禁止 `*`；API 使用 `allow_credentials=True`，必须回显明确 Origin。
+- 后端在进程启动时读取，修改后重启 API 服务。
+
+Systemd drop-in 示例：
+
+```ini
+# /etc/systemd/system/zvms4.service.d/cors.conf
+[Service]
+Environment="ZVMS_CORS_ALLOWED_ORIGINS=https://<content-domain>"
+```
+
+```bash
+systemctl daemon-reload
+systemctl restart zvms4
+```
+
+### 内容站 CSP
+
+```text
+ZVMS_API_ORIGIN=https://<api-domain>
+ZVMS_API_WS_ORIGIN=wss://<api-domain>
+```
+
+`nginx-security-headers.conf` 是模板，保留两个占位符：
+
+- `__ZVMS_API_ORIGIN__`
+- `__ZVMS_API_WS_ORIGIN__`
+
+使用仓库脚本渲染：
+
+```bash
+cd zvms4-backend-python
+ZVMS_API_ORIGIN='https://<api-domain>' \
+ZVMS_API_WS_ORIGIN='wss://<api-domain>' \
+python config/render_nginx_security_headers.py \
+  --output /etc/nginx/snippets/zvms-security-headers.conf
+nginx -t
+systemctl reload nginx
+```
+
+未渲染时占位符不会匹配任何浏览器源，CSP 会 fail closed，跨域 API 被阻断。这是
+有意设计，避免把某个环境域名固化进模板。
+
+## 3. 前端构建
+
+POSIX shell：
+
+```bash
+cd zvms4-frontend
+VITE_API_BASE='https://<api-domain>/api' pnpm build
+```
+
+PowerShell：
+
+```powershell
+$env:VITE_API_BASE = 'https://<api-domain>/api'
+pnpm build
+```
+
+构建后应确认主 bundle 内包含部署期 API 地址：
+
+```bash
+rg -l 'https://<api-domain>/api' dist/assets
+```
+
+部署到内容站：
+
+```text
+/www/zvms4/frontend-dist
+```
+
+API 站可以保留同一份前端文件用于应急查看，但 API vhost 不应承担页面入口职责。
+
+## 4. 内容站 Nginx
+
+内容站只服务静态文件和 SPA 路由，同时显式拒绝 `/api`，防止错误配置把 API 请求
+留在内容站：
+
+```nginx
+http {
+    # 模板含 map，必须放在 http 上下文。
+    include /etc/nginx/snippets/zvms-security-headers.conf;
+
+    server {
+        server_name <content-domain>;
+
+        root /www/zvms4/frontend-dist;
+        index index.html;
+
+        # 浏览器必须直接访问 API 域名；内容站不代理 API。
+        location ^~ /api/ {
+            return 404;
+        }
+
+        location /assets/ {
+            try_files $uri =404;
+            expires 30d;
+            add_header Cache-Control "public, immutable";
+        }
+
+        location / {
+            try_files $uri $uri/ /index.html;
+        }
+    }
+}
+```
+
+如果 `location /assets/` 自己声明了 `add_header`，Nginx 不会继承 server 级别的
+安全响应头。生产配置应把安全头放在 `http` 级别的 include 中，或在该 location
+重复所需响应头，然后用实际响应验证。
+
+## 5. API 站 Nginx
+
+API vhost 只暴露 API、SSE 和 WebSocket：
+
+```nginx
+map $http_upgrade $zvms4_connection_upgrade {
+    default upgrade;
+    "" close;
+}
+
+server {
+    server_name <api-domain>;
+    client_max_body_size 25m;
+
+    location /api/ {
+        proxy_pass http://127.0.0.1:8018;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_read_timeout 120s;
+
+        # AI SSE 必须关闭代理缓冲。
+        proxy_buffering off;
+    }
+
+    location = /api/system/ssh/ws {
+        proxy_pass http://127.0.0.1:8018;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $zvms4_connection_upgrade;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_read_timeout 3600s;
+    }
+
+    location /socket.io/ {
+        proxy_pass http://127.0.0.1:8018;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $zvms4_connection_upgrade;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_read_timeout 3600s;
+    }
+
+    location / {
+        return 404;
+    }
+}
+```
+
+CORS 响应头由 FastAPI `CORSMiddleware` 生成，不应在 API Nginx 中重复添加，否则容易
+产生重复的 `Access-Control-Allow-Origin`。
+
+## 6. 跨域请求行为
+
+前端统一 API 基址由 `plugins/axios.ts` 的 `baseURL` 提供：
+
+- Axios 请求：`withCredentials: true`，携带 `Authorization`。
+- AI SSE/JSON：原生 `fetch`，同样使用绝对 `baseURL`。
+- 活动上传：Element Plus Upload 使用绝对 `baseURL` 和 Bearer token。
+- 登出：原生 `fetch` 使用绝对 `baseURL`。
+- SSH WebSocket：从 `baseURL` 解析真实 API host，并转换成 `wss://`。
+
+后端允许任意请求头和方法，但使用严格 Origin 白名单。以下响应头必须暴露给浏览器：
+
+```text
+X-Ban-Reason
+X-Ban-Until
+Retry-After
+X-AI-Request-Id
+X-AI-Quota-Used
+X-AI-Quota-Limit
+```
+
+这些头分别用于封禁提示、重试等待、请求追踪与额度展示；不在
+`Access-Control-Expose-Headers` 中时，浏览器会返回 `null`。
+
+下载接口使用 Axios blob 和前端自带文件名，不依赖跨域读取
+`Content-Disposition`。
+
+## 7. 验证
+
+### CORS 预检
+
+```bash
+curl -i -X OPTIONS 'https://<api-domain>/api/health' \
+  -H 'Origin: https://<content-domain>' \
+  -H 'Access-Control-Request-Method: GET' \
+  -H 'Access-Control-Request-Headers: authorization,content-type,xuehai-id,x-device-unlock'
+```
+
+必须满足：
+
+- 状态码为 `200`。
+- `Access-Control-Allow-Origin` 精确等于内容站 Origin。
+- `Access-Control-Allow-Credentials: true`。
+- 请求头和方法均被允许。
+
+### 暴露响应头
+
+```bash
+curl -i 'https://<api-domain>/api/health' \
+  -H 'Origin: https://<content-domain>'
+```
+
+检查 `Access-Control-Expose-Headers` 包含第 6 节列出的全部名称。
+
+### WebSocket
+
+浏览器访问内容站后，SSH WebSocket 应连接：
+
+```text
+wss://<api-domain>/api/system/ssh/ws?ticket=<one-time-ticket>
+```
+
+不能出现内容站 host 与 API 绝对 URL 拼接的地址。
+
+## 8. 发布顺序
+
+1. 更新 API 后端代码与 `ZVMS_CORS_ALLOWED_ORIGINS`，重启 `zvms4`。
+2. 渲染新的 CSP 文件，执行 `nginx -t` 后 reload 内容站 Nginx。
+3. 使用绝对 `VITE_API_BASE` 重新构建前端并发布 dist。
+4. 确认内容站 `/api/*` 不再反向代理。
+5. 执行 CORS、SSE、上传、下载、AI 和 SSH WebSocket 冒烟测试。
+
+前端与服务端必须作为一组发布：旧前端仍使用同源 `/api`，新前端使用绝对 API
+地址。若只发布其中一侧，就会落入同源/跨域混用状态。
+
+### 现网反代注意事项
 
 1. **反代必须改写 `Host`**：`/api`、`/api/system/ssh/ws`、`/socket.io/` 三处都要
    `proxy_set_header Host zvpapi.xiaobopisces.top`。zvp-backend 上 443 的**默认站点**

@@ -1,6 +1,7 @@
 /// <reference types="vite/client" />
 
 interface ImportMetaEnv {
+  /** Absolute HTTPS API URL ending in /api; required for production builds. */
   readonly VITE_API_BASE?: string
 }
 

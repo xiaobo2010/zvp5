@@ -1,5 +1,5 @@
 import { fileURLToPath, URL } from 'node:url'
-import { defineConfig } from 'vite'
+import { defineConfig, loadEnv } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import vueJsx from '@vitejs/plugin-vue-jsx'
 // import basicSsl from '@vitejs/plugin-basic-ssl'
@@ -13,9 +13,15 @@ import IconsResolver from 'unplugin-icons/resolver'
 import { VitePWA as pwa } from 'vite-plugin-pwa'
 import { ElementPlusResolver, VantResolver } from 'unplugin-vue-components/resolvers'
 import { externalizeInlineScripts } from './scripts/vite-plugin-externalize-inline-scripts'
+import { validateProductionApiBase } from './src/utils/apiBaseConfig'
+
+function requireProductionApiBase(mode: string): string {
+  const fileEnv = loadEnv(mode, process.cwd(), 'VITE_')
+  return validateProductionApiBase(process.env.VITE_API_BASE || fileEnv.VITE_API_BASE)
+}
 
 // https://vitejs.dev/config/
-export default defineConfig({
+export const viteBaseConfig = {
   plugins: [
     vue(),
     vueJsx(),
@@ -165,4 +171,11 @@ export default defineConfig({
       }
     }
   }
+}
+
+export default defineConfig(({ command, mode }) => {
+  if (command === 'build') {
+    requireProductionApiBase(mode)
+  }
+  return viteBaseConfig
 })
