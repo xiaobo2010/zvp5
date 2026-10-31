@@ -338,7 +338,18 @@ uvicorn main:app --host 0.0.0.0 --port 8000
 | `frontend/src/utils/constants.ts:2,4` | 外部图标 URL | 不移植 |
 | `backend/routers/xh_router.py`、`routers/v1/platform.py` | 学海代理 / 平台登录体系 | 不在义工管理范围，未触碰 |
 
-**部署注意（上游既有配置，本次未动）**：`zvms4-frontend/src/plugins/axios.ts:21` `baseURL = 'https://zvp.xiaobopisces.top/api/'` 指向现役 zvp 域名——替换上线时必须改为相对路径 `/api/` 或新域名。
+**部署结构**：主站负责页面与静态资源分发，另一域名负责 `/api` 请求并可解析到距离
+数据库更近的后端。生产构建通过环境变量 `VITE_API_BASE` 注入完整 API 基址；后端
+通过环境变量 `ZVMS_CORS_ALLOWED_ORIGINS` 接收逗号分隔的主站 Origin 白名单。Nginx
+CSP 模板中的 `__ZVMS_API_ORIGIN__` / `__ZVMS_API_WS_ORIGIN__` 同样由部署环境替换，
+仓库不保存生产域名。
+
+```text
+VITE_API_BASE=https://<api-domain>/api
+ZVMS_CORS_ALLOWED_ORIGINS=https://<content-domain>
+```
+
+后端只在进程启动时读取 `ZVMS_CORS_ALLOWED_ORIGINS`，修改后需重启服务。
 
 #### 6. 验证记录
 
