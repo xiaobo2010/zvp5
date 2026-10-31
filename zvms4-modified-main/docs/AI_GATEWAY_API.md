@@ -633,7 +633,7 @@ OpenAI 兼容面里，严格校验请求体的网关会直接 400——为了多
 from openai import OpenAI
 
 client = OpenAI(
-    base_url="https://zvp.albwxy.fun/api/ai/v1",
+    base_url="https://<api-domain>/api/ai/v1",
     api_key="<平台登录 token>",
 )
 print(client.chat.completions.create(
@@ -710,7 +710,7 @@ print(client.chat.completions.create(
 from openai import OpenAI
 
 client = OpenAI(
-    base_url="https://zvp.albwxy.fun/api/ai/v1",
+    base_url="https://<api-domain>/api/ai/v1",
     api_key="zvk_...",   # 创建时拿到的明文
 )
 ```
