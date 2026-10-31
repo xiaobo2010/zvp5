@@ -162,7 +162,14 @@ app.add_middleware(
     allow_headers=["*"],
     # 封禁拒绝是 403，原因/到期走响应头（见 util/ban.py）。浏览器的 JS 默认读
     # 不到自定义响应头，跨域本地调试会丢原因；显式暴露后前端才能提示用户。
-    expose_headers=["X-Ban-Reason", "X-Ban-Until"],
+    expose_headers=[
+        "X-Ban-Reason",
+        "X-Ban-Until",
+        "Retry-After",
+        "X-AI-Request-Id",
+        "X-AI-Quota-Used",
+        "X-AI-Quota-Limit",
+    ],
 )
 
 # 端点耗时统计：纯 ASGI 中间件，注册位置刻意夹在 CORSMiddleware 与

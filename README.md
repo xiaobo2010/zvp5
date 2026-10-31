@@ -350,6 +350,11 @@ ZVMS_CORS_ALLOWED_ORIGINS=https://<content-domain>
 ```
 
 后端只在进程启动时读取 `ZVMS_CORS_ALLOWED_ORIGINS`，修改后需重启服务。
+生产 `vite build` 会在 `VITE_API_BASE` 缺失、不是 HTTPS、末尾不是 `/api` 或带
+query/fragment 时直接失败。CSP 用
+`zvms4-backend-python/config/render_nginx_security_headers.py` 从环境变量渲染。
+完整拓扑、Nginx、CORS、SSE、WebSocket 与发布顺序见
+`zvms4-modified-main/docs/DEPLOY_API_SPLIT.md`。
 
 #### 6. 验证记录
 

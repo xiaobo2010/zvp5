@@ -30,6 +30,29 @@ def test_local_origins_pass_preflight(origin: str) -> None:
     assert "x-device-unlock" in response.headers["access-control-allow-headers"].lower()
 
 
+def test_cross_origin_responses_expose_headers_used_by_frontend() -> None:
+    response = TestClient(app).get(
+        "/api/health",
+        headers={
+            "Origin": "http://localhost:5173",
+            "User-Agent": "Mozilla/5.0",
+        },
+    )
+
+    exposed = {
+        name.strip().lower()
+        for name in response.headers["access-control-expose-headers"].split(",")
+    }
+    assert {
+        "x-ban-reason",
+        "x-ban-until",
+        "retry-after",
+        "x-ai-request-id",
+        "x-ai-quota-used",
+        "x-ai-quota-limit",
+    } <= exposed
+
+
 def test_deployment_origins_come_from_environment(monkeypatch) -> None:
     monkeypatch.setenv(
         "ZVMS_CORS_ALLOWED_ORIGINS",

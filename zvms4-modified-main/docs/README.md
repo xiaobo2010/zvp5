@@ -71,4 +71,5 @@
 | `FILES_API_DESIGN.md` | 附件 API，以及系统文件管理的根目录 jail（§13） |
 | `DEVICE_TRACKING_DESIGN.md` | `APP_LOGS` 学海 ID 采集 |
 | `DB_PERF_MAINTENANCE_DESIGN.md` | 数据库性能与保留期维护 |
+| `DEPLOY_API_SPLIT.md` | 内容站 / API 直连拆分、CORS、CSP、SSE 与 WebSocket 部署 |
 | `V4242_*` / `REFERENCE_TREES_ALIGNMENT.md` | 阶段契约与参考树对账记录 |
