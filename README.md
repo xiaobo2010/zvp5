@@ -338,9 +338,10 @@ uvicorn main:app --host 0.0.0.0 --port 8000
 | `frontend/src/utils/constants.ts:2,4` | 外部图标 URL | 不移植 |
 | `backend/routers/xh_router.py`、`routers/v1/platform.py` | 学海代理 / 平台登录体系 | 不在义工管理范围，未触碰 |
 
-**部署注意**：API 域名通过部署环境的 `VITE_API_BASE` 在构建时注入，不在源码中写死。
-本地开发未设置该变量时使用同源 `/api`，并由 Vite 代理到本机后端；生产构建应注入
-指定环境对应的 API 基址（例如 `https://api.example.com/api`）。
+**部署结构**：主站 `https://zvp.xiaobopisces.top` 负责页面与静态资源分发；生产构建
+通过 `zvms4-frontend/.env.production` 将 API 基址设为
+`https://zvp.albwxy.fun/api`，让 `/api` 请求直连数据库附近的后端。后端 CORS 与
+主站 CSP 均需允许这两个来源。
 
 #### 6. 验证记录
 

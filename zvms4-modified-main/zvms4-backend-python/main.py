@@ -119,6 +119,8 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:4173",
         "http://localhost:5173",
+        "https://zvp.xiaobopisces.top",
+        "https://zvp.albwxy.fun",
         "https://v4.zvms.site",
         "https://v4-netlify.zvms.site",
         "https://main--zvms.netlify.app",
