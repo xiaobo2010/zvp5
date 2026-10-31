@@ -77,9 +77,15 @@ location /socket.io/ { ... Upgrade ... }
 
 ## 已知注意事项
 
-1. **tencent-43 上原有的 `zvp.albwxy.fun` 站点**也指向 `/www/zvms4/backend`。本次把
-   该后端切到了生产库，所以这个站点现在也吃生产数据；若它只是 staging，需要单独
-   给它配 `ORACLE_ACTIVE="test"` 的进程或关掉。
-2. 内容站反代是双层 nginx，API 侧 nginx 日志里的客户端 IP 是 `23.169.184.163`；
+1. **反代必须改写 `Host`**：`/api`、`/api/system/ssh/ws`、`/socket.io/` 三处都要
+   `proxy_set_header Host zvpapi.xiaobopisces.top`。tencent-43 上 443 的**默认站点**
+   是旧域名块，用 `$host`（`zvp.xiaobopisces.top`）透传时匹配不到任何 server，
+   会落到默认站点——停用期间正好是 410，于是 `/api` 全线 410。这是本次最隐蔽的一个坑。
+2. **旧域名停用不要用 410，要用 301**：410 属于「启发式可缓存」状态码，客户端会把
+   停用状态缓存住；实测出现过服务端 0 条 410、用户浏览器仍持续显示 410 的情况。
+   现在的做法是 `return 301 https://zvp.xiaobopisces.top$request_uri` 并带
+   `add_header Cache-Control "no-store" always;`。若要彻底不响应，用 444。
+   `zvp.albwxy.fun` 已按此停用，`albwxy.fun`（class-site）不受影响。
+3. 内容站反代是双层 nginx，API 侧 nginx 日志里的客户端 IP 是 `23.169.184.163`；
    需要真实 IP 时依赖 `X-Forwarded-For`（后端已按此解析）。
-3. Redis 只在本机监听；`/etc/redis/redis.conf` 末尾的覆盖段不要删。
+4. Redis 只在本机监听；`/etc/redis/redis.conf` 末尾的覆盖段不要删。
