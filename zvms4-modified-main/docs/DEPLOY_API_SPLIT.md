@@ -1,8 +1,8 @@
 # 内容站 / API 直连拆分部署
 
-本文档描述目标拓扑：主站负责页面和静态资源，浏览器对 `/api` 的请求直接发送到
-靠近数据库的 API 域名。内容站 **不转发** `/api`，避免每次请求增加内容站到 API
-机的跨机房往返。
+本文档描述目标拓扑：主站负责页面和静态资源；数据库密集型 `/api` 请求直接发送到
+靠近数据库的 API 域名，少数依赖内容站本机资源的端点保留在内容站，避免错误的跨机
+房往返或访问到另一台机器的本地资源。
 
 文中 `<content-domain>`、`<api-domain>` 是部署期占位符，仓库不保存生产域名。
 
@@ -10,14 +10,15 @@
 
 ```text
 浏览器
-  ├─ GET /、/assets/* ───────────────→ 内容站：静态文件
-  └─ GET/POST /api/*（绝对 API 地址）→ API 站：nginx → uvicorn
+  ├─ GET /、/assets/* ───────────────────────→ 内容站：静态文件
+  ├─ /api/system/files/*、SSH ─────────────→ 内容站：本机运维后端
+  └─ 其余 /api/*（绝对 API 地址）───────────→ API 站：nginx → uvicorn
 ```
 
 | 角色 | 页面 Origin | 请求目标 | 职责 |
 |---|---|---|---|
-| 内容站 | `https://<content-domain>` | 同源 | HTML、JS、CSS、图标、PWA 文件 |
-| API 站 | 不作为页面 Origin | `https://<api-domain>/api/*` | FastAPI、SSE、上传、WebSocket |
+| 内容站 | `https://<content-domain>` | 同源；少数本机运维 API | HTML、JS、CSS、图标、PWA 文件；本机文件与 SSH |
+| API 站 | 不作为页面 Origin | `https://<api-domain>/api/*` | FastAPI、数据库业务、AI、SSE、上传 |
 
 浏览器发出的 API 请求是跨域请求。浏览器 Origin 必须是内容站 Origin，不能填 API
 域名；CORS 白名单配置的是“谁在调用 API”，不是“API 自己在哪里”。
@@ -123,8 +124,8 @@ API 站可以保留同一份前端文件用于应急查看，但 API vhost 不�
 
 ## 4. 内容站 Nginx
 
-内容站只服务静态文件和 SPA 路由，同时显式拒绝 `/api`，防止错误配置把 API 请求
-留在内容站：
+内容站服务静态文件和 SPA 路由，并只代理必须访问内容站本机资源的少数路径。其余
+`/api/*` 显式拒绝，防止错误配置把数据库 API 请求留在内容站：
 
 ```nginx
 http {
@@ -137,10 +138,20 @@ http {
         root /www/zvms4/frontend-dist;
         index index.html;
 
-        # 浏览器必须直接访问 API 域名；内容站不代理 API。
-        location ^~ /api/ {
-            return 404;
+        # 本机资源端点：前端用页面 Origin 访问，避免把本机文件/SSH
+        # 请求发到数据库近端机器。以下 location 指向本机 uvicorn。
+        location ^~ /api/system/files/ { proxy_pass http://127.0.0.1:8018; }
+        location = /api/system/ssh/session { proxy_pass http://127.0.0.1:8018; }
+        location = /api/system/ssh/ws {
+            proxy_pass http://127.0.0.1:8018;
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection $zvms4_connection_upgrade;
+            proxy_read_timeout 3600s;
         }
+
+        # 不允许内容站兜底代理其他 API。
+        location ^~ /api/ { return 404; }
 
         location /assets/ {
             try_files $uri =404;
@@ -161,7 +172,8 @@ http {
 
 ## 5. API 站 Nginx
 
-API vhost 只暴露 API、SSE 和 WebSocket：
+API vhost 只暴露数据库业务 API、AI、SSE 和它自己的实时接口。内容站本机运维路径
+不应转发到这里；否则读到的是 API 机的文件系统或 SSH 环境。
 
 ```nginx
 map $http_upgrade $zvms4_connection_upgrade {
@@ -172,6 +184,12 @@ map $http_upgrade $zvms4_connection_upgrade {
 server {
     server_name <api-domain>;
     client_max_body_size 25m;
+
+    # 本机文件/SSH 端点只允许从内容站访问，API 域名明确拒绝，
+    # 避免调用方误读 API 机的本地文件或 SSH 环境。
+    location ^~ /api/system/files/ { return 404; }
+    location = /api/system/ssh/session { return 404; }
+    location = /api/system/ssh/ws { return 404; }
 
     location /api/ {
         proxy_pass http://127.0.0.1:8018;
@@ -184,18 +202,6 @@ server {
 
         # AI SSE 必须关闭代理缓冲。
         proxy_buffering off;
-    }
-
-    location = /api/system/ssh/ws {
-        proxy_pass http://127.0.0.1:8018;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection $zvms4_connection_upgrade;
-        proxy_set_header Host $host;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_read_timeout 3600s;
     }
 
     location /socket.io/ {
@@ -227,7 +233,7 @@ CORS 响应头由 FastAPI `CORSMiddleware` 生成，不应在 API Nginx 中重�
 - AI SSE/JSON：原生 `fetch`，同样使用绝对 `baseURL`。
 - 活动上传：Element Plus Upload 使用绝对 `baseURL` 和 Bearer token。
 - 登出：原生 `fetch` 使用绝对 `baseURL`。
-- SSH WebSocket：从 `baseURL` 解析真实 API host，并转换成 `wss://`。
+- SSH 票据与 WebSocket：固定使用页面 Origin，确保票据和终端落到同一台内容站。
 
 后端允许任意请求头和方法，但使用严格 Origin 白名单。以下响应头必须暴露给浏览器：
 
@@ -278,17 +284,18 @@ curl -i 'https://<api-domain>/api/health' \
 浏览器访问内容站后，SSH WebSocket 应连接：
 
 ```text
-wss://<api-domain>/api/system/ssh/ws?ticket=<one-time-ticket>
+wss://<content-domain>/api/system/ssh/ws?ticket=<one-time-ticket>
 ```
 
-不能出现内容站 host 与 API 绝对 URL 拼接的地址。
+SSH 的票据申请和 WebSocket 必须落在同一内容站实例；不能把申请请求发到 API 域名，
+再把 WebSocket 接到内容站。
 
 ## 8. 发布顺序
 
 1. 更新 API 后端代码与 `ZVMS_CORS_ALLOWED_ORIGINS`，重启 `zvms4`。
 2. 渲染新的 CSP 文件，执行 `nginx -t` 后 reload 内容站 Nginx。
 3. 使用绝对 `VITE_API_BASE` 重新构建前端并发布 dist。
-4. 确认内容站 `/api/*` 不再反向代理。
+4. 确认内容站只反向代理证书、文件管理和 SSH 的本机路径，其余 `/api/*` 返回 404。
 5. 执行 CORS、SSE、上传、下载、AI 和 SSH WebSocket 冒烟测试。
 
 前端与服务端必须作为一组发布：旧前端仍使用同源 `/api`，新前端使用绝对 API

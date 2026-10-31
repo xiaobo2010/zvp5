@@ -1,5 +1,5 @@
 import axios from '@/plugins/axios.ts'
-import { baseURL } from '@/plugins/axios.ts'
+import { contentBaseURL } from '@/plugins/axios.ts'
 import type { AiThinkingLevel } from '@/../types/ai'
 
 // POST /api/system/ssh/session 的响应体(后端 routers/system_ssh_router.py:74)
@@ -69,5 +69,5 @@ export function buildSshWsUrlFor(
 }
 
 export function buildSshWsUrl(ticket: string): string {
-  return buildSshWsUrlFor(baseURL || '/api', ticket)
+  return buildSshWsUrlFor(contentBaseURL || '/api', ticket)
 }

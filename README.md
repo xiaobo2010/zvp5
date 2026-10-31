@@ -349,6 +349,11 @@ VITE_API_BASE=https://<api-domain>/api
 ZVMS_CORS_ALLOWED_ORIGINS=https://<content-domain>
 ```
 
+前端默认把 API 请求直发数据库近端域名；`/api/system/files/*` 以及 SSH
+票据/WebSocket 这类依赖内容站本机资源的路径保留在内容站 Origin。登录证书仍与登录
+接口保持同一 API Origin，避免两台服务器的 RSA 密钥不一致。内容站 Nginx
+必须只为这些路径代理本机后端，其余 `/api/*` 返回 404，避免误把数据库请求绕回内容站。
+
 后端只在进程启动时读取 `ZVMS_CORS_ALLOWED_ORIGINS`，修改后需重启服务。
 生产 `vite build` 会在 `VITE_API_BASE` 缺失、不是 HTTPS、末尾不是 `/api` 或带
 query/fragment 时直接失败。CSP 用
