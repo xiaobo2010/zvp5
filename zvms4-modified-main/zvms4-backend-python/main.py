@@ -8,6 +8,7 @@ import os
 import re
 import threading
 from datetime import datetime
+from urllib.parse import urlsplit
 from typings.log import ZVMSLog, client_ip_from, user_agent_from, xuehai_id_from
 from routers import (
     users_router,
@@ -74,6 +75,45 @@ _logger = logging.getLogger(__name__)
 sio = socketio.AsyncServer(async_mode="asgi")
 socket = socketio.ASGIApp(sio)
 
+# 本地开发固定放行；生产页面 Origin 由部署环境提供，不把域名写进仓库。
+DEFAULT_CORS_ALLOWED_ORIGINS = (
+    "http://localhost:4173",
+    "http://localhost:5173",
+)
+
+
+def cors_allowed_origins() -> list[str]:
+    """Return local development origins plus deploy-configured origins.
+
+    ``ZVMS_CORS_ALLOWED_ORIGINS`` is a comma-separated list of exact browser
+    origins. Wildcards are rejected because credentialed CORS requires an
+    explicit origin echo.
+    """
+
+    configured = os.getenv("ZVMS_CORS_ALLOWED_ORIGINS", "")
+    origins = list(DEFAULT_CORS_ALLOWED_ORIGINS)
+    for raw_origin in configured.split(","):
+        origin = raw_origin.strip().rstrip("/")
+        if not origin:
+            continue
+        parsed = urlsplit(origin)
+        if (
+            origin == "*"
+            or parsed.scheme not in {"http", "https"}
+            or not parsed.netloc
+            or parsed.path
+            or parsed.query
+            or parsed.fragment
+        ):
+            raise RuntimeError(
+                "ZVMS_CORS_ALLOWED_ORIGINS must contain comma-separated "
+                f"http(s) origins, got {raw_origin.strip()!r}"
+            )
+        if origin not in origins:
+            origins.append(origin)
+    return origins
+
+
 # 登记给 routers 用（开启维护模式时要断开所有实时连接），避免 router 反向
 # import main 造成循环导入。
 realtime.register_server(sio)
@@ -116,13 +156,7 @@ app.add_middleware(realtime.MaintenanceSocketGuard)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:4173",
-        "http://localhost:5173",
-        "https://v4.zvms.site",
-        "https://v4-netlify.zvms.site",
-        "https://main--zvms.netlify.app",
-    ],
+    allow_origins=cors_allowed_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
