@@ -18,10 +18,27 @@ import {
   cloneForCaller,
   ttlFor
 } from '@/utils/requestCache'
+import { usesContentHost } from '@/utils/apiRouting'
 
 const apiBase = import.meta.env.VITE_API_BASE ?? '/api'
 
 export const baseURL = apiBase.replace(/\/+$/, '')
+
+/**
+ * Most API calls deliberately use the database-adjacent API origin.  A small
+ * number of endpoints belong to the content host instead.  Keep this base
+ * derived from the page origin so the same build works for production, local
+ * development, and an emergency page served by the API host.
+ */
+export const contentBaseURL =
+  typeof window === 'undefined'
+    ? '/api'
+    : `${window.location.origin}/api`
+
+/** Resolve the host by endpoint ownership, not by whether the URL starts with /api. */
+export function baseURLForRequest(url: unknown): string {
+  return usesContentHost(url) ? contentBaseURL : baseURL
+}
 
 const axiosInstance = axios.create({
   baseURL,
@@ -129,6 +146,11 @@ function noticeStaleCache() {
 
 axiosInstance.interceptors.request.use(
   (config) => {
+    // Resolve the few machine-local endpoints to the page/content host;
+    // all other relative API paths retain the database-adjacent base.
+    if (!/^([a-z][a-z\d+.-]*:)?\/\//i.test(String(config.url ?? ''))) {
+      config.baseURL = baseURLForRequest(config.url)
+    }
     // 命中进程内缓存：直接返回上次的响应，不再发请求、不点亮进度条
     const cached = cachedResponse(config)
     if (cached) {
