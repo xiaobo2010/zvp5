@@ -19,10 +19,13 @@ itself) is deliberately **not** implemented here.
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timedelta
 
 import config
 from db import backends
+
+_logger = logging.getLogger(__name__)
 
 # Matches the §3.3 window for rejected/quarantined rows (30 days).
 DEFAULT_RETENTION_DAYS = 30
@@ -58,11 +61,14 @@ async def purge_expired_attachments() -> int:
         days = retention_days()
         cutoff = retention_cutoff(datetime.now(), days)
         purged = await backends.get_files_repo().purge_deleted(cutoff)
-        print(
-            f"purge_expired_attachments: purged {purged} tombstone row(s); "
-            f"retention={days}d; cutoff={cutoff.isoformat()}"
+        _logger.info(
+            "purge_expired_attachments: purged %s tombstone row(s); "
+            "retention=%sd; cutoff=%s",
+            purged,
+            days,
+            cutoff.isoformat(),
         )
         return int(purged)
     except Exception as exc:
-        print(f"purge_expired_attachments failed: {exc!r}")
+        _logger.exception("purge_expired_attachments failed: %r", exc)
         return 0

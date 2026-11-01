@@ -28,7 +28,9 @@ ADMIN = "000000000000000000000001"
 USER = "000000000000000000000003"
 OID = "a" * 24
 
-CREATED = datetime(2026, 10, 24, 9, 30, 0)
+# 夹具时间必须落在审阅列表的滚动 7 天窗内：固定字面量会随墙钟过期
+# （2026-10-31 09:30 后三个列表用例开始空集失败），用相对时间保持原意。
+CREATED = datetime.now().replace(microsecond=0) - timedelta(days=1)
 
 
 class FakePromptAuditRepo:

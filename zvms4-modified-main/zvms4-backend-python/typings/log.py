@@ -102,14 +102,23 @@ def xuehai_id_from(request: Request) -> str:
 def client_ip_from(request: Request) -> str:
     """请求来源 IP（字符串）；取不到时返回空串。
 
-    生产在 nginx 后面（uvicorn 只听 ``127.0.0.1:8018``），``request.client.host``
-    永远是回环地址，真实来源只在 ``X-Forwarded-For`` 里。取链条上**第一个非空
-    段**：那是 nginx 侧记下的原始客户端，后面的段是各级代理。没有该头（直连/
-    测试）才回落到 socket 对端地址。
+    信任分层，按顺序取第一个可用的：
 
-    返回值只用于审计展示，不做任何信任判定——转发头可以被客户端伪造，但「谁
-    声称自己从哪来」本身就是需要留痕的事实。
+    * ``X-Real-IP``（**可信**）：生产在 nginx 后面，uvicorn 只听
+      ``127.0.0.1:8018``，所有流量必经自家 nginx；vhost 对 ``/api/`` 与 WS
+      location 都写了 ``proxy_set_header X-Real-IP $remote_addr``，客户端自带
+      的同名头会被覆盖。所以这个值就是 nginx 看到的真实对端，登录限流的 IP 档
+      以它为键（见 ``routers/users_router`` / ``util/login_throttle``）。
+    * ``X-Forwarded-For`` 第一个非空段（**不可信**）：只在没有 ``X-Real-IP``
+      时使用——直连、测试，或别的反代只配了 XFF。它可能被客户端伪造，仍要留痕
+      （「谁声称自己从哪来」本身是审计事实），但不能作为频控键的唯一依据。
+    * socket 对端地址：没有转发头时的最后回落（直连/测试）。
+
+    返回值进 ``CLIENT_IP`` 列，截断到列宽。
     """
+    real = (request.headers.get("X-Real-IP") or "").strip()
+    if real:
+        return real[:CLIENT_IP_MAX_LEN]
     forwarded = request.headers.get("X-Forwarded-For") or ""
     for part in forwarded.split(","):
         candidate = part.strip()

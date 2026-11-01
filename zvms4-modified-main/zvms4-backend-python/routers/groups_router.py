@@ -298,13 +298,19 @@ async def get_user_times_in_class(
         selected_students, start, end, allow_cache=allow_cache
     )
     if not allow_cache and start is None and end is None:
-        for student in selected_students:
-            await backends.get_time_repo().upsert_for_user(
-                student,
-                user_times[student]["on-campus"],
-                user_times[student]["off-campus"],
-                user_times[student]["social-practice"],
-            )
+        # 整批一个事务重算缓存：逐学生 upsert 是每人 2 次往返 + 1 次 commit，
+        # 100 人最坏 ~41s，且中途失败会留下半新半旧的缓存。
+        await backends.get_time_repo().upsert_many_for_users(
+            [
+                (
+                    student,
+                    user_times[student]["on-campus"],
+                    user_times[student]["off-campus"],
+                    user_times[student]["social-practice"],
+                )
+                for student in selected_students
+            ]
+        )
     time = []
     class_groups: dict[str, Optional[dict]] = {}
     for user in result:

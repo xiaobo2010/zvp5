@@ -191,6 +191,16 @@ def test_active_list_hides_changelog_synced_notices() -> None:
     assert "notifications.source_ref IS NULL" not in admin
 
 
+def test_active_list_is_bounded_to_the_latest_100() -> None:
+    """历史公告只增不减；用户侧列表必须有行数上限，且截断的是最新一批。"""
+    sql = _sql(notifications_repo._list_active_stmt())
+
+    assert "FETCH FIRST 100 ROWS ONLY" in sql
+    assert sql.index("ORDER BY notifications.created_at DESC") < sql.index(
+        "FETCH FIRST 100 ROWS ONLY"
+    )
+
+
 def test_admin_list_has_no_active_filter() -> None:
     sql = _sql(notifications_repo._list_all_stmt())
     assert "FROM notifications" in sql

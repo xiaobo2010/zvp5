@@ -2,7 +2,6 @@ from io import BytesIO
 from fastapi import Response
 from fastapi.responses import StreamingResponse
 import pandas as pd
-import tempfile
 from tqdm import tqdm
 
 from util.calculate import calculate_user_time
@@ -38,18 +37,17 @@ def json2csv(data: list[dict]):
 
 def json2xlsx(data: list[dict]):
     df = json2dataframe(data)
-    with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as temp_file:
-        with pd.ExcelWriter(temp_file.name, engine="openpyxl") as writer:
-            df.to_excel(writer, index=False)
-    with open(temp_file.name, "rb") as file:
-        buffer = file.read()
-    content_stream = BytesIO(buffer)
+    # 直接写内存缓冲：NamedTemporaryFile(delete=False) 每次下载都会在 /tmp
+    # 留下一个 xlsx，异常路径连清理机会都没有。
+    buffer = BytesIO()
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False)
+    buffer.seek(0)
     return StreamingResponse(
-        content=content_stream,
+        content=buffer,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": "attachment; filename=time.xlsx"},
     )
-    # Use the buffer as needed
 
 
 async def calculate(

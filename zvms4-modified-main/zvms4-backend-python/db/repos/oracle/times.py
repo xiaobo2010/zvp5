@@ -56,6 +56,9 @@ Row = dict[str, Any]
 # :mod:`db.repos.oracle.temp_passwords`。
 _NO_PARALLEL = "/*+ NO_PARALLEL */"
 
+# Oracle 一条 ``IN`` 最多 1000 项（ORA-01795），超过就按这个粒度切块。
+_OID_CHUNK = 1000
+
 
 @asynccontextmanager
 async def _session_for(
@@ -114,6 +117,14 @@ def _delete_for_user_stmt(user_oid: str):
     return (
         delete(time_tbl)
         .where(time_tbl.c.user_oid == user_oid)
+        .prefix_with(_NO_PARALLEL, dialect="oracle")
+    )
+
+
+def _delete_for_users_stmt(user_oids: list[str]):
+    return (
+        delete(time_tbl)
+        .where(time_tbl.c.user_oid.in_(user_oids))
         .prefix_with(_NO_PARALLEL, dialect="oracle")
     )
 
@@ -188,6 +199,27 @@ def _list_by_users_stmt(
     if page is not None:
         stmt = stmt.offset((page - 1) * size).limit(size)
     return stmt
+
+
+def _order_time_rows(
+    rows: list[Row], sort_field: str | None, descending: bool
+) -> list[Row]:
+    """给分块读合并后的行补上 ``_list_by_users_stmt`` 的全局排序。
+
+    单条语句时 ORDER BY 由 Oracle 负责；超过 :data:`_OID_CHUNK` 拆成多条以后，
+    每条只排自己那一块，所以在外层按同一键集合（:data:`_TIME_SORT_COLUMNS`）
+    和同样的 NULL 位置（ASC 时 NULL 最后、DESC 时最前，Oracle 默认）重排。
+    """
+    key = sort_field if sort_field in _TIME_SORT_COLUMNS else None
+    if key is None:
+        # 没有可用的排序列时原语句退化为 oid 升序（``descending`` 不参与）。
+        rows.sort(key=lambda row: str(row["_id"]))
+        return rows
+    rows.sort(
+        key=lambda row: (row[key] is None, 0.0 if row[key] is None else row[key]),
+        reverse=descending,
+    )
+    return rows
 
 
 def _joined_time_columns() -> tuple[Any, ...]:
@@ -535,6 +567,51 @@ class OracleTimeRepo:
             if owns:
                 await session.commit()
 
+    async def upsert_many_for_users(
+        self, entries: list[tuple[str, float, float, float]]
+    ) -> None:
+        """批量重算用户时长缓存（``entries`` = ``(user_oid, on, off, social)``）。
+
+        班级重算原来逐学生调 :meth:`upsert_for_user`：每人一条 DELETE、一条
+        INSERT、一次自带 commit，100 人最坏 ≈ 200 次跨洋往返，且中途失败会留下
+        半新半旧的缓存。这里把 DELETE 收成按 :data:`_OID_CHUNK` 分块的多用户
+        语句、INSERT 收成一次数组绑定，整批单事务提交——要么全更新，要么全不
+        动。重复 user_oid 取最后一次，与逐条 delete+insert 的最终结果一致。
+        """
+        if not entries:
+            return
+        latest: dict[str, tuple[float, float, float]] = {}
+        for user_oid, on_campus_raw, off_campus_raw, social_practice in entries:
+            latest[normalize_oid(user_oid)] = (
+                on_campus_raw,
+                off_campus_raw,
+                social_practice,
+            )
+        users = list(latest)
+        now = datetime.now()
+        stmt = insert(time_tbl)
+        async with _session_for(self._session) as (session, owns):
+            for start in range(0, len(users), _OID_CHUNK):
+                chunk = users[start : start + _OID_CHUNK]
+                await session.execute(_delete_for_users_stmt(chunk))
+                # 同一批 oid 先删后插，保持「一人一行」的唯一约束语义。
+                await session.execute(
+                    stmt,
+                    [
+                        {
+                            "oid": new_oid(),
+                            "user_oid": user,
+                            "on_campus_raw": latest[user][0],
+                            "off_campus_raw": latest[user][1],
+                            "social_practice": latest[user][2],
+                            "updated_at": now,
+                        }
+                        for user in chunk
+                    ],
+                )
+            if owns:
+                await session.commit()
+
     async def list_academic_years(self, user_oid: str) -> list[Row]:
         stmt = _list_academic_years_stmt(normalize_oid(user_oid))
         async with _session_for(self._session) as (session, _owns):
@@ -569,11 +646,35 @@ class OracleTimeRepo:
     ) -> list[Row]:
         if not user_oids:
             return []
-        users = [normalize_oid(oid) for oid in user_oids]
-        stmt = _list_by_users_stmt(users, sort_field, descending, page, size)
+        users = list(dict.fromkeys(normalize_oid(oid) for oid in user_oids))
+        if len(users) <= _OID_CHUNK:
+            # 常规路径保持单条语句：排序和分页完全交给 Oracle（行为零变化）。
+            stmt = _list_by_users_stmt(users, sort_field, descending, page, size)
+            async with _session_for(self._session) as (session, _owns):
+                rows = (await session.execute(stmt)).all()
+            return [_time_row(row._mapping) for row in rows]
+        # 超过 1000 个 user_oid 时一条 ``IN`` 会 ORA-01795，只能拆块读；
+        # ORDER BY/OFFSET/FETCH 无法跨语句生效，于是合并后在外层补排序和分页。
+        merged: list[Any] = []
         async with _session_for(self._session) as (session, _owns):
-            rows = (await session.execute(stmt)).all()
-        return [_time_row(row._mapping) for row in rows]
+            for start in range(0, len(users), _OID_CHUNK):
+                chunk = users[start : start + _OID_CHUNK]
+                merged.extend(
+                    (
+                        await session.execute(
+                            _list_by_users_stmt(
+                                chunk, sort_field, descending, None, None
+                            )
+                        )
+                    ).all()
+                )
+        rows = _order_time_rows(
+            [_time_row(row._mapping) for row in merged], sort_field, descending
+        )
+        if page is not None:
+            start = (page - 1) * size
+            rows = rows[start : start + size]
+        return rows
 
     async def list_by_search(
         self,

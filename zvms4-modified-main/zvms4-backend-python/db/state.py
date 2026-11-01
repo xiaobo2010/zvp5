@@ -22,7 +22,6 @@ worker 部署时它们恰好等于全局状态；一旦多进程/多机，各算
 from __future__ import annotations
 
 import json
-import math
 import time
 import uuid
 from typing import Any
@@ -30,6 +29,41 @@ from typing import Any
 from db import cache
 
 NS = "zvms:state"
+
+#: 滑动窗口判定与写入必须在一个原子操作里完成：拆成 ZREMRANGEBYSCORE →
+#: ZCARD → ZADD 时，并发请求会同时读到 ``count < limit`` 再各自 ZADD，
+#: 限额按并发数放大。脚本内的时间基准仍由调用方传入（``now``），
+#: 保持「窗口边界 = 调用方此刻 - window」的原有语义。
+WINDOW_HIT_SCRIPT = """
+local key = KEYS[1]
+local now = tonumber(ARGV[1])
+local window = tonumber(ARGV[2])
+local limit = tonumber(ARGV[3])
+
+redis.call('ZREMRANGEBYSCORE', key, '-inf', now - window)
+local count = redis.call('ZCARD', key)
+if count >= limit then
+  local oldest = redis.call('ZRANGE', key, 0, 0, 'WITHSCORES')
+  local retry = window
+  if oldest[2] then
+    retry = window - (now - tonumber(oldest[2]))
+  end
+  retry = math.ceil(retry)
+  if retry < 1 then retry = 1 end
+  return {0, retry}
+end
+redis.call('ZADD', key, now, ARGV[4])
+redis.call('PEXPIRE', key, math.max(1, math.floor(window * 1000)))
+return {1, 0}
+"""
+
+#: INCR 与 PEXPIRE 拆两次往返时，中间的断连/崩溃会留下**没有 TTL** 的计数器
+#: （永久占用键空间且计数只增不减）。Lua 保证两者要么都生效要么都不生效。
+KV_INCR_SCRIPT = """
+local value = redis.call('INCR', KEYS[1])
+redis.call('PEXPIRE', KEYS[1], ARGV[1])
+return value
+"""
 
 
 def redis_configured() -> bool:
@@ -50,25 +84,24 @@ async def window_hit(key: str, limit: int, window: float) -> tuple[bool, int] | 
         return None
 
     now = time.time()
-    cutoff = now - window
     zkey = f"{NS}:win:{key}"
+    member = f"{now:.6f}:{uuid.uuid4().hex[:8]}"
     try:
-        await client.zremrangebyscore(zkey, "-inf", cutoff)
-        count = int(await client.zcard(zkey) or 0)
-        if count >= limit:
-            oldest = await client.zrange(zkey, 0, 0, withscores=True)
-            if oldest:
-                retry = math.ceil(window - (now - float(oldest[0][1])))
-            else:
-                retry = math.ceil(window)
-            return False, max(1, int(retry))
-        member = f"{now:.6f}:{uuid.uuid4().hex[:8]}"
-        await client.zadd(zkey, {member: now})
-        await client.pexpire(zkey, max(1, int(window * 1000)))
-        return True, 0
+        allowed, retry = await client.eval(
+            WINDOW_HIT_SCRIPT,
+            1,
+            zkey,
+            f"{now:.6f}",
+            window,
+            limit,
+            member,
+        )
     except Exception:  # noqa: BLE001 - 降级由调用方的本地实现接管
         cache.note_failure()
         return None
+    if int(allowed) == 1:
+        return True, 0
+    return False, max(1, int(retry))
 
 
 async def kv_get(key: str) -> Any | None:
@@ -134,9 +167,10 @@ async def kv_incr(key: str, ttl: float) -> int | None:
     if client is None:
         return None
     try:
-        value = int(await client.incr(f"{NS}:kv:{key}"))
-        await client.pexpire(f"{NS}:kv:{key}", max(1, int(ttl * 1000)))
-        return value
+        value = await client.eval(
+            KV_INCR_SCRIPT, 1, f"{NS}:kv:{key}", max(1, int(ttl * 1000))
+        )
+        return int(value)
     except Exception:  # noqa: BLE001
         cache.note_failure()
         return None

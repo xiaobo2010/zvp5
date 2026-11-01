@@ -15,6 +15,8 @@
 
 from __future__ import annotations
 
+import math
+
 
 class FakeRedis:
     def __init__(self) -> None:
@@ -22,7 +24,17 @@ class FakeRedis:
         self.ttl: dict[str, int] = {}
         self.zsets: dict[str, dict[str, float]] = {}
         self.fail = False
-        self.calls = {"get": 0, "set": 0, "delete": 0, "incr": 0}
+        self.calls = {
+            "get": 0,
+            "set": 0,
+            "delete": 0,
+            "incr": 0,
+            "eval": 0,
+            "zremrangebyscore": 0,
+            "zcard": 0,
+            "zadd": 0,
+            "pexpire": 0,
+        }
 
     def _check(self) -> None:
         if self.fail:
@@ -70,6 +82,7 @@ class FakeRedis:
 
     async def zremrangebyscore(self, key: str, low, high):
         self._check()
+        self.calls["zremrangebyscore"] += 1
         zset = self.zsets.get(key, {})
         low_v, high_v = float(low), float(high)
         self.zsets[key] = {
@@ -81,6 +94,7 @@ class FakeRedis:
 
     async def zcard(self, key: str):
         self._check()
+        self.calls["zcard"] += 1
         return len(self.zsets.get(key, {}))
 
     async def zrange(self, key: str, start: int, end: int, withscores: bool = False):
@@ -91,8 +105,56 @@ class FakeRedis:
 
     async def zadd(self, key: str, mapping: dict[str, float]):
         self._check()
+        self.calls["zadd"] += 1
         self.zsets.setdefault(key, {}).update({m: float(s) for m, s in mapping.items()})
         return 1
+
+    async def eval(self, script: str, numkeys: int, *args):
+        """按脚本内容分派到等价的 Python 实现。
+
+        真 Redis 执行 Lua 是原子的；测试替身无法提供真原子性，但能保证
+        「一次 EVAL = 一次往返」以及脚本语义（拒绝不写成员、TTL 与自增同生共死）
+        与生产一致。脚本内容变了就必须同步这里，故按关键命令识别。
+        """
+        self._check()
+        self.calls["eval"] += 1
+        keys = list(args[:numkeys])
+        argv = list(args[numkeys:])
+        if "ZREMRANGEBYSCORE" in script:
+            return self._eval_window(keys[0], argv)
+        if "INCR" in script and "PEXPIRE" in script:
+            return self._eval_incr(keys[0], argv)
+        raise NotImplementedError(f"FakeRedis 不认识的脚本: {script[:40]!r}")
+
+    def _eval_window(self, key: str, argv: list) -> list[int]:
+        now = float(argv[0])
+        window = float(argv[1])
+        limit = int(float(argv[2]))
+        member = str(argv[3])
+        zset = self.zsets.get(key, {})
+        cutoff = now - window
+        # ZREMRANGEBYSCORE 的上界是闭区间。
+        self.zsets[key] = {m: s for m, s in zset.items() if s > cutoff}
+        current = self.zsets[key]
+        if len(current) >= limit:
+            oldest = min(current.values())
+            retry = max(1, math.ceil(window - (now - oldest)))
+            return [0, retry]
+        current[member] = now
+        self.ttl[key] = max(1, math.floor(window * 1000))
+        return [1, 0]
+
+    def _eval_incr(self, key: str, argv: list) -> int:
+        value = int(self.kv.get(key, "0")) + 1
+        self.kv[key] = str(value)
+        self.ttl[key] = int(argv[0])
+        return value
+
+    async def pexpire(self, key: str, ms: int):
+        self._check()
+        self.calls["pexpire"] += 1
+        self.ttl[key] = ms
+        return True
 
     async def scan_iter(self, match: str | None = None, count: int | None = None):
         self._check()

@@ -100,6 +100,14 @@ class Repos:
             raise RuntimeError("insert failed")
         self.session.data["members"][(oid, mode)] = duration
 
+    async def add_many(self, activity, entries, status):
+        # 导入的批量写入：一行一次 execute 的旧实现会在这里暴露出来。
+        self.session.store.member_batches.append(list(entries))
+        for oid, mode, duration in entries:
+            if oid == self.session.store.fail_on:
+                raise RuntimeError("insert failed")
+            self.session.data["members"][(oid, mode)] = duration
+
     async def update_fields(self, key, fields):
         self.session.data["members"][key] = fields["duration"]
 
@@ -126,7 +134,7 @@ class Log:
 @pytest.fixture
 def store(monkeypatch):
     state = SimpleNamespace(data={"members": {}, "status": "effective", "activities": 0, "imports": 0, "logs": 0},
-                            lock=asyncio.Lock(), fail_on=None, unknown=set(), bulk_calls=[])
+                            lock=asyncio.Lock(), fail_on=None, unknown=set(), bulk_calls=[], member_batches=[])
 
     @asynccontextmanager
     async def scope():
@@ -237,6 +245,22 @@ async def test_import_checks_user_existence_in_batches(store):
     batches = store.bulk_calls
     assert [len(batch) for batch in batches] == [500, 500, 201]
     assert sorted(oid for batch in batches for oid in batch) == oids
+
+
+@pytest.mark.asyncio
+async def test_import_writes_members_in_one_batch(store):
+    rows = [[f"{index:024x}", "Name", "123", "Group", 1, 0, 0] for index in range(1, 6)]
+    content = workbook(rows)
+    upload = UploadFile(
+        BytesIO(content),
+        filename="import.xlsx",
+        headers=Headers({"content-type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"}),
+    )
+    await imports.upload_activity_excel("义工活动", "测试活动导入描述", upload, {"id": USER, "per": ["admin"]}, Log())
+
+    assert len(store.member_batches) == 1
+    assert [entry[0] for entry in store.member_batches[0]] == [row[0] for row in rows]
+    assert all(entry[1] == "on-campus" for entry in store.member_batches[0])
 
 
 @pytest.mark.asyncio

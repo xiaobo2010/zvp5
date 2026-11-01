@@ -152,15 +152,20 @@ async def test_data_written_once_for_all_users(env):
 
 
 @pytest.mark.asyncio
-async def test_data_order_matches_sequential_append(env):
+async def test_data_order_matches_sequential_append(env, tmp_path):
     await compute_time.generate_reports()
 
+    # 落盘用绝对路径（cwd 下的 export/），元数据里保留 tar 包内的相对标签。
+    assert env.written == [
+        str(tmp_path / "export" / _class_name(class_oid) / f"{user['id']}_{user['name']}.json")
+        for class_oid in ("class-1", "class-2")
+        for user in USERS[class_oid]
+    ]
     expected = [
         f"./export/{_class_name(class_oid)}/{user['id']}_{user['name']}.json"
         for class_oid in ("class-1", "class-2")
         for user in USERS[class_oid]
     ]
-    assert env.written == expected
 
     row = env.repo.rows[env.repo.inserted[0]]
     assert [item["filename"] for item in row["data"]] == expected
@@ -195,3 +200,37 @@ async def test_find_one_data_is_dataframe_ready(env):
     assert len(df) == len(data)
     assert {"name", "id", "group", "on-campus", "filename"} <= set(df.columns)
     assert df["group"].tolist() == ["高一(1)班"] * 3 + ["高一(2)班"] * 2
+
+
+@pytest.mark.asyncio
+async def test_non_numeric_student_id_is_skipped_not_fatal(env, monkeypatch, caplog):
+    """学号前 4 位不是数字时只跳过该用户，不能让整批报表 failed。"""
+    dirty = {
+        "_id": "65f0000000000000000000c1",
+        "id": "S2024009",
+        "name": "脏数据",
+    }
+    monkeypatch.setitem(USERS, "class-1", [*USERS["class-1"], dirty])
+
+    await compute_time.generate_reports()
+
+    row = env.repo.rows[env.repo.inserted[0]]
+    assert row["status"] == "processing"  # 没有翻成 failed
+    assert [item["id"] for item in row["data"]] == [
+        "20240001",
+        "20240002",
+        "20240003",
+        "20240004",
+        "20240005",
+    ]
+    assert "skip user S2024009" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_artifacts_land_under_absolute_paths(env, tmp_path):
+    """落盘位置与下载路由一致：cwd/data/export.tar.gz + cwd/export/summary.xlsx。"""
+    await compute_time.generate_reports()
+
+    archive = tmp_path / "data" / "export.tar.gz"
+    assert archive.is_file()
+    assert (tmp_path / "export" / "summary.xlsx").is_file()

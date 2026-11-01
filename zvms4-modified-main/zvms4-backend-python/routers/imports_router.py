@@ -122,8 +122,15 @@ async def upload_activity_excel(
                 "status": "effective", "approver": "authority", "place": "", "updatedAt": now
             })
             members_repo = backends.get_members_repo(session)
-            for (oid, mode), duration in records.items():
-                await members_repo.add(str(activity_id), oid, mode, duration, "effective")
+            # 整批一次数组绑定写库：逐行 add 在远程 ADB 上是 1w 次跨洋往返。
+            await members_repo.add_many(
+                str(activity_id),
+                [
+                    (oid, mode, duration)
+                    for (oid, mode), duration in records.items()
+                ],
+                "effective",
+            )
             # 同一条审计要能直接读：操作者写名字，活动写文件名里的活动名。
             performer = (
                 await users_repo.get_names([str(user["id"])])

@@ -1,6 +1,22 @@
 import type { Dayjs } from 'dayjs'
+import dayjs from 'dayjs'
 import { axios } from '@/plugins'
 import { downloadBlob } from '@/utils/download'
+
+type ExportFormat = 'csv' | 'excel' | 'json' | 'html' | 'latex'
+
+function extensionOf(format: ExportFormat) {
+  return format === 'excel' ? 'xlsx' : format === 'latex' ? 'tex' : format
+}
+
+/**
+ * 下载文件名：name 为空（users/activities 型导出没有名称输入框）时兜底成
+ * `export-YYYYMMDD-HHmmss`，避免浏览器只拿到一个扩展名。
+ */
+export function exportFileName(name: string | undefined | null, format: ExportFormat) {
+  const base = name?.trim() || `export-${dayjs().format('YYYYMMDD-HHmmss')}`
+  return `${base}.${extensionOf(format)}`
+}
 
 async function createExportTask(
   type: 'time' | 'users' | 'activities',
@@ -39,7 +55,7 @@ async function queryTaskStatus(id: string) {
 async function downloadTaskFile(
   id: string,
   name: string,
-  format: 'csv' | 'excel' | 'json' | 'html' | 'latex',
+  format: ExportFormat,
   language: string = 'en-US' // Default to English, can be changed in the UI
 ) {
   const result = await axios(`/exports/${id}/file`, {
@@ -56,8 +72,7 @@ async function downloadTaskFile(
       latex: 'application/octet-stream'
     } as { [key: string]: string }
   )[format]
-  const extension = format === 'excel' ? 'xlsx' : format === 'latex' ? 'tex' : format
-  downloadBlob(result.data, mime, `${name}.${extension}`)
+  downloadBlob(result.data, mime, exportFileName(name, format))
 }
 
 export { createExportTask as create, queryTaskStatus as query, downloadTaskFile as download }

@@ -1,7 +1,9 @@
 import os
 import re
+import asyncio
 import logging
 from collections import defaultdict
+from pathlib import Path
 from typing import Any, cast
 import tarfile
 import numpy as np
@@ -25,6 +27,80 @@ from util.statement import (
 
 _logger = logging.getLogger(__name__)
 
+# 落盘目录按 cwd 拼绝对路径：下载路由 routers/exports_router.py:427 仍按
+# "./data/export.tar.gz" 寻址，两边必须是同一个目录——所以这里不能换成
+# 基于 __file__ 的后端根（那会让读写落在两处），只把相对路径显式化。
+EXPORT_DIRNAME = "export"
+DATA_DIRNAME = "data"
+EXPORT_ARCHIVE = "export.tar.gz"
+
+
+def _report_dirs() -> tuple[Path, Path]:
+    root = Path.cwd()
+    return root / EXPORT_DIRNAME, root / DATA_DIRNAME
+
+
+def _reset_export_dir(export_dir: Path) -> None:
+    """清掉上一轮生成的 pdf/json 与空班级目录，保留其他文件。"""
+    if not export_dir.exists():
+        export_dir.mkdir(parents=True)
+        return
+    for item in os.listdir(export_dir):
+        item_path = export_dir / item
+        if item_path.is_dir():
+            for file in os.listdir(item_path):
+                file_path = item_path / file
+                if file.endswith((".pdf", ".json")):
+                    os.remove(file_path)
+            os.rmdir(item_path)
+
+
+def _write_reports_bundle(
+    groups: list[tuple[str, list[tuple[str, str, dict, dict]]]]
+) -> list[dict]:
+    """在线程里一次性做完落盘/Excel/打包，返回写进 ``daily_exports.data`` 的条目。
+
+    全是同步阻塞 IO 与 pandas/tarfile 的 CPU 工作：留在事件循环上会把单 worker
+    的整站按死一次，所以由调用方整块扔进 ``asyncio.to_thread``。
+    ``groups`` 是 ``[(班级名, [(学号, 姓名, statement_data, spreadsheet), ...])]``，
+    目录与归档顺序仍与逐条循环时一致。
+    """
+    export_dir, data_dir = _report_dirs()
+    _reset_export_dir(export_dir)
+
+    items: list[dict] = []
+    for class_name, entries in groups:
+        class_dir = export_dir / class_name
+        class_dir.mkdir(parents=True, exist_ok=True)
+        for user_id, user_name, statement_data, spreadsheet in entries:
+            file_path = class_dir / f"{user_id}_{user_name}.json"
+            write_statement_json(statement_data, spreadsheet, str(file_path))
+            # 元数据里保留包内相对标签（tar arcname 就是 export），只给人看。
+            filename = f"./export/{class_name}/{user_id}_{user_name}.json"
+            items.append({**spreadsheet, "filename": filename})
+            _logger.info(
+                "Exported statement for %s in class %s (saved to %s).",
+                user_name,
+                class_name,
+                filename,
+            )
+        _logger.info("Exported statements for class %s.", class_name)
+
+    df = pd.DataFrame(items)
+    df.rename(columns=TRANSLATIONS["zh"]["spreadsheet"], inplace=True)
+    summary_path = export_dir / "summary.xlsx"
+    if summary_path.exists():
+        os.remove(summary_path)
+    df.to_excel(summary_path, index=False)
+
+    data_dir.mkdir(parents=True, exist_ok=True)
+    archive_path = data_dir / EXPORT_ARCHIVE
+    if archive_path.exists():
+        os.remove(archive_path)
+    with tarfile.open(archive_path, "w:gz") as tar:
+        tar.add(export_dir, arcname=EXPORT_DIRNAME)
+    return items
+
 
 async def generate_reports():
     classes = await backends.get_groups_repo().list_non_permission()
@@ -33,26 +109,25 @@ async def generate_reports():
     db_id = await exports_repo.insert(
         {"created_at": datetime.now(), "status": "processing", "data": []}
     )
-    spreadsheet_items: list[dict[str, Any]] = []
     try:
-        if not os.path.exists("./export"):
-            os.makedirs("./export")
-        else:
-            for item in os.listdir("./export"):
-                item_path = os.path.join("./export", item)
-                if os.path.isdir(item_path):
-                    for file in os.listdir(item_path):
-                        file_path = os.path.join(item_path, file)
-                        if file.endswith((".pdf", ".json")):
-                            os.remove(file_path)
-                    os.rmdir(item_path)
+        # 先把 repo 数据全部取完（异步），再把整块落盘下沉到线程。
+        groups: list[tuple[str, list[tuple[str, str, dict, dict]]]] = []
         for class_id in classes:
             users = await backends.get_users_repo().list_by_class(class_id["_id"])
-            class_dir = f'./export/{class_id["name"]}'
-            os.makedirs(class_dir, exist_ok=True)
+            entries: list[tuple[str, str, dict, dict]] = []
             for user in users:
                 user_id = str(user["id"])
-                entry = int(user_id[:4])
+                try:
+                    entry = int(user_id[:4])
+                except ValueError:
+                    # 学号前 4 位不是入学年份（非数字/脏数据）：只跳过这个人，
+                    # 否则一个人就能让整批报表失败。
+                    _logger.warning(
+                        "skip user %s in class %s: student id is not year-prefixed",
+                        user_id,
+                        class_id["name"],
+                    )
+                    continue
                 soy = datetime.now().replace(
                     month=8, day=1, year=entry, hour=0, minute=0, second=0, microsecond=0
                 )
@@ -65,37 +140,17 @@ async def generate_reports():
                     second=59,
                     microsecond=999999,
                 )
-                os.makedirs(class_dir, exist_ok=True)
-                filename = f'{class_dir}/{user["id"]}_{user["name"]}.json'
                 volunteer_data, spreadsheet = await build_statement_data(
                     str(user["_id"]),
                     (soy, eoy),
                     language="zh",
                 )
-                write_statement_json(volunteer_data, spreadsheet, filename)
-                spreadsheet_items.append({**spreadsheet, "filename": filename})
-                _logger.info(
-                    "Exported statement for %s in class %s (saved to %s).",
-                    user["name"],
-                    class_id["name"],
-                    filename,
-                )
-            _logger.info("Exported statements for class %s.", class_id["name"])
+                entries.append((user_id, user["name"], volunteer_data, spreadsheet))
+            groups.append((class_id["name"], entries))
+
+        spreadsheet_items = await asyncio.to_thread(_write_reports_bundle, groups)
         await exports_repo.update_fields(db_id, {"data": spreadsheet_items})
-        # Create a tar.gz archive of the export directory
-        spreadsheet_items = await exports_repo.find_one(db_id)
-        spreadsheet_items = spreadsheet_items.get("data", [])
-        df = pd.DataFrame(spreadsheet_items)
-        df.rename(columns=TRANSLATIONS["zh"]["spreadsheet"], inplace=True)
-        if os.path.exists("./export/summary.xlsx"):
-            os.remove("./export/summary.xlsx")
-        df.to_excel(f"./export/summary.xlsx", index=False)
-        os.makedirs("./data", exist_ok=True)
-        if os.path.exists("./data/export.tar.gz"):
-            os.remove("./data/export.tar.gz")
-        with tarfile.open("./data/export.tar.gz", "w:gz") as tar:
-            tar.add("./export", arcname="export")
-        return "./data/export.tar.gz"
+        return f"./{DATA_DIRNAME}/{EXPORT_ARCHIVE}"
     except Exception:
         _logger.exception("Failed to generate daily reports")
         try:
@@ -444,7 +499,7 @@ async def rebuild_statistics() -> dict[str, int]:
                 _origin_stat_rows(totals, origins, adjusted), now
             )
             await session.commit()
-            print(f"rebuild_statistics done: {counts}")
+            _logger.info("rebuild_statistics done: %s", counts)
             return counts
         except BaseException:
             await session.rollback()
