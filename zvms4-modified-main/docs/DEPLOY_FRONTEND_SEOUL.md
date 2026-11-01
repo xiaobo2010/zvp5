@@ -25,10 +25,14 @@
 2. **证书应急**:LA `/www/server/panel/vhost/ssl/zvp.xiaobopisces.top/{fullchain,privkey}.pem` 拷至 `tencent-43:/etc/nginx/ssl/zvp/`(后已被 certbot 取代,文件保留作应急)。
 3. **tencent-43 nginx**:
    - `sites-available/zvpapi`:`location /` 从 `return 404` 改为 SPA(root `/www/zvms4/frontend-dist`、`gzip_static`、`/assets/` expires 1y、try_files → index.html);CSP map `$zvms_csp` 从 LA vhost 平移(带 `Xuehai-Id` 收紧/普通两档);备份 `zvpapi.bak-planA-20261101-231718`。
-   - 新增 `sites-available/zvp`:纯静态 vhost(:80 acme + 301,:443 SPA + http2 on)。API 仍由浏览器直连 zvpapi,本 vhost 不代理 `/api`。
+   - 新增 `sites-available/zvp`:静态 vhost + **本机 API 反代**(:80 acme + 301;:443 SPA;`= /api/system/ssh/ws` 升级、`^~ /api/`、`/socket.io/` 全部指向 `127.0.0.1:8018`,与 zvpapi vhost 同上游同参数)。机器本地端点(SSH 终端/文件管理器)由前端 `src/utils/apiRouting.ts` 路由到页面源,同机部署下零额外跳数——这正是本 vhost 反代 `/api` 的原因,与仓库 `deployment/zvms4.nginx.conf` 模板同口径。**刻意不开 http2**:WS 的 `Upgrade` 头在 h2 里非法,会表现为后端 404(Web SSH 是管理员关键路径,不冒任何险)。备份 `zvp.bak-coloc-20261101-234552`。
 4. **DNS**:Cloudflare `zvp` A 记录 `23.169.184.163 → 43.128.154.199`(record_id `dc1b0099e5265d030242f927e63c80c6`,灰云,TTL 300)。
 5. **证书本地化**:certbot HTTP-01(webroot `/var/www/letsencrypt`)在 tencent-43 签发,zvp vhost 切到 `/etc/letsencrypt/live/zvp.xiaobopisces.top/`(有效至 2027-01-30,certbot 定时器自动续期)。
 6. **gzip 空转修复**(见 §4)。
+
+## 2.1 同夜后续:与 albxy 的「api 直连」工作流合并
+
+推送时发现远端 main 已有 albxy 的三个平行提交(`b4ce389` / `a475efc` / `4bf3d11`,10-31 21:13~22:44,与本仓 9385201 同一晚在另一台机器上做的同主题工作):部署模板(`deployment/`)、API 归属分层(`src/utils/apiRouting.ts`:`/system/ssh/*`、`/system/files/*` 走 content host,其余走 API host)、`VITE_API_BASE` 构建期强校验(`apiBaseConfig.ts`,生产构建缺失即报错)、CORS expose_headers 扩列。合并方式:rebase 本地三提交到远端之上,`ssh.ts`/`ssh.spec.ts` **采纳远端参数化实现**(`buildSshWsUrlFor`,语义覆盖本地版本),`main.py` 双边改动干净融合。合并后全栈重验:pytest **4165/4165**、vitest **997/997**、vue-tsc 零错误。本 vhost 的 `/api` 反代(§2 第 3 条)即为使该分层设计在「content host=后端同机」新拓扑下成立而加。
 
 ## 3. 验证记录(可复跑)
 
@@ -60,6 +64,24 @@ ssh tencent-43 'chown -R www-data:www-data /www/zvms4/frontend-dist'
 
 构建产物里 `VITE_API_BASE` 为绝对基址(zvpapi),与同源部署兼容(同源请求不受 CORS 约束);两个 origin(zvp / zvpapi)都能正确取到 API。后端 CORS 白名单已含 `https://zvp.xiaobopisces.top` 与 `https://zvpapi.xiaobopisces.top`。
 
+### 后端发布(现行)
+
+```bash
+rsync -az \
+  --exclude '.venv/' --exclude '__pycache__/' --exclude '*.pyc' \
+  --exclude '.pytest_cache/' \
+  --exclude 'settings.py' --exclude 'settings.py.bak.*' \
+  --exclude '*.pem' --exclude 'aes_key.txt' --exclude 'ssh_key' \
+  --exclude 'export/' --exclude 'data/' \
+  zvms4-modified-main/zvms4-backend-python/ tencent-43:/www/zvms4/backend/
+ssh tencent-43 'chown -R www-data:www-data /www/zvms4/backend && systemctl restart zvms4'
+```
+
+注意(2026-11-02 踩过):rsync `-a` 以 root 运行会保留本地属主(本地 uid 1000 在腾讯机上
+映射为 `lighthouse`),服务以 www-data 运行,代码可读(644)无碍,但**根目录属主一变,
+SQLite(`system_state.db` / `perf_samples.db`)就建不了 journal 文件**,表现为
+`attempt to write a readonly database` 且维护态/性能采样静默降级。**rsync 后必须 chown。**
+
 ## 6. 回滚与注意事项
 
 - **DNS 回滚**:Cloudflare 把 zvp A 记录改回 23.169.184.163(TTL 300,~5 分钟生效)。前提:LA 的 443 已恢复可达——本次事故即因此而起,回滚前先验证 `curl --resolve zvp.xiaobopisces.top:443:23.169.184.163 https://zvp.xiaobopisces.top/`。
@@ -68,6 +90,7 @@ ssh tencent-43 'chown -R www-data:www-data /www/zvms4/frontend-dist'
   - `/etc/nginx/sites-available/zvpapi.bak-planA-20261101-231718`(翻转前 vhost)
   - `/www/zvms4/frontend-dist.pre-planA-20261101-231703`(旧 dist)
   - `/etc/nginx/ssl/zvp/`(LA 拷贝版证书,应急)
+  - `/etc/nginx/sites-available/zvp.bak-coloc-20261101-234552`(加 /api 反代前的纯静态版)
 - **UA 盾牌**:后端 `main.py` 对非 Mozilla UA 一律 418;监控/脚本探测请带浏览器 UA,否则测到的 418 不是故障。
 - 运维遗留(待后续处理):
   - LA `/www/wwwlogs/zvp.xiaobopisces.top.log` 已 147MB 未轮转;
