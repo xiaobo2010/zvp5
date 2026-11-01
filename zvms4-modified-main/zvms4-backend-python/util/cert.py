@@ -18,6 +18,7 @@ import secrets
 import stat
 import string
 import struct
+from pathlib import Path
 from Crypto.Hash import SHA256
 
 from db import backends
@@ -25,7 +26,11 @@ from db.ids import new_oid
 from util.ban import ban_is_active, raise_banned
 from util.group import get_user_permissions
 
-PLATFORM_KEY_PATH = "aes_key.txt"
+# 三个密钥文件都与 util/ 同层（后端根）。按本文件定位而不是 cwd：调度任务和
+# 手工启动的 cwd 并不保证是后端根，import 期读不到文件会直接起不来。
+_BACKEND_ROOT = Path(__file__).resolve().parents[1]
+
+PLATFORM_KEY_PATH = str(_BACKEND_ROOT / "aes_key.txt")
 
 _logger = logging.getLogger(__name__)
 
@@ -105,8 +110,8 @@ def pwd_strength(password: str) -> int:
     return strength
 
 
-public_key = RSA.import_key(open("rsa_public_key.pem", "rb").read())
-private_key = RSA.import_key(open("rsa_private_key.pem", "rb").read())
+public_key = RSA.import_key((_BACKEND_ROOT / "rsa_public_key.pem").read_bytes())
+private_key = RSA.import_key((_BACKEND_ROOT / "rsa_private_key.pem").read_bytes())
 
 
 def read_platform_key(path: str = PLATFORM_KEY_PATH) -> str:

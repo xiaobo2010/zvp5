@@ -11,11 +11,14 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any, Optional
 from urllib.parse import parse_qs
 
-from db.system_state import is_enabled_fresh
+from db.system_state import is_enabled_fresh_async
 from util.object_id import bearer_token, is_admin_token
+
+_logger = logging.getLogger(__name__)
 
 # nginx 把 ``/socket.io`` 反代到同一个后端进程，FastAPI 侧 ``main`` 用
 # ``app.mount("/socket.io", socketio.ASGIApp(sio))`` 挂载。
@@ -106,10 +109,14 @@ async def disconnect_all_clients() -> int:
                     await server.disconnect(sid, namespace=namespace)
                     disconnected += 1
                 except Exception as e:  # 单个连接失败不影响其余连接
-                    print(f"Failed to disconnect socket {sid} [{namespace}]: {e}")
+                    _logger.exception(
+                        "Failed to disconnect socket %s [%s]: %s", sid, namespace, e
+                    )
     except Exception as e:
         # 断连失败绝不能让调用方（POST /enable）500：状态已经落库，维护模式已生效。
-        print(f"disconnect_all_clients aborted after {disconnected}: {e}")
+        _logger.exception(
+            "disconnect_all_clients aborted after %s: %s", disconnected, e
+        )
     return disconnected
 
 
@@ -140,7 +147,7 @@ class MaintenanceSocketGuard:
         if (
             scope["type"] in ("http", "websocket")
             and self._is_handshake(scope)
-            and is_enabled_fresh()  # 绕过 ~2s TTL 缓存，读最新状态
+            and await is_enabled_fresh_async()  # 绕过 ~2s TTL 缓存，读最新状态
             and not await is_admin_conn(scope)
         ):
             await self._reject(scope, send)

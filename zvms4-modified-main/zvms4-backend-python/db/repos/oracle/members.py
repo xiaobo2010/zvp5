@@ -559,6 +559,43 @@ class OracleMembersRepo:
                 await session.commit()
         return oid
 
+    async def add_many(
+        self,
+        activity_oid: str,
+        entries: list[tuple[str, str, float]],
+        status: str,
+    ) -> None:
+        """批量建成员关系（``entries`` = ``(member_oid, mode, duration)``）。
+
+        Excel 导入原来逐行调 :meth:`add`，远程 ADB 上一行一个 RTT，1w 行 ≈ 23
+        分钟且全程占着事务。这里把整批交给 oracledb 的数组绑定（一次
+        ``executemany``），按 :data:`_OID_CHUNK` 行一批控制绑定变量数；与单行版
+        一样只写调用方给的 session，``owns`` 时才提交，所以导入的「要么全成、
+        要么全滚」由外层事务保证。
+        """
+        if not entries:
+            return
+        activity = normalize_oid(activity_oid)
+        stmt = insert(members_tbl)
+        async with _session_for(self._session) as (session, owns):
+            for start in range(0, len(entries), _OID_CHUNK):
+                batch = [
+                    {
+                        "oid": new_oid(),
+                        "activity_oid": activity,
+                        "member_oid": normalize_oid(member_oid),
+                        "member_mode": mode,
+                        "duration_hours": duration,
+                        "member_status": status,
+                    }
+                    for member_oid, mode, duration in entries[
+                        start : start + _OID_CHUNK
+                    ]
+                ]
+                await session.execute(stmt, batch)
+            if owns:
+                await session.commit()
+
     async def remove(self, oid: str) -> None:
         stmt = _delete_member_stmt(normalize_oid(oid))
         async with _session_for(self._session) as (session, owns):
@@ -631,11 +668,19 @@ class OracleMembersRepo:
         return [_member_row(row._mapping) for row in rows]
 
     async def list_by_members(self, member_oids: list[str]) -> list[Row]:
-        if not member_oids:
+        unique = list(dict.fromkeys(normalize_oid(o) for o in member_oids))
+        if not unique:
             return []
-        stmt = _list_by_members_stmt([normalize_oid(o) for o in member_oids])
+        # 班级人数压到 1000 以上时单条 ``IN`` 会直接 ORA-01795；这里与
+        # :meth:`list_by_activity_and_members` 同款分块。语句本身没有 ORDER BY，
+        # 调用方都按 oid 建索引，所以按块拼接顺序不影响语义。
+        rows: list[Any] = []
         async with _session_for(self._session) as (session, _owns):
-            rows = (await session.execute(stmt)).all()
+            for start in range(0, len(unique), _OID_CHUNK):
+                chunk = unique[start : start + _OID_CHUNK]
+                rows.extend(
+                    (await session.execute(_list_by_members_stmt(chunk))).all()
+                )
         return [_member_row(row._mapping) for row in rows]
 
     async def list_by_activity_and_members(

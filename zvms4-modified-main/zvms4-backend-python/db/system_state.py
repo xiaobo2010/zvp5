@@ -326,9 +326,10 @@ def _state_with_auto_recovery() -> dict:
             return state
         if _auto_probe_result() is not False:
             return state
-        print(
+        _logger.warning(
             "maintenance: stale auto maintenance state detected "
-            f"(updated_by={state['updated_by']!r}, probe=False) -> healing"
+            "(updated_by=%r, probe=False) -> healing",
+            state["updated_by"],
         )
         try:
             set_state(False, STALE_AUTO_REASON, None, AUTO_HEAL_ACTOR)

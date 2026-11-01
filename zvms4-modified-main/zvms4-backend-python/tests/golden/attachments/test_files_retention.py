@@ -27,6 +27,7 @@ Run from the repository root::
 from __future__ import annotations
 
 import asyncio
+import logging
 from datetime import datetime, timedelta
 
 import pytest
@@ -142,40 +143,42 @@ def test_job_cutoff_follows_configured_days(monkeypatch, fake_repo):
     assert before - timedelta(days=7) <= cutoff <= after - timedelta(days=7)
 
 
-def test_job_logs_purged_count(fake_repo, capsys):
+def test_job_logs_purged_count(fake_repo, caplog):
+    caplog.set_level(logging.INFO, logger="tasks.files_retention")
     asyncio.run(purge_expired_attachments())
-    out = capsys.readouterr().out
+    out = caplog.text
     assert f"purged {fake_repo.rowcount} tombstone row(s)" in out
     assert "retention=30d" in out
 
 
-def test_job_logs_and_returns_zero_when_nothing_matches(monkeypatch, capsys):
+def test_job_logs_and_returns_zero_when_nothing_matches(monkeypatch, caplog):
+    caplog.set_level(logging.INFO, logger="tasks.files_retention")
     repo = _FakeFilesRepo(rowcount=0)
     monkeypatch.setattr(backends, "get_files_repo", lambda session=None: repo)
 
     assert asyncio.run(purge_expired_attachments()) == 0
-    assert "purged 0 tombstone row(s)" in capsys.readouterr().out
+    assert "purged 0 tombstone row(s)" in caplog.text
 
 
-def test_job_swallows_repo_failure(monkeypatch, capsys):
+def test_job_swallows_repo_failure(monkeypatch, caplog):
     repo = _FakeFilesRepo(exc=RuntimeError("boom"))
     monkeypatch.setattr(backends, "get_files_repo", lambda session=None: repo)
 
     # Must not raise: a failure here would surface inside the scheduler.
     assert asyncio.run(purge_expired_attachments()) == 0
-    out = capsys.readouterr().out
+    out = caplog.text
     assert "purge_expired_attachments failed" in out
     assert "boom" in out
 
 
-def test_job_swallows_failure_from_repo_lookup(monkeypatch, capsys):
+def test_job_swallows_failure_from_repo_lookup(monkeypatch, caplog):
     def _boom(session=None):
         raise RuntimeError("no engine")
 
     monkeypatch.setattr(backends, "get_files_repo", _boom)
 
     assert asyncio.run(purge_expired_attachments()) == 0
-    assert "no engine" in capsys.readouterr().out
+    assert "no engine" in caplog.text
 
 
 # --------------------------------------------------------------------------

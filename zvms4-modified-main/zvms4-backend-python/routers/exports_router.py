@@ -357,10 +357,9 @@ async def export_time(
 async def get_export(task_id: str, user=Depends(get_current_user)):
     if "admin" not in user["per"]:
         raise HTTPException(status_code=403, detail="权限不足")
-    task = await backends.get_tasks_repo().get_by_uuid(_task_uuid(task_id))
+    task = await backends.get_tasks_repo().get_status_by_uuid(_task_uuid(task_id))
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
-    del task["result"]
     task["_id"] = str(task["_id"])
     return {"code": 200, "status": "ok", "data": task}
 

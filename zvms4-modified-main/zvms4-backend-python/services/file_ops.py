@@ -52,7 +52,8 @@ ROOT_FORBIDDEN_DETAIL = "路径不在允许的根目录范围内"
 # access is deliberate for the admin file manager, but these names are never
 # "user files": reading them turns one admin token into the JWT signing key,
 # the DB password or the Oracle wallet. Match by real path (symlinks included),
-# not just by the raw request string.
+# not just by the raw request string. ``settings.py.bak.*`` / ``id_rsa.bak`` 这类
+# 备份变体由下面的前缀层覆盖，精确集合只列「真名」。
 PROTECTED_BASENAMES: frozenset[str] = frozenset(
     {
         "aes_key.txt",
@@ -80,18 +81,57 @@ PROTECTED_BASENAMES: frozenset[str] = frozenset(
         "credentials.json",
     }
 )
-# 前缀形式（``.env.local`` / ``.env.production`` …）：精确集合列不全所有变体，
-# 只要以 ``.env.`` 开头一律按凭据处理。
-PROTECTED_BASENAME_PREFIXES: tuple[str, ...] = (".env.",)
-PROTECTED_PATH_SEGMENTS: frozenset[str] = frozenset({".oci", "adb-wallet"})
+# 前缀形式：精确集合列不全所有变体。运维现场真实存在的是「带后缀的备份」——
+# ``settings.py.bak.20261013121615``、``id_rsa.bak``——以及 sshd 默认密钥
+# ``ssh_key``。按前缀判定的语义是：**文件名以这些片段开头即视为同一件密钥**，
+# 宁可把 ``ssh_key.pub`` 这类公钥一起挡掉（管理员仍有 SSH 通道），也不给备份
+# 文件留缝。``credentials`` / ``ewallet`` 等短前缀同理。
+PROTECTED_BASENAME_PREFIXES: tuple[str, ...] = (
+    ".env.",
+    "settings.py",
+    "ssh_key",
+    "authorized_keys",
+    "id_rsa",
+    "id_ed25519",
+    "aes_key",
+    "rsa_private_key",
+    "rsa_public_key",
+    "credentials",
+    "cwallet",
+    "ewallet",
+    "tnsnames",
+    "sqlnet",
+    "ojdbc",
+    "keystore",
+    "truststore",
+)
+# 扩展名兜底：``foo.key``、``anything.pem`` 没有可枚举的文件名，但从不在
+# 「用户文件」的范畴里。只收这两个扩展名——``.crt`` / ``.cer`` 常是公开证书，
+# 误挡的代价大于收益；而 ``.pem`` / ``.key`` 在 ALLOWED_ROOTS（``/www/zvms4``
+# 与 ``/home``）下几乎只可能是私钥或密钥对的一部分，浏览器下载它们没有任何
+# 正当用途，管理员确实要看就走 SSH。
+PROTECTED_SUFFIXES: tuple[str, ...] = (".pem", ".key")
+# ``.git`` 里有远端凭据与完整历史，``.ssh`` 里是私钥与 known_hosts：两者都是
+# 「按目录」而不是「按文件名」的边界，按路径段判定（段集是 realpath 之后算的，
+# 所以软链到 ``.ssh`` 也会命中）。``.oci`` 是 Oracle CLI 的凭据目录，
+# ``adb-wallet`` 是 ADB 钱包的解压落点。
+PROTECTED_PATH_SEGMENTS: frozenset[str] = frozenset(
+    {".oci", "adb-wallet", ".ssh", ".git"}
+)
 
 
 def _is_protected_secret(path: str) -> bool:
-    """True when ``path`` names an application/credential artifact."""
+    """True when ``path`` names an application/credential artifact.
+
+    四层判定，任何一层命中即拒绝：精确名单 → 文件名前缀 → 扩展名 → 路径段。
+    ``path`` 应当是 ``realpath`` 之后的结果，这样软链与 ``..`` 都按真实落点判。
+    """
     name = os.path.basename(path).lower()
     if name in PROTECTED_BASENAMES:
         return True
     if name.startswith(PROTECTED_BASENAME_PREFIXES):
+        return True
+    if name.endswith(PROTECTED_SUFFIXES):
         return True
     segments = {part.lower() for part in path.split(os.sep) if part}
     return bool(segments & PROTECTED_PATH_SEGMENTS)

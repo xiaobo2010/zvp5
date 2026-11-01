@@ -602,6 +602,20 @@ class MembersRepo(Protocol):
         """
         ...
 
+    async def add_many(
+        self,
+        activity_oid: str,
+        entries: list[tuple[str, str, float]],
+        status: str,
+    ) -> None:
+        """Insert membership rows in bulk (``entries`` = ``(member_oid, mode, duration)``).
+
+        The Excel-import path: one transaction over array-bound executemany,
+        so a bad row rolls back the whole import. Same uniqueness invariant
+        as :meth:`add`.
+        """
+        ...
+
     async def remove(self, oid: str) -> None:
         """Delete a membership row by its ``_id``."""
         ...
@@ -755,6 +769,18 @@ class TimeRepo(Protocol):
         social_practice: float,
     ) -> None:
         """Create or replace the user's aggregate time row."""
+        ...
+
+    async def upsert_many_for_users(
+        self, entries: list[tuple[str, float, float, float]]
+    ) -> None:
+        """Recompute total-time rows for many users in one transaction.
+
+        ``entries`` = ``(user_oid, on_campus_raw, off_campus_raw,
+        social_practice)``; duplicate user oids take the last occurrence,
+        matching the per-user upsert's final state. Either the whole batch
+        lands or none of it does.
+        """
         ...
 
     async def list_academic_years(self, user_oid: str) -> list[Row]:

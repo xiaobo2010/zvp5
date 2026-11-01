@@ -2,8 +2,9 @@
 
 三件事必须同时成立才算把「这条日志从哪来」留住：
 
-* ``client_ip_from`` 优先 ``X-Forwarded-For`` 首个非空段（生产在 nginx 后，
-  socket 对端恒为回环），没有该头才回落到对端地址，两者都没有给空串。
+* ``client_ip_from`` 的信任分层：优先**可信**的 ``X-Real-IP``（自家 nginx 用
+  ``proxy_set_header`` 覆盖写入），没有它才回落到 ``X-Forwarded-For`` 首个非空
+  段（可能是客户端自称，仅供审计），再回落到 socket 对端，三者都没有给空串。
 * 写路径把两列真正落库（``_insert_stmt`` 的 values 不是摆设）。
 * 读路径把两列透出（``_log_row``），否则库里存了前端也看不到。
 """
@@ -43,6 +44,21 @@ class _RecordingSession:
 # ---------------------------------------------------------------------------
 # 采集
 # ---------------------------------------------------------------------------
+
+
+def test_client_ip_prefers_trusted_real_ip_over_forwarded_chain():
+    """``X-Real-IP`` 由自家 nginx 覆盖写入，优先于可伪造的 XFF。"""
+    request = _request(
+        {"X-Real-IP": "203.0.113.7", "X-Forwarded-For": "198.51.100.66, 10.0.0.2"}
+    )
+
+    assert client_ip_from(request) == "203.0.113.7"
+
+
+def test_client_ip_uses_the_first_forwarded_segment_without_real_ip():
+    request = _request({"X-Forwarded-For": " 203.0.113.9 , 10.0.0.2"})
+
+    assert client_ip_from(request) == "203.0.113.9"
 
 
 def test_client_ip_prefers_the_first_non_empty_forwarded_segment():

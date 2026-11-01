@@ -529,6 +529,20 @@ async def _charge(
 BURST_TRIGGER = "ai_chat_burst"
 
 
+async def _teardown_step(label: str, awaitable) -> None:
+    """流式收尾的一步：失败只记日志，不能顺手把后面的审计/扣费也跳掉。
+
+    槽已经由调用方先还了，所以这里兜住「异常」（不是取消）只是记账；
+    ``CancelledError`` 仍然向上抛——那是客户端断开，吞掉反而会干扰取消传播。
+    """
+    try:
+        await awaitable
+    except Exception as exc:  # noqa: BLE001 - 收尾是旁路，失败不改响应
+        _logger.warning(
+            "ai stream teardown failed at %s: %s", label, type(exc).__name__
+        )
+
+
 async def _evaluate_burst(user_oid: str) -> None:
     """一次请求结束后评估「AI 对话请求突发」（只告警，不封人）。
 
@@ -2491,14 +2505,33 @@ async def _stream_completion(
                 roles_snapshot=snapshot,
             )
 
+        # 手动进上下文管理器就没有兜底：每个出口都得自己还槽，漏一个就永久吃掉
+        # 一格并发（漏满 8 次后全站 429，直到重启）。``released`` 让归还幂等——
+        # 重入会多还一格，等于把并发上限悄悄放大。
+        released = False
+
+        async def _release_slot() -> None:
+            nonlocal released
+            if released:
+                return
+            released = True
+            await guard.__aexit__(None, None, None)
+
         # 缓存注入只作用于发给上游的 body；``stream_options`` 由 providers 内部补，
         # 这里不重复补（两处都补会覆盖客户端自己的 stream_options 取值）。
         body, cache_key = prompt_cache.request_body(payload, entry)
 
-        if await _stream_unsupported_cached(key, model):
+        try:
+            stream_unsupported = await _stream_unsupported_cached(key, model)
+        except BaseException:
+            # 负缓存查询也是 await 点：客户端在这里断开同样会跳过后面的还槽。
+            await _release_slot()
+            raise
+
+        if stream_unsupported:
             # 负缓存命中：一小时内的第二次请求。这个上游明确不吃流式，别再拿一次
             # 必废的流式调用去试——直接以非流式起步（结果照样包成 SSE 帧）。
-            await guard.__aexit__(None, None, None)
+            await _release_slot()
             return _client_stream_response(
                 await _blocking_completion(
                     blocking_payload,
@@ -2527,8 +2560,13 @@ async def _stream_completion(
             # 200 但一个字节都没有：按空流透传（与改造前一致），不猜原因。
             first = b""
             stream_iter = None
-        except Exception as exc:  # noqa: BLE001 - 首帧前的任何失败都还能改状态码
-            await guard.__aexit__(None, None, None)
+        except BaseException as exc:  # noqa: BLE001 - 取消也是 BaseException，也得还槽
+            # 先还槽再判断：``CancelledError`` 不是 ``Exception``，以前从这里直接
+            # 逃出、槽跟着丢。``__aexit__`` 里只有 ``semaphore.release()``，没有可
+            # 挂起的 await，所以这一句本身不会被取消打断。
+            await _release_slot()
+            if not isinstance(exc, Exception):
+                raise
             code = _stream_failure_code(exc)
             unsupported = _stream_unsupported(
                 meta.get("status_code"), meta.get("error_body")
@@ -2714,13 +2752,14 @@ async def _stream_completion(
             else:
                 await routing.mark_success(key)
             finally:
+                # 槽必须在任何可被取消的 await **之前**还：客户端中途断开时 anyio
+                # 会把 CancelledError 注入这个 finally，之后第一个 await 就再抛一次，
+                # 排在它后面的收尾全部跳过——以前正是这样漏槽 + 丢审计/扣费的。
+                await _release_slot()
                 # 客户端断开/中途返回时也要把上游连接关掉（httpx 的 stream 上下文
                 # 由生成器的 aclose 驱动）。
                 if stream_iter is not None:
-                    try:
-                        await stream_iter.aclose()
-                    except Exception:  # noqa: BLE001 - 收尾失败不能盖住审计
-                        pass
+                    await _teardown_step("upstream-close", stream_iter.aclose())
                 # 最后一帧可能没有空行收尾（上游在 [DONE] 后直接关连接），收尾解析一次。
                 tracker.close()
                 if json_body:
@@ -2745,39 +2784,48 @@ async def _stream_completion(
                     units = ai_usage.estimate_af(
                         estimated_prompt_chars, state["chars"], rate
                     )
-                await audit.record(
-                    user_oid=user_oid,
-                    capability="chat",
-                    endpoint=audit.ENDPOINT_CHAT,
-                    provider=name,
-                    model=model,
-                    status=state["status"],
-                    http_status=200 if state["status"] == "success" else None,
-                    error_code=state["error_code"],
-                    latency_ms=_elapsed_ms(started),
-                    units=units,
-                    request_id=request_id,
-                    key_scope=entry.get("scope"),
-                    purpose=purpose,
-                    attempt_no=index,
-                    first_token_ms=state["first_token_ms"],
-                    roles_snapshot=snapshot,
-                    cache_key=cache_key,
-                    **tokens,
-                )
-                if _billable(entry):
-                    await _charge(user_oid, units, roles)
-                # 流式请求的「完成」就在生成器收尾：此时流水已落库，计数包含本次。
-                await _evaluate_burst(user_oid)
-                await prompt_audit.record_outcome(
-                    audit_oid,
-                    answer_text=(
-                        _answer_text(json_result)
-                        if json_body
-                        else _stream_answer_text(bytes(state["answer"]))
+                # 每一步单独兜住：一步失败（或断连后只剩同步机会）不能把后面的
+                # 审计/扣费一起带走；槽已经在上面还过了，这里失败不会造成泄漏。
+                await _teardown_step(
+                    "audit",
+                    audit.record(
+                        user_oid=user_oid,
+                        capability="chat",
+                        endpoint=audit.ENDPOINT_CHAT,
+                        provider=name,
+                        model=model,
+                        status=state["status"],
+                        http_status=200 if state["status"] == "success" else None,
+                        error_code=state["error_code"],
+                        latency_ms=_elapsed_ms(started),
+                        units=units,
+                        request_id=request_id,
+                        key_scope=entry.get("scope"),
+                        purpose=purpose,
+                        attempt_no=index,
+                        first_token_ms=state["first_token_ms"],
+                        roles_snapshot=snapshot,
+                        cache_key=cache_key,
+                        **tokens,
                     ),
                 )
-                await guard.__aexit__(None, None, None)
+                if _billable(entry):
+                    await _teardown_step(
+                        "charge", _charge(user_oid, units, roles)
+                    )
+                # 流式请求的「完成」就在生成器收尾：此时流水已落库，计数包含本次。
+                await _teardown_step("burst", _evaluate_burst(user_oid))
+                await _teardown_step(
+                    "prompt-outcome",
+                    prompt_audit.record_outcome(
+                        audit_oid,
+                        answer_text=(
+                            _answer_text(json_result)
+                            if json_body
+                            else _stream_answer_text(bytes(state["answer"]))
+                        ),
+                    ),
+                )
 
         return StreamingResponse(
             generate(),

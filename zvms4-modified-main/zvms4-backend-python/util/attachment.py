@@ -21,6 +21,7 @@ import time
 import warnings
 from dataclasses import dataclass
 from datetime import date, timedelta
+from pathlib import Path
 
 import anyio
 from PIL import Image, ImageOps, UnidentifiedImageError
@@ -101,10 +102,31 @@ _SIGN_PURPOSE_LABEL = b"filesign"
 _DEFAULT_TTL = 3600  # default validity: 1 hour (design §6.2)
 _MAX_TTL = 86400  # hard cap: 24 hours (design §6.2)
 
-try:  # pragma: no cover - key is always present in a real deployment
-    _aes_key_bytes = open("aes_key.txt", "r").read().encode("utf-8")
-except OSError:  # pragma: no cover
-    _aes_key_bytes = b""
+_AES_KEY_PATH = Path(__file__).resolve().parents[1] / "aes_key.txt"
+
+
+def _load_sign_secret(path: Path) -> bytes:
+    """读平台密钥；缺失或为空即启动失败，绝不退化成可预测的密钥。
+
+    旧实现用相对 cwd 的 ``open("aes_key.txt")`` 并吞掉 ``OSError``：进程从别的
+    目录启动（systemd ``WorkingDirectory`` 漂移、pytest、cron）时密钥悄悄变成
+    ``b""``，于是 ``_SIGN_KEY = sha256(b"filesign")`` 人人可算，附件签名 URL 能被
+    任意伪造。密钥与 ``rsa_*.pem`` 同层放在后端根，路径按 ``__file__`` 锚定，
+    与 cwd 无关。空文件与缺失等价——空串同样推导出可预测的签名键。
+    """
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise RuntimeError(
+            f"附件签名密钥不可用：{path}（缺失或不可读，拒绝以空密钥启动）"
+        ) from exc
+    secret = raw.encode("utf-8")
+    if not secret.strip():
+        raise RuntimeError(f"附件签名密钥为空：{path}（拒绝以空密钥启动）")
+    return secret
+
+
+_aes_key_bytes = _load_sign_secret(_AES_KEY_PATH)
 
 # Purpose-derived key, isolated from the bare JWT HS256 key (design §6.2).
 _SIGN_KEY = hmac.new(_aes_key_bytes, _SIGN_PURPOSE_LABEL, hashlib.sha256).digest()

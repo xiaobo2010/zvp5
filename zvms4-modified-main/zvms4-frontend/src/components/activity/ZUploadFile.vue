@@ -105,7 +105,10 @@ const isDescriptionOverLimit = computed(
                 drag
                 :disabled="activity.name === ''"
                 :action="
-                  baseURL + `/imports/activities?name=${activity.name}&desc=${activity.description}`
+                  baseURL +
+                  `/imports/activities?name=${encodeURIComponent(activity.name)}&desc=${encodeURIComponent(
+                    activity.description
+                  )}`
                 "
                 multiple
                 :headers="{

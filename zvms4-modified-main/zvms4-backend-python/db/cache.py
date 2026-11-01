@@ -93,8 +93,13 @@ async def _get_client() -> Any:
     if _client_lock is None:
         _client_lock = asyncio.Lock()
     async with _client_lock:
+        # 锁外那次检查可能已过期：Redis 刚宕机时一批请求会排在锁上，
+        # 不复查就会逐个等满 0.5s 的连接超时。进锁后以最新状态为准。
+        if time.monotonic() < _degraded_until:
+            return None
         if _client is not None and _client_uri == uri:
             return _client
+        client: Any = None
         try:
             client = _aioredis.from_url(
                 uri,
@@ -104,6 +109,12 @@ async def _get_client() -> Any:
             )
             await client.ping()
         except Exception:  # noqa: BLE001 - 连接失败只降级，不冒泡
+            if client is not None:
+                # ping 失败的 client 没人会再碰它，交给 GC 会留下未关闭的连接池。
+                try:
+                    await client.aclose()
+                except Exception:  # noqa: BLE001
+                    pass
             _mark_degraded()
             _logger.warning("redis unavailable, cache disabled for %.0fs", DEGRADE_SECONDS)
             return None

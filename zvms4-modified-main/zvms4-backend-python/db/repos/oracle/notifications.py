@@ -50,6 +50,9 @@ from db.oracle.session import session_scope
 
 Row = dict[str, Any]
 
+# 用户侧公告列表的行数上限：只给客户端看最新一批，避免历史无限膨胀。
+_ACTIVE_LIMIT = 100
+
 
 @asynccontextmanager
 async def _session_for(
@@ -82,6 +85,8 @@ def _list_active_stmt():
     # 用户侧公告列表：排除 CHANGELOG 同步生成的版本公告（``source_ref`` = CHANGELOG
     # oid，作者是 SYSTEM 哨兵）。每发一版都会多一条，数量随发版线性增长，会把真
     # 正的管理员公告淹掉。管理端 ``list_all`` 不筛，仍可停用/回滚这些条目。
+    # 再加一道行数上限：历史公告只增不减，响应体（1G 生产机 + 远程 ADB 上）会随
+    # 时间线性膨胀。客户端只读最新一批，取 ``created_at`` 最新的 N 条即可。
     return (
         select(*_columns())
         .where(notifications_tbl.c.active == 1)
@@ -90,6 +95,7 @@ def _list_active_stmt():
             notifications_tbl.c.created_at.desc(),
             notifications_tbl.c.oid.desc(),
         )
+        .limit(_ACTIVE_LIMIT)
     )
 
 

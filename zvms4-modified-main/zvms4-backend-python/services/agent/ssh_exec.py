@@ -15,11 +15,14 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import logging
 from typing import Any
 
 from services import ssh_bridge
 
 from .tool_impl import AgentError
+
+_logger = logging.getLogger(__name__)
 
 # 契约 §4.2：command ≤1024，timeout ≤60；输出 stdout/stderr 各 8KB。
 MAX_COMMAND_CHARS = 1024
@@ -90,8 +93,13 @@ async def run_once(command: str, *, timeout: float = DEFAULT_TIMEOUT_SECONDS) ->
         except AgentError:
             raise
         except Exception as exc:  # noqa: BLE001 - 连接/通道故障统一翻译
+            # 上游异常原文可能带 known_hosts / 私钥路径，模型不需要也不该看到；
+            # 只把类型名交出去，细节留在服务端日志（同 system_ssh_router 的姿势）。
+            _logger.exception("ssh command failed: %s", type(exc).__name__)
             raise AgentError(
-                "AI_AGENT_SSH_FAILED", f"ssh command failed: {exc}", 502
+                "AI_AGENT_SSH_FAILED",
+                f"ssh command failed: {type(exc).__name__}",
+                502,
             ) from None
 
         stdout, stdout_truncated = _clip(_decode(getattr(result, "stdout", b"")))

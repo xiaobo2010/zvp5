@@ -7,7 +7,8 @@
 * ``trust_env=False`` —— 不吃 ``http_proxy`` 之类环境变量，出口必须可预期；
 * ``follow_redirects=False`` —— 重定向会把 ``Authorization`` 带去别的主机。
 
-返回给前端的 message 里不出现上游 URL、报文、密钥：这些只进日志（截断 500 字符）。
+返回给前端的 message 里不出现上游 URL、报文、密钥：日志也只留 host 与状态码，
+不截上游正文（正文可能回显用户 prompt）。
 
 上游地址来自调用方传入的 entry（可能是个人/共享/服务端任一层），本模块不再读
 settings：凭据目录已经决定「这次该打谁」，这里只负责把请求发出去。
@@ -28,7 +29,6 @@ _logger = logging.getLogger(__name__)
 
 CONNECT_TIMEOUT = 5.0
 READ_TIMEOUT = 120.0
-BODY_LOG_LIMIT = 500
 # 交给路由层判定「不支持流式」的错误体上限。错误体可能回显请求里的 prompt，
 # 所以只留够判定的一小段（短于它的 body 原样保留）。
 STREAM_META_BODY_LIMIT = 512
@@ -210,9 +210,11 @@ def _status_error(status_code: int) -> RouteError:
     return RouteError("AI_UPSTREAM_REJECTED", "upstream rejected the request", 502)
 
 
-def _upstream_error(name: str, status_code: int, body: str) -> RouteError:
+def _upstream_error(name: str, status_code: int) -> RouteError:
+    # 错误体可能回显用户 prompt（见模块 docstring），只留状态码与上游名，
+    # 不截正文——500 字符已经够泄露一段对话。
     _logger.warning(
-        "ai upstream %s returned %s: %s", name, status_code, body[:BODY_LOG_LIMIT]
+        "ai upstream %s returned HTTP %s (detail withheld)", name, status_code
     )
     return _status_error(status_code)
 
@@ -293,8 +295,8 @@ async def list_models(entry: dict, api_key: str | None = None) -> list[dict]:
         raise RouteError("AI_UPSTREAM_ERROR", "upstream is unreachable", 502) from None
 
     if response.status_code < 200 or response.status_code >= 300:
-        # 不走 ``_upstream_error``：那条路径会把响应体写进日志，而 ``/models`` 的
-        # 报错体可能回显整段请求头。这里只留状态码与 host。
+        # 与 ``_upstream_error`` 分开是为了在日志里记 host（更有定位价值），
+        # 而不是上游 name；两边都只留状态码，不记响应体。
         _logger.warning(
             "ai models probe %s returned %s",
             _host(entry) or "-",
@@ -341,9 +343,7 @@ async def chat_completion(payload: dict, entry: dict, api_key: str) -> dict:
         raise RouteError("AI_UPSTREAM_ERROR", "upstream is unreachable", 502) from None
 
     if response.status_code < 200 or response.status_code >= 300:
-        raise _upstream_error(
-            str(entry.get("name") or ""), response.status_code, response.text
-        )
+        raise _upstream_error(str(entry.get("name") or ""), response.status_code)
 
     try:
         return response.json()
@@ -401,9 +401,7 @@ async def chat_completion_stream(
                     # 里的 prompt，不该跟着进审计或日志。
                     meta["error_body"] = text[:STREAM_META_BODY_LIMIT]
                 raise _upstream_error(
-                    str(entry.get("name") or ""),
-                    response.status_code,
-                    text,
+                    str(entry.get("name") or ""), response.status_code
                 )
             # 双保险：就算上游无视 ``Accept-Encoding: identity`` 仍然压了，
             # ``aiter_bytes()`` 会按 Content-Encoding 解压后再给我们；``aiter_raw()``

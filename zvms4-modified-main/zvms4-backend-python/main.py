@@ -138,7 +138,7 @@ async def current_version() -> str:
     try:
         entries = await backends.get_changelog_repo().list_all()
     except Exception as e:
-        print(f"Failed to read version from changelog: {e}")
+        _logger.exception("Failed to read version from changelog: %s", e)
         return VERSION_UNKNOWN
     if not entries:
         return VERSION_UNKNOWN
@@ -372,7 +372,7 @@ async def mark_all_tasks_failed():
 
 async def startup_event():
     """Startup event handler to initialize the application."""
-    print("Starting up...")
+    _logger.info("Starting up...")
     scheduler.start()
 
     # Rebuild the derived volunteer-time statistics daily at 01:00 HKT (UTC+8).
@@ -398,6 +398,11 @@ async def startup_event():
         second=0,
         timezone="Asia/Hong_Kong",
         id="daily_generate_reports",
+        # 报表生成要写几千个文件再打包，跑一次几分钟：错过触发窗口不该重跑
+        # （coalesce），也不该和上一次重叠（max_instances）。
+        coalesce=True,
+        max_instances=1,
+        misfire_grace_time=3600,
     )
 
     # Clear the bytes of soft-deleted attachments older than the retention
@@ -543,7 +548,7 @@ async def startup_event():
     try:
         recovered = await run_queue.recover_on_startup()
         if recovered:
-            print(f"ai run queue: {recovered} interrupted run(s) recovered")
+            _logger.info("ai run queue: %s interrupted run(s) recovered", recovered)
     except Exception:  # noqa: BLE001 - 启动阶段的库不可用由 health 报告
         _logger.exception("ai run queue startup recovery failed")
 
@@ -576,12 +581,12 @@ async def startup_event():
     except Exception:  # noqa: BLE001 - 起泵失败只影响后台执行，接口仍可用
         _logger.exception("ai run queue kick failed")
 
-    print("Application started.")
+    _logger.info("Application started.")
 
 
 async def shutdown_event():
     """Shutdown event handler to clean up resources."""
-    print("Shutting down...")
+    _logger.info("Shutting down...")
     await mark_all_tasks_failed()
     scheduler.shutdown()
     try:
@@ -590,7 +595,7 @@ async def shutdown_event():
         await db_cache.aclose()
     except Exception:  # noqa: BLE001 - 缓存连接关不掉不影响进程退出
         pass
-    print("Application shut down.")
+    _logger.info("Application shut down.")
 
 
 # Register events

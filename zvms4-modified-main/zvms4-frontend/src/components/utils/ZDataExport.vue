@@ -11,7 +11,7 @@ import {
   ElSwitch
 } from 'element-plus'
 import api from '@/api'
-import { ref, toRefs, watch } from 'vue'
+import { onUnmounted, ref, toRefs, watch } from 'vue'
 import dayjs, { type Dayjs } from 'dayjs'
 import { Box, Download } from '@element-plus/icons-vue'
 import { useI18n } from 'vue-i18n'
@@ -76,6 +76,15 @@ const status = ref<'pending' | 'processing' | 'completed' | 'failed'>('pending')
 const allowCache = ref(false)
 const includeDescription = ref(false)
 
+let pollTimer: ReturnType<typeof setInterval> | null = null
+
+function stopPolling() {
+  if (pollTimer) {
+    clearInterval(pollTimer)
+    pollTimer = null
+  }
+}
+
 async function createTask() {
   const result = await api.exports.create(
     type.value,
@@ -88,20 +97,25 @@ async function createTask() {
   if (result) {
     taskID.value = result
   }
+  stopPolling()
   const interval = setInterval(async () => {
+    const stop = () => {
+      clearInterval(interval)
+      if (pollTimer === interval) pollTimer = null
+    }
     const result = await api.exports.query(taskID.value).catch(() => {
       color.value = 'exception'
-      clearInterval(interval)
+      stop()
     })
     if (result) {
       percentage.value = parseFloat(result.percentage.toFixed(2))
       status.value = result.status
       if (result.status === 'completed') {
         color.value = 'success'
-        clearInterval(interval)
+        stop()
       } else if (result.status === 'failed') {
         color.value = 'exception'
-        clearInterval(interval)
+        stop()
       } else if (result.status === 'pending' || percentage.value < 10.0) {
         color.value = 'warning'
       } else {
@@ -109,10 +123,13 @@ async function createTask() {
       }
     } else {
       color.value = 'exception'
-      clearInterval(interval)
+      stop()
     }
   }, 1500)
+  pollTimer = interval
 }
+
+onUnmounted(stopPolling)
 
 function cleanup() {
   name.value = ''

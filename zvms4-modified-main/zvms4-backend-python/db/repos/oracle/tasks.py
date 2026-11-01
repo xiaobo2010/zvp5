@@ -89,6 +89,16 @@ def _task_columns() -> tuple[Any, ...]:
     )
 
 
+def _task_status_columns() -> tuple[Any, ...]:
+    """状态轮询用的窄投影：``_task_columns`` 去掉 ``result``。
+
+    前端 ``src/api/exports.ts`` 每 1.5s 轮询一次状态，而 ``result`` 是整份
+    导出结果的 JSON CLOB；旧端点把它整份跨洋拉回来，再在路由里 ``del`` 掉。
+    轮询只需要元数据，列集里没有任何其它 CLOB/大列。
+    """
+    return tuple(column for column in _task_columns() if column.name != "result")
+
+
 def _insert_stmt(
     oid: str,
     task_uuid: str,
@@ -125,6 +135,10 @@ def _insert_stmt(
 
 def _get_by_uuid_stmt(task_uuid: str):
     return select(*_task_columns()).where(tasks_tbl.c.task_uuid == task_uuid)
+
+
+def _get_status_by_uuid_stmt(task_uuid: str):
+    return select(*_task_status_columns()).where(tasks_tbl.c.task_uuid == task_uuid)
 
 
 def _get_stmt(oid: str):
@@ -221,7 +235,9 @@ def _task_row(mapping: Any) -> Row:
         task_uuid: Any = uuid.UUID(raw_uuid) if raw_uuid is not None else None
     except (ValueError, TypeError):
         task_uuid = raw_uuid
-    result = mapping["result"]
+    # 窄投影（:func:`_task_status_columns`）不带 ``result``；``.get`` 让两种行
+    # 共用同一份映射，省掉一份重复的字段表。
+    result = mapping.get("result")
     return {
         "_id": mapping["oid"],
         "id": task_uuid,
@@ -277,6 +293,21 @@ class OracleTasksRepo:
         if row is None:
             return None
         return _task_row(row._mapping)
+
+    async def get_status_by_uuid(self, task_uuid: Any) -> Row | None:
+        """同 :meth:`get_by_uuid`，但不读 ``result`` CLOB（供状态轮询用）。
+
+        返回的文档没有 ``result`` 键；下载/生成路径仍走 :meth:`get_by_uuid`。
+        """
+        stmt = _get_status_by_uuid_stmt(_uuid_str(task_uuid))
+        async with _session_for(self._session) as (session, _owns):
+            row = (await session.execute(stmt)).first()
+        if row is None:
+            return None
+        task = _task_row(row._mapping)
+        # 轮询契约本来就没有 result（旧实现在路由里 del 掉），这里保持字段集合一致。
+        task.pop("result", None)
+        return task
 
     async def get(self, oid: str) -> Row | None:
         stmt = _get_stmt(normalize_oid(oid))
