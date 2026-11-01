@@ -1,5 +1,9 @@
 # 浏览器直连 API（2026-11-01）
 
+> **2026-11-02 更新**：前端源站已因 前端 443 生产事故整体迁至 zvp-backend（后端），
+> 本文指向 `zvp-frontend` 的部署命令已过时；现行架构、发布流水线与回滚见
+> `DEPLOY_FRONTEND_TO_BACKEND_HOST.md`。浏览器直连 zvpapi 的 API 路径不变。
+
 前端仍由 `zvp-frontend`分发，但**浏览器不再经内容站反代**，直接请求 API 域名
 `zvpapi.xiaobopisces.top`（后端）。这是 DEPLOY_API_SPLIT.md 那套「同源反代」的升级版。
 
