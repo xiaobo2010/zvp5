@@ -1,3 +1,6 @@
+# DEPRECATED: 与现网完全脱节的历史样例（无 TLS、无 SSE buffering off、端口 8000），
+# 照抄会复现已记录过的 SSE 卡死与 WS 404 事故。现网配置见 docs/DEPLOY_FRONTEND_SEOUL.md
+# 与 docs/DEPLOY_API_SPLIT.md。仅作历史参考保留。
 server {
     listen 80;
     server_name api.zvms.site;
