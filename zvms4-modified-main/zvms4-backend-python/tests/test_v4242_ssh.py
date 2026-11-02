@@ -239,6 +239,8 @@ def test_session_issues_single_use_ticket(env):
     entry = ssh_bridge.consume_ticket(ticket)
     assert entry is not None and entry.operator_oid == OPERATOR
     assert entry.approver_oid == APPROVER
+    # 没传 target：ticket 绑定默认目标（WS 侧只认 ticket 里的落点）。
+    assert entry.target_id == ssh_bridge.load_target().id
     # 单次消费：第二次必然拿不到。
     assert ssh_bridge.consume_ticket(ticket) is None
 
@@ -315,8 +317,9 @@ def test_initial_process_uses_pty(env):
     kwargs = connection.create_kwargs
     assert kwargs["term_type"] == "xterm-256color"
     assert kwargs["term_size"] == (ssh_bridge.DEFAULT_COLS, ssh_bridge.DEFAULT_ROWS)
-    # 目标只来自服务端配置，客户端无法指定。
-    assert connection.target.user == ssh_bridge.load_target().user
+    # 目标只来自服务端配置：没传 target 时就是默认目标，客户端无法指定。
+    assert connection.target == ssh_bridge.load_target()
+    assert connection.target.id == ssh_bridge.load_target().id
 
 
 def test_output_is_split_into_bounded_chunks(env):

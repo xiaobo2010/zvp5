@@ -167,7 +167,9 @@ export const viteBaseConfig = {
     proxy: {
       '/api': {
         target: 'http://127.0.0.1:8000',
-        changeOrigin: true
+        changeOrigin: true,
+        // Web SSH 的 /api/system/ssh/ws 需要 WebSocket 升级；Vite 默认不转发。
+        ws: true
       }
     }
   }

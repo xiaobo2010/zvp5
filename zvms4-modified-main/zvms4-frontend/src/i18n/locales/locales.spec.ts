@@ -41,13 +41,16 @@ describe('locale messages', () => {
     expect(failures).toEqual([])
   })
 
-  it('renders the SSH auth scene with a literal @', () => {
+  it('renders the SSH auth scene with the selected target', () => {
     const i18n = createI18n({
       locale: 'zh-CN',
       fallbackLocale: 'zh-CN',
       messages: { 'zh-CN': zhCN },
       legacy: false
     })
-    expect(i18n.global.t('server.ssh.authScene')).toContain('root@127.0.0.1')
+    // 目标展示串由服务端下发,可能自带 @;插值数据不参与模板解析。
+    expect(i18n.global.t('server.ssh.authScene', { target: 'root@192.0.2.11' })).toContain(
+      'root@192.0.2.11'
+    )
   })
 })

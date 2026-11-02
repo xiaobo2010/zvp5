@@ -1,15 +1,17 @@
 /**
  * API ownership split used by the browser request layer.
  *
- * The database adjacent origin is the default.  These routes are different:
- * they operate on the web host's local certificate, filesystem, or SSH
- * socket, so sending them through the database host adds a network hop and
- * can address the wrong machine's local resources.
+ * The database adjacent origin is the default.  A few routes are different:
+ * they operate on the web host's local filesystem, so sending them through
+ * the database host adds a network hop and can address the wrong machine's
+ * local resources.
+ *
+ * The SSH terminal is no longer machine-local: the API server's gateway
+ * backend opens the SSH connection itself, so `/system/ssh/*` (session and
+ * websocket included) stays on the API host.  Only file management still
+ * reads/writes the content host that served this page.
  */
-const CONTENT_HOST_EXACT_PATHS = new Set([
-  '/system/ssh/session',
-  '/system/ssh/ws'
-])
+const CONTENT_HOST_EXACT_PATHS = new Set<string>()
 
 const CONTENT_HOST_PREFIXES = ['/system/files/']
 
