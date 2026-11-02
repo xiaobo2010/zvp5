@@ -1,5 +1,5 @@
 import { fileURLToPath, URL } from 'node:url'
-import { defineConfig, loadEnv } from 'vite'
+import { defineConfig, loadEnv, type Plugin } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import vueJsx from '@vitejs/plugin-vue-jsx'
 // import basicSsl from '@vitejs/plugin-basic-ssl'
@@ -18,6 +18,55 @@ import { validateProductionApiBase } from './src/utils/apiBaseConfig'
 function requireProductionApiBase(mode: string): string {
   const fileEnv = loadEnv(mode, process.cwd(), 'VITE_')
   return validateProductionApiBase(process.env.VITE_API_BASE || fileEnv.VITE_API_BASE)
+}
+
+/**
+ * Warm the cross-origin API connection while the HTML is still being parsed.
+ *
+ * The SPA is served by the content host and calls the API host directly, so the
+ * first API request would otherwise pay a full DNS + TCP + TLS round trip after
+ * the JS bundle has already loaded.  `preconnect` starts that handshake in
+ * parallel with the bundle download from the other origin; `dns-prefetch` is the
+ * fallback for browsers that drop speculative connections.
+ *
+ * The origin is derived from VITE_API_BASE at build time, so no production
+ * domain is stored in the repository and a local build (`/api`) emits nothing.
+ */
+function preconnectApiOrigin(): Plugin {
+  let mode = 'production'
+  return {
+    name: 'zvms4-preconnect-api-origin',
+    apply: 'build',
+    configResolved(config) {
+      mode = config.mode
+    },
+    transformIndexHtml(html) {
+      const fileEnv = loadEnv(mode, process.cwd(), 'VITE_')
+      const raw = (process.env.VITE_API_BASE || fileEnv.VITE_API_BASE || '').trim()
+      if (!raw) return html
+      let origin: string
+      try {
+        origin = new URL(validateProductionApiBase(raw)).origin
+      } catch {
+        return html
+      }
+      return {
+        html,
+        tags: [
+          {
+            tag: 'link',
+            attrs: { rel: 'preconnect', href: origin, crossorigin: '' },
+            injectTo: 'head-prepend'
+          },
+          {
+            tag: 'link',
+            attrs: { rel: 'dns-prefetch', href: origin },
+            injectTo: 'head-prepend'
+          }
+        ]
+      }
+    }
+  }
 }
 
 // https://vitejs.dev/config/
@@ -133,7 +182,8 @@ export const viteBaseConfig = {
     }),
     VueComponents({
       resolvers: [ElementPlusResolver({ importStyle: false }), VantResolver(), IconsResolver()]
-    })
+    }),
+    preconnectApiOrigin()
   ],
   resolve: {
     alias: {

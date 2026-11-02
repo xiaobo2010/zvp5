@@ -1,8 +1,10 @@
 # 浏览器直连 API（2026-11-01）
 
-> **2026-11-02 更新**：前端源站已因 LA 443 生产事故整体迁至 tencent-43（首尔），
-> 本文指向 `zgovps-la` 的部署命令已过时；现行架构、发布流水线与回滚见
-> `DEPLOY_FRONTEND_SEOUL.md`。浏览器直连 zvpapi 的 API 路径不变。
+> **2026-11-02 更新（二次）**：前端源站已迁回 `zgovps-la`（洛杉矶）并开启 HTTP/2。
+> 11-01 记录的「LA 443 事故」实为宝塔面板国家级 DROP，已在机内修复。现行架构、
+> 发布流水线与回滚见 `DEPLOY_FRONTEND_LA_HTTP2.md`；`DEPLOY_FRONTEND_SEOUL.md`
+> 仅保留事故过程与首尔热备记录。浏览器直连 zvpapi 的 API 路径不变，本文其余
+> 内容（为什么要直连、CORS/CSP 配置）仍然有效。
 
 前端仍由 `zgovps-la`（洛杉矶）分发，但**浏览器不再经内容站反代**，直接请求 API 域名
 `zvpapi.xiaobopisces.top`（首尔）。这是 DEPLOY_API_SPLIT.md 那套「同源反代」的升级版。
