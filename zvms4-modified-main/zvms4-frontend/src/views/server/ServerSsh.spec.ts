@@ -2,7 +2,7 @@ import { mount, flushPromises, type VueWrapper } from '@vue/test-utils'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { h, watch, type SetupContext } from 'vue'
 import ServerSsh from './ServerSsh.vue'
-import { createSshSession, suggestSshCommand } from '@/api/system/ssh.ts'
+import { createSshSession, listSshTargets, suggestSshCommand } from '@/api/system/ssh.ts'
 import { listModels } from '@/api/ai/chat.ts'
 import { submitSceneRun } from '@/api/ai/scenes.ts'
 import { fetchRunDetail } from '@/api/ai/conversations.ts'
@@ -63,12 +63,18 @@ const {
   }
   const ElSkeleton = { name: 'ElSkeleton', template: '<div class="el-skeleton-stub" />' }
   const ElIcon = { name: 'ElIcon', template: '<span><slot /></span>' }
+  // 真实 ElSelect 通过 v-model 回传选中值;桩把插槽渲染出来并允许测试发
+  // update:modelValue,才能覆盖「选项渲染」「切换目标」两条行为。
   const ElSelect = {
     name: 'ElSelect',
-    props: { modelValue: [Number, String] },
-    template: '<div class="el-select-stub" />'
+    props: { modelValue: [Number, String], disabled: Boolean, placeholder: String },
+    template: '<div class="el-select-stub"><slot /></div>'
   }
-  const ElOption = { name: 'ElOption', template: '<div />' }
+  const ElOption = {
+    name: 'ElOption',
+    props: { label: [String, Number], value: [String, Number] },
+    template: '<div class="el-option-stub" :data-value="value">{{ label }}</div>'
+  }
   const ElInput = {
     name: 'ElInput',
     props: { modelValue: [String, Number] },
@@ -156,6 +162,7 @@ vi.mock('vue-i18n', () => ({
 vi.mock('@/api/system/ssh.ts', () => ({
   createSshSession: vi.fn(),
   suggestSshCommand: vi.fn(),
+  listSshTargets: vi.fn(),
   buildSshWsUrl: vi.fn((ticket: string) => `ws://test/system/ssh/ws?ticket=${ticket}`)
 }))
 
@@ -231,6 +238,16 @@ vi.mock('@xterm/addon-fit', () => ({
 
 const WARNED_KEY = 'zv.ssh.warned.000000000000000000000001'
 const CODE = '123456'
+const TARGETS = [
+  { id: 'frontend', label: '前端服务器', display: 'root@10.0.0.11' },
+  { id: 'api', label: 'API 服务器', display: 'root@10.0.0.12' }
+]
+
+function targetCatalog(targets = TARGETS, fallback = 'frontend') {
+  return {
+    data: { status: 'ok', code: 200, data: { targets, default: fallback } }
+  } as never
+}
 
 class WebSocketStub {
   static readonly CONNECTING = 0
@@ -269,6 +286,15 @@ function buttonByText(wrapper: VueWrapper, text: string) {
   const button = wrapper.findAll('button').find((item) => item.text() === text)
   if (!button) throw new Error(`button "${text}" not rendered`)
   return button
+}
+
+/** header 里只有目标选择器带 .target-select(字号下拉没有)。 */
+function targetSelect(wrapper: VueWrapper) {
+  const select = wrapper
+    .findAllComponents({ name: 'ElSelect' })
+    .find((item) => item.classes().includes('target-select'))
+  if (!select) throw new Error('target select not rendered')
+  return select
 }
 
 const SUGGEST = {
@@ -313,6 +339,8 @@ beforeEach(() => {
   succeedSpy.mockReset()
   failSpy.mockReset()
   vi.mocked(createSshSession).mockReset()
+  vi.mocked(listSshTargets).mockReset()
+  vi.mocked(listSshTargets).mockResolvedValue(targetCatalog())
   elMessageErrorSpy.mockReset()
   elMessageWarningSpy.mockReset()
   elMessageBoxConfirmSpy.mockReset()
@@ -477,7 +505,7 @@ it('exchanges a six-digit code for a ticket', async () => {
   await flushPromises()
 
   expect(createSshSession).toHaveBeenCalledTimes(1)
-  expect(createSshSession).toHaveBeenCalledWith(CODE)
+  expect(createSshSession).toHaveBeenCalledWith(CODE, 'frontend')
   expect(succeedSpy).toHaveBeenCalledTimes(1)
   expect(WebSocketStub.instances).toHaveLength(1)
   expect(WebSocketStub.instances[0].url).toContain('ticket=ticket-1')
@@ -781,6 +809,127 @@ it('downloads the suggestion as a local .sh script', async () => {
   expect(click).toHaveBeenCalledTimes(1)
   const anchor = (click.mock.instances as unknown as HTMLAnchorElement[])[0]!
   expect(anchor.download).toMatch(/^ssh-suggest-\d{8}-\d{6}\.sh$/)
+
+  wrapper.unmount()
+})
+
+// ---------- 连接目标 ----------
+it('renders the server-provided targets and preselects the default', async () => {
+  const wrapper = mountPage()
+  await flushPromises()
+
+  const select = targetSelect(wrapper)
+  expect(select.props('modelValue')).toBe('frontend')
+  expect(select.findAll('.el-option-stub').map((item) => item.text())).toEqual([
+    '前端服务器',
+    'API 服务器'
+  ])
+  // header 的地址跟着目标走,不再是写死的 root@127.0.0.1
+  expect(wrapper.text()).toContain('root@10.0.0.11')
+  expect(wrapper.text()).not.toContain('127.0.0.1')
+
+  wrapper.unmount()
+})
+
+it('opens the session with the selected target', async () => {
+  localStorage.setItem(WARNED_KEY, '1')
+  openSpy.mockResolvedValue(CODE)
+  vi.mocked(createSshSession).mockResolvedValue({
+    data: { status: 'ok', code: 200, data: { ticket: 'ticket-1', expires_in: 120 } }
+  } as never)
+
+  const wrapper = mountPage()
+  await flushPromises()
+
+  targetSelect(wrapper).vm.$emit('update:modelValue', 'api')
+  await flushPromises()
+  expect(wrapper.text()).toContain('root@10.0.0.12')
+
+  await emptyStateButton(wrapper).trigger('click')
+  await flushPromises()
+
+  // 授权框场景文案的 {target} 插值由 t() 负责,这里只确认仍走同一个 scene key
+  expect(openSpy).toHaveBeenCalledWith('server.ssh.authScene')
+  expect(createSshSession).toHaveBeenCalledWith(CODE, 'api')
+
+  wrapper.unmount()
+})
+
+it('locks the target selector while the auth dialog is pending', async () => {
+  localStorage.setItem(WARNED_KEY, '1')
+  let resolveCode: (value: string | null) => void = () => undefined
+  openSpy.mockReturnValue(
+    new Promise<string | null>((resolve) => {
+      resolveCode = resolve
+    })
+  )
+
+  const wrapper = mountPage()
+  await flushPromises()
+  expect(targetSelect(wrapper).props('disabled')).toBe(false)
+
+  await emptyStateButton(wrapper).trigger('click')
+  await flushPromises()
+  // 双人码批的是当时展示的目标,提交前不许换
+  expect(targetSelect(wrapper).props('disabled')).toBe(true)
+
+  resolveCode(null)
+  await flushPromises()
+  expect(targetSelect(wrapper).props('disabled')).toBe(false)
+  expect(createSshSession).not.toHaveBeenCalled()
+
+  wrapper.unmount()
+})
+
+it('disconnects the live session and clears the banner before switching target', async () => {
+  const wrapper = mountPage()
+  await flushPromises()
+  const ws = await connectTerminal(wrapper)
+
+  // 连接中/已连接时目标选择器必须锁住
+  expect(targetSelect(wrapper).props('disabled')).toBe(true)
+
+  // 先制造一条断线 banner,再切换目标
+  ws.onmessage?.({ data: JSON.stringify({ type: 'exit', code: 1 }) } as MessageEvent)
+  await flushPromises()
+  expect(wrapper.text()).toContain('server.ssh.exitCode')
+
+  targetSelect(wrapper).vm.$emit('update:modelValue', 'api')
+  await flushPromises()
+
+  expect(ws.close).toHaveBeenCalledWith(1000)
+  expect(wrapper.text()).toContain('server.ssh.statusIdle')
+  expect(wrapper.find('.el-alert-stub').exists()).toBe(false)
+
+  wrapper.unmount()
+})
+
+it('surfaces an empty target catalog and disables the start button', async () => {
+  vi.mocked(listSshTargets).mockResolvedValue(targetCatalog([], ''))
+
+  const wrapper = mountPage()
+  await flushPromises()
+
+  expect(wrapper.text()).toContain('server.ssh.noTargets')
+  const button = emptyStateButton(wrapper)
+  expect(button.attributes('disabled')).toBeDefined()
+
+  await button.trigger('click')
+  await flushPromises()
+  expect(openSpy).not.toHaveBeenCalled()
+
+  wrapper.unmount()
+})
+
+it('surfaces target catalog load failures and disables the start button', async () => {
+  vi.mocked(listSshTargets).mockRejectedValue(new Error('offline'))
+
+  const wrapper = mountPage()
+  await flushPromises()
+
+  expect(wrapper.text()).toContain('server.ssh.targetLoadFailed')
+  expect(emptyStateButton(wrapper).attributes('disabled')).toBeDefined()
+  expect(openSpy).not.toHaveBeenCalled()
 
   wrapper.unmount()
 })

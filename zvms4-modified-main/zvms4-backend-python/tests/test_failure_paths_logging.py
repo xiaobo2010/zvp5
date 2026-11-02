@@ -162,7 +162,7 @@ def test_output_pump_failure_logs_the_type_only(monkeypatch, caplog, capsys) -> 
 def test_connect_failure_is_logged_and_returns_a_generic_error(
     monkeypatch, caplog, capsys
 ) -> None:
-    async def _boom():
+    async def _boom(*_args, **_kwargs):
         raise OSError("cannot read /root/.ssh/id_rsa")
 
     class _Registry:

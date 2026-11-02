@@ -5,6 +5,10 @@
 ``Authorization`` 头，所以 WS 侧只认 ticket —— ticket 的发放已经过完整 HTTP
 鉴权，且 120 秒内单次有效。
 
+``GET /targets`` 只列出服务端配置的命名目标（id/label/display）；连接参数
+（host/port/user/密钥路径）永远不出现在响应里。``POST /session`` 的 ``target``
+只是一个 id，未配置的 id 一律 400 ``SSH_UNKNOWN_TARGET``。
+
 ``POST /suggest`` 只让 AI 起草一条命令文本（生成 ≠ 执行）：它不发 ticket、不开
 连接、不执行任何东西，执行仍然只发生在 ``/ws`` 里，由人粘贴并亲自回车。
 
@@ -74,6 +78,8 @@ class SessionRequest(BaseModel):
     # 长度/字符集留给守卫判：它要区分「格式非法 422」与「码不对 403」，
     # 在这里用 Field 提前拦截会把两种错误混成同一条 Pydantic 报错。
     totp_code: str
+    # 只接受目标 id，连接参数仍由服务端配置决定；未知 id 在端点里判 400。
+    target: str | None = None
 
 
 async def _require_system_admin(user: dict) -> dict:
@@ -93,6 +99,24 @@ async def _require_system_admin(user: dict) -> dict:
     return me
 
 
+@router.get("/targets")
+async def list_ssh_targets(user=Depends(get_current_user)):
+    """列出可选目标：只回 id/label/display，密钥路径与 known_hosts 永不出圈。"""
+    await _require_system_admin(user)
+    targets = ssh_bridge.load_targets()
+    default = ssh_bridge.load_target()
+    return {
+        "status": "ok",
+        "code": 200,
+        "data": {
+            "targets": [
+                {"id": t.id, "label": t.label, "display": t.display} for t in targets
+            ],
+            "default": default.id,
+        },
+    }
+
+
 @router.post("/session")
 async def create_ssh_session(
     payload: SessionRequest,
@@ -100,17 +124,34 @@ async def create_ssh_session(
 ):
     """校验双人码后发放 ticket；ticket 只能消费一次。"""
     me = await _require_system_admin(user)
+
+    # 先解析目标再验码：未知 id 不是「批准过的动作」，没必要消耗一次动态码。
+    target_id = (payload.target or "").strip()
+    if target_id:
+        target = ssh_bridge.get_target(target_id)
+        if target is None:
+            raise HTTPException(status_code=400, detail="SSH_UNKNOWN_TARGET")
+    else:
+        # 兼容老前端：不传 target 就是默认目标。
+        target = ssh_bridge.load_target()
+
     try:
         approver_oid = await require_dual_auth(me, payload.totp_code, action="web_ssh")
     except DualAuthError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
 
     operator_oid = str(me.get("_id") or user["id"])
-    ticket, expires_in = ssh_bridge.issue_ticket(operator_oid, approver_oid)
+    ticket, expires_in = ssh_bridge.issue_ticket(
+        operator_oid, approver_oid, target_id=target.id
+    )
     return {
         "status": "ok",
         "code": 200,
-        "data": {"ticket": ticket, "expires_in": expires_in},
+        "data": {
+            "ticket": ticket,
+            "expires_in": expires_in,
+            "target": {"id": target.id, "label": target.label},
+        },
     }
 
 
@@ -437,6 +478,28 @@ async def open_terminal(websocket: WebSocket, ticket: str = Query(default="")):
         return
 
     operator_oid = entry.operator_oid
+
+    # 目标由 ticket 决定：发 ticket 之后配置被改掉时宁可拒绝，也不静默连到别的
+    # 机器——否则审计里的 target 会和实际落点不一致。空 target_id 是升级前/测试
+    # 里手工造的 ticket，按默认目标处理，老语义不变。
+    target_id = getattr(entry, "target_id", "") or ""
+    target = (
+        ssh_bridge.get_target(target_id) if target_id else ssh_bridge.load_target()
+    )
+    if target is None:
+        logger.error("web ssh target unavailable: %s", target_id)
+        await _send_quietly(
+            websocket, {"type": "error", "detail": "终端目标不可用"}
+        )
+        await _close(websocket, ssh_bridge.WS_CLOSE_FAILURE, "终端目标不可用")
+        await audit_system_op(
+            operator_oid,
+            action="web_ssh",
+            detail=f"reject:target target={target_id}",
+            log_type="system_ssh",
+        )
+        return
+
     registry = ssh_bridge.registry()
     if not registry.acquire(operator_oid):
         await _send_quietly(
@@ -458,7 +521,7 @@ async def open_terminal(websocket: WebSocket, ticket: str = Query(default="")):
     reason = "client"
     try:
         try:
-            session = await ssh_bridge.SshSession.open()
+            session = await ssh_bridge.SshSession.open(target=target)
         except Exception as exc:  # noqa: BLE001 - 连接失败只回笼统提示
             # 只打异常类型：异常消息里可能带私钥路径或主机指纹。
             logger.error("web ssh connect failed: %s", type(exc).__name__)
@@ -475,7 +538,7 @@ async def open_terminal(websocket: WebSocket, ticket: str = Query(default="")):
         await audit_system_op(
             operator_oid,
             action="web_ssh",
-            detail=f"open approver={entry.approver_oid}",
+            detail=f"open approver={entry.approver_oid} target={target.id}",
             log_type="system_ssh",
         )
 
@@ -504,6 +567,6 @@ async def open_terminal(websocket: WebSocket, ticket: str = Query(default="")):
             await audit_system_op(
                 operator_oid,
                 action="web_ssh",
-                detail=f"close:{reason}",
+                detail=f"close:{reason} target={target.id}",
                 log_type="system_ssh",
             )

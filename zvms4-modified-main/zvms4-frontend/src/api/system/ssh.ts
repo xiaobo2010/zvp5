@@ -1,11 +1,36 @@
 import axios from '@/plugins/axios.ts'
-import { contentBaseURL } from '@/plugins/axios.ts'
+import { baseURL } from '@/plugins/axios.ts'
 import type { AiThinkingLevel } from '@/../types/ai'
+
+// GET /api/system/ssh/targets 的响应体:目标目录由服务端下发,前端只拿展示字段。
+export interface SshTarget {
+  id: string
+  label: string
+  display: string
+}
+
+export interface SshTargetsData {
+  targets: SshTarget[]
+  default: string
+}
+
+export interface SshTargetsResponse {
+  status: string
+  code: number
+  data: SshTargetsData
+}
+
+// 连接时选中的目标;后端回显 id + label,供会话审计与展示。
+export interface SshSessionTarget {
+  id: string
+  label: string
+}
 
 // POST /api/system/ssh/session 的响应体(后端 routers/system_ssh_router.py:74)
 export interface SshSessionData {
   ticket: string
   expires_in: number
+  target?: SshSessionTarget
 }
 
 export interface SshSessionResponse {
@@ -14,10 +39,17 @@ export interface SshSessionResponse {
   data: SshSessionData
 }
 
-// 双人码换取一次性 ticket;ticket 单次使用、120s 过期、绑定操作者
-export function createSshSession(totpCode: string) {
+// 目标目录只读:前端不做任何地址推导,全部以服务端配置为准。
+export function listSshTargets() {
+  return axios.get<SshTargetsResponse>('/system/ssh/targets')
+}
+
+// 双人码换取一次性 ticket;ticket 单次使用、120s 过期、绑定操作者。
+// target 省略时后端用默认目标;未选目标则不下发该字段。
+export function createSshSession(totpCode: string, target?: string) {
   return axios.post<SshSessionResponse>('/system/ssh/session', {
-    totp_code: totpCode
+    totp_code: totpCode,
+    ...(target ? { target } : {})
   })
 }
 
@@ -68,6 +100,8 @@ export function buildSshWsUrlFor(
   return url.toString()
 }
 
+// SSH 由 API 服务器的网关后端发起,WS 必须打 API host;
+// 页面/content host 只负责文件管理。
 export function buildSshWsUrl(ticket: string): string {
-  return buildSshWsUrlFor(contentBaseURL || '/api', ticket)
+  return buildSshWsUrlFor(baseURL || '/api', ticket)
 }

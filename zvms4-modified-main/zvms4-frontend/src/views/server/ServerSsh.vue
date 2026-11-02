@@ -6,7 +6,13 @@ import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
 import { useDark } from '@vueuse/core'
-import { createSshSession, buildSshWsUrl, suggestSshCommand } from '@/api/system/ssh.ts'
+import {
+  createSshSession,
+  buildSshWsUrl,
+  listSshTargets,
+  suggestSshCommand
+} from '@/api/system/ssh.ts'
+import type { SshTarget } from '@/api/system/ssh.ts'
 import { listModels } from '@/api/ai/chat.ts'
 import { SCENE_CONTEXT_LIMIT } from '@/api/ai/scenes.ts'
 import type { AiThinkingLevel } from '@/../types/ai'
@@ -89,6 +95,67 @@ const mainButtonText = computed(() => {
   if (status.value === 'connected') return t('server.ssh.disconnect')
   if (status.value === 'closed') return t('server.ssh.reconnect')
   return t('server.ssh.startButton')
+})
+
+// ---- 连接目标 ----
+// 目标目录由服务端下发,前端只负责展示与透传 id;不推导任何主机地址。
+const targets = ref<SshTarget[]>([])
+const selectedTarget = ref('')
+const targetsLoading = ref(false)
+const targetsError = ref('')
+// 授权框打开期间也锁住目标:双人码批的是当时展示的那个目标。
+const authPending = ref(false)
+
+const currentTarget = computed(
+  () => targets.value.find((item) => item.id === selectedTarget.value) ?? null
+)
+// display 是服务端给的完整展示串,缺失时退回 label,再缺就用占位符。
+const targetDisplay = computed(
+  () => currentTarget.value?.display || currentTarget.value?.label || '—'
+)
+const targetLocked = computed(
+  () => authPending.value || status.value === 'connecting' || status.value === 'connected'
+)
+
+async function loadTargets() {
+  targetsLoading.value = true
+  targetsError.value = ''
+  try {
+    const res = await listSshTargets()
+    targets.value = (res.data?.data?.targets ?? []).filter((item) => Boolean(item?.id))
+    const preferred = res.data?.data?.default
+    if (!targets.value.some((item) => item.id === selectedTarget.value)) {
+      selectedTarget.value =
+        (preferred && targets.value.find((item) => item.id === preferred)?.id) ||
+        targets.value[0]?.id ||
+        ''
+    }
+    if (!targets.value.length) {
+      targetsError.value = t('server.ssh.noTargets')
+    }
+  } catch {
+    targets.value = []
+    selectedTarget.value = ''
+    targetsError.value = t('server.ssh.targetLoadFailed')
+  } finally {
+    targetsLoading.value = false
+  }
+}
+
+// 切换目标只换目标,不自动连接;已有会话必须先干净断开并清屏。
+function resetForTargetChange() {
+  cancelConnectTimeout()
+  teardown()
+  term?.reset()
+  status.value = 'idle'
+  banner.value = ''
+  scrolledUp.value = false
+}
+
+watch(selectedTarget, (next, previous) => {
+  if (next === previous) return
+  if (status.value === 'idle' && !ws) return
+  resetForTargetChange()
 })
 
 function warnedKey(): string {
@@ -470,40 +537,59 @@ function disconnect() {
 
 async function openTerminal() {
   banner.value = ''
-  let dialog = authRef.value
-  if (!dialog) {
-    await nextTick()
-    dialog = authRef.value
-  }
-  if (!dialog) {
-    ElMessage.error(t('server.ssh.authDialogNotReady'))
-    console.error('[ssh] ZSystemAuthDialog ref unavailable (authRef.value is empty after nextTick)')
+  const targetId = selectedTarget.value
+  const target = targets.value.find((item) => item.id === targetId)
+  if (!targetId) {
+    ElMessage.warning(t('server.ssh.targetRequired'))
     return
   }
-  if (!localStorage.getItem(warnedKey())) {
-    const ok = await confirmRootRisk()
-    if (!ok) return
-  }
-  const code = await dialog.open(t('server.ssh.authScene'))
-  if (!code) {
-    status.value = 'idle'
-    return
-  }
+  // 从点下到 ticket 落地全程锁目标：双人码批的是这里展示的那台，
+  // 不能在授权框关闭后、POST 返回前被切走。
+  authPending.value = true
   try {
-    const res = await createSshSession(code)
-    const ticket = res.data?.data?.ticket
-    if (!ticket) {
-      dialog.fail(t('server.ssh.wsErrorTicket'))
-      ElMessage.error(t('server.ssh.ticketMissing'))
+    let dialog = authRef.value
+    if (!dialog) {
+      await nextTick()
+      dialog = authRef.value
+    }
+    if (!dialog) {
+      ElMessage.error(t('server.ssh.authDialogNotReady'))
+      console.error(
+        '[ssh] ZSystemAuthDialog ref unavailable (authRef.value is empty after nextTick)'
+      )
       return
     }
-    dialog.succeed()
-    startTerminal(ticket)
-    armConnectTimeout()
-  } catch (error) {
-    const message = resolveErrorMessage(error, 'server.auth.failed')
-    dialog.fail(message)
-    ElMessage.error(message)
+    if (!localStorage.getItem(warnedKey())) {
+      const ok = await confirmRootRisk()
+      if (!ok) return
+    }
+    const code = await dialog.open(
+      t('server.ssh.authScene', {
+        target: target?.display || target?.label || targetId
+      })
+    )
+    if (!code) {
+      status.value = 'idle'
+      return
+    }
+    try {
+      const res = await createSshSession(code, targetId)
+      const ticket = res.data?.data?.ticket
+      if (!ticket) {
+        dialog.fail(t('server.ssh.wsErrorTicket'))
+        ElMessage.error(t('server.ssh.ticketMissing'))
+        return
+      }
+      dialog.succeed()
+      startTerminal(ticket)
+      armConnectTimeout()
+    } catch (error) {
+      const message = resolveErrorMessage(error, 'server.auth.failed')
+      dialog.fail(message)
+      ElMessage.error(message)
+    }
+  } finally {
+    authPending.value = false
   }
 }
 
@@ -717,6 +803,7 @@ function onWindowResize() {
 
 onMounted(() => {
   window.addEventListener('resize', onWindowResize)
+  void loadTargets()
 })
 
 onBeforeUnmount(() => {
@@ -739,8 +826,23 @@ onBeforeUnmount(() => {
           <ElTag :type="statusTagType" effect="light" size="large">{{ statusText }}</ElTag>
           <span class="flex items-center gap-1.5 font-mono text-sm">
             <ElIcon :size="18"><Connection /></ElIcon>
-            root@127.0.0.1
+            {{ targetDisplay }}
           </span>
+          <ElSelect
+            v-model="selectedTarget"
+            class="target-select w-44"
+            :placeholder="t('server.ssh.targetPlaceholder')"
+            :aria-label="t('server.ssh.targetLabel')"
+            :disabled="targetLocked || targetsLoading"
+            :loading="targetsLoading"
+          >
+            <ElOption
+              v-for="target in targets"
+              :key="target.id"
+              :label="target.label"
+              :value="target.id"
+            />
+          </ElSelect>
           <div class="ml-auto flex flex-wrap items-center gap-2">
             <ElButton size="large" :icon="MagicStick" @click="suggestVisible = true">
               {{ t('server.ssh.suggest.open') }}
@@ -755,7 +857,7 @@ onBeforeUnmount(() => {
               size="large"
               :type="mainButtonType"
               :icon="mainButtonIcon"
-              :disabled="status === 'connecting'"
+              :disabled="status === 'connecting' || (!selectedTarget && status !== 'connected')"
               @click="status === 'connected' ? disconnect() : openTerminal()"
             >
               {{ mainButtonText }}
@@ -765,6 +867,14 @@ onBeforeUnmount(() => {
       </template>
 
       <div class="ssh-body flex flex-col gap-4">
+        <!-- 目标目录异常:加载失败或为空,必须显式说明,不能静默禁用 -->
+        <ElAlert
+          v-if="targetsError"
+          type="warning"
+          show-icon
+          :closable="false"
+          :title="targetsError"
+        />
         <!-- 断线 / 出错提示 -->
         <ElAlert
           v-if="status === 'closed' && (banner || statusText)"
@@ -807,6 +917,7 @@ onBeforeUnmount(() => {
                 type="primary"
                 :icon="Connection"
                 class="mt-2"
+                :disabled="!selectedTarget || targetsLoading"
                 @click="openTerminal"
               >
                 {{ t('server.ssh.startButton') }}

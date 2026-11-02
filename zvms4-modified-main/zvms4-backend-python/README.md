@@ -40,6 +40,30 @@ Linux/macOS 可将上述 Python 路径换为 `.venv/bin/python`。
 权限不足的监控项会单独降级，连接异常返回 503；采集使用 15 秒进程内缓存。
 完整响应、统计口径、权限和 OCI Monitoring 扩展方案见 [数据库状态 API](docs/database-status.md)。
 
+## Web SSH 多目标（单网关）
+
+网关部署在 API 服务器上，按管理员选择连接「前端服务器」或「API 服务器」；浏览器只发送目标
+`id`，host/port/user/密钥路径全部由服务端配置决定，任何响应与日志都不返回密钥路径或
+known_hosts 内容。交互式终端仍保留双人 TOTP、一次性 ticket（120 秒、绑定目标）、
+每人 2 条/全局 4 条并发上限与 `web_ssh` 审计（open/close 的 detail 带 `target=<id>`）。
+
+在 `settings.py` 配置（或等价的环境变量 `ZVMS_SSH_TARGETS`，优先级更高）：
+
+```python
+SSH_TARGETS = [
+    {"id": "frontend", "label": "前端服务器", "host": "10.0.0.5"},
+    {"id": "api", "label": "API 服务器", "host": "127.0.0.1",
+     "port": 22, "user": "root", "key_path": "/www/zvms4/backend/ssh_key"},
+]
+SSH_DEFAULT_TARGET = "frontend"  # 也可用 ZVMS_SSH_DEFAULT_TARGET
+```
+
+`id` 必须匹配 `^[a-z0-9][a-z0-9_-]{0,31}$` 且唯一；非法项会被丢弃并记 warning，
+`port`/`user`/`key_path`/`known_hosts` 缺省沿用旧的 `ZVMS_SSH_*` 与默认值。完全没配置、
+配置为空或全部非法时退化为原来的单目标 `id="self"`、`label="本机"`，老部署无需改动。
+`GET /api/system/ssh/targets`（仅 admin）返回 `[{id,label,display}]` 与 `default`；
+`POST /api/system/ssh/session` 的未知 `target` 一律 400 `SSH_UNKNOWN_TARGET`。
+
 ## 本轮修复与兼容性
 
 - 登录凭据校验、临时令牌用途、即时权限和封禁检查已收紧；密码、角色、班级或封禁状态变更会轮换会话版本。

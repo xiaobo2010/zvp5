@@ -6,19 +6,25 @@
 
 文中 `<content-domain>`、`<api-domain>` 是部署期占位符，仓库不保存生产域名。
 
+> **2026-11-02 更新（Web SSH 多目标）**：SSH 终端已改为「单网关 + 服务端目标目录」，
+> 网关部署在 API 站。`/api/system/ssh/{targets,session,ws}` 改由 API 站代理到本机
+> uvicorn；内容站不再承接 SSH。文件管理 `/api/system/files/*` 仍留在内容站。
+> 契约、配置与 Nginx 片段见 [`WEBSSH_MULTI_TARGET.md`](./WEBSSH_MULTI_TARGET.md)。
+
 ## 1. 拓扑
 
 ```text
 浏览器
   ├─ GET /、/assets/* ───────────────────────→ 内容站：静态文件
-  ├─ /api/system/files/*、SSH ─────────────→ 内容站：本机运维后端
+  ├─ /api/system/files/* ────────────────────→ 内容站：本机文件管理后端
+  ├─ /api/system/ssh/* ──────────────────────→ API 站：SSH 网关（连前端/API 目标）
   └─ 其余 /api/*（绝对 API 地址）───────────→ API 站：nginx → uvicorn
 ```
 
 | 角色 | 页面 Origin | 请求目标 | 职责 |
 |---|---|---|---|
-| 内容站 | `https://<content-domain>` | 同源；少数本机运维 API | HTML、JS、CSS、图标、PWA 文件；本机文件与 SSH |
-| API 站 | 不作为页面 Origin | `https://<api-domain>/api/*` | FastAPI、数据库业务、AI、SSE、上传 |
+| 内容站 | `https://<content-domain>` | 同源；本机文件管理 API | HTML、JS、CSS、图标、PWA 文件；本机文件管理 |
+| API 站 | 不作为页面 Origin | `https://<api-domain>/api/*` | FastAPI、数据库业务、AI、SSE、上传；Web SSH 网关 |
 
 浏览器发出的 API 请求是跨域请求。浏览器 Origin 必须是内容站 Origin，不能填 API
 域名；CORS 白名单配置的是“谁在调用 API”，不是“API 自己在哪里”。
@@ -138,17 +144,10 @@ http {
         root /www/zvms4/frontend-dist;
         index index.html;
 
-        # 本机资源端点：前端用页面 Origin 访问，避免把本机文件/SSH
-        # 请求发到数据库近端机器。以下 location 指向本机 uvicorn。
+        # 本机资源端点：前端用页面 Origin 访问，只保留文件管理。
+        # Web SSH 已于 2026-11-02 迁到 API 站网关（见 WEBSSH_MULTI_TARGET.md），
+        # 内容站不再承接 /api/system/ssh/*，由下面的 ^~ /api/ 返回 404。
         location ^~ /api/system/files/ { proxy_pass http://127.0.0.1:8018; }
-        location = /api/system/ssh/session { proxy_pass http://127.0.0.1:8018; }
-        location = /api/system/ssh/ws {
-            proxy_pass http://127.0.0.1:8018;
-            proxy_http_version 1.1;
-            proxy_set_header Upgrade $http_upgrade;
-            proxy_set_header Connection $zvms4_connection_upgrade;
-            proxy_read_timeout 3600s;
-        }
 
         # 不允许内容站兜底代理其他 API。
         location ^~ /api/ { return 404; }
@@ -185,11 +184,31 @@ server {
     server_name <api-domain>;
     client_max_body_size 25m;
 
-    # 本机文件/SSH 端点只允许从内容站访问，API 域名明确拒绝，
-    # 避免调用方误读 API 机的本地文件或 SSH 环境。
+    # 文件管理仍是内容站本机资源，API 域名不承接。
     location ^~ /api/system/files/ { return 404; }
-    location = /api/system/ssh/session { return 404; }
-    location = /api/system/ssh/ws { return 404; }
+
+    # Web SSH：API 站是网关（2026-11-02 起）。targets 由下面的 ^~ /api/ 覆盖；
+    # session 单独声明，ws 必须转发 Upgrade。
+    location = /api/system/ssh/session {
+        proxy_pass http://127.0.0.1:8018;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+
+    location = /api/system/ssh/ws {
+        proxy_pass http://127.0.0.1:8018;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $zvms4_connection_upgrade;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_read_timeout 3600s;
+    }
 
     location /api/ {
         proxy_pass http://127.0.0.1:8018;

@@ -7,19 +7,21 @@ describe('API host routing', () => {
     expect(normalizeApiPath('system/ssh/ws')).toBe('/system/ssh/ws')
   })
 
-  it.each([
-    '/system/files/list',
-    '/system/files/download',
-    '/system/ssh/session',
-    '/system/ssh/ws'
-  ])('keeps local endpoint %s on the content host', (path) => {
-    expect(usesContentHost(path)).toBe(true)
-  })
+  it.each(['/system/files/list', '/system/files/download'])(
+    'keeps local endpoint %s on the content host',
+    (path) => {
+      expect(usesContentHost(path)).toBe(true)
+    }
+  )
 
+  // SSH 会话与 WS 都由 API 服务器的网关后端发起,不再属于页面源本机资源。
   it.each([
     '/cert',
     '/health',
     '/version',
+    '/system/ssh/session',
+    '/system/ssh/ws',
+    '/system/ssh/targets',
     '/system/ssh/suggest',
     '/system/db/metrics/host',
     '/users/auth'
