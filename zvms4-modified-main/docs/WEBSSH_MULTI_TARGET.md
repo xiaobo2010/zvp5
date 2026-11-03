@@ -151,3 +151,82 @@ location = /api/system/ssh/ws {
 - ticket 仍在进程内存，单 worker 前提不变；多 worker 需要先迁 Redis。
 - 网关到目标机的网络与密钥由部署侧保证；连不上只回通用错误，不暴露 host/密钥路径。
 - 本方案不做本地 PTY / 不绕过 sshd；服务器 SSH 本身不可用不在代码兜底范围内。
+
+## 8. 部署实录（2026-11-03）
+
+> 目标主机：API/网关 = zvp-backend（<BACKEND_IP>），前端源站 = zvp-frontend
+> （<FRONTEND_IP>）。提交基线 `5eadd16`（含 19f085f 多目标实现）。
+
+### 8.1 审核结论
+
+| 项 | 结论 |
+|---|---|
+| 后端全量 | `pytest -q` → **4189 passed**（2:40） |
+| 前端全量 | `vitest run` → 90 files / **1008 passed**；`vue-tsc`（tsconfig.app 与 vitest 两套）0 错误 |
+| 安全面 | `GET /targets` 仅 admin 且只回 id/label/display；未知 id 在验码前 400，不消耗 TOTP；ticket 绑定 target，配置变更后拒连（4500）；连接参数只从服务端配置解析 |
+| 兼容面 | 未传 `target` 的老前端仍按默认目标走；`load_target()` 语义保留，AI Agent 的 `ssh_exec`/`ops_tools` 自动跟随默认目标 |
+
+### 8.2 目标与密钥（网关侧 = zvp-backend）
+
+- 密钥：沿用 前端 既有的 `zvms4-webssh` ed25519（`/www/zvms4/backend/ssh_key`，
+  600 www-data）；公钥已存在于 前端 `root@` 的 authorized_keys，本次追加到
+  zvp-backend `root@` 的 authorized_keys（备份 `/root/backup-20261103/authorized_keys`）。
+- known_hosts **按目标分开**：两台机器的 `127.0.0.1` host key 不同，混在一个文件会冲突。
+  - `ssh_known_hosts.content` ← `ssh-keyscan <FRONTEND_IP>:22`
+  - `ssh_known_hosts` ← `ssh-keyscan 127.0.0.1:23456`
+- 注意：后端的 sshd 端口是 **23456**（不是 22），target 必须显式写 `port: 23456`。
+- 配置走 systemd drop-in：`/etc/systemd/system/zvms4.service.d/10-ssh-targets.conf`
+  → `EnvironmentFile=/etc/zvms4/ssh-targets.env`（640 root:root）：
+
+```text
+ZVMS_SSH_TARGETS=[{"id":"content","label":"前端服务器","host":"<FRONTEND_IP>","port":22,...},
+                  {"id":"api","label":"API 服务器","host":"127.0.0.1","port":23456,...}]
+ZVMS_SSH_DEFAULT_TARGET=api
+```
+
+**默认目标选 `api`（而不是文档示例的 `content`）**：升级前 `load_target()` 的语义是
+「后端所在机器」，AI Agent 的 SSH 工具与其他遗留调用方都吃这个默认值；保持 `api`
+等于保持升级前落点，人类 UI 仍可在下拉里选前端服务器。
+
+### 8.3 变更流水
+
+| # | 主机 | 操作 | 备份 |
+|---|---|---|---|
+| 1 | 后端 | 后端整目录备份后 rsync（排除 `.venv`/密钥/`settings.py`/本地 db），`chown -R www-data` | `/www/zvms4/backend.bak-sshmulti-20261103-144241`（57M） |
+| 2 | 后端 | 密钥/known_hosts 落位；authorized_keys 追加公钥 | 同上 authorized_keys 备份 |
+| 3 | 后端 | 新增 `EnvironmentFile` drop-in，`daemon-reload` + `restart` | 原 unit 未改 |
+| 4 | 前端 | 前端备份后 rsync `--delete` 新 dist，`chown -R www:www` | `frontend-dist.pre-sshmulti-20261103-1450`（22M） |
+
+Nginx **无需改动**：后端 `zvpapi` vhost 已把 `/api/` 与 `/api/system/ssh/ws` 代理到
+127.0.0.1:8018；前端 的 `/api/` 也已整体反代回后端。仓库模板里内容站的 SSH location
+保留作单机部署兼容。
+
+### 8.4 验证记录（已复跑）
+
+| 项 | 方法 | 结果 |
+|---|---|---|
+| 配置解析 | 以服务进程 env 导入 `ssh_bridge.load_targets()` | `[('content','前端服务器','root@<FRONTEND_IP>',22),('api','API 服务器','root@127.0.0.1:23456',23456)]`，default=`api`，无 drop warning |
+| 网关连通性 | `runuser -u www-data -- ssh -i ... -o StrictHostKeyChecking=yes` | api → `VM-0-15-debian`；content → `XiaoBoCloud-CMCU` |
+| 路由存在性 | `GET /api/system/ssh/targets`（无 token） | `401 Could not validate credentials`（两个域名都是 401，不是 404） |
+| WS 升级 | `curl --http1.1` 带 Upgrade，无 ticket | `101 Switching Protocols` → 服务端主动关并回「ticket 无效或已过期」 |
+| 前端产物 | 首页 / 主 bundle | h2 200；bundle gzip 168183B；含 `preconnect`/`dns-prefetch`；`ServerSsh-*.js` 含目标选择文案 |
+| API | `https://zvp.../api/version` | 200，`v4.3.0-7` |
+| 服务日志 | `journalctl -u zvms4` 重启后 | 启动干净，无 `ssh targets` 告警 |
+
+### 8.5 未做与待人工确认
+
+- **双人码端到端**（选目标 → TOTP → `hostname` 核对 → 审计 `target=`）需要真人动态码，
+  未在本次部署中执行，留作上线后第一次使用的验收项。
+- 新增连通性带来的权限面：网关密钥可用于 `root@` 两台机器，后端进程一旦被攻破即等同
+  两机 root。密钥仅 600 www-data 可读，若需收窄应改为每目标一把 + sudo 白名单。
+- 前端 的 `/api/system/files/*` 现已随 `/api/` 整体反代到后端，文件管理操作的其实是后端
+  机器；这是 11-02 前端源站迁移时就存在的语义偏差，与本次改动无关，另行决策。
+
+### 8.6 回滚
+
+1. 后端：`rsync -a /www/zvms4/backend.bak-sshmulti-20261103-144241/ /www/zvms4/backend/`
+   （不带 `--delete`），`chown -R www-data` 后 `systemctl restart zvms4`。
+2. 配置：删 `/etc/systemd/system/zvms4.service.d/10-ssh-targets.conf` +
+   `daemon-reload` + `restart` → 自动退化为单目标 `self`（老路径，默认 `127.0.0.1:22`）。
+3. 前端：`rsync -a --delete /www/zvms4/frontend-dist.pre-sshmulti-20261103-1450/ /www/zvms4/frontend-dist/`
+   + `chown -R www:www`。
