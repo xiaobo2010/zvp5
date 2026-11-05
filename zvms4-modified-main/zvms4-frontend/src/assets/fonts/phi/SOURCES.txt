@@ -1,0 +1,7 @@
+Bebas Neue — SIL Open Font License 1.1
+https://github.com/google/fonts/tree/main/ofl/bebasneue
+
+Rajdhani — SIL Open Font License 1.1
+https://github.com/google/fonts/tree/main/ofl/rajdhani
+
+Bundled locally for the Phi (April Fools) theme; no runtime CDN.

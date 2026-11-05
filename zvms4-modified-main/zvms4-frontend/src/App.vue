@@ -339,6 +339,18 @@ watch([width, height], ([w, h]) => {
   verticalMode.value = w < h * 1.2
 })
 
+// Phi 主题：普通用户路由（/user、/activities、/me、/about）挂 .yg-phi 类
+const isPhiRoute = computed(() => {
+  const path = route.path
+  return (
+    path === '/user' ||
+    path.startsWith('/user/') ||
+    path.startsWith('/activities') ||
+    path === '/me' ||
+    path === '/about'
+  )
+})
+
 const locales: Record<
   (typeof locale)['value'],
   {
@@ -463,7 +475,10 @@ onMounted(async () => {
             </p>
           </div>
         </div>
-        <div class="yg-layout yg-layout--app">
+        <div :class="['yg-layout', 'yg-layout--app', { 'yg-phi': isPhiRoute }]">
+          <div v-if="isPhiRoute" class="yg-phi-velocity" aria-hidden="true"></div>
+          <div v-if="isPhiRoute" class="yg-phi-velocity" aria-hidden="true"></div>
+          <div v-if="isPhiRoute" class="yg-phi-velocity" aria-hidden="true"></div>
           <UserNav v-if="userStore.isLogin" />
           <div class="yg-layout__main">
             <header :class="['yg-layout__topbar', 'yg-topbar', { 'is-portrait': verticalMode }]">
