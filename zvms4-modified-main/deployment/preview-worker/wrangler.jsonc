@@ -1,0 +1,20 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "zvp-yuren",
+  "main": "src/index.js",
+  "compatibility_date": "2025-11-01",
+  "assets": {
+    "directory": "../../zvms4-frontend/dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application"
+  },
+  "routes": [
+    {
+      "pattern": "yuren.xiaobopisces.top",
+      "custom_domain": true
+    }
+  ],
+  "observability": {
+    "enabled": true
+  }
+}
