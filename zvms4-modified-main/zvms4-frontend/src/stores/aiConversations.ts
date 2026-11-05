@@ -32,21 +32,29 @@ import type {
  * 一次会话的三个活动对象都在这里：会话列表（游标分页）、当前会话的消息
  * （按 after_seq 增量）、以及当前会话里那一次后台执行（run）的进度。
  *
- * 轮询节奏：前台 1.5 秒一次，页面不可见时降到 5 秒（别在后台标签页里
+ * 轮询节奏：前台 2 秒一次，页面不可见时降到 5 秒（别在后台标签页里
  * 刷请求）。run 落到终态立刻停：没有活跃 run 就不该有常驻定时器。
+ * 跑满 60 秒还没终态就指数退避（上限 5 秒）：长 run 仍然要能看到进展，
+ * 但不值得每 2 秒打一次库。
  */
 
 /** 前台轮询间隔（毫秒）。 */
-export const POLL_INTERVAL_MS = 1_500
+export const POLL_INTERVAL_MS = 2_000
 
 /** 提交之后的快探间隔（毫秒）：先抢首帧，别让人干等。 */
-export const POLL_FAST_INTERVAL_MS = 500
+export const POLL_FAST_INTERVAL_MS = 750
 
 /** 快探次数：连着快探这么多次之后回落到常规间隔。 */
-export const POLL_FAST_TICKS = 4
+export const POLL_FAST_TICKS = 3
 
 /** 页面不可见时的轮询间隔（毫秒）。 */
 export const POLL_INTERVAL_HIDDEN_MS = 5_000
+
+/** 连续轮询多久之后开始退避（毫秒）。 */
+export const POLL_BACKOFF_AFTER_MS = 60_000
+
+/** 退避上限（毫秒）：再慢用户就看不出「它还在跑」了。 */
+export const POLL_BACKOFF_MAX_MS = 5_000
 
 /** run 的终态：落在这里就不再轮询。 */
 const TERMINAL_RUN_STATUS = new Set(['succeeded', 'failed', 'cancelled', 'interrupted'])
@@ -127,8 +135,12 @@ export const useAiConversationsStore = defineStore('aiConversations', () => {
 
   let pollTimer: ReturnType<typeof setTimeout> | null = null
   let pollingRunId = ''
-  /** 还剩几次快探：提交后先用 500ms 抢首帧，再回落到 1.5s。 */
+  /** 还剩几次快探：提交后先用 750ms 抢首帧，再回落到 2s。 */
   let fastPollBudget = 0
+  /** 本次轮询开始的时刻：超过 60 秒仍未终态就退避。 */
+  let pollStartedAt = 0
+  /** 当前退避间隔（毫秒）；0 表示还没进入退避。 */
+  let pollBackoffMs = 0
   /** 轮询期间登记到全局中止表里的注销函数：停轮询就摘掉。 */
   let unregisterPollAbort: (() => void) | null = null
   /** 已经成功拉过消息的会话（用来判断「要不要重拉」）。 */
@@ -622,8 +634,10 @@ export const useAiConversationsStore = defineStore('aiConversations', () => {
     stopPolling()
     pollingRunId = runId
     polling.value = true
-    // 提交后的头几拍用快节奏：首帧早到 0.5 秒，人不用盯着空消息区干等。
+    // 提交后的头几拍用快节奏：首帧早到 0.75 秒，人不用盯着空消息区干等。
     fastPollBudget = POLL_FAST_TICKS
+    pollStartedAt = Date.now()
+    pollBackoffMs = 0
     // 轮询也要能被全局中止（封禁后继续轮询只是把注定失败的请求刷一遍）。
     unregisterPollAbort = registerAiAbort(() => {
       stopPolling()
@@ -655,11 +669,27 @@ export const useAiConversationsStore = defineStore('aiConversations', () => {
     if (fast) {
       fastPollBudget -= 1
     }
-    const delay = fast ? POLL_FAST_INTERVAL_MS : pollIntervalMs()
+    const base = fast ? POLL_FAST_INTERVAL_MS : pollIntervalMs()
     pollTimer = setTimeout(() => {
       pollTimer = null
       void tick()
-    }, delay)
+    }, nextPollDelay(base))
+  }
+
+  /**
+   * 下一拍的间隔：前 60 秒按基础节奏，之后每次翻倍（上限 5 秒）。
+   *
+   * 长 run（10 轮工具调用可以跑几分钟）不该一直按 2 秒打一次；但也不能慢到
+   * 用户以为页面死了。退避只影响节奏，不影响增量协议：每拍照样带
+   * after_round / since_msg_seq。
+   */
+  function nextPollDelay(base: number): number {
+    if (Date.now() - pollStartedAt < POLL_BACKOFF_AFTER_MS) {
+      pollBackoffMs = 0
+      return base
+    }
+    pollBackoffMs = pollBackoffMs > 0 ? pollBackoffMs * 2 : base
+    return Math.min(pollBackoffMs, POLL_BACKOFF_MAX_MS)
   }
 
   async function tick(): Promise<void> {

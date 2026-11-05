@@ -613,6 +613,53 @@ def get_tool(name: object) -> ToolDef | None:
     return TOOLS.get(name)
 
 
+# 模型偶尔会把工具名带上函数调用层的命名空间前缀（``functions.platform_logs``），
+# 或者大小写漂移（``Platform_Logs``）。前缀是协议噪声，不是另一个工具。
+_TOOL_NAME_PREFIXES = ("functions.", "function.", "tool.", "tools.")
+
+# 别名表：只收「模型见过的写法」→「注册表里的名字」。**不新增工具**——别名只
+# 负责把既有名字翻译过来，目标不在 ``TOOLS`` 里就照样落空（下面还查一次注册表）。
+TOOL_NAME_ALIASES = {"platformHelp": PLATFORM_HELP_TOOL}
+_ALIASES_FOLDED = {key.lower(): value for key, value in TOOL_NAME_ALIASES.items()}
+
+
+def normalize_tool_name(name: object) -> str | None:
+    """把模型给的名字映射到注册表名；未知返回 ``None``。
+
+    规则（按序）：去空白 → 去 ``functions.``/``function.``/``tool.``/``tools.``
+    前缀 → 精确命中 → 大小写不敏感唯一命中 → 别名表（``platformHelp``）。
+
+    「唯一命中」是承重条件：注册表里若真出现两个只差大小写的名字，宁可不归一化
+    （返回 ``None``，走拒绝路径），也不能替模型挑一个执行——猜错的代价是副作用。
+    """
+    if not isinstance(name, str):
+        return None
+    text = name.strip()
+    if not text:
+        return None
+    while True:
+        folded_prefix = text.lower()
+        prefix = next(
+            (item for item in _TOOL_NAME_PREFIXES if folded_prefix.startswith(item)),
+            None,
+        )
+        if prefix is None:
+            break
+        text = text[len(prefix) :].strip()
+        if not text:
+            return None
+    if text in TOOLS:
+        return text
+    folded = text.lower()
+    matches = [key for key in TOOLS if key.lower() == folded]
+    if len(matches) == 1:
+        return matches[0]
+    alias = TOOL_NAME_ALIASES.get(text) or _ALIASES_FOLDED.get(folded)
+    if alias is not None and alias in TOOLS:
+        return alias
+    return None
+
+
 def _coerce(tool: str, key: str, value: Any, spec: dict) -> Any:
     """按 schema 收敛一个参数；收敛不了就报 ``AI_AGENT_BAD_ARGUMENT``。
 
@@ -755,11 +802,13 @@ __all__ = [
     "DIRECT_WRITE_TOOL_NAMES",
     "PLATFORM_HELP_TOOL",
     "READ",
+    "TOOL_NAME_ALIASES",
     "TOOLS",
     "VOLUNTEER_TOOL_NAMES",
     "WRITE",
     "ToolDef",
     "get_tool",
+    "normalize_tool_name",
     "prepare_arguments",
     "run_allowed",
     "tool_specs",

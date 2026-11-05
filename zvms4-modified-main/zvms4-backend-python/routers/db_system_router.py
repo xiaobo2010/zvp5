@@ -9,11 +9,13 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.routing import APIRoute
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db import backends
 from db.oracle.session import get_session
 from routers.system_router import _require_system_admin
+from services import db_maintenance
 from services.adb_backup import (
     AUDIT_LEVEL as BACKUP_AUDIT_LEVEL,
     AUDIT_TYPE as BACKUP_AUDIT_TYPE,
@@ -81,6 +83,66 @@ class _DatabaseStatusRoute(APIRoute):
 
 
 router = APIRouter(route_class=_DatabaseStatusRoute)
+
+
+# ---------------------------------------------------------------------------
+# 维护端点（services/db_maintenance.py）
+#
+# 所有校验都翻成 HTTPException：本 router 的 route_class 会把**非 HTTP** 异常
+# 统一变成 503，参数错误若走 ValueError 就会被伪装成「数据库不可用」。
+# ---------------------------------------------------------------------------
+
+
+class MaintenancePlanRequest(BaseModel):
+    action: str
+    tables: list[str] | None = None
+    dry_run: bool = False
+
+
+class MaintenanceRunRequest(BaseModel):
+    action: str
+    tables: list[str] | None = None
+    dry_run: bool = False
+    confirm: str | None = None
+
+
+class CacheFlushRequest(BaseModel):
+    scopes: list[str]
+
+
+class CacheRefreshRequest(BaseModel):
+    scopes: list[str] | None = None
+
+
+def _maintenance_http_error(exc: Exception) -> HTTPException:
+    if isinstance(exc, db_maintenance.MaintenanceError):
+        return HTTPException(status_code=exc.status_code, detail=exc.detail)
+    return HTTPException(status_code=400, detail="维护请求不合法")
+
+
+def _validated_action(action: str) -> str:
+    value = (action or "").strip().lower()
+    if value not in db_maintenance.ACTIONS:
+        raise HTTPException(
+            status_code=400,
+            detail="action 不合法，可选：" + ", ".join(db_maintenance.ACTIONS),
+        )
+    return value
+
+
+def _validated_tables(tables: list[str] | None) -> list[str]:
+    try:
+        return db_maintenance._normalize_tables(tables)
+    except db_maintenance.MaintenanceError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from None
+
+
+def _validated_scopes(scopes: list[str] | None) -> list[str]:
+    try:
+        return db_maintenance._normalize_scopes(scopes)
+    except db_maintenance.MaintenanceError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from None
+
 
 
 @router.get("/status")
@@ -284,6 +346,126 @@ async def backup_progress(
     await _require_system_admin(user)
     response.headers["Cache-Control"] = "no-store"
     return {"status": "ok", "code": 200, "data": await backup_snapshot()}
+
+
+@router.get("/maintenance/overview")
+async def maintenance_overview(
+    response: Response,
+    user=Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """表级体量/统计新鲜度体检（只读；单个字典视图不可用只降级该组件）。"""
+    await _require_system_admin(user)
+    data = await db_maintenance.overview(session)
+    response.headers["Cache-Control"] = "no-store"
+    # 体检本身有 ``data.available``：即使字典全不可读也返回 200 + 降级说明，
+    # 否则监控页会因为连接抖动整页 503。
+    return {"status": "ok", "code": 200, "data": data}
+
+
+@router.get("/maintenance/suggestions")
+async def maintenance_suggestions(
+    response: Response,
+    user=Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """优化建议（统计过期 / 索引不可用 / 层级过高 / 大表无索引 / 重复索引）。"""
+    await _require_system_admin(user)
+    data = await db_maintenance.suggestions(session)
+    response.headers["Cache-Control"] = "no-store"
+    return {"status": "ok", "code": 200, "data": data}
+
+
+@router.post("/maintenance/plan")
+async def maintenance_plan(
+    payload: MaintenancePlanRequest,
+    response: Response,
+    user=Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """只生成 SQL 计划，不执行（dry-run 的前半段，可在前端先审阅）。"""
+    await _require_system_admin(user)
+    action = _validated_action(payload.action)
+    tables = _validated_tables(payload.tables)
+    try:
+        data = await db_maintenance.build_plan(session, action, tables)
+    except Exception as exc:  # noqa: BLE001 - 领域错误转 4xx，其余交给 route_class
+        if isinstance(exc, db_maintenance.MaintenanceError):
+            raise _maintenance_http_error(exc) from None
+        raise
+    response.headers["Cache-Control"] = "no-store"
+    return {"status": "ok", "code": 200, "data": data}
+
+
+@router.post("/maintenance/run")
+async def maintenance_run(
+    payload: MaintenanceRunRequest,
+    response: Response,
+    user=Depends(get_current_user),
+):
+    """启动维护作业（后台任务），立刻返回 ``{job_id, started_at, state}``。
+
+    ``dry_run=true`` 时只生成计划、不执行 SQL，可以省略 ``confirm``；真正执行
+    必须带 ``confirm="RUN"``（防误触）。已有作业在跑 → 409。
+    """
+    await _require_system_admin(user)
+    action = _validated_action(payload.action)
+    tables = _validated_tables(payload.tables)
+    if not payload.dry_run and (payload.confirm or "").strip() != "RUN":
+        raise HTTPException(status_code=400, detail='危险操作需要 confirm="RUN"')
+
+    try:
+        started = db_maintenance.start_job(
+            action, tables, bool(payload.dry_run), str(user["id"])
+        )
+    except db_maintenance.JobBusy as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from None
+    except db_maintenance.MaintenanceError as exc:
+        raise _maintenance_http_error(exc) from None
+
+    response.headers["Cache-Control"] = "no-store"
+    return {"status": "ok", "code": 200, "data": started}
+
+
+@router.get("/maintenance/progress")
+async def maintenance_progress(
+    response: Response,
+    user=Depends(get_current_user),
+):
+    """维护作业进度（进程内状态，单 worker 前提与清理作业一致）。"""
+    await _require_system_admin(user)
+    response.headers["Cache-Control"] = "no-store"
+    return {"status": "ok", "code": 200, "data": db_maintenance.progress_snapshot()}
+
+
+@router.post("/cache/flush")
+async def cache_flush(
+    payload: CacheFlushRequest,
+    response: Response,
+    user=Depends(get_current_user),
+):
+    """按逻辑域失效 Redis 缓存（下一次读请求自动重建）。"""
+    await _require_system_admin(user)
+    scopes = _validated_scopes(payload.scopes)
+    data = await db_maintenance.flush_cache(scopes)
+    response.headers["Cache-Control"] = "no-store"
+    return {"status": "ok", "code": 200, "data": data}
+
+
+@router.post("/cache/refresh")
+async def cache_refresh(
+    payload: CacheRefreshRequest,
+    response: Response,
+    user=Depends(get_current_user),
+):
+    """重新生成设置中心 / 角色策略的进程内快照（失效后再生成）。"""
+    await _require_system_admin(user)
+    if payload.scopes is not None:
+        # scopes 只用于校验（前端可以原样回传）；快照刷新覆盖两处全部内容。
+        _validated_scopes(payload.scopes)
+    data = await db_maintenance.refresh_snapshots()
+    response.headers["Cache-Control"] = "no-store"
+    return {"status": "ok", "code": 200, "data": data}
 
 
 __all__ = ["router"]

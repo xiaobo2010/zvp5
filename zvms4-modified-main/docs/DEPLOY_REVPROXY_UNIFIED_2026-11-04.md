@@ -1,0 +1,97 @@
+# 2026-11-04 恢复「前端服务器统一反代」拓扑
+
+## 结论
+
+浏览器只访问 `https://zvp.xiaobopisces.top`（zgovps-la，23.169.184.163）。
+该机的 nginx 把 `/api/`、`/api/system/ssh/ws`、`/socket.io/` 反代到
+tencent-43 的 `https://zvpapi.xiaobopisces.top`（43.128.154.199:443，backend
+uvicorn 127.0.0.1:8018）。前端产物不再出现 `zvpapi` 字样，请求全部同源。
+
+```
+浏览器 ──TLS──> zvp.xiaobopisces.top (zgovps-la, nginx)
+                     ├── /            -> /www/zvms4/frontend-dist (静态)
+                     ├── /api/        -> https://zvpapi.xiaobopisces.top (tencent-43)
+                     ├── /api/system/ssh/ws  -> 同上（单独 location，带 Upgrade）
+                     └── /socket.io/  -> 同上（带 Upgrade）
+```
+
+## 为什么之前是直连
+
+2026-11-02 的 API 归属分层把前端迁到 LA、API 迁到 43，构建时注入
+`VITE_API_BASE=https://zvpapi.xiaobopisces.top/api`，浏览器直接跨源打 43。
+LA 上的 `/api/` 反代一直存在，但没有流量走它。现在改回注入同源基址：
+
+```bash
+cd zvms4-frontend
+VITE_API_BASE=https://zvp.xiaobopisces.top/api npm run build
+rsync -az --delete ./dist/ zgovps-la:/www/zvms4/frontend-dist/
+ssh zgovps-la 'chown -R www:www /www/zvms4/frontend-dist'
+```
+
+`VITE_API_BASE` 仍必须是绝对 HTTPS URL（`src/utils/apiBaseConfig.ts` 的强校验），
+只是host 换成页面自己的 host，语义上是同源。
+
+## 关键配套：真实客户端 IP
+
+反代把「所有用户」收敛成 LA 一个对端 IP，直接后果是登录限流、封禁、审计日志
+全部按 `23.169.184.163` 计数——一人触发全站遭殃。因此两层都要改：
+
+**zgovps-la vhost**（`/www/server/panel/vhost/nginx/zvp.xiaobopisces.top.conf`）
+
+```nginx
+proxy_set_header X-Real-IP $remote_addr;
+proxy_set_header X-Forwarded-For $remote_addr;   # 覆盖，不再 $proxy_add_x_forwarded_for
+```
+
+覆盖而非追加：客户端自带的 XFF 不会被带进上游，转发链只有一跳，语义确定。
+
+**tencent-43 vhost**（`/etc/nginx/sites-available/zvpapi`，文件顶部 http 上下文）
+
+```nginx
+set_real_ip_from 23.169.184.163;
+real_ip_header X-Forwarded-For;
+real_ip_recursive on;
+```
+
+只有 LA 的转发可信，`$remote_addr` 被还原成真实客户端，随后各 location 的
+`proxy_set_header X-Real-IP $remote_addr` 就是真实 IP。后端
+`typings/log.py::client_ip_from` 以 `X-Real-IP` 为准，所以这一条不能省。
+
+验证（2026-11-04 23:28，tencent-43 `/var/log/nginx/access.log`）：
+
+```
+38.175.199.192 - - [...] "GET /api/health HTTP/1.1" 200 38 "-" "Mozilla/5.0 realip-probe-"
+39.188.107.26 - - [...] "GET /api/v3/users/me/device HTTP/1.1" 200 151 ...
+```
+
+各用户 IP 独立成行，没有挤到 23.169.184.163。
+
+## 验收记录
+
+| 项 | 结果 |
+|---|---|
+| 产物 API 基址 | `assets/*.js` 仅含 `https://zvp.xiaobopisces.top/api`，全量 grep `zvpapi` = 0 |
+| 页面 | `GET /` 200，index 引用 `index-aIh1pLpn.js` |
+| API 透传 | `/api/health` 200 `{"status":"ok"}`；`/api/system/maintenance` 200 |
+| 等价性 | POST `/api/users/login`、`/api/v3/users/me/device`、ssh ws 升级，直连 43 与走 LA 反代返回码逐项一致（405 / 401 / 404） |
+| WebSocket | `/socket.io/?EIO=4&transport=polling` 200 |
+| 反代头 | LA `X-Forwarded-For $remote_addr` 3 处；43 `real_ip` 生效 |
+| 静态资源 | `/assets/index-aIh1pLpn.js` 200，446611 bytes；`/sw.js`、`/manifest.webmanifest` 200 |
+
+## 副作用与回滚
+
+- 切回同源后浏览器 origin 变了：`zvpapi` 域下的 cookie、localStorage、
+  IndexedDB 不再命中，用户需重新登录一次，设备解锁令牌（Xuehai-Id 相关）也会重置一次。
+- 上传上限从 43 的 30m 变为 LA 的 100m（`client_max_body_size 100m`），非收紧。
+- 回滚两条命令：
+  - 前端：`VITE_API_BASE=https://zvpapi.xiaobopisces.top/api npm run build` 后重新发布，
+    或直接把 `/www/zvms4/frontend-dist.bak-20261104-232651` 换回去。
+  - 反代：`/root/zvp-vhost.bak-prerevproxy-20261104-231901`（LA）、
+    `/etc/nginx/sites-available/zvpapi.bak-prerevproxy-20261104-231850`（43）。
+- `open_file_cache` 生效期内（最长 120s）发布 index.html 会短暂读到旧引用，属正常。
+
+## 遗留可选项
+
+- `zvpapi.xiaobopisces.top` 仍对公网开放，且本机还留着一份 2026-11-02 的 SPA 副本。
+  若要「真正统一入口」，可把该 vhost 的 `/api/` 限定 `allow 23.169.184.163; deny all;`，
+  根路径 301 到 zvp 域；代价是 LA 出口 IP 变化时会全站 502，需同时留后门 SSH 改配置。

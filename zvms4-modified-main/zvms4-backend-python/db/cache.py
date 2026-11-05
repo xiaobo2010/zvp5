@@ -18,6 +18,11 @@
 
 键空间：``zvms:<scope>:<...>``。``epoch``（单调计数器）用于「整类失效」：
 key 里带版本号，写时 INCR 一次，旧 key 靠 TTL 自然淘汰。
+
+``epoch`` 同时充当**跨进程版本号**：``services.settings_runtime`` /
+``services.roles.policy`` 每 5 秒只花一次 GET 看版本有没有变，变了才回源 ADB
+（写事件自动刷新）。为此 epoch key 一律带 30 天 TTL —— 它们是缓存元数据，
+不是业务数据，不该有永久 key。
 """
 
 from __future__ import annotations
@@ -28,7 +33,7 @@ import logging
 import time
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Any, Awaitable, Callable
+from typing import Any, Awaitable, Callable, Sequence
 
 try:  # 可选依赖：装不上就整层禁用，不影响主流程
     from redis import asyncio as _aioredis
@@ -43,6 +48,23 @@ DEGRADE_SECONDS = 5.0
 #: 单条 value 超过这个大小就不进缓存（``past`` / ``eligibility`` 是 CLOB，
 #: 极少数用户能到几百 KB；把它们塞进 Redis 挤占内存不划算）。
 MAX_VALUE_BYTES = 256 * 1024
+#: epoch key 的 TTL（30 天）。epoch 是缓存元数据，允许过期（过期 = 回到 0，
+#: 只是让旧 key 失去意义，不会造成错误读）；永久 key 会在 Redis 里越攒越多。
+EPOCH_TTL_SECONDS = 30 * 24 * 3600
+#: ``SCAN`` 的 COUNT 提示 / 单次 ``UNLINK`` 的批量。批量删除避免一次命令塞几万
+#: 个 key 把单条命令的耗时抬起来（Redis 是单线程）。
+SCAN_COUNT = 500
+UNLINK_BATCH = 200
+
+#: 逻辑域 -> 该域覆盖的 key 前缀（都是 ``zvms:<前缀>...`` 的形态）。
+SCOPE_PREFIXES: dict[str, tuple[str, ...]] = {
+    "users": ("user", "auth", "names", "class"),
+    "groups": ("group", "pgroup", "glist", "pglist"),
+    "activities": ("activity", "activities"),
+    "conversations": ("conv", "convlatest"),
+    "settings": ("cfg",),
+    "roles": ("role",),
+}
 
 _client: Any = None
 _client_uri: str | None = None
@@ -207,30 +229,114 @@ async def forget(*keys: str) -> None:
         _mark_degraded()
 
 
-async def epoch(scope: str) -> int:
-    """读取某个 scope 的版本号；不可用时返回 0（相当于「无缓存」键空间）。"""
+async def _read_epoch(scope: str) -> int | None:
+    """读 epoch；``None`` = Redis 读不到（与「版本就是 0」区分开）。"""
     client = await _get_client()
     if client is None:
-        return 0
+        return None
     try:
         raw = await client.get(f"{NS}:epoch:{scope}")
     except Exception:  # noqa: BLE001
         _mark_degraded()
-        return 0
+        return None
     try:
         return int(raw or 0)
     except (TypeError, ValueError):
         return 0
 
 
+async def epoch(scope: str) -> int:
+    """读取某个 scope 的版本号；不可用时返回 0（相当于「无缓存」键空间）。"""
+    value = await _read_epoch(scope)
+    return 0 if value is None else value
+
+
 async def bump_epoch(scope: str) -> None:
+    """整类失效 + 版本号自增（INCR 后补 30 天 TTL，不允许永久 key）。"""
     client = await _get_client()
     if client is None:
         return
+    key = f"{NS}:epoch:{scope}"
     try:
-        await client.incr(f"{NS}:epoch:{scope}")
+        await client.incr(key)
+        await client.expire(key, EPOCH_TTL_SECONDS)
     except Exception:  # noqa: BLE001
         _mark_degraded()
+
+
+async def version(scope: str) -> int:
+    """配置/数据版本号（= :func:`epoch`）。
+
+    供上层做「别的进程改过没有」的廉价判定：版本没变就不必回源数据库。
+    """
+    return await epoch(scope)
+
+
+async def version_or_none(scope: str) -> int | None:
+    """同 :func:`version`，但「Redis 读不到」返回 ``None`` 而不是 0。
+
+    版本闸必须能区分「版本就是 0」（Redis 活着、没人写过）与「读不到」
+    （Redis 挂了 / 在降级窗口）：后者要退回每次读库，前者才可以跳过。
+    """
+    return await _read_epoch(scope)
+
+
+async def _drop_keys(client: Any, keys: Sequence[str]) -> int:
+    """批量删除；``UNLINK`` 不可用（老版本 / 测试替身）时退回 ``DELETE``。"""
+    if not keys:
+        return 0
+    unlink = getattr(client, "unlink", None)
+    try:
+        if unlink is not None:
+            return int(await unlink(*keys))
+        return int(await client.delete(*keys))
+    except AttributeError:  # 替身只实现了 delete
+        return int(await client.delete(*keys))
+
+
+async def flush_prefix(prefix: str) -> int:
+    """删除所有以 ``zvms:<prefix>`` 开头的 key，返回删除数。
+
+    用 ``SCAN`` 而不是 ``KEYS``：``KEYS`` 在几十万 key 时会把 Redis 单线程
+    卡住，是标准的线上事故写法。
+    """
+    client = await _get_client()
+    if client is None:
+        return 0
+    pattern = f"{NS}:{prefix}*"
+    removed = 0
+    batch: list[str] = []
+    try:
+        async for key in client.scan_iter(match=pattern, count=SCAN_COUNT):
+            batch.append(key)
+            if len(batch) >= UNLINK_BATCH:
+                removed += await _drop_keys(client, batch)
+                batch = []
+        removed += await _drop_keys(client, batch)
+    except Exception:  # noqa: BLE001 - 失效失败只降级，不回滚业务写
+        _mark_degraded()
+    return removed
+
+
+async def flush_scopes(scopes: Sequence[str]) -> dict[str, int]:
+    """按逻辑域失效；返回 ``{scope: 删除的 key 数}``（含 epoch 自增）。
+
+    未知 scope 直接抛 ``ValueError``（在校验阶段就抛，一个 key 都不删），
+    调用方负责翻成 400。
+    """
+    wanted = list(dict.fromkeys(scopes))  # 去重且保序（同一域只失效一次）
+    unknown = [str(scope) for scope in wanted if scope not in SCOPE_PREFIXES]
+    if unknown:
+        raise ValueError(f"未知缓存域：{', '.join(unknown)}")
+
+    result: dict[str, int] = {}
+    for scope in wanted:
+        removed = 0
+        for prefix in SCOPE_PREFIXES[scope]:
+            removed += await flush_prefix(prefix)
+        await bump_epoch(scope)
+        result[scope] = removed
+    return result
 
 
 async def aclose() -> None:

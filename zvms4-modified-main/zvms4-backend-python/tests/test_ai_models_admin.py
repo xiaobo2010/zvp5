@@ -203,6 +203,27 @@ def test_get_is_admin_only(api) -> None:
 # ---------------------------------------------------------------------------
 
 
+def test_put_clears_the_stream_unsupported_negative_cache(api, monkeypatch) -> None:
+    """改模型覆盖行要把 1 小时的「不支持流式」负缓存作废（写事件自动刷新缓存）。"""
+    client, _repo = api
+    calls: list[int] = []
+
+    async def fake_clear() -> int:
+        calls.append(1)
+        return 0
+
+    monkeypatch.setattr(
+        ai_models_router.cache_invalidation,
+        "clear_stream_unsupported",
+        fake_clear,
+    )
+
+    response = client.put(f"{PREFIX}/gpt-x", json={"notes": "换渠道后重试流式"})
+
+    assert response.status_code == 200
+    assert calls == [1]
+
+
 def test_put_creates_a_custom_model_row(api) -> None:
     client, repo = api
 

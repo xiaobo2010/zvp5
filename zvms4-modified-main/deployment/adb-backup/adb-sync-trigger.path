@@ -1,0 +1,12 @@
+[Unit]
+Description=Watch the zvp manual ADB backup request file
+
+[Path]
+# 后端以 www-data 写这个文件；root 的 systemd 看到就启动 trigger service。
+# 选 data/ 而不是 /run：service 开了 PrivateTmp（/tmp 不可见），data/ 与进程
+# 生命周期无关且本来就是 www-data 可写目录。
+PathExists=/www/zvms4/backend/data/adb-sync.request
+Unit=adb-sync-trigger.service
+
+[Install]
+WantedBy=paths.target

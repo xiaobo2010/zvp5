@@ -374,6 +374,64 @@ async def test_trigger_non_zero_exit_raises_a_domain_error_with_a_scrubbed_summa
 
 
 @pytest.mark.asyncio
+async def test_trigger_uses_the_path_unit_request_file_not_sudo(monkeypatch, tmp_path):
+    """生产带 NoNewPrivileges：有 path 单元时只写请求文件，绝不调用 sudo。"""
+    flag = tmp_path / "adb-sync.request"
+    unit = tmp_path / "adb-sync-trigger.path"
+    unit.write_text("", encoding="utf-8")
+
+    async def is_active(unit=adb_backup.SYSTEMD_UNIT_NAME):
+        return "inactive"
+
+    async def run(*args, **kwargs):
+        raise AssertionError("sudo path must not be used when the path unit exists")
+
+    async def fake_snapshot():
+        return {"state": "idle"}
+
+    monkeypatch.setattr(adb_backup, "TRIGGER_PATH_UNIT", str(unit))
+    monkeypatch.setattr(adb_backup, "DEFAULT_TRIGGER_FILE", str(flag))
+    monkeypatch.setattr(adb_backup, "_unit_is_active", is_active)
+    monkeypatch.setattr(adb_backup, "_run_command", run)
+    monkeypatch.setattr(adb_backup, "backup_snapshot", fake_snapshot)
+
+    assert await adb_backup.trigger_backup() == {"state": "idle"}
+    assert flag.exists()
+    assert flag.read_text(encoding="ascii").strip().isdigit()
+
+
+def test_trigger_file_is_disabled_without_the_path_unit(monkeypatch, tmp_path):
+    """没有 path 单元时必须回落到 sudo 路径（本地/旧部署的行为不变）。"""
+    monkeypatch.setattr(adb_backup, "TRIGGER_PATH_UNIT", str(tmp_path / "missing.path"))
+    monkeypatch.setattr(adb_backup, "DEFAULT_TRIGGER_FILE", str(tmp_path / "flag"))
+    assert adb_backup.trigger_file() is None
+
+
+@pytest.mark.asyncio
+async def test_trigger_missing_unit_is_reported_as_not_installed(monkeypatch):
+    """主机迁移后单元没搬过去时，管理员要看到「未安装」而不是泛泛的启动失败。"""
+
+    async def is_active(unit=adb_backup.SYSTEMD_UNIT_NAME):
+        return "inactive"
+
+    async def run(argv, timeout):
+        return (
+            1,
+            "",
+            "Failed to start adb-sync.service: Unit adb-sync.service could not be found.\n",
+        )
+
+    monkeypatch.setattr(adb_backup, "_unit_is_active", is_active)
+    monkeypatch.setattr(adb_backup, "_run_command", run)
+
+    with pytest.raises(adb_backup.BackupTriggerError) as excinfo:
+        await adb_backup.trigger_backup()
+
+    assert str(excinfo.value) == adb_backup.NOT_INSTALLED_MESSAGE
+    assert "启动备份任务失败" not in str(excinfo.value)
+
+
+@pytest.mark.asyncio
 async def test_trigger_timeout_raises_a_domain_error(monkeypatch):
     async def is_active(unit=adb_backup.SYSTEMD_UNIT_NAME):
         return "inactive"

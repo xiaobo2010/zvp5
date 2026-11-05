@@ -2352,8 +2352,24 @@ class AIAgentEventsRepo(Protocol):
         """
         ...
 
-    async def list_for_request(self, request_id: str) -> list[Row]:
-        """Every tool event of one run, in write order."""
+    async def list_for_request(
+        self, request_id: str, *, after_round: int = 0
+    ) -> list[Row]:
+        """Every tool event of one run, in write order.
+
+        ``after_round > 0`` keeps only ``round_no > after_round`` (poll deltas);
+        the default ``0`` returns the whole timeline.
+        """
+        ...
+
+    async def list_display_for_request(
+        self, request_id: str, *, after_round: int = 0
+    ) -> list[Row]:
+        """Same rows/order as :meth:`list_for_request`, without the CLOB columns.
+
+        ``args_payload`` / ``args_hash`` are not selected (they are filled with
+        ``None``) — polling never needs the full canonical arguments.
+        """
         ...
 
     async def list_by_actor(
