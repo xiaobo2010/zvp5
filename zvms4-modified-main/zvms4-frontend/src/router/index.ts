@@ -33,32 +33,32 @@ const router = createRouter({
     {
       path: '/about',
       name: 'about',
-      component: () => import('../views/AboutView.vue')
+      component: () => import('../views/user-v2/AboutView.vue')
     },
     {
       path: '/user/login',
       name: 'user-login',
-      component: () => import('../views/user/UserLogin.vue')
+      component: () => import('../views/user-v2/UserLogin.vue')
     },
     {
       path: '/user',
       name: 'user',
-      component: () => import('../views/user/UserHome.vue')
+      component: () => import('../views/user-v2/UserHome.vue')
     },
     {
       path: '/me',
       name: 'profile',
-      component: () => import('../views/user/UserProfile.vue')
+      component: () => import('../views/user-v2/UserProfile.vue')
     },
     {
       path: '/user/:id',
       name: 'user-page',
-      component: () => import('../views/user/UserPage.vue')
+      component: () => import('../views/user-v2/UserPage.vue')
     },
     {
       path: '/user/:id/:action',
       name: 'user-action',
-      component: () => import('../views/user/UserPage.vue')
+      component: () => import('../views/user-v2/UserPage.vue')
     },
     {
       path: '/activity/create',
@@ -94,12 +94,12 @@ const router = createRouter({
     {
       path: '/activities',
       name: 'activity',
-      component: () => import('../views/user/UserActivity.vue')
+      component: () => import('../views/user-v2/UserActivity.vue')
     },
     {
       path: '/activities/:mode',
       name: 'activity-mode',
-      component: () => import('../views/user/UserActivity.vue')
+      component: () => import('../views/user-v2/UserActivity.vue')
     },
     {
       path: '/manage',

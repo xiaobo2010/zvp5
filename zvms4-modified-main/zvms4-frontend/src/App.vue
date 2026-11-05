@@ -12,7 +12,7 @@ import { RouterView } from 'vue-router'
 import { useUserStore } from '@/stores/user'
 import { useRouter, useRoute } from 'vue-router'
 import Password from '@/icons/MaterialSymbolsPasswordRounded.vue'
-import UserNav from '@/views/user/UserNav.vue'
+import UserNav from '@/views/user-v2/UserNav.vue'
 import { useHeaderStore } from './stores/header'
 import { useWindowSize, useDark, useOnline, usePreferredDark } from '@vueuse/core'
 import { useI18n } from 'vue-i18n'
@@ -515,7 +515,11 @@ onMounted(async () => {
               </div>
             </header>
             <main :class="['yg-layout__content', { 'is-portrait': verticalMode && userStore.isLogin }]">
-              <RouterView class="yg-view" />
+              <RouterView v-slot="{ Component, route }">
+                <Transition name="yg-route" mode="out-in">
+                  <component :is="Component" :key="route.path" class="yg-view" />
+                </Transition>
+              </RouterView>
             </main>
           </div>
         </div>
