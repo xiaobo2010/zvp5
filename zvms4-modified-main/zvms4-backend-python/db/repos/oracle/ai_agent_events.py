@@ -76,6 +76,27 @@ def _columns() -> tuple[Any, ...]:
     )
 
 
+def _display_columns() -> tuple[Any, ...]:
+    """轮询用的轻量投影：只取渲染需要的列。
+
+    故意不含 ``args_hash`` / ``args_payload``——后者是完整 canonical JSON（CLOB），
+    确认路径才需要；轮询每秒读一遍全量参数等于把整条时间线拖着走。
+    """
+    return (
+        ai_agent_events_tbl.c.oid,
+        ai_agent_events_tbl.c.request_id,
+        ai_agent_events_tbl.c.round_no,
+        ai_agent_events_tbl.c.tool_name,
+        ai_agent_events_tbl.c.tool_kind,
+        ai_agent_events_tbl.c.args_summary,
+        ai_agent_events_tbl.c.result_summary,
+        ai_agent_events_tbl.c.status,
+        ai_agent_events_tbl.c.actor_oid,
+        ai_agent_events_tbl.c.preview,
+        ai_agent_events_tbl.c.created_at,
+    )
+
+
 def _count_expired_stmt(cutoff: datetime):
     return (
         select(func.count())
@@ -90,6 +111,38 @@ def _purge_batch_stmt(cutoff: datetime, batch_size: int):
         ai_agent_events_tbl.c.created_at < cutoff,
         text("ROWNUM <= :batch_size").bindparams(batch_size=batch_size),
     )
+
+
+def _list_for_request_stmt(request_id: str, after_round: int = 0):
+    """一次 run 的事件，按写入顺序；``after_round > 0`` 时只取更新的轮次。"""
+    stmt = (
+        select(*_columns())
+        .select_from(ai_agent_events_tbl)
+        .where(ai_agent_events_tbl.c.request_id == str(request_id))
+        .order_by(
+            ai_agent_events_tbl.c.created_at, ai_agent_events_tbl.c.oid
+        )
+    )
+    floor = int(after_round or 0)
+    if floor > 0:
+        stmt = stmt.where(ai_agent_events_tbl.c.round_no > floor)
+    return stmt
+
+
+def _list_display_stmt(request_id: str, after_round: int = 0):
+    """同 :func:`_list_for_request_stmt` 的顺序与轮次过滤，但只取展示列。"""
+    stmt = (
+        select(*_display_columns())
+        .select_from(ai_agent_events_tbl)
+        .where(ai_agent_events_tbl.c.request_id == str(request_id))
+        .order_by(
+            ai_agent_events_tbl.c.created_at, ai_agent_events_tbl.c.oid
+        )
+    )
+    floor = int(after_round or 0)
+    if floor > 0:
+        stmt = stmt.where(ai_agent_events_tbl.c.round_no > floor)
+    return stmt
 
 
 def _row(mapping: Any) -> Row:
@@ -111,6 +164,33 @@ def _row(mapping: Any) -> Row:
         "actor_oid": mapping["actor_oid"],
         "approver_oid": mapping["approver_oid"],
         "confirmed_at": mapping["confirmed_at"],
+        "created_at": mapping["created_at"],
+    }
+
+
+def _display_row(mapping: Any) -> Row:
+    """轻量投影 → 与 :func:`_row` 同形状（缺的两列补 ``None``）。
+
+    保持同形状是为了让上层（事件视图 / 提案视图）不必区分两种来源：它们只读
+    ``args_summary`` / ``preview``，而这批列恰好都在。
+    """
+    return {
+        "_id": mapping["oid"],
+        "request_id": mapping["request_id"],
+        "round_no": (
+            int(mapping["round_no"]) if mapping["round_no"] is not None else None
+        ),
+        "tool_name": mapping["tool_name"],
+        "tool_kind": mapping["tool_kind"],
+        "args_hash": None,
+        "args_summary": mapping["args_summary"],
+        "args_payload": None,
+        "preview": mapping["preview"],
+        "result_summary": mapping["result_summary"],
+        "status": mapping["status"],
+        "actor_oid": mapping["actor_oid"],
+        "approver_oid": None,
+        "confirmed_at": None,
         "created_at": mapping["created_at"],
     }
 
@@ -232,19 +312,31 @@ class OracleAIAgentEventsRepo:
                 await session.commit()
         return bool(result.rowcount)
 
-    async def list_for_request(self, request_id: str) -> list[Row]:
-        """一次 run 的全部工具事件（按写入顺序：``created_at`` 后 ``oid``）。"""
-        stmt = (
-            select(*_columns())
-            .select_from(ai_agent_events_tbl)
-            .where(ai_agent_events_tbl.c.request_id == str(request_id))
-            .order_by(
-                ai_agent_events_tbl.c.created_at, ai_agent_events_tbl.c.oid
-            )
-        )
+    async def list_for_request(
+        self, request_id: str, *, after_round: int = 0
+    ) -> list[Row]:
+        """一次 run 的全部工具事件（按写入顺序：``created_at`` 后 ``oid``）。
+
+        ``after_round > 0`` 时只回 ``round_no > after_round`` 的行：调用方要增量
+        却把整条时间线拉回来，等于每秒重读一遍历史。默认 ``0`` 与旧行为逐字相同。
+        """
+        stmt = _list_for_request_stmt(request_id, after_round)
         async with _session_for(self._session) as (session, _owns):
             rows = (await session.execute(stmt)).all()
         return [_row(row._mapping) for row in rows]
+
+    async def list_display_for_request(
+        self, request_id: str, *, after_round: int = 0
+    ) -> list[Row]:
+        """同 :meth:`list_for_request`，但**不取** ``args_payload`` / ``args_hash``。
+
+        轮询专用：这两个列一个是 CLOB（完整参数），一个是它的哈希，只有确认提案
+        时才需要。展示层用不到，拉回来纯属给每条事件多背一份正文。
+        """
+        stmt = _list_display_stmt(request_id, after_round)
+        async with _session_for(self._session) as (session, _owns):
+            rows = (await session.execute(stmt)).all()
+        return [_display_row(row._mapping) for row in rows]
 
     async def list_by_actor(
         self,

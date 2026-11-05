@@ -44,6 +44,7 @@ import json
 import logging
 import math
 import time
+from datetime import datetime
 from typing import Any, Callable
 from uuid import uuid4
 
@@ -60,10 +61,19 @@ from services.ai.credentials import CredentialError
 from services.ai.routing import RouteError
 
 from . import context as agent_context
-from . import proposal, tool_impl
+from . import proposal, run_cache, tool_impl
 from .prompt import PROMPT_VERSION, SYSTEM_PROMPT
 from .tool_impl import AgentError
-from .tools import READ, WRITE, get_tool, prepare_arguments, run_allowed, tool_specs
+from .tools import (
+    READ,
+    WRITE,
+    ToolDef,
+    get_tool,
+    normalize_tool_name,
+    prepare_arguments,
+    run_allowed,
+    tool_specs,
+)
 
 _logger = logging.getLogger(__name__)
 
@@ -80,6 +90,10 @@ MAX_TOOL_RESULT_CHARS = 8000
 # 单轮最多执行几个工具调用。模型偶尔会一次吐十几个调用（尤其是被要求"批量"时），
 # 一次 run 的成本与副作用面都会失控；超出部分不执行、只回一条说明。
 MAX_TOOL_CALLS_PER_ROUND = 5
+
+# 未知调用回给模型的「可用工具」清单上限。全量 50+ 个名字塞进一条 tool 消息会挤占
+# 上下文，而模型纠偏只需要看见「有哪些邻居」，不需要完整目录。
+MAX_AVAILABLE_TOOLS = 40
 
 # run 级 wall-clock 上限（秒）。配在 ``settings`` 里（``AI_AGENT_RUN_TIMEOUT_SECONDS``）：
 # ``services.ai.config`` 不归本模块维护，这里直接读 settings 并自己做正整数兜底。
@@ -361,22 +375,42 @@ async def _write_event(
 
     与 ``audit.record`` 同一原则：审计是旁路。代价是极端情况下会缺一行，但
     「模型答完却被审计写失败搞成 500」是更糟的取舍。
+
+    落库成功后往轮询快照里追加同形状的一行：否则一秒内的事件要等快照过期才
+    可见（用户会看到「工具跑完了但时间线还停上一轮」）。
     """
+    oid = uuid4().hex
+    result = result_summary[:500]
     try:
         await backends.get_ai_agent_events_repo().insert(
-            oid=uuid4().hex,
+            oid=oid,
             request_id=request_id,
             round_no=round_no,
             tool_name=tool_name if isinstance(tool_name, str) else None,
             tool_kind=tool_kind,
             args_hash=args_hash,
             args_summary=args_summary,
-            result_summary=result_summary[:500],
+            result_summary=result,
             status=status,
             actor_oid=user_oid,
         )
     except Exception:  # noqa: BLE001 - 审计旁路
         _logger.warning("ai agent event write failed", exc_info=True)
+        return
+    # 形状与 ``proposal.run_events`` 一致：缓存里存的是展示视图，不是库行。
+    run_cache.append_event(
+        request_id,
+        {
+            "oid": oid,
+            "round_no": round_no,
+            "tool_name": tool_name if isinstance(tool_name, str) else None,
+            "tool_kind": tool_kind,
+            "args_summary": args_summary,
+            "result_summary": result,
+            "status": status,
+            "created_at": datetime.now().isoformat(sep=" ", timespec="seconds"),
+        },
+    )
 
 
 def _tool_call_parts(call: dict) -> tuple[str, str, object]:
@@ -391,6 +425,30 @@ def _tool_call_parts(call: dict) -> tuple[str, str, object]:
         name if isinstance(name, str) else "",
         function.get("arguments"),
     )
+
+
+def _resolve_tool(name: object) -> ToolDef | None:
+    """名字 → 注册表条目：先**原名**精确查，查不到再归一化。
+
+    顺序不能反：归一化会去掉 ``functions.`` 前缀并折叠大小写，而精确查表是唯一
+    无歧义的路径。两者都落空才是「模型编了个工具名」。
+    """
+    tool = get_tool(name)
+    if tool is not None:
+        return tool
+    normalized = normalize_tool_name(name)
+    return get_tool(normalized) if normalized else None
+
+
+def _available_tool_names(user: dict, scene: str | None = None) -> list[str]:
+    """当前用户 + 当前场景可见的工具名（排序、≤:data:`MAX_AVAILABLE_TOOLS`）。
+
+    直接复用 :func:`tool_specs`：声明层已经按角色与场景裁过，这里再抄一份名单就是
+    「两处各说一套」的开始。回给模型的清单必须与 `tools` 数组一致，否则它照着清单
+    重试仍然会撞白名单。
+    """
+    names = sorted({spec["function"]["name"] for spec in tool_specs(user, scene=scene)})
+    return names[:MAX_AVAILABLE_TOOLS]
 
 
 def _read_batch(calls: list[dict], start: int) -> list[tuple[int, dict]]:
@@ -410,7 +468,7 @@ def _read_batch(calls: list[dict], start: int) -> list[tuple[int, dict]]:
     while index < len(calls) and index < MAX_TOOL_CALLS_PER_ROUND:
         call = calls[index]
         _call_id, tool_name, _args = _tool_call_parts(call)
-        tool = get_tool(tool_name)
+        tool = _resolve_tool(tool_name)
         if (
             tool is None
             or tool.kind != READ
@@ -440,19 +498,22 @@ def _append_tool_outcome(
     """
     message, created, status, event_summary = outcome
     _call_id, tool_name, args = _tool_call_parts(call)
-    tool = get_tool(tool_name)
+    tool = _resolve_tool(tool_name)
+    # 归一化命中的调用在留痕里用**注册名**：审计按名字聚合，「functions.x」与「x」
+    # 分成两行会让同一个工具看起来像两个。
+    recorded_name = tool.name if tool is not None else (tool_name or None)
     conversation.append(message)
     handled_tools.append(
         {
             "tool_call_id": message.get("tool_call_id"),
-            "tool_name": tool_name or None,
+            "tool_name": recorded_name,
             "content": message.get("content"),
         }
     )
     events.append(
         {
             "round_no": round_no,
-            "tool_name": tool_name or None,
+            "tool_name": recorded_name,
             "tool_kind": tool.kind if tool is not None else None,
             "args_summary": _args_text(args),
             "result_summary": event_summary,
@@ -482,13 +543,19 @@ async def _run_tool(
     ``scene`` 非空时只放行 ``kind == READ`` 的工具：声明层已经把写工具裁掉了，
     这里是第二道——模型完全可以**编**一个 ``fs_write`` 调用出来，不能靠「不在
     tools 数组里」就当它不会发生。
+
+    工具名先按原名查表、查不到再归一化（:func:`tools.normalize_tool_name`）：
+    ``functions.platform_logs`` / 大小写漂移是模型侧的常见噪声，不该整轮拒绝，
+    但归一化命中后一律按**注册名**执行与记账。两者都落空时才回 ``unknown_tool``，
+    并附上当前可见的工具名，让模型能立刻换一个正确的名字重试。
     """
     call_id, raw_name, raw_args = _tool_call_parts(call)
     user_oid = user["id"]
 
-    tool = get_tool(raw_name)
+    tool = _resolve_tool(raw_name)
     if tool is None:
-        # 白名单外：拒绝并告诉模型「没有这个工具」，让它自己纠偏。
+        # 白名单外：拒绝并告诉模型「没有这个工具」+ 它此刻**能看到**哪些名字，
+        # 让它自己纠偏。只报 unknown 时模型容易换个同样不存在的名字重试。
         note = "工具不在白名单内，已拒绝"
         await _write_event(
             request_id=request_id,
@@ -501,7 +568,14 @@ async def _run_tool(
             user_oid=user_oid,
         )
         return (
-            _tool_message(call_id, {"error": "unknown_tool", "tool": raw_name}),
+            _tool_message(
+                call_id,
+                {
+                    "error": "unknown_tool",
+                    "tool": raw_name,
+                    "available_tools": _available_tool_names(user, scene),
+                },
+            ),
             None,
             "denied",
             note,
@@ -1872,7 +1946,7 @@ async def run(
 
             call = tool_calls[index]
             _call_id, tool_name, _args = _tool_call_parts(call)
-            tool = get_tool(tool_name)
+            tool = _resolve_tool(tool_name)
             if index >= MAX_TOOL_CALLS_PER_ROUND:
                 # 超出单轮上限：不执行，但仍要给每个 call 一条 tool 消息，否则
                 # 下一轮上游会因为「tool_calls 没有对应结果」直接 400。

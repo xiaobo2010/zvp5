@@ -20,10 +20,16 @@ import type { ChatTurn } from './chatSession'
 /**
  * 工具白名单：只用于把名字翻成中文标签。
  *
- * 前 10 条是活动域工具，后 17 条是运维工具（文件 / 数据库 / SSH），
- * 与后端 services/agent/tools.py、services/agent/ops_tools.py 一致。
+ * 与后端封闭注册表逐条对齐（`services/agent/tools.py` + `ops_tools` +
+ * `tools_platform` + `tools_governance` + `tools_ops_extra` + `tools_scripts`，共
+ * 56 条；`platform_help` 走 `TOOL_LABEL_KEYS` 覆盖，不在此列）。
+ *
+ * 这张表**不是权限判据**（权限在服务端），漏一条的后果只是界面显示「未知工具」；
+ * 所以这里宁可列全，也不要靠「名字看着像就通配」——那会把模型编的名字也翻成
+ * 一个看似正常的标签，审计时反而分不清。
  */
 const KNOWN_TOOLS = [
+  // 活动域（10）
   'search_activities',
   'list_activities',
   'get_activity',
@@ -34,6 +40,7 @@ const KNOWN_TOOLS = [
   'list_groups',
   'update_member_duration',
   'set_member_status',
+  // 文件 / 数据库 / SSH（17）
   'fs_list',
   'fs_stat',
   'fs_read',
@@ -50,7 +57,40 @@ const KNOWN_TOOLS = [
   'db_update',
   'db_delete',
   'db_ddl',
-  'ssh_exec'
+  'ssh_exec',
+  // 平台运维（8）
+  'platform_logs',
+  'db_diagnostics',
+  'backup_status',
+  'scheduler_status',
+  'device_ban_list',
+  'user_ban',
+  'user_unban',
+  'device_unban',
+  // 治理（9）
+  'ai_call_logs',
+  'ai_gateway_status',
+  'ai_prompt_audit_list',
+  'ai_quota_set',
+  'ai_api_key_revoke',
+  'ban_history',
+  'user_lookup',
+  'maintenance_mode',
+  'notify_send',
+  // 运维补充（10）
+  'agent_queue_status',
+  'server_time',
+  'settings_snapshot',
+  'volunteer_audit',
+  'scheduler_jobs',
+  'scheduler_control',
+  'attachment_stats',
+  'attachment_gc_preview',
+  'attachment_gc_run',
+  'backup_run',
+  // 白名单脚本（2）
+  'script_catalog',
+  'script_run'
 ]
 
 const KNOWN_TOOL_SET = new Set(KNOWN_TOOLS)
@@ -58,8 +98,9 @@ const KNOWN_TOOL_SET = new Set(KNOWN_TOOLS)
 /**
  * 平台使用帮助：所有角色都可见（学生会也要查「这个功能怎么用」）。
  *
- * 它不在 KNOWN_TOOLS 里——那 27 条是活动域与运维域的既有工具，
- * 这一条是新增的只读帮助入口，标签键也不走 snake_case 通配。
+ * 它不在 KNOWN_TOOLS 里——那张表是与后端注册表对齐的 56 条，这一条是独立的
+ * 只读帮助入口，标签键也不走 snake_case 通配（`platformHelp`，与后端别名
+ * `platformHelp → platform_help` 对应）。
  */
 export const PLATFORM_HELP_TOOL = 'platform_help'
 
@@ -82,7 +123,7 @@ export const VOLUNTEER_AGENT_TOOLS = [
   'set_member_status'
 ] as const
 
-/** admin 的可见集合：既有 27 条加平台帮助。 */
+/** admin 的可见集合：注册表里的 56 条加平台帮助。 */
 const ALL_AGENT_TOOLS = [...KNOWN_TOOLS, PLATFORM_HELP_TOOL]
 
 /**

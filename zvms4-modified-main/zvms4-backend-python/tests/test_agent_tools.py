@@ -74,6 +74,43 @@ def test_unknown_tool_names_are_refused(name) -> None:
     assert tools.get_tool(name) is None
 
 
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("search_activities", "search_activities"),
+        ("  search_activities  ", "search_activities"),
+        ("functions.search_activities", "search_activities"),
+        ("function.search_activities", "search_activities"),
+        ("tool.search_activities", "search_activities"),
+        ("tools.search_activities", "search_activities"),
+        ("Search_Activities", "search_activities"),
+        ("PLATFORM_LOGS", "platform_logs"),
+        ("platformHelp", "platform_help"),
+        ("platformhelp", "platform_help"),
+        ("functions.platformHelp", "platform_help"),
+    ],
+)
+def test_normalize_tool_name_maps_model_noise(raw, expected) -> None:
+    """模型侧的常见噪声（命名空间前缀 / 大小写 / 驼峰别名）要能归一到注册名。"""
+    assert tools.normalize_tool_name(raw) == expected
+    assert tools.get_tool(expected) is not None
+
+
+@pytest.mark.parametrize(
+    "raw",
+    ["", "   ", "functions.", "nope", "functions.nope", None, 42, ["x"], {"a": 1}],
+)
+def test_normalize_tool_name_never_invents_a_tool(raw) -> None:
+    """归一化只做翻译：目标不在注册表里就返回 ``None``，不「猜最接近的工具」。"""
+    assert tools.normalize_tool_name(raw) is None
+
+
+def test_alias_table_only_points_at_registered_tools() -> None:
+    for alias, target in tools.TOOL_NAME_ALIASES.items():
+        assert target in tools.TOOLS, alias
+        assert tools.normalize_tool_name(alias) == target
+
+
 def test_every_tool_declares_a_description_and_schema() -> None:
     for tool in tools.TOOLS.values():
         assert tool.description, tool.name

@@ -43,6 +43,25 @@ describe('工具标签', () => {
     expect(toolLabelKey('update_member_duration')).toBe('ai.agent.tools.update_member_duration')
   })
 
+  it('后端注册表的每个工具都有非 unknown 标签（含文案）', async () => {
+    const { zhCN } = await import('@/i18n/locales')
+    const labels: Record<string, string> = zhCN.ai.agent.tools
+    const names = availableAgentTools(['admin'])
+
+    expect(names).toHaveLength(57)
+    for (const name of names) {
+      const key = toolLabelKey(name)
+      expect(key, name).not.toBe('ai.agent.tools.unknown')
+      const labelKey = key.split('.').pop() as string
+      expect(labels[labelKey], name).toBeTruthy()
+      expect(labels[labelKey].length).toBeLessThanOrEqual(8)
+    }
+    // 新增的两条脚本工具与平台日志/诊断这类「以前显示未知」的名字。
+    for (const name of ['script_catalog', 'script_run', 'platform_logs', 'db_diagnostics']) {
+      expect(toolLabelKey(name)).toBe(`ai.agent.tools.${name}`)
+    }
+  })
+
   it('17 个运维工具都有中文标签', () => {
     const ops = [
       'fs_list',
@@ -80,11 +99,12 @@ describe('工具标签', () => {
 })
 
 describe('按角色的工具声明', () => {
-  it('admin 见到既有 27 条加平台帮助', () => {
+  it('admin 见到注册表的 56 条加平台帮助', () => {
     const tools = availableAgentTools(['admin'])
-    expect(tools).toHaveLength(28)
+    expect(tools).toHaveLength(57)
     expect(tools).toContain('search_activities')
     expect(tools).toContain('ssh_exec')
+    expect(tools).toContain('script_run')
     expect(tools).toContain(PLATFORM_HELP_TOOL)
   })
 

@@ -403,7 +403,7 @@ executor 内不碰会话表；`on_round` 由 `run_queue` 提供。
 - 左栏会话列表：新建/切换/重命名/归档/删除，按 `updated_at` 倒序，每项显示标题、时间、累计 token。
 - 对话区按 `seq` 渲染；agent 消息折叠工具事件与提案卡；运行中显示轮次进度与「后台执行中」。
 - 上下文条 `context_tokens/limit`，≥90% 警示；压缩点画分隔线并提示「更早 N 条已压缩」。
-- 进入页面先 `GET /runs?active=1` 恢复在飞任务；轮询 1.5s，`document.hidden` 降频 5s。
+- 进入页面先 `GET /runs?active=1` 恢复在飞任务；轮询 2s（前 3 拍 750ms），`document.hidden` 降频 5s，跑满 60s 仍未终态则指数退避（上限 5s）。
 - store：`stores/aiConversations.ts`；消息增量 `after_seq`；游标分页。
 - 文案进 `src/i18n/locales/ai.ts`（`ai.chat.sessions.*`），注意裸 `@` 会挂 `locales.spec.ts`。
 - 类型追加仓库根 `types/ai.d.ts`（**不在** `src/types`）。
@@ -502,3 +502,17 @@ GET /api/ai/runs/{run_id}?after_round=2&since_msg_seq=17
 | 保留期 | 14 天（`retention` 的 `scene_conversations`），级联删除 messages / runs |
 
 > 为什么用列而不是单独一张表：消息、run、提案、摘要水位、级联删除全挂在 `ai_conversations` 上；另起一张表等于把整条链路复制一遍。
+
+### 12.7 轮询与存储
+
+`GET /runs/{id}` 是唯一按秒级频率命中的读口，所以它的成本被单独压过一遍。
+
+- **1 秒进程内快照**（`services/agent/run_cache.py`）：`run_id -> {run 行, 事件视图, 提案视图}`，惰性过期，最多 64 条（最旧淘汰），`after_round` 在内存里切片。命中时不再查 `AI_RUNS` / `AI_AGENT_EVENTS`。
+- **SQL 只取增量与轻量列**：
+  - `list_for_request(after_round=N)` 把 `round_no > N` 下推到 SQL（默认 0 = 全量，旧行为不变）；
+  - 轮询走 `list_display_for_request`，投影里**不含** `args_payload`（CLOB，完整 canonical JSON）与 `args_hash`——它们只有确认提案时才需要，返回行同形状、两键为 `None`。
+- **消息不缓存**：`since_msg_seq > 0` 时每拍都查 `ai_messages` 增量。它是唯一必须实时的部分（用户消息、别的进程落的轮次）。
+- **终态 30s**：`succeeded|failed|cancelled|interrupted` 的快照活 30 秒（结果不会再变，历史回看不必回源）；`queued|running` 只活 1 秒。
+- **失效点**：`cancel()` 成功后、`_finish()` 的 CAS 成功后 `invalidate`（取消与终态下一拍立刻可见）；执行器 `_write_event` 落库成功后 `run_cache.append_event` 追加一条同形状事件（工具跑完与时间线同拍可见）；`run_queue.reset()`（测试清场）清空全部。
+- **前提是单 worker**：缓存只在当前进程可见，与 `run_queue` 的泵/在飞表同一假设（`config/supervisor.conf` 不带 `--workers`）。将来多 worker 需要外部缓存或直接关掉它——不能靠「反正是同一份数据」蒙混。
+- **前端节奏**：活跃 run 2s 一轮（提交后前 3 拍 750ms 抢首帧），页面隐藏 5s；连续轮询超过 60s 仍未终态按 `min(interval*2, 5s)` 退避，收到终态立即停。增量协议（`after_round` / `since_msg_seq`）不受节奏影响。
