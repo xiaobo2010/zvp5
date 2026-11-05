@@ -6,12 +6,25 @@ import {
   type AxiosResponse,
   type InternalAxiosRequestConfig
 } from 'axios'
+import { normalizeApiPath } from '@/utils/apiRouting'
 
 /**
- * 小型只读请求允许经 前端 再竞速一次。这个上限只约束备用线路：超过它的响应
- * 仍由后端主线路完整接收，避免为了兜底而把大文件复制两份。
+ * 只竞速首页、通知和活动/用户/分组详情等固定返回 JSON 的常用只读接口。
+ * 列表接口在后端都有分页上限，不把文件、导出和流式接口纳入。
  */
-export const SMALL_GET_RACE_LIMIT_BYTES = 256 * 1024
+const SMALL_JSON_GET_ROUTES: readonly RegExp[] = [
+  /^\/(?:version|health|changelog)$/,
+  /^\/system\/maintenance$/,
+  /^\/v3\/notifications$/,
+  /^\/(?:v2|v3)\/activities$/,
+  /^\/v2\/activities\/[^/]+$/,
+  /^\/v3\/activities\/[^/]+\/members$/,
+  /^\/v2\/users\/[^/]+\/activities$/,
+  /^\/v2\/groups\/[^/]+\/activities$/,
+  /^\/v3\/groups\/[^/]+\/users$/,
+  /^(?:\/(?:v[23]))?\/users\/[^/]+$/,
+  /^(?:\/(?:v[23]))?\/groups\/[^/]+$/
+]
 
 type HedgedConfig = InternalAxiosRequestConfig & {
   __zvmsHedgedGet?: boolean
@@ -32,12 +45,17 @@ function headerValue(config: InternalAxiosRequestConfig, name: string): string {
   return typeof value === 'string' ? value : ''
 }
 
+export function isSmallJsonGetPath(value: unknown): boolean {
+  const path = normalizeApiPath(value)
+  return SMALL_JSON_GET_ROUTES.some((pattern) => pattern.test(path))
+}
+
 /**
- * 只竞速普通的小型 JSON/text GET：
+ * 只竞速白名单内的小型 JSON GET：
  *
  * - 写请求、SSE、文件、Range 和显式流式响应保持单路；
  * - 主备基址相同时（本地开发和同源部署）自然关闭；
- * - 页面源/api 是备用线路，生产环境即 前端 上的 /api 反代。
+ * - 备用基址由部署期显式配置，不在源码里写生产域名。
  */
 export function hedgedGetRelayBase(
   config: InternalAxiosRequestConfig,
@@ -45,6 +63,9 @@ export function hedgedGetRelayBase(
   relayBaseURL: string
 ): string | null {
   if (typeof window === 'undefined' || typeof fetch !== 'function') {
+    return null
+  }
+  if (!relayBaseURL.trim()) {
     return null
   }
   if (String(config.method ?? '').toLowerCase() !== 'get' || config.data != null) {
@@ -61,7 +82,7 @@ export function hedgedGetRelayBase(
   }
 
   const url = String(config.url ?? '')
-  if (!url || /^([a-z][a-z\d+.-]*:)?\/\//i.test(url)) {
+  if (!url || /^([a-z][a-z\d+.-]*:)?\/\//i.test(url) || !isSmallJsonGetPath(url)) {
     return null
   }
 
@@ -70,48 +91,12 @@ export function hedgedGetRelayBase(
   return primary === relay ? null : relayBaseURL
 }
 
-function relayMaxContentLength(config: InternalAxiosRequestConfig): number {
-  const configured = config.maxContentLength
-  return typeof configured === 'number' && configured >= 0
-    ? Math.min(configured, SMALL_GET_RACE_LIMIT_BYTES)
-    : SMALL_GET_RACE_LIMIT_BYTES
-}
-
-function responseBytes(response: AxiosResponse): number | null {
-  const headers = response.headers as unknown as {
-    get?: (name: string) => unknown
-    [name: string]: unknown
+function isDefinitiveClientError(error: unknown): boolean {
+  if (!(error instanceof AxiosError) || !error.response) {
+    return false
   }
-  const declared =
-    typeof headers.get === 'function' ? headers.get('content-length') : headers['content-length']
-  const declaredNumber = Number(declared)
-  if (Number.isFinite(declaredNumber) && declaredNumber >= 0) {
-    return declaredNumber
-  }
-
-  const data = response.data
-  if (typeof data === 'string') {
-    return typeof TextEncoder === 'function'
-      ? new TextEncoder().encode(data).byteLength
-      : data.length
-  }
-  if (data instanceof ArrayBuffer) {
-    return data.byteLength
-  }
-  if (ArrayBuffer.isView(data)) {
-    return data.byteLength
-  }
-  if (typeof Blob !== 'undefined' && data instanceof Blob) {
-    return data.size
-  }
-  if (data != null && typeof data === 'object') {
-    try {
-      return new TextEncoder().encode(JSON.stringify(data)).byteLength
-    } catch {
-      return null
-    }
-  }
-  return null
+  const status = error.response.status
+  return status >= 400 && status < 500 && ![408, 425, 429].includes(status)
 }
 
 /**
@@ -170,13 +155,7 @@ export function createHedgedGetAdapter(
         ...config,
         baseURL: relayBaseURL,
         headers: AxiosHeaders.from(config.headers),
-        signal: relayController.signal,
-        maxContentLength: relayMaxContentLength(config),
-        onDownloadProgress: (event) => {
-          if (event.loaded > SMALL_GET_RACE_LIMIT_BYTES) {
-            relayController.abort()
-          }
-        }
+        signal: relayController.signal
       }
       const primaryConfig: InternalAxiosRequestConfig = {
         ...config,
@@ -193,6 +172,13 @@ export function createHedgedGetAdapter(
         .catch((error: unknown) => {
           primaryDone = true
           primaryError = error
+          if (isDefinitiveClientError(error) && !settled) {
+            settled = true
+            cleanup()
+            relayController.abort()
+            reject(error)
+            return
+          }
           rejectWhenBothFailed()
         })
 
@@ -200,19 +186,6 @@ export function createHedgedGetAdapter(
         .then(() => primaryAdapter(relayConfig))
         .then((response) => {
           relayDone = true
-          const size = responseBytes(response)
-          if (size !== null && size > SMALL_GET_RACE_LIMIT_BYTES) {
-            relayError = new AxiosError(
-              'Hedged GET response exceeded the small-response limit',
-              AxiosError.ERR_BAD_RESPONSE,
-              config,
-              response.request,
-              response
-            )
-            relayController.abort()
-            rejectWhenBothFailed()
-            return
-          }
           succeed(response, primaryController)
         })
         .catch((error: unknown) => {
@@ -225,7 +198,7 @@ export function createHedgedGetAdapter(
 
 /**
  * 在请求拦截器里安装竞速 adapter。两路都走 Axios 的 fetch adapter，以便复用
- * 超时、鉴权头、状态码处理，并让备用线路在读取过程中执行响应大小上限。
+ * 超时、鉴权头和状态码处理。
  */
 export function installHedgedGetAdapter(
   config: InternalAxiosRequestConfig,
@@ -235,8 +208,6 @@ export function installHedgedGetAdapter(
   if (raceConfig.__zvmsHedgedGet) {
     return
   }
-  // fetch adapter 会在读取过程中执行 maxContentLength；这样备用线路超过小型
-  // 响应上限时会直接取消，而不是先完整下载再丢弃。
   const adapter = getAdapter(['fetch']) || getAdapter(config.adapter)
   if (!adapter) {
     return

@@ -95,3 +95,24 @@ real_ip_recursive on;
 - `zvpapi.xiaobopisces.top` 仍对公网开放，且本机还留着一份 2026-11-02 的 SPA 副本。
   若要「真正统一入口」，可把该 vhost 的 `/api/` 限定 `allow <FRONTEND_IP>; deny all;`，
   根路径 301 到 zvp 域；代价是 前端 出口 IP 变化时会全站 502，需同时留后门 SSH 改配置。
+
+## 2026-11-06 小型 JSON GET 双路竞速
+
+统一反代仍是正常请求路径；浏览器同时向后端直连 API 发一份副本。两路都完整
+收到后，第一条成功响应获胜，另一条随即取消。该能力只覆盖明确的常用 JSON
+GET 白名单（版本、维护状态、通知、活动列表/详情、用户/分组详情等），不覆盖
+写请求、文件、导出、SSE 和流式接口。
+
+构建时必须同时注入：
+
+```bash
+VITE_API_BASE=https://zvp.xiaobopisces.top/api \
+VITE_API_RACE_BASE=https://zvpapi.xiaobopisces.top/api \
+pnpm build
+```
+
+- `VITE_API_BASE` 继续是浏览器正常同源路径。
+- `VITE_API_RACE_BASE` 是后端直连竞速路径；未配置时竞速自动关闭。
+- 后端已经允许页面 Origin 的 CORS，前端 CSP 也已放行 `zvpapi` Origin。
+- 发布前必须确认线上页面 Bundle 同时包含两个 API Origin 和竞速模块，不能只
+  看 `VITE_API_BASE`。
