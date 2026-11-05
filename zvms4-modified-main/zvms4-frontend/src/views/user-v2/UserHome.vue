@@ -52,22 +52,26 @@ watch(
 
 <template>
   <div v-if="user.isLogin" class="yg-v2-page yg-home-page">
-    <header class="yg-page-header yg-home-header">
-      <div>
-        <p class="yg-home-date">{{ dateText }}</p>
-        <h1 class="yg-page-header__title">
-          {{ t('home.greeting', { greet: t('home.greetings.' + greeting), name: user.name }) }}
-        </h1>
-        <p class="yg-page-header__subtitle">把每一次参与，都记录成看得见的成长。</p>
+    <section class="yg-phi-hero" aria-labelledby="phi-hero-title">
+      <h1 id="phi-hero-title" class="yg-phi-title">ZVMS</h1>
+      <p class="yg-phi-subtitle">VOLUNTEER <b>SYSTEM</b></p>
+      <p class="yg-phi-meta">
+        {{ t('home.greeting', { greet: t('home.greetings.' + greeting), name: user.name }) }} ·
+        {{ dateText }}
+      </p>
+      <p class="yg-phi-welcome">把每一次参与，都记录成看得见的成长。</p>
+      <div class="yg-phi-emblem" aria-hidden="true">
+        <span>V</span>
       </div>
       <ElButton
+        class="yg-phi-refresh"
         :icon="Refresh"
         :loading="loading"
         circle
         aria-label="刷新个人资料"
         @click="refreshUser"
       />
-    </header>
+    </section>
 
     <section class="yg-card" aria-labelledby="home-identity-title">
       <div class="yg-card__body yg-home-identity">

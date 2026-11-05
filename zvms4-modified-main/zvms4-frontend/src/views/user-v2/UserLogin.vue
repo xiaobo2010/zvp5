@@ -376,6 +376,9 @@ watch(user, async () => {
           <li>个人资料与设备安全</li>
         </ul>
       </div>
+      <div class="yg-phi-login-emblem" aria-hidden="true">
+        <span>PHI</span>
+      </div>
     </aside>
 
     <main class="yg-login-v2__main">

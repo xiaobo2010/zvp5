@@ -31,6 +31,9 @@ import './assets/main.css'
 // 普通用户端 v2（愚人节ui）：导航/页面进入/首页/活动/关于的布局层
 import './assets/styles/yg/user-v2.css'
 
+// Phigros 主题（愚人节ui）：暗色 + 青色 + 锐利几何 + 纯装饰判定线/网格
+import './assets/styles/yg/phi-theme.css'
+
 import persistedstate from 'pinia-plugin-persistedstate'
 
 // 表格展开行进出场动画（捕获期监听，对所有 el-table 生效）

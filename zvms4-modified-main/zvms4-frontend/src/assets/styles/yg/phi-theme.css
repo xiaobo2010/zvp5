@@ -1,0 +1,812 @@
+/* ==========================================================================
+   ZVMS Phigros Theme（愚人节UI）
+   作用域：.yg-phi 下覆盖普通用户端样式为 Phigros 视觉
+   删除：score/combo/RKS/判定交互/note下落/抽卡/等级游戏化/虚拟币
+   保留：真实义工业务 + 纯装饰几何元素（判定线/透视网格/扫描线/粒子）
+   字体：Bebas Neue（英文display）、Rajdhani（数字HUD）、系统UI字体（中文）
+   ========================================================================== */
+
+/* ---------- 字体 ---------- */
+@font-face {
+  font-family: 'Bebas';
+  src: url('../../fonts/phi/BebasNeue-Regular.ttf') format('truetype');
+  font-display: swap;
+  font-weight: 400;
+}
+
+@font-face {
+  font-family: 'Rajdhani';
+  src: url('../../fonts/phi/Rajdhani-Medium.ttf') format('truetype');
+  font-display: swap;
+  font-weight: 500;
+}
+
+@font-face {
+  font-family: 'Rajdhani';
+  src: url('../../fonts/phi/Rajdhani-Bold.ttf') format('truetype');
+  font-display: swap;
+  font-weight: 700;
+}
+
+/* ---------- Phi 作用域：暗色 + 青色主色 + 锐利几何 ---------- */
+.yg-phi {
+  --yg-bg-page: #050608;
+  --yg-bg-surface: #0c0e12;
+  --yg-bg-surface-raised: #12171b;
+  --yg-bg-surface-sunken: #060709;
+  --yg-bg-hover: rgba(73, 244, 226, 0.08);
+  --yg-bg-active: rgba(73, 244, 226, 0.15);
+
+  --yg-text-primary: #f4f6f8;
+  --yg-text-secondary: #b0b8c1;
+  --yg-text-tertiary: #737d87;
+  --yg-text-disabled: #4a5159;
+
+  --yg-border-subtle: rgba(244, 246, 248, 0.08);
+  --yg-border-default: rgba(244, 246, 248, 0.12);
+  --yg-border-strong: rgba(244, 246, 248, 0.18);
+
+  --yg-color-primary: #49f4e2;
+  --yg-color-primary-hover: #5ef7ea;
+  --yg-color-primary-active: #38e3d1;
+  --yg-color-primary-soft: rgba(73, 244, 226, 0.12);
+  --yg-color-primary-strong: #0ca89a;
+  --yg-color-primary-strong-hover: #0d9a8e;
+  --yg-color-primary-strong-active: #0b8d82;
+
+  --yg-shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --yg-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4), 0 2px 6px rgba(0, 0, 0, 0.45);
+  --yg-shadow-md: 0 2px 4px rgba(0, 0, 0, 0.35), 0 6px 16px rgba(0, 0, 0, 0.5);
+  --yg-shadow-lg: 0 4px 8px rgba(0, 0, 0, 0.4), 0 12px 32px rgba(0, 0, 0, 0.55);
+
+  --yg-focus-ring-color: #49f4e2;
+
+  --phi-cyan: #49f4e2;
+  --phi-pink: #ff4e9b;
+  --phi-display: Bebas, 'Impact', sans-serif;
+  --phi-hud: Rajdhani, 'Arial Narrow', sans-serif;
+}
+
+.yg-phi {
+  color-scheme: dark;
+  background: var(--yg-bg-page);
+  color: var(--yg-text-primary);
+}
+
+/* ---------- 背景装饰：透视网格 + 速度线 + 扫描线 ---------- */
+.yg-phi::before {
+  content: '';
+  position: fixed;
+  inset: 32% -35% -80%;
+  z-index: 0;
+  transform: rotateX(67deg);
+  transform-origin: 50% 0;
+  background-image:
+    linear-gradient(rgba(73, 244, 226, 0.09) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(73, 244, 226, 0.065) 1px, transparent 1px);
+  background-size: 54px 42px;
+  mask-image: linear-gradient(to bottom, transparent, #000 15%, #000 75%, transparent);
+  pointer-events: none;
+  animation: phi-grid-float 18s cubic-bezier(0.19, 1, 0.22, 1) infinite;
+}
+
+@keyframes phi-grid-float {
+  0%,
+  100% {
+    transform: rotateX(67deg) translateY(0);
+  }
+  50% {
+    transform: rotateX(67deg) translateY(15px);
+  }
+}
+
+.yg-phi::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  background: radial-gradient(
+    ellipse at 50% 35%,
+    transparent 0 20%,
+    rgba(5, 6, 8, 0.2) 78%,
+    #050608 120%
+  );
+  pointer-events: none;
+}
+
+/* 速度线装饰（固定位置，轻微位移） */
+.yg-phi-velocity {
+  position: fixed;
+  width: 130px;
+  height: 1px;
+  background: var(--phi-cyan);
+  opacity: 0.18;
+  transform: rotate(-31deg);
+  pointer-events: none;
+  z-index: 1;
+  animation: phi-velocity 4s cubic-bezier(0.19, 1, 0.22, 1) infinite;
+}
+
+.yg-phi-velocity:nth-child(1) {
+  top: 27%;
+  left: 5%;
+  animation-delay: -0.4s;
+}
+
+.yg-phi-velocity:nth-child(2) {
+  top: 42%;
+  right: 5%;
+  background: var(--phi-pink);
+  animation-delay: -2s;
+}
+
+.yg-phi-velocity:nth-child(3) {
+  top: 74%;
+  left: 11%;
+  width: 70px;
+  animation-delay: -3s;
+}
+
+@keyframes phi-velocity {
+  0%,
+  100% {
+    opacity: 0.07;
+    transform: translate3d(0, 0, 0) rotate(-31deg);
+  }
+  45% {
+    opacity: 0.3;
+    transform: translate3d(18px, -9px, 0) rotate(-31deg);
+  }
+}
+
+/* 判定线装饰（水平，无交互） */
+.yg-phi-judgment {
+  position: fixed;
+  left: 0;
+  right: 0;
+  top: 62%;
+  height: 2px;
+  z-index: 1;
+  background: rgba(244, 246, 248, 0.55);
+  box-shadow: 0 0 12px rgba(73, 244, 226, 0.3);
+  pointer-events: none;
+  animation: phi-judgment-pulse 1.875s cubic-bezier(0.19, 1, 0.22, 1) infinite;
+}
+
+.yg-phi-judgment::before {
+  content: '';
+  position: absolute;
+  inset: -1px 0;
+  background: var(--phi-cyan);
+  opacity: 0.2;
+}
+
+@keyframes phi-judgment-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 12px rgba(73, 244, 226, 0.2);
+  }
+  48% {
+    box-shadow: 0 0 18px rgba(73, 244, 226, 0.45);
+  }
+}
+
+/* ---------- 导航覆盖：暗色 + 细线 + HUD 字体 ---------- */
+.yg-phi .yg-glass-nav {
+  background: linear-gradient(160deg, rgba(12, 14, 18, 0.88), rgba(6, 7, 9, 0.72));
+  border-right-color: rgba(73, 244, 226, 0.15);
+  box-shadow:
+    inset 0 1px 0 rgba(73, 244, 226, 0.08),
+    0 8px 32px rgba(0, 0, 0, 0.55);
+}
+
+.yg-phi .yg-glass-nav--portrait {
+  background: var(--yg-bg-surface);
+  border-top-color: var(--yg-border-subtle);
+}
+
+.yg-phi .yg-glass-nav__indicator {
+  background: rgba(73, 244, 226, 0.15);
+  box-shadow: 0 0 12px rgba(73, 244, 226, 0.3);
+}
+
+.yg-phi .yg-glass-nav__item {
+  color: var(--yg-text-tertiary);
+}
+
+.yg-phi .yg-glass-nav__item:hover,
+.yg-phi .yg-glass-nav__item.is-active {
+  color: var(--phi-cyan);
+}
+
+.yg-phi .yg-glass-nav__theme-icon {
+  color: var(--yg-text-tertiary);
+}
+
+/* ---------- 卡片：斜切 + 细线 + 暗底 ---------- */
+.yg-phi .yg-card {
+  background: linear-gradient(120deg, #12171b, #090a0c 62%, #101217);
+  border-color: rgba(73, 244, 226, 0.12);
+  border-radius: var(--yg-radius-md);
+  clip-path: polygon(0 0, calc(100% - 12px) 0, 100% 12px, 100% 100%, 0 100%);
+  position: relative;
+}
+
+.yg-phi .yg-card::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 2px;
+  background: linear-gradient(var(--phi-cyan), transparent 78%);
+}
+
+.yg-phi .yg-card--hoverable:hover {
+  transform: translateX(4px);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.65);
+}
+
+/* ---------- 首页字标：ZVMS / VOLUNTEER ---------- */
+.yg-phi-hero {
+  position: relative;
+  padding: var(--yg-space-9) var(--yg-space-6) var(--yg-space-7);
+  overflow: hidden;
+  background: linear-gradient(135deg, rgba(12, 14, 18, 0.8), rgba(6, 7, 9, 0.95));
+  border: 1px solid rgba(73, 244, 226, 0.12);
+  border-radius: var(--yg-radius-lg);
+  clip-path: polygon(0 0, calc(100% - 16px) 0, 100% 16px, 100% 100%, 0 100%);
+}
+
+.yg-phi-hero::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 3px;
+  background: linear-gradient(var(--phi-cyan), transparent 70%);
+}
+
+.yg-phi-title {
+  margin: 0;
+  font: 400 clamp(80px, 15vw, 160px) / 0.75 var(--phi-display);
+  color: var(--yg-text-primary);
+  letter-spacing: 0.02em;
+  text-shadow:
+    4px 0 var(--phi-pink),
+    -3px 0 var(--phi-cyan);
+  animation: phi-title-glitch 8s steps(2) infinite;
+}
+
+@keyframes phi-title-glitch {
+  0%,
+  98%,
+  100% {
+    text-shadow:
+      4px 0 var(--phi-pink),
+      -3px 0 var(--phi-cyan);
+  }
+  99% {
+    text-shadow:
+      -4px 0 var(--phi-cyan),
+      3px 0 var(--phi-pink);
+  }
+}
+
+.yg-phi-subtitle {
+  margin: var(--yg-space-3) 0 0 4px;
+  font: 500 clamp(18px, 3vw, 26px) / 1 var(--phi-hud);
+  color: var(--yg-text-secondary);
+  letter-spacing: 0.15em;
+}
+
+.yg-phi-subtitle b {
+  color: var(--phi-cyan);
+  font-weight: 700;
+}
+
+.yg-phi-meta {
+  margin: var(--yg-space-4) 0 0 4px;
+  font: 500 13px var(--phi-hud);
+  color: var(--yg-text-tertiary);
+  letter-spacing: 0.08em;
+}
+
+/* PHI 印章装饰 */
+.yg-phi-emblem {
+  position: absolute;
+  right: 5%;
+  top: 50%;
+  width: min(28vw, 180px);
+  aspect-ratio: 1;
+  transform: translateY(-50%) rotate(45deg);
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(73, 244, 226, 0.25);
+  background: linear-gradient(135deg, rgba(73, 244, 226, 0.08), rgba(5, 6, 8, 0.75));
+  animation: phi-emblem-rotate 28s linear infinite;
+}
+
+.yg-phi-emblem::before,
+.yg-phi-emblem::after {
+  content: '';
+  position: absolute;
+  inset: 18%;
+  border: 1px solid rgba(73, 244, 226, 0.2);
+}
+
+.yg-phi-emblem::after {
+  inset: 32%;
+  border-color: rgba(255, 78, 155, 0.2);
+}
+
+.yg-phi-emblem span {
+  transform: rotate(-45deg);
+  font: 400 clamp(36px, 6vw, 64px) / 1 var(--phi-display);
+  color: var(--yg-text-primary);
+  text-shadow:
+    2px 0 var(--phi-pink),
+    -2px 0 var(--phi-cyan);
+}
+
+@keyframes phi-emblem-rotate {
+  to {
+    transform: translateY(-50%) rotate(405deg);
+  }
+}
+
+/* ---------- 首页时长：HUD 数字 + 细线轨道 ---------- */
+.yg-phi .yg-time-card {
+  background: linear-gradient(120deg, #0e1216, #080a0d);
+  border-color: rgba(73, 244, 226, 0.1);
+}
+
+.yg-phi .yg-time-card__title {
+  font: 500 11px var(--phi-hud);
+  color: var(--yg-text-tertiary);
+  letter-spacing: 0.12em;
+}
+
+.yg-phi .yg-time-card__value {
+  font: 700 32px / 0.9 var(--phi-hud);
+  font-variant-numeric: tabular-nums;
+  color: var(--phi-cyan);
+}
+
+.yg-phi .yg-time-card__unit {
+  margin-left: 4px;
+  font: 500 14px var(--phi-hud);
+  color: var(--yg-text-tertiary);
+}
+
+.yg-phi .yg-time-card__progress {
+  height: 1px;
+  background: rgba(73, 244, 226, 0.15);
+  overflow: hidden;
+  border-radius: 0;
+}
+
+.yg-phi .yg-time-card__progress-bar {
+  height: 100%;
+  background: var(--phi-cyan);
+  box-shadow: 0 0 8px var(--phi-cyan);
+  transition: transform 1s cubic-bezier(0.19, 1, 0.22, 1);
+}
+
+/* ---------- 按钮：锐利 + HUD 字重 ---------- */
+.yg-phi .yg-btn,
+.yg-phi .el-button {
+  font-family: var(--phi-hud);
+  font-weight: 500;
+  letter-spacing: 0.05em;
+  border-radius: var(--yg-radius-sm);
+  transition:
+    transform 180ms cubic-bezier(0.34, 1.28, 0.64, 1),
+    background-color 180ms cubic-bezier(0.25, 0.1, 0.25, 1),
+    border-color 180ms cubic-bezier(0.25, 0.1, 0.25, 1);
+}
+
+.yg-phi .yg-btn:hover,
+.yg-phi .el-button:hover {
+  transform: translateY(-2px);
+}
+
+.yg-phi .yg-btn:active,
+.yg-phi .el-button:active {
+  transform: scale(0.97);
+}
+
+.yg-phi .yg-btn--primary,
+.yg-phi .el-button--primary {
+  background: var(--yg-color-primary-strong);
+  border-color: var(--phi-cyan);
+  box-shadow: 0 0 12px rgba(73, 244, 226, 0.25);
+}
+
+.yg-phi .yg-btn--primary:hover,
+.yg-phi .el-button--primary:hover {
+  box-shadow: 0 0 18px rgba(73, 244, 226, 0.4);
+}
+
+/* ---------- 登录页：暗色分栏 + PHI 印章 ---------- */
+.yg-phi .yg-login-v2__brand {
+  background: linear-gradient(135deg, #0a0c10, #050608);
+  border-right-color: rgba(73, 244, 226, 0.12);
+  position: relative;
+}
+
+.yg-phi .yg-login-v2__brand::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 2px;
+  background: linear-gradient(var(--phi-cyan), transparent 70%);
+}
+
+.yg-phi .yg-login-v2__logo {
+  border: 1px solid rgba(73, 244, 226, 0.2);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+}
+
+.yg-phi .yg-login-v2__eyebrow {
+  font: 500 12px var(--phi-hud);
+  color: var(--phi-cyan);
+  letter-spacing: 0.12em;
+}
+
+.yg-phi .yg-login-v2__headline {
+  font-size: clamp(28px, 5vw, 36px);
+  text-shadow: 1px 0 rgba(73, 244, 226, 0.3);
+}
+
+.yg-phi .yg-login-v2__lead {
+  color: var(--yg-text-secondary);
+}
+
+.yg-phi .yg-login-v2__points li::before {
+  background: var(--phi-cyan);
+  box-shadow: 0 0 6px var(--phi-cyan);
+}
+
+.yg-phi .yg-login__card {
+  background: linear-gradient(120deg, #12171b, #0c0e12);
+  border-color: rgba(73, 244, 226, 0.15);
+  clip-path: polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 0 100%);
+}
+
+.yg-phi .yg-login__card::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 2px;
+  background: linear-gradient(var(--phi-cyan), transparent 75%);
+}
+
+.yg-phi .yg-login__title {
+  font-family: var(--phi-hud);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.yg-phi .yg-login__subtitle {
+  font-family: var(--phi-hud);
+  font-weight: 500;
+  color: var(--yg-text-tertiary);
+}
+
+/* PHI 印章（登录页右上角） */
+.yg-phi-login-emblem {
+  position: absolute;
+  right: 8%;
+  top: 12%;
+  width: 120px;
+  aspect-ratio: 1;
+  transform: rotate(45deg);
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(73, 244, 226, 0.2);
+  background: linear-gradient(135deg, rgba(73, 244, 226, 0.06), rgba(5, 6, 8, 0.8));
+  animation: phi-emblem-breathe 6s cubic-bezier(0.19, 1, 0.22, 1) infinite;
+}
+
+.yg-phi-login-emblem::before {
+  content: '';
+  position: absolute;
+  inset: 22%;
+  border: 1px solid rgba(73, 244, 226, 0.18);
+}
+
+.yg-phi-login-emblem span {
+  transform: rotate(-45deg);
+  font: 400 48px / 1 var(--phi-display);
+  color: rgba(244, 246, 248, 0.12);
+  text-shadow: none;
+}
+
+@keyframes phi-emblem-breathe {
+  0%,
+  100% {
+    transform: rotate(45deg) scale(1);
+  }
+  50% {
+    transform: rotate(45deg) scale(1.05);
+  }
+}
+
+/* ---------- 表格：细线 + 暗色行 ---------- */
+.yg-phi .el-table {
+  --el-table-bg-color: var(--yg-bg-surface);
+  --el-table-tr-bg-color: var(--yg-bg-surface);
+  --el-table-header-bg-color: var(--yg-bg-surface-sunken);
+  --el-table-row-hover-bg-color: rgba(73, 244, 226, 0.06);
+  --el-table-border-color: rgba(244, 246, 248, 0.08);
+  --el-table-text-color: var(--yg-text-primary);
+  --el-table-header-text-color: var(--yg-text-tertiary);
+}
+
+.yg-phi .el-table th {
+  font-family: var(--phi-hud);
+  font-weight: 500;
+  letter-spacing: 0.05em;
+}
+
+/* ---------- 输入框：暗底 + 青色焦点 ---------- */
+.yg-phi .el-input__wrapper {
+  background-color: var(--yg-bg-surface-sunken);
+  border-color: var(--yg-border-default);
+  box-shadow: none;
+}
+
+.yg-phi .el-input__wrapper:hover {
+  border-color: var(--yg-border-strong);
+}
+
+.yg-phi .el-input__wrapper.is-focus {
+  border-color: var(--phi-cyan);
+  box-shadow: 0 0 0 1px var(--phi-cyan);
+}
+
+.yg-phi .el-input__inner {
+  color: var(--yg-text-primary);
+}
+
+.yg-phi .el-input__inner::placeholder {
+  color: var(--yg-text-disabled);
+}
+
+/* ---------- 标签：青色软底 ---------- */
+.yg-phi .el-tag {
+  background-color: rgba(73, 244, 226, 0.12);
+  border-color: rgba(73, 244, 226, 0.2);
+  color: var(--phi-cyan);
+}
+
+.yg-phi .el-tag.el-tag--success {
+  background-color: rgba(52, 199, 89, 0.12);
+  border-color: rgba(52, 199, 89, 0.2);
+  color: #34c759;
+}
+
+.yg-phi .el-tag.el-tag--warning {
+  background-color: rgba(255, 149, 0, 0.12);
+  border-color: rgba(255, 149, 0, 0.2);
+  color: #ff9500;
+}
+
+.yg-phi .el-tag.el-tag--danger {
+  background-color: rgba(255, 59, 48, 0.12);
+  border-color: rgba(255, 59, 48, 0.2);
+  color: #ff3b30;
+}
+
+/* ---------- 顶栏：暗底 + HUD 字体 ---------- */
+.yg-phi .yg-topbar {
+  background: rgba(5, 6, 8, 0.92);
+  border-bottom-color: rgba(73, 244, 226, 0.12);
+  backdrop-filter: blur(10px);
+}
+
+.yg-phi .yg-topbar__title {
+  font-family: var(--phi-hud);
+  font-weight: 700;
+  letter-spacing: 0.05em;
+}
+
+/* ---------- 减少动效：停止循环动画 ---------- */
+@media (prefers-reduced-motion: reduce) {
+  .yg-phi::before {
+    animation: none;
+    transform: rotateX(67deg);
+  }
+
+  .yg-phi-velocity,
+  .yg-phi-judgment,
+  .yg-phi-emblem,
+  .yg-phi-login-emblem {
+    animation: none;
+  }
+
+  .yg-phi-title {
+    text-shadow:
+      4px 0 rgba(255, 78, 155, 0.5),
+      -3px 0 rgba(73, 244, 226, 0.5);
+  }
+}
+
+/* ---------- 响应式 ---------- */
+@media (max-width: 959px) {
+  .yg-phi-hero {
+    padding: var(--yg-space-7) var(--yg-space-5);
+  }
+
+  .yg-phi-emblem {
+    width: min(35vw, 140px);
+    right: 4%;
+  }
+
+  .yg-phi-login-emblem {
+    width: 90px;
+    right: 6%;
+    top: 10%;
+  }
+}
+
+@media (max-width: 599px) {
+  .yg-phi-hero {
+    padding: var(--yg-space-6) var(--yg-space-4);
+  }
+
+  .yg-phi-title {
+    font-size: clamp(60px, 18vw, 100px);
+  }
+
+  .yg-phi-emblem {
+    width: min(40vw, 110px);
+    right: 3%;
+  }
+
+  .yg-phi-login-emblem {
+    display: none;
+  }
+
+  .yg-phi-velocity {
+    display: none;
+  }
+}
+
+/* 判定线不跨页面/表单：只保留在首页 hero 内，登录品牌区一条短装饰 */
+.yg-phi .yg-phi-judgment {
+  display: none;
+}
+
+.yg-phi-hero::after {
+  content: '';
+  position: absolute;
+  right: var(--yg-space-6);
+  bottom: var(--yg-space-6);
+  left: var(--yg-space-6);
+  height: 2px;
+  background: rgba(244, 246, 248, 0.45);
+  box-shadow: 0 0 14px rgba(73, 244, 226, 0.45);
+  background-image: linear-gradient(90deg, var(--phi-cyan), transparent 72%);
+  pointer-events: none;
+}
+
+.yg-phi .yg-login-v2__brand::after {
+  content: '';
+  position: absolute;
+  right: var(--yg-space-9);
+  bottom: var(--yg-space-8);
+  left: var(--yg-space-9);
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(73, 244, 226, 0.6), transparent);
+  pointer-events: none;
+}
+
+.yg-phi .yg-login-v2__brand {
+  position: relative;
+}
+
+.yg-phi-refresh {
+  position: absolute;
+  z-index: 3;
+  top: var(--yg-space-5);
+  right: var(--yg-space-5);
+}
+
+.yg-phi-welcome {
+  margin: var(--yg-space-3) 0 0 4px;
+  color: var(--yg-text-secondary);
+  font-size: var(--yg-font-size-sm);
+}
+
+@media (max-width: 599px) {
+  .yg-phi-refresh {
+    top: var(--yg-space-3);
+    right: var(--yg-space-3);
+  }
+}
+
+.yg-phi .el-card__header {
+  color: var(--yg-text-primary);
+  border-bottom-color: var(--yg-border-subtle);
+}
+
+.yg-phi .el-card {
+  color: var(--yg-text-secondary);
+}
+
+.yg-phi .gauge-time {
+  color: var(--yg-text-primary);
+  font-family: var(--phi-hud);
+  font-variant-numeric: tabular-nums;
+}
+
+.yg-phi .gauge-label {
+  color: var(--yg-text-tertiary);
+  font-family: var(--phi-hud);
+  letter-spacing: 0.04em;
+}
+
+.yg-phi .footer-item {
+  color: var(--yg-text-tertiary);
+}
+
+.yg-phi .footer-item .upper {
+  color: var(--phi-cyan);
+}
+
+.yg-phi {
+  --el-color-primary: var(--phi-cyan);
+  --el-color-primary-light-3: #2ecfbe;
+  --el-color-primary-light-5: #1fa99b;
+  --el-color-primary-dark-2: #6ef7e9;
+}
+
+/* Element 表格在暗色主题下必须显式改 token：全局 --el-table-* 是浅色值 */
+.yg-phi .el-table {
+  --el-table-bg-color: var(--yg-bg-surface);
+  --el-table-tr-bg-color: var(--yg-bg-surface);
+  --el-table-header-bg-color: var(--yg-bg-surface-sunken);
+  --el-table-footer-bg-color: var(--yg-bg-surface);
+  --el-table-border-color: var(--yg-border-subtle);
+  --el-table-header-text-color: var(--yg-text-tertiary);
+  --el-table-text-color: var(--yg-text-primary);
+  --el-table-row-hover-bg-color: var(--yg-bg-hover);
+  color: var(--yg-text-primary);
+}
+
+.yg-phi .el-table__expanded-cell {
+  background: var(--yg-bg-surface);
+}
+
+.yg-phi .el-table th.el-table__cell,
+.yg-phi .el-table td.el-table__cell {
+  background-color: transparent;
+  border-bottom-color: var(--yg-border-subtle);
+}
+
+.yg-phi .el-table .el-table__body tr:hover > td.el-table__cell,
+.yg-phi .el-table .el-table__body tr.hover-row > td.el-table__cell,
+.yg-phi .el-table .el-table__body tr.current-row > td.el-table__cell {
+  background-color: var(--yg-bg-hover);
+}
+
+/* 暗色下的状态/身份标签：保留软底，但文字改成亮色 */
+.yg-phi .yg-tag {
+  background: var(--yg-bg-surface-sunken);
+  border-color: var(--yg-border-subtle);
+  color: var(--yg-text-primary);
+}
+
+.yg-phi .yg-tag--sky {
+  color: var(--phi-cyan);
+  border-color: rgba(73, 244, 226, 0.28);
+}
+
+.yg-phi .yg-tag--success {
+  color: var(--phi-cyan);
+  border-color: rgba(73, 244, 226, 0.28);
+}
+
+.yg-phi .yg-tag--warning {
+  color: #f3dc62;
+  border-color: rgba(243, 220, 98, 0.28);
+}
