@@ -13,11 +13,21 @@ import IconsResolver from 'unplugin-icons/resolver'
 import { VitePWA as pwa } from 'vite-plugin-pwa'
 import { ElementPlusResolver, VantResolver } from 'unplugin-vue-components/resolvers'
 import { externalizeInlineScripts } from './scripts/vite-plugin-externalize-inline-scripts'
-import { validateProductionApiBase } from './src/utils/apiBaseConfig'
+import {
+  validateOptionalProductionRaceApiBase,
+  validateProductionApiBase
+} from './src/utils/apiBaseConfig'
 
 function requireProductionApiBase(mode: string): string {
   const fileEnv = loadEnv(mode, process.cwd(), 'VITE_')
   return validateProductionApiBase(process.env.VITE_API_BASE || fileEnv.VITE_API_BASE)
+}
+
+function optionalProductionRaceApiBase(mode: string): string | undefined {
+  const fileEnv = loadEnv(mode, process.cwd(), 'VITE_')
+  return validateOptionalProductionRaceApiBase(
+    process.env.VITE_API_RACE_BASE || fileEnv.VITE_API_RACE_BASE
+  )
 }
 
 /**
@@ -42,17 +52,22 @@ function preconnectApiOrigin(): Plugin {
     },
     transformIndexHtml(html) {
       const fileEnv = loadEnv(mode, process.cwd(), 'VITE_')
-      const raw = (process.env.VITE_API_BASE || fileEnv.VITE_API_BASE || '').trim()
-      if (!raw) return html
-      let origin: string
-      try {
-        origin = new URL(validateProductionApiBase(raw)).origin
-      } catch {
-        return html
+      const bases = [
+        process.env.VITE_API_BASE || fileEnv.VITE_API_BASE,
+        process.env.VITE_API_RACE_BASE || fileEnv.VITE_API_RACE_BASE
+      ]
+      const origins = new Set<string>()
+      for (const raw of bases) {
+        try {
+          origins.add(new URL(validateOptionalProductionRaceApiBase(raw) || '').origin)
+        } catch {
+          // 主基址由 requireProductionApiBase 强校验，非法竞速基址同样在 build 前报错。
+        }
       }
+      if (origins.size === 0) return html
       return {
         html,
-        tags: [
+        tags: [...origins].flatMap((origin) => [
           {
             tag: 'link',
             attrs: { rel: 'preconnect', href: origin, crossorigin: '' },
@@ -63,7 +78,7 @@ function preconnectApiOrigin(): Plugin {
             attrs: { rel: 'dns-prefetch', href: origin },
             injectTo: 'head-prepend'
           }
-        ]
+        ])
       }
     }
   }
@@ -228,6 +243,7 @@ export const viteBaseConfig = {
 export default defineConfig(({ command, mode }) => {
   if (command === 'build') {
     requireProductionApiBase(mode)
+    optionalProductionRaceApiBase(mode)
   }
   return viteBaseConfig
 })

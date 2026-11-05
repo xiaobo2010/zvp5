@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { AxiosError, type AxiosAdapter, type AxiosResponse } from 'axios'
-import { createHedgedGetAdapter, hedgedGetRelayBase, SMALL_GET_RACE_LIMIT_BYTES } from './hedgedGet'
+import { createHedgedGetAdapter, hedgedGetRelayBase, isSmallJsonGetPath } from './hedgedGet'
 
 function config(overrides: Record<string, unknown> = {}) {
   return {
@@ -25,17 +25,46 @@ function response(data: unknown, status = 200): AxiosResponse {
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
 describe('小型 GET 双路竞速', () => {
-  it('只为普通 GET 选择页面源备用线路', () => {
+  it('只竞速白名单内的普通 JSON GET', () => {
     const primary = 'https://api-seoul.example.test/api'
     const relay = 'https://content-la.example.test/api'
 
     expect(hedgedGetRelayBase(config(), primary, relay)).toBe(relay)
+    expect(hedgedGetRelayBase(config({ url: '/v3/notifications' }), primary, relay)).toBe(relay)
     expect(hedgedGetRelayBase(config({ method: 'post' }), primary, relay)).toBeNull()
     expect(hedgedGetRelayBase(config({ responseType: 'blob' }), primary, relay)).toBeNull()
+    expect(hedgedGetRelayBase(config({ url: '/v2/users/me/time' }), primary, relay)).toBeNull()
+    expect(hedgedGetRelayBase(config({ url: '/v3/users/me/device' }), primary, relay)).toBeNull()
     expect(
       hedgedGetRelayBase(config({ headers: { Range: 'bytes=0-' } }), primary, relay)
     ).toBeNull()
     expect(hedgedGetRelayBase(config(), primary, primary)).toBeNull()
+    expect(hedgedGetRelayBase(config(), primary, '')).toBeNull()
+  })
+
+  it('白名单覆盖常用首页、通知、活动和详情接口', () => {
+    for (const path of [
+      '/version',
+      '/health',
+      '/changelog',
+      '/system/maintenance',
+      '/v3/notifications',
+      '/v2/activities',
+      '/v3/activities',
+      '/v2/activities/abc',
+      '/v3/activities/abc/members',
+      '/v2/users/abc/activities',
+      '/v2/groups/abc/activities',
+      '/v3/groups/abc/users',
+      '/users/abc',
+      '/v3/users/abc',
+      '/groups/abc',
+      '/v2/groups/abc'
+    ]) {
+      expect(isSmallJsonGetPath(path), path).toBe(true)
+    }
+    expect(isSmallJsonGetPath('/v2/users/abc/time')).toBe(false)
+    expect(isSmallJsonGetPath('/v3/users/me/device')).toBe(false)
   })
 
   it('完整响应先到者获胜，并中止另一路', async () => {
@@ -82,17 +111,30 @@ describe('小型 GET 双路竞速', () => {
     expect(calls.sort()).toEqual(['primary', 'relay'])
   })
 
-  it('备用线路超过小响应上限时不接管大响应', async () => {
+  it('首尔主线路快速返回 4xx 时立即结束，不等待备用线路', async () => {
+    const primaryResponse = response({ detail: 'unauthorized' }, 401)
+    const primary = new AxiosError(
+      'unauthorized',
+      AxiosError.ERR_BAD_REQUEST,
+      config(),
+      undefined,
+      primaryResponse
+    )
+    let relayAborted = false
     const adapter: AxiosAdapter = async (request) => {
-      const isRelay = request.baseURL === 'https://content-la.example.test/api'
-      return response('x'.repeat(isRelay ? SMALL_GET_RACE_LIMIT_BYTES + 1 : 4))
+      if (request.baseURL !== 'https://content-la.example.test/api') {
+        throw primary
+      }
+      await delay(60)
+      relayAborted = request.signal?.aborted === true
+      return response({ ok: true })
     }
 
-    const result = await createHedgedGetAdapter(
-      adapter,
-      'https://content-la.example.test/api'
-    )(config())
-    expect(result.data).toBe('xxxx')
+    await expect(
+      createHedgedGetAdapter(adapter, 'https://content-la.example.test/api')(config())
+    ).rejects.toBe(primary)
+    await delay(80)
+    expect(relayAborted).toBe(true)
   })
 
   it('两路都失败时保留首尔主线路错误', async () => {
