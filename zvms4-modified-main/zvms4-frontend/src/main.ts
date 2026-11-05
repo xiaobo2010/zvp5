@@ -28,6 +28,9 @@ import './assets/styles/yg-glass-nav.css'
 import './assets/styles/flat.css'
 import './assets/main.css'
 
+// 普通用户端 v2（愚人节ui）：导航/页面进入/首页/活动/关于的布局层
+import './assets/styles/yg/user-v2.css'
+
 import persistedstate from 'pinia-plugin-persistedstate'
 
 // 表格展开行进出场动画（捕获期监听，对所有 el-table 生效）
