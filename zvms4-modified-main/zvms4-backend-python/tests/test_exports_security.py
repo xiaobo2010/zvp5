@@ -53,20 +53,16 @@ async def test_end_only_export_preserves_filter(monkeypatch):
     async def list_all():
         return [{"_id": "user", "id": "123", "name": "Name", "class_id": "class"}]
 
-    async def group(value):
-        return {"name": "Group"}
+    async def group_list():
+        return [{"_id": "class", "name": "Group"}]
 
-    async def calculate(*args, **kwargs):
-        observed.append(args)
-        return {"on-campus": 1, "off-campus": 0, "social-practice": 0}
-
-    async def list_effective(*args, **kwargs):
-        return [{"_id": "activity"}]
+    async def bulk(ids, date_start=None, date_end=None, allow_cache=True, **kwargs):
+        observed.append((list(ids), date_start, date_end))
+        return {user_id: {"on-campus": 1, "off-campus": 0, "social-practice": 0} for user_id in ids}
 
     monkeypatch.setattr(backends, "get_tasks_repo", lambda: SimpleNamespace(get_by_uuid=get_task, update_fields=nothing, push_result=nothing))
     monkeypatch.setattr(backends, "get_users_repo", lambda: SimpleNamespace(list_all=list_all))
-    monkeypatch.setattr(backends, "get_groups_repo", lambda: SimpleNamespace(get=group))
-    monkeypatch.setattr(backends, "get_activities_repo", lambda: SimpleNamespace(list_effective=list_effective))
-    monkeypatch.setattr(exports, "calculate_user_time", calculate)
+    monkeypatch.setattr(backends, "get_groups_repo", lambda: SimpleNamespace(list_all=group_list))
+    monkeypatch.setattr(exports, "calculate_user_time_bulk", bulk)
     await exports.process_task(str(uuid.uuid4()))
-    assert observed == [("user", None, end)]
+    assert observed == [(["user"], None, end)]
