@@ -10,6 +10,8 @@
 
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
@@ -23,6 +25,8 @@ from util.object_id import get_current_user, is_admin_token
 from util.user import get_user_display_name
 
 router = APIRouter()
+
+logger = logging.getLogger(__name__)
 
 
 class EnableRequest(BaseModel):
@@ -94,7 +98,9 @@ async def enable_maintenance(
     # 已建立的连接必须在这里立刻断开（前端不会自己掉线）。断开失败不能影响
     # enable 的返回，所以逐个 try/except 由 disconnect_all_clients 内部兜住。
     disconnected = await disconnect_all_clients()
-    print(f"Maintenance enabled: disconnected {disconnected} socket.io client(s)")
+    logger.info(
+        "Maintenance enabled: disconnected %s socket.io client(s)", disconnected
+    )
 
     log.with_text(
         f"管理员 {await get_user_display_name(user['id'])} 开启了系统维护模式：{payload.reason}",

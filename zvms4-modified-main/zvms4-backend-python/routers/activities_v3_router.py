@@ -2,7 +2,6 @@ from datetime import datetime
 import math
 from fastapi import APIRouter, Depends, HTTPException, Body, Query
 from db import backends
-from db.ids import normalize_oid
 from db.oracle.session import session_scope
 from typings.log import inject_log
 from util.object_id import get_current_user

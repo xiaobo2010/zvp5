@@ -5,9 +5,7 @@ from typing import Literal, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import BaseModel
-from bcrypt import hashpw, gensalt
 import asyncio
-from util.activity_signoff import user_activity_signoff
 from typings.log import (
     inject_log,
     ZVMSLog,
@@ -44,10 +42,7 @@ from util.cert import (
     validate_by_cert,
 )
 from util.user import get_user_display_name, get_user_name
-from util.validation import (
-    validate_number,
-    validate_student_name,
-)
+from util.validation import validate_number
 
 router = APIRouter()
 

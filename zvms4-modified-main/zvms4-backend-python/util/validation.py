@@ -103,18 +103,3 @@ def validate_number(number: str):
         return False, "The last two digits indicates the student ID, no more than 60"
 
     return True, ""
-
-
-def validate_past_identity(identity: str):
-    """
-    Validate past identity.
-    1. Should be either name or number.
-    2. If the identity is name, it should be in the correct format.
-    3. If the identity is number, it should be in the correct format.
-    """
-
-    number, numbermsg = validate_number(identity)
-    if number:
-        return True, ""
-    else:
-        return False, numbermsg

@@ -68,14 +68,6 @@ def upgrade_user_positions(positions: list[UserPositionV1]) -> list[UserPosition
     return [trans_permissions(pos) for pos in positions]
 
 
-async def get_user(oid: str):
-    """
-    Get user by oid
-    """
-    validate_object_id(oid)
-    return await backends.get_users_repo().get_by_oid(oid)
-
-
 async def compulsory_temporary_token(
     token: str = Depends(oauth2_scheme), request: Request = None
 ):
@@ -337,16 +329,3 @@ async def is_admin_token(raw) -> bool:
         # 按调用方级别落库，不继承上一个请求留下的 warning 下限。
         log_level_floor.set(previous)
     return bool(user) and "admin" in (user.get("per") or [])
-
-
-def timestamp_change(date_string: str):
-    """
-    Change ISO-8601 to timestamp
-    """
-    dt = datetime.strptime(date_string, "%Y-%m-%dT%H:%M:%S.%fZ")
-    # Change the time zone to UTC
-    dt = dt.replace(tzinfo=timezone.utc)
-    # Get the timestamp
-    timestamp = dt.timestamp()
-    # Return the timestamp
-    return int(timestamp)
