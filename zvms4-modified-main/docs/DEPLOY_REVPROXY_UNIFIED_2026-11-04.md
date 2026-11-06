@@ -1,5 +1,30 @@
 # 2026-11-04 恢复「前端服务器统一反代」拓扑
 
+## 2026-11-06 标准发布命令（当前唯一口径）
+
+竞速能力是**构建期注入**的，漏注入不会报错、只会静默失效，所以发布走固定命令：
+
+```bash
+cd zvms4-frontend
+VITE_API_BASE=https://zvp.xiaobopisces.top/api \
+VITE_API_RACE_BASE=https://zvpapi.xiaobopisces.top/api \
+npm run build
+rsync -az --delete ./dist/ zvp-frontend:/www/zvms4/frontend-dist/
+ssh zvp-frontend 'chown -R www:www /www/zvms4/frontend-dist'
+```
+
+发布后必须核对产物，两个基址缺一即视为竞速未生效：
+
+```bash
+grep -c "Both API paths failed" dist/assets/index-*.js        # 竞速模块在包里
+grep -oh "https://zvp[a-z]*\.xiaobopisces\.top/api" dist/assets/*.js | sort -u
+# 期望同时看到 zvp.xiaobopisces.top（主路，走 前端反代）和 zvpapi.xiaobopisces.top（备路，直连后端）
+```
+
+**为什么曾经"没生效"**：2026-11-04 那次发布是双路竞速代码合入之前构建的，产物里根本
+没有竞速模块；后来即使带着代码重新构建，若只注入 `VITE_API_BASE`，
+`hedgedGetRelayBase()` 会因为备用基址为空直接返回 `null`，代码在包里也一次都不会触发。
+
 ## 结论
 
 浏览器只访问 `https://zvp.xiaobopisces.top`（zvp-frontend，<FRONTEND_IP>）。
