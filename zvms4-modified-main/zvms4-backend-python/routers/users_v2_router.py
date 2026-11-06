@@ -4,7 +4,7 @@ from db.repos.oracle.members import escape_oracle_regex
 from util.calculate import calculate_user_time, find_percentile_threshold
 from util.object_id import get_current_user
 from util.permission.user import validate_read_user_permission
-from utils import validate_object_id
+from util.oid import validate_object_id
 
 router = APIRouter()
 

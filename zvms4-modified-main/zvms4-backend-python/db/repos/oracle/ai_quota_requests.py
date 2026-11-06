@@ -34,6 +34,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from db.ids import new_oid, normalize_oid
 from db.models import ai_quota_requests as requests_tbl
 from db.oracle.session import session_scope
+from db.repos.pagination import page_args
 
 Row = dict[str, Any]
 
@@ -183,9 +184,7 @@ class OracleAIQuotaRequestsRepo:
     ) -> tuple[list[Row], int]:
         """按 ``created_at`` 倒序一页 + 总数（两条语句，不做窗口函数回读）。"""
         where = [] if status is None else [requests_tbl.c.status == str(status)]
-        page = max(1, int(page))
-        size = max(1, int(size))
-        offset = (page - 1) * size
+        offset, size = page_args(page, size)
         page_stmt = (
             select(*_columns())
             .where(*where)

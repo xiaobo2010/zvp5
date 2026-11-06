@@ -1,6 +1,6 @@
 from fastapi import HTTPException
 from db import backends
-from utils import validate_object_id
+from util.oid import validate_object_id
 
 
 async def get_user_class(user_oid: str) -> str:

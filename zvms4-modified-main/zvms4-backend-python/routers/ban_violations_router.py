@@ -14,7 +14,6 @@
 
 from __future__ import annotations
 
-from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -25,6 +24,7 @@ from services import violation_guard
 from typings.log import inject_log, xuehai_id_from
 from util.object_id import get_current_user
 from util.permission.features import has_feature
+from util.serialization import iso_seconds
 
 router = APIRouter()
 
@@ -50,12 +50,6 @@ def _require_admin(user: dict, feature: str | None = None) -> None:
     if feature is not None and has_feature(user, feature):
         return
     raise HTTPException(status_code=403, detail="权限不足")
-
-
-def _iso(value) -> Optional[str]:
-    if isinstance(value, datetime):
-        return value.isoformat(timespec="seconds")
-    return None
 
 
 class SignalReport(BaseModel):
@@ -131,7 +125,7 @@ async def list_violations(
             "signal": row["signal"],
             "detail": row.get("detail"),
             "xuehai_id": row.get("xuehai_id"),
-            "created_at": _iso(row.get("created_at")),
+            "created_at": iso_seconds(row.get("created_at")),
         }
         for row in rows
     ]

@@ -8,6 +8,7 @@ from typings.export import ExportFormat
 from typings.group import Group
 from fastapi import APIRouter, HTTPException, Depends, Query
 from db import backends
+from db.repos.pagination import page_args
 from pydantic import BaseModel
 
 from util.calculate import calculate_user_time_bulk
@@ -115,6 +116,8 @@ async def get_groups(
 
     count = len(rows)
 
+    # ``page < 1`` = 「一次全量」，不是第 1 页；哨兵语义特殊，故不走
+    # ``db.repos.pagination.page_args``（那里会把页号钳到 1）。
     if page < 1:
         result = rows
     else:
@@ -251,7 +254,8 @@ async def get_users_in_class(
         result = [user for user in result if pattern.search(user.get("name") or "")]
     count = len(result)
     result.sort(key=lambda user: user.get("id") or "")
-    result = result[(page - 1) * perpage : (page - 1) * perpage + perpage]
+    offset, limit = page_args(page, perpage)
+    result = result[offset : offset + limit]
     custom_flags = (
         await custom_password_flags_async(result) if pwdm else None
     )
@@ -292,7 +296,8 @@ async def get_user_times_in_class(
         result = [user for user in result if pattern.search(user.get("name") or "")]
     count = len(result)
     result.sort(key=lambda user: user.get("id") or "")
-    result = result[(page - 1) * perpage : (page - 1) * perpage + perpage]
+    offset, limit = page_args(page, perpage)
+    result = result[offset : offset + limit]
     selected_students = [str(user["_id"]) for user in result]
     user_times = await calculate_user_time_bulk(
         selected_students, start, end, allow_cache=allow_cache

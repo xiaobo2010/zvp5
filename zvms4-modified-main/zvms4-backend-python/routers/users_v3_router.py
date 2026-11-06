@@ -30,8 +30,9 @@ from util.object_id import (
     require_password_verification,
 )
 from util.permission.user import credential_change_forbidden, role_change_forbidden
+from util.oid import validate_object_id
+from util.serialization import iso, iso_seconds
 from util.user import get_user_display_name, user_profile
-from utils import validate_object_id
 from util.validation import validate_student_name
 
 router = APIRouter()
@@ -342,7 +343,7 @@ async def set_user_banned_v3(
         "code": 200,
         "data": {
             "banned": payload.banned,
-            "ban_until": ban_until.isoformat() if ban_until is not None else None,
+            "ban_until": iso(ban_until),
             "permanent": payload.banned and ban_until is None,
         },
     }
@@ -751,10 +752,6 @@ def _validated_device_id(raw: str) -> str:
     return value
 
 
-def _iso_or_none(value) -> Optional[str]:
-    return value.isoformat(timespec="seconds") if isinstance(value, datetime) else None
-
-
 @router.get("/me/device")
 async def get_my_device(request: Request, user=Depends(get_current_user)):
     """当前请求所携带的设备身份 + 本人主设备绑定/封禁状态。
@@ -778,7 +775,7 @@ async def get_my_device(request: Request, user=Depends(get_current_user)):
             "primary_xuehai_id": current.get("primary_xuehai_id") if current else None,
             "device_banned": device_banned,
             "device_ban_reason": ban_reason,
-            "device_ban_until": _iso_or_none(ban_until),
+            "device_ban_until": iso_seconds(ban_until),
         },
     }
 
@@ -1110,7 +1107,7 @@ async def create_temp_password_v3(
         "code": 200,
         "data": {
             "code": code,
-            "expires_at": _iso_or_none(expires_at),
+            "expires_at": iso_seconds(expires_at),
             "target": {
                 "_id": str(target["_id"]),
                 "id": target.get("id"),
