@@ -1,5 +1,5 @@
 import { fileURLToPath, URL } from 'node:url'
-import { defineConfig, loadEnv } from 'vite'
+import { defineConfig, loadEnv, type Plugin } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import vueJsx from '@vitejs/plugin-vue-jsx'
 // import basicSsl from '@vitejs/plugin-basic-ssl'
@@ -13,11 +13,75 @@ import IconsResolver from 'unplugin-icons/resolver'
 import { VitePWA as pwa } from 'vite-plugin-pwa'
 import { ElementPlusResolver, VantResolver } from 'unplugin-vue-components/resolvers'
 import { externalizeInlineScripts } from './scripts/vite-plugin-externalize-inline-scripts'
-import { validateProductionApiBase } from './src/utils/apiBaseConfig'
+import {
+  validateOptionalProductionRaceApiBase,
+  validateProductionApiBase
+} from './src/utils/apiBaseConfig'
 
 function requireProductionApiBase(mode: string): string {
   const fileEnv = loadEnv(mode, process.cwd(), 'VITE_')
   return validateProductionApiBase(process.env.VITE_API_BASE || fileEnv.VITE_API_BASE)
+}
+
+function optionalProductionRaceApiBase(mode: string): string | undefined {
+  const fileEnv = loadEnv(mode, process.cwd(), 'VITE_')
+  return validateOptionalProductionRaceApiBase(
+    process.env.VITE_API_RACE_BASE || fileEnv.VITE_API_RACE_BASE
+  )
+}
+
+/**
+ * Warm the cross-origin API connection while the HTML is still being parsed.
+ *
+ * The SPA is served by the content host and calls the API host directly, so the
+ * first API request would otherwise pay a full DNS + TCP + TLS round trip after
+ * the JS bundle has already loaded.  `preconnect` starts that handshake in
+ * parallel with the bundle download from the other origin; `dns-prefetch` is the
+ * fallback for browsers that drop speculative connections.
+ *
+ * The origin is derived from VITE_API_BASE at build time, so no production
+ * domain is stored in the repository and a local build (`/api`) emits nothing.
+ */
+function preconnectApiOrigin(): Plugin {
+  let mode = 'production'
+  return {
+    name: 'zvms4-preconnect-api-origin',
+    apply: 'build',
+    configResolved(config) {
+      mode = config.mode
+    },
+    transformIndexHtml(html) {
+      const fileEnv = loadEnv(mode, process.cwd(), 'VITE_')
+      const bases = [
+        process.env.VITE_API_BASE || fileEnv.VITE_API_BASE,
+        process.env.VITE_API_RACE_BASE || fileEnv.VITE_API_RACE_BASE
+      ]
+      const origins = new Set<string>()
+      for (const raw of bases) {
+        try {
+          origins.add(new URL(validateOptionalProductionRaceApiBase(raw) || '').origin)
+        } catch {
+          // 主基址由 requireProductionApiBase 强校验，非法竞速基址同样在 build 前报错。
+        }
+      }
+      if (origins.size === 0) return html
+      return {
+        html,
+        tags: [...origins].flatMap((origin) => [
+          {
+            tag: 'link',
+            attrs: { rel: 'preconnect', href: origin, crossorigin: '' },
+            injectTo: 'head-prepend'
+          },
+          {
+            tag: 'link',
+            attrs: { rel: 'dns-prefetch', href: origin },
+            injectTo: 'head-prepend'
+          }
+        ])
+      }
+    }
+  }
 }
 
 // https://vitejs.dev/config/
@@ -133,7 +197,8 @@ export const viteBaseConfig = {
     }),
     VueComponents({
       resolvers: [ElementPlusResolver({ importStyle: false }), VantResolver(), IconsResolver()]
-    })
+    }),
+    preconnectApiOrigin()
   ],
   resolve: {
     alias: {
@@ -178,6 +243,7 @@ export const viteBaseConfig = {
 export default defineConfig(({ command, mode }) => {
   if (command === 'build') {
     requireProductionApiBase(mode)
+    optionalProductionRaceApiBase(mode)
   }
   return viteBaseConfig
 })

@@ -19,8 +19,10 @@ import {
   ttlFor
 } from '@/utils/requestCache'
 import { usesContentHost } from '@/utils/apiRouting'
+import { hedgedGetRelayBase, installHedgedGetAdapter } from '@/plugins/hedgedGet'
 
 const apiBase = import.meta.env.VITE_API_BASE ?? '/api'
+const apiRaceBase = (import.meta.env.VITE_API_RACE_BASE ?? '').trim().replace(/\/+$/, '')
 
 export const baseURL = apiBase.replace(/\/+$/, '')
 
@@ -174,6 +176,12 @@ axiosInstance.interceptors.request.use(
       }
     }
     trackRequest(config)
+    if (!usesContentHost(config.url)) {
+      const relayBase = hedgedGetRelayBase(config, String(config.baseURL ?? ''), apiRaceBase)
+      if (relayBase) {
+        installHedgedGetAdapter(config, relayBase)
+      }
+    }
     return config
   },
   (error) => {

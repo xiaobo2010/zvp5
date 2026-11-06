@@ -403,6 +403,34 @@ describe('后台执行', () => {
     }
   })
 
+  it('长 run 超过 60 秒后轮询退避到上限，但仍在跑', async () => {
+    vi.useFakeTimers()
+    try {
+      mocks.submitRun.mockResolvedValue({
+        run_id: 'r1'.repeat(16),
+        message_oid: 'm1'.repeat(16),
+        status: 'queued'
+      })
+      const store = useAiConversationsStore()
+      await store.loadConversations()
+      await store.selectConversation(conversation().oid)
+      await store.submitRun(conversation().oid, '查一下')
+
+      await vi.advanceTimersByTimeAsync(60_000)
+      expect(store.polling).toBe(true)
+      mocks.fetchRunDetail.mockClear()
+
+      // 退避到 5 秒后，一个 5 秒窗口最多两拍；关键是别再按 2 秒刷。
+      await vi.advanceTimersByTimeAsync(5_000)
+      const polls = mocks.fetchRunDetail.mock.calls.length
+      expect(polls).toBeGreaterThanOrEqual(1)
+      expect(polls).toBeLessThanOrEqual(2)
+      expect(store.polling).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('页面不可见时轮询降到 5 秒', async () => {
     vi.useFakeTimers()
     const hidden = vi.spyOn(document, 'hidden', 'get').mockReturnValue(true)

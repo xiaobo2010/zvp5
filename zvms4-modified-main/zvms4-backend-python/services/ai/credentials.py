@@ -269,6 +269,11 @@ async def invalidate(user_oid: str | None = None) -> None:
     if keys:
         await state.kv_delete(*keys)
     _cache.clear()
+    # 凭据一改，按 (凭据 key, 模型) 记录的「上游不支持流式」负缓存就该作废：
+    # 换 key / 换渠道之后没有理由继续走一小时的降级路径。
+    from services.ai import cache_invalidation
+
+    await cache_invalidation.clear_stream_unsupported()
 
 
 async def _build(user_oid: str) -> list[dict]:

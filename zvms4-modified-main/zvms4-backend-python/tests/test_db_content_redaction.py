@@ -88,6 +88,13 @@ def test_column_name_rule_is_unchanged() -> None:
     assert db_content._redact_cell("PAYLOAD", "short") == "***"
 
 
+def test_cipher_columns_are_redacted() -> None:
+    """AI 凭据的密文也是离线爆破素材，列名规则不能只认 ``SECRET``。"""
+    assert db_content._redact_cell("API_KEY_CIPHER", "6Qk3m2vA") == "***"
+    assert db_content._redact_cell("api_key_cipher", "6Qk3m2vA") == "***"
+    assert db_content._redact_cell("SECRET_CIPHER", "6Qk3m2vA") == "***"
+
+
 @pytest.mark.asyncio
 async def test_object_ids_are_not_redacted() -> None:
     """24 位 hex 是活动/成员 oid，误伤会让整个控制台不可用。"""

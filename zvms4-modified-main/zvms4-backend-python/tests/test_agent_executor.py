@@ -450,6 +450,34 @@ async def test_tool_result_is_appended_as_an_openai_tool_message(monkeypatch, en
 
 
 @pytest.mark.asyncio
+async def test_prefixed_tool_name_is_normalized_to_the_registry_name(
+    monkeypatch, env
+) -> None:
+    """``functions.search_activities`` / 大小写漂移按注册名执行并记账。"""
+    _audit, events, _quota, activities, _capture = env
+    upstream = ScriptedUpstream(
+        [
+            _completion(
+                "",
+                tool_calls=[
+                    _tool_call("functions.Search_Activities", {"query": "图书馆"})
+                ],
+            ),
+            _completion("找到了 1 个活动。"),
+        ]
+    )
+    monkeypatch.setattr(providers, "chat_completion", upstream)
+
+    result = await _run(model=MODEL)
+
+    assert activities.calls[0]["search"] == "图书馆"
+    # 审计可聚合：事件里落的是注册名，不是模型说的那个前缀名。
+    assert result["events"][0]["tool_name"] == "search_activities"
+    assert result["events"][0]["status"] == "executed"
+    assert events.rows[0]["tool_name"] == "search_activities"
+
+
+@pytest.mark.asyncio
 async def test_unknown_tool_is_denied_and_the_run_continues(monkeypatch, env) -> None:
     _audit, events, _quota, _activities, _capture = env
     upstream = ScriptedUpstream(
@@ -468,6 +496,11 @@ async def test_unknown_tool_is_denied_and_the_run_continues(monkeypatch, env) ->
     assert events.rows[0]["status"] == "denied"
     # 被拒的工具仍要给模型一条 tool 消息，否则下一轮上游会 400。
     assert upstream.payloads[1]["messages"][3]["role"] == "tool"
+    # 回包带「此刻可见的工具」，模型才能立刻换一个正确的名字重试。
+    payload = json.loads(upstream.payloads[1]["messages"][3]["content"])
+    assert payload["error"] == "unknown_tool"
+    assert payload["available_tools"] == sorted(payload["available_tools"])
+    assert len(payload["available_tools"]) <= executor.MAX_AVAILABLE_TOOLS
 
 
 @pytest.mark.asyncio
