@@ -27,6 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import banned_devices as banned_devices_tbl
 from db.oracle.session import session_scope
+from db.repos.pagination import page_args
 
 Row = dict[str, Any]
 
@@ -168,13 +169,14 @@ def _page_stmt(
         )
     if conds:
         stmt = stmt.where(*conds)
+    offset, limit = page_args(page, size)
     return (
         stmt.order_by(
             banned_devices_tbl.c.created_at.desc(),
             banned_devices_tbl.c.xuehai_id.asc(),
         )
-        .offset((page - 1) * size)
-        .limit(size)
+        .offset(offset)
+        .limit(limit)
     )
 
 

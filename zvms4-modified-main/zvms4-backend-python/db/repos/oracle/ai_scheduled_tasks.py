@@ -37,6 +37,7 @@ from db.ids import new_oid, normalize_oid
 from db.models import ai_runs as ai_runs_tbl
 from db.models import ai_scheduled_tasks as tasks_tbl
 from db.oracle.session import session_scope
+from db.repos.pagination import page_args
 
 Row = dict[str, Any]
 
@@ -472,10 +473,10 @@ class OracleAiScheduledTasksRepo:
     ) -> tuple[list[Row], int]:
         """某任务的执行历史（``ai_runs.task_oid``），新的在前。"""
         normalized = normalize_oid(task_oid)
-        offset = (max(int(page), 1) - 1) * max(int(size), 1)
+        offset, size = page_args(page, size)
         async with _session_for(self._session) as (session, _owns):
             rows = (
-                await session.execute(_list_runs_stmt(normalized, offset, int(size)))
+                await session.execute(_list_runs_stmt(normalized, offset, size))
             ).all()
             total = (await session.execute(_runs_total_stmt(normalized))).scalar()
         return [_run_row(row._mapping) for row in rows], int(total or 0)

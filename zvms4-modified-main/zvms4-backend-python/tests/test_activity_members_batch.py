@@ -432,7 +432,7 @@ async def test_bulk_import_keeps_the_type_mismatch_error(monkeypatch) -> None:
     assert state["log"].inserts == 0
 
 
-# 大小写混合的 oid：``validate_object_id``（utils.py:6-10）经 ``normalize_oid``
+# 大小写混合的 oid：``validate_object_id``（util.oid）经 ``db.ids.normalize_oid``
 # （db/ids.py:70-80）转小写，handler 在 members.py 归一化边界之前已把 key 折成小写。
 MIXED_OID = "abcdefabcdefabcdefabcdef"
 
@@ -444,7 +444,7 @@ async def test_bulk_import_normalizes_mixed_case_oids_without_duplicate_rows(
     """同一成员以不同大小写出现 ⇒ 归一化后合并成一个三元组、只写一次。
 
     归一化发生在 handler ``routers/activities_v3_router.py:182``
-    （``str(validate_object_id(member.member))``，utils.py 走 ``normalize_oid`` 转小写），
+    （``str(validate_object_id(member.member))``，util.oid 走 ``normalize_oid`` 转小写），
     先于 ``additions`` 聚合（:183）。因此小写/大写两条 payload 落到同一 key，
     ``duration`` 相加而非各插一行。
     """
