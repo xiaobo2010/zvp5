@@ -17,9 +17,11 @@ from config import (
     BASE_SOCIAL_PRACTICE,
 )
 from db import backends
+from db.ids import is_valid_oid
 from db.oracle.session import session_scope
+from util.calculate import calculate_user_time_bulk
 from util.statement import (
-    build_statement_data,
+    assemble_statement,
     write_statement_json,
     TRANSLATIONS,
 )
@@ -101,6 +103,110 @@ def _write_reports_bundle(
     return items
 
 
+def _academic_period(entry: int) -> tuple[datetime, datetime]:
+    """入学年份 → (8 月 1 日, 三年后 7 月 31 日 23:59:59.999999)。"""
+    now = datetime.now()
+    return (
+        now.replace(
+            month=8, day=1, year=entry, hour=0, minute=0, second=0, microsecond=0
+        ),
+        now.replace(
+            month=7,
+            day=31,
+            year=entry + 3,
+            hour=23,
+            minute=59,
+            second=59,
+            microsecond=999999,
+        ),
+    )
+
+
+def _student_entry_year(student_id: str) -> int | None:
+    """学号前 4 位作为入学年份；不是数字（脏数据）返回 ``None``。"""
+    try:
+        return int(student_id[:4])
+    except ValueError:
+        return None
+
+
+async def _students_by_class(
+    classes: list[dict],
+) -> list[tuple[str, list[dict]]]:
+    """一次 ``list_all`` 拉全校学生，再按班级切分。
+
+    ``list_all`` 与 ``list_by_class`` 都是 ``ORDER BY oid ASC``，所以按班级
+    分组后每个人的顺序与逐班查询完全一致（报表文件/行顺序依赖它）。
+    """
+    users = await backends.get_users_repo().list_all()
+    by_class: dict[str, list[dict]] = defaultdict(list)
+    for user in users:
+        class_id = user.get("class_id")
+        if class_id is not None:
+            by_class[str(class_id)].append(user)
+    return [
+        (class_["name"], by_class.get(str(class_["_id"]), [])) for class_ in classes
+    ]
+
+
+def _report_plan(
+    students: list[tuple[str, list[dict]]],
+) -> list[tuple[str, list[tuple[dict, int, str]]]]:
+    """给每个学生算出 (user, 入学年份, 学号)，脏学号只跳过本人。"""
+    plan: list[tuple[str, list[tuple[dict, int, str]]]] = []
+    for class_name, users in students:
+        entries: list[tuple[dict, int, str]] = []
+        for user in users:
+            user_id = str(user["id"])
+            entry = _student_entry_year(user_id)
+            if entry is None:
+                # 学号前 4 位不是入学年份（非数字/脏数据）：只跳过这个人，
+                # 否则一个人就能让整批报表失败。
+                _logger.warning(
+                    "skip user %s in class %s: student id is not year-prefixed",
+                    user_id,
+                    class_name,
+                )
+                continue
+            entries.append((user, entry, user_id))
+        plan.append((class_name, entries))
+    return plan
+
+
+def _assemble_report_groups(
+    prepared: list[tuple[str, list[tuple[dict, tuple[datetime, datetime], list, dict, dict]]]],
+    activity_map: dict[str, dict],
+    approvers: dict[str, dict],
+) -> list[tuple[str, list[tuple[str, str, dict, dict]]]]:
+    """线程内的纯 CPU 段：把预加载数据拼成 statement + spreadsheet。
+
+    每人一次 :func:`assemble_statement`，不再有任何数据库访问；描述文案由
+    ``assemble_statement`` 内部用同一批 memberships/activities 渲染，顺序与
+    逐用户查询一致。
+    """
+    groups: list[tuple[str, list[tuple[str, str, dict, dict]]]] = []
+    for class_name, entries in prepared:
+        rows: list[tuple[str, str, dict, dict]] = []
+        for user, period, items, stats, stats_this_year in entries:
+            volunteer_data, spreadsheet = assemble_statement(
+                oid=str(user["_id"]),
+                user=user,
+                class_name=class_name,
+                period=period,
+                language="zh",
+                stats=stats,
+                stats_this_year=stats_this_year,
+                memberships=items,
+                activities=[
+                    activity_map.get(str(item["activity"])) for item in items
+                ],
+                approvers=approvers,
+            )
+            rows.append((str(user["id"]), user["name"], volunteer_data, spreadsheet))
+        groups.append((class_name, rows))
+    return groups
+
+
 async def generate_reports():
     classes = await backends.get_groups_repo().list_non_permission()
     exports_repo = backends.get_daily_exports_repo()
@@ -109,44 +215,82 @@ async def generate_reports():
         {"created_at": datetime.now(), "status": "processing", "data": []}
     )
     try:
-        # 先把 repo 数据全部取完（异步），再把整块落盘下沉到线程。
-        groups: list[tuple[str, list[tuple[str, str, dict, dict]]]] = []
-        for class_id in classes:
-            users = await backends.get_users_repo().list_by_class(class_id["_id"])
-            entries: list[tuple[str, str, dict, dict]] = []
-            for user in users:
-                user_id = str(user["id"])
-                try:
-                    entry = int(user_id[:4])
-                except ValueError:
-                    # 学号前 4 位不是入学年份（非数字/脏数据）：只跳过这个人，
-                    # 否则一个人就能让整批报表失败。
-                    _logger.warning(
-                        "skip user %s in class %s: student id is not year-prefixed",
-                        user_id,
-                        class_id["name"],
-                    )
-                    continue
-                soy = datetime.now().replace(
-                    month=8, day=1, year=entry, hour=0, minute=0, second=0, microsecond=0
-                )
-                eoy = datetime.now().replace(
-                    month=7,
-                    day=31,
-                    year=entry + 3,
-                    hour=23,
-                    minute=59,
-                    second=59,
-                    microsecond=999999,
-                )
-                volunteer_data, spreadsheet = await build_statement_data(
-                    str(user["_id"]),
-                    (soy, eoy),
-                    language="zh",
-                )
-                entries.append((user_id, user["name"], volunteer_data, spreadsheet))
-            groups.append((class_id["name"], entries))
+        # 固定几次批量读：全校用户 / 全部有效活动 / 全部成员关系 / 负责人，
+        # 再按入学年份各算一次时长。旧实现是「班级 × 用户 × ~11 次查询」。
+        plan = _report_plan(await _students_by_class(classes))
+        user_oids = [
+            str(user["_id"])
+            for _class_name, entries in plan
+            for user, _entry, _user_id in entries
+        ]
 
+        activities = await backends.get_activities_repo().list_effective()
+        activity_map = {str(activity["_id"]): activity for activity in activities}
+
+        memberships: dict[str, list] = defaultdict(list)
+        for row in await backends.get_members_repo().list_by_members(user_oids):
+            if row["status"] != "effective":
+                continue
+            memberships[str(row["member"])].append(row)
+
+        approvers = await backends.get_users_repo().get_many_by_oids(
+            list(
+                {
+                    activity["approver"]
+                    for activity in activities
+                    if is_valid_oid(activity.get("approver", ""))
+                }
+            )
+        )
+
+        stats = await calculate_user_time_bulk(user_oids, allow_cache=False)
+        if user_oids:
+            # 旧实现每人一次 delete+insert+commit；整批单事务写回。
+            await backends.get_time_repo().upsert_many_for_users(
+                [
+                    (
+                        oid,
+                        stats[oid]["on-campus"],
+                        stats[oid]["off-campus"],
+                        stats[oid]["social-practice"],
+                    )
+                    for oid in user_oids
+                ]
+            )
+
+        by_entry: dict[int, list[str]] = defaultdict(list)
+        for _class_name, entries in plan:
+            for user, entry, _user_id in entries:
+                by_entry[entry].append(str(user["_id"]))
+        periods = {entry: _academic_period(entry) for entry in by_entry}
+        year_stats: dict[str, dict] = {}
+        for entry, oids in by_entry.items():
+            year_stats.update(
+                await calculate_user_time_bulk(
+                    oids, *periods[entry], allow_cache=False
+                )
+            )
+
+        prepared = [
+            (
+                class_name,
+                [
+                    (
+                        user,
+                        periods[entry],
+                        memberships.get(str(user["_id"]), []),
+                        stats[str(user["_id"])],
+                        year_stats[str(user["_id"])],
+                    )
+                    for user, entry, _user_id in entries
+                ],
+            )
+            for class_name, entries in plan
+        ]
+        # 剩下的纯 CPU 活（明细行、描述文案）下沉到线程，别占事件循环。
+        groups = await asyncio.to_thread(
+            _assemble_report_groups, prepared, activity_map, approvers
+        )
         spreadsheet_items = await asyncio.to_thread(_write_reports_bundle, groups)
         await exports_repo.update_fields(db_id, {"data": spreadsheet_items})
         return f"./{DATA_DIRNAME}/{EXPORT_ARCHIVE}"
