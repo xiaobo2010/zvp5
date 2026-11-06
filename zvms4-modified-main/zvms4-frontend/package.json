@@ -6,7 +6,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/zvms/zvms4-frontend.git"
+    "url": "git+https://github.com/xiaobo2010/zvp5.git"
   },
   "type": "module",
   "scripts": {
