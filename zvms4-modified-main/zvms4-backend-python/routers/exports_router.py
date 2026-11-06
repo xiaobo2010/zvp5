@@ -22,7 +22,6 @@ import base64
 import json
 from util.object_id import (
     get_current_user,
-    validate_object_id,
     compulsory_temporary_token,
 )
 from util.permission.features import has_feature

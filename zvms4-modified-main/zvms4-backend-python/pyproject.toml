@@ -1,0 +1,8 @@
+# ruff 配置：只用于「死代码 / 未定义名」的防回归检查。
+# 刻意只选 F401（未使用 import）与 F821（未定义名）——
+# 不启用 E/W 风格规则，也不接管格式化（不使用 ruff format）。
+[tool.ruff]
+exclude = [".venv", "__pycache__"]
+
+[tool.ruff.lint]
+select = ["F401", "F821"]
