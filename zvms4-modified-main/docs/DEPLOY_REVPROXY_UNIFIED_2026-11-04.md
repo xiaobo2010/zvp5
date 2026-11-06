@@ -141,3 +141,19 @@ pnpm build
 - 后端已经允许页面 Origin 的 CORS，前端 CSP 也已放行 `zvpapi` Origin。
 - 发布前必须确认线上页面 Bundle 同时包含两个 API Origin 和竞速模块，不能只
   看 `VITE_API_BASE`。
+
+## 2026-11-06 双路竞速首次上线（发布记录）
+
+| 项 | 值 |
+| --- | --- |
+| 产物 | `assets/index-aUiB2Zdp.js`（449082 bytes）、`index-legacy-BYOQHxif.js`、`index-DLiD5bBa.css` |
+| 注入 | `VITE_API_BASE=https://zvp.xiaobopisces.top/api`、`VITE_API_RACE_BASE=https://zvpapi.xiaobopisces.top/api` |
+| 产物自检 | 竞速模块（`Both API paths failed`）命中 1 处；两个 API 基址同时出现在 `assets/*.js` |
+| 线上取包 | `GET /assets/index-aUiB2Zdp.js` 200 / 449082 bytes，两个基址齐备 |
+| 主路 | `GET https://zvp.xiaoboisces.top/api/version` 200 `v4.3.0-7`（经 前端反代） |
+| 备路 | `GET https://zvpapi.xiaoboisces.top/api/version` 200 `v4.3.0-7`；带 `Origin: https://zvp.xiaobopisces.top` 时回显 `Access-Control-Allow-Origin` + `Allow-Credentials: true` |
+| 静态资源 | index.html 引用的 20 个资源全部存在，无 404；`sw.js`、`manifest.webmanifest` 200 |
+| 回滚 | `/www/zvms4/frontend-dist.bak-20261106-170011`（前端） |
+
+竞速由浏览器端发起，服务器侧只能确认「代码在包里 + 两路都通」。要看到同一路径在
+后端的 access log 里出现两次（一次经前端、一次直连），需要有真实浏览器打开页面。
