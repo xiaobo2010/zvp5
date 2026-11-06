@@ -31,7 +31,6 @@ interface UserWithBan extends User {
   ban_reason?: string | null
   ban_permanent?: boolean
   ban_until?: string | null
-  primary_xuehai_id?: string | null
 }
 
 interface SegmentedTab {
@@ -286,12 +285,6 @@ const tempPasswordExpiresText = computed(() => {
   return expiresAt.isValid() ? expiresAt.format('YYYY-MM-DD HH:mm') : ''
 })
 
-// 主设备绑定：只在已绑定时展示（存量用户为空，不占版面）。
-const primaryDevice = computed(() => {
-  const value = (user.value as UserWithBan | undefined)?.primary_xuehai_id
-  return value ? String(value) : ''
-})
-
 // 签发/清绑走 aiRequest：错误体可能是字符串 detail（权限不足），此时
 // AiRequestError 的 message 为空、code 就是整句中文，展示两者兜底。
 function describeDeviceError(error: unknown, fallbackKey: string): string {
@@ -470,7 +463,6 @@ watch(current, () => {
 watch(
   () => route.params.action,
   (value) => {
-    console.log(value)
     const curPage = route.params.action?.toString()
     current.value = curPage && curPage !== '' ? curPage : 'info'
   }
@@ -550,9 +542,6 @@ watch(
       </template>
     </ElAlert>
     <div v-if="user && current === 'info'">
-      <p v-if="primaryDevice" class="mb-3 text-sm text-gray-500">
-        {{ t('manage.personalPanel.primaryDevice', { id: primaryDevice }) }}
-      </p>
       <ZActivityMember :id="id" mode="card" :person="user ?? undefined" />
     </div>
     <div v-else-if="user && current === 'activity'">

@@ -62,10 +62,6 @@ function isCacheableGet(config?: InternalAxiosRequestConfig) {
   if (responseType !== undefined && responseType !== 'json') {
     return false
   }
-  const authorization = config.headers?.get?.('Authorization') ?? config.headers?.Authorization
-  if (authorization) {
-    return false
-  }
   const path = `${config.baseURL ?? ''}${config.url ?? ''}`.toLowerCase()
   // 设备状态（me/device、ban/devices）必须每次新鲜：缓存会把 403/404 的错误体
   // 也当数据回写，主设备绑定/解绑后的状态读取会被旧值挡住。
@@ -82,10 +78,43 @@ function isIdempotentGet(config?: InternalAxiosRequestConfig) {
   return config?.method === 'get'
 }
 
+/**
+ * 32 位 FNV-1a 短哈希：缓存键里只留登录凭证的指纹，绝不写 token 原文。
+ * 重新登录会换 token，旧身份下的缓存自然不会再被命中。
+ */
+function hashToken(token: string): string {
+  let hash = 0x811c9dc5
+  for (let index = 0; index < token.length; index += 1) {
+    hash ^= token.charCodeAt(index)
+    hash = Math.imul(hash, 0x01000193)
+  }
+  return (hash >>> 0).toString(36)
+}
+
+/**
+ * GET 缓存的身份维度：登录用户的响应也进缓存，但必须按身份隔离。
+ *
+ * - 凭证取请求头里的 Authorization（去掉 Bearer 前缀），没有则用请求拦截器
+ *   即将注入的 localStorage token；两者归一化后是同一个值，读写键才能对上。
+ * - 学海设备号会改变同一账号返回的数据（切学号/企业号），一并参与隔离。
+ * - 未登录请求统一落到 anon，登录后不会读到匿名时期的缓存。
+ */
+function cacheIdentity(config: InternalAxiosRequestConfig): string {
+  const authorization = config.headers?.get?.('Authorization') ?? config.headers?.Authorization
+  const raw =
+    typeof authorization === 'string' && authorization
+      ? authorization
+      : (localStorage.getItem('token') ?? '')
+  const token = raw.replace(/^Bearer\s+/i, '')
+  const account = token ? `t${hashToken(token)}` : 'anon'
+  const xuehaiId = getXuehaiId()
+  return xuehaiId > 0 ? `${account}:x${xuehaiId}` : account
+}
+
 function cacheKey(config: InternalAxiosRequestConfig) {
   const params = config.params ? JSON.stringify(config.params) : ''
   const suffix = config.data && config.method !== 'get' ? JSON.stringify(config.data) : ''
-  return `${config.baseURL ?? ''}${config.url ?? ''}${params}${suffix}`
+  return `${cacheIdentity(config)}|${config.baseURL ?? ''}${config.url ?? ''}${params}${suffix}`
 }
 
 type CachedConfig = InternalAxiosRequestConfig & { __fromCache?: boolean }
