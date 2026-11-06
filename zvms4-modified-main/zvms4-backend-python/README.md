@@ -34,6 +34,8 @@ Linux/macOS 可将上述 Python 路径换为 `.venv/bin/python`。
 
 `GET /api/health` 在数据库不可用时返回 503。应用现有盾牌中间件要求 HTTP `User-Agent` 包含 `Mozilla`；使用 curl 或脚本验收时也需设置该请求头。
 
+可选：`ruff check .`（配置见 `pyproject.toml`，只查未使用 import / 未定义名，ruff 不是运行依赖，需自行安装）。
+
 ## 数据库状态接口
 
 `GET /api/system/db/status` 需要管理员的长期登录令牌，返回当前 schema 的表存储占用明细、表数量、估计行数、表空间容量及近期负载指标。
