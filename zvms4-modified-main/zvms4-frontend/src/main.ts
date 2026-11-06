@@ -33,6 +33,8 @@ import './assets/styles/yg/user-v2.css'
 
 // Phigros 主题（愚人节ui）：暗色 + 青色 + 锐利几何 + 纯装饰判定线/网格
 import './assets/styles/yg/phi-theme.css'
+// Phi 主题的 body 级弹层（Teleport 逃出 .yg-phi 的 Dialog/Message/Popover）
+import './assets/styles/yg/phi-portals.css'
 
 import persistedstate from 'pinia-plugin-persistedstate'
 

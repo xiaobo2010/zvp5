@@ -478,64 +478,73 @@ watch(
 </script>
 
 <template>
-  <div class="px-6 py-4 yg-v2-flow yg-user-page">
-    <ElPageHeader v-if="id" :icon="ArrowLeft" @back="router.back()" class="py-2">
+  <div class="px-6 py-4 yg-v2-flow yg-user-page phx phx-user">
+    <ElPageHeader v-if="id" :icon="ArrowLeft" @back="router.back()" class="phx-page-head">
       <template #content>
-        {{ user?.name }}
-        <ElTag v-if="user?.banned" type="danger" class="ml-2">
-          {{ banTagText }}
-        </ElTag>
+        <p class="phx-head__eyebrow">User · ZVMS</p>
+        <div class="phx-head__title-row">
+          <h1 class="phx-head__title">{{ user?.name }}</h1>
+          <ElTag v-if="user?.banned" type="danger" class="phx-ban-tag">
+            {{ banTagText }}
+          </ElTag>
+        </div>
+        <p class="phx-head__lead">查看用户资料、活动记录与账号状态。</p>
+        <span class="phx-head__index" aria-hidden="true">05</span>
       </template>
       <template #extra>
-        <ElSegmented v-model="current" :options="tabs">
+        <ElSegmented v-model="current" :options="tabs" class="phx-seg">
           <template #default="props">
-            <div class="flex flex-col items-center gap-2 p-2">
-              <ElIcon :size="18" class="mt-2">
+            <div class="phx-tab-inner">
+              <ElIcon :size="16" class="phx-tab-icon">
                 <Component :is="(props.item as SegmentedTab).icon" />
               </ElIcon>
-              {{ t(('manage.personalPanel.tabs.' + (props.item as SegmentedTab).value) as string) }}
+              <span class="phx-tab-label">
+                {{ t(('manage.personalPanel.tabs.' + (props.item as SegmentedTab).value) as string) }}
+              </span>
             </div>
           </template>
         </ElSegmented>
-        <span v-if="isAdmin && user" class="ml-4 inline-flex">
-          <ElButton text bg :loading="analysisLoading" @click="openVolunteerAnalysis">
-            {{ t('user.volunteerAnalysis.action') }}
-          </ElButton>
-        </span>
-        <span v-if="canIssueTempPassword && user" class="ml-2 inline-flex">
-          <ElButton text bg :loading="tempPasswordIssuing" @click="issueTempPasswordForUser">
-            {{ t('manage.personalPanel.tempPassword.action') }}
-          </ElButton>
-        </span>
-        <span v-if="isAdmin && user" class="ml-2 inline-flex">
-          <ElButton type="danger" text bg @click="clearPrimaryDevice">
-            {{ t('manage.personalPanel.clearDevice.action') }}
-          </ElButton>
-        </span>
-        <ElTooltip
-          v-if="userStore.position.includes('admin') && user"
-          :content="t('manage.personalPanel.banSelfForbidden')"
-          :disabled="!banSelfBlocked"
-          placement="bottom"
-        >
-          <span class="ml-4 inline-flex">
-            <ElButton type="danger" text bg :disabled="banSelfBlocked" @click="toggleBanned">
-              {{ user.banned ? t('manage.personalPanel.unban') : t('manage.personalPanel.ban') }}
+        <div class="phx-actions">
+          <span v-if="isAdmin && user" class="phx-action">
+            <ElButton text bg :loading="analysisLoading" @click="openVolunteerAnalysis">
+              {{ t('user.volunteerAnalysis.action') }}
             </ElButton>
           </span>
-        </ElTooltip>
-        <ElTooltip
-          v-if="userStore.position.includes('admin') && user"
-          :content="t('manage.personalPanel.deleteSelfForbidden')"
-          :disabled="!isSelf"
-          placement="bottom"
-        >
-          <span class="ml-2 inline-flex">
-            <ElButton type="danger" text bg :disabled="isSelf" @click="deleteUser">
-              {{ t('manage.groupDetails.userList.columns.remove') }}
+          <span v-if="canIssueTempPassword && user" class="phx-action">
+            <ElButton text bg :loading="tempPasswordIssuing" @click="issueTempPasswordForUser">
+              {{ t('manage.personalPanel.tempPassword.action') }}
             </ElButton>
           </span>
-        </ElTooltip>
+          <span v-if="isAdmin && user" class="phx-action">
+            <ElButton type="danger" text bg @click="clearPrimaryDevice">
+              {{ t('manage.personalPanel.clearDevice.action') }}
+            </ElButton>
+          </span>
+          <ElTooltip
+            v-if="userStore.position.includes('admin') && user"
+            :content="t('manage.personalPanel.banSelfForbidden')"
+            :disabled="!banSelfBlocked"
+            placement="bottom"
+          >
+            <span class="phx-action">
+              <ElButton type="danger" text bg :disabled="banSelfBlocked" @click="toggleBanned">
+                {{ user.banned ? t('manage.personalPanel.unban') : t('manage.personalPanel.ban') }}
+              </ElButton>
+            </span>
+          </ElTooltip>
+          <ElTooltip
+            v-if="userStore.position.includes('admin') && user"
+            :content="t('manage.personalPanel.deleteSelfForbidden')"
+            :disabled="!isSelf"
+            placement="bottom"
+          >
+            <span class="phx-action">
+              <ElButton type="danger" text bg :disabled="isSelf" @click="deleteUser">
+                {{ t('manage.groupDetails.userList.columns.remove') }}
+              </ElButton>
+            </span>
+          </ElTooltip>
+        </div>
       </template>
     </ElPageHeader>
     <ElAlert
@@ -543,25 +552,25 @@ watch(
       type="error"
       :closable="false"
       :title="t('manage.personalPanel.banReasonLabel') + '：' + banReasonText"
-      class="mb-3"
+      class="phx-alert"
     >
       <template #default>
         <span v-if="banUntilText">{{ t('manage.personalPanel.banUntil', { time: banUntilText }) }}</span>
       </template>
     </ElAlert>
-    <div v-if="user && current === 'info'">
-      <p v-if="primaryDevice" class="mb-3 text-sm text-gray-500">
+    <div v-if="user && current === 'info'" class="phx-panel phx-member" style="--phx-i: 1">
+      <p v-if="primaryDevice" class="phx-primary-device">
         {{ t('manage.personalPanel.primaryDevice', { id: primaryDevice }) }}
       </p>
       <ZActivityMember :id="id" mode="card" :person="user ?? undefined" />
     </div>
-    <div v-else-if="user && current === 'activity'">
-      <ZActivityList :perspective="id" role="mine" :key="id" />
+    <div v-else-if="user && current === 'activity'" class="phx-activity-pane">
+      <ZActivityList class="phx-activity" :perspective="id" role="mine" :key="id" />
     </div>
-    <div v-else-if="user && current === 'modify'">
+    <div v-else-if="user && current === 'modify'" class="phx-panel phx-content" style="--phx-i: 1">
       <ZUserModification :id="id" mode="modify" cid="" />
     </div>
-    <div v-else-if="user && current === 'logs'">
+    <div v-else-if="user && current === 'logs'" class="phx-panel phx-content" style="--phx-i: 1">
       <ZLogList :user="id" />
     </div>
     <ElDialog
@@ -627,10 +636,7 @@ watch(
     >
       <p class="text-sm leading-6 mb-3">{{ t('manage.personalPanel.tempPassword.notice') }}</p>
       <div class="flex items-center gap-2">
-        <code
-          class="min-w-0 flex-1 select-all break-all rounded bg-gray-100 px-3 py-2 font-mono text-xl font-bold tracking-widest dark:bg-gray-800"
-          >{{ tempPasswordIssued?.code }}</code
-        >
+        <code class="phx-code-block">{{ tempPasswordIssued?.code }}</code>
         <ElButton
           class="flex-none"
           :type="tempPasswordCopied ? 'success' : 'primary'"
@@ -660,3 +666,898 @@ watch(
     />
   </div>
 </template>
+
+<style scoped>
+/* ==========================================================================
+   Phi 棱角系统 · 用户主页（与 AboutView / UserActivity 同一套 scoped 写法）
+   直角 + 不对称斜切、细线、角括号、offset 硬阴影；浅色只改强调色与硬阴影。
+   注：本项目 compiler-sfc 3.5 会把 `:global(x) .a` 整条替换成 `x`，
+   所以浅色覆盖写成 `html[data-theme='light'] .phx-user ...`。
+   ========================================================================== */
+.phx-user {
+  --phx-accent: var(--phi-cyan, var(--yg-color-primary));
+  --phx-accent-2: var(--phi-pink, var(--yg-color-danger));
+  --phx-on-accent: #041311;
+  --phx-ink: var(--yg-text-primary);
+  --phx-muted: var(--yg-text-tertiary);
+  --phx-surface: var(--yg-bg-surface);
+  --phx-sunken: var(--yg-bg-surface-sunken);
+  --phx-line: color-mix(in srgb, var(--phx-accent) 22%, transparent);
+  --phx-line-soft: color-mix(in srgb, var(--phx-ink) 10%, transparent);
+  --phx-hard: color-mix(in srgb, var(--phx-accent) 16%, #000);
+  --phx-display: var(--phi-display, Bebas, Impact, sans-serif);
+  --phx-hud: var(--phi-hud, Rajdhani, 'Arial Narrow', sans-serif);
+  --phx-ease: cubic-bezier(0.19, 1, 0.22, 1);
+  --phx-spring: cubic-bezier(0.34, 1.4, 0.64, 1);
+  --yg-radius-xs: 0;
+  --yg-radius-sm: 0;
+  --yg-radius-md: 0;
+  --yg-radius-lg: 0;
+  --yg-radius-xl: 0;
+  --el-border-radius-base: 0;
+  --el-border-radius-small: 0;
+  --el-border-radius-round: 0;
+  --el-card-border-radius: 0;
+  --el-tag-border-radius: 0;
+  --el-button-border-radius: 0;
+  --el-alert-border-radius-base: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--yg-space-4);
+}
+
+html[data-theme='light'] .phx-user {
+  --phx-accent: #007a70;
+  --phx-accent-2: #c81e63;
+  --phx-on-accent: #ffffff;
+  --phx-hard: #101418;
+  --el-color-primary: #007a70;
+  --yg-color-primary: #007a70;
+  --yg-focus-ring-color: #007a70;
+}
+
+/* ---------- 页头：HUD 编号 + 细网格 + 斜线 ---------- */
+.phx-page-head {
+  position: relative;
+  margin: 0;
+  padding: var(--yg-space-5) var(--yg-space-6) var(--yg-space-4);
+  overflow: hidden;
+  border-left: 3px solid var(--phx-accent);
+  background:
+    linear-gradient(to bottom left, transparent calc(50% - 1px), var(--phx-accent) 50%, transparent calc(50% + 1.5px)) right top / 22px 22px no-repeat,
+    linear-gradient(var(--phx-line-soft) 1px, transparent 1px) 0 0 / 24px 24px,
+    linear-gradient(90deg, var(--phx-line-soft) 1px, transparent 1px) 0 0 / 24px 24px,
+    linear-gradient(100deg, color-mix(in srgb, var(--phx-accent) 9%, var(--phx-surface)), var(--phx-surface) 58%);
+  clip-path: polygon(0 0, calc(100% - 22px) 0, 100% 22px, 100% 100%, 0 100%);
+  animation: phx-head-in 420ms var(--phx-ease) both;
+}
+
+.phx-page-head::after {
+  content: '';
+  position: absolute;
+  right: 16%;
+  bottom: 0;
+  width: 120px;
+  height: 6px;
+  background: repeating-linear-gradient(-55deg, var(--phx-accent) 0 2px, transparent 2px 7px);
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+.phx-page-head :deep(.el-page-header__header) {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-start;
+  line-height: normal;
+}
+
+.phx-page-head :deep(.el-page-header__left) {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: flex-start;
+  width: 100%;
+  min-width: 0;
+  margin-right: 0;
+}
+
+.phx-page-head :deep(.el-page-header__back) {
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  margin-top: 2px;
+  border: 1px solid var(--phx-line);
+  background: var(--phx-sunken);
+  color: var(--phx-accent);
+  clip-path: polygon(0 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 0 100%);
+  transition:
+    transform 260ms var(--phx-spring),
+    background-color 180ms var(--phx-ease),
+    color 180ms var(--phx-ease);
+}
+
+.phx-page-head :deep(.el-page-header__back:hover) {
+  background: var(--phx-accent);
+  color: var(--phx-on-accent);
+  transform: translateX(-2px) skewX(-6deg);
+}
+
+.phx-page-head :deep(.el-page-header__icon) {
+  display: flex;
+  align-items: center;
+  margin-right: 0;
+  font-size: 18px;
+}
+
+.phx-page-head :deep(.el-page-header__title) {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.phx-page-head :deep(.el-divider--vertical) {
+  display: none;
+}
+
+.phx-page-head :deep(.el-page-header__content) {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0 96px 0 var(--yg-space-3);
+  color: var(--phx-ink);
+  font-size: inherit;
+}
+
+.phx-head__eyebrow {
+  display: flex;
+  align-items: center;
+  gap: var(--yg-space-2);
+  margin: 0 0 var(--yg-space-2);
+  color: var(--phx-accent);
+  font: 400 15px / 1 var(--phx-display);
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  animation: phx-slide-in 420ms 40ms var(--phx-ease) both;
+}
+
+.phx-head__eyebrow::before {
+  content: '';
+  flex: 0 0 auto;
+  width: 18px;
+  height: 2px;
+  background: currentColor;
+  transform: skewX(-40deg);
+}
+
+.phx-head__title-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--yg-space-2);
+  min-width: 0;
+}
+
+.phx-head__title {
+  position: relative;
+  display: inline-block;
+  max-width: 100%;
+  margin: 0;
+  color: var(--phx-ink);
+  font-size: clamp(24px, 4.2vw, 38px);
+  font-weight: var(--yg-font-weight-bold);
+  line-height: 1.1;
+  letter-spacing: 0.02em;
+  overflow-wrap: anywhere;
+  animation: phx-slide-in 420ms 60ms var(--phx-ease) both;
+}
+
+.phx-head__title::after {
+  content: '';
+  position: absolute;
+  bottom: -6px;
+  left: 0;
+  width: 44px;
+  height: 3px;
+  background: var(--phx-accent);
+  transform: skewX(-40deg);
+  transform-origin: left;
+}
+
+.phx-head__lead {
+  max-width: 54ch;
+  margin: var(--yg-space-3) 0 0;
+  color: var(--yg-text-secondary);
+  font-size: var(--yg-font-size-sm);
+  line-height: var(--yg-line-height-relaxed);
+  animation: phx-slide-in 420ms 110ms var(--phx-ease) both;
+}
+
+.phx-head__index {
+  position: absolute;
+  top: 10px;
+  right: 20px;
+  z-index: 0;
+  color: transparent;
+  font: 400 clamp(60px, 10vw, 104px) / 0.8 var(--phx-display);
+  -webkit-text-stroke: 1px color-mix(in srgb, var(--phx-ink) 42%, transparent);
+  text-shadow:
+    4px 0 color-mix(in srgb, var(--phx-accent-2) 26%, transparent),
+    -3px 0 color-mix(in srgb, var(--phx-accent) 30%, transparent);
+  opacity: 0.85;
+  user-select: none;
+  pointer-events: none;
+  animation: phx-slide-in-r 450ms 40ms var(--phx-ease) both;
+}
+
+.phx-ban-tag {
+  flex: 0 1 auto;
+  min-width: 0;
+  margin: 0;
+  border-radius: 0;
+  clip-path: polygon(0 0, 100% 0, 100% calc(100% - 5px), calc(100% - 5px) 100%, 0 100%);
+  overflow-wrap: anywhere;
+  white-space: normal;
+  height: auto;
+  padding-block: 2px;
+}
+
+/* 页签 + 权限按钮：独立一行，390 下自动换行不撑破页头 */
+.phx-page-head :deep(.el-page-header__extra) {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--yg-space-2);
+  width: 100%;
+  margin-top: var(--yg-space-4);
+  padding-top: var(--yg-space-3);
+  border-top: 1px solid var(--phx-line-soft);
+}
+
+.phx-seg {
+  --el-segmented-color: var(--phx-muted);
+  --el-segmented-bg-color: transparent;
+  --el-segmented-padding: 3px;
+  --el-segmented-item-selected-color: var(--phx-on-accent);
+  --el-segmented-item-selected-bg-color: transparent;
+  --el-segmented-item-hover-color: var(--phx-ink);
+  --el-segmented-item-hover-bg-color: color-mix(in srgb, var(--phx-accent) 9%, transparent);
+  --el-segmented-item-active-bg-color: color-mix(in srgb, var(--phx-accent) 16%, transparent);
+  flex: 1 1 320px;
+  min-width: 0;
+  max-width: 100%;
+  border: 1px solid var(--phx-line-soft);
+  border-radius: 0;
+}
+
+.phx-seg :deep(.el-segmented__group) {
+  width: 100%;
+  gap: 2px;
+}
+
+.phx-seg :deep(.el-segmented__item) {
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 0 8px;
+  border-radius: 0;
+  clip-path: polygon(8px 0, 100% 0, calc(100% - 8px) 100%, 0 100%);
+}
+
+.phx-seg :deep(.el-segmented__item-selected) {
+  border-radius: 0;
+  background:
+    linear-gradient(115deg, transparent 0 64%, color-mix(in srgb, #fff 20%, transparent) 64% 68%, transparent 68%),
+    var(--phx-accent);
+  clip-path: polygon(8px 0, 100% 0, calc(100% - 8px) 100%, 0 100%);
+  box-shadow: none;
+}
+
+.phx-tab-inner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 5px 0;
+}
+
+.phx-tab-icon {
+  flex: 0 0 auto;
+}
+
+.phx-tab-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--yg-font-size-sm);
+  font-weight: var(--yg-font-weight-medium);
+}
+
+.phx-actions {
+  display: flex;
+  flex: 0 1 auto;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+  margin-left: auto;
+}
+
+.phx-action {
+  display: inline-flex;
+}
+
+.phx-actions :deep(.el-button) {
+  border-radius: 0;
+  clip-path: polygon(0 0, 100% 0, 100% calc(100% - 6px), calc(100% - 6px) 100%, 0 100%);
+  transition:
+    transform 240ms var(--phx-spring),
+    color 180ms var(--phx-ease),
+    background-color 180ms var(--phx-ease);
+}
+
+.phx-actions :deep(.el-button:hover:not(.is-disabled)) {
+  transform: translateX(2px) skewX(-5deg);
+}
+
+/* ---------- 封禁提示：直角 + 右上斜切 ---------- */
+.phx-alert {
+  position: relative;
+  margin: 0;
+  border-radius: 0;
+  clip-path: polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 0 100%);
+  box-shadow: 4px 4px 0 var(--phx-hard);
+  animation: phx-panel-in 380ms 80ms var(--phx-ease) backwards;
+}
+
+.phx-alert :deep(.el-alert__title) {
+  font-family: var(--phx-hud), var(--yg-font-sans);
+  letter-spacing: 0.03em;
+}
+
+/* ---------- 资料块：切角面板 + HUD 描述表 ---------- */
+.phx-panel {
+  --phx-cut: 18px;
+  --phx-cut-s: 8px;
+  position: relative;
+  isolation: isolate;
+  min-width: 0;
+  color: var(--yg-text-secondary);
+  filter: drop-shadow(5px 5px 0 var(--phx-hard));
+  animation: phx-panel-in 440ms calc(var(--phx-i, 0) * 55ms + 60ms) var(--phx-ease) backwards;
+}
+
+.phx-panel::before,
+.phx-panel::after {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  pointer-events: none;
+  clip-path: polygon(
+    0 0,
+    calc(100% - var(--phx-cut)) 0,
+    100% var(--phx-cut),
+    100% 100%,
+    var(--phx-cut-s) 100%,
+    0 calc(100% - var(--phx-cut-s))
+  );
+}
+
+.phx-panel::before {
+  inset: 0;
+  background:
+    linear-gradient(225deg, var(--phx-accent) 0 calc(var(--phx-cut) * 0.9), transparent calc(var(--phx-cut) * 0.9 + 1px)),
+    color-mix(in srgb, var(--phx-ink) 16%, transparent);
+}
+
+.phx-panel::after {
+  inset: 1px;
+  background:
+    linear-gradient(var(--phx-accent), transparent 70%) left top / 2px 100% no-repeat,
+    linear-gradient(135deg, color-mix(in srgb, var(--phx-accent) 5%, var(--phx-surface)), var(--phx-surface) 46%);
+}
+
+.phx-member {
+  padding: var(--yg-space-4) calc(var(--phx-cut) + var(--yg-space-4)) var(--yg-space-5) var(--yg-space-5);
+  --el-descriptions-item-bordered-label-background: var(--phx-sunken);
+  --el-descriptions-table-border: 1px solid var(--phx-line-soft);
+}
+
+.phx-member :deep(.el-card) {
+  --el-card-bg-color: transparent;
+  --el-card-border-color: transparent;
+  --el-card-padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.phx-member :deep(.el-card__body) {
+  padding: 0;
+}
+
+.phx-primary-device {
+  display: flex;
+  align-items: baseline;
+  gap: var(--yg-space-2);
+  margin: 0 0 var(--yg-space-3);
+  padding: 0 0 var(--yg-space-2);
+  border-bottom: 1px dashed var(--phx-line);
+  color: var(--phx-muted);
+  font-size: var(--yg-font-size-sm);
+  overflow-wrap: anywhere;
+}
+
+.phx-primary-device::before {
+  content: 'DEV';
+  flex: 0 0 auto;
+  padding: 1px 5px;
+  border: 1px solid var(--phx-line);
+  color: var(--phx-accent);
+  font: 400 11px / 1.1 var(--phx-display);
+  letter-spacing: 0.16em;
+}
+
+.phx-member :deep(.el-descriptions__body) {
+  background: transparent;
+}
+
+.phx-member :deep(.el-descriptions__table) {
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.phx-member :deep(.el-descriptions__cell) {
+  border-color: var(--phx-line-soft);
+  color: var(--phx-ink);
+  overflow-wrap: anywhere;
+  animation: phx-cell-in 360ms var(--phx-ease) backwards;
+  animation-delay: var(--phx-desc-delay, 0ms);
+}
+
+.phx-member :deep(.el-descriptions__label) {
+  color: var(--phx-muted);
+  font-family: var(--phx-hud), var(--yg-font-sans);
+  font-size: var(--yg-font-size-xs);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.phx-member :deep(.el-descriptions__content) {
+  color: var(--yg-text-secondary);
+}
+
+.phx-member :deep(.el-descriptions__table tr:nth-child(2) .el-descriptions__cell) {
+  --phx-desc-delay: 40ms;
+}
+
+.phx-member :deep(.el-descriptions__table tr:nth-child(3) .el-descriptions__cell) {
+  --phx-desc-delay: 80ms;
+}
+
+.phx-member :deep(.el-descriptions__table tr:nth-child(4) .el-descriptions__cell) {
+  --phx-desc-delay: 120ms;
+}
+
+.phx-member :deep(.el-descriptions__table tr:nth-child(n + 5) .el-descriptions__cell) {
+  --phx-desc-delay: 160ms;
+}
+
+.phx-member :deep(.el-tag) {
+  border-radius: 0;
+  clip-path: polygon(0 0, 100% 0, 100% calc(100% - 5px), calc(100% - 5px) 100%, 0 100%);
+}
+
+/* ---------- 活动列表：硬边卡片 + 细线表格 + 固定列不透明 ---------- */
+.phx-activity-pane {
+  min-width: 0;
+}
+
+.phx-activity > :deep(.el-card) {
+  --el-card-bg-color: var(--phx-surface);
+  --el-card-border-color: color-mix(in srgb, var(--phx-ink) 16%, transparent);
+  --el-card-padding: var(--yg-space-4) var(--yg-space-4) var(--yg-space-2);
+  position: relative;
+  overflow: hidden;
+  border-radius: 0;
+  box-shadow: 5px 5px 0 var(--phx-hard);
+  animation: phx-card-in 440ms 100ms var(--phx-ease) backwards;
+}
+
+.phx-activity > :deep(.el-card:hover) {
+  box-shadow: 5px 5px 0 var(--phx-hard);
+}
+
+.phx-activity > :deep(.el-card)::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 3;
+  width: 2px;
+  background: linear-gradient(var(--phx-accent), transparent 72%);
+  pointer-events: none;
+}
+
+.phx-activity > :deep(.el-card)::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  z-index: 3;
+  width: 22px;
+  height: 22px;
+  background: linear-gradient(225deg, var(--phx-accent) 0 9px, transparent 9px 12px, var(--phx-line) 12px 13px, transparent 13px);
+  pointer-events: none;
+}
+
+.phx-activity :deep(.el-button) {
+  border-radius: 0;
+}
+
+.phx-activity :deep(.el-table) {
+  --el-table-header-bg-color: var(--phx-sunken);
+  --el-fill-color-lighter: color-mix(in srgb, var(--phx-ink) 3%, var(--phx-surface));
+  --phx-row-hover: color-mix(in srgb, var(--phx-accent) 9%, var(--phx-surface));
+  margin-top: var(--yg-space-3);
+  border-top: 1px solid var(--phx-line);
+}
+
+.phx-activity :deep(.el-table__inner-wrapper::before) {
+  background-color: var(--phx-line-soft);
+}
+
+.phx-activity :deep(.el-table thead th.el-table__cell) {
+  background-color: var(--phx-sunken);
+  border-bottom: 1px solid var(--phx-line);
+  color: var(--phx-muted);
+  font-family: var(--phx-hud), var(--yg-font-sans);
+  font-size: var(--yg-font-size-xs);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.phx-activity :deep(.el-table thead th.el-table__cell:first-child) {
+  background-image: linear-gradient(var(--phx-accent), var(--phx-accent));
+  background-position: left center;
+  background-size: 2px 40%;
+  background-repeat: no-repeat;
+}
+
+.phx-activity :deep(.el-table .el-table__row > td.el-table__cell) {
+  transition: background-color 180ms var(--phx-ease);
+}
+
+.phx-activity :deep(.el-table .el-table__row > td.el-table__cell .cell) {
+  transition: transform 260ms var(--phx-spring);
+}
+
+.phx-activity :deep(.el-table .el-table__body tr.el-table__row:hover > td.el-table__cell),
+.phx-activity :deep(.el-table .el-table__body tr.el-table__row.hover-row > td.el-table__cell) {
+  background-color: var(--phx-row-hover);
+  box-shadow: inset 0 -1px 0 var(--phx-line);
+}
+
+.phx-activity :deep(.el-table .el-table__body tr.el-table__row:hover > td.el-table__cell:first-child) {
+  background-image: linear-gradient(105deg, color-mix(in srgb, var(--phx-accent) 26%, transparent) 0 46%, transparent 46%);
+  box-shadow:
+    inset 3px 0 0 var(--phx-accent),
+    inset 0 -1px 0 var(--phx-line);
+}
+
+.phx-activity :deep(.el-table .el-table__body tr.el-table__row:hover > td.el-table__cell .cell) {
+  transform: translateX(3px) skewX(-3deg);
+}
+
+/* 固定列 sticky 单元格必须保持不透明，避免横向滚动时内容透出 */
+.phx-activity :deep(.el-table .el-table__body tr.el-table__row > td.el-table__cell.el-table-fixed-column--right) {
+  background-color: var(--phx-surface);
+}
+
+.phx-activity :deep(.el-table .el-table__body tr.el-table__row--striped > td.el-table__cell.el-table-fixed-column--right) {
+  background-color: var(--el-fill-color-lighter);
+}
+
+.phx-activity :deep(.el-table .el-table__body tr.el-table__row:hover > td.el-table__cell.el-table-fixed-column--right) {
+  background-color: var(--phx-row-hover);
+}
+
+/* 行进入：只动单元格，tr 上做位移会打断 sticky 固定列 */
+.phx-activity :deep(.el-table__body tr.el-table__row > td.el-table__cell) {
+  animation: phx-cell-in 360ms var(--phx-ease) backwards;
+  animation-delay: var(--phx-row-delay, 0ms);
+}
+
+.phx-activity :deep(.el-table__body tr.el-table__row:nth-of-type(2)) { --phx-row-delay: 30ms; }
+.phx-activity :deep(.el-table__body tr.el-table__row:nth-of-type(3)) { --phx-row-delay: 60ms; }
+.phx-activity :deep(.el-table__body tr.el-table__row:nth-of-type(4)) { --phx-row-delay: 90ms; }
+.phx-activity :deep(.el-table__body tr.el-table__row:nth-of-type(5)) { --phx-row-delay: 120ms; }
+.phx-activity :deep(.el-table__body tr.el-table__row:nth-of-type(6)) { --phx-row-delay: 150ms; }
+.phx-activity :deep(.el-table__body tr.el-table__row:nth-of-type(7)) { --phx-row-delay: 175ms; }
+.phx-activity :deep(.el-table__body tr.el-table__row:nth-of-type(n + 8)) { --phx-row-delay: 200ms; }
+
+.phx-activity :deep(.el-table .el-input__wrapper) {
+  border-radius: 0;
+  background-color: var(--phx-surface);
+  box-shadow:
+    inset 0 0 0 1px var(--phx-line-soft),
+    inset 0 -2px 0 var(--phx-line);
+}
+
+.phx-activity :deep(.el-table .el-input__wrapper:hover) {
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--phx-ink) 22%, transparent),
+    inset 0 -2px 0 var(--phx-accent);
+}
+
+.phx-activity :deep(.el-table .el-input__wrapper.is-focus) {
+  box-shadow:
+    inset 0 0 0 1px var(--phx-accent),
+    inset 0 -2px 0 var(--phx-accent);
+}
+
+.phx-activity :deep(.el-tag) {
+  border-radius: 0;
+  font-weight: var(--yg-font-weight-medium);
+  clip-path: polygon(0 0, 100% 0, 100% calc(100% - 5px), calc(100% - 5px) 100%, 0 100%);
+}
+
+html[data-theme='light'] .phx-activity :deep(.el-tag) {
+  color: var(--phx-accent);
+  border-color: color-mix(in srgb, var(--phx-accent) 30%, transparent);
+  background-color: color-mix(in srgb, var(--phx-accent) 8%, transparent);
+}
+
+html[data-theme='light'] .phx-activity :deep(.el-tag.el-tag--success) {
+  color: var(--yg-text-success);
+  border-color: color-mix(in srgb, var(--yg-text-success) 30%, transparent);
+  background-color: var(--yg-color-success-soft);
+}
+
+html[data-theme='light'] .phx-activity :deep(.el-tag.el-tag--warning) {
+  color: var(--yg-text-warning);
+  border-color: color-mix(in srgb, var(--yg-text-warning) 30%, transparent);
+  background-color: var(--yg-color-warning-soft);
+}
+
+html[data-theme='light'] .phx-activity :deep(.el-tag.el-tag--danger) {
+  color: var(--yg-text-danger);
+  border-color: color-mix(in srgb, var(--yg-text-danger) 30%, transparent);
+  background-color: var(--yg-color-danger-soft);
+}
+
+/* 分页：去胶囊，滑块改平行四边形 */
+.phx-activity :deep(.yg-pg) {
+  font-family: var(--phx-hud), var(--yg-font-sans);
+  font-weight: 500;
+  letter-spacing: 0.03em;
+}
+
+.phx-activity :deep(.yg-pg__btn),
+.phx-activity :deep(.yg-pg__track),
+.phx-activity :deep(.yg-pg__num),
+.phx-activity :deep(.yg-pg__select),
+.phx-activity :deep(.yg-pg__jump-input) {
+  border-radius: 0;
+}
+
+.phx-activity :deep(.yg-pg__btn),
+.phx-activity :deep(.yg-pg__track) {
+  box-shadow: inset 0 0 0 1px var(--phx-line-soft);
+}
+
+.phx-activity :deep(.yg-pg__btn:hover:not(:disabled)) {
+  box-shadow: inset 0 0 0 1px var(--phx-accent);
+  color: var(--phx-accent);
+}
+
+.phx-activity :deep(.yg-pg__thumb) {
+  border-radius: 0;
+  background: var(--phx-accent);
+  box-shadow: none;
+  clip-path: polygon(6px 0, 100% 0, calc(100% - 6px) 100%, 0 100%);
+}
+
+.phx-activity :deep(.yg-pg__num.is-active) {
+  color: var(--phx-on-accent);
+}
+
+/* ---------- 修改 / 日志：同一套切角容器 ---------- */
+.phx-content {
+  padding: var(--yg-space-4) calc(var(--phx-cut) + var(--yg-space-4)) var(--yg-space-5) var(--yg-space-5);
+  overflow-wrap: anywhere;
+}
+
+.phx-content :deep(.el-card) {
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.phx-content :deep(.el-button),
+.phx-content :deep(.el-tag) {
+  border-radius: 0;
+}
+
+/* ---------- 弹窗触发区：密码块改为直角 + 左下斜切 ---------- */
+.phx-code-block {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 12px;
+  border-left: 2px solid var(--phi-cyan, var(--yg-color-primary));
+  background: var(--yg-bg-surface-sunken);
+  color: var(--yg-text-primary);
+  font-family: var(--yg-font-mono, ui-monospace, monospace);
+  font-size: var(--yg-font-size-lg);
+  font-weight: var(--yg-font-weight-bold);
+  letter-spacing: 0.18em;
+  overflow-wrap: anywhere;
+  clip-path: polygon(0 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 8px 100%, 0 calc(100% - 8px));
+}
+
+/* ---------- 动效 ---------- */
+@keyframes phx-head-in {
+  from {
+    opacity: 0;
+    clip-path: polygon(0 0, 0 0, 0 22px, 0 100%, 0 100%);
+  }
+  to {
+    opacity: 1;
+    clip-path: polygon(0 0, calc(100% - 22px) 0, 100% 22px, 100% 100%, 0 100%);
+  }
+}
+
+@keyframes phx-slide-in {
+  from {
+    opacity: 0;
+    transform: translateX(-14px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes phx-slide-in-r {
+  from {
+    opacity: 0;
+    transform: translateX(18px) skewX(-8deg);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes phx-panel-in {
+  from {
+    opacity: 0;
+    transform: translateX(-10px);
+    clip-path: polygon(-12px -12px, -12px -12px, calc(-12px - 40px) calc(100% + 12px), -52px calc(100% + 12px));
+  }
+  to {
+    opacity: 1;
+    transform: none;
+    clip-path: polygon(-12px -12px, calc(100% + 52px) -12px, calc(100% + 12px) calc(100% + 12px), -52px calc(100% + 12px));
+  }
+}
+
+@keyframes phx-card-in {
+  from {
+    opacity: 0;
+    clip-path: polygon(-12px -12px, -12px -12px, -52px calc(100% + 12px), -52px calc(100% + 12px));
+  }
+  to {
+    opacity: 1;
+    clip-path: polygon(-12px -12px, calc(100% + 52px) -12px, calc(100% + 12px) calc(100% + 12px), -52px calc(100% + 12px));
+  }
+}
+
+@keyframes phx-cell-in {
+  from {
+    opacity: 0;
+    clip-path: inset(0 100% 0 0);
+  }
+  to {
+    opacity: 1;
+    clip-path: inset(0 0 0 0);
+  }
+}
+
+/* ---------- 窄屏（390）：页头收紧、按钮换行、编号缩小 ---------- */
+@media (max-width: 599px) {
+  .phx-page-head {
+    padding: var(--yg-space-4);
+  }
+
+  .phx-page-head :deep(.el-page-header__content) {
+    padding-right: 58px;
+    padding-left: var(--yg-space-2);
+  }
+
+  .phx-head__index {
+    top: 8px;
+    right: 12px;
+    font-size: 54px;
+  }
+
+  .phx-page-head::after {
+    right: 12px;
+    width: 72px;
+  }
+
+  .phx-page-head :deep(.el-page-header__extra) {
+    gap: 6px;
+  }
+
+  .phx-seg {
+    flex-basis: 100%;
+  }
+
+  .phx-seg :deep(.el-segmented__item) {
+    padding: 0 4px;
+  }
+
+  .phx-tab-label {
+    font-size: var(--yg-font-size-xs);
+  }
+
+  .phx-actions {
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .phx-member,
+  .phx-content {
+    padding: var(--yg-space-4) var(--yg-space-3) var(--yg-space-4) var(--yg-space-4);
+  }
+
+  .phx-member :deep(.el-descriptions__table) {
+    table-layout: auto;
+  }
+
+  .phx-activity > :deep(.el-card) {
+    --el-card-padding: var(--yg-space-3) var(--yg-space-2) var(--yg-space-1);
+    box-shadow: 3px 3px 0 var(--phx-hard);
+  }
+
+  .phx-alert {
+    box-shadow: 3px 3px 0 var(--phx-hard);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .phx-page-head,
+  .phx-head__eyebrow,
+  .phx-head__title,
+  .phx-head__lead,
+  .phx-head__index,
+  .phx-alert,
+  .phx-panel,
+  .phx-activity > :deep(.el-card),
+  .phx-member :deep(.el-descriptions__cell),
+  .phx-activity :deep(.el-table__body tr.el-table__row > td.el-table__cell) {
+    animation: none;
+  }
+
+  .phx-page-head :deep(.el-page-header__back),
+  .phx-actions :deep(.el-button),
+  .phx-activity :deep(.el-table .el-table__row > td.el-table__cell),
+  .phx-activity :deep(.el-table .el-table__row > td.el-table__cell .cell) {
+    transition: none;
+  }
+
+  .phx-page-head :deep(.el-page-header__back:hover),
+  .phx-actions :deep(.el-button:hover:not(.is-disabled)),
+  .phx-activity :deep(.el-table .el-table__body tr.el-table__row:hover > td.el-table__cell .cell) {
+    transform: none;
+  }
+}
+</style>

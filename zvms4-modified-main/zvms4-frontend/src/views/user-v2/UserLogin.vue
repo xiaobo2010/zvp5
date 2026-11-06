@@ -363,6 +363,11 @@ watch(user, async () => {
 <template>
   <div class="yg-login-v2">
     <aside class="yg-login-v2__brand" aria-label="平台介绍">
+      <span class="yg-phi-login-mark" aria-hidden="true">ZVMS</span>
+      <div class="yg-phi-login-rail" aria-hidden="true">
+        <span>SYS // LOGIN</span>
+        <span>ZH-HS · VOLUNTEER</span>
+      </div>
       <div class="yg-login-v2__brand-inner">
         <span class="yg-login-v2__logo">
           <img src="/pwa-192x192.png" alt="" />
@@ -383,6 +388,9 @@ watch(user, async () => {
 
     <main class="yg-login-v2__main">
       <section class="yg-login__card" aria-labelledby="yg-login-title">
+        <span class="yg-phi-login-tag" aria-hidden="true">
+          {{ mode === 'normal' ? 'AUTH // 01' : 'AUTH // 02' }}
+        </span>
         <div class="yg-login__brand">
           <span class="yg-login__logo">
             <img src="/favicon.ico" alt="" />
@@ -481,14 +489,14 @@ watch(user, async () => {
   padding: var(--yg-space-6) 0;
 }
 
-/* 登录卡：白底实色 + G2 2xl 圆角 + 柔和双层阴影（准则 2.4 / 2.5） */
+/* 登录卡：Phi 方角；切角、硬阴影、明暗配色由 phi-theme.css 接管 */
 .yg-login__card {
   width: 100%;
   max-width: 400px;
   padding: var(--yg-space-8);
   background-color: var(--yg-bg-surface);
   border: calc(var(--yg-space-1) / 4) solid var(--yg-border-subtle);
-  border-radius: var(--yg-radius-2xl);
+  border-radius: 0;
   box-shadow: var(--yg-shadow-lg);
 }
 
@@ -506,7 +514,7 @@ watch(user, async () => {
   width: var(--yg-space-9);
   height: var(--yg-space-9);
   flex-shrink: 0;
-  border-radius: var(--yg-radius-lg);
+  border-radius: 0;
   overflow: hidden;
 }
 
@@ -599,19 +607,13 @@ watch(user, async () => {
   margin-top: var(--yg-space-2);
 }
 
-@supports (corner-shape: squircle) {
-  .yg-login__card,
-  .yg-login__logo {
-    corner-shape: squircle;
-  }
-}
-
 /* ---- v2 登录页：品牌区 + 表单区（桌面分栏，移动单列） ---- */
 .yg-login-v2 {
   display: grid;
   grid-template-columns: minmax(0, 0.92fr) minmax(0, 1.08fr);
   min-height: 100%;
-  background: var(--yg-bg-page);
+  /* 透出 .yg-phi 的网格/扫描线底 */
+  background: transparent;
 }
 
 .yg-login-v2__brand {
@@ -632,7 +634,7 @@ watch(user, async () => {
   display: inline-flex;
   width: 64px;
   height: 64px;
-  border-radius: var(--yg-radius-lg);
+  border-radius: 0;
   overflow: hidden;
   box-shadow: var(--yg-shadow-sm);
 }
@@ -687,8 +689,9 @@ watch(user, async () => {
   content: '';
   width: 5px;
   height: 5px;
-  border-radius: var(--yg-radius-pill);
+  border-radius: 0;
   background: var(--yg-color-primary);
+  transform: rotate(45deg);
 }
 
 .yg-login-v2__main {
@@ -713,7 +716,7 @@ watch(user, async () => {
 
   .yg-login-v2__main {
     min-height: 100%;
-    padding: var(--yg-space-5);
+    padding: var(--yg-space-5) var(--yg-space-4);
   }
 }
 

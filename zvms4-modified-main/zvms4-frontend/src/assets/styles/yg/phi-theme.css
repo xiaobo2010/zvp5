@@ -810,3 +810,715 @@
   color: #f3dc62;
   border-color: rgba(243, 220, 98, 0.28);
 }
+
+/* ==========================================================================
+   Phi final layer
+   - 双主题（dark / light）真实切换：html[data-theme='light'] 不是暗色蒙层
+   - 时间面板 token 接口、硬边/切角、登录/首页 HUD、Element 组件收口
+   - 导航规则保持上一段不动；本层不写 .yg-glass-nav 选择器
+   ========================================================================== */
+
+.yg-phi {
+  --phi-frame: rgba(244, 246, 248, 0.2);
+  --phi-ink: #f4f6f8;
+  --phi-ink-3: #7b8791;
+  --phi-panel: #0b0e12;
+  --phi-panel-hi: #12171b;
+  --phi-accent: #49f4e2;
+  --phi-accent-soft: rgba(73, 244, 226, 0.18);
+  --phi-accent-glow: rgba(73, 244, 226, 0.42);
+  --phi-line: rgba(244, 246, 248, 0.14);
+  --phi-scan: rgba(73, 244, 226, 0.035);
+  --phi-shadow: rgba(73, 244, 226, 0.16);
+
+  --yg-color-success-soft: rgba(52, 199, 89, 0.14);
+  --yg-color-warning-soft: rgba(255, 149, 0, 0.14);
+  --yg-color-danger-soft: rgba(255, 59, 48, 0.14);
+  --yg-text-success: #63e58b;
+  --yg-text-warning: #ffc266;
+  --yg-text-danger: #ff7b75;
+  --yg-text-link: var(--phi-accent);
+  --yg-focus-ring-inner: var(--yg-bg-surface);
+  --yg-focus-ring-color: var(--phi-accent);
+
+  --el-bg-color: var(--yg-bg-surface);
+  --el-bg-color-page: var(--yg-bg-page);
+  --el-bg-color-overlay: var(--yg-bg-surface-raised);
+  --el-fill-color: var(--yg-bg-surface-sunken);
+  --el-fill-color-light: var(--yg-bg-surface-sunken);
+  --el-fill-color-lighter: var(--yg-bg-surface-sunken);
+  --el-fill-color-blank: var(--yg-bg-surface);
+  --el-text-color-primary: var(--yg-text-primary);
+  --el-text-color-regular: var(--yg-text-secondary);
+  --el-text-color-secondary: var(--yg-text-tertiary);
+  --el-text-color-placeholder: var(--yg-text-tertiary);
+  --el-border-color: var(--yg-border-default);
+  --el-border-color-light: var(--yg-border-default);
+  --el-border-color-lighter: var(--yg-border-subtle);
+  --el-border-color-extra-light: var(--yg-border-subtle);
+  --el-border-radius-base: 0;
+  --el-border-radius-small: 0;
+  --el-border-radius-round: 0;
+  --el-card-border-radius: 0;
+  --el-dialog-border-radius: 0;
+  --el-messagebox-border-radius: 0;
+  --el-button-border-radius: 0;
+  --el-tag-border-radius: 0;
+  --el-color-primary: var(--phi-accent);
+  --el-color-primary-light-3: color-mix(in srgb, var(--phi-accent) 65%, var(--yg-bg-surface));
+  --el-color-primary-light-5: color-mix(in srgb, var(--phi-accent) 45%, var(--yg-bg-surface));
+  --el-color-primary-light-7: color-mix(in srgb, var(--phi-accent) 30%, var(--yg-bg-surface));
+  --el-color-primary-light-8: color-mix(in srgb, var(--phi-accent) 20%, var(--yg-bg-surface));
+  --el-color-primary-light-9: color-mix(in srgb, var(--phi-accent) 10%, var(--yg-bg-surface));
+  --el-color-primary-dark-2: color-mix(in srgb, var(--phi-accent) 80%, #000);
+  --el-color-success: #34c759;
+  --el-color-warning: #ff9500;
+  --el-color-danger: #ff5c58;
+  --el-color-error: #ff5c58;
+}
+
+html[data-theme='light'] .yg-phi {
+  --yg-bg-page: #eef2f4;
+  --yg-bg-surface: #ffffff;
+  --yg-bg-surface-raised: #ffffff;
+  --yg-bg-surface-sunken: #f2f5f6;
+  --yg-bg-hover: rgba(11, 159, 147, 0.1);
+  --yg-bg-active: rgba(11, 159, 147, 0.17);
+  --yg-text-primary: #050608;
+  --yg-text-secondary: #3f4a53;
+  --yg-text-tertiary: #5b6670;
+  --yg-text-disabled: #8d969d;
+  --yg-border-subtle: rgba(5, 6, 8, 0.1);
+  --yg-border-default: rgba(5, 6, 8, 0.16);
+  --yg-border-strong: rgba(5, 6, 8, 0.28);
+  --yg-color-primary: #007a70;
+  --yg-color-primary-hover: #00685f;
+  --yg-color-primary-active: #00564f;
+  --yg-color-primary-soft: rgba(11, 159, 147, 0.1);
+  --yg-color-primary-strong: #00685f;
+  --yg-color-primary-strong-hover: #00564f;
+  --yg-color-primary-strong-active: #00443e;
+  --yg-color-success-soft: #e7f7ec;
+  --yg-color-warning-soft: #fff2d8;
+  --yg-color-danger-soft: #ffe8e6;
+  --yg-text-success: #1e7e34;
+  --yg-text-warning: #9a5a00;
+  --yg-text-danger: #b3261e;
+  --yg-text-link: #007a70;
+  --yg-focus-ring-inner: #ffffff;
+  --yg-focus-ring-color: #007a70;
+
+  --phi-frame: rgba(5, 6, 8, 0.22);
+  --phi-ink: #050608;
+  --phi-ink-3: #5b6670;
+  --phi-panel: #ffffff;
+  --phi-panel-hi: #f2f5f6;
+  --phi-accent: #007a70;
+  --phi-accent-soft: rgba(11, 159, 147, 0.13);
+  --phi-accent-glow: rgba(11, 159, 147, 0.34);
+  --phi-line: rgba(5, 6, 8, 0.16);
+  --phi-scan: rgba(5, 6, 8, 0.035);
+  --phi-shadow: rgba(5, 6, 8, 0.2);
+
+  --el-bg-color: #ffffff;
+  --el-bg-color-page: #eef2f4;
+  --el-bg-color-overlay: #ffffff;
+  --el-fill-color: #f2f5f6;
+  --el-fill-color-light: #f2f5f6;
+  --el-fill-color-lighter: #f2f5f6;
+  --el-fill-color-blank: #ffffff;
+  --el-text-color-primary: #050608;
+  --el-text-color-regular: #3f4a53;
+  --el-text-color-secondary: #5b6670;
+  --el-text-color-placeholder: #5b6670;
+  --el-border-color: rgba(5, 6, 8, 0.16);
+  --el-border-color-light: rgba(5, 6, 8, 0.12);
+  --el-border-color-lighter: rgba(5, 6, 8, 0.1);
+  --el-border-color-extra-light: rgba(5, 6, 8, 0.08);
+  --el-color-primary: #007a70;
+  --el-color-primary-light-3: color-mix(in srgb, #007a70 65%, #fff);
+  --el-color-primary-light-5: color-mix(in srgb, #007a70 45%, #fff);
+  --el-color-primary-light-7: color-mix(in srgb, #007a70 30%, #fff);
+  --el-color-primary-light-8: color-mix(in srgb, #007a70 20%, #fff);
+  --el-color-primary-light-9: color-mix(in srgb, #007a70 10%, #fff);
+  --el-color-primary-dark-2: #00564f;
+  --el-color-success: #1e7e34;
+  --el-color-warning: #9a5a00;
+  --el-color-danger: #b3261e;
+  --el-color-error: #b3261e;
+  color-scheme: light;
+}
+
+.yg-phi {
+  color-scheme: dark;
+}
+
+html[data-theme='light'] .yg-phi {
+  color-scheme: light;
+}
+
+/* 背景层：暗色近黑网格；浅色白/灰纸面 + 青色细网格 */
+html[data-theme='light'] .yg-phi {
+  background: var(--yg-bg-page);
+}
+
+html[data-theme='light'] .yg-phi::before {
+  background-image:
+    linear-gradient(rgba(5, 6, 8, 0.055) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(11, 159, 147, 0.055) 1px, transparent 1px);
+}
+
+html[data-theme='light'] .yg-phi::after {
+  background: radial-gradient(
+    ellipse at 50% 32%,
+    transparent 0 24%,
+    rgba(238, 242, 244, 0.22) 76%,
+    #eef2f4 118%
+  );
+}
+
+/* 首页：更硬的 HUD 框，新增 rail 读数 */
+.yg-phi .yg-phi-hero {
+  border-radius: 0;
+  border-color: var(--phi-frame);
+  background:
+    linear-gradient(var(--phi-scan) 1px, transparent 1px) 0 0 / 100% 4px,
+    linear-gradient(135deg, var(--phi-panel-hi), var(--phi-panel) 62%);
+  clip-path: polygon(
+    0 0,
+    calc(100% - 22px) 0,
+    100% 22px,
+    100% 100%,
+    22px 100%,
+    0 calc(100% - 22px)
+  );
+}
+
+.yg-phi .yg-phi-hero::before {
+  width: 4px;
+  background: linear-gradient(var(--phi-accent), transparent 72%);
+}
+
+.yg-phi .yg-phi-hero__rail {
+  position: absolute;
+  z-index: 2;
+  top: var(--yg-space-4);
+  right: var(--yg-space-5);
+  left: var(--yg-space-5);
+  display: flex;
+  justify-content: space-between;
+  color: var(--phi-ink-3);
+  font: 500 10px / 1.2 var(--phi-hud);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  pointer-events: none;
+}
+
+.yg-phi .yg-phi-title {
+  color: var(--phi-ink);
+  text-shadow:
+    4px 0 var(--phi-pink),
+    -3px 0 var(--phi-accent);
+}
+
+html[data-theme='light'] .yg-phi .yg-phi-title {
+  text-shadow:
+    3px 0 rgba(217, 54, 114, 0.2),
+    -3px 0 rgba(11, 159, 147, 0.25);
+}
+
+.yg-phi .yg-phi-subtitle,
+.yg-phi .yg-phi-meta {
+  color: var(--phi-ink-3);
+}
+
+.yg-phi .yg-phi-subtitle b {
+  color: var(--phi-accent);
+}
+
+.yg-phi .yg-phi-emblem {
+  border-color: var(--phi-frame);
+  background: linear-gradient(
+    135deg,
+    var(--phi-accent-soft),
+    color-mix(in srgb, var(--phi-panel) 78%, transparent)
+  );
+}
+
+.yg-phi .yg-phi-emblem::before,
+.yg-phi .yg-phi-emblem::after {
+  border-color: var(--phi-frame);
+}
+
+.yg-phi .yg-phi-emblem span {
+  color: var(--phi-ink);
+  text-shadow:
+    2px 0 var(--phi-pink),
+    -2px 0 var(--phi-accent);
+}
+
+.yg-phi .yg-phi-identity {
+  border-radius: 0;
+  border-color: var(--phi-frame);
+  background: linear-gradient(120deg, var(--phi-panel-hi), var(--phi-panel) 58%);
+}
+
+.yg-phi .yg-home-avatar {
+  border-radius: 0;
+  clip-path: polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 0 100%);
+  box-shadow: 3px 3px 0 var(--phi-shadow);
+}
+
+.yg-phi .yg-home-identity__name {
+  color: var(--phi-ink);
+}
+
+.yg-phi .yg-home-identity__meta,
+.yg-phi .yg-home-identity__action {
+  color: var(--phi-ink-3);
+}
+
+.yg-phi .yg-phi-card-code {
+  color: var(--phi-ink-3);
+  font: 500 10px var(--phi-hud);
+  letter-spacing: 0.12em;
+}
+
+/* 登录：品牌大 watermark + 直角面板；覆盖 SFC 的圆角/浅色品牌底 */
+.yg-phi .yg-login-v2 .yg-login-v2__brand {
+  background:
+    linear-gradient(var(--phi-scan) 1px, transparent 1px) 0 0 / 100% 4px,
+    linear-gradient(135deg, var(--phi-panel-hi), var(--phi-panel));
+  border-right-color: var(--phi-frame);
+  border-radius: 0;
+}
+
+.yg-phi .yg-login-v2 .yg-login__card {
+  border-radius: 0;
+  border-color: var(--phi-frame);
+  background: linear-gradient(135deg, var(--phi-panel-hi), var(--phi-panel));
+  box-shadow:
+    7px 7px 0 var(--phi-shadow),
+    0 24px 80px rgba(0, 0, 0, 0.24);
+  clip-path: polygon(0 0, calc(100% - 18px) 0, 100% 18px, 100% 100%, 0 100%);
+}
+
+.yg-phi .yg-login-v2 .yg-login__title,
+.yg-phi .yg-login-v2 .yg-login__brand-name {
+  color: var(--phi-ink);
+}
+
+.yg-phi .yg-login-v2 .yg-login__subtitle,
+.yg-phi .yg-login-v2 .yg-login-v2__lead,
+.yg-phi .yg-login-v2 .yg-login-v2__points {
+  color: var(--phi-ink-3);
+}
+
+.yg-phi .yg-phi-login-mark {
+  position: absolute;
+  z-index: 0;
+  right: -0.08em;
+  bottom: -0.2em;
+  color: color-mix(in srgb, var(--phi-ink) 5%, transparent);
+  font: 400 clamp(130px, 22vw, 330px) / 0.72 var(--phi-display);
+  letter-spacing: -0.03em;
+  pointer-events: none;
+  user-select: none;
+}
+
+.yg-phi .yg-phi-login-rail {
+  position: absolute;
+  z-index: 2;
+  top: var(--yg-space-5);
+  right: var(--yg-space-6);
+  left: var(--yg-space-6);
+  display: flex;
+  justify-content: space-between;
+  color: var(--phi-ink-3);
+  font: 500 10px var(--phi-hud);
+  letter-spacing: 0.14em;
+}
+
+.yg-phi .yg-phi-login-tag {
+  position: absolute;
+  top: 0;
+  right: 0;
+  padding: 4px 9px 3px;
+  background: var(--phi-accent);
+  color: #041311;
+  font: 700 10px var(--phi-hud);
+  letter-spacing: 0.14em;
+  clip-path: polygon(8px 0, 100% 0, 100% 100%, 0 100%);
+}
+
+html[data-theme='light'] .yg-phi .yg-phi-login-tag {
+  color: #fff;
+}
+
+/* 卡片/按钮/输入：统一硬边；不复用 --yg-radius，避免影响导航 */
+.yg-phi .yg-card,
+.yg-phi .el-card {
+  border-radius: 0;
+  border-color: var(--phi-frame);
+}
+
+.yg-phi .yg-card {
+  box-shadow: 5px 5px 0 var(--phi-shadow);
+}
+
+.yg-phi .el-card {
+  background: var(--phi-panel);
+  color: var(--phi-ink);
+  box-shadow: 5px 5px 0 var(--phi-shadow);
+  clip-path: polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 0 100%);
+}
+
+.yg-phi .el-card__header {
+  color: var(--phi-ink);
+  border-bottom-color: var(--phi-line);
+}
+
+.yg-phi .el-card__body {
+  color: var(--phi-ink-3);
+}
+
+.yg-phi .yg-btn,
+.yg-phi .el-button {
+  border-radius: 0;
+  font-family: var(--phi-hud);
+  letter-spacing: 0.05em;
+}
+
+.yg-phi .el-button {
+  color: var(--phi-ink);
+  background: var(--phi-panel-hi);
+  border-color: var(--phi-frame);
+}
+
+.yg-phi .el-button:hover {
+  color: var(--phi-accent);
+  border-color: var(--phi-accent);
+  background: var(--phi-accent-soft);
+}
+
+.yg-phi .el-button--primary,
+.yg-phi .yg-btn--primary {
+  color: #041311;
+  background: var(--phi-accent);
+  border-color: var(--phi-accent);
+}
+
+html[data-theme='light'] .yg-phi .el-button--primary,
+html[data-theme='light'] .yg-phi .yg-btn--primary {
+  color: #fff;
+}
+
+.yg-phi .el-button.is-text,
+.yg-phi .el-button.is-link {
+  color: var(--phi-ink-3);
+  background: transparent;
+}
+
+.yg-phi .el-button.is-text:hover {
+  color: var(--phi-accent);
+  background: var(--phi-accent-soft);
+}
+
+.yg-phi .el-input__wrapper,
+.yg-phi .el-select__wrapper,
+.yg-phi .el-textarea__inner {
+  border-radius: 0;
+  background: var(--phi-panel-hi);
+  border: 1px solid var(--phi-frame);
+  box-shadow: none;
+  color: var(--phi-ink);
+}
+
+.yg-phi .el-input__wrapper.is-focus,
+.yg-phi .el-select__wrapper.is-focused,
+.yg-phi .el-textarea__inner:focus {
+  border-color: var(--phi-accent);
+  box-shadow: 0 0 0 1px var(--phi-accent);
+}
+
+.yg-phi .el-input__inner,
+.yg-phi .el-textarea__inner {
+  color: var(--phi-ink);
+}
+
+.yg-phi .el-input__inner::placeholder,
+.yg-phi .el-textarea__inner::placeholder {
+  color: var(--phi-ink-3);
+}
+
+.yg-phi .el-switch {
+  --el-switch-on-color: var(--phi-accent);
+  --el-switch-off-color: var(--phi-ink-3);
+}
+
+.yg-phi .el-switch__core {
+  border-radius: 0;
+}
+
+.yg-phi .el-switch__action {
+  border-radius: 0;
+  transition: transform 280ms cubic-bezier(0.34, 1.5, 0.64, 1);
+}
+
+.yg-phi .el-tag {
+  border-radius: 0;
+  border-color: var(--phi-frame);
+  background: var(--phi-panel-hi);
+  color: var(--phi-ink);
+  clip-path: polygon(0 0, calc(100% - 5px) 0, 100% 5px, 100% 100%, 0 100%);
+}
+
+.yg-phi .yg-tag--success {
+  background: var(--yg-color-success-soft);
+  color: var(--yg-text-success);
+}
+
+.yg-phi .yg-tag--warning {
+  background: var(--yg-color-warning-soft);
+  color: var(--yg-text-warning);
+}
+
+.yg-phi .yg-tag--danger {
+  background: var(--yg-color-danger-soft);
+  color: var(--yg-text-danger);
+}
+
+.yg-phi .el-table {
+  --el-table-bg-color: var(--phi-panel);
+  --el-table-tr-bg-color: var(--phi-panel);
+  --el-table-header-bg-color: var(--phi-panel-hi);
+  --el-table-footer-bg-color: var(--phi-panel);
+  --el-table-border-color: var(--phi-line);
+  --el-table-header-text-color: var(--phi-ink-3);
+  --el-table-text-color: var(--phi-ink);
+  --el-table-row-hover-bg-color: var(--phi-accent-soft);
+  --el-table-current-row-bg-color: var(--phi-accent-soft);
+  --el-fill-color-lighter: var(--phi-panel-hi);
+}
+
+.yg-phi .el-table th.el-table__cell {
+  font-family: var(--phi-hud);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.yg-phi .el-table tr,
+.yg-phi .el-table td.el-table__cell,
+.yg-phi .el-table th.el-table__cell {
+  background-color: var(--phi-panel);
+  border-bottom-color: var(--phi-line);
+}
+
+.yg-phi .el-table .el-table__body tr:hover > td.el-table__cell,
+.yg-phi .el-table .el-table__body tr.hover-row > td.el-table__cell {
+  background-color: var(--phi-accent-soft);
+}
+
+.yg-phi .el-pagination {
+  --el-pagination-bg-color: var(--phi-panel-hi);
+  --el-pagination-text-color: var(--phi-ink);
+  --el-pagination-button-color: var(--phi-ink);
+  --el-pagination-button-bg-color: var(--phi-panel-hi);
+  --el-pagination-hover-color: var(--phi-accent);
+}
+
+.yg-phi .el-pagination button,
+.yg-phi .el-pagination .el-pager li,
+.yg-phi .el-pagination .btn-prev,
+.yg-phi .el-pagination .btn-next {
+  border-radius: 0;
+}
+
+.yg-phi .el-pager li.is-active {
+  color: #041311;
+  background: var(--phi-accent);
+  clip-path: polygon(0 0, calc(100% - 5px) 0, 100% 5px, 100% 100%, 0 100%);
+}
+
+html[data-theme='light'] .yg-phi .el-pager li.is-active {
+  color: #fff;
+}
+
+.yg-phi .el-skeleton {
+  --el-skeleton-color: var(--phi-panel-hi);
+  --el-skeleton-to-color: var(--phi-accent-soft);
+}
+
+.yg-phi .el-empty {
+  --el-empty-fill-color-0: var(--phi-panel);
+  --el-empty-fill-color-1: var(--phi-panel-hi);
+  --el-empty-fill-color-2: var(--phi-panel-hi);
+  --el-empty-fill-color-3: var(--phi-line);
+  --el-empty-fill-color-4: var(--phi-panel-hi);
+  --el-empty-fill-color-5: var(--phi-panel);
+  --el-empty-fill-color-6: var(--phi-panel-hi);
+  --el-empty-fill-color-7: var(--phi-panel);
+  --el-empty-fill-color-8: var(--phi-panel-hi);
+  --el-empty-fill-color-9: var(--phi-panel);
+}
+
+.yg-phi .el-empty__description p {
+  color: var(--phi-ink-3);
+}
+
+.yg-phi .el-alert {
+  border-radius: 0;
+  border: 1px solid var(--phi-frame);
+  background: var(--phi-panel-hi);
+}
+
+.yg-phi .el-alert__title,
+.yg-phi .el-alert__description {
+  color: var(--phi-ink);
+}
+
+.yg-phi .el-collapse,
+.yg-phi .el-collapse-item__header,
+.yg-phi .el-collapse-item__wrap,
+.yg-phi .el-collapse-item__content {
+  border-radius: 0;
+  border-color: var(--phi-line);
+  background: transparent;
+  color: var(--phi-ink);
+}
+
+.yg-phi .el-collapse-item__header:hover {
+  color: var(--phi-accent);
+}
+
+.yg-phi .el-descriptions__label,
+.yg-phi .el-descriptions__content {
+  color: var(--phi-ink-3);
+  border-color: var(--phi-line);
+  background: transparent;
+}
+
+.yg-phi .el-page-header__title,
+.yg-phi .el-page-header__content {
+  color: var(--phi-ink);
+}
+
+.yg-phi .el-result__title p {
+  color: var(--phi-ink);
+}
+
+.yg-phi .el-divider {
+  border-color: var(--phi-line);
+}
+
+.yg-phi .el-drawer {
+  border-radius: 0;
+  background: var(--phi-panel);
+  color: var(--phi-ink);
+}
+
+/* 顶栏：保留导航不动，只处理页面顶栏 */
+.yg-phi .yg-topbar {
+  background: color-mix(in srgb, var(--phi-panel) 88%, transparent);
+  border-bottom-color: var(--phi-frame);
+}
+
+html[data-theme='light'] .yg-phi .yg-topbar {
+  background: color-mix(in srgb, #fff 86%, transparent);
+}
+
+/* 动效：线性/弹簧混合；不碰导航 */
+.yg-phi .yg-phi-hero {
+  animation: phi-final-cut 520ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.yg-phi .yg-phi-hero__rail {
+  animation: phi-final-rail 480ms cubic-bezier(0.16, 1, 0.3, 1) 80ms both;
+}
+
+.yg-phi .yg-card,
+.yg-phi .el-card {
+  animation: phi-final-cut 430ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.yg-phi .yg-home-identity {
+  animation-delay: 70ms;
+}
+
+.yg-phi .yg-phi-login-mark {
+  animation: phi-final-mark 900ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes phi-final-cut {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 10px, 0);
+    clip-path: polygon(0 0, 0 0, 0 0, 0 100%, 0 100%, 0 100%);
+  }
+}
+
+@keyframes phi-final-rail {
+  from {
+    opacity: 0;
+    transform: translate3d(-12px, 0, 0);
+  }
+}
+
+@keyframes phi-final-mark {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 24px, 0) skewX(-4deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .yg-phi .yg-phi-hero,
+  .yg-phi .yg-phi-hero__rail,
+  .yg-phi .yg-card,
+  .yg-phi .el-card,
+  .yg-phi .yg-phi-login-mark,
+  .yg-phi .yg-phi-title,
+  .yg-phi .yg-phi-emblem,
+  .yg-phi .yg-phi-login-emblem,
+  .yg-phi .el-switch__action {
+    animation: none;
+    transition: none;
+  }
+}
+
+/* 移动端 hero：印章退到文字后，避免盖住 ZVMS；rail 只保留左侧读数 */
+.yg-phi .yg-phi-emblem {
+  z-index: 0;
+}
+
+.yg-phi .yg-phi-title,
+.yg-phi .yg-phi-subtitle,
+.yg-phi .yg-phi-meta,
+.yg-phi .yg-phi-welcome {
+  position: relative;
+  z-index: 1;
+}
+
+@media (max-width: 599px) {
+  .yg-phi .yg-phi-hero__rail {
+    top: 10px;
+    right: var(--yg-space-4);
+    left: var(--yg-space-4);
+    font-size: 9px;
+  }
+
+  .yg-phi .yg-phi-hero__rail span:last-child {
+    display: none;
+  }
+
+  .yg-phi .yg-phi-emblem {
+    width: min(28vw, 92px);
+    right: 12px;
+    top: 42%;
+    opacity: 0.62;
+  }
+
+  .yg-phi .yg-phi-title {
+    font-size: clamp(58px, 18vw, 96px);
+  }
+}
