@@ -240,9 +240,7 @@ const cells = computed(() => {
 
 const totalText = computed(() => shown.total.toFixed(decimalsOf(target.value.total)))
 // store 里已有缓存时长时直接展示并在原位缓动；只有完全没有数据的首次加载才出骨架
-const showSkeleton = computed(
-  () => loading.value && !loaded.value && target.value.total === 0
-)
+const showSkeleton = computed(() => loading.value && !loaded.value && target.value.total === 0)
 </script>
 
 <template>
@@ -266,9 +264,7 @@ const showSkeleton = computed(
 
         <div class="phi-time__total" aria-live="polite">
           <span class="phi-time__total-label">总记录</span>
-          <span class="phi-time__total-value">
-            {{ totalText }}<small>H</small>
-          </span>
+          <span class="phi-time__total-value"> {{ totalText }}<small>H</small> </span>
         </div>
 
         <div class="phi-time__tools">
@@ -347,11 +343,13 @@ const showSkeleton = computed(
             aria-valuemin="0"
             aria-valuemax="100"
             :aria-valuenow="Math.min(cell.percent, 100)"
+            :style="{ '--lit-pct': `${(cell.lit / SEGMENTS) * 100}%` }"
           >
             <i
               v-for="n in SEGMENTS"
               :key="n"
               :class="{ 'is-lit': n <= cell.lit, 'is-major': n % 6 === 0 }"
+              :style="{ '--tick-i': n }"
             ></i>
           </div>
 
@@ -435,10 +433,10 @@ const showSkeleton = computed(
       )
       0 100% / var(--tp-cut) var(--tp-cut) no-repeat,
     linear-gradient(var(--phi-accent), var(--phi-accent)) 0 0 / 3px 46% no-repeat,
-    linear-gradient(var(--phi-accent), var(--phi-accent)) calc(100% - 10px) calc(100% - 10px) /
-      18px 2px no-repeat,
-    linear-gradient(var(--phi-accent), var(--phi-accent)) calc(100% - 10px) calc(100% - 10px) /
-      2px 18px no-repeat;
+    linear-gradient(var(--phi-accent), var(--phi-accent)) calc(100% - 10px) calc(100% - 10px) / 18px
+      2px no-repeat,
+    linear-gradient(var(--phi-accent), var(--phi-accent)) calc(100% - 10px) calc(100% - 10px) / 2px
+      18px no-repeat;
 }
 
 @keyframes tp-reveal {
@@ -691,14 +689,56 @@ const showSkeleton = computed(
 
 /* 刻度条：24 段；点亮数跟随缓动中的数字，天然形成先快后慢的 stagger */
 .phi-time__ticks {
+  position: relative;
   display: grid;
   grid-template-columns: repeat(24, minmax(0, 1fr));
   gap: 3px;
   height: 18px;
   align-items: end;
+  isolation: isolate;
+}
+
+/* 已点亮区域的低频扫光：不是一次性扫过，进度条本身会持续“有电” */
+.phi-time__ticks::before {
+  content: '';
+  position: absolute;
+  z-index: 2;
+  inset: 0 auto 0 0;
+  width: var(--lit-pct, 0%);
+  pointer-events: none;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--phi-accent-soft) 35%,
+    var(--phi-accent-glow) 52%,
+    transparent 100%
+  );
+  opacity: 0.55;
+  transform: translateX(-110%);
+  animation: tp-bar-scan 3400ms cubic-bezier(0.6, 0, 0.2, 1) infinite;
+}
+
+/* 进度边缘的定位光标；随缓动数字一起推进 */
+.phi-time__ticks::after {
+  content: '';
+  position: absolute;
+  z-index: 3;
+  top: 0;
+  bottom: 0;
+  left: clamp(0px, var(--lit-pct, 0%), calc(100% - 2px));
+  width: 2px;
+  pointer-events: none;
+  background: var(--phi-accent);
+  box-shadow:
+    0 0 8px var(--phi-accent-glow),
+    0 0 18px var(--phi-accent-soft);
+  transition: left 340ms cubic-bezier(0.16, 1, 0.3, 1);
+  animation: tp-edge-pulse 2200ms ease-in-out infinite;
 }
 
 .phi-time__ticks i {
+  position: relative;
+  z-index: 1;
   display: block;
   height: 10px;
   background: var(--phi-tick-off);
@@ -715,7 +755,8 @@ const showSkeleton = computed(
 .phi-time__ticks i.is-lit {
   height: 18px;
   background: var(--phi-accent);
-  animation: tp-tick 300ms cubic-bezier(0.34, 1.56, 0.64, 1);
+  animation: tp-tick 360ms cubic-bezier(0.34, 1.56, 0.64, 1);
+  animation-delay: calc(var(--tick-i, 1) * 16ms);
 }
 
 .phi-time__cell:not(.is-over) .phi-time__ticks i.is-lit {
@@ -732,6 +773,33 @@ const showSkeleton = computed(
   }
   100% {
     transform: none;
+  }
+}
+
+@keyframes tp-bar-scan {
+  0% {
+    transform: translateX(-110%);
+    opacity: 0;
+  }
+  18% {
+    opacity: 0.55;
+  }
+  72%,
+  100% {
+    transform: translateX(220%);
+    opacity: 0;
+  }
+}
+
+@keyframes tp-edge-pulse {
+  0%,
+  100% {
+    opacity: 0.5;
+    transform: scaleY(0.72);
+  }
+  50% {
+    opacity: 1;
+    transform: scaleY(1);
   }
 }
 
@@ -822,13 +890,9 @@ const showSkeleton = computed(
 
 .phi-time__skel {
   display: block;
-  background: linear-gradient(
-      90deg,
-      transparent 0%,
-      var(--phi-accent-soft) 50%,
-      transparent 100%
-    )
-    0 0 / 200% 100% no-repeat,
+  background:
+    linear-gradient(90deg, transparent 0%, var(--phi-accent-soft) 50%, transparent 100%) 0 0 / 200%
+      100% no-repeat,
     var(--phi-tick-off);
   animation: tp-skel 1.1s linear infinite;
 }
@@ -850,10 +914,14 @@ const showSkeleton = computed(
 
 @keyframes tp-skel {
   from {
-    background-position: -100% 0, 0 0;
+    background-position:
+      -100% 0,
+      0 0;
   }
   to {
-    background-position: 200% 0, 0 0;
+    background-position:
+      200% 0,
+      0 0;
   }
 }
 
@@ -938,6 +1006,12 @@ const showSkeleton = computed(
 
   .phi-time__sweep {
     display: none;
+  }
+
+  .phi-time__ticks::before,
+  .phi-time__ticks::after {
+    animation: none;
+    transition: none;
   }
 
   .phi-time__ticks i {
