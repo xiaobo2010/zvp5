@@ -85,19 +85,49 @@ describe('小型 GET 双路竞速', () => {
       '/attachments/abc/ocr',
       '/ai/conversations',
       '/ai/conversations/abc',
+      '/ai/conversations/abc/messages',
       '/ai/runs',
       '/ai/runs/abc',
       '/ai/agent/proposals',
+      '/ai/models',
       '/ai/v1/models',
+      '/ai/logs',
+      '/ai/logs/stats',
+      '/ai/quota/usage',
+      '/ai/quota/abc',
+      '/ai/scheduled-tasks',
+      '/ai/scheduled-tasks/abc/runs',
+      '/v2/groups/abc/time',
+      '/v2/groups/abc/statistics/compliance',
+      '/v2/times',
+      '/system/settings',
+      '/system/user-quotas/abc',
+      '/v3/notifications/admin',
+      '/v3/notifications/abc/versions',
+      '/v3/ban/records',
       '/groups',
       '/groups/abc',
       '/v2/groups/abc'
     ]) {
       expect(isSmallJsonGetPath(path), path).toBe(true)
     }
-    expect(isSmallJsonGetPath('/ai/conversations/abc/messages')).toBe(false)
-    expect(isSmallJsonGetPath('/attachments/abc/thumb')).toBe(false)
-    expect(isSmallJsonGetPath('/attachments/abc')).toBe(false)
+    for (const path of [
+      '/ai/conversations/abc/messages/extra',
+      '/ai/models/abc',
+      '/ai/logs/abc',
+      '/ai/quota',
+      '/ai/scheduled-tasks/abc',
+      '/v2/groups/abc/time/extra',
+      '/v2/times/abc',
+      '/system/settings/abc',
+      '/system/user-quotas',
+      '/v3/notifications/abc',
+      '/v3/ban/records/abc',
+      '/attachments/abc/thumb',
+      '/attachments/abc'
+    ]) {
+      expect(isSmallJsonGetPath(path), path).toBe(false)
+    }
   })
 
   it('完整响应先到者获胜，并中止另一路', async () => {

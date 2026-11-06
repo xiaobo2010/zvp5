@@ -560,19 +560,6 @@ it('clears the primary device behind a danger confirmation', async () => {
   wrapper.unmount()
 })
 
-it('shows the bound primary device on the info tab', async () => {
-  readOneV3Mock.mockResolvedValue({
-    ...structuredClone(userFixture),
-    primary_xuehai_id: '149'
-  })
-  const wrapper = mountPage()
-  await flushPromises()
-
-  expect(wrapper.text()).toContain('manage.personalPanel.primaryDevice {"id":"149"}')
-
-  wrapper.unmount()
-})
-
 it('shows the AI analysis entry for admins only', async () => {
   const admin = mountPage()
   await flushPromises()

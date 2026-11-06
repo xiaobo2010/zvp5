@@ -3,6 +3,7 @@ import { AxiosError, type AxiosAdapter, type AxiosResponse } from 'axios'
 import { Blob as NodeBlob } from 'node:buffer'
 import client from './axios'
 import { cacheGet, cacheSet } from '@/utils/idbCache'
+import { clearMemoryCache } from '@/utils/requestCache'
 
 const { elMessageMock } = vi.hoisted(() => ({ elMessageMock: vi.fn() }))
 
@@ -20,7 +21,12 @@ vi.mock('@/plugins/ua', () => ({ getXuehaiId: () => 0 }))
 vi.mock('element-plus', () => ({ ElMessage: elMessageMock }))
 vi.mock('nprogress', () => ({ default: { start: vi.fn(), done: vi.fn() } }))
 
-beforeEach(() => { vi.clearAllMocks(); localStorage.clear() })
+beforeEach(() => {
+  vi.clearAllMocks()
+  localStorage.clear()
+  // 进程内缓存是模块级状态，不清理会让相邻用例互相命中。
+  clearMemoryCache()
+})
 afterEach(() => { vi.unstubAllGlobals() })
 
 /** 抓取 ElMessage 实际收到的 message(每个元素对应一次弹窗)。 */
@@ -63,18 +69,105 @@ class UnreadableBlob extends NodeBlob {
   }
 }
 
-it('never caches authenticated GET responses', async () => {
-  localStorage.setItem('token', 'alice')
-  client.defaults.adapter = async (config) => ({ data: { private: true }, status: 200, statusText: 'OK', headers: {}, config })
-  await client.get('/users/alice')
-  expect(cacheSet).not.toHaveBeenCalled()
+it('serves a repeated authenticated GET from cache without a second request', async () => {
+  localStorage.setItem('token', 'alice-session-token')
+  let calls = 0
+  client.defaults.adapter = async (config) => {
+    calls += 1
+    return { data: { calls }, status: 200, statusText: 'OK', headers: {}, config }
+  }
+
+  const first = await client.get('/v2/users/alice')
+  const second = await client.get('/v2/users/alice')
+
+  expect(calls).toBe(1)
+  expect(first.data).toEqual({ calls: 1 })
+  expect(second.data).toEqual({ calls: 1 })
+  expect(cacheSet).toHaveBeenCalledTimes(1)
 })
 
-it('never falls back to another identity cache when authenticated GET fails', async () => {
-  localStorage.setItem('token', 'bob')
-  client.defaults.adapter = async (config) => { throw new AxiosError('offline', 'ERR_NETWORK', config) }
-  await expect(client.get('/users/bob')).rejects.toThrow('offline')
-  expect(cacheGet).not.toHaveBeenCalled()
+it('keeps cache entries isolated per account', async () => {
+  localStorage.setItem('token', 'alice-session-token')
+  client.defaults.adapter = async (config) => ({
+    data: { owner: 'alice' },
+    status: 200,
+    statusText: 'OK',
+    headers: {},
+    config
+  })
+  await client.get('/v2/users/self')
+
+  localStorage.setItem('token', 'bob-session-token')
+  let calls = 0
+  client.defaults.adapter = async (config) => {
+    calls += 1
+    return { data: { owner: 'bob' }, status: 200, statusText: 'OK', headers: {}, config }
+  }
+  const result = await client.get('/v2/users/self')
+
+  // 换账号后旧缓存必须失效，请求重新发出并返回新身份的数据。
+  expect(calls).toBe(1)
+  expect(result.data).toEqual({ owner: 'bob' })
+
+  const keys = vi.mocked(cacheSet).mock.calls.map(([key]) => String(key))
+  expect(keys).toHaveLength(2)
+  expect(keys[0]).toContain('/v2/users/self')
+  expect(keys[0]).not.toBe(keys[1])
+  // 键里只留 token 指纹，不能出现凭证原文。
+  expect(keys.join('|')).not.toContain('alice-session-token')
+  expect(keys.join('|')).not.toContain('bob-session-token')
+})
+
+it('does not reuse the anonymous cache after logging in', async () => {
+  client.defaults.adapter = async (config) => ({
+    data: { owner: 'anonymous' },
+    status: 200,
+    statusText: 'OK',
+    headers: {},
+    config
+  })
+  await client.get('/v2/users/self')
+
+  localStorage.setItem('token', 'alice-session-token')
+  let calls = 0
+  client.defaults.adapter = async (config) => {
+    calls += 1
+    return { data: { owner: 'alice' }, status: 200, statusText: 'OK', headers: {}, config }
+  }
+  const result = await client.get('/v2/users/self')
+
+  expect(calls).toBe(1)
+  expect(result.data).toEqual({ owner: 'alice' })
+})
+
+it('falls back to its own identity cache when the authenticated GET fails', async () => {
+  localStorage.setItem('token', 'bob-session-token')
+  vi.mocked(cacheGet).mockResolvedValueOnce({ t: Date.now(), data: { cached: true } })
+  client.defaults.adapter = async (config) => {
+    throw new AxiosError('offline', 'ERR_NETWORK', config)
+  }
+
+  const result = await client.get('/v2/users/self')
+
+  expect(result.data).toEqual({ cached: true })
+  const key = String(vi.mocked(cacheGet).mock.calls[0][0])
+  expect(key).toContain('/v2/users/self')
+  expect(key).not.toContain('bob-session-token')
+})
+
+it('keeps the existing exclusion list for authenticated GETs', async () => {
+  localStorage.setItem('token', 'alice-session-token')
+  let calls = 0
+  client.defaults.adapter = async (config) => {
+    calls += 1
+    return { data: { calls }, status: 200, statusText: 'OK', headers: {}, config }
+  }
+
+  await client.get('/system/settings')
+  await client.get('/system/settings')
+
+  expect(calls).toBe(2)
+  expect(cacheSet).not.toHaveBeenCalled()
 })
 
 it('preserves error rejection for unauthorized responses', async () => {
