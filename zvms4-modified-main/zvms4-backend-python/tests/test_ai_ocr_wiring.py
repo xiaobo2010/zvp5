@@ -223,7 +223,7 @@ def background(monkeypatch) -> Recorder:
     ``/api/ai/ocr``；手动重识别的用例仍然跑真实的 ``process_ocr``。
     """
     recorder = Recorder()
-    monkeypatch.setattr(ai_router, "process_ocr", recorder)
+    monkeypatch.setattr("routers.ai.ocr.process_ocr", recorder)
     return recorder
 
 
@@ -468,8 +468,7 @@ def test_enqueue_hides_engine_kind_from_response_but_keeps_task_aligned(
     engines([_engine_row("primary", "tencent")])
     seen: list[tuple] = []
     monkeypatch.setattr(
-        ai_router,
-        "process_ocr",
+        "routers.ai.ocr.process_ocr",
         lambda oid, kind=None, name=None, user_oid=None: seen.append((oid, kind, name)),
     )
 

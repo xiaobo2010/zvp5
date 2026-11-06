@@ -30,7 +30,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from db import backends
-from routers.ai_router import (
+from routers.ai.common import (
     AI_FORBIDDEN_MESSAGE,
     _error_type,
     _has_ai_access,
