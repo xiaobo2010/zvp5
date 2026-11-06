@@ -24,7 +24,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from db import backends
-from routers.ai_router import _require_admin
+from routers.ai.common import _require_admin
 from services.ai import config as ai_config
 from services.ai import credentials, model_rates, providers
 from services.ai import cache_invalidation
