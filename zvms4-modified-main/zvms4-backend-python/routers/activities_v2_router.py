@@ -445,7 +445,7 @@ async def modify_activity_status_v2(
 
     target_activity = _validated_activity(target_activity)
 
-    if target_activity.status != "pending" and "admin" not in user.get("perm"):
+    if target_activity.status != "pending" and "admin" not in (user.get("per") or []):
         raise HTTPException(
             status_code=400,
             detail="Activity status can only be modified from pending to effective or refused",

@@ -1,8 +1,9 @@
 """Files / attachments HTTP layer (design ``docs/FILES_API_DESIGN.md`` §4).
 
 Prefix ``/api/attachments`` (mounted in ``main.py``). Every response body is
-inlined ``{"status", "code", "data"}`` — the shared response helper in
-``util/response.py`` is deliberately not used (it is broken, design C13).
+inlined ``{"status", "code", "data"}``. (Historically a broken shared helper
+``util/response.py`` existed — it built a dict and returned ``None``; it had no
+callers and has been deleted, so bodies stay inlined.)
 
 Permission matrix (design §4):
 * read  = owner | admin | department | secretary-in-same-class | valid signature
