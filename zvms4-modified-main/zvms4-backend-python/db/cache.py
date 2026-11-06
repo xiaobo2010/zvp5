@@ -71,6 +71,20 @@ _client_uri: str | None = None
 _client_lock: asyncio.Lock | None = None
 _degraded_until = 0.0
 _forced_client: Any = None
+#: 连接池上限。默认 ``max_connections`` 是 2**31——每个并发请求都能开一条新连接，
+#: 单 worker 下 Redis 端会被打进 ``maxclients``，然后所有请求一起超时降级。
+#: 32 远大于本进程的并发 SQL 数（池只有 8+8），够用且给 Redis 一个上界。
+MAX_CONNECTIONS = 32
+#: 空闲连接健康检查间隔（秒）：``health_check_interval=0``（默认）时，被 Redis
+#: 端掐掉的空闲连接要等第一次真正读写才暴露。30s 顺手做一次 PING。
+HEALTH_CHECK_SECONDS = 30
+
+#: 异步回填尚未落地的 value（key -> JSON payload）。见 :func:`remember` 的
+#: ``async_backfill``：同一个事件循环里「刚读过的 key 立刻再读」不该因为回填
+#: 还没写进 Redis 而再打一次数据库。
+_pending: dict[str, str] = {}
+#: 挂在事件循环上的回填任务集合（持有强引用，避免任务被 GC 掉）。
+_backfills: set[asyncio.Task] = set()
 
 
 def _uri() -> str:
@@ -128,6 +142,8 @@ async def _get_client() -> Any:
                 decode_responses=True,
                 socket_connect_timeout=CONNECT_TIMEOUT_SECONDS,
                 socket_timeout=CONNECT_TIMEOUT_SECONDS,
+                max_connections=MAX_CONNECTIONS,
+                health_check_interval=HEALTH_CHECK_SECONDS,
             )
             await client.ping()
         except Exception:  # noqa: BLE001 - 连接失败只降级，不冒泡
@@ -178,17 +194,50 @@ def _decode(value: Any) -> Any:
     return value
 
 
+async def _write_backfill(client: Any, key: str, payload: str, ttl: float) -> None:
+    """落地一条回填；失败只降级，不冒泡（回填失败本来就只是少一次缓存）。"""
+    try:
+        await client.set(key, payload, px=max(1, int(ttl * 1000)))
+    except Exception:  # noqa: BLE001
+        _mark_degraded()
+    finally:
+        _pending.pop(key, None)
+
+
+def _spawn_backfill(client: Any, key: str, payload: str, ttl: float) -> None:
+    """把回填写挂到事件循环上，**不等待**。
+
+    Redis 抖动（或单次写阻塞）不该被算进业务请求的响应时间里：读路径本来就是
+    「读不到就回源」，晚几百毫秒回填只影响下一次读的命中率。没有运行中的循环
+    （同步调用方 / 测试收尾）时直接放弃回填。
+    """
+    try:
+        task = asyncio.create_task(_write_backfill(client, key, payload, ttl))
+    except RuntimeError:  # pragma: no cover - 没有事件循环
+        _pending.pop(key, None)
+        return
+    _backfills.add(task)
+    task.add_done_callback(_backfills.discard)
+
+
 async def remember(
     key: str,
     ttl: float,
     loader: Callable[[], Awaitable[Any]],
     *,
     max_bytes: int = MAX_VALUE_BYTES,
+    async_backfill: bool = False,
 ) -> Any:
     """读穿：命中直接返回，未命中执行 ``loader`` 并回填。
 
     ``loader`` 返回 ``None`` 时不缓存（「不存在」也可能是负缓存陷阱：
     用户刚被创建就立刻登录，30s 的负缓存会让新账号认证失败）。
+
+    ``async_backfill=True``：回填写 fire-and-forget（不占响应时间）。此时同一
+    事件循环里紧接着的第二次读可能还没看到 Redis 里的值，因此 ``_pending`` 记一份
+    在途 payload 当作命中——否则「一次请求里读两遍同一个 key」会打两次数据库。
+    默认 ``False``：写落库后才返回，语义与历史完全一致（缓存层自己的测试依赖
+    这个同步点）。
     """
     client = await _get_client()
     if client is None:
@@ -198,6 +247,8 @@ async def remember(
     except Exception:  # noqa: BLE001
         _mark_degraded()
         return await loader()
+    if raw is None:
+        raw = _pending.get(key)
     if raw is not None:
         try:
             return _decode(json.loads(raw))
@@ -212,16 +263,24 @@ async def remember(
         except Exception:  # noqa: BLE001
             return value
         if len(payload.encode("utf-8")) <= max_bytes:
-            try:
-                await client.set(key, payload, px=max(1, int(ttl * 1000)))
-            except Exception:  # noqa: BLE001
-                _mark_degraded()
+            if async_backfill:
+                _pending[key] = payload
+                _spawn_backfill(client, key, payload, ttl)
+            else:
+                try:
+                    await client.set(key, payload, px=max(1, int(ttl * 1000)))
+                except Exception:  # noqa: BLE001
+                    _mark_degraded()
     return value
 
 
 async def forget(*keys: str) -> None:
     client = await _get_client()
-    if client is None or not keys:
+    if not keys:
+        return
+    for key in keys:
+        _pending.pop(key, None)
+    if client is None:
         return
     try:
         await client.delete(*keys)
@@ -361,3 +420,4 @@ def _reset_for_tests() -> None:
     global _forced_client, _degraded_until
     _forced_client = None
     _degraded_until = 0.0
+    _pending.clear()

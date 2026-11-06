@@ -1058,14 +1058,23 @@ async def read_user_time(
         )
     else:
         result = await calculate_user_time(user_oid)
+    # ``calculate_user_time`` 只回三档时长（on-campus / off-campus /
+    # social-practice），从不带 ``total``：这里求和补齐。响应字段与其它时长端点
+    # （``/api/exports/time``、``/api/activities/{oid}/time``）保持一致，不再因为
+    # 直接读 ``result["total"]`` 把 GET /api/users/{oid}/time 打成 500。
+    on_campus = result["on-campus"]
+    off_campus = result["off-campus"]
+    social_practice = result["social-practice"]
     return {
         "status": "ok",
         "code": 200,
         "data": {
-            "onCampus": result["on-campus"],
-            "offCampus": result["off-campus"],
-            "socialPractice": result["social-practice"],
-            "total": result["total"],
+            "onCampus": on_campus,
+            "offCampus": off_campus,
+            "socialPractice": social_practice,
+            # 走 USER_TIME 缓存时三个值是 NUMBER（Decimal），现算时是 float；
+            # 统一 float() 后相加，避免 Decimal + float 的 TypeError。
+            "total": float(on_campus) + float(off_campus) + float(social_practice),
         },
     }
 
