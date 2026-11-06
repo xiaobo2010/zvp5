@@ -98,8 +98,13 @@ watch(height, () => {
 </script>
 
 <template>
-  <div v-loading="loading" v-if="activity">
-    <ElPageHeader v-if="activity?._id" :icon="ArrowLeft" @back="() => router.back()" class="py-4">
+  <div v-loading="loading" v-if="activity" class="yg-activity-page">
+    <ElPageHeader
+      v-if="activity?._id"
+      :icon="ArrowLeft"
+      @back="() => router.back()"
+      class="py-4 yg-activity-page__header"
+    >
       <template #content>
         {{ activity.name }}
       </template>
@@ -183,10 +188,7 @@ watch(height, () => {
       </ElDescriptionsItem>
     </ElDescriptions>
     <div class="py-2 flex justify-end">
-      <ZActivityMember
-        :id="activity?.creator ?? ''"
-        :icon="StreamlineUserEdit"
-      />
+      <ZActivityMember :id="activity?.creator ?? ''" :icon="StreamlineUserEdit" />
       <ElButtonGroup class="px-2">
         <ElButton text bg round size="small" type="success" :icon="Plus">
           {{ dayjs(activity?.createdAt).format('YYYY-MM-DD HH:mm:ss') }}

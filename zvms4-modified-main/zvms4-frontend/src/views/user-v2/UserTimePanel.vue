@@ -548,6 +548,21 @@ const showSkeleton = computed(() => loading.value && !loaded.value && target.val
   font-size: var(--yg-font-size-sm);
 }
 
+/* 与全局 Phi 开关一致：无描边切角轨道 + 切角滑块 */
+.phi-time__switch :deep(.el-switch__core) {
+  border: 0;
+  border-radius: 0;
+  clip-path: polygon(5px 0, 100% 0, 100% calc(100% - 5px), calc(100% - 5px) 100%, 0 100%, 0 5px);
+  box-shadow: none;
+}
+
+.phi-time__switch :deep(.el-switch__action) {
+  border: 0;
+  border-radius: 0;
+  clip-path: polygon(3px 0, 100% 0, 100% calc(100% - 3px), calc(100% - 3px) 100%, 0 100%, 0 3px);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.26);
+}
+
 /* ---------- 网格与单元 ---------- */
 .phi-time__grid {
   position: relative;
