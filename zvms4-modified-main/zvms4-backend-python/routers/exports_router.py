@@ -14,7 +14,7 @@ from config import (
 )
 from typings.export import ExportFormat, ExportTask, ExportStatus, ExportVariant
 from typings.log import inject_log, ZVMSLog, xuehai_id_from
-from util.calculate import calculate_user_time
+from util.calculate import calculate_user_time_bulk, describe_memberships
 from util.user import get_user_display_name
 from fastapi.responses import FileResponse, Response
 from io import BytesIO
@@ -141,6 +141,128 @@ async def process_task(task_id: str):
         )
 
 
+_ZERO_TIME = {"on-campus": 0.0, "off-campus": 0.0, "social-practice": 0.0}
+
+
+def _group_map(groups) -> dict:
+    """``group_oid -> group document``：一次 list_all 取代逐用户 groups.get。"""
+    return {str(group["_id"]): group for group in groups}
+
+
+def _time_export_rows(
+    users,
+    user_times,
+    groups,
+    memberships=None,
+    activity_map=None,
+):
+    """线程内的纯 CPU 段：把批量算好的时长拼成导出行。
+
+    返回 ``(原始用户下标, doc)`` 对， ``push_result`` 的 20 人一推与
+    ``percentage`` 仍按旧循环的下标计算，进度条行为不变。
+    """
+    rows = []
+    for idx, user in enumerate(users):
+        user_id = str(user["_id"])
+        user_time = dict(user_times.get(user_id) or _ZERO_TIME)
+        more_on_campus = min(
+            round(max(user_time["off-campus"] - BASE_OFF_CAMPUS, 1) * OFF_TO_ON_RATE, 0),
+            MAX_EXCEED_DISCOUNT,
+        )
+        more_off_campus = min(
+            round(max(user_time["on-campus"] - BASE_ON_CAMPUS, 1) * ON_TO_OFF_RATE, 0),
+            MAX_EXCEED_DISCOUNT,
+        )
+        user_time["on-campus"] += more_on_campus
+        user_time["off-campus"] += more_off_campus
+        class_oid = user.get("class_id")
+        group = groups.get(str(class_oid)) if class_oid else None
+        if group is None:
+            continue
+        if memberships is None:
+            description = ""
+        else:
+            items = memberships.get(user_id, ())
+            description = describe_memberships(
+                items,
+                [activity_map.get(str(item["activity"])) for item in items],
+            )
+        rows.append(
+            (
+                idx,
+                {
+                    "_id": user_id,
+                    "Name": user["name"],
+                    "ID": str(user["id"]),
+                    "Group": group["name"],
+                    "On Campus": user_time["on-campus"],
+                    "Off Campus": user_time["off-campus"],
+                    "Social Practice": user_time["social-practice"],
+                    "Description": description,
+                },
+            )
+        )
+    return rows
+
+
+def _user_export_rows(users, groups):
+    """线程内的纯 CPU 段：用户列表导出（无时长）。"""
+    rows = []
+    for idx, user in enumerate(users):
+        class_oid = user.get("class_id")
+        group = groups.get(str(class_oid)) if class_oid else None
+        rows.append(
+            (
+                idx,
+                {
+                    "_id": str(user["_id"]),
+                    "Name": user["name"],
+                    "ID": str(user["id"]),
+                    "Group": group["name"] if group else "",
+                    "On Campus": None,
+                    "Off Campus": None,
+                    "Social Practice": None,
+                },
+            )
+        )
+    return rows
+
+
+async def _push_export_rows(tasks_repo, task_id, task, total, rows) -> None:
+    """按旧节奏（每 20 人一次）推送结果与百分比，最后收尾一次 completed。"""
+    result = []
+    for idx, doc in rows:
+        result.append(doc)
+        task["percentage"] = (idx + 1) / total * 100
+        if idx % 20 == 19:
+            await tasks_repo.push_result(
+                _task_uuid(task_id),
+                result,
+                {"percentage": task["percentage"]},
+            )
+            result = []
+            await asyncio.sleep(0.01)
+    await tasks_repo.push_result(
+        _task_uuid(task_id),
+        result,
+        {
+            "percentage": 100,
+            "status": ExportStatus.completed,
+            "task_end": datetime.now(),
+        },
+    )
+
+
+async def _export_descriptions(user_ids):
+    """``user_oid -> 有效成员关系``：描述文案的批量输入。"""
+    memberships: dict[str, list] = {}
+    for row in await backends.get_members_repo().list_by_members(user_ids):
+        if row["status"] != "effective":
+            continue
+        memberships.setdefault(str(row["member"]), []).append(row)
+    return memberships
+
+
 async def _process_task(task_id: str):
     tasks_repo = backends.get_tasks_repo()
     task = await tasks_repo.get_by_uuid(_task_uuid(task_id))
@@ -152,115 +274,47 @@ async def _process_task(task_id: str):
     )
     include_description = task.get("include_description", False)
     if task["variant"] == "time":
-        result = []
+        # 一次拉全校用户 + 一次分组表 + 一次批量算时长；旧实现是每人一次
+        # calculate_user_time（内部再 3 次查询）+ 每人一次 groups.get。
         users = await backends.get_users_repo().list_all()
-        activities = await backends.get_activities_repo().list_effective(
-            task["export_start"], task["export_end"]
+        user_ids = [str(user["_id"]) for user in users]
+        start, end = task["export_start"], task["export_end"]
+        dated = start is not None or end is not None
+        user_times = await calculate_user_time_bulk(
+            user_ids, start, end, allow_cache=task["allow_cache"]
         )
-        for idx, user in enumerate(users):
-            if task["export_start"] is not None or task["export_end"] is not None:
-                user_time = await calculate_user_time(
-                    str(user["_id"]),
-                    task["export_start"],
-                    task["export_end"],
-                    attach_description=include_description,
-                    activities=activities,
-                )
-            else:
-                user_time = await calculate_user_time(
-                    str(user["_id"]),
-                    allow_cache=task["allow_cache"],
-                    attach_description=include_description,
-                    activities=activities,
-                )
-            more_on_campus = min(
-                round(
-                    max(user_time["off-campus"] - BASE_OFF_CAMPUS, 1) * OFF_TO_ON_RATE,
-                    0,
-                ),
-                MAX_EXCEED_DISCOUNT,
+        if not task["allow_cache"] and not dated and user_ids:
+            await backends.get_time_repo().upsert_many_for_users(
+                [
+                    (
+                        user_id,
+                        user_times[user_id]["on-campus"],
+                        user_times[user_id]["off-campus"],
+                        user_times[user_id]["social-practice"],
+                    )
+                    for user_id in user_ids
+                ]
             )
-            more_off_campus = min(
-                round(
-                    max(user_time["on-campus"] - BASE_ON_CAMPUS, 1) * ON_TO_OFF_RATE, 0
-                ),
-                MAX_EXCEED_DISCOUNT,
-            )
-            user_time["on-campus"] += more_on_campus
-            user_time["off-campus"] += more_off_campus
-            class_oid = user.get("class_id")
-            group = (
-                await backends.get_groups_repo().get(class_oid) if class_oid else None
-            )
-            if group is None:
-                continue
-            doc = {
-                "_id": str(user["_id"]),
-                "Name": user["name"],
-                "ID": str(user["id"]),
-                "Group": group["name"],
-                "On Campus": user_time["on-campus"],
-                "Off Campus": user_time["off-campus"],
-                "Social Practice": user_time["social-practice"],
-                "Description": ""
-                if not include_description
-                else user_time.get("description", ""),
+        groups = _group_map(await backends.get_groups_repo().list_all())
+        memberships = None
+        activity_map = None
+        if include_description:
+            # 描述覆盖全部有效活动（与日期范围无关），与旧 generate_description
+            # 逐用户查询的口径一致。
+            activity_map = {
+                str(activity["_id"]): activity
+                for activity in await backends.get_activities_repo().list_effective()
             }
-            result.append(doc)
-            task["percentage"] = (idx + 1) / len(users) * 100
-            if idx % 20 == 19:
-                await tasks_repo.push_result(
-                    _task_uuid(task_id),
-                    result,
-                    {"percentage": task["percentage"]},
-                )
-                result = []
-                await asyncio.sleep(0.01)
-        await tasks_repo.push_result(
-            _task_uuid(task_id),
-            result,
-            {
-                "percentage": 100,
-                "status": ExportStatus.completed,
-                "task_end": datetime.now(),
-            },
+            memberships = await _export_descriptions(user_ids)
+        rows = await asyncio.to_thread(
+            _time_export_rows, users, user_times, groups, memberships, activity_map
         )
+        await _push_export_rows(tasks_repo, task_id, task, len(users), rows)
     elif task["variant"] == "users":
-        result = []
         users = await backends.get_users_repo().list_all()
-        for idx, user in enumerate(users):
-            class_oid = user.get("class_id")
-            group = (
-                await backends.get_groups_repo().get(class_oid) if class_oid else None
-            )
-            doc = {
-                "_id": str(user["_id"]),
-                "Name": user["name"],
-                "ID": str(user["id"]),
-                "Group": group["name"] if group else "",
-                "On Campus": None,
-                "Off Campus": None,
-                "Social Practice": None,
-            }
-            result.append(doc)
-            task["percentage"] = (idx + 1) / len(users) * 100
-            if idx % 20 == 19:
-                await tasks_repo.push_result(
-                    _task_uuid(task_id),
-                    result,
-                    {"percentage": task["percentage"]},
-                )
-                result = []
-                await asyncio.sleep(0.01)
-        await tasks_repo.push_result(
-            _task_uuid(task_id),
-            result,
-            {
-                "percentage": 100,
-                "status": ExportStatus.completed,
-                "task_end": datetime.now(),
-            },
-        )
+        groups = _group_map(await backends.get_groups_repo().list_all())
+        rows = await asyncio.to_thread(_user_export_rows, users, groups)
+        await _push_export_rows(tasks_repo, task_id, task, len(users), rows)
     else:
         await tasks_repo.update_fields(
             _task_uuid(task_id),
