@@ -346,6 +346,44 @@
   text-shadow:
     2px 0 var(--phi-pink),
     -2px 0 var(--phi-cyan);
+  animation: phi-emblem-glitch 5.2s steps(2, end) infinite;
+}
+
+@keyframes phi-emblem-glitch {
+  0%,
+  76%,
+  100% {
+    transform: rotate(-45deg);
+    opacity: 1;
+    filter: none;
+    text-shadow:
+      2px 0 var(--phi-pink),
+      -2px 0 var(--phi-cyan);
+  }
+  77% {
+    transform: rotate(-44deg) translate(-3px, 1px) skewX(-5deg);
+    opacity: 0.82;
+    filter: brightness(1.5);
+    text-shadow:
+      -5px 0 var(--phi-pink),
+      4px 0 var(--phi-cyan);
+  }
+  78% {
+    transform: rotate(-46deg) translate(2px, -1px) skewX(3deg);
+    opacity: 0.72;
+    filter: contrast(1.6);
+    text-shadow:
+      4px 0 var(--phi-pink),
+      -5px 0 var(--phi-cyan);
+  }
+  79% {
+    transform: rotate(-44deg) translate(-2px, 0);
+    opacity: 1;
+    filter: none;
+    text-shadow:
+      -3px 0 var(--phi-pink),
+      3px 0 var(--phi-cyan);
+  }
 }
 
 .yg-phi-emblem span small {
@@ -592,7 +630,8 @@
 
   .yg-phi-velocity,
   .yg-phi-judgment,
-  .yg-phi-emblem {
+  .yg-phi-emblem,
+  .yg-phi-emblem span {
     animation: none;
   }
 
@@ -1447,6 +1486,7 @@ html[data-theme='light'] .yg-phi .yg-topbar {
   .yg-phi .yg-phi-login-mark,
   .yg-phi .yg-phi-title,
   .yg-phi .yg-phi-emblem,
+  .yg-phi .yg-phi-emblem span,
   .yg-phi .el-switch__action {
     animation: none;
     transition: none;
