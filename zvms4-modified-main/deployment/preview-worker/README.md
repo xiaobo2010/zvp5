@@ -1,6 +1,6 @@
 # 前端分支预览（Cloudflare Worker）
 
-把任意前端分支的 `dist/` 丢到 Cloudflare Worker 上，用 `yuren.xiaobopisces.top`
+把任意前端分支的 `dist/` 丢到 Cloudflare Worker 上，用 `canary.xiaobopisces.top`
 这种临时域名给人看效果。**只发静态文件，不反代 API。**
 
 ## 为什么不在 Worker 里反代 `/api`
@@ -23,10 +23,10 @@ deploy 会把正式产物当预览发出去。
 ```bash
 # 1. 构建（注意不要用 npm run build，见下方坑 1）
 cd worktrees/v5-canary/zvms4-modified-main/zvms4-frontend
-VITE_API_BASE=https://yuren.xiaobopisces.top/api npx vite build
+VITE_API_BASE=https://canary.xiaobopisces.top/api npx vite build
 
 # 2. 把产物里的 API 基址换成 CORS 白名单里的正式域名
-sed -i 's|https://yuren\.xiaobopisces\.top/api|https://zvp.xiaobopisces.top/api|g' \
+sed -i 's|https://canary\.xiaobopisces\.top/api|https://zvp.xiaobopisces.top/api|g' \
   dist/assets/index-*.js
 
 # 3. 去掉 service worker（workbox 预缓存哈希与改写后的文件对不上）
@@ -40,7 +40,7 @@ npx wrangler@4 deploy
 
 # 5. 后端 CORS 放行预览域（zvp-backend，改完 daemon-reload + restart）
 #    /etc/systemd/system/zvms4.service.d/cors.conf
-#    Environment="ZVMS_CORS_ALLOWED_ORIGINS=https://zvp.xiaobopisces.top,...,https://yuren.xiaobopisces.top"
+#    Environment="ZVMS_CORS_ALLOWED_ORIGINS=https://zvp.xiaobopisces.top,...,https://canary.xiaobopisces.top"
 ```
 
 拆环境：`npx wrangler delete zvp-yuren`，并把 `cors.conf` 里的预览域去掉重启。
@@ -62,11 +62,11 @@ npx wrangler@4 deploy
 ## 验证
 
 ```bash
-curl -s -o /dev/null -w '%{http_code}\n' https://yuren.xiaobopisces.top/            # 200
+curl -s -o /dev/null -w '%{http_code}\n' https://canary.xiaobopisces.top/            # 200
 curl -s -D- -o /dev/null -X OPTIONS \
-  -H 'Origin: https://yuren.xiaobopisces.top' \
+  -H 'Origin: https://canary.xiaobopisces.top' \
   -H 'Access-Control-Request-Method: POST' \
   -H 'Access-Control-Request-Headers: authorization,content-type' \
   https://zvp.xiaobopisces.top/api/users/login | grep -i access-control-allow-origin
-# 应回显 https://yuren.xiaobopisces.top
+# 应回显 https://canary.xiaobopisces.top
 ```
