@@ -7,8 +7,6 @@ import re
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Response
-from fastapi.exceptions import RequestValidationError
-from fastapi.routing import APIRoute
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -39,6 +37,7 @@ from tasks.retention import (
 )
 from typings.log import inject_log
 from util.object_id import get_current_user
+from util.route_errors import DatabaseAvailabilityRoute
 from util.user import get_user_display_name
 
 
@@ -60,26 +59,11 @@ def _audit_summary(text: str) -> str:
     return " ".join(scrubbed.split())[:300]
 
 
-class _DatabaseStatusRoute(APIRoute):
-    def get_route_handler(self):
-        handler = super().get_route_handler()
+class _DatabaseStatusRoute(DatabaseAvailabilityRoute):
+    """Map unexpected failures to 503 without leaking internals."""
 
-        async def with_availability_errors(request):
-            # Authentication and session creation also access Oracle, before
-            # the endpoint function runs. Keep their failures in this boundary.
-            try:
-                return await handler(request)
-            except (HTTPException, RequestValidationError):
-                raise
-            except Exception:
-                _logger.exception("Database status request failed")
-                raise HTTPException(
-                    status_code=503,
-                    detail="数据库监控暂时不可用",
-                    headers={"Cache-Control": "no-store"},
-                )
-
-        return with_availability_errors
+    log_message = "Database status request failed"
+    unavailable_detail = "数据库监控暂时不可用"
 
 
 router = APIRouter(route_class=_DatabaseStatusRoute)

@@ -178,7 +178,7 @@ async def get_group_activities_v2(
 
 
 @router.get("/{group_id}/time")
-async def read_users(
+async def read_group_time(
     group_id: str,
     query: str = Query("", description="Search query for user name or ID"),
     page: int = Query(1, ge=1, description="Page number for pagination"),
@@ -189,7 +189,7 @@ async def read_users(
     user: Optional[str] = Depends(get_current_user),
 ):
     """
-    Query users
+    Query the activity time of the users in a group
     """
     sortkey = {
         "on-campus": "on_campus_raw",
