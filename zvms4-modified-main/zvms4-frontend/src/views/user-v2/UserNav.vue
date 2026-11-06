@@ -201,8 +201,27 @@ function playIndicator(target: { x: number; y: number }) {
   if (Math.abs(from.x - target.x) < 0.5 && Math.abs(from.y - target.y) < 0.5) return
 
   stopIndicatorAnimation()
+  /* 先以左端为锚点收缩，再弹到目标项；目标项同时由 CSS 向外突出并带阴影。 */
+  const midX = from.x + (target.x - from.x) * 0.34
+  const midY = from.y + (target.y - from.y) * 0.34
   const animation = pill.animate(
-    [{ transform: translate(from.x, from.y) }, { transform: translate(target.x, target.y) }],
+    [
+      {
+        transform: `${translate(from.x, from.y)} scaleX(1)`,
+        transformOrigin: '0 50%',
+        offset: 0
+      },
+      {
+        transform: `${translate(midX, midY)} scaleX(0.58)`,
+        transformOrigin: '0 50%',
+        offset: 0.3
+      },
+      {
+        transform: `${translate(target.x, target.y)} scaleX(1)`,
+        transformOrigin: '0 50%',
+        offset: 1
+      }
+    ],
     {
       duration: tokenMs('--yg-dur-page', 450),
       easing: tokenEasing('--yg-ease-spring', 'cubic-bezier(0.34, 1.56, 0.64, 1)'),
@@ -333,6 +352,8 @@ onUnmounted(() => {
   stopIndicatorAnimation()
   window.clearTimeout(spinTimer)
   spinTimer = 0
+  window.clearTimeout(protrudeTimer)
+  protrudeTimer = 0
 })
 
 const navSignature = computed(() =>
@@ -400,6 +421,20 @@ function toggleDark() {
 }
 
 const showThemeToggle = !pad() || getTabletType() === 'p615' || getTabletType() === 'p620'
+
+/* 点击态：目标项向外突出；指示器同时向左收缩再展开。 */
+const protrudingPath = ref('')
+let protrudeTimer = 0
+
+function handleNavClick(path: string) {
+  protrudingPath.value = path
+  window.clearTimeout(protrudeTimer)
+  protrudeTimer = window.setTimeout(() => {
+    protrudingPath.value = ''
+    protrudeTimer = 0
+  }, 520)
+  routeTo(path)
+}
 </script>
 
 <template>
@@ -425,9 +460,12 @@ const showThemeToggle = !pad() || getTabletType() === 'p615' || getTabletType() 
           <button
             type="button"
             class="yg-glass-nav__item"
-            :class="{ 'is-active': nav.judge(highlightPath) }"
+            :class="{
+              'is-active': nav.judge(highlightPath),
+              'is-protruding': protrudingPath === nav.path
+            }"
             :aria-label="t(`nav.${nav.name}`)"
-            @click="routeTo(nav.path)"
+            @click="handleNavClick(nav.path)"
           >
             <ElIcon><component :is="nav.icon" /></ElIcon>
           </button>
@@ -436,9 +474,12 @@ const showThemeToggle = !pad() || getTabletType() === 'p615' || getTabletType() 
           v-else
           type="button"
           class="yg-glass-nav__item"
-          :class="{ 'is-active': nav.judge(highlightPath) }"
+          :class="{
+            'is-active': nav.judge(highlightPath),
+            'is-protruding': protrudingPath === nav.path
+          }"
           :aria-label="t(`nav.${nav.name}`)"
-          @click="routeTo(nav.path)"
+          @click="handleNavClick(nav.path)"
         >
           <ElIcon><component :is="nav.icon" /></ElIcon>
         </button>

@@ -63,7 +63,6 @@ body.yg-phi-portals .el-loading-mask {
 
 /* ---------- dialog ---------- */
 body.yg-phi-portals .el-dialog,
-body.yg-phi-portals .el-message-box,
 body.yg-phi-portals .el-drawer {
   color: var(--p-ink);
   background: linear-gradient(
@@ -116,16 +115,222 @@ body.yg-phi-portals .el-message-box__headerbtn:hover .el-message-box__close {
   color: var(--p-cyan);
 }
 
+/* ---------- message-box：确认类提示不再用硬切角，改成小圆角 + 顶部细线 ---------- */
+body.yg-phi-portals .el-message-box {
+  position: relative;
+  overflow: hidden;
+  width: min(420px, calc(100vw - 40px));
+  padding: 0;
+  border: 1px solid var(--p-line);
+  border-radius: 8px;
+  clip-path: none;
+  background: linear-gradient(
+    160deg,
+    var(--p-surface),
+    color-mix(in srgb, var(--p-surface) 86%, var(--p-bg))
+  );
+  box-shadow:
+    0 20px 60px rgba(0, 0, 0, 0.3),
+    0 3px 0 color-mix(in srgb, var(--p-cyan) 12%, transparent);
+  animation: phi-msgbox-in 280ms var(--p-ease) both;
+}
+
+body.yg-phi-portals .el-message-box::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto;
+  height: 3px;
+  background: linear-gradient(90deg, var(--p-cyan), transparent 72%);
+}
+
+body.yg-phi-portals .el-message-box__header {
+  padding: 22px 22px 10px;
+  border-bottom: 0;
+}
+
+body.yg-phi-portals .el-message-box__title {
+  color: var(--p-ink);
+  font-family: var(--phi-hud, Rajdhani, 'Arial Narrow', sans-serif);
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 0.025em;
+}
+
+body.yg-phi-portals .el-message-box__headerbtn {
+  top: 16px;
+  right: 16px;
+}
+
+body.yg-phi-portals .el-message-box__content {
+  padding: 4px 22px 18px;
+  color: var(--p-muted);
+  font-size: 14px;
+  line-height: 1.65;
+}
+
+body.yg-phi-portals .el-message-box__message p {
+  margin: 0;
+}
+
+body.yg-phi-portals .el-message-box__container {
+  align-items: flex-start;
+  gap: 12px;
+}
+
+body.yg-phi-portals .el-message-box__status {
+  margin-top: 2px;
+}
+
+body.yg-phi-portals .el-message-box__btns {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 22px 18px;
+  border-top: 1px solid var(--p-line-soft);
+}
+
+body.yg-phi-portals .el-message-box__btns .el-button {
+  min-width: 82px;
+  margin-left: 0;
+  padding: 9px 18px;
+  border-radius: 4px;
+  font-family: var(--phi-hud, Rajdhani, 'Arial Narrow', sans-serif);
+  font-size: 14px;
+  letter-spacing: 0.03em;
+}
+
+body.yg-phi-portals .el-message-box__btns .el-button--primary {
+  border-color: var(--p-cyan);
+  background: var(--p-cyan);
+  color: #041311;
+}
+
+html[data-theme='light'] body.yg-phi-portals .el-message-box__btns .el-button--primary {
+  color: #fff;
+}
+
+body.yg-phi-portals .el-message-box__btns .el-button--danger {
+  border-color: var(--p-danger);
+  background: var(--p-danger);
+  color: #fff;
+}
+
+body.yg-phi-portals .el-message-box__input {
+  padding-top: 2px;
+}
+
+body.yg-phi-portals .el-message-box__errormsg {
+  padding-top: 4px;
+  color: var(--p-danger);
+}
+
+/* 弹窗整体淡入/淡出；密码错误等 ElMessage 也走同一套非线性节奏 */
+body.yg-phi-portals .fade-in-linear-enter-active,
+body.yg-phi-portals .fade-in-linear-leave-active {
+  transition: opacity 260ms var(--p-ease);
+}
+
+body.yg-phi-portals .fade-in-linear-enter-from,
+body.yg-phi-portals .fade-in-linear-leave-to {
+  opacity: 0;
+}
+
+body.yg-phi-portals .fade-in-linear-leave-active .el-message-box {
+  animation: phi-msgbox-out 220ms cubic-bezier(0.4, 0, 1, 1) both;
+}
+
+@keyframes phi-msgbox-in {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 12px, 0) scale(0.975);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+@keyframes phi-msgbox-out {
+  to {
+    opacity: 0;
+    transform: translate3d(0, 8px, 0) scale(0.985);
+  }
+}
+
 /* ---------- message / notification ---------- */
 body.yg-phi-portals .el-message,
 body.yg-phi-portals .el-notification {
   color: var(--p-ink);
   background: var(--p-surface);
   border: 1px solid var(--p-line);
-  border-left: 2px solid var(--p-cyan);
-  border-radius: 0;
-  box-shadow: 5px 5px 0 color-mix(in srgb, var(--p-cyan) 12%, transparent);
-  animation: phi-portal-slide 340ms var(--p-spring) both;
+  border-left: 3px solid var(--p-cyan);
+  border-radius: 4px;
+  box-shadow:
+    0 10px 30px rgba(0, 0, 0, 0.2),
+    0 2px 0 color-mix(in srgb, var(--p-cyan) 10%, transparent);
+  transition:
+    opacity 260ms var(--p-ease),
+    transform 420ms var(--p-spring),
+    filter 260ms var(--p-ease);
+}
+
+body.yg-phi-portals .el-message-fade-enter-active {
+  transition:
+    opacity 240ms var(--p-ease),
+    transform 440ms var(--p-spring),
+    filter 240ms var(--p-ease);
+}
+
+body.yg-phi-portals .el-message-fade-leave-active,
+body.yg-phi-portals .el-notification-fade-leave-active {
+  transition:
+    opacity 200ms cubic-bezier(0.4, 0, 1, 1),
+    transform 220ms cubic-bezier(0.4, 0, 1, 1),
+    filter 200ms ease;
+}
+
+body.yg-phi-portals .el-message-fade-enter-from {
+  opacity: 0;
+  transform: translate3d(0, -14px, 0) scale(0.96);
+  filter: blur(3px);
+}
+
+body.yg-phi-portals .el-message-fade-leave-to {
+  opacity: 0;
+  transform: translate3d(0, -8px, 0) scale(0.97);
+  filter: blur(2px);
+}
+
+body.yg-phi-portals .el-notification-fade-enter-from,
+body.yg-phi-portals .el-notification-fade-leave-to {
+  opacity: 0;
+  transform: translate3d(18px, 0, 0) scale(0.97);
+  filter: blur(2px);
+}
+
+body.yg-phi-portals .el-notification-fade-enter-active {
+  transition:
+    opacity 260ms var(--p-ease),
+    transform 440ms var(--p-spring),
+    filter 260ms var(--p-ease);
+}
+
+body.yg-phi-portals .el-message--error .el-message__icon {
+  animation: phi-alert-icon 520ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+@keyframes phi-alert-icon {
+  0% {
+    transform: scale(0.4);
+    opacity: 0;
+  }
+  60% {
+    transform: scale(1.18);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1);
+  }
 }
 
 body.yg-phi-portals .el-message__content,
