@@ -1,7 +1,5 @@
 <script setup lang="ts">
 import { useUserStore } from '@/stores/user'
-import { ElButton, ElIcon } from 'element-plus'
-import { ArrowRight, InfoFilled, List, Refresh, User } from '@element-plus/icons-vue'
 import dayjs from '@/plugins/dayjs'
 import { computed, ref, watch } from 'vue'
 import { useHeaderStore } from '@/stores/header'
@@ -23,25 +21,21 @@ if (!user.isLogin) {
 
 header.setHeader(t('nav.home'))
 
-const loading = ref(false)
 const nowTime = dayjs().hour()
 const greeting = ref(nowTime < 12 ? 'morning' : nowTime < 18 ? 'afternoon' : 'evening')
 const weekdays = ['星期日', '星期一', '星期二', '星期三', '星期四', '星期五', '星期六']
 const dateText = `${dayjs().format('M月D日')} ${weekdays[dayjs().day()]}`
 const stamp = dayjs().format('YYYY.MM.DD')
 const initial = computed(() => (user.name || '?').slice(0, 1))
+const totalHours = computed(() => {
+  const time = user.time
+  return (Number(time.onCampus || 0) + Number(time.offCampus || 0) + Number(time.socialPractice || 0))
+    .toFixed(1)
+    .replace(/\.0$/, '')
+})
 const showWorklist = computed(
   () => user.position.includes('admin') || user.position.includes('department')
 )
-
-async function refreshUser() {
-  loading.value = true
-  try {
-    await user.refreshUser()
-  } finally {
-    loading.value = false
-  }
-}
 
 watch(
   () => user.isLogin,
@@ -66,17 +60,9 @@ watch(
         {{ dateText }}
       </p>
       <p class="yg-phi-welcome">把每一次参与，都记录成看得见的成长。</p>
-      <div class="yg-phi-emblem" aria-hidden="true">
-        <span>V</span>
+      <div class="yg-phi-emblem" aria-hidden="true" title="义工总时长">
+        <span>{{ totalHours }}<small>H</small></span>
       </div>
-      <ElButton
-        class="yg-phi-refresh"
-        :icon="Refresh"
-        :loading="loading"
-        aria-label="刷新个人资料"
-        title="刷新个人资料"
-        @click="refreshUser"
-      />
     </section>
 
     <section class="yg-card yg-phi-identity" aria-labelledby="home-identity-title">
@@ -115,47 +101,6 @@ watch(
       :social-practice="user.time.socialPractice"
       discount
     />
-
-    <section class="yg-card" aria-labelledby="home-actions-title">
-      <div class="yg-card__header">
-        <h2 id="home-actions-title" class="yg-card__title">快捷入口</h2>
-        <span class="yg-phi-card-code" aria-hidden="true">LINK // 03</span>
-      </div>
-      <div class="yg-card__body">
-        <div class="yg-home-actions">
-          <RouterLink class="yg-card yg-card--hoverable yg-home-action" to="/activities/mine">
-            <span class="yg-home-action__icon" aria-hidden="true"
-              ><ElIcon><List /></ElIcon
-            ></span>
-            <span class="yg-home-action__text">
-              <b>我的义工</b>
-              <small>查看参与记录与活动状态</small>
-            </span>
-            <ElIcon class="yg-home-action__arrow" aria-hidden="true"><ArrowRight /></ElIcon>
-          </RouterLink>
-          <RouterLink class="yg-card yg-card--hoverable yg-home-action" to="/me">
-            <span class="yg-home-action__icon" aria-hidden="true"
-              ><ElIcon><User /></ElIcon
-            ></span>
-            <span class="yg-home-action__text">
-              <b>个人资料</b>
-              <small>学号、班级与设备状态</small>
-            </span>
-            <ElIcon class="yg-home-action__arrow" aria-hidden="true"><ArrowRight /></ElIcon>
-          </RouterLink>
-          <RouterLink class="yg-card yg-card--hoverable yg-home-action" to="/about">
-            <span class="yg-home-action__icon" aria-hidden="true"
-              ><ElIcon><InfoFilled /></ElIcon
-            ></span>
-            <span class="yg-home-action__text">
-              <b>关于平台</b>
-              <small>版本信息与开源许可</small>
-            </span>
-            <ElIcon class="yg-home-action__arrow" aria-hidden="true"><ArrowRight /></ElIcon>
-          </RouterLink>
-        </div>
-      </div>
-    </section>
 
     <UserHomeWorklist v-if="showWorklist" :is-admin="user.position.includes('admin')" />
   </div>

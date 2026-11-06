@@ -321,7 +321,7 @@
   place-items: center;
   border: 1px solid rgba(73, 244, 226, 0.25);
   background: linear-gradient(135deg, rgba(73, 244, 226, 0.08), rgba(5, 6, 8, 0.75));
-  animation: phi-emblem-rotate 28s linear infinite;
+  animation: phi-emblem-rotate 7s ease-in-out infinite alternate;
 }
 
 .yg-phi-emblem::before,
@@ -338,17 +338,30 @@
 }
 
 .yg-phi-emblem span {
+  display: inline-flex;
+  align-items: baseline;
   transform: rotate(-45deg);
-  font: 400 clamp(36px, 6vw, 64px) / 1 var(--phi-display);
+  font: 400 clamp(30px, 5vw, 54px) / 1 var(--phi-display);
   color: var(--yg-text-primary);
   text-shadow:
     2px 0 var(--phi-pink),
     -2px 0 var(--phi-cyan);
 }
 
+.yg-phi-emblem span small {
+  margin-left: 2px;
+  color: var(--phi-cyan);
+  font: 700 0.36em / 1 var(--phi-hud);
+  letter-spacing: 0.04em;
+  text-shadow: none;
+}
+
 @keyframes phi-emblem-rotate {
+  from {
+    transform: translateY(-50%) rotate(38deg);
+  }
   to {
-    transform: translateY(-50%) rotate(405deg);
+    transform: translateY(-50%) rotate(56deg);
   }
 }
 
@@ -491,45 +504,6 @@
   color: var(--yg-text-tertiary);
 }
 
-/* PHI 印章（登录页右上角） */
-.yg-phi-login-emblem {
-  position: absolute;
-  right: 8%;
-  top: 12%;
-  width: 120px;
-  aspect-ratio: 1;
-  transform: rotate(45deg);
-  display: grid;
-  place-items: center;
-  border: 1px solid rgba(73, 244, 226, 0.2);
-  background: linear-gradient(135deg, rgba(73, 244, 226, 0.06), rgba(5, 6, 8, 0.8));
-  animation: phi-emblem-breathe 6s cubic-bezier(0.19, 1, 0.22, 1) infinite;
-}
-
-.yg-phi-login-emblem::before {
-  content: '';
-  position: absolute;
-  inset: 22%;
-  border: 1px solid rgba(73, 244, 226, 0.18);
-}
-
-.yg-phi-login-emblem span {
-  transform: rotate(-45deg);
-  font: 400 48px / 1 var(--phi-display);
-  color: rgba(244, 246, 248, 0.12);
-  text-shadow: none;
-}
-
-@keyframes phi-emblem-breathe {
-  0%,
-  100% {
-    transform: rotate(45deg) scale(1);
-  }
-  50% {
-    transform: rotate(45deg) scale(1.05);
-  }
-}
-
 /* ---------- 表格：细线 + 暗色行 ---------- */
 .yg-phi .el-table {
   --el-table-bg-color: var(--yg-bg-surface);
@@ -618,8 +592,7 @@
 
   .yg-phi-velocity,
   .yg-phi-judgment,
-  .yg-phi-emblem,
-  .yg-phi-login-emblem {
+  .yg-phi-emblem {
     animation: none;
   }
 
@@ -640,12 +613,6 @@
     width: min(35vw, 140px);
     right: 4%;
   }
-
-  .yg-phi-login-emblem {
-    width: 90px;
-    right: 6%;
-    top: 10%;
-  }
 }
 
 @media (max-width: 599px) {
@@ -660,10 +627,6 @@
   .yg-phi-emblem {
     width: min(40vw, 110px);
     right: 3%;
-  }
-
-  .yg-phi-login-emblem {
-    display: none;
   }
 
   .yg-phi-velocity {
@@ -1258,11 +1221,16 @@ html[data-theme='light'] .yg-phi .yg-btn--primary {
 
 .yg-phi .el-switch__core {
   border-radius: 0;
+  transition:
+    background-color 320ms cubic-bezier(0.16, 1, 0.3, 1),
+    border-color 320ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 
+/* Element 的滑块位移走 left，不是 transform；只写 transform 会让位移瞬移。 */
 .yg-phi .el-switch__action {
   border-radius: 0;
-  transition: transform 280ms cubic-bezier(0.34, 1.5, 0.64, 1);
+  will-change: left, transform;
+  transition: all 340ms cubic-bezier(0.34, 1.4, 0.64, 1);
 }
 
 .yg-phi .el-tag {
@@ -1479,7 +1447,6 @@ html[data-theme='light'] .yg-phi .yg-topbar {
   .yg-phi .yg-phi-login-mark,
   .yg-phi .yg-phi-title,
   .yg-phi .yg-phi-emblem,
-  .yg-phi .yg-phi-login-emblem,
   .yg-phi .el-switch__action {
     animation: none;
     transition: none;
@@ -1521,4 +1488,50 @@ html[data-theme='light'] .yg-phi .yg-topbar {
   .yg-phi .yg-phi-title {
     font-size: clamp(58px, 18vw, 96px);
   }
+}
+
+/* 浅色模式导航：用户明确要求 nav 也随浅色变亮；这是唯一允许改 nav 的地方 */
+html[data-theme='light'] .yg-phi .yg-glass-nav {
+  background: linear-gradient(160deg, rgba(255, 255, 255, 0.92), rgba(242, 247, 248, 0.84));
+  border-right-color: rgba(5, 6, 8, 0.12);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.9),
+    0 8px 28px rgba(5, 6, 8, 0.08);
+}
+
+html[data-theme='light'] .yg-phi .yg-glass-nav--portrait {
+  background: rgba(255, 255, 255, 0.94);
+  border-top-color: rgba(5, 6, 8, 0.1);
+  box-shadow: 0 -8px 28px rgba(5, 6, 8, 0.08);
+}
+
+html[data-theme='light'] .yg-phi .yg-glass-nav__indicator {
+  background: rgba(11, 159, 147, 0.12);
+  box-shadow:
+    0 0 0 1px rgba(11, 159, 147, 0.1),
+    0 0 14px rgba(11, 159, 147, 0.16);
+}
+
+html[data-theme='light'] .yg-phi .yg-glass-nav__item {
+  color: #5b6670;
+}
+
+html[data-theme='light'] .yg-phi .yg-glass-nav__item:hover {
+  color: var(--phi-ink);
+}
+
+html[data-theme='light'] .yg-phi .yg-glass-nav__item.is-active {
+  color: var(--phi-accent);
+}
+
+html[data-theme='light'] .yg-phi .yg-glass-nav__divider {
+  background: rgba(5, 6, 8, 0.12);
+}
+
+html[data-theme='light'] .yg-phi .yg-glass-nav__theme-icon {
+  color: #5b6670;
+}
+
+html[data-theme='light'] .yg-phi .yg-glass-nav__theme-icon:hover {
+  color: var(--phi-accent);
 }
