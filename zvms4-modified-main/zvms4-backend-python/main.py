@@ -698,7 +698,7 @@ async def home():
             "version": await current_version(),
             "author": "ZZDev",
             "license": "MIT",
-            "source": "https://github.com/zvms/zvms4-backend-python.git",
+            "source": "https://github.com/xiaobo2010/zvp5.git",
             "apis": {
                 "user": "/api/users",
                 "activity": "/api/activities",
