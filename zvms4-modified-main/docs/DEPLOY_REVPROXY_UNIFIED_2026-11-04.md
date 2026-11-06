@@ -1,5 +1,8 @@
 # 2026-11-04 恢复「前端服务器统一反代」拓扑
 
+> 双路竞速扩展、后端 API gzip 和 CORS 预检的未执行部署要求见
+> [`DEPLOY_RACE_GZIP_PREFLIGHT.md`](./DEPLOY_RACE_GZIP_PREFLIGHT.md)。
+
 ## 2026-11-06 标准发布命令（当前唯一口径）
 
 竞速能力是**构建期注入**的，漏注入不会报错、只会静默失效，所以发布走固定命令：
@@ -141,6 +144,58 @@ pnpm build
 - 后端已经允许页面 Origin 的 CORS，前端 CSP 也已放行 `zvpapi` Origin。
 - 发布前必须确认线上页面 Bundle 同时包含两个 API Origin 和竞速模块，不能只
   看 `VITE_API_BASE`。
+
+### API gzip 与 CORS 预检
+
+后端 API 的动态 JSON 压缩和两层预检短路使用仓库中的三个 Nginx 片段：
+
+```text
+deployment/nginx/zvms-cors-map.conf
+deployment/nginx/zvms-api-preflight.conf
+deployment/nginx/zvms-api-gzip.conf
+```
+
+安装方式：
+
+- `zvms-cors-map.conf` 与 `zvms-api-gzip.conf` 放到两层的
+  `/etc/nginx/conf.d/`。其中 gzip 只装后端，前端已经启用。
+- `zvms-api-preflight.conf` 放到两层的 `/etc/nginx/snippets/`，并在
+  `location /api/ {` 内 include。
+- 预检只允许 `ZVMS_CORS_ALLOWED_ORIGINS` 当前三项；新增预览域时必须同时更新
+  `zvms-cors-map.conf` 和后端环境变量。
+- gzip 只覆盖文本和 JSON，不覆盖 `text/event-stream`、WebSocket 或图片、文件。
+
+验证：
+
+```bash
+curl -sS -H 'Accept-Encoding: gzip' -D - -o /dev/null \
+  https://zvpapi.xiaobopisces.top/api/changelog
+
+curl -sS -X OPTIONS \
+  -H 'Origin: https://canary.xiaobopisces.top' \
+  -H 'Access-Control-Request-Method: GET' \
+  -H 'Access-Control-Request-Headers: authorization,content-type,xuehai-id,x-device-unlock' \
+  -D - -o /dev/null https://zvpapi.xiaobopisces.top/api/v3/notifications
+```
+
+后端 JSON 响应应出现 `Content-Encoding: gzip`；预检应返回 `204`，包含
+`Access-Control-Max-Age: 7200`。
+
+### 竞速白名单口径
+
+2026-11-06 根据后端 access log 将竞速扩展到实际出现的常用 JSON GET：
+
+- 版本、健康、changelog、证书、metadata/session、日志；
+- 通知、维护状态、角色策略；
+- 活动、用户、分组列表/详情及分页子资源、活动统计；
+- 设备状态、封禁规则/触发/用户/设备/违规；
+- 附件 JSON 列表及 meta/audit/ocr；
+- AI 会话列表与详情、AI runs、Agent proposals、OpenAI 模型列表。
+
+以下仍然单路：`/ai/conversations/{id}/messages`、附件缩略图与文件本体、导出文件、
+上传、所有写请求、SSE、Range 和流式响应。AI JSON GET 虽然允许
+`validateStatus=() => true`，竞速层仍只让 2xx 获胜；两路都非 2xx 时才返回主线路
+原始响应。
 
 ## 2026-11-06 双路竞速首次上线（发布记录）
 
