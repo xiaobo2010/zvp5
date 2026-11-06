@@ -339,21 +339,24 @@ onMounted(async () => {
 
 <template>
   <div class="profile-page yg-v2-flow">
-    <header class="yg-page-header">
-      <div class="profile-heading">
-        <h1 class="yg-page-header__title">{{ t('profile.pageTitle') }}</h1>
-        <p class="yg-page-header__subtitle">{{ t('profile.pageSubtitle') }}</p>
+    <header class="phx-head">
+      <div class="phx-head__copy">
+        <p class="phx-head__eyebrow">Profile · No. {{ studentNumber }}</p>
+        <h1 class="phx-head__title">{{ t('profile.pageTitle') }}</h1>
+        <p class="phx-head__lead">{{ t('profile.pageSubtitle') }}</p>
       </div>
+      <span class="phx-head__index" aria-hidden="true">03</span>
     </header>
 
-    <section class="yg-card profile-identity-card">
+    <section class="phx-panel profile-identity-card" style="--phx-i: 1">
       <div class="yg-card__header">
+        <span class="phx-code" aria-hidden="true">ID</span>
         <h2 class="yg-card__title">{{ t('profile.infoTitle') }}</h2>
       </div>
 
       <div class="yg-card__body">
         <div class="profile-hero">
-          <span class="yg-avatar yg-avatar--xl" aria-hidden="true">{{ initials }}</span>
+          <span class="profile-avatar" aria-hidden="true">{{ initials }}</span>
           <div class="profile-identity">
             <p class="profile-name">{{ displayName }}</p>
             <div class="profile-roles">
@@ -395,8 +398,9 @@ onMounted(async () => {
       </div>
     </section>
 
-    <section class="yg-card profile-device-card">
+    <section class="phx-panel profile-device-card" style="--phx-i: 2">
       <div class="yg-card__header">
+        <span class="phx-code" aria-hidden="true">DEV</span>
         <h2 class="yg-card__title">{{ t('device.profile.title') }}</h2>
         <div class="yg-card__extra">
           <ElButton
@@ -525,10 +529,12 @@ onMounted(async () => {
       :title="t('device.profile.changeTitle')"
       width="min(420px, 92vw)"
       append-to-body
+      class="profile-device-dialog"
     >
       <p class="profile-device-dialog-hint">{{ t('device.profile.changeHint') }}</p>
       <ElInput
         v-model="changeValue"
+        class="profile-device-dialog-input"
         :maxlength="32"
         :placeholder="t('device.profile.changePlaceholder')"
         clearable
@@ -547,9 +553,10 @@ onMounted(async () => {
       </template>
     </ElDialog>
 
-    <section class="yg-card">
+    <section class="phx-panel profile-notices-card" style="--phx-i: 3">
       <div class="yg-card__header">
         <div class="profile-notices-heading">
+          <span class="phx-code" aria-hidden="true">MSG</span>
           <h2 class="yg-card__title">{{ t('profile.notices.title') }}</h2>
           <span v-if="unreadCount > 0" class="yg-tag yg-tag--sky">
             {{ t('profile.notices.unreadCount', { count: unreadCount }) }}
@@ -601,7 +608,12 @@ onMounted(async () => {
         </div>
 
         <ul v-else class="profile-notice-list">
-          <li v-for="notice in notices" :key="notice.id" class="profile-notice">
+          <li
+            v-for="(notice, index) in notices"
+            :key="notice.id"
+            class="profile-notice"
+            :style="{ '--phx-n': Math.min(index, 8) }"
+          >
             <button
               type="button"
               class="profile-notice-head"
@@ -646,8 +658,9 @@ onMounted(async () => {
       </div>
     </section>
 
-    <section class="yg-card">
+    <section class="phx-panel profile-actions-card" style="--phx-i: 4">
       <div class="yg-card__header">
+        <span class="phx-code" aria-hidden="true">SYS</span>
         <h2 class="yg-card__title">{{ t('profile.actions.title') }}</h2>
       </div>
 
@@ -695,6 +708,50 @@ onMounted(async () => {
 </template>
 
 <style scoped>
+/* ==========================================================================
+   Phi 棱角系统 · 个人资料页（与 About / Activity 同一套 scoped 写法）
+   直角 + 不对称斜切（右上大切、左下小切）、细线、offset 硬阴影。
+   颜色只从 --yg-* / --phi-* 派生；浅色只改强调色与硬阴影。
+   浅色覆盖写成 `html[data-theme='light'] .profile-page`：compiler-sfc 3.5
+   会把 `:global(x) .a` 整条替换成 `x`，不能用。
+   ========================================================================== */
+.profile-page,
+.profile-device-dialog-input {
+  --phx-accent: var(--phi-cyan, var(--yg-color-primary));
+  --phx-accent-2: var(--phi-pink, var(--yg-color-danger));
+  --phx-ink: var(--yg-text-primary);
+  --phx-muted: var(--yg-text-tertiary);
+  --phx-surface: var(--yg-bg-surface);
+  --phx-sunken: var(--yg-bg-surface-sunken);
+  --phx-line: color-mix(in srgb, var(--phx-accent) 22%, transparent);
+  --phx-line-soft: color-mix(in srgb, var(--phx-ink) 10%, transparent);
+  --phx-hard: color-mix(in srgb, var(--phx-accent) 16%, #000);
+  --phx-display: var(--phi-display, Bebas, Impact, sans-serif);
+  --phx-hud: var(--phi-hud, Rajdhani, 'Arial Narrow', sans-serif);
+  --phx-ease: cubic-bezier(0.19, 1, 0.22, 1);
+  --phx-spring: cubic-bezier(0.34, 1.4, 0.64, 1);
+  --yg-radius-xs: 0;
+  --yg-radius-sm: 0;
+  --yg-radius-md: 0;
+  --yg-radius-lg: 0;
+  --yg-radius-xl: 0;
+  --el-border-radius-base: 0;
+  --el-border-radius-small: 0;
+  --el-border-radius-round: 0;
+  --el-border-radius-circle: 0;
+  --el-button-border-radius: 0;
+}
+
+html[data-theme='light'] .profile-page,
+html[data-theme='light'] .profile-device-dialog-input {
+  --phx-accent: #007a70;
+  --phx-accent-2: #c81e63;
+  --phx-hard: #101418;
+  --el-color-primary: #007a70;
+  --yg-color-primary: #007a70;
+  --yg-focus-ring-color: #007a70;
+}
+
 /* ---------- 页面骨架 ---------- */
 .profile-page {
   display: flex;
@@ -705,21 +762,299 @@ onMounted(async () => {
   margin: 0 auto;
 }
 
-/* 头部自带 24px 下外边距，与页面栅格间距叠加会翻倍，这里归零 */
-.profile-page .yg-page-header {
-  margin-bottom: 0;
+/* ---------- 页头：HUD 编号 + 细网格 + 斜线 ---------- */
+.phx-head {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: var(--yg-space-4);
+  margin: 0;
+  padding: var(--yg-space-6) var(--yg-space-6) var(--yg-space-5);
+  overflow: hidden;
+  border-left: 3px solid var(--phx-accent);
+  background:
+    linear-gradient(to bottom left, transparent calc(50% - 1px), var(--phx-accent) 50%, transparent calc(50% + 1.5px)) right top / 22px 22px no-repeat,
+    linear-gradient(var(--phx-line-soft) 1px, transparent 1px) 0 0 / 24px 24px,
+    linear-gradient(90deg, var(--phx-line-soft) 1px, transparent 1px) 0 0 / 24px 24px,
+    linear-gradient(100deg, color-mix(in srgb, var(--phx-accent) 9%, var(--phx-surface)), var(--phx-surface) 58%);
+  clip-path: polygon(0 0, calc(100% - 22px) 0, 100% 22px, 100% 100%, 0 100%);
+  animation: phx-head-in 420ms var(--phx-ease) both;
+}
+
+.phx-head::after {
+  content: '';
+  position: absolute;
+  right: 18%;
+  bottom: 0;
+  width: 120px;
+  height: 6px;
+  background: repeating-linear-gradient(-55deg, var(--phx-accent) 0 2px, transparent 2px 7px);
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+.phx-head__copy {
+  min-width: 0;
+}
+
+.phx-head__eyebrow {
+  display: flex;
+  align-items: center;
+  gap: var(--yg-space-2);
+  margin: 0 0 var(--yg-space-2);
+  color: var(--phx-accent);
+  font: 400 15px / 1 var(--phx-display);
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  overflow-wrap: anywhere;
+}
+
+.phx-head__eyebrow::before {
+  content: '';
+  flex: 0 0 auto;
+  width: 18px;
+  height: 2px;
+  background: currentColor;
+  transform: skewX(-40deg);
+}
+
+.phx-head__title {
+  position: relative;
+  display: inline-block;
+  margin: 0;
+  color: var(--phx-ink);
+  font-size: clamp(26px, 4.2vw, 38px);
+  font-weight: var(--yg-font-weight-bold);
+  line-height: 1.1;
+  letter-spacing: 0.02em;
+  animation: phx-slide-in 420ms 60ms var(--phx-ease) both;
+}
+
+.phx-head__title::after {
+  content: '';
+  position: absolute;
+  bottom: -6px;
+  left: 0;
+  width: 44px;
+  height: 3px;
+  background: var(--phx-accent);
+  transform: skewX(-40deg);
+  transform-origin: left;
+}
+
+.phx-head__lead {
+  max-width: 54ch;
+  margin: var(--yg-space-4) 0 0;
+  color: var(--yg-text-secondary);
+  font-size: var(--yg-font-size-sm);
+  line-height: var(--yg-line-height-relaxed);
+  animation: phx-slide-in 420ms 110ms var(--phx-ease) both;
+}
+
+.phx-head__index {
+  align-self: start;
+  color: transparent;
+  font: 400 clamp(64px, 11vw, 112px) / 0.8 var(--phx-display);
+  -webkit-text-stroke: 1px color-mix(in srgb, var(--phx-ink) 45%, transparent);
+  text-shadow:
+    4px 0 color-mix(in srgb, var(--phx-accent-2) 28%, transparent),
+    -3px 0 color-mix(in srgb, var(--phx-accent) 32%, transparent);
+  user-select: none;
+  animation: phx-slide-in-r 450ms 40ms var(--phx-ease) both;
+}
+
+/* ---------- 切角面板：右上大切 + 左下小切；边框/底面用两层伪元素画 ---------- */
+.phx-panel {
+  --phx-cut: 18px;
+  --phx-cut-s: 8px;
+  position: relative;
+  isolation: isolate;
+  color: var(--yg-text-secondary);
+  filter: drop-shadow(5px 5px 0 var(--phx-hard));
+  animation: phx-panel-in 440ms calc(var(--phx-i, 0) * 55ms + 60ms) var(--phx-ease) backwards;
+}
+
+.phx-panel::before,
+.phx-panel::after {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  pointer-events: none;
+  clip-path: polygon(
+    0 0,
+    calc(100% - var(--phx-cut)) 0,
+    100% var(--phx-cut),
+    100% 100%,
+    var(--phx-cut-s) 100%,
+    0 calc(100% - var(--phx-cut-s))
+  );
+}
+
+.phx-panel::before {
+  inset: 0;
+  background:
+    linear-gradient(225deg, var(--phx-accent) 0 calc(var(--phx-cut) * 0.9), transparent calc(var(--phx-cut) * 0.9 + 1px)),
+    color-mix(in srgb, var(--phx-ink) 16%, transparent);
+}
+
+.phx-panel::after {
+  inset: 1px;
+  background:
+    linear-gradient(var(--phx-accent), transparent 70%) left top / 2px 100% no-repeat,
+    linear-gradient(135deg, color-mix(in srgb, var(--phx-accent) 5%, var(--phx-surface)), var(--phx-surface) 46%);
+}
+
+.phx-panel .yg-card__header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-start;
+  gap: var(--yg-space-2) var(--yg-space-3);
+  min-height: 52px;
+  padding: var(--yg-space-3) calc(var(--phx-cut) + var(--yg-space-3)) var(--yg-space-3) var(--yg-space-5);
+  border-bottom: 1px solid var(--phx-line-soft);
+}
+
+.phx-panel .yg-card__title {
+  min-width: 0;
+  margin: 0;
+  color: var(--phx-ink);
+  font-size: var(--yg-font-size-lg);
+  font-weight: var(--yg-font-weight-semibold);
+  line-height: var(--yg-line-height-snug);
+}
+
+.phx-panel .yg-card__extra {
+  margin-left: auto;
+}
+
+.phx-panel .yg-card__body {
+  padding: var(--yg-space-4) var(--yg-space-5) var(--yg-space-5);
+  color: var(--yg-text-secondary);
+}
+
+.phx-code {
+  flex: 0 0 auto;
+  padding: 2px 6px 1px;
+  border: 1px solid var(--phx-line);
+  color: var(--phx-accent);
+  font: 400 13px / 1.1 var(--phx-display);
+  letter-spacing: 0.16em;
+}
+
+/* ---------- 标签：直角 + 右下小切；语义色走 --yg-text-* 令牌 ---------- */
+.profile-page .yg-tag {
+  height: 24px;
+  padding: 0 10px 0 8px;
+  border: 1px solid var(--phx-line-soft);
+  border-radius: 0;
+  background: var(--phx-sunken);
+  color: var(--yg-text-secondary);
+  font-family: var(--phx-hud), var(--yg-font-sans);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  clip-path: polygon(0 0, 100% 0, 100% calc(100% - 6px), calc(100% - 6px) 100%, 0 100%);
+}
+
+.profile-page .yg-tag.yg-tag--sky {
+  border-color: color-mix(in srgb, var(--phx-accent) 34%, transparent);
+  background: color-mix(in srgb, var(--phx-accent) 10%, transparent);
+  color: var(--phx-accent);
+}
+
+.profile-page .yg-tag.yg-tag--success {
+  border-color: color-mix(in srgb, var(--yg-text-success) 34%, transparent);
+  background: var(--yg-color-success-soft);
+  color: var(--yg-text-success);
+}
+
+.profile-page .yg-tag.yg-tag--warning {
+  border-color: color-mix(in srgb, var(--yg-text-warning) 34%, transparent);
+  background: var(--yg-color-warning-soft);
+  color: var(--yg-text-warning);
+}
+
+.profile-page .yg-tag.yg-tag--danger {
+  border-color: color-mix(in srgb, var(--yg-text-danger) 40%, transparent);
+  background: var(--yg-color-danger-soft);
+  color: var(--yg-text-danger);
+}
+
+/* ---------- 骨架 / 空状态：斜切条 + 菱形图标 ---------- */
+.profile-page .yg-skeleton__text {
+  border-radius: 0;
+  background: linear-gradient(
+      90deg,
+      var(--phx-sunken) 0 35%,
+      color-mix(in srgb, var(--phx-accent) 12%, var(--phx-sunken)) 50%,
+      var(--phx-sunken) 65%
+    )
+    0 0 / 220% 100%;
+  clip-path: polygon(0 0, 100% 0, calc(100% - 8px) 100%, 0 100%);
+  animation: phx-scan 1.4s linear infinite;
+}
+
+.profile-page .yg-empty__icon {
+  border-radius: 0;
+  background: color-mix(in srgb, var(--phx-accent) 12%, transparent);
+  color: var(--phx-accent);
+  clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%);
 }
 
 /* ---------- 个人信息 ---------- */
-.profile-identity-card {
-  box-shadow: var(--yg-shadow-sm);
+.profile-hero {
+  position: relative;
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr);
+  align-items: center;
+  gap: var(--yg-space-5);
+  padding: var(--yg-space-2) 0 0 var(--yg-space-1);
 }
 
-.profile-hero {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: var(--yg-space-5);
+/* 头像外的角括号框 */
+.profile-hero::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: calc(var(--yg-space-1) - 7px);
+  width: 86px;
+  height: 86px;
+  margin-top: calc(-43px + var(--yg-space-1));
+  background:
+    linear-gradient(var(--phx-accent), var(--phx-accent)) left top / 14px 1px no-repeat,
+    linear-gradient(var(--phx-accent), var(--phx-accent)) left top / 1px 14px no-repeat,
+    linear-gradient(var(--phx-accent), var(--phx-accent)) right bottom / 14px 1px no-repeat,
+    linear-gradient(var(--phx-accent), var(--phx-accent)) right bottom / 1px 14px no-repeat;
+  pointer-events: none;
+}
+
+/* 右上角斜线纹，放在内容下面 */
+.profile-hero::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  z-index: -1;
+  width: 96px;
+  height: 32px;
+  background: repeating-linear-gradient(-55deg, var(--phx-line) 0 2px, transparent 2px 8px);
+  pointer-events: none;
+}
+
+.profile-avatar {
+  display: grid;
+  place-items: center;
+  width: 72px;
+  height: 72px;
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--phx-accent) 24%, var(--phx-surface)), color-mix(in srgb, var(--phx-accent) 6%, var(--phx-surface)));
+  color: var(--phx-accent);
+  font-size: 30px;
+  font-weight: var(--yg-font-weight-bold);
+  line-height: 1;
+  clip-path: polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 14px 100%, 0 calc(100% - 14px));
 }
 
 .profile-identity {
@@ -731,10 +1066,10 @@ onMounted(async () => {
 
 .profile-name {
   margin: 0;
-  font-size: var(--yg-font-size-2xl);
-  font-weight: var(--yg-font-weight-semibold);
+  font-size: clamp(22px, 4vw, 28px);
+  font-weight: var(--yg-font-weight-bold);
   line-height: var(--yg-line-height-tight);
-  color: var(--yg-text-primary);
+  color: var(--phx-ink);
   overflow-wrap: anywhere;
 }
 
@@ -744,26 +1079,75 @@ onMounted(async () => {
   gap: var(--yg-space-2);
 }
 
-.profile-details {
-  margin-top: var(--yg-space-5);
-  padding-top: var(--yg-space-5);
-  border-top: calc(var(--yg-space-1) / 4) solid var(--yg-border-subtle);
+/* 描述信息：硬边网格，每格左上一段青色刻度 */
+.profile-details,
+.profile-device-details {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0;
+  margin: var(--yg-space-5) 0 0;
+  border-top: 1px solid var(--phx-line-soft);
 }
 
-.profile-details .yg-descriptions__item {
-  flex: 1 1 var(--yg-space-9);
+.profile-device-details {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-top: 0;
+}
+
+.profile-details .yg-descriptions__item,
+.profile-device-details .yg-descriptions__item {
+  position: relative;
   min-width: 0;
+  padding: var(--yg-space-3) var(--yg-space-4) var(--yg-space-1) 0;
 }
 
-.profile-details .yg-descriptions__label {
+.profile-details .yg-descriptions__item + .yg-descriptions__item,
+.profile-device-details .yg-descriptions__item + .yg-descriptions__item {
+  padding-left: var(--yg-space-4);
+  border-left: 1px solid var(--phx-line-soft);
+}
+
+.profile-details .yg-descriptions__item::before,
+.profile-device-details .yg-descriptions__item::before {
+  content: '';
+  position: absolute;
+  top: -1px;
+  left: 0;
+  width: 22px;
+  height: 2px;
+  background: var(--phx-accent);
+}
+
+.profile-details .yg-descriptions__label,
+.profile-device-details .yg-descriptions__label {
+  color: var(--phx-muted);
+  font-size: var(--yg-font-size-xs);
   font-weight: var(--yg-font-weight-regular);
+  letter-spacing: 0.08em;
 }
 
-.profile-details .yg-descriptions__value {
+.profile-details .yg-descriptions__value,
+.profile-device-details .yg-descriptions__value {
   margin: 0;
+  color: var(--phx-ink);
   font-size: var(--yg-font-size-md);
   font-weight: var(--yg-font-weight-medium);
-  color: var(--yg-text-primary);
+  overflow-wrap: anywhere;
+}
+
+.profile-device-details .yg-descriptions__value {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--yg-space-2);
+}
+
+.profile-page .yg-text-num {
+  font-family: var(--phx-hud), var(--yg-font-mono);
+  font-size: 17px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.04em;
 }
 
 .profile-class-error {
@@ -773,130 +1157,7 @@ onMounted(async () => {
   gap: var(--yg-space-2);
 }
 
-/* ---------- 快捷操作 ---------- */
-/* 满宽操作行：卡片内边距归零，由行自己提供左右留白，分隔线才能贯通整卡 */
-.profile-action-body {
-  padding: 0;
-  overflow: hidden;
-  border-radius: 0 0 var(--yg-radius-lg) var(--yg-radius-lg);
-}
-
-.profile-action-list {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.profile-action-item + .profile-action-item {
-  border-top: calc(var(--yg-space-1) / 4) solid var(--yg-border-subtle);
-}
-
-/* 危险操作单独成组：靠间距分组，红色高危态只落在这一项上 */
-.profile-action-item--danger {
-  margin-top: var(--yg-space-2);
-}
-
-.profile-action {
-  display: flex;
-  align-items: center;
-  justify-content: flex-start;
-  gap: var(--yg-space-3);
-  width: 100%;
-  padding: var(--yg-space-3) var(--yg-space-5);
-  border: 0;
-  background: transparent;
-  color: var(--yg-text-primary);
-  font-size: var(--yg-font-size-lg);
-  line-height: var(--yg-line-height-snug);
-  text-align: left;
-  cursor: pointer;
-  transition: background-color var(--yg-dur-fast) var(--yg-ease-out);
-}
-
-.profile-action:hover {
-  background-color: var(--yg-bg-hover);
-}
-
-.profile-action:active {
-  background-color: var(--yg-bg-active);
-}
-
-.profile-action:focus-visible {
-  outline: none;
-  box-shadow: var(--yg-focus-ring);
-}
-
-/* 退出登录：高危操作，红色主题（浅红底 + 红字红图标，hover 加深）
-   独立成一行的按钮，语义与普通操作行拉开，故内容居中 */
-.profile-action.profile-action--danger {
-  justify-content: center;
-  gap: var(--yg-space-2);
-  color: var(--yg-text-danger);
-  background: var(--yg-color-danger-soft);
-  font-weight: var(--yg-font-weight-medium);
-  transition:
-    background-color var(--yg-dur-fast) var(--yg-ease-out),
-    color var(--yg-dur-fast) var(--yg-ease-out);
-}
-
-.profile-action.profile-action--danger:hover,
-.profile-action.profile-action--danger:focus {
-  color: var(--yg-text-danger);
-  background: color-mix(in srgb, var(--yg-color-danger-soft) 70%, var(--yg-color-danger) 30%);
-}
-
-.profile-action.profile-action--danger:active {
-  color: var(--yg-color-on-danger);
-  background: var(--yg-color-danger);
-}
-
-.profile-action.profile-action--danger:focus-visible {
-  outline: none;
-  box-shadow: inset var(--yg-focus-ring);
-}
-
-.profile-logout-icon {
-  font-size: var(--yg-font-size-lg);
-}
-
-.profile-action-label {
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-
-/* 开关本体只作视觉呈现：焦点与交互都由外层这一层 role="switch" 承担，
-   避免出现两个可聚焦的开关 */
-.profile-action--switch {
-  justify-content: space-between;
-}
-
-.profile-switch-control {
-  pointer-events: none;
-}
-
-/* 开关 Q 弹：滑块用弹簧曲线位移，按压时轻微回缩 */
-.profile-switch-control :deep(.el-switch__core) {
-  transition:
-    background-color var(--yg-dur-slow) var(--yg-ease-out),
-    border-color var(--yg-dur-slow) var(--yg-ease-out);
-}
-
-.profile-switch-control :deep(.el-switch__action) {
-  transition:
-    left var(--yg-dur-slow) var(--yg-ease-spring),
-    transform var(--yg-dur-slow) var(--yg-ease-spring);
-}
-
-.profile-action--switch:active :deep(.el-switch__action) {
-  transform: scale(0.8);
-  transition-duration: var(--yg-dur-fast);
-}
-
 /* ---------- 主设备 ---------- */
-.profile-device-card {
-  box-shadow: var(--yg-shadow-sm);
-}
-
 .profile-device-skeleton {
   display: flex;
   flex-direction: column;
@@ -918,11 +1179,14 @@ onMounted(async () => {
   align-items: flex-start;
   gap: var(--yg-space-3);
   margin-bottom: var(--yg-space-4);
-  padding: var(--yg-space-3) var(--yg-space-4);
-  border: calc(var(--yg-space-1) / 4) solid var(--yg-color-warning);
-  border-radius: var(--yg-radius-md);
-  background: var(--yg-color-warning-soft);
+  padding: var(--yg-space-3) var(--yg-space-5) var(--yg-space-3) var(--yg-space-4);
+  border: 0;
+  border-left: 3px solid var(--yg-text-warning);
+  background:
+    repeating-linear-gradient(-45deg, color-mix(in srgb, var(--yg-text-warning) 10%, transparent) 0 6px, transparent 6px 12px),
+    var(--yg-color-warning-soft);
   color: var(--yg-text-warning);
+  clip-path: polygon(0 0, calc(100% - 12px) 0, 100% 12px, 100% 100%, 0 100%);
 }
 
 .profile-device-ban-icon {
@@ -947,33 +1211,11 @@ onMounted(async () => {
   overflow-wrap: anywhere;
 }
 
-.profile-device-details {
-  margin: 0;
-}
-
-.profile-device-details .yg-descriptions__item {
-  flex: 1 1 var(--yg-space-9);
-  min-width: 0;
-}
-
-.profile-device-details .yg-descriptions__label {
-  font-weight: var(--yg-font-weight-regular);
-}
-
-.profile-device-details .yg-descriptions__value {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: var(--yg-space-2);
-  margin: 0;
-  font-size: var(--yg-font-size-md);
-  font-weight: var(--yg-font-weight-medium);
-  color: var(--yg-text-primary);
-}
-
 .profile-device-hint {
-  margin: var(--yg-space-3) 0 0;
-  color: var(--yg-text-tertiary);
+  margin: var(--yg-space-4) 0 0;
+  padding-left: var(--yg-space-3);
+  border-left: 1px solid var(--phx-line);
+  color: var(--phx-muted);
   font-size: var(--yg-font-size-sm);
   line-height: var(--yg-line-height-relaxed);
 }
@@ -986,11 +1228,34 @@ onMounted(async () => {
   margin-top: var(--yg-space-4);
 }
 
+/* 弹窗挂在 body 上，变量在输入框自身上重新声明（见顶部） */
 .profile-device-dialog-hint {
   margin: 0 0 var(--yg-space-3);
+  padding-left: var(--yg-space-3);
+  border-left: 2px solid var(--phi-cyan, var(--yg-color-primary));
   color: var(--yg-text-secondary);
   font-size: var(--yg-font-size-sm);
   line-height: var(--yg-line-height-relaxed);
+}
+
+.profile-device-dialog-input :deep(.el-input__wrapper) {
+  border-radius: 0;
+  box-shadow:
+    inset 0 0 0 1px var(--phx-line-soft),
+    inset 0 -2px 0 var(--phx-line);
+  transition: box-shadow 200ms var(--phx-ease);
+}
+
+.profile-device-dialog-input :deep(.el-input__wrapper:hover) {
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--phx-ink) 24%, transparent),
+    inset 0 -2px 0 var(--phx-accent);
+}
+
+.profile-device-dialog-input :deep(.el-input__wrapper.is-focus) {
+  box-shadow:
+    inset 0 0 0 1px var(--phx-accent),
+    inset 0 -2px 0 var(--phx-accent);
 }
 
 .profile-device-dialog-error {
@@ -1002,8 +1267,16 @@ onMounted(async () => {
 /* ---------- 通知栏目 ---------- */
 .profile-notices-heading {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: var(--yg-space-2);
+  gap: var(--yg-space-2) var(--yg-space-3);
+  min-width: 0;
+}
+
+.profile-notice-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: var(--yg-space-3);
 }
 
 .profile-notice-empty-icon {
@@ -1022,54 +1295,82 @@ onMounted(async () => {
   list-style: none;
 }
 
+/* 逐条斜向擦入 */
+.profile-notice {
+  animation: phx-row-in 360ms calc(var(--phx-n, 0) * 40ms + 200ms) var(--phx-ease) backwards;
+}
+
 .profile-notice + .profile-notice {
-  border-top: calc(var(--yg-space-1) / 4) solid var(--yg-border-subtle);
+  border-top: 1px solid var(--phx-line-soft);
 }
 
 .profile-notice-head {
+  position: relative;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: var(--yg-space-2) var(--yg-space-3);
   width: 100%;
-  padding: var(--yg-space-3) var(--yg-space-2);
+  padding: var(--yg-space-3) var(--yg-space-2) var(--yg-space-3) var(--yg-space-4);
   border: 0;
-  border-radius: var(--yg-radius-md);
+  border-radius: 0;
   background: transparent;
-  color: var(--yg-text-primary);
+  color: var(--phx-ink);
   text-align: left;
   cursor: pointer;
   transition:
-    background-color var(--yg-dur-fast) var(--yg-ease-out),
-    transform var(--yg-dur-slow) var(--yg-ease-spring);
+    background-color 180ms var(--phx-ease),
+    transform 260ms var(--phx-spring);
+}
+
+.profile-notice-head::before {
+  content: '';
+  position: absolute;
+  top: var(--yg-space-2);
+  bottom: var(--yg-space-2);
+  left: 0;
+  width: 2px;
+  background: var(--phx-accent);
+  transform: scaleY(0);
+  transition: transform 260ms var(--phx-spring);
 }
 
 .profile-notice-head:hover {
-  background: var(--yg-bg-hover);
+  background: linear-gradient(100deg, color-mix(in srgb, var(--phx-accent) 10%, transparent) 0 45%, transparent 80%);
+  transform: translateX(3px);
+}
+
+.profile-notice-head:hover::before,
+.profile-notice-head[aria-expanded='true']::before {
+  transform: scaleY(1);
 }
 
 .profile-notice-head:active {
-  transform: scale(0.99);
-  transition-duration: var(--yg-dur-fast);
+  transform: translateX(3px) scale(0.99);
+  transition-duration: 120ms;
 }
 
 .profile-notice-head:focus-visible {
-  outline: none;
-  box-shadow: var(--yg-focus-ring);
+  outline: 2px solid var(--phx-accent);
+  outline-offset: -2px;
 }
 
-/* 未读圆点：主色实心；已读退成浅灰底，位置始终保留，避免行宽跳动 */
+/* 未读：青色菱形 + 外圈；已读退成灰菱形，位置始终保留 */
 .profile-notice-dot {
   flex: 0 0 auto;
-  width: var(--yg-space-2);
-  height: var(--yg-space-2);
-  border-radius: 50%;
+  width: 8px;
+  height: 8px;
+  border-radius: 0;
   background-color: var(--yg-border-default);
-  transition: background-color var(--yg-dur-base) var(--yg-ease-out);
+  transform: rotate(45deg);
+  transition:
+    background-color 200ms var(--phx-ease),
+    box-shadow 200ms var(--phx-ease);
 }
 
 .profile-notice-dot.is-unread {
-  background-color: var(--yg-color-primary);
+  background-color: var(--phx-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--phx-accent) 22%, transparent);
 }
 
 .profile-notice-title {
@@ -1078,7 +1379,7 @@ onMounted(async () => {
   font-size: var(--yg-font-size-lg);
   font-weight: var(--yg-font-weight-semibold);
   line-height: var(--yg-line-height-snug);
-  color: var(--yg-text-primary);
+  color: var(--phx-ink);
   overflow-wrap: anywhere;
 }
 
@@ -1087,64 +1388,422 @@ onMounted(async () => {
   color: var(--yg-text-secondary);
 }
 
+.profile-notice-head[aria-expanded='true'] .profile-notice-title {
+  color: var(--phx-accent);
+}
+
 .profile-notice-meta {
   flex: 0 0 auto;
-  color: var(--yg-text-tertiary);
+  color: var(--phx-muted);
+  font-family: var(--phx-hud), var(--yg-font-sans);
   font-size: var(--yg-font-size-sm);
+  font-weight: 500;
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }
 
 .profile-notice-caret {
   flex: 0 0 auto;
-  color: var(--yg-text-tertiary);
-  transition: transform var(--yg-dur-slow) var(--yg-ease-spring);
+  color: var(--phx-muted);
+  transition: transform 300ms var(--phx-spring);
 }
 
 .profile-notice-caret.is-open {
+  color: var(--phx-accent);
   transform: rotate(180deg);
 }
 
 .profile-notice-body {
-  padding: 0 var(--yg-space-2) var(--yg-space-4);
-  color: var(--yg-text-primary);
+  margin: 0 0 var(--yg-space-4) var(--yg-space-1);
+  padding: var(--yg-space-1) var(--yg-space-2) 0 var(--yg-space-4);
+  border-left: 1px solid var(--phx-line);
+  color: var(--phx-ink);
   font-size: var(--yg-font-size-md);
   line-height: var(--yg-line-height-relaxed);
-  animation: yg-notice-open var(--yg-dur-slow) var(--yg-ease-spring);
+  animation: phx-notice-open 300ms var(--phx-ease);
 }
 
-@keyframes yg-notice-open {
+/* ---------- 快捷操作 ---------- */
+.profile-action-body {
+  padding: 0;
+}
+
+.profile-action-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: phx-action;
+}
+
+.profile-action-item {
+  counter-increment: phx-action;
+}
+
+.profile-action-item + .profile-action-item {
+  border-top: 1px solid var(--phx-line-soft);
+}
+
+.profile-action {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: var(--yg-space-3);
+  width: 100%;
+  min-height: 52px;
+  padding: var(--yg-space-3) var(--yg-space-5);
+  border: 0;
+  background: transparent;
+  color: var(--phx-ink);
+  font-size: var(--yg-font-size-lg);
+  line-height: var(--yg-line-height-snug);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background-color 180ms var(--phx-ease),
+    box-shadow 180ms var(--phx-ease);
+}
+
+/* 行号 01/02/03：纯装饰 */
+.profile-action::before {
+  content: counter(phx-action, decimal-leading-zero);
+  flex: 0 0 auto;
+  width: 22px;
+  color: var(--phx-muted);
+  font: 400 15px / 1 var(--phx-display);
+  letter-spacing: 0.08em;
+  transition: color 180ms var(--phx-ease);
+}
+
+/* 右侧斜角箭头（开关与退出不显示） */
+.profile-action:not(.profile-action--switch, .profile-action--danger)::after {
+  content: '';
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  margin-left: auto;
+  border-top: 1.5px solid currentColor;
+  border-right: 1.5px solid currentColor;
+  color: var(--phx-muted);
+  transform: rotate(45deg);
+  transition:
+    transform 260ms var(--phx-spring),
+    color 180ms var(--phx-ease);
+}
+
+.profile-action-label {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  transition: transform 260ms var(--phx-spring);
+}
+
+.profile-action:hover {
+  background: linear-gradient(100deg, color-mix(in srgb, var(--phx-accent) 10%, transparent) 0 40%, transparent 78%);
+  box-shadow: inset 3px 0 0 var(--phx-accent);
+}
+
+.profile-action:hover::before {
+  color: var(--phx-accent);
+}
+
+.profile-action:hover .profile-action-label {
+  transform: translateX(3px);
+}
+
+.profile-action:not(.profile-action--switch, .profile-action--danger):hover::after {
+  color: var(--phx-accent);
+  transform: translateX(3px) rotate(45deg);
+}
+
+.profile-action:active {
+  background-color: var(--yg-bg-active);
+}
+
+.profile-action:focus-visible {
+  outline: 2px solid var(--phx-accent);
+  outline-offset: -3px;
+}
+
+/* 开关本体只作视觉呈现：焦点与交互都由外层这一层 role="switch" 承担，
+   避免出现两个可聚焦的开关 */
+.profile-action--switch {
+  justify-content: flex-start;
+}
+
+.profile-switch-control {
+  --el-switch-on-color: var(--phx-accent);
+  --el-switch-off-color: color-mix(in srgb, var(--phx-ink) 24%, transparent);
+  margin-left: auto;
+  pointer-events: none;
+}
+
+/* 方形开关：轨道与滑块都直角；滑块用弹簧位移，按压时轻微回缩 */
+.profile-switch-control :deep(.el-switch__core) {
+  border-radius: 0;
+  transition:
+    background-color 300ms var(--phx-ease),
+    border-color 300ms var(--phx-ease);
+}
+
+.profile-switch-control :deep(.el-switch__action) {
+  border-radius: 0;
+  transition:
+    left 300ms var(--phx-spring),
+    transform 300ms var(--phx-spring);
+}
+
+.profile-action--switch:active :deep(.el-switch__action) {
+  transform: scale(0.8);
+  transition-duration: 120ms;
+}
+
+/* 退出登录：单独成块的高危按钮，红色斜纹 + 双切角 */
+.profile-action-item.profile-action-item--danger {
+  margin: var(--yg-space-2) var(--yg-space-4) var(--yg-space-4);
+  border-top: 0;
+}
+
+.profile-action.profile-action--danger {
+  justify-content: center;
+  gap: var(--yg-space-2);
+  min-height: 48px;
+  border: 1px solid color-mix(in srgb, var(--yg-text-danger) 40%, transparent);
+  background:
+    repeating-linear-gradient(-45deg, color-mix(in srgb, var(--yg-text-danger) 9%, transparent) 0 6px, transparent 6px 12px),
+    var(--yg-color-danger-soft);
+  box-shadow: none;
+  color: var(--yg-text-danger);
+  font-weight: var(--yg-font-weight-semibold);
+  clip-path: polygon(0 0, calc(100% - 12px) 0, 100% 12px, 100% 100%, 12px 100%, 0 calc(100% - 12px));
+  transition:
+    background-color 180ms var(--phx-ease),
+    color 180ms var(--phx-ease);
+}
+
+.profile-action.profile-action--danger::before {
+  content: none;
+}
+
+.profile-action.profile-action--danger:hover,
+.profile-action.profile-action--danger:focus {
+  color: var(--yg-text-danger);
+  background:
+    repeating-linear-gradient(-45deg, color-mix(in srgb, var(--yg-text-danger) 14%, transparent) 0 6px, transparent 6px 12px),
+    color-mix(in srgb, var(--yg-color-danger-soft) 70%, var(--yg-color-danger) 30%);
+  box-shadow: none;
+}
+
+.profile-action.profile-action--danger:hover .profile-action-label {
+  transform: none;
+}
+
+.profile-action.profile-action--danger:active {
+  color: var(--yg-color-on-danger);
+  background: var(--yg-color-danger);
+}
+
+.profile-action.profile-action--danger:focus-visible {
+  outline: 2px solid var(--yg-text-danger);
+  outline-offset: -5px;
+}
+
+.profile-logout-icon {
+  font-size: var(--yg-font-size-lg);
+}
+
+/* ---------- 动效 ---------- */
+@keyframes phx-head-in {
   from {
     opacity: 0;
-    transform: translateY(calc(var(--yg-space-1) * -1));
+    clip-path: polygon(0 0, 0 0, 0 22px, 0 100%, 0 100%);
   }
   to {
     opacity: 1;
-    transform: translateY(0);
+    clip-path: polygon(0 0, calc(100% - 22px) 0, 100% 22px, 100% 100%, 0 100%);
+  }
+}
+
+/* 面板斜向 clip reveal；终点多留余量，结束时硬阴影不会“跳出来” */
+@keyframes phx-panel-in {
+  from {
+    opacity: 0;
+    transform: translateX(-10px);
+    clip-path: polygon(-12px -12px, -12px -12px, -52px calc(100% + 12px), -52px calc(100% + 12px));
+  }
+  to {
+    opacity: 1;
+    transform: none;
+    clip-path: polygon(-12px -12px, calc(100% + 52px) -12px, calc(100% + 12px) calc(100% + 12px), -52px calc(100% + 12px));
+  }
+}
+
+@keyframes phx-row-in {
+  from {
+    opacity: 0;
+    transform: translateX(-10px);
+    clip-path: inset(-4px 100% -4px -12px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+    clip-path: inset(-4px -4px -4px -12px);
+  }
+}
+
+@keyframes phx-notice-open {
+  from {
+    opacity: 0;
+    clip-path: inset(0 0 100% 0);
+  }
+  to {
+    opacity: 1;
+    clip-path: inset(0 0 0 0);
+  }
+}
+
+@keyframes phx-slide-in {
+  from {
+    opacity: 0;
+    transform: translateX(-14px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes phx-slide-in-r {
+  from {
+    opacity: 0;
+    transform: translateX(18px) skewX(-8deg);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes phx-scan {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: -120% 0;
+  }
+}
+
+/* ---------- 窄屏（≤640 / 390） ---------- */
+@media (max-width: 640px) {
+  .phx-head {
+    padding: var(--yg-space-5) var(--yg-space-4) var(--yg-space-4);
+  }
+
+  .phx-head__index {
+    font-size: 56px;
+  }
+
+  .phx-head::after {
+    right: 12px;
+    width: 72px;
+  }
+
+  .phx-panel {
+    filter: drop-shadow(3px 3px 0 var(--phx-hard));
+  }
+
+  .phx-panel .yg-card__header {
+    padding-left: var(--yg-space-4);
+  }
+
+  .phx-panel .yg-card__body {
+    padding: var(--yg-space-4);
+  }
+
+  .profile-hero {
+    grid-template-columns: 60px minmax(0, 1fr);
+    gap: var(--yg-space-4);
+  }
+
+  .profile-hero::before {
+    width: 74px;
+    height: 74px;
+    margin-top: calc(-37px + var(--yg-space-1));
+  }
+
+  .profile-avatar {
+    width: 60px;
+    height: 60px;
+    font-size: 26px;
+  }
+
+  .profile-details,
+  .profile-device-details {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .profile-details .yg-descriptions__item + .yg-descriptions__item,
+  .profile-device-details .yg-descriptions__item + .yg-descriptions__item {
+    padding-left: 0;
+    border-top: 1px solid var(--phx-line-soft);
+    border-left: 0;
+  }
+
+  /* 通知行：标题与箭头同排，作者/时间换到下一行 */
+  .profile-notice-caret {
+    order: 2;
+  }
+
+  .profile-notice-meta {
+    order: 3;
+    flex-basis: calc(100% - 20px);
+    margin-left: 20px;
+    white-space: normal;
+  }
+
+  .profile-action {
+    padding-inline: var(--yg-space-4);
+  }
+
+  /* 触控目标：窄屏下刷新按钮不小于 44px */
+  .profile-notices-refresh,
+  .profile-device-refresh {
+    min-height: var(--yg-control-height-lg);
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .phx-head,
+  .phx-head__title,
+  .phx-head__lead,
+  .phx-head__index,
+  .phx-panel,
+  .profile-notice,
+  .profile-notice-body,
+  .profile-page .yg-skeleton__text {
+    animation: none;
+  }
+
+  .profile-switch-control :deep(.el-switch__core),
   .profile-switch-control :deep(.el-switch__action),
   .profile-notice-caret,
   .profile-notice-dot,
   .profile-notice-head,
-  .profile-notice-body {
+  .profile-notice-head::before,
+  .profile-action,
+  .profile-action::before,
+  .profile-action::after,
+  .profile-action-label {
     transition: none;
-    animation: none;
-  }
-}
-
-@media (max-width: 640px) {
-  .profile-details .yg-descriptions__item,
-  .profile-device-details .yg-descriptions__item {
-    flex-basis: 100%;
   }
 
-  /* 触控目标：窄屏下刷新按钮不小于 44px */
-  .profile-notices-refresh :deep(.el-button),
-  .profile-device-refresh :deep(.el-button) {
-    min-height: var(--yg-control-height-lg);
+  .profile-notice-head:hover,
+  .profile-notice-head:active,
+  .profile-action:hover .profile-action-label {
+    transform: none;
+  }
+
+  .profile-action:not(.profile-action--switch, .profile-action--danger):hover::after {
+    transform: rotate(45deg);
   }
 }
 </style>

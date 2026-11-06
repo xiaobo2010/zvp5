@@ -346,9 +346,24 @@ const isPhiRoute = computed(() => {
     path === '/user' ||
     path.startsWith('/user/') ||
     path.startsWith('/activities') ||
+    path.startsWith('/activity/') ||
     path === '/me' ||
     path === '/about'
   )
+})
+
+// Teleport 到 body 的弹层/下拉不在 .yg-phi 内，用 body 标记把 Phi 令牌和样式带出去。
+// 仅普通用户路由生效，后台页面保持原样。
+watch(
+  isPhiRoute,
+  (value) => {
+    document.body.classList.toggle('yg-phi-portals', value)
+  },
+  { immediate: true }
+)
+
+onUnmounted(() => {
+  document.body.classList.remove('yg-phi-portals')
 })
 
 const locales: Record<
