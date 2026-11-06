@@ -136,7 +136,8 @@
 }
 
 .yg-glass-nav--v2.yg-glass-nav--portrait .yg-glass-nav__indicator {
-  border-radius: var(--yg-radius-md);
+  border-radius: 0;
+  clip-path: polygon(0 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 0 100%);
 }
 
 .yg-user-page {
