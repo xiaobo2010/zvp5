@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
@@ -44,6 +45,8 @@ from util import dual_auth
 from . import tool_impl
 from .tool_impl import AgentError
 from .tools import TOOLS, WRITE, ToolDef, get_tool, prepare_arguments, run_allowed
+
+_logger = logging.getLogger(__name__)
 
 # ``ARGS_SUMMARY`` 的列宽（V033）。它**只是展示**：超过 500 就截断加 ``…``，
 # 不再拒绝建提案——完整参数在 ``ARGS_PAYLOAD``（CLOB）里，校验用的也是它。
@@ -66,6 +69,8 @@ STATUS_FAILED = "failed"
 
 # ``GET /proposals`` 一次最多返回多少条（契约 §1.4：limit ≤ 50）。
 LIST_LIMIT_MAX = 50
+# 批量 UPDATE 的单条 ``IN`` 上限（Oracle 表达式列表硬上限 1000，留余量）。
+_EXPIRE_CHUNK = 900
 
 
 @dataclass(frozen=True)
@@ -542,6 +547,74 @@ def _list_item(row: dict, *, cached_dual_auth: bool = False) -> dict:
     }
 
 
+def _row_action(row: dict) -> str | None:
+    """工具 → 双人授权 action（没有该字段的工具返回 ``None``）。"""
+    tool = get_tool(row.get("tool_name"))
+    return tool.dual_auth_action if tool is not None else None
+
+
+async def _dual_auth_flags(user: dict, rows: list[dict]) -> dict[str, bool]:
+    """一次取完这一页需要的「有没有在窗口内的授权」，返回 ``{action: bool}``。
+
+    历史写法是每行一次 ``cached_approval``（一次 Redis GET）：200 行的列表就是
+    200 次往返，而 **action 的取值只有工具注册表那么几个**（当前所有写工具共用
+    ``agent_write``）。按 action 去重后一页最多几次 GET，等价于 MGET 的往返数，
+    又不必在服务层复刻 ``dual_auth`` 的键名布局（那样会导致两处键格式漂移）。
+    """
+    actions = {action for row in rows if (action := _row_action(row)) is not None}
+    if not actions:
+        return {}
+    return {
+        action: await dual_auth.cached_approval(user, action=action) is not None
+        for action in actions
+    }
+
+
+async def _expire_many(oids: list[str]) -> None:
+    """把一批提案一次落成 ``expired``（``WHERE status='proposed'`` 仍然是 CAS）。
+
+    逐条 ``update_status`` = 每条一次 UPDATE + 一次 COMMIT（跨洋 2×138ms）；
+    列表页一次最多 200 条，光是「标记过期」就能把一个 GET 拖成十几秒。
+    这里合成一条 ``UPDATE ... WHERE oid IN (...) AND status='proposed'``：
+    CAS 语义不变（抢不到已 ``confirmed`` / ``executing`` 的行），行数上限按
+    Oracle 的 ``IN`` 上限分块。
+    """
+    if not oids:
+        return
+    repo = backends.get_ai_agent_events_repo()
+    if not hasattr(repo, "_session"):
+        # 测试替身 / 非 Oracle 实现：没有 caller-owned session 可借，走公开 API。
+        for oid in oids:
+            await _mark_expired(oid)
+        return
+    try:
+        # 延迟导入：与 services/agent/tools_*.py 的写法一致（不在模块导入时建引擎）。
+        from sqlalchemy import update
+
+        from db.models import ai_agent_events as events_tbl
+        from db.oracle.session import session_scope
+
+        async with session_scope() as session:
+            for start in range(0, len(oids), _EXPIRE_CHUNK):
+                chunk = oids[start : start + _EXPIRE_CHUNK]
+                await session.execute(
+                    update(events_tbl)
+                    .where(
+                        events_tbl.c.oid.in_(chunk),
+                        events_tbl.c.status == STATUS_PROPOSED,
+                    )
+                    .values(
+                        status=STATUS_EXPIRED,
+                        result_summary="提案已过期（未执行）",
+                    )
+                )
+            await session.commit()
+    except Exception as exc:  # noqa: BLE001 - 审计写失败不该把 200 变成 500
+        _logger.warning("bulk expire of %d proposals failed: %r", len(oids), exc)
+        for oid in oids:
+            await _mark_expired(oid)
+
+
 async def list_mine(
     *, user: dict, status: str | None = None, limit: int = 20
 ) -> list[dict]:
@@ -560,25 +633,25 @@ async def list_mine(
     )
 
     now = datetime.now()
-    out: list[dict] = []
-
-    async def _item(row: dict) -> dict:
-        tool = get_tool(row.get("tool_name"))
-        action = tool.dual_auth_action if tool is not None else None
-        cached = bool(
-            action and await dual_auth.cached_approval(user, action=action) is not None
-        )
-        return _list_item(row, cached_dual_auth=cached)
-
+    keep: list[dict] = []
+    expired: list[str] = []
     for row in rows:
-        if row.get("status") != STATUS_PROPOSED:
-            out.append(await _item(row))
-            continue
-        created_at = row.get("created_at")
-        if not isinstance(created_at, datetime) or now >= _expires_at(created_at):
-            await _mark_expired(str(row.get("_id") or row.get("oid") or ""))
-            continue
-        out.append(await _item(row))
+        if row.get("status") == STATUS_PROPOSED:
+            created_at = row.get("created_at")
+            if not isinstance(created_at, datetime) or now >= _expires_at(created_at):
+                expired.append(str(row.get("_id") or row.get("oid") or ""))
+                continue
+        keep.append(row)
+    # 先收集、后一次写：过期判定是纯本地计算，不值得为每条行各开一个事务。
+    await _expire_many(expired)
+
+    flags = await _dual_auth_flags(user, keep[:limit])
+    out: list[dict] = []
+    for row in keep:
+        action = _row_action(row)
+        out.append(
+            _list_item(row, cached_dual_auth=bool(action and flags.get(action)))
+        )
         if len(out) >= limit:
             break
     return out[:limit]

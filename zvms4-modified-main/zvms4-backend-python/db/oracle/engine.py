@@ -3,6 +3,22 @@
 Importing this module must not create an engine or touch the network. The
 engine is only built the first time :func:`get_engine` (or anything that
 depends on it) is called.
+
+Timeout policy (why both knobs exist)
+-------------------------------------
+* ``pool_timeout`` (``ZVMS_DB_POOL_TIMEOUT``, seconds, default 5) bounds the
+  **checkout** wait. In SQLAlchemy's async pool the checkout is a *blocking*
+  ``queue.get`` executed inside the greenlet — it does not yield to the event
+  loop. Production runs a single worker, so an exhausted pool froze every
+  request (including health checks and socket.io pings) for the full timeout.
+  There is no way to make that wait cooperative here, so the only safe move is
+  to keep the bound short and let the excess request fail fast (503) instead of
+  freezing the process: **the timeout is an upper bound on a site-wide stall**.
+* ``call_timeout`` (``ZVMS_DB_CALL_TIMEOUT``, seconds, default 60) is passed to
+  python-oracledb thin mode in **milliseconds** and bounds a single round trip
+  (``DPY-4024``/``ORA-01013``-style). Without it a half-open connection keeps a
+  request — and its pool slot — pinned until TCP gives up, which is exactly how
+  a saturated pool turns into the freeze described above.
 """
 
 from __future__ import annotations
@@ -36,6 +52,14 @@ def _connect_args(cfg: oracle_config.OracleConfig) -> dict:
         # and short enough that a site-wide stall is bounded.
         "tcp_connect_timeout": float(
             os.environ.get("ZVMS_DB_TCP_CONNECT_TIMEOUT", "5")
+        ),
+        # Per-round-trip cap, in **milliseconds** (oracledb thin mode takes ms
+        # here, unlike ``ZVMS_DB_CALL_TIMEOUT`` which is seconds like every
+        # other env knob). A half-open connection without this keeps its pool
+        # slot forever; 60s is far above the 138ms p99 of a healthy ADB call and
+        # still short enough that a dead link frees the slot within a minute.
+        "call_timeout": int(
+            float(os.environ.get("ZVMS_DB_CALL_TIMEOUT", "60")) * 1000
         ),
     }
     if cfg.wallet_dir:

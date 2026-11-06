@@ -53,6 +53,11 @@ DEFAULT_CONCURRENCY = 2
 DEFAULT_MAX_RUNS_PER_USER = 1
 DEFAULT_HEARTBEAT_SECONDS = 30
 DEFAULT_IDLE_SECONDS = 1.0
+# 空闲退避倍率（相对于 ``DEFAULT_IDLE_SECONDS``）：1s → 5s → 30s。
+# 队列常年是空的，空闲时每秒一次 ``claim_next``（一次 SELECT + 一次 CAS UPDATE）
+# 纯属白烧连接与 ADB 往返；但「有活」时必须立刻回到 1s，否则提交后要等半分钟
+# 才开跑——所以 kick / 线程回收唤醒会把退避清零。
+IDLE_BACKOFF = (1.0, 5.0, 30.0)
 DEFAULT_STALE_SECONDS = 360
 STALE_MARGIN_SECONDS = 60
 # 单次 run 从库里回放的历史消息上限：超长会话该由压缩截断（§5），这里只是兜住
@@ -737,6 +742,7 @@ async def kick() -> None:
 
 async def _pump(semaphore: asyncio.Semaphore, wake: asyncio.Event) -> None:
     """领取循环：串行领、并发跑。异常一律就地吞掉——泵死了整个队列就停了。"""
+    idle = 0  # 连续空转次数：只影响「下一次空转等多久」，不影响领取顺序
     while True:
         await semaphore.acquire()
         run: dict | None = None
@@ -749,8 +755,12 @@ async def _pump(semaphore: asyncio.Semaphore, wake: asyncio.Event) -> None:
             _logger.exception("ai run claim failed")
         if run is None:
             semaphore.release()
-            await _idle(wake)
+            if not await _idle(wake, idle):
+                idle += 1
+            else:
+                idle = 0  # 被 kick 叫醒 = 有新活，退避立刻回到最短
             continue
+        idle = 0
         _spawn(run, semaphore, wake)
 
 
@@ -774,13 +784,24 @@ def _retire(run_id: str, task: asyncio.Task, wake: asyncio.Event) -> None:
         _logger.error("ai run task %s crashed: %r", run_id, error)
 
 
-async def _idle(wake: asyncio.Event) -> None:
-    """空闲等待：有 kick 就立刻醒，没有就一秒看一次队列。"""
+def _idle_timeout(attempt: int) -> float:
+    """第 ``attempt`` 次空等多久：``DEFAULT_IDLE_SECONDS`` × 1 / 5 / 30。
+
+    以 ``DEFAULT_IDLE_SECONDS`` 为基准而不是写死 1/5/30 秒：测试把它调到 0.01
+    时整套退避同比缩小，用例不必真的等 30 秒。
+    """
+    factor = IDLE_BACKOFF[min(max(attempt, 0), len(IDLE_BACKOFF) - 1)]
+    return DEFAULT_IDLE_SECONDS * factor
+
+
+async def _idle(wake: asyncio.Event, attempt: int = 0) -> bool:
+    """空闲等待；返回 ``True`` 表示被 kick 叫醒（有新活），``False`` 表示超时。"""
     try:
-        await asyncio.wait_for(wake.wait(), timeout=DEFAULT_IDLE_SECONDS)
+        await asyncio.wait_for(wake.wait(), timeout=_idle_timeout(attempt))
     except (asyncio.TimeoutError, TimeoutError):
-        return
+        return False
     wake.clear()
+    return True
 
 
 def reset() -> None:
