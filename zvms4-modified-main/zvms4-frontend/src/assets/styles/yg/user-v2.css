@@ -102,7 +102,7 @@
   opacity: 0;
 }
 
-/* ---------- 导航 v2：桌面 72px 侧栏；移动端全宽底部 dock ---------- */
+/* ---------- 导航 v2：桌面 72px 侧栏；移动端居中悬浮 HUD dock ---------- */
 .yg-glass-nav--v2.yg-glass-nav--landscape {
   width: 72px;
 }
@@ -111,39 +111,87 @@
   padding-block: var(--yg-space-3);
 }
 
+/* 居中悬浮的长条 dock：外壳本身透明，实体底面画在 ::before 上，
+   这样切角轮廓和阴影可以分开处理，子项的点击突出也不会被裁掉。 */
 .yg-glass-nav--v2.yg-glass-nav--portrait {
   position: fixed;
-  right: 0;
-  bottom: 0;
-  left: 0;
-  width: 100%;
+  right: auto;
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 10px);
+  left: 50%;
+  width: min(560px, calc(100vw - 24px));
   max-width: none;
   max-height: none;
-  padding-bottom: env(safe-area-inset-bottom, 0px);
+  padding-bottom: 0;
   border: 0;
-  border-top: 1px solid var(--yg-border-subtle);
   border-radius: 0;
-  background: var(--yg-bg-surface);
+  background: transparent;
   box-shadow: none;
-  transform: none;
+  transform: translateX(-50%);
+  /* 伪元素画底面时 z-index:0，导航项必须抬到它上面；
+     否则时间面板里同样带 z-index 的刻度会从 dock 后面透出来。 */
+  isolation: isolate;
+  /* clip-path 会裁掉 box-shadow，所以阴影挂在外壳的 filter 上；子项不受裁剪影响 */
+  filter: drop-shadow(0 10px 18px rgba(5, 6, 8, 0.34)) drop-shadow(0 2px 4px rgba(5, 6, 8, 0.22));
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
 }
 
+.yg-glass-nav--v2.yg-glass-nav--portrait::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  background: linear-gradient(160deg, var(--yg-bg-surface-raised), var(--yg-bg-surface-sunken) 78%);
+  /* 不对称切角：左上小切 + 右下大切，避免又变成一条普通矩形底栏 */
+  clip-path: polygon(
+    14px 0,
+    100% 0,
+    100% calc(100% - 18px),
+    calc(100% - 18px) 100%,
+    0 100%,
+    0 14px
+  );
+}
+
 .yg-glass-nav--v2.yg-glass-nav--portrait .yg-glass-nav__items {
-  justify-content: space-around;
+  position: relative;
+  z-index: 1;
+  justify-content: space-between;
   gap: 0;
-  padding: 6px var(--yg-space-4);
+  padding: 8px 20px;
 }
 
 .yg-glass-nav--v2.yg-glass-nav--portrait .yg-glass-nav__item {
-  width: 48px;
-  height: 48px;
+  flex: 0 1 44px;
+  width: 44px;
+  min-width: 34px;
+  height: 44px;
 }
 
+/* 竖屏指示器保留切角矩形，不做圆角、不做平行四边形 */
 .yg-glass-nav--v2.yg-glass-nav--portrait .yg-glass-nav__indicator {
   border-radius: 0;
   clip-path: polygon(0 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 0 100%);
+}
+
+/* 浅色：dock 保持亮面，阴影更轻，避免底栏重新变成一块压暗的横条 */
+html[data-theme='light'] .yg-glass-nav--v2.yg-glass-nav--portrait {
+  filter: drop-shadow(0 8px 16px rgba(15, 23, 42, 0.14))
+    drop-shadow(0 1px 2px rgba(15, 23, 42, 0.08));
+}
+
+/* 键盘弹起（视口很矮）时 dock 仍然收一圈，避免盖住输入框 */
+@media (max-height: 480px) {
+  .yg-glass-nav--v2.yg-glass-nav--portrait .yg-glass-nav__items {
+    padding: 4px 16px;
+  }
+
+  .yg-glass-nav--v2.yg-glass-nav--portrait .yg-glass-nav__item {
+    flex-basis: 40px;
+    width: 40px;
+    min-width: 34px;
+    height: 40px;
+  }
 }
 
 .yg-user-page {

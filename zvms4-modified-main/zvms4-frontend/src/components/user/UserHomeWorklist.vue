@@ -418,8 +418,32 @@ onMounted(() => {
 }
 
 .home-worklist__pagination {
+  --el-pagination-bg-color: transparent;
+  --el-pagination-button-bg-color: transparent;
+  --el-pagination-hover-color: var(--yg-color-primary, #0b9f93);
   justify-content: center;
   margin-top: var(--yg-space-4, 16px);
+}
+
+/* 无框页码：普通页透明，当前页只留文字强调 + 底部细标记 */
+.home-worklist__pagination.home-worklist__pagination :deep(.btn-prev),
+.home-worklist__pagination.home-worklist__pagination :deep(.btn-next),
+.home-worklist__pagination.home-worklist__pagination :deep(.el-pager li) {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--yg-text-secondary, #475569);
+}
+
+.home-worklist__pagination.home-worklist__pagination :deep(.el-pager li:hover) {
+  color: var(--yg-color-primary, #0b9f93);
+}
+
+.home-worklist__pagination.home-worklist__pagination :deep(.el-pager li.is-active) {
+  color: var(--yg-color-primary, #0b9f93);
+  background: transparent;
+  box-shadow: inset 0 -2px 0 var(--yg-color-primary, #0b9f93);
+  clip-path: none;
 }
 
 @media (max-width: 768px) {
