@@ -410,7 +410,7 @@ async def _allow_reauth(*_args, **_kwargs):
 
 @pytest.fixture(autouse=True)
 def _no_reauth(monkeypatch):
-    monkeypatch.setattr(ai_router, "require_password_verification", _allow_reauth)
+    monkeypatch.setattr("routers.ai.keys.require_password_verification", _allow_reauth)
 
 
 def _client(user: dict | None = None) -> TestClient:
