@@ -1,14 +1,8 @@
-from typing import Optional
 from fastapi import Depends, APIRouter, Query
 from pydantic import ValidationError
 
 from typings.time import UserActivityTime
-from util.calculate import calculate_user_time
-from util.object_id import (
-    optional_current_user,
-    validate_object_id,
-    get_current_user,
-)
+from util.object_id import get_current_user
 from db import backends
 
 router = APIRouter()

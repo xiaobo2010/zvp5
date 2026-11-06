@@ -45,7 +45,7 @@ import logging
 import math
 import time
 from datetime import datetime
-from typing import Any, Callable
+from typing import Callable
 from uuid import uuid4
 
 import settings
