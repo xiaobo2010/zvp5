@@ -16,6 +16,7 @@ import type { TableInstance } from 'element-plus'
 import api from '@/api'
 import { useI18n } from 'vue-i18n'
 import { useUserStore } from '@/stores/user'
+import { useGroupsStore } from '@/stores/groups'
 import type { Group, ActivityTimeRecord } from '@/../types'
 import { useWindowSize } from '@vueuse/core'
 import { Search } from '@element-plus/icons-vue'
@@ -91,7 +92,7 @@ async function loadGroup() {
     return
   }
   try {
-    group.value = await api.group.readOne(id.value)
+    group.value = await useGroupsStore().fetchGroup(id.value)
   } catch {
     group.value = undefined
   }

@@ -3,6 +3,7 @@ import { ElSelect, ElOption } from 'element-plus'
 import { computed, onMounted, ref, toRefs, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import api from '@/api'
+import { useGroupsStore } from '@/stores/groups'
 import { extractHanCharacters, extractNonHanCharacters } from '@/utils/extraChars'
 import type { User } from '@/../types'
 
@@ -60,7 +61,8 @@ function sameValue(a: string | string[], b: string | string[]) {
 }
 
 async function getUserGroups(user: User) {
-  return await Promise.all(user.group.map(async (group) => api.group.readOne(group)))
+  const groupsStore = useGroupsStore()
+  return await Promise.all(user.group.map((group) => groupsStore.fetchGroup(group)))
 }
 
 async function toOption(user: User): Promise<PersonOption> {

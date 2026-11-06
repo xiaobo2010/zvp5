@@ -71,7 +71,6 @@ async function getInfo() {
   const activityTask = api.activity.read.single(id.value).then((response) => {
     activity.value = response.activity
     membersCount.value = response.members_count
-    console.log(response)
   })
   await Promise.all([memberTask, activityTask])
   loading.value = false
