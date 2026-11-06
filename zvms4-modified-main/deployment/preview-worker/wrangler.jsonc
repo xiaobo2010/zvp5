@@ -10,7 +10,7 @@
   },
   "routes": [
     {
-      "pattern": "yuren.xiaobopisces.top",
+      "pattern": "canary.xiaobopisces.top",
       "custom_domain": true
     }
   ],
