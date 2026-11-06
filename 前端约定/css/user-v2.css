@@ -135,7 +135,13 @@
   position: absolute;
   inset: 0;
   z-index: 0;
-  background: linear-gradient(160deg, var(--yg-bg-surface-raised), var(--yg-bg-surface-sunken) 78%);
+  /* 实体底面必须是实色：移动端 dock 会盖在滚动内容上，任何 alpha 都会让下层颜色透出来。 */
+  background-color: var(--yg-bg-surface);
+  background-image: linear-gradient(
+    160deg,
+    var(--yg-bg-surface-raised),
+    var(--yg-bg-surface-sunken) 78%
+  );
   /* 不对称切角：左上小切 + 右下大切，避免又变成一条普通矩形底栏 */
   clip-path: polygon(
     14px 0,
