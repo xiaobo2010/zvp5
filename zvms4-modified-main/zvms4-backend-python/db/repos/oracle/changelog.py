@@ -5,6 +5,19 @@ SQLAlchemy 2.0 async Core over the ``CHANGELOG`` table (``zvms_new.changelog``):
 key ``date`` on read), ``items`` → a JSON ``CLOB``. Returned rows use the shared
 ``Row`` shape (``_id`` lowercase hex, ``date``, ``items`` as a decoded list).
 
+Redis read-through
+------------------
+``list_all`` is the single hottest caller-visible read in the API: ``GET /api/``
+and ``GET /api/changelog`` both go through it (``main.current_version`` reads
+``entries[0]["version"]``), and on ADB it costs one round trip *per request*
+(138ms cross-ocean). The whole list is cached for 5 minutes under a key that
+carries the ``changelog`` epoch; ``create`` / ``update`` / ``delete`` forget it
+immediately, so an edit is visible on the next request even though the TTL is
+long. A separate "latest version" key is deliberately **not** implemented:
+there is no call site that can be changed to use it (``main.py`` and
+``changelog_router.py`` both call ``list_all``), so it would be dead weight on
+top of a cache that already answers both endpoints without touching ADB.
+
 Session ownership
 -----------------
 ``__init__`` takes an optional ``AsyncSession``:
@@ -13,13 +26,16 @@ Session ownership
   :func:`db.oracle.session.session_scope`, and **writes commit once** (one write
   = one transaction); the session is closed by ``session_scope``.
 * ``session`` supplied: the repo uses it as-is and **never commits or closes**
-  it — the caller owns the unit of work.
+  it — the caller owns the unit of work. Caching is bypassed in that mode: a
+  caller-owned session may hold uncommitted rows, and a cache hit would hand
+  back the pre-transaction value.
 
 Nothing here opens a connection at import time.
 """
 
 from __future__ import annotations
 
+import random
 from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Any, AsyncIterator
@@ -27,11 +43,18 @@ from typing import Any, AsyncIterator
 from sqlalchemy import delete, insert, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from db import cache
 from db.ids import new_oid, normalize_oid
 from db.models import changelog as changelog_tbl
 from db.oracle.session import session_scope
 
 Row = dict[str, Any]
+
+#: 全量列表的 TTL。版本号挂在列表首行，改动只发生在管理员编辑变更日志时
+#: （一年几次），5 分钟的兜底足够宽松；写路径会主动 forget，不依赖 TTL 生效。
+_LIST_TTL_SECONDS = 300.0
+#: 缓存域：``cache.epoch`` 的 scope（写时 INCR，旧 key 靠 TTL 自然淘汰）。
+_CACHE_SCOPE = "changelog"
 
 
 @asynccontextmanager
@@ -107,17 +130,37 @@ def _entry_doc(mapping: Any) -> Row:
     }
 
 
+async def _forget_list() -> None:
+    """写后失效：epoch INCR，旧列表 key 从此不再被读到。
+
+    只自增、不删 key（也不需要知道 key 的确切形状）：旧 epoch 的 key 靠 TTL
+    自然淘汰，避免为此跑一趟 ``SCAN``。
+    """
+    await cache.bump_epoch(_CACHE_SCOPE)
+
+
 class OracleChangelogRepo:
     """``ChangelogRepo`` over Oracle ADB (``zvms_new.changelog``)."""
 
     def __init__(self, session: AsyncSession | None = None) -> None:
         self._session = session
+        # 调用方自带事务时不做缓存（理由见模块 docstring）。
+        self._use_cache = session is None
 
-    async def list_all(self) -> list[Row]:
+    async def _list_all(self) -> list[Row]:
         stmt = _list_all_stmt()
         async with _session_for(self._session) as (session, _owns):
             rows = (await session.execute(stmt)).all()
         return [_entry_doc(row._mapping) for row in rows]
+
+    async def list_all(self) -> list[Row]:
+        if not self._use_cache:
+            return await self._list_all()
+        version = await cache.epoch(_CACHE_SCOPE)
+        key = f"{cache.NS}:changelog:{version}:all"
+        # ±10% 抖动：多进程同时冷启动时别让这一条 key 在同毫秒一起过期。
+        ttl = _LIST_TTL_SECONDS * (1.0 + random.uniform(-0.1, 0.1))
+        return await cache.remember(key, ttl, self._list_all, async_backfill=True)
 
     async def get_by_oid(self, oid: str) -> Row | None:
         stmt = _get_by_oid_stmt(normalize_oid(oid))
@@ -134,6 +177,7 @@ class OracleChangelogRepo:
             await session.execute(stmt)
             if owns:
                 await session.commit()
+        await _forget_list()
         return oid
 
     async def update(
@@ -144,6 +188,7 @@ class OracleChangelogRepo:
             result = await session.execute(stmt)
             if owns:
                 await session.commit()
+        await _forget_list()
         return int(result.rowcount)
 
     async def delete(self, oid: str) -> int:
@@ -152,6 +197,7 @@ class OracleChangelogRepo:
             result = await session.execute(stmt)
             if owns:
                 await session.commit()
+        await _forget_list()
         return int(result.rowcount)
 
 
