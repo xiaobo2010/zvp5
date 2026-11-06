@@ -15,14 +15,14 @@ Cloudflare 同区回环——响应带 `Cdn-Loop: cloudflare; loops=1`，状态 
 
 ## 步骤
 
-分支预览在仓库内的 git worktree 里构建（分支名已由 `愚人节ui` 改名为 `phigros`）：
-`worktrees/phigros/zvms4-modified-main/zvms4-frontend`。`wrangler.jsonc` 的
+分支预览在仓库内的 git worktree 里构建（分支名已由 `愚人节ui` 改名 `phigros` 后又改名 `v5-canary`）：
+`worktrees/v5-canary/zvms4-modified-main/zvms4-frontend`。`wrangler.jsonc` 的
 `assets.directory` 必须指向**该分支的** `dist`，默认写的是 main 的产物，直接
 deploy 会把正式产物当预览发出去。
 
 ```bash
 # 1. 构建（注意不要用 npm run build，见下方坑 1）
-cd worktrees/phigros/zvms4-modified-main/zvms4-frontend
+cd worktrees/v5-canary/zvms4-modified-main/zvms4-frontend
 VITE_API_BASE=https://yuren.xiaobopisces.top/api npx vite build
 
 # 2. 把产物里的 API 基址换成 CORS 白名单里的正式域名
