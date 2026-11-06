@@ -27,6 +27,7 @@ from db import backends
 from routers.ai_router import _require_admin
 from services.ai import config as ai_config
 from services.ai import credentials, model_rates, providers
+from services.ai import cache_invalidation
 from services.ai.credentials import CredentialError
 from services.ai.routing import RouteError
 from util.object_id import get_current_user, require_password_verification
@@ -257,6 +258,8 @@ async def update_model(
     row = await _repo().upsert(name, fields=fields, actor=user.get("id"))
     # 倍率快照按 60 秒 TTL 缓存，改完必须立刻失效，否则新价最多晚一分钟生效。
     model_rates.invalidate()
+    # 模型覆盖行可能改了「是否支持流式」的判断前提：把 1 小时的负缓存一并作废。
+    await cache_invalidation.clear_stream_unsupported()
     providers, contexts = await _catalog(user)
     return {
         "status": "ok",
@@ -382,6 +385,7 @@ async def delete_model(model: str, user=Depends(get_current_user)):
     await _repo().delete(_clean_model_name(model))
     # 删覆盖行 = 回到默认倍率 1.0，同样要立刻失效缓存。
     model_rates.invalidate()
+    await cache_invalidation.clear_stream_unsupported()
     return None
 
 

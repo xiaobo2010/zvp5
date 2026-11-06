@@ -3,6 +3,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import ZAiChat from './ZAiChat.vue'
 import { useUserStore } from '@/stores/user'
+import { POLL_FAST_INTERVAL_MS, POLL_INTERVAL_MS } from '@/stores/aiConversations'
 import {
   cancelRun,
   compactConversation,
@@ -844,8 +845,8 @@ describe('智能体模式', () => {
     expect(placeholder.exists()).toBe(true)
     expect(placeholder.text()).toContain('ai.chat.thinkingPlaceholder')
 
-    // 正文到了：占位让位给真实回复
-    await vi.advanceTimersByTimeAsync(600)
+    // 正文到了：占位让位给真实回复（首拍是 FAST 间隔，留 50ms 余量）
+    await vi.advanceTimersByTimeAsync(POLL_FAST_INTERVAL_MS + 50)
     await settle()
 
     expect(wrapper.find('.ai-chat__pending-reply').exists()).toBe(false)
@@ -864,21 +865,27 @@ describe('智能体模式', () => {
     await settle()
     await sendText(wrapper, '查一下图书馆')
 
-    await vi.advanceTimersByTimeAsync(500)
+    await vi.advanceTimersByTimeAsync(POLL_FAST_INTERVAL_MS)
     await settle()
     expect(vi.mocked(fetchRunDetail).mock.calls.length).toBe(1)
 
-    // 快探期内每隔 500ms 一次
-    await vi.advanceTimersByTimeAsync(500)
+    // 快探期内每隔 FAST 间隔一次
+    await vi.advanceTimersByTimeAsync(POLL_FAST_INTERVAL_MS)
     await settle()
     expect(vi.mocked(fetchRunDetail).mock.calls.length).toBe(2)
 
-    // 快探用完（4 次）之后回落到 1.5 秒：500ms 与 1000ms 之后都不再发请求
-    await vi.advanceTimersByTimeAsync(1000)
+    // 第 3 次快探（最后一次预算）
+    await vi.advanceTimersByTimeAsync(POLL_FAST_INTERVAL_MS)
     await settle()
-    expect(vi.mocked(fetchRunDetail).mock.calls.length).toBe(4)
+    expect(vi.mocked(fetchRunDetail).mock.calls.length).toBe(3)
 
-    await vi.advanceTimersByTimeAsync(1000)
+    // 已回落到常规间隔：再等 1 秒不该有第 4 次
+    await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS / 2)
+    await settle()
+    expect(vi.mocked(fetchRunDetail).mock.calls.length).toBe(3)
+
+    // 满 2 秒才发第 4 次
+    await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS / 2)
     await settle()
     expect(vi.mocked(fetchRunDetail).mock.calls.length).toBe(4)
 

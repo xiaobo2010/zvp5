@@ -33,7 +33,7 @@ import settings
 from db import backends
 from db.repos.protocols import ActiveRunConflict
 from services import violation_guard
-from services.agent import executor, proposal as proposal_service
+from services.agent import executor, proposal as proposal_service, run_cache
 from services.agent.tools import WRITE
 from services.agent.tool_impl import AgentError
 from services.ai import (
@@ -74,6 +74,8 @@ TERMINAL_STOP_REASONS = frozenset(
     {"completed", "max_iterations", "token_budget", "timeout", "cancelled", "error"}
 )
 ACTIVE_STATUSES = ("queued", "running")
+#: 终态：run 详情可以缓存久一点——结果不会再变，前端回看历史不必每次回源。
+TERMINAL_STATUSES = frozenset({"succeeded", "failed", "cancelled", "interrupted"})
 RUN_NOT_FOUND = "AI_RUN_NOT_FOUND"
 RUN_NOT_CANCELLABLE = "AI_RUN_NOT_CANCELLABLE"
 RUN_CONFLICT = conversations.RUN_CONFLICT
@@ -562,6 +564,8 @@ async def cancel(*, user: Mapping[str, Any], run_id: str) -> dict:
         # 还没开跑：不必等 worker 在轮边界看到标志（也免得它占一次上游调用）。
         await _runs().mark_cancelled_if_queued(str(run_id))
 
+    # 状态刚变过：下一次轮询必须回源，否则前端会再看到 1 秒「仍在跑」。
+    run_cache.invalidate(str(run_id))
     latest = await _runs().get(str(run_id), owner_oid) or row
     return {"status": str(latest.get("status"))}
 
@@ -793,6 +797,8 @@ def reset() -> None:
     _in_flight.clear()
     # run 级进程内状态一并清掉：测试里上一个用例的覆盖不能带进下一个用例。
     _OVERRIDES.clear()
+    # 轮询快照同理：上一条用例缓存的 run 行不该出现在下一条里。
+    run_cache.reset()
     # 封禁态缓存同属进程内状态：上一条用例造出来的「已封」不能跟着 TTL 漏进来。
     ban_state.invalidate()
     if _pump_task is not None and not _pump_task.done():
@@ -1023,6 +1029,9 @@ async def _finish(
         return False
     if not written:
         _logger.info("ai run %s was already terminal, result dropped", run_id)
+    else:
+        # 终态刚落：快照里还是 running，留着会让前端继续画「执行中」。
+        run_cache.invalidate(str(run_id))
     return bool(written)
 
 
@@ -1518,6 +1527,11 @@ async def run_detail(
     ``after_round`` 只回 ``round_no > after_round`` 的事件：轮询载荷随轮次线性
     增长，而不是平方（每次把整条时间线重发一遍）。
 
+    **1 秒内重复轮询不回源**：run 行、事件、提案都从进程内快照取，``after_round``
+    在内存里切片；只有消息增量（``since_msg_seq``）每次都查库——它是唯一「必须
+    实时」的部分（用户发消息、别的 run 落轮次）。快照由 :mod:`run_cache` 管，
+    单 worker 前提与队列本身相同；取消/收尾会主动失效。
+
     ``since_msg_seq`` 是**轮级**增量：给了就额外回 ``seq > since_msg_seq`` 的消息，
     与 ``GET /conversations/{oid}/messages`` **同一形状、同一顺序**（升序、同一份
     view）。为什么不复用它：一次轮询里客户端要的是「run 进度 + 这轮新增了哪些
@@ -1525,16 +1539,35 @@ async def run_detail(
     不传则不返回该键——老客户端拿到的响应逐字不变。
     """
     owner_oid = str(user.get("id") or "")
-    row = await _runs().get(str(run_id), owner_oid)
-    if row is None:
-        raise AgentError(RUN_NOT_FOUND, "run not found", 404)
-
+    key = str(run_id)
     floor = max(0, int(after_round or 0))
-    # 事件与提案是**同一张表**的两种视图：一次查询喂两处，别再各查一遍。
-    rows = await _events().list_for_request(str(run_id))
-    events = await proposal_service.run_events(
-        request_id=str(run_id), user=dict(user), rows=rows
-    )
+
+    snapshot = run_cache.get(key)
+    if snapshot is not None and str(snapshot["row"].get("owner_oid") or "") != owner_oid:
+        # 缓存键只有 run_id：别人的 run 不能被一次命中绕过归属检查。
+        snapshot = None
+    if snapshot is None:
+        row = await _runs().get(key, owner_oid)
+        if row is None:
+            raise AgentError(RUN_NOT_FOUND, "run not found", 404)
+        # 事件与提案是**同一张表**的两种视图：一次查询喂两处，别再各查一遍。
+        rows = await _event_rows(key)
+        events = await proposal_service.run_events(
+            request_id=key, user=dict(user), rows=rows
+        )
+        proposals = _run_proposals(rows, owner_oid)
+        run_cache.put(
+            key,
+            row=row,
+            events=events,
+            proposals=proposals,
+            ttl=_detail_ttl(row),
+        )
+    else:
+        row = snapshot["row"]
+        events = snapshot["events"]
+        proposals = snapshot["proposals"]
+
     seen: set[str] = set()
     incremental: list[dict] = []
     for event in events:
@@ -1551,7 +1584,7 @@ async def run_detail(
     detail = {
         "run": run_view(row),
         "events": incremental,
-        "proposals": _run_proposals(rows, owner_oid),
+        "proposals": proposals,
     }
     if since_msg_seq is not None:
         detail["messages"] = await conversations.messages_since(
@@ -1560,6 +1593,26 @@ async def run_detail(
             limit=conversations.MESSAGE_LIMIT_MAX,
         )
     return detail
+
+
+def _detail_ttl(row: Mapping[str, Any]) -> float:
+    """快照寿命：终态 30s（结果不会再变），活跃 1s（下一拍必须看得见进展）。"""
+    if str(row.get("status") or "") in TERMINAL_STATUSES:
+        return run_cache.TERMINAL_TTL
+    return run_cache.DEFAULT_TTL
+
+
+async def _event_rows(run_id: str) -> list[dict]:
+    """轮询取事件：优先轻量投影（不拉两个 CLOB 列）。
+
+    内存桩/旧实现没有 ``list_display_for_request`` 时回落到全量查询——形状一致，
+    只是多背两列。
+    """
+    repo = _events()
+    lister = getattr(repo, "list_display_for_request", None)
+    if lister is None:
+        return await repo.list_for_request(str(run_id))
+    return await lister(str(run_id))
 
 
 def _run_proposals(rows: Sequence[Mapping[str, Any]], owner_oid: str) -> list[dict]:

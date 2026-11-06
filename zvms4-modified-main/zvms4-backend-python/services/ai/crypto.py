@@ -1,8 +1,9 @@
 """AI 凭据的对称加解密（AES-256-GCM）。
 
 为什么加密而不是哈希：上游 api_key 必须能还原成明文去发请求，哈希做不到；所以
-库里存的是密文，主密钥留在进程环境（``ZVMS_AI_KEY_SECRET``）或仓库根的
-``aes_key.txt``（已在 .gitignore 里），数据库备份泄露不等于凭据泄露。
+库里存的是密文，主密钥留在进程环境（``ZVMS_AI_KEY_SECRET``）或 ``aes_key.txt``
+（路径解析见 :mod:`util.platform_key`，生产推荐 systemd ``LoadCredential``），
+数据库备份泄露不等于凭据泄露。
 
 为什么 GCM：自带完整性校验。密文被改一个字节，``decrypt_and_verify`` 会抛错，
 我们就能把「库里数据坏了」与「换过主密钥」区分成同一种可观测结果（502），而不是
@@ -18,12 +19,12 @@ from __future__ import annotations
 import base64
 import hashlib
 import os
-from pathlib import Path
 
 from Crypto.Cipher import AES
 
+from util import platform_key
+
 _SECRET_ENV = "ZVMS_AI_KEY_SECRET"
-_SECRET_FILE = Path(__file__).resolve().parents[2] / "aes_key.txt"
 _KEY_SALT = b"zvms-ai-credential-v1:"
 _NONCE_BYTES = 12  # GCM 的推荐长度；随机 nonce 复用会直接摧毁 GCM 的安全性
 _TAG_BYTES = 16
@@ -34,15 +35,19 @@ _master_key: bytes | None = None
 
 
 def _load_secret() -> str:
-    """环境变量优先：部署机上不该为了换密钥去改仓库里的文件。"""
+    """环境变量优先；否则走共享解析（显式路径 → LoadCredential → 旧文件）。
+
+    这里必须 ``strip()``：历史实现读文件后就去空白，生产密文都是用去掉换行的
+    64 字符派生的；改成保留换行会让所有已存密文变成不可读。
+    """
     value = os.environ.get(_SECRET_ENV)
     if value:
         return value
     try:
-        raw = _SECRET_FILE.read_bytes()
-    except OSError as exc:
+        raw = platform_key.read_text()
+    except platform_key.KeyMaterialError as exc:
         raise ValueError("credential key material is unavailable") from exc
-    text = raw.decode("utf-8", "ignore").strip()
+    text = raw.strip()
     if not text:
         raise ValueError("credential key material is unavailable")
     return text

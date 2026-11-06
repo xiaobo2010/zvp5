@@ -15,7 +15,9 @@
    同步的 FastAPI 依赖/参数默认值里，把它们改成协程会连锁改一大片调用方。所以：
    快照由 :func:`refresh`（启动时挂到调度器，每 5 秒一次）刷新，同步读取点用
    :func:`get_override` / :func:`get_sync` 直接读内存；需要「一定是最新」的接口路径
-   用 :func:`ensure_fresh` 先刷一次。
+   用 :func:`ensure_fresh` 先刷一次。每次刷新先花一次 Redis GET 看 ``settings``
+   版本号（``db.cache.version``）：版本没变就不读库，``set_many`` 写成功后自增
+   版本号，别的进程下一轮就知道要回源。Redis 不可用时退回「每 5 秒读库」。
 3. **``set_many`` 立即改写快照**，不等下一轮刷新 —— 管理员点完保存，同进程的读取点
    下一个请求就拿到新值（跨进程最多晚 :data:`REFRESH_SECONDS` 秒）。
 
@@ -31,13 +33,21 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Callable
 
-from db import backends
+from db import backends, cache
 
 logger = logging.getLogger(__name__)
 
 # 快照有效期（秒）。与 ``util.dual_auth`` 的窗口口径一致：用 ``time.monotonic``
 # 计时，系统时间跳变不会把缓存拉长或立刻过期。
 REFRESH_SECONDS = 5.0
+
+#: 版本闸生效时，最多多久不回源数据库（秒）。
+#: 版本号只能证明「没人通过 API 改过」，挡不住「有人直接改了库」，所以保留
+#: 这个强制回源兜底：最坏情况下手工改库 5 分钟内生效。
+FULL_RELOAD_SECONDS = 300.0
+
+#: Redis 里该域的版本键（写设置 / 写角色策略时 INCR，见 ``db.cache.flush_scopes``）。
+VERSION_SCOPE = "settings"
 
 GROUP_AI = "ai"
 GROUP_OPS = "ops"
@@ -46,6 +56,23 @@ _RATE_LIMIT_MAX = 1_000_000
 _ROLE_QUOTA_MAX = 10_000_000
 _MAX_LIST_ITEMS = 50
 _MAX_ROLE_COUNT = 50
+
+#: V051 之前的角色额度 kind（已并入 ``af`` 池）。只读兼容：库里还有这些值时
+#: 归并进 ``af``，不拒收（否则设置项永远不生效、日志每 5 秒刷一次）。
+LEGACY_QUOTA_KINDS: tuple[str, ...] = ("ocr", "chat")
+
+#: 「旧 kind 已归并」的日志去重（``(role, kind)``）。module 级：一个进程只提一次。
+_legacy_logged: set[tuple[str, str]] = set()
+
+
+def _note_legacy_kind(role: str, kind: str) -> None:
+    token = (role, kind)
+    if token in _legacy_logged:
+        return
+    _legacy_logged.add(token)
+    logger.info(
+        "设置项 ai.role_quota：角色 %s 的历史能力 %r 已归并进 af", role, kind
+    )
 
 
 class SettingsValidationError(ValueError):
@@ -90,6 +117,10 @@ _db_meta: dict[str, tuple[datetime | None, str | None]] = {}
 _quota_rows: dict[str, dict[str, Any]] = {}
 _last_refresh = 0.0
 _refreshing = False
+#: 上次读库时 Redis 里的版本号；``None`` = Redis 不可用 / 还没读过。
+_last_version: int | None = None
+#: 上次真正回源 ADB 的时刻（``_last_refresh`` 是「上次确认快照可用」的时刻）。
+_last_full_read = 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -154,6 +185,18 @@ def _validate_compact_ratio(value: Any) -> float:
 
 
 def _validate_role_quota(value: Any) -> dict[str, dict[str, int]]:
+    """``{角色: {能力: 月额度}}``。
+
+    V051 把用户侧的 ``ocr`` / ``chat`` 并进了统一 AF 池（``af``），但库里仍有
+    旧值。对旧 kind 的处理是**归并而不是拒收**：
+
+    * 同角色已经有 ``af`` → 忽略旧键（``af`` 是现行口径，旧值只是历史残留；
+      两个都加会让额度在每次启动时翻倍）；
+    * 同角色只有旧键 → 旧键求和写进 ``af``（同一角色多旧键取和）。
+
+    以前这里直接抛错，导致生产每 5 秒刷一条「ai.role_quota 不合法」的日志而
+    设置项永远不生效。现在只在校验通过后记一次 info（module 级 set 去重）。
+    """
     from services.ai import config as ai_config
 
     if not isinstance(value, dict) or not value:
@@ -167,13 +210,24 @@ def _validate_role_quota(value: Any) -> dict[str, dict[str, int]]:
         if not isinstance(limits, dict):
             raise ValueError(f"角色 {role} 的额度必须是对象")
         entry: dict[str, int] = {}
+        legacy_total = 0
+        has_legacy = False
         for kind, limit in limits.items():
+            if kind in LEGACY_QUOTA_KINDS:
+                legacy_total += _require_int(
+                    limit, 0, _ROLE_QUOTA_MAX, f"角色 {role} 的 {kind} 额度"
+                )
+                has_legacy = True
+                _note_legacy_kind(str(role).strip(), str(kind))
+                continue
             # 额度 kind 与频控 kind 不是同一套：用户侧额度只有 ``af``（V051）。
             if kind not in ai_config.QUOTA_KINDS:
                 raise ValueError(f"角色 {role} 出现未知能力 {kind!r}")
             entry[str(kind)] = _require_int(
                 limit, 0, _ROLE_QUOTA_MAX, f"角色 {role} 的 {kind} 额度"
             )
+        if has_legacy and "af" not in entry:
+            entry["af"] = legacy_total
         if not entry:
             raise ValueError(f"角色 {role} 至少要有一个能力的额度")
         out[role.strip()] = entry
@@ -472,11 +526,14 @@ def _validate(spec: SettingSpec, value: Any) -> Any:
 
 def _reset_state() -> None:
     """清空快照（测试钩子：用例之间不串值）。"""
-    global _last_refresh
+    global _last_refresh, _last_version, _last_full_read
     _db_values.clear()
     _db_meta.clear()
     _quota_rows.clear()
     _last_refresh = 0.0
+    _last_version = None
+    _last_full_read = 0.0
+    _legacy_logged.clear()
 
 
 def reset_cache() -> None:
@@ -484,14 +541,41 @@ def reset_cache() -> None:
     _reset_state()
 
 
-async def refresh() -> None:
-    """从库里重读两张表，重建进程内快照；任何失败都回落默认值。"""
-    global _refreshing, _last_refresh
+async def _current_version() -> int | None:
+    """Redis 里的设置版本号；Redis 不可用时返回 ``None``（闸门禁用，照旧读库）。"""
+    try:
+        return await cache.version_or_none(VERSION_SCOPE)
+    except Exception:  # noqa: BLE001 - 缓存层不该影响设置读取
+        return None
+
+
+async def refresh(*, force: bool = False) -> None:
+    """重建进程内快照；``force`` 绕过版本闸直接回源。
+
+    版本闸：先花一次 Redis GET 看 ``settings`` 版本号。版本与上次相同、且上次
+    回源距今不到 :data:`FULL_RELOAD_SECONDS` → 库里一定还是那份，直接返回。
+    这让「每 5 秒一次刷新」从「4 条 SQL」降成「1 条 GET」，同时别的进程一写
+    （``set_many`` → ``cache.flush_scopes(["settings"])``）本进程就看得见。
+    """
+    global _refreshing, _last_refresh, _last_version, _last_full_read
     if _refreshing:
         # 上一轮还没读完：这一轮直接跳过，不让并发刷新叠加连接。
         return
     _refreshing = True
     try:
+        version = await _current_version()
+        now = time.monotonic()
+        if (
+            not force
+            and version is not None
+            and version == _last_version
+            and _last_full_read > 0
+            and now - _last_full_read < FULL_RELOAD_SECONDS
+        ):
+            # 版本没变：别的进程没写过，快照仍然可信，只是把「确认时刻」推后。
+            _last_refresh = now
+            return
+
         specs = _registry()
 
         values: dict[str, Any] = {}
@@ -540,6 +624,8 @@ async def refresh() -> None:
         _quota_rows.clear()
         _quota_rows.update(quotas)
         _last_refresh = time.monotonic()
+        _last_full_read = _last_refresh
+        _last_version = version
     finally:
         _refreshing = False
 
@@ -551,7 +637,7 @@ async def ensure_fresh(force: bool = False) -> None:
         or _last_refresh <= 0
         or time.monotonic() - _last_refresh >= REFRESH_SECONDS
     ):
-        await refresh()
+        await refresh(force=force)
 
 
 # ---------------------------------------------------------------------------
@@ -641,7 +727,7 @@ async def set_many(
     先全量校验再落库：一批里有一个非法值时一个都不写，避免管理员的批量提交
     写进去一半。
     """
-    global _last_refresh
+    global _last_refresh, _last_full_read
     specs = _registry()
     normalized: dict[str, Any] = {}
     for key, raw in updates.items():
@@ -659,8 +745,23 @@ async def set_many(
         _db_values[key] = value
         _db_meta[key] = (now, actor_oid)
     # 快照已是最新：TTL 从现在重新计时，避免紧随其后的 ensure_fresh 再读一遍库。
-    _last_refresh = time.monotonic()
+    _last_refresh = _last_full_read = time.monotonic()
+    await _publish_change()
     return [_view(specs[key]) for key in normalized]
+
+
+async def _publish_change() -> None:
+    """写后广播：失效该域缓存并自增版本号，让别的进程下一轮刷新回源。
+
+    刻意吞异常：Redis 抖一下不能把「已经落库成功」的写变成 500。失败时把
+    ``_last_version`` 置空，本进程下一轮 refresh 照旧读库。
+    """
+    global _last_version
+    try:
+        await cache.flush_scopes([VERSION_SCOPE])
+        _last_version = await _current_version()
+    except Exception:  # noqa: BLE001 - 广播失败只影响跨进程时效
+        _last_version = None
 
 
 def _quota_view(user_oid: str) -> dict[str, Any]:
@@ -703,6 +804,9 @@ async def set_user_quota(
             "updated_by": actor_oid,
             "updated_at": datetime.now(),
         }
+    # 用户级覆盖也在同一份快照里：同样要广播（否则别的进程最多 5 分钟才看到，
+    # 而上传配额是靠它兜的）。
+    await _publish_change()
     return _quota_view(user_oid)
 
 

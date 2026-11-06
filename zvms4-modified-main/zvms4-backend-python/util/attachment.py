@@ -26,6 +26,8 @@ from pathlib import Path
 import anyio
 from PIL import Image, ImageOps, UnidentifiedImageError
 
+from util import platform_key
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -102,7 +104,7 @@ _SIGN_PURPOSE_LABEL = b"filesign"
 _DEFAULT_TTL = 3600  # default validity: 1 hour (design §6.2)
 _MAX_TTL = 86400  # hard cap: 24 hours (design §6.2)
 
-_AES_KEY_PATH = Path(__file__).resolve().parents[1] / "aes_key.txt"
+_AES_KEY_PATH = platform_key.resolve_path() or platform_key.legacy_path()
 
 
 def _load_sign_secret(path: Path) -> bytes:

@@ -595,6 +595,8 @@ def test_readonly_gate_allows_keywords_inside_literals():
         "SELECT DBMS_LOCK.SLEEP(100) FROM dual",
         "SELECT * FROM USER_TRASH",
         "SELECT * FROM DUAL_AUTH_USES",
+        "SELECT * FROM AI_CREDENTIALS",
+        "SELECT * FROM AI_OCR_ENGINES",
         "SELECT * FROM USERS@REMOTE_DB",
     ],
 )
@@ -1090,6 +1092,21 @@ def test_row_write_on_protected_table_is_403(fake_db):
 # ---------------------------------------------------------------------------
 # 6. DDL 闸
 # ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("name", ["AI_CREDENTIALS", "AI_OCR_ENGINES"])
+def test_ai_secret_tables_are_closed_to_the_generic_console(name):
+    """凭据表的整表读取/写入都必须走 AI 管理面，不走通用控制台。"""
+    assert name in db_content._PROTECTED_READ_TABLES
+    assert name in db_content._PROTECTED_TABLES
+
+    with pytest.raises(db_content.DbContentError) as read_exc:
+        db_content.validate_readonly_sql(f"SELECT * FROM {name}")
+    assert read_exc.value.status_code == 403
+
+    with pytest.raises(db_content.DbContentError) as write_exc:
+        db_content.validate_ddl_sql(f"DELETE FROM {name}", confirm=name)
+    assert write_exc.value.status_code == 403
 
 
 @pytest.mark.parametrize(

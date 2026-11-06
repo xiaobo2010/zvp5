@@ -57,6 +57,7 @@ ROOT_FORBIDDEN_DETAIL = "路径不在允许的根目录范围内"
 PROTECTED_BASENAMES: frozenset[str] = frozenset(
     {
         "aes_key.txt",
+        "ai-key",
         "rsa_private_key.pem",
         "rsa_public_key.pem",
         "settings.py",
@@ -94,6 +95,7 @@ PROTECTED_BASENAME_PREFIXES: tuple[str, ...] = (
     "id_rsa",
     "id_ed25519",
     "aes_key",
+    "ai-key",
     "rsa_private_key",
     "rsa_public_key",
     "credentials",

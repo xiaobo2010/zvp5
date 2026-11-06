@@ -79,7 +79,15 @@ _DML_VERBS = frozenset({"INSERT", "UPDATE", "DELETE", "MERGE"})
 
 # 契约 §4.4.2：这三张表是双人授权/回收站/变更日志的底座，改一条就可能让审计
 # 失去可信度（例如删掉 dual_auth_uses 里的重放记录），所以任何写语句一律拒绝。
-_PROTECTED_TABLES: tuple[str, ...] = ("DUAL_AUTH_USES", "USER_TRASH", "CHANGELOG")
+_PROTECTED_TABLES: tuple[str, ...] = (
+    "DUAL_AUTH_USES",
+    "USER_TRASH",
+    "CHANGELOG",
+    # 凭据表只能走 AI 管理面（带密码再认证 + 双人码）；通用控制台既能改坏
+    # 密文，也能把整表密文一次性读走，属于同一类「不该从这里碰」的表。
+    "AI_CREDENTIALS",
+    "AI_OCR_ENGINES",
+)
 
 # Tables whose *rows* carry credentials/audit substrate. The row reader is
 # still useful for ordinary content tables, but these must go through a
@@ -89,11 +97,15 @@ _PROTECTED_READ_TABLES: tuple[str, ...] = (
     "USER_TRASH",
     "TEMP_LOGIN_PASSWORDS",
     "DEVICE_CHALLENGES",
+    "AI_CREDENTIALS",
+    "AI_OCR_ENGINES",
 )
 
 # Column values that must never be returned by the generic content console.
 # `PAYLOAD` is the archived user row (password hash + session id included);
-# `*_HASH` covers PASSWORD_HASH / CODE_HASH / TOKEN_HASH.
+# `*_HASH` covers PASSWORD_HASH / CODE_HASH / TOKEN_HASH; `*_CIPHER` covers
+# API_KEY_CIPHER / SECRET_CIPHER —— 密文虽然不可直接使用，但它是离线爆破素材，
+# 且 `SECRET` 的列名规则漏掉了 `API_KEY_CIPHER`（本次补上）。
 _SENSITIVE_COLUMNS: frozenset[str] = frozenset(
     {"PASSWORD_HASH", "SESSION_ID", "CODE_HASH", "TOKEN_HASH", "PAYLOAD"}
 )
@@ -126,7 +138,7 @@ _DANGEROUS_FUNCTION_RE = re.compile(
 )
 _PROTECTED_READ_TABLE_RE = re.compile(
     r"(?i)(?<![\w$#])(?:DUAL_AUTH_USES|USER_TRASH|TEMP_LOGIN_PASSWORDS|"
-    r"DEVICE_CHALLENGES)(?![\w$#])"
+    r"DEVICE_CHALLENGES|AI_CREDENTIALS|AI_OCR_ENGINES)(?![\w$#])"
 )
 
 # 破坏性语句里「目标表名」位于这些关键字之后；顺序即匹配优先级。
@@ -196,6 +208,7 @@ def _is_sensitive_column(name: str) -> bool:
     return (
         upper in _SENSITIVE_COLUMNS
         or upper.endswith("_HASH")
+        or upper.endswith("_CIPHER")
         or "PASSWORD" in upper
         or "SECRET" in upper
     )

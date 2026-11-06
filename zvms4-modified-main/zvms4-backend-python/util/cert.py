@@ -23,6 +23,7 @@ from Crypto.Hash import SHA256
 
 from db import backends
 from db.ids import new_oid
+from util import platform_key
 from util.ban import ban_is_active, raise_banned
 from util.group import get_user_permissions
 
@@ -30,7 +31,9 @@ from util.group import get_user_permissions
 # 手工启动的 cwd 并不保证是后端根，import 期读不到文件会直接起不来。
 _BACKEND_ROOT = Path(__file__).resolve().parents[1]
 
-PLATFORM_KEY_PATH = str(_BACKEND_ROOT / "aes_key.txt")
+# AES 主密钥的位置由 util.platform_key 统一裁决（生产走 systemd LoadCredential，
+# 本地/旧部署回退到后端根 aes_key.txt）。RSA 仍固定在后端根。
+PLATFORM_KEY_PATH = str(platform_key.resolve_path() or platform_key.legacy_path())
 
 _logger = logging.getLogger(__name__)
 
@@ -125,14 +128,24 @@ def read_platform_key(path: str = PLATFORM_KEY_PATH) -> str:
         mode = os.stat(path).st_mode
     except OSError:
         mode = 0
-    if mode & (stat.S_IRGRP | stat.S_IROTH):
+    # systemd 凭据副本是只读挂载、权限由 systemd 管理（0440 + ACL）；对它 chmod
+    # 只会得到「权限过宽且无法收紧」的假告警，跳过。
+    if not platform_key.is_credential_path(path) and mode & (
+        stat.S_IRGRP | stat.S_IROTH
+    ):
         try:
             os.chmod(path, 0o600)
             _logger.warning("密钥文件 %s 权限过宽，已收紧为 0600", path)
         except OSError as exc:
             _logger.warning("密钥文件 %s 权限过宽且无法收紧：%s", path, exc)
-    with open(path, "r") as handle:
-        return handle.read()
+    try:
+        with open(path, "r") as handle:
+            text = handle.read()
+    except OSError as exc:
+        raise RuntimeError(f"平台主密钥不可用：{path}") from exc
+    if not text.strip():
+        raise RuntimeError(f"平台主密钥为空：{path}")
+    return text
 
 
 jwt_private_key = read_platform_key()

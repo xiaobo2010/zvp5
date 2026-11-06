@@ -34,11 +34,20 @@ import time
 from datetime import datetime
 from typing import Any, Iterable
 
+from db import cache
+
 logger = logging.getLogger(__name__)
 
 # 快照有效期（秒）。与 ``services.settings_runtime.REFRESH_SECONDS`` 同口径：
 # 用 ``time.monotonic`` 计时，系统时间跳变不会拉长或立刻作废缓存。
 REFRESH_SECONDS = 5.0
+
+#: 版本闸生效时最多多久不回源数据库（秒）。版本号只能证明「没人通过 API 改过」，
+#: 挡不住直接改库；5 分钟的强制回源是最坏情况下的兜底。
+FULL_RELOAD_SECONDS = 300.0
+
+#: Redis 里本域的版本键（写策略时由 ``cache.flush_scopes(["roles"])`` 自增）。
+VERSION_SCOPE = "roles"
 
 _ADMIN_ROLE = "admin"
 
@@ -120,15 +129,21 @@ _quotas: dict[tuple[str, str], int] = {}
 _meta: dict[str, tuple[datetime | None, str | None]] = {}
 _last_refresh = 0.0
 _refreshing = False
+#: 上次读库时 Redis 里的版本号；``None`` = Redis 不可用 / 还没读过。
+_last_version: int | None = None
+#: 上次真正回源数据库的时刻（``_last_refresh`` 是「上次确认快照可用」的时刻）。
+_last_full_read = 0.0
 
 
 def _reset_state() -> None:
     """清空快照（测试钩子；也让下一次读取重新按 DEFAULTS 算）。"""
-    global _last_refresh
+    global _last_refresh, _last_version, _last_full_read
     _features.clear()
     _quotas.clear()
     _meta.clear()
     _last_refresh = 0.0
+    _last_version = None
+    _last_full_read = 0.0
 
 
 def reset_cache() -> None:
@@ -137,9 +152,10 @@ def reset_cache() -> None:
 
 
 def invalidate() -> None:
-    """写后失效：下一次 :func:`ensure_fresh` 必刷（不等 TTL 到期）。"""
-    global _last_refresh
+    """写后失效：下一次 :func:`ensure_fresh` 必刷（不等 TTL、也不受版本闸影响）。"""
+    global _last_refresh, _last_full_read
     _last_refresh = 0.0
+    _last_full_read = 0.0
 
 
 def _repo():
@@ -153,14 +169,41 @@ def _repo():
     return OracleRolePoliciesRepo()
 
 
-async def refresh() -> None:
-    """从库里重读两张表，重建进程内快照；任何失败都回落代码默认值。"""
-    global _refreshing, _last_refresh
+async def _current_version() -> int | None:
+    """Redis 里的角色策略版本号；Redis 不可用返回 ``None``（闸门禁用，照旧读库）。"""
+    try:
+        return await cache.version_or_none(VERSION_SCOPE)
+    except Exception:  # noqa: BLE001 - 缓存层不该影响策略读取
+        return None
+
+
+async def refresh(*, force: bool = False) -> None:
+    """重建进程内快照；``force`` 绕过版本闸直接回源。
+
+    每次先花一次 Redis GET 看 ``roles`` 版本号：版本没变、且上次回源不到
+    :data:`FULL_RELOAD_SECONDS` → 库里一定还是那份，直接返回。写路径
+    （:func:`replace_role`）自增版本号，别的进程下一轮即可见。
+    任何读库失败都回落代码默认值。
+    """
+    global _refreshing, _last_refresh, _last_version, _last_full_read
     if _refreshing:
         # 上一轮还没读完：这一轮直接跳过，不让并发刷新叠加连接。
         return
     _refreshing = True
     try:
+        version = await _current_version()
+        now = time.monotonic()
+        if (
+            not force
+            and version is not None
+            and version == _last_version
+            and _last_full_read > 0
+            and now - _last_full_read < FULL_RELOAD_SECONDS
+        ):
+            # 版本没变：别的进程没写过，快照仍然可信，只把「确认时刻」推后。
+            _last_refresh = now
+            return
+
         features: dict[tuple[str, str], bool] = {}
         quotas: dict[tuple[str, str], int] = {}
         meta: dict[str, tuple[datetime | None, str | None]] = {}
@@ -202,6 +245,8 @@ async def refresh() -> None:
         _meta.clear()
         _meta.update(meta)
         _last_refresh = time.monotonic()
+        _last_full_read = _last_refresh
+        _last_version = version
     finally:
         _refreshing = False
 
@@ -227,7 +272,7 @@ async def ensure_fresh(force: bool = False) -> None:
         or _last_refresh <= 0
         or time.monotonic() - _last_refresh >= REFRESH_SECONDS
     ):
-        await refresh()
+        await refresh(force=force)
 
 
 # ---------------------------------------------------------------------------
@@ -340,16 +385,28 @@ async def replace_role(
     quotas: dict[str, int],
     actor: str | None = None,
 ) -> dict[str, Any]:
-    """写库（单事务全量替换）→ 立刻重读快照 → 返回该角色最新的生效矩阵。
+    """写库（单事务全量替换）→ 立刻重读快照 → 广播版本号 → 返回最新矩阵。
 
     写后**主动 refresh** 而不是只 ``invalidate()``：管理员点完保存，本进程下一次
     guard 判断就必须是新值；把快照清空会让中间那一小段时间回落到 DEFAULTS，
     那是比「多一次查询」更糟的错值。调用方（路由）负责校验与双人授权。
+
+    广播放最后：别的进程看到版本变化时，本进程的快照已经是最新的了。
     """
     await _repo().upsert_role(role, features, quotas, actor)
     await refresh()
+    await _publish_change()
     return _role_view(role)
 
+
+async def _publish_change() -> None:
+    """失效本域缓存并自增版本号；失败只降级（写已经落库，不能因此 500）。"""
+    global _last_version
+    try:
+        await cache.flush_scopes([VERSION_SCOPE])
+        _last_version = await _current_version()
+    except Exception:  # noqa: BLE001 - 广播失败只影响跨进程时效
+        _last_version = None
 
 
 async def effective_policy(roles: Iterable[str] | None) -> dict[str, Any]:
