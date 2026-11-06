@@ -1,8 +1,7 @@
-from datetime import datetime
-
 from db import backends
 from util.ban import ban_is_active, ban_reason_of, ban_until_epoch
-from utils import validate_object_id
+from util.oid import validate_object_id
+from util.serialization import iso
 
 
 def public_user(user: dict) -> dict:
@@ -52,9 +51,7 @@ def user_profile(user: dict) -> dict:
     if banned:
         until = user.get("ban_until")
         profile["ban_reason"] = ban_reason_of(user)
-        profile["ban_until"] = (
-            until.isoformat() if isinstance(until, datetime) else None
-        )
+        profile["ban_until"] = iso(until)
         profile["ban_source"] = user.get("ban_source")
         profile["ban_rule"] = user.get("ban_rule")
         # 永久封禁 = 没有到期时间；前端靠这一位决定显示「永久」而不是空白。

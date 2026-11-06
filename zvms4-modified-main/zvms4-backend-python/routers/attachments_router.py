@@ -58,6 +58,7 @@ from util.object_id import (
     validate_object_id,
 )
 from util.permission.features import ensure_feature
+from util.serialization import iso_text
 
 # ---------------------------------------------------------------------------
 # Device gate
@@ -235,14 +236,6 @@ async def _can_read(user: dict, row: dict, class_id: str | None) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def _iso(value) -> str | None:
-    if value is None:
-        return None
-    if isinstance(value, datetime):
-        return value.isoformat()
-    return str(value)
-
-
 def _serialize_meta(row: dict, *, include_sha: bool) -> dict:
     data = {
         "_id": str(row.get("_id") or ""),
@@ -257,8 +250,8 @@ def _serialize_meta(row: dict, *, include_sha: bool) -> dict:
         "entity_oid": row.get("entity_oid"),
         "status": row.get("status"),
         "ocr_status": row.get("ocr_status"),
-        "created_at": _iso(row.get("created_at")),
-        "deleted_at": _iso(row.get("deleted_at")),
+        "created_at": iso_text(row.get("created_at")),
+        "deleted_at": iso_text(row.get("deleted_at")),
     }
     if include_sha:
         data["sha256"] = row.get("sha256")
@@ -280,7 +273,7 @@ def _serialize_event(row: dict) -> dict:
         "from_status": row.get("from_status"),
         "to_status": row.get("to_status"),
         "detail": row.get("detail"),
-        "created_at": _iso(row.get("created_at")),
+        "created_at": iso_text(row.get("created_at")),
     }
 
 
@@ -741,7 +734,7 @@ async def get_attachment_audit(
                 "text": ocr.get("text") if ocr else None,
                 "confidence": ocr.get("confidence") if ocr else None,
                 "lines": lines,
-                "updated_at": _iso(ocr.get("created_at")) if ocr else None,
+                "updated_at": iso_text(ocr.get("created_at")) if ocr else None,
             },
             "events": [_serialize_event(event) for event in events],
             "events_limit": AUDIT_EVENT_LIMIT,
@@ -933,7 +926,7 @@ async def get_attachment_ocr(
             "text": ocr.get("text") if ocr else None,
             "confidence": ocr.get("confidence") if ocr else None,
             "lines": _ocr_lines(ocr),
-            "updated_at": _iso(ocr.get("updated_at")) if ocr else None,
+            "updated_at": iso_text(ocr.get("updated_at")) if ocr else None,
         },
     }
 

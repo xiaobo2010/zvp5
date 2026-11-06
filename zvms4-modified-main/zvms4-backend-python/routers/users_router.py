@@ -835,6 +835,8 @@ async def read_users(
     # 分页下推到 SQL：``page == -1`` 仍表示「不分页」，但必须给硬上限——
     # 不限量返回才是这条路径原来的问题。``perpage`` 本身已由 Query(le=100)
     # 夹住，所以只有 -1 分支需要这个天花板。
+    # 这个 ``-1`` 哨兵刻意不交给 ``db.repos.pagination.page_args``：它会把页
+    # 号钳到 1，而这里要的是「一次全量（截断到 CAP）」的另一种语义。
     limit = _USER_LIST_CAP if page == -1 else perpage
     offset = 0 if page == -1 else (page - 1) * perpage
     users, count = await backends.get_users_repo().search(
@@ -986,6 +988,7 @@ async def read_user_activity(
 
     activities.sort(key=lambda activity: activity["_id"], reverse=True)
 
+    # ``page == -1`` 同样是「一次全量」哨兵，不能用 ``page_args`` 归一。
     if page == -1:
         page_activities = activities
     else:

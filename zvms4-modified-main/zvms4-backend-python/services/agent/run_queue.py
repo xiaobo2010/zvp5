@@ -45,6 +45,7 @@ from services.ai import (
 from typings.log import ZVMSLog
 from util import agent_unlock
 from util.ban import ban_is_active
+from util.serialization import iso_str
 
 _logger = logging.getLogger(__name__)
 
@@ -187,12 +188,6 @@ def _int(value: object) -> int:
         return 0
 
 
-def _iso(value: object) -> str | None:
-    if isinstance(value, datetime):
-        return value.isoformat(sep=" ", timespec="seconds")
-    return value if isinstance(value, str) else None
-
-
 def _clip(text: object, limit: int) -> str | None:
     if text is None:
         return None
@@ -217,9 +212,9 @@ def run_view(row: Mapping[str, Any]) -> dict:
         "completion_tokens": _int(row.get("completion_tokens")),
         "total_tokens": _int(row.get("total_tokens")),
         "cancel_requested": bool(row.get("cancel_requested")),
-        "created_at": _iso(row.get("created_at")),
-        "started_at": _iso(row.get("started_at")),
-        "finished_at": _iso(row.get("finished_at")),
+        "created_at": iso_str(row.get("created_at")),
+        "started_at": iso_str(row.get("started_at")),
+        "finished_at": iso_str(row.get("finished_at")),
     }
 
 

@@ -39,12 +39,12 @@ import sqlite3
 import threading
 import time
 from contextlib import closing
-from datetime import datetime, timezone
 from typing import Any, Iterable, Mapping
 
 from services import db_monitor
 from services.api_metrics import api_metrics
 from services.host_metrics import collect_host_metrics
+from util.serialization import iso_epoch_utc
 
 _logger = logging.getLogger(__name__)
 
@@ -369,10 +369,6 @@ RANGE_SECONDS: dict[str, int] = {
 AGG_FUNCTIONS = {"avg": "AVG", "max": "MAX", "min": "MIN"}
 
 
-def _iso(ts: float | int) -> str:
-    return datetime.fromtimestamp(float(ts), tz=timezone.utc).isoformat()
-
-
 def resolve_range(range_key: str) -> int:
     try:
         return RANGE_SECONDS[range_key]
@@ -424,11 +420,11 @@ def query_history(
                 value = _finite(row["value"])
                 if value is None:
                     continue
-                points[row["series"]].append({"ts": _iso(bucket), "value": value})
+                points[row["series"]].append({"ts": iso_epoch_utc(bucket), "value": value})
 
     return {
-        "from": _iso(start),
-        "to": _iso(moment),
+        "from": iso_epoch_utc(start),
+        "to": iso_epoch_utc(moment),
         "step_seconds": step,
         "agg": agg,
         "unknown_series": unknown,
@@ -510,7 +506,7 @@ def query_top_sql(limit: int = 10) -> dict[str, Any]:
         for row in rows
         if not db_monitor.is_monitoring_sql(row["sql_text"])
     ]
-    return {"observed_at": _iso(latest), "items": items[:bounded]}
+    return {"observed_at": iso_epoch_utc(latest), "items": items[:bounded]}
 
 
 # --------------------------------------------------------------------------- #

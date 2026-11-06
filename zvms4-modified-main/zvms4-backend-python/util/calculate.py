@@ -8,7 +8,7 @@ from db import backends
 from db.ids import normalize_oid
 from settings import LANGUAGE
 from typings.time import UserActivityTime
-from utils import validate_object_id
+from util.oid import validate_object_id
 import pandas as pd
 
 logger = logging.getLogger(__name__)

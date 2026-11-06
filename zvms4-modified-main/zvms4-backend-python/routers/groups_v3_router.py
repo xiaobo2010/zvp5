@@ -6,7 +6,7 @@ from db.oracle.session import session_scope
 from typings.log import inject_log
 from util.object_id import get_current_user
 from util.user import get_user_display_name
-from utils import validate_object_id
+from util.oid import validate_object_id
 
 router = APIRouter()
 
