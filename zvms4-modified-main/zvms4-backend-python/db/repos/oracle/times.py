@@ -728,11 +728,22 @@ class OracleTimeRepo:
     async def list_with_origin(self, user_oids: list[str]) -> list[Row]:
         if not user_oids:
             return []
-        users = [normalize_oid(oid) for oid in user_oids]
-        stmt = _list_with_origin_stmt(users)
+        users = list(dict.fromkeys(normalize_oid(oid) for oid in user_oids))
+        if len(users) <= _OID_CHUNK:
+            stmt = _list_with_origin_stmt(users)
+            async with _session_for(self._session) as (session, _owns):
+                rows = (await session.execute(stmt)).all()
+            return [_with_origin_row(row._mapping) for row in rows]
+        # 超过 1000 个 oid 时单条 ``IN`` 会 ORA-01795（表达式列表上限），
+        # 与 ``list_by_users`` 同口径按 _OID_CHUNK 拆块。
+        merged: list[Any] = []
         async with _session_for(self._session) as (session, _owns):
-            rows = (await session.execute(stmt)).all()
-        return [_with_origin_row(row._mapping) for row in rows]
+            for start in range(0, len(users), _OID_CHUNK):
+                chunk = users[start : start + _OID_CHUNK]
+                merged.extend(
+                    (await session.execute(_list_with_origin_stmt(chunk))).all()
+                )
+        return [_with_origin_row(row._mapping) for row in merged]
 
     async def upsert_with_origin_stat(
         self,
