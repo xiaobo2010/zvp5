@@ -1,8 +1,8 @@
 """oid 形状守卫：24 位 hex 是业务 oid，32 位 hex 是会话/提案的 opaque handle。
 
-拆分 ``routers/ai_router.py`` 时曾把 ``ai_conversations_router.OID_PATTERN`` 与
-``ai_agent_router.PROPOSAL_OID_PATTERN`` 的 ``{32}`` 报成「写错了，ObjectId 是 24
-位」。核对三个权威来源后确认 **32 位才是对的**：
+拆分 ``routers/ai_router.py`` 时曾把会话/提案的 32 位形状报成「写错了，ObjectId
+是 24 位」。核对三个权威来源后确认 **32 位才是对的**（会话/run 的形状判定现在
+统一走 ``util.oid.hex_id_or_none(length=32)``）：
 
 * ``db/ids.py`` 的 24 位 hex 只用于业务 ObjectId（``new_oid`` / ``validate_oid``）；
 * ``db/repos/protocols.py`` 明确记录会话与 run 的 ``oid`` 是
@@ -22,7 +22,8 @@ import pytest
 
 import db.ids as ids
 from routers.ai_agent_router import PROPOSAL_OID_PATTERN
-from routers.ai_conversations_router import OID_PATTERN, _require_oid
+from routers.ai_conversations_router import _require_oid
+from util.oid import hex_id_or_none
 from services.agent.tool_impl import AgentError
 
 
@@ -39,10 +40,11 @@ def test_conversation_handle_is_32_hex_uuid4() -> None:
     """会话/消息/run 的 oid 是 ``uuid4().hex``：32 位小写 hex。"""
     handle = uuid4().hex
     assert len(handle) == 32
-    assert OID_PATTERN.match(handle)
+    assert hex_id_or_none(handle, length=32) == handle
     # 24 位业务 oid 不该被当成会话 handle
-    assert not OID_PATTERN.match("a" * 24)
-    assert not OID_PATTERN.match(handle.upper())
+    assert hex_id_or_none("a" * 24, length=32) is None
+    # 形状判定本身只收小写 hex；大写是包装层先 lower 再校验（见下一条断言）
+    assert hex_id_or_none(handle.upper(), length=32) == handle
 
 
 def test_proposal_handle_is_32_hex_uuid4() -> None:

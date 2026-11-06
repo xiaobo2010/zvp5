@@ -26,7 +26,6 @@
 
 from __future__ import annotations
 
-from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, Body, Depends, HTTPException
@@ -36,9 +35,10 @@ from db import backends
 from db.repos.oracle.notifications import notification_content_hash
 from typings.log import inject_log
 from util.object_id import get_current_user, require_password_verification
+from util.oid import validate_object_id
 from util.permission.features import has_feature
+from util.serialization import iso_seconds
 from util.user import get_user_display_name
-from utils import validate_object_id
 
 router = APIRouter()
 
@@ -78,12 +78,6 @@ def _require_admin(user: dict, feature: str | None = None) -> None:
     raise HTTPException(status_code=403, detail="权限不足")
 
 
-def _iso(value) -> Optional[str]:
-    if isinstance(value, datetime):
-        return value.isoformat(timespec="seconds")
-    return None
-
-
 def _clean_text(value: str, field: str, limit: int) -> str:
     """Trim and reject whitespace-only/oversized input.
 
@@ -117,8 +111,8 @@ def _view(entry: dict) -> dict:
         ),
         "author_id": entry["author_oid"],
         "author_name": entry["author_name"],
-        "created_at": _iso(entry["created_at"]),
-        "updated_at": _iso(entry["updated_at"]),
+        "created_at": iso_seconds(entry["created_at"]),
+        "updated_at": iso_seconds(entry["updated_at"]),
         "active": bool(entry["active"]),
     }
 
@@ -135,7 +129,7 @@ def _version_view(snapshot: dict) -> dict:
         "source_version": snapshot["source_version"],
         "author_id": snapshot["author_oid"],
         "author_name": snapshot["author_name"],
-        "created_at": _iso(snapshot["created_at"]),
+        "created_at": iso_seconds(snapshot["created_at"]),
     }
 
 

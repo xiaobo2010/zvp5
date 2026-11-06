@@ -12,7 +12,7 @@ from util.calculate import (
     describe_memberships,
 )
 from util.get_class import get_user_classname
-from utils import validate_object_id
+from util.oid import validate_object_id
 
 # Language type definition
 Language = Literal["zh", "en"]

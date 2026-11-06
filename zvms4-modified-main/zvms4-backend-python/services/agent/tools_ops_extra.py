@@ -47,6 +47,7 @@ from db.oracle.session import session_scope
 from services import adb_backup, db_content, settings_runtime
 from services.ai import config as ai_config
 from util.dual_auth import audit_system_op
+from util.serialization import iso_str_nonempty
 
 from . import ops_auth, run_queue
 from .ops_tools import WRITE_AUTH_ACTION, _admin_only, _cap, _draft, _params
@@ -92,15 +93,6 @@ AUDIT_LOG_TYPE = "ai_ops_extra"
 # --------------------------------------------------------------------------- #
 
 
-def _iso(value: Any) -> str | None:
-    """``datetime`` → 秒级 ISO 字符串；字符串原样回，其它一律 ``None``。"""
-    if isinstance(value, datetime):
-        return value.isoformat(sep=" ", timespec="seconds")
-    if isinstance(value, str) and value:
-        return value
-    return None
-
-
 def _int(value: Any, default: int = 0) -> int:
     try:
         return int(value)
@@ -127,7 +119,7 @@ def _seconds_since(moment: Any, now: datetime) -> int | None:
 def _epoch_iso(value: Any) -> str | None:
     """epoch 秒 → ISO 字符串（``maintenance_state.since`` 是 ``time.time()``）。"""
     if isinstance(value, datetime):
-        return _iso(value)
+        return iso_str_nonempty(value)
     try:
         return datetime.fromtimestamp(float(value)).isoformat(sep=" ", timespec="seconds")
     except (TypeError, ValueError, OverflowError, OSError):
@@ -235,7 +227,7 @@ def _settings_item(item: dict, masked: list[str]) -> dict:
         "label": item.get("label"),
         "min": item.get("min"),
         "max": item.get("max"),
-        "updated_at": _iso(item.get("updated_at")),
+        "updated_at": iso_str_nonempty(item.get("updated_at")),
         "updated_by": item.get("updated_by"),
     }
 
@@ -283,7 +275,7 @@ async def _impl_settings_snapshot(user: dict, group: str = SETTINGS_GROUP_DEFAUL
         {
             "kind": "settings_snapshot",
             "group": target,
-            "observed_at": _iso(datetime.now()),
+            "observed_at": iso_str_nonempty(datetime.now()),
             "count": len(items),
             "settings": items,
             "masked_keys": masked,
@@ -428,7 +420,7 @@ def _call_log_item(row: dict) -> dict:
     """
     payload = {
         "oid": str(row.get("_id") or ""),
-        "ts": _iso(row.get("created_at")),
+        "ts": iso_str_nonempty(row.get("created_at")),
         "capability": row.get("capability"),
         "status": row.get("status"),
         "http_status": _int_or_none(row.get("http_status")),
@@ -476,7 +468,7 @@ async def _impl_ai_call_logs(
     return _cap(
         {
             "kind": "ai_call_logs",
-            "window": {"days": window, "since": _iso(since)},
+            "window": {"days": window, "since": iso_str_nonempty(since)},
             "filters": {
                 "capability": capability,
                 "status": status,
@@ -567,22 +559,22 @@ async def _impl_agent_queue_status(user: dict) -> dict:
     return _cap(
         {
             "kind": "agent_queue_status",
-            "observed_at": _iso(now),
+            "observed_at": iso_str_nonempty(now),
             "queued": {
                 "count": _int(queued["total"]) if queued else 0,
-                "oldest_created_at": _iso(queued["oldest_created"]) if queued else None,
+                "oldest_created_at": iso_str_nonempty(queued["oldest_created"]) if queued else None,
                 "oldest_wait_seconds": (
                     _seconds_since(queued["oldest_created"], now) if queued else None
                 ),
             },
             "running": {
                 "count": _int(running["total"]) if running else 0,
-                "oldest_started_at": _iso(running["oldest_started"]) if running else None,
+                "oldest_started_at": iso_str_nonempty(running["oldest_started"]) if running else None,
                 "oldest_running_seconds": (
                     _seconds_since(running["oldest_started"], now) if running else None
                 ),
                 "oldest_heartbeat_at": (
-                    _iso(running["oldest_heartbeat"]) if running else None
+                    iso_str_nonempty(running["oldest_heartbeat"]) if running else None
                 ),
                 "stale": _int(stale),
                 "without_heartbeat": _int(no_heartbeat),
@@ -596,7 +588,7 @@ async def _impl_agent_queue_status(user: dict) -> dict:
                 "max_runs_per_user": run_queue.max_runs_per_user(),
                 "heartbeat_seconds": int(run_queue.heartbeat_seconds()),
                 "stale_seconds": stale_after,
-                "stale_cutoff": _iso(cutoff),
+                "stale_cutoff": iso_str_nonempty(cutoff),
             },
             "pump_alive": _pump_alive(),
             "zombie_basis": (
@@ -1025,7 +1017,7 @@ def _lookup_view(row: Any, class_names: dict[str, str]) -> dict:
         "banned": bool(row.get("banned")),
         # 永久封禁在仓储里是「没有 ban_until 这个键」；这里显式给 null，
         # 让模型看到 ``banned=true, ban_until=null`` 这一对。
-        "ban_until": _iso(ban_until),
+        "ban_until": iso_str_nonempty(ban_until),
         "device_bound": "primary_xuehai_id" in row,
     }
 
@@ -1188,11 +1180,11 @@ def _record_item(row: Any, rule_names: dict[str, str]) -> dict:
         "rule_name": mapping.get("rule_name") or rule_names.get(rule_code),
         "reason": mapping.get("reason"),
         "permanent": bool(mapping.get("permanent")),
-        "started_at": _iso(mapping.get("started_at")),
-        "expires_at": _iso(mapping.get("expires_at")),
+        "started_at": iso_str_nonempty(mapping.get("started_at")),
+        "expires_at": iso_str_nonempty(mapping.get("expires_at")),
         "operator_oid": mapping.get("operator_oid"),
         "operator_name": mapping.get("operator_name"),
-        "created_at": _iso(mapping.get("created_at")),
+        "created_at": iso_str_nonempty(mapping.get("created_at")),
     }
 
 
@@ -1296,7 +1288,7 @@ async def _device_history(user_oid: str) -> dict | None:
     return {
         "xuehai_id_masked": _mask_xuehai(xuehai_id),
         "ban_count": _int(counter.get("ban_count")) if counter else 0,
-        "last_banned_at": _iso(counter.get("last_banned_at")) if counter else None,
+        "last_banned_at": iso_str_nonempty(counter.get("last_banned_at")) if counter else None,
     }
 
 
@@ -1350,7 +1342,7 @@ async def _impl_ban_history(
         {
             "rule_code": item._mapping.get("rule_code"),
             "count": _int(item._mapping.get("ban_count")),
-            "last_at": _iso(item._mapping.get("last_at")),
+            "last_at": iso_str_nonempty(item._mapping.get("last_at")),
         }
         for item in tier_rows
     ]
@@ -1358,7 +1350,7 @@ async def _impl_ban_history(
         {
             "trigger_code": item._mapping.get("trigger_code"),
             "batches": _int(item._mapping.get("batches")),
-            "last_at": _iso(item._mapping.get("last_at")),
+            "last_at": iso_str_nonempty(item._mapping.get("last_at")),
         }
         for item in violation_rows
     ]
@@ -1371,7 +1363,7 @@ async def _impl_ban_history(
                 "name": row.get("name"),
                 "business_id": row.get("id"),
                 "banned": bool(row.get("banned")),
-                "ban_until": _iso(row.get("ban_until")),
+                "ban_until": iso_str_nonempty(row.get("ban_until")),
             },
             "records": records,
             "tiers": tiers,

@@ -36,6 +36,7 @@ from typings.log import inject_log
 from util.ban import humanize_ban_reason
 from util.object_id import get_current_user, require_password_verification
 from util.permission.features import has_feature
+from util.serialization import iso_seconds
 from util.user import get_user_display_name
 
 router = APIRouter()
@@ -205,14 +206,6 @@ def _require_admin(user: dict, feature: str | None = None) -> None:
     raise HTTPException(status_code=403, detail="权限不足")
 
 
-
-def _iso(value) -> Optional[str]:
-    """``datetime`` → ``YYYY-MM-DDTHH:MM:SS``；None 原样返回（永久封禁）。"""
-    if isinstance(value, datetime):
-        return value.isoformat(timespec="seconds")
-    return None
-
-
 def _load_json(raw, fallback):
     """读取宽进：库里是 JSON 文本，坏数据降级而不是让整页 500。"""
     if isinstance(raw, (dict, list)):
@@ -252,7 +245,7 @@ def _rule_view(rule: dict) -> dict:
         "builtin": bool(rule.get("builtin")),
         "config": _rule_config(rule),
         "penalties": _rule_penalties(rule),
-        "updated_at": _iso(rule.get("updated_at")),
+        "updated_at": iso_seconds(rule.get("updated_at")),
     }
 
 
@@ -593,7 +586,7 @@ async def list_banned_users(
             "reason": humanize_ban_reason(row.get("ban_reason")) or None,
             # ban_until 为 NULL 且 banned=1 就是永久封禁。
             "permanent": row.get("ban_until") is None,
-            "until": _iso(row.get("ban_until")),
+            "until": iso_seconds(row.get("ban_until")),
             "source": row.get("ban_source"),
             "rule_code": row.get("ban_rule"),
         }
@@ -623,10 +616,10 @@ def _device_view(row: dict, ban_count: int = 0, owner: dict | None = None) -> di
         "reason": row.get("reason"),
         # until 为 NULL 就是永久，与 /users、/records 的 permanent 语义一致。
         "permanent": until is None,
-        "until": _iso(until),
+        "until": iso_seconds(until),
         "source": row.get("source"),
         "rule_code": row.get("rule_code"),
-        "created_at": _iso(row.get("created_at")),
+        "created_at": iso_seconds(row.get("created_at")),
         "ban_count": ban_count,
         "owner": owner,
     }
@@ -702,7 +695,7 @@ async def ban_device(
         operator_oid=str(user["id"]),
     )
 
-    until_text = _iso(until) or "永久"
+    until_text = iso_seconds(until) or "永久"
     log.with_text(
         f"管理员 {await get_user_display_name(user['id'])} 封禁了设备 {xuehai_id}"
         f"（原因：{reason}，到期：{until_text}）",
@@ -719,7 +712,7 @@ async def ban_device(
             "xuehai_id": xuehai_id,
             "reason": reason,
             "permanent": until is None,
-            "until": _iso(until),
+            "until": iso_seconds(until),
             "source": "admin",
             "rule_code": None,
             "ban_count": counts.get(xuehai_id, 0),
@@ -799,8 +792,8 @@ async def list_ban_records(
             "rule_code": row.get("rule_code"),
             "reason": humanize_ban_reason(row.get("reason")) or None,
             "permanent": bool(row.get("permanent")),
-            "started_at": _iso(row.get("started_at")),
-            "expires_at": _iso(row.get("expires_at")),
+            "started_at": iso_seconds(row.get("started_at")),
+            "expires_at": iso_seconds(row.get("expires_at")),
             "operator_name": row.get("operator_name"),
         }
         for row in rows

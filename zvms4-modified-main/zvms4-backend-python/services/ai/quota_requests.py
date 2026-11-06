@@ -22,6 +22,7 @@ import logging
 from typing import Any, Iterable
 
 from db import backends
+from db.repos.pagination import page_bounds
 from services import log_events
 from util.dual_auth import audit_system_op
 
@@ -129,15 +130,10 @@ def _clip(value: object, width: int) -> str | None:
 
 
 def _page_args(page: object, size: object) -> tuple[int, int]:
-    try:
-        page_no = int(page)
-    except (TypeError, ValueError):
-        page_no = 1
-    try:
-        page_size = int(size)
-    except (TypeError, ValueError):
-        page_size = DEFAULT_PAGE_SIZE
-    return max(1, page_no), max(1, min(page_size, MAX_PAGE_SIZE))
+    """配额管理页的 ``(page, size)`` 归一：默认 20、上限 50（口径在常量里）。"""
+    return page_bounds(
+        page, size, default_size=DEFAULT_PAGE_SIZE, max_size=MAX_PAGE_SIZE
+    )
 
 
 # ---------------------------------------------------------------------------

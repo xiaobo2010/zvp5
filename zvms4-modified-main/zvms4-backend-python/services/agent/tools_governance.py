@@ -47,6 +47,7 @@ from services import db_content
 from services.ai import api_keys, quota
 from tasks import ocr_upload_gc
 from util.dual_auth import audit_system_op
+from util.serialization import iso_space_seconds
 from util.user import get_user_display_name
 
 from . import ops_auth
@@ -121,8 +122,8 @@ def _clamp(value: Any, low: int, high: int, default: int) -> int:
 
 
 def _iso(value: Any) -> str | None:
-    moment = _as_datetime(value)
-    return moment.isoformat(sep=" ", timespec="seconds") if moment else None
+    """先把 ``str``/``datetime`` 都解析成时间，再走统一序列化。"""
+    return iso_space_seconds(_as_datetime(value))
 
 
 def _as_datetime(value: Any) -> datetime | None:

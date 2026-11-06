@@ -16,7 +16,7 @@ from util.object_id import get_current_user, compulsory_temporary_token
 from util.permission import volunteer, volunteer_member
 from util.user import get_user_display_name
 from util.validation import validate_activity_description, validate_activity_name
-from utils import validate_object_id
+from util.oid import validate_object_id
 
 router = APIRouter()
 
