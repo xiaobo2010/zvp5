@@ -45,7 +45,7 @@ def _stubs(monkeypatch):
     async def _noop_warmup() -> bool:
         return True
 
-    monkeypatch.setattr(ai_router, "_warmup_local_engines", _noop_warmup)
+    monkeypatch.setattr("routers.ai.health._warmup_local_engines", _noop_warmup)
     routing.reset_state()
     rate_limit.reset_state()
     yield

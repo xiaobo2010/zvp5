@@ -132,7 +132,7 @@ async def _allow_reauth(*_args, **_kwargs):
 
 @pytest.fixture(autouse=True)
 def _no_reauth(monkeypatch):
-    monkeypatch.setattr(ai_router, "require_password_verification", _allow_reauth)
+    monkeypatch.setattr("routers.ai.keys.require_password_verification", _allow_reauth)
     monkeypatch.setattr(ai_api_keys_router, "require_password_verification", _allow_reauth)
 
 
@@ -348,9 +348,9 @@ def ocr_env(monkeypatch):
             )
         return True
 
-    # ``ai_router`` 是 ``from ... import require_password_verification`` 的绑定，
-    # 所以要打在路由模块的命名空间上。
-    monkeypatch.setattr(ai_router, "require_password_verification", _verify)
+    # ``routers.ai.ocr`` 是 ``from ... import require_password_verification`` 的
+    # 绑定，所以要打在端点模块的命名空间上（不再经过聚合器 ai_router）。
+    monkeypatch.setattr("routers.ai.ocr.require_password_verification", _verify)
     audit = _audit_repo(monkeypatch)
 
     app = FastAPI()

@@ -37,7 +37,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from routers.ai_router import AI_FORBIDDEN_MESSAGE, _error_type, _has_ai_access
+from routers.ai.common import AI_FORBIDDEN_MESSAGE, _error_type, _has_ai_access
 from services.agent import run_queue
 from services.agent.tool_impl import AgentError
 from services.ai import audit, conversations

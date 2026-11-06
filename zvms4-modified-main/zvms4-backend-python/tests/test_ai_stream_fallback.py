@@ -292,7 +292,7 @@ def _cached(key: str, model: str) -> bool:
 
 def test_negative_cache_expires_after_the_ttl(monkeypatch) -> None:
     now = {"value": 1000.0}
-    monkeypatch.setattr(ai_router, "_stream_clock", lambda: now["value"])
+    monkeypatch.setattr("routers.ai.common._stream_clock", lambda: now["value"])
 
     _mark("shared:b", "team/gpt-x")
 
