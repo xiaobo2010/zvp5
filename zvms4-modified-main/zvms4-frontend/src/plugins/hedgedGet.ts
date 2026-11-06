@@ -13,17 +13,30 @@ import { normalizeApiPath } from '@/utils/apiRouting'
  * 列表接口在后端都有分页上限，不把文件、导出和流式接口纳入。
  */
 const SMALL_JSON_GET_ROUTES: readonly RegExp[] = [
-  /^\/(?:version|health|changelog)$/,
-  /^\/system\/maintenance$/,
+  /^\/(?:version|health|changelog|cert|meta|session)$/,
+  /^\/logs$/,
+  /^\/system\/(?:maintenance|role-policies(?:\/me)?)$/,
   /^\/v3\/notifications$/,
   /^\/(?:v2|v3)\/activities$/,
   /^\/v2\/activities\/[^/]+$/,
+  /^\/v2\/activities\/[^/]+\/members(?:\/[^/]+)?$/,
   /^\/v3\/activities\/[^/]+\/members$/,
-  /^\/v2\/users\/[^/]+\/activities$/,
-  /^\/v2\/groups\/[^/]+\/activities$/,
+  /^\/v2\/statistics\/activities\/[^/]+\/analysis$/,
+  /^\/v2\/users(?:\/[^/]+\/(?:activities|time|time_statistics))?$/,
+  /^\/v2\/groups(?:\/[^/]+\/(?:activities|users))?$/,
   /^\/v3\/groups\/[^/]+\/users$/,
+  /^\/v3\/users\/me\/(?:device|device-bindings)$/,
   /^(?:\/(?:v[23]))?\/users\/[^/]+$/,
-  /^(?:\/(?:v[23]))?\/groups\/[^/]+$/
+  /^(?:\/(?:v[23]))?\/groups\/[^/]+$/,
+  /^\/groups$/,
+  /^\/v3\/ban\/(?:rules|triggers|users|devices|violations)$/,
+  /^\/attachments$/,
+  /^\/attachments\/[^/]+\/(?:meta|audit|ocr)$/,
+  /^\/ai\/conversations$/,
+  /^\/ai\/conversations\/[^/]+$/,
+  /^\/ai\/runs(?:\/[^/]+)?$/,
+  /^\/ai\/agent\/proposals$/,
+  /^\/ai\/v1\/models$/
 ]
 
 type HedgedConfig = InternalAxiosRequestConfig & {
@@ -99,9 +112,16 @@ function isDefinitiveClientError(error: unknown): boolean {
   return status >= 400 && status < 500 && ![408, 425, 429].includes(status)
 }
 
+function responseAccepted(config: InternalAxiosRequestConfig, response: AxiosResponse): boolean {
+  if (response.status >= 200 && response.status < 300) {
+    return true
+  }
+  return config.validateStatus ? config.validateStatus(response.status) : false
+}
+
 /**
- * 两路低层 Axios adapter 同时启动；两路都完整收到后才算完成，第一条成功响应
- * 获胜并中止另一条。若一路失败，另一条仍可完成；两路都失败时保留首尔错误。
+ * 两路低层 Axios adapter 同时启动；2xx 响应优先，先完整收到者获胜并中止另一条。
+ * AI 请求会放开 validateStatus，因此非 2xx 也必须等待另一条，不能抢先获胜。
  */
 export function createHedgedGetAdapter(
   primaryAdapter: AxiosAdapter,
@@ -114,6 +134,8 @@ export function createHedgedGetAdapter(
       const primarySignal = config.signal
       let primaryError: unknown
       let relayError: unknown
+      let primaryResponse: AxiosResponse | undefined
+      let relayResponse: AxiosResponse | undefined
       let primaryDone = false
       let relayDone = false
       let settled = false
@@ -144,6 +166,12 @@ export function createHedgedGetAdapter(
         if (settled || !primaryDone || !relayDone) return
         settled = true
         cleanup()
+        const accepted = primaryResponse ?? relayResponse
+        if (accepted && responseAccepted(config, accepted)) {
+          accepted.config = config
+          resolve(accepted)
+          return
+        }
         reject(
           primaryError ??
             relayError ??
@@ -167,7 +195,12 @@ export function createHedgedGetAdapter(
         .then(() => primaryAdapter(primaryConfig))
         .then((response) => {
           primaryDone = true
-          succeed(response, relayController)
+          primaryResponse = response
+          if (response.status >= 200 && response.status < 300) {
+            succeed(response, relayController)
+          } else {
+            rejectWhenBothFailed()
+          }
         })
         .catch((error: unknown) => {
           primaryDone = true
@@ -186,7 +219,12 @@ export function createHedgedGetAdapter(
         .then(() => primaryAdapter(relayConfig))
         .then((response) => {
           relayDone = true
-          succeed(response, primaryController)
+          relayResponse = response
+          if (response.status >= 200 && response.status < 300) {
+            succeed(response, primaryController)
+          } else {
+            rejectWhenBothFailed()
+          }
         })
         .catch((error: unknown) => {
           relayDone = true

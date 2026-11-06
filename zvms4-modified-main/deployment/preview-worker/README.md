@@ -55,6 +55,11 @@ npx wrangler@4 deploy
 绕过：直接用 `npx vite build`（不吃 `prebuild`），或先把样式文件补进
 `前端约定/css/`。
 
+`v5-canary` 分支已修：主题样式（`user-v2` / `phi-theme` / `phi-portals`）落在
+`前端约定/css/` 源目录，生成目录只是副本，`npm run build` 可直接用。
+注意另一端也可能只改生成目录——发版前用
+`diff <(tail -n +8 src/assets/styles/yg/X.css) 前端约定/css/X.css` 核对两边一致。
+
 同一个根因还会让 `scripts/vite-plugin-externalize-inline-scripts.ts` 在
 `closeBundle` 报 `ENOENT dist/index.html`——真实错误是前面的模块解析失败，
 这个插件只是把错误盖住，看日志时别被它带偏。
