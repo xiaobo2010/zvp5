@@ -11,7 +11,6 @@ export function composeDurationRecommendation(config: {
   attachment?: number
   ticketRequired?: boolean
 }): string {
-  console.log(config)
   const { lte, gte, unlimited, documented, lang, attachment, ticketRequired } = config
   const attachmentText = {
     1:

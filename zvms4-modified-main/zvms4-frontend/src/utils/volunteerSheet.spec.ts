@@ -64,7 +64,7 @@ describe('volunteer sheet rows', () => {
     ])
   })
 
-  it('parses an xlsx workbook through the SheetJS boundary', () => {
+  it('parses an xlsx workbook through the SheetJS boundary', async () => {
     const workbook = XLSX.utils.book_new()
     const sheet = XLSX.utils.aoa_to_sheet([
       ['姓名', '学号', '时长'],
@@ -73,6 +73,6 @@ describe('volunteer sheet rows', () => {
     XLSX.utils.book_append_sheet(workbook, sheet, '义工名单')
     const buffer = XLSX.write(workbook, { type: 'array', bookType: 'xlsx' })
 
-    expect(parseVolunteerXlsx(buffer)).toEqual([['20240001', '张三', '2']])
+    expect(await parseVolunteerXlsx(buffer)).toEqual([['20240001', '张三', '2']])
   })
 })

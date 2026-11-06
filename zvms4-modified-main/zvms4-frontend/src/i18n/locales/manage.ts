@@ -163,7 +163,6 @@ export const zhCN = {
     banDialogConfirm: '确认封禁',
     banPermanent: '永久',
     banUntil: '到期：{time}',
-    primaryDevice: '主设备：{id}',
     tempPassword: {
       action: '签发临时密码',
       confirmTitle: '签发临时密码',

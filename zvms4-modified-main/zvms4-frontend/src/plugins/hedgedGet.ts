@@ -34,9 +34,25 @@ const SMALL_JSON_GET_ROUTES: readonly RegExp[] = [
   /^\/attachments\/[^/]+\/(?:meta|audit|ocr)$/,
   /^\/ai\/conversations$/,
   /^\/ai\/conversations\/[^/]+$/,
+  /^\/ai\/conversations\/[^/]+\/messages$/,
   /^\/ai\/runs(?:\/[^/]+)?$/,
   /^\/ai\/agent\/proposals$/,
-  /^\/ai\/v1\/models$/
+  /^\/ai\/models$/,
+  /^\/ai\/v1\/models$/,
+  /^\/ai\/logs$/,
+  /^\/ai\/logs\/stats$/,
+  /^\/ai\/quota\/usage$/,
+  /^\/ai\/quota\/[^/]+$/,
+  /^\/ai\/scheduled-tasks$/,
+  /^\/ai\/scheduled-tasks\/[^/]+\/runs$/,
+  /^\/v2\/groups\/[^/]+\/time$/,
+  /^\/v2\/groups\/[^/]+\/statistics\/compliance$/,
+  /^\/v2\/times$/,
+  /^\/system\/settings$/,
+  /^\/system\/user-quotas\/[^/]+$/,
+  /^\/v3\/notifications\/admin$/,
+  /^\/v3\/notifications\/[^/]+\/versions$/,
+  /^\/v3\/ban\/records$/
 ]
 
 type HedgedConfig = InternalAxiosRequestConfig & {
