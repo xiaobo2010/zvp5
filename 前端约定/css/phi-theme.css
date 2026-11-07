@@ -9,21 +9,27 @@
 /* ---------- 字体 ---------- */
 @font-face {
   font-family: 'Bebas';
-  src: url('../../fonts/phi/BebasNeue-Regular.ttf') format('truetype');
+  src:
+    url('../../fonts/phi/BebasNeue-Regular.woff2') format('woff2'),
+    url('../../fonts/phi/BebasNeue-Regular.ttf') format('truetype');
   font-display: swap;
   font-weight: 400;
 }
 
 @font-face {
   font-family: 'Rajdhani';
-  src: url('../../fonts/phi/Rajdhani-Medium.ttf') format('truetype');
+  src:
+    url('../../fonts/phi/Rajdhani-Medium.woff2') format('woff2'),
+    url('../../fonts/phi/Rajdhani-Medium.ttf') format('truetype');
   font-display: swap;
   font-weight: 500;
 }
 
 @font-face {
   font-family: 'Rajdhani';
-  src: url('../../fonts/phi/Rajdhani-Bold.ttf') format('truetype');
+  src:
+    url('../../fonts/phi/Rajdhani-Bold.woff2') format('woff2'),
+    url('../../fonts/phi/Rajdhani-Bold.ttf') format('truetype');
   font-display: swap;
   font-weight: 700;
 }
