@@ -1588,6 +1588,9 @@ html[data-theme='light'] .profile-device-dialog-input {
   border-radius: 0;
   clip-path: polygon(3px 0, 100% 0, 100% calc(100% - 3px), calc(100% - 3px) 100%, 0 100%, 0 3px);
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.26);
+  /* 主题切换走 View Transitions 时，真实 DOM 被快照盖住，left transition 不生效。
+     提升为独立快照组后，滑块位移由 yg-glass-nav.css 的 group 动画接管。 */
+  view-transition-name: phi-theme-switch;
   transition:
     left 300ms var(--phx-spring),
     transform 300ms var(--phx-spring);
