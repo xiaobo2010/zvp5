@@ -652,7 +652,6 @@ def test_delete_cascade_archives_and_cleans_in_one_transaction(install_fake_sess
     assert trash["oid"] == trash_oid
     assert trash["user_oid"] == OTHER
     assert trash["deleted_by"] == SELF
-    assert trash["restored_at"] is None
 
     payload = json.loads(trash["payload"])
     assert payload["user"]["business_id"] == "20230103"
@@ -822,7 +821,7 @@ def test_purge_stmt_targets_deleted_at_with_rownum():
     assert "ROWNUM <= " in sql
     params = _params(stmt)
     assert cutoff in params.values() and 10 in params.values()
-    # 保留期只由 deleted_at 决定，restored_at 是标记位、不参与判定。
+    # 保留期只由 deleted_at 决定（restored_at 已于 V052 删除），SQL 里不应出现它。
     assert "restored_at" not in sql
 
 
