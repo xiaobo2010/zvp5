@@ -981,12 +981,28 @@ def _lookup_mode(
 
 
 async def _class_names(class_ids: list[str]) -> dict[str, str]:
-    """``{class_oid: name}``；单个班级查不到只影响 ``class_name``，不失败。"""
-    unique = list(dict.fromkeys(cid for cid in class_ids if cid))
+    """``{class_oid: name}``；单个班级查不到只影响 ``class_name``，不失败。
+
+    ``GROUPS`` 只有班级行，所以优先一次 ``list_all`` 建映射，而不是对每个
+    ``class_id`` 单查（N+1）。仓储替身只有单查接口，按能力探测回落旧路径。
+    """
+    unique = list(dict.fromkeys(str(cid) for cid in class_ids if cid))
     if not unique:
         return {}
     repo = backends.get_groups_repo()
+    list_all = getattr(repo, "list_all", None)
     names: dict[str, str] = {}
+    if list_all is not None:
+        try:
+            by_oid = {str(group.get("_id")): group for group in await list_all()}
+        except Exception:  # noqa: BLE001 - 班级名是加分项，不是查询本身
+            logger.warning("agent user_lookup class lookup failed", exc_info=True)
+            return {}
+        for class_id in unique:
+            group = by_oid.get(class_id)
+            if isinstance(group, dict) and group.get("name"):
+                names[class_id] = str(group["name"])
+        return names
     for class_id in unique:
         try:
             group = await repo.get(class_id)

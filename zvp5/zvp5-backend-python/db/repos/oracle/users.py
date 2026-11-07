@@ -757,7 +757,6 @@ user_trash_tbl = Table(
     Column("deleted_by", VARCHAR2(24), nullable=True),
     Column("deleted_at", TIMESTAMP, nullable=False),
     Column("payload", CLOB, nullable=False),
-    Column("restored_at", TIMESTAMP, nullable=True),
 )
 
 # ``files`` 的 BLOB（``content``）绝不进回收站 payload：CLOB 装不下附件字节，
@@ -861,7 +860,8 @@ def _purge_trash_stmt(cutoff: Any, batch_size: int):
 
     ``ROWNUM`` 而非 ``FETCH FIRST n ROWS ONLY``：Oracle 的 ``DELETE`` 不接受后者
     （与 ``db/repos/oracle/app_logs.py::_purge_batch_stmt`` 同一写法）。
-    只按 ``deleted_at`` 判过期——``restored_at`` 是标记位，不参与保留期计算。
+    只按 ``deleted_at`` 判过期。历史上还有一个 ``restored_at`` 标记位，但它全生命
+    周期只写 NULL、无任何读取方，已由 ``V052`` 删除；保留期口径不变。
     """
     return delete(user_trash_tbl).where(
         user_trash_tbl.c.deleted_at < cutoff,
@@ -946,7 +946,6 @@ async def archive_and_delete_user(
             deleted_by=actor,
             deleted_at=datetime.now(),
             payload=json.dumps(payload, ensure_ascii=False),
-            restored_at=None,
         )
     )
 

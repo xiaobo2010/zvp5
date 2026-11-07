@@ -27,8 +27,13 @@ from typing import Any, Awaitable, Callable, Mapping, Sequence
 from uuid import uuid4
 
 import settings
+from sqlalchemy import select as sa_select
+from sqlalchemy import update as sa_update
 
 from db import backends
+from db.models import ai_agent_events as ai_agent_events_tbl
+from db.models import ai_runs as ai_runs_tbl
+from db.oracle.session import session_scope
 from services import db_content, settings_runtime
 from services.agent.tool_impl import AgentError
 from services.ai import prompt_audit
@@ -699,14 +704,26 @@ async def _invalidate_proposals(owner_oid: str, conversation_oid: str) -> int:
     （``routers/ai_agent_router.py`` 的确认路径）。删掉会话却不作废提案，等于留着
     一个「用户以为已经删掉」的写操作，30 分钟内还能被执行。
 
-    仓储层没有「按会话批量作废」的接口，所以这里按 actor 的待确认提案逐条回查它
-    属于哪次 run（一次 run 只会属于一个会话），命中才 CAS 成 ``failed``。
+    仓储层没有「按会话批量作废」的接口（``db/`` 属于本批另一条车道），所以这里
+    按 actor 的待确认提案一次读出，再把「这些 request_id 属于哪个会话」收成一条
+    ``IN`` 查询、命中提案收成一条带 ``status='proposed'`` 条件（CAS）的 ``UPDATE``。
+    逐条 ``runs.get`` + ``events.update_status`` 在提案多时就是 2N 次跨洋往返。
+
+    非 SQL 装配（内存替身/其它实现）没有可共享的会话，回落到公共 API 的逐条
+    路径：行为一致，只是多几次往返。
     """
     events = _events()
     runs = _runs()
     rows = await events.list_by_actor(
         str(owner_oid), status="proposed", limit=PROPOSAL_SCAN_LIMIT
     )
+    if not rows:
+        return 0
+    if hasattr(runs, "_session") and hasattr(events, "_session"):
+        return await _invalidate_proposals_batch(
+            owner_oid, conversation_oid, rows
+        )
+
     invalidated = 0
     for row in rows:
         request_id = str(row.get("request_id") or "")
@@ -724,6 +741,55 @@ async def _invalidate_proposals(owner_oid: str, conversation_oid: str) -> int:
         if changed:
             invalidated += 1
     return invalidated
+
+
+async def _invalidate_proposals_batch(
+    owner_oid: str, conversation_oid: str, rows: list[Row]
+) -> int:
+    """``_invalidate_proposals`` 的集合式实现：1 条 SELECT + 1 条 UPDATE。"""
+    event_oids: list[str] = []
+    event_request: dict[str, str] = {}
+    for row in rows:
+        request_id = str(row.get("request_id") or "")
+        event_oid = str(row.get("_id") or row.get("oid") or "")
+        if not request_id or not event_oid:
+            continue
+        event_oids.append(event_oid)
+        event_request[event_oid] = request_id
+    if not event_oids:
+        return 0
+
+    async with session_scope() as session:
+        run_conversations: dict[str, str] = {}
+        request_ids = list(dict.fromkeys(event_request.values()))
+        for start in range(0, len(request_ids), PROPOSAL_SCAN_LIMIT):
+            chunk = request_ids[start : start + PROPOSAL_SCAN_LIMIT]
+            result = await session.execute(
+                sa_select(ai_runs_tbl.c.oid, ai_runs_tbl.c.conversation_oid).where(
+                    ai_runs_tbl.c.oid.in_(chunk),
+                    ai_runs_tbl.c.owner_oid == str(owner_oid),
+                )
+            )
+            for run_oid, run_conversation in result.all():
+                run_conversations[str(run_oid)] = str(run_conversation)
+        doomed = [
+            event_oid
+            for event_oid in event_oids
+            if run_conversations.get(event_request[event_oid])
+            == str(conversation_oid)
+        ]
+        if not doomed:
+            return 0
+        changed = await session.execute(
+            sa_update(ai_agent_events_tbl)
+            .where(
+                ai_agent_events_tbl.c.oid.in_(doomed),
+                ai_agent_events_tbl.c.status == "proposed",
+            )
+            .values(status="failed", result_summary=DELETED_PROPOSAL_SUMMARY)
+        )
+        await session.commit()
+        return int(changed.rowcount or 0)
 
 
 async def delete(*, user: Mapping[str, Any], oid: str) -> dict:
