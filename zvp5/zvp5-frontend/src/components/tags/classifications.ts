@@ -16,6 +16,8 @@ import { LucideWorkflow } from '@/icons'
 interface IconAndColor {
   icon: Component
   color: 'primary' | 'success' | 'warning' | 'danger' | 'info'
+  /** 标签自定义色系（目前仅义工模式使用），由 ZButtonTag 的 tone 透传 */
+  tone?: 'cyan' | 'violet' | 'magenta'
 }
 
 type set = 'mode' | 'status' | 'type' | 'member' | 'create'
@@ -32,15 +34,18 @@ export default {
   mode: {
     'on-campus': {
       icon: School,
-      color: 'primary'
+      color: 'primary',
+      tone: 'cyan'
     },
     'off-campus': {
       icon: CityGate,
-      color: 'success'
+      color: 'success',
+      tone: 'violet'
     },
     'social-practice': {
       icon: Vacation,
-      color: 'warning'
+      color: 'warning',
+      tone: 'magenta'
     },
     hybrid: {
       icon: Star,
