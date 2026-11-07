@@ -14,6 +14,7 @@ import { VitePWA as pwa } from 'vite-plugin-pwa'
 import { ElementPlusResolver } from 'unplugin-vue-components/resolvers'
 import { externalizeInlineScripts } from './scripts/vite-plugin-externalize-inline-scripts'
 import {
+  validateOptionalContentApiBase,
   validateOptionalProductionRaceApiBase,
   validateProductionApiBase
 } from './src/utils/apiBaseConfig'
@@ -27,6 +28,13 @@ function optionalProductionRaceApiBase(mode: string): string | undefined {
   const fileEnv = loadEnv(mode, process.cwd(), 'VITE_')
   return validateOptionalProductionRaceApiBase(
     process.env.VITE_API_RACE_BASE || fileEnv.VITE_API_RACE_BASE
+  )
+}
+
+function optionalContentApiBase(mode: string): string | undefined {
+  const fileEnv = loadEnv(mode, process.cwd(), 'VITE_')
+  return validateOptionalContentApiBase(
+    process.env.VITE_API_CONTENT_BASE || fileEnv.VITE_API_CONTENT_BASE
   )
 }
 
@@ -54,7 +62,9 @@ function preconnectApiOrigin(): Plugin {
       const fileEnv = loadEnv(mode, process.cwd(), 'VITE_')
       const bases = [
         process.env.VITE_API_BASE || fileEnv.VITE_API_BASE,
-        process.env.VITE_API_RACE_BASE || fileEnv.VITE_API_RACE_BASE
+        process.env.VITE_API_RACE_BASE || fileEnv.VITE_API_RACE_BASE,
+        // 预览站的内容主机是远端 API 域，值得和主基址一样预热。
+        process.env.VITE_API_CONTENT_BASE || fileEnv.VITE_API_CONTENT_BASE
       ]
       const origins = new Set<string>()
       for (const raw of bases) {
@@ -244,6 +254,7 @@ export default defineConfig(({ command, mode }) => {
   if (command === 'build') {
     requireProductionApiBase(mode)
     optionalProductionRaceApiBase(mode)
+    optionalContentApiBase(mode)
   }
   return viteBaseConfig
 })
