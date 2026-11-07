@@ -1,6 +1,6 @@
 <script lang="ts" setup>
 import type { Activity, ActivityMember } from '@/../types/v2'
-import { toRefs, ref, computed } from 'vue'
+import { toRefs, ref, computed, defineAsyncComponent } from 'vue'
 import {
   ElButton,
   ElInput,
@@ -20,14 +20,17 @@ import {
   ZActivityMember,
   ZActivityType,
   ZButtonOrCard,
-  ZActivityMemberList,
-  ZActivityStatsDialog
+  ZActivityMemberList
 } from '@/components'
 import { ZMarkdown, ZMarkdownEditor } from '@/components/markdown'
 import { useI18n } from 'vue-i18n'
 import api from '@/api'
 import router from '@/router'
 import ZActivityAttachmentsDialog from './ZActivityAttachmentsDialog.vue'
+// 活动统计弹窗是 chart.js 的唯一活动侧入口：打开「统计」才需要，按需加载。
+const ZActivityStatsDialog = defineAsyncComponent(
+  () => import('./ZActivityStatsDialog.vue')
+)
 import { StreamlineInterfaceUserEditActionsCloseEditGeometricHumanPencilPersonSingleUpUserWrite } from '@/icons'
 
 const props = withDefaults(
