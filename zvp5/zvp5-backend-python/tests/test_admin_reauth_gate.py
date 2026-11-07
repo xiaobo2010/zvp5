@@ -193,8 +193,8 @@ def env(monkeypatch):
     app = FastAPI()
     app.include_router(ai_router.router, prefix="/api/ai")
     app.include_router(ai_api_keys_router.router, prefix="/api/ai/api-keys")
-    app.include_router(ban_router.router, prefix="/api/v3/ban")
-    app.include_router(notifications_router.router, prefix="/api/v3/notifications")
+    app.include_router(ban_router.router, prefix="/api/v1/ban")
+    app.include_router(notifications_router.router, prefix="/api/v1/notifications")
     app.include_router(changelog_router.router, prefix="/api/changelog")
     app.include_router(system_settings_router.router, prefix="/api/system")
     app.dependency_overrides[get_current_user] = lambda: {
@@ -234,7 +234,7 @@ ENDPOINTS = [
     (
         "ban_rule_create",
         "post",
-        "/api/v3/ban/rules",
+        "/api/v1/ban/rules",
         {
             "code": "new_rule",
             "name": "规则",
@@ -243,24 +243,24 @@ ENDPOINTS = [
         },
         201,
     ),
-    ("ban_rule_update", "put", "/api/v3/ban/rules/my_rule", {"enabled": False}, 200),
-    ("ban_rule_delete", "delete", "/api/v3/ban/rules/my_rule", None, 204),
-    ("ban_device_ban", "post", "/api/v3/ban/devices", {"xuehai_id": "1234567890"}, 200),
-    ("ban_device_unban", "delete", "/api/v3/ban/devices/1234567890", None, 204),
+    ("ban_rule_update", "put", "/api/v1/ban/rules/my_rule", {"enabled": False}, 200),
+    ("ban_rule_delete", "delete", "/api/v1/ban/rules/my_rule", None, 204),
+    ("ban_device_ban", "post", "/api/v1/ban/devices", {"xuehai_id": "1234567890"}, 200),
+    ("ban_device_unban", "delete", "/api/v1/ban/devices/1234567890", None, 204),
     (
         "ban_device_reset_gradient",
         "post",
-        "/api/v3/ban/devices/1234567890/reset-gradient",
+        "/api/v1/ban/devices/1234567890/reset-gradient",
         None,
         204,
     ),
-    ("notification_create", "post", "/api/v3/notifications", NOTICE, 201),
-    ("notification_update", "put", f"/api/v3/notifications/{OID}", {"title": "改"}, 200),
-    ("notification_delete", "delete", f"/api/v3/notifications/{OID}", None, 204),
+    ("notification_create", "post", "/api/v1/notifications", NOTICE, 201),
+    ("notification_update", "put", f"/api/v1/notifications/{OID}", {"title": "改"}, 200),
+    ("notification_delete", "delete", f"/api/v1/notifications/{OID}", None, 204),
     (
         "notification_rollback",
         "post",
-        f"/api/v3/notifications/{OID}/rollback",
+        f"/api/v1/notifications/{OID}/rollback",
         {"version": 1},
         200,
     ),
@@ -313,7 +313,7 @@ def test_foreign_token_is_rejected(env, name, method, path, body, ok_status):
     "name,method,path,body,ok_status",
     [
         ("ai_credential_delete", "delete", f"/api/ai/keys/{OID}", None, 204),
-        ("notification_create", "post", "/api/v3/notifications", NOTICE, 201),
+        ("notification_create", "post", "/api/v1/notifications", NOTICE, 201),
         ("system_settings_update", "put", "/api/system/settings", SETTINGS, 200),
     ],
 )
@@ -344,4 +344,4 @@ def test_token_does_not_leak_into_service_fields(env, monkeypatch):
 
 def test_read_endpoints_need_no_token(env):
     assert env.get("/api/ai/api-keys").status_code == 200
-    assert env.get("/api/v3/ban/rules").status_code == 200
+    assert env.get("/api/v1/ban/rules").status_code == 200

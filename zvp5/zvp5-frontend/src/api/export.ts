@@ -20,9 +20,9 @@ export const time = {
     asc: boolean = true
   ) {
     const result = (
-      await axios(`/v2/times`, {
+      await axios(`/v1/times`, {
         params: {
-          search,
+          query: search,
           page,
           perpage,
           sort,

@@ -84,8 +84,8 @@ it('serves a repeated authenticated GET from cache without a second request', as
     return { data: { calls }, status: 200, statusText: 'OK', headers: {}, config }
   }
 
-  const first = await client.get('/v2/users/alice')
-  const second = await client.get('/v2/users/alice')
+  const first = await client.get('/v1/users/alice')
+  const second = await client.get('/v1/users/alice')
 
   expect(calls).toBe(1)
   expect(first.data).toEqual({ calls: 1 })
@@ -102,7 +102,7 @@ it('keeps cache entries isolated per account', async () => {
     headers: {},
     config
   })
-  await client.get('/v2/users/self')
+  await client.get('/v1/users/self')
 
   localStorage.setItem('token', 'bob-session-token')
   let calls = 0
@@ -110,7 +110,7 @@ it('keeps cache entries isolated per account', async () => {
     calls += 1
     return { data: { owner: 'bob' }, status: 200, statusText: 'OK', headers: {}, config }
   }
-  const result = await client.get('/v2/users/self')
+  const result = await client.get('/v1/users/self')
 
   // 换账号后旧缓存必须失效，请求重新发出并返回新身份的数据。
   expect(calls).toBe(1)
@@ -118,7 +118,7 @@ it('keeps cache entries isolated per account', async () => {
 
   const keys = vi.mocked(cacheSet).mock.calls.map(([key]) => String(key))
   expect(keys).toHaveLength(2)
-  expect(keys[0]).toContain('/v2/users/self')
+  expect(keys[0]).toContain('/v1/users/self')
   expect(keys[0]).not.toBe(keys[1])
   // 键里只留 token 指纹，不能出现凭证原文。
   expect(keys.join('|')).not.toContain('alice-session-token')
@@ -133,7 +133,7 @@ it('does not reuse the anonymous cache after logging in', async () => {
     headers: {},
     config
   })
-  await client.get('/v2/users/self')
+  await client.get('/v1/users/self')
 
   localStorage.setItem('token', 'alice-session-token')
   let calls = 0
@@ -141,7 +141,7 @@ it('does not reuse the anonymous cache after logging in', async () => {
     calls += 1
     return { data: { owner: 'alice' }, status: 200, statusText: 'OK', headers: {}, config }
   }
-  const result = await client.get('/v2/users/self')
+  const result = await client.get('/v1/users/self')
 
   expect(calls).toBe(1)
   expect(result.data).toEqual({ owner: 'alice' })
@@ -154,11 +154,11 @@ it('falls back to its own identity cache when the authenticated GET fails', asyn
     throw new AxiosError('offline', 'ERR_NETWORK', config)
   }
 
-  const result = await client.get('/v2/users/self')
+  const result = await client.get('/v1/users/self')
 
   expect(result.data).toEqual({ cached: true })
   const key = String(vi.mocked(cacheGet).mock.calls[0][0])
-  expect(key).toContain('/v2/users/self')
+  expect(key).toContain('/v1/users/self')
   expect(key).not.toContain('bob-session-token')
 })
 
@@ -343,9 +343,9 @@ it('merges concurrent identical GETs into a single request', async () => {
   }
 
   const results = await Promise.all([
-    client.get('/v3/users/me/device'),
-    client.get('/v3/users/me/device'),
-    client.get('/v3/users/me/device')
+    client.get('/v1/users/me/device'),
+    client.get('/v1/users/me/device'),
+    client.get('/v1/users/me/device')
   ])
 
   expect(calls).toBe(1)
@@ -365,8 +365,8 @@ it('keeps concurrent GETs with different query strings apart', async () => {
   }
 
   await Promise.all([
-    client.get('/v2/users', { params: { page: 1 } }),
-    client.get('/v2/users', { params: { page: 2 } })
+    client.get('/v1/users', { params: { page: 1 } }),
+    client.get('/v1/users', { params: { page: 2 } })
   ])
 
   expect(calls).toBe(2)
@@ -381,7 +381,7 @@ it('never merges write requests', async () => {
     return { data: { calls }, status: 200, statusText: 'OK', headers: {}, config }
   }
 
-  await Promise.all([client.post('/v3/notifications', {}), client.post('/v3/notifications', {})])
+  await Promise.all([client.post('/v1/notifications', {}), client.post('/v1/notifications', {})])
 
   expect(calls).toBe(2)
 })
@@ -397,8 +397,8 @@ it('never merges requests that carry a caller-side abort signal', async () => {
 
   const controller = new AbortController()
   await Promise.all([
-    client.get('/v2/users/self', { signal: controller.signal }),
-    client.get('/v2/users/self', { signal: controller.signal })
+    client.get('/v1/users/self', { signal: controller.signal }),
+    client.get('/v1/users/self', { signal: controller.signal })
   ])
 
   expect(calls).toBe(2)
@@ -415,8 +415,8 @@ it('gives every caller its own copy of the shared payload', async () => {
   })
 
   const [first, second] = await Promise.all([
-    client.get('/v2/users/self'),
-    client.get('/v2/users/self')
+    client.get('/v1/users/self'),
+    client.get('/v1/users/self')
   ])
 
   first.data.list.push(3)
@@ -428,8 +428,8 @@ it('rejects every merged caller when the shared request fails, with a single toa
   client.defaults.adapter = failingAdapter(500, { detail: 'boom' })
 
   const results = await Promise.allSettled([
-    client.get('/v2/users/self'),
-    client.get('/v2/users/self')
+    client.get('/v1/users/self'),
+    client.get('/v1/users/self')
   ])
 
   expect(results.map((r) => r.status)).toEqual(['rejected', 'rejected'])
@@ -445,8 +445,8 @@ it('ends the merged flight when the shared request throws a non-axios error', as
   }
 
   const results = await Promise.allSettled([
-    client.get('/v2/users/self'),
-    client.get('/v2/users/self')
+    client.get('/v1/users/self'),
+    client.get('/v1/users/self')
   ])
 
   expect(results.map((r) => r.status)).toEqual(['rejected', 'rejected'])
@@ -467,8 +467,8 @@ it('lets a merged caller receive the retried result of the shared request', asyn
   }
 
   const [first, second] = await Promise.all([
-    client.get('/v2/users/self'),
-    client.get('/v2/users/self')
+    client.get('/v1/users/self'),
+    client.get('/v1/users/self')
   ])
 
   expect(calls).toBe(2)
@@ -486,7 +486,7 @@ it('writes the response cache once for a merged group', async () => {
     config
   })
 
-  await Promise.all([client.get('/v2/users/self'), client.get('/v2/users/self')])
+  await Promise.all([client.get('/v1/users/self'), client.get('/v1/users/self')])
 
   expect(cacheSet).toHaveBeenCalledTimes(1)
 })
@@ -502,7 +502,7 @@ it('always sends the device unlock header on a xuehai device', async () => {
     return { data: { ok: true }, status: 200, statusText: 'OK', headers: {}, config }
   }
 
-  await client.get('/v2/users/self')
+  await client.get('/v1/users/self')
 
   expect(headers['Xuehai-Id']).toBe('123')
   // 没有解锁票据时也发空值头：请求头集合保持恒定，浏览器才不会在解锁那一刻
@@ -519,7 +519,7 @@ it('sends no device headers on a regular browser', async () => {
     return { data: { ok: true }, status: 200, statusText: 'OK', headers: {}, config }
   }
 
-  await client.get('/v2/users/self')
+  await client.get('/v1/users/self')
 
   expect('Xuehai-Id' in headers).toBe(false)
   expect('X-Device-Unlock' in headers).toBe(false)
@@ -528,5 +528,5 @@ it('sends no device headers on a regular browser', async () => {
 it('routes file endpoints to the content host derived from the page origin', () => {
   // 预览站由 VITE_API_CONTENT_BASE 覆盖这条推导（见 utils/apiBaseConfig.spec.ts）。
   expect(baseURLForRequest('/system/files/list')).toBe(`${window.location.origin}/api`)
-  expect(baseURLForRequest('/v3/users/me')).not.toBe(`${window.location.origin}/api`)
+  expect(baseURLForRequest('/v1/users/me')).not.toBe(`${window.location.origin}/api`)
 })

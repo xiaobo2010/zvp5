@@ -1,4 +1,4 @@
-"""``/api/v2/mcp/activities/{id}`` 的异常收窄（审计 P2）。
+"""``/api/v1/mcp/activities/{id}`` 的异常收窄（审计 P2）。
 
 裸 ``except:`` 会把 ``KeyboardInterrupt`` / ``SystemExit`` / ``TypeError`` 全部
 翻译成 400，既掩盖真正的服务端 bug，也让基类异常无法穿过 ASGI 栈。
@@ -24,7 +24,7 @@ from db import backends
 from routers import mcp_router
 from util.object_id import get_current_user
 
-PREFIX = "/api/v2/mcp"
+PREFIX = "/api/v1/mcp"
 ADMIN = {"id": "64b7f0c2e1a3b4c5d6e7fc00", "per": ["admin"]}
 VALID_OID = "64b7f0c2e1a3b4c5d6e7fc01"
 

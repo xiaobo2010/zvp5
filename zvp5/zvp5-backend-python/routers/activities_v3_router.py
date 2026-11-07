@@ -19,6 +19,17 @@ def _is_volunteer_manager(user: dict) -> bool:
     return "admin" in per or "department" in per
 
 
+# 列表排序白名单：对外的 ``sort`` 值 → ``zvms_new.activities`` 的实际列。
+# 故意不做「未命中就回落 oid」——拼错字段名应当 400，而不是静默按默认序返回。
+_ACTIVITY_SORT_COLUMNS: dict[str, str] = {
+    "name": "name",
+    "type": "atype",
+    "status": "status",
+    "date": "activity_date",
+    "_id": "oid",
+}
+
+
 @router.get('')
 async def get_activities_v3(
     page: int = Query(1, ge=1, description="Page number"),
@@ -26,11 +37,23 @@ async def get_activities_v3(
     query: str = Query('', description="Search keyword"),
     type: Literal['on-campus', 'off-campus', 'social-practice', 'hybrid', ''] = Query('', description="Type of activity to filter"),
     status: Literal['effective', 'refused', 'pending', 'draft', ''] = Query(''),
+    sort: str = Query('', description="Sort field: name/type/status/date/_id"),
+    asc: bool = Query(False, description="Sort ascending"),
     user=Depends(get_current_user)
 ):
     repo = backends.get_activities_repo()
     atypes = [type] if type else None
-    rows, total = await repo.list_page(query, atypes, status or None, page, size)
+
+    # 不传 ``sort`` 时不排序，沿用 repo 固定的 oid DESC（旧行为）。
+    sort_column = None
+    if sort:
+        sort_column = _ACTIVITY_SORT_COLUMNS.get(sort)
+        if sort_column is None:
+            raise HTTPException(status_code=400, detail="不支持的排序字段")
+
+    rows, total = await repo.list_page(
+        query, atypes, status or None, page, size, sort=sort_column, asc=asc
+    )
 
     activities = [
         {
@@ -44,6 +67,10 @@ async def get_activities_v3(
             "updatedAt": row["updatedAt"],
             "creator": row["creator"],
             "creator_name": row["creator_name"],
+            "place": row["place"],
+            "origin": row["origin"],
+            "appointee": row["appointee"],
+            "approver": row["approver"],
         }
         for row in rows
     ]
@@ -57,7 +84,6 @@ class CreateActivityRequest(BaseModel):
     type: Literal['on-campus', 'off-campus', 'social-practice', 'hybrid']
 
 
-@router.post('', status_code=201)
 async def create_activity_v3(
     payload: CreateActivityRequest,
     user=Depends(get_current_user),

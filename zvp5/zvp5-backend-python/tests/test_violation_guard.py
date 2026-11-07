@@ -975,7 +975,7 @@ def test_client_report_drops_agent_jailbreak(monkeypatch) -> None:
             return None
 
     app = FastAPI()
-    app.include_router(ban_violations_router.router, prefix="/api/v3/ban")
+    app.include_router(ban_violations_router.router, prefix="/api/v1/ban")
     app.dependency_overrides[get_current_user] = lambda: {
         "id": "000000000000000000000002",
         "per": ["student"],
@@ -983,7 +983,7 @@ def test_client_report_drops_agent_jailbreak(monkeypatch) -> None:
     app.dependency_overrides[inject_log] = lambda: StubLog()
 
     response = TestClient(app).post(
-        "/api/v3/ban/violations",
+        "/api/v1/ban/violations",
         json={
             "signals": [
                 {"signal": "agent_jailbreak", "detail": "越狱提示词"},

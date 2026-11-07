@@ -139,7 +139,7 @@ def env(monkeypatch):
 @pytest.fixture
 def client(env):
     app = FastAPI()
-    app.include_router(activities_v2_router.router, prefix="/api/v2/activities")
+    app.include_router(activities_v2_router.router, prefix="/api/v1/activities")
     return TestClient(app)
 
 
@@ -156,7 +156,7 @@ def auth(oid: str, roles: list[str], kind: str = "short") -> dict:
 
 def test_temporary_token_passes_authentication(client, env):
     """临时票（前端删除活动实际送的凭据）必须通过，不能再 401。"""
-    response = client.delete(f"/api/v2/activities/{ACTIVITY}", headers=auth(ADMIN, ["admin"]))
+    response = client.delete(f"/api/v1/activities/{ACTIVITY}", headers=auth(ADMIN, ["admin"]))
     assert response.status_code == 200
     assert response.json() == {"detail": "Activity deleted successfully"}
     assert env.activities.deleted == [ACTIVITY]
@@ -166,28 +166,28 @@ def test_temporary_token_passes_authentication(client, env):
 
 def test_long_lived_token_is_rejected(client, env):
     """长期票不得走临时票通道：scope 校验必须拦下（401，且无副作用）。"""
-    response = client.delete(f"/api/v2/activities/{ACTIVITY}", headers=auth(ADMIN, ["admin"], "long"))
+    response = client.delete(f"/api/v1/activities/{ACTIVITY}", headers=auth(ADMIN, ["admin"], "long"))
     assert response.status_code == 401
     assert env.activities.deleted == []
 
 
 def test_creator_can_delete_without_admin_or_department(client, env):
     """创建人即使只有 student 角色也能删。"""
-    response = client.delete(f"/api/v2/activities/{ACTIVITY}", headers=auth(CREATOR, ["student"]))
+    response = client.delete(f"/api/v1/activities/{ACTIVITY}", headers=auth(CREATOR, ["student"]))
     assert response.status_code == 200
     assert env.activities.deleted == [ACTIVITY]
 
 
 def test_department_can_delete(client, env):
     response = client.delete(
-        f"/api/v2/activities/{ACTIVITY}", headers=auth(DEPARTMENT, ["department"])
+        f"/api/v1/activities/{ACTIVITY}", headers=auth(DEPARTMENT, ["department"])
     )
     assert response.status_code == 200
 
 
 def test_non_creator_non_admin_is_forbidden(client, env):
     """既不是创建人、也不是 admin/department → 403，且不得产生任何删除副作用。"""
-    response = client.delete(f"/api/v2/activities/{ACTIVITY}", headers=auth(OTHER, ["student"]))
+    response = client.delete(f"/api/v1/activities/{ACTIVITY}", headers=auth(OTHER, ["student"]))
     assert response.status_code == 403
     assert env.activities.deleted == []
     assert env.members.removed_for_activity == []
@@ -196,13 +196,13 @@ def test_non_creator_non_admin_is_forbidden(client, env):
 
 def test_missing_activity_is_404(client, env):
     response = client.delete(
-        "/api/v2/activities/0000000000000000000000ff", headers=auth(CREATOR, ["student"])
+        "/api/v1/activities/0000000000000000000000ff", headers=auth(CREATOR, ["student"])
     )
     assert response.status_code == 404
 
 
 def test_invalid_activity_id_is_rejected(client, env):
-    response = client.delete("/api/v2/activities/not-an-object-id", headers=auth(ADMIN, ["admin"]))
+    response = client.delete("/api/v1/activities/not-an-object-id", headers=auth(ADMIN, ["admin"]))
     assert response.status_code == 400
     assert response.json()["detail"] == "Invalid Object ID"
     assert env.activities.deleted == []
@@ -213,7 +213,7 @@ def test_invalid_activity_id_is_rejected(client, env):
 
 def test_member_delete_accepts_temporary_token_for_admin(client, env):
     response = client.delete(
-        f"/api/v2/activities/{ACTIVITY}/members/{MEMBER}", headers=auth(ADMIN, ["admin"])
+        f"/api/v1/activities/{ACTIVITY}/members/{MEMBER}", headers=auth(ADMIN, ["admin"])
     )
     assert response.status_code == 200
     assert response.json() == {"detail": "Activity member deleted successfully"}
@@ -223,7 +223,7 @@ def test_member_delete_accepts_temporary_token_for_admin(client, env):
 
 def test_member_delete_rejects_long_lived_token(client, env):
     response = client.delete(
-        f"/api/v2/activities/{ACTIVITY}/members/{MEMBER}", headers=auth(ADMIN, ["admin"], "long")
+        f"/api/v1/activities/{ACTIVITY}/members/{MEMBER}", headers=auth(ADMIN, ["admin"], "long")
     )
     assert response.status_code == 401
     assert env.members.removed == []
@@ -232,7 +232,7 @@ def test_member_delete_rejects_long_lived_token(client, env):
 def test_member_delete_keeps_admin_only_scope(client, env):
     """删除成员口径保持 admin/department：创建人身份不放行。"""
     response = client.delete(
-        f"/api/v2/activities/{ACTIVITY}/members/{MEMBER}", headers=auth(CREATOR, ["student"])
+        f"/api/v1/activities/{ACTIVITY}/members/{MEMBER}", headers=auth(CREATOR, ["student"])
     )
     assert response.status_code == 403
     assert env.members.removed == []
@@ -240,13 +240,13 @@ def test_member_delete_keeps_admin_only_scope(client, env):
 
 def test_member_delete_invalid_ids_are_rejected(client, env):
     response = client.delete(
-        f"/api/v2/activities/{ACTIVITY}/members/not-an-object-id", headers=auth(ADMIN, ["admin"])
+        f"/api/v1/activities/{ACTIVITY}/members/not-an-object-id", headers=auth(ADMIN, ["admin"])
     )
     assert response.status_code == 400
     assert env.members.removed == []
 
     response = client.delete(
-        "/api/v2/activities/not-an-object-id/members/" + MEMBER, headers=auth(ADMIN, ["admin"])
+        "/api/v1/activities/not-an-object-id/members/" + MEMBER, headers=auth(ADMIN, ["admin"])
     )
     assert response.status_code == 400
     assert env.members.removed == []
@@ -254,7 +254,7 @@ def test_member_delete_invalid_ids_are_rejected(client, env):
 
 def test_member_delete_missing_member_is_404(client, env):
     response = client.delete(
-        f"/api/v2/activities/{ACTIVITY}/members/0000000000000000000000aa",
+        f"/api/v1/activities/{ACTIVITY}/members/0000000000000000000000aa",
         headers=auth(ADMIN, ["admin"]),
     )
     assert response.status_code == 404

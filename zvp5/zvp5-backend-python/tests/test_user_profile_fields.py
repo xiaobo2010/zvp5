@@ -18,7 +18,7 @@ from db import backends
 from routers import users_v3_router
 from util.user import user_profile
 
-PREFIX = "/api/v3/users"
+PREFIX = "/api/v1/users"
 TARGET = "000000000000000000000002"
 CLASS = "0000000000000000000000ff"
 READER = {"id": "000000000000000000000001", "per": ["student"]}

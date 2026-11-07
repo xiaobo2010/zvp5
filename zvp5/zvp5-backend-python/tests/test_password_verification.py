@@ -172,7 +172,7 @@ def world(monkeypatch):
     )
 
     app = FastAPI()
-    app.include_router(users_v3_router.router, prefix="/api/v3/users")
+    app.include_router(users_v3_router.router, prefix="/api/v1/users")
     app.include_router(ai_agent_router.router, prefix="/api/ai/agent")
     app.include_router(attachments_router.router, prefix="/api/attachments")
     app.dependency_overrides[get_current_user] = lambda: {
@@ -227,43 +227,43 @@ async def test_rejections_are_403_never_401(world, label, token) -> None:
 HIGH_RISK_ENDPOINTS = [
     (
         "PUT",
-        f"/api/v3/users/{TARGET}/bindings",
+        f"/api/v1/users/{TARGET}/bindings",
         {"xuehai_id": PRIMARY},
         {},
     ),
     (
         "DELETE",
-        f"/api/v3/users/{TARGET}/bindings/777",
+        f"/api/v1/users/{TARGET}/bindings/777",
         {},
         {},
     ),
     (
         "DELETE",
-        f"/api/v3/users/{TARGET}/primary-device",
+        f"/api/v1/users/{TARGET}/primary-device",
         {},
         {},
     ),
     (
         "POST",
-        f"/api/v3/users/{TARGET}/temp-password",
+        f"/api/v1/users/{TARGET}/temp-password",
         {},
         {},
     ),
     (
         "DELETE",
-        f"/api/v3/users/{TARGET}",
+        f"/api/v1/users/{TARGET}",
         {},
         {},
     ),
     (
         "PUT",
-        "/api/v3/users/me/primary-device",
+        "/api/v1/users/me/primary-device",
         {"xuehai_id": "555"},
         {"Xuehai-Id": PRIMARY},
     ),
     (
         "DELETE",
-        "/api/v3/users/me/primary-device",
+        "/api/v1/users/me/primary-device",
         {},
         {"Xuehai-Id": PRIMARY},
     ),
@@ -348,7 +348,7 @@ def test_endpoint_rejects_a_forged_token(world, method, path, body, headers) -> 
 
 def test_binding_endpoints_pass_with_the_operators_own_token(world) -> None:
     bound = world.client.put(
-        f"/api/v3/users/{TARGET}/bindings",
+        f"/api/v1/users/{TARGET}/bindings",
         json={"xuehai_id": PRIMARY, "verification_token": _token(CURRENT)},
     )
     assert bound.status_code == 204
@@ -356,7 +356,7 @@ def test_binding_endpoints_pass_with_the_operators_own_token(world) -> None:
 
     revoked = world.client.request(
         "DELETE",
-        f"/api/v3/users/{TARGET}/bindings/777",
+        f"/api/v1/users/{TARGET}/bindings/777",
         json={"verification_token": _token(CURRENT)},
     )
     assert revoked.status_code == 204
@@ -368,7 +368,7 @@ def test_first_binding_needs_no_token(world) -> None:
     USERS[CURRENT]["primary_xuehai_id"] = None
 
     response = world.client.put(
-        "/api/v3/users/me/primary-device",
+        "/api/v1/users/me/primary-device",
         json={"xuehai_id": "555"},
         headers={"Xuehai-Id": "555"},
     )

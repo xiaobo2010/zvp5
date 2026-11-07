@@ -238,7 +238,7 @@ async def list_activity_members(
     sort: str = "_id",
     asc: bool = True,
 ) -> dict:
-    """活动的成员名单（与 ``GET /api/v2/activities/{id}/members`` 同形）。
+    """活动的成员名单（与 ``GET /api/v1/activities/{id}/members`` 同形）。
 
     ``search`` 先按姓名/学号把用户缩成 oid 集合，再按 oid 过滤成员——与路由层
     完全相同的两步查询；不这么做就得在成员表上 join 用户表，而仓储没有那条语句。
@@ -272,7 +272,7 @@ async def list_activity_members(
 
 
 async def user_volunteer_time(user_id: str) -> dict:
-    """某用户的义工时长（缓存口径，与 ``GET /api/v2/users/{id}/time`` 一致）。"""
+    """某用户的义工时长（缓存口径，与 ``GET /api/v1/users/{id}/time`` 一致）。"""
     return await calculate_user_time(user_id, allow_cache=True)
 
 

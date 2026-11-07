@@ -120,10 +120,10 @@ def test_create_user_duplicate_race_is_conflict(monkeypatch):
             find_by_business_id=find_by_business_id, create=create
         ),
     )
-    http = _client(users_v3_router.router, "/api/v3/users")
+    http = _client(users_v3_router.router, "/api/v1/users")
 
     response = http.post(
-        "/api/v3/users", json={"id": "20250101", "name": "张三"}
+        "/api/v1/users", json={"id": "20250101", "name": "张三"}
     )
     assert response.status_code == 409
     assert response.json()["detail"] == "学号已存在"
@@ -146,10 +146,10 @@ def test_ban_rule_unique_race_is_conflict(monkeypatch):
             get_by_code=get_by_code, get_by_trigger=get_by_trigger, insert=insert
         ),
     )
-    http = _client(ban_router.router, "/api/v3/ban")
+    http = _client(ban_router.router, "/api/v1/ban")
 
     response = http.post(
-        "/api/v3/ban/rules",
+        "/api/v1/ban/rules",
         json={
             "code": "custom_rule",
             "name": "自定义规则",
@@ -201,9 +201,9 @@ def test_group_time_rows_with_null_columns_do_not_500(monkeypatch):
         "get_time_repo",
         lambda *a, **k: SimpleNamespace(list_by_class=list_by_class),
     )
-    http = _client(groups_v2_router.router, "/api/v2/groups")
+    http = _client(groups_v2_router.router, "/api/v1/groups")
 
-    response = http.get(f"/api/v2/groups/{GROUP}/time")
+    response = http.get(f"/api/v1/groups/{GROUP}/time")
     assert response.status_code == 200
     row = response.json()["data"][0]
     assert row["on-campus"] == 0
@@ -220,10 +220,10 @@ def test_activity_with_missing_fields_is_conflict_not_500(monkeypatch):
         "get_activities_repo",
         lambda *a, **k: SimpleNamespace(get=get),
     )
-    http = _client(activities_v2_router.router, "/api/v2/activities")
+    http = _client(activities_v2_router.router, "/api/v1/activities")
 
     response = http.put(
-        f"/api/v2/activities/{ACTIVITY}/status", json={"status": "effective"}
+        f"/api/v1/activities/{ACTIVITY}/status", json={"status": "effective"}
     )
     assert response.status_code == 409
     assert response.json()["detail"] == "活动数据不完整，无法完成该操作"

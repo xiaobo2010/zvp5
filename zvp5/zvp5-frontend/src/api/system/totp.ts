@@ -16,5 +16,5 @@ export interface TotpResponse {
 
 // 读取自己的当前登录动态码(user_id 传本人 ObjectId,即 user store 的 _id)
 export function getMyTotp(userId: string) {
-  return axios.get<TotpResponse>(`/v3/users/${userId}/totp`)
+  return axios.get<TotpResponse>(`/v1/users/${userId}/totp`)
 }
