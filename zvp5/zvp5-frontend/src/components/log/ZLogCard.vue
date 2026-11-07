@@ -2,6 +2,7 @@
 import type { Log } from '../../../types/log'
 import { computed, toRefs } from 'vue'
 import { ElCard, ElForm, ElFormItem, ElTag } from 'element-plus'
+import { useI18n } from 'vue-i18n'
 import dayjs from '@/plugins/dayjs'
 
 const props = defineProps<{
@@ -9,17 +10,18 @@ const props = defineProps<{
 }>()
 
 const { log } = toRefs(props)
+const { t } = useI18n()
 
 type LogWithClient = Log & { client_ip?: string | null; user_agent?: string | null }
 
 const clientIp = computed(() => (log.value as LogWithClient).client_ip ?? '')
 const userAgent = computed(() => (log.value as LogWithClient).user_agent ?? '')
 
-const typeLabels: Record<string, string> = {
+const typeLabels = computed<Record<string, string>>(() => ({
   user_login: '登录',
   user_logout: '登出',
   user_verify: '身份验证',
-  login_fail: '登录失败',
+  login_fail: t('log.type.loginFail'),
   passwd_change: '密码修改',
   totp_view: '动态码查看',
   user_create: '用户创建',
@@ -116,7 +118,7 @@ const typeLabels: Record<string, string> = {
   platform_misuse_report: '平台滥用举报',
   platform_misuse_violation: '平台滥用认定',
   platform_misuse_exempt: '平台滥用豁免'
-}
+}))
 
 const levelLabels: Record<string, string> = {
   info: '普通',

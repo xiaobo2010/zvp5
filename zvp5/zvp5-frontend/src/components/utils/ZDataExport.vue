@@ -8,13 +8,15 @@ import {
   ElText,
   ElProgress,
   ElInput,
-  ElSwitch
+  ElSwitch,
+  ElMessage
 } from 'element-plus'
 import api from '@/api'
 import { onUnmounted, ref, toRefs, watch } from 'vue'
 import dayjs, { type Dayjs } from 'dayjs'
 import { Box, Download } from '@element-plus/icons-vue'
 import { useI18n } from 'vue-i18n'
+import { resolveErrorMessage } from '@/utils/errorMessage'
 import 'dayjs/locale/zh-cn'
 
 const props = defineProps<{
@@ -86,17 +88,38 @@ function stopPolling() {
 }
 
 async function createTask() {
-  const result = await api.exports.create(
-    type.value,
-    format.value,
-    range.value[0] ? dayjs(range.value[0]) : undefined,
-    range.value[1] ? dayjs(range.value[1]) : undefined,
-    allowCache.value,
-    includeDescription.value
-  )
-  if (result) {
-    taskID.value = result
+  let task: string | null | undefined
+  try {
+    task = await api.exports.create(
+      type.value,
+      format.value,
+      range.value[0] ? dayjs(range.value[0]) : undefined,
+      range.value[1] ? dayjs(range.value[1]) : undefined,
+      allowCache.value,
+      includeDescription.value
+    )
+  } catch (error) {
+    color.value = 'exception'
+    status.value = 'failed'
+    ElMessage({
+      message: resolveErrorMessage(error, 'manage.exports.createFailed'),
+      type: 'error',
+      grouping: true,
+      plain: true
+    })
+    return
   }
+  // 空返回值同样不能起轮询：taskID 为空会让进度条永远停在初始态
+  if (!task) {
+    color.value = 'exception'
+    status.value = 'failed'
+    return
+  }
+  taskID.value = task
+  // 重新发起时先把上一次的终态清掉，否则失败态会残留到首次轮询返回
+  percentage.value = 0
+  status.value = 'pending'
+  color.value = 'warning'
   stopPolling()
   const interval = setInterval(async () => {
     const stop = () => {

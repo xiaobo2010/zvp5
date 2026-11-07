@@ -51,17 +51,22 @@ if ('serviceWorker' in navigator) {
   })
 }
 
-window.onbeforeunload = (e) => {
+// 退出/右键都走 addEventListener：直接占用 window.onbeforeunload / oncontextmenu
+// 会顶掉挂在同一槽位上的其它监听，且卸载时无痕可清。
+function handleBeforeUnload(e: BeforeUnloadEvent) {
   if (location.pathname.startsWith('/activity/create/') || location.pathname.endsWith('/modify')) {
     e.preventDefault()
-    return false
+    // 兼容旧浏览器：与原先 return false 的语义一致
+    e.returnValue = ''
   }
 }
 
-window.oncontextmenu = (e) => {
+function handleContextMenu(e: MouseEvent) {
   e.preventDefault()
-  return false
 }
+
+window.addEventListener('beforeunload', handleBeforeUnload)
+window.addEventListener('contextmenu', handleContextMenu)
 
 const { t, locale } = useI18n()
 
@@ -305,6 +310,8 @@ onUnmounted(() => {
     clearInterval(banTimer)
     banTimer = undefined
   }
+  window.removeEventListener('beforeunload', handleBeforeUnload)
+  window.removeEventListener('contextmenu', handleContextMenu)
   stopPlatformGuard()
   document.body.style.overflow = ''
 })

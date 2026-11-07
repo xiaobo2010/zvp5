@@ -353,6 +353,9 @@ export const zhCN = {
     }
   },
   view: {
+    loadFailed: '义工详情加载失败，请重试',
+    retry: '重试',
+    myDurationLoadFailed: '我的时长加载失败，请稍后重试',
     panels: {
       mine: {
         name: '我的义工',

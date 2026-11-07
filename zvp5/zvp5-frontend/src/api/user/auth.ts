@@ -2,6 +2,7 @@ import axios from '@/plugins/axios'
 import { baseURL } from '@/plugins/axios'
 import type { Response, LoginResult } from '@/../types'
 import { ElNotification } from 'element-plus'
+import { translateKey } from '@/utils/errorMessage'
 import { byteArrayToHex } from './utils'
 import { encryptData, importPublicKey } from './crypto'
 
@@ -17,7 +18,7 @@ export async function getRSAPublicCert(): Promise<string> {
   ).data as Response<string>
   if (result.status === 'error') {
     ElNotification({
-      title: 'Error when fetching RSA public key',
+      title: translateKey('common.publicKeyFetchFailed'),
       message: result.message,
       type: 'error'
     })
@@ -51,7 +52,7 @@ export async function resetPassword(
   ).data as Response<LoginResult>
   if (result.status === 'error') {
     ElNotification({
-      title: 'Error when resetting password',
+      title: translateKey('common.passwordResetFailed'),
       message: result.message,
       type: 'error'
     })
@@ -71,7 +72,7 @@ export async function resetToInitial(user: string, token: string) {
   ).data as Response<{ initial_password: string }>
   if (result.status === 'error') {
     ElNotification({
-      title: 'Error when resetting password',
+      title: translateKey('common.passwordResetFailed'),
       message: result.message,
       type: 'error'
     })

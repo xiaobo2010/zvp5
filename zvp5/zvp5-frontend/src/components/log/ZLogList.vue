@@ -26,18 +26,32 @@ const xuehai_id = ref('')
 const xuehai_id2 = ref('')
 const amount = ref(0)
 
+// 请求序号守卫：四个 watch 都可能连发，慢响应不得覆盖后发请求的结果
+let requestSeq = 0
+
 async function refresh() {
-  const result = await api.logs.read(
-    page.value,
-    perpage.value,
-    query.value,
-    user.value,
-    xuehai_id.value
-  )
-  logs.value = result?.data ?? []
-  amount.value = result?.size ?? 0
+  const seq = ++requestSeq
+  loading.value = true
+  try {
+    const result = await api.logs.read(
+      page.value,
+      perpage.value,
+      query.value,
+      user.value,
+      xuehai_id.value
+    )
+    if (seq !== requestSeq) return
+    logs.value = result?.data ?? []
+    amount.value = result?.size ?? 0
+  } catch {
+    if (seq !== requestSeq) return
+    logs.value = []
+    amount.value = 0
+  } finally {
+    if (seq === requestSeq) loading.value = false
+  }
 }
-refresh()
+void refresh()
 
 watch(page, refresh)
 watch(perpage, refresh)

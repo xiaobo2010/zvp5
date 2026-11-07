@@ -1,6 +1,7 @@
 import type { Response } from '../../types'
 import axios from '@/plugins/axios.ts'
 import { ElNotification } from 'element-plus'
+import { translateKey } from '@/utils/errorMessage'
 import type { Log } from '../../types/log'
 
 export async function read(
@@ -30,7 +31,7 @@ export async function read(
   }
   if (result.status === 'error') {
     ElNotification({
-      title: `Error fetching log list (${result.code})`,
+      title: translateKey('common.logListFetchFailed', { code: result.code }),
       message: result.message,
       type: 'error'
     })
