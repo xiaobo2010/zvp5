@@ -77,6 +77,7 @@ declare module 'vue' {
     ZIde: typeof import('./src/components/server/ZIde.vue')['default']
     ZInputDuration: typeof import('./src/components/form/ZInputDuration.vue')['default']
     ZLogCard: typeof import('./src/components/log/ZLogCard.vue')['default']
+    ZLoginReveal: typeof import('./src/components/system/ZLoginReveal.vue')['default']
     ZLogList: typeof import('./src/components/log/ZLogList.vue')['default']
     ZMarkdown: typeof import('./src/components/markdown/ZMarkdown.vue')['default']
     ZMarkdownAiDialog: typeof import('./src/components/markdown/ZMarkdownAiDialog.vue')['default']
