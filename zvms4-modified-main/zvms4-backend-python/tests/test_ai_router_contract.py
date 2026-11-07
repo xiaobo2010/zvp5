@@ -263,7 +263,7 @@ def ocr_deps(monkeypatch, files_repo):
     monkeypatch.setattr(
         backends, "get_ai_ocr_engines_repo", lambda session=None: _EngineRepo()
     )
-    monkeypatch.setattr(ai_router, "process_ocr", _process)
+    monkeypatch.setattr("routers.ai.ocr.process_ocr", _process)
     state["consume"] = consume
     state["peek"] = peek
     state["site"] = site

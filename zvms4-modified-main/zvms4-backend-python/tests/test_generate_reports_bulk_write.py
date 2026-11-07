@@ -12,6 +12,10 @@ SET data=:data`` 单次 58 万 buffer gets。现在改成循环内只攒内存 l
 4. ``find_one`` 拿回的 data 仍可直接喂 ``pd.DataFrame``（元素是 dict）。
 
 全程假 repo + 临时目录，不连库、不写仓库。
+
+注：逐用户的 ``build_statement_data`` 现已换成批量预加载 + 线程内
+``assemble_statement``，所以失败注入点也跟着挪到了 ``assemble_statement``
+（对外的「单个用户失败 → 整批 failed」契约不变）。
 """
 
 from __future__ import annotations
@@ -31,13 +35,13 @@ CLASSES = [
 
 USERS = {
     "class-1": [
-        {"_id": "65f0000000000000000000a1", "id": "20240001", "name": "学生一"},
-        {"_id": "65f0000000000000000000a2", "id": "20240002", "name": "学生二"},
-        {"_id": "65f0000000000000000000a3", "id": "20240003", "name": "学生三"},
+        {"_id": "65f0000000000000000000a1", "id": "20240001", "name": "学生一", "class_id": "class-1"},
+        {"_id": "65f0000000000000000000a2", "id": "20240002", "name": "学生二", "class_id": "class-1"},
+        {"_id": "65f0000000000000000000a3", "id": "20240003", "name": "学生三", "class_id": "class-1"},
     ],
     "class-2": [
-        {"_id": "65f0000000000000000000b1", "id": "20240004", "name": "学生四"},
-        {"_id": "65f0000000000000000000b2", "id": "20240005", "name": "学生五"},
+        {"_id": "65f0000000000000000000b1", "id": "20240004", "name": "学生四", "class_id": "class-2"},
+        {"_id": "65f0000000000000000000b2", "id": "20240005", "name": "学生五", "class_id": "class-2"},
     ],
 }
 
@@ -79,24 +83,33 @@ class _FakeGroupsRepo:
 
 
 class _FakeUsersRepo:
-    async def list_by_class(self, class_oid):
-        return [dict(u) for u in USERS[class_oid]]
+    async def list_all(self) -> list[dict]:
+        return [dict(u) for users in USERS.values() for u in users]
+
+    async def get_many_by_oids(self, oids) -> dict:
+        return {}
 
 
-_USER_CLASS: dict[str, str] = {
-    user["_id"]: class_oid for class_oid, users in USERS.items() for user in users
-}
-_USER_BY_OID: dict[str, dict] = {
-    user["_id"]: user for users in USERS.values() for user in users
-}
+class _FakeActivitiesRepo:
+    async def list_effective(self, *args) -> list[dict]:
+        return []
+
+
+class _FakeMembersRepo:
+    async def list_by_members(self, member_oids) -> list[dict]:
+        return []
+
+
+class _FakeTimeRepo:
+    async def upsert_many_for_users(self, entries) -> None:
+        return None
 
 
 def _class_name(class_oid: str) -> str:
     return next(c["name"] for c in CLASSES if c["_id"] == class_oid)
 
 
-def _spreadsheet(user: dict, class_name: str) -> dict:
-    return {
+def _spreadsheet(user: dict, class_name: str) -> dict:    return {
         "_id": user["_id"],
         "name": user["name"],
         "id": user["id"],
@@ -118,20 +131,49 @@ def env(tmp_path, monkeypatch):
     written: list[str] = []
     failing: set[str] = set()
 
-    async def fake_build_statement_data(user_oid, period, language="zh"):
-        if str(user_oid) in failing:
+    def fake_assemble_statement(
+        *,
+        oid,
+        user,
+        class_name,
+        period,
+        language,
+        stats,
+        stats_this_year,
+        memberships,
+        activities,
+        approvers,
+    ):
+        if str(oid) in failing:
             raise RuntimeError("statement build failed")
-        user = _USER_BY_OID[str(user_oid)]
-        return {"user_data": {"database_id": user["_id"]}}, _spreadsheet(
-            user, _class_name(_USER_CLASS[user["_id"]])
-        )
+        return {"user_data": {"database_id": user["_id"]}}, _spreadsheet(user, class_name)
+
+    async def fake_bulk(user_ids, *args, **kwargs):
+        return {
+            str(user_id): {
+                "on-campus": 0.0,
+                "off-campus": 0.0,
+                "social-practice": 0.0,
+            }
+            for user_id in user_ids
+        }
 
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(backends, "get_daily_exports_repo", lambda *a, **k: repo)
     monkeypatch.setattr(backends, "get_groups_repo", lambda *a, **k: _FakeGroupsRepo())
     monkeypatch.setattr(backends, "get_users_repo", lambda *a, **k: _FakeUsersRepo())
     monkeypatch.setattr(
-        compute_time, "build_statement_data", fake_build_statement_data, raising=False
+        backends, "get_activities_repo", lambda *a, **k: _FakeActivitiesRepo()
+    )
+    monkeypatch.setattr(
+        backends, "get_members_repo", lambda *a, **k: _FakeMembersRepo()
+    )
+    monkeypatch.setattr(backends, "get_time_repo", lambda *a, **k: _FakeTimeRepo())
+    monkeypatch.setattr(
+        compute_time, "assemble_statement", fake_assemble_statement, raising=False
+    )
+    monkeypatch.setattr(
+        compute_time, "calculate_user_time_bulk", fake_bulk, raising=False
     )
     monkeypatch.setattr(
         compute_time,
@@ -209,6 +251,7 @@ async def test_non_numeric_student_id_is_skipped_not_fatal(env, monkeypatch, cap
         "_id": "65f0000000000000000000c1",
         "id": "S2024009",
         "name": "脏数据",
+        "class_id": "class-1",
     }
     monkeypatch.setitem(USERS, "class-1", [*USERS["class-1"], dirty])
 

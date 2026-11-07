@@ -19,6 +19,16 @@ created between the two statements may therefore appear in the response while
 the returned version is older; the reverse (new version, missing notice) can
 never happen, so a client that processes the full list can never miss a notice.
 
+Redis read-through
+------------------
+``list_active`` is the per-request read (every client refresh): two ADB round
+trips (state + rows) 138ms each. The ``(rows, version)`` pair is cached for ~20s
+under a key that carries a Redis epoch; every committed create / update / delete
+/ rollback bumps that epoch, so an activation change is visible immediately and
+the TTL only covers "someone else's process wrote and we did not see it". The
+version returned to clients is the one captured with the rows, i.e. the
+consistency argument above still holds.
+
 Session ownership
 -----------------
 ``__init__`` takes an optional ``AsyncSession``:
@@ -35,6 +45,7 @@ Nothing here opens a connection at import time.
 from __future__ import annotations
 
 import hashlib
+import random
 from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Any, AsyncIterator
@@ -42,6 +53,7 @@ from typing import Any, AsyncIterator
 from sqlalchemy import delete, func, insert, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from db import cache
 from db.ids import new_oid, normalize_oid
 from db.models import notification_state as state_tbl
 from db.models import notification_versions as versions_tbl
@@ -52,6 +64,14 @@ Row = dict[str, Any]
 
 # 用户侧公告列表的行数上限：只给客户端看最新一批，避免历史无限膨胀。
 _ACTIVE_LIMIT = 100
+
+#: 用户侧公告列表的缓存 TTL。公告是「管理员偶尔发一条」的读多写极少对象，
+#: 15~30s 足够把首页/移动端的重复拉取挡掉；真正的失效靠写路径 bump epoch，
+#: TTL 只兜「别的进程写、本进程没参与」之外的漏网情况。
+_ACTIVE_TTL_SECONDS = 120.0
+#: 缓存域。NOTIFICATION_STATE 里的版本号在数据库里，读它本身就要一次 ADB 往返，
+#: 所以 key 用 Redis epoch 当版本（写路径 INCR，跨进程天然共享）。
+_CACHE_SCOPE = "notifications"
 
 
 @asynccontextmanager
@@ -405,22 +425,46 @@ async def _next_snapshot_version(
     return max(highest, current_version) + 1
 
 
+async def _forget_lists() -> None:
+    """写后失效：epoch INCR，旧 key 不再被读（TTL 自然淘汰，无需 SCAN）。"""
+    await cache.bump_epoch(_CACHE_SCOPE)
+
+
 class OracleNotificationsRepo:
     """``NotificationsRepo`` over Oracle ADB (``NOTIFICATIONS``)."""
 
     def __init__(self, session: AsyncSession | None = None) -> None:
         self._session = session
+        # 调用方自带事务时直通：它可能要读自己未提交的写。
+        self._use_cache = session is None
 
     async def get_state(self) -> Row:
         async with _session_for(self._session) as (session, _owns):
             return await _read_state(session)
 
-    async def list_active(self) -> tuple[list[Row], int]:
+    async def _list_active_uncached(self) -> tuple[list[Row], int]:
         # State first: see the module docstring for the consistency argument.
         async with _session_for(self._session) as (session, _owns):
             state = await _read_state(session)
             rows = (await session.execute(_list_active_stmt())).all()
         return [_row(row._mapping) for row in rows], int(state["version"])
+
+    async def list_active(self) -> tuple[list[Row], int]:
+        """用户侧公告列表（2 条 SQL → 常态 1 次 Redis GET）。
+
+        缓存的是 ``(rows, version)`` 整对：版本号与列表必须来自同一次快照，
+        分开缓存会出现「新版本 + 旧列表」这种客户端最讨厌的组合。
+        """
+        if not self._use_cache:
+            return await self._list_active_uncached()
+        version = await cache.epoch(_CACHE_SCOPE)
+        key = f"{cache.NS}:notif:{version}:active"
+        ttl = _ACTIVE_TTL_SECONDS * (1.0 + random.uniform(-0.1, 0.1))
+        cached = await cache.remember(
+            key, ttl, self._list_active_uncached, async_backfill=True
+        )
+        rows, db_version = cached
+        return rows, int(db_version)
 
     async def list_all(self) -> tuple[list[Row], int]:
         async with _session_for(self._session) as (session, _owns):
@@ -477,6 +521,7 @@ class OracleNotificationsRepo:
             version = await _bump_state(session, now)
             if owns:
                 await session.commit()
+        await _forget_lists()
         return (
             {
                 "_id": oid,
@@ -555,6 +600,7 @@ class OracleNotificationsRepo:
             version = await _bump_state(session, now)
             if owns:
                 await session.commit()
+        await _forget_lists()
         return entry, version
 
     async def delete(
@@ -591,6 +637,7 @@ class OracleNotificationsRepo:
             version = await _bump_state(session, now)
             if owns:
                 await session.commit()
+        await _forget_lists()
         return deleted, version
 
     async def list_versions(self, oid: str) -> tuple[list[Row], int]:
@@ -682,6 +729,7 @@ class OracleNotificationsRepo:
             version = await _bump_state(session, now)
             if owns:
                 await session.commit()
+        await _forget_lists()
         return note, version, snapshot
 
 

@@ -24,7 +24,8 @@ function openDB(): Promise<IDBDatabase | null> {
     const timer = setTimeout(() => finish(null), 1500)
     try {
       if (typeof indexedDB === 'undefined') { finish(null); return }
-      // v1 could contain authenticated responses. Discard them on upgrade.
+      // v1 的键没有身份段（可能混入登录响应），升级到 v2 时整库丢弃；
+      // 之后写进 v2 的键由 plugins/axios.ts 统一带上身份指纹，换账号不会串读。
       const request = indexedDB.open(DB_NAME, 2)
       request.onupgradeneeded = () => {
         const db = request.result

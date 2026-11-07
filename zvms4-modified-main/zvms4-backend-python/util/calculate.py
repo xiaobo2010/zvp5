@@ -1,25 +1,36 @@
 from collections import defaultdict
+from collections.abc import Mapping, Sequence
 from datetime import datetime
 import logging
-from typing import Literal
+from typing import Any, Literal
 from config import BASE_ON_CAMPUS, BASE_OFF_CAMPUS, BASE_SOCIAL_PRACTICE
 from db import backends
 from db.ids import normalize_oid
 from settings import LANGUAGE
 from typings.time import UserActivityTime
-from utils import validate_object_id
+from util.oid import validate_object_id
 import pandas as pd
 
 logger = logging.getLogger(__name__)
 
 
-async def generate_description(user_id: str):
-    collections = await backends.get_members_repo().list_for_member(
-        user_id, status="effective"
-    )
+def describe_memberships(
+    collections: Sequence[Mapping[str, Any]],
+    activities: Sequence[Mapping[str, Any] | None],
+) -> str:
+    """Render the ``description`` text for one user's effective memberships.
+
+    ``collections`` and ``activities`` must be **aligned**: ``activities[i]`` is
+    the activity resolved for ``collections[i]`` (``None`` when the row is gone).
+    Keeping the resolution outside makes the formatting itself pure, so callers
+    that already batch-loaded activities pay no per-user round trip while the
+    legacy callers keep their old behaviour.
+
+    The output is exactly what the historical per-item loop produced: the same
+    ``effective`` filter, the same order, the same separators.
+    """
     desc = []
-    for collection in collections:
-        activity = await backends.get_activities_repo().get(collection["activity"])
+    for collection, activity in zip(collections, activities):
         if not activity or activity.get("status") != "effective":
             continue
         if LANGUAGE == "zh-CN":
@@ -46,6 +57,38 @@ async def generate_description(user_id: str):
     else:
         description = ", ".join(desc[:-1]) + " and " + desc[-1]
     return description
+
+
+async def generate_description(
+    user_id: str,
+    memberships: Mapping[str, Sequence[Mapping[str, Any]]] | None = None,
+    activities: Mapping[str, Mapping[str, Any]] | None = None,
+):
+    """Description text for one user.
+
+    ``memberships`` / ``activities`` are optional pre-loaded maps
+    (``user_oid -> effective membership rows`` and
+    ``activity_oid -> activity document``): a caller looping over users passes
+    them once instead of re-reading both tables per user. ``None`` keeps the
+    historical per-user queries, so old two/one-argument calls behave exactly as
+    before.
+    """
+    if memberships is None:
+        collections = await backends.get_members_repo().list_for_member(
+            user_id, status="effective"
+        )
+    else:
+        collections = list(memberships.get(str(user_id), ()))
+    if activities is None:
+        resolved = [
+            await backends.get_activities_repo().get(collection["activity"])
+            for collection in collections
+        ]
+    else:
+        resolved = [
+            activities.get(str(collection["activity"])) for collection in collections
+        ]
+    return describe_memberships(collections, resolved)
 
 
 # NOTE: ``calculate_user_time_with_origin`` and ``time_with_origin`` now have no

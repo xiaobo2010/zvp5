@@ -29,6 +29,7 @@ from db.ids import new_oid
 from db.models import app_logs as app_logs_tbl
 from db.models import users as users_tbl
 from db.oracle.session import session_scope
+from db.repos.pagination import page_args, page_bounds
 
 Row = dict[str, Any]
 
@@ -123,17 +124,6 @@ def _insert_stmt(
 
 #: Hard cap on one page, mirrored by ``logs_router``'s ``perpage`` ``le=``.
 PAGE_SIZE_MAX = 100
-
-
-def _clamped(page: int, size: int) -> tuple[int, int]:
-    """Normalise paging to ``page >= 1`` and ``1 <= size <= PAGE_SIZE_MAX``.
-
-    ``page <= 0`` (the legacy ``-1`` the router used to accept) means the first
-    page: the old code rendered it as ``OFFSET 0`` + ``LIMIT size``, and there is
-    no cheap way to return "everything" anyway. The router now rejects ``page < 1``
-    with a 422, so this only guards direct repo callers.
-    """
-    return max(1, int(page)), min(PAGE_SIZE_MAX, max(1, int(size)))
 
 
 def _like_pattern(query: str) -> str:
@@ -246,7 +236,7 @@ def _list_stmt(
     排序走 ``ix_app_logs_ts_raw``（V018），过滤走 ``ltype``/``app_user``/
     ``xuehai_id``/``log_level`` 上的索引或复合索引前缀。
     """
-    page, size = _clamped(page, size)
+    offset, limit = page_args(page, size, max_size=PAGE_SIZE_MAX)
     stmt = select(*_page_columns()).select_from(_log_from())
     conds = _filter(
         query, performer, types, levels, time_start, time_end, xuehai_id, exclude_types
@@ -255,8 +245,8 @@ def _list_stmt(
         stmt = stmt.where(*conds)
     return (
         stmt.order_by(app_logs_tbl.c.ts_raw.desc())
-        .offset((page - 1) * size)
-        .limit(size)
+        .offset(offset)
+        .limit(limit)
     )
 
 
@@ -292,7 +282,7 @@ def _for_user_filter(user_oid: str, query: str) -> list[Any]:
 
 
 def _list_for_user_stmt(user_oid: str, query: str, page: int, size: int):
-    page, size = _clamped(page, size)
+    offset, limit = page_args(page, size, max_size=PAGE_SIZE_MAX)
     stmt = (
         select(*_page_columns())
         .select_from(_log_from())
@@ -300,8 +290,8 @@ def _list_for_user_stmt(user_oid: str, query: str, page: int, size: int):
     )
     return (
         stmt.order_by(app_logs_tbl.c.ts_raw.desc())
-        .offset((page - 1) * size)
-        .limit(size)
+        .offset(offset)
+        .limit(limit)
     )
 
 
@@ -530,7 +520,7 @@ class OracleAppLogsRepo:
         ``exclude_types`` 是黑名单，仅在 ``types`` 为空时生效（管理端默认隐藏
         ``login_fail``，显式传 ``types`` 则原样按白名单查）。
         """
-        page, size = _clamped(page, size)
+        page, size = page_bounds(page, size, max_size=PAGE_SIZE_MAX)
         page_stmt = _list_stmt(
             query,
             performer,
@@ -573,7 +563,7 @@ class OracleAppLogsRepo:
         self, user_oid: str, query: str = "", page: int = 1, size: int = 10
     ) -> tuple[list[Row], int]:
         """某用户的一页日志与总数，分页/计数口径与 :meth:`list_page` 一致。"""
-        page, size = _clamped(page, size)
+        page, size = page_bounds(page, size, max_size=PAGE_SIZE_MAX)
         page_stmt = _list_for_user_stmt(user_oid, query, page, size)
         async with _session_for(self._session) as (session, _owns):
             rows = (await session.execute(page_stmt)).all()

@@ -1,5 +1,6 @@
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { createPinia, setActivePinia } from 'pinia'
 import ZSelectPerson from './ZSelectPerson.vue'
 import api from '@/api'
 
@@ -62,6 +63,8 @@ function selectedLabel() {
 }
 
 beforeEach(() => {
+  // 组件通过 groups store 读取班级名称；store 依赖一个活跃的 pinia 实例。
+  setActivePinia(createPinia())
   read.mockReset()
   readOne.mockReset()
   readOneGroup.mockReset()

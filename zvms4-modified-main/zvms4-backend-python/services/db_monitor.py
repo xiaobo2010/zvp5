@@ -39,6 +39,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.api_metrics import api_metrics
 from services.host_metrics import collect_host_metrics
+from util.serialization import iso_text, iso_utc
 
 _logger = logging.getLogger(__name__)
 
@@ -325,29 +326,6 @@ def _number(value: Any, *, integer: bool = False) -> int | float | None:
     return converted if math.isfinite(converted) else None
 
 
-def _timestamp(value: Any) -> str | None:
-    if value is None:
-        return None
-    if isinstance(value, datetime):
-        return value.isoformat()
-    return str(value)
-
-
-def _utc_timestamp(value: Any) -> str | None:
-    """ISO-8601 instant for Oracle timestamps.
-
-    Oracle ``TIMESTAMP``/``DATE`` columns carry no offset; the ADB session time
-    zone is UTC (verified in production), so a naive value is labelled UTC
-    instead of being left ambiguous — the browser would otherwise read it as
-    local time. Storage fields keep using :func:`_timestamp` (frozen shape).
-    """
-    if isinstance(value, datetime):
-        if value.tzinfo is None:
-            value = value.replace(tzinfo=timezone.utc)
-        return value.isoformat()
-    return _timestamp(value)
-
-
 def _row_value(row: Any, key: str) -> Any:
     return row._mapping[key]
 
@@ -530,8 +508,8 @@ def _fast_load_metrics(rows: list[Any]) -> list[dict[str, Any]]:
                 "name": name,
                 "value": value,
                 "unit": unit,
-                "begin_time": _timestamp(begin if begin is not None else now),
-                "end_time": _timestamp(end if end is not None else now),
+                "begin_time": iso_text(begin if begin is not None else now),
+                "end_time": iso_text(end if end is not None else now),
                 "interval_centiseconds": interval_centiseconds,
                 "group_id": 2,
             }
@@ -570,8 +548,8 @@ def _legacy_load_metrics(rows: list[Any]) -> list[dict[str, Any]]:
                 "name": _row_value(row, "metric_name"),
                 "value": _number(_row_value(row, "value")),
                 "unit": _row_value(row, "metric_unit"),
-                "begin_time": _timestamp(_row_value(row, "begin_time")),
-                "end_time": _timestamp(_row_value(row, "end_time")),
+                "begin_time": iso_text(_row_value(row, "begin_time")),
+                "end_time": iso_text(_row_value(row, "end_time")),
                 "interval_centiseconds": _number(
                     _row_value(row, "intsize_csec"), integer=True
                 ),
@@ -615,7 +593,7 @@ async def _collect(session: AsyncSession) -> dict[str, Any]:
                     "estimated_rows": _number(
                         _row_value(row, "num_rows"), integer=True
                     ),
-                    "last_analyzed": _timestamp(_row_value(row, "last_analyzed")),
+                    "last_analyzed": iso_text(_row_value(row, "last_analyzed")),
                     "table_bytes": table_bytes,
                     "index_bytes": index_bytes,
                     "lob_bytes": lob_bytes,
@@ -860,7 +838,7 @@ def _sessions_payload(rows: list[Any]) -> dict[str, Any]:
             "wait_class": _mapping_get(row, "wait_class"),
             "last_call_et": _number(_mapping_get(row, "last_call_et"), integer=True),
             "sql_id": _mapping_get(row, "sql_id"),
-            "logon_time": _utc_timestamp(_mapping_get(row, "logon_time")),
+            "logon_time": iso_utc(_mapping_get(row, "logon_time")),
         }
         for row in rows
     ]

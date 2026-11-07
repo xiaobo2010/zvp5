@@ -18,6 +18,7 @@ import { ref, onMounted, toRefs, watch } from 'vue'
 import api from '@/api'
 import type { Group, User, UserPosition } from '@/../types'
 import { useUserStore } from '@/stores/user.ts'
+import { useGroupsStore } from '@/stores/groups'
 import { reactive } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ArrowRight } from '@element-plus/icons-vue'
@@ -241,7 +242,7 @@ async function remoteFetchClass(search: string) {
       classes.value = []
     }
   } else if (classGroupID.value) {
-    const group = await api.group.readOne(classGroupID.value)
+    const group = await useGroupsStore().fetchGroup(classGroupID.value)
     if (group) {
       classes.value = [group]
     } else {

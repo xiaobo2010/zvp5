@@ -138,11 +138,6 @@ def _b64url_encode(raw: bytes) -> str:
     return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
 
 
-def _b64url_decode(value: str) -> bytes:
-    pad = "=" * (-len(value) % 4)
-    return base64.urlsafe_b64decode(value + pad)
-
-
 def _compute_sig(oid: str, exp: int, purpose: str) -> str:
     message = f"{oid}|{exp}|{purpose}".encode("utf-8")
     return _b64url_encode(hmac.new(_SIGN_KEY, message, hashlib.sha256).digest())

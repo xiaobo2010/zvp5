@@ -15,6 +15,10 @@ from db.ids import normalize_oid, is_valid_oid
 from util.ban import ban_is_active, raise_banned
 from util.cert import jwt_decode
 from util.group import get_user_permissions
+# 旧 ``utils.validate_object_id`` 已并入 ``util.oid``；本模块继续 re-export，
+# 其余 40 余处 ``from util.object_id import validate_object_id`` 不必改。
+# ``as`` 形式是显式 re-export：ruff 的 F401 不会再把它当死代码。
+from util.oid import validate_object_id as validate_object_id
 
 try:  # 驱动层异常可能没被 SQLAlchemy 包成 DBAPIError（如连接中途断开）
     import oracledb
@@ -51,13 +55,6 @@ async def _log_level_scope():
         log_level_floor.set(previous)
 
 
-def validate_object_id(id: str):
-    try:
-        return normalize_oid(id)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid Object ID")
-
-
 def string_to_option_object_id(id: str):
     if is_valid_oid(id):
         return normalize_oid(id)
@@ -66,14 +63,6 @@ def string_to_option_object_id(id: str):
 
 def upgrade_user_positions(positions: list[UserPositionV1]) -> list[UserPositionV2]:
     return [trans_permissions(pos) for pos in positions]
-
-
-async def get_user(oid: str):
-    """
-    Get user by oid
-    """
-    validate_object_id(oid)
-    return await backends.get_users_repo().get_by_oid(oid)
 
 
 async def compulsory_temporary_token(
@@ -337,16 +326,3 @@ async def is_admin_token(raw) -> bool:
         # 按调用方级别落库，不继承上一个请求留下的 warning 下限。
         log_level_floor.set(previous)
     return bool(user) and "admin" in (user.get("per") or [])
-
-
-def timestamp_change(date_string: str):
-    """
-    Change ISO-8601 to timestamp
-    """
-    dt = datetime.strptime(date_string, "%Y-%m-%dT%H:%M:%S.%fZ")
-    # Change the time zone to UTC
-    dt = dt.replace(tzinfo=timezone.utc)
-    # Get the timestamp
-    timestamp = dt.timestamp()
-    # Return the timestamp
-    return int(timestamp)

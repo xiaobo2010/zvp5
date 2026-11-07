@@ -24,7 +24,7 @@ Importing this module performs **no I/O**.
 from __future__ import annotations
 
 import json
-from typing import Any, Type
+from typing import Any
 
 from sqlalchemy import (
     CheckConstraint,

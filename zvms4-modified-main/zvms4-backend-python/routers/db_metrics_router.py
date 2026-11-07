@@ -3,18 +3,16 @@
 Prefix ``/api/system/db/metrics`` (mounted in ``main.py``).  Admin-only, same
 envelope as ``/api/system/db/*``: ``{"status", "code", "data"}``.
 
-The route class is a deliberate *copy* of Lane 2's ``_DatabaseStatusRoute``
-rather than an import: the two lanes own separate files and must not couple.
+「不可用 → 503」的错误边界与 ``db_system_router`` 共用
+:class:`util.route_errors.DatabaseAvailabilityRoute`；本模块只覆盖日志前缀与
+detail 文案，响应形状与 ``/api/system/db/*`` 保持一致。
 """
 
 from __future__ import annotations
 
 import asyncio
-import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
-from fastapi.exceptions import RequestValidationError
-from fastapi.routing import APIRoute
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.oracle.session import get_session
@@ -22,34 +20,16 @@ from routers.system_router import _require_system_admin
 from services.db_monitor import get_local_metrics, get_realtime_metrics
 from services.perf_sampler import query_endpoints, query_history, query_top_sql
 from util.object_id import get_current_user
-
-_logger = logging.getLogger(__name__)
+from util.route_errors import DatabaseAvailabilityRoute
 
 _MAX_SERIES = 12
 
 
-class _MetricsStatusRoute(APIRoute):
+class _MetricsStatusRoute(DatabaseAvailabilityRoute):
     """Map unexpected failures to 503 without leaking internals."""
 
-    def get_route_handler(self):
-        handler = super().get_route_handler()
-
-        async def with_availability_errors(request):
-            # Authentication also accesses Oracle, before the endpoint function
-            # runs. Keep its failures inside this boundary.
-            try:
-                return await handler(request)
-            except (HTTPException, RequestValidationError):
-                raise
-            except Exception:
-                _logger.exception("Database metrics request failed")
-                raise HTTPException(
-                    status_code=503,
-                    detail="数据库性能监控暂时不可用",
-                    headers={"Cache-Control": "no-store"},
-                )
-
-        return with_availability_errors
+    log_message = "Database metrics request failed"
+    unavailable_detail = "数据库性能监控暂时不可用"
 
 
 router = APIRouter(route_class=_MetricsStatusRoute)

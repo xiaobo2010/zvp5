@@ -1,14 +1,18 @@
 import json
+from collections.abc import Mapping, Sequence
 from datetime import datetime
-from typing import List, Optional, Literal
+from typing import Any, List, Optional, Literal
 from pydantic import BaseModel, Field
 
 from db import backends
 from db.ids import is_valid_oid
 from typings.time import UserActivityTime
-from util.calculate import calculate_user_time, generate_description
+from util.calculate import (
+    calculate_user_time,
+    describe_memberships,
+)
 from util.get_class import get_user_classname
-from utils import validate_object_id
+from util.oid import validate_object_id
 
 # Language type definition
 Language = Literal["zh", "en"]
@@ -151,36 +155,53 @@ class VolunteerStatementData(BaseModel):
     statement_data: List[StatementRecord] = Field(default_factory=list)
 
 
-# Function to build statement data from your kernel data
-async def build_statement_data(
-    id: str,
+def assemble_statement(
+    *,
+    oid: str,
+    user: Mapping[str, Any],
+    class_name: str,
     period: tuple[datetime, datetime],
-    language: Language = "zh",
+    language: Language,
+    stats: Mapping[str, Any],
+    stats_this_year: Mapping[str, Any],
+    memberships: Sequence[Mapping[str, Any]],
+    activities: Sequence[Mapping[str, Any] | None],
+    approvers: Mapping[str, Mapping[str, Any] | None],
 ) -> tuple[VolunteerStatementData, dict]:
-    """
-    Build the volunteer statement model and spreadsheet row from kernel data
+    """Assemble one statement from data the caller has already loaded.
+
+    Pure Python: no database access, no ``await``. This is the single
+    implementation behind both :func:`build_statement_data` (which fills the
+    arguments with per-user queries) and the batched report/export paths (which
+    fill them from school-wide maps), so the two can never drift apart.
 
     Args:
-        id: Unique identifier for the user (e.g., student ID)
-        period: Tuple containing start and end dates for the statement period
-        language: Language for the statement ("zh" for Chinese, "en" for English)
+        oid: User oid (24-hex).
+        user: Full user document (``_id`` / ``id`` / ``name`` are read).
+        class_name: Class display name (already resolved by the caller).
+        period: Start and end dates for the statement header.
+        language: ``"zh"`` or ``"en"``.
+        stats: ``calculate_user_time`` result for all effective memberships.
+        stats_this_year: Same, restricted to the current academic year.
+        memberships: Effective membership rows for this user, in display order.
+        activities: Activity documents **aligned with** ``memberships`` (``None``
+            where the activity is missing); non-``effective`` rows are skipped.
+        approvers: ``approver_oid -> user document`` (``None`` for a dangling
+            approver). Non-oid approvers fall back to the built-in authority.
 
     Returns:
         A tuple of the assembled ``VolunteerStatementData`` and the per-user
         ``spreadsheet_data`` dict (``filename`` is added by the caller).
     """
 
-    validate_object_id(id)
-    user = await backends.get_users_repo().get_by_oid(id)
     user_name = user.get("name", "Unknown User")
     student_id = user.get("id", "Unknown ID")
-    class_id = await get_user_classname(id)
 
     # Create Pydantic models from kernel data
     user_data = UserData(
         name=user_name,
         student_id=student_id,
-        class_name=class_id,
+        class_name=class_name,
         database_id=str(user["_id"]),
         export_time=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         export_period=f"{period[0].strftime('%Y年%m月%d日')}——{period[1].strftime('%Y年%m月%d日')}"
@@ -188,12 +209,11 @@ async def build_statement_data(
         else f"{period[0].strftime('%B %d, %Y')} – {period[1].strftime('%B %d, %Y')}",
     )
 
-    stat = await calculate_user_time(id, allow_cache=False)
-    on_campus_hours = stat.get("on-campus", 0.0)
-    off_campus_hours = stat.get("off-campus", 0.0)
-    social_practice_hours = stat.get("social-practice", 0.0)
+    on_campus_hours = stats.get("on-campus", 0.0)
+    off_campus_hours = stats.get("off-campus", 0.0)
+    social_practice_hours = stats.get("social-practice", 0.0)
     stat_obj = UserActivityTime(
-        _id=id,
+        _id=oid,
         user=user["id"],
         on_campus_raw=on_campus_hours,
         off_campus_raw=off_campus_hours,
@@ -213,34 +233,21 @@ async def build_statement_data(
         social_practice_hours=stat_obj.social_practice,
     )
 
-    now = datetime.now()
-    ay = now.year if now.month >= 9 else now.year - 1
-    soy = datetime.now().replace(
-        month=8, day=1, year=ay, hour=0, minute=0, second=0, microsecond=0
-    )
-    eoy = datetime.now().replace(
-        month=7, day=31, year=ay + 1, hour=23, minute=59, second=59, microsecond=999999
-    )
-    stat_this_year = await calculate_user_time(
-        id, date_start=soy, date_end=eoy, allow_cache=False
-    )
     stats_data_this_year = StatsData(
-        on_campus_hours=stat_this_year.get("on-campus", 0.0),
-        off_campus_hours=stat_this_year.get("off-campus", 0.0),
-        social_practice_hours=stat_this_year.get("social-practice", 0.0),
+        on_campus_hours=stats_this_year.get("on-campus", 0.0),
+        off_campus_hours=stats_this_year.get("off-campus", 0.0),
+        social_practice_hours=stats_this_year.get("social-practice", 0.0),
     )
 
     statement_records = []
 
-    items = await backends.get_members_repo().list_for_member(id, status="effective")
     type_map = {"on-campus": "on", "off-campus": "off", "social-practice": "social"}
-    for item in items:
-        activity = await backends.get_activities_repo().get(item["activity"])
+    for item, activity in zip(memberships, activities):
         if not activity or activity.get("status") != "effective":
             continue
         assignee = activity.get("approver", "Unknown")
         if is_valid_oid(assignee):
-            assignee_data = await backends.get_users_repo().get_by_oid(assignee)
+            assignee_data = approvers.get(assignee)
         else:
             assignee_data = {
                 "name": "学校团委" if language == "zh" else "Authority",
@@ -276,7 +283,7 @@ async def build_statement_data(
         statement_data=statement_records,
     )
 
-    description = await generate_description(id)
+    description = describe_memberships(memberships, activities)
 
     spreadsheet_data = {
         "_id": user_data.database_id,
@@ -293,6 +300,119 @@ async def build_statement_data(
     }
 
     return volunteer_data, spreadsheet_data
+
+
+# Function to build statement data from your kernel data
+async def build_statement_data(
+    id: str,
+    period: tuple[datetime, datetime],
+    language: Language = "zh",
+    *,
+    user: Optional[Mapping[str, Any]] = None,
+    class_name: Optional[str] = None,
+    groups: Optional[Mapping[str, Mapping[str, Any]]] = None,
+    activities: Optional[Mapping[str, Mapping[str, Any]]] = None,
+    memberships: Optional[Mapping[str, Sequence[Mapping[str, Any]]]] = None,
+    approvers: Optional[Mapping[str, Mapping[str, Any]]] = None,
+    stats: Optional[Mapping[str, Any]] = None,
+    stats_this_year: Optional[Mapping[str, Any]] = None,
+) -> tuple[VolunteerStatementData, dict]:
+    """
+    Build the volunteer statement model and spreadsheet row from kernel data
+
+    Args:
+        id: Unique identifier for the user (e.g., student ID)
+        period: Tuple containing start and end dates for the statement period
+        language: Language for the statement ("zh" for Chinese, "en" for English)
+        user: Pre-loaded user document (``get_by_oid`` result).
+        class_name: Pre-resolved class name; resolution is skipped when given.
+        groups: ``group_oid -> group document`` map, used to resolve the class
+            name from ``user["class_id"]``. Falls back to ``get_user_classname``
+            when the oid is absent so odd data keeps the historical behaviour.
+        activities: ``activity_oid -> activity document`` map.
+        memberships: ``user_oid -> effective membership rows`` map.
+        approvers: ``approver_oid -> user document`` map.
+        stats: Pre-computed ``calculate_user_time`` result (all memberships).
+        stats_this_year: Pre-computed result for the current academic year.
+
+    Every pre-load argument is optional and defaults to the historical per-user
+    query, so existing callers keep their exact behaviour. A batched caller
+    passes them all and this function performs no database access at all.
+
+    Returns:
+        A tuple of the assembled ``VolunteerStatementData`` and the per-user
+        ``spreadsheet_data`` dict (``filename`` is added by the caller).
+    """
+
+    validate_object_id(id)
+    if user is None:
+        user = await backends.get_users_repo().get_by_oid(id)
+
+    if class_name is None:
+        class_id = user.get("class_id")
+        if groups is not None and class_id is not None:
+            group = groups.get(str(class_id))
+            if group is not None:
+                class_name = group["name"]
+        if class_name is None:
+            class_name = await get_user_classname(id)
+
+    if stats is None:
+        stats = await calculate_user_time(id, allow_cache=False)
+
+    now = datetime.now()
+    ay = now.year if now.month >= 9 else now.year - 1
+    soy = datetime.now().replace(
+        month=8, day=1, year=ay, hour=0, minute=0, second=0, microsecond=0
+    )
+    eoy = datetime.now().replace(
+        month=7, day=31, year=ay + 1, hour=23, minute=59, second=59, microsecond=999999
+    )
+    if stats_this_year is None:
+        stats_this_year = await calculate_user_time(
+            id, date_start=soy, date_end=eoy, allow_cache=False
+        )
+
+    if memberships is None:
+        items = list(
+            await backends.get_members_repo().list_for_member(
+                id, status="effective"
+            )
+        )
+    else:
+        items = list(memberships.get(str(id), ()))
+
+    if activities is None:
+        resolved = [
+            await backends.get_activities_repo().get(item["activity"])
+            for item in items
+        ]
+    else:
+        resolved = [activities.get(str(item["activity"])) for item in items]
+
+    if approvers is None:
+        approver_oids = {
+            activity["approver"]
+            for activity in resolved
+            if activity and is_valid_oid(activity.get("approver", ""))
+        }
+        approvers = {
+            approver: await backends.get_users_repo().get_by_oid(approver)
+            for approver in approver_oids
+        }
+
+    return assemble_statement(
+        oid=id,
+        user=user,
+        class_name=class_name,
+        period=period,
+        language=language,
+        stats=stats,
+        stats_this_year=stats_this_year,
+        memberships=items,
+        activities=resolved,
+        approvers=approvers,
+    )
 
 
 def _stats_payload(stats: StatsData) -> dict:
