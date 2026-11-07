@@ -2,7 +2,7 @@
 import ZGroupUserList from '@/components/group/ZGroupUserList.vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElPageHeader, ElSegmented, ElIcon, ElText } from 'element-plus'
-import { ref, watch, type Component } from 'vue'
+import { defineAsyncComponent, ref, watch, type Component } from 'vue'
 import type { Group } from '@/../types'
 import { useWindowSize } from '@vueuse/core'
 import { useUserStore } from '@/stores/user.ts'
@@ -15,7 +15,10 @@ import ZUserModification from '@/components/group/ZUserModification.vue'
 import { AddUser, User, ViewList } from '@icon-park/vue-next'
 import { TablerSum } from '@/icons'
 import UilStatistics from '@/icons/UilStatistics.vue'
-import ZGroupTimeStatistics from '@/components/group/ZGroupTimeStatistics.vue'
+// 统计 tab 才用 chart.js：静态导入会让 190KB 的图表块进入组页首屏，改成按需加载。
+const ZGroupTimeStatistics = defineAsyncComponent(
+  () => import('@/components/group/ZGroupTimeStatistics.vue')
+)
 
 interface SegmentedTab {
   label: string
