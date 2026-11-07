@@ -3,15 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useDark } from '@vueuse/core'
-import {
-  ElButton,
-  ElDialog,
-  ElIcon,
-  ElInput,
-  ElMessage,
-  ElMessageBox,
-  ElSwitch
-} from 'element-plus'
+import { ElButton, ElDialog, ElIcon, ElInput, ElMessage, ElMessageBox, ElSwitch } from 'element-plus'
 import { Bell, Refresh, SwitchButton, Warning } from '@element-plus/icons-vue'
 import { useUserStore } from '@/stores/user'
 import { useGroupsStore } from '@/stores/groups'
@@ -89,14 +81,18 @@ async function changePassword() {
 
 async function logout() {
   try {
-    await ElMessageBox.confirm(t('profile.logoutConfirm'), t('profile.logoutConfirmTitle'), {
-      confirmButtonText: t('profile.logoutConfirmOk'),
-      cancelButtonText: t('profile.logoutConfirmCancel'),
-      type: 'warning',
-      // 退出登录属高危确认，主按钮走红色语义色（深浅色一致）
-      confirmButtonClass: 'el-button--danger',
-      closeOnClickModal: false
-    })
+    await ElMessageBox.confirm(
+      t('profile.logoutConfirm'),
+      t('profile.logoutConfirmTitle'),
+      {
+        confirmButtonText: t('profile.logoutConfirmOk'),
+        cancelButtonText: t('profile.logoutConfirmCancel'),
+        type: 'warning',
+        // 退出登录属高危确认，主按钮走红色语义色（深浅色一致）
+        confirmButtonClass: 'el-button--danger',
+        closeOnClickModal: false
+      }
+    )
   } catch {
     return
   }
@@ -216,8 +212,10 @@ async function bindCurrentDevice() {
   deviceBinding.value = true
   try {
     if (deviceStatus.value?.primary_xuehai_id) {
-      await withTemporaryToken(String(user._id), t('device.profile.verifyChangeReason'), (token) =>
-        setMyPrimaryDevice(xuehaiId, token)
+      await withTemporaryToken(
+        String(user._id),
+        t('device.profile.verifyChangeReason'),
+        (token) => setMyPrimaryDevice(xuehaiId, token)
       )
     } else {
       await setMyPrimaryDevice(xuehaiId)
@@ -248,8 +246,10 @@ async function submitChange() {
   }
   deviceSaving.value = true
   try {
-    await withTemporaryToken(String(user._id), t('device.profile.verifyChangeReason'), (token) =>
-      setMyPrimaryDevice(next, token)
+    await withTemporaryToken(
+      String(user._id),
+      t('device.profile.verifyChangeReason'),
+      (token) => setMyPrimaryDevice(next, token)
     )
     changeDialogVisible.value = false
     ElMessage.success(t('device.profile.changeSuccess'))
@@ -266,20 +266,26 @@ async function submitChange() {
 
 async function unbindPrimaryDevice() {
   try {
-    await ElMessageBox.confirm(t('device.profile.unbindWarning'), t('device.profile.unbindTitle'), {
-      confirmButtonText: t('device.profile.unbindConfirm'),
-      cancelButtonText: t('device.profile.unbindCancel'),
-      type: 'warning',
-      confirmButtonClass: 'el-button--danger',
-      closeOnClickModal: false
-    })
+    await ElMessageBox.confirm(
+      t('device.profile.unbindWarning'),
+      t('device.profile.unbindTitle'),
+      {
+        confirmButtonText: t('device.profile.unbindConfirm'),
+        cancelButtonText: t('device.profile.unbindCancel'),
+        type: 'warning',
+        confirmButtonClass: 'el-button--danger',
+        closeOnClickModal: false
+      }
+    )
   } catch {
     return
   }
   deviceSaving.value = true
   try {
-    await withTemporaryToken(String(user._id), t('device.profile.verifyUnbindReason'), (token) =>
-      clearMyPrimaryDevice(token)
+    await withTemporaryToken(
+      String(user._id),
+      t('device.profile.verifyUnbindReason'),
+      (token) => clearMyPrimaryDevice(token)
     )
     ElMessage.success(t('device.profile.unbindSuccess'))
     await loadDevice()
@@ -294,7 +300,8 @@ async function unbindPrimaryDevice() {
 }
 
 /* ---------- 深浅色切换 ---------- */
-const reduceMotion = () => window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
+const reduceMotion = () =>
+  window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
 
 function toggleDarkMode() {
   const next = !dark.value
@@ -489,10 +496,7 @@ onMounted(async () => {
             }}
           </p>
 
-          <div
-            v-if="deviceState.bound || deviceState.isXuehaiDevice"
-            class="profile-device-actions"
-          >
+          <div v-if="deviceState.bound || deviceState.isXuehaiDevice" class="profile-device-actions">
             <ElButton
               v-if="deviceState.canBind"
               type="primary"
@@ -770,20 +774,10 @@ html[data-theme='light'] .profile-device-dialog-input {
   overflow: hidden;
   border-left: 3px solid var(--phx-accent);
   background:
-    linear-gradient(
-        to bottom left,
-        transparent calc(50% - 1px),
-        var(--phx-accent) 50%,
-        transparent calc(50% + 1.5px)
-      )
-      right top / 22px 22px no-repeat,
+    linear-gradient(to bottom left, transparent calc(50% - 1px), var(--phx-accent) 50%, transparent calc(50% + 1.5px)) right top / 22px 22px no-repeat,
     linear-gradient(var(--phx-line-soft) 1px, transparent 1px) 0 0 / 24px 24px,
     linear-gradient(90deg, var(--phx-line-soft) 1px, transparent 1px) 0 0 / 24px 24px,
-    linear-gradient(
-      100deg,
-      color-mix(in srgb, var(--phx-accent) 9%, var(--phx-surface)),
-      var(--phx-surface) 58%
-    );
+    linear-gradient(100deg, color-mix(in srgb, var(--phx-accent) 9%, var(--phx-surface)), var(--phx-surface) 58%);
   clip-path: polygon(0 0, calc(100% - 22px) 0, 100% 22px, 100% 100%, 0 100%);
   animation: phx-head-in 420ms var(--phx-ease) both;
 }
@@ -900,11 +894,7 @@ html[data-theme='light'] .profile-device-dialog-input {
 .phx-panel::before {
   inset: 0;
   background:
-    linear-gradient(
-      225deg,
-      var(--phx-accent) 0 calc(var(--phx-cut) * 0.9),
-      transparent calc(var(--phx-cut) * 0.9 + 1px)
-    ),
+    linear-gradient(225deg, var(--phx-accent) 0 calc(var(--phx-cut) * 0.9), transparent calc(var(--phx-cut) * 0.9 + 1px)),
     color-mix(in srgb, var(--phx-ink) 16%, transparent);
 }
 
@@ -912,11 +902,7 @@ html[data-theme='light'] .profile-device-dialog-input {
   inset: 1px;
   background:
     linear-gradient(var(--phx-accent), transparent 70%) left top / 2px 100% no-repeat,
-    linear-gradient(
-      135deg,
-      color-mix(in srgb, var(--phx-accent) 5%, var(--phx-surface)),
-      var(--phx-surface) 46%
-    );
+    linear-gradient(135deg, color-mix(in srgb, var(--phx-accent) 5%, var(--phx-surface)), var(--phx-surface) 46%);
 }
 
 .phx-panel .yg-card__header {
@@ -926,8 +912,7 @@ html[data-theme='light'] .profile-device-dialog-input {
   justify-content: flex-start;
   gap: var(--yg-space-2) var(--yg-space-3);
   min-height: 52px;
-  padding: var(--yg-space-3) calc(var(--phx-cut) + var(--yg-space-3)) var(--yg-space-3)
-    var(--yg-space-5);
+  padding: var(--yg-space-3) calc(var(--phx-cut) + var(--yg-space-3)) var(--yg-space-3) var(--yg-space-5);
   border-bottom: 1px solid var(--phx-line-soft);
 }
 
@@ -952,19 +937,17 @@ html[data-theme='light'] .profile-device-dialog-input {
 .phx-code {
   flex: 0 0 auto;
   padding: 2px 6px 1px;
-  border: 0;
-  background: color-mix(in srgb, var(--phx-accent) 12%, transparent);
+  border: 1px solid var(--phx-line);
   color: var(--phx-accent);
   font: 400 13px / 1.1 var(--phx-display);
   letter-spacing: 0.16em;
-  clip-path: polygon(0 0, calc(100% - 5px) 0, 100% 5px, 100% 100%, 0 100%);
 }
 
 /* ---------- 标签：直角 + 右下小切；语义色走 --yg-text-* 令牌 ---------- */
 .profile-page .yg-tag {
   height: 24px;
   padding: 0 10px 0 8px;
-  border: 0;
+  border: 1px solid var(--phx-line-soft);
   border-radius: 0;
   background: var(--phx-sunken);
   color: var(--yg-text-secondary);
@@ -976,21 +959,25 @@ html[data-theme='light'] .profile-device-dialog-input {
 }
 
 .profile-page .yg-tag.yg-tag--sky {
-  background: color-mix(in srgb, var(--phx-accent) 12%, transparent);
+  border-color: color-mix(in srgb, var(--phx-accent) 34%, transparent);
+  background: color-mix(in srgb, var(--phx-accent) 10%, transparent);
   color: var(--phx-accent);
 }
 
 .profile-page .yg-tag.yg-tag--success {
+  border-color: color-mix(in srgb, var(--yg-text-success) 34%, transparent);
   background: var(--yg-color-success-soft);
   color: var(--yg-text-success);
 }
 
 .profile-page .yg-tag.yg-tag--warning {
+  border-color: color-mix(in srgb, var(--yg-text-warning) 34%, transparent);
   background: var(--yg-color-warning-soft);
   color: var(--yg-text-warning);
 }
 
 .profile-page .yg-tag.yg-tag--danger {
+  border-color: color-mix(in srgb, var(--yg-text-danger) 40%, transparent);
   background: var(--yg-color-danger-soft);
   color: var(--yg-text-danger);
 }
@@ -1061,23 +1048,13 @@ html[data-theme='light'] .profile-device-dialog-input {
   place-items: center;
   width: 72px;
   height: 72px;
-  background: linear-gradient(
-    135deg,
-    color-mix(in srgb, var(--phx-accent) 24%, var(--phx-surface)),
-    color-mix(in srgb, var(--phx-accent) 6%, var(--phx-surface))
-  );
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--phx-accent) 24%, var(--phx-surface)), color-mix(in srgb, var(--phx-accent) 6%, var(--phx-surface)));
   color: var(--phx-accent);
   font-size: 30px;
   font-weight: var(--yg-font-weight-bold);
   line-height: 1;
-  clip-path: polygon(
-    0 0,
-    calc(100% - 14px) 0,
-    100% 14px,
-    100% 100%,
-    14px 100%,
-    0 calc(100% - 14px)
-  );
+  clip-path: polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 14px 100%, 0 calc(100% - 14px));
 }
 
 .profile-identity {
@@ -1206,11 +1183,7 @@ html[data-theme='light'] .profile-device-dialog-input {
   border: 0;
   border-left: 3px solid var(--yg-text-warning);
   background:
-    repeating-linear-gradient(
-      -45deg,
-      color-mix(in srgb, var(--yg-text-warning) 10%, transparent) 0 6px,
-      transparent 6px 12px
-    ),
+    repeating-linear-gradient(-45deg, color-mix(in srgb, var(--yg-text-warning) 10%, transparent) 0 6px, transparent 6px 12px),
     var(--yg-color-warning-soft);
   color: var(--yg-text-warning);
   clip-path: polygon(0 0, calc(100% - 12px) 0, 100% 12px, 100% 100%, 0 100%);
@@ -1363,11 +1336,7 @@ html[data-theme='light'] .profile-device-dialog-input {
 }
 
 .profile-notice-head:hover {
-  background: linear-gradient(
-    100deg,
-    color-mix(in srgb, var(--phx-accent) 10%, transparent) 0 45%,
-    transparent 80%
-  );
+  background: linear-gradient(100deg, color-mix(in srgb, var(--phx-accent) 10%, transparent) 0 45%, transparent 80%);
   transform: translateX(3px);
 }
 
@@ -1529,11 +1498,7 @@ html[data-theme='light'] .profile-device-dialog-input {
 }
 
 .profile-action:hover {
-  background: linear-gradient(
-    100deg,
-    color-mix(in srgb, var(--phx-accent) 10%, transparent) 0 40%,
-    transparent 78%
-  );
+  background: linear-gradient(100deg, color-mix(in srgb, var(--phx-accent) 10%, transparent) 0 40%, transparent 78%);
   box-shadow: inset 3px 0 0 var(--phx-accent);
 }
 
@@ -1567,30 +1532,21 @@ html[data-theme='light'] .profile-device-dialog-input {
 
 .profile-switch-control {
   --el-switch-on-color: var(--phx-accent);
-  --el-switch-off-color: color-mix(in srgb, var(--phx-ink) 26%, var(--phx-surface));
+  --el-switch-off-color: color-mix(in srgb, var(--phx-ink) 24%, transparent);
   margin-left: auto;
   pointer-events: none;
 }
 
-/* 无框开关：软填充切角轨道 + 切角滑块；滑块仍走 left 弹簧位移，按压回缩 */
+/* 方形开关：轨道与滑块都直角；滑块用弹簧位移，按压时轻微回缩 */
 .profile-switch-control :deep(.el-switch__core) {
-  border: 0;
   border-radius: 0;
-  clip-path: polygon(5px 0, 100% 0, 100% calc(100% - 5px), calc(100% - 5px) 100%, 0 100%, 0 5px);
-  box-shadow: none;
   transition:
     background-color 300ms var(--phx-ease),
-    box-shadow 300ms var(--phx-ease);
+    border-color 300ms var(--phx-ease);
 }
 
 .profile-switch-control :deep(.el-switch__action) {
-  border: 0;
   border-radius: 0;
-  clip-path: polygon(3px 0, 100% 0, 100% calc(100% - 3px), calc(100% - 3px) 100%, 0 100%, 0 3px);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.26);
-  /* 主题切换走 View Transitions 时，真实 DOM 被快照盖住，left transition 不生效。
-     提升为独立快照组后，滑块位移由 yg-glass-nav.css 的 group 动画接管。 */
-  view-transition-name: phi-theme-switch;
   transition:
     left 300ms var(--phx-spring),
     transform 300ms var(--phx-spring);
@@ -1611,25 +1567,14 @@ html[data-theme='light'] .profile-device-dialog-input {
   justify-content: center;
   gap: var(--yg-space-2);
   min-height: 48px;
-  border: 0;
+  border: 1px solid color-mix(in srgb, var(--yg-text-danger) 40%, transparent);
   background:
-    repeating-linear-gradient(
-      -45deg,
-      color-mix(in srgb, var(--yg-text-danger) 9%, transparent) 0 6px,
-      transparent 6px 12px
-    ),
+    repeating-linear-gradient(-45deg, color-mix(in srgb, var(--yg-text-danger) 9%, transparent) 0 6px, transparent 6px 12px),
     var(--yg-color-danger-soft);
   box-shadow: none;
   color: var(--yg-text-danger);
   font-weight: var(--yg-font-weight-semibold);
-  clip-path: polygon(
-    0 0,
-    calc(100% - 12px) 0,
-    100% 12px,
-    100% 100%,
-    12px 100%,
-    0 calc(100% - 12px)
-  );
+  clip-path: polygon(0 0, calc(100% - 12px) 0, 100% 12px, 100% 100%, 12px 100%, 0 calc(100% - 12px));
   transition:
     background-color 180ms var(--phx-ease),
     color 180ms var(--phx-ease);
@@ -1643,11 +1588,7 @@ html[data-theme='light'] .profile-device-dialog-input {
 .profile-action.profile-action--danger:focus {
   color: var(--yg-text-danger);
   background:
-    repeating-linear-gradient(
-      -45deg,
-      color-mix(in srgb, var(--yg-text-danger) 14%, transparent) 0 6px,
-      transparent 6px 12px
-    ),
+    repeating-linear-gradient(-45deg, color-mix(in srgb, var(--yg-text-danger) 14%, transparent) 0 6px, transparent 6px 12px),
     color-mix(in srgb, var(--yg-color-danger-soft) 70%, var(--yg-color-danger) 30%);
   box-shadow: none;
 }
@@ -1692,12 +1633,7 @@ html[data-theme='light'] .profile-device-dialog-input {
   to {
     opacity: 1;
     transform: none;
-    clip-path: polygon(
-      -12px -12px,
-      calc(100% + 52px) -12px,
-      calc(100% + 12px) calc(100% + 12px),
-      -52px calc(100% + 12px)
-    );
+    clip-path: polygon(-12px -12px, calc(100% + 52px) -12px, calc(100% + 12px) calc(100% + 12px), -52px calc(100% + 12px));
   }
 }
 

@@ -142,7 +142,10 @@ function placeThumb(animate: boolean) {
     return
   }
   el.animate(
-    [{ transform: `translate3d(${from}px, 0, 0)` }, { transform: `translate3d(${x}px, 0, 0)` }],
+    [
+      { transform: `translate3d(${from}px, 0, 0)` },
+      { transform: `translate3d(${x}px, 0, 0)` }
+    ],
     { duration: 470, easing: SPRING }
   )
 }
@@ -297,7 +300,11 @@ function selectPage(page: number, event: MouseEvent) {
   const target = event.currentTarget as HTMLElement | null
   if (target && !reduceMotion()) {
     target.animate(
-      [{ transform: 'scale(0.86)' }, { transform: 'scale(1.18)' }, { transform: 'scale(1)' }],
+      [
+        { transform: 'scale(0.86)' },
+        { transform: 'scale(1.18)' },
+        { transform: 'scale(1)' }
+      ],
       { duration: 420, easing: 'cubic-bezier(0.22, 1.55, 0.36, 1)' }
     )
   }
@@ -440,7 +447,9 @@ watch([visiblePages, slotPx], () => {
       </button>
     </div>
 
-    <span class="yg-pg__status" aria-live="polite"> 第 {{ localPage }} / {{ pageCount }} 页 </span>
+    <span class="yg-pg__status" aria-live="polite">
+      第 {{ localPage }} / {{ pageCount }} 页
+    </span>
 
     <label v-if="!isMobile" class="yg-pg__jump">
       前往
@@ -485,34 +494,34 @@ watch([visiblePages, slotPx], () => {
 
 .yg-pg__select {
   height: 32px;
-  padding: 0 26px 0 4px;
-  border: 0;
-  border-bottom: 1px solid var(--yg-border-default);
-  border-radius: 0;
-  background-color: transparent;
-  background-image:
-    linear-gradient(45deg, transparent 50%, currentColor 50%),
+  padding: 0 26px 0 10px;
+  border: 1px solid var(--yg-border-default);
+  border-radius: var(--yg-radius-md);
+  background-color: var(--yg-bg-surface-raised);
+  background-image: linear-gradient(45deg, transparent 50%, currentColor 50%),
     linear-gradient(135deg, currentColor 50%, transparent 50%);
   background-position:
-    calc(100% - 12px) 14px,
-    calc(100% - 7px) 14px;
+    calc(100% - 15px) 14px,
+    calc(100% - 10px) 14px;
   background-size: 5px 5px;
   background-repeat: no-repeat;
   color: var(--yg-text-primary);
   font-size: 13px;
   appearance: none;
   cursor: pointer;
-  transition: border-color 160ms ease;
+  transition:
+    border-color 160ms ease,
+    box-shadow 160ms ease;
 }
 
 .yg-pg__select:hover {
-  border-bottom-color: var(--yg-color-primary);
+  border-color: var(--yg-color-primary);
 }
 
 .yg-pg__select:focus-visible {
   outline: none;
-  border-bottom-color: var(--yg-color-primary);
-  box-shadow: inset 0 -2px 0 var(--yg-color-primary);
+  border-color: var(--yg-color-primary);
+  box-shadow: var(--yg-focus-ring);
 }
 
 .yg-pg__nav {
@@ -521,7 +530,7 @@ watch([visiblePages, slotPx], () => {
   gap: 8px;
 }
 
-/* 翻页钮：无框，只保留箭头与颜色反馈 */
+/* 圆形玻璃导航钮：按压回弹 */
 .yg-pg__btn {
   display: inline-flex;
   align-items: center;
@@ -529,18 +538,20 @@ watch([visiblePages, slotPx], () => {
   width: 34px;
   height: 34px;
   padding: 0;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  color: var(--yg-text-secondary);
+  border: 1px solid var(--yg-border-default);
+  border-radius: 999px;
+  background: var(--yg-bg-surface-raised);
+  color: var(--yg-text-primary);
   cursor: pointer;
   transition:
     transform 460ms cubic-bezier(0.34, 1.9, 0.42, 1),
-    color 160ms ease,
+    background-color 160ms ease,
+    border-color 160ms ease,
     opacity 160ms ease;
 }
 
 .yg-pg__btn:hover:not(:disabled) {
+  border-color: var(--yg-color-primary);
   color: var(--yg-color-primary);
 }
 
@@ -555,45 +566,40 @@ watch([visiblePages, slotPx], () => {
 }
 
 .yg-pg__btn:focus-visible {
-  outline: 2px solid var(--yg-color-primary);
-  outline-offset: 2px;
+  outline: none;
+  box-shadow: var(--yg-focus-ring);
 }
 
-/* 页码轨道：无胶囊外框，只留一条底规；宽度由 --yg-pg-slot 决定，滑块严格对齐 */
+/* 页码轨道：可拖拽，宽度完全由 --yg-pg-slot 决定，滑块与格子严格对齐 */
 .yg-pg__track {
   position: relative;
   display: inline-flex;
   align-items: stretch;
-  padding: 0 3px;
-  border: 0;
-  border-bottom: 1px solid var(--yg-border-subtle);
-  border-radius: 0;
-  background: transparent;
+  padding: 3px;
+  border: 1px solid var(--yg-border-default);
+  border-radius: 999px;
+  background: var(--yg-bg-surface-sunken);
   cursor: grab;
   user-select: none;
   touch-action: none;
-  overflow: visible;
+  overflow: hidden;
 }
 
 .yg-pg__track.is-dragging {
   cursor: grabbing;
 }
 
-/* 选中标记：低高度底部强调条，不再是整块滑块/平行四边形。
-   位移、弹簧与缩放脉冲仍由 JS/WAAPI 驱动。 */
+/* 选中滑块：位置与弹簧动画全部由 JS/WAAPI 驱动，CSS 不参与过渡 */
 .yg-pg__thumb {
   position: absolute;
-  right: auto;
-  bottom: -1px;
+  top: 3px;
+  bottom: 3px;
   left: 0;
   width: var(--yg-pg-slot, 42px);
-  height: 3px;
-  border-radius: 0;
+  border-radius: 999px;
   background: var(--yg-color-primary);
-  box-shadow: none;
-  clip-path: polygon(0 0, 100% 0, calc(100% - 6px) 100%, 0 100%);
+  box-shadow: 0 2px 10px rgba(14, 165, 233, 0.4);
   transform: translate3d(3px, 0, 0);
-  transform-origin: 50% 100%;
   will-change: transform, scale;
   pointer-events: none;
 }
@@ -602,10 +608,10 @@ watch([visiblePages, slotPx], () => {
   position: relative;
   z-index: 1;
   width: var(--yg-pg-slot, 42px);
-  height: 34px;
+  height: 32px;
   padding: 0;
   border: 0;
-  border-radius: 0;
+  border-radius: 999px;
   background: transparent;
   color: var(--yg-text-secondary);
   font-size: 13px;
@@ -624,13 +630,13 @@ watch([visiblePages, slotPx], () => {
 }
 
 .yg-pg__num.is-active {
-  color: var(--yg-color-primary);
+  color: #fff;
   font-weight: 600;
 }
 
 .yg-pg__num:focus-visible {
-  outline: 2px solid var(--yg-color-primary);
-  outline-offset: -2px;
+  outline: none;
+  box-shadow: var(--yg-focus-ring);
 }
 
 .yg-pg__status {
@@ -649,10 +655,9 @@ watch([visiblePages, slotPx], () => {
   width: 52px;
   height: 32px;
   padding: 0 6px;
-  border: 0;
-  border-bottom: 1px solid var(--yg-border-default);
-  border-radius: 0;
-  background: transparent;
+  border: 1px solid var(--yg-border-default);
+  border-radius: var(--yg-radius-md);
+  background: var(--yg-bg-surface-raised);
   color: var(--yg-text-primary);
   font-size: 13px;
   text-align: center;
@@ -661,8 +666,8 @@ watch([visiblePages, slotPx], () => {
 
 .yg-pg__jump-input:focus-visible {
   outline: none;
-  border-bottom-color: var(--yg-color-primary);
-  box-shadow: inset 0 -2px 0 var(--yg-color-primary);
+  border-color: var(--yg-color-primary);
+  box-shadow: var(--yg-focus-ring);
 }
 
 /* 窄屏：只留 上一页 / 页码轨道 / 下一页，纵向排一行 */

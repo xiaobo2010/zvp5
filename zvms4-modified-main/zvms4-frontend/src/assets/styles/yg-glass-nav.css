@@ -213,29 +213,6 @@ html.dark .yg-glass-nav__indicator {
    JS 侧不再写死毫秒数。 */
 .yg-glass-nav__theme-icon {
   display: inline-flex;
-  /* 快照过渡期间真实 DOM 会被伪元素盖住，CSS 动画不可见。
-     给它单独一个 View Transition 组，让旋转发生在快照层上。 */
-  view-transition-name: phi-theme-icon;
-}
-
-::view-transition-group(phi-theme-icon) {
-  animation: yg-theme-icon-vt var(--yg-dur-page) var(--yg-ease-spring) both;
-}
-
-/* 太阳/月亮近似中心对称，纯 360° 旋转几乎看不出来；快照层改成四分之一圈回弹 + 缩放。 */
-@keyframes yg-theme-icon-vt {
-  0% {
-    transform: rotate(-135deg) scale(0.55);
-  }
-  55% {
-    transform: rotate(12deg) scale(1.16);
-  }
-  78% {
-    transform: rotate(-4deg) scale(0.98);
-  }
-  100% {
-    transform: rotate(0deg) scale(1);
-  }
 }
 
 .yg-glass-nav__theme-icon.spinning {
@@ -252,13 +229,6 @@ html.dark .yg-glass-nav__indicator {
   to {
     transform: rotate(360deg) scale(1);
   }
-}
-
-/* 深色模式开关：快照过渡会冻住 left transition，导致滑块瞬间跳到终点。
-   把滑块提升为独立 View Transition 组，让位移在快照层上继续滑动。 */
-::view-transition-group(phi-theme-switch) {
-  animation-duration: var(--yg-dur-slow);
-  animation-timing-function: var(--yg-ease-spring);
 }
 
 /* 深浅色整屏过渡：View Transitions 快照交叉淡化（非线性缓动）
@@ -286,9 +256,7 @@ html.dark .yg-glass-nav__indicator {
 @media (prefers-reduced-motion: reduce) {
   :root::view-transition-group(root),
   :root::view-transition-old(root),
-  :root::view-transition-new(root),
-  ::view-transition-group(phi-theme-icon),
-  ::view-transition-group(phi-theme-switch) {
+  :root::view-transition-new(root) {
     animation: none;
   }
 }
