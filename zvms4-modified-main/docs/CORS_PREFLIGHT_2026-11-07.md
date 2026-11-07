@@ -99,3 +99,29 @@ if (xuehaiId > 0 && !config.headers['X-Device-Unlock']) {
 
 本轮改动全部在前端，**未触碰后端**：路由、方法、状态码、响应体、错误文案、响应头一律不变。
 `X-Device-Unlock` 的空值语义与「不带」在现有后端实现下完全等价。
+
+## 七、发布记录（2026-11-07）
+
+| 项 | 值 |
+| --- | --- |
+| 提交 | `e942d0f perf(frontend): 合并在途相同 GET，并让请求头集合保持恒定` |
+| 远端 | `origin/main` = `e942d0f` |
+| 目标 | 洛杉矶 `zgovps-la` `/www/zvms4/frontend-dist`（nginx `root`，`gzip_static on`） |
+| 备份 | `/www/zvms4/frontend-dist.bak-20261107-133820`（22M） |
+| 产物 | `index-Cj24z6Rz.js` / `index-ZSk6j9bi.css` / `index-legacy-DBGALj1D.js`，178 个文件 + 160 个 `.gz` |
+| 构建 | `VITE_API_BASE=https://zvp.xiaobopisces.top/api` + `VITE_API_RACE_BASE=https://zvpapi.xiaoboisces.top/api` |
+| 未动 | 首尔后端（`zvms4` 未重启）、canary 预览站、nginx 配置 |
+
+验收：首页 / `/user/login` `/activities` `/ai` `/manage` `/about` 全 200；`/api/health`
+`/api/version` `/api/changelog` `/api/` 全 200；`gzip_static` 生效（js 171KB / css 26.7KB，
+均带 `content-encoding: gzip`）；旧产物 `index-Ch_yOuv0.js` 已随 `--delete` 移除（404）；
+洛杉矶近 500 条访问日志 0 条 5xx；`zvms4` 服务 active、近 10 分钟 0 条 Traceback。
+
+回滚：
+
+```bash
+rsync -a /www/zvms4/frontend-dist.bak-20261107-133820/ /www/zvms4/frontend-dist/
+find /www/zvms4/frontend-dist -type f -exec chown www:www {} +
+```
+
+不涉及数据库变更，无需回滚数据。
