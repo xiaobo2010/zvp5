@@ -19,7 +19,7 @@ def replace_required(source: str, old: str, new: str) -> str:
 
 def main() -> None:
     base = Path(__file__).resolve().parent
-    root = base if (base / "settings.example.py").exists() else base.parent / "zvms4-backend-python"
+    root = base if (base / "settings.example.py").exists() else base.parent / "zvp5-backend-python"
     template = root / "settings.example.py"
     target = root / "settings.py"
     password = os.environ.get("ZVMS_ORACLE_PASSWORD", "")
