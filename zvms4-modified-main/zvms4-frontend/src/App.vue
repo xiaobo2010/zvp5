@@ -21,6 +21,7 @@ import type { WatermarkFontType } from 'element-plus'
 import { zhCn } from 'element-plus/es/locale/index.mjs'
 import ZNotificationReminder from '@/components/notification/ZNotificationReminder.vue'
 import ZPrimaryDeviceGate from '@/components/notification/ZPrimaryDeviceGate.vue'
+import ZLoginReveal from '@/components/system/ZLoginReveal.vue'
 import { useRegisterSW } from 'virtual:pwa-register/vue'
 import { CarbonCloudOffline } from '@/icons'
 // 直接从定义模块引入：绕过 @/views barrel，避免主 chunk 打包全部路由视图
@@ -32,6 +33,7 @@ import {
   clearPlatformGuardData
 } from '@/utils/platformGuard'
 import { startPhiEdgePhase, stopPhiEdgePhase } from '@/utils/phiEdgePhase'
+import { loginRoleKey } from '@/utils/loginRole'
 import dayjs from '@/plugins/dayjs'
 
 const { needRefresh, offlineReady, updateServiceWorker } = useRegisterSW()
@@ -191,6 +193,42 @@ watch(
   (v) => {
     v && resetPassword()
   }
+)
+
+// 登录揭示：登录成功后先等路由离开登录页，再在主页面上盖一层欢迎动画。
+// 若在登录页就开播，慢接口会让幕布拉开时露出的仍是登录表单。
+const loginRevealPending = ref(false)
+const loginRevealVisible = ref(false)
+const loginRevealRun = ref(0)
+const loginRevealName = ref('')
+const loginRevealRole = ref('')
+
+function playLoginReveal() {
+  if (!loginRevealPending.value || route.path.endsWith('login')) {
+    return
+  }
+  loginRevealPending.value = false
+  loginRevealName.value = userStore.name
+  loginRevealRole.value = t(`home.positions.${loginRoleKey(userStore.position)}`)
+  loginRevealRun.value += 1
+  loginRevealVisible.value = true
+}
+
+watch(
+  () => userStore.isLogin,
+  (logged) => {
+    if (!logged) {
+      loginRevealPending.value = false
+      return
+    }
+    loginRevealPending.value = true
+    playLoginReveal()
+  }
+)
+
+watch(
+  () => route.path,
+  () => playLoginReveal()
 )
 
 // force insecure sessions to log out
@@ -589,6 +627,13 @@ onMounted(async () => {
     </ElWatermark>
     <ZNotificationReminder />
     <ZPrimaryDeviceGate />
+    <ZLoginReveal
+      v-if="loginRevealVisible"
+      :key="loginRevealRun"
+      :name="loginRevealName"
+      :role="loginRevealRole"
+      @done="loginRevealVisible = false"
+    />
   </ElConfigProvider>
 </template>
 
