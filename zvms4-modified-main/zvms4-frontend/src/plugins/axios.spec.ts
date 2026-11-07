@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { AxiosError, type AxiosAdapter, type AxiosResponse } from 'axios'
 import { Blob as NodeBlob } from 'node:buffer'
-import client from './axios'
+import client, { baseURLForRequest } from './axios'
 import { cacheGet, cacheSet } from '@/utils/idbCache'
 import { clearMemoryCache } from '@/utils/requestCache'
 import { clearFlights, pendingFlightCount } from './singleFlight'
@@ -523,4 +523,10 @@ it('sends no device headers on a regular browser', async () => {
 
   expect('Xuehai-Id' in headers).toBe(false)
   expect('X-Device-Unlock' in headers).toBe(false)
+})
+
+it('routes file endpoints to the content host derived from the page origin', () => {
+  // 预览站由 VITE_API_CONTENT_BASE 覆盖这条推导（见 utils/apiBaseConfig.spec.ts）。
+  expect(baseURLForRequest('/system/files/list')).toBe(`${window.location.origin}/api`)
+  expect(baseURLForRequest('/v3/users/me')).not.toBe(`${window.location.origin}/api`)
 })

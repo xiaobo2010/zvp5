@@ -19,6 +19,7 @@ import {
   ttlFor
 } from '@/utils/requestCache'
 import { usesContentHost } from '@/utils/apiRouting'
+import { resolveContentApiBase } from '@/utils/apiBaseConfig'
 import { hedgedGetRelayBase, installHedgedGetAdapter } from '@/plugins/hedgedGet'
 import { joinFlight } from '@/plugins/singleFlight'
 
@@ -32,11 +33,14 @@ export const baseURL = apiBase.replace(/\/+$/, '')
  * number of endpoints belong to the content host instead.  Keep this base
  * derived from the page origin so the same build works for production, local
  * development, and an emergency page served by the API host.
+ *
+ * 预览站（Cloudflare Worker 只发静态资产）没有 `/api`，页面源的 `/api` 会被
+ * SPA fallback 接走，因此允许用 `VITE_API_CONTENT_BASE` 显式指到 API 域。
  */
-export const contentBaseURL =
-  typeof window === 'undefined'
-    ? '/api'
-    : `${window.location.origin}/api`
+export const contentBaseURL = resolveContentApiBase(
+  import.meta.env.VITE_API_CONTENT_BASE,
+  typeof window === 'undefined' ? undefined : window.location.origin
+)
 
 /** Resolve the host by endpoint ownership, not by whether the URL starts with /api. */
 export function baseURLForRequest(url: unknown): string {

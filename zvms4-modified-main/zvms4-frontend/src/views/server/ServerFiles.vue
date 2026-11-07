@@ -16,6 +16,7 @@ import {
 } from '@/api/system/files.ts'
 import ZSystemAuthDialog from '@/components/system/ZSystemAuthDialog.vue'
 import ZPagination from '@/components/utils/ZPagination.vue'
+import { resolveErrorMessage } from '@/utils/errorMessage'
 import ZFilePreview from '@/components/server/ZFilePreview.vue'
 import {
   Refresh,
@@ -129,8 +130,9 @@ async function load() {
   } catch (error) {
     entries.value = []
     total.value = 0
+    // 列表失败不等于动态码错：走统一解析，取不到 detail 时回落到「目录读取失败」
     ElMessage({
-      message: errorMessageOf(error),
+      message: resolveErrorMessage(error, 'server.files.loadFailed'),
       type: 'error',
       grouping: true,
       plain: true

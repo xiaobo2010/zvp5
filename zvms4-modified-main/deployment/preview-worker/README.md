@@ -38,12 +38,17 @@ deploy 会把正式产物当预览发出去。
 
 ```bash
 # 1. 构建（注意不要用 npm run build，见下方坑 1）
+#    直接按正式 API 域构建，省掉「先按预览域构建再 sed」那一步：
+#    index.html 的 preconnect 与各类内联脚本因此都指向真域名，不必二次改写。
 cd worktrees/v5-canary/zvms4-modified-main/zvms4-frontend
-VITE_API_BASE=https://canary.xiaobopisces.top/api npx vite build
+VITE_API_BASE=https://zvp.xiaobopisces.top/api \
+VITE_API_RACE_BASE=https://zvpapi.xiaobopisces.top/api \
+VITE_API_CONTENT_BASE=https://zvp.xiaobopisces.top/api \
+npx vite build
 
-# 2. 把产物里的 API 基址换成 CORS 白名单里的正式域名
-sed -i 's|https://canary\.xiaobopisces\.top/api|https://zvp.xiaobopisces.top/api|g' \
-  dist/assets/index-*.js
+# 2. 预览域只发静态资产：`VITE_API_CONTENT_BASE` 必须给，否则 /system/files/*
+#    会打到页面源的 /api，被 SPA fallback 接走（200 + index.html），
+#    文件管理页面会抛 TypeError，再用兜底文案误报成「动态码无效或已过期」。
 
 # 3. 去掉 service worker（workbox 预缓存哈希与改写后的文件对不上）
 rm -f dist/sw.js dist/sw.js.map dist/workbox-*.js dist/workbox-*.js.map
