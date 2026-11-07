@@ -119,12 +119,14 @@ async def calculate_user_time_with_origin(
         return cache_data['data']
     accepted = await backends.get_activities_repo().list_effective()
     accepted_ids = [str(activity["_id"]) for activity in accepted]
+    # 有效活动已经在手：按 oid 建映射，循环里不再逐条回查（原来 N 条成员 = N 次 get）。
+    activity_by_oid = {str(activity["_id"]): activity for activity in accepted}
     db_data = await backends.get_members_repo().list_for_member(
         user_id, status="effective", activity_oids=accepted_ids
     )
     categorize_by_origin = {} # (certain origin) -> { 'on-campus': float, 'off-campus': float, 'social-practice': float }
     for data in db_data:
-        activity = await backends.get_activities_repo().get(data["activity"])
+        activity = activity_by_oid.get(str(data["activity"])) or {}
         origin = activity.get('origin', 'unknown')
         if origin not in categorize_by_origin:
             categorize_by_origin[origin] = {

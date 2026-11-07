@@ -48,14 +48,25 @@ async def _refresh_user_time_for_activity(activity_id: str) -> None:
                     members, allow_cache=False, session=session
                 )
                 time_repo = backends.get_time_repo(session)
-                for member in members:
-                    member_time = times[member]
-                    await time_repo.upsert_for_user(
+                entries = [
+                    (
                         member,
-                        member_time["on-campus"],
-                        member_time["off-campus"],
-                        member_time["social-practice"],
+                        times[member]["on-campus"],
+                        times[member]["off-campus"],
+                        times[member]["social-practice"],
                     )
+                    for member in members
+                ]
+                upsert_many = getattr(time_repo, "upsert_many_for_users", None)
+                if upsert_many is not None:
+                    # 整批一次数组绑定：逐人 upsert 在远程 ADB 上是 2N 次跨洋往返。
+                    await upsert_many(entries)
+                else:
+                    # 只实现旧接口的替身/装配：逐条写，结果与批量一致。
+                    for member, on_campus, off_campus, social in entries:
+                        await time_repo.upsert_for_user(
+                            member, on_campus, off_campus, social
+                        )
                 await session.commit()
         except Exception:
             logger.warning(

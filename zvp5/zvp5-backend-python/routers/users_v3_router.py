@@ -1,3 +1,4 @@
+import inspect
 import logging
 from datetime import datetime, timedelta
 from typing import Literal, Optional
@@ -40,9 +41,9 @@ router = APIRouter()
 _logger = logging.getLogger(__name__)
 
 
-async def _get_zvms_new_user(oid: str) -> Optional[dict]:
+async def _get_zvms_new_user(oid: str, session=None) -> Optional[dict]:
     validate_object_id(oid)
-    return await backends.get_users_repo().get_by_oid(oid)
+    return await backends.get_users_repo(session).get_by_oid(oid)
 
 
 @router.get("/{user_id}")
@@ -651,23 +652,33 @@ async def set_user_binding_v3(
         raise HTTPException(status_code=403, detail="权限不足")
 
     oid = validate_object_id(user_id)
-    target = await backends.get_users_repo().get_by_oid(str(oid))
-    if target is None:
-        raise HTTPException(status_code=404, detail="用户不存在")
 
-    await require_password_verification(payload.verification_token, user)
+    # 一个 session 一个事务：改绑（撤销旧绑定 + 激活新绑定）与审计日志同生共死。
+    # ``session_scope`` 只关了不提交，所以显式 ``begin()``——否则写会随 close 丢掉。
+    async with session_scope() as session:
+        async with session.begin():
+            users_repo = backends.get_users_repo(session)
+            target = await users_repo.get_by_oid(str(oid))
+            if target is None:
+                raise HTTPException(status_code=404, detail="用户不存在")
 
-    bindings = backends.get_bindings_repo()
-    for row in await bindings.list_for_user(str(oid)):
-        if row["status"] == "active" and row["xuehai_id"] != payload.xuehai_id:
-            await bindings.revoke(str(oid), row["xuehai_id"])
-    await bindings.upsert(str(oid), payload.xuehai_id, "admin", payload.note)
+            # 404 先于 403 的既有次序不变；验证本身不写本事务的任何行。
+            await require_password_verification(payload.verification_token, user)
 
-    log.with_text(
-        f"管理员 {await get_user_display_name(user['id'])} 为用户 {target['name']} 绑定了学海设备 {payload.xuehai_id}",
-        type="device_bind",
-    )
-    await log.insert_log()
+            bindings = backends.get_bindings_repo(session)
+            for row in await bindings.list_for_user(str(oid)):
+                if row["status"] == "active" and row["xuehai_id"] != payload.xuehai_id:
+                    await bindings.revoke(str(oid), row["xuehai_id"])
+            await bindings.upsert(str(oid), payload.xuehai_id, "admin", payload.note)
+
+            performer = (
+                await users_repo.get_names([str(user["id"])])
+            ).get(str(user["id"])) or "未知用户"
+            log.with_text(
+                f"管理员 {performer} 为用户 {target['name']} 绑定了学海设备 {payload.xuehai_id}",
+                type="device_bind",
+            )
+            await log.insert_log(session)
 
     return
 
@@ -722,14 +733,22 @@ _DEVICE_ID_MAX_LEN = 32
 
 async def _device_ban_status(
     xuehai_id: str,
+    session=None,
 ) -> tuple[bool, Optional[str], Optional[datetime]]:
     """设备封禁状态统一问 :mod:`services.device_guard`。
 
     服务层在并行车道落地，这里延迟导入：路由模块不因服务层尚未就绪而在导入期
     失败，同时保证常量与判定逻辑只有一份实现（本层不重复推导账号封禁联动）。
+
+    ``session`` 交给服务层复用本请求的事务，省掉「一次请求开三条连接」；替身
+    （离线单测）只实现单参形态，按能力探测回落到原调用，行为不变。
     """
     from services.device_guard import device_ban_status
 
+    if session is None:
+        return await device_ban_status(xuehai_id)
+    if "session" in inspect.signature(device_ban_status).parameters:
+        return await device_ban_status(xuehai_id, session=session)
     return await device_ban_status(xuehai_id)
 
 
@@ -760,12 +779,16 @@ async def get_my_device(request: Request, user=Depends(get_current_user)):
     前端用它区分「没带设备头」和「带了但不是主设备」，因此不做 400。
     """
     xuehai_id = xuehai_id_from(request)
-    current = await _get_zvms_new_user(user["id"])
 
     device_banned, ban_reason, ban_until = False, None, None
-    if xuehai_id:
-        # 空设备号不代表任何设备，拿它去查只会命中脏数据行。
-        device_banned, ban_reason, ban_until = await _device_ban_status(xuehai_id)
+    # 本人的主设备与设备封禁判定共用一个 session：只读，不提交（close 即回滚）。
+    async with session_scope() as session:
+        current = await _get_zvms_new_user(user["id"], session)
+        if xuehai_id:
+            # 空设备号不代表任何设备，拿它去查只会命中脏数据行。
+            device_banned, ban_reason, ban_until = await _device_ban_status(
+                xuehai_id, session
+            )
 
     return {
         "status": "ok",
