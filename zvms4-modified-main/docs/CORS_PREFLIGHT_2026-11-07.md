@@ -1,0 +1,101 @@
+# CORS 预检延迟：调查与修复（2026-11-07）
+
+> 起因：测试员反馈「Preflight 的时候会因为拿学海 ID 的 API 发生 HTTP CORS 预检造成延迟」。
+> 本文记录实测到的浏览器行为、线上证据，以及本轮落地的两处修复。
+
+## 一、结论
+
+「拿学海 ID 的 API」= `GET /api/v3/users/me/device`（前端 `readMyDevice()`，返回 `xuehai_id`
+与设备封禁状态）。它**不是病根**，只是启动关键路径上第一个撞上预检的接口。
+
+真正的成因是三件事叠加：
+
+1. **跨域结构**：跨域请求必然预检。生产页面 `https://zvp.xiaobopisces.top` 与主 API 基址
+   `https://zvp.xiaobopisces.top/api` **同源**，主路零预检；预检只发生在
+   ①竞速备腿 `https://zvpapi.xiaobopisces.top/api`（跨域）②预览站 canary/yuren（页面在
+   Cloudflare、API 在洛杉矶，全部跨域）。
+2. **预检缓存键太细**：键里含**完整 URL（含 query）**与**请求头集合**。换 query 就是一次新
+   预检；请求头集合**变大**（多一个头）也是一次新预检。
+3. **前端并发重复请求没有合并**：同一秒内同一个 URL 被请求 4~5 次，于是被打 4~5 次预检。
+
+## 二、浏览器预检缓存的实测语义
+
+用真实 Chromium（`chrome-headless-shell`）+ 一个复刻线上响应头的本地 mock 服务器测得
+（线上响应头见 `deployment/nginx/zvms-api-preflight.conf`：`204` +
+`Access-Control-Allow-Origin` 回显 + `Access-Control-Max-Age: 7200`）：
+
+| 场景 | 新增预检次数 |
+| --- | --- |
+| 同 URL 同请求头，连发 3 次 | **1**（`Max-Age` 生效） |
+| 只改 query string | **每次 1 次**（翻页/搜索各算一个 URL） |
+| 请求头集合**变大**（加 `Xuehai-Id` / `X-Device-Unlock`） | **每次 1 次** |
+| 请求头集合**变小**（去掉一个头） | 0（子集复用上一条缓存） |
+| 冷缓存下并发同 URL ×4 | **4**（浏览器不做在途合并） |
+| 已有缓存后并发同 URL ×4 | 0 |
+
+结论：Chrome 的预检缓存条目记录的是「上次允许的请求头集合」，新的请求头集合若是它的**子集**
+就复用，**超集就重新预检**。因此「中途多出一个请求头」会让已知的每个 URL 集体重新预检。
+
+## 三、线上证据
+
+首尔（`zvpapi`）nginx 访问日志里真浏览器的 OPTIONS（Referer 为空是因为站点响应带
+`referrer-policy: no-referrer`）：
+
+- 54 个不同 URL；`/api/v3/users/me/device` 7 次；`/api/system/maintenance` 68 次。
+- 同一个 `/api/ai/conversations/{id}`：`OPTIONS` ×5 + `GET` ×4。
+
+洛杉矶（`zvp`）访问日志：
+
+- 564 条真浏览器预检，**全部**来自 canary / yuren 预览域；生产域 0 条（主路同源）。
+- 近 5000 条请求里 233 条 OPTIONS，去重 66 个 URL，93 条带 query。
+- OPTIONS → GET 的实测间隔 0~1 秒（秒级精度），即预检那一轮往返直接压在真实请求前面。
+
+## 四、本轮落地的修复
+
+### 1. 在途合并（single-flight）——`src/plugins/singleFlight.ts` + `src/plugins/axios.ts`
+
+同一时刻、同一身份、同一 URL 的 GET 合并成一次网络往返：预检次数与真实请求次数一起降为 1。
+
+刻意收窄的边界（避免改变既有语义）：
+
+- 只合并**在途**请求，不做任何结果缓存——响应新鲜度仍由发起方决定；
+- 只合并 GET；写请求不可共享；
+- 调用方自带 `signal` / 进度回调 / 非 JSON·文本响应一律不参与；
+- 跟随者拿到深拷贝，不会与发起者互相污染；
+- 跟随者不重复弹窗、不重复跳登录、不重复重试——这些由发起者那一次请求统一处理；
+- 重试沿用同一个航班（否则重试会「加入」自己发起的航班并永远等下去）。
+
+### 2. 请求头集合恒定——`src/plugins/axios.ts` + `src/api/platformGuard.ts`
+
+平板解锁凭证 `X-Device-Unlock` 原先「解锁后才出现」，属于**请求头集合变大**，
+会让已知的每个 URL 在解锁那一刻集体重新预检。现在**没有票据时也发一个空值头**：
+
+```ts
+if (xuehaiId > 0 && !config.headers['X-Device-Unlock']) {
+  config.headers['X-Device-Unlock'] = cachedUnlockToken()
+}
+```
+
+空值与不带等价：后端 `(request.headers.get("X-Device-Unlock") or "").strip()` 取到空串，
+与请求头缺失是同一条分支（`routers/attachments_router.py:130`）。
+
+请求头集合因此在一次会话内保持恒定（除登录时新增 `Authorization` 这一次性变化）。
+
+## 五、未做 / 待定
+
+- **预览站同源化**（未做）：在 canary Worker 里把 `/api/*` 反代到
+  `https://zvpapi.xiaobolisces.top/api/*`，构建基址改成相对路径 `/api`，预览站即可零预检。
+  `deployment/preview-worker/README.md` 里「Worker 无法反代 `/api`」的结论只对
+  `zvp.xiaoboisces.top` 成立（该域名 Cloudflare 返回 `1016 Origin DNS error`）；
+  实测 Worker → `zvpapi.xiaoboisces.top` 返回 **200、无 `Cdn-Loop`**。
+  需要处理：`Set-Cookie` 去 Domain、WS(`/api/system/ssh/ws`) 用 `WebSocketPair` 转发、SSE 直通。
+- **登录态改走同源 Cookie**（未做，收益大但面大）：跨域请求即可退化为简单请求，浏览器彻底
+  不发预检。代价是 CSRF 防护、登录态存储与所有鉴权读点的改造。
+- **登录瞬间的一次性重预检**（接受）：`Authorization` 头在登录后才出现，属于集合变大，
+  必然带来一次重预检。要消除只能让未登录请求也发一个空 `Authorization`，那会改变后端
+  看到的请求形态与状态码语义（403/401），越过契约红线，不做。
+
+## 六、契约边界
+
+本轮改动全部在前端，**未触碰后端**：路由、方法、状态码、响应体、错误文案、响应头一律不变。
+`X-Device-Unlock` 的空值语义与「不带」在现有后端实现下完全等价。

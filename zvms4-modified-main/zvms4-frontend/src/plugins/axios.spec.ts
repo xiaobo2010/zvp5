@@ -4,10 +4,14 @@ import { Blob as NodeBlob } from 'node:buffer'
 import client from './axios'
 import { cacheGet, cacheSet } from '@/utils/idbCache'
 import { clearMemoryCache } from '@/utils/requestCache'
+import { clearFlights, pendingFlightCount } from './singleFlight'
 
 const { elMessageMock } = vi.hoisted(() => ({ elMessageMock: vi.fn() }))
 
 const { abortAllAiRunsMock } = vi.hoisted(() => ({ abortAllAiRunsMock: vi.fn() }))
+
+/** 学海设备号：0 = 普通浏览器，其余为学海设备。 */
+const { xuehaiIdMock } = vi.hoisted(() => ({ xuehaiIdMock: { value: 0 } }))
 
 vi.mock('@/router', () => ({ default: { currentRoute: { value: { path: '/' } }, push: vi.fn(), replace: vi.fn() } }))
 vi.mock('@/stores/user', () => ({ useUserStore: () => ({ removeUser: vi.fn().mockResolvedValue(undefined) }) }))
@@ -17,15 +21,18 @@ vi.mock('@/api/ai/activeRuns', () => ({
   activeAiRunCount: vi.fn(() => 0)
 }))
 vi.mock('@/utils/idbCache', () => ({ cacheGet: vi.fn().mockResolvedValue(null), cacheSet: vi.fn() }))
-vi.mock('@/plugins/ua', () => ({ getXuehaiId: () => 0 }))
+vi.mock('@/plugins/ua', () => ({ getXuehaiId: () => xuehaiIdMock.value }))
 vi.mock('element-plus', () => ({ ElMessage: elMessageMock }))
 vi.mock('nprogress', () => ({ default: { start: vi.fn(), done: vi.fn() } }))
 
 beforeEach(() => {
   vi.clearAllMocks()
   localStorage.clear()
+  xuehaiIdMock.value = 0
   // 进程内缓存是模块级状态，不清理会让相邻用例互相命中。
   clearMemoryCache()
+  // 在途合并的航班表同样是模块级状态。
+  clearFlights()
 })
 afterEach(() => { vi.unstubAllGlobals() })
 
@@ -320,4 +327,200 @@ it('keeps the ban branch and the rejection when aborting throws', async () => {
   expect(error).toBeInstanceOf(AxiosError)
   expect(error.response?.status).toBe(403)
   expect(elMessageMock).not.toHaveBeenCalled()
+})
+
+// --- 在途合并（single-flight）:并发的相同 GET 只发一次网络请求 -----------------
+// 跨域请求的 CORS 预检按完整 URL（含 query）与请求头集合分别缓存，冷缓存下并发
+// N 个相同请求会打 N 次预检；合并后预检与真实请求都只剩一次。
+
+it('merges concurrent identical GETs into a single request', async () => {
+  localStorage.setItem('token', 'alice-session-token')
+  let calls = 0
+  client.defaults.adapter = async (config) => {
+    calls += 1
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    return { data: { calls }, status: 200, statusText: 'OK', headers: {}, config }
+  }
+
+  const results = await Promise.all([
+    client.get('/v3/users/me/device'),
+    client.get('/v3/users/me/device'),
+    client.get('/v3/users/me/device')
+  ])
+
+  expect(calls).toBe(1)
+  for (const result of results) {
+    expect(result.data).toEqual({ calls: 1 })
+  }
+  expect(pendingFlightCount()).toBe(0)
+})
+
+it('keeps concurrent GETs with different query strings apart', async () => {
+  localStorage.setItem('token', 'alice-session-token')
+  let calls = 0
+  client.defaults.adapter = async (config) => {
+    calls += 1
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    return { data: { calls }, status: 200, statusText: 'OK', headers: {}, config }
+  }
+
+  await Promise.all([
+    client.get('/v2/users', { params: { page: 1 } }),
+    client.get('/v2/users', { params: { page: 2 } })
+  ])
+
+  expect(calls).toBe(2)
+})
+
+it('never merges write requests', async () => {
+  localStorage.setItem('token', 'alice-session-token')
+  let calls = 0
+  client.defaults.adapter = async (config) => {
+    calls += 1
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    return { data: { calls }, status: 200, statusText: 'OK', headers: {}, config }
+  }
+
+  await Promise.all([client.post('/v3/notifications', {}), client.post('/v3/notifications', {})])
+
+  expect(calls).toBe(2)
+})
+
+it('never merges requests that carry a caller-side abort signal', async () => {
+  localStorage.setItem('token', 'alice-session-token')
+  let calls = 0
+  client.defaults.adapter = async (config) => {
+    calls += 1
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    return { data: { calls }, status: 200, statusText: 'OK', headers: {}, config }
+  }
+
+  const controller = new AbortController()
+  await Promise.all([
+    client.get('/v2/users/self', { signal: controller.signal }),
+    client.get('/v2/users/self', { signal: controller.signal })
+  ])
+
+  expect(calls).toBe(2)
+})
+
+it('gives every caller its own copy of the shared payload', async () => {
+  localStorage.setItem('token', 'alice-session-token')
+  client.defaults.adapter = async (config) => ({
+    data: { list: [1, 2] },
+    status: 200,
+    statusText: 'OK',
+    headers: {},
+    config
+  })
+
+  const [first, second] = await Promise.all([
+    client.get('/v2/users/self'),
+    client.get('/v2/users/self')
+  ])
+
+  first.data.list.push(3)
+  expect(second.data.list).toEqual([1, 2])
+})
+
+it('rejects every merged caller when the shared request fails, with a single toast', async () => {
+  localStorage.setItem('token', 'alice-session-token')
+  client.defaults.adapter = failingAdapter(500, { detail: 'boom' })
+
+  const results = await Promise.allSettled([
+    client.get('/v2/users/self'),
+    client.get('/v2/users/self')
+  ])
+
+  expect(results.map((r) => r.status)).toEqual(['rejected', 'rejected'])
+  // 跟随者不重复弹窗：错误由发起者那一次请求统一处理。
+  expect(elMessageMock).toHaveBeenCalledTimes(1)
+  expect(pendingFlightCount()).toBe(0)
+})
+
+it('ends the merged flight when the shared request throws a non-axios error', async () => {
+  localStorage.setItem('token', 'alice-session-token')
+  client.defaults.adapter = async () => {
+    throw new Error('adapter exploded')
+  }
+
+  const results = await Promise.allSettled([
+    client.get('/v2/users/self'),
+    client.get('/v2/users/self')
+  ])
+
+  expect(results.map((r) => r.status)).toEqual(['rejected', 'rejected'])
+  // 航班必须结束：跟随者换掉了 axios 自带 adapter（连带丢掉请求超时），
+  // 航班不结束跟随者就会一直挂着。
+  expect(pendingFlightCount()).toBe(0)
+  expect(elMessageMock).toHaveBeenCalledTimes(1)
+})
+
+it('lets a merged caller receive the retried result of the shared request', async () => {  localStorage.setItem('token', 'alice-session-token')
+  let calls = 0
+  client.defaults.adapter = async (config) => {
+    calls += 1
+    if (calls === 1) {
+      throw new AxiosError('offline', 'ERR_NETWORK', config)
+    }
+    return { data: { calls }, status: 200, statusText: 'OK', headers: {}, config }
+  }
+
+  const [first, second] = await Promise.all([
+    client.get('/v2/users/self'),
+    client.get('/v2/users/self')
+  ])
+
+  expect(calls).toBe(2)
+  expect(first.data).toEqual({ calls: 2 })
+  expect(second.data).toEqual({ calls: 2 })
+})
+
+it('writes the response cache once for a merged group', async () => {
+  localStorage.setItem('token', 'alice-session-token')
+  client.defaults.adapter = async (config) => ({
+    data: { owner: 'alice' },
+    status: 200,
+    statusText: 'OK',
+    headers: {},
+    config
+  })
+
+  await Promise.all([client.get('/v2/users/self'), client.get('/v2/users/self')])
+
+  expect(cacheSet).toHaveBeenCalledTimes(1)
+})
+
+// --- 请求头集合恒定:解锁凭证不再让预检缓存整片失效 -----------------------------
+
+it('always sends the device unlock header on a xuehai device', async () => {
+  xuehaiIdMock.value = 123
+  localStorage.setItem('token', 'alice-session-token')
+  let headers: Record<string, unknown> = {}
+  client.defaults.adapter = async (config) => {
+    headers = config.headers as unknown as Record<string, unknown>
+    return { data: { ok: true }, status: 200, statusText: 'OK', headers: {}, config }
+  }
+
+  await client.get('/v2/users/self')
+
+  expect(headers['Xuehai-Id']).toBe('123')
+  // 没有解锁票据时也发空值头：请求头集合保持恒定，浏览器才不会在解锁那一刻
+  // 把已知的每个 URL 重新预检一遍。
+  expect('X-Device-Unlock' in headers).toBe(true)
+  expect(headers['X-Device-Unlock']).toBe('')
+})
+
+it('sends no device headers on a regular browser', async () => {
+  localStorage.setItem('token', 'alice-session-token')
+  let headers: Record<string, unknown> = {}
+  client.defaults.adapter = async (config) => {
+    headers = config.headers as unknown as Record<string, unknown>
+    return { data: { ok: true }, status: 200, statusText: 'OK', headers: {}, config }
+  }
+
+  await client.get('/v2/users/self')
+
+  expect('Xuehai-Id' in headers).toBe(false)
+  expect('X-Device-Unlock' in headers).toBe(false)
 })

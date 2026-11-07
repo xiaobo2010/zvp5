@@ -1,5 +1,5 @@
-import axios, { AxiosError } from 'axios'
-import type { AxiosResponse, InternalAxiosRequestConfig } from 'axios'
+import axios, { AxiosError, getAdapter } from 'axios'
+import type { AxiosAdapter, AxiosResponse, InternalAxiosRequestConfig } from 'axios'
 import { ElMessage } from 'element-plus'
 import nprogress from 'nprogress'
 import 'nprogress/nprogress.css'
@@ -20,6 +20,7 @@ import {
 } from '@/utils/requestCache'
 import { usesContentHost } from '@/utils/apiRouting'
 import { hedgedGetRelayBase, installHedgedGetAdapter } from '@/plugins/hedgedGet'
+import { joinFlight } from '@/plugins/singleFlight'
 
 const apiBase = import.meta.env.VITE_API_BASE ?? '/api'
 const apiRaceBase = (import.meta.env.VITE_API_RACE_BASE ?? '').trim().replace(/\/+$/, '')
@@ -117,7 +118,106 @@ function cacheKey(config: InternalAxiosRequestConfig) {
   return `${cacheIdentity(config)}|${config.baseURL ?? ''}${config.url ?? ''}${params}${suffix}`
 }
 
+/**
+ * 航班键 = 身份维度 + 目标 URL + 解锁凭证状态。
+ *
+ * 解锁凭证必须进键：解锁前后同一个 URL 的请求头集合不同（后端对附件门禁的判定
+ * 也不同），混进同一个航班会让「没带凭证」的请求拿到「带凭证」的响应。
+ * 凭证本身只留指纹，键里不出现原文。
+ */
+function flightKey(config: InternalAxiosRequestConfig): string {
+  const unlock = cachedUnlockToken()
+  const unlockPart = unlock ? `u${hashToken(unlock)}` : 'u-'
+  return `${cacheKey(config)}|${unlockPart}`
+}
+
+/**
+ * 只有「同一时刻的相同 GET」才合并。写请求不可共享；调用方自带取消信号、
+ * 进度回调、非 JSON/文本 响应一律不参与——合并它们会改变既有语义。
+ */
+function canSingleFlight(config: InternalAxiosRequestConfig, callerSignal: unknown): boolean {
+  if (String(config.method ?? 'get').toLowerCase() !== 'get') {
+    return false
+  }
+  if (callerSignal) {
+    return false
+  }
+  if (config.onDownloadProgress || config.onUploadProgress) {
+    return false
+  }
+  const responseType = String(config.responseType ?? 'json')
+  return responseType === 'json' || responseType === 'text'
+}
+
+/**
+ * 跟随者的 adapter：不发网络请求，等发起者那一次请求的结果。
+ *
+ * 数据给一份深拷贝，避免两个调用方互相污染；错误用跟随者自己的 config 重新抛出，
+ * 错误拦截器据此识别跟随者并跳过重复处理。
+ */
+function followerAdapter(
+  promise: Promise<AxiosResponse>,
+  config: InternalAxiosRequestConfig
+): AxiosAdapter {
+  return async () => {
+    try {
+      const response = await promise
+      return { ...response, data: cloneForCaller(response.data), config }
+    } catch (error) {
+      if (axios.isAxiosError(error)) {
+        throw new AxiosError(error.message, error.code, config, error.request, error.response)
+      }
+      // 非 Axios 错误也包成 AxiosError：跟随者据此被识别为跟随者，
+      // 不会重复弹窗。
+      throw new AxiosError(
+        error instanceof Error ? error.message : String(error),
+        'ERR_BAD_RESPONSE',
+        config
+      )
+    }
+  }
+}
+
+/**
+ * 发起者的 adapter：包一层，只为了兜住「非 Axios 错误」这一种收尾场景。
+ *
+ * 跟随者换掉了 axios 自带 adapter（连带丢掉请求超时），它们等的是航班的结果。
+ * AxiosError 走的是错误拦截器（可重试的会重试，终态才结束航班），但如果 adapter
+ * 抛出的是别的异常，错误拦截器拿不到 config，航班就永远不会结束，跟随者会一直
+ *挂着。非 Axios 错误不会被重试，所以在这里直接结束航班。
+ */
+function leaderAdapter(
+  adapter: AxiosAdapter,
+  handle: { fail: (error: unknown) => void }
+): AxiosAdapter {
+  return async (config) => {
+    try {
+      return await adapter(config)
+    } catch (error) {
+      if (!axios.isAxiosError(error)) {
+        handle.fail(error)
+      }
+      throw error
+    }
+  }
+}
+
 type CachedConfig = InternalAxiosRequestConfig & { __fromCache?: boolean }
+
+/**
+ * 在途合并（single-flight）的内部标记。
+ *
+ * - `__flightKey`：本次请求所属航班的键。重试沿用同一个键，否则重试会「加入」
+ *   自己发起的航班并永远等下去。
+ * - `__flightHandle`：发起者持有的句柄，最终结果由它广播给跟随者。
+ * - `__singleFlightFollower`：跟随者标记。跟随者不重复弹窗、不重复跳登录、
+ *   不重复重试——那些由发起者那一次请求统一处理。
+ */
+type FlightConfig = CachedConfig & {
+  __flightKey?: string
+  __flightHandle?: { settle: (value: AxiosResponse) => void; fail: (error: unknown) => void }
+  __singleFlightFollower?: boolean
+}
 
 /**
  * 命中进程内缓存时构造一个等价的响应，并让本次请求跳过真实网络。
@@ -177,6 +277,9 @@ function noticeStaleCache() {
 
 axiosInstance.interceptors.request.use(
   (config) => {
+    // 调用方自带的取消信号要在 trackRequest 覆盖它之前取：trackRequest 会无条件
+    // 给每个请求挂一个受控 signal，用它判断「调用方是否管取消」就永远为真。
+    const callerSignal = config.signal
     // Resolve the few machine-local endpoints to the page/content host;
     // all other relative API paths retain the database-adjacent base.
     if (!/^([a-z][a-z\d+.-]*:)?\/\//i.test(String(config.url ?? ''))) {
@@ -197,18 +300,51 @@ axiosInstance.interceptors.request.use(
     if (xuehaiId > 0 && !config.headers['Xuehai-Id']) {
       config.headers['Xuehai-Id'] = String(xuehaiId)
     }
-    // 平板解锁后带上临时凭证：只认缓存里仍在 5 分钟窗口内的那张
+    // 平板解锁凭证：无票据时也发一个空值头。
+    //
+    // 浏览器预检缓存的键里含**请求头集合**，一旦中途多出一个头（解锁后才有
+    // X-Device-Unlock），已知的每个 URL 都会被重新预检一遍——平板解锁那一刻会
+    // 集体重预检。请求头集合保持恒定就不会触发。
+    //
+    // 空值与不带等价：后端 `(request.headers.get("X-Device-Unlock") or "").strip()`
+    // 取到空串，与请求头缺失是同一条分支。
     if (xuehaiId > 0 && !config.headers['X-Device-Unlock']) {
-      const unlockToken = cachedUnlockToken()
-      if (unlockToken) {
-        config.headers['X-Device-Unlock'] = unlockToken
-      }
+      config.headers['X-Device-Unlock'] = cachedUnlockToken()
     }
     trackRequest(config)
     if (!usesContentHost(config.url)) {
       const relayBase = hedgedGetRelayBase(config, String(config.baseURL ?? ''), apiRaceBase)
       if (relayBase) {
         installHedgedGetAdapter(config, relayBase)
+      }
+    }
+    // 同一时刻的相同 GET 合并成一次网络往返。
+    //
+    // 跨域请求的 CORS 预检按完整 URL（含 query）与请求头集合分别缓存，冷缓存下
+    // 并发 N 个相同请求会打 N 次预检（浏览器不做在途合并），每次预检又是一轮
+    // 完整往返。合并后预检与真实请求都只剩一次。
+    const flight = config as FlightConfig
+    if (!flight.__flightKey && canSingleFlight(config, callerSignal)) {
+      const key = flightKey(config)
+      const handle = joinFlight<AxiosResponse>(key)
+      flight.__flightKey = key
+      if (handle.leader) {
+        flight.__flightHandle = handle
+        // config.adapter 可能是适配器名（'fetch'/'xhr'）而不是函数，先解析成函数。
+        let adapter: AxiosAdapter | undefined
+        try {
+          adapter =
+            typeof config.adapter === 'function' ? config.adapter : getAdapter(config.adapter)
+        } catch {
+          // 解析不了就交给 axios 自己报错，这里不改变原有失败路径。
+          adapter = undefined
+        }
+        if (adapter) {
+          config.adapter = leaderAdapter(adapter, handle)
+        }
+      } else {
+        flight.__singleFlightFollower = true
+        config.adapter = followerAdapter(handle.promise, config)
       }
     }
     return config
@@ -246,10 +382,13 @@ axiosInstance.interceptors.response.use(
   (response) => {
     releaseRequest(response.config)
     nprogress.done()
-    const config = response.config as CachedConfig
+    const config = response.config as FlightConfig
+    // 发起者的最终结果：广播给所有跟随者，并结束这个航班。
+    config.__flightHandle?.settle(response)
     if (isCacheableGet(config)) {
       // 缓存命中的响应不再回写，避免同一条数据把有效期无限续上
-      if (!config.__fromCache) {
+      // 跟随者拿到的是同一份数据，也不必重复回写。
+      if (!config.__fromCache && !config.__singleFlightFollower) {
         memorySet(cacheKey(config), response.data)
         void cacheSet(cacheKey(config), response.data)
       }
@@ -261,10 +400,19 @@ axiosInstance.interceptors.response.use(
   },
   async (error: Error | AxiosError) => {
     nprogress.done()
+    // 非 Axios 错误拿不到 config，航班收尾要用单独的引用兜住。
+    const errorConfig = axios.isAxiosError(error)
+      ? (error.config as FlightConfig | undefined)
+      : undefined
     if (axios.isAxiosError(error)) {
-      const config = error.config
+      const config = error.config as FlightConfig | undefined
       releaseRequest(config)
+      if (config?.__singleFlightFollower) {
+        // 跟随者：错误已由发起者那一次请求判定，这里不再重复弹窗/跳登录/重试。
+        return Promise.reject(error)
+      }
       if (axios.isCancel(error) || config?.signal?.aborted) {
+        config?.__flightHandle?.fail(error)
         return Promise.reject(error)
       }
       // 平板解锁凭证被后端否掉（过期/吊销/换了账号）：清掉本地缓存，
@@ -289,6 +437,7 @@ axiosInstance.interceptors.response.use(
         ) {
           router.push('/maintenance')
         }
+        config?.__flightHandle?.fail(error)
         return Promise.reject(error)
       }
       if (config && isRetryableFailure(config, error)) {
@@ -305,6 +454,7 @@ axiosInstance.interceptors.response.use(
               headers: { 'x-zvms-local-cache': String(cached.t) },
               config
             }
+            config.__flightHandle?.settle(stale)
             return stale
           }
         }
@@ -312,10 +462,13 @@ axiosInstance.interceptors.response.use(
         if (!retryConfig.__retried) {
           retryConfig.__retried = true
           await backoff()
+          // 航班保持 pending：重试后的结果才是终态，由响应拦截器收尾。
           return axiosInstance(config)
         }
       }
     }
+    // 终态失败：结束航班，跟随者立即收到同样的错误，不留悬挂的在途请求。
+    errorConfig?.__flightHandle?.fail(error)
     let errorDisplayed = false
     if (axios.isAxiosError(error)) {
       if (error.response?.status === 401) {
