@@ -154,11 +154,11 @@ The application uses Pinia for centralized state management with the following k
 - **Timeout handling** and retry mechanisms
 
 **Key API Endpoints:**
-- `/api/v2/users/*` - User management and authentication
-- `/api/v2/activities/*` - Activity CRUD operations
-- `/api/v2/groups/*` - Group management
-- `/api/v2/statistics/*` - Analytics and reporting
-- `/api/v2/time/*` - Time tracking and calculations
+- `/api/v1/users/*` - User management and authentication
+- `/api/v1/activities/*` - Activity CRUD operations
+- `/api/v1/groups/*` - Group management
+- `/api/v1/statistics/*` - Analytics and reporting
+- `/api/v1/time/*` - Time tracking and calculations
 
 ### Mobile & Cross-Platform Support
 

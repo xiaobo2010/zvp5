@@ -1,4 +1,4 @@
-"""``PUT /api/v2/activities/{id}/status`` 的 admin 放行闸门。
+"""``PUT /api/v1/activities/{id}/status`` 的 admin 放行闸门。
 
 回归的是 ``modify_activity_status_v2`` 里读错键的老 bug：判断写的是
 ``user.get("perm")``（已退役的键），现役用户字典只有 ``per``。键读不到时

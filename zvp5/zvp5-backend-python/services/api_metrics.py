@@ -3,7 +3,7 @@
 Two hard requirements shape this module:
 
 * **Route templates only.**  The middleware reads ``scope["route"].path`` (the
-  FastAPI template, e.g. ``/api/v3/activities/{aid}/members``), never the raw
+  FastAPI template, e.g. ``/api/v1/activities/{aid}/members``), never the raw
   URL.  Raw URLs would blow up the key space with every path parameter value.
 * **Bounded memory.**  The recorder keeps at most ``MAX_ROUTES`` (method, route)
   buckets; anything beyond that collapses into ``(other)``.  Latency

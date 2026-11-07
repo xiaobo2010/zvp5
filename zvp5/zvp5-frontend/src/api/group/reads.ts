@@ -1,28 +1,5 @@
 import axios from '@/plugins/axios'
-import type { User, GroupUsersPage, ActivityTimePage } from '@/../types'
-
-export async function users(
-  gid: string,
-  page: number = 1,
-  perpage: number = 10,
-  search: string = '',
-  pwdm: boolean = false
-) {
-  const response = (
-    await axios(`/v2/groups/${gid}/users`, {
-      params: {
-        page,
-        perpage,
-        search,
-        pwdm
-      }
-    })
-  ).data as GroupUsersPage
-  return {
-    users: response.members,
-    size: response.total
-  }
-}
+import type { User, ActivityTimePage } from '@/../types'
 
 export async function users_v3(
   gid: string,
@@ -32,7 +9,7 @@ export async function users_v3(
   pwdm: boolean = false
 ) {
   const response = (
-    await axios(`/v3/groups/${gid}/users`, {
+    await axios(`/v1/groups/${gid}/users`, {
       params: {
         page,
         size,
@@ -61,7 +38,7 @@ export async function time(
   asc: boolean = true
 ) {
   const response = (
-    await axios(`/v2/groups/${gid}/time`, {
+    await axios(`/v1/groups/${gid}/time`, {
       params: {
         page,
         perpage,
@@ -80,5 +57,5 @@ export async function time(
 }
 
 export async function statisticsCompliance(groupId: string) {
-  return (await axios(`/v2/groups/${groupId}/statistics/compliance`)).data
+  return (await axios(`/v1/groups/${groupId}/statistics/compliance`)).data
 }

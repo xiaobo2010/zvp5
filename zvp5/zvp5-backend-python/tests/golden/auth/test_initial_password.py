@@ -5,11 +5,11 @@
 1. ``util.cert.generate_initial_password``（重置路径仍在用）的四条不变量：
    长度 / 字符集 / 刻意不达强度、以及随机性（连续 50 次不重复）。
 2. 建号 vs 重置的分叉契约（用户拍板）：
-   - ``POST /api/v3/users`` 的**建号**初始密码 == 学号（新生可用学号直接登录），
+   - ``POST /api/v1/users`` 的**建号**初始密码 == 学号（新生可用学号直接登录），
      落库哈希可用学号 ``check_password`` 通过、且不是其他学号的哈希。
    - 学号 ``pwd_strength < 3``，所以建号账号仍走「弱密码 → 5 分钟临时令牌 →
      强制改密」既有闭环。
-   - ``DELETE /api/v3/users/{oid}/password`` 的**重置**仍返回随机一次性密码，
+   - ``DELETE /api/v1/users/{oid}/password`` 的**重置**仍返回随机一次性密码，
      **绝不**回归学号。
 
 全离线：真跑 ``routers.users_v3_router``（真 ``validate_number`` / 真 bcrypt），
@@ -62,7 +62,7 @@ def test_fifty_consecutive_draws_are_unique() -> None:
 
 # --- 建号 vs 重置的分叉契约 ---------------------------------------------------
 
-PREFIX = "/api/v3/users"
+PREFIX = "/api/v1/users"
 ADMIN = "00000000000000000000000a"
 TARGET = "00000000000000000000000b"
 

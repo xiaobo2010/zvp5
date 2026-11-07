@@ -735,7 +735,7 @@ async def create_user(
 ):
     raise HTTPException(
         status_code=503,
-        detail="仅允许读取：用户创建请使用 POST /api/v3/users",
+        detail="仅允许读取：用户创建请使用 POST /api/v1/users",
     )
 
 
@@ -917,7 +917,7 @@ async def update_user(
 async def add_user_to_group(user_oid: str, group_id: str):
     raise HTTPException(
         status_code=503,
-        detail="仅允许读取：用户分组请使用 POST /api/v3/groups/{group_id}/users/{user_id}",
+        detail="仅允许读取：用户分组请使用 POST /api/v1/groups/{group_id}/users/{user_id}",
     )
 
 
@@ -925,7 +925,7 @@ async def add_user_to_group(user_oid: str, group_id: str):
 async def remove_user_from_group(user_oid: str, group_id: str):
     raise HTTPException(
         status_code=503,
-        detail="仅允许读取：用户移出分组请使用 DELETE /api/v3/groups/{group_id}/users/{user_id}",
+        detail="仅允许读取：用户移出分组请使用 DELETE /api/v1/groups/{group_id}/users/{user_id}",
     )
 
 

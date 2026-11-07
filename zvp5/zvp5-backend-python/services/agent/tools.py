@@ -110,7 +110,7 @@ class ToolDef:
 def _always(user: dict) -> bool:
     """任何已登录用户：``get_current_user`` 已经挡过未认证请求。
 
-    对应 REST 端点（``GET /api/v2/activities``、``GET /api/v2/users/{id}/time``
+    对应 REST 端点（``GET /api/v1/activities``、``GET /api/v1/users/{id}/time``
     等）在「已登录」之外没有额外角色闸——工具不额外收紧。
     """
     return True

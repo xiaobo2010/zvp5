@@ -31,7 +31,7 @@ from db import backends
 from routers import activities_v3_router as activities
 from util.object_id import get_current_user
 
-PREFIX = "/api/v3/activities"
+PREFIX = "/api/v1/activities"
 ACTIVITY_ID = "000000000000000000000010"
 MEMBER_OIDS = [f"{index:024x}" for index in range(10, 20)]
 GHOST_OID = "0000000000000000000000aa"

@@ -39,7 +39,7 @@ export interface VolunteerSubject {
   ban_until?: string | null
 }
 
-/** `GET /v2/users/{id}/activities` 的行：活动本体 + 该用户的成员记录。 */
+/** `GET /v1/users/{id}/activities` 的行：活动本体 + 该用户的成员记录。 */
 export interface VolunteerActivityRow extends Activity {
   mine?: Pick<ActivityMember, '_id' | 'member' | 'status' | 'mode' | 'duration'>
 }

@@ -1,4 +1,4 @@
-"""``/api/v3/ban`` 管理端点的离线契约（admin only）。
+"""``/api/v1/ban`` 管理端点的离线契约（admin only）。
 
 覆盖读形状、写校验与写语义三块：
 
@@ -24,7 +24,7 @@ from db import backends
 from routers import ban_router
 from util.object_id import get_current_user
 
-PREFIX = "/api/v3/ban"
+PREFIX = "/api/v1/ban"
 ADMIN = {"id": "000000000000000000000001", "per": ["admin"]}
 STUDENT = {"id": "000000000000000000000002", "per": ["student"]}
 
@@ -1234,7 +1234,7 @@ def test_manual_device_ban_keeps_naive_until_untouched(devices_api) -> None:
 # P0-1 目标侧保护：不能封另一个 admin（解封方向不拦）
 # ---------------------------------------------------------------------------
 
-USERS_PREFIX = "/api/v3/users"
+USERS_PREFIX = "/api/v1/users"
 ACTOR = "000000000000000000000001"
 PEER_ADMIN = "000000000000000000000003"
 STUDENT_OID = "000000000000000000000002"

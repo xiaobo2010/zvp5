@@ -48,7 +48,7 @@ async def test_async_recorders_store_the_same_rows_as_the_sync_ones():
     ]
 
     endpoints = [
-        {"method": "GET", "route": "/api/v3/users", "count": 3, "err_count": 0,
+        {"method": "GET", "route": "/api/v1/users", "count": 3, "err_count": 0,
          "avg_ms": 1.5, "p95_ms": 2.0, "max_ms": 2.5}
     ]
     assert perf_sampler.record_endpoints(ts, endpoints) == 1

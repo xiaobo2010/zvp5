@@ -1,4 +1,4 @@
-"""站内通知端点（前缀 ``/api/v3/notifications``）。
+"""站内通知端点（前缀 ``/api/v1/notifications``）。
 
 契约分两层：
 

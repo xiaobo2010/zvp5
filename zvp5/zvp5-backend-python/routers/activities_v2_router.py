@@ -140,7 +140,6 @@ async def create_activity_v2(
     return JSONResponse({"id": str(oid)}, status_code=201)
 
 
-@router.get("")
 async def get_activities_v2(
     page: int = Query(1, ge=1, description="Page number for pagination"),
     perpage: int = Query(10, ge=1, le=100, description="Number of items per page"),
@@ -244,7 +243,6 @@ async def delete_activity_v2(
     return {"detail": "Activity deleted successfully"}
 
 
-@router.get("/{activity_id}/members")
 async def get_activity_members_v2(
     activity_id: str,
     page: int = Query(1, ge=1, description="Page number for pagination"),
@@ -316,7 +314,6 @@ async def get_activity_member_v2(
     return target_member
 
 
-@router.post("/{activity_id}/members")
 async def add_activity_member_v2(
     activity_id: str,
     member: ActivityMember,

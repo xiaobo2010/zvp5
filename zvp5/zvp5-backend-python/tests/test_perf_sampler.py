@@ -245,7 +245,7 @@ async def test_sample_host_writes_local_series_and_drains_endpoints(perf_db, mon
                  "utilization_percent": 10.0, "waited": 0},
     )
     recorder = ApiMetricsRecorder()
-    recorder.record("GET", "/api/v3/users", 200, 12.0)
+    recorder.record("GET", "/api/v1/users", 200, 12.0)
     monkeypatch.setattr(perf_sampler, "api_metrics", recorder)
 
     result = await perf_sampler.sample_host()
@@ -259,7 +259,7 @@ async def test_sample_host_writes_local_series_and_drains_endpoints(perf_db, mon
 
     # The endpoint window was drained into perf_endpoints.
     endpoints = perf_sampler.query_endpoints("1h")
-    assert endpoints["items"][0]["route"] == "/api/v3/users"
+    assert endpoints["items"][0]["route"] == "/api/v1/users"
     assert recorder.snapshot()["items"] == []
 
 

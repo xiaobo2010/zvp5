@@ -108,15 +108,15 @@ ROUTERS: tuple[tuple, ...] = (
     (exports_router.router, "/api/exports", ["exports"]),
     (imports_router.router, "/api/imports", ["imports"]),
     (logs_router.router, "/api/logs", ["logs"]),
-    (activities_v2_router.router, "/api/v2/activities", None),
-    (users_v2_router.router, "/api/v2/users", None),
-    (groups_v2_router.router, "/api/v2/groups", None),
-    (times_router.router, "/api/v2/times", None),
-    (activity_statistics_router.router, "/api/v2/statistics/activities", None),
-    (mcp_router.router, "/api/v2/mcp", None),
-    (activities_v3_router.router, "/api/v3/activities", None),
-    (users_v3_router.router, "/api/v3/users", None),
-    (groups_v3_router.router, "/api/v3/groups", None),
+    (activities_v2_router.router, "/api/v1/activities", None),
+    (users_v2_router.router, "/api/v1/users", None),
+    (groups_v2_router.router, "/api/v1/groups", None),
+    (times_router.router, "/api/v1/times", None),
+    (activity_statistics_router.router, "/api/v1/statistics/activities", None),
+    (mcp_router.router, "/api/v1/mcp", None),
+    (activities_v3_router.router, "/api/v1/activities", None),
+    (users_v3_router.router, "/api/v1/users", None),
+    (groups_v3_router.router, "/api/v1/groups", None),
     (changelog_router.router, "/api/changelog", ["changelog"]),
     (attachments_router.router, "/api/attachments", ["attachments"]),
     (system_router, "/api/system/maintenance", ["System"]),
@@ -127,9 +127,9 @@ ROUTERS: tuple[tuple, ...] = (
     (system_files_router.router, "/api/system/files", ["System"]),
     (system_db_content_router.router, "/api/system/db/content", ["System"]),
     (system_role_policies_router.router, "/api/system/role-policies", ["System"]),
-    (ban_router.router, "/api/v3/ban", ["ban"]),
-    (notifications_router.router, "/api/v3/notifications", ["notifications"]),
-    (ban_violations_router.router, "/api/v3/ban", ["ban"]),
+    (ban_router.router, "/api/v1/ban", ["ban"]),
+    (notifications_router.router, "/api/v1/notifications", ["notifications"]),
+    (ban_violations_router.router, "/api/v1/ban", ["ban"]),
     # 必须先于 ai_router 注册：``ai_router`` 的 ``GET /quota/{user_oid}`` 会把
     # ``/api/ai/quota/requests`` 与 ``/api/ai/quota/users`` 当成 oid 匹配掉（FastAPI
     # 按注册顺序匹配），回一个与业务无关的 400 Invalid Object ID。
@@ -156,6 +156,13 @@ app.mount("/socket.io", socket)
 
 for _router, _prefix, _tags in ROUTERS:
     app.include_router(_router, prefix=_prefix, tags=_tags)
+
+# TODO: 移除 MCP 的 /api/v2 兼容别名。主挂载已归并到 /api/v1/mcp；旧前缀
+# 只留给尚未升级的 MCP 客户端，等它们切到 /api/v1/mcp 后删除这一行。
+# schema 不重复登记（同一 router 两套前缀会撞 operation_id）。
+app.include_router(
+    mcp_router.router, prefix="/api/v2/mcp", tags=None, include_in_schema=False
+)
 
 # 首页 → 6 条 legacy redirect → 探活/证书 → 异常处理 → 版本。
 # 这个交错顺序是拆分前的原样（路由表 dump 与它逐条对齐），别顺手重排。

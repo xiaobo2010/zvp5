@@ -1,7 +1,7 @@
 """MCP（Model Context Protocol）只读端点。
 
 这些端点给 AI agent 与外部工具提供**只读**的活动数据：没有敏感操作，也没有任何
-鉴权旁路——每个端点都单独判 admin，与 ``/api/v2/*`` 的写面完全隔离。
+鉴权旁路——每个端点都单独判 admin，与 ``/api/v1/*`` 的写面完全隔离。
 
 审批与响应外壳（``{"success": true, "data": ...}``）留在这里，查询逻辑全部搬到了
 ``services.agent.tool_impl``：agent 工具与 MCP 端点必须回答同一份数据，各写一遍

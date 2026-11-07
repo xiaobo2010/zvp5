@@ -21,7 +21,7 @@ from db import backends
 from routers import groups_v3_router as groups_v3
 from util.object_id import get_current_user
 
-PREFIX = "/api/v3/groups"
+PREFIX = "/api/v1/groups"
 GROUP_ID = "0000000000000000000000ff"
 READER = {"id": "000000000000000000000001", "per": ["student"]}
 
