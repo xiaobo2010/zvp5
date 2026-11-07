@@ -116,4 +116,26 @@ describe('OCR 轮询', () => {
     expect(fetchResult).toHaveBeenCalledTimes(2)
     expect(polling.running.value).toEqual([])
   })
+
+  // poll 在飞期间没有 timer：只靠 timers.has 判重会让第二次 start 起第二路轮询
+  it('poll 在飞期间重复 start 不会起第二路轮询', async () => {
+    let resolveFirst: (value: OcrResult | undefined) => void = () => undefined
+    const fetchResult = vi.fn(
+      () =>
+        new Promise<OcrResult | undefined>((resolve) => {
+          resolveFirst = resolve
+        })
+    )
+    const polling = useAiOcrPolling({ intervalMs: 100, fetchResult })
+
+    polling.start('oid-7')
+    polling.start('oid-7')
+    expect(fetchResult).toHaveBeenCalledTimes(1)
+
+    resolveFirst({ status: 'done' })
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(fetchResult).toHaveBeenCalledTimes(1)
+    expect(polling.isRunning('oid-7')).toBe(false)
+  })
 })

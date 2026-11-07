@@ -90,6 +90,7 @@
    c. 删除 `users` 行；
    d. 写 `app_logs`（ltype `user_hard_delete`，level `warning`）。
 4. 回收站表（新 DDL 迁移）：`user_trash(oid PK, user_oid, deleted_by, deleted_at, payload CLOB JSON, restored_at NULL)`；DDL 文件放 `db/oracle/ddl/`（编号顺延现有最大版本），**不自动执行生产 DDL**，仅提供文件并在报告中说明应用方式。
+   注：RESTORED_AT 已于 V052 删除（2026-11），实际列集合以 `db/oracle/ddl/V011__add_user_trash.sql` 与 `V052__drop_user_trash_restored_at.sql` 为准。
 5. 垃圾回收：新增任务（照抄 `tasks/retention.py` 的后台任务范式），`deleted_at < now - 30 days` 的回收站行物理删除，保留期常量可配；接入既有调度（与 retention 同机制）。
 
 **前端（3.3B）**

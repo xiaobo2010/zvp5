@@ -1,6 +1,7 @@
 import type { Response, ActivityTimeRecord } from '@/../types'
 import { ElNotification } from 'element-plus'
 import axios from '@/plugins/axios.ts'
+import { translateKey } from '@/utils/errorMessage'
 
 export * as activity from './activity'
 export * as user from './user'
@@ -36,7 +37,7 @@ export const time = {
     }
     if (result.status === 'error') {
       ElNotification({
-        title: 'Error when fetching data (' + result.code + ')',
+        title: translateKey('common.fetchFailed', { code: result.code }),
         message: result.message,
         type: 'error'
       })

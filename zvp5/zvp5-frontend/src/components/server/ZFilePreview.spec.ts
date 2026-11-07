@@ -328,3 +328,51 @@ it('writes the file_edit result back into the editor', async () => {
 
   wrapper.unmount()
 })
+
+// 弹层不关、直接换 path 时必须重拉；只看 modelValue 会把上一个文件的内容留在屏幕上
+it('re-fetches when the path changes while the dialog stays open', async () => {
+  vi.mocked(previewFile).mockResolvedValue(textPreview('listen 8080') as never)
+  const wrapper = mount(ZFilePreview, {
+    props: { modelValue: false, path: '/www/zvms4/a.conf', name: 'a.conf' },
+    global: { directives: { loading: {} } }
+  })
+  await wrapper.setProps({ modelValue: true })
+  await flushPromises()
+  expect(previewFile).toHaveBeenCalledTimes(1)
+
+  await wrapper.setProps({ path: '/www/zvms4/b.conf', name: 'b.conf' })
+  await flushPromises()
+
+  expect(previewFile).toHaveBeenCalledTimes(2)
+  expect(previewFile).toHaveBeenLastCalledWith('/www/zvms4/b.conf')
+
+  wrapper.unmount()
+})
+
+// 换文件时旧请求慢回来，不能覆盖新文件的内容
+it('ignores a stale preview response that lands after the newer one', async () => {
+  let resolveFirst: (value: unknown) => void = () => undefined
+  const first = new Promise((resolve) => {
+    resolveFirst = resolve
+  })
+  vi.mocked(previewFile)
+    .mockReturnValueOnce(first as never)
+    .mockResolvedValueOnce(textPreview('NEW') as never)
+
+  const wrapper = mount(ZFilePreview, {
+    props: { modelValue: false, path: '/www/zvms4/old.conf', name: 'old.conf' },
+    global: { directives: { loading: {} } }
+  })
+  await wrapper.setProps({ modelValue: true })
+  await flushPromises()
+  await wrapper.setProps({ path: '/www/zvms4/new.conf', name: 'new.conf' })
+  await flushPromises()
+
+  resolveFirst(textPreview('OLD'))
+  await flushPromises()
+
+  expect(wrapper.find('.zide-stub__content').text()).toContain('NEW')
+  expect(wrapper.find('.zide-stub__content').text()).not.toContain('OLD')
+
+  wrapper.unmount()
+})

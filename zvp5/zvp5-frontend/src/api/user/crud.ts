@@ -2,6 +2,7 @@ import { temporaryToken } from '@/plugins/short-token'
 import type { User, Response } from '@/../types'
 import { ElNotification } from 'element-plus'
 import axios from '@/plugins/axios.ts'
+import { translateKey } from '@/utils/errorMessage'
 
 async function getUser(id: string, overrideAxios: boolean = true) {
   const result = (
@@ -29,7 +30,7 @@ async function getUsers(id: string = '', page: number = 1, perpage: number = 5) 
   }
   if (result.status === 'error') {
     ElNotification({
-      title: 'Error when fetching data (' + result.code + ')',
+      title: translateKey('common.fetchFailed', { code: result.code }),
       message: result.message,
       type: 'error'
     })
@@ -62,7 +63,7 @@ async function putUser(
   ).data as Response<null>
   if (result.status === 'error') {
     ElNotification({
-      title: 'Error when updating user: ' + result.message,
+      title: translateKey('common.userUpdateFailed', { code: result.code }),
       message: result.message,
       type: 'error'
     })
@@ -82,7 +83,7 @@ export const past = {
     ).data as Response<null>
     if (result.status === 'error') {
       ElNotification({
-        title: 'Error when updating user: ' + result.message,
+        title: translateKey('common.userUpdateFailed', { code: result.code }),
         message: result.message,
         type: 'error'
       })
@@ -99,7 +100,7 @@ export const past = {
     ).data as Response<null>
     if (result.status === 'error') {
       ElNotification({
-        title: 'Error when updating user: ' + result.message,
+        title: translateKey('common.userUpdateFailed', { code: result.code }),
         message: result.message,
         type: 'error'
       })

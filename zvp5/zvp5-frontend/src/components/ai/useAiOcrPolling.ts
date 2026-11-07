@@ -35,6 +35,8 @@ export function useAiOcrPolling(options: AiOcrPollingOptions = {}) {
 
   const timers = new Map<string, ReturnType<typeof setTimeout>>()
   const failures = new Map<string, number>()
+  // poll 在飞期间没有 timer，只靠 timers 判重会让重复 start 起两轮轮询
+  const inFlight = new Set<string>()
   const running = ref<string[]>([])
 
   function clearTimer(oid: string) {
@@ -97,14 +99,17 @@ export function useAiOcrPolling(options: AiOcrPollingOptions = {}) {
       schedule(oid)
     } catch (error) {
       scheduleFailure(oid, error)
+    } finally {
+      inFlight.delete(oid)
     }
   }
 
-  /** 开始跟踪一个附件的识别进度；已在跟踪时忽略。 */
+  /** 开始跟踪一个附件的识别进度；已在跟踪（含 poll 在飞）时忽略。 */
   function start(oid: string) {
-    if (!oid || timers.has(oid)) {
+    if (!oid || timers.has(oid) || inFlight.has(oid)) {
       return
     }
+    inFlight.add(oid)
     running.value = [...running.value, oid]
     void poll(oid)
   }

@@ -74,17 +74,20 @@ onMounted(() => {
   })
 })
 
-function refresh() {
+async function refresh() {
   loading.value = true
-  api.group.read_v2(page.value, perpage.value, search.value).then((res) => {
+  try {
+    const res = await api.group.read_v2(page.value, perpage.value, search.value)
     groups.value = []
+    // 空响应也必须收掉 loading：提前 return 会留下永久转圈的表格
     if (!res) return
     groups.value.push(...res.groups)
     total.value = res.size
+  } catch {
+    // 失败提示由全局拦截器统一负责，这里只需要复位 loading
+  } finally {
     loading.value = false
-  }).catch(() => {
-    loading.value = false
-  })
+  }
 }
 
 onMounted(refresh)

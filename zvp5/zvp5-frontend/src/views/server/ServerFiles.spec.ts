@@ -2,7 +2,8 @@ import { mount, flushPromises, type VueWrapper } from '@vue/test-utils'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { h } from 'vue'
 import ServerFiles from './ServerFiles.vue'
-import { listFiles } from '@/api/system/files.ts'
+import { listFiles, deleteEntry } from '@/api/system/files.ts'
+import { ElMessageBox } from 'element-plus'
 
 const { elMessageSpy, elementComponents } = vi.hoisted(() => {
   const ElCard = {
@@ -146,6 +147,7 @@ function mountPage(): VueWrapper {
 beforeEach(() => {
   vi.mocked(listFiles).mockReset()
   vi.mocked(listFiles).mockImplementation(async (path: string) => listResponse(path) as never)
+  vi.mocked(deleteEntry).mockReset()
   elMessageSpy.mockReset()
 })
 
@@ -233,6 +235,30 @@ it('reserves enough width for the four wide-screen row actions', async () => {
 
   expect(column).toBeTruthy()
   expect(column!.attributes('data-width')).toBe('320')
+
+  wrapper.unmount()
+})
+
+// 删除失败的 detail 过去被原样弹给用户（英文 Permission denied）；
+// 现在必须走 resolveErrorMessage 翻成中文，取不到时回落到 deleteFailed。
+it('translates the backend delete failure detail into Chinese', async () => {
+  vi.mocked(ElMessageBox.confirm).mockResolvedValueOnce('confirm' as never)
+  vi.mocked(deleteEntry).mockRejectedValueOnce({
+    response: { status: 403, data: { detail: 'Permission denied' } }
+  })
+  const wrapper = mountPage()
+  await flushPromises()
+
+  // 表格行由真实 ElTable 渲染，这里直接触发内部删除流程，只验错误文案
+  await (
+    wrapper.vm as unknown as {
+      doDelete: (entry: unknown, recursive: boolean) => Promise<void>
+    }
+  ).doDelete({ name: 'secret.txt', type: 'file' }, false)
+  await flushPromises()
+
+  expect(elMessageSpy).toHaveBeenCalledWith('没有权限执行该操作')
+  expect(elMessageSpy).not.toHaveBeenCalledWith('Permission denied')
 
   wrapper.unmount()
 })

@@ -44,7 +44,7 @@ VITE_API_BASE=https://<api-domain>/api
   `/api`。
 - 本地 `vite dev` 不需要该变量，仍由 Vite 代理 `/api` 到 `127.0.0.1:8000`。
 
-模板见 `zvms4-frontend/.env.production.example`。实际值应来自部署系统，不要提交到
+模板见 `zvp5-frontend/.env.production.example`。实际值应来自部署系统，不要提交到
 仓库。
 
 ### API 后端 CORS
@@ -86,7 +86,7 @@ ZVMS_API_WS_ORIGIN=wss://<api-domain>
 使用仓库脚本渲染：
 
 ```bash
-cd zvms4-backend-python
+cd zvp5-backend-python
 ZVMS_API_ORIGIN='https://<api-domain>' \
 ZVMS_API_WS_ORIGIN='wss://<api-domain>' \
 python config/render_nginx_security_headers.py \
@@ -103,7 +103,7 @@ systemctl reload nginx
 POSIX shell：
 
 ```bash
-cd zvms4-frontend
+cd zvp5-frontend
 VITE_API_BASE='https://<api-domain>/api' pnpm build
 ```
 

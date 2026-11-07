@@ -43,7 +43,7 @@
 
 ### 3.1 放进 `scripts/`
 
-路径必须是 `zvms4-backend-python/scripts/<name>.py`，且以 `python scripts/<name>.py`
+路径必须是 `zvp5-backend-python/scripts/<name>.py`，且以 `python scripts/<name>.py`
 直接可跑（脚本自己把仓库根补进 `sys.path`，见现有两个脚本的开头）。
 
 ### 3.2 首行 docstring 写清用途与安全约束

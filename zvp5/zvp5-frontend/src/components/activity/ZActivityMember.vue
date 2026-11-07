@@ -13,7 +13,6 @@ import {
   ElDialog,
   ElMessage,
   ElMessageBox,
-  ElNotification,
   ElPopconfirm,
   ElPopover,
   ElSpace,
@@ -23,8 +22,9 @@ import { useI18n } from 'vue-i18n'
 import ZUserGroup from '../tags/ZUserGroup.vue'
 import ZUserPosition from '../tags/ZUserPosition.vue'
 import { useUserStore } from '@/stores/user'
-import { temporaryToken } from '@/plugins/short-token'
+import { temporaryToken, isTemporaryTokenCancelled } from '@/plugins/short-token'
 import { useClipboard, useWindowSize } from '@vueuse/core'
+import { resolveErrorMessage } from '@/utils/errorMessage'
 import router from '@/router'
 
 const { width, height } = useWindowSize()
@@ -121,25 +121,31 @@ const { copy: copyToClipboard, copied: passwordCopied } = useClipboard({
 
 async function resetMemberPassword() {
   loading2.value = true
-  const token = await temporaryToken(userStore._id).catch(() => {
-    loading2.value = false
-  })
-  if (!token) {
-    return
-  }
-  const password = await api.user.password.reset(id.value, token).catch(() => {
-    loading2.value = false
-  })
-  loading2.value = false
-  if (password) {
+  try {
+    const token = await temporaryToken(userStore._id)
+    if (!token) {
+      return
+    }
+    const password = await api.user.password.reset(id.value, token)
+    // 只有真实拿到一次性密码才算成功：空返回值（200 外层错误码 / 旧契约）
+    // 绝不能再报成功，否则管理员会拿着一个没生效的密码去发人。
+    if (!password) {
+      return
+    }
     initialPassword.value = password
     initialPasswordVisible.value = true
-  } else {
-    // 兼容未返回一次性密码的旧契约：仅提示重置成功
-    ElNotification({
-      title: '密码重置成功',
-      type: 'success'
-    })
+  } catch (error) {
+    // 取消密码框是正常中止，不提示；其余失败给兜底提示（与全局拦截器文案相同时由 grouping 去重）
+    if (!isTemporaryTokenCancelled(error)) {
+      ElMessage({
+        message: resolveErrorMessage(error, 'manage.personalPanel.resetPasswordFailed'),
+        type: 'error',
+        grouping: true,
+        plain: true
+      })
+    }
+  } finally {
+    loading2.value = false
   }
 }
 

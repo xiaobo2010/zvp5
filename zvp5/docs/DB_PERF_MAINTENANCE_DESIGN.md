@@ -343,8 +343,8 @@ Query：`range`（`1h|6h|24h|7d`，默认 `1h`）、`limit`（默认 20，上限
 
 ## 9. 验证要求（各车道必须原样回贴输出）
 
-- L1/L2：`cd zvms4-backend-python && .venv/bin/python -m pytest tests -q`（全绿）＋ 各自新增测试文件单跑输出；**在线实测**：`ssh zgovps-la` + 只读探针（新端点用 `curl 127.0.0.1:8018` 或 `--resolve`）贴真实 JSON 片段。
-- L3/L4：`cd zvms4-frontend && npx --yes pnpm@10 run type-check` ＋ `npx --yes pnpm@10 run test:unit`（本机 pnpm 9.5 不认 workspace，必须 `npx --yes pnpm@10`）。
+- L1/L2：`cd zvp5-backend-python && .venv/bin/python -m pytest tests -q`（全绿）＋ 各自新增测试文件单跑输出；**在线实测**：`ssh zgovps-la` + 只读探针（新端点用 `curl 127.0.0.1:8018` 或 `--resolve`）贴真实 JSON 片段。
+- L3/L4：`cd zvp5-frontend && npx --yes pnpm@10 run type-check` ＋ `npx --yes pnpm@10 run test:unit`（本机 pnpm 9.5 不认 workspace，必须 `npx --yes pnpm@10`）。
 - L1 线上实测必须回贴：① 合并语句真实耗时；② `v$sqlarea` 经 schema 过滤后的 Top 10（证明无 Oracle 内部 SQL 混入）；③ `/metrics/realtime`、`/metrics/history` 的真实 JSON 片段。
 - 契约只增不改：`GET /status`、`/retention/preview` 的既有字段必须逐字保留（测试断言钉死）。
 - 不得 commit / push / 部署。

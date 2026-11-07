@@ -41,13 +41,21 @@ const timeOfMine = ref({
   'social-practice': user.time.socialPractice
 })
 const loading = ref(false)
+const loadFailed = ref(false)
 
 async function getTimeOfMine() {
   loading.value = true
-  const response = await api.user.time.read(user._id)
-  const percentage = await api.user.time.percentile(user._id)
-  timeOfMine.value = response
-  loading.value = false
+  loadFailed.value = false
+  try {
+    const response = await api.user.time.read(user._id)
+    await api.user.time.percentile(user._id)
+    timeOfMine.value = response
+  } catch {
+    // 失败提示由全局拦截器负责；这里给弹层一个降级文案，不让 loading 卡死
+    loadFailed.value = true
+  } finally {
+    loading.value = false
+  }
 }
 
 const { mode, size, force, bg, showMyDuration, showProperties } = toRefs(props)
@@ -113,7 +121,15 @@ const modes = classifications.mode
     </template>
     <ElRow>
       <ElCol :span="24" class="py-1" v-if="showMyDuration && mode">
+        <p
+          v-if="loadFailed"
+          class="text-sm"
+          style="color: var(--yg-text-tertiary)"
+        >
+          {{ t('activity.view.myDurationLoadFailed') }}
+        </p>
         <ElProgress
+          v-else
           type="dashboard"
           :percentage="percentOfMine"
           :status="percentOfMine >= 100 ? 'success' : ''"

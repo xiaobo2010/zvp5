@@ -7,7 +7,6 @@ import type { ActivityMember } from 'types/activity.v2'
 
 const props = defineProps<{
   type: ActivityMember['mode']
-  standardTime?: number
   realTime: number
 }>()
 
