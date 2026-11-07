@@ -82,7 +82,8 @@ export const zhCN = {
     timeList: {
       diff: '查看与达标所差时间',
       filled: '已完成',
-      diffed: '还差 {time} 小时'
+      diffed: '还差 {time} 小时',
+      loadFailed: '时长列表加载失败，请稍后重试'
     },
     statistics: {
       chartType: {
@@ -116,6 +117,7 @@ export const zhCN = {
       logs: '日志'
     },
     resetPassword: '重置该用户密码',
+    resetPasswordFailed: '密码重置失败',
     resetConfirm: '请确认您的操作。',
     initialPasswordDialog: {
       title: '一次性初始密码',
@@ -906,6 +908,7 @@ export const zhCN = {
       export: '导出',
       download: '下载'
     },
+    createFailed: '创建导出任务失败，请稍后重试',
     prompt: '导出任务 ID 为 {task}。确认您的进度，当任务完成时点击下方「下载」按钮。'
   }
 }

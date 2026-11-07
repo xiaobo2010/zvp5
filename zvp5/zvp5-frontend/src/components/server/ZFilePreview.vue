@@ -61,6 +61,8 @@ const skipped = ref(false)
 const data = ref<FilePreviewData | null>(null)
 const lightbox = ref(false)
 const dimensions = ref<{ w: number; h: number } | null>(null)
+// 预览请求序号：换文件/重试时只认最后一次请求的结果
+let previewSeq = 0
 
 // 文本文件整体交给 Z-IDE(全屏 Monaco);md 的「渲染预览」切换也在它内部。
 // 异步组件拿不到 InstanceType,这里按 Z-IDE defineExpose 的契约显式声明句柄。
@@ -182,6 +184,8 @@ function failureMessage(error: unknown): string {
 }
 
 async function fetchPreview() {
+  // 请求序号：同弹层里换文件时，慢响应不得覆盖后发请求的数据
+  const seq = ++previewSeq
   loading.value = true
   failed.value = false
   skipped.value = false
@@ -199,22 +203,29 @@ async function fetchPreview() {
   }
   try {
     const res = await previewFile(props.path)
+    if (seq !== previewSeq) return
     const body = res.data?.data
     if (!body) throw new Error('empty preview payload')
     data.value = body
   } catch (error) {
+    if (seq !== previewSeq) return
     failed.value = true
     failure.value = failureMessage(error)
   } finally {
-    loading.value = false
+    if (seq === previewSeq) loading.value = false
   }
 }
 
 watch(
-  () => props.modelValue,
-  (open) => {
+  // path 也要看：弹层不关、同组件直接换文件时同样要重拉
+  () => [props.modelValue, props.path] as const,
+  ([open]) => {
     if (open) void fetchPreview()
-    else ideRef.value?.reset()
+    else {
+      // 关闭时让在途响应作废，避免关掉后又被旧数据写回
+      previewSeq += 1
+      ideRef.value?.reset()
+    }
   }
 )
 

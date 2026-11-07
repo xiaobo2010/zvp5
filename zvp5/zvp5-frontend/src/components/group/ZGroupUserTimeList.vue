@@ -20,6 +20,7 @@ import { useGroupsStore } from '@/stores/groups'
 import type { Group, ActivityTimeRecord } from '@/../types'
 import { useWindowSize } from '@vueuse/core'
 import { Search } from '@element-plus/icons-vue'
+import { resolveErrorMessage } from '@/utils/errorMessage'
 
 const router = useRouter()
 const { width, height } = useWindowSize()
@@ -125,10 +126,11 @@ const refresh = async () => {
       time.value = []
       total.value = 0
     }
-  } catch {
+  } catch (err) {
     time.value = []
     total.value = 0
-    error.value = '时长列表加载失败，请稍后重试'
+    // 全局拦截器已经弹过一次：这里只把可展示文案落到行内占位，不再组件侧重复弹窗
+    error.value = resolveErrorMessage(err, 'manage.groupDetails.timeList.loadFailed')
   } finally {
     loading.value = false
   }
