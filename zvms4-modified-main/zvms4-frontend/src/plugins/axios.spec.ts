@@ -19,7 +19,6 @@ vi.mock('@/api/ai/activeRuns', () => ({
 vi.mock('@/utils/idbCache', () => ({ cacheGet: vi.fn().mockResolvedValue(null), cacheSet: vi.fn() }))
 vi.mock('@/plugins/ua', () => ({ getXuehaiId: () => 0 }))
 vi.mock('element-plus', () => ({ ElMessage: elMessageMock }))
-vi.mock('nprogress', () => ({ default: { start: vi.fn(), done: vi.fn() } }))
 
 beforeEach(() => {
   vi.clearAllMocks()

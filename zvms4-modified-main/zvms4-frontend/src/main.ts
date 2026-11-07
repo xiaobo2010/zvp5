@@ -12,6 +12,7 @@ import ElementPlus from 'element-plus'
 
 import 'element-plus/theme-chalk/index.css'
 import 'element-plus/theme-chalk/dark/css-vars.css'
+import 'vant/lib/index.css'
 import 'virtual:uno.css'
 
 // 义工平台标准样式库（令牌 → 基础 → 组件），由 design:sync 从「前端约定/css」同步而来
@@ -32,6 +33,8 @@ import './assets/styles/yg/user-v2.css'
 
 // Phigros 主题（愚人节ui）：暗色 + 青色 + 锐利几何 + 纯装饰判定线/网格
 import './assets/styles/yg/phi-theme.css'
+// Phi 遗留普通用户页面皮肤：登记 / 创建 / 详情流程的切角面板与表格
+import './assets/styles/yg/phi-legacy-pages.css'
 // Phi 主题的 body 级弹层（Teleport 逃出 .yg-phi 的 Dialog/Message/Popover）
 import './assets/styles/yg/phi-portals.css'
 

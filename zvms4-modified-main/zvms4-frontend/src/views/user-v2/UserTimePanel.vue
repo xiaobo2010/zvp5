@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref, toRefs, watch } from 'vue'
-import { ElButton, ElDialog, ElIcon, ElSwitch } from 'element-plus'
+import { ElButton, ElDialog, ElIcon } from 'element-plus'
 import { DataAnalysis, Refresh } from '@element-plus/icons-vue'
 import { useI18n } from 'vue-i18n'
 import { useUserStore } from '@/stores/user'
@@ -23,17 +23,15 @@ const props = withDefaults(
     onCampus?: number
     offCampus?: number
     socialPractice?: number
-    discount?: boolean
   }>(),
   {
     onCampus: 0,
     offCampus: 0,
-    socialPractice: 0,
-    discount: false
+    socialPractice: 0
   }
 )
 
-const { user, onCampus, offCampus, socialPractice, discount } = toRefs(props)
+const { user, onCampus, offCampus, socialPractice } = toRefs(props)
 const userStore = useUserStore()
 const { t } = useI18n()
 
@@ -47,7 +45,6 @@ const base = reactive({
   socialPractice: socialPractice.value
 })
 
-const exceed = ref(discount.value)
 const loading = ref(false)
 const loaded = ref(false)
 const error = ref('')
@@ -67,8 +64,9 @@ function getDiscount(value: number, threshold: number, rate: number) {
   return Math.round((value - threshold) / rate)
 }
 
-const bonusOn = computed(() => (exceed.value ? getDiscount(base.offCampus, 15, 2) : 0))
-const bonusOff = computed(() => (exceed.value ? getDiscount(base.onCampus, 25, 3) : 0))
+const bonusOn = computed(() => getDiscount(base.offCampus, 15, 2))
+const bonusOff = computed(() => getDiscount(base.onCampus, 25, 3))
+const hasBonus = computed(() => bonusOn.value > 0 || bonusOff.value > 0)
 
 const target = computed(() => ({
   on: base.onCampus + bonusOn.value,
@@ -232,7 +230,7 @@ const cells = computed(() => {
       percent: Math.round(ratio * 100),
       lit: Math.max(0, Math.min(SEGMENTS, Math.floor(live * SEGMENTS + 1e-6))),
       over: diff >= 0,
-      gapLabel: diff >= 0 ? t('home.panels.time.exceed') : t('home.panels.time.lack'),
+      gapLabel: diff >= 0 ? t('home.panels.time.more') : t('home.panels.time.less'),
       gap: Math.abs(diff).toFixed(diff % 1 === 0 ? 0 : 1)
     }
   })
@@ -268,10 +266,6 @@ const showSkeleton = computed(() => loading.value && !loaded.value && target.val
         </div>
 
         <div class="phi-time__tools">
-          <div class="phi-time__switch">
-            <span aria-hidden="true">{{ t('home.panels.time.discount') }}</span>
-            <ElSwitch v-model="exceed" aria-label="显示折算：校内校外时长互补" />
-          </div>
           <ElButton
             class="phi-time__tool"
             aria-label="查看时长明细"
@@ -329,6 +323,15 @@ const showSkeleton = computed(() => loading.value && !loaded.value && target.val
           <p class="phi-time__value">
             <span class="phi-time__num" aria-hidden="true">{{ cell.display }}</span>
             <span class="phi-time__unit" aria-hidden="true">H</span>
+            <span
+              class="phi-time__gap"
+              :class="cell.over ? 'is-over' : 'is-under'"
+              aria-hidden="true"
+            >
+              <span class="phi-time__gap-label">{{ cell.gapLabel }}</span>
+              <span class="phi-time__gap-num">{{ cell.gap }}</span>
+              <small>H</small>
+            </span>
             <span class="phi-time__sr">
               {{ cell.name }} {{ cell.real }} {{ t('home.panels.time.unit') }}，标准
               {{ cell.standard }} {{ t('home.panels.time.unit') }}，{{ cell.gapLabel }}
@@ -358,10 +361,6 @@ const showSkeleton = computed(() => loading.value && !loaded.value && target.val
               <dt>标准</dt>
               <dd>{{ cell.standard }}<small>H</small></dd>
             </div>
-            <div :class="cell.over ? 'is-up' : 'is-down'">
-              <dt>{{ cell.gapLabel }}</dt>
-              <dd>{{ cell.gap }}<small>H</small></dd>
-            </div>
             <div>
               <dt>进度</dt>
               <dd>{{ cell.percent }}<small>%</small></dd>
@@ -370,7 +369,7 @@ const showSkeleton = computed(() => loading.value && !loaded.value && target.val
         </article>
       </div>
 
-      <p v-if="exceed && !error" class="phi-time__note">
+      <p v-if="hasBonus && !error" class="phi-time__note">
         已按互补规则折算：校内超出 25 小时部分按 1/3 计入校外，校外超出 15 小时部分按 1/2
         计入校内。总记录为三项原始时长之和。
       </p>
@@ -539,15 +538,6 @@ const showSkeleton = computed(() => loading.value && !loaded.value && target.val
   gap: var(--yg-space-2);
 }
 
-.phi-time__switch {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--yg-space-2);
-  margin-right: var(--yg-space-2);
-  color: var(--phi-ink-2);
-  font-size: var(--yg-font-size-sm);
-}
-
 /* ---------- 网格与单元 ---------- */
 .phi-time__grid {
   position: relative;
@@ -678,6 +668,84 @@ const showSkeleton = computed(() => loading.value && !loaded.value && target.val
   font-size: 22px;
 }
 
+/* 折算差额：紧贴大数字右上角，用另一种形态（描边小牌）和颜色承载“少/多” */
+.phi-time__gap {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 3px;
+  margin-left: var(--yg-space-3);
+  padding: 3px 8px 2px;
+  border: 1px solid currentColor;
+  font-family: var(--phi-hud);
+  font-size: var(--yg-font-size-xs);
+  letter-spacing: 0.08em;
+  line-height: 1;
+  transform: translateY(-5px);
+  clip-path: polygon(0 0, calc(100% - 6px) 0, 100% 6px, 100% 100%, 0 100%);
+}
+
+.phi-time__gap.is-over {
+  color: var(--phi-accent-ink);
+  background: color-mix(in srgb, var(--phi-accent) 12%, transparent);
+}
+
+.phi-time__gap.is-under {
+  color: var(--phi-warn);
+  background: color-mix(in srgb, var(--phi-warn) 12%, transparent);
+}
+
+.phi-time__gap-label {
+  opacity: 0.78;
+}
+
+.phi-time__gap small {
+  font-size: 11px;
+  font-weight: 700;
+}
+
+/* 故障抖动：沿用 ZVMS 标题的粉/青双影 + 偶发位移/倾斜 */
+.phi-time__gap-num {
+  position: relative;
+  display: inline-block;
+  min-width: 1ch;
+  font-size: 20px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  text-shadow:
+    1px 0 color-mix(in srgb, var(--phi-pink) 72%, transparent),
+    -1px 0 color-mix(in srgb, var(--phi-cyan) 72%, transparent);
+  animation: tp-gap-glitch 6.4s steps(2) infinite;
+}
+
+@keyframes tp-gap-glitch {
+  0%,
+  90%,
+  100% {
+    transform: none;
+    text-shadow:
+      1px 0 color-mix(in srgb, var(--phi-pink) 72%, transparent),
+      -1px 0 color-mix(in srgb, var(--phi-cyan) 72%, transparent);
+  }
+  91% {
+    transform: translate(-1px, 1px) skewX(-6deg);
+    text-shadow:
+      -2px 0 var(--phi-pink),
+      2px 0 var(--phi-cyan);
+  }
+  92% {
+    transform: translate(2px, -1px) skewX(4deg);
+    text-shadow:
+      2px 0 var(--phi-pink),
+      -2px 0 var(--phi-cyan);
+    opacity: 0.86;
+  }
+  93% {
+    transform: none;
+    opacity: 1;
+  }
+}
+
 .phi-time__sr {
   position: absolute;
   width: 1px;
@@ -698,7 +766,8 @@ const showSkeleton = computed(() => loading.value && !loaded.value && target.val
   isolation: isolate;
 }
 
-/* 已点亮区域的低频扫光：不是一次性扫过，进度条本身会持续“有电” */
+/* 已点亮区域的低频扫光：光带用 background-position 在点亮段内推进，
+   起始位置锁在进度条左端（x=0），不再从左端外侧飘进来。 */
 .phi-time__ticks::before {
   content: '';
   position: absolute;
@@ -706,16 +775,17 @@ const showSkeleton = computed(() => loading.value && !loaded.value && target.val
   inset: 0 auto 0 0;
   width: var(--lit-pct, 0%);
   pointer-events: none;
-  background: linear-gradient(
+  background-image: linear-gradient(
     90deg,
     transparent 0%,
-    var(--phi-accent-soft) 35%,
-    var(--phi-accent-glow) 52%,
-    transparent 100%
+    var(--phi-accent-soft) 42%,
+    var(--phi-accent-glow) 50%,
+    transparent 58%
   );
-  opacity: 0.55;
-  transform: translateX(-110%);
-  animation: tp-bar-scan 3400ms cubic-bezier(0.6, 0, 0.2, 1) infinite;
+  background-repeat: no-repeat;
+  background-size: 36% 100%;
+  background-position: 0 0;
+  animation: tp-bar-scan 3400ms cubic-bezier(0.55, 0, 0.2, 1) infinite;
 }
 
 /* 进度边缘的定位光标；随缓动数字一起推进 */
@@ -778,15 +848,19 @@ const showSkeleton = computed(() => loading.value && !loaded.value && target.val
 
 @keyframes tp-bar-scan {
   0% {
-    transform: translateX(-110%);
+    background-position: 0 0;
     opacity: 0;
   }
-  18% {
+  8% {
     opacity: 0.55;
   }
-  72%,
+  80% {
+    background-position: 156% 0;
+    opacity: 0.3;
+  }
+  88%,
   100% {
-    transform: translateX(220%);
+    background-position: 156% 0;
     opacity: 0;
   }
 }
@@ -805,7 +879,7 @@ const showSkeleton = computed(() => loading.value && !loaded.value && target.val
 
 .phi-time__meta {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   margin: var(--yg-space-4) 0 0;
   border-top: 1px dashed var(--phi-line-strong);
 }
@@ -834,14 +908,6 @@ const showSkeleton = computed(() => loading.value && !loaded.value && target.val
 
 .phi-time__meta small {
   font-size: 12px;
-}
-
-.phi-time__meta .is-down dd {
-  color: var(--phi-warn);
-}
-
-.phi-time__meta .is-up dd {
-  color: var(--phi-accent-ink);
 }
 
 .phi-time__note {
@@ -979,10 +1045,6 @@ const showSkeleton = computed(() => loading.value && !loaded.value && target.val
     font-size: 28px;
   }
 
-  .phi-time__switch {
-    margin-right: auto;
-  }
-
   .phi-time__ticks {
     gap: 2px;
   }
@@ -1000,7 +1062,8 @@ const showSkeleton = computed(() => loading.value && !loaded.value && target.val
   .phi-time__panel,
   .phi-time__cell,
   .phi-time__ticks i.is-lit,
-  .phi-time__skel {
+  .phi-time__skel,
+  .phi-time__gap-num {
     animation: none;
   }
 

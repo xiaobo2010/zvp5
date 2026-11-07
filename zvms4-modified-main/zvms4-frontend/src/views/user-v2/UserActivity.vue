@@ -153,10 +153,20 @@ html[data-theme='light'] .phx {
   overflow: hidden;
   border-left: 3px solid var(--phx-accent);
   background:
-    linear-gradient(to bottom left, transparent calc(50% - 1px), var(--phx-accent) 50%, transparent calc(50% + 1.5px)) right top / 22px 22px no-repeat,
+    linear-gradient(
+        to bottom left,
+        transparent calc(50% - 1px),
+        var(--phx-accent) 50%,
+        transparent calc(50% + 1.5px)
+      )
+      right top / 22px 22px no-repeat,
     linear-gradient(var(--phx-line-soft) 1px, transparent 1px) 0 0 / 24px 24px,
     linear-gradient(90deg, var(--phx-line-soft) 1px, transparent 1px) 0 0 / 24px 24px,
-    linear-gradient(100deg, color-mix(in srgb, var(--phx-accent) 9%, var(--phx-surface)), var(--phx-surface) 58%);
+    linear-gradient(
+      100deg,
+      color-mix(in srgb, var(--phx-accent) 9%, var(--phx-surface)),
+      var(--phx-surface) 58%
+    );
   clip-path: polygon(0 0, calc(100% - 22px) 0, 100% 22px, 100% 100%, 0 100%);
   animation: phx-head-in 420ms var(--phx-ease) both;
 }
@@ -241,27 +251,15 @@ html[data-theme='light'] .phx {
   animation: phx-slide-in-r 450ms 40ms var(--phx-ease) both;
 }
 
-/* ---------- 页签轨道：平行四边形 + 斜切填充 indicator ---------- */
+/* ---------- 页签轨道：无填充块，只保留底部细线与倾斜强调线 ---------- */
 .phx-tabs {
   position: relative;
   display: flex;
   align-items: stretch;
-  gap: 6px;
-  padding: 6px 22px 6px 0;
+  gap: 4px;
+  padding: 0;
   border-bottom: 1px solid var(--phx-line);
   animation: phx-slide-in 400ms 90ms var(--phx-ease) both;
-}
-
-.phx-tabs::after {
-  content: '';
-  position: absolute;
-  right: 0;
-  bottom: -1px;
-  width: 64px;
-  height: 3px;
-  background: repeating-linear-gradient(-55deg, var(--phx-accent) 0 2px, transparent 2px 6px);
-  opacity: 0.6;
-  pointer-events: none;
 }
 
 .phx-tabs__label {
@@ -283,7 +281,7 @@ html[data-theme='light'] .phx {
   align-items: center;
   gap: var(--yg-space-2);
   min-height: 44px;
-  padding: 0 22px 0 18px;
+  padding: 0 18px;
   border: 0;
   background: transparent;
   color: var(--phx-muted);
@@ -291,38 +289,42 @@ html[data-theme='light'] .phx {
   font: inherit;
   font-size: var(--yg-font-size-md);
   font-weight: var(--yg-font-weight-medium);
-  clip-path: polygon(10px 0, 100% 0, calc(100% - 10px) 100%, 0 100%);
-  transition:
-    color 200ms var(--phx-ease),
-    transform 260ms var(--phx-spring);
+  transition: color 200ms var(--phx-ease);
 }
 
-/* 斜切填充：激活时由左侧弹出，失活时向右收回，读起来像一块滑块在页签间移动 */
+/* 激活标记：3px 倾斜底线，从中间展开；不再是整块斜切填充 */
 .phx-tab__fill {
   position: absolute;
-  inset: 0;
-  z-index: -1;
-  background:
-    linear-gradient(115deg, transparent 0 62%, color-mix(in srgb, #fff 22%, transparent) 62% 66%, transparent 66%),
-    var(--phx-accent);
-  transform: scaleX(0);
+  right: 18px;
+  bottom: -1px;
+  left: 18px;
+  z-index: 0;
+  height: 3px;
+  background: var(--phx-accent);
+  transform: scaleX(0) skewX(-28deg);
   transform-origin: right center;
   transition: transform 340ms var(--phx-spring);
+  pointer-events: none;
 }
 
+/* hover 只给一层很淡的斜向洗色，不形成方块 */
 .phx-tab::before {
   content: '';
   position: absolute;
-  inset: 0;
-  z-index: -2;
-  background: color-mix(in srgb, var(--phx-ink) 5%, transparent);
+  inset: 4px 2px;
+  z-index: -1;
+  background: linear-gradient(
+    100deg,
+    color-mix(in srgb, var(--phx-accent) 10%, transparent) 0 46%,
+    transparent 78%
+  );
   opacity: 0;
   transition: opacity 180ms var(--phx-ease);
+  pointer-events: none;
 }
 
 .phx-tab:hover {
   color: var(--phx-ink);
-  transform: translateX(3px);
 }
 
 .phx-tab:hover::before {
@@ -330,18 +332,17 @@ html[data-theme='light'] .phx {
 }
 
 .phx-tab.is-active {
-  color: var(--phx-on-accent);
+  color: var(--phx-accent);
   font-weight: var(--yg-font-weight-semibold);
-  transform: none;
 }
 
 .phx-tab.is-active .phx-tab__fill {
-  transform: scaleX(1);
+  transform: scaleX(1) skewX(-28deg);
   transform-origin: left center;
 }
 
 .phx-tab:focus-visible {
-  outline: 2px solid var(--phx-ink);
+  outline: 2px solid var(--phx-accent);
   outline-offset: -4px;
 }
 
@@ -379,27 +380,22 @@ html[data-theme='light'] .phx {
   box-shadow: 5px 5px 0 var(--phx-hard);
 }
 
+/* 角标并入 ::before（左侧强调条 + 右上折角），把 ::after 让给全局流光边 */
 .phx-list > :deep(.el-card)::before {
   content: '';
   position: absolute;
-  top: 0;
-  bottom: 0;
-  left: 0;
+  inset: 0;
   z-index: 3;
-  width: 2px;
-  background: linear-gradient(var(--phx-accent), transparent 72%);
-  pointer-events: none;
-}
-
-.phx-list > :deep(.el-card)::after {
-  content: '';
-  position: absolute;
-  top: 0;
-  right: 0;
-  z-index: 3;
-  width: 22px;
-  height: 22px;
-  background: linear-gradient(225deg, var(--phx-accent) 0 9px, transparent 9px 12px, var(--phx-line) 12px 13px, transparent 13px);
+  background:
+    linear-gradient(
+        225deg,
+        var(--phx-accent) 0 9px,
+        transparent 9px 12px,
+        var(--phx-line) 12px 13px,
+        transparent 13px
+      )
+      right top / 22px 22px no-repeat,
+    linear-gradient(var(--phx-accent), transparent 72%) left top / 2px 100% no-repeat;
   pointer-events: none;
 }
 
@@ -454,7 +450,11 @@ html[data-theme='light'] .phx {
 }
 
 .phx-list :deep(.el-table .el-table__body tr.el-table__row:hover > td.el-table__cell:first-child) {
-  background-image: linear-gradient(105deg, color-mix(in srgb, var(--phx-accent) 26%, transparent) 0 46%, transparent 46%);
+  background-image: linear-gradient(
+    105deg,
+    color-mix(in srgb, var(--phx-accent) 26%, transparent) 0 46%,
+    transparent 46%
+  );
   box-shadow:
     inset 3px 0 0 var(--phx-accent),
     inset 0 -1px 0 var(--phx-line);
@@ -465,15 +465,30 @@ html[data-theme='light'] .phx {
 }
 
 /* 固定列 sticky 单元格必须保持不透明，避免横向滚动时内容透出 */
-.phx-list :deep(.el-table .el-table__body tr.el-table__row > td.el-table__cell.el-table-fixed-column--right) {
+.phx-list
+  :deep(
+    .el-table .el-table__body tr.el-table__row > td.el-table__cell.el-table-fixed-column--right
+  ) {
   background-color: var(--phx-surface);
 }
 
-.phx-list :deep(.el-table .el-table__body tr.el-table__row--striped > td.el-table__cell.el-table-fixed-column--right) {
+.phx-list
+  :deep(
+    .el-table
+      .el-table__body
+      tr.el-table__row--striped
+      > td.el-table__cell.el-table-fixed-column--right
+  ) {
   background-color: var(--el-fill-color-lighter);
 }
 
-.phx-list :deep(.el-table .el-table__body tr.el-table__row:hover > td.el-table__cell.el-table-fixed-column--right) {
+.phx-list
+  :deep(
+    .el-table
+      .el-table__body
+      tr.el-table__row:hover
+      > td.el-table__cell.el-table-fixed-column--right
+  ) {
   background-color: var(--phx-row-hover);
 }
 
@@ -487,13 +502,27 @@ html[data-theme='light'] .phx {
   animation-delay: var(--phx-row-delay, 0ms);
 }
 
-.phx-list :deep(.el-table__body tr.el-table__row:nth-of-type(2)) { --phx-row-delay: 30ms; }
-.phx-list :deep(.el-table__body tr.el-table__row:nth-of-type(3)) { --phx-row-delay: 60ms; }
-.phx-list :deep(.el-table__body tr.el-table__row:nth-of-type(4)) { --phx-row-delay: 90ms; }
-.phx-list :deep(.el-table__body tr.el-table__row:nth-of-type(5)) { --phx-row-delay: 120ms; }
-.phx-list :deep(.el-table__body tr.el-table__row:nth-of-type(6)) { --phx-row-delay: 150ms; }
-.phx-list :deep(.el-table__body tr.el-table__row:nth-of-type(7)) { --phx-row-delay: 175ms; }
-.phx-list :deep(.el-table__body tr.el-table__row:nth-of-type(n + 8)) { --phx-row-delay: 200ms; }
+.phx-list :deep(.el-table__body tr.el-table__row:nth-of-type(2)) {
+  --phx-row-delay: 30ms;
+}
+.phx-list :deep(.el-table__body tr.el-table__row:nth-of-type(3)) {
+  --phx-row-delay: 60ms;
+}
+.phx-list :deep(.el-table__body tr.el-table__row:nth-of-type(4)) {
+  --phx-row-delay: 90ms;
+}
+.phx-list :deep(.el-table__body tr.el-table__row:nth-of-type(5)) {
+  --phx-row-delay: 120ms;
+}
+.phx-list :deep(.el-table__body tr.el-table__row:nth-of-type(6)) {
+  --phx-row-delay: 150ms;
+}
+.phx-list :deep(.el-table__body tr.el-table__row:nth-of-type(7)) {
+  --phx-row-delay: 175ms;
+}
+.phx-list :deep(.el-table__body tr.el-table__row:nth-of-type(n + 8)) {
+  --phx-row-delay: 200ms;
+}
 
 /* 表头搜索框：直角、底部青线，聚焦时整框青线 */
 .phx-list :deep(.el-table .el-input__wrapper) {
@@ -547,46 +576,17 @@ html[data-theme='light'] .phx-list :deep(.el-tag.el-tag--danger) {
   background-color: var(--yg-color-danger-soft);
 }
 
-/* 分页（ZPagination 自绘）：去胶囊，滑块改平行四边形 */
+/* 分页（ZPagination 自绘）：几何与颜色交给共享组件，这里只补字体 */
 .phx-list :deep(.yg-pg) {
   font-family: var(--phx-hud), var(--yg-font-sans);
   font-weight: 500;
   letter-spacing: 0.03em;
 }
 
-.phx-list :deep(.yg-pg__btn),
-.phx-list :deep(.yg-pg__track),
-.phx-list :deep(.yg-pg__num),
-.phx-list :deep(.yg-pg__select),
-.phx-list :deep(.yg-pg__jump-input) {
-  border-radius: 0;
-}
-
-.phx-list :deep(.yg-pg__btn),
-.phx-list :deep(.yg-pg__track) {
-  box-shadow: inset 0 0 0 1px var(--phx-line-soft);
-}
-
-.phx-list :deep(.yg-pg__btn:hover:not(:disabled)) {
-  box-shadow: inset 0 0 0 1px var(--phx-accent);
-  color: var(--phx-accent);
-}
-
-.phx-list :deep(.yg-pg__thumb) {
-  border-radius: 0;
-  background: var(--phx-accent);
-  box-shadow: none;
-  clip-path: polygon(6px 0, 100% 0, calc(100% - 6px) 100%, 0 100%);
-}
-
 .phx-list :deep(.yg-pg__num) {
   font-family: var(--phx-hud), var(--yg-font-sans);
   font-size: 14px;
   font-weight: 700;
-}
-
-.phx-list :deep(.yg-pg__num.is-active) {
-  color: var(--phx-on-accent);
 }
 
 /* ---------- 动效 ---------- */
@@ -631,7 +631,12 @@ html[data-theme='light'] .phx-list :deep(.el-tag.el-tag--danger) {
   }
   to {
     opacity: 1;
-    clip-path: polygon(-12px -12px, calc(100% + 52px) -12px, calc(100% + 12px) calc(100% + 12px), -52px calc(100% + 12px));
+    clip-path: polygon(
+      -12px -12px,
+      calc(100% + 52px) -12px,
+      calc(100% + 12px) calc(100% + 12px),
+      -52px calc(100% + 12px)
+    );
   }
 }
 

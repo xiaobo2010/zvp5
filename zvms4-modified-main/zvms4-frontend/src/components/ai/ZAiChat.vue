@@ -2107,14 +2107,19 @@ onUnmounted(() => {
 
 /* 桌面侧栏：固定宽度，跟主区等高 */
 .ai-chat__sidebar {
+  display: flex;
+  flex-direction: column;
   flex: none;
   width: 260px;
   /* 高度跟着对话列走，不再按视口猜一个数 */
   max-height: 100%;
+  min-height: 0;
   padding: var(--yg-space-3);
   border: 1px solid var(--yg-border-default);
   border-radius: var(--yg-radius-lg);
   background: var(--yg-bg-surface);
+  /* 会话多时只让内部列表滚，侧栏本身不被内容顶高 */
+  overflow: hidden;
 }
 
 .ai-chat__main {

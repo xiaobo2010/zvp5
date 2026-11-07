@@ -4,12 +4,32 @@ import { useRoute, useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user.ts'
 import { computed, ref, watch, type Component } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ElPageHeader, ElSegmented, ElLoading, ElIcon, ElButton, ElTag, ElMessage, ElMessageBox, ElNotification, ElTooltip, ElDialog, ElInput, ElSelect, ElOption, ElAlert } from 'element-plus'
+import {
+  ElPageHeader,
+  ElSegmented,
+  ElLoading,
+  ElIcon,
+  ElButton,
+  ElTag,
+  ElMessage,
+  ElMessageBox,
+  ElNotification,
+  ElTooltip,
+  ElDialog,
+  ElInput,
+  ElSelect,
+  ElOption,
+  ElAlert
+} from 'element-plus'
 import { ZActivityList } from '@/components'
 import { ArrowLeft, Edit } from '@element-plus/icons-vue'
 import type { User } from '@/../types'
 import api from '@/api'
-import { clearUserPrimaryDevice, issueTempPassword, type TempPasswordIssueResult } from '@/api/user/device'
+import {
+  clearUserPrimaryDevice,
+  issueTempPassword,
+  type TempPasswordIssueResult
+} from '@/api/user/device'
 import { isTemporaryTokenCancelled, withTemporaryToken } from '@/plugins/short-token'
 import { aiErrorOf } from '@/api/ai/errors'
 import { useClipboard } from '@vueuse/core'
@@ -18,10 +38,7 @@ import ZUserModification from '@/components/group/ZUserModification.vue'
 import { Info, Log, ViewList } from '@icon-park/vue-next'
 import ZLogList from '@/components/log/ZLogList.vue'
 import ZSceneRunDialog from '@/components/server/ZSceneRunDialog.vue'
-import {
-  VOLUNTEER_ACTIVITY_LIMIT,
-  buildVolunteerContextMarkdown
-} from '@/utils/volunteerAnalysis'
+import { VOLUNTEER_ACTIVITY_LIMIT, buildVolunteerContextMarkdown } from '@/utils/volunteerAnalysis'
 
 /**
  * 封禁元数据由 `GET /v3/users/{id}` 附带返回;共享的 User 类型还没声明这几个字段,
@@ -57,7 +74,7 @@ watch(
 )
 
 async function getUser() {
-  const loading = ElLoading.service({ fullscreen: true})
+  const loading = ElLoading.service({ fullscreen: true })
   const result = await api.user.readOne_v3(id.value).catch(() => {
     loading.close()
   })
@@ -128,7 +145,9 @@ const banReasonValid = computed(() => {
 })
 
 const banReasonText = computed(
-  () => (user.value as UserWithBan | undefined)?.ban_reason || t('manage.personalPanel.banReasonFallback')
+  () =>
+    (user.value as UserWithBan | undefined)?.ban_reason ||
+    t('manage.personalPanel.banReasonFallback')
 )
 
 // 只有真被封禁才需要这行;到期时间按本地时区展示,永久封禁没有 ban_until。
@@ -201,10 +220,9 @@ async function toggleBanned() {
     return
   }
   try {
-    await ElMessageBox.confirm(
-      t('manage.personalPanel.unbanConfirm', { name: user.value.name }),
-      { type: 'warning' }
-    )
+    await ElMessageBox.confirm(t('manage.personalPanel.unbanConfirm', { name: user.value.name }), {
+      type: 'warning'
+    })
   } catch {
     return
   }
@@ -427,7 +445,13 @@ async function openVolunteerAnalysis() {
 }
 
 getUser().then(() => {
-  if (!(userStore.position.includes('admin') || userStore.position.includes('department') || userStore.position.includes('secretary') && user.value?.group[0] === userStore.class_id)) {
+  if (
+    !(
+      userStore.position.includes('admin') ||
+      userStore.position.includes('department') ||
+      (userStore.position.includes('secretary') && user.value?.group[0] === userStore.class_id)
+    )
+  ) {
     router.replace('/not-found')
   }
 })
@@ -499,7 +523,9 @@ watch(
                 <Component :is="(props.item as SegmentedTab).icon" />
               </ElIcon>
               <span class="phx-tab-label">
-                {{ t(('manage.personalPanel.tabs.' + (props.item as SegmentedTab).value) as string) }}
+                {{
+                  t(('manage.personalPanel.tabs.' + (props.item as SegmentedTab).value) as string)
+                }}
               </span>
             </div>
           </template>
@@ -555,7 +581,9 @@ watch(
       class="phx-alert"
     >
       <template #default>
-        <span v-if="banUntilText">{{ t('manage.personalPanel.banUntil', { time: banUntilText }) }}</span>
+        <span v-if="banUntilText">{{
+          t('manage.personalPanel.banUntil', { time: banUntilText })
+        }}</span>
       </template>
     </ElAlert>
     <div v-if="user && current === 'info'" class="phx-panel phx-member" style="--phx-i: 1">
@@ -620,7 +648,12 @@ watch(
         <ElButton @click="banDialogVisible = false">
           {{ t('action.cancel', '取消') }}
         </ElButton>
-        <ElButton type="danger" :disabled="!banReasonValid || !banDurationValid" :loading="banSubmitting" @click="submitBan">
+        <ElButton
+          type="danger"
+          :disabled="!banReasonValid || !banDurationValid"
+          :loading="banSubmitting"
+          @click="submitBan"
+        >
           {{ t('manage.personalPanel.banDialogConfirm') }}
         </ElButton>
       </template>
@@ -724,10 +757,20 @@ html[data-theme='light'] .phx-user {
   overflow: hidden;
   border-left: 3px solid var(--phx-accent);
   background:
-    linear-gradient(to bottom left, transparent calc(50% - 1px), var(--phx-accent) 50%, transparent calc(50% + 1.5px)) right top / 22px 22px no-repeat,
+    linear-gradient(
+        to bottom left,
+        transparent calc(50% - 1px),
+        var(--phx-accent) 50%,
+        transparent calc(50% + 1.5px)
+      )
+      right top / 22px 22px no-repeat,
     linear-gradient(var(--phx-line-soft) 1px, transparent 1px) 0 0 / 24px 24px,
     linear-gradient(90deg, var(--phx-line-soft) 1px, transparent 1px) 0 0 / 24px 24px,
-    linear-gradient(100deg, color-mix(in srgb, var(--phx-accent) 9%, var(--phx-surface)), var(--phx-surface) 58%);
+    linear-gradient(
+      100deg,
+      color-mix(in srgb, var(--phx-accent) 9%, var(--phx-surface)),
+      var(--phx-surface) 58%
+    );
   clip-path: polygon(0 0, calc(100% - 22px) 0, 100% 22px, 100% 100%, 0 100%);
   animation: phx-head-in 420ms var(--phx-ease) both;
 }
@@ -921,8 +964,8 @@ html[data-theme='light'] .phx-user {
 .phx-seg {
   --el-segmented-color: var(--phx-muted);
   --el-segmented-bg-color: transparent;
-  --el-segmented-padding: 3px;
-  --el-segmented-item-selected-color: var(--phx-on-accent);
+  --el-segmented-padding: 0;
+  --el-segmented-item-selected-color: var(--phx-accent);
   --el-segmented-item-selected-bg-color: transparent;
   --el-segmented-item-hover-color: var(--phx-ink);
   --el-segmented-item-hover-bg-color: color-mix(in srgb, var(--phx-accent) 9%, transparent);
@@ -930,13 +973,15 @@ html[data-theme='light'] .phx-user {
   flex: 1 1 320px;
   min-width: 0;
   max-width: 100%;
-  border: 1px solid var(--phx-line-soft);
+  border: 0;
   border-radius: 0;
+  background: transparent;
+  box-shadow: inset 0 -1px 0 var(--phx-line-soft);
 }
 
 .phx-seg :deep(.el-segmented__group) {
   width: 100%;
-  gap: 2px;
+  gap: 0;
 }
 
 .phx-seg :deep(.el-segmented__item) {
@@ -944,15 +989,14 @@ html[data-theme='light'] .phx-user {
   min-width: 0;
   padding: 0 8px;
   border-radius: 0;
-  clip-path: polygon(8px 0, 100% 0, calc(100% - 8px) 100%, 0 100%);
+  clip-path: none;
 }
 
+/* 选中态只画底部 3px 强调线，不再铺整块斜切背景 */
 .phx-seg :deep(.el-segmented__item-selected) {
   border-radius: 0;
-  background:
-    linear-gradient(115deg, transparent 0 64%, color-mix(in srgb, #fff 20%, transparent) 64% 68%, transparent 68%),
-    var(--phx-accent);
-  clip-path: polygon(8px 0, 100% 0, calc(100% - 8px) 100%, 0 100%);
+  background: linear-gradient(var(--phx-accent), var(--phx-accent)) left bottom / 100% 3px no-repeat;
+  clip-path: none;
   box-shadow: none;
 }
 
@@ -992,12 +1036,19 @@ html[data-theme='light'] .phx-user {
 }
 
 .phx-actions :deep(.el-button) {
+  border: 0;
   border-radius: 0;
   clip-path: polygon(0 0, 100% 0, 100% calc(100% - 6px), calc(100% - 6px) 100%, 0 100%);
   transition:
     transform 240ms var(--phx-spring),
     color 180ms var(--phx-ease),
     background-color 180ms var(--phx-ease);
+}
+
+/* 文字型操作不要切角外框 */
+.phx-actions :deep(.el-button.is-text),
+.phx-actions :deep(.el-button.is-link) {
+  clip-path: none;
 }
 
 .phx-actions :deep(.el-button:hover:not(.is-disabled)) {
@@ -1050,7 +1101,11 @@ html[data-theme='light'] .phx-user {
 .phx-panel::before {
   inset: 0;
   background:
-    linear-gradient(225deg, var(--phx-accent) 0 calc(var(--phx-cut) * 0.9), transparent calc(var(--phx-cut) * 0.9 + 1px)),
+    linear-gradient(
+      225deg,
+      var(--phx-accent) 0 calc(var(--phx-cut) * 0.9),
+      transparent calc(var(--phx-cut) * 0.9 + 1px)
+    ),
     color-mix(in srgb, var(--phx-ink) 16%, transparent);
 }
 
@@ -1058,11 +1113,16 @@ html[data-theme='light'] .phx-user {
   inset: 1px;
   background:
     linear-gradient(var(--phx-accent), transparent 70%) left top / 2px 100% no-repeat,
-    linear-gradient(135deg, color-mix(in srgb, var(--phx-accent) 5%, var(--phx-surface)), var(--phx-surface) 46%);
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--phx-accent) 5%, var(--phx-surface)),
+      var(--phx-surface) 46%
+    );
 }
 
 .phx-member {
-  padding: var(--yg-space-4) calc(var(--phx-cut) + var(--yg-space-4)) var(--yg-space-5) var(--yg-space-5);
+  padding: var(--yg-space-4) calc(var(--phx-cut) + var(--yg-space-4)) var(--yg-space-5)
+    var(--yg-space-5);
   --el-descriptions-item-bordered-label-background: var(--phx-sunken);
   --el-descriptions-table-border: 1px solid var(--phx-line-soft);
 }
@@ -1174,27 +1234,22 @@ html[data-theme='light'] .phx-user {
   box-shadow: 5px 5px 0 var(--phx-hard);
 }
 
+/* 角标并入 ::before（左侧强调条 + 右上折角），把 ::after 让给全局流光边 */
 .phx-activity > :deep(.el-card)::before {
   content: '';
   position: absolute;
-  top: 0;
-  bottom: 0;
-  left: 0;
+  inset: 0;
   z-index: 3;
-  width: 2px;
-  background: linear-gradient(var(--phx-accent), transparent 72%);
-  pointer-events: none;
-}
-
-.phx-activity > :deep(.el-card)::after {
-  content: '';
-  position: absolute;
-  top: 0;
-  right: 0;
-  z-index: 3;
-  width: 22px;
-  height: 22px;
-  background: linear-gradient(225deg, var(--phx-accent) 0 9px, transparent 9px 12px, var(--phx-line) 12px 13px, transparent 13px);
+  background:
+    linear-gradient(
+        225deg,
+        var(--phx-accent) 0 9px,
+        transparent 9px 12px,
+        var(--phx-line) 12px 13px,
+        transparent 13px
+      )
+      right top / 22px 22px no-repeat,
+    linear-gradient(var(--phx-accent), transparent 72%) left top / 2px 100% no-repeat;
   pointer-events: none;
 }
 
@@ -1246,8 +1301,13 @@ html[data-theme='light'] .phx-user {
   box-shadow: inset 0 -1px 0 var(--phx-line);
 }
 
-.phx-activity :deep(.el-table .el-table__body tr.el-table__row:hover > td.el-table__cell:first-child) {
-  background-image: linear-gradient(105deg, color-mix(in srgb, var(--phx-accent) 26%, transparent) 0 46%, transparent 46%);
+.phx-activity
+  :deep(.el-table .el-table__body tr.el-table__row:hover > td.el-table__cell:first-child) {
+  background-image: linear-gradient(
+    105deg,
+    color-mix(in srgb, var(--phx-accent) 26%, transparent) 0 46%,
+    transparent 46%
+  );
   box-shadow:
     inset 3px 0 0 var(--phx-accent),
     inset 0 -1px 0 var(--phx-line);
@@ -1258,15 +1318,30 @@ html[data-theme='light'] .phx-user {
 }
 
 /* 固定列 sticky 单元格必须保持不透明，避免横向滚动时内容透出 */
-.phx-activity :deep(.el-table .el-table__body tr.el-table__row > td.el-table__cell.el-table-fixed-column--right) {
+.phx-activity
+  :deep(
+    .el-table .el-table__body tr.el-table__row > td.el-table__cell.el-table-fixed-column--right
+  ) {
   background-color: var(--phx-surface);
 }
 
-.phx-activity :deep(.el-table .el-table__body tr.el-table__row--striped > td.el-table__cell.el-table-fixed-column--right) {
+.phx-activity
+  :deep(
+    .el-table
+      .el-table__body
+      tr.el-table__row--striped
+      > td.el-table__cell.el-table-fixed-column--right
+  ) {
   background-color: var(--el-fill-color-lighter);
 }
 
-.phx-activity :deep(.el-table .el-table__body tr.el-table__row:hover > td.el-table__cell.el-table-fixed-column--right) {
+.phx-activity
+  :deep(
+    .el-table
+      .el-table__body
+      tr.el-table__row:hover
+      > td.el-table__cell.el-table-fixed-column--right
+  ) {
   background-color: var(--phx-row-hover);
 }
 
@@ -1276,13 +1351,27 @@ html[data-theme='light'] .phx-user {
   animation-delay: var(--phx-row-delay, 0ms);
 }
 
-.phx-activity :deep(.el-table__body tr.el-table__row:nth-of-type(2)) { --phx-row-delay: 30ms; }
-.phx-activity :deep(.el-table__body tr.el-table__row:nth-of-type(3)) { --phx-row-delay: 60ms; }
-.phx-activity :deep(.el-table__body tr.el-table__row:nth-of-type(4)) { --phx-row-delay: 90ms; }
-.phx-activity :deep(.el-table__body tr.el-table__row:nth-of-type(5)) { --phx-row-delay: 120ms; }
-.phx-activity :deep(.el-table__body tr.el-table__row:nth-of-type(6)) { --phx-row-delay: 150ms; }
-.phx-activity :deep(.el-table__body tr.el-table__row:nth-of-type(7)) { --phx-row-delay: 175ms; }
-.phx-activity :deep(.el-table__body tr.el-table__row:nth-of-type(n + 8)) { --phx-row-delay: 200ms; }
+.phx-activity :deep(.el-table__body tr.el-table__row:nth-of-type(2)) {
+  --phx-row-delay: 30ms;
+}
+.phx-activity :deep(.el-table__body tr.el-table__row:nth-of-type(3)) {
+  --phx-row-delay: 60ms;
+}
+.phx-activity :deep(.el-table__body tr.el-table__row:nth-of-type(4)) {
+  --phx-row-delay: 90ms;
+}
+.phx-activity :deep(.el-table__body tr.el-table__row:nth-of-type(5)) {
+  --phx-row-delay: 120ms;
+}
+.phx-activity :deep(.el-table__body tr.el-table__row:nth-of-type(6)) {
+  --phx-row-delay: 150ms;
+}
+.phx-activity :deep(.el-table__body tr.el-table__row:nth-of-type(7)) {
+  --phx-row-delay: 175ms;
+}
+.phx-activity :deep(.el-table__body tr.el-table__row:nth-of-type(n + 8)) {
+  --phx-row-delay: 200ms;
+}
 
 .phx-activity :deep(.el-table .el-input__wrapper) {
   border-radius: 0;
@@ -1334,45 +1423,23 @@ html[data-theme='light'] .phx-activity :deep(.el-tag.el-tag--danger) {
   background-color: var(--yg-color-danger-soft);
 }
 
-/* 分页：去胶囊，滑块改平行四边形 */
+/* 分页：几何与颜色交给共享组件，这里只补字体 */
 .phx-activity :deep(.yg-pg) {
   font-family: var(--phx-hud), var(--yg-font-sans);
   font-weight: 500;
   letter-spacing: 0.03em;
 }
 
-.phx-activity :deep(.yg-pg__btn),
-.phx-activity :deep(.yg-pg__track),
-.phx-activity :deep(.yg-pg__num),
-.phx-activity :deep(.yg-pg__select),
-.phx-activity :deep(.yg-pg__jump-input) {
-  border-radius: 0;
-}
-
-.phx-activity :deep(.yg-pg__btn),
-.phx-activity :deep(.yg-pg__track) {
-  box-shadow: inset 0 0 0 1px var(--phx-line-soft);
-}
-
-.phx-activity :deep(.yg-pg__btn:hover:not(:disabled)) {
-  box-shadow: inset 0 0 0 1px var(--phx-accent);
-  color: var(--phx-accent);
-}
-
-.phx-activity :deep(.yg-pg__thumb) {
-  border-radius: 0;
-  background: var(--phx-accent);
-  box-shadow: none;
-  clip-path: polygon(6px 0, 100% 0, calc(100% - 6px) 100%, 0 100%);
-}
-
-.phx-activity :deep(.yg-pg__num.is-active) {
-  color: var(--phx-on-accent);
+.phx-activity :deep(.yg-pg__num) {
+  font-family: var(--phx-hud), var(--yg-font-sans);
+  font-size: 14px;
+  font-weight: 700;
 }
 
 /* ---------- 修改 / 日志：同一套切角容器 ---------- */
 .phx-content {
-  padding: var(--yg-space-4) calc(var(--phx-cut) + var(--yg-space-4)) var(--yg-space-5) var(--yg-space-5);
+  padding: var(--yg-space-4) calc(var(--phx-cut) + var(--yg-space-4)) var(--yg-space-5)
+    var(--yg-space-5);
   overflow-wrap: anywhere;
 }
 
@@ -1440,12 +1507,22 @@ html[data-theme='light'] .phx-activity :deep(.el-tag.el-tag--danger) {
   from {
     opacity: 0;
     transform: translateX(-10px);
-    clip-path: polygon(-12px -12px, -12px -12px, calc(-12px - 40px) calc(100% + 12px), -52px calc(100% + 12px));
+    clip-path: polygon(
+      -12px -12px,
+      -12px -12px,
+      calc(-12px - 40px) calc(100% + 12px),
+      -52px calc(100% + 12px)
+    );
   }
   to {
     opacity: 1;
     transform: none;
-    clip-path: polygon(-12px -12px, calc(100% + 52px) -12px, calc(100% + 12px) calc(100% + 12px), -52px calc(100% + 12px));
+    clip-path: polygon(
+      -12px -12px,
+      calc(100% + 52px) -12px,
+      calc(100% + 12px) calc(100% + 12px),
+      -52px calc(100% + 12px)
+    );
   }
 }
 
@@ -1456,7 +1533,12 @@ html[data-theme='light'] .phx-activity :deep(.el-tag.el-tag--danger) {
   }
   to {
     opacity: 1;
-    clip-path: polygon(-12px -12px, calc(100% + 52px) -12px, calc(100% + 12px) calc(100% + 12px), -52px calc(100% + 12px));
+    clip-path: polygon(
+      -12px -12px,
+      calc(100% + 52px) -12px,
+      calc(100% + 12px) calc(100% + 12px),
+      -52px calc(100% + 12px)
+    );
   }
 }
 

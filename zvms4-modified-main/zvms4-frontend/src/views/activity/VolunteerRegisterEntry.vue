@@ -106,7 +106,7 @@ onMounted(async () => {
 
       <RouterLink
         class="yg-register-entry__choice yg-register-entry__choice--create-activity"
-        :to="{ name: 'activity-create' }"
+        :to="{ name: 'activity-create-home' }"
       >
         <span class="yg-register-entry__choice-icon" aria-hidden="true">
           <ElIcon><CirclePlusFilled /></ElIcon>

@@ -2,6 +2,8 @@ export const zhCN = {
   title: 'AI 网关',
   subtitle: '模型转发、OCR 识别与月度额度。',
   tabs: {
+    back: '返回',
+    tabsLabel: 'AI 网关分区',
     chat: 'ZVAgent',
     quota: '我的额度',
     keys: 'Key 管理',

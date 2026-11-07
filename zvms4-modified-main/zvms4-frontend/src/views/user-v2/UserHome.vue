@@ -99,7 +99,6 @@ watch(
       :on-campus="user.time.onCampus"
       :off-campus="user.time.offCampus"
       :social-practice="user.time.socialPractice"
-      discount
     />
 
     <UserHomeWorklist v-if="showWorklist" :is-admin="user.position.includes('admin')" />

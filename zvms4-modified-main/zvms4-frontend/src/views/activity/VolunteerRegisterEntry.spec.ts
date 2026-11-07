@@ -1,6 +1,6 @@
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { describe, expect, it, vi } from 'vitest'
-import { createMemoryHistory, createRouter } from 'vue-router'
+import { createMemoryHistory, createRouter, RouterLink } from 'vue-router'
 import { createPinia } from 'pinia'
 import { createI18n } from 'vue-i18n'
 import { defineComponent, h } from 'vue'
@@ -25,7 +25,15 @@ function buildRouter() {
         name: 'activity-register-mode',
         component: Page
       },
-      { path: '/activity/create', name: 'activity-create', component: Page },
+      {
+        path: '/activity/create',
+        name: 'activity-create',
+        component: Page,
+        children: [
+          { path: '/activity/create', name: 'activity-create-home', component: Page },
+          { path: '/activity/create/:type', name: 'activity-create-type', component: Page }
+        ]
+      },
       { path: '/activities/mine', name: 'activity', component: Page }
     ]
   })
@@ -49,7 +57,7 @@ function backButton(wrapper: VueWrapper) {
 
 describe('VolunteerRegisterEntry', () => {
   it('offers one visible choice per action', async () => {
-    const { wrapper } = await mountEntry()
+    const { wrapper, router } = await mountEntry()
 
     expect(wrapper.text()).toContain(zhCN.nav.registerEntry.create.title)
     expect(wrapper.text()).toContain(zhCN.nav.registerEntry.edit.title)
@@ -64,6 +72,16 @@ describe('VolunteerRegisterEntry', () => {
     expect(links[1].attributes('href')).toBe('/activity/register/edit')
     // 创建义工是新建活动，不继承登记页的活动/会话 query。
     expect(links[2].attributes('href')).toBe('/activity/create')
+  })
+
+  it('targets the nested create page instead of the shell route', async () => {
+    const { wrapper, router } = await mountEntry()
+
+    const target = wrapper.findAllComponents(RouterLink)[2].props('to')
+    const matched = router.resolve(target).matched.map((record) => record.name)
+
+    // 只匹配到 activity-create（父级外壳）会渲染空 RouterView，页面一片空白。
+    expect(matched).toEqual(['activity-create', 'activity-create-home'])
   })
 
   it('keeps the query when moving into the editor', async () => {

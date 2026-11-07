@@ -869,10 +869,11 @@ onMounted(() => {
 .ai-log-stats__tile {
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  padding: var(--yg-space-3);
-  border-radius: var(--yg-radius-md);
+  gap: 4px;
+  padding: var(--yg-space-4);
+  border-radius: 0;
   background: var(--yg-bg-surface-sunken);
+  clip-path: polygon(0 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 0 100%);
 }
 
 .ai-log-stats__value {

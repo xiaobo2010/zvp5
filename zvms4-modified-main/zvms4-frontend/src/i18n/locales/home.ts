@@ -36,7 +36,9 @@ export const zhCN = {
       unit: '小时',
       least: '{type}: 至少 {least} 小时',
       lack: '还差',
-      exceed: '超出'
+      exceed: '超出',
+      less: '少',
+      more: '多'
     },
     review: {
       title: '待审核活动',

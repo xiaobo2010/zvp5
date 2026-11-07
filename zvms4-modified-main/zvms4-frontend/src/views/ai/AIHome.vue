@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { useRoute, useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user.ts'
-import { ref, watch, type Component } from 'vue'
+import { computed, nextTick, ref, watch, type Component } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useWindowSize } from '@vueuse/core'
 import { ElPageHeader, ElSegmented, ElIcon } from 'element-plus'
 import {
   AlarmClock,
@@ -119,29 +120,106 @@ watch(
     }
   }
 )
+
+/* 与服务器/平台管理同一套页头：竖屏或窄屏用紧凑页头 + 胶囊导航，
+   ≥1024 横屏用 ElPageHeader 右侧分段控件。*/
+const { width, height } = useWindowSize()
+const verticalMode = computed(() => width.value < height.value * 1.2)
+const compactTabs = computed(() => verticalMode.value || width.value < 1024)
+
+const tabsNavRef = ref<HTMLElement | null>(null)
+
+function scrollActiveTabIntoView() {
+  const nav = tabsNavRef.value
+  if (!nav) {
+    return
+  }
+  const active = nav.querySelector<HTMLElement>('.ai-tabs__pill.is-active')
+  if (!active) {
+    return
+  }
+  const target = active.offsetLeft - (nav.clientWidth - active.offsetWidth) / 2
+  const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
+  nav.scrollTo?.({ left: Math.max(0, target), behavior: reduced ? 'auto' : 'smooth' })
+}
+
+watch(
+  [current, compactTabs],
+  () => {
+    void nextTick(() => {
+      scrollActiveTabIntoView()
+    })
+  },
+  { immediate: true }
+)
 </script>
 
 <template>
-  <div class="yg-ai-home" :class="{ 'yg-ai-home--chat': current === 'chat' }">
-    <ElPageHeader :icon="ArrowLeft" @back="() => router.back()" class="yg-ai-home__header">
+  <div
+    class="yg-ai-home"
+    :class="[
+      compactTabs ? 'px-4 py-3' : 'px-6 py-4',
+      { 'yg-ai-home--chat': current === 'chat' }
+    ]"
+  >
+    <!-- 竖屏/窄屏：紧凑页头 + 胶囊导航，与服务器/平台管理同一套外壳 -->
+    <template v-if="compactTabs">
+      <header class="ai-head">
+        <button
+          type="button"
+          class="yg-icon-btn ai-head__back"
+          :aria-label="t('ai.tabs.back')"
+          @click="router.back()"
+        >
+          <ElIcon :size="20">
+            <ArrowLeft />
+          </ElIcon>
+        </button>
+        <h1 class="ai-head__title">{{ t('ai.tabs.' + current) }}</h1>
+      </header>
+
+      <nav
+        ref="tabsNavRef"
+        class="ai-tabs yg-liquid-glass"
+        role="tablist"
+        :aria-label="t('ai.tabs.tabsLabel')"
+      >
+        <button
+          v-for="tab in tabs"
+          :key="tab.value"
+          type="button"
+          role="tab"
+          class="ai-tabs__pill"
+          :class="{ 'is-active': tab.value === current }"
+          :aria-selected="tab.value === current"
+          @click="current = tab.value"
+        >
+          <ElIcon :size="18">
+            <Component :is="tab.icon" />
+          </ElIcon>
+          <span class="ai-tabs__label">{{ t('ai.tabs.' + tab.value) }}</span>
+        </button>
+      </nav>
+    </template>
+
+    <!-- 桌面：页头标题 + 右侧分段控件 -->
+    <ElPageHeader v-else :icon="ArrowLeft" @back="() => router.back()" class="yg-ai-home__header">
       <template #content>
         {{ t('ai.tabs.' + current) }}
       </template>
+      <template #extra>
+        <ElSegmented v-model="current" :options="tabs">
+          <template #default="props">
+            <div class="ai-tabs__seg-item">
+              <ElIcon :size="18" class="ai-tabs__seg-icon">
+                <Component :is="(props.item as SegmentedTab).icon" />
+              </ElIcon>
+              <span>{{ t('ai.tabs.' + (props.item as SegmentedTab).value) }}</span>
+            </div>
+          </template>
+        </ElSegmented>
+      </template>
     </ElPageHeader>
-
-    <!-- 标签页：横向分段控件（准则 4.2.12 / 4.3.5） -->
-    <div class="yg-ai-home__tabs">
-      <ElSegmented v-model="current" :options="tabs">
-        <template #default="props">
-          <div class="flex items-center gap-2 px-2">
-            <ElIcon :size="16">
-              <Component :is="(props.item as SegmentedTab).icon" />
-            </ElIcon>
-            {{ t('ai.tabs.' + (props.item as SegmentedTab).value) }}
-          </div>
-        </template>
-      </ElSegmented>
-    </div>
 
     <div class="yg-ai-home__panel">
       <ZAiChat v-if="current === 'chat'" />
@@ -205,13 +283,130 @@ watch(
  */
 @media (orientation: landscape) and (max-height: 820px) {
   .yg-ai-home__header,
-  .yg-ai-home__tabs {
+  .ai-head,
+  .ai-tabs {
     flex: none;
   }
 }
 
-.yg-ai-home__tabs {
+/* 桌面分段控件：分区多时横向滚动，不挤压页头标题 */
+.yg-ai-home__header :deep(.el-page-header__extra) {
+  max-width: 80%;
   overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.yg-ai-home__header :deep(.el-page-header__extra)::-webkit-scrollbar {
+  display: none;
+}
+
+/* 分段控件自身不再出现滚动条：横向滚动交给外层 extra */
+.yg-ai-home__header :deep(.el-segmented) {
+  scrollbar-width: none;
+}
+
+.yg-ai-home__header :deep(.el-segmented)::-webkit-scrollbar {
+  display: none;
+}
+
+/* 紧凑页头：返回按钮与标题同行（与服务器/平台管理一致） */
+.ai-head {
+  display: flex;
+  align-items: center;
+  gap: var(--yg-space-3);
+  margin-bottom: var(--yg-space-3);
+}
+
+.ai-head__back {
+  flex: 0 0 auto;
+}
+
+.ai-head__title {
+  margin: 0;
+  font-size: var(--yg-font-size-xl);
+  font-weight: var(--yg-font-weight-semibold);
+  line-height: var(--yg-line-height-tight);
+  color: var(--yg-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 胶囊导航：横向可滚动，当前项自动滚入可视区 */
+.ai-tabs {
+  display: flex;
+  align-items: center;
+  gap: var(--yg-space-2);
+  margin-bottom: var(--yg-space-4);
+  padding: var(--yg-space-1);
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+  border: none;
+  border-radius: var(--yg-radius-pill);
+  -webkit-backdrop-filter: blur(var(--yg-glass-blur-sm)) saturate(180%);
+  backdrop-filter: blur(var(--yg-glass-blur-sm)) saturate(180%);
+}
+
+.ai-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.ai-tabs__pill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--yg-space-2);
+  flex: 0 0 auto;
+  min-height: var(--yg-control-height-lg);
+  padding: 0 var(--yg-space-4);
+  border: none;
+  border-radius: var(--yg-radius-pill);
+  background-color: transparent;
+  color: var(--yg-text-tertiary);
+  font-family: inherit;
+  font-size: var(--yg-font-size-md);
+  line-height: var(--yg-line-height-snug);
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    color var(--yg-dur-base) var(--yg-ease-out),
+    background-color var(--yg-dur-base) var(--yg-ease-out),
+    box-shadow var(--yg-dur-base) var(--yg-ease-out);
+}
+
+.ai-tabs__pill:hover {
+  color: var(--yg-text-primary);
+  background-color: var(--yg-bg-hover);
+}
+
+.ai-tabs__pill:active {
+  background-color: var(--yg-bg-active);
+}
+
+.ai-tabs__pill:focus-visible {
+  outline: none;
+  box-shadow: var(--yg-focus-ring);
+}
+
+.ai-tabs__pill.is-active {
+  color: var(--yg-color-primary);
+  background-color: var(--yg-color-primary-soft);
+  box-shadow: var(--yg-shadow-sm);
+  font-weight: var(--yg-font-weight-medium);
+}
+
+/* 桌面分段控件里的单项：图标在上、文字在下 */
+.ai-tabs__seg-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--yg-space-2);
+  padding: var(--yg-space-1) var(--yg-space-2);
+}
+
+.ai-tabs__seg-icon {
+  margin-top: var(--yg-space-2);
 }
 
 .yg-ai-home__panel {

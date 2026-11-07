@@ -244,7 +244,7 @@ watch([current, compactTabs], () => {
       <template #extra>
         <ElSegmented v-model="current" :options="tabs">
           <template #default="props">
-            <div class="flex flex-col items-center gap-2 p-2">
+            <div class="flex flex-col items-center gap-2 px-2 py-1">
               <ElIcon :size="18" class="mt-2">
                 <Component :is="(props.item as SegmentedTab).icon" />
               </ElIcon>
