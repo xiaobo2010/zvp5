@@ -4,10 +4,15 @@
 -- 用户硬删除的回收站: adds USER_TRASH on an instance where V001 was already
 -- applied.
 --
---   * USER_TRASH (oid, user_oid, deleted_by, deleted_at, payload, restored_at)
+--   * USER_TRASH (oid, user_oid, deleted_by, deleted_at, payload)
 --     + ck_user_trash_oid / ck_user_trash_payload_json
 --     + ix_user_trash_deleted_at (deleted_at)
 --     + ix_user_trash_user_oid  (user_oid)
+--
+-- Legacy: this file originally also declared a `restored_at TIMESTAMP` column.
+-- It was written as NULL on every insert and never read, so V052 drops it; the
+-- baseline column definition was removed here in the same change (same
+-- baseline-sync convention as V047 <-> V001).
 --
 -- Background (v4.2.4-2 契约 §3.3A-3/4): `DELETE /api/v3/users/{user_id}` 是
 -- **硬删除 + 事务级联**。因为全库没有 ON DELETE CASCADE（V001 头部声明由应用
@@ -18,10 +23,10 @@
 --
 --   * payload 是整包快照（CLOB + IS JSON），供人工回溯/恢复；
 --   * deleted_at 是回收站的保留期基准: `tasks/user_trash_gc.py` 把
---     deleted_at < now - 30 天（可配）的行物理删除;
---   * restored_at 为 NULL 表示「未被恢复过」; GC **只**看 deleted_at,
---     restored_at 纯粹是人工操作的标记位，不参与保留期计算（契约 §3.3A-5
---     写的就是 deleted_at < now - 30 days）。
+--     deleted_at < now - 30 天（可配）的行物理删除; GC **只**看 deleted_at
+--     （契约 §3.3A-5 写的就是 deleted_at < now - 30 days）。
+--   * 这里曾有 restored_at（「未被恢复过」的标记位），但它全生命周期只写
+--     NULL、无读取方，V052 已删除该列；回收站不提供恢复功能。
 --
 -- user_oid **故意不加外键**指向 USERS(OID): 回收站的意义就是在 USERS 行被删掉
 -- 之后仍然保留整包数据; 加了外键删除会直接被 ORA-02292 拒绝，回收站也就失去
@@ -39,9 +44,9 @@
 -- db/repos/oracle/users.py (`user_trash_tbl`, on a private MetaData precisely so
 -- it cannot drift that check).
 --
--- Applying: run by hand as the schema owner (SQLcl / sqlplus), same as V001-V010
--- — there is no migration runner in this repository; see db/oracle/ddl/README.md
--- ("Applying V001" / "Idempotency").
+-- Applying: `python misc/apply_ddl.py v011` (idempotent; `--dry-run` parses
+-- without connecting). SQLcl / sqlplus still work too — see
+-- db/oracle/ddl/README.md ("Applying versioned migrations").
 -- ============================================================================
 
 BEGIN
@@ -52,7 +57,6 @@ CREATE TABLE user_trash (
   deleted_by VARCHAR2(24 CHAR),
   deleted_at TIMESTAMP NOT NULL,
   payload CLOB NOT NULL,
-  restored_at TIMESTAMP,
   PRIMARY KEY (oid),
   CONSTRAINT ck_user_trash_oid CHECK (REGEXP_LIKE(oid,''^[0-9a-f]{24}$'')),
   CONSTRAINT ck_user_trash_payload_json CHECK (payload IS JSON)

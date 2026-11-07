@@ -139,6 +139,23 @@ sqlplus admin/<password>@zvp5adb2 @V001__initial_schema.sql
 Each statement is wrapped in a PL/SQL `EXECUTE IMMEDIATE` block, so run the file
 in a client that executes `/` line terminators (SQLcl / sqlplus both do).
 
+### Applying versioned migrations
+
+`V002` onward are applied one file at a time. The bundled runner uses the
+application's own session factory (wallet/DSN/credentials from `settings.py`),
+so it works on hosts that ship neither SQLcl nor sqlplus:
+
+```bash
+.venv/bin/python misc/apply_ddl.py --dry-run v052   # parse only, no connection
+.venv/bin/python misc/apply_ddl.py v052             # apply
+```
+
+Statements are split on a line containing only `/`, exactly like SQLcl. Every
+file is idempotent (each `ALTER`/`CREATE` swallows the "already exists" codes),
+so re-running is the supported way to repair a half-applied migration. Nothing
+is applied automatically at application startup — production runs are done by
+hand in a release window.
+
 ### Verify after applying
 
 ```sql
