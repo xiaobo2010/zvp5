@@ -239,6 +239,14 @@ const cells = computed(() => {
 const totalText = computed(() => shown.total.toFixed(decimalsOf(target.value.total)))
 // store 里已有缓存时长时直接展示并在原位缓动；只有完全没有数据的首次加载才出骨架
 const showSkeleton = computed(() => loading.value && !loaded.value && target.value.total === 0)
+
+/* ---------- 进度条渐变色：低→警示色，高→强调色 ---------- */
+function getTickColor(tickIndex: number) {
+  // 按整条 24 格插值：低进度只点亮左侧 warn 段，接近达标才出现右侧 accent。
+  const progress = (tickIndex - 1) / (SEGMENTS - 1)
+  const warnWeight = Math.round((1 - progress) * 100)
+  return `color-mix(in srgb, var(--phi-warn) ${warnWeight}%, var(--phi-accent))`
+}
 </script>
 
 <template>
@@ -346,13 +354,19 @@ const showSkeleton = computed(() => loading.value && !loaded.value && target.val
             aria-valuemin="0"
             aria-valuemax="100"
             :aria-valuenow="Math.min(cell.percent, 100)"
-            :style="{ '--lit-pct': `${(cell.lit / SEGMENTS) * 100}%` }"
+            :style="{
+              '--lit-pct': `${(cell.lit / SEGMENTS) * 100}%`,
+              '--edge-color': cell.lit > 0 ? getTickColor(cell.lit) : 'var(--phi-accent)'
+            }"
           >
             <i
               v-for="n in SEGMENTS"
               :key="n"
               :class="{ 'is-lit': n <= cell.lit, 'is-major': n % 6 === 0 }"
-              :style="{ '--tick-i': n }"
+              :style="{
+                '--tick-i': n,
+                '--tick-color': n <= cell.lit ? getTickColor(n) : 'var(--phi-tick-off)'
+              }"
             ></i>
           </div>
 
@@ -798,10 +812,10 @@ const showSkeleton = computed(() => loading.value && !loaded.value && target.val
   left: clamp(0px, var(--lit-pct, 0%), calc(100% - 2px));
   width: 2px;
   pointer-events: none;
-  background: var(--phi-accent);
+  background: var(--edge-color, var(--phi-accent));
   box-shadow:
-    0 0 8px var(--phi-accent-glow),
-    0 0 18px var(--phi-accent-soft);
+    0 0 8px var(--edge-color, var(--phi-accent-glow)),
+    0 0 18px color-mix(in srgb, var(--edge-color, var(--phi-accent)) 50%, transparent);
   transition: left 340ms cubic-bezier(0.16, 1, 0.3, 1);
   animation: tp-edge-pulse 2200ms ease-in-out infinite;
 }
@@ -824,13 +838,14 @@ const showSkeleton = computed(() => loading.value && !loaded.value && target.val
 
 .phi-time__ticks i.is-lit {
   height: 18px;
-  background: var(--phi-accent);
+  background: var(--tick-color, var(--phi-accent));
   animation: tp-tick 360ms cubic-bezier(0.34, 1.56, 0.64, 1);
   animation-delay: calc(var(--tick-i, 1) * 16ms);
 }
 
 .phi-time__cell:not(.is-over) .phi-time__ticks i.is-lit {
-  background: var(--phi-ink);
+  /* 未达标时使用渐变色，而不是统一的 ink 色 */
+  background: var(--tick-color, var(--phi-ink));
 }
 
 @keyframes tp-tick {

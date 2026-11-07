@@ -77,6 +77,7 @@ const typeText = computed(() => {
       v-if="type in types"
       :size="size ?? 'small'"
       :type="types[type].color"
+      :tone="types[type].tone"
       :icon="types[type].icon"
       :unknown="!effective"
       :force="force"
