@@ -197,18 +197,47 @@
   }
 }
 
-/* ---------- 导航覆盖：暗色 + 细线 + HUD 字体 ---------- */
-.yg-phi .yg-glass-nav {
-  background: linear-gradient(160deg, rgba(12, 14, 18, 0.88), rgba(6, 7, 9, 0.72));
-  border-right-color: rgba(73, 244, 226, 0.15);
+/* ---------- 导航覆盖：半透明青色玻璃 + 细线 + HUD 字体 ---------- */
+html.dark .yg-phi .yg-glass-nav--landscape {
+  background:
+    radial-gradient(120% 50% at 0% 0%, rgba(73, 244, 226, 0.1), transparent 62%),
+    linear-gradient(160deg, rgba(14, 18, 24, 0.52), rgba(6, 8, 11, 0.32));
+  -webkit-backdrop-filter: blur(28px) saturate(165%);
+  backdrop-filter: blur(28px) saturate(165%);
+  border-right-color: rgba(73, 244, 226, 0.16);
   box-shadow:
-    inset 0 1px 0 rgba(73, 244, 226, 0.08),
-    0 8px 32px rgba(0, 0, 0, 0.55);
+    inset 0 1px 0 rgba(244, 246, 248, 0.1),
+    inset 1px 0 0 rgba(73, 244, 226, 0.12),
+    inset -1px 0 0 rgba(0, 0, 0, 0.45),
+    1px 0 0 rgba(0, 0, 0, 0.28),
+    0 16px 44px rgba(0, 0, 0, 0.5),
+    0 2px 8px rgba(0, 0, 0, 0.34);
 }
 
-.yg-phi .yg-glass-nav--portrait {
-  background: var(--yg-bg-surface);
-  border-top-color: var(--yg-border-subtle);
+/* 竖屏 dock：外壳透明，实体底面由 user-v2.css 的 ::before 按 --yg-* 令牌绘制 */
+html.dark .yg-phi .yg-glass-nav--portrait {
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  filter: drop-shadow(0 18px 32px rgba(0, 0, 0, 0.52)) drop-shadow(0 2px 6px rgba(0, 0, 0, 0.36));
+}
+
+/* dock 玻璃：偏冷的青色反光，与横屏栏同一套光影 */
+html.dark .yg-phi .yg-glass-nav--v2.yg-glass-nav--portrait::before {
+  background: linear-gradient(160deg, rgba(18, 24, 28, 0.72), rgba(7, 9, 12, 0.56) 78%);
+  -webkit-backdrop-filter: blur(22px) saturate(170%);
+  backdrop-filter: blur(22px) saturate(170%);
+  box-shadow:
+    inset 0 1px 0 rgba(73, 244, 226, 0.18),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.5),
+    inset 1px 0 0 rgba(73, 244, 226, 0.1),
+    inset -1px 0 0 rgba(0, 0, 0, 0.36);
+}
+
+html.dark .yg-phi .yg-glass-nav--v2.yg-glass-nav--portrait::after {
+  background:
+    linear-gradient(155deg, rgba(73, 244, 226, 0.14), transparent 44%),
+    linear-gradient(90deg, transparent, rgba(244, 246, 248, 0.06) 22%, transparent 48%);
 }
 
 .yg-phi .yg-glass-nav__indicator {
@@ -453,11 +482,13 @@
   font-family: var(--phi-hud);
   font-weight: 500;
   letter-spacing: 0.05em;
-  border-radius: var(--yg-radius-sm);
+  border: 0;
+  border-radius: 0;
   transition:
     transform 180ms cubic-bezier(0.34, 1.28, 0.64, 1),
     background-color 180ms cubic-bezier(0.25, 0.1, 0.25, 1),
-    border-color 180ms cubic-bezier(0.25, 0.1, 0.25, 1);
+    color 180ms cubic-bezier(0.25, 0.1, 0.25, 1),
+    box-shadow 180ms cubic-bezier(0.25, 0.1, 0.25, 1);
 }
 
 .yg-phi .yg-btn:hover,
@@ -473,13 +504,12 @@
 .yg-phi .yg-btn--primary,
 .yg-phi .el-button--primary {
   background: var(--yg-color-primary-strong);
-  border-color: var(--phi-cyan);
-  box-shadow: 0 0 12px rgba(73, 244, 226, 0.25);
+  border: 0;
 }
 
 .yg-phi .yg-btn--primary:hover,
 .yg-phi .el-button--primary:hover {
-  box-shadow: 0 0 18px rgba(73, 244, 226, 0.4);
+  background: var(--yg-color-primary-strong-hover);
 }
 
 /* ---------- 登录页：暗色分栏 + PHI 印章 ---------- */
@@ -800,23 +830,27 @@
 /* 暗色下的状态/身份标签：保留软底，但文字改成亮色 */
 .yg-phi .yg-tag {
   background: var(--yg-bg-surface-sunken);
-  border-color: var(--yg-border-subtle);
+  border-color: transparent;
   color: var(--yg-text-primary);
+  clip-path: polygon(0 0, 100% 0, 100% calc(100% - 5px), calc(100% - 5px) 100%, 0 100%);
 }
 
 .yg-phi .yg-tag--sky {
   color: var(--phi-cyan);
-  border-color: rgba(73, 244, 226, 0.28);
+  border-color: transparent;
+  background: color-mix(in srgb, var(--phi-cyan) 12%, transparent);
 }
 
 .yg-phi .yg-tag--success {
   color: var(--phi-cyan);
-  border-color: rgba(73, 244, 226, 0.28);
+  border-color: transparent;
+  background: color-mix(in srgb, var(--phi-cyan) 12%, transparent);
 }
 
 .yg-phi .yg-tag--warning {
   color: #f3dc62;
-  border-color: rgba(243, 220, 98, 0.28);
+  border-color: transparent;
+  background: var(--yg-color-warning-soft);
 }
 
 /* ==========================================================================
@@ -829,13 +863,20 @@
 .yg-phi {
   --phi-frame: rgba(244, 246, 248, 0.2);
   --phi-ink: #f4f6f8;
+  --phi-ink-2: color-mix(in srgb, #f4f6f8 78%, transparent);
   --phi-ink-3: #7b8791;
   --phi-panel: #0b0e12;
   --phi-panel-hi: #12171b;
   --phi-accent: #49f4e2;
+  --phi-accent-ink: #49f4e2;
   --phi-accent-soft: rgba(73, 244, 226, 0.18);
   --phi-accent-glow: rgba(73, 244, 226, 0.42);
   --phi-line: rgba(244, 246, 248, 0.14);
+  --phi-line-strong: rgba(244, 246, 248, 0.24);
+  --phi-sunken: #070a0d;
+  --phi-grid: rgba(244, 246, 248, 0.06);
+  --phi-tick-off: rgba(244, 246, 248, 0.16);
+  --phi-warn: #ffc266;
   --phi-scan: rgba(73, 244, 226, 0.035);
   --phi-shadow: rgba(73, 244, 226, 0.16);
 
@@ -918,13 +959,20 @@ html[data-theme='light'] .yg-phi {
 
   --phi-frame: rgba(5, 6, 8, 0.22);
   --phi-ink: #050608;
+  --phi-ink-2: color-mix(in srgb, #050608 78%, transparent);
   --phi-ink-3: #5b6670;
   --phi-panel: #ffffff;
   --phi-panel-hi: #f2f5f6;
   --phi-accent: #007a70;
+  --phi-accent-ink: #007a70;
   --phi-accent-soft: rgba(11, 159, 147, 0.13);
   --phi-accent-glow: rgba(11, 159, 147, 0.34);
   --phi-line: rgba(5, 6, 8, 0.16);
+  --phi-line-strong: rgba(5, 6, 8, 0.24);
+  --phi-sunken: #f7f9fa;
+  --phi-grid: rgba(5, 6, 8, 0.05);
+  --phi-tick-off: rgba(5, 6, 8, 0.14);
+  --phi-warn: #9a5a00;
   --phi-scan: rgba(5, 6, 8, 0.035);
   --phi-shadow: rgba(5, 6, 8, 0.2);
 
@@ -1163,6 +1211,22 @@ html[data-theme='light'] .yg-phi .yg-phi-login-tag {
   color: #fff;
 }
 
+/* 概览瓦片：沿用硬边语言，切角与卡片同族，圆角全部抹平 */
+.yg-phi .yg-tile {
+  /* 组件里用的 p-4/p-3 是 px 语义的工具类（4px/未定义），这里统一给足呼吸位 */
+  padding: var(--yg-space-4);
+  border: 1px solid var(--phi-line);
+  border-radius: 0;
+  background: var(--phi-sunken);
+  clip-path: polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 0 100%);
+}
+
+/* 进度条：轨道与填充都改成硬边，避免在硬边卡片里出现胶囊圆头 */
+.yg-phi .el-progress-bar__outer,
+.yg-phi .el-progress-bar__inner {
+  border-radius: 0;
+}
+
 /* 卡片/按钮/输入：统一硬边；不复用 --yg-radius，避免影响导航 */
 .yg-phi .yg-card,
 .yg-phi .el-card {
@@ -1178,7 +1242,15 @@ html[data-theme='light'] .yg-phi .yg-phi-login-tag {
   background: var(--phi-panel);
   color: var(--phi-ink);
   box-shadow: 5px 5px 0 var(--phi-shadow);
-  clip-path: polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 0 100%);
+  /* 右/下多留 5px：clip-path 会裁掉自身阴影，把阴影带包进裁剪区阴影才留得住 */
+  clip-path: polygon(
+    0 0,
+    calc(100% - 14px) 0,
+    100% 14px,
+    calc(100% + 5px) calc(14px + 5px),
+    calc(100% + 5px) calc(100% + 5px),
+    0 calc(100% + 5px)
+  );
 }
 
 .yg-phi .el-card__header {
@@ -1192,28 +1264,42 @@ html[data-theme='light'] .yg-phi .yg-phi-login-tag {
 
 .yg-phi .yg-btn,
 .yg-phi .el-button {
+  border: 0;
   border-radius: 0;
   font-family: var(--phi-hud);
   letter-spacing: 0.05em;
 }
 
+/* 默认按钮：无描边，只用软填充 + 右上切角；hover 才出现左侧强调边 */
+.yg-phi .yg-btn,
 .yg-phi .el-button {
   color: var(--phi-ink);
-  background: var(--phi-panel-hi);
-  border-color: var(--phi-frame);
+  background: color-mix(in srgb, var(--phi-ink) 7%, var(--phi-panel-hi));
+  box-shadow: none;
+  clip-path: polygon(0 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 0 100%);
 }
 
+.yg-phi .yg-btn:hover,
 .yg-phi .el-button:hover {
   color: var(--phi-accent);
-  border-color: var(--phi-accent);
   background: var(--phi-accent-soft);
+  box-shadow: inset 2px 0 0 var(--phi-accent);
 }
 
+/* 主按钮：实色强调填充，无框 */
 .yg-phi .el-button--primary,
 .yg-phi .yg-btn--primary {
   color: #041311;
   background: var(--phi-accent);
-  border-color: var(--phi-accent);
+  border: 0;
+  box-shadow: none;
+}
+
+.yg-phi .el-button--primary:hover,
+.yg-phi .yg-btn--primary:hover {
+  color: #041311;
+  background: color-mix(in srgb, var(--phi-accent) 86%, #fff);
+  box-shadow: none;
 }
 
 html[data-theme='light'] .yg-phi .el-button--primary,
@@ -1221,15 +1307,68 @@ html[data-theme='light'] .yg-phi .yg-btn--primary {
   color: #fff;
 }
 
+html[data-theme='light'] .yg-phi .el-button--primary:hover,
+html[data-theme='light'] .yg-phi .yg-btn--primary:hover {
+  color: #fff;
+}
+
+/* 危险按钮：软危险填充 + 危险文字，不用描边 */
+.yg-phi .el-button--danger,
+.yg-phi .yg-btn--danger {
+  color: var(--yg-text-danger);
+  background: var(--yg-color-danger-soft);
+  border: 0;
+  box-shadow: none;
+}
+
+.yg-phi .el-button--danger:hover,
+.yg-phi .yg-btn--danger:hover {
+  color: var(--yg-text-danger);
+  background: color-mix(in srgb, var(--yg-color-danger-soft) 70%, var(--el-color-danger) 30%);
+  box-shadow: inset 2px 0 0 var(--el-color-danger);
+}
+
+/* 文字 / 链接按钮：完全透明，只做颜色和下划线反馈 */
 .yg-phi .el-button.is-text,
-.yg-phi .el-button.is-link {
+.yg-phi .el-button.is-link,
+.yg-phi .yg-btn--text,
+.yg-phi .yg-btn--ghost {
   color: var(--phi-ink-3);
+  background: transparent;
+  clip-path: none;
+  box-shadow: none;
+}
+
+.yg-phi .el-button.is-text:hover,
+.yg-phi .el-button.is-link:hover,
+.yg-phi .yg-btn--text:hover,
+.yg-phi .yg-btn--ghost:hover {
+  color: var(--phi-accent);
+  background: transparent;
+  box-shadow: none;
+  text-decoration: underline;
+  text-underline-offset: 0.24em;
+}
+
+.yg-phi .el-button--danger.is-text,
+.yg-phi .el-button--danger.is-link {
+  color: var(--yg-text-danger);
   background: transparent;
 }
 
-.yg-phi .el-button.is-text:hover {
-  color: var(--phi-accent);
-  background: var(--phi-accent-soft);
+.yg-phi .el-button--danger.is-text:hover,
+.yg-phi .el-button--danger.is-link:hover {
+  color: var(--yg-text-danger);
+  background: transparent;
+  box-shadow: none;
+}
+
+/* 键盘焦点保留可见轮廓；clip-path 会裁 box-shadow，所以用 outline */
+.yg-phi .yg-btn:focus-visible,
+.yg-phi .el-button:focus-visible {
+  outline: 2px solid var(--phi-accent);
+  outline-offset: 2px;
+  box-shadow: none;
 }
 
 .yg-phi .el-input__wrapper,
@@ -1261,29 +1400,119 @@ html[data-theme='light'] .yg-phi .yg-btn--primary {
 
 .yg-phi .el-switch {
   --el-switch-on-color: var(--phi-accent);
-  --el-switch-off-color: var(--phi-ink-3);
+  --el-switch-off-color: color-mix(in srgb, var(--phi-ink-3) 34%, var(--phi-panel-hi));
+  --el-switch-border-color: transparent;
 }
 
+/* 无描边开关：不规则切角轨道（大切角 + 小切角错位），选中只多一道内侧窄高光 */
 .yg-phi .el-switch__core {
+  border: 0;
   border-radius: 0;
+  clip-path: polygon(
+    8px 0,
+    calc(100% - 3px) 0,
+    100% 3px,
+    100% calc(100% - 8px),
+    calc(100% - 8px) 100%,
+    3px 100%,
+    0 calc(100% - 3px),
+    0 8px
+  );
+  box-shadow: none;
   transition:
     background-color 320ms cubic-bezier(0.16, 1, 0.3, 1),
-    border-color 320ms cubic-bezier(0.16, 1, 0.3, 1);
+    box-shadow 320ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.yg-phi .el-switch.is-checked .el-switch__core {
+  box-shadow:
+    inset 0 -2px 0 color-mix(in srgb, #fff 34%, transparent),
+    inset 0 0 0 1px color-mix(in srgb, var(--phi-accent) 26%, transparent);
+}
+
+html[data-theme='light'] .yg-phi .el-switch.is-checked .el-switch__core {
+  box-shadow:
+    inset 0 -2px 0 color-mix(in srgb, #000 14%, transparent),
+    inset 0 0 0 1px color-mix(in srgb, var(--phi-accent) 22%, transparent);
 }
 
 /* Element 的滑块位移走 left，不是 transform；只写 transform 会让位移瞬移。 */
 .yg-phi .el-switch__action {
+  position: relative;
+  overflow: hidden;
+  border: 0;
   border-radius: 0;
+  clip-path: polygon(
+    5px 0,
+    calc(100% - 1px) 0,
+    100% 1px,
+    100% calc(100% - 5px),
+    calc(100% - 5px) 100%,
+    1px 100%,
+    0 calc(100% - 1px),
+    0 5px
+  );
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.28);
   will-change: left, transform;
   transition: all 340ms cubic-bezier(0.34, 1.4, 0.64, 1);
 }
 
+/* 打开时滑块表面掠一道青色反光：状态一变就重播，关掉时不残留 */
+.yg-phi .el-switch__action::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(
+    105deg,
+    transparent 20%,
+    color-mix(in srgb, var(--phi-accent) 62%, transparent) 48%,
+    transparent 74%
+  );
+  transform: translateX(-140%);
+  opacity: 0;
+}
+
+.yg-phi .el-switch.is-checked .el-switch__action::after {
+  animation: phi-switch-glint 520ms cubic-bezier(0.42, 0, 0.2, 1) 60ms both;
+}
+
+@keyframes phi-switch-glint {
+  0% {
+    transform: translateX(-140%);
+    opacity: 0;
+  }
+  28% {
+    opacity: 0.85;
+  }
+  100% {
+    transform: translateX(140%);
+    opacity: 0;
+  }
+}
+
 .yg-phi .el-tag {
+  border: 0;
   border-radius: 0;
-  border-color: var(--phi-frame);
-  background: var(--phi-panel-hi);
-  color: var(--phi-ink);
+  background: var(--phi-accent-soft);
+  color: var(--phi-accent);
   clip-path: polygon(0 0, calc(100% - 5px) 0, 100% 5px, 100% 100%, 0 100%);
+}
+
+.yg-phi .el-tag.el-tag--success {
+  background: var(--yg-color-success-soft);
+  color: var(--yg-text-success);
+}
+
+.yg-phi .el-tag.el-tag--warning {
+  background: var(--yg-color-warning-soft);
+  color: var(--yg-text-warning);
+}
+
+.yg-phi .el-tag.el-tag--danger,
+.yg-phi .el-tag.el-tag--error {
+  background: var(--yg-color-danger-soft);
+  color: var(--yg-text-danger);
 }
 
 .yg-phi .yg-tag--success {
@@ -1332,11 +1561,12 @@ html[data-theme='light'] .yg-phi .yg-btn--primary {
   background-color: var(--phi-accent-soft);
 }
 
+/* ElPagination：去掉方块页码底，选中页只留文字强调 + 底部细标记 */
 .yg-phi .el-pagination {
-  --el-pagination-bg-color: var(--phi-panel-hi);
+  --el-pagination-bg-color: transparent;
   --el-pagination-text-color: var(--phi-ink);
   --el-pagination-button-color: var(--phi-ink);
-  --el-pagination-button-bg-color: var(--phi-panel-hi);
+  --el-pagination-button-bg-color: transparent;
   --el-pagination-hover-color: var(--phi-accent);
 }
 
@@ -1345,16 +1575,49 @@ html[data-theme='light'] .yg-phi .yg-btn--primary {
 .yg-phi .el-pagination .btn-prev,
 .yg-phi .el-pagination .btn-next {
   border-radius: 0;
+  background: transparent;
 }
 
-.yg-phi .el-pager li.is-active {
-  color: #041311;
-  background: var(--phi-accent);
-  clip-path: polygon(0 0, calc(100% - 5px) 0, 100% 5px, 100% 100%, 0 100%);
+.yg-phi .el-pagination .el-pager li:hover {
+  color: var(--phi-accent);
 }
 
-html[data-theme='light'] .yg-phi .el-pager li.is-active {
-  color: #fff;
+.yg-phi .el-pagination .el-pager li,
+.yg-phi .el-pagination.is-background .el-pager li {
+  background: transparent;
+}
+
+.yg-phi .el-pager li.is-active,
+.yg-phi .el-pagination.is-background .el-pager li.is-active {
+  color: var(--phi-accent);
+  background: transparent;
+  box-shadow: inset 0 -2px 0 var(--phi-accent);
+  clip-path: none;
+}
+
+/* ElSegmented：透明分组 + 底部细线；选中项只留文字强调和底部标记 */
+.yg-phi .el-segmented {
+  --el-segmented-bg-color: transparent;
+  --el-segmented-item-selected-bg-color: transparent;
+  --el-segmented-item-selected-color: var(--phi-accent);
+  --el-segmented-item-hover-bg-color: var(--phi-accent-soft);
+  --el-segmented-item-active-bg-color: color-mix(in srgb, var(--phi-accent) 18%, transparent);
+  --el-segmented-color: var(--phi-ink-3);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: inset 0 -1px 0 var(--phi-line);
+}
+
+.yg-phi .el-segmented__item {
+  border-radius: 0;
+}
+
+.yg-phi .el-segmented__item-selected {
+  border-radius: 0;
+  background: linear-gradient(var(--phi-accent), var(--phi-accent)) left bottom / 100% 3px no-repeat;
+  box-shadow: none;
+  clip-path: none;
 }
 
 .yg-phi .el-skeleton {
@@ -1484,18 +1747,196 @@ html[data-theme='light'] .yg-phi .yg-topbar {
   }
 }
 
+/* ==========================================================================
+   列表出场：含表格的卡片统一成义工列表那套「斜向擦入 + 逐行错峰」
+   - 只在卡片/表格重新挂载时播放：切换页签时换的是列表本身，页头与页签保持常驻。
+   - 弹层 teleport 到 body，不在 .yg-phi 下，弹窗里的表格不会被这套规则命中。
+   - 浏览器不支持 :has() 时整条规则被丢弃，自动回落到上面的通用卡片动画。
+   ========================================================================== */
+
+.yg-phi .el-card:has(.el-table) {
+  animation: phi-list-reveal-card 440ms cubic-bezier(0.19, 1, 0.22, 1) 120ms backwards;
+}
+
+.yg-phi .yg-card:has(.el-table) {
+  animation: phi-list-reveal 440ms cubic-bezier(0.19, 1, 0.22, 1) 120ms backwards;
+}
+
+.yg-phi .el-table__body tr.el-table__row > td.el-table__cell {
+  animation: phi-list-row-in 360ms cubic-bezier(0.19, 1, 0.22, 1) backwards;
+  animation-delay: var(--phi-row-delay, 0ms);
+}
+
+.yg-phi .el-table__body tr.el-table__row:nth-of-type(2) {
+  --phi-row-delay: 30ms;
+}
+
+.yg-phi .el-table__body tr.el-table__row:nth-of-type(3) {
+  --phi-row-delay: 60ms;
+}
+
+.yg-phi .el-table__body tr.el-table__row:nth-of-type(4) {
+  --phi-row-delay: 90ms;
+}
+
+.yg-phi .el-table__body tr.el-table__row:nth-of-type(5) {
+  --phi-row-delay: 120ms;
+}
+
+.yg-phi .el-table__body tr.el-table__row:nth-of-type(6) {
+  --phi-row-delay: 150ms;
+}
+
+.yg-phi .el-table__body tr.el-table__row:nth-of-type(7) {
+  --phi-row-delay: 175ms;
+}
+
+.yg-phi .el-table__body tr.el-table__row:nth-of-type(n + 8) {
+  --phi-row-delay: 200ms;
+}
+
+/* 从左上角斜向拉开：起始多边形压到卡片外，避免切角处露出直边 */
+@keyframes phi-list-reveal {
+  from {
+    opacity: 0;
+    clip-path: polygon(
+      -12px -12px,
+      -12px -12px,
+      -52px calc(100% + 12px),
+      -52px calc(100% + 12px)
+    );
+  }
+  to {
+    opacity: 1;
+    clip-path: polygon(
+      -12px -12px,
+      calc(100% + 52px) -12px,
+      calc(100% + 12px) calc(100% + 12px),
+      -52px calc(100% + 12px)
+    );
+  }
+}
+
+/* el-card 自带右上切角：收束形状与静态切角完全重合，动画结束不会跳一下 */
+@keyframes phi-list-reveal-card {
+  from {
+    opacity: 0;
+    clip-path: polygon(
+      -12px -12px,
+      -12px -12px,
+      -12px -12px,
+      -12px -12px,
+      -12px -12px,
+      -12px -12px
+    );
+  }
+  to {
+    opacity: 1;
+    clip-path: polygon(
+      0 0,
+      calc(100% - 14px) 0,
+      100% 14px,
+      calc(100% + 5px) calc(14px + 5px),
+      calc(100% + 5px) calc(100% + 5px),
+      0 calc(100% + 5px)
+    );
+  }
+}
+
+/* 单元格只擦自身：tr 上做位移会打断 sticky 固定列 */
+@keyframes phi-list-row-in {
+  from {
+    opacity: 0;
+    clip-path: inset(0 100% 0 0);
+  }
+  to {
+    opacity: 1;
+    clip-path: inset(0 0 0 0);
+  }
+}
+
+/* ==========================================================================
+   大框流光边
+   - 暗边保留 1px 打底，再叠一圈低频巡边的青色流光：不是闪烁，是缓慢绕场
+   - 用 conic-gradient + @property 旋转角度，遮罩只留 1px 边框，不影响内容
+   - 不支持遮罩合成的浏览器整条规则丢弃，保持原来的暗边
+   ========================================================================== */
+
+@property --phi-edge-angle {
+  syntax: '<angle>';
+  inherits: false;
+  initial-value: 0deg;
+}
+
+.yg-phi .el-card,
+.yg-phi .yg-card,
+.yg-phi .phi-time__panel {
+  position: relative;
+}
+
+@supports ((mask-composite: exclude) or (-webkit-mask-composite: xor)) {
+  .yg-phi .el-card::after,
+  .yg-phi .yg-card::after,
+  .yg-phi .phi-time__panel::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    padding: 1px;
+    pointer-events: none;
+    background: conic-gradient(
+      from var(--phi-edge-angle),
+      transparent 0deg 292deg,
+      color-mix(in srgb, var(--phi-accent) 26%, transparent) 310deg,
+      var(--phi-accent) 326deg,
+      color-mix(in srgb, var(--phi-accent) 26%, transparent) 342deg,
+      transparent 360deg
+    );
+    -webkit-mask:
+      linear-gradient(#000 0 0) content-box,
+      linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+    mask:
+      linear-gradient(#000 0 0) content-box,
+      linear-gradient(#000 0 0);
+    mask-composite: exclude;
+    animation: phi-edge-flow 7.6s linear infinite;
+    /* 每个框由壳层写入随机相位，避免所有框同步扫边 */
+    animation-delay: var(--phi-edge-delay, 0ms);
+  }
+}
+
+@keyframes phi-edge-flow {
+  to {
+    --phi-edge-angle: 360deg;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .yg-phi .yg-phi-hero,
   .yg-phi .yg-phi-hero__rail,
   .yg-phi .yg-card,
   .yg-phi .el-card,
+  .yg-phi .el-table__body tr.el-table__row > td.el-table__cell,
   .yg-phi .yg-phi-login-mark,
   .yg-phi .yg-phi-title,
   .yg-phi .yg-phi-emblem,
   .yg-phi .yg-phi-emblem span,
-  .yg-phi .el-switch__action {
+  .yg-phi .el-switch__core,
+  .yg-phi .el-switch__action,
+  .yg-phi .el-segmented__item-selected {
     animation: none;
     transition: none;
+  }
+
+  .yg-phi .el-switch__action::after,
+  .yg-phi .el-segmented__item-selected::after {
+    display: none;
+  }
+
+  .yg-phi .el-card::after,
+  .yg-phi .yg-card::after,
+  .yg-phi .phi-time__panel::after {
+    animation: none;
   }
 }
 
@@ -1536,26 +1977,52 @@ html[data-theme='light'] .yg-phi .yg-topbar {
   }
 }
 
-/* 浅色模式导航：用户明确要求 nav 也随浅色变亮；这是唯一允许改 nav 的地方 */
-html[data-theme='light'] .yg-phi .yg-glass-nav {
-  background: linear-gradient(160deg, rgba(255, 255, 255, 0.92), rgba(242, 247, 248, 0.84));
+/* 浅色模式导航：nav 也随浅色变亮；半透明白云材质 + 更轻的光影 */
+html[data-theme='light'] .yg-phi .yg-glass-nav--landscape {
+  background:
+    radial-gradient(120% 55% at 0% 0%, rgba(255, 255, 255, 0.55), transparent 62%),
+    linear-gradient(160deg, rgba(255, 255, 255, 0.6), rgba(242, 247, 248, 0.34));
   border-right-color: rgba(5, 6, 8, 0.12);
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.9),
-    0 8px 28px rgba(5, 6, 8, 0.08);
+    inset 0 1px 0 rgba(255, 255, 255, 0.85),
+    inset 1px 0 0 rgba(255, 255, 255, 0.5),
+    inset -1px 0 0 rgba(5, 6, 8, 0.06),
+    1px 0 0 rgba(5, 6, 8, 0.07),
+    0 10px 30px rgba(5, 6, 8, 0.08),
+    0 2px 6px rgba(5, 6, 8, 0.05);
 }
 
+/* 浅色 dock：保持亮面，阴影比暗色更轻 */
 html[data-theme='light'] .yg-phi .yg-glass-nav--portrait {
-  background: rgba(255, 255, 255, 0.94);
-  border-top-color: rgba(5, 6, 8, 0.1);
-  box-shadow: 0 -8px 28px rgba(5, 6, 8, 0.08);
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  filter: drop-shadow(0 10px 20px rgba(15, 23, 42, 0.14))
+    drop-shadow(0 1px 2px rgba(15, 23, 42, 0.08));
+}
+
+html[data-theme='light'] .yg-phi .yg-glass-nav--v2.yg-glass-nav--portrait::before {
+  background: linear-gradient(
+    160deg,
+    color-mix(in srgb, #ffffff 80%, transparent),
+    color-mix(in srgb, #eef2f4 58%, transparent) 78%
+  );
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.9),
+    inset 0 -1px 0 rgba(5, 6, 8, 0.06),
+    inset 1px 0 0 rgba(255, 255, 255, 0.6),
+    inset -1px 0 0 rgba(255, 255, 255, 0.42);
+}
+
+html[data-theme='light'] .yg-phi .yg-glass-nav--v2.yg-glass-nav--portrait::after {
+  background:
+    linear-gradient(155deg, rgba(255, 255, 255, 0.42), transparent 44%),
+    linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2) 22%, transparent 48%);
 }
 
 html[data-theme='light'] .yg-phi .yg-glass-nav__indicator {
   background: rgba(11, 159, 147, 0.12);
-  box-shadow:
-    0 0 0 1px rgba(11, 159, 147, 0.1),
-    0 0 14px rgba(11, 159, 147, 0.16);
+  box-shadow: 0 3px 10px rgba(11, 159, 147, 0.16);
 }
 
 html[data-theme='light'] .yg-phi .yg-glass-nav__item {
@@ -1580,4 +2047,302 @@ html[data-theme='light'] .yg-phi .yg-glass-nav__theme-icon {
 
 html[data-theme='light'] .yg-phi .yg-glass-nav__theme-icon:hover {
   color: var(--phi-accent);
+}
+
+/* ==========================================================================
+   后台三区统一层：AI 网关 / 服务器管理 / 平台管理
+   - 三处共用「页头 + 分区导航 + 面板」同一套外壳节奏
+   - 只作用于 .yg-phi，不改变其它页面的既有观感
+   ========================================================================== */
+
+/* 页头：HUD 字体 + 青色悬停，与普通用户端页头同源 */
+.yg-phi .el-page-header__back {
+  color: var(--phi-ink-3);
+}
+
+.yg-phi .el-page-header__back:hover {
+  color: var(--phi-accent);
+}
+
+.yg-phi .el-page-header__content,
+.yg-phi .el-page-header__title {
+  color: var(--phi-ink);
+  font-family: var(--phi-hud);
+  letter-spacing: 0.06em;
+}
+
+/* 紧凑页头（<1024 / 竖屏）：三区共用同一规格 */
+.yg-phi .ai-head__back,
+.yg-phi .server-head__back,
+.yg-phi .manage-head__back {
+  color: var(--phi-ink-3);
+}
+
+.yg-phi .ai-head__title,
+.yg-phi .server-head__title,
+.yg-phi .manage-head__title {
+  color: var(--phi-ink);
+  font-family: var(--phi-hud);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+/* 桌面分段控件：硬边 + 切角选中块，替掉 Element 默认的圆角胶囊。
+   暗色用 html[data-theme='dark'] 抬高优先级：body.yg-phi-portals 的
+   下划线分段样式会命中页内控件，必须压过它。 */
+html[data-theme='dark'] .yg-phi .el-segmented {
+  --el-segmented-bg-color: var(--phi-panel);
+  --el-segmented-color: var(--phi-ink-3);
+  --el-segmented-item-hover-bg-color: var(--phi-accent-soft);
+  --el-segmented-item-hover-color: var(--phi-ink);
+  --el-segmented-item-selected-bg-color: var(--phi-accent);
+  --el-segmented-item-selected-color: #041311;
+  --el-segmented-item-selected-disabled-bg-color: var(--phi-accent);
+  padding: 3px;
+  border: 1px solid var(--phi-line);
+  border-radius: 0;
+  background: linear-gradient(120deg, var(--phi-panel-hi), var(--phi-panel));
+  box-shadow: inset 0 1px 0 rgba(244, 246, 248, 0.06);
+  /* 外框不再是被裁掉的矩形：大切角 + 小切角，和滑块的几何语言对齐 */
+  clip-path: polygon(
+    4px 0,
+    calc(100% - 10px) 0,
+    100% 10px,
+    100% calc(100% - 4px),
+    calc(100% - 4px) 100%,
+    10px 100%,
+    0 calc(100% - 10px),
+    0 4px
+  );
+}
+
+html[data-theme='dark'] .yg-phi .el-segmented__item {
+  border-radius: 0;
+  color: var(--phi-ink-3);
+  font-family: var(--phi-hud);
+  letter-spacing: 0.04em;
+  clip-path: polygon(3px 0, 100% 0, 100% calc(100% - 3px), calc(100% - 3px) 100%, 0 100%, 0 3px);
+}
+
+html[data-theme='dark'] .yg-phi .el-segmented__item:not(.is-disabled):hover {
+  color: var(--phi-ink);
+}
+
+html[data-theme='dark'] .yg-phi .el-segmented__item.is-selected {
+  color: #041311;
+}
+
+html[data-theme='dark'] .yg-phi .el-segmented__item-selected {
+  border-radius: 0;
+  /* 不再是纯色块：斜向金属渐变 + 上下窄高光，滑块看起来像一片被打磨过的金属 */
+  background:
+    linear-gradient(
+      118deg,
+      color-mix(in srgb, var(--phi-accent) 72%, #ffffff) 0%,
+      var(--phi-accent) 32%,
+      color-mix(in srgb, var(--phi-accent) 88%, #04110f) 68%,
+      color-mix(in srgb, var(--phi-accent) 90%, #ffffff) 100%
+    );
+  clip-path: polygon(
+    0 0,
+    calc(100% - 7px) 0,
+    100% 7px,
+    100% 100%,
+    7px 100%,
+    0 calc(100% - 7px)
+  );
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.55),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.24),
+    0 0 14px rgba(73, 244, 226, 0.26);
+  /* 位移和宽度用同一套回弹曲线，换页签时滑块先窜出去再落位 */
+  transition:
+    transform 440ms cubic-bezier(0.22, 1.22, 0.3, 1),
+    width 440ms cubic-bezier(0.22, 1.22, 0.3, 1),
+    background-color 320ms var(--yg-ease-out),
+    box-shadow 320ms var(--yg-ease-out);
+}
+
+/* 紧凑胶囊导航：同一块玻璃材质 + 同一组切角。
+   body.yg-phi-portals 前缀用于压过各 SFC 的 scoped 胶囊圆角。 */
+body.yg-phi-portals .yg-phi .ai-tabs,
+body.yg-phi-portals .yg-phi .server-tabs,
+body.yg-phi-portals .yg-phi .manage-tabs {
+  padding: 4px;
+  border: 1px solid var(--phi-line);
+  border-radius: 0;
+  background: linear-gradient(
+    120deg,
+    color-mix(in srgb, var(--phi-panel-hi) 72%, transparent),
+    color-mix(in srgb, var(--phi-panel) 82%, transparent)
+  );
+  box-shadow:
+    inset 0 1px 0 rgba(244, 246, 248, 0.07),
+    0 8px 22px rgba(0, 0, 0, 0.32);
+  clip-path: polygon(
+    0 0,
+    calc(100% - 10px) 0,
+    100% 10px,
+    100% 100%,
+    10px 100%,
+    0 calc(100% - 10px)
+  );
+}
+
+body.yg-phi-portals .yg-phi .ai-tabs__pill,
+body.yg-phi-portals .yg-phi .server-tabs__pill,
+body.yg-phi-portals .yg-phi .manage-tabs__item {
+  border-radius: 0;
+  color: var(--phi-ink-3);
+  clip-path: polygon(0 0, 100% 0, 100% calc(100% - 6px), calc(100% - 6px) 100%, 0 100%);
+}
+
+body.yg-phi-portals .yg-phi .ai-tabs__pill:hover,
+body.yg-phi-portals .yg-phi .server-tabs__pill:hover,
+body.yg-phi-portals .yg-phi .manage-tabs__item:hover {
+  color: var(--phi-ink);
+  background: var(--phi-accent-soft);
+}
+
+body.yg-phi-portals .yg-phi .ai-tabs__pill.is-active,
+body.yg-phi-portals .yg-phi .server-tabs__pill.is-active,
+body.yg-phi-portals .yg-phi .manage-tabs__item.is-active {
+  color: var(--phi-accent);
+  background: var(--phi-accent-soft);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--phi-accent) 36%, transparent),
+    inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  font-weight: 700;
+}
+
+/* 分段控件里的图标/文字：三区同字号、同列间距 */
+.yg-phi .ai-tabs__seg-item,
+.yg-phi .server-tabs__seg-item,
+.yg-phi .manage-tabs__seg-item {
+  font-family: var(--phi-hud);
+  letter-spacing: 0.04em;
+}
+
+/* 浅色模式卡片：白纸底 + 青色切角，后台三区与用户端同一材质 */
+html[data-theme='light'] .yg-phi .yg-card {
+  background: linear-gradient(120deg, #ffffff, #f8fbfc 62%, #f2f5f6);
+  border-color: rgba(5, 6, 8, 0.12);
+}
+
+html[data-theme='light'] .yg-phi .yg-card::before {
+  background: linear-gradient(var(--phi-accent), transparent 78%);
+}
+
+/* 浅色模式的分段控件：青底白字，边界靠细线而不是阴影 */
+html[data-theme='light'] .yg-phi .el-segmented {
+  --el-segmented-bg-color: #ffffff;
+  --el-segmented-color: var(--phi-ink-3);
+  --el-segmented-item-hover-bg-color: var(--phi-accent-soft);
+  --el-segmented-item-hover-color: var(--phi-ink);
+  --el-segmented-item-selected-bg-color: var(--phi-accent);
+  --el-segmented-item-selected-color: #ffffff;
+  --el-segmented-item-selected-disabled-bg-color: var(--phi-accent);
+  background: linear-gradient(120deg, #ffffff, var(--phi-panel-hi));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9);
+  clip-path: polygon(
+    4px 0,
+    calc(100% - 10px) 0,
+    100% 10px,
+    100% calc(100% - 4px),
+    calc(100% - 4px) 100%,
+    10px 100%,
+    0 calc(100% - 10px),
+    0 4px
+  );
+}
+
+html[data-theme='light'] .yg-phi .el-segmented__item {
+  color: var(--phi-ink-3);
+  clip-path: polygon(3px 0, 100% 0, 100% calc(100% - 3px), calc(100% - 3px) 100%, 0 100%, 0 3px);
+}
+
+html[data-theme='light'] .yg-phi .el-segmented__item:not(.is-disabled):hover {
+  color: var(--phi-ink);
+}
+
+html[data-theme='light'] .yg-phi .el-segmented__item.is-selected,
+html[data-theme='light'] .yg-phi .el-segmented__item-selected {
+  color: #ffffff;
+}
+
+html[data-theme='light'] .yg-phi .el-segmented__item-selected {
+  /* 浅色：同一束斜向高光，但压暗端更浅，避免青底显脏 */
+  background:
+    linear-gradient(
+      118deg,
+      color-mix(in srgb, var(--phi-accent) 76%, #ffffff) 0%,
+      var(--phi-accent) 40%,
+      color-mix(in srgb, var(--phi-accent) 88%, #03110f) 100%
+    );
+  clip-path: polygon(
+    0 0,
+    calc(100% - 7px) 0,
+    100% 7px,
+    100% 100%,
+    7px 100%,
+    0 calc(100% - 7px)
+  );
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.42),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.16),
+    0 0 10px rgba(11, 159, 147, 0.22);
+  transition:
+    transform 440ms cubic-bezier(0.22, 1.22, 0.3, 1),
+    width 440ms cubic-bezier(0.22, 1.22, 0.3, 1),
+    background-color 320ms var(--yg-ease-out),
+    box-shadow 320ms var(--yg-ease-out);
+}
+
+/* 滑块表面周期性掠光：低频、窄带，只做“金属反光”层次的细节动效 */
+.yg-phi .el-segmented__item-selected::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(
+    105deg,
+    transparent 22%,
+    rgba(255, 255, 255, 0.42) 46%,
+    rgba(255, 255, 255, 0.18) 54%,
+    transparent 74%
+  );
+  transform: translateX(-140%);
+  animation: phi-seg-glint 5200ms cubic-bezier(0.55, 0, 0.25, 1) 900ms infinite;
+}
+
+@keyframes phi-seg-glint {
+  0% {
+    transform: translateX(-140%);
+    opacity: 0;
+  }
+  8% {
+    opacity: 0.9;
+  }
+  34% {
+    transform: translateX(140%);
+    opacity: 0;
+  }
+  100% {
+    transform: translateX(140%);
+    opacity: 0;
+  }
+}
+
+html[data-theme='light'] .yg-phi .ai-tabs,
+html[data-theme='light'] .yg-phi .server-tabs,
+html[data-theme='light'] .yg-phi .manage-tabs {
+  background: linear-gradient(
+    120deg,
+    color-mix(in srgb, #ffffff 82%, transparent),
+    color-mix(in srgb, #eef2f4 76%, transparent)
+  );
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.9),
+    0 8px 18px rgba(5, 6, 8, 0.1);
 }

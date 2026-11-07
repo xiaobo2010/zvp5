@@ -343,7 +343,7 @@ watch(
   flex-direction: column;
   align-items: center;
   gap: var(--yg-space-2);
-  padding: var(--yg-space-2);
+  padding: var(--yg-space-1) var(--yg-space-2);
 }
 
 .server-tabs__seg-icon {

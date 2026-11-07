@@ -1,8 +1,6 @@
 import axios, { AxiosError } from 'axios'
 import type { AxiosResponse, InternalAxiosRequestConfig } from 'axios'
 import { ElMessage } from 'element-plus'
-import nprogress from 'nprogress'
-import 'nprogress/nprogress.css'
 import router from '@/router'
 import { useUserStore } from '@/stores/user'
 import { cacheGet, cacheSet } from '@/utils/idbCache'
@@ -182,13 +180,12 @@ axiosInstance.interceptors.request.use(
     if (!/^([a-z][a-z\d+.-]*:)?\/\//i.test(String(config.url ?? ''))) {
       config.baseURL = baseURLForRequest(config.url)
     }
-    // 命中进程内缓存：直接返回上次的响应，不再发请求、不点亮进度条
+    // 命中进程内缓存：直接返回上次的响应，不再发请求
     const cached = cachedResponse(config)
     if (cached) {
       config.adapter = () => Promise.resolve(cached)
       return config
     }
-    nprogress.start()
     const token = localStorage.getItem('token')
     if (token && !config.headers['Authorization']) {
       config.headers['Authorization'] = `Bearer ${token}`
@@ -214,7 +211,6 @@ axiosInstance.interceptors.request.use(
     return config
   },
   (error) => {
-    nprogress.done()
     return Promise.reject(error)
   }
 )
@@ -245,7 +241,6 @@ function isDeviceLoginDetail(detail: unknown): boolean {
 axiosInstance.interceptors.response.use(
   (response) => {
     releaseRequest(response.config)
-    nprogress.done()
     const config = response.config as CachedConfig
     if (isCacheableGet(config)) {
       // 缓存命中的响应不再回写，避免同一条数据把有效期无限续上
@@ -260,7 +255,6 @@ axiosInstance.interceptors.response.use(
     return response
   },
   async (error: Error | AxiosError) => {
-    nprogress.done()
     if (axios.isAxiosError(error)) {
       const config = error.config
       releaseRequest(config)

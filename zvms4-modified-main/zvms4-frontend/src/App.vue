@@ -31,6 +31,7 @@ import {
   setPlatformGuardAccount,
   clearPlatformGuardData
 } from '@/utils/platformGuard'
+import { startPhiEdgePhase, stopPhiEdgePhase } from '@/utils/phiEdgePhase'
 import dayjs from '@/plugins/dayjs'
 
 const { needRefresh, offlineReady, updateServiceWorker } = useRegisterSW()
@@ -339,7 +340,7 @@ watch([width, height], ([w, h]) => {
   verticalMode.value = w < h * 1.2
 })
 
-// Phi 主题：普通用户路由（/user、/activities、/me、/about）挂 .yg-phi 类
+// Phi 主题：整个应用（普通用户端 + 后台三个管理区）统一挂 .yg-phi 类
 const isPhiRoute = computed(() => {
   const path = route.path
   return (
@@ -348,8 +349,36 @@ const isPhiRoute = computed(() => {
     path.startsWith('/activities') ||
     path.startsWith('/activity/') ||
     path === '/me' ||
-    path === '/about'
+    path === '/about' ||
+    path === '/ai' ||
+    path.startsWith('/ai/') ||
+    path === '/server' ||
+    path.startsWith('/server/') ||
+    path === '/manage' ||
+    path.startsWith('/manage/') ||
+    path.startsWith('/group/')
   )
+})
+
+// 页内页签（义工列表 / 平台管理 / 服务器管理 / AI 网关）切换只改路径末段。
+// 这些视图由自身的本地状态驱动面板，若仍按 route.path 作为 key，每次点滑块都会整页重挂载：
+// 页头动画重播、滚动位置和列表状态丢失、分段滑块的位移也要从 0 重新开始。
+// 这里把同一视图的不同末段归一到同一个 key，让外壳常驻，只替换内部面板。
+const VIEW_FAMILY: Record<string, string> = {
+  'activity-mode': '/activities',
+  'manage-action': '/manage',
+  'ai-action': '/ai',
+  'server-maintenance': '/server',
+  'server-database': '/server',
+  'server-totp': '/server',
+  'server-ssh': '/server',
+  'server-files': '/server',
+  'server-db-content': '/server'
+}
+
+const viewKey = computed(() => {
+  const name = route.name?.toString() ?? ''
+  return VIEW_FAMILY[name] ?? route.path
 })
 
 // Teleport 到 body 的弹层/下拉不在 .yg-phi 内，用 body 标记把 Phi 令牌和样式带出去。
@@ -364,7 +393,10 @@ watch(
 
 onUnmounted(() => {
   document.body.classList.remove('yg-phi-portals')
+  stopPhiEdgePhase()
 })
+
+onMounted(startPhiEdgePhase)
 
 const locales: Record<
   (typeof locale)['value'],
@@ -545,9 +577,9 @@ onMounted(async () => {
               </div>
             </header>
             <main :class="['yg-layout__content', { 'is-portrait': verticalMode && userStore.isLogin }]">
-              <RouterView v-slot="{ Component, route }">
+              <RouterView v-slot="{ Component }">
                 <Transition name="yg-route" mode="out-in">
-                  <component :is="Component" :key="route.path" class="yg-view" />
+                  <component :is="Component" :key="viewKey" class="yg-view" />
                 </Transition>
               </RouterView>
             </main>

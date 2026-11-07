@@ -36,32 +36,7 @@ vi.mock('element-plus', async () => {
       return () => h('div', { class: 'el-empty' }, [props.description, slots.default?.()])
     }
   })
-  const ElSegmented = defineComponent({
-    name: 'ElSegmented',
-    props: {
-      modelValue: { type: String, default: '' },
-      options: { type: Array, default: () => [] }
-    },
-    emits: ['update:modelValue'],
-    setup(props, { emit }) {
-      return () =>
-        h(
-          'div',
-          { class: 'el-segmented' },
-          (props.options as Array<{ label: string; value: string }>).map((option) =>
-            h(
-              'button',
-              {
-                class: 'el-segmented__item',
-                onClick: () => emit('update:modelValue', option.value)
-              },
-              option.label
-            )
-          )
-        )
-    }
-  })
-  return { ElButton, ElEmpty, ElIcon, ElSegmented }
+  return { ElButton, ElEmpty, ElIcon }
 })
 
 function conversation(overrides: Partial<AiConversation> = {}): AiConversation {
@@ -102,7 +77,7 @@ function mountList(
 
 async function switchToArchived(wrapper: ReturnType<typeof mountList>) {
   const target = wrapper
-    .findAll('.el-segmented__item')
+    .findAll('.ai-sessions__switch-btn')
     .find((item) => item.text() === 'ai.chat.sessions.archived')
   expect(target).toBeTruthy()
   await target!.trigger('click')
