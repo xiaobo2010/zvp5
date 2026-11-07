@@ -903,7 +903,9 @@ async def get_realtime_metrics(session: AsyncSession) -> dict[str, Any]:
     """
     data = await get_database_status(session)
     data["pool"] = pool_metrics()
-    data["host"] = collect_host_metrics()["host"]
+    # ``/proc`` reads + ``statvfs`` are blocking syscalls; same discipline as the
+    # ``/host`` endpoint, which already runs this collector in a worker thread.
+    data["host"] = (await asyncio.to_thread(collect_host_metrics))["host"]
     data["api"] = api_metrics.snapshot()
     data["sessions"] = await collect_sessions(session)
     return data

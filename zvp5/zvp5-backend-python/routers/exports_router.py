@@ -1,5 +1,6 @@
 import os
 import uuid
+import time
 import asyncio
 import logging
 from fastapi import APIRouter, HTTPException, Depends, Query, Request
@@ -157,8 +158,8 @@ def _time_export_rows(
 ):
     """线程内的纯 CPU 段：把批量算好的时长拼成导出行。
 
-    返回 ``(原始用户下标, doc)`` 对， ``push_result`` 的 20 人一推与
-    ``percentage`` 仍按旧循环的下标计算，进度条行为不变。
+    返回 ``(原始用户下标, doc)`` 对，``percentage`` 仍按旧循环的下标计算，
+    进度条最终值不变（推送频率见 :func:`_push_export_rows`）。
     """
     rows = []
     for idx, user in enumerate(users):
@@ -228,19 +229,35 @@ def _user_export_rows(users, groups):
 
 
 async def _push_export_rows(tasks_repo, task_id, task, total, rows) -> None:
-    """按旧节奏（每 20 人一次）推送结果与百分比，最后收尾一次 completed。"""
+    """按「1 秒或 1 个百分点，先到者」节流推送；首条与末条必推。
+
+    旧实现每 20 行 UPDATE 一次（1w 行导出 ≈ 500 次跨洋往返 + 500 次
+    ``sleep(0.01)``）。进度是给人看的，1% 的粒度已经比屏幕刷新更细；
+    百分比最多推 100 次，加上首条/末条即是上限。
+    """
     result = []
+    pushed_at = time.monotonic()
+    pushed_percentage = 0.0
+    first = True
+    last_index = len(rows) - 1
     for idx, doc in rows:
         result.append(doc)
-        task["percentage"] = (idx + 1) / total * 100
-        if idx % 20 == 19:
+        percentage = (idx + 1) / total * 100
+        task["percentage"] = percentage
+        now = time.monotonic()
+        # 末条不在这里推：紧随其后的收尾推送必发（completed + 100）。
+        if idx != last_index and (
+            first or now - pushed_at >= 1.0 or percentage - pushed_percentage >= 1.0
+        ):
+            first = False
             await tasks_repo.push_result(
                 _task_uuid(task_id),
                 result,
-                {"percentage": task["percentage"]},
+                {"percentage": percentage},
             )
             result = []
-            await asyncio.sleep(0.01)
+            pushed_at = now
+            pushed_percentage = percentage
     await tasks_repo.push_result(
         _task_uuid(task_id),
         result,

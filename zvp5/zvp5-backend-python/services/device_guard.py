@@ -207,14 +207,16 @@ def _invalid_temp_password(remaining: int) -> HTTPException:
 # ---------------------------------------------------------------------------
 
 
-async def _admin_primary_device_exempt(xuehai_id: str, rule_code: Any) -> bool:
+async def _admin_primary_device_exempt(
+    xuehai_id: str, rule_code: Any, session: Any = None
+) -> bool:
     """该设备是否是**任一 admin** 的主学海设备（豁免判定）。
 
     只在「本来就要拒绝」的分支上调用：正常放行路径不许多一次查询。
     查询失败按无豁免处理（判成受限是收窄权限，不会把封禁判丢）。
     """
     try:
-        exempt = await backends.get_users_repo().is_admin_primary_device(xuehai_id)
+        exempt = await backends.get_users_repo(session).is_admin_primary_device(xuehai_id)
     except Exception:
         _logger.exception("查询管理员主设备失败，按无豁免处理")
         return False
@@ -229,7 +231,7 @@ async def _admin_primary_device_exempt(xuehai_id: str, rule_code: Any) -> bool:
 
 
 async def device_ban_status(
-    xuehai_id: str, *, now: datetime | None = None
+    xuehai_id: str, *, now: datetime | None = None, session: Any = None
 ) -> tuple[bool, str | None, datetime | None]:
     """这台设备**此刻**是否被限制登入，以及原因/到期时刻。
 
@@ -244,27 +246,30 @@ async def device_ban_status(
     （``source="admin"``）仍然有效——人工决定优先于脚本判定。
 
     空 ``xuehai_id`` 一律放行：没有设备号就没有设备证据，老客户端也不带这个头。
+
+    ``session`` 给调用方复用自己的读事务（``/me/device`` 里与本人行同一次读），
+    不传则每个仓储各开各的会话，语义一致。
     """
     if not xuehai_id:
         return False, None, None
 
     at = now or datetime.now()
 
-    row = await backends.get_device_bans_repo().get(xuehai_id)
+    row = await backends.get_device_bans_repo(session).get(xuehai_id)
     if row:
         until = _as_until(row.get("until"))
         if not _expired(until, at):
             source = row.get("source")
             rule_code = row.get("rule_code")
             if source == "rule" and await _admin_primary_device_exempt(
-                xuehai_id, rule_code
+                xuehai_id, rule_code, session
             ):
                 return False, None, None
             reason = row.get("reason")
             reason = reason.strip() if isinstance(reason, str) and reason.strip() else None
             return True, reason or DEFAULT_BAN_REASON, until
 
-    for user in await backends.get_users_repo().list_banned_by_xuehai(xuehai_id):
+    for user in await backends.get_users_repo(session).list_banned_by_xuehai(xuehai_id):
         if ban_is_active(user, at):
             if has_admin_role(user.get("roles")):
                 _logger.info(
@@ -274,7 +279,7 @@ async def device_ban_status(
                 )
                 continue
             if await _admin_primary_device_exempt(
-                xuehai_id, user.get("ban_rule")
+                xuehai_id, user.get("ban_rule"), session
             ):
                 return False, None, None
             return True, ban_reason_of(user), _as_until(user.get("ban_until"))
