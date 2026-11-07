@@ -32,7 +32,7 @@ Cloudflare 同区回环——响应带 `Cdn-Loop: cloudflare; loops=1`，状态 
 ## 步骤
 
 分支预览在仓库内的 git worktree 里构建（分支名已由 `愚人节ui` 改名 `phigros` 后又改名 `v5-canary`）：
-`worktrees/v5-canary/zvms4-modified-main/zvms4-frontend`。`wrangler.jsonc` 的
+`worktrees/v5-canary/zvp5/zvp5-frontend`。`wrangler.jsonc` 的
 `assets.directory` 必须指向**该分支的** `dist`，默认写的是 main 的产物，直接
 deploy 会把正式产物当预览发出去。
 
@@ -40,7 +40,7 @@ deploy 会把正式产物当预览发出去。
 # 1. 构建（注意不要用 npm run build，见下方坑 1）
 #    直接按正式 API 域构建，省掉「先按预览域构建再 sed」那一步：
 #    index.html 的 preconnect 与各类内联脚本因此都指向真域名，不必二次改写。
-cd worktrees/v5-canary/zvms4-modified-main/zvms4-frontend
+cd worktrees/v5-canary/zvp5/zvp5-frontend
 VITE_API_BASE=https://zvp.xiaobopisces.top/api \
 VITE_API_RACE_BASE=https://zvpapi.xiaobopisces.top/api \
 VITE_API_CONTENT_BASE=https://zvp.xiaobopisces.top/api \
