@@ -1,6 +1,15 @@
 import { mount } from '@vue/test-utils'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import i18n from '@/i18n'
 import ZLoginReveal from './ZLoginReveal.vue'
+
+function mountReveal(props: { name: string; role: string }) {
+  return mount(ZLoginReveal, {
+    props,
+    attachTo: document.body,
+    global: { plugins: [i18n] }
+  })
+}
 
 describe('ZLoginReveal', () => {
   afterEach(() => {
@@ -10,10 +19,7 @@ describe('ZLoginReveal', () => {
 
   it('渲染问候与身份，并在时间轴结束后通知父级', () => {
     vi.useFakeTimers()
-    const wrapper = mount(ZLoginReveal, {
-      props: { name: '张三', role: '管理员' },
-      attachTo: document.body
-    })
+    const wrapper = mountReveal({ name: '张三', role: '管理员' })
 
     const text = (document.body.textContent ?? '').replace(/\s+/g, '')
     expect(text).toContain('你好，张三')
@@ -28,10 +34,7 @@ describe('ZLoginReveal', () => {
   })
 
   it('姓名为空时回退到「同学」', () => {
-    const wrapper = mount(ZLoginReveal, {
-      props: { name: '  ', role: '学生' },
-      attachTo: document.body
-    })
+    const wrapper = mountReveal({ name: '  ', role: '学生' })
 
     const text = (document.body.textContent ?? '').replace(/\s+/g, '')
     expect(text).toContain('你好，同学')
@@ -41,10 +44,7 @@ describe('ZLoginReveal', () => {
   })
 
   it('姓名为空字符串时回退到「同学」', () => {
-    const wrapper = mount(ZLoginReveal, {
-      props: { name: '', role: '教师' },
-      attachTo: document.body
-    })
+    const wrapper = mountReveal({ name: '', role: '教师' })
 
     expect((document.body.textContent ?? '').replace(/\s+/g, '')).toContain('你好，同学')
 
@@ -52,10 +52,7 @@ describe('ZLoginReveal', () => {
   })
 
   it('保留无障碍标签', () => {
-    const wrapper = mount(ZLoginReveal, {
-      props: { name: '李四', role: '志愿者' },
-      attachTo: document.body
-    })
+    const wrapper = mountReveal({ name: '李四', role: '志愿者' })
 
     const container = document.body.querySelector('.login-reveal')
     expect(container).not.toBeNull()
@@ -82,10 +79,7 @@ describe('ZLoginReveal', () => {
     }))
 
     vi.useFakeTimers()
-    const wrapper = mount(ZLoginReveal, {
-      props: { name: '王五', role: '管理员' },
-      attachTo: document.body
-    })
+    const wrapper = mountReveal({ name: '王五', role: '管理员' })
 
     const container = document.body.querySelector('.login-reveal')
     expect(container?.classList.contains('is-reduced')).toBe(true)
@@ -103,10 +97,7 @@ describe('ZLoginReveal', () => {
     vi.useFakeTimers()
     const clearTimeoutSpy = vi.spyOn(window, 'clearTimeout')
 
-    const wrapper = mount(ZLoginReveal, {
-      props: { name: '测试', role: '用户' },
-      attachTo: document.body
-    })
+    const wrapper = mountReveal({ name: '测试', role: '用户' })
 
     wrapper.unmount()
 
