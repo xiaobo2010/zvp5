@@ -34,6 +34,7 @@ from db.ids import new_oid, normalize_oid
 from db.models import ban_violations as ban_violations_tbl
 from db.models import users as users_tbl
 from db.oracle.session import session_scope
+from db.repos.pagination import page_args
 
 Row = dict[str, Any]
 
@@ -163,12 +164,13 @@ def _page_stmt(query: str, page: int, size: int):
     conds = _page_filter(query)
     if conds:
         stmt = stmt.where(*conds)
+    offset, limit = page_args(page, size)
     return (
         stmt.order_by(
             ban_violations_tbl.c.created_at.desc(), ban_violations_tbl.c.oid.desc()
         )
-        .offset((page - 1) * size)
-        .limit(size)
+        .offset(offset)
+        .limit(limit)
     )
 
 

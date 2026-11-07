@@ -34,6 +34,7 @@ from db.ids import new_oid, normalize_oid
 from db.models import activities as activities_tbl
 from db.models import users as users_tbl
 from db.oracle.session import session_scope
+from db.repos.pagination import page_args
 
 Row = dict[str, Any]
 
@@ -127,7 +128,8 @@ def _page_stmt(query: str, atypes: list[str] | None, status: str | None, page: i
     conds = _activity_filter(query, atypes, status)
     if conds:
         stmt = stmt.where(*conds)
-    return stmt.order_by(activities_tbl.c.oid.desc()).offset((page - 1) * size).limit(size)
+    offset, limit = page_args(page, size)
+    return stmt.order_by(activities_tbl.c.oid.desc()).offset(offset).limit(limit)
 
 
 def _count_stmt(query: str, atypes: list[str] | None, status: str | None):
@@ -196,7 +198,8 @@ def _list_by_oids_stmt(oids: list[str], query: str, page: int, size: int):
         stmt = stmt.where(func.regexp_like(activities_tbl.c.name, query, "i"))
     stmt = stmt.order_by(activities_tbl.c.oid.desc())
     if page != -1:
-        stmt = stmt.offset((page - 1) * size).limit(size)
+        offset, limit = page_args(page, size)
+        stmt = stmt.offset(offset).limit(limit)
     return stmt
 
 
@@ -230,7 +233,8 @@ def _list_raw_stmt(
         column = getattr(activities_tbl.c, _RAW_SORT_COLUMNS.get(sort, "oid"))
         stmt = stmt.order_by(column.asc() if asc else column.desc())
     if page is not None:
-        stmt = stmt.offset((page - 1) * size).limit(size)
+        offset, limit = page_args(page, size)
+        stmt = stmt.offset(offset).limit(limit)
     return stmt
 
 

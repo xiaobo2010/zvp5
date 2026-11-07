@@ -197,8 +197,8 @@ def test_real_file_upload_passes_the_gate(monkeypatch) -> None:
     assert response.status_code == 200, response.text
     body = response.json()
     assert body["status"] == "ok"
-    # The endpoint inlines its status: HTTP 200 + body ``code`` 201 (the module
-    # deliberately does not use ``util/response.py``, design C13).
+    # The endpoint inlines its status: HTTP 200 + body ``code`` 201 (the old
+    # ``util/response.py`` helper was broken and is gone).
     assert body["code"] == 201
     assert body["data"]["_id"] == FIRST_FILE_OID
     assert body["data"]["thumb_oid"] == FIRST_THUMB_OID

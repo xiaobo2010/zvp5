@@ -49,9 +49,14 @@ class CallSite:
 
 #: 已接入 LLM 安全认证（或其调用者已在更外层拦截）的调用点。
 GATED_CALL_SITES: dict[str, str] = {
-    "routers/ai_router.py": (
-        "OpenAI 兼容面 /v1/chat/completions：_screen_chat_request 在候选选择与"
-        "频控/额度之前拦截 department（JWT 与 zvk_ key 的 owner 同一套判定）"
+    "routers/ai/completion.py": (
+        "OpenAI 兼容面 /v1/chat/completions 的非流式实现层：调用方 "
+        "routers.ai.chat.chat_completions 已先过 _screen_chat_request（在候选选择与"
+        "频控/额度之前拦截 department，JWT 与 zvk_ key 的 owner 同一套判定）"
+    ),
+    "routers/ai/streaming.py": (
+        "OpenAI 兼容面 /v1/chat/completions 的流式实现层：同上，入口在 "
+        "routers.ai.chat.chat_completions 已经过 _screen_chat_request"
     ),
     "services/agent/run_queue.py": (
         "agent 提交入口：submit() 在入队前接 safety_guard.screen（本文件不直接调"
@@ -251,7 +256,8 @@ def test_required_entries_are_present() -> None:
     """这几个入口是产品契约的一部分：删掉登记等于静默放弃闸门。"""
     gated = set(GATED_CALL_SITES)
     assert {
-        "routers/ai_router.py",
+        "routers/ai/completion.py",
+        "routers/ai/streaming.py",
         "services/agent/run_queue.py",
         "services/agent/executor.py",
         "services/ai/textgen.py",
@@ -262,7 +268,8 @@ def test_scan_finds_the_real_entry_points() -> None:
     """扫描本身要有产出：零命中说明规则写坏了，等于永远绿。"""
     paths = {site.path for site in scan_call_sites(BACKEND_ROOT)}
     assert {
-        "routers/ai_router.py",
+        "routers/ai/completion.py",
+        "routers/ai/streaming.py",
         "services/agent/executor.py",
         "services/ai/textgen.py",
         "services/ai/safety_guard.py",
@@ -409,10 +416,9 @@ AI_SEAM_PARENTS: dict[str, frozenset[str]] = {
 
 #: 有正当理由**不**接开关的 AI 入口（理由必填）。
 #:
-#: 目前只有一条：SSH 命令起草（``/api/system/ssh/suggest``）是「严格 admin +
-#: 即时查库复核」的端点（``system_ssh_router._require_system_admin``）。策略层
-#: ``admin`` 恒为 True（``policy.feature_enabled`` 的代码短路），在这里挂开关等于
-#: 挂一个恒真的判断——审查者应该把它当「已由更强的角色闸门覆盖」，不是漏接。
+#: 两类：SSH 命令起草（严格 admin + 即时查库复核，策略层 admin 恒 True），以及
+#: 上游调用的实现层（门禁在调用方）、admin 配置面/运维视图（关掉开关会形成
+#: 「修不了也看不见」的死锁）。每条的理由必须写清「更强的闸门在哪」。
 FEATURE_GATE_EXEMPT: dict[str, str] = {
     "routers/system_ssh_router.py": (
         "SSH 命令起草：_require_system_admin 要求严格 admin + 即时查库复核；"
@@ -423,6 +429,26 @@ FEATURE_GATE_EXEMPT: dict[str, str] = {
         "POST /discover 只是代管渠道去调它自己的 /models 取元数据（上下文窗口），"
         "不产出任何内容、不下发 prompt。按功能开关拦截会形成死锁：关掉 AI 功能后"
         "管理员就再也无法配置/修复模型目录，连重新打开功能所需的渠道信息都配不了。"
+    ),
+    "routers/ai/completion.py": (
+        "上游调用的非流式实现层：门禁在调用方 routers.ai.chat.chat_completions"
+        "（_screen_chat_request + _feature_error 在选路之前）；本模块只被它调用"
+    ),
+    "routers/ai/streaming.py": (
+        "上游调用的流式实现层：门禁同样在 routers.ai.chat.chat_completions；"
+        "本模块只被它调用"
+    ),
+    "routers/ai/ocr_engines.py": (
+        "OCR 引擎注册表是 admin 配置面（_require_admin），与 routers/ai_models_router.py"
+        " 同一类：关掉 AI 功能后管理员仍要能配置/修复引擎，接开关会形成死锁"
+    ),
+    "routers/ai/health.py": (
+        "健康检查是 admin 运维视图（_require_admin）：只读配置与冷却状态，"
+        "不产出内容、不下发 prompt；被开关挡住只会让运维看不见故障原因"
+    ),
+    "routers/ai_router.py": (
+        "纯路由聚合器：不定义端点，只为兼容旧导入 re-export services.ai.ocr / "
+        "providers 等符号；门禁在 routers/ai/* 的端点模块里"
     ),
 }
 
@@ -536,7 +562,11 @@ def test_ai_router_entries_are_actually_found() -> None:
     """扫描要有产出：零命中说明规则写坏了，等于永远绿。"""
     paths = {entry.path for entry in scan_ai_entries(BACKEND_ROOT)}
     assert {
-        "routers/ai_router.py",
+        "routers/ai/ocr.py",
+        "routers/ai/completion.py",
+        "routers/ai/streaming.py",
+        "routers/ai/ocr_engines.py",
+        "routers/ai/health.py",
         "routers/ai_agent_router.py",
         "routers/ai_schedule_router.py",
         "routers/ai_conversations_router.py",

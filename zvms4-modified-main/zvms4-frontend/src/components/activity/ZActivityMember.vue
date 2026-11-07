@@ -97,7 +97,6 @@ function refresh() {
         loading.value = false
       })
       .catch((err: ErrorResponse) => {
-        console.log(err, err.code)
         if (err.code === 404) {
           notFound.value = true
         }

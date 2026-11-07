@@ -15,7 +15,6 @@
 from __future__ import annotations
 
 import logging
-import re
 from typing import Any, Awaitable, Callable
 from uuid import uuid4
 
@@ -23,13 +22,14 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from routers.ai_router import AI_FORBIDDEN_MESSAGE, _error_type, _has_ai_access, ai_scene
+from routers.ai.common import AI_FORBIDDEN_MESSAGE, _error_type, _has_ai_access, ai_scene
 from services.agent import run_queue
 from services.agent.tool_impl import AgentError
 from services.ai import audit
 from services.ai import conversations
 from typings.log import xuehai_id_from
 from util.object_id import get_current_user
+from util.oid import hex_id_or_none
 from util.permission.features import ensure_feature
 
 _logger = logging.getLogger(__name__)
@@ -38,7 +38,8 @@ router = APIRouter()
 
 # 会话/run 的 oid 都是 ``uuid4().hex``（32 位小写 hex）。形状不对直接当「不存在」：
 # 32 位 hex 的校验不需要一次数据库往返，也顺手挡掉把奇怪字符串塞进查询的情形。
-OID_PATTERN = re.compile(r"^[0-9a-f]{32}$")
+# 形状判定在 ``util.oid.hex_id_or_none``（24 位业务 oid 走 ``db.ids``）。
+SESSION_ID_LENGTH = 32
 
 # 审计里的端点名：与挂载前缀一致，方便和 ``/api/ai/agent/run`` 区分开。
 ENDPOINT_CONVERSATIONS = "/api/ai/conversations"
@@ -231,8 +232,8 @@ async def _dispatch(
 
 
 def _require_oid(oid: str, *, code: str, message: str) -> str:
-    value = str(oid or "").strip().lower()
-    if not OID_PATTERN.match(value):
+    value = hex_id_or_none(oid, length=SESSION_ID_LENGTH)
+    if value is None:
         raise AgentError(code, message, 404)
     return value
 

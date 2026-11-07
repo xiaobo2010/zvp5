@@ -36,26 +36,41 @@
 from __future__ import annotations
 
 import hashlib
+import random
 from typing import Any
 
 from db import cache
 from db.ids import normalize_oid
 
-#: 认证窄投影：封禁/角色改动要尽快可见，只给 30s。
-TTL_AUTH = 30.0
+# TTL 只兜「失效没送达」这一种意外。真正的正确性由写路径负责：每个写方法都会
+# 精确 forget 自己的 key 并 bump 域 epoch（见本文件下方的 `_forget_*` 与各写方法），
+# 绕过代理的事务型写（Excel 导入、DB 控制台）也在提交后显式 bump。因此这里可以
+# 放长，把跨洋回源压到最低；单 worker 部署下不存在多进程 read-after-write 竞争。
+#
+# 认证窄投影：封禁/角色改动会精确失效 auth key，TTL 只是兜底。
+TTL_AUTH = 180.0
 #: 用户全量文档（含 password_hash；Redis 只监听 127.0.0.1 且不落盘）。
-TTL_USER = 60.0
+TTL_USER = 600.0
 #: 显示名与班级成员列表：写用户时 epoch 整体失效，TTL 只兜跨进程遗漏。
-TTL_NAMES = 300.0
-TTL_CLASS_MEMBERS = 300.0
+TTL_NAMES = 3600.0
+TTL_CLASS_MEMBERS = 1800.0
 #: 班级/权限组本身几乎不变。
-TTL_GROUP = 300.0
-TTL_GROUP_LIST = 60.0
+TTL_GROUP = 3600.0
+TTL_GROUP_LIST = 600.0
 #: 活动详情中等频；有效活动全集变化极慢。
-TTL_ACTIVITY = 60.0
-TTL_ACTIVITIES_EFFECTIVE = 600.0
-#: 会话：run 期间频繁 touch，缓存只覆盖「打开会话 / 场景定位」这两条读。
-TTL_CONVERSATION = 30.0
+TTL_ACTIVITY = 600.0
+TTL_ACTIVITIES_EFFECTIVE = 7200.0
+#: 会话在 run 期间频繁 touch（每次 touch 都 forget），TTL 只覆盖「重新打开」。
+TTL_CONVERSATION = 120.0
+#: TTL 抖动比例（±10%）。同一批 key（比如一次首页把所有班级名单都读一遍）如果
+#: 用同一个 TTL，就会在同一秒集体过期，然后一起回源——「缓存雪崩」的标准形状。
+#: 抖动把过期时刻摊开，代价只是最长多活 10% 的时间。
+_TTL_JITTER = 0.1
+
+
+def _ttl(seconds: float) -> float:
+    """给固定 TTL 加 ±10% 抖动（保留原来的量级与语义）。"""
+    return seconds * (1.0 + random.uniform(-_TTL_JITTER, _TTL_JITTER))
 
 
 def _k(*parts: Any) -> str:
@@ -87,7 +102,10 @@ class _CachedRepo:
     async def _read(self, key: str, ttl: float, loader: Any) -> Any:
         if not self._use_cache:
             return await loader()
-        return await cache.remember(key, ttl, loader)
+        # 代理层的写只是「让缓存早点热」：不占响应时间（Redis 抖动不能拖慢读请求）。
+        return await cache.remember(
+            key, _ttl(ttl), loader, async_backfill=True
+        )
 
 
 class CachedUsersRepo(_CachedRepo):
@@ -116,7 +134,12 @@ class CachedUsersRepo(_CachedRepo):
             return await self._inner.get_names(oids)
         version = await cache.epoch("users")
         key = _k("names", version, _digest(unique))
-        return await cache.remember(key, TTL_NAMES, lambda: self._inner.get_names(oids))
+        return await cache.remember(
+            key,
+            _ttl(TTL_NAMES),
+            lambda: self._inner.get_names(oids),
+            async_backfill=True,
+        )
 
     async def list_by_class(self, class_oid: str) -> list[Any]:
         class_oid = normalize_oid(class_oid)
@@ -125,7 +148,10 @@ class CachedUsersRepo(_CachedRepo):
         version = await cache.epoch("users")
         key = _k("class", version, class_oid)
         return await cache.remember(
-            key, TTL_CLASS_MEMBERS, lambda: self._inner.list_by_class(class_oid)
+            key,
+            _ttl(TTL_CLASS_MEMBERS),
+            lambda: self._inner.list_by_class(class_oid),
+            async_backfill=True,
         )
 
     # ------------------------------------------------------------------ 写
@@ -263,7 +289,7 @@ class CachedGroupsRepo(_CachedRepo):
             return await _call()
         version = await cache.epoch("groups")
         key = _k("glist", version, query, page, size if size is not None else "-")
-        return await cache.remember(key, TTL_GROUP_LIST, _call)
+        return await cache.remember(key, _ttl(TTL_GROUP_LIST), _call, async_backfill=True)
 
     async def list_permission_groups(
         self, query: str = "", permissions: list[str] | None = None
@@ -276,8 +302,9 @@ class CachedGroupsRepo(_CachedRepo):
         )
         return await cache.remember(
             key,
-            TTL_GROUP_LIST,
+            _ttl(TTL_GROUP_LIST),
             lambda: self._inner.list_permission_groups(query, permissions),
+            async_backfill=True,
         )
 
     async def create(self, *args: Any, **kwargs: Any) -> str:
@@ -327,8 +354,9 @@ class CachedActivitiesRepo(_CachedRepo):
         key = _k("activities", "effective", version)
         return await cache.remember(
             key,
-            TTL_ACTIVITIES_EFFECTIVE,
+            _ttl(TTL_ACTIVITIES_EFFECTIVE),
             lambda: self._inner.list_effective(date_start, date_end),
+            async_backfill=True,
         )
 
     async def create(self, *args: Any, **kwargs: Any) -> str:
@@ -364,7 +392,10 @@ class CachedAIConversationsRepo(_CachedRepo):
         if not self._use_cache:
             return await self._inner.get(oid, owner_oid)
         row = await cache.remember(
-            key, TTL_CONVERSATION, lambda: self._inner.get(oid, owner_oid)
+            key,
+            _ttl(TTL_CONVERSATION),
+            lambda: self._inner.get(oid, owner_oid),
+            async_backfill=True,
         )
         # key 只带 oid（写方法大多只知道 oid），所以归属校验在命中后补一次：
         # 别人的会话读出来必须返回 None，且不落缓存。

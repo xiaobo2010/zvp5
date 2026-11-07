@@ -119,13 +119,8 @@ async def test_list_requires_admin_before_touching_the_database():
 
 
 @pytest.mark.asyncio
-async def test_time_export_reads_the_activity_set_once(monkeypatch):
-    activity_calls = []
+async def test_time_export_computes_every_user_time_in_one_bulk_call(monkeypatch):
     seen = []
-
-    async def list_effective(*args):
-        activity_calls.append(args)
-        return [{"_id": "000000000000000000000010"}]
 
     async def list_all():
         return [
@@ -133,12 +128,15 @@ async def test_time_export_reads_the_activity_set_once(monkeypatch):
             for index in range(25)
         ]
 
-    async def group(value):
-        return {"name": "Group"}
+    async def group_list():
+        return [{"_id": "class", "name": "Group"}]
 
-    async def calculate(*args, **kwargs):
-        seen.append(kwargs)
-        return {"on-campus": 1, "off-campus": 0, "social-practice": 0}
+    async def bulk(ids, start=None, end=None, allow_cache=True):
+        seen.append((list(ids), start, end, allow_cache))
+        return {
+            user_id: {"on-campus": 1, "off-campus": 0, "social-practice": 0}
+            for user_id in ids
+        }
 
     async def get_task(value):
         return {
@@ -160,14 +158,14 @@ async def test_time_export_reads_the_activity_set_once(monkeypatch):
         ),
     )
     monkeypatch.setattr(backends, "get_users_repo", lambda: SimpleNamespace(list_all=list_all))
-    monkeypatch.setattr(backends, "get_groups_repo", lambda: SimpleNamespace(get=group))
     monkeypatch.setattr(
-        backends, "get_activities_repo", lambda: SimpleNamespace(list_effective=list_effective)
+        backends, "get_groups_repo", lambda: SimpleNamespace(list_all=group_list)
     )
-    monkeypatch.setattr(exports, "calculate_user_time", calculate)
+    monkeypatch.setattr(exports, "calculate_user_time_bulk", bulk)
 
     await exports.process_task(str(uuid.uuid4()))
 
-    assert activity_calls == [(None, None)]
-    assert len(seen) == 25
-    assert all(call["activities"] == [{"_id": "000000000000000000000010"}] for call in seen)
+    assert len(seen) == 1
+    ids, start, end, allow_cache = seen[0]
+    assert len(ids) == 25
+    assert (start, end, allow_cache) == (None, None, True)

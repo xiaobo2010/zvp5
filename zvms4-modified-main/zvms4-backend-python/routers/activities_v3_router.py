@@ -2,12 +2,11 @@ from datetime import datetime
 import math
 from fastapi import APIRouter, Depends, HTTPException, Body, Query
 from db import backends
-from db.ids import normalize_oid
 from db.oracle.session import session_scope
 from typings.log import inject_log
 from util.object_id import get_current_user
 from util.user import get_user_display_name, user_profile
-from utils import validate_object_id
+from util.oid import validate_object_id
 from typing import Literal
 from pydantic import BaseModel, Field, field_validator
 from util.validation import validate_activity_description

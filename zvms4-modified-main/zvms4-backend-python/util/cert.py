@@ -445,12 +445,3 @@ async def get_hashed_password_by_cert(cert: str):
     if pwd_strength(password) < 3:
         raise HTTPException(status_code=400, detail="密码强度不足")
     return (await hash_password_async(password)).decode("utf-8")
-
-
-async def checkpwd(id: str, pwd: str):
-    user = await backends.get_users_repo().get_by_oid(id)
-    if user is not None and user.get("password") and await verify_password_async(
-        pwd, user["password"]
-    ):
-        return True
-    return False

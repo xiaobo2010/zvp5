@@ -54,6 +54,7 @@ from db.ids import new_oid, normalize_oid
 from db.models import ai_call_logs as ai_call_logs_tbl
 from db.models import users as users_tbl
 from db.oracle.session import session_scope
+from db.repos.pagination import page_args
 
 Row = dict[str, Any]
 
@@ -298,12 +299,13 @@ def _page_stmt(conds: list[Any], page: int, size: int):
     stmt = select(*_columns()).select_from(ai_call_logs_tbl)
     if conds:
         stmt = stmt.where(*conds)
+    offset, limit = page_args(page, size)
     return (
         stmt.order_by(
             ai_call_logs_tbl.c.created_at.desc(), ai_call_logs_tbl.c.oid.desc()
         )
-        .offset((page - 1) * size)
-        .limit(size)
+        .offset(offset)
+        .limit(limit)
     )
 
 

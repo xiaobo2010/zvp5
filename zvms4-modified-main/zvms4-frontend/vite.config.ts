@@ -11,7 +11,7 @@ import AutoImport from 'unplugin-auto-import/vite'
 import Icons from 'unplugin-icons/vite'
 import IconsResolver from 'unplugin-icons/resolver'
 import { VitePWA as pwa } from 'vite-plugin-pwa'
-import { ElementPlusResolver, VantResolver } from 'unplugin-vue-components/resolvers'
+import { ElementPlusResolver } from 'unplugin-vue-components/resolvers'
 import { externalizeInlineScripts } from './scripts/vite-plugin-externalize-inline-scripts'
 import {
   validateOptionalProductionRaceApiBase,
@@ -193,10 +193,10 @@ export const viteBaseConfig = {
     AutoImport({
       // 全量样式已由 main.ts 引入(element-plus/theme-chalk/index.css + 覆盖层),
       // 关闭按需样式注入,避免同一份 CSS 被重复打包,也让 vitest 不必加载 .css 副作用链。
-      resolvers: [ElementPlusResolver({ importStyle: false }), VantResolver(), IconsResolver()]
+      resolvers: [ElementPlusResolver({ importStyle: false }), IconsResolver()]
     }),
     VueComponents({
-      resolvers: [ElementPlusResolver({ importStyle: false }), VantResolver(), IconsResolver()]
+      resolvers: [ElementPlusResolver({ importStyle: false }), IconsResolver()]
     }),
     preconnectApiOrigin()
   ],

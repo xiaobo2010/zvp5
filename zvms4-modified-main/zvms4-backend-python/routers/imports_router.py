@@ -7,7 +7,7 @@ from zipfile import BadZipFile, ZipFile
 import pandas as pd
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 
-from db import backends
+from db import backends, cache
 from db.ids import normalize_oid
 from db.oracle.session import session_scope
 from typings.log import inject_log
@@ -141,4 +141,7 @@ async def upload_activity_excel(
             )
             await log.insert_log(session)
 
+    # 事务内的写走的是「调用方自带 session」的仓储实例，缓存代理按设计整体旁路，
+    # 因此失效必须在这里补：新建活动/成员会让活动详情与有效活动全集变旧。
+    await cache.bump_epoch("activities")
     return {"status": "ok", "code": 201}

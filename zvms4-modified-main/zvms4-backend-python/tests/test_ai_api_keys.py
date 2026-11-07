@@ -223,7 +223,7 @@ async def _allow_reauth(*_args, **_kwargs):
 
 @pytest.fixture(autouse=True)
 def _no_reauth(monkeypatch):
-    monkeypatch.setattr(ai_router, "require_password_verification", _allow_reauth)
+    monkeypatch.setattr("routers.ai.keys.require_password_verification", _allow_reauth)
     monkeypatch.setattr(ai_api_keys_router, "require_password_verification", _allow_reauth)
 
 
@@ -723,7 +723,7 @@ def test_jwt_path_still_uses_the_platform_authenticator(repo, users, gateway, mo
         seen.append((token, scope, exception))
         return {"id": OWNER, "per": ["department"], "perm": [], "class_id": None}
 
-    monkeypatch.setattr(ai_router, "_authenticate", _fake_authenticate)
+    monkeypatch.setattr("routers.ai.common._authenticate", _fake_authenticate)
 
     user = asyncio.run(ai_router.get_ai_client("jwt-looking-token", None, None))
 

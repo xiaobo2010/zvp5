@@ -42,6 +42,7 @@ from db import backends, cache
 from db.oracle.session import session_scope
 from services import db_content, settings_runtime
 from services.roles import policy as roles_policy
+from util.serialization import iso
 
 _logger = logging.getLogger(__name__)
 
@@ -165,8 +166,8 @@ def _as_datetime(value: Any) -> datetime | None:
 
 
 def _iso(value: Any) -> str | None:
-    moment = _as_datetime(value)
-    return moment.isoformat() if moment is not None else None
+    """先按运维面的口径归一（带时区换本地 naive），再统一序列化。"""
+    return iso(_as_datetime(value))
 
 
 def _now_iso() -> str:

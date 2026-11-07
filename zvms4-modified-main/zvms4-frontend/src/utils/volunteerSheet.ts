@@ -1,5 +1,3 @@
-import * as XLSX from 'xlsx'
-
 export type VolunteerSheetRow = [string, string, string]
 
 const HEADER_WORDS = new Set(['学号', '编号', '姓名', '时长', '小时', 'duration', 'name', 'id'])
@@ -84,7 +82,10 @@ export function normalizeVolunteerSheetRows(matrix: unknown[][]): VolunteerSheet
   })
 }
 
-export function parseVolunteerXlsx(buffer: ArrayBuffer): VolunteerSheetRow[] {
+export async function parseVolunteerXlsx(buffer: ArrayBuffer): Promise<VolunteerSheetRow[]> {
+  // xlsx 约 400KB，只在真正导入表格时才需要；放进函数体内动态加载，
+  // 避免登记页首包为一次可能用不到的导入付体积。
+  const XLSX = await import('xlsx')
   const workbook = XLSX.read(buffer, { type: 'array', cellDates: false })
   const sheet = workbook.Sheets[workbook.SheetNames[0] ?? '']
   if (!sheet) return []

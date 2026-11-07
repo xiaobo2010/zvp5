@@ -10,11 +10,11 @@ repository layer and the HTTP layer:
   for anything else.
 * :func:`is_valid_oid` - non-raising predicate for the same shape.
 
-:class:`InvalidOid` subclasses :class:`ValueError`, so the existing
-``except ValueError`` guards in ``utils.validate_object_id`` /
-``util.object_id.validate_object_id`` keep their explicit ``HTTP 400``
-contract, while a global FastAPI handler in ``main`` maps any that escape to
-``HTTP 400`` instead of the generic ``500``.
+:class:`InvalidOid` subclasses :class:`ValueError`, so the ``except`` guard in
+``util.oid.validate_object_id`` (the single HTTP-layer wrapper, re-exported by
+``util.object_id``) keeps its explicit ``HTTP 400`` contract, while a global
+FastAPI handler in ``main`` maps any that escape to ``HTTP 400`` instead of the
+generic ``500``.
 
 This module stays framework-agnostic and does **no** database I/O. It has no
 third-party dependencies.

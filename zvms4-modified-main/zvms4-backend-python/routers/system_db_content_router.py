@@ -22,7 +22,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Path, Query
 from pydantic import BaseModel, Field
 
-from db import backends
+from db import backends, cache
 from services import db_content
 from util.dual_auth import DualAuthError, audit_system_op, require_dual_auth
 from util.ban import ban_is_active, raise_banned
@@ -104,6 +104,17 @@ def _translates_content_errors(handler):
 
 def _ok(data: Any) -> dict[str, Any]:
     return {"status": "ok", "code": 200, "data": data}
+
+
+async def _invalidate_read_caches() -> None:
+    """写库之后按域自增缓存版本号。
+
+    控制台能改任意表的任意行，缓存代理根本看不到这次写（它只包了仓储方法），
+    所以失效只能在这里补。用 ``bump_epoch`` 而不是 ``flush_scopes``：O(1)、不发
+    SCAN，旧 key 靠 TTL 自然淘汰。只 bump 有缓存的五个域。
+    """
+    for scope in ("users", "groups", "activities", "roles", "settings"):
+        await cache.bump_epoch(scope)
 
 
 async def _audit(user: dict, action: str, detail: str, *, log_type: str) -> None:
@@ -214,6 +225,7 @@ async def insert_row(
         f"insert {name.upper()} ({columns}) approver={approver}",
         log_type="system_db_dml",
     )
+    await _invalidate_read_caches()
     return _ok(data)
 
 
@@ -239,6 +251,7 @@ async def update_row(
         f"update {name.upper()} ({columns}) approver={approver}",
         log_type="system_db_dml",
     )
+    await _invalidate_read_caches()
     return _ok(data)
 
 
@@ -261,6 +274,7 @@ async def delete_row(
         f"delete {name.upper()} approver={approver}",
         log_type="system_db_dml",
     )
+    await _invalidate_read_caches()
     return _ok(data)
 
 
@@ -294,4 +308,5 @@ async def run_ddl(
         f"{plan['summary']} approver={approver}",
         log_type=log_type,
     )
+    await _invalidate_read_caches()
     return _ok(data)

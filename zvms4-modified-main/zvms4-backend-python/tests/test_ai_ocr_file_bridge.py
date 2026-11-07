@@ -287,7 +287,7 @@ def test_feature_switch_off_is_403(tmp_path, engines, quotas, audit_repo, monkey
     def _denied(user, key):
         raise HTTPException(status_code=403, detail="当前角色无权使用该功能")
 
-    monkeypatch.setattr(ai_router, "ensure_feature", _denied)
+    monkeypatch.setattr("routers.ai.ocr.ensure_feature", _denied)
 
     response = _admin().post("/api/ai/ocr/file", json={"path": str(_image(tmp_path))})
 

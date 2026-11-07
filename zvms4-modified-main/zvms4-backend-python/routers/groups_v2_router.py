@@ -14,6 +14,7 @@ from config import (
     BASE_SOCIAL_PRACTICE,
 )
 from db import backends
+from db.repos.pagination import page_args
 from typings.time import UserActivityTime
 from util.calculate import calculate_user_time_bulk
 from util.get_class import get_user_class
@@ -89,8 +90,8 @@ async def get_groups_v2(
     merged = class_rows + permission_rows
     total = len(merged)
 
-    start = (page - 1) * size
-    result = merged[start : start + size]
+    offset, limit = page_args(page, size)
+    result = merged[offset : offset + limit]
 
     return {
         "data": result,
@@ -178,7 +179,7 @@ async def get_group_activities_v2(
 
 
 @router.get("/{group_id}/time")
-async def read_users(
+async def read_group_time(
     group_id: str,
     query: str = Query("", description="Search query for user name or ID"),
     page: int = Query(1, ge=1, description="Page number for pagination"),
@@ -189,7 +190,7 @@ async def read_users(
     user: Optional[str] = Depends(get_current_user),
 ):
     """
-    Query users
+    Query the activity time of the users in a group
     """
     sortkey = {
         "on-campus": "on_campus_raw",
@@ -283,8 +284,8 @@ async def get_group_users_v2(
             key=lambda member: (member.get(sort) is None, member.get(sort)),
             reverse=not asc,
         )
-    start = (page - 1) * perpage
-    members = members[start : start + perpage]
+    offset, limit = page_args(page, perpage)
+    members = members[offset : offset + limit]
 
     custom_flags = (
         await custom_password_flags_async(members) if pwdm else None

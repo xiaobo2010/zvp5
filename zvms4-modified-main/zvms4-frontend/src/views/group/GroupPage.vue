@@ -3,10 +3,10 @@ import ZGroupUserList from '@/components/group/ZGroupUserList.vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElPageHeader, ElSegmented, ElIcon, ElText } from 'element-plus'
 import { ref, watch, type Component } from 'vue'
-import api from '@/api'
 import type { Group } from '@/../types'
 import { useWindowSize } from '@vueuse/core'
 import { useUserStore } from '@/stores/user.ts'
+import { useGroupsStore } from '@/stores/groups'
 import { ArrowLeft } from '@element-plus/icons-vue'
 import { ZActivityList } from '@/components'
 import ZGroupUserTimeList from '@/components/group/ZGroupUserTimeList.vue'
@@ -25,6 +25,7 @@ interface SegmentedTab {
 
 const { height } = useWindowSize()
 const userStore = useUserStore()
+const groupsStore = useGroupsStore()
 const route = useRoute()
 const router = useRouter()
 const { t } = useI18n()
@@ -40,7 +41,7 @@ watch(height, () => {
 })
 
 async function refresh() {
-  const res = await api.group.readOne(id.value)
+  const res = await groupsStore.fetchGroup(id.value)
   group.value = res
   if (res?.type !== 'class') {
     tab.value = 'users'

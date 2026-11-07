@@ -33,7 +33,9 @@ from services.ai import config as ai_config
 from services.ai import scheduled_runner as runner
 from services.ai.scheduled_runner import ScheduledError
 from util.object_id import get_current_user
+from util.oid import hex_id_or_none
 from util.permission.features import ensure_feature
+from util.serialization import iso
 
 router = APIRouter()
 
@@ -101,14 +103,10 @@ def _http(exc: ScheduledError) -> HTTPException:
 
 
 def _oid(value: str) -> str:
-    text = str(value or "").strip().lower()
-    if not OID_PATTERN.match(text):
+    text = hex_id_or_none(value)
+    if text is None:
         raise HTTPException(status_code=404, detail="AI_SCHEDULE_NOT_FOUND")
     return text
-
-
-def _iso(value: object) -> str | None:
-    return value.isoformat() if isinstance(value, datetime) else None
 
 
 def _view(row: Mapping[str, Any]) -> dict[str, Any]:
@@ -119,20 +117,20 @@ def _view(row: Mapping[str, Any]) -> dict[str, Any]:
         "prompt_text": row.get("prompt_text"),
         "review_status": row.get("review_status"),
         "reviewed_by_oid": row.get("reviewed_by_oid"),
-        "reviewed_at": _iso(row.get("reviewed_at")),
+        "reviewed_at": iso(row.get("reviewed_at")),
         "review_note": row.get("review_note"),
         "schedule_kind": row.get("schedule_kind"),
         "interval_minutes": row.get("interval_minutes"),
         "cron_expr": row.get("cron_expr"),
         "enabled": bool(row.get("enabled")),
         "model": row.get("model"),
-        "last_run_at": _iso(row.get("last_run_at")),
-        "next_run_at": _iso(row.get("next_run_at")),
+        "last_run_at": iso(row.get("last_run_at")),
+        "next_run_at": iso(row.get("next_run_at")),
         "run_count": row.get("run_count") or 0,
         "last_status": row.get("last_status"),
         "last_error": row.get("last_error"),
-        "created_at": _iso(row.get("created_at")),
-        "updated_at": _iso(row.get("updated_at")),
+        "created_at": iso(row.get("created_at")),
+        "updated_at": iso(row.get("updated_at")),
     }
 
 
@@ -144,9 +142,9 @@ def _run_view(row: Mapping[str, Any]) -> dict[str, Any]:
         "stop_reason": row.get("stop_reason"),
         "error_code": row.get("error_code"),
         "error_message": row.get("error_message"),
-        "created_at": _iso(row.get("created_at")),
-        "started_at": _iso(row.get("started_at")),
-        "finished_at": _iso(row.get("finished_at")),
+        "created_at": iso(row.get("created_at")),
+        "started_at": iso(row.get("started_at")),
+        "finished_at": iso(row.get("finished_at")),
     }
 
 

@@ -1343,7 +1343,7 @@ async function onImportFile(event: Event) {
   try {
     const buffer = await file.arrayBuffer()
     if (/\.(xlsx|xls)$/i.test(file.name)) {
-      const rows = parseVolunteerXlsx(buffer)
+      const rows = await parseVolunteerXlsx(buffer)
       if (!rows.length) {
         ElMessage.info('表格中没有可导入的数据')
         return

@@ -16,7 +16,7 @@ from util.object_id import get_current_user, compulsory_temporary_token
 from util.permission import volunteer, volunteer_member
 from util.user import get_user_display_name
 from util.validation import validate_activity_description, validate_activity_name
-from utils import validate_object_id
+from util.oid import validate_object_id
 
 router = APIRouter()
 
@@ -445,7 +445,7 @@ async def modify_activity_status_v2(
 
     target_activity = _validated_activity(target_activity)
 
-    if target_activity.status != "pending" and "admin" not in user.get("perm"):
+    if target_activity.status != "pending" and "admin" not in (user.get("per") or []):
         raise HTTPException(
             status_code=400,
             detail="Activity status can only be modified from pending to effective or refused",

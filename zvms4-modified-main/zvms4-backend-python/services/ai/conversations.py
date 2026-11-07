@@ -32,6 +32,7 @@ from db import backends
 from services import db_content, settings_runtime
 from services.agent.tool_impl import AgentError
 from services.ai import prompt_audit
+from util.serialization import iso_str
 
 # 会话类型与状态：与表上的 CHECK 逐字一致（写错只会在 Oracle 上变成 ORA-02290，
 # 而那时事务已经开了一半）。``chat`` 已下线，只为存量数据保留常量：老会话不能
@@ -148,13 +149,6 @@ def _int(value: object) -> int:
         return int(value or 0)
     except (TypeError, ValueError):
         return 0
-
-
-def _iso(value: object) -> str | None:
-    """TIMESTAMP → 字符串；与仓库其余 AI 面同一口径（空格分隔、秒精度）。"""
-    if isinstance(value, datetime):
-        return value.isoformat(sep=" ", timespec="seconds")
-    return value if isinstance(value, str) else None
 
 
 def _json(value: object) -> object:
@@ -355,11 +349,11 @@ def conversation_view(row: Mapping[str, Any]) -> dict:
         "compaction": {
             "upto_seq": upto,
             "summarized": upto > 0,
-            "degraded_at": _iso(row.get("compaction_degraded_at")),
+            "degraded_at": iso_str(row.get("compaction_degraded_at")),
         },
         "message_count": _int(row.get("message_count")),
-        "created_at": _iso(row.get("created_at")),
-        "updated_at": _iso(row.get("updated_at")),
+        "created_at": iso_str(row.get("created_at")),
+        "updated_at": iso_str(row.get("updated_at")),
     }
 
 
@@ -398,7 +392,7 @@ def message_view(row: Mapping[str, Any]) -> dict:
         "round_no": row.get("round_no"),
         "request_id": row.get("request_id"),
         "usage": _usage_of(row),
-        "created_at": _iso(row.get("created_at")),
+        "created_at": iso_str(row.get("created_at")),
     }
 
 

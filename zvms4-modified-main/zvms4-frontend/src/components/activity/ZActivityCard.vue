@@ -46,7 +46,6 @@ api.activity.read
       api.activity.member
         .read(activity.value._id, userSession.value)
         .then((res) => {
-          console.log(res)
           mine.value = res
           loading.value = false
         })
