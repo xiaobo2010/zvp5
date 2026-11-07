@@ -84,7 +84,7 @@ if (xuehaiId > 0 && !config.headers['X-Device-Unlock']) {
 ## 五、未做 / 待定
 
 - **预览站同源化**（未做）：在 canary Worker 里把 `/api/*` 反代到
-  `https://zvpapi.xiaobolisces.top/api/*`，构建基址改成相对路径 `/api`，预览站即可零预检。
+  `https://zvpapi.xiaobopisces.top/api/*`，构建基址改成相对路径 `/api`，预览站即可零预检。
   `deployment/preview-worker/README.md` 里「Worker 无法反代 `/api`」的结论只对
   `zvp.xiaoboisces.top` 成立（该域名 Cloudflare 返回 `1016 Origin DNS error`）；
   实测 Worker → `zvpapi.xiaoboisces.top` 返回 **200、无 `Cdn-Loop`**。
@@ -109,7 +109,7 @@ if (xuehaiId > 0 && !config.headers['X-Device-Unlock']) {
 | 目标 | 洛杉矶 `zgovps-la` `/www/zvms4/frontend-dist`（nginx `root`，`gzip_static on`） |
 | 备份 | `/www/zvms4/frontend-dist.bak-20261107-133820`（22M） |
 | 产物 | `index-Cj24z6Rz.js` / `index-ZSk6j9bi.css` / `index-legacy-DBGALj1D.js`，178 个文件 + 160 个 `.gz` |
-| 构建 | `VITE_API_BASE=https://zvp.xiaobopisces.top/api` + `VITE_API_RACE_BASE=https://zvpapi.xiaoboisces.top/api` |
+| 构建 | `VITE_API_BASE=https://zvp.xiaobopisces.top/api` + `VITE_API_RACE_BASE=https://zvpapi.xiaobopisces.top/api` |
 | 未动 | 首尔后端（`zvms4` 未重启）、canary 预览站、nginx 配置 |
 
 验收：首页 / `/user/login` `/activities` `/ai` `/manage` `/about` 全 200；`/api/health`

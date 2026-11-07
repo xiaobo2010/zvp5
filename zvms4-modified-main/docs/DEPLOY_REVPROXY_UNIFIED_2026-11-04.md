@@ -205,8 +205,8 @@ curl -sS -X OPTIONS \
 | 注入 | `VITE_API_BASE=https://zvp.xiaobopisces.top/api`、`VITE_API_RACE_BASE=https://zvpapi.xiaobopisces.top/api` |
 | 产物自检 | 竞速模块（`Both API paths failed`）命中 1 处；两个 API 基址同时出现在 `assets/*.js` |
 | 线上取包 | `GET /assets/index-aUiB2Zdp.js` 200 / 449082 bytes，两个基址齐备 |
-| 主路 | `GET https://zvp.xiaoboisces.top/api/version` 200 `v4.3.0-7`（经 LA 反代） |
-| 备路 | `GET https://zvpapi.xiaoboisces.top/api/version` 200 `v4.3.0-7`；带 `Origin: https://zvp.xiaobopisces.top` 时回显 `Access-Control-Allow-Origin` + `Allow-Credentials: true` |
+| 主路 | `GET https://zvp.xiaobopisces.top/api/version` 200 `v4.3.0-7`（经 LA 反代） |
+| 备路 | `GET https://zvpapi.xiaobopisces.top/api/version` 200 `v4.3.0-7`；带 `Origin: https://zvp.xiaobopisces.top` 时回显 `Access-Control-Allow-Origin` + `Allow-Credentials: true` |
 | 静态资源 | index.html 引用的 20 个资源全部存在，无 404；`sw.js`、`manifest.webmanifest` 200 |
 | 回滚 | `/www/zvms4/frontend-dist.bak-20261106-170011`（LA） |
 
