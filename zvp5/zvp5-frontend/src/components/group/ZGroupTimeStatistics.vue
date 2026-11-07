@@ -75,7 +75,7 @@ const roster = ref<GroupComplianceMemberRosters>({})
 const loading = ref(false)
 const error = ref('')
 
-// `/v2/groups/{id}/statistics/compliance` requires secretary of the class and
+// `/v1/groups/{id}/statistics/compliance` requires secretary of the class and
 // above. Pre-judge only for UX; the backend remains the source of truth.
 const canView = computed(
   () =>

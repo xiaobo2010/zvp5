@@ -10,7 +10,7 @@ the APScheduler instance, socket.io and the ``tasks.compute_time`` graph, none o
 which this test needs — and it would drag the whole application's import chain
 (and its startup hooks) into what is meant to be a router contract test. The
 prefix below is copied from ``main.py``'s
-``include_router(activity_statistics_router.router, prefix="/api/v2/statistics/activities")``
+``include_router(activity_statistics_router.router, prefix="/api/v1/statistics/activities")``
 so the tested URLs are the production ones.
 
 Offline compromise: importing ``routers.activity_statistics_router`` reaches
@@ -35,7 +35,7 @@ from util.activity_statistics import BIN_WIDTH_SMALL
 from util.object_id import get_current_user
 
 ACTIVITY_ID = "64b7f0c2e1a3b4c5d6e7f801"
-PREFIX = "/api/v2/statistics/activities"
+PREFIX = "/api/v1/statistics/activities"
 
 _USERS = [{"_id": "u1", "class_id": "c1"}, {"_id": "u2", "class_id": "c1"}]
 _CLASSES = [{"_id": "c1", "name": "高一(1)班"}]

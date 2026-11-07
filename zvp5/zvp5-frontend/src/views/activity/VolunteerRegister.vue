@@ -95,7 +95,7 @@ interface RegistrationRow {
   baseMessage: string
 }
 
-// 服务端已存在的成员记录（`GET /v3/activities/{aid}/members` 的一行）。
+// 服务端已存在的成员记录（`GET /v1/activities/{aid}/members` 的一行）。
 // 选活动时按页载入成内存索引：表格里敲到已在活动中的成员时能立刻标「已录入」，
 // 提交时按「设置时长」覆盖而不是再新增一条。不写进 localStorage 草稿，换活动即失效。
 interface ExistingMemberRecord {

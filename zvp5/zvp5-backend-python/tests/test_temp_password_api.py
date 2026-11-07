@@ -2,7 +2,7 @@
 
 覆盖两件事：
 
-* ``POST /api/v3/users/{user_id}/temp-password`` 的权限矩阵（admin/department
+* ``POST /api/v1/users/{user_id}/temp-password`` 的权限矩阵（admin/department
   全校、secretary 同班、student 拒绝、给 admin 建号要 admin 身份）、返回结构、
   8 位纯数字明文，以及「库里只有 bcrypt 哈希、明文只在响应里出现一次」。
 * ``/me/device`` 与 ``/me/primary-device`` 的设备身份闸门：首次绑定必须发生在
@@ -31,7 +31,7 @@ from typings.log import inject_log
 from util.cert import jwt_encode
 from util.object_id import get_current_user
 
-PREFIX = "/api/v3/users"
+PREFIX = "/api/v1/users"
 
 ADMIN_OID = "000000000000000000000001"
 SECRETARY_OID = "000000000000000000000002"

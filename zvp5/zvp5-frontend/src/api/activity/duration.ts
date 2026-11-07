@@ -16,7 +16,7 @@ export async function modify(
   options: { silent?: boolean; timeout?: number } = {}
 ) {
   await axios({
-    url: `/v2/activities/${aid}/members/${user.toString()}/record`,
+    url: `/v1/activities/${aid}/members/${user.toString()}/record`,
     method: 'put',
     data: { duration, mode },
     timeout: options.timeout

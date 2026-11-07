@@ -1,6 +1,6 @@
 """回收站（``user_trash``）保留期清理任务（v4.2.4-2 契约 §3.3A-5）。
 
-``DELETE /api/v3/users/{user_id}`` 是硬删除：被删用户的行 + 全部关联行先在同一个
+``DELETE /api/v1/users/{user_id}`` 是硬删除：被删用户的行 + 全部关联行先在同一个
 事务里整包归档进 ``user_trash``（见 ``db/repos/oracle/users.py``
 ``archive_and_delete_user``）。归档**不是永久备份**——保留期 30 天（可配），到期
 由本模块物理删除回收站行。

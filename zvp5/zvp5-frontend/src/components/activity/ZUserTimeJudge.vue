@@ -66,7 +66,7 @@ base.onCampus = onCampus.value
 base.offCampus = offCampus.value
 base.socialPractice = socialPractice.value
 
-// `/v2/users/{id}/time` is readable by the user itself, or by a secretary and
+// `/v1/users/{id}/time` is readable by the user itself, or by a secretary and
 // above. Pre-judge only for UX; the backend remains the source of truth.
 const canRead = computed(
   () =>

@@ -46,11 +46,11 @@ describe('小型 GET 双路竞速', () => {
     const relay = 'https://content-la.example.test/api'
 
     expect(hedgedGetRelayBase(config(), primary, relay)).toBe(relay)
-    expect(hedgedGetRelayBase(config({ url: '/v3/notifications' }), primary, relay)).toBe(relay)
+    expect(hedgedGetRelayBase(config({ url: '/v1/notifications' }), primary, relay)).toBe(relay)
     expect(hedgedGetRelayBase(config({ method: 'post' }), primary, relay)).toBeNull()
     expect(hedgedGetRelayBase(config({ responseType: 'blob' }), primary, relay)).toBeNull()
-    expect(hedgedGetRelayBase(config({ url: '/v2/users/me/time' }), primary, relay)).toBe(relay)
-    expect(hedgedGetRelayBase(config({ url: '/v3/users/me/device' }), primary, relay)).toBe(relay)
+    expect(hedgedGetRelayBase(config({ url: '/v1/users/me/time' }), primary, relay)).toBe(relay)
+    expect(hedgedGetRelayBase(config({ url: '/v1/users/me/device' }), primary, relay)).toBe(relay)
     expect(
       hedgedGetRelayBase(config({ headers: { Range: 'bytes=0-' } }), primary, relay)
     ).toBeNull()
@@ -70,31 +70,28 @@ describe('小型 GET 双路竞速', () => {
       '/system/maintenance',
       '/system/role-policies',
       '/system/role-policies/me',
-      '/v3/notifications',
-      '/v2/activities',
-      '/v3/activities',
-      '/v2/activities/abc',
-      '/v2/activities/abc/members',
-      '/v2/activities/abc/members/member',
-      '/v3/activities/abc/members',
-      '/v2/statistics/activities/abc/analysis',
-      '/v2/users',
-      '/v2/users/abc/time',
-      '/v2/users/abc/time_statistics',
-      '/v2/users/abc/activities',
-      '/v2/groups',
-      '/v2/groups/abc/activities',
-      '/v2/groups/abc/users',
-      '/v3/groups/abc/users',
-      '/v3/users/me/device',
-      '/v3/users/me/device-bindings',
+      '/v1/notifications',
+      '/v1/activities',
+      '/v1/activities/abc',
+      '/v1/activities/abc/members',
+      '/v1/activities/abc/members/member',
+      '/v1/statistics/activities/abc/analysis',
+      '/v1/users',
+      '/v1/users/abc/time',
+      '/v1/users/abc/time_statistics',
+      '/v1/users/abc/activities',
+      '/v1/groups',
+      '/v1/groups/abc/activities',
+      '/v1/groups/abc/users',
+      '/v1/users/me/device',
+      '/v1/users/me/device-bindings',
       '/users/abc',
-      '/v3/users/abc',
-      '/v3/ban/rules',
-      '/v3/ban/triggers',
-      '/v3/ban/users',
-      '/v3/ban/devices',
-      '/v3/ban/violations',
+      '/v1/users/abc',
+      '/v1/ban/rules',
+      '/v1/ban/triggers',
+      '/v1/ban/users',
+      '/v1/ban/devices',
+      '/v1/ban/violations',
       '/attachments',
       '/attachments/abc/meta',
       '/attachments/abc/audit',
@@ -113,17 +110,17 @@ describe('小型 GET 双路竞速', () => {
       '/ai/quota/abc',
       '/ai/scheduled-tasks',
       '/ai/scheduled-tasks/abc/runs',
-      '/v2/groups/abc/time',
-      '/v2/groups/abc/statistics/compliance',
-      '/v2/times',
+      '/v1/groups/abc/time',
+      '/v1/groups/abc/statistics/compliance',
+      '/v1/times',
       '/system/settings',
       '/system/user-quotas/abc',
-      '/v3/notifications/admin',
-      '/v3/notifications/abc/versions',
-      '/v3/ban/records',
+      '/v1/notifications/admin',
+      '/v1/notifications/abc/versions',
+      '/v1/ban/records',
       '/groups',
       '/groups/abc',
-      '/v2/groups/abc'
+      '/v1/groups/abc'
     ]) {
       expect(isSmallJsonGetPath(path), path).toBe(true)
     }
@@ -133,12 +130,12 @@ describe('小型 GET 双路竞速', () => {
       '/ai/logs/abc',
       '/ai/quota',
       '/ai/scheduled-tasks/abc',
-      '/v2/groups/abc/time/extra',
-      '/v2/times/abc',
+      '/v1/groups/abc/time/extra',
+      '/v1/times/abc',
       '/system/settings/abc',
       '/system/user-quotas',
-      '/v3/notifications/abc',
-      '/v3/ban/records/abc',
+      '/v1/notifications/abc',
+      '/v1/ban/records/abc',
       '/attachments/abc/thumb',
       '/attachments/abc'
     ]) {
@@ -205,7 +202,7 @@ describe('小型 GET 双路竞速', () => {
     expect(serialized).not.toContain('secret-token')
     expect(serialized).not.toContain('secret-cookie')
     expect(performance.getEntriesByName(API_RACE_EVENT).length).toBeGreaterThan(measuresBefore)
-    expect(apiRaceObservationPath('/v3/users/68c3d9b346711c1f1f0475b3?x=1')).toBe('/v3/users/:id')
+    expect(apiRaceObservationPath('/v1/users/68c3d9b346711c1f1f0475b3?x=1')).toBe('/v1/users/:id')
   })
 
   it('首尔失败时仍由 LA 备用线路完成', async () => {

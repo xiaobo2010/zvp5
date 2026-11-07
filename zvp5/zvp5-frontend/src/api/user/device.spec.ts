@@ -31,7 +31,7 @@ describe('device api contract', () => {
     }
     request.mockResolvedValueOnce(data)
     await expect(readMyDevice()).resolves.toEqual(data)
-    expect(request).toHaveBeenCalledWith({ method: 'get', url: '/v3/users/me/device' })
+    expect(request).toHaveBeenCalledWith({ method: 'get', url: '/v1/users/me/device' })
   })
 
   it('绑定主设备提交与请求头语义一致的目标设备号', async () => {
@@ -39,7 +39,7 @@ describe('device api contract', () => {
     await setMyPrimaryDevice('101')
     expect(requestVoid).toHaveBeenCalledWith({
       method: 'put',
-      url: '/v3/users/me/primary-device',
+      url: '/v1/users/me/primary-device',
       data: { xuehai_id: '101' }
     })
   })
@@ -47,7 +47,7 @@ describe('device api contract', () => {
   it('解绑本人主设备', async () => {
     requestVoid.mockResolvedValueOnce(undefined)
     await clearMyPrimaryDevice()
-    expect(requestVoid).toHaveBeenCalledWith({ method: 'delete', url: '/v3/users/me/primary-device' })
+    expect(requestVoid).toHaveBeenCalledWith({ method: 'delete', url: '/v1/users/me/primary-device' })
   })
 
   it('签发一次性临时密码按 oid 定位目标', async () => {
@@ -58,13 +58,13 @@ describe('device api contract', () => {
     }
     request.mockResolvedValueOnce(issued)
     await expect(issueTempPassword('oid1')).resolves.toEqual(issued)
-    expect(request).toHaveBeenCalledWith({ method: 'post', url: '/v3/users/oid1/temp-password' })
+    expect(request).toHaveBeenCalledWith({ method: 'post', url: '/v1/users/oid1/temp-password' })
   })
 
   it('管理员清空他人主设备按 oid 定位目标', async () => {
     requestVoid.mockResolvedValueOnce(undefined)
     await clearUserPrimaryDevice('oid1')
-    expect(requestVoid).toHaveBeenCalledWith({ method: 'delete', url: '/v3/users/oid1/primary-device' })
+    expect(requestVoid).toHaveBeenCalledWith({ method: 'delete', url: '/v1/users/oid1/primary-device' })
   })
 
   it('高危写操作带上 verify 短令牌时进请求体', async () => {
@@ -82,22 +82,22 @@ describe('device api contract', () => {
 
     expect(requestVoid).toHaveBeenNthCalledWith(1, {
       method: 'put',
-      url: '/v3/users/me/primary-device',
+      url: '/v1/users/me/primary-device',
       data: { xuehai_id: '102', verification_token: 'verify-token' }
     })
     expect(requestVoid).toHaveBeenNthCalledWith(2, {
       method: 'delete',
-      url: '/v3/users/me/primary-device',
+      url: '/v1/users/me/primary-device',
       data: { verification_token: 'verify-token' }
     })
     expect(requestVoid).toHaveBeenNthCalledWith(3, {
       method: 'delete',
-      url: '/v3/users/oid1/primary-device',
+      url: '/v1/users/oid1/primary-device',
       data: { verification_token: 'verify-token' }
     })
     expect(request).toHaveBeenCalledWith({
       method: 'post',
-      url: '/v3/users/oid1/temp-password',
+      url: '/v1/users/oid1/temp-password',
       data: { verification_token: 'verify-token' }
     })
   })

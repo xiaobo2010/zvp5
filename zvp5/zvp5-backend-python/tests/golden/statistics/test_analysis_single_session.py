@@ -1,6 +1,6 @@
 """Single-session / concurrent-read tests for the activity analysis route.
 
-``GET /api/v2/statistics/activities/{id}/analysis`` reads three things: the
+``GET /api/v1/statistics/activities/{id}/analysis`` reads three things: the
 effective memberships, the profiles of the oids those memberships reference and
 the class listing. This module pins the shape of those reads:
 
@@ -31,7 +31,7 @@ from util.activity_statistics import BIN_WIDTH_SMALL
 from util.object_id import get_current_user
 
 ACTIVITY_ID = "64b7f0c2e1a3b4c5d6e7f801"
-PREFIX = "/api/v2/statistics/activities"
+PREFIX = "/api/v1/statistics/activities"
 SECRETARY = {"id": "64b7f0c2e1a3b4c5d6e7f8ff", "per": ["secretary"]}
 
 

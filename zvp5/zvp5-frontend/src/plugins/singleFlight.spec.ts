@@ -7,8 +7,8 @@ beforeEach(() => {
 
 describe('在途合并（single-flight）', () => {
   it('gives the same promise to everyone joining the same key', async () => {
-    const leader = joinFlight<string>('/api/v3/users/me/device')
-    const follower = joinFlight<string>('/api/v3/users/me/device')
+    const leader = joinFlight<string>('/api/v1/users/me/device')
+    const follower = joinFlight<string>('/api/v1/users/me/device')
 
     expect(leader.leader).toBe(true)
     expect(follower.leader).toBe(false)
@@ -19,8 +19,8 @@ describe('在途合并（single-flight）', () => {
   })
 
   it('keeps different keys apart', () => {
-    const first = joinFlight<string>('/api/v3/users/me/device')
-    const second = joinFlight<string>('/api/v3/users/me/device?x=1')
+    const first = joinFlight<string>('/api/v1/users/me/device')
+    const second = joinFlight<string>('/api/v1/users/me/device?x=1')
 
     expect(second.leader).toBe(true)
     expect(second.promise).not.toBe(first.promise)

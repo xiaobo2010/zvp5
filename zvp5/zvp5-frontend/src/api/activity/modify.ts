@@ -4,7 +4,7 @@ import type { Response } from '@/../types'
 async function modifyActivityInfo(aid: string, name: string, description: string) {
   const result = (
     await axios({
-      url: `/v2/activities/${aid}/info`,
+      url: `/v1/activities/${aid}/info`,
       method: 'put',
       data: {
         description,
@@ -20,7 +20,7 @@ async function modifyActivityInfo(aid: string, name: string, description: string
 
 async function modifyActivityStatus(aid: string, status: string) {
   await axios({
-    url: `/v2/activities/${aid}/status`,
+    url: `/v1/activities/${aid}/status`,
     method: 'put',
     data: {
       status

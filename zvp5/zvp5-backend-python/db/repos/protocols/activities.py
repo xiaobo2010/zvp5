@@ -24,13 +24,16 @@ class ActivitiesRepo(Protocol):
         status: str | None,
         page: int,
         size: int,
+        sort: str | None = None,
+        asc: bool = False,
     ) -> tuple[list[Row], int]:
         """Return ``(rows, total)`` for one page, filtered by keyword/type/status.
 
         ``query`` is a case-insensitive *contains* on ``name`` only. ``atypes``
         is an OR-list of activity types (``on-campus`` / ``off-campus`` /
         ``social-practice`` / ``hybrid``); empty/``None`` means "no type filter".
-        ``status`` is an optional equality filter.
+        ``status`` is an optional equality filter. ``sort`` is an optional
+        whitelisted column name (``None`` keeps ``oid DESC``).
         """
         ...
 

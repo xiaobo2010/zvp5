@@ -224,7 +224,6 @@ async def read_group_time(
     return {"status": "ok", "code": 200, "data": results, "metadata": {"size": count}}
 
 
-@router.get("/{group_id}/users")
 async def get_group_users_v2(
     group_id: str,
     page: int = Query(1, ge=1, description="Page number for pagination"),

@@ -8,7 +8,7 @@ export async function createActivity(activity: Activity) {
   delete activity._id
   activity.date = dayjs(activity.date).toISOString()
   const result = (
-    await axios('/v2/activities', {
+    await axios('/v1/activities', {
       method: 'post',
       data: activity
     })

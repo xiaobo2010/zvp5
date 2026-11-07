@@ -1,4 +1,4 @@
-"""``GET /api/v3/users/me/device-bindings`` 的离线契约。
+"""``GET /api/v1/users/me/device-bindings`` 的离线契约。
 
 覆盖设备自助读取语义：
 
@@ -20,7 +20,7 @@ from db import backends
 from routers import users_v3_router
 from util.object_id import get_current_user
 
-PREFIX = "/api/v3/users"
+PREFIX = "/api/v1/users"
 USER_OID = "000000000000000000000002"
 OTHER_OID = "000000000000000000000003"
 

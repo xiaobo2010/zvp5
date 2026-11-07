@@ -1,4 +1,4 @@
-"""``/api/v3/ban/violations`` 的离线契约（上报端点 + 管理员证据列表）。
+"""``/api/v1/ban/violations`` 的离线契约（上报端点 + 管理员证据列表）。
 
 钉住三件事：
 
@@ -23,7 +23,7 @@ from routers import ban_violations_router
 from services import violation_guard
 from util.object_id import get_current_user
 
-PREFIX = "/api/v3/ban"
+PREFIX = "/api/v1/ban"
 ADMIN = {"id": "000000000000000000000001", "per": ["admin"]}
 STUDENT = {"id": "000000000000000000000002", "per": ["student"]}
 

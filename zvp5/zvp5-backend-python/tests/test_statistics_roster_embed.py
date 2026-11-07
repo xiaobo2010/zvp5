@@ -37,7 +37,7 @@ from util.object_id import get_current_user
 
 # ── A：/v2/groups/{id}/statistics/compliance ─────────────────────────────────
 
-GROUPS_PREFIX = "/api/v2/groups"
+GROUPS_PREFIX = "/api/v1/groups"
 CLASS_OID = "64b7f0c2e1a3b4c5d6e7f801"
 SECRETARY_OID = "64b7f0c2e1a3b4c5d6e7f805"
 MEMBER_OIDS = [
@@ -240,7 +240,7 @@ def test_compliance_emits_the_roster_unconditionally(monkeypatch) -> None:
 
 # ── B：/v2/statistics/activities/{aid}/analysis ──────────────────────────────
 
-STATS_PREFIX = "/api/v2/statistics/activities"
+STATS_PREFIX = "/api/v1/statistics/activities"
 ACTIVITY_ID = "64b7f0c2e1a3b4c5d6e7f802"
 U1 = "64b7f0c2e1a3b4c5d6e7f821"
 U2 = "64b7f0c2e1a3b4c5d6e7f822"
