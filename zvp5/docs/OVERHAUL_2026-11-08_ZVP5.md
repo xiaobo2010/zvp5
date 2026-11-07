@@ -44,7 +44,7 @@ canary 分支 = 上述各阶段逐笔 merge + canary 独有两笔（`13ca249` va
 
 ## 四、遗留清单（未做项，按优先级）
 
-1. **发版窗口**：上节时序本身（生产部署不在本次授权内）。
+1. **发版窗口**：已于 2026-11-08 执行完毕（后端+生产前端+V052+canary 全链路），见 [`DEPLOY_2026-11-08_V1_CUT.md`](./DEPLOY_2026-11-08_V1_CUT.md)。
 2. **MCP 别名移除**：外部客户端确认迁移后删 `main.py` 的 `/api/v2/mcp` include（带 TODO 标记）并重冻结路由快照。
 3. **element-plus 按需化**（JS 约 -300~400KB raw）：全局注册/`v-loading`/命令式组件/ElConfigProvider 语言包回归面大，单独立项。
 4. **legacy 产物去留**：dist 的 48%（8.7MB）；现代端运行时代价≈0，收益是磁盘与构建时间。取决于学海平板 UA 实测（`src/plugins/ua.ts` 可采）。
