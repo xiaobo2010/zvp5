@@ -13,6 +13,22 @@ Cloudflare 同区回环——响应带 `Cdn-Loop: cloudflare; loops=1`，状态 
 改用的办法：**构建产物里把 API 基址指到已在后端 CORS 白名单里的正式域名**
 （`https://zvp.xiaobopisces.top/api`），浏览器直连该域名跨域调用。
 
+> **2026-11-07 复核（未落地，仅更正结论）**：上面那条「Worker 侧做不了同源反代」只对
+> `zvp.xiaobopisces.top` 成立——那个域名从 Worker 出站会拿到 Cloudflare
+> `1016 Origin DNS error`。用一个一次性 Worker 实测三个目标：
+>
+> | 目标 | 结果 |
+> | --- | --- |
+> | `https://zvpapi.xiaobopisces.top/api/version` | **200**，无 `Cdn-Loop` |
+> | `https://zvp.xiaobopisces.top/api/version` | 530 / `1016` |
+> | `https://<FRONTEND_IP>/api/version` | 403 / `1003` |
+>
+> 也就是说**反代到 `zvpapi` 是可行的**：预览站若改成 `/api` 同源相对路径，
+> CORS 预检会彻底消失（预检是跨域才有的，同源请求浏览器根本不发 OPTIONS）。
+> 落地前需要处理三件事：`Set-Cookie` 去掉 Domain 再下发、WS(`/api/system/ssh/ws`) 用
+> `WebSocketPair` 转发、SSE 直通不缓冲。
+> 背景与实测见 `docs/CORS_PREFLIGHT_2026-11-07.md`。
+
 ## 步骤
 
 分支预览在仓库内的 git worktree 里构建（分支名已由 `愚人节ui` 改名 `phigros` 后又改名 `v5-canary`）：

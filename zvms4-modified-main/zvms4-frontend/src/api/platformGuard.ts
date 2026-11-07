@@ -1,6 +1,7 @@
 import axios from 'axios'
 import type { Response } from '@/../types'
 import { baseURL } from '@/plugins/axios'
+import { cachedUnlockToken } from '@/plugins/device-unlock'
 import { getXuehaiId } from '@/plugins/ua'
 
 export type PlatformSignalName = 'iframe' | 'bridge' | 'devtools'
@@ -39,6 +40,9 @@ export async function reportSignals(signals: PlatformSignal[]): Promise<boolean>
   const xuehaiId = getXuehaiId()
   if (xuehaiId > 0) {
     headers['Xuehai-Id'] = String(xuehaiId)
+    // 请求头集合必须与 axios 实例保持一致（这里也要带空的解锁头）：
+    // 浏览器预检缓存的键含请求头集合，同一个 URL 用两套头会各预检一次。
+    headers['X-Device-Unlock'] = cachedUnlockToken()
   }
   try {
     const response = await axios.post<Response<PlatformViolationResult>>(
