@@ -19,25 +19,6 @@ body.yg-phi-portals {
   --p-danger: #ff6b66;
   --p-ease: cubic-bezier(0.16, 1, 0.3, 1);
   --p-spring: cubic-bezier(0.34, 1.4, 0.64, 1);
-  /* 弹层里的自绘分页/控件仍读 --yg-*；把 Phi 弹层令牌映射过去，避免浅色默认值漏进来 */
-  --yg-bg-page: var(--p-bg);
-  --yg-bg-surface: var(--p-surface);
-  --yg-bg-surface-raised: var(--p-surface);
-  --yg-bg-surface-sunken: var(--p-sunken);
-  --yg-bg-hover: var(--p-hover);
-  --yg-bg-active: color-mix(in srgb, var(--p-cyan) 18%, transparent);
-  --yg-text-primary: var(--p-ink);
-  --yg-text-secondary: var(--p-muted);
-  --yg-text-tertiary: var(--p-muted);
-  --yg-border-subtle: var(--p-line-soft);
-  --yg-border-default: var(--p-line);
-  --yg-border-strong: var(--p-line);
-  --yg-color-primary: var(--p-cyan);
-  --yg-color-primary-hover: color-mix(in srgb, var(--p-cyan) 86%, #fff);
-  --yg-color-primary-soft: color-mix(in srgb, var(--p-cyan) 14%, transparent);
-  --yg-text-danger: var(--p-danger);
-  --yg-color-danger-soft: color-mix(in srgb, var(--p-danger) 16%, transparent);
-  --yg-focus-ring-color: var(--p-cyan);
   color-scheme: dark;
 }
 
@@ -434,75 +415,31 @@ body.yg-phi-portals .el-textarea__inner::placeholder {
 }
 
 body.yg-phi-portals .el-button {
-  border: 0;
   border-radius: 0;
   font-family: var(--phi-hud, Rajdhani, 'Arial Narrow', sans-serif);
   letter-spacing: 0.04em;
-  background: color-mix(in srgb, var(--p-ink) 7%, var(--p-sunken));
-  color: var(--p-ink);
-  clip-path: polygon(0 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 0 100%);
-}
-
-body.yg-phi-portals .el-button:hover {
-  color: var(--p-cyan);
-  background: var(--p-hover);
 }
 
 body.yg-phi-portals .el-button--primary {
-  border: 0;
-  background: var(--p-cyan);
+  border-color: var(--p-cyan);
+  background: color-mix(in srgb, var(--p-cyan) 78%, #000);
   color: #041311;
 }
 
 body.yg-phi-portals .el-button--danger {
-  border: 0;
-  background: color-mix(in srgb, var(--p-danger) 16%, transparent);
-  color: var(--p-danger);
+  border-color: var(--p-danger);
+  background: color-mix(in srgb, var(--p-danger) 78%, #000);
+  color: #fff;
 }
 
 body.yg-phi-portals .el-button.is-text,
 body.yg-phi-portals .el-button.is-link {
   color: var(--p-muted);
-  background: transparent;
-  clip-path: none;
 }
 
-body.yg-phi-portals .el-button.is-text:hover,
-body.yg-phi-portals .el-button.is-link:hover {
+body.yg-phi-portals .el-button.is-text:hover {
   color: var(--p-cyan);
-  background: transparent;
-  text-decoration: underline;
-  text-underline-offset: 0.24em;
-}
-
-body.yg-phi-portals .el-button:focus-visible {
-  outline: 2px solid var(--p-cyan);
-  outline-offset: 2px;
-}
-
-/* ElSegmented：透明分组 + 底部细线；选中项采用与分页一致的下划线语言 */
-body.yg-phi-portals .el-segmented {
-  --el-segmented-bg-color: transparent;
-  --el-segmented-item-selected-bg-color: transparent;
-  --el-segmented-item-selected-color: var(--p-cyan);
-  --el-segmented-item-hover-bg-color: var(--p-hover);
-  --el-segmented-item-active-bg-color: color-mix(in srgb, var(--p-cyan) 18%, transparent);
-  --el-segmented-color: var(--p-muted);
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  box-shadow: inset 0 -1px 0 var(--p-line-soft);
-}
-
-body.yg-phi-portals .el-segmented__item {
-  border-radius: 0;
-}
-
-body.yg-phi-portals .el-segmented__item-selected {
-  border-radius: 0;
-  background: linear-gradient(var(--p-cyan), var(--p-cyan)) left bottom / 100% 3px no-repeat;
-  box-shadow: none;
-  clip-path: none;
+  background: var(--p-hover);
 }
 
 body.yg-phi-portals .el-tag {
