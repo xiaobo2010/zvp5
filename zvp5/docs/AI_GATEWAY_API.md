@@ -1,6 +1,6 @@
 # AI 网关 API
 
-适用代码：`zvms4-backend-python` @ `dce53af`（2026-10-29）
+适用代码：`zvp5-backend-python` @ `dce53af`（2026-10-29）
 挂载点：`main.py` → `app.include_router(ai_router.router, prefix="/api/ai")`
 + `app.include_router(ai_api_keys_router.router, prefix="/api/ai/api-keys")`
 + `app.include_router(ai_agent_router.router, prefix="/api/ai/agent")`
@@ -93,9 +93,9 @@ API key 详见 §8；它**不能**打开管理面（`/keys`、`/quota`、`/logs`
 |---|---|
 | `/api/ai/keys`、`/api/ai/keys/{oid}` | POST / PATCH / DELETE |
 | `/api/ai/api-keys`、`/api/ai/api-keys/{oid}` | POST / PATCH / DELETE |
-| `/api/v3/ban/rules`、`/api/v3/ban/rules/{code}` | POST / PUT / DELETE（DELETE 走 body） |
-| `/api/v3/ban/devices`、`/api/v3/ban/devices/{xuehai_id}`、`.../reset-gradient` | POST / DELETE / POST（均走 body） |
-| `/api/v3/notifications`、`/{oid}`、`/{oid}/rollback` | POST / PUT / DELETE / POST |
+| `/api/v1/ban/rules`、`/api/v1/ban/rules/{code}` | POST / PUT / DELETE（DELETE 走 body） |
+| `/api/v1/ban/devices`、`/api/v1/ban/devices/{xuehai_id}`、`.../reset-gradient` | POST / DELETE / POST（均走 body） |
+| `/api/v1/notifications`、`/{oid}`、`/{oid}/rollback` | POST / PUT / DELETE / POST |
 | `/api/changelog`、`/api/changelog/{oid}` | POST / PUT / DELETE |
 | `/api/system/settings` | PUT |
 
@@ -532,7 +532,7 @@ run 的两面）与 `AI_PROMPT_AUDIT`（`AI_PROMPT_RETENTION_DAYS`，默认 30 �
 - 证据：`AI_CALL_LOGS` 里该用户窗口内的 `capability='chat'` 行数（含 `rejected` / `busy`；
   agent 的每一轮也是一行 chat）。默认阈值 80 次 / 1 小时 / `mode=alert`。
 - 触发点：chat 请求完成处（成功或扣费后）与 agent run 完成处各评估一次，60 秒
-  `(trigger, user)` 节流兜底；规则可在 `/api/v3/ban/rules` 里调阈值或切 `ban`。
+  `(trigger, user)` 节流兜底；规则可在 `/api/v1/ban/rules` 里调阈值或切 `ban`。
 - `department` 在自动封禁豁免名单里（`NO_AUTO_BAN_ROLES`）：即使切成 `ban` 也只记证据与告警，
   不改现有语义。
 
@@ -773,12 +773,12 @@ client = OpenAI(
 
 | 工具 | 参数 | 权限镜像 |
 |---|---|---|
-| `search_activities` | `query`、`limit`（1–20） | 登录即可（同 `GET /api/v2/activities`） |
+| `search_activities` | `query`、`limit`（1–20） | 登录即可（同 `GET /api/v1/activities`） |
 | `list_activities` | `page`、`perpage`（1–100）、`activity_type` | 同上 |
-| `get_activity` | `activity_id` | 同上（同 `GET /api/v2/activities/{id}`） |
+| `get_activity` | `activity_id` | 同上（同 `GET /api/v1/activities/{id}`） |
 | `activity_statistics` | `activity_id` | 团支书及以上（同统计端点） |
 | `list_activity_members` | `activity_id`、`page`、`perpage`、`search` | 登录即可（同成员列表端点） |
-| `user_volunteer_time` | `user_id`（缺省=自己） | 登录即可（同 `GET /api/v2/users/{id}/time`） |
+| `user_volunteer_time` | `user_id`（缺省=自己） | 登录即可（同 `GET /api/v1/users/{id}/time`） |
 | `user_activities` | `user_id`（缺省=自己）、`page` | 同上 |
 | `list_groups` | `page`、`size` | 登录即可；权限组清单只对有管理权限者返回 |
 
@@ -881,7 +881,7 @@ client = OpenAI(
 | `AI_RUN_INTERRUPTED` | — | run 因进程重启/心跳丢失被收敛（出现在 `ai_runs.error_code`） |
 | `AI_CONTEXT_UNAVAILABLE` | 503 | 压缩所需上游不可用（已降级为截断时不抛） |
 
-前端映射在 `zvms4-frontend/src/api/ai/errors.ts` + `src/i18n/locales/ai.ts`；新增错误码必须两处同步。
+前端映射在 `zvp5-frontend/src/api/ai/errors.ts` + `src/i18n/locales/ai.ts`；新增错误码必须两处同步。
 
 ---
 
@@ -943,7 +943,7 @@ client = OpenAI(
 
 相关表：`ai_credentials`、`ai_ocr_engines`、`ai_api_keys`、`ai_quota`、`ai_call_logs`、`ai_agent_events`、`ai_prompt_audit`、`ai_conversations` / `ai_messages` / `ai_runs`、`file_ocr`（迁移 `V024`–`V048`）。
 
-> `V045`–`V048` 摘要：`app_logs` 加 `client_ip` / `user_agent`；`ai_conversations` 加 `thinking` / `scene`；`ai_prompt_audit` 加 `answer_text` / `tool_calls` / `refused` / `warned`；`V047` 为 `ban_violations(created_at)`、`ai_call_logs(status,created_at)` 建索引，删 4 条冗余索引与死表 `logs`。完整口径见 `zvms4-backend-python/docs/database-status.md`。
+> `V045`–`V048` 摘要：`app_logs` 加 `client_ip` / `user_agent`；`ai_conversations` 加 `thinking` / `scene`；`ai_prompt_audit` 加 `answer_text` / `tool_calls` / `refused` / `warned`；`V047` 为 `ban_violations(created_at)`、`ai_call_logs(status,created_at)` 建索引，删 4 条冗余索引与死表 `logs`。完整口径见 `zvp5-backend-python/docs/database-status.md`。
 
 ---
 

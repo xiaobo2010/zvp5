@@ -7,8 +7,8 @@
 仓库内对应文件：
 
 ```text
-zvms4-frontend/src/plugins/hedgedGet.ts
-zvms4-frontend/src/plugins/hedgedGet.spec.ts
+zvp5-frontend/src/plugins/hedgedGet.ts
+zvp5-frontend/src/plugins/hedgedGet.spec.ts
 deployment/nginx/zvms-cors-map.conf
 deployment/nginx/zvms-api-preflight.conf
 deployment/nginx/zvms-api-gzip.conf
@@ -17,7 +17,7 @@ deployment/nginx/zvms-api-gzip.conf
 前端必须使用双基址构建：
 
 ```bash
-cd zvms4-modified-main/zvms4-frontend
+cd zvp5/zvp5-frontend
 VITE_API_BASE=https://zvp.xiaobopisces.top/api \
 VITE_API_RACE_BASE=https://zvpapi.xiaobopisces.top/api \
 pnpm build
@@ -145,7 +145,7 @@ curl -sS -X OPTIONS \
   -H 'Origin: https://zvp.xiaobopisces.top' \
   -H 'Access-Control-Request-Method: GET' \
   -H 'Access-Control-Request-Headers: authorization,content-type,xuehai-id,x-device-unlock' \
-  -D - -o /dev/null https://zvpapi.xiaobopisces.top/api/v3/notifications
+  -D - -o /dev/null https://zvpapi.xiaobopisces.top/api/v1/notifications
 ```
 
 canary 域预检分别请求洛杉矶和首尔，期望均为 `204`、正确回显 Origin，并包含
@@ -157,7 +157,7 @@ canary 域预检分别请求洛杉矶和首尔，期望均为 `204`、正确回�
 curl -sS -X OPTIONS \
   -H 'Origin: https://evil.example' \
   -H 'Access-Control-Request-Method: GET' \
-  -D - -o /dev/null https://zvpapi.xiaobopisces.top/api/v3/notifications
+  -D - -o /dev/null https://zvpapi.xiaobopisces.top/api/v1/notifications
 ```
 
 期望：没有 `Access-Control-Allow-Origin`。

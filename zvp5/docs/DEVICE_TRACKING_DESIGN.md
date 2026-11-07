@@ -2,7 +2,7 @@
 
 > **v1（2026-10-14）**：采集链已在主干落地（`f74b0bc` / `66a593f`「采集学海ID——为平板加固做准备」）；本设计稿固化其**契约**，并补上本轮新增的 **按学海 ID 查询 + 索引**。状态：**采集与查询已实施**；设备↔用户强绑定为**未实施**的后续项。
 > **v2（2026-10-15）**：修复「一条都采不到」——初版 `getXuehaiId()` 只读学海浏览器桥 `window.xhBrowserJava`，而**资料中心 App 无此桥**，导致其请求头恒不发送。现改为**双源**：桥优先，UA（资料中心 `userId/<id>`）兜底（§2、§7.1）。
-> 基线仓库：`zvms4-modified-main/`，后端 `zvms4-backend-python/`。
+> 基线仓库：`zvp5/`，后端 `zvp5-backend-python/`。
 > 来源：zvp 旧代码（`zvp5-repo/zvp-latest`）学海 API 只读排查 + 本仓 LOGS/APP_LOGS schema 与日志链核实。
 
 ---
@@ -21,10 +21,10 @@
 
 | # | 事实 | 出处 |
 |---|---|---|
-| D1 | 前端 `getXuehaiId()` **双源**：① 原生桥 `window.xhBrowserJava?.getUserId?.()`（学海浏览器 xhbrowser）；② 兜底解析 `navigator.userAgent` 的 `userId/(\w+)`（资料中心 App xhdatacenter，UA 形如 `deviceId/<x> userId/<y>`）。两者都归一等价性为正整数，否则 `0` | `zvms4-frontend/src/plugins/ua.ts:23-33`；来源 `义工平台代码笔记整理.md:1240-1249` |
-| D2 | 请求拦截器按需注入 `Xuehai-Id` 头：仅当 `getXuehaiId() > 0` 且未显式设置时写入 | `zvms4-frontend/src/plugins/axios.ts:61-64` |
-| D3 | `window.xhBrowserJava` 的 TS 声明存在（可选属性） | `zvms4-frontend/src/types/xuehai.d.ts:5` |
-| D4 | 后端读取头 `Xuehai-Id` 并 `.strip()`；头名大小写不敏感由 Starlette 保证 | `zvms4-backend-python/typings/log.py:66-67` |
+| D1 | 前端 `getXuehaiId()` **双源**：① 原生桥 `window.xhBrowserJava?.getUserId?.()`（学海浏览器 xhbrowser）；② 兜底解析 `navigator.userAgent` 的 `userId/(\w+)`（资料中心 App xhdatacenter，UA 形如 `deviceId/<x> userId/<y>`）。两者都归一等价性为正整数，否则 `0` | `zvp5-frontend/src/plugins/ua.ts:23-33`；来源 `义工平台代码笔记整理.md:1240-1249` |
+| D2 | 请求拦截器按需注入 `Xuehai-Id` 头：仅当 `getXuehaiId() > 0` 且未显式设置时写入 | `zvp5-frontend/src/plugins/axios.ts:61-64` |
+| D3 | `window.xhBrowserJava` 的 TS 声明存在（可选属性） | `zvp5-frontend/src/types/xuehai.d.ts:5` |
+| D4 | 后端读取头 `Xuehai-Id` 并 `.strip()`；头名大小写不敏感由 Starlette 保证 | `zvp5-backend-python/typings/log.py:66-67` |
 | D5 | `ZVMSLog` 含 `xuehai_id` 字段，`insert_log()` 经 `AppLogsRepo.insert(...)` 落库 | `typings/log.py:8-63` |
 | D6 | `inject_log` 依赖项在所有写日志端点注入 `xuehai_id = xuehai_id_from(request)` | `typings/log.py:70-79` |
 | D7 | shield 中间件被拦请求（418）也写一条 `security_alert`，同样带 `xuehai_id` | `main.py:103-123` |
@@ -161,7 +161,7 @@ APP_LOGS.XUEHAI_ID  ──►  GET /api/logs?xuehai_id=…（admin 反查）    
 
 **已修复（v2）**
 
-- **资料中心 App 采不到**：初版只读 `window.xhBrowserJava`（学海浏览器桥），资料中心无此桥 → 头恒不发。根因见 §2 双源图；修复 `zvms4-frontend/src/plugins/ua.ts:23-33`。
+- **资料中心 App 采不到**：初版只读 `window.xhBrowserJava`（学海浏览器桥），资料中心无此桥 → 头恒不发。根因见 §2 双源图；修复 `zvp5-frontend/src/plugins/ua.ts:23-33`。
 
 **后续（未实施，逐项评审后另开）**
 

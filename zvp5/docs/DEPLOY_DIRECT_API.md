@@ -46,7 +46,7 @@ TCP 建连：直连 59ms vs 反代 163ms —— 即国内到洛杉矶 RTT ≈160
 `src/plugins/axios.ts` 已支持 `VITE_API_BASE`（缺省 `/api`）。构建时注入：
 
 ```bash
-cd zvms4-modified-main/zvms4-frontend
+cd zvp5/zvp5-frontend
 VITE_API_BASE=https://zvpapi.xiaobopisces.top/api npx vite build
 rsync -az --delete dist/ zgovps-la:/www/zvms4/frontend-dist/
 ```
@@ -112,7 +112,7 @@ location /api/system/ssh/ws {
 | 前端单测 | 87 文件 / **980 例全绿**（含新增 `ssh.spec.ts` 6 例） |
 | typecheck | `vue-tsc --noEmit` 零错误 |
 | 部署一致性 | 线上产物与本地产物 174 文件哈希完全一致 |
-| CORS 预检 | `OPTIONS /api/v3/ban/violations` → 200，`allow-origin` + `allow-credentials` + `xuehai-id` 全通 |
+| CORS 预检 | `OPTIONS /api/v1/ban/violations` → 200，`allow-origin` + `allow-credentials` + `xuehai-id` 全通 |
 | WS 握手 | 直连首尔 / 经洛杉矶 均 `101`（修复前 404） |
 | 站点健康 | 首页 200；直连 API `/api/system/maintenance` → `{"status":"ok",...}` |
 | 真实流量 | 首尔侧出现国内用户直连 `122.190.107.133 /api/system/maintenance`；洛杉矶侧 `/api` 命中停止新增 |

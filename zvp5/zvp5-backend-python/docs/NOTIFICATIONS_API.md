@@ -1,4 +1,4 @@
-# 站内通知 API（`/api/v3/notifications`）
+# 站内通知 API（`/api/v1/notifications`）
 
 本文是前端接入的唯一契约。后端实现只负责「谁发的、什么时候发的、内容是什么、
 全局/单条版本号是多少」；**已阅 / 不再显示都是客户端本地状态**，服务端不保存
@@ -89,7 +89,7 @@ active else "0"))` 的 64 位小写 hex。`active` 参与哈希，因为停用/�
 ## 3. 用户端：读取当前有效通知
 
 ```
-GET /api/v3/notifications
+GET /api/v1/notifications
 Authorization: Bearer <access_token>
 ```
 
@@ -138,7 +138,7 @@ Authorization: Bearer <access_token>
 ### 4.1 列出全部通知（含停用）
 
 ```
-GET /api/v3/notifications/admin
+GET /api/v1/notifications/admin
 ```
 
 需要当前角色含 `admin`。返回形状与用户端相同，但包含 `active = false` 的行，
@@ -147,7 +147,7 @@ GET /api/v3/notifications/admin
 ### 4.2 创建/发送通知
 
 ```
-POST /api/v3/notifications
+POST /api/v1/notifications
 Content-Type: application/json
 
 {
@@ -178,7 +178,7 @@ Content-Type: application/json
 ### 4.3 编辑/停用/重新启用
 
 ```
-PUT /api/v3/notifications/{oid}
+PUT /api/v1/notifications/{oid}
 Content-Type: application/json
 
 {
@@ -215,7 +215,7 @@ Content-Type: application/json
 ### 4.4 删除
 
 ```
-DELETE /api/v3/notifications/{oid}
+DELETE /api/v1/notifications/{oid}
 Content-Type: application/json
 
 { "verification_token": "<5 分钟密码再认证令牌>" }
@@ -231,7 +231,7 @@ Content-Type: application/json
 ### 4.5 版本历史
 
 ```
-GET /api/v3/notifications/{oid}/versions
+GET /api/v1/notifications/{oid}/versions
 ```
 
 需要 `admin`。按 `version` **倒序**返回该通知的完整修订历史；通知已被删除时
@@ -274,7 +274,7 @@ GET /api/v3/notifications/{oid}/versions
 ### 4.6 回滚到指定版本
 
 ```
-POST /api/v3/notifications/{oid}/rollback
+POST /api/v1/notifications/{oid}/rollback
 Content-Type: application/json
 
 { "version": 2, "verification_token": "<5 分钟密码再认证令牌>" }
@@ -327,7 +327,7 @@ type LocalState = {
 
 打开应用时：
 
-1. `GET /api/v3/notifications`，拿到 `server.version` 和当前有效通知列表。
+1. `GET /api/v1/notifications`，拿到 `server.version` 和当前有效通知列表。
 2. 删除本地 `read` / `suppressed` 中已不在列表里的 id（可选；`suppressed`
    建议保留，防止通知停用后再启用时重新出现）。
 3. 对每条通知：
