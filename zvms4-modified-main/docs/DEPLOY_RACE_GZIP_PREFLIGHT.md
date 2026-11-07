@@ -1,6 +1,6 @@
 # 双路竞速扩展、API gzip 与预检部署要求
 
-> 状态：代码和配置片段已提交，**尚未部署线上**。本文是后续发布时的执行依据。
+> 状态：已于 2026-11-07 完成后端机与前端机的发布。发布记录见文末。
 
 ## 1. 发布物
 
@@ -85,17 +85,21 @@ include /etc/nginx/snippets/zvms-api-preflight.conf;
 
 目标主机：`<FRONTEND_IP>`（zvp-frontend / zvp）。
 
-安装同一份 CORS map 和预检 include：
+宝塔的前端 Nginx 根目录不是 `/etc/nginx`，实际路径如下：
 
 ```bash
 install -m 0644 deployment/nginx/zvms-cors-map.conf \
-  /etc/nginx/conf.d/zvms-cors-map.conf
+  /www/server/panel/vhost/nginx/00-zvms-cors-map.conf
 install -m 0644 deployment/nginx/zvms-api-preflight.conf \
-  /etc/nginx/snippets/zvms-api-preflight.conf
+  /www/server/nginx/conf/zvms-api-preflight.conf
 ```
 
 在 `/www/server/panel/vhost/nginx/zvp.xiaobopisces.top.conf` 的
-`location /api/ {` 内增加同一行 include。
+`location /api/ {` 内增加：
+
+```nginx
+include /www/server/nginx/conf/zvms-api-preflight.conf;
+```
 
 前端已经启用动态 gzip，本次不重复安装 gzip 片段。
 
@@ -115,9 +119,11 @@ Nginx 对 `/api/*` 的 OPTIONS 请求直接返回 `204`，不再经过 FastAPI�
 ## 6. 发布顺序
 
 1. 备份两台的 Nginx 主配置、`zvpapi`/`zvp` vhost 和现有 conf.d/snippets。
-2. 先装后端 map、gzip 和预检 include，执行 `nginx -t`，通过后 reload。
+2. 先装后端 map、gzip 和预检 include，执行 `nginx -t`，通过后执行
+   `systemctl reload nginx`。
 3. 验证后端 JSON gzip、生产域/canary 域预检、未知 Origin 拒绝。
-4. 再装前端 map 和预检 include，执行 `nginx -t`，通过后 reload。
+4. 再装前端 map 和预检 include，执行 `nginx -t`，通过后执行 `nginx -s reload`
+   （该机 `nginx.service` 被 panel 屏蔽）。
 5. 备份前端 `/www/zvms4/frontend-dist`，发布双基址构建产物并统一属主。
 6. 验证首页、API、竞速 Bundle、OPTIONS、gzip 和 SSE/文件单路行为。
 
@@ -163,3 +169,17 @@ curl -sS -X OPTIONS \
 3. 还原前端 `frontend-dist` 备份并修正属主。
 
 回滚不会修改数据库，也不需要重启 FastAPI。
+
+## 9. 2026-11-07 发布记录
+
+| 项 | 结果 |
+| --- | --- |
+| 后端配置备份 | `/root/backup-20261107-preflight-gzip-20261107-001257` |
+| 前端配置备份 | `/root/backup-20261107-preflight-001323` |
+| 前端备份 | `/www/zvms4/frontend-dist.bak-20261107-0015` |
+| 后端 gzip | `/api/changelog` 从 29,293 bytes 降至约 13,509 bytes，带 `Content-Encoding: gzip` |
+| 预检 | 生产域/canary × 前端/后端 四种组合均为 204，`Max-Age: 7200` |
+| 未知 Origin | 返回 204，但无 `Access-Control-Allow-Origin` |
+| 前端产物 | `index-tOk_jfbe.js`，SHA256 `3EC890132D7D7004CD89763E8C16CCF060AA9879D5602F58328BD5AEAB574897` |
+| 前端文件 | 336 个文件，其中 160 个 `.gz` |
+| 健康检查 | 首页、后端 `/api/health`、前端 `/api/health` 均为 200 |
