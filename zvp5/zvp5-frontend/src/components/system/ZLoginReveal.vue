@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 
 const props = defineProps<{
   name: string
@@ -7,6 +8,8 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{ done: [] }>()
+
+const { t } = useI18n()
 
 interface Particle {
   style: Record<string, string>
@@ -16,9 +19,9 @@ interface Slice {
   style: Record<string, string>
 }
 
-const displayName = computed(() => props.name.trim() || '同学')
-const helloText = computed(() => `你好，${displayName.value}`)
-const roleText = computed(() => `身份：${props.role}`)
+const displayName = computed(() => props.name.trim() || t('login.reveal.fallbackName'))
+const helloText = computed(() => t('login.reveal.hello', { name: displayName.value }))
+const roleText = computed(() => t('login.reveal.role', { role: props.role }))
 
 const helloLineRef = ref<HTMLElement | null>(null)
 const roleLineRef = ref<HTMLElement | null>(null)

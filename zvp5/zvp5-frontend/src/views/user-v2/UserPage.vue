@@ -493,8 +493,7 @@ watch(current, () => {
 
 watch(
   () => route.params.action,
-  (value) => {
-    console.log(value)
+  () => {
     const curPage = route.params.action?.toString()
     current.value = curPage && curPage !== '' ? curPage : 'info'
   }
