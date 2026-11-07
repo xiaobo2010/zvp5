@@ -2,6 +2,7 @@ import { mount, type VueWrapper } from '@vue/test-utils'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { h, type SetupContext } from 'vue'
 import ZLogCard from './ZLogCard.vue'
+import i18n from '@/i18n'
 import type { Log } from '../../../types/log'
 
 // element-plus 整包 mock:真实包会连带引入 theme-chalk 的 .css,node ESM 下无法加载
@@ -48,7 +49,8 @@ function logFixture(overrides: Partial<Log> = {}): Log {
 }
 
 function mountCard(log: Log): VueWrapper {
-  return mount(ZLogCard, { props: { log } })
+  // login_fail 等标签走 i18n，挂真实 locale 才能断言中文文案
+  return mount(ZLogCard, { props: { log }, global: { plugins: [i18n] } })
 }
 
 beforeEach(() => {})

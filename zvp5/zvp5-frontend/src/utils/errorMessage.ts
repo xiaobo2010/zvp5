@@ -30,7 +30,10 @@ export const DEFAULT_ERROR_MESSAGE = '请求失败，请稍后重试'
  * 让「错误提示」这种基础设施变成测试的负担。项目只有 zh-CN 一套消息，按路径取值
  * 与 t() 等价；取不到就把 key 原样返回，便于立刻发现漏配。
  */
-export function translateKey(key: string): string {
+export function translateKey(
+  key: string,
+  params?: Record<string, string | number>
+): string {
   let node: unknown = zhCN
   for (const segment of key.split('.')) {
     if (!node || typeof node !== 'object') {
@@ -38,7 +41,16 @@ export function translateKey(key: string): string {
     }
     node = (node as Record<string, unknown>)[segment]
   }
-  return typeof node === 'string' ? node : key
+  if (typeof node !== 'string') {
+    return key
+  }
+  if (!params) {
+    return node
+  }
+  // 只做 `{name}` 单层替换：本模块不跑 vue-i18n 的消息编译器，够 api 层拼 code 用。
+  return node.replace(/\{(\w+)\}/g, (matched, name: string) =>
+    Object.prototype.hasOwnProperty.call(params, name) ? String(params[name]) : matched
+  )
 }
 
 /**

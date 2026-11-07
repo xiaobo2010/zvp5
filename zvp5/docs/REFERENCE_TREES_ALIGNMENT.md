@@ -1,7 +1,7 @@
-# 参考树对齐清单（zvp-latest / zvp5-gitlab → zvms4-modified-main）
+# 参考树对齐清单（zvp-latest / zvp5-gitlab → zvp5）
 
 > 核对日期：2026-10-24
-> 开发主线：`zvms4-modified-main/`
+> 开发主线：`zvp5/`
 > 参考树：`zvp-latest/`（含后门的 beta 快照）、`zvp5-gitlab/`（未完成的第二套后端）
 >
 > 本文记录能力对账与留档结果。**2026-10-24 已按确认执行删除**：
@@ -101,8 +101,8 @@
 | --- | --- |
 | `zvp-latest/` | 3.6 MB |
 | `zvp5-gitlab/` | 204 KB |
-| `zvms4-frontend/node_modules/` | 1.4 GB |
-| `zvms4-backend-python/.venv/` | 290 MB |
+| `zvp5-frontend/node_modules/` | 1.4 GB |
+| `zvp5-backend-python/.venv/` | 290 MB |
 | `.git/` | 6.6 MB |
 
 参考树只占约 3.8 MB；真正占空间的是开发依赖。删除参考树主要是收敛仓库与安全面，不是解决卡顿的有效手段。

@@ -56,21 +56,6 @@ const loading = ref(false)
 
 const authRef = ref<InstanceType<typeof ZSystemAuthDialog>>()
 
-function errorMessageOf(error: unknown): string {
-  const err = error as AxiosError<{ detail?: unknown }>
-  const detail = err?.response?.data?.detail
-  if (typeof detail === 'string' && detail) return detail
-  return t('server.auth.failed')
-}
-
-// 删除不再有双人码,失败原因不能落到「动态码无效」上,单独取一次后端 detail
-function deleteErrorMessage(error: unknown): string {
-  const err = error as AxiosError<{ detail?: unknown }>
-  const detail = err?.response?.data?.detail
-  if (typeof detail === 'string' && detail) return detail
-  return t('server.files.deleteFailed')
-}
-
 function axiosStatus(error: unknown): number {
   const err = error as AxiosError
   return err?.response?.status ?? 0
@@ -267,7 +252,7 @@ async function doMkdir() {
     ElMessage.success(t('server.files.mkdirDone'))
     await load()
   } catch (error) {
-    authRef.value?.fail(errorMessageOf(error))
+    authRef.value?.fail(resolveErrorMessage(error, 'server.auth.failed'))
   }
 }
 
@@ -296,7 +281,7 @@ async function onUpload(file: File) {
   } catch (error) {
     const status = axiosStatus(error)
     if (status !== 409) {
-      authRef.value?.fail(errorMessageOf(error))
+      authRef.value?.fail(resolveErrorMessage(error, 'server.auth.failed'))
       return
     }
     // 409 同名:询问是否覆盖。注意携带同一动态码重试会触发防重放 409,
@@ -319,7 +304,7 @@ async function onUpload(file: File) {
       ElMessage.success(t('server.files.uploadDone'))
       await load()
     } catch (retryError) {
-      authRef.value?.fail(errorMessageOf(retryError))
+      authRef.value?.fail(resolveErrorMessage(retryError, 'server.auth.failed'))
     }
   }
 }
@@ -347,7 +332,7 @@ async function doRename(entry: FileEntry) {
     ElMessage.success(t('server.files.renameDone'))
     await load()
   } catch (error) {
-    authRef.value?.fail(errorMessageOf(error))
+    authRef.value?.fail(resolveErrorMessage(error, 'server.auth.failed'))
   }
 }
 
@@ -372,7 +357,7 @@ async function doDelete(entry: FileEntry, recursive: boolean) {
       await doDelete(entry, true)
       return
     }
-    ElMessage.error(deleteErrorMessage(error))
+    ElMessage.error(resolveErrorMessage(error, 'server.files.deleteFailed'))
   }
 }
 
@@ -409,7 +394,7 @@ async function doChmod(entry: FileEntry) {
     ElMessage.success(t('server.files.chmodDone'))
     await load()
   } catch (error) {
-    authRef.value?.fail(errorMessageOf(error))
+    authRef.value?.fail(resolveErrorMessage(error, 'server.auth.failed'))
   }
 }
 

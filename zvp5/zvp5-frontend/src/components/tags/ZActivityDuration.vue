@@ -15,7 +15,6 @@ const props = defineProps<{
   id?: string
   uid?: string
   record?: string
-  max?: number //reserved for future use
 }>()
 const emits = defineEmits<{
   (e: 'update:duration', value: number): void

@@ -364,4 +364,14 @@ describe('群组列表', () => {
 
     wrapper.unmount()
   })
+
+  // 后端空响应（200 但没有 body）曾让 loading 永久为真，表格一直转圈
+  it('空响应也要收掉 loading', async () => {
+    readSpy.mockResolvedValueOnce(undefined)
+    const wrapper = await mountList()
+
+    expect((wrapper.vm as unknown as { loading: boolean }).loading).toBe(false)
+
+    wrapper.unmount()
+  })
 })
