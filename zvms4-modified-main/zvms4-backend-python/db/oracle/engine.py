@@ -23,14 +23,17 @@ Timeout policy (why both knobs exist)
 
 from __future__ import annotations
 
+import logging
 import os
 from typing import Optional
 
-from sqlalchemy import text
+from sqlalchemy import event, text
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 
 from . import config as oracle_config
 from .clob import install_lob_binds
+
+logger = logging.getLogger(__name__)
 
 _engine: Optional[AsyncEngine] = None
 
@@ -53,15 +56,14 @@ def _connect_args(cfg: oracle_config.OracleConfig) -> dict:
         "tcp_connect_timeout": float(
             os.environ.get("ZVMS_DB_TCP_CONNECT_TIMEOUT", "5")
         ),
-        # Per-round-trip cap, in **milliseconds** (oracledb thin mode takes ms
-        # here, unlike ``ZVMS_DB_CALL_TIMEOUT`` which is seconds like every
-        # other env knob). A half-open connection without this keeps its pool
-        # slot forever; 60s is far above the 138ms p99 of a healthy ADB call and
-        # still short enough that a dead link frees the slot within a minute.
-        "call_timeout": int(
-            float(os.environ.get("ZVMS_DB_CALL_TIMEOUT", "60")) * 1000
-        ),
     }
+    # NOTE: the per-round-trip cap (``call_timeout``) is **not** a connect
+    # keyword. python-oracledb 26.x exposes it as a connection *attribute*
+    # only — ``oracledb.connect_async()`` has no such parameter and raises
+    # ``TypeError: connect_async() got an unexpected keyword argument
+    # 'call_timeout'`` when it is passed here (that is exactly how the
+    # production service failed to boot on 2026-11-07). It is applied per
+    # connection by :func:`_install_call_timeout` instead.
     if cfg.wallet_dir:
         args["config_dir"] = cfg.wallet_dir
         args["wallet_location"] = cfg.wallet_dir
@@ -71,6 +73,51 @@ def _connect_args(cfg: oracle_config.OracleConfig) -> dict:
 
 
 _TRUTHY = frozenset({"1", "true", "yes", "on"})
+
+
+def _call_timeout_ms() -> int:
+    """Per-round-trip cap in **milliseconds** (``ZVMS_DB_CALL_TIMEOUT`` seconds).
+
+    A half-open connection without this keeps a request — and its pool slot —
+    pinned until TCP gives up, which is how a saturated pool turns into a
+    site-wide freeze. 60s is far above the 138ms p99 of a healthy ADB call
+    and still short enough that a dead link frees the slot within a minute.
+    """
+    return int(float(os.environ.get("ZVMS_DB_CALL_TIMEOUT", "60")) * 1000)
+
+
+def _install_call_timeout(engine: AsyncEngine) -> None:
+    """Apply ``call_timeout`` to every new physical connection.
+
+    python-oracledb keeps ``call_timeout`` as a connection attribute (not a
+    connect keyword), and the async dialect hands SQLAlchemy's pool an
+    *adapter* object rather than the driver connection, so the raw connection
+    is reached through ``_connection``. Failures are logged and ignored: a
+    driver that does not know the attribute must not stop the service from
+    booting.
+    """
+    timeout_ms = _call_timeout_ms()
+    if timeout_ms <= 0:
+        return
+
+    sync_engine = getattr(engine, "sync_engine", None)
+    if sync_engine is None:
+        return
+
+    try:
+
+        @event.listens_for(sync_engine, "connect")
+        def _set_call_timeout(dbapi_connection, connection_record) -> None:  # noqa: ANN001
+            raw = getattr(dbapi_connection, "_connection", dbapi_connection)
+            try:
+                raw.call_timeout = timeout_ms
+            except Exception:  # pragma: no cover - 驱动差异
+                logger.warning(
+                    "call_timeout 未能应用（驱动不支持或连接不可写）", exc_info=True
+                )
+
+    except Exception:  # pragma: no cover - 事件注册失败不应阻断启动
+        logger.warning("call_timeout 事件注册失败，连接超时保持未设置", exc_info=True)
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -139,6 +186,7 @@ def get_engine() -> AsyncEngine:
             **_pool_settings(),
         )
         install_lob_binds(_engine)
+        _install_call_timeout(_engine)
     return _engine
 
 
