@@ -1,12 +1,14 @@
 # ZVMS 后端结构与约定（可直接照抄的实现指南）
 
 > 目的：把「哪些是契约、哪些可以动、新代码往哪放」写成一份能执行的文档。
-> 数值均为 2026-11-06 夜间重构后实测（`app.routes` 共 **257** 条）。
+> 数值均为 2026-11-07 v2/v3 全量归并到 `/api/v1` 之后实测（`app.routes` 共 **257** 条）。
+> 版本段裁决与撞车处置见 [`ADR_API_V1_REVERSIONING.md`](./ADR_API_V1_REVERSIONING.md)：内部版本段只剩
+> `/api/ai/v1/*`（OpenAI 兼容外部契约，永续）与 `/api/v2/mcp`（兼容别名，待移除）。
 
 ## 1. 分层
 
 ```
-main.py                 只做装配：导入、ROUTERS 注册表、按序装配、uvicorn 入口（180 行）
+main.py                 只做装配：导入、ROUTERS 注册表、按序装配、uvicorn 入口（187 行）
 app_setup.py            FastAPI 实例 + CORS/盾牌/安全头/维护/ApiMetrics 中间件装配
 scheduler.py            14 个 APScheduler job + 启动/关闭钩子
 socket_events.py        socket.io 连接与事件
@@ -28,30 +30,46 @@ util/                   无状态工具
 
 ## 2. 路由注册表（实测条数）
 
-| 模块 | 条数 | 域 |
+`app.routes` 257 条 = 241 条 router 路由 + 10 条 `main` 自挂 + 5 条 `/api/v2/mcp` 别名 + 1 个 `/socket.io` mount。
+
+| 模块 | 条数 | 挂载前缀 / 域 |
 |---|---|---|
-| `routers/users_router.py` | 17 | 用户 v1（含 4 条 503 契约桩） |
-| `routers/users_v3_router.py` | 18 | 用户 v3（现役主面） |
-| `routers/groups_router.py` / `groups_v2` / `groups_v3` | 10 / 6 / 6 | 群组/班级 |
-| `routers/activities_v2` / `activities_v3` / `activity_statistics` | 13 / 4 / 5 | 活动 |
-| `routers/attachments_router.py` | 13 | 附件（整 router 挂设备解锁依赖） |
-| `routers/ban_router.py` / `ban_violations_router.py` | 11 / 2 | 封禁（同前缀 `/api/v3/ban`） |
-| `routers/notifications_router.py` | 7 | 通知 |
-| `routers/changelog_router.py` | 4 | 变更日志 |
-| `routers/exports_router.py` / `imports_router.py` | 7 / 1 | 导入导出 |
-| `routers/times_router.py` / `users_v2_router.py` | 1 / 4 | 时间记录 |
-| `routers/mcp_router.py` | 5 | MCP |
-| `routers/ai/*`（8 个子模块）+ `ai_models` / `ai_api_keys` / `ai_agent` / `ai_conversations` / `ai_scenes` / `ai_schedule` / `ai_quota_requests` | 60 | AI 网关 |
+| `routers/users_router.py` | 17 | `/api/users`（无版本段，含 4 条 503 契约桩） |
+| `routers/users_v2_router.py` / `users_v3_router.py` | 4 / 18 | `/api/v1/users`（单版本面，v3 为现役主实现） |
+| `routers/groups_router.py` / `groups_v2` / `groups_v3` | 10 / 5 / 6 | `/api/groups`（无版本段）+ `/api/v1/groups` |
+| `routers/activities_v2` / `activities_v3` / `activity_statistics` | 10 / 3 / 5 | `/api/v1/activities`（同前缀撞车按 ADR 裁决）+ `/api/v1/statistics/activities` |
+| `routers/times_router.py` | 1 | `/api/v1/times` |
+| `routers/attachments_router.py` | 13 | `/api/attachments`（整 router 挂设备解锁依赖） |
+| `routers/ban_router.py` / `ban_violations_router.py` | 11 / 2 | 同前缀 `/api/v1/ban` |
+| `routers/notifications_router.py` | 7 | `/api/v1/notifications` |
+| `routers/changelog_router.py` | 4 | `/api/changelog` |
+| `routers/exports_router.py` / `imports_router.py` | 7 / 1 | `/api/exports` / `/api/imports` |
+| `routers/logs_router.py` | 1 | `/api/logs` |
+| `routers/mcp_router.py` | 5 | `/api/v1/mcp` 为主，`/api/v2/mcp` 兼容别名（`include_in_schema=False`，待移除） |
+| `routers/ai/*`（8 个子模块）+ `ai_models` / `ai_api_keys` / `ai_agent` / `ai_conversations` / `ai_scenes` / `ai_schedule` / `ai_quota_requests` | 60 | AI 网关（`/api/ai/*`；其中 `/api/ai/v1/*` 为 OpenAI 兼容外部契约） |
 | `routers/system_*`（maintenance/settings/db/db.metrics/db.content/ssh/files/role-policies） | 51 | 运维面 |
 | `main` 自挂（`meta_routes` 4 + `legacy_redirects` 6） | 10 | 探针与兼容 |
+
+### 2.1 `/api/v1` 撞车裁决（route 级）
+
+`main.py:105-146` 的注册顺序即契约：v2 家族 router 先注册、v3 家族后注册，同 method 同 path 时先注册者胜。
+归并后 5 组撞车已按 ADR 摘除败方装饰器（函数体保留给 `services/agent/tool_impl.py` 作同形参考），因此**不能**按「v3 后注册所以覆盖 v2」理解：
+
+| 路径 | 现役实现 |
+|---|---|
+| `POST /api/v1/activities` | v2（`create_activity_v2`，保留 `date/place/approver/origin` 完整契约；v3 create 路由已摘除） |
+| `GET /api/v1/activities` | v3（`get_activities_v3`，可选 `sort`/`asc` 白名单 + place/origin/appointee/approver 投影） |
+| `GET /api/v1/activities/{activity_id}/members` | v3（`get_activity_members_v3`） |
+| `POST /api/v1/activities/{activity_id}/members` | v3（`add_activity_member_v3`，批量契约） |
+| `GET /api/v1/groups/{group_id}/users` | v3（`get_group_users_v3`，`pwdm` = 是否设置过密码） |
 
 ## 3. 响应契约：三套并存，**不要统一**
 
 | 形态 | 用在哪 | 例子 |
 |---|---|---|
-| envelope `{"status":"ok","code":200,"data":...}` | v1 读面、system、ai、db、users v3 多数端点 | `GET /api/`、`GET /api/groups` |
-| 裸对象/裸列表（含 `{"data","total"}`） | v2/v3 新面 | `GET /api/v3/users/{oid}` |
-| `JSONResponse` + 自定义状态码 | 201 创建、`{"detail":"... updated"}` | `POST /api/v2/activities` |
+| envelope `{"status":"ok","code":200,"data":...}` | 无版本段读面（`/api/users`、`/api/groups` 等）、system、ai、db，以及 `/api/v1/*` 多数端点 | `GET /api/`、`GET /api/groups` |
+| 裸对象/裸列表（含 `{"data","total"}`） | `/api/v1` 新面（原 v2/v3 实现） | `GET /api/v1/users/{oid}` |
+| `JSONResponse` + 自定义状态码 | 201 创建、`{"detail":"... updated"}` | `POST /api/v1/activities`（v2 契约） |
 
 前端硬依赖点（改动前必须读）：
 `src/api/group/crud.ts`（判 `status === 'ok'`）、`src/api/user/auth.ts:60`、
@@ -125,7 +143,7 @@ TTL 只兜「失效没送达」。放长的前提是写路径一定失效，因�
 
 ## 9. 新增端点 checklist
 
-- [ ] 路径归属：`/api/v3/...`（现役）或既有域；不要新增 v1 路径
+- [ ] 路径归属：`/api/v1/...`（单版本制的唯一内部版本段）或既有无版本域（`/api/users`、`/api/groups`、`/api/exports`、`/api/imports`、`/api/logs`、`/api/changelog`、`/api/attachments`、`/api/system*`、`/api/ai` 管理面）；**不要再引入 `/api/v2` / `/api/v3` 内部版本段**，裁决依据见 [`ADR_API_V1_REVERSIONING.md`](./ADR_API_V1_REVERSIONING.md)
 - [ ] 鉴权走 `util/object_id.py` 的 `get_current_user` / `optional_current_user` + `util/permission/features.ensure_feature`
 - [ ] 响应 envelope，错误用 `HTTPException`（`detail` 用中文整句）
 - [ ] 读热点先想「能不能用 repo 现有缓存」，别在 router 里自己起缓存
@@ -136,7 +154,7 @@ TTL 只兜「失效没送达」。放长的前提是写路径一定失效，因�
 ## 10. 验证命令
 
 ```bash
-cd zvms4-modified-main/zvms4-backend-python
+cd zvp5/zvp5-backend-python
 .venv/bin/python -c "import main; print(len(main.app.routes))"   # 257
 .venv/bin/python -m pytest -q                                     # 4378 passed
 .venv/bin/python -m ruff check .                                  # 未安装则跳过
@@ -144,8 +162,8 @@ cd zvms4-modified-main/zvms4-backend-python
 
 ## 11. 已知的历史包袱（有意保留）
 
-- v1 写端点返回 **503 + 文案**，是 zvp 兼容期的契约桩，不是死代码（前端仍展示该文案）。
-- 前端仍在调 v1 读面：`/api/users/auth`、`/auth/logout`、`/auth/device`、`/api/users/{id}/past`、`/api/groups`、`/groups/{id}/name|description`。
+- 无版本段写端点（`/api/users` 下 `POST /`、`DELETE /{target}`、`PUT /{user_oid}`、`POST /{user_oid}/group` 等 4 条）返回 **503 + 文案**，是 zvp 兼容期的契约桩，不是死代码（前端仍展示该文案）。
+- 前端仍在调无版本段读面：`/api/users/auth`、`/auth/logout`、`/auth/device`、`/api/users/{id}/past`、`/api/groups`、`/groups/{id}/name|description`。
 - `/api/ai/keys`（旧）与 `/api/ai/api-keys`（新）双实现并存，前端仍用旧面；迁移完成前都不要删。
 - 运维面 `/api/system/*` 在维护期全放行（自救路径），不能收紧。
 - 维护状态存独立 SQLite（`ZVMS_SYSTEM_DB`），不在 ADB 备份覆盖范围内，跨机部署要单独持久化。

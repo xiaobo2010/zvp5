@@ -2,7 +2,7 @@
 
 > **当前运行状态（2026-10-17）**：Oracle Autonomous Database 是唯一运行时数据库，
 > MongoDB 代码与依赖已移除。本文保留早期移植与双库阶段的工程记录；部署、配置和
-> 数据库口径以 `zvms4-backend-python/README.md`、`db/oracle/` 与
+> 数据库口径以 `zvp5-backend-python/README.md`、`db/oracle/` 与
 > `docs/ADB_SCHEMA_SPEC.md` 为准。
 >
 > **2026-10-24 参考树收敛**：`zvp-latest/` 与 `zvp5-gitlab/` 已删除；学海 API
@@ -29,20 +29,20 @@
 ## 1. 目录结构
 
 ```
-zvp-modified-v4/
+zvp5/
 ├── README.md                 # 本文件
 ├── STATUS.md                 # 模块移植：Part 1 义工管理（10-09）/ Part 2-4 用户·日志·登录（10-10）/ Part 5 全量 API 盘点（10-10）/ Part 6 弱密码强制改密（10-10）/ Part 7 token 有效期调整（10-10）/ Part 8 可用状态落地：运行时验证 + shield 加固 + 运行缺口修复（10-11）/ Part 9 部署切换·logo·四 bug 修复·CHANGELOG 页面（10-11）/ Part 10 双库收敛与 PWA 接管（10-12）/ Part 11 前端体验批次（10-12）/ Part 12 CHANGELOG 数据库化·管理员可编辑（10-12）
 ├── DB_ALIGNMENT.md           # 已并入仓库根 README §三（数据库对齐 Ground Truth），本目录不再有该文件
 ├── docs/                     # 设计稿（ADB 迁移/规范、FILES_API_DESIGN.md、DEVICE_TRACKING_DESIGN.md 等）
-├── zvms4-backend-python/     # FastAPI 后端（上游 zvms4，DB 层已对齐；义工/用户/日志/登录 v2-v3 已移植；shield 加固就位，已通过 41 项运行时冒烟）
+├── zvp5-backend-python/      # FastAPI 后端（上游 zvms4，DB 层已对齐；义工/用户/日志/登录 v2-v3 已移植；shield 加固就位，已通过 41 项运行时冒烟）
 │   ├── README.md
 │   ├── requirements.txt
 │   ├── config/               # supervisor.conf / nginx 样例
 │   └── ...
-└── zvms4-frontend/           # Vue3 + Vite 前端（上游为基准；仅义工管理 API 接线改动，见 STATUS.md §2）
+└── zvp5-frontend/            # Vue3 + Vite 前端（上游为基准；仅义工管理 API 接线改动，见 STATUS.md §2）
 ```
 
-> **入库路径**：本目录在 GitHub 仓库 `xiaobo2010/zvp5` 中对应 `zvms4-modified-main/`（本地目录名 `zvp-modified-v4` 与入库目录名不同，同步时注意映射）。
+> **入库路径**：本目录在 GitHub 仓库 `xiaobo2010/zvp5` 中即 `zvp5/`（2026-11 目录更名后统一口径，旧本地目录名同步弃用），子目录为 `zvp5-frontend/` 与 `zvp5-backend-python/`。
 
 ## 2. 这份代码从哪来、为什么
 
@@ -83,7 +83,7 @@ zvp-modified-v4/
   - `typings/activity_v2.py` **保持上游严格版本**（`datetime` + 非空）：实库 `activities` 的日期为 BSON `Date` 且零 null，若改用 zvp 的 `int`/可空版本会让 `Activity.model_validate` 直接失败。见根 README §三.6。
 - **未改动**：`database.py`（与 zvp 逐字节相同，已连两库）、其余业务逻辑。前端本次改动仅为义工管理 API 接线（见 `STATUS.md` §2），模板 / 样式未动。
 
-验证：`python3 -m compileall zvms4-backend-python` 通过；改动集中在上述 6 个文件。
+验证：`python3 -m compileall zvp5-backend-python` 通过；改动集中在上述 6 个文件。
 
 ## 5. 配置与运行
 
@@ -92,7 +92,7 @@ zvp-modified-v4/
 ### 5.1 配置
 
 ```bash
-cp zvms4-backend-python/settings.example.py zvms4-backend-python/settings.py
+cp zvp5-backend-python/settings.example.py zvp5-backend-python/settings.py
 ```
 
 `settings.py` 填写：
@@ -111,7 +111,7 @@ cp zvms4-backend-python/settings.example.py zvms4-backend-python/settings.py
 ### 5.2 运行后端
 
 ```bash
-cd zvms4-backend-python
+cd zvp5-backend-python
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 # 生成密钥后
@@ -168,8 +168,8 @@ uvicorn main:app --host 0.0.0.0 --port 8000
 - **日志/审计**：`APP_LOGS` 增 `client_ip` / `user_agent`（V045），登录类事件统一带 IP/UA；事件常量收进 `services/log_events.py`（新增 `user_logout`、`ai_quota_request_approve/reject`）；`AI_PROMPT_AUDIT` 扩 `answer_text` / `tool_calls` / `refused` / `warned`（V046），`GET /api/ai/prompts/{oid}` 一并透出。
 - **引擎与模型**：run 详情支持 `since_msg_seq` 增量消息；会话模型建时锁定（PATCH → 409 `AI_CONVERSATION_MODEL_LOCKED`）；会话级思考强度 `low/medium/high`；模型上下文窗口支持 `{"id","context"}` 形态并在保存时 best-effort 探测上游 `/models`，`/v1/models` 每项带 `context`（可 null）。
 - **ZVAgent 工具**：新增只读 `ban_history`（封禁流水、按规则历史档位、30 天违规批次、规则 penalties 梯度、绑定设备计数，学海 ID 打码）。
-- **数据库**：V045–V048（`app_logs` 两列、`ai_conversations.thinking` / `scene`、`ai_prompt_audit` 四列、索引与死表 `logs` 下线、保留窗口与 `created_at` 默认值）。细节见 `zvms4-backend-python/docs/database-status.md`。
+- **数据库**：V045–V048（`app_logs` 两列、`ai_conversations.thinking` / `scene`、`ai_prompt_audit` 四列、索引与死表 `logs` 下线、保留窗口与 `created_at` 默认值）。细节见 `zvp5-backend-python/docs/database-status.md`。
 - **文件与场景**：系统文件与 agent `fs_*` 共同受根目录 jail（`/www/zvms4`、`/home`，越界 403 `FILES_ROOT_FORBIDDEN`），前端快捷目录同步收敛；`POST /api/ai/ocr/file` 支持按站点路径同步识别预览图片；`POST /api/ai/scenes/{scene}/runs` 提供只读场景（`terminal` / `file_edit`）。
-- **前端**：会话运行中逐轮见回复、模型只读展示、思考强度三档、归档会话视图与恢复、平台管理添加班级（`POST /api/v3/groups`）、日志卡片 IP/UA 与事件 label 对齐、文件预览 OCR / 编辑器「AI 分析」/ 终端「智能分析」。
+- **前端**：会话运行中逐轮见回复、模型只读展示、思考强度三档、归档会话视图与恢复、平台管理添加班级（`POST /api/v1/groups`）、日志卡片 IP/UA 与事件 label 对齐、文件预览 OCR / 编辑器「AI 分析」/ 终端「智能分析」。
 
 契约细节：`docs/AI_GATEWAY_API.md`、`docs/AI_CONVERSATION_DESIGN.md`、`docs/AI_AGENT_OPS_DESIGN.md`、`docs/FILES_API_DESIGN.md`。
