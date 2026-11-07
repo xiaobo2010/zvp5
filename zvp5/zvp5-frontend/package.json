@@ -51,7 +51,6 @@
     "socket.io-client": "^4.8.1",
     "ua-parser-js": "^2.0.10",
     "universal-cookie": "^8.0.1",
-    "vant": "^4.9.20",
     "vue": "^3.5.17",
     "vue-chartjs": "^5.3.2",
     "vue-router": "^4.5.1",

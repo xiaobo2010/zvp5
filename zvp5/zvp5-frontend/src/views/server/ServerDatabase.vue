@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user.ts'
-import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
+import { defineAsyncComponent, ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
   ElCard, ElTag, ElAlert, ElButton, ElTooltip, ElMessageBox, ElMessage,
@@ -21,7 +21,10 @@ import {
   type DbMetricsRange, type DbMetricsTopSqlData, type DbMetricsEndpointsData,
   type DbMetricsHostData, type BackupProgressData
 } from '@/api/system/db.ts'
-import DbPerfTrendChart from '@/components/server/DbPerfTrendChart.vue'
+// 性能趋势图依赖 chart.js（~190KB）：只有展开对应面板时才需要，按需加载。
+const DbPerfTrendChart = defineAsyncComponent(
+  () => import('@/components/server/DbPerfTrendChart.vue')
+)
 import { resolveErrorMessage } from '@/utils/errorMessage'
 
 const router = useRouter()

@@ -149,13 +149,44 @@ export const viteBaseConfig = {
         // SW 首装可少拉 ~2.8MB，modern 浏览器按需回退即可。
         // 注意 workbox GenerateSW 没有 exclude 选项，等价物是 globIgnores。
         // monaco（Z-IDE 编辑器）仅服务端文件管理按需使用，不进 precache：
-        // SW 首装可省 ~3.7MB；离线时 Z-IDE 不可用属可接受（管理员在线工具）。
+        // SW 首装可省 ~3.2MB；离线时 Z-IDE 不可用属可接受（管理员在线工具）。
+        // 注意 monaco 没有独立的 manualChunk 后，产物文件名跟着入口模块走
+        // （editor.api-*.js / editor-*.css / ZIde-*.js），所以除了历史命名外都要按新名字排除。
+        // 管理端重 chunk（xlsx 报表、chart.js 图表、Server* 页面）同理：运行时在线拉取即可，
+        // 不占首装预缓存。
         globIgnores: [
           '**/node_modules/**/*',
           '**/*-legacy-*.js',
           '**/monaco-*.js',
           '**/monaco-*.css',
-          '**/editor.worker-*.js'
+          '**/editor.api-*.js',
+          '**/editor.worker-*.js',
+          '**/editor-*.css',
+          '**/ZIde-*.js',
+          '**/ZIde-*.css',
+          // monaco basic-languages 的语法配置 chunk：没有 editor.api 就是死代码，别进首装预缓存。
+          '**/html-*.js',
+          '**/css-*.js',
+          '**/javascript-*.js',
+          '**/typescript-*.js',
+          '**/python-*.js',
+          '**/yaml-*.js',
+          '**/xml-*.js',
+          '**/sql-*.js',
+          '**/ini-*.js',
+          '**/dockerfile-*.js',
+          '**/markdown-*.js',
+          '**/shell-*.js',
+          '**/xlsx-*.js',
+          '**/chartTheme-*.js',
+          '**/Server*-*.js',
+          // 上面排除了 chartTheme（chart.js 本体），那么只依赖它的三个图表消费者
+          // chunk 一起排除，避免「预缓存了却离线跑不起来」的条目。
+          '**/ZGroupTimeStatistics-*.js',
+          '**/ZGroupTimeStatistics-*.css',
+          '**/DbPerfTrendChart-*.js',
+          '**/ZActivityStatsDialog-*.js',
+          '**/ZActivityStatsDialog-*.css'
         ],
         maximumFileSizeToCacheInBytes: 5 * 1024 * 1024
       },
@@ -224,8 +255,6 @@ export const viteBaseConfig = {
         // 其余交给 rollup 默认的按入口/动态导入切分，避免过度碎片化。
         manualChunks(id) {
           if (!id.includes('node_modules')) return
-          // Monaco 单独成块:只有服务器文件页(Z-IDE)用到,别混进 index / element-plus 主块。
-          if (id.includes('monaco-editor')) return 'monaco'
           if (id.includes('element-plus') || id.includes('@element-plus')) return 'element-plus'
           if (
             /node_modules\/(vue|vue-router|pinia|vue-i18n|@vue\/[^/]+|@vueuse\/[^/]+)\//.test(id)

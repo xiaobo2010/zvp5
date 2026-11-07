@@ -117,7 +117,9 @@ vi.mock('@/components/markdown/ZMarkdown.vue', () => ({
 }))
 
 // Monaco 在 jsdom 里跑不起来,文本分支用轻量 stub 顶替;只保留「AI 分析」入口这一处交互。
+// ZFilePreview 用 defineAsyncComponent 拉 ZIde，需要 __esModule 让 Vue 走 default 互操作。
 vi.mock('@/components/server/ZIde.vue', () => ({
+  __esModule: true,
   default: {
     name: 'ZIdeStub',
     props: {

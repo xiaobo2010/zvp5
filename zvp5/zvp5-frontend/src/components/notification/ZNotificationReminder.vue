@@ -1,12 +1,14 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElButton, ElDialog } from 'element-plus'
 import { useI18n } from 'vue-i18n'
 import dayjs from '@/plugins/dayjs'
 import { useUserStore } from '@/stores/user'
 import { listActive, type NotificationRecord } from '@/api/notifications'
-import ZMarkdown from '@/components/markdown/ZMarkdown.vue'
+// 通知正文的 markdown 渲染(markdown-it + dompurify)不在首屏路径上：
+// 提醒弹窗打开时才加载，避免这两个库随 App 壳进入入口 chunk。
+const ZMarkdown = defineAsyncComponent(() => import('@/components/markdown/ZMarkdown.vue'))
 import {
   collectUnreadNotifications,
   emptyNotificationState,

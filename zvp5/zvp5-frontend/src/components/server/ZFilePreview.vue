@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, defineComponent, h, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { AxiosError } from 'axios'
 import { ElImageViewer, ElMessage } from 'element-plus'
@@ -7,7 +7,6 @@ import { CopyDocument, Document, Download, Refresh } from '@element-plus/icons-v
 import { previewFile, downloadFile, type FilePreviewData } from '@/api/system/files.ts'
 import { ocrFile } from '@/api/ai/scenes.ts'
 import { aiErrorCodeOf, aiErrorCopy, aiErrorOf } from '@/api/ai/errors.ts'
-import ZIde from '@/components/server/ZIde.vue'
 import ZSceneRunDialog from '@/components/server/ZSceneRunDialog.vue'
 
 // 可写回的编码:后端只放行 utf-8 与 gbk。latin-1 只是预览解码兜底(任何字节都能解出来),
@@ -26,6 +25,19 @@ const BINARY_EXTENSIONS = new Set([
   'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx',
   'woff', 'woff2', 'ttf', 'otf', 'eot'
 ])
+
+// Z-IDE 是 Monaco 的宿主，只有打开文本预览才用得到：异步加载让 monaco 整块退出首屏。
+// 首帧给一个转圈占位，避免全屏弹窗出现后空白闪一下。
+const ZIdeLoading = defineComponent({
+  name: 'ZIdeLoading',
+  render: () => h('div', { class: 'zide-loading' }, h('span', { class: 'zide-loading__spinner' }))
+})
+
+const ZIde = defineAsyncComponent({
+  loader: () => import('@/components/server/ZIde.vue'),
+  loadingComponent: ZIdeLoading,
+  delay: 120
+})
 
 const props = defineProps<{
   modelValue: boolean
@@ -51,7 +63,14 @@ const lightbox = ref(false)
 const dimensions = ref<{ w: number; h: number } | null>(null)
 
 // 文本文件整体交给 Z-IDE(全屏 Monaco);md 的「渲染预览」切换也在它内部。
-const ideRef = ref<InstanceType<typeof ZIde> | null>(null)
+// 异步组件拿不到 InstanceType,这里按 Z-IDE defineExpose 的契约显式声明句柄。
+interface ZIdeHandle {
+  confirmLeave: () => Promise<boolean>
+  reset: () => void
+  isDirty: () => boolean
+  applyContent: (text: string, mode?: 'replace' | 'insert') => Promise<boolean>
+}
+const ideRef = ref<ZIdeHandle | null>(null)
 
 const preview = computed(() => data.value)
 const isText = computed(() => preview.value?.kind === 'text' && typeof preview.value.content === 'string')
@@ -515,4 +534,27 @@ async function onBeforeClose(done: () => void) {
   font-size: var(--yg-font-size-sm);
   line-height: var(--yg-line-height-normal);
   color: var(--yg-text-danger);
+}
+
+.zide-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 40vh;
+  padding: var(--yg-space-6);
+}
+
+.zide-loading__spinner {
+  width: 28px;
+  height: 28px;
+  border: 3px solid var(--yg-border-subtle);
+  border-top-color: var(--yg-text-tertiary);
+  border-radius: 999px;
+  animation: zide-loading-spin 0.8s linear infinite;
+}
+
+@keyframes zide-loading-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }</style>
