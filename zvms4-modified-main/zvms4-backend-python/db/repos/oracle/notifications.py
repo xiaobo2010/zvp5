@@ -68,7 +68,7 @@ _ACTIVE_LIMIT = 100
 #: 用户侧公告列表的缓存 TTL。公告是「管理员偶尔发一条」的读多写极少对象，
 #: 15~30s 足够把首页/移动端的重复拉取挡掉；真正的失效靠写路径 bump epoch，
 #: TTL 只兜「别的进程写、本进程没参与」之外的漏网情况。
-_ACTIVE_TTL_SECONDS = 20.0
+_ACTIVE_TTL_SECONDS = 120.0
 #: 缓存域。NOTIFICATION_STATE 里的版本号在数据库里，读它本身就要一次 ADB 往返，
 #: 所以 key 用 Redis epoch 当版本（写路径 INCR，跨进程天然共享）。
 _CACHE_SCOPE = "notifications"

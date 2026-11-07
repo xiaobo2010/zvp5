@@ -36,7 +36,7 @@
 | 夜间报表 `generate_reports` | 逐用户 N+1：45~61 次查询/人，2000 人 ≈ 数小时 | 整批预加载：**12 次**（与人数无关），输出逐字节一致 |
 | 导出 time/users 变体 | 逐用户循环 + 逐人 `groups.get` | 一次 `list_all` + map + `calculate_user_time_bulk` |
 | `/api/`、`/api/changelog` | 每次一次跨洋 ADB 查询（138ms） | Redis 读穿，300s，写后 bump epoch |
-| `/api/v3/notifications` | 每请求 2 条 SQL | 列表+版本同快照缓存 ~20s |
+| `/api/v3/notifications` | 每请求 2 条 SQL | 列表+版本同快照缓存 2min |
 | 提案列表 `list_mine` | 200 行 → 200 次 UPDATE + 200 次 Redis GET | 1 次批量 UPDATE + 1 次授权查询 |
 | agent run queue 空转 | 每 1s 一次 SELECT+CAS | 1s→5s→30s 退避，kick 立即回 1s |
 | DB 语句超时 | 无（慢查询可永久占用连接，池满冻结事件循环） | `call_timeout` 默认 60s（`ZVMS_DB_CALL_TIMEOUT`） |

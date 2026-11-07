@@ -51,8 +51,8 @@ from db.oracle.session import session_scope
 Row = dict[str, Any]
 
 #: 全量列表的 TTL。版本号挂在列表首行，改动只发生在管理员编辑变更日志时
-#: （一年几次），5 分钟的兜底足够宽松；写路径会主动 forget，不依赖 TTL 生效。
-_LIST_TTL_SECONDS = 300.0
+#: （一年几次），且写路径主动 bump epoch；TTL 只是兜底，可以给到 30 分钟。
+_LIST_TTL_SECONDS = 1800.0
 #: 缓存域：``cache.epoch`` 的 scope（写时 INCR，旧 key 靠 TTL 自然淘汰）。
 _CACHE_SCOPE = "changelog"
 
