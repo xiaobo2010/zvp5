@@ -1,4 +1,4 @@
-"""``/api/v2/statistics/activities/grades/{grade}/*`` 的未知年级语义。
+"""``/api/v1/statistics/activities/grades/{grade}/*`` 的未知年级语义。
 
 回归目标（2026-10 审计 P0）：两个 handler 直接 ``result["percentiles"][grade]``
 / ``result["indicators"][grade]``，任意 grade（拼错、已毕业的年级、大小写不同）
@@ -28,7 +28,7 @@ from db import backends
 from routers import activity_statistics_router
 from util.object_id import get_current_user
 
-PREFIX = "/api/v2/statistics/activities"
+PREFIX = "/api/v1/statistics/activities"
 READER = {"id": "64b7f0c2e1a3b4c5d6e7fb01", "per": ["secretary"]}
 
 PERCENTILES = {

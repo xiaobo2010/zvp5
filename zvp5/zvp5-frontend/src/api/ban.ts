@@ -70,7 +70,7 @@ export interface BanRecord {
 }
 
 export async function getRules() {
-  const result = (await axios('/v3/ban/rules')).data as Response<BanRule[]>
+  const result = (await axios('/v1/ban/rules')).data as Response<BanRule[]>
   if (result.status === 'error') {
     throw result
   }
@@ -78,7 +78,7 @@ export async function getRules() {
 }
 
 export async function getTriggers() {
-  const result = (await axios('/v3/ban/triggers')).data as Response<BanTrigger[]>
+  const result = (await axios('/v1/ban/triggers')).data as Response<BanTrigger[]>
   if (result.status === 'error') {
     throw result
   }
@@ -89,7 +89,7 @@ export async function createRule(payload: BanRuleCreate, verificationToken?: str
   const result = (
     await axios({
       method: 'post',
-      url: '/v3/ban/rules',
+      url: '/v1/ban/rules',
       data: { ...payload, ...(verificationToken ? { verification_token: verificationToken } : {}) }
     })
   ).data as Response<BanRule>
@@ -103,7 +103,7 @@ export async function deleteRule(code: string, verificationToken?: string) {
   const result = (
     await axios({
       method: 'delete',
-      url: `/v3/ban/rules/${code}`,
+      url: `/v1/ban/rules/${code}`,
       ...(verificationToken ? { data: { verification_token: verificationToken } } : {})
     })
   ).data as Response<null>
@@ -115,7 +115,7 @@ export async function deleteRule(code: string, verificationToken?: string) {
 
 export async function getViolations(page: number = 1, perpage: number = 20, query: string = '') {
   const result = (
-    await axios('/v3/ban/violations', {
+    await axios('/v1/ban/violations', {
       params: {
         page,
         perpage,
@@ -146,7 +146,7 @@ export async function updateRule(
   const result = (
     await axios({
       method: 'put',
-      url: `/v3/ban/rules/${code}`,
+      url: `/v1/ban/rules/${code}`,
       data: { ...payload, ...(verificationToken ? { verification_token: verificationToken } : {}) }
     })
   ).data as Response<BanRule>
@@ -158,7 +158,7 @@ export async function updateRule(
 
 export async function getRecords(page: number = 1, perpage: number = 20, query: string = '') {
   const result = (
-    await axios('/v3/ban/records', {
+    await axios('/v1/ban/records', {
       params: {
         page,
         perpage,
@@ -217,7 +217,7 @@ export interface DeviceBanPayload {
 
 export async function getBannedUsers(page: number = 1, perpage: number = 20, query: string = '') {
   const result = (
-    await axios('/v3/ban/users', {
+    await axios('/v1/ban/users', {
       params: {
         page,
         perpage,
@@ -246,7 +246,7 @@ export async function getBannedDevices(
   query: string = ''
 ) {
   const result = (
-    await axios('/v3/ban/devices', {
+    await axios('/v1/ban/devices', {
       params: {
         page,
         perpage,
@@ -277,7 +277,7 @@ export async function getBannedDevices(
 export async function banDevice(payload: DeviceBanPayload, verificationToken?: string) {
   await axios({
     method: 'post',
-    url: '/v3/ban/devices',
+    url: '/v1/ban/devices',
     data: { ...payload, ...(verificationToken ? { verification_token: verificationToken } : {}) }
   })
   return true
@@ -286,7 +286,7 @@ export async function banDevice(payload: DeviceBanPayload, verificationToken?: s
 export async function unbanDevice(xuehaiId: string, verificationToken?: string) {
   await axios({
     method: 'delete',
-    url: `/v3/ban/devices/${encodeURIComponent(xuehaiId)}`,
+    url: `/v1/ban/devices/${encodeURIComponent(xuehaiId)}`,
     ...(verificationToken ? { data: { verification_token: verificationToken } } : {})
   })
   return true
@@ -295,7 +295,7 @@ export async function unbanDevice(xuehaiId: string, verificationToken?: string) 
 export async function resetDeviceGradient(xuehaiId: string, verificationToken?: string) {
   await axios({
     method: 'post',
-    url: `/v3/ban/devices/${encodeURIComponent(xuehaiId)}/reset-gradient`,
+    url: `/v1/ban/devices/${encodeURIComponent(xuehaiId)}/reset-gradient`,
     ...(verificationToken ? { data: { verification_token: verificationToken } } : {})
   })
   return true

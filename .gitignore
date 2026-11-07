@@ -1,3 +1,4 @@
 adb2-wallet.7z
 # git worktree 工作目录（预览/并行开发用）
 worktrees/
+.slim/deepwork/

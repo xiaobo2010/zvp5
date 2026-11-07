@@ -503,7 +503,7 @@ function describeError(error: unknown): string {
 
 /**
  * 班级 id → 班级名。班级名只用于展示，拿不到就留空，不影响学号/姓名的匹配，
- * 因此这里吞掉异常（普通学生角色无权读 /v2/groups）。
+ * 因此这里吞掉异常（普通学生角色无权读 /v1/groups）。
  */
 async function fetchClassNames(): Promise<Map<string, string>> {
   const names = new Map<string, string>()
@@ -511,7 +511,7 @@ async function fetchClassNames(): Promise<Map<string, string>> {
     for (let page = 1; page <= MAX_GROUP_PAGES; page += 1) {
       const response = await axios({
         method: 'get',
-        url: '/v2/groups',
+        url: '/v1/groups',
         params: { page, size: GROUP_PAGE_SIZE }
       })
       const payload = response?.data
@@ -566,7 +566,7 @@ async function fetchStudents(
   for (let page = 1; page <= MAX_USER_PAGES; page += 1) {
     const response = await axios({
       method: 'get',
-      url: '/v2/users',
+      url: '/v1/users',
       params: { page, size: USER_PAGE_SIZE, query: '' },
       timeout: 30000
     })

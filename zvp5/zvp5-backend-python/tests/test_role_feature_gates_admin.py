@@ -141,9 +141,9 @@ def test_activity_stats_off_blocks_readers_and_skips_the_repository(user, monkey
 
     response = _app(
         activity_statistics_router.router,
-        "/api/v2/statistics/activities",
+        "/api/v1/statistics/activities",
         user,
-    ).get("/api/v2/statistics/activities/act1/description")
+    ).get("/api/v1/statistics/activities/act1/description")
 
     assert response.status_code == 403, response.text
     assert response.json()["detail"] == FEATURE_DENIED
@@ -156,9 +156,9 @@ def test_activity_stats_on_keeps_secretary_default(monkeypatch):
 
     response = _app(
         activity_statistics_router.router,
-        "/api/v2/statistics/activities",
+        "/api/v1/statistics/activities",
         USER_SECRETARY,
-    ).get("/api/v2/statistics/activities/act1/description")
+    ).get("/api/v1/statistics/activities/act1/description")
 
     assert response.status_code == 200, response.text
     body = response.json()
@@ -377,7 +377,7 @@ _ADMIN_ONLY_CASES = [
     ),
     pytest.param(
         notifications_router.router,
-        "/api/v3/notifications",
+        "/api/v1/notifications",
         "post",
         "",
         {"json": {"title": "通知", "content": "内容"}},
@@ -387,7 +387,7 @@ _ADMIN_ONLY_CASES = [
     ),
     pytest.param(
         ban_router.router,
-        "/api/v3/ban",
+        "/api/v1/ban",
         "get",
         "/rules",
         {},
@@ -397,7 +397,7 @@ _ADMIN_ONLY_CASES = [
     ),
     pytest.param(
         ban_violations_router.router,
-        "/api/v3/ban",
+        "/api/v1/ban",
         "get",
         "/violations",
         {},
@@ -482,10 +482,10 @@ def test_switch_on_lets_department_read_admin_surfaces(
 
     cases = {
         "logs.read": (logs_router.router, "/api/logs", "get", ""),
-        "ban.read": (ban_router.router, "/api/v3/ban", "get", "/rules"),
+        "ban.read": (ban_router.router, "/api/v1/ban", "get", "/rules"),
         "notify.publish": (
             notifications_router.router,
-            "/api/v3/notifications",
+            "/api/v1/notifications",
             "get",
             "/admin",
         ),
@@ -508,8 +508,8 @@ def test_ban_read_switch_also_opens_the_violations_list(monkeypatch):
         backends, "get_violations_repo", lambda *a, **k: _ViolationsRepo()
     )
 
-    response = _app(ban_violations_router.router, "/api/v3/ban", USER_DEPT).get(
-        "/api/v3/ban/violations"
+    response = _app(ban_violations_router.router, "/api/v1/ban", USER_DEPT).get(
+        "/api/v1/ban/violations"
     )
 
     assert response.status_code == 200, response.text
@@ -519,8 +519,8 @@ def test_ban_write_stays_admin_only_even_with_ban_read_on(monkeypatch):
     """``ban.read`` 只下放读：新增规则仍然只有 admin 能写。"""
     _override(monkeypatch, "department", "ban.read", True)
 
-    response = _app(ban_router.router, "/api/v3/ban", USER_DEPT).post(
-        "/api/v3/ban/rules",
+    response = _app(ban_router.router, "/api/v1/ban", USER_DEPT).post(
+        "/api/v1/ban/rules",
         json={
             "code": "new_rule",
             "name": "新规则",
@@ -773,12 +773,12 @@ def test_admin_reads_admin_surfaces_even_with_every_switch_off(monkeypatch):
         backends, "get_notifications_repo", lambda *a, **k: _NotificationsRepo()
     )
 
-    assert _app(ban_router.router, "/api/v3/ban", USER_ADMIN).get(
-        "/api/v3/ban/rules"
+    assert _app(ban_router.router, "/api/v1/ban", USER_ADMIN).get(
+        "/api/v1/ban/rules"
     ).status_code == 200
     assert _app(logs_router.router, "/api/logs", USER_ADMIN).get("/api/logs").status_code == 200
-    assert _app(notifications_router.router, "/api/v3/notifications", USER_ADMIN).get(
-        "/api/v3/notifications/admin"
+    assert _app(notifications_router.router, "/api/v1/notifications", USER_ADMIN).get(
+        "/api/v1/notifications/admin"
     ).status_code == 200
 
 

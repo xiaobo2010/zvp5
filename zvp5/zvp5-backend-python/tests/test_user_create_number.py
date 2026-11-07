@@ -1,4 +1,4 @@
-"""班级内建号（``POST /api/v3/users``）的学号轻校验契约。
+"""班级内建号（``POST /api/v1/users``）的学号轻校验契约。
 
 背景：学号格式限制从建号口移除——班级内建号的编号规则由各班级自定，不再要求
 8 位纯数字 + 年份窗口 + 班号/座号范围。**只剩三类硬约束**（会真的炸后端的）：
@@ -32,7 +32,7 @@ from typings.log import inject_log
 from util.cert import check_password, jwt_decode, pwd_strength, rsa_encrypt
 from util.object_id import get_current_user
 
-PREFIX = "/api/v3/users"
+PREFIX = "/api/v1/users"
 ADMIN = "00000000000000000000000a"
 NEW_OID = "00000000000000000000000b"
 EXISTING_NUMBER = "20240101"

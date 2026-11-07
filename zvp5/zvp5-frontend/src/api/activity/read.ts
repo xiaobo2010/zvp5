@@ -11,7 +11,7 @@ async function getClassActivities(
   asc: boolean = false
 ) {
   return (
-    await axios(`/v2/groups/${classid}/activities`, {
+    await axios(`/v1/groups/${classid}/activities`, {
       params: {
         page,
         perpage,
@@ -37,14 +37,14 @@ async function getAllActivities(
   sortField: string = '_id',
   ascending: boolean = false
 ) {
-  return (
-    await axios('/v2/activities', {
+  // v3 契约：perpage→size、search→query、activity_type→type（单值），sort/asc 透传。
+  const response = (
+    await axios('/v1/activities', {
       params: {
-        mode: 'campus',
-        activity_type: filter.type,
         page,
-        perpage,
-        search,
+        size: perpage,
+        query: search,
+        type: filter.type,
         sort: sortField,
         asc: ascending
       }
@@ -53,11 +53,13 @@ async function getAllActivities(
     activities: Activity[]
     total: number
   }
+  // 后端 v3 响应不回显 page/perpage，用请求入参补齐以维持原返回形状。
+  return { ...response, page, perpage }
 }
 
 async function getActivity(id: string) {
   // id: ObjectId
-  return (await axios(`/v2/activities/${id}`)).data as {
+  return (await axios(`/v1/activities/${id}`)).data as {
     activity: Activity
     members_count: number
   }
@@ -71,7 +73,7 @@ async function getAllActivitiesV3(
   status: string = ''
 ) {
   return (
-    await axios('/v3/activities', {
+    await axios('/v1/activities', {
       method: 'GET',
       params: {
         page,

@@ -8,7 +8,7 @@ user comes from ``app.dependency_overrides[get_current_user]``.
 Why a throwaway ``FastAPI()`` instead of ``main.app``: importing ``main`` pulls
 in APScheduler, socket.io and the ``tasks.compute_time`` graph. The prefix below
 is copied from ``main.py``'s
-``include_router(groups_v2_router.router, prefix="/api/v2/groups")`` so the
+``include_router(groups_v2_router.router, prefix="/api/v1/groups")`` so the
 tested URL is the production one.
 
 Two properties are pinned beyond the response contract:
@@ -34,7 +34,7 @@ from db import backends
 from routers import groups_v2_router
 from util.object_id import get_current_user
 
-PREFIX = "/api/v2/groups"
+PREFIX = "/api/v1/groups"
 
 CLASS_OID = "64b7f0c2e1a3b4c5d6e7f801"
 OTHER_CLASS_OID = "64b7f0c2e1a3b4c5d6e7f802"

@@ -106,12 +106,23 @@ def _activity_filter(query: str, atypes: list[str] | None, status: str | None) -
     return conds
 
 
-def _page_stmt(query: str, atypes: list[str] | None, status: str | None, page: int, size: int):
+def _page_stmt(
+    query: str,
+    atypes: list[str] | None,
+    status: str | None,
+    page: int,
+    size: int,
+    sort: str | None = None,
+    asc: bool = False,
+):
     """``list_page`` select: creator name joined, total via ``COUNT(*) OVER()``.
 
     The LEFT JOIN resolves ``creator_name`` (a missing creator keeps the row —
     the ``USERS`` side is the optional one); the analytic total is evaluated
     over the filtered set, before the row limit.
+
+    ``sort`` is an already-whitelisted column name (``None`` keeps the default
+    ``oid DESC``); ``asc`` only applies when ``sort`` is given.
     """
     stmt = (
         select(
@@ -129,7 +140,12 @@ def _page_stmt(query: str, atypes: list[str] | None, status: str | None, page: i
     if conds:
         stmt = stmt.where(*conds)
     offset, limit = page_args(page, size)
-    return stmt.order_by(activities_tbl.c.oid.desc()).offset(offset).limit(limit)
+    if sort:
+        column = getattr(activities_tbl.c, sort)
+        order = column.asc() if asc else column.desc()
+    else:
+        order = activities_tbl.c.oid.desc()
+    return stmt.order_by(order).offset(offset).limit(limit)
 
 
 def _count_stmt(query: str, atypes: list[str] | None, status: str | None):
@@ -309,8 +325,10 @@ class OracleActivitiesRepo:
         status: str | None,
         page: int,
         size: int,
+        sort: str | None = None,
+        asc: bool = False,
     ) -> tuple[list[Row], int]:
-        stmt = _page_stmt(query, atypes, status, page, size)
+        stmt = _page_stmt(query, atypes, status, page, size, sort, asc)
         count_stmt = _count_stmt(query, atypes, status)
         async with _session_for(self._session) as (session, _owns):
             rows = (await session.execute(stmt)).all()

@@ -1,4 +1,4 @@
-"""``/api/v3/notifications`` 的离线契约测试。
+"""``/api/v1/notifications`` 的离线契约测试。
 
 覆盖四件事：
 
@@ -24,7 +24,7 @@ from routers import notifications_router
 from typings.log import inject_log
 from util.object_id import get_current_user
 
-PREFIX = "/api/v3/notifications"
+PREFIX = "/api/v1/notifications"
 ADMIN = {"id": "000000000000000000000001", "per": ["admin"]}
 STUDENT = {"id": "000000000000000000000002", "per": ["student"]}
 CREATED = datetime(2026, 10, 21, 9, 30, 0)

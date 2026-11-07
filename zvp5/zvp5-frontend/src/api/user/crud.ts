@@ -116,7 +116,7 @@ async function getUsersV2(
   role: string = ''
 ) {
   const result = (
-    await axios('/v2/users', {
+    await axios('/v1/users', {
       params: { page, size, query, role }
     })
   ).data as { data: User[]; total: number }
@@ -127,7 +127,7 @@ async function getUsersV2(
 }
 
 async function getUserV3(id: string) {
-  const result = (await axios(`/v3/users/${id}`)).data as Response<User>
+  const result = (await axios(`/v1/users/${id}`)).data as Response<User>
   if (result.status === 'error') {
     throw result
   }
@@ -137,7 +137,7 @@ async function getUserV3(id: string) {
 async function putUserRoles(uid: string, roles: string[]) {
   const response = await axios({
     method: 'put',
-    url: `/v3/users/${uid}/roles`,
+    url: `/v1/users/${uid}/roles`,
     data: { roles }
   })
   return response?.status === 204
@@ -146,7 +146,7 @@ async function putUserRoles(uid: string, roles: string[]) {
 async function putUserStudentId(uid: string, studentId: string) {
   const response = await axios({
     method: 'put',
-    url: `/v3/users/${uid}/student-id`,
+    url: `/v1/users/${uid}/student-id`,
     data: { id: studentId }
   })
   return response?.status >= 200 && response?.status < 300
@@ -155,7 +155,7 @@ async function putUserStudentId(uid: string, studentId: string) {
 async function deleteUserV3(uid: string, verificationToken?: string) {
   const response = await axios({
     method: 'delete',
-    url: `/v3/users/${uid}`,
+    url: `/v1/users/${uid}`,
     ...(verificationToken ? { data: { verification_token: verificationToken } } : {})
   })
   return response?.status >= 200 && response?.status < 300
@@ -176,7 +176,7 @@ async function putUserBanned(
   if (banned && durationDays != null) data.duration_days = durationDays
   const response = await axios({
     method: 'put',
-    url: `/v3/users/${uid}/banned`,
+    url: `/v1/users/${uid}/banned`,
     data
   })
   // 200 带 ban_until 响应体(便于提示到期时间);保留对 204 的兼容。
@@ -192,7 +192,7 @@ async function createUserV3(
   const result = (
     await axios({
       method: 'post',
-      url: '/v3/users',
+      url: '/v1/users',
       data: { id, name, roles, class_id: class_id || undefined }
     })
   ).data as { id: string; initial_password?: string }

@@ -2,9 +2,9 @@
 
 覆盖契约 §3.3A 的四条后端能力：
 
-* ``PUT /api/v3/users/{id}/roles`` 的**目标侧保护**（禁改其他 admin / 禁改自己）；
-* 新增 ``PUT /api/v3/users/{id}/student-id``（轻校验 / 409 / 轮换 session_id）；
-* 新增 ``DELETE /api/v3/users/{id}``（单事务归档 + 清理 + 删行，失败整体回滚）；
+* ``PUT /api/v1/users/{id}/roles`` 的**目标侧保护**（禁改其他 admin / 禁改自己）；
+* 新增 ``PUT /api/v1/users/{id}/student-id``（轻校验 / 409 / 轮换 session_id）；
+* 新增 ``DELETE /api/v1/users/{id}``（单事务归档 + 清理 + 删行，失败整体回滚）；
 * ``tasks/user_trash_gc.py``（30 天保留期、可配、只清过期行、写审计）。
 
 离线方式（与 ``tests/test_retention_async.py`` 同一风格：同步用例内
@@ -144,7 +144,7 @@ def env(monkeypatch):
     monkeypatch.setattr(users_v3_router, "get_user_display_name", display_name)
 
     app = FastAPI()
-    app.include_router(users_v3_router.router, prefix="/api/v3/users")
+    app.include_router(users_v3_router.router, prefix="/api/v1/users")
     app.dependency_overrides[get_current_user] = lambda: {"id": SELF, "per": ["admin"]}
     app.dependency_overrides[inject_log] = lambda: log
 
@@ -180,7 +180,7 @@ def test_role_change_forbidden_is_pure_policy():
 
 
 def test_admin_cannot_change_other_admin_roles(env):
-    response = env.client.put(f"/api/v3/users/{ADMIN}/roles", json={"roles": ["student"]})
+    response = env.client.put(f"/api/v1/users/{ADMIN}/roles", json={"roles": ["student"]})
     assert response.status_code == 403
     assert response.json()["detail"] == "不能修改管理员账号的角色"
     assert env.repo.set_roles_calls == []
@@ -190,7 +190,7 @@ def test_admin_cannot_change_other_admin_roles(env):
 def test_admin_cannot_change_own_roles(env):
     """自我提权 / 自我降级（自锁）都在同一条闸下被拒，且不落库、不写审计。"""
     for roles in (["admin"], ["student"], ["admin", "department"]):
-        response = env.client.put(f"/api/v3/users/{SELF}/roles", json={"roles": roles})
+        response = env.client.put(f"/api/v1/users/{SELF}/roles", json={"roles": roles})
         assert response.status_code == 403
         assert response.json()["detail"] == "不能修改自己的角色"
     assert env.repo.set_roles_calls == []
@@ -199,20 +199,20 @@ def test_admin_cannot_change_own_roles(env):
 
 def test_non_admin_cannot_change_roles(env):
     _login_as(env, ["student"])
-    response = env.client.put(f"/api/v3/users/{OTHER}/roles", json={"roles": ["admin"]})
+    response = env.client.put(f"/api/v1/users/{OTHER}/roles", json={"roles": ["admin"]})
     assert response.status_code == 403
     assert response.json()["detail"] == "权限不足"
     assert env.repo.set_roles_calls == []
 
 
 def test_unknown_role_is_rejected_by_whitelist(env):
-    response = env.client.put(f"/api/v3/users/{OTHER}/roles", json={"roles": ["superuser"]})
+    response = env.client.put(f"/api/v1/users/{OTHER}/roles", json={"roles": ["superuser"]})
     assert response.status_code == 422
     assert env.repo.set_roles_calls == []
 
 
 def test_admin_can_change_other_non_admin_roles(env):
-    response = env.client.put(f"/api/v3/users/{OTHER}/roles", json={"roles": ["secretary"]})
+    response = env.client.put(f"/api/v1/users/{OTHER}/roles", json={"roles": ["secretary"]})
     assert response.status_code == 204
     assert env.repo.set_roles_calls == [(OTHER, ["secretary"])]
     assert env.log.calls[0]["type"] == "role_change"
@@ -220,7 +220,7 @@ def test_admin_can_change_other_non_admin_roles(env):
 
 def test_role_change_missing_target_is_404(env):
     response = env.client.put(
-        "/api/v3/users/0000000000000000000000ff/roles", json={"roles": ["student"]}
+        "/api/v1/users/0000000000000000000000ff/roles", json={"roles": ["student"]}
     )
     assert response.status_code == 404
 
@@ -232,7 +232,7 @@ def test_role_change_missing_target_is_404(env):
 
 def test_student_id_success_writes_audit(env):
     response = env.client.put(
-        f"/api/v3/users/{OTHER}/student-id", json={"id": env.new_student_id}
+        f"/api/v1/users/{OTHER}/student-id", json={"id": env.new_student_id}
     )
     assert response.status_code == 204
     assert env.repo.set_business_id_calls == [(OTHER, env.new_student_id)]
@@ -247,7 +247,7 @@ def test_student_id_unusual_format_is_accepted(env):
     """
     for unusual in ("2019", "201901011", "abcdefgh", "2019-1-01", "cs2019A"):
         response = env.client.put(
-            f"/api/v3/users/{OTHER}/student-id", json={"id": unusual}
+            f"/api/v1/users/{OTHER}/student-id", json={"id": unusual}
         )
         assert response.status_code == 204, unusual
     assert [call[1] for call in env.repo.set_business_id_calls] == [
@@ -263,7 +263,7 @@ def test_student_id_unusual_format_is_accepted(env):
 def test_student_id_is_stripped_before_write(env):
     """首尾空白是输入噪音，strip 后再落库（登录名不该带不可见字符）。"""
     response = env.client.put(
-        f"/api/v3/users/{OTHER}/student-id", json={"id": "  cs2019A  "}
+        f"/api/v1/users/{OTHER}/student-id", json={"id": "  cs2019A  "}
     )
     assert response.status_code == 204
     assert env.repo.set_business_id_calls == [(OTHER, "cs2019A")]
@@ -271,7 +271,7 @@ def test_student_id_is_stripped_before_write(env):
 
 def test_student_id_blank_is_400(env):
     for blank in ("", "   ", "\t\n"):
-        response = env.client.put(f"/api/v3/users/{OTHER}/student-id", json={"id": blank})
+        response = env.client.put(f"/api/v1/users/{OTHER}/student-id", json={"id": blank})
         assert response.status_code == 400, blank
         assert response.json()["detail"] == "学号不能为空"
     assert env.repo.set_business_id_calls == []
@@ -280,7 +280,7 @@ def test_student_id_blank_is_400(env):
 
 def test_student_id_too_long_is_400(env):
     response = env.client.put(
-        f"/api/v3/users/{OTHER}/student-id", json={"id": "a" * 33}
+        f"/api/v1/users/{OTHER}/student-id", json={"id": "a" * 33}
     )
     assert response.status_code == 400
     assert response.json()["detail"] == "学号长度不能超过 32 个字符"
@@ -288,14 +288,14 @@ def test_student_id_too_long_is_400(env):
 
     # 边界：正好 32 字符是列宽上限，必须放行（否则等于把 33 的错算到 32 头上）。
     response = env.client.put(
-        f"/api/v3/users/{OTHER}/student-id", json={"id": "b" * 32}
+        f"/api/v1/users/{OTHER}/student-id", json={"id": "b" * 32}
     )
     assert response.status_code == 204
 
 
 def test_student_id_with_space_or_control_char_is_400(env):
     for bad in ("2019 01", "2019\u000101", "2019\u007f01"):
-        response = env.client.put(f"/api/v3/users/{OTHER}/student-id", json={"id": bad})
+        response = env.client.put(f"/api/v1/users/{OTHER}/student-id", json={"id": bad})
         assert response.status_code == 400, repr(bad)
         assert response.json()["detail"] == "学号不能包含空白或控制字符"
     assert env.repo.set_business_id_calls == []
@@ -304,7 +304,7 @@ def test_student_id_with_space_or_control_char_is_400(env):
 
 def test_student_id_duplicate_is_409(env):
     """学号唯一：占用者是别人 → 409（自己占用自己是幂等改写，不放行重复）。"""
-    response = env.client.put(f"/api/v3/users/{OTHER}/student-id", json={"id": env.ids[1]})
+    response = env.client.put(f"/api/v1/users/{OTHER}/student-id", json={"id": env.ids[1]})
     assert response.status_code == 409
     assert response.json()["detail"] == "学号已存在"
     assert env.repo.set_business_id_calls == []
@@ -313,7 +313,7 @@ def test_student_id_duplicate_is_409(env):
 def test_student_id_non_admin_is_403(env):
     _login_as(env, ["department"])
     response = env.client.put(
-        f"/api/v3/users/{OTHER}/student-id", json={"id": env.new_student_id}
+        f"/api/v1/users/{OTHER}/student-id", json={"id": env.new_student_id}
     )
     assert response.status_code == 403
     assert env.repo.set_business_id_calls == []
@@ -321,7 +321,7 @@ def test_student_id_non_admin_is_403(env):
 
 def test_student_id_unknown_user_is_404(env):
     response = env.client.put(
-        "/api/v3/users/0000000000000000000000ff/student-id",
+        "/api/v1/users/0000000000000000000000ff/student-id",
         json={"id": env.new_student_id},
     )
     assert response.status_code == 404
@@ -348,7 +348,7 @@ def test_set_roles_stmt_rotates_session():
 def test_cannot_delete_self(env):
     response = env.client.request(
         "DELETE",
-        f"/api/v3/users/{SELF}",
+        f"/api/v1/users/{SELF}",
         json={"verification_token": _verify_token(SELF)},
     )
     assert response.status_code == 403
@@ -359,7 +359,7 @@ def test_cannot_delete_self(env):
 
 def test_non_admin_cannot_delete(env):
     _login_as(env, ["department"])
-    response = env.client.delete(f"/api/v3/users/{OTHER}")
+    response = env.client.delete(f"/api/v1/users/{OTHER}")
     assert response.status_code == 403
     assert env.repo.delete_calls == []
 
@@ -367,7 +367,7 @@ def test_non_admin_cannot_delete(env):
 def test_delete_user_writes_warning_audit(env):
     response = env.client.request(
         "DELETE",
-        f"/api/v3/users/{OTHER}",
+        f"/api/v1/users/{OTHER}",
         json={"verification_token": _verify_token(SELF)},
     )
     assert response.status_code == 204
@@ -382,7 +382,7 @@ def test_delete_user_gone_is_404_and_not_logged(env):
     env.repo.fail_delete = True
     response = env.client.request(
         "DELETE",
-        f"/api/v3/users/{OTHER}",
+        f"/api/v1/users/{OTHER}",
         json={"verification_token": _verify_token(SELF)},
     )
     assert response.status_code == 404
@@ -390,7 +390,7 @@ def test_delete_user_gone_is_404_and_not_logged(env):
 
 
 def test_delete_missing_user_is_404(env):
-    response = env.client.delete("/api/v3/users/0000000000000000000000ff")
+    response = env.client.delete("/api/v1/users/0000000000000000000000ff")
     assert response.status_code == 404
     assert env.repo.delete_calls == []
 

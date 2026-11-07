@@ -5,7 +5,7 @@ import ZGroupList from './ZGroupList.vue'
 /**
  * 群组列表的两个入口：
  * - 「添加班级」：单输入框弹窗，必填校验后调 createGroupV3，成功后刷新列表；
- * - 重命名按钮已移除（后端 PUT /v3/groups/{id}/name 无前端入口时不保留死按钮）。
+ * - 重命名按钮已移除（后端 PUT /v1/groups/{id}/name 无前端入口时不保留死按钮）。
  */
 
 const { readSpy, createSpy, deleteSpy, pushSpy, elMessageErrorSpy, elMessageSuccessSpy } =

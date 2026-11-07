@@ -11,7 +11,7 @@ export interface ActivityTimeRecord extends UserActivityTimeSums {
 }
 
 /**
- * @description Payload shape of `/v2/groups/:id/time`.
+ * @description Payload shape of `/v1/groups/:id/time`.
  */
 export interface ActivityTimePage {
   data: ActivityTimeRecord[]
@@ -21,7 +21,7 @@ export interface ActivityTimePage {
 }
 
 /**
- * @description Payload shape of `/v2/groups/:id/users`.
+ * @description Payload shape of `/v1/groups/:id/users`.
  */
 export interface GroupUsersPage {
   members: User[]
@@ -29,7 +29,7 @@ export interface GroupUsersPage {
 }
 
 /**
- * @description Payload shape of `/v2/statistics/activities/:id/description`.
+ * @description Payload shape of `/v1/statistics/activities/:id/description`.
  * The keys mirror the backend `util/activity_statistics.describe_durations`
  * output verbatim, so a typo in a consumer becomes a type error.
  */
@@ -90,7 +90,7 @@ export interface StatisticsMemberRef {
 }
 
 /**
- * @description Payload shape of `/v2/statistics/activities/:id/analysis`.
+ * @description Payload shape of `/v1/statistics/activities/:id/analysis`.
  */
 export interface ActivityStatistics {
   total: number
@@ -109,7 +109,7 @@ export interface ActivityStatistics {
 
 /**
  * @description Member rosters carried by the additive `member_rosters` field of
- * `/v2/groups/:id/statistics/compliance`. Mode keys and bucket keys match the
+ * `/v1/groups/:id/statistics/compliance`. Mode keys and bucket keys match the
  * compliance payload verbatim so consumers can join by label; any missing mode
  * or bucket means no visible members for that slice, and a response without the
  * field degrades the same way.

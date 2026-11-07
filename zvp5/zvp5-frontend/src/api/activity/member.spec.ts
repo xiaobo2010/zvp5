@@ -18,7 +18,7 @@ describe('批量新增活动成员', () => {
     await insertMany(AID, [{ member: MEMBER, mode: 'on-campus', duration: 2 }])
 
     expect(request).toHaveBeenCalledWith(
-      `/v3/activities/${AID}/members`,
+      `/v1/activities/${AID}/members`,
       expect.objectContaining({ method: 'post', params: undefined })
     )
   })
@@ -29,7 +29,7 @@ describe('批量新增活动成员', () => {
     })
 
     expect(request).toHaveBeenCalledWith(
-      `/v3/activities/${AID}/members`,
+      `/v1/activities/${AID}/members`,
       expect.objectContaining({
         params: { overwrite: false, reject_existing: true }
       })
@@ -43,7 +43,7 @@ describe('批量新增活动成员', () => {
     })
 
     expect(request).toHaveBeenCalledWith(
-      `/v3/activities/${AID}/members`,
+      `/v1/activities/${AID}/members`,
       expect.objectContaining({
         params: { overwrite: true, reject_existing: true }
       })

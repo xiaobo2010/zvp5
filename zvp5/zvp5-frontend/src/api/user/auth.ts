@@ -62,7 +62,7 @@ export async function resetPassword(
 
 export async function resetToInitial(user: string, token: string) {
   const result = (
-    await axios(`/v3/users/${user}/password`, {
+    await axios(`/v1/users/${user}/password`, {
       method: 'DELETE',
       headers: {
         Authorization: `Bearer ${token}`

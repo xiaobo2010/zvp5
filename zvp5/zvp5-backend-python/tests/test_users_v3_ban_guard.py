@@ -103,7 +103,7 @@ def client(monkeypatch):
     monkeypatch.setattr(users_v3_router, "get_user_display_name", display_name)
 
     app = FastAPI()
-    app.include_router(users_v3_router.router, prefix="/api/v3/users")
+    app.include_router(users_v3_router.router, prefix="/api/v1/users")
     app.dependency_overrides[get_current_user] = lambda: {"id": SELF, "per": ["admin"]}
     app.dependency_overrides[inject_log] = lambda: StubLog(state["logs"])
     return TestClient(app), state
@@ -111,7 +111,7 @@ def client(monkeypatch):
 
 def test_admin_cannot_ban_self(client):
     http, state = client
-    response = http.put(f"/api/v3/users/{SELF}/banned", json={"banned": True})
+    response = http.put(f"/api/v1/users/{SELF}/banned", json={"banned": True})
     assert response.status_code == 403
     assert response.json()["detail"] == "不能封禁自己"
     # 未落库，也未写审计日志
@@ -121,7 +121,7 @@ def test_admin_cannot_ban_self(client):
 
 def test_admin_can_ban_other_user_with_default_reason(client):
     http, state = client
-    assert http.put(f"/api/v3/users/{OTHER}/banned", json={"banned": True}).status_code == 200
+    assert http.put(f"/api/v1/users/{OTHER}/banned", json={"banned": True}).status_code == 200
 
     ban = state["bans"][0]
     assert ban["oid"] == OTHER
@@ -142,7 +142,7 @@ def test_admin_can_ban_other_user_with_default_reason(client):
 def test_admin_reason_is_trimmed_and_forwarded(client):
     http, state = client
     response = http.put(
-        f"/api/v3/users/{OTHER}/banned",
+        f"/api/v1/users/{OTHER}/banned",
         json={"banned": True, "reason": "  多次刷分  "},
     )
     assert response.status_code == 200
@@ -154,7 +154,7 @@ def test_blank_reason_falls_back_to_default(client):
     http, state = client
     assert (
         http.put(
-            f"/api/v3/users/{OTHER}/banned",
+            f"/api/v1/users/{OTHER}/banned",
             json={"banned": True, "reason": "   "},
         ).status_code
         == 200
@@ -165,7 +165,7 @@ def test_blank_reason_falls_back_to_default(client):
 def test_too_long_reason_is_rejected(client):
     http, state = client
     response = http.put(
-        f"/api/v3/users/{OTHER}/banned",
+        f"/api/v1/users/{OTHER}/banned",
         json={"banned": True, "reason": "x" * 513},
     )
     assert response.status_code == 422
@@ -174,7 +174,7 @@ def test_too_long_reason_is_rejected(client):
 
 def test_self_unban_is_not_blocked(client):
     http, state = client
-    assert http.put(f"/api/v3/users/{SELF}/banned", json={"banned": False}).status_code == 200
+    assert http.put(f"/api/v1/users/{SELF}/banned", json={"banned": False}).status_code == 200
     assert state["clears"] == [SELF]
     assert state["bans"] == []
     # 解封不写流水：历史事实已经由封禁时的行承担，解封不能追加「负封禁」。
@@ -182,7 +182,7 @@ def test_self_unban_is_not_blocked(client):
 
 
 # ---------------------------------------------------------------------------
-# 解封不再连带删除设备封禁行（设备统一走 /api/v3/ban/devices）
+# 解封不再连带删除设备封禁行（设备统一走 /api/v1/ban/devices）
 # ---------------------------------------------------------------------------
 
 
@@ -194,7 +194,7 @@ def test_unban_leaves_device_bans_untouched(client) -> None:
     """设备封禁是独立事实：解账号不能顺带放走一台被判定违规的机器。"""
     http, state = client
 
-    assert http.put(f"/api/v3/users/{OTHER}/banned", json={"banned": False}).status_code == 200
+    assert http.put(f"/api/v1/users/{OTHER}/banned", json={"banned": False}).status_code == 200
 
     assert state["clears"] == [OTHER]
     assert state["device_deletes"] == []
@@ -208,7 +208,7 @@ def test_unban_still_succeeds_when_device_repo_would_fail(client) -> None:
     http, state = client
     state["device_rows"] = RuntimeError("oracle down")
 
-    response = http.put(f"/api/v3/users/{OTHER}/banned", json={"banned": False})
+    response = http.put(f"/api/v1/users/{OTHER}/banned", json={"banned": False})
 
     assert response.status_code == 200
     assert state["clears"] == [OTHER]

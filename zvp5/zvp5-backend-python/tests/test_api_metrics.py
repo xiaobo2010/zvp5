@@ -26,13 +26,13 @@ class Clock:
 def test_counts_errors_average_max_and_percentile():
     recorder = ApiMetricsRecorder()
     for _ in range(99):
-        recorder.record("GET", "/api/v3/activities/{aid}/members", 200, 10.0)
-    recorder.record("GET", "/api/v3/activities/{aid}/members", 500, 500.0)
+        recorder.record("GET", "/api/v1/activities/{aid}/members", 200, 10.0)
+    recorder.record("GET", "/api/v1/activities/{aid}/members", 500, 500.0)
 
     items = recorder.snapshot()["items"]
     assert len(items) == 1
     item = items[0]
-    assert item["route"] == "/api/v3/activities/{aid}/members"
+    assert item["route"] == "/api/v1/activities/{aid}/members"
     assert item["count"] == 100
     assert item["err_count"] == 1
     assert item["avg_ms"] == 14.9
@@ -66,7 +66,7 @@ def test_window_seconds_is_the_real_span_not_a_nominal_value():
 def test_route_cardinality_is_bounded_by_an_other_bucket():
     recorder = ApiMetricsRecorder(max_routes=3)
     for index in range(50):
-        recorder.record("GET", f"/api/v3/users/{index}", 200, 1.0)
+        recorder.record("GET", f"/api/v1/users/{index}", 200, 1.0)
     items = recorder.snapshot()["items"]
     assert len(items) == 4  # max_routes + the overflow bucket
     assert sum(item["count"] for item in items) == 50
@@ -79,8 +79,8 @@ def test_histogram_memory_per_route_is_fixed():
 
     recorder = ApiMetricsRecorder()
     for index in range(5000):
-        recorder.record("GET", "/api/v3/activities", 200, float(index % 1000))
-    stats = recorder._routes[("GET", "/api/v3/activities")]
+        recorder.record("GET", "/api/v1/activities", 200, float(index % 1000))
+    stats = recorder._routes[("GET", "/api/v1/activities")]
     assert stats.count == 5000
     # One fixed-size bucket array per route, independent of the sample count.
     assert len(stats.buckets) == len(BOUNDS_MS) + 1
@@ -95,7 +95,7 @@ def test_excluded_paths_cover_health_version_static_and_self():
     assert is_excluded_path("/assets/index-abc.js")
     assert is_excluded_path("/socket.io/")
     assert is_excluded_path("/favicon.ico")
-    assert not is_excluded_path("/api/v3/activities/123/members")
+    assert not is_excluded_path("/api/v1/activities/123/members")
 
 
 def _client(recorder):
