@@ -1,8 +1,8 @@
 <script lang="ts" setup>
 import type { Activity, ActivityMember } from '@/../types/v2'
-import { Vacation, School, CityGate, Star } from '@icon-park/vue-next'
-import type { Component as VueComponent } from 'vue'
+import { Star } from '@icon-park/vue-next'
 import { ZButtonTag } from '@/components'
+import classifications from './classifications'
 import { useI18n } from 'vue-i18n'
 import { onMounted, ref, toRefs, watch } from 'vue'
 import { useUserStore } from '@/stores/user'
@@ -87,31 +87,8 @@ watch(mode, (newVal) => {
   }
 })
 
-const modes: Record<
-  Activity['type'],
-  {
-    icon: VueComponent
-    color: 'primary' | 'warning' | 'success' | 'danger' | 'info'
-  }
-> = {
-  'on-campus': {
-    icon: School,
-    color: 'primary'
-  },
-  'off-campus': {
-    icon: CityGate,
-    color: 'success'
-  },
-  'social-practice': {
-    icon: Vacation,
-    color: 'warning'
-  },
-  hybrid: {
-    icon: Star,
-    // 红色只用于高危操作；混合模式用中性灰（准则第 5 章）
-    color: 'info'
-  }
-}
+// 颜色/图标映射与 ZActivityType 共用同一份，避免两处模式配色漂移
+const modes = classifications.mode
 </script>
 
 <template>
@@ -125,12 +102,13 @@ const modes: Record<
       <ZButtonTag
         :size="size ?? 'small'"
         :type="modes[mode].color"
+        :tone="modes[mode].tone"
         :icon="modes[mode].icon"
         :unknown="!mode || !(mode in modes)"
         :force="force"
         :bg="bg"
       >
-        {{ t(`activity.mode.${mode}.short`) }}
+        {{ t(`activity.mode.${mode}.name`) }}
       </ZButtonTag>
     </template>
     <ElRow>
@@ -150,6 +128,6 @@ const modes: Record<
     </ElRow>
   </ElPopover>
   <ZButtonTag v-else :size="size ?? 'small'" type="info" :icon="Star" :force="force" :bg="bg">
-    {{ t(`activity.mode.hybrid.short`) }}
+    {{ t(`activity.mode.hybrid.name`) }}
   </ZButtonTag>
 </template>
