@@ -94,12 +94,19 @@ FastAPI 按注册顺序匹配。以下顺序**不能动**：
 
 | 数据 | key 域 | TTL | 失效 |
 |---|---|---|---|
-| 用户 `get_by_oid` / `get_for_auth` / `get_names` / `list_by_class` | `zvms:user:*` | 30–300s（±10% 抖动） | `user` epoch 自增 |
-| 群组 `get` / `list_classes` / `list_permission_groups` | `zvms:group:*` | 300s | `group` epoch |
-| 活动 `get` / `list_effective`（无日期区间时） | `zvms:activity:*` | 60s / 600s | `activity` epoch |
-| AI 会话 `get` / `latest_by_scene` | `zvms:conv:*` | 30s | 写入即失效 |
-| 变更日志 `list_all` | `zvms:changelog:*` | 300s | create/update/delete bump |
-| 通知 `list_active`（列表与版本同快照） | `zvms:notify:*` | ~20s | 写操作 bump |
+| 用户 `get_by_oid` / `get_for_auth` / `get_names` / `list_by_class` | `zvms:user:*` | auth 180s / user 600s / names 1h / 班级成员 30min（±10% 抖动） | `user` epoch 自增 + 精确 forget |
+| 群组 `get` / `list_classes` / `list_permission_groups` | `zvms:group:*` | 1h / 列表 10min | `group` epoch |
+| 活动 `get` / `list_effective`（无日期区间时） | `zvms:activity:*` | 10min / 2h | `activity` epoch |
+| AI 会话 `get` / `latest_by_scene` | `zvms:conv:*` | 2min | 写入即失效 |
+| 变更日志 `list_all` | `zvms:changelog:*` | 30min | create/update/delete bump |
+| 通知 `list_active`（列表与版本同快照） | `zvms:notify:*` | 2min | 写操作 bump |
+
+TTL 只兜「失效没送达」。放长的前提是写路径一定失效，因此两类**旁路写**必须显式补偿版本号：
+
+- 自带 `session` 的事务写会整体绕过缓存代理（`use_cache=session is None`）——目前只有 Excel 导入（`routers/imports_router.py`）与活动成员登记，导入在提交后 `bump_epoch("activities")`；
+- DB 控制台（`/api/system/db/content`）能改任意行，四个写端点提交后统一 `_invalidate_read_caches()`（users/groups/activities/roles/settings 各 bump 一次，O(1) 不发 SCAN）。
+
+新增旁路写时如果忘了补，缓存会旧到 TTL 上限；`tests/test_cache_policy.py` 钉了 TTL 区间与补偿函数。
 
 **不要加的缓存**：`USER_TIME`（DB 已是物化结果，再加缓存双写不一致）、`AI_MESSAGES.list_after`（追加写、顺序敏感）、`ai_runs.claim_next`（CAS）。
 
