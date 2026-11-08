@@ -1,0 +1,20 @@
+/* ==========================================================================
+   平板滚动流畅层（性能规则，不承载任何视觉设计）
+   目标设备：三星 P615C / P620（Galaxy Tab S6 Lite，Mali 级 GPU，60Hz）。
+   滚动时的合成带宽被两类负载挤占：固定毛玻璃导航的 backdrop-filter 采样
+   （设计本体，不可降级），与 phi 主题的纯装饰动画（全屏 3D 网格、速度线、
+   判定线等）。后者在滚动进行中处于感知盲区，冻结 160ms 肉眼不可辨。
+   utils/scrollActivity.ts 在滚动时给 <html> 打 data-scrolling，这里把
+   「平滑、可安全冻结在任意帧」的装饰动画统一暂停，把帧预算还给滚动。
+   排除项：phi-title-glitch / phi-emblem-rotate / phi-emblem-glitch 是
+   steps()/alternate 故障动画，冻结在中间帧会显示“错位”状态，观感会变，
+   故不在此暂停。选择器与 phi-theme.css（design:sync 生成物）保持同名。
+   ========================================================================== */
+
+html[data-scrolling] .yg-phi::before,
+html[data-scrolling] .yg-phi-velocity,
+html[data-scrolling] .yg-phi-judgment,
+html[data-scrolling] .yg-phi .phi-time__panel::after,
+html[data-scrolling] .yg-phi .el-segmented__item-selected::after {
+  animation-play-state: paused;
+}
