@@ -7,14 +7,11 @@
   ``box`` 允许 ``None``、空结果算成功而不是异常。SDK 层用 monkeypatch 替换
   ``_load_*_sdk``（延迟导入的那一层），断言**入参组装**（base64 无前缀、
   ``LanguageType=zh``、阿里 body 是二进制）与出参归一化。
-* **注册表 / 站点额度**：三个 kind 与 DDL CHECK 逐字对齐；站点额度落到
+* **注册表 / 站点额度**：注册表只有五个云端 kind；站点额度落到
   ``SHARED_OWNER_OID`` + ``ocr_<engine>``，非白名单 kind 必须拒绝（拼错 = 额度记到
   一行永远不会被查的记录上，等于没扣）。
 * **仓储**：SQL 形状按 ``literal_binds`` 编译后断言——排序键、enabled 过滤、
   「``None`` = 不改」的 UPDATE 语义，以及崩溃式错误（撞名）必须抛而不是吞。
-
-RapidOCR 有一条**真跑**的 smoke：PIL 生成一张有字的图，真走加载模型 + 推理。
-模型加载不起来（CI 缺 onnxruntime/模型）时 skip 并写明环境原因，不造假通过。
 
 不连库、不建引擎、不碰网络：所有上游都是假对象。
 """
@@ -23,13 +20,11 @@ from __future__ import annotations
 
 import base64
 import json
-import os
 from contextlib import asynccontextmanager
 from datetime import datetime
 from types import SimpleNamespace
 
 import pytest
-from PIL import Image, ImageDraw
 from sqlalchemy.dialects import oracle
 from sqlalchemy.exc import IntegrityError
 
@@ -358,236 +353,21 @@ def test_aliyun_non_json_data_is_an_empty_result(monkeypatch) -> None:
 
 
 # ---------------------------------------------------------------------------
-# RapidOCR：假输出归一化 + 真跑 smoke
-# ---------------------------------------------------------------------------
-
-
-class _FakeRapidOcr:
-    def __init__(self) -> None:
-        self.calls = []
-
-    def __call__(self, img_content, **kwargs):
-        self.calls.append(img_content)
-        return SimpleNamespace(
-            txts=("第一行", "second line"),
-            scores=(0.93, 0.41),
-            boxes=[
-                [[0, 0], [10, 0], [10, 5], [0, 5]],
-                [[0, 6], [10, 6], [10, 11], [0, 11]],
-            ],
-            elapse=0.12,
-        )
-
-
-def test_rapidocr_normalizes_output_and_skips_credentials(monkeypatch) -> None:
-    fake = _FakeRapidOcr()
-    monkeypatch.setattr(ocr_engines, "_RAPIDOCR_ENGINE", None)
-    monkeypatch.setattr(
-        ocr_engines,
-        "_load_rapidocr_sdk",
-        lambda: SimpleNamespace(RapidOCR=lambda: fake),
-    )
-
-    result = _run(
-        ocr_engines.RapidOcrEngine().recognize(PNG, "image/png", {}, {})
-    )
-
-    assert result["engine"] == ocr_engines.KIND_RAPIDOCR
-    assert result["text"] == "第一行\nsecond line"
-    assert result["lines"][0]["confidence"] == pytest.approx(0.93)
-    assert result["lines"][1]["box"] == [[0, 6], [10, 6], [10, 11], [0, 11]]
-    assert result["raw"]["elapse"] == pytest.approx(0.12)
-    assert fake.calls == [PNG]
-
-
-def test_rapidocr_instance_is_a_process_singleton(monkeypatch) -> None:
-    created: list[object] = []
-
-    class _Counting:
-        def __init__(self) -> None:
-            created.append(self)
-
-        def __call__(self, img_content, **kwargs):
-            return SimpleNamespace(txts=(), scores=(), boxes=None, elapse=0.0)
-
-    monkeypatch.setattr(ocr_engines, "_RAPIDOCR_ENGINE", None)
-    monkeypatch.setattr(
-        ocr_engines, "_load_rapidocr_sdk", lambda: SimpleNamespace(RapidOCR=_Counting)
-    )
-
-    engine = ocr_engines.RapidOcrEngine()
-    _run(engine.recognize(PNG, "image/png", {}, {}))
-    _run(engine.recognize(PNG, "image/png", {}, {}))
-
-    # 模型加载以秒计：两次调用只能构造一次实例。
-    assert len(created) == 1
-
-
-def test_rapidocr_empty_image_is_rejected() -> None:
-    with pytest.raises(ocr_engines.OcrEngineError):
-        _run(ocr_engines.RapidOcrEngine().recognize(b"", "image/png", {}, {}))
-
-
-def test_rapidocr_real_smoke() -> None:
-    """真加载模型 + 真推理，验证「本地兜底」不是纸面功能。
-
-    环境原因（没装 onnxruntime / 模型文件缺失）跳过并说明；识别不出字则算失败——
-    那说明适配器接错了 API 形状，不是环境问题。
-    """
-    image = Image.new("RGB", (460, 130), "white")
-    draw = ImageDraw.Draw(image)
-    try:
-        draw.text((20, 40), "Hello OCR 2026", fill="black", font_size=48)
-    except TypeError:  # pragma: no cover - 旧 Pillow 没有 font_size
-        draw.text((20, 40), "Hello OCR 2026", fill="black")
-    import io
-
-    buffer = io.BytesIO()
-    image.save(buffer, format="PNG")
-    payload = buffer.getvalue()
-
-    try:
-        result = _run(
-            ocr_engines.RapidOcrEngine().recognize(payload, "image/png", {}, {})
-        )
-    except (ocr_engines.OcrEngineError, ImportError, OSError) as exc:
-        pytest.skip(f"rapidocr 模型/依赖在当前环境不可用: {exc}")
-
-    assert result["engine"] == ocr_engines.KIND_RAPIDOCR
-    assert result["lines"], f"没有识别出任何文本行: {result['raw']}"
-    text = result["text"].lower()
-    # 合成图的字体渲染在个别 Pillow 版本下会退化，只要求命中部分关键字。
-    assert any(token in text for token in ("ocr", "hello", "2026")), text
-    assert all(line["confidence"] is None or 0.0 <= line["confidence"] <= 1.0
-               for line in result["lines"])
-
-
-# ---------------------------------------------------------------------------
-# RapidOCR 的 ORT 线程限制 + 本地预热
-# ---------------------------------------------------------------------------
-
-
-class _WarmupSpy:
-    """预热用的假引擎：记录每次调用，可选地模拟「模型加载失败」。"""
-
-    def __init__(self, *, fail: bool = False) -> None:
-        self.fail = fail
-        self.calls: list[tuple[bytes, dict]] = []
-
-    def __call__(self, payload, **kwargs):
-        self.calls.append((payload, kwargs))
-        if self.fail:
-            raise RuntimeError("onnxruntime session init failed")
-        return SimpleNamespace(txts=(), scores=(), boxes=None, elapse=0.0)
-
-
-def test_warmup_local_engines_is_idempotent(monkeypatch) -> None:
-    spy = _WarmupSpy()
-    monkeypatch.setattr(ocr_engines, "_RAPIDOCR_ENGINE", spy)
-    monkeypatch.setattr(ocr_engines, "_WARMUP_DONE", False)
-
-    assert _run(ocr_engines.warmup_local_engines()) is True
-    assert _run(ocr_engines.warmup_local_engines()) is True
-
-    # 首次：det/cls 一遍 + rec-only 一遍（让第一张真图也不用等 rec 会话）；
-    # 第二次命中完成标记，一次推理都不该再跑。
-    assert len(spy.calls) == 2
-    assert spy.calls[0][1] == {}
-    assert spy.calls[1][1] == {
-        "use_det": False,
-        "use_cls": False,
-        "use_rec": True,
-    }
-
-
-def test_warmup_local_engines_returns_false_instead_of_raising(monkeypatch) -> None:
-    spy = _WarmupSpy(fail=True)
-    monkeypatch.setattr(ocr_engines, "_RAPIDOCR_ENGINE", spy)
-    monkeypatch.setattr(ocr_engines, "_WARMUP_DONE", False)
-
-    # 健康检查依赖这个契约：本地引擎挂了只降级成 False，不能把 /health 变成 500。
-    assert _run(ocr_engines.warmup_local_engines()) is False
-    # 失败不标记完成：下次健康检查还能重试（也许只是模型没下载完）。
-    assert ocr_engines._WARMUP_DONE is False
-    assert _run(ocr_engines.warmup_local_engines()) is False
-    assert len(spy.calls) == 2
-
-
-def test_rapidocr_ort_threads_env_override_reaches_the_constructor(monkeypatch) -> None:
-    captured: dict = {}
-
-    class _FakeRapidOCR:
-        def __init__(self, params=None) -> None:
-            captured["params"] = params
-
-    monkeypatch.setenv(ocr_engines.ORT_THREADS_ENV, "2")
-    monkeypatch.setattr(ocr_engines, "_RAPIDOCR_ENGINE", None)
-    monkeypatch.setattr(
-        ocr_engines,
-        "_load_rapidocr_sdk",
-        lambda: SimpleNamespace(RapidOCR=_FakeRapidOCR),
-    )
-
-    ocr_engines._rapidocr_instance()
-
-    # 只断言构造参数：这里绝不真的加载 ONNX 模型。
-    assert captured["params"] == {
-        "EngineConfig.onnxruntime.intra_op_num_threads": 2,
-        "EngineConfig.onnxruntime.inter_op_num_threads": 1,
-    }
-
-
-@pytest.mark.parametrize("raw", ["0", "-1", "-8"])
-def test_rapidocr_ort_threads_zero_or_negative_means_unlimited(
-    monkeypatch, raw: str
-) -> None:
-    recorded: list[dict] = []
-
-    class _Factory:
-        def __init__(self, **kwargs) -> None:
-            recorded.append(kwargs)
-
-    monkeypatch.setenv(ocr_engines.ORT_THREADS_ENV, raw)
-
-    ocr_engines._construct_rapidocr(_Factory)
-
-    # 0 / 负数 = 不限制，把线程数交还给 ORT 默认值：一个参数都不传。
-    assert recorded == [{}]
-
-
-def test_rapidocr_ort_default_threads_are_bounded_by_cpu_count(monkeypatch) -> None:
-    monkeypatch.delenv(ocr_engines.ORT_THREADS_ENV, raising=False)
-    cpus = os.cpu_count() or 1
-
-    threads = ocr_engines._rapidocr_intra_threads()
-
-    expected_default = min(
-        ocr_engines.ORT_DEFAULT_MAX_INTRA_THREADS,
-        max(ocr_engines.ORT_DEFAULT_MIN_INTRA_THREADS, cpus // 2),
-    )
-    # 默认值本身落在 2..4；最终值再被 CPU 数钳住（1 核机器上只能降到 1）。
-    assert 2 <= expected_default <= 4
-    assert threads == max(1, min(expected_default, cpus))
-    assert threads <= cpus
-
-
-# ---------------------------------------------------------------------------
 # 注册表
 # ---------------------------------------------------------------------------
 
 
 def test_registry_covers_every_ddl_kind() -> None:
-    # 两处都写死六元组：只断言 ``set(ENGINES) == set(ENGINE_KINDS)`` 时，两边
+    # 两处都写死五元组：只断言 ``set(ENGINES) == set(ENGINE_KINDS)`` 时，两边
     # 一起漏掉同一个 kind 会静默通过——那正好是「DDL 拒收新 kind」的前置条件。
     expected_kinds = {
         ocr_engines.KIND_TENCENT,
         ocr_engines.KIND_ALIYUN,
         ocr_engines.KIND_BAIDU,
-        ocr_engines.KIND_RAPIDOCR,
         ocr_engines.KIND_GROQ,
         ocr_engines.KIND_ZHIPU,
     }
-    assert len(expected_kinds) == 6
+    assert len(expected_kinds) == 5
     assert set(ocr_engines.ENGINE_KINDS) == expected_kinds
     assert set(ocr_engines.ENGINES) == expected_kinds
     for kind, engine_cls in ocr_engines.ENGINES.items():
@@ -639,7 +419,6 @@ def test_site_kinds_are_the_engine_whitelist() -> None:
         "ocr_tencent",
         "ocr_aliyun",
         "ocr_baidu",
-        "ocr_rapidocr",
         "ocr_groq",
         "ocr_zhipu",
     }
@@ -895,8 +674,8 @@ class _Session:
 def _row_mapping(**overrides) -> dict:
     mapping = {
         "oid": "e" * 24,
-        "name": "rapidocr-local",
-        "kind": "rapidocr",
+        "name": "tencent-local",
+        "kind": "tencent",
         "config_json": '{"language_type": "zh"}',
         "secret_cipher": None,
         "key_hint": None,
@@ -917,8 +696,8 @@ def test_rows_are_mongo_shaped_dicts() -> None:
     assert rows == [
         {
             "_id": "e" * 24,
-            "name": "rapidocr-local",
-            "kind": "rapidocr",
+            "name": "tencent-local",
+            "kind": "tencent",
             "config": {"language_type": "zh"},
             "secret_cipher": None,
             "key_hint": None,
@@ -936,7 +715,7 @@ def test_injected_session_is_neither_committed_nor_closed() -> None:
 
     assert _run(repo.update("e" * 24, priority=10)) is True
     assert _run(repo.delete("e" * 24)) is True
-    assert _run(repo.insert(name="x", kind="rapidocr")) is not None
+    assert _run(repo.insert(name="x", kind="tencent")) is not None
     # 注入的 session 归调用方：仓储自己 commit 会把上层事务切两半。
     assert session.commits == 0
 
@@ -950,7 +729,7 @@ def test_repo_created_session_commits_once(monkeypatch) -> None:
 
     monkeypatch.setattr(ocr_repo, "session_scope", lambda: _scope())
 
-    oid = _run(ocr_repo.OracleAIOcrEnginesRepo().insert(name="x", kind="rapidocr"))
+    oid = _run(ocr_repo.OracleAIOcrEnginesRepo().insert(name="x", kind="tencent"))
 
     assert oid is not None and len(oid) == 24
     assert session.commits == 1

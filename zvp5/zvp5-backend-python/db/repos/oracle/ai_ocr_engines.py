@@ -13,7 +13,7 @@ V026). 行形状是 Mongo 风格的 dict（``"_id"`` = 小写 hex ``OID``）。
   进出：``JSONText`` 负责 ``json.dumps``，落库是 JSON 字符串而不是 Python repr
   （后者会被 ``IS JSON`` 约束挡下来）。
 * ``secret_cipher``：整份凭证对象的 AES-GCM 密文 base64，可空。``None`` 表示
-  「这个引擎不需要凭证」（rapidocr），不是「配置缺失」。明文既不落库也不进日志。
+  这一行没有凭证（历史行），不是「配置缺失」。明文既不落库也不进日志。
 
 排序是 ``priority ASC, name ASC``：路由取第一条可用引擎，这个顺序既是
 ``ix_ai_ocr_engines_enabled_priority`` 的查询形状，也保证「同一优先级时行为确定」

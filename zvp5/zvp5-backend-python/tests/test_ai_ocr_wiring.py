@@ -1211,11 +1211,11 @@ def test_get_attachment_ocr_without_any_row_reports_empty_lines(files_repo):
 def test_adapters_expose_version_constants():
     assert ocr_engines.TencentOcrEngine.VERSION.startswith("tencent-")
     assert ocr_engines.AliyunOcrEngine.VERSION.startswith("aliyun-")
-    assert ocr_engines.RapidOcrEngine.VERSION.startswith("rapidocr-")
+    assert ocr_engines.BaiduOcrEngine.VERSION.startswith("baidu-")
     # 版本号用于 file_ocr.engine_version，必须非空且各 kind 互不相同。
     versions = {
         ocr_engines.TencentOcrEngine.VERSION,
         ocr_engines.AliyunOcrEngine.VERSION,
-        ocr_engines.RapidOcrEngine.VERSION,
+        ocr_engines.BaiduOcrEngine.VERSION,
     }
     assert len(versions) == 3
