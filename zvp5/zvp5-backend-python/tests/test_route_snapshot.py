@@ -15,11 +15,13 @@ from __future__ import annotations
 
 from collections import Counter
 
-from fastapi.routing import APIWebSocketRoute, Mount
+from fastapi.routing import Mount
 
 import main
+from tests.route_utils import iter_leaf_routes
 
-# 257 个 route 对象 = 255 条带 methods 的路由（APIRoute 237 + 两个
+# 展开 FastAPI 的 included-router 容器后，257 个叶子路由 = 255 条带 methods 的
+# 路由（APIRoute 237 + 两个
 # 自定义 APIRoute 子类 13 + 5）+ 1 个 socket.io Mount + 1 个 WebSocket 路由。
 # 文档路由不计入：``docs_url`` / ``openapi_url`` 都是 None（见
 # tests/test_cert_endpoint.py）。
@@ -287,10 +289,10 @@ FROZEN_ROUTES: list[tuple[str, tuple[str, ...]]] = [
 def _runtime_routes() -> list[tuple[str, tuple[str, ...]]]:
     """收集运行时路由：(path, sorted(methods))，按 path/methods 排序。"""
     rows: list[tuple[str, tuple[str, ...]]] = []
-    for route in main.app.routes:
+    for route in iter_leaf_routes(main.app.routes):
         methods = getattr(route, "methods", None)
         path = getattr(route, "path", None)
-        if methods is None or path is None:
+        if not methods or not path:
             continue
         rows.append((path, tuple(sorted(methods))))
     rows.sort()
@@ -298,7 +300,7 @@ def _runtime_routes() -> list[tuple[str, tuple[str, ...]]]:
 
 
 def test_route_count_is_frozen():
-    assert len(main.app.routes) == TOTAL_ROUTE_OBJECTS
+    assert len(list(iter_leaf_routes(main.app.routes))) == TOTAL_ROUTE_OBJECTS
 
 
 def test_route_table_matches_frozen_snapshot():
@@ -334,15 +336,12 @@ def test_route_table_matches_frozen_snapshot():
 
 
 def test_socketio_mount_is_frozen():
-    mounts = [route for route in main.app.routes if isinstance(route, Mount)]
+    mounts = [
+        route for route in iter_leaf_routes(main.app.routes) if isinstance(route, Mount)
+    ]
     assert [mount.path for mount in mounts] == ["/socket.io"]
     assert type(mounts[0].app).__module__.startswith("socketio")
 
 
 def test_websocket_route_is_frozen():
-    websockets = [
-        route for route in main.app.routes if isinstance(route, APIWebSocketRoute)
-    ]
-    assert [(route.path, route.name) for route in websockets] == [
-        ("/api/system/ssh/ws", "open_terminal")
-    ]
+    assert str(main.app.router.url_path_for("open_terminal")) == "/api/system/ssh/ws"

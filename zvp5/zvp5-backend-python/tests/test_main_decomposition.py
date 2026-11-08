@@ -17,13 +17,14 @@
 from __future__ import annotations
 
 import main
+from tests.route_utils import iter_leaf_routes
 
 PRE_SPLIT_ROUTE_COUNT = 257
 ROUTER_COUNT = 35
 
 
 def test_route_count_matches_pre_split_dump() -> None:
-    assert len(main.app.routes) == PRE_SPLIT_ROUTE_COUNT
+    assert len(list(iter_leaf_routes(main.app.routes))) == PRE_SPLIT_ROUTE_COUNT
 
 
 def test_middleware_stack_order_is_unchanged() -> None:
@@ -52,7 +53,7 @@ def test_router_table_order_keeps_the_quota_prefix_constraint() -> None:
 
 
 def test_legacy_redirects_and_meta_routes_sit_after_the_router_table() -> None:
-    paths = [getattr(route, "path", None) for route in main.app.routes]
+    paths = [getattr(route, "path", None) for route in iter_leaf_routes(main.app.routes)]
 
     # 首页在 redirect 之前，redirect 在所有 include_router 之后，version 收尾。
     assert paths.index("/api/") < paths.index("/api/user/{path:path}")

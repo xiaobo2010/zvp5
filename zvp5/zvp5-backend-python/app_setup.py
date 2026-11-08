@@ -15,6 +15,8 @@ import json
 import logging
 import os
 import re
+from collections.abc import Callable
+from contextlib import AbstractAsyncContextManager
 from datetime import datetime
 from urllib.parse import urlsplit
 
@@ -234,11 +236,16 @@ async def shield_middleware(request: Request, call_next):
     return await call_next(request)
 
 
-def create_app() -> FastAPI:
+def create_app(
+    lifespan: Callable[[FastAPI], AbstractAsyncContextManager[None]] | None = None,
+) -> FastAPI:
     """构造 app 并按「顺序即契约」装好全部中间件。"""
 
     app = FastAPI(
-        default_response_class=JSONResponse, docs_url=None, openapi_url=None
+        default_response_class=JSONResponse,
+        docs_url=None,
+        openapi_url=None,
+        lifespan=lifespan,
     )
 
     # 维护模式对 socket.io 的准入：socket.io 挂在与本中间件栈不同的 ASGI 子应用上
@@ -283,6 +290,3 @@ def create_app() -> FastAPI:
     app.middleware("http")(shield_middleware)
 
     return app
-
-
-app = create_app()
