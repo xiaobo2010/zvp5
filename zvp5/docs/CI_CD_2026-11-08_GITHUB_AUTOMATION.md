@@ -105,3 +105,18 @@ main 已把 `zvms4-modified-main/` 更名 `zvp5/`，分支仍用旧目录名；
 - DDL 变更基线用 `git describe --tags`，非 release tag 会干扰告警范围。
 - 远端 rollback 在"尚未产生备份"时会报一条误导性失败，可让 wrapper 支持
   no-change 幂等。
+
+## 九、启用后的自动化观察（2026-11-08）
+
+合入 `0c0db42` 后，`dependabot.yml` 立即开始工作，远端生成 6 条待评审分支：
+
+| 分支 | 内容 | 处置建议 |
+| --- | --- | --- |
+| `dependabot/github_actions/github-actions-*` | `checkout` v4→v7、`setup-python` v5→v7、`pnpm/action-setup` v4→v6、`setup-node` v4→v7、`upload-artifact` v4→v7 | 先看该 PR 自身的 CI 结论再合；6 个主版本一次性跳，需确认 action 的输入/输出语义没变 |
+| `.../backend-patches-*` | 后端 patch 组（certifi、click、uvicorn 等） | 低风险，跑一遍后端全量即可 |
+| `.../pycryptodome-4.3.0` | 3.23 → 4.x 主版本 | **暂不合**：加密/解密链路的 C 扩展大版本，需单独验证历史密文可解 |
+| `.../sqlalchemy-eq-2.1.star` | 2.0 → 2.1 | **暂不合**：ORM 行为变更需跑全量 + 仓储层重点用例 |
+| `.../redis-gte-8.1.0-and-lt-9` | 6.4 → 8.1 | **暂不合**：跳两个大版本，读穿缓存路径要实测 |
+| `.../tencentcloud-sdk-python-ocr-*` | SDK 下限抬到 3.1.202 | 低风险，OCR 相关用例覆盖后即可合 |
+
+原则：`main` 只在全量门禁绿的前提下前进；Dependabot PR 不批量合。
