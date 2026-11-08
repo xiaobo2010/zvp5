@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ArrowDown, User, SwitchButton, CircleCloseFilled } from '@element-plus/icons-vue'
+import { ArrowDown, User, SwitchButton } from '@element-plus/icons-vue'
 import {
   ElIcon,
   ElButton,
@@ -22,6 +22,7 @@ import { zhCn } from 'element-plus/es/locale/index.mjs'
 import ZNotificationReminder from '@/components/notification/ZNotificationReminder.vue'
 import ZPrimaryDeviceGate from '@/components/notification/ZPrimaryDeviceGate.vue'
 import ZLoginReveal from '@/components/system/ZLoginReveal.vue'
+import ZBanScreen from '@/components/system/ZBanScreen.vue'
 import { useRegisterSW } from 'virtual:pwa-register/vue'
 import { CarbonCloudOffline } from '@/icons'
 // 直接从定义模块引入：绕过 @/views barrel，避免主 chunk 打包全部路由视图
@@ -555,30 +556,18 @@ onUnmounted(() => {
             <span class="text-sm px-1">{{ locales[locale].disconnected.message }}</span>
           </template>
         </ElAlert>
-        <div
+        <ZBanScreen
           v-if="banLocked"
-          class="banned-shield hidden-print fixed inset-0 flex items-center justify-center"
-          style="z-index: 9999"
-          role="alertdialog"
-          aria-modal="true"
-          aria-labelledby="banned-title"
-          @wheel.prevent
-          @touchmove.prevent
-          @contextmenu.prevent
-        >
-          <div class="banned-card flex flex-col items-center text-center px-6">
-            <ElIcon class="banned-icon" :size="88">
-              <CircleCloseFilled />
-            </ElIcon>
-            <h2 id="banned-title" class="banned-title">{{ t('nav.banned.title') }}</h2>
-            <p class="banned-message">{{ t('nav.banned.message', { reason: banReasonText }) }}</p>
-            <p class="banned-until">{{ banUntilText }}</p>
-            <p class="banned-appeal">{{ t('nav.banned.appeal') }}</p>
-            <p v-show="banCountdown > 0" class="banned-countdown">
-              {{ t('nav.banned.autoLogoutIn', { seconds: banCountdown }) }}
-            </p>
-          </div>
-        </div>
+          variant="account"
+          :title="t('nav.banned.title')"
+          :reason="banReasonText"
+          :until="banUntilText"
+          :appeal="t('nav.banned.appeal')"
+          :countdown="banCountdown"
+          :countdown-total="BAN_NOTICE_SECONDS"
+          :countdown-text="banCountdown > 0 ? t('nav.banned.autoLogoutIn', { seconds: banCountdown }) : ''"
+          :lock-scroll="false"
+        />
         <div :class="['yg-layout', 'yg-layout--app', { 'yg-phi': isPhiRoute }]">
           <div v-if="isPhiRoute" class="yg-phi-velocity" aria-hidden="true"></div>
           <div v-if="isPhiRoute" class="yg-phi-velocity" aria-hidden="true"></div>
@@ -871,72 +860,6 @@ onUnmounted(() => {
 :global(.yg-user-menu .el-popper__arrow),
 :global(.yg-user-menu > .el-popper__arrow) {
   display: none;
-}
-
-/* 封禁全屏：危险态用红色系（准则第 5 章）。深红底不在语义调色板内，
-   这里取 --yg-red-800 色阶令牌；文字用 --yg-color-on-danger。 */
-.banned-shield {
-  background: var(--yg-red-800);
-  color: var(--yg-color-on-danger);
-  animation: banned-shield-in 0.2s ease-out;
-}
-
-.banned-card {
-  max-width: 32rem;
-  padding: 3rem 2rem;
-}
-
-.banned-icon {
-  color: var(--yg-red-100);
-  margin-bottom: 1.5rem;
-}
-
-.banned-title {
-  font-size: 2.25rem;
-  font-weight: 700;
-  letter-spacing: 0.05em;
-  margin: 0 0 1rem;
-}
-
-.banned-message {
-  font-size: 1.125rem;
-  opacity: 0.95;
-  margin: 0;
-}
-
-.banned-appeal {
-  font-size: 1rem;
-  opacity: 0.75;
-  margin: 0.5rem 0 0;
-}
-
-.banned-until {
-  font-size: 1rem;
-  opacity: 0.85;
-  margin: 0.5rem 0 0;
-  font-variant-numeric: tabular-nums;
-}
-
-.banned-countdown {
-  font-size: 1rem;
-  font-variant-numeric: tabular-nums;
-  opacity: 0.9;
-  margin: 0.5rem 0 0;
-}
-
-@keyframes banned-shield-in {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .banned-shield {
-    animation: none;
-  }
 }
 </style>
 

@@ -42,7 +42,16 @@ export const zhCN = {
     until: '封禁到期：{time}',
     appeal: '违规使用平板是严重的违纪行为。',
     autoLogoutIn: '将在 {seconds} 秒后自动退出登录',
-    ack: '我知道了'
+    ack: '我知道了',
+    system: 'SECURITY // INTERRUPT',
+    warning: 'WARNING',
+    overheat: 'OVERHEAT',
+    reasonLabel: 'REASON // 封禁理由',
+    risk: 'RISK LEVEL',
+    lockedAccount: 'ACCOUNT LOCKED',
+    lockedDevice: 'DEVICE LOCKED',
+    codeAccount: 'ERR // USER_BANNED',
+    codeDevice: 'ERR // DEVICE_BANNED'
   },
   language: '',
   dark: '夜间模式',
