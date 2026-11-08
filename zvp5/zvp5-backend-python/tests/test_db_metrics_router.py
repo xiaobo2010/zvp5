@@ -234,6 +234,7 @@ def test_wiring_keeps_shield_and_maintenance_outside_api_metrics():
     """Regression guard for main.py: the metrics middleware must stay inside the
     maintenance middleware (so 503s are not counted) and inside the shield."""
     import main
+    from tests.route_utils import iter_leaf_routes
 
     names = [
         getattr(middleware.cls, "__name__", str(middleware.cls))
@@ -246,7 +247,10 @@ def test_wiring_keeps_shield_and_maintenance_outside_api_metrics():
     assert metrics_index > 1
     assert names.index("CORSMiddleware") > metrics_index
 
-    paths = {getattr(route, "path", None) for route in main.app.routes}
+    paths = {
+        getattr(route, "path", None)
+        for route in iter_leaf_routes(main.app.routes)
+    }
     for path in (
         f"{PREFIX}/realtime",
         f"{PREFIX}/history",

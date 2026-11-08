@@ -7,17 +7,13 @@ from pydantic import ValidationError
 
 from config import (
     BASE_OFF_CAMPUS,
-    ON_TO_OFF_RATE,
     BASE_ON_CAMPUS,
-    OFF_TO_ON_RATE,
-    MAX_EXCEED_DISCOUNT,
     BASE_SOCIAL_PRACTICE,
 )
 from db import backends
 from db.repos.pagination import page_args
 from typings.time import UserActivityTime
 from util.calculate import calculate_user_time_bulk
-from util.get_class import get_user_class
 from util.object_id import get_current_user, validate_object_id
 from db.oracle.session import session_scope
 from util.permission.user import validate_read_group_permission

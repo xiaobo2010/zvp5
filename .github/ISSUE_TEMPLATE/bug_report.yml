@@ -1,0 +1,41 @@
+name: Bug report
+description: 报告可复现的缺陷
+title: "[Bug] "
+labels:
+  - bug
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: 问题描述
+      description: 实际行为与预期行为分别是什么？
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+      placeholder: |
+        1. 打开 ...
+        2. 点击 ...
+        3. 观察到 ...
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: 影响范围
+      options:
+        - 后端/API
+        - 前端
+        - 数据库
+        - AI/ZVAgent
+        - 部署/CI
+        - 其他
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: 日志、截图或补充信息
+      description: 请先移除密码、Token、密钥和个人敏感信息。
