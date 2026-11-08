@@ -51,4 +51,4 @@ tencentcloud-sdk-python-common>=3.0.1000
 alibabacloud-ocr-api20210707>=3.0.0
 # Redis 读穿缓存（db/cache.py）。可选能力：settings.REDIS_URI 为空时缓存层
 # 整体禁用，但客户端库仍然装上，避免部署时再补依赖。
-redis>=6.4,<9
+redis>=8.1.0,<9
