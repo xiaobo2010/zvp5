@@ -1,11 +1,15 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
-const props = defineProps<{
-  name: string
-  role: string
-}>()
+const props = withDefaults(
+  defineProps<{
+    name: string
+    role: string
+    active?: boolean
+  }>(),
+  { active: true }
+)
 
 const emit = defineEmits<{ done: [] }>()
 
@@ -34,8 +38,13 @@ const DESKTOP_MIN_WIDTH = 768
 const SLICES_PER_LINE = { mobile: 4, desktop: 6 } as const
 const PARTICLE_COUNT = { mobile: 8, desktop: 20 } as const
 
+// 触摸设备（平板/手机）强制使用 mobile 档位，减轻 P620 压力
+const isTouchDevice =
+  typeof window !== 'undefined' &&
+  window.matchMedia?.('(pointer: coarse)')?.matches === true
+
 function isDesktop(): boolean {
-  return window.innerWidth >= DESKTOP_MIN_WIDTH
+  return !isTouchDevice && window.innerWidth >= DESKTOP_MIN_WIDTH
 }
 
 // 粒子只做 transform / opacity 动画。最晚结束时间 = 生成 2020ms + 延迟 80ms + 时长 650ms = 2750ms，
@@ -146,7 +155,14 @@ let sliceTimer: number | undefined
 let particleTimer: number | undefined
 let cleanupTimer: number | undefined
 
-onMounted(() => {
+const started = ref(false)
+
+function startTimeline(): void {
+  if (started.value) {
+    return
+  }
+  started.value = true
+
   doneTimer = window.setTimeout(() => emit('done'), reducedMotion ? REDUCED_MS : TOTAL_MS)
 
   if (!reducedMotion) {
@@ -156,6 +172,21 @@ onMounted(() => {
       particles.value = []
       slices.value = []
     }, CLEANUP_MS)
+  }
+}
+
+watch(
+  () => props.active,
+  (v) => {
+    if (v) {
+      startTimeline()
+    }
+  }
+)
+
+onMounted(() => {
+  if (props.active) {
+    startTimeline()
   }
 })
 
@@ -179,7 +210,7 @@ onBeforeUnmount(() => {
   <Teleport to="body">
     <div
       class="login-reveal"
-      :class="{ 'is-reduced': reducedMotion }"
+      :class="{ 'is-reduced': reducedMotion, 'is-waiting': !started }"
       role="status"
       aria-live="polite"
       :aria-label="`${helloText}，${roleText}`"
@@ -379,8 +410,17 @@ onBeforeUnmount(() => {
   will-change: clip-path, opacity, filter;
   animation:
     reveal-brand-assemble 400ms cubic-bezier(0.19, 1, 0.22, 1) 400ms forwards,
-    reveal-brand-pulse 400ms cubic-bezier(0.33, 0, 0.67, 1) 800ms forwards,
     reveal-brand-out 200ms ease 1200ms forwards;
+}
+
+/* 触摸设备保留组装和淡出，跳过脉冲以减轻 GPU 负担 */
+@media (pointer: fine) {
+  .login-reveal__brand {
+    animation:
+      reveal-brand-assemble 400ms cubic-bezier(0.19, 1, 0.22, 1) 400ms forwards,
+      reveal-brand-pulse 400ms cubic-bezier(0.33, 0, 0.67, 1) 800ms forwards,
+      reveal-brand-out 200ms ease 1200ms forwards;
+  }
 }
 
 /* 品牌组装使用 inset 从中心向外展开（四边收缩至中心点，再打开） */
@@ -556,6 +596,8 @@ onBeforeUnmount(() => {
 
 /* ========== Reduced Motion ========== */
 .login-reveal.is-reduced {
+  /* 保持不透明覆盖，防止 nav 闪现 */
+  background: var(--reveal-panel);
   animation: reveal-fade-out 300ms ease 700ms forwards;
 }
 
@@ -577,5 +619,20 @@ onBeforeUnmount(() => {
   to {
     opacity: 0;
   }
+}
+
+/* ========== Waiting State ========== */
+/* 等待态：暂停所有动画（含 reduced 下根节点的淡出），移除合成层，保持不透明幕布 */
+.login-reveal.is-waiting,
+.login-reveal.is-waiting * {
+  animation-play-state: paused !important;
+}
+
+.login-reveal.is-waiting .login-reveal__panel,
+.login-reveal.is-waiting .login-reveal__scanline,
+.login-reveal.is-waiting .login-reveal__brand,
+.login-reveal.is-waiting .login-reveal__slice,
+.login-reveal.is-waiting .login-reveal__particle {
+  will-change: auto;
 }
 </style>
