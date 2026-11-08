@@ -4,7 +4,9 @@
 靠近数据库的 API 域名，少数依赖内容站本机资源的端点保留在内容站，避免错误的跨机
 房往返或访问到另一台机器的本地资源。
 
-文中 `<content-domain>`、`<api-domain>` 是部署期占位符，仓库不保存生产域名。
+文中 `<content-domain>`、`<api-domain>` 是通用部署说明的占位符。发布工作流不保存
+具体生产域名，而是从 GitHub Environment 读取基址并校验格式、健康端点、构建注入和
+preconnect。
 
 > **2026-11-02 更新（Web SSH 多目标）**：SSH 终端已改为「单网关 + 服务端目标目录」，
 > 网关部署在 API 站。`/api/system/ssh/{targets,session,ws}` 改由 API 站代理到本机

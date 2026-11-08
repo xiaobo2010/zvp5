@@ -14,6 +14,6 @@ In the meantime, we have integrated the program into Clarity. This means that yo
 
 ## Application Development Security
 
-We strive to maximize security during development. We have Dependabot enabled to validate the security of our dependencies, and we use CodeQL to analyze our code for potential vulnerabilities. At the same time, we use emerging technology stacks, such as using `bcrypt` instead of `sha`, `RSA` for transfers, and so on.
+We strive to maximize security during development. Dependabot keeps dependencies current, while the repository CI uses Gitleaks for secret detection and Trivy for HIGH/CRITICAL dependency vulnerability checks. At the same time, we use emerging technology stacks, such as using `bcrypt` instead of `sha`, `RSA` for transfers, and so on.
 
 If you find some security vulnerabilities, please raise an issue.
