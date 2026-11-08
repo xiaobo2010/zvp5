@@ -1207,3 +1207,12 @@ AI 能力统一以 **ZVAgent** 对外（代码与文档中的「智能体 / AI �
 | 账号与应用安全 | 登录频控（账号 5 次/分 + IP 60 次/分 → 429 `AUTH_RATE_LIMITED`）、登出轮换 `session_id`、管理写操作密码再认证、重查询读预算 60 次/分/用户（429 `READ_RATE_LIMITED`）、安全响应头 + CSP、shield 418 追责采集、socket.io 仅认 `Authorization` 头与 auth 载荷 | `zvp5/zvp5-backend-python/README.md` |
 | 日志与审计 | `APP_LOGS` 新增 `client_ip` / `user_agent`（V045）；事件常量集中在 `services/log_events.py`；`AI_PROMPT_AUDIT` 扩 `answer_text` / `tool_calls` / `refused` / `warned`（V046） | `zvp5/docs/AI_GATEWAY_API.md` §6.8、`zvp5/zvp5-backend-python/docs/database-status.md` |
 | 前端 | 会话运行中逐轮见回复、模型只读展示、思考强度三档、归档会话视图与恢复、平台管理可添加班级、日志卡片展示 IP/UA、文件预览 OCR / 编辑器「AI 分析」/ 终端「智能分析」 | `zvp5/zvp5-frontend/README.md` |
+
+---
+
+## 十、GitHub 自动化（2026-11-07）
+
+- 根目录 `.github/workflows/ci.yml` 统一运行后端 pytest/Ruff、前端 Vitest/ESLint/类型检查/生产构建、Cypress、ShellCheck、actionlint、Gitleaks 与 Trivy。
+- 推送到 `main` 只运行 CI，不部署。发布非预发布 GitHub Release 后，只有全部检查通过且 release commit 属于 `main` 才自动发布前端与后端；DDL 不自动执行，健康检查失败会按相反顺序回滚。首次启用前需按
+  `zvp5/deployment/github-actions/README.md` 创建 `production` Environment、配置 Secrets 并在两台服务器安装受限部署账号。
+- Dependabot 每周分组更新 pip、pnpm 与 GitHub Actions；分支保护暂时保持观察模式，不把检查设为 required。
