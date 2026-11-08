@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch, h } from 'vue'
+import { ref, watch, h, reactive } from 'vue'
 import { ElButton, ElMessageBox, ElMessage } from 'element-plus'
 import { ArrowRight } from '@element-plus/icons-vue'
 import { useUserStore } from '@/stores/user'
@@ -11,6 +11,7 @@ import api from '@/api'
 import { getMaintenanceStatus } from '@/api/system/maintenance.ts'
 import { resetMaintenanceGuardCache } from '@/router/maintenanceGuard'
 import { formatBanUntil, readBanInfo } from '@/utils/ban'
+import ZBanScreen from '@/components/system/ZBanScreen.vue'
 import dayjs from 'dayjs'
 import type { User, UserProfile } from '@/../types'
 
@@ -83,7 +84,46 @@ function notifyMaintenanceBlocked() {
 function isUserBanned(error: unknown): boolean {
   const response = (error as { response?: { status?: number; data?: { detail?: unknown } } })
     ?.response
-  return response?.status === 403 && response?.data?.detail === 'USER_BANNED'
+  if (response?.status !== 403) {
+    return false
+  }
+  const detail = response.data?.detail
+  if (detail === 'USER_BANNED') {
+    return true
+  }
+  // 设备闸/结构化错误用对象承载 code,账号封禁也可能以该形式下发。
+  return (
+    !!detail && typeof detail === 'object' && (detail as { code?: unknown }).code === 'USER_BANNED'
+  )
+}
+
+// 全屏封禁屏:登录页没有 token,不写 store、不自动登出,只显示原因/期限/确认。
+type BanScreenState = {
+  visible: boolean
+  title: string
+  reason: string
+  until: string
+  appeal: string
+  ackText: string
+  variant: 'account' | 'device'
+}
+
+const banScreen = reactive<BanScreenState>({
+  visible: false,
+  title: '',
+  reason: '',
+  until: '',
+  appeal: '',
+  ackText: '',
+  variant: 'account'
+})
+
+function showBanScreen(payload: Omit<BanScreenState, 'visible'>) {
+  Object.assign(banScreen, payload, { visible: true })
+}
+
+function closeBanScreen() {
+  banScreen.visible = false
 }
 
 function notifyUserBanned(error: unknown) {
@@ -95,21 +135,13 @@ function notifyUserBanned(error: unknown) {
     formatBanUntil(until, (ms) =>
       t('nav.banned.until', { time: dayjs(ms).format('YYYY-MM-DD HH:mm') })
     ) || t('nav.banned.permanent')
-  // alert 只有一个确认按钮:用户必须显式确认才能关(不允许点遮罩误关掉原因)。
-  void ElMessageBox.alert(
-    h('div', null, [
-      h('p', { style: 'margin: 0 0 8px;' }, reason || t('nav.banned.reasonFallback')),
-      h('p', { style: 'margin: 0;' }, untilLine)
-    ]),
-    t('nav.banned.title'),
-    {
-      confirmButtonText: t('nav.banned.ack'),
-      closeOnClickModal: false,
-      closeOnPressEscape: false,
-      showClose: false
-    }
-  ).catch(() => {
-    // 弹窗被程序化关闭时 alert 会 reject,这里吞掉即可,不影响登录流程。
+  showBanScreen({
+    title: t('nav.banned.title'),
+    reason: reason || t('nav.banned.reasonFallback'),
+    until: untilLine,
+    appeal: t('nav.banned.appeal'),
+    ackText: t('nav.banned.ack'),
+    variant: 'account'
   })
 }
 
@@ -165,7 +197,7 @@ watch(tempPassword, (value) => {
 })
 
 // 设备封禁:原因/期限同样在 X-Ban-* 头里(后端复用 util.ban 的头口径),
-// 沿用账号封禁的阻塞式弹窗,只把标题/兜底原因换成设备口径。
+// 沿用账号封禁的全屏封禁屏,只把标题/兜底原因/确认文案换成设备口径。
 function notifyDeviceBanned(error: unknown) {
   const { reason, until } = readBanInfo(
     (error as { response?: { headers?: unknown } })?.response?.headers
@@ -174,20 +206,13 @@ function notifyDeviceBanned(error: unknown) {
     formatBanUntil(until, (ms) =>
       t('nav.banned.until', { time: dayjs(ms).format('YYYY-MM-DD HH:mm') })
     ) || t('nav.banned.permanent')
-  void ElMessageBox.alert(
-    h('div', null, [
-      h('p', { style: 'margin: 0 0 8px;' }, reason || t('nav.login.device.bannedFallback')),
-      h('p', { style: 'margin: 0;' }, untilLine)
-    ]),
-    t('nav.login.device.bannedTitle'),
-    {
-      confirmButtonText: t('nav.login.device.bannedAck'),
-      closeOnClickModal: false,
-      closeOnPressEscape: false,
-      showClose: false
-    }
-  ).catch(() => {
-    // 程序化关闭时 alert 会 reject,吞掉即可,不影响登录流程。
+  showBanScreen({
+    title: t('nav.login.device.bannedTitle'),
+    reason: reason || t('nav.login.device.bannedFallback'),
+    until: untilLine,
+    appeal: t('nav.banned.appeal'),
+    ackText: t('nav.login.device.bannedAck'),
+    variant: 'device'
   })
 }
 
@@ -271,6 +296,10 @@ async function submitTempPassword() {
       notifyDeviceBanned(error)
       return
     }
+    if (isUserBanned(error)) {
+      notifyUserBanned(error)
+      return
+    }
     tempError.value = tempErrorText(detail)
   } finally {
     tempSubmitting.value = false
@@ -345,8 +374,9 @@ async function reset_and_login(id: string, token: string) {
       await userStore
         .setUser(id, new_password)
         .then(async () => router.replace(await postLoginTarget()))
-        .catch(() => {
+        .catch((error: unknown) => {
           loading.value = false
+          handleLoginFailure(error)
         })
     },
     token
@@ -474,6 +504,17 @@ watch(user, async () => {
         </div>
       </section>
     </main>
+
+    <ZBanScreen
+      v-if="banScreen.visible"
+      :title="banScreen.title"
+      :reason="banScreen.reason"
+      :until="banScreen.until"
+      :appeal="banScreen.appeal"
+      :ack-text="banScreen.ackText"
+      :variant="banScreen.variant"
+      @ack="closeBanScreen"
+    />
   </div>
 </template>
 
