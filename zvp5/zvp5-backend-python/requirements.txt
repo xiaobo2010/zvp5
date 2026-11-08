@@ -46,7 +46,7 @@ sqlalchemy[asyncio]==2.0.*
 oracledb>=2.0
 asyncssh==2.24.1
 # OCR 引擎（services/ai/ocr_engines.py）：SDK 延迟导入，装不上只影响对应引擎
-tencentcloud-sdk-python-ocr>=3.0.1000
+tencentcloud-sdk-python-ocr>=3.1.202
 tencentcloud-sdk-python-common>=3.0.1000
 alibabacloud-ocr-api20210707>=3.0.0
 # Redis 读穿缓存（db/cache.py）。可选能力：settings.REDIS_URI 为空时缓存层
