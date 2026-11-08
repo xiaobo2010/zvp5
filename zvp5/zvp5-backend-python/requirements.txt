@@ -49,11 +49,6 @@ asyncssh==2.24.1
 tencentcloud-sdk-python-ocr>=3.0.1000
 tencentcloud-sdk-python-common>=3.0.1000
 alibabacloud-ocr-api20210707>=3.0.0
-# rapidocr 3.x 的 __call__ 返回 dataclass（txts/scores/boxes）；2.x 返回
-# (result, elapse) 元组，会让适配器静默产出空 lines 却报「成功」。上界 <4 防
-# 4.x 再改 API。
-rapidocr>=3.10,<4
-onnxruntime>=1.17
 # Redis 读穿缓存（db/cache.py）。可选能力：settings.REDIS_URI 为空时缓存层
 # 整体禁用，但客户端库仍然装上，避免部署时再补依赖。
 redis>=6.4,<9

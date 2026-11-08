@@ -117,7 +117,7 @@ Content-Type: application/json
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `attachment_oid` | string | 是 | 附件 oid，必须已通过附件 API 落库 |
-| `provider` | string \| null | 否 | **引擎 kind**（`tencent` / `baidu` / `rapidocr` / ...，不是模型名）。有值时只在该 kind 的引擎里选；**仅 admin 可用**，且不减免站点额度。非 admin 传了 → 403 `AI_FORBIDDEN`，拼错的 kind → 400 `AI_OCR_ENGINE_BAD_KIND` |
+| `provider` | string \| null | 否 | **引擎 kind**（`tencent` / `baidu` / ...，不是模型名）。有值时只在该 kind 的引擎里选；**仅 admin 可用**，且不减免站点额度。非 admin 传了 → 403 `AI_FORBIDDEN`，拼错的 kind → 400 `AI_OCR_ENGINE_BAD_KIND` |
 
 > 网关不提供图片直传：OCR 只处理已落库的附件，否则就成了绕过附件配额与内容审核的旁路。
 > 单图体积上限 20MB（`config.AI_OCR_MAX_IMAGE_BYTES`，`settings.AI_OCR_MAX_IMAGE_BYTES` 可覆盖）：入队按元数据判一次，后台识别按真实字节再判一次。
@@ -179,18 +179,18 @@ Content-Type: application/json
 |---|---|---|---|
 | `tencent` | 90 | 1000 | 免费额度最先用 |
 | `baidu` | 95 | 500 | `accurate_basic` |
-| `rapidocr` | 100 | 1000000 | 本地不限量，但占 CPU |
 | `zhipu` | 500 | 100000 | 免费视觉模型兜底 |
 | `groq` | 900 | 1500 | 对比用 |
 
 ### 2.4 引擎能力矩阵
+
+> 本地 OCR（RapidOCR）已下线，仅支持云端引擎。
 
 | kind | 凭证 | bbox | 逐行置信度 | 自动重试 |
 |---|---|---|---|---|
 | `tencent` | `secret_id` / `secret_key` / `region` | 有 | 有 | 无 |
 | `aliyun` | `access_key_id` / `access_key_secret` | 有 | 有 | 无 |
 | `baidu` | `api_key` / `secret_key` | 有 | **无** | 无（110/111 自动换 token） |
-| `rapidocr` | 无需（必须留空） | 有 | 有 | 无 |
 | `groq` | `api_key` | 有（schema 约束） | **无** | 无（429 → 直接报限流） |
 | `zhipu` | `api_key` | **无** | **无** | 429 + 1302/1305 重试 3 次（2s/5s），1308 不重试 |
 
@@ -298,7 +298,7 @@ Content-Type: application/json
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `name` | string | 是 | 全局唯一 |
-| `kind` | string | 是 | `tencent` / `aliyun` / `baidu` / `rapidocr` / `groq` / `zhipu` |
+| `kind` | string | 是 | `tencent` / `aliyun` / `baidu` / `groq` / `zhipu` |
 | `config` | object | 否 | 非敏感参数，见下表 |
 | `secret` | object | 按 kind | 明文凭证，按 kind 校验必填项 |
 | `enabled` | bool | 否 | 默认 `true` |
@@ -313,7 +313,6 @@ Content-Type: application/json
 | `tencent` | `secret_id`, `secret_key` | `region`（secret 里也可传）, `language_type`（`zh`）, `timeout`（30s） |
 | `aliyun` | `access_key_id`, `access_key_secret` | `endpoint`（`ocr-api.cn-hangzhou.aliyuncs.com`）, `timeout`（30s） |
 | `baidu` | `api_key`, `secret_key` | `endpoint`（`https://aip.baidubce.com`）, `ocr_api`（`accurate_basic`）, `timeout`（30s） |
-| `rapidocr` | **必须留空** | 线程数由环境变量 `AI_OCR_ORT_THREADS` 控制 |
 | `groq` | `api_key` | `base_url`（`https://api.groq.com/openai/v1`）, `model`（`qwen/qwen3.8-27b`）, `reasoning_effort`（`none`）, `max_tokens`, `timeout`（30s） |
 | `zhipu` | `api_key` | `base_url`（`https://open.bigmodel.cn/api/paas/v4`）, `model`（`glm-4.6v-flash`）, `max_tokens`（4096）, `temperature`（0.1）, `retry_attempts`（3）, `json_mode`（true）, `thinking`（`disabled`）, `timeout`（30s） |
 
@@ -403,7 +402,7 @@ Content-Type: application/json
 | `attempt_no` | NUMBER(3) | 同一次请求里的第几次尝试（1 起）；NULL = 不是某次上游尝试（门禁直接拒） |
 | `purpose` | VARCHAR2(24) | 场景来源（开放集合，见 6.5） |
 | `first_token_ms` | NUMBER(10) | 流式首块到达耗时；非流式 NULL |
-| `engine_kind` | VARCHAR2(24) | OCR 引擎类型（`tencent`/`aliyun`/`rapidocr`/`baidu`/`groq`/`zhipu`） |
+| `engine_kind` | VARCHAR2(24) | OCR 引擎类型（`tencent`/`aliyun`/`baidu`/`groq`/`zhipu`） |
 | `attachment_oid` | VARCHAR2(24) | OCR 针对的附件；无外键（附件删了事实仍成立） |
 | `round_no` | NUMBER(3) | agent 一次 run 的第几轮（1 起）；NULL = 非 agent 轮次 |
 | `roles_snapshot` | VARCHAR2(64) | 调用时的角色快照（逗号连接）；NULL = 未采集 |
@@ -541,12 +540,11 @@ run 的两面）与 `AI_PROMPT_AUDIT`（`AI_PROMPT_RETENTION_DAYS`，默认 30 �
 
 ## 7. 健康检查 `/api/ai/health`
 
-`GET /api/ai/health`（admin），同时会**后台预热**本地引擎（幂等）。
+`GET /api/ai/health`（admin 视图）：只回显生效配置与进程内状态（worker 数、实际频控阈值、冷却范围、凭据/模型清单、额度默认值），不含密钥、路径与上游原始报文。
 
 ```json
 {
   "enabled": true,
-  "local_engine_ready": true,
   "max_concurrency": 4,
   "worker_count": 1,
   "rate_limit_per_minute": { "ocr": 10, "chat": 20 },
@@ -568,7 +566,6 @@ run 的两面）与 `AI_PROMPT_AUDIT`（`AI_PROMPT_RETENTION_DAYS`，默认 30 �
 | `rate_limit_per_minute` | **每进程**的实际阈值 = `ceil(全局阈值 / worker_count)`（至少 1）；全局真实上限 ≈ 阈值 × `worker_count` |
 | `cooldown_scope` | 恒为 `"process"`：熔断状态是进程内的，多 worker 各熔各的 |
 
-`local_engine_ready` 只是一个布尔，不暴露路径、模型名或密钥材料。
 `settings.AI_ROUTES` 已废弃并从响应里移除（它从来没生效过，回显只会误导运维）。
 频控 / 熔断 / 凭据缓存 / API key 校验缓存都是**进程内**状态：`worker_count > 1` 时进程启动会打一条 WARNING。
 
@@ -928,7 +925,6 @@ client = OpenAI(
 | `AI_CREDENTIALS_CACHE_TTL` | `config.py` | 凭据缓存 30s |
 | `AI_API_KEY_CACHE_TTL` | `config.py` | API key 校验缓存 30s |
 | `AI_API_KEY_RATE_LIMIT_PER_MINUTE` | `config.py` | 单把 API key 的每分钟上限，默认 60 |
-| `AI_OCR_ORT_THREADS` | 环境变量 | rapidocr 线程数 |
 | `AI_CALL_LOGS_RETENTION_DAYS` | `config.py` | 流水保留 90 天 |
 | `AI_STREAM_USAGE_HOSTS` | `settings`（可选） | 额外允许 `stream_options.include_usage` 的上游 host；`["*"]` = 全部 |
 | `AI_SILICONFLOW_FREE_MODELS` | `settings` | SiliconFlow 免费模型白名单（运维维护）；`misc/seed_channel.py` 只从这里取模型，留空 = 渠道不上线 |
