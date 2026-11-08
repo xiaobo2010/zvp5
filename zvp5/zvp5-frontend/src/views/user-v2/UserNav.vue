@@ -18,6 +18,7 @@ import { useRouter, useRoute } from 'vue-router'
 import { useDark, useWindowSize } from '@vueuse/core'
 import { useI18n } from 'vue-i18n'
 import { pad, getTabletType } from '@/plugins/ua'
+import { prefetchRoute, prefetchRoutesWhenIdle } from '@/utils/routePrefetch'
 
 const user = useUserStore()
 const router = useRouter()
@@ -341,6 +342,17 @@ onMounted(() => {
     })
 })
 
+/* 平板导航体验：可见导航项的路由 chunk 在空闲时预取，悬停/触摸按下时
+   （pointerenter，见模板）立即补一发。用 watch 而非 mounted 一次性快照：
+   position 是登录后由 App.vue refreshUser() 异步拉回来的，首帧快照会漏掉
+   管理/服务器/AI 项，position 落地后 visibleNavs 重算会再次触发预取；
+   utils/routePrefetch 内部 Set 幂等，重复触发零成本。 */
+const stopNavPrefetch = watch(
+  () => visibleNavs.value.map((nav) => nav.path),
+  (paths) => prefetchRoutesWhenIdle(router, paths),
+  { immediate: true }
+)
+
 onUnmounted(() => {
   disposed = true
   rafHandles.forEach((handle) => cancelAnimationFrame(handle))
@@ -354,6 +366,7 @@ onUnmounted(() => {
   spinTimer = 0
   window.clearTimeout(protrudeTimer)
   protrudeTimer = 0
+  stopNavPrefetch()
 })
 
 const navSignature = computed(() =>
@@ -466,6 +479,7 @@ function handleNavClick(path: string) {
             }"
             :aria-label="t(`nav.${nav.name}`)"
             @click="handleNavClick(nav.path)"
+            @pointerenter="prefetchRoute(router, nav.path)"
           >
             <ElIcon><component :is="nav.icon" /></ElIcon>
           </button>
@@ -480,6 +494,7 @@ function handleNavClick(path: string) {
           }"
           :aria-label="t(`nav.${nav.name}`)"
           @click="handleNavClick(nav.path)"
+          @pointerenter="prefetchRoute(router, nav.path)"
         >
           <ElIcon><component :is="nav.icon" /></ElIcon>
         </button>

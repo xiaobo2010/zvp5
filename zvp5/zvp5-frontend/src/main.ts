@@ -37,6 +37,9 @@ import './assets/styles/yg/phi-legacy-pages.css'
 // Phi 主题的 body 级弹层（Teleport 逃出 .yg-phi 的 Dialog/Message/Popover）
 import './assets/styles/yg/phi-portals.css'
 
+// 平板滚动流畅层：滚动进行中暂停纯装饰动画（性能规则，不承载视觉设计）
+import './assets/styles/perf-tablet.css'
+
 import persistedstate from 'pinia-plugin-persistedstate'
 
 // 表格展开行进出场动画（捕获期监听，对所有 el-table 生效）

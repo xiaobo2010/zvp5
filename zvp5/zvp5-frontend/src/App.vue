@@ -34,6 +34,8 @@ import {
 } from '@/utils/platformGuard'
 import { startPhiEdgePhase, stopPhiEdgePhase } from '@/utils/phiEdgePhase'
 import { loginRoleKey } from '@/utils/loginRole'
+import { installScrollActivityFlag, uninstallScrollActivityFlag } from '@/utils/scrollActivity'
+import { warmupFontsWhenIdle } from '@/utils/routePrefetch'
 import dayjs from '@/plugins/dayjs'
 
 const { needRefresh, offlineReady, updateServiceWorker } = useRegisterSW()
@@ -507,6 +509,12 @@ watch(offlineReady, () => {
 })
 
 onMounted(async () => {
+  // 平板滚动流畅性：滚动进行中给 <html> 打 data-scrolling，
+  // perf-tablet.css 据此暂停纯装饰动画（详见 utils/scrollActivity.ts）。
+  installScrollActivityFlag()
+  // phi 显示字体（Bebas/Rajdhani，font-display: swap）空闲预热：
+  // 提前于登录揭示动画与首页大标题首次绘制，消掉 FOUT 文本跳动。
+  warmupFontsWhenIdle(['400 1em Bebas', '500 1em Rajdhani', '700 1em Rajdhani'])
   // 维护模式的跳转统一交给 router 全局守卫(见 src/router/maintenanceGuard.ts),
   // 这里只负责登录态刷新;维护页自身不再发起注定 503 的业务请求。
   try {
@@ -517,6 +525,10 @@ onMounted(async () => {
   } catch {
     // 刷新失败时静默,不阻塞正常启动
   }
+})
+
+onUnmounted(() => {
+  uninstallScrollActivityFlag()
 })
 </script>
 

@@ -372,7 +372,9 @@ function attachScrollHelpers(container: HTMLDivElement) {
   container.addEventListener('touchmove', handleTerminalTouchMove, { passive: false })
   container.addEventListener('touchend', handleTerminalTouchEnd, { passive: true })
   viewportEl = container.querySelector('.xterm-viewport')
-  viewportEl?.addEventListener('scroll', updateScrollState)
+  // scroll 只读滚动位置刷新 UI 状态、绝不 preventDefault，passive 让
+  // 浏览器不必等主线程应答即可平滑滚动（终端长输出滚动更顺）。
+  viewportEl?.addEventListener('scroll', updateScrollState, { passive: true })
 }
 
 function detachScrollHelpers() {
