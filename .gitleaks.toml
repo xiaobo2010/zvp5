@@ -1,0 +1,14 @@
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Intentionally preserved, non-executable vulnerability archive"
+paths = [
+  '''reference/xuehai/''',
+  '''adb2-wallet\.7z''',
+  '''zvp5/zvp5-backend-python/\.venv/''',
+  '''zvp5/zvp5-backend-python/tests/''',
+  '''node_modules/''',
+  '''dist/''',
+  '''zvp5/zvp5-frontend/.*\.spec\.ts''',
+]

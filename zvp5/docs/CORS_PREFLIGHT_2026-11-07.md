@@ -125,3 +125,40 @@ find /www/zvms4/frontend-dist -type f -exec chown www:www {} +
 ```
 
 不涉及数据库变更，无需回滚数据。
+
+## 八、线上“CORS 全失败”事故复核（2026-11-07 22:10）
+
+随后线上反馈「API 全部失败」，复核发现 CORS 服务端配置并未失效，而是发布的
+`index-Cj24z6Rz.js` 把两个 API 域名都写成了不存在的 `*.xiaoboisces.top`（少了
+`p`）。该域名 DNS 为 NXDOMAIN，浏览器在真正发出请求前即失败；页面和主 JS 里的
+preconnect 也指向了同一错误域名。服务端预检与普通响应仍能正确回显
+`Origin: https://zvp.xiaobopisces.top`。
+
+处置：
+
+- 使用正确基址重新构建：`VITE_API_BASE=https://zvp.xiaobopisces.top/api`、
+  `VITE_API_RACE_BASE=https://zvpapi.xiaobopisces.top/api`；
+- 新产物 `index-cEdSHq54.js` 校验后仅含上述两个正确基址，全量 grep
+  `xiaoboisces` / `xiaobolisces` 均为 0；
+- 洛杉矶 `/www/zvms4/frontend-dist` 原子切换，原目录备份到
+  `/www/zvms4/frontend-dist.bak-corsfix-20261107-220742`；
+- 新目录共 178 个文件 + 160 个 `.gz`，属主 `www:www`，`nginx -t` 后重载。
+
+线上验收：
+
+- `/api/health` 200，`Access-Control-Allow-Origin: https://zvp.xiaobopisces.top`；
+- `zvpapi` 预检 204，Allow-Origin / Credentials / Headers / Max-Age 齐备；
+- 首页引用 `index-cEdSHq54.js`，线上取包只含两个正确 API 基址。
+
+自动化防回归：发布工作流从 Environment 读取两个生产基址，先检查格式并探活各自
+`/api/health`，随后验证基址已注入 `dist/assets`、对应 origin 已进入
+`index.html` 的 preconnect。工作流不保存具体生产域名；生产部署也已改为仅由
+非预发布 GitHub Release 触发，普通 `main` 推送不再上线。
+
+回滚：
+
+```bash
+mv /www/zvms4/frontend-dist /www/zvms4/frontend-dist.failed-corsfix-20261107-220742
+mv /www/zvms4/frontend-dist.bak-corsfix-20261107-220742 /www/zvms4/frontend-dist
+nginx -s reload
+```
