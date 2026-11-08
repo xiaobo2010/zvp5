@@ -37,6 +37,7 @@ import { startPhiEdgePhase, stopPhiEdgePhase } from '@/utils/phiEdgePhase'
 import { loginRoleKey } from '@/utils/loginRole'
 import { installScrollActivityFlag, uninstallScrollActivityFlag } from '@/utils/scrollActivity'
 import { warmupFontsWhenIdle } from '@/utils/routePrefetch'
+import { prefetchLoginHome, resetLoginHomePrefetch } from '@/utils/homePrefetch'
 import dayjs from '@/plugins/dayjs'
 
 const { needRefresh, offlineReady, updateServiceWorker } = useRegisterSW()
@@ -203,40 +204,99 @@ watch(
   }
 )
 
-// 登录揭示：登录成功后先等路由离开登录页，再在主页面上盖一层欢迎动画。
-// 若在登录页就开播，慢接口会让幕布拉开时露出的仍是登录表单。
+// 登录揭示：登录成功瞬间就挂一层不透明覆盖，先挡住 nav/topbar；
+// 等路由真正离开登录页后再启动 2.8s 时间线。这样慢接口只表现为“幕布等待”，
+// 不会先闪一下导航。等待超过 6s 兜底撤掉，避免卡死。
 const loginRevealPending = ref(false)
 const loginRevealVisible = ref(false)
+const loginRevealStarted = ref(false)
 const loginRevealRun = ref(0)
 const loginRevealName = ref('')
 const loginRevealRole = ref('')
+let loginCoverTimer: number | undefined
 
-function playLoginReveal() {
-  if (!loginRevealPending.value || route.path.endsWith('login')) {
+function clearLoginCoverTimer() {
+  if (loginCoverTimer !== undefined) {
+    window.clearTimeout(loginCoverTimer)
+    loginCoverTimer = undefined
+  }
+}
+
+function finishLoginReveal() {
+  clearLoginCoverTimer()
+  loginRevealPending.value = false
+  loginRevealVisible.value = false
+  loginRevealStarted.value = false
+  delete document.documentElement.dataset.loginReveal
+}
+
+function beginLoginCover() {
+  if (loginRevealVisible.value) {
     return
   }
-  loginRevealPending.value = false
   loginRevealName.value = userStore.name
   loginRevealRole.value = t(`home.positions.${loginRoleKey(userStore.position)}`)
   loginRevealRun.value += 1
+  loginRevealStarted.value = false
   loginRevealVisible.value = true
+  document.documentElement.dataset.loginReveal = '1'
+  // 首页首屏依赖立即发；不要把时长/群组/字体排到 idle，揭示一结束就要能看见。
+  prefetchLoginHome(router)
+  clearLoginCoverTimer()
+  loginCoverTimer = window.setTimeout(() => {
+    if (!loginRevealStarted.value) {
+      finishLoginReveal()
+    }
+  }, 6000)
+}
+
+function startLoginReveal() {
+  if (!loginRevealVisible.value) {
+    return
+  }
+  clearLoginCoverTimer()
+  loginRevealStarted.value = true
 }
 
 watch(
   () => userStore.isLogin,
   (logged) => {
     if (!logged) {
-      loginRevealPending.value = false
+      resetLoginHomePrefetch()
+      finishLoginReveal()
       return
     }
     loginRevealPending.value = true
-    playLoginReveal()
+    beginLoginCover()
+    // 极端时序下路由 watch 可能先于登录 watch 触发（同一 tick 的 replace）。
+    if (!route.path.endsWith('login') && !route.path.endsWith('maintenance')) {
+      startLoginReveal()
+    }
   }
 )
 
 watch(
   () => route.path,
-  () => playLoginReveal()
+  () => {
+    if (!userStore.isLogin) {
+      return
+    }
+    if (route.path.endsWith('login')) {
+      return
+    }
+    if (route.path.endsWith('maintenance')) {
+      finishLoginReveal()
+      return
+    }
+    if (!loginRevealPending.value && !loginRevealVisible.value) {
+      return
+    }
+    if (!loginRevealVisible.value) {
+      beginLoginCover()
+    }
+    loginRevealPending.value = false
+    startLoginReveal()
+  }
 )
 
 // force insecure sessions to log out
@@ -352,6 +412,8 @@ onUnmounted(() => {
     clearInterval(banTimer)
     banTimer = undefined
   }
+  clearLoginCoverTimer()
+  delete document.documentElement.dataset.loginReveal
   window.removeEventListener('beforeunload', handleBeforeUnload)
   window.removeEventListener('contextmenu', handleContextMenu)
   stopPlatformGuard()
@@ -426,6 +488,11 @@ const VIEW_FAMILY: Record<string, string> = {
 
 const viewKey = computed(() => {
   const name = route.name?.toString() ?? ''
+  // 学生详情头部滑块（info/activity/modify/logs）只切路由末段，外壳必须常驻；
+  // 按学生 id 归族，既避免每次点滑块整页重挂载，也不会和 `/user` 首页撞 key。
+  if (name === 'user-page' || name === 'user-action') {
+    return `/user/${route.params.id ?? ''}`
+  }
   return VIEW_FAMILY[name] ?? route.path
 })
 
@@ -463,17 +530,33 @@ const locales: Record<
   }
 }
 
+const userMenuOpen = ref(false)
+// 固定引用：内联字面量会让每次 App patch 都触发 popper 重新定位。
+const userMenuPopperOptions = {
+  modifiers: [{ name: 'offset', options: { offset: [0, 10] } }]
+}
+
+function closeUserMenu() {
+  userMenuOpen.value = false
+}
+
 const panelButtons = [
   {
     icon: Password,
     async click() {
-      await modifyPasswordDialogs(String(userStore.id), locale.value, userStore.resetPassword)
+      closeUserMenu()
+      try {
+        await modifyPasswordDialogs(String(userStore.id), locale.value, userStore.resetPassword)
+      } catch {
+        /* 用户取消改密或短令牌获取失败：菜单已关闭，不把取消当成异常 */
+      }
     },
     text: 'reset'
   },
   {
     icon: SwitchButton,
     async click() {
+      closeUserMenu()
       try {
         await ElMessageBox.confirm(
           t('nav.logoutConfirm', '退出登录后需要重新验证身份，确定要退出吗？'),
@@ -482,11 +565,12 @@ const panelButtons = [
             confirmButtonText: t('nav.logout', '退出登录'),
             cancelButtonText: t('action.cancel', '取消'),
             type: 'warning',
-            confirmButtonClass: 'el-button--danger'
+            confirmButtonClass: 'el-button--danger',
+            closeOnClickModal: false
           }
         )
         await userStore.removeUser()
-        router.replace('/user/login')
+        await router.replace('/user/login')
       } catch {
         /* 用户取消 */
       }
@@ -591,26 +675,30 @@ onUnmounted(() => {
                   </span>
                   <span class="yg-user-chip__name">{{ userStore.name }}</span>
                   <ElPopover
+                    v-model:visible="userMenuOpen"
                     width="200px"
                     trigger="click"
                     placement="bottom-end"
-                    :popper-options="{ modifiers: [{ name: 'offset', options: { offset: [0, 10] } }] }"
+                    :popper-options="userMenuPopperOptions"
                     popper-class="yg-user-menu"
                   >
                     <template #reference>
                       <button
                         type="button"
                         class="yg-user-chip__toggle"
+                        aria-haspopup="menu"
+                        :aria-expanded="userMenuOpen ? 'true' : 'false'"
                         :aria-label="t('nav.accountMenu', '账号菜单')"
                       >
                         <ElIcon><ArrowDown /></ElIcon>
                       </button>
                     </template>
-                    <div class="yg-user-menu__list">
+                    <div class="yg-user-menu__list" role="menu">
                       <ElButton
                         v-for="button in panelButtons"
                         :key="button.text"
                         text
+                        role="menuitem"
                         :icon="button.icon"
                         :class="['yg-user-menu__item', `yg-user-menu__item--${button.text}`]"
                         @click="button.click"
@@ -640,7 +728,8 @@ onUnmounted(() => {
       :key="loginRevealRun"
       :name="loginRevealName"
       :role="loginRevealRole"
-      @done="loginRevealVisible = false"
+      :active="loginRevealStarted"
+      @done="finishLoginReveal"
     />
   </ElConfigProvider>
 </template>
@@ -854,6 +943,21 @@ onUnmounted(() => {
 
 :global(.yg-user-menu) {
   padding: 4px;
+}
+
+/* P620 等触摸平板：图标仍是 24px，但命中区扩到 40px；菜单项按 44px 触控标准。
+   负 margin 抵消扩大的盒子，胶囊布局不跳。 */
+@media (pointer: coarse) {
+  .yg-user-chip__toggle {
+    width: 40px;
+    height: 40px;
+    margin: -8px;
+  }
+
+  :global(.yg-user-menu__item.el-button) {
+    height: 44px;
+    padding: 0 12px;
+  }
 }
 
 /* 极简风去掉指向箭头，弹层直接以右边缘对齐胶囊 */
