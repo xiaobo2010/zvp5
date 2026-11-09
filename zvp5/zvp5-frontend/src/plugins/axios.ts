@@ -140,6 +140,9 @@ function flightKey(config: InternalAxiosRequestConfig): string {
  * 进度回调、非 JSON/文本 响应一律不参与——合并它们会改变既有语义。
  */
 function canSingleFlight(config: InternalAxiosRequestConfig, callerSignal: unknown): boolean {
+  if ((config as CachedConfig).__bypassCache) {
+    return false
+  }
   if (String(config.method ?? 'get').toLowerCase() !== 'get') {
     return false
   }
@@ -206,7 +209,39 @@ function leaderAdapter(
   }
 }
 
-type CachedConfig = InternalAxiosRequestConfig & { __fromCache?: boolean }
+type CachedConfig = InternalAxiosRequestConfig & {
+  __fromCache?: boolean
+  __bypassCache?: boolean
+}
+
+const USER_ACTION_CACHE_BYPASS_MS = 5000
+let cacheBypassUntil = 0
+
+/**
+ * 刷新按钮、分页、搜索等手动操作必须在本次交互后重新请求。
+ *
+ * 进程内缓存只用于「程序自动进入页面」这类重复读取；用户刚点过按钮/链接时
+ * 给后续请求一个短暂的 bypass 窗口，避免 30 秒 TTL 内点刷新仍拿到旧响应。
+ */
+function markUserInitiatedRequest(event: Event) {
+  const target = event.target
+  if (!(target instanceof Element)) return
+  if (!target.closest('button, a[href], input[type="submit"], [role="button"]')) return
+  cacheBypassUntil = Date.now() + USER_ACTION_CACHE_BYPASS_MS
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('click', markUserInitiatedRequest, { capture: true, passive: true })
+}
+
+function shouldBypassCache(): boolean {
+  return Date.now() < cacheBypassUntil
+}
+
+/** 测试隔离用：清掉上一个用例手动点击留下的 bypass 窗口。 */
+export function resetUserInteractionCacheBypass(): void {
+  cacheBypassUntil = 0
+}
 
 /**
  * 在途合并（single-flight）的内部标记。
@@ -228,7 +263,7 @@ type FlightConfig = CachedConfig & {
  * 这样重复进入页面/重复展开同一条数据时是同步可用的，不会再有加载卡顿。
  */
 function cachedResponse(config: InternalAxiosRequestConfig): AxiosResponse | null {
-  if (!isCacheableGet(config)) {
+  if (!isCacheableGet(config) || (config as CachedConfig).__bypassCache) {
     return null
   }
   const key = cacheKey(config)
@@ -289,6 +324,9 @@ axiosInstance.interceptors.request.use(
     if (!/^([a-z][a-z\d+.-]*:)?\/\//i.test(String(config.url ?? ''))) {
       config.baseURL = baseURLForRequest(config.url)
     }
+    // 用户刚点过刷新/搜索/分页等控件时，本次请求跳过进程内缓存；
+    // 网络成功后的响应仍会覆盖旧缓存。
+    ;(config as CachedConfig).__bypassCache = shouldBypassCache()
     // 命中进程内缓存：直接返回上次的响应，不再发请求、不点亮进度条
     const cached = cachedResponse(config)
     if (cached) {

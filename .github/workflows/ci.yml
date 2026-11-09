@@ -265,34 +265,46 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for name in VITE_API_BASE VITE_API_RACE_BASE; do
-            value="${!name}"
-            [[ -n "$value" ]] || { echo "$name is required" >&2; exit 1; }
-            node -e '
-              const [name, value] = process.argv.slice(1)
+          : "${VITE_API_BASE:?VITE_API_BASE is required}"
+          : "${VITE_API_RACE_BASE:?VITE_API_RACE_BASE is required}"
+          : "${PROD_FRONTEND_HEALTH_URL:?PROD_FRONTEND_HEALTH_URL is required}"
+          node -e '
+            const api = process.env.VITE_API_BASE || ""
+            if (api !== "/api") {
               let url
-              try { url = new URL(value) } catch { throw new Error(name + " must be an absolute URL") }
+              try { url = new URL(api) } catch { throw new Error("VITE_API_BASE must be /api or an absolute URL") }
               if (
                 url.protocol !== "https:" || !url.hostname || url.username || url.password ||
                 url.search || url.hash || url.pathname.replace(/\/+$/, "") !== "/api"
-              ) throw new Error(name + " must be an HTTPS URL ending in /api")
-            ' "$name" "$value"
-            health_url="$(node -e 'process.stdout.write(new URL(process.argv[1]).origin + "/api/health")' "$value")"
-            curl -fsS --retry 3 --retry-delay 2 \
-              -A 'Mozilla/5.0 (compatible; ZVP5-Deploy/1.0)' "$health_url" >/dev/null
-          done
+              ) throw new Error("VITE_API_BASE must be /api or an HTTPS URL ending in /api")
+            }
+            const race = new URL(process.env.VITE_API_RACE_BASE || "")
+            if (
+              race.protocol !== "https:" || !race.hostname || race.username || race.password ||
+              race.search || race.hash || race.pathname.replace(/\/+$/, "") !== "/api"
+            ) throw new Error("VITE_API_RACE_BASE must be an HTTPS URL ending in /api")
+          '
+          if [[ "$VITE_API_BASE" == "/api" ]]; then
+            api_health_url="$(node -e 'process.stdout.write(new URL("/api/health", process.env.PROD_FRONTEND_HEALTH_URL).href)')"
+          else
+            api_health_url="$(node -e 'process.stdout.write(new URL(process.argv[1]).origin + "/api/health")' "$VITE_API_BASE")"
+          fi
+          race_health_url="$(node -e 'process.stdout.write(new URL(process.argv[1]).origin + "/api/health")' "$VITE_API_RACE_BASE")"
+          curl -fsS --retry 3 --retry-delay 2 \
+            -A 'Mozilla/5.0 (compatible; ZVP5-Deploy/1.0)' "$api_health_url" >/dev/null
+          curl -fsS --retry 3 --retry-delay 2 \
+            -A 'Mozilla/5.0 (compatible; ZVP5-Deploy/1.0)' "$race_health_url" >/dev/null
       - name: Install frontend dependencies
         working-directory: zvp5/zvp5-frontend
         run: pnpm install --frozen-lockfile
       - name: Build frontend with configured production API origins
         working-directory: zvp5/zvp5-frontend
         run: |
+          set -euo pipefail
           pnpm run build
-          grep -R -F "$VITE_API_BASE" dist/assets >/dev/null
           grep -R -F "$VITE_API_RACE_BASE" dist/assets >/dev/null
-          api_origin="$(node -e 'process.stdout.write(new URL(process.argv[1]).origin)' "$VITE_API_BASE")"
+          grep -F 'src="/assets/' dist/index.html >/dev/null
           race_origin="$(node -e 'process.stdout.write(new URL(process.argv[1]).origin)' "$VITE_API_RACE_BASE")"
-          grep -F "$api_origin" dist/index.html >/dev/null
           grep -F "$race_origin" dist/index.html >/dev/null
 
       - name: Package deployment artifacts
