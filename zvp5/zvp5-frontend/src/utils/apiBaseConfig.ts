@@ -29,6 +29,10 @@ function validateAbsoluteApiBase(value: string | undefined, envName: string): st
 }
 
 export function validateProductionApiBase(value: string | undefined): string {
+  // Same-origin is the canonical deployment: the final page Origin is zvp and
+  // /api is served by that same vhost. Keeping this relative also keeps test
+  // deployments origin-agnostic until the manual DNS cutover.
+  if ((value || '').trim() === '/api') return '/api'
   return validateAbsoluteApiBase(value, 'VITE_API_BASE')
 }
 

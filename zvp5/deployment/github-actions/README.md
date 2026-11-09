@@ -62,7 +62,7 @@ Environment Variables:
 
 | Name | Meaning |
 |---|---|
-| `PROD_API_BASE` | Public API base ending in `/api` |
+| `PROD_API_BASE` | Canonical same-origin `/api`, or an absolute HTTPS API base ending in `/api` for a split-origin rollback |
 | `PROD_API_RACE_BASE` | Race API base ending in `/api`; required by the current production build |
 | `PROD_FRONTEND_HEALTH_URL` | Public frontend root URL |
 

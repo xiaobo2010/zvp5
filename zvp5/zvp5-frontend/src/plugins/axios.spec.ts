@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { AxiosError, type AxiosAdapter, type AxiosResponse } from 'axios'
 import { Blob as NodeBlob } from 'node:buffer'
-import client, { baseURLForRequest } from './axios'
+import client, { baseURLForRequest, resetUserInteractionCacheBypass } from './axios'
 import { cacheGet, cacheSet } from '@/utils/idbCache'
 import { clearMemoryCache } from '@/utils/requestCache'
 import { clearFlights, pendingFlightCount } from './singleFlight'
@@ -31,6 +31,7 @@ beforeEach(() => {
   xuehaiIdMock.value = 0
   // 进程内缓存是模块级状态，不清理会让相邻用例互相命中。
   clearMemoryCache()
+  resetUserInteractionCacheBypass()
   // 在途合并的航班表同样是模块级状态。
   clearFlights()
 })
@@ -91,6 +92,29 @@ it('serves a repeated authenticated GET from cache without a second request', as
   expect(first.data).toEqual({ calls: 1 })
   expect(second.data).toEqual({ calls: 1 })
   expect(cacheSet).toHaveBeenCalledTimes(1)
+})
+
+it('bypasses the process cache when a button interaction requests fresh data', async () => {
+  localStorage.setItem('token', 'alice-session-token')
+  const button = document.createElement('button')
+  document.body.appendChild(button)
+  let calls = 0
+  client.defaults.adapter = async (config) => {
+    calls += 1
+    return { data: { calls }, status: 200, statusText: 'OK', headers: {}, config }
+  }
+
+  const initial = await client.get('/v1/users/alice')
+  button.click()
+  const refreshed = await client.get('/v1/users/alice')
+  resetUserInteractionCacheBypass()
+  const afterRefresh = await client.get('/v1/users/alice')
+
+  expect(initial.data).toEqual({ calls: 1 })
+  expect(refreshed.data).toEqual({ calls: 2 })
+  expect(afterRefresh.data).toEqual({ calls: 2 })
+  expect(calls).toBe(2)
+  button.remove()
 })
 
 it('keeps cache entries isolated per account', async () => {
