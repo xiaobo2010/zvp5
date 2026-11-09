@@ -132,7 +132,7 @@ class AIOcrEnginesRepo(Protocol):
     Rows use the Mongo document shape::
 
         {"_id": <hex str>, "name": str,
-         "kind": "tencent" | "aliyun" | "rapidocr",
+         "kind": "tencent" | "aliyun" | "baidu" | "groq" | "zhipu",
          "config": dict, "secret_cipher": str | None, "key_hint": str | None,
          "enabled": bool, "priority": int,
          "created_at": datetime, "updated_at": datetime}
@@ -141,7 +141,7 @@ class AIOcrEnginesRepo(Protocol):
     ``language_type``; never credentials). ``secret_cipher`` is the **only**
     form of the credentials that reaches the database: AES-GCM ciphertext of the
     whole credential object, base64-encoded (see :mod:`services.ai.crypto`).
-    ``None`` means "this engine needs no credentials" (rapidocr) — not "missing
+    ``None`` means "this row has no credentials" (legacy rows) — not "missing
     config". ``key_hint`` is display-only.
 
     ``priority`` is a small-is-first ordering key: the router picks the first

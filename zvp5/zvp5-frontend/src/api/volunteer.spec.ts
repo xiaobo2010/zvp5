@@ -35,11 +35,11 @@ describe('义工登记 OCR 流程', () => {
     vi.mocked(enqueueOcr).mockResolvedValue({
       status: 'pending',
       attachment_oid: OID,
-      engine: 'rapidocr'
+      engine: 'tencent'
     })
     vi.mocked(getOcr).mockResolvedValue({
       status: 'done',
-      engine: 'rapidocr',
+      engine: 'tencent',
       text: '学号 姓名 时长\n2024001 张三 2',
       confidence: 0.92
     })
@@ -66,7 +66,7 @@ describe('义工登记 OCR 流程', () => {
       }
     ])
     expect(result.attachmentOid).toBe(OID)
-    expect(result.engine).toBe('rapidocr')
+    expect(result.engine).toBe('tencent')
     expect(progress).toHaveBeenCalledWith(expect.objectContaining({ stage: 'queued' }))
     expect(progress).toHaveBeenCalledWith(expect.objectContaining({ stage: 'recognizing' }))
   })
@@ -78,7 +78,7 @@ describe('义工登记 OCR 流程', () => {
     vi.mocked(enqueueOcr).mockResolvedValue({
       status: 'pending',
       attachment_oid: OID,
-      engine: 'rapidocr'
+      engine: 'tencent'
     })
     vi.mocked(getOcr).mockResolvedValue({ status: 'failed' })
 

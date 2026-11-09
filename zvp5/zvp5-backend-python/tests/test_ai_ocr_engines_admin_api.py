@@ -199,7 +199,11 @@ def test_list_never_returns_secret_cipher(repo):
 
 def test_list_includes_disabled_engines(repo):
     assert _create(priority=10).status_code == 201
-    assert _create(name="spare", kind="rapidocr", secret=None, enabled=False).status_code == 201
+    assert (
+        _create(name="spare", kind="tencent", secret=dict(TENCENT_SECRET), enabled=False)
+        .status_code
+        == 201
+    )
 
     body = _client().get("/api/ai/ocr-engines").json()["data"]
 
@@ -251,14 +255,13 @@ def test_create_priority_defaults_to_100(repo):
     assert created.json()["data"]["priority"] == 100
 
 
-def test_create_rapidocr_takes_no_secret(repo):
-    ok = _create(name="local", kind="rapidocr", secret=None)
+def test_create_rejects_removed_local_kind(repo):
+    """本地引擎已下线：``rapidocr`` 不再是合法 kind（存量行由运维清理）。"""
+    response = _create(name="local", kind="rapidocr", secret=None)
 
-    assert ok.status_code == 201
-    view = ok.json()["data"]
-    assert view["has_secret"] is False
-    assert view["key_hint"] is None
-    assert repo.rows[view["oid"]]["secret_cipher"] is None
+    assert response.status_code == 400
+    assert response.json()["detail"] == "AI_OCR_ENGINE_BAD_KIND"
+    assert repo.rows == {}
 
 
 def test_create_rejects_bad_kind(repo):
@@ -352,18 +355,6 @@ def test_public_view_never_leaks_baidu_or_groq_secret_material(repo):
         assert row["secret_cipher"] not in listing.text
 
 
-def test_create_rejects_secret_for_rapidocr(repo):
-    response = _create(
-        name="local", kind="rapidocr", secret={"secret_id": "leaked-into-wrong-place"}
-    )
-
-    assert response.status_code == 400
-    assert response.json()["detail"] == "AI_OCR_ENGINE_INVALID"
-    # 拒绝时也不能把值回显出去（那等于把「贴错的密钥」写进客户端与日志）。
-    assert "leaked-into-wrong-place" not in response.text
-    assert repo.rows == {}
-
-
 def test_create_rejects_bad_name_and_priority(repo):
     assert _create(name="Primary Engine").json()["detail"] == "AI_OCR_ENGINE_INVALID"
     assert _create(name="second", priority=-1).json()["detail"] == "AI_OCR_ENGINE_INVALID"
@@ -384,7 +375,7 @@ def test_create_duplicate_name_is_409(repo):
 def test_create_requires_admin(repo):
     response = _client({"id": USER, "per": ["department"]}).post(
         "/api/ai/ocr-engines",
-        json={"name": "primary", "kind": "rapidocr"},
+        json={"name": "primary", "kind": "tencent"},
     )
 
     assert response.status_code == 403
@@ -411,6 +402,41 @@ def test_patch_updates_toggle_and_priority(repo):
     assert view["config"] == {"language_type": "zh"}
 
 
+def test_patch_legacy_removed_kind_row_can_still_be_disabled(repo):
+    """存量 ``rapidocr`` 行：停用/改名/删除必须可用，只有「带 secret」拒 400。
+
+    注册表已没有这个 kind，``_REQUIRED_SECRET_FIELDS`` 也就没有表项——下标取值
+    会在这里 KeyError → 500，把运维「先停用存量行」的路直接堵死。
+    """
+    oid = "e" * 24
+    repo.rows[oid] = {
+        "_id": oid,
+        "name": "legacy-local",
+        "kind": "rapidocr",
+        "config": {},
+        "secret_cipher": None,
+        "key_hint": None,
+        "enabled": True,
+        "priority": 100,
+        "created_at": None,
+        "updated_at": None,
+    }
+
+    response = _client().patch(f"/api/ai/ocr-engines/{oid}", json={"enabled": False})
+
+    assert response.status_code == 200
+    assert response.json()["data"]["enabled"] is False
+    assert repo.rows[oid]["enabled"] is False
+
+    rejected = _client().patch(
+        f"/api/ai/ocr-engines/{oid}", json={"secret": {"secret_id": "nope"}}
+    )
+
+    assert rejected.status_code == 400
+    assert rejected.json()["detail"] == "AI_OCR_ENGINE_INVALID"
+    assert repo.rows[oid]["secret_cipher"] is None
+
+
 def test_patch_rotates_secret(repo):
     oid = _create().json()["data"]["oid"]
     before = repo.rows[oid]["secret_cipher"]
@@ -428,17 +454,6 @@ def test_patch_rotates_secret(repo):
     assert json.loads(crypto.decrypt_secret(after)) == rotated
     assert response.json()["data"]["key_hint"] == crypto.key_hint(rotated["secret_id"])
     assert rotated["secret_key"] not in response.text
-
-
-def test_patch_secret_on_rapidocr_is_rejected(repo):
-    oid = _create(name="local", kind="rapidocr", secret=None).json()["data"]["oid"]
-
-    response = _client().patch(
-        f"/api/ai/ocr-engines/{oid}", json={"secret": {"secret_id": "nope"}}
-    )
-
-    assert response.status_code == 400
-    assert repo.rows[oid]["secret_cipher"] is None
 
 
 def test_patch_unknown_engine_is_404(repo):

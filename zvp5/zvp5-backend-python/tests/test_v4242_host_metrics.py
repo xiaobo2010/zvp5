@@ -238,7 +238,11 @@ def test_host_endpoint_rejects_token_without_admin_permission(admin_client, monk
 
 def test_host_endpoint_is_mounted_by_main_with_the_metrics_prefix():
     import main
+    from tests.route_utils import iter_leaf_routes
 
-    paths = {getattr(route, "path", None) for route in main.app.routes}
+    paths = {
+        getattr(route, "path", None)
+        for route in iter_leaf_routes(main.app.routes)
+    }
     assert HOST_URL in paths
     assert REALTIME_URL in paths

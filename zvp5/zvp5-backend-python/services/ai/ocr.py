@@ -402,7 +402,7 @@ async def _recognize_bytes(
 
 
 def _engine_secret(row: dict) -> dict:
-    """``secret_cipher`` → 凭证 dict；``None`` = 本地引擎，不需要凭证。"""
+    """``secret_cipher`` → 凭证 dict；``None`` 按空 dict 处理（无凭证的历史行）。"""
     cipher = row.get("secret_cipher")
     if not cipher:
         return {}
