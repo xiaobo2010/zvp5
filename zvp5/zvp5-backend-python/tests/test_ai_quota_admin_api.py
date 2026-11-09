@@ -329,7 +329,7 @@ def test_site_level_quota_does_not_leak_into_the_user_view(api) -> None:
 
     client.put(
         f"{PREFIX}/quota/{TARGET_OID}",
-        json={"kind": "ocr_rapidocr", "limit_count": 1234},
+        json={"kind": "ocr_groq", "limit_count": 1234},
     )
 
     data = client.get(f"{PREFIX}/quota/{TARGET_OID}").json()["data"]

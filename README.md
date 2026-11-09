@@ -338,29 +338,24 @@ uvicorn main:app --host 0.0.0.0 --port 8000
 | `frontend/src/utils/constants.ts:2,4` | 外部图标 URL | 不移植 |
 | `backend/routers/xh_router.py`、`routers/v1/platform.py` | 学海代理 / 平台登录体系 | 不在义工管理范围，未触碰 |
 
-**部署结构**：主站负责页面与静态资源分发，另一域名负责 `/api` 请求并可解析到距离
-数据库更近的后端。生产构建通过环境变量 `VITE_API_BASE` 注入完整 API 基址；后端
-通过环境变量 `ZVMS_CORS_ALLOWED_ORIGINS` 接收逗号分隔的主站 Origin 白名单。Nginx
-CSP 模板中的 `__ZVMS_API_ORIGIN__` / `__ZVMS_API_WS_ORIGIN__` 同样由部署环境替换，
-仓库不保存生产域名。
+**部署结构（最终口径）**：浏览器、页面、静态资源和主 API 的正式 Origin 统一为
+`https://zvp.xiaobopisces.top`。生产构建使用同源 `VITE_API_BASE=/api`，因此主业务请求
+不产生 CORS preflight；备用 API 域名不是页面 Origin。完成部署后需
+人工把 `zvp.xiaobopisces.top` 的 DNS 解析切到目标 API 主机。
 
 ```text
-VITE_API_BASE=https://<api-domain>/api
-ZVMS_CORS_ALLOWED_ORIGINS=https://<content-domain>
+VITE_API_BASE=/api
+VITE_API_RACE_BASE=https://<backup-api-domain>/api   # 可选竞速/回退
+ZVMS_CORS_ALLOWED_ORIGINS=https://zvp.xiaobopisces.top
 ```
 
-前端默认把 API 请求直发数据库近端域名；`/api/system/files/*` 以及 SSH
-票据/WebSocket 这类依赖内容站本机资源的路径保留在内容站 Origin。登录证书仍与登录
-接口保持同一 API Origin，避免两台服务器的 RSA 密钥不一致。内容站 Nginx
-必须只为这些路径代理本机后端，其余 `/api/*` 返回 404，避免误把数据库请求绕回内容站。
+用户手动点击刷新、分页、搜索或其他按钮后，前端会跳过 30 秒进程内缓存并重新请求；
+程序自动进入页面时仍可使用短期缓存以减少重复读取。
 
-后端只在进程启动时读取 `ZVMS_CORS_ALLOWED_ORIGINS`，修改后需重启服务。
-生产 `vite build` 会在 `VITE_API_BASE` 缺失、不是 HTTPS、末尾不是 `/api` 或带
-query/fragment 时直接失败。CSP 用
-`zvp5-backend-python/config/render_nginx_security_headers.py` 从环境变量渲染。
-完整拓扑、Nginx、CORS、SSE、WebSocket 与发布顺序见
-`zvp5/docs/DEPLOY_API_SPLIT.md`。
-
+`vite build` 接受同源 `/api`，也保留绝对 HTTPS `/api` 基址作为拆域回滚能力。CSP
+通过 `zvp5-backend-python/config/render_nginx_security_headers.py` 从环境变量渲染。
+完整发布顺序、DNS 切换、缓存刷新行为和回滚步骤见
+[`zvp5/docs/DEPLOY_ZVP_ORIGIN_2026-11-10.md`](./zvp5/docs/DEPLOY_ZVP_ORIGIN_2026-11-10.md)。
 #### 6. 验证记录
 
 - 后端：`python3 -m py_compile`（v3 路由 + 两个权限文件）exit 0；危险模式 grep 零命中。
@@ -1207,3 +1202,12 @@ AI 能力统一以 **ZVAgent** 对外（代码与文档中的「智能体 / AI �
 | 账号与应用安全 | 登录频控（账号 5 次/分 + IP 60 次/分 → 429 `AUTH_RATE_LIMITED`）、登出轮换 `session_id`、管理写操作密码再认证、重查询读预算 60 次/分/用户（429 `READ_RATE_LIMITED`）、安全响应头 + CSP、shield 418 追责采集、socket.io 仅认 `Authorization` 头与 auth 载荷 | `zvp5/zvp5-backend-python/README.md` |
 | 日志与审计 | `APP_LOGS` 新增 `client_ip` / `user_agent`（V045）；事件常量集中在 `services/log_events.py`；`AI_PROMPT_AUDIT` 扩 `answer_text` / `tool_calls` / `refused` / `warned`（V046） | `zvp5/docs/AI_GATEWAY_API.md` §6.8、`zvp5/zvp5-backend-python/docs/database-status.md` |
 | 前端 | 会话运行中逐轮见回复、模型只读展示、思考强度三档、归档会话视图与恢复、平台管理可添加班级、日志卡片展示 IP/UA、文件预览 OCR / 编辑器「AI 分析」/ 终端「智能分析」 | `zvp5/zvp5-frontend/README.md` |
+
+---
+
+## 十、GitHub 自动化（2026-11-07）
+
+- 根目录 `.github/workflows/ci.yml` 统一运行后端 pytest/Ruff、前端 Vitest/ESLint/类型检查/生产构建、Cypress、ShellCheck、actionlint、Gitleaks 与 Trivy。
+- 推送到 `main` 只运行 CI，不部署。发布非预发布 GitHub Release 后，只有全部检查通过且 release commit 属于 `main` 才自动发布 LA 前端与首尔后端；DDL 不自动执行，健康检查失败会按相反顺序回滚。首次启用前需按
+  `zvp5/deployment/github-actions/README.md` 创建 `production` Environment、配置 Secrets 并在两台服务器安装受限部署账号。
+- Dependabot 每周分组更新 pip、pnpm 与 GitHub Actions；分支保护暂时保持观察模式，不把检查设为 required。

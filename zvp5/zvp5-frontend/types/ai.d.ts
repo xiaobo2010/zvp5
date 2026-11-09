@@ -4,7 +4,7 @@
 
 export type AiKeyScope = 'personal' | 'shared'
 
-export type AiOcrEngineKind = 'tencent' | 'aliyun' | 'baidu' | 'rapidocr' | 'groq' | 'zhipu'
+export type AiOcrEngineKind = 'tencent' | 'aliyun' | 'baidu' | 'groq' | 'zhipu'
 
 /**
  * 用户侧额度 kind：V051 起只剩 AF 一个池（对话与 OCR 共用）。
@@ -115,7 +115,7 @@ export interface AiLogRecord {
   purpose: string | null
   /** 流式首块到达耗时（毫秒）；非流式为 null。 */
   first_token_ms: number | null
-  /** OCR 引擎类型（tencent/aliyun/rapidocr/baidu/groq/zhipu）；OCR 行才有。 */
+  /** OCR 引擎类型（tencent/aliyun/baidu/groq/zhipu）；OCR 行才有。 */
   engine_kind: string | null
   /** OCR 针对的附件 oid。 */
   attachment_oid: string | null
@@ -319,8 +319,6 @@ export interface AiSharedEntry {
 
 export interface AiHealthData {
   enabled: boolean
-  /** 本地引擎（rapidocr）预热是否就绪。 */
-  local_engine_ready?: boolean
   max_concurrency: number
   providers: AiProviderView[]
   /** 供应商 → 熔断剩余秒数。 */

@@ -2,43 +2,22 @@
 
 from __future__ import annotations
 
-import logging
-
-from fastapi import APIRouter, BackgroundTasks, Depends
+from fastapi import APIRouter, Depends
 
 from routers.ai.common import _require_admin
 from services.ai import config as ai_config
-from services.ai import credentials, ocr_engines, rate_limit, routing
+from services.ai import credentials, rate_limit, routing
 from util.object_id import get_current_user
 
 router = APIRouter()
-
-_logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Health（admin 视图：不含密钥、不含上游原始报文）
 # ---------------------------------------------------------------------------
 
-# 本地引擎（rapidocr）的预热状态。``None`` = 还没预热过。
-# 只存布尔值：不存路径、不存模型名、不存任何加载细节，避免 health 视图变成
-# 「服务器文件系统/引擎内部结构」的泄露面。
-_local_engine_ready: bool | None = None
-
-
-async def _warmup_local_engines() -> bool:
-    """后台预热本地引擎；健康检查不能因此失败，异常一律降级为 ``False``。"""
-    global _local_engine_ready
-    try:
-        _local_engine_ready = bool(await ocr_engines.warmup_local_engines())
-    except Exception:  # noqa: BLE001 - warmup 契约上不抛，这里只是最后一道保险
-        _logger.exception("ai local engine warmup failed")
-        _local_engine_ready = False
-    return _local_engine_ready
-
 
 @router.get("/health")
 async def ai_health(
-    background_tasks: BackgroundTasks,
     user=Depends(get_current_user),
 ):
     _require_admin(user)
@@ -66,19 +45,12 @@ async def ai_health(
                 }
             )
 
-    # 预热本地引擎（rapidocr）：首次加载 onnxruntime 与模型要秒级时间，放在
-    # 后台任务里跑，/health 立即返回；warmup 本身幂等，重复请求只是复用实例。
-    # 预热的失败不影响本响应（失败只体现在下面 local_engine_ready 的取值上）。
-    background_tasks.add_task(_warmup_local_engines)
-
     workers = ai_config.worker_count()
     return {
         "status": "ok",
         "code": 200,
         "data": {
             "enabled": ai_config.is_enabled(),
-            # 只有一个布尔：预热是否已就绪。不暴露任何路径 / 模型名 / 密钥材料。
-            "local_engine_ready": bool(_local_engine_ready),
             "max_concurrency": ai_config.max_concurrency(),
             # 部署的进程数 + 每进程的实际频控阈值：两者一起才能算出「全局真实
             # 上限」（阈值 × N）。单 worker 时阈值就是配置值。

@@ -1,12 +1,12 @@
-"""OCR 引擎适配器注册表（腾讯 / 阿里 / 百度 / RapidOCR / Groq）。
+"""OCR 引擎适配器注册表（腾讯 / 阿里 / 百度 / Groq / 智谱）。
 
 注册表把「用哪个厂商的 OCR」收敛成一组同签名的适配器::
 
     result = await ENGINES[kind]().recognize(image, mime, secret, config)
 
-``secret`` 是 ``ai_ocr_engines.secret_cipher`` 解密后的凭证 **dict**（本地引擎
-是 ``{}``），``config`` 是 ``config_json`` 解析后的 dict。凭证的加解密不在这里
-做：本模块只吃明文（进程内），写库口径由 :mod:`services.ai.crypto` 决定。
+``secret`` 是 ``ai_ocr_engines.secret_cipher`` 解密后的凭证 **dict**，``config``
+是 ``config_json`` 解析后的 dict。凭证的加解密不在这里做：本模块只吃明文
+（进程内），写库口径由 :mod:`services.ai.crypto` 决定。
 
 统一结果形状（上层只依赖 ``text`` / ``lines`` / ``engine`` / ``raw``）::
 
@@ -17,19 +17,18 @@
 
 三条归一化约定，都是「上层不该被厂商差异污染」的具体化：
 
-* ``confidence`` 统一到 ``0..1``。腾讯是 0-100，阿里 ``prob`` 与 RapidOCR 的
-  ``score`` 本来就是 0-1 —— 如果在适配器外再除一次 100，腾讯的分数就会被压成
-  0.0099，展示层看不出错，只有排序会悄悄坏掉。
+* ``confidence`` 统一到 ``0..1``。腾讯是 0-100，阿里 ``prob`` 本来就是 0-1
+  —— 如果在适配器外再除一次 100，腾讯的分数就会被压成 0.0099，展示层看不出错，
+  只有排序会悄悄坏掉。
 * ``box`` **保留厂商原始结构**（腾讯是 ``{"X","Y","Width","Height"}``，阿里是
-  四个点的列表，RapidOCR 是四点坐标数组）。上层不依赖它，所以不做格式统一：
-  强行转成同一个形状只会丢掉这里用不上的信息。
+  四个点的列表）。上层不依赖它，所以不做格式统一：强行转成同一个形状只会丢掉
+  这里用不上的信息。
 * 空结果也是成功：识别不出字时返回 ``text=""`` 和空 ``lines``，而不是抛异常。
   「图上没字」和「引擎坏了」是两件事，混成同一个异常会让重试逻辑白跑。
 
 依赖全部**延迟导入**：`tencentcloud-sdk-python-ocr` / `alibabacloud-ocr-api20210707`
-/ `rapidocr` 都是重包（onnxruntime 尤甚），装不上或没装的部署不该在 import 阶段
-把整个网关带崩；缺依赖时抛 :class:`OcrEngineError`，消息可直接进审计日志（不含
-任何凭证）。
+都是重包，装不上或没装的部署不该在 import 阶段把整个网关带崩；缺依赖时抛
+:class:`OcrEngineError`，消息可直接进审计日志（不含任何凭证）。
 
 百度与 Groq 走项目自带的 ``httpx`` **手写 HTTP**，不引 SDK：百度 ``baidu-aip``
 停更多年，Groq 只需一个 OpenAI 兼容端点，多一个包就多一份升级债。
@@ -39,10 +38,8 @@ from __future__ import annotations
 
 import base64
 import hashlib
-import inspect
 import json
 import logging
-import os
 import re
 import threading
 import time
@@ -57,13 +54,13 @@ from . import thinking as thinking_param
 _logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# kind 常量：与 ``ck_ai_ocr_engines_kind`` 的 CHECK 逐字一致
+# kind 常量：注册表只支持这五个**云端**引擎。DB 的 ``ck_ai_ocr_engines_kind`` 仍
+# 保留 ``'rapidocr'``（本地引擎已下线，存量行由 ``select_engine`` 跳过、由运维清理）。
 # ---------------------------------------------------------------------------
 
 KIND_TENCENT = "tencent"
 KIND_ALIYUN = "aliyun"
 KIND_BAIDU = "baidu"
-KIND_RAPIDOCR = "rapidocr"
 KIND_GROQ = "groq"
 KIND_ZHIPU = "zhipu"
 
@@ -71,7 +68,6 @@ ENGINE_KINDS: tuple[str, ...] = (
     KIND_TENCENT,
     KIND_ALIYUN,
     KIND_BAIDU,
-    KIND_RAPIDOCR,
     KIND_GROQ,
     KIND_ZHIPU,
 )
@@ -90,7 +86,7 @@ TENCENT_DEFAULT_LANGUAGE = "zh"
 ALIYUN_DEFAULT_ENDPOINT = "ocr-api.cn-hangzhou.aliyuncs.com"
 
 # 百度 OCR：token 端点与识别端点同域，``ocr_api`` 默认走高精度版（``accurate_basic``
-# 比 ``general_basic`` 慢一点但中英混排准得多，本地兜底已有 RapidOCR 顶着延迟）。
+# 比 ``general_basic`` 慢一点但中英混排准得多）。
 BAIDU_DEFAULT_ENDPOINT = "https://aip.baidubce.com"
 BAIDU_DEFAULT_OCR_API = "accurate_basic"
 # 换 token 的提前量（秒）。上游 ``expires_in`` 是 30 天，掐点复用 token 会偶发
@@ -708,222 +704,6 @@ class BaiduOcrEngine:
 
 
 # ---------------------------------------------------------------------------
-# RapidOCR（本地兜底）
-# ---------------------------------------------------------------------------
-
-# 模型实例是**进程级**的：det/cls/rec 三个 ONNX 模型的加载成本以秒计，每次调用
-# 重建会让第一张图之外的所有请求都白等。锁用 ``threading.Lock`` 而不是
-# ``asyncio.Lock``：初始化发生在 ``to_thread`` 的工作线程里，而且 asyncio 原语
-# 绑定事件循环，多 worker/重载时会出现「锁绑在旧 loop 上」的经典错误。
-_RAPIDOCR_ENGINE: Any = None
-_RAPIDOCR_INIT_LOCK = threading.Lock()
-
-# ORT 线程上限：onnxruntime 默认 ``intra_op_num_threads=0`` = 吃满物理核。这台机器
-# 上还跑着 ComfyUI + Ollama，一个 OCR 请求把 8 个 vCPU 全占了，别的服务就开始
-# 排队。默认取 ``min(4, max(2, cpu//2))``（8 vCPU → 4），``inter_op`` 固定 1：
-# OCR 的算子图是串行的小图，inter-op 并行只会增加调度抖动。
-ORT_THREADS_ENV = "AI_OCR_ORT_THREADS"
-ORT_DEFAULT_MAX_INTRA_THREADS = 4
-ORT_DEFAULT_MIN_INTRA_THREADS = 2
-
-
-def _env_int(name: str, default: int) -> int:
-    raw = os.environ.get(name)
-    if raw is None or not raw.strip():
-        return default
-    try:
-        return int(raw.strip())
-    except ValueError:
-        _logger.warning("ignoring %s=%r: not an integer", name, raw)
-        return default
-
-
-def _rapidocr_intra_threads(cpu_count: int | None = None) -> int:
-    """intra-op 线程数：环境变量优先，缺省 ``min(4, max(2, cpu//2))``。
-
-    ``AI_OCR_ORT_THREADS`` 设成 ``0`` / 负数表示**不限制**（交给 ORT 默认值），
-    给压测或纯批处理部署留个口子。返回值始终钳进 ``1..cpu_count``：rapidocr
-    的 ``_init_sess_opts`` 对越界值静默忽略，钳位是我们自己保证「限制真的生效」。
-    """
-    cpus = cpu_count if cpu_count and cpu_count > 0 else (os.cpu_count() or 1)
-    default = min(ORT_DEFAULT_MAX_INTRA_THREADS, max(ORT_DEFAULT_MIN_INTRA_THREADS, cpus // 2))
-    threads = _env_int(ORT_THREADS_ENV, default)
-    if threads <= 0:
-        return 0
-    return max(1, min(threads, cpus))
-
-
-def _rapidocr_engine_params() -> dict:
-    """rapidocr 3.x 的线程参数入口：``params`` 里的**点号路径**。
-
-    3.10.0 的 ``RapidOCR(params=...)`` 经 ``ParseParams.update_batch`` 按 ``.``
-    拆段写进 OmegaConf（``rapidocr/utils/parse_parameters.py:45``），Det/Cls/Rec
-    三个模型都从 ``cfg.EngineConfig[engine_type]`` 取线程数
-    （``rapidocr/main.py:127``），最终落到
-    ``OrtInferSession._init_sess_opts``（``inference_engine/onnxruntime/main.py:85``）。
-    所以这里只需写 ``EngineConfig.onnxruntime.*`` 一处，三个会话共享。
-    """
-    intra = _rapidocr_intra_threads()
-    if intra <= 0:
-        return {}
-    return {
-        "EngineConfig.onnxruntime.intra_op_num_threads": intra,
-        "EngineConfig.onnxruntime.inter_op_num_threads": 1,
-    }
-
-
-def _construct_rapidocr(factory: Any) -> Any:
-    """按 ``params`` 建实例；2.x（或只收零参的桩）退回默认构造。
-
-    用 ``inspect`` 而不是 ``try/except TypeError``：后者的兜底范围含 init 内部
-    抛出的 TypeError，会把「参数真的错了」误判成「这个版本不支持」，然后静默
-    退回吃满 CPU 的模式。
-    """
-    params = _rapidocr_engine_params()
-    if not params:
-        return factory()
-    try:
-        signature = inspect.signature(factory)
-    except (TypeError, ValueError):  # pragma: no cover - C 扩展/内建
-        return factory()
-    accepts_params = "params" in signature.parameters or any(
-        param.kind is inspect.Parameter.VAR_KEYWORD
-        for param in signature.parameters.values()
-    )
-    if not accepts_params:  # pragma: no cover - rapidocr 2.x
-        return factory()
-    return factory(params=params)
-
-
-def _load_rapidocr_sdk() -> SimpleNamespace:
-    try:
-        from rapidocr import RapidOCR
-    except ImportError as exc:  # pragma: no cover - 依赖已装在 .venv
-        raise OcrEngineError(
-            "rapidocr is unavailable: pip install rapidocr onnxruntime"
-        ) from exc
-    return SimpleNamespace(RapidOCR=RapidOCR)
-
-
-def _rapidocr_instance() -> Any:
-    """取（必要时初始化）进程内单例。调用方必须在工作线程里调。"""
-    global _RAPIDOCR_ENGINE
-    if _RAPIDOCR_ENGINE is not None:
-        return _RAPIDOCR_ENGINE
-    with _RAPIDOCR_INIT_LOCK:
-        if _RAPIDOCR_ENGINE is None:
-            _RAPIDOCR_ENGINE = _construct_rapidocr(_load_rapidocr_sdk().RapidOCR)
-    return _RAPIDOCR_ENGINE
-
-
-class RapidOcrEngine:
-    """RapidOCR：进程内 ONNX 推理，无凭证、无 HTTP，作为云端失败时的兜底。"""
-
-    kind = KIND_RAPIDOCR
-    VERSION = "rapidocr-2"
-
-    async def recognize(
-        self,
-        image: bytes,
-        mime: str,
-        secret: Mapping[str, Any],
-        config: Mapping[str, Any],
-    ) -> dict:
-        # secret 允许为空 dict：本地引擎没有凭证，「不需要」不是「配置缺失」。
-        payload = bytes(image) if isinstance(image, (bytes, bytearray)) else b""
-        if not payload:
-            raise OcrEngineError("rapidocr engine requires non-empty image bytes")
-        # 推理是 CPU 密集的同步调用，必须离开事件循环。
-        return await anyio.to_thread.run_sync(self._recognize_sync, payload)
-
-    @staticmethod
-    def _recognize_sync(payload: bytes) -> dict:
-        engine = _rapidocr_instance()
-        output = engine(payload)  # rapidocr 3.x 直接接受 bytes
-
-        txts = getattr(output, "txts", None) or ()
-        scores = getattr(output, "scores", None) or ()
-        boxes = getattr(output, "boxes", None)
-
-        lines: list[dict] = []
-        for index, text in enumerate(txts):
-            score = scores[index] if index < len(scores) else None
-            box = None
-            if boxes is not None:
-                try:
-                    if index < len(boxes):
-                        box = _plain(boxes[index])
-                except TypeError:  # pragma: no cover - 非序列的 boxes
-                    box = None
-            lines.append(_line(text, _confidence(score), box))
-
-        raw = {
-            "elapse": _plain(getattr(output, "elapse", None)),
-            "scores": [_confidence(score) for score in scores],
-            "boxes": _plain(boxes),
-        }
-        return _result(lines=lines, engine=KIND_RAPIDOCR, raw=raw)
-
-
-# ---------------------------------------------------------------------------
-# 本地引擎预热
-# ---------------------------------------------------------------------------
-
-# 8x8 纯白 PNG：只要能过 rapidocr 的 load_img + det 前处理即可。空白图的 det
-# 结果是空，rapidocr 内部把「检测不到」当正常输出返回，不会抛。
-_WARMUP_PNG = base64.b64decode(
-    "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAAAAADhZOFXAAAAEElEQVR4nGP8zwABTAwUMQBJQQEPeWDz+AAAAABJRU5ErkJggg=="
-)
-_WARMUP_LOCK = threading.Lock()
-_WARMUP_DONE = False
-
-
-def _warmup_sync() -> bool:
-    """在 worker 线程里跑一次最小推理；幂等。
-
-    首次调用要付模型加载 + ORT 会话初始化的钱（实测 ~3.3s），放在健康检查里
-    预热，用户的第一张图就不用等。失败**只记日志**：本地引擎挂了不该让健康检查
-    变成 500，调用方拿 False 自己决定要不要展示「本地不可用」。
-    """
-    global _WARMUP_DONE
-    if _WARMUP_DONE:
-        return True
-    with _WARMUP_LOCK:
-        if _WARMUP_DONE:
-            return True
-        try:
-            engine = _rapidocr_instance()
-            engine(_WARMUP_PNG)
-        except Exception as exc:
-            # 不标记 done：下次健康检查还能再试（可能只是模型没下载完）。
-            _logger.warning(
-                "local OCR warmup failed: %s: %s", type(exc).__name__, str(exc)[:300]
-            )
-            return False
-        try:
-            # 空白图检测不到行，rec 模型不会被加载；显式跑一次 rec-only，
-            # 让「第一张真图」也不用等 rec 会话初始化。
-            engine(_WARMUP_PNG, use_det=False, use_cls=False, use_rec=True)
-        except Exception as exc:  # pragma: no cover - 预热 rec 失败不影响主路径
-            _logger.debug(
-                "local OCR warmup skipped rec preload: %s: %s",
-                type(exc).__name__,
-                str(exc)[:200],
-            )
-        _WARMUP_DONE = True
-        return True
-
-
-async def warmup_local_engines() -> bool:
-    """预热本地 OCR（RapidOCR）；成功 ``True``，失败 ``False``（不抛异常）。
-
-    幂等且可并发：状态与锁都在 worker 线程侧，事件循环不会被 3 秒的模型加载
-    卡住；重复调用直接命中已完成的标记。
-    """
-    return await anyio.to_thread.run_sync(_warmup_sync)
-
-
-# ---------------------------------------------------------------------------
 # Groq（OpenAI 兼容 chat/completions，视觉模型）
 # ---------------------------------------------------------------------------
 
@@ -1401,8 +1181,8 @@ class ZhipuOcrEngine:
 # ---------------------------------------------------------------------------
 #
 # 哪些字段是「用户可写的上游地址」：阿里/百度的 ``endpoint``（Tea SDK 的 endpoint
-# 常常不带 scheme）、Groq/智谱的 ``base_url``。腾讯按 region 由 SDK 拼地址、
-# rapidocr 纯本地，都没有可写地址。
+# 常常不带 scheme）、Groq/智谱的 ``base_url``。腾讯按 region 由 SDK 拼地址，没有
+# 可写地址。
 _ENDPOINT_FIELDS = ("base_url", "endpoint")
 
 
@@ -1440,7 +1220,6 @@ ENGINES: dict[str, type] = {
     KIND_TENCENT: TencentOcrEngine,
     KIND_ALIYUN: AliyunOcrEngine,
     KIND_BAIDU: BaiduOcrEngine,
-    KIND_RAPIDOCR: RapidOcrEngine,
     KIND_GROQ: GroqOcrEngine,
     KIND_ZHIPU: ZhipuOcrEngine,
 }
@@ -1452,7 +1231,6 @@ __all__ = [
     "KIND_TENCENT",
     "KIND_ALIYUN",
     "KIND_BAIDU",
-    "KIND_RAPIDOCR",
     "KIND_GROQ",
     "KIND_ZHIPU",
     "TENCENT_DEFAULT_LANGUAGE",
@@ -1468,7 +1246,6 @@ __all__ = [
     "ZHIPU_DEFAULT_MODEL",
     "ZHIPU_DEFAULT_MAX_TOKENS",
     "ZHIPU_DEFAULT_TEMPERATURE",
-    "ORT_THREADS_ENV",
     "DEFAULT_TIMEOUT",
     "OcrEngineError",
     "OcrEngineRateLimited",
@@ -1476,8 +1253,6 @@ __all__ = [
     "TencentOcrEngine",
     "AliyunOcrEngine",
     "BaiduOcrEngine",
-    "RapidOcrEngine",
     "GroqOcrEngine",
     "ZhipuOcrEngine",
-    "warmup_local_engines",
 ]
