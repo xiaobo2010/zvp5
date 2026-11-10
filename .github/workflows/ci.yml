@@ -1,0 +1,475 @@
+name: CI and production deploy
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  release:
+    types:
+      - published
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  PYTHON_VERSION: "3.13"
+  NODE_VERSION_FILE: zvp5/zvp5-frontend/.node-version
+  PNPM_VERSION: "10.34.5"
+
+jobs:
+  backend:
+    name: Backend quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: zvp5/zvp5-backend-python
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: zvp5/zvp5-backend-python/requirements.txt
+      - name: Install backend dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt ruff==0.17.4
+      - name: Generate local test keys
+        run: python tools/setup_local.py
+      - name: Ruff dead-code and undefined-name checks
+        run: |
+          python -m ruff check --select F821 .
+          python -m ruff check --select F401 main.py app_setup.py routers services util db typings tasks tools
+      - name: Run backend tests
+        run: python -m pytest -q
+      - name: Compile backend
+        run: python -m compileall -q routers services util db typings tasks
+
+  frontend:
+    name: Frontend quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: zvp5/zvp5-frontend
+    env:
+      VITE_API_BASE: https://ci.invalid/api
+      VITE_API_RACE_BASE: https://race.ci.invalid/api
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: ${{ env.NODE_VERSION_FILE }}
+          cache: pnpm
+          cache-dependency-path: zvp5/zvp5-frontend/pnpm-lock.yaml
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Run unit tests
+        run: pnpm exec vitest run --reporter=dot
+      - name: Lint
+        run: pnpm run lint
+      - name: Type check
+        run: pnpm run type-check
+      - name: Production build
+        run: pnpm run build
+      - name: Upload frontend build
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: zvp5/zvp5-frontend/dist
+          if-no-files-found: error
+          retention-days: 3
+
+  frontend-e2e:
+    name: Frontend Cypress E2E
+    needs: frontend
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: zvp5/zvp5-frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: ${{ env.NODE_VERSION_FILE }}
+          cache: pnpm
+          cache-dependency-path: zvp5/zvp5-frontend/pnpm-lock.yaml
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Install Cypress binary
+        run: pnpm exec cypress install
+      - uses: actions/download-artifact@v4
+        with:
+          name: frontend-dist
+          path: zvp5/zvp5-frontend/dist
+      - name: Run Cypress
+        run: pnpm run test:e2e
+
+  workflow-security:
+    name: Workflow and secret checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install ShellCheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+      - name: ShellCheck deployment scripts
+        run: >-
+          shellcheck -x
+          zvp5/deployment/github-actions/zvms4-deploy
+          zvp5/deployment/github-actions/*.sh
+      - name: Test deployment backup and rollback paths
+        run: bash zvp5/deployment/github-actions/test-deploy-wrapper.sh
+      - name: Lint GitHub Actions workflows
+        run: docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:1.7.7
+      - name: Scan working tree for secrets
+        run: >-
+          docker run --rm -v "$PWD:/repo"
+          ghcr.io/gitleaks/gitleaks:v8.28.0
+          detect --source=/repo --no-git --config=/repo/.gitleaks.toml
+          --redact --verbose --exit-code=1
+      - name: Scan test fixtures for high-confidence credential formats
+        run: >-
+          docker run --rm -v "$PWD:/repo"
+          ghcr.io/gitleaks/gitleaks:v8.28.0
+          detect --source=/repo --no-git --config=/repo/.gitleaks-high-confidence.toml
+          --enable-rule=private-key --enable-rule=aws-access-token
+          --enable-rule=github-app-token --enable-rule=github-fine-grained-pat
+          --enable-rule=github-oauth --enable-rule=github-pat
+          --enable-rule=github-refresh-token --enable-rule=gitlab-pat
+          --enable-rule=gitlab-oauth-app-secret
+          --enable-rule=gitlab-runner-authentication-token
+          --enable-rule=npm-access-token --enable-rule=pypi-upload-token
+          --enable-rule=slack-app-token --enable-rule=slack-bot-token
+          --enable-rule=slack-webhook-url --enable-rule=stripe-access-token
+          --enable-rule=openai-api-key --enable-rule=anthropic-api-key
+          --enable-rule=gcp-api-key --enable-rule=azure-ad-client-secret
+          --enable-rule=cloudflare-api-key --enable-rule=cloudflare-global-api-key
+          --redact --verbose --exit-code=1
+
+  dependency-security:
+    name: Dependency vulnerability checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: ${{ env.NODE_VERSION_FILE }}
+          cache: pnpm
+          cache-dependency-path: zvp5/zvp5-frontend/pnpm-lock.yaml
+      - name: Audit frontend production dependencies
+        working-directory: zvp5/zvp5-frontend
+        run: pnpm audit --prod --audit-level high
+      - name: Scan repository dependencies for high and critical findings
+        run: >-
+          docker run --rm -v "$PWD:/src" -w /src
+          aquasec/trivy:0.76.2 fs
+          --scanners vuln --severity HIGH,CRITICAL
+          --exit-code 1 --no-progress .
+
+  deploy-production:
+    name: Deploy production
+    needs:
+      - backend
+      - frontend
+      - frontend-e2e
+      - workflow-security
+      - dependency-security
+    if: >-
+      github.event_name == 'release' &&
+      github.event.action == 'published' &&
+      github.event.release.prerelease == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: production
+    concurrency:
+      group: production-deploy
+      cancel-in-progress: false
+    env:
+      VITE_API_BASE: ${{ vars.PROD_API_BASE }}
+      VITE_API_RACE_BASE: ${{ vars.PROD_API_RACE_BASE }}
+      PROD_FRONTEND_HEALTH_URL: ${{ vars.PROD_FRONTEND_HEALTH_URL }}
+      DEPLOYMENT_ID: ${{ github.run_id }}-${{ github.run_attempt }}
+      # release tag 由人输入，禁止直接插值进 run: 脚本（命令注入）；只经 env 传给 shell。
+      RELEASE_TAG: ${{ github.event.release.tag_name }}
+      BACKEND_SSH_HOST: ${{ secrets.BACKEND_SSH_HOST }}
+      BACKEND_SSH_PORT: ${{ secrets.BACKEND_SSH_PORT }}
+      BACKEND_SSH_USER: ${{ secrets.BACKEND_SSH_USER }}
+      FRONTEND_SSH_HOST: ${{ secrets.FRONTEND_SSH_HOST }}
+      FRONTEND_SSH_PORT: ${{ secrets.FRONTEND_SSH_PORT }}
+      FRONTEND_SSH_USER: ${{ secrets.FRONTEND_SSH_USER }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify published release commit is on main
+        shell: bash
+        env:
+          RELEASE_PRERELEASE: ${{ github.event.release.prerelease }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_PRERELEASE" == "false" ]]
+          git fetch --no-tags origin main
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+
+      - name: Flag database migration changes without applying them
+        shell: bash
+        run: |
+          set -euo pipefail
+          previous_release="$(git describe --tags --abbrev=0 "$GITHUB_SHA^" 2>/dev/null || true)"
+          if [[ -n "$previous_release" ]]; then
+            compare_range="$previous_release..$GITHUB_SHA"
+          else
+            root_commit="$(git rev-list --max-parents=0 "$GITHUB_SHA" | tail -n 1)"
+            compare_range="$root_commit..$GITHUB_SHA"
+          fi
+          echo "Checking database DDL changes in $compare_range"
+          if git diff --name-only "$compare_range" -- 'zvp5/zvp5-backend-python/db/oracle/ddl/**' | grep -q .; then
+            {
+              echo '### WARNING: database DDL changed'
+              echo
+              echo 'This deployment only updates application code. Database migrations are never applied automatically.'
+              echo 'Review the migrations and apply them through the documented manual process.'
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo '::warning title=Database migration not applied::DDL files changed; apply them manually.'
+          fi
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: ${{ env.NODE_VERSION_FILE }}
+          cache: pnpm
+          cache-dependency-path: zvp5/zvp5-frontend/pnpm-lock.yaml
+      - name: Preflight configured production API origins
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${VITE_API_BASE:?VITE_API_BASE is required}"
+          : "${VITE_API_RACE_BASE:?VITE_API_RACE_BASE is required}"
+          : "${PROD_FRONTEND_HEALTH_URL:?PROD_FRONTEND_HEALTH_URL is required}"
+          node -e '
+            const api = process.env.VITE_API_BASE || ""
+            if (api !== "/api") {
+              let url
+              try { url = new URL(api) } catch { throw new Error("VITE_API_BASE must be /api or an absolute URL") }
+              if (
+                url.protocol !== "https:" || !url.hostname || url.username || url.password ||
+                url.search || url.hash || url.pathname.replace(/\/+$/, "") !== "/api"
+              ) throw new Error("VITE_API_BASE must be /api or an HTTPS URL ending in /api")
+            }
+            const race = new URL(process.env.VITE_API_RACE_BASE || "")
+            if (
+              race.protocol !== "https:" || !race.hostname || race.username || race.password ||
+              race.search || race.hash || race.pathname.replace(/\/+$/, "") !== "/api"
+            ) throw new Error("VITE_API_RACE_BASE must be an HTTPS URL ending in /api")
+          '
+          if [[ "$VITE_API_BASE" == "/api" ]]; then
+            api_health_url="$(node -e 'process.stdout.write(new URL("/api/health", process.env.PROD_FRONTEND_HEALTH_URL).href)')"
+          else
+            api_health_url="$(node -e 'process.stdout.write(new URL(process.argv[1]).origin + "/api/health")' "$VITE_API_BASE")"
+          fi
+          race_health_url="$(node -e 'process.stdout.write(new URL(process.argv[1]).origin + "/api/health")' "$VITE_API_RACE_BASE")"
+          curl -fsS --retry 3 --retry-delay 2 \
+            -A 'Mozilla/5.0 (compatible; ZVP5-Deploy/1.0)' "$api_health_url" >/dev/null
+          curl -fsS --retry 3 --retry-delay 2 \
+            -A 'Mozilla/5.0 (compatible; ZVP5-Deploy/1.0)' "$race_health_url" >/dev/null
+      - name: Install frontend dependencies
+        working-directory: zvp5/zvp5-frontend
+        run: pnpm install --frozen-lockfile
+      - name: Build frontend with configured production API origins
+        working-directory: zvp5/zvp5-frontend
+        run: |
+          set -euo pipefail
+          pnpm run build
+          grep -R -F "$VITE_API_RACE_BASE" dist/assets >/dev/null
+          grep -F 'src="/assets/' dist/index.html >/dev/null
+          race_origin="$(node -e 'process.stdout.write(new URL(process.argv[1]).origin)' "$VITE_API_RACE_BASE")"
+          grep -F "$race_origin" dist/index.html >/dev/null
+
+      - name: Package deployment artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/zvp5-deploy"
+          tar -C zvp5/zvp5-frontend/dist -czf "$RUNNER_TEMP/zvp5-deploy/frontend-$GITHUB_SHA.tar.gz" .
+          tar -C zvp5/zvp5-backend-python \
+            --exclude='.venv' --exclude='__pycache__' --exclude='*.pyc' \
+            --exclude='.pytest_cache' --exclude='settings.py*' \
+            --exclude='.env' --exclude='.env.*' \
+            --exclude='*.pem' --exclude='*.sso' --exclude='*.p12' \
+            --exclude='aes_key*' --exclude='ssh_key*' --exclude='ssh_known_hosts*' \
+            --exclude='known_hosts*' --exclude='id_rsa*' --exclude='id_ed25519*' \
+            --exclude='.ssh' --exclude='.oci' --exclude='adb-wallet' \
+            --exclude='wallet*' --exclude='cwallet*' --exclude='ewallet*' \
+            --exclude='tnsnames*' \
+            --exclude='*.db' --exclude='*.db-*' \
+            --exclude='sqlite*' --exclude='system_state.db*' \
+            --exclude='perf_samples.db*' --exclude='export' --exclude='data' \
+            --exclude='uploads' --exclude='instance' --exclude='logs' \
+            --exclude='local_settings.py*' --exclude='*.log' \
+            -czf "$RUNNER_TEMP/zvp5-deploy/backend-$GITHUB_SHA.tar.gz" .
+          for bundle in "$RUNNER_TEMP"/zvp5-deploy/*.tar.gz; do
+            sha256sum "$bundle" | awk '{print $1}' > "$bundle.sha256"
+          done
+
+      - name: Install deployment SSH credentials
+        shell: bash
+        env:
+          BACKEND_SSH_KEY: ${{ secrets.BACKEND_SSH_KEY }}
+          BACKEND_KNOWN_HOSTS: ${{ secrets.BACKEND_KNOWN_HOSTS }}
+          FRONTEND_SSH_KEY: ${{ secrets.FRONTEND_SSH_KEY }}
+          FRONTEND_KNOWN_HOSTS: ${{ secrets.FRONTEND_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          : "${BACKEND_SSH_KEY:?BACKEND_SSH_KEY is required}"
+          : "${BACKEND_KNOWN_HOSTS:?BACKEND_KNOWN_HOSTS is required}"
+          : "${FRONTEND_SSH_KEY:?FRONTEND_SSH_KEY is required}"
+          : "${FRONTEND_KNOWN_HOSTS:?FRONTEND_KNOWN_HOSTS is required}"
+          install -d -m 0700 "$HOME/.ssh"
+          printf '%s\n' "$BACKEND_SSH_KEY" > "$HOME/.ssh/zvp5-backend"
+          printf '%s\n' "$FRONTEND_SSH_KEY" > "$HOME/.ssh/zvp5-frontend"
+          printf '%s\n' "$BACKEND_KNOWN_HOSTS" > "$HOME/.ssh/zvp5-backend.known_hosts"
+          printf '%s\n' "$FRONTEND_KNOWN_HOSTS" > "$HOME/.ssh/zvp5-frontend.known_hosts"
+          chmod 0600 "$HOME/.ssh"/zvp5-*
+
+      - name: Upload deployment bundles
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${BACKEND_SSH_HOST:?BACKEND_SSH_HOST is required}"
+          : "${BACKEND_SSH_PORT:?BACKEND_SSH_PORT is required}"
+          : "${BACKEND_SSH_USER:?BACKEND_SSH_USER is required}"
+          : "${FRONTEND_SSH_HOST:?FRONTEND_SSH_HOST is required}"
+          : "${FRONTEND_SSH_PORT:?FRONTEND_SSH_PORT is required}"
+          : "${FRONTEND_SSH_USER:?FRONTEND_SSH_USER is required}"
+          upload() {
+            local prefix="$1" host="$2" port="$3" user="$4"
+            ssh -i "$HOME/.ssh/zvp5-$prefix" -p "$port" \
+              -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+              -o GlobalKnownHostsFile=/dev/null \
+              -o BatchMode=yes -o ConnectTimeout=15 \
+              -o UserKnownHostsFile="$HOME/.ssh/zvp5-$prefix.known_hosts" \
+              "$user@$host" "mkdir -p incoming && rm -f incoming/$prefix-$GITHUB_SHA.tar.gz incoming/$prefix-$GITHUB_SHA.tar.gz.sha256"
+            scp -q -i "$HOME/.ssh/zvp5-$prefix" -P "$port" \
+              -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+              -o GlobalKnownHostsFile=/dev/null \
+              -o BatchMode=yes -o ConnectTimeout=15 \
+              -o UserKnownHostsFile="$HOME/.ssh/zvp5-$prefix.known_hosts" \
+              "$RUNNER_TEMP/zvp5-deploy/$prefix-$GITHUB_SHA.tar.gz" \
+              "$RUNNER_TEMP/zvp5-deploy/$prefix-$GITHUB_SHA.tar.gz.sha256" \
+              "$user@$host:incoming/"
+          }
+          upload backend "$BACKEND_SSH_HOST" "$BACKEND_SSH_PORT" "$BACKEND_SSH_USER"
+          upload frontend "$FRONTEND_SSH_HOST" "$FRONTEND_SSH_PORT" "$FRONTEND_SSH_USER"
+
+      - name: Deploy backend then frontend with automatic rollback
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          : "${PROD_FRONTEND_HEALTH_URL:?PROD_FRONTEND_HEALTH_URL is required}"
+          backend_attempted=0
+          frontend_attempted=0
+
+          remote() {
+            local prefix="$1" host="$2" port="$3" user="$4" command="$5"
+            ssh -i "$HOME/.ssh/zvp5-$prefix" -p "$port" \
+              -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+              -o GlobalKnownHostsFile=/dev/null \
+              -o BatchMode=yes -o ConnectTimeout=15 \
+              -o UserKnownHostsFile="$HOME/.ssh/zvp5-$prefix.known_hosts" \
+              "$user@$host" "$command"
+          }
+
+          check_url() {
+            local url="$1"
+            for _ in $(seq 1 12); do
+              if curl -fsS -A 'Mozilla/5.0 (compatible; ZVP5-Deploy/1.0)' "$url" >/dev/null; then
+                return 0
+              fi
+              sleep 5
+            done
+            echo "Health check failed: $url" >&2
+            return 1
+          }
+
+          rollback() {
+            local status=$?
+            local rollback_failed=0
+            trap - EXIT
+            if [[ $status -ne 0 ]]; then
+              if [[ $frontend_attempted -eq 1 ]]; then
+                remote frontend "$FRONTEND_SSH_HOST" "$FRONTEND_SSH_PORT" "$FRONTEND_SSH_USER" \
+                  "sudo -n /usr/local/sbin/zvms4-deploy rollback frontend $GITHUB_SHA $DEPLOYMENT_ID" || rollback_failed=1
+              fi
+              if [[ $backend_attempted -eq 1 ]]; then
+                remote backend "$BACKEND_SSH_HOST" "$BACKEND_SSH_PORT" "$BACKEND_SSH_USER" \
+                  "sudo -n /usr/local/sbin/zvms4-deploy rollback backend $GITHUB_SHA $DEPLOYMENT_ID" || rollback_failed=1
+              fi
+              if [[ $frontend_attempted -eq 1 ]]; then
+                check_url "$PROD_FRONTEND_HEALTH_URL" || rollback_failed=1
+              fi
+              if [[ $backend_attempted -eq 1 ]]; then
+                check_url "${VITE_API_BASE%/}/health" || rollback_failed=1
+                check_url "${VITE_API_RACE_BASE%/}/health" || rollback_failed=1
+              fi
+              {
+                echo '### Production deployment failed'
+                echo
+                echo "- Release: \`$RELEASE_TAG\`"
+                echo "- Commit: \`$GITHUB_SHA\`"
+                echo "- Deployment ID: \`$DEPLOYMENT_ID\`"
+                echo '- Rollback was attempted in reverse deployment order.'
+                if [[ $rollback_failed -eq 0 ]]; then
+                  echo '- Rollback and post-rollback health checks passed.'
+                else
+                  echo '- **WARNING**: rollback or post-rollback health verification failed.'
+                fi
+              } >> "$GITHUB_STEP_SUMMARY"
+            fi
+            exit "$status"
+          }
+          trap rollback EXIT
+
+          backend_attempted=1
+          remote backend "$BACKEND_SSH_HOST" "$BACKEND_SSH_PORT" "$BACKEND_SSH_USER" \
+            "sudo -n /usr/local/sbin/zvms4-deploy deploy backend $GITHUB_SHA $DEPLOYMENT_ID"
+          check_url "${VITE_API_BASE%/}/health"
+          check_url "${VITE_API_RACE_BASE%/}/health"
+
+          frontend_attempted=1
+          remote frontend "$FRONTEND_SSH_HOST" "$FRONTEND_SSH_PORT" "$FRONTEND_SSH_USER" \
+            "sudo -n /usr/local/sbin/zvms4-deploy deploy frontend $GITHUB_SHA $DEPLOYMENT_ID"
+          check_url "$PROD_FRONTEND_HEALTH_URL"
+          check_url "${VITE_API_BASE%/}/health"
+          check_url "${VITE_API_RACE_BASE%/}/health"
+
+          {
+            echo '### Production deployment succeeded'
+            echo
+            echo "- Release: \`$RELEASE_TAG\`"
+            echo "- Commit: \`$GITHUB_SHA\`"
+            echo "- Deployment ID: \`$DEPLOYMENT_ID\`"
+            echo '- Backend and frontend health checks passed.'
+            echo '- No database migration was executed.'
+          } >> "$GITHUB_STEP_SUMMARY"

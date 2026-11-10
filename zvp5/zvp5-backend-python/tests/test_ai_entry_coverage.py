@@ -442,10 +442,6 @@ FEATURE_GATE_EXEMPT: dict[str, str] = {
         "OCR 引擎注册表是 admin 配置面（_require_admin），与 routers/ai_models_router.py"
         " 同一类：关掉 AI 功能后管理员仍要能配置/修复引擎，接开关会形成死锁"
     ),
-    "routers/ai/health.py": (
-        "健康检查是 admin 运维视图（_require_admin）：只读配置与冷却状态，"
-        "不产出内容、不下发 prompt；被开关挡住只会让运维看不见故障原因"
-    ),
     "routers/ai_router.py": (
         "纯路由聚合器：不定义端点，只为兼容旧导入 re-export services.ai.ocr / "
         "providers 等符号；门禁在 routers/ai/* 的端点模块里"
@@ -561,12 +557,13 @@ def test_every_ai_router_entry_calls_a_feature_gate() -> None:
 def test_ai_router_entries_are_actually_found() -> None:
     """扫描要有产出：零命中说明规则写坏了，等于永远绿。"""
     paths = {entry.path for entry in scan_ai_entries(BACKEND_ROOT)}
+    # health.py 已不再 import 任何 AI 接缝：本地 OCR 预热下线后，它只是一个纯
+    # admin 只读视图（凭据目录 / 频控 / 冷却状态），不把请求送到模型。
     assert {
         "routers/ai/ocr.py",
         "routers/ai/completion.py",
         "routers/ai/streaming.py",
         "routers/ai/ocr_engines.py",
-        "routers/ai/health.py",
         "routers/ai_agent_router.py",
         "routers/ai_schedule_router.py",
         "routers/ai_conversations_router.py",

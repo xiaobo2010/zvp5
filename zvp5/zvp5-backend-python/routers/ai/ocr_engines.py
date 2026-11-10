@@ -18,9 +18,8 @@ class OcrEngineCreateRequest(BaseModel):
     """新建 OCR 引擎。必填凭证字段按 ``kind`` 定，校验在服务层（错误码要稳定）。
 
     ``secret`` 是**明文凭证 dict**（腾讯 ``secret_id/secret_key/region``、阿里
-    ``access_key_id/access_key_secret[/endpoint]``、本地引擎必须留空）；它只在这
-    一次请求里以明文存在，落库前会被 :mod:`services.ai.crypto` 加密，响应里连密文
-    都不回。
+    ``access_key_id/access_key_secret[/endpoint]``）；它只在这一次请求里以明文
+    存在，落库前会被 :mod:`services.ai.crypto` 加密，响应里连密文都不回。
     """
 
     name: str

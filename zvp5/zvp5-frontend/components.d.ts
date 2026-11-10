@@ -63,6 +63,7 @@ declare module 'vue' {
     ZAiSessionList: typeof import('./src/components/ai/ZAiSessionList.vue')['default']
     ZAttachmentAudit: typeof import('./src/components/manage/ZAttachmentAudit.vue')['default']
     ZAttachmentUpload: typeof import('./src/components/attachment/ZAttachmentUpload.vue')['default']
+    ZAuthAlert: typeof import('./src/components/system/ZAuthAlert.vue')['default']
     ZBanRules: typeof import('./src/components/manage/ZBanRules.vue')['default']
     ZBanScreen: typeof import('./src/components/system/ZBanScreen.vue')['default']
     ZButtonOrCard: typeof import('./src/components/utils/ZButtonOrCard.vue')['default']

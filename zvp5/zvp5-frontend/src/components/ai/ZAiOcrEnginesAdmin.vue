@@ -42,7 +42,6 @@ const SECRET_FIELDS: Record<AiOcrEngineKind, string[]> = {
   tencent: ['secret_id', 'secret_key', 'region'],
   aliyun: ['access_key_id', 'access_key_secret'],
   baidu: ['api_key', 'secret_key'],
-  rapidocr: [],
   groq: ['api_key'],
   zhipu: ['api_key']
 }
@@ -56,7 +55,7 @@ const SECRET_LABELS: Record<string, string> = {
   api_key: 'ai.engines.apiKey'
 }
 
-const KIND_OPTIONS: AiOcrEngineKind[] = ['tencent', 'aliyun', 'baidu', 'rapidocr', 'groq', 'zhipu']
+const KIND_OPTIONS: AiOcrEngineKind[] = ['tencent', 'aliyun', 'baidu', 'groq', 'zhipu']
 
 const rows = ref<AiOcrEngineRecord[]>([])
 const loading = ref(false)
@@ -72,7 +71,7 @@ const formRef = ref<FormInstance>()
 
 const form = reactive({
   name: '',
-  kind: 'rapidocr' as AiOcrEngineKind,
+  kind: 'tencent' as AiOcrEngineKind,
   priority: 100,
   enabled: true,
   config: '',
@@ -88,6 +87,9 @@ const dialogTitle = computed(() =>
 const secretFields = computed(() => SECRET_FIELDS[form.kind] ?? [])
 
 function kindLabel(kind: string): string {
+  if (!KIND_OPTIONS.some((option) => option === kind)) {
+    return kind
+  }
   const key = `ai.engines.kind${kind.charAt(0).toUpperCase()}${kind.slice(1)}`
   const label = t(key)
   return label === key ? kind : label
@@ -138,7 +140,7 @@ async function load() {
 
 function resetForm() {
   form.name = ''
-  form.kind = 'rapidocr'
+  form.kind = 'tencent'
   form.priority = 100
   form.enabled = true
   form.config = ''
@@ -454,25 +456,26 @@ onMounted(() => {
           </ElFormItem>
         </div>
 
-        <ElFormItem :label="t('ai.engines.secret')" prop="secret">
+        <ElFormItem
+          v-if="secretFields.length > 0"
+          :label="t('ai.engines.secret')"
+          prop="secret"
+        >
           <div class="w-full flex flex-col gap-2">
-            <template v-if="secretFields.length > 0">
-              <div
-                v-for="field in secretFields"
-                :key="field"
-                class="flex flex-wrap items-center gap-2"
-              >
-                <span class="yg-text-xs yg-text-tertiary w-40">{{ t(SECRET_LABELS[field] ?? field) }}</span>
-                <ElInput
-                  v-model="form.secret[field]"
-                  class="w-64"
-                  type="password"
-                  show-password
-                />
-              </div>
-              <p class="yg-text-xs yg-text-tertiary">{{ t('ai.engines.secretHint') }}</p>
-            </template>
-            <p v-else class="yg-text-xs yg-text-tertiary">{{ t('ai.engines.noSecret') }}</p>
+            <div
+              v-for="field in secretFields"
+              :key="field"
+              class="flex flex-wrap items-center gap-2"
+            >
+              <span class="yg-text-xs yg-text-tertiary w-40">{{ t(SECRET_LABELS[field] ?? field) }}</span>
+              <ElInput
+                v-model="form.secret[field]"
+                class="w-64"
+                type="password"
+                show-password
+              />
+            </div>
+            <p class="yg-text-xs yg-text-tertiary">{{ t('ai.engines.secretHint') }}</p>
             <p v-if="fieldError.secret" class="yg-text-xs yg-text-danger">
               {{ fieldError.secret }}
             </p>

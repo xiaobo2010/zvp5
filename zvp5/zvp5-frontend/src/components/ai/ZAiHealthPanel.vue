@@ -62,7 +62,7 @@ onMounted(() => {
         </div>
 
         <template v-else-if="data">
-          <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             <div class="yg-tile p-3 flex flex-col gap-1">
               <span class="yg-statistic__title">{{ t('ai.health.enabled') }}</span>
               <ElTag :type="data.enabled ? 'primary' : 'info'" size="small" class="w-fit">
@@ -72,16 +72,6 @@ onMounted(() => {
             <div class="yg-tile p-3 flex flex-col gap-1">
               <span class="yg-statistic__title">{{ t('ai.health.concurrency') }}</span>
               <span class="yg-statistic__value">{{ data.max_concurrency }}</span>
-            </div>
-            <div class="yg-tile p-3 flex flex-col gap-1">
-              <span class="yg-statistic__title">{{ t('ai.health.localEngine') }}</span>
-              <span class="yg-text-sm">
-                {{
-                  data.local_engine_ready
-                    ? t('ai.health.localEngineReady')
-                    : t('ai.health.localEngineCold')
-                }}
-              </span>
             </div>
             <div class="yg-tile p-3 flex flex-col gap-1">
               <span class="yg-statistic__title">{{ t('ai.health.quotaDefaults') }}</span>

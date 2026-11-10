@@ -1,7 +1,8 @@
 """Pluggable OCR interface + state machine helpers (design §7).
 
 引擎的**实现**不在这里：真实适配器都在 :mod:`services.ai.ocr_engines`（腾讯 /
-阿里 / RapidOCR），本模块只负责「跑选中的引擎 → 失败回退 → 落库 → 推进状态机」。
+阿里 / 百度 / Groq / 智谱），本模块只负责「跑选中的引擎 → 失败回退 → 落库 →
+推进状态机」。
 
 引擎由入队方先选一个（``services.ai.ocr.enqueue`` 已扣用户额度与那一份站点
 额度），本模块只**跟随**：第一次尝试必须是入队时的那一行——即使它在入队后被改名
@@ -303,9 +304,9 @@ async def _audit_attempt(
     """写一条「这一次尝试」的流水；没有 ``user_oid`` 就没法归属，只能跳过。
 
     ``purpose`` 恒为 ``'ocr'``：OCR 只有一个场景，不像 chat 那样由前端区分。
-    ``engine_kind`` 是**注册表里的 kind**（tencent/aliyun/rapidocr/baidu/
-    groq/zhipu），``provider``/``model`` 仍是引擎名——后者是运维认引擎的标签，
-    前者才能按「引擎类型」聚合失败率。
+    ``engine_kind`` 是**注册表里的 kind**（tencent/aliyun/baidu/groq/zhipu），
+    ``provider``/``model`` 仍是引擎名——后者是运维认引擎的标签，前者才能按
+    「引擎类型」聚合失败率。
     """
     if not user_oid:
         return
@@ -359,7 +360,7 @@ async def _select_row(engine_kind: str, engine_name: str | None) -> dict:
 
 
 def _secret(row: dict) -> dict:
-    """``secret_cipher`` → 凭证 dict；``None`` = 本地引擎，不需要凭证。"""
+    """``secret_cipher`` → 凭证 dict；``None`` 按空 dict 处理（无凭证的历史行）。"""
     cipher = row.get("secret_cipher")
     if not cipher:
         return {}

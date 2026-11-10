@@ -74,8 +74,14 @@ export const useUserStore = defineStore('user', {
         this.position = await getUserPositions(legacy)
       }
     },
-    async setUser(user: string, password: string) {
-      const result = await api.user.auth.useLongTermAuth(user, password, 'long', 'login')
+    async setUser(user: string, password: string, options?: { suppressErrorToast?: boolean }) {
+      const result = await api.user.auth.useLongTermAuth(
+        user,
+        password,
+        'long',
+        'login',
+        options
+      )
       if (result) {
         const information: User | UserProfile =
           result.profile ?? ((await api.user.readOne(result._id)) as User)
