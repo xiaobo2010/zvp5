@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { ref, watch, h, reactive } from 'vue'
-import { ElButton, ElMessageBox, ElMessage } from 'element-plus'
+import { ref, watch, h, reactive, nextTick } from 'vue'
+import { ElButton, ElInput, ElMessageBox, ElMessage } from 'element-plus'
 import { ArrowRight } from '@element-plus/icons-vue'
 import { useUserStore } from '@/stores/user'
 import { useHeaderStore } from '@/stores/header'
@@ -12,6 +12,7 @@ import { getMaintenanceStatus } from '@/api/system/maintenance.ts'
 import { resetMaintenanceGuardCache } from '@/router/maintenanceGuard'
 import { formatBanUntil, readBanInfo } from '@/utils/ban'
 import ZBanScreen from '@/components/system/ZBanScreen.vue'
+import ZAuthAlert from '@/components/system/ZAuthAlert.vue'
 import dayjs from 'dayjs'
 import type { User, UserProfile } from '@/../types'
 
@@ -21,6 +22,7 @@ const { t } = useI18n()
 
 const user = ref('')
 const password = ref<string>('')
+const passwordInput = ref<InstanceType<typeof ElInput> | null>(null)
 const loginfield = ref()
 const userStore = useUserStore()
 const router = useRouter()
@@ -126,6 +128,76 @@ function closeBanScreen() {
   banScreen.visible = false
 }
 
+// 登录失败对话框：密码错误走红色（danger），设备闸拦截走琥珀色（warning）。
+// 与封禁屏分开——封禁是终态不可重试，这几种都还能改输入再来一次。
+type AuthAlertState = {
+  visible: boolean
+  variant: 'danger' | 'warning'
+  title: string
+  message: string
+  hint: string
+  ackText: string
+  actionText: string
+}
+
+const authAlert = reactive<AuthAlertState>({
+  visible: false,
+  variant: 'danger',
+  title: '',
+  message: '',
+  hint: '',
+  ackText: '',
+  actionText: ''
+})
+
+type AuthAlertPayload = Pick<AuthAlertState, 'title' | 'message'> &
+  Partial<Pick<AuthAlertState, 'variant' | 'hint' | 'ackText' | 'actionText'>>
+
+// 按钮回调放在响应式状态之外：它们不需要参与 diff，而且弹层关闭后还要再消费一次。
+let alertAckHandler: (() => void) | null = null
+let alertActionHandler: (() => void) | null = null
+
+function showAuthAlert(
+  payload: AuthAlertPayload,
+  handlers: { ack?: () => void; action?: () => void } = {}
+) {
+  Object.assign(
+    authAlert,
+    { variant: 'danger', hint: '', ackText: '', actionText: '' },
+    payload,
+    { visible: true }
+  )
+  alertAckHandler = handlers.ack ?? null
+  alertActionHandler = handlers.action ?? null
+}
+
+function closeAuthAlert() {
+  authAlert.visible = false
+}
+
+function onAuthAlertAck() {
+  const handler = alertAckHandler
+  alertAckHandler = null
+  alertActionHandler = null
+  closeAuthAlert()
+  handler?.()
+}
+
+function onAuthAlertAction() {
+  const handler = alertActionHandler
+  alertAckHandler = null
+  alertActionHandler = null
+  closeAuthAlert()
+  handler?.()
+}
+
+// 弹层关掉后焦点必须落回密码框，否则键盘/读屏用户会停在 body 上。
+function focusPassword() {
+  void nextTick(() => {
+    passwordInput.value?.focus()
+  })
+}
+
 function notifyUserBanned(error: unknown) {
   const { reason, until } = readBanInfo(
     (error as { response?: { headers?: unknown } })?.response?.headers
@@ -217,12 +289,76 @@ function notifyDeviceBanned(error: unknown) {
 }
 
 function notifyDeviceRequired(detail: DeviceLoginDetail) {
-  ElMessage({
-    message: detail.message || t('nav.login.device.required'),
-    type: 'warning',
-    grouping: true,
-    plain: true
-  })
+  // 后端 message 更贴近当前策略（平板绑定/临时密码），i18n 只做兜底。
+  showAuthAlert(
+    {
+      variant: 'warning',
+      title: t('nav.login.device.requiredTitle'),
+      message: detail.message || t('nav.login.device.required'),
+      ackText: t('nav.login.device.requiredAck')
+    },
+    { ack: focusPassword }
+  )
+}
+
+// 本机不是主设备：挑战令牌 5 分钟过期且只能用一次，切到临时密码表单后没有退路，
+// 所以先让用户确认「要用临时密码」，不再像以前那样静默换表单。
+function notifyDeviceNotPrimary(detail: DeviceLoginDetail) {
+  showAuthAlert(
+    {
+      variant: 'warning',
+      title: t('nav.login.device.notPrimaryTitle'),
+      message: detail.message || t('nav.login.device.tempHint'),
+      ackText: t('nav.login.device.notPrimaryAck'),
+      actionText: t('nav.login.device.notPrimaryAction')
+    },
+    {
+      ack: () => {
+        backToNormal()
+        focusPassword()
+      },
+      action: () => enterTempMode(detail)
+    }
+  )
+}
+
+// 没拿到 challenge 就没法换临时密码，只能告知并回到登录表单。
+function notifyDeviceNotPrimaryNoChallenge() {
+  showAuthAlert(
+    {
+      variant: 'warning',
+      title: t('nav.login.device.notPrimaryTitle'),
+      message: t('nav.login.device.challengeMissing'),
+      ackText: t('nav.login.device.notPrimaryAck')
+    },
+    { ack: focusPassword }
+  )
+}
+
+// 后端把「密码错误」与「用户不存在」归一成同一条 403 字符串 detail，
+// 页面侧统一按「账号或密码不正确」提示，不区分具体哪一种。
+function isPasswordRejected(error: unknown): boolean {
+  const response = (error as { response?: { status?: number; data?: { detail?: unknown } } })
+    ?.response
+  return response?.status === 403 && typeof response.data?.detail === 'string'
+}
+
+function notifyPasswordError() {
+  showAuthAlert(
+    {
+      variant: 'danger',
+      title: t('nav.login.passwordErrorTitle'),
+      message: t('nav.login.passwordErrorMessage'),
+      ackText: t('nav.login.passwordErrorAck')
+    },
+    {
+      ack: () => {
+        // 留下的密码一定是错的，清空后直接把焦点还给密码框。
+        password.value = ''
+        focusPassword()
+      }
+    }
+  )
 }
 
 // 登录失败的统一出口:设备闸三类错误优先,其余保持原有维护/封禁分支。
@@ -230,14 +366,9 @@ function handleLoginFailure(error: unknown) {
   const detail = deviceDetailOf(error)
   if (detail?.code === 'DEVICE_NOT_PRIMARY') {
     if (detail.challenge) {
-      enterTempMode(detail)
+      notifyDeviceNotPrimary(detail)
     } else {
-      ElMessage({
-        message: t('nav.login.device.challengeMissing'),
-        type: 'error',
-        grouping: true,
-        plain: true
-      })
+      notifyDeviceNotPrimaryNoChallenge()
     }
     return
   }
@@ -253,6 +384,10 @@ function handleLoginFailure(error: unknown) {
     notifyMaintenanceBlocked()
   } else if (isUserBanned(error)) {
     notifyUserBanned(error)
+  } else if (isPasswordRejected(error)) {
+    // 顺序不能反：USER_BANNED 也是 403 字符串 detail，先由封禁分支收口，
+    // 剩下的 403 字符串才归到密码错误。
+    notifyPasswordError()
   }
 }
 
@@ -321,7 +456,7 @@ async function login() {
 
     const id = user.value
     const { token, _id } = (await api.user.auth
-      .useLongTermAuth(id, password.value, 'short', 'login')
+      .useLongTermAuth(id, password.value, 'short', 'login', { suppressErrorToast: true })
       .catch((error: unknown) => {
         loading.value = false
         handleLoginFailure(error)
@@ -355,7 +490,7 @@ async function login() {
   loading.value = true
   const id = user.value
   await userStore
-    .setUser(id, password.value as string)
+    .setUser(id, password.value as string, { suppressErrorToast: true })
     .then(async () => router.replace(await postLoginTarget()))
     .catch((error: unknown) => {
       loading.value = false
@@ -446,6 +581,7 @@ watch(user, async () => {
           </ElFormItem>
           <ElFormItem :label="t('nav.login.form.password')" prop="password">
             <ElInput
+              ref="passwordInput"
               type="password"
               v-model="password"
               clearable
@@ -504,6 +640,18 @@ watch(user, async () => {
         </div>
       </section>
     </main>
+
+    <ZAuthAlert
+      v-if="authAlert.visible"
+      :variant="authAlert.variant"
+      :title="authAlert.title"
+      :message="authAlert.message"
+      :hint="authAlert.hint"
+      :ack-text="authAlert.ackText"
+      :action-text="authAlert.actionText"
+      @ack="onAuthAlertAck"
+      @action="onAuthAlertAction"
+    />
 
     <ZBanScreen
       v-if="banScreen.visible"

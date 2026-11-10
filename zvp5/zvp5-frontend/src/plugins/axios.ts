@@ -24,6 +24,19 @@ import { joinFlight } from '@/plugins/singleFlight'
 const apiBase = import.meta.env.VITE_API_BASE ?? '/api'
 const apiRaceBase = (import.meta.env.VITE_API_RACE_BASE ?? '').trim().replace(/\/+$/, '')
 
+/**
+ * 调用方可以按请求关掉「通用兜底 toast」。
+ *
+ * 登录页用 ZAuthAlert（错误按设备闸/密码错误分色）自己呈现失败原因，拦截器再弹
+ * 一条通用提示就成了双提示。标记挂在 config 上随请求走，只影响这一条 toast，
+ * 401 清 token、503 维护跳转、USER_BANNED、DEVICE_* 静默分支都不受影响。
+ */
+declare module 'axios' {
+  export interface AxiosRequestConfig {
+    suppressErrorToast?: boolean
+  }
+}
+
 export const baseURL = apiBase.replace(/\/+$/, '')
 
 /**
@@ -505,6 +518,9 @@ axiosInstance.interceptors.response.use(
     }
     // 终态失败：结束航班，跟随者立即收到同样的错误，不留悬挂的在途请求。
     errorConfig?.__flightHandle?.fail(error)
+    // 登录页自己弹 ZAuthAlert 时带了抑制标记：通用兜底 toast 会让同一次失败
+    // 出现两层提示。只跳过这条 toast，其余分支保持原样。
+    const suppressErrorToast = errorConfig?.suppressErrorToast === true
     let errorDisplayed = false
     if (axios.isAxiosError(error)) {
       if (error.response?.status === 401) {
@@ -541,7 +557,7 @@ axiosInstance.interceptors.response.use(
         // 设备闸/临时密码登入失败：登录页按 detail.code 自行展示（临时密码引导、
         // 设备封禁说明、重试提示），这里静默 reject，不再叠一条通用 toast。
       } else {
-        if (!errorDisplayed) {
+        if (!errorDisplayed && !suppressErrorToast) {
           errorDisplayed = true
           let detail: unknown = error.response?.data?.detail
           const rawData = error.response?.data
