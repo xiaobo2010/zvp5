@@ -1,7 +1,7 @@
 """站点级 OCR 额度的默认口径。
 
 背景（2026-10-24 上线实测）：站点额度曾经回落到用户级的 OCR 默认额度（当时
-``DEFAULT_QUOTA["ocr"]`` = 100），于是 tencent/rapidocr 的月额度一建就是 100 ——
+``DEFAULT_QUOTA["ocr"]`` = 100），于是 tencent 的月额度一建就是 100 ——
 几十个用户一天就能打满，之后全站 OCR 一起 503。站点额度是「平台愿意为全站垫多少
 上游调用」，与「单个用户能用多少」不是一个口径，必须分开。
 
@@ -35,12 +35,12 @@ def test_site_quota_can_be_overridden_per_kind(monkeypatch) -> None:
     monkeypatch.setattr(
         settings,
         "AI_SITE_QUOTA",
-        {"ocr_groq": 1500, "ocr_rapidocr": 1_000_000},
+        {"ocr_groq": 1500, "ocr_zhipu": 1_000_000},
         raising=False,
     )
 
     assert quota.default_limit_for(None, "ocr_groq") == 1500
-    assert quota.default_limit_for(None, "ocr_rapidocr") == 1_000_000
+    assert quota.default_limit_for(None, "ocr_zhipu") == 1_000_000
     # 没被覆盖的站点 kind 仍走兜底值。
     assert quota.default_limit_for(None, "ocr_tencent") == 1000
 

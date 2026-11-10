@@ -86,6 +86,9 @@ export const zhCN = {
       account: '学号',
       password: '密码'
     },
+    passwordErrorTitle: '登录失败',
+    passwordErrorMessage: '账号或密码不正确，请重新输入。',
+    passwordErrorAck: '重新输入',
     device: {
       tempTitle: '临时密码登录',
       tempHint: '本机不是该账号的主学海设备。请输入团支书或管理员签发的 8 位临时密码。',
@@ -101,6 +104,11 @@ export const zhCN = {
         '临时会话已建立，1 小时内有效。如需将本机设为主设备，请联系管理员清除旧的主设备绑定。',
       required:
         '普通用户需使用学海平板登录本应用。如确需在其它设备登入，请让团支书或管理员签发临时密码。',
+      requiredTitle: '这台设备无法登录',
+      requiredAck: '我知道了',
+      notPrimaryTitle: '这不是你的主设备',
+      notPrimaryAck: '返回',
+      notPrimaryAction: '使用临时密码登录',
       challengeMissing: '本机不是主设备，且未取到验证挑战。请返回重新登录。',
       bannedTitle: '这台设备已被限制登录',
       bannedFallback: '违规使用平板',

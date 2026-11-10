@@ -82,11 +82,23 @@ export async function resetToInitial(user: string, token: string) {
   return result.data.initial_password
 }
 
+/**
+ * 登录请求可选项。
+ *
+ * `suppressErrorToast` 只压制 axios 拦截器的通用兜底 toast：登录页要用
+ * ZAuthAlert 自己呈现失败原因，否则同一次失败会先弹动画对话框、又冒出一条
+ * 右上角提示。改密流程的二次校验（short-token.ts）不传它，保持原有提示。
+ */
+export interface LoginOptions {
+  suppressErrorToast?: boolean
+}
+
 async function UserLogin(
   user: string,
   password: string,
   term: 'long' | 'short' = 'long',
-  purpose: 'login' | 'verify' = 'login'
+  purpose: 'login' | 'verify' = 'login',
+  options: LoginOptions = {}
 ) {
   const payload = JSON.stringify({
     password: password,
@@ -102,7 +114,8 @@ async function UserLogin(
       credential: hex,
       mode: term,
       purpose: purpose
-    }
+    },
+    suppressErrorToast: options.suppressErrorToast === true
   })).data
   if (term === 'long' && purpose === 'login') {
     localStorage.setItem('token', result.token)

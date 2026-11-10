@@ -1112,7 +1112,7 @@ ai_call_logs = Table(
     Column("purpose", VARCHAR2(24), nullable=True),
     # 流式首块到达耗时（毫秒）；非流式为 NULL（没有「首块」这个概念）。
     Column("first_token_ms", NUMBER(10), nullable=True),
-    # OCR 引擎类型（tencent/aliyun/rapidocr/baidu/groq/zhipu）；OCR 行才填。
+    # OCR 引擎类型（tencent/aliyun/baidu/groq/zhipu）；OCR 行才填。
     Column("engine_kind", VARCHAR2(24), nullable=True),
     # OCR 针对的附件 oid。无外键：附件删了，这次识别发生过的事实仍然成立。
     Column("attachment_oid", VARCHAR2(24), nullable=True),
@@ -1308,12 +1308,13 @@ Index(
 # ---------------------------------------------------------------------------
 # AI_OCR_ENGINES  ← new (OCR 引擎注册表; V026, KIND 由 V027 扩展)
 #   一行 = 一个可路由的 OCR 引擎配置，KIND 是引擎类型（tencent / aliyun /
-#   rapidocr / baidu / groq）而不是 provider 名：同类型可以有多行（不同
+#   baidu / groq / zhipu）而不是 provider 名：同类型可以有多行（不同
 #   region / 配额来源）。
 #   PRIORITY 数字越小越优先（100 为默认档），路由按 (enabled, priority) 取
 #   第一行可用引擎，所以 ix_ai_ocr_engines_enabled_priority 就是查询形状。
-#   SECRET_CIPHER 可空：本地引擎（rapidocr）没有凭证，「NULL = 不需要」而不是
-#   「配置缺失」。密文口径同 API_KEY_CIPHER：只存 AES-GCM 的 base64。
+#   SECRET_CIPHER 可空：历史行可能没有凭证（如已下线的本地引擎），
+#   「NULL = 空凭证」而不是「配置缺失」。密文口径同 API_KEY_CIPHER：只存
+#   AES-GCM 的 base64。
 #   NAME 唯一：运维按名字指定/禁用某个引擎。
 # ---------------------------------------------------------------------------
 

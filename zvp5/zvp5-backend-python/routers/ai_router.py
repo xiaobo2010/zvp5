@@ -110,7 +110,7 @@ from routers.ai.completion import (  # noqa: F401  (re-export)
     _blocking_completion,
     _stream_answer_text,
 )
-from routers.ai.health import _warmup_local_engines, ai_health  # noqa: F401
+from routers.ai.health import ai_health  # noqa: F401
 from routers.ai.keys import (  # noqa: F401  (re-export 请求模型与端点)
     KeyCreateRequest,
     KeyDeleteRequest,

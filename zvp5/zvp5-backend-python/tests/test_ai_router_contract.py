@@ -390,7 +390,6 @@ def test_health_does_not_echo_the_dead_routes_config(catalog):
     # 其余运维字段还在（删的是死配置，不是整个视图）。
     assert set(body) >= {
         "enabled",
-        "local_engine_ready",
         "max_concurrency",
         "providers",
         "cooldown_seconds",

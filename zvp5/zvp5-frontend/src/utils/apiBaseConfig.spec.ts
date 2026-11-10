@@ -16,8 +16,12 @@ it('rejects a missing API base', () => {
   expect(() => validateProductionApiBase('')).toThrow('VITE_API_BASE is required')
 })
 
-it('rejects a relative API base', () => {
-  expect(() => validateProductionApiBase('/api')).toThrow('must be an absolute URL')
+it('accepts the canonical same-origin /api base', () => {
+  expect(validateProductionApiBase('/api')).toBe('/api')
+})
+
+it('rejects other relative API bases', () => {
+  expect(() => validateProductionApiBase('/v1')).toThrow('must be an absolute URL')
 })
 
 it('rejects a non-HTTPS API base', () => {
@@ -80,7 +84,7 @@ it('falls back to a relative /api without a page origin (SSR / unit tests)', () 
 })
 
 it('prefers the configured content base and strips trailing slashes', () => {
-  expect(resolveContentApiBase('https://zvp.example.test/api/', 'https://canary.example.test')).toBe(
-    'https://zvp.example.test/api'
-  )
+  expect(
+    resolveContentApiBase('https://zvp.example.test/api/', 'https://canary.example.test')
+  ).toBe('https://zvp.example.test/api')
 })

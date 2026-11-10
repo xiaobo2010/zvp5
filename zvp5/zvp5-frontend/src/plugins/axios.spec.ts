@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { AxiosError, type AxiosAdapter, type AxiosResponse } from 'axios'
 import { Blob as NodeBlob } from 'node:buffer'
-import client, { baseURLForRequest } from './axios'
+import client, { baseURLForRequest, resetUserInteractionCacheBypass } from './axios'
 import { cacheGet, cacheSet } from '@/utils/idbCache'
 import { clearMemoryCache } from '@/utils/requestCache'
 import { clearFlights, pendingFlightCount } from './singleFlight'
@@ -30,6 +30,7 @@ beforeEach(() => {
   xuehaiIdMock.value = 0
   // 进程内缓存是模块级状态，不清理会让相邻用例互相命中。
   clearMemoryCache()
+  resetUserInteractionCacheBypass()
   // 在途合并的航班表同样是模块级状态。
   clearFlights()
 })
@@ -90,6 +91,29 @@ it('serves a repeated authenticated GET from cache without a second request', as
   expect(first.data).toEqual({ calls: 1 })
   expect(second.data).toEqual({ calls: 1 })
   expect(cacheSet).toHaveBeenCalledTimes(1)
+})
+
+it('bypasses the process cache when a button interaction requests fresh data', async () => {
+  localStorage.setItem('token', 'alice-session-token')
+  const button = document.createElement('button')
+  document.body.appendChild(button)
+  let calls = 0
+  client.defaults.adapter = async (config) => {
+    calls += 1
+    return { data: { calls }, status: 200, statusText: 'OK', headers: {}, config }
+  }
+
+  const initial = await client.get('/v1/users/alice')
+  button.click()
+  const refreshed = await client.get('/v1/users/alice')
+  resetUserInteractionCacheBypass()
+  const afterRefresh = await client.get('/v1/users/alice')
+
+  expect(initial.data).toEqual({ calls: 1 })
+  expect(refreshed.data).toEqual({ calls: 2 })
+  expect(afterRefresh.data).toEqual({ calls: 2 })
+  expect(calls).toBe(2)
+  button.remove()
 })
 
 it('keeps cache entries isolated per account', async () => {
@@ -295,6 +319,17 @@ it('still toasts a string-detail 403 (unchanged behavior)', async () => {
   client.defaults.adapter = failingAdapter(403, { detail: 'WRONG_PASSWORD' })
   await client.post('/users/auth', {}).catch((e) => e)
   expect(shownMessages()).toEqual(['WRONG_PASSWORD'])
+})
+
+// 登录页自己弹 ZAuthAlert 呈现失败原因时带这个标记：拦截器不能再叠一条通用 toast。
+it('suppresses the generic toast when the caller marked the request', async () => {
+  client.defaults.adapter = failingAdapter(403, { detail: '用户名或密码错误' })
+  const error = await client
+    .post('/users/auth', {}, { suppressErrorToast: true })
+    .catch((e) => e)
+  expect(error).toBeInstanceOf(AxiosError)
+  expect(error.response?.status).toBe(403)
+  expect(elMessageMock).not.toHaveBeenCalled()
 })
 
 // --- 封禁 403:除遮罩/store 之外,必须中止在途 AI 请求 -------------------------

@@ -7,9 +7,11 @@ import {
   Management,
   Monitor,
   ChatLineRound,
-  EditPen
+  EditPen,
+  SwitchButton,
+  Lock
 } from '@element-plus/icons-vue'
-import { ElTooltip, ElIcon } from 'element-plus'
+import { ElTooltip, ElIcon, ElPopover, ElMessageBox } from 'element-plus'
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useUserStore } from '@/stores/user'
 import MdiEye from '@/icons/MdiEye.vue'
@@ -19,12 +21,14 @@ import { useDark, useWindowSize } from '@vueuse/core'
 import { useI18n } from 'vue-i18n'
 import { pad, getTabletType } from '@/plugins/ua'
 import { prefetchRoute, prefetchRoutesWhenIdle } from '@/utils/routePrefetch'
+// 直接引模块而非 @/views barrel：barrel 会把整包用户视图拖进导航 chunk。
+import { modifyPasswordDialogs } from '@/views/user/modifyPasswordDialogs'
 
 const user = useUserStore()
 const router = useRouter()
 const route = useRoute()
 const dark = useDark()
-const { t } = useI18n({
+const { t, locale } = useI18n({
   useScope: 'global'
 })
 
@@ -448,6 +452,64 @@ function handleNavClick(path: string) {
   }, 520)
   routeTo(path)
 }
+
+/* ---- 账号菜单：旧顶栏被移除后，账号入口迁到导航末尾 ---- */
+/* 竖屏是底部药丸，菜单向上弹；横屏是左侧玻璃栏，菜单向右弹。 */
+const accountMenuOpen = ref(false)
+/* 固定引用：内联字面量会让每次 patch 都触发 popper 重新定位。 */
+const accountPopperOptions = {
+  modifiers: [{ name: 'offset', options: { offset: [0, 8] } }]
+}
+const accountPlacement = computed(() => (verticalMode.value ? 'top-end' : 'right-end'))
+
+/* 头像里只放名字首字：横屏导航栏宽 4rem，竖屏药丸也要留给功能项，
+   完整用户名放不进 44px 的触控目标里。 */
+const avatarLabel = computed(() => user.name?.trim().charAt(0) || '?')
+
+async function changePassword() {
+  accountMenuOpen.value = false
+  try {
+    await modifyPasswordDialogs(String(user.id), locale.value, user.resetPassword)
+  } catch {
+    /* 用户取消改密或短令牌获取失败：菜单已关闭，不把取消当成异常 */
+  }
+}
+
+async function logout() {
+  accountMenuOpen.value = false
+  try {
+    await ElMessageBox.confirm(
+      t('nav.logoutConfirm', '退出登录后需要重新验证身份，确定要退出吗？'),
+      t('nav.logout', '退出登录'),
+      {
+        confirmButtonText: t('nav.logout', '退出登录'),
+        cancelButtonText: t('action.cancel', '取消'),
+        type: 'warning',
+        confirmButtonClass: 'el-button--danger',
+        closeOnClickModal: false
+      }
+    )
+    await user.removeUser()
+    await router.replace('/user/login')
+  } catch {
+    /* 用户取消 */
+  }
+}
+
+const accountItems = computed(() => [
+  {
+    key: 'reset',
+    icon: Lock,
+    label: t('nav.reset', '密码修改'),
+    action: changePassword
+  },
+  {
+    key: 'logout',
+    icon: SwitchButton,
+    label: t('nav.logout', '退出登录'),
+    action: logout
+  }
+])
 </script>
 
 <template>
@@ -516,11 +578,154 @@ function handleNavClick(path: string) {
           <ElIcon><component :is="dark ? Moon : Sunny" /></ElIcon>
         </span>
       </button>
+      <span class="yg-glass-nav__divider" aria-hidden="true" />
+      <ElPopover
+        v-model:visible="accountMenuOpen"
+        :placement="accountPlacement"
+        trigger="click"
+        width="200px"
+        :popper-options="accountPopperOptions"
+        popper-class="yg-glass-account-menu"
+      >
+        <template #reference>
+          <button
+            type="button"
+            class="yg-glass-nav__item yg-glass-nav__account"
+            aria-haspopup="menu"
+            :aria-expanded="accountMenuOpen ? 'true' : 'false'"
+            :aria-label="t('nav.accountMenu', '账号菜单')"
+          >
+            <span class="yg-glass-nav__avatar" aria-hidden="true">{{ avatarLabel }}</span>
+          </button>
+        </template>
+        <div class="yg-glass-account-menu__list" role="menu">
+          <button
+            v-for="item in accountItems"
+            :key="item.key"
+            type="button"
+            role="menuitem"
+            :class="['yg-glass-account-menu__item', `yg-glass-account-menu__item--${item.key}`]"
+            @click="item.action"
+          >
+            <ElIcon><component :is="item.icon" /></ElIcon>
+            <span>{{ item.label }}</span>
+          </button>
+        </div>
+      </ElPopover>
     </div>
   </nav>
 </template>
 
 <style scoped>
+/* 账号按钮：头像圆片。触控尺寸沿用导航项的 44px，圆片本身 28px。 */
+.yg-glass-nav__avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--yg-color-primary-soft);
+  color: var(--yg-color-primary);
+  font-size: var(--yg-font-size-sm);
+  font-weight: var(--yg-font-weight-semibold);
+  line-height: 1;
+  /* 一圈主色细环，让头像在玻璃栏上读得出是个「人」而不是普通图标 */
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--yg-color-primary) 28%, transparent);
+  transition:
+    background-color var(--yg-dur-base) var(--yg-ease-out),
+    color var(--yg-dur-base) var(--yg-ease-out),
+    box-shadow var(--yg-dur-base) var(--yg-ease-out);
+}
+
+.yg-glass-nav__account:hover .yg-glass-nav__avatar {
+  background: var(--yg-color-primary);
+  color: var(--yg-bg-surface);
+}
+
+.yg-glass-nav__account:focus-visible .yg-glass-nav__avatar {
+  /* 焦点环画在头像上：导航项本身带 clip-path 切角，画在按钮上会被切掉 */
+  box-shadow:
+    0 0 0 2px var(--yg-bg-surface),
+    0 0 0 4px var(--yg-focus-ring-color);
+}
+
+/* 菜单内容由本组件编译（插槽归属本组件），scoped 样式照常生效 */
+.yg-glass-account-menu__list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 180px;
+}
+
+.yg-glass-account-menu__item {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  height: 44px;
+  padding: 0 12px;
+  border: none;
+  border-radius: var(--yg-radius-sm);
+  background: transparent;
+  color: var(--yg-text-primary);
+  font-size: var(--yg-font-size-sm);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background-color var(--yg-dur-fast) var(--yg-ease-out),
+    color var(--yg-dur-fast) var(--yg-ease-out);
+}
+
+.yg-glass-account-menu__item:hover,
+.yg-glass-account-menu__item:focus-visible {
+  background: var(--yg-bg-hover);
+  color: var(--yg-text-primary);
+  outline: none;
+}
+
+/* 退出登录属高危项，走危险色 */
+.yg-glass-account-menu__item--logout,
+.yg-glass-account-menu__item--logout:hover {
+  color: var(--yg-text-danger);
+}
+
+.yg-glass-account-menu__item--logout:hover {
+  background: var(--yg-color-danger-soft);
+}
+
+/* 弹层挂在 body 下，scoped 选择器到不了，这里用 :global 显式声明。
+   底色用 --yg-bg-surface-raised 且保持不透明（准则第 6 章：弹出层面板必须不透明，
+   否则叠在浅色页面上白字白底、深色页面上黑字黑底都读不出来）；
+   玻璃感交给描边、高光与投影去承担。 */
+:global(.el-popper.is-light.yg-glass-account-menu) {
+  padding: 6px;
+  border: 1px solid var(--yg-border-default);
+  border-radius: var(--yg-radius-md);
+  background: var(--yg-bg-surface-raised);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.7),
+    0 12px 32px rgba(28, 28, 30, 0.16),
+    0 2px 8px rgba(28, 28, 30, 0.08);
+  color: var(--yg-text-primary);
+}
+
+:global(html.dark .el-popper.is-light.yg-glass-account-menu) {
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.12),
+    0 16px 40px rgba(0, 0, 0, 0.5);
+}
+
+/* element-plus 的 popover 内容自带 12px 内边距，这里交给菜单自己控制 */
+:global(.yg-glass-account-menu .el-popover) {
+  padding: 0;
+}
+
+/* 极简风去掉指向箭头，弹层直接贴着按钮边缘 */
+:global(.yg-glass-account-menu .el-popper__arrow) {
+  display: none;
+}
+
 @media print {
   .yg-glass-nav {
     display: none;

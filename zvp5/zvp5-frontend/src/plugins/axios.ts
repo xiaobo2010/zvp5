@@ -24,6 +24,19 @@ import { joinFlight } from '@/plugins/singleFlight'
 const apiBase = import.meta.env.VITE_API_BASE ?? '/api'
 const apiRaceBase = (import.meta.env.VITE_API_RACE_BASE ?? '').trim().replace(/\/+$/, '')
 
+/**
+ * 调用方可以按请求关掉「通用兜底 toast」。
+ *
+ * 登录页用 ZAuthAlert（错误按设备闸/密码错误分色）自己呈现失败原因，拦截器再弹
+ * 一条通用提示就成了双提示。标记挂在 config 上随请求走，只影响这一条 toast，
+ * 401 清 token、503 维护跳转、USER_BANNED、DEVICE_* 静默分支都不受影响。
+ */
+declare module 'axios' {
+  export interface AxiosRequestConfig {
+    suppressErrorToast?: boolean
+  }
+}
+
 export const baseURL = apiBase.replace(/\/+$/, '')
 
 /**
@@ -138,6 +151,9 @@ function flightKey(config: InternalAxiosRequestConfig): string {
  * 进度回调、非 JSON/文本 响应一律不参与——合并它们会改变既有语义。
  */
 function canSingleFlight(config: InternalAxiosRequestConfig, callerSignal: unknown): boolean {
+  if ((config as CachedConfig).__bypassCache) {
+    return false
+  }
   if (String(config.method ?? 'get').toLowerCase() !== 'get') {
     return false
   }
@@ -204,7 +220,39 @@ function leaderAdapter(
   }
 }
 
-type CachedConfig = InternalAxiosRequestConfig & { __fromCache?: boolean }
+type CachedConfig = InternalAxiosRequestConfig & {
+  __fromCache?: boolean
+  __bypassCache?: boolean
+}
+
+const USER_ACTION_CACHE_BYPASS_MS = 5000
+let cacheBypassUntil = 0
+
+/**
+ * 刷新按钮、分页、搜索等手动操作必须在本次交互后重新请求。
+ *
+ * 进程内缓存只用于「程序自动进入页面」这类重复读取；用户刚点过按钮/链接时
+ * 给后续请求一个短暂的 bypass 窗口，避免 30 秒 TTL 内点刷新仍拿到旧响应。
+ */
+function markUserInitiatedRequest(event: Event) {
+  const target = event.target
+  if (!(target instanceof Element)) return
+  if (!target.closest('button, a[href], input[type="submit"], [role="button"]')) return
+  cacheBypassUntil = Date.now() + USER_ACTION_CACHE_BYPASS_MS
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('click', markUserInitiatedRequest, { capture: true, passive: true })
+}
+
+function shouldBypassCache(): boolean {
+  return Date.now() < cacheBypassUntil
+}
+
+/** 测试隔离用：清掉上一个用例手动点击留下的 bypass 窗口。 */
+export function resetUserInteractionCacheBypass(): void {
+  cacheBypassUntil = 0
+}
 
 /**
  * 在途合并（single-flight）的内部标记。
@@ -226,7 +274,7 @@ type FlightConfig = CachedConfig & {
  * 这样重复进入页面/重复展开同一条数据时是同步可用的，不会再有加载卡顿。
  */
 function cachedResponse(config: InternalAxiosRequestConfig): AxiosResponse | null {
-  if (!isCacheableGet(config)) {
+  if (!isCacheableGet(config) || (config as CachedConfig).__bypassCache) {
     return null
   }
   const key = cacheKey(config)
@@ -287,7 +335,10 @@ axiosInstance.interceptors.request.use(
     if (!/^([a-z][a-z\d+.-]*:)?\/\//i.test(String(config.url ?? ''))) {
       config.baseURL = baseURLForRequest(config.url)
     }
-    // 命中进程内缓存：直接返回上次的响应，不再发请求
+    // 用户刚点过刷新/搜索/分页等控件时，本次请求跳过进程内缓存；
+    // 网络成功后的响应仍会覆盖旧缓存。
+    ;(config as CachedConfig).__bypassCache = shouldBypassCache()
+    // 命中进程内缓存：直接返回上次的响应，不再发请求、不点亮进度条
     const cached = cachedResponse(config)
     if (cached) {
       config.adapter = () => Promise.resolve(cached)
@@ -467,6 +518,9 @@ axiosInstance.interceptors.response.use(
     }
     // 终态失败：结束航班，跟随者立即收到同样的错误，不留悬挂的在途请求。
     errorConfig?.__flightHandle?.fail(error)
+    // 登录页自己弹 ZAuthAlert 时带了抑制标记：通用兜底 toast 会让同一次失败
+    // 出现两层提示。只跳过这条 toast，其余分支保持原样。
+    const suppressErrorToast = errorConfig?.suppressErrorToast === true
     let errorDisplayed = false
     if (axios.isAxiosError(error)) {
       if (error.response?.status === 401) {
@@ -503,7 +557,7 @@ axiosInstance.interceptors.response.use(
         // 设备闸/临时密码登入失败：登录页按 detail.code 自行展示（临时密码引导、
         // 设备封禁说明、重试提示），这里静默 reject，不再叠一条通用 toast。
       } else {
-        if (!errorDisplayed) {
+        if (!errorDisplayed && !suppressErrorToast) {
           errorDisplayed = true
           let detail: unknown = error.response?.data?.detail
           const rawData = error.response?.data

@@ -1,9 +1,8 @@
 import asyncio
 import logging
 import re
-from collections import defaultdict
 from datetime import datetime
-from typing import Literal, cast
+from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ValidationError

@@ -11,8 +11,6 @@
   不出现在任何响应里（视图里只有 ``key_hint`` = 账号标识的末四位）。
 * **必填字段按 kind 定**：缺 region 的腾讯引擎会在第一次识别时才炸，而那时用户
   已经扣过额度了——录入时就拒掉。
-* **``rapidocr`` 不接受凭证**：本地引擎没有账号，收下 secret 只能意味着管理员把
-  密钥贴错了地方。
 """
 
 from __future__ import annotations
@@ -39,7 +37,6 @@ _PRIORITY_MAX = 999  # NUMBER(3)
 _REQUIRED_SECRET_FIELDS: dict[str, tuple[str, ...]] = {
     ocr_engines.KIND_TENCENT: ("secret_id", "secret_key", "region"),
     ocr_engines.KIND_ALIYUN: ("access_key_id", "access_key_secret"),
-    ocr_engines.KIND_RAPIDOCR: (),
     # 百度 OCR：api_key + secret_key 先换 access_token 再调识别接口，两者都必填
     # （缺 secret_key 换不到 token，缺 api_key 无法标识应用）。
     ocr_engines.KIND_BAIDU: ("api_key", "secret_key"),
@@ -168,12 +165,14 @@ async def update_engine(oid: str, fields: dict) -> dict:
     if fields.get("priority") is not None:
         changes["priority"] = _clean_priority(fields["priority"])
     if fields.get("secret") is not None:
-        if not _REQUIRED_SECRET_FIELDS[kind]:
+        # ``.get`` 而不是下标：库里可能还有已下线 kind 的存量行（如 rapidocr），
+        # 它们没有必填字段表项——停用/改名/删除都要能用，只有「带 secret」拒掉。
+        if not _REQUIRED_SECRET_FIELDS.get(kind, ()):
             raise RouteError(
                 "AI_OCR_ENGINE_INVALID", f"{kind} engine takes no credentials", 400
             )
         # 仓储把 ``None`` 解释成「不改」，所以凭证只能换不能清——云端引擎本来就
-        # 不该允许清空（清了必然识别失败）；本地引擎抽不到密文说明数据本来就坏。
+        # 不该允许清空（清了必然识别失败）。
         cipher, hint = _seal_secret(kind, fields["secret"])
         changes["secret_cipher"] = cipher
         changes["key_hint"] = hint
@@ -248,8 +247,11 @@ def _clean_priority(value: object) -> int:
 
 
 def _secret_dict(kind: str, secret: object) -> dict:
-    """校验并归一化凭证；``rapidocr`` 只接受空。"""
-    required = _REQUIRED_SECRET_FIELDS[kind]
+    """校验并归一化凭证：必填字段按 ``kind`` 取，其余字段只做形状校验。
+
+    已下线 kind 的存量行没有表项，``.get`` 兜成「不接受任何凭证」。
+    """
+    required = _REQUIRED_SECRET_FIELDS.get(kind, ())
     if secret is None:
         data: dict = {}
     elif isinstance(secret, dict):
@@ -290,7 +292,7 @@ def _secret_dict(kind: str, secret: object) -> dict:
 
 
 def _seal_secret(kind: str, secret: object) -> tuple[str | None, str | None]:
-    """凭证 dict → ``(secret_cipher, key_hint)``；本地引擎返回 ``(None, None)``。"""
+    """凭证 dict → ``(secret_cipher, key_hint)``；空凭证返回 ``(None, None)``。"""
     data = _secret_dict(kind, secret)
     if not data:
         return None, None

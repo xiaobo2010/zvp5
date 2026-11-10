@@ -1,17 +1,8 @@
 <script setup lang="ts">
-import { ArrowDown, User, SwitchButton } from '@element-plus/icons-vue'
-import {
-  ElIcon,
-  ElButton,
-  ElPopover,
-  ElConfigProvider,
-  ElMessageBox,
-  ElWatermark
-} from 'element-plus'
+import { ElIcon, ElConfigProvider, ElMessageBox, ElWatermark } from 'element-plus'
 import { RouterView } from 'vue-router'
 import { useUserStore } from '@/stores/user'
 import { useRouter, useRoute } from 'vue-router'
-import Password from '@/icons/MaterialSymbolsPasswordRounded.vue'
 import UserNav from '@/views/user-v2/UserNav.vue'
 import { useHeaderStore } from './stores/header'
 import { useWindowSize, useDark, useOnline, usePreferredDark } from '@vueuse/core'
@@ -530,55 +521,6 @@ const locales: Record<
   }
 }
 
-const userMenuOpen = ref(false)
-// 固定引用：内联字面量会让每次 App patch 都触发 popper 重新定位。
-const userMenuPopperOptions = {
-  modifiers: [{ name: 'offset', options: { offset: [0, 10] } }]
-}
-
-function closeUserMenu() {
-  userMenuOpen.value = false
-}
-
-const panelButtons = [
-  {
-    icon: Password,
-    async click() {
-      closeUserMenu()
-      try {
-        await modifyPasswordDialogs(String(userStore.id), locale.value, userStore.resetPassword)
-      } catch {
-        /* 用户取消改密或短令牌获取失败：菜单已关闭，不把取消当成异常 */
-      }
-    },
-    text: 'reset'
-  },
-  {
-    icon: SwitchButton,
-    async click() {
-      closeUserMenu()
-      try {
-        await ElMessageBox.confirm(
-          t('nav.logoutConfirm', '退出登录后需要重新验证身份，确定要退出吗？'),
-          t('nav.logout', '退出登录'),
-          {
-            confirmButtonText: t('nav.logout', '退出登录'),
-            cancelButtonText: t('action.cancel', '取消'),
-            type: 'warning',
-            confirmButtonClass: 'el-button--danger',
-            closeOnClickModal: false
-          }
-        )
-        await userStore.removeUser()
-        await router.replace('/user/login')
-      } catch {
-        /* 用户取消 */
-      }
-    },
-    text: 'logout'
-  }
-]
-
 watch(needRefresh, () => {
   if (!needRefresh.value) {
     return
@@ -658,58 +600,6 @@ onUnmounted(() => {
           <div v-if="isPhiRoute" class="yg-phi-velocity" aria-hidden="true"></div>
           <UserNav v-if="userStore.isLogin" />
           <div class="yg-layout__main">
-            <header :class="['yg-layout__topbar', 'yg-topbar', { 'is-portrait': verticalMode }]">
-              <div class="yg-topbar__left">
-                <img class="yg-topbar__logo" src="/pwa-192x192.png" alt="义工平台 Logo" />
-                <span
-                  class="yg-topbar__title"
-                  @dblclick="router.push(userStore.isLogin ? '/user' : '/user/login')"
-                >
-                  {{ headerStore.header }}
-                </span>
-              </div>
-              <div class="yg-topbar__right" v-if="userStore.isLogin">
-                <div class="yg-user-chip">
-                  <span class="yg-user-chip__avatar">
-                    <ElIcon><User /></ElIcon>
-                  </span>
-                  <span class="yg-user-chip__name">{{ userStore.name }}</span>
-                  <ElPopover
-                    v-model:visible="userMenuOpen"
-                    width="200px"
-                    trigger="click"
-                    placement="bottom-end"
-                    :popper-options="userMenuPopperOptions"
-                    popper-class="yg-user-menu"
-                  >
-                    <template #reference>
-                      <button
-                        type="button"
-                        class="yg-user-chip__toggle"
-                        aria-haspopup="menu"
-                        :aria-expanded="userMenuOpen ? 'true' : 'false'"
-                        :aria-label="t('nav.accountMenu', '账号菜单')"
-                      >
-                        <ElIcon><ArrowDown /></ElIcon>
-                      </button>
-                    </template>
-                    <div class="yg-user-menu__list" role="menu">
-                      <ElButton
-                        v-for="button in panelButtons"
-                        :key="button.text"
-                        text
-                        role="menuitem"
-                        :icon="button.icon"
-                        :class="['yg-user-menu__item', `yg-user-menu__item--${button.text}`]"
-                        @click="button.click"
-                      >
-                        {{ t(`nav.${button.text}`) }}
-                      </ElButton>
-                    </div>
-                  </ElPopover>
-                </div>
-              </div>
-            </header>
             <main :class="['yg-layout__content', { 'is-portrait': verticalMode && userStore.isLogin }]">
               <RouterView v-slot="{ Component }">
                 <Transition name="yg-route" mode="out-in">
@@ -747,10 +637,8 @@ onUnmounted(() => {
   font-size: 1.2rem;
 }
 
-/* 顶栏外观由标准样式库的 .yg-topbar 提供，这里只补项目自有元素 */
-
-/* 竖屏底部 dock 让位：药丸 56px(--yg-header-height) + 离底 12px(--yg-space-3)
-   + 手势/刘海安全区 + 内容自身 16px 留白(--yg-space-4)。
+/* 竖屏底部 dock（UserNav 悬浮药丸）让位：药丸 56px(--yg-header-height 令牌同值)
+   + 离底 12px(--yg-space-3) + 手势/刘海安全区 + 内容自身 16px 留白(--yg-space-4)。
    抽成 --yg-content-bottom-inset 是为了让页面（如服务器页）算自身高度时引用同一份
    数值，不必各自硬编码 96px；横屏不挂 is-portrait，padding 仍是 base.css 的 24px。 */
 .yg-layout__content {
@@ -763,207 +651,6 @@ onUnmounted(() => {
       var(--yg-space-4)
   );
   padding-bottom: var(--yg-content-bottom-inset);
-}
-
-/* 竖屏顶栏：视觉高度仍是 56px，但用 min-height 承载顶部安全区（刘海屏），
-   左右留白收紧到 12px 把宽度让给标题；用户名在窄屏会挤掉标题，故只留头像。 */
-.yg-topbar.is-portrait {
-  height: auto;
-  min-height: calc(var(--yg-header-height) + env(safe-area-inset-top, 0px));
-  padding-top: env(safe-area-inset-top, 0px);
-  padding-inline: var(--yg-space-3);
-  gap: var(--yg-space-2);
-}
-
-.yg-topbar.is-portrait .yg-topbar__left {
-  flex: 1;
-  min-width: 0;
-}
-
-/* 标题占满剩余宽度并被 ellipsis 截断；双击回首页的绑定在模板上，与样式无关 */
-.yg-topbar.is-portrait .yg-topbar__title {
-  max-width: 100%;
-  min-width: 0;
-}
-
-.yg-topbar.is-portrait .yg-user-chip {
-  gap: var(--yg-space-1);
-  padding: 0 var(--yg-space-1);
-}
-
-.yg-topbar.is-portrait .yg-user-chip__name {
-  display: none;
-}
-
-.yg-topbar__title {
-  font-size: var(--yg-font-size-lg);
-  font-weight: var(--yg-font-weight-semibold);
-  line-height: var(--yg-line-height-tight);
-  color: var(--yg-text-primary);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.yg-topbar__logo {
-  width: var(--yg-space-7);
-  height: var(--yg-space-7);
-  flex-shrink: 0;
-  border-radius: var(--yg-radius-md);
-  object-fit: cover;
-}
-
-.yg-topbar__right {
-  display: flex;
-  align-items: center;
-  gap: var(--yg-space-2);
-  flex-shrink: 0;
-}
-
-/* 账号胶囊：头像 + 用户名 + 展开箭头合成一个整体，替代原先两个 is-text 主色按钮 */
-.yg-user-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 36px;
-  padding: 0 4px 0 4px;
-  border: 1px solid var(--yg-border-default);
-  border-radius: var(--yg-radius-pill);
-  background: var(--yg-bg-surface);
-  transition:
-    border-color var(--yg-dur-fast) var(--yg-ease-out),
-    background-color var(--yg-dur-fast) var(--yg-ease-out);
-}
-
-.yg-user-chip:hover {
-  border-color: var(--yg-color-primary);
-  background: var(--yg-bg-hover);
-}
-
-.yg-user-chip__avatar {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 26px;
-  height: 26px;
-  border-radius: 50%;
-  background: var(--yg-color-primary-soft);
-  color: var(--yg-color-primary);
-  font-size: 15px;
-  line-height: 1;
-}
-
-.yg-user-chip__name {
-  max-width: 12rem;
-  overflow: hidden;
-  color: var(--yg-text-primary);
-  font-size: var(--yg-font-size-sm);
-  font-weight: var(--yg-font-weight-medium);
-  /* 行盒压到 26px 与头像同高，三者共用 flex 中线，避免基线把文字顶偏 */
-  display: inline-flex;
-  align-items: center;
-  height: 26px;
-  line-height: 1;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-
-/* 箭头按钮保留 24px 触控区，不参与主色填充；图标自身对齐中线 */
-.yg-user-chip__toggle {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
-  padding: 0;
-  border: 0;
-  border-radius: 50%;
-  background: transparent;
-  color: var(--yg-text-secondary);
-  font-size: 13px;
-  line-height: 1;
-  cursor: pointer;
-  transition:
-    color var(--yg-dur-fast) var(--yg-ease-out),
-    background-color var(--yg-dur-fast) var(--yg-ease-out);
-}
-
-.yg-user-chip__toggle > .el-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  line-height: 1;
-}
-
-.yg-user-chip__toggle:hover {
-  background: var(--yg-bg-active);
-  color: var(--yg-text-primary);
-}
-
-.yg-user-chip__toggle:focus-visible {
-  outline: none;
-  box-shadow: var(--yg-focus-ring);
-}
-
-/* 账号菜单：中性项 + 危险项（退出登录属高危，走 --yg-color-danger）
-   注：弹层挂在 body 下，scoped 选择器到不了，这里用 :global 显式声明
-   （面板色另在 popper-class 同规则里补，避免白字白底） */
-:global(.yg-user-menu__list) {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-/* 菜单只有两项，压到 32px 行高 + 4px 内边距，整体更紧凑 */
-:global(.yg-user-menu__item.el-button) {
-  justify-content: flex-start;
-  width: 100%;
-  height: 32px;
-  margin: 0;
-  padding: 0 8px;
-  border-radius: var(--yg-radius-sm);
-  color: var(--yg-text-primary);
-  font-size: var(--yg-font-size-sm);
-}
-
-:global(.yg-user-menu__item.el-button:hover),
-:global(.yg-user-menu__item.el-button:focus) {
-  background: var(--yg-bg-hover);
-  color: var(--yg-text-primary);
-}
-
-:global(.yg-user-menu__item.el-button.yg-user-menu__item--logout),
-:global(.yg-user-menu__item.el-button.yg-user-menu__item--logout:hover) {
-  color: var(--yg-text-danger);
-}
-
-:global(.yg-user-menu__item.el-button.yg-user-menu__item--logout:hover) {
-  background: var(--yg-color-danger-soft);
-}
-
-:global(.yg-user-menu) {
-  padding: 4px;
-}
-
-/* P620 等触摸平板：图标仍是 24px，但命中区扩到 40px；菜单项按 44px 触控标准。
-   负 margin 抵消扩大的盒子，胶囊布局不跳。 */
-@media (pointer: coarse) {
-  .yg-user-chip__toggle {
-    width: 40px;
-    height: 40px;
-    margin: -8px;
-  }
-
-  :global(.yg-user-menu__item.el-button) {
-    height: 44px;
-    padding: 0 12px;
-  }
-}
-
-/* 极简风去掉指向箭头，弹层直接以右边缘对齐胶囊 */
-:global(.yg-user-menu .el-popper__arrow),
-:global(.yg-user-menu > .el-popper__arrow) {
-  display: none;
 }
 </style>
 

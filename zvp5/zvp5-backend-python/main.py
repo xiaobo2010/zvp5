@@ -22,6 +22,7 @@
 from __future__ import annotations
 
 import os
+from contextlib import asynccontextmanager
 
 import error_handlers
 import legacy_redirects
@@ -33,12 +34,12 @@ from app_setup import (  # noqa: F401 - 兼容导出：tests/ 与运维脚本按
     SECURITY_RESPONSE_HEADERS,
     SHIELD_BLOCKED_MESSAGE,
     _write_security_audit,
-    app,
+    create_app,
     cors_allowed_origins,
 )
-from db.oracle.engine import ping as oracle_ping
-from db.system_state import is_enabled_async as maintenance_enabled
-from db.system_state import is_enabled_fresh_async as maintenance_enabled_fresh
+from db.oracle.engine import ping as oracle_ping  # noqa: F401 - 兼容导出
+from db.system_state import is_enabled_async as maintenance_enabled  # noqa: F401 - 兼容导出
+from db.system_state import is_enabled_fresh_async as maintenance_enabled_fresh  # noqa: F401 - 兼容导出
 from error_handlers import (  # noqa: F401 - 兼容导出
     _localize_validation_message,
     invalid_oid_exception_handler,
@@ -92,13 +93,26 @@ from scheduler import (  # noqa: F401 - 兼容导出
     shutdown_event,
     startup_event,
 )
-from socket_events import sio, socket
+from socket_events import sio, socket  # noqa: F401 - sio 兼容导出
 from typings.log import ZVMSLog  # noqa: F401 - 兼容导出
 
 # ``main._cert_pem``：``/api/cert`` 的公钥缓存（真实读写见 meta_routes，经
 # bindings 落在这个名字上）。这里只放初始值，让既有测试的
 # ``monkeypatch.setattr(main, "_cert_pem", None)`` 有对象可打桩。
 _cert_pem: str | None = None
+
+
+@asynccontextmanager
+async def lifespan(_app):
+    """Run scheduler startup/shutdown through FastAPI's supported lifespan API."""
+    await startup_event()
+    try:
+        yield
+    finally:
+        await shutdown_event()
+
+
+app = create_app(lifespan=lifespan)
 
 
 # 路由表：(router, prefix, tags)。顺序即契约 —— 先注册先匹配。
@@ -145,10 +159,6 @@ ROUTERS: tuple[tuple, ...] = (
     (ai_schedule_router.router, "/api/ai/scheduled-tasks", ["ai"]),
 )
 
-
-# 事件：scheduler 的 14 个 job 在 startup 里登记（见 scheduler.startup_event）。
-app.add_event_handler("startup", startup_event)
-app.add_event_handler("shutdown", shutdown_event)
 
 # socket.io 是独立 ASGI 子应用，挂载点单独一层（维护准入见
 # realtime.MaintenanceSocketGuard）。挂载在路由注册之前，与拆分前一致。

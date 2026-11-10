@@ -41,11 +41,6 @@ def _stubs(monkeypatch):
         return []
 
     monkeypatch.setattr(credentials, "catalog", _catalog)
-    # 预热是后台任务：真跑会加载 onnxruntime 模型，健康检查的用例不该等它。
-    async def _noop_warmup() -> bool:
-        return True
-
-    monkeypatch.setattr("routers.ai.health._warmup_local_engines", _noop_warmup)
     routing.reset_state()
     rate_limit.reset_state()
     yield

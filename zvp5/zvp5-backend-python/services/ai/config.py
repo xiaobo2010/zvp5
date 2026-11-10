@@ -35,7 +35,7 @@ _DEFAULT_SITE_OCR_MONTHLY_UNITS = 1000
 def site_quota() -> dict[str, int]:
     """``settings.AI_SITE_QUOTA``：按引擎 kind 覆盖站点月额度。
 
-    形如 ``{"ocr_tencent": 1000, "ocr_rapidocr": 1000000}``。值非法（负数/非整数）
+    形如 ``{"ocr_tencent": 1000, "ocr_groq": 1500}``。值非法（负数/非整数）
     直接跳过，保留默认值——写错一个条目不该让额度变成 0 把整条链路掐死。
     """
     raw = getattr(settings, "AI_SITE_QUOTA", {}) or {}
