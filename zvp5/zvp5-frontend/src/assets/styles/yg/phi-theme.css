@@ -873,6 +873,9 @@ html.dark .yg-phi .yg-glass-nav--v2.yg-glass-nav--portrait::after {
   --phi-ink-3: #7b8791;
   --phi-panel: #0b0e12;
   --phi-panel-hi: #12171b;
+  /* 默认按钮在深色面板上不能只剩「黑块」：填充抬一档，再补一圈 1px 内描边。 */
+  --phi-control-fill: color-mix(in srgb, var(--phi-ink) 14%, var(--phi-panel-hi));
+  --phi-control-line: color-mix(in srgb, var(--phi-ink) 18%, transparent);
   --phi-accent: #49f4e2;
   --phi-accent-ink: #49f4e2;
   --phi-accent-soft: rgba(73, 244, 226, 0.18);
@@ -969,6 +972,8 @@ html[data-theme='light'] .yg-phi {
   --phi-ink-3: #5b6670;
   --phi-panel: #ffffff;
   --phi-panel-hi: #f2f5f6;
+  --phi-control-fill: color-mix(in srgb, var(--phi-ink) 7%, var(--phi-panel-hi));
+  --phi-control-line: transparent;
   --phi-accent: #007a70;
   --phi-accent-ink: #007a70;
   --phi-accent-soft: rgba(11, 159, 147, 0.13);
@@ -1276,12 +1281,13 @@ html[data-theme='light'] .yg-phi .yg-phi-login-tag {
   letter-spacing: 0.05em;
 }
 
-/* 默认按钮：无描边，只用软填充 + 右上切角；hover 才出现左侧强调边 */
+/* 默认按钮：软填充 + 1px 内描边 + 右上切角；hover 才出现左侧强调边。
+   深色下填充由 --phi-control-fill 抬到 14%，避免与近黑面板糊在一起。 */
 .yg-phi .yg-btn,
 .yg-phi .el-button {
   color: var(--phi-ink);
-  background: color-mix(in srgb, var(--phi-ink) 7%, var(--phi-panel-hi));
-  box-shadow: none;
+  background: var(--phi-control-fill);
+  box-shadow: inset 0 0 0 1px var(--phi-control-line);
   clip-path: polygon(0 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 0 100%);
 }
 
