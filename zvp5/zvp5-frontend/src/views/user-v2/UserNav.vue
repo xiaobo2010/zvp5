@@ -617,9 +617,9 @@ const accountItems = computed(() => [
 </template>
 
 <style scoped>
-/* 账号按钮：六芒星头像。触控尺寸沿用导航项的 44px，星形本身 30px。
-   星形用 12 点 polygon（外半径 50%、内半径 28.9%），中央区域足以容纳首字；
-   clip-path 会裁掉 outline/box-shadow，所以轮廓用 drop-shadow 沿星形边缘绘制。 */
+/* 账号按钮：尖顶六边形头像。触控尺寸沿用导航项的 44px，六边形本身 30px。
+   clip-path 会裁掉 outline/box-shadow，所以轮廓与投影都用 drop-shadow 沿着
+   裁切后的六边形绘制：1px 主色硬偏移 + 一层柔和落影，深色底也有轮廓。 */
 .yg-glass-nav__avatar {
   display: inline-flex;
   align-items: center;
@@ -632,21 +632,10 @@ const accountItems = computed(() => [
   font-size: var(--yg-font-size-sm);
   font-weight: var(--yg-font-weight-semibold);
   line-height: 1;
-  clip-path: polygon(
-    50% 0%,
-    64.4% 25%,
-    93.3% 25%,
-    78.9% 50%,
-    93.3% 75%,
-    64.4% 75%,
-    50% 100%,
-    35.6% 75%,
-    6.7% 75%,
-    21.1% 50%,
-    6.7% 25%,
-    35.6% 25%
-  );
-  filter: drop-shadow(0 0 0.5px color-mix(in srgb, var(--yg-color-primary) 55%, transparent));
+  clip-path: polygon(50% 0%, 93.3% 25%, 93.3% 75%, 50% 100%, 6.7% 75%, 6.7% 25%);
+  filter:
+    drop-shadow(1px 2px 0 color-mix(in srgb, var(--yg-color-primary) 32%, transparent))
+    drop-shadow(0 4px 8px rgba(5, 6, 8, 0.28));
   transition:
     background-color var(--yg-dur-base) var(--yg-ease-out),
     color var(--yg-dur-base) var(--yg-ease-out),
@@ -659,8 +648,10 @@ const accountItems = computed(() => [
 }
 
 .yg-glass-nav__account:focus-visible .yg-glass-nav__avatar {
-  /* clip-path 下 outline/box-shadow 不可见，用两层同形 drop-shadow 画焦点光晕 */
+  /* 保留六边形投影，再叠两层同形焦点光晕 */
   filter:
+    drop-shadow(1px 2px 0 color-mix(in srgb, var(--yg-color-primary) 32%, transparent))
+    drop-shadow(0 4px 8px rgba(5, 6, 8, 0.28))
     drop-shadow(0 0 1px var(--yg-bg-surface))
     drop-shadow(0 0 2px var(--yg-focus-ring-color))
     drop-shadow(0 0 4px var(--yg-focus-ring-color));
