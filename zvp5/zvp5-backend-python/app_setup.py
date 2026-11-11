@@ -221,7 +221,7 @@ async def shield_middleware(request: Request, call_next):
         log_class = bindings.get("ZVMSLog", ZVMSLog)
         _spawn_security_audit(
             log_class(
-                url=str(request.url),
+                url=request.url.path,
                 user="",
                 data=json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
                 timestamp=datetime.now().timestamp(),

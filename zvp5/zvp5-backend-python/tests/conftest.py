@@ -111,3 +111,13 @@ def _fresh_read_budget():
     read_throttle.reset_state()
     yield
     read_throttle.reset_state()
+
+
+@pytest.fixture(autouse=True)
+def _fresh_credential_replay():
+    """凭据一次性消费表也是进程内状态：跨用例残留会把新凭据误判成重放。"""
+    from util import credential_replay
+
+    credential_replay.reset_state()
+    yield
+    credential_replay.reset_state()

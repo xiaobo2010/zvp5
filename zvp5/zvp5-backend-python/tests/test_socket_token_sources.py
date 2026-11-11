@@ -96,5 +96,6 @@ def test_query_token_does_not_authenticate_a_real_connection(repo) -> None:
     finally:
         client.close()
 
-    assert packet.text.startswith("40"), packet.text
+    # query 里的 token 不被识别 ⇒ 连接仍是匿名 ⇒ 现在被拒绝。
+    assert packet.text.startswith("44"), packet.text
     assert repo.lookups == []

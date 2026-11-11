@@ -24,6 +24,7 @@ from Crypto.Hash import SHA256
 from db import backends
 from db.ids import new_oid
 from util import platform_key
+from util import credential_replay
 from util.ban import ban_is_active, raise_banned
 from util.group import get_user_permissions
 
@@ -319,7 +320,7 @@ def _credential_timestamp(value) -> float:
     return timestamp
 
 
-def _read_credential(cert: str) -> dict:
+async def _read_credential(cert: str) -> dict:
     try:
         credential = json.loads(rsa_decrypt(cert))
         if not isinstance(credential, dict) or not isinstance(credential.get("password"), str):
@@ -327,6 +328,12 @@ def _read_credential(cert: str) -> dict:
     except (ValueError, TypeError, UnicodeError):
         raise HTTPException(status_code=400, detail="Invalid credential")
     _credential_timestamp(credential.get("time"))
+    # 载荷里没有 nonce，同一份密文在窗口内可重放；解密成功后按密文摘要做一次性
+    # 消费，verify 密文也就无法再当 login 用。
+    try:
+        await credential_replay.consume(cert)
+    except credential_replay.CredentialReplayed:
+        raise HTTPException(status_code=401, detail=credential_replay.MESSAGE)
     return credential
 
 
@@ -372,7 +379,7 @@ async def validate_by_cert(
     the change loop itself is never blocked. TOTP logins are not affected
     (no password is involved).
     """
-    auth_field = _read_credential(cert)
+    auth_field = await _read_credential(cert)
     prefetched = _prefetched_user.get()
     if prefetched is not None and prefetched[0] == str(id):
         # 调用方刚读到的就是这一行（含「确实不存在」），别再花一次往返。
@@ -440,7 +447,7 @@ async def validate_by_cert(
 
 
 async def get_hashed_password_by_cert(cert: str):
-    auth_field = _read_credential(cert)
+    auth_field = await _read_credential(cert)
     password = auth_field["password"]
     if pwd_strength(password) < 3:
         raise HTTPException(status_code=400, detail="密码强度不足")
