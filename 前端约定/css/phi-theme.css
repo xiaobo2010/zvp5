@@ -1369,6 +1369,60 @@ html[data-theme='light'] .yg-phi .yg-btn--primary:hover {
   box-shadow: none;
 }
 
+/* 带底色的语义标签（ZButtonTag 的 text + bg）：
+   `.is-text` 会用中性 ink 抹掉类型色，导致「有效/审核中」以及
+   校内/校外/社会实践落成同一种灰。这里只对 is-has-bg 的按钮恢复
+   各自的软底与文字色，不影响普通文字按钮。 */
+.yg-phi .el-button--primary.is-text.is-has-bg {
+  color: var(--yg-color-primary);
+  background: var(--yg-color-primary-soft);
+}
+
+.yg-phi .el-button--success.is-text.is-has-bg {
+  color: var(--yg-text-success);
+  background: var(--yg-color-success-soft);
+}
+
+.yg-phi .el-button--warning.is-text.is-has-bg {
+  color: var(--yg-text-warning);
+  background: var(--yg-color-warning-soft);
+}
+
+.yg-phi .el-button--danger.is-text.is-has-bg {
+  color: var(--yg-text-danger);
+  background: var(--yg-color-danger-soft);
+}
+
+.yg-phi .el-button--info.is-text.is-has-bg {
+  color: var(--yg-text-secondary);
+  background: var(--yg-bg-surface-sunken);
+}
+
+.yg-phi .el-button--primary.is-text.is-has-bg:hover {
+  color: var(--yg-color-primary);
+  background: color-mix(in srgb, var(--yg-color-primary-soft) 72%, var(--yg-color-primary) 28%);
+}
+
+.yg-phi .el-button--success.is-text.is-has-bg:hover {
+  color: var(--yg-text-success);
+  background: color-mix(in srgb, var(--yg-color-success-soft) 72%, var(--yg-color-success) 28%);
+}
+
+.yg-phi .el-button--warning.is-text.is-has-bg:hover {
+  color: var(--yg-text-warning);
+  background: color-mix(in srgb, var(--yg-color-warning-soft) 72%, var(--yg-color-warning) 28%);
+}
+
+.yg-phi .el-button--danger.is-text.is-has-bg:hover {
+  color: var(--yg-text-danger);
+  background: color-mix(in srgb, var(--yg-color-danger-soft) 72%, var(--yg-color-danger) 28%);
+}
+
+.yg-phi .el-button--info.is-text.is-has-bg:hover {
+  color: var(--yg-text-primary);
+  background: var(--yg-bg-surface-sunken);
+}
+
 /* 键盘焦点保留可见轮廓；clip-path 会裁 box-shadow，所以用 outline */
 .yg-phi .yg-btn:focus-visible,
 .yg-phi .el-button:focus-visible {
