@@ -67,7 +67,12 @@ function spawnParticles(): void {
   }
 
   const count = isDesktop() ? PARTICLE_COUNT.desktop : PARTICLE_COUNT.mobile
-  const palette = ['#f4f6f8', '#49f4e2', '#ff4e9b']
+  // 颜色交给主题令牌：浅色幕布上白粒子会消失，必须由 CSS 按主题换成深色碎屑。
+  const palette = [
+    'var(--reveal-particle-1)',
+    'var(--reveal-particle-2)',
+    'var(--reveal-particle-3)'
+  ]
   const list: Particle[] = []
 
   for (let i = 0; i < count; i += 1) {
@@ -269,6 +274,10 @@ onBeforeUnmount(() => {
   --reveal-cyan: #49f4e2;
   --reveal-pink: #ff4e9b;
   --reveal-panel: #05080b;
+  --reveal-particle-1: #f4f6f8;
+  --reveal-particle-2: #49f4e2;
+  --reveal-particle-3: #ff4e9b;
+  --reveal-brand-glow: rgba(73, 244, 226, 0.8);
   position: fixed;
   inset: 0;
   z-index: 9500;
@@ -437,13 +446,13 @@ onBeforeUnmount(() => {
 
 @keyframes reveal-brand-pulse {
   0% {
-    filter: drop-shadow(0 0 0 rgba(73, 244, 226, 0));
+    filter: drop-shadow(0 0 0 transparent);
   }
   50% {
-    filter: drop-shadow(0 0 32px rgba(73, 244, 226, 0.8));
+    filter: drop-shadow(0 0 32px var(--reveal-brand-glow));
   }
   100% {
-    filter: drop-shadow(0 0 0 rgba(73, 244, 226, 0));
+    filter: drop-shadow(0 0 0 transparent);
   }
 }
 
@@ -592,6 +601,95 @@ onBeforeUnmount(() => {
   to {
     transform: translate3d(0, 100%, 0);
   }
+}
+
+/* ========== 浅色主题 ========== */
+/* 浅色下不再使用黑幕：幕布换成冷白/浅青纸面，粒子换成深色碎屑，
+   否则原来的白色粒子与霓虹描边在浅底上几乎不可见。 */
+html[data-theme='light'] .login-reveal {
+  --reveal-cyan: #0b9f93;
+  --reveal-pink: #d93672;
+  --reveal-panel: #f4f8f9;
+  --reveal-particle-1: #0b0e12;
+  --reveal-particle-2: #0b9f93;
+  --reveal-particle-3: #d93672;
+  --reveal-brand-glow: rgba(11, 159, 147, 0.45);
+}
+
+html[data-theme='light'] .login-reveal__panel {
+  background:
+    repeating-linear-gradient(
+      0deg,
+      rgba(11, 159, 147, 0.06) 0 1px,
+      transparent 1px 5px
+    ),
+    radial-gradient(100% 80% at 50% 50%, rgba(11, 159, 147, 0.12), transparent 68%),
+    linear-gradient(135deg, #ffffff 0%, #eef4f5 100%);
+}
+
+html[data-theme='light'] .login-reveal__rule {
+  background: linear-gradient(
+    90deg,
+    rgba(11, 159, 147, 0) 0%,
+    rgba(11, 159, 147, 0.35) 12%,
+    #0b9f93 40%,
+    #ffffff 50%,
+    #0b9f93 60%,
+    rgba(11, 159, 147, 0.35) 88%,
+    rgba(11, 159, 147, 0) 100%
+  );
+  box-shadow:
+    0 0 12px rgba(11, 159, 147, 0.45),
+    0 0 32px rgba(11, 159, 147, 0.22);
+}
+
+html[data-theme='light'] .login-reveal__scanline {
+  background: linear-gradient(
+    135deg,
+    transparent 0%,
+    transparent 48%,
+    rgba(11, 159, 147, 0.12) 49%,
+    rgba(11, 159, 147, 0.55) 50%,
+    rgba(5, 6, 8, 0.34) 50.5%,
+    rgba(11, 159, 147, 0.55) 51%,
+    rgba(11, 159, 147, 0.12) 52%,
+    transparent 53%,
+    transparent 100%
+  );
+}
+
+html[data-theme='light'] .login-reveal__brand {
+  color: #0b0e12;
+  text-shadow:
+    3px 0 rgba(217, 54, 114, 0.16),
+    -3px 0 rgba(11, 159, 147, 0.18);
+}
+
+html[data-theme='light'] .login-reveal__line {
+  color: #0b0e12;
+  text-shadow:
+    2px 0 rgba(217, 54, 114, 0.12),
+    -2px 0 rgba(11, 159, 147, 0.16);
+}
+
+html[data-theme='light'] .login-reveal__line--hello {
+  text-shadow:
+    3px 0 rgba(217, 54, 114, 0.14),
+    -3px 0 rgba(11, 159, 147, 0.18);
+}
+
+html[data-theme='light'] .login-reveal__line--role {
+  color: rgba(11, 14, 18, 0.62);
+}
+
+html[data-theme='light'] .login-reveal__slice {
+  background: linear-gradient(
+    135deg,
+    rgba(11, 159, 147, 0.12),
+    rgba(11, 159, 147, 0.06) 50%,
+    rgba(217, 54, 114, 0.1)
+  );
+  border-color: rgba(11, 159, 147, 0.32);
 }
 
 /* ========== Reduced Motion ========== */

@@ -303,7 +303,7 @@ if (security.value < 4) {
 // 封禁全屏锁:由 axios 拦截器识别 403 + USER_BANNED 后写入的首次检测时间戳驱动
 // (userStore.bannedNoticeAt, unix ms, 0=无)。时间戳随 store 持久化,刷新页面
 // 恢复剩余倒计时而非重新计时;到点前不可关闭、不可跳过,到点自动登出。
-const BAN_NOTICE_SECONDS = 30
+const BAN_NOTICE_SECONDS = 15
 const banCountdown = ref(0)
 const banLocked = computed(() => userStore.bannedNoticeAt > 0)
 const banFinalizing = ref(false)
@@ -329,7 +329,12 @@ async function finalizeBan() {
     await router.replace('/user/login')
     userStore.bannedNoticeAt = 0
   } catch {
-    // 跳转失败保持遮罩(fail-closed),由倒计时 tick 自动重试
+    // 跳转失败保持状态(fail-closed)，短延迟重试，避免粒子已消散后留下空遮罩。
+    window.setTimeout(() => {
+      if (userStore.bannedNoticeAt > 0) {
+        void finalizeBan()
+      }
+    }, 600)
   }
   banFinalizing.value = false
 }
@@ -340,9 +345,8 @@ function updateBanCountdown() {
   }
   const left = BAN_NOTICE_SECONDS - (Date.now() - userStore.bannedNoticeAt) / 1000
   banCountdown.value = Math.max(0, Math.ceil(left))
-  if (left <= 0) {
-    void finalizeBan()
-  }
+  // 到点后由 ZBanScreen 先播完粒子消散，再 emit ack 调 finalizeBan；
+  // 这里不能提前卸载遮罩，否则粒子动画会被硬切掉。
 }
 
 watch(
@@ -592,7 +596,9 @@ onUnmounted(() => {
           :countdown="banCountdown"
           :countdown-total="BAN_NOTICE_SECONDS"
           :countdown-text="banCountdown > 0 ? t('nav.banned.autoLogoutIn', { seconds: banCountdown }) : ''"
+          :auto-dismiss="banCountdown"
           :lock-scroll="false"
+          @ack="finalizeBan"
         />
         <div :class="['yg-layout', 'yg-layout--app', { 'yg-phi': isPhiRoute }]">
           <div v-if="isPhiRoute" class="yg-phi-velocity" aria-hidden="true"></div>
