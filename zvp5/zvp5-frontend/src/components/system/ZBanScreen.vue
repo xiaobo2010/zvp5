@@ -16,6 +16,8 @@ const props = withDefaults(
     lockScroll?: boolean
     /** 风险格点亮数量（0–12），不传时按 variant 取默认值 */
     riskLevel?: number
+    /** 挂载时剩余秒数，到点进入消散；0 立即消散。仅读取挂载时的值 */
+    autoDismiss?: number
   }>(),
   {
     appeal: '',
@@ -25,7 +27,8 @@ const props = withDefaults(
     ackText: '',
     variant: 'account',
     lockScroll: true,
-    riskLevel: undefined
+    riskLevel: undefined,
+    autoDismiss: 15
   }
 )
 
@@ -39,12 +42,19 @@ const reducedMotion =
   window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches === true
 
 const RISK_CELLS = 12
+const PARTICLE_COUNT = 80
+const DISMISS_DURATION_FULL = 1200 // 完整消散动画时长 ms
+const DISMISS_DURATION_REDUCED = 300 // reduced-motion 淡出时长 ms
+
 const uid = useId()
 const titleId = `z-ban-title-${uid}`
 const reasonId = `z-ban-reason-${uid}`
 
 const rootRef = ref<HTMLElement | null>(null)
-const ackRef = ref<HTMLButtonElement | null>(null)
+const screenRef = ref<HTMLElement | null>(null)
+const particleContainerRef = ref<HTMLElement | null>(null)
+
+const isDismissing = ref(false)
 
 // 可选文案键由其他分支补充；缺失时回退到英文装饰文字
 function label(key: string, fallback: string): string {
@@ -83,19 +93,153 @@ const countdownRatio = computed(() => {
 })
 const countdownLabel = computed(() => props.countdownText || `${props.countdown}s`)
 
-const showAck = computed(() => props.ackText.trim().length > 0)
-
 let previousOverflow: string | null = null
+let dismissTimer: ReturnType<typeof setTimeout> | null = null
+
+interface Particle {
+  id: string
+  x: number
+  y: number
+  size: number
+  color: string
+  tx: number
+  ty: number
+  delay: number
+}
+
+const particles = ref<Particle[]>([])
+
+function generateParticles(): void {
+  if (!screenRef.value) return
+
+  const rect = screenRef.value.getBoundingClientRect()
+  const centerX = rect.width / 2
+  const centerY = rect.height / 2
+
+  // 采样关键区域作为粒子源
+  const sources: Array<{ x: number; y: number; weight: number }> = []
+
+  // 警告文字区域
+  const warningEl = screenRef.value.querySelector('.z-ban__warning')
+  if (warningEl) {
+    const r = warningEl.getBoundingClientRect()
+    sources.push({
+      x: r.left - rect.left + r.width / 2,
+      y: r.top - rect.top + r.height / 2,
+      weight: 0.3
+    })
+  }
+
+  // 原因块
+  const reasonEl = screenRef.value.querySelector('.z-ban__reason')
+  if (reasonEl) {
+    const r = reasonEl.getBoundingClientRect()
+    sources.push({
+      x: r.left - rect.left + r.width / 2,
+      y: r.top - rect.top + r.height / 2,
+      weight: 0.25
+    })
+  }
+
+  // 风险格
+  const cellsEl = screenRef.value.querySelector('.z-ban__cells')
+  if (cellsEl) {
+    const r = cellsEl.getBoundingClientRect()
+    sources.push({
+      x: r.left - rect.left + r.width / 2,
+      y: r.top - rect.top + r.height / 2,
+      weight: 0.2
+    })
+  }
+
+  // 边缘红色面板（上下各一个源）
+  sources.push({ x: centerX, y: 40, weight: 0.15 })
+  sources.push({ x: centerX, y: rect.height - 40, weight: 0.1 })
+
+  const colors = ['#ff3b30', '#ffffff', '#ffb59e', '#ff7875', '#ffd591']
+
+  const newParticles: Particle[] = []
+  for (let i = 0; i < PARTICLE_COUNT; i++) {
+    // 按权重随机选择源
+    const rand = Math.random()
+    let cumulative = 0
+    let source = sources[0]
+    for (const s of sources) {
+      cumulative += s.weight
+      if (rand <= cumulative) {
+        source = s
+        break
+      }
+    }
+
+    // 起点加入随机偏移
+    const x = source.x + (Math.random() - 0.5) * 80
+    const y = source.y + (Math.random() - 0.5) * 60
+
+    // 终点：向上方偏移 + 横向随机
+    const tx = x + (Math.random() - 0.5) * 300
+    const ty = y - 200 - Math.random() * 400
+
+    newParticles.push({
+      id: `p-${i}`,
+      x,
+      y,
+      size: 2 + Math.random() * 4,
+      color: colors[Math.floor(Math.random() * colors.length)],
+      tx,
+      ty,
+      delay: Math.random() * 200
+    })
+  }
+
+  particles.value = newParticles
+}
+
+let ackTimer: ReturnType<typeof setTimeout> | null = null
+
+function startDismiss(): void {
+  if (isDismissing.value) return
+  isDismissing.value = true
+
+  // reduced-motion 只做短淡出；否则一次性测量布局生成粒子
+  if (!reducedMotion) generateParticles()
+  ackTimer = setTimeout(
+    () => {
+      ackTimer = null
+      emit('ack')
+    },
+    reducedMotion ? DISMISS_DURATION_REDUCED : DISMISS_DURATION_FULL
+  )
+}
+
+/** 挂载时剩余秒数：非有限值回退 15，负数按 0（立即消散）处理 */
+function initialDelayMs(): number {
+  const raw = props.autoDismiss
+  const seconds = Number.isFinite(raw) ? Math.max(0, raw) : 15
+  return seconds * 1000
+}
 
 onMounted(() => {
   if (props.lockScroll) {
     previousOverflow = document.body.style.overflow
     document.body.style.overflow = 'hidden'
   }
+
   void nextTick(() => {
-    // 有确认按钮时聚焦按钮，否则聚焦对话框本身，避免焦点留在被遮挡的页面上
-    ;(ackRef.value ?? rootRef.value)?.focus({ preventScroll: true })
+    // 聚焦对话框本身，避免焦点留在被遮挡的页面上
+    rootRef.value?.focus({ preventScroll: true })
   })
+
+  // 只读取挂载时的 autoDismiss（剩余秒数）；父组件之后递减该 prop 不会重置计时
+  const delay = initialDelayMs()
+  if (delay === 0) {
+    startDismiss()
+  } else {
+    dismissTimer = setTimeout(() => {
+      dismissTimer = null
+      startDismiss()
+    }, delay)
+  }
 })
 
 onBeforeUnmount(() => {
@@ -103,11 +247,15 @@ onBeforeUnmount(() => {
     document.body.style.overflow = previousOverflow
     previousOverflow = null
   }
+  if (dismissTimer !== null) {
+    clearTimeout(dismissTimer)
+    dismissTimer = null
+  }
+  if (ackTimer !== null) {
+    clearTimeout(ackTimer)
+    ackTimer = null
+  }
 })
-
-function onAck(): void {
-  emit('ack')
-}
 </script>
 
 <template>
@@ -115,7 +263,7 @@ function onAck(): void {
     <div
       ref="rootRef"
       class="z-ban hidden-print"
-      :class="[`z-ban--${variant}`, { 'is-reduced': reducedMotion }]"
+      :class="[`z-ban--${variant}`, { 'is-reduced': reducedMotion, 'is-dismissing': isDismissing }]"
       role="alertdialog"
       aria-modal="true"
       :aria-labelledby="titleId"
@@ -124,7 +272,7 @@ function onAck(): void {
       @contextmenu.prevent
       @keydown.tab.prevent
     >
-      <div class="z-ban__screen">
+      <div ref="screenRef" class="z-ban__screen">
         <div class="z-ban__hazard z-ban__hazard--top" aria-hidden="true" />
         <div class="z-ban__content">
           <p class="z-ban__sys" aria-hidden="true">
@@ -162,10 +310,6 @@ function onAck(): void {
             </div>
             <span class="z-ban__count">{{ countdownLabel }}</span>
           </div>
-
-          <button v-if="showAck" ref="ackRef" type="button" class="z-ban__ack" @click="onAck">
-            {{ ackText }}
-          </button>
         </div>
         <div class="z-ban__hazard z-ban__hazard--bottom" aria-hidden="true" />
       </div>
@@ -173,6 +317,30 @@ function onAck(): void {
       <div class="z-ban__panel z-ban__panel--top" aria-hidden="true" />
       <div class="z-ban__panel z-ban__panel--bottom" aria-hidden="true" />
       <div class="z-ban__seam" aria-hidden="true" />
+
+      <!-- 粒子容器 -->
+      <div
+        v-if="isDismissing && !reducedMotion"
+        ref="particleContainerRef"
+        class="z-ban__particles"
+        aria-hidden="true"
+      >
+        <span
+          v-for="p in particles"
+          :key="p.id"
+          class="z-ban__particle"
+          :style="{
+            left: `${p.x}px`,
+            top: `${p.y}px`,
+            width: `${p.size}px`,
+            height: `${p.size}px`,
+            backgroundColor: p.color,
+            '--tx': `${p.tx}px`,
+            '--ty': `${p.ty}px`,
+            animationDelay: `${p.delay}ms`
+          }"
+        />
+      </div>
     </div>
   </Teleport>
 </template>
@@ -433,38 +601,6 @@ function onAck(): void {
   color: #fff;
   font-variant-numeric: tabular-nums;
 }
-.z-ban__ack {
-  align-self: stretch;
-  min-height: 44px;
-  margin-top: 4px;
-  padding: 10px 20px;
-  font: inherit;
-  font-size: 15px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  color: var(--yg-color-on-danger, #fff);
-  background: var(--yg-red-600, #e53026);
-  border: 1px solid var(--yg-red-400, #ff7875);
-  border-radius: 0;
-  box-shadow: 0 6px 20px rgb(255 59 48 / 0.35);
-  cursor: pointer;
-  transition:
-    transform 160ms ease,
-    opacity 160ms ease;
-}
-
-.z-ban__ack:hover {
-  opacity: 0.92;
-}
-
-.z-ban__ack:active {
-  transform: translateY(1px);
-}
-
-.z-ban__ack:focus-visible {
-  outline: 2px solid #fff;
-  outline-offset: 3px;
-}
 
 /* 两块面板：与 ZLoginReveal 相同的开合结构，深红实色 */
 .z-ban__panel {
@@ -527,6 +663,72 @@ function onAck(): void {
   to { opacity: 1; transform: none; }
 }
 
+/* === 消散动效 === */
+
+/* 消散时的脉冲效果：红色元素亮度闪烁 */
+.z-ban.is-dismissing .z-ban__screen {
+  animation: z-ban-dismiss-pulse 200ms ease-out;
+}
+
+.z-ban.is-dismissing .z-ban__hazard,
+.z-ban.is-dismissing .z-ban__panel {
+  animation: z-ban-dismiss-pulse 200ms ease-out;
+}
+
+/* 整屏淡出（完整动画） */
+.z-ban.is-dismissing:not(.is-reduced) {
+  animation: z-ban-dismiss-fade 200ms ease-out 1000ms forwards;
+}
+
+/* 整屏淡出（reduced-motion） */
+.z-ban.is-dismissing.is-reduced {
+  animation: z-ban-dismiss-fade-fast 300ms ease-out forwards;
+}
+
+@keyframes z-ban-dismiss-pulse {
+  0%, 100% { filter: brightness(1); }
+  50% { filter: brightness(1.4) saturate(1.3); }
+}
+
+@keyframes z-ban-dismiss-fade {
+  to { opacity: 0; }
+}
+
+@keyframes z-ban-dismiss-fade-fast {
+  to { opacity: 0; }
+}
+
+/* 粒子容器 */
+.z-ban__particles {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1;
+}
+
+/* 单个粒子 */
+.z-ban__particle {
+  position: absolute;
+  border-radius: 50%;
+  box-shadow: 0 0 4px currentColor;
+  will-change: transform, opacity;
+  animation: z-ban-particle-drift 1200ms cubic-bezier(0.2, 0.6, 0.3, 1) forwards;
+}
+
+@keyframes z-ban-particle-drift {
+  0% {
+    opacity: 1;
+    transform: translate(0, 0) scale(1);
+  }
+  20% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translate(var(--tx), var(--ty)) scale(0.3);
+  }
+}
+
 @media (max-width: 480px) {
   .z-ban__content {
     padding: 18px 16px;
@@ -541,10 +743,6 @@ function onAck(): void {
   .z-ban__cells {
     gap: 3px;
   }
-
-  .z-ban__ack {
-    min-height: 48px;
-  }
 }
 
 /* 减少动效：不渲染面板与红线，内容直接静态显示 */
@@ -557,8 +755,7 @@ function onAck(): void {
   animation: none;
 }
 
-.z-ban.is-reduced .z-ban__bar-fill,
-.z-ban.is-reduced .z-ban__ack {
+.z-ban.is-reduced .z-ban__bar-fill {
   transition: none;
 }
 
@@ -572,8 +769,7 @@ function onAck(): void {
     animation: none;
   }
 
-  .z-ban__bar-fill,
-  .z-ban__ack {
+  .z-ban__bar-fill {
     transition: none;
   }
 }

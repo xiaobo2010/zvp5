@@ -617,25 +617,40 @@ const accountItems = computed(() => [
 </template>
 
 <style scoped>
-/* 账号按钮：头像圆片。触控尺寸沿用导航项的 44px，圆片本身 28px。 */
+/* 账号按钮：六芒星头像。触控尺寸沿用导航项的 44px，星形本身 30px。
+   星形用 12 点 polygon（外半径 50%、内半径 28.9%），中央区域足以容纳首字；
+   clip-path 会裁掉 outline/box-shadow，所以轮廓用 drop-shadow 沿星形边缘绘制。 */
 .yg-glass-nav__avatar {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
+  width: 30px;
+  height: 30px;
+  border-radius: 0;
   background: var(--yg-color-primary-soft);
   color: var(--yg-color-primary);
   font-size: var(--yg-font-size-sm);
   font-weight: var(--yg-font-weight-semibold);
   line-height: 1;
-  /* 一圈主色细环，让头像在玻璃栏上读得出是个「人」而不是普通图标 */
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--yg-color-primary) 28%, transparent);
+  clip-path: polygon(
+    50% 0%,
+    64.4% 25%,
+    93.3% 25%,
+    78.9% 50%,
+    93.3% 75%,
+    64.4% 75%,
+    50% 100%,
+    35.6% 75%,
+    6.7% 75%,
+    21.1% 50%,
+    6.7% 25%,
+    35.6% 25%
+  );
+  filter: drop-shadow(0 0 0.5px color-mix(in srgb, var(--yg-color-primary) 55%, transparent));
   transition:
     background-color var(--yg-dur-base) var(--yg-ease-out),
     color var(--yg-dur-base) var(--yg-ease-out),
-    box-shadow var(--yg-dur-base) var(--yg-ease-out);
+    filter var(--yg-dur-base) var(--yg-ease-out);
 }
 
 .yg-glass-nav__account:hover .yg-glass-nav__avatar {
@@ -644,10 +659,11 @@ const accountItems = computed(() => [
 }
 
 .yg-glass-nav__account:focus-visible .yg-glass-nav__avatar {
-  /* 焦点环画在头像上：导航项本身带 clip-path 切角，画在按钮上会被切掉 */
-  box-shadow:
-    0 0 0 2px var(--yg-bg-surface),
-    0 0 0 4px var(--yg-focus-ring-color);
+  /* clip-path 下 outline/box-shadow 不可见，用两层同形 drop-shadow 画焦点光晕 */
+  filter:
+    drop-shadow(0 0 1px var(--yg-bg-surface))
+    drop-shadow(0 0 2px var(--yg-focus-ring-color))
+    drop-shadow(0 0 4px var(--yg-focus-ring-color));
 }
 
 /* 菜单内容由本组件编译（插槽归属本组件），scoped 样式照常生效 */

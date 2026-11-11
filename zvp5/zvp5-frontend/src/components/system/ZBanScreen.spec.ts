@@ -72,26 +72,6 @@ describe('ZBanScreen', () => {
     wrapper.unmount()
   })
 
-  it('没有 ackText 时不渲染确认按钮', () => {
-    const wrapper = mountBan()
-    expect(query('.z-ban__ack')).toBeNull()
-    wrapper.unmount()
-  })
-
-  it('点击确认按钮触发 ack', async () => {
-    const wrapper = mountBan({ ackText: '我知道了' })
-
-    const ack = query<HTMLButtonElement>('.z-ban__ack')
-    expect(ack).not.toBeNull()
-    expect(ack?.textContent?.trim()).toBe('我知道了')
-
-    ack?.click()
-    await wrapper.vm.$nextTick()
-    expect(wrapper.emitted('ack')).toHaveLength(1)
-
-    wrapper.unmount()
-  })
-
   it('countdown 为 0 时隐藏倒计时', () => {
     const wrapper = mountBan()
     expect(query('.z-ban__countdown')).toBeNull()
@@ -147,5 +127,164 @@ describe('ZBanScreen', () => {
 
     wrapper.unmount()
     window.matchMedia = originalMatchMedia
+  })
+
+  it('默认 15 秒后自动触发消散并 emit ack', async () => {
+    vi.useFakeTimers()
+    const wrapper = mountBan()
+
+    // 初始状态：未消散
+    expect(query('.z-ban')?.classList.contains('is-dismissing')).toBe(false)
+    expect(wrapper.emitted('ack')).toBeUndefined()
+
+    // 前进到 15 秒：开始消散
+    vi.advanceTimersByTime(15000)
+    await wrapper.vm.$nextTick()
+    expect(query('.z-ban')?.classList.contains('is-dismissing')).toBe(true)
+    expect(wrapper.emitted('ack')).toBeUndefined()
+
+    // 再前进 1200ms（完整动画时长）：emit ack
+    vi.advanceTimersByTime(1200)
+    await wrapper.vm.$nextTick()
+    expect(wrapper.emitted('ack')).toHaveLength(1)
+
+    wrapper.unmount()
+  })
+
+  it('autoDismiss 为 0 时立即进入消散', async () => {
+    vi.useFakeTimers()
+    const wrapper = mountBan({ autoDismiss: 0 })
+
+    // 挂载后立即消散
+    await wrapper.vm.$nextTick()
+    expect(query('.z-ban')?.classList.contains('is-dismissing')).toBe(true)
+
+    // 前进完整动画时长后 emit ack
+    vi.advanceTimersByTime(1200)
+    await wrapper.vm.$nextTick()
+    expect(wrapper.emitted('ack')).toHaveLength(1)
+
+    wrapper.unmount()
+  })
+
+  it('自定义 autoDismiss 按指定时间退场', async () => {
+    vi.useFakeTimers()
+    const wrapper = mountBan({ autoDismiss: 3 })
+
+    // 前进到 3 秒
+    vi.advanceTimersByTime(3000)
+    await wrapper.vm.$nextTick()
+    expect(query('.z-ban')?.classList.contains('is-dismissing')).toBe(true)
+
+    // 再前进 1200ms
+    vi.advanceTimersByTime(1200)
+    await wrapper.vm.$nextTick()
+    expect(wrapper.emitted('ack')).toHaveLength(1)
+
+    wrapper.unmount()
+  })
+
+  it('消散时生成粒子（非 reduced-motion）', async () => {
+    vi.useFakeTimers()
+    const wrapper = mountBan()
+
+    // 触发消散
+    vi.advanceTimersByTime(15000)
+    await wrapper.vm.$nextTick()
+
+    // 粒子容器应该存在
+    const particleContainer = query('.z-ban__particles')
+    expect(particleContainer).not.toBeNull()
+
+    // 粒子应该生成
+    const particles = document.body.querySelectorAll('.z-ban__particle')
+    expect(particles.length).toBeGreaterThan(0)
+
+    wrapper.unmount()
+  })
+
+  it('reduced-motion 消散时不生成粒子且快速淡出', async () => {
+    const originalMatchMedia = window.matchMedia
+    window.matchMedia = vi.fn().mockImplementation((q: string) => ({
+      matches: q === '(prefers-reduced-motion: reduce)',
+      media: q,
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn()
+    }))
+
+    vi.useFakeTimers()
+    const wrapper = mountBan()
+
+    // 触发消散
+    vi.advanceTimersByTime(15000)
+    await wrapper.vm.$nextTick()
+
+    // is-dismissing 和 is-reduced 都应该存在
+    expect(query('.z-ban')?.classList.contains('is-dismissing')).toBe(true)
+    expect(query('.z-ban')?.classList.contains('is-reduced')).toBe(true)
+
+    // 不应该有粒子
+    expect(query('.z-ban__particles')).toBeNull()
+
+    // 300ms 后 emit ack（而非 1200ms）
+    vi.advanceTimersByTime(300)
+    await wrapper.vm.$nextTick()
+    expect(wrapper.emitted('ack')).toHaveLength(1)
+
+    wrapper.unmount()
+    window.matchMedia = originalMatchMedia
+  })
+
+  it('卸载前清理计时器', () => {
+    vi.useFakeTimers()
+    const wrapper = mountBan()
+
+    wrapper.unmount()
+
+    // 卸载后前进时间不应触发任何事件
+    vi.advanceTimersByTime(20000)
+    expect(wrapper.emitted('ack')).toBeUndefined()
+  })
+
+  it('只读挂载时的 autoDismiss，prop 后续变化不重置计时', async () => {
+    vi.useFakeTimers()
+    const wrapper = mountBan({ autoDismiss: 5 })
+
+    // 前进 2 秒后更新 prop
+    vi.advanceTimersByTime(2000)
+    await wrapper.setProps({ autoDismiss: 10 })
+
+    // 再前进 3 秒（挂载后总共 5 秒）：应触发消散
+    vi.advanceTimersByTime(3000)
+    await wrapper.vm.$nextTick()
+    expect(query('.z-ban')?.classList.contains('is-dismissing')).toBe(true)
+
+    wrapper.unmount()
+  })
+
+  it('非有限 autoDismiss 回退到默认 15 秒', async () => {
+    vi.useFakeTimers()
+    const wrapper = mountBan({ autoDismiss: NaN })
+
+    // 前进到 15 秒
+    vi.advanceTimersByTime(15000)
+    await wrapper.vm.$nextTick()
+    expect(query('.z-ban')?.classList.contains('is-dismissing')).toBe(true)
+
+    wrapper.unmount()
+  })
+
+  it('负数 autoDismiss 按 0 处理（立即消散）', async () => {
+    vi.useFakeTimers()
+    const wrapper = mountBan({ autoDismiss: -5 })
+
+    await wrapper.vm.$nextTick()
+    expect(query('.z-ban')?.classList.contains('is-dismissing')).toBe(true)
+
+    wrapper.unmount()
   })
 })

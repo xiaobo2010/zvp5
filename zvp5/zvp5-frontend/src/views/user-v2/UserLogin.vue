@@ -99,14 +99,14 @@ function isUserBanned(error: unknown): boolean {
   )
 }
 
-// 全屏封禁屏:登录页没有 token,不写 store、不自动登出,只显示原因/期限/确认。
+// 全屏封禁屏:登录页没有 token,不写 store、不自动登出,只显示原因/期限；
+// 15 秒后由 ZBanScreen 播放粒子消散并 emit ack，关闭后仍停留在登录页。
 type BanScreenState = {
   visible: boolean
   title: string
   reason: string
   until: string
   appeal: string
-  ackText: string
   variant: 'account' | 'device'
 }
 
@@ -116,7 +116,6 @@ const banScreen = reactive<BanScreenState>({
   reason: '',
   until: '',
   appeal: '',
-  ackText: '',
   variant: 'account'
 })
 
@@ -212,7 +211,6 @@ function notifyUserBanned(error: unknown) {
     reason: reason || t('nav.banned.reasonFallback'),
     until: untilLine,
     appeal: t('nav.banned.appeal'),
-    ackText: t('nav.banned.ack'),
     variant: 'account'
   })
 }
@@ -283,7 +281,6 @@ function notifyDeviceBanned(error: unknown) {
     reason: reason || t('nav.login.device.bannedFallback'),
     until: untilLine,
     appeal: t('nav.banned.appeal'),
-    ackText: t('nav.login.device.bannedAck'),
     variant: 'device'
   })
 }
@@ -659,7 +656,6 @@ watch(user, async () => {
       :reason="banScreen.reason"
       :until="banScreen.until"
       :appeal="banScreen.appeal"
-      :ack-text="banScreen.ackText"
       :variant="banScreen.variant"
       @ack="closeBanScreen"
     />
