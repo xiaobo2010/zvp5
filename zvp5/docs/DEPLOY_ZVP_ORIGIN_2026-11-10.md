@@ -68,8 +68,8 @@ zvp.xiaobopisces.top
 
 | 项 | 值 |
 |---|---|
-| 当前 zvp 解析 | `23.169.184.163`（LA，尚未修改 DNS） |
-| DNS 切换目标 | `43.128.154.199`（Seoul） |
+| 当前 zvp 解析 | `43.128.154.199`（Seoul，DNS 已于 2026-11-10 23:00 切换） |
+| DNS 切换目标 | `43.128.154.199`（Seoul，已生效） |
 | 最终主 bundle | `index-Cv7_FQOa.js` |
 | 主 API 构建基址 | `/api`（同源） |
 | 竞速/备用 API | 通过部署环境变量提供，不作为页面 Origin |
@@ -100,5 +100,14 @@ zvp.xiaobopisces.top
 - Seoul 原 API vhost：部署前同目录下的 `*.bak-origin-split-*` 备份
 - Seoul 上线前 dist：`/www/zvms4/frontend-dist.bak-zvp-origin-20261110`
 
-> **待人工操作**：把 `zvp.xiaobopisces.top` 的 DNS 解析从 `23.169.184.163` 改为 `43.128.154.199`。
-> 修改后等待 TTL 生效，再重新验证首页、`/api/health`、WebSocket/SSE 和 PWA。
+> **DNS 切换已完成（2026-11-10 23:02 CST）**：`zvp.xiaobopisces.top` 的 A 记录由
+> `23.169.184.163`（LA）改为 `43.128.154.199`（Seoul），TTL 300、不走 Cloudflare 代理。
+> 切换前后复验：两台主机首页均为同一份 `index-Cv7_FQOa.js`，`/api/health` 均 200
+> `{"status":"ok"}`；Cloudflare / Google DoH 解析均为 `43.128.154.199`；Seoul nginx
+> access log 已确认公网请求落到该机。`/sw.js` 200 且 MIME 为 `application/javascript`。
+>
+> 遗留小问题（两台主机一致，非本次切换引入）：`/manifest.webmanifest` 的
+> `Content-Type` 是 `application/octet-stream`，PWA 安装可能被浏览器拒收，
+> 需在 nginx 补 `types { application/manifest+json webmanifest; }`。
+>
+> **回滚方式**：把该 A 记录改回 `23.169.184.163` 即可，代码与构建产物无需重发。
