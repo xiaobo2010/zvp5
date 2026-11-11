@@ -7,7 +7,7 @@ import App from './App.vue'
 import router from './router'
 import i18n from './i18n'
 
-import ElementPlus from 'element-plus'
+import { ElLoading } from 'element-plus/es/components/loading/index.mjs'
 // import CKEditor from '@ckeditor/ckeditor5-vue'
 
 import 'element-plus/theme-chalk/index.css'
@@ -52,9 +52,10 @@ app.use(router as unknown as Plugin)
 app.use(i18n as unknown as Plugin)
 // app.use(CKEditor as unknown as Plugin)
 
-app.use(ElementPlus, {
-  size: 'default'
-})
+// Element Plus 组件由 unplugin-vue-components 的 ElementPlusResolver 按需
+// 引入（importStyle: false，全量 chalk CSS 仍在上方引入）；这里只全局注册
+// v-loading 指令——模板里 52 处依赖全局指令，resolver 不覆盖指令。
+app.use(ElLoading)
 
 installTableExpandMotion()
 

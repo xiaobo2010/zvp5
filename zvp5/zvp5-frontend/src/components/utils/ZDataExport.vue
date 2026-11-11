@@ -1,16 +1,14 @@
 <script setup lang="ts">
-import {
-  ElForm,
-  ElFormItem,
-  ElSelect,
-  ElOption,
-  ElDatePicker,
-  ElText,
-  ElProgress,
-  ElInput,
-  ElSwitch,
-  ElMessage
-} from 'element-plus'
+import { ElForm } from 'element-plus/es/components/form/index.mjs'
+import { ElFormItem } from 'element-plus/es/components/form/index.mjs'
+import { ElSelect } from 'element-plus/es/components/select/index.mjs'
+import { ElOption } from 'element-plus/es/components/select/index.mjs'
+import { ElDatePicker } from 'element-plus/es/components/date-picker/index.mjs'
+import { ElText } from 'element-plus/es/components/text/index.mjs'
+import { ElProgress } from 'element-plus/es/components/progress/index.mjs'
+import { ElInput } from 'element-plus/es/components/input/index.mjs'
+import { ElSwitch } from 'element-plus/es/components/switch/index.mjs'
+import { ElMessage } from 'element-plus/es/components/message/index.mjs'
 import api from '@/api'
 import { onUnmounted, ref, toRefs, watch } from 'vue'
 import dayjs, { type Dayjs } from 'dayjs'

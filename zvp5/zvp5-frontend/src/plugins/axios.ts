@@ -1,6 +1,8 @@
 import axios, { AxiosError, getAdapter } from 'axios'
 import type { AxiosAdapter, AxiosResponse, InternalAxiosRequestConfig } from 'axios'
-import { ElMessage } from 'element-plus'
+// 深路径 import：entry 静态链不能触碰 element-plus barrel，否则懒加载路由
+// 独占的 EP 重组件会被整体提升进首屏 chunk。
+import { ElMessage } from 'element-plus/es/components/message/index.mjs'
 import router from '@/router'
 import { useUserStore } from '@/stores/user'
 import { cacheGet, cacheSet } from '@/utils/idbCache'

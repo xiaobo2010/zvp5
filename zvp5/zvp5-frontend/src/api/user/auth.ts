@@ -1,7 +1,7 @@
 import axios from '@/plugins/axios'
 import { baseURL } from '@/plugins/axios'
 import type { Response, LoginResult } from '@/../types'
-import { ElNotification } from 'element-plus'
+import { ElNotification } from 'element-plus/es/components/notification/index.mjs'
 import { translateKey } from '@/utils/errorMessage'
 import { byteArrayToHex } from './utils'
 import { encryptData, importPublicKey } from './crypto'

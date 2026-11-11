@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ElButton, ElEmpty, ElIcon } from 'element-plus'
+import { ElButton } from 'element-plus/es/components/button/index.mjs'
+import { ElEmpty } from 'element-plus/es/components/empty/index.mjs'
+import { ElIcon } from 'element-plus/es/components/icon/index.mjs'
 import { Delete, Edit, FolderChecked, Plus } from '@element-plus/icons-vue'
 import type { AiConversation } from '@/../types/ai'
 import { formatTokens, relativeTimeParts } from './conversationSession'

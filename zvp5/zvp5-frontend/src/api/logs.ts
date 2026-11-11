@@ -1,6 +1,6 @@
 import type { Response } from '../../types'
 import axios from '@/plugins/axios.ts'
-import { ElNotification } from 'element-plus'
+import { ElNotification } from 'element-plus/es/components/notification/index.mjs'
 import { translateKey } from '@/utils/errorMessage'
 import type { Log } from '../../types/log'
 

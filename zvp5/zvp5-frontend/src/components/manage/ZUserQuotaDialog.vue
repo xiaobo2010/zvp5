@@ -14,15 +14,13 @@
  */
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import {
-  ElButton,
-  ElDialog,
-  ElIcon,
-  ElInputNumber,
-  ElMessage,
-  ElMessageBox,
-  ElTag
-} from 'element-plus'
+import { ElButton } from 'element-plus/es/components/button/index.mjs'
+import { ElDialog } from 'element-plus/es/components/dialog/index.mjs'
+import { ElIcon } from 'element-plus/es/components/icon/index.mjs'
+import { ElInputNumber } from 'element-plus/es/components/input-number/index.mjs'
+import { ElMessage } from 'element-plus/es/components/message/index.mjs'
+import { ElMessageBox } from 'element-plus/es/components/message-box/index.mjs'
+import { ElTag } from 'element-plus/es/components/tag/index.mjs'
 import { Refresh } from '@element-plus/icons-vue'
 import {
   aiErrorCodeOf,

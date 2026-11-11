@@ -1,5 +1,5 @@
 import { temporaryToken } from '@/plugins/short-token.ts'
-import { ElMessageBox } from 'element-plus'
+import { ElMessageBox } from 'element-plus/es/components/message-box/index.mjs'
 
 const locales: Record<
   string,

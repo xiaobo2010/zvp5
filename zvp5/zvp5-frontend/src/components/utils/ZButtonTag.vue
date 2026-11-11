@@ -1,6 +1,7 @@
 <script lang="ts" setup>
 import { useI18n } from 'vue-i18n'
-import { ElButton, ElTooltip } from 'element-plus'
+import { ElButton } from 'element-plus/es/components/button/index.mjs'
+import { ElTooltip } from 'element-plus/es/components/tooltip/index.mjs'
 import { computed, toRefs, type Component as VueComponent } from 'vue'
 import { useWindowSize } from '@vueuse/core'
 import { Remove } from '@element-plus/icons-vue'

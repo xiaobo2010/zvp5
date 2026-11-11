@@ -1,17 +1,15 @@
 <script setup lang="ts">
 import { ref, toRefs, reactive, watch, computed } from 'vue'
-import {
-  ElCard,
-  ElRow,
-  ElCol,
-  ElButton,
-  ElDivider,
-  ElSwitch,
-  ElResult,
-  ElTooltip,
-  ElSkeleton,
-  ElDialog
-} from 'element-plus'
+import { ElCard } from 'element-plus/es/components/card/index.mjs'
+import { ElRow } from 'element-plus/es/components/row/index.mjs'
+import { ElCol } from 'element-plus/es/components/col/index.mjs'
+import { ElButton } from 'element-plus/es/components/button/index.mjs'
+import { ElDivider } from 'element-plus/es/components/divider/index.mjs'
+import { ElSwitch } from 'element-plus/es/components/switch/index.mjs'
+import { ElResult } from 'element-plus/es/components/result/index.mjs'
+import { ElTooltip } from 'element-plus/es/components/tooltip/index.mjs'
+import { ElSkeleton } from 'element-plus/es/components/skeleton/index.mjs'
+import { ElDialog } from 'element-plus/es/components/dialog/index.mjs'
 import { useWindowSize } from '@vueuse/core'
 import { useUserStore } from '@/stores/user'
 import { useI18n } from 'vue-i18n'

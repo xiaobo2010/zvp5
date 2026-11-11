@@ -11,7 +11,10 @@ import {
   SwitchButton,
   Lock
 } from '@element-plus/icons-vue'
-import { ElTooltip, ElIcon, ElPopover, ElMessageBox } from 'element-plus'
+import { ElTooltip } from 'element-plus/es/components/tooltip/index.mjs'
+import { ElIcon } from 'element-plus/es/components/icon/index.mjs'
+import { ElPopover } from 'element-plus/es/components/popover/index.mjs'
+import { ElMessageBox } from 'element-plus/es/components/message-box/index.mjs'
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useUserStore } from '@/stores/user'
 import MdiEye from '@/icons/MdiEye.vue'
@@ -350,9 +353,15 @@ onMounted(() => {
    （pointerenter，见模板）立即补一发。用 watch 而非 mounted 一次性快照：
    position 是登录后由 App.vue refreshUser() 异步拉回来的，首帧快照会漏掉
    管理/服务器/AI 项，position 落地后 visibleNavs 重算会再次触发预取；
-   utils/routePrefetch 内部 Set 幂等，重复触发零成本。 */
+   utils/routePrefetch 内部 Set 幂等，重复触发零成本。
+   idle 只预取普通用户高频轻页（首页/活动/我的）——管理/服务器/AI/登记
+   是重 chunk（ManageHome/AIHome/VolunteerRegister 合计 ~400KB），登录后
+   2 秒内全部拉下会与首屏抢带宽；它们的导航项保留 pointerenter 即时预取。 */
 const stopNavPrefetch = watch(
-  () => visibleNavs.value.map((nav) => nav.path),
+  () =>
+    visibleNavs.value
+      .filter((nav) => nav.name === 'home' || nav.name === 'activity' || nav.name === 'profile')
+      .map((nav) => nav.path),
   (paths) => prefetchRoutesWhenIdle(router, paths),
   { immediate: true }
 )

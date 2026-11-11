@@ -1,5 +1,11 @@
 <script setup lang="ts">
-import { ElIcon, ElConfigProvider, ElMessageBox, ElWatermark } from 'element-plus'
+// 深路径 import：entry 静态链一旦触碰 element-plus barrel，全部已用组件
+//（含懒加载路由独占的重组件）都会被提升进首屏 chunk；深路径只拉本组件闭包。
+import { ElIcon } from 'element-plus/es/components/icon/index.mjs'
+import { ElConfigProvider } from 'element-plus/es/components/config-provider/index.mjs'
+import { ElMessageBox } from 'element-plus/es/components/message-box/index.mjs'
+import { ElWatermark } from 'element-plus/es/components/watermark/index.mjs'
+
 import { RouterView } from 'vue-router'
 import { useUserStore } from '@/stores/user'
 import { useRouter, useRoute } from 'vue-router'

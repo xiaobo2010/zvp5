@@ -1,15 +1,13 @@
 <script setup lang="ts">
 import type { ActivityInstance } from '@/../types'
-import {
-  ElDrawer,
-  ElTable,
-  ElTableColumn,
-  ElButton,
-  ElCard,
-  ElInput,
-  ElDivider,
-  ElTooltip
-} from 'element-plus'
+import { ElDrawer } from 'element-plus/es/components/drawer/index.mjs'
+import { ElTable } from 'element-plus/es/components/table/index.mjs'
+import { ElTableColumn } from 'element-plus/es/components/table/index.mjs'
+import { ElButton } from 'element-plus/es/components/button/index.mjs'
+import { ElCard } from 'element-plus/es/components/card/index.mjs'
+import { ElInput } from 'element-plus/es/components/input/index.mjs'
+import { ElDivider } from 'element-plus/es/components/divider/index.mjs'
+import { ElTooltip } from 'element-plus/es/components/tooltip/index.mjs'
 import type { TableInstance } from 'element-plus'
 import { nextTick, onMounted, ref, toRefs, watch, useTemplateRef } from 'vue'
 import { useUserStore } from '@/stores/user'

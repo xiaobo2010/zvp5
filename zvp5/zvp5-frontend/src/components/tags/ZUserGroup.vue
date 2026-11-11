@@ -2,7 +2,7 @@
 import { ref, toRefs } from 'vue'
 import { useGroupsStore } from '@/stores/groups'
 import { ZUserPosition } from '.'
-import { ElButton } from 'element-plus'
+import { ElButton } from 'element-plus/es/components/button/index.mjs'
 import type { Group } from '@/../types'
 import { useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user'

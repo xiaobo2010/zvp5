@@ -1,5 +1,7 @@
 <script setup lang="ts">
-import { ElPageHeader, ElButton, ElSpace } from 'element-plus'
+import { ElPageHeader } from 'element-plus/es/components/page-header/index.mjs'
+import { ElButton } from 'element-plus/es/components/button/index.mjs'
+import { ElSpace } from 'element-plus/es/components/space/index.mjs'
 import { ref, watch } from 'vue'
 import { useRoute, useRouter, RouterView } from 'vue-router'
 import { useI18n } from 'vue-i18n'

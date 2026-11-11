@@ -78,6 +78,32 @@ describe('prefetchRoutesWhenIdle 空闲批量预取', () => {
     expect(factory).toHaveBeenCalledTimes(1)
   })
 
+  it('省流模式（saveData）不后台预取', () => {
+    const idle = vi.fn()
+    vi.stubGlobal('requestIdleCallback', idle)
+    const connection = { saveData: true, effectiveType: '4g' }
+    vi.stubGlobal('navigator', { ...navigator, connection })
+    const { router, factory, root } = makeRouter()
+
+    prefetchRoutesWhenIdle(router, [`${root}/user`])
+    expect(idle).not.toHaveBeenCalled()
+    expect(factory).not.toHaveBeenCalled()
+    vi.unstubAllGlobals()
+  })
+
+  it('2G 弱网不后台预取', () => {
+    const idle = vi.fn()
+    vi.stubGlobal('requestIdleCallback', idle)
+    const connection = { saveData: false, effectiveType: '2g' }
+    vi.stubGlobal('navigator', { ...navigator, connection })
+    const { router, factory, root } = makeRouter()
+
+    prefetchRoutesWhenIdle(router, [`${root}/user`])
+    expect(idle).not.toHaveBeenCalled()
+    expect(factory).not.toHaveBeenCalled()
+    vi.unstubAllGlobals()
+  })
+
   it('无 requestIdleCallback 时退化为 setTimeout', () => {
     vi.stubGlobal('requestIdleCallback', undefined)
     vi.useFakeTimers()

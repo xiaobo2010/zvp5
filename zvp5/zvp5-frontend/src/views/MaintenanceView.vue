@@ -2,7 +2,10 @@
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { ElCard, ElResult, ElButton, ElAlert } from 'element-plus'
+import { ElCard } from 'element-plus/es/components/card/index.mjs'
+import { ElResult } from 'element-plus/es/components/result/index.mjs'
+import { ElButton } from 'element-plus/es/components/button/index.mjs'
+import { ElAlert } from 'element-plus/es/components/alert/index.mjs'
 import dayjs from '@/plugins/dayjs'
 import {
   getMaintenanceStatus,

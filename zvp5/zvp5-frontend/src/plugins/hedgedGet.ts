@@ -103,6 +103,13 @@ function nowMs(): number {
   return typeof performance !== 'undefined' ? performance.now() : Date.now()
 }
 
+/**
+ * 延迟对冲门槛：主路超过该时长仍未完成才启动备路。
+ * 取 200ms：低于它时省掉备路的出网请求，高于它时仍保住对慢主路（拥塞/断流）
+ * 的兜底能力；白名单都是小 JSON GET，200ms 内 2xx 完成的比例很高。
+ */
+export const RELAY_DELAY_MS = 200
+
 function safeOrigin(value: string): string {
   try {
     const base = typeof window === 'undefined' ? 'http://localhost' : window.location.origin
@@ -258,12 +265,18 @@ function classifyBranchError(
 }
 
 /**
- * 两路低层 Axios adapter 同时启动；2xx 响应优先，先完整收到者获胜并中止另一条。
+ * 两路低层 Axios adapter 竞速；2xx 响应优先，先完整收到者获胜并中止另一条。
  * AI 请求会放开 validateStatus，因此非 2xx 也必须等待另一条，不能抢先获胜。
+ *
+ * 备路是「延迟对冲」而非无条件双发：主路先发，relayDelayMs 内主路已完成
+ * （或明确 4xx）就根本不启动备路——白名单接口常态出网请求减半，只有主路
+ * 真的超过门槛（慢/网络故障/5xx）才对冲。主路非 2xx 或网络错误时立即启动
+ * 备路，不等门槛，保住原竞速的兜底语义。
  */
 export function createHedgedGetAdapter(
   primaryAdapter: AxiosAdapter,
-  relayBaseURL: string
+  relayBaseURL: string,
+  relayDelayMs: number = RELAY_DELAY_MS
 ): AxiosAdapter {
   return (config) =>
     new Promise<AxiosResponse>((resolve, reject) => {
@@ -333,6 +346,10 @@ export function createHedgedGetAdapter(
 
       const abortBoth = () => {
         externalAborted = true
+        if (relayTimer !== null) {
+          clearTimeout(relayTimer)
+          relayTimer = null
+        }
         primaryController.abort()
         relayController.abort()
       }
@@ -345,6 +362,10 @@ export function createHedgedGetAdapter(
 
       const cleanup = () => {
         primarySignal?.removeEventListener?.('abort', onExternalAbort)
+        if (relayTimer !== null) {
+          clearTimeout(relayTimer)
+          relayTimer = null
+        }
       }
       const succeed = (
         response: AxiosResponse,
@@ -410,6 +431,9 @@ export function createHedgedGetAdapter(
             succeed(response, 'primary', relayController, relayState)
           } else {
             finishBranch(primaryState, 'http_error', response.status)
+            // 主路非 2xx（5xx/validateStatus 放开的响应）：备路必须接管判定，
+            // 立即启动，不再等延迟门槛。
+            startRelay()
             rejectWhenBothFailed()
           }
         })
@@ -427,32 +451,50 @@ export function createHedgedGetAdapter(
             reject(error)
             return
           }
+          // 主路网络故障是竞速的核心场景：立即启动备路，不等延迟门槛。
+          startRelay()
           rejectWhenBothFailed()
         })
 
-      void Promise.resolve()
-        .then(() => {
-          relayState.startedAt = nowMs()
-          return primaryAdapter(relayConfig)
-        })
-        .then((response) => {
-          relayDone = true
-          relayResponse = response
-          if (response.status >= 200 && response.status < 300) {
-            finishBranch(relayState, 'success', response.status)
-            succeed(response, 'relay', primaryController, primaryState)
-          } else {
-            finishBranch(relayState, 'http_error', response.status)
+      let relayTimer: ReturnType<typeof setTimeout> | null = null
+      let relayStarted = false
+      const startRelay = () => {
+        if (relayStarted || settled) return
+        relayStarted = true
+        if (relayTimer !== null) {
+          clearTimeout(relayTimer)
+          relayTimer = null
+        }
+        void Promise.resolve()
+          .then(() => {
+            relayState.startedAt = nowMs()
+            return primaryAdapter(relayConfig)
+          })
+          .then((response) => {
+            relayDone = true
+            relayResponse = response
+            if (response.status >= 200 && response.status < 300) {
+              finishBranch(relayState, 'success', response.status)
+              succeed(response, 'relay', primaryController, primaryState)
+            } else {
+              finishBranch(relayState, 'http_error', response.status)
+              rejectWhenBothFailed()
+            }
+          })
+          .catch((error: unknown) => {
+            relayDone = true
+            relayError = error
+            const classification = classifyBranchError(error, externalAborted, settled)
+            finishBranch(relayState, classification.outcome, classification.status)
             rejectWhenBothFailed()
-          }
-        })
-        .catch((error: unknown) => {
-          relayDone = true
-          relayError = error
-          const classification = classifyBranchError(error, externalAborted, settled)
-          finishBranch(relayState, classification.outcome, classification.status)
-          rejectWhenBothFailed()
-        })
+          })
+      }
+
+      if (relayDelayMs > 0) {
+        relayTimer = setTimeout(startRelay, relayDelayMs)
+      } else {
+        startRelay()
+      }
     })
 }
 

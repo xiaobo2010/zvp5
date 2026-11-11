@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { ElCollapse, ElCollapseItem } from 'element-plus'
+import { ElCollapse } from 'element-plus/es/components/collapse/index.mjs'
+import { ElCollapseItem } from 'element-plus/es/components/collapse/index.mjs'
 import { useHeaderStore } from '@/stores/header'
 import { useI18n } from 'vue-i18n'
 import api from '@/api'
