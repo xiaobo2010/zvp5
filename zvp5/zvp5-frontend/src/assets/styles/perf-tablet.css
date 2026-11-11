@@ -20,19 +20,16 @@ html[data-scrolling] .yg-phi .el-segmented__item-selected::after {
 }
 
 /* ==========================================================================
-   登录揭示期间（性能 + 防 nav 闪现）
+   登录揭示期间（性能）
    App.vue 在登录成功、揭示覆盖层出现时给 <html> 打 data-login-reveal，
-   done/超时/登出后移除。此时整页被不透明幕布盖住：
-   - 把 .yg-layout 设为 visibility:hidden：首帧就不让 nav/topbar 参与绘制，
-     即使揭示 Teleport 晚一帧也不会闪；布局仍在，导航指示器测量不受影响。
-   - 暂停遮罩下仍在跑的常驻装饰动画；避免两块全屏幕布与首页 3D 网格、
-     扫光、刻度脉冲争 Mali 的合成带宽。一次性入场动画不在此列，让它们在
-     幕布下自然跑完，揭幕时页面已稳定。
+   done/超时/登出后移除。
+   注意：这里不能把 .yg-layout 设为 visibility:hidden。幕布拉开时露出的
+   必须是已经排好版、已经拿完数据的真实首页（对应区域实时可见），
+   而不是先看到空底、等覆盖层卸载后主页再“闪”出来。首帧防闪由 App 在
+   同一 tick 挂载 Teleport 覆盖层保证。
+   只暂停遮罩下仍在跑的常驻装饰动画，避免与幕布争 Mali 的合成带宽；
+   一次性入场动画不在此列，让它们在幕布下自然跑完，揭幕时页面已稳定。
    ========================================================================== */
-html[data-login-reveal] .yg-layout {
-  visibility: hidden;
-}
-
 html[data-login-reveal] .yg-phi::before,
 html[data-login-reveal] .yg-phi-velocity,
 html[data-login-reveal] .yg-phi-judgment,

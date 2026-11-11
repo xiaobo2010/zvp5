@@ -515,6 +515,53 @@ body.yg-phi-portals .el-button.is-link:hover {
   text-underline-offset: 0.24em;
 }
 
+/* 弹层里的带底色语义标签（状态/模式筛选、修改状态弹层）：
+   与 .yg-phi 内保持同一套语义色，避免 is-text 把类型色抹平。 */
+body.yg-phi-portals .el-button--primary.is-text.is-has-bg {
+  color: var(--p-cyan);
+  background: color-mix(in srgb, var(--p-cyan) 14%, transparent);
+}
+
+body.yg-phi-portals .el-button--success.is-text.is-has-bg {
+  color: var(--el-color-success);
+  background: color-mix(in srgb, var(--el-color-success) 14%, transparent);
+}
+
+body.yg-phi-portals .el-button--warning.is-text.is-has-bg {
+  color: var(--el-color-warning);
+  background: color-mix(in srgb, var(--el-color-warning) 14%, transparent);
+}
+
+body.yg-phi-portals .el-button--danger.is-text.is-has-bg {
+  color: var(--p-danger);
+  background: color-mix(in srgb, var(--p-danger) 16%, transparent);
+}
+
+body.yg-phi-portals .el-button--info.is-text.is-has-bg {
+  color: var(--p-muted);
+  background: color-mix(in srgb, var(--p-ink) 8%, transparent);
+}
+
+body.yg-phi-portals .el-button--primary.is-text.is-has-bg:hover {
+  color: var(--p-cyan);
+  background: color-mix(in srgb, var(--p-cyan) 22%, transparent);
+}
+
+body.yg-phi-portals .el-button--success.is-text.is-has-bg:hover {
+  color: var(--el-color-success);
+  background: color-mix(in srgb, var(--el-color-success) 22%, transparent);
+}
+
+body.yg-phi-portals .el-button--warning.is-text.is-has-bg:hover {
+  color: var(--el-color-warning);
+  background: color-mix(in srgb, var(--el-color-warning) 22%, transparent);
+}
+
+body.yg-phi-portals .el-button--danger.is-text.is-has-bg:hover {
+  color: var(--p-danger);
+  background: color-mix(in srgb, var(--p-danger) 24%, transparent);
+}
+
 body.yg-phi-portals .el-button:focus-visible {
   outline: 2px solid var(--p-cyan);
   outline-offset: 2px;
