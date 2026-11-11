@@ -2,24 +2,22 @@
 import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useWindowSize } from '@vueuse/core'
-import {
-  ElButton,
-  ElCard,
-  ElDialog,
-  ElEmpty,
-  ElForm,
-  ElFormItem,
-  ElInput,
-  ElInputNumber,
-  ElMessageBox,
-  ElMessage,
-  ElOption,
-  ElSelect,
-  ElSwitch,
-  ElTable,
-  ElTableColumn,
-  ElTag
-} from 'element-plus'
+import { ElButton } from 'element-plus/es/components/button/index.mjs'
+import { ElCard } from 'element-plus/es/components/card/index.mjs'
+import { ElDialog } from 'element-plus/es/components/dialog/index.mjs'
+import { ElEmpty } from 'element-plus/es/components/empty/index.mjs'
+import { ElForm } from 'element-plus/es/components/form/index.mjs'
+import { ElFormItem } from 'element-plus/es/components/form/index.mjs'
+import { ElInput } from 'element-plus/es/components/input/index.mjs'
+import { ElInputNumber } from 'element-plus/es/components/input-number/index.mjs'
+import { ElMessageBox } from 'element-plus/es/components/message-box/index.mjs'
+import { ElMessage } from 'element-plus/es/components/message/index.mjs'
+import { ElOption } from 'element-plus/es/components/select/index.mjs'
+import { ElSelect } from 'element-plus/es/components/select/index.mjs'
+import { ElSwitch } from 'element-plus/es/components/switch/index.mjs'
+import { ElTable } from 'element-plus/es/components/table/index.mjs'
+import { ElTableColumn } from 'element-plus/es/components/table/index.mjs'
+import { ElTag } from 'element-plus/es/components/tag/index.mjs'
 import type { FormInstance, FormItemRule, FormRules, TableInstance } from 'element-plus'
 import {
   createRule,

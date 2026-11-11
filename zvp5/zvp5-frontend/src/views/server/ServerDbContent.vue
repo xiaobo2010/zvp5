@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ElMessage, ElDialog } from 'element-plus'
+import { ElMessage } from 'element-plus/es/components/message/index.mjs'
+import { ElDialog } from 'element-plus/es/components/dialog/index.mjs'
 import {
   getSchema,
   getColumns,

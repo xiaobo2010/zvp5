@@ -1,7 +1,7 @@
 import api from '@/api'
 import type { User, UserPosition, UserProfile, UserActivityTimeSums } from '@/../types'
 import { defineStore } from 'pinia'
-import { ElNotification } from 'element-plus'
+import { ElNotification } from 'element-plus/es/components/notification/index.mjs'
 import { useRouter } from 'vue-router'
 import { getUserPositions } from '@/utils/groupPosition'
 import { clearCache } from '@/utils/idbCache'

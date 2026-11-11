@@ -1,14 +1,12 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import {
-  ElButton,
-  ElEmpty,
-  ElIcon,
-  ElTable,
-  ElTableColumn,
-  ElTag
-} from 'element-plus'
+import { ElButton } from 'element-plus/es/components/button/index.mjs'
+import { ElEmpty } from 'element-plus/es/components/empty/index.mjs'
+import { ElIcon } from 'element-plus/es/components/icon/index.mjs'
+import { ElTable } from 'element-plus/es/components/table/index.mjs'
+import { ElTableColumn } from 'element-plus/es/components/table/index.mjs'
+import { ElTag } from 'element-plus/es/components/tag/index.mjs'
 import { Refresh } from '@element-plus/icons-vue'
 import { getHealth } from '@/api/ai'
 import type { AiHealthData } from '@/../types/ai'

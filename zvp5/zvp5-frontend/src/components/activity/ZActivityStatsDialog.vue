@@ -1,15 +1,13 @@
 <script lang="ts" setup>
-import {
-  ElButton,
-  ElCol,
-  ElEmpty,
-  ElIcon,
-  ElMessage,
-  ElResult,
-  ElRow,
-  ElStatistic,
-  ElTag
-} from 'element-plus'
+import { ElButton } from 'element-plus/es/components/button/index.mjs'
+import { ElCol } from 'element-plus/es/components/col/index.mjs'
+import { ElEmpty } from 'element-plus/es/components/empty/index.mjs'
+import { ElIcon } from 'element-plus/es/components/icon/index.mjs'
+import { ElMessage } from 'element-plus/es/components/message/index.mjs'
+import { ElResult } from 'element-plus/es/components/result/index.mjs'
+import { ElRow } from 'element-plus/es/components/row/index.mjs'
+import { ElStatistic } from 'element-plus/es/components/statistic/index.mjs'
+import { ElTag } from 'element-plus/es/components/tag/index.mjs'
 import { computed, ref, watch } from 'vue'
 import { useWindowSize } from '@vueuse/core'
 import { ArrowDown, Download, Refresh } from '@element-plus/icons-vue'

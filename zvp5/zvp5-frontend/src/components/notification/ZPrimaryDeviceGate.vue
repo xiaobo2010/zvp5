@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { ElButton, ElDialog, ElMessage } from 'element-plus'
+import { ElButton } from 'element-plus/es/components/button/index.mjs'
+import { ElDialog } from 'element-plus/es/components/dialog/index.mjs'
+import { ElMessage } from 'element-plus/es/components/message/index.mjs'
 import { useI18n } from 'vue-i18n'
 import { useUserStore } from '@/stores/user'
 import { readMyDevice, setMyPrimaryDevice, type MyDeviceStatus } from '@/api/user/device'

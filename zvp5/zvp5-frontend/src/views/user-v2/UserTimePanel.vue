@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref, toRefs, watch } from 'vue'
-import { ElButton, ElDialog, ElIcon } from 'element-plus'
+import { ElButton } from 'element-plus/es/components/button/index.mjs'
+import { ElDialog } from 'element-plus/es/components/dialog/index.mjs'
+import { ElIcon } from 'element-plus/es/components/icon/index.mjs'
 import { DataAnalysis, Refresh } from '@element-plus/icons-vue'
 import { useI18n } from 'vue-i18n'
 import { useUserStore } from '@/stores/user'

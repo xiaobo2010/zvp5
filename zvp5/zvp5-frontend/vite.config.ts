@@ -1,4 +1,7 @@
 import { fileURLToPath, URL } from 'node:url'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
+import { dirname, join as joinPath } from 'node:path'
+import { createRequire } from 'node:module'
 import { defineConfig, loadEnv, type Plugin } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import vueJsx from '@vitejs/plugin-vue-jsx'
@@ -12,12 +15,115 @@ import Icons from 'unplugin-icons/vite'
 import IconsResolver from 'unplugin-icons/resolver'
 import { VitePWA as pwa } from 'vite-plugin-pwa'
 import { ElementPlusResolver } from 'unplugin-vue-components/resolvers'
+import type { ComponentResolver } from 'unplugin-vue-components/types'
 import { externalizeInlineScripts } from './scripts/vite-plugin-externalize-inline-scripts'
 import {
   validateOptionalContentApiBase,
   validateOptionalProductionRaceApiBase,
   validateProductionApiBase
 } from './src/utils/apiBaseConfig'
+
+/**
+ * Element Plus 深路径 resolver（替代官方 ElementPlusResolver）。
+ *
+ * 官方 resolver 生成的是 barrel import（'element-plus/es'）。rolldown 无法
+ * tree-shake EP barrel（组件带 withInstall 顶层副作用），只要任何入口可
+ * 达模块 import barrel，全部 124 个组件都会进首屏 chunk。深路径 import 让
+ * 每个组件模块独立参与 chunk 分配：首屏只含入口链实际用到的组件，其余
+ * 跟随懒加载路由。
+ *
+ * 组件名 → 目录的映射通过扫描 node_modules 里每个组件入口的导出语句构建
+ * （ElButtonGroup→button、ElFormItem→form、ElTableColumn→table 等子组件
+ * 从父组件入口导出，天然映射正确），因此不存在需要退回 barrel 的场景。
+ *
+ * 全量样式仍由 main.ts 引入（importStyle: false 的原因见下方 AutoImport
+ * 配置），深路径不改变样式来源。
+ */
+function deepElementPlusResolver(): ComponentResolver {
+  // 不能用 import.meta.url 相对定位：vite 会把本配置打包进 .vite-temp/
+  // 临时文件，new URL('./node_modules/...') 会指错目录。createRequire 的
+  // Node 模块解析会向上冒泡找到项目自身的 node_modules。
+  const require = createRequire(import.meta.url)
+  const epPkgDir = dirname(require.resolve('element-plus/package.json'))
+  const componentsRoot = joinPath(epPkgDir, 'es', 'components')
+  let componentDirs: Map<string, string> | null = null
+  const dirOf = (name: string) => {
+    if (componentDirs === null) {
+      componentDirs = new Map()
+      for (const dir of readdirSync(componentsRoot)) {
+        const entry = joinPath(componentsRoot, dir, 'index.mjs')
+        if (!existsSync(entry)) continue
+        const source = readFileSync(entry, 'utf8')
+        const exports = source.match(/export\s*\{([^}]*)\}/g)
+        if (!exports) continue
+        for (const chunk of exports.join(' ').match(/\bEl[A-Z][A-Za-z]+\b/g) ?? []) {
+          if (!componentDirs.has(chunk)) componentDirs.set(chunk, dir)
+        }
+      }
+    }
+    return componentDirs.get(name)
+  }
+  return {
+    type: 'component',
+    resolve(name: string) {
+      if (!/^El[A-Z]/.test(name)) return
+      if (/^ElIcon./.test(name)) {
+        return { name: name.replace(/^ElIcon/, ''), from: '@element-plus/icons-vue' }
+      }
+      const dir = dirOf(name)
+      if (!dir) return
+      return { name, from: `element-plus/es/components/${dir}/index.mjs` }
+    },
+    resolveDirective(name: string) {
+      const map: Record<string, string> = {
+        Loading: 'loading',
+        Popover: 'popover',
+        InfiniteScroll: 'infinite-scroll'
+      }
+      const dir = map[name]
+      if (!dir) return
+      return {
+        name: `El${name}Directive`,
+        from: `element-plus/es/components/${dir}/index.mjs`
+      }
+    }
+  }
+}
+
+/**
+ * 一次性诊断：定位所有仍 import element-plus barrel 的源文件。
+ * 打印在 build 日志里，EP 全量入 chunk 时用它找残留引用源。
+ */
+function traceElementPlusBarrel(): Plugin {
+  return {
+    name: 'zvms4-ep-barrel-trace',
+    transform(code, id) {
+      if (id.includes('node_modules')) return
+      if (/['"]element-plus(?:\/es)?['"]/.test(code)) {
+        console.log(`[EP-BARREL] ${id}`)
+      }
+      return null
+    }
+  }
+}
+
+function kebabCase(name: string): string {
+  return name.replace(/([a-z0-9])([A-Z])/g, '$1-$2').toLowerCase()
+}
+
+/**
+ * vitest 跑的是这份 vite 配置，但测试里的 vi.mock('element-plus') 依赖
+ * 「'element-plus' 与 'element-plus/es' 解析到同一物理模块」这一事实来连
+ * 模板组件一起拦截。深路径 resolver 会打破它，因此测试运行时退回官方
+ * barrel resolver；构建产物不受影响（vitest 不出包）。
+ */
+function elementPlusResolverForCurrentRuntime(): ComponentResolver {
+  if (process.env.VITEST || process.env.NODE_ENV === 'test') {
+    return ElementPlusResolver({ importStyle: false }) as unknown as ComponentResolver
+  }
+  return deepElementPlusResolver()
+}
+
 
 function requireProductionApiBase(mode: string): string {
   const fileEnv = loadEnv(mode, process.cwd(), 'VITE_')
@@ -186,7 +292,17 @@ export const viteBaseConfig = {
           '**/ZGroupTimeStatistics-*.css',
           '**/DbPerfTrendChart-*.js',
           '**/ZActivityStatsDialog-*.js',
-          '**/ZActivityStatsDialog-*.css'
+          '**/ZActivityStatsDialog-*.css',
+          // 管理端/AI/登记页等大路由 chunk 同理：运行时在线拉取即可，
+          // 不占 SW 首装预缓存（与 monaco 同一取舍，离线不可用属可接受）。
+          '**/AIHome-*.js',
+          '**/AIHome-*.css',
+          '**/ManageHome-*.js',
+          '**/ManageHome-*.css',
+          '**/VolunteerRegister-*.js',
+          '**/VolunteerRegister-*.css',
+          '**/ZMarkdown-*.js',
+          '**/ZMarkdown-*.css'
         ],
         maximumFileSizeToCacheInBytes: 5 * 1024 * 1024
       },
@@ -234,11 +350,13 @@ export const viteBaseConfig = {
     AutoImport({
       // 全量样式已由 main.ts 引入(element-plus/theme-chalk/index.css + 覆盖层),
       // 关闭按需样式注入,避免同一份 CSS 被重复打包,也让 vitest 不必加载 .css 副作用链。
-      resolvers: [ElementPlusResolver({ importStyle: false }), IconsResolver()]
+      resolvers: [elementPlusResolverForCurrentRuntime(), IconsResolver()]
     }),
     VueComponents({
-      resolvers: [ElementPlusResolver({ importStyle: false }), IconsResolver()]
+      resolvers: [elementPlusResolverForCurrentRuntime(), IconsResolver()]
     }),
+    // 诊断插件放在 unplugin 之后，transform 才能看到注入的 import。
+    traceElementPlusBarrel(),
     preconnectApiOrigin()
   ],
   resolve: {
@@ -251,11 +369,14 @@ export const viteBaseConfig = {
   build: {
     rollupOptions: {
       output: {
-        // 只做粗粒度拆分：element-plus 与 vue 全家各自成 chunk，
-        // 其余交给 rollup 默认的按入口/动态导入切分，避免过度碎片化。
+        // 只做粗粒度拆分：vue 全家桶自成 chunk；其余交给 rollup 默认的
+        // 按入口/动态导入切分，避免过度碎片化。
+        // 注意不要给 element-plus 单独 manualChunks：那会把所有懒加载路由
+        // 用到的 EP 组件（表格/上传/图表等重货）全部并进首屏 preload 的
+        // 共享 chunk。去掉后 EP 组件跟随引用它的路由 chunk 自然分流，
+        // 首屏只带登录页真正需要的少量组件。
         manualChunks(id) {
           if (!id.includes('node_modules')) return
-          if (id.includes('element-plus') || id.includes('@element-plus')) return 'element-plus'
           if (
             /node_modules\/(vue|vue-router|pinia|vue-i18n|@vue\/[^/]+|@vueuse\/[^/]+)\//.test(id)
           ) {

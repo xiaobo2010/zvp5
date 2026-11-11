@@ -1,6 +1,6 @@
 import { temporaryToken } from '@/plugins/short-token'
 import type { User, Response } from '@/../types'
-import { ElNotification } from 'element-plus'
+import { ElNotification } from 'element-plus/es/components/notification/index.mjs'
 import axios from '@/plugins/axios.ts'
 import { translateKey } from '@/utils/errorMessage'
 

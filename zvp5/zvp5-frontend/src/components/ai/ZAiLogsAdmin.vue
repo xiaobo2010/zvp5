@@ -1,19 +1,17 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import {
-  ElButton,
-  ElDatePicker,
-  ElEmpty,
-  ElIcon,
-  ElInput,
-  ElMessage,
-  ElOption,
-  ElSelect,
-  ElTable,
-  ElTableColumn,
-  ElTag
-} from 'element-plus'
+import { ElButton } from 'element-plus/es/components/button/index.mjs'
+import { ElDatePicker } from 'element-plus/es/components/date-picker/index.mjs'
+import { ElEmpty } from 'element-plus/es/components/empty/index.mjs'
+import { ElIcon } from 'element-plus/es/components/icon/index.mjs'
+import { ElInput } from 'element-plus/es/components/input/index.mjs'
+import { ElMessage } from 'element-plus/es/components/message/index.mjs'
+import { ElOption } from 'element-plus/es/components/select/index.mjs'
+import { ElSelect } from 'element-plus/es/components/select/index.mjs'
+import { ElTable } from 'element-plus/es/components/table/index.mjs'
+import { ElTableColumn } from 'element-plus/es/components/table/index.mjs'
+import { ElTag } from 'element-plus/es/components/tag/index.mjs'
 import { CopyDocument, Refresh } from '@element-plus/icons-vue'
 import ZSelectPerson from '@/components/form/ZSelectPerson.vue'
 import ZPagination from '@/components/utils/ZPagination.vue'

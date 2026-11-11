@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { useRouter } from 'vue-router'
-import { ElResult, ElButton, ElCard } from 'element-plus'
+import { ElResult } from 'element-plus/es/components/result/index.mjs'
+import { ElButton } from 'element-plus/es/components/button/index.mjs'
+import { ElCard } from 'element-plus/es/components/card/index.mjs'
 import { useI18n } from 'vue-i18n'
 
 const { t } = useI18n()

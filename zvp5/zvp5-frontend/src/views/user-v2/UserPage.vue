@@ -4,23 +4,21 @@ import { useRoute, useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user.ts'
 import { computed, ref, watch, type Component } from 'vue'
 import { useI18n } from 'vue-i18n'
-import {
-  ElPageHeader,
-  ElSegmented,
-  ElLoading,
-  ElIcon,
-  ElButton,
-  ElTag,
-  ElMessage,
-  ElMessageBox,
-  ElNotification,
-  ElTooltip,
-  ElDialog,
-  ElInput,
-  ElSelect,
-  ElOption,
-  ElAlert
-} from 'element-plus'
+import { ElPageHeader } from 'element-plus/es/components/page-header/index.mjs'
+import { ElSegmented } from 'element-plus/es/components/segmented/index.mjs'
+import { ElLoading } from 'element-plus/es/components/loading/index.mjs'
+import { ElIcon } from 'element-plus/es/components/icon/index.mjs'
+import { ElButton } from 'element-plus/es/components/button/index.mjs'
+import { ElTag } from 'element-plus/es/components/tag/index.mjs'
+import { ElMessage } from 'element-plus/es/components/message/index.mjs'
+import { ElMessageBox } from 'element-plus/es/components/message-box/index.mjs'
+import { ElNotification } from 'element-plus/es/components/notification/index.mjs'
+import { ElTooltip } from 'element-plus/es/components/tooltip/index.mjs'
+import { ElDialog } from 'element-plus/es/components/dialog/index.mjs'
+import { ElInput } from 'element-plus/es/components/input/index.mjs'
+import { ElSelect } from 'element-plus/es/components/select/index.mjs'
+import { ElOption } from 'element-plus/es/components/select/index.mjs'
+import { ElAlert } from 'element-plus/es/components/alert/index.mjs'
 import { ZActivityList } from '@/components'
 import { ArrowLeft, Edit } from '@element-plus/icons-vue'
 import type { User } from '@/../types'

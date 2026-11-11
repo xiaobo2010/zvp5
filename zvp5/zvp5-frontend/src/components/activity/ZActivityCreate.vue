@@ -4,22 +4,20 @@ import type { Activity, ActivityMember } from '@/../types/v2'
 import { reactive, ref, toRefs, watch, computed } from 'vue'
 import dayjs from '@/plugins/dayjs'
 import { useI18n } from 'vue-i18n'
-import {
-  ElButton,
-  ElCol,
-  ElDatePicker,
-  ElForm,
-  ElFormItem,
-  ElInput,
-  ElAlert,
-  ElRadio,
-  ElRadioGroup,
-  ElRow,
-  ElScrollbar,
-  ElSelect,
-  ElCascader,
-  ElMessage
-} from 'element-plus'
+import { ElButton } from 'element-plus/es/components/button/index.mjs'
+import { ElCol } from 'element-plus/es/components/col/index.mjs'
+import { ElDatePicker } from 'element-plus/es/components/date-picker/index.mjs'
+import { ElForm } from 'element-plus/es/components/form/index.mjs'
+import { ElFormItem } from 'element-plus/es/components/form/index.mjs'
+import { ElInput } from 'element-plus/es/components/input/index.mjs'
+import { ElAlert } from 'element-plus/es/components/alert/index.mjs'
+import { ElRadio } from 'element-plus/es/components/radio/index.mjs'
+import { ElRadioGroup } from 'element-plus/es/components/radio/index.mjs'
+import { ElRow } from 'element-plus/es/components/row/index.mjs'
+import { ElScrollbar } from 'element-plus/es/components/scrollbar/index.mjs'
+import { ElSelect } from 'element-plus/es/components/select/index.mjs'
+import { ElCascader } from 'element-plus/es/components/cascader/index.mjs'
+import { ElMessage } from 'element-plus/es/components/message/index.mjs'
 import { useWindowSize } from '@vueuse/core'
 import { ArrowLeft, ArrowRight, Location } from '@element-plus/icons-vue'
 import {

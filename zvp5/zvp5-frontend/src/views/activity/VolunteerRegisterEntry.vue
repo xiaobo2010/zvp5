@@ -2,7 +2,7 @@
 import { onMounted } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { ElIcon } from 'element-plus'
+import { ElIcon } from 'element-plus/es/components/icon/index.mjs'
 import { ArrowLeft, CirclePlusFilled, EditPen, InfoFilled, Plus } from '@element-plus/icons-vue'
 import { useHeaderStore } from '@/stores/header'
 import { ensureRegisterAccess } from './registerAccess'

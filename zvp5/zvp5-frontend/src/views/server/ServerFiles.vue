@@ -1,7 +1,11 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ElMessage, ElMessageBox, ElDropdown, ElDropdownMenu, ElDropdownItem } from 'element-plus'
+import { ElMessage } from 'element-plus/es/components/message/index.mjs'
+import { ElMessageBox } from 'element-plus/es/components/message-box/index.mjs'
+import { ElDropdown } from 'element-plus/es/components/dropdown/index.mjs'
+import { ElDropdownMenu } from 'element-plus/es/components/dropdown/index.mjs'
+import { ElDropdownItem } from 'element-plus/es/components/dropdown/index.mjs'
 import { useMediaQuery } from '@vueuse/core'
 import type { AxiosError } from 'axios'
 import {

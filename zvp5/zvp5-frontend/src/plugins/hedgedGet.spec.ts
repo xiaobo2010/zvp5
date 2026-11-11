@@ -161,7 +161,8 @@ describe('小型 GET 双路竞速', () => {
     const observed = nextRaceObservation()
     const result = await createHedgedGetAdapter(
       adapter,
-      'https://content-la.example.test/api'
+      'https://content-la.example.test/api',
+      0
     )(config())
     const observation = await observed
     expect(result.data).toEqual({ source: 'relay' })
@@ -178,6 +179,61 @@ describe('小型 GET 双路竞速', () => {
     })
   })
 
+  it('主路在门槛内完成时备路不启动（零双发）', async () => {
+    const calls: string[] = []
+    const adapter: AxiosAdapter = async (request) => {
+      const isRelay = request.baseURL === 'https://content-la.example.test/api'
+      calls.push(isRelay ? 'relay' : 'primary')
+      await delay(isRelay ? 1 : 20)
+      return response({ ok: true })
+    }
+
+    const observed = nextRaceObservation()
+    const result = await createHedgedGetAdapter(
+      adapter,
+      'https://content-la.example.test/api',
+      80
+    )(config())
+    const observation = await observed
+    await delay(200)
+    expect(result.data).toEqual({ ok: true })
+    expect(calls).toEqual(['primary'])
+    expect(observation).toMatchObject({
+      winner: 'primary',
+      reason: 'fastest_complete',
+      relay: { outcome: 'superseded' }
+    })
+  })
+
+  it('主路超过门槛后备路对冲接管', async () => {
+    const calls: string[] = []
+    const adapter: AxiosAdapter = async (request) => {
+      const isRelay = request.baseURL === 'https://content-la.example.test/api'
+      calls.push(isRelay ? 'relay' : 'primary')
+      const wait = isRelay ? 5 : 120
+      await delay(wait)
+      if (request.signal?.aborted) {
+        throw new AxiosError('aborted', AxiosError.ERR_CANCELED, request)
+      }
+      return response(isRelay ? { source: 'relay' } : { source: 'primary' })
+    }
+
+    const observed = nextRaceObservation()
+    const result = await createHedgedGetAdapter(
+      adapter,
+      'https://content-la.example.test/api',
+      40
+    )(config())
+    const observation = await observed
+    expect(result.data).toEqual({ source: 'relay' })
+    expect(calls.sort()).toEqual(['primary', 'relay'])
+    expect(observation).toMatchObject({
+      winner: 'relay',
+      reason: 'fastest_complete',
+      relay: { status: 200, outcome: 'success' }
+    })
+  })
+
   it('观测不包含查询串或鉴权凭证', async () => {
     const adapter: AxiosAdapter = async (request) => {
       await delay(request.baseURL === 'https://content-la.example.test/api' ? 1 : 30)
@@ -187,7 +243,8 @@ describe('小型 GET 双路竞速', () => {
     const observed = nextRaceObservation()
     await createHedgedGetAdapter(
       adapter,
-      'https://content-la.example.test/api'
+      'https://content-la.example.test/api',
+      0
     )(
       config({
         url: '/ai/conversations/0123456789abcdef0123456789abcdef?token=secret-query',
@@ -218,7 +275,8 @@ describe('小型 GET 双路竞速', () => {
 
     const result = await createHedgedGetAdapter(
       adapter,
-      'https://content-la.example.test/api'
+      'https://content-la.example.test/api',
+      0
     )(config())
     expect(result.data).toEqual({ ok: true })
     expect(calls.sort()).toEqual(['primary', 'relay'])
@@ -245,7 +303,7 @@ describe('小型 GET 双路竞速', () => {
 
     const observed = nextRaceObservation()
     await expect(
-      createHedgedGetAdapter(adapter, 'https://content-la.example.test/api')(config())
+      createHedgedGetAdapter(adapter, 'https://content-la.example.test/api', 0)(config())
     ).rejects.toBe(primary)
     const observation = await observed
     await delay(80)
@@ -268,7 +326,7 @@ describe('小型 GET 双路竞速', () => {
 
     const observed = nextRaceObservation()
     await expect(
-      createHedgedGetAdapter(adapter, 'https://content-la.example.test/api')(config())
+      createHedgedGetAdapter(adapter, 'https://content-la.example.test/api', 0)(config())
     ).rejects.toBe(primary)
     const observation = await observed
     expect(observation).toMatchObject({
@@ -292,7 +350,8 @@ describe('小型 GET 双路竞速', () => {
     const observed = nextRaceObservation()
     const result = await createHedgedGetAdapter(
       adapter,
-      'https://content-la.example.test/api'
+      'https://content-la.example.test/api',
+      0
     )(raceConfig)
     const observation = await observed
     expect(result.status).toBe(200)
@@ -317,7 +376,8 @@ describe('小型 GET 双路竞速', () => {
     const observed = nextRaceObservation()
     const result = await createHedgedGetAdapter(
       adapter,
-      'https://content-la.example.test/api'
+      'https://content-la.example.test/api',
+      0
     )(raceConfig)
     const observation = await observed
     expect(result.status).toBe(401)
@@ -343,7 +403,8 @@ describe('小型 GET 双路竞速', () => {
     const observed = nextRaceObservation()
     const pending = createHedgedGetAdapter(
       adapter,
-      'https://content-la.example.test/api'
+      'https://content-la.example.test/api',
+      0
     )(config({ signal: controller.signal })).catch((error) => error)
     await delay(5)
     controller.abort()

@@ -9,14 +9,12 @@ import {
 } from '..'
 import { computed, onMounted, ref, toRefs, withDefaults } from 'vue'
 import { useWindowSize } from '@vueuse/core'
-import {
-  ElPageHeader,
-  ElButton,
-  ElButtonGroup,
-  ElDescriptions,
-  ElDescriptionsItem,
-  ElResult
-} from 'element-plus'
+import { ElPageHeader } from 'element-plus/es/components/page-header/index.mjs'
+import { ElButton } from 'element-plus/es/components/button/index.mjs'
+import { ElButtonGroup } from 'element-plus/es/components/button/index.mjs'
+import { ElDescriptions } from 'element-plus/es/components/descriptions/index.mjs'
+import { ElDescriptionsItem } from 'element-plus/es/components/descriptions/index.mjs'
+import { ElResult } from 'element-plus/es/components/result/index.mjs'
 import { ArrowLeft, ArrowRight, Clock, Location, Plus, Timer, Edit } from '@element-plus/icons-vue'
 import { useUserStore } from '@/stores/user'
 import { StreamlineUserEdit } from '@/icons'

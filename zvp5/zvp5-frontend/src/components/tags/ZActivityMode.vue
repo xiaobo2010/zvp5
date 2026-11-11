@@ -6,7 +6,10 @@ import classifications from './classifications'
 import { useI18n } from 'vue-i18n'
 import { onMounted, ref, toRefs, watch } from 'vue'
 import { useUserStore } from '@/stores/user'
-import { ElPopover, ElProgress, ElRow, ElCol } from 'element-plus'
+import { ElPopover } from 'element-plus/es/components/popover/index.mjs'
+import { ElProgress } from 'element-plus/es/components/progress/index.mjs'
+import { ElRow } from 'element-plus/es/components/row/index.mjs'
+import { ElCol } from 'element-plus/es/components/col/index.mjs'
 import api from '@/api'
 
 const { t } = useI18n()

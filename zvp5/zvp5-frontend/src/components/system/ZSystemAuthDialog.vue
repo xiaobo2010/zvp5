@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ElButton, ElDialog, ElInput } from 'element-plus'
+import { ElButton } from 'element-plus/es/components/button/index.mjs'
+import { ElDialog } from 'element-plus/es/components/dialog/index.mjs'
+import { ElInput } from 'element-plus/es/components/input/index.mjs'
 
 const { t } = useI18n()
 

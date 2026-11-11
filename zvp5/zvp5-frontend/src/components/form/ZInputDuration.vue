@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { Timer } from '@element-plus/icons-vue'
 import { toRefs, ref, watch } from 'vue'
-import { ElInput, ElForm, ElFormItem } from 'element-plus'
+import { ElInput } from 'element-plus/es/components/input/index.mjs'
+import { ElForm } from 'element-plus/es/components/form/index.mjs'
+import { ElFormItem } from 'element-plus/es/components/form/index.mjs'
 import { useI18n } from 'vue-i18n'
 import type { InternalRuleItem } from 'async-validator'
 

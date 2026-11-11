@@ -1,16 +1,14 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import {
-  ElAlert,
-  ElButton,
-  ElButtonGroup,
-  ElDialog,
-  ElInput,
-  ElOption,
-  ElRadioButton,
-  ElRadioGroup,
-  ElSelect
-} from 'element-plus'
+import { ElAlert } from 'element-plus/es/components/alert/index.mjs'
+import { ElButton } from 'element-plus/es/components/button/index.mjs'
+import { ElButtonGroup } from 'element-plus/es/components/button/index.mjs'
+import { ElDialog } from 'element-plus/es/components/dialog/index.mjs'
+import { ElInput } from 'element-plus/es/components/input/index.mjs'
+import { ElOption } from 'element-plus/es/components/select/index.mjs'
+import { ElRadioButton } from 'element-plus/es/components/radio/index.mjs'
+import { ElRadioGroup } from 'element-plus/es/components/radio/index.mjs'
+import { ElSelect } from 'element-plus/es/components/select/index.mjs'
 import { useI18n } from 'vue-i18n'
 import { listModels } from '@/api/ai/chat'
 import { streamChatCompletion, type AiStreamError } from '@/api/ai/stream'

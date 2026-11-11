@@ -2,19 +2,17 @@
 import { computed, h, onMounted, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useWindowSize } from '@vueuse/core'
-import {
-  ElButton,
-  ElEmpty,
-  ElIcon,
-  ElInput,
-  ElInputNumber,
-  ElMessage,
-  ElMessageBox,
-  ElOption,
-  ElSelect,
-  ElSwitch,
-  ElTooltip
-} from 'element-plus'
+import { ElButton } from 'element-plus/es/components/button/index.mjs'
+import { ElEmpty } from 'element-plus/es/components/empty/index.mjs'
+import { ElIcon } from 'element-plus/es/components/icon/index.mjs'
+import { ElInput } from 'element-plus/es/components/input/index.mjs'
+import { ElInputNumber } from 'element-plus/es/components/input-number/index.mjs'
+import { ElMessage } from 'element-plus/es/components/message/index.mjs'
+import { ElMessageBox } from 'element-plus/es/components/message-box/index.mjs'
+import { ElOption } from 'element-plus/es/components/select/index.mjs'
+import { ElSelect } from 'element-plus/es/components/select/index.mjs'
+import { ElSwitch } from 'element-plus/es/components/switch/index.mjs'
+import { ElTooltip } from 'element-plus/es/components/tooltip/index.mjs'
 import { Check, Delete, InfoFilled, Lock, Plus, Refresh, RefreshLeft } from '@element-plus/icons-vue'
 import dayjs from '@/plugins/dayjs'
 import {

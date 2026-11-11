@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ElButton, ElIcon, ElTag } from 'element-plus'
+import { ElButton } from 'element-plus/es/components/button/index.mjs'
+import { ElIcon } from 'element-plus/es/components/icon/index.mjs'
+import { ElTag } from 'element-plus/es/components/tag/index.mjs'
 import { CopyDocument } from '@element-plus/icons-vue'
 import {
   buildPreviewView,

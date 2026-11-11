@@ -39,7 +39,15 @@ export function prefetchRoute(router: Router, path: string): void {
   }
 }
 
-export function prefetchRoutesWhenIdle(router: Router, paths: string[], timeoutMs = 2000): void {
+export function prefetchRoutesWhenIdle(router: Router, paths: string[], timeoutMs = 5000): void {
+  // 省流模式（Android Data Saver）或 2G 弱网不后台预取；点击前的
+  // pointerenter 即时预取不受影响，首次导航会现下载，属预期取舍。
+  const connection = (
+    navigator as Navigator & {
+      connection?: { saveData?: boolean; effectiveType?: string }
+    }
+  ).connection
+  if (connection?.saveData || /^2g$/.test(connection?.effectiveType ?? '')) return
   const warm = () => {
     for (const path of paths) prefetchRoute(router, path)
   }

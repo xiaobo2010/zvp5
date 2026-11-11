@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { ref, watch, h, reactive, nextTick } from 'vue'
-import { ElButton, ElInput, ElMessageBox, ElMessage } from 'element-plus'
+import { ElButton } from 'element-plus/es/components/button/index.mjs'
+import { ElInput } from 'element-plus/es/components/input/index.mjs'
+import { ElMessageBox } from 'element-plus/es/components/message-box/index.mjs'
+import { ElMessage } from 'element-plus/es/components/message/index.mjs'
 import { ArrowRight } from '@element-plus/icons-vue'
 import { useUserStore } from '@/stores/user'
 import { useHeaderStore } from '@/stores/header'

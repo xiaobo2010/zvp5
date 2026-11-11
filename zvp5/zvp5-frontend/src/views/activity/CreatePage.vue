@@ -1,6 +1,7 @@
 <script lang="ts" setup>
 import { useRoute } from 'vue-router'
-import { ElResult, ElCard } from 'element-plus'
+import { ElResult } from 'element-plus/es/components/result/index.mjs'
+import { ElCard } from 'element-plus/es/components/card/index.mjs'
 import { ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { CreateActivityType } from '@/../types'

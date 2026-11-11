@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ElIcon } from 'element-plus'
+import { ElIcon } from 'element-plus/es/components/icon/index.mjs'
 import { ref, watch, type Component as VueComponent } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ZActivityList } from '@/components'
