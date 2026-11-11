@@ -19,7 +19,7 @@ body.yg-phi-portals {
   /* 弹层里的默认按钮同样抬高一档填充，并补 1px 内描边，避免与近黑底混在一起。 */
   --p-control-fill: color-mix(in srgb, var(--p-ink) 14%, var(--p-sunken));
   --p-control-line: color-mix(in srgb, var(--p-ink) 18%, transparent);
-  --p-muted: #8e9aa5;
+  --p-muted: #a6b1bb;
   --p-cyan: #49f4e2;
   --p-magenta: #ff4e9b;
   --p-line: rgba(244, 246, 248, 0.16);
@@ -507,10 +507,15 @@ body.yg-phi-portals .el-button--danger {
 
 body.yg-phi-portals .el-button.is-text,
 body.yg-phi-portals .el-button.is-link {
-  color: var(--p-muted);
+  color: color-mix(in srgb, var(--p-ink) 80%, transparent);
   background: transparent;
   clip-path: none;
   box-shadow: none;
+}
+
+body.yg-phi-portals .el-button--danger.is-text,
+body.yg-phi-portals .el-button--danger.is-link {
+  color: var(--p-danger);
 }
 
 body.yg-phi-portals .el-button.is-text:hover,

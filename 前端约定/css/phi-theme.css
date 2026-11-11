@@ -42,7 +42,7 @@
 
   --yg-text-primary: #f4f6f8;
   --yg-text-secondary: #b0b8c1;
-  --yg-text-tertiary: #737d87;
+  --yg-text-tertiary: #8d98a2;
   --yg-text-disabled: #4a5159;
 
   --yg-border-subtle: rgba(244, 246, 248, 0.08);
@@ -861,7 +861,7 @@ html.dark .yg-phi .yg-glass-nav--v2.yg-glass-nav--portrait::after {
   --phi-frame: rgba(244, 246, 248, 0.2);
   --phi-ink: #f4f6f8;
   --phi-ink-2: color-mix(in srgb, #f4f6f8 78%, transparent);
-  --phi-ink-3: #7b8791;
+  --phi-ink-3: #9aa6b0;
   --phi-panel: #0b0e12;
   --phi-panel-hi: #12171b;
   /* 默认按钮在深色面板上不能只剩「黑块」：填充抬一档，再补一圈 1px 内描边。 */
@@ -1331,12 +1331,14 @@ html[data-theme='light'] .yg-phi .yg-btn--primary:hover {
   box-shadow: inset 2px 0 0 var(--el-color-danger);
 }
 
-/* 文字 / 链接按钮：完全透明，只做颜色和下划线反馈 */
+/* 文字 / 链接按钮：完全透明，只做颜色和下划线反馈。
+   深色底上原来的 ink-3 偏暗，14px 按钮字几乎看不出来；文字按钮用比
+   正文次级更亮的 ink-2，和真正不可点的占位/说明文字拉开。 */
 .yg-phi .el-button.is-text,
 .yg-phi .el-button.is-link,
 .yg-phi .yg-btn--text,
 .yg-phi .yg-btn--ghost {
-  color: var(--phi-ink-3);
+  color: var(--phi-ink-2);
   background: transparent;
   clip-path: none;
   box-shadow: none;
