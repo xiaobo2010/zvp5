@@ -98,6 +98,10 @@ body {
 }
 
 .yg-layout--app .yg-layout__content {
+  position: relative;
+  /* 让内容区成为独立层叠上下文：速度线用 z-index:-1 落在内容背景之上、
+     页面卡片之下，同时跟随这个滚动容器一起上下移动。 */
+  isolation: isolate;
   min-height: 0;
   overflow-y: auto;
   background-color: var(--yg-bg-page);

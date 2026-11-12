@@ -607,12 +607,13 @@ onUnmounted(() => {
           @ack="finalizeBan"
         />
         <div :class="['yg-layout', 'yg-layout--app', { 'yg-phi': isPhiRoute }]">
-          <div v-if="isPhiRoute" class="yg-phi-velocity" aria-hidden="true"></div>
-          <div v-if="isPhiRoute" class="yg-phi-velocity" aria-hidden="true"></div>
-          <div v-if="isPhiRoute" class="yg-phi-velocity" aria-hidden="true"></div>
           <UserNav v-if="userStore.isLogin" />
           <div class="yg-layout__main">
             <main :class="['yg-layout__content', { 'is-portrait': verticalMode && userStore.isLogin }]">
+              <!-- 速度线挂在滚动内容里，随页面上下滚动；不再 fixed 浮在视口上。 -->
+              <div v-if="isPhiRoute" class="yg-phi-velocity" aria-hidden="true"></div>
+              <div v-if="isPhiRoute" class="yg-phi-velocity" aria-hidden="true"></div>
+              <div v-if="isPhiRoute" class="yg-phi-velocity" aria-hidden="true"></div>
               <RouterView v-slot="{ Component }">
                 <Transition name="yg-route" mode="out-in">
                   <component :is="Component" :key="viewKey" class="yg-view" />

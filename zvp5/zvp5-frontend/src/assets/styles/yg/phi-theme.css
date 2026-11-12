@@ -123,16 +123,17 @@
   pointer-events: none;
 }
 
-/* 速度线装饰（固定位置，轻微位移） */
+/* 速度线装饰（随滚动内容上下移动，轻微位移）。
+   挂在 .yg-layout__content 内，用负 z-index 垫在卡片背景之后。 */
 .yg-phi-velocity {
-  position: fixed;
+  position: absolute;
   width: 130px;
   height: 1px;
   background: var(--phi-cyan);
   opacity: 0.18;
   transform: rotate(-31deg);
   pointer-events: none;
-  z-index: 1;
+  z-index: -1;
   animation: phi-velocity 4s cubic-bezier(0.19, 1, 0.22, 1) infinite;
 }
 
