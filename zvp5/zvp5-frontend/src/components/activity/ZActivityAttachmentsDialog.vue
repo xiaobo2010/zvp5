@@ -1,5 +1,7 @@
 <script lang="ts" setup>
-import { ElButton, ElResult, ElSwitch } from 'element-plus'
+import { ElButton } from 'element-plus/es/components/button/index.mjs'
+import { ElResult } from 'element-plus/es/components/result/index.mjs'
+import { ElSwitch } from 'element-plus/es/components/switch/index.mjs'
 import { computed, ref, watch } from 'vue'
 import { Refresh, Tickets } from '@element-plus/icons-vue'
 import { useI18n } from 'vue-i18n'

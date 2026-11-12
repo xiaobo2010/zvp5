@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, nextTick, ref } from 'vue'
-import { ElButton, ElButtonGroup, ElInput } from 'element-plus'
+import { ElButton } from 'element-plus/es/components/button/index.mjs'
+import { ElButtonGroup } from 'element-plus/es/components/button/index.mjs'
+import { ElInput } from 'element-plus/es/components/input/index.mjs'
 import {
   TextBold,
   TextItalic,

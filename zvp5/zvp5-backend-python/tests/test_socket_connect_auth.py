@@ -147,14 +147,15 @@ def test_auth_payload_token_accepts_optional_bearer_prefix(client, monkeypatch, 
     assert packet.startswith("44"), packet
 
 
-def test_anonymous_connection_stays_allowed(client, monkeypatch) -> None:
+def test_anonymous_connection_is_rejected(client, monkeypatch) -> None:
+    """无 token 的匿名连接不再放行，也不触发用户查询。"""
     repo = _install_repo(monkeypatch, _FakeUsersRepo({}))
     sid = _handshake(client)
 
     packet = _namespace_connect(client, sid)
 
-    assert packet.startswith("40"), packet
-    assert repo.lookups == [], "no token → no lookup (behaviour unchanged)"
+    assert packet.startswith("44"), packet
+    assert repo.lookups == [], "no token → no lookup"
 
 
 def test_expired_or_forged_token_is_rejected(client, monkeypatch) -> None:

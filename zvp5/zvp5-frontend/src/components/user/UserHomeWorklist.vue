@@ -1,7 +1,13 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ElButton, ElCard, ElEmpty, ElIcon, ElPagination, ElSkeleton, ElTag } from 'element-plus'
+import { ElButton } from 'element-plus/es/components/button/index.mjs'
+import { ElCard } from 'element-plus/es/components/card/index.mjs'
+import { ElEmpty } from 'element-plus/es/components/empty/index.mjs'
+import { ElIcon } from 'element-plus/es/components/icon/index.mjs'
+import { ElPagination } from 'element-plus/es/components/pagination/index.mjs'
+import { ElSkeleton } from 'element-plus/es/components/skeleton/index.mjs'
+import { ElTag } from 'element-plus/es/components/tag/index.mjs'
 import { Refresh, WarningFilled, Clock, CircleCheck, CircleClose } from '@element-plus/icons-vue'
 import dayjs from '@/plugins/dayjs'
 import api from '@/api'
@@ -316,10 +322,64 @@ onMounted(() => {
   gap: var(--yg-space-6, 24px);
 }
 
+/* 与「义工时间」面板同一套外框：不对称切角 + 扫描线底 + 硬阴影包进 clip 多边形，
+   再用 ::before 补切角斜线、左侧强调条与右下角括号。 */
 .home-worklist__card {
-  border-radius: var(--yg-radius-lg, 16px);
-  background: var(--yg-bg-surface-raised, #fff);
-  box-shadow: var(--yg-shadow-sm, 0 2px 8px rgb(15 23 42 / 8%));
+  --hw-cut: 18px;
+  --hw-d: 6px;
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--phi-frame, var(--yg-border-default, #e5e7eb));
+  border-radius: 0;
+  background:
+    linear-gradient(var(--phi-scan, rgba(73, 244, 226, 0.035)) 1px, transparent 1px) 0 0 / 100% 3px,
+    linear-gradient(115deg, var(--phi-panel-hi, #12171b), var(--phi-panel, #0b0e12) 58%);
+  box-shadow: var(--hw-d) var(--hw-d) 0 var(--phi-shadow, rgba(73, 244, 226, 0.16));
+  clip-path: polygon(
+    0 0,
+    calc(100% - var(--hw-cut)) 0,
+    calc(100% + var(--hw-d)) calc(var(--hw-cut) + var(--hw-d)),
+    calc(100% + var(--hw-d)) calc(100% + var(--hw-d)),
+    calc(var(--hw-cut) + var(--hw-d)) calc(100% + var(--hw-d)),
+    0 calc(100% - var(--hw-cut))
+  );
+  animation: home-card-reveal 560ms cubic-bezier(0.16, 1, 0.3, 1) 120ms backwards;
+}
+
+.home-worklist__card::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    linear-gradient(
+        to bottom left,
+        transparent calc(50% - 1px),
+        var(--phi-frame, rgba(244, 246, 248, 0.2)) calc(50% - 1px),
+        var(--phi-frame, rgba(244, 246, 248, 0.2)) calc(50% + 1px),
+        transparent calc(50% + 1px)
+      )
+      100% 0 / var(--hw-cut) var(--hw-cut) no-repeat,
+    linear-gradient(
+        to top right,
+        transparent calc(50% - 1px),
+        var(--phi-frame, rgba(244, 246, 248, 0.2)) calc(50% - 1px),
+        var(--phi-frame, rgba(244, 246, 248, 0.2)) calc(50% + 1px),
+        transparent calc(50% + 1px)
+      )
+      0 100% / var(--hw-cut) var(--hw-cut) no-repeat,
+    linear-gradient(var(--phi-accent, var(--yg-color-primary, #0b9f93)), var(--phi-accent, var(--yg-color-primary, #0b9f93)))
+      0 0 / 3px 46% no-repeat,
+    linear-gradient(var(--phi-accent, var(--yg-color-primary, #0b9f93)), var(--phi-accent, var(--yg-color-primary, #0b9f93)))
+      calc(100% - 10px) calc(100% - 10px) / 18px 2px no-repeat,
+    linear-gradient(var(--phi-accent, var(--yg-color-primary, #0b9f93)), var(--phi-accent, var(--yg-color-primary, #0b9f93)))
+      calc(100% - 10px) calc(100% - 10px) / 2px 18px no-repeat;
+}
+
+@keyframes home-card-reveal {
+  from {
+    clip-path: polygon(0 0, 0 0, 0 0, 0 100%, 0 100%, 0 100%);
+  }
 }
 
 .home-worklist__header,
@@ -354,8 +414,34 @@ onMounted(() => {
   list-style: none;
 }
 
+/* 行数据出现：与表格列表同一套逐行错峰擦入 */
+.home-worklist__items li {
+  animation: phi-home-row-in 360ms cubic-bezier(0.19, 1, 0.22, 1) backwards;
+  animation-delay: var(--home-row-delay, 0ms);
+}
+
+.home-worklist__items li:nth-of-type(2) {
+  --home-row-delay: 30ms;
+}
+
+.home-worklist__items li:nth-of-type(3) {
+  --home-row-delay: 60ms;
+}
+
+.home-worklist__items li:nth-of-type(4) {
+  --home-row-delay: 90ms;
+}
+
+.home-worklist__items li:nth-of-type(5) {
+  --home-row-delay: 120ms;
+}
+
+.home-worklist__items li:nth-of-type(n + 6) {
+  --home-row-delay: 160ms;
+}
+
 .home-worklist__items li + li {
-  border-top: 1px solid var(--yg-border-subtle, #e5e7eb);
+  border-top: 1px solid var(--phi-line, var(--yg-border-subtle, #e5e7eb));
 }
 
 .home-worklist__row {
@@ -363,15 +449,35 @@ onMounted(() => {
   min-height: 52px;
   padding: 10px 4px;
   border: 0;
-  border-radius: var(--yg-radius-sm, 8px);
+  border-radius: 0;
   background: transparent;
   color: inherit;
   text-align: left;
   cursor: pointer;
+  transition:
+    background-color 180ms var(--yg-ease-out, cubic-bezier(0.25, 0.1, 0.25, 1)),
+    box-shadow 180ms var(--yg-ease-out, cubic-bezier(0.25, 0.1, 0.25, 1));
 }
 
+/* 与标准列表行一致：青色淡底 + 左缘强调线 */
 .home-worklist__row:hover {
-  background: var(--yg-bg-hover, #f1f5f9);
+  background: color-mix(
+    in srgb,
+    var(--phi-accent, var(--yg-color-primary, #0b9f93)) 9%,
+    transparent
+  );
+  box-shadow: inset 3px 0 0 var(--phi-accent, var(--yg-color-primary, #0b9f93));
+}
+
+@keyframes phi-home-row-in {
+  from {
+    opacity: 0;
+    clip-path: inset(0 100% 0 0);
+  }
+  to {
+    opacity: 1;
+    clip-path: inset(0 0 0 0);
+  }
 }
 
 .home-worklist__row:focus-visible {
@@ -418,8 +524,32 @@ onMounted(() => {
 }
 
 .home-worklist__pagination {
+  --el-pagination-bg-color: transparent;
+  --el-pagination-button-bg-color: transparent;
+  --el-pagination-hover-color: var(--yg-color-primary, #0b9f93);
   justify-content: center;
   margin-top: var(--yg-space-4, 16px);
+}
+
+/* 无框页码：普通页透明，当前页只留文字强调 + 底部细标记 */
+.home-worklist__pagination.home-worklist__pagination :deep(.btn-prev),
+.home-worklist__pagination.home-worklist__pagination :deep(.btn-next),
+.home-worklist__pagination.home-worklist__pagination :deep(.el-pager li) {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--yg-text-secondary, #475569);
+}
+
+.home-worklist__pagination.home-worklist__pagination :deep(.el-pager li:hover) {
+  color: var(--yg-color-primary, #0b9f93);
+}
+
+.home-worklist__pagination.home-worklist__pagination :deep(.el-pager li.is-active) {
+  color: var(--yg-color-primary, #0b9f93);
+  background: transparent;
+  box-shadow: inset 0 -2px 0 var(--yg-color-primary, #0b9f93);
+  clip-path: none;
 }
 
 @media (max-width: 768px) {
@@ -433,8 +563,13 @@ onMounted(() => {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .home-worklist__card,
+  .home-worklist__items li {
+    animation: none;
+  }
+
   .home-worklist__row {
-    scroll-behavior: auto;
+    transition: none;
   }
 }
 </style>

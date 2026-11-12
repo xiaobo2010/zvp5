@@ -7,9 +7,14 @@ import {
   Management,
   Monitor,
   ChatLineRound,
-  EditPen
+  EditPen,
+  SwitchButton,
+  Lock
 } from '@element-plus/icons-vue'
-import { ElTooltip, ElIcon } from 'element-plus'
+import { ElTooltip } from 'element-plus/es/components/tooltip/index.mjs'
+import { ElIcon } from 'element-plus/es/components/icon/index.mjs'
+import { ElPopover } from 'element-plus/es/components/popover/index.mjs'
+import { ElMessageBox } from 'element-plus/es/components/message-box/index.mjs'
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useUserStore } from '@/stores/user'
 import MdiEye from '@/icons/MdiEye.vue'
@@ -18,12 +23,15 @@ import { useRouter, useRoute } from 'vue-router'
 import { useDark, useWindowSize } from '@vueuse/core'
 import { useI18n } from 'vue-i18n'
 import { pad, getTabletType } from '@/plugins/ua'
+import { prefetchRoute, prefetchRoutesWhenIdle } from '@/utils/routePrefetch'
+// 直接引模块而非 @/views barrel：barrel 会把整包用户视图拖进导航 chunk。
+import { modifyPasswordDialogs } from '@/views/user/modifyPasswordDialogs'
 
 const user = useUserStore()
 const router = useRouter()
 const route = useRoute()
 const dark = useDark()
-const { t } = useI18n({
+const { t, locale } = useI18n({
   useScope: 'global'
 })
 
@@ -201,8 +209,27 @@ function playIndicator(target: { x: number; y: number }) {
   if (Math.abs(from.x - target.x) < 0.5 && Math.abs(from.y - target.y) < 0.5) return
 
   stopIndicatorAnimation()
+  /* 先以左端为锚点收缩，再弹到目标项；目标项同时由 CSS 向外突出并带阴影。 */
+  const midX = from.x + (target.x - from.x) * 0.34
+  const midY = from.y + (target.y - from.y) * 0.34
   const animation = pill.animate(
-    [{ transform: translate(from.x, from.y) }, { transform: translate(target.x, target.y) }],
+    [
+      {
+        transform: `${translate(from.x, from.y)} scaleX(1)`,
+        transformOrigin: '0 50%',
+        offset: 0
+      },
+      {
+        transform: `${translate(midX, midY)} scaleX(0.58)`,
+        transformOrigin: '0 50%',
+        offset: 0.3
+      },
+      {
+        transform: `${translate(target.x, target.y)} scaleX(1)`,
+        transformOrigin: '0 50%',
+        offset: 1
+      }
+    ],
     {
       duration: tokenMs('--yg-dur-page', 450),
       easing: tokenEasing('--yg-ease-spring', 'cubic-bezier(0.34, 1.56, 0.64, 1)'),
@@ -322,6 +349,23 @@ onMounted(() => {
     })
 })
 
+/* 平板导航体验：可见导航项的路由 chunk 在空闲时预取，悬停/触摸按下时
+   （pointerenter，见模板）立即补一发。用 watch 而非 mounted 一次性快照：
+   position 是登录后由 App.vue refreshUser() 异步拉回来的，首帧快照会漏掉
+   管理/服务器/AI 项，position 落地后 visibleNavs 重算会再次触发预取；
+   utils/routePrefetch 内部 Set 幂等，重复触发零成本。
+   idle 只预取普通用户高频轻页（首页/活动/我的）——管理/服务器/AI/登记
+   是重 chunk（ManageHome/AIHome/VolunteerRegister 合计 ~400KB），登录后
+   2 秒内全部拉下会与首屏抢带宽；它们的导航项保留 pointerenter 即时预取。 */
+const stopNavPrefetch = watch(
+  () =>
+    visibleNavs.value
+      .filter((nav) => nav.name === 'home' || nav.name === 'activity' || nav.name === 'profile')
+      .map((nav) => nav.path),
+  (paths) => prefetchRoutesWhenIdle(router, paths),
+  { immediate: true }
+)
+
 onUnmounted(() => {
   disposed = true
   rafHandles.forEach((handle) => cancelAnimationFrame(handle))
@@ -333,6 +377,9 @@ onUnmounted(() => {
   stopIndicatorAnimation()
   window.clearTimeout(spinTimer)
   spinTimer = 0
+  window.clearTimeout(protrudeTimer)
+  protrudeTimer = 0
+  stopNavPrefetch()
 })
 
 const navSignature = computed(() =>
@@ -400,11 +447,83 @@ function toggleDark() {
 }
 
 const showThemeToggle = !pad() || getTabletType() === 'p615' || getTabletType() === 'p620'
+
+/* 点击态：目标项向外突出；指示器同时向左收缩再展开。 */
+const protrudingPath = ref('')
+let protrudeTimer = 0
+
+function handleNavClick(path: string) {
+  protrudingPath.value = path
+  window.clearTimeout(protrudeTimer)
+  protrudeTimer = window.setTimeout(() => {
+    protrudingPath.value = ''
+    protrudeTimer = 0
+  }, 520)
+  routeTo(path)
+}
+
+/* ---- 账号菜单：旧顶栏被移除后，账号入口迁到导航末尾 ---- */
+/* 竖屏是底部药丸，菜单向上弹；横屏是左侧玻璃栏，菜单向右弹。 */
+const accountMenuOpen = ref(false)
+/* 固定引用：内联字面量会让每次 patch 都触发 popper 重新定位。 */
+const accountPopperOptions = {
+  modifiers: [{ name: 'offset', options: { offset: [0, 8] } }]
+}
+const accountPlacement = computed(() => (verticalMode.value ? 'top-end' : 'right-end'))
+
+/* 头像里只放名字首字：横屏导航栏宽 4rem，竖屏药丸也要留给功能项，
+   完整用户名放不进 44px 的触控目标里。 */
+const avatarLabel = computed(() => user.name?.trim().charAt(0) || '?')
+
+async function changePassword() {
+  accountMenuOpen.value = false
+  try {
+    await modifyPasswordDialogs(String(user.id), locale.value, user.resetPassword)
+  } catch {
+    /* 用户取消改密或短令牌获取失败：菜单已关闭，不把取消当成异常 */
+  }
+}
+
+async function logout() {
+  accountMenuOpen.value = false
+  try {
+    await ElMessageBox.confirm(
+      t('nav.logoutConfirm', '退出登录后需要重新验证身份，确定要退出吗？'),
+      t('nav.logout', '退出登录'),
+      {
+        confirmButtonText: t('nav.logout', '退出登录'),
+        cancelButtonText: t('action.cancel', '取消'),
+        type: 'warning',
+        confirmButtonClass: 'el-button--danger',
+        closeOnClickModal: false
+      }
+    )
+    await user.removeUser()
+    await router.replace('/user/login')
+  } catch {
+    /* 用户取消 */
+  }
+}
+
+const accountItems = computed(() => [
+  {
+    key: 'reset',
+    icon: Lock,
+    label: t('nav.reset', '密码修改'),
+    action: changePassword
+  },
+  {
+    key: 'logout',
+    icon: SwitchButton,
+    label: t('nav.logout', '退出登录'),
+    action: logout
+  }
+])
 </script>
 
 <template>
   <nav
-    :class="['yg-glass-nav', verticalMode ? 'yg-glass-nav--portrait' : 'yg-glass-nav--landscape']"
+    :class="['yg-glass-nav', 'yg-glass-nav--v2', verticalMode ? 'yg-glass-nav--portrait' : 'yg-glass-nav--landscape']"
     aria-label="主导航"
   >
     <div ref="itemsRef" class="yg-glass-nav__items">
@@ -425,9 +544,13 @@ const showThemeToggle = !pad() || getTabletType() === 'p615' || getTabletType() 
           <button
             type="button"
             class="yg-glass-nav__item"
-            :class="{ 'is-active': nav.judge(highlightPath) }"
+            :class="{
+              'is-active': nav.judge(highlightPath),
+              'is-protruding': protrudingPath === nav.path
+            }"
             :aria-label="t(`nav.${nav.name}`)"
-            @click="routeTo(nav.path)"
+            @click="handleNavClick(nav.path)"
+            @pointerenter="prefetchRoute(router, nav.path)"
           >
             <ElIcon><component :is="nav.icon" /></ElIcon>
           </button>
@@ -436,9 +559,13 @@ const showThemeToggle = !pad() || getTabletType() === 'p615' || getTabletType() 
           v-else
           type="button"
           class="yg-glass-nav__item"
-          :class="{ 'is-active': nav.judge(highlightPath) }"
+          :class="{
+            'is-active': nav.judge(highlightPath),
+            'is-protruding': protrudingPath === nav.path
+          }"
           :aria-label="t(`nav.${nav.name}`)"
-          @click="routeTo(nav.path)"
+          @click="handleNavClick(nav.path)"
+          @pointerenter="prefetchRoute(router, nav.path)"
         >
           <ElIcon><component :is="nav.icon" /></ElIcon>
         </button>
@@ -460,11 +587,235 @@ const showThemeToggle = !pad() || getTabletType() === 'p615' || getTabletType() 
           <ElIcon><component :is="dark ? Moon : Sunny" /></ElIcon>
         </span>
       </button>
+      <span class="yg-glass-nav__divider" aria-hidden="true" />
+      <ElPopover
+        v-model:visible="accountMenuOpen"
+        :placement="accountPlacement"
+        trigger="click"
+        width="200px"
+        :popper-options="accountPopperOptions"
+        popper-class="yg-glass-account-menu"
+      >
+        <template #reference>
+          <button
+            type="button"
+            class="yg-glass-nav__item yg-glass-nav__account"
+            aria-haspopup="menu"
+            :aria-expanded="accountMenuOpen ? 'true' : 'false'"
+            :aria-label="t('nav.accountMenu', '账号菜单')"
+          >
+            <!-- 账号徽记：整块 aria-hidden，可读名称在按钮 aria-label 上。
+                 30px 内只画三层：切角外框、内圈、右下角品红刻度；首字留在中心。
+                 gradient id 固定且本组件只渲染一次，避免同页 id 冲突。 -->
+            <span class="yg-glass-nav__avatar" aria-hidden="true">
+              <svg class="yg-glass-nav__avatar-mark" viewBox="0 0 32 32" focusable="false">
+                <defs>
+                  <linearGradient id="yg-nav-avatar-plate" x1="4" y1="2" x2="28" y2="30" gradientUnits="userSpaceOnUse">
+                    <stop class="yg-glass-nav__avatar-plate-hi" offset="0" />
+                    <stop class="yg-glass-nav__avatar-plate-lo" offset="1" />
+                  </linearGradient>
+                </defs>
+                <polygon
+                  class="yg-glass-nav__avatar-frame"
+                  points="16,1.5 27.2,8 27.2,24 16,30.5 4.8,24 4.8,8"
+                />
+                <polygon
+                  class="yg-glass-nav__avatar-plate"
+                  points="16,4.2 24.6,9.2 24.6,22.8 16,27.8 7.4,22.8 7.4,9.2"
+                  fill="url(#yg-nav-avatar-plate)"
+                />
+                <path class="yg-glass-nav__avatar-tick" d="M24.6 22.2h3.4v1.15h-2.25V26" />
+              </svg>
+              <span class="yg-glass-nav__avatar-initial">{{ avatarLabel }}</span>
+            </span>
+          </button>
+        </template>
+        <div class="yg-glass-account-menu__list" role="menu">
+          <button
+            v-for="item in accountItems"
+            :key="item.key"
+            type="button"
+            role="menuitem"
+            :class="['yg-glass-account-menu__item', `yg-glass-account-menu__item--${item.key}`]"
+            @click="item.action"
+          >
+            <ElIcon><component :is="item.icon" /></ElIcon>
+            <span>{{ item.label }}</span>
+          </button>
+        </div>
+      </ElPopover>
     </div>
   </nav>
 </template>
 
 <style scoped>
+/* 账号徽记：30px 尖顶六边形 HUD。触控尺寸仍是导航项 44px，图标本体不超过 32px。
+   外框描边画在 SVG 里，落影用 drop-shadow，避免再上 clip-path 把焦点裁掉。
+   渐变端点用 stop class 上色，才能跟着 --yg-color-primary 走深浅色。 */
+.yg-glass-nav__avatar {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  color: var(--yg-color-primary);
+  filter:
+    drop-shadow(1px 2px 0 color-mix(in srgb, var(--yg-color-primary) 36%, transparent))
+    drop-shadow(0 3px 5px rgba(5, 6, 8, 0.32));
+  transition: filter var(--yg-dur-base) var(--yg-ease-out);
+}
+
+.yg-glass-nav__avatar-mark {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.yg-glass-nav__avatar-frame {
+  fill: color-mix(in srgb, var(--yg-color-primary) 14%, var(--yg-bg-surface));
+  stroke: var(--yg-color-primary);
+  stroke-width: 1.15;
+  stroke-linejoin: miter;
+}
+
+.yg-glass-nav__avatar-plate-hi {
+  stop-color: color-mix(in srgb, var(--yg-color-primary) 34%, var(--yg-bg-surface));
+}
+
+.yg-glass-nav__avatar-plate-lo {
+  stop-color: color-mix(in srgb, var(--yg-color-primary) 8%, var(--yg-bg-surface));
+}
+
+.yg-glass-nav__avatar-tick {
+  fill: none;
+  stroke: #ff4e9b;
+  stroke-width: 1.15;
+  stroke-linecap: square;
+  stroke-linejoin: miter;
+}
+
+.yg-glass-nav__avatar-initial {
+  position: relative;
+  z-index: 1;
+  color: var(--yg-color-primary);
+  font-size: 13px;
+  font-weight: var(--yg-font-weight-semibold);
+  line-height: 1;
+  letter-spacing: 0;
+}
+
+.yg-glass-nav__account:hover .yg-glass-nav__avatar-frame {
+  fill: var(--yg-color-primary);
+}
+
+.yg-glass-nav__account:hover .yg-glass-nav__avatar-plate-hi,
+.yg-glass-nav__account:hover .yg-glass-nav__avatar-plate-lo {
+  stop-color: color-mix(in srgb, var(--yg-color-primary) 78%, #050608);
+}
+
+.yg-glass-nav__account:hover .yg-glass-nav__avatar-initial {
+  color: var(--yg-bg-surface);
+}
+
+.yg-glass-nav__account:hover .yg-glass-nav__avatar {
+  filter:
+    drop-shadow(1px 2px 0 color-mix(in srgb, var(--yg-color-primary) 48%, transparent))
+    drop-shadow(0 4px 7px rgba(5, 6, 8, 0.36));
+}
+
+.yg-glass-nav__account:focus-visible .yg-glass-nav__avatar {
+  filter:
+    drop-shadow(1px 2px 0 color-mix(in srgb, var(--yg-color-primary) 36%, transparent))
+    drop-shadow(0 3px 5px rgba(5, 6, 8, 0.32))
+    drop-shadow(0 0 1px var(--yg-bg-surface))
+    drop-shadow(0 0 2px var(--yg-focus-ring-color))
+    drop-shadow(0 0 4px var(--yg-focus-ring-color));
+}
+
+/* Phi 浅色纸面：品红刻度加深，避免白底上发飘 */
+html[data-theme='light'] .yg-glass-nav__avatar-tick {
+  stroke: #c2186a;
+}
+
+/* 菜单内容由本组件编译（插槽归属本组件），scoped 样式照常生效 */
+.yg-glass-account-menu__list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 180px;
+}
+
+.yg-glass-account-menu__item {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  height: 44px;
+  padding: 0 12px;
+  border: none;
+  border-radius: var(--yg-radius-sm);
+  background: transparent;
+  color: var(--yg-text-primary);
+  font-size: var(--yg-font-size-sm);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background-color var(--yg-dur-fast) var(--yg-ease-out),
+    color var(--yg-dur-fast) var(--yg-ease-out);
+}
+
+.yg-glass-account-menu__item:hover,
+.yg-glass-account-menu__item:focus-visible {
+  background: var(--yg-bg-hover);
+  color: var(--yg-text-primary);
+  outline: none;
+}
+
+/* 退出登录属高危项，走危险色 */
+.yg-glass-account-menu__item--logout,
+.yg-glass-account-menu__item--logout:hover {
+  color: var(--yg-text-danger);
+}
+
+.yg-glass-account-menu__item--logout:hover {
+  background: var(--yg-color-danger-soft);
+}
+
+/* 弹层挂在 body 下，scoped 选择器到不了，这里用 :global 显式声明。
+   底色用 --yg-bg-surface-raised 且保持不透明（准则第 6 章：弹出层面板必须不透明，
+   否则叠在浅色页面上白字白底、深色页面上黑字黑底都读不出来）；
+   玻璃感交给描边、高光与投影去承担。 */
+:global(.el-popper.is-light.yg-glass-account-menu) {
+  padding: 6px;
+  border: 1px solid var(--yg-border-default);
+  border-radius: var(--yg-radius-md);
+  background: var(--yg-bg-surface-raised);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.7),
+    0 12px 32px rgba(28, 28, 30, 0.16),
+    0 2px 8px rgba(28, 28, 30, 0.08);
+  color: var(--yg-text-primary);
+}
+
+:global(html.dark .el-popper.is-light.yg-glass-account-menu) {
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.12),
+    0 16px 40px rgba(0, 0, 0, 0.5);
+}
+
+/* element-plus 的 popover 内容自带 12px 内边距，这里交给菜单自己控制 */
+:global(.yg-glass-account-menu .el-popover) {
+  padding: 0;
+}
+
+/* 极简风去掉指向箭头，弹层直接贴着按钮边缘 */
+:global(.yg-glass-account-menu .el-popper__arrow) {
+  display: none;
+}
+
 @media print {
   .yg-glass-nav {
     display: none;

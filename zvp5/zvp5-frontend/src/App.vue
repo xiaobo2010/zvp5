@@ -1,18 +1,15 @@
 <script setup lang="ts">
-import { ArrowDown, User, SwitchButton, CircleCloseFilled } from '@element-plus/icons-vue'
-import {
-  ElIcon,
-  ElButton,
-  ElPopover,
-  ElConfigProvider,
-  ElMessageBox,
-  ElWatermark
-} from 'element-plus'
+// 深路径 import：entry 静态链一旦触碰 element-plus barrel，全部已用组件
+//（含懒加载路由独占的重组件）都会被提升进首屏 chunk；深路径只拉本组件闭包。
+import { ElIcon } from 'element-plus/es/components/icon/index.mjs'
+import { ElConfigProvider } from 'element-plus/es/components/config-provider/index.mjs'
+import { ElMessageBox } from 'element-plus/es/components/message-box/index.mjs'
+import { ElWatermark } from 'element-plus/es/components/watermark/index.mjs'
+
 import { RouterView } from 'vue-router'
 import { useUserStore } from '@/stores/user'
 import { useRouter, useRoute } from 'vue-router'
-import Password from '@/icons/MaterialSymbolsPasswordRounded.vue'
-import UserNav from '@/views/user/UserNav.vue'
+import UserNav from '@/views/user-v2/UserNav.vue'
 import { useHeaderStore } from './stores/header'
 import { useWindowSize, useDark, useOnline, usePreferredDark } from '@vueuse/core'
 import { useI18n } from 'vue-i18n'
@@ -21,6 +18,8 @@ import type { WatermarkFontType } from 'element-plus'
 import { zhCn } from 'element-plus/es/locale/index.mjs'
 import ZNotificationReminder from '@/components/notification/ZNotificationReminder.vue'
 import ZPrimaryDeviceGate from '@/components/notification/ZPrimaryDeviceGate.vue'
+import ZLoginReveal from '@/components/system/ZLoginReveal.vue'
+import ZBanScreen from '@/components/system/ZBanScreen.vue'
 import { useRegisterSW } from 'virtual:pwa-register/vue'
 import { CarbonCloudOffline } from '@/icons'
 // 直接从定义模块引入：绕过 @/views barrel，避免主 chunk 打包全部路由视图
@@ -31,6 +30,11 @@ import {
   setPlatformGuardAccount,
   clearPlatformGuardData
 } from '@/utils/platformGuard'
+import { startPhiEdgePhase, stopPhiEdgePhase } from '@/utils/phiEdgePhase'
+import { loginRoleKey } from '@/utils/loginRole'
+import { installScrollActivityFlag, uninstallScrollActivityFlag } from '@/utils/scrollActivity'
+import { warmupFontsWhenIdle } from '@/utils/routePrefetch'
+import { prefetchLoginHome, resetLoginHomePrefetch } from '@/utils/homePrefetch'
 import dayjs from '@/plugins/dayjs'
 
 const { needRefresh, offlineReady, updateServiceWorker } = useRegisterSW()
@@ -197,6 +201,101 @@ watch(
   }
 )
 
+// 登录揭示：登录成功瞬间就挂一层不透明覆盖，先挡住 nav/topbar；
+// 等路由真正离开登录页后再启动 2.8s 时间线。这样慢接口只表现为“幕布等待”，
+// 不会先闪一下导航。等待超过 6s 兜底撤掉，避免卡死。
+const loginRevealPending = ref(false)
+const loginRevealVisible = ref(false)
+const loginRevealStarted = ref(false)
+const loginRevealRun = ref(0)
+const loginRevealName = ref('')
+const loginRevealRole = ref('')
+let loginCoverTimer: number | undefined
+
+function clearLoginCoverTimer() {
+  if (loginCoverTimer !== undefined) {
+    window.clearTimeout(loginCoverTimer)
+    loginCoverTimer = undefined
+  }
+}
+
+function finishLoginReveal() {
+  clearLoginCoverTimer()
+  loginRevealPending.value = false
+  loginRevealVisible.value = false
+  loginRevealStarted.value = false
+  delete document.documentElement.dataset.loginReveal
+}
+
+function beginLoginCover() {
+  if (loginRevealVisible.value) {
+    return
+  }
+  loginRevealName.value = userStore.name
+  loginRevealRole.value = t(`home.positions.${loginRoleKey(userStore.position)}`)
+  loginRevealRun.value += 1
+  loginRevealStarted.value = false
+  loginRevealVisible.value = true
+  document.documentElement.dataset.loginReveal = '1'
+  // 首页首屏依赖立即发；不要把时长/群组/字体排到 idle，揭示一结束就要能看见。
+  prefetchLoginHome(router)
+  clearLoginCoverTimer()
+  loginCoverTimer = window.setTimeout(() => {
+    if (!loginRevealStarted.value) {
+      finishLoginReveal()
+    }
+  }, 6000)
+}
+
+function startLoginReveal() {
+  if (!loginRevealVisible.value) {
+    return
+  }
+  clearLoginCoverTimer()
+  loginRevealStarted.value = true
+}
+
+watch(
+  () => userStore.isLogin,
+  (logged) => {
+    if (!logged) {
+      resetLoginHomePrefetch()
+      finishLoginReveal()
+      return
+    }
+    loginRevealPending.value = true
+    beginLoginCover()
+    // 极端时序下路由 watch 可能先于登录 watch 触发（同一 tick 的 replace）。
+    if (!route.path.endsWith('login') && !route.path.endsWith('maintenance')) {
+      startLoginReveal()
+    }
+  }
+)
+
+watch(
+  () => route.path,
+  () => {
+    if (!userStore.isLogin) {
+      return
+    }
+    if (route.path.endsWith('login')) {
+      return
+    }
+    if (route.path.endsWith('maintenance')) {
+      finishLoginReveal()
+      return
+    }
+    if (!loginRevealPending.value && !loginRevealVisible.value) {
+      return
+    }
+    if (!loginRevealVisible.value) {
+      beginLoginCover()
+    }
+    loginRevealPending.value = false
+    startLoginReveal()
+  }
+)
+
 // force insecure sessions to log out
 const security = ref(Number(localStorage.getItem('security') || '0') - 0)
 
@@ -210,7 +309,7 @@ if (security.value < 4) {
 // 封禁全屏锁:由 axios 拦截器识别 403 + USER_BANNED 后写入的首次检测时间戳驱动
 // (userStore.bannedNoticeAt, unix ms, 0=无)。时间戳随 store 持久化,刷新页面
 // 恢复剩余倒计时而非重新计时;到点前不可关闭、不可跳过,到点自动登出。
-const BAN_NOTICE_SECONDS = 30
+const BAN_NOTICE_SECONDS = 15
 const banCountdown = ref(0)
 const banLocked = computed(() => userStore.bannedNoticeAt > 0)
 const banFinalizing = ref(false)
@@ -236,7 +335,12 @@ async function finalizeBan() {
     await router.replace('/user/login')
     userStore.bannedNoticeAt = 0
   } catch {
-    // 跳转失败保持遮罩(fail-closed),由倒计时 tick 自动重试
+    // 跳转失败保持状态(fail-closed)，短延迟重试，避免粒子已消散后留下空遮罩。
+    window.setTimeout(() => {
+      if (userStore.bannedNoticeAt > 0) {
+        void finalizeBan()
+      }
+    }, 600)
   }
   banFinalizing.value = false
 }
@@ -247,9 +351,8 @@ function updateBanCountdown() {
   }
   const left = BAN_NOTICE_SECONDS - (Date.now() - userStore.bannedNoticeAt) / 1000
   banCountdown.value = Math.max(0, Math.ceil(left))
-  if (left <= 0) {
-    void finalizeBan()
-  }
+  // 到点后由 ZBanScreen 先播完粒子消散，再 emit ack 调 finalizeBan；
+  // 这里不能提前卸载遮罩，否则粒子动画会被硬切掉。
 }
 
 watch(
@@ -310,6 +413,8 @@ onUnmounted(() => {
     clearInterval(banTimer)
     banTimer = undefined
   }
+  clearLoginCoverTimer()
+  delete document.documentElement.dataset.loginReveal
   window.removeEventListener('beforeunload', handleBeforeUnload)
   window.removeEventListener('contextmenu', handleContextMenu)
   stopPlatformGuard()
@@ -346,6 +451,69 @@ watch([width, height], ([w, h]) => {
   verticalMode.value = w < h * 1.2
 })
 
+// Phi 主题：整个应用（普通用户端 + 后台三个管理区）统一挂 .yg-phi 类
+const isPhiRoute = computed(() => {
+  const path = route.path
+  return (
+    path === '/user' ||
+    path.startsWith('/user/') ||
+    path.startsWith('/activities') ||
+    path.startsWith('/activity/') ||
+    path === '/me' ||
+    path === '/about' ||
+    path === '/ai' ||
+    path.startsWith('/ai/') ||
+    path === '/server' ||
+    path.startsWith('/server/') ||
+    path === '/manage' ||
+    path.startsWith('/manage/') ||
+    path.startsWith('/group/')
+  )
+})
+
+// 页内页签（义工列表 / 平台管理 / 服务器管理 / AI 网关）切换只改路径末段。
+// 这些视图由自身的本地状态驱动面板，若仍按 route.path 作为 key，每次点滑块都会整页重挂载：
+// 页头动画重播、滚动位置和列表状态丢失、分段滑块的位移也要从 0 重新开始。
+// 这里把同一视图的不同末段归一到同一个 key，让外壳常驻，只替换内部面板。
+const VIEW_FAMILY: Record<string, string> = {
+  'activity-mode': '/activities',
+  'manage-action': '/manage',
+  'ai-action': '/ai',
+  'server-maintenance': '/server',
+  'server-database': '/server',
+  'server-totp': '/server',
+  'server-ssh': '/server',
+  'server-files': '/server',
+  'server-db-content': '/server'
+}
+
+const viewKey = computed(() => {
+  const name = route.name?.toString() ?? ''
+  // 学生详情头部滑块（info/activity/modify/logs）只切路由末段，外壳必须常驻；
+  // 按学生 id 归族，既避免每次点滑块整页重挂载，也不会和 `/user` 首页撞 key。
+  if (name === 'user-page' || name === 'user-action') {
+    return `/user/${route.params.id ?? ''}`
+  }
+  return VIEW_FAMILY[name] ?? route.path
+})
+
+// Teleport 到 body 的弹层/下拉不在 .yg-phi 内，用 body 标记把 Phi 令牌和样式带出去。
+// 仅普通用户路由生效，后台页面保持原样。
+watch(
+  isPhiRoute,
+  (value) => {
+    document.body.classList.toggle('yg-phi-portals', value)
+  },
+  { immediate: true }
+)
+
+onUnmounted(() => {
+  document.body.classList.remove('yg-phi-portals')
+  stopPhiEdgePhase()
+})
+
+onMounted(startPhiEdgePhase)
+
 const locales: Record<
   (typeof locale)['value'],
   {
@@ -363,38 +531,6 @@ const locales: Record<
   }
 }
 
-const panelButtons = [
-  {
-    icon: Password,
-    async click() {
-      await modifyPasswordDialogs(String(userStore.id), locale.value, userStore.resetPassword)
-    },
-    text: 'reset'
-  },
-  {
-    icon: SwitchButton,
-    async click() {
-      try {
-        await ElMessageBox.confirm(
-          t('nav.logoutConfirm', '退出登录后需要重新验证身份，确定要退出吗？'),
-          t('nav.logout', '退出登录'),
-          {
-            confirmButtonText: t('nav.logout', '退出登录'),
-            cancelButtonText: t('action.cancel', '取消'),
-            type: 'warning',
-            confirmButtonClass: 'el-button--danger'
-          }
-        )
-        await userStore.removeUser()
-        router.replace('/user/login')
-      } catch {
-        /* 用户取消 */
-      }
-    },
-    text: 'logout'
-  }
-]
-
 watch(needRefresh, () => {
   if (!needRefresh.value) {
     return
@@ -410,6 +546,12 @@ watch(offlineReady, () => {
 })
 
 onMounted(async () => {
+  // 平板滚动流畅性：滚动进行中给 <html> 打 data-scrolling，
+  // perf-tablet.css 据此暂停纯装饰动画（详见 utils/scrollActivity.ts）。
+  installScrollActivityFlag()
+  // phi 显示字体（Bebas/Rajdhani，font-display: swap）空闲预热：
+  // 提前于登录揭示动画与首页大标题首次绘制，消掉 FOUT 文本跳动。
+  warmupFontsWhenIdle(['400 1em Bebas', '500 1em Rajdhani', '700 1em Rajdhani'])
   // 维护模式的跳转统一交给 router 全局守卫(见 src/router/maintenanceGuard.ts),
   // 这里只负责登录态刷新;维护页自身不再发起注定 503 的业务请求。
   try {
@@ -420,6 +562,10 @@ onMounted(async () => {
   } catch {
     // 刷新失败时静默,不阻塞正常启动
   }
+})
+
+onUnmounted(() => {
+  uninstallScrollActivityFlag()
 })
 </script>
 
@@ -446,83 +592,33 @@ onMounted(async () => {
             <span class="text-sm px-1">{{ locales[locale].disconnected.message }}</span>
           </template>
         </ElAlert>
-        <div
+        <ZBanScreen
           v-if="banLocked"
-          class="banned-shield hidden-print fixed inset-0 flex items-center justify-center"
-          style="z-index: 9999"
-          role="alertdialog"
-          aria-modal="true"
-          aria-labelledby="banned-title"
-          @wheel.prevent
-          @touchmove.prevent
-          @contextmenu.prevent
-        >
-          <div class="banned-card flex flex-col items-center text-center px-6">
-            <ElIcon class="banned-icon" :size="88">
-              <CircleCloseFilled />
-            </ElIcon>
-            <h2 id="banned-title" class="banned-title">{{ t('nav.banned.title') }}</h2>
-            <p class="banned-message">{{ t('nav.banned.message', { reason: banReasonText }) }}</p>
-            <p class="banned-until">{{ banUntilText }}</p>
-            <p class="banned-appeal">{{ t('nav.banned.appeal') }}</p>
-            <p v-show="banCountdown > 0" class="banned-countdown">
-              {{ t('nav.banned.autoLogoutIn', { seconds: banCountdown }) }}
-            </p>
-          </div>
-        </div>
-        <div class="yg-layout yg-layout--app">
+          variant="account"
+          :title="t('nav.banned.title')"
+          :reason="banReasonText"
+          :until="banUntilText"
+          :appeal="t('nav.banned.appeal')"
+          :countdown="banCountdown"
+          :countdown-total="BAN_NOTICE_SECONDS"
+          :countdown-text="banCountdown > 0 ? t('nav.banned.autoLogoutIn', { seconds: banCountdown }) : ''"
+          :auto-dismiss="banCountdown"
+          :lock-scroll="false"
+          @ack="finalizeBan"
+        />
+        <div :class="['yg-layout', 'yg-layout--app', { 'yg-phi': isPhiRoute }]">
           <UserNav v-if="userStore.isLogin" />
           <div class="yg-layout__main">
-            <header :class="['yg-layout__topbar', 'yg-topbar', { 'is-portrait': verticalMode }]">
-              <div class="yg-topbar__left">
-                <img class="yg-topbar__logo" src="/pwa-192x192.png" alt="义工平台 Logo" />
-                <span
-                  class="yg-topbar__title"
-                  @dblclick="router.push(userStore.isLogin ? '/user' : '/user/login')"
-                >
-                  {{ headerStore.header }}
-                </span>
-              </div>
-              <div class="yg-topbar__right" v-if="userStore.isLogin">
-                <div class="yg-user-chip">
-                  <span class="yg-user-chip__avatar">
-                    <ElIcon><User /></ElIcon>
-                  </span>
-                  <span class="yg-user-chip__name">{{ userStore.name }}</span>
-                  <ElPopover
-                    width="200px"
-                    trigger="click"
-                    placement="bottom-end"
-                    :popper-options="{ modifiers: [{ name: 'offset', options: { offset: [0, 10] } }] }"
-                    popper-class="yg-user-menu"
-                  >
-                    <template #reference>
-                      <button
-                        type="button"
-                        class="yg-user-chip__toggle"
-                        :aria-label="t('nav.accountMenu', '账号菜单')"
-                      >
-                        <ElIcon><ArrowDown /></ElIcon>
-                      </button>
-                    </template>
-                    <div class="yg-user-menu__list">
-                      <ElButton
-                        v-for="button in panelButtons"
-                        :key="button.text"
-                        text
-                        :icon="button.icon"
-                        :class="['yg-user-menu__item', `yg-user-menu__item--${button.text}`]"
-                        @click="button.click"
-                      >
-                        {{ t(`nav.${button.text}`) }}
-                      </ElButton>
-                    </div>
-                  </ElPopover>
-                </div>
-              </div>
-            </header>
             <main :class="['yg-layout__content', { 'is-portrait': verticalMode && userStore.isLogin }]">
-              <RouterView class="yg-view" />
+              <!-- 速度线挂在滚动内容里，随页面上下滚动；不再 fixed 浮在视口上。 -->
+              <div v-if="isPhiRoute" class="yg-phi-velocity" aria-hidden="true"></div>
+              <div v-if="isPhiRoute" class="yg-phi-velocity" aria-hidden="true"></div>
+              <div v-if="isPhiRoute" class="yg-phi-velocity" aria-hidden="true"></div>
+              <RouterView v-slot="{ Component }">
+                <Transition name="yg-route" mode="out-in">
+                  <component :is="Component" :key="viewKey" class="yg-view" />
+                </Transition>
+              </RouterView>
             </main>
           </div>
         </div>
@@ -530,6 +626,14 @@ onMounted(async () => {
     </ElWatermark>
     <ZNotificationReminder />
     <ZPrimaryDeviceGate />
+    <ZLoginReveal
+      v-if="loginRevealVisible"
+      :key="loginRevealRun"
+      :name="loginRevealName"
+      :role="loginRevealRole"
+      :active="loginRevealStarted"
+      @done="finishLoginReveal"
+    />
   </ElConfigProvider>
 </template>
 
@@ -546,10 +650,8 @@ onMounted(async () => {
   font-size: 1.2rem;
 }
 
-/* 顶栏外观由标准样式库的 .yg-topbar 提供，这里只补项目自有元素 */
-
-/* 竖屏底部 dock 让位：药丸 56px(--yg-header-height) + 离底 12px(--yg-space-3)
-   + 手势/刘海安全区 + 内容自身 16px 留白(--yg-space-4)。
+/* 竖屏底部 dock（UserNav 悬浮药丸）让位：药丸 56px(--yg-header-height 令牌同值)
+   + 离底 12px(--yg-space-3) + 手势/刘海安全区 + 内容自身 16px 留白(--yg-space-4)。
    抽成 --yg-content-bottom-inset 是为了让页面（如服务器页）算自身高度时引用同一份
    数值，不必各自硬编码 96px；横屏不挂 is-portrait，padding 仍是 base.css 的 24px。 */
 .yg-layout__content {
@@ -562,258 +664,6 @@ onMounted(async () => {
       var(--yg-space-4)
   );
   padding-bottom: var(--yg-content-bottom-inset);
-}
-
-/* 竖屏顶栏：视觉高度仍是 56px，但用 min-height 承载顶部安全区（刘海屏），
-   左右留白收紧到 12px 把宽度让给标题；用户名在窄屏会挤掉标题，故只留头像。 */
-.yg-topbar.is-portrait {
-  height: auto;
-  min-height: calc(var(--yg-header-height) + env(safe-area-inset-top, 0px));
-  padding-top: env(safe-area-inset-top, 0px);
-  padding-inline: var(--yg-space-3);
-  gap: var(--yg-space-2);
-}
-
-.yg-topbar.is-portrait .yg-topbar__left {
-  flex: 1;
-  min-width: 0;
-}
-
-/* 标题占满剩余宽度并被 ellipsis 截断；双击回首页的绑定在模板上，与样式无关 */
-.yg-topbar.is-portrait .yg-topbar__title {
-  max-width: 100%;
-  min-width: 0;
-}
-
-.yg-topbar.is-portrait .yg-user-chip {
-  gap: var(--yg-space-1);
-  padding: 0 var(--yg-space-1);
-}
-
-.yg-topbar.is-portrait .yg-user-chip__name {
-  display: none;
-}
-
-.yg-topbar__title {
-  font-size: var(--yg-font-size-lg);
-  font-weight: var(--yg-font-weight-semibold);
-  line-height: var(--yg-line-height-tight);
-  color: var(--yg-text-primary);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.yg-topbar__logo {
-  width: var(--yg-space-7);
-  height: var(--yg-space-7);
-  flex-shrink: 0;
-  border-radius: var(--yg-radius-md);
-  object-fit: cover;
-}
-
-.yg-topbar__right {
-  display: flex;
-  align-items: center;
-  gap: var(--yg-space-2);
-  flex-shrink: 0;
-}
-
-/* 账号胶囊：头像 + 用户名 + 展开箭头合成一个整体，替代原先两个 is-text 主色按钮 */
-.yg-user-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 36px;
-  padding: 0 4px 0 4px;
-  border: 1px solid var(--yg-border-default);
-  border-radius: var(--yg-radius-pill);
-  background: var(--yg-bg-surface);
-  transition:
-    border-color var(--yg-dur-fast) var(--yg-ease-out),
-    background-color var(--yg-dur-fast) var(--yg-ease-out);
-}
-
-.yg-user-chip:hover {
-  border-color: var(--yg-color-primary);
-  background: var(--yg-bg-hover);
-}
-
-.yg-user-chip__avatar {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 26px;
-  height: 26px;
-  border-radius: 50%;
-  background: var(--yg-color-primary-soft);
-  color: var(--yg-color-primary);
-  font-size: 15px;
-  line-height: 1;
-}
-
-.yg-user-chip__name {
-  max-width: 12rem;
-  overflow: hidden;
-  color: var(--yg-text-primary);
-  font-size: var(--yg-font-size-sm);
-  font-weight: var(--yg-font-weight-medium);
-  /* 行盒压到 26px 与头像同高，三者共用 flex 中线，避免基线把文字顶偏 */
-  display: inline-flex;
-  align-items: center;
-  height: 26px;
-  line-height: 1;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-
-/* 箭头按钮保留 24px 触控区，不参与主色填充；图标自身对齐中线 */
-.yg-user-chip__toggle {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
-  padding: 0;
-  border: 0;
-  border-radius: 50%;
-  background: transparent;
-  color: var(--yg-text-secondary);
-  font-size: 13px;
-  line-height: 1;
-  cursor: pointer;
-  transition:
-    color var(--yg-dur-fast) var(--yg-ease-out),
-    background-color var(--yg-dur-fast) var(--yg-ease-out);
-}
-
-.yg-user-chip__toggle > .el-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  line-height: 1;
-}
-
-.yg-user-chip__toggle:hover {
-  background: var(--yg-bg-active);
-  color: var(--yg-text-primary);
-}
-
-.yg-user-chip__toggle:focus-visible {
-  outline: none;
-  box-shadow: var(--yg-focus-ring);
-}
-
-/* 账号菜单：中性项 + 危险项（退出登录属高危，走 --yg-color-danger）
-   注：弹层挂在 body 下，scoped 选择器到不了，这里用 :global 显式声明
-   （面板色另在 popper-class 同规则里补，避免白字白底） */
-:global(.yg-user-menu__list) {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-/* 菜单只有两项，压到 32px 行高 + 4px 内边距，整体更紧凑 */
-:global(.yg-user-menu__item.el-button) {
-  justify-content: flex-start;
-  width: 100%;
-  height: 32px;
-  margin: 0;
-  padding: 0 8px;
-  border-radius: var(--yg-radius-sm);
-  color: var(--yg-text-primary);
-  font-size: var(--yg-font-size-sm);
-}
-
-:global(.yg-user-menu__item.el-button:hover),
-:global(.yg-user-menu__item.el-button:focus) {
-  background: var(--yg-bg-hover);
-  color: var(--yg-text-primary);
-}
-
-:global(.yg-user-menu__item.el-button.yg-user-menu__item--logout),
-:global(.yg-user-menu__item.el-button.yg-user-menu__item--logout:hover) {
-  color: var(--yg-text-danger);
-}
-
-:global(.yg-user-menu__item.el-button.yg-user-menu__item--logout:hover) {
-  background: var(--yg-color-danger-soft);
-}
-
-:global(.yg-user-menu) {
-  padding: 4px;
-}
-
-/* 极简风去掉指向箭头，弹层直接以右边缘对齐胶囊 */
-:global(.yg-user-menu .el-popper__arrow),
-:global(.yg-user-menu > .el-popper__arrow) {
-  display: none;
-}
-
-/* 封禁全屏：危险态用红色系（准则第 5 章）。深红底不在语义调色板内，
-   这里取 --yg-red-800 色阶令牌；文字用 --yg-color-on-danger。 */
-.banned-shield {
-  background: var(--yg-red-800);
-  color: var(--yg-color-on-danger);
-  animation: banned-shield-in 0.2s ease-out;
-}
-
-.banned-card {
-  max-width: 32rem;
-  padding: 3rem 2rem;
-}
-
-.banned-icon {
-  color: var(--yg-red-100);
-  margin-bottom: 1.5rem;
-}
-
-.banned-title {
-  font-size: 2.25rem;
-  font-weight: 700;
-  letter-spacing: 0.05em;
-  margin: 0 0 1rem;
-}
-
-.banned-message {
-  font-size: 1.125rem;
-  opacity: 0.95;
-  margin: 0;
-}
-
-.banned-appeal {
-  font-size: 1rem;
-  opacity: 0.75;
-  margin: 0.5rem 0 0;
-}
-
-.banned-until {
-  font-size: 1rem;
-  opacity: 0.85;
-  margin: 0.5rem 0 0;
-  font-variant-numeric: tabular-nums;
-}
-
-.banned-countdown {
-  font-size: 1rem;
-  font-variant-numeric: tabular-nums;
-  opacity: 0.9;
-  margin: 0.5rem 0 0;
-}
-
-@keyframes banned-shield-in {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .banned-shield {
-    animation: none;
-  }
 }
 </style>
 

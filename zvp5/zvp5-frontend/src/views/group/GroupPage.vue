@@ -1,7 +1,10 @@
 <script lang="ts" setup>
 import ZGroupUserList from '@/components/group/ZGroupUserList.vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElPageHeader, ElSegmented, ElIcon, ElText } from 'element-plus'
+import { ElPageHeader } from 'element-plus/es/components/page-header/index.mjs'
+import { ElSegmented } from 'element-plus/es/components/segmented/index.mjs'
+import { ElIcon } from 'element-plus/es/components/icon/index.mjs'
+import { ElText } from 'element-plus/es/components/text/index.mjs'
 import { defineAsyncComponent, ref, watch, type Component } from 'vue'
 import type { Group } from '@/../types'
 import { useWindowSize } from '@vueuse/core'

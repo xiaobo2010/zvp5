@@ -23,7 +23,6 @@ vi.mock('@/api/ai/activeRuns', () => ({
 vi.mock('@/utils/idbCache', () => ({ cacheGet: vi.fn().mockResolvedValue(null), cacheSet: vi.fn() }))
 vi.mock('@/plugins/ua', () => ({ getXuehaiId: () => xuehaiIdMock.value }))
 vi.mock('element-plus', () => ({ ElMessage: elMessageMock }))
-vi.mock('nprogress', () => ({ default: { start: vi.fn(), done: vi.fn() } }))
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -320,6 +319,17 @@ it('still toasts a string-detail 403 (unchanged behavior)', async () => {
   client.defaults.adapter = failingAdapter(403, { detail: 'WRONG_PASSWORD' })
   await client.post('/users/auth', {}).catch((e) => e)
   expect(shownMessages()).toEqual(['WRONG_PASSWORD'])
+})
+
+// 登录页自己弹 ZAuthAlert 呈现失败原因时带这个标记：拦截器不能再叠一条通用 toast。
+it('suppresses the generic toast when the caller marked the request', async () => {
+  client.defaults.adapter = failingAdapter(403, { detail: '用户名或密码错误' })
+  const error = await client
+    .post('/users/auth', {}, { suppressErrorToast: true })
+    .catch((e) => e)
+  expect(error).toBeInstanceOf(AxiosError)
+  expect(error.response?.status).toBe(403)
+  expect(elMessageMock).not.toHaveBeenCalled()
 })
 
 // --- 封禁 403:除遮罩/store 之外,必须中止在途 AI 请求 -------------------------

@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { ElIcon, ElProgress } from 'element-plus'
+import { ElIcon } from 'element-plus/es/components/icon/index.mjs'
+import { ElProgress } from 'element-plus/es/components/progress/index.mjs'
 import { computed, onMounted, onUnmounted, ref, toRefs, watch } from 'vue'
 import { CaretTop, CaretBottom } from '@element-plus/icons-vue'
 import { useI18n } from 'vue-i18n'

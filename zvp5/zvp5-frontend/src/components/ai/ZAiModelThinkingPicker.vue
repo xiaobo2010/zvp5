@@ -1,7 +1,10 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ElIcon, ElOption, ElSegmented, ElSelect } from 'element-plus'
+import { ElIcon } from 'element-plus/es/components/icon/index.mjs'
+import { ElOption } from 'element-plus/es/components/select/index.mjs'
+import { ElSegmented } from 'element-plus/es/components/segmented/index.mjs'
+import { ElSelect } from 'element-plus/es/components/select/index.mjs'
 import { Lock } from '@element-plus/icons-vue'
 import type { AiThinkingLevel } from '@/../types/ai'
 

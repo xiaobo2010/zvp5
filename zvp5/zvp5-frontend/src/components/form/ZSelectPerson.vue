@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { ElSelect, ElOption } from 'element-plus'
+import { ElSelect } from 'element-plus/es/components/select/index.mjs'
+import { ElOption } from 'element-plus/es/components/select/index.mjs'
 import { computed, onMounted, ref, toRefs, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import api from '@/api'

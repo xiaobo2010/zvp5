@@ -1,16 +1,14 @@
 <script setup lang="ts">
-import {
-  ElButton,
-  ElCard,
-  ElCol,
-  ElEmpty,
-  ElIcon,
-  ElResult,
-  ElRow,
-  ElSegmented,
-  ElTable,
-  ElTableColumn
-} from 'element-plus'
+import { ElButton } from 'element-plus/es/components/button/index.mjs'
+import { ElCard } from 'element-plus/es/components/card/index.mjs'
+import { ElCol } from 'element-plus/es/components/col/index.mjs'
+import { ElEmpty } from 'element-plus/es/components/empty/index.mjs'
+import { ElIcon } from 'element-plus/es/components/icon/index.mjs'
+import { ElResult } from 'element-plus/es/components/result/index.mjs'
+import { ElRow } from 'element-plus/es/components/row/index.mjs'
+import { ElSegmented } from 'element-plus/es/components/segmented/index.mjs'
+import { ElTable } from 'element-plus/es/components/table/index.mjs'
+import { ElTableColumn } from 'element-plus/es/components/table/index.mjs'
 import { computed, ref, toRefs, watch } from 'vue'
 import { InfoFilled, Refresh } from '@element-plus/icons-vue'
 import { useI18n } from 'vue-i18n'

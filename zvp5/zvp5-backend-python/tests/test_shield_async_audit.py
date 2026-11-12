@@ -79,3 +79,27 @@ def test_audit_failure_does_not_change_the_418(monkeypatch):
     assert blocked.json() == main.SHIELD_BLOCKED_MESSAGE
     assert pattern.status_code == 418
     assert allowed.status_code == 404
+
+
+def test_audit_url_drops_the_query_string(monkeypatch):
+    """418 请求里的 query（可能带 token / 凭据）不得写进 APP_LOGS。"""
+    captured: list[dict] = []
+
+    class _RecordingLog:
+        def __init__(self, **kwargs) -> None:
+            captured.append(kwargs)
+
+        async def insert_log(self) -> None:
+            return None
+
+    monkeypatch.setattr(main, "ZVMSLog", _RecordingLog)
+
+    client = TestClient(main.app)
+    try:
+        response = client.get(f"{PROBE_URL}?token=super-secret-token", headers=CURL)
+    finally:
+        client.close()
+
+    assert response.status_code == 418
+    assert captured and captured[0]["url"] == PROBE_URL
+    assert "super-secret-token" not in str(captured)

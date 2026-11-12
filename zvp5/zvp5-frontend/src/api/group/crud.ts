@@ -1,7 +1,7 @@
 import axios from '@/plugins/axios'
 import { temporaryToken } from '@/plugins/short-token'
 import type { Group, Response, UserPosition } from '@/../types'
-import { ElNotification } from 'element-plus'
+import { ElNotification } from 'element-plus/es/components/notification/index.mjs'
 
 export async function createGroup(group: Group) {
   const response = await axios({

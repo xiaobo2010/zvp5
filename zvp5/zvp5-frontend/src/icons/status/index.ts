@@ -6,7 +6,7 @@ import type { Component } from 'vue'
 export const memberActivityStatuses = {
   pending: {
     icon: Loading,
-    color: 'primary'
+    color: 'warning'
   },
   effective: {
     icon: Check,

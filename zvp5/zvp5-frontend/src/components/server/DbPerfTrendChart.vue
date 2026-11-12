@@ -12,7 +12,7 @@ import type { ChartData, ChartOptions } from 'chart.js'
 import { Line } from 'vue-chartjs'
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ElEmpty } from 'element-plus'
+import { ElEmpty } from 'element-plus/es/components/empty/index.mjs'
 import dayjs from '@/plugins/dayjs'
 import { useChartTheme } from '@/utils/chartTheme'
 

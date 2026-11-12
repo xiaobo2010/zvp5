@@ -1,0 +1,681 @@
+/* ==========================================================================
+   Phi · body-level portals
+   Teleport 到 body 的弹窗、MessageBox、Message、Notification、Popover、
+   Select 下拉都不在 .yg-phi 内；App 在普通用户路由给 body 加
+   `.yg-phi-portals`，这里只负责这些逃逸节点。导航不在此文范围。
+   ========================================================================== */
+
+body.yg-phi-portals {
+  --p-bg: #050608;
+  --p-surface: #0c0e12;
+  --p-sunken: #060709;
+  --p-ink: #f4f6f8;
+  /* 弹层里的默认按钮同样抬高一档填充，并补 1px 内描边，避免与近黑底混在一起。 */
+  --p-control-fill: color-mix(in srgb, var(--p-ink) 14%, var(--p-sunken));
+  --p-control-line: color-mix(in srgb, var(--p-ink) 18%, transparent);
+  --p-muted: #a6b1bb;
+  --p-cyan: #49f4e2;
+  --p-magenta: #ff4e9b;
+  --p-line: rgba(244, 246, 248, 0.16);
+  --p-line-soft: rgba(244, 246, 248, 0.08);
+  --p-hover: rgba(73, 244, 226, 0.12);
+  --p-danger: #ff6b66;
+  --p-ease: cubic-bezier(0.16, 1, 0.3, 1);
+  --p-spring: cubic-bezier(0.34, 1.4, 0.64, 1);
+  /* 弹层里的自绘分页/控件仍读 --yg-*；把 Phi 弹层令牌映射过去，避免浅色默认值漏进来 */
+  --yg-bg-page: var(--p-bg);
+  --yg-bg-surface: var(--p-surface);
+  --yg-bg-surface-raised: var(--p-surface);
+  --yg-bg-surface-sunken: var(--p-sunken);
+  --yg-bg-hover: var(--p-hover);
+  --yg-bg-active: color-mix(in srgb, var(--p-cyan) 18%, transparent);
+  --yg-text-primary: var(--p-ink);
+  --yg-text-secondary: var(--p-muted);
+  --yg-text-tertiary: var(--p-muted);
+  --yg-border-subtle: var(--p-line-soft);
+  --yg-border-default: var(--p-line);
+  --yg-border-strong: var(--p-line);
+  --yg-color-primary: var(--p-cyan);
+  --yg-color-primary-hover: color-mix(in srgb, var(--p-cyan) 86%, #fff);
+  --yg-color-primary-soft: color-mix(in srgb, var(--p-cyan) 14%, transparent);
+  --yg-text-danger: var(--p-danger);
+  --yg-color-danger-soft: color-mix(in srgb, var(--p-danger) 16%, transparent);
+  --yg-focus-ring-color: var(--p-cyan);
+  color-scheme: dark;
+}
+
+html[data-theme='light'] body.yg-phi-portals {
+  --p-bg: #eef2f4;
+  --p-surface: #ffffff;
+  --p-sunken: #f2f5f6;
+  --p-ink: #050608;
+  --p-control-fill: color-mix(in srgb, var(--p-ink) 7%, var(--p-sunken));
+  --p-control-line: transparent;
+  --p-muted: #4b5560;
+  --p-cyan: #0b9f93;
+  --p-magenta: #d93672;
+  --p-line: rgba(5, 6, 8, 0.18);
+  --p-line-soft: rgba(5, 6, 8, 0.09);
+  --p-hover: rgba(11, 159, 147, 0.1);
+  --p-danger: #c62828;
+  color-scheme: light;
+}
+
+/* ---------- overlay / mask ---------- */
+body.yg-phi-portals .el-overlay {
+  background-color: rgba(5, 6, 8, 0.72);
+  backdrop-filter: blur(8px);
+}
+
+html[data-theme='light'] body.yg-phi-portals .el-overlay {
+  background-color: rgba(5, 6, 8, 0.34);
+}
+
+body.yg-phi-portals .el-overlay-dialog {
+  animation: phi-portal-fade 180ms var(--p-ease);
+}
+
+body.yg-phi-portals .el-loading-mask {
+  background-color: color-mix(in srgb, var(--p-bg) 82%, transparent);
+}
+
+/* ---------- dialog ---------- */
+body.yg-phi-portals .el-dialog,
+body.yg-phi-portals .el-drawer {
+  color: var(--p-ink);
+  background: linear-gradient(
+    135deg,
+    var(--p-surface),
+    color-mix(in srgb, var(--p-surface) 72%, var(--p-bg))
+  );
+  border: 1px solid var(--p-line);
+  border-radius: 0;
+  box-shadow:
+    8px 8px 0 color-mix(in srgb, var(--p-ink) 13%, transparent),
+    0 24px 80px rgba(0, 0, 0, 0.38);
+  clip-path: polygon(0 0, calc(100% - 18px) 0, 100% 18px, 100% 100%, 0 100%);
+  animation: phi-portal-clip 320ms var(--p-ease) both;
+}
+
+body.yg-phi-portals .el-dialog__header,
+body.yg-phi-portals .el-message-box__header {
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--p-line-soft);
+}
+
+body.yg-phi-portals .el-dialog__title,
+body.yg-phi-portals .el-message-box__title,
+body.yg-phi-portals .el-drawer__title {
+  color: var(--p-ink);
+  font-family: var(--phi-hud, Rajdhani, 'Arial Narrow', sans-serif);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+body.yg-phi-portals .el-dialog__body,
+body.yg-phi-portals .el-message-box__content,
+body.yg-phi-portals .el-drawer__body {
+  color: var(--p-muted);
+}
+
+body.yg-phi-portals .el-dialog__footer,
+body.yg-phi-portals .el-message-box__btns {
+  border-top: 1px solid var(--p-line-soft);
+}
+
+body.yg-phi-portals .el-dialog__headerbtn .el-dialog__close,
+body.yg-phi-portals .el-message-box__headerbtn .el-message-box__close {
+  color: var(--p-muted);
+}
+
+body.yg-phi-portals .el-dialog__headerbtn:hover .el-dialog__close,
+body.yg-phi-portals .el-message-box__headerbtn:hover .el-message-box__close {
+  color: var(--p-cyan);
+}
+
+/* ---------- message-box：确认类提示不再用硬切角，改成小圆角 + 顶部细线 ---------- */
+body.yg-phi-portals .el-message-box {
+  position: relative;
+  overflow: hidden;
+  width: min(420px, calc(100vw - 40px));
+  padding: 0;
+  border: 1px solid var(--p-line);
+  border-radius: 8px;
+  clip-path: none;
+  background: linear-gradient(
+    160deg,
+    var(--p-surface),
+    color-mix(in srgb, var(--p-surface) 86%, var(--p-bg))
+  );
+  box-shadow:
+    0 20px 60px rgba(0, 0, 0, 0.3),
+    0 3px 0 color-mix(in srgb, var(--p-cyan) 12%, transparent);
+  animation: phi-msgbox-in 280ms var(--p-ease) both;
+}
+
+body.yg-phi-portals .el-message-box::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto;
+  height: 3px;
+  background: linear-gradient(90deg, var(--p-cyan), transparent 72%);
+}
+
+body.yg-phi-portals .el-message-box__header {
+  padding: 22px 22px 10px;
+  border-bottom: 0;
+}
+
+body.yg-phi-portals .el-message-box__title {
+  color: var(--p-ink);
+  font-family: var(--phi-hud, Rajdhani, 'Arial Narrow', sans-serif);
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 0.025em;
+}
+
+body.yg-phi-portals .el-message-box__headerbtn {
+  top: 16px;
+  right: 16px;
+}
+
+body.yg-phi-portals .el-message-box__content {
+  padding: 4px 22px 18px;
+  color: var(--p-muted);
+  font-size: 14px;
+  line-height: 1.65;
+}
+
+body.yg-phi-portals .el-message-box__message p {
+  margin: 0;
+}
+
+body.yg-phi-portals .el-message-box__container {
+  align-items: flex-start;
+  gap: 12px;
+}
+
+body.yg-phi-portals .el-message-box__status {
+  margin-top: 2px;
+}
+
+body.yg-phi-portals .el-message-box__btns {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 22px 18px;
+  border-top: 1px solid var(--p-line-soft);
+}
+
+body.yg-phi-portals .el-message-box__btns .el-button {
+  min-width: 82px;
+  margin-left: 0;
+  padding: 9px 18px;
+  border-radius: 4px;
+  font-family: var(--phi-hud, Rajdhani, 'Arial Narrow', sans-serif);
+  font-size: 14px;
+  letter-spacing: 0.03em;
+}
+
+body.yg-phi-portals .el-message-box__btns .el-button--primary {
+  border-color: var(--p-cyan);
+  background: var(--p-cyan);
+  color: #041311;
+  box-shadow: none;
+}
+
+html[data-theme='light'] body.yg-phi-portals .el-message-box__btns .el-button--primary {
+  color: #fff;
+}
+
+body.yg-phi-portals .el-message-box__btns .el-button--danger {
+  border-color: var(--p-danger);
+  background: var(--p-danger);
+  color: #fff;
+  box-shadow: none;
+}
+
+body.yg-phi-portals .el-message-box__input {
+  padding-top: 2px;
+}
+
+body.yg-phi-portals .el-message-box__errormsg {
+  padding-top: 4px;
+  color: var(--p-danger);
+}
+
+/* 弹窗整体淡入/淡出；密码错误等 ElMessage 也走同一套非线性节奏 */
+body.yg-phi-portals .fade-in-linear-enter-active,
+body.yg-phi-portals .fade-in-linear-leave-active {
+  transition: opacity 260ms var(--p-ease);
+}
+
+body.yg-phi-portals .fade-in-linear-enter-from,
+body.yg-phi-portals .fade-in-linear-leave-to {
+  opacity: 0;
+}
+
+body.yg-phi-portals .fade-in-linear-leave-active .el-message-box {
+  animation: phi-msgbox-out 220ms cubic-bezier(0.4, 0, 1, 1) both;
+}
+
+@keyframes phi-msgbox-in {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 12px, 0) scale(0.975);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+@keyframes phi-msgbox-out {
+  to {
+    opacity: 0;
+    transform: translate3d(0, 8px, 0) scale(0.985);
+  }
+}
+
+/* ---------- message / notification ---------- */
+body.yg-phi-portals .el-message,
+body.yg-phi-portals .el-notification {
+  color: var(--p-ink);
+  background: var(--p-surface);
+  border: 1px solid var(--p-line);
+  border-left: 3px solid var(--p-cyan);
+  border-radius: 4px;
+  box-shadow:
+    0 10px 30px rgba(0, 0, 0, 0.2),
+    0 2px 0 color-mix(in srgb, var(--p-cyan) 10%, transparent);
+  transition:
+    opacity 260ms var(--p-ease),
+    transform 420ms var(--p-spring),
+    filter 260ms var(--p-ease);
+}
+
+/* 顶部提示不再贴右滑入：水平居中，以中线为原点向两侧展开成横幅。
+   clip-path 用负 inset 给阴影留出空间，展开完成后再完整显示卡片。 */
+body.yg-phi-portals .el-notification {
+  right: auto;
+  left: 50%;
+  width: min(520px, calc(100vw - 32px));
+  transform: translateX(-50%);
+  transform-origin: center top;
+  clip-path: inset(-48px -48px -48px -48px round 4px);
+  transition:
+    opacity 240ms var(--p-ease),
+    transform 420ms var(--p-spring),
+    clip-path 420ms var(--p-spring),
+    filter 240ms var(--p-ease);
+}
+
+body.yg-phi-portals .el-message-fade-enter-active {
+  transition:
+    opacity 240ms var(--p-ease),
+    transform 440ms var(--p-spring),
+    filter 240ms var(--p-ease);
+}
+
+body.yg-phi-portals .el-message-fade-leave-active,
+body.yg-phi-portals .el-notification-fade-leave-active {
+  transition:
+    opacity 200ms cubic-bezier(0.4, 0, 1, 1),
+    transform 220ms cubic-bezier(0.4, 0, 1, 1),
+    filter 200ms ease;
+}
+
+body.yg-phi-portals .el-message-fade-enter-from {
+  opacity: 0;
+  transform: translate3d(0, -14px, 0) scale(0.96);
+  filter: blur(3px);
+}
+
+body.yg-phi-portals .el-message-fade-leave-to {
+  opacity: 0;
+  transform: translate3d(0, -8px, 0) scale(0.97);
+  filter: blur(2px);
+}
+
+body.yg-phi-portals .el-notification-fade-enter-from,
+body.yg-phi-portals .el-notification-fade-leave-to {
+  right: auto;
+  left: 50%;
+  opacity: 0;
+  transform: translateX(-50%) translateY(-6px);
+  /* 宽度从 0 向两边拉开；高度和阴影区域始终保留。 */
+  clip-path: inset(-48px 50% -48px 50% round 4px);
+  filter: blur(2px);
+}
+
+body.yg-phi-portals .el-notification-fade-enter-active {
+  transition:
+    opacity 240ms var(--p-ease),
+    transform 420ms var(--p-spring),
+    clip-path 420ms var(--p-spring),
+    filter 240ms var(--p-ease);
+}
+
+body.yg-phi-portals .el-notification-fade-leave-active {
+  transition:
+    opacity 180ms cubic-bezier(0.4, 0, 1, 1),
+    transform 220ms cubic-bezier(0.4, 0, 1, 1),
+    clip-path 220ms cubic-bezier(0.4, 0, 1, 1),
+    filter 180ms ease;
+}
+
+body.yg-phi-portals .el-message--error .el-message__icon {
+  animation: phi-alert-icon 520ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+@keyframes phi-alert-icon {
+  0% {
+    transform: scale(0.4);
+    opacity: 0;
+  }
+  60% {
+    transform: scale(1.18);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+body.yg-phi-portals .el-message__content,
+body.yg-phi-portals .el-notification__title {
+  color: var(--p-ink);
+}
+
+body.yg-phi-portals .el-notification__content {
+  color: var(--p-muted);
+}
+
+body.yg-phi-portals .el-message--success,
+body.yg-phi-portals .el-notification--success {
+  border-left-color: var(--p-cyan);
+}
+
+body.yg-phi-portals .el-message--warning,
+body.yg-phi-portals .el-notification--warning {
+  border-left-color: #f3dc62;
+}
+
+body.yg-phi-portals .el-message--error,
+body.yg-phi-portals .el-notification--error {
+  border-left-color: var(--p-danger);
+}
+
+/* ---------- popper / dropdown / select ---------- */
+body.yg-phi-portals .el-popper,
+body.yg-phi-portals .el-select__popper,
+body.yg-phi-portals .el-dropdown__popper,
+body.yg-phi-portals .el-popover,
+body.yg-phi-portals .el-tooltip__popper {
+  color: var(--p-ink);
+  background: var(--p-surface);
+  border: 1px solid var(--p-line);
+  border-radius: 0;
+  box-shadow: 4px 4px 0 color-mix(in srgb, var(--p-cyan) 12%, transparent);
+  clip-path: polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 0 100%);
+}
+
+body.yg-phi-portals .el-popper__arrow::before {
+  background: var(--p-surface);
+  border-color: var(--p-line);
+}
+
+body.yg-phi-portals .el-select-dropdown__item,
+body.yg-phi-portals .el-dropdown-menu__item {
+  color: var(--p-muted);
+}
+
+body.yg-phi-portals .el-select-dropdown__item.is-hovering,
+body.yg-phi-portals .el-select-dropdown__item:hover,
+body.yg-phi-portals .el-dropdown-menu__item:not(.is-disabled):hover {
+  color: var(--p-ink);
+  background: var(--p-hover);
+}
+
+body.yg-phi-portals .el-select-dropdown__item.is-selected {
+  color: var(--p-cyan);
+}
+
+/* ---------- controls inside portals ---------- */
+body.yg-phi-portals .el-input__wrapper,
+body.yg-phi-portals .el-textarea__inner,
+body.yg-phi-portals .el-select__wrapper {
+  color: var(--p-ink);
+  background: var(--p-sunken);
+  border: 1px solid var(--p-line);
+  border-radius: 0;
+  box-shadow: none;
+}
+
+body.yg-phi-portals .el-input__wrapper.is-focus,
+body.yg-phi-portals .el-textarea__inner:focus,
+body.yg-phi-portals .el-select__wrapper.is-focused {
+  border-color: var(--p-cyan);
+  box-shadow: 0 0 0 1px var(--p-cyan);
+}
+
+body.yg-phi-portals .el-input__inner,
+body.yg-phi-portals .el-textarea__inner {
+  color: var(--p-ink);
+}
+
+body.yg-phi-portals .el-input__inner::placeholder,
+body.yg-phi-portals .el-textarea__inner::placeholder {
+  color: var(--p-muted);
+}
+
+body.yg-phi-portals .el-button {
+  border: 0;
+  border-radius: 0;
+  font-family: var(--phi-hud, Rajdhani, 'Arial Narrow', sans-serif);
+  letter-spacing: 0.04em;
+  background: var(--p-control-fill);
+  color: var(--p-ink);
+  box-shadow: inset 0 0 0 1px var(--p-control-line);
+  clip-path: polygon(0 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 0 100%);
+}
+
+body.yg-phi-portals .el-button:hover {
+  color: var(--p-cyan);
+  background: var(--p-hover);
+}
+
+body.yg-phi-portals .el-button--primary {
+  border: 0;
+  background: var(--p-cyan);
+  color: #041311;
+  box-shadow: none;
+}
+
+body.yg-phi-portals .el-button--danger {
+  border: 0;
+  background: color-mix(in srgb, var(--p-danger) 16%, transparent);
+  color: var(--p-danger);
+  box-shadow: none;
+}
+
+body.yg-phi-portals .el-button.is-text,
+body.yg-phi-portals .el-button.is-link {
+  color: color-mix(in srgb, var(--p-ink) 80%, transparent);
+  background: transparent;
+  clip-path: none;
+  box-shadow: none;
+}
+
+body.yg-phi-portals .el-button--danger.is-text,
+body.yg-phi-portals .el-button--danger.is-link {
+  color: var(--p-danger);
+}
+
+body.yg-phi-portals .el-button.is-text:hover,
+body.yg-phi-portals .el-button.is-link:hover {
+  color: var(--p-cyan);
+  background: transparent;
+  text-decoration: underline;
+  text-underline-offset: 0.24em;
+}
+
+/* 弹层里的带底色语义标签（状态/模式筛选、修改状态弹层）：
+   与 .yg-phi 内保持同一套语义色，避免 is-text 把类型色抹平。 */
+body.yg-phi-portals .el-button--primary.is-text.is-has-bg {
+  color: var(--p-cyan);
+  background: color-mix(in srgb, var(--p-cyan) 14%, transparent);
+}
+
+body.yg-phi-portals .el-button--success.is-text.is-has-bg {
+  color: var(--el-color-success);
+  background: color-mix(in srgb, var(--el-color-success) 14%, transparent);
+}
+
+body.yg-phi-portals .el-button--warning.is-text.is-has-bg {
+  color: var(--el-color-warning);
+  background: color-mix(in srgb, var(--el-color-warning) 14%, transparent);
+}
+
+body.yg-phi-portals .el-button--danger.is-text.is-has-bg {
+  color: var(--p-danger);
+  background: color-mix(in srgb, var(--p-danger) 16%, transparent);
+}
+
+body.yg-phi-portals .el-button--info.is-text.is-has-bg {
+  color: var(--p-muted);
+  background: color-mix(in srgb, var(--p-ink) 8%, transparent);
+}
+
+body.yg-phi-portals .el-button--primary.is-text.is-has-bg:hover {
+  color: var(--p-cyan);
+  background: color-mix(in srgb, var(--p-cyan) 22%, transparent);
+}
+
+body.yg-phi-portals .el-button--success.is-text.is-has-bg:hover {
+  color: var(--el-color-success);
+  background: color-mix(in srgb, var(--el-color-success) 22%, transparent);
+}
+
+body.yg-phi-portals .el-button--warning.is-text.is-has-bg:hover {
+  color: var(--el-color-warning);
+  background: color-mix(in srgb, var(--el-color-warning) 22%, transparent);
+}
+
+body.yg-phi-portals .el-button--danger.is-text.is-has-bg:hover {
+  color: var(--p-danger);
+  background: color-mix(in srgb, var(--p-danger) 24%, transparent);
+}
+
+body.yg-phi-portals .el-button:focus-visible {
+  outline: 2px solid var(--p-cyan);
+  outline-offset: 2px;
+}
+
+/* ElSegmented：透明分组 + 底部细线；选中项采用与分页一致的下划线语言 */
+body.yg-phi-portals .el-segmented {
+  --el-segmented-bg-color: transparent;
+  --el-segmented-item-selected-bg-color: transparent;
+  --el-segmented-item-selected-color: var(--p-cyan);
+  --el-segmented-item-hover-bg-color: var(--p-hover);
+  --el-segmented-item-active-bg-color: color-mix(in srgb, var(--p-cyan) 18%, transparent);
+  --el-segmented-color: var(--p-muted);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: inset 0 -1px 0 var(--p-line-soft);
+}
+
+body.yg-phi-portals .el-segmented__item {
+  border-radius: 0;
+}
+
+body.yg-phi-portals .el-segmented__item-selected {
+  border-radius: 0;
+  background: linear-gradient(var(--p-cyan), var(--p-cyan)) left bottom / 100% 3px no-repeat;
+  box-shadow: none;
+  clip-path: none;
+}
+
+body.yg-phi-portals .el-tag {
+  border-radius: 0;
+  border-color: var(--p-line);
+  background: var(--p-sunken);
+  color: var(--p-ink);
+}
+
+body.yg-phi-portals .el-divider {
+  border-color: var(--p-line-soft);
+}
+
+body.yg-phi-portals .el-descriptions__label,
+body.yg-phi-portals .el-descriptions__content {
+  color: var(--p-muted);
+  border-color: var(--p-line-soft);
+}
+
+body.yg-phi-portals .el-descriptions__label {
+  color: var(--p-muted);
+  background: var(--p-sunken);
+}
+
+body.yg-phi-portals .el-alert {
+  border-radius: 0;
+  border: 1px solid var(--p-line);
+  background: var(--p-sunken);
+}
+
+body.yg-phi-portals .el-alert__title,
+body.yg-phi-portals .el-alert__description {
+  color: var(--p-ink);
+}
+
+body.yg-phi-portals .el-empty__description p {
+  color: var(--p-muted);
+}
+
+/* ---------- motion ---------- */
+@keyframes phi-portal-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes phi-portal-clip {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 12px, 0) scale(0.985);
+    clip-path: polygon(0 0, 0 0, 0 0, 0 100%, 0 100%);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+    clip-path: polygon(0 0, calc(100% - 18px) 0, 100% 18px, 100% 100%, 0 100%);
+  }
+}
+
+@keyframes phi-portal-slide {
+  from {
+    opacity: 0;
+    transform: translate3d(18px, 0, 0) skewX(-3deg);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) skewX(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body.yg-phi-portals .el-overlay-dialog,
+  body.yg-phi-portals .el-dialog,
+  body.yg-phi-portals .el-message-box,
+  body.yg-phi-portals .el-drawer,
+  body.yg-phi-portals .el-message,
+  body.yg-phi-portals .el-notification {
+    animation: none;
+    transition: none;
+  }
+}

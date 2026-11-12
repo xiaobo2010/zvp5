@@ -2,7 +2,10 @@
 import { School, CityGate, Vacation } from '@icon-park/vue-next'
 import type { ActivityMode } from '@/../types'
 import { ref, toRefs, type Component as VueComponent, watch } from 'vue'
-import { ElSelect, ElOption, ElForm, ElFormItem } from 'element-plus'
+import { ElSelect } from 'element-plus/es/components/select/index.mjs'
+import { ElOption } from 'element-plus/es/components/select/index.mjs'
+import { ElForm } from 'element-plus/es/components/form/index.mjs'
+import { ElFormItem } from 'element-plus/es/components/form/index.mjs'
 import { useI18n } from 'vue-i18n'
 
 const { t } = useI18n()

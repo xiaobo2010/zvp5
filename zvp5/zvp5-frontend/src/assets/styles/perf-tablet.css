@@ -1,0 +1,41 @@
+/* ==========================================================================
+   平板滚动流畅层（性能规则，不承载任何视觉设计）
+   目标设备：三星 P615C / P620（Galaxy Tab S6 Lite，Mali 级 GPU，60Hz）。
+   滚动时的合成带宽被两类负载挤占：固定毛玻璃导航的 backdrop-filter 采样
+   （设计本体，不可降级），与 phi 主题的纯装饰动画（全屏 3D 网格、速度线、
+   判定线等）。后者在滚动进行中处于感知盲区，冻结 160ms 肉眼不可辨。
+   utils/scrollActivity.ts 在滚动时给 <html> 打 data-scrolling，这里把
+   「平滑、可安全冻结在任意帧」的装饰动画统一暂停，把帧预算还给滚动。
+   排除项：phi-title-glitch / phi-emblem-rotate / phi-emblem-glitch 是
+   steps()/alternate 故障动画，冻结在中间帧会显示“错位”状态，观感会变，
+   故不在此暂停。选择器与 phi-theme.css（design:sync 生成物）保持同名。
+   ========================================================================== */
+
+html[data-scrolling] .yg-phi::before,
+html[data-scrolling] .yg-phi-velocity,
+html[data-scrolling] .yg-phi-judgment,
+html[data-scrolling] .yg-phi .phi-time__panel::after,
+html[data-scrolling] .yg-phi .el-segmented__item-selected::after {
+  animation-play-state: paused;
+}
+
+/* ==========================================================================
+   登录揭示期间（性能）
+   App.vue 在登录成功、揭示覆盖层出现时给 <html> 打 data-login-reveal，
+   done/超时/登出后移除。
+   注意：这里不能把 .yg-layout 设为 visibility:hidden。幕布拉开时露出的
+   必须是已经排好版、已经拿完数据的真实首页（对应区域实时可见），
+   而不是先看到空底、等覆盖层卸载后主页再“闪”出来。首帧防闪由 App 在
+   同一 tick 挂载 Teleport 覆盖层保证。
+   只暂停遮罩下仍在跑的常驻装饰动画，避免与幕布争 Mali 的合成带宽；
+   一次性入场动画不在此列，让它们在幕布下自然跑完，揭幕时页面已稳定。
+   ========================================================================== */
+html[data-login-reveal] .yg-phi::before,
+html[data-login-reveal] .yg-phi-velocity,
+html[data-login-reveal] .yg-phi-judgment,
+html[data-login-reveal] .yg-phi .phi-time__panel::after,
+html[data-login-reveal] .yg-phi .el-segmented__item-selected::after,
+html[data-login-reveal] .phi-time__ticks::before,
+html[data-login-reveal] .phi-time__ticks::after {
+  animation-play-state: paused;
+}

@@ -6,18 +6,16 @@ import type { Component as VueComponent } from 'vue'
 import { Plus, Refresh, User as UserIcon } from '@element-plus/icons-vue'
 import { ZButtonOrCard, ZUserTimeJudge } from '@/components'
 import api from '@/api'
-import {
-  ElButton,
-  ElDescriptions,
-  ElDescriptionsItem,
-  ElDialog,
-  ElMessage,
-  ElMessageBox,
-  ElPopconfirm,
-  ElPopover,
-  ElSpace,
-  ElTag
-} from 'element-plus'
+import { ElButton } from 'element-plus/es/components/button/index.mjs'
+import { ElDescriptions } from 'element-plus/es/components/descriptions/index.mjs'
+import { ElDescriptionsItem } from 'element-plus/es/components/descriptions/index.mjs'
+import { ElDialog } from 'element-plus/es/components/dialog/index.mjs'
+import { ElMessage } from 'element-plus/es/components/message/index.mjs'
+import { ElMessageBox } from 'element-plus/es/components/message-box/index.mjs'
+import { ElPopconfirm } from 'element-plus/es/components/popconfirm/index.mjs'
+import { ElPopover } from 'element-plus/es/components/popover/index.mjs'
+import { ElSpace } from 'element-plus/es/components/space/index.mjs'
+import { ElTag } from 'element-plus/es/components/tag/index.mjs'
 import { useI18n } from 'vue-i18n'
 import ZUserGroup from '../tags/ZUserGroup.vue'
 import ZUserPosition from '../tags/ZUserPosition.vue'

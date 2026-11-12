@@ -1,4 +1,4 @@
-import { ElMessageBox } from 'element-plus'
+import { ElMessageBox } from 'element-plus/es/components/message-box/index.mjs'
 import api from '@/api'
 import i18n from '@/i18n'
 

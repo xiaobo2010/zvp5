@@ -1,5 +1,5 @@
 import type { Response, ActivityTimeRecord } from '@/../types'
-import { ElNotification } from 'element-plus'
+import { ElNotification } from 'element-plus/es/components/notification/index.mjs'
 import axios from '@/plugins/axios.ts'
 import { translateKey } from '@/utils/errorMessage'
 

@@ -1,15 +1,13 @@
 <script lang="ts" setup>
 import type { Activity, ActivityMember } from '@/../types/v2'
 import { toRefs, ref, computed, defineAsyncComponent } from 'vue'
-import {
-  ElButton,
-  ElInput,
-  ElPopconfirm,
-  ElButtonGroup,
-  ElIcon,
-  ElMessage,
-  ElTag
-} from 'element-plus'
+import { ElButton } from 'element-plus/es/components/button/index.mjs'
+import { ElInput } from 'element-plus/es/components/input/index.mjs'
+import { ElPopconfirm } from 'element-plus/es/components/popconfirm/index.mjs'
+import { ElButtonGroup } from 'element-plus/es/components/button/index.mjs'
+import { ElIcon } from 'element-plus/es/components/icon/index.mjs'
+import { ElMessage } from 'element-plus/es/components/message/index.mjs'
+import { ElTag } from 'element-plus/es/components/tag/index.mjs'
 import { Calendar, ArrowRight, Delete, Edit, MagicStick } from '@element-plus/icons-vue'
 import dayjs from '@/plugins/dayjs'
 import { useUserStore } from '@/stores/user'

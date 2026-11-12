@@ -2,7 +2,8 @@
 import { positions } from '@/icons/positions'
 import type { UserPosition } from '@/../types'
 import { toRefs, type Component as VueComponent } from 'vue'
-import { ElButton, ElButtonGroup } from 'element-plus'
+import { ElButton } from 'element-plus/es/components/button/index.mjs'
+import { ElButtonGroup } from 'element-plus/es/components/button/index.mjs'
 import { useI18n } from 'vue-i18n'
 
 const props = defineProps<{ position: UserPosition[]; group?: boolean; text?: string }>()

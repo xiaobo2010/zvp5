@@ -1,7 +1,7 @@
 import axios from '@/plugins/axios'
 import type { Activity } from '@/../types/v2'
 import type { ErrorResponseInstance } from '@/../types'
-import { dayjs } from 'element-plus'
+import dayjs from 'dayjs'
 
 export async function createActivity(activity: Activity) {
   /// @ts-ignore

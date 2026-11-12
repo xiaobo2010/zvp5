@@ -28,7 +28,6 @@
     "generate-pwa-assets": "pwa-assets-generator"
   },
   "dependencies": {
-    "@amap/amap-jsapi-loader": "^1.0.1",
     "@icon-park/vue-next": "^1.4.2",
     "@types/desmos": "^1.11.0",
     "@types/ua-parser-js": "^0.7.39",
@@ -44,7 +43,6 @@
     "markdown-it": "^14.3.3",
     "oxlint": "^1.6.0",
     "pinia": "^3.0.3",
-    "socket.io-client": "^4.8.4",
     "ua-parser-js": "^2.0.10",
     "universal-cookie": "^8.0.1",
     "vue": "^3.5.45",

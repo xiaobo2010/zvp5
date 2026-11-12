@@ -13,22 +13,20 @@
  */
 import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import {
-  ElButton,
-  ElDialog,
-  ElForm,
-  ElFormItem,
-  ElIcon,
-  ElInput,
-  ElInputNumber,
-  ElMessage,
-  ElMessageBox,
-  ElRadio,
-  ElRadioGroup,
-  ElTable,
-  ElTableColumn,
-  ElTag
-} from 'element-plus'
+import { ElButton } from 'element-plus/es/components/button/index.mjs'
+import { ElDialog } from 'element-plus/es/components/dialog/index.mjs'
+import { ElForm } from 'element-plus/es/components/form/index.mjs'
+import { ElFormItem } from 'element-plus/es/components/form/index.mjs'
+import { ElIcon } from 'element-plus/es/components/icon/index.mjs'
+import { ElInput } from 'element-plus/es/components/input/index.mjs'
+import { ElInputNumber } from 'element-plus/es/components/input-number/index.mjs'
+import { ElMessage } from 'element-plus/es/components/message/index.mjs'
+import { ElMessageBox } from 'element-plus/es/components/message-box/index.mjs'
+import { ElRadio } from 'element-plus/es/components/radio/index.mjs'
+import { ElRadioGroup } from 'element-plus/es/components/radio/index.mjs'
+import { ElTable } from 'element-plus/es/components/table/index.mjs'
+import { ElTableColumn } from 'element-plus/es/components/table/index.mjs'
+import { ElTag } from 'element-plus/es/components/tag/index.mjs'
 import { Refresh, Search, Setting } from '@element-plus/icons-vue'
 import ZPagination from '@/components/utils/ZPagination.vue'
 import {

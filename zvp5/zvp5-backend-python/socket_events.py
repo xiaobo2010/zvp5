@@ -49,6 +49,11 @@ async def connect(sid, environ, auth=None):
         except Exception:
             _logger.exception("refuse socket connect %s (auth unavailable)", sid)
             return False
+    else:
+        # 实时通道原先对匿名连接敞开：任何人建连就能订阅广播事件。项目内目前
+        # 没有按连接推送的内容，但连接面本身不该有匿名免检入口。
+        _logger.warning("refuse socket connect %s (no token)", sid)
+        raise SocketIOConnectionRefusedError("请先登录后再建立实时连接")
     _logger.info("connect %s", sid)
 
 

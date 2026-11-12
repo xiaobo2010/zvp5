@@ -1,7 +1,10 @@
 <script setup lang="ts">
 import type { Log } from '../../../types/log'
 import { computed, toRefs } from 'vue'
-import { ElCard, ElForm, ElFormItem, ElTag } from 'element-plus'
+import { ElCard } from 'element-plus/es/components/card/index.mjs'
+import { ElForm } from 'element-plus/es/components/form/index.mjs'
+import { ElFormItem } from 'element-plus/es/components/form/index.mjs'
+import { ElTag } from 'element-plus/es/components/tag/index.mjs'
 import { useI18n } from 'vue-i18n'
 import dayjs from '@/plugins/dayjs'
 

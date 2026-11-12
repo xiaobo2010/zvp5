@@ -4,7 +4,9 @@ import { useUserStore } from '@/stores/user.ts'
 import { computed, nextTick, ref, watch, type Component } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useWindowSize } from '@vueuse/core'
-import { ElPageHeader, ElSegmented, ElIcon } from 'element-plus'
+import { ElPageHeader } from 'element-plus/es/components/page-header/index.mjs'
+import { ElSegmented } from 'element-plus/es/components/segmented/index.mjs'
+import { ElIcon } from 'element-plus/es/components/icon/index.mjs'
 import { ArrowLeft, Avatar, Bell } from '@element-plus/icons-vue'
 import { Block, Config, Group, Log, Picture, User } from '@icon-park/vue-next'
 import ZGroupUserList from '@/components/group/ZGroupUserList.vue'
@@ -244,7 +246,7 @@ watch([current, compactTabs], () => {
       <template #extra>
         <ElSegmented v-model="current" :options="tabs">
           <template #default="props">
-            <div class="flex flex-col items-center gap-2 p-2">
+            <div class="flex flex-col items-center gap-2 px-2 py-1">
               <ElIcon :size="18" class="mt-2">
                 <Component :is="(props.item as SegmentedTab).icon" />
               </ElIcon>

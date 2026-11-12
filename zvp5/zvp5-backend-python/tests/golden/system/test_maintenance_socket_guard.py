@@ -55,6 +55,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 import main  # noqa: E402  (sys.path 引导之后再导入)
+import socket_events  # noqa: E402
 from db import backends, system_state  # noqa: E402
 from routers import system_router  # noqa: E402
 from typings.log import inject_log  # noqa: E402
@@ -100,6 +101,10 @@ def _admin_user() -> dict:
     return {"id": ADMIN_OID, "per": ["admin"]}
 
 
+async def _accept_any_token(token, scope, exception=True, request=None) -> dict:
+    return _admin_user()
+
+
 @pytest.fixture()
 def client(tmp_path, monkeypatch) -> TestClient:
     """隔离状态库 + 打桩外围 + 返回进程内 TestClient（不进 lifespan）。"""
@@ -115,6 +120,7 @@ def client(tmp_path, monkeypatch) -> TestClient:
     monkeypatch.setitem(main.app.dependency_overrides, get_current_user, _admin_user)
     monkeypatch.setitem(main.app.dependency_overrides, inject_log, _FakeLog)
     monkeypatch.setattr(backends, "get_users_repo", lambda *a, **k: _FakeUsersRepo())
+    monkeypatch.setattr(socket_events, "_authenticate", _accept_any_token)
     monkeypatch.setattr(system_router, "get_user_permissions", _fake_permissions)
     monkeypatch.setattr(system_router, "get_user_display_name", _fake_display_name)
 
@@ -131,10 +137,14 @@ def handshake(client: TestClient, headers: dict | None = None):
 
 
 def namespace_connect(client: TestClient, sid: str):
-    """发 socket.io CONNECT(40) 并取回 CONNECT ack。"""
+    """发 socket.io CONNECT(40) 并取回 CONNECT ack。
+
+    匿名连接已被 ``connect`` 拒绝，所以这里显式带 ``auth.token``；本文件的
+    ``_authenticate`` 打桩为「任何 token 即管理员」，被测的是维护模式行为。
+    """
     post = client.post(
         f"{POLLING_URL}&sid={sid}",
-        content="40",
+        content="40" + json.dumps({"token": "maintenance-harness"}),
         headers={**MOZ, "content-type": "text/plain;charset=UTF-8"},
     )
     poll = client.get(f"{POLLING_URL}&sid={sid}", headers=MOZ)

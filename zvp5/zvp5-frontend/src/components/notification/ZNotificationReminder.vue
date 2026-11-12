@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { ElButton, ElDialog } from 'element-plus'
+import { ElButton } from 'element-plus/es/components/button/index.mjs'
+import { ElDialog } from 'element-plus/es/components/dialog/index.mjs'
 import { useI18n } from 'vue-i18n'
 import dayjs from '@/plugins/dayjs'
 import { useUserStore } from '@/stores/user'
@@ -21,6 +22,8 @@ import {
 } from '@/utils/notificationState'
 
 const MIN_CHECK_INTERVAL_MS = 60_000
+// 登录后先给页面 10s 稳定期再弹通知，避免刚进入就打断主流程。
+const INITIAL_DELAY_MS = 10_000
 
 const { t } = useI18n()
 const route = useRoute()
@@ -47,6 +50,8 @@ let generation = 0
 let inFlight: AbortController | null = null
 let lastCheckedAt = 0
 let advanceTimer: ReturnType<typeof setTimeout> | null = null
+let readyAt = 0
+let initialTimer: ReturnType<typeof setTimeout> | null = null
 
 const progressText = computed(() => {
   if (!current.value) {
@@ -74,6 +79,11 @@ function resetForAccount() {
   state.value = emptyNotificationState()
   lastCheckedAt = 0
   advancing.value = false
+  readyAt = 0
+  if (initialTimer) {
+    clearTimeout(initialTimer)
+    initialTimer = null
+  }
   if (advanceTimer) {
     clearTimeout(advanceTimer)
     advanceTimer = null
@@ -81,6 +91,10 @@ function resetForAccount() {
 }
 
 async function checkNotifications(force = false) {
+  // 登录后的初始延迟内，路由/可见性等被动触发一律不请求。
+  if (!force && readyAt > 0 && Date.now() < readyAt) {
+    return
+  }
   const key = accountKey.value
   if (!key || !userStore.isLogin) {
     return
@@ -160,9 +174,15 @@ watch(
   accountKey,
   () => {
     resetForAccount()
-    if (accountKey.value) {
-      void checkNotifications(true)
+    if (!accountKey.value) {
+      return
     }
+    readyAt = Date.now() + INITIAL_DELAY_MS
+    initialTimer = setTimeout(() => {
+      readyAt = 0
+      initialTimer = null
+      void checkNotifications(true)
+    }, INITIAL_DELAY_MS)
   },
   { immediate: true }
 )

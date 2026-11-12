@@ -33,7 +33,7 @@ from db.oracle.session import session_scope
 from db.system_state import is_enabled_fresh
 from services import device_guard, log_events, risk_monitor
 from util.ban import ban_headers, ban_is_active, raise_banned
-from util import login_throttle
+from util import login_throttle, read_throttle
 from util.cert import (
     get_hashed_password_by_cert,
     jwt_encode,
@@ -815,6 +815,7 @@ async def change_password(
 
 @router.get("")
 async def read_users(
+    request: Request,
     query: str = Query("", max_length=128),
     page: int = Query(1, ge=-1),
     perpage: int = Query(5, ge=1, le=100),
@@ -824,6 +825,17 @@ async def read_users(
     """
     Query users
     """
+    # 匿名分支按 IP 记账：未登录也能按学号精确查姓名，不限速就是一条无成本
+    # 的学号枚举通道。登录用户的路径与额度不受影响。
+    if user is None:
+        try:
+            await read_throttle.check_anonymous(client_ip_from(request))
+        except read_throttle.ReadRateLimited as exc:
+            raise HTTPException(
+                status_code=429,
+                detail={"code": exc.code, "message": exc.message},
+                headers={"Retry-After": str(exc.retry_after)},
+            )
     if privilege:
         groups = await backends.get_groups_repo().list_permission_groups(
             permissions=["admin", "department"]

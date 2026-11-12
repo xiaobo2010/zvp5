@@ -1,7 +1,7 @@
 import api from '@/api'
 import type { User, UserPosition, UserProfile, UserActivityTimeSums } from '@/../types'
 import { defineStore } from 'pinia'
-import { ElNotification } from 'element-plus'
+import { ElNotification } from 'element-plus/es/components/notification/index.mjs'
 import { useRouter } from 'vue-router'
 import { getUserPositions } from '@/utils/groupPosition'
 import { clearCache } from '@/utils/idbCache'
@@ -74,8 +74,14 @@ export const useUserStore = defineStore('user', {
         this.position = await getUserPositions(legacy)
       }
     },
-    async setUser(user: string, password: string) {
-      const result = await api.user.auth.useLongTermAuth(user, password, 'long', 'login')
+    async setUser(user: string, password: string, options?: { suppressErrorToast?: boolean }) {
+      const result = await api.user.auth.useLongTermAuth(
+        user,
+        password,
+        'long',
+        'login',
+        options
+      )
       if (result) {
         const information: User | UserProfile =
           result.profile ?? ((await api.user.readOne(result._id)) as User)
