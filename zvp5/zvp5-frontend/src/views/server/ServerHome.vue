@@ -8,6 +8,7 @@ import { ElPageHeader } from 'element-plus/es/components/page-header/index.mjs'
 import { ElSegmented } from 'element-plus/es/components/segmented/index.mjs'
 import { ElIcon } from 'element-plus/es/components/icon/index.mjs'
 import { ArrowLeft, Setting, DataLine, Key, Connection, Folder, Grid } from '@element-plus/icons-vue'
+import ZHexGrid from '@/components/decor/ZHexGrid.vue'
 
 interface SegmentedTab {
   label: string
@@ -144,6 +145,8 @@ watch(
     class="server-shell"
     :class="[compactTabs ? 'px-4 py-3' : 'px-6 py-4', { 'server-shell--fill': isFill }]"
   >
+    <!-- 蜂窝底纹：与封禁页同一套仪器感底纹，管理台用主题强调色，压在内容之下 -->
+    <ZHexGrid :size="64" color="var(--yg-text-primary)" :opacity="0.055" drift :z-index="-1" />
     <!-- 紧凑布局：页头（返回 + 标题）与胶囊导航分两行 -->
     <template v-if="compactTabs">
       <header class="server-head">
@@ -214,6 +217,9 @@ watch(
 <style scoped>
 /* ---------- 服务器页外壳 ---------- */
 .server-shell {
+  position: relative;
+  /* 建立层叠上下文：蜂窝底纹 z-index:-1 落在页面底色之上、内容之下 */
+  isolation: isolate;
   display: flex;
   flex-direction: column;
   min-height: 0;

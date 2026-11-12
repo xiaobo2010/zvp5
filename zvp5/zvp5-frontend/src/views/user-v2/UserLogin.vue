@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch, h, reactive, nextTick } from 'vue'
+import { ref, watch, h, reactive, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import { ElButton } from 'element-plus/es/components/button/index.mjs'
 import { ElInput } from 'element-plus/es/components/input/index.mjs'
 import { ElMessageBox } from 'element-plus/es/components/message-box/index.mjs'
@@ -130,6 +130,42 @@ function showBanScreen(payload: Omit<BanScreenState, 'visible'>) {
 function closeBanScreen() {
   banScreen.visible = false
 }
+
+// 封禁屏预热：封禁信息只能从登录 403 的响应头拿到，首帧要在低端平板上一次性
+// 完成样式解析/字体度量/合成层创建，冷启动会掉帧。空闲时先挂一个不可见实例
+// （ZBanScreen 的 prewarm 模式）把这一笔成本提前付掉，真正封禁时直接显示。
+const banWarm = ref(false)
+let warmTimer: ReturnType<typeof setTimeout> | null = null
+
+function warmBanScreen() {
+  if (banScreen.visible) {
+    return
+  }
+  // 静态化用户（reduced-motion）没有入场动画，预热无收益。
+  if (window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches === true) {
+    return
+  }
+  banWarm.value = true
+  warmTimer = setTimeout(() => {
+    warmTimer = null
+    banWarm.value = false
+  }, 1600)
+}
+
+onMounted(() => {
+  if (typeof window.requestIdleCallback === 'function') {
+    window.requestIdleCallback(() => warmBanScreen(), { timeout: 2500 })
+  } else {
+    setTimeout(() => warmBanScreen(), 900)
+  }
+})
+
+onBeforeUnmount(() => {
+  if (warmTimer !== null) {
+    clearTimeout(warmTimer)
+    warmTimer = null
+  }
+})
 
 // 登录失败对话框：密码错误走红色（danger），设备闸拦截走琥珀色（warning）。
 // 与封禁屏分开——封禁是终态不可重试，这几种都还能改输入再来一次。
@@ -660,6 +696,18 @@ watch(user, async () => {
       :action-text="authAlert.actionText"
       @ack="onAuthAlertAck"
       @action="onAuthAlertAction"
+    />
+
+    <!-- 预热实例：不可见，只为把封禁屏首帧的样式/合成成本提前付掉 -->
+    <ZBanScreen
+      v-if="banWarm && !banScreen.visible"
+      prewarm
+      variant="account"
+      :title="t('nav.banned.title')"
+      :reason="t('nav.banned.reasonFallback')"
+      :until="t('nav.banned.permanent')"
+      :appeal="t('nav.banned.appeal')"
+      :lock-scroll="false"
     />
 
     <ZBanScreen

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, useId } from 'vue'
 import { useI18n } from 'vue-i18n'
+import ZHexGrid from '@/components/decor/ZHexGrid.vue'
 
 const props = withDefaults(
   defineProps<{
@@ -18,6 +19,11 @@ const props = withDefaults(
     riskLevel?: number
     /** 挂载时剩余秒数，到点进入消散；0 立即消散。仅读取挂载时的值 */
     autoDismiss?: number
+    /**
+     * 预热模式：挂载后不可见、不锁滚动、不抢焦点、不计时消散。
+     * 登录页空闲时用它提前跑一遍首帧渲染成本，真正封禁时不再掉帧。
+     */
+    prewarm?: boolean
   }>(),
   {
     appeal: '',
@@ -28,7 +34,8 @@ const props = withDefaults(
     variant: 'account',
     lockScroll: true,
     riskLevel: undefined,
-    autoDismiss: 15
+    autoDismiss: 15,
+    prewarm: false
   }
 )
 
@@ -220,6 +227,10 @@ function initialDelayMs(): number {
 }
 
 onMounted(() => {
+  // 预热实例只是一次离屏渲染，不接管滚动、焦点与计时。
+  if (props.prewarm) {
+    return
+  }
   if (props.lockScroll) {
     previousOverflow = document.body.style.overflow
     document.body.style.overflow = 'hidden'
@@ -263,9 +274,14 @@ onBeforeUnmount(() => {
     <div
       ref="rootRef"
       class="z-ban hidden-print"
-      :class="[`z-ban--${variant}`, { 'is-reduced': reducedMotion, 'is-dismissing': isDismissing }]"
+      :class="[
+        `z-ban--${variant}`,
+        { 'is-reduced': reducedMotion, 'is-dismissing': isDismissing, 'is-prewarm': prewarm }
+      ]"
       role="alertdialog"
-      aria-modal="true"
+      :aria-modal="prewarm ? undefined : 'true'"
+      :aria-hidden="prewarm || undefined"
+      :inert="prewarm || undefined"
       :aria-labelledby="titleId"
       :aria-describedby="reasonId"
       tabindex="-1"
@@ -273,6 +289,15 @@ onBeforeUnmount(() => {
       @keydown.tab.prevent
     >
       <div ref="screenRef" class="z-ban__screen">
+        <!-- 六边形蜂窝线框：压在最底层，只做仪器感底纹，不参与布局 -->
+        <ZHexGrid
+          :size="58"
+          color="var(--z-ban-red)"
+          :opacity="0.1"
+          drift
+          flicker
+          :z-index="-1"
+        />
         <div class="z-ban__hazard z-ban__hazard--top" aria-hidden="true" />
         <div class="z-ban__content">
           <p class="z-ban__sys" aria-hidden="true">
@@ -365,11 +390,20 @@ onBeforeUnmount(() => {
   overscroll-behavior: contain;
 }
 
+/* 预热实例：全屏但不可见，仍会走完样式解析与首帧合成，成本提前付掉；
+   登录页 1.6s 后随组件卸载，不占常驻内存。 */
+.z-ban.is-prewarm {
+  opacity: 0;
+  pointer-events: none;
+}
+
 .z-ban__screen {
   position: absolute;
   inset: 0;
   display: flex;
   flex-direction: column;
+  /* 建立层叠上下文：蜂窝底纹 z-index:-1 落在屏幕底色之上、内容之下 */
+  isolation: isolate;
   background:
     radial-gradient(ellipse 90% 60% at 50% 38%, #3d0008 0%, transparent 70%),
     var(--z-ban-ink);
@@ -393,12 +427,31 @@ onBeforeUnmount(() => {
   position: relative;
   flex: none;
   height: 14px;
+  overflow: hidden;
+  opacity: 0.85;
+}
+
+/* 斜纹单独一层：比条子左右各宽 48px，平移一个周期（24px 沿 45° 方向）
+   时会露出边缘，靠这圈余量吃掉；只动 transform，走合成层。 */
+.z-ban__hazard::before {
+  content: '';
+  position: absolute;
+  inset: 0 -48px;
   background: repeating-linear-gradient(
     -45deg,
     var(--z-ban-red) 0 12px,
     var(--z-ban-ink) 12px 24px
   );
-  opacity: 0.85;
+  animation: z-ban-hazard-crawl 3.4s linear infinite;
+}
+
+@keyframes z-ban-hazard-crawl {
+  from {
+    transform: translate3d(0, 0, 0);
+  }
+  to {
+    transform: translate3d(-16.97px, 16.97px, 0);
+  }
 }
 
 .z-ban__hazard--top {
@@ -470,6 +523,7 @@ onBeforeUnmount(() => {
   overflow-wrap: normal;
   word-break: keep-all;
   max-width: 100%;
+  animation: z-ban-glitch-warning 9s steps(1, end) infinite;
 }
 
 /* 紧贴 WARNING 的过热状态行：单行，过长时省略而不撑破布局 */
@@ -487,6 +541,7 @@ onBeforeUnmount(() => {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  animation: z-ban-glitch-overheat 7.6s steps(1, end) infinite;
 }
 
 .z-ban__title {
@@ -496,6 +551,86 @@ onBeforeUnmount(() => {
   color: #fff;
   border-left: 4px solid var(--z-ban-red);
   padding-left: 12px;
+  animation: z-ban-glitch-title 11s steps(1, end) infinite;
+}
+
+/* 故障抖动：只用本页红/白做 CRT 信号错位，不引入青-品红色差。
+   全程 transform 合成层 + 极稀疏的跳帧（90% 时间静止），像设备失控而非装饰。 */
+@keyframes z-ban-glitch-warning {
+  0%,
+  88%,
+  94%,
+  100% {
+    transform: none;
+    text-shadow:
+      0 0 18px rgb(255 59 48 / 0.55),
+      3px 0 0 rgb(122 0 12 / 0.9);
+  }
+  89% {
+    transform: translate3d(-3px, 0, 0) skewX(-1deg);
+    text-shadow:
+      -4px 0 0 var(--z-ban-red),
+      4px 0 0 rgb(255 255 255 / 0.32);
+  }
+  90% {
+    transform: translate3d(2px, 0, 0) skewX(0.8deg);
+    text-shadow:
+      4px 0 0 var(--z-ban-red),
+      -3px 0 0 rgb(255 255 255 / 0.26);
+  }
+  91% {
+    transform: translate3d(-1px, 0, 0);
+  }
+  92% {
+    transform: none;
+  }
+  93% {
+    transform: translate3d(2px, 0, 0);
+  }
+}
+
+@keyframes z-ban-glitch-overheat {
+  0%,
+  90%,
+  100% {
+    transform: none;
+    text-shadow: 0 0 8px rgb(255 59 48 / 0.45);
+  }
+  91% {
+    transform: translate3d(3px, 0, 0);
+    text-shadow:
+      -3px 0 0 var(--z-ban-red),
+      3px 0 0 rgb(255 255 255 / 0.3);
+  }
+  92% {
+    transform: translate3d(-2px, 0, 0);
+    text-shadow: 3px 0 0 rgb(255 120 115 / 0.85);
+  }
+  94% {
+    transform: none;
+    text-shadow: 0 0 8px rgb(255 59 48 / 0.45);
+  }
+}
+
+@keyframes z-ban-glitch-title {
+  0%,
+  91%,
+  100% {
+    transform: none;
+    text-shadow: none;
+  }
+  92% {
+    transform: translate3d(-1px, 0, 0);
+    text-shadow: -2px 0 0 var(--z-ban-red);
+  }
+  93% {
+    transform: translate3d(1px, 0, 0);
+    text-shadow: 2px 0 0 rgb(255 59 48 / 0.75);
+  }
+  94% {
+    transform: none;
+    text-shadow: none;
+  }
 }
 
 .z-ban__block {
@@ -759,6 +894,14 @@ onBeforeUnmount(() => {
   transition: none;
 }
 
+/* 静态化用户：去掉斜纹爬动与字体抖动，保留静态底纹 */
+.z-ban.is-reduced .z-ban__hazard::before,
+.z-ban.is-reduced .z-ban__warning,
+.z-ban.is-reduced .z-ban__overheat,
+.z-ban.is-reduced .z-ban__title {
+  animation: none;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .z-ban__panel,
   .z-ban__seam {
@@ -771,6 +914,13 @@ onBeforeUnmount(() => {
 
   .z-ban__bar-fill {
     transition: none;
+  }
+
+  .z-ban__hazard::before,
+  .z-ban__warning,
+  .z-ban__overheat,
+  .z-ban__title {
+    animation: none;
   }
 }
 
