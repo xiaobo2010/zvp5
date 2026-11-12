@@ -17,10 +17,13 @@ import { VitePWA as pwa } from 'vite-plugin-pwa'
 import { ElementPlusResolver } from 'unplugin-vue-components/resolvers'
 import type { ComponentResolver } from 'unplugin-vue-components/types'
 import { externalizeInlineScripts } from './scripts/vite-plugin-externalize-inline-scripts'
+import { crossOriginPwaAssets } from './scripts/vite-plugin-cross-origin-pwa-assets'
 import {
   validateOptionalContentApiBase,
   validateOptionalProductionRaceApiBase,
-  validateProductionApiBase
+  validatePageBase,
+  validateProductionApiBase,
+  validateStaticBase
 } from './src/utils/apiBaseConfig'
 
 /**
@@ -144,6 +147,14 @@ function optionalContentApiBase(mode: string): string | undefined {
   )
 }
 
+const startupEnv = loadEnv(
+  process.env.NODE_ENV === 'development' ? 'development' : 'production',
+  process.cwd(),
+  'VITE_'
+)
+const staticBase = validateStaticBase(process.env.VITE_STATIC_BASE || startupEnv.VITE_STATIC_BASE)
+const pageBase = validatePageBase(process.env.VITE_PAGE_BASE || startupEnv.VITE_PAGE_BASE)
+
 /**
  * Warm the cross-origin API connection while the HTML is still being parsed.
  *
@@ -170,14 +181,17 @@ function preconnectApiOrigin(): Plugin {
         process.env.VITE_API_BASE || fileEnv.VITE_API_BASE,
         process.env.VITE_API_RACE_BASE || fileEnv.VITE_API_RACE_BASE,
         // 预览站的内容主机是远端 API 域，值得和主基址一样预热。
-        process.env.VITE_API_CONTENT_BASE || fileEnv.VITE_API_CONTENT_BASE
+        process.env.VITE_API_CONTENT_BASE || fileEnv.VITE_API_CONTENT_BASE,
+        process.env.VITE_STATIC_BASE || fileEnv.VITE_STATIC_BASE
       ]
       const origins = new Set<string>()
       for (const raw of bases) {
+        if (!raw || raw === '/') continue
         try {
-          origins.add(new URL(validateOptionalProductionRaceApiBase(raw) || '').origin)
+          const origin = new URL(raw).origin
+          if (origin.startsWith('https://')) origins.add(origin)
         } catch {
-          // 主基址由 requireProductionApiBase 强校验，非法竞速基址同样在 build 前报错。
+          // 各基址的格式由 build 前校验统一负责。
         }
       }
       if (origins.size === 0) return html
@@ -200,8 +214,13 @@ function preconnectApiOrigin(): Plugin {
   }
 }
 
+function staticAssetPath(base: string, relativePath: string): string {
+  return base === '/' ? `/${relativePath}` : `${base}${relativePath}`
+}
+
 // https://vitejs.dev/config/
 export const viteBaseConfig = {
+  base: staticBase,
   plugins: [
     vue(),
     vueJsx(),
@@ -224,6 +243,9 @@ export const viteBaseConfig = {
     // index.html 的内联脚本，workbox precache 才能收录新外置文件。
     externalizeInlineScripts(),
     pwa({
+      // The worker must remain same-origin; its manifest/precache can move.
+      base: '/',
+      useCredentials: true,
       injectRegister: 'auto',
       registerType: 'autoUpdate',
       immediate: true,
@@ -232,25 +254,34 @@ export const viteBaseConfig = {
         name: 'ZVMS 4',
         short_name: 'ZVMS',
         description: 'The Zhenhai High School Volunteer Management System 4',
+        start_url: pageBase,
+        scope: pageBase,
         theme_color: '#ffffff',
         icons: [
           {
-            src: 'pwa-192x192.png',
+            src: staticAssetPath(staticBase, 'pwa-192x192.png'),
             sizes: '192x192',
             type: 'image/png'
           },
           {
-            src: 'pwa-512x512.png',
+            src: staticAssetPath(staticBase, 'pwa-512x512.png'),
             sizes: '512x512',
             type: 'image/png'
           }
         ]
       },
       workbox: {
+        inlineWorkboxRuntime: true,
+        ...(staticBase === '/'
+          ? {}
+          : {
+              modifyURLPrefix: { '': staticBase },
+              navigateFallback: staticAssetPath(staticBase, 'index.html')
+            }),
         skipWaiting: true,
         clientsClaim: true,
         cleanupOutdatedCaches: true,
-        sourcemap: true,
+        sourcemap: false,
         // legacy 产物仅供老浏览器降级使用，不必进 precache：
         // SW 首装可少拉 ~2.8MB，modern 浏览器按需回退即可。
         // 注意 workbox GenerateSW 没有 exclude 选项，等价物是 globIgnores。
@@ -346,6 +377,7 @@ export const viteBaseConfig = {
         }, 600000)
       }
     }),
+    crossOriginPwaAssets(staticBase),
     Icons({}),
     AutoImport({
       // 全量样式已由 main.ts 引入(element-plus/theme-chalk/index.css + 覆盖层),

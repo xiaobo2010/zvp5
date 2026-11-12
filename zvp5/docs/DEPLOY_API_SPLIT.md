@@ -23,10 +23,10 @@ preconnect。
   └─ 其余 /api/*（绝对 API 地址）───────────→ API 站：nginx → uvicorn
 ```
 
-| 角色 | 页面 Origin | 请求目标 | 职责 |
-|---|---|---|---|
-| 内容站 | `https://<content-domain>` | 同源；本机文件管理 API | HTML、JS、CSS、图标、PWA 文件；本机文件管理 |
-| API 站 | 不作为页面 Origin | `https://<api-domain>/api/*` | FastAPI、数据库业务、AI、SSE、上传；Web SSH 网关 |
+| 角色   | 页面 Origin                | 请求目标                     | 职责                                             |
+| ------ | -------------------------- | ---------------------------- | ------------------------------------------------ |
+| 内容站 | `https://<content-domain>` | 同源；本机文件管理 API       | HTML、JS、CSS、图标、PWA 文件；本机文件管理      |
+| API 站 | 不作为页面 Origin          | `https://<api-domain>/api/*` | FastAPI、数据库业务、AI、SSE、上传；Web SSH 网关 |
 
 浏览器发出的 API 请求是跨域请求。浏览器 Origin 必须是内容站 Origin，不能填 API
 域名；CORS 白名单配置的是“谁在调用 API”，不是“API 自己在哪里”。
@@ -78,12 +78,14 @@ systemctl restart zvms4
 ```text
 ZVMS_API_ORIGIN=https://<api-domain>
 ZVMS_API_WS_ORIGIN=wss://<api-domain>
+ZVMS_STATIC_ORIGIN=https://<static-domain>
 ```
 
-`nginx-security-headers.conf` 是模板，保留两个占位符：
+`nginx-security-headers.conf` 是模板，保留三个占位符：
 
 - `__ZVMS_API_ORIGIN__`
 - `__ZVMS_API_WS_ORIGIN__`
+- `__ZVMS_STATIC_ORIGIN__`
 
 使用仓库脚本渲染：
 
@@ -91,6 +93,7 @@ ZVMS_API_WS_ORIGIN=wss://<api-domain>
 cd zvp5-backend-python
 ZVMS_API_ORIGIN='https://<api-domain>' \
 ZVMS_API_WS_ORIGIN='wss://<api-domain>' \
+ZVMS_STATIC_ORIGIN='https://<static-domain>' \
 python config/render_nginx_security_headers.py \
   --output /etc/nginx/snippets/zvms-security-headers.conf
 nginx -t

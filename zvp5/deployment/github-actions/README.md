@@ -64,6 +64,7 @@ Environment Variables:
 |---|---|
 | `PROD_API_BASE` | Canonical same-origin `/api`, or an absolute HTTPS API base ending in `/api` for a split-origin rollback |
 | `PROD_API_RACE_BASE` | Race API base ending in `/api`; required by the current production build |
+| `PROD_STATIC_BASE` | High-bandwidth static asset origin ending in `/`; defaults to `https://zvpapi.xiaobopisces.top/` |
 | `PROD_FRONTEND_HEALTH_URL` | Public frontend root URL |
 
 Production API hosts are runtime configuration and are not stored in the

@@ -3,7 +3,9 @@ import {
   resolveContentApiBase,
   validateOptionalContentApiBase,
   validateOptionalProductionRaceApiBase,
-  validateProductionApiBase
+  validatePageBase,
+  validateProductionApiBase,
+  validateStaticBase
 } from './apiBaseConfig'
 
 it('accepts an absolute HTTPS API base ending in /api', () => {
@@ -87,4 +89,37 @@ it('prefers the configured content base and strips trailing slashes', () => {
   expect(
     resolveContentApiBase('https://zvp.example.test/api/', 'https://canary.example.test')
   ).toBe('https://zvp.example.test/api')
+})
+
+it('defaults the static asset base to same-origin', () => {
+  expect(validateStaticBase(undefined)).toBe('/')
+  expect(validateStaticBase('')).toBe('/')
+  expect(validateStaticBase('/')).toBe('/')
+})
+
+it('normalizes an absolute HTTPS static asset base with a trailing slash', () => {
+  expect(validateStaticBase('https://static.example.test')).toBe('https://static.example.test/')
+  expect(validateStaticBase('https://static.example.test/assets')).toBe(
+    'https://static.example.test/assets/'
+  )
+})
+
+it('rejects unsafe static asset bases', () => {
+  expect(() => validateStaticBase('http://static.example.test/')).toThrow(
+    'VITE_STATIC_BASE must be / or an absolute HTTPS URL'
+  )
+  expect(() => validateStaticBase('/static/')).toThrow(
+    'VITE_STATIC_BASE must be / or an absolute HTTPS URL'
+  )
+  expect(() => validateStaticBase('https://user:pass@static.example.test/')).toThrow(
+    'VITE_STATIC_BASE must be / or an absolute HTTPS URL'
+  )
+})
+
+it('validates the page origin used by a cross-origin PWA manifest', () => {
+  expect(validatePageBase(undefined)).toBe('/')
+  expect(validatePageBase('https://zvp.example.test')).toBe('https://zvp.example.test/')
+  expect(() => validatePageBase('/app')).toThrow(
+    'VITE_PAGE_BASE must be / or an absolute HTTPS URL'
+  )
 })

@@ -3,6 +3,10 @@
 interface ImportMetaEnv {
   /** Absolute HTTPS API URL ending in /api; required for production builds. */
   readonly VITE_API_BASE?: string
+  /** Optional cross-origin static asset base; defaults to same-origin `/`. */
+  readonly VITE_STATIC_BASE?: string
+  /** Public page origin used to anchor PWA scope when the manifest is cross-origin. */
+  readonly VITE_PAGE_BASE?: string
 }
 
 interface ImportMeta {

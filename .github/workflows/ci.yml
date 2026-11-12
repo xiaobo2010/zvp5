@@ -206,6 +206,8 @@ jobs:
     env:
       VITE_API_BASE: ${{ vars.PROD_API_BASE }}
       VITE_API_RACE_BASE: ${{ vars.PROD_API_RACE_BASE }}
+      VITE_STATIC_BASE: ${{ vars.PROD_STATIC_BASE || 'https://zvpapi.xiaobopisces.top/' }}
+      VITE_PAGE_BASE: ${{ vars.PROD_FRONTEND_HEALTH_URL }}
       PROD_FRONTEND_HEALTH_URL: ${{ vars.PROD_FRONTEND_HEALTH_URL }}
       DEPLOYMENT_ID: ${{ github.run_id }}-${{ github.run_attempt }}
       # release tag 由人输入，禁止直接插值进 run: 脚本（命令注入）；只经 env 传给 shell。
@@ -267,6 +269,8 @@ jobs:
           set -euo pipefail
           : "${VITE_API_BASE:?VITE_API_BASE is required}"
           : "${VITE_API_RACE_BASE:?VITE_API_RACE_BASE is required}"
+          : "${VITE_STATIC_BASE:?VITE_STATIC_BASE is required}"
+          : "${VITE_PAGE_BASE:?VITE_PAGE_BASE is required}"
           : "${PROD_FRONTEND_HEALTH_URL:?PROD_FRONTEND_HEALTH_URL is required}"
           node -e '
             const api = process.env.VITE_API_BASE || ""
@@ -283,6 +287,22 @@ jobs:
               race.protocol !== "https:" || !race.hostname || race.username || race.password ||
               race.search || race.hash || race.pathname.replace(/\/+$/, "") !== "/api"
             ) throw new Error("VITE_API_RACE_BASE must be an HTTPS URL ending in /api")
+            const staticBase = process.env.VITE_STATIC_BASE || ""
+            if (staticBase !== "/") {
+              const url = new URL(staticBase)
+              if (
+                url.protocol !== "https:" || !url.hostname || url.username || url.password ||
+                url.search || url.hash || !url.pathname.endsWith("/")
+              ) throw new Error("VITE_STATIC_BASE must be / or an HTTPS URL ending in /")
+            }
+            const pageBase = process.env.VITE_PAGE_BASE || ""
+            if (pageBase !== "/") {
+              const url = new URL(pageBase)
+              if (
+                url.protocol !== "https:" || !url.hostname || url.username || url.password ||
+                url.search || url.hash || !url.pathname.endsWith("/")
+              ) throw new Error("VITE_PAGE_BASE must be / or an HTTPS URL ending in /")
+            }
           '
           if [[ "$VITE_API_BASE" == "/api" ]]; then
             api_health_url="$(node -e 'process.stdout.write(new URL("/api/health", process.env.PROD_FRONTEND_HEALTH_URL).href)')"
@@ -303,7 +323,7 @@ jobs:
           set -euo pipefail
           pnpm run build
           grep -R -F "$VITE_API_RACE_BASE" dist/assets >/dev/null
-          grep -F 'src="/assets/' dist/index.html >/dev/null
+          node .github/scripts/verify-static-base.cjs dist "$VITE_STATIC_BASE" "$VITE_PAGE_BASE"
           race_origin="$(node -e 'process.stdout.write(new URL(process.argv[1]).origin)' "$VITE_API_RACE_BASE")"
           grep -F "$race_origin" dist/index.html >/dev/null
 
