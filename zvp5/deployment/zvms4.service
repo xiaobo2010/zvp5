@@ -10,6 +10,9 @@ Group=www-data
 WorkingDirectory=/www/zvms4/backend
 Environment=PYTHONUNBUFFERED=1
 Environment=TNS_ADMIN=/www/zvms4/adb-wallet-zvp5adb2
+# ADB 口令不再写进 settings.py：源文件 /etc/zvms4/zvp-secrets.env（root:root 0600），
+# 由 systemd 在启动时注入；settings.py 读不到就 fail-fast，不会静默用空口令连库。
+EnvironmentFile=/etc/zvms4/zvp-secrets.env
 # AES 主密钥不走部署树：systemd 在启动时把它复制到 $CREDENTIALS_DIRECTORY，
 # 服务停即消失。源文件放 /etc/zvms4/ai-key（root:root 0600），由运维迁移，
 # 不参与 rsync。见 docs/ISSUE_2026-11-03_AI_CREDENTIAL_UNREADABLE.md。
