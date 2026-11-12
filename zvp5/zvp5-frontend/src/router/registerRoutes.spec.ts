@@ -7,7 +7,7 @@ vi.mock('@/api/system/maintenance.ts', () => ({
 }))
 vi.mock('@/api', () => ({ default: {} }))
 
-import router, { registerEntryTarget } from './index'
+import router, { registerEntryTarget, resolveRouterBase } from './index'
 
 describe('register routes', () => {
   it('keeps /activity/register as the operation chooser', () => {
@@ -56,5 +56,16 @@ describe('registerEntryTarget', () => {
       params: { mode: 'create' },
       query: { activity: ['', 'act-2'] }
     })
+  })
+})
+describe('resolveRouterBase', () => {
+  it.each([
+    [undefined, '/'],
+    ['/', '/'],
+    ['https://zvp.xiaobopisces.top/', '/'],
+    ['https://zvp.xiaobopisces.top/app', '/app/'],
+    ['https://zvp.xiaobopisces.top/app/', '/app/']
+  ])('maps page base %s to router base %s', (pageBase, expected) => {
+    expect(resolveRouterBase(pageBase)).toBe(expected)
   })
 })
