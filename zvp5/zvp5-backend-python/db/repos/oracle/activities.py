@@ -22,7 +22,6 @@ Nothing here opens a connection at import time.
 
 from __future__ import annotations
 
-import re
 from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Any, AsyncIterator
@@ -34,6 +33,7 @@ from db.ids import new_oid, normalize_oid
 from db.models import activities as activities_tbl
 from db.models import users as users_tbl
 from db.oracle.session import session_scope
+from db.repos.oracle.search import like_pattern
 from db.repos.pagination import page_args
 
 Row = dict[str, Any]
@@ -89,15 +89,17 @@ def _activity_columns() -> tuple[Any, ...]:
 def _activity_filter(query: str, atypes: list[str] | None, status: str | None) -> list[Any]:
     """Replicate the Mongo ``$match`` shared by the page/count queries.
 
-    * non-empty ``query`` → case-insensitive ``contains`` on ``name`` only,
-      with the keyword ``re.escape``d exactly like the current pipelines.
+    * non-empty ``query`` → case-insensitive **literal** ``contains`` on ``name``
+      only (``LOWER(col) LIKE '%kw%' ESCAPE '\'``, wildcards escaped).
     * non-empty ``atypes`` → ``type IN (...)`` (an OR-list).
     * truthy ``status`` → equality filter (empty/``None`` = no filter).
     """
     conds: list[Any] = []
     if query:
         conds.append(
-            func.regexp_like(activities_tbl.c.name, re.escape(query), "i")
+            func.lower(activities_tbl.c.name).like(
+                like_pattern(query), escape="\\"
+            )
         )
     if atypes:
         conds.append(activities_tbl.c.atype.in_(list(atypes)))
@@ -211,7 +213,11 @@ def _list_effective_stmt(date_start: Any, date_end: Any):
 def _list_by_oids_stmt(oids: list[str], query: str, page: int, size: int):
     stmt = select(*_activity_columns()).where(activities_tbl.c.oid.in_(oids))
     if query:
-        stmt = stmt.where(func.regexp_like(activities_tbl.c.name, query, "i"))
+        stmt = stmt.where(
+            func.lower(activities_tbl.c.name).like(
+                like_pattern(query), escape="\\"
+            )
+        )
     stmt = stmt.order_by(activities_tbl.c.oid.desc())
     if page != -1:
         offset, limit = page_args(page, size)
@@ -224,7 +230,11 @@ def _count_by_oids_stmt(oids: list[str], query: str):
         activities_tbl.c.oid.in_(oids)
     )
     if query:
-        stmt = stmt.where(func.regexp_like(activities_tbl.c.name, query, "i"))
+        stmt = stmt.where(
+            func.lower(activities_tbl.c.name).like(
+                like_pattern(query), escape="\\"
+            )
+        )
     return stmt
 
 

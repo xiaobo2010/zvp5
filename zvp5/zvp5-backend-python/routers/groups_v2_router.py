@@ -138,7 +138,7 @@ async def get_group_activities_v2(
     perpage: int = Query(10, ge=1, le=100, description="Number of items per page"),
     search: str = Query("", max_length=64, description="Search keyword"),
     sort: str = Query("_id", description="Sort by field"),
-    regex: bool = Query(False, description="Treat search as a regular expression"),
+    regex: bool = Query(False, description="已废弃：关键字一律按字面量匹配，不再走正则"),
     asc: bool = Query(False, description="Sort in ascending order"),
     user=Depends(get_current_user),
 ):
@@ -156,9 +156,8 @@ async def get_group_activities_v2(
 
     class_oid = validate_object_id(group_id)
 
-    if not regex:
-        search = re.escape(search) if search else ""
-
+    # ``search`` 按字面量关键字处理（仓储侧转义 LIKE 通配符）；``regex`` 保留
+    # 只是为了不破坏旧客户端的 query 参数。
     activities, count = await backends.get_groups_repo().activities_page(
         str(class_oid), search, sort, asc, page, perpage
     )
@@ -226,7 +225,7 @@ async def get_group_users_v2(
     perpage: int = Query(10, ge=1, le=100, description="Number of items per page"),
     search: str = Query("", description="Search keyword"),
     sort: str = Query("id", description="Sort by field"),
-    regex: bool = Query(False, description="Use simple regex for search"),
+    regex: bool = Query(False, description="已废弃：关键字一律按字面量匹配，不再走正则"),
     asc: bool = Query(True, description="Sort in ascending order"),
     exceeding: bool = Query(True, description="Include exceeding time"),
     shortage: bool = Query(False, description="Include shortage time"),

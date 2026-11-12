@@ -574,8 +574,9 @@ def test_banned_page_selects_currently_banned_users_only():
 def test_banned_page_query_matches_name_or_business_id():
     sql = _sql(users_repo._banned_page_stmt("2026", 1, 20))
     assert "users.banned = 1" in sql
-    assert "regexp_like(users.name, '2026', 'i')" in sql
-    assert "regexp_like(users.business_id, '2026', 'i')" in sql
+    assert "lower(users.name) LIKE '%2026%' ESCAPE '\\'" in sql
+    assert "lower(users.business_id) LIKE '%2026%' ESCAPE '\\'" in sql
+    assert "regexp_like" not in sql.lower()
 
 
 def test_banned_count_stmt_uses_the_same_filter_without_join():
@@ -638,7 +639,7 @@ def test_device_bans_page_filters_by_query_with_escaped_wildcards() -> None:
     from db.repos.oracle import device_bans
 
     sql = _sql(device_bans._page_stmt(1, 20, "12%_3"))
-    assert "banned_devices.xuehai_id LIKE '%12\\%\\_3%' ESCAPE '\\'" in sql
+    assert "lower(banned_devices.xuehai_id) LIKE '%12\\%\\_3%' ESCAPE '\\'" in sql
     assert "count(*) OVER () AS total_count" in sql
 
 
@@ -647,7 +648,7 @@ def test_device_bans_count_matches_the_query_filter() -> None:
 
     sql = _sql(device_bans._count_stmt("2026"))
     assert "SELECT count(*) AS count_1 FROM banned_devices" in sql
-    assert "banned_devices.xuehai_id LIKE '%2026%' ESCAPE '\\'" in sql
+    assert "lower(banned_devices.xuehai_id) LIKE '%2026%' ESCAPE '\\'" in sql
 
 
 def test_device_ban_counters_table_shape() -> None:

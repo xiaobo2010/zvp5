@@ -20,14 +20,12 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import date, datetime
 from decimal import Decimal
 
 from db import backends
-from db.repos.oracle.members import escape_oracle_regex
 from util.activity_statistics import describe_durations, to_mcp_statistics
 from util.calculate import calculate_user_time
 from util.dual_auth import audit_system_op
@@ -144,7 +142,7 @@ async def list_activities(
 ) -> dict:
     """一页活动（MCP 投影）+ 分页信息。"""
     rows, count = await backends.get_activities_repo().list_raw(
-        search=re.escape(search) if search else "",
+        search=search,
         atypes=normalize_activity_types(activity_type),
         sort=sort,
         asc=asc,
@@ -221,7 +219,7 @@ async def activity_types_summary() -> dict:
 async def activity_search_suggestions(*, query: str, limit: int = 10) -> dict:
     """活动名联想（``_id`` / ``name`` / ``type``）。"""
     rows, _total = await backends.get_activities_repo().list_raw(
-        search=re.escape(query), sort=None, page=1, size=limit
+        search=query, sort=None, page=1, size=limit
     )
     return {
         "query": query,
@@ -246,8 +244,7 @@ async def list_activity_members(
     if not await backends.get_activities_repo().get(activity_id):
         raise AgentError("AI_AGENT_NOT_FOUND", "activity not found", 404)
 
-    pattern = re.escape(search) if search else ""
-    searched_users = await backends.get_users_repo().list_by_name_or_id(pattern)
+    searched_users = await backends.get_users_repo().list_by_name_or_id(search)
     member_ids = [str(item["_id"]) for item in searched_users]
 
     members, count = await backends.get_members_repo().list_raw(
@@ -278,7 +275,7 @@ async def user_volunteer_time(user_id: str) -> dict:
 
 async def user_activities(*, user_id: str, page: int = 1, perpage: int = 10) -> dict:
     """某用户参与的活动 + 他自己的那行成员记录（``mine``）。"""
-    search = escape_oracle_regex("")
+    search = ""
     rows, total = await backends.get_members_repo().list_for_user_activities(
         user_id, search, "_id", False, page, perpage
     )

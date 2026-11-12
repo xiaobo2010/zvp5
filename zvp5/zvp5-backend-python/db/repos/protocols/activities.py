@@ -79,9 +79,9 @@ class ActivitiesRepo(Protocol):
         """Return ``(rows, total)`` for activities restricted to ``oids``.
 
         Lifts ``util/calculate.py::get_activities_related_to_user``: ``_id IN
-        oids`` plus a ``contains`` on ``name`` (the raw ``query`` used verbatim
-        as a Mongo ``$regex``; an empty ``query`` adds no filter), ordered by
-        ``_id`` desc. ``page == -1`` means "no pagination".
+        oids`` plus a case-insensitive **literal** ``contains`` on ``name``
+        (``%``/``_``/``\\`` escaped; an empty ``query`` adds no filter), ordered
+        by ``_id`` desc. ``page == -1`` means "no pagination".
         """
         ...
 
@@ -101,9 +101,9 @@ class ActivitiesRepo(Protocol):
         document shape verbatim (not the canonical projection): ``_id`` is a
         lowercase hex string, extra document fields survive, and ``sort`` may
         name any field (``None`` = natural order, ``page`` ``None`` = no
-        pagination). ``search`` is applied as a case-insensitive ``contains``
-        on ``name`` **verbatim** (callers ``re.escape`` it themselves; empty =
-        no name filter); ``atypes`` is an OR-list; ``status`` equality.
+        pagination). ``search`` is applied as a case-insensitive **literal**
+        ``contains`` on ``name`` (LIKE wildcards escaped by the repo; empty = no
+        name filter); ``atypes`` is an OR-list; ``status`` equality.
         """
         ...
 

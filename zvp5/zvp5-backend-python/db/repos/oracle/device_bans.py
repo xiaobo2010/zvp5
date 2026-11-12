@@ -27,6 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import banned_devices as banned_devices_tbl
 from db.oracle.session import session_scope
+from db.repos.oracle.search import like_pattern
 from db.repos.pagination import page_args
 
 Row = dict[str, Any]
@@ -165,7 +166,9 @@ def _page_stmt(
     conds = _active_filter(include_expired, now)
     if query:
         conds.append(
-            banned_devices_tbl.c.xuehai_id.like(_like_pattern(query), escape="\\")
+            func.lower(banned_devices_tbl.c.xuehai_id).like(
+                like_pattern(query), escape="\\"
+            )
         )
     if conds:
         stmt = stmt.where(*conds)
@@ -180,11 +183,6 @@ def _page_stmt(
     )
 
 
-def _like_pattern(query: str) -> str:
-    escaped = query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-    return f"%{escaped}%"
-
-
 def _count_stmt(
     query: str = "",
     include_expired: bool = False,
@@ -194,7 +192,9 @@ def _count_stmt(
     conds = _active_filter(include_expired, now)
     if query:
         conds.append(
-            banned_devices_tbl.c.xuehai_id.like(_like_pattern(query), escape="\\")
+            func.lower(banned_devices_tbl.c.xuehai_id).like(
+                like_pattern(query), escape="\\"
+            )
         )
     if conds:
         stmt = stmt.where(*conds)

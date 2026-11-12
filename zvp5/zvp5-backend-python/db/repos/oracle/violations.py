@@ -22,7 +22,6 @@ Nothing here opens a connection at import time.
 
 from __future__ import annotations
 
-import re
 from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Any, AsyncIterator
@@ -34,6 +33,7 @@ from db.ids import new_oid, normalize_oid
 from db.models import ban_violations as ban_violations_tbl
 from db.models import users as users_tbl
 from db.oracle.session import session_scope
+from db.repos.oracle.search import like_pattern
 from db.repos.pagination import page_args
 
 Row = dict[str, Any]
@@ -124,14 +124,18 @@ def _count_batches_since_stmt(user_oid: str, trigger: str, since: datetime):
 
 
 def _page_filter(query: str) -> list[Any]:
-    """``query`` → 大小写不敏感 contains，命中用户姓名/学号（转义同 users 仓储）。"""
+    """``query`` → 大小写不敏感的字面量 contains，命中用户姓名/学号。
+
+    与 users 仓储同一套 ``LIKE`` 口径：``%``/``_``/``\\`` 转义成字面量，列侧
+    走 ``LOWER(col)``——正则引擎和它带来的全表扫描都不再参与。
+    """
     if not query:
         return []
-    pattern = re.escape(query)
+    pattern = like_pattern(query)
     return [
         or_(
-            func.regexp_like(users_tbl.c.name, pattern, "i"),
-            func.regexp_like(users_tbl.c.business_id, pattern, "i"),
+            func.lower(users_tbl.c.name).like(pattern, escape="\\"),
+            func.lower(users_tbl.c.business_id).like(pattern, escape="\\"),
         )
     ]
 

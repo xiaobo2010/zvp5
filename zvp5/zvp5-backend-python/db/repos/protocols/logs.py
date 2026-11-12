@@ -54,8 +54,9 @@ class AppLogsRepo(Protocol):
     ) -> tuple[list[Row], int]:
         """Return ``(rows, total)`` for the admin log browser.
 
-        Lifts ``routers/logs_router.py.read_logs``: ``query`` is a case-sensitive
-        *contains* on ``url``/``data`` (``re.escape``d; empty = no filter),
+        Lifts ``routers/logs_router.py.read_logs``: ``query`` is a
+        case-insensitive *contains* on ``url``/``data`` (LIKE wildcards escaped;
+        empty = no filter),
         ``performer`` an ``user`` equality, ``types``/``levels`` OR-lists on
         ``type``/``level``, ``time_start``/``time_end`` are **exclusive** bounds
         on the ``timestamp`` float, and ``xuehai_id`` an equality on the captured

@@ -60,8 +60,8 @@ class GroupsRepo(Protocol):
         Rows are the canonical activity documents (same shape as
         :meth:`ActivitiesRepo.get`): every activity that at least one member of
         ``group_oid``'s class belongs to. ``search`` is a case-insensitive
-        regex over ``name``/``description`` (empty = no filter), ``sort``/
-        ``asc`` order the rows (unknown/empty ``sort`` falls back to
+        literal ``contains`` over ``name``/``description`` (empty = no filter),
+        ``sort``/``asc`` order the rows (unknown/empty ``sort`` falls back to
         ``_id`` descending). ``total`` counts the matching activities, i.e.
         every distinct activity of the class, not ``memberships``.
 
@@ -95,9 +95,10 @@ class GroupsRepo(Protocol):
 
         Rows use the shape ``{"_id": <hex str>, "name": str,
         "type": "permission", "permissions": list[str]}``. ``query`` is applied
-        as a case-insensitive *contains* on ``name`` (``re.escape``d, empty = no
-        filter); ``permissions`` restricts to groups whose ``permissions`` array
-        intersects the given values (empty/``None`` = no filter).
+        as a case-insensitive *contains* on ``name`` (LIKE wildcards escaped,
+        empty = no filter); ``permissions`` restricts to groups whose
+        ``permissions`` array intersects the given values (empty/``None`` = no
+        filter).
 
         Lifts ``routers/users_router.py`` (``permissions $in`` lookup) and
         ``routers/groups_v2_router.py`` (name ``$regex`` lookup).

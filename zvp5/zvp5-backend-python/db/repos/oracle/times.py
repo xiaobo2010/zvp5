@@ -44,6 +44,7 @@ from db.models import time_with_origin_stat as stat_tbl
 from db.models import user_time as time_tbl
 from db.models import users as users_tbl
 from db.oracle.session import session_scope
+from db.repos.oracle.search import SEARCH_QUERY_MAX, like_pattern
 from db.repos.oracle.users import _search_filter
 
 Row = dict[str, Any]
@@ -265,15 +266,8 @@ def _search_conds(query: str, logged_in: bool) -> list[Any]:
     return _search_filter(query, logged_in)
 
 
-_SEARCH_QUERY_MAX = 64
-
-
-def _like_pattern(query: str) -> str:
-    """``%query%`` with LIKE wildcards escaped (lower-cased for ``LOWER(col)``)."""
-    escaped = (
-        query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-    )
-    return f"%{escaped.lower()}%"
+# 保留旧名字：调用方与用例都按 ``times._SEARCH_QUERY_MAX`` 引用它。
+_SEARCH_QUERY_MAX = SEARCH_QUERY_MAX
 
 
 def _class_conds(class_oid: str, query: str) -> list[Any]:
@@ -289,7 +283,7 @@ def _class_conds(class_oid: str, query: str) -> list[Any]:
         if len(query) > _SEARCH_QUERY_MAX:
             conds.append(false())
             return conds
-        pattern = _like_pattern(query)
+        pattern = like_pattern(query)
         conds.append(
             or_(
                 func.lower(users_tbl.c.name).like(pattern, escape="\\"),

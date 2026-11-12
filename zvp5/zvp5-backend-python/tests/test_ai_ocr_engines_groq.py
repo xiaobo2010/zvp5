@@ -18,6 +18,18 @@ import pytest
 import settings  # noqa: F401  (services.ai.config 读它，先导入保证顺序一致)
 from services.ai import ocr_engines
 
+
+@pytest.fixture(autouse=True)
+def _fresh_http_client():
+    """``AsyncClient`` 现在进程级复用：用例之间必须丢掉缓存。
+
+    每个用例都跑自己的事件循环（``asyncio.run``），跨循环复用旧 client 没有
+    意义；``_reset_http_client`` 只断引用不 close，见其 docstring。
+    """
+    ocr_engines._reset_http_client()
+    yield
+    ocr_engines._reset_http_client()
+
 API_KEY = "gsk-groq-0123456789abcdef-never-print"
 MODEL = "qwen/qwen3.8-27b"
 SECRET = {"api_key": API_KEY}

@@ -1056,11 +1056,10 @@ async def _impl_user_lookup(
     else:
         # 仓储的模糊查同时匹配 name/id；这里再按姓名收一次，免得用纯数字
         # 姓名查到一串学号。服务端已经筛过一遍，多这一层不增加往返。
-        pattern = re.escape(value)
         needle = value.lower()
         rows = [
             row
-            for row in await repo.list_by_name_or_id(pattern)
+            for row in await repo.list_by_name_or_id(value)
             if needle in str(row.get("name") or "").lower()
         ]
 

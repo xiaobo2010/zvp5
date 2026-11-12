@@ -1,6 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from db import backends
-from db.repos.oracle.members import escape_oracle_regex
 from util.calculate import calculate_user_time, find_percentile_threshold
 from util.object_id import get_current_user
 from util.permission.user import validate_read_user_permission
@@ -49,7 +48,7 @@ async def get_user_activities_v2(
     perpage: int = Query(10, ge=1, le=100, description="Number of items per page"),
     search: str = Query("", max_length=64, description="Search keyword"),
     sort: str = Query("_id", description="Sort by field"),
-    regex: bool = Query(False, description="Treat search as a regular expression"),
+    regex: bool = Query(False, description="已废弃：关键字一律按字面量匹配，不再走正则"),
     asc: bool = Query(False, description="Sort in ascending order"),
     user=Depends(get_current_user),
 ):
@@ -69,9 +68,8 @@ async def get_user_activities_v2(
     # Check if the user has permission to view the activities
     # skipped right now
 
-    if not regex:
-        search = escape_oracle_regex(search) if search else ""
-
+    # 关键字是字面量（仓储侧转义 ``%``/``_``/``\\`` 并 lower 比较）；``regex``
+    # 仅为兼容旧客户端保留。
     rows, total = await backends.get_members_repo().list_for_user_activities(
         user_id, search, sort, asc, page, perpage
     )

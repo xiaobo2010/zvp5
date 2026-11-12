@@ -200,7 +200,8 @@ class UsersRepo(Protocol):
         """Return users whose 学号 (``id``) starts with ``prefix``.
 
         Lifts ``util/calculate.py::time_with_origin``'s grade branch
-        (``{"id": {"$regex": "^<prefix>"}}`` used verbatim — no escaping).
+        (``{"id": {"$regex": "^<prefix>"}}``): a ``LIKE 'prefix%'`` prefix scan,
+        with LIKE wildcards escaped so the prefix stays a literal.
         """
         ...
 
@@ -221,9 +222,10 @@ class UsersRepo(Protocol):
     ) -> tuple[list[Row], int]:
         """Return ``(rows, total)`` for a page of users.
 
-        ``logged_in`` selects between the two filter shapes verbatim: the
-        three-branch ``$or`` (``name``/``id``/``past`` ``$regex`` — *not*
-        escaped) and the unlogged exact ``{"id": query}``. Rows carry the
+        ``logged_in`` selects between the two filter shapes: the three-branch
+        ``$or`` (case-insensitive **literal** ``contains`` on ``name``/``id``/
+        ``past``, LIKE wildcards escaped) and the unlogged exact
+        ``{"id": query}``. Rows carry the
         ``_id``/``name``/``id``/``class_id`` projection.
 
         ``limit``/``offset`` push pagination into SQL (``OFFSET … FETCH``) and
@@ -234,11 +236,12 @@ class UsersRepo(Protocol):
         ...
 
     async def list_by_name_or_id(self, pattern: str) -> list[Row]:
-        """Return full user docs matching name/id ``$regex`` (empty = all users).
+        """Return full user docs matching a name/id keyword (empty = all users).
 
         Lifts ``routers/activities_v2_router.get_activity_members_v2``'s
-        searched-users lookup; ``pattern`` is already ``re.escape``d by the
-        caller and applied verbatim.
+        searched-users lookup; ``pattern`` is a plain keyword matched as a
+        case-insensitive literal ``contains`` (LIKE wildcards escaped by the
+        repo), not a regular expression.
         """
         ...
 

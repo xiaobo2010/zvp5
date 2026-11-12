@@ -12,7 +12,6 @@ is neither committed nor closed (the caller owns the unit of work).
 
 from __future__ import annotations
 
-import re
 from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator
 
@@ -26,6 +25,7 @@ from db.models import groups as groups_tbl
 from db.models import users as users_tbl
 from db.oracle.session import session_scope
 from db.repos.oracle.activities import _activity_doc
+from db.repos.oracle.search import like_pattern
 
 Row = dict[str, Any]
 
@@ -90,7 +90,9 @@ def _list_classes_stmt(query: str, page: int, size: int):
     )
     if query:
         stmt = stmt.where(
-            func.regexp_like(groups_tbl.c.name, re.escape(query), "i")
+            func.lower(groups_tbl.c.name).like(
+                like_pattern(query), escape="\\"
+            )
         )
     return (
         stmt.order_by(groups_tbl.c.oid.asc())
@@ -104,7 +106,9 @@ def _list_classes_count_stmt(query: str):
     stmt = select(func.count()).select_from(groups_tbl)
     if query:
         stmt = stmt.where(
-            func.regexp_like(groups_tbl.c.name, re.escape(query), "i")
+            func.lower(groups_tbl.c.name).like(
+                like_pattern(query), escape="\\"
+            )
         )
     return stmt
 
@@ -155,11 +159,11 @@ def _members_page_stmt(group_oid: str, query: str, page: int, size: int):
         .where(users_tbl.c.class_oid == group_oid)
     )
     if query:
-        pattern = re.escape(query)
+        pattern = like_pattern(query)
         stmt = stmt.where(
             or_(
-                func.regexp_like(users_tbl.c.name, pattern, "i"),
-                func.regexp_like(users_tbl.c.business_id, pattern, "i"),
+                func.lower(users_tbl.c.name).like(pattern, escape="\\"),
+                func.lower(users_tbl.c.business_id).like(pattern, escape="\\"),
             )
         )
     return (
@@ -176,11 +180,11 @@ def _members_count_stmt(group_oid: str, query: str):
         .where(users_tbl.c.class_oid == group_oid)
     )
     if query:
-        pattern = re.escape(query)
+        pattern = like_pattern(query)
         stmt = stmt.where(
             or_(
-                func.regexp_like(users_tbl.c.name, pattern, "i"),
-                func.regexp_like(users_tbl.c.business_id, pattern, "i"),
+                func.lower(users_tbl.c.name).like(pattern, escape="\\"),
+                func.lower(users_tbl.c.business_id).like(pattern, escape="\\"),
             )
         )
     return stmt
@@ -244,10 +248,11 @@ def _group_activities_stmt(
         func.count().over().label("total_count"),
     ).where(exists(member_exists))
     if search:
+        pattern = like_pattern(search)
         stmt = stmt.where(
             or_(
-                func.regexp_like(activities_tbl.c.name, search, "i"),
-                func.regexp_like(activities_tbl.c.description, search, "i"),
+                func.lower(activities_tbl.c.name).like(pattern, escape="\\"),
+                func.lower(activities_tbl.c.description).like(pattern, escape="\\"),
             )
         )
     column = _ACTIVITY_SORT_COLUMNS.get(sort) if sort else None
@@ -277,7 +282,9 @@ def _permission_filter(query: str, permissions: list[str] | None) -> list[Any]:
     """Permission-group filter: ``type == "permission"`` + name/permissions filters."""
     conds: list[Any] = [groups_tbl.c.type == "permission"]
     if query:
-        conds.append(func.regexp_like(groups_tbl.c.name, re.escape(query), "i"))
+        conds.append(
+            func.lower(groups_tbl.c.name).like(like_pattern(query), escape="\\")
+        )
     if permissions:
         conds.append(
             or_(

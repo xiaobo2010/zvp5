@@ -257,4 +257,10 @@ async def shutdown_event():
         await db_cache.aclose()
     except Exception:  # noqa: BLE001 - 缓存连接关不掉不影响进程退出
         pass
+    try:
+        from services.ai import ocr_engines as ocr_engines_module
+
+        await ocr_engines_module.aclose()
+    except Exception:  # noqa: BLE001 - OCR 连接池关不掉不影响进程退出
+        pass
     _logger.info("Application shut down.")

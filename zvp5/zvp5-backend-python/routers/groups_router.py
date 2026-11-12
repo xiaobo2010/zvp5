@@ -217,9 +217,6 @@ async def get_class_activities(
     """
     Get activities related to a group
     """
-    if query != "" and "admin" not in user["per"]:
-        query = re.escape(query)
-
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
     result, count = await get_activities_related_to_user(

@@ -1,6 +1,5 @@
 import asyncio
 import logging
-import re
 from datetime import datetime
 from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -156,7 +155,7 @@ async def get_activities_v2(
     search: str = Query("", description="Search string for filtering activities"),
     sort: str = Query("_id", description="Sort field"),
     asc: bool = Query(False, description="Sort order (ascending or descending)"),
-    regex: bool = Query(False, description="Whether to use regex for searching"),
+    regex: bool = Query(False, description="已废弃：关键字一律按字面量匹配，不再走正则"),
     activity_type: str = Query("all", description="Type of activity to filter by"),
     user=Depends(get_current_user),
 ):
@@ -180,9 +179,8 @@ async def get_activities_v2(
     if len(target_types) == 0:
         target_types = ["on-campus", "off-campus", "social-practice", "hybrid"]
 
-    if not regex:
-        search = re.escape(search) if search else ""
-
+    # ``search`` 现在是**字面量**关键字（仓储侧转义 LIKE 通配符并 lower 比较）；
+    # ``regex`` 仅为兼容旧客户端保留，不再改变匹配方式。
     activities, count = await backends.get_activities_repo().list_raw(
         search=search,
         atypes=target_types,
@@ -260,7 +258,7 @@ async def get_activity_members_v2(
     search: str = Query("", description="Search string for filtering members"),
     sort: str = Query("_id", description="Sort field"),
     asc: bool = Query(True, description="Sort order (ascending or descending)"),
-    regex: bool = Query(False, description="Whether to use regex for searching"),
+    regex: bool = Query(False, description="已废弃：关键字一律按字面量匹配，不再走正则"),
     user=Depends(get_current_user),
 ):
     """
@@ -279,9 +277,6 @@ async def get_activity_members_v2(
 
     if not activity:
         raise HTTPException(status_code=404, detail="Activity not found")
-
-    if not regex:
-        search = re.escape(search) if search else ""
 
     searched_users = await backends.get_users_repo().list_by_name_or_id(search)
     member_ids = [str(user["_id"]) for user in searched_users]
