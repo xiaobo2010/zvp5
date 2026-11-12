@@ -16,6 +16,7 @@ import { resetMaintenanceGuardCache } from '@/router/maintenanceGuard'
 import { formatBanUntil, readBanInfo } from '@/utils/ban'
 import ZBanScreen from '@/components/system/ZBanScreen.vue'
 import ZAuthAlert from '@/components/system/ZAuthAlert.vue'
+import ZLoginBackdrop from '@/components/system/ZLoginBackdrop.vue'
 import dayjs from 'dayjs'
 import type { User, UserProfile } from '@/../types'
 
@@ -527,6 +528,8 @@ watch(user, async () => {
 
 <template>
   <div class="yg-login-v2">
+    <ZLoginBackdrop />
+
     <aside class="yg-login-v2__brand" aria-label="平台介绍">
       <span class="yg-phi-login-mark" aria-hidden="true">ZVMS</span>
       <div class="yg-phi-login-rail" aria-hidden="true">
@@ -549,6 +552,12 @@ watch(user, async () => {
     </aside>
 
     <main class="yg-login-v2__main">
+      <div class="yg-login-v2__rail" aria-hidden="true">
+        <span>SYS // AUTH</span>
+        <span>SECURE // NODE 01</span>
+      </div>
+      <span class="yg-login-v2__ghost" aria-hidden="true">01</span>
+
       <section class="yg-login__card" aria-labelledby="yg-login-title">
         <span class="yg-phi-login-tag" aria-hidden="true">
           {{ mode === 'normal' ? 'AUTH // 01' : 'AUTH // 02' }}
@@ -794,14 +803,19 @@ watch(user, async () => {
 
 /* ---- v2 登录页：品牌区 + 表单区（桌面分栏，移动单列） ---- */
 .yg-login-v2 {
+  position: relative;
   display: grid;
   grid-template-columns: minmax(0, 0.92fr) minmax(0, 1.08fr);
+  height: 100%;
   min-height: 100%;
+  isolation: isolate;
   /* 透出 .yg-phi 的网格/扫描线底 */
   background: transparent;
 }
 
 .yg-login-v2__brand {
+  position: relative;
+  z-index: 1;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -880,14 +894,64 @@ watch(user, async () => {
 }
 
 .yg-login-v2__main {
+  position: relative;
+  z-index: 1;
+  isolation: isolate;
   display: flex;
   align-items: center;
   justify-content: center;
+  min-height: 100%;
   padding: var(--yg-space-6);
 }
 
 .yg-login-v2__main .yg-login__card {
+  position: relative;
+  z-index: 2;
   max-width: 400px;
+}
+
+/* 右侧 HUD 读数：移动端品牌区隐藏后，这层仍保留终端感 */
+.yg-login-v2__rail {
+  position: absolute;
+  z-index: 1;
+  top: var(--yg-space-5);
+  right: var(--yg-space-6);
+  left: var(--yg-space-6);
+  display: flex;
+  justify-content: space-between;
+  color: var(--yg-text-tertiary);
+  font: 500 10px var(--phi-hud, ui-monospace, monospace);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  pointer-events: none;
+}
+
+.yg-login-v2__rail span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.yg-login-v2__rail span::before {
+  content: '';
+  width: 5px;
+  height: 5px;
+  background: var(--yg-color-primary);
+  transform: rotate(45deg);
+  box-shadow: 0 0 7px var(--yg-color-primary);
+}
+
+/* 卡片后面的超大编号：Phigros 式的几何锚点，不参与命中 */
+.yg-login-v2__ghost {
+  position: absolute;
+  z-index: 0;
+  right: 3%;
+  bottom: -2%;
+  color: color-mix(in srgb, var(--phi-ink) 5%, transparent);
+  font: 400 clamp(150px, 23vw, 330px) / 0.72 var(--phi-display, Impact, sans-serif);
+  letter-spacing: -0.06em;
+  pointer-events: none;
+  user-select: none;
 }
 
 @media (max-width: 959px) {
@@ -900,8 +964,22 @@ watch(user, async () => {
   }
 
   .yg-login-v2__main {
+    height: 100%;
     min-height: 100%;
-    padding: var(--yg-space-5) var(--yg-space-4);
+    padding: var(--yg-space-8) var(--yg-space-4);
+  }
+
+  .yg-login-v2__rail {
+    top: var(--yg-space-4);
+    right: var(--yg-space-4);
+    left: var(--yg-space-4);
+  }
+
+  .yg-login-v2__ghost {
+    right: -6%;
+    bottom: 1%;
+    font-size: clamp(150px, 46vw, 240px);
+    opacity: 0.7;
   }
 }
 
