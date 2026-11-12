@@ -108,9 +108,9 @@ precache:81 条 3086KB → 90 条 **2153KB(-30% 体积)**(条数升是 EP
 
 ## 四、遗留项(记录未修)
 
-- **P0-2 i18n 按路由拆分**:17 个 locale 模块静态全量进首屏
-  (~20KB gzip),`ai/manage/server` 文案登录页用不到;需 i18n 结构
-  改造,留待下轮。
+- ~~**P0-2 i18n 按路由拆分**~~ **已于 2026-11-12 完成**:ai/manage/server/
+  activity 四个大字典按路由懒加载,首屏入口 gzip 188.5→150.3KB(另见
+  `DEPLOY_2026-11-12_CANARY_PROMOTE.md`)。
 - EP 全量 CSS 328KB(`theme-chalk/index.css`):按需 CSS 曾因命令式组件
   样式/测试副作用链问题被关闭,gzip 后 ~45KB,风险收益比不佳,保留。
 - P1-4 GET 缓存双写 + structuredClone 体积阈值;P2-3 草稿 deep watch;
