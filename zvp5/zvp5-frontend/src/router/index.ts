@@ -23,8 +23,20 @@ export function registerEntryTarget(query: LocationQuery): RouteLocationRaw | nu
   }
 }
 
+/**
+ * Vite `base` points at the static-asset origin in production, so it cannot be
+ * used as Vue Router's history base. The page base supplies the path component
+ * for the content document instead (normally `/`).
+ */
+export function resolveRouterBase(pageBase: string | undefined): string {
+  const raw = (pageBase || '').trim()
+  if (!raw || raw === '/') return '/'
+
+  const pathname = new URL(raw).pathname || '/'
+  return pathname.endsWith('/') ? pathname : `${pathname}/`
+}
 const router = createRouter({
-  history: createWebHistory(import.meta.env.BASE_URL),
+  history: createWebHistory(resolveRouterBase(import.meta.env.VITE_PAGE_BASE)),
   routes: [
     {
       path: '/',
@@ -190,7 +202,7 @@ const router = createRouter({
       path: '/:pathMatch(.*)*',
       name: 'not-found',
       component: () => import('../views/NotFound.vue')
-    },
+    }
   ]
 })
 
