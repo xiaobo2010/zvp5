@@ -1,4 +1,4 @@
-import { zhCN } from '@/i18n/locales'
+import { localeMessages } from '@/i18n/locales/namespaces'
 import {
   AI_ERROR_FALLBACK_SECTION,
   aiErrorCopy,
@@ -25,16 +25,17 @@ export const DEFAULT_ERROR_MESSAGE = '请求失败，请稍后重试'
 /**
  * 按 i18n key 取中文文案。
  *
- * 这里直接读 locales 里的消息表，而不是走 vue-i18n 的全局实例：本模块被 axios
- * 拦截器在最早期引入，组件测试又经常把 vue-i18n 整体 mock 掉，依赖运行时实例会
- * 让「错误提示」这种基础设施变成测试的负担。项目只有 zh-CN 一套消息，按路径取值
- * 与 t() 等价；取不到就把 key 原样返回，便于立刻发现漏配。
+ * 这里直接读 locales 的消息表（首屏字典 + 已懒加载的大字典），而不是走 vue-i18n
+ * 的全局实例：本模块被 axios 拦截器在最早期引入，组件测试又经常把 vue-i18n 整体
+ * mock 掉，依赖运行时实例会让「错误提示」这种基础设施变成测试的负担。项目只有
+ * zh-CN 一套消息，按路径取值与 t() 等价；取不到就把 key 原样返回，便于立刻发现漏配。
+ * 大字典（ai/manage/server/activity）由路由守卫装载，调用方所在页面必然已加载。
  */
 export function translateKey(
   key: string,
   params?: Record<string, string | number>
 ): string {
-  let node: unknown = zhCN
+  let node: unknown = localeMessages()
   for (const segment of key.split('.')) {
     if (!node || typeof node !== 'object') {
       return key

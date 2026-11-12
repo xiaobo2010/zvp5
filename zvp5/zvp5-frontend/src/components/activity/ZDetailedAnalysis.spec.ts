@@ -1,7 +1,7 @@
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import ElementPlus from 'element-plus'
-import i18n from '@/i18n'
+import i18n, { ensureLocaleForPath } from '@/i18n'
 import ZDetailedAnalysis from './ZDetailedAnalysis.vue'
 import type { Activity } from '@/../types/v2'
 
@@ -69,6 +69,11 @@ function mountAnalysis(): VueWrapper {
     global: { plugins: [i18n, ElementPlus] }
   })
 }
+
+// activity.* 字典按路由懒加载，组件测试不经过路由守卫，先按 /activities 装载一次。
+beforeAll(async () => {
+  await ensureLocaleForPath('/activities')
+})
 
 beforeEach(() => {
   readMock.mockReset()

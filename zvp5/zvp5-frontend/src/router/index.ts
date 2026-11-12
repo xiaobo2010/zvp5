@@ -5,6 +5,7 @@ import {
   type RouteLocationRaw
 } from 'vue-router'
 import { maintenanceGuard } from './maintenanceGuard'
+import { ensureLocaleForPath } from '@/i18n'
 
 // 登记入口页的分流：带 activity 的深链（活动详情、旧书签）直达「添加义工」，
 // 并把整份 query 原样带走，避免 activity/session 等参数在分流时丢失。
@@ -198,10 +199,12 @@ const router = createRouter({
 // 勿在此处取消「所有在飞请求」：组件首个请求（onMounted）与触发导航的
 // router.replace 同 tick 发出，渲染 flush 先于守卫，会掐掉新页面自己的请求。
 // 维护模式与入口归一化共用同一个全局守卫:应用内导航、深链接、冷启动都会被覆盖。
-router.beforeEach((to) => {
+router.beforeEach(async (to) => {
   if (to.path === '/index.html' || to.path.endsWith('/index.html')) {
     return { path: '/', replace: true }
   }
+  // 大字典按路由懒加载；失败只影响文案，不能阻断导航（维护模式跳转也在下一行）。
+  await ensureLocaleForPath(to.path).catch(() => {})
   return maintenanceGuard(to)
 })
 
