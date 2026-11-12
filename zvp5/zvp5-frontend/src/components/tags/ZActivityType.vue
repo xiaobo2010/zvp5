@@ -6,7 +6,7 @@ import type { ActivityType as LegacyActivityType } from '@/../types'
 import type { Activity } from '@/../types/v2'
 import { ZButtonTag } from '@/components'
 import { ZActivityStatus } from '@/components'
-import { ElButtonGroup } from 'element-plus'
+import { ElButtonGroup } from 'element-plus/es/components/button/index.mjs'
 import classifications from './classifications'
 
 const { t } = useI18n()
@@ -77,6 +77,7 @@ const typeText = computed(() => {
       v-if="type in types"
       :size="size ?? 'small'"
       :type="types[type].color"
+      :tone="types[type].tone"
       :icon="types[type].icon"
       :unknown="!effective"
       :force="force"

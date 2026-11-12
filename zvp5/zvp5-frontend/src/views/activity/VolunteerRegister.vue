@@ -2,20 +2,18 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import {
-  ElButton,
-  ElCheckbox,
-  ElDialog,
-  ElIcon,
-  ElInput,
-  ElMessage,
-  ElMessageBox,
-  ElOption,
-  ElPageHeader,
-  ElPopover,
-  ElSelect,
-  ElTag
-} from 'element-plus'
+import { ElButton } from 'element-plus/es/components/button/index.mjs'
+import { ElCheckbox } from 'element-plus/es/components/checkbox/index.mjs'
+import { ElDialog } from 'element-plus/es/components/dialog/index.mjs'
+import { ElIcon } from 'element-plus/es/components/icon/index.mjs'
+import { ElInput } from 'element-plus/es/components/input/index.mjs'
+import { ElMessage } from 'element-plus/es/components/message/index.mjs'
+import { ElMessageBox } from 'element-plus/es/components/message-box/index.mjs'
+import { ElOption } from 'element-plus/es/components/select/index.mjs'
+import { ElPageHeader } from 'element-plus/es/components/page-header/index.mjs'
+import { ElPopover } from 'element-plus/es/components/popover/index.mjs'
+import { ElSelect } from 'element-plus/es/components/select/index.mjs'
+import { ElTag } from 'element-plus/es/components/tag/index.mjs'
 import {
   ArrowLeft,
   Bell,

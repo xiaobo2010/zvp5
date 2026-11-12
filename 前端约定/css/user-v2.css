@@ -1,0 +1,564 @@
+/* ==========================================================================
+   ZVMS 普通用户端 v2（愚人节ui）
+   只服务普通用户可见页面：外壳导航、页面进入、登录、首页、活动、资料。
+   约束：只用 --yg-* 令牌；圆角取令牌；动效单次 ≤450ms；无常驻循环。
+   ========================================================================== */
+
+:root {
+  /* 列表/页面编排专用的非线性曲线（与设计稿 §5.1 对应） */
+  --yg-ease-list: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* ---------- 页面容器与进入编排 ---------- */
+.yg-v2-page {
+  width: 100%;
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: var(--yg-space-6);
+  display: flex;
+  flex-direction: column;
+  gap: var(--yg-space-5);
+}
+
+.yg-v2-page > * {
+  animation: yg-v2-rise 320ms var(--yg-ease-list) both;
+}
+
+.yg-v2-page > *:nth-child(2) {
+  animation-delay: 40ms;
+}
+
+.yg-v2-page > *:nth-child(3) {
+  animation-delay: 80ms;
+}
+
+.yg-v2-page > *:nth-child(4) {
+  animation-delay: 120ms;
+}
+
+.yg-v2-page > *:nth-child(n + 5) {
+  animation-delay: 160ms;
+}
+
+@keyframes yg-v2-rise {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* 仅做进入编排、不接管页面内边距的容器（资料页/用户主页） */
+.yg-v2-flow > * {
+  animation: yg-v2-rise 320ms var(--yg-ease-list) both;
+}
+
+.yg-v2-flow > *:nth-child(2) {
+  animation-delay: 40ms;
+}
+
+.yg-v2-flow > *:nth-child(3) {
+  animation-delay: 80ms;
+}
+
+.yg-v2-flow > *:nth-child(n + 4) {
+  animation-delay: 120ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .yg-v2-flow > * {
+    animation: none;
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* ---------- 路由切换：淡入 + 轻微上移，不用大幅位移 ---------- */
+.yg-route-enter-active {
+  transition:
+    opacity 220ms var(--yg-ease-list),
+    transform 220ms var(--yg-ease-list);
+}
+
+.yg-route-leave-active {
+  transition: opacity 120ms var(--yg-ease-out);
+}
+
+.yg-route-enter-from {
+  opacity: 0;
+  transform: translateY(6px);
+}
+
+.yg-route-leave-to {
+  opacity: 0;
+}
+
+/* ---------- 导航 v2：桌面 72px 侧栏；移动端居中悬浮 HUD dock ---------- */
+.yg-glass-nav--v2.yg-glass-nav--landscape {
+  width: 72px;
+}
+
+.yg-glass-nav--v2.yg-glass-nav--landscape .yg-glass-nav__items {
+  padding-block: var(--yg-space-3);
+}
+
+/* 居中悬浮的长条 dock：外壳本身透明，实体底面画在 ::before 上，
+   这样切角轮廓和阴影可以分开处理，子项的点击突出也不会被裁掉。 */
+.yg-glass-nav--v2.yg-glass-nav--portrait {
+  position: fixed;
+  right: auto;
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 10px);
+  left: 50%;
+  width: min(560px, calc(100vw - 24px));
+  max-width: none;
+  max-height: none;
+  padding-bottom: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  transform: translateX(-50%);
+  /* 伪元素画底面时 z-index:0，导航项必须抬到它上面；
+     否则时间面板里同样带 z-index 的刻度会从 dock 后面透出来。 */
+  isolation: isolate;
+  /* clip-path 会裁掉 box-shadow，所以阴影挂在外壳的 filter 上；子项不受裁剪影响 */
+  filter: drop-shadow(0 10px 18px rgba(5, 6, 8, 0.34)) drop-shadow(0 2px 4px rgba(5, 6, 8, 0.22));
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+/* 深色：实体底座交给 ::before 的玻璃层；外壳不能再叠一层实色背景和阴影 */
+html.dark .yg-glass-nav--v2.yg-glass-nav--portrait {
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+}
+
+.yg-glass-nav--v2.yg-glass-nav--portrait::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  /* 半透明玻璃：底色用令牌混合出透明度，深浅色自动跟随；模糊取景放在同一层，
+     避免整块 dock 因为 clip-path 被裁掉外阴影。 */
+  background: linear-gradient(
+    160deg,
+    color-mix(in srgb, var(--yg-bg-surface-raised) 70%, transparent),
+    color-mix(in srgb, var(--yg-bg-surface-sunken) 54%, transparent) 78%
+  );
+  -webkit-backdrop-filter: blur(18px) saturate(180%);
+  backdrop-filter: blur(18px) saturate(180%);
+  /* 不对称切角：左上小切 + 右下大切，避免又变成一条普通矩形底栏 */
+  clip-path: polygon(
+    14px 0,
+    100% 0,
+    100% calc(100% - 18px),
+    calc(100% - 18px) 100%,
+    0 100%,
+    0 14px
+  );
+  /* 光影：顶边高光压出玻璃厚度，底边内阴影把 dock 压在内容上，
+     左右内反光让切角边缘有折射感。 */
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.55),
+    inset 0 -1px 0 rgba(5, 6, 8, 0.16),
+    inset 1px 0 0 rgba(255, 255, 255, 0.24),
+    inset -1px 0 0 rgba(255, 255, 255, 0.16);
+}
+
+/* 顶面斜向扫光：只铺一层极淡的高光，不参与布局与点击 */
+.yg-glass-nav--v2.yg-glass-nav--portrait::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  background:
+    linear-gradient(155deg, rgba(255, 255, 255, 0.32), transparent 44%),
+    linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.12) 22%, transparent 48%);
+  clip-path: polygon(
+    14px 0,
+    100% 0,
+    100% calc(100% - 18px),
+    calc(100% - 18px) 100%,
+    0 100%,
+    0 14px
+  );
+  pointer-events: none;
+}
+
+html.dark .yg-glass-nav--v2.yg-glass-nav--portrait::before {
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.16),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.5),
+    inset 1px 0 0 rgba(255, 255, 255, 0.07),
+    inset -1px 0 0 rgba(0, 0, 0, 0.34);
+}
+
+html.dark .yg-glass-nav--v2.yg-glass-nav--portrait::after {
+  background:
+    linear-gradient(155deg, rgba(255, 255, 255, 0.1), transparent 46%),
+    linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.05) 22%, transparent 48%);
+}
+
+/* 不支持 backdrop-filter 时抬到底色接近实心，保证 dock 上的图标可读 */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .yg-glass-nav--v2.yg-glass-nav--portrait::before {
+    background: linear-gradient(
+      160deg,
+      var(--yg-bg-surface-raised),
+      var(--yg-bg-surface-sunken) 78%
+    );
+  }
+}
+
+.yg-glass-nav--v2.yg-glass-nav--portrait .yg-glass-nav__items {
+  position: relative;
+  z-index: 1;
+  justify-content: space-between;
+  gap: 0;
+  padding: 8px 20px;
+}
+
+.yg-glass-nav--v2.yg-glass-nav--portrait .yg-glass-nav__item {
+  flex: 0 1 44px;
+  width: 44px;
+  min-width: 34px;
+  height: 44px;
+}
+
+/* 竖屏指示器保留切角矩形，不做圆角、不做平行四边形 */
+.yg-glass-nav--v2.yg-glass-nav--portrait .yg-glass-nav__indicator {
+  border-radius: 0;
+  clip-path: polygon(0 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 0 100%);
+}
+
+/* 浅色：dock 保持亮面，阴影更轻，避免底栏重新变成一块压暗的横条 */
+html[data-theme='light'] .yg-glass-nav--v2.yg-glass-nav--portrait {
+  filter: drop-shadow(0 8px 16px rgba(15, 23, 42, 0.14))
+    drop-shadow(0 1px 2px rgba(15, 23, 42, 0.08));
+}
+
+/* 键盘弹起（视口很矮）时 dock 仍然收一圈，避免盖住输入框 */
+@media (max-height: 480px) {
+  .yg-glass-nav--v2.yg-glass-nav--portrait .yg-glass-nav__items {
+    padding: 4px 16px;
+  }
+
+  .yg-glass-nav--v2.yg-glass-nav--portrait .yg-glass-nav__item {
+    flex-basis: 40px;
+    width: 40px;
+    min-width: 34px;
+    height: 40px;
+  }
+}
+
+.yg-user-page {
+  width: 100%;
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: var(--yg-space-6);
+}
+
+@media (max-width: 599px) {
+  .yg-user-page {
+    padding: var(--yg-space-4);
+  }
+}
+
+/* ---------- 首页 ---------- */
+.yg-home-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--yg-space-4);
+}
+
+.yg-home-date {
+  margin: 0 0 var(--yg-space-2);
+  color: var(--yg-text-tertiary);
+  font-size: var(--yg-font-size-sm);
+}
+
+.yg-home-identity {
+  display: flex;
+  align-items: center;
+  gap: var(--yg-space-4);
+}
+
+.yg-home-avatar {
+  display: grid;
+  place-items: center;
+  width: 56px;
+  height: 56px;
+  flex: 0 0 auto;
+  border-radius: var(--yg-radius-pill);
+  background: var(--yg-color-primary-soft);
+  color: var(--yg-color-primary);
+  font-size: var(--yg-font-size-xl);
+  font-weight: var(--yg-font-weight-semibold);
+}
+
+.yg-home-identity__body {
+  min-width: 0;
+  flex: 1;
+}
+
+.yg-home-identity__name {
+  margin: 0;
+  color: var(--yg-text-primary);
+  font-size: var(--yg-font-size-xl);
+  font-weight: var(--yg-font-weight-semibold);
+  line-height: var(--yg-line-height-tight);
+}
+
+.yg-home-identity__meta {
+  margin: var(--yg-space-1) 0 0;
+  color: var(--yg-text-tertiary);
+  font-size: var(--yg-font-size-sm);
+}
+
+.yg-home-identity__roles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--yg-space-2);
+  margin-top: var(--yg-space-2);
+}
+
+.yg-home-identity__action {
+  flex: 0 0 auto;
+}
+
+.yg-home-actions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--yg-space-4);
+}
+
+.yg-home-action {
+  display: flex;
+  align-items: center;
+  gap: var(--yg-space-3);
+  min-height: 84px;
+  color: var(--yg-text-primary);
+  text-decoration: none;
+}
+
+.yg-home-action__icon {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  flex: 0 0 auto;
+  border-radius: var(--yg-radius-md);
+  background: var(--yg-color-primary-soft);
+  color: var(--yg-color-primary);
+}
+
+.yg-home-action__text {
+  min-width: 0;
+  flex: 1;
+}
+
+.yg-home-action__text b {
+  display: block;
+  font-size: var(--yg-font-size-md);
+  font-weight: var(--yg-font-weight-medium);
+}
+
+.yg-home-action__text small {
+  display: block;
+  margin-top: var(--yg-space-1);
+  color: var(--yg-text-tertiary);
+  font-size: var(--yg-font-size-sm);
+}
+
+.yg-home-action__arrow {
+  color: var(--yg-text-tertiary);
+  transition: transform var(--yg-dur-base) var(--yg-ease-out);
+}
+
+.yg-home-action:hover .yg-home-action__arrow {
+  transform: translateX(2px);
+}
+
+/* ---------- 义工列表页 ---------- */
+.yg-activity-tabs {
+  display: flex;
+  gap: var(--yg-space-1);
+  border-bottom: 1px solid var(--yg-border-subtle);
+}
+
+.yg-activity-tab {
+  position: relative;
+  min-height: 44px;
+  padding: var(--yg-space-2) var(--yg-space-3);
+  border: 0;
+  background: transparent;
+  color: var(--yg-text-tertiary);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--yg-font-size-md);
+  transition: color var(--yg-dur-fast) var(--yg-ease-out);
+}
+
+.yg-activity-tab::after {
+  content: '';
+  position: absolute;
+  right: var(--yg-space-3);
+  bottom: -1px;
+  left: var(--yg-space-3);
+  height: 2px;
+  border-radius: var(--yg-radius-pill);
+  background: var(--yg-color-primary);
+  transform: scaleX(0);
+  transition: transform var(--yg-dur-base) var(--yg-ease-list);
+}
+
+.yg-activity-tab:hover,
+.yg-activity-tab.is-active {
+  color: var(--yg-text-primary);
+}
+
+.yg-activity-tab.is-active::after {
+  transform: scaleX(1);
+}
+
+.yg-activity-tab:focus-visible {
+  outline: none;
+  box-shadow: var(--yg-focus-ring);
+}
+
+/* 活动表格首次呈现时逐行淡入；表格行不能安全做位移，故只做 opacity。 */
+.yg-activity-list .el-table__body tr {
+  animation: yg-v2-fade 220ms var(--yg-ease-list) both;
+}
+
+.yg-activity-list .el-table__body tr:nth-child(2) {
+  animation-delay: 35ms;
+}
+
+.yg-activity-list .el-table__body tr:nth-child(3) {
+  animation-delay: 70ms;
+}
+
+.yg-activity-list .el-table__body tr:nth-child(4) {
+  animation-delay: 105ms;
+}
+
+.yg-activity-list .el-table__body tr:nth-child(5) {
+  animation-delay: 140ms;
+}
+
+.yg-activity-list .el-table__body tr:nth-child(n + 6) {
+  animation-delay: 175ms;
+}
+
+@keyframes yg-v2-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .yg-activity-list .el-table__body tr {
+    animation: none;
+    opacity: 1;
+  }
+}
+
+/* ---------- 关于 ---------- */
+.yg-about {
+  align-items: center;
+  text-align: center;
+}
+
+.yg-about__logo {
+  width: 64px;
+  height: 64px;
+  border-radius: var(--yg-radius-lg);
+}
+
+.yg-about__name {
+  margin: 0;
+  font-size: var(--yg-font-size-2xl);
+  font-weight: var(--yg-font-weight-semibold);
+}
+
+.yg-about__version {
+  margin: 0;
+  color: var(--yg-text-tertiary);
+  font-size: var(--yg-font-size-sm);
+}
+
+.yg-about__license {
+  width: 100%;
+  max-width: 640px;
+  text-align: left;
+}
+
+/* ---------- 响应式 ---------- */
+@media (min-width: 960px) {
+  .yg-v2-page {
+    padding: var(--yg-space-7) var(--yg-space-7) var(--yg-space-8);
+    gap: var(--yg-space-6);
+  }
+}
+
+@media (max-width: 959px) {
+  .yg-v2-page {
+    padding: var(--yg-space-5);
+  }
+
+  .yg-home-actions {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 599px) {
+  .yg-v2-page {
+    padding: var(--yg-space-4);
+    gap: var(--yg-space-4);
+  }
+
+  .yg-home-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .yg-home-header > .el-button {
+    align-self: flex-end;
+  }
+
+  .yg-home-identity {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .yg-home-identity__action {
+    width: 100%;
+  }
+
+  .yg-v2-page > * {
+    animation-duration: 240ms;
+  }
+}
+
+/* 减少动态：内容直接出现；导航指示器由 base.css 的全局降级处理 */
+@media (prefers-reduced-motion: reduce) {
+  .yg-v2-page > * {
+    animation: none;
+    opacity: 1;
+    transform: none;
+  }
+
+  .yg-route-enter-active,
+  .yg-route-leave-active {
+    transition: none;
+  }
+}

@@ -126,7 +126,28 @@ find /www/zvms4/frontend-dist -type f -exec chown www:www {} +
 
 不涉及数据库变更，无需回滚数据。
 
-## 八、线上“CORS 全失败”事故复核（2026-11-07 22:10）
+## 八、canary 预览站同步（2026-11-07 夜）
+
+| 项 | 值 |
+| --- | --- |
+| 合并 | `e691be6 Merge remote-tracking branch 'origin/main' into v5-canary`（带上 `origin/v5-canary` 的 `68937ec`） |
+| 冲突 | 仅 `src/plugins/axios.ts`：canary 已移除 `nprogress`，main 新增航班收尾。保留 `releaseRequest` + `__flightHandle.settle/fail`，丢弃 `nprogress.done()` |
+| 校验 | `vitest` 40 用例（axios/singleFlight）通过；`vue-tsc` 0 error；`eslint` 干净 |
+| 构建 | 直接 `VITE_API_BASE=https://zvp.xiaobopisces.top/api` + `VITE_API_RACE_BASE=https://zvpapi.xiaobopisces.top/api` `npx vite build`（省掉「先按预览域构建再 sed」那一步，顺带让 `index.html` 的 preconnect 指向真正的 API 域） |
+| 产物 | `index-B1BuCZuE.js` 456KB（gzip 174KB）/ `index-BxN-jjj6.css` 494KB / `index-legacy-C_EBKhKP.js`；`sw.js` 与 workbox 已删 |
+| 部署 | `npx wrangler@4 deploy`，`zvp-yuren` Version ID `bf94e33c-33d9-4448-a64e-d1016e0eb685`，88 个新文件 / 92 个复用 |
+
+验收：`https://canary.xiaobopisces.top/` 200，`index.html` 引用新 bundle；新旧 bundle
+均 200 但旧文件名返回 `text/html`（SPA fallback，非真实旧产物）、`/sw.js` 同样回落
+`text/html`，不会注册 Service Worker；headless Chromium 渲染出登录页（`#app[data-v-app]`），
+无白屏。跨域预检：`OPTIONS` + `access-control-request-headers:
+authorization,xuehai-id,x-device-unlock,content-type` 回显 `access-control-allow-origin:
+https://canary.xiaobopisces.top`、`max-age 7200`。
+
+回滚：`npx wrangler@4 rollback <version-id>`（上一版见 Cloudflare Workers 版本列表），
+或在旧提交上重新构建后 deploy。
+
+## 九、线上“CORS 全失败”事故复核（2026-11-07 22:10）
 
 随后线上反馈「API 全部失败」，复核发现 CORS 服务端配置并未失效，而是发布的
 `index-Cj24z6Rz.js` 把两个 API 域名都写成了不存在的 `*.xiaoboisces.top`（少了

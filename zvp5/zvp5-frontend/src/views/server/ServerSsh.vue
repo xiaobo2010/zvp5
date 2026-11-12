@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus/es/components/message/index.mjs'
+import { ElMessageBox } from 'element-plus/es/components/message-box/index.mjs'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
@@ -372,7 +373,9 @@ function attachScrollHelpers(container: HTMLDivElement) {
   container.addEventListener('touchmove', handleTerminalTouchMove, { passive: false })
   container.addEventListener('touchend', handleTerminalTouchEnd, { passive: true })
   viewportEl = container.querySelector('.xterm-viewport')
-  viewportEl?.addEventListener('scroll', updateScrollState)
+  // scroll 只读滚动位置刷新 UI 状态、绝不 preventDefault，passive 让
+  // 浏览器不必等主线程应答即可平滑滚动（终端长输出滚动更顺）。
+  viewportEl?.addEventListener('scroll', updateScrollState, { passive: true })
 }
 
 function detachScrollHelpers() {

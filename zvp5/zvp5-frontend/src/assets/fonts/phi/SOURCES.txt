@@ -1,0 +1,18 @@
+Bebas Neue — SIL Open Font License 1.1
+https://github.com/google/fonts/tree/main/ofl/bebasneue
+
+Rajdhani — SIL Open Font License 1.1
+https://github.com/google/fonts/tree/main/ofl/rajdhani
+
+Bundled locally for the Phi (April Fools) theme; no runtime CDN.
+
+--- WOFF2 转换（2026-11-08）---
+由同目录同名 TTF 派生，TTF 保留为原始备份，并作为不支持 woff2 时的
+@font-face 回落（见 src/assets/styles/yg/phi-theme.css 的 src 列表）。
+工具：fontTools 4.68.0 + brotli（python3 -m fontTools.ttLib.woff2 compress）
+命令：python3 -m fontTools.ttLib.woff2 compress <name>.ttf -o <name>.woff2
+
+  BebasNeue-Regular.ttf  61400 B -> BebasNeue-Regular.woff2  21512 B (-65.0%)
+  Rajdhani-Bold.ttf     400680 B -> Rajdhani-Bold.woff2     104768 B (-73.9%)
+  Rajdhani-Medium.ttf   384348 B -> Rajdhani-Medium.woff2   104272 B (-72.9%)
+  合计                   846428 B -> 230552 B (-72.8%)

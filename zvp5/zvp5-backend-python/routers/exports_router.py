@@ -3,7 +3,7 @@ import uuid
 import time
 import asyncio
 import logging
-from fastapi import APIRouter, HTTPException, Depends, Query, Request
+from fastapi import APIRouter, HTTPException, Depends, Query, Request, Header
 
 
 from config import (
@@ -36,6 +36,7 @@ from fastapi import BackgroundTasks
 from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from typing import Optional
 
 from services import risk_monitor
 
@@ -44,6 +45,9 @@ _logger = logging.getLogger(__name__)
 _MAX_EXPORT_PAGE_SIZE = 100
 _DEFAULT_EXPORT_WINDOW_DAYS = 30
 _MAX_EXPORT_WINDOW_DAYS = 365
+
+# 下载授权的统一拒绝文案：不区分「令牌不存在 / 已过期 / 不是发给你的」。
+_DOWNLOAD_DENIED = "下载授权无效或已失效"
 
 
 async def _run_risk_export(user_oid) -> None:
@@ -462,28 +466,46 @@ async def request_download_reports(
 @router.get("/reports/download")
 async def download_reports(
     request: Request,
-    token: str,
+    token: Optional[str] = Query(None),
+    user=Depends(get_current_user),
+    x_download_token: Optional[str] = Header(None),
 ):
     global tokens
+    # 授权令牌只是「同一管理员的一次性下载凭据」，不是认证本身：必须叠加有效
+    # 的 admin JWT，且令牌必须发给当前登录者。任一项不符都回同一句话，避免把
+    # 「令牌不存在」「令牌过期」「不是发给你的」区分开成为探测信号。
+    raw_token = (x_download_token or token or "").strip()
+    if "admin" not in user.get("per", []):
+        raise HTTPException(status_code=403, detail=_DOWNLOAD_DENIED)
+    if not raw_token:
+        raise HTTPException(status_code=403, detail=_DOWNLOAD_DENIED)
     try:
-        token_data = json.loads(base64.b64decode(token).decode())
+        token_data = json.loads(base64.b64decode(raw_token).decode())
     except Exception:
-        raise HTTPException(status_code=400, detail="Invalid token format")
+        raise HTTPException(status_code=403, detail=_DOWNLOAD_DENIED)
 
     if not isinstance(token_data, dict) or not isinstance(token_data.get("token"), str):
-        raise HTTPException(status_code=400, detail="Invalid token format")
+        raise HTTPException(status_code=403, detail=_DOWNLOAD_DENIED)
     now = datetime.now().timestamp()
     # No await between lookup and removal: consume once within this process.
     # The client supplies only a lookup key; expiry and actor are authoritative
     # server-side fields, even if the base64 JSON was edited by the caller.
     stored = next((item for item in tokens if item["token"] == token_data["token"]), None)
-    tokens = [item for item in tokens if item["expires_at"] > now and item is not stored]
-    if stored is None or stored["expires_at"] <= now:
-        raise HTTPException(status_code=403, detail="Invalid or expired token")
+    if (
+        stored is None
+        or stored["expires_at"] <= now
+        or str(stored.get("granted_to")) != str(user["id"])
+    ):
+        # 不匹配时不消费令牌：否则任何持有效 admin JWT 的人都能靠瞎猜把别人的
+        # 下载授权烧掉。
+        tokens = [item for item in tokens if item["expires_at"] > now]
+        raise HTTPException(status_code=403, detail=_DOWNLOAD_DENIED)
+    tokens = [item for item in tokens if item is not stored and item["expires_at"] > now]
     token_data = stored
 
+    # 只记 path：完整 URL 会把一次性令牌写进 APP_LOGS。
     log = ZVMSLog(
-        str(request.url),
+        str(request.url.path),
         str(token_data["granted_to"]),
         f"用户 {await get_user_display_name(token_data['granted_to'])} 下载了报告文件",
         datetime.timestamp(datetime.now()),

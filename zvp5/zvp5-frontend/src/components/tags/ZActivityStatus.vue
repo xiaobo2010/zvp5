@@ -4,7 +4,11 @@ import { ref, toRefs, h } from 'vue'
 import type { Activity, ActivityMember } from '@/../types/v2'
 import { ZButtonTag } from '@/components'
 import classifications from './classifications'
-import { ElPopover, ElButton, ElSpace, ElPopconfirm, ElDivider } from 'element-plus'
+import { ElPopover } from 'element-plus/es/components/popover/index.mjs'
+import { ElButton } from 'element-plus/es/components/button/index.mjs'
+import { ElSpace } from 'element-plus/es/components/space/index.mjs'
+import { ElPopconfirm } from 'element-plus/es/components/popconfirm/index.mjs'
+import { ElDivider } from 'element-plus/es/components/divider/index.mjs'
 import api from '@/api'
 
 const { t } = useI18n()

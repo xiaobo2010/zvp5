@@ -7,14 +7,12 @@ import {
   nextTick,
   type Ref
 } from 'vue'
-import {
-  ElButton,
-  ElDialog,
-  ElProgress,
-  ElIcon,
-  ElImageViewer,
-  ElMessage
-} from 'element-plus'
+import { ElButton } from 'element-plus/es/components/button/index.mjs'
+import { ElDialog } from 'element-plus/es/components/dialog/index.mjs'
+import { ElProgress } from 'element-plus/es/components/progress/index.mjs'
+import { ElIcon } from 'element-plus/es/components/icon/index.mjs'
+import { ElImageViewer } from 'element-plus/es/components/image-viewer/index.mjs'
+import { ElMessage } from 'element-plus/es/components/message/index.mjs'
 import {
   Camera,
   Picture,

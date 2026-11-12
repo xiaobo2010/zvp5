@@ -1,0 +1,915 @@
+/* ==========================================================================
+   本文件由 `npm run design:sync` 自动生成，请勿手工修改。
+   来源：前端约定/css/phi-legacy-pages.css
+   需要改动请编辑上述源文件后重新执行同步命令；
+   直接改本文件会在下次同步时被覆盖，造成样式库与准则漂移。
+   ========================================================================== */
+/* ==========================================================================
+   Phi · 普通用户端遗留页面皮肤
+   --------------------------------------------------------------------------
+   覆盖 /activity/register、/activity/register/:mode、/activity/create、
+   /activity/details/:id 这些仍带旧版圆角/描边外观的页面。
+
+   约定：
+   - 只用 .yg-phi 作用域；选择器重复三次类名，确保压过 SFC scoped 的
+     `[data-v]` 选择器，不靠 !important。
+   - 卡片/面板改用实色底 + 不对称切角 + 左侧强调边 + offset 硬阴影；
+     硬阴影用 drop-shadow，避免被 clip-path 裁掉。
+   - 按钮不重建方框描边；旧页面专属按钮用平底/下划线表达状态。
+   - 表格分隔线与固定列表头保持功能性，仅统一为 Phi 的线宽与不透明底色。
+   ========================================================================== */
+
+.yg-phi.yg-phi.yg-phi {
+  --legacy-surface: var(--phi-panel);
+  --legacy-raised: var(--phi-panel-hi);
+  --legacy-ink: var(--phi-ink);
+  --legacy-muted: var(--phi-ink-3);
+  --legacy-accent: var(--phi-accent);
+  --legacy-accent-soft: var(--phi-accent-soft);
+  --legacy-line: var(--phi-line);
+  --legacy-hard: color-mix(in srgb, var(--phi-accent) 18%, #000);
+  --legacy-ease: cubic-bezier(0.19, 1, 0.22, 1);
+  --legacy-spring: cubic-bezier(0.34, 1.4, 0.64, 1);
+}
+
+/* 浅色：硬阴影改为柔和的深炭灰，避免彩色阴影压过纸面 */
+html[data-theme='light'] .yg-phi.yg-phi.yg-phi {
+  --legacy-hard: rgba(16, 20, 24, 0.16);
+  --legacy-line: rgba(5, 6, 8, 0.14);
+}
+
+/* --------------------------------------------------------------------------
+   页面头部：HUD 斜切块 + 左侧强调边
+   -------------------------------------------------------------------------- */
+.yg-phi.yg-phi.yg-phi .yg-register-entry__header,
+.yg-phi.yg-phi.yg-phi .register-page > .el-page-header,
+.yg-phi.yg-phi.yg-phi .yg-create-page > .el-page-header,
+.yg-phi.yg-phi.yg-phi .yg-activity-page__header {
+  position: relative;
+  isolation: isolate;
+  margin: 0 0 var(--yg-space-4);
+  padding: var(--yg-space-5) var(--yg-space-6) var(--yg-space-4);
+  border: 0;
+  border-left: 3px solid var(--legacy-accent);
+  border-radius: 0;
+  background:
+    linear-gradient(var(--phi-scan) 1px, transparent 1px) 0 0 / 100% 4px,
+    linear-gradient(
+      100deg,
+      color-mix(in srgb, var(--legacy-accent) 8%, var(--legacy-surface)),
+      var(--legacy-surface) 62%
+    );
+  box-shadow: none;
+  clip-path: polygon(0 0, calc(100% - 20px) 0, 100% 20px, 100% 100%, 0 100%);
+  overflow: hidden;
+}
+
+/* 右下角斜线刻度：纯装饰，不抢标题 */
+.yg-phi.yg-phi.yg-phi .yg-register-entry__header::after,
+.yg-phi.yg-phi.yg-phi .register-page > .el-page-header::after,
+.yg-phi.yg-phi.yg-phi .yg-create-page > .el-page-header::after,
+.yg-phi.yg-phi.yg-phi .yg-activity-page__header::after {
+  content: '';
+  position: absolute;
+  right: 17%;
+  bottom: 0;
+  width: 96px;
+  height: 4px;
+  background: repeating-linear-gradient(-55deg, var(--legacy-accent) 0 2px, transparent 2px 7px);
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.yg-phi.yg-phi.yg-phi .yg-register-entry__header .yg-page-header__title,
+.yg-phi.yg-phi.yg-phi .register-page > .el-page-header .el-page-header__content,
+.yg-phi.yg-phi.yg-phi .yg-create-page > .el-page-header .el-page-header__content,
+.yg-phi.yg-phi.yg-phi .yg-activity-page__header .el-page-header__content {
+  color: var(--legacy-ink);
+  font-family: var(--phi-hud), var(--yg-font-sans);
+  font-size: clamp(24px, 3.2vw, 34px);
+  font-weight: 700;
+  line-height: 1.1;
+  letter-spacing: 0.02em;
+}
+
+/* 页面头部里的返回按钮：平底，不加方框 */
+.yg-phi.yg-phi.yg-phi .register-page > .el-page-header .el-page-header__left,
+.yg-phi.yg-phi.yg-phi .yg-create-page > .el-page-header .el-page-header__left,
+.yg-phi.yg-phi.yg-phi .yg-activity-page__header .el-page-header__left {
+  color: var(--legacy-muted);
+}
+
+.yg-phi.yg-phi.yg-phi .register-page > .el-page-header .el-page-header__left:hover,
+.yg-phi.yg-phi.yg-phi .yg-create-page > .el-page-header .el-page-header__left:hover,
+.yg-phi.yg-phi.yg-phi .yg-activity-page__header .el-page-header__left:hover {
+  color: var(--legacy-accent);
+}
+
+/* --------------------------------------------------------------------------
+   /activity/register：三个操作入口
+   -------------------------------------------------------------------------- */
+.yg-phi.yg-phi.yg-phi .yg-register-entry__choice {
+  position: relative;
+  border: 0;
+  border-radius: 0;
+  background: linear-gradient(135deg, var(--legacy-raised), var(--legacy-surface) 74%);
+  box-shadow: none;
+  clip-path: polygon(0 0, calc(100% - 16px) 0, 100% 16px, 100% 100%, 0 100%);
+  filter: drop-shadow(5px 5px 0 var(--legacy-hard));
+  transition:
+    filter var(--yg-dur-base) var(--legacy-ease),
+    background-color var(--yg-dur-base) var(--legacy-ease),
+    transform var(--yg-dur-base) var(--legacy-ease);
+}
+
+/* 左侧强调边 */
+.yg-phi.yg-phi.yg-phi .yg-register-entry__choice::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 2px;
+  background: linear-gradient(var(--legacy-accent), transparent 72%);
+  pointer-events: none;
+  transition: width var(--yg-dur-base) var(--legacy-ease);
+}
+
+/* 顶部扫描纹理 */
+.yg-phi.yg-phi.yg-phi .yg-register-entry__choice::after {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 3px;
+  background:
+    repeating-linear-gradient(90deg, var(--legacy-accent) 0 1px, transparent 1px 4px),
+    linear-gradient(var(--legacy-accent), var(--legacy-accent));
+  opacity: 0.24;
+  pointer-events: none;
+}
+
+.yg-phi.yg-phi.yg-phi .yg-register-entry__choice:hover,
+.yg-phi.yg-phi.yg-phi .yg-register-entry__choice:focus-visible {
+  border: 0;
+  background: color-mix(in srgb, var(--legacy-accent) 7%, var(--legacy-surface));
+  box-shadow: none;
+  filter: drop-shadow(7px 7px 0 var(--legacy-hard));
+  transform: translateY(-2px);
+}
+
+.yg-phi.yg-phi.yg-phi .yg-register-entry__choice:hover::before {
+  width: 3px;
+}
+
+.yg-phi.yg-phi.yg-phi .yg-register-entry__choice:focus-visible {
+  outline: 2px solid var(--legacy-accent);
+  outline-offset: -4px;
+}
+
+.yg-phi.yg-phi.yg-phi .yg-register-entry__choice:active {
+  background: var(--legacy-raised);
+  box-shadow: none;
+  filter: drop-shadow(3px 3px 0 var(--legacy-hard));
+  transform: translateY(0);
+  transition-duration: 80ms;
+}
+
+.yg-phi.yg-phi.yg-phi .yg-register-entry__choice.is-disabled,
+.yg-phi.yg-phi.yg-phi .yg-register-entry__choice[aria-disabled='true'] {
+  background: var(--legacy-surface);
+  box-shadow: none;
+  filter: none;
+  transform: none;
+}
+
+.yg-phi.yg-phi.yg-phi .yg-register-entry__choice-icon {
+  border-radius: 0;
+  background: var(--legacy-accent-soft);
+  color: var(--legacy-accent);
+  clip-path: polygon(0 0, calc(100% - 9px) 0, 100% 9px, 100% 100%, 0 100%);
+}
+
+/* 主操作（添加义工）：青色强调 */
+.yg-phi.yg-phi.yg-phi .yg-register-entry__choice--create::before {
+  background: linear-gradient(var(--legacy-accent), var(--legacy-accent));
+}
+
+.yg-phi.yg-phi.yg-phi .yg-register-entry__choice--create .yg-register-entry__choice-icon {
+  background: var(--legacy-accent-soft);
+  color: var(--legacy-accent);
+}
+
+/* 中性操作（修改义工）：灰色调 */
+.yg-phi.yg-phi.yg-phi .yg-register-entry__choice--edit::before {
+  background: linear-gradient(var(--legacy-muted), transparent 72%);
+}
+
+.yg-phi.yg-phi.yg-phi .yg-register-entry__choice--edit .yg-register-entry__choice-icon {
+  background: var(--legacy-surface);
+  color: var(--legacy-muted);
+}
+
+/* 次要操作（创建活动）：青色图标 + 灰色边 */
+.yg-phi.yg-phi.yg-phi .yg-register-entry__choice--create-activity::before {
+  background: linear-gradient(var(--legacy-muted), transparent 72%);
+}
+
+.yg-phi.yg-phi.yg-phi .yg-register-entry__choice--create-activity .yg-register-entry__choice-icon {
+  background: color-mix(in srgb, var(--legacy-accent) 10%, var(--legacy-surface));
+  color: var(--legacy-accent);
+}
+
+.yg-phi.yg-phi.yg-phi .yg-register-entry__choice-title {
+  color: var(--legacy-ink);
+}
+
+.yg-phi.yg-phi.yg-phi .yg-register-entry__choice-desc {
+  color: var(--legacy-muted);
+}
+
+/* CTA 按钮视觉：描边 + 箭头 */
+.yg-phi.yg-phi.yg-phi .yg-register-entry__choice-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px 6px 12px;
+  border: 1px solid currentColor;
+  color: var(--legacy-accent);
+  font-family: var(--phi-hud), var(--yg-font-sans);
+  letter-spacing: 0.04em;
+  clip-path: polygon(0 0, calc(100% - 6px) 0, 100% 6px, 100% 100%, 0 100%);
+  transition:
+    background-color var(--yg-dur-fast) var(--legacy-ease),
+    transform var(--yg-dur-fast) var(--legacy-ease);
+}
+
+.yg-phi.yg-phi.yg-phi .yg-register-entry__choice-action::after {
+  content: '→';
+  display: inline-block;
+  font-size: 18px;
+  transition: transform var(--yg-dur-fast) var(--legacy-ease);
+}
+
+.yg-phi.yg-phi.yg-phi .yg-register-entry__choice:hover .yg-register-entry__choice-action {
+  background: var(--legacy-accent-soft);
+}
+
+.yg-phi.yg-phi.yg-phi .yg-register-entry__choice:hover .yg-register-entry__choice-action::after {
+  transform: translateX(3px);
+}
+
+.yg-phi.yg-phi.yg-phi .yg-register-entry__choice:active .yg-register-entry__choice-action {
+  transform: scale(0.97);
+}
+
+.yg-phi.yg-phi.yg-phi .yg-register-entry__hint {
+  border: 0;
+  border-left: 3px solid var(--legacy-accent);
+  border-radius: 0;
+  background: color-mix(in srgb, var(--legacy-accent) 6%, var(--legacy-surface));
+  color: var(--legacy-muted);
+  clip-path: polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 0 100%);
+}
+
+.yg-phi.yg-phi.yg-phi .yg-register-entry__hint-icon {
+  color: var(--legacy-accent);
+}
+
+/* --------------------------------------------------------------------------
+   /activity/register/:mode：编辑器
+   -------------------------------------------------------------------------- */
+.yg-phi.yg-phi.yg-phi .register-page {
+  --el-border-radius-base: 0;
+}
+
+.yg-phi.yg-phi.yg-phi .reg-card {
+  position: relative;
+  border: 0;
+  border-radius: 0;
+  background: linear-gradient(135deg, var(--legacy-raised), var(--legacy-surface) 74%);
+  box-shadow: none;
+  clip-path: polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 0 100%);
+  filter: drop-shadow(5px 5px 0 var(--legacy-hard));
+}
+
+.yg-phi.yg-phi.yg-phi .reg-card::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  z-index: 3;
+  width: 2px;
+  background: linear-gradient(var(--legacy-accent), transparent 72%);
+  pointer-events: none;
+}
+
+/* 页头里的短提示：从圆角胶囊改成切角标签 */
+.yg-phi.yg-phi.yg-phi .list-hint {
+  border: 0;
+  border-radius: 0;
+  padding: 2px 8px 2px 6px;
+  background: var(--yg-color-warning-soft);
+  color: var(--yg-text-warning);
+  clip-path: polygon(0 0, calc(100% - 6px) 0, 100% 6px, 100% 100%, 0 100%);
+}
+
+.yg-phi.yg-phi.yg-phi .index-status .index-meta,
+.yg-phi.yg-phi.yg-phi .grid-sub {
+  font-family: var(--phi-hud), var(--yg-font-sans);
+  letter-spacing: 0.02em;
+}
+
+.yg-phi.yg-phi.yg-phi .page-head {
+  align-items: center;
+  gap: var(--yg-space-3);
+}
+
+.yg-phi.yg-phi.yg-phi .page-head .page-title {
+  color: var(--legacy-ink);
+  font-family: var(--phi-hud), var(--yg-font-sans);
+  letter-spacing: 0.02em;
+}
+
+/* 栏目切换：去掉描边方框，改为切角平底 + 激活下划线/左强调边 */
+.yg-phi.yg-phi.yg-phi .editor-tabs .editor-tab {
+  position: relative;
+  border: 0;
+  border-radius: 0;
+  background: var(--legacy-raised);
+  color: var(--legacy-muted);
+  box-shadow: none;
+  clip-path: polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 0 100%);
+  transition:
+    color var(--yg-dur-base) var(--legacy-ease),
+    background-color var(--yg-dur-base) var(--legacy-ease);
+}
+
+.yg-phi.yg-phi.yg-phi .editor-tabs .editor-tab::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 0;
+  background: var(--legacy-accent);
+  transition: width var(--yg-dur-base) var(--legacy-ease);
+}
+
+.yg-phi.yg-phi.yg-phi .editor-tabs .editor-tab::after {
+  content: '';
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 2px;
+  background: transparent;
+  transition: background-color var(--yg-dur-base) var(--legacy-ease);
+}
+
+.yg-phi.yg-phi.yg-phi .editor-tabs .editor-tab:hover {
+  border: 0;
+  background: var(--legacy-accent-soft);
+  color: var(--legacy-ink);
+  box-shadow: none;
+}
+
+.yg-phi.yg-phi.yg-phi .editor-tabs .editor-tab:active {
+  background: color-mix(in srgb, var(--legacy-accent) 16%, var(--legacy-surface));
+  box-shadow: none;
+}
+
+.yg-phi.yg-phi.yg-phi .editor-tabs .editor-tab.is-active {
+  border: 0;
+  background: linear-gradient(100deg, var(--legacy-accent-soft), var(--legacy-raised) 72%);
+  color: var(--legacy-accent);
+  box-shadow: none;
+}
+
+.yg-phi.yg-phi.yg-phi .editor-tabs .editor-tab.is-active::before {
+  width: 3px;
+}
+
+.yg-phi.yg-phi.yg-phi .editor-tabs .editor-tab.is-active::after {
+  background: var(--legacy-accent);
+}
+
+.yg-phi.yg-phi.yg-phi .editor-tabs .editor-tab:focus-visible {
+  outline: 2px solid var(--legacy-accent);
+  outline-offset: -3px;
+  box-shadow: none;
+}
+
+.yg-phi.yg-phi.yg-phi .editor-tabs .editor-tab:disabled,
+.yg-phi.yg-phi.yg-phi .editor-tabs .editor-tab.is-disabled {
+  border: 0;
+  background: var(--legacy-surface);
+  color: var(--legacy-muted);
+  box-shadow: none;
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.yg-phi.yg-phi.yg-phi .editor-tabs .editor-tab__title {
+  color: inherit;
+}
+
+.yg-phi.yg-phi.yg-phi .editor-tabs .editor-tab__desc {
+  color: var(--legacy-muted);
+}
+
+.yg-phi.yg-phi.yg-phi .editor-tabs .editor-tab.is-active .editor-tab__desc {
+  color: color-mix(in srgb, var(--legacy-accent) 70%, var(--legacy-muted));
+}
+
+/* 编辑网格：表头/汇总条/表格线 */
+.yg-phi.yg-phi.yg-phi .grid-head {
+  border-bottom: 1px solid var(--legacy-line);
+}
+
+.yg-phi.yg-phi.yg-phi .summary-item strong {
+  color: var(--legacy-ink);
+  font-family: var(--phi-hud), var(--yg-font-sans);
+  letter-spacing: 0.04em;
+}
+
+.yg-phi.yg-phi.yg-phi .grid-footer {
+  border-top: 1px solid var(--legacy-line);
+  background: var(--legacy-surface);
+}
+
+.yg-phi.yg-phi.yg-phi .grid-wrap {
+  background: var(--legacy-surface);
+}
+
+.yg-phi.yg-phi.yg-phi .reg-grid {
+  color: var(--legacy-ink);
+}
+
+.yg-phi.yg-phi.yg-phi .reg-grid th {
+  background: var(--legacy-raised);
+  color: var(--legacy-muted);
+  border-bottom: 1px solid var(--legacy-line);
+  font-family: var(--phi-hud), var(--yg-font-sans);
+  font-size: var(--yg-font-size-xs);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.yg-phi.yg-phi.yg-phi .reg-grid th:first-child {
+  background-image: linear-gradient(var(--legacy-accent), var(--legacy-accent));
+  background-position: left center;
+  background-size: 2px 40%;
+  background-repeat: no-repeat;
+}
+
+.yg-phi.yg-phi.yg-phi .reg-grid td {
+  border-bottom: 1px solid color-mix(in srgb, var(--legacy-ink) 8%, transparent);
+}
+
+.yg-phi.yg-phi.yg-phi .reg-grid tbody tr:hover td {
+  background: var(--legacy-accent-soft);
+}
+
+/* 单元格输入：只保留底部细线；聚焦时补左侧强调边 */
+.yg-phi.yg-phi.yg-phi .cell-input,
+.yg-phi.yg-phi.yg-phi .cell-select {
+  border: 0;
+  border-bottom: 1px solid var(--legacy-line);
+  border-radius: 0;
+  background: transparent;
+  color: var(--legacy-ink);
+  box-shadow: none;
+}
+
+.yg-phi.yg-phi.yg-phi .cell-input::placeholder {
+  color: var(--legacy-muted);
+}
+
+.yg-phi.yg-phi.yg-phi .cell-input:focus,
+.yg-phi.yg-phi.yg-phi .cell-select:focus {
+  outline: none;
+  border-bottom-color: var(--legacy-accent);
+  background: color-mix(in srgb, var(--legacy-accent) 8%, var(--legacy-surface));
+  box-shadow: inset 2px 0 0 var(--legacy-accent);
+}
+
+.yg-phi.yg-phi.yg-phi .cell-input.is-error {
+  border-bottom-color: var(--yg-text-danger);
+  background: var(--yg-color-danger-soft);
+  box-shadow: inset 2px 0 0 var(--yg-text-danger);
+}
+
+.yg-phi.yg-phi.yg-phi .cell-input.is-warning {
+  border-bottom-color: var(--yg-text-warning);
+  background: var(--yg-color-warning-soft);
+  box-shadow: inset 2px 0 0 var(--yg-text-warning);
+}
+
+.yg-phi.yg-phi.yg-phi .status-pill {
+  border-radius: 0;
+  padding: 1px 8px 2px;
+  font-family: var(--phi-hud), var(--yg-font-sans);
+  letter-spacing: 0.04em;
+  clip-path: polygon(0 0, calc(100% - 6px) 0, 100% 6px, 100% 100%, 0 100%);
+}
+
+/* 页面内的 Element 输入/选择：去掉四周描边，只留底部细线，聚焦补左强调边 */
+.yg-phi.yg-phi.yg-phi :is(.register-page, .yg-create-page, .yg-activity-page) .el-input__wrapper,
+.yg-phi.yg-phi.yg-phi :is(.register-page, .yg-create-page, .yg-activity-page) .el-select__wrapper,
+.yg-phi.yg-phi.yg-phi :is(.register-page, .yg-create-page, .yg-activity-page) .el-textarea__inner {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: inset 0 -1px 0 var(--legacy-line);
+}
+
+.yg-phi.yg-phi.yg-phi
+  :is(.register-page, .yg-create-page, .yg-activity-page)
+  .el-input__wrapper.is-focus,
+.yg-phi.yg-phi.yg-phi
+  :is(.register-page, .yg-create-page, .yg-activity-page)
+  .el-select__wrapper.is-focused,
+.yg-phi.yg-phi.yg-phi
+  :is(.register-page, .yg-create-page, .yg-activity-page)
+  .el-textarea__inner:focus {
+  border-color: transparent;
+  background: color-mix(in srgb, var(--legacy-accent) 7%, var(--legacy-surface));
+  box-shadow:
+    inset 0 -1px 0 var(--legacy-accent),
+    inset 2px 0 0 var(--legacy-accent);
+}
+
+.yg-phi.yg-phi.yg-phi :is(.register-page, .yg-create-page, .yg-activity-page) .el-input__inner,
+.yg-phi.yg-phi.yg-phi :is(.register-page, .yg-create-page, .yg-activity-page) .el-textarea__inner {
+  color: var(--legacy-ink);
+}
+
+.yg-phi.yg-phi.yg-phi
+  :is(.register-page, .yg-create-page, .yg-activity-page)
+  .el-input__inner::placeholder,
+.yg-phi.yg-phi.yg-phi
+  :is(.register-page, .yg-create-page, .yg-activity-page)
+  .el-textarea__inner::placeholder {
+  color: var(--legacy-muted);
+}
+
+/* 窄屏页头：ElPageHeader 默认把 extra 和标题挤在同一行，390 下会裁掉右侧。
+   头部改为两行：返回+标题第一行，操作区第二行。 */
+@media (max-width: 720px) {
+  .yg-phi.yg-phi.yg-phi .register-page > .el-page-header .el-page-header__header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: var(--yg-space-2);
+    box-sizing: border-box;
+    width: 100%;
+    min-width: 0;
+  }
+
+  .yg-phi.yg-phi.yg-phi .register-page > .el-page-header .el-page-header__left {
+    flex: 1 1 100%;
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  .yg-phi.yg-phi.yg-phi .register-page > .el-page-header .el-page-header__back,
+  .yg-phi.yg-phi.yg-phi
+    .register-page
+    > .el-page-header
+    .el-page-header__back
+    .el-page-header__title {
+    flex: none;
+    white-space: nowrap;
+  }
+
+  .yg-phi.yg-phi.yg-phi .register-page > .el-page-header .el-page-header__content {
+    min-width: 0;
+    white-space: normal;
+  }
+
+  .yg-phi.yg-phi.yg-phi .register-page > .el-page-header .el-page-header__extra {
+    flex: 1 1 100%;
+    box-sizing: border-box;
+    width: auto;
+    max-width: 100%;
+    min-width: 0;
+  }
+
+  .yg-phi.yg-phi.yg-phi .register-page > .el-page-header .index-status {
+    width: 100%;
+    max-width: 100%;
+    justify-content: flex-start;
+  }
+
+  .yg-phi.yg-phi.yg-phi .register-page > .el-page-header .index-meta {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .yg-phi.yg-phi.yg-phi .register-page > .el-page-header .list-hint {
+    max-width: 100%;
+    white-space: normal;
+  }
+
+  .yg-phi.yg-phi.yg-phi .yg-activity-page__header .el-page-header__header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: var(--yg-space-2);
+    box-sizing: border-box;
+    width: 100%;
+    min-width: 0;
+  }
+
+  .yg-phi.yg-phi.yg-phi .yg-activity-page__header .el-page-header__left {
+    flex: 1 1 100%;
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  .yg-phi.yg-phi.yg-phi .yg-activity-page__header .el-page-header__back,
+  .yg-phi.yg-phi.yg-phi .yg-activity-page__header .el-page-header__back .el-page-header__title {
+    flex: none;
+    white-space: nowrap;
+  }
+
+  .yg-phi.yg-phi.yg-phi .yg-activity-page__header .el-page-header__content {
+    min-width: 0;
+    overflow: visible;
+    white-space: normal;
+  }
+
+  .yg-phi.yg-phi.yg-phi .yg-create-page > .el-page-header .el-page-header__header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: var(--yg-space-2);
+    box-sizing: border-box;
+    width: 100%;
+    min-width: 0;
+  }
+
+  .yg-phi.yg-phi.yg-phi .yg-create-page > .el-page-header .el-page-header__left {
+    flex: 1 1 100%;
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  .yg-phi.yg-phi.yg-phi .yg-create-page > .el-page-header .el-page-header__back,
+  .yg-phi.yg-phi.yg-phi
+    .yg-create-page
+    > .el-page-header
+    .el-page-header__back
+    .el-page-header__title {
+    flex: none;
+    white-space: nowrap;
+  }
+
+  .yg-phi.yg-phi.yg-phi .yg-create-page > .el-page-header .el-page-header__content {
+    min-width: 0;
+    white-space: normal;
+  }
+
+  .yg-phi.yg-phi.yg-phi .yg-create-page > .el-page-header .el-page-header__extra {
+    flex: 1 1 100%;
+    width: auto;
+    max-width: 100%;
+    min-width: 0;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   /activity/create：页头切换按钮 + 创建卡片
+   -------------------------------------------------------------------------- */
+.yg-phi.yg-phi.yg-phi .yg-create-page > .el-page-header .el-button {
+  position: relative;
+  border-color: transparent;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--legacy-muted);
+}
+
+.yg-phi.yg-phi.yg-phi .yg-create-page > .el-page-header .el-button:hover {
+  border-color: transparent;
+  background: var(--legacy-accent-soft);
+  box-shadow: none;
+  color: var(--legacy-accent);
+}
+
+/* 当前栏目的按钮是 disabled 态：用下划线表示选中，而不是描边方框 */
+.yg-phi.yg-phi.yg-phi .yg-create-page > .el-page-header .el-button.is-disabled {
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+  color: var(--legacy-accent);
+  opacity: 1;
+}
+
+.yg-phi.yg-phi.yg-phi .yg-create-page > .el-page-header .el-button.is-disabled::after {
+  content: '';
+  position: absolute;
+  right: 10%;
+  bottom: 4px;
+  left: 10%;
+  height: 2px;
+  background: var(--legacy-accent);
+}
+
+.yg-phi.yg-phi.yg-phi .yg-create-page .el-card,
+.yg-phi.yg-phi.yg-phi .yg-create-page .yg-activity-create__card {
+  position: relative;
+  border: 0;
+  border-radius: 0;
+  background: linear-gradient(135deg, var(--legacy-raised), var(--legacy-surface) 74%);
+  box-shadow: none;
+  clip-path: polygon(0 0, calc(100% - 16px) 0, 100% 16px, 100% 100%, 0 100%);
+  filter: drop-shadow(5px 5px 0 var(--legacy-hard));
+}
+
+.yg-phi.yg-phi.yg-phi .yg-create-page .yg-activity-create__card::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  z-index: 3;
+  width: 2px;
+  background: linear-gradient(var(--legacy-accent), transparent 72%);
+  pointer-events: none;
+}
+
+.yg-phi.yg-phi.yg-phi .yg-create-page .yg-activity-create__actions {
+  border-top: 1px solid var(--legacy-line);
+}
+
+/* --------------------------------------------------------------------------
+   /activity/details/:id：详情与成员面板
+   -------------------------------------------------------------------------- */
+.yg-phi.yg-phi.yg-phi .yg-activity-page {
+  --el-border-radius-base: 0;
+}
+
+.yg-phi.yg-phi.yg-phi .yg-activity-page .el-card {
+  position: relative;
+  border: 0;
+  border-radius: 0;
+  background: linear-gradient(135deg, var(--legacy-raised), var(--legacy-surface) 74%);
+  box-shadow: none;
+  clip-path: polygon(0 0, calc(100% - 16px) 0, 100% 16px, 100% 100%, 0 100%);
+  filter: drop-shadow(5px 5px 0 var(--legacy-hard));
+}
+
+.yg-phi.yg-phi.yg-phi .yg-activity-page .el-card::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  z-index: 3;
+  width: 2px;
+  background: linear-gradient(var(--legacy-accent), transparent 72%);
+  pointer-events: none;
+}
+
+.yg-phi.yg-phi.yg-phi .yg-activity-details {
+  color: var(--legacy-ink);
+}
+
+.yg-phi.yg-phi.yg-phi .yg-activity-details__head {
+  position: relative;
+  padding: var(--yg-space-3) var(--yg-space-4);
+  border-left: 3px solid var(--legacy-accent);
+  background: linear-gradient(
+    100deg,
+    color-mix(in srgb, var(--legacy-accent) 8%, var(--legacy-surface)),
+    transparent 74%
+  );
+  clip-path: polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 0 100%);
+}
+
+.yg-phi.yg-phi.yg-phi .yg-activity-details__title {
+  color: var(--legacy-ink);
+  font-family: var(--phi-hud), var(--yg-font-sans);
+  letter-spacing: 0.02em;
+}
+
+.yg-phi.yg-phi.yg-phi .yg-activity-details__desc {
+  color: var(--legacy-muted);
+}
+
+.yg-phi.yg-phi.yg-phi .yg-activity-details__meta {
+  padding: var(--yg-space-2) var(--yg-space-3);
+  background: color-mix(in srgb, var(--legacy-ink) 4%, var(--legacy-surface));
+  clip-path: polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 0 100%);
+}
+
+.yg-phi.yg-phi.yg-phi .yg-activity-details__foot {
+  border-top: 1px solid var(--legacy-line);
+}
+
+/* 成员表：表头与固定列保持不透明 */
+.yg-phi.yg-phi.yg-phi .yg-activity-page .el-table {
+  --el-table-bg-color: var(--legacy-surface);
+  --el-table-tr-bg-color: var(--legacy-surface);
+  --el-table-header-bg-color: var(--legacy-raised);
+  --el-table-border-color: var(--legacy-line);
+}
+
+.yg-phi.yg-phi.yg-phi .yg-activity-page .el-table th.el-table__cell {
+  background-color: var(--legacy-raised);
+  color: var(--legacy-muted);
+  font-family: var(--phi-hud), var(--yg-font-sans);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.yg-phi.yg-phi.yg-phi .yg-activity-page .el-table .el-table__body tr > td.el-table__cell {
+  background-color: var(--legacy-surface);
+  border-bottom-color: var(--legacy-line);
+}
+
+.yg-phi.yg-phi.yg-phi .yg-activity-page .el-table td.el-table-fixed-column--right {
+  background-color: var(--legacy-surface);
+}
+
+.yg-phi.yg-phi.yg-phi .yg-activity-page .el-table th.el-table-fixed-column--right {
+  background-color: var(--legacy-raised);
+}
+
+/* --------------------------------------------------------------------------
+   旧页面弹层：组件全局样式仍带大圆角，这里统一为 Phi 的实色切角面板
+   （弹层被 Teleport 到 body，由 App 打上 .yg-phi-portals）
+   -------------------------------------------------------------------------- */
+body.yg-phi-portals .vr-overwrite-dialog.el-dialog,
+body.yg-phi-portals .vr-ocr-dialog.el-dialog {
+  border: 1px solid var(--p-line);
+  border-radius: 0;
+  background: linear-gradient(
+    135deg,
+    var(--p-surface),
+    color-mix(in srgb, var(--p-surface) 74%, var(--p-bg))
+  );
+  box-shadow: 8px 8px 0 color-mix(in srgb, var(--p-ink) 13%, transparent);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  clip-path: polygon(0 0, calc(100% - 18px) 0, 100% 18px, 100% 100%, 0 100%);
+}
+
+body.yg-phi-portals .vr-notice-popper.el-popper.is-light {
+  border: 1px solid var(--p-line);
+  border-radius: 0;
+  background: var(--p-surface);
+  box-shadow: 6px 6px 0 color-mix(in srgb, var(--p-ink) 11%, transparent);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  clip-path: polygon(0 0, calc(100% - 12px) 0, 100% 12px, 100% 100%, 0 100%);
+}
+
+body.yg-phi-portals .vr-notice-popper .el-popper__arrow::before {
+  border-color: var(--p-line);
+  background: var(--p-surface);
+}
+
+/* --------------------------------------------------------------------------
+   响应式：390px / 平板下收窄页头与硬阴影，不改变已有栅格断点
+   -------------------------------------------------------------------------- */
+@media (max-width: 768px) {
+  /* ActivityPage 外层仍是旧版 px-16 py-12；小屏收到常规页面留白，避免内容被挤窄 */
+  .yg-phi.yg-phi.yg-phi .yg-activity-page {
+    padding: var(--yg-space-4) var(--yg-space-3) var(--yg-space-5);
+  }
+}
+
+@media (max-width: 640px) {
+  .yg-phi.yg-phi.yg-phi .yg-register-entry__header,
+  .yg-phi.yg-phi.yg-phi .register-page > .el-page-header,
+  .yg-phi.yg-phi.yg-phi .yg-create-page > .el-page-header,
+  .yg-phi.yg-phi.yg-phi .yg-activity-page__header {
+    padding: var(--yg-space-4) var(--yg-space-4) var(--yg-space-3);
+    clip-path: polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 0 100%);
+  }
+
+  .yg-phi.yg-phi.yg-phi .register-page > .el-page-header .el-page-header__content,
+  .yg-phi.yg-phi.yg-phi .yg-create-page > .el-page-header .el-page-header__content,
+  .yg-phi.yg-phi.yg-phi .yg-activity-page__header .el-page-header__content {
+    font-size: var(--yg-font-size-2xl);
+  }
+
+  .yg-phi.yg-phi.yg-phi .reg-card,
+  .yg-phi.yg-phi.yg-phi .yg-register-entry__choice,
+  .yg-phi.yg-phi.yg-phi .yg-create-page .el-card,
+  .yg-phi.yg-phi.yg-phi .yg-create-page .yg-activity-create__card,
+  .yg-phi.yg-phi.yg-phi .yg-activity-page .el-card {
+    filter: drop-shadow(3px 3px 0 var(--legacy-hard));
+  }
+}
+
+/* --------------------------------------------------------------------------
+   减少动态：尊重系统设置，不再做位移/宽度动画
+   -------------------------------------------------------------------------- */
+@media (prefers-reduced-motion: reduce) {
+  .yg-phi.yg-phi.yg-phi .yg-register-entry__choice,
+  .yg-phi.yg-phi.yg-phi .editor-tabs .editor-tab,
+  .yg-phi.yg-phi.yg-phi .editor-tabs .editor-tab::before,
+  .yg-phi.yg-phi.yg-phi .editor-tabs .editor-tab::after {
+    transition: none;
+  }
+
+  .yg-phi.yg-phi.yg-phi .yg-register-entry__choice:hover,
+  .yg-phi.yg-phi.yg-phi .yg-register-entry__choice:active {
+    transform: none;
+  }
+}

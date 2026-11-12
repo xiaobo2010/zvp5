@@ -14,12 +14,12 @@ export const zhCN = {
   mode: {
     'on-campus': {
       name: '校内义工',
-      short: '校内',
+      short: '校内义工',
       key: 'on-campus'
     },
     'off-campus': {
       name: '校外义工',
-      short: '校外',
+      short: '校外义工',
       key: 'off-campus'
     },
     'social-practice': {

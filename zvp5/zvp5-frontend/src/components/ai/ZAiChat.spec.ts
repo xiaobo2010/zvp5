@@ -1,6 +1,6 @@
 import { mount, type VueWrapper } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import ZAiChat from './ZAiChat.vue'
 import { useUserStore } from '@/stores/user'
 import { POLL_FAST_INTERVAL_MS, POLL_INTERVAL_MS } from '@/stores/aiConversations'
@@ -116,6 +116,13 @@ vi.mock('vue-i18n', async (importOriginal) => {
         params === undefined ? key : `${key} ${JSON.stringify(params)}`
     })
   }
+})
+
+// 本文件把 vue-i18n 整体桩掉了，组件渲染只回显 key；但 resolveErrorMessage 的
+// 兜底文案直接读消息表，而 ai.* 字典已改为路由懒加载，这里先装载一次。
+beforeAll(async () => {
+  const { loadNamespace } = await import('@/i18n/locales/namespaces')
+  await loadNamespace('ai')
 })
 
 vi.mock('element-plus', async () => {

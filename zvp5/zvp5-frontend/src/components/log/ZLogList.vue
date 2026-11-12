@@ -3,7 +3,7 @@ import type { Log } from '@/../types/log'
 import { ref, watch, toRefs } from 'vue'
 import api from '@/api'
 import ZLogCard from '@/components/log/ZLogCard.vue'
-import { ElInput } from 'element-plus'
+import { ElInput } from 'element-plus/es/components/input/index.mjs'
 
 const props = withDefaults(
   defineProps<{

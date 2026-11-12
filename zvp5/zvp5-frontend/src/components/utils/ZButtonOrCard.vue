@@ -1,5 +1,10 @@
 <script lang="ts" setup>
-import { ElCard, ElButton, ElSkeleton, ElSkeletonItem, ElDialog, ElDrawer } from 'element-plus'
+import { ElCard } from 'element-plus/es/components/card/index.mjs'
+import { ElButton } from 'element-plus/es/components/button/index.mjs'
+import { ElSkeleton } from 'element-plus/es/components/skeleton/index.mjs'
+import { ElSkeletonItem } from 'element-plus/es/components/skeleton/index.mjs'
+import { ElDialog } from 'element-plus/es/components/dialog/index.mjs'
+import { ElDrawer } from 'element-plus/es/components/drawer/index.mjs'
 import { toRefs, ref, watch } from 'vue'
 import type { Component as VueComponent } from 'vue'
 const props = withDefaults(

@@ -2,7 +2,7 @@
 import { onMounted } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { ElIcon } from 'element-plus'
+import { ElIcon } from 'element-plus/es/components/icon/index.mjs'
 import { ArrowLeft, CirclePlusFilled, EditPen, InfoFilled, Plus } from '@element-plus/icons-vue'
 import { useHeaderStore } from '@/stores/header'
 import { ensureRegisterAccess } from './registerAccess'
@@ -68,6 +68,8 @@ onMounted(async () => {
         class="yg-register-entry__choice yg-register-entry__choice--create"
         :to="target('create')"
       >
+        <span class="yg-register-entry__choice-number" aria-hidden="true">01</span>
+        <span class="yg-register-entry__choice-bracket" aria-hidden="true"></span>
         <span class="yg-register-entry__choice-icon" aria-hidden="true">
           <ElIcon><Plus /></ElIcon>
         </span>
@@ -88,6 +90,8 @@ onMounted(async () => {
         class="yg-register-entry__choice yg-register-entry__choice--edit"
         :to="target('edit')"
       >
+        <span class="yg-register-entry__choice-number" aria-hidden="true">02</span>
+        <span class="yg-register-entry__choice-bracket" aria-hidden="true"></span>
         <span class="yg-register-entry__choice-icon" aria-hidden="true">
           <ElIcon><EditPen /></ElIcon>
         </span>
@@ -106,8 +110,10 @@ onMounted(async () => {
 
       <RouterLink
         class="yg-register-entry__choice yg-register-entry__choice--create-activity"
-        :to="{ name: 'activity-create' }"
+        :to="{ name: 'activity-create-home' }"
       >
+        <span class="yg-register-entry__choice-number" aria-hidden="true">03</span>
+        <span class="yg-register-entry__choice-bracket" aria-hidden="true"></span>
         <span class="yg-register-entry__choice-icon" aria-hidden="true">
           <ElIcon><CirclePlusFilled /></ElIcon>
         </span>
@@ -149,9 +155,9 @@ onMounted(async () => {
 }
 
 /* 卡片整体是一个 44px 以上的可点击区域，整卡可聚焦、可回车进入。
-   悬停只换边框和阴影，不做位移：层次已由 --yg-shadow-* 表达，也避免引入
-   额外的位移数值。 */
+   Phi 皮肤会补切角、硬阴影和 2px 上浮；这里只保留基础布局与降级态。 */
 .yg-register-entry__choice {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: var(--yg-space-4);
@@ -167,6 +173,38 @@ onMounted(async () => {
     box-shadow var(--yg-dur-base) var(--yg-ease-out),
     border-color var(--yg-dur-base) var(--yg-ease-out),
     background-color var(--yg-dur-base) var(--yg-ease-out);
+}
+
+/* 编号：右上角显示数字，避开左上角图标 */
+.yg-register-entry__choice-number {
+  position: absolute;
+  top: var(--yg-space-3);
+  right: var(--yg-space-4);
+  color: var(--yg-color-primary);
+  font-family: var(--yg-font-mono);
+  font-size: var(--yg-font-size-lg);
+  font-weight: var(--yg-font-weight-bold);
+  line-height: 1;
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+/* 角括号：右下角装饰 */
+.yg-register-entry__choice-bracket {
+  position: absolute;
+  right: var(--yg-space-4);
+  bottom: var(--yg-space-4);
+  width: 18px;
+  height: 18px;
+  border-right: 2px solid var(--yg-color-primary);
+  border-bottom: 2px solid var(--yg-color-primary);
+  opacity: 0.3;
+  pointer-events: none;
+  transition: opacity var(--yg-dur-base) var(--yg-ease-out);
+}
+
+.yg-register-entry__choice:hover .yg-register-entry__choice-bracket {
+  opacity: 0.6;
 }
 
 .yg-register-entry__choice:hover {
@@ -251,9 +289,22 @@ onMounted(async () => {
   display: inline-flex;
   align-items: center;
   gap: var(--yg-space-1);
+  align-self: flex-start;
+  min-height: 44px;
+  padding: var(--yg-space-2) var(--yg-space-4);
   font-size: var(--yg-font-size-md);
   font-weight: var(--yg-font-weight-medium);
   color: var(--yg-text-link);
+  border: 1px solid var(--yg-border-default);
+  border-radius: 0;
+  transition:
+    background-color var(--yg-dur-fast) var(--yg-ease-out),
+    border-color var(--yg-dur-fast) var(--yg-ease-out);
+}
+
+.yg-register-entry__choice:hover .yg-register-entry__choice-action {
+  background-color: var(--yg-bg-surface-hover);
+  border-color: var(--yg-color-primary);
 }
 
 .yg-register-entry__choice-action::after {
@@ -263,6 +314,10 @@ onMounted(async () => {
 
 .yg-register-entry__choice:hover .yg-register-entry__choice-action::after {
   transform: translateX(var(--yg-space-1));
+}
+
+.yg-register-entry__choice:active .yg-register-entry__choice-action {
+  transform: scale(0.98);
 }
 
 .yg-register-entry__hint {
@@ -293,9 +348,27 @@ onMounted(async () => {
   }
 }
 
+@media (max-width: 640px) {
+  .yg-register-entry__choice {
+    padding: var(--yg-space-5);
+  }
+
+  .yg-register-entry__choice-action {
+    align-self: stretch;
+    justify-content: center;
+  }
+
+  /* 移动端 CTA 通栏，右下角括号会压到按钮，直接隐藏 */
+  .yg-register-entry__choice-bracket {
+    display: none;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .yg-register-entry__choice,
-  .yg-register-entry__choice-action::after {
+  .yg-register-entry__choice-action,
+  .yg-register-entry__choice-action::after,
+  .yg-register-entry__choice-bracket {
     transition: none;
   }
 

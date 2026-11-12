@@ -1,18 +1,16 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import {
-  ElButton,
-  ElCard,
-  ElDialog,
-  ElDrawer,
-  ElEmpty,
-  ElIcon,
-  ElInput,
-  ElMessage,
-  ElMessageBox,
-  ElTag
-} from 'element-plus'
+import { ElButton } from 'element-plus/es/components/button/index.mjs'
+import { ElCard } from 'element-plus/es/components/card/index.mjs'
+import { ElDialog } from 'element-plus/es/components/dialog/index.mjs'
+import { ElDrawer } from 'element-plus/es/components/drawer/index.mjs'
+import { ElEmpty } from 'element-plus/es/components/empty/index.mjs'
+import { ElIcon } from 'element-plus/es/components/icon/index.mjs'
+import { ElInput } from 'element-plus/es/components/input/index.mjs'
+import { ElMessage } from 'element-plus/es/components/message/index.mjs'
+import { ElMessageBox } from 'element-plus/es/components/message-box/index.mjs'
+import { ElTag } from 'element-plus/es/components/tag/index.mjs'
 import { Menu, Promotion, VideoPause, WarningFilled } from '@element-plus/icons-vue'
 import { useWindowSize } from '@vueuse/core'
 import {
@@ -2107,14 +2105,19 @@ onUnmounted(() => {
 
 /* 桌面侧栏：固定宽度，跟主区等高 */
 .ai-chat__sidebar {
+  display: flex;
+  flex-direction: column;
   flex: none;
   width: 260px;
   /* 高度跟着对话列走，不再按视口猜一个数 */
   max-height: 100%;
+  min-height: 0;
   padding: var(--yg-space-3);
   border: 1px solid var(--yg-border-default);
   border-radius: var(--yg-radius-lg);
   background: var(--yg-bg-surface);
+  /* 会话多时只让内部列表滚，侧栏本身不被内容顶高 */
+  overflow: hidden;
 }
 
 .ai-chat__main {

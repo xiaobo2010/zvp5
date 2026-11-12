@@ -1,19 +1,17 @@
 <script lang="ts" setup>
 import { useRouter } from 'vue-router'
-import {
-  ElTable,
-  ElTableColumn,
-  ElCard,
-  ElButton,
-  ElDialog,
-  ElForm,
-  ElFormItem,
-  ElIcon,
-  ElInput,
-  ElMessage,
-  ElMessageBox,
-  ElTooltip
-} from 'element-plus'
+import { ElTable } from 'element-plus/es/components/table/index.mjs'
+import { ElTableColumn } from 'element-plus/es/components/table/index.mjs'
+import { ElCard } from 'element-plus/es/components/card/index.mjs'
+import { ElButton } from 'element-plus/es/components/button/index.mjs'
+import { ElDialog } from 'element-plus/es/components/dialog/index.mjs'
+import { ElForm } from 'element-plus/es/components/form/index.mjs'
+import { ElFormItem } from 'element-plus/es/components/form/index.mjs'
+import { ElIcon } from 'element-plus/es/components/icon/index.mjs'
+import { ElInput } from 'element-plus/es/components/input/index.mjs'
+import { ElMessage } from 'element-plus/es/components/message/index.mjs'
+import { ElMessageBox } from 'element-plus/es/components/message-box/index.mjs'
+import { ElTooltip } from 'element-plus/es/components/tooltip/index.mjs'
 import { computed, nextTick, ref, onMounted, watch } from 'vue'
 import type { TableInstance } from 'element-plus'
 import api from '@/api'

@@ -1,19 +1,17 @@
 <script lang="ts" setup>
-import {
-  ElCard,
-  ElInput,
-  ElLoading,
-  ElForm,
-  ElFormItem,
-  ElSelect,
-  ElOption,
-  ElButton,
-  ElCheckbox,
-  ElCheckboxGroup,
-  ElDialog,
-  ElMessage,
-  ElNotification
-} from 'element-plus'
+import { ElCard } from 'element-plus/es/components/card/index.mjs'
+import { ElInput } from 'element-plus/es/components/input/index.mjs'
+import { ElLoading } from 'element-plus/es/components/loading/index.mjs'
+import { ElForm } from 'element-plus/es/components/form/index.mjs'
+import { ElFormItem } from 'element-plus/es/components/form/index.mjs'
+import { ElSelect } from 'element-plus/es/components/select/index.mjs'
+import { ElOption } from 'element-plus/es/components/select/index.mjs'
+import { ElButton } from 'element-plus/es/components/button/index.mjs'
+import { ElCheckbox } from 'element-plus/es/components/checkbox/index.mjs'
+import { ElCheckboxGroup } from 'element-plus/es/components/checkbox/index.mjs'
+import { ElDialog } from 'element-plus/es/components/dialog/index.mjs'
+import { ElMessage } from 'element-plus/es/components/message/index.mjs'
+import { ElNotification } from 'element-plus/es/components/notification/index.mjs'
 import { ref, onMounted, toRefs, watch } from 'vue'
 import api from '@/api'
 import type { Group, User, UserPosition } from '@/../types'

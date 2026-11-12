@@ -5,9 +5,9 @@ import { createPinia } from 'pinia'
 
 import App from './App.vue'
 import router from './router'
-import i18n from './i18n'
+import i18n, { prefetchRemainingLocales } from './i18n'
 
-import ElementPlus from 'element-plus'
+import { ElLoading } from 'element-plus/es/components/loading/index.mjs'
 // import CKEditor from '@ckeditor/ckeditor5-vue'
 
 import 'element-plus/theme-chalk/index.css'
@@ -27,6 +27,19 @@ import './assets/styles/yg-glass-nav.css'
 import './assets/styles/flat.css'
 import './assets/main.css'
 
+// 普通用户端 v2（愚人节ui）：导航/页面进入/首页/活动/关于的布局层
+import './assets/styles/yg/user-v2.css'
+
+// Phigros 主题（愚人节ui）：暗色 + 青色 + 锐利几何 + 纯装饰判定线/网格
+import './assets/styles/yg/phi-theme.css'
+// Phi 遗留普通用户页面皮肤：登记 / 创建 / 详情流程的切角面板与表格
+import './assets/styles/yg/phi-legacy-pages.css'
+// Phi 主题的 body 级弹层（Teleport 逃出 .yg-phi 的 Dialog/Message/Popover）
+import './assets/styles/yg/phi-portals.css'
+
+// 平板滚动流畅层：滚动进行中暂停纯装饰动画（性能规则，不承载视觉设计）
+import './assets/styles/perf-tablet.css'
+
 import persistedstate from 'pinia-plugin-persistedstate'
 
 // 表格展开行进出场动画（捕获期监听，对所有 el-table 生效）
@@ -39,10 +52,15 @@ app.use(router as unknown as Plugin)
 app.use(i18n as unknown as Plugin)
 // app.use(CKEditor as unknown as Plugin)
 
-app.use(ElementPlus, {
-  size: 'default'
-})
+// Element Plus 组件由 unplugin-vue-components 的 ElementPlusResolver 按需
+// 引入（importStyle: false，全量 chalk CSS 仍在上方引入）；这里只全局注册
+// v-loading 指令——模板里 52 处依赖全局指令，resolver 不覆盖指令。
+app.use(ElLoading)
 
 installTableExpandMotion()
 
 app.mount('#app')
+
+// 首屏出来之后再把未用到的字典拉下来：不与首屏资源抢带宽，
+// 之后点击导航（/ai、/manage、/server、/activity）已是本地命中。
+prefetchRemainingLocales()

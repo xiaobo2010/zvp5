@@ -4,7 +4,9 @@ import { useUserStore } from '@/stores/user.ts'
 import { computed, nextTick, ref, watch, type Component } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useWindowSize } from '@vueuse/core'
-import { ElPageHeader, ElSegmented, ElIcon } from 'element-plus'
+import { ElPageHeader } from 'element-plus/es/components/page-header/index.mjs'
+import { ElSegmented } from 'element-plus/es/components/segmented/index.mjs'
+import { ElIcon } from 'element-plus/es/components/icon/index.mjs'
 import { ArrowLeft, Setting, DataLine, Key, Connection, Folder, Grid } from '@element-plus/icons-vue'
 
 interface SegmentedTab {
@@ -343,7 +345,7 @@ watch(
   flex-direction: column;
   align-items: center;
   gap: var(--yg-space-2);
-  padding: var(--yg-space-2);
+  padding: var(--yg-space-1) var(--yg-space-2);
 }
 
 .server-tabs__seg-icon {
