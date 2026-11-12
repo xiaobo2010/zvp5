@@ -3,7 +3,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import i18n from '@/i18n'
 import ZLoginReveal from './ZLoginReveal.vue'
 
-function mountReveal(props: { name: string; role: string; active?: boolean }) {
+function mountReveal(props: {
+  name: string
+  role: string
+  active?: boolean
+  prewarm?: boolean
+}) {
   return mount(ZLoginReveal, {
     props,
     attachTo: document.body,
@@ -190,6 +195,26 @@ describe('ZLoginReveal', () => {
 
     vi.advanceTimersByTime(2800)
     expect(wrapper.emitted('done')).toHaveLength(1)
+
+    wrapper.unmount()
+  })
+
+  it('prewarm 模式只渲染不可见实例，不启动时间线也不读屏', () => {
+    vi.useFakeTimers()
+    const wrapper = mountReveal({
+      name: '张三',
+      role: '管理员',
+      active: false,
+      prewarm: true
+    })
+
+    const container = document.body.querySelector('.login-reveal')
+    expect(container?.classList.contains('is-prewarm')).toBe(true)
+    expect(container?.getAttribute('aria-hidden')).toBe('true')
+    expect(container?.hasAttribute('role')).toBe(false)
+
+    vi.advanceTimersByTime(2800)
+    expect(wrapper.emitted('done')).toBeUndefined()
 
     wrapper.unmount()
   })

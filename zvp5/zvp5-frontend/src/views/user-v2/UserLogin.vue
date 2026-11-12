@@ -17,6 +17,7 @@ import { formatBanUntil, readBanInfo } from '@/utils/ban'
 import ZBanScreen from '@/components/system/ZBanScreen.vue'
 import ZAuthAlert from '@/components/system/ZAuthAlert.vue'
 import ZLoginBackdrop from '@/components/system/ZLoginBackdrop.vue'
+import ZLoginReveal from '@/components/system/ZLoginReveal.vue'
 import dayjs from 'dayjs'
 import type { User, UserProfile } from '@/../types'
 
@@ -137,8 +138,15 @@ function closeBanScreen() {
 const banWarm = ref(false)
 let warmTimer: ReturnType<typeof setTimeout> | null = null
 
+// 登录揭示动画预热：登录成功后的 2.8s 幕布在低端平板上第一次挂载时，
+// 蜂窝底纹/字体阴影/合成层的样式解析会掉帧。登录页空闲时先挂一个 prewarm
+// 实例，把这一笔成本提前付掉；真正揭示时直接复用同一套样式与合成路径。
+const revealWarm = ref(false)
+let revealWarmTimer: ReturnType<typeof setTimeout> | null = null
+let warmAlive = true
+
 function warmBanScreen() {
-  if (banScreen.visible) {
+  if (!warmAlive || banScreen.visible) {
     return
   }
   // 静态化用户（reduced-motion）没有入场动画，预热无收益。
@@ -152,18 +160,46 @@ function warmBanScreen() {
   }, 1600)
 }
 
+function warmLoginReveal() {
+  if (!warmAlive || revealWarm.value) {
+    return
+  }
+  if (window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches === true) {
+    return
+  }
+  revealWarm.value = true
+  revealWarmTimer = setTimeout(() => {
+    revealWarmTimer = null
+    revealWarm.value = false
+  }, 1600)
+}
+
 onMounted(() => {
   if (typeof window.requestIdleCallback === 'function') {
-    window.requestIdleCallback(() => warmBanScreen(), { timeout: 2500 })
+    window.requestIdleCallback(
+      () => {
+        warmBanScreen()
+        warmLoginReveal()
+      },
+      { timeout: 2500 }
+    )
   } else {
-    setTimeout(() => warmBanScreen(), 900)
+    setTimeout(() => {
+      warmBanScreen()
+      warmLoginReveal()
+    }, 900)
   }
 })
 
 onBeforeUnmount(() => {
+  warmAlive = false
   if (warmTimer !== null) {
     clearTimeout(warmTimer)
     warmTimer = null
+  }
+  if (revealWarmTimer !== null) {
+    clearTimeout(revealWarmTimer)
+    revealWarmTimer = null
   }
 })
 
@@ -708,6 +744,15 @@ watch(user, async () => {
       :until="t('nav.banned.permanent')"
       :appeal="t('nav.banned.appeal')"
       :lock-scroll="false"
+    />
+
+    <!-- 登录揭示预热：只跑样式/蜂窝/合成，不启动时间线，也不读屏 -->
+    <ZLoginReveal
+      v-if="revealWarm && !banScreen.visible"
+      prewarm
+      name=""
+      role=""
+      :active="false"
     />
 
     <ZBanScreen
