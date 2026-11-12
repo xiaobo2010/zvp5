@@ -5,6 +5,7 @@ import { useHeaderStore } from '@/stores/header'
 import { useI18n } from 'vue-i18n'
 import api from '@/api'
 import { onMounted, ref } from 'vue'
+import { staticAssetUrl } from '@/utils/staticAssets'
 
 const { t } = useI18n()
 const header = useHeaderStore()
@@ -31,7 +32,11 @@ header.setHeader(t('nav.about'))
 
     <section class="phx-panel phx-about__board" style="--phx-i: 1" aria-labelledby="about-title">
       <div class="phx-about__mark" aria-hidden="true">
-        <img class="phx-about__logo" src="/pwa-192x192.png" alt="" />
+        <img
+          class="phx-about__logo"
+          :src="staticAssetUrl('pwa-192x192.png')"
+          alt=""
+        />
       </div>
       <div class="phx-about__copy">
         <p class="phx-about__kicker">Volunteer System</p>

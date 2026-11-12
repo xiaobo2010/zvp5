@@ -338,14 +338,16 @@ uvicorn main:app --host 0.0.0.0 --port 8000
 | `frontend/src/utils/constants.ts:2,4` | 外部图标 URL | 不移植 |
 | `backend/routers/xh_router.py`、`routers/v1/platform.py` | 学海代理 / 平台登录体系 | 不在义工管理范围，未触碰 |
 
-**部署结构（最终口径）**：浏览器、页面、静态资源和主 API 的正式 Origin 统一为
-`https://zvp.xiaobopisces.top`。生产构建使用同源 `VITE_API_BASE=/api`，因此主业务请求
-不产生 CORS preflight；备用 API 域名不是页面 Origin。完成部署后需
-人工把 `zvp.xiaobopisces.top` 的 DNS 解析切到目标 API 主机。
+**部署结构（2026-11-12 起）**：页面壳与同源 `/api` 继续由
+`https://zvp.xiaobopisces.top` 提供；JS、CSS、字体、图片、PWA Manifest 及 Workbox
+预缓存由高带宽静态域 `https://zvpapi.xiaobopisces.top` 提供。浏览器规范要求
+Service Worker 注册文件必须同源，因此只有 `/sw.js` 仍从页面域加载。
 
 ```text
 VITE_API_BASE=/api
-VITE_API_RACE_BASE=https://<backup-api-domain>/api   # 可选竞速/回退
+VITE_API_RACE_BASE=https://zvpapi.xiaobopisces.top/api
+VITE_STATIC_BASE=https://zvpapi.xiaobopisces.top/
+VITE_PAGE_BASE=https://zvp.xiaobopisces.top/
 ZVMS_CORS_ALLOWED_ORIGINS=https://zvp.xiaobopisces.top
 ```
 
