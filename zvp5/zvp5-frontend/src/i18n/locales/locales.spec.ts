@@ -1,7 +1,20 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { baseCompile } from '@intlify/message-compiler'
 import { createI18n } from 'vue-i18n'
+import i18n, { ensureLocaleForPath } from '@/i18n'
 import { zhCN } from './index'
+import {
+  LAZY_NAMESPACES,
+  isCorePath,
+  loadNamespace,
+  namespacesForPath
+} from './namespaces'
+
+// 只读路由表，不真正导航；维护守卫的请求统一 mock 掉，避免测试触网。
+vi.mock('@/api/system/maintenance.ts', () => ({
+  getMaintenanceStatus: vi.fn()
+}))
+vi.mock('@/api', () => ({ default: {} }))
 
 function leaves(value: unknown, out: Array<{ key: string; message: string }> = []) {
   if (typeof value === 'string') {
@@ -52,5 +65,40 @@ describe('locale messages', () => {
     expect(i18n.global.t('server.ssh.authScene', { target: 'root@192.0.2.11' })).toContain(
       'root@192.0.2.11'
     )
+  })
+})
+
+describe('lazy locale namespaces', () => {
+  it('loads every lazy namespace into a non-empty message tree', async () => {
+    for (const name of LAZY_NAMESPACES) {
+      const messages = await loadNamespace(name)
+      expect(Object.keys(messages)).toEqual([name])
+      const tree = messages[name] as Record<string, unknown>
+      expect(tree).toBeTypeOf('object')
+      expect(Object.keys(tree).length).toBeGreaterThan(0)
+    }
+  })
+
+  it('serves core messages from the initial bundle without awaiting anything', () => {
+    expect(i18n.global.te('common.fetchFailed')).toBe(true)
+    expect(i18n.global.te('nav.banned.title')).toBe(true)
+  })
+
+  it('merges the ai dictionary when entering /ai', async () => {
+    expect(i18n.global.te('ai.chat.model')).toBe(false)
+    await ensureLocaleForPath('/ai/chat')
+    expect(i18n.global.te('ai.chat.model')).toBe(true)
+    expect(i18n.global.t('ai.chat.model')).toBe('模型')
+  })
+
+  it('skips the login page and covers every other top-level route', async () => {
+    expect(namespacesForPath('/user/login')).toEqual([])
+    const { default: router } = await import('@/router')
+    const paths = router.options.routes.map((route) => route.path)
+    expect(paths.length).toBeGreaterThan(0)
+    const uncovered = paths.filter(
+      (path) => namespacesForPath(path).length === 0 && !isCorePath(path)
+    )
+    expect(uncovered).toEqual([])
   })
 })

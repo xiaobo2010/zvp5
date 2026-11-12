@@ -353,6 +353,9 @@ export const viteBaseConfig = {
       resolvers: [elementPlusResolverForCurrentRuntime(), IconsResolver()]
     }),
     VueComponents({
+      // 测试运行时用的是官方 barrel resolver（见上），若允许它写 dts，会把
+      // components.d.ts 从深路径声明改回 barrel，每次跑测试都重复污染工作区。
+      dts: process.env.VITEST ? false : 'components.d.ts',
       resolvers: [elementPlusResolverForCurrentRuntime(), IconsResolver()]
     }),
     // 诊断插件放在 unplugin 之后，transform 才能看到注入的 import。

@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest'
+import { beforeAll, describe, expect, it } from 'vitest'
 import { AxiosError, type AxiosResponse } from 'axios'
 import { AiRequestError } from '@/api/ai/errors'
+import { loadNamespace } from '@/i18n/locales/namespaces'
 import {
   DEFAULT_ERROR_MESSAGE,
   EN_ERROR_MESSAGES,
@@ -9,6 +10,12 @@ import {
   resolveErrorMessage,
   resolveErrorMessageOr
 } from './errorMessage'
+
+// server.* 等大字典改为按路由懒加载，生产里由守卫装载；测试不走路由，先手动装一次，
+// 才能验证「取不到 detail 时回落到 i18n key」这条链路。
+beforeAll(async () => {
+  await loadNamespace('server')
+})
 
 function axiosErrorOf(status: number, data: unknown): AxiosError {
   const config = { headers: {} } as AxiosError['config']

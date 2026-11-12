@@ -5,7 +5,7 @@ import { createPinia } from 'pinia'
 
 import App from './App.vue'
 import router from './router'
-import i18n from './i18n'
+import i18n, { prefetchRemainingLocales } from './i18n'
 
 import { ElLoading } from 'element-plus/es/components/loading/index.mjs'
 // import CKEditor from '@ckeditor/ckeditor5-vue'
@@ -60,3 +60,7 @@ app.use(ElLoading)
 installTableExpandMotion()
 
 app.mount('#app')
+
+// 首屏出来之后再把未用到的字典拉下来：不与首屏资源抢带宽，
+// 之后点击导航（/ai、/manage、/server、/activity）已是本地命中。
+prefetchRemainingLocales()
