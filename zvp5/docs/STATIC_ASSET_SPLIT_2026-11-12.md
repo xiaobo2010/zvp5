@@ -30,7 +30,10 @@ pnpm build
 
 1. 将同一份 `dist/` 部署到 `zvp` 和 `zvpapi` 两个 vhost 的
    `/www/zvms4/frontend-dist`。
-2. `zvpapi` 的 `/assets/` 必须对 `https://zvp.xiaobopisces.top` 返回 CORS 头。
+2. `zvpapi` 的 `/assets/`、`/index.html`、`/apple-touch-icon.png`、`/favicon.ico`
+   和 `/manifest.webmanifest` 必须对 `https://zvp.xiaobopisces.top` 返回
+   `Access-Control-Allow-Origin`；Workbox 使用带凭据的跨域预缓存，因此还必须
+   返回 `Access-Control-Allow-Credentials: true`。
 3. `zvp` 的 CSP 必须允许 `zvpapi` 作为 `script-src`、`style-src`、`img-src`、
    `font-src`、`connect-src` 和 `manifest-src`。
 4. 清理旧 Service Worker 缓存并刷新页面验收。
@@ -42,3 +45,6 @@ pnpm build
 运行时代码均已指向 `zvpapi`。跨域 Manifest 需要 `zvpapi` 返回
 `Access-Control-Allow-Origin: https://zvp.xiaobopisces.top` 和
 `Access-Control-Allow-Credentials: true`，并由 CSP 的 `manifest-src` 放行。
+Workbox 预缓存 `index.html`、根目录 PWA 图标和 `/assets/*` 时同样使用带凭据的
+跨域请求，因此这些响应也必须返回同样的 CORS 头，否则 Service Worker 安装会因
+`Access-Control-Allow-Origin` 缺失而失败。
