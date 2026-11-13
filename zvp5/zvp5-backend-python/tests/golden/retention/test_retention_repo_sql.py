@@ -134,9 +134,11 @@ def test_app_logs_delete_is_the_frozen_predicate() -> None:
     assert sql.startswith("DELETE FROM app_logs")
     assert "app_logs.ts_raw < " in sql
     assert "ROWNUM <= 5000" in sql
-    # The batch size is a bind, not a string splice: it must be the only place
-    # the number appears.
-    assert sql.count("5000") == 1
+    # The batch size is a bind, not a string splice: the standalone number must
+    # appear only in the ROWNUM cap. The cutoff's epoch literal may legitimately
+    # contain the digits (e.g. 1785555000.0 on a UTC runner), so count 5000 as
+    # its own token, never inside a longer number.
+    assert len(re.findall(r"(?<![\d.])5000(?![\d.])", sql)) == 1
 
 
 def test_app_logs_null_branches_are_explicit() -> None:
