@@ -78,6 +78,24 @@ const TITLE_MAX = 200
 const CONTENT_MAX = 4000
 const CONTENT_BYTE_MAX = 4000
 
+/**
+ * 版本自动公告在库里的 SYSTEM 哨兵作者 oid（后端
+ * `services/changelog_notifications.py: SYSTEM_AUTHOR_OID`）。
+ *
+ * 新后端会在每条通知上返回 `source_ref`（非空即自动生成），这是首选判据；
+ * 但生产后端可能还是旧版本、暂时不返回该字段，此时用哨兵 oid 兜底识别，
+ * 避免「等后端上线才生效」的空窗。人工通知不可能用这个全零 oid。
+ */
+const SYSTEM_AUTHOR_ID = '000000000000000000000000'
+
+/** 这条通知是否由版本 CHANGELOG 自动生成（管理列表不展示）。 */
+function isGeneratedNotice(item: NotificationRecord): boolean {
+  if (item.source_ref) {
+    return true
+  }
+  return item.author_id === SYSTEM_AUTHOR_ID
+}
+
 const rows = ref<NotificationRecord[]>([])
 const loading = ref(false)
 const loadFailed = ref(false)
@@ -158,11 +176,10 @@ async function loadNotifications() {
   loading.value = true
   try {
     const data = await listAll()
-    // 版本 CHANGELOG 自动生成的公告（source_ref 非空、作者 SYSTEM）不在本表展示：
-    // 每发一版都会多一条，把真正人工发送的公告挤下去；版本记录在同屏下方单独
-    // 呈现，这里再列一遍只会增加管理成本。服务端仍保留这些行（可停用/回滚），
-    // 只是不再混进人工公告列表。
-    rows.value = data.notifications.filter((item) => !item.source_ref)
+    // 版本 CHANGELOG 自动生成的公告不在本表展示：每发一版都会多一条，把真正
+    // 人工发送的公告挤下去；版本记录在同屏下方单独呈现，这里再列一遍只会
+    // 增加管理成本。服务端仍保留这些行（可停用/回滚），只是不混进人工列表。
+    rows.value = data.notifications.filter((item) => !isGeneratedNotice(item))
     loadFailed.value = false
   } catch {
     rows.value = []

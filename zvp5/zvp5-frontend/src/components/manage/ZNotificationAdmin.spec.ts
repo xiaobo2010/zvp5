@@ -427,4 +427,28 @@ describe('版本自动公告不混进人工通知列表', () => {
 
     wrapper.unmount()
   })
+
+  it('老后端不返回 source_ref 时用 SYSTEM 哨兵作者 oid 兜底过滤', async () => {
+    vi.mocked(listAll).mockResolvedValue({
+      version: 2,
+      notifications: [
+        {
+          ...record,
+          id: 'n-3',
+          title: 'v4.3.1 版本更新',
+          author_name: 'SYSTEM',
+          author_id: '000000000000000000000000'
+        },
+        { ...record }
+      ]
+    })
+
+    const wrapper = mount(ZNotificationAdmin)
+    await flushPromises()
+
+    expect(wrapper.findAll('.el-table-stub__row')).toHaveLength(1)
+    expect(wrapper.text()).not.toContain('v4.3.1 版本更新')
+
+    wrapper.unmount()
+  })
 })
