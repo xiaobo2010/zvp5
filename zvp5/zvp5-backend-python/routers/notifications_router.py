@@ -103,6 +103,9 @@ def _view(entry: dict) -> dict:
     as ``AUTHOR_OID`` and is the immutable identity behind ``author_name``.
     ``content_hash`` covers title/content/active, so a client can detect an
     edit without comparing the body text.
+    ``source_ref`` 非空表示这条公告由某个来源对象自动同步生成（当前只有
+    CHANGELOG），``author_name`` 是 SYSTEM 哨兵。用户侧列表本就排除这些条目；
+    管理端需要它来区分「人写的公告」与「版本自动公告」，把后者从列表里隐藏。
     """
     return {
         "id": entry["_id"],
@@ -114,6 +117,7 @@ def _view(entry: dict) -> dict:
         ),
         "author_id": entry["author_oid"],
         "author_name": entry["author_name"],
+        "source_ref": entry.get("source_ref"),
         "created_at": iso_seconds(entry["created_at"]),
         "updated_at": iso_seconds(entry["updated_at"]),
         "active": bool(entry["active"]),

@@ -19,6 +19,12 @@ export interface NotificationRecord {
   author_id: string
   /** 发布当时的显示名（之后不可变）。 */
   author_name: string
+  /**
+   * 非空表示这条公告由来源对象自动同步生成（当前只有 CHANGELOG 版本公告，
+   * 作者是 SYSTEM 哨兵）。用户侧列表已在服务端排除；管理端据此把它从
+   * 人工公告列表里隐藏（版本记录在同屏下方单独呈现）。
+   */
+  source_ref?: string | null
   created_at: string | null
   updated_at: string | null
   active: boolean
@@ -85,10 +91,15 @@ export async function listActive(signal?: AbortSignal): Promise<NotificationList
  * 通知被编辑（version + 1）后会重新变回未读。
  */
 export async function listRead(signal?: AbortSignal): Promise<Record<string, number>> {
+  // 已读映射是后台轮询的辅助数据：调用方（notificationStore）已有静默降级
+  // —— 拉取失败就保留上一次结果。老后端还没有这个端点时会返回 405
+  // （`/notifications/{oid}` 只允许 PUT/DELETE），按 60s 节流反复弹通用 toast
+  // 只会干扰用户，所以这里压掉兜底提示。
   const response = await axios({
     method: 'get',
     url: '/v1/notifications/read',
-    signal
+    signal,
+    suppressErrorToast: true
   })
   const data = unwrap(response.data as Response<NotificationReadMap>)
   return data?.read ?? {}
@@ -101,9 +112,12 @@ export async function listRead(signal?: AbortSignal): Promise<Record<string, num
  * 回执里的 version 是服务端认定的该通知当前版本，前端据此对齐本地已读映射。
  */
 export async function markRead(oid: string): Promise<NotificationReadReceipt> {
+  // 同 listRead：写穿失败由横幅/收件页自己回滚并给重试入口，不再叠一条通用
+  // toast；接口未上线时这条请求会 405/404。
   const response = await axios({
     method: 'post',
-    url: `/v1/notifications/${oid}/read`
+    url: `/v1/notifications/${oid}/read`,
+    suppressErrorToast: true
   })
   return unwrap(response.data as Response<NotificationReadReceipt>)
 }

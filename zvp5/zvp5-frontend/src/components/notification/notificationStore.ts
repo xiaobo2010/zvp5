@@ -21,6 +21,7 @@
  */
 import { reactive } from 'vue'
 import {
+  httpStatusOf,
   listActive,
   listRead,
   markRead as markReadRequest,
@@ -47,6 +48,25 @@ import {
 
 /** 单次同步最多补写多少条历史已读（避免一次性打爆接口）。 */
 const LEGACY_FLUSH_LIMIT = 30
+
+/**
+ * 后端是否已经提供已读接口。
+ *
+ * 老版本后端没有 `/v1/notifications/read`：`GET` 会被 `/{oid}` 的 PUT/DELETE
+ * 命中而返回 405，`POST /{oid}/read` 同理。命中一次就停止轮询，避免每次同步
+ * 都打一发必然失败的请求；`bindNotificationAccount` 会重置它，所以后端上线
+ * 后重新登录即恢复，无需改前端。
+ *
+ * 注意这不是「吞掉错误」：真正失败（5xx / 网络）不算端点缺失，仍会走
+ * readFailed 与重试入口；列表接口失败也照旧标记 failed。
+ */
+const readEndpoint = { available: true }
+
+/** 该错误是否表示「这个端点还不存在」，而非业务失败。 */
+function isReadEndpointMissing(error: unknown, allowNotFound: boolean): boolean {
+  const status = httpStatusOf(error)
+  return status === 405 || status === 501 || (allowNotFound && status === 404)
+}
 
 export interface NotificationRuntimeState {
   /** 当前绑定的账号 id；空串表示未登录。 */
@@ -97,6 +117,7 @@ export function bindNotificationAccount(accountId: string | number | null | unde
   }
   const previous = notificationRuntime.accountKey
   generation += 1
+  readEndpoint.available = true
   notificationRuntime.accountKey = key
   notificationRuntime.notifications = []
   notificationRuntime.notificationsLoaded = false
@@ -149,7 +170,7 @@ export function unreadCount(): number {
  */
 export async function syncReadMap(signal?: AbortSignal): Promise<void> {
   const accountKey = notificationRuntime.accountKey
-  if (!accountKey) {
+  if (!accountKey || !readEndpoint.available) {
     return
   }
   const requestGeneration = generation
@@ -159,14 +180,20 @@ export async function syncReadMap(signal?: AbortSignal): Promise<void> {
       return
     }
     applyServerReadMap(accountKey, serverRead)
-  } catch {
-    // 已读映射拉取失败：保留上一次的结果，不把通知误判成未读。
+  } catch (error) {
+    // 端点不存在就停掉后续轮询；其它失败保留上一次结果，不把通知误判成未读。
+    if (isReadEndpointMissing(error, true)) {
+      readEndpoint.available = false
+    }
   }
 }
 
 /**
  * 同步：已读映射与通知列表并行拉取，合并后统一生效。
- * 任一失败只标记 failed，不清空已有数据（避免闪烁与误判未读）。
+ *
+ * 两者分开结算：已读映射是辅助数据，后端尚未上线该端点（老版本对
+ * `GET /notifications/read` 返回 405）时不能连带拖垮通知列表 —— 列表照常
+ * 展示，只是已读回到本地 + pending 的判断。列表本身失败才标记 failed。
  */
 export async function syncNotifications(signal?: AbortSignal): Promise<void> {
   const accountKey = notificationRuntime.accountKey
@@ -176,12 +203,24 @@ export async function syncNotifications(signal?: AbortSignal): Promise<void> {
   const requestGeneration = generation
   notificationRuntime.loading = true
   try {
-    const [list, serverRead] = await Promise.all([listActive(signal), listRead(signal)])
+    const queriedRead = readEndpoint.available
+    const [listResult, readResult] = await Promise.allSettled([
+      listActive(signal),
+      queriedRead ? listRead(signal) : Promise.resolve<Record<string, number>>({})
+    ])
     if (requestGeneration !== generation || notificationRuntime.accountKey !== accountKey) {
       // 账号已切换：丢弃这次响应。
       return
     }
-    applyServerReadMap(accountKey, serverRead)
+    if (queriedRead && readResult.status === 'fulfilled') {
+      applyServerReadMap(accountKey, readResult.value)
+    } else if (readResult.status === 'rejected' && isReadEndpointMissing(readResult.reason, true)) {
+      readEndpoint.available = false
+    }
+    if (listResult.status === 'rejected') {
+      throw listResult.reason
+    }
+    const list = listResult.value
     notificationRuntime.notifications = list.notifications
     notificationRuntime.notificationsLoaded = true
     notificationRuntime.failed = false
@@ -252,7 +291,10 @@ async function flushPendingWrites(
         return
       }
       confirmReadMark(accountKey, id, receiptVersion(receipt, version))
-    } catch {
+    } catch (error) {
+      if (isReadEndpointMissing(error, false)) {
+        readEndpoint.available = false
+      }
       // 补写失败不影响本次会话：本地仍然算已读，下次同步再试。
       clearSentReadMark(accountKey, id)
       return
@@ -285,7 +327,12 @@ export async function markNotificationRead(
     confirmReadMark(accountKey, notice.id, receiptVersion(receipt, version))
     notificationRuntime.readFailed = false
     return true
-  } catch {
+  } catch (error) {
+    // 端点不存在（405/501）时同样停掉后续自动补写；404 是「通知不存在」的
+    // 业务语义，不能当成端点缺失。
+    if (isReadEndpointMissing(error, false)) {
+      readEndpoint.available = false
+    }
     // 回滚：恢复到写入前的版本，下次检查时这条通知重新出现。
     rollbackReadMark(accountKey, notice.id, before)
     notificationRuntime.readFailed = true

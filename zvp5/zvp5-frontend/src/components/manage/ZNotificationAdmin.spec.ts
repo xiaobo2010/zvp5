@@ -401,3 +401,30 @@ describe('通知管理写操作的密码再认证', () => {
     wrapper.unmount()
   })
 })
+
+describe('版本自动公告不混进人工通知列表', () => {
+  it('source_ref 非空的条目被过滤，只留人写的公告', async () => {
+    vi.mocked(listAll).mockResolvedValue({
+      version: 2,
+      notifications: [
+        {
+          ...record,
+          id: 'n-2',
+          title: 'v4.3.0 版本更新',
+          author_name: 'SYSTEM',
+          source_ref: '0c00000000000000000000aa'
+        },
+        { ...record }
+      ]
+    })
+
+    const wrapper = mount(ZNotificationAdmin)
+    await flushPromises()
+
+    expect(wrapper.findAll('.el-table-stub__row')).toHaveLength(1)
+    expect(wrapper.text()).toContain('开学通知')
+    expect(wrapper.text()).not.toContain('v4.3.0 版本更新')
+
+    wrapper.unmount()
+  })
+})

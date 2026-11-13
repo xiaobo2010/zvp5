@@ -118,7 +118,8 @@ describe('notifications API contract', () => {
     expect(request).toHaveBeenCalledWith({
       method: 'get',
       url: '/v1/notifications/read',
-      signal
+      signal,
+      suppressErrorToast: true
     })
   })
 
@@ -138,7 +139,8 @@ describe('notifications API contract', () => {
     await expect(markRead(notice.id)).resolves.toEqual({ oid: notice.id, version: 2 })
     expect(request).toHaveBeenCalledWith({
       method: 'post',
-      url: `/v1/notifications/${notice.id}/read`
+      url: `/v1/notifications/${notice.id}/read`,
+      suppressErrorToast: true
     })
   })
 })

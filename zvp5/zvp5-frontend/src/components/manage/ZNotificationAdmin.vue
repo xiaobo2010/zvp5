@@ -158,7 +158,11 @@ async function loadNotifications() {
   loading.value = true
   try {
     const data = await listAll()
-    rows.value = data.notifications
+    // 版本 CHANGELOG 自动生成的公告（source_ref 非空、作者 SYSTEM）不在本表展示：
+    // 每发一版都会多一条，把真正人工发送的公告挤下去；版本记录在同屏下方单独
+    // 呈现，这里再列一遍只会增加管理成本。服务端仍保留这些行（可停用/回滚），
+    // 只是不再混进人工公告列表。
+    rows.value = data.notifications.filter((item) => !item.source_ref)
     loadFailed.value = false
   } catch {
     rows.value = []

@@ -23,7 +23,12 @@ const { storeState, routeState, pushSpy } = vi.hoisted(() => ({
 vi.mock('@/api/notifications', () => ({
   listActive: vi.fn(),
   listRead: vi.fn(),
-  markRead: vi.fn()
+  markRead: vi.fn(),
+  // store 用它是为了把「端点不存在」与真失败分开；mock 里按真实实现取状态码。
+  httpStatusOf: (error: unknown) => {
+    const status = (error as { response?: { status?: number } } | null)?.response?.status
+    return typeof status === 'number' ? status : null
+  }
 }))
 
 vi.mock('@/stores/user', async () => {

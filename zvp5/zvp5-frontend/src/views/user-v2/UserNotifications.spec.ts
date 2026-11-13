@@ -15,7 +15,11 @@ const { storeState } = vi.hoisted(() => ({
 vi.mock('@/api/notifications', () => ({
   listActive: vi.fn(),
   listRead: vi.fn(),
-  markRead: vi.fn()
+  markRead: vi.fn(),
+  httpStatusOf: (error: unknown) => {
+    const status = (error as { response?: { status?: number } } | null)?.response?.status
+    return typeof status === 'number' ? status : null
+  }
 }))
 
 vi.mock('@/stores/user', async () => {

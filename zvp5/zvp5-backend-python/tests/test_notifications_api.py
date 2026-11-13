@@ -556,6 +556,35 @@ def test_admin_list_shape_includes_inactive(api) -> None:
     assert body["data"]["notifications"][0]["author_name"] == "张老师"
 
 
+def test_admin_list_exposes_source_ref_to_tell_generated_notices_apart(api) -> None:
+    """管理端只靠 ``source_ref`` 才能把版本自动公告跟人写的公告分开。
+
+    用户侧列表在 SQL 层就排除了这些条目，管理端不筛（仍可停用/回滚），
+    于是前端必须能拿到 ``source_ref`` 才能按需求把它们从管理列表里隐藏。
+    """
+    http, repo, _log = api
+    manual = http.post(PREFIX, json=CREATE_PAYLOAD).json()["data"]["notification"]
+    generated_oid = "0d00000000000000000000ff"
+    changelog_oid = "0c00000000000000000000aa"
+    repo.rows[generated_oid] = {
+        "_id": generated_oid,
+        "title": "v4.3.0",
+        "content": "- 修复若干问题",
+        "active": True,
+        "author_oid": "000000000000000000000000",
+        "author_name": "SYSTEM",
+        "version": 1,
+        "source_ref": changelog_oid,
+        "created_at": UPDATED,
+        "updated_at": UPDATED,
+    }
+
+    body = http.get(f"{PREFIX}/admin").json()
+    notices = {item["id"]: item for item in body["data"]["notifications"]}
+    assert notices[manual["id"]]["source_ref"] is None
+    assert notices[generated_oid]["source_ref"] == changelog_oid
+
+
 # ---------------------------------------------------------------------------
 # 内容哈希
 # ---------------------------------------------------------------------------

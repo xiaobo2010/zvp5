@@ -140,6 +140,7 @@ Authorization: Bearer <access_token>
         "content_hash": "9f2c…（64 位 hex）",
         "author_id": "000000000000000000000001",
         "author_name": "张老师",
+        "source_ref": null,
         "created_at": "2026-10-21T09:30:00",
         "updated_at": "2026-10-21T10:15:00",
         "active": true
@@ -158,7 +159,8 @@ Authorization: Bearer <access_token>
 | `notifications[].version` | int | **单条**修订号，单调递增 |
 | `notifications[].content_hash` | string | 当前内容的 sha256（64 位小写 hex），见 §1.4 |
 | `notifications[].author_id` | string | 发布人用户 oid，不可变 |
-| `notifications[].author_name` | string | 发布当时显示名，不可变 |
+| `notifications[].author_name` | string | 发布当时显示名，不可变；自动版本公告为 `SYSTEM` |
+| `notifications[].source_ref` | string \| null | 非空表示由来源对象自动同步生成（当前只有 CHANGELOG 版本公告）。用户端列表在 SQL 层就排除这些行，恒为 `null`；管理端会返回它们，前端据此把人写的公告与版本自动公告分开（管理页只列人写的） |
 | `notifications[].created_at` | string | 发送时间，`YYYY-MM-DDTHH:MM:SS`（naive） |
 | `notifications[].updated_at` | string | 最后一次编辑/停用时间 |
 | `notifications[].active` | bool | 用户端当前恒为 `true`；管理端可能为 `false` |
