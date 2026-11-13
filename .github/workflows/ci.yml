@@ -170,11 +170,11 @@ jobs:
       - uses: pnpm/action-setup@v4
         with:
           version: ${{ env.PNPM_VERSION }}
+      # 该任务只跑 pnpm audit（不做 pnpm install），没有 pnpm store 可缓存；
+      # 开启 pnpm 缓存会让 setup-node 的 post 步骤因路径不存在而报错。
       - uses: actions/setup-node@v4
         with:
           node-version-file: ${{ env.NODE_VERSION_FILE }}
-          cache: pnpm
-          cache-dependency-path: zvp5/zvp5-frontend/pnpm-lock.yaml
       - name: Audit frontend production dependencies
         working-directory: zvp5/zvp5-frontend
         run: pnpm audit --prod --audit-level high

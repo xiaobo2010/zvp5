@@ -510,6 +510,12 @@ export function installHedgedGetAdapter(
   if (raceConfig.__zvmsHedgedGet) {
     return
   }
+  // 调用方已显式指定 adapter 函数（单测桩 / 显式定制）时不接管：竞速只应
+  // 接管「用默认适配器数组发起」的常规请求，而不是悄悄绕开调用方钉死的
+  // adapter。生产请求的 config.adapter 是 axios 默认的适配器名数组，不受影响。
+  if (typeof config.adapter === 'function') {
+    return
+  }
   const adapter = getAdapter(['fetch']) || getAdapter(config.adapter)
   if (!adapter) {
     return
