@@ -1263,9 +1263,10 @@ html[data-theme='light'] .yg-phi .yg-phi-title {
 }
 
 /* 角落支架装饰（NERV instrument corners） */
-.yg-phi .yg-login-v2 .yg-login__card .yg-phi-login-tag {
-  /* tag在绝对定位子元素中，不受 > * 规则影响 */
+.yg-phi .yg-login-v2 .yg-login__card-shell .yg-phi-login-tag {
+  /* tag 是卡片的兄弟节点，脱离卡片的 clip-path 裁切范围，才能跨坐在顶边上 */
   z-index: 3;
+  animation: phi-login-tag-in 460ms cubic-bezier(0.16, 1, 0.3, 1) 90ms both;
 }
 
 .yg-phi .yg-login-v2 .yg-login__title,
@@ -1326,17 +1327,19 @@ html[data-theme='light'] .yg-phi .yg-phi-title {
   box-shadow: 0 0 8px rgba(73, 244, 226, 0.4);
 }
 
-/* AUTH tag：锐利切角 + 霓虹发光 */
+/* AUTH tag：跨坐在卡片顶边上的锐利切角标签 + 霓虹发光
+   - 定位挂在卡片外壳上：卡片自身是 clip-path 容器，标头留在卡片里会被裁掉
+   - 切角改到右上，与卡片本体的右上切角同向呼应 */
 .yg-phi .yg-phi-login-tag {
   position: absolute;
-  top: 0;
-  right: 0;
+  top: -12px;
+  right: 28px;
   padding: 4px 9px 3px;
   background: var(--phi-accent);
   color: #041311;
   font: 700 10px var(--phi-hud);
   letter-spacing: 0.14em;
-  clip-path: polygon(8px 0, 100% 0, 100% 100%, 0 100%);
+  clip-path: polygon(0 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 0 100%);
   box-shadow:
     0 0 12px rgba(73, 244, 226, 0.3),
     inset 0 1px 0 rgba(255, 255, 255, 0.4);
@@ -2031,6 +2034,14 @@ html[data-theme='light'] .yg-phi .yg-topbar {
     opacity: 0;
     transform: translate3d(20px, 0, 0);
     clip-path: polygon(0 0, 0 0, 0 20px, 0 100%, 0 100%);
+  }
+}
+
+/* AUTH tag 独立入场：卡片本体有 clip-path 动画，标头在外壳里，需自己跟上节奏 */
+@keyframes phi-login-tag-in {
+  from {
+    opacity: 0;
+    transform: translate3d(14px, 0, 0);
   }
 }
 

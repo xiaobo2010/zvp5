@@ -630,96 +630,99 @@ watch(user, async () => {
       </div>
       <span class="yg-login-v2__ghost" aria-hidden="true">01</span>
 
-      <section class="yg-login__card" aria-labelledby="yg-login-title">
+      <!-- 外层壳：把 AUTH 标头挪出卡片的 clip-path 裁切范围，才能跨坐在顶边上 -->
+      <div class="yg-login__card-shell">
         <span class="yg-phi-login-tag" aria-hidden="true">
           {{ mode === 'normal' ? 'AUTH // 01' : 'AUTH // 02' }}
         </span>
-        <div class="yg-login__brand">
-          <span class="yg-login__logo">
-            <img src="/favicon.ico" alt="" />
-          </span>
-          <span class="yg-login__brand-name">义工平台</span>
-        </div>
+        <section class="yg-login__card" aria-labelledby="yg-login-title">
+          <div class="yg-login__brand">
+            <span class="yg-login__logo">
+              <img src="/favicon.ico" alt="" />
+            </span>
+            <span class="yg-login__brand-name">义工平台</span>
+          </div>
 
-        <h1 id="yg-login-title" class="yg-login__title">{{ t('nav.login.pageTitle') }}</h1>
-        <p class="yg-login__subtitle">{{ t('nav.login.motto') }}</p>
+          <h1 id="yg-login-title" class="yg-login__title">{{ t('nav.login.pageTitle') }}</h1>
+          <p class="yg-login__subtitle">{{ t('nav.login.motto') }}</p>
 
-        <ElForm
-          v-if="mode === 'normal'"
-          ref="loginfield"
-          label-position="top"
-          class="yg-login__form"
-        >
-          <ElFormItem :label="t('nav.login.form.account')" prop="id">
+          <ElForm
+            v-if="mode === 'normal'"
+            ref="loginfield"
+            label-position="top"
+            class="yg-login__form"
+          >
+            <ElFormItem :label="t('nav.login.form.account')" prop="id">
+              <ElInput
+                v-model.number="user"
+                :minlength="8"
+                :maxlength="8"
+                clearable
+                type="number"
+                class="yg-login__input w-full"
+              />
+            </ElFormItem>
+            <ElFormItem :label="t('nav.login.form.password')" prop="password">
+              <ElInput
+                ref="passwordInput"
+                type="password"
+                v-model="password"
+                clearable
+                show-password
+                class="yg-login__input w-full"
+                @keyup.enter="login"
+              />
+            </ElFormItem>
+          </ElForm>
+
+          <div v-else class="yg-login__temp">
+            <p class="yg-login__temp-title">{{ t('nav.login.device.tempTitle') }}</p>
+            <p class="yg-login__temp-hint">{{ t('nav.login.device.tempHint') }}</p>
             <ElInput
-              v-model.number="user"
-              :minlength="8"
+              v-model="tempPassword"
               :maxlength="8"
-              clearable
-              type="number"
-              class="yg-login__input w-full"
+              inputmode="numeric"
+              autocomplete="one-time-code"
+              :placeholder="t('nav.login.device.tempPlaceholder')"
+              class="yg-login__input yg-login__temp-input w-full"
+              @keyup.enter="submitTempPassword"
             />
-          </ElFormItem>
-          <ElFormItem :label="t('nav.login.form.password')" prop="password">
-            <ElInput
-              ref="passwordInput"
-              type="password"
-              v-model="password"
-              clearable
-              show-password
-              class="yg-login__input w-full"
-              @keyup.enter="login"
-            />
-          </ElFormItem>
-        </ElForm>
+            <p class="yg-login__temp-note">{{ t('nav.login.device.tempNote') }}</p>
+            <p v-if="tempError" class="yg-login__error" role="alert">{{ tempError }}</p>
+          </div>
 
-        <div v-else class="yg-login__temp">
-          <p class="yg-login__temp-title">{{ t('nav.login.device.tempTitle') }}</p>
-          <p class="yg-login__temp-hint">{{ t('nav.login.device.tempHint') }}</p>
-          <ElInput
-            v-model="tempPassword"
-            :maxlength="8"
-            inputmode="numeric"
-            autocomplete="one-time-code"
-            :placeholder="t('nav.login.device.tempPlaceholder')"
-            class="yg-login__input yg-login__temp-input w-full"
-            @keyup.enter="submitTempPassword"
-          />
-          <p class="yg-login__temp-note">{{ t('nav.login.device.tempNote') }}</p>
-          <p v-if="tempError" class="yg-login__error" role="alert">{{ tempError }}</p>
-        </div>
-
-        <div class="yg-login__actions">
-          <template v-if="mode === 'normal'">
-            <ElButton
-              type="primary"
-              size="large"
-              class="w-full"
-              @click="login"
-              :icon="ArrowRight"
-              :disabled="password === '' || String(user).length !== 8"
-              :loading="loading"
-            >
-              {{ t('nav.login.actions.login') }}
-            </ElButton>
-          </template>
-          <template v-else>
-            <ElButton
-              type="primary"
-              size="large"
-              class="w-full"
-              @click="submitTempPassword"
-              :disabled="tempPassword.length !== 8"
-              :loading="tempSubmitting"
-            >
-              {{ t('nav.login.device.tempSubmit') }}
-            </ElButton>
-            <ElButton size="large" text class="w-full yg-login__back" @click="backToNormal">
-              {{ t('nav.login.device.tempBack') }}
-            </ElButton>
-          </template>
-        </div>
-      </section>
+          <div class="yg-login__actions">
+            <template v-if="mode === 'normal'">
+              <ElButton
+                type="primary"
+                size="large"
+                class="w-full"
+                @click="login"
+                :icon="ArrowRight"
+                :disabled="password === '' || String(user).length !== 8"
+                :loading="loading"
+              >
+                {{ t('nav.login.actions.login') }}
+              </ElButton>
+            </template>
+            <template v-else>
+              <ElButton
+                type="primary"
+                size="large"
+                class="w-full"
+                @click="submitTempPassword"
+                :disabled="tempPassword.length !== 8"
+                :loading="tempSubmitting"
+              >
+                {{ t('nav.login.device.tempSubmit') }}
+              </ElButton>
+              <ElButton size="large" text class="w-full yg-login__back" @click="backToNormal">
+                {{ t('nav.login.device.tempBack') }}
+              </ElButton>
+            </template>
+          </div>
+        </section>
+      </div>
     </main>
 
     <ZAuthAlert
@@ -747,13 +750,7 @@ watch(user, async () => {
     />
 
     <!-- 登录揭示预热：只跑样式/蜂窝/合成，不启动时间线，也不读屏 -->
-    <ZLoginReveal
-      v-if="revealWarm && !banScreen.visible"
-      prewarm
-      name=""
-      role=""
-      :active="false"
-    />
+    <ZLoginReveal v-if="revealWarm && !banScreen.visible" prewarm name="" role="" :active="false" />
 
     <ZBanScreen
       v-if="banScreen.visible"
@@ -774,6 +771,14 @@ watch(user, async () => {
   justify-content: center;
   min-height: 100%;
   padding: var(--yg-space-6) 0;
+}
+
+/* 登录卡外壳：只负责把 AUTH 标头放到卡片 clip-path 裁切范围之外，
+   标头自身的定位与切角由 phi-theme.css 接管 */
+.yg-login__card-shell {
+  position: relative;
+  width: 100%;
+  max-width: 400px;
 }
 
 /* 登录卡：Phi 方角；切角、硬阴影、明暗配色由 phi-theme.css 接管 */
