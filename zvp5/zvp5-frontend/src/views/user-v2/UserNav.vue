@@ -9,7 +9,8 @@ import {
   ChatLineRound,
   EditPen,
   SwitchButton,
-  Lock
+  Lock,
+  Bell
 } from '@element-plus/icons-vue'
 import { ElTooltip } from 'element-plus/es/components/tooltip/index.mjs'
 import { ElIcon } from 'element-plus/es/components/icon/index.mjs'
@@ -106,6 +107,15 @@ const navs = computed<NavItem[]>(() => [
     path: '/me',
     show: true,
     judge: (path) => path.startsWith('/me')
+  },
+  {
+    // 站内通知收件箱。管理员不显示：他们已经有 /manage/notifications 的
+    // 编辑 + 发送页，两个「通知」入口放在一起会互相打架。
+    icon: Bell,
+    name: 'notifications',
+    path: '/notifications',
+    show: !user.position.includes('admin'),
+    judge: (path) => path.startsWith('/notifications')
   },
   {
     icon: Monitor,
@@ -354,13 +364,19 @@ onMounted(() => {
    position 是登录后由 App.vue refreshUser() 异步拉回来的，首帧快照会漏掉
    管理/服务器/AI 项，position 落地后 visibleNavs 重算会再次触发预取；
    utils/routePrefetch 内部 Set 幂等，重复触发零成本。
-   idle 只预取普通用户高频轻页（首页/活动/我的）——管理/服务器/AI/登记
+   idle 只预取普通用户高频轻页（首页/活动/我的/通知）——管理/服务器/AI/登记
    是重 chunk（ManageHome/AIHome/VolunteerRegister 合计 ~400KB），登录后
    2 秒内全部拉下会与首屏抢带宽；它们的导航项保留 pointerenter 即时预取。 */
 const stopNavPrefetch = watch(
   () =>
     visibleNavs.value
-      .filter((nav) => nav.name === 'home' || nav.name === 'activity' || nav.name === 'profile')
+      .filter(
+        (nav) =>
+          nav.name === 'home' ||
+          nav.name === 'activity' ||
+          nav.name === 'profile' ||
+          nav.name === 'notifications'
+      )
       .map((nav) => nav.path),
   (paths) => prefetchRoutesWhenIdle(router, paths),
   { immediate: true }

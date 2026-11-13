@@ -386,3 +386,248 @@ def test_version_row_maps_flags_and_numeric_versions() -> None:
     assert row["source_version"] == 1
     assert row["content_hash"] == "a" * 64
     assert row["created_at"] == NOW
+
+
+# ---------------------------------------------------------------------------
+# 已读状态（V053）
+# ---------------------------------------------------------------------------
+
+
+class _Rows:
+    """最小结果集桩：``first()`` / ``all()`` / ``rowcount``，不连库。"""
+
+    rowcount = 1
+
+    def __init__(self, rows) -> None:
+        self._rows = rows
+
+    def first(self):
+        return self._rows[0] if self._rows else None
+
+    def all(self):
+        return self._rows
+
+
+class _MappingRow:
+    def __init__(self, mapping) -> None:
+        self._mapping = mapping
+
+
+#: 一条完整的通知行映射：``_row()`` 会读取除 ``source_ref`` 外的全部列。
+_NOTICE_ROW = {
+    "oid": OID,
+    "title": "标题",
+    "content": "正文",
+    "active": 1,
+    "author_oid": AUTHOR_OID,
+    "author_name": "张老师",
+    "version": 3,
+    "source_ref": None,
+    "created_at": NOW,
+    "updated_at": NOW,
+}
+
+
+class _ReadSession:
+    """按语句形状返回结果的会话桩，并记录每条 SQL 与绑定参数。"""
+
+    def __init__(self, *, notice_version=None, read_rows=()) -> None:
+        self.notice_version = notice_version
+        self.read_rows = list(read_rows)
+        self.calls: list[tuple[str, dict]] = []
+        self.commits = 0
+
+    async def execute(self, stmt, params=None):
+        sql = _sql(stmt) if params is None else " ".join(str(stmt).split())
+        self.calls.append((sql, dict(params or {})))
+        if params is not None:
+            return _Rows([])
+        if "FROM notifications" in sql:
+            if self.notice_version is None:
+                return _Rows([])
+            row = dict(_NOTICE_ROW, version=self.notice_version)
+            return _Rows([_MappingRow(row)])
+        return _Rows(self.read_rows)
+
+    async def commit(self) -> None:
+        self.commits += 1
+
+
+def test_list_read_stmt_is_scoped_to_one_user() -> None:
+    sql = _sql(notifications_repo._list_read_stmt(AUTHOR_OID))
+
+    assert "FROM notification_reads" in sql
+    assert f"notification_reads.user_oid = '{AUTHOR_OID}'" in sql
+    # 只取两列：客户端要的是 {oid: version}，读正文/时间都是浪费。
+    assert sql.startswith(
+        "SELECT notification_reads.notification_oid, notification_reads.version"
+    )
+
+
+def test_list_read_maps_oid_to_int_version() -> None:
+    import asyncio
+
+    session = _ReadSession(read_rows=[("a" * 24, 3), ("b" * 24, 1)])
+    repo = notifications_repo.OracleNotificationsRepo(session=session)
+
+    assert asyncio.run(repo.list_read(AUTHOR_OID)) == {"a" * 24: 3, "b" * 24: 1}
+
+
+def test_mark_read_upsert_is_keyed_on_the_full_primary_key() -> None:
+    sql = " ".join(str(notifications_repo._mark_read_stmt()).split())
+
+    assert sql.startswith("MERGE INTO notification_reads target")
+    # 冲突键必须是完整 PK：只按通知去重会把别人的已读行覆盖掉。
+    assert "target.user_oid = source.user_oid" in sql
+    assert "target.notification_oid = source.notification_oid" in sql
+    # 存在则覆盖 version/read_at（不是「已存在就跳过」：重复标记要能刷新）。
+    assert "UPDATE SET target.version = :version, target.read_at = :at" in sql
+    assert (
+        "INSERT (user_oid, notification_oid, version, read_at)" in sql
+    )
+
+
+def test_mark_read_reads_the_notice_version_and_upserts() -> None:
+    import asyncio
+
+    session = _ReadSession(notice_version=4)
+    repo = notifications_repo.OracleNotificationsRepo(session=session)
+
+    result = asyncio.run(repo.mark_read(AUTHOR_OID, OID, NOW))
+
+    assert result == (OID, 4)
+    merge_calls = [
+        (sql, params) for sql, params in session.calls if "notification_reads" in sql
+    ]
+    assert len(merge_calls) == 1
+    _sql_text, params = merge_calls[0]
+    # 版本来自 NOTIFICATIONS 的当前值，客户端不传。
+    assert params == {
+        "user_oid": AUTHOR_OID,
+        "notification_oid": OID,
+        "version": 4,
+        "at": NOW,
+    }
+    # 调用方自带事务：repo 不提交（unit of work 归调用方）。
+    assert session.commits == 0
+
+
+def test_second_mark_read_overwrites_version_and_read_at() -> None:
+    """同 user 同通知二次标记：还是同一条 MERGE，绑定新的 version / 时间。"""
+    import asyncio
+
+    session = _ReadSession(notice_version=2)
+    repo = notifications_repo.OracleNotificationsRepo(session=session)
+    later = datetime(2026, 10, 22, 8, 0, 0)
+
+    asyncio.run(repo.mark_read(AUTHOR_OID, OID, NOW))
+    asyncio.run(repo.mark_read(AUTHOR_OID, OID, later))
+
+    versions = [
+        params["version"]
+        for sql, params in session.calls
+        if "notification_reads" in sql
+    ]
+    timestamps = [
+        params["at"] for sql, params in session.calls if "notification_reads" in sql
+    ]
+    assert versions == [2, 2]
+    assert timestamps == [NOW, later]
+
+
+def test_mark_read_unknown_notice_returns_none_without_writing() -> None:
+    import asyncio
+
+    session = _ReadSession(notice_version=None)
+    repo = notifications_repo.OracleNotificationsRepo(session=session)
+
+    assert asyncio.run(repo.mark_read(AUTHOR_OID, OID, NOW)) is None
+    assert not any("notification_reads" in sql for sql, _ in session.calls)
+    assert session.commits == 0
+
+
+def test_mark_read_normalizes_oid_case() -> None:
+    import asyncio
+
+    session = _ReadSession(notice_version=1)
+    repo = notifications_repo.OracleNotificationsRepo(session=session)
+
+    assert asyncio.run(repo.mark_read(AUTHOR_OID, OID.upper(), NOW)) == (OID, 1)
+
+
+def test_delete_cleans_read_rows_in_the_same_transaction() -> None:
+    import asyncio
+
+    session = _ReadSession(notice_version=3)
+    repo = notifications_repo.OracleNotificationsRepo(session=session)
+
+    asyncio.run(repo.delete(OID))
+
+    sqls = [sql for sql, _ in session.calls]
+    delete_reads = [
+        sql for sql in sqls if sql.startswith("DELETE FROM notification_reads")
+    ]
+    assert len(delete_reads) == 1
+    assert f"notification_reads.notification_oid = '{OID}'" in delete_reads[0]
+    # 先删通知行、再清已读行：两条 DELETE 之间没有被 commit 切开。
+    assert sqls.index(delete_reads[0]) > next(
+        index
+        for index, sql in enumerate(sqls)
+        if sql.startswith("DELETE FROM notifications ")
+    )
+
+
+def test_edit_never_touches_read_rows() -> None:
+    """编辑只 bump 通知版本；已读行原样留着，由客户端比较判未读。"""
+    import asyncio
+
+    session = _ReadSession(notice_version=1)
+    repo = notifications_repo.OracleNotificationsRepo(session=session)
+
+    asyncio.run(repo.update(OID, title="新标题"))
+
+    assert not any("notification_reads" in sql for sql, _ in session.calls)
+
+
+# ---------------------------------------------------------------------------
+# 迁移镜像（ddl_check 只比对 V001；这里额外钉住 V053 与 V001/models 一致）
+# ---------------------------------------------------------------------------
+
+
+def test_v053_migration_mirrors_models_and_v001() -> None:
+    from db import ddl_check
+
+    path = ddl_check.DDL_PATH.parent / "V053__notification_reads.sql"
+    v053 = ddl_check.parse_schema(
+        ddl_check.extract_execute_immediate(path.read_text(encoding="utf-8"))
+    )
+    modeled = ddl_check.parse_models()
+    v001 = ddl_check.parse_v001()
+
+    expected = modeled["tables"]["notification_reads"]
+    assert v053["tables"]["notification_reads"] == expected
+    assert v001["tables"]["notification_reads"] == expected
+
+    # 形状定稿：复合主键、无 OID 列、无外键、无额外索引。
+    assert expected["pk"] == ("user_oid", "notification_oid")
+    assert set(expected["columns"]) == {
+        "user_oid",
+        "notification_oid",
+        "version",
+        "read_at",
+    }
+    assert expected["fk"] == set()
+    assert v053["indexes"] == set()
+
+
+def test_v053_is_idempotent() -> None:
+    from db import ddl_check
+
+    text = (
+        ddl_check.DDL_PATH.parent / "V053__notification_reads.sql"
+    ).read_text(encoding="utf-8")
+
+    # 重跑时表已存在 -> ORA-00955 吞掉；其它错误必须继续 RAISE。
+    assert "EXECUTE IMMEDIATE" in text
+    assert "-955" in text
+    assert "RAISE" in text

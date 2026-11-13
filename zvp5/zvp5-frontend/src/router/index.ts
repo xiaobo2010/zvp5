@@ -52,6 +52,13 @@ const router = createRouter({
       component: () => import('../views/user-v2/UserProfile.vue')
     },
     {
+      // 站内通知收件箱：所有用户可见（管理员在导航里不显示入口，
+      // 他们有 /manage/notifications 的编辑 + 发送页）。
+      path: '/notifications',
+      name: 'notifications',
+      component: () => import('../views/user-v2/UserNotifications.vue')
+    },
+    {
       path: '/user/:id',
       name: 'user-page',
       component: () => import('../views/user-v2/UserPage.vue')

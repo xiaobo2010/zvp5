@@ -1175,6 +1175,30 @@ END;
 /
 
 -- ----------------------------------------------------------------------------
+-- NOTIFICATION_READS  ← new (每用户已读状态)
+--   一行 = 「某用户读到某条通知的第几版」，已读判定 read[oid] >= notification.version。
+--   存版本号而不是 bool：通知编辑后 VERSION 变大必须重新变未读。
+--   PK (user_oid, notification_oid)：一条通知对一个用户只有一行，重复标记是
+--   upsert，不长历史。无 OID 列（没有独立身份），也不建外键（用户/通知都可能
+--   被硬删，行是用户数据不是审计材料）；通知硬删除时由仓储层同事务清理。
+--   也由 V053__notification_reads.sql 在存量实例上创建。
+-- ----------------------------------------------------------------------------
+BEGIN
+  EXECUTE IMMEDIATE '
+CREATE TABLE notification_reads (
+  user_oid VARCHAR2(24 CHAR) NOT NULL,
+  notification_oid VARCHAR2(24 CHAR) NOT NULL,
+  version NUMBER(19) NOT NULL,
+  read_at TIMESTAMP DEFAULT SYSTIMESTAMP NOT NULL,
+  PRIMARY KEY (user_oid, notification_oid)
+)';
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE != -955 THEN RAISE; END IF;
+END;
+/
+
+-- ----------------------------------------------------------------------------
 -- AI_CALL_LOGS  ← new (AI 网关调用流水; append-only)
 --   一次网关调用一行，成功/失败/超时/拒绝/忙都落库——只记成功就无法回答
 --   「额度为什么没扣成」。无外键：审计要活得比账号久（同 BAN_VIOLATIONS）。

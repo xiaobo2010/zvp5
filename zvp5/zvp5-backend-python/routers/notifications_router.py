@@ -3,8 +3,10 @@
 契约分两层：
 
 * ``GET ""`` —— 任何已登录用户读取当前**有效**通知列表 + 全局版本号。客户端
-  只把返回的 ``version`` 与自己本地的版本比较，决定是否需要刷新；``已阅`` /
-  ``不再显示`` 完全是客户端本地状态，不调用服务端，也不推进任何版本号。
+  只把返回的 ``version`` 与自己本地的版本比较，决定是否需要刷新。
+* ``GET /read``、``POST /{oid}/read`` —— 当前登录用户的**已读状态**（跟着帐号
+  走，V053）。已读判定 ``read[oid] >= notification.version``，由客户端比较；
+  服务端只存「读到哪一版」。「不再显示 / suppress」仍是设备级偏好，留在前端。
 * ``GET /admin``、``POST ""``、``PUT /{oid}``、``DELETE /{oid}`` —— 管理端。
   服务端每个请求都从数据库重新解析当前角色（``get_current_user``），
   ``_require_admin`` 只认**当前**的 ``admin``，不信任 JWT 里的旧快照；
@@ -14,7 +16,7 @@
 版本语义：
 
 * 全局 ``version``（``NOTIFICATION_STATE``）在每次成功的创建/编辑/删除时与
-  业务行**同一事务** +1；失败（通知不存在）不推进。
+  业务行**同一事务** +1；失败（通知不存在）不推进。标记已读不推进任何版本。
 * 单条通知的 ``version``（``NOTIFICATIONS.VERSION``）创建为 1，每次成功编辑
   或停用 +1，用于客户端判断「这条通知是否被改过」。
 * 每次成功写入都在**同一事务**里落一条 ``NOTIFICATION_VERSIONS`` 快照，
@@ -26,6 +28,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, Body, Depends, HTTPException
@@ -149,6 +152,40 @@ async def read_notifications(user=Depends(get_current_user)):
     """Current active notices + global version for the client's local markers."""
     rows, version = await backends.get_notifications_repo().list_active()
     return _envelope(rows, version)
+
+
+@router.get("/read")
+async def read_notification_reads(user=Depends(get_current_user)):
+    """当前登录用户的已读版本映射 ``{notification_oid: version}``。
+
+    per-user 数据，不进 ``list_active`` 的进程内/Redis 缓存：那份缓存的是对
+    所有人都相同的「通知列表 + 全局版本」。
+    """
+    read = await backends.get_notifications_repo().list_read(user["id"])
+    return {"status": "ok", "code": 200, "data": {"read": read}}
+
+
+@router.post("/{oid}/read")
+async def mark_notification_read(oid: str, user=Depends(get_current_user)):
+    """把一条通知标记为已读到**当前**版本（幂等 upsert）。
+
+    任何已登录用户都能调：已读是用户自己的状态，不需要 admin。版本由服务端
+    从通知行读出，客户端不传——否则改过的通知可以被补写一个大版本号骗成已读。
+    """
+    validate_object_id(oid)
+
+    result = await backends.get_notifications_repo().mark_read(
+        user["id"], oid, datetime.now()
+    )
+    if result is None:
+        raise HTTPException(status_code=404, detail="通知不存在")
+
+    read_oid, version = result
+    return {
+        "status": "ok",
+        "code": 200,
+        "data": {"oid": read_oid, "version": version},
+    }
 
 
 @router.get("/admin")

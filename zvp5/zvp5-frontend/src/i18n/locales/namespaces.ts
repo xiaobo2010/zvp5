@@ -40,7 +40,17 @@ export const NAMESPACE_RULES: NamespaceRule[] = [
 
 /** 只吃首屏字典的路径：根、登录、关于、个人资料、维护页与 404 兜底。 */
 export const CORE_EXACT_PATHS = ['/', '/:pathMatch(.*)*']
-export const CORE_PREFIX_PATHS = ['/about', '/me', '/user/login', '/maintenance']
+/**
+ * /notifications 走 notificationCenter + nav：两者都在首屏字典里（core.ts），
+ * 因此和 /me 一样归入核心路径，无需按路由懒加载任何大字典。
+ */
+export const CORE_PREFIX_PATHS = [
+  '/about',
+  '/me',
+  '/notifications',
+  '/user/login',
+  '/maintenance'
+]
 
 function underPath(path: string, prefix: string): boolean {
   if (path === prefix) return true

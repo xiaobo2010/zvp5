@@ -906,6 +906,34 @@ Index(
 
 
 # ---------------------------------------------------------------------------
+# NOTIFICATION_READS ← new (每用户已读状态; V053)
+#   一行 = 「某个用户已经把某条通知读到第几版」，已读判定是
+#   ``read[oid] >= notification.version``。存版本号而不是 bool，是因为通知
+#   编辑后 VERSION + 1 必须重新变成未读——bool 记不下「读到哪一版」，也就无法
+#   在编辑后自动回退。
+#   PK 是 (USER_OID, NOTIFICATION_OID)：一条通知对一个用户只有一行，重复标记
+#   就是 upsert（MERGE），不会长出多行历史。没有 OID 列——它没有独立身份，
+#   也不被单独引用。
+#   不建外键（同 NOTIFICATIONS.AUTHOR_OID）：用户或通知都可能被硬删，而这些行
+#   是用户数据、不是审计材料；通知硬删除时由仓储层在同一事务里清理对应行。
+# ---------------------------------------------------------------------------
+
+notification_reads = Table(
+    "notification_reads",
+    metadata,
+    Column("user_oid", VARCHAR2(24), primary_key=True),
+    Column("notification_oid", VARCHAR2(24), primary_key=True),
+    Column("version", NUMBER(19), nullable=False),
+    Column(
+        "read_at",
+        oracle.TIMESTAMP,
+        nullable=False,
+        server_default=text("SYSTIMESTAMP"),
+    ),
+)
+
+
+# ---------------------------------------------------------------------------
 # DEVICE_CHALLENGES  ← new (异设备登录的一次性挑战; V014)
 #   ``token_hash`` 存 SHA-256 hex 而不是明文 token：挑战值等价于「一次登录
 #   许可」，泄露即可被抢用。唯一索引既是查找路径也是防重放裁决者。

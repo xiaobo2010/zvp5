@@ -1,7 +1,8 @@
 """Oracle implementation of :class:`db.repos.protocols.NotificationsRepo`.
 
 SQLAlchemy 2.0 async Core over ``NOTIFICATIONS`` and the singleton
-``NOTIFICATION_STATE`` counter (V015). Returned rows use the shared dict shape
+``NOTIFICATION_STATE`` counter (V015), plus the per-user read state in
+``NOTIFICATION_READS`` (V053). Returned rows use the shared dict shape
 (``_id`` = lowercase-hex ``OID``, ``active`` = bool, ``version`` = int).
 
 Why the global counter lives in a table
@@ -50,11 +51,12 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Any, AsyncIterator
 
-from sqlalchemy import delete, func, insert, select, update
+from sqlalchemy import delete, func, insert, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db import cache
 from db.ids import new_oid, normalize_oid
+from db.models import notification_reads as reads_tbl
 from db.models import notification_state as state_tbl
 from db.models import notification_versions as versions_tbl
 from db.models import notifications as notifications_tbl
@@ -176,6 +178,43 @@ def _update_stmt(oid: str, fields: dict[str, Any], now: datetime):
 
 def _delete_stmt(oid: str):
     return delete(notifications_tbl).where(notifications_tbl.c.oid == oid)
+
+
+def _list_read_stmt(user_oid: str):
+    return select(reads_tbl.c.notification_oid, reads_tbl.c.version).where(
+        reads_tbl.c.user_oid == user_oid
+    )
+
+
+#: 标记已读的原子 upsert。Oracle 侧单语句 ``MERGE`` 是「不存在才插、存在就覆盖」
+#: 的写法，重复点击/重试都只留一行；先 SELECT 再 INSERT/UPDATE 会在并发双击时
+#: 撞主键（ORA-00001），而这不是错误，是同一个动作。
+#:
+#: 冲突键是完整 PK ``(user_oid, notification_oid)``：一条通知对一个用户只有一行。
+#: ``version`` 由调用方从 ``NOTIFICATIONS`` 读出的**当前**版本传入，客户端不传。
+_MARK_READ = text(
+    """
+    MERGE INTO notification_reads target
+    USING (SELECT :user_oid AS user_oid, :notification_oid AS notification_oid
+           FROM dual) source
+    ON (target.user_oid = source.user_oid
+        AND target.notification_oid = source.notification_oid)
+    WHEN MATCHED THEN
+        UPDATE SET target.version = :version, target.read_at = :at
+    WHEN NOT MATCHED THEN
+        INSERT (user_oid, notification_oid, version, read_at)
+        VALUES (source.user_oid, source.notification_oid, :version, :at)
+    """
+)
+
+
+def _mark_read_stmt():
+    return _MARK_READ
+
+
+def _delete_reads_stmt(notification_oid: str):
+    """通知硬删除时同事务清理已读行；没有它就会留下永远不会再被读到的孤儿。"""
+    return delete(reads_tbl).where(reads_tbl.c.notification_oid == notification_oid)
 
 
 def _restore_stmt(
@@ -634,6 +673,10 @@ class OracleNotificationsRepo:
                 created_at=now,
             )
             await session.execute(_delete_stmt(normalized))
+            # 同事务清掉已读行：表上没有 FK，就没有级联删除兜底；通知没了，这些
+            # 行永远不会再被读到。回滚复活同一 oid 时不恢复它们 —— 复活后的
+            # version 已高于任何历史值，语义上本来就该重新是未读。
+            await session.execute(_delete_reads_stmt(normalized))
             version = await _bump_state(session, now)
             if owns:
                 await session.commit()
@@ -731,6 +774,59 @@ class OracleNotificationsRepo:
                 await session.commit()
         await _forget_lists()
         return note, version, snapshot
+
+    # ------------------------------------------------------------------
+    # 每用户已读状态（V053）
+    #
+    # 这两个方法刻意**不碰** ``list_active`` 的读缓存：那份缓存的是「全量通知
+    # + 全局版本」，对所有人相同；已读状态是 per-user 的，掺进去既无法共享也
+    # 会把缓存条数放大成「用户数 × 通知数」。写已读也不 bump epoch：它不改变
+    # 任何用户看到的列表或版本号，失效缓存只会白白打穿一次全体用户的列表。
+    # ------------------------------------------------------------------
+
+    async def list_read(self, user_oid: str) -> dict[str, int]:
+        """当前用户的已读版本映射 ``{notification_oid: version}``。
+
+        返回该用户的**全部** read 行（不按通知是否还存在过滤）：客户端拿它和
+        列表里的 ``version`` 比较即可，多出来的键自然被忽略。
+        """
+        stmt = _list_read_stmt(normalize_oid(user_oid))
+        async with _session_for(self._session) as (session, _owns):
+            rows = (await session.execute(stmt)).all()
+        return {str(row[0]): int(row[1]) for row in rows}
+
+    async def mark_read(
+        self, user_oid: str, notification_oid: str, now: datetime
+    ) -> tuple[str, int] | None:
+        """把一条通知标记为该用户已读到**当前**版本；返回 ``(oid, version)``。
+
+        ``version`` 读自 ``NOTIFICATIONS`` 的当前值，客户端不传：否则一个改过
+        内容的通知可以被「补写一个更大的版本号」骗成已读。
+        通知不存在返回 ``None`` —— 与 :meth:`update` / :meth:`delete` 的
+        「拿不到行就交回调用方判 404」同一口径，路由层翻译成 404「通知不存在」。
+
+        幂等：同一 (user, notification) 重复标记走同一条 ``MERGE``，只更新
+        ``version`` / ``read_at``，不会长出新行。
+        """
+        user = normalize_oid(user_oid)
+        oid = normalize_oid(notification_oid)
+        async with _session_for(self._session) as (session, owns):
+            row = (await session.execute(_get_stmt(oid))).first()
+            if row is None:
+                return None
+            version = int(row._mapping["version"])
+            await session.execute(
+                _mark_read_stmt(),
+                {
+                    "user_oid": user,
+                    "notification_oid": oid,
+                    "version": version,
+                    "at": now,
+                },
+            )
+            if owns:
+                await session.commit()
+        return oid, version
 
 
 __all__ = ["OracleNotificationsRepo", "notification_content_hash"]

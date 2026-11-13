@@ -43,6 +43,8 @@ class FakeNotificationsRepo:
     def __init__(self) -> None:
         self.rows: dict[str, dict] = {}
         self.versions: dict[str, list[dict]] = {}
+        # (user_oid, notification_oid) -> {"version": int, "read_at": datetime}
+        self.reads: dict[tuple[str, str], dict] = {}
         self.version = 0
         self._seq = 0
 
@@ -179,6 +181,9 @@ class FakeNotificationsRepo:
             author_name=author_name or row["author_name"],
         )
         self.rows.pop(oid)
+        # 与 Oracle 实现一致：通知硬删时连同其已读行一起清掉。
+        for key in [key for key in self.reads if key[1] == oid]:
+            self.reads.pop(key)
         self.version += 1
         return dict(row), self.version
 
@@ -235,6 +240,26 @@ class FakeNotificationsRepo:
         )
         self.version += 1
         return dict(row), self.version, snapshot
+
+    # --- 已读状态（V053）--------------------------------------------------
+
+    async def list_read(self, user_oid):
+        return {
+            notification_oid: record["version"]
+            for (owner, notification_oid), record in self.reads.items()
+            if owner == user_oid
+        }
+
+    async def mark_read(self, user_oid, notification_oid, now):
+        row = self.rows.get(notification_oid)
+        if row is None:
+            return None
+        # 版本取通知行的**当前**值：客户端不能补写更大的版本号。
+        self.reads[(user_oid, notification_oid)] = {
+            "version": row["version"],
+            "read_at": now,
+        }
+        return notification_oid, row["version"]
 
 
 class FakeLog:
@@ -751,3 +776,168 @@ def test_rollback_unknown_version_is_404(api) -> None:
     assert response.json()["detail"] == "版本不存在"
     assert repo.version == 1
     assert log.insert_count == 0
+
+
+# ---------------------------------------------------------------------------
+# 已读状态（V053，跟着账号走）
+# ---------------------------------------------------------------------------
+
+
+def test_read_map_is_empty_for_a_fresh_account(api) -> None:
+    http, _repo, _log = api
+    _as(http, STUDENT)
+
+    body = http.get(f"{PREFIX}/read").json()
+    assert body["status"] == "ok"
+    assert body["code"] == 200
+    assert body["data"] == {"read": {}}
+
+
+def test_any_logged_in_user_can_mark_read_and_list_read(api) -> None:
+    """已读是用户自己的状态：非 admin 也能读写，且不需要管理端权限。"""
+    http, repo, log = api
+    created = http.post(PREFIX, json=CREATE_PAYLOAD).json()["data"]["notification"]
+    log.insert_count = 0
+
+    _as(http, STUDENT)
+    response = http.post(f"{PREFIX}/{created['id']}/read")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "ok"
+    assert body["code"] == 200
+    assert body["data"] == {"oid": created["id"], "version": 1}
+
+    assert http.get(f"{PREFIX}/read").json()["data"] == {
+        "read": {created["id"]: 1}
+    }
+    # 标记已读不写审计日志，也不推进任何版本号。
+    assert log.insert_count == 0
+    assert repo.version == 1
+
+
+def test_mark_read_is_idempotent_and_refreshes_to_current_version(api) -> None:
+    http, repo, _log = api
+    created = http.post(PREFIX, json=CREATE_PAYLOAD).json()["data"]["notification"]
+    _as(http, STUDENT)
+
+    first = http.post(f"{PREFIX}/{created['id']}/read").json()
+    second = http.post(f"{PREFIX}/{created['id']}/read").json()
+
+    assert first["data"] == second["data"] == {"oid": created["id"], "version": 1}
+    # 同一 (user, notification) 只有一行：重复标记不会长成流水。
+    assert len(repo.reads) == 1
+    assert repo.version == 1  # 全局版本没被标记已读推进
+
+    # 通知被编辑后 version + 1；再标记一次，落的是**当前**版本。
+    _as(http, ADMIN)
+    edited = http.put(
+        f"{PREFIX}/{created['id']}", json={"title": "改过的标题"}
+    ).json()["data"]["notification"]
+    _as(http, STUDENT)
+    third = http.post(f"{PREFIX}/{created['id']}/read").json()
+    assert third["data"]["version"] == edited["version"] == 2
+    assert len(repo.reads) == 1
+    assert http.get(f"{PREFIX}/read").json()["data"] == {
+        "read": {created["id"]: 2}
+    }
+
+
+def test_edit_after_read_does_not_auto_invalidate_the_read_row(api) -> None:
+    """编辑通知不写回已读行：旧的 version 留着，靠客户端比较判定为未读。
+
+    服务端若替所有人把已读行刷成新版本，等于「编辑即已读」，用户永远看不到
+    这条通知又改了 —— 那才是真正的语义错误。
+    """
+    http, repo, _log = api
+    created = http.post(PREFIX, json=CREATE_PAYLOAD).json()["data"]["notification"]
+    _as(http, STUDENT)
+    http.post(f"{PREFIX}/{created['id']}/read")
+
+    _as(http, ADMIN)
+    edited = http.put(
+        f"{PREFIX}/{created['id']}", json={"content": "改过的正文。"}
+    ).json()["data"]["notification"]
+
+    # 服务端存的仍是读那一刻的版本；客户端据 notice.version 判未读。
+    _as(http, STUDENT)
+    assert http.get(f"{PREFIX}/read").json()["data"]["read"] == {created["id"]: 1}
+    assert edited["version"] == 2
+    assert repo.reads[(STUDENT["id"], created["id"])]["version"] == 1
+    assert edited["version"] > repo.reads[(STUDENT["id"], created["id"])]["version"]
+
+
+def test_read_state_is_per_user(api) -> None:
+    http, _repo, _log = api
+    created = http.post(PREFIX, json=CREATE_PAYLOAD).json()["data"]["notification"]
+    second = http.post(
+        PREFIX, json={"title": "第二条", "content": "内容"}
+    ).json()["data"]["notification"]
+
+    _as(http, STUDENT)
+    http.post(f"{PREFIX}/{created['id']}/read")
+
+    _as(http, ADMIN)
+    assert http.get(f"{PREFIX}/read").json()["data"] == {"read": {}}
+    http.post(f"{PREFIX}/{second['id']}/read")
+    assert http.get(f"{PREFIX}/read").json()["data"] == {
+        "read": {second["id"]: 1}
+    }
+
+    _as(http, STUDENT)
+    assert http.get(f"{PREFIX}/read").json()["data"] == {
+        "read": {created["id"]: 1}
+    }
+
+
+def test_mark_read_unknown_notice_is_404(api) -> None:
+    http, repo, _log = api
+    _as(http, STUDENT)
+
+    response = http.post(f"{PREFIX}/0d000000000000000000ffff/read")
+    assert response.status_code == 404
+    assert response.json()["detail"] == "通知不存在"
+    assert repo.reads == {}
+
+
+def test_mark_read_rejects_malformed_oid(api) -> None:
+    http, repo, _log = api
+    _as(http, STUDENT)
+
+    response = http.post(f"{PREFIX}/not-an-oid/read")
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Invalid Object ID"
+    assert repo.reads == {}
+
+
+def test_delete_drops_the_read_rows_of_that_notice(api) -> None:
+    http, repo, _log = api
+    created = http.post(PREFIX, json=CREATE_PAYLOAD).json()["data"]["notification"]
+    _as(http, STUDENT)
+    http.post(f"{PREFIX}/{created['id']}/read")
+    assert repo.reads
+
+    _as(http, ADMIN)
+    assert http.delete(f"{PREFIX}/{created['id']}").status_code == 204
+    assert repo.reads == {}
+    assert http.get(f"{PREFIX}/read").json()["data"] == {"read": {}}
+
+
+def test_list_responses_never_carry_per_user_read_state(api) -> None:
+    """列表缓存的是对所有人相同的那一份，掺进 per-user 状态就会串号。"""
+    http, _repo, _log = api
+    created = http.post(PREFIX, json=CREATE_PAYLOAD).json()["data"]["notification"]
+    _as(http, STUDENT)
+    http.post(f"{PREFIX}/{created['id']}/read")
+
+    user_body = http.get(PREFIX).json()
+    _as(http, ADMIN)
+    admin_body = http.get(f"{PREFIX}/admin").json()
+
+    assert set(user_body["data"]) == {"version", "notifications"}
+    assert set(admin_body["data"]) == {"version", "notifications"}
+    for notice in user_body["data"]["notifications"]:
+        assert "read" not in notice
+        assert "read_at" not in notice
+    for notice in admin_body["data"]["notifications"]:
+        assert "read" not in notice
+        assert "read_at" not in notice

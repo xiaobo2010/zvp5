@@ -4,8 +4,8 @@ import axios from '@/plugins/axios.ts'
 /**
  * 站内通知接口（契约见 backend `docs/NOTIFICATIONS_API.md`）。
  *
- * 服务端只负责通知内容和版本号；「已阅 / 不再显示」是客户端本地状态，
- * 这里没有任何标记阅读的请求。
+ * 服务端负责通知内容、版本号与「已阅」记录（跟着账号走，换设备登录同样生效）；
+ * 「不再显示」仍是设备级偏好，只存在于客户端本地。
  */
 export interface NotificationRecord {
   id: string
@@ -37,6 +37,18 @@ export interface NotificationMutationData {
   version: number
 }
 
+/** 当前登录用户的已读映射：通知 oid -> 读到的单条版本号。 */
+export interface NotificationReadMap {
+  read: Record<string, number>
+}
+
+/** 标记已读的回执：服务端记下的单条版本号。 */
+export interface NotificationReadReceipt {
+  oid: string
+  /** 服务端认定的该通知当前版本。 */
+  version: number
+}
+
 export interface CreateNotificationInput {
   title: string
   content: string
@@ -63,6 +75,37 @@ export async function listActive(signal?: AbortSignal): Promise<NotificationList
     signal
   })
   return unwrap(response.data as Response<NotificationListData>)
+}
+
+/**
+ * 用户端：当前账号的已读映射。
+ *
+ * 已读状态存在服务端，跟着账号走：换设备登录同样生效。
+ * 返回的 read[oid] 是「读到的单条版本号」；read[oid] >= 通知当前版本 即为已读，
+ * 通知被编辑（version + 1）后会重新变回未读。
+ */
+export async function listRead(signal?: AbortSignal): Promise<Record<string, number>> {
+  const response = await axios({
+    method: 'get',
+    url: '/v1/notifications/read',
+    signal
+  })
+  const data = unwrap(response.data as Response<NotificationReadMap>)
+  return data?.read ?? {}
+}
+
+/**
+ * 用户端：标记某条通知已读（幂等 upsert）。
+ *
+ * 任何已登录用户可调用；通知不存在时服务端返回 404。
+ * 回执里的 version 是服务端认定的该通知当前版本，前端据此对齐本地已读映射。
+ */
+export async function markRead(oid: string): Promise<NotificationReadReceipt> {
+  const response = await axios({
+    method: 'post',
+    url: `/v1/notifications/${oid}/read`
+  })
+  return unwrap(response.data as Response<NotificationReadReceipt>)
 }
 
 /** 管理端：包含停用项的通知列表。仅严格 admin 可用。 */
