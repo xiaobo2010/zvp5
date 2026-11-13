@@ -31,8 +31,8 @@ jobs:
       run:
         working-directory: zvp5/zvp5-backend-python
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
@@ -63,11 +63,11 @@ jobs:
       VITE_API_BASE: https://ci.invalid/api
       VITE_API_RACE_BASE: https://race.ci.invalid/api
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
         with:
           version: ${{ env.PNPM_VERSION }}
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version-file: ${{ env.NODE_VERSION_FILE }}
           cache: pnpm
@@ -83,7 +83,7 @@ jobs:
       - name: Production build
         run: pnpm run build
       - name: Upload frontend build
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: frontend-dist
           path: zvp5/zvp5-frontend/dist
@@ -99,11 +99,11 @@ jobs:
       run:
         working-directory: zvp5/zvp5-frontend
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
         with:
           version: ${{ env.PNPM_VERSION }}
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version-file: ${{ env.NODE_VERSION_FILE }}
           cache: pnpm
@@ -112,7 +112,7 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Install Cypress binary
         run: pnpm exec cypress install
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: frontend-dist
           path: zvp5/zvp5-frontend/dist
@@ -124,7 +124,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install ShellCheck
         run: sudo apt-get update && sudo apt-get install -y shellcheck
       - name: ShellCheck deployment scripts
@@ -166,13 +166,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
         with:
           version: ${{ env.PNPM_VERSION }}
       # 该任务只跑 pnpm audit（不做 pnpm install），没有 pnpm store 可缓存；
       # 开启 pnpm 缓存会让 setup-node 的 post 步骤因路径不存在而报错。
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version-file: ${{ env.NODE_VERSION_FILE }}
       - name: Audit frontend production dependencies
@@ -219,7 +219,7 @@ jobs:
       FRONTEND_SSH_PORT: ${{ secrets.FRONTEND_SSH_PORT }}
       FRONTEND_SSH_USER: ${{ secrets.FRONTEND_SSH_USER }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -255,10 +255,10 @@ jobs:
             echo '::warning title=Database migration not applied::DDL files changed; apply them manually.'
           fi
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           version: ${{ env.PNPM_VERSION }}
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version-file: ${{ env.NODE_VERSION_FILE }}
           cache: pnpm
