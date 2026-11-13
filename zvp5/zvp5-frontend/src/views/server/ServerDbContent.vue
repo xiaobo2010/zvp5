@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus/es/components/message/index.mjs'
 import { ElDialog } from 'element-plus/es/components/dialog/index.mjs'
@@ -25,6 +25,7 @@ import {
 import ZSystemAuthDialog from '@/components/system/ZSystemAuthDialog.vue'
 import { resolveErrorMessage } from '@/utils/errorMessage'
 import { Plus } from '@element-plus/icons-vue'
+import ZHexUnit from './components/ZHexUnit.vue'
 
 const { t } = useI18n()
 
@@ -34,6 +35,9 @@ const MAX_LIMIT = 200
 // ---------- 表清单 ----------
 const schemaLoading = ref(false)
 const schemaItems = ref<SchemaItem[]>([])
+// 输入框的值立刻回显（打字手感），过滤用的关键字去抖 180ms：
+// 表名多的时候每敲一个字母重算一次列表，肉眼可见地卡。
+const schemaFilterInput = ref('')
 const schemaFilter = ref('')
 const selectedTable = ref('')
 
@@ -41,6 +45,24 @@ const filteredSchema = computed(() => {
   const keyword = schemaFilter.value.trim().toUpperCase()
   if (!keyword) return schemaItems.value
   return schemaItems.value.filter((item) => item.name.toUpperCase().includes(keyword))
+})
+
+let filterTimer: ReturnType<typeof setTimeout> | undefined
+
+watch(schemaFilterInput, (value) => {
+  if (filterTimer !== undefined) {
+    clearTimeout(filterTimer)
+  }
+  filterTimer = setTimeout(() => {
+    filterTimer = undefined
+    schemaFilter.value = value
+  }, 180)
+})
+
+onUnmounted(() => {
+  if (filterTimer !== undefined) {
+    clearTimeout(filterTimer)
+  }
 })
 
 async function loadSchema() {
@@ -467,12 +489,37 @@ void loadSchema()
 </script>
 
 <template>
-  <div class="flex flex-1 min-h-0 gap-4 pb-2">
+  <div class="db-content-page phi-srv-page">
+    <!-- 状态条:表数量与当前表行数是这一页最要紧的两个读数 -->
+    <div class="phi-srv-strip">
+      <ZHexUnit
+        :label="t('server.dbContent.unitLabel')"
+        :value="filteredSchema.length"
+        size="lg"
+        :hint="t('server.dbContent.unitTables', { count: filteredSchema.length })"
+      />
+      <div class="phi-srv-strip__cell">
+        <div class="phi-srv-unit__body">
+          <span class="phi-srv-unit__label">{{ t('server.dbContent.gridTitle') }}</span>
+          <span class="phi-srv-unit__hint phi-srv-unit__hint--muted font-mono">{{
+            selectedTable || '—'
+          }}</span>
+        </div>
+      </div>
+      <div class="phi-srv-strip__cell">
+        <div class="phi-srv-unit__body">
+          <span class="phi-srv-unit__label">{{ t('server.dbContent.totalLabel') }}</span>
+          <span class="phi-srv-unit__hint">{{ rowsTotalDisplay() }}</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="flex flex-1 min-h-0 gap-4 pb-2">
     <!-- 左:表清单 -->
     <ElCard class="w-72 shrink-0" body-class="table-list-body">
-      <span class="yg-text-xs yg-text-tertiary mb-2 block tabular-nums">{{ t('server.dbContent.schemaCount', { count: filteredSchema.length }) }}</span>
+      <span class="phi-srv-subtitle mb-2 block tabular-nums">{{ t('server.dbContent.schemaCount', { count: filteredSchema.length }) }}</span>
       <ElInput
-        v-model="schemaFilter"
+        v-model="schemaFilterInput"
         :placeholder="t('server.dbContent.searchPlaceholder')"
         clearable
         class="mb-2"
@@ -566,10 +613,15 @@ void loadSchema()
           class="sql-input"
         />
         <div class="mt-2 flex flex-wrap items-center gap-2">
-          <ElButton type="primary" :disabled="sqlRunning" @click="executeQuery">
+          <ElButton
+            type="primary"
+            :loading="sqlRunning"
+            :disabled="sqlRunning"
+            @click="executeQuery"
+          >
             {{ t('server.dbContent.sqlRun') }}
           </ElButton>
-          <span class="yg-text-xs yg-text-tertiary">{{ t('server.dbContent.sqlLimitLabel') }}</span>
+          <span class="phi-srv-subtitle">{{ t('server.dbContent.sqlLimitLabel') }}</span>
           <ElInputNumber v-model="sqlLimit" :min="1" :max="500" size="small" class="!w-24" />
         </div>
         <ElAlert
@@ -627,14 +679,19 @@ void loadSchema()
           class="sql-input"
         />
         <div class="mt-2 flex flex-wrap items-center gap-2">
-          <span class="yg-text-xs yg-text-tertiary">{{ t('server.dbContent.ddlConfirmLabel') }}</span>
+          <span class="phi-srv-subtitle">{{ t('server.dbContent.ddlConfirmLabel') }}</span>
           <ElInput
             v-model="ddlConfirm"
             :placeholder="t('server.dbContent.ddlConfirmPlaceholder')"
             size="small"
             class="!w-32 uppercase"
           />
-          <ElButton type="danger" :disabled="ddlRunning" @click="executeDdl">
+          <ElButton
+            type="danger"
+            :loading="ddlRunning"
+            :disabled="ddlRunning"
+            @click="executeDdl"
+          >
             {{ t('server.dbContent.ddlRun') }}
           </ElButton>
         </div>
@@ -650,34 +707,34 @@ void loadSchema()
             {{ t('server.dbContent.ddlRowcount') }}: {{ ddlResult.rowcount === null ? '—' : ddlResult.rowcount }}
             · {{ t('server.dbContent.ddlSummary') }}: {{ ddlResult.summary }}
           </div>
-          <div v-else class="mt-2 yg-text-xs yg-text-tertiary">{{ ddlNote || t('server.dbContent.ddlNone') }}</div>
+          <div v-else class="mt-2 phi-srv-dim">{{ ddlNote || t('server.dbContent.ddlNone') }}</div>
         </template>
-        <p class="mt-2 yg-text-xs yg-text-tertiary">{{ t('server.dbContent.ddlCommitted') }}</p>
+        <p class="mt-2 phi-srv-dim">{{ t('server.dbContent.ddlCommitted') }}</p>
       </ElCard>
 
       <!-- 数据网格 -->
       <ElCard class="xl:col-span-2" body-class="db-grid-body">
         <div class="flex flex-wrap items-center justify-between gap-2 pb-2">
           <div class="flex items-center gap-3">
-            <span class="yg-text-xs yg-text-tertiary">{{ t('server.dbContent.gridTitle') }}</span>
+            <span class="phi-srv-subtitle">{{ t('server.dbContent.gridTitle') }}</span>
             <span v-if="selectedTable" class="font-mono text-[14px] font-semibold text-[var(--yg-text-primary)]">
               {{ selectedTable }}
             </span>
-            <span v-if="selectedTable && !hasPk" class="yg-text-xs yg-text-tertiary">
+            <span v-if="selectedTable && !hasPk" class="phi-srv-dim">
               {{ t('server.dbContent.noPkNote') }}
             </span>
           </div>
           <div class="flex items-center gap-2">
-            <ElButton size="small" :icon="Plus" :disabled="!selectedTable" @click="openInsert">
+            <ElButton size="small" :icon="Plus" :disabled="!selectedTable || submitting" @click="openInsert">
               {{ t('server.dbContent.insert') }}
             </ElButton>
-            <span v-if="rowsData" class="yg-text-xs yg-text-tertiary tabular-nums">
+            <span v-if="rowsData" class="phi-srv-subtitle tabular-nums">
               {{ t('server.dbContent.totalLabel') }} {{ rowsTotalDisplay() }}
             </span>
             <ElButton size="small" :disabled="page <= 0 || rowsLoading" @click="gotoPage(page - 1)">
               ‹ {{ t('server.dbContent.pagePrev') }}
             </ElButton>
-            <span v-if="rowsData" class="yg-text-xs yg-text-tertiary tabular-nums">
+            <span v-if="rowsData" class="phi-srv-subtitle tabular-nums">
               {{ t('server.dbContent.pageInfo', { page: page + 1, pages: Math.max(1, rowsPages()) }) }}
             </span>
             <ElButton
@@ -736,10 +793,10 @@ void loadSchema()
               fixed="right"
             >
               <template #default="{ row }">
-                <ElButton text bg size="small" @click="openEdit(row as Record<string, CellValue>)">
+                <ElButton text bg size="small" :disabled="submitting" @click="openEdit(row as Record<string, CellValue>)">
                   {{ t('server.dbContent.edit') }}
                 </ElButton>
-                <ElButton text bg size="small" type="danger" @click="doDelete(row as Record<string, CellValue>)">
+                <ElButton text bg size="small" type="danger" :disabled="submitting" @click="doDelete(row as Record<string, CellValue>)">
                   {{ t('server.dbContent.del') }}
                 </ElButton>
               </template>
@@ -804,10 +861,11 @@ void loadSchema()
       append-to-body
     >
       <pre class="max-h-[50vh] overflow-auto whitespace-pre-wrap break-all rounded-md border border-[var(--yg-border-default)] bg-[var(--yg-bg-surface-sunken)] p-3 font-mono text-[13px] leading-5 text-[var(--yg-text-primary)]">{{ lobPreviewText }}</pre>
-      <p class="mt-2 yg-text-xs yg-text-tertiary">{{ t('server.dbContent.lobTitle') }}</p>
+      <p class="mt-2 phi-srv-dim">{{ t('server.dbContent.lobTitle') }}</p>
     </ElDialog>
 
     <ZSystemAuthDialog ref="authRef" />
+    </div>
   </div>
 </template>
 

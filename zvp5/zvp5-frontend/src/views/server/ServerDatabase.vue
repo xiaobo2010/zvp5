@@ -36,6 +36,7 @@ const DbPerfTrendChart = defineAsyncComponent(
   () => import('@/components/server/DbPerfTrendChart.vue')
 )
 import { resolveErrorMessage } from '@/utils/errorMessage'
+import ZHexUnit from './components/ZHexUnit.vue'
 
 const router = useRouter()
 const userStore = useUserStore()
@@ -108,6 +109,8 @@ const retentionRun = ref<RetentionRunData | null>(null)
 const previewLoading = ref(false)
 const runLoading = ref(false)
 const retentionError = ref<{ type: 'warning' | 'error'; text: string } | null>(null)
+// 确认框弹出期间锁住重复触发(清理不可逆,只能确认一次)
+const retentionPending = ref(false)
 const retentionProgress = ref<RetentionProgressData | null>(null)
 // 进度端点尚未部署(L2 未上线)时退回旧同步形态,不影响既有清理流程
 const progressSupported = ref(true)
@@ -176,6 +179,8 @@ function phaseLabel(phase: string | null | undefined): string {
 }
 
 async function previewRetentionNow() {
+  // 预览在飞时忽略二次触发:慢网下连点会叠出多个预览请求,后到的旧结果会盖掉新的统计
+  if (previewLoading.value) return
   previewLoading.value = true
   retentionError.value = null
   try {
@@ -191,6 +196,18 @@ async function previewRetentionNow() {
 
 async function onRunRetention() {
   if (!retentionPreview.value || progressRunning.value) return
+  // 确认框是异步弹出的:从点按钮到 runLoading 落地之间还有一帧,
+  // 这段时间里再点一次会开出第二个确认框,清理这种不可逆操作只允许确认一次。
+  if (retentionPending.value) return
+  retentionPending.value = true
+  try {
+    await runRetentionConfirmed()
+  } finally {
+    retentionPending.value = false
+  }
+}
+
+async function runRetentionConfirmed() {
   try {
     await ElMessageBox.confirm(
       t(M + 'retentionConfirmBody'),
@@ -288,6 +305,8 @@ function stopProgressPolling() {
 const backupProgress = ref<BackupProgressData | null>(null)
 const backupRunLoading = ref(false)
 const backupError = ref<string | null>(null)
+// 确认框弹出期间锁住重复触发(全量备份不能重复发起)
+const backupPending = ref(false)
 let backupTimer: number | undefined
 
 // POST /backup/run 成功后的瞬间,进度端点读到的仍可能是上一次 run 的终态快照:
@@ -387,6 +406,17 @@ function stopBackupPolling() {
 }
 
 async function onRunBackup() {
+  // 同清理:确认框弹出到请求落地之间锁住二次点击
+  if (backupPending.value) return
+  backupPending.value = true
+  try {
+    await runBackupConfirmed()
+  } finally {
+    backupPending.value = false
+  }
+}
+
+async function runBackupConfirmed() {
   try {
     await ElMessageBox.confirm(
       t(M + 'backupConfirmBody'),
@@ -647,12 +677,26 @@ const trendEmptyText = computed(() => {
   return t(M + 'trendEmpty')
 })
 
+// 趋势分组 / 时间范围切换:连点时按 200ms 去抖,只发最后一次请求。
+// 分段控件与下拉可以连点,不锁住的话一串历史请求会同时打向后端。
+let trendTimer: number | undefined
+
+function scheduleHistoryRefresh() {
+  if (trendTimer !== undefined) {
+    window.clearTimeout(trendTimer)
+  }
+  trendTimer = window.setTimeout(() => {
+    trendTimer = undefined
+    void refreshHistory()
+  }, 200)
+}
+
 watch(trendRange, () => {
-  void refreshHistory()
+  scheduleHistoryRefresh()
 })
 
 watch(trendFamily, () => {
-  void refreshHistory()
+  scheduleHistoryRefresh()
 })
 
 // 慢端点按 P95 降序,"最慢的排最前"
@@ -906,8 +950,8 @@ function formatCount(n: number | null | undefined): string {
   return n === null || n === undefined ? '—' : n.toLocaleString('en-US')
 }
 
-function formatMetric(value: number | null): string {
-  if (value === null) return '—'
+function formatMetric(value: number | null | undefined): string {
+  if (value === null || value === undefined) return '—'
   return Number.isInteger(value) ? value.toLocaleString('en-US') : value.toFixed(2)
 }
 
@@ -915,8 +959,8 @@ function formatTime(iso: string | null | undefined): string {
   return iso ? dayjs(iso).format('YYYY-MM-DD HH:mm:ss') : '—'
 }
 
-function formatInterval(centiseconds: number | null): string {
-  if (centiseconds === null) return '—'
+function formatInterval(centiseconds: number | null | undefined): string {
+  if (centiseconds === null || centiseconds === undefined) return '—'
   const seconds = centiseconds / 100
   return `${seconds % 1 === 0 ? seconds.toFixed(0) : seconds.toFixed(1)}s`
 }
@@ -1011,6 +1055,145 @@ const tablespaceTotals = computed(() => {
   return { used, max, percent, anyNull }
 })
 
+// ---------- MAGI 状态单元：把本页最要紧的读数顶到最上面 ----------
+// 实例状态是本页唯一的总开关读数：降级即危险色，配色沿用六边形单元的语气。
+const dbStateTone = computed<'ok' | 'danger' | 'idle'>(() => {
+  if (loading.value) return 'idle'
+  if (!dbStatus.value) return 'idle'
+  return overallState.value === 'ok' ? 'ok' : 'danger'
+})
+
+const dbStateValue = computed(() => {
+  if (loading.value) return '···'
+  if (!dbStatus.value) return '—'
+  return overallState.value === 'ok' ? 'OK' : 'DEGRADED'
+})
+
+const dbStateHint = computed(() => {
+  if (loading.value) return t('server.hud.loading')
+  if (!dbStatus.value) return loadError.value || t(M + 'loadFailed')
+  if (overallState.value !== 'ok') return t(M + 'statusDegraded')
+  return t(M + 'statusOk')
+})
+
+/** 连接池占用：使用中 / 常驻。利用率越高徽章越刺眼（75% 警告、90% 危险）。 */
+const poolUnitValue = computed(() => {
+  const p = pool.value
+  if (!p) return '—'
+  const used = p.checked_out ?? null
+  const size = p.size ?? null
+  if (used === null || size === null) return '—'
+  return `${used}/${size}`
+})
+
+function utilizationTone(percent: number | null | undefined): 'accent' | 'warn' | 'danger' | 'idle' {
+  if (percent === null || percent === undefined) return 'idle'
+  if (percent >= 90) return 'danger'
+  if (percent >= 75) return 'warn'
+  return 'accent'
+}
+
+const poolUnitTone = computed(() => utilizationTone(pool.value?.utilization_percent))
+
+const poolUnitHint = computed(() => {
+  const p = pool.value
+  if (!p) return t(M + 'unitPoolScope')
+  return t(M + 'unitUsedPct', { percent: pctText(p.utilization_percent) })
+})
+
+const sessionUnitValue = computed(() => {
+  const s = rtSessions.value
+  if (!s) return '—'
+  return formatCount(s.total)
+})
+
+const sessionUnitHint = computed(() => {
+  const s = rtSessions.value
+  if (!s) return t('server.hud.statusIdle')
+  return t(M + 'unitActive', { count: formatCount(s.active) })
+})
+
+const warningCount = computed(() => dbStatus.value?.warnings.length ?? 0)
+
+const tablespaceUnitValue = computed(() => {
+  const percent = tablespaceTotals.value.percent
+  return percent === null ? '—' : pctText(percent)
+})
+
+const tablespaceUnitTone = computed(() => utilizationTone(tablespaceTotals.value.percent))
+
+const tablespaceUnitHint = computed(() => {
+  const totals = tablespaceTotals.value
+  if (totals.percent === null) return t(M + 'tablespacesScopeNote')
+  return `${formatBytes(totals.used)} / ${formatBytes(totals.max)}`
+})
+
+// ---------- 本地服务器读数 ----------
+const hostUnitTone = computed<'ok' | 'warn' | 'danger' | 'idle'>(() => {
+  if (hostLoading.value) return 'idle'
+  if (hostAvailable.value === false) return 'danger'
+  if (hostError.value) return 'warn'
+  return 'ok'
+})
+
+const hostUnitValue = computed(() => {
+  if (hostLoading.value) return '···'
+  if (hostAvailable.value === false) return 'DOWN'
+  return 'ONLINE'
+})
+
+const hostUnitHint = computed(() => {
+  if (hostLoading.value) return t('server.hud.loading')
+  if (hostAvailable.value === false) return t(M + 'hostUnavailable')
+  return hostObservedText.value
+})
+
+const hostCpuValue = computed(() => {
+  const res = hostRes.value
+  if (!res) return '—'
+  return pctText(100 - res.cpu.idle_pct)
+})
+
+const hostCpuTone = computed(() => utilizationTone(hostRes.value ? 100 - hostRes.value.cpu.idle_pct : null))
+
+const hostMemValue = computed(() => {
+  const res = hostRes.value
+  if (!res || res.mem.total_mb <= 0) return '—'
+  return pctText((res.mem.used_mb / res.mem.total_mb) * 100)
+})
+
+const hostMemTone = computed(() => {
+  const res = hostRes.value
+  if (!res || res.mem.total_mb <= 0) return 'idle'
+  return utilizationTone((res.mem.used_mb / res.mem.total_mb) * 100)
+})
+
+const hostMemHint = computed(() => {
+  const res = hostRes.value
+  if (!res) return t(M + 'hostMem')
+  return `${formatMb(res.mem.used_mb)} / ${formatMb(res.mem.total_mb)}`
+})
+
+const hostCpuHint = computed(() => {
+  const res = hostRes.value
+  if (!res) return t(M + 'hostCpu')
+  return `${t(M + 'hostCpuUser')} ${pctText(res.cpu.user_pct)} · ${t(M + 'hostCpuSystem')} ${pctText(res.cpu.system_pct)}`
+})
+
+const hostDiskValue = computed(() => {
+  const res = hostRes.value
+  if (!res) return '—'
+  return pctText(res.disk.used_pct)
+})
+
+const hostDiskTone = computed(() => utilizationTone(hostRes.value?.disk.used_pct))
+
+const hostDiskHint = computed(() => {
+  const res = hostRes.value
+  if (!res) return t(M + 'hostDisk')
+  return `${formatGb(res.disk.free_gb)} ${t(M + 'hostDiskFree')}`
+})
+
 const SUMMARY_BYTE_PROPS = new Set([
   'table_bytes', 'index_bytes', 'lob_bytes', 'lob_index_bytes', 'total_bytes'
 ])
@@ -1070,6 +1253,10 @@ onBeforeUnmount(() => {
   stopBackupPolling()
   stopMetricsPolling()
   stopHostPolling()
+  if (trendTimer !== undefined) {
+    window.clearTimeout(trendTimer)
+    trendTimer = undefined
+  }
   if (probeTimer !== undefined) {
     window.clearTimeout(probeTimer)
     probeTimer = undefined
@@ -1083,18 +1270,55 @@ onBeforeUnmount(() => {
 
 <template>
   <!-- 数据库监控:仅 admin 可见;页内 ElSegmented 分区(数据库 / 本地服务器) -->
-  <div class="flex flex-col gap-3">
-    <div>
+  <div class="db-page phi-srv-page">
+    <div class="db-views">
       <ElSegmented v-model="activeView" :options="viewOptions" />
+      <span class="phi-srv-tag phi-srv-tag--muted">
+        {{ activeView === 'host' ? t(M + 'tagHost') : t(M + 'unitLabel') }}
+      </span>
     </div>
 
     <!-- 本地服务器:仅依赖独立 host 端点,首屏不等待 Oracle -->
     <template v-if="activeView === 'host'">
+      <!-- 状态单元:主机在线状态与 CPU / 内存 / 磁盘三个最要紧的占用读数 -->
+      <div class="phi-srv-strip" :class="{ 'phi-srv-strip--danger': hostAvailable === false }">
+        <ZHexUnit
+          :label="t(M + 'tagHost')"
+          :value="hostUnitValue"
+          :tone="hostUnitTone"
+          size="lg"
+          :hint="hostUnitHint"
+        />
+        <ZHexUnit
+          :label="t(M + 'unitHostCpu')"
+          :value="hostCpuValue"
+          :tone="hostCpuTone"
+          size="sm"
+          :hint="hostCpuHint"
+        />
+        <ZHexUnit
+          :label="t(M + 'unitHostMem')"
+          :value="hostMemValue"
+          :tone="hostMemTone"
+          size="sm"
+          :hint="hostMemHint"
+        />
+        <ZHexUnit
+          :label="t(M + 'unitHostDisk')"
+          :value="hostDiskValue"
+          :tone="hostDiskTone"
+          size="sm"
+          :hint="hostDiskHint"
+        />
+      </div>
       <ElCard shadow="never">
         <template #header>
           <div class="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
-            <span class="font-medium">{{ t(M + 'hostCardTitle') }}</span>
-            <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-gray-500 dark:text-gray-400">
+            <div class="flex flex-wrap items-center gap-2">
+              <span class="font-medium">{{ t(M + 'hostCardTitle') }}</span>
+              <span class="phi-srv-tag">{{ t(M + 'tagHostResource') }}</span>
+            </div>
+            <div class="flex flex-wrap items-center gap-x-3 gap-y-1 phi-srv-dim">
               <span v-if="hostSnapshot && hostObservedText !== '—'">
                 {{ t(M + 'perfRefreshedAt', { time: hostObservedText }) }}
               </span>
@@ -1113,13 +1337,13 @@ onBeforeUnmount(() => {
             :title="t(M + 'hostUnavailable')"
           />
           <template v-else-if="hostRes">
-            <div v-if="hostError" class="text-sm text-gray-500 dark:text-gray-400">
+            <div v-if="hostError" class="phi-srv-dim">
               {{ t(M + 'hostRefreshFailed') }}
             </div>
 
             <!-- 主机资源:/proc 即时读,按指标域分瓦片 -->
             <section class="flex flex-col gap-2">
-              <div class="text-sm font-medium">{{ t(M + 'hostTitle') }}</div>
+              <div class="phi-srv-subtitle">{{ t(M + 'hostTitle') }}</div>
               <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
                 <!-- CPU -->
                 <div class="flex flex-col gap-1.5 yg-tile">
@@ -1183,11 +1407,11 @@ onBeforeUnmount(() => {
                   <span class="yg-text-xs yg-text-tertiary">{{ t(M + 'hostNet') }}</span>
                   <div class="flex flex-col gap-0.5 text-sm tabular-nums">
                     <span>
-                      <span class="text-gray-500 dark:text-gray-400">{{ t(M + 'hostNetRx') }}</span>
+                      <span class="text-[var(--yg-text-secondary)]">{{ t(M + 'hostNetRx') }}</span>
                       {{ formatKbps(hostRes.net.rx_kbps) }}
                     </span>
                     <span>
-                      <span class="text-gray-500 dark:text-gray-400">{{ t(M + 'hostNetTx') }}</span>
+                      <span class="text-[var(--yg-text-secondary)]">{{ t(M + 'hostNetTx') }}</span>
                       {{ formatKbps(hostRes.net.tx_kbps) }}
                     </span>
                   </div>
@@ -1197,11 +1421,11 @@ onBeforeUnmount(() => {
                   <span class="yg-text-xs yg-text-tertiary">{{ t(M + 'hostDiskIo') }}</span>
                   <div class="flex flex-col gap-0.5 text-sm tabular-nums">
                     <span>
-                      <span class="text-gray-500 dark:text-gray-400">{{ t(M + 'hostDiskIoRead') }}</span>
+                      <span class="text-[var(--yg-text-secondary)]">{{ t(M + 'hostDiskIoRead') }}</span>
                       {{ formatKbps(hostRes.diskio.read_kbps) }}
                     </span>
                     <span>
-                      <span class="text-gray-500 dark:text-gray-400">{{ t(M + 'hostDiskIoWrite') }}</span>
+                      <span class="text-[var(--yg-text-secondary)]">{{ t(M + 'hostDiskIoWrite') }}</span>
                       {{ formatKbps(hostRes.diskio.write_kbps) }}
                     </span>
                   </div>
@@ -1211,11 +1435,11 @@ onBeforeUnmount(() => {
                   <span class="yg-text-xs yg-text-tertiary">{{ t(M + 'hostProc') }}</span>
                   <div class="flex flex-col gap-0.5 text-sm tabular-nums">
                     <span>
-                      <span class="text-gray-500 dark:text-gray-400">{{ t(M + 'hostProcRss') }}</span>
+                      <span class="text-[var(--yg-text-secondary)]">{{ t(M + 'hostProcRss') }}</span>
                       {{ formatMb(hostRes.proc.rss_mb) }}
                     </span>
                     <span>
-                      <span class="text-gray-500 dark:text-gray-400">{{ t(M + 'hostProcUptime') }}</span>
+                      <span class="text-[var(--yg-text-secondary)]">{{ t(M + 'hostProcUptime') }}</span>
                       {{ formatHours(hostRes.proc.uptime_hours) }}
                     </span>
                   </div>
@@ -1225,38 +1449,44 @@ onBeforeUnmount(() => {
 
             <!-- 进程池(host/pool 口径与实时面板一致) -->
             <section v-if="hostPool" class="flex flex-col gap-2">
-              <div class="text-sm font-medium">{{ t(M + 'poolTitle') }}</div>
+              <div class="phi-srv-subtitle flex flex-wrap items-center gap-2">{{ t(M + 'poolTitle') }}<span class="phi-srv-tag phi-srv-tag--muted">{{ t(M + 'tagPool') }}</span></div>
               <div class="flex flex-wrap gap-x-8 gap-y-2 text-sm tabular-nums">
                 <span>
-                  <span class="text-gray-500 dark:text-gray-400">{{ t(M + 'poolSize') }}</span>
+                  <span class="text-[var(--yg-text-secondary)]">{{ t(M + 'poolSize') }}</span>
                   {{ hostPool.size }}
                 </span>
                 <span>
-                  <span class="text-gray-500 dark:text-gray-400">{{ t(M + 'poolCheckedOut') }}</span>
+                  <span class="text-[var(--yg-text-secondary)]">{{ t(M + 'poolCheckedOut') }}</span>
                   {{ hostPool.checkedout }}
                 </span>
                 <span>
-                  <span class="text-gray-500 dark:text-gray-400">{{ t(M + 'poolOverflow') }}</span>
+                  <span class="text-[var(--yg-text-secondary)]">{{ t(M + 'poolOverflow') }}</span>
                   {{ hostPool.overflow }}
                 </span>
                 <span>
-                  <span class="text-gray-500 dark:text-gray-400">{{ t(M + 'poolCapacity') }}</span>
+                  <span class="text-[var(--yg-text-secondary)]">{{ t(M + 'poolCapacity') }}</span>
                   {{ hostPool.capacity }}
                 </span>
                 <span>
-                  <span class="text-gray-500 dark:text-gray-400">{{ t(M + 'poolWaited') }}</span>
+                  <span class="text-[var(--yg-text-secondary)]">{{ t(M + 'poolWaited') }}</span>
                   {{ hostPool.waited }}
                 </span>
                 <span>
-                  <span class="text-gray-500 dark:text-gray-400">{{ t(M + 'poolUtilization') }}</span>
+                  <span class="text-[var(--yg-text-secondary)]">{{ t(M + 'poolUtilization') }}</span>
                   {{ pctText(hostPool.utilization_percent) }}
                 </span>
               </div>
               <ElProgress :percentage="clampPct(hostPool.utilization_percent)" :color="percentColor" :show-text="false" />
-              <div class="text-sm text-gray-500 dark:text-gray-400">{{ t(M + 'poolScopeNote') }}</div>
+              <div class="phi-srv-dim">{{ t(M + 'poolScopeNote') }}</div>
             </section>
           </template>
-          <div v-else class="flex min-h-24 items-center text-sm text-gray-500 dark:text-gray-400">
+          <!-- 读取期间用骨架占位,别让整块区域只剩一句「加载中…」 -->
+          <div v-else-if="hostLoading" class="phi-srv-skel">
+            <div class="phi-srv-skel__line phi-srv-skel__line--tall"></div>
+            <div class="phi-srv-skel__line"></div>
+            <div class="phi-srv-skel__line phi-srv-skel__line--short"></div>
+          </div>
+          <div v-else class="flex min-h-24 items-center phi-srv-dim">
             {{ t(M + 'loading') }}
           </div>
         </div>
@@ -1264,13 +1494,70 @@ onBeforeUnmount(() => {
     </template>
 
     <template v-else-if="dbStatus">
+    <!-- 状态单元:实例状态、连接池占用、活动会话是这一页最要紧的三个读数 -->
+    <div class="phi-srv-strip" :class="{ 'phi-srv-strip--danger': overallState !== 'ok' || maintenanceActive }">
+      <ZHexUnit
+        :label="t(M + 'unitLabel')"
+        :value="dbStateValue"
+        :tone="dbStateTone"
+        size="lg"
+        :hint="dbStateHint"
+      />
+      <ZHexUnit
+        :label="t(M + 'unitPool')"
+        :value="poolUnitValue"
+        :tone="poolUnitTone"
+        size="md"
+        :hint="poolUnitHint"
+      />
+      <ZHexUnit
+        :label="t(M + 'unitSessions')"
+        :value="sessionUnitValue"
+        size="sm"
+        :hint="sessionUnitHint"
+      />
+      <div class="phi-srv-strip__cell">
+        <div class="phi-srv-unit__body">
+          <span class="phi-srv-unit__label">{{ t(M + 'unitSpace') }}</span>
+          <span
+            class="phi-srv-unit__hint"
+            :class="{ 'phi-srv-unit__hint--muted': tablespaceUnitTone === 'idle' }"
+          >
+            {{ tablespaceUnitValue }}
+          </span>
+        </div>
+      </div>
+      <div class="phi-srv-strip__cell">
+        <div class="phi-srv-unit__body">
+          <span class="phi-srv-unit__label">{{ t(M + 'totalTables') }}</span>
+          <span class="phi-srv-unit__hint phi-srv-unit__hint--muted tabular-nums">
+            {{ formatCount(tables?.count ?? null) }}
+          </span>
+        </div>
+      </div>
+      <div class="phi-srv-strip__cell">
+        <div class="phi-srv-unit__body">
+          <span class="phi-srv-unit__label">{{ t(M + 'warningsTitle') }}</span>
+          <span
+            class="phi-srv-unit__hint tabular-nums"
+            :class="warningCount > 0 ? 'db-danger' : 'phi-srv-unit__hint--muted'"
+          >
+            {{ t(M + 'unitWarnings', { count: warningCount }) }}
+          </span>
+        </div>
+      </div>
+    </div>
+
     <!-- 概览 + 容量并排(Swiss 栅格):宽屏左右分栏,窄屏纵向 -->
     <div class="grid grid-cols-1 gap-3 xl:grid-cols-2 xl:items-start">
     <!-- 总览:状态 / 观测时间 / 缓存口径 / 合计 / warnings -->
     <ElCard shadow="never">
       <template #header>
         <div class="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
-          <span class="font-medium">{{ t(M + 'title') }}</span>
+          <div class="flex flex-wrap items-center gap-2">
+            <span class="font-medium">{{ t(M + 'title') }}</span>
+            <span class="phi-srv-tag">{{ t(M + 'unitLabel') }}</span>
+          </div>
           <ElTooltip :content="t(M + 'cacheHint')" placement="top">
             <ElButton text bg :icon="Refresh" :loading="loading" @click="refresh">
               {{ t(M + 'refresh') }}
@@ -1278,15 +1565,18 @@ onBeforeUnmount(() => {
           </ElTooltip>
         </div>
       </template>
-      <div class="flex flex-col gap-3">
+      <div class="flex flex-col gap-3" :class="{ 'phi-srv-busy': loading }">
         <div class="flex flex-wrap items-center gap-x-6 gap-y-2">
-          <ElTag :type="overallState === 'ok' ? 'success' : 'warning'">
+          <span
+            class="phi-srv-tag"
+            :class="overallState === 'ok' ? 'phi-srv-tag--ok' : 'phi-srv-tag--danger'"
+          >
             {{ overallState === 'ok' ? t(M + 'statusOk') : t(M + 'statusDegraded') }}
-          </ElTag>
+          </span>
           <span class="text-sm">
             {{ t(M + 'observedAt') }}：<span class="font-medium">{{ formatTime(dbStatus.observed_at) }}</span>
           </span>
-          <span class="text-sm text-gray-500 dark:text-gray-400">{{ cacheText }}</span>
+          <span class="phi-srv-dim">{{ cacheText }}</span>
         </div>
         <div class="flex flex-wrap gap-x-8 gap-y-2 text-sm">
           <span>
@@ -1299,8 +1589,8 @@ onBeforeUnmount(() => {
           </span>
         </div>
         <div class="mt-1">
-          <div class="text-sm font-medium">{{ t(M + 'warningsTitle') }}</div>
-          <ul class="mt-1 flex list-disc flex-col gap-1 pl-5 text-sm text-gray-600 dark:text-gray-300">
+          <div class="phi-srv-subtitle">{{ t(M + 'warningsTitle') }}</div>
+          <ul class="phi-srv-notes mt-1">
             <li v-for="(warning, i) in dbStatus.warnings" :key="i">{{ warning }}</li>
           </ul>
         </div>
@@ -1310,7 +1600,10 @@ onBeforeUnmount(() => {
     <!-- 容量配额:仅展示承载平台数据的表空间,每项 used/max + 进度条,合计行 -->
     <ElCard shadow="never">
       <template #header>
-        <span class="font-medium">{{ t(M + 'tablespacesTitle') }}</span>
+        <div class="flex flex-wrap items-center gap-2">
+          <span class="font-medium">{{ t(M + 'tablespacesTitle') }}</span>
+          <span class="phi-srv-tag">{{ t(M + 'tagStorage') }}</span>
+        </div>
       </template>
       <div class="flex flex-col gap-4">
         <ElAlert
@@ -1324,7 +1617,7 @@ onBeforeUnmount(() => {
         <template v-else-if="tablespaces">
           <div
             v-if="applicationTablespaces.length === 0"
-            class="text-sm text-gray-500 dark:text-gray-400"
+            class="phi-srv-dim"
           >
             {{ t(M + 'tablespacesEmpty') }}
           </div>
@@ -1344,17 +1637,17 @@ onBeforeUnmount(() => {
             />
           </div>
           <div v-if="applicationTablespaces.length > 1" class="flex flex-wrap items-baseline justify-between gap-x-3 border-t border-gray-200 pt-2 text-sm dark:border-gray-700">
-            <span class="text-gray-500 dark:text-gray-400">{{ t(M + 'tablespacesTotal') }}</span>
+            <span class="text-[var(--yg-text-secondary)]">{{ t(M + 'tablespacesTotal') }}</span>
             <span>
               {{ formatBytes(tablespaceTotals.used) }} / {{ formatBytes(tablespaceTotals.max) }}
               · <span class="font-medium">{{ pctText(tablespaceTotals.percent) }}</span>
-              <span v-if="tablespaceTotals.anyNull" class="text-gray-500 dark:text-gray-400">
+              <span v-if="tablespaceTotals.anyNull" class="text-[var(--yg-text-secondary)]">
                 · {{ t(M + 'totalsPartial') }}
               </span>
             </span>
           </div>
-          <div class="text-sm text-gray-500 dark:text-gray-400">{{ t(M + 'maxBytesNote') }}</div>
-          <div class="text-sm text-gray-500 dark:text-gray-400">{{ t(M + 'tablespacesScopeNote') }}</div>
+          <div class="phi-srv-dim">{{ t(M + 'maxBytesNote') }}</div>
+          <div class="phi-srv-dim">{{ t(M + 'tablespacesScopeNote') }}</div>
         </template>
       </div>
     </ElCard>
@@ -1363,7 +1656,10 @@ onBeforeUnmount(() => {
     <!-- 每表占用与数据量:字节拆分 + 优化器估算行数 + 统计新鲜度 -->
     <ElCard shadow="never">
       <template #header>
-        <span class="font-medium">{{ t(M + 'tablesTitle') }}</span>
+        <div class="flex flex-wrap items-center gap-2">
+          <span class="font-medium">{{ t(M + 'tablesTitle') }}</span>
+          <span class="phi-srv-tag">{{ t(M + 'tagTables') }}</span>
+        </div>
       </template>
       <div class="flex flex-col gap-4">
         <ElAlert
@@ -1404,7 +1700,7 @@ onBeforeUnmount(() => {
               </template>
             </ElTableColumn>
           </ElTable>
-          <div class="text-sm text-gray-500 dark:text-gray-400">{{ t(M + 'tablesCaption') }}</div>
+          <div class="phi-srv-dim">{{ t(M + 'tablesCaption') }}</div>
         </template>
       </div>
     </ElCard>
@@ -1413,8 +1709,11 @@ onBeforeUnmount(() => {
     <ElCard shadow="never">
       <template #header>
         <div class="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
-          <span class="font-medium">{{ t(M + 'loadTitle') }}</span>
-          <span class="text-sm text-gray-500 dark:text-gray-400">
+          <div class="flex flex-wrap items-center gap-2">
+            <span class="font-medium">{{ t(M + 'loadTitle') }}</span>
+            <span class="phi-srv-tag">{{ t(M + 'tagLoad') }}</span>
+          </div>
+          <span class="phi-srv-dim">
             {{ t(M + 'source') }}：{{ load?.source }}
           </span>
         </div>
@@ -1440,11 +1739,11 @@ onBeforeUnmount(() => {
             <ElTableColumn :label="t(M + 'colWindow')" min-width="250">
               <template #default="{ row }">
                 {{ formatTime(row.begin_time) }} ～ {{ formatTime(row.end_time) }}
-                <span class="text-gray-500 dark:text-gray-400">（{{ formatInterval(row.interval_centiseconds) }}）</span>
+                <span class="text-[var(--yg-text-secondary)]">（{{ formatInterval(row.interval_centiseconds) }}）</span>
               </template>
             </ElTableColumn>
           </ElTable>
-          <div class="text-sm text-gray-500 dark:text-gray-400">{{ t(M + 'assessmentNote') }}</div>
+          <div class="phi-srv-dim">{{ t(M + 'assessmentNote') }}</div>
 
           <!-- 连接池:仅代表当前 API 进程 -->
           <ElAlert
@@ -1456,26 +1755,26 @@ onBeforeUnmount(() => {
             :description="degradeText(pool.reason, undefined)"
           />
           <div v-else-if="pool" class="flex flex-col gap-2">
-            <div class="text-sm font-medium">{{ t(M + 'poolTitle') }}</div>
+            <div class="phi-srv-subtitle flex flex-wrap items-center gap-2">{{ t(M + 'poolTitle') }}<span class="phi-srv-tag phi-srv-tag--muted">{{ t(M + 'tagPool') }}</span></div>
             <div class="flex flex-wrap gap-x-8 gap-y-2 text-sm">
               <span>
-                <span class="text-gray-500 dark:text-gray-400">{{ t(M + 'poolSize') }}</span>
+                <span class="text-[var(--yg-text-secondary)]">{{ t(M + 'poolSize') }}</span>
                 {{ pool.size ?? '—' }}
               </span>
               <span>
-                <span class="text-gray-500 dark:text-gray-400">{{ t(M + 'poolCheckedOut') }}</span>
+                <span class="text-[var(--yg-text-secondary)]">{{ t(M + 'poolCheckedOut') }}</span>
                 {{ pool.checked_out ?? '—' }}
               </span>
               <span>
-                <span class="text-gray-500 dark:text-gray-400">{{ t(M + 'poolOverflow') }}</span>
+                <span class="text-[var(--yg-text-secondary)]">{{ t(M + 'poolOverflow') }}</span>
                 {{ pool.overflow ?? '—' }}
               </span>
               <span>
-                <span class="text-gray-500 dark:text-gray-400">{{ t(M + 'poolCapacity') }}</span>
+                <span class="text-[var(--yg-text-secondary)]">{{ t(M + 'poolCapacity') }}</span>
                 {{ pool.capacity ?? '—' }}
               </span>
               <span>
-                <span class="text-gray-500 dark:text-gray-400">{{ t(M + 'poolUtilization') }}</span>
+                <span class="text-[var(--yg-text-secondary)]">{{ t(M + 'poolUtilization') }}</span>
                 {{ pctText(pool.utilization_percent) }}
               </span>
             </div>
@@ -1485,7 +1784,7 @@ onBeforeUnmount(() => {
               :color="percentColor"
               :show-text="false"
             />
-            <div class="text-sm text-gray-500 dark:text-gray-400">{{ t(M + 'poolScopeNote') }}</div>
+            <div class="phi-srv-dim">{{ t(M + 'poolScopeNote') }}</div>
           </div>
         </template>
       </div>
@@ -1497,6 +1796,7 @@ onBeforeUnmount(() => {
         <div class="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
           <div class="flex flex-wrap items-center gap-2">
             <span class="font-medium">{{ t(M + 'perfTitle') }}</span>
+            <span class="phi-srv-tag">{{ t(M + 'tagPerf') }}</span>
             <ElTag v-if="metricsAvailable && !maintenanceActive" size="small" type="success" effect="plain" round>
               <span class="perf-live" aria-hidden="true"></span>
               {{ t(M + 'perfLiveTag') }}
@@ -1505,7 +1805,7 @@ onBeforeUnmount(() => {
               {{ t(M + 'perfPausedTag') }}
             </ElTag>
           </div>
-          <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-gray-500 dark:text-gray-400">
+          <div class="flex flex-wrap items-center gap-x-3 gap-y-1 phi-srv-dim">
             <span v-if="metricsRealtime">{{ t(M + 'perfRefreshedAt', { time: rtObservedText }) }}</span>
             <ElButton text bg size="small" :icon="Refresh" :loading="realtimeLoading" @click="probeMetrics">
               {{ t(M + 'refresh') }}
@@ -1513,7 +1813,7 @@ onBeforeUnmount(() => {
           </div>
         </div>
       </template>
-      <div class="flex flex-col gap-4">
+      <div class="flex flex-col gap-4" :class="{ 'phi-srv-busy': realtimeLoading }">
         <ElAlert
           v-if="metricsAvailable === false"
           type="info"
@@ -1522,17 +1822,17 @@ onBeforeUnmount(() => {
           :title="t(M + 'perfUnavailable')"
         />
         <template v-else-if="metricsRealtime">
-          <div v-if="realtimeError" class="text-sm text-gray-500 dark:text-gray-400">
+          <div v-if="realtimeError" class="phi-srv-dim">
             {{ t(M + 'perfRefreshFailed') }}
           </div>
-          <div v-if="maintenanceActive" class="text-sm text-gray-500 dark:text-gray-400">
+          <div v-if="maintenanceActive" class="phi-srv-dim">
             {{ t(M + 'perfPausedMaintenance') }}
           </div>
 
           <!-- Oracle 负载 + 连接池 -->
           <div class="grid grid-cols-1 gap-4 xl:grid-cols-2">
             <section class="flex flex-col gap-2">
-              <div class="text-sm font-medium">{{ t(M + 'oracleLoadTitle') }}</div>
+              <div class="phi-srv-subtitle">{{ t(M + 'oracleLoadTitle') }}</div>
               <ElAlert
                 v-if="rtLoad && !rtLoad.available"
                 type="info"
@@ -1543,7 +1843,7 @@ onBeforeUnmount(() => {
               />
               <div v-else class="grid grid-cols-2 gap-x-6 gap-y-1.5 text-sm tabular-nums sm:grid-cols-3">
                 <div v-for="(metric, i) in rtLoad?.metrics ?? []" :key="i">
-                  <span class="text-gray-500 dark:text-gray-400">{{ metric.name }}</span>
+                  <span class="text-[var(--yg-text-secondary)]">{{ metric.name }}</span>
                   <span class="ml-1 font-medium">
                     {{ formatMetric(metric.value) }}<span v-if="metric.unit"> {{ metric.unit }}</span>
                   </span>
@@ -1551,13 +1851,13 @@ onBeforeUnmount(() => {
               </div>
               <div v-if="rtSessions" class="flex flex-wrap gap-x-6 gap-y-1 text-sm tabular-nums">
                 <span>
-                  <span class="text-gray-500 dark:text-gray-400">{{ t(M + 'sessionsTotal') }}</span>
+                  <span class="text-[var(--yg-text-secondary)]">{{ t(M + 'sessionsTotal') }}</span>
                   {{ formatCount(rtSessions.total) }}
                 </span>
                 <span class="text-emerald-600 dark:text-emerald-400">
                   {{ t(M + 'sessionsActive') }} {{ formatCount(rtSessions.active) }}
                 </span>
-                <span class="text-gray-500 dark:text-gray-400">
+                <span class="text-[var(--yg-text-secondary)]">
                   {{ t(M + 'sessionsInactive') }} {{ formatCount(rtSessions.inactive) }}
                 </span>
               </div>
@@ -1565,41 +1865,41 @@ onBeforeUnmount(() => {
 
             <!-- 连接池(新键,口径同既有卡,额外含因满等待次数) -->
             <section v-if="rtPool" class="flex flex-col gap-2">
-              <div class="text-sm font-medium">{{ t(M + 'poolTitle') }}</div>
+              <div class="phi-srv-subtitle flex flex-wrap items-center gap-2">{{ t(M + 'poolTitle') }}<span class="phi-srv-tag phi-srv-tag--muted">{{ t(M + 'tagPool') }}</span></div>
               <div class="flex flex-wrap gap-x-8 gap-y-2 text-sm tabular-nums">
                 <span>
-                  <span class="text-gray-500 dark:text-gray-400">{{ t(M + 'poolSize') }}</span>
+                  <span class="text-[var(--yg-text-secondary)]">{{ t(M + 'poolSize') }}</span>
                   {{ rtPool.size }}
                 </span>
                 <span>
-                  <span class="text-gray-500 dark:text-gray-400">{{ t(M + 'poolCheckedOut') }}</span>
+                  <span class="text-[var(--yg-text-secondary)]">{{ t(M + 'poolCheckedOut') }}</span>
                   {{ rtPool.checkedout }}
                 </span>
                 <span>
-                  <span class="text-gray-500 dark:text-gray-400">{{ t(M + 'poolOverflow') }}</span>
+                  <span class="text-[var(--yg-text-secondary)]">{{ t(M + 'poolOverflow') }}</span>
                   {{ rtPool.overflow }}
                 </span>
                 <span>
-                  <span class="text-gray-500 dark:text-gray-400">{{ t(M + 'poolCapacity') }}</span>
+                  <span class="text-[var(--yg-text-secondary)]">{{ t(M + 'poolCapacity') }}</span>
                   {{ rtPool.capacity }}
                 </span>
                 <span>
-                  <span class="text-gray-500 dark:text-gray-400">{{ t(M + 'poolWaited') }}</span>
+                  <span class="text-[var(--yg-text-secondary)]">{{ t(M + 'poolWaited') }}</span>
                   {{ rtPool.waited }}
                 </span>
                 <span>
-                  <span class="text-gray-500 dark:text-gray-400">{{ t(M + 'poolUtilization') }}</span>
+                  <span class="text-[var(--yg-text-secondary)]">{{ t(M + 'poolUtilization') }}</span>
                   {{ pctText(rtPool.utilization_percent) }}
                 </span>
               </div>
               <ElProgress :percentage="clampPct(rtPool.utilization_percent)" :color="percentColor" :show-text="false" />
-              <div class="text-sm text-gray-500 dark:text-gray-400">{{ t(M + 'poolScopeNote') }}</div>
+              <div class="phi-srv-dim">{{ t(M + 'poolScopeNote') }}</div>
             </section>
           </div>
 
           <!-- 会话明细 + 等待类别分布 -->
           <section v-if="rtSessions" class="flex flex-col gap-3">
-            <div class="text-sm font-medium">{{ t(M + 'sessionsTitle') }}</div>
+            <div class="phi-srv-subtitle">{{ t(M + 'sessionsTitle') }}</div>
             <div class="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_15rem]">
               <ElTable
                 :data="rtSessions.items"
@@ -1633,7 +1933,7 @@ onBeforeUnmount(() => {
                 </ElTableColumn>
               </ElTable>
               <div class="flex flex-col gap-2">
-                <div class="text-sm font-medium">{{ t(M + 'waitClassTitle') }}</div>
+                <div class="phi-srv-subtitle">{{ t(M + 'waitClassTitle') }}</div>
                 <template v-if="waitDistribution.length > 0">
                   <div
                     v-for="row in waitDistribution"
@@ -1641,17 +1941,17 @@ onBeforeUnmount(() => {
                     class="flex items-center gap-2"
                     :title="`${row.count} / ${rtSessions.total}`"
                   >
-                    <span class="h-2 w-2 shrink-0 rounded-full" :style="{ background: row.color }"></span>
+                    <span class="db-wait-dot" :style="{ background: row.color }"></span>
                     <span class="min-w-0 flex-1 truncate text-xs">{{ row.cls }}</span>
-                    <span class="text-xs tabular-nums text-gray-500 dark:text-gray-400">{{ row.count }}</span>
+                    <span class="text-xs tabular-nums text-[var(--yg-text-secondary)]">{{ row.count }}</span>
                   </div>
                 </template>
-                <span v-else class="text-sm text-gray-500 dark:text-gray-400">—</span>
+                <span v-else class="phi-srv-dim">—</span>
               </div>
             </div>
           </section>
         </template>
-        <div v-else class="flex min-h-24 items-center text-sm text-gray-500 dark:text-gray-400">
+        <div v-else class="flex min-h-24 items-center phi-srv-dim">
           {{ t(M + 'loading') }}
         </div>
       </div>
@@ -1662,7 +1962,10 @@ onBeforeUnmount(() => {
       <template #header>
         <div class="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
           <div class="flex flex-wrap items-center gap-x-3 gap-y-2">
-            <span class="font-medium">{{ t(M + 'trendTitle') }}</span>
+            <div class="flex flex-wrap items-center gap-2">
+              <span class="font-medium">{{ t(M + 'trendTitle') }}</span>
+              <span class="phi-srv-tag">{{ t(M + 'tagTrend') }}</span>
+            </div>
             <ElSegmented v-model="trendRange" :options="rangeOptions" />
             <ElSelect v-model="trendFamily" class="w-44" :aria-label="t(M + 'trendFamilyLabel')">
               <ElOptionGroup
@@ -1703,13 +2006,16 @@ onBeforeUnmount(() => {
     <ElCard shadow="never">
       <template #header>
         <div class="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
-          <span class="font-medium">{{ t(M + 'topSqlTitle') }}</span>
+          <div class="flex flex-wrap items-center gap-2">
+            <span class="font-medium">{{ t(M + 'topSqlTitle') }}</span>
+            <span class="phi-srv-tag">{{ t(M + 'tagTopSql') }}</span>
+          </div>
           <ElButton text bg size="small" :icon="Refresh" :loading="topSqlLoading" @click="refreshTopSql">
             {{ t(M + 'refresh') }}
           </ElButton>
         </div>
       </template>
-      <div class="flex flex-col gap-3">
+      <div class="flex flex-col gap-3" :class="{ 'phi-srv-busy': topSqlLoading }">
         <ElAlert
           v-if="topSqlError"
           type="info"
@@ -1746,8 +2052,8 @@ onBeforeUnmount(() => {
             <template #default="{ row }">{{ formatCount(row.disk_reads) }}</template>
           </ElTableColumn>
         </ElTable>
-        <div v-else class="text-sm text-gray-500 dark:text-gray-400">{{ t(M + 'topSqlEmpty') }}</div>
-        <div class="text-sm text-gray-500 dark:text-gray-400">{{ t(M + 'topSqlNote') }}</div>
+        <div v-else class="phi-srv-dim">{{ t(M + 'topSqlEmpty') }}</div>
+        <div class="phi-srv-dim">{{ t(M + 'topSqlNote') }}</div>
       </div>
     </ElCard>
 
@@ -1755,7 +2061,10 @@ onBeforeUnmount(() => {
     <ElCard shadow="never">
       <template #header>
         <div class="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
-          <span class="font-medium">{{ t(M + 'endpointsTitle') }}</span>
+          <div class="flex flex-wrap items-center gap-2">
+            <span class="font-medium">{{ t(M + 'endpointsTitle') }}</span>
+            <span class="phi-srv-tag">{{ t(M + 'tagEndpoints') }}</span>
+          </div>
           <ElButton text bg size="small" :icon="Refresh" :loading="endpointsLoading" @click="refreshEndpoints">
             {{ t(M + 'refresh') }}
           </ElButton>
@@ -1790,7 +2099,7 @@ onBeforeUnmount(() => {
           </ElTableColumn>
           <ElTableColumn prop="err_count" sortable :label="t(M + 'colErrCount')" min-width="90">
             <template #default="{ row }">
-              <span :class="row.err_count > 0 ? 'font-medium text-red-500' : ''">
+              <span :class="row.err_count > 0 ? 'db-danger font-medium' : ''">
                 {{ formatCount(row.err_count) }}
               </span>
             </template>
@@ -1805,8 +2114,8 @@ onBeforeUnmount(() => {
             <template #default="{ row }">{{ formatDurationMs(row.max_ms) }}</template>
           </ElTableColumn>
         </ElTable>
-        <div v-else class="text-sm text-gray-500 dark:text-gray-400">{{ t(M + 'endpointsEmpty') }}</div>
-        <div class="text-sm text-gray-500 dark:text-gray-400">{{ t(M + 'endpointsNote') }}</div>
+        <div v-else class="phi-srv-dim">{{ t(M + 'endpointsEmpty') }}</div>
+        <div class="phi-srv-dim">{{ t(M + 'endpointsNote') }}</div>
       </div>
     </ElCard>
 
@@ -1814,7 +2123,10 @@ onBeforeUnmount(() => {
     <ElCard shadow="never">
       <template #header>
         <div class="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
-          <span class="font-medium">{{ t(M + 'retentionTitle') }}</span>
+          <div class="flex flex-wrap items-center gap-2">
+            <span class="font-medium">{{ t(M + 'retentionTitle') }}</span>
+            <span class="phi-srv-tag">{{ t(M + 'tagRetention') }}</span>
+          </div>
           <div class="flex flex-wrap items-center gap-2">
             <ElButton
               text bg :icon="Refresh" :loading="previewLoading" :disabled="progressRunning"
@@ -1823,7 +2135,9 @@ onBeforeUnmount(() => {
               {{ t(M + 'retentionPreview') }}
             </ElButton>
             <ElButton
-              text bg :loading="runLoading" :disabled="!retentionPreview || progressRunning"
+              text bg
+              :loading="runLoading || retentionPending"
+              :disabled="!retentionPreview || progressRunning || retentionPending"
               @click="onRunRetention"
             >
               {{ t(M + 'retentionRun') }}
@@ -1831,15 +2145,15 @@ onBeforeUnmount(() => {
           </div>
         </div>
       </template>
-      <div class="flex flex-col gap-4">
-        <ElAlert
-          v-if="maintenanceActive"
-          type="warning"
-          show-icon
-          :closable="false"
-          :title="t(M + 'maintenanceBannerTitle')"
-          :description="maintenanceBannerText"
-        />
+      <div class="flex flex-col gap-4" :class="{ 'phi-srv-busy': runLoading || retentionPending }">
+        <!-- 维护中:危险的横幅样式,状态条同时转危险色,一眼能找到 -->
+        <div v-if="maintenanceActive" class="phi-srv-alert phi-srv-alert--warn">
+          <span class="phi-srv-tag phi-srv-tag--warn">SYS // MAINT</span>
+          <div class="phi-srv-alert__body">
+            <p class="font-medium">{{ t(M + 'maintenanceBannerTitle') }}</p>
+            <p class="phi-srv-dim">{{ maintenanceBannerText }}</p>
+          </div>
+        </div>
         <ElAlert
           v-if="retentionError"
           :type="retentionError.type"
@@ -1874,11 +2188,11 @@ onBeforeUnmount(() => {
                 class="flex flex-wrap gap-x-6 gap-y-1 text-sm tabular-nums"
               >
                 <span>
-                  <span class="text-gray-500 dark:text-gray-400">{{ t(M + 'lastRunAppLogs') }}</span>
+                  <span class="text-[var(--yg-text-secondary)]">{{ t(M + 'lastRunAppLogs') }}</span>
                   {{ t(M + 'progressTableLine', retentionProgress.progress.app_logs) }}
                 </span>
                 <span>
-                  <span class="text-gray-500 dark:text-gray-400">{{ t(M + 'lastRunExportTasks') }}</span>
+                  <span class="text-[var(--yg-text-secondary)]">{{ t(M + 'lastRunExportTasks') }}</span>
                   {{ t(M + 'progressTableLine', retentionProgress.progress.export_tasks) }}
                 </span>
               </div>
@@ -1901,40 +2215,40 @@ onBeforeUnmount(() => {
             </div>
           </div>
         </template>
-        <div v-else class="text-sm text-gray-500 dark:text-gray-400">
+        <div v-else class="phi-srv-dim">
           {{ t(M + 'retentionPreviewEmpty') }}
         </div>
         <template v-if="retentionRun">
           <div class="flex flex-col gap-2">
             <div class="flex items-center gap-2">
-              <div class="text-sm font-medium">{{ t(M + 'lastRunTitle') }}</div>
+              <div class="phi-srv-subtitle">{{ t(M + 'lastRunTitle') }}</div>
               <ElTag v-if="retentionProgress?.last_run?.state === 'failed'" type="danger" size="small">
                 {{ t(M + 'phaseFailed') }}
               </ElTag>
             </div>
             <div class="flex flex-wrap gap-x-8 gap-y-2 text-sm tabular-nums">
               <span>
-                <span class="text-gray-500 dark:text-gray-400">{{ t(M + 'lastRunAppLogs') }}</span>
+                <span class="text-[var(--yg-text-secondary)]">{{ t(M + 'lastRunAppLogs') }}</span>
                 {{ t(M + 'lastRunCountLine', {
                   count: formatCount(retentionRun.app_logs.deleted),
                   remaining: formatCount(retentionRun.app_logs.remaining)
                 }) }}
               </span>
               <span>
-                <span class="text-gray-500 dark:text-gray-400">{{ t(M + 'lastRunExportTasks') }}</span>
+                <span class="text-[var(--yg-text-secondary)]">{{ t(M + 'lastRunExportTasks') }}</span>
                 {{ t(M + 'lastRunCountLine', {
                   count: formatCount(retentionRun.export_tasks.deleted),
                   remaining: formatCount(retentionRun.export_tasks.remaining)
                 }) }}
               </span>
               <span>
-                <span class="text-gray-500 dark:text-gray-400">{{ t(M + 'lastRunBatches') }}</span>
+                <span class="text-[var(--yg-text-secondary)]">{{ t(M + 'lastRunBatches') }}</span>
                 {{ retentionRun.batches }}
               </span>
             </div>
           </div>
         </template>
-        <div class="text-sm text-gray-500 dark:text-gray-400">{{ t(M + 'retentionNote') }}</div>
+        <div class="phi-srv-dim">{{ t(M + 'retentionNote') }}</div>
       </div>
     </ElCard>
 
@@ -1942,18 +2256,21 @@ onBeforeUnmount(() => {
     <ElCard shadow="never">
       <template #header>
         <div class="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
-          <span class="font-medium">{{ t(M + 'backupTitle') }}</span>
+          <div class="flex flex-wrap items-center gap-2">
+            <span class="font-medium">{{ t(M + 'backupTitle') }}</span>
+            <span class="phi-srv-tag">{{ t(M + 'tagBackup') }}</span>
+          </div>
           <ElButton
             text bg
-            :loading="backupRunLoading || displayedBackupState === 'running'"
-            :disabled="displayedBackupState === 'running'"
+            :loading="backupRunLoading || backupPending || displayedBackupState === 'running'"
+            :disabled="displayedBackupState === 'running' || backupPending"
             @click="onRunBackup"
           >
             {{ t(M + 'backupRun') }}
           </ElButton>
         </div>
       </template>
-      <div class="flex flex-col gap-4">
+      <div class="flex flex-col gap-4" :class="{ 'phi-srv-busy': backupRunLoading || backupPending }">
         <ElAlert
           v-if="backupError"
           type="error"
@@ -1988,8 +2305,8 @@ onBeforeUnmount(() => {
             </div>
           </template>
         </ElAlert>
-        <div v-else class="text-sm text-gray-500 dark:text-gray-400">{{ t(M + 'backupIdleEmpty') }}</div>
-        <div class="text-sm text-gray-500 dark:text-gray-400">{{ t(M + 'backupNote') }}</div>
+        <div v-else class="phi-srv-dim">{{ t(M + 'backupIdleEmpty') }}</div>
+        <div class="phi-srv-dim">{{ t(M + 'backupNote') }}</div>
       </div>
     </ElCard>
     </template>
@@ -1998,16 +2315,25 @@ onBeforeUnmount(() => {
     <template v-else>
       <ElCard shadow="never">
         <template #header>
-          <span class="font-medium">{{ t(M + 'title') }}</span>
+          <div class="flex flex-wrap items-center gap-2">
+            <span class="font-medium">{{ t(M + 'title') }}</span>
+            <span class="phi-srv-tag">{{ t(M + 'unitLabel') }}</span>
+          </div>
         </template>
         <div class="flex min-h-24 flex-wrap items-center gap-3">
           <template v-if="loadError && !loading">
-            <span class="text-sm text-gray-500 dark:text-gray-400">{{ loadError }}</span>
+            <span class="phi-srv-dim">{{ loadError }}</span>
             <ElButton text bg :icon="Refresh" @click="refresh">
               {{ t('maintenance.recheck') }}
             </ElButton>
           </template>
-          <span v-else class="text-sm text-gray-500 dark:text-gray-400">{{ t(M + 'loading') }}</span>
+          <!-- 首次读取:骨架占位,别让整页只剩一句「加载中…」 -->
+          <div v-else-if="loading" class="phi-srv-skel w-full">
+            <div class="phi-srv-skel__line phi-srv-skel__line--tall"></div>
+            <div class="phi-srv-skel__line"></div>
+            <div class="phi-srv-skel__line phi-srv-skel__line--short"></div>
+          </div>
+          <span v-else class="phi-srv-dim">{{ t(M + 'loading') }}</span>
         </div>
       </ElCard>
     </template>
@@ -2015,6 +2341,34 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+/* ---------- 页面骨架 ---------- */
+.db-page {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* 分区切换与当前通道标签同一行：一眼知道自己在哪个仪表盘 */
+.db-views {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--yg-space-3);
+}
+
+/* 危险读数（告警条数、错误端点数）：强调色，不与普通读数混在一起 */
+.db-danger {
+  color: var(--phi-srv-danger);
+}
+
+/* 等待类别分布的读数点：菱形，与 HUD 读数条同一套几何 */
+.db-wait-dot {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  transform: rotate(45deg);
+}
+
 .perf-live {
   display: inline-block;
   width: 6px;

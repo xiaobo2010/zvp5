@@ -3,13 +3,13 @@ import { useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user.ts'
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ElCard } from 'element-plus/es/components/card/index.mjs'
 import { ElButton } from 'element-plus/es/components/button/index.mjs'
 import { ElProgress } from 'element-plus/es/components/progress/index.mjs'
 import { Refresh, View, Hide } from '@element-plus/icons-vue'
 import { isAxiosError } from 'axios'
 import { getMyTotp } from '@/api/system/totp.ts'
 import { errorDetailOf, resolveErrorMessage } from '@/utils/errorMessage'
+import ZHexUnit from './components/ZHexUnit.vue'
 
 const router = useRouter()
 const userStore = useUserStore()
@@ -61,10 +61,34 @@ const remainingPct = computed(() => {
 
 // 临近过期转暖色:≤10 秒红,≤24 秒橙(约 17%/40% 窗口,与旧 30 秒窗口阈值等比换算)
 function countdownColor(seconds: number): string {
-  if (seconds <= 10) return '#f56c6c'
-  if (seconds <= 24) return '#e6a23c'
-  return '#409eff'
+  if (seconds <= 10) return '#ff7b75'
+  if (seconds <= 24) return '#ffc266'
+  return '#49f4e2'
 }
+
+/** 徽章语气跟着倒计时走:剩余越少越刺眼,过期直接转危险色。 */
+const countdownTone = computed<'accent' | 'warn' | 'danger' | 'idle'>(() => {
+  if (loading.value) return 'idle'
+  if (!otp.value) return 'idle'
+  if (expired.value) return 'danger'
+  if (remaining.value <= 10) return 'danger'
+  if (remaining.value <= 24) return 'warn'
+  return 'accent'
+})
+
+const countdownValue = computed(() => {
+  if (loading.value) return '···'
+  if (!otp.value) return '—'
+  if (expired.value) return 'EXP'
+  return String(remaining.value)
+})
+
+const countdownHint = computed(() => {
+  if (loading.value) return t('server.hud.loading')
+  if (!otp.value) return t(M + 'loadFailed')
+  if (expired.value) return t(M + 'expired')
+  return t(M + 'unitRemaining', { seconds: remaining.value })
+})
 
 const displayCode = computed(() => {
   return showCode.value && otp.value && !expired.value ? otp.value : '••••••'
@@ -162,69 +186,92 @@ onUnmounted(() => {
 
 <template>
   <!-- 登录动态码:仅 admin 可见(域守卫),接口本身也只允许本人 -->
-  <ElCard v-if="otp" shadow="never">
-    <template #header>
-      <div class="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
-        <span class="font-medium">{{ t(M + 'title') }}</span>
-        <ElButton text bg :icon="Refresh" :loading="loading" @click="refresh">
+  <div class="phi-srv-page">
+    <!-- 倒计时单元:剩余秒数是本页唯一要紧的状态 -->
+    <div class="phi-srv-strip">
+      <ZHexUnit
+        :label="t(M + 'unitLabel')"
+        :value="countdownValue"
+        :tone="countdownTone"
+        size="lg"
+        :hint="countdownHint"
+      />
+    </div>
+
+    <section v-if="otp" class="yg-card">
+      <header class="yg-card__header">
+        <h2 class="yg-card__title">{{ t(M + 'codeTitle') }}</h2>
+        <ElButton text bg :icon="Refresh" :loading="loading" :disabled="loading" @click="refresh">
           {{ t(M + 'refresh') }}
         </ElButton>
+      </header>
+      <div class="yg-card__body totp-body">
+        <div class="flex flex-wrap items-center gap-x-4 gap-y-3">
+          <span class="phi-srv-code">{{ displayCode }}</span>
+          <ElButton
+            text
+            bg
+            :icon="showCode ? Hide : View"
+            :disabled="expired || loading"
+            @click="showCode = !showCode"
+          >
+            {{ showCode ? t(M + 'hide') : t(M + 'show') }}
+          </ElButton>
+        </div>
+        <div class="flex w-full max-w-sm flex-col gap-1">
+          <ElProgress
+            :percentage="remainingPct"
+            :color="countdownColor(remaining)"
+            :show-text="false"
+          />
+          <span class="phi-srv-dim">
+            {{ remainsText }} · {{ t(M + 'refreshInterval') }}
+          </span>
+          <span v-if="loadError" class="phi-srv-dim" style="color: var(--yg-text-danger)">
+            {{ loadError }}
+          </span>
+        </div>
+        <ul class="phi-srv-notes">
+          <li>{{ t(M + 'noteSelfOnly') }}</li>
+          <li>{{ t(M + 'noteUsage') }}</li>
+          <li>{{ t(M + 'noteLog') }}</li>
+        </ul>
       </div>
-    </template>
-    <div class="flex flex-col gap-4">
-      <div class="flex flex-wrap items-center gap-x-4 gap-y-3">
-        <span class="font-mono text-4xl tracking-[0.35em] dark:text-gray-100">
-          {{ displayCode }}
-        </span>
-        <ElButton text bg :icon="showCode ? Hide : View" :disabled="expired" @click="showCode = !showCode">
-          {{ showCode ? t(M + 'hide') : t(M + 'show') }}
-        </ElButton>
-        <span
-          v-if="expired"
-          class="text-sm text-orange-600 dark:text-orange-400"
-        >
-          {{ t(M + 'expired') }}
-        </span>
-      </div>
-      <div class="flex w-full max-w-sm flex-col gap-1">
-        <ElProgress
-          :percentage="remainingPct"
-          :color="countdownColor(remaining)"
-          :show-text="false"
-        />
-        <span class="text-sm text-gray-500 dark:text-gray-400">
-          {{ remainsText }} · {{ t(M + 'refreshInterval') }}
-        </span>
-        <span v-if="loadError" class="text-sm text-red-600 dark:text-red-400">
-          {{ loadError }}
-        </span>
-      </div>
-      <ul class="flex list-disc flex-col gap-1 pl-5 text-sm text-gray-600 dark:text-gray-300">
-        <li>{{ t(M + 'noteSelfOnly') }}</li>
-        <li>{{ t(M + 'noteUsage') }}</li>
-        <li>{{ t(M + 'noteLog') }}</li>
-      </ul>
-    </div>
-  </ElCard>
+    </section>
 
-  <!-- 首次加载 / 读取失败 -->
-  <ElCard v-else shadow="never">
-    <template #header>
-      <span class="font-medium">{{ t(M + 'title') }}</span>
-    </template>
-    <div class="flex min-h-24 flex-wrap items-center gap-3">
-      <template v-if="loadError && !loading">
-        <span class="text-sm text-gray-500 dark:text-gray-400">{{ loadError }}</span>
-        <ElButton text bg :icon="Refresh" @click="refresh">
-          {{ t('maintenance.recheck') }}
-        </ElButton>
-      </template>
-      <span v-else class="text-sm text-gray-500 dark:text-gray-400">{{ t(M + 'loading') }}</span>
-    </div>
-  </ElCard>
+    <!-- 首次加载 / 读取失败 -->
+    <section v-else class="yg-card">
+      <header class="yg-card__header">
+        <h2 class="yg-card__title">{{ t(M + 'title') }}</h2>
+      </header>
+      <div class="yg-card__body">
+        <template v-if="loadError && !loading">
+          <div class="flex flex-wrap items-center gap-3">
+            <span class="phi-srv-dim">{{ loadError }}</span>
+            <ElButton text bg :icon="Refresh" @click="refresh">
+              {{ t('maintenance.recheck') }}
+            </ElButton>
+          </div>
+        </template>
+        <!-- 骨架屏占位:读取期间不再是一句干巴巴的「加载中…」 -->
+        <div v-else-if="loading" class="phi-srv-skel">
+          <div class="phi-srv-skel__line phi-srv-skel__line--tall"></div>
+          <div class="phi-srv-skel__line"></div>
+          <div class="phi-srv-skel__line phi-srv-skel__line--short"></div>
+        </div>
+        <span v-else class="phi-srv-dim">{{ t(M + 'loading') }}</span>
+      </div>
+    </section>
+  </div>
 </template>
 
 <style scoped>
+.totp-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--yg-space-4);
+}
+
 /* EP 进度条 theme 写死 `transition: width 0.6s ease`，而倒计时每 200ms tick 一次，
    过渡永远重启、条一直追不上真实剩余时间。本页把时长压到 200ms 与 tick 对齐。 */
 :deep(.el-progress-bar__inner) {
