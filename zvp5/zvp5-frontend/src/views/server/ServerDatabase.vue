@@ -1280,7 +1280,9 @@ onBeforeUnmount(() => {
 
     <!-- 本地服务器:仅依赖独立 host 端点,首屏不等待 Oracle -->
     <template v-if="activeView === 'host'">
-      <!-- 状态单元:主机在线状态与 CPU / 内存 / 磁盘三个最要紧的占用读数 -->
+      <!-- 状态单元:主机在线状态与 CPU / 内存 / 磁盘三个最要紧的占用读数
+           同页六边形统一用 lg 一档(与其他服务器页一致),层级靠 tone 强调色
+           与 muted 降噪区分,不靠大小堆叠 -->
       <div class="phi-srv-strip" :class="{ 'phi-srv-strip--danger': hostAvailable === false }">
         <ZHexUnit
           :label="t(M + 'tagHost')"
@@ -1293,21 +1295,24 @@ onBeforeUnmount(() => {
           :label="t(M + 'unitHostCpu')"
           :value="hostCpuValue"
           :tone="hostCpuTone"
-          size="sm"
+          size="lg"
+          muted
           :hint="hostCpuHint"
         />
         <ZHexUnit
           :label="t(M + 'unitHostMem')"
           :value="hostMemValue"
           :tone="hostMemTone"
-          size="sm"
+          size="lg"
+          muted
           :hint="hostMemHint"
         />
         <ZHexUnit
           :label="t(M + 'unitHostDisk')"
           :value="hostDiskValue"
           :tone="hostDiskTone"
-          size="sm"
+          size="lg"
+          muted
           :hint="hostDiskHint"
         />
       </div>
@@ -1507,13 +1512,15 @@ onBeforeUnmount(() => {
         :label="t(M + 'unitPool')"
         :value="poolUnitValue"
         :tone="poolUnitTone"
-        size="md"
+        size="lg"
+        muted
         :hint="poolUnitHint"
       />
       <ZHexUnit
         :label="t(M + 'unitSessions')"
         :value="sessionUnitValue"
-        size="sm"
+        size="lg"
+        muted
         :hint="sessionUnitHint"
       />
       <div class="phi-srv-strip__cell">

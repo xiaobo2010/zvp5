@@ -242,5 +242,15 @@ it('renders the database view without runtime errors', async () => {
   expect(wrapper.findAll('.phi-srv-hex').length).toBeGreaterThan(0)
   expect(wrapper.text()).toContain('server.database.unitLabel')
 
+  // 同页六边形统一大小：不得再出现 lg/md/sm 混排
+  const hexes = wrapper.findAll('.phi-srv-hex')
+  const sizes = new Set<string>()
+  for (const hex of hexes) {
+    const cls = hex.classes().find((c) => /^phi-srv-hex--(sm|md|lg)$/.test(c))
+    expect(cls).toBeTruthy()
+    sizes.add(cls as string)
+  }
+  expect(sizes.size).toBe(1)
+
   wrapper.unmount()
 })

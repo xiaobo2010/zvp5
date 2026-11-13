@@ -4,7 +4,6 @@ import { useUserStore } from '@/stores/user.ts'
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ElButton } from 'element-plus/es/components/button/index.mjs'
-import { ElProgress } from 'element-plus/es/components/progress/index.mjs'
 import { Refresh, View, Hide } from '@element-plus/icons-vue'
 import { isAxiosError } from 'axios'
 import { getMyTotp } from '@/api/system/totp.ts'
@@ -51,20 +50,13 @@ const expired = computed(() => {
   return ms !== null && ms <= 0
 })
 
-// 进度条用连续剩余毫秒归一(而非取整后的整数秒),配合 200ms 定时器才真的平滑递减;
-// 配色与「剩余 N 秒」文本仍用整数秒(见 countdownColor / remainsText)
+// 倒计时用连续剩余毫秒归一(而非取整后的整数秒),配合 200ms 定时器才真的平滑递减;
+// 配色与「剩余 N 秒」文本仍用整数秒(见 countdownTone / remainsText)
 const remainingPct = computed(() => {
   const ms = remainingMs.value
   if (ms === null || ms <= 0) return 0
   return Math.min(100, (ms / (OTP_STEP_SECONDS * 1000)) * 100)
 })
-
-// 临近过期转暖色:≤10 秒红,≤24 秒橙(约 17%/40% 窗口,与旧 30 秒窗口阈值等比换算)
-function countdownColor(seconds: number): string {
-  if (seconds <= 10) return '#ff7b75'
-  if (seconds <= 24) return '#ffc266'
-  return '#49f4e2'
-}
 
 /** 徽章语气跟着倒计时走:剩余越少越刺眼,过期直接转危险色。 */
 const countdownTone = computed<'accent' | 'warn' | 'danger' | 'idle'>(() => {
@@ -83,11 +75,12 @@ const countdownValue = computed(() => {
   return String(remaining.value)
 })
 
+/** 徽章说明只讲状态,秒数由徽章读数承担,避免同一个数字出现两次。 */
 const countdownHint = computed(() => {
   if (loading.value) return t('server.hud.loading')
   if (!otp.value) return t(M + 'loadFailed')
-  if (expired.value) return t(M + 'expired')
-  return t(M + 'unitRemaining', { seconds: remaining.value })
+  if (expired.value) return t(M + 'unitExpired')
+  return t(M + 'unitValid')
 })
 
 const displayCode = computed(() => {
@@ -134,7 +127,7 @@ function autoRefreshOnce() {
 function startTimer() {
   stopTimer()
   tick()
-  // 200ms 粒度驱动 now,进度条平滑递减;仅作本地倒计时,不发起请求、不写审计日志
+  // 200ms 粒度驱动 now,六边形里的倒计时扇形才平滑收缩;仅作本地倒计时,不发起请求、不写审计日志
   timer = setInterval(tick, 200)
 }
 
@@ -187,17 +180,6 @@ onUnmounted(() => {
 <template>
   <!-- 登录动态码:仅 admin 可见(域守卫),接口本身也只允许本人 -->
   <div class="phi-srv-page">
-    <!-- 倒计时单元:剩余秒数是本页唯一要紧的状态 -->
-    <div class="phi-srv-strip">
-      <ZHexUnit
-        :label="t(M + 'unitLabel')"
-        :value="countdownValue"
-        :tone="countdownTone"
-        size="lg"
-        :hint="countdownHint"
-      />
-    </div>
-
     <section v-if="otp" class="yg-card">
       <header class="yg-card__header">
         <h2 class="yg-card__title">{{ t(M + 'codeTitle') }}</h2>
@@ -206,31 +188,37 @@ onUnmounted(() => {
         </ElButton>
       </header>
       <div class="yg-card__body totp-body">
-        <div class="flex flex-wrap items-center gap-x-4 gap-y-3">
-          <span class="phi-srv-code">{{ displayCode }}</span>
-          <ElButton
-            text
-            bg
-            :icon="showCode ? Hide : View"
-            :disabled="expired || loading"
-            @click="showCode = !showCode"
-          >
-            {{ showCode ? t(M + 'hide') : t(M + 'show') }}
-          </ElButton>
+        <!-- 动态码与它的剩余时间并排：六边形本身就是倒计时指示器 -->
+        <div class="totp-stage">
+          <div class="totp-code">
+            <span class="phi-srv-code">{{ displayCode }}</span>
+            <ElButton
+              text
+              bg
+              :icon="showCode ? Hide : View"
+              :disabled="expired || loading"
+              @click="showCode = !showCode"
+            >
+              {{ showCode ? t(M + 'hide') : t(M + 'show') }}
+            </ElButton>
+          </div>
+          <div class="totp-countdown">
+            <ZHexUnit
+              :label="t(M + 'unitLabel')"
+              :value="countdownValue"
+              :tone="countdownTone"
+              :progress="remainingPct"
+              size="lg"
+              :hint="countdownHint"
+            />
+            <span class="phi-srv-dim">
+              {{ expired ? remainsText : t(M + 'refreshInterval') }}
+            </span>
+          </div>
         </div>
-        <div class="flex w-full max-w-sm flex-col gap-1">
-          <ElProgress
-            :percentage="remainingPct"
-            :color="countdownColor(remaining)"
-            :show-text="false"
-          />
-          <span class="phi-srv-dim">
-            {{ remainsText }} · {{ t(M + 'refreshInterval') }}
-          </span>
-          <span v-if="loadError" class="phi-srv-dim" style="color: var(--yg-text-danger)">
-            {{ loadError }}
-          </span>
-        </div>
+        <span v-if="loadError" class="phi-srv-dim" style="color: var(--yg-text-danger)">
+          {{ loadError }}
+        </span>
         <ul class="phi-srv-notes">
           <li>{{ t(M + 'noteSelfOnly') }}</li>
           <li>{{ t(M + 'noteUsage') }}</li>
@@ -272,9 +260,24 @@ onUnmounted(() => {
   gap: var(--yg-space-4);
 }
 
-/* EP 进度条 theme 写死 `transition: width 0.6s ease`，而倒计时每 200ms tick 一次，
-   过渡永远重启、条一直追不上真实剩余时间。本页把时长压到 200ms 与 tick 对齐。 */
-:deep(.el-progress-bar__inner) {
-  transition-duration: 200ms;
+/* 动态码与倒计时单元并排：窄屏时自然折行 */
+.totp-stage {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--yg-space-4) var(--yg-space-6);
+}
+
+.totp-code {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--yg-space-3);
+}
+
+.totp-countdown {
+  display: flex;
+  flex-direction: column;
+  gap: var(--yg-space-1);
 }
 </style>

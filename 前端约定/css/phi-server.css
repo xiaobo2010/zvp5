@@ -174,6 +174,14 @@
    MAGI 六边形消息单元
    六边形徽章 = 状态本体；右侧 HUD 标签 + 说明 = 消息文本
    ========================================================================== */
+
+/* 倒计时填充角度：注册为可动画属性，进度变化时扇形平滑收缩 */
+@property --phi-hex-p {
+  syntax: '<percentage>';
+  inherits: true;
+  initial-value: 0%;
+}
+
 .phi-srv-unit {
   display: flex;
   align-items: center;
@@ -202,12 +210,53 @@
   background: var(--phi-panel);
 }
 
+/* ---------- 倒计时徽章 ----------
+   六边形外圈当表盘：剩余时间 = 从正上方顺时针的亮弧，随剩余比例连续收缩，
+   弧前沿带一道高光标出当前刻度；内层六边形挖空，读数始终落在干净的面上。 */
+.phi-srv-hex--progress {
+  background: rgba(6, 9, 12, 0.94);
+}
+
+/* 内层六边形扩大成读数面板，外圈留出表盘环 */
+.phi-srv-hex--progress::before {
+  inset: 7px;
+  z-index: 1;
+}
+
+.phi-srv-hex__progress {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  clip-path: polygon(0 50%, 26% 0, 74% 0, 100% 50%, 74% 100%, 26% 100%);
+  background:
+    /* 弧前沿高光：标出当前刻度 */
+    conic-gradient(
+      from 0deg at 50% 50%,
+      transparent 0 max(0%, calc(var(--phi-hex-p) - 2.5%)),
+      color-mix(in srgb, var(--phi-hex-c) 55%, transparent) max(0%, calc(var(--phi-hex-p) - 2.5%)) var(--phi-hex-p),
+      transparent var(--phi-hex-p) 100%
+    ),
+    /* 剩余时间的亮弧：从正上方顺时针 */
+    conic-gradient(
+      from 0deg at 50% 50%,
+      var(--phi-hex-c) 0 var(--phi-hex-p),
+      transparent var(--phi-hex-p) 100%
+    );
+  transition: --phi-hex-p 200ms linear;
+}
+
+/* 读数压在表盘环之上 */
+.phi-srv-hex--progress .phi-srv-hex__value {
+  z-index: 2;
+  text-shadow:
+    0 0 3px var(--phi-panel),
+    0 0 12px color-mix(in srgb, var(--phi-hex-c) 55%, transparent);
+}
+
 .phi-srv-hex__value {
   position: relative;
   z-index: 1;
   max-width: 100%;
-  padding: 0 14%;
-  overflow: hidden;
   color: var(--phi-hex-c);
   font: 700 15px / 1.05 var(--phi-hud);
   letter-spacing: 0.04em;
@@ -216,7 +265,15 @@
   font-variant-numeric: tabular-nums;
   text-shadow: 0 0 12px color-mix(in srgb, var(--phi-hex-c) 55%, transparent);
   white-space: nowrap;
+}
+
+/* 读数本体：字号由组件按六边形可用宽度实测后收窄，这里只管排版 */
+.phi-srv-hex__text {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
   text-overflow: ellipsis;
+  vertical-align: middle;
 }
 
 .phi-srv-hex--sm {
