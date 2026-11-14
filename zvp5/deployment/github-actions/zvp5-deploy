@@ -38,6 +38,8 @@ MAX_ARCHIVE_BYTES="${ZVP5_DEPLOY_MAX_ARCHIVE_BYTES:-268435456}"
 
 CHANGED_COMPONENT=""
 PREPARED_VENV=""
+# 失败时由 handle_error 清掉的解包目录。
+STAGING_DIR=""
 
 log() {
   printf '[zvp5-deploy] %s\n' "$*"
@@ -361,6 +363,7 @@ deploy_frontend() {
 
   rm -rf "$staging" "$previous"
   ensure_dir "$staging" 0755
+  STAGING_DIR="$staging"
   tar -xzf "$archive" -C "$staging" --no-same-owner --no-same-permissions
   [[ -f "$staging/index.html" ]] || die "frontend archive does not contain index.html"
   find "$staging" -type f \( \
@@ -370,7 +373,9 @@ deploy_frontend() {
 
   CHANGED_COMPONENT=frontend
   mv "$FRONTEND_DIR" "$previous"
+  STAGING_DIR="$staging"
   mv "$staging" "$FRONTEND_DIR"
+  STAGING_DIR=""
   if [[ "${ZVP5_SKIP_CHOWN:-0}" != "1" ]]; then
     chown -R "$FRONTEND_OWNER" "$FRONTEND_DIR"
   fi
@@ -409,7 +414,11 @@ deploy_backend() {
 
   rm -rf "$staging"
   ensure_dir "$staging" 0755
+  STAGING_DIR="$staging"
   tar -xzf "$archive" -C "$staging" --no-same-owner --no-same-permissions
+  # tar 按 umask 027 落成 root:root 0640，而下一步 pip 是以服务用户跑的，
+  # 读不到 requirements.txt。先交接属主，后面 rsync -a 会把属主带到部署目录。
+  set_owner "$staging"
   prepare_backend_venv "$revision" "$deployment_id" "$staging"
 
   CHANGED_COMPONENT=backend
@@ -419,6 +428,7 @@ deploy_backend() {
   restart_service
   health_check
   rm -rf "$staging"
+  STAGING_DIR=""
   prune_backups backend
   prune_venvs
   CHANGED_COMPONENT=""
@@ -506,6 +516,10 @@ rollback_backend() {
 handle_error() {
   local status=$?
   trap - EXIT
+  if [[ -n "${STAGING_DIR:-}" ]]; then
+    rm -rf "$STAGING_DIR" || true
+    STAGING_DIR=""
+  fi
   if [[ -n "$CHANGED_COMPONENT" ]]; then
     log "Deployment failed; rolling back $CHANGED_COMPONENT" >&2
     if [[ "$CHANGED_COMPONENT" == "frontend" ]]; then
