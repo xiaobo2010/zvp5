@@ -15,7 +15,7 @@
   名单里没有 CN，所以国内住宅 IP 一直是通的。
 - `tcpdump -ni any 'tcp and port 443 and host <BACKEND_IP>'`：后端发起的三次
   SYN 全部到达 `ens3`，前端不回 SYN-ACK —— 是本机 netfilter 丢弃，不是上游路由。
-- 修复前后同一组探针：后端 / 另一处主机 / 另一处主机三处出口从 `timeout` 变为 `200 + HTTP/2`。
+- 修复前后同一组探针：后端与另外两处境外出口从 `timeout` 变为 `200 + HTTP/2`。
 
 **结论**：11-01 的「事故」是探针出口落在被 DROP 的地区（东亚、东南亚、北美
 多在名单里），不是前端机房的问题。国内用户当时并未受影响。
@@ -72,7 +72,7 @@
 
 | 项 | 方法 | 结果 |
 |---|---|---|
-| 前端 443 可达性 | 后端 / 另一处主机 / 另一处主机三处出口 `curl --resolve ...:443:<FRONTEND_IP>` | 修复前 timeout → 修复后 `200`，`http_version=2` |
+| 前端 443 可达性 | 后端与另外两处境外出口 `curl --resolve ...:443:<FRONTEND_IP>` | 修复前 timeout → 修复后 `200`，`http_version=2` |
 | DNS | 8.8.8.8（各处出口各自解析）+ DoH | 均为 `<FRONTEND_IP>` |
 | 首页 | `curl -A Mozilla/5.0 https://zvp.../` | `HTTP/2 200`，gzip 后 wire 795B |
 | 主 bundle | 带 `Accept-Encoding: gzip` | `HTTP/2 200`，`content-encoding: gzip`，168134B（原 445KB） |

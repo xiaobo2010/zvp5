@@ -37,7 +37,7 @@ workflow，就能读到 10 条生产 secret。转公开是为了拿回这些闸�
 重写规则（同一份映射同时作用于文件内容与提交信息）：
 
 - `zvp-backend` → `zvp-backend`、`zvp-frontend` → `zvp-frontend`、`另一处主机` → `另一处主机`
-- `另一处主机` → 另一处主机、`另一处主机` → 另一处主机
+- 第三方主机（ARM 另一处主机、另一处主机、另一处主机）一律不点名，统一写成「另一处主机 / 另一处境外出口」
 - 后端 / 前端 / 后端 / 前端 → 后端 / 前端；另一处主机 → 另一处主机；数据库侧 → 数据库侧
 - Cloudflare account id → `<CF_ACCOUNT_ID>`，DNS record id → `<CF_RECORD_ID>`
 - 真实主机 IP → `<BACKEND_IP>` / `<FRONTEND_IP>` / `<CLIENT_IP>`
@@ -67,7 +67,7 @@ GitHub 自己 GC 之前一直在。所以：
 | 1 | `README.md:206` 的 `users \| 1781` 行数 | **不改**（用户裁定：用户行数无所谓） |
 | 2 | 学海相关措辞 | **已软化**：去掉「后门 / 漏洞」等定性词，改成「含设备标识采集、任意 URL 代签与外部跳转等未经审计能力」的事实陈述（`README.md` / `zvp5/README.md` / `STATUS.md` / `REFERENCE_TREES_ALIGNMENT.md`） |
 | 3 | Cloudflare account id | **已从当前树彻底清除**：`canary.yml` 改为只读 `vars.CLOUDFLARE_ACCOUNT_ID`（值放在 canary environment）；文档里的 account id 与 DNS `record_id` 全部换 `<CF_ACCOUNT_ID>` / `<CF_RECORD_ID>` |
-| 4 | 服务商别名与机房地理 | **已处理**：主机别名统一成 `zvp-backend` / `zvp-frontend`，地理描述统一成「后端 / 前端」；另一处主机、ARM 另一处主机、另一处主机不再点名，只按角色描述。当前树只剩前后端两台的身份 |
+| 4 | 服务商别名与机房地理 | **已处理**：主机别名统一成 `zvp-backend` / `zvp-frontend`，地理描述统一成「后端 / 前端」；第三方主机不再点名，只按「另一处主机 / 另一处境外出口」描述。当前树只剩前后端两台的身份 |
 | 5 | LICENSE（MIT，署名 `XiaoBo Huang`） | **保留** |
 
 ### 关于 account id 的历史残留
