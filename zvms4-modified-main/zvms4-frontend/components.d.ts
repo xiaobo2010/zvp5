@@ -103,6 +103,7 @@ declare module 'vue' {
     'ZSelectClass 2': typeof import('./src/components/form/ZSelectClass 2.vue')['default']
     ZSelectPerson: typeof import('./src/components/form/ZSelectPerson.vue')['default']
     ZSystemAuthDialog: typeof import('./src/components/system/ZSystemAuthDialog.vue')['default']
+    ZSystemSettings: typeof import('./src/components/manage/ZSystemSettings.vue')['default']
     ZTime: typeof import('./src/components/tags/ZTime.vue')['default']
     ZTimeJudge: typeof import('./src/components/activity/ZTimeJudge.vue')['default']
     'ZTimeJudge 2': typeof import('./src/components/activity/ZTimeJudge 2.vue')['default']
