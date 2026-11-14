@@ -6,7 +6,7 @@
 
 > **路径策略变更（2026-10-19）**：本文档只覆盖附件上传（Oracle BLOB），不涉及系统文件管理。另行修订：`/api/system/files` 的**系统目录黑名单已放开**（`/etc`、`/root`、`/usr`、`/dev`、`/var/lib/*` 等由 OS 权限裁决），仅保留 `/proc`、`/sys` 两个虚拟文件系统保护。详见 `V4242_STAGE2_CONTRACT.md` §3.3。
 >
-> **2026-10-29 取代上一条**：黑名单方案改为**根目录白名单 jail**——系统文件管理只允许 `/www/zvms4` 与 `/home`，越界 403 `FILES_ROOT_FORBIDDEN`。见 §13；附件 API 本身不受影响。
+> **2026-10-29 取代上一条**：黑名单方案改为**根目录白名单 jail**——系统文件管理只允许 `/www/zvms4`，越界 403 `FILES_ROOT_FORBIDDEN`。见 §13；附件 API 本身不受影响。（2026-11-14 修订：`/home` 分支因生产 systemd `ProtectHome=true` 从未生效，正式从白名单删除。）
 
 ---
 
@@ -338,7 +338,7 @@ oracle 审计追加确认：`file_links` 吊销表**不需要**；`owner_oid` **
 系统文件管理（`/api/system/files`）与 ZVAgent 的 `fs_*` 工具共享同一个路径判定器 `services/file_ops.py`。本轮把「靠 OS 权限裁决」改成**显式白名单**：
 
 ```python
-ALLOWED_ROOTS = ("/www/zvms4", "/home")
+ALLOWED_ROOTS = ("/www/zvms4",)
 ROOT_FORBIDDEN_CODE = "FILES_ROOT_FORBIDDEN"
 ```
 
@@ -346,7 +346,7 @@ ROOT_FORBIDDEN_CODE = "FILES_ROOT_FORBIDDEN"
 
 1. 输入必须是绝对路径；拒绝 NUL / 换行。
 2. `os.path.realpath` 展开 `..` 与符号链接。
-3. 真实路径必须等于某个根，或以 `root + os.sep` 开头——按**路径段**比较，`/home2` 不会因为以 `/home` 开头被放行。
+3. 真实路径必须等于某个根，或以 `root + os.sep` 开头——按**路径段**比较，`/www/zvms40` 不会因为以 `/www/zvms4` 开头被放行。
 4. 再判 `/proc` / `/sys` 虚拟文件系统与凭据文件黑名单（`aes_key.txt`、`*.pem`、`settings.py`、`.env*`、wallet 等）。
 
 效果：

@@ -11,7 +11,7 @@
    不再要求双人码，只写审计。需求明确取消这两类的双人审批（日常改文本、清临时
    文件太频繁，双人码把流程卡成瓶颈），留痕由 ``system_file`` 审计承担。
    读操作不过双人码，但同样受根目录 jail 约束（``services.file_ops.ALLOWED_ROOTS``：
-   只有站点根与家目录可访问，越界回 403 ``FILES_ROOT_FORBIDDEN``），``/proc``、
+   只有站点根可访问，越界回 403 ``FILES_ROOT_FORBIDDEN``），``/proc``、
    ``/sys`` 两个虚拟文件系统另有单独拒绝面。
 
 同步文件 IO 一律经 ``asyncio.to_thread`` 执行：本服务是单 uvicorn worker，直接在

@@ -169,7 +169,7 @@ uvicorn main:app --host 0.0.0.0 --port 8000
 - **引擎与模型**：run 详情支持 `since_msg_seq` 增量消息；会话模型建时锁定（PATCH → 409 `AI_CONVERSATION_MODEL_LOCKED`）；会话级思考强度 `low/medium/high`；模型上下文窗口支持 `{"id","context"}` 形态并在保存时 best-effort 探测上游 `/models`，`/v1/models` 每项带 `context`（可 null）。
 - **ZVAgent 工具**：新增只读 `ban_history`（封禁流水、按规则历史档位、30 天违规批次、规则 penalties 梯度、绑定设备计数，学海 ID 打码）。
 - **数据库**：V045–V048（`app_logs` 两列、`ai_conversations.thinking` / `scene`、`ai_prompt_audit` 四列、索引与死表 `logs` 下线、保留窗口与 `created_at` 默认值）。细节见 `zvp5-backend-python/docs/database-status.md`。
-- **文件与场景**：系统文件与 agent `fs_*` 共同受根目录 jail（`/www/zvms4`、`/home`，越界 403 `FILES_ROOT_FORBIDDEN`），前端快捷目录同步收敛；`POST /api/ai/ocr/file` 支持按站点路径同步识别预览图片；`POST /api/ai/scenes/{scene}/runs` 提供只读场景（`terminal` / `file_edit`）。
+- **文件与场景**：系统文件与 agent `fs_*` 共同受根目录 jail（仅 `/www/zvms4`；`/home` 分支因生产 `ProtectHome=true` 未生效已删除，越界 403 `FILES_ROOT_FORBIDDEN`），前端快捷目录同步收敛；`POST /api/ai/ocr/file` 支持按站点路径同步识别预览图片；`POST /api/ai/scenes/{scene}/runs` 提供只读场景（`terminal` / `file_edit`）。
 - **前端**：会话运行中逐轮见回复、模型只读展示、思考强度三档、归档会话视图与恢复、平台管理添加班级（`POST /api/v1/groups`）、日志卡片 IP/UA 与事件 label 对齐、文件预览 OCR / 编辑器「AI 分析」/ 终端「智能分析」。
 
 契约细节：`docs/AI_GATEWAY_API.md`、`docs/AI_CONVERSATION_DESIGN.md`、`docs/AI_AGENT_OPS_DESIGN.md`、`docs/FILES_API_DESIGN.md`。

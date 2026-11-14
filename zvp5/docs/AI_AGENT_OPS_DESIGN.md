@@ -380,6 +380,6 @@ AI 产品对外统一称 **ZVAgent**。文档、界面文案、日志描述里�
 
 `fs_list` / `fs_stat` / `fs_read` / `fs_write` / `fs_mkdir` / `fs_rename` / `fs_delete` / `fs_chmod` 全部走 `services/file_ops`，与 HTTP 文件管理端点共用同一条边界：
 
-- 只允许 `ALLOWED_ROOTS = ("/www/zvms4", "/home")`；判定在 `realpath` **之后**按路径段比较（`/home2` 不会被 `/home` 放行），`..` 与符号链接都逃不出去。
+- 只允许 `ALLOWED_ROOTS = ("/www/zvms4",)`；判定在 `realpath` **之后**按路径段比较（`/www/zvms40` 不会被 `/www/zvms4` 放行），`..` 与符号链接都逃不出去。（2026-11-14：`/home` 分支因生产 `ProtectHome=true` 未生效而删除。）
 - 越界 → 403 `FILES_ROOT_FORBIDDEN`；`/proc` / `/sys` 与凭据文件黑名单仍是独立拒绝面。
 - 因此「agent 能读全盘」不再成立：它能读的范围与管理员在文件管理器里能点的范围完全一致。

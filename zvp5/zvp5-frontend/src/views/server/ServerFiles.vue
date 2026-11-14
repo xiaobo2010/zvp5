@@ -40,7 +40,9 @@ const { t } = useI18n()
 
 const DEFAULT_PAGE_SIZE = 200
 // 后端只放行这两个根,页面的快捷入口与手输校验都以此为唯一口径
-const QUICK_DIRS = ['/www/zvms4', '/home']
+// 2026-11-14 安全对齐:后端 ALLOWED_ROOTS 已收敛到 /www/zvms4(生产 systemd
+// ProtectHome=true 使 /home 分支从未生效),前端快捷目录同步收敛。
+const QUICK_DIRS = ['/www/zvms4']
 
 // 竖屏判定与 App.vue / UserNav.vue 同阈值(宽高比 ≤ 6/5):
 // 竖屏底部是悬浮药丸导航,左侧目录栏会让表格只剩几十像素,必须改为上下排布。
@@ -131,7 +133,7 @@ async function load() {
   }
 }
 
-// 与后端同一判定:/home 放行、/home2 不放行(前缀必须落在分隔符边界上)
+// 与后端同一判定:/www/zvms4 放行、/www/zvms40 不放行(前缀必须落在分隔符边界上)
 function isAllowedPath(path: string): boolean {
   return QUICK_DIRS.some((root) => path === root || path.startsWith(`${root}/`))
 }

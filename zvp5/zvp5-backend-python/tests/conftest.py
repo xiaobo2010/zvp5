@@ -77,9 +77,9 @@ def _isolated_state_db(tmp_path_factory, monkeypatch) -> Path:
 def _files_jail_allows_tmp(monkeypatch) -> None:
     """文件根目录 jail 的测试豁免：用例都在 pytest 的 tmp 目录里造文件。
 
-    生产白名单仍是 ``services.file_ops.ALLOWED_ROOTS``（站点根 + 家目录）；这里只
+    生产白名单仍是 ``services.file_ops.ALLOWED_ROOTS``（站点根）；这里只
     把系统临时目录并进来，否则所有 ``tmp_path`` 用例都会撞 403
-    ``FILES_ROOT_FORBIDDEN``。jail 的边界用例（/etc、/root、/home2、软链逃逸）
+    ``FILES_ROOT_FORBIDDEN``。jail 的边界用例（/etc、/root、/www/zvms40、软链逃逸）
     不受影响：它们断言的是白名单**之外**的路径。
     """
     import tempfile
