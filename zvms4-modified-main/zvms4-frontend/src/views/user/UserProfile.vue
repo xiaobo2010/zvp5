@@ -354,10 +354,24 @@ onMounted(async () => {
   padding: 0 16px;
   border-radius: 0;
   font-size: 15px;
+  color: var(--yg2-text);
+  background: transparent;
+  transition:
+    background-color 200ms var(--yg2-ease-out),
+    color 200ms var(--yg2-ease-out),
+    padding-left 200ms var(--yg2-ease-out);
+}
+
+.profile-action:hover {
+  background: var(--yg2-surface-sunken);
+}
+
+.profile-action:active {
+  background: color-mix(in srgb, var(--yg2-accent) 10%, transparent);
 }
 
 .profile-action + .profile-action {
-  border-top: 1px solid var(--yg-border-default);
+  border-top: 1px solid var(--yg2-sep);
 }
 
 .profile-switch {
