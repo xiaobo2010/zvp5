@@ -35,6 +35,7 @@ import './assets/styles/v2/tokens.css'
 import './assets/styles/v2/materials.css'
 import './assets/styles/v2/typography.css'
 import './assets/styles/v2/controls.css'
+import './assets/styles/v2/liquid.css'
 import './assets/styles/v2/patterns.css'
 import './assets/styles/v2/shell.css'
 import './assets/styles/v2/ep-bridge.css'
@@ -47,6 +48,7 @@ import { installTableExpandMotion } from './plugins/tableExpandMotion'
 
 // 工作台「本地预览」点选桥接：仅 DEV + 被工作台 iframe 嵌入时启用
 import { installPreviewPicker } from './dev/previewPicker'
+import { installLiquidPointer } from './utils/liquidPointer'
 
 const app = createApp(App)
 
@@ -61,5 +63,6 @@ app.use(ElementPlus, {
 
 installTableExpandMotion()
 installPreviewPicker()
+installLiquidPointer()
 
 app.mount('#app')

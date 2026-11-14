@@ -2,7 +2,7 @@
 import ZGroupUserList from '@/components/group/ZGroupUserList.vue'
 import { useRoute, useRouter } from 'vue-router'
 
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import api from '@/api'
 import type { Group } from '@/../types'
 import { useWindowSize } from '@vueuse/core'
@@ -10,6 +10,7 @@ import { useUserStore } from '@/stores/user.ts'
 import { ZActivityList } from '@/components'
 import ZGroupUserTimeList from '@/components/group/ZGroupUserTimeList.vue'
 import { useI18n } from 'vue-i18n'
+import Segmented from '@/ui/ux/Segmented.vue'
 import ZUserModification from '@/components/group/ZUserModification.vue'
 import ZGroupTimeStatistics from '@/components/group/ZGroupTimeStatistics.vue'
 
@@ -116,6 +117,13 @@ const curPage = route.params.action?.toString()
 
 const tab = ref(curPage && curPage !== '' ? curPage : 'users')
 
+const segmentItems = computed(() =>
+  (group.value?.type !== 'class' ? tabs2.value : tabs.value).map((item) => ({
+    value: item.value,
+    label: t(('manage.groupDetails.tabs.' + item.value) as string)
+  }))
+)
+
 watch(tab, () => {
   router.replace('/group/' + id.value + '/' + (tab.value ?? 'users'))
 })
@@ -139,18 +147,7 @@ watch(tab, () => {
       </div>
     </header>
 
-    <nav class="yg2-segment group-tabs">
-      <button
-        v-for="item in group?.type !== 'class' ? tabs2 : tabs"
-        :key="item.value"
-        class="yg2-segment__item"
-        :class="{ 'is-active': tab === item.value }"
-        type="button"
-        @click="tab = item.value"
-      >
-        {{ t(('manage.groupDetails.tabs.' + item.value) as string) }}
-      </button>
-    </nav>
+    <Segmented v-model="tab" class="group-tabs" :items="segmentItems" aria-label="小组面板" />
     <div class="yg2-panel">
       <ZGroupUserList v-if="tab === 'users'" :id="id" />
       <ZActivityList v-else-if="tab === 'activities'" :class-target="id" role="class" embed />

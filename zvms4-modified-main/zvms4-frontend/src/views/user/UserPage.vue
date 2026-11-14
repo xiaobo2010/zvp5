@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user.ts'
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import Segmented from '@/ui/ux/Segmented.vue'
 import { ElLoading, ElButton, ElMessageBox, ElNotification, ElDialog, ElInput, ElAlert } from 'element-plus'
 import { ZActivityList } from '@/components'
 import type { User } from '@/../types'
@@ -166,6 +167,15 @@ const curPage = route.params.action?.toString()
 
 const current = ref(curPage && curPage !== '' ? curPage : 'info')
 
+const segmentItems = computed(() =>
+  tabs.value
+    .filter((tab) => tab.display !== false)
+    .map((tab) => ({
+      value: tab.value,
+      label: t(('manage.personalPanel.tabs.' + tab.value) as string)
+    }))
+)
+
 const tabs = ref<{ value: string; display?: boolean }[]>(
   [
     { value: 'info' },
@@ -234,18 +244,12 @@ watch(
       </div>
     </header>
 
-    <nav class="yg2-segment user-tabs">
-      <button
-        v-for="tab in tabs"
-        :key="tab.value"
-        class="yg2-segment__item"
-        :class="{ 'is-active': current === tab.value }"
-        type="button"
-        @click="current = tab.value"
-      >
-        {{ t(('manage.personalPanel.tabs.' + tab.value) as string) }}
-      </button>
-    </nav>
+    <Segmented
+      v-model="current"
+      class="user-tabs"
+      :items="segmentItems"
+      aria-label="个人面板"
+    />
     <ElAlert
       v-if="user?.banned"
       type="error"

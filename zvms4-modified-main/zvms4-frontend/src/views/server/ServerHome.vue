@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { RouterView, useRoute, useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user.ts'
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import Segmented from '@/ui/ux/Segmented.vue'
 
 
 interface SegmentedTab {
@@ -20,6 +21,13 @@ if (!userStore.position.includes('admin')) {
 }
 
 const current = ref('maintenance')
+
+const segmentItems = computed(() =>
+  tabs.value.map((item) => ({
+    value: item.value,
+    label: t(('server.tabs.' + item.value) as string)
+  }))
+)
 
 const tabs = ref<SegmentedTab[]>([
   {
@@ -81,18 +89,12 @@ watch(current, () => {
       </div>
     </header>
 
-    <nav class="yg2-segment server-tabs">
-      <button
-        v-for="item in tabs"
-        :key="item.value"
-        class="yg2-segment__item"
-        :class="{ 'is-active': current === item.value }"
-        type="button"
-        @click="current = item.value"
-      >
-        {{ t(('server.tabs.' + item.value) as string) }}
-      </button>
-    </nav>
+    <Segmented
+      v-model="current"
+      class="server-tabs"
+      :items="segmentItems"
+      aria-label="服务器管理"
+    />
 
     <RouterView />
   </div>

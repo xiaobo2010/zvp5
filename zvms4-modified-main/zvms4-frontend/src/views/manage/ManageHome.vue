@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { useRoute, useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user.ts'
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import Segmented from '@/ui/ux/Segmented.vue'
 
 
 import ZGroupUserList from '@/components/group/ZGroupUserList.vue'
@@ -46,6 +47,13 @@ const current = ref(
     (curPage !== 'roles' || isAdmin)
     ? curPage
     : 'groups'
+)
+
+const segmentItems = computed(() =>
+  tabs.value.map((item) => ({
+    value: item.value,
+    label: t(('manage.manage.tabs.' + item.value) as string)
+  }))
 )
 
 const tabs = ref<SegmentedTab[]>([
@@ -111,18 +119,12 @@ watch(
       </div>
     </header>
 
-    <nav class="yg2-segment manage-tabs">
-      <button
-        v-for="item in tabs"
-        :key="item.value"
-        class="yg2-segment__item"
-        :class="{ 'is-active': current === item.value }"
-        type="button"
-        @click="current = item.value"
-      >
-        {{ t(('manage.manage.tabs.' + item.value) as string) }}
-      </button>
-    </nav>
+    <Segmented
+      v-model="current"
+      class="manage-tabs"
+      :items="segmentItems"
+      aria-label="平台管理"
+    />
     <div class="yg2-panel">
       <ZGroupList v-if="current === 'groups'" />
       <ZGroupUserList v-else-if="current === 'users'" id="" />

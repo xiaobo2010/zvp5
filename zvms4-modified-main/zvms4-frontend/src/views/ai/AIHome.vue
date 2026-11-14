@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { useRoute, useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user.ts'
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import Segmented from '@/ui/ux/Segmented.vue'
 import ZAiChat from '@/components/ai/ZAiChat.vue'
 import ZAiQuotaPanel from '@/components/ai/ZAiQuotaPanel.vue'
 import ZAiKeysAdmin from '@/components/ai/ZAiKeysAdmin.vue'
@@ -46,6 +47,10 @@ if (curPage && (!VALID_CURRENT.includes(curPage) || !isVisible(curPage))) {
 
 const current = ref(
   curPage && VALID_CURRENT.includes(curPage) && isVisible(curPage) ? curPage : 'chat'
+)
+
+const segmentItems = computed(() =>
+  tabs.value.map((item) => ({ value: item.value, label: t('ai.tabs.' + item.value) }))
 )
 
 const tabs = ref<SegmentedTab[]>([
@@ -97,18 +102,7 @@ watch(
       </div>
     </header>
 
-    <nav class="yg2-segment ai-tabs">
-      <button
-        v-for="item in tabs"
-        :key="item.value"
-        class="yg2-segment__item"
-        :class="{ 'is-active': current === item.value }"
-        type="button"
-        @click="current = item.value"
-      >
-        {{ t('ai.tabs.' + item.value) }}
-      </button>
-    </nav>
+    <Segmented v-model="current" class="ai-tabs" :items="segmentItems" aria-label="AI 网关" />
 
     <div class="ai-page__panel">
       <ZAiChat v-if="current === 'chat'" />
