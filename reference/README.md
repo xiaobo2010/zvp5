@@ -8,7 +8,7 @@
 | `zvp5-gitlab/` | `zvp5-gitlab`（已删除） | 独立审核流、FAQ/资源、定向 WebSocket 推送的模型与骨架 | 未完成设计稿，代码本身不可运行 |
 
 删除原参考树前已完成能力对账，见
-`zvms4-modified-main/docs/REFERENCE_TREES_ALIGNMENT.md`。
+`zvp5/docs/REFERENCE_TREES_ALIGNMENT.md`。
 
 ## 使用约束
 

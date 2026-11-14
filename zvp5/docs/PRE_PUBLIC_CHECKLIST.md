@@ -11,6 +11,10 @@ workflow，就能读到 10 条生产 secret。转公开是为了拿回这些闸�
 
 ## 一、已经做完的（2026-11-14）
 
+> 2026-11-14 晚做过一次全历史重写，下面这些提交的 SHA 都已变化；表中的
+> 7 位短 SHA 只用于指认「哪一次改动」，不再能在远端解析。旧 SHA 对应关系只
+> 保存在本机备份 bundle 里（见 §二）。
+
 | 项 | 提交 | 说明 |
 | --- | --- | --- |
 | 主机 IP 脱敏 | `bf87f20` | 12 个文档/README 里 50 处真实 IP → `<BACKEND_IP>` / `<FRONTEND_IP>` / `<CLIENT_IP>`；端口、路径、服务别名保留。约定见 `REDACTION_POLICY.md` |
@@ -18,49 +22,43 @@ workflow，就能读到 10 条生产 secret。转公开是为了拿回这些闸�
 | 扫描配置 | `bedf6c2` / `1ec433a` | 两份 `.gitleaks*.toml` 去掉 `reference/xuehai/` 放行——这条放行正是此前扫描全绿的原因 |
 | 归档不占门禁 | `bedf6c2` | `ci.yml` 的 `paths-ignore` 加 `reference/**`；纯归档改动不再跑全量门禁 |
 
-## 二、历史里还没解决的问题
+## 二、历史重写（2026-11-14 已完成）
 
-公开是把 `.git` 一起交出去，当前 `.git` 有 **39 MB**：
+`git filter-repo` 跑了一遍全历史重写，`main` / `v5-canary` / `feat/yg-redesign-v2` /
+5 个 dependabot 分支一起强推。结果：
 
-| 内容 | 规模 | 问题 |
+| 项 | 重写前 | 重写后 |
 | --- | --- | --- |
-| `reference/xuehai/`（2 个提交） | 216 KB | **第三方签名 KEY 仍在历史里**，删当前树删不掉它 |
-| `zvms4-modified-main/`（448 个提交） | 历史里约 **67 MB** blob | 已删除的旧代码线，含当时的 `.env.production`、测试夹具 |
-| 全历史扫描命中 | 若干 | 都是测试夹具（假的 `api_key`、假 JWT），无生产密钥 |
+| `main` 提交数 | 531 | **531**（一个没少） |
+| `.git` 体积 | 39 MB | **19 MB** |
+| 提交信息里的服务商/机房词 | 39 条 | 0 |
+| 树内容里的账号 id / 别名 / 地理词 / 真实 IP | 若干 | 0（全历史逐 commit 扫过） |
 
-所以「删文件」只解决当前树。要连历史一起干净，只有两条路：
+重写规则（同一份映射同时作用于文件内容与提交信息）：
 
-### 方案 A：重写历史（保留 523 个提交）
+- `zvp-backend` → `zvp-backend`、`zvp-frontend` → `zvp-frontend`、`另一处主机` → `另一处主机`
+- `另一处主机` → 另一处主机、`另一处主机` → 另一处主机
+- 后端 / 前端 / 后端 / 前端 → 后端 / 前端；另一处主机 → 另一处主机；数据库侧 → 数据库侧
+- Cloudflare account id → `<CF_ACCOUNT_ID>`，DNS record id → `<CF_RECORD_ID>`
+- 真实主机 IP → `<BACKEND_IP>` / `<FRONTEND_IP>` / `<CLIENT_IP>`
+- 三个文件名带地理/服务商信息的文档整条历史改名
 
-```bash
-git filter-repo --invert-paths \
-  --path reference/xuehai --path zvms4-modified-main
-```
+**没有动**（都是明确决定）：`reference/xuehai/` 里的第三方签名 KEY 仍在历史里——
+它要留着做设备/身份追踪，代价就是公开后它一并可见。真要抹掉，加一条
+`--replace-text` 规则再跑一次同样的流程即可。
 
-- 好处：`git log` / blame / 提交叙事全保留，`.git` 会从 39 MB 掉到个位数。
-- 代价：**所有 SHA 全变**。`/www/zvp5/.github-actions/backend.current`、现存
-  release tag、部署记录里的 SHA 全部作废，得重新打 tag。远端要强制推送一次。
+备份：`~/zvp5-pre-rewrite-20261114.bundle`（全 refs 的 bundle，含旧 SHA 的全部
+对象）。要回滚就在干净目录 `git clone <bundle>` 后重新强推。
 
-### 方案 B：新仓库只推当前树（推荐）
+### 还没清掉的：GitHub 侧旧对象
 
-```bash
-# 在一个干净目录里
-git clone --depth 1 git@github.com:xiaobo2010/zvp5.git zvp5-public
-cd zvp5-public
-rm -rf .git && git init -b main
-git add -A && git commit -m "Initial commit"
-git remote add origin git@github.com:xiaobo2010/zvp5-public.git
-git push -u origin main
-```
+强推只是把分支指向新历史，**旧对象仍在 GitHub 仓库里，按 SHA 仍然能访问**，
+GitHub 自己 GC 之前一直在。所以：
 
-- 好处：历史零负担，公开前不再需要逐 commit 审计；旧私有库原样留着当档案。
-- 代价：丢掉 523 个提交的 blame。对当前阶段（v5 刚起步、文档里本来就写满了
-  对账记录）影响不大。
-- 注意：新仓库的 Actions Secrets / Variables / Environments **要重新配**一遍，
-  workflows 里的 `github.repository` 引用如果是硬编码 `xiaobo2010/zvp5` 也要改。
-
-> 权衡：A 保历史但会让现网部署记录失效并需要一次 force push；B 干净但要从头配
-> secret。你更在意哪一头，就选哪条。
+- 若只是「别人不容易翻到」→ 现状够用；
+- 若要真的断掉旧 SHA 的可达性 → 只有两条路：让 GitHub Support 回收，或者按
+  方案 B 新建仓库只推当前树（新仓库没有旧对象）。转公开前建议走后者：把重写后
+  的 history 推到新仓库，旧私有库原样留档。
 
 ## 三、逐项裁定（2026-11-14）
 
