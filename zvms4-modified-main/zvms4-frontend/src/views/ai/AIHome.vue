@@ -12,13 +12,14 @@ import ZAiQuotaAdmin from '@/components/ai/ZAiQuotaAdmin.vue'
 import ZAiHealthPanel from '@/components/ai/ZAiHealthPanel.vue'
 import ZAiLogsAdmin from '@/components/ai/ZAiLogsAdmin.vue'
 import ZAiSessions from '@/components/ai/ZAiSessions.vue'
+import ZAiQuotaRequests from '@/components/ai/ZAiQuotaRequests.vue'
 
 interface SegmentedTab {
   label: string
   value: string
 }
 
-const VALID_CURRENT = ['chat', 'sessions', 'quota', 'keys', 'engines', 'quota-admin', 'health', 'logs']
+const VALID_CURRENT = ['chat', 'sessions', 'quota', 'quota-requests', 'keys', 'engines', 'quota-admin', 'health', 'logs']
 const ADMIN_ONLY = ['keys', 'engines', 'quota-admin', 'health', 'logs']
 
 const route = useRoute()
@@ -66,6 +67,10 @@ const tabs = ref<SegmentedTab[]>([
   {
     label: 'quota',
     value: 'quota'
+  },
+  {
+    label: 'quota-requests',
+    value: 'quota-requests'
   }
 ])
 
@@ -107,12 +112,15 @@ watch(
       </div>
     </header>
 
-    <Segmented v-model="current" class="ai-tabs" :items="segmentItems" aria-label="AI 网关" />
+    <div class="ai-tabs-scroll">
+      <Segmented v-model="current" class="ai-tabs" :items="segmentItems" aria-label="AI 网关" />
+    </div>
 
     <div class="ai-page__panel">
       <ZAiChat v-if="current === 'chat'" />
       <ZAiSessions v-else-if="current === 'sessions'" />
       <ZAiQuotaPanel v-else-if="current === 'quota'" />
+      <ZAiQuotaRequests v-else-if="current === 'quota-requests'" />
       <ZAiKeysAdmin v-else-if="current === 'keys'" />
       <ZAiOcrEnginesAdmin v-else-if="current === 'engines'" />
       <ZAiQuotaAdmin v-else-if="current === 'quota-admin'" />
@@ -152,8 +160,18 @@ watch(
   color: var(--yg2-text);
 }
 
+.ai-tabs-scroll {
+  align-self: stretch;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-bottom: 4px;
+  scrollbar-width: thin;
+}
+
 .ai-tabs {
   align-self: flex-start;
+  width: max-content;
   max-width: 100%;
   overflow-x: auto;
   scrollbar-width: none;

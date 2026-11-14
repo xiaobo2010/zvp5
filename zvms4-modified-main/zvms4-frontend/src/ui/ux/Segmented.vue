@@ -53,16 +53,34 @@ async function sync(index = activeIndex.value) {
 }
 
 watch(() => [props.items.length, props.modelValue], () => void sync())
+let observer: ResizeObserver | null = null
+
 onMounted(() => {
   void sync()
   window.addEventListener('resize', onResize)
+  // 字体/图标加载完或容器宽度变化时重新量一次，避免首屏落在第 1 个格子
+  if (typeof ResizeObserver !== 'undefined' && root.value) {
+    observer = new ResizeObserver(() => void sync())
+    observer.observe(root.value)
+    const first = buttons.value[0]
+    if (first) {
+      observer.observe(first)
+    }
+  }
+  if (document.fonts?.ready) {
+    void document.fonts.ready.then(() => void sync())
+  }
 })
 
 function onResize() {
   void sync()
 }
 
-onBeforeUnmount(() => window.removeEventListener('resize', onResize))
+onBeforeUnmount(() => {
+  window.removeEventListener('resize', onResize)
+  observer?.disconnect()
+  observer = null
+})
 
 /* ---------- 指针拖动：滑块跟着手走，松手吸附 ---------- */
 let startX = 0

@@ -12,13 +12,14 @@ import ZLogList from '@/components/log/ZLogList.vue'
 import ZBanRules from '@/components/manage/ZBanRules.vue'
 import ZNotificationAdmin from '@/components/manage/ZNotificationAdmin.vue'
 import ManageRoles from '@/views/manage/ManageRoles.vue'
+import ZRolePolicies from '@/components/manage/ZRolePolicies.vue'
 
 interface SegmentedTab {
   label: string
   value: string
 }
 
-const VALID_CURRENT = ['groups', 'users', 'roles', 'ban', 'logs', 'notifications']
+const VALID_CURRENT = ['groups', 'users', 'roles', 'role-policies', 'ban', 'logs', 'notifications']
 
 const route = useRoute()
 const router = useRouter()
@@ -71,6 +72,10 @@ if (isAdmin) {
   tabs.value[tabs.value.length] = {
     label: 'Roles',
     value: 'roles'
+  }
+  tabs.value[tabs.value.length] = {
+    label: 'RolePolicies',
+    value: 'role-policies'
   }
   tabs.value[tabs.value.length] = {
     label: 'Notifications',
@@ -129,6 +134,7 @@ watch(
       <ZGroupList v-if="current === 'groups'" />
       <ZGroupUserList v-else-if="current === 'users'" id="" />
       <ManageRoles v-else-if="current === 'roles'" />
+      <ZRolePolicies v-else-if="current === 'role-policies'" />
       <ZLogList v-else-if="current === 'logs'" id="" user="" />
       <ZBanRules v-else-if="current === 'ban'" />
       <ZNotificationAdmin v-else-if="current === 'notifications'" />
