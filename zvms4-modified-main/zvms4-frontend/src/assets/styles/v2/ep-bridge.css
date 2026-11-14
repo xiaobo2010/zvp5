@@ -187,11 +187,13 @@ html[data-theme='dark'] {
   border-color: var(--yg2-line);
 }
 
+/* 聚焦态由 liquid.css 统一渲染（1px 内环 + 4px 柔光），
+   这里必须把 EP 自己的边框色清掉，否则会出现「边框 + 内环」双层高亮 */
 .el-input__wrapper.is-focus,
 .el-select__wrapper.is-focused,
 .el-textarea__inner:focus {
-  border-color: var(--yg2-accent);
-  box-shadow: 0 0 0 3px var(--yg2-accent-soft);
+  border-color: transparent;
+  box-shadow: none;
 }
 
 /* ---------- 按钮（只统一圆角与字重，不改高度契约） ------------------------ */
@@ -252,8 +254,39 @@ html[data-theme='dark'] {
 .el-message-box {
   border-radius: 24px;
   padding: 24px;
-  background: var(--yg2-surface-raised);
-  box-shadow: var(--yg2-shadow-float);
+  background: color-mix(in srgb, var(--yg2-surface) 78%, transparent);
+  backdrop-filter: blur(30px) saturate(190%) brightness(1.03);
+  -webkit-backdrop-filter: blur(30px) saturate(190%) brightness(1.03);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, #fff 60%, transparent),
+    inset 0 0 0 1px color-mix(in srgb, var(--yg2-line) 70%, transparent),
+    0 30px 80px -20px color-mix(in srgb, #000 38%, transparent);
+}
+
+/* 遮罩也带一点毛玻璃，弹层浮在内容上更有层次 */
+.el-overlay {
+  background-color: color-mix(in srgb, #000 28%, transparent);
+  backdrop-filter: blur(6px) saturate(120%);
+  -webkit-backdrop-filter: blur(6px) saturate(120%);
+}
+
+[data-theme='dark'] .el-dialog,
+[data-theme='dark'] .el-message-box {
+  background: color-mix(in srgb, var(--yg2-surface) 84%, transparent);
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .el-dialog,
+  .el-message-box {
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    background: var(--yg2-surface-raised);
+  }
+
+  .el-overlay {
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
 }
 
 .el-dialog__title,

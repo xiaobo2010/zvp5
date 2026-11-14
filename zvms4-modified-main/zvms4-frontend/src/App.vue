@@ -333,6 +333,12 @@ function toggleRail() {
 }
 
 // headerStore.header 形如「首页 - 义工平台」，顶栏只显示前半段。
+/** 底部栏当前高亮项的下标，用来驱动滑块平移 */
+const mobileTabIndex = computed(() => {
+  const index = mobileTabs.findIndex((tab) => tab.judge(route.path))
+  return index < 0 ? 0 : index
+})
+
 const pageTitle = computed(() => {
   const full = headerStore.header
   const suffix = ` - ${headerStore.base}`
@@ -615,7 +621,16 @@ onMounted(async () => {
               <RouterView class="yg-view" />
             </main>
           </div>
-          <nav v-if="userStore.isLogin" class="yg2-mobile-tabs" aria-label="快捷导航">
+          <nav
+            v-if="userStore.isLogin"
+            class="yg2-mobile-tabs"
+            aria-label="快捷导航"
+            :style="{
+              '--yg2-tabs-count': mobileTabs.length + 1,
+              '--yg2-tabs-index': mobileTabIndex
+            }"
+          >
+            <span class="yg2-mobile-tabs__thumb" aria-hidden="true" />
             <button
               v-for="tab in mobileTabs"
               :key="tab.key"
