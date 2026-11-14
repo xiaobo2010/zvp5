@@ -26,7 +26,7 @@ REDIS_URI = ""
 # AI gateway (services/ai). 密钥不写在这里：api_key_env 指向环境变量名，
 # 值走进程环境（settings 同名属性只作为测试兜底）。
 AI_ENABLED = True
-# name -> {"kind":"openai_compat","base_url":"https://...","api_key_env":"ZVMS_AI_XXX_KEY",
+# name -> {"kind":"openai_compat","base_url":"https://...","api_key_env":"ZVP5_AI_XXX_KEY",
 #          "models":["..."],"timeout":{"connect":5,"read":120}}
 AI_PROVIDERS = {}
 AI_MAX_CONCURRENCY = 8
@@ -113,12 +113,12 @@ AI_SILICONFLOW_FREE_MODELS = [
 ]
 
 # 管理员在 /api/ai/keys 里建的凭据（个人 / 共享）加密落库，主密钥从这里取：
-# 优先环境变量 ZVMS_AI_KEY_SECRET；没有则走 util/platform_key.py 的统一解析：
+# 优先环境变量 ZVP5_AI_KEY_SECRET；没有则走 util/platform_key.py 的统一解析：
 #   1) $CREDENTIALS_DIRECTORY/zvms_ai_key（systemd LoadCredential，生产推荐）
-#   2) $ZVMS_PLATFORM_KEY_FILE（显式路径，给非 systemd 部署）
+#   2) $ZVP5_PLATFORM_KEY_FILE（显式路径，给非 systemd 部署）
 #   3) 后端根 aes_key.txt（旧位置，兼容回退）
 # 密钥是 65 字节随机串，已在 .gitignore 里，不入库。派生方式：
 #   sha256(b"zvms-ai-credential-v1:" + secret.strip()) -> 32 字节 AES-256-GCM 主密钥
 # 换主密钥等于让所有已存密文解不开（调用方会收到 502 AI_CREDENTIAL_UNREADABLE），
 # 所以轮换时要先把旧 key 重新录入或重加密。
-# ZVMS_AI_KEY_SECRET = ""
+# ZVP5_AI_KEY_SECRET = ""

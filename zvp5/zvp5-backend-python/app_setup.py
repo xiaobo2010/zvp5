@@ -45,7 +45,7 @@ DEFAULT_CORS_ALLOWED_ORIGINS = (
 def cors_allowed_origins() -> list[str]:
     """Return local development origins plus deploy-configured origins.
 
-    ``ZVMS_CORS_ALLOWED_ORIGINS`` is a comma-separated list of exact browser
+    ``ZVP5_CORS_ALLOWED_ORIGINS`` is a comma-separated list of exact browser
     origins. Wildcards are rejected because credentialed CORS requires an
     explicit origin echo.
     """
@@ -66,7 +66,7 @@ def cors_allowed_origins() -> list[str]:
             or parsed.fragment
         ):
             raise RuntimeError(
-                "ZVMS_CORS_ALLOWED_ORIGINS must contain comma-separated "
+                "ZVP5_CORS_ALLOWED_ORIGINS must contain comma-separated "
                 f"http(s) origins, got {raw_origin.strip()!r}"
             )
         if origin not in origins:

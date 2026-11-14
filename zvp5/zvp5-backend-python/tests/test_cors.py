@@ -55,7 +55,7 @@ def test_cross_origin_responses_expose_headers_used_by_frontend() -> None:
 
 def test_deployment_origins_come_from_environment(monkeypatch) -> None:
     monkeypatch.setenv(
-        "ZVMS_CORS_ALLOWED_ORIGINS",
+        "ZVP5_CORS_ALLOWED_ORIGINS",
         "https://content.example.test, https://api.example.test/",
     )
 
@@ -66,7 +66,7 @@ def test_deployment_origins_come_from_environment(monkeypatch) -> None:
 
 
 def test_wildcard_origin_is_rejected(monkeypatch) -> None:
-    monkeypatch.setenv("ZVMS_CORS_ALLOWED_ORIGINS", "*")
+    monkeypatch.setenv("ZVP5_CORS_ALLOWED_ORIGINS", "*")
 
     with pytest.raises(RuntimeError, match="http\\(s\\) origins"):
         cors_allowed_origins()

@@ -1,7 +1,7 @@
 """上传管线的图片并发上限与配额键清理。
 
 ``_image_semaphore`` 原先硬编码为 2：第 3 个并发上传即排队。现在由
-``ZVMS_IMAGE_CONCURRENCY``（1..8，默认 4）决定，非法值回落默认。
+``ZVP5_IMAGE_CONCURRENCY``（1..8，默认 4）决定，非法值回落默认。
 配额 ``_quota`` 原先只按日 key 增长、从不清理：这里钉住按日切换后只剩当天与
 前 1 天的 key。
 """
@@ -25,17 +25,17 @@ def _clean_quota(monkeypatch):
 
 
 def test_image_concurrency_is_configurable_and_defensive(monkeypatch):
-    monkeypatch.delenv("ZVMS_IMAGE_CONCURRENCY", raising=False)
+    monkeypatch.delenv("ZVP5_IMAGE_CONCURRENCY", raising=False)
     assert attachment.image_concurrency() == 4
     assert attachment.IMAGE_CONCURRENCY_DEFAULT == 4
 
-    monkeypatch.setenv("ZVMS_IMAGE_CONCURRENCY", "1")
+    monkeypatch.setenv("ZVP5_IMAGE_CONCURRENCY", "1")
     assert attachment.image_concurrency() == 1
-    monkeypatch.setenv("ZVMS_IMAGE_CONCURRENCY", "8")
+    monkeypatch.setenv("ZVP5_IMAGE_CONCURRENCY", "8")
     assert attachment.image_concurrency() == 8
 
     for invalid in ("0", "9", "-1", "abc", "", "3.5"):
-        monkeypatch.setenv("ZVMS_IMAGE_CONCURRENCY", invalid)
+        monkeypatch.setenv("ZVP5_IMAGE_CONCURRENCY", invalid)
         assert attachment.image_concurrency() == attachment.IMAGE_CONCURRENCY_DEFAULT
 
 

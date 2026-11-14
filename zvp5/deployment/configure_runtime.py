@@ -1,7 +1,7 @@
 """Create a production-shaped settings.py for the ADB2 deployment.
 
-The Oracle password is read from ZVP5_ORACLE_PASSWORD (legacy ZVMS_ORACLE_PASSWORD
-still accepted) so it is not stored in this repository or placed in a shell history file.
+The Oracle password is read from ZVP5_ORACLE_PASSWORD so it is not stored in
+this repository or placed in a shell history file.
 """
 
 from __future__ import annotations
@@ -22,11 +22,9 @@ def main() -> None:
     root = base if (base / "settings.example.py").exists() else base.parent / "zvp5-backend-python"
     template = root / "settings.example.py"
     target = root / "settings.py"
-    password = os.environ.get("ZVP5_ORACLE_PASSWORD") or os.environ.get(
-        "ZVMS_ORACLE_PASSWORD", ""
-    )
+    password = os.environ.get("ZVP5_ORACLE_PASSWORD", "")
     if not password:
-        raise SystemExit("ZVP5_ORACLE_PASSWORD (or legacy ZVMS_ORACLE_PASSWORD) is required")
+        raise SystemExit("ZVP5_ORACLE_PASSWORD is required")
     source = target.read_text(encoding="utf-8") if target.exists() else template.read_text(encoding="utf-8")
     source = source.replace('ORACLE_ACTIVE = "prod"', 'ORACLE_ACTIVE = "test"', 1)
     replacements = {

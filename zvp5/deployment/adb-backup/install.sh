@@ -7,8 +7,8 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BACKUP_DIR=/root/adb-backup
-VENV_PY=${ZVP5_VENV_PY:-${ZVMS_VENV_PY:-/www/zvp5/backend/.venv/bin/python}}
-SERVICE_USER=${ZVP5_SERVICE_USER:-${ZVMS_SERVICE_USER:-www-data}}
+VENV_PY=${ZVP5_VENV_PY:-/www/zvp5/backend/.venv/bin/python}
+SERVICE_USER=${ZVP5_SERVICE_USER:-www-data}
 
 [[ $EUID -eq 0 ]] || { echo "must run as root" >&2; exit 1; }
 [[ -x "$VENV_PY" ]] || { echo "python not found: $VENV_PY" >&2; exit 1; }

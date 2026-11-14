@@ -51,7 +51,7 @@ def test_call_timeout_is_not_a_connect_keyword() -> None:
 
 
 def test_call_timeout_ms_reads_env(monkeypatch) -> None:
-    monkeypatch.setenv("ZVMS_DB_CALL_TIMEOUT", "12.5")
+    monkeypatch.setenv("ZVP5_DB_CALL_TIMEOUT", "12.5")
     assert _call_timeout_ms() == 12500
-    monkeypatch.setenv("ZVMS_DB_CALL_TIMEOUT", "0")
+    monkeypatch.setenv("ZVP5_DB_CALL_TIMEOUT", "0")
     assert _call_timeout_ms() == 0

@@ -13,7 +13,7 @@
 
 隔离与陷阱：
 
-* 状态库用 ``ZVMS_SYSTEM_DB`` 指到 ``tmp_path``，并在 ``client`` fixture 里
+* 状态库用 ``ZVP5_SYSTEM_DB`` 指到 ``tmp_path``，并在 ``client`` fixture 里
   **自检隔离生效**（``_db_path()`` 必须落在临时目录），绝不碰生产的
   ``system_state.db``；用例前后 ``invalidate_cache()``，避免进程内 TTL 缓存
   跨用例串味。
@@ -109,12 +109,12 @@ async def _accept_any_token(token, scope, exception=True, request=None) -> dict:
 def client(tmp_path, monkeypatch) -> TestClient:
     """隔离状态库 + 打桩外围 + 返回进程内 TestClient（不进 lifespan）。"""
     state_db = tmp_path / "system_state.db"
-    monkeypatch.setenv("ZVMS_SYSTEM_DB", str(state_db))
+    monkeypatch.setenv("ZVP5_SYSTEM_DB", str(state_db))
     system_state.invalidate_cache()
 
     # 自检隔离生效：环境变量确实把状态库指到临时目录，绝不碰生产库。
     isolated = Path(system_state._db_path()).resolve()
-    assert isolated == state_db.resolve(), "ZVMS_SYSTEM_DB 未生效，用例可能污染生产状态库"
+    assert isolated == state_db.resolve(), "ZVP5_SYSTEM_DB 未生效，用例可能污染生产状态库"
     assert isolated != Path(system_state.STATE_DB_PATH).resolve()
 
     monkeypatch.setitem(main.app.dependency_overrides, get_current_user, _admin_user)

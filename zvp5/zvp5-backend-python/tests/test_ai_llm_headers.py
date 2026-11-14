@@ -411,7 +411,7 @@ async def test_catalog_without_new_columns_keeps_the_old_shape(repo):
 
 @pytest.mark.asyncio
 async def test_server_scope_settings_pass_headers_and_path_through(repo, monkeypatch):
-    monkeypatch.setenv("ZVMS_AI_PLAN_KEY", "server-plan-key")
+    monkeypatch.setenv("ZVP5_AI_PLAN_KEY", "server-plan-key")
     monkeypatch.setattr(
         settings,
         "AI_PROVIDERS",
@@ -419,7 +419,7 @@ async def test_server_scope_settings_pass_headers_and_path_through(repo, monkeyp
             "plan": {
                 "kind": "openai_compat",
                 "base_url": "https://plan.example.com/v1",
-                "api_key_env": "ZVMS_AI_PLAN_KEY",
+                "api_key_env": "ZVP5_AI_PLAN_KEY",
                 "headers": {"X-Api-Key": HEADER_SECRET, "Bad Name": "dropped"},
                 "api_path": "/v1/messages",
             }

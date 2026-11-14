@@ -15,9 +15,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from util.env import getenv  # noqa: E402
 
-API_PLACEHOLDER = "__ZVMS_API_ORIGIN__"
-WS_PLACEHOLDER = "__ZVMS_API_WS_ORIGIN__"
-STATIC_PLACEHOLDER = "__ZVMS_STATIC_ORIGIN__"
+API_PLACEHOLDER = "__ZVP5_API_ORIGIN__"
+WS_PLACEHOLDER = "__ZVP5_API_WS_ORIGIN__"
+STATIC_PLACEHOLDER = "__ZVP5_STATIC_ORIGIN__"
 
 
 def _origin(value: str, *, schemes: set[str], variable: str) -> str:
@@ -38,9 +38,9 @@ def _origin(value: str, *, schemes: set[str], variable: str) -> str:
 
 
 def render(template: str, api_origin: str, ws_origin: str, static_origin: str) -> str:
-    api = _origin(api_origin, schemes={"https"}, variable="ZVMS_API_ORIGIN")
-    ws = _origin(ws_origin, schemes={"wss"}, variable="ZVMS_API_WS_ORIGIN")
-    static = _origin(static_origin, schemes={"https"}, variable="ZVMS_STATIC_ORIGIN")
+    api = _origin(api_origin, schemes={"https"}, variable="ZVP5_API_ORIGIN")
+    ws = _origin(ws_origin, schemes={"wss"}, variable="ZVP5_API_WS_ORIGIN")
+    static = _origin(static_origin, schemes={"https"}, variable="ZVP5_STATIC_ORIGIN")
     rendered = (
         template.replace(API_PLACEHOLDER, api)
         .replace(WS_PLACEHOLDER, ws)

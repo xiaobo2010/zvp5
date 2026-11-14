@@ -48,7 +48,7 @@ MONITORING_SQL = [
 
 @pytest.fixture
 def perf_db(monkeypatch, tmp_path):
-    monkeypatch.setenv("ZVMS_PERF_DB", str(tmp_path / "perf_samples.db"))
+    monkeypatch.setenv("ZVP5_PERF_DB", str(tmp_path / "perf_samples.db"))
     perf_sampler._initialized_paths.clear()
     perf_sampler.reset_rate_state()
     return tmp_path / "perf_samples.db"

@@ -25,7 +25,7 @@ _PROD_MARKER = re.compile(
     r"""^\s*ORACLE_ACTIVE\s*=\s*(['"])prod\1""", re.MULTILINE
 )
 #: 显式轮换/首次搭建生产机的逃生门：设了它才允许生成新密钥。
-_ALLOW_BOOTSTRAP_ENV = "ZVMS_ALLOW_KEY_BOOTSTRAP"
+_ALLOW_BOOTSTRAP_ENV = "ZVP5_ALLOW_KEY_BOOTSTRAP"
 
 
 def _would_create_keys(root: Path) -> bool:

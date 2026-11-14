@@ -13,7 +13,7 @@
 * 审计：发起行（管理员）+ 结果行（``retention_purge`` / ``warning``）。
 
 离线：业务库仓库是 fake、session 依赖 yield None、socket 断连被替身接管；
-维护态库用 ``ZVMS_SYSTEM_DB`` 隔离到 ``tmp_path``，绝不碰仓库根下的真实状态库。
+维护态库用 ``ZVP5_SYSTEM_DB`` 隔离到 ``tmp_path``，绝不碰仓库根下的真实状态库。
 
 跑法：``.venv/bin/python -m pytest tests/test_retention_async.py -q``
 """
@@ -202,7 +202,7 @@ def _clean_job_state(monkeypatch):
 def state_db(tmp_path, monkeypatch) -> Path:
     """维护态库隔离到 tmp_path（真实状态库不可被测试污染）。"""
     path = tmp_path / "system_state.db"
-    monkeypatch.setenv("ZVMS_SYSTEM_DB", str(path))
+    monkeypatch.setenv("ZVP5_SYSTEM_DB", str(path))
     system_state.invalidate_cache()
     yield path
     system_state.invalidate_cache()

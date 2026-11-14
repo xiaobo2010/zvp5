@@ -194,7 +194,7 @@ PROGRESS_URL = "/api/system/db/retention/progress"
 def state_db(tmp_path, monkeypatch):
     """进度端点会读状态库：隔离到 tmp_path，别碰仓库根下的真实状态库。"""
     path = tmp_path / "system_state.db"
-    monkeypatch.setenv("ZVMS_SYSTEM_DB", str(path))
+    monkeypatch.setenv("ZVP5_SYSTEM_DB", str(path))
     system_state.invalidate_cache()
     yield path
     system_state.invalidate_cache()

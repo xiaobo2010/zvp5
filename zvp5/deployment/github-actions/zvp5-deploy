@@ -1,14 +1,6 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-# 改名过渡：旧的 ZVMS4_* 环境变量在本脚本内映射成 ZVP5_*（新名优先）。
-# 两台的 env / CI 变量都换完之后，删掉这段即可完成收口。
-for _legacy in ${!ZVMS4_@}; do
-  _new="ZVP5_${_legacy#ZVMS4_}"
-  [[ -n "${!_new-}" ]] || export "${_new}=${!_legacy}"
-done
-unset -v _legacy _new
-
 PATH="${ZVP5_DEPLOY_PATH:-/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin}"
 umask 027
 

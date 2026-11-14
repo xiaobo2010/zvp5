@@ -1,7 +1,7 @@
 """AI 凭据的对称加解密（AES-256-GCM）。
 
 为什么加密而不是哈希：上游 api_key 必须能还原成明文去发请求，哈希做不到；所以
-库里存的是密文，主密钥留在进程环境（``ZVMS_AI_KEY_SECRET``）或 ``aes_key.txt``
+库里存的是密文，主密钥留在进程环境（``ZVP5_AI_KEY_SECRET``）或 ``aes_key.txt``
 （路径解析见 :mod:`util.platform_key`，生产推荐 systemd ``LoadCredential``），
 数据库备份泄露不等于凭据泄露。
 
@@ -24,7 +24,7 @@ from Crypto.Cipher import AES
 
 from util import platform_key
 
-_SECRET_ENV = "ZVMS_AI_KEY_SECRET"
+_SECRET_ENV = "ZVP5_AI_KEY_SECRET"
 _KEY_SALT = b"zvms-ai-credential-v1:"
 _NONCE_BYTES = 12  # GCM 的推荐长度；随机 nonce 复用会直接摧毁 GCM 的安全性
 _TAG_BYTES = 16

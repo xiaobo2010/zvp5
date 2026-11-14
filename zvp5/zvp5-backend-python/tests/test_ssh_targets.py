@@ -1,7 +1,7 @@
 """Web SSH 多目标（单网关 + 服务端目标目录）的离线用例。
 
 网关部署在 API 服务器上，前端只能选目标 id；host/port/user/密钥路径全部来自
-``ZVMS_SSH_TARGETS`` / ``settings.SSH_TARGETS``。本文件钉住四件事：
+``ZVP5_SSH_TARGETS`` / ``settings.SSH_TARGETS``。本文件钉住四件事：
 
 * 配置解析：JSON/list、非法 JSON、重复 id、缺省字段、legacy 退化；
 * HTTP 契约：``GET /targets`` 只给 id/label/display，未知 target 400；
@@ -105,13 +105,13 @@ class _FakeConnection:
 def _clean_ssh_config(monkeypatch):
     """把目标配置清成「完全没配」：用例各自按需注入。"""
     for name in (
-        "ZVMS_SSH_TARGETS",
-        "ZVMS_SSH_DEFAULT_TARGET",
-        "ZVMS_SSH_HOST",
-        "ZVMS_SSH_PORT",
-        "ZVMS_SSH_USER",
-        "ZVMS_SSH_KEY_PATH",
-        "ZVMS_SSH_KNOWN_HOSTS",
+        "ZVP5_SSH_TARGETS",
+        "ZVP5_SSH_DEFAULT_TARGET",
+        "ZVP5_SSH_HOST",
+        "ZVP5_SSH_PORT",
+        "ZVP5_SSH_USER",
+        "ZVP5_SSH_KEY_PATH",
+        "ZVP5_SSH_KNOWN_HOSTS",
     ):
         monkeypatch.delenv(name, raising=False)
     for name in (
@@ -139,7 +139,7 @@ def _fresh_process_state(monkeypatch):
 def configured(monkeypatch):
     """注入两个目标：一个自定义端口 + 独立密钥，一个只有 host（走缺省）。"""
     monkeypatch.setenv(
-        "ZVMS_SSH_TARGETS", json.dumps(TWO_TARGETS, ensure_ascii=False)
+        "ZVP5_SSH_TARGETS", json.dumps(TWO_TARGETS, ensure_ascii=False)
     )
     return ssh_bridge.load_targets()
 
@@ -250,10 +250,10 @@ def test_env_json_targets_parse_with_defaults(configured):
 
 
 def test_missing_optional_fields_fall_back_to_legacy_env(monkeypatch):
-    monkeypatch.setenv("ZVMS_SSH_USER", "legacy-user")
-    monkeypatch.setenv("ZVMS_SSH_PORT", "2022")
-    monkeypatch.setenv("ZVMS_SSH_KEY_PATH", "/legacy/key")
-    monkeypatch.setenv("ZVMS_SSH_TARGETS", json.dumps([{"id": "a", "host": "h1"}]))
+    monkeypatch.setenv("ZVP5_SSH_USER", "legacy-user")
+    monkeypatch.setenv("ZVP5_SSH_PORT", "2022")
+    monkeypatch.setenv("ZVP5_SSH_KEY_PATH", "/legacy/key")
+    monkeypatch.setenv("ZVP5_SSH_TARGETS", json.dumps([{"id": "a", "host": "h1"}]))
 
     (target,) = ssh_bridge.load_targets()
 
@@ -276,13 +276,13 @@ def test_env_wins_over_settings(monkeypatch):
     monkeypatch.setattr(
         settings, "SSH_TARGETS", [{"id": "from-settings", "host": "h0"}], raising=False
     )
-    monkeypatch.setenv("ZVMS_SSH_TARGETS", json.dumps([{"id": "from-env", "host": "h1"}]))
+    monkeypatch.setenv("ZVP5_SSH_TARGETS", json.dumps([{"id": "from-env", "host": "h1"}]))
 
     assert [t.id for t in ssh_bridge.load_targets()] == ["from-env"]
 
 
 def test_invalid_json_falls_back_to_legacy_and_warns(monkeypatch, caplog):
-    monkeypatch.setenv("ZVMS_SSH_TARGETS", "{not-json")
+    monkeypatch.setenv("ZVP5_SSH_TARGETS", "{not-json")
 
     with caplog.at_level(logging.WARNING, logger="services.ssh_bridge"):
         targets = ssh_bridge.load_targets()
@@ -296,8 +296,8 @@ def test_invalid_json_falls_back_to_legacy_and_warns(monkeypatch, caplog):
 
 
 def test_legacy_fallback_keeps_old_env_vars(monkeypatch):
-    monkeypatch.setenv("ZVMS_SSH_HOST", "legacy.example.com")
-    monkeypatch.setenv("ZVMS_SSH_PORT", "2200")
+    monkeypatch.setenv("ZVP5_SSH_HOST", "legacy.example.com")
+    monkeypatch.setenv("ZVP5_SSH_PORT", "2200")
 
     (target,) = ssh_bridge.load_targets()
 
@@ -308,7 +308,7 @@ def test_legacy_fallback_keeps_old_env_vars(monkeypatch):
 
 @pytest.mark.parametrize("raw", ["", "[]", "{}", '"x"', "null"])
 def test_empty_or_malformed_config_still_yields_one_target(monkeypatch, caplog, raw):
-    monkeypatch.setenv("ZVMS_SSH_TARGETS", raw)
+    monkeypatch.setenv("ZVP5_SSH_TARGETS", raw)
 
     with caplog.at_level(logging.WARNING, logger="services.ssh_bridge"):
         targets = ssh_bridge.load_targets()
@@ -320,7 +320,7 @@ def test_empty_or_malformed_config_still_yields_one_target(monkeypatch, caplog, 
 
 def test_invalid_ids_duplicates_and_missing_host_are_dropped(monkeypatch, caplog):
     monkeypatch.setenv(
-        "ZVMS_SSH_TARGETS",
+        "ZVP5_SSH_TARGETS",
         json.dumps(
             [
                 {"id": "UPPER", "host": "h0"},  # 大写不合法
@@ -351,7 +351,7 @@ def test_invalid_ids_duplicates_and_missing_host_are_dropped(monkeypatch, caplog
 
 def test_key_paths_never_reach_the_warning_log(monkeypatch, caplog):
     monkeypatch.setenv(
-        "ZVMS_SSH_TARGETS",
+        "ZVP5_SSH_TARGETS",
         json.dumps(
             [
                 {"id": "BAD", "host": "h", "key_path": FRONTEND_KEY},
@@ -370,7 +370,7 @@ def test_key_paths_never_reach_the_warning_log(monkeypatch, caplog):
 
 
 def test_get_target_and_load_target_resolution(monkeypatch):
-    monkeypatch.setenv("ZVMS_SSH_TARGETS", json.dumps(TWO_TARGETS))
+    monkeypatch.setenv("ZVP5_SSH_TARGETS", json.dumps(TWO_TARGETS))
 
     assert ssh_bridge.get_target("api").host == "192.0.2.6"
     assert ssh_bridge.get_target("nope") is None
@@ -385,14 +385,14 @@ def test_get_target_and_load_target_resolution(monkeypatch):
 
 
 def test_default_target_follows_env_then_first(monkeypatch):
-    monkeypatch.setenv("ZVMS_SSH_TARGETS", json.dumps(TWO_TARGETS))
-    monkeypatch.setenv("ZVMS_SSH_DEFAULT_TARGET", "api")
+    monkeypatch.setenv("ZVP5_SSH_TARGETS", json.dumps(TWO_TARGETS))
+    monkeypatch.setenv("ZVP5_SSH_DEFAULT_TARGET", "api")
     assert ssh_bridge.load_target().id == "api"
 
-    monkeypatch.setenv("ZVMS_SSH_DEFAULT_TARGET", "does-not-exist")
+    monkeypatch.setenv("ZVP5_SSH_DEFAULT_TARGET", "does-not-exist")
     assert ssh_bridge.load_target().id == "frontend"
 
-    monkeypatch.delenv("ZVMS_SSH_DEFAULT_TARGET")
+    monkeypatch.delenv("ZVP5_SSH_DEFAULT_TARGET")
     monkeypatch.setattr(settings, "SSH_DEFAULT_TARGET", "api", raising=False)
     assert ssh_bridge.load_target().id == "api"
 

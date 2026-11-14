@@ -99,7 +99,7 @@ DUMP_X = HERE / "dump_expected.json"
 #: the rebuild's row set is a superset. Only the direction-only-in-new is allowed.
 KNOWN_SUPERSET_TABLES = {"time_academic_year"}
 
-_SCRATCH_ENV = "ZVMS_SCRATCH_JSON"
+_SCRATCH_ENV = "ZVP5_SCRATCH_JSON"
 
 
 # ===========================================================================
@@ -238,10 +238,10 @@ def _scratch_info(cfg: oracle_config.OracleConfig, user: str, password: str) -> 
 
 
 async def _admin_engine() -> Any:
-    """Admin engine: configured user, or ZVMS_ADMIN_USER/PASSWORD override."""
+    """Admin engine: configured user, or ZVP5_ADMIN_USER/PASSWORD override."""
     cfg = oracle_config.load_config()
-    admin_user = os.environ.get("ZVMS_ADMIN_USER")
-    admin_password = os.environ.get("ZVMS_ADMIN_PASSWORD")
+    admin_user = os.environ.get("ZVP5_ADMIN_USER")
+    admin_password = os.environ.get("ZVP5_ADMIN_PASSWORD")
     if admin_user and admin_password:
         cfg = cfg._replace(user=admin_user, password=admin_password)
     return _build_engine(cfg)
@@ -496,7 +496,7 @@ async def run(args: argparse.Namespace) -> int:
         )
 
         cfg = oracle_config.load_config()
-        scratch_user = "ZVMS_GS_" + secrets.token_hex(4).upper()
+        scratch_user = "ZVP5_GS_" + secrets.token_hex(4).upper()
         password = "Zs" + secrets.token_hex(12)
 
         if await _user_exists(admin, scratch_user):

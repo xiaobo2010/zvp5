@@ -53,7 +53,7 @@ IMAGE_CONCURRENCY_MAX = 8
 
 
 def image_concurrency() -> int:
-    """``ZVMS_IMAGE_CONCURRENCY``（1..8），非法或越界回落默认值。"""
+    """``ZVP5_IMAGE_CONCURRENCY``（1..8），非法或越界回落默认值。"""
     raw = getenv("ZVP5_IMAGE_CONCURRENCY")
     try:
         value = int(str(raw))

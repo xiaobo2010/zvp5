@@ -78,7 +78,7 @@ class StubRepo:
                 {},
                 Exception(
                     "ORA-00001: unique constraint "
-                    "(ZVMS_NEW.UQ_DUAL_APPROVER_COUNTER) violated"
+                    "(ZVP5_NEW.UQ_DUAL_APPROVER_COUNTER) violated"
                 ),
             )
         self.used.add((approver_oid, otp_counter))

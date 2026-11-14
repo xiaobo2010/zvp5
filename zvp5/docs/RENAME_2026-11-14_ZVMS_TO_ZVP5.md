@@ -124,29 +124,53 @@ systemctl daemon-reload && systemctl enable --now zvms4
 nginx 回滚：`tar xzf /root/nginx-bak-<ts>.tar.gz -C /` 后 `nginx -t && systemctl reload nginx`
 （zvp-frontend 用 `nginx -s reload`）。
 
+## 环境变量收口（2026-11-14 20:56）
+
+新代码上线后，zvp-backend 的变量名已经真换成 `ZVP5_*`：
+
+| 文件 | 变化 |
+|---|---|
+| `/etc/zvms4/zvp-secrets.env` | `ZVP5_ORACLE_PASSWORD`、`ZVP5_ORACLE_WALLET_PASSWORD` |
+| `/etc/zvms4/ssh-targets.env` | `ZVP5_SSH_TARGETS`、`ZVP5_SSH_DEFAULT_TARGET` |
+| `zvp5.service.d/cors.conf` | `ZVP5_CORS_ALLOWED_ORIGINS` |
+| `zvp5.service.d/10-ssh-targets.conf` | `EnvironmentFile=/etc/zvp5/ssh-targets.env` |
+| `/www/zvp5/backend/settings.py` | 读 `ZVP5_ORACLE_*`（带旧名回落），钱包路径改 `/www/zvp5` |
+
+`settings.py` 不在部署树里，是手工维护的，所以单独改；它自带一层旧名回落，
+下次再动它之前不会踩空。重启后 `/proc/<pid>/environ` 里只剩 `ZVP5_*`，
+`/api/health`（内部真 ping Oracle）200，公网 CORS 预检回显 canary 域。
+
+代码侧的回落层同步删除：`util/env.py` 不再认 `ZVMS_*`，`platform_key` 不再认
+`zvms_ai_key`，部署脚本不再把 `ZVMS4_*` 映射成 `ZVP5_*`，`configure_runtime`
+与 `adb-backup/install.sh` 的旧名兜底也去掉了。测试里的 `ZVMS_*` 全部换名
+（`test_env_compat` 留了一条「旧名不再生效」的断言防回归）。
+
+**故意保留的三处**（都是回滚保险，不是漏网）：
+
+1. `zvp5.service` 里 `LoadCredential=zvms_ai_key:...` —— 回滚会恢复到改名前的
+   构建，那份代码只认旧 id。
+2. `[Install] Alias=zvms4.service` —— `systemctl restart zvms4` 仍能命中。
+3. `/usr/local/sbin/zvms4-deploy` 符号链接 + 对应 sudo 规则 —— 老 tag 发
+   release 时 workflow 里写的还是这个路径（sudo 不跟随符号链接匹配策略，
+   所以那条规则不能省）。
+
+等下一次发布稳定、回滚窗口过去后再删这三处。
+
 ## 还没做的
 
-1. **环境变量真换名**：`/etc/zvms4/{zvp-secrets,ssh-targets}.env`、
-   `zvp5.service.d/*.conf` 里的 `ZVMS_*` 改成 `ZVP5_*`。
-   **前置条件：带 `util/env.py` 的新后端代码已经发布上线。** 线上跑的还是改名前的
-   构建，只认 `ZVMS_*`；现在就改 env 名字，下次 restart 会读不到配置。
-2. **撤掉旧名**：`LEGACY_CREDENTIAL_ID`、unit 里 `zvms_ai_key` 那行、
-   脚本开头 `ZVMS4_*` 映射、`Alias=zvms4.service`、`zvms4-deploy` 符号链接与
-   对应 sudo 规则。
-3. **目录实体化**：`/www/zvms4` → `/www/zvp5`、`/etc/zvms4` → `/etc/zvp5`，
+1. **撤掉回滚保险**：unit 里 `zvms_ai_key` 那行、`Alias=zvms4.service`、
+   `zvms4-deploy` 符号链接与对应 sudo 规则（见上一节的说明）。
+2. **目录实体化**：`/www/zvms4` → `/www/zvp5`、`/etc/zvms4` → `/etc/zvp5`，
    把符号链接换成真目录（后端的 venv 绝对路径、nginx root 都指着
    `/www/zvp5`，改实体目录不影响它们）。
-4. **浏览器侧标识符**：`zvms.platformGuard.*`（localStorage）、`zvms4-cache`
+3. **浏览器侧标识符**：`zvms.platformGuard.*`（localStorage）、`zvms4-cache`
    （IndexedDB）、`meta[name="zvms-platform"]`、`x-zvms-local-cache` 响应头、
    `zvms:api-race` 事件、`ZVMSLog` 类名。改 localStorage/IndexedDB 键等于让
    老客户端丢掉缓存（对功能无影响），可以一次性换掉。
-5. **Oracle schema `zvms_new`**：独立窗口，见下。
+4. **Oracle schema `zvms_new`**：独立窗口，见下。
 
 > 顺序很重要：**代码先上线，再改机器上的 env 名字，最后删回落逻辑。** 反过来会在
-> 旧代码还在跑的窗口里把服务弄起不来。
->
-> 下一版后端发布时，同时会把 `zvp5_ai_key` 那条凭据用上（新代码优先认它），
-> 所以发布+重启验证通过后，就可以删 unit 里 `zvms_ai_key` 那行。
+> 旧代码还在跑的窗口里把服务弄起不来。2026-11-14 已按这个顺序走完。
 
 ## Oracle schema 改名（未排期）
 

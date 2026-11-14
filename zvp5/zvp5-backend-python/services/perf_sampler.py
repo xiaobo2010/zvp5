@@ -5,7 +5,7 @@ root, deliberately decoupled from Oracle ADB: an ADB write costs ~0.5-0.95s per
 round trip, which would double the sampling budget, and the Oracle DDL in
 ``db/oracle/ddl/`` needs a human to apply it.  The layout mirrors
 :mod:`db.system_state` — WAL, short-lived connections, lazy ``CREATE TABLE IF NOT
-EXISTS`` — and accepts a ``ZVMS_PERF_DB`` override (``PERF_DB_PATH`` /
+EXISTS`` — and accepts a ``ZVP5_PERF_DB`` override (``PERF_DB_PATH`` /
 ``_db_path()``).
 
 Three tiers, all configurable by environment variable:

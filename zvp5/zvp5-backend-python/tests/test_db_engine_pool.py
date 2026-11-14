@@ -13,11 +13,11 @@ import pytest
 from db.oracle import engine as db_engine
 
 _POOL_ENV = (
-    "ZVMS_DB_POOL_SIZE",
-    "ZVMS_DB_POOL_OVERFLOW",
-    "ZVMS_DB_POOL_TIMEOUT",
-    "ZVMS_DB_PRE_PING",
-    "ZVMS_DB_RECYCLE",
+    "ZVP5_DB_POOL_SIZE",
+    "ZVP5_DB_POOL_OVERFLOW",
+    "ZVP5_DB_POOL_TIMEOUT",
+    "ZVP5_DB_PRE_PING",
+    "ZVP5_DB_RECYCLE",
 )
 
 
@@ -68,22 +68,22 @@ class TestPoolDefaults:
 class TestEnvOverrides:
     @pytest.mark.parametrize("raw", ["1", "true", "TRUE", "yes", "on", " 1 "])
     def test_pre_ping_truthy_values(self, clean_pool_env, raw):
-        clean_pool_env.setenv("ZVMS_DB_PRE_PING", raw)
+        clean_pool_env.setenv("ZVP5_DB_PRE_PING", raw)
         assert db_engine._pool_settings()["pool_pre_ping"] is True
 
     @pytest.mark.parametrize("raw", ["0", "false", "no", "off", ""])
     def test_pre_ping_falsy_values(self, clean_pool_env, raw):
-        clean_pool_env.setenv("ZVMS_DB_PRE_PING", raw)
+        clean_pool_env.setenv("ZVP5_DB_PRE_PING", raw)
         assert db_engine._pool_settings()["pool_pre_ping"] is False
 
     def test_recycle_override(self, clean_pool_env):
-        clean_pool_env.setenv("ZVMS_DB_RECYCLE", "1200")
+        clean_pool_env.setenv("ZVP5_DB_RECYCLE", "1200")
         assert db_engine._pool_settings()["pool_recycle"] == 1200
 
     def test_sizing_overrides_still_work(self, clean_pool_env):
-        clean_pool_env.setenv("ZVMS_DB_POOL_SIZE", "4")
-        clean_pool_env.setenv("ZVMS_DB_POOL_OVERFLOW", "2")
-        clean_pool_env.setenv("ZVMS_DB_POOL_TIMEOUT", "1.5")
+        clean_pool_env.setenv("ZVP5_DB_POOL_SIZE", "4")
+        clean_pool_env.setenv("ZVP5_DB_POOL_OVERFLOW", "2")
+        clean_pool_env.setenv("ZVP5_DB_POOL_TIMEOUT", "1.5")
         settings = db_engine._pool_settings()
         assert settings["pool_size"] == 4
         assert settings["max_overflow"] == 2
@@ -119,8 +119,8 @@ class TestGetEngineWiring:
         assert kwargs["hide_parameters"] is True
 
     def test_env_overrides_reach_create_async_engine(self, captured, clean_pool_env):
-        clean_pool_env.setenv("ZVMS_DB_PRE_PING", "1")
-        clean_pool_env.setenv("ZVMS_DB_RECYCLE", "90")
+        clean_pool_env.setenv("ZVP5_DB_PRE_PING", "1")
+        clean_pool_env.setenv("ZVP5_DB_RECYCLE", "90")
         db_engine.get_engine()
         kwargs = captured[0].kwargs
         assert kwargs["pool_pre_ping"] is True
