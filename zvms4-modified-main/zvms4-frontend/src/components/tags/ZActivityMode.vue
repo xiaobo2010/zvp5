@@ -123,6 +123,7 @@ const modes: Record<
   >
     <template #reference>
       <ZButtonTag
+        :class="mode && mode in modes ? `mode-tag mode-tag--${mode}` : ''"
         :size="size ?? 'small'"
         :type="modes[mode].color"
         :icon="modes[mode].icon"

@@ -521,3 +521,70 @@ html[data-theme='dark'] {
 .el-table .col-actions .cell .el-button + .el-button {
   margin-left: 0;
 }
+
+
+/* ==========================================================================
+   成员姓名胶囊：原来用 Element primary 的浅蓝底蓝字，浅色下辨识度不足。
+   改成中性底 + 深字（深色模式反过来），悬浮时略微加深。
+   ========================================================================== */
+
+.el-button.yg2-name-chip,
+.el-button.yg2-name-chip.is-text.is-has-bg {
+  --el-fill-color-light: var(--yg2-act-bg);
+  --el-fill-color: var(--yg2-act-bg);
+  --el-button-bg-color: var(--yg2-act-bg);
+  --el-button-text-color: var(--yg2-act-text);
+  --el-button-hover-bg-color: var(--yg2-act-hover);
+  --el-button-hover-text-color: var(--yg2-act-text);
+  --el-button-border-color: transparent;
+
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 500;
+  box-shadow: none;
+}
+
+.el-button.yg2-name-chip:hover {
+  background: var(--yg2-act-hover);
+}
+
+
+/* ==========================================================================
+   表格内的危险/中性小按钮：统一到 --yg2-act-* 那套，
+   避免浅色下「浅灰底 + 亮红字」辨识度不足。
+   ========================================================================== */
+
+.el-table .el-button.el-button--danger.is-text.is-has-bg {
+  --el-fill-color-light: var(--yg2-act-danger-bg);
+  --el-fill-color: var(--yg2-act-danger-bg);
+  --el-button-bg-color: var(--yg2-act-danger-bg);
+  --el-button-text-color: var(--yg2-act-danger-text);
+  --el-button-hover-bg-color: var(--yg2-act-danger-hover);
+  --el-button-hover-text-color: var(--yg2-act-danger-text);
+}
+
+.el-table .el-button.el-button--info.is-text.is-has-bg,
+.el-table .el-button.el-button--primary.is-text.is-has-bg:not(.mode-tag):not(.yg2-name-chip) {
+  --el-fill-color-light: var(--yg2-act-bg);
+  --el-fill-color: var(--yg2-act-bg);
+  --el-button-bg-color: var(--yg2-act-bg);
+  --el-button-text-color: var(--yg2-act-text);
+  --el-button-hover-bg-color: var(--yg2-act-hover);
+  --el-button-hover-text-color: var(--yg2-act-text);
+}
+
+
+/* 表格里的按钮组：改为有间距的胶囊排列，避免标签与时长贴在一起 */
+.el-table .el-button-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  vertical-align: middle;
+}
+
+.el-table .el-button-group > .el-button {
+  margin: 0;
+  border-radius: 999px;
+}

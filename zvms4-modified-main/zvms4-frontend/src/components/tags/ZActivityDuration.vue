@@ -46,7 +46,7 @@ async function modify() {
 
 <template>
   <ElButtonGroup>
-    <ZActivityMode :force="force" :mode="mode as ActivityMode" v-if="mode" />
+    <ZActivityMode force="full" :mode="mode as ActivityMode" v-if="mode" />
 
     <ElPopover
       width="328px"

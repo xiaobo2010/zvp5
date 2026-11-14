@@ -98,30 +98,14 @@ onMounted(() => {
       </div>
     </header>
 
-    <div class="yg2-detail__body">
-      <ZActivityDetails
-        :activity="activity"
-        mode="campus"
-        :members-count="membersCount"
-        show-members-inline
-      />
-
-      <aside class="yg2-detail__aside">
-        <section v-if="mine" class="yg2-card yg2-detail__card">
-          <h2 class="yg2-card__title">{{ t('activity.view.panels.mine.name') }}</h2>
-          <dl class="yg2-kv">
-            <dt>{{ t('activity.form.duration') }}</dt>
-            <dd>
-              <ZActivityDuration
-                :mode="mine.mode"
-                :duration="mine.duration"
-                force="full"
-              />
-            </dd>
-            <dt>{{ t('activity.status.title') }}</dt>
-            <dd><ZActivityStatus :type="mineStatus" size="small" force="full" /></dd>
-          </dl>
-        </section>
+    <div class="yg2-detail__body" :class="{ 'yg2-detail__body--single': !mine }">
+      <div class="yg2-detail__main">
+        <ZActivityDetails
+          :activity="activity"
+          mode="campus"
+          :members-count="membersCount"
+          show-members-inline
+        />
 
         <section class="yg2-card yg2-detail__card">
           <h2 class="yg2-card__title">{{ t('activity.form.person') }}</h2>
@@ -131,6 +115,20 @@ onMounted(() => {
             :members-count="membersCount"
             @refresh="getInfo"
           />
+        </section>
+      </div>
+
+      <aside v-if="mine" class="yg2-detail__aside">
+        <section class="yg2-card yg2-detail__card">
+          <h2 class="yg2-card__title">{{ t('activity.view.panels.mine.name') }}</h2>
+          <dl class="yg2-kv">
+            <dt>{{ t('activity.form.duration') }}</dt>
+            <dd>
+              <ZActivityDuration :mode="mine.mode" :duration="mine.duration" force="full" />
+            </dd>
+            <dt>{{ t('activity.status.title') }}</dt>
+            <dd><ZActivityStatus :type="mineStatus" size="small" force="full" /></dd>
+          </dl>
         </section>
       </aside>
     </div>
@@ -244,6 +242,17 @@ onMounted(() => {
   grid-template-columns: minmax(0, 1fr) 320px;
   gap: 16px;
   align-items: start;
+}
+
+/* 「我的义工」不存在时不留 320px 的空列 */
+.yg2-detail__body--single {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.yg2-detail__main {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
 }
 
 .yg2-detail__aside {

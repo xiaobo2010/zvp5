@@ -165,11 +165,12 @@ async function insertUserPast() {
 </script>
 
 <template>
-  <ElButton v-if="notFound && mode === 'button'" text bg type="danger" :icon="icon" size="small" round>
+  <ElButton v-if="notFound && mode === 'button'" class="yg2-name-chip" text bg type="danger" :icon="icon" size="small" round>
     {{ t('manage.personalPanel.notFound') }}
   </ElButton>
   <ZButtonOrCard
     v-else
+    class="yg2-name-chip"
     :mode="mode"
     :type="color"
     size="small"
