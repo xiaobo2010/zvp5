@@ -13,6 +13,14 @@ Run the bootstrap on both the frontend host and the backend host as
 root. The public key must match the private key stored in the corresponding
 GitHub Environment Secret.
 
+> **2026-11-14 已完成**：`github-deploy` 账号、`/usr/local/sbin/zvms4-deploy`
+> 与四条免密 sudo 规则已装在 `zvp-backend`（后端，<BACKEND_IP>:23456）和
+> `zvp-frontend`（前端，<FRONTEND_IP>:22）。两把部署私钥只存在于 `production`
+> environment 的 `BACKEND_SSH_KEY` / `FRONTEND_SSH_KEY`，本机不再保留副本。
+> 轮换流程：本地 `ssh-keygen -t ed25519` 生成新对 → 覆盖远端
+> `~github-deploy/.ssh/authorized_keys`（保留旧行直到新 secret 生效）→ 用
+> `ssh-keyscan -p <port> <host>` 重生成 known_hosts → 更新四个 secret → 删除旧行。
+
 ```bash
 sudo bash ./bootstrap-deploy-user.sh ./zvms4-deploy /root/zvp5-deploy.pub
 ```
