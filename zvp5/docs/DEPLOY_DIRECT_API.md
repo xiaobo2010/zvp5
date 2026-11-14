@@ -113,7 +113,7 @@ location /api/system/ssh/ws {
 | typecheck | `vue-tsc --noEmit` 零错误 |
 | 部署一致性 | 线上产物与本地产物 174 文件哈希完全一致 |
 | CORS 预检 | `OPTIONS /api/v1/ban/violations` → 200，`allow-origin` + `allow-credentials` + `xuehai-id` 全通 |
-| WS 握手 | 直连后端 / 经前端 均 `101`（修复前 404） |
+| WS 握手 | 直连后端 / 经前端均 `101`（修复前 404） |
 | 站点健康 | 首页 200；直连 API `/api/system/maintenance` → `{"status":"ok",...}` |
 | 真实流量 | 后端侧出现国内用户直连 `<CLIENT_IP> /api/system/maintenance`；前端侧 `/api` 命中停止新增 |
 

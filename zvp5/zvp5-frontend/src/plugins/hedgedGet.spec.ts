@@ -262,7 +262,7 @@ describe('小型 GET 双路竞速', () => {
     expect(apiRaceObservationPath('/v1/users/68c3d9b346711c1f1f0475b3?x=1')).toBe('/v1/users/:id')
   })
 
-  it('后端失败时仍由 前端 备用线路完成', async () => {
+  it('后端失败时仍由前端备用线路完成', async () => {
     const calls: string[] = []
     const adapter: AxiosAdapter = async (request) => {
       const isRelay = request.baseURL === 'https://content-la.example.test/api'

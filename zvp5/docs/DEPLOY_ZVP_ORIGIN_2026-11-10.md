@@ -73,12 +73,12 @@ zvp.xiaobopisces.top
 | 最终主 bundle | `index-Cv7_FQOa.js` |
 | 主 API 构建基址 | `/api`（同源） |
 | 竞速/备用 API | 通过部署环境变量提供，不作为页面 Origin |
-| 前端 静态目录 | `/www/zvms4/frontend-dist` |
-| 后端 静态目录 | `/www/zvms4/frontend-dist` |
+| 前端静态目录 | `/www/zvms4/frontend-dist` |
+| 后端静态目录 | `/www/zvms4/frontend-dist` |
 
 两个主机的 `frontend-dist` 已部署同一份最终产物。当前访问：
 
-- `https://zvp.xiaobopisces.top`：前端 实例，页面和静态资源同源，主 API 经同源 Nginx 反代。
+- `https://zvp.xiaobopisces.top`：前端实例，页面和静态资源同源，主 API 经同源 Nginx 反代。
 - 备用 API 实例只用于竞速/回退，不作为最终页面 Origin。
 
 验收：
@@ -95,10 +95,10 @@ zvp.xiaobopisces.top
 
 备份：
 
-- 前端 原 vhost：`/www/server/panel/vhost/nginx/zvp.xiaobopisces.top.conf.bak-origin-split-20261109-233250`
-- 前端 上线前 dist：`/www/zvms4/frontend-dist.bak-origin-split-20261109-233250`
-- 后端 原 API vhost：部署前同目录下的 `*.bak-origin-split-*` 备份
-- 后端 上线前 dist：`/www/zvms4/frontend-dist.bak-zvp-origin-20261110`
+- 前端原 vhost：`/www/server/panel/vhost/nginx/zvp.xiaobopisces.top.conf.bak-origin-split-20261109-233250`
+- 前端上线前 dist：`/www/zvms4/frontend-dist.bak-origin-split-20261109-233250`
+- 后端原 API vhost：部署前同目录下的 `*.bak-origin-split-*` 备份
+- 后端上线前 dist：`/www/zvms4/frontend-dist.bak-zvp-origin-20261110`
 
 > **DNS 切换已完成（2026-11-10 23:02 CST）**：`zvp.xiaobopisces.top` 的 A 记录由
 > `<FRONTEND_IP>`（前端）改为 `<BACKEND_IP>`（后端），TTL 300、不走 Cloudflare 代理。

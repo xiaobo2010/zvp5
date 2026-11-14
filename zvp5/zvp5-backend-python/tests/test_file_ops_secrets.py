@@ -46,7 +46,7 @@ def test_credential_names_are_protected(name: str) -> None:
 @pytest.mark.parametrize(
     "path",
     [
-        # 生产 前端 机器上真实存在的备份：精确集合永远列不全时间戳。
+        # 生产前端机器上真实存在的备份：精确集合永远列不全时间戳。
         "/www/zvms4/backend/settings.py.bak.20261013121615",
         "/www/zvms4/backend/settings.py.bak",
         # sshd 默认私钥与授权名单（services/ssh_bridge.py 的默认路径）。

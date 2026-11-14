@@ -13,7 +13,7 @@ workflow，就能读到 10 条生产 secret。转公开是为了拿回这些闸�
 
 | 项 | 提交 | 说明 |
 | --- | --- | --- |
-| 主机 IP 脱敏 | `bf87f20` | 12 个文档/README 里 50 处真实 IP → `<BACKEND_IP>` / `<FRONTEND_IP>` / `<PROXY_IP>` / `<CLIENT_IP>`；端口、路径、服务别名保留。约定见 `REDACTION_POLICY.md` |
+| 主机 IP 脱敏 | `bf87f20` | 12 个文档/README 里 50 处真实 IP → `<BACKEND_IP>` / `<FRONTEND_IP>` / `<CLIENT_IP>`；端口、路径、服务别名保留。约定见 `REDACTION_POLICY.md` |
 | 学海归档移出 | `bedf6c2` | `reference/xuehai/` 含从 `xhcore.so` 提取的第三方签名 KEY、任意 URL 签名代理、设备采集与外呼逻辑。整棵移出到 `~/zvp5-private-reference/xuehai/`，根 README 里复述的 KEY 值改为不复现 |
 | 扫描配置 | `bedf6c2` / `1ec433a` | 两份 `.gitleaks*.toml` 去掉 `reference/xuehai/` 放行——这条放行正是此前扫描全绿的原因 |
 | 归档不占门禁 | `bedf6c2` | `ci.yml` 的 `paths-ignore` 加 `reference/**`；纯归档改动不再跑全量门禁 |

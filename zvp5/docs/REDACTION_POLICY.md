@@ -9,7 +9,6 @@
 | --- | --- | --- |
 | `<BACKEND_IP>` | 后端/API 所在机（后端，别名 `zvp-backend`） | 部署记录、排障日志 |
 | `<FRONTEND_IP>` | 前端源站（前端，别名 `zvp-frontend`） | 反代配置、`ssh-keyscan` 示例 |
-| `<PROXY_IP>` | 另一处主机节点的 IP | 链路验证记录 |
 | `<CLIENT_IP>` | 真实访客/终端 IP | access.log 摘录 |
 | `<CF_ACCOUNT_ID>` | Cloudflare account id | Worker 部署命令、wrangler 说明 |
 | `<CF_RECORD_ID>` | Cloudflare 单条 DNS 记录的 record id | DNS 切换/回滚记录 |

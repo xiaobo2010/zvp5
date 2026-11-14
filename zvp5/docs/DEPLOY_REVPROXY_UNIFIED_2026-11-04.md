@@ -21,7 +21,7 @@ ssh zvp-frontend 'chown -R www:www /www/zvms4/frontend-dist'
 ```bash
 grep -c "Both API paths failed" dist/assets/index-*.js        # 竞速模块在包里
 grep -oh "https://zvp[a-z]*\.xiaobopisces\.top/api" dist/assets/*.js | sort -u
-# 期望同时看到 zvp.xiaobopisces.top（主路，走 前端反代）和 zvpapi.xiaobopisces.top（备路，直连后端）
+# 期望同时看到 zvp.xiaobopisces.top（主路，走前端反代）和 zvpapi.xiaobopisces.top（备路，直连后端）
 ```
 
 **为什么曾经"没生效"**：2026-11-04 那次发布是双路竞速代码合入之前构建的，产物里根本
@@ -47,7 +47,7 @@ uvicorn 127.0.0.1:8018）。前端产物不再出现 `zvpapi` 字样，请求全
 
 2026-11-02 的 API 归属分层把前端迁到前端机、API 留在后端机，构建时注入
 `VITE_API_BASE=https://zvpapi.xiaobopisces.top/api`，浏览器直接跨源打后端。
-前端 上的 `/api/` 反代一直存在，但没有流量走它。现在改回注入同源基址：
+前端上的 `/api/` 反代一直存在，但没有流量走它。现在改回注入同源基址：
 
 ```bash
 cd zvms4-frontend
@@ -61,7 +61,7 @@ ssh zvp-frontend 'chown -R www:www /www/zvms4/frontend-dist'
 
 ## 关键配套：真实客户端 IP
 
-反代把「所有用户」收敛成 前端 一个对端 IP，直接后果是登录限流、封禁、审计日志
+反代把「所有用户」收敛成前端一个对端 IP，直接后果是登录限流、封禁、审计日志
 全部按 `<FRONTEND_IP>` 计数——一人触发全站遭殃。因此两层都要改：
 
 **zvp-frontend vhost**（`/www/server/panel/vhost/nginx/zvp.xiaobopisces.top.conf`）
@@ -81,14 +81,14 @@ real_ip_header X-Forwarded-For;
 real_ip_recursive on;
 ```
 
-只有 前端 的转发可信，`$remote_addr` 被还原成真实客户端，随后各 location 的
+只有前端的转发可信，`$remote_addr` 被还原成真实客户端，随后各 location 的
 `proxy_set_header X-Real-IP $remote_addr` 就是真实 IP。后端
 `typings/log.py::client_ip_from` 以 `X-Real-IP` 为准，所以这一条不能省。
 
 验证（2026-11-04 23:28，zvp-backend `/var/log/nginx/access.log`）：
 
 ```
-<PROXY_IP> - - [...] "GET /api/health HTTP/1.1" 200 38 "-" "Mozilla/5.0 realip-probe-"
+<CLIENT_IP> - - [...] "GET /api/health HTTP/1.1" 200 38 "-" "Mozilla/5.0 realip-probe-"
 <CLIENT_IP> - - [...] "GET /api/v3/users/me/device HTTP/1.1" 200 151 ...
 ```
 
@@ -101,7 +101,7 @@ real_ip_recursive on;
 | 产物 API 基址 | `assets/*.js` 仅含 `https://zvp.xiaobopisces.top/api`，全量 grep `zvpapi` = 0 |
 | 页面 | `GET /` 200，index 引用 `index-aIh1pLpn.js` |
 | API 透传 | `/api/health` 200 `{"status":"ok"}`；`/api/system/maintenance` 200 |
-| 等价性 | POST `/api/users/login`、`/api/v3/users/me/device`、ssh ws 升级，直连后端与走 前端反代返回码逐项一致（405 / 401 / 404） |
+| 等价性 | POST `/api/users/login`、`/api/v3/users/me/device`、ssh ws 升级，直连后端与走前端反代返回码逐项一致（405 / 401 / 404） |
 | WebSocket | `/socket.io/?EIO=4&transport=polling` 200 |
 | 反代头 | 前端 `X-Forwarded-For $remote_addr` 3 处；后端 `real_ip` 生效 |
 | 静态资源 | `/assets/index-aIh1pLpn.js` 200，446611 bytes；`/sw.js`、`/manifest.webmanifest` 200 |
@@ -122,7 +122,7 @@ real_ip_recursive on;
 
 - `zvpapi.xiaobopisces.top` 仍对公网开放，且本机还留着一份 2026-11-02 的 SPA 副本。
   若要「真正统一入口」，可把该 vhost 的 `/api/` 限定 `allow <FRONTEND_IP>; deny all;`，
-  根路径 301 到 zvp 域；代价是 前端 出口 IP 变化时会全站 502，需同时保留一条带外 SSH 通道改配置。
+  根路径 301 到 zvp 域；代价是前端出口 IP 变化时会全站 502，需同时保留一条带外 SSH 通道改配置。
 
 ## 2026-11-06 小型 JSON GET 双路竞速
 
@@ -205,7 +205,7 @@ curl -sS -X OPTIONS \
 | 注入 | `VITE_API_BASE=https://zvp.xiaobopisces.top/api`、`VITE_API_RACE_BASE=https://zvpapi.xiaobopisces.top/api` |
 | 产物自检 | 竞速模块（`Both API paths failed`）命中 1 处；两个 API 基址同时出现在 `assets/*.js` |
 | 线上取包 | `GET /assets/index-aUiB2Zdp.js` 200 / 449082 bytes，两个基址齐备 |
-| 主路 | `GET https://zvp.xiaobopisces.top/api/version` 200 `v4.3.0-7`（经 前端反代） |
+| 主路 | `GET https://zvp.xiaobopisces.top/api/version` 200 `v4.3.0-7`（经前端反代） |
 | 备路 | `GET https://zvpapi.xiaobopisces.top/api/version` 200 `v4.3.0-7`；带 `Origin: https://zvp.xiaobopisces.top` 时回显 `Access-Control-Allow-Origin` + `Allow-Credentials: true` |
 | 静态资源 | index.html 引用的 20 个资源全部存在，无 404；`sw.js`、`manifest.webmanifest` 200 |
 | 回滚 | `/www/zvms4/frontend-dist.bak-20261106-170011`（前端） |

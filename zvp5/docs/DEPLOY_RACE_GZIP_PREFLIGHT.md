@@ -178,7 +178,7 @@ curl -sS -X OPTIONS \
 | 前端配置备份 | `/root/backup-20261107-preflight-001323` |
 | 前端备份 | `/www/zvms4/frontend-dist.bak-20261107-0015` |
 | 后端 gzip | `/api/changelog` 从 29,293 bytes 降至约 13,509 bytes，带 `Content-Encoding: gzip` |
-| 预检 | 生产域/canary × 前端/后端 四种组合均为 204，`Max-Age: 7200` |
+| 预检 | 生产域/canary × 前端/后端四种组合均为 204，`Max-Age: 7200` |
 | 未知 Origin | 返回 204，但无 `Access-Control-Allow-Origin` |
 | 前端产物 | `index-tOk_jfbe.js`，SHA256 `3EC890132D7D7004CD89763E8C16CCF060AA9879D5602F58328BD5AEAB574897` |
 | 前端文件 | 336 个文件，其中 160 个 `.gz` |
