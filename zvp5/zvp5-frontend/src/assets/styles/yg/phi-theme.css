@@ -1185,12 +1185,6 @@ html[data-theme='light'] .yg-phi .yg-phi-title {
   background: linear-gradient(120deg, var(--phi-panel-hi), var(--phi-panel) 58%);
 }
 
-.yg-phi .yg-home-avatar {
-  border-radius: 0;
-  clip-path: polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 0 100%);
-  box-shadow: 3px 3px 0 var(--phi-shadow);
-}
-
 .yg-phi .yg-home-identity__name {
   color: var(--phi-ink);
 }

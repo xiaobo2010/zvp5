@@ -31,6 +31,7 @@ import {
   primaryDeviceErrorMessage
 } from '@/components/notification/primaryDeviceLogic'
 import ZMarkdown from '@/components/markdown/ZMarkdown.vue'
+import ZUserAvatar from '@/components/user/ZUserAvatar.vue'
 import { formatDateTime } from '@/utils/dateTime'
 import {
   emptyNotificationState,
@@ -59,8 +60,6 @@ if (!user.isLogin) {
 
 /* ---------- 个人信息 ---------- */
 const displayName = computed(() => user.name.trim() || t('profile.nameMissing'))
-
-const initials = computed(() => user.name.trim().slice(0, 1) || '—')
 
 const studentNumber = computed(() => (user.id ? String(user.id) : '—'))
 
@@ -347,7 +346,7 @@ onMounted(async () => {
 
       <div class="yg-card__body">
         <div class="profile-hero">
-          <span class="profile-avatar" aria-hidden="true">{{ initials }}</span>
+          <ZUserAvatar size="lg" :name="user.name" :code="user.id" />
           <div class="profile-identity">
             <p class="profile-name">{{ displayName }}</p>
             <div class="profile-roles">
@@ -1021,24 +1020,7 @@ html[data-theme='light'] .profile-device-dialog-input {
   grid-template-columns: 72px minmax(0, 1fr);
   align-items: center;
   gap: var(--yg-space-5);
-  padding: var(--yg-space-2) 0 0 var(--yg-space-1);
-}
-
-/* 头像外的角括号框 */
-.profile-hero::before {
-  content: '';
-  position: absolute;
-  top: 50%;
-  left: calc(var(--yg-space-1) - 7px);
-  width: 86px;
-  height: 86px;
-  margin-top: calc(-43px + var(--yg-space-1));
-  background:
-    linear-gradient(var(--phx-accent), var(--phx-accent)) left top / 14px 1px no-repeat,
-    linear-gradient(var(--phx-accent), var(--phx-accent)) left top / 1px 14px no-repeat,
-    linear-gradient(var(--phx-accent), var(--phx-accent)) right bottom / 14px 1px no-repeat,
-    linear-gradient(var(--phx-accent), var(--phx-accent)) right bottom / 1px 14px no-repeat;
-  pointer-events: none;
+  padding: var(--yg-space-2) 0 0;
 }
 
 /* 右上角斜线纹，放在内容下面 */
@@ -1052,30 +1034,6 @@ html[data-theme='light'] .profile-device-dialog-input {
   height: 32px;
   background: repeating-linear-gradient(-55deg, var(--phx-line) 0 2px, transparent 2px 8px);
   pointer-events: none;
-}
-
-.profile-avatar {
-  display: grid;
-  place-items: center;
-  width: 72px;
-  height: 72px;
-  background: linear-gradient(
-    135deg,
-    color-mix(in srgb, var(--phx-accent) 24%, var(--phx-surface)),
-    color-mix(in srgb, var(--phx-accent) 6%, var(--phx-surface))
-  );
-  color: var(--phx-accent);
-  font-size: 30px;
-  font-weight: var(--yg-font-weight-bold);
-  line-height: 1;
-  clip-path: polygon(
-    0 0,
-    calc(100% - 14px) 0,
-    100% 14px,
-    100% 100%,
-    14px 100%,
-    0 calc(100% - 14px)
-  );
 }
 
 .profile-identity {
@@ -1779,20 +1737,8 @@ html[data-theme='light'] .profile-device-dialog-input {
   }
 
   .profile-hero {
-    grid-template-columns: 60px minmax(0, 1fr);
+    grid-template-columns: 72px minmax(0, 1fr);
     gap: var(--yg-space-4);
-  }
-
-  .profile-hero::before {
-    width: 74px;
-    height: 74px;
-    margin-top: calc(-37px + var(--yg-space-1));
-  }
-
-  .profile-avatar {
-    width: 60px;
-    height: 60px;
-    font-size: 26px;
   }
 
   .profile-details,

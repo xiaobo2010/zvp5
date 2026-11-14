@@ -25,6 +25,7 @@ import { useDark, useWindowSize } from '@vueuse/core'
 import { useI18n } from 'vue-i18n'
 import { pad, getTabletType } from '@/plugins/ua'
 import { prefetchRoute, prefetchRoutesWhenIdle } from '@/utils/routePrefetch'
+import ZUserAvatar from '@/components/user/ZUserAvatar.vue'
 // 直接引模块而非 @/views barrel：barrel 会把整包用户视图拖进导航 chunk。
 import { modifyPasswordDialogs } from '@/views/user/modifyPasswordDialogs'
 
@@ -487,10 +488,6 @@ const accountPopperOptions = {
 }
 const accountPlacement = computed(() => (verticalMode.value ? 'top-end' : 'right-end'))
 
-/* 头像里只放名字首字：横屏导航栏宽 4rem，竖屏药丸也要留给功能项，
-   完整用户名放不进 44px 的触控目标里。 */
-const avatarLabel = computed(() => user.name?.trim().charAt(0) || '?')
-
 async function changePassword() {
   accountMenuOpen.value = false
   try {
@@ -620,30 +617,8 @@ const accountItems = computed(() => [
             :aria-expanded="accountMenuOpen ? 'true' : 'false'"
             :aria-label="t('nav.accountMenu', '账号菜单')"
           >
-            <!-- 账号徽记：整块 aria-hidden，可读名称在按钮 aria-label 上。
-                 30px 内只画三层：切角外框、内圈、右下角品红刻度；首字留在中心。
-                 gradient id 固定且本组件只渲染一次，避免同页 id 冲突。 -->
-            <span class="yg-glass-nav__avatar" aria-hidden="true">
-              <svg class="yg-glass-nav__avatar-mark" viewBox="0 0 32 32" focusable="false">
-                <defs>
-                  <linearGradient id="yg-nav-avatar-plate" x1="4" y1="2" x2="28" y2="30" gradientUnits="userSpaceOnUse">
-                    <stop class="yg-glass-nav__avatar-plate-hi" offset="0" />
-                    <stop class="yg-glass-nav__avatar-plate-lo" offset="1" />
-                  </linearGradient>
-                </defs>
-                <polygon
-                  class="yg-glass-nav__avatar-frame"
-                  points="16,1.5 27.2,8 27.2,24 16,30.5 4.8,24 4.8,8"
-                />
-                <polygon
-                  class="yg-glass-nav__avatar-plate"
-                  points="16,4.2 24.6,9.2 24.6,22.8 16,27.8 7.4,22.8 7.4,9.2"
-                  fill="url(#yg-nav-avatar-plate)"
-                />
-                <path class="yg-glass-nav__avatar-tick" d="M24.6 22.2h3.4v1.15h-2.25V26" />
-              </svg>
-              <span class="yg-glass-nav__avatar-initial">{{ avatarLabel }}</span>
-            </span>
+            <!-- 账号徽记整块 aria-hidden，可读名称在按钮 aria-label 上。 -->
+            <ZUserAvatar size="xs" :name="user.name" :code="user.id" />
           </button>
         </template>
         <div class="yg-glass-account-menu__list" role="menu">
@@ -665,97 +640,6 @@ const accountItems = computed(() => [
 </template>
 
 <style scoped>
-/* 账号徽记：30px 尖顶六边形 HUD。触控尺寸仍是导航项 44px，图标本体不超过 32px。
-   外框描边画在 SVG 里，落影用 drop-shadow，避免再上 clip-path 把焦点裁掉。
-   渐变端点用 stop class 上色，才能跟着 --yg-color-primary 走深浅色。 */
-.yg-glass-nav__avatar {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 30px;
-  height: 30px;
-  color: var(--yg-color-primary);
-  filter:
-    drop-shadow(1px 2px 0 color-mix(in srgb, var(--yg-color-primary) 36%, transparent))
-    drop-shadow(0 3px 5px rgba(5, 6, 8, 0.32));
-  transition: filter var(--yg-dur-base) var(--yg-ease-out);
-}
-
-.yg-glass-nav__avatar-mark {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  overflow: visible;
-}
-
-.yg-glass-nav__avatar-frame {
-  fill: color-mix(in srgb, var(--yg-color-primary) 14%, var(--yg-bg-surface));
-  stroke: var(--yg-color-primary);
-  stroke-width: 1.15;
-  stroke-linejoin: miter;
-}
-
-.yg-glass-nav__avatar-plate-hi {
-  stop-color: color-mix(in srgb, var(--yg-color-primary) 34%, var(--yg-bg-surface));
-}
-
-.yg-glass-nav__avatar-plate-lo {
-  stop-color: color-mix(in srgb, var(--yg-color-primary) 8%, var(--yg-bg-surface));
-}
-
-.yg-glass-nav__avatar-tick {
-  fill: none;
-  stroke: #ff4e9b;
-  stroke-width: 1.15;
-  stroke-linecap: square;
-  stroke-linejoin: miter;
-}
-
-.yg-glass-nav__avatar-initial {
-  position: relative;
-  z-index: 1;
-  color: var(--yg-color-primary);
-  font-size: 13px;
-  font-weight: var(--yg-font-weight-semibold);
-  line-height: 1;
-  letter-spacing: 0;
-}
-
-.yg-glass-nav__account:hover .yg-glass-nav__avatar-frame {
-  fill: var(--yg-color-primary);
-}
-
-.yg-glass-nav__account:hover .yg-glass-nav__avatar-plate-hi,
-.yg-glass-nav__account:hover .yg-glass-nav__avatar-plate-lo {
-  stop-color: color-mix(in srgb, var(--yg-color-primary) 78%, #050608);
-}
-
-.yg-glass-nav__account:hover .yg-glass-nav__avatar-initial {
-  color: var(--yg-bg-surface);
-}
-
-.yg-glass-nav__account:hover .yg-glass-nav__avatar {
-  filter:
-    drop-shadow(1px 2px 0 color-mix(in srgb, var(--yg-color-primary) 48%, transparent))
-    drop-shadow(0 4px 7px rgba(5, 6, 8, 0.36));
-}
-
-.yg-glass-nav__account:focus-visible .yg-glass-nav__avatar {
-  filter:
-    drop-shadow(1px 2px 0 color-mix(in srgb, var(--yg-color-primary) 36%, transparent))
-    drop-shadow(0 3px 5px rgba(5, 6, 8, 0.32))
-    drop-shadow(0 0 1px var(--yg-bg-surface))
-    drop-shadow(0 0 2px var(--yg-focus-ring-color))
-    drop-shadow(0 0 4px var(--yg-focus-ring-color));
-}
-
-/* Phi 浅色纸面：品红刻度加深，避免白底上发飘 */
-html[data-theme='light'] .yg-glass-nav__avatar-tick {
-  stroke: #c2186a;
-}
-
 /* 菜单内容由本组件编译（插槽归属本组件），scoped 样式照常生效 */
 .yg-glass-account-menu__list {
   display: flex;

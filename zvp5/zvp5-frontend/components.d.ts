@@ -98,6 +98,7 @@ declare module 'vue' {
     ZSystemSettings: typeof import('./src/components/manage/ZSystemSettings.vue')['default']
     ZTimeJudge: typeof import('./src/components/activity/ZTimeJudge.vue')['default']
     ZUploadFile: typeof import('./src/components/activity/ZUploadFile.vue')['default']
+    ZUserAvatar: typeof import('./src/components/user/ZUserAvatar.vue')['default']
     ZUserGroup: typeof import('./src/components/tags/ZUserGroup.vue')['default']
     ZUserModification: typeof import('./src/components/group/ZUserModification.vue')['default']
     ZUserPosition: typeof import('./src/components/tags/ZUserPosition.vue')['default']

@@ -183,7 +183,8 @@ describe('UserNav 账号菜单', () => {
     expect(account.exists()).toBe(true)
     expect(account.attributes('aria-label')).toBe('nav.accountMenu')
     expect(account.attributes('aria-haspopup')).toBe('menu')
-    expect(wrapper.find('.yg-glass-nav__avatar').text()).toBe('张')
+    expect(wrapper.find('.z-pilot-plate').attributes('aria-hidden')).toBe('true')
+    expect(wrapper.find('.z-pilot-plate__type').text()).toBe('张')
 
     wrapper.unmount()
   })
