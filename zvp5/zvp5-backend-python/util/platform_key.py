@@ -13,8 +13,10 @@
 
 解析顺序（先命中先返回，**不做静默回退**）：
 
-1. ``ZVMS_PLATFORM_KEY_FILE``：显式路径，给非 systemd 部署与本地调试；
-2. ``$CREDENTIALS_DIRECTORY/zvms_ai_key``：systemd ``LoadCredential`` 注入；
+1. ``ZVP5_PLATFORM_KEY_FILE``（旧名 ``ZVMS_PLATFORM_KEY_FILE`` 仍回落）：
+   显式路径，给非 systemd 部署与本地调试；
+2. ``$CREDENTIALS_DIRECTORY/zvp5_ai_key``（旧 id ``zvms_ai_key`` 仍回落）：
+   systemd ``LoadCredential`` 注入；
 3. 后端根 ``aes_key.txt``：兼容回退，迁移完成后可删除。
 
 注意：``read_text()`` 原样返回文件内容，**不 strip**。``util/cert.py`` 与
@@ -27,10 +29,14 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-#: systemd ``LoadCredential=zvms_ai_key:<source>`` 里的 id。
-CREDENTIAL_ID = "zvms_ai_key"
-#: 非 systemd 部署的显式路径。
-_PATH_ENV = "ZVMS_PLATFORM_KEY_FILE"
+from util import env
+
+#: systemd ``LoadCredential=zvp5_ai_key:<source>`` 里的 id。
+CREDENTIAL_ID = "zvp5_ai_key"
+#: 历史 id：改名期间两台机器的 unit 仍注入 ``zvms_ai_key``。
+LEGACY_CREDENTIAL_ID = "zvms_ai_key"
+#: 非 systemd 部署的显式路径（旧名 ``ZVMS_PLATFORM_KEY_FILE`` 由 util.env 回落）。
+_PATH_ENV = "ZVP5_PLATFORM_KEY_FILE"
 #: 旧位置：与 backend 根同层（部署树内）。
 _LEGACY_FILE = Path(__file__).resolve().parents[1] / "aes_key.txt"
 
@@ -44,8 +50,19 @@ def legacy_path() -> Path:
 
 
 def credential_path() -> Path | None:
+    """``$CREDENTIALS_DIRECTORY`` 下的凭据副本；新名不存在时回落到旧名。
+
+    两者都不存在时返回新名路径——保持「挂载目录在、文件缺失就是启动失败」的
+    契约，不把配置错误伪装成没挂凭据。
+    """
     root = os.environ.get("CREDENTIALS_DIRECTORY")
-    return Path(root) / CREDENTIAL_ID if root else None
+    if not root:
+        return None
+    current = Path(root) / CREDENTIAL_ID
+    if current.exists():
+        return current
+    legacy = Path(root) / LEGACY_CREDENTIAL_ID
+    return legacy if legacy.exists() else current
 
 
 def is_credential_path(path: str | Path) -> bool:
@@ -69,7 +86,7 @@ def resolve_path() -> Path | None:
     ``CREDENTIALS_DIRECTORY`` 一旦存在就只认它（即使文件缺失）——这是 systemd
     部署的契约，静默退到旧文件会把「凭据没挂上」伪装成正常启动。
     """
-    explicit = os.environ.get(_PATH_ENV)
+    explicit = env.getenv(_PATH_ENV)
     if explicit:
         return Path(explicit)
     credential = credential_path()
@@ -99,6 +116,7 @@ def read_text() -> str:
 
 __all__ = [
     "CREDENTIAL_ID",
+    "LEGACY_CREDENTIAL_ID",
     "KeyMaterialError",
     "credential_path",
     "is_credential_path",

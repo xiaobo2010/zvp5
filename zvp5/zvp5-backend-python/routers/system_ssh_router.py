@@ -40,6 +40,7 @@ from services.ai import textgen
 from services.ai import thinking as ai_thinking
 from services.ssh_command_log import CommandLineBuffer
 from typings.log import ZVMSLog
+from util import env as env_config
 from util.dual_auth import (
     DualAuthError,
     audit_system_op,
@@ -63,7 +64,7 @@ AUDIT_CONCURRENCY_DEFAULT = 8
 
 
 def audit_concurrency() -> int:
-    raw = os.environ.get("ZVMS_SSH_AUDIT_CONCURRENCY")
+    raw = env_config.getenv("ZVP5_SSH_AUDIT_CONCURRENCY")
     try:
         value = int(str(raw))
     except (TypeError, ValueError):

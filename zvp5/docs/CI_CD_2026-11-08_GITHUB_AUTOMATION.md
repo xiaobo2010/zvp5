@@ -5,7 +5,7 @@
 - 源分支：`origin/codex/github-automation`（作者 `albxy`，4 个提交，
   `8e4a654` → `38a52bf`），基线 `c965429`。
 - 形态是 **push 式发布**：GitHub Actions 跑质量与安全检查 → 构建并打包
-  → SSH 把制品送到两台主机 → 服务器端 `/usr/local/sbin/zvms4-deploy`
+  → SSH 把制品送到两台主机 → 服务器端 `/usr/local/sbin/zvp5-deploy`
   （仅这 4 条命令有免密 sudo）校验 sha256、备份、原子切换、健康检查，
   失败自动回滚。**不是服务器端 `git pull` 轮询。**
 - 门禁语义：`push` 到 main 只跑 CI；只有发布**非预发布 Release**、且
@@ -28,7 +28,7 @@ main 已把 `zvms4-modified-main/` 更名 `zvp5/`，分支仍用旧目录名；
 | `.github/ISSUE_TEMPLATE/*`、`.github/PULL_REQUEST_TEMPLATE.md` | 模板 |
 | `.github/dependabot.yml` | 每周分组更新 pip / pnpm / actions |
 | `.gitleaks.toml`、`.gitleaks-high-confidence.toml` | 密钥扫描规则 |
-| `zvp5/deployment/github-actions/zvms4-deploy` | 服务器端部署/回滚脚本 |
+| `zvp5/deployment/github-actions/zvp5-deploy` | 服务器端部署/回滚脚本 |
 | `zvp5/deployment/github-actions/bootstrap-deploy-user.sh` | 建部署账号 + 收窄 sudoers |
 | `zvp5/deployment/github-actions/test-deploy-wrapper.sh` | 部署脚本回归测试 |
 | `zvp5/deployment/github-actions/README.md` | 运维手册 |

@@ -42,6 +42,24 @@ def test_credential_directory_beats_legacy_file(tmp_path, monkeypatch):
     assert platform_key.read_text() == "from-systemd\n"
 
 
+def test_legacy_credential_id_still_resolves(tmp_path, monkeypatch):
+    """改名期间 unit 仍注入 zvms_ai_key：新 id 不存在时必须认旧 id。"""
+    _clear_env(monkeypatch)
+    (tmp_path / platform_key.LEGACY_CREDENTIAL_ID).write_text("legacy\n", encoding="utf-8")
+    monkeypatch.setenv("CREDENTIALS_DIRECTORY", str(tmp_path))
+
+    assert platform_key.read_text() == "legacy\n"
+
+
+def test_new_credential_id_wins_when_both_exist(tmp_path, monkeypatch):
+    _clear_env(monkeypatch)
+    (tmp_path / platform_key.CREDENTIAL_ID).write_text("new\n", encoding="utf-8")
+    (tmp_path / platform_key.LEGACY_CREDENTIAL_ID).write_text("legacy\n", encoding="utf-8")
+    monkeypatch.setenv("CREDENTIALS_DIRECTORY", str(tmp_path))
+
+    assert platform_key.read_text() == "new\n"
+
+
 def test_missing_credential_file_does_not_fall_back(tmp_path, monkeypatch):
     """挂载配置错了就启动失败；退回旧文件会把事故藏起来。"""
     _clear_env(monkeypatch)

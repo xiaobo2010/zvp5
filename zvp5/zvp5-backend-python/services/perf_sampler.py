@@ -43,6 +43,7 @@ from typing import Any, Iterable, Mapping
 
 from services import db_monitor
 from services.api_metrics import api_metrics
+from util.env import getenv
 from services.host_metrics import collect_host_metrics
 from util.serialization import iso_epoch_utc
 
@@ -51,7 +52,7 @@ _logger = logging.getLogger(__name__)
 # 后端根目录：本文件位于 services/ 下，向上两级即后端根（同 db/system_state.py）。
 _BACKEND_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-PERF_DB_PATH = os.environ.get("ZVMS_PERF_DB") or os.path.join(
+PERF_DB_PATH = getenv("ZVP5_PERF_DB") or os.path.join(
     _BACKEND_ROOT, "perf_samples.db"
 )
 
@@ -133,7 +134,7 @@ def retention_days() -> int:
 
 
 def _db_path() -> str:
-    return os.environ.get("ZVMS_PERF_DB") or PERF_DB_PATH
+    return getenv("ZVP5_PERF_DB") or PERF_DB_PATH
 
 
 # --------------------------------------------------------------------------- #

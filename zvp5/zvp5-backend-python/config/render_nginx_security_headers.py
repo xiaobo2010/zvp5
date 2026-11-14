@@ -9,6 +9,12 @@ import sys
 from pathlib import Path
 from urllib.parse import urlsplit
 
+# 本文件按 `python config/render_nginx_security_headers.py` 独立运行，
+# 后端根不在 sys.path 上，先补再导入共用读取器。
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from util.env import getenv  # noqa: E402
+
 API_PLACEHOLDER = "__ZVMS_API_ORIGIN__"
 WS_PLACEHOLDER = "__ZVMS_API_WS_ORIGIN__"
 STATIC_PLACEHOLDER = "__ZVMS_STATIC_ORIGIN__"
@@ -60,9 +66,9 @@ def main() -> int:
 
     rendered = render(
         args.template.read_text(encoding="utf-8"),
-        os.environ.get("ZVMS_API_ORIGIN", ""),
-        os.environ.get("ZVMS_API_WS_ORIGIN", ""),
-        os.environ.get("ZVMS_STATIC_ORIGIN", ""),
+        getenv("ZVP5_API_ORIGIN", ""),
+        getenv("ZVP5_API_WS_ORIGIN", ""),
+        getenv("ZVP5_STATIC_ORIGIN", ""),
     )
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)

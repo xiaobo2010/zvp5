@@ -39,7 +39,7 @@
 | 文件 | 改动 | 为什么 |
 |---|---|---|
 | `deployment/zvms4.nginx.conf` | `http2 on`；`upstream zvms4_local_api { keepalive 32; keepalive_requests 1000; keepalive_timeout 60s; }`；`proxy_set_header Connection ""`；`keepalive_timeout 65`；`open_file_cache`；`ssl_session_timeout 1d` | h2 让一次页面加载的资源/接口复用同一条 TLS 连接；清空 `Connection` 才能让 nginx→uvicorn 的连接池真正生效 |
-| `deployment/zvms4.service` | `uvicorn ... --timeout-keep-alive 75` | uvicorn 默认 5s 空闲即断，浏览器两次操作之间就要重连；75s 大于 nginx 侧 65s，由 nginx 先关 |
+| `deployment/zvp5.service` | `uvicorn ... --timeout-keep-alive 75` | uvicorn 默认 5s 空闲即断，浏览器两次操作之间就要重连；75s 大于 nginx 侧 65s，由 nginx 先关 |
 | `zvms4-frontend/vite.config.ts` | 新增 `preconnectApiOrigin()` 插件，构建期按 `VITE_API_BASE` 注入 `<link rel="preconnect">` + `<link rel="dns-prefetch">` | 页面在 前端、API 在后端，跨源首请求原本要等 JS 加载完才握手；预连接与 bundle 下载并行 |
 
 `http2 on` 需要 nginx ≥ 1.25.1（`listen ... http2` 旧写法已废弃）。生产实测：

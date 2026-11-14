@@ -27,6 +27,7 @@ from contextlib import asynccontextmanager
 import error_handlers
 import legacy_redirects
 import meta_routes
+from util.env import getenv
 from app_setup import (  # noqa: F401 - 兼容导出：tests/ 与运维脚本按 main.<name> 取
     DEFAULT_CORS_ALLOWED_ORIGINS,
     MAINTENANCE_EXEMPT_PATHS,
@@ -193,5 +194,5 @@ if __name__ == "__main__":
     uvicorn.run(
         app=app,
         host="0.0.0.0",
-        port=int(os.getenv("ZVMS_PORT", "8018")),
+        port=int(getenv("ZVP5_PORT", "8018")),
     )

@@ -28,6 +28,7 @@ from typing import Any, Awaitable, Callable
 import asyncssh
 
 import settings
+from util.env import getenv
 
 logger = logging.getLogger(__name__)
 
@@ -180,8 +181,8 @@ def _target_items() -> list | None:
     ``None`` 表示「完全没配置」，交给 :func:`load_targets` 走单目标退化。
     """
 
-    raw: object = os.environ.get("ZVMS_SSH_TARGETS")
-    source = "ZVMS_SSH_TARGETS"
+    raw: object = getenv("ZVP5_SSH_TARGETS")
+    source = "ZVP5_SSH_TARGETS"
     if not raw:
         raw = getattr(settings, "SSH_TARGETS", None)
         source = "settings.SSH_TARGETS"

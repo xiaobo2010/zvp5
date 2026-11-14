@@ -1,31 +1,46 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-PATH="${ZVMS4_DEPLOY_PATH:-/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin}"
+# 改名过渡：旧的 ZVMS4_* 环境变量在本脚本内映射成 ZVP5_*（新名优先）。
+# 两台的 env / CI 变量都换完之后，删掉这段即可完成收口。
+for _legacy in ${!ZVMS4_@}; do
+  _new="ZVP5_${_legacy#ZVMS4_}"
+  [[ -n "${!_new-}" ]] || export "${_new}=${!_legacy}"
+done
+unset -v _legacy _new
+
+PATH="${ZVP5_DEPLOY_PATH:-/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin}"
 umask 027
 
-DEPLOY_ROOT="${ZVMS4_DEPLOY_ROOT:-/www/zvms4}"
-INCOMING_ROOT="${ZVMS4_DEPLOY_INCOMING:-/home/github-deploy/incoming}"
+DEPLOY_ROOT="${ZVP5_DEPLOY_ROOT:-/www/zvp5}"
+INCOMING_ROOT="${ZVP5_DEPLOY_INCOMING:-/home/github-deploy/incoming}"
 BACKUP_ROOT="$DEPLOY_ROOT/backups/github-actions"
 STATE_ROOT="$DEPLOY_ROOT/.github-actions"
 VENV_ROOT="$STATE_ROOT/venvs"
 FRONTEND_DIR="$DEPLOY_ROOT/frontend-dist"
 BACKEND_DIR="$DEPLOY_ROOT/backend"
-SERVICE_NAME="${ZVMS4_DEPLOY_SERVICE:-zvms4}"
-SERVICE_USER="${ZVMS4_SERVICE_USER:-www-data}"
-FRONTEND_OWNER="${ZVMS4_FRONTEND_OWNER:-www:www}"
-SERVICE_URL="${ZVMS4_DEPLOY_SERVICE_URL:-http://127.0.0.1:8018/api/health}"
-SYSTEMCTL="${ZVMS4_SYSTEMCTL:-systemctl}"
-CURL_BIN="${ZVMS4_CURL:-curl}"
-HEALTH_ATTEMPTS="${ZVMS4_DEPLOY_HEALTH_ATTEMPTS:-12}"
-HEALTH_SLEEP="${ZVMS4_DEPLOY_HEALTH_SLEEP:-5}"
-MAX_ARCHIVE_BYTES="${ZVMS4_DEPLOY_MAX_ARCHIVE_BYTES:-268435456}"
+# 服务名在改名期间自动判定：装好 zvp5.service 之前一律沿用 zvms4。
+if [[ -n "${ZVP5_DEPLOY_SERVICE:-}" ]]; then
+  SERVICE_NAME="$ZVP5_DEPLOY_SERVICE"
+elif systemctl cat zvp5.service >/dev/null 2>&1; then
+  SERVICE_NAME="zvp5"
+else
+  SERVICE_NAME="zvms4"
+fi
+SERVICE_USER="${ZVP5_SERVICE_USER:-www-data}"
+FRONTEND_OWNER="${ZVP5_FRONTEND_OWNER:-www:www}"
+SERVICE_URL="${ZVP5_DEPLOY_SERVICE_URL:-http://127.0.0.1:8018/api/health}"
+SYSTEMCTL="${ZVP5_SYSTEMCTL:-systemctl}"
+CURL_BIN="${ZVP5_CURL:-curl}"
+HEALTH_ATTEMPTS="${ZVP5_DEPLOY_HEALTH_ATTEMPTS:-12}"
+HEALTH_SLEEP="${ZVP5_DEPLOY_HEALTH_SLEEP:-5}"
+MAX_ARCHIVE_BYTES="${ZVP5_DEPLOY_MAX_ARCHIVE_BYTES:-268435456}"
 
 CHANGED_COMPONENT=""
 PREPARED_VENV=""
 
 log() {
-  printf '[zvms4-deploy] %s\n' "$*"
+  printf '[zvp5-deploy] %s\n' "$*"
 }
 
 die() {
@@ -36,14 +51,14 @@ die() {
 ensure_dir() {
   local path="$1" mode="$2"
   mkdir -p "$path"
-  if [[ "${ZVMS4_SKIP_CHMOD:-0}" != "1" ]]; then
+  if [[ "${ZVP5_SKIP_CHMOD:-0}" != "1" ]]; then
     chmod "$mode" "$path"
   fi
 }
 
 usage() {
   cat >&2 <<'EOF'
-Usage: zvms4-deploy <deploy|rollback> <backend|frontend> <40-char-git-sha> <deployment-id>
+Usage: zvp5-deploy <deploy|rollback> <backend|frontend> <40-char-git-sha> <deployment-id>
 EOF
   exit 64
 }
@@ -123,7 +138,7 @@ mark_deployment_noop() {
 
 set_owner() {
   local path="$1"
-  if [[ "${ZVMS4_SKIP_CHOWN:-0}" == "1" ]]; then
+  if [[ "${ZVP5_SKIP_CHOWN:-0}" == "1" ]]; then
     return 0
   fi
   [[ $EUID -eq 0 ]] || die "chown requires root"
@@ -356,7 +371,7 @@ deploy_frontend() {
   CHANGED_COMPONENT=frontend
   mv "$FRONTEND_DIR" "$previous"
   mv "$staging" "$FRONTEND_DIR"
-  if [[ "${ZVMS4_SKIP_CHOWN:-0}" != "1" ]]; then
+  if [[ "${ZVP5_SKIP_CHOWN:-0}" != "1" ]]; then
     chown -R "$FRONTEND_OWNER" "$FRONTEND_DIR"
   fi
   rm -rf "$previous"
@@ -441,7 +456,7 @@ rollback_frontend() {
   [[ -d "$restore_root/frontend-dist" ]] || die "invalid frontend backup"
   [[ -d "$FRONTEND_DIR" ]] && mv "$FRONTEND_DIR" "$failed_dir"
   mv "$restore_root/frontend-dist" "$FRONTEND_DIR"
-  if [[ "${ZVMS4_SKIP_CHOWN:-0}" != "1" ]]; then
+  if [[ "${ZVP5_SKIP_CHOWN:-0}" != "1" ]]; then
     chown -R "$FRONTEND_OWNER" "$FRONTEND_DIR"
   fi
   rm -rf "$restore_root" "$failed_dir" "$previous"
@@ -475,7 +490,7 @@ rollback_backend() {
   set_owner "$BACKEND_DIR"
   restore_backend_venv "$revision" "$deployment_id"
   restart_service
-  if [[ "${ZVMS4_SKIP_ROLLBACK_HEALTH:-0}" != "1" ]]; then
+  if [[ "${ZVP5_SKIP_ROLLBACK_HEALTH:-0}" != "1" ]]; then
     health_check
   fi
   rm -rf "$restore_root"
@@ -520,7 +535,7 @@ trap handle_error EXIT
 # 手工调用）。用 flock 把整段部署/回滚串起来，避免两个进程同时 mv 同一棵树。
 ensure_dir "$STATE_ROOT" 0751
 exec 9>"$STATE_ROOT/deploy.lock"
-flock -w "${ZVMS4_DEPLOY_LOCK_TIMEOUT:-600}" 9 || die "another zvms4-deploy run holds the lock"
+flock -w "${ZVP5_DEPLOY_LOCK_TIMEOUT:-600}" 9 || die "another zvp5-deploy run holds the lock"
 
 case "$ACTION:$COMPONENT" in
   deploy:frontend) deploy_frontend "$REVISION" "$DEPLOYMENT_ID" ;;

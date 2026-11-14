@@ -20,6 +20,8 @@ from contextlib import AbstractAsyncContextManager
 from datetime import datetime
 from urllib.parse import urlsplit
 
+from util.env import getenv
+
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -49,7 +51,7 @@ def cors_allowed_origins() -> list[str]:
     explicit origin echo.
     """
 
-    configured = os.getenv("ZVMS_CORS_ALLOWED_ORIGINS", "")
+    configured = getenv("ZVP5_CORS_ALLOWED_ORIGINS", "")
     origins = list(DEFAULT_CORS_ALLOWED_ORIGINS)
     for raw_origin in configured.split(","):
         origin = raw_origin.strip().rstrip("/")

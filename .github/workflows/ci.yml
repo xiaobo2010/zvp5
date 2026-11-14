@@ -142,7 +142,7 @@ jobs:
       - name: ShellCheck deployment scripts
         run: >-
           shellcheck -x
-          zvp5/deployment/github-actions/zvms4-deploy
+          zvp5/deployment/github-actions/zvp5-deploy
           zvp5/deployment/github-actions/*.sh
       - name: Test deployment backup and rollback paths
         run: bash zvp5/deployment/github-actions/test-deploy-wrapper.sh
@@ -468,11 +468,11 @@ jobs:
             if [[ $status -ne 0 ]]; then
               if [[ $frontend_attempted -eq 1 ]]; then
                 remote frontend "$FRONTEND_SSH_HOST" "$FRONTEND_SSH_PORT" "$FRONTEND_SSH_USER" \
-                  "sudo -n /usr/local/sbin/zvms4-deploy rollback frontend $GITHUB_SHA $DEPLOYMENT_ID" || rollback_failed=1
+                  "sudo -n /usr/local/sbin/zvp5-deploy rollback frontend $GITHUB_SHA $DEPLOYMENT_ID" || rollback_failed=1
               fi
               if [[ $backend_attempted -eq 1 ]]; then
                 remote backend "$BACKEND_SSH_HOST" "$BACKEND_SSH_PORT" "$BACKEND_SSH_USER" \
-                  "sudo -n /usr/local/sbin/zvms4-deploy rollback backend $GITHUB_SHA $DEPLOYMENT_ID" || rollback_failed=1
+                  "sudo -n /usr/local/sbin/zvp5-deploy rollback backend $GITHUB_SHA $DEPLOYMENT_ID" || rollback_failed=1
               fi
               if [[ $frontend_attempted -eq 1 ]]; then
                 check_url "$PROD_FRONTEND_HEALTH_URL" || rollback_failed=1
@@ -501,13 +501,13 @@ jobs:
 
           backend_attempted=1
           remote backend "$BACKEND_SSH_HOST" "$BACKEND_SSH_PORT" "$BACKEND_SSH_USER" \
-            "sudo -n /usr/local/sbin/zvms4-deploy deploy backend $GITHUB_SHA $DEPLOYMENT_ID"
+            "sudo -n /usr/local/sbin/zvp5-deploy deploy backend $GITHUB_SHA $DEPLOYMENT_ID"
           check_url "$API_HEALTH_URL"
           check_url "$RACE_API_HEALTH_URL"
 
           frontend_attempted=1
           remote frontend "$FRONTEND_SSH_HOST" "$FRONTEND_SSH_PORT" "$FRONTEND_SSH_USER" \
-            "sudo -n /usr/local/sbin/zvms4-deploy deploy frontend $GITHUB_SHA $DEPLOYMENT_ID"
+            "sudo -n /usr/local/sbin/zvp5-deploy deploy frontend $GITHUB_SHA $DEPLOYMENT_ID"
           check_url "$PROD_FRONTEND_HEALTH_URL"
           check_url "$API_HEALTH_URL"
           check_url "$RACE_API_HEALTH_URL"

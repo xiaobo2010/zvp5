@@ -2,13 +2,13 @@
 set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-WRAPPER="$SCRIPT_DIR/zvms4-deploy"
+WRAPPER="$SCRIPT_DIR/zvp5-deploy"
 TEST_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TEST_ROOT"' EXIT
 
 export ZVMS4_DEPLOY_ROOT="$TEST_ROOT/www"
 export ZVMS4_DEPLOY_INCOMING="$TEST_ROOT/incoming"
-export ZVMS4_DEPLOY_SERVICE="zvms4-test"
+export ZVP5_DEPLOY_SERVICE="zvms4-test"
 export ZVMS4_DEPLOY_HEALTH_ATTEMPTS=1
 export ZVMS4_DEPLOY_HEALTH_SLEEP=0
 export ZVMS4_SKIP_CHOWN=1

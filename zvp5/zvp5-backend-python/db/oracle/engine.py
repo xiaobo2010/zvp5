@@ -32,6 +32,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async
 
 from . import config as oracle_config
 from .clob import install_lob_binds
+from util.env import getenv, getenv_bool
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +55,7 @@ def _connect_args(cfg: oracle_config.OracleConfig) -> dict:
         # blocking connect handshake. 5s is enough for a healthy ADB round trip
         # and short enough that a site-wide stall is bounded.
         "tcp_connect_timeout": float(
-            os.environ.get("ZVMS_DB_TCP_CONNECT_TIMEOUT", "5")
+            getenv("ZVP5_DB_TCP_CONNECT_TIMEOUT", "5")
         ),
     }
     # NOTE: the per-round-trip cap (``call_timeout``) is **not** a connect
@@ -83,7 +84,7 @@ def _call_timeout_ms() -> int:
     site-wide freeze. 60s is far above the 138ms p99 of a healthy ADB call
     and still short enough that a dead link frees the slot within a minute.
     """
-    return int(float(os.environ.get("ZVMS_DB_CALL_TIMEOUT", "60")) * 1000)
+    return int(float(getenv("ZVP5_DB_CALL_TIMEOUT", "60")) * 1000)
 
 
 def _install_call_timeout(engine: AsyncEngine) -> None:
@@ -121,11 +122,8 @@ def _install_call_timeout(engine: AsyncEngine) -> None:
 
 
 def _env_bool(name: str, default: bool) -> bool:
-    """把环境变量读成布尔值；未设置时返回 ``default``。"""
-    raw = os.environ.get(name)
-    if raw is None:
-        return default
-    return raw.strip().lower() in _TRUTHY
+    """把环境变量读成布尔值；未设置时返回 ``default``（含 ZVMS_ 旧名回落）。"""
+    return getenv_bool(name, default, truthy=_TRUTHY)
 
 
 def _pool_settings() -> dict:
@@ -157,12 +155,12 @@ def _pool_settings() -> dict:
       它就是纯开销。
     """
     return {
-        "pool_size": int(os.environ.get("ZVMS_DB_POOL_SIZE", "8")),
-        "max_overflow": int(os.environ.get("ZVMS_DB_POOL_OVERFLOW", "8")),
-        "pool_timeout": float(os.environ.get("ZVMS_DB_POOL_TIMEOUT", "5")),
+        "pool_size": int(getenv("ZVP5_DB_POOL_SIZE", "8")),
+        "max_overflow": int(getenv("ZVP5_DB_POOL_OVERFLOW", "8")),
+        "pool_timeout": float(getenv("ZVP5_DB_POOL_TIMEOUT", "5")),
         "pool_use_lifo": True,
         "pool_pre_ping": _env_bool("ZVMS_DB_PRE_PING", False),
-        "pool_recycle": int(os.environ.get("ZVMS_DB_RECYCLE", "600")),
+        "pool_recycle": int(getenv("ZVP5_DB_RECYCLE", "600")),
     }
 
 
