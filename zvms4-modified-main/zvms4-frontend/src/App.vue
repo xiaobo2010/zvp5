@@ -788,35 +788,51 @@ onMounted(async () => {
   gap: 2px;
 }
 
-/* 菜单只有两项，压到 32px 行高 + 4px 内边距，整体更紧凑 */
-:global(.yg-user-menu__item.el-button) {
+/* 菜单只有两项，压到 32px 行高 + 8px 内边距，整体更紧凑。
+   注意：Element Plus 有 `.el-button + .el-button { margin-left: 12px }`，
+   在纵向列表里会把第二项顶偏 12px —— 必须显式清零，否则两项左边缘对不齐。 */
+:global(.yg-user-menu__list .yg-user-menu__item.el-button) {
   justify-content: flex-start;
   width: 100%;
-  height: 32px;
+  height: 34px;
   margin: 0;
-  padding: 0 8px;
-  border-radius: var(--yg-radius-sm);
-  color: var(--yg-text-primary);
-  font-size: var(--yg-font-size-sm);
+  padding: 0 10px;
+  border-radius: var(--yg2-r-8);
+  color: var(--yg2-text);
+  font-size: 13.5px;
+  transition:
+    background-color 160ms var(--yg2-ease-out),
+    color 160ms var(--yg2-ease-out);
 }
 
-:global(.yg-user-menu__item.el-button:hover),
-:global(.yg-user-menu__item.el-button:focus) {
-  background: var(--yg-bg-hover);
-  color: var(--yg-text-primary);
+:global(.yg-user-menu__list .yg-user-menu__item.el-button:hover),
+:global(.yg-user-menu__list .yg-user-menu__item.el-button:focus) {
+  background: var(--yg2-surface-sunken);
+  color: var(--yg2-text);
 }
 
-:global(.yg-user-menu__item.el-button.yg-user-menu__item--logout),
-:global(.yg-user-menu__item.el-button.yg-user-menu__item--logout:hover) {
-  color: var(--yg-text-danger);
+:global(.yg-user-menu__list .yg-user-menu__item.el-button.yg-user-menu__item--logout) {
+  color: var(--yg2-danger);
 }
 
-:global(.yg-user-menu__item.el-button.yg-user-menu__item--logout:hover) {
-  background: var(--yg-color-danger-soft);
+:global(.yg-user-menu__list .yg-user-menu__item.el-button.yg-user-menu__item--logout:hover) {
+  background: var(--yg2-danger-soft);
+  color: var(--yg2-danger);
+}
+
+/* 图标与文字基线对齐，两项的起始位置一致 */
+:global(.yg-user-menu__list .yg-user-menu__item.el-button > .el-icon) {
+  margin-right: 8px;
+  font-size: 15px;
+}
+
+:global(.yg-user-menu__list .yg-user-menu__item.el-button > span) {
+  display: inline-flex;
+  align-items: center;
 }
 
 :global(.yg-user-menu) {
-  padding: 4px;
+  padding: 6px;
 }
 
 /* 极简风去掉指向箭头，弹层直接以右边缘对齐胶囊 */
