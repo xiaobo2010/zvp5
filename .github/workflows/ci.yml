@@ -5,6 +5,11 @@ on:
   push:
     branches:
       - main
+    # 纯文档提交不跑门禁：私有库按 job 时长计费，一次全量约 20 分钟。
+    # release 事件不受影响，发版照样走完整门禁。
+    paths-ignore:
+      - "**/*.md"
+      - "**/*.txt"
   release:
     types:
       - published
