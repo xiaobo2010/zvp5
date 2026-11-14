@@ -26,10 +26,10 @@
     0 12px 32px color-mix(in srgb, #000 7%, transparent);
 }
 
-/* 19) 网格渐变：三团相近的品牌色慢慢游动 */
-.yg2-card::before,
-.yg2-panel::before,
-.yg2-xcard::before {
+/* 19) 网格渐变：三团相近的品牌色慢慢游动（仅演示卡开启） */
+.yg2-card--deco::before,
+.yg2-panel--deco::before,
+.yg2-xcard.yg2-card--deco::before {
   content: '';
   position: absolute;
   inset: -30%;
@@ -49,10 +49,10 @@
   100% { transform: translate3d(-1%, 2%, 0) scale(1.02); }
 }
 
-/* 21) 点阵纹理：往右下角渐渐消失 */
-.yg2-card::after,
-.yg2-panel::after,
-.yg2-xcard::after {
+/* 21) 点阵纹理：往右下角渐渐消失（仅演示卡开启） */
+.yg2-card--deco::after,
+.yg2-panel--deco::after,
+.yg2-xcard.yg2-card--deco::after {
   content: '';
   position: absolute;
   inset: 0;
@@ -80,39 +80,15 @@
   pointer-events: none;
 }
 
-/* ---------- 默认材质：全站卡片都先站到毛玻璃上 --------------------------- */
+/* ---------- 默认材质：实体 ----------------------------------------------
+   按《Apple Liquid Glass 设计准则》2.2 / 10.2：卡片属于内容层，
+   不得默认使用 backdrop-filter；玻璃只能通过 .yg2-card--glass 显式选择，
+   且仅用于设计演示或确有悬浮属性的场景。
+   ---------------------------------------------------------------------- */
 .yg2-card,
-.yg2-xcard {
-  background: color-mix(in srgb, #fff 15%, transparent);
-  backdrop-filter: blur(20px) saturate(170%);
-  -webkit-backdrop-filter: blur(20px) saturate(170%);
-}
-
+.yg2-xcard,
 .yg2-panel {
-  background: color-mix(in srgb, #fff 10%, transparent);
-  backdrop-filter: blur(20px) saturate(160%);
-  -webkit-backdrop-filter: blur(20px) saturate(160%);
-}
-
-[data-theme='dark'] .yg2-card,
-[data-theme='dark'] .yg2-xcard {
-  background: color-mix(in srgb, #fff 7%, transparent);
-}
-
-[data-theme='dark'] .yg2-panel {
-  background: color-mix(in srgb, #fff 5%, transparent);
-}
-
-@media (prefers-reduced-transparency: reduce) {
-  .yg2-card,
-  .yg2-xcard,
-  .yg2-panel,
-  .yg2-card--glass,
-  .yg2-card--liquid {
-    backdrop-filter: none;
-    -webkit-backdrop-filter: none;
-    background: var(--yg2-surface);
-  }
+  background: var(--yg2-surface);
 }
 
 /* ---------- 1) 毛玻璃 ---------------------------------------------------- */

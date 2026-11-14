@@ -67,7 +67,7 @@ async function collapse() {
     <!-- ============ 底子 ============ -->
     <h2 class="cardlab__h2">底子</h2>
     <div class="yg2-card-grid">
-      <YgCard v-for="item in samples" :key="item.title">
+      <YgCard v-for="item in samples" :key="item.title" deco>
         <template #icon><component :is="item.icon" :size="20" :stroke-width="1.6" /></template>
         <template #title>{{ item.title }}</template>
         <template #subtitle>{{ item.kind }}</template>
@@ -84,19 +84,19 @@ async function collapse() {
     <!-- ============ 材质 ============ -->
     <h2 class="cardlab__h2">材质</h2>
     <div class="yg2-card-grid">
-      <YgCard variant="glass">
+      <YgCard variant="glass" deco>
         <template #icon><Sparkles :size="20" :stroke-width="1.6" /></template>
         <template #title>毛玻璃</template>
         <template #desc>背景模糊 20、白色 15%、一圈白色细边，背后垫彩色光斑。</template>
       </YgCard>
 
-      <YgCard variant="liquid">
+      <YgCard variant="liquid" deco>
         <template #icon><Sparkles :size="20" :stroke-width="1.6" /></template>
         <template #title>液态玻璃</template>
         <template #desc>边缘带折射与镜面高光，指针移动时高光跟着走。</template>
       </YgCard>
 
-      <YgCard variant="glass" holo spotlight>
+      <YgCard variant="glass" holo spotlight deco>
         <template #icon><Sparkles :size="20" :stroke-width="1.6" /></template>
         <template #title>全息卡片</template>
         <template #desc>表面的彩虹反光跟着鼠标移动。</template>
@@ -112,27 +112,27 @@ async function collapse() {
     <!-- ============ 光效 ============ -->
     <h2 class="cardlab__h2">光效</h2>
     <div class="yg2-card-grid">
-      <YgCard border="grad">
+      <YgCard border="grad" deco>
         <template #title>渐变描边</template>
         <template #desc>品牌色过渡到透明的描边。</template>
       </YgCard>
 
-      <YgCard border="spin">
+      <YgCard border="spin" deco>
         <template #title>流光边框</template>
         <template #desc>渐变边框 8 秒转一圈。</template>
       </YgCard>
 
-      <YgCard border="marquee">
+      <YgCard border="marquee" deco>
         <template #title>跑马灯描边</template>
         <template #desc>暗灰边框上有一小段亮光，4 秒跑一圈。</template>
       </YgCard>
 
-      <YgCard spotlight>
+      <YgCard spotlight deco>
         <template #title>聚光灯</template>
         <template #desc>鼠标位置亮一团柔光，边框跟着亮。</template>
       </YgCard>
 
-      <YgCard glow>
+      <YgCard glow deco>
         <template #title>光晕</template>
         <template #desc>卡片背后一团品牌色光晕，模糊 60、透明度 30%。</template>
       </YgCard>
@@ -149,7 +149,7 @@ async function collapse() {
     <h2 class="cardlab__h2">动效</h2>
     <div class="yg2-card-grid">
       <TiltCard>
-        <YgCard variant="glass">
+        <YgCard variant="glass" deco>
           <template #icon><Sparkles :size="20" :stroke-width="1.6" /></template>
           <template #title>3D 倾斜</template>
           <template #desc>最多 10 度，表面反光跟着指针走。</template>
@@ -158,14 +158,14 @@ async function collapse() {
 
       <FlipCard>
         <template #front>
-          <YgCard variant="glass">
+          <YgCard variant="glass" deco>
             <template #icon><BookOpen :size="20" :stroke-width="1.6" /></template>
             <template #title>翻转卡片</template>
             <template #desc>点一下翻到背面看详情。</template>
           </YgCard>
         </template>
         <template #back>
-          <YgCard variant="liquid">
+          <YgCard variant="liquid" deco>
             <template #title>背面</template>
             <template #desc>这里可以放报名条件、集合地点、负责人联系方式。</template>
             <template #foot>

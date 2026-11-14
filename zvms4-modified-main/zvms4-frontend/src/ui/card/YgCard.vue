@@ -13,6 +13,8 @@ const props = withDefaults(
     glow?: boolean
     /** 全息：表面彩虹反光跟着指针走 */
     holo?: boolean
+    /** 装饰层（网格渐变 + 点阵）：仅设计演示使用，业务页面不要开 */
+    deco?: boolean
     padding?: number
     radius?: number
     /** 说明最多两行，超出省略（规范 15） */
@@ -24,6 +26,7 @@ const props = withDefaults(
     spotlight: false,
     glow: false,
     holo: false,
+    deco: false,
     padding: 24,
     radius: 26,
     clamp: true
@@ -43,7 +46,8 @@ const classes = computed(() => [
   props.spotlight && 'yg2-card--spotlight',
   props.glow && 'yg2-card--glow',
   props.holo && 'yg2-card--holo',
-  props.clamp && 'yg2-xcard--clamp'
+  props.clamp && 'yg2-xcard--clamp',
+  props.deco && 'yg2-card--deco'
 ])
 </script>
 

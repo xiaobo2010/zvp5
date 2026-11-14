@@ -1,12 +1,113 @@
 /* ==========================================================================
-   液态玻璃：按钮 / 图标键 / 导航项 / 顶栏 / 移动药丸条
-   参照 Kyant0/AndroidLiquidGlass 的做法：vibrancy（提饱和+提亮）+ blur
-   + lens（边缘折射）+ 镜面高光（随指针移动）+ 按下时轻微形变。
-   浏览器里没有真实折射，用「内高光 + 边缘环 + 指针高光」三件套近似。
-   --lx / --ly 由 src/utils/liquidPointer.ts 在 pointermove 时写入。
+   Liquid Glass v2 —— 严格遵循《Apple Liquid Glass 网页前端设计准则 v1.0》
+
+   核心：Glass is a layer, not a theme.
+   - L4 导航层（顶栏 / 侧栏 / 底部栏）：玻璃
+   - L5 浮层（Dialog / Popover / Dropdown / Tooltip / Toast）：玻璃
+   - L3 控件（按钮 / 输入 / 分段）：以实体为主，玻璃只在轻量控件上少量使用
+   - L2 内容层（卡片 / 表格 / 列表 / 图表）：实体，禁止默认加 backdrop-filter
+
+   材质参数集中在 :root 的 --yg2-glass-* 令牌里，组件不写死数值。
    ========================================================================== */
 
-/* ---------- 共通材质 ------------------------------------------------------ */
+:root {
+  /* 玻璃表面：透射率 / 模糊 / 饱和 / 描边 / 高光 */
+  --yg2-glass-nav-fill: color-mix(in srgb, #ffffff 62%, transparent);
+  --yg2-glass-nav-blur: 28px;
+  --yg2-glass-overlay-fill: color-mix(in srgb, #ffffff 80%, transparent);
+  --yg2-glass-overlay-blur: 30px;
+  --yg2-glass-control-fill: color-mix(in srgb, #ffffff 55%, transparent);
+  --yg2-glass-control-blur: 14px;
+  --yg2-glass-saturate: 180%;
+  --yg2-glass-stroke: color-mix(in srgb, #ffffff 46%, transparent);
+  --yg2-glass-highlight: color-mix(in srgb, #ffffff 70%, transparent);
+  --yg2-glass-shadow: 0 1px 2px color-mix(in srgb, #000 5%, transparent),
+    0 12px 28px color-mix(in srgb, #000 8%, transparent);
+}
+
+[data-theme='dark'] {
+  --yg2-glass-nav-fill: color-mix(in srgb, #1c1c1e 62%, transparent);
+  --yg2-glass-overlay-fill: color-mix(in srgb, #1c1c1e 82%, transparent);
+  --yg2-glass-control-fill: color-mix(in srgb, #ffffff 8%, transparent);
+  --yg2-glass-stroke: color-mix(in srgb, #ffffff 12%, transparent);
+  --yg2-glass-highlight: color-mix(in srgb, #ffffff 16%, transparent);
+  --yg2-glass-shadow: 0 1px 2px color-mix(in srgb, #000 40%, transparent),
+    0 14px 32px color-mix(in srgb, #000 45%, transparent);
+}
+
+/* ==========================================================================
+   L4 导航层
+   ========================================================================== */
+
+.yg2-sidebar,
+.yg2-topbar {
+  background: var(--yg2-glass-nav-fill);
+  backdrop-filter: blur(var(--yg2-glass-nav-blur)) saturate(var(--yg2-glass-saturate));
+  -webkit-backdrop-filter: blur(var(--yg2-glass-nav-blur)) saturate(var(--yg2-glass-saturate));
+  box-shadow:
+    inset 0 1px 0 var(--yg2-glass-highlight),
+    inset 0 0 0 1px var(--yg2-glass-stroke),
+    var(--yg2-glass-shadow);
+}
+
+/* 内侧描边 + 顶部高光：一层即可，不再叠加其它发光 */
+.yg2-sidebar::after,
+.yg2-topbar::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border-radius: inherit;
+  box-shadow: inset 0 0 0 1px var(--yg2-glass-stroke);
+}
+
+.yg2-mobile-tabs {
+  background: var(--yg2-glass-nav-fill);
+  backdrop-filter: blur(24px) saturate(var(--yg2-glass-saturate));
+  -webkit-backdrop-filter: blur(24px) saturate(var(--yg2-glass-saturate));
+  box-shadow:
+    inset 0 1px 0 var(--yg2-glass-highlight),
+    inset 0 0 0 1px var(--yg2-glass-stroke),
+    var(--yg2-glass-shadow);
+}
+
+/* ==========================================================================
+   L5 浮层
+   ========================================================================== */
+
+.el-popper.is-light,
+.el-dropdown__popper,
+.el-select__popper,
+.el-picker__popper,
+.el-dialog,
+.el-message-box,
+.el-message,
+.el-notification,
+.el-drawer {
+  background: var(--yg2-glass-overlay-fill);
+  backdrop-filter: blur(var(--yg2-glass-overlay-blur)) saturate(var(--yg2-glass-saturate));
+  -webkit-backdrop-filter: blur(var(--yg2-glass-overlay-blur)) saturate(var(--yg2-glass-saturate));
+  border: 1px solid var(--yg2-glass-stroke);
+  box-shadow:
+    inset 0 1px 0 var(--yg2-glass-highlight),
+    var(--yg2-shadow-float);
+}
+
+.el-popper__arrow::before {
+  background: var(--yg2-glass-overlay-fill) !important;
+  border-color: var(--yg2-glass-stroke) !important;
+}
+
+/* 浮层上不做膨胀动效，只做轻微淡入与 2px 位移 */
+.el-popper,
+.el-dialog {
+  transition: opacity 180ms var(--yg2-ease-out), transform 180ms var(--yg2-ease-out);
+}
+
+/* ==========================================================================
+   L3 控件：实体为主，交互只做亮度/阴影的轻微变化
+   ========================================================================== */
+
 .yg2-btn,
 .yg2-icon-btn,
 .yg2-nav-item,
@@ -14,630 +115,237 @@
 .yg2-mobile-tabs__item {
   position: relative;
   isolation: isolate;
-  -webkit-tap-highlight-color: transparent;
-}
-
-/* 镜面高光：跟随指针的一团柔光，hover / 按下时出现 */
-.yg2-btn::after,
-.yg2-icon-btn::after,
-.yg2-nav-item::after,
-.yg2-seg__item::after,
-.yg2-mobile-tabs__item::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  z-index: -1;
-  border-radius: inherit;
-  background: radial-gradient(
-    120px circle at var(--lx, 50%) var(--ly, 0%),
-    color-mix(in srgb, #fff 62%, transparent),
-    transparent 62%
-  );
-  opacity: 0;
-  transition: opacity var(--yg2-dur-2) var(--yg2-ease-out);
-  pointer-events: none;
-}
-
-.yg2-btn:hover::after,
-.yg2-icon-btn:hover::after,
-.yg2-nav-item:hover::after,
-.yg2-seg__item:hover::after,
-.yg2-mobile-tabs__item:hover::after,
-.is-pressed.yg2-btn::after,
-.is-pressed.yg2-icon-btn::after {
-  opacity: 1;
-}
-
-/* ---------- 按钮：三种材质 ----------------------------------------------- */
-.yg2-btn {
-  backdrop-filter: blur(14px) saturate(180%) brightness(1.04);
-  -webkit-backdrop-filter: blur(14px) saturate(180%) brightness(1.04);
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, #fff 70%, transparent),
-    inset 0 -1px 0 color-mix(in srgb, #000 8%, transparent),
-    0 1px 2px color-mix(in srgb, #000 6%, transparent);
-  transition:
-    transform var(--yg2-dur-1) var(--yg2-ease-out),
-    box-shadow var(--yg2-dur-2) var(--yg2-ease-out),
-    background var(--yg2-dur-2) var(--yg2-ease-out);
-}
-
-.yg2-btn:hover {
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, #fff 82%, transparent),
-    inset 0 -1px 0 color-mix(in srgb, #000 8%, transparent),
-    0 6px 18px color-mix(in srgb, #000 10%, transparent);
-}
-
-.yg2-btn.is-pressed,
-.yg2-btn:active {
-  transform: scale(0.975);
-  box-shadow:
-    inset 0 2px 6px color-mix(in srgb, #000 12%, transparent),
-    inset 0 1px 0 color-mix(in srgb, #fff 40%, transparent);
-}
-
-/* 主按钮：蓝色染料 + 玻璃高光，避免纯色塑料感 */
-.yg2-btn--primary {
-  background:
-    linear-gradient(
-      to bottom,
-      color-mix(in srgb, #fff 18%, transparent),
-      transparent 52%
-    ),
-    var(--yg2-accent);
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, #fff 42%, transparent),
-    inset 0 -1px 0 color-mix(in srgb, #000 18%, transparent),
-    0 2px 6px color-mix(in srgb, var(--yg2-accent) 34%, transparent);
-}
-
-.yg2-btn--primary:hover {
-  background:
-    linear-gradient(
-      to bottom,
-      color-mix(in srgb, #fff 24%, transparent),
-      transparent 56%
-    ),
-    var(--yg2-accent-hover);
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, #fff 50%, transparent),
-    inset 0 -1px 0 color-mix(in srgb, #000 18%, transparent),
-    0 8px 22px color-mix(in srgb, var(--yg2-accent) 32%, transparent);
-}
-
-/* 次按钮 / 幽灵按钮：真玻璃 */
-.yg2-btn--secondary,
-.yg2-btn--quiet {
-  background: color-mix(in srgb, var(--yg2-surface) 58%, transparent);
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, #fff 78%, transparent),
-    inset 0 0 0 1px color-mix(in srgb, var(--yg2-line-strong) 70%, transparent),
-    0 1px 2px color-mix(in srgb, #000 5%, transparent);
-}
-
-.yg2-btn--quiet {
-  background: color-mix(in srgb, var(--yg2-surface) 34%, transparent);
-}
-
-.yg2-btn--secondary:hover,
-.yg2-btn--quiet:hover {
-  background: color-mix(in srgb, var(--yg2-surface) 76%, transparent);
-}
-
-/* ---------- 图标键 ------------------------------------------------------- */
-.yg2-icon-btn {
-  background: color-mix(in srgb, var(--yg2-surface) 55%, transparent);
-  backdrop-filter: blur(12px) saturate(170%);
-  -webkit-backdrop-filter: blur(12px) saturate(170%);
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, #fff 72%, transparent),
-    inset 0 0 0 1px color-mix(in srgb, var(--yg2-line) 90%, transparent);
-  transition:
-    transform var(--yg2-dur-1) var(--yg2-ease-out),
-    background var(--yg2-dur-2) var(--yg2-ease-out);
-}
-
-.yg2-icon-btn:hover {
-  background: color-mix(in srgb, var(--yg2-surface) 78%, transparent);
-}
-
-.yg2-icon-btn.is-pressed {
-  transform: scale(0.94);
-}
-
-/* ---------- 侧栏导航项 --------------------------------------------------- */
-.yg2-nav-item {
-  overflow: hidden;
-}
-
-.yg2-nav-item.is-active {
-  background: color-mix(in srgb, var(--yg2-surface) 78%, transparent);
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, #fff 80%, transparent),
-    inset 0 0 0 1px color-mix(in srgb, var(--yg2-line) 80%, transparent),
-    0 2px 8px color-mix(in srgb, #000 6%, transparent);
-  backdrop-filter: blur(12px) saturate(170%);
-  -webkit-backdrop-filter: blur(12px) saturate(170%);
-}
-
-/* ---------- 顶栏：更明显的玻璃 + 底部折射边 ------------------------------ */
-.yg2-topbar {
-  backdrop-filter: blur(30px) saturate(190%) brightness(1.03);
-  -webkit-backdrop-filter: blur(30px) saturate(190%) brightness(1.03);
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, #fff 60%, transparent),
-    0 1px 0 color-mix(in srgb, var(--yg2-line) 100%, transparent);
-}
-
-/* ---------- 移动端药丸条 ------------------------------------------------ */
-.yg2-mobile-tabs {
-  backdrop-filter: blur(26px) saturate(190%) brightness(1.04);
-  -webkit-backdrop-filter: blur(26px) saturate(190%) brightness(1.04);
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, #fff 70%, transparent),
-    inset 0 0 0 1px color-mix(in srgb, var(--yg2-line) 90%, transparent),
-    0 12px 32px color-mix(in srgb, #000 16%, transparent);
-}
-
-/* ---------- 暗色：高光收一点，避免发灰 ---------------------------------- */
-[data-theme='dark'] .yg2-btn,
-[data-theme='dark'] .yg2-icon-btn,
-[data-theme='dark'] .yg2-btn--secondary,
-[data-theme='dark'] .yg2-btn--quiet {
-  background: color-mix(in srgb, var(--yg2-surface) 70%, transparent);
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, #fff 16%, transparent),
-    inset 0 0 0 1px color-mix(in srgb, #fff 10%, transparent),
-    0 1px 2px color-mix(in srgb, #000 40%, transparent);
-}
-
-[data-theme='dark'] .yg2-btn--primary {
-  background:
-    linear-gradient(
-      to bottom,
-      color-mix(in srgb, #fff 22%, transparent),
-      transparent 56%
-    ),
-    var(--yg2-accent);
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, #fff 30%, transparent),
-    inset 0 -1px 0 color-mix(in srgb, #000 30%, transparent),
-    0 6px 20px color-mix(in srgb, var(--yg2-accent) 30%, transparent);
-}
-
-[data-theme='dark'] .yg2-nav-item.is-active {
-  background: color-mix(in srgb, #fff 12%, transparent);
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, #fff 14%, transparent),
-    inset 0 0 0 1px color-mix(in srgb, #fff 8%, transparent);
-}
-
-[data-theme='dark'] .yg2-btn::after,
-[data-theme='dark'] .yg2-icon-btn::after,
-[data-theme='dark'] .yg2-nav-item::after,
-[data-theme='dark'] .yg2-seg__item::after {
-  background: radial-gradient(
-    120px circle at var(--lx, 50%) var(--ly, 0%),
-    color-mix(in srgb, #fff 26%, transparent),
-    transparent 62%
-  );
-}
-
-/* ---------- 降级：不支持 backdrop-filter 或要求降透明 -------------------- */
-@supports not (backdrop-filter: blur(1px)) {
-  .yg2-btn,
-  .yg2-icon-btn,
-  .yg2-nav-item.is-active,
-  .yg2-topbar,
-  .yg2-mobile-tabs {
-    backdrop-filter: none;
-    background-color: var(--yg2-surface);
-  }
-}
-
-@media (prefers-reduced-transparency: reduce) {
-  .yg2-btn,
-  .yg2-icon-btn,
-  .yg2-nav-item.is-active,
-  .yg2-seg__thumb,
-  .yg2-topbar,
-  .yg2-mobile-tabs {
-    backdrop-filter: none;
-    -webkit-backdrop-filter: none;
-    background-color: var(--yg2-surface);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .yg2-btn,
-  .yg2-icon-btn,
-  .yg2-seg__thumb {
-    transition: none;
-  }
-}
-
-/* ==========================================================================
-   材质规范（第二层）：按组件类型分档
-   1) 胶囊按钮  2) 内凹输入  3) 标签/分段/开关/进度/页码
-   4) 卡片顶部环境反光  5) 强玻璃浮层（弹窗/抽屉/下拉/日期/气泡）
-   6) 药丸消息条  7) 表头/遮罩/骨架/Tooltip  8) 暗色自动降级
-   ========================================================================== */
-
-/* ---------- 1) 按钮：悬浮上浮 + 按压回弹 -------------------------------- */
-.yg2-btn {
-  transition:
-    transform 260ms cubic-bezier(0.34, 1.4, 0.64, 1),
-    box-shadow var(--yg2-dur-2) var(--yg2-ease-out),
-    background var(--yg2-dur-2) var(--yg2-ease-out);
-}
-
-.yg2-btn:hover {
-  transform: translate3d(0, -1px, 0);
-}
-
-.yg2-btn.is-pressed,
-.yg2-btn:active {
-  transform: translate3d(0, 0, 0) scale(0.972);
-  transition-duration: 90ms;
-}
-
-/* 侧栏导航项：按下回弹 + 选中时弹一下（弹簧曲线） */
-.yg2-nav-item {
   transition:
     background-color 180ms var(--yg2-ease-out),
     color 180ms var(--yg2-ease-out),
-    transform 260ms cubic-bezier(0.34, 1.56, 0.64, 1);
+    box-shadow 180ms var(--yg2-ease-out),
+    transform 120ms var(--yg2-ease-out);
 }
 
-.yg2-nav-item:active {
-  transform: scale(0.955);
+.yg2-btn {
+  border-radius: 999px;
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, #fff 60%, transparent),
+    0 1px 2px color-mix(in srgb, #000 6%, transparent);
 }
 
-.yg2-nav-item.is-active,
-.yg2-nav-item.is-pressing {
-  animation: yg2-nav-pop 360ms cubic-bezier(0.34, 1.56, 0.64, 1);
+.yg2-btn--primary {
+  background: var(--yg2-accent);
+  color: var(--yg2-text-on-accent);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, #fff 26%, transparent),
+    0 2px 8px color-mix(in srgb, var(--yg2-accent) 28%, transparent);
 }
 
-@keyframes yg2-nav-pop {
-  0% { transform: scale(0.96); }
-  55% { transform: scale(1.025); }
-  100% { transform: scale(1); }
+.yg2-btn--primary:hover {
+  background: var(--yg2-accent-hover);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, #fff 26%, transparent),
+    0 3px 12px color-mix(in srgb, var(--yg2-accent) 34%, transparent);
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .yg2-nav-item,
-  .yg2-nav-item.is-active {
-    transition: none;
-    animation: none;
-  }
+.yg2-btn--secondary {
+  background: var(--yg2-surface);
+  color: var(--yg2-text);
+  box-shadow:
+    inset 0 0 0 1px var(--yg2-line),
+    0 1px 2px color-mix(in srgb, #000 5%, transparent);
 }
 
-/* ---------- 2) 输入框 / 选择器：内凹玻璃 + 聚焦光晕 ---------------------- */
+.yg2-btn--secondary:hover {
+  background: color-mix(in srgb, var(--yg2-text) 4%, var(--yg2-surface));
+}
+
+.yg2-btn--quiet {
+  background: transparent;
+  color: var(--yg2-text-secondary);
+}
+
+.yg2-btn--quiet:hover {
+  background: color-mix(in srgb, var(--yg2-text) 5%, transparent);
+  color: var(--yg2-text);
+}
+
+.yg2-btn.is-pressed,
+.yg2-btn:active,
+.yg2-icon-btn.is-pressed,
+.yg2-icon-btn:active {
+  transform: scale(0.974);
+}
+
+.yg2-icon-btn {
+  border-radius: 999px;
+  color: var(--yg2-text-secondary);
+}
+
+.yg2-icon-btn:hover {
+  background: color-mix(in srgb, var(--yg2-text) 6%, transparent);
+  color: var(--yg2-text);
+}
+
+/* 导航项：选中态用浅底 + 主色文字，不使用发光 */
+.yg2-nav-item {
+  border-radius: var(--yg2-r-12);
+  color: var(--yg2-text-secondary);
+}
+
+.yg2-nav-item:hover {
+  background: color-mix(in srgb, var(--yg2-text) 5%, transparent);
+  color: var(--yg2-text);
+}
+
+.yg2-nav-item.is-active {
+  background: var(--yg2-accent-soft);
+  color: var(--yg2-accent);
+}
+
+/* 分段控件：滑块是实体白，靠阴影浮起（iOS 的做法），不用玻璃 */
+.yg2-seg__thumb {
+  background: var(--yg2-surface);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--yg2-text) 7%, transparent),
+    0 1px 3px color-mix(in srgb, #000 10%, transparent);
+}
+
+.yg2-seg__item {
+  color: var(--yg2-text-secondary);
+}
+
+.yg2-seg__item.is-active {
+  color: var(--yg2-text);
+}
+
+/* 输入控件：允许「轻量玻璃」，但必须保证文字对比度 */
 .yg2-input,
 .el-input .el-input__wrapper,
 .el-select .el-select__wrapper,
 .el-textarea .el-textarea__inner {
-  background: color-mix(in srgb, var(--yg2-surface-sunken) 66%, transparent);
-  background-color: color-mix(in srgb, var(--yg2-surface-sunken) 66%, transparent);
-  box-shadow:
-    inset 0 1px 2px color-mix(in srgb, #000 8%, transparent),
-    inset 0 -1px 0 color-mix(in srgb, #fff 60%, transparent),
-    inset 0 0 0 1px color-mix(in srgb, var(--yg2-line) 90%, transparent);
-  transition:
-    box-shadow var(--yg2-dur-2) var(--yg2-ease-out),
-    background var(--yg2-dur-2) var(--yg2-ease-out);
+  background: var(--yg2-surface);
+  box-shadow: inset 0 0 0 1px var(--yg2-line);
+  transition: box-shadow 180ms var(--yg2-ease-out), background-color 180ms var(--yg2-ease-out);
 }
 
-.yg2-input:hover,
-.el-input .el-input__wrapper:hover,
-.el-select .el-select__wrapper:hover {
-  background: color-mix(in srgb, var(--yg2-surface-sunken) 82%, transparent);
-  background-color: color-mix(in srgb, var(--yg2-surface-sunken) 82%, transparent);
-}
-
-.yg2-input:focus,
-.yg2-input:focus-visible,
 .el-input .el-input__wrapper.is-focus,
 .el-input .el-input__wrapper:focus-within,
 .el-select .el-select__wrapper.is-focused,
-.el-textarea .el-textarea__inner:focus {
-  background: color-mix(in srgb, var(--yg2-surface) 80%, transparent);
-  background-color: color-mix(in srgb, var(--yg2-surface) 80%, transparent);
-  box-shadow:
-    inset 0 1px 2px color-mix(in srgb, #000 6%, transparent),
-    inset 0 0 0 1px var(--yg2-accent),
-    0 0 0 4px color-mix(in srgb, var(--yg2-accent) 18%, transparent);
-}
-
-/* 聚焦时的品牌色光晕（外发光） */
 .yg2-input:focus,
-.el-textarea__inner:focus {
+.yg2-input:focus-visible,
+.el-textarea .el-textarea__inner:focus {
+  background: var(--yg2-surface);
+  box-shadow:
+    inset 0 0 0 1px var(--yg2-accent),
+    0 0 0 3px var(--yg2-accent-soft);
   outline: none;
 }
 
-/* ---------- 3) 标签 / 开关 / 进度 / 页码 -------------------------------- */
-.yg2-badge,
-.el-tag {
-  background: color-mix(in srgb, var(--yg2-surface) 62%, transparent);
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, #fff 70%, transparent),
-    inset 0 0 0 1px color-mix(in srgb, var(--yg2-line) 90%, transparent);
-  backdrop-filter: blur(8px) saturate(160%);
-  -webkit-backdrop-filter: blur(8px) saturate(160%);
-}
+/* ==========================================================================
+   L2 内容层：卡片 / 面板 / 表格保持实体，覆盖主题里任何玻璃化默认值
+   ========================================================================== */
 
-.el-switch__core {
-  background: color-mix(in srgb, var(--yg2-surface-sunken) 70%, transparent);
-  box-shadow: inset 0 1px 3px color-mix(in srgb, #000 14%, transparent);
-}
-
-.el-switch.is-checked .el-switch__core {
-  background: var(--yg2-accent);
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, #fff 30%, transparent),
-    0 2px 10px color-mix(in srgb, var(--yg2-accent) 40%, transparent);
-}
-
-.el-switch__core .el-switch__action {
-  box-shadow:
-    0 1px 2px color-mix(in srgb, #000 18%, transparent),
-    inset 0 1px 0 color-mix(in srgb, #fff 90%, transparent);
-  transition: transform 340ms cubic-bezier(0.34, 1.4, 0.64, 1);
-}
-
-.yg2-progress__track {
-  box-shadow: inset 0 1px 2px color-mix(in srgb, #000 10%, transparent);
-}
-
-.yg2-progress__bar {
-  background:
-    linear-gradient(to bottom, color-mix(in srgb, #fff 26%, transparent), transparent 60%),
-    var(--yg2-accent);
-}
-
-.el-pagination button,
-.el-pagination .el-pager li {
-  background: color-mix(in srgb, var(--yg2-surface) 55%, transparent);
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, #fff 70%, transparent),
-    inset 0 0 0 1px color-mix(in srgb, var(--yg2-line) 80%, transparent);
-  backdrop-filter: blur(8px) saturate(160%);
-  -webkit-backdrop-filter: blur(8px) saturate(160%);
-  transition: transform 220ms cubic-bezier(0.34, 1.4, 0.64, 1);
-}
-
-.el-pagination .el-pager li:hover,
-.el-pagination button:hover {
-  transform: translate3d(0, -1px, 0);
-}
-
-.el-pagination .el-pager li.is-active {
-  background:
-    linear-gradient(to bottom, color-mix(in srgb, #fff 22%, transparent), transparent 60%),
-    var(--yg2-accent);
-  color: #fff;
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, #fff 40%, transparent),
-    0 2px 8px color-mix(in srgb, var(--yg2-accent) 36%, transparent);
-}
-
-/* ---------- 4) 卡片：顶部环境反光 -------------------------------------- */
 .yg2-card,
-.yg2-panel {
-  position: relative;
-  overflow: hidden;
-  background: color-mix(in srgb, var(--yg2-surface) 88%, transparent);
+.yg2-xcard,
+.yg2-panel,
+.el-card {
+  background: var(--yg2-surface);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border: 1px solid var(--yg2-line);
   box-shadow:
-    inset 0 1px 0 color-mix(in srgb, #fff 65%, transparent),
-    inset 0 0 0 1px color-mix(in srgb, var(--yg2-line) 90%, transparent),
-    var(--yg2-shadow-ambient);
-}
-
-.yg2-card::before,
-.yg2-panel::before {
-  content: '';
-  position: absolute;
-  inset: 0 0 auto;
-  height: 34%;
-  background: linear-gradient(
-    to bottom,
-    color-mix(in srgb, #fff 46%, transparent),
-    transparent
-  );
-  opacity: 0.5;
-  pointer-events: none;
-}
-
-/* 大面板里的反光收得更浅，避免把表格头洗白 */
-.yg2-panel::before {
-  height: 22%;
-  opacity: 0.3;
-}
-
-/* 内容层要压在反光层之上 */
-.yg2-card > *,
-.yg2-panel > * {
-  position: relative;
-}
-
-/* ---------- 5) 强玻璃浮层：对话框 / 抽屉 / 下拉 / 日期 / 气泡 ------------- */
-.el-dialog,
-.el-drawer,
-.el-message-box {
-  background: color-mix(in srgb, var(--yg2-surface) 84%, transparent);
-  backdrop-filter: blur(40px) saturate(200%) brightness(1.04);
-  -webkit-backdrop-filter: blur(40px) saturate(200%) brightness(1.04);
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, #fff 70%, transparent),
-    inset 0 0 0 1px color-mix(in srgb, var(--yg2-line) 80%, transparent),
-    var(--yg2-shadow-float);
-}
-
-.el-popper.is-light,
-.el-select__popper,
-.el-picker__popper,
-.el-dropdown__popper {
-  background: color-mix(in srgb, var(--yg2-surface) 86%, transparent);
-  backdrop-filter: blur(34px) saturate(190%) brightness(1.03);
-  -webkit-backdrop-filter: blur(34px) saturate(190%) brightness(1.03);
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, #fff 72%, transparent),
-    inset 0 0 0 1px color-mix(in srgb, var(--yg2-line) 80%, transparent),
-    var(--yg2-shadow-float);
-}
-
-.el-popper.is-light > .el-popper__arrow::before {
-  background: color-mix(in srgb, var(--yg2-surface) 86%, transparent);
-  border-color: color-mix(in srgb, var(--yg2-line) 80%, transparent);
-}
-
-.el-picker-panel,
-.el-date-picker,
-.el-select-dropdown__list {
-  background: transparent;
-}
-
-/* ---------- 6) 消息条 / 通知：药丸玻璃 ---------------------------------- */
-.el-message {
-  border-radius: 999px;
-  padding: 9px 18px;
-  background: color-mix(in srgb, var(--yg2-surface) 80%, transparent);
-  backdrop-filter: blur(30px) saturate(190%);
-  -webkit-backdrop-filter: blur(30px) saturate(190%);
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, #fff 72%, transparent),
-    inset 0 0 0 1px color-mix(in srgb, var(--yg2-line) 85%, transparent),
-    var(--yg2-shadow-float);
-}
-
-/* ---------- 7) 表头 / 遮罩 / Tooltip ----------------------------------- */
-.el-table th.el-table__cell {
-  background: color-mix(in srgb, var(--yg2-surface) 52%, transparent);
-  backdrop-filter: blur(10px) saturate(160%);
-  -webkit-backdrop-filter: blur(10px) saturate(160%);
-}
-
-.yg2-table-head,
-.el-loading-mask {
-  backdrop-filter: blur(3px) saturate(140%);
-  -webkit-backdrop-filter: blur(3px) saturate(140%);
-  background: color-mix(in srgb, var(--yg2-surface) 62%, transparent);
-}
-
-/* Tooltip（EP 的 is-dark 气泡）
-   注意：EP 自己写的是 `color: var(--el-bg-color)`，我们把 --el-bg-color 映射成
-   深色表面后，暗色模式就变成「深底 + 深字」，所以这里必须显式声明 color。 */
-.el-popper.is-dark {
-  border-radius: var(--yg2-r-8);
-  padding: 6px 10px;
-  background: color-mix(in srgb, #1d1d1f 90%, transparent);
-  border: 1px solid color-mix(in srgb, #fff 14%, transparent);
-  backdrop-filter: blur(20px) saturate(180%);
-  -webkit-backdrop-filter: blur(20px) saturate(180%);
-  color: #f5f5f7;
-  font-size: 12px;
-  line-height: 1.5;
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, #fff 16%, transparent),
-    0 8px 24px color-mix(in srgb, #000 28%, transparent);
-}
-
-.el-popper.is-dark > .el-popper__arrow::before {
-  background: color-mix(in srgb, #1d1d1f 90%, transparent);
-  border-color: color-mix(in srgb, #fff 14%, transparent);
-}
-
-/* 暗色下反过来：浅底深字，才能从黑色页面里跳出来 */
-[data-theme='dark'] .el-popper.is-dark {
-  background: color-mix(in srgb, #f5f5f7 94%, transparent);
-  border-color: color-mix(in srgb, #000 12%, transparent);
-  color: #1d1d1f;
-  box-shadow:
-    inset 0 1px 0 #fff,
-    0 10px 28px color-mix(in srgb, #000 55%, transparent);
-}
-
-[data-theme='dark'] .el-popper.is-dark > .el-popper__arrow::before {
-  background: color-mix(in srgb, #f5f5f7 94%, transparent);
-  border-color: color-mix(in srgb, #000 12%, transparent);
-}
-
-/* ---------- 8) 暗色：自动切深色玻璃 ------------------------------------ */
-[data-theme='dark'] .yg2-input,
-[data-theme='dark'] .el-input .el-input__wrapper,
-[data-theme='dark'] .el-select .el-select__wrapper,
-[data-theme='dark'] .el-textarea .el-textarea__inner {
-  background: color-mix(in srgb, #ffffff 8%, transparent);
-  background-color: color-mix(in srgb, #ffffff 8%, transparent);
-  box-shadow:
-    inset 0 1px 2px color-mix(in srgb, #000 45%, transparent),
-    inset 0 -1px 0 color-mix(in srgb, #fff 8%, transparent),
-    inset 0 0 0 1px color-mix(in srgb, #fff 10%, transparent);
+    inset 0 1px 0 color-mix(in srgb, #fff 42%, transparent),
+    0 1px 2px color-mix(in srgb, #000 4%, transparent),
+    0 10px 24px color-mix(in srgb, #000 5%, transparent);
 }
 
 [data-theme='dark'] .yg2-card,
-[data-theme='dark'] .yg2-panel {
-  background: color-mix(in srgb, var(--yg2-surface) 92%, transparent);
+[data-theme='dark'] .yg2-xcard,
+[data-theme='dark'] .yg2-panel,
+[data-theme='dark'] .el-card {
+  background: var(--yg2-surface);
+  border-color: var(--yg2-line);
   box-shadow:
-    inset 0 1px 0 color-mix(in srgb, #fff 12%, transparent),
-    inset 0 0 0 1px color-mix(in srgb, #fff 8%, transparent),
-    var(--yg2-shadow-ambient);
+    inset 0 1px 0 color-mix(in srgb, #fff 8%, transparent),
+    0 1px 2px color-mix(in srgb, #000 35%, transparent),
+    0 12px 26px color-mix(in srgb, #000 35%, transparent);
 }
 
-[data-theme='dark'] .yg2-card::before,
-[data-theme='dark'] .yg2-panel::before {
-  background: linear-gradient(
-    to bottom,
-    color-mix(in srgb, #fff 14%, transparent),
-    transparent
-  );
-  opacity: 0.5;
+/* 卡片内部的装饰层（网格/噪点/点阵）默认关闭，只在设计演示里显式开启 */
+.yg2-card::before,
+.yg2-panel::before,
+.yg2-xcard::before,
+.yg2-card::after,
+.yg2-panel::after,
+.yg2-xcard::after {
+  content: none;
 }
 
-[data-theme='dark'] .el-dialog,
-[data-theme='dark'] .el-drawer,
-[data-theme='dark'] .el-message-box,
-[data-theme='dark'] .el-popper.is-light,
-[data-theme='dark'] .el-select__popper,
-[data-theme='dark'] .el-picker__popper {
-  background: color-mix(in srgb, var(--yg2-surface) 88%, transparent);
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, #fff 12%, transparent),
-    inset 0 0 0 1px color-mix(in srgb, #fff 8%, transparent),
-    var(--yg2-shadow-float);
+.yg2-card--deco::before,
+.yg2-xcard.yg2-card--deco::before {
+  content: '';
 }
 
-[data-theme='dark'] .el-pagination button,
-[data-theme='dark'] .el-pagination .el-pager li,
-[data-theme='dark'] .el-tag {
-  background: color-mix(in srgb, #ffffff 8%, transparent);
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, #fff 12%, transparent),
-    inset 0 0 0 1px color-mix(in srgb, #fff 8%, transparent);
+/* ==========================================================================
+   降级：不支持 backdrop-filter / 要求减少透明 / 减少动效
+   ========================================================================== */
+
+@supports not (backdrop-filter: blur(1px)) {
+  .yg2-sidebar,
+  .yg2-topbar,
+  .yg2-mobile-tabs,
+  .el-popper.is-light,
+  .el-dialog,
+  .el-message-box,
+  .el-message,
+  .el-notification,
+  .el-drawer {
+    background: var(--yg2-surface);
+  }
 }
 
-/* ---------- 9) 无障碍：减少动效时关掉弹性 ------------------------------ */
+@media (prefers-reduced-transparency: reduce) {
+  .yg2-sidebar,
+  .yg2-topbar,
+  .yg2-mobile-tabs,
+  .el-popper.is-light,
+  .el-dropdown__popper,
+  .el-select__popper,
+  .el-picker__popper,
+  .el-dialog,
+  .el-message-box,
+  .el-message,
+  .el-notification,
+  .el-drawer {
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    background: var(--yg2-surface);
+    box-shadow: inset 0 0 0 1px var(--yg2-line), var(--yg2-shadow-ambient);
+  }
+
+  .yg2-lens-clip {
+    display: none;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .yg2-btn,
   .yg2-btn.is-pressed,
   .yg2-btn:active,
-  .yg2-btn:hover,
-  .el-pagination button,
-  .el-pagination .el-pager li,
-  .el-switch__core .el-switch__action {
+  .yg2-icon-btn,
+  .yg2-nav-item,
+  .yg2-seg__item,
+  .el-popper,
+  .el-dialog {
     transition: none;
     transform: none;
+  }
+
+  .yg2-lens-clip__blob {
+    animation: none;
   }
 }
 
 /* ==========================================================================
-   真实折射层：SVG feDisplacementMap（作用在自绘光场上）
-
-   实测结论：Chrome 会丢弃 backdrop-filter 里的 url(#filter)（computed value
-   只剩 blur/saturate），所以「直接折射背后内容」在 Chrome 上做不到。
-   可行的做法是把可自绘的那层光场放进玻璃里，用 feDisplacementMap 真位移，
-   既保留真实形变，又不依赖浏览器不支持的写法。
+   动态光照：只作用于导航玻璃内部自绘的光场（真实位移），
+   不叠加在内容层，也不产生持续闪烁。
    ========================================================================== */
 
 .yg2-lens-clip {
@@ -648,7 +356,7 @@
   pointer-events: none;
   z-index: -1;
   filter: url(#yg2-lens-lg);
-  opacity: 0.85;
+  opacity: 0.7;
   contain: paint;
 }
 
@@ -699,19 +407,5 @@
 
 .yg2-topbar .yg2-lens-clip {
   filter: url(#yg2-lens-sm);
-  opacity: 0.6;
+  opacity: 0.5;
 }
-
-/* 降级：减少透明 / 减少动效时关掉折射层 */
-@media (prefers-reduced-transparency: reduce) {
-  .yg2-lens-clip {
-    display: none;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .yg2-lens-clip__blob {
-    animation: none;
-  }
-}
-

@@ -328,15 +328,21 @@ const sumsForAnalysis = computed(() => ({
 /* ---------- 圆环 ---------- */
 .tr__ring {
     cursor: pointer;
+    outline: none;
     transform-origin: 100px 100px;
     transition:
-      transform 260ms cubic-bezier(0.34, 1.4, 0.64, 1),
-      opacity 220ms var(--yg2-ease-out),
-      filter 220ms var(--yg2-ease-out);
+      transform 420ms cubic-bezier(0.22, 1.4, 0.36, 1),
+      opacity 260ms var(--yg2-ease-out),
+      filter 300ms var(--yg2-ease-out);
   }
 
   /* 选中：整条环略微放大 + 光晕，其余降权 */
-  .tr__ring.is-selected {
+  .tr__ring:focus-visible {
+    outline: none;
+    filter: drop-shadow(0 0 0 2px var(--yg2-accent-soft));
+  }
+
+.tr__ring.is-selected {
     transform: scale(1.035);
     filter: drop-shadow(0 0 6px color-mix(in srgb, currentColor 30%, transparent));
   }
@@ -425,8 +431,22 @@ const sumsForAnalysis = computed(() => ({
 }
 
 .tr__item.is-selected {
-  background: color-mix(in srgb, var(--yg2-text) 5%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--yg2-text) 8%, transparent);
+  background: transparent;
+  box-shadow: none;
+}
+
+.tr__item.is-selected .tr__name {
+  color: var(--yg2-text);
+  font-weight: 600;
+}
+
+.tr__item.is-selected .tr__value strong {
+  color: var(--yg2-text);
+}
+
+.tr__item:focus-visible {
+  outline: none;
+  background: color-mix(in srgb, var(--yg2-text) 4%, transparent);
 }
 
 .tr__dot {
@@ -480,12 +500,18 @@ const sumsForAnalysis = computed(() => ({
 
 /* ---------- 选中后的明细 ---------- */
 .tr__detail {
-  margin-top: 4px;
-  padding: 12px 14px;
-  border-radius: var(--yg2-r-12);
-  background: color-mix(in srgb, var(--yg2-text) 3.5%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--yg2-text) 7%, transparent);
-  animation: tr-detail-in 220ms var(--yg2-ease-out);
+  margin-top: 6px;
+  padding: 4px 2px 2px;
+  background: none;
+  box-shadow: none;
+  border-top: 1px solid var(--yg2-sep);
+  animation: tr-detail-in 320ms cubic-bezier(0.22, 1.2, 0.36, 1);
+  transform-origin: top center;
+}
+
+@keyframes tr-detail-in {
+  from { opacity: 0; transform: translateY(-6px) scaleY(0.96); }
+  to { opacity: 1; transform: none; }
 }
 
 .tr__detail-head {
@@ -511,6 +537,11 @@ const sumsForAnalysis = computed(() => ({
   border-radius: 999px;
   font-size: 12px;
   color: var(--yg2-accent);
+  background: transparent;
+  transition: background-color 160ms var(--yg2-ease-out);
+}
+
+.tr__detail-more:hover {
   background: var(--yg2-accent-soft);
 }
 
