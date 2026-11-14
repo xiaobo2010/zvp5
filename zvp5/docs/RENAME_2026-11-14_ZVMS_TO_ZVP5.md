@@ -104,7 +104,9 @@ nginx 回滚：`tar xzf /root/nginx-bak-<ts>.tar.gz -C /` 后 `nginx -t && syste
 ## 还没做的
 
 1. **环境变量真换名**：`/etc/zvms4/{zvp-secrets,ssh-targets}.env`、
-   `zvp5.service.d/*.conf` 里的 `ZVMS_*` 改成 `ZVP5_*`。改完跑一轮再删回落。
+   `zvp5.service.d/*.conf` 里的 `ZVMS_*` 改成 `ZVP5_*`。
+   **前置条件：带 `util/env.py` 的新后端代码已经发布上线。** 线上跑的还是改名前的
+   构建，只认 `ZVMS_*`；现在就改 env 名字，下次 restart 会读不到配置。
 2. **撤掉旧名**：`LEGACY_CREDENTIAL_ID`、unit 里 `zvms_ai_key` 那行、
    脚本开头 `ZVMS4_*` 映射、`Alias=zvms4.service`、`zvms4-deploy` 符号链接与
    对应 sudo 规则。
@@ -116,6 +118,12 @@ nginx 回滚：`tar xzf /root/nginx-bak-<ts>.tar.gz -C /` 后 `nginx -t && syste
    `zvms:api-race` 事件、`ZVMSLog` 类名。改 localStorage/IndexedDB 键等于让
    老客户端丢掉缓存（对功能无影响），可以一次性换掉。
 5. **Oracle schema `zvms_new`**：独立窗口，见下。
+
+> 顺序很重要：**代码先上线，再改机器上的 env 名字，最后删回落逻辑。** 反过来会在
+> 旧代码还在跑的窗口里把服务弄起不来。
+>
+> 下一版后端发布时，同时会把 `zvp5_ai_key` 那条凭据用上（新代码优先认它），
+> 所以发布+重启验证通过后，就可以删 unit 里 `zvms_ai_key` 那行。
 
 ## Oracle schema 改名（未排期）
 
