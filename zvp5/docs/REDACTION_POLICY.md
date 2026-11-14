@@ -34,7 +34,10 @@ git grep -nE '\b([0-9]{1,3}\.){3}[0-9]{1,3}\b' -- '*.md' '*.yml' \
 
 | 内容 | 处理 | 原因 |
 | --- | --- | --- |
-| `reference/xuehai/` | 2026-11-14 移出仓库，本机保留在 `~/zvp5-private-reference/xuehai/` | 含从 `xhcore.so` 提取的第三方签名 KEY、任意 URL 签名代理、设备身份采集与外呼逻辑；公开等于把伪造学海 API 请求的能力交出去 |
+| `reference/xuehai/` | 2026-11-14 移出仓库，本机保留在 `~/zvp5-private-reference/xuehai/` | 含从 `xhcore.so` 提取的 64 字符签名 KEY、任意 URL 签名代理、设备身份采集与外呼逻辑；公开等于把伪造学海 API 请求的能力交出去 |
+
+> KEY 仍需要保留（后续设备/身份追踪要用），只是不进仓库：见 `~/zvp5-private-reference/xuehai/`。
+> 注意历史提交里仍有这棵归档，真要公开得重写那 2 个提交，否则等于把 KEY 发出去。 |
 
 根 `README.md` 里原本复述过那个 KEY 的值，已改成「只记结论、不复现值」。
 `.gitleaks.toml` 中针对 `reference/xuehai/` 的放行条目同步删除——万一有人把它复制

@@ -1134,7 +1134,8 @@ XH：`/xh/api`（`api/xh.js`）
   - **`V1`**（默认，:63-67）：`sign = md5(method + url + t + KEY + body + "Authorization: " + token)`，其中 `t = 当前毫秒`；结果以 `?sign=<sign>&t=<t>`（已有 `?` 则 `&`）附加到 URL。
   - **`encrytred`**（:68-92）：`appCode='WEB002001'`、`appKey=md5('XH'+appCode)`、`timestamp=t`；GET 时把原 query 并入待签名对象；`raw = ''.join(f'{k}={obj[k]}&' for k in sorted(obj))`；`sign = md5(md5(raw + body))`；并写入请求头 `timestamp/sign/X-B3-SpanId/X-B3-TraceId/loginSign(空)/token`。
   - **`disabled`**（:61-62）：原样 URL，不签名。
-- **硬编码密钥**（:46）：原文件里是一个 68 字符的 `KEY` 常量，注释标明 *dumped from `xhcore.so`*。**值不在此复现**——2026-11-14 已把整棵 `reference/xuehai/` 移出仓库（见 `docs/REDACTION_POLICY.md`），这里只留结论：签名是可逆推的，密钥本该由服务端持有。
+- **硬编码密钥**（:46）：原文件里是一个 64 字符的 `KEY` 常量（注释写 `#64 bits`），标明 *dumped from `xhcore.so`*。**值不在此复现**——2026-11-14 已把整棵 `reference/xuehai/` 移出仓库（见 `docs/REDACTION_POLICY.md`），这里只留结论：签名是可逆推的，密钥本该由服务端持有。KEY 本身已完整保存在私有归档
+  `~/zvp5-private-reference/xuehai/`（后续设备/身份追踪要用），不进仓库。
 - **出站与 TLS**（:96-98, :152-159）：用 `urllib.request.urlopen(req, timeout=10, context=ssl_ctx)`；`ssl_ctx.check_hostname=False`、`verify_mode=CERT_NONE`，即**关闭证书校验**。
 - **签名例外**（:147）：`body` 序列化后 `≥ 1 MiB` 时**不参与签名**（`None`）。
 - **响应**（:168-173）：原样回传 `{actual_url, status, headers, body}`；`response_encoding='raw'` 时以字节返回。
