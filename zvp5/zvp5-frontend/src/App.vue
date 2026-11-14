@@ -20,6 +20,7 @@ import ZNotificationReminder from '@/components/notification/ZNotificationRemind
 import ZPrimaryDeviceGate from '@/components/notification/ZPrimaryDeviceGate.vue'
 import ZLoginReveal from '@/components/system/ZLoginReveal.vue'
 import ZBanScreen from '@/components/system/ZBanScreen.vue'
+import ZHexGrid from '@/components/decor/ZHexGrid.vue'
 import { useRegisterSW } from 'virtual:pwa-register/vue'
 import { CarbonCloudOffline } from '@/icons'
 // 直接从定义模块引入：绕过 @/views barrel，避免主 chunk 打包全部路由视图
@@ -471,6 +472,25 @@ const isPhiRoute = computed(() => {
   )
 })
 
+// 服务端/管理台已在各自外壳内挂蜂窝底纹；其余 Phi 页面与独立通知页由 App 统一补一层。
+// 登录页有自己的缓存背景，不重复叠。
+const hasLocalHexGrid = computed(() => {
+  const path = route.path
+  return (
+    path === '/server' ||
+    path.startsWith('/server/') ||
+    path === '/manage' ||
+    path.startsWith('/manage/')
+  )
+})
+
+const showPageHex = computed(
+  () =>
+    (isPhiRoute.value || route.path === '/notifications') &&
+    !hasLocalHexGrid.value &&
+    route.path !== '/user/login'
+)
+
 // 页内页签（义工列表 / 平台管理 / 服务器管理 / AI 网关）切换只改路径末段。
 // 这些视图由自身的本地状态驱动面板，若仍按 route.path 作为 key，每次点滑块都会整页重挂载：
 // 页头动画重播、滚动位置和列表状态丢失、分段滑块的位移也要从 0 重新开始。
@@ -610,6 +630,16 @@ onUnmounted(() => {
           <UserNav v-if="userStore.isLogin" />
           <div class="yg-layout__main">
             <main :class="['yg-layout__content', { 'is-portrait': verticalMode && userStore.isLogin }]">
+              <!-- 全局蜂窝底纹：服务端/管理台已有自己的底纹，其余页面统一补上 -->
+              <div v-if="showPageHex" class="yg-page-hex" aria-hidden="true">
+                <ZHexGrid
+                  :size="64"
+                  color="var(--yg-text-primary)"
+                  :opacity="0.055"
+                  drift
+                  sweep
+                />
+              </div>
               <!-- 速度线挂在滚动内容里，随页面上下滚动；不再 fixed 浮在视口上。 -->
               <div v-if="isPhiRoute" class="yg-phi-velocity" aria-hidden="true"></div>
               <div v-if="isPhiRoute" class="yg-phi-velocity" aria-hidden="true"></div>
@@ -641,6 +671,17 @@ onUnmounted(() => {
 .full {
   width: 100%;
   height: 100%;
+}
+
+/* 全局蜂窝底纹：固定在视口上，负 z-index 落在内容区底色之上、卡片之下。
+   内容区自身有 isolation + overflow，这里必须 fixed 才不会被滚动内容带跑。 */
+.yg-page-hex {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  overflow: hidden;
+  pointer-events: none;
+  contain: layout paint style;
 }
 
 .disconnected {
