@@ -1,7 +1,7 @@
 """Create a production-shaped settings.py for the ADB2 deployment.
 
-The Oracle password is read from ZVMS_ORACLE_PASSWORD so it is not stored in
-this repository or placed in a shell history file.
+The Oracle password is read from ZVP5_ORACLE_PASSWORD (legacy ZVMS_ORACLE_PASSWORD
+still accepted) so it is not stored in this repository or placed in a shell history file.
 """
 
 from __future__ import annotations
@@ -22,9 +22,11 @@ def main() -> None:
     root = base if (base / "settings.example.py").exists() else base.parent / "zvp5-backend-python"
     template = root / "settings.example.py"
     target = root / "settings.py"
-    password = os.environ.get("ZVMS_ORACLE_PASSWORD", "")
+    password = os.environ.get("ZVP5_ORACLE_PASSWORD") or os.environ.get(
+        "ZVMS_ORACLE_PASSWORD", ""
+    )
     if not password:
-        raise SystemExit("ZVMS_ORACLE_PASSWORD is required")
+        raise SystemExit("ZVP5_ORACLE_PASSWORD (or legacy ZVMS_ORACLE_PASSWORD) is required")
     source = target.read_text(encoding="utf-8") if target.exists() else template.read_text(encoding="utf-8")
     source = source.replace('ORACLE_ACTIVE = "prod"', 'ORACLE_ACTIVE = "test"', 1)
     replacements = {
@@ -33,7 +35,7 @@ def main() -> None:
         'ORACLE_PASSWORD = ""': f"ORACLE_PASSWORD = {password!r}",
         'ORACLE_TEST_DSN = ""': 'ORACLE_TEST_DSN = "zvp5adb2_tp"',
         'ORACLE_TEST_WALLET_DIR = ""': (
-            'ORACLE_TEST_WALLET_DIR = "/www/zvms4/adb-wallet-zvp5adb2"'
+            'ORACLE_TEST_WALLET_DIR = "/www/zvp5/adb-wallet-zvp5adb2"'
         ),
         'ORACLE_TEST_WALLET_PASSWORD = ""': (
             f"ORACLE_TEST_WALLET_PASSWORD = {password!r}"

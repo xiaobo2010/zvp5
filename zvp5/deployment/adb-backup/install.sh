@@ -7,8 +7,8 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BACKUP_DIR=/root/adb-backup
-VENV_PY=${ZVMS_VENV_PY:-/www/zvms4/backend/.venv/bin/python}
-SERVICE_USER=${ZVMS_SERVICE_USER:-www-data}
+VENV_PY=${ZVP5_VENV_PY:-${ZVMS_VENV_PY:-/www/zvp5/backend/.venv/bin/python}}
+SERVICE_USER=${ZVP5_SERVICE_USER:-${ZVMS_SERVICE_USER:-www-data}}
 
 [[ $EUID -eq 0 ]] || { echo "must run as root" >&2; exit 1; }
 [[ -x "$VENV_PY" ]] || { echo "python not found: $VENV_PY" >&2; exit 1; }
@@ -20,9 +20,9 @@ chmod 600 "$BACKUP_DIR/admin_pw1" "$BACKUP_DIR/admin_pw2"
 find "$BACKUP_DIR/wallet1" "$BACKUP_DIR/wallet2" -type f -exec chmod 600 {} +
 
 # 请求文件目录：后端（www-data）写，root 的 path 单元看。
-install -d -m 0750 -o "$SERVICE_USER" -g "$SERVICE_USER" /www/zvms4/backend/data
+install -d -m 0750 -o "$SERVICE_USER" -g "$SERVICE_USER" /www/zvp5/backend/data
 
-# 单元里的 python 路径按部署实际值替换（仓库模板是 /www/zvms4/backend/.venv）。
+# 单元里的 python 路径按部署实际值替换（仓库模板是 /www/zvp5/backend/.venv）。
 sed "s#^ExecStart=.*#ExecStart=$VENV_PY $BACKUP_DIR/sync_adb.py#" \
   "$HERE/adb-sync.service" > /etc/systemd/system/adb-sync.service
 chmod 644 /etc/systemd/system/adb-sync.service

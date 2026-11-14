@@ -1,7 +1,7 @@
 # ADB 手动备份栈（adb-sync）
 
 后端 `POST /api/system/db/backup/run` 只负责**触发**：生产写
-`/www/zvms4/backend/data/adb-sync.request`，root 的 `adb-sync-trigger.path` 看到后
+`/www/zvp5/backend/data/adb-sync.request`，root 的 `adb-sync-trigger.path` 看到后
 启动 oneshot 单元；真正的 prod → adb2 全量同步由 `sync_adb.py` 在 root 下执行
 （zvp-backend 实测约 35–40 秒；冷缓存可能更久）。本地/旧部署没有 path 单元时回落到
 `sudo -n systemctl start --no-block adb-sync.service`。
@@ -33,7 +33,7 @@ ssh zvp-backend 'bash /root/adb-backup/install.sh'
 
 # 3) 只读预演（确认能连上 prod/adb2，不写目标库）
 ssh zvp-backend 'cd /root/adb-backup && \
-  ADB_SYNC_DRY_RUN=1 /www/zvms4/backend/.venv/bin/python sync_adb.py'
+  ADB_SYNC_DRY_RUN=1 /www/zvp5/backend/.venv/bin/python sync_adb.py'
 
 # 4) 真实跑一次（约 35–40 秒；完成看 SYNC_OK / SYNC_FAIL）
 ssh zvp-backend 'sudo systemctl start --no-block adb-sync.service'
@@ -42,9 +42,9 @@ ssh zvp-backend 'tail -f /var/log/adb-sync.log'
 
 ## 为什么不能再依赖 systemd 之外的路径
 
-生产的 `zvms4.service` 带 `NoNewPrivileges=true`：**这个进程里 sudo 一定失败**
+生产的 `zvp5.service`（旧名 `zvms4.service` 是 Alias） 带 `NoNewPrivileges=true`：**这个进程里 sudo 一定失败**
 （日志是 `sudo: If sudo is running in a container, you may need to adjust ...`）。
-所以手动触发改成「后端写 `/www/zvms4/backend/data/adb-sync.request` → root 的
+所以手动触发改成「后端写 `/www/zvp5/backend/data/adb-sync.request` → root 的
 `adb-sync-trigger.path` 看到 → 启动 `adb-sync.service` 并删掉请求文件」。
 提权动作由 systemd 完成，后端进程仍然没有任何提权能力。
 

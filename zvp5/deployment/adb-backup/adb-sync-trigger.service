@@ -7,5 +7,5 @@ Type=oneshot
 # 先删请求文件再启动：PathExists 依赖「不存在 -> 存在」的跳变，残留文件会让
 # 下一次触发不生效。删失败不阻断（下一次写入仍会刷新 mtime，但 PathExists
 # 只看存在性，所以这一步失败时本次触发仍会执行）。
-ExecStartPre=-/bin/rm -f /www/zvms4/backend/data/adb-sync.request
+ExecStartPre=-/bin/rm -f /www/zvp5/backend/data/adb-sync.request
 ExecStart=/usr/bin/systemctl start --no-block adb-sync.service
