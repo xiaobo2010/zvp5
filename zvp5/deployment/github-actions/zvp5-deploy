@@ -283,7 +283,11 @@ activate_backend_venv() {
     rm -rf "$previous_target"
     write_state "$record" "directory|$previous_target"
     mv "$BACKEND_DIR/.venv" "$previous_target"
-    mv "$new_venv" "$BACKEND_DIR/.venv"
+    # 新 venv 必须用符号链接接入：venv 里的 bin/* 脚本把解释器路径写死成
+    # 「创建时」的绝对路径，直接 mv 到 .venv 会让 shebang 指向已经不存在的
+    # 目录，systemd 启动报 203/EXEC "No such file or directory"。
+    ln -s "$new_venv" "$next"
+    mv "$next" "$BACKEND_DIR/.venv"
   else
     die "backend virtualenv is missing"
   fi

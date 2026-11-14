@@ -81,6 +81,29 @@ workflow 发 release 会被拒。sudoers 文件名改成 `/etc/sudoers.d/zvp5-gi
 
 实测：`sudo -l -U github-deploy` 有 8 条 NOPASSWD 规则（两条路径 × 四个动作）。
 
+## 首次真机部署（2026-11-14 20:50）
+
+把 main `d49da4b8` 发到 zvp-backend，暴露并修掉部署脚本两个真 bug（都是第一次
+真跑才可能发现）：
+
+1. `umask 027` → tar 解出的 `requirements.txt` 是 `root:root 0640`，而 pip 以
+   `www-data` 跑，直接 `Permission denied`。修复：解包后立刻 `set_owner "$staging"`。
+2. `.venv` 还是普通目录时，`activate_backend_venv` 把新建的 venv 整个 `mv` 进
+   `.venv`。venv 里 `bin/*` 的 shebang 写死创建时的绝对路径，搬完就失效，
+   systemd 报 `203/EXEC: No such file or directory`，健康检查 12 次全失败 →
+   自动回滚（回滚本身是好的，服务恢复 200）。
+
+现在统一成符号链接模型：`.venv -> .github-actions/venvs/backend-<rev>-<id>`，
+切版本只换链接，shebang 永远有效。
+
+最终结果：`backend.current = d49da4b8...`，health 200（该端点会真连 Oracle 做
+ping，等于验证了新 venv 的 oracledb + 钱包），公网 zvp/zvpapi 200，
+`settings.py` / `aes_key.txt` / `system_state.db` / `data/` 原样保留，
+adb-sync 的 path 单元仍 active。
+
+**注意**：现在 `.venv` 指向 `/www/zvp5/.github-actions/venvs/...`，所以
+`/www/zvms4` 这个旧路径不能立刻删——它还是 `.github-actions` 的实体目录。
+
 ## 回滚
 
 每一步都可单独回退，备份都在机器上：

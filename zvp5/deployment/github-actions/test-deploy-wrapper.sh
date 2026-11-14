@@ -130,7 +130,12 @@ printf 'new backend\n' > "$TEST_ROOT/source/backend/app.py"
 archive backend "$REV_A" "$TEST_ROOT/source/backend"
 bash "$WRAPPER" deploy backend "$REV_A" "$ID_A"
 assert_file 'new-package==2' "$ZVMS4_DEPLOY_ROOT/backend/requirements.txt"
-[[ -d "$ZVMS4_DEPLOY_ROOT/backend/.venv" && ! -L "$ZVMS4_DEPLOY_ROOT/backend/.venv" ]]
+# .venv 必须是指向 venvs/backend-<rev>-<id> 的符号链接，不能把 venv 目录整个
+# 搬进来：venv 里 bin/* 的 shebang 写死创建时的绝对路径，搬家后 shebang 失效，
+# systemd 启动会 203/EXEC "No such file or directory"。
+[[ -L "$ZVMS4_DEPLOY_ROOT/backend/.venv" ]]
+[[ "$(readlink "$ZVMS4_DEPLOY_ROOT/backend/.venv")" == "$ZVMS4_DEPLOY_ROOT/.github-actions/venvs/backend-$REV_A-$ID_A" ]]
+[[ -d "$ZVMS4_DEPLOY_ROOT/backend/.venv" ]]
 assert_file 'new-env' "$ZVMS4_DEPLOY_ROOT/backend/.venv/new-env-marker"
 [[ -f "$ZVMS4_DEPLOY_ROOT/.github-actions/venvs/backend-previous-$REV_A-$ID_A/old-env-marker" ]]
 grep -Fx -- '-r' "$ZVMS4_TEST_PIP_LOG" >/dev/null
