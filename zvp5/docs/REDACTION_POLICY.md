@@ -7,8 +7,8 @@
 
 | 占位符 | 含义 | 出现场景 |
 | --- | --- | --- |
-| `<BACKEND_IP>` | 后端/API 所在机（后端，别名 `zvp-backend`） | 部署记录、排障日志 |
-| `<FRONTEND_IP>` | 前端源站（前端，别名 `zvp-frontend`） | 反代配置、`ssh-keyscan` 示例 |
+| `<BACKEND_IP>` | 后端/API 所在机（别名 `zvp-backend`） | 部署记录、排障日志 |
+| `<FRONTEND_IP>` | 前端源站（别名 `zvp-frontend`） | 反代配置、`ssh-keyscan` 示例 |
 | `<CLIENT_IP>` | 真实访客/终端 IP | access.log 摘录 |
 | `<CF_ACCOUNT_ID>` | Cloudflare account id | Worker 部署命令、wrangler 说明 |
 | `<CF_RECORD_ID>` | Cloudflare 单条 DNS 记录的 record id | DNS 切换/回滚记录 |
@@ -24,6 +24,18 @@
 的 `CLOUDFLARE_ACCOUNT_ID` 变量里，本机副本在
 `~/.config/opencode/credentials/cf-account-id`。
 
+## 主机命名
+
+只暴露两台机器的身份，其余主机不点名：
+
+| 角色 | 写法 |
+| --- | --- |
+| 后端 / API 所在机 | `zvp-backend`，正文里简称「后端」 |
+| 前端源站 | `zvp-frontend`，正文里简称「前端」 |
+| 其余主机（中继、备用、自有…） | 「另一处主机」或「另一处境外出口」，不写别名、不写地理 |
+
+机房所在国家/城市同样不写：它和主机别名组合起来能直接对到服务商。
+
 ## 提交前自查
 
 ```bash
@@ -32,9 +44,9 @@ git grep -nE '\b([0-9]{1,3}\.){3}[0-9]{1,3}\b' -- '*.md' '*.yml' \
   | grep -vE '127\.0\.0\.1|0\.0\.0\.0|203\.0\.113|198\.51\.100|169\.254'
 ```
 
-历史提交里的旧文档仍然带着真实 IP。要彻底清掉得重写历史（`git filter-repo`），
-那会改掉所有 SHA，牵连部署记录与 tag；目前的选择是「公开时以当前树为准」，
-所以新提交不得再写入真实值。
+2026-11-14 已经用 `git filter-repo` 把整条历史洗过一遍：文件内容与提交信息里的
+真实 IP、服务商别名、机房地理、Cloudflare 账号标识全部替换成占位符，531 个提交
+一个没少（见 `PRE_PUBLIC_CHECKLIST.md` §二）。新增提交自然也要守住上面的约定。
 
 ## 已移出的内容
 

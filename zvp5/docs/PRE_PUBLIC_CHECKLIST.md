@@ -36,12 +36,14 @@ workflow，就能读到 10 条生产 secret。转公开是为了拿回这些闸�
 
 重写规则（同一份映射同时作用于文件内容与提交信息）：
 
-- `zvp-backend` → `zvp-backend`、`zvp-frontend` → `zvp-frontend`、`另一处主机` → `另一处主机`
-- 第三方主机（ARM 另一处主机、另一处主机、另一处主机）一律不点名，统一写成「另一处主机 / 另一处境外出口」
-- 后端 / 前端 / 后端 / 前端 → 后端 / 前端；另一处主机 → 另一处主机；数据库侧 → 数据库侧
-- Cloudflare account id → `<CF_ACCOUNT_ID>`，DNS record id → `<CF_RECORD_ID>`
-- 真实主机 IP → `<BACKEND_IP>` / `<FRONTEND_IP>` / `<CLIENT_IP>`
-- 三个文件名带地理/服务商信息的文档整条历史改名
+- 后端机、前端机的服务商别名 → `zvp-backend` / `zvp-frontend`；
+- 其余主机（中继、备用、自有）一律不点名 → 「另一处主机 / 另一处境外出口」；
+- 机房所在国家/城市（含英文缩写）→ 「后端 / 前端」；数据库所在区域 → 「数据库侧」；
+- Cloudflare account id → `<CF_ACCOUNT_ID>`，DNS record id → `<CF_RECORD_ID>`；
+- 真实主机 IP → `<BACKEND_IP>` / `<FRONTEND_IP>` / `<CLIENT_IP>`；
+- 三个文件名带地理/服务商信息的文档，整条历史里一起改名。
+
+> 这份清单本身也不再复述旧值——把旧别名原样写在这里，等于换个地方泄露一次。
 
 **没有动**（都是明确决定）：`reference/xuehai/` 里的第三方签名 KEY 仍在历史里——
 它要留着做设备/身份追踪，代价就是公开后它一并可见。真要抹掉，加一条
