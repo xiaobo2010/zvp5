@@ -5,6 +5,10 @@ defineEmits<{ openDrawer: [] }>()
 
 <template>
   <header class="yg2-topbar">
+    <div class="yg2-lens-clip" aria-hidden="true">
+      <span class="yg2-lens-clip__blob yg2-lens-clip__blob--2" />
+      <span class="yg2-lens-clip__blob yg2-lens-clip__blob--3" />
+    </div>
     <button
       type="button"
       class="yg2-topbar__menu"

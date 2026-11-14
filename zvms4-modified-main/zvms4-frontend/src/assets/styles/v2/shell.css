@@ -244,6 +244,8 @@
 
 /* ── 顶栏 ───────────────────────────────────────────────── */
 .yg2-topbar {
+  position: relative;
+  overflow: hidden;
   position: sticky;
   top: 0;
   z-index: 20;

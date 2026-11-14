@@ -571,3 +571,87 @@
     transform: none;
   }
 }
+
+/* ==========================================================================
+   真实折射层：SVG feDisplacementMap（作用在自绘光场上）
+
+   实测结论：Chrome 会丢弃 backdrop-filter 里的 url(#filter)（computed value
+   只剩 blur/saturate），所以「直接折射背后内容」在 Chrome 上做不到。
+   可行的做法是把可自绘的那层光场放进玻璃里，用 feDisplacementMap 真位移，
+   既保留真实形变，又不依赖浏览器不支持的写法。
+   ========================================================================== */
+
+.yg2-lens-clip {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  border-radius: inherit;
+  pointer-events: none;
+  z-index: -1;
+  filter: url(#yg2-lens-lg);
+  opacity: 0.85;
+  contain: paint;
+}
+
+.yg2-lens-clip__blob {
+  position: absolute;
+  width: 320px;
+  height: 320px;
+  border-radius: 50%;
+  filter: blur(40px);
+  will-change: transform;
+}
+
+.yg2-lens-clip__blob--1 {
+  top: -110px;
+  left: -90px;
+  background: radial-gradient(circle, var(--yg2-ambient-1), transparent 68%);
+  animation: yg2-lens-drift-1 26s var(--yg2-ease-in-out) infinite alternate;
+}
+
+.yg2-lens-clip__blob--2 {
+  bottom: -130px;
+  left: 10%;
+  background: radial-gradient(circle, var(--yg2-ambient-2), transparent 68%);
+  animation: yg2-lens-drift-2 34s var(--yg2-ease-in-out) infinite alternate;
+}
+
+.yg2-lens-clip__blob--3 {
+  top: 38%;
+  right: -120px;
+  background: radial-gradient(circle, var(--yg2-ambient-3), transparent 70%);
+  animation: yg2-lens-drift-3 30s var(--yg2-ease-in-out) infinite alternate;
+}
+
+@keyframes yg2-lens-drift-1 {
+  from { transform: translate3d(0, 0, 0) scale(1); }
+  to { transform: translate3d(38px, 26px, 0) scale(1.12); }
+}
+
+@keyframes yg2-lens-drift-2 {
+  from { transform: translate3d(0, 0, 0) scale(1.06); }
+  to { transform: translate3d(-32px, -20px, 0) scale(0.96); }
+}
+
+@keyframes yg2-lens-drift-3 {
+  from { transform: translate3d(0, 0, 0) scale(0.98); }
+  to { transform: translate3d(22px, -34px, 0) scale(1.1); }
+}
+
+.yg2-topbar .yg2-lens-clip {
+  filter: url(#yg2-lens-sm);
+  opacity: 0.6;
+}
+
+/* 降级：减少透明 / 减少动效时关掉折射层 */
+@media (prefers-reduced-transparency: reduce) {
+  .yg2-lens-clip {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .yg2-lens-clip__blob {
+    animation: none;
+  }
+}

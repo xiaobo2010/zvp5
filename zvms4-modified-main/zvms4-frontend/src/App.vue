@@ -19,6 +19,7 @@ import {
 import { RouterView } from 'vue-router'
 import { useUserStore } from '@/stores/user'
 import { useTheme } from '@/utils/theme'
+import lensNormal from '@/assets/lens/lens-normal.png'
 import { useRouter, useRoute } from 'vue-router'
 import Password from '@/icons/MaterialSymbolsPasswordRounded.vue'
 import AmbientField from '@/ui/shell/AmbientField.vue'
@@ -454,6 +455,18 @@ onMounted(async () => {
 </script>
 
 <template>
+  <svg class="yg2-lens-defs" aria-hidden="true" width="0" height="0">
+    <defs>
+      <filter id="yg2-lens-lg" x="-25%" y="-25%" width="150%" height="150%" color-interpolation-filters="sRGB">
+        <feImage :href="lensNormal" preserveAspectRatio="none" result="map" />
+        <feDisplacementMap in="SourceGraphic" in2="map" scale="-16" xChannelSelector="R" yChannelSelector="G" />
+      </filter>
+      <filter id="yg2-lens-sm" x="-25%" y="-25%" width="150%" height="150%" color-interpolation-filters="sRGB">
+        <feImage :href="lensNormal" preserveAspectRatio="none" result="map" />
+        <feDisplacementMap in="SourceGraphic" in2="map" scale="-9" xChannelSelector="R" yChannelSelector="G" />
+      </filter>
+    </defs>
+  </svg>
   <ElConfigProvider :locale="langPack" class="yg-bg-page full">
     <ElWatermark
       :font="watermark"
