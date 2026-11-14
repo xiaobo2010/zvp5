@@ -38,6 +38,7 @@ import './assets/styles/v2/controls.css'
 import './assets/styles/v2/patterns.css'
 import './assets/styles/v2/shell.css'
 import './assets/styles/v2/ep-bridge.css'
+import './assets/styles/v2/ux.css'
 
 import persistedstate from 'pinia-plugin-persistedstate'
 

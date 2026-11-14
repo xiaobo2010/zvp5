@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import StateBlock from '@/ui/ux/StateBlock.vue'
+import { usePullToRefresh } from '@/ui/ux/usePullToRefresh'
 import type { Activity, ActivityMember } from '@/../types/v2'
 import { ElDrawer } from 'element-plus'
 import { onMounted, ref, toRefs, watch } from 'vue'
@@ -41,6 +43,7 @@ const size = ref(0)
 // eslint-disable-next-line vue/no-dupe-keys
 const perspective = ref(persp.value === 'mine' ? user._id : persp.value)
 const loading = ref(true)
+const loadFailed = ref(false)
 const searchWord = ref(route.query?.search?.toString() ?? '')
 const query = ref(route.query?.search?.toString() ?? '')
 
@@ -52,6 +55,7 @@ const asc = ref(false)
 
 function refresh() {
   loading.value = true
+  loadFailed.value = false
   getActivity(
     perspective.value === 'mine' ? user._id : perspective.value,
     role.value,
@@ -71,11 +75,22 @@ function refresh() {
     .catch(() => {
       activities.value = []
       size.value = 0
+      loadFailed.value = true
       loading.value = false
     })
 }
 
+// 触屏下拉刷新（只在列表滚动到顶时接管手势）
+const { pulling, refreshing } = usePullToRefresh(() => {
+  refresh()
+})
+
 onMounted(refresh)
+
+/** 空态里的「浏览全部项目」：切到全校视角的列表页。 */
+function openAll() {
+  router.push('/activities/campus')
+}
 
 function confirmPage() {
   refresh()
@@ -167,9 +182,36 @@ function typeLabel(type: string) {
       </button>
     </div>
 
-    <div v-if="loading" class="yg2-tickets" aria-busy="true">
-      <div v-for="n in 6" :key="n" class="yg2-ticket yg2-ticket--skeleton" />
+    <div
+      v-if="pulling || refreshing"
+      class="yg2-ptr__hint"
+      :class="{ 'is-pulling': pulling || refreshing }"
+    >
+      <span v-if="refreshing" class="yg2-spinner" />
+      <span v-else>松手刷新</span>
     </div>
+
+    <div v-if="loading" class="yg2-tickets" aria-busy="true">
+      <div v-for="n in 6" :key="n" class="yg2-ticket yg2-ticket--skeleton">
+        <span class="yg2-skeleton yg2-ticket__sk-date" />
+        <span class="yg2-ticket__sk-main">
+          <span class="yg2-skeleton" style="width: 42%; height: 12px" />
+          <span class="yg2-skeleton" style="width: 72%; height: 18px" />
+          <span class="yg2-skeleton" style="width: 30%; height: 12px" />
+        </span>
+      </div>
+    </div>
+
+    <StateBlock
+      v-else-if="loadFailed"
+      tone="error"
+      title="没能加载项目列表"
+      description="网络或服务端出了问题，不是你的操作有误。稍后重试通常就能恢复。"
+    >
+      <template #actions>
+        <button class="yg2-btn yg2-btn--primary" type="button" @click="refresh">重新试试</button>
+      </template>
+    </StateBlock>
 
     <div v-else-if="activities.length" class="yg2-tickets">
       <button
@@ -212,10 +254,25 @@ function typeLabel(type: string) {
       </button>
     </div>
 
-    <div v-else class="yg2-empty">
-      <p>没有找到项目</p>
-      <p class="yg2-empty__hint">换个关键词，或稍后再来看看</p>
-    </div>
+    <StateBlock
+      v-else
+      title="没有找到项目"
+      description="换个关键词，或稍后再来看看；也可以先浏览全部项目。"
+    >
+      <template #actions>
+        <button
+          v-if="query"
+          class="yg2-btn yg2-btn--secondary"
+          type="button"
+          @click="searchWord = ''; query = ''; refresh()"
+        >
+          清空关键词
+        </button>
+        <button class="yg2-btn yg2-btn--primary" type="button" @click="openAll">
+          浏览全部项目
+        </button>
+      </template>
+    </StateBlock>
 
     <div v-if="activities.length" class="yg2-activity__pager">
       <ZPagination v-model:current-page="activePage" v-model:page-size="pageSize" :total="size" />
@@ -401,6 +458,19 @@ function typeLabel(type: string) {
 .yg2-ticket:hover .yg2-ticket__chevron {
   transform: translateX(2px);
   color: var(--yg2-accent);
+}
+
+.yg2-ticket__sk-main {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  justify-content: center;
+}
+
+.yg2-ticket__sk-date {
+  width: 44px;
+  height: 44px;
+  border-radius: var(--yg2-r-12);
 }
 
 .yg2-ticket--skeleton {
