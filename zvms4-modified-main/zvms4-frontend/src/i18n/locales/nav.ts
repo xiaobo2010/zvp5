@@ -2,6 +2,7 @@ export const zhCN = {
   home: '首页',
   profile: '我的',
   activity: '义工列表',
+  activityShort: '项目',
   manage: '平台管理',
   server: '服务器管理',
   ai: 'AI 网关',
@@ -11,6 +12,17 @@ export const zhCN = {
   changelog: '更新日志',
   logout: '退出登录',
   reset: '密码修改',
+  menu: '菜单',
+  toggleSidebar: '收起侧边栏',
+  groups: {
+    overview: '概览',
+    collab: '协作',
+    admin: '管理'
+  },
+  theme: {
+    light: '切换到浅色模式',
+    dark: '切换到深色模式'
+  },
   banned: {
     title: '账号已被封禁',
     message: '由于{reason}，您的账号已被封禁。',

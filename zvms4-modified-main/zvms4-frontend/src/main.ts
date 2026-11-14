@@ -29,10 +29,23 @@ import './assets/styles/yg-glass-nav.css'
 import './assets/styles/flat.css'
 import './assets/main.css'
 
+// v2 重构层（Apple 液态玻璃）：令牌 / 材质 / 排版 / 外壳，全部 --yg2- 前缀，与 v1 并存。
+// base.css 含全局 reset，等页面迁移到 v2 后再引入，避免影响尚未迁移的旧页面。
+import './assets/styles/v2/tokens.css'
+import './assets/styles/v2/materials.css'
+import './assets/styles/v2/typography.css'
+import './assets/styles/v2/controls.css'
+import './assets/styles/v2/patterns.css'
+import './assets/styles/v2/shell.css'
+import './assets/styles/v2/ep-bridge.css'
+
 import persistedstate from 'pinia-plugin-persistedstate'
 
 // 表格展开行进出场动画（捕获期监听，对所有 el-table 生效）
 import { installTableExpandMotion } from './plugins/tableExpandMotion'
+
+// 工作台「本地预览」点选桥接：仅 DEV + 被工作台 iframe 嵌入时启用
+import { installPreviewPicker } from './dev/previewPicker'
 
 const app = createApp(App)
 
@@ -46,5 +59,6 @@ app.use(ElementPlus, {
 })
 
 installTableExpandMotion()
+installPreviewPicker()
 
 app.mount('#app')

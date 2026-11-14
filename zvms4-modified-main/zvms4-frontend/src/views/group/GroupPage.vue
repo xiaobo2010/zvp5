@@ -1,26 +1,21 @@
 <script lang="ts" setup>
 import ZGroupUserList from '@/components/group/ZGroupUserList.vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElPageHeader, ElSegmented, ElIcon, ElText } from 'element-plus'
-import { ref, watch, type Component } from 'vue'
+
+import { ref, watch } from 'vue'
 import api from '@/api'
 import type { Group } from '@/../types'
 import { useWindowSize } from '@vueuse/core'
 import { useUserStore } from '@/stores/user.ts'
-import { ArrowLeft } from '@element-plus/icons-vue'
 import { ZActivityList } from '@/components'
 import ZGroupUserTimeList from '@/components/group/ZGroupUserTimeList.vue'
 import { useI18n } from 'vue-i18n'
 import ZUserModification from '@/components/group/ZUserModification.vue'
-import { AddUser, User, ViewList } from '@icon-park/vue-next'
-import { TablerSum } from '@/icons'
-import UilStatistics from '@/icons/UilStatistics.vue'
 import ZGroupTimeStatistics from '@/components/group/ZGroupTimeStatistics.vue'
 
 interface SegmentedTab {
   label: string
   value: string
-  icon: Component
 }
 
 const { height } = useWindowSize()
@@ -77,22 +72,18 @@ const tabs = ref<SegmentedTab[]>([
   {
     label: 'Users',
     value: 'users',
-    icon: User
   },
   {
     label: 'Activities',
     value: 'activities',
-    icon: ViewList
   },
   {
     label: 'Time',
     value: 'time',
-    icon: TablerSum
   },
   {
     label: 'Statistics',
     value: 'statistics',
-    icon: UilStatistics
   },
 ])
 
@@ -100,7 +91,6 @@ if (userStore.position.includes('admin')) {
   tabs.value[tabs.value.length] = {
     label: 'Create',
     value: 'create',
-    icon: AddUser
   }
 }
 
@@ -110,7 +100,6 @@ if (group.value?.type !== 'class') {
     {
       label: 'Users',
       value: 'users',
-      icon: User
     },
   ]
 }
@@ -120,7 +109,6 @@ const tabs2 = ref<SegmentedTab[]>([
   {
     label: 'Users',
     value: 'users',
-    icon: User
   },
 ])
 
@@ -134,29 +122,42 @@ watch(tab, () => {
 </script>
 
 <template>
-  <div class="page-container px-6 py-4">
-    <ElPageHeader v-if="id" :icon="ArrowLeft" @back="() => router.back()" class="py-4">
-      <template #content>
-        {{ group?.name }}
-      </template>
-      <template #extra>
-        <ElSegmented v-model="tab" :options="group?.type !== 'class' ? tabs2 : tabs">
-          <template #default="props">
-            <div class="flex flex-col items-center gap-2 p-2">
-              <ElIcon :size="18" class="mt-2">
-                <Component :is="(props.item as SegmentedTab).icon" />
-              </ElIcon>
-              {{ t(('manage.groupDetails.tabs.' + (props.item as SegmentedTab).value) as string) }}
-            </div>
-          </template>
-        </ElSegmented>
-      </template>
-    </ElPageHeader>
-    <ZGroupUserList v-if="tab === 'users'" :id="id" />
-    <ZActivityList v-else-if="tab === 'activities'" :class-target="id" role="class" />
-    <ZGroupUserTimeList v-else-if="tab === 'time'" :id="id" />
-    <ZUserModification v-else-if="tab === 'create'" :cid="id" mode="create" id="" />
-    <ZGroupTimeStatistics v-else-if="tab === 'statistics'" :group-id="id" />
+  <div v-if="id" class="yg2-page group-page">
+    <button class="group-back" type="button" @click="router.back()">
+      <span aria-hidden="true">‹</span> 返回
+    </button>
+
+    <header class="yg2-page-header">
+      <div>
+        <p class="yg2-page-header__eyebrow">
+          {{ group?.type === 'class' ? '行政班' : '小组' }}
+        </p>
+        <h1 class="yg2-page-header__title">{{ group?.name || '…' }}</h1>
+        <p class="yg2-page-header__subtitle">
+          {{ group?.description || group?._id }}
+        </p>
+      </div>
+    </header>
+
+    <nav class="yg2-segment group-tabs">
+      <button
+        v-for="item in group?.type !== 'class' ? tabs2 : tabs"
+        :key="item.value"
+        class="yg2-segment__item"
+        :class="{ 'is-active': tab === item.value }"
+        type="button"
+        @click="tab = item.value"
+      >
+        {{ t(('manage.groupDetails.tabs.' + item.value) as string) }}
+      </button>
+    </nav>
+    <div class="yg2-panel">
+      <ZGroupUserList v-if="tab === 'users'" :id="id" />
+      <ZActivityList v-else-if="tab === 'activities'" :class-target="id" role="class" embed />
+      <ZGroupUserTimeList v-else-if="tab === 'time'" :id="id" />
+      <ZUserModification v-else-if="tab === 'create'" :cid="id" mode="create" id="" />
+      <ZGroupTimeStatistics v-else-if="tab === 'statistics'" :group-id="id" />
+    </div>
   </div>
 </template>
 
@@ -168,5 +169,39 @@ watch(tab, () => {
 
 .page-container :deep(.el-page-header__content) {
   font-weight: 600;
+}
+</style>
+
+<style scoped>
+.group-page {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.group-back {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 32px;
+  padding: 0 12px 0 8px;
+  border: 0;
+  border-radius: var(--yg2-r-pill);
+  background: transparent;
+  color: var(--yg2-text-secondary);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.group-back:hover {
+  background: var(--yg2-surface-sunken);
+  color: var(--yg2-text);
+}
+
+.group-tabs {
+  align-self: flex-start;
 }
 </style>

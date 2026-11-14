@@ -568,7 +568,7 @@ onBeforeUnmount(() => {
         <div class="relative">
           <div
             ref="containerRef"
-            class="terminal-box h-[calc(100vh_-_20rem)] min-h-[360px] bg-[var(--yg-bg-page)] p-2"
+            class="terminal-box h-[calc(100vh_-_20rem)] min-h-[360px] p-2"
           >
             <!-- 连接中骨架 -->
             <ElSkeleton v-if="status === 'connecting'" :rows="4" animated />
@@ -638,6 +638,14 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+/* 终端容器：v2 内凹表面（v1 的 --yg-bg-page 已随壳层移除） */
+.terminal-box {
+  border: 1px solid var(--yg2-line);
+  border-radius: var(--yg2-r-12);
+  background: var(--yg2-surface-sunken);
+  overflow: hidden;
+}
+
 /* 全局 flat.css 已收口样式,本页只保留等宽字体继承 */
 textarea,
 input {

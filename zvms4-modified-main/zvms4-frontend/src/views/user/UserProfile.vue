@@ -3,19 +3,8 @@ import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useDark } from '@vueuse/core'
-import {
-  ElAvatar,
-  ElButton,
-  ElCard,
-  ElDescriptions,
-  ElDescriptionsItem,
-  ElIcon,
-  ElMessageBox,
-  ElPageHeader,
-  ElSwitch,
-  ElTag
-} from 'element-plus'
-import { ArrowLeft, SwitchButton } from '@element-plus/icons-vue'
+import { ElIcon, ElMessageBox, ElSwitch } from 'element-plus'
+import { SwitchButton } from '@element-plus/icons-vue'
 import { useUserStore } from '@/stores/user'
 import { useGroupsStore } from '@/stores/groups'
 import { useHeaderStore } from '@/stores/header'
@@ -136,68 +125,62 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="profile-page">
-    <ElPageHeader :icon="ArrowLeft" class="profile-header" @back="router.back()">
-      <template #content>{{ t('profile.pageTitle') }}</template>
-    </ElPageHeader>
+  <div class="yg2-page profile-page">
+    <button class="profile-back" type="button" @click="router.back()">
+      <span aria-hidden="true">‹</span> 返回
+    </button>
 
-    <ElCard shadow="never" class="profile-card">
+    <header class="yg2-page-header">
+      <div>
+        <p class="yg2-page-header__eyebrow">账户</p>
+        <h1 class="yg2-page-header__title">{{ t('profile.pageTitle') }}</h1>
+      </div>
+    </header>
+
+    <section class="yg2-card profile-hero-card">
       <div class="profile-hero">
-        <ElAvatar :size="80" class="profile-avatar">{{ initials }}</ElAvatar>
+        <div class="profile-avatar">{{ initials }}</div>
         <div class="profile-identity">
           <div class="profile-name-line">
             <span class="profile-name">{{ user.name }}</span>
-            <ElTag
-              v-for="role in visibleRoles"
-              :key="role"
-              size="small"
-              effect="plain"
-              class="profile-role"
-            >
+            <span v-for="role in visibleRoles" :key="role" class="yg2-badge yg2-badge--accent">
               {{ roleLabel(role) }}
-            </ElTag>
+            </span>
           </div>
           <span class="profile-class">
             {{ className || user.class_id || t('profile.noClass') }}
           </span>
         </div>
+        <span class="profile-status" :class="user.banned ? 'is-banned' : 'is-normal'">
+          {{ user.banned ? t('profile.status.banned') : t('profile.status.normal') }}
+        </span>
       </div>
 
-      <ElDescriptions :column="1" border class="profile-details">
-        <ElDescriptionsItem :label="t('profile.labels.name')">
-          {{ user.name }}
-        </ElDescriptionsItem>
-        <ElDescriptionsItem :label="t('profile.labels.number')">
-          {{ user.id }}
-        </ElDescriptionsItem>
-        <ElDescriptionsItem :label="t('profile.labels.class')">
-          {{ className || user.class_id || t('profile.noClass') }}
-        </ElDescriptionsItem>
-        <ElDescriptionsItem :label="t('profile.labels.identity')">
-          <ElTag
-            v-for="role in visibleRoles"
-            :key="role"
-            size="small"
-            effect="plain"
-            class="profile-role"
-          >
-            {{ roleLabel(role) }}
-          </ElTag>
-        </ElDescriptionsItem>
-        <ElDescriptionsItem :label="t('profile.labels.status')">
-          <span :class="user.banned ? 'profile-banned' : 'profile-normal'">
-            {{ user.banned ? t('profile.status.banned') : t('profile.status.normal') }}
-          </span>
-        </ElDescriptionsItem>
-      </ElDescriptions>
-    </ElCard>
+      <dl class="yg2-kv profile-kv">
+        <dt>{{ t('profile.labels.name') }}</dt>
+        <dd>{{ user.name }}</dd>
+        <dt>{{ t('profile.labels.number') }}</dt>
+        <dd>{{ user.id }}</dd>
+        <dt>{{ t('profile.labels.class') }}</dt>
+        <dd>{{ className || user.class_id || t('profile.noClass') }}</dd>
+        <dt>{{ t('profile.labels.identity') }}</dt>
+        <dd class="profile-kv-roles">
+          <span v-for="role in visibleRoles" :key="role" class="yg2-badge">{{ roleLabel(role) }}</span>
+        </dd>
+      </dl>
+    </section>
 
-    <ElCard shadow="never" class="profile-card profile-notices">
+    <section class="yg2-card">
       <div class="profile-notices-head">
-        <span class="profile-section-title">{{ t('profile.notices.title') }}</span>
-        <ElButton text size="small" :loading="noticesLoading" @click="loadNotices">
+        <h2 class="yg2-card__title">{{ t('profile.notices.title') }}</h2>
+        <button
+          class="yg2-btn yg2-btn--quiet yg2-btn--sm"
+          type="button"
+          :disabled="noticesLoading"
+          @click="loadNotices"
+        >
           {{ t('profile.notices.refresh') }}
-        </ElButton>
+        </button>
       </div>
 
       <p v-if="noticesLoading && notices.length === 0" class="profile-notices-hint">
@@ -244,12 +227,12 @@ onMounted(async () => {
           </div>
         </li>
       </ul>
-    </ElCard>
+    </section>
 
-    <ElCard shadow="never" class="profile-card profile-actions">
-      <ElButton text size="large" class="profile-action" @click="changePassword">
+    <section class="yg2-card profile-actions">
+      <button class="profile-action" type="button" @click="changePassword">
         {{ t('profile.actions.changePassword') }}
-      </ElButton>
+      </button>
       <div
         class="profile-action profile-switch"
         role="switch"
@@ -262,17 +245,17 @@ onMounted(async () => {
         <span>{{ t('profile.actions.darkMode') }}</span>
         <ElSwitch v-model="dark" />
       </div>
-      <ElButton text size="large" class="profile-action" @click="router.push('/about')">
+      <button class="profile-action" type="button" @click="router.push('/about')">
         {{ t('profile.actions.about') }}
-      </ElButton>
-      <ElButton text size="large" class="profile-action" @click="router.push('/changelog')">
+      </button>
+      <button class="profile-action" type="button" @click="router.push('/changelog')">
         {{ t('profile.actions.changelog') }}
-      </ElButton>
-      <ElButton class="profile-action profile-logout" @click="logout">
+      </button>
+      <button class="profile-action profile-logout" type="button" @click="logout">
         <ElIcon class="profile-logout__icon"><SwitchButton /></ElIcon>
         {{ t('profile.actions.logout') }}
-      </ElButton>
-    </ElCard>
+      </button>
+    </section>
   </div>
 </template>
 
@@ -588,5 +571,242 @@ onMounted(async () => {
   .profile-name {
     font-size: 20px;
   }
+}
+
+/* v2 个人页 */
+.profile-page {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  max-width: 1080px;
+  margin: 0 auto;
+}
+
+.profile-page .yg2-card {
+  padding: 20px;
+}
+
+.profile-page .profile-actions {
+  padding: 8px;
+}
+
+.profile-back {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 32px;
+  padding: 0 12px 0 8px;
+  border: 0;
+  border-radius: var(--yg2-r-pill);
+  background: transparent;
+  color: var(--yg2-text-secondary);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.profile-back:hover {
+  background: var(--yg2-surface-sunken);
+  color: var(--yg2-text);
+}
+
+.profile-hero-card {
+  padding: 24px;
+}
+
+.profile-hero {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.profile-avatar {
+  display: grid;
+  place-items: center;
+  width: 72px;
+  height: 72px;
+  border-radius: var(--yg2-r-pill);
+  background: linear-gradient(160deg, rgba(0, 113, 227, 0.16), rgba(0, 113, 227, 0.04));
+  color: var(--yg2-accent);
+  font-size: 24px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.profile-name-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.profile-name {
+  font-size: 24px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  color: var(--yg2-text);
+}
+
+.profile-class {
+  display: block;
+  margin-top: 4px;
+  font-size: 13px;
+  color: var(--yg2-text-secondary);
+}
+
+.profile-status {
+  margin-left: auto;
+  padding: 4px 10px;
+  border-radius: var(--yg2-r-pill);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.profile-status.is-normal {
+  background: rgba(52, 199, 89, 0.12);
+  color: #248a3d;
+}
+
+.profile-status.is-banned {
+  background: rgba(255, 59, 48, 0.12);
+  color: var(--yg2-danger);
+}
+
+.profile-kv {
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid var(--yg2-line);
+}
+
+.profile-kv dt {
+  font-size: 13px;
+  color: var(--yg2-text-secondary);
+}
+
+.profile-kv dd {
+  font-size: 14px;
+  color: var(--yg2-text);
+}
+
+.profile-kv-roles {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.profile-notices-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.profile-notices-hint {
+  margin: 4px 0;
+  font-size: 13px;
+  color: var(--yg2-text-tertiary);
+}
+
+.profile-notice-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.profile-notice + .profile-notice {
+  border-top: 1px solid var(--yg2-line);
+}
+
+.profile-notice-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto 16px;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 14px 4px;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  color: var(--yg2-text);
+}
+
+.profile-notice-title {
+  font-size: 14px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.profile-notice-meta {
+  font-size: 12px;
+  color: var(--yg2-text-tertiary);
+}
+
+.profile-notice-caret {
+  color: var(--yg2-text-tertiary);
+  transition: transform var(--yg2-dur-1) var(--yg2-ease-out);
+}
+
+.profile-notice-caret.is-open {
+  transform: rotate(180deg);
+}
+
+.profile-notice-body {
+  padding: 4px 4px 16px;
+}
+
+.profile-actions {
+  display: flex;
+  flex-direction: column;
+  padding: 8px;
+}
+
+.profile-action {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  min-height: 48px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: var(--yg2-r-12);
+  background: transparent;
+  color: var(--yg2-text);
+  font: inherit;
+  font-size: 15px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.profile-action:hover {
+  background: var(--yg2-surface-sunken);
+}
+
+.profile-switch {
+  cursor: default;
+}
+
+.profile-logout {
+  color: var(--yg2-danger);
+  gap: 8px;
+  justify-content: flex-start;
+}
+
+.profile-logout__icon {
+  font-size: 16px;
+}
+
+/* 覆盖旧样式遗留 */
+.profile-card {
+  border: 0;
+  box-shadow: none;
+  background: transparent;
 }
 </style>

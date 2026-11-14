@@ -1,35 +1,21 @@
 <script setup lang="ts">
-import type { ActivityInstance } from '@/../types'
-import {
-  ElDrawer,
-  ElTable,
-  ElTableColumn,
-  ElButton,
-  ElCard,
-  ElInput,
-  ElDivider,
-  ElTooltip
-} from 'element-plus'
-import type { TableInstance } from 'element-plus'
-import { nextTick, onMounted, ref, toRefs, watch, useTemplateRef } from 'vue'
+import type { Activity, ActivityMember } from '@/../types/v2'
+import { ElDrawer } from 'element-plus'
+import { onMounted, ref, toRefs, watch } from 'vue'
 import { useUserStore } from '@/stores/user'
 import dayjs from '@/plugins/dayjs'
-import { Box, Search, PieChart, Refresh, View } from '@element-plus/icons-vue'
-import { useWindowSize, useSwipe, usePointerSwipe } from '@vueuse/core'
 import { useI18n } from 'vue-i18n'
 import { getActivity } from './getActivity'
-import { ZActivityType, ZActivityStatus, ZActivityDuration, ZActivityCard } from '@/components'
+import { ZActivityType, ZActivityStatus, ZActivityDuration } from '@/components'
 import { displayStatus } from '@/utils/activityStatus'
 import { useRouter, useRoute } from 'vue-router'
 import ZDataExport from '@/components/utils/ZDataExport.vue'
+import ZPagination from '@/components/utils/ZPagination.vue'
 import { pad } from '@/plugins/ua.ts'
-import type { Activity } from '@/../types/v2'
 
 const { t } = useI18n()
-const { width, height } = useWindowSize()
 const router = useRouter()
 const route = useRoute()
-
 const user = useUserStore()
 
 const props = withDefaults(
@@ -38,36 +24,29 @@ const props = withDefaults(
     embed?: boolean
     perspective?: string
     classTarget?: string
-    modelValue?: Activity[]
-    selectTarget?: string
-    selectedMax?: number
-    select?: boolean
   }>(),
   {
     role: 'mine',
     embed: false,
-    perspective: 'mine',
-    selectTarget: '',
-    selectedMax: 0, // Infinite
-    select: false
+    perspective: 'mine'
   }
 )
-const emits = defineEmits(['update:modelValue'])
 
-const tableRef = ref<TableInstance>()
+const { role, perspective: persp, classTarget, embed } = toRefs(props)
+
 const activePage = ref(parseInt(route.query?.page?.toString() ?? '1') ?? 1)
-const pageSize = ref(parseInt(route.query?.perpage?.toString() ?? '8') ?? 8)
+const pageSize = ref(parseInt(route.query?.perpage?.toString() ?? '12') ?? 12)
 const size = ref(0)
 
-const { role, perspective: persp, selectTarget, classTarget, select, embed } = toRefs(props)
 // eslint-disable-next-line vue/no-dupe-keys
 const perspective = ref(persp.value === 'mine' ? user._id : persp.value)
 const loading = ref(true)
 const searchWord = ref(route.query?.search?.toString() ?? '')
 const query = ref(route.query?.search?.toString() ?? '')
 
-const activities = ref<Activity[]>([])
+type ActivityRow = Activity & { mine?: ActivityMember }
 
+const activities = ref<ActivityRow[]>([])
 const sort = ref('_id')
 const asc = ref(false)
 
@@ -80,80 +59,23 @@ function refresh() {
     pageSize.value,
     query.value,
     classTarget.value ?? user.class_id ?? '',
-    selectTarget.value,
+    '',
     sort.value,
     asc.value
   )
     .then((res) => {
-      if (res && res?.activities?.length !== 0) {
-        activities.value = res?.activities
-        size.value = res?.total
-        loading.value = false
-      } else {
-        activities.value = []
-        loading.value = false
-        size.value = 0
-      }
+      activities.value = res?.activities ?? []
+      size.value = res?.total ?? 0
+      loading.value = false
     })
     .catch(() => {
+      activities.value = []
+      size.value = 0
       loading.value = false
     })
 }
 
-onMounted(() => {
-  refresh()
-  // 首帧渲染后按表格真实位置校准一次高度
-  nextTick(() => {
-    tableMaxHeight.value = computeTableHeight()
-  })
-})
-
-watch(selectTarget, refresh)
-
-/** 分页行 + 卡片下边距 + 页面底部留白 */
-const BOTTOM_ROOM = 96
-
-/**
- * 表格高度 = 视口高度 − 表格实际顶部 − 底部预留，
- * 以表头真实位置为基准，不受页面标题、卡片工具栏行数影响，尽量少留白。
- */
-function computeTableHeight() {
-  const el = (tableRef.value as { $el?: HTMLElement } | undefined)?.$el
-  const top = el?.getBoundingClientRect?.().top ?? 0
-  if (top > 0 && top < height.value * 0.8) {
-    return Math.max(280, Math.round(height.value - top - BOTTOM_ROOM))
-  }
-  const reserved = width.value < 768 ? 340 : 320
-  return Math.max(280, height.value - reserved)
-}
-
-const tableMaxHeight = ref(computeTableHeight())
-
-watch([width, height], () => {
-  tableMaxHeight.value = computeTableHeight()
-})
-
-const items = ref<Activity[]>([])
-
-watch(
-  activities,
-  () => {
-    items.value = activities.value
-  },
-  { immediate: true }
-)
-
-function selectable(row: ActivityInstance) {
-  return (
-    (selectTarget.value.toLowerCase().includes(row.type.toLowerCase()) ||
-      selectTarget.value === '') &&
-    row.status === 'effective'
-  )
-}
-
-function handleSelectionChange(val: string[]) {
-  emits('update:modelValue', val)
-}
+onMounted(refresh)
 
 function confirmPage() {
   refresh()
@@ -168,65 +90,24 @@ watch(query, confirmPage)
 
 const openExport = ref(false)
 
-async function onSortChange(data: {
-  column: Activity
-  prop: string
-  order?: 'ascending' | 'descending'
-}) {
-  if (data.order) {
-    sort.value = data.prop
-    asc.value = data.order === 'ascending'
-  } else {
-    sort.value = '_id'
-    asc.value = false
-  }
-  refresh()
+const WEEKDAYS = ['周日', '周一', '周二', '周三', '周四', '周五', '周六']
+
+function weekday(date: string) {
+  return WEEKDAYS[new Date(date).getDay()] ?? ''
 }
 
-const el = useTemplateRef('card')
-// @ts-ignore
-const { isSwiping, direction } = useSwipe(el)
+function open(row: ActivityRow) {
+  const session = row.mine?._id ? '?session=' + row.mine._id : ''
+  router.push(`/activity/details/${row._id}${session}`)
+}
 
-watch(isSwiping, (swiping) => {
-  if (loading.value) {
-    return
-  }
-  if (swiping && direction.value === 'right') {
-    if (activePage.value > 1) {
-      activePage.value -= 1
-      refresh()
-    }
-  } else if (swiping && direction.value === 'left') {
-    if (activePage.value < Math.ceil(size.value / pageSize.value)) {
-      activePage.value += 1
-      refresh()
-    }
-  }
-})
-
-// @ts-ignore
-const { isSwiping: isPointerSwiping, direction: pointerDirection } = usePointerSwipe(el)
-
-watch(isPointerSwiping, (swiping) => {
-  if (loading.value) {
-    return
-  }
-  if (swiping && pointerDirection.value === 'left') {
-    if (activePage.value > 1) {
-      activePage.value -= 1
-      refresh()
-    }
-  } else if (swiping && pointerDirection.value === 'right') {
-    if (activePage.value < Math.ceil(size.value / pageSize.value)) {
-      activePage.value += 1
-      refresh()
-    }
-  }
-})
+function typeLabel(type: string) {
+  return t('activity.mode.' + type + '.name', type)
+}
 </script>
 
 <template>
-  <div class="max-w-full">
+  <div class="yg2-activity" :class="{ 'is-embed': embed }">
     <ElDrawer
       direction="rtl"
       size="50%"
@@ -236,169 +117,330 @@ watch(isPointerSwiping, (swiping) => {
     >
       <ZDataExport type="time" v-model="openExport" />
     </ElDrawer>
-    <ElCard ref="card" shadow="never" v-loading="loading" :class="[embed ? 'yg-embed' : '']">
-      <div class="flex items-center justify-between gap-2 flex-wrap px-2">
-        <div class="text-lg">
-          <slot name="title" />
-        </div>
-        <div v-if="perspective === user._id && !selectTarget" class="flex items-center gap-1">
-          <ElButton type="primary" round class="px-1" text bg :icon="Refresh" @click="refresh">
-            {{ t('activity.form.actions.refresh') }}
-          </ElButton>
-          <ElDivider v-if="!pad()" direction="vertical" />
-          <ElButton
-            v-if="role === 'campus' && !pad()"
-            :icon="Box"
-            @click="openExport = true"
-            type="warning"
-            text
-            bg
-            round
-            :disabled="!user.position.includes('admin')"
-          >
-            {{ t('activity.export.name') }}
-          </ElButton>
-        </div>
+
+    <header v-if="!embed" class="yg2-page-header">
+      <div>
+        <p class="yg2-page-header__eyebrow">{{ t('nav.activity') }}</p>
+        <h1 class="yg2-page-header__title">
+          <slot name="title">{{ t('nav.activity') }}</slot>
+        </h1>
+        <p class="yg2-page-header__subtitle">共 {{ size }} 个项目</p>
       </div>
-      <!-- @vue-ignore -->
-      <ElTable
-        :ref="tableRef"
-        :max-height="tableMaxHeight"
-        :data="items"
-        table-layout="auto"
-        row-key="_id"
-        @selection-change="handleSelectionChange"
-        stripe
-        :key="selectTarget || 'all'"
-        @sort-change="onSortChange"
-      >
-        <ElTableColumn v-if="select" type="selection" :selectable="selectable" reserve-selection />
-        <ElTableColumn v-else type="expand">
-          <template #default="{ row }">
-            <ZActivityCard
-              :_id="row._id"
-              :mode="role"
-              :perspective="perspective"
-              :user-session="row?.mine?._id"
-              @refresh="refresh"
-            />
-          </template>
-        </ElTableColumn>
-        <ElTableColumn prop="name" sortable :label="t('activity.form.name')" />
-        <ElTableColumn prop="date" sortable :label="t('activity.form.date')">
-          <template #default="{ row }">
-            {{ dayjs(row.date).format('YYYY-MM-DD') }}
-          </template>
-        </ElTableColumn>
-        <ElTableColumn
-          prop="type"
-          v-if="role !== 'mine'"
-          :label="t('activity.form.type')"
+      <div class="yg2-page-header__actions">
+        <button
+          class="yg2-btn yg2-btn--secondary yg2-btn--sm"
+          type="button"
+          :disabled="loading"
+          @click="refresh"
         >
-          <template #default="{ row }">
-            <ZActivityType
-              :type="row.type"
-              size="small"
-              special="other"
-              :status="row?.status"
-              :status-modifiable="
-                user.position.includes('admin') ||
-                (user.position.includes('department') && row?.status == 'pending')
-              "
-              :activity="row"
-              :refresh="refresh"
-              call-when-modify
-            />
-          </template>
-        </ElTableColumn>
-        <ElTableColumn v-else :label="t('activity.form.duration')">
-          <template #default="{ row }">
-            <div class="mine-duration">
-              <ElTooltip
-                :content="t('activity.analysis.pendingTip')"
-                placement="top"
-                :disabled="displayStatus(row) !== 'pending'"
-              >
-                <span class="mine-status">
-                  <ZActivityStatus :type="displayStatus(row)" size="small" force="full" />
-                </span>
-              </ElTooltip>
-              <ZActivityDuration
-                :mode="row.mine.mode"
-                :duration="row.mine.duration"
-                force="short"
-              />
-            </div>
-          </template>
-        </ElTableColumn>
-        <ElTableColumn fixed="right">
-          <template #header>
-            <ElInput
-              v-model="searchWord"
-              size="small"
-              :prefix-icon="Search"
-              @blur="query = searchWord"
-              @keydown.enter="query = searchWord"
-            />
-          </template>
-          <template #default="{ row }">
-            <ElButton
-              :icon="View"
-              v-if="selectTarget === ''"
-              text
-              bg
-              type="info"
-              @click="
-                router.push(
-                  `/activity/details/${row._id}` +
-                    (role === 'mine' ? '?session=' + row.mine._id : '')
-                )
-              "
-            >
-              {{ t('activity.impression.actions.view') }}
-            </ElButton>
-          </template>
-        </ElTableColumn>
-      </ElTable>
-      <div class="py-2" v-if="activities.length !== 0">
-        <ZPagination
-          v-model:current-page="activePage"
-          v-model:page-size="pageSize"
-          :total="size"
-        />
+          {{ t('activity.form.actions.refresh') }}
+        </button>
+        <button
+          v-if="role === 'campus' && !pad()"
+          class="yg2-btn yg2-btn--secondary yg2-btn--sm"
+          type="button"
+          :disabled="!user.position.includes('admin')"
+          @click="openExport = true"
+        >
+          {{ t('activity.export.name') }}
+        </button>
       </div>
-    </ElCard>
+    </header>
+
+    <div class="yg2-activity__bar">
+      <input
+        v-model="searchWord"
+        class="yg2-input yg2-activity__search"
+        type="search"
+        :placeholder="t('activity.form.searchPlaceholder', '搜索项目名称')"
+        @keydown.enter="query = searchWord"
+        @blur="query = searchWord"
+      />
+      <button
+        v-if="embed"
+        class="yg2-btn yg2-btn--secondary yg2-btn--sm"
+        type="button"
+        :disabled="loading"
+        @click="refresh"
+      >
+        {{ t('activity.form.actions.refresh') }}
+      </button>
+    </div>
+
+    <div v-if="loading" class="yg2-tickets" aria-busy="true">
+      <div v-for="n in 6" :key="n" class="yg2-ticket yg2-ticket--skeleton" />
+    </div>
+
+    <div v-else-if="activities.length" class="yg2-tickets">
+      <button
+        v-for="row in activities"
+        :key="row._id"
+        class="yg2-ticket"
+        type="button"
+        @click="open(row)"
+      >
+        <span class="yg2-ticket__date">
+          <span class="yg2-ticket__day">{{ dayjs(row.date).format('DD') }}</span>
+          <span class="yg2-ticket__month">{{ dayjs(row.date).format('M月') }}</span>
+          <span class="yg2-ticket__week">{{ weekday(row.date) }}</span>
+        </span>
+
+        <span class="yg2-ticket__main">
+          <span class="yg2-ticket__kicker">
+            <ZActivityType :type="row.type" size="small" special="other" />
+            <span v-if="row.place" class="yg2-ticket__place">{{ row.place }}</span>
+          </span>
+          <span class="yg2-ticket__title">{{ row.name }}</span>
+          <span class="yg2-ticket__meta">
+            <ZActivityStatus
+              v-if="role === 'mine'"
+              :type="displayStatus(row)"
+              size="small"
+              force="full"
+            />
+            <span v-else class="yg2-badge">{{ typeLabel(row.type) }}</span>
+            <ZActivityDuration
+              v-if="row.mine"
+              :mode="row.mine.mode"
+              :duration="row.mine.duration"
+              force="short"
+            />
+          </span>
+        </span>
+
+        <span class="yg2-ticket__chevron" aria-hidden="true">›</span>
+      </button>
+    </div>
+
+    <div v-else class="yg2-empty">
+      <p>没有找到项目</p>
+      <p class="yg2-empty__hint">换个关键词，或稍后再来看看</p>
+    </div>
+
+    <div v-if="activities.length" class="yg2-activity__pager">
+      <ZPagination v-model:current-page="activePage" v-model:page-size="pageSize" :total="size" />
+    </div>
   </div>
 </template>
 
 <style scoped>
-.code {
-  font-family: 'Menlo', 'Monaco', 'Consolas', 'Courier New', 'Courier', 'monospace';
+.yg2-activity {
+  width: 100%;
+  max-width: var(--yg2-content-max);
+  margin: 0 auto;
+  padding: var(--yg2-sp-8) var(--yg2-gutter) var(--yg2-sp-12);
 }
 
-.mine-duration {
+.yg2-activity.is-embed {
+  padding: 0;
+}
+
+.yg2-activity__bar {
+  display: flex;
+  gap: 10px;
+  margin-bottom: var(--yg2-sp-4);
+}
+
+.yg2-activity__search {
+  max-width: 320px;
+  height: 40px;
+  font-size: 14px;
+}
+
+.yg2-tickets {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 16px;
+}
+
+/* 票券卡：日期铅字 + 虚线撕口 + 右侧箭头 */
+.yg2-ticket {
+  --ticket-divider: 92px;
+
+  position: relative;
+  display: grid;
+  grid-template-columns: var(--ticket-divider) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  min-height: 112px;
+  padding-right: 16px;
+  border: 1px solid var(--yg2-line);
+  border-radius: var(--yg2-r-20);
+  background: var(--yg2-surface);
+  box-shadow: var(--yg2-shadow-ambient);
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: transform var(--yg2-dur-2) var(--yg2-ease-out),
+    border-color var(--yg2-dur-2) var(--yg2-ease-out),
+    box-shadow var(--yg2-dur-2) var(--yg2-ease-out);
+}
+
+.yg2-ticket:hover {
+  transform: translateY(-2px);
+  border-color: var(--yg2-line-strong);
+  box-shadow: var(--yg2-shadow-raised);
+}
+
+.yg2-ticket:focus-visible {
+  outline: 3px solid var(--yg2-focus);
+  outline-offset: 2px;
+}
+
+/* 撕口：卡片上下沿各挖一个半圆 */
+.yg2-ticket::before,
+.yg2-ticket::after {
+  content: '';
+  position: absolute;
+  left: var(--ticket-divider);
+  width: 12px;
+  height: 12px;
+  margin-left: -6px;
+  border: 1px solid var(--yg2-line);
+  border-radius: 50%;
+  background: var(--yg2-bg);
+}
+
+.yg2-ticket::before {
+  top: -7px;
+  clip-path: inset(0 0 50% 0);
+}
+
+.yg2-ticket::after {
+  bottom: -7px;
+  clip-path: inset(50% 0 0 0);
+}
+
+.yg2-ticket__date {
+  position: relative;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 1px;
+  align-self: stretch;
+  padding: 16px 0;
+}
+
+/* 撕线：绝对定位，保证与卡片同高 */
+.yg2-ticket__date::after {
+  content: '';
+  position: absolute;
+  top: 12px;
+  bottom: 12px;
+  right: -1px;
+  border-right: 1px dashed var(--yg2-line-strong);
+}
+
+.yg2-ticket__day {
+  font-size: 27px;
+  font-weight: 650;
+  letter-spacing: -0.03em;
+  line-height: 1.05;
+  color: var(--yg2-text);
+  font-variant-numeric: tabular-nums;
+}
+
+.yg2-ticket__month {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--yg2-text-tertiary);
+}
+
+.yg2-ticket__week {
+  font-size: 11px;
+  color: var(--yg2-text-tertiary);
+}
+
+.yg2-ticket__main {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.yg2-ticket__kicker {
   display: flex;
   align-items: center;
   gap: 8px;
-  flex-wrap: wrap;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--yg2-text-tertiary);
 }
 
-.mine-duration > :deep(.el-button-group) {
-  flex-shrink: 0;
+.yg2-ticket__place {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.mine-status {
-  flex-shrink: 0;
-  display: inline-flex;
+.yg2-ticket__title {
+  overflow: hidden;
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--yg2-text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.yg2-ticket__meta {
+  display: flex;
   align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--yg2-text-secondary);
 }
 
-.el-card.yg-embed {
-  padding: 0 !important;
+.yg2-ticket__chevron {
+  font-size: 20px;
+  line-height: 1;
+  color: var(--yg2-text-tertiary);
+  transition: transform var(--yg2-dur-1) var(--yg2-ease-out);
 }
 
-.el-card.yg-embed > .el-card__body {
-  padding: 0 !important;
-  margin: 0 !important;
+.yg2-ticket:hover .yg2-ticket__chevron {
+  transform: translateX(2px);
+  color: var(--yg2-accent);
+}
+
+.yg2-ticket--skeleton {
+  height: 112px;
+  border-style: dashed;
+  cursor: default;
+  background: transparent;
+  box-shadow: none;
+  animation: yg2-ticket-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes yg2-ticket-pulse {
+  50% {
+    opacity: 0.45;
+  }
+}
+
+.yg2-activity__pager {
+  display: flex;
+  justify-content: center;
+  padding-top: var(--yg2-sp-6);
+}
+
+.yg2-empty__hint {
+  margin: 0;
+  font-size: 13px;
+  color: var(--yg2-text-tertiary);
+}
+
+@media (max-width: 768px) {
+  .yg2-activity {
+    padding: var(--yg2-sp-6) var(--yg2-sp-4) var(--yg2-sp-10);
+  }
+
+  .yg2-tickets {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .yg2-activity__search {
+    max-width: none;
+  }
 }
 </style>

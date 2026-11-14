@@ -1,0 +1,194 @@
+/* ==========================================================================
+   v2 页面骨架 · 页头 / 卡片 / 键值表 / 徽标
+   新页面统一用 .yg2-page > .yg2-page-header + .yg2-card 组合。
+   ========================================================================== */
+
+.yg2-page {
+  width: 100%;
+  max-width: var(--yg2-content-max);
+  margin: 0 auto;
+  padding: var(--yg2-sp-8) var(--yg2-gutter) var(--yg2-sp-12);
+}
+
+/* ── 页头 ───────────────────────────────────────────────── */
+.yg2-page-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--yg2-sp-4);
+  margin-bottom: var(--yg2-sp-6);
+}
+
+.yg2-page-header__eyebrow {
+  margin: 0 0 8px;
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  color: var(--yg2-text-tertiary);
+}
+
+.yg2-page-header__title {
+  margin: 0;
+  font-size: 34px;
+  font-weight: 700;
+  letter-spacing: -0.025em;
+  line-height: 1.12;
+  color: var(--yg2-text);
+}
+
+.yg2-page-header__subtitle {
+  margin: 10px 0 0;
+  font-size: 15px;
+  line-height: 1.5;
+  color: var(--yg2-text-secondary);
+}
+
+.yg2-page-header__actions {
+  display: flex;
+  flex: none;
+  gap: 10px;
+  padding-bottom: 4px;
+}
+
+/* ── 卡片 ───────────────────────────────────────────────── */
+.yg2-card__title {
+  margin: 0 0 var(--yg2-sp-4);
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--yg2-text);
+}
+
+/* ── 键值表 ─────────────────────────────────────────────── */
+.yg2-kv {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr);
+  gap: 14px var(--yg2-sp-4);
+  margin: 0;
+}
+
+.yg2-kv dt {
+  font-size: 14px;
+  color: var(--yg2-text-tertiary);
+}
+
+.yg2-kv dd {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--yg2-text);
+}
+
+/* ── 徽标 ───────────────────────────────────────────────── */
+.yg2-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  padding: 0 10px;
+  border-radius: var(--yg2-r-pill);
+  background: var(--yg2-surface-sunken);
+  color: var(--yg2-text-secondary);
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.yg2-badge--accent {
+  background: var(--yg2-accent-soft);
+  color: var(--yg2-accent);
+}
+
+.yg2-badge--amber {
+  background: var(--yg2-amber-soft);
+  color: #a35f00;
+}
+
+.yg2-badge--danger {
+  background: var(--yg2-danger-soft);
+  color: var(--yg2-danger);
+}
+
+[data-theme='dark'] .yg2-badge--amber {
+  color: var(--yg2-amber);
+}
+
+/* ── 空态 ───────────────────────────────────────────────── */
+.yg2-empty {
+  display: grid;
+  place-items: center;
+  gap: 8px;
+  padding: var(--yg2-sp-10) var(--yg2-sp-4);
+  text-align: center;
+  color: var(--yg2-text-tertiary);
+  font-size: 14px;
+}
+
+@media (max-width: 768px) {
+  .yg2-page {
+    /* 底部为移动端药丸导航让位，避免最后一行被遮住 */
+    padding: var(--yg2-sp-6) var(--yg2-sp-4) calc(112px + env(safe-area-inset-bottom));
+  }
+
+  .yg2-page-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .yg2-page-header__title {
+    font-size: 28px;
+  }
+
+  .yg2-page-header__actions {
+    width: 100%;
+  }
+}
+
+
+/* 面板外壳：给「直出」的遗留列表组件套一层 v2 表面，并压平内部 ElCard */
+.yg2-panel {
+  padding: 18px;
+  min-height: 200px;
+  background: var(--yg2-surface);
+  border: 1px solid var(--yg2-line);
+  border-radius: var(--yg2-r-20);
+  box-shadow: var(--yg2-shadow-ambient);
+}
+
+.yg2-panel + .yg2-panel {
+  margin-top: 16px;
+}
+
+/* 列表工具条：搜索 / 筛选 / 操作 一行排布 */
+.yg2-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.yg2-toolbar__grow {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+
+.yg2-toolbar__field {
+  flex: 0 0 160px;
+  width: 160px;
+}
+
+.yg2-toolbar__end {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.yg2-toolbar .el-input,
+.yg2-toolbar .el-select {
+  max-width: 280px;
+}

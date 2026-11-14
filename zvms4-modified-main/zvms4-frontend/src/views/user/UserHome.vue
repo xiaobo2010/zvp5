@@ -1,30 +1,17 @@
 <script setup lang="ts">
-import { useUserStore } from '@/stores/user'
-import {
-  ElDescriptions,
-  ElDescriptionsItem,
-  ElButton,
-  ElCard,
-  ElSkeleton,
-  ElTag
-} from 'element-plus'
-import { Refresh } from '@element-plus/icons-vue'
-import dayjs from '@/plugins/dayjs'
-import { ref } from 'vue'
-import { useHeaderStore } from '@/stores/header'
+import { computed, reactive, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { reactive, watch } from 'vue'
+import { useHeaderStore } from '@/stores/header'
+import { useUserStore } from '@/stores/user'
 import ZUserGroup from '@/components/tags/ZUserGroup.vue'
 import ZUserPosition from '@/components/tags/ZUserPosition.vue'
 import ZUserTimeJudge from '@/components/activity/ZUserTimeJudge.vue'
-import { useWindowSize } from '@vueuse/core'
-import { useRouter } from 'vue-router'
 
 const header = useHeaderStore()
 const user = useUserStore()
-const { t } = useI18n()
-const { width, height } = useWindowSize()
 const router = useRouter()
+const { t } = useI18n()
 
 if (!user.isLogin) {
   router.replace('/user/login')
@@ -32,9 +19,25 @@ if (!user.isLogin) {
 
 header.setHeader(t('nav.home'))
 
-const nowTime = dayjs().hour()
-const greeting = ref(nowTime < 12 ? 'morning' : nowTime < 18 ? 'afternoon' : 'evening')
 const loading = ref(false)
+
+const greeting = computed(() => {
+  const hour = new Date().getHours()
+  return hour < 12 ? 'morning' : hour < 18 ? 'afternoon' : 'evening'
+})
+
+const greetingText = computed(() =>
+  t('home.greeting', { greet: t('home.greetings.' + greeting.value), name: user.name })
+)
+
+const today = new Intl.DateTimeFormat('zh-CN', {
+  year: 'numeric',
+  month: 'long',
+  day: 'numeric',
+  weekday: 'long'
+}).format(new Date())
+
+const isSecretary = computed(() => user.position.includes('secretary'))
 
 const time = reactive({
   socialPractice: user.time.socialPractice,
@@ -43,58 +46,69 @@ const time = reactive({
 })
 
 async function refreshUser() {
+  if (loading.value) {
+    return
+  }
   loading.value = true
   await user.refreshUser()
+  time.socialPractice = user.time.socialPractice
+  time.onCampus = user.time.onCampus
+  time.offCampus = user.time.offCampus
   loading.value = false
 }
 
 watch(
   () => user.isLogin,
   (v) => {
-    if (v) {
-      return
+    if (!v) {
+      router.replace('/user/login')
     }
-    router.replace('/user/login')
   }
 )
 </script>
 
 <template>
-  <div class="px-6 fill" style="width: 100%" v-if="user.isLogin">
-    <p class="text-[22px] py-4 font-semibold">
-      {{ t('home.greeting', { greet: t('home.greetings.' + greeting), name: user.name }) }}
-    </p>
-    <div class="py-2">
-      <ElCard shadow="never">
-        <ElDescriptions class="fill" border :column="width < height * 1.2 ? 2 : 3">
-          <template #title>
-            <p class="text-xl">{{ t('home.panels.information.title') }}</p>
-          </template>
-          <template #extra>
-            <ElButton
-              type="success"
-              :icon="Refresh"
-              text
-              bg
-              circle
-              @click="refreshUser"
-              :disabled="loading"
-            />
-            <!--<ElDivider direction="vertical" />
-            <ElButton type="info" :icon="MaterialSymbolsDescriptionOutline" text bg circle />-->
-          </template>
-          <ElSkeleton v-if="loading" :loading="true" :rows="3" />
-          <ElDescriptionsItem v-if="!loading" :label="t('home.labels.name')">{{
-            user.name
-          }}</ElDescriptionsItem>
-          <ElDescriptionsItem v-if="!loading" :label="t('home.labels.number')">{{
-            user.id
-          }}</ElDescriptionsItem>
-          <ElDescriptionsItem v-if="!loading" :label="t('home.labels.identify')">
+  <div v-if="user.isLogin" class="yg2-page">
+    <header class="yg2-page-header">
+      <div>
+        <p class="yg2-page-header__eyebrow">{{ today }}</p>
+        <h1 class="yg2-page-header__title">{{ greetingText }}</h1>
+      </div>
+      <div class="yg2-page-header__actions">
+        <button
+          class="yg2-btn yg2-btn--secondary yg2-btn--sm"
+          type="button"
+          :disabled="loading"
+          @click="refreshUser"
+        >
+          {{ loading ? '刷新中…' : '刷新' }}
+        </button>
+        <button
+          v-if="isSecretary"
+          class="yg2-btn yg2-btn--primary yg2-btn--sm"
+          type="button"
+          @click="router.push('/group/' + user.class_id)"
+        >
+          管理班级
+        </button>
+      </div>
+    </header>
+
+    <div class="yg2-home">
+      <section class="yg2-card yg2-home__card yg2-home__card--profile" :class="{ 'is-loading': loading }">
+        <h2 class="yg2-card__title">{{ t('home.panels.information.title') }}</h2>
+        <dl class="yg2-kv">
+          <dt>{{ t('home.labels.name') }}</dt>
+          <dd>{{ user.name }}</dd>
+
+          <dt>{{ t('home.labels.number') }}</dt>
+          <dd class="yg2-num">{{ user.id }}</dd>
+
+          <dt>{{ t('home.labels.identify') }}</dt>
+          <dd class="yg2-home__tags">
             <ZUserGroup
               v-for="group in user.groups"
               :key="group"
-              class="px-1"
               :group="group"
               :grouping="false"
             />
@@ -102,32 +116,173 @@ watch(
               v-if="user.position.find((role) => role !== 'student') || !user.groups.length"
               :position="user.position"
             />
-          </ElDescriptionsItem>
-        </ElDescriptions>
-        <div v-if="user.position.includes('secretary')" class="py-4">
-          <ElButton text bg class="w-full" @click="$router.push('/group/' + user.class_id)">
-            管理班级
-          </ElButton>
-        </div>
-      </ElCard>
-    </div>
-    <div :class="['py-2', user.shouldResetPassword ? 'yg-blur' : '']">
-      <ZUserTimeJudge
-        :user="user._id"
-        :on-campus="user.time.onCampus"
-        :off-campus="time.offCampus"
-        :social-practice="time.socialPractice"
-        discount
-      />
+          </dd>
+        </dl>
+      </section>
+
+      <section class="yg2-card yg2-home__card yg2-home__card--links">
+        <h2 class="yg2-card__title">快捷入口</h2>
+        <nav class="yg2-shortcuts">
+          <RouterLink class="yg2-shortcut" to="/activities/mine">
+            <span class="yg2-shortcut__main">浏览义工列表</span>
+            <span class="yg2-shortcut__meta">看看最近能报什么</span>
+            <span class="yg2-shortcut__arrow" aria-hidden="true">›</span>
+          </RouterLink>
+          <RouterLink
+            v-if="user.class_id"
+            class="yg2-shortcut"
+            :to="'/group/' + user.class_id"
+          >
+            <span class="yg2-shortcut__main">我的小组</span>
+            <span class="yg2-shortcut__meta">班级成员与时长</span>
+            <span class="yg2-shortcut__arrow" aria-hidden="true">›</span>
+          </RouterLink>
+          <RouterLink class="yg2-shortcut" to="/ai/chat">
+            <span class="yg2-shortcut__main">AI 助手</span>
+            <span class="yg2-shortcut__meta">问问活动怎么选</span>
+            <span class="yg2-shortcut__arrow" aria-hidden="true">›</span>
+          </RouterLink>
+        </nav>
+      </section>
+
+      <section
+        class="yg2-card yg2-home__card yg2-home__card--time"
+        :class="{ 'is-blurred': user.shouldResetPassword }"
+      >
+        <ZUserTimeJudge
+          :user="user._id"
+          :on-campus="time.onCampus"
+          :off-campus="time.offCampus"
+          :social-practice="time.socialPractice"
+          discount
+        />
+      </section>
     </div>
   </div>
 </template>
 
 <style scoped>
-.fill {
-  width: 100%;
+.yg2-home {
+  display: grid;
+  grid-template-columns: minmax(0, 340px) minmax(0, 1fr);
+  grid-template-areas:
+    'profile time'
+    'links time';
+  gap: 16px;
+  align-items: start;
 }
-.yg-blur {
-  filter: blur(2rem);
+
+.yg2-home__card--profile {
+  grid-area: profile;
+}
+
+.yg2-home__card--links {
+  grid-area: links;
+}
+
+.yg2-home__card--time {
+  grid-area: time;
+}
+
+.yg2-home__card {
+  padding: 24px;
+}
+
+.yg2-home__card.is-loading {
+  opacity: 0.55;
+}
+
+.yg2-home__tags {
+  flex-wrap: wrap;
+}
+
+/* 快捷入口 */
+.yg2-shortcuts {
+  display: grid;
+  gap: 2px;
+}
+
+.yg2-shortcut {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas:
+    'main arrow'
+    'meta arrow';
+  gap: 2px 10px;
+  padding: 10px 12px;
+  border-radius: var(--yg2-r-12);
+  color: inherit;
+  text-decoration: none;
+  transition: background var(--yg2-dur-1) var(--yg2-ease-out);
+}
+
+.yg2-shortcut:hover {
+  background: var(--yg2-surface-sunken);
+}
+
+.yg2-shortcut:focus-visible {
+  outline: 3px solid var(--yg2-focus);
+  outline-offset: 1px;
+}
+
+.yg2-shortcut__main {
+  grid-area: main;
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--yg2-text);
+}
+
+.yg2-shortcut__meta {
+  grid-area: meta;
+  font-size: 12px;
+  color: var(--yg2-text-tertiary);
+}
+
+.yg2-shortcut__arrow {
+  grid-area: arrow;
+  align-self: center;
+  font-size: 20px;
+  line-height: 1;
+  color: var(--yg2-text-tertiary);
+}
+
+/* 时长组件自带 ElCard：去掉内层描边/底色，与页面卡片融为一体 */
+.yg2-home__card--time :deep(.el-card) {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.yg2-home__card--time :deep(.el-card__body) {
+  padding: 0;
+}
+
+.yg2-home__card--time :deep(.text-lg) {
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+/* 强制改密前先挡住时长明细，避免绕过 */
+.yg2-home__card--time.is-blurred {
+  filter: blur(18px);
+  pointer-events: none;
+  user-select: none;
+}
+
+@media (max-width: 1024px) {
+  .yg2-home {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      'profile'
+      'time'
+      'links';
+  }
+}
+
+@media (max-width: 768px) {
+  .yg2-home__card {
+    padding: 18px;
+  }
 }
 </style>

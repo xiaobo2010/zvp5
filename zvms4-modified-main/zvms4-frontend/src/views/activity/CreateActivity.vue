@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { ElPageHeader, ElButton, ElSpace } from 'element-plus'
-import { ref, watch } from 'vue'
+import { ElIcon } from 'element-plus'
+import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter, RouterView } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import type { ActivityType, CreateActivityType, UserPosition } from '@/../types'
@@ -66,32 +66,71 @@ watch(tab, () => {
 
 const visibility = permissions(user.position as UserPosition[])
 
+const visibleTabs = computed(() => tabs.filter((x) => visibility[x.value]))
+
 </script>
 
 <template>
-  <div class="p-4 yg-create-page" style="width: 100%">
-    <ElPageHeader v-if="tab" class="text-2xl px-12 py-6" @back="router.back()" :icon="ArrowLeft">
-      <template #content>
-        {{ $t(tab ? `activity.create.${tab}` : 'nav.create') }}
-      </template>
-      <template #extra>
-        <ElSpace>
-          <ElButton
-            v-for="button in tabs.filter((x) => visibility[x.value])"
-            :key="button.value"
-            @click="mov(button.value)"
-            text
-            bg
-            :icon="button.icon"
-            :type="button.color"
-            size="small"
-            :disabled="button.value === tab"
-          >
-            {{ t(`activity.createMinimized.${button.value}`) }}
-          </ElButton>
-        </ElSpace>
-      </template>
-    </ElPageHeader>
+  <div class="yg2-page create-page">
+    <button type="button" class="create-back" @click="router.back()">
+      <ElIcon><ArrowLeft /></ElIcon>
+      返回
+    </button>
+
+    <header class="yg2-page-header">
+      <div>
+        <p class="yg2-page-header__eyebrow">{{ t('nav.create') }}</p>
+        <h1 class="yg2-page-header__title">
+          {{ t(tab ? `activity.create.${tab}` : 'nav.create') }}
+        </h1>
+      </div>
+    </header>
+
+    <nav v-if="visibleTabs.length > 1" class="yg2-segment create-tabs">
+      <button
+        v-for="button in visibleTabs"
+        :key="button.value"
+        type="button"
+        class="yg2-segment__item"
+        :class="{ 'is-active': button.value === tab }"
+        @click="mov(button.value)"
+      >
+        {{ t(`activity.createMinimized.${button.value}`) }}
+      </button>
+    </nav>
+
     <RouterView v-if="show" :key="tab" />
   </div>
 </template>
+
+<style scoped>
+.create-page {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.create-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  align-self: flex-start;
+  padding: 6px 10px 6px 6px;
+  border: 0;
+  border-radius: var(--yg2-r-8);
+  background: transparent;
+  color: var(--yg2-text-secondary);
+  font-size: 13px;
+  cursor: pointer;
+  transition: background var(--yg2-dur-1) var(--yg2-ease-out);
+}
+
+.create-back:hover {
+  background: var(--yg2-surface-sunken);
+  color: var(--yg2-text);
+}
+
+.create-tabs {
+  align-self: flex-start;
+}
+</style>

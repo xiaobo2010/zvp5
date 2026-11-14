@@ -47,15 +47,23 @@ watch(xuehai_id2, refresh)
 
 <template>
   <div>
-    <div class="flex gap-2">
-      <ElInput v-model.lazy="query" @keydown.enter="query2 = query" @blur="query2 = query"></ElInput>
+    <div class="yg2-toolbar">
+      <ElInput
+        v-model.lazy="query"
+        class="yg2-toolbar__grow"
+        placeholder="搜索日志内容"
+        clearable
+        @keydown.enter="query2 = query"
+        @blur="query2 = query"
+      />
       <ElInput
         v-model.lazy="xuehai_id"
-        class="w-40 shrink-0"
+        class="yg2-toolbar__field"
         placeholder="学海 ID"
+        clearable
         @keydown.enter="xuehai_id2 = xuehai_id"
         @blur="xuehai_id2 = xuehai_id"
-      ></ElInput>
+      />
     </div>
     <ZLogCard v-loading="loading" :log="log" v-for="log in logs" :key="log._id" />
     <div class="py-2">
