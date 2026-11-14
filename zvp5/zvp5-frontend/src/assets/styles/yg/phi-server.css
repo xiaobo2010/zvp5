@@ -24,6 +24,14 @@
   --phi-srv-idle: #8d98a2;
 }
 
+/* 浅色面板上的状态色需要压深，否则绿/灰读数在白色内舱上对比度不足 */
+html[data-theme='light'] .phi-srv {
+  --phi-srv-ok: #1f8a4c;
+  --phi-srv-warn: #a85a05;
+  --phi-srv-danger: #b42318;
+  --phi-srv-idle: #5f6b75;
+}
+
 /* ---------- 页面纵向节奏 ---------- */
 .phi-srv-page {
   display: flex;
@@ -177,12 +185,12 @@
 }
 
 /* ==========================================================================
-   MAGI 六边形消息单元
-   六边形徽章 = 状态本体；右侧 HUD 标签 + 说明 = 消息文本
+   MAGI 数据单元：Phigros × EVA MAGI 矩形状态读数
+   形态：裁角矩形数据舱，左侧垂直填充带（进度表），扫描线叠加
    ========================================================================== */
 
-/* 倒计时填充角度：注册为可动画属性，进度变化时扇形平滑收缩 */
-@property --phi-hex-p {
+/* 进度百分比：注册为可动画属性，填充带平滑变化 */
+@property --phi-unit-p {
   syntax: '<percentage>';
   inherits: true;
   initial-value: 0%;
@@ -195,85 +203,135 @@
   min-width: 0;
 }
 
+/* 矩形数据舱：裁角 + 色带边框 + 内嵌读数面板 */
 .phi-srv-hex {
   --phi-hex-c: var(--phi-accent);
   position: relative;
   display: grid;
   place-items: center;
   flex: 0 0 auto;
-  width: 56px;
-  height: 62px;
-  clip-path: polygon(0 50%, 26% 0, 74% 0, 100% 50%, 74% 100%, 26% 100%);
-  background: linear-gradient(158deg, var(--phi-hex-c), rgba(6, 9, 12, 0.92) 76%);
+  width: 64px;
+  height: 42px;
+  clip-path: polygon(0 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 8px 100%, 0 calc(100% - 8px));
+  background:
+    linear-gradient(0deg, var(--phi-hex-c), var(--phi-hex-c)) 0 0 / 2px 100% no-repeat,
+    linear-gradient(90deg, rgba(6, 9, 12, 0.94), rgba(6, 9, 12, 0.88));
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--phi-hex-c) 35%, transparent),
+    inset 0 -1px 0 color-mix(in srgb, var(--phi-hex-c) 20%, transparent);
 }
 
-/* 内层六边形：留出一圈状态色的「边框」 */
+/* 内层读数面板：留出左侧进度槽 + 四周状态边框 */
 .phi-srv-hex::before {
   content: '';
   position: absolute;
-  inset: 2px;
-  clip-path: polygon(0 50%, 26% 0, 74% 0, 100% 50%, 74% 100%, 26% 100%);
-  background: var(--phi-panel);
+  inset: 2px 2px 2px 6px;
+  background:
+    linear-gradient(0deg, var(--phi-panel), var(--phi-panel-hi) 60%);
+  clip-path: polygon(0 0, calc(100% - 6px) 0, 100% 6px, 100% 100%, 6px 100%, 0 calc(100% - 6px));
+  border: 1px solid color-mix(in srgb, var(--phi-hex-c) 20%, transparent);
 }
 
-/* ---------- 倒计时徽章 ----------
-   六边形外圈当表盘：剩余时间 = 从正上方顺时针的亮弧，随剩余比例连续收缩，
-   弧前沿带一道高光标出当前刻度；内层六边形挖空，读数始终落在干净的面上。 */
+/* 扫描线纹理：水平细线，营造 MAGI 屏幕读数质感 */
+.phi-srv-hex::after {
+  content: '';
+  position: absolute;
+  inset: 2px 2px 2px 6px;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 1px,
+    color-mix(in srgb, var(--phi-hex-c) 4%, transparent) 1px,
+    color-mix(in srgb, var(--phi-hex-c) 4%, transparent) 2px
+  );
+  pointer-events: none;
+  mix-blend-mode: overlay;
+  opacity: 0.6;
+}
+
+/* ---------- 倒计时进度单元 ----------
+   左侧垂直填充带：剩余时间 = 从底部向上的充能柱，平滑上升/下降 */
 .phi-srv-hex--progress {
-  background: rgba(6, 9, 12, 0.94);
-}
-
-/* 内层六边形扩大成读数面板，外圈留出表盘环 */
-.phi-srv-hex--progress::before {
-  inset: 7px;
-  z-index: 1;
+  background:
+    /* 轨道压暗，亮色只留给底部的充能柱，剩余量一眼可读 */
+    linear-gradient(
+        0deg,
+        color-mix(in srgb, var(--phi-hex-c) 26%, transparent),
+        color-mix(in srgb, var(--phi-hex-c) 26%, transparent)
+      )
+      0 0 / 2px 100% no-repeat,
+    linear-gradient(90deg, rgba(6, 9, 12, 0.96), rgba(6, 9, 12, 0.92));
 }
 
 .phi-srv-hex__progress {
   position: absolute;
-  inset: 0;
+  left: 0;
+  bottom: 0;
+  width: 6px;
+  height: 100%;
   z-index: 0;
-  clip-path: polygon(0 50%, 26% 0, 74% 0, 100% 50%, 74% 100%, 26% 100%);
-  background:
-    /* 弧前沿高光：标出当前刻度 */
-    conic-gradient(
-      from 0deg at 50% 50%,
-      transparent 0 max(0%, calc(var(--phi-hex-p) - 2.5%)),
-      color-mix(in srgb, var(--phi-hex-c) 55%, transparent) max(0%, calc(var(--phi-hex-p) - 2.5%)) var(--phi-hex-p),
-      transparent var(--phi-hex-p) 100%
-    ),
-    /* 剩余时间的亮弧：从正上方顺时针 */
-    conic-gradient(
-      from 0deg at 50% 50%,
-      var(--phi-hex-c) 0 var(--phi-hex-p),
-      transparent var(--phi-hex-p) 100%
-    );
-  transition: --phi-hex-p 200ms linear;
+  overflow: hidden;
 }
 
-/* 读数压在表盘环之上 */
+/* 填充带本体：从底部向上，高度由 --phi-unit-p 驱动 */
+.phi-srv-hex__progress::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 100%;
+  height: var(--phi-unit-p);
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--phi-hex-c) 90%, #fff) 0%,
+    var(--phi-hex-c) 35%,
+    color-mix(in srgb, var(--phi-hex-c) 70%, #000) 100%
+  );
+  box-shadow:
+    0 0 6px color-mix(in srgb, var(--phi-hex-c) 50%, transparent),
+    inset 0 1px 0 color-mix(in srgb, #fff 30%, transparent);
+  transition: height 200ms linear;
+}
+
+/* 顶端指示点：标出当前刻度 */
+.phi-srv-hex__progress::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  bottom: var(--phi-unit-p);
+  width: 100%;
+  height: 2px;
+  background: color-mix(in srgb, var(--phi-hex-c) 90%, #fff);
+  box-shadow: 0 0 4px var(--phi-hex-c);
+  transition: bottom 200ms linear;
+}
+
+/* 读数压在面板之上 */
 .phi-srv-hex--progress .phi-srv-hex__value {
   z-index: 2;
   text-shadow:
-    0 0 3px var(--phi-panel),
-    0 0 12px color-mix(in srgb, var(--phi-hex-c) 55%, transparent);
+    0 0 2px var(--phi-panel),
+    0 0 8px color-mix(in srgb, var(--phi-hex-c) 45%, transparent);
 }
 
 .phi-srv-hex__value {
   position: relative;
   z-index: 1;
   max-width: 100%;
+  padding: 0 8px 0 10px;
   color: var(--phi-hex-c);
-  font: 700 15px / 1.05 var(--phi-hud);
-  letter-spacing: 0.04em;
+  font: 700 16px / 1 var(--phi-hud);
+  letter-spacing: 0.06em;
   text-align: center;
   text-transform: uppercase;
   font-variant-numeric: tabular-nums;
-  text-shadow: 0 0 12px color-mix(in srgb, var(--phi-hex-c) 55%, transparent);
+  text-shadow:
+    0 0 8px color-mix(in srgb, var(--phi-hex-c) 45%, transparent),
+    0 1px 1px rgba(0, 0, 0, 0.5);
   white-space: nowrap;
 }
 
-/* 读数本体：字号由组件按六边形可用宽度实测后收窄，这里只管排版 */
+/* 读数本体：字号由组件实测后调整，这里只管排版 */
 .phi-srv-hex__text {
   display: inline-block;
   max-width: 100%;
@@ -282,24 +340,28 @@
   vertical-align: middle;
 }
 
+/* 尺寸变体：保持矩形比例，不再是六边形的高宽比 */
 .phi-srv-hex--sm {
-  width: 40px;
-  height: 44px;
+  width: 52px;
+  height: 36px;
 }
 
 .phi-srv-hex--sm .phi-srv-hex__value {
-  font-size: 12px;
+  font-size: 13px;
+  padding: 0 6px 0 8px;
 }
 
 .phi-srv-hex--lg {
-  width: 78px;
-  height: 86px;
+  width: 84px;
+  height: 52px;
 }
 
 .phi-srv-hex--lg .phi-srv-hex__value {
   font-size: 22px;
+  padding: 0 10px 0 12px;
 }
 
+/* 语气色：accent / ok / warn / danger / idle */
 .phi-srv-hex--ok {
   --phi-hex-c: var(--phi-srv-ok);
 }
@@ -328,7 +390,7 @@
   }
 
   50% {
-    filter: drop-shadow(0 0 12px color-mix(in srgb, var(--phi-srv-danger) 50%, transparent));
+    filter: drop-shadow(0 0 10px color-mix(in srgb, var(--phi-srv-danger) 45%, transparent));
   }
 }
 
@@ -394,6 +456,27 @@
 
 .phi-srv-strip--danger {
   border-color: color-mix(in srgb, var(--phi-srv-danger) 45%, var(--phi-frame));
+}
+
+/* 窄屏/竖屏：flex-wrap 会让不同宽度的单元错位，改成网格后一行两个，
+   手机一行一个；直接子级 ZHexUnit 也一起受控。 */
+@media (max-width: 1024px) {
+  .phi-srv-strip {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: var(--yg-space-3) var(--yg-space-4);
+  }
+
+  .phi-srv-strip__cell {
+    padding-right: 0;
+    border-right: 0;
+  }
+}
+
+@media (max-width: 560px) {
+  .phi-srv-strip {
+    grid-template-columns: 1fr;
+  }
 }
 
 /* ---------- 危险横幅 ---------- */
@@ -558,6 +641,11 @@
   .phi-srv-busy::after,
   .phi-srv-loading::after {
     animation: none;
+  }
+
+  .phi-srv-hex__progress::before,
+  .phi-srv-hex__progress::after {
+    transition: none;
   }
 
   .phi-srv-skel__line {

@@ -66,7 +66,7 @@ it('keeps the refresh entry visible after the code expires', async () => {
   expect(wrapper.text()).not.toContain('server.totp.loading')
 })
 
-it('counts down inside the hexagon instead of a progress bar', async () => {
+it('counts down inside the data cell instead of a progress bar', async () => {
   vi.mocked(getMyTotp).mockResolvedValue({
     data: {
       status: 'ok',
@@ -92,12 +92,12 @@ it('counts down inside the hexagon instead of a progress bar', async () => {
   expect(hex.exists()).toBe(true)
   expect(hex.classes()).toContain('phi-srv-hex--progress')
 
-  // 六边形内部有填充层，角度由 --phi-hex-p 驱动
+  // 数据舱内部有填充层，高度由 --phi-unit-p 驱动
   const fill = hex.find('.phi-srv-hex__progress')
   expect(fill.exists()).toBe(true)
 
   const readProgress = () =>
-    Number(String(fill.attributes('style') ?? '').match(/--phi-hex-p:\s*([\d.]+)%/)?.[1])
+    Number(String(fill.attributes('style') ?? '').match(/--phi-unit-p:\s*([\d.]+)%/)?.[1])
 
   const start = readProgress()
   expect(start).toBeGreaterThan(90)
