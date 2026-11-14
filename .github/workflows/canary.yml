@@ -48,6 +48,8 @@ jobs:
     env:
       WRANGLER_VERSION: "4.162.0"
       CANARY_URL: https://canary.xiaobopisces.top
+      # 后端盾牌会 418 掉没有 UA 的请求（curl 默认 UA 也在黑名单里），冒烟必须带这个。
+      PROBE_UA: Mozilla/5.0 (compatible; ZVP5-Deploy/1.0)
       CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID || '<CF_ACCOUNT_ID>' }}
       # 预览站跨域直连正式 API：CORS 白名单里必须已有 canary 域。
       VITE_API_BASE: ${{ vars.CANARY_API_BASE || 'https://zvp.xiaobopisces.top/api' }}
@@ -150,12 +152,12 @@ jobs:
           home_status=""
           waf_blocked=0
           for _ in $(seq 1 6); do
-            home_status="$(curl -fsS -o /dev/null -w '%{http_code}' "$CANARY_URL/" || true)"
+            home_status="$(curl -fsS -A "$PROBE_UA" -o /dev/null -w '%{http_code}' "$CANARY_URL/" || true)"
             if [[ "$home_status" == "403" ]]; then
               waf_blocked=1
               break
             fi
-            remote_sha="$(curl -fsS --compressed -H 'Accept-Encoding: gzip' "$CANARY_URL$entry" | sha256sum | awk '{print $1}' || true)"
+            remote_sha="$(curl -fsS -A "$PROBE_UA" --compressed -H 'Accept-Encoding: gzip' "$CANARY_URL$entry" | sha256sum | awk '{print $1}' || true)"
             if [[ "$home_status" == "200" && "$remote_sha" == "$local_sha" ]]; then
               break
             fi
@@ -183,7 +185,7 @@ jobs:
 
           # 预览站的 service worker 已被移除，`/sw.js` 应回落到 SPA 的 index.html；
           # 若仍返回 application/javascript，说明浏览器会跑旧的预缓存壳。
-          sw_type="$(curl -fsS -o /dev/null -w '%{content_type}' "$CANARY_URL/sw.js" | tr -d '\r')"
+          sw_type="$(curl -fsS -A "$PROBE_UA" -o /dev/null -w '%{content_type}' "$CANARY_URL/sw.js" | tr -d '\r')"
           case "$sw_type" in
             text/html*) ;;
             *)
@@ -193,17 +195,20 @@ jobs:
           esac
 
           # 预览域不在后端 CORS 白名单时，页面能打开但所有 API 都会被 400 拒掉。
-          cors_origin="$(curl -fsS -D- -o /dev/null -X OPTIONS \
+          # 不用 `curl -f`：被盾牌 418 / WAF 403 时需要读状态码决定「降级」而不是硬失败。
+          cors_hdr="$(mktemp)"
+          cors_status="$(curl -sS -A "$PROBE_UA" -D "$cors_hdr" -o /dev/null -w '%{http_code}' -X OPTIONS \
             -H "Origin: $CANARY_URL" \
             -H 'Access-Control-Request-Method: POST' \
             -H 'Access-Control-Request-Headers: authorization,content-type' \
-            "$VITE_API_BASE/users/login" \
-            | tr -d '\r' | awk 'tolower($1) == "access-control-allow-origin:" {print $2}' | tail -n1)"
+            "$VITE_API_BASE/users/login" || echo 000)"
+          cors_origin="$(tr -d '\r' < "$cors_hdr" | awk 'tolower($1) == "access-control-allow-origin:" {print $2}' | tail -n1)"
+          rm -f "$cors_hdr"
           [[ "$cors_origin" == "$CANARY_URL" ]] || {
-            # 没拿到任何 AC-AO 头也可能是 API 侧盾牌拦了 CI 出口 IP；那种情况降级成警告，
+            # 没拿到任何 AC-AO 头也可能是边缘/盾牌拦了 CI 出口 IP；那种情况降级成警告，
             # 拿到「别的 Origin」才是真的白名单没配对。
             if [[ -z "$cors_origin" ]]; then
-              echo "::warning title=CORS probe inconclusive::no access-control-allow-origin header (backend shield may be blocking the runner IP)."
+              echo "::warning title=CORS probe inconclusive::no access-control-allow-origin header (status $cors_status; backend shield or WAF may be blocking the runner IP)."
             else
               echo "backend CORS does not echo the preview origin (got '$cors_origin')" >&2
               exit 1
