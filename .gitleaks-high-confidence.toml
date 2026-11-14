@@ -4,7 +4,6 @@ useDefault = true
 [allowlist]
 description = "High-confidence credential scan; test fixtures are not broadly exempt"
 paths = [
-  '''reference/xuehai/''',
   '''adb2-wallet\.7z''',
   '''\.venv/''',
   '''node_modules/''',

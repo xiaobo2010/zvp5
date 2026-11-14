@@ -6,7 +6,7 @@
 > `docs/ADB_SCHEMA_SPEC.md` 为准。
 >
 > **2026-10-24 参考树收敛**：`zvp-latest/` 与 `zvp5-gitlab/` 已删除；学海 API
-> 原始文件归档在仓库根 `reference/xuehai/`，审核流/FAQ/资源/定向推送设计归档在
+> 原始文件曾归档在仓库根 `reference/xuehai/`（2026-11-14 已移出仓库），审核流/FAQ/资源/定向推送设计归档在
 > `reference/zvp5-gitlab/`。`UserProfile` 与 `ManageRoles` 页面已接入主线。对账
 > 与处置记录见 `docs/REFERENCE_TREES_ALIGNMENT.md`。
 

@@ -165,7 +165,7 @@ APP_LOGS.XUEHAI_ID  ──►  GET /api/logs?xuehai_id=…（admin 反查）    
 
 **后续（未实施，逐项评审后另开）**
 
-- 设备↔平台用户**强绑定**（登录期校验），形态参考 `zvp5-gitlab` 的 `users.xhid` + `devices` 表 + `device_identifier` 校验（`reference/zvp5-gitlab/models/users.py:29`；设备绑定实现在原 `routers/v1/platform.py:72-108`，该文件未随参考树归档，现存副本见 `reference/xuehai/zvp-latest/backend/routers/v1/platform.py`）——需先定注册/解绑与误伤回退策略。
+- 设备↔平台用户**强绑定**（登录期校验），形态参考 `zvp5-gitlab` 的 `users.xhid` + `devices` 表 + `device_identifier` 校验（`reference/zvp5-gitlab/models/users.py:29`；设备绑定实现在原 `routers/v1/platform.py:72-108`，该文件未随参考树归档，现存副本见私有归档 `~/zvp5-private-reference/xuehai/zvp-latest/backend/routers/v1/platform.py`（仓库内已移除））——需先定注册/解绑与误伤回退策略。
 - 设备维度**风控规则**（同一学海 ID 短时多账号、异常 UA/路径）——规则库与告警投递另行设计。
 - 读端 `xuehai_id` 的**聚合视图**（每设备关联账号列表）。
 

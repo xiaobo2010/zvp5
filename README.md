@@ -24,14 +24,14 @@
 | 目录 | 角色 | 说明 |
 |---|---|---|
 | `zvp5/` | **开发主线（我们开发的版本）** | 基于 **zvms4 正式版**（上游 `zvms/zvms4-backend-python` + `zvms/zvms4-frontend`）修改。数据库层向现役 zvp 的 MongoDB Atlas 真实结构对齐，并**逐模块从 zvp-latest 迁移功能与数据结构**（义工管理、用户管理 / 登录、日志、鉴权），每个移植面均经安全审计。见 §二。 |
-| `reference/` | **参考归档（只读）** | 原 `zvp-latest` 与 `zvp5-gitlab` 已于 2026-10-24 删除；学海 API 整份留档于 `reference/xuehai/`，独立审核流/FAQ/资源/定向 WebSocket 设计留档于 `reference/zvp5-gitlab/`。**不得参与构建或导入主线。** |
+| `reference/` | **参考归档（只读）** | 原 `zvp-latest` 与 `zvp5-gitlab` 已于 2026-10-24 删除；学海 API 曾留档于 `reference/xuehai/`（**2026-11-14 已移出仓库**，见 `docs/REDACTION_POLICY.md`），独立审核流/FAQ/资源/定向 WebSocket 设计留档于 `reference/zvp5-gitlab/`。**不得参与构建或导入主线。** |
 
 > 两套参考树与主线的逐端点 / 逐页面 / 功能面对账，以及删除结果，见
 > `zvp5/docs/REFERENCE_TREES_ALIGNMENT.md`（2026-10-24）。
 
 ### 安全声明（重要）
 
-- 原 `zvp-latest` 代码**存在后门与漏洞**；原树已删除，仅把学海 API 等拒绝面原样归档在 `reference/xuehai/`。归档**不得运行、不得导入主线**。
+- 原 `zvp-latest` 代码**存在后门与漏洞**；原树已删除，学海 API 等拒绝面曾原样归档在 `reference/xuehai/`，**2026-11-14 已移出本仓库**（含第三方签名密钥，不适合公开）。归档**不得运行、不得导入主线**。
 - 已迁移模块的审计结论与拒绝面（设备采集、用户绑定、外链跳转、学海代理、设备会话等）见 §四。
 - 本仓库**不声称任何模块「已审计安全」**；既有审计均为**静态验证**，上线前需在有 Atlas 连接的环境跑一次运行时冒烟。
 

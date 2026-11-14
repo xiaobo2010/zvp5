@@ -1,7 +1,7 @@
 # STATUS — 模块移植与安全审计（zvp → zvms4-modified）
 
-> **2026-10-24：原 `zvp-latest/` 与 `zvp5-gitlab/` 已删除。** 学海 API 原文件归档在
-> 仓库根 `reference/xuehai/zvp-latest/`；审核流/FAQ/资源/定向推送设计归档在
+> **2026-10-24：原 `zvp-latest/` 与 `zvp5-gitlab/` 已删除。** 学海 API 原文件曾归档在
+> 仓库根 `reference/xuehai/zvp-latest/`（2026-11-14 已移出仓库）；审核流/FAQ/资源/定向推送设计归档在
 > `reference/zvp5-gitlab/`。本文中的参考树路径均为删除前的历史记录，对账与处置
 > 结论见 `docs/REFERENCE_TREES_ALIGNMENT.md`。
 
