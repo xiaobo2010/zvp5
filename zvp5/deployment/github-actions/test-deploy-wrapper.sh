@@ -6,6 +6,8 @@ WRAPPER="$SCRIPT_DIR/zvp5-deploy"
 TEST_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TEST_ROOT"' EXIT
 
+# 这里的 ZVMS4_* 是故意的：脚本里那段「旧名映射成新名」的过渡逻辑必须被覆盖到。
+# 只有在两台机器的 env 全部换成 ZVP5_*、回落段删掉之后，才把它们改成 ZVP5_*。
 export ZVMS4_DEPLOY_ROOT="$TEST_ROOT/www"
 export ZVMS4_DEPLOY_INCOMING="$TEST_ROOT/incoming"
 export ZVP5_DEPLOY_SERVICE="zvms4-test"

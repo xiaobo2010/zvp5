@@ -89,8 +89,10 @@ CLOUDFLARE_ACCOUNT_ID=<CF_ACCOUNT_ID> \
 npx wrangler@4 deploy
 
 # 5. 后端 CORS 放行预览域（zvp-backend，改完 daemon-reload + restart）
-#    /etc/systemd/system/zvms4.service.d/cors.conf
-#    Environment="ZVMS_CORS_ALLOWED_ORIGINS=https://zvp.xiaobopisces.top,...,https://canary.xiaobopisces.top"
+#    /etc/systemd/system/zvp5.service.d/cors.conf（改名过渡期仍是
+#    zvms4.service.d/cors.conf，两者内容一致即可）
+#    Environment="ZVP5_CORS_ALLOWED_ORIGINS=https://zvp.xiaobopisces.top,...,https://canary.xiaobopisces.top"
+#    （旧名 ZVMS_CORS_ALLOWED_ORIGINS 由 util/env.py 回落，改哪台生效哪台）
 ```
 
 拆环境：`npx wrangler delete zvp-yuren`，并把 `cors.conf` 里的预览域去掉重启。
