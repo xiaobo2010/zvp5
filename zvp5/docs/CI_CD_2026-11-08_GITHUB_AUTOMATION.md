@@ -148,9 +148,12 @@ Cloudflare Worker，本次未动 `on.push.branches`。
 `v5-canary` 之前是「推了不跑任何 CI、预览站全靠手工 wrangler」的状态。现在单开
 一份 `.github/workflows/canary.yml`，与 main 的 `ci.yml` 完全解耦：
 
-- 触发：`push` 到 `v5-canary`、或手动 dispatch 该分支。
-- 门禁：五个 job 与 main 同构（后端 pytest、前端 vitest/lint/vue-tsc/构建、
-  Cypress、shellcheck+actionlint+gitleaks、pnpm audit+trivy）。
+- 触发：`push` 到 `v5-canary`（仅当前端、preview-worker 或本文件变更）、或手动 dispatch。
+- 门禁：**只跑前端**——vitest、lint、`pnpm run build`（内含 vue-tsc）与构建断言，
+  和部署合并成**一个 job**，只构建一次。后端 pytest、Cypress、gitleaks、trivy 只在
+  main 的 `ci.yml` 跑：canary 只产静态预览，后端回归在合入 main 时拦。
+- 计费：私有库按 job 时长算，本通道约 **7~9 分钟/次推送**，main 全量一轮约 20 分钟；
+  纯文档或纯后端提交不触发。
 - 部署：只有 `deploy-canary` 一个 job，**只发前端静态产物**到 Cloudflare Worker
   `zvp-yuren`（`canary.xiaobopisces.top`）。无 SSH、无后端发布、无 DDL。
 - 构建参数：`VITE_API_BASE`/`RACE`/`CONTENT` 指向正式 API 域（跨域 + 后端 CORS

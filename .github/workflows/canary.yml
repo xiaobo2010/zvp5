@@ -1,19 +1,26 @@
-name: Canary CI and Worker preview deploy
+name: Canary preview (frontend → Worker)
 
-# canary 通道与 main 完全隔离：
-#   - 只跑质量门禁 + 前端预览部署，不碰任何后端主机、不执行 SSH、不碰数据库。
-#   - 产物是纯静态前端，发到 Cloudflare Worker（zvp-yuren / canary.xiaobopisces.top），
-#     页面里的 /api 指向正式 API 域，靠后端 CORS 白名单放行预览域。
-#   - 正式发布仍由 ci.yml 的 release 门禁控制；这个文件不会部署生产。
+# canary 通道刻意保持"一条腿"：
+#   - 只跑前端门禁 + 构建 + 发布，不跑后端 pytest、Cypress、gitleaks、trivy。
+#     那些在 main 的 ci.yml 里跑；canary 只产出静态预览，后端拒绝在 main 门禁解决。
+#   - 单 job：装依赖 → vitest/lint/type-check → 用 canary 参数构建 → 断言 → 发布 → 冒烟。
+#     合并成一个 job 是为了避免"门禁构建一次、部署再构建一次"的重复计费。
+#   - 只在相关路径变更时触发，纯文档/后端提交不消耗 Actions 分钟。
 #
-# 必需仓库 Secret：CLOUDFLARE_API_TOKEN（Workers Scripts:Edit + Workers Routes:Edit）。
-# 可选仓库 Variables：CLOUDFLARE_ACCOUNT_ID、CANARY_API_BASE、
-# CANARY_API_RACE_BASE、CANARY_API_CONTENT_BASE。
+# 计费参考（私有库按 job 时长计）：本文件约 7~9 分钟/次推送；main 的全量门禁约 20 分钟。
+#
+# 必需：canary environment 里的 CLOUDFLARE_API_TOKEN（该 environment 只允许本分支访问）。
+# 可选仓库 Variables：CLOUDFLARE_ACCOUNT_ID、CANARY_API_BASE、CANARY_API_RACE_BASE、
+# CANARY_API_CONTENT_BASE。
 
 on:
   push:
     branches:
       - v5-canary
+    paths:
+      - "zvp5/zvp5-frontend/**"
+      - "zvp5/deployment/preview-worker/**"
+      - ".github/workflows/canary.yml"
   workflow_dispatch:
 
 permissions:
@@ -21,208 +28,23 @@ permissions:
 
 concurrency:
   group: canary-${{ github.ref }}
-  # 快速连续推送时取消旧的一轮，省分钟数。代价：被取消的那轮若已在部署阶段，
-  # 预览站可能停在上一版——下一次推送重发即可，预览站允许这种不精确。
   cancel-in-progress: true
 
 env:
-  PYTHON_VERSION: "3.13"
   NODE_VERSION_FILE: zvp5/zvp5-frontend/.node-version
   PNPM_VERSION: "10.34.5"
 
 jobs:
-  backend:
-    name: Backend quality
-    runs-on: ubuntu-latest
-    timeout-minutes: 25
-    defaults:
-      run:
-        working-directory: zvp5/zvp5-backend-python
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-      - uses: actions/setup-python@v7
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-          cache: pip
-          cache-dependency-path: zvp5/zvp5-backend-python/requirements.txt
-      - name: Install backend dependencies
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install -r requirements.txt ruff==0.17.4
-      - name: Generate local test keys
-        run: python tools/setup_local.py
-      - name: Ruff dead-code and undefined-name checks
-        run: |
-          python -m ruff check --select F821 .
-          python -m ruff check --select F401 main.py app_setup.py routers services util db typings tasks tools
-      - name: Run backend tests
-        run: python -m pytest -q
-      - name: Compile backend
-        run: python -m compileall -q routers services util db typings tasks
-
-  frontend:
-    name: Frontend quality
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    defaults:
-      run:
-        working-directory: zvp5/zvp5-frontend
-    env:
-      VITE_API_BASE: https://ci.invalid/api
-      VITE_API_RACE_BASE: https://race.ci.invalid/api
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-      - uses: pnpm/action-setup@v6
-        with:
-          version: ${{ env.PNPM_VERSION }}
-      - uses: actions/setup-node@v7
-        with:
-          node-version-file: ${{ env.NODE_VERSION_FILE }}
-          cache: pnpm
-          cache-dependency-path: zvp5/zvp5-frontend/pnpm-lock.yaml
-      - name: Install frontend dependencies
-        run: pnpm install --frozen-lockfile
-      - name: Run unit tests
-        run: pnpm exec vitest run --reporter=dot
-      - name: Lint
-        run: pnpm run lint
-      - name: Type check
-        run: pnpm run type-check
-      - name: Production build
-        run: pnpm run build
-      - name: Upload frontend build
-        uses: actions/upload-artifact@v7
-        with:
-          name: frontend-dist
-          path: zvp5/zvp5-frontend/dist
-          if-no-files-found: error
-          retention-days: 3
-
-  frontend-e2e:
-    name: Frontend Cypress E2E
-    needs: frontend
+  preview:
+    name: Frontend gates and Worker preview
     runs-on: ubuntu-latest
     timeout-minutes: 20
     defaults:
       run:
         working-directory: zvp5/zvp5-frontend
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-      - uses: pnpm/action-setup@v6
-        with:
-          version: ${{ env.PNPM_VERSION }}
-      - uses: actions/setup-node@v7
-        with:
-          node-version-file: ${{ env.NODE_VERSION_FILE }}
-          cache: pnpm
-          cache-dependency-path: zvp5/zvp5-frontend/pnpm-lock.yaml
-      - name: Install frontend dependencies
-        run: pnpm install --frozen-lockfile
-      - name: Install Cypress binary
-        run: pnpm exec cypress install
-      - uses: actions/download-artifact@v8
-        with:
-          name: frontend-dist
-          path: zvp5/zvp5-frontend/dist
-      - name: Run Cypress
-        run: pnpm run test:e2e
-
-  workflow-security:
-    name: Workflow and secret checks
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-      - name: Install ShellCheck
-        run: sudo apt-get update && sudo apt-get install -y shellcheck
-      - name: ShellCheck deployment scripts
-        run: >-
-          shellcheck -x
-          zvp5/deployment/github-actions/zvms4-deploy
-          zvp5/deployment/github-actions/*.sh
-      - name: Test deployment backup and rollback paths
-        run: bash zvp5/deployment/github-actions/test-deploy-wrapper.sh
-      - name: Lint GitHub Actions workflows
-        run: docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:1.7.7
-      - name: Scan working tree for secrets
-        run: >-
-          docker run --rm -v "$PWD:/repo"
-          ghcr.io/gitleaks/gitleaks:v8.28.0
-          detect --source=/repo --no-git --config=/repo/.gitleaks.toml
-          --redact --verbose --exit-code=1
-      - name: Scan test fixtures for high-confidence credential formats
-        run: >-
-          docker run --rm -v "$PWD:/repo"
-          ghcr.io/gitleaks/gitleaks:v8.28.0
-          detect --source=/repo --no-git --config=/repo/.gitleaks-high-confidence.toml
-          --enable-rule=private-key --enable-rule=aws-access-token
-          --enable-rule=github-app-token --enable-rule=github-fine-grained-pat
-          --enable-rule=github-oauth --enable-rule=github-pat
-          --enable-rule=github-refresh-token --enable-rule=gitlab-pat
-          --enable-rule=gitlab-oauth-app-secret
-          --enable-rule=gitlab-runner-authentication-token
-          --enable-rule=npm-access-token --enable-rule=pypi-upload-token
-          --enable-rule=slack-app-token --enable-rule=slack-bot-token
-          --enable-rule=slack-webhook-url --enable-rule=stripe-access-token
-          --enable-rule=openai-api-key --enable-rule=anthropic-api-key
-          --enable-rule=gcp-api-key --enable-rule=azure-ad-client-secret
-          --enable-rule=cloudflare-api-key --enable-rule=cloudflare-global-api-key
-          --redact --verbose --exit-code=1
-
-  dependency-security:
-    name: Dependency vulnerability checks
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-      - uses: pnpm/action-setup@v6
-        with:
-          version: ${{ env.PNPM_VERSION }}
-      # 该任务只跑 pnpm audit（不做 pnpm install），没有 pnpm store 可缓存；
-      # 开启 pnpm 缓存会让 setup-node 的 post 步骤因路径不存在而报错。
-      - uses: actions/setup-node@v7
-        with:
-          node-version-file: ${{ env.NODE_VERSION_FILE }}
-      - name: Audit frontend production dependencies
-        working-directory: zvp5/zvp5-frontend
-        run: pnpm audit --prod --audit-level high
-      - name: Scan repository dependencies for high and critical findings
-        run: >-
-          docker run --rm -v "$PWD:/src" -w /src
-          aquasec/trivy:0.76.2 fs
-          --scanners vuln --severity HIGH,CRITICAL
-          --exit-code 1 --no-progress .
-
-  deploy-canary:
-    name: Deploy canary Worker
-    needs:
-      - backend
-      - frontend
-      - frontend-e2e
-      - workflow-security
-      - dependency-security
-    # 手工 dispatch 到别的分支时只跑门禁，不部署预览站。
-    if: github.ref == 'refs/heads/v5-canary'
-    runs-on: ubuntu-latest
-    timeout-minutes: 25
-    # token 存在 canary environment 里，且该 environment 只允许 v5-canary 分支访问；
+    # token 存在 canary environment 里，且该 environment 只允许 v5-canary 访问；
     # 其他分支的 workflow 引用不到这把 Cloudflare token。
     environment: canary
-    concurrency:
-      group: canary-worker-deploy
-      # 手动 dispatch 与 push 撞车时串行发布，避免两个 wrangler 同时上传。
-      # 注意：工作流级 concurrency 仍可能取消正在跑的一轮，预览站重发即恢复。
-      cancel-in-progress: false
     env:
       WRANGLER_VERSION: "4.162.0"
       CANARY_URL: https://canary.xiaobopisces.top
@@ -247,11 +69,13 @@ jobs:
           node-version-file: ${{ env.NODE_VERSION_FILE }}
           cache: pnpm
           cache-dependency-path: zvp5/zvp5-frontend/pnpm-lock.yaml
-      - name: Install frontend dependencies
-        working-directory: zvp5/zvp5-frontend
+      - name: Install dependencies
         run: pnpm install --frozen-lockfile
+      - name: Unit tests
+        run: pnpm exec vitest run --reporter=dot
+      - name: Lint
+        run: pnpm run lint
       - name: Build preview bundle
-        working-directory: zvp5/zvp5-frontend
         shell: bash
         run: |
           set -euo pipefail
@@ -259,6 +83,7 @@ jobs:
           : "${VITE_API_RACE_BASE:?VITE_API_RACE_BASE is required}"
           : "${VITE_API_CONTENT_BASE:?VITE_API_CONTENT_BASE is required}"
           : "${VITE_PAGE_BASE:?VITE_PAGE_BASE is required}"
+          # build = run-p type-check build-only，类型检查与产物在同一步完成。
           pnpm run build
           # 静态资源必须走预览域同源；混进绝对静态域说明 VITE_STATIC_BASE 没生效。
           grep -F 'src="/assets/' dist/index.html >/dev/null
@@ -287,7 +112,6 @@ jobs:
           }
           NODE
       - name: Drop service worker from the preview bundle
-        working-directory: zvp5/zvp5-frontend
         shell: bash
         run: |
           set -euo pipefail
@@ -296,6 +120,7 @@ jobs:
           [[ ! -e dist/sw.js ]] || { echo "dist/sw.js still present" >&2; exit 1; }
       - name: Deploy to Cloudflare Worker
         shell: bash
+        working-directory: .
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: |
@@ -306,6 +131,7 @@ jobs:
             --config zvp5/deployment/preview-worker/wrangler.jsonc
       - name: Smoke test the deployed preview
         shell: bash
+        working-directory: .
         run: |
           set -euo pipefail
           dist_dir=zvp5/zvp5-frontend/dist
