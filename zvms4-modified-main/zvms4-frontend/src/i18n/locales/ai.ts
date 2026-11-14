@@ -3,6 +3,7 @@ export const zhCN = {
   subtitle: '模型转发、OCR 识别与月度额度。',
   tabs: {
     chat: '对话',
+    sessions: '会话',
     quota: '我的额度',
     keys: 'Key 管理',
     engines: 'OCR 引擎',

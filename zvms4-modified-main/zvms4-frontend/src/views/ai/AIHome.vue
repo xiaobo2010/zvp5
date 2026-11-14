@@ -11,13 +11,14 @@ import ZAiOcrEnginesAdmin from '@/components/ai/ZAiOcrEnginesAdmin.vue'
 import ZAiQuotaAdmin from '@/components/ai/ZAiQuotaAdmin.vue'
 import ZAiHealthPanel from '@/components/ai/ZAiHealthPanel.vue'
 import ZAiLogsAdmin from '@/components/ai/ZAiLogsAdmin.vue'
+import ZAiSessions from '@/components/ai/ZAiSessions.vue'
 
 interface SegmentedTab {
   label: string
   value: string
 }
 
-const VALID_CURRENT = ['chat', 'quota', 'keys', 'engines', 'quota-admin', 'health', 'logs']
+const VALID_CURRENT = ['chat', 'sessions', 'quota', 'keys', 'engines', 'quota-admin', 'health', 'logs']
 const ADMIN_ONLY = ['keys', 'engines', 'quota-admin', 'health', 'logs']
 
 const route = useRoute()
@@ -57,6 +58,10 @@ const tabs = ref<SegmentedTab[]>([
   {
     label: 'chat',
     value: 'chat'
+  },
+  {
+    label: 'sessions',
+    value: 'sessions'
   },
   {
     label: 'quota',
@@ -106,6 +111,7 @@ watch(
 
     <div class="ai-page__panel">
       <ZAiChat v-if="current === 'chat'" />
+      <ZAiSessions v-else-if="current === 'sessions'" />
       <ZAiQuotaPanel v-else-if="current === 'quota'" />
       <ZAiKeysAdmin v-else-if="current === 'keys'" />
       <ZAiOcrEnginesAdmin v-else-if="current === 'engines'" />

@@ -74,6 +74,9 @@ async function handleUnauthorized(): Promise<void> {
   }
 }
 
+/** AI 场景头：后端按场景选模型/额度。 */
+export const AI_SCENE_HEADER = 'X-AI-Scene'
+
 export interface AiRequestConfig {
   method: 'get' | 'post' | 'put' | 'patch' | 'delete'
   url: string
