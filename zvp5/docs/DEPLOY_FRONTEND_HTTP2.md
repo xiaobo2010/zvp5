@@ -63,7 +63,7 @@
 | 4 | 前端 | 证书路径从面板副本（2026-12-13 到期）切到 `/etc/letsencrypt/live/zvp.xiaobopisces.top/`（2027-01-21 到期），并新增 `/etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh` | 原 vhost 备份 |
 | 5 | 后端 | `sites-available/zvp`、`zvpapi` 加 `http2 on`；新建 `/etc/nginx/conf.d/zvms4-upstream.conf`（upstream 定义两 vhost 共用）；`/api/` 改走 upstream 并清 `Connection` | `/root/backup-20261102/{zvp,zvpapi,zvms4.service}` |
 | 6 | 后端 | `zvms4.service` 加 `--timeout-keep-alive 75`，`daemon-reload` + `restart` | 同上 |
-| 7 | Cloudflare | `zvp` A 记录 `<BACKEND_IP> → <FRONTEND_IP>`（record_id `<CF_RECORD_ID>`，灰云，TTL 300） | 改回旧 IP 即回滚 |
+| 7 | Cloudflare | `zvp` A 记录 `<BACKEND_IP> → <FRONTEND_IP>`（`record_id <CF_RECORD_ID>`，灰云，TTL 300） | 改回旧 IP 即回滚 |
 
 > Cloudflare 凭据：`cf-api-token-new` 只有读权限，写 DNS 要用
 > `~/.config/opencode/credentials/cf-api-token`。

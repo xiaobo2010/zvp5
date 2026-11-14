@@ -11,12 +11,19 @@
 | `<FRONTEND_IP>` | 前端源站（前端，别名 `zvp-frontend`） | 反代配置、`ssh-keyscan` 示例 |
 | `<PROXY_IP>` | 另一处主机节点的 IP | 链路验证记录 |
 | `<CLIENT_IP>` | 真实访客/终端 IP | access.log 摘录 |
+| `<CF_ACCOUNT_ID>` | Cloudflare account id | Worker 部署命令、wrangler 说明 |
+| `<CF_RECORD_ID>` | Cloudflare 单条 DNS 记录的 record id | DNS 切换/回滚记录 |
 
 端口、路径、目录结构、服务别名可以保留——它们离开 IP 之后不构成可探测的入口，
 但删掉会让文档失去可操作性（比如 `sshd` 不在 22、`/www/zvp5` 的真实布局）。
 
 域名同样保留：`zvp.xiaobopisces.top` 之类的记录本来就是公开 DNS 可见的，
 藏起来只会让文档自相矛盾。
+
+账号级标识（Cloudflare account id、DNS record id）不进文档：它们虽然不能单独
+当凭据用，但能省掉攻击者定位账号的一步。account id 只配在 canary environment
+的 `CLOUDFLARE_ACCOUNT_ID` 变量里，本机副本在
+`~/.config/opencode/credentials/cf-account-id`。
 
 ## 提交前自查
 

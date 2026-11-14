@@ -43,10 +43,12 @@ Cloudflare 同区回环——响应带 `Cdn-Loop: cloudflare; loops=1`，状态 
 | --- | --- |
 | `CLOUDFLARE_API_TOKEN` | Workers Scripts:Edit + Workers Routes:Edit |
 
-可选仓库 Variables（不配则用下面括号里的默认值）：`CLOUDFLARE_ACCOUNT_ID`
-（<CF_ACCOUNT_ID>…）、`CANARY_API_BASE`（`https://zvp.xiaobopisces.top/api`）、
-`CANARY_API_RACE_BASE`（`https://zvpapi.xiaobopisces.top/api`）、
-`CANARY_API_CONTENT_BASE`（`https://zvp.xiaobopisces.top/api`）。
+必需环境 Variable：`CLOUDFLARE_ACCOUNT_ID`（canary environment 里配置，不进仓库）。
+
+可选环境 Variables（不配则用下面括号里的默认值）：`CANARY_API_BASE`
+（`https://zvp.xiaobopisces.top/api`）、`CANARY_API_RACE_BASE`
+（`https://zvpapi.xiaobopisces.top/api`）、`CANARY_API_CONTENT_BASE`
+（`https://zvp.xiaobopisces.top/api`）。
 
 CI 里的构建参数与手工版一致，另有两条是预览站专属的：
 
@@ -85,7 +87,7 @@ rm -f dist/sw.js dist/sw.js.map dist/workbox-*.js dist/workbox-*.js.map
 # 4. 部署
 cd ../deployment/preview-worker
 CLOUDFLARE_API_TOKEN=$(cat ~/.config/opencode/credentials/cf-api-token) \
-CLOUDFLARE_ACCOUNT_ID=<CF_ACCOUNT_ID> \
+CLOUDFLARE_ACCOUNT_ID=$(cat ~/.config/opencode/credentials/cf-account-id) \
 npx wrangler@4 deploy
 
 # 5. 后端 CORS 放行预览域（zvp-backend，改完 daemon-reload + restart）

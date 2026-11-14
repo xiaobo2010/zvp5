@@ -62,20 +62,32 @@ git push -u origin main
 > 权衡：A 保历史但会让现网部署记录失效并需要一次 force push；B 干净但要从头配
 > secret。你更在意哪一头，就选哪条。
 
-## 三、公开前必须逐项拍板
+## 三、逐项裁定（2026-11-14）
 
-1. **`README.md:206`** 有一张生产库表快照，`users | 1781` 之类的真实行数。
-   公开等于露用户规模，建议抹成 `<N>` 或整列删掉。
-2. **`README.md` 学海章节的措辞**。现在写的是「原 `zvp-latest` 代码存在后门与
-   漏洞」。私有仓库里这是内部结论；公开后它变成对某个学校教育平台的公开指控，
-   而且这份归档本来就是你从对方产物里提取的。建议改成「含设备身份采集与任意
-   URL 代理能力，已整体剥离」这种事实陈述，去掉定性词。
-3. **`canary.yml` 里 Cloudflare account id 内联默认值**（`<CF_ACCOUNT_ID>…`）。
-   account id 不是密钥，但公开后等于给攻击者省一步。可以改成必填变量。
-4. **服务商与别名**：`zvp-backend` / `zvp-frontend` / `另一处主机` / `另一处主机`
-   这些别名加上「后端 / 前端 / HK」的地理描述，能推出用的是哪家 VPS。要不要保留
-   看你——删了文档就没法照着排障。
-5. **LICENSE 是 MIT，署名 `XiaoBo Huang`**。公开前确认这就是你想用的协议与署名。
+| # | 项 | 结论 |
+| --- | --- | --- |
+| 1 | `README.md:206` 的 `users \| 1781` 行数 | **不改**（用户裁定：用户行数无所谓） |
+| 2 | 学海相关措辞 | **已软化**：去掉「后门 / 漏洞」等定性词，改成「含设备标识采集、任意 URL 代签与外部跳转等未经审计能力」的事实陈述（`README.md` / `zvp5/README.md` / `STATUS.md` / `REFERENCE_TREES_ALIGNMENT.md`） |
+| 3 | Cloudflare account id | **已从当前树彻底清除**：`canary.yml` 改为只读 `vars.CLOUDFLARE_ACCOUNT_ID`（值放在 canary environment）；文档里的 account id 与 DNS `record_id` 全部换 `<CF_ACCOUNT_ID>` / `<CF_RECORD_ID>` |
+| 4 | 服务商别名与机房地理 | **已处理**：主机别名统一成 `zvp-backend` / `zvp-frontend`，地理描述统一成「后端 / 前端」；另一处主机、ARM 另一处主机、另一处主机不再点名，只按角色描述。当前树只剩前后端两台的身份 |
+| 5 | LICENSE（MIT，署名 `XiaoBo Huang`） | **保留** |
+
+### 关于 account id 的历史残留
+
+当前树已清零（文档里也不再留任何前缀），但公开是把 `.git` 一起交出去，那串
+32 位账号标识仍在 **5 个历史提交**里：
+
+```
+b5a0802 2026-11-05 chore(deploy): 忽略 worktrees/，补齐前端分支预览 Worker 的部署说明
+ceb7c2d 2026-11-08 docs: ZVP5 大修总账
+55095a6 2026-11-14 ci: 收口发布链路并新增 canary 前端预览部署
+dc9438a 2026-11-14 ci(canary): v5-canary 推送跑门禁并把前端预览发到 Cloudflare Worker
+89d9e0b 2026-11-14 docs: 转公开仓库检查清单
+```
+
+要连历史一起清，只能用 `git filter-repo --replace-text` 做字符串替换（比删路径温和，
+但照样改 SHA）：`b5a0802` 之后的所有提交换名，`backend.current` 里的旧 SHA 悬空。
+DNS `record_id` 在 3 个提交里，同批处理。
 
 ## 四、公开后立刻做（这才是转公开的目的）
 

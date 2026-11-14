@@ -405,7 +405,7 @@ xh_router 任意 URL 代理（:159 urlopen + :46 硬编码签名 KEY）、登录
 
 # Part 8 — 后端可用状态落地：运行时验证 + 运行缺口修复 + shield 加固移植（2026-10-11）
 
-> 任务：把 `zvms4-backend-python` 从「静态编译通过」做到**运行时可用**——后端能真实启动、连库、全 API 面闭环可用；可参考 zvp-latest 后端，但其后门/外站跳转/设备面红线不变；最后更新 README。
+> 任务：把 `zvms4-backend-python` 从「静态编译通过」做到**运行时可用**——后端能真实启动、连库、全 API 面闭环可用；可参考 zvp-latest 后端，但其设备采集/外站跳转/外呼等未审计面红线不变；最后更新 README。
 > 方式：fixer 泳道移植 shield 中间件（规格先行）∥ 编排者搭运行环境（venv/密钥/临时 MongoDB Docker）→ 端到端冒烟脚本三轮迭代 → 全部缺口修复 → 41/41 断言通过。本机 Python 3.14.4 + mongo:7 临时容器（127.0.0.1:27018，验证后已删）。
 
 ## 32. shield_middleware 移植（zvp-latest `main.py:55-119` 语义改写，非照抄）

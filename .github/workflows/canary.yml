@@ -9,9 +9,10 @@ name: Canary preview (frontend → Worker)
 #
 # 计费参考（私有库按 job 时长计）：本文件约 7~9 分钟/次推送；main 的全量门禁约 20 分钟。
 #
-# 必需：canary environment 里的 CLOUDFLARE_API_TOKEN（该 environment 只允许本分支访问）。
-# 可选仓库 Variables：CLOUDFLARE_ACCOUNT_ID、CANARY_API_BASE、CANARY_API_RACE_BASE、
-# CANARY_API_CONTENT_BASE。
+# 必需：canary environment 里的 secret CLOUDFLARE_API_TOKEN 与变量
+# CLOUDFLARE_ACCOUNT_ID（该 environment 只允许本分支访问）。账号 ID 不写在仓库里，
+# 缺失时 Deploy 步骤会以 "CLOUDFLARE_ACCOUNT_ID is required" 直接失败。
+# 可选环境 Variables：CANARY_API_BASE、CANARY_API_RACE_BASE、CANARY_API_CONTENT_BASE。
 
 on:
   push:
@@ -50,7 +51,7 @@ jobs:
       CANARY_URL: https://canary.xiaobopisces.top
       # 后端盾牌会 418 掉没有 UA 的请求（curl 默认 UA 也在黑名单里），冒烟必须带这个。
       PROBE_UA: Mozilla/5.0 (compatible; ZVP5-Deploy/1.0)
-      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID || '<CF_ACCOUNT_ID>' }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
       # 预览站跨域直连正式 API：CORS 白名单里必须已有 canary 域。
       VITE_API_BASE: ${{ vars.CANARY_API_BASE || 'https://zvp.xiaobopisces.top/api' }}
       VITE_API_RACE_BASE: ${{ vars.CANARY_API_RACE_BASE || 'https://zvpapi.xiaobopisces.top/api' }}

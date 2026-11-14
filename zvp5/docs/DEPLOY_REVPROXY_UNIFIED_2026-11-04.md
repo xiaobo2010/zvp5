@@ -122,7 +122,7 @@ real_ip_recursive on;
 
 - `zvpapi.xiaobopisces.top` 仍对公网开放，且本机还留着一份 2026-11-02 的 SPA 副本。
   若要「真正统一入口」，可把该 vhost 的 `/api/` 限定 `allow <FRONTEND_IP>; deny all;`，
-  根路径 301 到 zvp 域；代价是 前端 出口 IP 变化时会全站 502，需同时留后门 SSH 改配置。
+  根路径 301 到 zvp 域；代价是 前端 出口 IP 变化时会全站 502，需同时保留一条带外 SSH 通道改配置。
 
 ## 2026-11-06 小型 JSON GET 双路竞速
 
