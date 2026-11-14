@@ -336,7 +336,9 @@ function toggleRail() {
 /** 底部栏当前高亮项的下标，用来驱动滑块平移 */
 const mobileTabIndex = computed(() => {
   const index = mobileTabs.findIndex((tab) => tab.judge(route.path))
-  return index < 0 ? 0 : index
+  // 既不是首页、项目、我的（例如「菜单」里打开的关于/更新日志/管理页），
+  // 高亮落到最后一个格子「菜单」上，而不是硬回退到首页。
+  return index < 0 ? mobileTabs.length : index
 })
 
 const pageTitle = computed(() => {
@@ -645,6 +647,7 @@ onMounted(async () => {
             <button
               type="button"
               class="yg2-mobile-tabs__item"
+              :class="{ 'is-active': mobileTabIndex === mobileTabs.length }"
               @click="drawerOpen = true"
             >
               <svg
