@@ -3,6 +3,7 @@ import { ElIcon } from 'element-plus'
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter, RouterView } from 'vue-router'
 import { useI18n } from 'vue-i18n'
+import Segmented from '@/ui/ux/Segmented.vue'
 import type { ActivityType, CreateActivityType, UserPosition } from '@/../types'
 import { ArrowLeft } from '@element-plus/icons-vue'
 import classifications from '@/components/tags/classifications'
@@ -18,6 +19,13 @@ const router = useRouter()
 const path = ref(route.params?.type ?? '')
 
 const tab = ref(path.value as string)
+
+const segmentItems = computed(() =>
+  visibleTabs.value.map((item) => ({
+    value: item.value,
+    label: t(`activity.createMinimized.${item.value}`)
+  }))
+)
 
 watch(
   () => route.path,
@@ -86,18 +94,14 @@ const visibleTabs = computed(() => tabs.filter((x) => visibility[x.value]))
       </div>
     </header>
 
-    <nav v-if="visibleTabs.length > 1" class="yg2-segment create-tabs">
-      <button
-        v-for="button in visibleTabs"
-        :key="button.value"
-        type="button"
-        class="yg2-segment__item"
-        :class="{ 'is-active': button.value === tab }"
-        @click="mov(button.value)"
-      >
-        {{ t(`activity.createMinimized.${button.value}`) }}
-      </button>
-    </nav>
+    <Segmented
+      v-if="visibleTabs.length > 1"
+      :model-value="tab"
+      class="create-tabs"
+      :items="segmentItems"
+      aria-label="创建方式"
+      @update:model-value="mov"
+    />
 
     <RouterView v-if="show" :key="tab" />
   </div>

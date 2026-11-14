@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ZActivityList } from '@/components'
 import { useHeaderStore } from '@/stores/header'
 import { useI18n } from 'vue-i18n'
+import Segmented from '@/ui/ux/Segmented.vue'
 import { useUserStore } from '@/stores/user'
 
 const header = useHeaderStore()
@@ -43,6 +44,13 @@ const panes = [
   }
 ].filter((pane) => pane.visibility)
 
+const segmentItems = computed(() =>
+  panes.map((pane) => ({
+    value: pane.value,
+    label: t(`activity.view.panels.${pane.value}.short`)
+  }))
+)
+
 function moveTo(type: string) {
   tab.value = type
   router.replace(`/activities/${type}`)
@@ -59,20 +67,12 @@ function moveTo(type: string) {
         </h1>
       </div>
       <div v-if="panes.length > 1" class="yg2-page-header__actions">
-        <div class="yg2-segment" role="tablist">
-          <button
-            v-for="pane in panes"
-            :key="pane.value"
-            class="yg2-segment__item"
-            :class="{ 'is-active': tab === pane.value }"
-            type="button"
-            role="tab"
-            :aria-selected="tab === pane.value"
-            @click="moveTo(pane.value)"
-          >
-            {{ t(`activity.view.panels.${pane.value}.short`) }}
-          </button>
-        </div>
+        <Segmented
+          :model-value="tab"
+          :items="segmentItems"
+          aria-label="项目范围"
+          @update:model-value="moveTo"
+        />
       </div>
     </header>
 
