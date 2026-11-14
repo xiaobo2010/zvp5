@@ -20,6 +20,8 @@ import type { ActivityMember } from 'types/activity.v2'
 import type { GroupComplianceMemberRosters, StatisticsMemberRef } from 'types/statistics'
 import { useI18n } from 'vue-i18n'
 import { useUserStore } from '@/stores/user'
+import { categoryColor, categoryRamp } from '@/utils/categoryColors'
+import { useTheme } from '@/utils/theme'
 import { useChartTheme } from '@/utils/chartTheme'
 
 const { t } = useI18n()
@@ -58,14 +60,30 @@ interface ModeCard {
 
 const CANONICAL_MODES: GroupMode[] = ['on-campus', 'off-campus', 'social-practice']
 
-const MODE_PALETTES: Record<string, string[]> = {
-  'on-campus': ['#c6e2ff', '#a0cfff', '#79bbff', '#409eff', '#337ecc', '#245db2'],
-  'off-campus': ['#d1edc4', '#b3e19d', '#95d475', '#67c23a', '#529b2e', '#398e01'],
-  'social-practice': ['#f8e3c5', '#f3d19e', '#eebe77', '#e6a23c', '#cf9236', '#b88230']
-}
-const FALLBACK_PALETTE = ['#e4e7ed', '#cdd0d6', '#b1b3b8', '#909399', '#73767a', '#5a5c62']
+// 三类义工统一走语义令牌；依赖 theme.dark 以便主题切换时重新取色
+const { dark: themeDark } = useTheme()
 
-const BAR_PALETTE = ['#409eff', '#67c23a', '#e6a23c']
+const MODE_PALETTES = computed<Record<string, string[]>>(() => {
+  void themeDark.value
+  return {
+    'on-campus': categoryRamp('on-campus'),
+    'off-campus': categoryRamp('off-campus'),
+    'social-practice': categoryRamp('social-practice')
+  }
+})
+const FALLBACK_PALETTE = computed(() => {
+  void themeDark.value
+  return categoryRamp('on-campus')
+})
+
+const BAR_PALETTE = computed(() => {
+  void themeDark.value
+  return [
+    categoryColor('on-campus'),
+    categoryColor('off-campus'),
+    categoryColor('social-practice')
+  ]
+})
 const ROSTER_TOOLTIP_LIMIT = 6
 
 const { groupId } = toRefs(props)
@@ -200,7 +218,7 @@ const barChartData = computed<ChartData<'bar', number[], string>>(() => {
   const datasets = orderedModes().map((mode, index) => ({
     label: t(`activity.mode.${mode}.name`),
     data: labelKeys.map((label) => Number(statistics.value[mode]?.[label]) || 0),
-    backgroundColor: BAR_PALETTE[index % BAR_PALETTE.length],
+    backgroundColor: BAR_PALETTE.value[index % BAR_PALETTE.value.length],
     borderRadius: 4
   }))
 
@@ -276,7 +294,7 @@ const modeCards = computed<ModeCard[]>(() => {
           {
             data: rows.map((row) => row.count),
             backgroundColor: rows.map((row, index) =>
-              paletteAt(MODE_PALETTES[mode] ?? FALLBACK_PALETTE, index)
+              paletteAt(MODE_PALETTES.value[mode] ?? FALLBACK_PALETTE.value, index)
             )
           }
         ]

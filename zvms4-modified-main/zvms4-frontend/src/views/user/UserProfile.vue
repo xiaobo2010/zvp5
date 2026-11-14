@@ -691,8 +691,8 @@ onMounted(async () => {
 }
 
 .profile-status.is-normal {
-  background: rgba(52, 199, 89, 0.12);
-  color: #248a3d;
+  background: var(--yg2-cat-community-soft);
+  color: var(--yg2-cat-community);
 }
 
 .profile-status.is-banned {
