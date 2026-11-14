@@ -10,7 +10,7 @@ h11==0.16.0
 httptools==0.7.1
 idna==3.20
 pyasn1==0.6.5
-pycryptodome==3.23.0
+pycryptodome==4.4.0
 pydantic==2.14.3
 pydantic_core==2.50.4
 PyJWT==2.15.1
