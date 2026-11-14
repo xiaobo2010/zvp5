@@ -26,8 +26,8 @@
 }
 
 [data-theme='dark'] {
-  --yg2-glass-nav-fill: color-mix(in srgb, #1c1c1e 62%, transparent);
-  --yg2-glass-overlay-fill: color-mix(in srgb, #1c1c1e 82%, transparent);
+  --yg2-glass-nav-fill: color-mix(in srgb, #24252d 64%, transparent);
+  --yg2-glass-overlay-fill: color-mix(in srgb, #24252d 84%, transparent);
   --yg2-glass-control-fill: color-mix(in srgb, #ffffff 8%, transparent);
   --yg2-glass-stroke: color-mix(in srgb, #ffffff 12%, transparent);
   --yg2-glass-highlight: color-mix(in srgb, #ffffff 16%, transparent);
@@ -105,8 +105,74 @@
 }
 
 /* ==========================================================================
-   L3 控件：实体为主，交互只做亮度/阴影的轻微变化
+   L3 控件：实体为主，交互做亮度/阴影的轻微变化 + 指针跟随的柔光
    ========================================================================== */
+
+/* 悬停流光：跟着指针的一团柔光（--lx/--ly 由 liquidPointer 写入）。
+   属于准则 4.8 的 Dynamic Lighting，只在 hover / 按下时出现。 */
+.yg2-nav-item,
+.yg2-btn,
+.yg2-icon-btn,
+.yg2-seg__item,
+.yg2-mobile-tabs__item {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.yg2-nav-item::before,
+.yg2-btn::before,
+.yg2-icon-btn::before,
+.yg2-seg__item::before,
+.yg2-mobile-tabs__item::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  background: radial-gradient(
+    150px circle at var(--lx, 50%) var(--ly, 0%),
+    color-mix(in srgb, #fff 46%, transparent),
+    transparent 62%
+  );
+  opacity: 0;
+  transition: opacity 180ms var(--yg2-ease-out);
+  pointer-events: none;
+}
+
+.yg2-nav-item:hover::before,
+.yg2-btn:hover::before,
+.yg2-icon-btn:hover::before,
+.yg2-seg__item:hover::before,
+.yg2-mobile-tabs__item:hover::before,
+.yg2-nav-item.is-pressed::before,
+.yg2-btn.is-pressed::before,
+.yg2-icon-btn.is-pressed::before {
+  opacity: 1;
+}
+
+[data-theme='dark'] .yg2-nav-item::before,
+[data-theme='dark'] .yg2-btn::before,
+[data-theme='dark'] .yg2-icon-btn::before,
+[data-theme='dark'] .yg2-seg__item::before,
+[data-theme='dark'] .yg2-mobile-tabs__item::before {
+  background: radial-gradient(
+    150px circle at var(--lx, 50%) var(--ly, 0%),
+    color-mix(in srgb, #fff 16%, transparent),
+    transparent 62%
+  );
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .yg2-nav-item::before,
+  .yg2-btn::before,
+  .yg2-icon-btn::before,
+  .yg2-seg__item::before,
+  .yg2-mobile-tabs__item::before {
+    transition: none;
+  }
+}
 
 .yg2-btn,
 .yg2-icon-btn,
@@ -408,4 +474,56 @@
 .yg2-topbar .yg2-lens-clip {
   filter: url(#yg2-lens-sm);
   opacity: 0.5;
+}
+
+
+/* ==========================================================================
+   主题切换过渡（《深浅色自适应配色规范》第 7 节）
+   只覆盖容器与文字/边框/描边，不做全局 * 过渡。
+   ========================================================================== */
+
+html,
+body,
+.yg2-app,
+.yg2-sidebar,
+.yg2-topbar,
+.yg2-mobile-tabs,
+.yg2-page,
+.yg2-card,
+.yg2-xcard,
+.yg2-panel,
+.el-card,
+.el-dialog,
+.el-popper,
+.tr__svg circle,
+.tr__item,
+.tr__total,
+.tr__hint {
+  transition:
+    background-color 200ms ease,
+    color 200ms ease,
+    border-color 200ms ease,
+    stroke 200ms ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html,
+  body,
+  .yg2-app,
+  .yg2-sidebar,
+  .yg2-topbar,
+  .yg2-mobile-tabs,
+  .yg2-page,
+  .yg2-card,
+  .yg2-xcard,
+  .yg2-panel,
+  .el-card,
+  .el-dialog,
+  .el-popper,
+  .tr__svg circle,
+  .tr__item,
+  .tr__total,
+  .tr__hint {
+    transition: none;
+  }
 }

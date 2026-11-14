@@ -7,14 +7,14 @@
   color-scheme: light;
 
   /* ── 中性色 ─────────────────────────────────────────────── */
-  --yg2-bg: #f5f5f7;
+  --yg2-bg: #f5f6f8;
   --yg2-surface: #ffffff;
-  --yg2-surface-sunken: #ededf0;
+  --yg2-surface-sunken: #eef0f3;
   --yg2-surface-raised: #ffffff;
-  --yg2-text: #1d1d1f;
-  --yg2-text-secondary: #6e6e73;
-  /* 对 #f5f5f7 / #fff 均 ≥4.5:1，正文级小字可用 */
-  --yg2-text-tertiary: #6f6f76;
+  --yg2-text: #20242b;
+  --yg2-text-secondary: #737b86;
+  /* 对 #f5f6f8 / #fff 均 ≥4.5:1，正文级小字可用 */
+  --yg2-text-tertiary: #6d7580;
   --yg2-text-on-accent: #ffffff;
   --yg2-line: rgba(0, 0, 0, 0.08);
   --yg2-line-strong: rgba(0, 0, 0, 0.14);
@@ -29,12 +29,12 @@
 
   /* ── 三类义工配色（全站统一：红=校内、绿=校外、蓝=社会实践）─────────── */
   /* 浅色下用更沉的同类色，避免纯白卡片上「霓虹感」过重 */
-  --yg2-cat-school: #d4475c;
-  --yg2-cat-school-soft: rgba(212, 71, 92, 0.13);
-  --yg2-cat-community: #2c8f56;
-  --yg2-cat-community-soft: rgba(44, 143, 86, 0.13);
-  --yg2-cat-time: #2f68c9;
-  --yg2-cat-time-soft: rgba(47, 104, 201, 0.13);
+  --yg2-cat-school: #b94f65;
+  --yg2-cat-school-soft: rgba(185, 79, 101, 0.14);
+  --yg2-cat-community: #34865c;
+  --yg2-cat-community-soft: rgba(52, 134, 92, 0.14);
+  --yg2-cat-time: #416fa9;
+  --yg2-cat-time-soft: rgba(65, 111, 169, 0.14);
 
   /* ── 数据暖色（只给志愿时长/贡献） ───────────────────────── */
   --yg2-amber: #ff9f0a;
@@ -118,20 +118,20 @@
 [data-theme="dark"] {
   color-scheme: dark;
 
-  --yg2-bg: #000000;
-  --yg2-surface: #1c1c1e;
-  --yg2-surface-sunken: #2c2c2e;
-  --yg2-surface-raised: #2c2c2e;
-  --yg2-cat-school: #ff375f;
-  --yg2-cat-school-soft: rgba(255, 55, 95, 0.22);
-  --yg2-cat-community: #30d158;
-  --yg2-cat-community-soft: rgba(48, 209, 88, 0.22);
-  --yg2-cat-time: #409cff;
-  --yg2-cat-time-soft: rgba(64, 156, 255, 0.22);
+  --yg2-bg: #17191f;
+  --yg2-surface: #24252d;
+  --yg2-surface-sunken: #2c2e37;
+  --yg2-surface-raised: #2c2e37;
+  --yg2-cat-school: #ff8298;
+  --yg2-cat-school-soft: rgba(255, 130, 152, 0.22);
+  --yg2-cat-community: #75e6ac;
+  --yg2-cat-community-soft: rgba(117, 230, 172, 0.2);
+  --yg2-cat-time: #85c1ff;
+  --yg2-cat-time-soft: rgba(133, 193, 255, 0.2);
 
-  --yg2-text: #f5f5f7;
-  --yg2-text-secondary: #98989d;
-  --yg2-text-tertiary: #8e8e93;
+  --yg2-text: #f1f3f6;
+  --yg2-text-secondary: #a4a9b4;
+  --yg2-text-tertiary: #9aa0ab;
   --yg2-line: rgba(255, 255, 255, 0.1);
   --yg2-line-strong: rgba(255, 255, 255, 0.18);
   --yg2-sep: rgba(255, 255, 255, 0.08);
@@ -152,15 +152,15 @@
   --yg2-danger: #ff453a;
   --yg2-danger-soft: rgba(255, 69, 58, 0.16);
 
-  --yg2-ambient-1: #0a2038;
-  --yg2-ambient-2: #2a1a08;
-  --yg2-ambient-3: #151030;
+  --yg2-ambient-1: #14243a;
+  --yg2-ambient-2: #2a2019;
+  --yg2-ambient-3: #1c1b30;
   --yg2-ambient-opacity: 0.5;
 
-  --yg2-glass-chrome-fill: rgba(28, 28, 30, 0.55);
+  --yg2-glass-chrome-fill: rgba(36, 37, 45, 0.62);
   --yg2-glass-chrome-stroke: rgba(255, 255, 255, 0.1);
-  --yg2-glass-control-fill: rgba(44, 44, 46, 0.6);
-  --yg2-glass-overlay-fill: rgba(44, 44, 46, 0.85);
+  --yg2-glass-control-fill: rgba(44, 46, 55, 0.62);
+  --yg2-glass-overlay-fill: rgba(36, 37, 45, 0.86);
   --yg2-glass-highlight: rgba(255, 255, 255, 0.14);
   --yg2-glass-inner: inset 0 1px 0 var(--yg2-glass-highlight), inset 0 -1px 0 rgba(255, 255, 255, 0.03);
 

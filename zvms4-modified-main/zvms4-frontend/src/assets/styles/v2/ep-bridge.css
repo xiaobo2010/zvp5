@@ -373,3 +373,21 @@ html[data-theme='dark'] {
   --el-button-hover-bg-color: color-mix(in srgb, var(--yg2-cat-time) 22%, transparent);
   --el-button-border-color: transparent;
 }
+
+
+/* ==========================================================================
+   v1 令牌 → v2 令牌（统一主题系统，避免两套配色打架）
+   背景/文字只保留一处定义，v1 的 #0D0D0F / #F5F5F7 不再生效。
+   ========================================================================== */
+
+:root,
+[data-theme='dark'] {
+  --yg-bg-page: var(--yg2-bg);
+  --yg-bg-surface: var(--yg2-surface);
+  --yg-bg-surface-raised: var(--yg2-surface-raised);
+  --yg-bg-surface-sunken: var(--yg2-surface-sunken);
+  --yg-text-primary: var(--yg2-text);
+  --yg-text-secondary: var(--yg2-text-secondary);
+  --yg-text-tertiary: var(--yg2-text-tertiary);
+  --yg-border-subtle: var(--yg2-line);
+}

@@ -26,6 +26,8 @@ import {
 } from 'chart.js'
 import type { ChartData, ChartOptions } from 'chart.js'
 import { useI18n } from 'vue-i18n'
+import { categoryColor, categoryHover } from '@/utils/categoryColors'
+import { useTheme } from '@/utils/theme'
 import { ZButtonOrCard } from '@/components'
 import UilStatistics from '@/icons/UilStatistics.vue'
 import api from '@/api'
@@ -69,12 +71,24 @@ const STATS_CACHE_MAX = 20
 const DISTRIBUTION_CHART_HEIGHT = 280
 const ROSTER_TOOLTIP_LIMIT = 6
 
-const MODE_COLORS: Record<string, { base: string; hover: string }> = {
-  'on-campus': { base: '#409eff', hover: '#337ecc' },
-  'off-campus': { base: '#67c23a', hover: '#529b2e' },
-  'social-practice': { base: '#e6a23c', hover: '#cf9236' }
-}
-const FALLBACK_MODE_COLOR = { base: '#909399', hover: '#73767a' }
+// 三类义工统一走语义令牌；依赖主题，切换时重新取色
+const { dark: themeDark } = useTheme()
+
+const MODE_COLORS = computed<Record<string, { base: string; hover: string }>>(() => {
+  void themeDark.value
+  return {
+    'on-campus': { base: categoryColor('on-campus'), hover: categoryHover('on-campus') },
+    'off-campus': { base: categoryColor('off-campus'), hover: categoryHover('off-campus') },
+    'social-practice': {
+      base: categoryColor('social-practice'),
+      hover: categoryHover('social-practice')
+    }
+  }
+})
+const FALLBACK_MODE_COLOR = computed(() => {
+  void themeDark.value
+  return { base: categoryColor('on-campus'), hover: categoryHover('on-campus') }
+})
 
 interface StatsCacheEntry {
   payload: ActivityStatistics
@@ -319,8 +333,8 @@ const modeRows = computed<ModeRow[]>(() => {
       count: row.count,
       sum: row.sum,
       mean: row.mean,
-      color: MODE_COLORS[row.mode]?.base ?? FALLBACK_MODE_COLOR.base,
-      hoverColor: MODE_COLORS[row.mode]?.hover ?? FALLBACK_MODE_COLOR.hover,
+      color: MODE_COLORS.value[row.mode]?.base ?? FALLBACK_MODE_COLOR.value.base,
+      hoverColor: MODE_COLORS.value[row.mode]?.hover ?? FALLBACK_MODE_COLOR.value.hover,
       members: modeMembers ? (modeMembers[row.mode] ?? []) : null
     }))
     .sort((a, b) => a.count - b.count)
