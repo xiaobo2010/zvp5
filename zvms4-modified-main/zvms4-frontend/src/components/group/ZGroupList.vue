@@ -1,7 +1,7 @@
 <script lang="ts" setup>
 import { useRouter } from 'vue-router'
 import { ElTable, ElTableColumn, ElCard, ElButton, ElInput } from 'element-plus'
-import { computed, nextTick, ref, onMounted, watch } from 'vue'
+import { nextTick, ref, onMounted, watch } from 'vue'
 import type { TableInstance } from 'element-plus'
 import api from '@/api'
 import type { Group } from '@/../types'
@@ -13,8 +13,6 @@ import { useI18n } from 'vue-i18n'
 
 const groups = ref<Group[]>([])
 
-/** 只有真的存在权限数据时才显示「权限」列，避免整列空白 */
-const hasPermissions = computed(() => groups.value.some((g) => (g.permissions ?? []).length > 0))
 const { height } = useWindowSize()
 const page = ref(1)
 const router = useRouter()
@@ -111,7 +109,6 @@ async function remove(id: string) {
       <ElTable :ref="tableRef" :data="groups" :max-height="tableHeight">
         <ElTableColumn prop="name" :label="t('manage.groupList.columns.name')" min-width="200" />
         <ElTableColumn
-          v-if="hasPermissions"
           prop="permission"
           :label="t('manage.groupList.columns.permission')"
           min-width="220"

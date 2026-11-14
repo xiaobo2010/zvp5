@@ -351,6 +351,9 @@ html[data-theme='dark'] {
    ========================================================================== */
 
 .el-button.mode-tag--on-campus {
+  /* 这三类标签同样是 .is-text.is-has-bg，底色来自 --el-fill-color-light */
+  --el-fill-color-light: var(--yg2-cat-school-soft);
+  --el-fill-color: var(--yg2-cat-school-soft);
   --el-button-text-color: var(--yg2-cat-school);
   --el-button-hover-text-color: var(--yg2-cat-school);
   --el-button-bg-color: var(--yg2-cat-school-soft);
@@ -359,6 +362,8 @@ html[data-theme='dark'] {
 }
 
 .el-button.mode-tag--off-campus {
+  --el-fill-color-light: var(--yg2-cat-community-soft);
+  --el-fill-color: var(--yg2-cat-community-soft);
   --el-button-text-color: var(--yg2-cat-community);
   --el-button-hover-text-color: var(--yg2-cat-community);
   --el-button-bg-color: var(--yg2-cat-community-soft);
@@ -367,6 +372,8 @@ html[data-theme='dark'] {
 }
 
 .el-button.mode-tag--social-practice {
+  --el-fill-color-light: var(--yg2-cat-time-soft);
+  --el-fill-color: var(--yg2-cat-time-soft);
   --el-button-text-color: var(--yg2-cat-time);
   --el-button-hover-text-color: var(--yg2-cat-time);
   --el-button-bg-color: var(--yg2-cat-time-soft);
