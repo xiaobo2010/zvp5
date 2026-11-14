@@ -39,6 +39,11 @@ function go(item: NavItem) {
 
 <template>
   <aside class="yg2-sidebar" :class="{ 'is-open': props.open }" aria-label="主导航">
+    <div class="yg2-lens-clip" aria-hidden="true">
+      <span class="yg2-lens-clip__blob yg2-lens-clip__blob--1" />
+      <span class="yg2-lens-clip__blob yg2-lens-clip__blob--2" />
+      <span class="yg2-lens-clip__blob yg2-lens-clip__blob--3" />
+    </div>
     <div class="yg2-sidebar__brand">
       <span class="yg2-sidebar__logo" aria-hidden="true">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
