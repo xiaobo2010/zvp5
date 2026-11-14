@@ -2,9 +2,8 @@
 useDefault = true
 
 [allowlist]
-description = "Intentionally preserved, non-executable vulnerability archive"
+description = "Non-executable reference archive (xuehai was moved out of the repo on 2026-11-14)"
 paths = [
-  '''reference/xuehai/''',
   '''adb2-wallet\.7z''',
   '''zvp5/zvp5-backend-python/\.venv/''',
   '''zvp5/zvp5-backend-python/tests/''',

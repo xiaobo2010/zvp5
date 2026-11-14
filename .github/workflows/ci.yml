@@ -10,6 +10,8 @@ on:
     paths-ignore:
       - "**/*.md"
       - "**/*.txt"
+      # 纯参考归档：不参与构建、不被导入，改它不该跑全部门禁。
+      - "reference/**"
   release:
     types:
       - published

@@ -1103,6 +1103,9 @@ XH：`/xh/api`（`api/xh.js`）
 > **2026-10-24：原两棵参考树已删除。** 下文 `zvp-latest/...` 路径对应归档
 > `reference/xuehai/zvp-latest/...`；`zvp5-gitlab/...` 仅保留学海登录相关历史结论。
 >
+> **2026-11-14：`reference/xuehai/` 已整体移出仓库**（仓库计划转公开，该归档含第三方
+> 签名密钥）。下文引用它的行号、路径保留为审计记录，代码本身不再在本仓库内。
+>
 > 调查对象：本仓库各代码线对**学海生态 API**的调用。结论一句话：**真正发起学海 API 调用的是原 `zvp-latest`（参考 zvp 线）与原 `zvp5-gitlab`（学海登录体系）；`zvp5`（移植主线）已红线剥离，零调用**。
 
 ### 0. 学海生态域名
@@ -1131,7 +1134,7 @@ XH：`/xh/api`（`api/xh.js`）
   - **`V1`**（默认，:63-67）：`sign = md5(method + url + t + KEY + body + "Authorization: " + token)`，其中 `t = 当前毫秒`；结果以 `?sign=<sign>&t=<t>`（已有 `?` 则 `&`）附加到 URL。
   - **`encrytred`**（:68-92）：`appCode='WEB002001'`、`appKey=md5('XH'+appCode)`、`timestamp=t`；GET 时把原 query 并入待签名对象；`raw = ''.join(f'{k}={obj[k]}&' for k in sorted(obj))`；`sign = md5(md5(raw + body))`；并写入请求头 `timestamp/sign/X-B3-SpanId/X-B3-TraceId/loginSign(空)/token`。
   - **`disabled`**（:61-62）：原样 URL，不签名。
-- **硬编码密钥**（:46）：`KEY = 'eptim]q34imt5b]-q04i5q=fdkfjfsadlkjfasdfrt573df4pltoy]-pn965498d'`，注释标明 *dumped from `xhcore.so`*。
+- **硬编码密钥**（:46）：原文件里是一个 68 字符的 `KEY` 常量，注释标明 *dumped from `xhcore.so`*。**值不在此复现**——2026-11-14 已把整棵 `reference/xuehai/` 移出仓库（见 `docs/REDACTION_POLICY.md`），这里只留结论：签名是可逆推的，密钥本该由服务端持有。
 - **出站与 TLS**（:96-98, :152-159）：用 `urllib.request.urlopen(req, timeout=10, context=ssl_ctx)`；`ssl_ctx.check_hostname=False`、`verify_mode=CERT_NONE`，即**关闭证书校验**。
 - **签名例外**（:147）：`body` 序列化后 `≥ 1 MiB` 时**不参与签名**（`None`）。
 - **响应**（:168-173）：原样回传 `{actual_url, status, headers, body}`；`response_encoding='raw'` 时以字节返回。
