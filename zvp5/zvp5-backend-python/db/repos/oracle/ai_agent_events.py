@@ -39,6 +39,7 @@ from sqlalchemy import delete, func, insert, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import ai_agent_events as ai_agent_events_tbl
+from db.models import ai_runs as ai_runs_tbl
 from db.oracle.session import session_scope
 
 Row = dict[str, Any]
@@ -145,6 +146,35 @@ def _list_display_stmt(request_id: str, after_round: int = 0):
     return stmt
 
 
+def _fail_proposed_for_conversation_stmt(
+    conversation_oid: str, result_summary: str
+):
+    """一条语句作废某个会话名下的全部待确认提案。
+
+    以前是「按 actor 取一页待确认 → 查 run 归属 → 逐条 CAS」，所以一页
+    (``PROPOSAL_SCAN_LIMIT``) 之外、或同一个人别的会话里的提案要分好几趟；而删
+    会话必须把**该会话所有**提案都作废，否则「用户以为删了」的写操作还能被点确认。
+    子查询走 ``AI_RUNS.OID``（提案的 ``REQUEST_ID`` 就是 run 的 oid），一条
+    ``UPDATE`` 覆盖全集，与游标无关。
+
+    ``WHERE status = 'proposed'`` 仍是 CAS 语义：已经 ``confirmed`` / ``executing``
+    的行不动（那些已经是既成事实，不该被删会话改写成 ``failed``）。
+    ``result_summary`` 只为说明「为什么被作废」，由服务层传入同一份文案。
+    """
+    return (
+        update(ai_agent_events_tbl)
+        .where(
+            ai_agent_events_tbl.c.status == "proposed",
+            ai_agent_events_tbl.c.request_id.in_(
+                select(ai_runs_tbl.c.oid).where(
+                    ai_runs_tbl.c.conversation_oid == str(conversation_oid)
+                )
+            ),
+        )
+        .values(status="failed", result_summary=result_summary)
+    )
+
+
 def _row(mapping: Any) -> Row:
     """``_id`` 用主键；``round_no`` 统一转 int（Oracle 回 ``Decimal``）。"""
     return {
@@ -195,6 +225,30 @@ def _display_row(mapping: Any) -> Row:
     }
 
 
+def _event_values(**fields: Any) -> dict[str, Any]:
+    """事件行的完整取值（单条与批量共用一份列清单）。
+
+    两处各抄一份列名，加列时必有一边漏；而漏掉的列在 Oracle 上是静默 NULL。
+    """
+    return {
+        "oid": fields["oid"],
+        "request_id": fields.get("request_id"),
+        "round_no": fields.get("round_no"),
+        "tool_name": fields.get("tool_name"),
+        "tool_kind": fields.get("tool_kind"),
+        "args_hash": fields.get("args_hash"),
+        "args_summary": fields.get("args_summary"),
+        "args_payload": fields.get("args_payload"),
+        "preview": fields.get("preview"),
+        "result_summary": fields.get("result_summary"),
+        "status": fields.get("status") or "executed",
+        "actor_oid": fields.get("actor_oid"),
+        "approver_oid": fields.get("approver_oid"),
+        "confirmed_at": fields.get("confirmed_at"),
+        "created_at": fields.get("created_at"),
+    }
+
+
 class OracleAIAgentEventsRepo:
     """``AIAgentEventsRepo`` over Oracle ADB (``AI_AGENT_EVENTS``)."""
 
@@ -218,30 +272,61 @@ class OracleAIAgentEventsRepo:
         actor_oid: str | None = None,
         approver_oid: str | None = None,
         confirmed_at: datetime | None = None,
+        created_at: datetime | None = None,
     ) -> str:
-        """追加一条工具调用事件；``oid`` 由调用方给（提案句柄要提前返回给前端）。"""
-        stmt = insert(ai_agent_events_tbl).values(
-            oid=oid,
-            request_id=request_id,
-            round_no=round_no,
-            tool_name=tool_name,
-            tool_kind=tool_kind,
-            args_hash=args_hash,
-            args_summary=args_summary,
-            args_payload=args_payload,
-            preview=preview,
-            result_summary=result_summary,
-            status=status,
-            actor_oid=actor_oid,
-            approver_oid=approver_oid,
-            confirmed_at=confirmed_at,
-            created_at=datetime.now(),
-        )
+        """追加一条工具调用事件；``oid`` 由调用方给（提案句柄要提前返回给前端）。
+
+        ``created_at`` 可显式给：批量路径里事件是「工具完成时」攒下来的，落库却是
+        轮收尾，让仓储按落库时刻盖时间戳会把一轮的工具时间线压成一个瞬间。缺省
+        仍是 ``datetime.now()``（即时写路径的行为不变）。
+        """
         async with _session_for(self._session) as (session, owns):
-            await session.execute(stmt)
+            await session.execute(
+                insert(ai_agent_events_tbl).values(
+                    **_event_values(
+                        oid=oid,
+                        request_id=request_id,
+                        round_no=round_no,
+                        tool_name=tool_name,
+                        tool_kind=tool_kind,
+                        args_hash=args_hash,
+                        args_summary=args_summary,
+                        args_payload=args_payload,
+                        preview=preview,
+                        result_summary=result_summary,
+                        status=status,
+                        actor_oid=actor_oid,
+                        approver_oid=approver_oid,
+                        confirmed_at=confirmed_at,
+                        created_at=created_at or datetime.now(),
+                    )
+                )
+            )
             if owns:
                 await session.commit()
         return oid
+
+    async def insert_many(self, rows: list[Row]) -> int:
+        """一批事件一次数组绑定 INSERT（executemany）。
+
+        轮收尾用：一轮里 5 个工具原来是 5 次 ``insert`` + 5 次提交，ADB 上每次
+        commit 0.5~0.95s；现在与消息批次共用**同一个事务**，一条语句写完。每行都
+        自带 ``created_at``（工具完成时刻），仓储不在这里改写历史时间线。
+
+        注入 session 时**不提交**（由调用方的轮事务负责），这是仓储层的统一约定。
+        """
+        if not rows:
+            return 0
+        stmt = insert(ai_agent_events_tbl)
+        payload = [
+            _event_values(**{**row, "created_at": row.get("created_at") or datetime.now()})
+            for row in rows
+        ]
+        async with _session_for(self._session) as (session, owns):
+            await session.execute(stmt, payload)
+            if owns:
+                await session.commit()
+        return len(payload)
 
     async def get(self, oid: str) -> Row | None:
         stmt = (
@@ -365,6 +450,25 @@ class OracleAIAgentEventsRepo:
         async with _session_for(self._session) as (session, _owns):
             rows = (await session.execute(stmt)).all()
         return [_row(row._mapping) for row in rows]
+
+    async def fail_proposed_for_conversation(
+        self, conversation_oid: str, *, result_summary: str | None = None
+    ) -> int:
+        """作废某会话名下的全部 ``proposed`` 提案，返回实际命中行数。
+
+        删会话的前置动作（``services.ai.conversations._invalidate_proposals``）：
+        确认路径只校验提案的 actor，**不要求 run 还在**，所以留着的提案在会话删掉
+        之后仍然能被执行。判定范围必须按**会话**而不是按 actor 的一页扫描——否则
+        第 501 条待确认提案就漏了。
+        """
+        stmt = _fail_proposed_for_conversation_stmt(
+            str(conversation_oid), str(result_summary or "")
+        )
+        async with _session_for(self._session) as (session, owns):
+            result = await session.execute(stmt)
+            if owns:
+                await session.commit()
+        return int(result.rowcount or 0)
 
     async def count_expired(self, cutoff: datetime) -> int:
         """``created_at < cutoff`` 的条数（只读，与 :meth:`purge_batch` 同谓词）。

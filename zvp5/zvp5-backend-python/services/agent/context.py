@@ -445,12 +445,36 @@ def parse_summary(text: str, limit_chars: int) -> str:
     return text.strip()[:limit].strip()
 
 
+def _item_chars(item: Any) -> int:
+    """单条消息序列化后的字符数（与 :func:`estimate_tokens` 同一份 dumps 参数）。
+
+    存在的理由是「一段列表的长度可以按条相加」：默认分隔符下
+
+    ``len(json.dumps(list)) == Σ len(json.dumps(item)) + 2*(n-1) + 2``
+
+    （每条之间 ``", "`` 两字符 + 外层方括号两字符）。``json`` 对每个元素的编
+    码互相独立，所以逐条长度之和与整段一次编码的长度严格相等；不可序列化对象
+    走的 ``default=str`` 兜底也逐条一致。有了它，硬截断就能把「每丢一条重算整
+    段」的 O(n²) 换成一次预计算 + 区间和。
+    """
+    try:
+        return len(json.dumps(item, ensure_ascii=False))
+    except (TypeError, ValueError):
+        return len(json.dumps(item, ensure_ascii=False, default=str))
+
+
 def hard_truncate(messages: list[dict], limit_tokens: int) -> list[dict]:
     """超限时的最后一道闸：从最旧开始丢，直到估回水位以下。
 
     约束是「不许留下悬空配对」：丢掉 ``assistant(tool_calls)`` 后紧跟的 ``tool``
     必须一起走（它们已经无主）。开头几条 system 永不丢——那是行为护栏与缓存前缀，
     丢了等于换了一个助手。
+
+    实现是**线性**的：每条消息的序列化长度只算一次，之后维护区间和。原来的写法
+    每轮循环都对「剩下的整段 + 整段 head」各 ``json.dumps`` 一次（``head`` 还是
+    个常量，白算一遍），长上下文里一次降级就是上万次整段编码。判断式与
+    ``estimate_tokens`` 的算术逐字等价（见 :func:`_item_chars`），所以输出与原
+    实现字节相同。
     """
     budget = _positive_int(limit_tokens, DEFAULT_CONTEXT_LIMIT)
     items = [dict(item) for item in _messages_of(messages)]
@@ -465,12 +489,31 @@ def hard_truncate(messages: list[dict], limit_tokens: int) -> list[dict]:
             target.pop(0)
 
     drop_orphans(rest)
-    while len(rest) > 1 and estimate_tokens(head) + estimate_tokens(rest) > budget:
-        rest.pop(0)
+    # 每条只序列化一次：``widths`` 是不变的，滑窗只改 ``left`` / ``total``。
+    widths = [_item_chars(item) for item in rest]
+    head_tokens = estimate_tokens(head)
+    total = sum(widths)
+    left = 0
+    right = len(rest)
+
+    def rest_tokens() -> int:
+        count = right - left
+        if count <= 0:
+            return 0
+        return math.ceil((total + 2 * (count - 1) + 2) / CHARS_PER_TOKEN)
+
+    while right - left > 1 and head_tokens + rest_tokens() > budget:
+        total -= widths[left]
+        left += 1
         # 被丢的可能是 assistant(tool_calls)：它后面的 tool 就地变成孤儿。
-        drop_orphans(rest)
-    drop_orphans(rest)
-    return head + rest
+        while left < right and rest[left].get("role") == "tool":
+            total -= widths[left]
+            left += 1
+    kept = rest[left:]
+    # 循环不变式已经保证 ``kept[0]`` 不是 tool；这一句是给「以后改循环」兜底的
+    # 同一条语义，代价只有一次判空。
+    drop_orphans(kept)
+    return head + kept
 
 
 async def compact(

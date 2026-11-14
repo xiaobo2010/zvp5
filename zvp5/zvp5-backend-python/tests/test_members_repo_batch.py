@@ -77,6 +77,12 @@ def _bound_list(stmt) -> list[str]:
     return next(value for value in params.values() if isinstance(value, list))
 
 
+def _bound_lists(stmt) -> list[list[str]]:
+    """一条语句里每一段 ``IN`` 的绑定值，按出现顺序。"""
+    params = stmt.compile(dialect=oracle.dialect()).params
+    return [value for value in params.values() if isinstance(value, list)]
+
+
 def _bound_activity(stmt) -> str:
     params = stmt.compile(dialect=oracle.dialect()).params
     return next(value for value in params.values() if isinstance(value, str))
@@ -129,24 +135,28 @@ async def test_up_to_1000_oids_stay_in_a_single_statement() -> None:
 
 
 @pytest.mark.asyncio
-async def test_more_than_1000_oids_are_split_into_chunks_on_one_session(
+async def test_more_than_1000_oids_stay_in_one_statement_with_or_ed_in_clauses(
     monkeypatch,
 ) -> None:
     oids = [f"{index:024x}" for index in range(1001)]
     session = _Session([_row(OID_A)])
     repo = OracleMembersRepo(session)
-    # 分块必须在注入的 session 内循环：不允许重新 checkout。
+    # 分块必须留在注入的 session 里，且**不拆语句**。
     monkeypatch.setattr(
         members_module, "session_scope", lambda: pytest.fail("分块不应重开 session")
     )
 
     rows = await repo.list_by_activity_and_members(ACTIVITY, oids)
 
-    assert len(session.statements) == 2  # 1000 + 1
-    assert [len(_bound_list(stmt)) for stmt in session.statements] == [1000, 1]
-    assert {_bound_activity(stmt) for stmt in session.statements} == {ACTIVITY}
-    # 每块回放行都并入结果（两个块各回放 1 行 ⇒ 2 行）。
-    assert [row["_id"] for row in rows] == [f"{OID_A}:on-campus"] * 2
+    # ORA-01795 的上限是「一条 IN」，不是「一条语句」：OR 起来的多段 IN 仍是
+    # 一条语句，排序/分页/计数都不受影响。
+    assert len(session.statements) == 1
+    stmt = session.statements[0]
+    lists = _bound_lists(stmt)
+    assert [len(values) for values in lists] == [1000, 1]
+    assert sum(lists, []) == oids
+    assert str(stmt).count("IN (") == 2
+    assert [row["_id"] for row in rows] == [f"{OID_A}:on-campus"]
 
 
 @pytest.mark.asyncio

@@ -9,11 +9,14 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from sqlalchemy.dialects import oracle
 
 from db.repos.oracle import ai_agent_events as repo
 
 REQUEST = "b" * 32
+TS = datetime(2026, 11, 15, 9, 30, 0)
 
 
 def _sql(stmt) -> str:
@@ -115,3 +118,88 @@ def test_display_row_keeps_the_full_row_shape() -> None:
     assert row["round_no"] == 2
     assert row["tool_name"] == "fs_read"
     assert row["result_summary"] == "ok"
+
+
+# ---------------------------------------------------------------------------
+# 批量写（A-H1）与按会话作废提案（A-M9）
+# ---------------------------------------------------------------------------
+
+CONV = "c" * 32
+
+
+def test_fail_proposed_for_conversation_is_one_statement() -> None:
+    """作废范围按**会话**下推：一条 UPDATE，不依赖任何扫描窗口。"""
+    sql = _sql(repo._fail_proposed_for_conversation_stmt(CONV, "会话已删除"))
+
+    assert sql.upper().startswith("UPDATE AI_AGENT_EVENTS SET")
+    assert "ai_agent_events.status = 'proposed'" in sql
+    assert f"ai_agent_events.request_id IN (SELECT ai_runs.oid FROM ai_runs WHERE ai_runs.conversation_oid = '{CONV}')" in sql
+    # 文案与 status 一起写：删会话的原因要留在行上，不能只留一个 failed。
+    assert sql.count("'会话已删除'") == 1
+    assert "ai_agent_events.actor_oid" not in sql
+
+
+class _Result:
+    def __init__(self, rowcount: int = 0) -> None:
+        self.rowcount = rowcount
+
+
+class _Session:
+    def __init__(self, rowcount: int = 0) -> None:
+        self.calls: list = []
+        self.commits = 0
+        self.rowcount = rowcount
+
+    async def execute(self, stmt, params=None):
+        self.calls.append((stmt, params))
+        return _Result(self.rowcount)
+
+    async def commit(self) -> None:
+        self.commits += 1
+
+
+def test_fail_proposed_for_conversation_returns_the_rowcount() -> None:
+    import asyncio
+
+    session = _Session(rowcount=3)
+    store = repo.OracleAIAgentEventsRepo(session)
+
+    changed = asyncio.run(
+        store.fail_proposed_for_conversation(CONV, result_summary="会话已删除")
+    )
+
+    assert changed == 3
+    assert len(session.calls) == 1
+    # 注入 session 由调用方提交：仓储不自己 commit（统一约定）。
+    assert session.commits == 0
+
+
+def test_insert_many_is_one_array_bound_statement() -> None:
+    """批量写只发**一条** INSERT + 一个参数列表（executemany）。"""
+    import asyncio
+
+    session = _Session()
+    store = repo.OracleAIAgentEventsRepo(session)
+    rows = [
+        {"oid": "e1", "round_no": 1, "status": "executed", "created_at": TS},
+        {"oid": "e2", "round_no": 1, "status": "failed", "created_at": TS},
+    ]
+
+    written = asyncio.run(store.insert_many(rows))
+
+    assert written == 2
+    assert len(session.calls) == 1
+    stmt, params = session.calls[0]
+    assert str(stmt).upper().startswith("INSERT INTO AI_AGENT_EVENTS")
+    assert [item["oid"] for item in params] == ["e1", "e2"]
+    # 批量路径的时间戳是调用方给的（工具完成时），仓储不改写。
+    assert all(item["created_at"] == TS for item in params)
+    assert session.commits == 0
+
+
+def test_insert_many_empty_is_a_noop() -> None:
+    import asyncio
+
+    session = _Session()
+    assert asyncio.run(repo.OracleAIAgentEventsRepo(session).insert_many([])) == 0
+    assert session.calls == []

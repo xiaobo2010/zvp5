@@ -4,6 +4,31 @@ from typing import Optional
 
 from config import MAX_ACTIVITY_DESCRIPTION_LENGTH
 
+# `activities` 表三列的列宽（`db/oracle/ddl/V001__initial_schema.sql:116-125`，
+# 单位 CHAR）：写超了 Oracle 抛 ORA-12899，到 handler 就是 500。列宽只在仓库
+# 里写一份，校验与建表同源——改列宽时这里必须一起改。
+ACTIVITY_NAME_MAX_LENGTH = 256
+ACTIVITY_PLACE_MAX_LENGTH = 256
+ACTIVITY_APPROVER_MAX_LENGTH = 24
+
+
+def _validate_varchar(value: Optional[str], limit: int, label: str):
+    """定长文本列的通用校验：NULL 放行、NUL 拒绝、超宽拒绝（不静默截断）。
+
+    NUL 单独拦的原因不是长度——Oracle 会把字符串里的 ``\\x00`` 当终止符吞掉，
+    落库值与用户提交的不一致；这种「悄悄改数据」比报错更难查。
+    """
+    if value is None:
+        return True, ""
+
+    if "\x00" in value:
+        return False, f"{label} should not contain NUL characters"
+
+    if len(value) > limit:
+        return False, f"{label} should be at most {limit} characters"
+
+    return True, ""
+
 
 def _description_max_length() -> int:
     """活动描述长度上限：运行期设置 ``ops.activity_description_max_length`` 优先。"""
@@ -22,7 +47,24 @@ def validate_activity_name(name: str):
     if name[0] == " " or name[-1] == " ":
         return False, "Should not have space before or after the string"
 
-    return True, ""
+    # 列宽校验放最后：先给「空/首尾空格」这种更好改的提示，再报长度。
+    return _validate_varchar(name, ACTIVITY_NAME_MAX_LENGTH, "Name")
+
+
+def validate_activity_place(place: Optional[str]):
+    """活动地点（``ACTIVITIES.PLACE``，``VARCHAR2(256 CHAR)``，可空）。"""
+    return _validate_varchar(place, ACTIVITY_PLACE_MAX_LENGTH, "Place")
+
+
+def validate_activity_approver(approver: Optional[str]):
+    """审核人（``ACTIVITIES.APPROVER``，``VARCHAR2(24 CHAR)``）。
+
+    列宽只有 24：它存的不是用户 oid（24 位十六进制刚好卡满），而是
+    ``''`` / ``authority`` / ``member`` 这类哨兵值或 oid 本身。
+    """
+    return _validate_varchar(
+        approver, ACTIVITY_APPROVER_MAX_LENGTH, "Approver"
+    )
 
 
 def validate_activity_description(description: Optional[str]):

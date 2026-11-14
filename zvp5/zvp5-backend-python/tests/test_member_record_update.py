@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import pytest
 from fastapi import HTTPException
+from sqlalchemy.exc import IntegrityError
 
 from db import backends
 from routers import activities_v2_router
@@ -94,6 +95,8 @@ class _MembersRepo:
         return None
 
     async def update_fields(self, oid, fields):
+        if self.state.get("update_error") is not None:
+            raise self.state["update_error"]
         self.state["updates"].append((oid, dict(fields)))
         for row in self.state["rows"]:
             if row["_id"] == oid:
@@ -153,6 +156,7 @@ def state(monkeypatch):
             MEMBER_OID: {"_id": MEMBER_OID, "name": "张三", "id": "20241726"},
         },
         "updates": [],
+        "update_error": None,
         "cache": {},
         "cache_writes": [],
         "log": _Log(),
@@ -310,3 +314,48 @@ async def test_cache_refresh_failure_keeps_the_response(state, monkeypatch):
     assert state["updates"] == [(SESSION_ID, {"duration": 4.0, "mode": "on-campus"})]
     assert state["cache_writes"] == []
     assert state["log"].inserts == 1
+
+
+class _OracleError(Exception):
+    """oracledb 的 ``DatabaseError`` 形状：错误码挂在 ``.code`` 上。"""
+
+    def __init__(self, code: int) -> None:
+        self.code = code
+        super().__init__(f"ORA-{code:05d}")
+
+
+def _integrity_error(code: int) -> IntegrityError:
+    return IntegrityError("UPDATE activity_members ...", {}, _OracleError(code))
+
+
+@pytest.mark.asyncio
+async def test_mode_change_colliding_with_the_unique_key_is_409(state):
+    """改 mode 撞 uq_activity_members_dedup（ORA-00001）⇒ 409，不是 500。
+
+    冲突路径上不重算、不写审计：库里什么都没变，缓存也就没理由动。
+    """
+    state["activities"][ACTIVITY_ID] = _activity(ACTIVITY_ID, "支教活动", atype="hybrid")
+    state["update_error"] = _integrity_error(1)
+
+    with pytest.raises(HTTPException) as failure:
+        await _call(state, mode="off-campus")
+
+    assert failure.value.status_code == 409
+    assert failure.value.detail == (
+        "该成员在此活动下已有相同计数模式的记录，请先删除或合并"
+    )
+    assert state["updates"] == []
+    assert state["cache_writes"] == []
+    assert state["log"].inserts == 0
+
+
+@pytest.mark.asyncio
+async def test_other_integrity_errors_still_bubble(state):
+    """ORA-02291（FK）之类的完整性错误不能被这段 409 文案吞掉。"""
+    state["update_error"] = _integrity_error(2291)
+
+    with pytest.raises(IntegrityError):
+        await _call(state, duration=1.0)
+
+    assert state["cache_writes"] == []
+    assert state["log"].inserts == 0

@@ -87,6 +87,24 @@ def escape_oracle_regex(value: str) -> str:
     )
 
 
+def _chunked_in(column: Any, values: list[str]) -> Any:
+    """同一列上的 ``IN`` 超过 1000 项时改写成 ``OR c IN (...) OR c IN (...)``。
+
+    为什么不是「分块执行、结果在 Python 里拼」：页面/计数语句带 ``ORDER BY``
+    与 ``OFFSET/LIMIT``，拆成多条语句会让排序与分页在**每块内部**各来一次，
+    对外语义直接变形。OR 起来的同一条语句里 Oracle 只看到一个过滤条件，
+    排序、分页、``COUNT(*) OVER()`` 全都还在 SQL 侧，与不分块时一致。
+    """
+    chunks = [
+        values[start : start + _OID_CHUNK]
+        for start in range(0, len(values), _OID_CHUNK)
+    ]
+    if not chunks:
+        # 空集合维持原语义：匹配不到任何行（而非「不过滤」）。
+        return column.in_([])
+    return or_(*(column.in_(chunk) for chunk in chunks))
+
+
 _JOINED_ACTIVITY_COLUMNS = (
     ("oid", activities_tbl.c.oid),
     ("name", activities_tbl.c.name),
@@ -319,6 +337,23 @@ def _set_status_stmt(oid: str, status: str):
     )
 
 
+def _cas_status_stmt(oid: str, expected: str, status: str):
+    """状态迁移的 CAS 写：``WHERE oid = :id AND status = :expected``。
+
+    审核是「先读再判再写」，两个管理员同时点会都通过读后的判断，后写的
+    悄悄覆盖先写的（并各自触发一次重算/审计）。把期望状态写进 ``WHERE``
+    后，只有一个事务能改到行，另一个 ``rowcount == 0``，由调用方回 409。
+    """
+    return (
+        update(members_tbl)
+        .where(
+            members_tbl.c.oid == oid,
+            members_tbl.c.member_status == expected,
+        )
+        .values(member_status=status)
+    )
+
+
 def _set_mode_stmt(oid: str, mode: str):
     return (
         update(members_tbl)
@@ -363,13 +398,15 @@ def _list_for_member_stmt(
     if status:
         stmt = stmt.where(members_tbl.c.member_status == status)
     if activity_oids is not None:
-        stmt = stmt.where(members_tbl.c.activity_oid.in_(activity_oids))
+        # 调用方（util/calculate.py）把「全部有效活动」一次传进来，超过 1000
+        # 就是 ORA-01795；这里用 OR-of-INs 保住单条语句。
+        stmt = stmt.where(_chunked_in(members_tbl.c.activity_oid, activity_oids))
     return stmt
 
 
 def _list_by_members_stmt(member_oids: list[str]):
     return select(*_member_columns()).where(
-        members_tbl.c.member_oid.in_(member_oids)
+        _chunked_in(members_tbl.c.member_oid, member_oids)
     )
 
 
@@ -378,7 +415,7 @@ def _list_by_activity_and_members_stmt(
 ):
     return select(*_member_columns()).where(
         members_tbl.c.activity_oid == activity_oid,
-        members_tbl.c.member_oid.in_(member_oids),
+        _chunked_in(members_tbl.c.member_oid, member_oids),
     )
 
 
@@ -391,8 +428,21 @@ def _count_for_activity_stmt(
     if status:
         stmt = stmt.where(members_tbl.c.member_status == status)
     if member_oids is not None:
-        stmt = stmt.where(members_tbl.c.member_oid.in_(member_oids))
+        stmt = stmt.where(_chunked_in(members_tbl.c.member_oid, member_oids))
     return stmt
+
+
+def _count_distinct_members_stmt(activity_oid: str):
+    """一个活动里**不同的人**有几个（同一个人可有多条 mode 行）。
+
+    即时重算的闸门必须按人为单位：按行数判断会把「1 个人 3 条记录」当成
+    3 个成员，也会让 501 行但其实只有 200 人的活动被无谓地推给每日全量。
+    """
+    return (
+        select(func.count(func.distinct(members_tbl.c.member_oid)))
+        .select_from(members_tbl)
+        .where(members_tbl.c.activity_oid == activity_oid)
+    )
 
 
 def _remove_for_activity_stmt(activity_oid: str):
@@ -434,7 +484,7 @@ def _list_raw_stmt(
         members_tbl.c.activity_oid == activity_oid
     )
     if member_oids is not None:
-        stmt = stmt.where(members_tbl.c.member_oid.in_(member_oids))
+        stmt = stmt.where(_chunked_in(members_tbl.c.member_oid, member_oids))
     if sort:
         column = getattr(members_tbl.c, _RAW_SORT_COLUMNS.get(sort, "oid"))
         stmt = stmt.order_by(column.asc() if asc else column.desc())
@@ -610,6 +660,19 @@ class OracleMembersRepo:
             if owns:
                 await session.commit()
 
+    async def cas_status(self, oid: str, expected: str, status: str) -> bool:
+        """仅当当前状态仍是 ``expected`` 时改成 ``status``；返回是否改到行。
+
+        调用方拿 ``False`` 就知道并发里有人先改了状态：不该再重算、不该再
+        写审计，应当回冲突。
+        """
+        stmt = _cas_status_stmt(normalize_oid(oid), expected, status)
+        async with _session_for(self._session) as (session, owns):
+            changed = (await session.execute(stmt)).rowcount > 0
+            if owns:
+                await session.commit()
+        return changed
+
     async def set_mode(self, oid: str, mode: str) -> None:
         stmt = _set_mode_stmt(normalize_oid(oid), mode)
         async with _session_for(self._session) as (session, owns):
@@ -671,16 +734,11 @@ class OracleMembersRepo:
         unique = list(dict.fromkeys(normalize_oid(o) for o in member_oids))
         if not unique:
             return []
-        # 班级人数压到 1000 以上时单条 ``IN`` 会直接 ORA-01795；这里与
-        # :meth:`list_by_activity_and_members` 同款分块。语句本身没有 ORDER BY，
-        # 调用方都按 oid 建索引，所以按块拼接顺序不影响语义。
-        rows: list[Any] = []
+        # 班级人数压到 1000 以上时单条 ``IN`` 会直接 ORA-01795；这里把同一个
+        # ``IN`` 拆成 OR 起来的多段，仍是**一条**语句，不按块重开、不丢顺序。
+        stmt = _list_by_members_stmt(unique)
         async with _session_for(self._session) as (session, _owns):
-            for start in range(0, len(unique), _OID_CHUNK):
-                chunk = unique[start : start + _OID_CHUNK]
-                rows.extend(
-                    (await session.execute(_list_by_members_stmt(chunk))).all()
-                )
+            rows = (await session.execute(stmt)).all()
         return [_member_row(row._mapping) for row in rows]
 
     async def list_by_activity_and_members(
@@ -692,22 +750,24 @@ class OracleMembersRepo:
         statement instead of one lookup per member; the returned rows share
         ``get_by_triple``'s key space, so the caller can decide update-vs-insert
         in memory. The ``IN`` list is split into :data:`_OID_CHUNK`-sized
-        statements because Oracle rejects more than 1000 elements in one ``IN``
-        (ORA-01795); every chunk runs on the same session.
+        ``OR``-ed ``IN`` clauses because Oracle rejects more than 1000 elements
+        in one ``IN`` (ORA-01795) — the statement itself stays single, so the
+        result set (and the caller's in-memory upsert pass) is unchanged.
         """
         unique = list(dict.fromkeys(normalize_oid(o) for o in member_oids))
         if not unique:
             return []
         activity = normalize_oid(activity_oid)
-        rows: list[Any] = []
+        stmt = _list_by_activity_and_members_stmt(activity, unique)
         async with _session_for(self._session) as (session, _owns):
-            for start in range(0, len(unique), _OID_CHUNK):
-                chunk = unique[start : start + _OID_CHUNK]
-                result = await session.execute(
-                    _list_by_activity_and_members_stmt(activity, chunk)
-                )
-                rows.extend(result.all())
+            rows = (await session.execute(stmt)).all()
         return [_member_row(row._mapping) for row in rows]
+
+    async def count_distinct_members(self, activity_oid: str) -> int:
+        """活动里不同成员的人数（同一人多条 mode 记录只算一个）。"""
+        stmt = _count_distinct_members_stmt(normalize_oid(activity_oid))
+        async with _session_for(self._session) as (session, _owns):
+            return int((await session.execute(stmt)).scalar_one())
 
     async def count_for_activity(
         self,

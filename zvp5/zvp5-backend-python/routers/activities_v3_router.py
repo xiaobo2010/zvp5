@@ -9,7 +9,7 @@ from util.user import get_user_display_name, user_profile
 from util.oid import validate_object_id
 from typing import Literal
 from pydantic import BaseModel, Field, field_validator
-from util.validation import validate_activity_description
+from util.validation import validate_activity_description, validate_activity_name
 
 router = APIRouter()
 
@@ -94,6 +94,12 @@ async def create_activity_v3(
             status_code=403,
             detail='权限不足'
         )
+
+    # 名称与描述都要过列宽校验：v3 原先只验描述，超长名称会一路写到
+    # ORA-12899（500）。与 v2 建活动共用 util/validation.py 的同一套上限。
+    validated, reason = validate_activity_name(payload.name)
+    if not validated:
+        raise HTTPException(status_code=400, detail=reason)
 
     validated, reason = validate_activity_description(payload.description)
     if not validated:
@@ -299,3 +305,11 @@ async def add_activity_member_v3(
                 ),
             )
             await log.insert_log(session)
+
+    # 事务提交后再排后台重算：缓存里的 user_time 必须当场反映这批成员，
+    # 否则要等到每日 01:00 的全量重建才更新。直接复用 v2 的实现（人数闸门、
+    # 信号量、批量 upsert 都在那边），延迟 import 避免两个 router 互相导入。
+    from routers.activities_v2_router import _schedule_user_time_refresh
+
+    _schedule_user_time_refresh(activity_id)
+

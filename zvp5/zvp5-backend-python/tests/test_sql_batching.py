@@ -85,14 +85,26 @@ def _member_row(oid: str):
 
 
 @pytest.mark.asyncio
-async def test_list_by_members_splits_more_than_1000_oids():
+async def test_list_by_members_keeps_one_statement_beyond_1000_oids():
+    """超过 1000 个 oid 仍是**一条**语句：同一列拆成 OR 起来的多段 IN。
+
+    ORA-01795 限制的是单段 ``IN`` 的元素数，不是语句数；改成多条语句执行会让
+    调用方（重算/导出）多付一次跨洋往返。
+    """
     session = _Session(lambda statement, params: [_member_row(_oid(11))])
     repo = members_repo.OracleMembersRepo(session=session)
 
     rows = await repo.list_by_members([_oid(index) for index in range(1001)])
 
-    assert len(session.calls) == 2
-    assert len(rows) == 2
+    assert len(session.calls) == 1
+    assert len(rows) == 1
+    statement = session.calls[0][0]
+    assert str(statement).count("IN (") == 2
+    assert [
+        len(value)
+        for value in statement.compile(dialect=DIALECT).params.values()
+        if isinstance(value, list)
+    ] == [1000, 1]
 
 
 @pytest.mark.asyncio

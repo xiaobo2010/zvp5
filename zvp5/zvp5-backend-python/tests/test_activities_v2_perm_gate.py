@@ -74,8 +74,13 @@ class _ActivitiesRepo:
     async def get(self, oid):
         return self.state["activity"]
 
-    async def update(self, oid, fields):
+    async def cas_status(self, oid, expected, fields):
+        # CAS：期望状态不符就一行都改不到（并发审核的输家）。
+        self.state["cas_calls"].append((oid, expected, dict(fields)))
+        if self.state.get("cas_conflict"):
+            return False
         self.state["updates"].append((oid, dict(fields)))
+        return True
 
 
 class _UsersRepo:
@@ -95,6 +100,8 @@ def state(monkeypatch):
     state = {
         "activity": _activity("effective"),
         "updates": [],
+        "cas_calls": [],
+        "cas_conflict": False,
         "log": _Log(),
         "names": {ADMIN_OID: "管理员", PLAIN_OID: "张三"},
     }
@@ -168,3 +175,44 @@ async def test_admin_branch_reads_the_live_per_key(state):
     await _call(state, user={"id": ADMIN_OID, "per": ["admin", "department"]})
 
     assert state["updates"][0][0] == ACTIVITY_ID
+
+
+@pytest.mark.asyncio
+async def test_status_write_is_a_compare_and_set_on_the_expected_status(state):
+    """写库带着「读到的旧状态」：CAS 命中才继续重算/审计。"""
+
+    await _call(state, status="refused", user=ADMIN)
+
+    assert state["cas_calls"] == [
+        (ACTIVITY_ID, "effective", state["cas_calls"][0][2])
+    ]
+    fields = state["cas_calls"][0][2]
+    assert fields["status"] == "refused"
+    assert "approver" not in fields
+    assert state["log"].inserts == 1
+
+
+@pytest.mark.asyncio
+async def test_lost_cas_race_is_409_without_refresh_or_audit(state):
+    """并发下输掉审核的一方：409，且不得重算时长、不得写审计。"""
+    state["cas_conflict"] = True
+
+    with pytest.raises(HTTPException) as failure:
+        await _call(state, status="refused", user=ADMIN)
+
+    assert failure.value.status_code == 409
+    assert failure.value.detail == "活动状态已被其他操作修改，请刷新后重试"
+    assert state["updates"] == []
+    assert state["log"].inserts == 0
+
+
+@pytest.mark.asyncio
+async def test_pending_approval_still_records_the_approver(state):
+    """pending → effective 是「审核通过」：CAS 里仍要带 approver。"""
+    state["activity"] = _activity("pending")
+
+    await _call(state, status="effective", user=ADMIN)
+
+    fields = state["cas_calls"][0][2]
+    assert fields["status"] == "effective"
+    assert fields["approver"] == ADMIN_OID

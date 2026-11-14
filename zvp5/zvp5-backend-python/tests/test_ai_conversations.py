@@ -19,6 +19,7 @@ from uuid import uuid4
 
 import pytest
 
+import settings
 from db import backends
 from services.agent.tool_impl import AgentError
 from services.ai import conversations
@@ -356,8 +357,8 @@ async def test_create_rejects_unknown_mode(env) -> None:
 async def test_view_marks_compaction_and_clamps_ratio(env, monkeypatch) -> None:
     # 上限钉死成 1000：这个用例测的是「超限时 ratio 夹在 1.0」，不该随默认窗口
     # 变大（32768 → 200000）而失效。
-    monkeypatch.setattr(conversations.settings, "AI_MODEL_CONTEXT_LIMITS", {}, raising=False)
-    monkeypatch.setattr(conversations.settings, "AI_DEFAULT_CONTEXT_LIMIT", 1000, raising=False)
+    monkeypatch.setattr(settings, "AI_MODEL_CONTEXT_LIMITS", {}, raising=False)
+    monkeypatch.setattr(settings, "AI_DEFAULT_CONTEXT_LIMIT", 1000, raising=False)
     row = env.conv.seed(
         "a" * 32,
         summary="旧内容摘要",
@@ -385,8 +386,8 @@ def test_title_from_collapses_whitespace_and_clips() -> None:
 
 
 def test_context_limit_reads_settings(monkeypatch) -> None:
-    monkeypatch.setattr(conversations.settings, "AI_MODEL_CONTEXT_LIMITS", {"big": 128000}, raising=False)
-    monkeypatch.setattr(conversations.settings, "AI_DEFAULT_CONTEXT_LIMIT", 16000, raising=False)
+    monkeypatch.setattr(settings, "AI_MODEL_CONTEXT_LIMITS", {"big": 128000}, raising=False)
+    monkeypatch.setattr(settings, "AI_DEFAULT_CONTEXT_LIMIT", 16000, raising=False)
 
     assert conversations.context_limit("big") == 128000
     assert conversations.context_limit("unknown") == 16000

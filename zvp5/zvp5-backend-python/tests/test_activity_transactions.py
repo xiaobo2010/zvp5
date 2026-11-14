@@ -10,6 +10,7 @@ from fastapi import HTTPException, UploadFile
 from starlette.datastructures import Headers
 
 from db import backends
+from routers import activities_v2_router as v2
 from routers import activities_v3_router as activities, imports_router as imports
 
 ACTIVITY = "000000000000000000000010"
@@ -48,7 +49,21 @@ class Repos:
     async def get_for_update(self, oid):
         await self.session.store.lock.acquire()
         self.session.locked = True
-        return {"_id": oid, "type": "hybrid", "name": "Activity"}
+        return {
+            "_id": oid,
+            "type": "hybrid",
+            "name": "Activity",
+            "description": "",
+            "date": "2026-01-01T00:00:00",
+            "createdAt": "2026-01-01T00:00:00",
+            "updatedAt": "2026-01-01T00:00:00",
+            "appointee": USER,
+            "approver": "member",
+            "creator": USER,
+            "status": "effective",
+            "place": "p",
+            "origin": "labor",
+        }
 
     async def get_by_oid(self, oid):
         return {"_id": oid}
@@ -112,7 +127,31 @@ class Repos:
         self.session.data["members"][key] = fields["duration"]
 
     async def update(self, oid, fields):
-        self.session.data["status"] = fields["status"]
+        if self.session.store.fail_on_update:
+            raise RuntimeError("update failed")
+        self.session.store.updates.append(dict(fields))
+        if "status" in fields:
+            self.session.data["status"] = fields["status"]
+
+    async def delete(self, oid):
+        # 父行删除必须在子行之后（调用方顺序），且持有活动行锁。
+        assert self.session.locked
+        if self.session.store.fail_on_delete:
+            raise RuntimeError("delete failed")
+        self.session.data["activities"] -= 1
+
+    async def list_by_activity(self, activity_oid, status=None):
+        # 受影响成员的抓取必须发生在行锁之后、删行之前。
+        assert self.session.locked
+        await asyncio.sleep(0)
+        return [
+            {"_id": f"{oid}:{mode}", "member": oid, "mode": mode}
+            for oid, mode in self.session.data["members"]
+        ]
+
+    async def remove_for_activity(self, activity_oid):
+        assert self.session.locked
+        self.session.data["members"].clear()
 
     async def create(self, *args):
         self.session.data[self.kind] += 1
@@ -134,7 +173,9 @@ class Log:
 @pytest.fixture
 def store(monkeypatch):
     state = SimpleNamespace(data={"members": {}, "status": "effective", "activities": 0, "imports": 0, "logs": 0},
-                            lock=asyncio.Lock(), fail_on=None, unknown=set(), bulk_calls=[], member_batches=[])
+                            lock=asyncio.Lock(), fail_on=None, unknown=set(), bulk_calls=[], member_batches=[],
+                            fail_on_update=False, fail_on_delete=False, updates=[],
+                            scheduled=[], refreshed=[])
 
     @asynccontextmanager
     async def scope():
@@ -142,8 +183,17 @@ def store(monkeypatch):
 
     monkeypatch.setattr(activities, "session_scope", scope)
     monkeypatch.setattr(imports, "session_scope", scope)
+    monkeypatch.setattr(v2, "session_scope", scope)
     for name in ("users", "members", "activities", "imports"):
-        monkeypatch.setattr(backends, f"get_{name}_repo", lambda session, kind=name: Repos(session, kind))
+        monkeypatch.setattr(backends, f"get_{name}_repo", lambda session=None, kind=name: Repos(session, kind))
+    # v3/import 在提交后排后台重算；v2 删除活动在提交后按抓到的成员重算。
+    # 这里只记录调用，避免 fire-and-forget 任务读到假仓库。
+    monkeypatch.setattr(v2, "_schedule_user_time_refresh", state.scheduled.append)
+
+    async def refresh(member_ids, activity_id=None):
+        state.refreshed.append((list(member_ids), activity_id))
+
+    monkeypatch.setattr(v2, "_refresh_user_time_for_members", refresh)
     return state
 
 
@@ -169,6 +219,7 @@ async def test_later_member_failure_rolls_back_earlier_member_and_activity(store
     with pytest.raises(RuntimeError):
         await activities.add_activity_member_v3(ACTIVITY, [member(), member(OTHER)], {"id": USER, "per": ["admin"]}, Log())
     assert store.data == before
+    assert store.scheduled == []
 
 
 def workbook(rows):
@@ -261,6 +312,8 @@ async def test_import_writes_members_in_one_batch(store):
     assert len(store.member_batches) == 1
     assert [entry[0] for entry in store.member_batches[0]] == [row[0] for row in rows]
     assert all(entry[1] == "on-campus" for entry in store.member_batches[0])
+    # 导入全部是 effective 成员：提交后按活动排一次后台重算，缓存立刻对齐。
+    assert store.scheduled == [ACTIVITY]
 
 
 @pytest.mark.asyncio
@@ -277,3 +330,86 @@ async def test_import_unknown_user_still_rejects_the_whole_workbook(store):
         await imports.upload_activity_excel("义工活动", "测试活动导入描述", upload, {"id": USER, "per": ["admin"]}, Log())
     assert failure.value.status_code == 400
     assert store.data == before
+
+
+# --- v2 建/删活动的单事务与锁序 -------------------------------------------
+
+
+def activity_payload(name="支教活动", place="学校", approver="member"):
+    return v2.Activity.model_validate(
+        {
+            "_id": ACTIVITY,
+            "type": "on-campus",
+            "name": name,
+            "description": "说明",
+            "date": "2026-01-01T00:00:00",
+            "createdAt": "2026-01-01T00:00:00",
+            "updatedAt": "2026-01-01T00:00:00",
+            "appointee": USER,
+            "approver": approver,
+            "creator": USER,
+            "status": "pending",
+            "place": place,
+            "origin": "labor",
+        }
+    )
+
+
+@pytest.mark.asyncio
+async def test_v2_create_writes_activity_extra_and_audit_in_one_transaction(store):
+    response = await v2.create_activity_v2(
+        activity_payload(), {"id": USER, "per": ["admin"]}, Log()
+    )
+
+    assert response.status_code == 201
+    assert store.data["activities"] == 1
+    # place/approver 的补写与建行同一事务：失败会一起回滚。
+    assert store.updates == [{"place": "学校", "approver": "member"}]
+    assert store.data["logs"] == 1
+
+
+@pytest.mark.asyncio
+async def test_v2_create_rolls_back_the_insert_when_the_extra_write_fails(store):
+    store.fail_on_update = True
+    before = deepcopy(store.data)
+
+    with pytest.raises(RuntimeError):
+        await v2.create_activity_v2(
+            activity_payload(), {"id": USER, "per": ["admin"]}, Log()
+        )
+
+    assert store.data == before
+    assert store.data["activities"] == 0
+    assert store.data["logs"] == 0
+
+
+@pytest.mark.asyncio
+async def test_v2_delete_locks_parent_first_and_captures_members_before_deleting(store):
+    store.data["activities"] = 1
+    store.data["members"] = {(USER, "on-campus"): 1.0, (OTHER, "off-campus"): 2.0}
+
+    response = await v2.delete_activity_v2(
+        ACTIVITY, {"id": USER, "per": ["admin"]}, Log()
+    )
+
+    assert response == {"detail": "Activity deleted successfully"}
+    assert store.data["activities"] == 0
+    assert store.data["members"] == {}
+    assert store.data["logs"] == 1
+    # 成员行已删，只能按删除前抓到的 oid 逐个重算。
+    assert store.refreshed == [([USER, OTHER], ACTIVITY)]
+
+
+@pytest.mark.asyncio
+async def test_v2_delete_is_atomic_when_the_parent_delete_fails(store):
+    store.data["activities"] = 1
+    store.data["members"] = {(USER, "on-campus"): 1.0}
+    store.fail_on_delete = True
+    before = deepcopy(store.data)
+
+    with pytest.raises(RuntimeError):
+        await v2.delete_activity_v2(ACTIVITY, {"id": USER, "per": ["admin"]}, Log())
+
+    # 成员删除与活动删除同一事务：父行失败，子行必须一起回滚。
+    assert store.data == before
+    assert store.refreshed == []

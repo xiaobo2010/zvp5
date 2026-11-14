@@ -28,6 +28,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
 from db import backends
+from routers import activities_v2_router
 from routers import activities_v3_router as activities
 from util.object_id import get_current_user
 
@@ -315,6 +316,7 @@ def _bulk(monkeypatch, *, existing, users, atype="hybrid", status="effective"):
         "users": _BulkUsersRepo(users),
         "activities": _ActivitiesRepo(atype, status),
         "log": _Log(),
+        "scheduled": [],
     }
 
     @asynccontextmanager
@@ -326,6 +328,11 @@ def _bulk(monkeypatch, *, existing, users, atype="hybrid", status="effective"):
     monkeypatch.setattr(backends, "get_users_repo", lambda s=None: state["users"])
     monkeypatch.setattr(
         backends, "get_activities_repo", lambda s=None: state["activities"]
+    )
+    # v3 在提交后调 v2 的后台重算（延迟 import，所以补丁打在 v2 模块上有效）。
+    # 这里只记录调度，不让 fire-and-forget 任务真的去读假仓库。
+    monkeypatch.setattr(
+        activities_v2_router, "_schedule_user_time_refresh", state["scheduled"].append
     )
     return state
 
@@ -367,6 +374,8 @@ async def test_bulk_import_batches_reads_and_upserts_in_memory(monkeypatch) -> N
     assert state["activities"].updates[0]["status"] == "pending"
     assert "updatedAt" in state["activities"].updates[0]
     assert state["log"].inserts == 1
+    # 提交后按活动排一次后台重算：缓存里的 user_time 当场失效，不等 01:00。
+    assert state["scheduled"] == [ACTIVITY_ID]
     # 审计详情必须是人名 + 活动名，不能把 oid 直接写进去。
     assert state["log"].texts == [
         "用户 成员0a 为义工活动《支教活动》增加时长：成员0a on-campus +2.0；成员0b off-campus +1.0"

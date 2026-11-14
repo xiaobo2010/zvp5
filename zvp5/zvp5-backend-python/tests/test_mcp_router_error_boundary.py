@@ -142,3 +142,22 @@ def test_non_admin_still_403(api) -> None:
     assert response.status_code == 403
     assert response.json() == {"detail": "权限不足"}
     assert repo.gets == []
+
+
+@pytest.mark.parametrize("user", [{"id": "64b7f0c2e1a3b4c5d6e7fc04"}, {"id": "64b7f0c2e1a3b4c5d6e7fc05", "per": None}])
+def test_missing_or_null_per_is_a_clean_403(api, user) -> None:
+    """``per`` 缺键 / 为 ``None`` → 403，不是 ``KeyError`` 冒泡成 500。
+
+    老 token 或服务账号的 payload 里可能没有 ``per``：``user["per"]`` 抛的
+    ``KeyError`` 会被兜底处理器翻成 500，而这里的语义从来只是「你不是管理员」。
+    两种形状都要覆盖——``None`` 不能靠 ``.get("per", [])`` 的缺省值兜住。
+    """
+    http, repo = api
+    http.app.dependency_overrides[get_current_user] = lambda: dict(user)
+
+    response = http.get(f"{PREFIX}/activities/{VALID_OID}")
+
+    assert response.status_code == 403, response.text
+    assert response.json() == {"detail": "权限不足"}
+    assert repo.gets == []
+

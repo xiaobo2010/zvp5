@@ -58,6 +58,16 @@ class ActivitiesRepo(Protocol):
         """Apply a partial ``$set`` of ``fields`` to the activity."""
         ...
 
+    async def cas_status(self, oid: str, expected: str, fields: Row) -> bool:
+        """Apply ``fields`` only while the activity's status is still ``expected``.
+
+        Compare-and-set counterpart of :meth:`update` for review transitions:
+        returns ``False`` when the row no longer carries ``expected`` (another
+        transaction won the race), so the caller can answer 409 instead of
+        silently overwriting a concurrent review.
+        """
+        ...
+
     async def delete(self, oid: str) -> None:
         """Delete an activity. Callers are responsible for its members."""
         ...
@@ -179,6 +189,15 @@ class MembersRepo(Protocol):
         """Set a membership's approval status."""
         ...
 
+    async def cas_status(self, oid: str, expected: str, status: str) -> bool:
+        """Set the status only while it still equals ``expected``; return success.
+
+        Compare-and-set counterpart of :meth:`set_status` for review
+        transitions: ``False`` means a concurrent review already moved the row,
+        so the caller must not recalculate times or write an audit entry.
+        """
+        ...
+
     async def set_mode(self, oid: str, mode: str) -> None:
         """Set a membership's mode."""
         ...
@@ -267,6 +286,14 @@ class MembersRepo(Protocol):
         member_oids: list[str] | None = None,
     ) -> int:
         """Count an activity's memberships, optionally by status/member set."""
+        ...
+
+    async def count_distinct_members(self, activity_oid: str) -> int:
+        """Count the **people** in an activity (one user, several modes = one).
+
+        The immediate time-refresh guard needs a population size, not a row
+        count: a single user may hold one row per counting mode.
+        """
         ...
 
     async def remove_for_activity(self, activity_oid: str) -> None:

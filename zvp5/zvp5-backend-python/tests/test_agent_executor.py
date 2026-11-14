@@ -1160,7 +1160,14 @@ async def test_should_stop_before_each_tool_segment(monkeypatch, env) -> None:
     assert len(upstream.payloads) == 1
     # 同批的两个只读工具都跑了（批已发出，撤不回）。
     assert [call["search"] for call in activities.calls] == ["a", "b"]
-    assert [row["status"] for row in events.rows] == ["executed", "executed"]
+    # 会话路径（有 ``on_round``）的事件是**缓冲**的：随轮收尾与消息同事务落库，
+    # 所以这里看到的是 payload 里的缓冲，而不是仓储里的行（见
+    # ``tests/test_agent_event_batching.py``）。
+    assert events.rows == []
+    assert [item["status"] for item in rounds[0]["events"]] == [
+        "executed",
+        "executed",
+    ]
     assert result["stop_reason"] == "cancelled"
     assert result["rounds"] == 1
     assert [item["tool_name"] for item in rounds[0]["tools"]] == [
@@ -1205,7 +1212,8 @@ async def test_read_tools_in_one_round_run_concurrently_in_call_order(
     assert [message["tool_call_id"] for message in tool_messages] == ["call_1", "call_2"]
     assert '"/a"' in tool_messages[0]["content"]
     assert '"/b"' in tool_messages[1]["content"]
-    assert [row["status"] for row in events.rows] == ["executed", "executed"]
+    # 有 ``on_round`` = 事件进本轮缓冲（随轮落库），仓储此时还是空的。
+    assert events.rows == []
     assert result["events"][0]["tool_name"] == tool.name
 
 

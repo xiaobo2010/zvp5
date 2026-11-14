@@ -26,7 +26,9 @@ NOT_FOUND_DETAIL = "Activity not found"
 
 
 def _require_admin(user: dict) -> None:
-    if "admin" not in user["per"]:
+    # ``per`` 可能缺键或为 None（老 token / 服务账号的 payload）：``user["per"]``
+    # 抛 KeyError 会被兜底成 500，而「没有 admin」本来就是一次干净的 403。
+    if "admin" not in (user.get("per") or []):
         raise HTTPException(status_code=403, detail="权限不足")
 
 

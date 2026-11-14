@@ -1174,8 +1174,14 @@ def _on_round(run_id: str, conversation_oid: str, owner_oid: str, state: dict):
             return
         # 一个 ``append_batch`` = 一个事务：锁会话行、连续分配 seq、插入本体、
         # 累加会话 token/context/count。半条工具链在回放时会被上游 400。
+        # 本轮的工具事件搭同一趟车（executor 在工具完成时攒好，带各自的时间戳）：
+        # 它们原来是每条一次提交，ADB 上单次 commit 0.5~0.95s，一轮 2~3 个工具
+        # 就能把 run 拖慢好几秒，而这些事件并没有「必须先于消息可见」的语义。
         await conversations.append_round(
-            conversation_oid, rows, usage=_usage_block(payload["tokens"])
+            conversation_oid,
+            rows,
+            usage=_usage_block(payload["tokens"]),
+            events=payload["events"],
         )
 
         state["rounds"] = max(int(state.get("rounds") or 0), round_no)
@@ -1297,7 +1303,7 @@ def _is_round_payload(value: Mapping[str, Any]) -> bool:
 
 
 def _normalise_round(args: Sequence[Any], kwargs: Mapping[str, Any]) -> dict:
-    """``on_round(...)`` 实参 → ``{round_no, assistant, tools, tokens}``。"""
+    """``on_round(...)`` 实参 → ``{round_no, assistant, tools, tokens, events}``。"""
     payload = kwargs.get("payload")
     if not isinstance(payload, Mapping):
         for value in args:
@@ -1313,6 +1319,7 @@ def _round_payload_of(payload: Mapping[str, Any]) -> dict:
     """executor 的 ``_round_payload`` 形状：``assistant`` / ``tools`` / ``usage``。"""
     assistant = payload.get("assistant")
     raw_tools = payload.get("tools")
+    raw_events = payload.get("events")
     return {
         "round_no": _int(payload.get("round_no")),
         "assistant": dict(assistant) if isinstance(assistant, Mapping) else {},
@@ -1320,6 +1327,10 @@ def _round_payload_of(payload: Mapping[str, Any]) -> dict:
         if isinstance(raw_tools, (list, tuple))
         else [],
         "tokens": _tokens_of(payload.get("usage")),
+        # 缺省空元组：手写 payload 的测试替身与旧调用方没有这个键，不该因此 500。
+        "events": [dict(item) for item in raw_events if isinstance(item, Mapping)]
+        if isinstance(raw_events, (list, tuple))
+        else [],
     }
 
 
@@ -1352,6 +1363,8 @@ def _legacy_round(args: Sequence[Any], kwargs: Mapping[str, Any]) -> dict:
         "assistant": assistant,
         "tools": _tools_of(items, assistant),
         "tokens": _tokens_of(usage),
+        # 旧形状没有事件缓冲（那个年代每个事件自己写一行）：空列表 = 走快路径。
+        "events": [],
     }
 
 

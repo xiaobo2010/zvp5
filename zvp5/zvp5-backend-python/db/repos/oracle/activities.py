@@ -27,7 +27,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Any, AsyncIterator
 
-from sqlalchemy import delete, func, insert, select, update
+from sqlalchemy import delete, func, insert, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.ids import new_oid, normalize_oid
@@ -37,6 +37,9 @@ from db.oracle.session import session_scope
 from db.repos.pagination import page_args
 
 Row = dict[str, Any]
+
+# Oracle refuses more than 1000 elements in a single ``IN`` (ORA-01795).
+_OID_CHUNK = 1000
 
 # Mongo field name → Oracle column attribute name (spec §3).
 _FIELD_COLUMNS: dict[str, str] = {
@@ -84,6 +87,24 @@ def _activity_columns() -> tuple[Any, ...]:
         activities_tbl.c.place,
         activities_tbl.c.origin,
     )
+
+
+def _chunked_in(column: Any, values: list[str]) -> Any:
+    """``IN`` 超过 1000 项时改写成 ``OR c IN (...) OR c IN (...)``。
+
+    与 ``db/repos/oracle/members.py::_chunked_in`` 同一手法：单条语句里
+    Oracle 只看到一串过滤条件，``ORDER BY``/分页/``COUNT`` 都还留在 SQL 侧；
+    拆成多条语句执行会把排序分页按块各做一遍，语义就变了。两处各留一份是
+    为了避免 members/activities 之间的循环 import。
+    """
+    chunks = [
+        values[start : start + _OID_CHUNK]
+        for start in range(0, len(values), _OID_CHUNK)
+    ]
+    if not chunks:
+        # 空集合维持原语义：匹配不到任何行（而非「不过滤」）。
+        return column.in_([])
+    return or_(*(column.in_(chunk) for chunk in chunks))
 
 
 def _activity_filter(query: str, atypes: list[str] | None, status: str | None) -> list[Any]:
@@ -194,6 +215,23 @@ def _update_stmt(oid: str, values: Row):
     return update(activities_tbl).where(activities_tbl.c.oid == oid).values(**values)
 
 
+def _cas_status_stmt(oid: str, expected: str, values: Row):
+    """审核状态迁移的 CAS 写：``WHERE oid = :id AND status = :expected``。
+
+    审核接口先读再判（pending → effective/refused），并发下两个审核人会都
+    通过判断，后写的覆盖先写的并各自重算/写审计。把期望状态压进 ``WHERE``，
+    只有一个事务能命中行；``rowcount == 0`` 由调用方转 409。
+    """
+    return (
+        update(activities_tbl)
+        .where(
+            activities_tbl.c.oid == oid,
+            activities_tbl.c.status == expected,
+        )
+        .values(**values)
+    )
+
+
 def _delete_stmt(oid: str):
     return delete(activities_tbl).where(activities_tbl.c.oid == oid)
 
@@ -209,7 +247,9 @@ def _list_effective_stmt(date_start: Any, date_end: Any):
 
 
 def _list_by_oids_stmt(oids: list[str], query: str, page: int, size: int):
-    stmt = select(*_activity_columns()).where(activities_tbl.c.oid.in_(oids))
+    stmt = select(*_activity_columns()).where(
+        _chunked_in(activities_tbl.c.oid, oids)
+    )
     if query:
         stmt = stmt.where(func.regexp_like(activities_tbl.c.name, query, "i"))
     stmt = stmt.order_by(activities_tbl.c.oid.desc())
@@ -221,7 +261,7 @@ def _list_by_oids_stmt(oids: list[str], query: str, page: int, size: int):
 
 def _count_by_oids_stmt(oids: list[str], query: str):
     stmt = select(func.count()).select_from(activities_tbl).where(
-        activities_tbl.c.oid.in_(oids)
+        _chunked_in(activities_tbl.c.oid, oids)
     )
     if query:
         stmt = stmt.where(func.regexp_like(activities_tbl.c.name, query, "i"))
@@ -397,6 +437,27 @@ class OracleActivitiesRepo:
             await session.execute(stmt)
             if owns:
                 await session.commit()
+
+    async def cas_status(self, oid: str, expected: str, fields: Row) -> bool:
+        """仅当状态仍是 ``expected`` 时应用 ``fields``；返回是否命中行。
+
+        ``fields`` 走与 :meth:`update` 相同的白名单映射，因此调用方传
+        ``{"status", "approver", "updatedAt"}`` 的语义完全一致，只是多了一个
+        ``status = expected`` 的并发守卫。
+        """
+        values = {
+            _FIELD_COLUMNS[key]: value
+            for key, value in fields.items()
+            if key in _FIELD_COLUMNS
+        }
+        if not values:
+            return False
+        stmt = _cas_status_stmt(normalize_oid(oid), expected, values)
+        async with _session_for(self._session) as (session, owns):
+            changed = (await session.execute(stmt)).rowcount > 0
+            if owns:
+                await session.commit()
+        return changed
 
     async def list_effective(
         self, date_start: Any = None, date_end: Any = None
