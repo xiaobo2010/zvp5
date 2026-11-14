@@ -4,13 +4,13 @@ import { useI18n } from 'vue-i18n'
 import { ElIcon, ElSwitch, ElSkeleton } from 'element-plus'
 import { Refresh, InfoFilled } from '@element-plus/icons-vue'
 import { useUserTime, TIME_STANDARD, type TimeKey } from '@/composables/useUserTime'
-import { useCountUp } from '@/composables/useCountUp'
+import ZDetailedAnalysis from '@/components/activity/ZDetailedAnalysis.vue'
 import { useUserStore } from '@/stores/user'
 
 /**
  * 首页「义工时间」：Apple Fitness 式三同心环。
  *
- * 红=校内 25h、绿=校外 15h、蓝=时间 18h（全站统一配色，见 tokens.css
+ * 红=校内 25h、绿=校外 15h、蓝=社会实践 18h（全站统一配色，见 tokens.css
  * 的 --yg2-cat-* ）。环用 SVG + stroke-dasharray 绘制，加载时从 0 长到实际
  * 进度；超过目标的环最多画满一圈，但下方百分比照实显示。
  */
@@ -30,7 +30,7 @@ const { loading, error, exceed, shown, total, refresh } = useUserTime(() => id.v
 const meta: Record<TimeKey, { label: string; color: string; soft: string }> = {
   'on-campus': { label: '校内义工', color: 'var(--yg2-cat-school)', soft: 'var(--yg2-cat-school-soft)' },
   'off-campus': { label: '校外义工', color: 'var(--yg2-cat-community)', soft: 'var(--yg2-cat-community-soft)' },
-  'social-practice': { label: '时间义工', color: 'var(--yg2-cat-time)', soft: 'var(--yg2-cat-time-soft)' }
+  'social-practice': { label: '社会实践', color: 'var(--yg2-cat-time)', soft: 'var(--yg2-cat-time-soft)' }
 }
 
 const order: TimeKey[] = ['on-campus', 'off-campus', 'social-practice']
@@ -84,20 +84,39 @@ function fmt(value: number) {
   return Number.isInteger(value) ? String(value) : value.toFixed(1)
 }
 
-const totalAnimated = useCountUp(() => total.value, 1100)
-const animated = {
-  'on-campus': useCountUp(() => shown.value['on-campus'], 1100),
-  'off-campus': useCountUp(() => shown.value['off-campus'], 1100),
-  'social-practice': useCountUp(() => shown.value['social-practice'], 1100)
+const totalText = computed(() => fmt(total.value))
+/** 三位数/带小数时缩小字号，避免压到圆环内圈 */
+const totalSize = computed(() => {
+  const text = totalText.value
+  if (text.length >= 6) return '18px'
+  if (text.length === 5) return '21px'
+  if (text.length === 4) return '25px'
+  if (text.length === 3) return '31px'
+  return ''
+})
+
+/** 点击某条环或图例：选中该类，环略微放大，其余降权 */
+const selected = ref<TimeKey | null>(null)
+
+function dim(key: TimeKey) {
+  return selected.value !== null && selected.value !== key
 }
 
-/** 悬停强调：指向哪一条，其余两条降权 */
-const hovered = ref<TimeKey | null>(null)
-function dim(key: TimeKey) {
-  return hovered.value !== null && hovered.value !== key
+function toggle(key: TimeKey) {
+  selected.value = selected.value === key ? null : key
 }
+
+/** 明细弹层：复用 ZDetailedAnalysis，按类别筛选 */
+const detailOpen = ref(false)
 
 const formulaOpen = ref(false)
+
+/** ZDetailedAnalysis 需要 m 到 kebab-case 的汇总口径 */
+const sumsForAnalysis = computed(() => ({
+  'on-campus': shown.value['on-campus'],
+  'off-campus': shown.value['off-campus'],
+  'social-practice': shown.value['social-practice']
+}))
 </script>
 
 <template>
@@ -105,7 +124,7 @@ const formulaOpen = ref(false)
     <header class="tr__head">
       <div>
         <h2 class="yg2-card__title">{{ t('home.panels.time.title') }}</h2>
-        <p class="tr__hint">红=校内 · 绿=校外 · 蓝=时间</p>
+        <p class="tr__hint">红=校内 · 绿=校外 · 蓝=实践</p>
       </div>
       <button class="yg2-icon-btn" type="button" title="刷新时长" aria-label="刷新时长" @click="refresh">
         <ElIcon><Refresh /></ElIcon>
@@ -117,9 +136,20 @@ const formulaOpen = ref(false)
 
     <template v-else>
       <div class="tr__body">
-      <div class="tr__rings" :class="{ 'is-hovering': hovered !== null }">
+      <div class="tr__rings">
         <svg viewBox="0 0 200 200" class="tr__svg" role="img" :aria-label="`累计 ${fmt(total)} 小时`">
-          <g v-for="ring in rings" :key="ring.key" :class="{ 'is-dim': dim(ring.key) }">
+          <g
+            v-for="ring in rings"
+            :key="ring.key"
+            class="tr__ring"
+            :class="{ 'is-dim': dim(ring.key), 'is-selected': selected === ring.key }"
+            role="button"
+            tabindex="0"
+            :aria-pressed="selected === ring.key"
+            @click="toggle(ring.key)"
+            @keydown.enter.prevent="toggle(ring.key)"
+            @keydown.space.prevent="toggle(ring.key)"
+          >
             <!-- 轨道：同色低透明度 -->
             <circle
               cx="100"
@@ -143,17 +173,14 @@ const formulaOpen = ref(false)
               :stroke-dasharray="circumference(ring.r)"
               :stroke-dashoffset="dashOffset(ring.r, ring.key)"
               :style="{
-                transition: 'stroke-dashoffset 1100ms cubic-bezier(0.16, 0.84, 0.24, 1)',
-                opacity: dim(ring.key) ? 0.28 : 1
+                transition: 'stroke-dashoffset 1100ms cubic-bezier(0.16, 0.84, 0.24, 1)'
               }"
-              @pointerenter="hovered = ring.key"
-              @pointerleave="hovered = null"
             />
           </g>
         </svg>
 
         <div class="tr__center">
-          <strong class="tr__total">{{ fmt(totalAnimated) }}</strong>
+          <strong class="tr__total" :style="{ fontSize: totalSize }">{{ totalText }}</strong>
           <span class="tr__total-label">累计义工小时</span>
         </div>
       </div>
@@ -163,14 +190,18 @@ const formulaOpen = ref(false)
           v-for="key in order"
           :key="key"
           class="tr__item"
-          :class="{ 'is-dim': dim(key), 'is-done': percent(key) >= 100 }"
-          @pointerenter="hovered = key"
-          @pointerleave="hovered = null"
+          :class="{ 'is-dim': dim(key), 'is-done': percent(key) >= 100, 'is-selected': selected === key }"
+          role="button"
+          tabindex="0"
+          :aria-pressed="selected === key"
+          @click="toggle(key)"
+          @keydown.enter.prevent="toggle(key)"
+          @keydown.space.prevent="toggle(key)"
         >
           <span class="tr__dot" :style="{ background: meta[key].color }" />
           <span class="tr__name">{{ meta[key].label }}</span>
           <span class="tr__value">
-            <strong>{{ fmt(animated[key].value) }}</strong>h
+            <strong>{{ fmt(shown[key]) }}</strong>h
             <span class="tr__goal">/ {{ TIME_STANDARD[key] }}h</span>
           </span>
           <span class="tr__pct">
@@ -179,6 +210,25 @@ const formulaOpen = ref(false)
           </span>
         </li>
       </ul>
+      </div>
+
+      <div v-if="selected" class="tr__detail">
+        <div class="tr__detail-head">
+          <span class="tr__dot" :style="{ background: meta[selected].color }" />
+          <strong>{{ meta[selected].label }}</strong>
+          <span class="tr__detail-sum">
+            累计 {{ fmt(shown[selected]) }}h / {{ TIME_STANDARD[selected] }}h · {{ percent(selected) }}%
+          </span>
+          <button class="tr__detail-more" type="button" @click="detailOpen = true">
+            查看该类明细
+          </button>
+        </div>
+        <p class="tr__detail-note">
+          <template v-if="percent(selected) >= 100">已达成目标</template>
+          <template v-else>还差 {{ fmt(TIME_STANDARD[selected] - shown[selected]) }} 小时达成目标</template>
+          <span class="tr__detail-sep">·</span>
+          明细里列出这一类下的每一次义工记录与时数
+        </p>
       </div>
     </template>
 
@@ -194,6 +244,23 @@ const formulaOpen = ref(false)
     </footer>
 
     <Teleport to="body">
+      <div v-if="detailOpen && selected" class="tr-modal" role="dialog" aria-modal="true" @click.self="detailOpen = false">
+        <div class="tr-modal__card tr-modal__card--wide">
+          <header class="tr__detail-head">
+            <span class="tr__dot" :style="{ background: meta[selected].color }" />
+            <strong>{{ meta[selected].label }} · 义工明细</strong>
+            <button class="yg2-icon-btn" type="button" aria-label="关闭" @click="detailOpen = false">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                <path d="m6 6 12 12M18 6 6 18" />
+              </svg>
+            </button>
+          </header>
+          <ZDetailedAnalysis :id="user" :mode="selected" :sums="sumsForAnalysis" />
+        </div>
+      </div>
+    </Teleport>
+
+    <Teleport to="body">
       <div
         v-if="formulaOpen"
         class="tr-modal"
@@ -205,7 +272,7 @@ const formulaOpen = ref(false)
         <div class="tr-modal__card">
           <h3 id="tr-formula-title" class="tr-modal__title">折算公示</h3>
           <p class="tr__formula-desc">
-            达标线：校内 25 小时、校外 15 小时、时间义工 18 小时。打开「显示折算」后，超出的部分按下表互补：
+            达标线：校内 25 小时、校外 15 小时、社会实践 18 小时。打开「显示折算」后，超出的部分按下表互补：
           </p>
           <table class="tr__table">
             <thead>
@@ -259,6 +326,25 @@ const formulaOpen = ref(false)
 }
 
 /* ---------- 圆环 ---------- */
+.tr__ring {
+    cursor: pointer;
+    transform-origin: 100px 100px;
+    transition:
+      transform 260ms cubic-bezier(0.34, 1.4, 0.64, 1),
+      opacity 220ms var(--yg2-ease-out),
+      filter 220ms var(--yg2-ease-out);
+  }
+
+  /* 选中：整条环略微放大 + 光晕，其余降权 */
+  .tr__ring.is-selected {
+    transform: scale(1.035);
+    filter: drop-shadow(0 0 6px color-mix(in srgb, currentColor 30%, transparent));
+  }
+
+  .tr__ring.is-dim {
+    opacity: 0.42;
+  }
+
 .tr__rings {
   position: relative;
   display: grid;
@@ -278,6 +364,10 @@ const formulaOpen = ref(false)
 
 .tr__progress {
   transition: opacity 220ms var(--yg2-ease-out);
+}
+
+.tr__ring.is-selected .tr__progress {
+  filter: saturate(1.12);
 }
 
 .tr__center {
@@ -326,12 +416,17 @@ const formulaOpen = ref(false)
     opacity 200ms var(--yg2-ease-out);
 }
 
+.tr__item {
+  cursor: pointer;
+}
+
 .tr__item.is-dim {
   opacity: 0.45;
 }
 
-.tr__item:hover {
-  background: color-mix(in srgb, var(--yg2-text) 4%, transparent);
+.tr__item.is-selected {
+  background: color-mix(in srgb, var(--yg2-text) 5%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--yg2-text) 8%, transparent);
 }
 
 .tr__dot {
@@ -381,6 +476,79 @@ const formulaOpen = ref(false)
   font-size: 10.5px;
   color: var(--yg2-success);
   background: var(--yg2-success-soft);
+}
+
+/* ---------- 选中后的明细 ---------- */
+.tr__detail {
+  margin-top: 4px;
+  padding: 12px 14px;
+  border-radius: var(--yg2-r-12);
+  background: color-mix(in srgb, var(--yg2-text) 3.5%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--yg2-text) 7%, transparent);
+  animation: tr-detail-in 220ms var(--yg2-ease-out);
+}
+
+.tr__detail-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  font-size: 13px;
+}
+
+.tr__detail-head strong {
+  white-space: nowrap;
+}
+
+.tr__detail-sum {
+  color: var(--yg2-text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.tr__detail-more {
+  margin-left: auto;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  color: var(--yg2-accent);
+  background: var(--yg2-accent-soft);
+}
+
+.tr__detail-note {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--yg2-text-tertiary);
+}
+
+.tr__detail-sep {
+  margin: 0 6px;
+  opacity: 0.5;
+}
+
+/* 明细弹层加宽，并隐藏 ZDetailedAnalysis 自带的类别切换（类别已由环选定） */
+.tr-modal .tr-modal__card--wide {
+  width: min(780px, 100%);
+  max-height: min(80dvh, 760px);
+  overflow: auto;
+  padding: 16px 18px 18px;
+}
+
+.tr-modal .tr-modal__card--wide :deep(.el-segmented) {
+  display: none;
+}
+
+.tr-modal .tr-modal__card--wide .tr__detail-head {
+  justify-content: flex-start;
+  margin-bottom: 8px;
+}
+
+.tr-modal .tr-modal__card--wide .tr__detail-head .yg2-icon-btn {
+  margin-left: auto;
+}
+
+@keyframes tr-detail-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: none; }
 }
 
 /* ---------- 底部 ---------- */

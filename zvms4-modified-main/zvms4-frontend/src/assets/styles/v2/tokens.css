@@ -27,13 +27,14 @@
   --yg2-accent-soft: rgba(0, 113, 227, 0.1);
   --yg2-focus: rgba(0, 113, 227, 0.45);
 
-  /* ── 三类义工配色（全站统一：红=校内、绿=校外、蓝=时间）─────────── */
-  --yg2-cat-school: #ff2d55;
-  --yg2-cat-school-soft: rgba(255, 45, 85, 0.16);
-  --yg2-cat-community: #34c759;
-  --yg2-cat-community-soft: rgba(52, 199, 89, 0.16);
-  --yg2-cat-time: #0a84ff;
-  --yg2-cat-time-soft: rgba(10, 132, 255, 0.16);
+  /* ── 三类义工配色（全站统一：红=校内、绿=校外、蓝=社会实践）─────────── */
+  /* 浅色下用更沉的同类色，避免纯白卡片上「霓虹感」过重 */
+  --yg2-cat-school: #d4475c;
+  --yg2-cat-school-soft: rgba(212, 71, 92, 0.13);
+  --yg2-cat-community: #2c8f56;
+  --yg2-cat-community-soft: rgba(44, 143, 86, 0.13);
+  --yg2-cat-time: #2f68c9;
+  --yg2-cat-time-soft: rgba(47, 104, 201, 0.13);
 
   /* ── 数据暖色（只给志愿时长/贡献） ───────────────────────── */
   --yg2-amber: #ff9f0a;
