@@ -21,7 +21,6 @@
 
 from __future__ import annotations
 
-import os
 from contextlib import asynccontextmanager
 
 import error_handlers

@@ -16,7 +16,6 @@ import base64
 import hashlib
 import hmac
 import io
-import os
 import time
 import warnings
 from dataclasses import dataclass
