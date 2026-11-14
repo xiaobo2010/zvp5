@@ -29,6 +29,19 @@
 
   /* ── 三类义工配色（全站统一：红=校内、绿=校外、蓝=社会实践）─────────── */
   /* 浅色下用更沉的同类色，避免纯白卡片上「霓虹感」过重 */
+  /* 表格操作按钮：中性 / 品牌 / 危险，浅色都是「浅底 + 深字」 */
+  --yg2-act-bg: #eef0f4;
+  --yg2-act-text: #39424f;
+  --yg2-act-hover: #e3e6ec;
+  --yg2-act-info-bg: #e6f0fd;
+  --yg2-act-info-text: #1d5fae;
+  --yg2-act-info-hover: #d8e8fb;
+  --yg2-act-danger-bg: #fdeaea;
+  --yg2-act-danger-text: #b23a34;
+  --yg2-act-danger-hover: #fadbdb;
+  --yg2-act-disabled-bg: #f3f4f7;
+  --yg2-act-disabled-text: #a7adb8;
+
   /* 身份/班级标签（浅色：冷灰底 + 深灰字，避免白字浅底） */
   --yg2-id-bg: #e9eef5;
   --yg2-id-text: #45566c;
@@ -55,20 +68,22 @@
   --yg2-danger-soft: rgba(255, 59, 48, 0.1);
 
   /* ── 环境光 ─────────────────────────────────────────────── */
-  --yg2-ambient-1: #bfe0ff;
-  --yg2-ambient-2: #ffe1bd;
-  --yg2-ambient-3: #e6e2ff;
-  --yg2-ambient-opacity: 0.72;
+  --yg2-ambient-1: #a9cdf5;
+  --yg2-ambient-2: #ffd9b8;
+  --yg2-ambient-3: #d8d2f5;
+  --yg2-ambient-opacity: 0.85;
 
   /* ── 玻璃材质 ───────────────────────────────────────────── */
-  --yg2-glass-chrome-fill: rgba(255, 255, 255, 0.5);
-  --yg2-glass-chrome-stroke: rgba(255, 255, 255, 0.6);
+  --yg2-glass-chrome-fill: rgba(255, 255, 255, 0.58);
+  --yg2-glass-chrome-stroke: rgba(255, 255, 255, 0.68);
+  --yg2-glass-chrome-highlight: rgba(255, 255, 255, 0.9);
+  --yg2-glass-chrome-shadow: 0 8px 28px rgba(31, 45, 61, 0.07);
   --yg2-glass-control-fill: rgba(255, 255, 255, 0.66);
   --yg2-glass-overlay-fill: rgba(255, 255, 255, 0.82);
   --yg2-glass-highlight: rgba(255, 255, 255, 0.75);
   --yg2-glass-blur: 28px;
   --yg2-glass-blur-sm: 20px;
-  --yg2-glass-saturate: 180%;
+  --yg2-glass-saturate: 190%;
   --yg2-glass-inner: inset 0 1px 0 var(--yg2-glass-highlight), inset 0 -1px 0 rgba(0, 0, 0, 0.04);
 
   /* ── 阴影 ───────────────────────────────────────────────── */
@@ -128,6 +143,19 @@
   --yg2-surface: #24252d;
   --yg2-surface-sunken: #2c2e37;
   --yg2-surface-raised: #2c2e37;
+  /* 表格操作按钮（深色：深底 + 亮字，避免高饱和撞色） */
+  --yg2-act-bg: #2f333d;
+  --yg2-act-text: #d5dae3;
+  --yg2-act-hover: #383d49;
+  --yg2-act-info-bg: #1e3552;
+  --yg2-act-info-text: #9fc7f5;
+  --yg2-act-info-hover: #24405f;
+  --yg2-act-danger-bg: #3b2528;
+  --yg2-act-danger-text: #ff9e97;
+  --yg2-act-danger-hover: #472b2f;
+  --yg2-act-disabled-bg: #262932;
+  --yg2-act-disabled-text: #6b7280;
+
   /* 身份/班级标签（深色：抬高背景与文字明度） */
   --yg2-id-bg: #303641;
   --yg2-id-text: #e0e8f2;
@@ -164,13 +192,15 @@
   --yg2-danger: #ff453a;
   --yg2-danger-soft: rgba(255, 69, 58, 0.16);
 
-  --yg2-ambient-1: #14243a;
-  --yg2-ambient-2: #2a2019;
-  --yg2-ambient-3: #1c1b30;
-  --yg2-ambient-opacity: 0.5;
+  --yg2-ambient-1: #17304f;
+  --yg2-ambient-2: #33261a;
+  --yg2-ambient-3: #221f3d;
+  --yg2-ambient-opacity: 0.62;
 
-  --yg2-glass-chrome-fill: rgba(36, 37, 45, 0.62);
-  --yg2-glass-chrome-stroke: rgba(255, 255, 255, 0.1);
+  --yg2-glass-chrome-fill: rgba(30, 33, 42, 0.72);
+  --yg2-glass-chrome-stroke: rgba(255, 255, 255, 0.14);
+  --yg2-glass-chrome-highlight: rgba(255, 255, 255, 0.22);
+  --yg2-glass-chrome-shadow: 0 10px 30px rgba(0, 0, 0, 0.42);
   --yg2-glass-control-fill: rgba(44, 46, 55, 0.62);
   --yg2-glass-overlay-fill: rgba(36, 37, 45, 0.86);
   --yg2-glass-highlight: rgba(255, 255, 255, 0.14);

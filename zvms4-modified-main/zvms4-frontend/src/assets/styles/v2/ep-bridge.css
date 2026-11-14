@@ -446,3 +446,71 @@ html[data-theme='dark'] {
 .el-button.yg2-id-tag.el-button--danger .el-icon {
   color: var(--yg2-danger);
 }
+
+
+/* ==========================================================================
+   表格操作按钮：查看（中性）/ 重命名（品牌）/ 删除（危险），
+   浅色浅底深字、深色深底亮字；禁用态明确降级而不是「看起来像正常按钮」。
+   ========================================================================== */
+
+.el-button.yg2-action {
+  height: 28px;
+  padding: 0 12px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: var(--yg2-act-bg);
+  color: var(--yg2-act-text);
+  font-size: 13px;
+  font-weight: 500;
+  box-shadow: none;
+  transition: background 140ms var(--yg2-ease-out), color 140ms var(--yg2-ease-out);
+}
+
+.el-button.yg2-action:hover {
+  background: var(--yg2-act-hover);
+  color: var(--yg2-act-text);
+}
+
+.el-button.yg2-action.yg2-action--info {
+  background: var(--yg2-act-info-bg);
+  color: var(--yg2-act-info-text);
+}
+
+.el-button.yg2-action.yg2-action--info:hover {
+  background: var(--yg2-act-info-hover);
+  color: var(--yg2-act-info-text);
+}
+
+.el-button.yg2-action.yg2-action--danger {
+  background: var(--yg2-act-danger-bg);
+  color: var(--yg2-act-danger-text);
+}
+
+.el-button.yg2-action.yg2-action--danger:hover {
+  background: var(--yg2-act-danger-hover);
+  color: var(--yg2-act-danger-text);
+}
+
+.el-button.yg2-action.is-disabled,
+.el-button.yg2-action.is-disabled:hover {
+  background: var(--yg2-act-disabled-bg);
+  color: var(--yg2-act-disabled-text);
+  border-color: transparent;
+  cursor: not-allowed;
+}
+
+.el-button.yg2-action + .el-button.yg2-action {
+  margin-left: 8px;
+}
+
+/* 操作列不换行，三个按钮保持一行等距 */
+.el-table .col-actions .cell {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  white-space: nowrap;
+}
+
+.el-table .col-actions .cell .el-button + .el-button {
+  margin-left: 0;
+}

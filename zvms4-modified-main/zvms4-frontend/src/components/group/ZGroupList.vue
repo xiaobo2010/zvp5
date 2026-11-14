@@ -1,7 +1,7 @@
 <script lang="ts" setup>
 import { useRouter } from 'vue-router'
 import { ElTable, ElTableColumn, ElCard, ElButton, ElInput } from 'element-plus'
-import { nextTick, ref, onMounted, watch } from 'vue'
+import { computed, nextTick, ref, onMounted, watch } from 'vue'
 import type { TableInstance } from 'element-plus'
 import api from '@/api'
 import type { Group } from '@/../types'
@@ -12,6 +12,9 @@ import { Search } from '@element-plus/icons-vue'
 import { useI18n } from 'vue-i18n'
 
 const groups = ref<Group[]>([])
+
+/** 只有真的存在权限数据时才显示「权限」列，避免整列空白 */
+const hasPermissions = computed(() => groups.value.some((g) => (g.permissions ?? []).length > 0))
 const { height } = useWindowSize()
 const page = ref(1)
 const router = useRouter()
@@ -90,29 +93,47 @@ async function remove(id: string) {
 
 <template>
   <div class="px-2">
+    <div class="yg2-toolbar">
+      <span class="yg2-toolbar__end">
+        <ElInput
+          v-model="search"
+          size="small"
+          class="yg2-toolbar__field"
+          :placeholder="t('manage.groupList.columns.search')"
+          :prefix-icon="Search"
+          clearable
+          @blur="handleSearch"
+          @keyup.enter="handleSearch"
+        />
+      </span>
+    </div>
     <ElCard shadow="never" v-loading="loading">
       <ElTable :ref="tableRef" :data="groups" :max-height="tableHeight">
-        <ElTableColumn prop="name" :label="t('manage.groupList.columns.name')"></ElTableColumn>
-        <ElTableColumn prop="permission" :label="t('manage.groupList.columns.permission')">
+        <ElTableColumn prop="name" :label="t('manage.groupList.columns.name')" min-width="200" />
+        <ElTableColumn
+          v-if="hasPermissions"
+          prop="permission"
+          :label="t('manage.groupList.columns.permission')"
+          min-width="220"
+        >
           <template #default="{ row }">
             <ZUserPosition v-for="p in row.permissions ?? []" :key="p" :position="[p]" />
           </template>
         </ElTableColumn>
-        <ElTableColumn label="Action">
-          <template #header>
-            <ElInput
-              v-model="search"
-              size="small"
-              :placeholder="t('manage.groupList.columns.search')"
-              :prefix-icon="Search"
-              @blur="handleSearch"
-              @keyup.enter="handleSearch"
-            />
-          </template>
+        <ElTableColumn label="操作" width="260" align="right" class-name="col-actions">
           <template #default="{ row }">
-            <ElButton type="primary" size="small" text bg @click="router.push(`/group/${row._id}`)">查看</ElButton>
-            <ElButton type="info" size="small" text bg disabled>重命名</ElButton>
-            <ElButton type="danger" size="small" text bg :disabled="submission" @click="remove(row._id)">删除</ElButton>
+            <ElButton class="yg2-action" size="small" @click="router.push(`/group/${row._id}`)">
+              查看
+            </ElButton>
+            <ElButton class="yg2-action yg2-action--info" size="small" disabled>重命名</ElButton>
+            <ElButton
+              class="yg2-action yg2-action--danger"
+              size="small"
+              :disabled="submission"
+              @click="remove(row._id)"
+            >
+              删除
+            </ElButton>
           </template>
         </ElTableColumn>
       </ElTable>

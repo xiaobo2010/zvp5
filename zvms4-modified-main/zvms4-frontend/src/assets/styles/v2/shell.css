@@ -46,10 +46,14 @@
   gap: var(--yg2-sp-2);
   height: 100dvh;
   padding: var(--yg2-sp-5) var(--yg2-sp-3) var(--yg2-sp-4);
-  border-right: 1px solid var(--yg2-line);
+  border-right: 1px solid var(--yg2-glass-chrome-stroke);
   background: var(--yg2-glass-chrome-fill);
   -webkit-backdrop-filter: blur(var(--yg2-glass-blur)) saturate(var(--yg2-glass-saturate));
   backdrop-filter: blur(var(--yg2-glass-blur)) saturate(var(--yg2-glass-saturate));
+  box-shadow:
+    var(--yg2-glass-chrome-shadow),
+    inset 0 1px 0 var(--yg2-glass-chrome-highlight),
+    inset -1px 0 0 color-mix(in srgb, #fff 32%, transparent);
 }
 
 .yg2-sidebar__brand {
@@ -133,6 +137,26 @@
   transition: padding 320ms var(--yg2-ease-out);
 }
 
+/* 玻璃斜向高光：给导航层一点「厚度」，不是纯半透明白 */
+.yg2-sidebar::before,
+.yg2-topbar::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(
+    155deg,
+    color-mix(in srgb, #fff 26%, transparent) 0%,
+    color-mix(in srgb, #fff 8%, transparent) 34%,
+    transparent 62%
+  );
+  opacity: 0.9;
+}
+
+.yg2-sidebar > * {
+  position: relative;
+}
+
 .yg2-sidebar__nav {
   display: flex;
   flex-direction: column;
@@ -150,6 +174,8 @@
 }
 
 .yg2-nav-group__title {
+  opacity: 0.72;
+  letter-spacing: 0.08em;
   padding: 0 var(--yg2-sp-2) var(--yg2-sp-2);
   font-size: 11px;
   font-weight: 500;
@@ -163,9 +189,10 @@
   align-items: center;
   gap: 10px;
   width: 100%;
-  height: 34px;
-  padding: 0 var(--yg2-sp-2);
-  border-radius: var(--yg2-r-8);
+  height: 38px;
+  padding: 0 10px;
+  border-radius: 10px;
+  margin-bottom: 2px;
   color: var(--yg2-text-secondary);
   font-size: 14px;
   text-align: left;
@@ -203,9 +230,10 @@
 }
 
 .yg2-nav-item.is-active {
-  background: var(--yg2-accent-soft);
+  background: color-mix(in srgb, var(--yg2-accent) 12%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--yg2-accent) 16%, transparent);
   color: var(--yg2-accent);
-  font-weight: 500;
+  font-weight: 600;
 }
 
 .yg2-nav-item.is-active .yg2-nav-item__icon {
@@ -277,6 +305,8 @@
 
 /* 选中态：底色交给滑块，item 自己只负责图标颜色，避免出现两个圆 */
 .yg2-app.is-rail .yg2-nav-item.is-active {
+  background: color-mix(in srgb, var(--yg2-accent) 12%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--yg2-accent) 16%, transparent);
   background: transparent;
   color: var(--yg2-accent);
   box-shadow: none;
@@ -338,10 +368,13 @@
   gap: var(--yg2-sp-3);
   height: var(--yg2-topbar-h);
   padding: 0 var(--yg2-sp-6);
-  border-bottom: 1px solid var(--yg2-line);
+  border-bottom: 1px solid var(--yg2-glass-chrome-stroke);
   background: var(--yg2-glass-chrome-fill);
-  -webkit-backdrop-filter: blur(var(--yg2-glass-blur)) saturate(var(--yg2-glass-saturate));
-  backdrop-filter: blur(var(--yg2-glass-blur)) saturate(var(--yg2-glass-saturate));
+  -webkit-backdrop-filter: blur(var(--yg2-glass-blur-sm)) saturate(var(--yg2-glass-saturate));
+  backdrop-filter: blur(var(--yg2-glass-blur-sm)) saturate(var(--yg2-glass-saturate));
+  box-shadow:
+    0 6px 20px color-mix(in srgb, #1f2d3d 6%, transparent),
+    inset 0 1px 0 var(--yg2-glass-chrome-highlight);
 }
 
 .yg2-topbar__menu {

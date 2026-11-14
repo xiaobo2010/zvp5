@@ -18,8 +18,8 @@
 
 .yg2-ambient__blob {
   position: absolute;
-  width: 70vmax;
-  height: 70vmax;
+  width: 76vmax;
+  height: 76vmax;
   border-radius: 50%;
   opacity: var(--yg2-ambient-opacity);
   will-change: transform;
@@ -27,8 +27,9 @@
 }
 
 .yg2-ambient__blob:nth-child(1) {
-  top: -34vmax;
-  left: -18vmax;
+  /* 往侧栏方向靠一点，玻璃背后才有颜色可透 */
+  top: -26vmax;
+  left: -12vmax;
   animation: yg2-drift-1 84s var(--yg2-ease-in-out) infinite alternate;
 }
 .yg2-ambient__blob:nth-child(2) {

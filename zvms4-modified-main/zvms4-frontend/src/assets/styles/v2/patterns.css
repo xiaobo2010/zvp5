@@ -16,7 +16,7 @@
   align-items: flex-end;
   justify-content: space-between;
   gap: var(--yg2-sp-4);
-  margin-bottom: var(--yg2-sp-6);
+  margin-bottom: var(--yg2-sp-4);
 }
 
 .yg2-page-header__eyebrow {
