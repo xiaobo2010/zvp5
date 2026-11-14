@@ -635,7 +635,7 @@ onUnmounted(() => {
                 <ZHexGrid
                   :size="64"
                   color="var(--yg-text-primary)"
-                  :opacity="0.055"
+                  :opacity="0.07"
                   drift
                   sweep
                 />

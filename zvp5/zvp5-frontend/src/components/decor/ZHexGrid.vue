@@ -224,24 +224,24 @@ onBeforeUnmount(() => {
   animation: z-hex-drift 96s linear infinite;
 }
 
-/* 自上而下的亮度扫过：mask 里保留一层基础亮度，亮带经过时抬到 100%，
-   离开后回落。图案本身始终可见，只是每个周期「先亮后暗」一次。 */
+/* 自上而下的亮度扫过：mask 保留一层基础亮度，亮带经过时抬到 100%，
+   离开后回落。亮带收窄并提高对比，暗/浅主题都表现为图案先变强再变弱。 */
 .z-hex-grid--sweep .z-hex-grid__layer {
   -webkit-mask-image: linear-gradient(
     to bottom,
-    rgba(0, 0, 0, 0.42) 0%,
-    rgba(0, 0, 0, 0.42) 36%,
+    rgba(0, 0, 0, 0.45) 0%,
+    rgba(0, 0, 0, 0.45) 40%,
     #000 50%,
-    rgba(0, 0, 0, 0.42) 64%,
-    rgba(0, 0, 0, 0.42) 100%
+    rgba(0, 0, 0, 0.45) 60%,
+    rgba(0, 0, 0, 0.45) 100%
   );
   mask-image: linear-gradient(
     to bottom,
-    rgba(0, 0, 0, 0.42) 0%,
-    rgba(0, 0, 0, 0.42) 36%,
+    rgba(0, 0, 0, 0.45) 0%,
+    rgba(0, 0, 0, 0.45) 40%,
     #000 50%,
-    rgba(0, 0, 0, 0.42) 64%,
-    rgba(0, 0, 0, 0.42) 100%
+    rgba(0, 0, 0, 0.45) 60%,
+    rgba(0, 0, 0, 0.45) 100%
   );
   -webkit-mask-size: 100% 280%;
   mask-size: 100% 280%;
@@ -255,29 +255,6 @@ onBeforeUnmount(() => {
   animation:
     z-hex-drift 96s linear infinite,
     z-hex-sweep 14s cubic-bezier(0.4, 0, 0.6, 1) infinite;
-}
-
-/* 浅色主题的网格线本身是深色：让亮带把线条「冲淡」而不是加深，
-   这样经过时画面变亮、离开后恢复深色，语义仍然是先亮后暗。 */
-@media (prefers-reduced-motion: no-preference) {
-  html[data-theme='light'] .z-hex-grid--sweep .z-hex-grid__layer {
-    -webkit-mask-image: linear-gradient(
-      to bottom,
-      #000 0%,
-      #000 36%,
-      rgba(0, 0, 0, 0.38) 50%,
-      #000 64%,
-      #000 100%
-    );
-    mask-image: linear-gradient(
-      to bottom,
-      #000 0%,
-      #000 36%,
-      rgba(0, 0, 0, 0.38) 50%,
-      #000 64%,
-      #000 100%
-    );
-  }
 }
 
 .z-hex-grid--flicker .z-hex-grid__svg {
