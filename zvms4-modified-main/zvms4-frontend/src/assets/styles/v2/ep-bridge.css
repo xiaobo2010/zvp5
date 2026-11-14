@@ -343,3 +343,33 @@ html[data-theme='dark'] {
   padding: 0 0 12px;
   border-bottom: 0;
 }
+
+
+/* ==========================================================================
+   义工类型标签与首页三环共用同一套类别色：
+   红=校内、绿=校外、蓝=时间（社会实践），全站一致，避免换个页面就认不出。
+   ========================================================================== */
+
+.el-button.mode-tag--on-campus {
+  --el-button-text-color: var(--yg2-cat-school);
+  --el-button-hover-text-color: var(--yg2-cat-school);
+  --el-button-bg-color: var(--yg2-cat-school-soft);
+  --el-button-hover-bg-color: color-mix(in srgb, var(--yg2-cat-school) 22%, transparent);
+  --el-button-border-color: transparent;
+}
+
+.el-button.mode-tag--off-campus {
+  --el-button-text-color: var(--yg2-cat-community);
+  --el-button-hover-text-color: var(--yg2-cat-community);
+  --el-button-bg-color: var(--yg2-cat-community-soft);
+  --el-button-hover-bg-color: color-mix(in srgb, var(--yg2-cat-community) 22%, transparent);
+  --el-button-border-color: transparent;
+}
+
+.el-button.mode-tag--social-practice {
+  --el-button-text-color: var(--yg2-cat-time);
+  --el-button-hover-text-color: var(--yg2-cat-time);
+  --el-button-bg-color: var(--yg2-cat-time-soft);
+  --el-button-hover-bg-color: color-mix(in srgb, var(--yg2-cat-time) 22%, transparent);
+  --el-button-border-color: transparent;
+}

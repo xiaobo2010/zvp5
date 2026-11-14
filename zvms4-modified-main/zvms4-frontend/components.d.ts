@@ -111,6 +111,7 @@ declare module 'vue' {
     'ZUserPosition 2': typeof import('./src/components/tags/ZUserPosition 2.vue')['default']
     ZUserTimeBars: typeof import('./src/components/activity/ZUserTimeBars.vue')['default']
     ZUserTimeJudge: typeof import('./src/components/activity/ZUserTimeJudge.vue')['default']
+    ZUserTimeRings: typeof import('./src/components/activity/ZUserTimeRings.vue')['default']
     ZVerticalNav: typeof import('./src/components/form/ZVerticalNav.vue')['default']
     'ZVerticalNav 2': typeof import('./src/components/form/ZVerticalNav 2.vue')['default']
   }

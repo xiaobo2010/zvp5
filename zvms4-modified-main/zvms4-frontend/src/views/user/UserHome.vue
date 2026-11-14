@@ -6,7 +6,7 @@ import { useHeaderStore } from '@/stores/header'
 import { useUserStore } from '@/stores/user'
 import ZUserGroup from '@/components/tags/ZUserGroup.vue'
 import ZUserPosition from '@/components/tags/ZUserPosition.vue'
-import ZUserTimeBars from '@/components/activity/ZUserTimeBars.vue'
+import ZUserTimeRings from '@/components/activity/ZUserTimeRings.vue'
 
 const header = useHeaderStore()
 const user = useUserStore()
@@ -149,7 +149,7 @@ watch(
         class="yg2-card yg2-home__card yg2-home__card--time"
         :class="{ 'is-blurred': user.shouldResetPassword }"
       >
-        <ZUserTimeBars :user="user._id" />
+        <ZUserTimeRings :user="user._id" />
       </section>
     </div>
   </div>

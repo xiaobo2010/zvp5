@@ -27,6 +27,14 @@
   --yg2-accent-soft: rgba(0, 113, 227, 0.1);
   --yg2-focus: rgba(0, 113, 227, 0.45);
 
+  /* ── 三类义工配色（全站统一：红=校内、绿=校外、蓝=时间）─────────── */
+  --yg2-cat-school: #ff2d55;
+  --yg2-cat-school-soft: rgba(255, 45, 85, 0.16);
+  --yg2-cat-community: #34c759;
+  --yg2-cat-community-soft: rgba(52, 199, 89, 0.16);
+  --yg2-cat-time: #0a84ff;
+  --yg2-cat-time-soft: rgba(10, 132, 255, 0.16);
+
   /* ── 数据暖色（只给志愿时长/贡献） ───────────────────────── */
   --yg2-amber: #ff9f0a;
   --yg2-amber-soft: rgba(255, 159, 10, 0.14);
@@ -113,6 +121,13 @@
   --yg2-surface: #1c1c1e;
   --yg2-surface-sunken: #2c2c2e;
   --yg2-surface-raised: #2c2c2e;
+  --yg2-cat-school: #ff375f;
+  --yg2-cat-school-soft: rgba(255, 55, 95, 0.22);
+  --yg2-cat-community: #30d158;
+  --yg2-cat-community-soft: rgba(48, 209, 88, 0.22);
+  --yg2-cat-time: #409cff;
+  --yg2-cat-time-soft: rgba(64, 156, 255, 0.22);
+
   --yg2-text: #f5f5f7;
   --yg2-text-secondary: #98989d;
   --yg2-text-tertiary: #8e8e93;

@@ -75,6 +75,7 @@ const typeText = computed(() => {
   <ElButtonGroup>
     <ZButtonTag
       v-if="type in types"
+      :class="`mode-tag mode-tag--${type}`"
       :size="size ?? 'small'"
       :type="types[type].color"
       :icon="types[type].icon"
