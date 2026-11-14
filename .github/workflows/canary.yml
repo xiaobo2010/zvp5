@@ -72,6 +72,14 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
       - name: Unit tests
+        # 单测必须跑在"无预览基址"的环境里：axios.spec 断言文件类请求由
+        # window.location.origin 推导，job 级的 canary VITE_* 会把它污染成 zvp 域。
+        env:
+          VITE_API_BASE: https://ci.invalid/api
+          VITE_API_RACE_BASE: https://race.ci.invalid/api
+          VITE_API_CONTENT_BASE: ""
+          VITE_STATIC_BASE: ""
+          VITE_PAGE_BASE: ""
         run: pnpm exec vitest run --reporter=dot
       - name: Lint
         run: pnpm run lint
