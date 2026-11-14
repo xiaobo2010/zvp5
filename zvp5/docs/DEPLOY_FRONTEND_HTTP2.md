@@ -72,7 +72,7 @@
 
 | 项 | 方法 | 结果 |
 |---|---|---|
-| 前端 443 可达性 | 后端 / 另一处主机 / OCI 三地 `curl --resolve ...:443:<FRONTEND_IP>` | 修复前 timeout → 修复后 `200`，`http_version=2` |
+| 前端 443 可达性 | 后端 / 另一处主机 / 另一处主机三处出口 `curl --resolve ...:443:<FRONTEND_IP>` | 修复前 timeout → 修复后 `200`，`http_version=2` |
 | DNS | 8.8.8.8（各处出口各自解析）+ DoH | 均为 `<FRONTEND_IP>` |
 | 首页 | `curl -A Mozilla/5.0 https://zvp.../` | `HTTP/2 200`，gzip 后 wire 795B |
 | 主 bundle | 带 `Accept-Encoding: gzip` | `HTTP/2 200`，`content-encoding: gzip`，168134B（原 445KB） |

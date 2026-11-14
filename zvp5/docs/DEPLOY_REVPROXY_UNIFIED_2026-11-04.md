@@ -88,7 +88,7 @@ real_ip_recursive on;
 验证（2026-11-04 23:28，zvp-backend `/var/log/nginx/access.log`）：
 
 ```
-<CLIENT_IP> - - [...] "GET /api/health HTTP/1.1" 200 38 "-" "Mozilla/5.0 realip-probe-"
+<PROXY_IP> - - [...] "GET /api/health HTTP/1.1" 200 38 "-" "Mozilla/5.0 realip-probe-"
 <CLIENT_IP> - - [...] "GET /api/v3/users/me/device HTTP/1.1" 200 151 ...
 ```
 
@@ -101,7 +101,7 @@ real_ip_recursive on;
 | 产物 API 基址 | `assets/*.js` 仅含 `https://zvp.xiaobopisces.top/api`，全量 grep `zvpapi` = 0 |
 | 页面 | `GET /` 200，index 引用 `index-aIh1pLpn.js` |
 | API 透传 | `/api/health` 200 `{"status":"ok"}`；`/api/system/maintenance` 200 |
-| 等价性 | POST `/api/users/login`、`/api/v3/users/me/device`、ssh ws 升级，直连 43 与走 前端反代返回码逐项一致（405 / 401 / 404） |
+| 等价性 | POST `/api/users/login`、`/api/v3/users/me/device`、ssh ws 升级，直连后端与走 前端反代返回码逐项一致（405 / 401 / 404） |
 | WebSocket | `/socket.io/?EIO=4&transport=polling` 200 |
 | 反代头 | 前端 `X-Forwarded-For $remote_addr` 3 处；后端 `real_ip` 生效 |
 | 静态资源 | `/assets/index-aIh1pLpn.js` 200，446611 bytes；`/sw.js`、`/manifest.webmanifest` 200 |
