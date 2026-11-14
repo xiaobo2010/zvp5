@@ -1,15 +1,13 @@
 <script setup lang="ts">
 import { RouterView, useRoute, useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user.ts'
-import { ref, watch, type Component } from 'vue'
+import { ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ElButton, ElSegmented, ElIcon } from 'element-plus'
-import { ArrowLeft, Setting, DataLine, Key, Connection, Folder, Grid } from '@element-plus/icons-vue'
+
 
 interface SegmentedTab {
   label: string
   value: string
-  icon: Component
 }
 
 const route = useRoute()
@@ -26,33 +24,27 @@ const current = ref('maintenance')
 const tabs = ref<SegmentedTab[]>([
   {
     label: 'Maintenance',
-    value: 'maintenance',
-    icon: Setting
+    value: 'maintenance'
   },
   {
     label: 'Database',
-    value: 'database',
-    icon: DataLine
+    value: 'database'
   },
   {
     label: 'Totp',
-    value: 'totp',
-    icon: Key
+    value: 'totp'
   },
   {
     label: 'Ssh',
-    value: 'ssh',
-    icon: Connection
+    value: 'ssh'
   },
   {
     label: 'Files',
-    value: 'files',
-    icon: Folder
+    value: 'files'
   },
   {
     label: 'Content',
-    value: 'dbContent',
-    icon: Grid
+    value: 'dbContent'
   },
 ])
 
@@ -77,20 +69,72 @@ watch(current, () => {
 </script>
 
 <template>
-  <div class="px-4 py-4">
-    <div class="flex items-center gap-3 mb-4">
-      <ElButton text bg :icon="ArrowLeft" @click="() => router.back()" />
-      <ElSegmented v-model="current" :options="tabs" class="flex-1 min-w-0 w-full">
-        <template #default="props">
-          <div class="flex flex-col items-center gap-2 p-2">
-            <ElIcon :size="18" class="mt-2">
-              <Component :is="(props.item as SegmentedTab).icon" />
-            </ElIcon>
-            {{ t(('server.tabs.' + (props.item as SegmentedTab).value) as string) }}
-          </div>
-        </template>
-      </ElSegmented>
-    </div>
+  <div class="yg2-page server-page">
+    <button class="server-back" type="button" @click="router.back()">
+      <span aria-hidden="true">‹</span> 返回
+    </button>
+
+    <header class="yg2-page-header">
+      <div>
+        <p class="yg2-page-header__eyebrow">服务器管理</p>
+        <h1 class="yg2-page-header__title">{{ t('server.tabs.' + current) }}</h1>
+      </div>
+    </header>
+
+    <nav class="yg2-segment server-tabs">
+      <button
+        v-for="item in tabs"
+        :key="item.value"
+        class="yg2-segment__item"
+        :class="{ 'is-active': current === item.value }"
+        type="button"
+        @click="current = item.value"
+      >
+        {{ t(('server.tabs.' + item.value) as string) }}
+      </button>
+    </nav>
+
     <RouterView />
   </div>
 </template>
+
+<style scoped>
+.server-page {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.server-back {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 32px;
+  padding: 0 12px 0 8px;
+  border: 0;
+  border-radius: var(--yg2-r-pill);
+  background: transparent;
+  color: var(--yg2-text-secondary);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.server-back:hover {
+  background: var(--yg2-surface-sunken);
+  color: var(--yg2-text);
+}
+
+.server-tabs {
+  align-self: flex-start;
+  max-width: 100%;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.server-tabs::-webkit-scrollbar {
+  display: none;
+}
+</style>

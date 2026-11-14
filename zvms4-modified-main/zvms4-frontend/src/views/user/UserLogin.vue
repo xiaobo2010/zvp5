@@ -1,11 +1,6 @@
 <script setup lang="ts">
-import { ref, watch, h } from 'vue'
-import {
-  ElButton,
-  ElMessageBox,
-  ElMessage,
-} from 'element-plus'
-import { ArrowRight } from '@element-plus/icons-vue'
+import { computed, ref, h } from 'vue'
+import { ElMessageBox, ElMessage } from 'element-plus'
 import { useUserStore } from '@/stores/user'
 import { useHeaderStore } from '@/stores/header'
 import { useRouter, useRoute } from 'vue-router'
@@ -23,7 +18,6 @@ const { t } = useI18n()
 
 const user = ref('')
 const password = ref<string>('')
-const loginfield = ref()
 const userStore = useUserStore()
 const router = useRouter()
 const route = useRoute()
@@ -200,151 +194,179 @@ async function reset_and_login(id: string, token: string) {
   })
 }
 
-watch(user, async () => {
-  await loginfield.value.validate()
-})
+// 提交按钮可用性：8 位学号 + 非空密码
+const canSubmit = computed(() => String(user.value).length === 8 && password.value !== '')
 </script>
 
 <template>
-  <div class="yg-login">
-    <section class="yg-login__card" aria-labelledby="yg-login-title">
-      <div class="yg-login__brand">
-        <span class="yg-login__logo">
+  <div class="yg2-login">
+    <section class="yg2-login__card" aria-labelledby="yg2-login-title">
+      <div class="yg2-login__brand">
+        <span class="yg2-login__mark">
           <img src="/favicon.ico" alt="" />
         </span>
-        <span class="yg-login__brand-name">义工平台</span>
+        <span class="yg2-login__brand-name">义工平台</span>
       </div>
 
-      <h1 id="yg-login-title" class="yg-login__title">{{ t('nav.login.pageTitle') }}</h1>
-      <p class="yg-login__subtitle">{{ t('nav.login.motto') }}</p>
+      <h1 id="yg2-login-title" class="yg2-login__title">欢迎回来</h1>
+      <p class="yg2-login__subtitle">{{ t('nav.login.motto') }}</p>
 
-      <ElForm ref="loginfield" label-position="top" class="yg-login__form">
-        <ElFormItem :label="t('nav.login.form.account')" prop="id">
-          <ElInput
-            v-model.number="user"
-            :minlength="8"
-            :maxlength="8"
-            clearable
-            type="number"
-            class="yg-login__input w-full"
+      <form class="yg2-login__form" novalidate @submit.prevent="login">
+        <label class="yg2-field">
+          <span class="yg2-field__label">{{ t('nav.login.form.account') }}</span>
+          <input
+            v-model="user"
+            class="yg2-input"
+            type="text"
+            inputmode="numeric"
+            autocomplete="username"
+            maxlength="8"
+            placeholder="8 位学号"
           />
-        </ElFormItem>
-        <ElFormItem :label="t('nav.login.form.password')" prop="password">
-          <ElInput
-            type="password"
+        </label>
+
+        <label class="yg2-field">
+          <span class="yg2-field__label">{{ t('nav.login.form.password') }}</span>
+          <input
             v-model="password"
-            clearable
-            show-password
-            class="yg-login__input w-full"
-            @keyup.enter="login"
+            class="yg2-input"
+            type="password"
+            autocomplete="current-password"
+            placeholder="密码"
           />
-        </ElFormItem>
-      </ElForm>
+        </label>
 
-      <div class="yg-login__actions">
-        <ElButton
-          type="primary"
-          size="large"
-          class="w-full"
-          @click="login"
-          :icon="ArrowRight"
-          :disabled="password === '' || String(user).length !== 8"
-          :loading="loading"
+        <button
+          class="yg2-btn yg2-btn--primary yg2-btn--lg yg2-login__submit"
+          type="submit"
+          :disabled="!canSubmit || loading"
         >
-          {{ t('nav.login.actions.login') }}
-        </ElButton>
-      </div>
+          <span v-if="!loading">{{ t('nav.login.actions.login') }}</span>
+          <span v-else class="yg2-login__spinner" aria-hidden="true" />
+        </button>
+      </form>
+
+      <p class="yg2-login__hint">首次登录密码为学号，登录后请立即修改</p>
     </section>
   </div>
 </template>
 
 <style scoped>
-.yg-login {
-  display: flex;
-  align-items: center;
-  justify-content: center;
+.yg2-login {
+  display: grid;
+  place-items: center;
   min-height: 100%;
-  padding: var(--yg-space-6) 0;
+  padding: 32px 20px 72px;
 }
 
-/* 登录卡：白底实色 + G2 2xl 圆角 + 柔和双层阴影（准则 2.4 / 2.5） */
-.yg-login__card {
+/* 登录卡：实色哑光面 + 28px 圆角 + 单层柔和投影 */
+.yg2-login__card {
   width: 100%;
-  max-width: 400px;
-  padding: var(--yg-space-8);
-  background-color: var(--yg-bg-surface);
-  border: calc(var(--yg-space-1) / 4) solid var(--yg-border-subtle);
-  border-radius: var(--yg-radius-2xl);
-  box-shadow: var(--yg-shadow-lg);
+  max-width: 420px;
+  padding: 40px 36px 32px;
+  border: 1px solid var(--yg2-line);
+  border-radius: var(--yg2-r-32);
+  background: var(--yg2-surface);
+  box-shadow: var(--yg2-shadow-raised);
 }
 
-.yg-login__brand {
+.yg2-login__brand {
   display: flex;
   align-items: center;
-  gap: var(--yg-space-3);
-  margin-bottom: var(--yg-space-6);
+  gap: 10px;
+  margin-bottom: 28px;
 }
 
-.yg-login__logo {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: var(--yg-space-9);
-  height: var(--yg-space-9);
-  flex-shrink: 0;
-  border-radius: var(--yg-radius-lg);
+.yg2-login__mark {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
   overflow: hidden;
+  border-radius: 11px;
+  background: var(--yg2-surface-sunken);
 }
 
-.yg-login__logo img {
+.yg2-login__mark img {
   width: 100%;
   height: 100%;
-  border-radius: inherit;
   object-fit: cover;
 }
 
-.yg-login__brand-name {
-  font-size: var(--yg-font-size-sm);
-  font-weight: var(--yg-font-weight-medium);
-  color: var(--yg-text-tertiary);
+.yg2-login__brand-name {
+  font-size: 13px;
+  font-weight: 600;
   letter-spacing: 0.08em;
+  color: var(--yg2-text-secondary);
 }
 
-.yg-login__title {
+.yg2-login__title {
   margin: 0;
-  font-size: var(--yg-font-size-3xl);
-  font-weight: var(--yg-font-weight-semibold);
-  line-height: var(--yg-line-height-tight);
-  color: var(--yg-text-primary);
+  font-size: 30px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+  color: var(--yg2-text);
 }
 
-.yg-login__subtitle {
-  margin: var(--yg-space-2) 0 0;
-  font-size: var(--yg-font-size-sm);
-  color: var(--yg-text-tertiary);
+.yg2-login__subtitle {
+  margin: 8px 0 0;
+  font-size: 14px;
+  letter-spacing: 0.04em;
+  color: var(--yg2-text-tertiary);
 }
 
-.yg-login__form {
-  margin-top: var(--yg-space-6);
+.yg2-login__form {
+  display: grid;
+  gap: 18px;
+  margin-top: 28px;
 }
 
-.yg-login__form :deep(.el-form-item) {
-  margin-bottom: var(--yg-space-5);
+.yg2-login__submit {
+  width: 100%;
+  margin-top: 6px;
 }
 
-/* 登录控件用大号档（44px），移动端触控目标达标 */
-.yg-login__input {
-  --el-input-height: var(--yg-control-height-lg);
+.yg2-login__hint {
+  margin: 22px 0 0;
+  font-size: 12px;
+  text-align: center;
+  color: var(--yg2-text-tertiary);
 }
 
-.yg-login__actions {
-  margin-top: var(--yg-space-6);
+.yg2-login__spinner {
+  width: 18px;
+  height: 18px;
+  border: 2px solid rgba(255, 255, 255, 0.35);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: yg2-login-spin 0.8s linear infinite;
 }
 
-@supports (corner-shape: squircle) {
-  .yg-login__card,
-  .yg-login__logo {
-    corner-shape: squircle;
+@keyframes yg2-login-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .yg2-login__spinner {
+    animation-duration: 2s;
+  }
+}
+
+@media (max-width: 640px) {
+  .yg2-login {
+    padding: 16px 14px 48px;
+  }
+
+  .yg2-login__card {
+    padding: 30px 22px 24px;
+    border-radius: var(--yg2-r-26);
+  }
+
+  .yg2-login__title {
+    font-size: 26px;
   }
 }
 </style>

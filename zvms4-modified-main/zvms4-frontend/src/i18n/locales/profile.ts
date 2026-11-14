@@ -1,5 +1,5 @@
 export const zhCN = {
-  pageTitle: '我的',
+  pageTitle: '个人资料',
   infoTitle: '个人信息',
   labels: {
     name: '姓名',

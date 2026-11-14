@@ -1,0 +1,154 @@
+/* ==========================================================================
+   v2 设计令牌 · 色彩 / 字体 / 圆角 / 间距 / 动效 / 布局
+   前缀暂用 --yg2-，避免与 v1 的 --yg-* 在双跑期互相覆盖；迁移收尾时统一改名。
+   ========================================================================== */
+
+:root {
+  color-scheme: light;
+
+  /* ── 中性色 ─────────────────────────────────────────────── */
+  --yg2-bg: #f5f5f7;
+  --yg2-surface: #ffffff;
+  --yg2-surface-sunken: #ededf0;
+  --yg2-surface-raised: #ffffff;
+  --yg2-text: #1d1d1f;
+  --yg2-text-secondary: #6e6e73;
+  /* 对 #f5f5f7 / #fff 均 ≥4.5:1，正文级小字可用 */
+  --yg2-text-tertiary: #6f6f76;
+  --yg2-text-on-accent: #ffffff;
+  --yg2-line: rgba(0, 0, 0, 0.08);
+  --yg2-line-strong: rgba(0, 0, 0, 0.14);
+  --yg2-sep: rgba(60, 60, 67, 0.1);
+
+  /* ── 强调色 ─────────────────────────────────────────────── */
+  --yg2-accent: #0071e3;
+  --yg2-accent-hover: #0077ed;
+  --yg2-accent-press: #006edb;
+  --yg2-accent-soft: rgba(0, 113, 227, 0.1);
+  --yg2-focus: rgba(0, 113, 227, 0.45);
+
+  /* ── 数据暖色（只给志愿时长/贡献） ───────────────────────── */
+  --yg2-amber: #ff9f0a;
+  --yg2-amber-soft: rgba(255, 159, 10, 0.14);
+  --yg2-amber-bar: rgba(255, 159, 10, 0.38);
+
+  /* ── 语义色 ─────────────────────────────────────────────── */
+  --yg2-success: #34c759;
+  --yg2-success-soft: rgba(52, 199, 89, 0.14);
+  --yg2-warning: #ff9f0a;
+  --yg2-danger: #ff3b30;
+  --yg2-danger-soft: rgba(255, 59, 48, 0.1);
+
+  /* ── 环境光 ─────────────────────────────────────────────── */
+  --yg2-ambient-1: #bfe0ff;
+  --yg2-ambient-2: #ffe1bd;
+  --yg2-ambient-3: #e6e2ff;
+  --yg2-ambient-opacity: 0.72;
+
+  /* ── 玻璃材质 ───────────────────────────────────────────── */
+  --yg2-glass-chrome-fill: rgba(255, 255, 255, 0.5);
+  --yg2-glass-chrome-stroke: rgba(255, 255, 255, 0.6);
+  --yg2-glass-control-fill: rgba(255, 255, 255, 0.66);
+  --yg2-glass-overlay-fill: rgba(255, 255, 255, 0.82);
+  --yg2-glass-highlight: rgba(255, 255, 255, 0.75);
+  --yg2-glass-blur: 28px;
+  --yg2-glass-blur-sm: 20px;
+  --yg2-glass-saturate: 180%;
+  --yg2-glass-inner: inset 0 1px 0 var(--yg2-glass-highlight), inset 0 -1px 0 rgba(0, 0, 0, 0.04);
+
+  /* ── 阴影 ───────────────────────────────────────────────── */
+  --yg2-shadow-ambient: 0 1px 2px rgba(0, 0, 0, 0.04), 0 8px 24px -12px rgba(0, 0, 0, 0.1);
+  --yg2-shadow-raised: 0 2px 6px rgba(0, 0, 0, 0.05), 0 20px 48px -24px rgba(0, 0, 0, 0.18);
+  --yg2-shadow-float: 0 12px 40px -8px rgba(0, 0, 0, 0.18), 0 2px 8px rgba(0, 0, 0, 0.06);
+
+  /* ── 字体 ───────────────────────────────────────────────── */
+  --yg2-font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display",
+    "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", "Helvetica Neue", Arial, sans-serif;
+  --yg2-font-mono: "SF Mono", ui-monospace, "JetBrains Mono", Menlo, Consolas, monospace;
+
+  /* ── 圆角（同心规则：子 = 父 − 内边距） ──────────────────── */
+  --yg2-r-8: 8px;
+  --yg2-r-12: 12px;
+  --yg2-r-16: 16px;
+  --yg2-r-20: 20px;
+  --yg2-r-26: 26px;
+  --yg2-r-32: 32px;
+  --yg2-r-pill: 999px;
+
+  /* ── 间距（4pt 基准） ───────────────────────────────────── */
+  --yg2-sp-1: 4px;
+  --yg2-sp-2: 8px;
+  --yg2-sp-3: 12px;
+  --yg2-sp-4: 16px;
+  --yg2-sp-5: 20px;
+  --yg2-sp-6: 24px;
+  --yg2-sp-8: 32px;
+  --yg2-sp-10: 40px;
+  --yg2-sp-12: 48px;
+  --yg2-sp-16: 64px;
+  --yg2-sp-20: 80px;
+  --yg2-sp-24: 96px;
+
+  /* ── 动效 ───────────────────────────────────────────────── */
+  --yg2-dur-1: 120ms;
+  --yg2-dur-2: 220ms;
+  --yg2-dur-3: 360ms;
+  --yg2-dur-4: 560ms;
+  --yg2-ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --yg2-ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* ── 布局 ───────────────────────────────────────────────── */
+  --yg2-sidebar-w: 248px;
+  --yg2-sidebar-rail: 76px;
+  --yg2-topbar-h: 64px;
+  --yg2-content-max: 1160px;
+  --yg2-gutter: 40px;
+  --yg2-gutter-sm: 24px;
+}
+
+[data-theme="dark"] {
+  color-scheme: dark;
+
+  --yg2-bg: #000000;
+  --yg2-surface: #1c1c1e;
+  --yg2-surface-sunken: #2c2c2e;
+  --yg2-surface-raised: #2c2c2e;
+  --yg2-text: #f5f5f7;
+  --yg2-text-secondary: #98989d;
+  --yg2-text-tertiary: #8e8e93;
+  --yg2-line: rgba(255, 255, 255, 0.1);
+  --yg2-line-strong: rgba(255, 255, 255, 0.18);
+  --yg2-sep: rgba(255, 255, 255, 0.08);
+
+  --yg2-accent: #0a84ff;
+  --yg2-accent-hover: #1a8fff;
+  --yg2-accent-press: #0077ed;
+  --yg2-accent-soft: rgba(10, 132, 255, 0.16);
+  --yg2-focus: rgba(10, 132, 255, 0.5);
+
+  --yg2-amber: #ff9f0a;
+  --yg2-amber-soft: rgba(255, 159, 10, 0.16);
+  --yg2-amber-bar: rgba(255, 159, 10, 0.42);
+
+  --yg2-success: #30d158;
+  --yg2-success-soft: rgba(48, 209, 88, 0.16);
+  --yg2-warning: #ff9f0a;
+  --yg2-danger: #ff453a;
+  --yg2-danger-soft: rgba(255, 69, 58, 0.16);
+
+  --yg2-ambient-1: #0a2038;
+  --yg2-ambient-2: #2a1a08;
+  --yg2-ambient-3: #151030;
+  --yg2-ambient-opacity: 0.5;
+
+  --yg2-glass-chrome-fill: rgba(28, 28, 30, 0.55);
+  --yg2-glass-chrome-stroke: rgba(255, 255, 255, 0.1);
+  --yg2-glass-control-fill: rgba(44, 44, 46, 0.6);
+  --yg2-glass-overlay-fill: rgba(44, 44, 46, 0.85);
+  --yg2-glass-highlight: rgba(255, 255, 255, 0.14);
+  --yg2-glass-inner: inset 0 1px 0 var(--yg2-glass-highlight), inset 0 -1px 0 rgba(255, 255, 255, 0.03);
+
+  --yg2-shadow-ambient: 0 1px 2px rgba(0, 0, 0, 0.5), 0 8px 24px -12px rgba(0, 0, 0, 0.6);
+  --yg2-shadow-raised: 0 2px 6px rgba(0, 0, 0, 0.5), 0 20px 48px -24px rgba(0, 0, 0, 0.7);
+  --yg2-shadow-float: 0 12px 40px -8px rgba(0, 0, 0, 0.7), 0 2px 8px rgba(0, 0, 0, 0.5);
+}

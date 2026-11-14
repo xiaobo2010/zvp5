@@ -1,19 +1,8 @@
 <script setup lang="ts">
 import { useRoute, useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user.ts'
-import { ref, watch, type Component } from 'vue'
+import { ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ElPageHeader, ElSegmented, ElIcon } from 'element-plus'
-import {
-  ArrowLeft,
-  ChatLineRound,
-  Coin,
-  Cpu,
-  DataLine,
-  Key,
-  Odometer,
-  Tickets
-} from '@element-plus/icons-vue'
 import ZAiChat from '@/components/ai/ZAiChat.vue'
 import ZAiQuotaPanel from '@/components/ai/ZAiQuotaPanel.vue'
 import ZAiKeysAdmin from '@/components/ai/ZAiKeysAdmin.vue'
@@ -25,7 +14,6 @@ import ZAiLogsAdmin from '@/components/ai/ZAiLogsAdmin.vue'
 interface SegmentedTab {
   label: string
   value: string
-  icon: Component
 }
 
 const VALID_CURRENT = ['chat', 'quota', 'keys', 'engines', 'quota-admin', 'health', 'logs']
@@ -63,22 +51,20 @@ const current = ref(
 const tabs = ref<SegmentedTab[]>([
   {
     label: 'chat',
-    value: 'chat',
-    icon: ChatLineRound
+    value: 'chat'
   },
   {
     label: 'quota',
-    value: 'quota',
-    icon: Coin
+    value: 'quota'
   }
 ])
 
 if (isAdmin) {
-  tabs.value.push({ label: 'keys', value: 'keys', icon: Key })
-  tabs.value.push({ label: 'engines', value: 'engines', icon: Cpu })
-  tabs.value.push({ label: 'quota-admin', value: 'quota-admin', icon: DataLine })
-  tabs.value.push({ label: 'health', value: 'health', icon: Odometer })
-  tabs.value.push({ label: 'logs', value: 'logs', icon: Tickets })
+  tabs.value.push({ label: 'keys', value: 'keys' })
+  tabs.value.push({ label: 'engines', value: 'engines' })
+  tabs.value.push({ label: 'quota-admin', value: 'quota-admin' })
+  tabs.value.push({ label: 'health', value: 'health' })
+  tabs.value.push({ label: 'logs', value: 'logs' })
 }
 
 watch(current, () => {
@@ -99,28 +85,32 @@ watch(
 </script>
 
 <template>
-  <div class="yg-ai-home">
-    <ElPageHeader :icon="ArrowLeft" @back="() => router.back()" class="yg-ai-home__header">
-      <template #content>
-        {{ t('ai.tabs.' + current) }}
-      </template>
-    </ElPageHeader>
+  <div class="yg2-page ai-page">
+    <button class="ai-back" type="button" @click="router.back()">
+      <span aria-hidden="true">‹</span> 返回
+    </button>
 
-    <!-- 标签页：横向分段控件（准则 4.2.12 / 4.3.5） -->
-    <div class="yg-ai-home__tabs">
-      <ElSegmented v-model="current" :options="tabs">
-        <template #default="props">
-          <div class="flex items-center gap-2 px-2">
-            <ElIcon :size="16">
-              <Component :is="(props.item as SegmentedTab).icon" />
-            </ElIcon>
-            {{ t('ai.tabs.' + (props.item as SegmentedTab).value) }}
-          </div>
-        </template>
-      </ElSegmented>
-    </div>
+    <header class="yg2-page-header">
+      <div>
+        <p class="yg2-page-header__eyebrow">AI 网关</p>
+        <h1 class="yg2-page-header__title">{{ t('ai.tabs.' + current) }}</h1>
+      </div>
+    </header>
 
-    <div class="yg-ai-home__panel">
+    <nav class="yg2-segment ai-tabs">
+      <button
+        v-for="item in tabs"
+        :key="item.value"
+        class="yg2-segment__item"
+        :class="{ 'is-active': current === item.value }"
+        type="button"
+        @click="current = item.value"
+      >
+        {{ t('ai.tabs.' + item.value) }}
+      </button>
+    </nav>
+
+    <div class="ai-page__panel">
       <ZAiChat v-if="current === 'chat'" />
       <ZAiQuotaPanel v-else-if="current === 'quota'" />
       <ZAiKeysAdmin v-else-if="current === 'keys'" />
@@ -133,17 +123,50 @@ watch(
 </template>
 
 <style scoped>
-.yg-ai-home {
+.ai-page {
   display: flex;
   flex-direction: column;
-  gap: var(--yg-space-4);
+  gap: 16px;
+  min-height: calc(100dvh - var(--yg2-topbar-h) - 96px);
 }
 
-.yg-ai-home__tabs {
+.ai-back {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 32px;
+  padding: 0 12px 0 8px;
+  border: 0;
+  border-radius: var(--yg2-r-pill);
+  background: transparent;
+  color: var(--yg2-text-secondary);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.ai-back:hover {
+  background: var(--yg2-surface-sunken);
+  color: var(--yg2-text);
+}
+
+.ai-tabs {
+  align-self: flex-start;
+  max-width: 100%;
   overflow-x: auto;
+  scrollbar-width: none;
 }
 
-.yg-ai-home__panel {
+.ai-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.ai-page__panel {
   min-width: 0;
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
 }
 </style>

@@ -2,11 +2,10 @@
 import ZActivityMember from '@/components/activity/ZActivityMember.vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user.ts'
-import { computed, ref, watch, type Component } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ElPageHeader, ElSegmented, ElLoading, ElIcon, ElButton, ElTag, ElMessageBox, ElNotification, ElTooltip, ElDialog, ElInput, ElAlert } from 'element-plus'
+import { ElLoading, ElButton, ElMessageBox, ElNotification, ElDialog, ElInput, ElAlert } from 'element-plus'
 import { ZActivityList } from '@/components'
-import { ArrowLeft, Edit } from '@element-plus/icons-vue'
 import type { User } from '@/../types'
 import api from '@/api'
 import dayjs from '@/plugins/dayjs'
@@ -22,13 +21,6 @@ interface UserWithBan extends User {
   ban_reason?: string | null
   ban_permanent?: boolean
   ban_until?: string | null
-}
-
-interface SegmentedTab {
-  label: string
-  value: string
-  icon: Component
-  display?: boolean
 }
 
 const route = useRoute()
@@ -58,6 +50,8 @@ async function getUser() {
 }
 
 const isSelf = computed(() => !!userStore._id && userStore._id === id.value)
+const isAdmin = computed(() => userStore.position.includes('admin'))
+const initials = computed(() => (user.value?.name || '').slice(-2) || '?')
 const banSelfBlocked = computed(() => isSelf.value && !user.value?.banned)
 
 // 封禁弹窗:管理员封禁是永久动作且需要写原因,用页面内小弹窗替代 ElMessageBox.confirm,
@@ -172,30 +166,12 @@ const curPage = route.params.action?.toString()
 
 const current = ref(curPage && curPage !== '' ? curPage : 'info')
 
-const tabs = ref<SegmentedTab[]>(
+const tabs = ref<{ value: string; display?: boolean }[]>(
   [
-    {
-      label: 'Info',
-      value: 'info',
-      icon: Info
-    },
-    {
-      label: 'Activity',
-      value: 'activity',
-      icon: ViewList
-    },
-    {
-      label: 'Modify',
-      value: 'modify',
-      icon: Edit,
-      display: userStore.position.includes('admin')
-    },
-    {
-      label: 'Logs',
-      value: 'logs',
-      icon: Log,
-      display: userStore.position.includes('admin')
-    }
+    { value: 'info' },
+    { value: 'activity' },
+    { value: 'modify', display: userStore.position.includes('admin') },
+    { value: 'logs', display: userStore.position.includes('admin') }
   ].filter((x) => x.display ?? true)
 )
 
@@ -214,51 +190,62 @@ watch(
 </script>
 
 <template>
-  <div class="px-6 py-4">
-    <ElPageHeader v-if="id" :icon="ArrowLeft" @back="router.back()" class="py-2">
-      <template #content>
-        {{ user?.name }}
-        <ElTag v-if="user?.banned" type="danger" class="ml-2">
-          {{ t('manage.personalPanel.bannedTag') }}
-        </ElTag>
-      </template>
-      <template #extra>
-        <ElSegmented v-model="current" :options="tabs">
-          <template #default="props">
-            <div class="flex flex-col items-center gap-2 p-2">
-              <ElIcon :size="18" class="mt-2">
-                <Component :is="(props.item as SegmentedTab).icon" />
-              </ElIcon>
-              {{ t(('manage.personalPanel.tabs.' + (props.item as SegmentedTab).value) as string) }}
-            </div>
-          </template>
-        </ElSegmented>
-        <ElTooltip
-          v-if="userStore.position.includes('admin') && user"
-          :content="t('manage.personalPanel.banSelfForbidden')"
-          :disabled="!banSelfBlocked"
-          placement="bottom"
+  <div v-if="id" class="yg2-page user-page">
+    <button class="user-back" type="button" @click="router.back()">
+      <span aria-hidden="true">‹</span> 返回
+    </button>
+
+    <header class="yg2-page-header user-header">
+      <div class="user-id">
+        <div class="user-avatar">{{ initials }}</div>
+        <div>
+          <h1 class="yg2-page-header__title user-name">
+            {{ user?.name || '…' }}
+            <span v-if="user?.banned" class="yg2-badge yg2-badge--danger">
+              {{ t('manage.personalPanel.bannedTag') }}
+            </span>
+          </h1>
+          <p class="yg2-page-header__subtitle">
+            {{ user?.id }} · {{ user?.class_id || t('profile.noClass') }}
+          </p>
+        </div>
+      </div>
+      <div class="yg2-page-header__actions">
+        <button
+          v-if="isAdmin && user"
+          class="yg2-btn yg2-btn--danger yg2-btn--sm"
+          type="button"
+          :disabled="banSelfBlocked"
+          :title="banSelfBlocked ? t('manage.personalPanel.banSelfForbidden') : ''"
+          @click="toggleBanned"
         >
-          <span class="ml-4 inline-flex">
-            <ElButton type="danger" text bg :disabled="banSelfBlocked" @click="toggleBanned">
-              {{ user.banned ? t('manage.personalPanel.unban') : t('manage.personalPanel.ban') }}
-            </ElButton>
-          </span>
-        </ElTooltip>
-        <ElTooltip
-          v-if="userStore.position.includes('admin') && user"
-          :content="t('manage.personalPanel.deleteSelfForbidden')"
-          :disabled="!isSelf"
-          placement="bottom"
+          {{ user.banned ? t('manage.personalPanel.unban') : t('manage.personalPanel.ban') }}
+        </button>
+        <button
+          v-if="isAdmin && user"
+          class="yg2-btn yg2-btn--secondary yg2-btn--sm"
+          type="button"
+          :disabled="isSelf"
+          :title="isSelf ? t('manage.personalPanel.deleteSelfForbidden') : ''"
+          @click="deleteUser"
         >
-          <span class="ml-2 inline-flex">
-            <ElButton type="danger" text bg :disabled="isSelf" @click="deleteUser">
-              {{ t('manage.groupDetails.userList.columns.remove') }}
-            </ElButton>
-          </span>
-        </ElTooltip>
-      </template>
-    </ElPageHeader>
+          {{ t('manage.groupDetails.userList.columns.remove') }}
+        </button>
+      </div>
+    </header>
+
+    <nav class="yg2-segment user-tabs">
+      <button
+        v-for="tab in tabs"
+        :key="tab.value"
+        class="yg2-segment__item"
+        :class="{ 'is-active': current === tab.value }"
+        type="button"
+        @click="current = tab.value"
+      >
+        {{ t(('manage.personalPanel.tabs.' + tab.value) as string) }}
+      </button>
+    </nav>
     <ElAlert
       v-if="user?.banned"
       type="error"
@@ -274,7 +261,7 @@ watch(
       <ZActivityMember :id="id" mode="card" :person="user ?? undefined" />
     </div>
     <div v-else-if="user && current === 'activity'">
-      <ZActivityList :perspective="id" role="mine" :key="id" />
+      <ZActivityList :perspective="id" role="mine" :key="id" embed />
     </div>
     <div v-else-if="user && current === 'modify'">
       <ZUserModification :id="id" mode="modify" cid="" />
@@ -314,3 +301,61 @@ watch(
     </ElDialog>
   </div>
 </template>
+
+<style scoped>
+.user-page {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.user-back {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 32px;
+  padding: 0 12px 0 8px;
+  border: 0;
+  border-radius: var(--yg2-r-pill);
+  background: transparent;
+  color: var(--yg2-text-secondary);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.user-back:hover {
+  background: var(--yg2-surface-sunken);
+  color: var(--yg2-text);
+}
+
+.user-id {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.user-avatar {
+  display: grid;
+  place-items: center;
+  width: 64px;
+  height: 64px;
+  border-radius: var(--yg2-r-pill);
+  background: linear-gradient(160deg, rgba(0, 113, 227, 0.16), rgba(0, 113, 227, 0.04));
+  color: var(--yg2-accent);
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.user-name {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.user-tabs {
+  align-self: flex-start;
+}
+</style>

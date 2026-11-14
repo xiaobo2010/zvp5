@@ -1,5 +1,13 @@
 <script setup lang="ts">
-import { ArrowDown, User, SwitchButton, CircleCloseFilled } from '@element-plus/icons-vue'
+import {
+  ArrowDown,
+  User,
+  SwitchButton,
+  CircleCloseFilled,
+  HomeFilled,
+  Calendar,
+  Avatar
+} from '@element-plus/icons-vue'
 import {
   ElIcon,
   ElButton,
@@ -12,7 +20,9 @@ import { RouterView } from 'vue-router'
 import { useUserStore } from '@/stores/user'
 import { useRouter, useRoute } from 'vue-router'
 import Password from '@/icons/MaterialSymbolsPasswordRounded.vue'
-import UserNav from '@/views/user/UserNav.vue'
+import AmbientField from '@/ui/shell/AmbientField.vue'
+import AppSidebar from '@/ui/shell/AppSidebar.vue'
+import AppTopbar from '@/ui/shell/AppTopbar.vue'
 import { useHeaderStore } from './stores/header'
 import { useWindowSize, useDark, useOnline, usePreferredDark } from '@vueuse/core'
 import { useI18n } from 'vue-i18n'
@@ -327,18 +337,71 @@ watch(
 
 locale.value = 'zh-CN'
 
-const { width, height } = useWindowSize()
+const { width } = useWindowSize()
 
-// 竖屏（窄高比）时 UserNav 自带底部悬浮药丸导航，App 外壳只需给底部 dock 让位；
-// 横屏时 UserNav 走左侧玻璃栏。折叠/抽屉状态已随旧侧边栏一并移除。
-const verticalMode = ref<boolean>(width.value < height.value * 1.2)
+// 侧边栏形态：>1024 可手动收起；769–1024 自动收为图标栏；≤768 变成抽屉。
+const rail = ref(false)
+const drawerOpen = ref(false)
 
 watch(
   () => width.value,
   (w) => {
-    verticalMode.value = w < height.value * 1.2
-  }
+    rail.value = w > 768 && w <= 1024
+    if (w <= 768) {
+      drawerOpen.value = false
+    }
+  },
+  { immediate: true }
 )
+
+function toggleRail() {
+  rail.value = !rail.value
+}
+
+// headerStore.header 形如「首页 - 义工平台」，顶栏只显示前半段。
+const pageTitle = computed(() => {
+  const full = headerStore.header
+  const suffix = ` - ${headerStore.base}`
+  return full.endsWith(suffix) ? full.slice(0, -suffix.length) : full
+})
+
+// 光场按板块换色相，结构不变。
+const ambientTone = computed(() => {
+  const path = route.path
+  if (path.startsWith('/ai')) return 'ai'
+  if (path.startsWith('/group')) return 'groups'
+  if (path.startsWith('/manage') || path.startsWith('/server')) return 'manage'
+  return 'activities'
+})
+
+function toggleTheme() {
+  dark.value = !effectiveDark.value
+}
+
+// 移动端底栏前三个入口，第四个是抽屉。
+const mobileTabs = [
+  {
+    key: 'home',
+    labelKey: 'nav.home',
+    icon: HomeFilled,
+    judge: (path: string) => path === '/user',
+    action: () => router.push('/user')
+  },
+  {
+    key: 'activity',
+    labelKey: 'nav.activityShort',
+    icon: Calendar,
+    judge: (path: string) => path.startsWith('/activit'),
+    action: () => router.push('/activities/mine')
+  },
+  {
+    key: 'profile',
+    labelKey: 'nav.profile',
+    icon: Avatar,
+    judge: (path: string) => path.startsWith('/me'),
+    action: () => router.push('/me')
+  }
+]
 
 const locales: Record<
   (typeof locale)['value'],
@@ -464,69 +527,136 @@ onMounted(async () => {
             </p>
           </div>
         </div>
-        <div class="yg-layout yg-layout--app">
-          <UserNav v-if="userStore.isLogin" />
-          <div class="yg-layout__main">
-            <header class="yg-layout__topbar yg-topbar">
-              <div class="yg-topbar__left">
-                <img
-                  v-if="verticalMode"
-                  class="yg-topbar__logo"
-                  src="/favicon.ico"
-                  alt="favicon"
-                />
-                <span
-                  class="yg-topbar__title"
-                  @dblclick="router.push(userStore.isLogin ? '/user' : '/user/login')"
+        <div
+          class="yg2-app"
+          :class="{
+            'is-rail': rail,
+            'is-drawer-open': drawerOpen,
+            'is-plain': !userStore.isLogin
+          }"
+        >
+          <AmbientField :tone="ambientTone" />
+          <AppSidebar
+            v-if="userStore.isLogin"
+            :open="drawerOpen"
+            @toggle-rail="toggleRail"
+            @close="drawerOpen = false"
+          />
+          <div class="yg2-app__main">
+            <AppTopbar
+              v-if="userStore.isLogin"
+              :title="pageTitle"
+              @open-drawer="drawerOpen = true"
+            >
+              <template #actions>
+                <button
+                  type="button"
+                  class="yg2-icon-btn"
+                  :aria-label="
+                    effectiveDark ? t('nav.theme.light', '切换到浅色模式') : t('nav.theme.dark', '切换到深色模式')
+                  "
+                  @click="toggleTheme"
                 >
-                  {{ headerStore.header }}
-                </span>
-              </div>
-              <div class="yg-topbar__right" v-if="userStore.isLogin">
-                <div class="yg-user-chip">
-                  <span class="yg-user-chip__avatar">
-                    <ElIcon><User /></ElIcon>
-                  </span>
-                  <span class="yg-user-chip__name">{{ userStore.name }}</span>
-                  <ElPopover
-                    width="200px"
-                    trigger="click"
-                    placement="bottom-end"
-                    :popper-options="{ modifiers: [{ name: 'offset', options: { offset: [0, 10] } }] }"
-                    popper-class="yg-user-menu"
+                  <svg
+                    v-if="effectiveDark"
+                    width="17"
+                    height="17"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.6"
+                    stroke-linecap="round"
                   >
-                    <template #reference>
-                      <button
-                        type="button"
-                        class="yg-user-chip__toggle"
-                        :aria-label="t('nav.accountMenu', '账号菜单')"
-                      >
-                        <ElIcon><ArrowDown /></ElIcon>
-                      </button>
-                    </template>
-                    <div class="yg-user-menu__list">
-                      <ElButton
-                        v-for="button in panelButtons"
-                        :key="button.text"
-                        text
-                        :icon="button.icon"
-                        :class="['yg-user-menu__item', `yg-user-menu__item--${button.text}`]"
-                        @click="button.click"
-                      >
-                        {{ t(`nav.${button.text}`) }}
-                      </ElButton>
-                    </div>
-                  </ElPopover>
-                </div>
-              </div>
-            </header>
-            <main class="yg-layout__content">
-              <RouterView
-                class="yg-view"
-                :style="verticalMode && userStore.isLogin ? { paddingBottom: '96px' } : {}"
-              />
+                    <circle cx="12" cy="12" r="4.2" />
+                    <path
+                      d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6 7 7M17 17l1.4 1.4M18.4 5.6 17 7M7 17l-1.4 1.4"
+                    />
+                  </svg>
+                  <svg
+                    v-else
+                    width="17"
+                    height="17"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.6"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5Z" />
+                  </svg>
+                </button>
+                <ElPopover
+                  width="200px"
+                  trigger="click"
+                  placement="bottom-end"
+                  :popper-options="{ modifiers: [{ name: 'offset', options: { offset: [0, 10] } }] }"
+                  popper-class="yg-user-menu"
+                >
+                  <template #reference>
+                    <button
+                      type="button"
+                      class="yg2-user-chip"
+                      :aria-label="t('nav.accountMenu', '账号菜单')"
+                    >
+                      <span class="yg2-user-chip__avatar">
+                        <ElIcon><User /></ElIcon>
+                      </span>
+                      <span class="yg2-user-chip__name">{{ userStore.name }}</span>
+                      <ElIcon class="yg2-user-chip__caret"><ArrowDown /></ElIcon>
+                    </button>
+                  </template>
+                  <div class="yg-user-menu__list">
+                    <ElButton
+                      v-for="button in panelButtons"
+                      :key="button.text"
+                      text
+                      :icon="button.icon"
+                      :class="['yg-user-menu__item', `yg-user-menu__item--${button.text}`]"
+                      @click="button.click"
+                    >
+                      {{ t(`nav.${button.text}`) }}
+                    </ElButton>
+                  </div>
+                </ElPopover>
+              </template>
+            </AppTopbar>
+            <main class="yg2-app__content">
+              <RouterView class="yg-view" />
             </main>
           </div>
+          <nav v-if="userStore.isLogin" class="yg2-mobile-tabs" aria-label="快捷导航">
+            <button
+              v-for="tab in mobileTabs"
+              :key="tab.key"
+              type="button"
+              class="yg2-mobile-tabs__item"
+              :class="{ 'is-active': tab.judge(route.path) }"
+              @click="tab.action()"
+            >
+              <component :is="tab.icon" />
+              <span>{{ t(tab.labelKey, tab.key) }}</span>
+            </button>
+            <button
+              type="button"
+              class="yg2-mobile-tabs__item"
+              @click="drawerOpen = true"
+            >
+              <svg
+                width="18"
+                height="18"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.8"
+                stroke-linecap="round"
+              >
+                <path d="M4 7h16M4 12h16M4 17h16" />
+              </svg>
+              <span>{{ t('nav.menu', '菜单') }}</span>
+            </button>
+          </nav>
+          <div v-if="drawerOpen" class="yg2-drawer-mask" @click="drawerOpen = false" />
         </div>
       </div>
     </ElWatermark>

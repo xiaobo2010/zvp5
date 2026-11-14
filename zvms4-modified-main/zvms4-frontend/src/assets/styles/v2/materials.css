@@ -1,0 +1,132 @@
+/* ==========================================================================
+   v2 材质层 · 环境光场 + 三层玻璃 + 卡片/浮动
+   ========================================================================== */
+
+/* ── 环境光场 ──────────────────────────────────────────────
+   纯 radial-gradient 做柔边，不用 filter: blur()（省 GPU 且无光晕溢出）。
+   只随板块换色相，不参与交互；减少动效时静止。                                  */
+.yg2-ambient {
+  position: fixed;
+  inset: 0;
+  /* 必须落在内容之下：负 z-index 只在本层叠上下文内（.yg2-app 已是 relative+z-index:1），
+     不会钻到页面背景之后。 */
+  z-index: -1;
+  overflow: hidden;
+  pointer-events: none;
+  background: var(--yg2-bg);
+}
+
+.yg2-ambient__blob {
+  position: absolute;
+  width: 70vmax;
+  height: 70vmax;
+  border-radius: 50%;
+  opacity: var(--yg2-ambient-opacity);
+  will-change: transform;
+  background: radial-gradient(closest-side, var(--yg2-ambient-1), transparent 72%);
+}
+
+.yg2-ambient__blob:nth-child(1) {
+  top: -34vmax;
+  left: -18vmax;
+  animation: yg2-drift-1 84s var(--yg2-ease-in-out) infinite alternate;
+}
+.yg2-ambient__blob:nth-child(2) {
+  top: -22vmax;
+  right: -26vmax;
+  width: 56vmax;
+  height: 56vmax;
+  background: radial-gradient(closest-side, var(--yg2-ambient-2), transparent 72%);
+  animation: yg2-drift-2 110s var(--yg2-ease-in-out) infinite alternate;
+}
+.yg2-ambient__blob:nth-child(3) {
+  bottom: -40vmax;
+  left: 18vmax;
+  width: 62vmax;
+  height: 62vmax;
+  background: radial-gradient(closest-side, var(--yg2-ambient-3), transparent 72%);
+  animation: yg2-drift-3 96s var(--yg2-ease-in-out) infinite alternate;
+}
+
+@keyframes yg2-drift-1 {
+  to { transform: translate3d(6vmax, 4vmax, 0) scale(1.08); }
+}
+@keyframes yg2-drift-2 {
+  to { transform: translate3d(-5vmax, 6vmax, 0) scale(1.05); }
+}
+@keyframes yg2-drift-3 {
+  to { transform: translate3d(4vmax, -5vmax, 0) scale(1.1); }
+}
+
+/* 板块环境色：在任意容器上设置 data-ambient="activities|groups|ai|manage" */
+[data-ambient="activities"] { --yg2-ambient-1: #bfe0ff; --yg2-ambient-2: #ffe1bd; --yg2-ambient-3: #e6e2ff; }
+[data-ambient="groups"] { --yg2-ambient-1: #c8f0d8; --yg2-ambient-2: #d8e8ff; --yg2-ambient-3: #f0e6ff; }
+[data-ambient="ai"] { --yg2-ambient-1: #d9d4ff; --yg2-ambient-2: #c6ecff; --yg2-ambient-3: #ffe3f0; }
+[data-ambient="manage"] { --yg2-ambient-1: #d8e2ff; --yg2-ambient-2: #ffe8c8; --yg2-ambient-3: #e4e4ea; }
+
+[data-theme="dark"][data-ambient="activities"] { --yg2-ambient-1: #0b2a4a; --yg2-ambient-2: #3a200b; --yg2-ambient-3: #1b1436; }
+[data-theme="dark"][data-ambient="groups"] { --yg2-ambient-1: #0b3a24; --yg2-ambient-2: #0b2a4a; --yg2-ambient-3: #241436; }
+[data-theme="dark"][data-ambient="ai"] { --yg2-ambient-1: #241a4a; --yg2-ambient-2: #0b2a4a; --yg2-ambient-3: #3a0b24; }
+[data-theme="dark"][data-ambient="manage"] { --yg2-ambient-1: #1a2440; --yg2-ambient-2: #3a2a0b; --yg2-ambient-3: #141418; }
+
+/* ── 玻璃 ──────────────────────────────────────────────────
+   三层：chrome（导航栏）/ control（悬浮控件）/ overlay（弹层）。
+   禁止玻璃叠玻璃；禁止玻璃盖正文；滚动容器不加 blur。                            */
+.yg2-glass {
+  position: relative;
+  background: var(--yg2-glass-chrome-fill);
+  -webkit-backdrop-filter: blur(var(--yg2-glass-blur)) saturate(var(--yg2-glass-saturate));
+  backdrop-filter: blur(var(--yg2-glass-blur)) saturate(var(--yg2-glass-saturate));
+  box-shadow: var(--yg2-glass-inner), var(--yg2-shadow-ambient);
+}
+
+.yg2-glass--control {
+  background: var(--yg2-glass-control-fill);
+  -webkit-backdrop-filter: blur(var(--yg2-glass-blur-sm)) saturate(var(--yg2-glass-saturate));
+  backdrop-filter: blur(var(--yg2-glass-blur-sm)) saturate(var(--yg2-glass-saturate));
+  box-shadow: var(--yg2-glass-inner), var(--yg2-shadow-float);
+}
+
+.yg2-glass--overlay {
+  background: var(--yg2-glass-overlay-fill);
+  -webkit-backdrop-filter: blur(32px) saturate(var(--yg2-glass-saturate));
+  backdrop-filter: blur(32px) saturate(var(--yg2-glass-saturate));
+  box-shadow: var(--yg2-glass-inner), var(--yg2-shadow-float);
+}
+
+/* ── 卡片（哑光内容层） ──────────────────────────────────── */
+.yg2-card {
+  background: var(--yg2-surface);
+  border: 1px solid var(--yg2-line);
+  border-radius: var(--yg2-r-20);
+  box-shadow: var(--yg2-shadow-ambient);
+  contain: paint;
+}
+
+/* ── 降级：无 backdrop-filter / 用户要求减少透明度 ─────────── */
+@supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+  .yg2-glass,
+  .yg2-glass--control,
+  .yg2-glass--overlay {
+    background: var(--yg2-surface);
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .yg2-glass,
+  .yg2-glass--control,
+  .yg2-glass--overlay {
+    background: var(--yg2-surface);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+}
+
+/* ── 减少动效 ────────────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  /* 与 :nth-child(n) 的 animation 声明同权重，靠源顺序覆盖 */
+  .yg2-ambient .yg2-ambient__blob {
+    animation: none;
+    transform: none;
+  }
+}

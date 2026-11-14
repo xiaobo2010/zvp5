@@ -13,7 +13,6 @@ import {
   ElTag
 } from 'element-plus'
 import {
-  ArrowLeft,
   CopyDocument,
   Delete,
   Download,
@@ -1012,29 +1011,34 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="register-page">
-    <ElPageHeader class="yg-page-header" :icon="ArrowLeft" @back="router.back()">
-      <template #content>
-        <span class="page-title yg-page-header__title">批量义工登记</span>
-      </template>
-      <template #extra>
-        <div class="index-status yg-page-header__actions">
-          <ElTag :type="indexTagType" effect="plain">{{ indexLabel }}</ElTag>
-          <span class="index-meta">
-            {{ students.length }} 人
-            <template v-if="indexUpdatedLabel"> · {{ indexUpdatedLabel }}</template>
-          </span>
-          <ElButton
-            size="small"
-            :icon="Refresh"
-            :loading="indexLoading || indexBooting"
-            @click="refreshIndex()"
-          >
-            同步名单
-          </ElButton>
-        </div>
-      </template>
-    </ElPageHeader>
+  <div class="register-page yg2-page">
+    <header class="yg2-page-header">
+      <div>
+        <p class="yg2-page-header__eyebrow">批量登记</p>
+        <h1 class="yg2-page-header__title">批量义工登记</h1>
+        <p class="yg2-page-header__subtitle">
+          粘贴、导入或 OCR 识别名单，逐行核对后一次性提交
+        </p>
+      </div>
+      <div class="yg2-page-header__actions index-status">
+        <span
+          class="yg2-badge"
+          :class="indexTagType === 'success' ? 'yg2-badge--accent' : 'yg2-badge--amber'"
+        >{{ indexLabel }}</span>
+        <span class="index-meta">
+          {{ students.length }} 人
+          <span v-if="indexUpdatedLabel"> · {{ indexUpdatedLabel }}</span>
+        </span>
+        <button
+          class="yg2-btn yg2-btn--secondary yg2-btn--sm"
+          type="button"
+          :disabled="indexLoading || indexBooting"
+          @click="refreshIndex()"
+        >
+          同步名单
+        </button>
+      </div>
+    </header>
 
     <div class="reg-stack">
       <section class="reg-card activity-card">
@@ -1368,16 +1372,6 @@ onBeforeUnmount(() => {
   max-width: 80rem;
   margin: 0 auto;
   padding: var(--yg-space-4) var(--yg-space-6) var(--yg-space-7);
-  --el-color-primary: var(--yg-color-primary);
-  --el-color-primary-light-3: var(--yg-color-primary-hover);
-  --el-color-primary-light-5: var(--yg-color-primary-soft);
-  --el-color-primary-light-7: var(--yg-color-primary-soft);
-  --el-color-primary-light-8: var(--yg-color-primary-soft);
-  --el-color-primary-light-9: var(--yg-color-primary-soft);
-  --el-color-primary-dark-2: var(--yg-color-primary-active);
-  --el-color-success: var(--yg-color-success);
-  --el-color-warning: var(--yg-color-warning);
-  --el-color-danger: var(--yg-color-danger);
   --el-border-radius-base: var(--yg-radius-md);
 }
 
@@ -1849,5 +1843,35 @@ onBeforeUnmount(() => {
   .grid-wrap {
     max-height: calc(100vh - 20rem);
   }
+}
+
+/* v2 现代化覆盖 */
+.reg-card {
+  background: var(--yg2-surface);
+  border: 1px solid var(--yg2-line);
+  border-radius: var(--yg2-r-20);
+  box-shadow: var(--yg2-shadow-ambient);
+}
+
+.grid-head .grid-title {
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--yg2-text);
+}
+
+.grid-head .grid-sub {
+  color: var(--yg2-text-secondary);
+}
+
+.reg-card :deep(.el-button) {
+  height: 34px;
+  border-radius: var(--yg2-r-pill);
+  font-weight: 500;
+}
+
+.reg-card :deep(.el-select__wrapper) {
+  border-radius: var(--yg2-r-12);
+  min-height: 42px;
 }
 </style>

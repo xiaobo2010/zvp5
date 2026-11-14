@@ -22,18 +22,13 @@ header.setHeader(t('nav.about'))
 </script>
 
 <template>
-  <div class="p-4">
-    <ElPageHeader :icon="ArrowLeft" @back="router.back()" class="py-4">
-      <template #content>
-        <h1 class="text-[22px]">{{ t('nav.about') }}</h1>
-      </template>
-    </ElPageHeader>
-    <ElCard shadow="never">
-      <ElResult
-        icon="info"
-        title="镇海中学义工平台"
-        :sub-title="version"
-      >
+  <div class="yg2-page about-page">
+    <button class="about-back" type="button" @click="router.back()">
+      <span aria-hidden="true">‹</span> 返回
+    </button>
+
+    <div class="about-card">
+      <ElResult icon="info" title="镇海中学义工平台" :sub-title="version">
         <template #icon>
             <img :src="`/favicon.png?v=${version}`" alt="logo" style="width: 128px; height: 128px; border-radius: .75rem;"/>
         </template>
@@ -48,8 +43,61 @@ header.setHeader(t('nav.about'))
           </div>
         </template>
       </ElResult>
-    </ElCard>
+    </div>
   </div>
 </template>
 
-<style scoped></style>
+<style scoped>
+.about-page {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-width: 760px;
+  margin: 0 auto;
+}
+
+.about-back {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 32px;
+  padding: 0 12px 0 8px;
+  border: 0;
+  border-radius: var(--yg2-r-pill);
+  background: transparent;
+  color: var(--yg2-text-secondary);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.about-back:hover {
+  background: var(--yg2-surface-sunken);
+  color: var(--yg2-text);
+}
+
+.about-card {
+  padding: 24px;
+  background: var(--yg2-surface);
+  border: 1px solid var(--yg2-line);
+  border-radius: var(--yg2-r-26);
+  box-shadow: var(--yg2-shadow-ambient);
+}
+
+.about-card :deep(.el-result__title) {
+  margin-top: 4px;
+}
+
+.about-card :deep(.el-result__title p) {
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--yg2-text);
+}
+
+.about-card :deep(.el-result__subtitle p) {
+  color: var(--yg2-text-tertiary);
+}
+</style>
