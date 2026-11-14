@@ -282,6 +282,36 @@
   transition-duration: 90ms;
 }
 
+/* 侧栏导航项：按下回弹 + 选中时弹一下（弹簧曲线） */
+.yg2-nav-item {
+  transition:
+    background-color 180ms var(--yg2-ease-out),
+    color 180ms var(--yg2-ease-out),
+    transform 260ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.yg2-nav-item:active {
+  transform: scale(0.955);
+}
+
+.yg2-nav-item.is-active {
+  animation: yg2-nav-pop 360ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+@keyframes yg2-nav-pop {
+  0% { transform: scale(0.96); }
+  55% { transform: scale(1.025); }
+  100% { transform: scale(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .yg2-nav-item,
+  .yg2-nav-item.is-active {
+    transition: none;
+    animation: none;
+  }
+}
+
 /* ---------- 2) 输入框 / 选择器：内凹玻璃 + 聚焦光晕 ---------------------- */
 .yg2-input,
 .el-input .el-input__wrapper,
