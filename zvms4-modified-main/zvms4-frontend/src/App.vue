@@ -23,6 +23,7 @@ import { useRouter, useRoute } from 'vue-router'
 import Password from '@/icons/MaterialSymbolsPasswordRounded.vue'
 import AmbientField from '@/ui/shell/AmbientField.vue'
 import AppSidebar from '@/ui/shell/AppSidebar.vue'
+import OfflineBanner from '@/ui/ux/OfflineBanner.vue'
 import AppTopbar from '@/ui/shell/AppTopbar.vue'
 import { useHeaderStore } from './stores/header'
 import { useWindowSize, useOnline } from '@vueuse/core'
@@ -637,8 +638,9 @@ onMounted(async () => {
       </div>
     </ElWatermark>
     <ZNotificationReminder />
+    <OfflineBanner />
   </ElConfigProvider>
-</template>
+  </template>
 
 <style scoped>
 .full {
