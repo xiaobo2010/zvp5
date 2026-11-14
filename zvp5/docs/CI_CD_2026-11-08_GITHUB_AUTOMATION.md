@@ -163,6 +163,16 @@ Cloudflare Worker，本次未动 `on.push.branches`。
   图标未指向绝对域；发布前删掉 `dist/sw.js` 与 `workbox-*`（预览站不吃预缓存）。
 - 冒烟：线上入口 chunk 的 sha256 必须等于本地产物；`/sw.js` 必须回落
   `text/html`；后端 CORS 必须回显 `https://canary.xiaobopisces.top`。
+  四处探测统一带 `PROBE_UA`（`Mozilla/5.0 (compatible; ZVP5-Deploy/1.0)`）——
+  后端盾牌对未知 UA 一律 418，用 curl 默认 UA 探测等于自找失败。
+  CORS 那一步不用 `curl -f` 而是读状态码：拿到**别的** Origin 才算白名单配错
+  （硬失败），一个 AC-AO 头都没有且状态非 2xx 时按「盾牌/WAF 拦了 runner IP」
+  降级成 warning。
+- 已知限制：Cloudflare 的 zone 级 WAF 会拦 GitHub Actions 出口 IP，预览根路径
+  直接回 403，此时内容哈希与 CORS 比对整体跳过、只留 warning（本机 curl 是 200，
+  属于边缘策略不是部署问题）。要真正校验内容，得在 dash 里给
+  `canary.xiaobopisces.top` + Actions 出口 IP 段加 WAF skip 规则；当前 CI 用的
+  Cloudflare token 没有 firewall 权限，暂未做。
 - 成本控制：工作流级 `concurrency` 取消被新推送取代的旧一轮；部署 job 单独加
   `canary-worker-deploy` 组且 `cancel-in-progress: false`，避免上传被打断。
 
