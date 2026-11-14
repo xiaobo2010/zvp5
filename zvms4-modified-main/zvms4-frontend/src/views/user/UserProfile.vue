@@ -3,6 +3,8 @@ import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useTheme } from '@/utils/theme'
+import Skeleton from '@/ui/ux/Skeleton.vue'
+import StateBlock from '@/ui/ux/StateBlock.vue'
 import { ElIcon, ElMessageBox, ElSwitch } from 'element-plus'
 import { SwitchButton } from '@element-plus/icons-vue'
 import { useUserStore } from '@/stores/user'
@@ -182,15 +184,26 @@ onMounted(async () => {
         </button>
       </div>
 
-      <p v-if="noticesLoading && notices.length === 0" class="profile-notices-hint">
-        {{ t('profile.notices.loading') }}
-      </p>
-      <p v-else-if="noticesFailed" class="profile-notices-hint">
-        {{ t('profile.notices.failed') }}
-      </p>
-      <p v-else-if="notices.length === 0" class="profile-notices-hint">
-        {{ t('profile.notices.empty') }}
-      </p>
+      <div v-if="noticesLoading && notices.length === 0" class="profile-notices-skeleton">
+        <Skeleton :lines="3" height="13px" />
+      </div>
+      <StateBlock
+        v-else-if="noticesFailed"
+        tone="error"
+        title="通知没能加载出来"
+        description="服务端暂时没有响应，不是你的操作问题，重试一次通常就好了。"
+      >
+        <template #actions>
+          <button class="yg2-btn yg2-btn--primary" type="button" @click="loadNotices">
+            重新试试
+          </button>
+        </template>
+      </StateBlock>
+      <StateBlock
+        v-else-if="notices.length === 0"
+        title="暂时没有新通知"
+        description="有新的公告或提醒时会出现在这里。"
+      />
       <ul v-else class="profile-notice-list">
         <li v-for="notice in notices" :key="notice.id" class="profile-notice">
           <button

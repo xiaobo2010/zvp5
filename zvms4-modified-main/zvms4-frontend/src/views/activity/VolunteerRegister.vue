@@ -5,6 +5,7 @@ import { useI18n } from 'vue-i18n'
 import {
   ElAlert,
   ElButton,
+  ElDialog,
   ElMessage,
   ElMessageBox,
   ElOption,
@@ -22,6 +23,7 @@ import {
   View
 } from '@element-plus/icons-vue'
 import api from '@/api'
+import ResultState from '@/ui/ux/ResultState.vue'
 import { useHeaderStore } from '@/stores/header'
 import { useUserStore } from '@/stores/user'
 import type { ActivityMode } from '@/../types'
@@ -93,6 +95,9 @@ const selectedActivity = ref<Activity | null>(null)
 const rows = ref<RegistrationRow[]>([])
 const activeCell = ref<{ r: number; c: number } | null>(null)
 const submitLoading = ref(false)
+/** 提交结果页：成功给对勾 + 完成，失败写原因 + 返回修改 */
+const resultVisible = ref(false)
+const submitOutcome = ref<{ ok: boolean; reason: string }>({ ok: true, reason: '' })
 const ocrLoading = ref(false)
 const ocrStage = ref('')
 const savedActivityId = ref('')
@@ -798,13 +803,18 @@ async function submitRegistration() {
       row.status = 'saved'
       row.message = '已提交'
     }
-    ElMessage.success(`已为《${selectedActivity.value.name}》登记 ${payload.length} 人`)
+    submitOutcome.value = {
+      ok: true,
+      reason: `已为《${selectedActivity.value.name}》登记 ${payload.length} 人。`
+    }
+    resultVisible.value = true
   } catch (error) {
     const detail =
       (error as { response?: { data?: { detail?: string } } })?.response?.data?.detail ||
       (error as Error)?.message ||
       '提交失败，请重试'
-    ElMessage.error(detail)
+    submitOutcome.value = { ok: false, reason: detail }
+    resultVisible.value = true
   } finally {
     submitLoading.value = false
   }
@@ -1362,6 +1372,24 @@ onBeforeUnmount(() => {
         </div>
       </section>
     </div>
+
+    <ElDialog
+      v-model="resultVisible"
+      width="420px"
+      align-center
+      :show-close="false"
+      :close-on-click-modal="false"
+      class="yg2-result-dialog"
+    >
+      <ResultState
+        :ok="submitOutcome.ok"
+        :reason="submitOutcome.reason"
+        next-text="完成"
+        retry-text="返回修改"
+        @next="resultVisible = false"
+        @retry="resultVisible = false"
+      />
+    </ElDialog>
   </div>
 </template>
 
