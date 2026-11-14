@@ -21,7 +21,7 @@
 ## 二、浏览器预检缓存的实测语义
 
 用真实 Chromium（`chrome-headless-shell`）+ 一个复刻线上响应头的本地 mock 服务器测得
-（线上响应头见 `deployment/nginx/zvms-api-preflight.conf`：`204` +
+（线上响应头见 `deployment/nginx/zvp5-api-preflight.conf`：`204` +
 `Access-Control-Allow-Origin` 回显 + `Access-Control-Max-Age: 7200`）：
 
 | 场景 | 新增预检次数 |

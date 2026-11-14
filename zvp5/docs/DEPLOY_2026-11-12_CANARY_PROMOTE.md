@@ -8,7 +8,7 @@ canary 预览站同步重发。
 
 | # | 遗留 | 处理 |
 |---|---|---|
-| 1 | `/manifest.webmanifest`、`/site.webmanifest` 返回 `application/octet-stream`（浏览器拒绝解析，PWA 安装/图标/主题色失效） | 后端 `zvp` vhost、前端 备用 `zvp` vhost 各加 `location = /{manifest,site}.webmanifest`（`types { application/manifest+json webmanifest; }` + `default_type`）；线上复验两者均返回 `application/manifest+json`。仓库 `deployment/zvms4.nginx.conf` 同步落规则防回归 |
+| 1 | `/manifest.webmanifest`、`/site.webmanifest` 返回 `application/octet-stream`（浏览器拒绝解析，PWA 安装/图标/主题色失效） | 后端 `zvp` vhost、前端 备用 `zvp` vhost 各加 `location = /{manifest,site}.webmanifest`（`types { application/manifest+json webmanifest; }` + `default_type`）；线上复验两者均返回 `application/manifest+json`。仓库 `deployment/zvp5.nginx.conf` 同步落规则防回归 |
 | 2 | 首屏 i18n 全量（17 个字典 ~208KB 源码） | ai/manage/server/activity 四个大字典按路由懒加载（详见下） |
 | 3 | main 上两笔部署文档未 push | 已推送（`4c394ec..9b4e00d`） |
 | 4 | 生产前后端落后于仓库最新代码 | 本次全量发布（前端双端 + 后端） |

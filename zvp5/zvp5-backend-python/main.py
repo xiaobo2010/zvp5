@@ -188,7 +188,7 @@ if __name__ == "__main__":
     import uvicorn
 
     # 部署口径：生产由 systemd 以 ``uvicorn main:app --host 127.0.0.1 --port 8018``
-    # 拉起（nginx / docker 反代 127.0.0.1:8018，见 deployment/zvms4.nginx.conf 与
+    # 拉起（nginx / docker 反代 127.0.0.1:8018，见 deployment/zvp5.nginx.conf 与
     # docs/DEPLOY_*.md）。这里的默认值跟部署对齐，不再硬编码历史遗留的 8000；
     # 本机裸跑要别的端口就 ``ZVMS_PORT=8000 python main.py``。
     uvicorn.run(

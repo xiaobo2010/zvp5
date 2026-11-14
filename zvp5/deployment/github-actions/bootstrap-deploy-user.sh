@@ -28,7 +28,7 @@ fi
 
 install -m 0755 -o root -g root "$WRAPPER_SOURCE" /usr/local/sbin/zvp5-deploy
 # 过渡期保留旧名字：CI 里还没换过来的调用（以及运维手册里的老写法）继续可用。
-# sudo 会先把符号链接解析成真实路径再匹配策略，所以下面是按 zvp5-deploy 授的权。
+# 注意 sudo 不跟随符号链接匹配策略，旧路径必须在 sudoers 里单独列一条。
 ln -sfn /usr/local/sbin/zvp5-deploy /usr/local/sbin/zvms4-deploy
 install -d -m 0750 -o "$DEPLOY_USER" -g "$DEPLOY_USER" "/home/$DEPLOY_USER/incoming"
 install -d -m 0750 -o "$DEPLOY_USER" -g "$DEPLOY_USER" "/home/$DEPLOY_USER/.ssh"
@@ -52,6 +52,12 @@ $DEPLOY_USER ALL=(root) NOPASSWD: /usr/local/sbin/zvp5-deploy deploy backend *
 $DEPLOY_USER ALL=(root) NOPASSWD: /usr/local/sbin/zvp5-deploy deploy frontend *
 $DEPLOY_USER ALL=(root) NOPASSWD: /usr/local/sbin/zvp5-deploy rollback backend *
 $DEPLOY_USER ALL=(root) NOPASSWD: /usr/local/sbin/zvp5-deploy rollback frontend *
+# 旧路径：sudo 不跟随符号链接匹配策略，不显式授权的话老版本 workflow 发 release
+# 会被拒。指向同一个文件，权限等价；老 workflow 全部退役后可删。
+$DEPLOY_USER ALL=(root) NOPASSWD: /usr/local/sbin/zvms4-deploy deploy backend *
+$DEPLOY_USER ALL=(root) NOPASSWD: /usr/local/sbin/zvms4-deploy deploy frontend *
+$DEPLOY_USER ALL=(root) NOPASSWD: /usr/local/sbin/zvms4-deploy rollback backend *
+$DEPLOY_USER ALL=(root) NOPASSWD: /usr/local/sbin/zvms4-deploy rollback frontend *
 EOF
 visudo -cf "$tmp_sudoers"
 install -m 0440 -o root -g root "$tmp_sudoers" "$SUDOERS_FILE"

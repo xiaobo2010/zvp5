@@ -150,19 +150,19 @@ pnpm build
 后端 API 的动态 JSON 压缩和两层预检短路使用仓库中的三个 Nginx 片段：
 
 ```text
-deployment/nginx/zvms-cors-map.conf
-deployment/nginx/zvms-api-preflight.conf
-deployment/nginx/zvms-api-gzip.conf
+deployment/nginx/zvp5-cors-map.conf
+deployment/nginx/zvp5-api-preflight.conf
+deployment/nginx/zvp5-api-gzip.conf
 ```
 
 安装方式：
 
-- `zvms-cors-map.conf` 与 `zvms-api-gzip.conf` 放到两层的
+- `zvp5-cors-map.conf` 与 `zvp5-api-gzip.conf` 放到两层的
   `/etc/nginx/conf.d/`。其中 gzip 只装后端，前端已经启用。
-- `zvms-api-preflight.conf` 放到两层的 `/etc/nginx/snippets/`，并在
+- `zvp5-api-preflight.conf` 放到两层的 `/etc/nginx/snippets/`，并在
   `location /api/ {` 内 include。
 - 预检只允许 `ZVMS_CORS_ALLOWED_ORIGINS` 当前三项；新增预览域时必须同时更新
-  `zvms-cors-map.conf` 和后端环境变量。
+  `zvp5-cors-map.conf` 和后端环境变量。
 - gzip 只覆盖文本和 JSON，不覆盖 `text/event-stream`、WebSocket 或图片、文件。
 
 验证：
