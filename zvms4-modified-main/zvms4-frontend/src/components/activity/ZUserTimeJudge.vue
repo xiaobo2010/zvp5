@@ -2,18 +2,14 @@
 import { ref, toRefs, reactive, watch, computed } from 'vue'
 import {
   ElCard,
-  ElRow,
-  ElCol,
   ElButton,
   ElDivider,
   ElSwitch,
-  ElSpace,
   ElResult,
   ElTooltip,
   ElSkeleton,
   ElDialog
 } from 'element-plus'
-import { useWindowSize } from '@vueuse/core'
 import { useUserStore } from '@/stores/user'
 import { useI18n } from 'vue-i18n'
 import { ZActivityMemberTimeJudge, ZDetailedAnalysis } from '..'
@@ -23,7 +19,6 @@ import { Certificate, TableReport } from '@icon-park/vue-next'
 import { pad } from '@/plugins/ua.ts'
 import type { UserActivityTimeSums } from '@/../types'
 
-const { width, height } = useWindowSize()
 const userStore = useUserStore()
 const { t } = useI18n()
 const loading = ref(false)
@@ -128,7 +123,7 @@ const reportPage = ref(false)
 </script>
 
 <template>
-  <div>
+  <div class="judge-root">
     <ElDialog fullscreen destroy-on-close title="义工时长明细" v-model="reportPage">
       <ZDetailedAnalysis :id="user" mode="on-campus" :sums="sums" />
     </ElDialog>
@@ -166,48 +161,70 @@ const reportPage = ref(false)
         </ElCol>
       </ElRow>
       <ElResult v-if="error && !loading" icon="error" :title="error" />
-      <ElRow v-else-if="!loading" class="fill py-2 statistic">
-        <ElCol v-if="width > height" :span="2" />
-        <ElCol :span="width < height ? 10 : 4">
+      <div v-else-if="!loading" class="judge-grid">
+        <div class="judge-cell">
           <ZActivityMemberTimeJudge type="on-campus" :realTime="on" />
-          <ElDivider v-if="width < height" />
-        </ElCol>
-        <ElCol :span="2">
-          <ElDivider direction="vertical" class="height-full" />
-        </ElCol>
-        <ElCol :span="width < height ? 10 : 4">
+        </div>
+        <div class="judge-cell">
           <ZActivityMemberTimeJudge type="off-campus" :realTime="off" />
-          <ElDivider v-if="width < height" />
-        </ElCol>
-        <ElCol v-if="width > height" :span="1">
-          <ElDivider direction="vertical" class="height-full" />
-        </ElCol>
-        <ElCol :span="width < height ? 10 : 4">
+        </div>
+        <div class="judge-cell">
           <ZActivityMemberTimeJudge type="social-practice" :realTime="base.socialPractice" />
-        </ElCol>
-        <ElCol :span="2">
-          <ElDivider direction="vertical" class="height-full" />
-        </ElCol>
-        <ElCol v-if="width < height" :span="1" />
-        <ElCol :span="width < height ? 8 : 4">
-          <ElSpace direction="vertical">
-            <span>{{ t('home.panels.time.discount') }}</span>
-            <ElSwitch v-model="exceed" aria-label="校内校外时长互补" />
-          </ElSpace>
-        </ElCol>
-        <ElCol v-if="width > height" :span="1" />
-      </ElRow>
+        </div>
+        <div class="judge-discount">
+          <span>{{ t('home.panels.time.discount') }}</span>
+          <ElSwitch v-model="exceed" aria-label="校内校外时长互补" />
+        </div>
+      </div>
       <ElSkeleton v-else :throttle="200" :rows="4" animated class="py-2" />
     </ElCard>
   </div>
 </template>
 
 <style scoped>
-.statistic {
+.judge-root {
+  container-type: inline-size;
+}
+
+.judge-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-items: start;
+  gap: 16px 12px;
+  padding: 8px 0 2px;
   text-align: center;
 }
 
-.height-full {
-  height: 100%;
+.judge-cell {
+  min-width: 0;
+}
+
+.judge-discount {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-width: 0;
+  margin-top: 2px;
+  padding-top: 10px;
+  border-top: 1px solid var(--yg2-sep);
+  font-size: 12px;
+  color: var(--yg2-text-secondary);
+  text-align: center;
+}
+
+/* 卡片被压窄时（首页两栏布局的右列）把开关换到独立一行，
+   三个环各占一列，避免环与开关互相挤压 */
+@container (max-width: 560px) {
+  .judge-grid {
+    gap: 12px 8px;
+  }
+}
+
+@media (max-width: 900px) {
+  .judge-grid {
+    gap: 14px 8px;
+  }
 }
 </style>
