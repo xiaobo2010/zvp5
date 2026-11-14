@@ -17,7 +17,7 @@ import { ApplicationMenu } from '@icon-park/vue-next'
 import { useWindowSize } from '@vueuse/core'
 import type { Component as VueComponent } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
-import { useDark } from '@vueuse/core'
+import { useTheme } from '@/utils/theme'
 import { useI18n } from 'vue-i18n'
 import { watch } from 'vue'
 import { pad, getTabletType } from '@/plugins/ua'
@@ -25,7 +25,7 @@ import { pad, getTabletType } from '@/plugins/ua'
 const user = useUserStore()
 const router = useRouter()
 const route = useRoute()
-const dark = useDark()
+const { dark, setTheme } = useTheme()
 const { t } = useI18n({
   useScope: 'global'
 })
@@ -118,7 +118,7 @@ function routeTo(page: string) {
 const useless = ref(dark.value)
 
 watch(useless, () => {
-  dark.value = useless.value
+  setTheme(useless.value ? 'dark' : 'light')
 })
 </script>
 

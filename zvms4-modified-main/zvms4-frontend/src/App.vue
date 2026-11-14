@@ -18,13 +18,14 @@ import {
 } from 'element-plus'
 import { RouterView } from 'vue-router'
 import { useUserStore } from '@/stores/user'
+import { useTheme } from '@/utils/theme'
 import { useRouter, useRoute } from 'vue-router'
 import Password from '@/icons/MaterialSymbolsPasswordRounded.vue'
 import AmbientField from '@/ui/shell/AmbientField.vue'
 import AppSidebar from '@/ui/shell/AppSidebar.vue'
 import AppTopbar from '@/ui/shell/AppTopbar.vue'
 import { useHeaderStore } from './stores/header'
-import { useWindowSize, useDark, useOnline, usePreferredDark } from '@vueuse/core'
+import { useWindowSize, useOnline } from '@vueuse/core'
 import { useI18n } from 'vue-i18n'
 import { computed, watch, ref, onMounted, onUnmounted, h, reactive } from 'vue'
 import type { WatermarkFontType } from 'element-plus'
@@ -79,40 +80,11 @@ const route = useRoute()
 const router = useRouter()
 const userStore = useUserStore()
 const headerStore = useHeaderStore()
-const dark = useDark()
-const prefersDark = usePreferredDark()
+const { dark, toggleTheme: toggleThemePreference } = useTheme()
 
-// useDark 底层是 useColorMode，存储值有三态：'auto'（跟随系统）、'dark'、'light'。
-// useDark 返回的 isDark 只在「手动深色」时为 true，'auto' 态下即使系统是深色也为 false。
-// 这里还原「实际生效」的深浅态，让 --yg-* 令牌与 html.dark 始终一致。
-const COLOR_SCHEME_KEY = 'vueuse-color-scheme'
-const effectiveDark = computed(() => {
-  // 依赖 dark：用户手动切换时重新求值
-  const manualDark = dark.value
-  const stored = localStorage.getItem(COLOR_SCHEME_KEY)
-  if (stored === 'dark') {
-    return true
-  }
-  if (stored === 'light') {
-    return false
-  }
-  if (manualDark) {
-    return true
-  }
-  return prefersDark.value
-})
-
-// 主题状态唯一来源仍是 useDark（它负责写 html.dark 与 localStorage）。
-// 这里额外把同一状态映射到 data-theme，让 --yg-* 令牌跟着明暗切换
-// （准则 2.1：暗色通过 <html data-theme="dark"> 手动切换）。
-// 用 flush: 'sync' 让属性同步落到 DOM，后续读取令牌的代码能立刻拿到新值。
-watch(
-  effectiveDark,
-  (value) => {
-    document.documentElement.dataset.theme = value ? 'dark' : 'light'
-  },
-  { immediate: true, flush: 'sync' }
-)
+// 深浅色统一由 utils/theme.ts 管理：它同时维护 html.dark 与 data-theme，
+// 并保留 auto / light / dark 三态，见 useTheme()。
+const effectiveDark = computed(() => dark.value)
 
 /** 把 #RGB / #RRGGBB 令牌值转成带透明度的 rgba，避免在脚本里写死色值。 */
 function tokenToRgba(token: string, alpha: number): string {
@@ -375,7 +347,7 @@ const ambientTone = computed(() => {
 })
 
 function toggleTheme() {
-  dark.value = !effectiveDark.value
+  toggleThemePreference()
 }
 
 // 移动端底栏前三个入口，第四个是抽屉。
@@ -539,6 +511,7 @@ onMounted(async () => {
           <AppSidebar
             v-if="userStore.isLogin"
             :open="drawerOpen"
+            :rail="rail"
             @toggle-rail="toggleRail"
             @close="drawerOpen = false"
           />
@@ -552,6 +525,9 @@ onMounted(async () => {
                 <button
                   type="button"
                   class="yg2-icon-btn"
+                  :title="
+                    effectiveDark ? t('nav.theme.light', '切换到浅色模式') : t('nav.theme.dark', '切换到深色模式')
+                  "
                   :aria-label="
                     effectiveDark ? t('nav.theme.light', '切换到浅色模式') : t('nav.theme.dark', '切换到深色模式')
                   "

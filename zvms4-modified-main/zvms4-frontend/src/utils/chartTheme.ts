@@ -1,5 +1,5 @@
 import { computed } from 'vue'
-import { useDark } from '@vueuse/core'
+import { useTheme } from '@/utils/theme'
 
 export interface ChartTheme {
   text: string
@@ -23,6 +23,6 @@ export function resolveChartTheme(isDark: boolean): ChartTheme {
 }
 
 export function useChartTheme() {
-  const isDark = useDark()
+  const { dark: isDark } = useTheme()
   return computed(() => resolveChartTheme(isDark.value))
 }
