@@ -29,7 +29,36 @@ Cloudflare 同区回环——响应带 `Cdn-Loop: cloudflare; loops=1`，状态 
 > `WebSocketPair` 转发、SSE 直通不缓冲。
 > 背景与实测见 `docs/CORS_PREFLIGHT_2026-11-07.md`。
 
-## 步骤
+## 自动化（2026-11-14 起）
+
+`push` 到 `v5-canary`（或手动 `workflow_dispatch` 该分支）会走
+`.github/workflows/canary.yml`：五道质量门禁（后端 pytest、前端单测/lint/类型/
+构建、Cypress、workflow+密钥扫描、依赖漏洞扫描）全绿后，`deploy-canary` 把
+**前端静态产物**发到 Worker `zvp-yuren`（`canary.xiaobopisces.top`）。
+这条流水线不部署后端、不 SSH 任何主机、不碰数据库。
+
+必需仓库 Secret：
+
+| 名称 | 用途 |
+| --- | --- |
+| `CLOUDFLARE_API_TOKEN` | Workers Scripts:Edit + Workers Routes:Edit |
+
+可选仓库 Variables（不配则用下面括号里的默认值）：`CLOUDFLARE_ACCOUNT_ID`
+（<CF_ACCOUNT_ID>…）、`CANARY_API_BASE`（`https://zvp.xiaobopisces.top/api`）、
+`CANARY_API_RACE_BASE`（`https://zvpapi.xiaobopisces.top/api`）、
+`CANARY_API_CONTENT_BASE`（`https://zvp.xiaobopisces.top/api`）。
+
+CI 里的构建参数与手工版一致，另有两条是预览站专属的：
+
+```text
+VITE_STATIC_BASE=/                              # 静态资源由 Worker 自己托管
+VITE_PAGE_BASE=https://canary.xiaobopisces.top/  # PWA start_url/scope 锚在预览域
+```
+
+发布后自动冒烟：比对线上入口 chunk 与本地产物的 sha256、确认 `/sw.js` 回落到
+`text/html`（旧 service worker 不能被当成 JS 下发）、确认后端 CORS 回显预览域。
+
+## 步骤（手工应急）
 
 分支预览在仓库内的 git worktree 里构建（分支名已由 `愚人节ui` 改名 `phigros` 后又改名 `v5-canary`）：
 `worktrees/v5-canary/zvp5/zvp5-frontend`。`wrangler.jsonc` 的

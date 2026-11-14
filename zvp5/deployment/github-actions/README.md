@@ -64,7 +64,7 @@ Environment Variables:
 |---|---|
 | `PROD_API_BASE` | Canonical same-origin `/api`, or an absolute HTTPS API base ending in `/api` for a split-origin rollback |
 | `PROD_API_RACE_BASE` | Race API base ending in `/api`; required by the current production build |
-| `PROD_STATIC_BASE` | High-bandwidth static asset origin ending in `/`; defaults to `https://zvpapi.xiaobopisces.top/` |
+| `PROD_STATIC_BASE` | High-bandwidth static asset origin ending in `/`; required, no fallback — an unset variable fails the preflight instead of silently building against a stale origin |
 | `PROD_FRONTEND_HEALTH_URL` | Public frontend root URL |
 
 Production API hosts are runtime configuration and are not stored in the
@@ -133,6 +133,10 @@ The wrapper builds a replacement virtualenv outside the backend tree.
   channel cannot plant a setuid-root binary. This does not replace host
   hardening: anyone holding a deploy key still controls deployed content.
 - Successful deploys remove their own files from `~/incoming`.
+- Every invocation takes an exclusive `flock` on
+  `/www/zvms4/.github-actions/deploy.lock` before touching anything, so a manual
+  run and a CI retry cannot swap the same tree concurrently. A waiting run aborts
+  after `ZVMS4_DEPLOY_LOCK_TIMEOUT` seconds (default 600).
 - The built frontend is rejected unless both configured API bases are valid,
   their health endpoints are reachable, and both values appear in the bundle and
   generated preconnect links.

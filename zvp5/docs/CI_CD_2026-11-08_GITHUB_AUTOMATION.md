@@ -96,8 +96,8 @@ main 已把 `zvms4-modified-main/` 更名 `zvp5/`，分支仍用旧目录名；
 
 ## 八、遗留（不影响本次合并）
 
-- 服务器端无并发互斥（CI 侧有 `production-deploy` 串行组）；手工执行与 CI
-  重试并发时存在竞态，可加 `flock`。
+- ~~服务器端无并发互斥（CI 侧有 `production-deploy` 串行组）；手工执行与 CI
+  重试并发时存在竞态，可加 `flock`。~~ **已修**，见第十节。
 - 前端切换为两次 `mv`，存在毫秒级 404 窗口；可改为 releases 目录 +
   symlink 原子翻转。
 - 第三方 action / 镜像仍为 tag 固定，未做 digest pin。
@@ -120,3 +120,52 @@ main 已把 `zvms4-modified-main/` 更名 `zvp5/`，分支仍用旧目录名；
 | `.../tencentcloud-sdk-python-ocr-*` | SDK 下限抬到 3.1.202 | 低风险，OCR 相关用例覆盖后即可合 |
 
 原则：`main` 只在全量门禁绿的前提下前进；Dependabot PR 不批量合。
+
+## 十、2026-11-14 审查收口
+
+对 `origin/main`（`9343a48`，含 dependabot 的 6 个 actions 大版本跳）做了一次
+CI/CD 专项审查，本轮修掉的问题：
+
+| 级别 | 问题 | 处置 |
+| --- | --- | --- |
+| P0 | deploy/回滚路径用 `"${VITE_API_BASE%/}/health"` 拼健康检查 URL。标准值 `PROD_API_BASE=/api` 时它只是相对路径，curl 直接 `URL rejected: No host part`，**后端已部署成功也会判失败并整链回滚** | preflight 解析出的绝对地址写入 `$GITHUB_ENV`（`API_HEALTH_URL` / `RACE_API_HEALTH_URL`），deploy 与回滚路径只读这两个变量；写回前用 `^https://[^[:space:]]+$` 校验，避免多行值污染 `GITHUB_ENV` |
+| P1 | `VITE_STATIC_BASE` 内联 fallback `https://zvpapi.xiaobopisces.top/`，与「生产域名不进 workflow」的约定冲突，且 `PROD_STATIC_BASE` 漏配会被静默兜底 | 删掉 fallback，改为必填变量 |
+| P1 | 依赖/扫描镜像的新 CVE 只有 push/PR/release 才会被扫到 | 加 `schedule: 0 3 * * 1`（每周一）；`deploy-production` 的 `if` 限定 release 事件，定时运行不会部署 |
+| P2 | 五个质量 job 的 checkout 把只读 token 留在 runner 的 git config 里 | 加 `persist-credentials: false`；`deploy-production` 保留（它要 `git fetch origin main`） |
+| P2 | `dependabot.yml` 的 github-actions 组不限 `update-types`，主版本和补丁混在一个 PR（已发生 v4→v7/v8 六个一次性合并） | 组内限 `minor`/`patch`，主版本改为单独 PR |
+| P2 | 服务端无并发互斥（第九节遗留） | wrapper 入口 `exec 9>…/deploy.lock` + `flock -w`，超时默认 600s（`ZVMS4_DEPLOY_LOCK_TIMEOUT`）；`test-deploy-wrapper.sh` 补「锁被占用时拒绝、释放后正常部署」用例 |
+
+本轮明确不做：覆盖率/后端类型检查门槛（当前基线撑不住，会变成常驻红）、
+releases 目录 + symlink 原子翻转（要动 nginx root）、`pip install --require-hashes`
+（需先产出带哈希的锁文件）、action digest pin（等 canary 通道定稿后统一做）。
+
+canary 通道单独处理：`v5-canary` 的 push 目前不触发任何 CI，前端预览站也仍是
+手工 `wrangler` 发布。计划是复制一份 CI 配置到 canary，并把前端自动发到
+Cloudflare Worker，本次未动 `on.push.branches`。
+
+## 十一、canary 通道（2026-11-14）
+
+`v5-canary` 之前是「推了不跑任何 CI、预览站全靠手工 wrangler」的状态。现在单开
+一份 `.github/workflows/canary.yml`，与 main 的 `ci.yml` 完全解耦：
+
+- 触发：`push` 到 `v5-canary`、或手动 dispatch 该分支。
+- 门禁：五个 job 与 main 同构（后端 pytest、前端 vitest/lint/vue-tsc/构建、
+  Cypress、shellcheck+actionlint+gitleaks、pnpm audit+trivy）。
+- 部署：只有 `deploy-canary` 一个 job，**只发前端静态产物**到 Cloudflare Worker
+  `zvp-yuren`（`canary.xiaobopisces.top`）。无 SSH、无后端发布、无 DDL。
+- 构建参数：`VITE_API_BASE`/`RACE`/`CONTENT` 指向正式 API 域（跨域 + 后端 CORS
+  白名单），`VITE_STATIC_BASE=/`（Worker 自托管静态资源），
+  `VITE_PAGE_BASE=https://canary.xiaobopisces.top/`（PWA scope 锚预览域）。
+- 防回退：构建后断言 `src="/assets/` 同源、manifest 的 start_url/scope 等于预览域、
+  图标未指向绝对域；发布前删掉 `dist/sw.js` 与 `workbox-*`（预览站不吃预缓存）。
+- 冒烟：线上入口 chunk 的 sha256 必须等于本地产物；`/sw.js` 必须回落
+  `text/html`；后端 CORS 必须回显 `https://canary.xiaobopisces.top`。
+- 成本控制：工作流级 `concurrency` 取消被新推送取代的旧一轮；部署 job 单独加
+  `canary-worker-deploy` 组且 `cancel-in-progress: false`，避免上传被打断。
+
+需要的仓库 Secret 只有 `CLOUDFLARE_API_TOKEN`；`CLOUDFLARE_ACCOUNT_ID` 与三个
+`CANARY_*` 基址是可选的仓库 Variables，缺省值写在 workflow 里（预览站不是生产，
+允许内联默认值）。细节见 `deployment/preview-worker/README.md`。
+
+未做：canary 的 Worker 部署没有回滚动作（预览站直接重发上一次 commit 即可），
+也没有把 `feat/*` 分支接进来。

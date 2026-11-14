@@ -8,6 +8,10 @@ on:
   release:
     types:
       - published
+  # 依赖与扫描镜像的新 CVE 只在 push/PR/release 时才会被发现。每周定时重跑
+  # 门禁（deploy-production 的 if 已排除非 release 事件，定时运行不会部署）。
+  schedule:
+    - cron: "0 3 * * 1"
   workflow_dispatch:
 
 permissions:
@@ -32,6 +36,8 @@ jobs:
         working-directory: zvp5/zvp5-backend-python
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - uses: actions/setup-python@v7
         with:
           python-version: ${{ env.PYTHON_VERSION }}
@@ -64,6 +70,8 @@ jobs:
       VITE_API_RACE_BASE: https://race.ci.invalid/api
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - uses: pnpm/action-setup@v6
         with:
           version: ${{ env.PNPM_VERSION }}
@@ -100,6 +108,8 @@ jobs:
         working-directory: zvp5/zvp5-frontend
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - uses: pnpm/action-setup@v6
         with:
           version: ${{ env.PNPM_VERSION }}
@@ -125,6 +135,8 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - name: Install ShellCheck
         run: sudo apt-get update && sudo apt-get install -y shellcheck
       - name: ShellCheck deployment scripts
@@ -167,6 +179,8 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - uses: pnpm/action-setup@v6
         with:
           version: ${{ env.PNPM_VERSION }}
@@ -206,7 +220,7 @@ jobs:
     env:
       VITE_API_BASE: ${{ vars.PROD_API_BASE }}
       VITE_API_RACE_BASE: ${{ vars.PROD_API_RACE_BASE }}
-      VITE_STATIC_BASE: ${{ vars.PROD_STATIC_BASE || 'https://zvpapi.xiaobopisces.top/' }}
+      VITE_STATIC_BASE: ${{ vars.PROD_STATIC_BASE }}
       VITE_PAGE_BASE: ${{ vars.PROD_FRONTEND_HEALTH_URL }}
       PROD_FRONTEND_HEALTH_URL: ${{ vars.PROD_FRONTEND_HEALTH_URL }}
       DEPLOYMENT_ID: ${{ github.run_id }}-${{ github.run_attempt }}
@@ -219,6 +233,8 @@ jobs:
       FRONTEND_SSH_PORT: ${{ secrets.FRONTEND_SSH_PORT }}
       FRONTEND_SSH_USER: ${{ secrets.FRONTEND_SSH_USER }}
     steps:
+      # 这个 job 要 `git fetch origin main`（私有仓库），必须保留 checkout 注入的
+      # 只读 token；其余 job 一律不持久化凭证。
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
@@ -310,6 +326,18 @@ jobs:
             api_health_url="$(node -e 'process.stdout.write(new URL(process.argv[1]).origin + "/api/health")' "$VITE_API_BASE")"
           fi
           race_health_url="$(node -e 'process.stdout.write(new URL(process.argv[1]).origin + "/api/health")' "$VITE_API_RACE_BASE")"
+          # 后续步骤（含失败回滚路径）必须拿到绝对 URL：PROD_API_BASE=/api 时
+          # "${VITE_API_BASE%/}/health" 只是相对路径，curl 会直接拒绝。
+          for health_url in "$api_health_url" "$race_health_url"; do
+            [[ "$health_url" =~ ^https://[^[:space:]]+$ ]] || {
+              echo "invalid health URL: ${health_url:-<empty>}" >&2
+              exit 1
+            }
+          done
+          {
+            echo "API_HEALTH_URL=$api_health_url"
+            echo "RACE_API_HEALTH_URL=$race_health_url"
+          } >> "$GITHUB_ENV"
           curl -fsS --retry 3 --retry-delay 2 \
             -A 'Mozilla/5.0 (compatible; ZVP5-Deploy/1.0)' "$api_health_url" >/dev/null
           curl -fsS --retry 3 --retry-delay 2 \
@@ -450,8 +478,8 @@ jobs:
                 check_url "$PROD_FRONTEND_HEALTH_URL" || rollback_failed=1
               fi
               if [[ $backend_attempted -eq 1 ]]; then
-                check_url "${VITE_API_BASE%/}/health" || rollback_failed=1
-                check_url "${VITE_API_RACE_BASE%/}/health" || rollback_failed=1
+                check_url "$API_HEALTH_URL" || rollback_failed=1
+                check_url "$RACE_API_HEALTH_URL" || rollback_failed=1
               fi
               {
                 echo '### Production deployment failed'
@@ -474,15 +502,15 @@ jobs:
           backend_attempted=1
           remote backend "$BACKEND_SSH_HOST" "$BACKEND_SSH_PORT" "$BACKEND_SSH_USER" \
             "sudo -n /usr/local/sbin/zvms4-deploy deploy backend $GITHUB_SHA $DEPLOYMENT_ID"
-          check_url "${VITE_API_BASE%/}/health"
-          check_url "${VITE_API_RACE_BASE%/}/health"
+          check_url "$API_HEALTH_URL"
+          check_url "$RACE_API_HEALTH_URL"
 
           frontend_attempted=1
           remote frontend "$FRONTEND_SSH_HOST" "$FRONTEND_SSH_PORT" "$FRONTEND_SSH_USER" \
             "sudo -n /usr/local/sbin/zvms4-deploy deploy frontend $GITHUB_SHA $DEPLOYMENT_ID"
           check_url "$PROD_FRONTEND_HEALTH_URL"
-          check_url "${VITE_API_BASE%/}/health"
-          check_url "${VITE_API_RACE_BASE%/}/health"
+          check_url "$API_HEALTH_URL"
+          check_url "$RACE_API_HEALTH_URL"
 
           {
             echo '### Production deployment succeeded'

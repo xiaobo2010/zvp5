@@ -240,4 +240,24 @@ probe_mode="$(stat -c '%a' "$ZVMS4_DEPLOY_ROOT/frontend-dist/setuid-probe")"
   exit 1
 }
 
+# ---- 并发互斥回归：锁被占用时第二个进程必须失败，且不触碰现有产物 ----
+REV_G=7777777777777777777777777777777777777777
+ID_G=run-106-1
+printf '<html>locked-frontend</html>\n' > "$TEST_ROOT/source/frontend/index.html"
+archive frontend "$REV_G" "$TEST_ROOT/source/frontend"
+lock_file="$ZVMS4_DEPLOY_ROOT/.github-actions/deploy.lock"
+flock "$lock_file" sleep 30 &
+lock_pid=$!
+sleep 0.3
+if ZVMS4_DEPLOY_LOCK_TIMEOUT=1 bash "$WRAPPER" deploy frontend "$REV_G" "$ID_G"; then
+  echo "Expected concurrent deployment to be rejected while the lock is held" >&2
+  kill "$lock_pid" 2>/dev/null || true
+  exit 1
+fi
+kill "$lock_pid" 2>/dev/null || true
+wait "$lock_pid" 2>/dev/null || true
+assert_file 'setuid-frontend' "$ZVMS4_DEPLOY_ROOT/frontend-dist/index.html"
+bash "$WRAPPER" deploy frontend "$REV_G" "$ID_G"
+assert_file 'locked-frontend' "$ZVMS4_DEPLOY_ROOT/frontend-dist/index.html"
+
 echo "Deployment wrapper tests passed"

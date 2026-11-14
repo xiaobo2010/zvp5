@@ -516,6 +516,12 @@ validate_deployment_id "$DEPLOYMENT_ID"
 
 trap handle_error EXIT
 
+# 手工执行与 CI 重试可能并发（CI 侧只有 production-deploy 串行组，管不到 SSH 上的
+# 手工调用）。用 flock 把整段部署/回滚串起来，避免两个进程同时 mv 同一棵树。
+ensure_dir "$STATE_ROOT" 0751
+exec 9>"$STATE_ROOT/deploy.lock"
+flock -w "${ZVMS4_DEPLOY_LOCK_TIMEOUT:-600}" 9 || die "another zvms4-deploy run holds the lock"
+
 case "$ACTION:$COMPONENT" in
   deploy:frontend) deploy_frontend "$REVISION" "$DEPLOYMENT_ID" ;;
   deploy:backend) deploy_backend "$REVISION" "$DEPLOYMENT_ID" ;;
