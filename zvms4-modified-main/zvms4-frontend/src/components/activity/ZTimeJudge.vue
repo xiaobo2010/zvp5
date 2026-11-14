@@ -2,6 +2,7 @@
 import { ElIcon, ElProgress } from 'element-plus'
 import { toRefs, computed } from 'vue'
 import { ref, watch } from 'vue'
+import { useElementSize } from '@vueuse/core'
 import { CaretTop, CaretBottom } from '@element-plus/icons-vue'
 import { useI18n } from 'vue-i18n'
 import type { ActivityMember } from 'types/activity.v2'
@@ -17,6 +18,14 @@ const { type, realTime: real } = toRefs(props)
 const { t } = useI18n()
 
 const standard = ref(0)
+
+// 环形宽度跟随容器：卡片被压窄时整体等比收缩，避免环与左右两侧内容重叠。
+const root = ref<HTMLElement>()
+const { width: rootWidth } = useElementSize(root)
+const ringSize = computed(() => {
+  const width = rootWidth.value || 128
+  return Math.round(Math.min(128, Math.max(80, width - 4)))
+})
 
 function refreshStandardTime() {
   if (type.value === 'social-practice') {
@@ -81,8 +90,8 @@ function calculateLoss() {
 </script>
 
 <template>
-  <div class="time-gauge">
-    <ElProgress type="dashboard" :percentage="percentage" :color="colors" :width="128">
+  <div ref="root" class="time-gauge">
+    <ElProgress type="dashboard" :percentage="percentage" :color="colors" :width="ringSize">
       <p class="gauge-time">{{ real }}h</p>
       <p class="gauge-label">{{ t(`activity.mode.${type}.name`) }}</p>
     </ElProgress>
@@ -105,18 +114,30 @@ function calculateLoss() {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 8px;
-  min-width: 128px;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+  container-type: inline-size;
 }
 
 .gauge-time {
-  font-size: 20px;
-  font-weight: bold;
+  /* 环内数字跟容器等比缩放，窄卡片下不再顶出环外 */
+  font-size: clamp(13px, 15cqw, 20px);
+  font-weight: 700;
+  line-height: 1.1;
+  letter-spacing: -0.01em;
+  font-variant-numeric: tabular-nums;
 }
 
 .gauge-label {
-  font-size: 12px;
+  margin-top: 2px;
+  max-width: 100%;
+  font-size: clamp(10px, 9cqw, 12px);
+  line-height: 1.2;
   color: var(--el-text-color-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .upper {
@@ -128,13 +149,17 @@ function calculateLoss() {
 }
 
 .footer-item {
-  font-size: 12px !important;
   display: flex;
-  justify-content: space-between;
+  justify-content: center;
   align-items: center;
   flex-wrap: wrap;
+  gap: 2px 8px;
+  max-width: 100%;
+  font-size: 11px !important;
+  line-height: 1.35;
+  text-align: center;
   color: var(--el-text-color-regular);
-  gap: 4px;
+  font-variant-numeric: tabular-nums;
 }
 
 .footer-item .upper,
