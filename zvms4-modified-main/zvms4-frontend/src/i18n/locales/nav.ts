@@ -14,6 +14,7 @@ export const zhCN = {
   reset: '密码修改',
   menu: '菜单',
   toggleSidebar: '收起侧边栏',
+  expandSidebar: '展开侧边栏',
   groups: {
     overview: '概览',
     collab: '协作',

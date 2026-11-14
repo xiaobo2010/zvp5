@@ -2,7 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { useDark } from '@vueuse/core'
+import { useTheme } from '@/utils/theme'
 import { ElIcon, ElMessageBox, ElSwitch } from 'element-plus'
 import { SwitchButton } from '@element-plus/icons-vue'
 import { useUserStore } from '@/stores/user'
@@ -18,7 +18,7 @@ const groupsStore = useGroupsStore()
 const header = useHeaderStore()
 const router = useRouter()
 const { t } = useI18n()
-const dark = useDark()
+const { dark, toggleTheme: toggleThemePreference } = useTheme()
 
 header.setHeader(t('nav.profile'))
 
@@ -100,17 +100,16 @@ const reduceMotion = () =>
   window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
 
 function toggleDarkMode() {
-  const next = !dark.value
   const doc = document as Document & {
     startViewTransition?: (callback: () => void) => unknown
   }
   // 整屏快照交叉淡化，避免逐个组件生硬切换
   if (typeof doc.startViewTransition === 'function' && !reduceMotion()) {
     doc.startViewTransition(() => {
-      dark.value = next
+      toggleThemePreference()
     })
   } else {
-    dark.value = next
+    toggleThemePreference()
   }
 }
 
@@ -243,7 +242,7 @@ onMounted(async () => {
         @keydown.space.prevent="toggleDarkMode"
       >
         <span>{{ t('profile.actions.darkMode') }}</span>
-        <ElSwitch v-model="dark" />
+        <ElSwitch :model-value="dark" @update:model-value="toggleDarkMode" />
       </div>
       <button class="profile-action" type="button" @click="router.push('/about')">
         {{ t('profile.actions.about') }}

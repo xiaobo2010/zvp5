@@ -17,14 +17,15 @@ import { useUserStore } from '@/stores/user'
 import MdiEye from '@/icons/MdiEye.vue'
 import type { Component as VueComponent } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
-import { useDark, useWindowSize } from '@vueuse/core'
+import { useWindowSize } from '@vueuse/core'
+import { useTheme } from '@/utils/theme'
 import { useI18n } from 'vue-i18n'
 import { pad, getTabletType } from '@/plugins/ua'
 
 const user = useUserStore()
 const router = useRouter()
 const route = useRoute()
-const dark = useDark()
+const { dark, toggleTheme: toggleThemePreference } = useTheme()
 const { t } = useI18n({
   useScope: 'global'
 })
@@ -282,7 +283,7 @@ function toggleDark() {
   spinning.value = true
   setTimeout(() => (spinning.value = false), 650)
   const apply = () => {
-    dark.value = !dark.value
+    toggleThemePreference()
   }
   if (document.startViewTransition) {
     document.startViewTransition(apply)

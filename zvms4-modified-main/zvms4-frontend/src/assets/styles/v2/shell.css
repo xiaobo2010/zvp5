@@ -86,10 +86,10 @@
   display: grid;
   place-items: center;
   flex: none;
-  width: 26px;
-  height: 26px;
+  width: 28px;
+  height: 28px;
   border-radius: var(--yg2-r-8);
-  color: var(--yg2-text-tertiary);
+  color: var(--yg2-text-secondary);
   transition: background var(--yg2-dur-1) var(--yg2-ease-out),
     color var(--yg2-dur-1) var(--yg2-ease-out);
 }
@@ -97,6 +97,21 @@
 .yg2-sidebar__collapse:hover {
   background: var(--yg2-accent-soft);
   color: var(--yg2-accent);
+}
+
+/* 收起态是唯一的「展开」入口，给它一块明确的点击板，避免看不见 */
+.yg2-app.is-rail .yg2-sidebar__collapse {
+  width: 40px;
+  height: 26px;
+  background: var(--yg2-surface-sunken);
+  color: var(--yg2-text-secondary);
+  box-shadow: inset 0 0 0 1px var(--yg2-line);
+}
+
+.yg2-app.is-rail .yg2-sidebar__collapse:hover {
+  background: var(--yg2-accent-soft);
+  color: var(--yg2-accent);
+  box-shadow: inset 0 0 0 1px transparent;
 }
 
 .yg2-sidebar__nav {
@@ -197,15 +212,24 @@
   padding-right: var(--yg2-sp-2);
 }
 
-.yg2-app.is-rail .yg2-sidebar__brand {
-  padding: 0 0 var(--yg2-sp-4);
-}
-
 .yg2-app.is-rail .yg2-sidebar__title,
 .yg2-app.is-rail .yg2-nav-group__title,
-.yg2-app.is-rail .yg2-nav-item__label,
-.yg2-app.is-rail .yg2-sidebar__collapse {
+.yg2-app.is-rail .yg2-nav-item__label {
   display: none;
+}
+
+/* 收起后品牌竖排，折叠按钮变成「展开」提示，否则无法回到展开态 */
+.yg2-app.is-rail .yg2-sidebar__brand {
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 0 0 var(--yg2-sp-3);
+}
+
+.yg2-app.is-rail .yg2-sidebar__collapse {
+  width: 40px;
+  height: 26px;
+  border-radius: 999px;
 }
 
 .yg2-app.is-rail .yg2-nav-item {
@@ -266,17 +290,22 @@
 .yg2-icon-btn {
   display: grid;
   place-items: center;
-  width: 32px;
-  height: 32px;
+  width: 34px;
+  height: 34px;
   border-radius: 50%;
   color: var(--yg2-text-secondary);
   transition: background var(--yg2-dur-1) var(--yg2-ease-out),
-    color var(--yg2-dur-1) var(--yg2-ease-out);
+    color var(--yg2-dur-1) var(--yg2-ease-out),
+    transform var(--yg2-dur-1) var(--yg2-ease-out);
 }
 
 .yg2-icon-btn:hover {
-  background: var(--yg2-accent-soft);
+  background: var(--yg2-surface-sunken);
   color: var(--yg2-text);
+}
+
+.yg2-icon-btn:active {
+  transform: scale(0.94);
 }
 
 /* ── 移动端底栏 ─────────────────────────────────────────── */
@@ -328,36 +357,8 @@
 }
 
 /* ── 断点 ───────────────────────────────────────────────── */
-@media (max-width: 1024px) {
-  .yg2-app,
-  .yg2-app.is-rail {
-    grid-template-columns: var(--yg2-sidebar-rail) minmax(0, 1fr);
-  }
-
-  .yg2-app .yg2-sidebar {
-    align-items: center;
-    padding-left: var(--yg2-sp-2);
-    padding-right: var(--yg2-sp-2);
-  }
-
-  .yg2-app .yg2-sidebar__title,
-  .yg2-app .yg2-nav-group__title,
-  .yg2-app .yg2-nav-item__label,
-  .yg2-app .yg2-sidebar__collapse {
-    display: none;
-  }
-
-  .yg2-app .yg2-nav-item {
-    justify-content: center;
-    width: 40px;
-    padding: 0;
-  }
-
-  .yg2-app .yg2-nav-group {
-    align-items: center;
-  }
-}
-
+/* 769–1024：图标栏形态由 JS 的 rail 状态 + .is-rail 控制，
+   不再用媒体查询强制，否则用户点「展开」不会生效。 */
 @media (max-width: 768px) {
   .yg2-app,
   .yg2-app.is-rail {

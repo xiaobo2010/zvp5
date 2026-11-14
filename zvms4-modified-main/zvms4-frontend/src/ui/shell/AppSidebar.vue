@@ -5,7 +5,7 @@ import { useI18n } from 'vue-i18n'
 import { useUserStore } from '@/stores/user'
 import { NAV_GROUPS, FOOT_ITEMS, type NavItem } from './nav'
 
-const props = defineProps<{ open: boolean }>()
+const props = defineProps<{ open: boolean; rail?: boolean }>()
 const emit = defineEmits<{ toggleRail: []; close: [] }>()
 
 const route = useRoute()
@@ -49,11 +49,16 @@ function go(item: NavItem) {
       <button
         type="button"
         class="yg2-sidebar__collapse"
-        :aria-label="t('nav.toggleSidebar', '收起侧边栏')"
+        :title="
+          props.rail ? t('nav.expandSidebar', '展开侧边栏') : t('nav.toggleSidebar', '收起侧边栏')
+        "
+        :aria-label="
+          props.rail ? t('nav.expandSidebar', '展开侧边栏') : t('nav.toggleSidebar', '收起侧边栏')
+        "
         @click="emit('toggleRail')"
       >
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="m14 6-6 6 6 6" />
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <path :d="props.rail ? 'm10 6 6 6-6 6' : 'm14 6-6 6 6 6'" />
         </svg>
       </button>
     </div>

@@ -5,7 +5,7 @@ import { ElMessage } from 'element-plus'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
-import { useDark } from '@vueuse/core'
+import { useTheme } from '@/utils/theme'
 import { createSshSession, buildSshWsUrl } from '@/api/system/ssh.ts'
 import ZSystemAuthDialog from '@/components/system/ZSystemAuthDialog.vue'
 import { useUserStore } from '@/stores/user.ts'
@@ -43,7 +43,7 @@ const scrolledUp = ref(false)
 let viewportEl: HTMLElement | null = null
 let touchLastY: number | null = null
 
-const dark = useDark()
+const { dark } = useTheme()
 
 const statusText = computed(() => {
   if (status.value === 'idle') return t('server.ssh.statusIdle')
