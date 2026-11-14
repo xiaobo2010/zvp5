@@ -16,6 +16,9 @@ import FlipCard from '@/ui/card/FlipCard.vue'
 
 /** 共享元素转场（规范 13）：点击卡片用 View Transitions 放大成详情。 */
 const expanded = ref<null | { title: string; desc: string; kind: string }>(null)
+/** 最近一次点开的卡片下标：只有它能挂 view-transition-name，避免重名 */
+const sharedIndex = ref<number | null>(null)
+const detailRef = ref<HTMLElement | null>(null)
 
 const samples = [
   { title: '社区图书馆整理', desc: '整理书架、登记借阅，2 小时一场。', kind: '校外', icon: BookOpen },
@@ -23,12 +26,29 @@ const samples = [
   { title: '外语节志愿服务', desc: '引导来宾、维持秩序，需提前一小时到场。', kind: '校内', icon: CalendarDays }
 ]
 
-function expand(item: (typeof samples)[number]) {
-  expanded.value = { title: item.title, desc: item.desc, kind: item.kind }
+/** 共享元素转场：卡片与详情共用同一个 view-transition-name，浏览器负责形变。 */
+async function withTransition(mutate: () => Promise<void> | void) {
+  const doc = document as Document & { startViewTransition?: (cb: () => Promise<void> | void) => { finished: Promise<void> } }
+  if (typeof doc.startViewTransition !== 'function') {
+    await mutate()
+    return
+  }
+  const transition = doc.startViewTransition(mutate)
+  await transition.finished.catch(() => {})
 }
 
-function collapse() {
-  expanded.value = null
+async function expand(item: (typeof samples)[number], index: number) {
+  sharedIndex.value = index
+  await withTransition(() => {
+    expanded.value = { title: item.title, desc: item.desc, kind: item.kind }
+  })
+}
+
+async function collapse() {
+  await withTransition(() => {
+    expanded.value = null
+  })
+  sharedIndex.value = null
 }
 </script>
 
@@ -155,7 +175,11 @@ function collapse() {
         </template>
       </FlipCard>
 
-      <YgCard class="cardlab__expandable" @click="expand(samples[0]!)">
+      <YgCard
+        class="cardlab__expandable"
+        :style="{ viewTransitionName: sharedIndex === 0 ? 'card-shared' : 'none' }"
+        @click="expand(samples[0]!, 0)"
+      >
         <template #icon><Sparkles :size="20" :stroke-width="1.6" /></template>
         <template #title>共享元素转场</template>
         <template #desc>点击用 View Transitions 放大成详情，关闭时缩回原位。</template>
@@ -190,8 +214,8 @@ function collapse() {
     <!-- 共享元素详情 -->
     <Teleport to="body">
       <div v-if="expanded" class="cardlab__overlay" @click.self="collapse">
-        <div class="cardlab__detail">
-          <YgCard variant="liquid" :radius="28" :padding="28">
+        <div ref="detailRef" class="cardlab__detail" style="view-transition-name: card-shared">
+          <YgCard variant="plain" :radius="28" :padding="28" class="cardlab__detailcard">
             <template #title>{{ expanded.title }}</template>
             <template #subtitle>{{ expanded.kind }}</template>
             <template #desc>{{ expanded.desc }}</template>
@@ -298,5 +322,13 @@ function collapse() {
 
 .cardlab__detail {
   width: min(460px, 100%);
+}
+
+/* 详情卡放在遮罩上，用实色避免「玻璃叠玻璃」发灰 */
+.cardlab__detailcard {
+  background: color-mix(in srgb, var(--yg2-surface) 94%, transparent);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  box-shadow: 0 30px 80px -20px color-mix(in srgb, #000 45%, transparent);
 }
 </style>
