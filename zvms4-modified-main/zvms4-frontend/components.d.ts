@@ -109,6 +109,7 @@ declare module 'vue' {
     ZUserModification: typeof import('./src/components/group/ZUserModification.vue')['default']
     ZUserPosition: typeof import('./src/components/tags/ZUserPosition.vue')['default']
     'ZUserPosition 2': typeof import('./src/components/tags/ZUserPosition 2.vue')['default']
+    ZUserTimeBars: typeof import('./src/components/activity/ZUserTimeBars.vue')['default']
     ZUserTimeJudge: typeof import('./src/components/activity/ZUserTimeJudge.vue')['default']
     ZVerticalNav: typeof import('./src/components/form/ZVerticalNav.vue')['default']
     'ZVerticalNav 2': typeof import('./src/components/form/ZVerticalNav 2.vue')['default']

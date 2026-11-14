@@ -249,15 +249,77 @@
 }
 
 .yg2-app.is-rail .yg2-sidebar__collapse {
-  width: 40px;
-  height: 26px;
+  width: 32px;
+  height: 32px;
   border-radius: 999px;
 }
 
 .yg2-app.is-rail .yg2-nav-item {
   justify-content: center;
-  width: 40px;
+  width: 48px;
+  height: 48px;
   padding: 0;
+  border-radius: 999px;
+  gap: 0;
+}
+
+/* 图标栏里图标稍大一点，48px 的圆里才不显得空 */
+.yg2-app.is-rail .yg2-nav-item__icon {
+  width: 22px;
+  height: 22px;
+}
+
+.yg2-app.is-rail .yg2-nav-item__icon svg,
+.yg2-app.is-rail .yg2-nav-item__icon :deep(svg) {
+  width: 22px;
+  height: 22px;
+}
+
+/* 选中态：底色交给滑块，item 自己只负责图标颜色，避免出现两个圆 */
+.yg2-app.is-rail .yg2-nav-item.is-active {
+  background: transparent;
+  color: var(--yg2-accent);
+  box-shadow: none;
+  animation: yg2-rail-pop 380ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.yg2-app.is-rail .yg2-nav-group {
+  gap: 6px;
+}
+
+/* 滑块：跟着选中项上下滑，与分段控件同款弹簧曲线 */
+.yg2-rail-thumb {
+  position: absolute;
+  left: 50%;
+  top: 0;
+  width: 48px;
+  height: 48px;
+  margin-left: -24px;
+  border-radius: 999px;
+  background: var(--yg2-accent-soft);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--yg2-accent) 22%, transparent);
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    transform 360ms cubic-bezier(0.34, 1.42, 0.64, 1),
+    opacity 200ms var(--yg2-ease-out);
+  z-index: 0;
+}
+
+.yg2-app.is-rail .yg2-rail-thumb {
+  opacity: 1;
+}
+
+.yg2-app.is-rail .yg2-nav-item,
+.yg2-app.is-rail .yg2-sidebar__nav {
+  position: relative;
+  z-index: 1;
+}
+
+@keyframes yg2-rail-pop {
+  0% { transform: scale(0.9); }
+  55% { transform: scale(1.06); }
+  100% { transform: scale(1); }
 }
 
 .yg2-app.is-rail .yg2-nav-group {

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useUserStore } from '@/stores/user'
@@ -26,14 +26,58 @@ function isActive(item: NavItem) {
   return item.judge(route.path)
 }
 
-function go(item: NavItem) {
-  if (item.key === 'manage') {
-    const staff = user.position.includes('admin') || user.position.includes('department')
-    router.push(staff ? '/manage/groups' : `/group/${user.class_id}/users`)
-  } else {
-    router.push(item.path)
+const navEl = ref<HTMLElement>()
+const railThumbY = ref(0)
+
+/** 图标栏的滑块：量出当前选中项的纵向位置，交给 CSS 做弹簧位移 */
+function syncRailThumb() {
+  const nav = navEl.value
+  if (!nav) {
+    return
   }
-  emit('close')
+  const active = nav.querySelector<HTMLElement>('.yg2-nav-item.is-active')
+  if (!active) {
+    return
+  }
+  railThumbY.value = active.offsetTop + (active.offsetHeight - 48) / 2
+}
+
+watch(
+  () => [route.path, props.rail, groups.value.length],
+  () => {
+    void nextTick(syncRailThumb)
+  },
+  { immediate: true }
+)
+
+onMounted(() => void nextTick(syncRailThumb))
+
+/** 正在「弹一下」的项：用来先播完弹性动画，再切路由 */
+const pressing = ref<string | null>(null)
+
+/**
+ * 点击导航时先让弹性动画跑完再跳转。
+ * 之前是同步 push，页面一换，动画立刻被打断，看起来像卡顿。
+ */
+function go(item: NavItem) {
+  const target =
+    item.key === 'manage'
+      ? user.position.includes('admin') || user.position.includes('department')
+        ? '/manage/groups'
+        : `/group/${user.class_id}/users`
+      : item.path
+
+  if (target === route.path) {
+    emit('close')
+    return
+  }
+
+  pressing.value = item.key
+  window.setTimeout(() => {
+    pressing.value = null
+    void router.push(target)
+    emit('close')
+  }, 220)
 }
 </script>
 
@@ -68,7 +112,12 @@ function go(item: NavItem) {
       </button>
     </div>
 
-    <nav class="yg2-sidebar__nav">
+    <nav ref="navEl" class="yg2-sidebar__nav">
+      <span
+        class="yg2-rail-thumb"
+        aria-hidden="true"
+        :style="{ transform: `translate3d(0, ${railThumbY}px, 0)` }"
+      />
       <div v-for="group in groups" :key="group.key" class="yg2-nav-group">
         <div class="yg2-nav-group__title">{{ t(group.labelKey, group.labelKey) }}</div>
         <button
@@ -76,7 +125,7 @@ function go(item: NavItem) {
           :key="item.key"
           type="button"
           class="yg2-nav-item"
-          :class="{ 'is-active': isActive(item) }"
+          :class="{ 'is-active': isActive(item), 'is-pressing': pressing === item.key }"
           @click="go(item)"
         >
           <span class="yg2-nav-item__icon"><component :is="item.icon" /></span>
