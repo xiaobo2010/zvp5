@@ -88,9 +88,40 @@
     linear-gradient(rgba(73, 244, 226, 0.09) 1px, transparent 1px),
     linear-gradient(90deg, rgba(73, 244, 226, 0.065) 1px, transparent 1px);
   background-size: 54px 42px;
-  mask-image: linear-gradient(to bottom, transparent, #000 15%, #000 75%, transparent);
+  /* 两层 mask：第一层保留上下边缘渐隐，第二层是一条缓慢下移的亮带。
+     两层 intersect 后，亮带经过的位置网格先变亮、离开后回落。 */
+  -webkit-mask-image:
+    linear-gradient(to bottom, transparent, #000 15%, #000 75%, transparent),
+    linear-gradient(
+      to bottom,
+      rgba(0, 0, 0, 0.55) 0%,
+      rgba(0, 0, 0, 0.55) 36%,
+      #000 50%,
+      rgba(0, 0, 0, 0.55) 64%,
+      rgba(0, 0, 0, 0.55) 100%
+    );
+  mask-image:
+    linear-gradient(to bottom, transparent, #000 15%, #000 75%, transparent),
+    linear-gradient(
+      to bottom,
+      rgba(0, 0, 0, 0.55) 0%,
+      rgba(0, 0, 0, 0.55) 36%,
+      #000 50%,
+      rgba(0, 0, 0, 0.55) 64%,
+      rgba(0, 0, 0, 0.55) 100%
+    );
+  -webkit-mask-size: 100% 100%, 100% 300%;
+  mask-size: 100% 100%, 100% 300%;
+  -webkit-mask-position: 0 0, 50% 85%;
+  mask-position: 0 0, 50% 85%;
+  -webkit-mask-repeat: no-repeat, no-repeat;
+  mask-repeat: no-repeat, no-repeat;
+  -webkit-mask-composite: source-in;
+  mask-composite: intersect;
   pointer-events: none;
-  animation: phi-grid-float 18s cubic-bezier(0.19, 1, 0.22, 1) infinite;
+  animation:
+    phi-grid-float 18s cubic-bezier(0.19, 1, 0.22, 1) infinite,
+    phi-grid-sweep 14s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 }
 
 @keyframes phi-grid-float {
@@ -100,6 +131,18 @@
   }
   50% {
     transform: rotateX(67deg) translateY(15px);
+  }
+}
+
+/* 300% 高 mask 中，亮带中心从画面上方移到下方的两个位置。 */
+@keyframes phi-grid-sweep {
+  0% {
+    -webkit-mask-position: 0 0, 50% 85%;
+    mask-position: 0 0, 50% 85%;
+  }
+  100% {
+    -webkit-mask-position: 0 0, 50% 15%;
+    mask-position: 0 0, 50% 15%;
   }
 }
 
@@ -660,6 +703,20 @@ html.dark .yg-phi .yg-glass-nav--v2.yg-glass-nav--portrait::after {
   .yg-phi::before {
     animation: none;
     transform: rotateX(67deg);
+    -webkit-mask-image: linear-gradient(
+      to bottom,
+      transparent,
+      #000 15%,
+      #000 75%,
+      transparent
+    );
+    mask-image: linear-gradient(to bottom, transparent, #000 15%, #000 75%, transparent);
+    -webkit-mask-size: 100% 100%;
+    mask-size: 100% 100%;
+    -webkit-mask-position: 0 0;
+    mask-position: 0 0;
+    -webkit-mask-composite: source-over;
+    mask-composite: add;
   }
 
   .yg-phi-velocity,
@@ -1025,6 +1082,32 @@ html[data-theme='light'] .yg-phi::before {
   background-image:
     linear-gradient(rgba(5, 6, 8, 0.055) 1px, transparent 1px),
     linear-gradient(90deg, rgba(11, 159, 147, 0.055) 1px, transparent 1px);
+}
+
+/* 浅色背景上线条本身是深色：亮带把线条冲淡而非加深，保持「变亮」的语义。 */
+@media (prefers-reduced-motion: no-preference) {
+  html[data-theme='light'] .yg-phi::before {
+    -webkit-mask-image:
+      linear-gradient(to bottom, transparent, #000 15%, #000 75%, transparent),
+      linear-gradient(
+        to bottom,
+        #000 0%,
+        #000 36%,
+        rgba(0, 0, 0, 0.42) 50%,
+        #000 64%,
+        #000 100%
+      );
+    mask-image:
+      linear-gradient(to bottom, transparent, #000 15%, #000 75%, transparent),
+      linear-gradient(
+        to bottom,
+        #000 0%,
+        #000 36%,
+        rgba(0, 0, 0, 0.42) 50%,
+        #000 64%,
+        #000 100%
+      );
+  }
 }
 
 html[data-theme='light'] .yg-phi::after {

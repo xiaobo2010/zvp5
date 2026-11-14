@@ -15,6 +15,11 @@ const props = withDefaults(
     drift?: boolean
     /** 缓慢呼吸（亮度起伏） */
     flicker?: boolean
+    /**
+     * 自上而下的亮度扫过：每个周期里，亮带从顶部缓慢下移，
+     * 经过的网格先变亮再回落。只动 mask-position，不重排。
+     */
+    sweep?: boolean
     /** 层叠位置，宿主按需覆盖 */
     zIndex?: number
   }>(),
@@ -25,6 +30,7 @@ const props = withDefaults(
     stroke: 1,
     drift: false,
     flicker: false,
+    sweep: false,
     zIndex: 0
   }
 )
@@ -169,6 +175,7 @@ onBeforeUnmount(() => {
     :class="{
       'z-hex-grid--drift': drift,
       'z-hex-grid--flicker': flicker,
+      'z-hex-grid--sweep': sweep,
       'is-paused': isPaused
     }"
     aria-hidden="true"
@@ -217,9 +224,77 @@ onBeforeUnmount(() => {
   animation: z-hex-drift 96s linear infinite;
 }
 
+/* 自上而下的亮度扫过：mask 里保留一层基础亮度，亮带经过时抬到 100%，
+   离开后回落。图案本身始终可见，只是每个周期「先亮后暗」一次。 */
+.z-hex-grid--sweep .z-hex-grid__layer {
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0.42) 0%,
+    rgba(0, 0, 0, 0.42) 36%,
+    #000 50%,
+    rgba(0, 0, 0, 0.42) 64%,
+    rgba(0, 0, 0, 0.42) 100%
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0.42) 0%,
+    rgba(0, 0, 0, 0.42) 36%,
+    #000 50%,
+    rgba(0, 0, 0, 0.42) 64%,
+    rgba(0, 0, 0, 0.42) 100%
+  );
+  -webkit-mask-size: 100% 280%;
+  mask-size: 100% 280%;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  will-change: transform, mask-position;
+  animation: z-hex-sweep 14s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+.z-hex-grid--drift.z-hex-grid--sweep .z-hex-grid__layer {
+  animation:
+    z-hex-drift 96s linear infinite,
+    z-hex-sweep 14s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+/* 浅色主题的网格线本身是深色：让亮带把线条「冲淡」而不是加深，
+   这样经过时画面变亮、离开后恢复深色，语义仍然是先亮后暗。 */
+@media (prefers-reduced-motion: no-preference) {
+  html[data-theme='light'] .z-hex-grid--sweep .z-hex-grid__layer {
+    -webkit-mask-image: linear-gradient(
+      to bottom,
+      #000 0%,
+      #000 36%,
+      rgba(0, 0, 0, 0.38) 50%,
+      #000 64%,
+      #000 100%
+    );
+    mask-image: linear-gradient(
+      to bottom,
+      #000 0%,
+      #000 36%,
+      rgba(0, 0, 0, 0.38) 50%,
+      #000 64%,
+      #000 100%
+    );
+  }
+}
+
 .z-hex-grid--flicker .z-hex-grid__svg {
   will-change: opacity;
   animation: z-hex-flicker 7s ease-in-out infinite;
+}
+
+/* 89% / 11% 是 280% 高 mask 中亮带中心从画面上方移到下方的两个位置。 */
+@keyframes z-hex-sweep {
+  0% {
+    -webkit-mask-position: 50% 89%;
+    mask-position: 50% 89%;
+  }
+  100% {
+    -webkit-mask-position: 50% 11%;
+    mask-position: 50% 11%;
+  }
 }
 
 @keyframes z-hex-drift {
@@ -251,6 +326,11 @@ onBeforeUnmount(() => {
   .z-hex-grid__layer,
   .z-hex-grid__svg {
     animation: none !important;
+  }
+
+  .z-hex-grid--sweep .z-hex-grid__layer {
+    -webkit-mask-image: none;
+    mask-image: none;
   }
 }
 

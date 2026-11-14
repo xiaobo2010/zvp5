@@ -161,7 +161,14 @@ function prefetchTab(value: string): void {
     :class="[compactTabs ? 'px-4 py-3' : 'px-6 py-4', { 'server-shell--fill': isFill }]"
   >
     <!-- 蜂窝底纹：与封禁页同一套仪器感底纹，管理台用主题强调色，压在内容之下 -->
-    <ZHexGrid :size="64" color="var(--yg-text-primary)" :opacity="0.055" drift :z-index="-1" />
+    <ZHexGrid
+      :size="64"
+      color="var(--yg-text-primary)"
+      :opacity="0.055"
+      drift
+      sweep
+      :z-index="-1"
+    />
     <!-- 紧凑布局：页头（返回 + 标题）与胶囊导航分两行 -->
     <template v-if="compactTabs">
       <header class="server-head">
