@@ -45,24 +45,19 @@ watch(
   { immediate: true }
 )
 
-const colors = [
-  {
-    color: 'var(--el-color-danger)',
-    percentage: 25
-  },
-  {
-    color: 'var(--el-color-primary)',
-    percentage: 25.01
-  },
-  {
-    color: 'var(--el-color-primary)',
-    percentage: 99.99
-  },
-  {
-    color: 'var(--el-color-success)',
-    percentage: 100
-  }
-]
+// 与首页三环共用类别色：校内=红、校外=绿、社会实践=蓝
+const CATEGORY_COLOR: Record<string, string> = {
+  'on-campus': 'var(--yg2-cat-school)',
+  'off-campus': 'var(--yg2-cat-community)',
+  'social-practice': 'var(--yg2-cat-time)'
+}
+
+const ringColor = computed(() => CATEGORY_COLOR[type.value] || 'var(--yg2-accent)')
+
+const colors = computed(() => [
+  { color: ringColor.value, percentage: 99.99 },
+  { color: 'var(--yg2-cat-community)', percentage: 100 }
+])
 
 const percentage = computed(() => {
   if (!standard.value) return 0

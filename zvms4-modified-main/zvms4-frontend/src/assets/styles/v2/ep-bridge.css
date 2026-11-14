@@ -391,3 +391,58 @@ html[data-theme='dark'] {
   --yg-text-tertiary: var(--yg2-text-tertiary);
   --yg-border-subtle: var(--yg2-line);
 }
+
+
+/* ==========================================================================
+   身份 / 班级标签：直接用 Element 的按钮 CSS 变量接管配色，
+   避免和 .is-text.is-has-bg 这类组合选择器比特异性。
+   ========================================================================== */
+
+.el-button.yg2-id-tag {
+  /* EP 的 .is-text.is-has-bg 用的是 --el-fill-color-light，直接把这层变量接管，
+     免得和组合选择器比特异性 */
+  --el-fill-color-light: var(--yg2-id-bg);
+  --el-fill-color: var(--yg2-id-bg);
+
+  --el-button-bg-color: var(--yg2-id-bg);
+  --el-button-text-color: var(--yg2-id-text);
+  --el-button-border-color: var(--yg2-id-border);
+  --el-button-hover-bg-color: var(--yg2-id-bg);
+  --el-button-hover-text-color: var(--yg2-id-text);
+  --el-button-hover-border-color: var(--yg2-id-border);
+  --el-button-active-bg-color: var(--yg2-id-bg);
+  --el-button-active-text-color: var(--yg2-id-text);
+  --el-button-active-border-color: var(--yg2-id-border);
+
+  height: 26px;
+  padding: 0 11px;
+  border-radius: 999px;
+  border: 1px solid var(--el-button-border-color);
+  background: var(--el-button-bg-color);
+  color: var(--el-button-text-color);
+  font-size: 12.5px;
+  font-weight: 500;
+  box-shadow: none;
+}
+
+.el-button.yg2-id-tag .el-icon {
+  color: var(--yg2-id-icon);
+}
+
+.el-button.yg2-id-tag:hover .el-icon,
+.el-button.yg2-id-tag:focus .el-icon {
+  color: var(--yg2-id-icon);
+}
+
+/* 身份用色只点到图标上，文字始终走中性色 */
+.el-button.yg2-id-tag.el-button--success .el-icon {
+  color: var(--yg2-cat-community);
+}
+
+.el-button.yg2-id-tag.el-button--warning .el-icon {
+  color: var(--yg2-cat-school);
+}
+
+.el-button.yg2-id-tag.el-button--danger .el-icon {
+  color: var(--yg2-danger);
+}

@@ -23,6 +23,7 @@ const positionList = Object.entries(positions).map(([key, value]) => ({ name: ke
       v-for="item in positionList.filter((item) => position.includes(item.name))"
       :key="item.name"
       :type="item.color"
+      class="yg2-id-tag"
       :icon="item.icon"
       text
       round
@@ -38,7 +39,7 @@ const positionList = Object.entries(positions).map(([key, value]) => ({ name: ke
     v-for="item in positionList.filter((item) => position.includes(item.name))"
     :key="item.name"
     :type="item.color"
-    class="px-2"
+    class="px-2 yg2-id-tag"
     :icon="item.icon"
     text
     round
