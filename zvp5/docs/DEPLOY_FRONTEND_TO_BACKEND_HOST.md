@@ -31,7 +31,7 @@
 3. **zvp-backend nginx**:
    - `sites-available/zvpapi`:`location /` 从 `return 404` 改为 SPA(root `/www/zvms4/frontend-dist`、`gzip_static`、`/assets/` expires 1y、try_files → index.html);CSP map `$zvms_csp` 从 前端 vhost 平移(带 `Xuehai-Id` 收紧/普通两档);备份 `zvpapi.bak-planA-20261101-231718`。
    - 新增 `sites-available/zvp`:静态 vhost + **本机 API 反代**(:80 acme + 301;:443 SPA;`= /api/system/ssh/ws` 升级、`^~ /api/`、`/socket.io/` 全部指向 `127.0.0.1:8018`,与 zvpapi vhost 同上游同参数)。机器本地端点(SSH 终端/文件管理器)由前端 `src/utils/apiRouting.ts` 路由到页面源,同机部署下零额外跳数——这正是本 vhost 反代 `/api` 的原因,与仓库 `deployment/zvms4.nginx.conf` 模板同口径。**刻意不开 http2**:WS 的 `Upgrade` 头在 h2 里非法,会表现为后端 404(Web SSH 是管理员关键路径,不冒任何险)。备份 `zvp.bak-coloc-20261101-234552`。
-4. **DNS**:Cloudflare `zvp` A 记录 `<FRONTEND_IP> → <BACKEND_IP>`(record_id `<CF_RECORD_ID>`,灰云,TTL 300)。
+4. **DNS**:Cloudflare `zvp` A 记录 `<FRONTEND_IP> → <BACKEND_IP>`(`record_id <CF_RECORD_ID>`,灰云,TTL 300)。
 5. **证书本地化**:certbot HTTP-01(webroot `/var/www/letsencrypt`)在 zvp-backend 签发,zvp vhost 切到 `/etc/letsencrypt/live/zvp.xiaobopisces.top/`(有效至 2027-01-30,certbot 定时器自动续期)。
 6. **gzip 空转修复**(见 §4)。
 

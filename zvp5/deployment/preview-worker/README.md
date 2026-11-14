@@ -56,7 +56,7 @@ rm -f dist/sw.js dist/sw.js.map dist/workbox-*.js dist/workbox-*.js.map
 # 4. 部署
 cd ../deployment/preview-worker
 CLOUDFLARE_API_TOKEN=$(cat ~/.config/opencode/credentials/cf-api-token) \
-CLOUDFLARE_ACCOUNT_ID=<CF_ACCOUNT_ID> \
+CLOUDFLARE_ACCOUNT_ID=$(cat ~/.config/opencode/credentials/cf-account-id) \
 npx wrangler@4 deploy
 
 # 5. 后端 CORS 放行预览域（zvp-backend，改完 daemon-reload + restart）
