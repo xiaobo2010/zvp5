@@ -123,6 +123,11 @@ const router = createRouter({
           component: () => import('../views/server/ServerDatabase.vue')
         },
         {
+          path: 'db-maintenance',
+          name: 'server-db-maintenance',
+          component: () => import('../views/server/ServerDbMaintenance.vue')
+        },
+        {
           path: 'totp',
           name: 'server-totp',
           component: () => import('../views/server/ServerTotp.vue')

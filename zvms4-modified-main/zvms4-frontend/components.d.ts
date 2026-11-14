@@ -75,6 +75,7 @@ declare module 'vue' {
     ZButtonTag: typeof import('./src/components/utils/ZButtonTag.vue')['default']
     'ZButtonTag 2': typeof import('./src/components/utils/ZButtonTag 2.vue')['default']
     ZDataExport: typeof import('./src/components/utils/ZDataExport.vue')['default']
+    ZDbMaintenance: typeof import('./src/components/server/ZDbMaintenance.vue')['default']
     ZDetailedAnalysis: typeof import('./src/components/activity/ZDetailedAnalysis.vue')['default']
     ZFilePreview: typeof import('./src/components/server/ZFilePreview.vue')['default']
     ZGroupList: typeof import('./src/components/group/ZGroupList.vue')['default']

@@ -3,6 +3,7 @@ export const zhCN = {
     maintenance: '维护模式',
     database: '数据库状态',
     totp: '登录动态码',
+    'db-maintenance': '数据库维护',
     ssh: 'SSH 终端',
     files: '文件管理',
     dbContent: '数据库内容'

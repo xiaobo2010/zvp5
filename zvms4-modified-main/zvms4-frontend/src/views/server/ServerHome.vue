@@ -39,6 +39,10 @@ const tabs = ref<SegmentedTab[]>([
     value: 'database'
   },
   {
+    label: 'DbMaintenance',
+    value: 'db-maintenance'
+  },
+  {
     label: 'Totp',
     value: 'totp'
   },
