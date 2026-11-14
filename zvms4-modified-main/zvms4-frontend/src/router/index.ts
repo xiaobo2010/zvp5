@@ -15,6 +15,11 @@ const router = createRouter({
       component: () => import('../views/AboutView.vue')
     },
     {
+      path: '/card-lab',
+      name: 'card-lab',
+      component: () => import('../views/CardLab.vue')
+    },
+    {
       path: '/changelog',
       name: 'changelog',
       component: () => import('../views/ChangelogView.vue')
