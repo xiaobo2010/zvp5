@@ -618,3 +618,35 @@ html[data-theme='dark'] {
     transition: none;
   }
 }
+
+
+/* ==========================================================================
+   「文字 + 底色」的主按钮（text bg type="primary"）
+   关于页的「查看更新日志」就是这一类。EP 在这种组合下把底色接到
+   --el-fill-color-light（浅色约 #f5f7fa），文字用主色，放在白卡片上
+   只剩一行浅蓝字、没有边界，对比度经不起看。
+   这里接管成「品牌色淡底 + 加深文字」，并排除已经自带配色的标签类按钮。
+   ========================================================================== */
+.el-button.is-text.is-has-bg.el-button--primary:not(.yg2-id-tag):not(.yg2-name-chip):not(.yg2-mode-tag):not(.mode-tag) {
+  --el-fill-color-light: color-mix(in srgb, var(--yg2-accent) 12%, transparent);
+  --el-fill-color: color-mix(in srgb, var(--yg2-accent) 16%, transparent);
+
+  --el-button-bg-color: color-mix(in srgb, var(--yg2-accent) 12%, transparent);
+  --el-button-text-color: color-mix(in srgb, var(--yg2-accent) 74%, #00142e);
+  --el-button-hover-bg-color: color-mix(in srgb, var(--yg2-accent) 18%, transparent);
+  --el-button-hover-text-color: color-mix(in srgb, var(--yg2-accent) 62%, #001028);
+  --el-button-active-bg-color: color-mix(in srgb, var(--yg2-accent) 22%, transparent);
+
+  border: 1px solid color-mix(in srgb, var(--yg2-accent) 24%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, #ffffff 70%, transparent);
+}
+
+.el-button.is-text.is-has-bg.el-button--primary:not(.yg2-id-tag):not(.yg2-name-chip):not(.yg2-mode-tag):not(.mode-tag):hover {
+  border-color: color-mix(in srgb, var(--yg2-accent) 38%, transparent);
+}
+
+.dark .el-button.is-text.is-has-bg.el-button--primary:not(.yg2-id-tag):not(.yg2-name-chip):not(.yg2-mode-tag):not(.mode-tag) {
+  --el-button-text-color: color-mix(in srgb, var(--yg2-accent) 78%, #ffffff);
+  border-color: color-mix(in srgb, var(--yg2-accent) 32%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, #ffffff 14%, transparent);
+}
