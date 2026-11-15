@@ -37,6 +37,11 @@ def _sql(statement) -> str:
     )
 
 
+def _raw_sql(statement) -> str:
+    """Compiled SQL with bound-parameter placeholders kept (no literal binds)."""
+    return " ".join(str(statement.compile(dialect=DIALECT)).split())
+
+
 def _oid(index: int) -> str:
     return f"{index:024x}"
 
@@ -332,6 +337,76 @@ def test_batch_insert_targets_the_membership_columns():
         assert column in sql
 
 
+@pytest.mark.asyncio
+async def test_update_durations_many_writes_one_execute_per_batch():
+    """N 个既有成员的时长更新 = 1 条 ``executemany``，不是 N 条 UPDATE。"""
+    session = _Session()
+    repo = members_repo.OracleMembersRepo(session=session)
+
+    await repo.update_durations_many([(f"{index:024x}", 1.5) for index in range(1, 6)])
+
+    assert len(session.calls) == 1
+    statement, params = session.calls[0]
+    assert statement.is_update
+    assert [row["oid"] for row in params] == [f"{index:024x}" for index in range(1, 6)]
+    assert all(row["duration_hours"] == 1.5 for row in params)
+
+
+@pytest.mark.asyncio
+async def test_update_durations_many_chunks_and_keeps_the_sql_side_add():
+    """累加语义的 ``+`` 必须在 SQL 里：参数只带增量，不带「旧值 + 增量」。"""
+    session = _Session()
+    repo = members_repo.OracleMembersRepo(session=session)
+
+    await repo.update_durations_many(
+        [(f"{index:024x}", 2.0) for index in range(1001)]
+    )
+
+    assert [len(params) for _, params in session.calls] == [1000, 1]
+    sql = _raw_sql(session.calls[0][0])
+    assert (
+        "duration_hours=(activity_members.duration_hours + :duration_hours)" in sql
+    )
+
+
+def test_overwrite_update_sets_the_value_without_reading_the_old_one():
+    delta_sql = _raw_sql(members_repo._update_durations_many_stmt(delta=True))
+    set_sql = _raw_sql(members_repo._update_durations_many_stmt(delta=False))
+
+    assert "activity_members.duration_hours + :duration_hours" in delta_sql
+    assert "SET duration_hours=:duration_hours" in set_sql
+    assert "activity_members.oid = :oid" in set_sql
+
+
+@pytest.mark.asyncio
+async def test_sum_modes_for_member_is_one_double_effective_aggregate():
+    """单成员三档聚合：一条语句、双重 effective、按成员过滤。"""
+    session = _Session(
+        lambda statement, params: [
+            _row(on_campus_raw=6.5, off_campus_raw=1.0, social_practice=0.5)
+        ]
+    )
+    repo = members_repo.OracleMembersRepo(session=session)
+
+    totals = await repo.sum_modes_for_member(_oid(1))
+
+    assert totals == {"on-campus": 6.5, "off-campus": 1.0, "social-practice": 0.5}
+    assert len(session.calls) == 1
+    sql = _raw_sql(session.calls[0][0])
+    # 语义红线：活动与成员状态都必须是 effective（审核中活动不计入）。
+    assert "activities.status = :status_1" in sql
+    assert "activity_members.member_status = :member_status_1" in sql
+    assert "activity_members.member_oid = :member_oid_1" in sql
+    assert "GROUP BY activity_members.member_oid" in sql
+
+
+@pytest.mark.asyncio
+async def test_sum_modes_for_member_without_rows_returns_none():
+    repo = members_repo.OracleMembersRepo(session=_Session())
+
+    assert await repo.sum_modes_for_member(_oid(1)) is None
+
+
 # ---------------------------------------------------------------------------
 # E. 班级重算批量 upsert
 # ---------------------------------------------------------------------------
@@ -342,14 +417,21 @@ async def test_group_time_recompute_upserts_the_page_in_one_call(monkeypatch):
     from routers import groups_router
 
     students = [_oid(index) for index in range(1, 4)]
-    users = [
-        {"_id": student, "id": f"1{index}", "name": f"n{index}", "class_id": _oid(50)}
+    rows = [
+        {
+            "user": student,
+            "name": f"n{index}",
+            "id": f"1{index}",
+            "on_campus_raw": 0.0,
+            "off_campus_raw": 0.0,
+            "social_practice": 0.0,
+        }
         for index, student in enumerate(students, start=1)
     ]
     batches: list[list[tuple]] = []
 
-    async def list_by_class(class_oid):
-        return users
+    async def list_by_class(class_oid, query, sort_field, descending, page, size):
+        return [dict(row) for row in rows], len(rows)
 
     async def get_group(group_oid):
         return {"_id": group_oid, "name": "G"}
@@ -365,11 +447,6 @@ async def test_group_time_recompute_upserts_the_page_in_one_call(monkeypatch):
 
     monkeypatch.setattr(
         backends,
-        "get_users_repo",
-        lambda session=None: SimpleNamespace(list_by_class=list_by_class),
-    )
-    monkeypatch.setattr(
-        backends,
         "get_groups_repo",
         lambda session=None: SimpleNamespace(get=get_group),
     )
@@ -377,7 +454,8 @@ async def test_group_time_recompute_upserts_the_page_in_one_call(monkeypatch):
         backends,
         "get_time_repo",
         lambda session=None: SimpleNamespace(
-            upsert_many_for_users=upsert_many_for_users
+            list_by_class=list_by_class,
+            upsert_many_for_users=upsert_many_for_users,
         ),
     )
     monkeypatch.setattr(groups_router, "calculate_user_time_bulk", calculate)

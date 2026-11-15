@@ -63,7 +63,13 @@ class _FakeQuotaRepo:
         return dict(row) if row is not None else None
 
     async def consume(
-        self, user_oid: str, period: str, kind: str, amount: int, default_limit: int
+        self,
+        user_oid: str,
+        period: str,
+        kind: str,
+        amount: int,
+        default_limit: int,
+        want_state: bool = True,
     ):
         key = self._key(user_oid, period, kind)
         row = self.rows.get(key)

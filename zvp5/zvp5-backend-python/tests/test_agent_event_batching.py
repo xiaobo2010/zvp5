@@ -89,7 +89,9 @@ class FakeQuotaRepo:
     async def get(self, user_oid, period, kind):
         return None
 
-    async def consume(self, user_oid, period, kind, amount, default_limit):
+    async def consume(
+        self, user_oid, period, kind, amount, default_limit, want_state=True
+    ):
         return True, amount, default_limit
 
 

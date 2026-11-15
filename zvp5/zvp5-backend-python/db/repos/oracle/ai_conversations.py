@@ -33,6 +33,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from db.models import ai_conversations as ai_conversations_tbl
 from db.models import ai_messages as ai_messages_tbl
 from db.oracle.session import session_scope
+from db.repos.oracle.users import UserGoneError
 
 Row = dict[str, Any]
 
@@ -551,8 +552,15 @@ def _message_row(mapping: Any) -> Row:
 
 
 async def _allocate_seq(session: AsyncSession, conversation_oid: str) -> int:
-    """锁会话行后取下一个 ``seq``（1 起）。"""
-    await session.execute(_lock_conversation_stmt(conversation_oid))
+    """锁会话行后取下一个 ``seq``（1 起）。
+
+    锁命中的必须是**存在的**会话行：0 行说明会话在「读完归属/状态」与「写消息」
+    之间被删掉了。此时直接抛 not-found，而不是照常分配 seq——否则消息与 run 会
+    落成谁也读不到的孤儿行（会话页永远查不到它们）。
+    """
+    locked = await session.execute(_lock_conversation_stmt(conversation_oid))
+    if locked.first() is None:
+        raise UserGoneError(f"会话行不存在: {conversation_oid}")
     current = (await session.execute(_max_seq_stmt(conversation_oid))).scalar()
     return int(current or 0) + 1
 

@@ -126,6 +126,78 @@ def test_log_row_anonymous_row_has_none_names():
     assert doc["user_id"] is None
 
 
+def _logs_client(monkeypatch, rows):
+    """``GET /api/logs`` 的离线客户端；users 仓储一旦被调用就直接失败。"""
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from db import backends
+    from routers import logs_router
+    from util.object_id import get_current_user
+
+    class StubLogsRepo:
+        async def list_page(self, **_kwargs):
+            return [dict(row) for row in rows], len(rows)
+
+    def _no_users_repo(*_args, **_kwargs):  # pragma: no cover - 被调用即失败
+        raise AssertionError("日志列表不应再查 users 仓储")
+
+    monkeypatch.setattr(
+        backends, "get_applogs_repo", lambda session=None: StubLogsRepo()
+    )
+    monkeypatch.setattr(backends, "get_users_repo", _no_users_repo)
+
+    app = FastAPI()
+    app.include_router(logs_router.router, prefix="/api/logs")
+    app.dependency_overrides[get_current_user] = lambda: {
+        "id": USER_OID,
+        "per": ["admin"],
+    }
+    return TestClient(app)
+
+
+def _log_row(**overrides):
+    row = {
+        "_id": "a" * 24,
+        "url": "/api/x",
+        "user": USER_OID,
+        "user_name": "李四",
+        "user_id": "2026002",
+        "data": "{}",
+        "timestamp": 1.0,
+        "type": "user_login",
+        "level": "info",
+        "xuehai_id": "",
+    }
+    row.update(overrides)
+    return row
+
+
+def test_router_derives_display_name_without_a_second_users_query(monkeypatch):
+    """显示名只来自 JOIN，路由不再批量查 ``users``（每请求省一次 ADB 往返）。"""
+    from routers import logs_router
+
+    assert not hasattr(logs_router, "get_user_display_names")
+
+    response = _logs_client(
+        monkeypatch,
+        [
+            _log_row(),
+            # 已删用户：LEFT JOIN 未命中 → user_name 为 None，但 app_user 还在
+            _log_row(user="0" * 23 + "9", user_name=None, user_id=None),
+            # 未登录请求：app_user 为空串
+            _log_row(user="", user_name=None, user_id=None),
+        ],
+    ).get("/api/logs")
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert [row["user_name"] for row in data] == ["李四", "未知用户", "未登录"]
+    assert data[0]["user_id"] == "2026002"
+    # oid 仍是 ``user`` 字段：响应形状与取值口径不变。
+    assert data[0]["user"] == USER_OID
+
+
 def test_user_log_endpoint_passes_display_fields_through(monkeypatch):
     """``/{user_oid}/logs`` 原样序列化仓储行：新字段不需要再改路由。"""
     from fastapi import FastAPI

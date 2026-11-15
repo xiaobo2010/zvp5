@@ -22,12 +22,18 @@ never happen, so a client that processes the full list can never miss a notice.
 Redis read-through
 ------------------
 ``list_active`` is the per-request read (every client refresh): two ADB round
-trips (state + rows) 138ms each. The ``(rows, version)`` pair is cached for ~20s
+trips (state + rows) 138ms each. The ``(rows, version)`` pair is cached for 120s
 under a key that carries a Redis epoch; every committed create / update / delete
 / rollback bumps that epoch, so an activation change is visible immediately and
 the TTL only covers "someone else's process wrote and we did not see it". The
 version returned to clients is the one captured with the rows, i.e. the
 consistency argument above still holds.
+
+The value is a full page of notices (up to :data:`_ACTIVE_LIMIT` rows of up to
+4000-char bodies), so it can pass the global 256KB entry ceiling of
+:func:`db.cache.remember`. That ceiling is a silent "do not cache" switch: the
+row set would then be re-read from ADB on **every** request. This caller
+therefore raises it to :data:`_ACTIVE_CACHE_MAX_BYTES`.
 
 Session ownership
 -----------------
@@ -66,9 +72,13 @@ Row = dict[str, Any]
 _ACTIVE_LIMIT = 100
 
 #: 用户侧公告列表的缓存 TTL。公告是「管理员偶尔发一条」的读多写极少对象，
-#: 15~30s 足够把首页/移动端的重复拉取挡掉；真正的失效靠写路径 bump epoch，
+#: 120s 足够把首页/移动端的重复拉取挡掉；真正的失效靠写路径 bump epoch，
 #: TTL 只兜「别的进程写、本进程没参与」之外的漏网情况。
 _ACTIVE_TTL_SECONDS = 120.0
+#: 列表缓存的单值上限。``db.cache`` 默认 256KB（超过就静默不缓存），而这里一页
+#: 是 100 条 × 最多 4000 字正文，接近/超过 400KB 时默认上限会让缓存永久失效、
+#: 退化成每请求两次 ADB 往返。放宽到 2MB 仍然是有界的（行数与正文长度都有上限）。
+_ACTIVE_CACHE_MAX_BYTES = 2 * 1024 * 1024
 #: 缓存域。NOTIFICATION_STATE 里的版本号在数据库里，读它本身就要一次 ADB 往返，
 #: 所以 key 用 Redis epoch 当版本（写路径 INCR，跨进程天然共享）。
 _CACHE_SCOPE = "notifications"
@@ -461,7 +471,11 @@ class OracleNotificationsRepo:
         key = f"{cache.NS}:notif:{version}:active"
         ttl = _ACTIVE_TTL_SECONDS * (1.0 + random.uniform(-0.1, 0.1))
         cached = await cache.remember(
-            key, ttl, self._list_active_uncached, async_backfill=True
+            key,
+            ttl,
+            self._list_active_uncached,
+            max_bytes=_ACTIVE_CACHE_MAX_BYTES,
+            async_backfill=True,
         )
         rows, db_version = cached
         return rows, int(db_version)

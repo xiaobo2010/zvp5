@@ -57,6 +57,18 @@ def test_page_size_is_capped():
     assert exports._MAX_EXPORT_WINDOW_DAYS > exports._DEFAULT_EXPORT_WINDOW_DAYS
 
 
+def test_export_page_size_agrees_with_the_shared_ceiling():
+    """导出列表在 Query 层就限了 100；仓库层共享夹取上限不低于它。
+
+    活动/用户列表是 ``le=1000``（老客户端传大页不该 422），靠
+    :func:`db.repos.pagination.capped_size` 在语句层夹到共享上限。
+    """
+    from db.repos.pagination import LIST_PAGE_SIZE_MAX, capped_size
+
+    assert exports._MAX_EXPORT_PAGE_SIZE <= LIST_PAGE_SIZE_MAX
+    assert capped_size(1000) == LIST_PAGE_SIZE_MAX
+
+
 @pytest.mark.asyncio
 async def test_list_pages_through_the_database_and_keeps_data_a_list(monkeypatch):
     def unbounded(*args, **kwargs):

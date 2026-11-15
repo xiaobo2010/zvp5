@@ -37,6 +37,7 @@ class Session:
         else:
             if self.pending is not None:
                 self.store.data = self.pending
+                self.store.commits += 1
         finally:
             if self.locked:
                 self.store.lock.release()
@@ -126,6 +127,17 @@ class Repos:
     async def update_fields(self, key, fields):
         self.session.data["members"][key] = fields["duration"]
 
+    async def update_durations_many(self, entries, *, delta=True):
+        # 批量改时长：累加语义下 + 在 SQL 侧完成，这里按同样语义落内存。
+        assert self.session.locked
+        await asyncio.sleep(0)
+        for key, hours in entries:
+            if key[0] == self.session.store.fail_on:
+                raise RuntimeError("update failed")
+            base = self.session.data["members"].get(key, 0.0)
+            self.session.data["members"][key] = base + hours if delta else hours
+        self.session.store.duration_batches.append(([key for key, _ in entries], delta))
+
     async def update(self, oid, fields):
         if self.session.store.fail_on_update:
             raise RuntimeError("update failed")
@@ -175,7 +187,7 @@ def store(monkeypatch):
     state = SimpleNamespace(data={"members": {}, "status": "effective", "activities": 0, "imports": 0, "logs": 0},
                             lock=asyncio.Lock(), fail_on=None, unknown=set(), bulk_calls=[], member_batches=[],
                             fail_on_update=False, fail_on_delete=False, updates=[],
-                            scheduled=[], refreshed=[])
+                            scheduled=[], refreshed=[], duration_batches=[], commits=0)
 
     @asynccontextmanager
     async def scope():
@@ -210,6 +222,26 @@ async def test_concurrent_member_increments_serialize_on_activity(store):
     assert store.data["members"][(USER, "on-campus")] == 6
     assert store.data["status"] == "pending"
     assert store.data["logs"] == 3
+
+
+@pytest.mark.asyncio
+async def test_bulk_member_write_is_two_batches_in_one_transaction(store):
+    """既有 + 新增混在一单里：一次事务提交、两条批量写。"""
+    store.data["members"][(USER, "on-campus")] = 1
+    await activities.add_activity_member_v3(
+        ACTIVITY,
+        [member(USER, duration=2), member(OTHER, duration=3)],
+        {"id": USER, "per": ["admin"]},
+        Log(),
+    )
+
+    assert store.commits == 1
+    assert len(store.duration_batches) == 1 and store.duration_batches[0][1] is True
+    assert len(store.member_batches) == 1
+    assert store.data["members"] == {
+        (USER, "on-campus"): 3,
+        (OTHER, "on-campus"): 3,
+    }
 
 
 @pytest.mark.asyncio

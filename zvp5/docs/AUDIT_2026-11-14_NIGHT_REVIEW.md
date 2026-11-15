@@ -116,3 +116,90 @@ v2/v3 未挂装饰器的 handler（`get_activities_v2` / `get_activity_members_v
 3. **A-M7/A-M8 会话删除原子化 + conversation 锁契约统一**：一次性把
    delete/submit 的锁点收敛成同一把锁。
 4. 若要降监控占空比：`PERF_ORACLE_INTERVAL_SECONDS` 120→300，零代码风险。
+
+## 五、第二轮：热 API 健康性拓宽（2026-11-15 续）
+
+> 触发：v1 reversion 核验；把义工/群组/其他高频 API 的同一套健康性设计铺开。
+> 证据：生产 `perf_endpoints`（近两周）+ nginx access log 逐条 + 本地路由快照。
+
+### 5.1 v1 reversion 核验：成功
+
+- `main.py` 的 `ROUTERS` 在 `169622e`（11-07 23:49）把 v2/v3 前缀全并入 `/api/v1`；仅留 `/api/v2/mcp` 兼容别名（`include_in_schema=False`，带 TODO）。
+- 生产 `perf_endpoints`：所有 `/api/v2|v3/*` 末次调用停在 `11-07 22:43~23:09`，对应 `/api/v1/*` 自 `11-08 12:32` 起接管——与提交/部署完全对齐。
+- `tests/test_route_snapshot.py` 4 项全绿（257 对象）。
+
+### 5.2 顺带修复：指标标签回归（FastAPI 0.162 懒挂载）
+
+`_IncludedRouter` 使 `scope["route"].path` 丢 include 前缀：真实 `/api/v1/users/123/time` 被记成 `/{user_id}/time`，导致 `perf_endpoints` 面板标签错误、不同前缀的同名模板撞车。`services/api_metrics.py` 改为从 `_effective_candidates[*].path_format` 还原完整模板（按 route 缓存 + 回退），新增 `test_include_router_prefix_is_preserved_in_recorded_template`。
+
+### 5.3 已落地（本轮）
+
+**群组管理（6 项）**
+
+| # | 处置 |
+|---|---|
+| G-H1/H2/M5 | 新 `delete_cascade`：`FOR UPDATE` 锁父行 → 清 `group_indicators` → 解绑 `users.class_oid` → 删班，单事务一次 commit；v1/v3 共用。修掉「有指标/成员必 500」「半删除」「反向锁序」 |
+| G-H3 | `GROUP_NAME_MAX_LENGTH=128` / `GROUP_DESCRIPTION_MAX_LENGTH=1000`，5 个写入口超长/NUL → 400（原 ORA-12899→500）|
+| G-M1 | `/time` 同时接受 `search`（前端历史名）与 `query`，恢复班级时长搜索 |
+| G-M3 | v3 删班改用 `compulsory_temporary_token`（长会话 token 不再能直接删班）|
+| G-M4 | v1 `/user`、`/time` 分页下推（复用 `members_page` / `time_repo.list_by_class`）|
+| G-L1 | 改 description 对不存在群组 404 |
+
+**用户读路径（3 项）**
+
+| # | 处置 |
+|---|---|
+| U-H1 | `GET /users` 空 query 不再拼 3 个 `REGEXP_LIKE` / 不 `json_serialize(past)`，退化为纯 `select + ORDER BY + OFFSET/FETCH + COUNT(*) OVER()` |
+| U-M2 | 用户活动列表 `sort=_id` 改映射活动 oid（原映射成员行 oid，退化为 rowid 序）+ `NULLS LAST` |
+| U-M3 | v2 列表 `query` 加 `max_length=64`（超长 → 422，原可全扫慢查询）|
+
+**通知 / 日志（3 项）**
+
+| # | 处置 |
+|---|---|
+| L-H1 | 日志列表去掉二次 `get_user_display_names` 查询，直接用 JOIN 的 `user_name` 派生显示名（每请求省 1 次 ADB 往返）|
+| L-M2 | `type/level` 过滤 IN 列表分块（≤500/块，`OR(IN...)`），1500 值不再 ORA-01795→500 |
+| N-M2 | 公告列表缓存 key 放开到 2MB（消除 256KB 静默失效悬崖）+ 修正 20s/120s 注释漂移 |
+
+**Agent 栈（3 项）+ 义工（3 项）**（承接上一轮搁置）
+
+| # | 处置 |
+|---|---|
+| A-M3(a) | `quota.consume(want_state=False)`：成功分支跳过回读 SELECT（失败分支保留建行判据；OCR 仍拿 used/limit）|
+| A-M8 | `_allocate_seq` 校验 `FOR UPDATE` 命中行，会话已删 → not-found（关掉「删后仍插孤儿消息」）|
+| A-L2/L3/L5 | run_cache 命中返回引用（不再逐条深拷贝）+ 真 LRU 淘汰 |
+| B-M2 | 单成员重算改单条聚合（不再拉全表活动 + Python 求和）|
+| B-M1 | 批量加成员 2N 条往返 → 2 条 executemany（顺带修 `existing+duration` 读改写丢更新）|
+| B-L8 | 分页 `size` 语句层夹 200（Query 校验不动）+ `users_router` 活动列表 Python 侧 OFFSET 下推 |
+
+### 5.4 PREPARE / 待决策（本轮不改码或需拍板）
+
+| # | 事项 | 卡点 |
+|---|---|---|
+| B-M3/M4/M5 | `activity_members(activity_oid, member_status)`、`(member_oid, member_status, activity_oid)` 组合索引 | DDL 纪律：先 zvp5adb2 `EXPLAIN` 验证再上；A 选择性差，可能需改 covering `(activity_oid, member_status, duration_hours)` |
+| A-M3(b) | 额度 peek 收敛到每 run 首次（3→1 SQL）| 额度刚好耗尽时最多多花一轮上游费用（有界），需拍板 |
+| A-M4 | run_detail 增量下推 | 需先冻结「缓存必须全量 + proposals 与窗口解耦」契约 |
+| A-L6 | on_round 幂等重试 | 需确定性 oids + 具名终态 + 扣费顺序结论 |
+| A-M7 | 会话删除统一事务 | 需可恢复状态机，不能一行改 |
+| B-L6 | 活动附件孤儿级联 | BLOB 生命周期 + 软删/硬删产品决策 |
+| G-M2 | 加/移成员 CAS（`set_class` 条件更新）| 需 409/400 契约，未做 |
+| G-H4 | 多权限组成员只取 `permissions[0]` | 需先查现网 `groups.permissions` 长度 |
+| N-M1 | `/admin` 公告列表无上限 | 需分页契约 + 改 `NOTIFICATIONS_API.md` |
+| N-M3 | 通知 `?since_version=` 短路 | 省重复正文，向后兼容 |
+| N-M4 | canary 前端已调 `/read`，主库无此功能 | 需先 V053 `notification_reads` + 产品决策；当前 405/404 属发布错位 |
+| L-M1/M3 | 日志 `COUNT(*) OVER()` 全量窗口 + 深 OFFSET | 建议只第 1 页算总数 / keyset |
+| 监控 ASH | 抬 `PERF_ORACLE_INTERVAL_SECONDS` 120→300 | 生产 env 变更，零代码风险，需运维窗口 |
+| U-M5/M6/U-L1 | `/time` 未命中不回写、time_statistics 多往返、管理写路径无 CAS | 无热点证据 / 非高频目标 |
+
+### 5.5 验证（本轮，统一门禁）
+
+- 全量 `pytest -q` → **4676 passed, 1 warning**（exit 0）。
+- `ruff check --select F821 .` → All checks passed；`ruff check --select F401 main.py app_setup.py routers services util db typings tasks` → All checks passed。
+- `compileall -q routers services util db typings tasks` → exit 0。
+- `python -m db.ddl_check` → `OK 48 tables, 62 indexes - no drift`。
+
+### 5.6 生产实测结论（本轮取证）
+
+- `GET /api/v3/notifications`、`GET /api/logs` 近两周 nginx 逐条统计 **零 5xx**；错误率 = 401 token 抖动 + 499 客户端断连 + 418 盾牌 + canary 前端 `/read` 405（发布错位）。
+- `POST /api/users/auth` 均延迟 232ms ≈ 单次 bcrypt（cost 12，本机实测 256ms/次）；37% 错误率是 401/403/429 正常拒绝被 `err_count>=400` 一并计入，非 5xx。
+- `GET /api/users` 空 query 曾对 `past` CLOB 逐行 `json_serialize`（已修）；日志 `type/level` 无上限曾可 ORA-01795（已修）。

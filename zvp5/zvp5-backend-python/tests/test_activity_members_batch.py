@@ -9,7 +9,8 @@ GET ``/{aid}/members``：
 POST ``/{aid}/members``：
 
 4. 目标用户一次批量查、既有三元组一次批量查 ⇒ 单成员不再各查一次；
-5. 既有三元组走 ``update_fields``，新三元组走 ``add``；
+5. 既有三元组走一次 ``update_durations_many``、新三元组走一次 ``add_many``
+   （N 个成员 2 条 executemany，而不是 2N 条单行语句）；
 6. 用户不存在 / 类型不匹配的错误分支与文案不变，且不发生写。
 
 7. 默认（不带 ``overwrite``）仍是时长累加，行为与改造前一致；
@@ -227,7 +228,9 @@ class _BulkMembersRepo:
         self.existing = dict(existing)
         self.bulk_calls: list[tuple[str, tuple[str, ...]]] = []
         self.triple_calls: list[tuple[str, str]] = []
+        # 逐行写入的内容（语义断言）与批次形状（往返次数断言）分开记。
         self.writes: list[tuple[str, str, str, float]] = []
+        self.write_calls: list[tuple[str, int]] = []
 
     async def list_by_activity_and_members(self, activity_oid, member_oids):
         self.bulk_calls.append((activity_oid, tuple(member_oids)))
@@ -248,11 +251,26 @@ class _BulkMembersRepo:
         self.triple_calls.append((oid, mode))
         raise AssertionError("批量导入不应逐条 get_by_triple")
 
+    async def update_durations_many(self, entries, *, delta=True):
+        self.write_calls.append(("update", len(entries)))
+        for key, hours in entries:
+            member, mode = key.split(":")
+            base = self.existing.get((member, mode), 0.0)
+            value = base + hours if delta else hours
+            self.existing[(member, mode)] = value
+            self.writes.append(("update", key, "", value))
+
+    async def add_many(self, activity_oid, entries, status):
+        self.write_calls.append(("add", len(entries)))
+        for oid, mode, duration in entries:
+            self.existing[(oid, mode)] = duration
+            self.writes.append(("add", oid, mode, duration))
+
     async def update_fields(self, oid, fields):
-        self.writes.append(("update", oid, "", fields["duration"]))
+        raise AssertionError("批量导入不应逐行 update_fields")
 
     async def add(self, activity_oid, oid, mode, duration, status):
-        self.writes.append(("add", oid, mode, duration))
+        raise AssertionError("批量导入不应逐行 add")
 
 
 class _BulkUsersRepo:
@@ -370,6 +388,8 @@ async def test_bulk_import_batches_reads_and_upserts_in_memory(monkeypatch) -> N
         ("update", f"{MEMBER_OIDS[0]}:on-campus", "", 5.0),
         ("add", MEMBER_OIDS[1], "off-campus", 1.0),
     ]
+    # 一条 update executemany + 一条 insert executemany。
+    assert state["members"].write_calls == [("update", 1), ("add", 1)]
     assert len(state["activities"].updates) == 1
     assert state["activities"].updates[0]["status"] == "pending"
     assert "updatedAt" in state["activities"].updates[0]
@@ -658,6 +678,33 @@ async def test_bulk_import_reject_existing_allows_new_members(monkeypatch) -> No
 
     assert state["members"].writes == [("add", MEMBER_OIDS[0], "on-campus", 2.0)]
     assert len(state["activities"].updates) == 1
+
+
+@pytest.mark.asyncio
+async def test_bulk_import_writes_a_whole_batch_in_two_calls(monkeypatch) -> None:
+    """N 个既有 + N 个新增 ⇒ 2 条 executemany，而不是 2N 条单行写。"""
+    oids = [f"{index:024x}" for index in range(10, 16)]
+    existing = {(oid, "on-campus"): 1.0 for oid in oids[:3]}
+    state = _bulk(
+        monkeypatch,
+        existing=existing,
+        users={oid: _user_doc(oid) for oid in oids},
+    )
+
+    await activities.add_activity_member_v3(
+        ACTIVITY_ID,
+        [_new_member(oid, duration=1.0) for oid in oids],
+        MANAGER,
+        state["log"],
+    )
+
+    assert state["members"].write_calls == [("update", 3), ("add", 3)]
+    # 既有 3 条各自 +1.0，新增 3 条原样落库。
+    assert state["members"].existing == {
+        **{key: 2.0 for key in existing},
+        **{(oid, "on-campus"): 1.0 for oid in oids[3:]},
+    }
+    assert len(state["log"].texts) == 1
 
 
 @pytest.mark.asyncio

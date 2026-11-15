@@ -182,6 +182,38 @@ class ApiMetricsMiddleware:
     def __init__(self, app, recorder: ApiMetricsRecorder | None = None) -> None:
         self.app = app
         self.recorder = recorder if recorder is not None else api_metrics
+        # FastAPI 0.16x 起 ``include_router`` 变成 ``_IncludedRouter`` 懒解析：命中后
+        # ``scope["route"]`` 仍是内层 ``APIRoute``，其 ``.path`` 只是路由器内的局部
+        # 模板（丢了 include 前缀），真正的完整模板在该 wrapper 的
+        # ``_effective_candidates[*].path_format``。按 ``id(route)`` 缓存
+        # ``[(path_regex, path_format)]``，避免每请求扫路由表。
+        self._display_cache: dict[int, list[tuple[object, str]]] = {}
+
+    def _display_path(self, scope, route) -> str | None:
+        """还原 include 前缀后的完整路由模板（缺失时回退到局部 ``route.path``）。"""
+        key = id(route)
+        candidates = self._display_cache.get(key)
+        if candidates is None:
+            candidates = []
+            router = getattr(scope.get("app"), "router", None)
+            for entry in getattr(router, "routes", ()) or ():
+                for cand in getattr(entry, "_effective_candidates", None) or ():
+                    if getattr(cand, "original_route", None) is route:
+                        regex = getattr(cand, "path_regex", None)
+                        fmt = getattr(cand, "path_format", None) or getattr(
+                            cand, "path", None
+                        )
+                        if regex is not None and fmt:
+                            candidates.append((regex, fmt))
+            # 只有真找到 include 包装才缓存；否则留空、下次重试（懒挂载可能尚未填充），
+            # 直接注册的路由/旧版 FastAPI 永远为空，稳定回退。
+            if candidates:
+                self._display_cache[key] = candidates
+        real = scope.get("path", "")
+        for regex, fmt in candidates or ():
+            if regex.match(real):
+                return fmt
+        return getattr(route, "path", None)
 
     async def __call__(self, scope, receive, send) -> None:
         if scope.get("type") != "http":
@@ -201,7 +233,9 @@ class ApiMetricsMiddleware:
 
         def route_template() -> str | None:
             route = scope.get("route")
-            return getattr(route, "path", None)
+            if route is None:
+                return None
+            return self._display_path(scope, route)
 
         async def send_wrapper(message):
             nonlocal recorded

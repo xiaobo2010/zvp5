@@ -13,7 +13,7 @@ router = APIRouter()
 async def get_users_v2(
     page: int = Query(1, ge=1, description="Page number"),
     size: int = Query(10, ge=1, le=1000, description="Page size"),
-    query: str = Query("", description="Search keyword"),
+    query: str = Query("", max_length=64, description="Search keyword"),
     role: str = Query(""),
     user=Depends(get_current_user),
 ):

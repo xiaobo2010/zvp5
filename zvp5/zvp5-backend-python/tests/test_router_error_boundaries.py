@@ -230,26 +230,22 @@ def test_activity_with_missing_fields_is_conflict_not_500(monkeypatch):
 
 
 def test_group_times_missing_bulk_entry_defaults_to_zero(monkeypatch):
-    users = [{"_id": TARGET, "name": "张三", "id": "20250101", "class_id": GROUP}]
+    """v1 班级时长页读不到时长（NULL 列）时按 0 出，不是 500。"""
 
-    async def list_by_class(oid):
-        return [dict(row) for row in users]
+    async def list_by_class(*args, **kwargs):
+        return [_null_time_row()], 1
 
     async def get(oid):
         return {"_id": GROUP, "name": "一班"}
 
-    async def bulk(user_ids, start, end, allow_cache=True):
-        return {}
-
     monkeypatch.setattr(
         backends,
-        "get_users_repo",
+        "get_time_repo",
         lambda *a, **k: SimpleNamespace(list_by_class=list_by_class),
     )
     monkeypatch.setattr(
         backends, "get_groups_repo", lambda *a, **k: SimpleNamespace(get=get)
     )
-    monkeypatch.setattr(groups_router, "calculate_user_time_bulk", bulk)
     http = _client(groups_router.router, "/api/groups")
 
     response = http.get(f"/api/groups/{GROUP}/time")

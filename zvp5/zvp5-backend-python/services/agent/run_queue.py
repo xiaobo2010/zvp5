@@ -31,6 +31,7 @@ from uuid import uuid4
 import settings
 
 from db import backends
+from db.repos.oracle.users import UserGoneError
 from db.repos.protocols import ActiveRunConflict
 from services import violation_guard
 from services.agent import executor, proposal as proposal_service, run_cache
@@ -410,6 +411,13 @@ async def submit(
         _OVERRIDES.pop(run_id, None)
         raise AgentError(
             RUN_CONFLICT, "an active run already exists", 409
+        ) from exc
+    except UserGoneError as exc:
+        # 会话在 require_row 之后、插入之前被删：仓储拒绝写入（不落孤儿消息/run）。
+        # 对调用方与「一开始就读不到」是同一件事，回同一个 404。
+        _OVERRIDES.pop(run_id, None)
+        raise AgentError(
+            conversations.NOT_FOUND, "conversation not found", 404
         ) from exc
     except BaseException:
         _OVERRIDES.pop(run_id, None)

@@ -21,9 +21,19 @@ class AIQuotaRepo(Protocol):
     """
 
     async def consume(
-        self, user_oid: str, period: str, kind: str, amount: int, default_limit: int
+        self,
+        user_oid: str,
+        period: str,
+        kind: str,
+        amount: int,
+        default_limit: int,
+        want_state: bool = True,
     ) -> tuple[bool, int, int]:
-        """原子扣减，返回 (allowed, used, limit)。不超卖。"""
+        """原子扣减，返回 (allowed, used, limit)。不超卖。
+
+        ``want_state=False`` 用于**丢弃返回值**的调用点（只看 allowed）：实现可以
+        跳过成功后的回读，此时 used/limit 无意义，调用方不得使用。
+        """
         ...
 
     async def get(self, user_oid: str, period: str, kind: str) -> Row | None:

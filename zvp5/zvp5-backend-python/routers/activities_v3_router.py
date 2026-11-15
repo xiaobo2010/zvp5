@@ -267,18 +267,27 @@ async def add_activity_member_v3(
                         status_code=409,
                         detail=f"已有 {len(conflicts)} 条活动记录，确认后可按本次时长覆盖",
                     )
+            inserts: list[tuple[str, str, float]] = []
+            updates: list[tuple[object, float]] = []
             for (oid, mode), duration in additions.items():
                 existing = existing_by_key.get((oid, mode))
                 if existing and overwrite:
                     # 设置语义：直接写本次值，不读旧值也不累加。
-                    await members_repo.update_fields(existing["_id"], {"duration": duration})
+                    updates.append((existing["_id"], duration))
                 elif existing:
                     total = existing["duration"] + duration
                     if not math.isfinite(total):
                         raise HTTPException(status_code=400, detail="时长超出范围")
-                    await members_repo.update_fields(existing["_id"], {"duration": total})
+                    # 累加语义：+ 留在 SQL 侧，两个并发请求不会各自读到同一个旧值。
+                    updates.append((existing["_id"], duration))
                 else:
-                    await members_repo.add(activity_id, oid, mode, duration, "effective")
+                    inserts.append((oid, mode, duration))
+            # 两条 executemany 收尾：新增一整批 insert、既有一整批 update，
+            # 100 人的登记单从 2N 次往返降到 2 次（顺序仍与请求内的执行语义一致）。
+            if updates:
+                await members_repo.update_durations_many(updates, delta=not overwrite)
+            if inserts:
+                await members_repo.add_many(activity_id, inserts, "effective")
             await activities_repo.update(activity_id, {"status": "pending", "updatedAt": datetime.now()})
             # 审计日志是给人读的：oid 写进「详情」等于让管理员拿哈希再查一轮。
             # 操作者与成员名一次批量取回（同一事务内），活动名用行锁读到的文档。

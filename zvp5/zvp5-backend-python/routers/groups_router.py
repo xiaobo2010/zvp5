@@ -23,6 +23,7 @@ from util.object_id import (
 from util.permission.user import validate_read_group_permission
 from typings.log import inject_log
 from util.user import get_user_display_name, public_user
+from util.validation import validate_group_description, validate_group_name
 
 router = APIRouter()
 
@@ -42,6 +43,10 @@ async def create_group(
 
     if "admin" not in user["per"]:
         raise HTTPException(status_code=403, detail="Permission denied")
+
+    validated, reason = validate_group_name(payload.name)
+    if not validated:
+        raise HTTPException(status_code=400, detail=reason)
 
     id = await backends.get_groups_repo().create(payload.name)
 
@@ -185,6 +190,10 @@ async def update_group_name(
     if "admin" not in user["per"]:
         raise HTTPException(status_code=403, detail="Permission denied")
 
+    validated, reason = validate_group_name(payload.name)
+    if not validated:
+        raise HTTPException(status_code=400, detail=reason)
+
     oid = str(validate_object_id(group_id))
     groups_repo = backends.get_groups_repo()
 
@@ -248,14 +257,11 @@ async def get_users_in_class(
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
     class_oid = validate_object_id(group_id)
-    result = await backends.get_users_repo().list_by_class(str(class_oid))
-    if search:
-        pattern = re.compile(re.escape(search), re.IGNORECASE)
-        result = [user for user in result if pattern.search(user.get("name") or "")]
-    count = len(result)
-    result.sort(key=lambda user: user.get("id") or "")
-    offset, limit = page_args(page, perpage)
-    result = result[offset : offset + limit]
+    # 分页/搜索下推到 SQL（`members_page` 的 OFFSET/FETCH + COUNT），不再整班
+    # 拉进内存再 filter/sort/slice；排序键与 v3 一致（学号、oid）。
+    result, count = await backends.get_groups_repo().members_page(
+        str(class_oid), search, page, perpage
+    )
     custom_flags = (
         await custom_password_flags_async(result) if pwdm else None
     )
@@ -290,36 +296,80 @@ async def get_user_times_in_class(
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
     class_oid = validate_object_id(group_id)
-    result = await backends.get_users_repo().list_by_class(str(class_oid))
-    if search:
-        pattern = re.compile(re.escape(search), re.IGNORECASE)
-        result = [user for user in result if pattern.search(user.get("name") or "")]
-    count = len(result)
-    result.sort(key=lambda user: user.get("id") or "")
-    offset, limit = page_args(page, perpage)
-    result = result[offset : offset + limit]
-    selected_students = [str(user["_id"]) for user in result]
-    user_times = await calculate_user_time_bulk(
-        selected_students, start, end, allow_cache=allow_cache
-    )
-    if not allow_cache and start is None and end is None:
-        # 整批一个事务重算缓存：逐学生 upsert 是每人 2 次往返 + 1 次 commit，
-        # 100 人最坏 ~41s，且中途失败会留下半新半旧的缓存。
-        await backends.get_time_repo().upsert_many_for_users(
-            [
-                (
-                    student,
-                    user_times[student]["on-campus"],
-                    user_times[student]["off-campus"],
-                    user_times[student]["social-practice"],
-                )
-                for student in selected_students
-            ]
+    class_key = str(class_oid)
+    class_group = await backends.get_groups_repo().get(class_key)
+    if class_group is None:
+        return {"status": "ok", "code": 200, "data": [], "metadata": {"size": 0}}
+
+    if start is None and end is None:
+        # 分页/搜索/排序下推到 SQL：直接取「缓存时长」的当页（与 v2 同一取数），
+        # 不再整班 ``list_by_class`` 再在内存里 filter/sort/slice。
+        page_rows, count = await backends.get_time_repo().list_by_class(
+            class_key, search, None, False, page, perpage
         )
+        members = [
+            {
+                "_id": str(row["user"]),
+                "name": row["name"],
+                "id": row["id"],
+                "time": {
+                    "on-campus": row["on_campus_raw"] or 0.0,
+                    "off-campus": row["off_campus_raw"] or 0.0,
+                    "social-practice": row["social_practice"] or 0.0,
+                },
+            }
+            for row in page_rows
+        ]
+        if not allow_cache:
+            # 整批一个事务重算缓存：逐学生 upsert 是每人 2 次往返 + 1 次 commit，
+            # 100 人最坏 ~41s，且中途失败会留下半新半旧的缓存。
+            selected_students = [member["_id"] for member in members]
+            user_times = await calculate_user_time_bulk(
+                selected_students, None, None, allow_cache=False
+            )
+            await backends.get_time_repo().upsert_many_for_users(
+                [
+                    (
+                        student,
+                        user_times[student]["on-campus"],
+                        user_times[student]["off-campus"],
+                        user_times[student]["social-practice"],
+                    )
+                    for student in selected_students
+                ]
+            )
+            for member in members:
+                member["time"] = user_times.get(member["_id"]) or member["time"]
+    else:
+        # 带日期区间时不能读缓存：缓存行是全量累计值，按区间只能从活动台账重算。
+        result = await backends.get_users_repo().list_by_class(class_key)
+        if search:
+            pattern = re.compile(re.escape(search), re.IGNORECASE)
+            result = [
+                row for row in result if pattern.search(row.get("name") or "")
+            ]
+        count = len(result)
+        result.sort(key=lambda row: row.get("id") or "")
+        offset, limit = page_args(page, perpage)
+        result = result[offset : offset + limit]
+        selected_students = [str(row["_id"]) for row in result]
+        user_times = await calculate_user_time_bulk(
+            selected_students, start, end, allow_cache=allow_cache
+        )
+        members = [
+            {
+                "_id": str(row["_id"]),
+                "name": row["name"],
+                "id": row["id"],
+                "time": user_times.get(str(row["_id"])),
+            }
+            for row in result
+            if row.get("class_id") is not None
+        ]
+
     time = []
-    class_groups: dict[str, Optional[dict]] = {}
-    for user in result:
-        user_time = user_times.get(str(user["_id"])) or {
+    for member in members:
+        user_time = member["time"] or {
             "on-campus": 0.0,
             "off-campus": 0.0,
             "social-practice": 0.0,
@@ -337,19 +387,10 @@ async def get_user_times_in_class(
             user_time["on-campus"] = max(25 - user_time["on-campus"], 0)
             user_time["off-campus"] = max(15 - user_time["off-campus"], 0)
             user_time["social-practice"] = max(18 - user_time["social-practice"], 0)
-        class_id = user.get("class_id")
-        if class_id is None:
-            continue
-        class_key = str(class_id)
-        if class_key not in class_groups:
-            class_groups[class_key] = await backends.get_groups_repo().get(class_key)
-        class_group = class_groups[class_key]
-        if class_group is None:
-            continue
         doc = {
-            "_id": str(user["_id"]),
-            "name": user["name"],
-            "id": str(user["id"]),
+            "_id": member["_id"],
+            "name": member["name"],
+            "id": str(member["id"]),
             "group": class_group["name"],
             "on-campus": user_time["on-campus"],
             "off-campus": user_time["off-campus"],
@@ -377,7 +418,16 @@ async def update_group_description(
     if "admin" not in user["per"]:
         raise HTTPException(status_code=403, detail="Permission denied")
 
-    await backends.get_groups_repo().set_description(group_id, payload.description)
+    validated, reason = validate_group_description(payload.description)
+    if not validated:
+        raise HTTPException(status_code=400, detail=reason)
+
+    oid = str(validate_object_id(group_id))
+    groups_repo = backends.get_groups_repo()
+    if await groups_repo.get(oid) is None:
+        raise HTTPException(status_code=404, detail="Group not found")
+
+    await groups_repo.set_description(oid, payload.description)
 
     log.with_text(
         f"管理员 {await get_user_display_name(user['id'])} 修改了用户组描述（ID: {group_id}）",
@@ -403,11 +453,9 @@ async def delete_group(
         raise HTTPException(status_code=403, detail="Permission denied")
 
     groups_repo = backends.get_groups_repo()
-    target = await groups_repo.get(group_id)
+    target = await groups_repo.delete_cascade(group_id)
     if target is None:
         raise HTTPException(status_code=404, detail="Group not found")
-
-    await groups_repo.delete(group_id)
 
     log.with_text(
         f"管理员 {await get_user_display_name(user['id'])} 删除了用户组 {target['name']}",

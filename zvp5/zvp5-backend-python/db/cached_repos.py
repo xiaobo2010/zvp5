@@ -333,6 +333,16 @@ class CachedGroupsRepo(_CachedRepo):
         await cache.bump_epoch("groups")
         return result
 
+    async def delete_cascade(self, *args: Any, **kwargs: Any) -> Any:
+        result = await self._inner.delete_cascade(*args, **kwargs)
+        oid = _norm(args[0] if args else kwargs.get("oid"))
+        await cache.forget(_k("group", oid), _k("pgroup", oid))
+        await cache.bump_epoch("groups")
+        # 级联里把整班成员的 class_oid 置 NULL：用户缓存与「按班取人」的列表
+        # 都得一起失效，逐 oid 不现实，epoch 一把掀桌。
+        await cache.bump_epoch("users")
+        return result
+
 
 class CachedActivitiesRepo(_CachedRepo):
     """``activities``：详情与「有效活动全集」两条读路径。"""

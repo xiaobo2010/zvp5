@@ -966,13 +966,34 @@ async def read_user_activity(
 
     user_key = str(validate_object_id(user_oid))
 
-    # The legacy embedded `activities.members` array does not exist in the
-    # normalized schema; rebuild the same view from ACTIVITY_MEMBERS.
-    memberships = await backends.get_members_repo().list_for_member(user_key)
+    # 分页、过滤、排序全部下推到 SQL：与 ``users_v2`` 的 ``/{user_id}/activities``
+    # 用同一个孪生体（``COUNT(*) OVER()`` 随页带回总数），不再「拉该人全部成员行
+    # + 按 oid 拉全部活动 + Python 正则过滤/排序/切片」。
+    # ``page == -1`` 是老客户端的「一次全量」哨兵：交给同一条查询但不分页
+    # （``size=None``），不能用 ``page_args`` 归一。
+    rows, total = await backends.get_members_repo().list_for_user_activities(
+        user_key,
+        query,
+        "_id",
+        False,
+        page,
+        None if page == -1 else perpage,
+    )
 
+    # 同一活动的多条（多 mode）成员行合成一条：对外仍是「一个活动 + 该人在该
+    # 活动的全部成员记录」。行序即 SQL 的排序（活动 oid 倒序），同一活动的行相邻。
     members_by_activity: dict[str, list] = {}
-    for membership in memberships:
-        members_by_activity.setdefault(str(membership["activity"]), []).append(
+    activities: list = []
+    for row in rows:
+        activity = row["activity"]
+        if activity is None:
+            continue
+        activity_id = str(activity["_id"])
+        if activity_id not in members_by_activity:
+            members_by_activity[activity_id] = []
+            activities.append(activity)
+        membership = row["member"]
+        members_by_activity[activity_id].append(
             {
                 "_id": str(membership["member"]),
                 "status": membership.get("status"),
@@ -981,34 +1002,13 @@ async def read_user_activity(
             }
         )
 
-    activities, _ = await backends.get_activities_repo().list_by_oids(
-        list(members_by_activity), "", -1
-    )
-
-    # `metadata.size` counts the member's activities regardless of the name
-    # query (the original count omitted the name filter, cf. the commented-out
-    # `# {"name": {"$regex": query}}`).
-    count = len(activities)
-
-    if query:
-        pattern = re.compile(query, re.IGNORECASE)
-        activities = [
-            activity
-            for activity in activities
-            if pattern.search(activity.get("name") or "")
-        ]
-
-    activities.sort(key=lambda activity: activity["_id"], reverse=True)
-
-    # ``page == -1`` 同样是「一次全量」哨兵，不能用 ``page_args`` 归一。
-    if page == -1:
-        page_activities = activities
-    else:
-        start = (page - 1) * perpage
-        page_activities = activities[start : start + perpage]
+    # `metadata.size` 与 v2 孪生体同口径：`COUNT(*) OVER()` 统计的是**成员行**
+    # （同一活动的多 mode 行各计一次），且随关键字谓词变化。与旧实现的
+    # 「distinct 活动数、忽略过滤」略有差异；legacy v1 无前端调用方，统一到 v2。
+    count = total
 
     data = []
-    for activity in page_activities:
+    for activity in activities:
         activity_id = str(activity["_id"])
         data.append(
             {

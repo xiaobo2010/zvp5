@@ -109,7 +109,9 @@ class _QuotaRepo:
     async def get(self, user_oid, period, kind):
         return None
 
-    async def consume(self, user_oid, period, kind, amount, default_limit):
+    async def consume(
+        self, user_oid, period, kind, amount, default_limit, want_state=True
+    ):
         return True, amount, default_limit
 
 
@@ -121,7 +123,7 @@ def _offline(monkeypatch, quiet_ai_governance):
     async def peek(_user, _kind, _amount=1, *, roles=None):
         return True, 0, 1000
 
-    async def consume(_user, _kind, _amount, *, roles=None):
+    async def consume(_user, _kind, _amount, *, roles=None, want_state=True):
         return True, 0, 1000
 
     monkeypatch.setattr(quota, "peek", peek)

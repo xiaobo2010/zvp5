@@ -399,7 +399,9 @@ class _FakeQuotaRepo:
         self.calls: list[tuple] = []
         self.refunds: list[tuple] = []
 
-    async def consume(self, user_oid, period, kind, amount, default_limit):
+    async def consume(
+        self, user_oid, period, kind, amount, default_limit, want_state=True
+    ):
         self.calls.append((user_oid, period, kind, amount, default_limit))
         return True, 7, 100
 

@@ -221,9 +221,69 @@ def test_filters_stay_indexable():
 
 
 # ---------------------------------------------------------------------------
-# 4. 分页语义与上限
+# 3b. ``type``/``level`` 超长 IN 列表：分块，不撞 ORA-01795
 # ---------------------------------------------------------------------------
 
+
+def _many(prefix: str, count: int) -> list[str]:
+    return [f"{prefix}{index}" for index in range(count)]
+
+
+def _in_chunks(sql: str, column: str) -> int:
+    return sql.count(f"{column} IN (")
+
+
+def test_1500_types_are_split_into_chunks_of_500():
+    sql = _sql(
+        app_logs_repo._list_stmt(
+            "", "", _many("t", 1500), None, None, None, 1, 10
+        )
+    )
+
+    # 1500 / 500 = 3 块，块间是 OR：单条语句仍然成立，排序分页 COUNT 都没分叉。
+    assert _in_chunks(sql, "app_logs.ltype") == 3
+    assert sql.count("OR app_logs.ltype IN (") == 2
+    # 最坏情况下 Oracle 只看到 500 个元素，远低于 1000 的硬上限。
+    assert "'t499'" in sql and "'t500'" not in sql.split("OR app_logs.ltype")[0]
+
+
+def test_1500_levels_are_split_into_chunks_of_500():
+    sql = _sql(
+        app_logs_repo._list_stmt(
+            "", "", None, _many("l", 1500), None, None, 1, 10
+        )
+    )
+
+    assert _in_chunks(sql, "app_logs.log_level") == 3
+
+
+def test_in_chunk_boundaries_keep_a_single_in_when_short():
+    sql = _sql(
+        app_logs_repo._list_stmt(
+            "", "", _many("t", 500), _many("l", 501), None, None, 1, 10
+        )
+    )
+
+    assert _in_chunks(sql, "app_logs.ltype") == 1
+    assert _in_chunks(sql, "app_logs.log_level") == 2
+
+
+@pytest.mark.asyncio
+async def test_list_page_accepts_1500_types_without_erroring():
+    session = _RecordingSession([_row(total_count=1)])
+
+    logs, total = await app_logs_repo.OracleAppLogsRepo(session).list_page(
+        types=_many("t", 1500), page=1, size=10
+    )
+
+    assert total == 1
+    assert len(logs) == 1
+    assert _in_chunks(session.statements[0], "app_logs.ltype") == 3
+
+
+# ---------------------------------------------------------------------------
+# 4. 分页语义与上限
+# ---------------------------------------------------------------------------
 
 def test_page_size_is_capped_at_100():
     sql = _sql(app_logs_repo._list_stmt("", "", None, None, None, None, 1, 500))

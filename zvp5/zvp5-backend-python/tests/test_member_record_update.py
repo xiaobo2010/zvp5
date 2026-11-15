@@ -111,6 +111,18 @@ class _MembersRepo:
             rows = [row for row in rows if row["activity"] in accepted]
         return rows
 
+    async def sum_modes_for_member(self, user_id):
+        # 双重有效口径：成员状态与活动状态都得是 effective（审核中活动不计）。
+        totals = {"on-campus": 0.0, "off-campus": 0.0, "social-practice": 0.0}
+        for row in self.state["rows"]:
+            if row["member"] != user_id or row["status"] != "effective":
+                continue
+            activity = self.state["activities"].get(row["activity"])
+            if activity is None or activity["status"] != "effective":
+                continue
+            totals[row["mode"]] += row["duration"]
+        return totals
+
 
 class _UsersRepo:
     def __init__(self, state: dict) -> None:

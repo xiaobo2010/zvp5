@@ -220,18 +220,30 @@ async def _consume_in_session(
     amount: int,
     default_limit: int,
     updated_at: datetime,
+    want_state: bool = True,
 ) -> tuple[bool, int, int]:
-    """在已打开的 session 里完成一次扣减（调用方负责 commit）。"""
+    """在已打开的 session 里完成一次扣减（调用方负责 commit）。
+
+    ``want_state=False`` 用在**丢弃返回值**的调用点：扣减成功时不再回读
+    ``(used, limit)``，省掉一次跨洋 ``SELECT``；此时返回的 used/limit 恒为 0，
+    **调用方不得使用**它们（只该看 ``allowed``）。
+    """
     result = await session.execute(
         _consume_stmt(user_oid, period, kind, amount, updated_at)
     )
     if result.rowcount == 1:
+        if not want_state:
+            return True, 0, 0
         used, limit = await _read_used_limit(session, user_oid, period, kind)
         return True, used, limit
 
     # 没扣到：要么额度不足（行在），要么行还不存在（首次使用该能力）。
+    # 这次存在性查询是**建行分支的判据**，与是否回读展示值无关，所以
+    # ``want_state=False`` 也保留它——省掉会让首次使用永远扣不上账。
     existing = await _read_row(session, user_oid, period, kind)
     if existing is not None:
+        if not want_state:
+            return False, 0, 0
         mapping = existing._mapping
         return False, int(mapping["used"]), int(mapping["limit_count"])
 
@@ -252,6 +264,8 @@ async def _consume_in_session(
         _consume_stmt(user_oid, period, kind, amount, updated_at)
     )
     if result.rowcount == 1:
+        if not want_state:
+            return True, 0, 0
         used, limit = await _read_used_limit(session, user_oid, period, kind)
         return True, used, limit
 
@@ -260,6 +274,8 @@ async def _consume_in_session(
         # 行刚建好就被并发删掉（本模块没有删除接口，只可能是人工介入）：
         # 保守拒绝——宁可不给，也不超发。
         return False, 0, default_limit
+    if not want_state:
+        return False, 0, 0
     mapping = existing._mapping
     return False, int(mapping["used"]), int(mapping["limit_count"])
 
@@ -271,18 +287,27 @@ class OracleAIQuotaRepo:
         self._session = session
 
     async def consume(
-        self, user_oid: str, period: str, kind: str, amount: int, default_limit: int
+        self,
+        user_oid: str,
+        period: str,
+        kind: str,
+        amount: int,
+        default_limit: int,
+        want_state: bool = True,
     ) -> tuple[bool, int, int]:
         """原子扣减，返回 ``(allowed, used, limit)``；不超卖。
 
         ``default_limit`` 只在该三元组**首次**出现时生效：之后改限额走
         :meth:`set_limit`，这里绝不覆盖已有行的 ``limit_count``。
+
+        ``want_state=False`` 给**不看 used/limit** 的调用方用：成功分支不回读，
+        少一次跨洋 ``SELECT``。此时返回的 used/limit 无意义（恒 0），调用方不得使用。
         """
         target = normalize_oid(user_oid)
         now = _now()
         async with _session_for(self._session) as (session, owns):
             allowed, used, limit = await _consume_in_session(
-                session, target, period, kind, amount, default_limit, now
+                session, target, period, kind, amount, default_limit, now, want_state
             )
             if owns:
                 await session.commit()

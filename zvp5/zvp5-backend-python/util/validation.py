@@ -11,6 +11,11 @@ ACTIVITY_NAME_MAX_LENGTH = 256
 ACTIVITY_PLACE_MAX_LENGTH = 256
 ACTIVITY_APPROVER_MAX_LENGTH = 24
 
+# `groups` 表两列的列宽（`db/oracle/ddl/V001__initial_schema.sql:91-100`，单位
+# CHAR，模型见 `db/models.py:172,175`）：与活动同理，写超了是 ORA-12899 → 500。
+GROUP_NAME_MAX_LENGTH = 128
+GROUP_DESCRIPTION_MAX_LENGTH = 1000
+
 
 def _validate_varchar(value: Optional[str], limit: int, label: str):
     """定长文本列的通用校验：NULL 放行、NUL 拒绝、超宽拒绝（不静默截断）。
@@ -85,6 +90,18 @@ def validate_activity_description(description: Optional[str]):
         )
 
     return True, ""
+
+
+def validate_group_name(name: Optional[str]):
+    """班级/用户组名（``GROUPS.NAME``，``VARCHAR2(128 CHAR)``，非空列）。"""
+    return _validate_varchar(name, GROUP_NAME_MAX_LENGTH, "Name")
+
+
+def validate_group_description(description: Optional[str]):
+    """班级/用户组描述（``GROUPS.DESCRIPTION``，``VARCHAR2(1000 CHAR)``，可空）。"""
+    return _validate_varchar(
+        description, GROUP_DESCRIPTION_MAX_LENGTH, "Description"
+    )
 
 
 def validate_student_name(name: str):

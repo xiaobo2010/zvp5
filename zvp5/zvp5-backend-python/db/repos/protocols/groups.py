@@ -40,6 +40,17 @@ class GroupsRepo(Protocol):
         """Delete a group. Callers are responsible for detaching its members."""
         ...
 
+    async def delete_cascade(self, oid: str) -> Row | None:
+        """Delete a class group and everything that references it, atomically.
+
+        Locks the ``groups`` row ``FOR UPDATE``, removes its
+        ``group_indicators`` rows, detaches its members (``users.class_oid`` →
+        NULL) and deletes the row itself, in **one transaction**. Returns the
+        deleted ``{_id, name, description}`` row, or ``None`` when ``oid`` does
+        not exist (the not-found check happens inside the lock).
+        """
+        ...
+
     async def members_page(
         self, group_oid: str, query: str, page: int, size: int
     ) -> tuple[list[Row], int]:

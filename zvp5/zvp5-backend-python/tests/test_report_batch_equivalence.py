@@ -179,6 +179,20 @@ class _Repos:
         wanted = {str(oid) for oid in member_oids}
         return [dict(row) for row in MEMBERS if row["member"] in wanted]
 
+    async def sum_modes_for_member(self, member_oid):
+        # ``calculate_user_time`` 的默认分支：单成员三档聚合，口径与批量版一致
+        # （双重有效 + 审核中的活动不计入）。
+        self.calls["members.sum_modes_for_member"] += 1
+        totals = {"on-campus": 0.0, "off-campus": 0.0, "social-practice": 0.0}
+        for row in MEMBERS:
+            if row["member"] != str(member_oid) or row["status"] != "effective":
+                continue
+            activity = ACTIVITIES.get(row["activity"])
+            if activity is None or activity["status"] != "effective":
+                continue
+            totals[row["mode"]] += row["duration"]
+        return totals
+
     # -- time ----------------------------------------------------------
     async def get_for_user(self, user_oid):
         self.calls["time.get_for_user"] += 1
@@ -231,7 +245,9 @@ def repos(monkeypatch):
         get=state.get_activity, list_effective=state.list_effective
     )
     members = SimpleNamespace(
-        list_for_member=state.list_for_member, list_by_members=state.list_by_members
+        list_for_member=state.list_for_member,
+        list_by_members=state.list_by_members,
+        sum_modes_for_member=state.sum_modes_for_member,
     )
     times = SimpleNamespace(
         get_for_user=state.get_for_user,

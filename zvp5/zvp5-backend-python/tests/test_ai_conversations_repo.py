@@ -28,6 +28,7 @@ from sqlalchemy.exc import NoSuchColumnError
 
 from db.repos.oracle import ai_conversations as conversations_repo
 from db.repos.oracle import ai_runs as runs_repo
+from db.repos.oracle.users import UserGoneError
 
 DIALECT = oracle.dialect()
 OWNER = "000000000000000000000002"
@@ -729,23 +730,41 @@ class _BatchResult:
     def scalar(self):
         return self._scalar
 
+    def first(self):
+        """``_allocate_seq`` 只关心锁语句有没有命中会话行。"""
+        return None if self.rowcount == 0 else (1,)
+
 
 class _RecordingSession:
     """记录 (语句, 参数) 的假 session：注入时仓储不许自己提交。"""
 
-    def __init__(self, *, max_seq: int = 0) -> None:
+    def __init__(self, *, max_seq: int = 0, conversation_exists: bool = True) -> None:
         self.calls: list[tuple] = []
         self.commits = 0
         self.max_seq = max_seq
+        self.conversation_exists = conversation_exists
 
     async def execute(self, stmt, params=None):
         self.calls.append((stmt, params))
+        if "for update" in str(stmt).lower():
+            return _BatchResult(rowcount=1 if self.conversation_exists else 0)
         if "max(ai_messages.seq)" in str(stmt).lower():
             return _BatchResult(scalar=self.max_seq)
         return _BatchResult()
 
     async def commit(self) -> None:
         self.commits += 1
+
+    def begin_nested(self):
+        return _NullSavepoint()
+
+
+class _NullSavepoint:
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_exc):
+        return False
 
 
 def _message_row(oid: str, role: str = "tool", **extra: Any) -> dict:
@@ -849,3 +868,46 @@ def test_append_batch_usage_goes_into_the_same_statement_set() -> None:
     assert "message_count=(ai_conversations.message_count + 1)" in update_sql
     assert "tokens_total=(ai_conversations.tokens_total + 10)" in update_sql
     assert "context_tokens=1200" in update_sql
+
+
+# ---------------------------------------------------------------------------
+# A-M8：锁必须命中会话行，否则不写消息/run
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_allocate_seq_returns_max_plus_one_after_locking_the_row() -> None:
+    session = _RecordingSession(max_seq=4)
+
+    assert await conversations_repo._allocate_seq(session, CONV) == 5
+
+
+@pytest.mark.asyncio
+async def test_allocate_seq_rejects_a_conversation_row_that_is_gone() -> None:
+    session = _RecordingSession(conversation_exists=False)
+
+    with pytest.raises(UserGoneError):
+        await conversations_repo._allocate_seq(session, CONV)
+
+    # 锁没命中就停：连 ``MAX(seq)`` 都不该再查一次。
+    assert len(session.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_insert_queued_writes_nothing_when_the_conversation_is_gone() -> None:
+    """会话在「读完归属」与「写消息」之间被删：一条行都不许落（孤儿消息/run）。"""
+    session = _RecordingSession(conversation_exists=False)
+    repo = runs_repo.OracleAIRunsRepo(session=session)
+
+    with pytest.raises(UserGoneError):
+        await repo.insert_queued(
+            run_id=RUN,
+            conversation_oid=CONV,
+            owner_oid=OWNER,
+            message_oid="m" * 32,
+            content="查一下",
+        )
+
+    # 只有那条锁语句：用户消息 / run / 会话计数（一次 INSERT 与两次 UPDATE）
+    # 全部没发出去。
+    assert len(session.calls) == 1
+    assert "FOR UPDATE" in str(session.calls[0][0]).upper()

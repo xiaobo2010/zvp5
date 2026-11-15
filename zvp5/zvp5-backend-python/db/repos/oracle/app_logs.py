@@ -33,6 +33,28 @@ from db.repos.pagination import page_args, page_bounds
 
 Row = dict[str, Any]
 
+#: Oracle 一条 ``IN`` 的元素上限是 1000，超了就是 ORA-01795。``type``/``level``
+#: 来自逗号串、没有天然上界，所以按 500 分块（与
+#: ``db/repos/oracle/files.py::_OID_CHUNK`` 同口径，留一半余量）。
+_IN_CHUNK = 500
+
+
+def _chunked_in(column: Any, values: list[str]) -> Any:
+    """``IN`` 超过 :data:`_IN_CHUNK` 项时改写成 ``OR c IN (...) OR c IN (...)``。
+
+    与 ``db/repos/oracle/activities.py::_chunked_in`` 同一手法：分块发生在**一条**
+    语句内部，Oracle 只看到一串过滤条件，``ORDER BY``/分页/``COUNT`` 都还留在
+    SQL 侧；拆成多条语句执行会把排序分页按块各做一遍，语义就变了。
+    """
+    chunks = [
+        values[start : start + _IN_CHUNK]
+        for start in range(0, len(values), _IN_CHUNK)
+    ]
+    if not chunks:
+        # 空集合维持原语义：匹配不到任何行（而非「不过滤」）。
+        return column.in_([])
+    return or_(*(column.in_(chunk) for chunk in chunks))
+
 
 def _fit_utf8(value: str, limit: int) -> str:
     return value.encode("utf-8")[:limit].decode("utf-8", errors="ignore")
@@ -171,6 +193,9 @@ def _filter(
 
     ``exclude_types`` 只在**没有** ``types`` 白名单时生效（``logs_router`` 用它
     默认隐藏 ``login_fail``）；显式指定类型时管理员要看什么就给什么。
+
+    ``types``/``levels`` 走 :func:`_chunked_in`：两者都来自逗号串，值多了会撞上
+    Oracle 的 ``IN`` 元素上限（ORA-01795 → 500），分块后单条语句仍然成立。
     """
     conds: list[Any] = []
     if query:
@@ -178,7 +203,7 @@ def _filter(
     if performer:
         conds.append(app_logs_tbl.c.app_user == performer)
     if types:
-        conds.append(app_logs_tbl.c.ltype.in_(list(types)))
+        conds.append(_chunked_in(app_logs_tbl.c.ltype, list(types)))
     elif exclude_types:
         # ``IS NULL OR`` 这一支是承重的：Oracle 把空串当 NULL（``ZVMSLog`` 的
         # ``type`` 默认 ``""``），裸 ``NOT IN`` 会把这类普通行一起过滤成 NULL。
@@ -189,7 +214,7 @@ def _filter(
             )
         )
     if levels:
-        conds.append(app_logs_tbl.c.log_level.in_(list(levels)))
+        conds.append(_chunked_in(app_logs_tbl.c.log_level, list(levels)))
     if time_start is not None:
         conds.append(app_logs_tbl.c.ts_raw > time_start)
     if time_end is not None:

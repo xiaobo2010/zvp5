@@ -29,10 +29,13 @@ from db.repos.oracle.groups import (
     OracleGroupsRepo,
     _list_classes_stmt,
 )
+from db.repos.oracle.activities import _page_stmt as _activity_page_stmt
 from db.repos.oracle.users import (
     OracleUsersRepo,
     _search_page_stmt,
+    _user_page_stmt,
 )
+from db.repos.pagination import LIST_PAGE_SIZE_MAX
 from routers import groups_router, users_router
 from util.object_id import get_current_user, optional_current_user
 
@@ -369,3 +372,177 @@ def test_get_groups_still_slices_the_merged_list(monkeypatch) -> None:
     # 合并后按 name 排序：志工部 < 高一(1)班 < 高一(2)班 < 高二(1)班
     assert [row["name"] for row in body["data"]] == ["高一(2)班", "高二(1)班"]
     assert body["metadata"]["size"] == 4
+
+
+# ---------------------------------------------------------------------------
+# 超大页的仓库层夹取（Query 校验不动，老客户端传 le=1000 不 422）
+# ---------------------------------------------------------------------------
+
+
+def test_activity_page_clamps_an_oversized_size(caplog) -> None:
+    """活动列表 ``size=1000`` 在语句层就被夹到共享上限，并留一条 warning。"""
+    sql = _sql(_activity_page_stmt("", None, None, 1, 1000, None, False))
+
+    assert f"FETCH FIRST {LIST_PAGE_SIZE_MAX} ROWS ONLY" in sql
+    assert any(
+        "activities.list_page" in record.getMessage()
+        for record in caplog.records
+    )
+
+
+def test_user_page_clamps_an_oversized_size(caplog) -> None:
+    sql = _sql(_user_page_stmt("", "", 1, 1000))
+
+    assert f"FETCH FIRST {LIST_PAGE_SIZE_MAX} ROWS ONLY" in sql
+    assert any(
+        "users.list_page" in record.getMessage()
+        for record in caplog.records
+    )
+
+
+def test_a_size_within_the_ceiling_is_not_clamped(caplog) -> None:
+    sql = _sql(_user_page_stmt("", "", 1, 50))
+
+    assert "FETCH FIRST 50 ROWS ONLY" in sql
+    assert caplog.records == []
+
+
+# ---------------------------------------------------------------------------
+# GET /api/users/{oid}/activities：Python 侧的过滤/排序/切片下推到 SQL
+# ---------------------------------------------------------------------------
+
+
+def _membership(member: str, mode: str = "on-campus") -> dict:
+    return {
+        "_id": f"{member}:{mode}",
+        "activity": None,
+        "member": member,
+        "status": "effective",
+        "mode": mode,
+        "duration": 1.5,
+    }
+
+
+def _user_activity(oid: str, name: str) -> dict:
+    return {
+        "_id": oid,
+        "name": name,
+        "description": "",
+        "type": "on-campus",
+        "status": "effective",
+        "date": "2026-09-01",
+        "special": False,
+    }
+
+
+class _FakeUserActivitiesRepo:
+    """按 SQL 的 OFFSET/FETCH 语义切片；``size=None`` 表示一次全量。"""
+
+    def __init__(self, rows: list[dict]) -> None:
+        self.rows = rows
+        self.calls: list[tuple] = []
+
+    async def list_for_user_activities(self, user_oid, search, sort, asc, page, size):
+        self.calls.append((user_oid, search, sort, asc, page, size))
+        if size is None:
+            window = self.rows
+        else:
+            start = (page - 1) * size
+            window = self.rows[start : start + size]
+        return [dict(row) for row in window], len(self.rows)
+
+
+def _patch_user_activities(monkeypatch, rows: list[dict]) -> _FakeUserActivitiesRepo:
+    repo = _FakeUserActivitiesRepo(rows)
+    monkeypatch.setattr(backends, "get_members_repo", lambda *a, **k: repo)
+    return repo
+
+
+_USER_OID = "000000000000000000000001"
+_ADMIN = {"id": "000000000000000000000002", "per": ["admin"]}
+
+
+def _rows_for(oids: list[str]) -> list[dict]:
+    return [
+        {
+            "member": _membership(_USER_OID),
+            "activity": _user_activity(oid, f"活动{index}"),
+        }
+        for index, oid in enumerate(oids)
+    ]
+
+
+@pytest.mark.asyncio
+async def test_read_user_activity_pages_in_sql(monkeypatch) -> None:
+    repo = _patch_user_activities(monkeypatch, _rows_for([f"{i:024x}" for i in range(6)]))
+
+    body = await users_router.read_user_activity(
+        _USER_OID, user=_ADMIN, page=2, perpage=2, query=""
+    )
+
+    # 分页参数原样下推（_id 倒序，与老路径的 Python 排序同一把尺子）。
+    assert repo.calls == [(_USER_OID, "", "_id", False, 2, 2)]
+    # 第二页就是 SQL 给的窗口，响应不再二次切片。
+    assert [row["_id"] for row in body["data"]] == [f"{2:024x}", f"{3:024x}"]
+    assert body["metadata"]["size"] == 6
+
+
+@pytest.mark.asyncio
+async def test_read_user_activity_keeps_the_page_minus_one_full_list(monkeypatch) -> None:
+    """``page=-1`` 是「一次全量」哨兵：同一查询、不分页（``size=None``）。"""
+    rows = _rows_for([f"{i:024x}" for i in range(6)])
+    repo = _patch_user_activities(monkeypatch, rows)
+
+    body = await users_router.read_user_activity(
+        _USER_OID, user=_ADMIN, page=-1, perpage=2, query=""
+    )
+
+    assert repo.calls == [(_USER_OID, "", "_id", False, -1, None)]
+    assert len(body["data"]) == 6
+    assert body["metadata"]["size"] == 6
+
+
+@pytest.mark.asyncio
+async def test_read_user_activity_merges_modes_and_skips_missing_activities(
+    monkeypatch,
+) -> None:
+    """同一活动的多条成员行合成一条；活动已删除的行不进响应。"""
+    first = f"{1:024x}"
+    second = f"{2:024x}"
+    rows = [
+        {"member": _membership(_USER_OID, "on-campus"), "activity": _user_activity(first, "A")},
+        {"member": _membership(_USER_OID, "off-campus"), "activity": _user_activity(first, "A")},
+        {"member": _membership(_USER_OID), "activity": None},
+        {"member": _membership(_USER_OID), "activity": _user_activity(second, "B")},
+    ]
+    _patch_user_activities(monkeypatch, rows)
+
+    body = await users_router.read_user_activity(
+        _USER_OID, user=_ADMIN, page=1, perpage=10, query=""
+    )
+
+    assert [row["_id"] for row in body["data"]] == [first, second]
+    assert [member["mode"] for member in body["data"][0]["members"]] == [
+        "on-campus",
+        "off-campus",
+    ]
+    assert body["data"][1]["members"] == [
+        {
+            "_id": _USER_OID,
+            "status": "effective",
+            "duration": 1.5,
+            "mode": "on-campus",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_read_user_activity_pushes_the_keyword_filter_into_sql(monkeypatch) -> None:
+    """名字关键字是 SQL 谓词（同一个孪生体），不再在 Python 里 re.search。"""
+    repo = _patch_user_activities(monkeypatch, [])
+
+    await users_router.read_user_activity(
+        _USER_OID, user=_ADMIN, page=1, perpage=10, query="支教"
+    )
+
+    assert repo.calls == [(_USER_OID, "支教", "_id", False, 1, 10)]

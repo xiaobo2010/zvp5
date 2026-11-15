@@ -213,7 +213,9 @@ class FakeQuotaRepo:
         self.reads.append((user_oid, kind))
         return None
 
-    async def consume(self, user_oid, period, kind, amount, default_limit):
+    async def consume(
+        self, user_oid, period, kind, amount, default_limit, want_state=True
+    ):
         self.consumed.append((user_oid, kind, amount))
         return True, amount, default_limit
 

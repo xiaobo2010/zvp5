@@ -36,7 +36,17 @@ import re
 from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator
 
-from sqlalchemy import delete, exists, func, insert, literal_column, or_, select, update
+from sqlalchemy import (
+    bindparam,
+    delete,
+    exists,
+    func,
+    insert,
+    literal_column,
+    or_,
+    select,
+    update,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
@@ -46,6 +56,7 @@ from db.models import activity_members as members_tbl
 from db.models import users as users_tbl
 from db.oracle.session import session_scope
 from db.repos.oracle.activities import _activity_doc
+from db.repos.oracle.times import _effective_member_agg
 
 Row = dict[str, Any]
 
@@ -194,28 +205,39 @@ def _list_for_user_activities_stmt(
     sort: str,
     asc: bool,
     page: int,
-    size: int,
+    size: int | None,
 ):
     """The per-user activity page: one statement, total via ``COUNT(*) OVER()``.
+
+    ``sort="_id"`` 是**活动**的 ``_id``（端点对外返回的活动倒序），映射到
+    ``ACTIVITIES.OID``；映射到成员行 oid 时，``WHERE member_oid = ...`` 下该列
+    与插入序同向，等于把「按活动倒序」退化成 rowid 序。未知的 ``sort`` 仍按
+    成员行 oid 兜底。
 
     Ties follow ``ACTIVITY_MEMBERS.ROWID`` — the physical order the original
     unpaginated ``WHERE member_oid = ...`` scan returned, which the handler's
     stable ``list.sort`` preserved (golden ``01f`` shows ties are **not** in
-    ``_id`` order).
+    ``_id`` order). ``size=None`` keeps the ordering but drops the row limit:
+    the "whole list in one shot" sentinel of the legacy endpoints. 活动已删除的
+    成员行（``ACTIVITIES.OID`` 为 NULL）排到末尾：降序下 Oracle 默认
+    ``NULLS FIRST``，那会让这些不进响应的行占满首页。
     """
     stmt = _list_for_user_activities_query(user_oid, pattern).add_columns(
         *_joined_activity_columns(),
         func.count().over().label("total_count"),
     )
-    column = getattr(members_tbl.c, _RAW_SORT_COLUMNS.get(sort, "oid"))
-    return (
-        stmt.order_by(
-            column.asc() if asc else column.desc(),
-            literal_column("activity_members.rowid").asc(),
-        )
-        .offset((page - 1) * size)
-        .limit(size)
+    if sort == "_id":
+        column = activities_tbl.c.oid
+    else:
+        column = getattr(members_tbl.c, _RAW_SORT_COLUMNS.get(sort, "oid"))
+    ordered = column.asc() if asc else column.desc().nulls_last()
+    stmt = stmt.order_by(
+        ordered,
+        literal_column("activity_members.rowid").asc(),
     )
+    if size is None:
+        return stmt
+    return stmt.offset((page - 1) * size).limit(size)
 
 
 def _list_for_user_activities_count_stmt(user_oid: str, pattern: str):
@@ -505,6 +527,27 @@ def _total_of(rows: Any) -> int | None:
     return int(rows[0]._mapping["total_count"])
 
 
+def _update_durations_many_stmt(*, delta: bool):
+    """批量改时长：``duration_hours = duration_hours + :duration_hours`` 或直接赋值。
+
+    数组绑定（``executemany``）要求参数名与 ``bindparam`` 同名；``delta=True``
+    时加法留在 SQL 侧，避免「读旧值 → 算总和 → 写回」的并发丢更新。
+    """
+    amount = bindparam("duration_hours")
+    return (
+        update(members_tbl)
+        .where(members_tbl.c.oid == bindparam("oid"))
+        .values(
+            duration_hours=members_tbl.c.duration_hours + amount if delta else amount
+        )
+    )
+
+
+def _sum_modes_for_member_stmt(member_oid: str):
+    """``_effective_member_agg`` 只取一个成员：三档之和的单行。"""
+    return _effective_member_agg().where(members_tbl.c.member_oid == member_oid)
+
+
 def _member_row(mapping: Any) -> Row:
     """Translate an ACTIVITY_MEMBERS row to the Mongo document shape."""
     return {
@@ -553,8 +596,13 @@ class OracleMembersRepo:
         sort: str,
         asc: bool,
         page: int,
-        size: int,
+        size: int | None,
     ) -> tuple[list[Row], int]:
+        """``(rows, total)``：一页（``size=None`` 时整份）用户的成员关系 + 活动。
+
+        ``size=None`` 是老的「一次全量」哨兵语义：仍走同一语句、同一排序，
+        只是不带 ``OFFSET/FETCH``；``page`` 只在 ``size`` 给定时参与偏移。
+        """
         member = normalize_oid(user_oid)
         stmt = _list_for_user_activities_stmt(member, search, sort, asc, page, size)
         count_stmt = _list_for_user_activities_count_stmt(member, search)
@@ -641,6 +689,29 @@ class OracleMembersRepo:
                     for member_oid, mode, duration in entries[
                         start : start + _OID_CHUNK
                     ]
+                ]
+                await session.execute(stmt, batch)
+            if owns:
+                await session.commit()
+
+    async def update_durations_many(
+        self, entries: list[tuple[str, float]], *, delta: bool = True
+    ) -> None:
+        """批量改已有成员的时长（``entries`` = ``(成员关系 oid, 小时)``）。
+
+        登记成员原来对既有三元组逐条 :meth:`update_fields`：100 人就是 100 次
+        跨洋往返。这里按 :data:`_OID_CHUNK` 分批交给数组绑定（``executemany``），
+        整批一次写完。``delta=True``（累加语义）把 ``+`` 留在 SQL 侧，并发两个
+        请求不会互相覆盖；``delta=False``（覆盖语义）直接赋本次值。
+        """
+        if not entries:
+            return
+        stmt = _update_durations_many_stmt(delta=delta)
+        async with _session_for(self._session) as (session, owns):
+            for start in range(0, len(entries), _OID_CHUNK):
+                batch = [
+                    {"oid": normalize_oid(oid), "duration_hours": duration}
+                    for oid, duration in entries[start : start + _OID_CHUNK]
                 ]
                 await session.execute(stmt, batch)
             if owns:
@@ -762,6 +833,26 @@ class OracleMembersRepo:
         async with _session_for(self._session) as (session, _owns):
             rows = (await session.execute(stmt)).all()
         return [_member_row(row._mapping) for row in rows]
+
+    async def sum_modes_for_member(self, member_oid: str) -> Row | None:
+        """单成员的三档时长之和（双重有效口径）；没有有效成员关系时 ``None``。
+
+        口径与 :func:`_effective_member_agg` 逐字一致：``activities.status =
+        'effective' AND activity_members.member_status = 'effective'``（审核中的
+        活动不计入）。``calculate_user_time`` 的默认分支改走这里，一条语句拿到
+        「某人三档之和」，不再拉全部有效活动 + 该人全部成员行在 Python 里求和。
+        """
+        stmt = _sum_modes_for_member_stmt(normalize_oid(member_oid))
+        async with _session_for(self._session) as (session, _owns):
+            row = (await session.execute(stmt)).first()
+        if row is None:
+            return None
+        mapping = row._mapping
+        return {
+            "on-campus": mapping["on_campus_raw"],
+            "off-campus": mapping["off_campus_raw"],
+            "social-practice": mapping["social_practice"],
+        }
 
     async def count_distinct_members(self, activity_oid: str) -> int:
         """活动里不同成员的人数（同一人多条 mode 记录只算一个）。"""

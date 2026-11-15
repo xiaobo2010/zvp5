@@ -1523,7 +1523,9 @@ async def _summarize_history(
         )
         if _billable(entry):
             try:
-                await quota.consume(user_oid, "af", units, roles=roles)
+                await quota.consume(
+                    user_oid, "af", units, roles=roles, want_state=False
+                )
             except Exception as exc:  # noqa: BLE001 - 回写失败不能丢掉摘要
                 _logger.warning(
                     "ai agent compact quota write-back failed: %s",
@@ -1894,7 +1896,9 @@ async def run(
         if _billable(entry):
             # 后置扣减是 best-effort：回写失败不能丢掉已经生成的答案。
             try:
-                await quota.consume(user_oid, "af", units, roles=roles)
+                await quota.consume(
+                    user_oid, "af", units, roles=roles, want_state=False
+                )
             except Exception as exc:  # noqa: BLE001 - 回写失败不能丢掉答案
                 _logger.warning(
                     "ai agent quota write-back failed: %s", type(exc).__name__

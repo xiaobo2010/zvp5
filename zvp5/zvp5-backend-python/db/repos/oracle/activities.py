@@ -34,7 +34,7 @@ from db.ids import new_oid, normalize_oid
 from db.models import activities as activities_tbl
 from db.models import users as users_tbl
 from db.oracle.session import session_scope
-from db.repos.pagination import page_args
+from db.repos.pagination import capped_size, page_args
 
 Row = dict[str, Any]
 
@@ -160,6 +160,7 @@ def _page_stmt(
     conds = _activity_filter(query, atypes, status)
     if conds:
         stmt = stmt.where(*conds)
+    size = capped_size(size, where="activities.list_page")
     offset, limit = page_args(page, size)
     if sort:
         column = getattr(activities_tbl.c, sort)

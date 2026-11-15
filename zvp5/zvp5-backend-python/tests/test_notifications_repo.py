@@ -18,11 +18,13 @@ Run from the repository root::
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime
 
 import pytest
 from sqlalchemy.dialects import oracle
 
+from db import cache
 from db.models import notification_state as state_tbl
 from db.models import notifications as notifications_tbl
 from db.repos.oracle import notifications as notifications_repo
@@ -386,3 +388,115 @@ def test_version_row_maps_flags_and_numeric_versions() -> None:
     assert row["source_version"] == 1
     assert row["content_hash"] == "a" * 64
     assert row["created_at"] == NOW
+
+
+# ---------------------------------------------------------------------------
+# 列表缓存：单值上限必须容得下一整页正文
+# ---------------------------------------------------------------------------
+
+
+class _FakeCacheClient:
+    """够用的 async Redis 替身（字符串 value + px）。"""
+
+    def __init__(self) -> None:
+        self.data: dict[str, str] = {}
+        self.calls = {"get": 0, "set": 0}
+
+    async def get(self, key: str):
+        self.calls["get"] += 1
+        return self.data.get(key)
+
+    async def set(self, key: str, value: str, px: int | None = None):
+        self.calls["set"] += 1
+        self.data[key] = value
+        return True
+
+    async def incr(self, key: str) -> int:
+        value = int(self.data.get(key, "0")) + 1
+        self.data[key] = str(value)
+        return value
+
+    async def aclose(self) -> None:
+        return None
+
+
+@pytest.fixture
+def fake_cache():
+    client = _FakeCacheClient()
+    cache._install_client_for_tests(client)
+    yield client
+    cache._reset_for_tests()
+
+
+#: 300KB（UTF-8）：超过 ``cache.MAX_VALUE_BYTES``(256KB)，低于公告列表的 2MB。
+BIG_BODY = "正" * 100_000
+
+
+class _BigListRepo(notifications_repo.OracleNotificationsRepo):
+    """只替换「回源」一步，其余（key/TTL/max_bytes）走真实 ``list_active``。"""
+
+    def __init__(self, rows: list[dict]) -> None:
+        super().__init__()
+        self.calls = 0
+        self._rows = rows
+
+    async def _list_active_uncached(self):
+        self.calls += 1
+        return [dict(row) for row in self._rows], 7
+
+
+def test_remember_default_ceiling_still_rejects_payloads_over_256kb(fake_cache):
+    loads = {"n": 0}
+
+    async def loader():
+        loads["n"] += 1
+        return {"content": BIG_BODY}
+
+    async def main():
+        await cache.remember("k", 30, loader)
+        await cache.remember("k", 30, loader)
+
+    assert asyncio.run(main()) is None
+    assert loads["n"] == 2, "超过默认上限就不缓存，每次都回源"
+    assert fake_cache.calls["set"] == 0
+    assert "k" not in fake_cache.data
+
+
+def test_remember_explicit_max_bytes_caches_and_hits(fake_cache):
+    loads = {"n": 0}
+
+    async def loader():
+        loads["n"] += 1
+        return {"content": BIG_BODY}
+
+    async def main():
+        first = await cache.remember("k", 30, loader, max_bytes=2 * 1024 * 1024)
+        second = await cache.remember("k", 30, loader, max_bytes=2 * 1024 * 1024)
+        return first, second
+
+    assert asyncio.run(main()) == ({"content": BIG_BODY}, {"content": BIG_BODY})
+    assert loads["n"] == 1
+    assert fake_cache.calls["set"] == 1
+
+
+def test_list_active_caches_a_page_larger_than_the_default_ceiling(fake_cache):
+    """100 条 × 4000 字正文的整页必须进缓存，否则读穿永久失效。"""
+    repo = _BigListRepo([{"_id": OID, "content": BIG_BODY}])
+
+    async def main():
+        first_version = (await repo.list_active())[1]
+        second_version = (await repo.list_active())[1]
+        await asyncio.sleep(0)  # 让 async_backfill 真正写进 Redis
+        return first_version, second_version
+
+    assert asyncio.run(main()) == (7, 7)
+    assert repo.calls == 1, "第二次读必须命中缓存"
+    assert any(key.startswith(f"{cache.NS}:notif:") for key in fake_cache.data)
+
+
+def test_active_cache_ttl_and_ceiling_match_their_documentation():
+    # 模块 docstring 曾写「~20s」，常量实际是 120s；这里把两者钉在一起。
+    assert notifications_repo._ACTIVE_TTL_SECONDS == 120.0
+    assert notifications_repo._ACTIVE_CACHE_MAX_BYTES == 2 * 1024 * 1024
+    assert notifications_repo._ACTIVE_CACHE_MAX_BYTES > cache.MAX_VALUE_BYTES
+    assert len(BIG_BODY.encode("utf-8")) > cache.MAX_VALUE_BYTES

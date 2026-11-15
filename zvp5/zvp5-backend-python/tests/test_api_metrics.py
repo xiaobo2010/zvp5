@@ -139,3 +139,30 @@ def test_middleware_records_route_templates_not_urls():
     assert by_route["/items/{item_id}"]["count"] == 2
     assert by_route["/boom"]["err_count"] == 1
     assert by_route["/boom"]["count"] == 1
+
+
+def test_include_router_prefix_is_preserved_in_recorded_template():
+    """FastAPI >=0.16x 懒挂载：scope["route"].path 丢 include 前缀，须还原。
+
+    回归背景：升级到 FastAPI 0.162 后，perf_endpoints 里出现无前缀模板
+    （``/{user_id}/time``），把 ``/api/v1/users/{user_id}/time`` 记错并与其他
+    前缀的同名模板撞车。完整模板在 ``_IncludedRouter._effective_candidates``。
+    """
+    from fastapi import APIRouter
+
+    recorder = ApiMetricsRecorder()
+    app = FastAPI()
+    app.add_middleware(ApiMetricsMiddleware, recorder=recorder)
+    router = APIRouter()
+
+    @router.get("/{user_id}/time")
+    async def user_time(user_id: str):
+        return {"ok": user_id}
+
+    app.include_router(router, prefix="/api/v1/users")
+    client = TestClient(app)
+
+    assert client.get("/api/v1/users/123/time").status_code == 200
+    routes = {item["route"] for item in recorder.snapshot()["items"]}
+    assert routes == {"/api/v1/users/{user_id}/time"}
+

@@ -40,7 +40,13 @@ class FakeQuotaRepo:
         return dict(row) if row else None
 
     async def consume(
-        self, user_oid: str, period: str, kind: str, amount: int, default_limit: int
+        self,
+        user_oid: str,
+        period: str,
+        kind: str,
+        amount: int,
+        default_limit: int,
+        want_state: bool = True,
     ) -> tuple[bool, int, int]:
         self.calls.append(
             {

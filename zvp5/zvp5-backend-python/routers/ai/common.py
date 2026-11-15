@@ -357,7 +357,7 @@ async def _charge(
 ) -> None:
     """后置扣减是 best-effort：配额回写失败不能丢掉已经生成的答案。"""
     try:
-        await quota.consume(user_oid, "af", units, roles=roles)
+        await quota.consume(user_oid, "af", units, roles=roles, want_state=False)
     except Exception as exc:  # noqa: BLE001
         _logger.warning("ai quota write-back failed: %s", type(exc).__name__)
 
