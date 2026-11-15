@@ -1,0 +1,95 @@
+from typing import Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Query
+
+from db import backends
+from services import settings_runtime
+from util.object_id import get_current_user
+from util.permission.features import has_feature
+from util.read_throttle import read_budget
+
+router = APIRouter()
+
+#: 管理端默认隐藏的日志类型。``login_fail`` 是两条风控规则的计数数据源
+#: （``services/risk_monitor.py``），一次暴破尝试就会写满一屏；它属于
+#: 「机器看、人不用看」的行。默认列表排除，管理员排查账号异常时用
+#: ``?type=login_fail`` 显式取回（见 :func:`read_logs` 的 docstring）。
+HIDDEN_LOG_TYPES = ("login_fail",)
+
+
+@router.get("")
+async def read_logs(
+    performer: str = Query("", description="Filter by performer/user"),
+    page: int = Query(1, ge=1, description="Page number (1-based)"),
+    perpage: int = Query(10, ge=1, le=100, description="Items per page (max 100)"),
+    query: str = Query(
+        "",
+        description="Search query (url/data, case-insensitive contains)",
+    ),
+    type: str = Query("", description="Comma-separated log types"),
+    level: str = Query("", description="Comma-separated log levels"),
+    time_start: Optional[int] = Query(None, description="Start timestamp (seconds)"),
+    time_end: Optional[int] = Query(None, description="End timestamp (seconds)"),
+    xuehai_id: str = Query("", description="Filter by 学海设备 ID (Xuehai-Id header)"),
+    user=Depends(get_current_user),
+    _budget=Depends(read_budget),
+):
+    """管理端日志列表。
+
+    分页口径：``page`` 从 1 开始（``page < 1`` → 422），``perpage`` 上限 100，
+    两者在仓储层再钳一次，避免直接调用方绕过 FastAPI 校验。总数由仓储用
+    ``COUNT(*) OVER()`` 与当页数据一起带回，不再每页执行一次全表 ``COUNT``。
+
+    默认隐藏 ``login_fail``：不传 ``type`` 时按 :data:`HIDDEN_LOG_TYPES` 做
+    黑名单（该类是风控计数数据源，量大且对管理员无事可做）；显式
+    ``type=login_fail`` 仍然按白名单查询，账号排查入口保留。
+
+    显示名直接取仓储 ``LEFT JOIN users`` 带回的 ``user_name``
+    （``db/repos/oracle/app_logs.py``），本函数**不再**二次批量查 ``users``：
+    每请求少一次 ADB 往返。回落只在 Python 里做——``user_name`` 有值用它，
+    ``app_user`` 非空但 join 未命中 → 「未知用户」，``app_user`` 为空 →
+    「未登录」。
+    """
+    if "admin" not in (user.get("per") or []) and not has_feature(user, "logs.read"):
+        raise HTTPException(status_code=403, detail="Permission denied")
+
+    # 上限走运行期设置（``ops.max_query_count``）：原先写在 ``Query(max_length=...)``
+    # 里是 import 期求值，改配置不可能生效。
+    if len(query) > settings_runtime.get_sync("ops.max_query_count"):
+        raise HTTPException(status_code=400, detail="Query too long")
+
+    types = [t.strip() for t in type.split(",") if t.strip()]
+    levels = [l.strip() for l in level.split(",") if l.strip()]
+    # 只在管理员**没有**指定类型时套黑名单：显式选择（含多选）以调用方为准。
+    exclude_types = list(HIDDEN_LOG_TYPES) if not types else None
+
+    logs, count = await backends.get_applogs_repo().list_page(
+        query=query,
+        performer=performer,
+        types=types,
+        levels=levels,
+        time_start=time_start,
+        time_end=time_end,
+        xuehai_id=xuehai_id,
+        page=page,
+        size=perpage,
+        exclude_types=exclude_types,
+    )
+
+    # 显示名来自仓储 LIST 语句的 ``LEFT JOIN users``，这里只做 Python 回落：
+    # 再查一次 ``users`` 只是白付一次 ADB 往返（空串/已删号仍按原口径回落）。
+    for log in logs:
+        log["_id"] = str(log["_id"])
+        if log.get("user"):
+            log["user_name"] = log.get("user_name") or "未知用户"
+        else:
+            log["user_name"] = "未登录"
+
+    return {
+        "code": 200,
+        "status": "ok",
+        "data": logs,
+        "metadata": {
+            "size": count,
+        },
+    }

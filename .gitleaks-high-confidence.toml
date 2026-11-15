@@ -1,0 +1,12 @@
+[extend]
+useDefault = true
+
+[allowlist]
+description = "High-confidence credential scan; test fixtures are not broadly exempt"
+paths = [
+  '''adb2-wallet\.7z''',
+  '''\.venv/''',
+  '''node_modules/''',
+  '''dist/''',
+  '''rsa_private_key\.pem''',
+]

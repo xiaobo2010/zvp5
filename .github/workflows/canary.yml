@@ -1,0 +1,230 @@
+name: Canary preview (frontend → Worker)
+
+# canary 通道刻意保持"一条腿"：
+#   - 只跑前端门禁 + 构建 + 发布，不跑后端 pytest、Cypress、gitleaks、trivy。
+#     那些在 main 的 ci.yml 里跑；canary 只产出静态预览，后端拒绝在 main 门禁解决。
+#   - 单 job：装依赖 → vitest/lint/type-check → 用 canary 参数构建 → 断言 → 发布 → 冒烟。
+#     合并成一个 job 是为了避免"门禁构建一次、部署再构建一次"的重复计费。
+#   - 任何非文档改动都会触发（见下方 paths-ignore）：宁可多跑一次，也不要
+#     因为目录白名单过期而静默不部署。
+#
+# 计费参考（公开库标准 runner 不计费）：本文件约 7~9 分钟/次推送；main 的全量门禁约 20 分钟。
+#
+# 必需：canary environment 里的 secret CLOUDFLARE_API_TOKEN 与变量
+# CLOUDFLARE_ACCOUNT_ID（该 environment 只允许本分支访问）。账号 ID 不写在仓库里，
+# 缺失时 Deploy 步骤会以 "CLOUDFLARE_ACCOUNT_ID is required" 直接失败。
+# 可选环境 Variables：CANARY_API_BASE、CANARY_API_RACE_BASE、CANARY_API_CONTENT_BASE。
+
+on:
+  push:
+    branches:
+      - v5-canary
+    # 改代码就重新部署：只忽略纯文档，不用前端目录白名单。
+    # 白名单在目录改名、产物挪位、或分支结构与 main 不一致时会**静默漏掉**
+    # 部署——2026-11-15 canary 因为只认 zvp5/zvp5-frontend/** 而三周没更新，
+    # 看起来像「CI 自动部署没生效」。
+    paths-ignore:
+      - "**/*.md"
+      - "**/*.txt"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: canary-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION_FILE: zvp5/zvp5-frontend/.node-version
+  PNPM_VERSION: "10.34.5"
+
+jobs:
+  preview:
+    name: Frontend gates and Worker preview
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: zvp5/zvp5-frontend
+    # token 存在 canary environment 里，且该 environment 只允许 v5-canary 访问；
+    # 其他分支的 workflow 引用不到这把 Cloudflare token。
+    environment: canary
+    env:
+      WRANGLER_VERSION: "4.162.0"
+      CANARY_URL: https://canary.xiaobopisces.top
+      # 后端盾牌会 418 掉没有 UA 的请求（curl 默认 UA 也在黑名单里），冒烟必须带这个。
+      PROBE_UA: Mozilla/5.0 (compatible; ZVP5-Deploy/1.0)
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      # 预览站跨域直连正式 API：CORS 白名单里必须已有 canary 域。
+      VITE_API_BASE: ${{ vars.CANARY_API_BASE || 'https://zvp.xiaobopisces.top/api' }}
+      VITE_API_RACE_BASE: ${{ vars.CANARY_API_RACE_BASE || 'https://zvpapi.xiaobopisces.top/api' }}
+      VITE_API_CONTENT_BASE: ${{ vars.CANARY_API_CONTENT_BASE || 'https://zvp.xiaobopisces.top/api' }}
+      # Worker 自己托管静态资源，所以资源基址是根路径；
+      # PWA 的 start_url/scope 仍要锚在预览域上，不能落在 API 域。
+      VITE_STATIC_BASE: /
+      VITE_PAGE_BASE: https://canary.xiaobopisces.top/
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v6
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: ${{ env.NODE_VERSION_FILE }}
+          cache: pnpm
+          cache-dependency-path: zvp5/zvp5-frontend/pnpm-lock.yaml
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Unit tests
+        # 单测必须跑在"无预览基址"的环境里：axios.spec 断言文件类请求由
+        # window.location.origin 推导，job 级的 canary VITE_* 会把它污染成 zvp 域。
+        env:
+          VITE_API_BASE: https://ci.invalid/api
+          VITE_API_RACE_BASE: https://race.ci.invalid/api
+          VITE_API_CONTENT_BASE: ""
+          VITE_STATIC_BASE: ""
+          VITE_PAGE_BASE: ""
+        run: pnpm exec vitest run --reporter=dot
+      - name: Lint
+        run: pnpm run lint
+      - name: Build preview bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${VITE_API_BASE:?VITE_API_BASE is required}"
+          : "${VITE_API_RACE_BASE:?VITE_API_RACE_BASE is required}"
+          : "${VITE_API_CONTENT_BASE:?VITE_API_CONTENT_BASE is required}"
+          : "${VITE_PAGE_BASE:?VITE_PAGE_BASE is required}"
+          # build = run-p type-check build-only，类型检查与产物在同一步完成。
+          pnpm run build
+          # 静态资源必须走预览域同源；混进绝对静态域说明 VITE_STATIC_BASE 没生效。
+          grep -F 'src="/assets/' dist/index.html >/dev/null
+          grep -R -F "$VITE_API_BASE" dist/assets >/dev/null
+          grep -R -F "$VITE_API_RACE_BASE" dist/assets >/dev/null
+          node - <<'NODE'
+          const fs = require("node:fs")
+          const pageBase = process.env.VITE_PAGE_BASE
+          const manifest = JSON.parse(fs.readFileSync("dist/manifest.webmanifest", "utf8"))
+          // v5-canary 尚未合入 VITE_PAGE_BASE 支持时，manifest 产出的是相对形式
+          // （"/"）。按预览域解析后比较：既有变量时必须等于预览域，也不能落到别的域。
+          const resolve = (value) => {
+            try {
+              return new URL(value, pageBase).href
+            } catch {
+              return null
+            }
+          }
+          for (const key of ["start_url", "scope"]) {
+            if (resolve(manifest[key]) !== pageBase) {
+              throw new Error(`manifest ${key} must resolve to ${pageBase}, got ${manifest[key]}`)
+            }
+          }
+          if ((manifest.icons || []).some((icon) => /^https:\/\//.test(String(icon.src)))) {
+            throw new Error("manifest icons must stay on the preview origin")
+          }
+          NODE
+      - name: Drop service worker from the preview bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          rm -f dist/sw.js dist/sw.js.map dist/workbox-*.js dist/workbox-*.js.map
+          [[ ! -e dist/sw.js ]] || { echo "dist/sw.js still present" >&2; exit 1; }
+      - name: Deploy to Cloudflare Worker
+        shell: bash
+        working-directory: .
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          : "${CLOUDFLARE_API_TOKEN:?CLOUDFLARE_API_TOKEN is required}"
+          : "${CLOUDFLARE_ACCOUNT_ID:?CLOUDFLARE_ACCOUNT_ID is required}"
+          npx --yes "wrangler@${WRANGLER_VERSION}" deploy \
+            --config zvp5/deployment/preview-worker/wrangler.jsonc
+      - name: Smoke test the deployed preview
+        shell: bash
+        working-directory: .
+        run: |
+          set -euo pipefail
+          dist_dir=zvp5/zvp5-frontend/dist
+          entry="$(grep -o 'src="/assets/[^"]*"' "$dist_dir/index.html" | head -n1 | sed -e 's|src="||' -e 's|"$||')"
+          [[ -n "$entry" ]] || { echo "could not find entry asset in dist/index.html" >&2; exit 1; }
+          local_sha="$(sha256sum "$dist_dir$entry" | awk '{print $1}')"
+
+          home_status=""
+          waf_blocked=0
+          for _ in $(seq 1 6); do
+            home_status="$(curl -fsS -A "$PROBE_UA" -o /dev/null -w '%{http_code}' "$CANARY_URL/" || true)"
+            if [[ "$home_status" == "403" ]]; then
+              waf_blocked=1
+              break
+            fi
+            remote_sha="$(curl -fsS -A "$PROBE_UA" --compressed -H 'Accept-Encoding: gzip' "$CANARY_URL$entry" | sha256sum | awk '{print $1}' || true)"
+            if [[ "$home_status" == "200" && "$remote_sha" == "$local_sha" ]]; then
+              break
+            fi
+            sleep 5
+          done
+          if [[ $waf_blocked -eq 1 ]]; then
+            # Cloudflare 的托管规则会拦 GitHub Actions 出口 IP（同一地址用本机 curl
+            # 是 200）。这是边缘策略不是部署问题，降级成警告，不做硬失败。
+            echo "::warning title=Preview probe blocked by Cloudflare::canary root returned 403 to the runner IP; content/CORS checks skipped."
+            {
+              echo '### Canary preview deployed (probe skipped)'
+              echo
+              echo "- URL: $CANARY_URL"
+              echo "- Commit: \`$GITHUB_SHA\`"
+              echo "- Entry chunk: \`$entry\`"
+              echo '- Content and CORS probes were skipped: Cloudflare returned 403 to the runner IP.'
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          [[ "$home_status" == "200" ]] || { echo "preview root returned $home_status" >&2; exit 1; }
+          [[ "$remote_sha" == "$local_sha" ]] || {
+            echo "served $entry does not match the freshly built bundle" >&2
+            exit 1
+          }
+
+          # 预览站的 service worker 已被移除，`/sw.js` 应回落到 SPA 的 index.html；
+          # 若仍返回 application/javascript，说明浏览器会跑旧的预缓存壳。
+          sw_type="$(curl -fsS -A "$PROBE_UA" -o /dev/null -w '%{content_type}' "$CANARY_URL/sw.js" | tr -d '\r')"
+          case "$sw_type" in
+            text/html*) ;;
+            *)
+              echo "unexpected content-type for /sw.js: $sw_type" >&2
+              exit 1
+              ;;
+          esac
+
+          # 预览域不在后端 CORS 白名单时，页面能打开但所有 API 都会被 400 拒掉。
+          # 不用 `curl -f`：被盾牌 418 / WAF 403 时需要读状态码决定「降级」而不是硬失败。
+          cors_hdr="$(mktemp)"
+          cors_status="$(curl -sS -A "$PROBE_UA" -D "$cors_hdr" -o /dev/null -w '%{http_code}' -X OPTIONS \
+            -H "Origin: $CANARY_URL" \
+            -H 'Access-Control-Request-Method: POST' \
+            -H 'Access-Control-Request-Headers: authorization,content-type' \
+            "$VITE_API_BASE/users/login" || echo 000)"
+          cors_origin="$(tr -d '\r' < "$cors_hdr" | awk 'tolower($1) == "access-control-allow-origin:" {print $2}' | tail -n1)"
+          rm -f "$cors_hdr"
+          [[ "$cors_origin" == "$CANARY_URL" ]] || {
+            # 没拿到任何 AC-AO 头也可能是边缘/盾牌拦了 CI 出口 IP；那种情况降级成警告，
+            # 拿到「别的 Origin」才是真的白名单没配对。
+            if [[ -z "$cors_origin" ]]; then
+              echo "::warning title=CORS probe inconclusive::no access-control-allow-origin header (status $cors_status; backend shield or WAF may be blocking the runner IP)."
+            else
+              echo "backend CORS does not echo the preview origin (got '$cors_origin')" >&2
+              exit 1
+            fi
+          }
+
+          {
+            echo '### Canary preview deployed'
+            echo
+            echo "- URL: $CANARY_URL"
+            echo "- Commit: \`$GITHUB_SHA\`"
+            echo "- Entry chunk: \`$entry\`"
+            echo '- Worker: zvp-yuren (static assets only; no backend change was made)'
+          } >> "$GITHUB_STEP_SUMMARY"

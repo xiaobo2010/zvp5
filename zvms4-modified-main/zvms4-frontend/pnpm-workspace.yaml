@@ -1,7 +1,0 @@
-allowBuilds:
-  '@parcel/watcher': true
-  core-js: true
-  cypress: false
-  esbuild: true
-  sharp: true
-  vue-demi: true

@@ -1,0 +1,659 @@
+"""封禁数据层的离线契约（schema 形状 + 生成的 SQL），不连库。
+
+覆盖三件服务层会依赖、但一旦写错就会静默出错的事：
+
+* ``_user_doc`` 的封禁元数据**只在非 NULL 时出现**——永久封禁必须表现为
+  ``"ban_until" not in user``，否则服务层无法区分「永久」与「已到期时间戳」。
+* ``set_ban`` / ``clear_ban`` 是**一条** UPDATE：闸门 ``banned`` 与四列元数据
+  必须同一语句落下，并且照旧轮换 ``session_id``（旧 token 立即失效）。这里断言
+  编译后的 SQL 列集合与绑定值，而不是手写 SQL 子串。
+* ``count_distinct_xuehai`` 的谓词必须排除 Blank 设备号。**不能**写
+  ``xuehai_id != ''``：Oracle 把空串当 NULL，``col != NULL`` 恒为 NULL，会把
+  整张表过滤成 0 行；实现用 ``length(trim(col)) > 0``，这里把这条钉住。
+
+Nothing is executed: statements are compiled against the Oracle dialect with
+values inlined, no engine, no connection.
+
+Run from the repository root::
+
+    ./.venv/bin/python -m pytest tests/test_ban_repo_sql.py -q
+"""
+
+from __future__ import annotations
+
+from datetime import datetime
+
+import pytest
+from sqlalchemy.dialects import oracle
+
+from db.models import ban_records as ban_records_tbl
+from db.models import ban_rules as ban_rules_tbl
+from db.models import ban_violations as ban_violations_tbl
+from db.repos.oracle import app_logs as app_logs_repo
+from db.repos.oracle import ban_records as ban_records_repo
+from db.repos.oracle import ban_rules as ban_rules_repo
+from db.repos.oracle import users as users_repo
+from db.repos.oracle import violations as violations_repo
+
+USER_OID = "000000000000000000000002"
+OTHER_OID = "000000000000000000000003"
+UNTIL = datetime(2026, 11, 1, 0, 0, 0)
+
+DIALECT = oracle.dialect()
+
+
+def _sql(stmt) -> str:
+    """Compile with bound values inlined; whitespace collapsed for matching."""
+    return " ".join(
+        str(stmt.compile(dialect=DIALECT, compile_kwargs={"literal_binds": True})).split()
+    )
+
+
+def _mapping(**overrides) -> dict:
+    """``_user_columns()`` 投影出来的一行（未覆盖的列一律 NULL/假值）。"""
+    base = {
+        "oid": USER_OID,
+        "business_id": "2026002",
+        "name": "李四",
+        "roles": ["student"],
+        "class_oid": None,
+        "password_hash": "x",
+        "session_id": None,
+        "sex": None,
+        "eligibility": None,
+        "past": None,
+        "banned": 0,
+        "ban_reason": None,
+        "ban_until": None,
+        "ban_source": None,
+        "ban_rule": None,
+        "primary_xuehai_id": None,
+    }
+    base.update(overrides)
+    return base
+
+
+# ---------------------------------------------------------------------------
+# _user_doc: 四个新字段仅在非 NULL 时出现
+# ---------------------------------------------------------------------------
+
+def test_user_doc_fills_ban_metadata_when_present():
+    doc = users_repo._user_doc(
+        _mapping(
+            banned=1,
+            ban_reason="同学号多设备登录：3 台设备",
+            ban_until=UNTIL,
+            ban_source="rule",
+            ban_rule="multi_device_login",
+        )
+    )
+    assert doc["banned"] is True
+    assert doc["ban_reason"] == "同学号多设备登录：3 台设备"
+    assert doc["ban_until"] == UNTIL
+    assert doc["ban_source"] == "rule"
+    assert doc["ban_rule"] == "multi_device_login"
+
+
+def test_user_doc_omits_ban_metadata_for_permanent_ban():
+    """永久封禁 = banned 存在、ban_until 不存在（Mongo 的「字段缺失」语义）。"""
+    doc = users_repo._user_doc(
+        _mapping(banned=1, ban_reason="", ban_source="admin")
+    )
+    assert doc["banned"] is True
+    assert doc["ban_source"] == "admin"
+    assert "ban_until" not in doc
+    assert "ban_rule" not in doc
+
+
+def test_user_doc_has_no_ban_keys_for_clean_user():
+    doc = users_repo._user_doc(_mapping())
+    for key in ("banned", "ban_reason", "ban_until", "ban_source", "ban_rule"):
+        assert key not in doc
+
+
+# ---------------------------------------------------------------------------
+# set_ban / clear_ban: 一条 UPDATE，含会话轮换
+# ---------------------------------------------------------------------------
+
+def test_set_ban_stmt_is_one_update_with_metadata_and_session_rotation():
+    sql = _sql(
+        users_repo._set_ban_stmt(
+            USER_OID, "多设备登录", UNTIL, "rule", "multi_device_login"
+        )
+    )
+    assert sql.startswith("UPDATE users SET ")
+    assert "banned=1" in sql
+    assert "ban_reason=" in sql
+    assert "ban_until=" in sql
+    assert "ban_source=" in sql
+    assert "ban_rule=" in sql
+    assert "session_id=" in sql
+    assert f"WHERE users.oid = '{USER_OID}'" in sql
+    # 值必须落在各自列上，不能错位
+    assert "'多设备登录'" in sql
+    assert "'rule'" in sql
+    assert "'multi_device_login'" in sql
+    assert "2026-11-01" in sql
+
+
+def test_set_ban_if_stronger_has_atomic_guard():
+    sql = _sql(
+        users_repo._set_ban_if_stronger_stmt(
+            USER_OID, "规则封禁", UNTIL, "rule", "login_failure_burst"
+        )
+    )
+    assert "banned=1" in sql
+    assert "ban_until IS NOT NULL" in sql
+    assert "users.ban_until <" in sql
+    assert f"WHERE users.oid = '{USER_OID}'" in sql
+
+
+def test_set_ban_if_stronger_permanent_is_unconditional():
+    sql = _sql(
+        users_repo._set_ban_if_stronger_stmt(
+            USER_OID, "管理员永久封禁", None, "admin", None
+        )
+    )
+    assert "banned=1" in sql
+    assert "ban_until=NULL" in sql
+    assert "ban_until IS NOT NULL" not in sql
+
+
+def test_set_ban_stmt_leaves_ban_until_null_for_permanent_ban():
+    sql = _sql(
+        users_repo._set_ban_stmt(USER_OID, "违规", None, "admin", None)
+    )
+    assert "banned=1" in sql
+    assert "ban_until=NULL" in sql
+    assert "ban_rule=NULL" in sql
+    assert "session_id=" in sql
+
+
+def test_clear_ban_stmt_nulls_metadata_and_rotates_session():
+    sql = _sql(users_repo._clear_ban_stmt(USER_OID))
+    assert sql.startswith("UPDATE users SET ")
+    assert "banned=0" in sql
+    for col in ("ban_reason", "ban_until", "ban_source", "ban_rule"):
+        assert f"{col}=NULL" in sql
+    assert "session_id=" in sql
+    assert f"WHERE users.oid = '{USER_OID}'" in sql
+
+
+def test_set_banned_compat_shim_forwards_to_new_writers(monkeypatch):
+    """旧接口 ``set_banned(oid, 1/0)`` 必须落到新语句上，而不是另开一条路。"""
+    seen: list[str] = []
+
+    class FakeSession:
+        async def execute(self, stmt):
+            seen.append(_sql(stmt))
+
+        async def commit(self):
+            seen.append("COMMIT")
+
+    async def _run(banned: int) -> list[str]:
+        repo = users_repo.OracleUsersRepo(session=FakeSession())
+        await repo.set_banned(USER_OID, banned)
+        return seen
+
+    import asyncio
+
+    seen.clear()
+    asyncio.run(_run(1))
+    assert any("banned=1" in s for s in seen)
+    assert any("ban_source='admin'" in s for s in seen)
+    assert seen[-1] != "COMMIT"  # 注入的 session 由调用方提交
+
+    seen.clear()
+    asyncio.run(_run(0))
+    assert any("banned=0" in s for s in seen)
+    assert any("ban_until=NULL" in s for s in seen)
+
+
+# ---------------------------------------------------------------------------
+# count_distinct_xuehai: DISTINCT + 时间窗 + 非空设备号
+# ---------------------------------------------------------------------------
+
+def test_count_distinct_xuehai_stmt_filters_blank_and_counts_distinct():
+    since = 1760000000.0
+    sql = _sql(app_logs_repo._count_distinct_xuehai_stmt(USER_OID, since))
+    assert "count(DISTINCT app_logs.xuehai_id)" in sql
+    assert f"app_logs.app_user = '{USER_OID}'" in sql
+    assert "app_logs.ltype = 'user_login'" in sql
+    # Oracle 的 '' 陷阱：必须用 length(trim(...)) > 0，绝不能出现 xuehai_id != ''
+    assert "length(trim(app_logs.xuehai_id)) > 0" in sql
+    assert "xuehai_id != ''" not in sql
+    assert f"app_logs.ts_raw >= {since}" in sql
+
+
+# ---------------------------------------------------------------------------
+# count_by_user_ltype: 用户 + 类型 + 时间窗（风险规则的事件计数）
+# ---------------------------------------------------------------------------
+
+def test_count_by_user_ltype_stmt_is_index_friendly():
+    since = 1760000000.0
+    sql = _sql(
+        app_logs_repo._count_by_user_ltype_stmt(USER_OID, "login_fail", since)
+    )
+    assert sql.startswith("SELECT count(*) AS count_1 FROM app_logs")
+    assert f"app_logs.app_user = '{USER_OID}'" in sql
+    assert "app_logs.ltype = 'login_fail'" in sql
+    assert f"app_logs.ts_raw >= {since}" in sql
+    # 没有 contains 时不得引入 data 上的 LIKE：少一个非索引谓词。
+    assert "LIKE" not in sql.upper()
+
+
+def test_count_by_user_ltype_stmt_escapes_contains_wildcards():
+    """``contains`` 只是摘要匹配：``%`` / ``_`` 必须是字面量，且大小写不敏感。"""
+    sql = _sql(
+        app_logs_repo._count_by_user_ltype_stmt(
+            USER_OID, "login_fail", 1.0, "100%_banned"
+        )
+    )
+    assert "lower(app_logs.data) like" in sql.lower()
+    assert "100\\%\\_banned" in sql
+    assert "ESCAPE '\\'" in sql
+
+
+# ---------------------------------------------------------------------------
+# BAN_RECORDS / BAN_RULES 语句形状
+# ---------------------------------------------------------------------------
+
+def test_ban_record_insert_binds_permanent_as_number():
+    sql = _sql(
+        ban_records_repo._insert_stmt(
+            "0a00000000000000000000ff",
+            USER_OID,
+            "rule",
+            "multi_device_login",
+            "多设备",
+            True,
+            UNTIL,
+            None,
+            OTHER_OID,
+            UNTIL,
+        )
+    )
+    assert sql.startswith("INSERT INTO ban_records ")
+    assert "permanent" in sql
+    assert "'rule'" in sql
+    assert "'multi_device_login'" in sql
+    assert f"'{USER_OID}'" in sql
+    assert f"'{OTHER_OID}'" in sql
+
+
+def test_ban_record_insert_covers_every_not_null_column():
+    """回归：``created_at`` 漏列曾让生产封禁 500（ORA-01400）。
+
+    离线 SQL 契约测试之前只断言「某些值出现过」，没有校验**必填列是否都在**，
+    于是 ``created_at NOT NULL``（无默认值）这条漏列一路跑到生产。这里直接拿
+    ORM 表定义做列级校验：凡 NOT NULL 且无 ``server_default`` 的列，insert
+    的 values 里必须存在——以后再丢一列，这条会先红。
+    """
+    stmt = ban_records_repo._insert_stmt(
+        "0a00000000000000000000ff",
+        USER_OID,
+        "admin",
+        None,
+        "管理员封禁",
+        True,
+        UNTIL,
+        None,
+        OTHER_OID,
+        UNTIL,
+    )
+    provided = {
+        (key if isinstance(key, str) else key.name).lower() for key in stmt._values
+    }
+    required = {
+        col.name.lower()
+        for col in ban_records_tbl.c
+        if not col.nullable and col.server_default is None
+    }
+    assert required - provided == set()
+    assert "created_at" in provided
+
+
+def test_ban_record_insert_uses_write_time_for_created_at():
+    """``created_at`` 与 ``started_at`` 缺省值必须同源，不能各取一次 now。
+
+    直接跑 ``insert()`` 观察绑定值：调用方不传 ``started_at`` 时两列相等；
+    传了（补录场景）时 ``created_at`` 仍是写入时刻，晚于 ``started_at``。
+    """
+    captured: list[dict] = []
+
+    class FakeSession:
+        async def execute(self, stmt):
+            captured.append(dict(stmt.compile(dialect=DIALECT).params))
+
+        async def commit(self):
+            pass
+
+    async def _run(started_at):
+        repo = ban_records_repo.OracleBanRecordsRepo(session=FakeSession())
+        await repo.insert(
+            USER_OID, source="admin", reason="违规", permanent=True,
+            started_at=started_at,
+        )
+        return captured[-1]
+
+    import asyncio
+
+    implicit = asyncio.run(_run(None))
+    assert implicit["created_at"] == implicit["started_at"]
+
+    backfilled = datetime(2026, 1, 1, 0, 0, 0)
+    explicit = asyncio.run(_run(backfilled))
+    assert explicit["started_at"] == backfilled
+    assert explicit["created_at"] > backfilled
+
+
+
+def test_ban_record_count_is_scoped_to_user_and_rule():
+    sql = _sql(ban_records_repo._count_for_user_rule_stmt(USER_OID, "multi_device_login"))
+    assert "count(*)" in sql
+    assert f"ban_records.user_oid = '{USER_OID}'" in sql
+    assert "ban_records.rule_code = 'multi_device_login'" in sql
+
+
+def test_ban_record_page_joins_users_and_counts_windowed_total():
+    sql = _sql(ban_records_repo._page_stmt("", 1, 20))
+    assert "LEFT OUTER JOIN users ON ban_records.user_oid = users.oid" in sql
+    assert "users.name AS user_name" in sql
+    assert "users.business_id AS user_business_id" in sql
+    assert "count(*) OVER () AS total_count" in sql
+    assert "ORDER BY ban_records.started_at DESC" in sql
+
+
+def test_ban_rules_update_by_code_patches_only_given_fields():
+    sql = _sql(
+        ban_rules_repo._update_by_code_stmt("foreign_device_login", {"enabled": 0}, UNTIL)
+    )
+    assert sql.startswith("UPDATE ban_rules SET ")
+    assert "enabled=0" in sql
+    assert "updated_at=" in sql
+    # 没传的列一律不进 SET：name/config/penalties/trigger 都不该被顺手写成 NULL。
+    for untouched in ("config=", "penalties=", "name=", "trigger_code="):
+        assert untouched not in sql
+    assert "WHERE ban_rules.code = 'foreign_device_login'" in sql
+
+
+def test_ban_rules_update_by_code_can_rename():
+    sql = _sql(
+        ban_rules_repo._update_by_code_stmt("my_rule", {"name": "改名后"}, UNTIL)
+    )
+    assert sql.startswith("UPDATE ban_rules SET ")
+    assert "'改名后'" in sql
+    assert "enabled=" not in sql
+    assert "WHERE ban_rules.code = 'my_rule'" in sql
+
+
+def test_ban_rules_row_maps_flags_to_bools():
+    row = ban_rules_repo._rule_row(
+        {
+            "oid": "0b0000000000000000000002",
+            "code": "foreign_device_login",
+            "name": "非主学海设备登录",
+            "trigger_code": "foreign_device_login",
+            "enabled": 1,
+            "config": '{"threshold":3}',
+            "penalties": "[1,3,7,14,30,null]",
+            "builtin": 1,
+            "created_at": UNTIL,
+            "updated_at": UNTIL,
+        }
+    )
+    assert row["_id"] == "0b0000000000000000000002"
+    assert row["enabled"] is True
+    assert row["builtin"] is True
+    # trigger 是求值入口的键，必须在读投影里出现（漏了就只能按 code 猜）
+    assert row["trigger"] == "foreign_device_login"
+    # JSON 保持文本：解析是服务层的决定，数据层不猜每类规则的 schema
+    assert row["config"] == '{"threshold":3}'
+    assert row["penalties"] == "[1,3,7,14,30,null]"
+
+
+def test_ban_rules_columns_project_trigger():
+    names = [col.name for col in ban_rules_repo._columns()]
+    assert "trigger_code" in names
+    assert names.index("trigger_code") < names.index("created_at")
+
+
+def test_ban_rules_get_by_trigger_stmt_filters_one_column():
+    sql = _sql(ban_rules_repo._get_by_trigger_stmt("platform_misuse"))
+    assert sql.startswith("SELECT ")
+    assert "ban_rules.trigger_code = 'platform_misuse'" in sql
+
+
+def test_ban_rules_delete_by_code_stmt_targets_one_code():
+    sql = _sql(ban_rules_repo._delete_by_code_stmt("my_rule"))
+    assert sql.startswith("DELETE FROM ban_rules")
+    assert "WHERE ban_rules.code = 'my_rule'" in sql
+    # 删规则不等于删历史：流水表一个字都不能出现在这条语句里
+    assert "ban_records" not in sql
+
+
+def test_ban_rules_insert_covers_every_not_null_column():
+    """回归：``created_at`` 无默认值，漏列直接 ORA-01400（生产 500）。
+
+    与 ban_records 的同名用例同一个理由：离线契约只断言「某些值出现过」，会
+    漏掉「必填列是否都在」。
+    """
+    stmt = ban_rules_repo._insert_stmt(
+        "0b0000000000000000000003",
+        "my_rule",
+        "我的规则",
+        "platform_misuse",
+        True,
+        '{"threshold":3,"window_hours":24}',
+        "[1,3]",
+        False,
+        UNTIL,
+    )
+    provided = {
+        (key if isinstance(key, str) else key.name).lower() for key in stmt._values
+    }
+    required = {
+        col.name.lower()
+        for col in ban_rules_tbl.c
+        if not col.nullable and col.server_default is None
+    }
+    assert required - provided == set()
+    assert "trigger_code" in provided
+
+
+def test_ban_violations_columns_and_index_cover_the_counting_path():
+    """窗口内计数是热路径：索引必须是 (user_oid, trigger, created_at)。"""
+    names = [col.name for col in ban_violations_tbl.c]
+    for column in ("oid", "user_oid", "trigger_code", "signal", "xuehai_id", "detail",
+                   "batch_id", "created_at"):
+        assert column in names
+
+    indexes = {
+        index.name: [col.name for col in index.columns]
+        for index in ban_violations_tbl.indexes
+    }
+    # 批次去重（COUNT(DISTINCT ...)）必须能只走索引。
+    assert indexes["ix_ban_violations_batch"] == [
+        "user_oid",
+        "trigger_code",
+        "created_at",
+        "batch_id",
+    ]
+    # 前缀冗余的单索引已删；管理页的「全表按时间倒序」只由 created_at 服务。
+    assert "ix_ban_violations_user" not in indexes
+    assert indexes["ix_ban_violations_created"] == ["created_at"]
+
+
+def test_ban_violations_insert_writes_the_batch_id():
+    stmt = violations_repo._insert_stmt(
+        "0e00000000000000000000ff",
+        USER_OID,
+        "platform_misuse",
+        "iframe",
+        "2026000001",
+        "top!=self",
+        UNTIL,
+        "0e00000000000000000000aa",
+    )
+    provided = {(k if isinstance(k, str) else k.name).lower() for k in stmt._values}
+    assert "batch_id" in provided
+    sql = _sql(stmt)
+    assert "'0e00000000000000000000aa'" in sql
+    # batch_id 可空：V019 之前的存量行没有批次号。
+    assert ban_violations_tbl.c.batch_id.nullable is True
+
+
+def test_ban_violations_count_batches_dedups_with_oid_fallback():
+    """计数口径：``COUNT(DISTINCT COALESCE(batch_id, oid))``（旧行每行一批）。"""
+    sql = _sql(violations_repo._count_batches_since_stmt(USER_OID, "platform_misuse", UNTIL))
+
+    assert "count(distinct(coalesce(" in sql.lower()
+    assert "ban_violations.batch_id" in sql
+    assert "ban_violations.oid" in sql
+    assert f"ban_violations.user_oid = '{USER_OID}'" in sql
+    assert "ban_violations.trigger_code = 'platform_misuse'" in sql
+    assert "ban_violations.created_at >=" in sql
+
+
+def test_ban_violations_count_since_stays_row_based():
+    """证据行数仍然逐行统计：批次口径只用于封禁判定。"""
+    sql = _sql(violations_repo._count_since_stmt(USER_OID, "platform_misuse", UNTIL))
+    assert "count(*)" in sql
+    assert "DISTINCT" not in sql
+
+
+def test_ban_records_row_maps_permanent_and_joined_columns():
+    row = ban_records_repo._record_row(
+        {
+            "oid": "0c00000000000000000000ff",
+            "user_oid": USER_OID,
+            "source": "admin",
+            "rule_code": None,
+            "reason": "违规",
+            "permanent": 1,
+            "started_at": UNTIL,
+            "expires_at": None,
+            "operator_oid": OTHER_OID,
+            "created_at": UNTIL,
+            "user_name": "李四",
+            "user_business_id": "2026002",
+            "operator_name": "管理员",
+        }
+    )
+    assert row["permanent"] is True
+    assert row["user_name"] == "李四"
+    assert row["user_business_id"] == "2026002"
+    # 操作人姓名来自第二个 LEFT JOIN（USERS 别名 op）；规则封禁时为 None。
+    assert row["operator_name"] == "管理员"
+    assert row["expires_at"] is None
+
+
+@pytest.mark.parametrize("column", ["ban_reason", "ban_until", "ban_source", "ban_rule"])
+def test_user_columns_project_the_new_ban_columns(column):
+    names = [col.name for col in users_repo._user_columns()]
+    assert column in names
+
+
+# ---------------------------------------------------------------------------
+# list_banned_page: 「当前被封用户」不是流水
+# ---------------------------------------------------------------------------
+
+def test_banned_page_selects_currently_banned_users_only():
+    sql = _sql(users_repo._banned_page_stmt("", 2, 20))
+    assert "FROM users LEFT OUTER JOIN groups ON users.class_oid = groups.oid" in sql
+    assert "users.banned = 1" in sql
+    assert "groups.name AS class_name" in sql
+    assert "count(*) OVER () AS total_count" in sql
+    assert "ORDER BY users.business_id ASC, users.oid ASC" in sql
+    # 第 2 页 → OFFSET 20 ROWS
+    assert "OFFSET 20 ROWS" in sql
+    # 读的是 users 上的封禁状态，不能拿流水表兜底
+    assert "ban_records" not in sql
+
+
+def test_banned_page_query_matches_name_or_business_id():
+    sql = _sql(users_repo._banned_page_stmt("2026", 1, 20))
+    assert "users.banned = 1" in sql
+    assert "lower(users.name) LIKE '%2026%' ESCAPE '\\'" in sql
+    assert "lower(users.business_id) LIKE '%2026%' ESCAPE '\\'" in sql
+    assert "regexp_like" not in sql.lower()
+
+
+def test_banned_count_stmt_uses_the_same_filter_without_join():
+    sql = _sql(users_repo._banned_count_stmt(""))
+    assert "count(*)" in sql
+    assert "FROM users" in sql
+    assert "users.banned = 1" in sql
+    assert "JOIN groups" not in sql
+
+
+def test_banned_row_maps_permanent_ban_and_unknown_class():
+    row = users_repo._banned_row(
+        {
+            "oid": USER_OID,
+            "business_id": "2026002",
+            "name": "李四",
+            "ban_reason": "管理员封禁",
+            "ban_until": None,
+            "ban_source": "admin",
+            "ban_rule": None,
+            "class_name": None,
+        }
+    )
+    assert row["_id"] == USER_OID
+    assert row["id"] == "2026002"
+    assert row["class_name"] == users_repo._UNKNOWN_CLASS
+    assert row["ban_reason"] == "管理员封禁"
+    assert row["ban_until"] is None
+    assert row["ban_source"] == "admin"
+    assert row["ban_rule"] is None
+
+
+def test_delete_for_user_rule_targets_one_user_and_one_rule():
+    """梯度重置限定规则时，DELETE 必须同时钉住 user_oid 与 rule_code。
+
+    管理员封禁流水 ``rule_code IS NULL``，按规则删天然碰不到它们，所以指定
+    规则时**不该**再叠加 ``source`` 谓词。
+    """
+    sql = _sql(
+        ban_records_repo._delete_for_user_rule_stmt(USER_OID, "foreign_device_login")
+    )
+    assert sql.startswith("DELETE FROM ban_records")
+    assert USER_OID in sql
+    assert "foreign_device_login" in sql
+    assert "rule_code" in sql
+    assert "source" not in sql
+
+
+def test_delete_for_user_rule_without_rule_keeps_admin_records():
+    """不限规则时只删规则流水（source = 'rule'），保住管理员封禁的审计证据。"""
+    sql = _sql(ban_records_repo._delete_for_user_rule_stmt(USER_OID, None))
+    assert sql.startswith("DELETE FROM ban_records")
+    assert USER_OID in sql
+    assert "source = 'rule'" in sql
+    assert "rule_code" not in sql
+
+
+
+def test_device_bans_page_filters_by_query_with_escaped_wildcards() -> None:
+    from db.repos.oracle import device_bans
+
+    sql = _sql(device_bans._page_stmt(1, 20, "12%_3"))
+    assert "lower(banned_devices.xuehai_id) LIKE '%12\\%\\_3%' ESCAPE '\\'" in sql
+    assert "count(*) OVER () AS total_count" in sql
+
+
+def test_device_bans_count_matches_the_query_filter() -> None:
+    from db.repos.oracle import device_bans
+
+    sql = _sql(device_bans._count_stmt("2026"))
+    assert "SELECT count(*) AS count_1 FROM banned_devices" in sql
+    assert "lower(banned_devices.xuehai_id) LIKE '%2026%' ESCAPE '\\'" in sql
+
+
+def test_device_ban_counters_table_shape() -> None:
+    from db.models import device_ban_counters as counters_tbl
+
+    assert counters_tbl.primary_key.columns.keys() == ["xuehai_id"]
+    assert set(counters_tbl.c.keys()) == {"xuehai_id", "ban_count", "last_banned_at"}
+    assert counters_tbl.c.ban_count.nullable is False

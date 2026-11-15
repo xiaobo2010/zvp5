@@ -1,17 +1,19 @@
 # ZVP5 · 项目总览与开发状态
 
+> **2026-10-29 状态更新**：运行时数据库为 **Oracle Autonomous Database**（MongoDB 已退役，下文 §三 仅保留为历史对齐依据）；AI 能力统一命名为 **ZVAgent**（原「智能体 / AI 助手」）；安全面已收口（内容审核 fail-closed、登录与重查询频控、管理写操作再认证、文件根目录 jail）。能力清单见 §九，细节契约见 `zvp5/docs/` 与 `zvp5/zvp5-backend-python/README.md`。
+
 > 本文件是 `xiaobo2010/zvp5` 仓库的**权威文档**，由以下四份原零散文档合并而成（内容**全文保留**于对应章节）：
 >
 > | 原文件 | 并入章节 | 原文件去向 |
 > |---|---|---|
-> | `zvms4-modified-main/README.md` | §二 开发主线：zvms4-modified-main | zzj 整合时删除；**2026-10-12 主干合并后保留**（见 §七） |
-> | `zvms4-modified-main/DB_ALIGNMENT.md` | §三 数据库对齐（Ground Truth） | 已删除（内容即本节） |
-> | `zvms4-modified-main/STATUS.md` | §四 模块移植与安全审计记录（Part 1-7） | zzj 整合时删除；**2026-10-12 主干合并后保留**（Part 1-11 全文，见 §七） |
+> | `zvp5/README.md` | §二 开发主线：zvp5 | zzj 整合时删除；**2026-10-12 主干合并后保留**（见 §七） |
+> | `zvp5/DB_ALIGNMENT.md` | §三 数据库对齐（Ground Truth） | 已删除（内容即本节） |
+> | `zvp5/STATUS.md` | §四 模块移植与安全审计记录（Part 1-7） | zzj 整合时删除；**2026-10-12 主干合并后保留**（Part 1-11 全文，见 §七） |
 > | `zvp-latest/DEV_STATUS.md` | §五 zvp-latest 开发状态 | 已删除（内容即本节） |
 >
 > 正文中出现的 `STATUS.md` / `DB_ALIGNMENT.md` 等文件名，即指上述对应章节；「本文件」等自称亦相应指本章节。
 >
-> **注意**：本文件 §四 仅覆盖到 **Part 7**；主干 2026-10-12 合并 `zvp5-dev` 后带入的 **Part 8-11** 全文见保留的 `zvms4-modified-main/STATUS.md`（概览见 §七）。
+> **注意**：本文件 §四 仅覆盖到 **Part 7**；主干 2026-10-12 合并 `zvp5-dev` 后带入的 **Part 8-11** 全文见保留的 `zvp5/STATUS.md`（概览见 §七）。
 
 ---
 
@@ -21,15 +23,15 @@
 
 | 目录 | 角色 | 说明 |
 |---|---|---|
-| `zvms4-modified-main/` | **开发主线（我们开发的版本）** | 基于 **zvms4 正式版**（上游 `zvms/zvms4-backend-python` + `zvms/zvms4-frontend`）修改。数据库层向现役 zvp 的 MongoDB Atlas 真实结构对齐，并**逐模块从 zvp-latest 迁移功能与数据结构**（义工管理、用户管理 / 登录、日志、鉴权），每个移植面均经安全审计。见 §二。 |
-| `reference/` | **参考归档（只读）** | 原 `zvp-latest` 与 `zvp5-gitlab` 已于 2026-10-24 删除；学海 API 整份留档于 `reference/xuehai/`，独立审核流/FAQ/资源/定向 WebSocket 设计留档于 `reference/zvp5-gitlab/`。**不得参与构建或导入主线。** |
+| `zvp5/` | **开发主线（我们开发的版本）** | 基于 **zvms4 正式版**（上游 `zvms/zvms4-backend-python` + `zvms/zvms4-frontend`）修改。数据库层向现役 zvp 的 MongoDB Atlas 真实结构对齐，并**逐模块从 zvp-latest 迁移功能与数据结构**（义工管理、用户管理 / 登录、日志、鉴权），每个移植面均经安全审计。见 §二。 |
+| `reference/` | **参考归档（只读）** | 原 `zvp-latest` 与 `zvp5-gitlab` 已于 2026-10-24 删除；学海 API 曾留档于 `reference/xuehai/`（**2026-11-14 已移出仓库**，见 `docs/REDACTION_POLICY.md`），独立审核流/FAQ/资源/定向 WebSocket 设计留档于 `reference/zvp5-gitlab/`。**不得参与构建或导入主线。** |
 
 > 两套参考树与主线的逐端点 / 逐页面 / 功能面对账，以及删除结果，见
-> `zvms4-modified-main/docs/REFERENCE_TREES_ALIGNMENT.md`（2026-10-24）。
+> `zvp5/docs/REFERENCE_TREES_ALIGNMENT.md`（2026-10-24）。
 
 ### 安全声明（重要）
 
-- 原 `zvp-latest` 代码**存在后门与漏洞**；原树已删除，仅把学海 API 等拒绝面原样归档在 `reference/xuehai/`。归档**不得运行、不得导入主线**。
+- `zvp-latest` 是第三方平台的旧快照，其中包含设备标识采集、任意 URL 代签与外部跳转等**未经审计**的能力；原树已删除，学海 API 相关文件曾原样归档在 `reference/xuehai/`，**2026-11-14 已移出本仓库**（含第三方签名密钥，不适合公开）。归档**不得运行、不得导入主线**。
 - 已迁移模块的审计结论与拒绝面（设备采集、用户绑定、外链跳转、学海代理、设备会话等）见 §四。
 - 本仓库**不声称任何模块「已审计安全」**；既有审计均为**静态验证**，上线前需在有 Atlas 连接的环境跑一次运行时冒烟。
 
@@ -37,15 +39,15 @@
 
 | 层 | 栈 |
 |---|---|
-| 后端 | FastAPI + Motor(async MongoDB) + Pydantic（可选 socket.io / APScheduler） |
+| 后端 | FastAPI + SQLAlchemy 2.0 async + Pydantic（socket.io / APScheduler） |
 | 前端 | Vue3 + Vite + TypeScript + Element Plus + Pinia |
-| 数据库 | MongoDB，双库并存：`zvms`（遗留）+ `zvms_new`（现役主库），见 §三 |
+| 数据库 | Oracle Autonomous Database（ADB，python-oracledb thin 模式），唯一运行时数据库；§三 的 MongoDB 双库为历史对齐依据 |
 
 ### 文档地图
 
-- §二 开发主线：zvms4-modified-main —— 目录结构、代码来源、DB 对齐、配置运行、已知事项
+- §二 开发主线：zvp5 —— 目录结构、代码来源、DB 对齐、配置运行、已知事项
 - §三 数据库对齐（Ground Truth）—— 现役两库真实结构 + 逐条对齐改动清单
-- §四 模块移植与安全审计记录 —— Part 1 义工管理 / Part 2 用户管理与登录 / Part 3 日志 / Part 4 登录与鉴权 / Part 5 全量 API 盘点 / Part 6 弱密码强制改密 / Part 7 token 有效期（**Part 8-11 见保留的 `zvms4-modified-main/STATUS.md`**）
+- §四 模块移植与安全审计记录 —— Part 1 义工管理 / Part 2 用户管理与登录 / Part 3 日志 / Part 4 登录与鉴权 / Part 5 全量 API 盘点 / Part 6 弱密码强制改密 / Part 7 token 有效期（**Part 8-11 见保留的 `zvp5/STATUS.md`**）
 - §五 zvp-latest 开发状态 —— 后端 API 与前端页面完成度对账（P0-P2 已清零）
 - §六 zvp5-gitlab 开发进度对齐 —— 目录清单 / 完成度 / 不可运行性证据 / 与主线功能面照
 - §七 主干合并与 ADB 处置记录 —— `zvp5-dev` 并入主干（Part 8-11）/ Oracle ADB 适配排除 / 与 zzj 文档整合线合流
@@ -53,7 +55,7 @@
 
 ---
 
-## 二、开发主线：zvms4-modified-main
+## 二、开发主线：zvp5
 
 > 基于上游 **zvms4**（`zvms/zvms4-backend-python` + `zvms/zvms4-frontend`）的定制版本。
 > **改动方向一：数据库层向现役 zvp 平台的真实结构对齐。**
@@ -63,25 +65,25 @@
 > **改动方向五（2026-10-10 起）：登录与身份验证 API 移植（TOTP 动态码按用户派生 / 重置为初始密码 v3 / 登出与改密语义修复），登录/鉴权路径零外呼，见 `STATUS.md` Part 4。**
 > **改动方向六（2026-10-11 起，2026-10-12 主干合并带入）：后端可用状态落地——shield 请求加固中间件按 zvp 语义改写移植（剥离设备会话/学海面），运行缺口修复（依赖缺失 / example 配置字段缺失 / RSA 1024 / 关停竞态），并完成真实运行时端到端验证（41/41 断言），见 `STATUS.md` Part 8。**
 > **改动方向七（2026-10-12 起，2026-10-12 主干合并带入）：双库断裂面系统性收敛——群组与用户读取全面双库合并（权限组列表与成员、用户搜索去重、roles 合并、班级选择器修复），PWA SW 即时接管修复旧客户端首页 404，见 `STATUS.md` Part 10。**
-> 其余前端 UI 与后端业务逻辑仍以上游 zvms4 为基准，不采用 zvp 的代码（zvp 代码经检查存在漏洞与后门，仅提取其数据结构；义工管理与用户管理移植面经扫描确认无外链 / 外呼 / 越权代码，范围外危险代码一律未引入，上游自带的设备采集 / 外呼代码已在用户管理面上清除）。
+> 其余前端 UI 与后端业务逻辑仍以上游 zvms4 为基准，不采用 zvp 的代码（zvp 代码含设备标识采集、任意 URL 代签与外部跳转等未审计能力，仅提取其数据结构；义工管理与用户管理移植面经扫描确认无外链 / 外呼 / 越权代码，范围外危险代码一律未引入，上游自带的设备采集 / 外呼代码已在用户管理面上清除）。
 
 ---
 
 ### 1. 目录结构
 
 ```
-zvms4-modified-main/（入库目录名；本地目录名 zvp-modified-v4）
-├── zvms4-backend-python/     # FastAPI 后端（上游 zvms4，DB 层已对齐；模块按 zvp 移植）
+zvp5/（仓库目录名；2026-11 更名后统一口径）
+├── zvp5-backend-python/     # FastAPI 后端（上游 zvms4，DB 层已对齐；模块按 zvp 移植）
 │   ├── README.md
 │   ├── requirements.txt
 │   ├── config/               # supervisor.conf / nginx 样例
 │   └── ...
-└── zvms4-frontend/           # Vue3 + Vite 前端（上游为基准；仅部分 API 接线改动，见 §四 Part 1 §2）
+└── zvp5-frontend/           # Vue3 + Vite 前端（上游为基准；仅部分 API 接线改动，见 §四 Part 1 §2）
 ```
 
-> 原 `zvms4-modified-main/STATUS.md`（模块移植与安全审计）与 `zvms4-modified-main/DB_ALIGNMENT.md`（数据库对齐 Ground Truth）已并入本仓库根 `README.md`，分别见 §四 / §三。
+> 原 `zvp5/STATUS.md`（模块移植与安全审计）与 `zvp5/DB_ALIGNMENT.md`（数据库对齐 Ground Truth）已并入本仓库根 `README.md`，分别见 §四 / §三。
 
-> **入库路径**：本目录在 GitHub 仓库 `xiaobo2010/zvp5` 中对应 `zvms4-modified-main/`（本地目录名 `zvp-modified-v4` 与入库目录名不同，同步时注意映射）。
+> **入库路径**：本目录在 GitHub 仓库 `xiaobo2010/zvp5` 中即 `zvp5/`；子目录 `zvp5-frontend/`、`zvp5-backend-python/`（2026-11 目录更名后统一，旧的本地目录名已弃用）。
 
 ### 2. 这份代码从哪来、为什么
 
@@ -95,7 +97,7 @@ zvms4-modified-main/（入库目录名；本地目录名 zvp-modified-v4）
 | 登录与身份验证 | **现役 zvp**（2026-10-10 移植） | TOTP 动态码登录（按用户派生，RFC6238 本地自实现）+ 重置为初始密码 v3 端点 + 登出/改密语义修复；设备绑定 / 会话指纹 / 外呼投递 / recovery 问答拒绝移植，见 `STATUS.md` Part 4 |
 | 后端数据库层 | 向**现役 zvp** 对齐 | 改动见 §4 |
 
-**zvp（现役平台）贡献「数据在库里长什么样」**：包名、集合名、字段名 / 类型。除经安全审计放行的义工管理移植面外，它的代码（含后门）一律不引入。
+**zvp（现役平台）贡献「数据在库里长什么样」**：包名、集合名、字段名 / 类型。除经安全审计放行的义工管理移植面外，它的业务代码一律不引入。
 
 ### 3. 现役数据库结构（权威依据）
 
@@ -120,14 +122,14 @@ zvms4-modified-main/（入库目录名；本地目录名 zvp-modified-v4）
   - `typings/activity_v2.py` **保持上游严格版本**（`datetime` + 非空）：实库 `activities` 的日期为 BSON `Date` 且零 null，若改用 zvp 的 `int`/可空版本会让 `Activity.model_validate` 直接失败。见 `DB_ALIGNMENT.md` §6。
 - **未改动**：`database.py`（与 zvp 逐字节相同，已连两库）、其余业务逻辑。前端本次改动仅为义工管理 API 接线（见 `STATUS.md` §2），模板 / 样式未动。
 
-验证：`python3 -m compileall zvms4-backend-python` 通过；改动集中在上述 6 个文件。
+验证：`python3 -m compileall zvp5-backend-python` 通过；改动集中在上述 6 个文件。
 
 ### 5. 配置与运行
 
 #### 5.1 配置
 
 ```bash
-cp zvms4-backend-python/settings.example.py zvms4-backend-python/settings.py
+cp zvp5-backend-python/settings.example.py zvp5-backend-python/settings.py
 ```
 
 `settings.py` 填写：
@@ -144,7 +146,7 @@ cp zvms4-backend-python/settings.example.py zvms4-backend-python/settings.py
 #### 5.2 运行后端
 
 ```bash
-cd zvms4-backend-python
+cd zvp5-backend-python
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 # 生成密钥后
@@ -235,7 +237,7 @@ uvicorn main:app --host 0.0.0.0 --port 8000
 ### 5. 查询层改动清单（zvms4 → zvp 对齐，已实施）
 
 改动规则：**v2/v3 与 exports/imports、登录鉴权路径统一改用 `zvms_new` 的新 schema；v1（users_router 列表、groups_router）与 util 保持遗留 `zvms.*`**，与现役 zvp 的集合归属一致。
-所有改动均在 `zvp-modified-v4/zvms4-backend-python`，已 `python3 -m compileall` 通过。
+所有改动均在 `zvp5/zvp5-backend-python`，已 `python3 -m compileall` 通过。
 
 | # | 文件:行 | 改动 | 依据 |
 |---|---|---|---|
@@ -280,18 +282,18 @@ uvicorn main:app --host 0.0.0.0 --port 8000
 
 ---
 
-#### 1. 后端端点对齐总表（`zvms4-backend-python`）
+#### 1. 后端端点对齐总表（`zvp5-backend-python`）
 
 | 端点 | zvp 侧能力 | 本仓处理 | 状态 |
 |---|---|---|---|
-| `GET /api/v3/activities` | 全校列表：分页 / 关键词 / 类型 / 状态过滤 + creator 联表返回 `creator_name` | 新增（`routers/activities_v3_router.py:22`） | 已移植 |
-| `POST /api/v3/activities` | 简化创建：body `{name, description, type}` → 201 `{id}` | 新增（:156）；适配见 §3 | 已移植（适配） |
-| `GET /api/v3/activities/{aid}/members` | 快速成员列表：`$lookup` `zvms_new.users` 返回 `member_name` | 新增（:197） | 已移植 |
-| `POST /api/v3/activities/{aid}/members` | 批量加成员：预校验类型匹配、去重（同 member+mode 时长累加）、插入置 `status=effective`、活动回置 `pending`、204 空体 | 整体替换上游旧实现（:312）；body 换 `NewActivityMember {member, mode, duration>0}` | 已移植（替换） |
-| v2 全套（创建 / 详情 / 删除 / 成员增删查 / 改时长 / 改状态 / 改信息） | 与上游等价 | 上游已有，`routers/activities_v2_router.py` 未动 | 已存在 |
+| `GET /api/v1/activities` | 全校列表：分页 / 关键词 / 类型 / 状态过滤 + creator 联表返回 `creator_name` | 新增（`routers/activities_v3_router.py:22`）；归并后为该路径的**现役实现**（v3，含 `sort`/`asc` 白名单与 place/origin/appointee/approver 投影） | 已移植 |
+| `POST /api/v1/activities` | 简化创建：body `{name, description, type}` → 201 `{id}` | 新增（:156）；适配见 §3。**归并后该路径保留 v2 契约实现**（v3 create 装饰器已摘除，见 `docs/ADR_API_V1_REVERSIONING.md`） | 已移植（适配） |
+| `GET /api/v1/activities/{aid}/members` | 快速成员列表：`$lookup` `zvms_new.users` 返回 `member_name` | 新增（:197）；归并后为 v3 实现 | 已移植 |
+| `POST /api/v1/activities/{aid}/members` | 批量加成员：预校验类型匹配、去重（同 member+mode 时长累加）、插入置 `status=effective`、活动回置 `pending`、204 空体 | 整体替换上游旧实现（:312）；body 换 `NewActivityMember {member, mode, duration>0}`。归并后为**批量契约的唯一实现**（单条 v2 版已退役） | 已移植（替换） |
+| v2 全套（创建 / 详情 / 删除 / 成员增删查 / 改时长 / 改状态 / 改信息） | 与上游等价 | 上游已有，`routers/activities_v2_router.py`；归并后同挂 `/api/v1/activities`（`POST /api/v1/activities` 即由该模块提供） | 已存在 |
 | `POST /api/imports/activities`（Excel 导入义工） | — | 与 zvp 侧**逐字节相同**（diff 验证） | 已一致，未动 |
 
-#### 2. 前端接线（`zvms4-frontend`，最小改动，UI 设计未动）
+#### 2. 前端接线（`zvp5-frontend`，最小改动，UI 设计未动）
 
 | 文件 | 变更 |
 |---|---|
@@ -336,8 +338,26 @@ uvicorn main:app --host 0.0.0.0 --port 8000
 | `frontend/src/utils/constants.ts:2,4` | 外部图标 URL | 不移植 |
 | `backend/routers/xh_router.py`、`routers/v1/platform.py` | 学海代理 / 平台登录体系 | 不在义工管理范围，未触碰 |
 
-**部署注意（上游既有配置，本次未动）**：`zvms4-frontend/src/plugins/axios.ts:21` `baseURL = 'https://zvp.xiaobopisces.top/api/'` 指向现役 zvp 域名——替换上线时必须改为相对路径 `/api/` 或新域名。
+**部署结构（2026-11-12 起）**：页面壳与同源 `/api` 继续由
+`https://zvp.xiaobopisces.top` 提供；JS、CSS、字体、图片、PWA Manifest 及 Workbox
+预缓存由高带宽静态域 `https://zvpapi.xiaobopisces.top` 提供。浏览器规范要求
+Service Worker 注册文件必须同源，因此只有 `/sw.js` 仍从页面域加载。
 
+```text
+VITE_API_BASE=/api
+VITE_API_RACE_BASE=https://zvpapi.xiaobopisces.top/api
+VITE_STATIC_BASE=https://zvpapi.xiaobopisces.top/
+VITE_PAGE_BASE=https://zvp.xiaobopisces.top/
+ZVMS_CORS_ALLOWED_ORIGINS=https://zvp.xiaobopisces.top
+```
+
+用户手动点击刷新、分页、搜索或其他按钮后，前端会跳过 30 秒进程内缓存并重新请求；
+程序自动进入页面时仍可使用短期缓存以减少重复读取。
+
+`vite build` 接受同源 `/api`，也保留绝对 HTTPS `/api` 基址作为拆域回滚能力。CSP
+通过 `zvp5-backend-python/config/render_nginx_security_headers.py` 从环境变量渲染。
+完整发布顺序、DNS 切换、缓存刷新行为和回滚步骤见
+[`zvp5/docs/DEPLOY_ZVP_ORIGIN_2026-11-10.md`](./zvp5/docs/DEPLOY_ZVP_ORIGIN_2026-11-10.md)。
 #### 6. 验证记录
 
 - 后端：`python3 -m py_compile`（v3 路由 + 两个权限文件）exit 0；危险模式 grep 零命中。
@@ -370,20 +390,20 @@ uvicorn main:app --host 0.0.0.0 --port 8000
 | 端点 | zvp 侧能力 | 本仓处理 | 状态 |
 |---|---|---|---|
 | `POST /api/users/auth`（v1 登录） | zvp 已停用 v1、改用 `/v1/platform/login` | **不整端点搬运** platform 登录（拖入 APILogger 设备日志 / sid 会话绑定 / TOTP，触红线或无上游 UI 成死代码），改为补齐本仓登录的 zvp 语义，见 §10 | 已改造 |
-| `GET /api/v2/users` | 用户列表：分页 / 关键词 / 角色过滤 + 班级联表 | 新增（`routers/users_v2_router.py`，admin/department，带 role 时仅 admin） | 已移植 |
-| `GET /api/v3/users/{user_id}` | zvp 无对应端点（其登录即返 profile） | 新增（`routers/users_v3_router.py`）：`zvms_new` 用户 profile（本人 / admin / department / secretary 同班可读），服务前端刷新与用户详情 | 新增适配端点 |
-| `PUT /api/v3/users/{user_id}/roles` | admin 改角色，`AllowedRole` 白名单，204 | 新增 | 已移植 |
-| `POST /api/v3/users` | 建用户：默认密码=学号(bcrypt)、roles 白名单、学号查重 409、班级存在性校验 | 新增；不写 `session_id`（zvp 同款写法） | 已移植 |
-| `GET /api/v2/groups` | 班级列表（admin/department） | 新增（`routers/groups_v2_router.py`）；**不投影 enrollYear**（实库 `zvms_new.groups` 仅 `name`，DB_ALIGNMENT §2） | 已移植（适配） |
-| `GET /api/v2/groups/{group_id}` | 单班级（本人班级或 admin/department） | 新增；响应补合成字段 `type:"class"`（保前端既有判断语义） | 已移植（适配） |
-| `GET /api/v3/groups/{group_id}/users` | 班级成员分页（`zvms_new.users` by `class_id`） | 新增（`routers/groups_v3_router.py`）；扩展 `pwdm` 仅返回布尔（哈希经 pop 永不出响应） | 已移植（扩展） |
-| `POST /api/v3/groups` | 建班（admin） | 新增；**剔除 enrollYear**（实库无此字段） | 已移植（适配） |
-| `PUT /api/v3/groups/{group_id}/name` | 改名（admin） | 新增 | 已移植 |
-| `DELETE /api/v3/groups/{group_id}` | 删班（admin，成员 `class_id` 置空） | 新增 | 已移植 |
-| `POST / DELETE /api/v3/groups/{group_id}/users/{user_id}` | 加 / 移班级成员（admin/department；移除校验「不在此班级」400） | 新增 | 已移植 |
+| `GET /api/v1/users` | 用户列表：分页 / 关键词 / 角色过滤 + 班级联表 | 新增（`routers/users_v2_router.py`，admin/department，带 role 时仅 admin） | 已移植 |
+| `GET /api/v1/users/{user_id}` | zvp 无对应端点（其登录即返 profile） | 新增（`routers/users_v3_router.py`）：`zvms_new` 用户 profile（本人 / admin / department / secretary 同班可读），服务前端刷新与用户详情 | 新增适配端点 |
+| `PUT /api/v1/users/{user_id}/roles` | admin 改角色，`AllowedRole` 白名单，204 | 新增 | 已移植 |
+| `POST /api/v1/users` | 建用户：默认密码=学号(bcrypt)、roles 白名单、学号查重 409、班级存在性校验 | 新增；不写 `session_id`（zvp 同款写法） | 已移植 |
+| `GET /api/v1/groups` | 班级列表（admin/department） | 新增（`routers/groups_v2_router.py`）；**不投影 enrollYear**（实库 `zvms_new.groups` 仅 `name`，DB_ALIGNMENT §2） | 已移植（适配） |
+| `GET /api/v1/groups/{group_id}` | 单班级（本人班级或 admin/department） | 新增；响应补合成字段 `type:"class"`（保前端既有判断语义） | 已移植（适配） |
+| `GET /api/v1/groups/{group_id}/users` | 班级成员分页（`zvms_new.users` by `class_id`） | 新增（`routers/groups_v3_router.py`）；扩展 `pwdm` 仅返回布尔（哈希经 pop 永不出响应） | 已移植（扩展） |
+| `POST /api/v1/groups` | 建班（admin） | 新增；**剔除 enrollYear**（实库无此字段） | 已移植（适配） |
+| `PUT /api/v1/groups/{group_id}/name` | 改名（admin） | 新增 | 已移植 |
+| `DELETE /api/v1/groups/{group_id}` | 删班（admin，成员 `class_id` 置空） | 新增 | 已移植 |
+| `POST / DELETE /api/v1/groups/{group_id}/users/{user_id}` | 加 / 移班级成员（admin/department；移除校验「不在此班级」400） | 新增 | 已移植 |
 | v1 用户写端点（`POST ""`、`DELETE /{target}`、`PUT /{user_oid}`、`POST|DELETE /{user_oid}/group`） | zvp 全部 503 封堵（`_raise_exc`） | **同款 503 封堵**，杜绝前端静默写 legacy 库 | 已封堵（zvp parity） |
 | `GET /api/users/{user_oid}`（v1 详情） | zvp 同样无鉴权 | **加登录门**（偏离 zvp，收紧） | 已收紧 |
-| `GET /api/v2/groups/{id}/statistics/compliance` | — | 上游鉴权被注释 → **恢复**（admin/department/secretary 同班） | 已修复 |
+| `GET /api/v1/groups/{id}/statistics/compliance` | — | 上游鉴权被注释 → **恢复**（admin/department/secretary 同班） | 已修复 |
 | v1 `PUT /api/users/{oid}/password` | zvp 改密走 `PUT /v2/users/{id}/password` | 上游端点保留（已切 `zvms_new`，DB_ALIGNMENT §5），为改密主路径；zvp 的 `DELETE /v2/users/{id}/password`（重置为初始密码）**未移植**——目标前端无对应入口，需要时再补 v3 端点 | 已存在 |
 
 #### 9. 前端接线（最小改动，UI 与模板未动）
@@ -545,11 +565,11 @@ uvicorn main:app --host 0.0.0.0 --port 8000
   - **密码优先、OTP 兜底**（zvp 同款语义）：密码校验通过绝不进 OTP 分支——真实密码形如 `*Abc12345*` 的用户不受影响
   - OTP 登录 token 有效期 1 天（zvp 语义；普通登录 15 天（Part 7 起调整为 10 天）、临时 5 分钟不变）
   - 60s 凭据时间窗仍前置强制（防重放）
-- 新端点 `GET /api/v3/users/{id}/totp`（users_v3_router）：admin 取某用户当前动态码（zvp platform totp 的移植落点）；**超出 zvp 的加固：查看即写 `totp_view` warning 日志**（zvp 不记——凭据接触必须可审计）
+- 新端点 `GET /api/v1/users/{id}/totp`（users_v3_router）：admin 取某用户当前动态码（zvp platform totp 的移植落点）；**超出 zvp 的加固：查看即写 `totp_view` warning 日志**（zvp 不记——凭据接触必须可审计）
 - 前端入口：暂无 UI（zvp 的 ZDisplayTOTP 未移植），后端+日志已就绪，同 updateRoles 模式记录待接
 
 ##### 21.2 重置为初始密码——zvp `DELETE /v2/users/{id}/password`
-- 新端点 `DELETE /api/v3/users/{id}/password`（users_v3_router）：
+- 新端点 `DELETE /api/v1/users/{id}/password`（users_v3_router）：
   - 鉴权 **compulsory_temporary_token**（zvp `get_authz_user` 同款——凭据类操作先重新验证身份）
   - 权限 admin/department/secretary 同班（zvp 同款；同班校验基于 zvms_new `class_id` 比对且要求双方非空）
   - 置 `password=None` → 恢复真初始态（下次登录走默认密码=学号分支）
@@ -700,12 +720,12 @@ xh_router 任意 URL 代理（:159 urlopen + :46 硬编码签名 KEY）、登录
 | `routers/exports_router.py` | `/api/exports` | 可用，**前端已接线（2026-10-08）** |
 | `routers/imports_router.py` | `/api/imports` | 可用，**前端已接线（2026-10-08）** |
 | `routers/logs_router.py` | `/api/logs` | 可用 |
-| `routers/activities_v2_router.py` | `/api/v2/activities` | 可用（个别 bug） |
-| `routers/users_v2_router.py` | `/api/v2/users` | 部分可用，2 条 deprecated |
-| `routers/users_v3_router.py` | `/api/v3/users` | 可用 |
-| `routers/groups_v2_router.py` | `/api/v2/groups` | 可用 |
-| `routers/groups_v3_router.py` | `/api/v3/groups` | 可用（import bug 已修，含写入端点） |
-| `routers/activities_v3_router.py` | `/api/v3/activities` | 可用 |
+| `routers/activities_v2_router.py` | `/api/v1/activities`（原 v2） | 可用（个别 bug） |
+| `routers/users_v2_router.py` | `/api/v1/users`（原 v2） | 部分可用，2 条 deprecated |
+| `routers/users_v3_router.py` | `/api/v1/users`（原 v3） | 可用 |
+| `routers/groups_v2_router.py` | `/api/v1/groups`（原 v2） | 可用 |
+| `routers/groups_v3_router.py` | `/api/v1/groups`（原 v3） | 可用（import bug 已修，含写入端点） |
+| `routers/activities_v3_router.py` | `/api/v1/activities`（原 v3） | 可用 |
 | `routers/xh_router.py`（`app`） | `/xh` | 可用（签名代理） |
 | `routers/v1/platform.py`（`api`） | `/api/v1/platform` | 可用（新版平台接口） |
 
@@ -721,8 +741,8 @@ xh_router 任意 URL 代理（:159 urlopen + :46 硬编码签名 KEY）、登录
 | GET | `/api/groups`、`/{id}`、`/{id}/activities`、`/{id}/user`、`/{id}/time`、`/{id}/template` | 组读取 + 模板导出 | groups_router.py:58/101/148/189/236/363 |
 | — | `/api/exports/*`（7 端点） | 用户表/时长表导出、报表打包下载 | exports_router.py:193~357 |
 | — | `/api/imports/activities` | Excel 批量导入活动/成员 | imports_router.py:20 |
-| — | `/api/v2|v3/activities/*` | 活动 CRUD + 成员 | v2:23~510 / v3:24~400 |
-| — | `/api/v2|v3/users/*`、`/api/v2|v3/groups/*` | 用户/组读取（v3 为快实现） | 见各文件 |
+| — | `/api/v1/activities/*`（原 v2/v3） | 活动 CRUD + 成员 | v2:23~510 / v3:24~400 |
+| — | `/api/v1/users/*`、`/api/v1/groups/*`（原 v2/v3） | 用户/组读取（v3 为快实现） | 见各文件 |
 | — | `/api/v1/platform/{login,totp,logs,cert}` | 统一登录/TOTP/日志/证书 | platform.py:119/248/287/513 |
 | — | `/xh/api` | 学海请求签名代理 | xh_router.py:128 |
 
@@ -730,14 +750,14 @@ xh_router 任意 URL 代理（:159 urlopen + :46 硬编码签名 KEY）、登录
 
 | Method | Path | 用途 | 权限 | 定位 |
 |---|---|---|---|---|
-| POST | `/api/v3/groups`（body `{name, enrollYear?}`）→201 `{id}` | 创建班级 | admin | groups_v3_router.py:313 |
-| PUT | `/api/v3/groups/{id}/name` →204 | 班级改名 | admin | groups_v3_router.py:334 |
-| DELETE | `/api/v3/groups/{id}` →204 | 删班（成员 class_id 置空） | admin | groups_v3_router.py:361 |
-| POST | `/api/v3/groups/{gid}/users/{uid}` →204 | 用户入班 | admin\|department | groups_v3_router.py:388 |
-| DELETE | `/api/v3/groups/{gid}/users/{uid}` →204 | 用户移出班 | admin\|department | groups_v3_router.py:420 |
-| PUT | `/api/v3/users/{uid}/roles`（body `{roles: list}`）→204 | 修改用户角色（白名单 student/secretary/department/admin/teacher） | admin | users_v3_router.py:271 |
-| POST | `/api/v3/activities/{aid}/members`（body `[{member, mode, duration}]`）→204 | 批量添加活动成员（mode 连字符 `social-practice`） | admin\|department | activities_v3_router.py:319 |
-| POST | `/api/v3/users`（body `{id, name, roles?, class_id?}`）→201 `{id}` | 创建用户（初始密码=bcrypt(学号)，学号/姓名走 validate_*，409 学号重复） | admin | users_v3_router.py:323 |
+| POST | `/api/v1/groups`（body `{name, enrollYear?}`）→201 `{id}` | 创建班级 | admin | groups_v3_router.py:313 |
+| PUT | `/api/v1/groups/{id}/name` →204 | 班级改名 | admin | groups_v3_router.py:334 |
+| DELETE | `/api/v1/groups/{id}` →204 | 删班（成员 class_id 置空） | admin | groups_v3_router.py:361 |
+| POST | `/api/v1/groups/{gid}/users/{uid}` →204 | 用户入班 | admin\|department | groups_v3_router.py:388 |
+| DELETE | `/api/v1/groups/{gid}/users/{uid}` →204 | 用户移出班 | admin\|department | groups_v3_router.py:420 |
+| PUT | `/api/v1/users/{uid}/roles`（body `{roles: list}`）→204 | 修改用户角色（白名单 student/secretary/department/admin/teacher） | admin | users_v3_router.py:271 |
+| POST | `/api/v1/activities/{aid}/members`（body `[{member, mode, duration}]`）→204 | 批量添加活动成员（mode 连字符 `social-practice`） | admin\|department | activities_v3_router.py:319 |
+| POST | `/api/v1/users`（body `{id, name, roles?, class_id?}`）→201 `{id}` | 创建用户（初始密码=bcrypt(学号)，学号/姓名走 validate_*，409 学号重复） | admin | users_v3_router.py:323 |
 
 #### 1.3 停写 503（后端未实现 → 前端对应功能必然不可用）
 
@@ -754,7 +774,7 @@ xh_router 任意 URL 代理（:159 urlopen + :46 硬编码签名 KEY）、登录
 | DELETE | `/api/groups/{id}`（删班级） | :353 |
 
 > 说明：`_raise_exc`（users_router.py:33）统一抛 503，属"故意停写"。
-> 2026-10-08 起：**建班/改名/删班、用户入班/移出班、修改角色、活动加成员均有 v3 端点可用（§1.2a）**；上表 v1 503 端点保持原状未动。
+> 2026-10-08 起：**建班/改名/删班、用户入班/移出班、修改角色、活动加成员均有 `/api/v1` 端点可用（§1.2a，原 v3 实现）**；上表 v1 503 端点保持原状未动。
 
 #### 1.4 停用 / 弃用
 
@@ -762,9 +782,9 @@ xh_router 任意 URL 代理（:159 urlopen + :46 硬编码签名 KEY）、登录
 |---|---|---|---|
 | POST | `/api/users/auth` | **410 已停用** | users_router.py:50 |
 | GET | `/api/users/{oid}/time` | 弃用（README 勾选） | :396 |
-| GET | `/api/v2/users/{id}/time` | deprecated | users_v2_router.py:320 |
-| GET | `/api/v2/users/{id}/activities` | deprecated/slow | users_v2_router.py:217 |
-| POST | `/api/v2/activities/{id}/members` | 弃用（README 勾选） | activities_v2_router.py:303 |
+| GET | `/api/v1/users/{id}/time` | deprecated | users_v2_router.py:320 |
+| GET | `/api/v1/users/{id}/activities` | deprecated/slow | users_v2_router.py:217 |
+| POST | `/api/v1/activities/{id}/members` | 原 v2 单条版弃用并已随 v2/v3 归并退役（路由装饰器摘除）；该路径现由 v3 **批量**实现承接 | activities_v2_router.py:303 / activities_v3_router.py:319 |
 
 `routers/README.md` 明示：「本目录中的大部分 API 老旧缓慢，将逐步弃用」。
 
@@ -815,17 +835,17 @@ xh_router 任意 URL 代理（:159 urlopen + :46 硬编码签名 KEY）、登录
 - ~~`views/user/UserPage.vue:72`：残留 `console.log(value)`~~ **已删除（2026-10-08）**。
 
 **2026-10-08 新接线**：
-- ActivityPage「添加成员」多行弹窗 → `member.insertMany` → `POST /api/v3/activities/{aid}/members`。
+- ActivityPage「添加成员」多行弹窗 → `member.insertMany` → `POST /api/v1/activities/{aid}/members`。
 - ManageGroup 班级详情：添加成员弹窗 + 每行移出班级（admin\|department）。
-- ManageRole：每用户「修改角色」弹窗（checkbox 预填 roles）→ `PUT /api/v3/users/{uid}/roles`。
+- ManageRole：每用户「修改角色」弹窗（checkbox 预填 roles）→ `PUT /api/v1/users/{uid}/roles`。
 
 ---
 
 ### 3. 前端已接入的接口（`baseURL = /api/`，`plugins/axios.ts:18`）
 
-Activities：`/api/v3/activities`(GET/POST)、`/api/v2/activities/:id`、`/:aid/info|status`、`/:aid/members[:/sid]`、`/api/v3/activities/:aid/members`、`/:aid/members/:user/record`
-Groups：`/api/v2/groups`、`/api/v2|v3/groups/:id/users`、`/api/v2|v3/groups/:cid/activities`
-Users：`/api/users`、`/api/users/:id`、`/api/v2/users`、`/api/v2|v3/users/:id/activities`、`/api/v3/users/:id/time`、`/api/v2/users/:id/password`、`/api/users/:user/past/:idx`
+Activities：`/api/v1/activities`(GET/POST)、`/api/v1/activities/:id`、`/:aid/info|status`、`/:aid/members[:/sid]`、`/api/v1/activities/:aid/members`、`/:aid/members/:user/record`
+Groups：`/api/v1/groups`、`/api/v1/groups/:id/users`、`/api/v1/groups/:cid/activities`
+Users：`/api/users`、`/api/users/:id`、`/api/v1/users`、`/api/v1/users/:id/activities`、`/api/v1/users/:id/time`、`/api/v1/users/:id/password`、`/api/users/:user/past/:idx`
 Platform：`/api/v1/platform/{cert,login,totp,logs}`
 Logs：`/api/logs`、`/api/users/:user/logs`
 XH：`/xh/api`（`api/xh.js`）
@@ -841,19 +861,19 @@ XH：`/xh/api`（`api/xh.js`）
 | **报表导出** | `/api/exports/users`、`/time`、`/{task_id}`、`/{task_id}/file`、`/reports`、`/reports/download`、`GET /api/exports` | **全部已接线（2026-10-08）**：ManageHome「导出用户表/导出时长表」（建任务→轮询→blob 下载）+「下载报表」（`POST /reports` 取 token → `GET /reports/download?token=` 存 `export.tar.gz`） |
 | **Excel 导入活动** | `POST /api/imports/activities` | **已接线（2026-10-08）**：ActivityList「导入义工」弹窗（名称/描述/文件）→ `api/exports.ts` `importActivityExcel` |
 | **班级模板导出** | `GET /api/groups/{id}/template` | **已接线（2026-10-08）**：ManageGroup「导出模板」→ blob 下载 |
-| **班级时长统计** | `GET /api/groups/{id}/time`（v1）、`/api/v2/groups/{id}/time` | **已接线（2026-10-08）**：ManageGroup「时长统计」弹窗（`api/group/reads.ts` `time()`，ElTable 学号/姓名/校内/校外/社会实践） |
-| **添加活动成员** | `POST /api/v2|v3/activities/{aid}/members` | **已接线（2026-10-08）**：ActivityPage「添加成员」弹窗 → `member.insertMany`（v3） |
+| **班级时长统计** | `GET /api/groups/{id}/time`（v1）、`/api/v1/groups/{id}/time` | **已接线（2026-10-08）**：ManageGroup「时长统计」弹窗（`api/group/reads.ts` `time()`，ElTable 学号/姓名/校内/校外/社会实践） |
+| **添加活动成员** | `POST /api/v1/activities/{aid}/members`（原 v2/v3） | **已接线（2026-10-08）**：ActivityPage「添加成员」弹窗 → `member.insertMany`（v3 批量契约） |
 
 #### 4.2 前端页面/交互未完成
 
 | 位置 | 缺口 | 对应后端 |
 |---|---|---|
-| ~~ManageHome.vue 创建班级~~ | **已实现**（弹窗 → `POST /api/v3/groups`） | §1.2a |
-| ~~ManageHome.vue 创建用户按钮~~ | **已实现（2026-10-08）**：弹窗（学号/姓名/角色/班级）→ `POST /api/v3/users`，成功后 usersVersion 刷新 | §1.2a users_v3_router.py:323 |
+| ~~ManageHome.vue 创建班级~~ | **已实现**（弹窗 → `POST /api/v1/groups`） | §1.2a |
+| ~~ManageHome.vue 创建用户按钮~~ | **已实现（2026-10-08）**：弹窗（学号/姓名/角色/班级）→ `POST /api/v1/users`，成功后 usersVersion 刷新 | §1.2a users_v3_router.py:323 |
 | ~~ActivityPage.vue 添加成员~~ | **已实现**（多行弹窗 → v3 批量加成员） | §1.2a |
 | ~~ZClassDisplay.vue 修改/删除~~ | **已实现**（prompt 改名 / confirm 删班 → v3） | §1.2a |
 | ~~ManageGroup.vue 班级成员管理~~ | **已实现**（添加成员弹窗 + 移出班级） | §1.2a |
-| ~~ManageRole.vue 修改角色~~ | **已实现**（checkbox 弹窗 → `PUT /api/v3/users/{uid}/roles`） | §1.2a |
+| ~~ManageRole.vue 修改角色~~ | **已实现**（checkbox 弹窗 → `PUT /api/v1/users/{uid}/roles`） | §1.2a |
 | ~~UserPageNew.vue~~ | **已删除（2026-10-08）**：时间仪表盘合入 UserPage.vue info tab 并补数据加载 | — |
 | ~~stores/user.ts:90~~ | **已实现（2026-10-08）**：登录失败 ElMessage 提示 | — |
 | ~~ManageHome.vue 仪表盘空 pane~~ | **已实现（2026-10-08）**：总览 tab 新增数据概览统计卡片（班级/用户/活动总数，ElStatistic + ElCard） | 读取类端点 |
@@ -882,7 +902,7 @@ XH：`/xh/api`（`api/xh.js`）
 ### 6. 建议优先级
 
 1. ~~**P0 — 接线导出/导入**~~ **已完成（2026-10-08）**：用户表/时长表导出（任务轮询+下载）、班级模板导出、Excel 导入义工、报表打包下载（`/reports`）、班级时长统计全部接线。
-2. ~~**P0 — 打通管理写入**~~ **已完成（2026-10-08）**：班级写入/角色修改/活动加成员/**创建用户**走 v3 新端点（§1.2a）+ 前端接线（`POST /api/v3/users` 已补端点并接弹窗）。
+2. ~~**P0 — 打通管理写入**~~ **已完成（2026-10-08）**：班级写入/角色修改/活动加成员/**创建用户**走 v3 新端点（归并后为 `/api/v1`，§1.2a）+ 前端接线（`POST /api/v1/users` 已补端点并接弹窗）。
 3. ~~**P1 — 收尾部分实现页面**~~ **已完成（2026-10-08）**：ManageHome 仪表盘统计卡片、ActivityPage `doEdit` 收尾、创建用户弹窗全部落地；UserPageNew 合入 UserPage（时间仪表盘 + 数据加载）。
 4. ~~**P1 — 清理死代码**~~ **已完成（2026-10-08）**：删除 `activities_router.py`、`v1/users.py`、`v1/activities.py`、`v1/groups.py`、`UserPageNew.vue`、`devNotice` 死函数、`console.log` 残留。
 5. ~~**P2 — 恢复缺失模块**~~ **已关闭（2026-10-10，无需恢复）**：`activity_statistics_router`/`times_router`/`mcp_router` 经查证为审计副本陈旧 pyc 残留——canonical 仓库全仓零引用、从未入 git、main.py 从未注册，非代码库缺口（证据见 §1.5）。
@@ -903,8 +923,8 @@ XH：`/xh/api`（`api/xh.js`）
 ### 更新记录
 
 - **2026-10-10（pyc 悬案关闭）**：查证 §6.5 三模块（`activity_statistics_router`/`times_router`/`mcp_router`）——全仓 `grep` 零引用（main.py:16-27 注册表不含、无 `getattr`/`importlib`/`__import__` 动态导入、`routers/__init__.py` 仅 `from . import v1`、main.py 中 `routers.` 唯一用法为 :142 `routers.v1.platform.api`）；`git ls-files` 与 `git log --diff-filter=A -- backend/routers/__pycache__/*` 双双证明其 pyc 从未被 git 跟踪；本 clone 的 `routers/__pycache__/` 仅有本轮 py_compile 生成的 314 版缓存。结论：审计所见 pyc 系被审计部署副本的陈旧未跟踪产物，canonical 仓库无需恢复，§6.5 关闭，STATUS 待修项全部清零。
-- **2026-10-08（STATUS 收尾轮）**：修复 activities_v2 `status_cod` 拼写、groups_v2 `read_users`→`read_group_time` 命名、前端 `api.exports.*` 调用名与导出不匹配（运行时 TypeError）三个 bug；删除死代码 `routers/activities_router.py`、`routers/v1/{users,activities,groups}.py`、`UserPageNew.vue`（时间仪表盘合入 UserPage.vue info tab 并补 `api.user.time.read` 数据加载）、`devNotice` 死函数、`UserPage.vue` `console.log` 残留；新增 `POST /api/v3/users` 建用户端点（users_v3_router.py:323，初始密码=bcrypt(学号)）并接 ManageHome 创建用户弹窗（usersVersion 刷新）；接线「下载报表」（`POST /reports` token → `GET /reports/download` tar.gz）与 ManageGroup「时长统计」弹窗（`api/group/reads.ts` `time()`）；ManageHome 总览 tab 新增数据概览统计卡片（班级/用户/活动总数）；stores/user.ts 登录失败 ElMessage 提示；ActivityPage `doEdit` TODO WIP 清理。验证：后端 `py_compile` 通过、前端 `vite build` 通过（叠加终态）、残留 grep 零匹配。
-- **2026-10-08（实施）**：打通「活动添加成员」链路（前端 ActivityPage 弹窗 → `POST /api/v3/activities/{aid}/members`，body 改用 `NewActivityMember`，修 `social-practice` 连字符）；新增 v3 班级写入（建/改名/删班、用户入班/移出班）与 `PUT /api/v3/users/{uid}/roles` 角色修改端点，前端 ZClassDisplay / ManageHome / ManageGroup / ManageRole 全部接线；修 `groups_v3` HTTPException 未导入、`main.py` 三行非法 `lazy import`、ManageHome `x<script>` 脏字符。验证：后端 `py_compile` 通过、前端 `vite build` 通过。
+- **2026-10-08（STATUS 收尾轮）**：修复 activities_v2 `status_cod` 拼写、groups_v2 `read_users`→`read_group_time` 命名、前端 `api.exports.*` 调用名与导出不匹配（运行时 TypeError）三个 bug；删除死代码 `routers/activities_router.py`、`routers/v1/{users,activities,groups}.py`、`UserPageNew.vue`（时间仪表盘合入 UserPage.vue info tab 并补 `api.user.time.read` 数据加载）、`devNotice` 死函数、`UserPage.vue` `console.log` 残留；新增 `POST /api/v1/users` 建用户端点（users_v3_router.py:323，初始密码=bcrypt(学号)）并接 ManageHome 创建用户弹窗（usersVersion 刷新）；接线「下载报表」（`POST /reports` token → `GET /reports/download` tar.gz）与 ManageGroup「时长统计」弹窗（`api/group/reads.ts` `time()`）；ManageHome 总览 tab 新增数据概览统计卡片（班级/用户/活动总数）；stores/user.ts 登录失败 ElMessage 提示；ActivityPage `doEdit` TODO WIP 清理。验证：后端 `py_compile` 通过、前端 `vite build` 通过（叠加终态）、残留 grep 零匹配。
+- **2026-10-08（实施）**：打通「活动添加成员」链路（前端 ActivityPage 弹窗 → `POST /api/v1/activities/{aid}/members`，body 改用 `NewActivityMember`，修 `social-practice` 连字符）；新增 v3 班级写入（建/改名/删班、用户入班/移出班，归并后为 `/api/v1/groups`）与 `PUT /api/v1/users/{uid}/roles` 角色修改端点，前端 ZClassDisplay / ManageHome / ManageGroup / ManageRole 全部接线；修 `groups_v3` HTTPException 未导入、`main.py` 三行非法 `lazy import`、ManageHome `x<script>` 脏字符。验证：后端 `py_compile` 通过、前端 `vite build` 通过。
 - **2026-10-08（P0 导出/导入接线）**：新增 `frontend/src/api/exports.ts`（导出任务创建/轮询/文件下载、班级模板、Excel 导入、blob 保存，经 `api/export.ts` barrel 挂为 `exports` 命名空间）；ManageHome 头部新增「导出用户表/导出时长表」（POST 建任务 → 轮询至完成 → 自动下载）；ManageGroup 新增「导出模板」；ActivityList 新增「导入义工」弹窗（名称/描述/Excel 文件 → `POST /api/imports/activities`）。验证：`vite build` 通过。
 
 
@@ -920,9 +940,9 @@ XH：`/xh/api`（`api/xh.js`）
 
 ### 6.0 与主线的关系（先定性）
 
-`zvp5-gitlab/` 与 §二 的 `zvms4-modified-main/` **不是同一份代码的两个版本，而是两套并行实现**：
+`zvp5-gitlab/` 与 §二 的 `zvp5/` **不是同一份代码的两个版本，而是两套并行实现**：
 
-| 维度 | 主线 `zvms4-modified-main`（§二） | 本目录 `zvp5-gitlab` |
+| 维度 | 主线 `zvp5`（§二） | 本目录 `zvp5-gitlab` |
 |---|---|---|
 | 数据层 | FastAPI + **Motor（异步 MongoDB）** 双库 `zvms`/`zvms_new` | FastAPI + **SQLAlchemy 2.0 async（关系型库，`create_async_engine`）** |
 | 缓存/推送 | 可选 socket.io / APScheduler | **Redis（asyncio）+ WebSocket（PushService）** |
@@ -997,7 +1017,7 @@ XH：`/xh/api`（`api/xh.js`）
 
 ### 6.5 与主线功能面对照
 
-| 功能面 | 主线 §二（zvms4-modified-main） | zvp5-gitlab |
+| 功能面 | 主线 §二（zvp5） | zvp5-gitlab |
 |---|---|---|
 | 用户 / 班级 / 组 | ✅ 已移植（v2/v3） | 模型已定义，路由基本未写 |
 | 活动 / 成员 | ✅ 已移植（v2/v3 + 加成员） | 模型 + 部分路由（编译不过） |
@@ -1014,7 +1034,7 @@ XH：`/xh/api`（`api/xh.js`）
 - **大体量级**：架构与数据模型完成度高（设计层约八成），**实现层约一成**，入口为 0。整体约 **15%–20%**，且**不可运行**。
 - **性质**：这是**另起炉灶的第二套后端**（关系库 + 独立审核流程 + 多学校），不是主线的分支或补丁。
 - **"与主线对齐"若要落地，需先定向**：是**续写本目录**（补 `app.py`/`relations.py`/`config.py`、修语法与未定义名、逐步实现端点），还是**以主线为准**（本目录仅作历史留档）。两者数据层根本不同，方向不同则后续工作完全不同。
-- 当前处置：**保持原状，仅作历史留档，不参与构建**；开发主线仍为 §二 的 `zvms4-modified-main/`。
+- 当前处置：**保持原状，仅作历史留档，不参与构建**；开发主线仍为 §二 的 `zvp5/`。
 
 ### 更新记录
 
@@ -1028,7 +1048,7 @@ XH：`/xh/api`（`api/xh.js`）
 
 ### 7.1 合并内容（`zvp5-dev` → `main`）
 
-`zvp5-dev` 相对原 `main` 共 **13** 个提交，其中 **12** 个（`16eb170…28c939f`，即 Part 8-11 全部改进）已并入主干，仅 `cdf85ad` 被排除（见 7.2）。改动全部落在 `zvms4-modified-main/`，概览：
+`zvp5-dev` 相对原 `main` 共 **13** 个提交，其中 **12** 个（`16eb170…28c939f`，即 Part 8-11 全部改进）已并入主干，仅 `cdf85ad` 被排除（见 7.2）。改动全部落在 `zvp5/`，概览：
 
 | 批次 | 内容 | 版本 |
 |---|---|---|
@@ -1037,21 +1057,21 @@ XH：`/xh/api`（`api/xh.js`）
 | Part 10 | 群组与用户读取双库收敛（权限组列表与成员、搜索去重、roles 合成、班级选择器）+ 身份徽标常显 + PWA SW 即时接管 | v4.2.0-4 |
 | Part 11 | changelog 免登录 + PWA 版本自动接管（SW 轮询 30min + controllerchange 自动 reload）+ IndexedDB 本地缓存 + 关于 / 更新日志返回按钮 | v4.2.1-1 |
 
-**主干当前版本：v4.2.1-1**；Part 1-11 全文见保留的 `zvms4-modified-main/STATUS.md`（本文件 §四 仅覆盖至 Part 7）。
+**主干当前版本：v4.2.1-1**；Part 1-11 全文见保留的 `zvp5/STATUS.md`（本文件 §四 仅覆盖至 Part 7）。
 
 ### 7.2 ADB 处置（排除）
 
 - **排除提交**：`cdf85ad feat(zvp5-gitlab): 适配 Oracle Autonomous Database (ADB)`
 - **处置方式**：快进至 `zvp5-dev` 顶点后，在主干上 `revert` 该提交——`zvp5-gitlab/` 全量还原为 ex-GitLab 快照（`d86cbb6`）状态：`database.py` 的 `String(255)`、models 的 CLOB 化、`config.example.py` 的 ADB 连接示例、README 的 ADB 选型记录**一律不进入主干**。
 - **理由**：ADB（甲骨文自治数据库）适配线与主干基准（MongoDB 双库 `zvms` / `zvms_new`）无关，剥离后主干更稳健；独立的 `zvms4-adb-migration` 工作线保持不动、另行处置。
-- **校验**：主干全树仅剩 `zvms4-modified-main/STATUS.md` 一处**文字注记**提及 ADB（说明其为独立工作线），无任何 ADB 代码或依赖残留。
+- **校验**：主干全树仅剩 `zvp5/STATUS.md` 一处**文字注记**提及 ADB（说明其为独立工作线），无任何 ADB 代码或依赖残留。
 
 ### 7.3 与 zzj 文档整合线的合流
 
 主干合并同时回填了 `origin/main` 上 zzj 的 5 个提交（`24cbb15…d00226e`，含「零散文档并入根 README」）。冲突处置：
 
-- `zvms4-modified-main/README.md`、`STATUS.md`：zzj 线删除 / `zvp5-dev` 线修改 → **保留修改**（不丢 Part 8-11 增量）。
-- `zvms4-modified-main/DB_ALIGNMENT.md`、`zvp-latest/DEV_STATUS.md`：**随 zzj 线删除**（内容已并入本文件 §三 / §五）。
+- `zvp5/README.md`、`STATUS.md`：zzj 线删除 / `zvp5-dev` 线修改 → **保留修改**（不丢 Part 8-11 增量）。
+- `zvp5/DB_ALIGNMENT.md`、`zvp-latest/DEV_STATUS.md`：**随 zzj 线删除**（内容已并入本文件 §三 / §五）。
 
 ### 7.4 第二批合并：单库收敛 + CHANGELOG 数据库化（2026-10-12，剥离 ADB）
 
@@ -1074,97 +1094,44 @@ XH：`/xh/api`（`api/xh.js`）
 - **数据库开关移除**：`ORACLE_ENABLED` 已删除（`settings.example.py`、`OracleConfig`、`db/oracle/session.py`、`main.py` 健康检查改为无条件 Oracle ping），**不存在非 ADB 回退路径**；`ORACLE_ACTIVE` 保留，仅用于在 ADB 实例间选择 prod / test。
 - **生产状态**：11 个模块全部走 ADB，带鉴权端到端全 200；`zvms4-mongo` 与历史数据按决策**保留归档**（已无任何代码引用）。
 - **附带修正**：数据边界的非法 id 由 500 修正为 400（`db/ids.py::InvalidOid` + 全局异常处理）。
-- **义工数据补录（2026-10-14）**：ADB 全量上线后发现生产「少了很多义工」——ETL 完整性护栏隔离了 **42 个 activities + 1712 个 activity_members**（悬空 creator/appointee FK、超长 description、Int64 时间戳、迁移后测试数据）。已按决策补录 41 个（排除测试数据 TestDB）+ 1712 条成员，并新增 `V006__relax_activity_user_fks.sql` 放开 3 个指向已删除账号的 FK。详见 `zvms4-modified-main/docs/ADB_MIGRATION.md` §6.8。
+- **义工数据补录（2026-10-14）**：ADB 全量上线后发现生产「少了很多义工」——ETL 完整性护栏隔离了 **42 个 activities + 1712 个 activity_members**（悬空 creator/appointee FK、超长 description、Int64 时间戳、迁移后测试数据）。已按决策补录 41 个（排除测试数据 TestDB）+ 1712 条成员，并新增 `V006__relax_activity_user_fks.sql` 放开 3 个指向已删除账号的 FK。详见 `zvp5/docs/ADB_MIGRATION.md` §6.8。
 
 ---
 
 ## 八、学海（XueHai / 云作业）API 调用调查报告
 
-> **2026-10-24：原两棵参考树已删除。** 下文 `zvp-latest/...` 路径对应归档
-> `reference/xuehai/zvp-latest/...`；`zvp5-gitlab/...` 仅保留学海登录相关历史结论。
+> **2026-11-15：本节已移出仓库。** 内容含第三方平台的接口域名、签名算法、
+> 设备身份字段与登录校验逻辑，属逆向分析记录；为避免公开仓库传播该材料，
+> 全文已归档到仓库外的本地存档，此处只保留结论。
 >
-> 调查对象：本仓库各代码线对**学海生态 API**的调用。结论一句话：**真正发起学海 API 调用的是原 `zvp-latest`（参考 zvp 线）与原 `zvp5-gitlab`（学海登录体系）；`zvms4-modified-main`（移植主线）已红线剥离，零调用**。
+> **结论**：真正发起学海 API 调用的是原 `zvp-latest`（参考线）与原
+> `zvp5-gitlab`（学海登录体系）；`zvp5`（移植主线）已红线剥离，**零调用**。
 
-### 0. 学海生态域名
+## 九、ZVAgent 与安全收敛（2026-10-29）
 
-| 域名 | 角色 | 出现位置 |
+AI 能力统一以 **ZVAgent** 对外（代码与文档中的「智能体 / AI 助手 / Agent」同指此产品；「AI 网关」仍是模块名）。本轮的实现与契约以代码为准，文档入口如下：
+
+| 主题 | 结论 | 文档 |
 |---|---|---|
-| `admin.yunzuoye.net` | 学海管理后台 API（`/Other/TransferInterface2`） | `zvp-latest/frontend/src/api/xh.js:12` |
-| `ztp.yunzuoye.cloud` | 学海平台 API（`/api/v1/pub/platform/users/{id}/profile`） | `zvp-latest/frontend/src/api/xh.js:31` |
-| `oss.yunzuoye.net` | 学海静态资源（应用图标） | `zvp-latest/frontend/src/utils/constants.ts:2,4` |
-| `cloud-resource.yunzuoye.net` | 学海前端打包资源（`js/app.js`，`@/utils/axios.ts`） | `zvp-latest/backend/routers/xh_router.py:69`（签名算法出处注释） |
+| 内容安全 | 提交瞬间做规则审核 + 灰区 LLM 判定，**fail-closed**：判定跑不起来就拒绝本次回答；对外统一 `AI_SAFETY_REJECTED`（run 提交 422、`/v1` 403）。判定成立即记违规 + 警告 + 按 `BAN_RULES.penalties` **首档立即封号**（原「首次只警告」语义废除）；admin 天然旁路并写 `ai_moderation_unrestricted` | `zvp5/docs/AI_AGENT_OPS_DESIGN.md` §10、`zvp5/docs/AI_GATEWAY_API.md` §8.5 |
+| 会话 | 模型在**建会话时锁定**（PATCH 改模型 409 `AI_CONVERSATION_MODEL_LOCKED`）；会话级思考强度 `low/medium/high`；`chat` 会话模式下线（存量只读，新建 409）；`/v1/chat/completions` 保留为无状态兼容面 | `zvp5/docs/AI_CONVERSATION_DESIGN.md` §12 |
+| 只读场景 | `POST /api/ai/scenes/{scene}/runs`（`terminal` / `file_edit`）：admin + `ai.agent`，工具只声明只读集，参考内容脱敏后进 prompt 但不落消息表，跳过 30 分钟密码门，场景会话 14 天保留 | `zvp5/docs/AI_GATEWAY_API.md` §16 |
+| 文件 | `/api/system/files` 与 agent `fs_*` 共同受根目录 jail：只允许 `/www/zvms4` 与 `/home`，越界 403 `FILES_ROOT_FORBIDDEN`；预览图片新增 `POST /api/ai/ocr/file` 路径桥 | `zvp5/docs/FILES_API_DESIGN.md` §13、`zvp5/docs/AI_GATEWAY_API.md` §2.5 |
+| 账号与应用安全 | 登录频控（账号 5 次/分 + IP 60 次/分 → 429 `AUTH_RATE_LIMITED`）、登出轮换 `session_id`、管理写操作密码再认证、重查询读预算 60 次/分/用户（429 `READ_RATE_LIMITED`）、安全响应头 + CSP、shield 418 追责采集、socket.io 仅认 `Authorization` 头与 auth 载荷 | `zvp5/zvp5-backend-python/README.md` |
+| 日志与审计 | `APP_LOGS` 新增 `client_ip` / `user_agent`（V045）；事件常量集中在 `services/log_events.py`；`AI_PROMPT_AUDIT` 扩 `answer_text` / `tool_calls` / `refused` / `warned`（V046） | `zvp5/docs/AI_GATEWAY_API.md` §6.8、`zvp5/zvp5-backend-python/docs/database-status.md` |
+| 前端 | 会话运行中逐轮见回复、模型只读展示、思考强度三档、归档会话视图与恢复、平台管理可添加班级、日志卡片展示 IP/UA、文件预览 OCR / 编辑器「AI 分析」/ 终端「智能分析」 | `zvp5/zvp5-frontend/README.md` |
 
-### 1. 调用总览
+---
 
-| # | 调用方 | 形态 | 目标 | 签名 | 用途 |
-|---|---|---|---|---|---|
-| 1 | `zvp-latest` 后端 `POST /xh/api` | 通用签名代理（任意 URL） | 由前端传入 | `V1` / `encrytred` / `disabled` | 代前端向学海发起带签名的 HTTP |
-| 2 | `zvp-latest` 前端 `transfer()` | `POST /../xh/api`（经 1） | `https://admin.yunzuoye.net/Other/TransferInterface2` | `disabled`（不签名） | 学海数据接口透传 |
-| 3 | `zvp-latest` 前端 `getXHProfile()` | 经 1+2 | `http://ztp.yunzuoye.cloud/api/v1/pub/platform/users/{userId}/profile` | `disabled` | 取学海用户资料（`username`） |
-| 4 | `zvp5-gitlab` 后端 | 登录请求类型 | 学海平板/数据中心设备 | `xhid` / `xhid_md5` | 以学海设备身份登录 ZVMS |
+## 十、GitHub 自动化（2026-11-07）
 
-### 2. 后端签名代理 —— `zvp-latest/backend/routers/xh_router.py`
+- 根目录 `.github/workflows/ci.yml` 统一运行后端 pytest/Ruff、前端 Vitest/ESLint/类型检查/生产构建、Cypress、ShellCheck、actionlint、Gitleaks 与 Trivy。
+- 推送到 `main` 只运行 CI，不部署。发布非预发布 GitHub Release 后，只有全部检查通过且 release commit 属于 `main` 才自动发布前端与后端；DDL 不自动执行，健康检查失败会按相反顺序回滚。首次启用前需按
+  `zvp5/deployment/github-actions/README.md` 创建 `production` Environment、配置 Secrets 并在两台服务器安装受限部署账号。
+- Dependabot 每周分组更新 pip、pnpm 与 GitHub Actions；分支保护暂时保持观察模式，不把检查设为 required。
 
-- **挂载**：`main.py:141` `app.include_router(xh_router.app, prefix="/xh")` → 对外端点 **`POST /xh/api`**（`xh_router.py:128`）。
-- **请求体**（Pydantic 判别联合，`xh_router.py:102-126`）：`method`、`url`（任意）、`headers`、`body`、`token`、`options{sign_version,response_is_json,response_encoding}`。
-- **签名算法 `sign_request`（:51-94）**，三档：
-  - **`V1`**（默认，:63-67）：`sign = md5(method + url + t + KEY + body + "Authorization: " + token)`，其中 `t = 当前毫秒`；结果以 `?sign=<sign>&t=<t>`（已有 `?` 则 `&`）附加到 URL。
-  - **`encrytred`**（:68-92）：`appCode='WEB002001'`、`appKey=md5('XH'+appCode)`、`timestamp=t`；GET 时把原 query 并入待签名对象；`raw = ''.join(f'{k}={obj[k]}&' for k in sorted(obj))`；`sign = md5(md5(raw + body))`；并写入请求头 `timestamp/sign/X-B3-SpanId/X-B3-TraceId/loginSign(空)/token`。
-  - **`disabled`**（:61-62）：原样 URL，不签名。
-- **硬编码密钥**（:46）：`KEY = 'eptim]q34imt5b]-q04i5q=fdkfjfsadlkjfasdfrt573df4pltoy]-pn965498d'`，注释标明 *dumped from `xhcore.so`*。
-- **出站与 TLS**（:96-98, :152-159）：用 `urllib.request.urlopen(req, timeout=10, context=ssl_ctx)`；`ssl_ctx.check_hostname=False`、`verify_mode=CERT_NONE`，即**关闭证书校验**。
-- **签名例外**（:147）：`body` 序列化后 `≥ 1 MiB` 时**不参与签名**（`None`）。
-- **响应**（:168-173）：原样回传 `{actual_url, status, headers, body}`；`response_encoding='raw'` 时以字节返回。
-- **错误映射**（:174-197）：JSON 解析失败 502、DNS 失败 502、超时 504、连接拒绝/重置 502、编码不存在 400、其它 500。
-- **旧实现注释**（:199-201）：`/xhapi.html` 的 `GET /index.html` 已注释掉。
+---
 
-### 3. 前端 —— `zvp-latest/frontend/src/api/xh.js`
+## 十一、许可
 
-- `transfer(options)`（:5-26）：固定 `POST /../xh/api`，代理到 `https://admin.yunzuoye.net/Other/TransferInterface2`，`options.sign_version='disabled'`，把调用参数包进 `body` 的 `header` 字段。
-- `getXHProfile(userId = getXuehaiId())`（:28-43）：经 `transfer` 请求 `http://ztp.yunzuoye.cloud/api/v1/pub/platform/users/{userId}/profile`；失败用 `ElMessage` 报错并抛异常。
-- **唯一消费点**：`stores/user.ts:68` —— `username = verifiedName ?? window.webView?.getUserName?.() ?? (await import('@/api')).xh.getXHProfile(getXuehaiId()).username`；`stores/user.ts:8` 的静态导入已注释。
-
-### 4. 设备桥接与 UA 判定
-
-- `frontend/src/plugins/ua.ts`：
-  - `getXuehaiId(): number` = `window.xhBrowserJava?.getUserId?.() || 0`（:7-9）；
-  - `pad()` = `!!getXuehaiId()`（:11）；
-  - `isXuehaiDCenter(requireFeature)` 依赖 UA 含 `userId/`、`deviceId/` 与 `window.webView.getUserName`（:13）。
-- 后端 UA 门禁放行设备端：`zvp-latest/backend/main.py:82` 允许 UA 含 `com.xh`；:98 识别 `X-Requested-With ∈ {com.xh.browser, com.xh.datacenter}`。
-- 学海设备请求头 `Xuehai-Id` 被采集进日志：`zvp-latest/backend/util/log.py:36`（`optional_int(header(req,'Xuehai-Id'))`）、`util/logify.py:26-30`。
-- 前端常量含学海资源 URL：`utils/constants.ts:2,4`（`oss.yunzuoye.net`）。
-
-### 5. `zvp5-gitlab` 的学海登录体系
-
-- 请求类型（`schemas.py:20-32`）：
-  - `XuehaiBrowserLoginRequest`：`login_type='xhbrowser'`、`device_identifier`、`xhid:int`；
-  - `XuehaiDataCenterLoginRequest`：`login_type='xhdatacenter'`、`device_identifier`、`xhid`、`xhid_md5`、`name`、`class_name`。
-- 校验（`routers/v1/platform.py:72-99`）：`device_identifier` 必须等于 `x_device_id` 且设备已注册（redis 或 `Device` 表）；按 `xhid` 查 `User`；数据中心登录额外校验 `md5(xhid).hexdigest()==xhid_md5` 与 `user.name==name`（否则 `DO_NOT_STEAL_ACCOUNT`）。
-
-### 6. `zvms4-modified-main`（移植主线）的处置 —— 不调用
-
-移植主线**有意不引入**学海调用面，历史记录见其 `STATUS.md` / `README.md`：
-
-- 未移植：`xh_router.py` 整文件、`frontend/src/api/xh.js`、`routers/v1/platform.py` 学海登录、`util/logify.py`、`util/blocking.py`、`util/logs.py`。
-- 剥离的设备面：`src/plugins/axios.ts` 的 Clarity/Xuehai/Device 三请求头与 `_clck`；`src/plugins/ua.ts` 的 `getXuehaiId()`/`xhBrowserJava` 桥接；`main.py` 的 `zvp_session` 设备会话 cookie；登录日志的三设备字段。
-- 终局审计：后端全树对 `requests|httpx|aiohttp|urlopen|urllib` **零命中**（无任何出站 HTTP 能力点）；前端对 `xuehai|clarity|_clck|deviceId|xhBrowserJava|yunzuoye|window.open|urlopen` 仅剩历史日志展示/文案层残留。
-- 文字/数据残留：`frontend/README.md`、`SECURITY.md`、`TECH_REPORT.md` 提及 XueHai 平板；ADB 线 `db/models.py` 的 `LOGS` 表保留 `XUEHAI_ID NUMBER(18)` 列（仅镜像 `zvms_new.logs` 历史设备 schema，代码零引用）。
-
-### 7. 风险清单（学海调用面）
-
-1. **硬编码签名密钥**：`KEY` 源自逆向 `xhcore.so`，随源码分发即泄露；任何持有者可为学海请求伪造签名。
-2. **TLS 证书校验关闭**：`CERT_NONE` + `check_hostname=False`，中间人可篡改/窃听。
-3. **开放 URL 签名代理（SSRF）**：`/xh/api` 接受任意 `url`，服务端代为发起请求且回传完整响应头，可被用于探测内网/绕过网络边界。
-4. **设备身份与账号绑定**：`xhid`/`device_identifier` 直接映射到 `User`，设备指纹泄露面大。
-5. **明文信道**：`getXHProfile` 使用 `http://ztp.yunzuoye.cloud`。
-6. **≥1MiB body 免签名**：大请求体绕过签名校验。
-
-### 8. 证据索引
-
-- 后端代理与签名：`zvp-latest/backend/routers/xh_router.py:46,51-94,96-98,128-197`
-- 挂载：`zvp-latest/backend/main.py:141`（UA 放行 :82,98）
-- 前端调用：`zvp-latest/frontend/src/api/xh.js:5-43`；消费点 `stores/user.ts:68`
-- 设备桥接：`zvp-latest/frontend/src/plugins/ua.ts:7-13`；常量 `utils/constants.ts:2,4`
-- 日志采集：`zvp-latest/backend/util/log.py:36`、`util/logify.py:26-30`
-- 学海登录：`zvp5-gitlab/schemas.py:20-32`、`routers/v1/platform.py:72-99`
-- 主线剥离记录：`zvms4-modified-main/STATUS.md`（§红线剥离 / 终局 grep）、`zvms4-adb-migration:zvms4-modified-main/docs/ADB_SCHEMA_SPEC.md`（LOGS.XUEHAI_ID）
+本仓库采用 **MIT 许可证**（见 `LICENSE`），来源与第三方署名见 `NOTICE`。

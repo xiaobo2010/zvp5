@@ -1,0 +1,300 @@
+/* ==========================================================================
+   液态玻璃导航 .yg-glass-nav（UserNav 专用）
+   来源：origin/feat/yg-design-system 分支的 src/assets/styles/yg-theme.css
+         §10.6「液态玻璃导航」段（原文件 814-1005 行）
+   抽取日期：2026-10-24
+   说明：只搬 .yg-glass-nav 相关规则 + 深浅切换的 View Transitions 过渡；
+         §11 corner-shape 与 §12 减少动效偏好已由 yg/base.css 提供，不再重复；
+         本段未引用 .yg-frost/.yg-liquid-glass/.yg-mask（这些已由 yg/base.css 定义）。
+   顺序：须在 yg/main.css 之后引入（依赖其 --yg-* 令牌）。
+   ========================================================================== */
+
+/* ==========================================================================
+   10.6 液态玻璃导航（参考 rdev/liquid-glass-react：高光折射 + 弹性交互）
+   横屏 = 左侧玻璃栏；竖屏 = 底部悬浮药丸。仅此组件使用强玻璃材质。
+   ========================================================================== */
+.yg-glass-nav {
+  position: relative;
+  z-index: 100;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* —— 横屏：左侧玻璃栏 —— */
+/* 半透明配方：底色只保留一层薄雾，主要靠 backdrop-filter 取景；
+   光影分三层——顶边高光、内侧反光、外侧接触阴影 + 环境阴影，
+   让玻璃在深浅背景上都能看出厚度，而不是一块压暗的实心条。 */
+.yg-glass-nav--landscape {
+  width: 4rem;
+  height: 100%;
+  flex-shrink: 0;
+  background:
+    radial-gradient(120% 55% at 0% 0%, rgba(255, 255, 255, 0.5), transparent 62%),
+    linear-gradient(160deg, rgba(255, 255, 255, 0.58), rgba(255, 255, 255, 0.3));
+  -webkit-backdrop-filter: blur(28px) saturate(175%);
+  backdrop-filter: blur(28px) saturate(175%);
+  border-right: 1px solid rgba(255, 255, 255, 0.42);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.72),
+    inset 1px 0 0 rgba(255, 255, 255, 0.35),
+    inset -1px 0 0 rgba(28, 28, 30, 0.06),
+    1px 0 0 rgba(255, 255, 255, 0.2),
+    0 12px 40px rgba(28, 28, 30, 0.1),
+    0 2px 8px rgba(28, 28, 30, 0.06);
+}
+
+/* 不支持 backdrop-filter 时把底色加厚，保证图标可读 */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .yg-glass-nav--landscape {
+    background: linear-gradient(160deg, rgba(255, 255, 255, 0.92), rgba(255, 255, 255, 0.82));
+  }
+}
+
+/* —— 竖屏：底部悬浮药丸 —— */
+/* 竖屏药丸是 fixed 层、背后是滚动内容，每帧都要重采样；模糊半径压到 12px
+   以降低滚动手势期间的低端平板掉帧风险（横屏栏背后是静态 shell，保持 24px）。
+   层级刻意保持 100（低于顶栏的 --yg-z-sticky = 1020）：药丸是内容层上的悬浮件，
+   必须让顶栏压住自己，也不该盖过弹层/提示；要调整观感请改尺寸，别抬 z-index。 */
+.yg-glass-nav--portrait {
+  position: fixed;
+  left: 50%;
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 12px);
+  transform: translateX(-50%);
+  max-width: calc(100vw - 24px);
+  /* 兜底上限：极端缩放或超矮视口下，药丸不允许吃掉整屏内容 */
+  max-height: calc(100dvh - env(safe-area-inset-top, 0px) - var(--yg-space-8));
+  border-radius: 0;
+  background:
+    radial-gradient(120% 70% at 18% 0%, rgba(255, 255, 255, 0.5), transparent 58%),
+    linear-gradient(160deg, rgba(255, 255, 255, 0.64), rgba(255, 255, 255, 0.36));
+  -webkit-backdrop-filter: blur(18px) saturate(175%);
+  backdrop-filter: blur(18px) saturate(175%);
+  border: 1px solid rgba(255, 255, 255, 0.48);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.78),
+    inset 0 -1px 0 rgba(28, 28, 30, 0.1),
+    0 10px 30px rgba(28, 28, 30, 0.16),
+    0 2px 8px rgba(28, 28, 30, 0.08);
+}
+
+/* 键盘弹起（visual viewport 被压到 480px 以下）时药丸整体缩一圈：
+   内边距回到 4px、触控项收到 40px，避免浮在输入框上方挡住正在输入的内容。
+   只作用于竖屏药丸，横屏玻璃栏不受影响。 */
+@media (max-height: 480px) {
+  .yg-glass-nav--portrait .yg-glass-nav__items {
+    padding: var(--yg-space-1);
+  }
+
+  .yg-glass-nav--portrait .yg-glass-nav__item {
+    width: var(--yg-space-8);
+    height: var(--yg-space-8);
+  }
+}
+
+html.dark .yg-glass-nav--landscape {
+  background:
+    radial-gradient(120% 50% at 0% 0%, rgba(255, 255, 255, 0.12), transparent 62%),
+    linear-gradient(160deg, rgba(38, 42, 48, 0.5), rgba(16, 18, 22, 0.32));
+  border-right: 1px solid rgba(255, 255, 255, 0.14);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.16),
+    inset 1px 0 0 rgba(255, 255, 255, 0.08),
+    inset -1px 0 0 rgba(0, 0, 0, 0.42),
+    1px 0 0 rgba(0, 0, 0, 0.3),
+    0 16px 44px rgba(0, 0, 0, 0.46),
+    0 2px 8px rgba(0, 0, 0, 0.34);
+}
+
+html.dark .yg-glass-nav--portrait {
+  background:
+    radial-gradient(120% 70% at 18% 0%, rgba(255, 255, 255, 0.14), transparent 58%),
+    linear-gradient(160deg, rgba(38, 42, 48, 0.54), rgba(16, 18, 22, 0.34));
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.18),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.5),
+    0 14px 36px rgba(0, 0, 0, 0.5),
+    0 2px 8px rgba(0, 0, 0, 0.36);
+}
+
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  html.dark .yg-glass-nav--landscape {
+    background: linear-gradient(160deg, rgba(38, 42, 48, 0.92), rgba(16, 18, 22, 0.86));
+  }
+
+  html.dark .yg-glass-nav--portrait {
+    background: linear-gradient(160deg, rgba(38, 42, 48, 0.92), rgba(16, 18, 22, 0.86));
+  }
+}
+
+.yg-glass-nav__items {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 6px;
+}
+
+.yg-glass-nav--landscape .yg-glass-nav__items {
+  flex-direction: column;
+  height: 100%;
+  padding: var(--yg-space-2) 0;
+}
+
+.yg-glass-nav--landscape .yg-glass-nav__theme {
+  margin-top: auto;
+}
+
+/* 弹性滑动指示器（液态玻璃高亮药丸）
+   位移弹簧由 UserNav.vue 用 Web Animation 显式播放（读当前渲染位移 → 弹簧到目标项）：
+   CSS transition 版本在切到 /me 时会被页面挂载期间的样式重算取消（transitioncancel），
+   表现为「第一次有动画、之后直接跳过去」。这里只保留透明度过渡，尺寸/位移一律交给
+   显式动画或行内样式，避免两套机制互相打断。 */
+.yg-glass-nav__indicator {
+  position: absolute;
+  left: 0;
+  top: 0;
+  border-radius: 0;
+  clip-path: polygon(0 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 0 100%);
+  background: var(--yg-color-primary-soft);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.55),
+    0 2px 8px rgba(14, 165, 233, 0.25);
+  transition: opacity var(--yg-dur-base) var(--yg-ease-out);
+  pointer-events: none;
+  will-change: transform;
+}
+
+html.dark .yg-glass-nav__indicator {
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.15),
+    0 2px 8px rgba(14, 165, 233, 0.3);
+}
+
+/* 导航项：44px 触控目标 + 按压回弹 */
+.yg-glass-nav__item {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border: none;
+  border-radius: 0;
+  clip-path: polygon(0 0, 100% 0, 100% calc(100% - 7px), calc(100% - 7px) 100%, 0 100%);
+  background: transparent;
+  color: var(--yg-text-tertiary);
+  cursor: pointer;
+  transition:
+    color var(--yg-dur-base) var(--yg-ease-out),
+    background-color var(--yg-dur-base) var(--yg-ease-out),
+    transform var(--yg-dur-base) var(--yg-ease-spring),
+    filter var(--yg-dur-base) var(--yg-ease-out);
+}
+
+/* 点击目标：向导航外侧突出，带硬/软两层阴影；指示器同时向左收缩再展开。 */
+.yg-glass-nav__item.is-protruding {
+  z-index: 2;
+  color: var(--yg-color-primary);
+}
+
+.yg-glass-nav--landscape .yg-glass-nav__item.is-protruding {
+  transform: translate3d(-7px, 0, 0) scale(1.08);
+  filter:
+    drop-shadow(4px 4px 0 color-mix(in srgb, var(--yg-color-primary) 24%, transparent))
+    drop-shadow(0 8px 14px rgba(5, 6, 8, 0.22));
+}
+
+.yg-glass-nav--portrait .yg-glass-nav__item.is-protruding {
+  transform: translate3d(0, -8px, 0) scale(1.06);
+  filter:
+    drop-shadow(0 5px 0 color-mix(in srgb, var(--yg-color-primary) 22%, transparent))
+    drop-shadow(0 8px 14px rgba(5, 6, 8, 0.22));
+}
+
+.yg-glass-nav__item:hover {
+  color: var(--yg-text-primary);
+}
+
+.yg-glass-nav__item:active {
+  transform: scale(0.86);
+  transition-timing-function: var(--yg-ease-spring);
+}
+
+.yg-glass-nav__item.is-active {
+  color: var(--yg-color-primary);
+}
+
+.yg-glass-nav__item .el-icon {
+  font-size: 22px;
+}
+
+.yg-glass-nav__divider {
+  flex-shrink: 0;
+  background: var(--yg-border-default);
+}
+
+.yg-glass-nav--portrait .yg-glass-nav__divider {
+  width: 1px;
+  height: 22px;
+  margin: 0 4px;
+}
+
+.yg-glass-nav--landscape .yg-glass-nav__divider {
+  width: 22px;
+  height: 1px;
+  margin: 4px 0;
+}
+
+/* 主题切换按钮：点击旋转一整圈，旋转中图标随整屏快照交叉淡化
+   时长与 View Transitions 共用 --yg-dur-page，解锁时机由 animationend 反推，
+   JS 侧不再写死毫秒数。 */
+.yg-glass-nav__theme-icon {
+  display: inline-flex;
+}
+
+.yg-glass-nav__theme-icon.spinning {
+  animation: yg-theme-spin var(--yg-dur-page) var(--yg-ease-spring);
+}
+
+@keyframes yg-theme-spin {
+  from {
+    transform: rotate(0deg) scale(0.85);
+  }
+  50% {
+    transform: rotate(180deg) scale(1.08);
+  }
+  to {
+    transform: rotate(360deg) scale(1);
+  }
+}
+
+/* 深浅色整屏过渡：View Transitions 快照交叉淡化（非线性缓动）
+   用 :root 收窄伪元素（::view-transition-* 挂在文档元素上）是为了稳压 flat.css
+   里同名的 480ms 字面量规则——它在 main.ts 中晚于本文件引入，特异性相同时会
+   覆盖这里。这样主题时长/曲线只有「--yg-* 令牌」这一处事实来源；flat.css 的
+   重复段应在其归属改动中删除，别在这里继续加特异性。 */
+:root::view-transition-old(root),
+:root::view-transition-new(root) {
+  animation-duration: var(--yg-dur-page);
+  animation-timing-function: var(--yg-ease-in-out);
+  mix-blend-mode: normal;
+}
+
+::view-transition-old(root) {
+  z-index: 1;
+}
+
+::view-transition-new(root) {
+  z-index: 2147483646;
+}
+
+/* 减少动效：View Transitions 的伪元素不在 base.css 的 `*` 降级范围内，
+   这里显式关掉快照动画，等价于原来的 reduceMotion() 判断（瞬时换肤）。 */
+@media (prefers-reduced-motion: reduce) {
+  :root::view-transition-group(root),
+  :root::view-transition-old(root),
+  :root::view-transition-new(root) {
+    animation: none;
+  }
+}

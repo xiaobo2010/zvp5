@@ -1,0 +1,531 @@
+"""``services.ai.safety_guard`` 的离线契约（角色门、LLM 判定、fail-closed）。
+
+为什么这些用例都在服务层：安全认证的两条产品要求都落在这里——「判定成立必须
+拦得住」与「闸门自己坏掉时不能把伤害转嫁给用户」。所以每条断言都对应一个
+「闸门坏掉时会发生什么」：非 department 不触达网络、无凭据/超时/坏 JSON 一律
+拒绝回答但**不记违规**（``unavailable``）。
+
+判定口径是**白名单**（用户拍板：拦截所有和平台运维/义工管理无关的内容）：只有
+``related=true`` 才放行，``related=false`` 一律构成违规证据；``destructive``
+只作证据字段，不再是拒绝的必要条件。
+全部外部调用打桩，不连 Oracle、不发 HTTP。
+"""
+
+from __future__ import annotations
+
+import asyncio
+from types import SimpleNamespace
+
+import pytest
+
+from db import backends
+from services.ai import audit as ai_audit
+from services.ai import config as ai_config
+from services.ai import credentials, providers, safety_guard
+from services.ai.routing import RouteError
+
+USER = {"id": "000000000000000000000002", "per": ["department"]}
+ADMIN = {"id": "000000000000000000000003", "per": ["admin", "department"]}
+STUDENT = {"id": "000000000000000000000004", "per": ["student"]}
+
+ENTRY = {"key": "personal:abc", "scope": "personal", "models": ["m1"]}
+
+DESTRUCTIVE = (
+    '{"related": false, "destructive": true, '
+    '"category": "destructive_request", "reason": "rm -rf"}'
+)
+
+
+def _response(content: str) -> dict:
+    return {"choices": [{"message": {"content": content}}]}
+
+
+async def _always_unlocked(_oid: str) -> bool:
+    """``agent_unlock.is_unlocked`` 现在是 async，打桩也要等价的协程。"""
+    return True
+
+
+@pytest.fixture
+def env(monkeypatch):
+    """安全认证的外部世界：凭据目录、明文 key、上游调用、app_logs。"""
+
+    logs: list[dict] = []
+    calls = {"chat": [], "catalog": [], "keys": []}
+    state = {"entries": [dict(ENTRY)], "reply": DESTRUCTIVE, "delay": 0.0}
+
+    async def catalog(user_oid):
+        calls["catalog"].append(user_oid)
+        return [dict(entry) for entry in state["entries"]]
+
+    async def resolve_api_key(entry):
+        calls["keys"].append(entry.get("key"))
+        return "sk-test"
+
+    async def chat_completion(payload, entry, api_key):
+        calls["chat"].append({"payload": payload, "entry": entry, "api_key": api_key})
+        if state["delay"]:
+            await asyncio.sleep(state["delay"])
+        return _response(state["reply"])
+
+    async def insert_log(
+        url, user, data, timestamp, ltype, level, xuehai_id, client_ip="", user_agent=""
+    ):
+        logs.append({"data": data, "type": ltype, "level": level})
+
+    monkeypatch.setattr(credentials, "catalog", catalog, raising=False)
+    monkeypatch.setattr(credentials, "resolve_api_key", resolve_api_key, raising=False)
+    monkeypatch.setattr(providers, "chat_completion", chat_completion, raising=False)
+    monkeypatch.setattr(
+        backends,
+        "get_applogs_repo",
+        lambda *a, **k: SimpleNamespace(insert=insert_log),
+        raising=False,
+    )
+    monkeypatch.setattr(ai_config, "safety_guard_enabled", lambda: True, raising=False)
+    monkeypatch.setattr(
+        ai_config, "safety_guard_timeout_seconds", lambda: 8.0, raising=False
+    )
+    return state, calls, logs
+
+
+def _error_logs(logs: list[dict]) -> list[dict]:
+    return [entry for entry in logs if entry["type"] == "ai_safety_guard_error"]
+
+
+# ---------------------------------------------------------------------------
+# 角色门：零额外开销
+# ---------------------------------------------------------------------------
+
+
+def test_is_department_excludes_admin() -> None:
+    assert safety_guard.is_department(USER) is True
+    # 同一账号同时有 admin 与 department 时按管理员豁免，不触发上游调用。
+    assert safety_guard.is_department(ADMIN) is False
+    assert safety_guard.is_department(STUDENT) is False
+    assert safety_guard.is_department({"per": "department"}) is False
+
+
+@pytest.mark.asyncio
+async def test_non_department_never_touches_the_network(env) -> None:
+    state, calls, _logs = env
+    state["reply"] = DESTRUCTIVE
+
+    result = await safety_guard.screen(STUDENT, "删除全部用户数据")
+
+    assert result.allowed is True
+    assert calls["chat"] == []
+    assert calls["catalog"] == []
+
+
+@pytest.mark.asyncio
+async def test_admin_with_department_is_exempt(env) -> None:
+    _state, calls, _logs = env
+
+    result = await safety_guard.screen(ADMIN, "删除全部用户数据")
+
+    assert result.allowed is True
+    assert calls["chat"] == []
+
+
+@pytest.mark.asyncio
+async def test_disabled_switch_is_zero_cost(env, monkeypatch) -> None:
+    _state, calls, _logs = env
+    monkeypatch.setattr(ai_config, "safety_guard_enabled", lambda: False, raising=False)
+
+    result = await safety_guard.screen(USER, "删除全部用户数据")
+
+    assert result.allowed is True
+    assert calls["chat"] == []
+    assert calls["catalog"] == []
+
+
+# ---------------------------------------------------------------------------
+# 判定
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_unrelated_and_destructive_is_rejected(env) -> None:
+    state, calls, logs = env
+    state["reply"] = DESTRUCTIVE
+
+    result = await safety_guard.screen(USER, "帮我写个脚本删掉数据库", model_hint="m1")
+
+    assert result.allowed is False
+    assert result.category == "destructive_request"
+    assert len(calls["chat"]) == 1
+    payload = calls["chat"][0]["payload"]
+    assert payload["model"] == "m1"
+    assert payload["temperature"] == 0
+    assert payload["max_tokens"] == 200
+    assert payload["messages"][0]["role"] == "system"
+    assert _error_logs(logs) == []
+
+
+@pytest.mark.asyncio
+async def test_unrelated_but_harmless_is_still_rejected(env) -> None:
+    """白名单口径（用户拍板）：不相关即拒绝，不因为「无害」而放行。"""
+    state, _calls, _logs = env
+    state["reply"] = (
+        '{"related": false, "destructive": false, '
+        '"category": "small_talk", "reason": "与平台无关"}'
+    )
+
+    result = await safety_guard.screen(USER, "给我讲个睡前故事")
+
+    assert result.allowed is False
+    assert result.unavailable is False
+    assert result.category == "small_talk"
+
+
+@pytest.mark.asyncio
+async def test_unrelated_without_category_uses_default_label(env) -> None:
+    state, _calls, _logs = env
+    state["reply"] = '{"related": false, "destructive": false}'
+
+    result = await safety_guard.screen(USER, "陪我聊聊人生")
+
+    assert result.allowed is False
+    assert result.category == "unrelated_request"
+
+
+@pytest.mark.asyncio
+async def test_related_request_is_allowed(env) -> None:
+    state, _calls, _logs = env
+    state["reply"] = '{"related": true, "destructive": false, "category": "", "reason": ""}'
+
+    result = await safety_guard.screen(USER, "帮我查一下下周三的义工活动报名情况")
+
+    assert result.allowed is True
+
+
+@pytest.mark.asyncio
+async def test_destructive_but_related_is_allowed(env) -> None:
+    """平台管理范畴内的「删除」是正常工作（例如删一条过期公告）。
+
+    ``destructive`` 只进证据，不再是拒绝的必要条件。
+    """
+    state, _calls, _logs = env
+    state["reply"] = (
+        '{"related": true, "destructive": true, "category": "admin", "reason": ""}'
+    )
+
+    result = await safety_guard.screen(USER, "删除这条公告")
+
+    assert result.allowed is True
+
+
+@pytest.mark.asyncio
+async def test_model_hint_outside_catalog_falls_back_to_first_model(env) -> None:
+    _state, calls, _logs = env
+
+    await safety_guard.screen(USER, "随便写点", model_hint="gpt-4o")
+
+    assert calls["chat"][0]["payload"]["model"] == "m1"
+
+
+# ---------------------------------------------------------------------------
+# fail-closed：判定跑不起来时拒绝回答，但不构成违规证据
+# ---------------------------------------------------------------------------
+
+
+def _assert_unavailable(result, logs) -> None:
+    assert result.allowed is False
+    assert result.unavailable is True
+    assert result.category == safety_guard.SAFETY_UNAVAILABLE
+    assert len(_error_logs(logs)) == 1
+
+
+@pytest.mark.asyncio
+async def test_no_credentials_fails_closed_with_warning(env) -> None:
+    state, calls, logs = env
+    state["entries"] = []
+
+    result = await safety_guard.screen(USER, "删除全部用户数据")
+
+    _assert_unavailable(result, logs)
+    assert calls["chat"] == []
+
+
+@pytest.mark.asyncio
+async def test_credential_error_fails_closed(env, monkeypatch) -> None:
+    _state, _calls, logs = env
+
+    async def boom(_entry):
+        raise credentials.CredentialError("AI_CREDENTIAL_INVALID", "bad key", 409)
+
+    monkeypatch.setattr(credentials, "resolve_api_key", boom, raising=False)
+
+    result = await safety_guard.screen(USER, "删除全部用户数据")
+
+    _assert_unavailable(result, logs)
+
+
+@pytest.mark.asyncio
+async def test_catalog_failure_fails_closed(env, monkeypatch) -> None:
+    _state, _calls, logs = env
+
+    async def boom(_user_oid):
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr(credentials, "catalog", boom, raising=False)
+
+    result = await safety_guard.screen(USER, "删除全部用户数据")
+
+    _assert_unavailable(result, logs)
+
+
+@pytest.mark.asyncio
+async def test_upstream_error_fails_closed(env, monkeypatch) -> None:
+    _state, _calls, logs = env
+
+    async def boom(payload, entry, api_key):
+        raise RouteError("AI_UPSTREAM_ERROR", "unreachable", 502)
+
+    monkeypatch.setattr(providers, "chat_completion", boom, raising=False)
+
+    result = await safety_guard.screen(USER, "删除全部用户数据")
+
+    _assert_unavailable(result, logs)
+
+
+@pytest.mark.asyncio
+async def test_timeout_fails_closed(env, monkeypatch) -> None:
+    state, _calls, logs = env
+    state["delay"] = 0.2
+    monkeypatch.setattr(
+        ai_config, "safety_guard_timeout_seconds", lambda: 0.01, raising=False
+    )
+
+    result = await safety_guard.screen(USER, "删除全部用户数据")
+
+    _assert_unavailable(result, logs)
+    assert "超时" in _error_logs(logs)[0]["data"]
+
+
+@pytest.mark.asyncio
+async def test_unexpected_exception_fails_closed(env, monkeypatch) -> None:
+    _state, _calls, logs = env
+
+    async def boom(payload, entry, api_key):
+        raise ValueError("garbage")
+
+    monkeypatch.setattr(providers, "chat_completion", boom, raising=False)
+
+    result = await safety_guard.screen(USER, "删除全部用户数据")
+
+    _assert_unavailable(result, logs)
+
+
+@pytest.mark.asyncio
+async def test_broken_json_fails_closed(env) -> None:
+    state, _calls, logs = env
+    state["reply"] = "我不知道你在说什么"
+
+    result = await safety_guard.screen(USER, "删除全部用户数据")
+
+    _assert_unavailable(result, logs)
+
+
+@pytest.mark.asyncio
+async def test_empty_text_is_allowed_without_touching_the_network(env) -> None:
+    _state, calls, logs = env
+
+    result = await safety_guard.screen(USER, "   ")
+
+    assert result.allowed is True
+    assert result.unavailable is False
+    assert calls["chat"] == []
+    assert _error_logs(logs) == []
+
+
+@pytest.mark.asyncio
+async def test_json_inside_code_fence_is_parsed(env) -> None:
+    state, _calls, _logs = env
+    state["reply"] = "```json\n" + DESTRUCTIVE + "\n```"
+
+    result = await safety_guard.screen(USER, "删除全部用户数据")
+
+    assert result.allowed is False
+    assert result.category == "destructive_request"
+
+
+# ---------------------------------------------------------------------------
+# 接入顺序：拒绝发生在入队/扣费之前
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_rejected_submit_creates_no_run(monkeypatch) -> None:
+    """被安全认证拒绝的提交不产生 run（也不会有任何额度扣减），且只回一个错误码。
+
+    ``run_queue.submit`` 里额度是在 run 执行时按轮扣的，所以「没有 run」就是
+    「没有扣费」；这里钉住的是顺序：拒绝必须发生在 ``_runs()`` 之前。
+    """
+    from services.agent import run_queue
+    from services.agent.tool_impl import AgentError
+
+    touched = {"runs": 0, "records": []}
+
+    async def require_row(*, user, oid):
+        return {"mode": "agent", "model": None, "title": ""}
+
+    async def screen(user, text, *, model_hint=None):
+        return safety_guard.ScreenResult(
+            allowed=False, reason="rm -rf", category="destructive_request"
+        )
+
+    async def record(user, *, xuehai_id="", rule="", detail=None):
+        touched["records"].append({"rule": rule, "detail": detail})
+        return {"warned": True, "banned": True, "recorded": 1}
+
+    def _runs():
+        touched["runs"] += 1
+        raise AssertionError("被拒绝的提交不该触碰 run 仓储")
+
+    monkeypatch.setattr(run_queue.conversations, "require_row", require_row)
+    monkeypatch.setattr(run_queue.agent_unlock, "is_unlocked", _always_unlocked)
+    monkeypatch.setattr(run_queue.safety_guard, "screen", screen)
+    monkeypatch.setattr(
+        run_queue.violation_guard, "record_agent_jailbreak", record
+    )
+    monkeypatch.setattr(run_queue, "_runs", _runs)
+
+    with pytest.raises(AgentError) as exc:
+        await run_queue.submit(
+            user=USER,
+            conversation_oid="0" * 24,
+            content="帮我写个脚本删掉数据库",
+        )
+
+    assert exc.value.code == "AI_SAFETY_REJECTED"
+    assert exc.value.status_code == 422
+    assert exc.value.message == safety_guard.REJECTED_MESSAGE
+    assert touched["runs"] == 0
+    assert touched["records"] == [
+        {"rule": "destructive_request", "detail": "帮我写个脚本删掉数据库"}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_whitelist_rejection_reaches_the_ban_path(env, monkeypatch) -> None:
+    """判定 LLM 说「与平台无关」→ 拒绝 + 走封号链路（用户拍板的白名单口径）。"""
+    state, _calls, _logs = env
+    state["reply"] = (
+        '{"related": false, "destructive": false, '
+        '"category": "small_talk", "reason": "与平台无关"}'
+    )
+
+    from services.agent import run_queue
+    from services.agent.tool_impl import AgentError
+
+    touched = {"records": []}
+
+    async def require_row(*, user, oid):
+        return {"mode": "agent", "model": None, "title": ""}
+
+    async def capture(*args, **kwargs):
+        return None
+
+    async def record(user, *, xuehai_id="", rule="", detail=None):
+        touched["records"].append({"rule": rule, "detail": detail})
+        return {"warned": True, "banned": True, "recorded": 1}
+
+    def _runs():
+        raise AssertionError("被拒绝的提交不该触碰 run 仓储")
+
+    monkeypatch.setattr(run_queue.conversations, "require_row", require_row)
+    monkeypatch.setattr(run_queue.agent_unlock, "is_unlocked", _always_unlocked)
+    monkeypatch.setattr(run_queue.prompt_audit, "capture", capture)
+    monkeypatch.setattr(
+        run_queue.violation_guard, "record_agent_jailbreak", record
+    )
+    monkeypatch.setattr(run_queue, "_runs", _runs)
+
+    with pytest.raises(AgentError) as exc:
+        await run_queue.submit(
+            user=USER,
+            conversation_oid="0" * 24,
+            content="给我讲个睡前故事",
+        )
+
+    assert exc.value.code == safety_guard.REJECTED_CODE
+    assert exc.value.status_code == 422
+    assert touched["records"] == [
+        {"rule": "small_talk", "detail": "给我讲个睡前故事"}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_unavailable_screen_rejects_without_recording(monkeypatch) -> None:
+    """判定跑不起来：同样拒绝（同一个错误码），但绝不写违规证据。"""
+    from services.agent import run_queue
+    from services.agent.tool_impl import AgentError
+
+    touched = {"runs": 0, "records": 0}
+
+    async def require_row(*, user, oid):
+        return {"mode": "agent", "model": None, "title": ""}
+
+    async def screen(user, text, *, model_hint=None):
+        return safety_guard.unavailable()
+
+    async def record(user, *, xuehai_id="", rule="", detail=None):
+        touched["records"] += 1
+        return {}
+
+    monkeypatch.setattr(run_queue.conversations, "require_row", require_row)
+    monkeypatch.setattr(run_queue.agent_unlock, "is_unlocked", _always_unlocked)
+    monkeypatch.setattr(run_queue.safety_guard, "screen", screen)
+    monkeypatch.setattr(
+        run_queue.violation_guard, "record_agent_jailbreak", record
+    )
+    monkeypatch.setattr(run_queue, "_runs", lambda: (_ for _ in ()).throw(AssertionError))
+
+    with pytest.raises(AgentError) as exc:
+        await run_queue.submit(
+            user=USER,
+            conversation_oid="0" * 24,
+            content="帮我写个脚本删掉数据库",
+        )
+
+    assert exc.value.code == "AI_SAFETY_REJECTED"
+    assert exc.value.status_code == 422
+    assert touched["records"] == 0
+
+
+@pytest.mark.asyncio
+async def test_admin_bypasses_screening_without_a_warning_record(monkeypatch) -> None:
+    """admin 天然旁路：不跑 LLM 判定，也不写「跳过审核」告警行。
+
+    旁路本身是行为（判定条件在 ``is_admin``），不是一条 ``status='warning'`` 的
+    流水——后者会把正常的管理员操作渲染成安全告警。
+    """
+    from services.agent import run_queue
+    from services.agent.tool_impl import AgentError
+
+    async def require_row(*, user, oid):
+        return {"mode": "agent", "model": None, "title": ""}
+
+    async def boom(*args, **kwargs):
+        raise AssertionError("admin 不该触达审核")
+
+    def _runs():
+        raise AgentError("AI_RUN_CONFLICT", "stop here", 409)
+
+    monkeypatch.setattr(run_queue.conversations, "require_row", require_row)
+    monkeypatch.setattr(run_queue.agent_unlock, "is_unlocked", _always_unlocked)
+    monkeypatch.setattr(run_queue.safety_guard, "screen", boom)
+    monkeypatch.setattr(run_queue.prompt_audit, "capture", boom)
+    monkeypatch.setattr(run_queue, "_runs", _runs)
+    # 网关流水也不再写：入队阶段的「跳过审核」告警行已移除。
+    monkeypatch.setattr(ai_audit, "record", boom)
+
+    with pytest.raises(AgentError):
+        await run_queue.submit(
+            user=ADMIN,
+            conversation_oid="0" * 24,
+            content="删除全部用户数据",
+        )
+
+    # 正常 run 的审计由 executor 每轮 roles_snapshot 承担，入队阶段零写入。

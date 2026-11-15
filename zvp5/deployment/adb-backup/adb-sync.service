@@ -1,0 +1,13 @@
+[Unit]
+Description=zvp5 ADB backup sync (prod zvp5adb -> adb2 zvp5adb2)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/root/adb-backup
+ExecStart=/www/zvp5/backend/.venv/bin/python /root/adb-backup/sync_adb.py
+StandardOutput=append:/var/log/adb-sync.log
+StandardError=append:/var/log/adb-sync.log
+TimeoutStartSec=3600

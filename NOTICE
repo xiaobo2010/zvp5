@@ -1,0 +1,19 @@
+许可与来源
+==========
+
+本仓库的代码（除个别文件另有声明外）采用 **MIT 许可证**，全文见 `LICENSE`。
+
+来源与署名
+----------
+
+- `zvp5/zvp5-frontend/` 派生自 [`zvms/zvms4-frontend`](https://github.com/zvms/zvms4-frontend)
+  （MIT，Copyright (c) 2023 zvms）。该子目录保留上游原始 `LICENSE`。
+- `zvp5/zvp5-backend-python/` 派生自 [`zvms/zvms4-backend-python`](https://github.com/zvms/zvms4-backend-python)
+  （上游未附许可证文件）。本仓库由所有者 XiaoBo Huang 统一按 MIT 授权发布。
+- `reference/` 下的归档代码仅作历史参考，不参与构建，随本仓库一并以 MIT 分发。
+
+不随仓库分发的内容
+------------------
+
+与第三方教学平台相关的接口逆向分析记录、参考归档与其提取出的签名材料，已由作者移出
+本仓库，另存于仓库外的私有存档，不在本仓库的授权范围内。

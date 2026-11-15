@@ -1,0 +1,19 @@
+# DEPRECATED: 与现网完全脱节的历史样例（无 TLS、无 SSE buffering off、端口 8000），
+# 照抄会复现已记录过的 SSE 卡死与 WS 404 事故。现网配置见 docs/DEPLOY_FRONTEND_TO_BACKEND_HOST.md
+# 与 docs/DEPLOY_API_SPLIT.md。仅作历史参考保留。
+server {
+    listen 80;
+    server_name api.zvms.site;
+
+    location / {
+        proxy_pass http://127.0.0.1:8000;  # Update with your app's port
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_cache_bypass $http_upgrade;
+    }
+
+    error_log /var/log/nginx/zvms.log;
+    access_log /var/log/nginx/zvms.log;
+}

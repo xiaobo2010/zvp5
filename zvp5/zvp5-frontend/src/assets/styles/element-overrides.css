@@ -1,0 +1,482 @@
+/* ==========================================================================
+   义工平台 · Element Plus 令牌适配层 element-overrides.css
+   文件：src/assets/styles/element-overrides.css
+   层级：令牌层（位于「标准样式库 yg/main.css」之后、「项目自定义层 flat.css」之前）
+
+   职责：把 Element Plus 的 CSS 变量映射到《前端设计准则》定义的 --yg-* 令牌，
+        让全部 EP 组件自动跟随准则的取色、圆角、字号、控件高度与层次。
+
+   约定（见《前端设计准则.md》第 2、6、7 章）：
+   1. 本文件只做「变量映射」，不重写组件结构；组件外观微调放在 flat.css。
+   2. 颜色、圆角、阴影、字号一律引用 --yg-* 变量，禁止字面量。
+   3. EP 的变量模型天生是「色阶型」（primary-light-3/5/7/8/9、primary-dark-2），
+      而 yg 的语义令牌没有色阶。适配层是唯一消费色阶令牌的位置：这里按
+      「越浅=越浅底、越深=按下态」的语义，把 EP 色阶对齐到 --yg-sky-* /
+      --yg-*-soft 令牌，保证 EP 与业务样式同属一套天蓝色系。
+   4. 选择器用 html:root / html.dark（与 EP 自带的 html.dark 同权重），
+      借助「本文件在 EP 样式之后加载」覆盖 EP 暗色变量，使 EP 在明暗两态
+      都跟随 --yg-* 令牌。
+   ========================================================================== */
+
+/* ---------- 通用令牌（明暗两态共用） ---------- */
+html:root {
+  /* —— 主色：天蓝 ——
+     EP 的浅色阶必须是「单调且互不相同」的阶梯：light-3 最深 → light-9 最浅。
+     若把多档填成同一个值，EP 的 is-plain / is-text / is-disabled 会出现
+     「文字 = light-5、底 = light-9」同值的 1.0:1 隐形文字。
+     这里用 color-mix 按固定比例向表面色靠拢，生成可预期的五档；
+     混色基准是 --yg-bg-surface，深色下自动反向（浅色阶贴近深表面）。 */
+  --el-color-primary: var(--yg-color-primary);
+  --el-color-primary-light-3: color-mix(in srgb, var(--yg-color-primary) 65%, var(--yg-bg-surface));
+  --el-color-primary-light-5: color-mix(in srgb, var(--yg-color-primary) 45%, var(--yg-bg-surface));
+  --el-color-primary-light-7: color-mix(in srgb, var(--yg-color-primary) 30%, var(--yg-bg-surface));
+  --el-color-primary-light-8: color-mix(in srgb, var(--yg-color-primary) 20%, var(--yg-bg-surface));
+  --el-color-primary-light-9: color-mix(in srgb, var(--yg-color-primary) 10%, var(--yg-bg-surface));
+  --el-color-primary-dark-2: var(--yg-color-primary-active);
+
+  /* —— 成功：绿 —— */
+  --el-color-success: var(--yg-color-success);
+  --el-color-success-light-3: color-mix(in srgb, var(--yg-color-success) 65%, var(--yg-bg-surface));
+  --el-color-success-light-5: color-mix(in srgb, var(--yg-color-success) 45%, var(--yg-bg-surface));
+  --el-color-success-light-7: color-mix(in srgb, var(--yg-color-success) 30%, var(--yg-bg-surface));
+  --el-color-success-light-8: color-mix(in srgb, var(--yg-color-success) 20%, var(--yg-bg-surface));
+  --el-color-success-light-9: color-mix(in srgb, var(--yg-color-success) 10%, var(--yg-bg-surface));
+  --el-color-success-dark-2: var(--yg-color-success-active);
+
+  /* —— 警告：橙 —— */
+  --el-color-warning: var(--yg-color-warning);
+  --el-color-warning-light-3: color-mix(in srgb, var(--yg-color-warning) 65%, var(--yg-bg-surface));
+  --el-color-warning-light-5: color-mix(in srgb, var(--yg-color-warning) 45%, var(--yg-bg-surface));
+  --el-color-warning-light-7: color-mix(in srgb, var(--yg-color-warning) 30%, var(--yg-bg-surface));
+  --el-color-warning-light-8: color-mix(in srgb, var(--yg-color-warning) 20%, var(--yg-bg-surface));
+  --el-color-warning-light-9: color-mix(in srgb, var(--yg-color-warning) 10%, var(--yg-bg-surface));
+  --el-color-warning-dark-2: var(--yg-color-warning-active);
+
+  /* —— 危险：红（仅高危/破坏性操作，见准则第 5 章） —— */
+  --el-color-danger: var(--yg-color-danger);
+  --el-color-danger-light-3: color-mix(in srgb, var(--yg-color-danger) 65%, var(--yg-bg-surface));
+  --el-color-danger-light-5: color-mix(in srgb, var(--yg-color-danger) 45%, var(--yg-bg-surface));
+  --el-color-danger-light-7: color-mix(in srgb, var(--yg-color-danger) 30%, var(--yg-bg-surface));
+  --el-color-danger-light-8: color-mix(in srgb, var(--yg-color-danger) 20%, var(--yg-bg-surface));
+  --el-color-danger-light-9: color-mix(in srgb, var(--yg-color-danger) 10%, var(--yg-bg-surface));
+  --el-color-danger-dark-2: var(--yg-color-danger-active);
+  --el-color-error: var(--yg-color-danger);
+  --el-color-error-light-3: color-mix(in srgb, var(--yg-color-danger) 65%, var(--yg-bg-surface));
+  --el-color-error-light-5: color-mix(in srgb, var(--yg-color-danger) 45%, var(--yg-bg-surface));
+  --el-color-error-light-7: color-mix(in srgb, var(--yg-color-danger) 30%, var(--yg-bg-surface));
+  --el-color-error-light-8: color-mix(in srgb, var(--yg-color-danger) 20%, var(--yg-bg-surface));
+  --el-color-error-light-9: color-mix(in srgb, var(--yg-color-danger) 10%, var(--yg-bg-surface));
+  --el-color-error-dark-2: var(--yg-color-danger-active);
+
+  /* —— 信息：中性灰。yg 体系里的「信息蓝」由 --yg-color-info 单独提供，
+        交由 .yg-tag--sky / .yg-alert--info 等显式类使用；EP 的 info 保持中性，
+        避免蓝色泛滥（准则 2.1：主色视觉面积不超过 15%）。 —— */
+  --el-color-info: var(--yg-text-tertiary);
+  --el-color-info-light-3: color-mix(in srgb, var(--el-color-info) 65%, var(--yg-bg-surface));
+  --el-color-info-light-5: color-mix(in srgb, var(--el-color-info) 45%, var(--yg-bg-surface));
+  --el-color-info-light-7: color-mix(in srgb, var(--el-color-info) 30%, var(--yg-bg-surface));
+  --el-color-info-light-8: color-mix(in srgb, var(--el-color-info) 20%, var(--yg-bg-surface));
+  --el-color-info-light-9: color-mix(in srgb, var(--el-color-info) 10%, var(--yg-bg-surface));
+  --el-color-info-dark-2: var(--yg-text-secondary);
+
+  --el-color-white: var(--yg-color-on-primary);
+  --el-color-black: var(--yg-text-primary);
+
+  /* —— 背景 —— */
+  --el-bg-color: var(--yg-bg-surface);
+  --el-bg-color-page: var(--yg-bg-page);
+  --el-bg-color-overlay: var(--yg-bg-surface-raised);
+  --el-fill-color: var(--yg-bg-surface-sunken);
+  --el-fill-color-light: var(--yg-bg-surface-sunken);
+  --el-fill-color-lighter: var(--yg-bg-surface-sunken);
+  --el-fill-color-extra-light: var(--yg-bg-surface-sunken);
+  --el-fill-color-blank: var(--yg-bg-surface);
+  --el-fill-color-dark: var(--yg-border-default);
+  --el-fill-color-darker: var(--yg-border-strong);
+
+  /* —— 文字 —— */
+  --el-text-color-primary: var(--yg-text-primary);
+  --el-text-color-regular: var(--yg-text-secondary);
+  --el-text-color-secondary: var(--yg-text-tertiary);
+  --el-text-color-placeholder: var(--yg-text-tertiary);
+  --el-text-color-disabled: var(--yg-text-disabled);
+  --el-disabled-text-color: var(--yg-text-disabled);
+  --el-disabled-bg-color: var(--yg-bg-surface-sunken);
+  --el-disabled-border-color: var(--yg-border-default);
+
+  /* —— 边框 —— */
+  --el-border-color: var(--yg-border-default);
+  --el-border-color-light: var(--yg-border-default);
+  --el-border-color-lighter: var(--yg-border-subtle);
+  --el-border-color-extra-light: var(--yg-border-subtle);
+  --el-border-color-dark: var(--yg-border-strong);
+  --el-border-color-darker: var(--yg-border-strong);
+
+  /* —— 圆角：只用 G2 档位（准则 2.4） —— */
+  --el-border-radius-base: var(--yg-radius-md);
+  --el-border-radius-small: var(--yg-radius-sm);
+  --el-border-radius-round: var(--yg-radius-pill);
+  --el-border-radius-circle: var(--yg-radius-pill);
+  --el-card-border-radius: var(--yg-radius-lg);
+  --el-dialog-border-radius: var(--yg-radius-xl);
+  --el-messagebox-border-radius: var(--yg-radius-xl);
+  --el-notification-border-radius: var(--yg-radius-xl);
+  --el-message-border-radius: var(--yg-radius-md);
+  --el-popper-border-radius: var(--yg-radius-lg);
+  --el-tag-border-radius: var(--yg-radius-xs);
+  --el-button-border-radius: var(--yg-radius-md);
+  --el-alert-border-radius: var(--yg-radius-md);
+  --el-scrollbar-radius: var(--yg-radius-pill);
+
+  /* —— 字体 —— */
+  --el-font-family: var(--yg-font-sans);
+  --el-font-size-extra-small: var(--yg-font-size-xs);
+  --el-font-size-small: var(--yg-font-size-sm);
+  --el-font-size-base: var(--yg-font-size-md);
+  --el-font-size-medium: var(--yg-font-size-lg);
+  --el-font-size-large: var(--yg-font-size-lg);
+  --el-form-item-label-font-size: var(--yg-font-size-sm);
+
+  /* —— 控件高度 —— */
+  --el-component-size: var(--yg-control-height-md);
+  --el-component-size-small: var(--yg-control-height-sm);
+  --el-component-size-large: var(--yg-control-height-lg);
+  --el-component-size-extra-large: var(--yg-control-height-lg);
+
+  /* —— 层次：阴影是唯一的层次来源（准则 2.5） —— */
+  --el-box-shadow: var(--yg-shadow-lg);
+  --el-box-shadow-light: var(--yg-shadow-md);
+  --el-box-shadow-lighter: var(--yg-shadow-sm);
+  --el-box-shadow-dark: var(--yg-shadow-xl);
+
+  /* —— 动效 —— */
+  --el-transition-duration: var(--yg-dur-base);
+  --el-transition-duration-fast: var(--yg-dur-fast);
+
+  /* —— 组件专属底色 —— */
+  --el-card-bg-color: var(--yg-bg-surface);
+  --el-card-border-color: var(--yg-border-subtle);
+  --el-dialog-bg-color: var(--yg-bg-surface-raised);
+  --el-messagebox-bg-color: var(--yg-bg-surface-raised);
+  --el-drawer-bg-color: var(--yg-bg-surface-raised);
+  --el-message-bg-color: var(--yg-bg-surface-raised);
+  --el-notification-bg-color: var(--yg-bg-surface-raised);
+  --el-popper-bg-color: var(--yg-bg-surface-raised);
+  --el-popper-box-shadow: var(--yg-shadow-md);
+
+  /* —— 表格 —— */
+  --el-table-border-color: var(--yg-border-subtle);
+  --el-table-header-bg-color: var(--yg-bg-surface-sunken);
+  --el-table-header-text-color: var(--yg-text-tertiary);
+  --el-table-text-color: var(--yg-text-primary);
+  --el-table-bg-color: var(--yg-bg-surface);
+  --el-table-tr-bg-color: var(--yg-bg-surface);
+  --el-table-row-hover-bg-color: var(--yg-bg-hover);
+  --el-table-current-row-bg-color: var(--yg-color-primary-soft);
+
+  /* —— 分页 —— */
+  --el-pagination-button-bg-color: var(--yg-bg-surface);
+  --el-pagination-hover-color: var(--yg-color-primary);
+
+  /* —— 键盘焦点（准则 2.5：焦点环必须可见） ——
+     EP 的按钮焦点环默认取 --el-color-primary-light-5，落在白底上约 1.1:1，
+     等于没有焦点环；输入/选择器的聚焦边框也默认取品牌天蓝。
+     统一改走 --yg-focus-ring-color（外圈强色，白底 5.93:1），与全局
+     :focus-visible 的双层焦点环（--yg-focus-ring）同源。 */
+  --el-button-outline-color: var(--yg-focus-ring-color);
+  --el-input-focus-border-color: var(--yg-focus-ring-color);
+  --el-select-input-focus-border-color: var(--yg-focus-ring-color);
+}
+
+/* ==========================================================================
+   遮罩色：准则 2.6 允许弹出层使用半透明遮罩（rgba(0,0,0,0.35) + 模糊）。
+   用 color-mix 把令牌混成半透明黑；不支持 color-mix 的浏览器沿用 EP 自带遮罩色，
+   不会退化成「无遮罩」。
+   ========================================================================== */
+@supports (color: color-mix(in srgb, red, blue)) {
+  html:root {
+    --el-mask-color: color-mix(in srgb, var(--yg-gray-950) 35%, transparent);
+  }
+}
+
+/* ==========================================================================
+   暗色态：EP 自带 html.dark 变量在此被覆盖，暗色下同样跟随 --yg-* 令牌
+   ========================================================================== */
+html.dark {
+  /* 浅色阶无需在此重复：上面的阶梯以 --yg-bg-surface 为混色基准，
+     深色下自动变成「贴近深表面的深色阶」，语义（越浅档越贴近表面）不变。 */
+  --el-button-disabled-text-color: var(--yg-text-disabled-control);
+  --el-disabled-text-color: var(--yg-text-disabled-control);
+  --el-button-outline-color: var(--yg-focus-ring-color);
+  --el-input-focus-border-color: var(--yg-focus-ring-color);
+  --el-select-input-focus-border-color: var(--yg-focus-ring-color);
+  --el-color-info: var(--yg-text-tertiary);
+  --el-bg-color: var(--yg-bg-surface);
+  --el-bg-color-page: var(--yg-bg-page);
+  --el-bg-color-overlay: var(--yg-bg-surface-raised);
+  --el-fill-color-blank: var(--yg-bg-surface);
+  --el-text-color-primary: var(--yg-text-primary);
+  --el-text-color-regular: var(--yg-text-secondary);
+  --el-text-color-secondary: var(--yg-text-tertiary);
+  --el-text-color-placeholder: var(--yg-text-tertiary);
+  --el-text-color-disabled: var(--yg-text-disabled);
+  --el-border-color: var(--yg-border-default);
+  --el-border-color-light: var(--yg-border-default);
+  --el-border-color-lighter: var(--yg-border-subtle);
+  --el-border-color-extra-light: var(--yg-border-subtle);
+  --el-fill-color: var(--yg-bg-surface-sunken);
+  --el-fill-color-light: var(--yg-bg-surface-sunken);
+  --el-fill-color-lighter: var(--yg-bg-surface-sunken);
+  --el-fill-color-extra-light: var(--yg-bg-surface-sunken);
+  --el-box-shadow: var(--yg-shadow-lg);
+  --el-box-shadow-light: var(--yg-shadow-md);
+  --el-box-shadow-lighter: var(--yg-shadow-sm);
+  --el-box-shadow-dark: var(--yg-shadow-xl);
+}
+
+/* ==========================================================================
+   硬规则一：弹出层面板一律实色不透明（准则第 6 章）
+   面板背景 = --yg-bg-surface-raised；禁止半透明、禁止 backdrop-filter。
+   遮罩 .el-overlay 本身属于背景层，允许半透明（准则 2.6）。
+   ========================================================================== */
+.el-dialog,
+.el-message-box,
+.el-drawer,
+.el-notification,
+.el-message,
+.el-popper.is-light,
+.el-select-dropdown,
+.el-autocomplete-suggestion,
+.el-dropdown-menu,
+.el-cascader__dropdown {
+  background-color: var(--yg-bg-surface-raised);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+/* 弹出层阴影统一走 --yg-shadow-lg / md（准则 6.1 第 2 条） */
+.el-dialog,
+.el-message-box,
+.el-notification {
+  box-shadow: var(--yg-shadow-lg);
+}
+
+.el-drawer {
+  box-shadow: var(--yg-shadow-lg);
+}
+
+.el-popper.is-light {
+  box-shadow: var(--yg-shadow-md);
+}
+
+/* ==========================================================================
+   硬规则二：红色只用于高危操作（准则第 5 章）
+   全局层面：EP 的 danger / error 一律指向 --yg-color-danger，
+   不会出现「装饰性红」；普通状态一律走中性灰或语义绿/橙。
+   组件层面：只有「删除 / 清空 / 注销 / 危险确认」允许实心红按钮。
+   ========================================================================== */
+/* EP 的 .el-button--danger 只改底色，文字色仍取 --el-color-white。
+   项目里 --el-color-white 被映射成 --yg-color-on-primary，若该令牌为白则恰好可用；
+   这里显式补齐文字/边框色，保证任何色彩映射下都是「红底白字」，
+   深浅色模式一致（危险确认按钮，如「仍然登出」）。
+   注：写 `.el-button--danger.el-button--danger` 是为了干过 theme-chalk 与 flat.css
+   里同名的单类规则——它们在 el-message-box 这类运行时挂载的场景下会盖住这里的值。 */
+.el-button--danger.el-button--danger {
+  --el-button-text-color: var(--yg-color-on-danger);
+  --el-button-bg-color: var(--yg-color-danger-strong);
+  --el-button-border-color: var(--yg-color-danger-strong);
+  --el-button-hover-text-color: var(--yg-color-on-danger);
+  --el-button-hover-bg-color: var(--yg-color-danger-strong-hover);
+  --el-button-hover-border-color: var(--yg-color-danger-strong-hover);
+  --el-button-active-text-color: var(--yg-color-on-danger);
+  --el-button-active-bg-color: var(--yg-color-danger-strong-active);
+  --el-button-active-border-color: var(--yg-color-danger-strong-active);
+}
+
+/* ==========================================================================
+   主按钮实底：白字必须 ≥ 4.5:1（准则 2.1）
+   --yg-color-primary 是品牌天蓝，白字仅 2.6:1，只能用于图标/边框/选中态；
+   实心底改走 strong 系列（sky-700 → 800 → 900）。
+   双类写法压过 flat.css 的 .el-button--primary（同权重、后加载）。
+   ========================================================================== */
+.el-button--primary.el-button--primary {
+  --el-button-text-color: var(--yg-color-on-primary);
+  --el-button-bg-color: var(--yg-color-primary-strong);
+  --el-button-border-color: var(--yg-color-primary-strong);
+  --el-button-hover-text-color: var(--yg-color-on-primary);
+  --el-button-hover-bg-color: var(--yg-color-primary-strong-hover);
+  --el-button-hover-border-color: var(--yg-color-primary-strong-hover);
+  --el-button-active-text-color: var(--yg-color-on-primary);
+  --el-button-active-bg-color: var(--yg-color-primary-strong-active);
+  --el-button-active-border-color: var(--yg-color-primary-strong-active);
+}
+
+/* ==========================================================================
+   浅色按钮（plain / text / link）：EP 用 light-5 当文字、light-9 当底，
+   软底软字约 1.0–2.6:1。这里统一改成「软底 + 深语义文字」（≥4.5:1），
+   并把 hover / active 一并钉住——EP 默认悬停会把底色切成实心主色，
+   若只改文字色会出现「深字压深底」的二次失败。
+   ========================================================================== */
+.el-button--primary.is-plain,
+.el-button--primary.is-text,
+.el-button--primary.is-link {
+  --el-button-text-color: var(--yg-text-link);
+  --el-button-hover-text-color: var(--yg-text-link-hover);
+  --el-button-hover-link-text-color: var(--yg-text-link-hover);
+  --el-button-active-text-color: var(--yg-text-link-active);
+  --el-button-active-color: var(--yg-text-link-active);
+  --el-button-bg-color: var(--yg-color-primary-soft);
+  --el-button-border-color: var(--el-color-primary-light-5);
+  --el-button-hover-bg-color: var(--yg-color-primary-soft);
+  --el-button-hover-border-color: var(--yg-text-link);
+}
+
+.el-button--success.is-plain,
+.el-button--success.is-text,
+.el-button--success.is-link {
+  --el-button-text-color: var(--yg-text-success);
+  --el-button-hover-text-color: var(--yg-text-success);
+  --el-button-hover-link-text-color: var(--yg-text-success);
+  --el-button-active-text-color: var(--yg-text-success);
+  --el-button-active-color: var(--yg-text-success);
+  --el-button-bg-color: var(--yg-color-success-soft);
+  --el-button-border-color: var(--el-color-success-light-5);
+  --el-button-hover-bg-color: var(--yg-color-success-soft);
+  --el-button-hover-border-color: var(--yg-text-success);
+}
+
+.el-button--warning.is-plain,
+.el-button--warning.is-text,
+.el-button--warning.is-link {
+  --el-button-text-color: var(--yg-text-warning);
+  --el-button-hover-text-color: var(--yg-text-warning);
+  --el-button-hover-link-text-color: var(--yg-text-warning);
+  --el-button-active-text-color: var(--yg-text-warning);
+  --el-button-active-color: var(--yg-text-warning);
+  --el-button-bg-color: var(--yg-color-warning-soft);
+  --el-button-border-color: var(--el-color-warning-light-5);
+  --el-button-hover-bg-color: var(--yg-color-warning-soft);
+  --el-button-hover-border-color: var(--yg-text-warning);
+}
+
+.el-button--danger.is-plain,
+.el-button--danger.is-text,
+.el-button--danger.is-link {
+  --el-button-text-color: var(--yg-text-danger);
+  --el-button-hover-text-color: var(--yg-text-danger-hover);
+  --el-button-hover-link-text-color: var(--yg-text-danger-hover);
+  --el-button-active-text-color: var(--yg-text-danger-hover);
+  --el-button-active-color: var(--yg-text-danger-hover);
+  --el-button-bg-color: var(--yg-color-danger-soft);
+  --el-button-border-color: var(--el-color-danger-light-5);
+  --el-button-hover-bg-color: var(--yg-color-danger-soft);
+  --el-button-hover-border-color: var(--yg-text-danger);
+}
+
+.el-button--info.is-plain,
+.el-button--info.is-text,
+.el-button--info.is-link {
+  --el-button-text-color: var(--yg-text-secondary);
+  --el-button-hover-text-color: var(--yg-text-primary);
+  --el-button-hover-link-text-color: var(--yg-text-primary);
+  --el-button-active-text-color: var(--yg-text-primary);
+  --el-button-active-color: var(--yg-text-primary);
+  --el-button-bg-color: var(--yg-bg-surface-sunken);
+  --el-button-border-color: var(--el-color-info-light-3);
+  --el-button-hover-bg-color: var(--yg-bg-hover);
+  --el-button-hover-border-color: var(--yg-border-strong);
+}
+
+/* 无类型按钮（`<el-button>取消</el-button>`：EP 不加任何 --modifier 类）
+   的悬停默认是「sky-500 文字压 sky-10% 软底」≈2.6:1，与 .yg-btn 侧已修的
+   「悬停往深走」不一致。这里把中性按钮的悬停/按下钉成「深字 + 天蓝浅底」，
+   用 :not() 排除语义变体，避免与实心/浅色按钮的悬停色互相打架。 */
+.el-button:not(.el-button--primary):not(.el-button--success):not(.el-button--warning):not(.el-button--danger):not(.el-button--info) {
+  --el-button-hover-text-color: var(--yg-text-primary);
+  --el-button-hover-bg-color: var(--yg-bg-hover);
+  --el-button-hover-border-color: var(--yg-border-strong);
+  --el-button-active-text-color: var(--yg-text-primary);
+  --el-button-active-bg-color: var(--yg-bg-active);
+  --el-button-active-border-color: var(--yg-border-strong);
+}
+
+/* ==========================================================================
+   禁用态：EP 的 is-disabled 文字取 light-5、底取 light-9，两档同值即隐形。
+   实心按钮统一退成「中性凹陷底 + 中灰文字」（≥3:1），浅色变体的文字同样走中灰，
+   一律用 --yg-text-disabled-control（浅灰底 3.08:1），不用 --yg-text-disabled
+   （那是占位符级别，压在浅底上只有 1.6:1）。
+   ========================================================================== */
+.el-button.is-disabled:not(.is-plain):not(.is-text):not(.is-link),
+.el-button.is-disabled:not(.is-plain):not(.is-text):not(.is-link):hover,
+.el-button.is-disabled:not(.is-plain):not(.is-text):not(.is-link):active,
+.el-button.is-disabled:not(.is-plain):not(.is-text):not(.is-link):focus {
+  --el-button-disabled-bg-color: var(--yg-bg-surface-sunken);
+  --el-button-disabled-border-color: var(--yg-border-default);
+  --el-button-disabled-text-color: var(--yg-text-disabled-control);
+  background-color: var(--yg-bg-surface-sunken);
+  border-color: var(--yg-border-default);
+  color: var(--yg-text-disabled-control);
+}
+
+/* 浅色变体的禁用态：EP 的 0,3,0 规则先于本文件生效，这里用同权重覆盖。
+   plain 的软底（light-9）压不住 3:1（danger 软底 + 中灰字只有 2.99:1），
+   因此统一退回中性凹陷底；text / link 的透明底由 EP 的 !important 保住，
+   这里只改文字色。 */
+.el-button.is-plain.is-disabled,
+.el-button.is-plain.is-disabled:hover,
+.el-button.is-plain.is-disabled:active,
+.el-button.is-plain.is-disabled:focus {
+  background-color: var(--yg-bg-surface-sunken);
+  border-color: var(--yg-border-default);
+  color: var(--yg-text-disabled-control);
+}
+
+.el-button.is-text.is-disabled,
+.el-button.is-text.is-disabled:hover,
+.el-button.is-text.is-disabled:active,
+.el-button.is-text.is-disabled:focus,
+.el-button.is-link.is-disabled,
+.el-button.is-link.is-disabled:hover,
+.el-button.is-link.is-disabled:active,
+.el-button.is-link.is-disabled:focus {
+  color: var(--yg-text-disabled-control);
+}
+
+/* 表单校验错误允许红字红边框（准则 5.3） */
+.el-form-item.is-error .el-input__wrapper,
+.el-form-item.is-error .el-textarea__inner {
+  box-shadow: 0 0 0 1px var(--yg-color-danger) inset;
+}
+
+/* ==========================================================================
+   硬规则三：圆角只用 G2 档位（准则 2.4）
+   1) 圆角尺寸由上面的 --el-*-border-radius 令牌统一落到 G2 档位；
+   2) 支持 corner-shape 的浏览器升级为连续曲率（圆形与胶囊除外）。
+   ========================================================================== */
+@supports (corner-shape: squircle) {
+  .el-button,
+  .el-input__wrapper,
+  .el-input-number,
+  .el-select__wrapper,
+  .el-textarea__inner,
+  .el-checkbox__inner,
+  .el-radio__inner,
+  .el-card,
+  .el-alert,
+  .el-tag,
+  .el-table,
+  .el-dialog,
+  .el-message-box,
+  .el-drawer,
+  .el-notification,
+  .el-message,
+  .el-popper.is-light,
+  .el-dropdown-menu,
+  .el-pagination button,
+  .el-pagination .el-pager li,
+  .el-segmented,
+  .el-date-editor,
+  .el-calendar-table td .el-calendar-day {
+    corner-shape: squircle;
+  }
+}
