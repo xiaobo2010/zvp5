@@ -5,9 +5,10 @@ name: Canary preview (frontend → Worker)
 #     那些在 main 的 ci.yml 里跑；canary 只产出静态预览，后端拒绝在 main 门禁解决。
 #   - 单 job：装依赖 → vitest/lint/type-check → 用 canary 参数构建 → 断言 → 发布 → 冒烟。
 #     合并成一个 job 是为了避免"门禁构建一次、部署再构建一次"的重复计费。
-#   - 只在相关路径变更时触发，纯文档/后端提交不消耗 Actions 分钟。
+#   - 任何非文档改动都会触发（见下方 paths-ignore）：宁可多跑一次，也不要
+#     因为目录白名单过期而静默不部署。
 #
-# 计费参考（私有库按 job 时长计）：本文件约 7~9 分钟/次推送；main 的全量门禁约 20 分钟。
+# 计费参考（公开库标准 runner 不计费）：本文件约 7~9 分钟/次推送；main 的全量门禁约 20 分钟。
 #
 # 必需：canary environment 里的 secret CLOUDFLARE_API_TOKEN 与变量
 # CLOUDFLARE_ACCOUNT_ID（该 environment 只允许本分支访问）。账号 ID 不写在仓库里，
@@ -18,10 +19,13 @@ on:
   push:
     branches:
       - v5-canary
-    paths:
-      - "zvp5/zvp5-frontend/**"
-      - "zvp5/deployment/preview-worker/**"
-      - ".github/workflows/canary.yml"
+    # 改代码就重新部署：只忽略纯文档，不用前端目录白名单。
+    # 白名单在目录改名、产物挪位、或分支结构与 main 不一致时会**静默漏掉**
+    # 部署——2026-11-15 canary 因为只认 zvp5/zvp5-frontend/** 而三周没更新，
+    # 看起来像「CI 自动部署没生效」。
+    paths-ignore:
+      - "**/*.md"
+      - "**/*.txt"
   workflow_dispatch:
 
 permissions:
