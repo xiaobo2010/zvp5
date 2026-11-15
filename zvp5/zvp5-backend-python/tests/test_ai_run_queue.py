@@ -529,7 +529,7 @@ def install_executor(monkeypatch, handler):
     async def run(*, user, messages, model=None, thinking=None, request_id=None,
                   summary=None, on_round=None, should_stop=None, on_summary=None,
                   scene=None, reference=None, context_tokens=None,
-                  on_compaction=None):
+                  on_compaction=None, on_delta=None, on_tool=None):
         record = {
             "user": user,
             "messages": messages,
@@ -541,6 +541,8 @@ def install_executor(monkeypatch, handler):
             "reference": reference,
             "context_tokens": context_tokens,
             "on_compaction": on_compaction,
+            "on_delta": on_delta,
+            "on_tool": on_tool,
         }
         calls.append(record)
         forwarded = {

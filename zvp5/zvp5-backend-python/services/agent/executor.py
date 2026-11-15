@@ -39,6 +39,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import inspect
 import json
 import logging
@@ -61,6 +62,7 @@ from services.ai.credentials import CredentialError
 from services.ai.routing import RouteError
 
 from . import context as agent_context
+from . import live as live_events
 from . import proposal, run_cache, tool_impl
 from .prompt import PROMPT_VERSION, SYSTEM_PROMPT
 from .tool_impl import AgentError
@@ -86,6 +88,19 @@ RETRYABLE_CODES = frozenset(
 # 单个工具结果塞回对话的上限（字符）。活动列表一页 100 条很容易超；截断并注明
 # 比让上游 400（context 超限）好，但必须让模型知道「这不是全部」。
 MAX_TOOL_RESULT_CHARS = 8000
+
+# 错误结果的上限故意放宽：一次失败的工具调用里 ``error`` / ``code`` / ``message``
+# 就是模型纠偏的全部依据，按正常结果的 8000 字裁掉尾部等于把线索裁掉。
+MAX_TOOL_ERROR_CHARS = 16000
+
+# 历史回放里「旧轮次」工具结果的上限（字符）。最新两轮工具链保持原文，更早的
+# 结果按 head+tail 收紧——这些内容通常已经被模型消化过，重发全量只是重复计费。
+HISTORY_TOOL_RESULT_CHARS = 1200
+HISTORY_FULL_TOOL_ROUNDS = 2
+
+# 同一 run 内重复只读结果压缩成引用时的标记键。模型看到 ``_ref`` 就知道去哪找
+# 原文，而不是以为工具这次返回了空结果。
+DUPLICATE_REF_KEY = "_ref"
 
 # 单轮最多执行几个工具调用。模型偶尔会一次吐十几个调用（尤其是被要求"批量"时），
 # 一次 run 的成本与副作用面都会失控；超出部分不执行、只回一条说明。
@@ -200,10 +215,40 @@ def _elapsed_ms(started: float) -> int:
     return max(0, int((time.monotonic() - started) * 1000))
 
 
+def _digest(text: str) -> str:
+    """结果指纹（16 位 hex）：去重引用与截断标记共用同一个确定性算法。"""
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
+
+
 def _truncate(text: str, limit: int = MAX_TOOL_RESULT_CHARS) -> str:
+    """head+tail 截断：保留开头与结尾，并在中间留下可核对的元信息。
+
+    只留开头（旧实现）会把「结论在最后一行」的列表/日志整段丢掉；而 head+tail
+    让模型既看到字段结构，也能看到末尾的汇总。标记里带原始长度与 sha256，排查时
+    能确认「模型看到的是同一份结果，只是被压缩过」。
+    """
     if len(text) <= limit:
         return text
-    return text[:limit] + "\n…（结果已被截断，请缩小查询范围）"
+    original = len(text)
+    marker = f"\n…[truncated original_chars={original} sha256={_digest(text)}]…\n"
+    if limit <= 0:
+        return ""
+    if len(marker) >= limit:
+        return marker[:limit]
+    budget = limit - len(marker)
+    head_len = int(budget * 0.6)
+    tail_len = budget - head_len
+    tail = text[-tail_len:] if tail_len else ""
+    return f"{text[:head_len]}{marker}{tail}"
+
+
+def _looks_like_error_payload(text: str) -> bool:
+    """工具结果的 ``content`` 是否是错误载荷（决定用更宽的截断上限）。"""
+    try:
+        payload = json.loads(text)
+    except (TypeError, ValueError):
+        return False
+    return isinstance(payload, dict) and bool(payload.get("error"))
 
 
 def run_timeout_seconds() -> int:
@@ -302,6 +347,7 @@ async def _call_upstream(
 
         body, cache_key = prompt_cache.request_body(payload, entry)
         thinking_param.apply(body, thinking, entry)
+        body = {**body, "stream": False}
         try:
             async with routing.slot():
                 result = await providers.chat_completion(body, entry, api_key)
@@ -325,6 +371,241 @@ async def _call_upstream(
     raise _attach_entry(
         AgentError(failure.code, failure.message, failure.status_code), last_entry
     )
+
+
+class _StreamUnsupported(Exception):
+    """所有候选都没有吐出可用的流式帧：调用方回退到非流式请求。"""
+
+
+def _merge_tool_fragment(acc: dict, fragment: object) -> None:
+    """把流式 ``tool_calls`` 分片并进累计结构（id/name 可能只在首片出现）。"""
+    if not isinstance(fragment, dict):
+        return
+    acc.setdefault("id", "")
+    acc.setdefault("type", "function")
+    acc.setdefault("function", {"name": "", "arguments": ""})
+    call_id = fragment.get("id")
+    if isinstance(call_id, str) and call_id:
+        acc["id"] = call_id
+    kind = fragment.get("type")
+    if isinstance(kind, str) and kind:
+        acc["type"] = kind
+    function = fragment.get("function")
+    if not isinstance(function, dict):
+        return
+    name = function.get("name")
+    if isinstance(name, str) and name:
+        acc["function"]["name"] = name
+    arguments = function.get("arguments")
+    if isinstance(arguments, str) and arguments:
+        acc["function"]["arguments"] += arguments
+
+
+async def _collect_stream(
+    chunks,
+    *,
+    on_delta: Callable[[str], None] | None = None,
+) -> dict:
+    """把流式 chunk 聚合成与 ``chat_completion`` 同形的响应体。
+
+    三条不变量：
+
+    * **累计文本**只在本地追加，``on_delta`` 收到的是累计值而不是裸 delta；
+    * ``tool_calls`` 参数必须**收齐并是合法 JSON** 才交给下游执行——半个 JSON
+      执行等于猜参数；
+    * 候选之间不共享状态：这个函数一次只处理一个候选的流。
+    """
+    content_parts: list[str] = []
+    reasoning_parts: list[str] = []
+    calls: dict[int, dict] = {}
+    usage: dict | None = None
+    finish_reason: str | None = None
+    saw_chunk = False
+
+    async for chunk in chunks:
+        saw_chunk = True
+        if isinstance(chunk.get("usage"), dict):
+            usage = chunk["usage"]
+        if chunk.get("error"):
+            raise RouteError("AI_UPSTREAM_ERROR", "upstream stream reported an error", 502)
+        choices = chunk.get("choices")
+        if not isinstance(choices, list) or not choices:
+            continue
+        choice = choices[0] if isinstance(choices[0], dict) else {}
+        if isinstance(choice.get("finish_reason"), str):
+            finish_reason = choice["finish_reason"]
+        delta = choice.get("delta")
+        if not isinstance(delta, dict):
+            delta = choice.get("message") if isinstance(choice.get("message"), dict) else {}
+        text = delta.get("content")
+        if isinstance(text, str) and text:
+            content_parts.append(text)
+            if on_delta is not None:
+                on_delta("".join(content_parts))
+        reasoning = delta.get("reasoning_content")
+        if isinstance(reasoning, str) and reasoning:
+            reasoning_parts.append(reasoning)
+        fragments = delta.get("tool_calls")
+        if isinstance(fragments, list):
+            for position, fragment in enumerate(fragments):
+                index = (
+                    fragment.get("index")
+                    if isinstance(fragment, dict)
+                    and isinstance(fragment.get("index"), int)
+                    else position
+                )
+                _merge_tool_fragment(calls.setdefault(index, {}), fragment)
+
+    if not saw_chunk:
+        raise _StreamUnsupported
+
+    tool_calls: list[dict] = []
+    for index in sorted(calls):
+        call = calls[index]
+        function = call.get("function") if isinstance(call.get("function"), dict) else {}
+        raw = function.get("arguments")
+        if not isinstance(raw, str) or not raw.strip():
+            raw = "{}"
+        try:
+            json.loads(raw)
+        except ValueError:
+            # 参数没拼完整：这一轮不能执行任何工具（可能改错东西）。
+            raise AgentError(
+                "AI_UPSTREAM_ERROR",
+                "upstream returned incomplete tool call arguments",
+                502,
+            ) from None
+        name = function.get("name")
+        if not isinstance(name, str) or not name:
+            raise AgentError(
+                "AI_UPSTREAM_ERROR", "upstream returned a tool call without a name", 502
+            )
+        tool_calls.append(
+            {
+                "id": call.get("id") or f"call_{index}",
+                "type": call.get("type") or "function",
+                "function": {"name": name, "arguments": raw},
+            }
+        )
+
+    message: dict = {"content": "".join(content_parts)}
+    if reasoning_parts:
+        message["reasoning_content"] = "".join(reasoning_parts)
+    if tool_calls:
+        message["tool_calls"] = tool_calls
+    result: dict = {
+        "choices": [{"message": message, "finish_reason": finish_reason}]
+    }
+    if usage is not None:
+        result["usage"] = usage
+    return result
+
+
+async def _call_upstream_stream(
+    payload: dict,
+    candidates: list[dict],
+    *,
+    thinking: object = None,
+    on_delta: Callable[[int, str], None] | None = None,
+    round_no: int = 0,
+) -> tuple[dict, dict, str | None]:
+    """流式版本的上游调用：逐候选尝试，**首段文本之后不再换候选**。
+
+    首段文本之前的失败可以安全地换 provider（客户端还没看到任何字）；一旦
+    ``on_delta`` 已经发出过内容，重试会让用户看到「A 说了一半，B 从头说」，
+    所以直接抛错。``StreamNotSSE`` 是成功：上游只是忽略了 ``stream``。
+    """
+    last_error: RouteError | None = None
+    last_entry: dict | None = None
+    for entry in candidates:
+        last_entry = entry
+        key = str(entry.get("key") or "")
+        try:
+            api_key = await credentials.resolve_api_key(entry)
+        except CredentialError as exc:
+            await routing.mark_failure(key)
+            raise _attach_entry(
+                AgentError(exc.code, exc.message, exc.status_code), entry
+            ) from None
+
+        body, cache_key = prompt_cache.request_body(
+            {**payload, "stream": True}, entry
+        )
+        thinking_param.apply(body, thinking, entry)
+        emitted = {"value": False}
+
+        def _delta(text: str, _emitted=emitted) -> None:
+            if text:
+                _emitted["value"] = True
+                if on_delta is not None:
+                    on_delta(round_no, text)
+
+        try:
+            async with routing.slot():
+                chunks = providers.chat_completion_stream_json(body, entry, api_key)
+                result = await _collect_stream(chunks, on_delta=_delta)
+        except providers.StreamNotSSE as exc:
+            await routing.mark_success(key)
+            if not isinstance(exc.payload, dict):
+                raise AgentError(
+                    "AI_UPSTREAM_ERROR", "upstream returned an unexpected payload", 502
+                ) from None
+            return exc.payload, entry, cache_key
+        except _StreamUnsupported:
+            last_error = RouteError(
+                "AI_UPSTREAM_REJECTED", "upstream returned an empty stream", 502
+            )
+            continue
+        except RouteError as exc:
+            if exc.code != "AI_BUSY":
+                await routing.mark_failure(key)
+            if emitted["value"]:
+                # 已经吐过字：不换候选、不重试，避免重复文本。
+                raise _attach_entry(
+                    AgentError(exc.code, exc.message, exc.status_code), entry
+                ) from None
+            if exc.code not in RETRYABLE_CODES:
+                last_error = exc
+                continue
+            last_error = exc
+            continue
+        except AgentError:
+            raise
+
+        await routing.mark_success(key)
+        return result, entry, cache_key
+
+    failure = last_error or RouteError(
+        "AI_NO_PROVIDER", routing.NO_PROVIDER_MESSAGE, 503
+    )
+    raise _StreamUnsupported from failure
+
+
+async def _call_upstream_auto(
+    payload: dict,
+    candidates: list[dict],
+    *,
+    thinking: object = None,
+    on_delta: Callable[[int, str], None] | None = None,
+    round_no: int = 0,
+) -> tuple[dict, dict, str | None]:
+    """先流式；所有候选都不支持/不可用时退回既有非流式实现。
+
+    ``on_delta`` 为空 = 调用方不需要增量（裸执行器/离线测试）：直接走非流式，
+    不额外建一条 SSE 连接。生产会话路径总会传回调，所以拿到的是真正的流式上游。
+    """
+    if on_delta is None:
+        return await _call_upstream(payload, candidates, thinking=thinking)
+    try:
+        return await _call_upstream_stream(
+            payload,
+            candidates,
+            thinking=thinking,
+            on_delta=on_delta,
+            round_no=round_no,
+        )
+    except _StreamUnsupported:
+        return await _call_upstream(payload, candidates, thinking=thinking)
 
 
 def _message_of(result: object) -> tuple[str, list[dict], str | None]:
@@ -408,12 +689,14 @@ async def _write_event(
     }
     if buffer is not None and status != "proposed":
         buffer.append(record)
-    else:
-        try:
-            await backends.get_ai_agent_events_repo().insert(**record)
-        except Exception:  # noqa: BLE001 - 审计旁路
-            _logger.warning("ai agent event write failed", exc_info=True)
-            return
+        # 缓冲事件此时还没提交：不能写进轮询快照，否则前端会先看到「已持久化」
+        # 的事件、随后事务失败时又消失。由 ``_on_round`` 在 commit 之后统一追加。
+        return
+    try:
+        await backends.get_ai_agent_events_repo().insert(**record)
+    except Exception:  # noqa: BLE001 - 审计旁路
+        _logger.warning("ai agent event write failed", exc_info=True)
+        return
     # 形状与 ``proposal.run_events`` 一致：缓存里存的是展示视图，不是库行。
     run_cache.append_event(
         request_id,
@@ -430,6 +713,8 @@ async def _write_event(
             ),
         },
     )
+    # 事件此刻确实已落库：订阅者拉一次快照就能看到（提案卡尤其需要即时出现）。
+    live_events.publish_resync(request_id)
 
 
 def _tool_call_parts(call: dict) -> tuple[str, str, object]:
@@ -500,6 +785,56 @@ def _read_batch(calls: list[dict], start: int) -> list[tuple[int, dict]]:
     return batch
 
 
+def _tool_live_frame(call: dict, round_no: int, status: str, **extra) -> dict:
+    """SSE 工具帧的公共字段（ephemeral，只走 live hub，不落库）。"""
+    call_id, tool_name, args = _tool_call_parts(call)
+    tool = _resolve_tool(tool_name)
+    frame = {
+        "type": "tool",
+        "round_no": round_no,
+        "tool_call_id": call_id or None,
+        "tool_name": tool.name if tool is not None else (tool_name or None),
+        "tool_kind": tool.kind if tool is not None else None,
+        "status": status,
+        "args_summary": _args_text(args),
+    }
+    frame.update(extra)
+    return frame
+
+
+def _notify_tools(
+    callback, batch: list[tuple[int, dict]], round_no: int, *, status: str = "pending"
+) -> None:
+    """批量调用的「已开始」帧：慢客户端由 hub 自己合并/丢弃，这里不 await。"""
+    if callback is None:
+        return
+    for _position, call in batch:
+        try:
+            callback(_tool_live_frame(call, round_no, status))
+        except Exception:  # noqa: BLE001 - live 只是旁路，不能打挂执行
+            _logger.warning("ai agent live tool callback failed", exc_info=True)
+
+
+def _notify_tool_outcome(callback, call: dict, outcome: tuple, round_no: int) -> None:
+    """工具完成帧：成功/失败分别映射为 ``success`` / ``error``。"""
+    if callback is None:
+        return
+    _message, _created, event_status, summary = outcome
+    status = "success" if event_status in ("executed", "proposed") else "error"
+    try:
+        callback(
+            _tool_live_frame(
+                call,
+                round_no,
+                status,
+                result_summary=summary,
+                event_status=event_status,
+            )
+        )
+    except Exception:  # noqa: BLE001 - live 只是旁路
+        _logger.warning("ai agent live tool callback failed", exc_info=True)
+
+
 def _append_tool_outcome(
     call: dict,
     outcome: tuple[dict, dict | None, str, str],
@@ -509,11 +844,16 @@ def _append_tool_outcome(
     events: list[dict],
     proposals: list[dict],
     round_no: int,
+    read_cache: dict | None = None,
 ) -> None:
     """一条工具结果 → 对话 / 落库载荷 / 事件 / 提案（串行与并发共用一份）。
 
     抽出来是为了让「并行」只改调度，不改任何一处的形状：三处记录漏一个，
     UI 与审计就会各说一套。
+
+    ``read_cache`` 只服务 token 优化：同一 run 里「同工具 + 同参数」的只读结果
+    若 digest 仍一致，就把正文压成 ``_ref``。写入工具会**清空**这份缓存——写操作
+    之后的只读结果可能已经变了，绝不能复用写之前的数据。
     """
     message, created, status, event_summary = outcome
     _call_id, tool_name, args = _tool_call_parts(call)
@@ -521,6 +861,33 @@ def _append_tool_outcome(
     # 归一化命中的调用在留痕里用**注册名**：审计按名字聚合，「functions.x」与「x」
     # 分成两行会让同一个工具看起来像两个。
     recorded_name = tool.name if tool is not None else (tool_name or None)
+    if read_cache is not None and tool is not None:
+        if tool.kind == WRITE:
+            # 提案/直接写在未来某一刻都可能落库；从这一刻起旧读结果不再可信。
+            read_cache.clear()
+        elif tool.kind == READ and status == "executed":
+            content = message.get("content")
+            if isinstance(content, str) and content and not _looks_like_error_payload(content):
+                key = (recorded_name or "", _args_key(args))
+                previous = read_cache.get(key)
+                digest = _digest(content)
+                if (
+                    previous is not None
+                    and previous.get("digest") == digest
+                    # 只引用「还在最近两轮上下文里」的原文：``_wire`` 只保留最新
+                    # 两轮工具链全文，更早的已被 head+tail 收紧，引用它会丢信息。
+                    and round_no - int(previous.get("round_no") or round_no) <= 1
+                ):
+                    message["content"] = _duplicate_ref(
+                        previous, tool_name=str(recorded_name or ""), chars=len(content)
+                    )
+                    event_summary = f"{event_summary}（与先前结果相同，已压缩为引用）"[:500]
+                else:
+                    read_cache[key] = {
+                        "digest": digest,
+                        "call_id": message.get("tool_call_id"),
+                        "round_no": round_no,
+                    }
     conversation.append(message)
     handled_tools.append(
         {
@@ -899,11 +1266,40 @@ def _summary_text(value: object) -> str:
 
 def _tool_message(call_id: str, payload: object) -> dict:
     """OpenAI 的 ``role="tool"`` 消息：``tool_call_id`` 必须与调用一一对应。"""
+    text = tool_impl.to_json_text(payload)
+    limit = MAX_TOOL_ERROR_CHARS if _looks_like_error_payload(text) else MAX_TOOL_RESULT_CHARS
     return {
         "role": "tool",
         "tool_call_id": call_id,
-        "content": _truncate(tool_impl.to_json_text(payload)),
+        "content": _truncate(text, limit),
     }
+
+
+def _args_key(raw_args: object) -> str:
+    """参数指纹：同一工具 + 同一参数才允许把重复只读结果压成引用。
+
+    解析成 JSON 后按排序键序列化，避免 ``{"a":1,"b":2}`` 与 ``{"b":2,"a":1}``
+    被当成两次不同调用；解析不了就用原文（确定性、可比较）。
+    """
+    if isinstance(raw_args, str):
+        try:
+            raw_args = json.loads(raw_args)
+        except ValueError:
+            return raw_args
+    return tool_impl.to_json_text(raw_args)
+
+
+def _duplicate_ref(previous: dict, *, tool_name: str, chars: int) -> str:
+    """重复只读结果的紧凑表示（合法 JSON，模型能读懂「内容同上」）。"""
+    return tool_impl.to_json_text(
+        {
+            DUPLICATE_REF_KEY: previous.get("digest"),
+            "tool": tool_name,
+            "repeat_of": previous.get("call_id"),
+            "original_chars": chars,
+            "note": "identical result already returned earlier in this run; content omitted",
+        }
+    )
 
 
 def _validate_messages(messages: object) -> list[dict]:
@@ -1065,11 +1461,30 @@ def _add_usage(acc: dict, tokens: dict) -> dict:
 
 
 def _wire(messages: list[dict]) -> list[dict]:
-    """裁剪成上游协议能接受的形状（``seq`` 等存储字段不出去）。"""
-    return [
+    """裁剪成上游协议能接受的形状（``seq`` 等存储字段不出去）。
+
+    顺手做一次**历史工具结果的有界压缩**：最新 ``HISTORY_FULL_TOOL_ROUNDS`` 轮
+    工具链原样保留（模型正在用），更早轮次的 tool 正文按 head+tail 收紧。压缩在
+    每次请求前发生，不修改 ``conversation`` 本身——落库与回放仍是原文。
+    """
+    out = [
         {key: message[key] for key in _WIRE_KEYS if key in message}
         for message in messages
     ]
+    groups = [
+        index
+        for index, message in enumerate(out)
+        if message.get("role") == "assistant" and message.get("tool_calls")
+    ]
+    if len(groups) > HISTORY_FULL_TOOL_ROUNDS:
+        cutoff = groups[-HISTORY_FULL_TOOL_ROUNDS]
+        for index, message in enumerate(out):
+            if index >= cutoff or message.get("role") != "tool":
+                continue
+            content = message.get("content")
+            if isinstance(content, str) and len(content) > HISTORY_TOOL_RESULT_CHARS:
+                message["content"] = _truncate(content, HISTORY_TOOL_RESULT_CHARS)
+    return out
 
 
 def _finish_reason(result: dict) -> str | None:
@@ -1613,6 +2028,8 @@ async def run(
     reference: str | None = None,
     context_tokens: int | None = None,
     on_compaction: Callable | None = None,
+    on_delta: Callable[[int, str], None] | None = None,
+    on_tool: Callable[[dict], None] | None = None,
 ) -> dict:
     """跑完一次 agent 会话。
 
@@ -1700,6 +2117,8 @@ async def run(
     # 裸执行器（无 ``on_round``）没人负责落库，只能逐条即时写——审计不能因为
     # 「少接了一根线」就整段消失。
     buffering = on_round is not None
+    # 同一 run 的重复只读结果登记表：写工具/提案会清空（见 _append_tool_outcome）。
+    read_cache: dict[tuple[str, str], dict] = {}
 
     # 0) 请求前预检：用会话行记录的 prompt 规模判一次水位。不做这一步的话，新 run
     #    的第一个请求会把「已经 90% 占用的全量历史」整段发上去，压完全白花一次
@@ -1807,9 +2226,8 @@ async def run(
             # 合格 ID 是我们自己的命名空间；上游只认裸模型名。
             "model": credentials.upstream_model_name(candidates, chosen),
             "messages": _wire(conversation),
-            # 强制非流式：工具调用的完整参数只在整条响应里，流式边收边执行等于
-            # 猜半个 JSON。
-            "stream": False,
+            # 工具调用的完整参数只在整条响应里；流式路径把参数分片聚合完整并
+            # 校验 JSON 之后才执行，聚合失败就不执行任何工具。
             "tools": tool_specs(user, scene=scene),
         }
 
@@ -1817,7 +2235,13 @@ async def run(
         try:
             remaining = max(0.0, deadline - started)
             result, entry, cache_key = await asyncio.wait_for(
-                _call_upstream(payload, candidates, thinking=thinking),
+                _call_upstream_auto(
+                    payload,
+                    candidates,
+                    thinking=thinking,
+                    on_delta=on_delta,
+                    round_no=round_no,
+                ),
                 timeout=remaining,
             )
         except (asyncio.TimeoutError, TimeoutError):
@@ -1969,7 +2393,9 @@ async def run(
                     content=content,
                     reasoning=reasoning,
                     finish_reason=finish_reason,
-                    tool_calls=tool_calls,
+                    # 没有任何工具被执行：assistant 行也不能带 tool_calls，否则
+                    # 回放会看到「有调用、无结果」的残链，整轮被丢弃。
+                    tool_calls=[],
                     tools=[],
                     tokens=tokens,
                     units=units,
@@ -2001,6 +2427,7 @@ async def run(
             if len(batch) > 1:
                 # 同轮多个只读工具：并发跑，结果按原顺序组装。取消语义只落在
                 # **批边界**——批内的调用已经发出去了，撤不回，但下一批不会再发。
+                _notify_tools(on_tool, batch, round_no, status="pending")
                 outcomes = await asyncio.gather(
                     *[
                         _run_tool(
@@ -2023,7 +2450,9 @@ async def run(
                         events=events,
                         proposals=proposals,
                         round_no=round_no,
+                        read_cache=read_cache,
                     )
+                    _notify_tool_outcome(on_tool, call, outcome, round_no)
                 index = batch[-1][0] + 1
                 continue
 
@@ -2075,6 +2504,7 @@ async def run(
                 index += 1
                 continue
 
+            _notify_tools(on_tool, [(index, call)], round_no, status="pending")
             outcome = await _run_tool(
                 call=call,
                 user=user,
@@ -2091,8 +2521,19 @@ async def run(
                 events=events,
                 proposals=proposals,
                 round_no=round_no,
+                read_cache=read_cache,
             )
+            _notify_tool_outcome(on_tool, call, outcome, round_no)
             index += 1
+
+        emitted_calls = tool_calls
+        if interrupted:
+            executed_ids = {
+                str(item.get("tool_call_id") or "") for item in handled_tools
+            }
+            emitted_calls = [
+                call for call in tool_calls if _tool_call_id(call) in executed_ids
+            ]
 
         await _emit(
             on_round,
@@ -2101,7 +2542,10 @@ async def run(
                 content=content,
                 reasoning=reasoning,
                 finish_reason=finish_reason,
-                tool_calls=tool_calls,
+                # 中断时只把**已执行**的调用交出去：assistant.tool_calls 与 tool
+                # 消息必须一一配对，否则下一次回放会把整轮（包括已执行的工作）
+                # 一起丢掉。未执行的调用不伪造结果，直接裁掉。
+                tool_calls=emitted_calls,
                 tools=handled_tools,
                 tokens=tokens,
                 units=units,

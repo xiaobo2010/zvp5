@@ -19,11 +19,11 @@ from typing import Any, Awaitable, Callable
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from routers.ai.common import AI_FORBIDDEN_MESSAGE, _error_type, _has_ai_access, ai_scene
-from services.agent import run_queue
+from services.agent import live, run_queue
 from services.agent.tool_impl import AgentError
 from services.ai import audit
 from services.ai import conversations
@@ -532,6 +532,69 @@ async def get_run(
         )
 
     return await _dispatch(action, user=user, scene=scene)
+
+
+@router.get("/runs/{run_id}/events")
+async def stream_run_events(
+    run_id: str,
+    user=Depends(get_current_user),
+    scene: str | None = Depends(ai_scene),
+):
+    """run 的实时事件流（SSE，fetch 兼容）。
+
+    与 ``GET /runs/{run_id}`` 完全兼容：老客户端继续轮询，新客户端可以订阅这条
+    流。首个字节之前完成所有 HTTP 级校验（鉴权/功能开关/归属），因此 403/404/503
+    仍是普通 JSON；一旦开始流式，错误只能以 ``error`` 帧收尾。
+
+    单 worker 限定：内存 hub 不能跨进程广播，``live.multi_worker()`` 为真时回
+    503，让前端降级回轮询而不是收到一条永远不更新的「假流」。
+    """
+    request_id = uuid4().hex
+    if not _has_ai_access(user):
+        return await _forbidden(user, scene=scene, request_id=request_id)
+    try:
+        _require_agent_feature(user)
+        oid = _require_oid(
+            run_id, code=run_queue.RUN_NOT_FOUND, message="run not found"
+        )
+        if live.multi_worker():
+            raise AgentError(
+                "AI_RUN_EVENTS_UNSUPPORTED",
+                "live run events require a single worker; fall back to polling",
+                503,
+            )
+        # 先订阅再读库：读库期间产生的事件进入队列，按 seq 去重后不会丢。
+        subscription = live.subscribe(oid)
+        try:
+            snapshot_seq = live.next_seq(oid)
+            detail = await run_queue.run_detail(user=user, run_id=oid)
+        except Exception:
+            live.unsubscribe(subscription)
+            raise
+    except AgentError as exc:
+        return _error(
+            exc.status_code,
+            exc.code,
+            exc.message,
+            request_id=request_id,
+            headers=exc.headers or None,
+        )
+
+    return StreamingResponse(
+        live.event_frames(
+            subscription,
+            run_id=oid,
+            initial=detail,
+            snapshot_seq=snapshot_seq,
+            user=dict(user),
+        ),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "X-AI-Request-Id": request_id,
+        },
+    )
 
 
 @router.post("/runs/{run_id}/cancel")

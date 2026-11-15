@@ -904,6 +904,7 @@ async def append_round(
     *,
     usage: Mapping[str, int | None] | None = None,
     events: Sequence[Mapping[str, Any]] | None = None,
+    committed_events: list[dict] | None = None,
 ) -> list[dict]:
     """一轮的 assistant + 全部 tool 消息落库，**同一事务**累加会话用量。
 
@@ -919,6 +920,10 @@ async def append_round(
     事件是**旁路**：它的插入包在嵌套 savepoint 里，失败只 warning（回滚到
     savepoint，消息与会话累加照旧提交）。反过来（事件写失败把整轮消息回滚）就是
     让审计的可用性决定业务数据的可用性。
+
+    ``committed_events`` 非空时，只有**真正提交成功**的事件才追加进去：调用方
+    （``run_queue._on_round``）据此刷新轮询快照，避免把 savepoint 回滚掉的审计
+    显示成「已持久化」。
     """
     for row in rows:
         if str(row.get("role")) not in ("assistant", "tool"):
@@ -935,14 +940,18 @@ async def append_round(
         inserted = await backends.get_ai_messages_repo(session).append_batch(
             str(conversation_oid), rows, usage=usage
         )
+        events_ok = True
         try:
             async with session.begin_nested():
                 await backends.get_ai_agent_events_repo(session).insert_many(
                     [dict(event) for event in events]
                 )
         except Exception:  # noqa: BLE001 - 审计旁路，回滚 savepoint 后继续提交消息
+            events_ok = False
             _logger.warning("ai agent round events write failed", exc_info=True)
         await session.commit()
+    if events_ok and committed_events is not None:
+        committed_events.extend(dict(event) for event in events)
     return inserted
 
 

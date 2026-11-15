@@ -16,6 +16,8 @@ settings：凭据目录已经决定「这次该打谁」，这里只负责把请
 
 from __future__ import annotations
 
+import codecs
+import json
 import logging
 from typing import AsyncIterator, Mapping
 
@@ -412,3 +414,109 @@ async def chat_completion_stream(
         raise RouteError("AI_TIMEOUT", "upstream timed out", 504) from None
     except httpx.HTTPError:
         raise RouteError("AI_UPSTREAM_ERROR", "upstream is unreachable", 502) from None
+
+
+class StreamNotSSE(Exception):
+    """上游忽略了 ``stream``：返回的是普通 JSON 包，不是 SSE。
+
+    携带完整响应体：调用方（agent executor）可以直接把它当一次非流式成功结果，
+    不必再发一次请求。单独一个异常类型而不是 ``RouteError``——这不是错误。
+    """
+
+    def __init__(self, payload: object) -> None:
+        super().__init__("upstream did not return an SSE stream")
+        self.payload = payload
+
+
+def _looks_like_sse(chunk: bytes) -> bool:
+    """首块字节像不像 SSE（字段名或注释行开头）。"""
+    head = bytes(chunk or b"")[:16].decode("utf-8", "replace").lstrip().lower()
+    if not head:
+        return True
+    markers = ("data:", ":", "event:", "id:", "retry:")
+    if any(marker.startswith(head) for marker in markers):
+        return True
+    return head.startswith(markers)
+
+
+def _sse_payloads(buffer: str) -> tuple[list[str], str]:
+    """从缓冲区切出完整 SSE 事件里的 ``data`` 值，返回 ``(payloads, rest)``。
+
+    同时接受 ``\n\n`` 与 ``\r\n\r\n`` 分隔；一帧里有多行 ``data:`` 时按 SSE 规范
+    用换行拼接。
+    """
+    normalized = buffer.replace("\r\n", "\n")
+    blocks = normalized.split("\n\n")
+    rest = blocks.pop() if blocks else ""
+    payloads: list[str] = []
+    for block in blocks:
+        data: list[str] = []
+        for line in block.split("\n"):
+            if line.startswith("data:"):
+                data.append(line[5:].lstrip())
+        if data:
+            payloads.append("\n".join(data))
+    return payloads, rest
+
+
+async def chat_completion_stream_json(
+    payload: dict,
+    entry: dict,
+    api_key: str,
+) -> AsyncIterator[dict]:
+    """把上游 SSE 解析成 JSON chunk 序列（agent 的流式执行用）。
+
+    与 :func:`chat_completion_stream` 的区别只在**解析层**：那一层负责字节级
+    透传（chat 面直接用），这里负责把 ``data: {...}`` 还原成对象。工具调用的参数
+    可能被拆成多个 chunk，聚合是 executor 的责任——这一层只保证「不丢帧、不拼错
+    换行、``[DONE]`` 之后不再产出」。
+
+    首个字节不是 SSE（上游无视 ``stream``）时抛 :class:`StreamNotSSE`，把完整
+    JSON 交给调用方当非流式结果；2xx 但 JSON 坏掉才是 ``AI_UPSTREAM_ERROR``。
+    """
+    buffer = ""
+    first = True
+    decoder = codecs.getincrementaldecoder("utf-8")()
+    stream = chat_completion_stream(payload, entry, api_key)
+    async for raw in stream:
+        if first:
+            first = False
+            if not _looks_like_sse(raw):
+                body = bytearray(raw)
+                async for more in stream:
+                    body.extend(more)
+                try:
+                    parsed = json.loads(bytes(body).decode("utf-8"))
+                except (UnicodeDecodeError, ValueError):
+                    raise RouteError(
+                        "AI_UPSTREAM_ERROR", "upstream returned malformed json", 502
+                    ) from None
+                raise StreamNotSSE(parsed)
+        buffer += decoder.decode(raw)
+        payloads, buffer = _sse_payloads(buffer)
+        for text in payloads:
+            if text.strip() == "[DONE]":
+                return
+            try:
+                chunk = json.loads(text)
+            except ValueError:
+                raise RouteError(
+                    "AI_UPSTREAM_ERROR", "upstream sent a malformed stream frame", 502
+                ) from None
+            if isinstance(chunk, Mapping):
+                yield dict(chunk)
+    buffer += decoder.decode(b"", final=True)
+    if buffer.strip():
+        # 没有结尾空行的小上游：最后一段也尝试解析，避免丢掉唯一一帧。
+        payloads, _ = _sse_payloads(buffer + "\n\n")
+        for text in payloads:
+            if text.strip() == "[DONE]":
+                return
+            try:
+                chunk = json.loads(text)
+            except ValueError:
+                raise RouteError(
+                    "AI_UPSTREAM_ERROR", "upstream sent a malformed stream frame", 502
+                ) from None
+            if isinstance(chunk, Mapping):
+                yield dict(chunk)
