@@ -1,0 +1,553 @@
+/* ==========================================================================
+   Liquid Glass · 材质层 v2.2
+   --------------------------------------------------------------------------
+   这一层只做一件事：把「玻璃」从「半透明 + blur」升级成有厚度、有边缘光、
+   有内反射的真实材质，并把它收敛成 3 个层级 + 2 个哑光层级。
+
+   为什么集中在一个文件：
+   1) 材质参数全部来自 --yg2-lens-* 令牌，浅色/深色只在 tokens.css 里调，
+      组件不写死数值（准则：统一管理材质参数）；
+   2) 本文件在 ux.css 之后引入，用同权重选择器覆盖 shell.css / liquid.css
+      里旧的扁平材质，不改动它们的结构与间距，回归风险最小；
+   3) 所有降级（无 backdrop-filter / 减少透明 / 减少动效）都在文末统一收口。
+
+   层级（越靠后越「厚」，同一屏内不要跨层叠放）：
+   L0 哑光面   --yg2-lens-matte-*   内容层：卡片、表格、列表（不通透，保可读性）
+   L1 轻玻璃   --yg2-lens-quiet-*   内容层里需要「透一点」的容器
+   L2 导航玻璃 --yg2-lens-chrome-*  侧栏
+   L3 控件玻璃 --yg2-lens-control-* 悬浮控件：分段、圆形按钮、移动端底栏
+   L4 浮层玻璃 --yg2-lens-overlay-* 弹窗、下拉、选择器、提示
+   ========================================================================== */
+
+/* ==========================================================================
+   1. 材质基元
+   ========================================================================== */
+
+/* 方向性镜面边：1px 渐变描边，左上最亮、右下几乎无光。
+   这是玻璃「有厚度」的关键——均匀描边看起来像贴纸，方向性的才像折射。 */
+.yg2-lens-rim {
+  position: relative;
+}
+
+.yg2-lens-rim::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  padding: 1px;
+  border-radius: inherit;
+  pointer-events: none;
+  background: var(--yg2-lens-rim-grad);
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  opacity: var(--yg2-lens-rim-opacity, 1);
+  transition: opacity var(--yg2-dur-2) var(--yg2-ease-out);
+}
+
+/* ==========================================================================
+   2. 侧栏（L2 导航玻璃）
+   顶栏不是玻璃（产品决定）：它是实体 chrome 栏，见第 3 节。
+   ========================================================================== */
+
+.yg2-sidebar {
+  border-right: 0;
+  background: var(--yg2-lens-chrome-fill);
+  -webkit-backdrop-filter: blur(var(--yg2-lens-chrome-blur)) saturate(var(--yg2-lens-sat))
+    brightness(var(--yg2-lens-chrome-brightness));
+  backdrop-filter: blur(var(--yg2-lens-chrome-blur)) saturate(var(--yg2-lens-sat))
+    brightness(var(--yg2-lens-chrome-brightness));
+  box-shadow:
+    inset 0 1px 0 var(--yg2-lens-chrome-bloom),
+    inset -1px 0 0 var(--yg2-lens-chrome-edge),
+    var(--yg2-lens-chrome-cast);
+}
+
+/* ==========================================================================
+   3. 顶栏（实体 chrome，不做玻璃）
+   内容区是独立滚动容器，永远滚不到顶栏下面；给它留 blur 只会糊自己。
+   ========================================================================== */
+
+.yg2-topbar {
+  background: var(--yg2-lens-chrome-solid);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  box-shadow:
+    inset 0 1px 0 var(--yg2-lens-chrome-solid-top),
+    0 1px 0 var(--yg2-line),
+    var(--yg2-lens-chrome-solid-cast);
+}
+
+.yg2-topbar::before,
+.yg2-topbar__glass,
+.yg2-topbar .yg2-lens-clip {
+  display: none;
+}
+
+/* ==========================================================================
+   4. 内容层（L0 哑光 / L1 轻玻璃）
+   ========================================================================== */
+
+.yg2-card,
+.yg2-panel,
+.yg2-xcard {
+  background: var(--yg2-lens-matte-fill);
+  border: 0;
+  -webkit-backdrop-filter: blur(var(--yg2-lens-matte-blur)) saturate(var(--yg2-lens-sat));
+  backdrop-filter: blur(var(--yg2-lens-matte-blur)) saturate(var(--yg2-lens-sat));
+  /* 顶光 + 内圈亮边 + 外侧发丝暗线：三层叠出「有厚度的板」 */
+  box-shadow:
+    inset 0 1px 0 var(--yg2-lens-matte-bloom),
+    inset 0 0 0 1px var(--yg2-lens-matte-sheath),
+    inset 0 0 0 1.5px var(--yg2-lens-matte-hairline),
+    var(--yg2-lens-matte-cast);
+}
+
+/* 方向性镜面边：卡片「有厚度」的关键。
+   用 ::after + mask 做 1px 渐变描边（左上亮、右下暗），
+   比四条均匀的 inset 阴影更像真实倒角。
+   排除 deco / liquid 变体，它们各自占用了 ::after。 */
+.yg2-card:not(.yg2-card--deco):not(.yg2-card--liquid)::after,
+.yg2-panel:not(.yg2-panel--deco)::after,
+.yg2-xcard:not(.yg2-card--deco):not(.yg2-card--liquid)::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  padding: 1px;
+  border-radius: inherit;
+  pointer-events: none;
+  background: var(--yg2-lens-rim-grad);
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+}
+
+/* 需要「浮起来」的一等卡片：更厚、更亮、带方向性边 */
+.yg2-card--glass {
+  background: var(--yg2-lens-quiet-fill);
+  -webkit-backdrop-filter: blur(var(--yg2-lens-quiet-blur)) saturate(var(--yg2-lens-sat));
+  backdrop-filter: blur(var(--yg2-lens-quiet-blur)) saturate(var(--yg2-lens-sat));
+  box-shadow:
+    inset 0 1px 0 var(--yg2-lens-quiet-bloom),
+    var(--yg2-lens-quiet-cast);
+}
+
+/* 明确声明为液态玻璃的卡片：L2 厚度 + 方向镜面边 */
+.yg2-card--liquid {
+  background: var(--yg2-lens-chrome-fill);
+  -webkit-backdrop-filter: blur(var(--yg2-lens-chrome-blur)) saturate(var(--yg2-lens-sat))
+    brightness(var(--yg2-lens-chrome-brightness));
+  backdrop-filter: blur(var(--yg2-lens-chrome-blur)) saturate(var(--yg2-lens-sat))
+    brightness(var(--yg2-lens-chrome-brightness));
+  box-shadow:
+    inset 0 1px 0 var(--yg2-lens-chrome-bloom),
+    var(--yg2-lens-chrome-cast);
+}
+
+/* 旧版 --liquid 自带的彩色锥形边太「科技感」，换成克制的方向性白光 */
+.yg2-card--liquid::after {
+  background: var(--yg2-lens-rim-grad);
+  padding: 1px;
+  opacity: 1;
+}
+
+/* 内嵌小行（列表、表格行）：更薄一层，避免和父卡片抢】
+.yg2-row,
+.yg2-subcard {
+  background: var(--yg2-lens-matte-fill-sunken);
+  border-radius: var(--yg2-r-16);
+  box-shadow: inset 0 0 0 1px var(--yg2-lens-matte-sheath);
+}
+
+/* ==========================================================================
+   5. 控件层（L3）
+   ========================================================================== */
+
+.yg2-btn--secondary,
+.yg2-btn--quiet,
+.yg2-icon-btn,
+.yg2-user-chip {
+  position: relative;
+  background: var(--yg2-lens-control-fill);
+  box-shadow:
+    inset 0 1px 0 var(--yg2-lens-control-bloom),
+    inset 0 0 0 1px var(--yg2-lens-control-sheath),
+    var(--yg2-lens-control-cast);
+  transition:
+    background var(--yg2-dur-1) var(--yg2-ease-out),
+    box-shadow var(--yg2-dur-2) var(--yg2-ease-out),
+    transform var(--yg2-dur-1) var(--yg2-ease-out);
+}
+
+.yg2-btn--secondary:hover,
+.yg2-btn--quiet:hover,
+.yg2-icon-btn:hover,
+.yg2-user-chip:hover {
+  background: var(--yg2-lens-control-fill-hover);
+  box-shadow:
+    inset 0 1px 0 var(--yg2-lens-control-bloom-strong),
+    inset 0 0 0 1px var(--yg2-lens-control-sheath-hover),
+    var(--yg2-lens-control-cast-hover);
+}
+
+.yg2-btn--secondary:active,
+.yg2-btn--quiet:active,
+.yg2-icon-btn:active,
+.yg2-user-chip:active {
+  transform: translateY(0.5px) scale(0.985);
+  box-shadow:
+    inset 0 1px 0 transparent,
+    inset 0 1px 3px var(--yg2-lens-control-press-shade),
+    inset 0 0 0 1px var(--yg2-lens-control-sheath);
+}
+
+/* 主按钮：保持实体品牌色（可读性优先），只给一层顶光与按压反馈 */
+.yg2-btn--primary {
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, #fff 26%, transparent),
+    inset 0 -1px 0 color-mix(in srgb, #000 10%, transparent),
+    0 1px 2px color-mix(in srgb, var(--yg2-accent) 28%, transparent),
+    0 10px 24px -14px color-mix(in srgb, var(--yg2-accent) 55%, transparent);
+}
+
+/* 输入框：内陷，不是凸起。玻璃控件是「浮」，输入框是「凹」 */
+.yg2-input,
+.el-input .el-input__wrapper,
+.el-select .el-select__wrapper,
+.el-textarea .el-textarea__inner {
+  background: var(--yg2-lens-input-fill);
+  box-shadow:
+    inset 0 1px 2px var(--yg2-lens-input-shade),
+    inset 0 0 0 1px var(--yg2-lens-input-sheath);
+  transition: box-shadow var(--yg2-dur-2) var(--yg2-ease-out),
+    background var(--yg2-dur-2) var(--yg2-ease-out);
+}
+
+.el-input .el-input__wrapper:hover,
+.el-select .el-select__wrapper:hover,
+.yg2-input:hover {
+  box-shadow:
+    inset 0 1px 2px var(--yg2-lens-input-shade),
+    inset 0 0 0 1px var(--yg2-lens-input-sheath-hover);
+}
+
+.el-input .el-input__wrapper.is-focus,
+.el-input .el-input__wrapper:focus-within,
+.el-select .el-select__wrapper.is-focused,
+.yg2-input:focus,
+.yg2-input:focus-visible {
+  background: var(--yg2-lens-input-fill-focus);
+  box-shadow:
+    inset 0 1px 2px transparent,
+    inset 0 0 0 1px var(--yg2-accent),
+    0 0 0 3px var(--yg2-accent-soft);
+}
+
+/* 分段控件与移动端底栏：同层材质，滑块做成「抬起的小玻璃」 */
+.yg2-seg {
+  background: var(--yg2-lens-control-fill);
+  box-shadow:
+    inset 0 1px 2px var(--yg2-lens-input-shade),
+    inset 0 0 0 1px var(--yg2-lens-control-sheath);
+}
+
+.yg2-seg__thumb {
+  background: var(--yg2-lens-control-fill-raised);
+  box-shadow:
+    inset 0 1px 0 var(--yg2-lens-control-bloom-strong),
+    inset 0 0 0 1px var(--yg2-lens-control-sheath-hover),
+    0 1px 3px color-mix(in srgb, #0b1220 14%, transparent);
+}
+
+.yg2-mobile-tabs {
+  border: 0;
+  background: var(--yg2-lens-control-fill);
+  -webkit-backdrop-filter: blur(var(--yg2-lens-control-blur)) saturate(var(--yg2-lens-sat));
+  backdrop-filter: blur(var(--yg2-lens-control-blur)) saturate(var(--yg2-lens-sat));
+  box-shadow:
+    inset 0 1px 0 var(--yg2-lens-control-bloom-strong),
+    inset 0 0 0 1px var(--yg2-lens-control-sheath),
+    var(--yg2-lens-control-cast-hover);
+}
+
+/* ==========================================================================
+   6. 浮层（L4）
+   ========================================================================== */
+
+.el-popper.is-light,
+.el-dropdown__popper,
+.el-select__popper,
+.el-picker__popper,
+.el-dialog,
+.el-message-box,
+.el-message,
+.el-notification,
+.el-drawer {
+  border: 0;
+  background: var(--yg2-lens-overlay-fill);
+  -webkit-backdrop-filter: blur(var(--yg2-lens-overlay-blur)) saturate(var(--yg2-lens-sat));
+  backdrop-filter: blur(var(--yg2-lens-overlay-blur)) saturate(var(--yg2-lens-sat));
+  box-shadow:
+    inset 0 1px 0 var(--yg2-lens-overlay-bloom),
+    inset 0 0 0 1px var(--yg2-lens-overlay-sheath),
+    var(--yg2-lens-overlay-cast);
+}
+
+.el-popper__arrow::before {
+  background: var(--yg2-lens-overlay-fill) !important;
+  border: 0 !important;
+  box-shadow: inset 0 0 0 1px var(--yg2-lens-overlay-sheath);
+}
+
+/* 浮层动画：只做「从 2px 上方淡入」，不做缩放弹跳 */
+.el-popper,
+.el-dropdown__popper,
+.el-select__popper {
+  transition:
+    opacity 160ms var(--yg2-ease-out),
+    transform 200ms var(--yg2-ease-out);
+}
+
+/* 遮罩：深色下不要纯黑压死背景层次 */
+.el-overlay {
+  background-color: var(--yg2-lens-scrim);
+  -webkit-backdrop-filter: blur(var(--yg2-lens-scrim-blur));
+  backdrop-filter: blur(var(--yg2-lens-scrim-blur));
+}
+
+/* ==========================================================================
+   7. 动效：指针光照（只对带 data-lens 的可交互玻璃生效）
+   ========================================================================== */
+
+.yg2-btn--secondary,
+.yg2-btn--quiet,
+.yg2-icon-btn,
+.yg2-user-chip,
+.yg2-card--liquid {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+}
+
+/* 跟随指针的一团柔光：由 utils/lensPointer.ts 写入 --lx/--ly（0–100%） */
+:is(.yg2-btn--secondary, .yg2-btn--quiet, .yg2-icon-btn, .yg2-user-chip)::before {
+  content: '';
+  position: absolute;
+  inset: -40%;
+  z-index: -1;
+  border-radius: inherit;
+  pointer-events: none;
+  opacity: 0;
+  background: radial-gradient(
+    42% 42% at var(--lx, 50%) var(--ly, 50%),
+    var(--yg2-lens-control-glow),
+    transparent 70%
+  );
+  transition: opacity var(--yg2-dur-2) var(--yg2-ease-out);
+}
+
+:is(.yg2-btn--secondary, .yg2-btn--quiet, .yg2-icon-btn, .yg2-user-chip):hover::before {
+  opacity: 1;
+}
+
+/* 侧栏当前项：用「玻璃 + 品牌色底光」代替平涂色块，
+   这样它在侧栏材质上是浮起来的一层，而不是印上去的一块颜色。 */
+.yg2-nav-item.is-active {
+  position: relative;
+  isolation: isolate;
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--yg2-accent) 20%, transparent),
+    color-mix(in srgb, var(--yg2-accent) 11%, transparent)
+  );
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.45),
+    inset 0 0 0 1px color-mix(in srgb, var(--yg2-accent) 24%, transparent),
+    0 4px 12px -8px color-mix(in srgb, var(--yg2-accent) 60%, transparent);
+  color: var(--yg2-accent);
+}
+
+[data-theme='dark'] .yg2-nav-item.is-active {
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.12),
+    inset 0 0 0 1px color-mix(in srgb, var(--yg2-accent) 34%, transparent),
+    0 4px 14px -8px rgba(0, 0, 0, 0.8);
+}
+
+
+/* 卡片变体统一收口到同一套材质。
+   card.css 里的 --glass / --liquid / --holo / --spotlight 各自写死了 #fff 15% 之类，
+   在浅色里勉强能用，到深色就成了「亮蓝玻璃 + 灰字」。这里让它们共用 --yg2-lens-matte-*，
+   变体只保留自己的光效层（::before / ::after 装饰）。 */
+.yg2-card--glass,
+.yg2-card--liquid,
+.yg2-card--holo,
+.yg2-card--spotlight,
+[data-theme='dark'] .yg2-card--glass,
+[data-theme='dark'] .yg2-card--liquid,
+[data-theme='dark'] .yg2-card--holo,
+[data-theme='dark'] .yg2-card--spotlight {
+  background: var(--yg2-lens-matte-fill);
+  -webkit-backdrop-filter: blur(var(--yg2-lens-matte-blur)) saturate(var(--yg2-lens-sat));
+  backdrop-filter: blur(var(--yg2-lens-matte-blur)) saturate(var(--yg2-lens-sat));
+}
+
+/* 深色下 deco 的网格渐变是品牌色 16%，在深底上会亮成一片，
+   压到 0.34 才回到「氛围」而不是「发光」。 */
+[data-theme='dark'] .yg2-card--deco::before,
+[data-theme='dark'] .yg2-panel--deco::before,
+[data-theme='dark'] .yg2-xcard.yg2-card--deco::before {
+  opacity: 0.34;
+}
+
+[data-theme='dark'] .yg2-card--deco::after,
+[data-theme='dark'] .yg2-panel--deco::after {
+  opacity: 0.3;
+}
+
+/* ==========================================================================
+   7.5 页面级容器 + 可复用工具类
+   ========================================================================== */
+
+/* 登录卡：独立页面上的唯一实体，做成 L1.5 玻璃。
+   UserLogin.vue 的 scoped 样式写死了白色背景，这里用更高权重覆盖。 */
+.yg2-login__card {
+  position: relative;
+  isolation: isolate;
+  background: var(--yg2-lens-glass-fill);
+  border: 0;
+  -webkit-backdrop-filter: blur(var(--yg2-lens-glass-blur)) saturate(var(--yg2-lens-sat));
+  backdrop-filter: blur(var(--yg2-lens-glass-blur)) saturate(var(--yg2-lens-sat));
+  box-shadow:
+    inset 0 1px 0 var(--yg2-lens-matte-bloom),
+    inset 0 0 0 1px var(--yg2-lens-matte-sheath),
+    var(--yg2-lens-glass-cast);
+}
+
+/* 工具类：任何容器加上它就是一层面板玻璃，厚度由 --chrome / --quiet 调 */
+.yg2-glass-surface {
+  position: relative;
+  isolation: isolate;
+  background: var(--yg2-lens-glass-fill);
+  -webkit-backdrop-filter: blur(var(--yg2-lens-glass-blur)) saturate(var(--yg2-lens-sat));
+  backdrop-filter: blur(var(--yg2-lens-glass-blur)) saturate(var(--yg2-lens-sat));
+  box-shadow:
+    inset 0 1px 0 var(--yg2-lens-matte-bloom),
+    inset 0 0 0 1px var(--yg2-lens-matte-sheath),
+    var(--yg2-lens-glass-cast);
+}
+
+.yg2-glass-surface--chrome {
+  background: var(--yg2-lens-chrome-fill);
+  -webkit-backdrop-filter: blur(var(--yg2-lens-chrome-blur)) saturate(var(--yg2-lens-sat));
+  backdrop-filter: blur(var(--yg2-lens-chrome-blur)) saturate(var(--yg2-lens-sat));
+  box-shadow:
+    inset 0 1px 0 var(--yg2-lens-chrome-bloom),
+    inset 0 0 0 1px var(--yg2-lens-chrome-edge),
+    var(--yg2-lens-chrome-cast);
+}
+
+.yg2-glass-surface--quiet {
+  background: var(--yg2-lens-quiet-fill);
+  -webkit-backdrop-filter: blur(var(--yg2-lens-quiet-blur)) saturate(var(--yg2-lens-sat));
+  backdrop-filter: blur(var(--yg2-lens-quiet-blur)) saturate(var(--yg2-lens-sat));
+  box-shadow:
+    inset 0 1px 0 var(--yg2-lens-quiet-bloom),
+    inset 0 0 0 1px var(--yg2-lens-matte-sheath),
+    var(--yg2-lens-quiet-cast);
+}
+
+/* 方向性镜面边：任意玻璃面都能加（用 mask 只留 1px 环） */
+.yg2-glass-surface::after,
+.yg2-login__card::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  padding: 1px;
+  border-radius: inherit;
+  pointer-events: none;
+  background: var(--yg2-lens-rim-grad);
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+}
+
+/* ==========================================================================
+   8. 降级与无障碍
+   ========================================================================== */
+
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .yg2-sidebar,
+  .yg2-card,
+  .yg2-panel,
+  .yg2-xcard,
+  .yg2-login__card,
+  .yg2-glass-surface,
+  .yg2-mobile-tabs,
+  .el-dialog,
+  .el-popper,
+  .el-drawer {
+    background: var(--yg2-surface);
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .yg2-sidebar,
+  .yg2-card,
+  .yg2-panel,
+  .yg2-xcard,
+  .yg2-login__card,
+  .yg2-glass-surface,
+  .yg2-mobile-tabs,
+  .el-dialog,
+  .el-popper,
+  .el-drawer {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    background: var(--yg2-surface);
+  }
+
+  .yg2-card::after,
+  .yg2-panel::after,
+  .yg2-glass-surface::after {
+    display: none;
+  }
+
+  .el-overlay {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .yg2-btn--secondary,
+  .yg2-btn--quiet,
+  .yg2-icon-btn,
+  .yg2-user-chip,
+  .el-popper,
+  .el-dropdown__popper,
+  .el-select__popper {
+    transition: none;
+  }
+
+  :is(.yg2-btn--secondary, .yg2-btn--quiet, .yg2-icon-btn, .yg2-user-chip)::before {
+    display: none;
+  }
+}

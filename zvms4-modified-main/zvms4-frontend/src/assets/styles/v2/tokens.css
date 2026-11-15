@@ -7,7 +7,7 @@
   color-scheme: light;
 
   /* ── 中性色 ─────────────────────────────────────────────── */
-  --yg2-bg: #f5f6f8;
+  --yg2-bg: #e9edf5;
   --yg2-surface: #ffffff;
   --yg2-surface-sunken: #eef0f3;
   --yg2-surface-raised: #ffffff;
@@ -68,10 +68,12 @@
   --yg2-danger-soft: rgba(255, 59, 48, 0.1);
 
   /* ── 环境光 ─────────────────────────────────────────────── */
-  --yg2-ambient-1: #a9cdf5;
-  --yg2-ambient-2: #ffd9b8;
-  --yg2-ambient-3: #d8d2f5;
-  --yg2-ambient-opacity: 0.85;
+  --yg2-ambient-1: #9bc4f7;
+  --yg2-ambient-2: #ffcf9c;
+  --yg2-ambient-3: #c6c0f8;
+  --yg2-ambient-opacity: 0.92;
+  --yg2-ambient-core: #ffffff;
+  --yg2-ambient-cursor: rgba(120, 170, 245, 0.22);
 
   /* ── 玻璃材质 ───────────────────────────────────────────── */
   --yg2-glass-chrome-fill: rgba(255, 255, 255, 0.58);
@@ -134,12 +136,104 @@
   --yg2-content-max: 1160px;
   --yg2-gutter: 40px;
   --yg2-gutter-sm: 24px;
+
+  /* ── Liquid Glass 材质层（light）────────────────────────────
+     由 assets/styles/v2/glass.css 消费；组件不得直接写这些数值。
+     层级：matte(内容) < quiet(轻玻璃) < chrome(侧栏) < control(控件) < overlay(浮层) */
+  --yg2-lens-sat: 175%;
+
+  /* 方向性镜面边：左上强、右下弱，制造「厚度」 */
+  --yg2-lens-rim-grad: linear-gradient(
+    152deg,
+    rgba(255, 255, 255, 0.98) 0%,
+    rgba(255, 255, 255, 0.62) 12%,
+    rgba(255, 255, 255, 0.16) 34%,
+    rgba(255, 255, 255, 0.04) 52%,
+    rgba(255, 255, 255, 0.1) 68%,
+    rgba(255, 255, 255, 0.34) 88%,
+    rgba(255, 255, 255, 0.72) 100%
+  );
+  --yg2-lens-rim-opacity: 1;
+
+  /* L0 哑光内容面 */
+  --yg2-lens-matte-fill: linear-gradient(180deg, rgba(255, 255, 255, 0.9) 0%, rgba(252, 253, 255, 0.78) 58%, rgba(244, 247, 252, 0.72) 100%);
+  --yg2-lens-matte-fill-sunken: rgba(15, 23, 42, 0.035);
+  --yg2-lens-matte-blur: 18px;
+  --yg2-lens-matte-bloom: rgba(255, 255, 255, 0.95);
+  --yg2-lens-matte-sheath: rgba(255, 255, 255, 0.6);
+  --yg2-lens-matte-hairline: rgba(15, 23, 42, 0.085);
+  --yg2-lens-matte-cast: 0 1px 2px rgba(15, 23, 42, 0.05), 0 10px 28px -14px rgba(15, 23, 42, 0.22),
+    0 32px 64px -40px rgba(15, 23, 42, 0.24);
+
+  /* L1 轻玻璃 */
+  --yg2-lens-quiet-fill: linear-gradient(180deg, rgba(255, 255, 255, 0.86), rgba(255, 255, 255, 0.66));
+  --yg2-lens-quiet-blur: 20px;
+  --yg2-lens-quiet-bloom: rgba(255, 255, 255, 0.95);
+  --yg2-lens-quiet-cast: 0 1px 2px rgba(15, 23, 42, 0.05), 0 20px 44px -26px rgba(15, 23, 42, 0.24);
+
+  /* L1.5 页面级玻璃：一等浮层（登录卡 / 弹窗 / 抽屉） */
+  --yg2-lens-glass-fill: linear-gradient(180deg, rgba(255, 255, 255, 0.92) 0%, rgba(250, 252, 255, 0.82) 100%);
+  --yg2-lens-glass-blur: 30px;
+  --yg2-lens-glass-cast: 0 1px 2px rgba(15, 23, 42, 0.05), 0 24px 56px -28px rgba(15, 23, 42, 0.3),
+    0 60px 120px -70px rgba(15, 23, 42, 0.3);
+
+  /* L1.5 页面级玻璃：一等浮层（登录卡 / 弹窗 / 抽屉） */
+  --yg2-lens-glass-fill: linear-gradient(180deg, rgba(46, 49, 60, 0.9) 0%, rgba(30, 32, 40, 0.84) 100%);
+  --yg2-lens-glass-blur: 30px;
+  --yg2-lens-glass-cast: 0 1px 2px rgba(0, 0, 0, 0.55), 0 24px 56px -28px rgba(0, 0, 0, 0.8),
+    0 60px 120px -70px rgba(0, 0, 0, 0.9);
+
+  /* L2 导航玻璃（侧栏） */
+  --yg2-lens-chrome-fill: linear-gradient(180deg, rgba(245, 247, 252, 0.78) 0%, rgba(240, 243, 250, 0.62) 100%);
+  --yg2-lens-chrome-blur: 34px;
+  --yg2-lens-chrome-brightness: 1.02;
+  --yg2-lens-chrome-bloom: rgba(255, 255, 255, 0.92);
+  --yg2-lens-chrome-edge: rgba(15, 23, 42, 0.09);
+  --yg2-lens-chrome-cast: 0 1px 2px rgba(15, 23, 42, 0.05), 0 24px 60px -40px rgba(15, 23, 42, 0.32),
+    12px 0 32px -24px rgba(15, 23, 42, 0.18);
+
+  /* 顶栏：实体 chrome，不是玻璃 */
+  --yg2-lens-chrome-solid: linear-gradient(180deg, #ffffff 0%, #fcfcfe 100%);
+  --yg2-lens-chrome-solid-top: rgba(255, 255, 255, 0.9);
+  --yg2-lens-chrome-solid-cast: 0 10px 30px -24px rgba(15, 23, 42, 0.35);
+
+  /* L3 控件玻璃 */
+  --yg2-lens-control-fill: linear-gradient(180deg, rgba(255, 255, 255, 0.88), rgba(255, 255, 255, 0.66));
+  --yg2-lens-control-fill-hover: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(255, 255, 255, 0.8));
+  --yg2-lens-control-fill-raised: linear-gradient(180deg, #ffffff, rgba(255, 255, 255, 0.92));
+  --yg2-lens-control-blur: 22px;
+  --yg2-lens-control-bloom: rgba(255, 255, 255, 0.92);
+  --yg2-lens-control-bloom-strong: #ffffff;
+  --yg2-lens-control-sheath: rgba(15, 23, 42, 0.08);
+  --yg2-lens-control-sheath-hover: rgba(15, 23, 42, 0.13);
+  --yg2-lens-control-cast: 0 1px 2px rgba(15, 23, 42, 0.05), 0 8px 20px -12px rgba(15, 23, 42, 0.2);
+  --yg2-lens-control-cast-hover: 0 2px 4px rgba(15, 23, 42, 0.06), 0 12px 28px -14px rgba(15, 23, 42, 0.26);
+  --yg2-lens-control-press-shade: rgba(15, 23, 42, 0.12);
+  --yg2-lens-control-glow: rgba(255, 255, 255, 0.9);
+
+  /* 输入框：内陷 */
+  --yg2-lens-input-fill: rgba(255, 255, 255, 0.72);
+  --yg2-lens-input-fill-focus: #ffffff;
+  --yg2-lens-input-shade: rgba(15, 23, 42, 0.06);
+  --yg2-lens-input-sheath: rgba(15, 23, 42, 0.1);
+  --yg2-lens-input-sheath-hover: rgba(15, 23, 42, 0.16);
+
+  /* L4 浮层玻璃 */
+  --yg2-lens-overlay-fill: linear-gradient(180deg, rgba(255, 255, 255, 0.93), rgba(252, 252, 254, 0.85));
+  --yg2-lens-overlay-blur: 36px;
+  --yg2-lens-overlay-bloom: rgba(255, 255, 255, 0.95);
+  --yg2-lens-overlay-sheath: rgba(15, 23, 42, 0.09);
+  --yg2-lens-overlay-cast: 0 2px 6px rgba(15, 23, 42, 0.06), 0 32px 72px -32px rgba(15, 23, 42, 0.36);
+
+  /* 遮罩 */
+  --yg2-lens-scrim: rgba(15, 23, 42, 0.22);
+  --yg2-lens-scrim-blur: 2px;
 }
 
 [data-theme="dark"] {
   color-scheme: dark;
 
-  --yg2-bg: #17191f;
+  --yg2-bg: #0e1015;
   --yg2-surface: #24252d;
   --yg2-surface-sunken: #2c2e37;
   --yg2-surface-raised: #2c2e37;
@@ -192,10 +286,12 @@
   --yg2-danger: #ff453a;
   --yg2-danger-soft: rgba(255, 69, 58, 0.16);
 
-  --yg2-ambient-1: #17304f;
-  --yg2-ambient-2: #33261a;
-  --yg2-ambient-3: #221f3d;
-  --yg2-ambient-opacity: 0.62;
+  --yg2-ambient-1: #14406f;
+  --yg2-ambient-2: #33230f;
+  --yg2-ambient-3: #241f52;
+  --yg2-ambient-opacity: 0.66;
+  --yg2-ambient-core: #101a2b;
+  --yg2-ambient-cursor: rgba(58, 112, 190, 0.16);
 
   --yg2-glass-chrome-fill: rgba(30, 33, 42, 0.72);
   --yg2-glass-chrome-stroke: rgba(255, 255, 255, 0.14);
@@ -209,4 +305,72 @@
   --yg2-shadow-ambient: 0 1px 2px rgba(0, 0, 0, 0.5), 0 8px 24px -12px rgba(0, 0, 0, 0.6);
   --yg2-shadow-raised: 0 2px 6px rgba(0, 0, 0, 0.5), 0 20px 48px -24px rgba(0, 0, 0, 0.7);
   --yg2-shadow-float: 0 12px 40px -8px rgba(0, 0, 0, 0.7), 0 2px 8px rgba(0, 0, 0, 0.5);
+
+  /* ── Liquid Glass 材质层（dark）────────────────────────────
+     深色不做简单反相：降低描边亮度、抬高填充的「空气感」、
+     用更弱的顶光 + 更强的外投影拉开层次。 */
+  --yg2-lens-sat: 165%;
+  --yg2-lens-rim-grad: linear-gradient(
+    152deg,
+    rgba(255, 255, 255, 0.44) 0%,
+    rgba(255, 255, 255, 0.2) 12%,
+    rgba(255, 255, 255, 0.05) 34%,
+    rgba(255, 255, 255, 0.02) 52%,
+    rgba(255, 255, 255, 0.05) 68%,
+    rgba(255, 255, 255, 0.12) 88%,
+    rgba(255, 255, 255, 0.26) 100%
+  );
+  --yg2-lens-rim-opacity: 0.9;
+
+  --yg2-lens-matte-fill: linear-gradient(180deg, rgba(44, 47, 57, 0.82), rgba(32, 34, 42, 0.76));
+  --yg2-lens-matte-fill-sunken: rgba(255, 255, 255, 0.045);
+  --yg2-lens-matte-blur: 18px;
+  --yg2-lens-matte-bloom: rgba(255, 255, 255, 0.18);
+  --yg2-lens-matte-sheath: rgba(255, 255, 255, 0.14);
+  --yg2-lens-matte-hairline: rgba(0, 0, 0, 0.4);
+  --yg2-lens-matte-cast: 0 1px 2px rgba(0, 0, 0, 0.45), 0 14px 34px -22px rgba(0, 0, 0, 0.7);
+
+  --yg2-lens-quiet-fill: linear-gradient(180deg, rgba(44, 47, 57, 0.9), rgba(32, 34, 42, 0.82));
+  --yg2-lens-quiet-blur: 20px;
+  --yg2-lens-quiet-bloom: rgba(255, 255, 255, 0.1);
+  --yg2-lens-quiet-cast: 0 1px 2px rgba(0, 0, 0, 0.5), 0 20px 44px -26px rgba(0, 0, 0, 0.8);
+
+  --yg2-lens-chrome-fill: linear-gradient(180deg, rgba(36, 38, 46, 0.86), rgba(24, 26, 33, 0.78));
+  --yg2-lens-chrome-blur: 34px;
+  --yg2-lens-chrome-brightness: 1;
+  --yg2-lens-chrome-bloom: rgba(255, 255, 255, 0.14);
+  --yg2-lens-chrome-edge: rgba(255, 255, 255, 0.08);
+  --yg2-lens-chrome-cast: 0 1px 2px rgba(0, 0, 0, 0.5), 0 24px 60px -40px rgba(0, 0, 0, 0.85);
+
+  --yg2-lens-chrome-solid: linear-gradient(180deg, #23252c 0%, #1e2026 100%);
+  --yg2-lens-chrome-solid-top: rgba(255, 255, 255, 0.06);
+  --yg2-lens-chrome-solid-cast: 0 10px 30px -22px rgba(0, 0, 0, 0.9);
+
+  --yg2-lens-control-fill: linear-gradient(180deg, rgba(50, 53, 64, 0.9), rgba(34, 36, 44, 0.82));
+  --yg2-lens-control-fill-hover: linear-gradient(180deg, rgba(60, 64, 76, 0.94), rgba(40, 43, 52, 0.86));
+  --yg2-lens-control-fill-raised: linear-gradient(180deg, rgba(64, 68, 80, 0.98), rgba(47, 50, 60, 0.94));
+  --yg2-lens-control-blur: 22px;
+  --yg2-lens-control-bloom: rgba(255, 255, 255, 0.12);
+  --yg2-lens-control-bloom-strong: rgba(255, 255, 255, 0.18);
+  --yg2-lens-control-sheath: rgba(255, 255, 255, 0.1);
+  --yg2-lens-control-sheath-hover: rgba(255, 255, 255, 0.16);
+  --yg2-lens-control-cast: 0 1px 2px rgba(0, 0, 0, 0.42), 0 8px 20px -12px rgba(0, 0, 0, 0.7);
+  --yg2-lens-control-cast-hover: 0 2px 4px rgba(0, 0, 0, 0.5), 0 12px 28px -14px rgba(0, 0, 0, 0.78);
+  --yg2-lens-control-press-shade: rgba(0, 0, 0, 0.45);
+  --yg2-lens-control-glow: rgba(255, 255, 255, 0.16);
+
+  --yg2-lens-input-fill: rgba(16, 18, 24, 0.55);
+  --yg2-lens-input-fill-focus: rgba(14, 16, 21, 0.72);
+  --yg2-lens-input-shade: rgba(0, 0, 0, 0.35);
+  --yg2-lens-input-sheath: rgba(255, 255, 255, 0.1);
+  --yg2-lens-input-sheath-hover: rgba(255, 255, 255, 0.16);
+
+  --yg2-lens-overlay-fill: linear-gradient(180deg, rgba(43, 46, 55, 0.94), rgba(30, 32, 40, 0.9));
+  --yg2-lens-overlay-blur: 38px;
+  --yg2-lens-overlay-bloom: rgba(255, 255, 255, 0.12);
+  --yg2-lens-overlay-sheath: rgba(255, 255, 255, 0.12);
+  --yg2-lens-overlay-cast: 0 2px 6px rgba(0, 0, 0, 0.5), 0 32px 72px -32px rgba(0, 0, 0, 0.85);
+
+  --yg2-lens-scrim: rgba(4, 6, 10, 0.48);
+  --yg2-lens-scrim-blur: 3px;
 }

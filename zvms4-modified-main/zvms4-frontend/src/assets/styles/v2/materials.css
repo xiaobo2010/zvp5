@@ -41,12 +41,24 @@
   animation: yg2-drift-2 110s var(--yg2-ease-in-out) infinite alternate;
 }
 .yg2-ambient__blob:nth-child(3) {
-  bottom: -40vmax;
-  left: 18vmax;
-  width: 62vmax;
-  height: 62vmax;
-  background: radial-gradient(closest-side, var(--yg2-ambient-3), transparent 72%);
+  bottom: -34vmax;
+  left: 16vmax;
+  width: 84vmax;
+  height: 84vmax;
+  background: radial-gradient(closest-side, var(--yg2-ambient-3), transparent 74%);
   animation: yg2-drift-3 96s var(--yg2-ease-in-out) infinite alternate;
+}
+
+/* 光场焦点：内容区中部的一团中性光，让玻璃有「被照亮的地面」，
+   而不是只在四角有颜色、中间一片死白。 */
+.yg2-ambient__blob:nth-child(4) {
+  top: 22vmax;
+  left: 42vmax;
+  width: 58vmax;
+  height: 58vmax;
+  background: radial-gradient(closest-side, var(--yg2-ambient-core), transparent 76%);
+  opacity: calc(var(--yg2-ambient-opacity) * 0.9);
+  animation: yg2-drift-2 120s var(--yg2-ease-in-out) infinite alternate;
 }
 
 @keyframes yg2-drift-1 {
@@ -65,10 +77,16 @@
 [data-ambient="ai"] { --yg2-ambient-1: #d9d4ff; --yg2-ambient-2: #c6ecff; --yg2-ambient-3: #ffe3f0; }
 [data-ambient="manage"] { --yg2-ambient-1: #d8e2ff; --yg2-ambient-2: #ffe8c8; --yg2-ambient-3: #e4e4ea; }
 
-[data-theme="dark"][data-ambient="activities"] { --yg2-ambient-1: #0b2a4a; --yg2-ambient-2: #3a200b; --yg2-ambient-3: #1b1436; }
-[data-theme="dark"][data-ambient="groups"] { --yg2-ambient-1: #0b3a24; --yg2-ambient-2: #0b2a4a; --yg2-ambient-3: #241436; }
-[data-theme="dark"][data-ambient="ai"] { --yg2-ambient-1: #241a4a; --yg2-ambient-2: #0b2a4a; --yg2-ambient-3: #3a0b24; }
-[data-theme="dark"][data-ambient="manage"] { --yg2-ambient-1: #1a2440; --yg2-ambient-2: #3a2a0b; --yg2-ambient-3: #141418; }
+/* 注意：data-ambient 写在 .yg2-ambient 元素上，data-theme 写在 <html> 上，
+   所以深色必须用「后代」形式，否则永远匹配不到，深色下会一直用浅色马卡龙。 */
+[data-theme="dark"] [data-ambient="activities"],
+[data-theme="dark"][data-ambient="activities"] { --yg2-ambient-1: #0f3459; --yg2-ambient-2: #36220e; --yg2-ambient-3: #1e1740; }
+[data-theme="dark"] [data-ambient="groups"],
+[data-theme="dark"][data-ambient="groups"] { --yg2-ambient-1: #0d3a28; --yg2-ambient-2: #0f3459; --yg2-ambient-3: #241a44; }
+[data-theme="dark"] [data-ambient="ai"],
+[data-theme="dark"][data-ambient="ai"] { --yg2-ambient-1: #2a1f52; --yg2-ambient-2: #0f3459; --yg2-ambient-3: #3c1030; }
+[data-theme="dark"] [data-ambient="manage"],
+[data-theme="dark"][data-ambient="manage"] { --yg2-ambient-1: #1c2842; --yg2-ambient-2: #33260e; --yg2-ambient-3: #16161c; }
 
 /* ── 玻璃 ──────────────────────────────────────────────────
    三层：chrome（导航栏）/ control（悬浮控件）/ overlay（弹层）。

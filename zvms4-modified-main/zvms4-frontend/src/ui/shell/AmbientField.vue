@@ -11,6 +11,8 @@ withDefaults(defineProps<{ tone?: string }>(), { tone: 'activities' })
     <div class="yg2-ambient__blob" />
     <div class="yg2-ambient__blob" />
     <div class="yg2-ambient__blob" />
+    <!-- 中部焦点光：玻璃需要一层「被照亮的底面」才显厚度 -->
+    <div class="yg2-ambient__blob" />
     <div class="yg2-ambient__cursor" />
   </div>
 </template>

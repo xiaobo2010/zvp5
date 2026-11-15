@@ -1,17 +1,13 @@
 <script setup lang="ts">
-import LiquidGlass from '@/ui/glass/LiquidGlass.vue'
-
+// 顶栏不做玻璃：内容区是独立滚动容器，永远滚不到顶栏下面，
+// 给它上 backdrop-filter 只是把自己背后的环境光糊成一片灰。
+// 这里是实体 chrome 栏：一层顶光 + 一条发丝分隔线，材质见 v2/glass.css。
 defineProps<{ title: string }>()
 defineEmits<{ openDrawer: [] }>()
 </script>
 
 <template>
   <header class="yg2-topbar">
-    <LiquidGlass class="yg2-topbar__glass" :radius="0" capture=".yg2-app" />
-    <div class="yg2-lens-clip is-under-glass" aria-hidden="true">
-      <span class="yg2-lens-clip__blob yg2-lens-clip__blob--2" />
-      <span class="yg2-lens-clip__blob yg2-lens-clip__blob--3" />
-    </div>
     <button
       type="button"
       class="yg2-topbar__menu"

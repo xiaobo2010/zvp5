@@ -109,7 +109,9 @@ async function capture(selector: string): Promise<Backdrop> {
   const target = selector ? document.querySelector<HTMLElement>(selector) : null
   if (target) {
     try {
-      const { default: html2canvas } = await import('html2canvas')
+      // html2canvas-pro：原生支持 color()/color-mix()/oklch —— v2 样式里有 160+ 处
+      // color-mix()，用原版 html2canvas 会解析失败并落回程序化背景（等于折假背景）。
+      const { default: html2canvas } = await import('html2canvas-pro')
       const rect = target.getBoundingClientRect()
       const canvas = await html2canvas(target, {
         scale: 1,

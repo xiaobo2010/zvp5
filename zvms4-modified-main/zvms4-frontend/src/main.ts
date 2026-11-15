@@ -41,6 +41,8 @@ import './assets/styles/v2/patterns.css'
 import './assets/styles/v2/shell.css'
 import './assets/styles/v2/ep-bridge.css'
 import './assets/styles/v2/ux.css'
+// 玻璃材质层：必须最后加载，用同权重选择器覆盖上面各层的扁平材质。
+import './assets/styles/v2/glass.css'
 
 import persistedstate from 'pinia-plugin-persistedstate'
 

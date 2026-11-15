@@ -200,7 +200,7 @@ const canSubmit = computed(() => String(user.value).length === 8 && password.val
 
 <template>
   <div class="yg2-login">
-    <section class="yg2-login__card" aria-labelledby="yg2-login-title">
+    <section class="yg2-login__card yg2-glass-surface yg2-glass-surface--chrome" aria-labelledby="yg2-login-title">
       <div class="yg2-login__brand">
         <span class="yg2-login__mark">
           <img src="/favicon.ico" alt="" />
@@ -259,15 +259,13 @@ const canSubmit = computed(() => String(user.value).length === 8 && password.val
   padding: 32px 20px 72px;
 }
 
-/* 登录卡：实色哑光面 + 28px 圆角 + 单层柔和投影 */
+/* 登录卡：玻璃材质由 .yg2-glass-surface--chrome 提供（见 v2/glass.css），
+   这里只管尺寸与排布，避免材质散落在各处。 */
 .yg2-login__card {
   width: 100%;
   max-width: 420px;
   padding: 40px 36px 32px;
-  border: 1px solid var(--yg2-line);
   border-radius: var(--yg2-r-32);
-  background: var(--yg2-surface);
-  box-shadow: var(--yg2-shadow-raised);
 }
 
 .yg2-login__brand {
