@@ -114,3 +114,15 @@ DNS `record_id` 在 3 个提交里，同批处理。
   `GITHUB_TOKEN` 只读；本仓库没有 `pull_request_target` / `workflow_run`，
   runner 全是 GitHub 托管，公开库最经典的「fork PR 打穿自托管 runner」不适用。
 - **搜索可见**：`reference/zvp5-gitlab/` 这类未完成设计稿会被人翻到，酌情删。
+
+## 六、2026-11-15 第二轮清理（全历史重写）
+
+| 项 | 处置 |
+| --- | --- |
+| 真实学生姓名索引表 | `义工平台代码笔记整理.md` 的 §6 索引表与「来源」说明从当前树删除；该文件的**全部历史版本**已从重写后的历史中移除，脱敏版在重写后作为新提交重新加入 |
+| 事故复盘 `docs/ISSUE_2026-11-03_AI_CREDENTIAL_UNREADABLE.md` | 当前树与历史一并删除，`zvp5.service` 与 `tools/setup_local.py` 里的引用改为中性表述 |
+| 内网地址 / 权威 NS / 后端公网 IP | 当前树写 `<INTERNAL_HOST>` / `<CF_NAMESERVER>` / `<BACKEND_IP>`；历史与代码/测试统一换成 TEST-NET 文档地址（`192.0.2.x`）与 `ns1.example.com`，保证任何按 IP 解析的断言仍然成立 |
+| README §八「学海 API 调查报告」 | 整节移出仓库，只保留结论；全文存档在仓库外 |
+| 许可 | 新增 `NOTICE`：MIT 覆盖范围、上游 `zvms/zvms4-*` 署名、不再分发内容的说明；README 补「十一、许可」 |
+| `.gitignore` | 根补 `.env*` / `*.pem` / `*.key` / `*.p12` / `aes_key.txt` / `credentials/`；前端补 `.env` 规则（此前完全没有） |
+| 用户裁定不处理 | `reference/xuehai/` 在历史中的第三方签名材料按决定保留；公有域名（`*.xiaobopisces.top`、`albwxy.fun`）不清，CI 里仍是功能默认值 |
