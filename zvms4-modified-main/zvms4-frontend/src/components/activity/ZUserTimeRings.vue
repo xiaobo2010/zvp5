@@ -6,6 +6,7 @@ import { Refresh, InfoFilled } from '@element-plus/icons-vue'
 import { useUserTime, TIME_STANDARD, type TimeKey } from '@/composables/useUserTime'
 import ZDetailedAnalysis from '@/components/activity/ZDetailedAnalysis.vue'
 import { useUserStore } from '@/stores/user'
+import { useCountUp } from '@/ui/ux/useCountUp'
 
 /**
  * 首页「义工时间」：Apple Fitness 式三同心环。
@@ -84,7 +85,8 @@ function fmt(value: number) {
   return Number.isInteger(value) ? String(value) : value.toFixed(1)
 }
 
-const totalText = computed(() => fmt(total.value))
+const animatedTotal = useCountUp(computed(() => total.value ?? 0))
+const totalText = computed(() => fmt(animatedTotal.value))
 /** 三位数/带小数时缩小字号，避免压到圆环内圈 */
 const totalSize = computed(() => {
   const text = totalText.value

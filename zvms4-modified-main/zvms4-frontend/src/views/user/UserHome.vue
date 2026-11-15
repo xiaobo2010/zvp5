@@ -69,7 +69,7 @@ watch(
 
 <template>
   <div v-if="user.isLogin" class="yg2-page">
-    <header class="yg2-page-header">
+    <header class="yg2-page-header yg2-enter">
       <div>
         <p class="yg2-page-header__eyebrow">{{ today }}</p>
         <h1 class="yg2-page-header__title">{{ greetingText }}</h1>
@@ -95,7 +95,7 @@ watch(
     </header>
 
     <div class="yg2-home">
-      <section class="yg2-card yg2-home__card yg2-home__card--profile" :class="{ 'is-loading': loading }">
+      <section class="yg2-card yg2-home__card yg2-home__card--profile yg2-float yg2-lift yg2-parallax" :class="{ 'is-loading': loading }">
         <h2 class="yg2-card__title">{{ t('home.panels.information.title') }}</h2>
         <dl class="yg2-kv">
           <dt>{{ t('home.labels.name') }}</dt>

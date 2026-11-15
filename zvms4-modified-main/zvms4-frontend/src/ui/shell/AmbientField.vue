@@ -44,6 +44,8 @@ export function installAmbientCursor() {
     root.style.setProperty('--yg2-cy', `${y.toFixed(1)}px`)
     root.style.setProperty('--yg2-mx', `${((x / window.innerWidth) * 100).toFixed(2)}%`)
     root.style.setProperty('--yg2-my', `${((y / window.innerHeight) * 100).toFixed(2)}%`)
+    root.style.setProperty('--yg2-px', `${((x / window.innerWidth) * 2 - 1).toFixed(3)}`)
+    root.style.setProperty('--yg2-py', `${((y / window.innerHeight) * 2 - 1).toFixed(3)}`)
     raf = requestAnimationFrame(tick)
   }
 

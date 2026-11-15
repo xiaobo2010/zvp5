@@ -580,3 +580,41 @@ body,
 .yg2-page > .yg2-enter-seq:nth-child(3) { animation-delay: 230ms; }
 .yg2-enter-seq { animation: yg2-rise 560ms cubic-bezier(.22,.61,.36,1) both; }
 @media (prefers-reduced-motion: reduce) { .yg2-enter-seq { animation: none; } }
+
+/* ── 空间运动：只给 1–2 个主面板，异速、幅度 4px，不影响布局 ─────────── */
+@keyframes yg2-float-a {
+  from { transform: translate3d(0, -2px, 0); }
+  to   { transform: translate3d(0, 2px, 0); }
+}
+@keyframes yg2-float-b {
+  from { transform: translate3d(0, 2px, 0); }
+  to   { transform: translate3d(0, -2px, 0); }
+}
+.yg2-float {
+  animation: yg2-float-a 9s var(--yg2-ease-in-out) infinite alternate;
+  will-change: transform;
+}
+.yg2-float--slow { animation-name: yg2-float-b; animation-duration: 12s; }
+
+/* 鼠标视差：位移 ±3px，用 CSS 变量，不触发重排 */
+.yg2-parallax {
+  transform: translate3d(calc(var(--yg2-px, 0) * 3px), calc(var(--yg2-py, 0) * 3px), 0);
+  transition: transform 240ms var(--yg2-ease-out);
+}
+
+/* 悬停抬升：只作用在玻璃面板上，2px，不改变点击区域 */
+.yg2-lift {
+  transition: transform 220ms var(--yg2-ease-out), box-shadow 220ms var(--yg2-ease-out);
+}
+.yg2-lift:hover {
+  transform: translate3d(0, -2px, 0);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .yg2-float, .yg2-parallax { animation: none; transform: none; }
+  .yg2-lift:hover { transform: none; }
+}
+@media (max-width: 767px) {
+  .yg2-float { animation: none; }
+  .yg2-parallax { transform: none; }
+}
