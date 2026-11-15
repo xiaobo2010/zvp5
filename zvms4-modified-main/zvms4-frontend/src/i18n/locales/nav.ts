@@ -7,6 +7,7 @@ export const zhCN = {
   server: '服务器管理',
   ai: 'AI 网关',
   create: '创建义工',
+  createShort: '创建',
   register: '批量登记',
   about: '关于',
   changelog: '更新日志',

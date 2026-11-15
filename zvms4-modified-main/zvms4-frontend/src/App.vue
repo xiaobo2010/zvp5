@@ -335,10 +335,10 @@ function toggleRail() {
 // headerStore.header 形如「首页 - 义工平台」，顶栏只显示前半段。
 /** 底部栏当前高亮项的下标，用来驱动滑块平移 */
 const mobileTabIndex = computed(() => {
-  const index = mobileTabs.findIndex((tab) => tab.judge(route.path))
+  const index = mobileTabs.value.findIndex((tab) => tab.judge(route.path))
   // 既不是首页、项目、我的（例如「菜单」里打开的关于/更新日志/管理页），
   // 高亮落到最后一个格子「菜单」上，而不是硬回退到首页。
-  return index < 0 ? mobileTabs.length : index
+  return index < 0 ? mobileTabs.value.length : index
 })
 
 const pageTitle = computed(() => {
@@ -361,7 +361,7 @@ function toggleTheme() {
 }
 
 // 移动端底栏前三个入口，第四个是抽屉。
-const mobileTabs = [
+const mobileTabAll = [
   {
     key: 'home',
     labelKey: 'nav.home',
@@ -382,8 +382,22 @@ const mobileTabs = [
     icon: Avatar,
     judge: (path: string) => path.startsWith('/me'),
     action: () => router.push('/me')
+  },
+  // 有创建权限的人（管理员 / 部门 / 秘书）多一格「创建」，手机上也少绕一步
+  {
+    key: 'create',
+    labelKey: 'nav.createShort',
+    icon: null,
+    show: () =>
+      userStore.position.includes('admin') ||
+      userStore.position.includes('department') ||
+      userStore.position.includes('secretary'),
+    judge: (path: string) => path.startsWith('/activity/create'),
+    action: () => router.push('/activity/create')
   }
 ]
+
+const mobileTabs = computed(() => mobileTabAll.filter((tab) => !tab.show || tab.show()))
 
 const locales: Record<
   (typeof locale)['value'],
@@ -641,7 +655,19 @@ onMounted(async () => {
               :class="{ 'is-active': tab.judge(route.path) }"
               @click="tab.action()"
             >
-              <component :is="tab.icon" />
+              <component :is="tab.icon" v-if="tab.icon" />
+              <svg
+                v-else
+                width="18"
+                height="18"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.8"
+                stroke-linecap="round"
+              >
+                <path d="M12 5v14M5 12h14" />
+              </svg>
               <span>{{ t(tab.labelKey, tab.key) }}</span>
             </button>
             <button
