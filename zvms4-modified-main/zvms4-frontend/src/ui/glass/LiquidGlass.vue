@@ -19,10 +19,19 @@ const props = withDefaults(
     tint?: number
     shape?: 'rounded' | 'circle' | 'pill'
     capture?: string
+    preset?: 'nav' | 'button' | 'dialog'
     refreshOnScroll?: boolean
     tone?: string
   }>(),
-  { radius: 24, tint: 0.06, shape: 'rounded', capture: '', refreshOnScroll: true, tone: 'activities' },
+  {
+    radius: 24,
+    tint: 0.06,
+    shape: 'rounded',
+    capture: '',
+    preset: 'nav',
+    refreshOnScroll: true,
+    tone: 'activities',
+  },
 )
 
 const host = ref<HTMLDivElement | null>(null)
@@ -33,33 +42,41 @@ let scrollTimer = 0
 let resizeObserver: ResizeObserver | null = null
 let media: MediaQueryList | null = null
 
-/** 浅色 / 深色两套参数：浅色压低 tint 与 rim，避免发白成了磨砂板 */
+/**
+ * 三档参数（按用户要求分级，卡片不参与）：
+ * - nav：轻折射、中模糊，只给一层薄边缘光
+ * - button：明显边缘高光 + 轻微折射，中心几乎不扭曲
+ * - dialog：更强空间层次（模糊/内压更足）+ 中等折射
+ */
+const PRESETS = {
+  nav: {
+    light: { edge: 0.012, rim: 0.05, base: 0.0, edgeD: 0.2, rimD: 0.9, baseD: 0.12, corner: 0.018, ripple: 0.0, blur: 7 },
+    dark: { edge: 0.014, rim: 0.06, base: 0.0, edgeD: 0.19, rimD: 1.0, baseD: 0.12, corner: 0.02, ripple: 0.0, blur: 8 },
+  },
+  button: {
+    light: { edge: 0.02, rim: 0.11, base: 0.0, edgeD: 0.14, rimD: 0.7, baseD: 0.1, corner: 0.03, ripple: 0.0, blur: 5 },
+    dark: { edge: 0.024, rim: 0.13, base: 0.0, edgeD: 0.13, rimD: 0.75, baseD: 0.1, corner: 0.034, ripple: 0.0, blur: 6 },
+  },
+  dialog: {
+    light: { edge: 0.02, rim: 0.07, base: 0.006, edgeD: 0.16, rimD: 0.85, baseD: 0.15, corner: 0.026, ripple: 0.0, blur: 10 },
+    dark: { edge: 0.024, rim: 0.085, base: 0.008, edgeD: 0.15, rimD: 0.9, baseD: 0.16, corner: 0.03, ripple: 0.0, blur: 12 },
+  },
+} as const
+
 function params(dark: boolean) {
-  return dark
-    ? {
-        edgeIntensity: 0.024,
-        rimIntensity: 0.085,
-        baseIntensity: 0.006,
-        edgeDistance: 0.16,
-        rimDistance: 0.95,
-        baseDistance: 0.14,
-        cornerBoost: 0.03,
-        rippleEffect: 0.02,
-        blurRadius: 8,
-        tintOpacity: props.tint + 0.04,
-      }
-    : {
-        edgeIntensity: 0.02,
-        rimIntensity: 0.07,
-        baseIntensity: 0.004,
-        edgeDistance: 0.17,
-        rimDistance: 0.88,
-        baseDistance: 0.13,
-        cornerBoost: 0.026,
-        rippleEffect: 0.01,
-        blurRadius: 6,
-        tintOpacity: props.tint,
-      }
+  const tier = PRESETS[props.preset][dark ? 'dark' : 'light']
+  return {
+    edgeIntensity: tier.edge,
+    rimIntensity: tier.rim,
+    baseIntensity: tier.base,
+    edgeDistance: tier.edgeD,
+    rimDistance: tier.rimD,
+    baseDistance: tier.baseD,
+    cornerBoost: tier.corner,
+    rippleEffect: tier.ripple,
+    blurRadius: tier.blur,
+    tintOpacity: props.tint,
+  }
 }
 
 function isDark() {

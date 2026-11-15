@@ -3,74 +3,111 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Liquid Glass Demo</title>
+<title>Liquid Glass · 采样正确性验证</title>
 <link rel="stylesheet" href="styles.css" />
 <link rel="stylesheet" href="glass.css" />
 <style>
-  html, body { margin: 0; background: #f5f6f8; font-family: system-ui, -apple-system, sans-serif; }
-  .stage {
-    position: relative;
-    min-height: 100vh;
+  html, body { margin: 0; background: #f3f5f9; font-family: system-ui, -apple-system, sans-serif; }
+  .stage { position: relative; min-height: 100vh; overflow: hidden;
     background:
-      radial-gradient(40% 50% at 18% 22%, rgba(120, 170, 245, .85), transparent 70%),
-      radial-gradient(38% 44% at 82% 30%, rgba(255, 190, 130, .75), transparent 72%),
-      radial-gradient(46% 50% at 58% 88%, rgba(170, 140, 240, .55), transparent 70%),
-      linear-gradient(160deg, #eef3fb 0%, #f7f4ee 52%, #eef1f7 100%);
+      radial-gradient(38% 42% at 16% 18%, rgba(96, 152, 235, .8), transparent 70%),
+      radial-gradient(34% 38% at 84% 24%, rgba(255, 176, 98, .72), transparent 72%),
+      radial-gradient(44% 46% at 56% 86%, rgba(150, 118, 236, .5), transparent 70%),
+      linear-gradient(160deg, #e9f0fb 0%, #f8f3ea 55%, #eceff6 100%);
   }
-  .topbar {
-    position: fixed; inset: 0 0 auto 0; height: 72px;
-    display: flex; align-items: center; gap: 14px; padding: 0 22px;
-    z-index: 10;
-  }
-  .topbar__brand { font-weight: 600; font-size: 15px; color: #1c2430; margin-right: auto; }
-  .pill-row { position: fixed; left: 24px; top: 120px; z-index: 10; }
-  .panel-wrap { position: fixed; right: 40px; bottom: 60px; z-index: 10; }
-  .copy { position: absolute; left: 24px; bottom: 40px; max-width: 520px; color: #26313f; }
-  .copy h1 { font-size: 34px; margin: 0 0 8px; letter-spacing: -.02em; }
-  .copy p { margin: 0; color: #59636f; line-height: 1.6; }
-  .glass-button-text { color: #1b2430; font-weight: 500; }
-  .glass-container .glass-button.is-active .glass-button-text { color: #0a5bd3; }
+  /* 高频参照物：玻璃是否正确呈现「背后」的东西，靠它判断 */
+  .stripes { position: absolute; inset: 90px 0 auto 0; height: 210px;
+    background-image: repeating-linear-gradient(90deg, #1b2430 0 14px, #ffffff 14px 28px);
+    opacity: .92; }
+  .words { position: absolute; left: 50%; top: 150px; transform: translateX(-50%);
+    font-size: 92px; font-weight: 800; letter-spacing: -.03em; color: #0b6b3a; white-space: nowrap; }
+  .grid { position: absolute; inset: auto 0 0 0; height: 46vh;
+    background-image:
+      linear-gradient(#2b3a4d22 1px, transparent 1px),
+      linear-gradient(90deg, #2b3a4d22 1px, transparent 1px);
+    background-size: 26px 26px; }
+  .nav { position: fixed; inset: 0 0 auto 0; height: 76px; z-index: 10; display: flex; align-items: center; padding: 0 24px; }
+  .nav__label { position: relative; z-index: 1; font-size: 15px; font-weight: 600; color: #121a24; }
+  .dock { position: fixed; left: 50%; bottom: 42px; transform: translateX(-50%); z-index: 10; display: flex; gap: 18px; }
+  .card-behind { position: absolute; left: 50%; top: 340px; transform: translateX(-50%); width: 460px;
+    background: #fff; border-radius: 18px; padding: 22px; box-shadow: 0 18px 40px rgba(20,30,45,.12); }
+  .card-behind h3 { margin: 0 0 8px; font-size: 18px; color: #16202c; }
+  .card-behind p { margin: 0; color: #5a6675; font-size: 13px; line-height: 1.7; }
+  .dialog-zone { position: fixed; right: 56px; bottom: 60px; z-index: 10; }
+  .note { position: fixed; left: 24px; bottom: 22px; z-index: 10; font-size: 12px; color: #64707f; }
+  .glass-button-text { color: #10202f; font-weight: 600; }
 </style>
 </head>
 <body>
   <div class="stage">
-    <div class="topbar" id="topbar"><span class="topbar__brand">义工平台</span></div>
-    <div class="pill-row" id="pillrow"></div>
-    <div class="panel-wrap" id="panel"></div>
-    <div class="copy">
-      <h1>Liquid Glass 真机验证</h1>
-      <p>用库自带的 Container / Button 叠在渐变背景上，先确认折射、边缘光与嵌套玻璃在真实浏览器里能否达标。</p>
+    <div class="stripes"></div>
+    <div class="words">BEHIND GLASS</div>
+    <div class="grid"></div>
+
+    <div class="nav" id="nav"><span class="nav__label">义工平台 · 导航（轻折射 / 中模糊）</span></div>
+
+    <div class="card-behind">
+      <h3>普通卡片保持原材质</h3>
+      <p>这一块不用玻璃：内容卡片继续走现有的 CSS 毛玻璃，只让导航、悬浮按钮、弹窗参与 WebGL 折射，避免整页都在「晃」。</p>
     </div>
+
+    <div class="dock" id="dock"></div>
+    <div class="dialog-zone" id="dialogzone"></div>
+    <div class="note">条纹与文字放在玻璃后面，用来判断折射是否真的采到了「背后的内容」。</div>
   </div>
+
   <script src="html2canvas.min.js"></script>
   <script src="container.js"></script>
   <script src="button.js"></script>
   <script>
-    window.glassControls = {
-      edgeIntensity: 0.022, rimIntensity: 0.075, baseIntensity: 0.004,
-      edgeDistance: 0.16, rimDistance: 0.9, baseDistance: 0.12,
-      cornerBoost: 0.028, rippleEffect: 0.0, blurRadius: 7.0, tintOpacity: 0.05
+    // 三档参数与 src/ui/glass/LiquidGlass.vue 的 PRESETS 保持一致（浅色）
+    const TIERS = {
+      nav: { edgeIntensity: 0.012, rimIntensity: 0.05, baseIntensity: 0, edgeDistance: 0.2, rimDistance: 0.9, baseDistance: 0.12, cornerBoost: 0.018, rippleEffect: 0, blurRadius: 7 },
+      button: { edgeIntensity: 0.02, rimIntensity: 0.11, baseIntensity: 0, edgeDistance: 0.14, rimDistance: 0.7, baseDistance: 0.1, cornerBoost: 0.03, rippleEffect: 0, blurRadius: 5 },
+      dialog: { edgeIntensity: 0.02, rimIntensity: 0.07, baseIntensity: 0.006, edgeDistance: 0.16, rimDistance: 0.85, baseDistance: 0.15, cornerBoost: 0.026, rippleEffect: 0, blurRadius: 10 }
+    }
+    function useTier(name) {
+      window.glassControls = { ...TIERS[name], tintOpacity: name === 'nav' ? 0.05 : 0.08 }
+      Container.instances.forEach((inst) => {
+        const r = inst.gl_refs
+        if (!r || !r.gl) return
+        const g = r.gl
+        const c = window.glassControls
+        g.uniform1f(r.edgeIntensityLoc, c.edgeIntensity)
+        g.uniform1f(r.rimIntensityLoc, c.rimIntensity)
+        g.uniform1f(r.baseIntensityLoc, c.baseIntensity)
+        g.uniform1f(r.edgeDistanceLoc, c.edgeDistance)
+        g.uniform1f(r.rimDistanceLoc, c.rimDistance)
+        g.uniform1f(r.baseDistanceLoc, c.baseDistance)
+        g.uniform1f(r.cornerBoostLoc, c.cornerBoost)
+        g.uniform1f(r.rippleEffectLoc, c.rippleEffect)
+        g.uniform1f(r.blurRadiusLoc, c.blurRadius)
+        g.uniform1f(r.tintOpacityLoc, c.tintOpacity)
+        if (inst.render) inst.render()
+      })
     }
 
-    const bar = new Container({ type: 'rounded', borderRadius: 22, tintOpacity: 0.04 })
-    bar.element.style.width = '100%'
-    bar.element.style.height = '64px'
-    document.getElementById('topbar').appendChild(bar.element)
+    const nav = new Container({ type: 'rounded', borderRadius: 0, tintOpacity: 0.05 })
+    nav.element.style.width = '100%'
+    nav.element.style.height = '76px'
+    document.getElementById('nav').prepend(nav.element)
 
-    const row = new Container({ type: 'pill', borderRadius: 999, tintOpacity: 0.05 })
-    document.getElementById('pillrow').appendChild(row.element)
-    ;['首页', '项目', '我的'].forEach((text, i) => {
-      const btn = new Button({ text, size: 15, type: 'pill', tintOpacity: 0.03 })
-      if (i === 0) btn.element.classList.add('is-active')
-      row.addChild(btn)
+    const dock = new Container({ type: 'pill', borderRadius: 999, tintOpacity: 0.08 })
+    document.getElementById('dock').appendChild(dock.element)
+    ;['首页', '项目', '我的'].forEach((t) => dock.addChild(new Button({ text: t, size: 15, type: 'pill', tintOpacity: 0.07 })))
+
+    const dialog = new Container({ type: 'rounded', borderRadius: 26, tintOpacity: 0.1 })
+    dialog.element.style.width = '300px'
+    dialog.element.style.height = '170px'
+    document.getElementById('dialogzone').appendChild(dialog.element)
+    dialog.addChild(new Button({ text: '确定', size: 15, type: 'pill', tintOpacity: 0.09 }))
+
+    window.__applyTier = useTier
+    window.__glassReport = () => ({
+      canvases: document.querySelectorAll('canvas').length,
+      fallback: Container.instances.filter((i) => !i.gl_refs || !i.gl_refs.gl).length,
+      snapshot: !!(Container.pageSnapshot && Container.pageSnapshot.length > 1000),
     })
-
-    const panel = new Container({ type: 'rounded', borderRadius: 26, tintOpacity: 0.07 })
-    panel.element.style.width = '260px'
-    panel.element.style.height = '150px'
-    document.getElementById('panel').appendChild(panel.element)
-    const circle = new Button({ text: '＋', size: 22, type: 'circle', tintOpacity: 0.06 })
-    panel.addChild(circle)
   </script>
 </body>
 </html>
