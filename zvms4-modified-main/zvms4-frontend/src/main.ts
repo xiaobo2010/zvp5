@@ -43,6 +43,8 @@ import './assets/styles/v2/ep-bridge.css'
 import './assets/styles/v2/ux.css'
 // 玻璃材质层：必须最后加载，用同权重选择器覆盖上面各层的扁平材质。
 import './assets/styles/v2/glass.css'
+// 数据表格精修层：必须在 ep-bridge/glass 之后，用同权重覆盖表格基线
+import './assets/styles/v2/table.css'
 
 import persistedstate from 'pinia-plugin-persistedstate'
 
