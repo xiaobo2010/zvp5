@@ -125,18 +125,10 @@ export default defineConfig({
     }
   },
   // 本地后端联调：开发服务器把 /api 代理到本机 uvicorn（默认 baseURL 为 /api）
-  // 8000 = main 的 zvp5 后端；main 已退役 /api/v2、/api/v3，这两个前缀暂时仍由
-  // 本地 v4 后端承接（8001）。等 24 个文件里的 66 处 v2/v3 调用迁到 /api/v1 后可删。
+  // 8000 = main 的 zvp5 后端。前端已全部迁到 /api/v1，不再需要 v4 后端承接
+  // /api/v2、/api/v3，故这里只留一条 /api 规则。
   server: {
     proxy: {
-      '/api/v2': {
-        target: 'http://127.0.0.1:8001',
-        changeOrigin: true
-      },
-      '/api/v3': {
-        target: 'http://127.0.0.1:8001',
-        changeOrigin: true
-      },
       '/api': {
         target: 'http://127.0.0.1:8000',
         changeOrigin: true
