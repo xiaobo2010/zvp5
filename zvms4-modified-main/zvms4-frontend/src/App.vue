@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { installAmbientCursor } from '@/ui/shell/AmbientField.vue'
+import { installAmbientCursor, installAmbientTilt } from '@/ui/shell/AmbientField.vue'
 import {
   ArrowDown,
   User,
@@ -476,11 +476,15 @@ onMounted(async () => {
   }
 })
 let disposeAmbient: (() => void) | null = null
+// 两套光源互斥：粗指针设备用重力感应，桌面继续用鼠标
+let disposeTilt: (() => void) | null = null
 onMounted(() => {
   disposeAmbient = installAmbientCursor()
+  disposeTilt = installAmbientTilt()
 })
 onBeforeUnmount(() => {
   disposeAmbient?.()
+  disposeTilt?.()
 })
 </script>
 
