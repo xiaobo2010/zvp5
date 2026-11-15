@@ -3,8 +3,9 @@
 jail 是「文件管理端点」与「agent ``fs_*`` 工具」共同依赖的唯一判定点，所以这里的
 每一条都钉在**路径段**上而不是字符串前缀：
 
-* 白名单内：站点根、家目录及其子路径、根自身；
-* 白名单外：``/etc`` / ``/root`` / ``/home2`` / ``/www/zvms4-old``（同名前缀伪装）；
+* 白名单内：站点根及其子路径、根自身（``/home`` 分支已随 ProtectHome=true
+  的部署现实删除，见 ``services/file_ops.py`` 注释）；
+* 白名单外：``/etc`` / ``/root`` / ``/home`` / ``/www/zvms4-old``（同名前缀伪装）；
 * 软链逃逸：白名单内的链接指向 ``/etc``，``realpath`` 之后仍被拒。
 
 ``tests/conftest.py`` 给所有用例把系统临时目录并进了白名单（用例都在 ``tmp_path``
@@ -19,7 +20,7 @@ import pytest
 
 from services import file_ops
 
-PRODUCTION_ROOTS = ("/www/zvms4", "/home")
+PRODUCTION_ROOTS = ("/www/zvms4",)
 
 
 @pytest.fixture(autouse=True)
@@ -37,7 +38,7 @@ def _production_roots(monkeypatch) -> None:
         "/usr/bin/python3",
         "/var/lib/docker/x",
         "/tmp/scratch.txt",
-        "/home2/x.txt",
+        "/home/xiaobo2010/notes.txt",
         "/www/zvms4-old/x",
         "/www/zvms40",
     ],
@@ -54,10 +55,8 @@ def test_paths_outside_the_roots_are_forbidden(path: str) -> None:
     "path",
     [
         "/www/zvms4",
-        "/home",
         "/www/zvms4/app/main.py",
         "/www/zvms4/app/../app/main.py",
-        "/home/xiaobo2010/notes.txt",
     ],
 )
 def test_paths_inside_the_roots_are_allowed(path: str) -> None:
@@ -72,7 +71,7 @@ def test_root_itself_is_not_an_entry() -> None:
 
 @pytest.mark.parametrize(
     "path",
-    ["/www/zvms4/app/main.py", "/home/xiaobo2010/notes.txt", "/home/xiaobo2010"],
+    ["/www/zvms4/app/main.py", "/www/zvms4/data/backups"],
 )
 def test_entry_paths_inside_the_roots_are_allowed(path: str) -> None:
     entry, target = file_ops.resolve_entry_path(path)
@@ -111,11 +110,11 @@ def test_symlink_escape_is_resolved_before_the_jail(tmp_path, monkeypatch) -> No
 
 def test_dot_dot_hop_stays_inside_the_jail() -> None:
     """``..`` 只会在 realpath 里展开，不能借它从根内跳到根外。"""
-    assert file_ops.resolve_path("/home/xiaobo2010/../xiaobo2010/x") == (
-        "/home/xiaobo2010/x"
+    assert file_ops.resolve_path("/www/zvms4/app/../app/main.py") == (
+        "/www/zvms4/app/main.py"
     )
     with pytest.raises(file_ops.FileOpError) as caught:
-        file_ops.resolve_path("/home/../etc/passwd")
+        file_ops.resolve_path("/www/zvms4/../etc/passwd")
     assert caught.value.code == "FILES_ROOT_FORBIDDEN"
 
 

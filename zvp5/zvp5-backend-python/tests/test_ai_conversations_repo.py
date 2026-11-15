@@ -28,6 +28,7 @@ from sqlalchemy.exc import NoSuchColumnError
 
 from db.repos.oracle import ai_conversations as conversations_repo
 from db.repos.oracle import ai_runs as runs_repo
+from db.repos.oracle.users import UserGoneError
 
 DIALECT = oracle.dialect()
 OWNER = "000000000000000000000002"
@@ -324,7 +325,7 @@ def test_next_seq_locks_the_conversation_row_first() -> None:
     assert "ai_messages" not in lock_sql
 
     source = _source(conversations_repo.OracleAIMessagesRepo.append_batch)
-    assert source.index("_allocate_seq") < source.index("_insert_message_stmt")
+    assert source.index("_allocate_seq") < source.index("_insert_message_values")
     assert "_allocate_seq" not in _source(
         conversations_repo.OracleAIConversationsRepo.count_messages
     )
@@ -402,11 +403,15 @@ def test_append_batch_bumps_the_conversation_in_the_same_transaction() -> None:
     source = _source(conversations_repo.OracleAIMessagesRepo.append_batch)
 
     # 一轮的 assistant + 全部 tool 一次落库，会话累加在同一个方法体内。
-    assert "_insert_message_stmt" in source
+    assert "_insert_message_values" in source
     assert "_bump_conversation_stmt" in source
-    assert source.index("_insert_message_stmt") < source.index(
+    assert source.index("_allocate_seq") < source.index("_insert_message_values")
+    assert source.index("_insert_message_values") < source.index(
         "_bump_conversation_stmt"
     )
+    # **一次**数组绑定 INSERT：整批取值交一个 ``session.execute(insert(...), values)``，
+    # 逐行 execute 在 ADB 上就是每条一次跨洋往返（它们本来就在同一事务里）。
+    assert "session.execute(insert(ai_messages_tbl), values)" in source
     # 只有一个提交点：多一处 commit 就等于把「同事务」拆成两段。
     assert source.count("session.commit()") == 1
     # 空批次不碰数据库。
@@ -711,3 +716,198 @@ def test_usage_accumulation_is_in_sql_not_read_back() -> None:
     assert "tokens_total=(ai_conversations.tokens_total + 10)" in sql
     assert "context_tokens=1200" in sql
     assert "SELECT" not in sql.upper()
+
+
+# ---------------------------------------------------------------------------
+# append_batch：一次数组绑定 INSERT（A-M2）
+# ---------------------------------------------------------------------------
+
+class _BatchResult:
+    def __init__(self, rowcount: int = 1, scalar=None) -> None:
+        self.rowcount = rowcount
+        self._scalar = scalar
+
+    def scalar(self):
+        return self._scalar
+
+    def first(self):
+        """``_allocate_seq`` 只关心锁语句有没有命中会话行。"""
+        return None if self.rowcount == 0 else (1,)
+
+
+class _RecordingSession:
+    """记录 (语句, 参数) 的假 session：注入时仓储不许自己提交。"""
+
+    def __init__(self, *, max_seq: int = 0, conversation_exists: bool = True) -> None:
+        self.calls: list[tuple] = []
+        self.commits = 0
+        self.max_seq = max_seq
+        self.conversation_exists = conversation_exists
+
+    async def execute(self, stmt, params=None):
+        self.calls.append((stmt, params))
+        if "for update" in str(stmt).lower():
+            return _BatchResult(rowcount=1 if self.conversation_exists else 0)
+        if "max(ai_messages.seq)" in str(stmt).lower():
+            return _BatchResult(scalar=self.max_seq)
+        return _BatchResult()
+
+    async def commit(self) -> None:
+        self.commits += 1
+
+    def begin_nested(self):
+        return _NullSavepoint()
+
+
+class _NullSavepoint:
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_exc):
+        return False
+
+
+def _message_row(oid: str, role: str = "tool", **extra: Any) -> dict:
+    row = {
+        "oid": oid,
+        "role": role,
+        "content": "正文",
+        "tool_call_id": f"call-{oid}",
+        "tool_name": "search_activities",
+        "round_no": 1,
+        "request_id": RUN,
+    }
+    row.update(extra)
+    return row
+
+
+def test_append_batch_sends_one_array_bound_insert() -> None:
+    """一轮 N 条消息只发**一次**插入（外加锁、MAX(seq)、会话累加）。"""
+    import asyncio
+
+    session = _RecordingSession(max_seq=4)
+    repo = conversations_repo.OracleAIMessagesRepo(session)
+
+    inserted = asyncio.run(
+        repo.append_batch(
+            CONV,
+            [_message_row("m1", "assistant"), _message_row("m2"), _message_row("m3")],
+        )
+    )
+
+    # 语句总数固定为 4：锁会话行、MAX(seq)、**一次**批量插入、会话累加。
+    # 原来是 3 + N（N = 消息条数）。
+    assert len(session.calls) == 4
+    inserts = [
+        call for call in session.calls if "INSERT INTO AI_MESSAGES" in str(call[0]).upper()
+    ]
+    assert len(inserts) == 1, "逐行 execute 等于每条一次跨洋往返"
+    _stmt, params = inserts[0]
+    assert isinstance(params, list) and len(params) == 3
+    # seq 连续且从锁内 MAX(seq)+1 起算。
+    assert [item["seq"] for item in params] == [5, 6, 7]
+    assert [item["oid"] for item in params] == ["m1", "m2", "m3"]
+    # 工具身份三件套照旧带上：批量不能变成「只写正文」。
+    assert params[1]["tool_call_id"] == "call-m2"
+    assert params[1]["tool_name"] == "search_activities"
+    # 返回值顺序与字段与原实现一致。
+    assert [row["_id"] for row in inserted] == ["m1", "m2", "m3"]
+    assert [row["seq"] for row in inserted] == [5, 6, 7]
+    # 会话累加仍在同一方法体里，且注入 session 不提交。
+    assert any(
+        "UPDATE AI_CONVERSATIONS" in str(call[0]).upper() for call in session.calls
+    )
+    assert session.commits == 0
+
+
+def test_append_batch_commits_once_when_it_owns_the_session(monkeypatch) -> None:
+    import asyncio
+    from contextlib import asynccontextmanager
+
+    session = _RecordingSession(max_seq=0)
+
+    @asynccontextmanager
+    async def scope():
+        yield session
+
+    monkeypatch.setattr(conversations_repo, "session_scope", scope)
+    repo = conversations_repo.OracleAIMessagesRepo()
+
+    asyncio.run(repo.append_batch(CONV, [_message_row("m1"), _message_row("m2")]))
+
+    # 消息 + 会话累加同一事务，只有边缘这一次提交。
+    assert session.commits == 1
+
+
+def test_append_batch_usage_goes_into_the_same_statement_set() -> None:
+    import asyncio
+
+    session = _RecordingSession(max_seq=1)
+    repo = conversations_repo.OracleAIMessagesRepo(session)
+
+    asyncio.run(
+        repo.append_batch(
+            CONV,
+            [_message_row("m1", "assistant")],
+            usage={
+                "prompt_tokens": 7,
+                "completion_tokens": 3,
+                "total_tokens": 10,
+                "context_tokens": 1200,
+            },
+        )
+    )
+
+    update_sql = next(
+        " ".join(
+            str(stmt.compile(dialect=DIALECT, compile_kwargs={"literal_binds": True})).split()
+        )
+        for stmt, _params in session.calls
+        if "UPDATE AI_CONVERSATIONS" in str(stmt).upper()
+    )
+    assert "message_count=(ai_conversations.message_count + 1)" in update_sql
+    assert "tokens_total=(ai_conversations.tokens_total + 10)" in update_sql
+    assert "context_tokens=1200" in update_sql
+
+
+# ---------------------------------------------------------------------------
+# A-M8：锁必须命中会话行，否则不写消息/run
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_allocate_seq_returns_max_plus_one_after_locking_the_row() -> None:
+    session = _RecordingSession(max_seq=4)
+
+    assert await conversations_repo._allocate_seq(session, CONV) == 5
+
+
+@pytest.mark.asyncio
+async def test_allocate_seq_rejects_a_conversation_row_that_is_gone() -> None:
+    session = _RecordingSession(conversation_exists=False)
+
+    with pytest.raises(UserGoneError):
+        await conversations_repo._allocate_seq(session, CONV)
+
+    # 锁没命中就停：连 ``MAX(seq)`` 都不该再查一次。
+    assert len(session.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_insert_queued_writes_nothing_when_the_conversation_is_gone() -> None:
+    """会话在「读完归属」与「写消息」之间被删：一条行都不许落（孤儿消息/run）。"""
+    session = _RecordingSession(conversation_exists=False)
+    repo = runs_repo.OracleAIRunsRepo(session=session)
+
+    with pytest.raises(UserGoneError):
+        await repo.insert_queued(
+            run_id=RUN,
+            conversation_oid=CONV,
+            owner_oid=OWNER,
+            message_oid="m" * 32,
+            content="查一下",
+        )
+
+    # 只有那条锁语句：用户消息 / run / 会话计数（一次 INSERT 与两次 UPDATE）
+    # 全部没发出去。
+    assert len(session.calls) == 1
+    assert "FOR UPDATE" in str(session.calls[0][0]).upper()

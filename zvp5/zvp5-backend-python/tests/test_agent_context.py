@@ -435,6 +435,88 @@ def test_hard_truncate_keeps_last_message_even_if_alone_over_limit():
     assert context.hard_truncate(messages, limit_tokens=10) == messages
 
 
+def _hard_truncate_reference(messages: list[dict], limit_tokens: int) -> list[dict]:
+    """改造前的实现（逐条 ``pop(0)`` + 每次重算整段）：等价性基准，别优化它。"""
+    budget = context._positive_int(limit_tokens, context.DEFAULT_CONTEXT_LIMIT)
+    items = [dict(item) for item in context._messages_of(messages)]
+    head_end = 0
+    while head_end < len(items) and items[head_end].get("role") in context._SYSTEM_ROLES:
+        head_end += 1
+    head, rest = items[:head_end], items[head_end:]
+
+    def drop_orphans(target: list[dict]) -> None:
+        while target and target[0].get("role") == "tool":
+            target.pop(0)
+
+    drop_orphans(rest)
+    while len(rest) > 1 and context.estimate_tokens(head) + context.estimate_tokens(rest) > budget:
+        rest.pop(0)
+        drop_orphans(rest)
+    drop_orphans(rest)
+    return head + rest
+
+
+def test_hard_truncate_matches_the_quadratic_reference_on_random_inputs():
+    """线性实现必须与旧实现**逐字节**等价（随机 300 组：角色混排 + 各种水位）。
+
+    旧写法每轮都对「剩下的整段」``json.dumps`` 两次，长上下文里一次降级就是上万
+    次整段编码；这次换成一次预算 + 区间和。但「更快」不能换来切点漂移：少留一条
+    就少了一段工具结果，多留一条就可能又超限（下一次调用直接 400）。所以这里用
+    旧实现当 oracle。
+    """
+    import random
+
+    rng = random.Random(20261115)
+    roles = ("system", "developer", "user", "assistant", "tool")
+    for _ in range(300):
+        messages: list[dict] = []
+        for index in range(rng.randint(0, 14)):
+            role = rng.choice(roles)
+            item: dict = {
+                "role": role,
+                "content": "中" * rng.randint(0, 60) + "x" * rng.randint(0, 20),
+            }
+            if role == "assistant" and rng.random() < 0.5:
+                item["tool_calls"] = [
+                    {
+                        "id": f"call-{index}",
+                        "type": "function",
+                        "function": {"name": "activity_list", "arguments": "{}"},
+                    }
+                ]
+            if role == "tool":
+                item["tool_call_id"] = f"call-{index}"
+            if rng.random() < 0.3:
+                item["seq"] = index
+            messages.append(item)
+        budget = rng.choice([1, 5, 40, 200, 900, 4000])
+        assert context.hard_truncate(messages, budget) == _hard_truncate_reference(
+            messages, budget
+        ), (messages, budget)
+
+
+def test_hard_truncate_serializes_each_message_once(monkeypatch):
+    """序列化次数必须是 O(n)：旧实现是 O(n²)（每条丢一次、整段重算两次）。"""
+    calls = {"n": 0}
+    real = context.json.dumps
+
+    def counting(*args, **kwargs):
+        calls["n"] += 1
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(context.json, "dumps", counting)
+
+    messages = [{"role": "system", "content": "提示"}]
+    for index in range(40):
+        messages += _turn(index)
+    context.hard_truncate(messages, limit_tokens=400)
+
+    # 上界 = 每条一次（+ head 的估算一次）再留一点余量；O(n²) 在这个规模上是
+    # 数百次，一眼能分开。故意用一个宽松的常数，避免钉死实现细节。
+    assert calls["n"] <= len(messages) + 5
+
+
+
 # ---------------------------------------------------------------------- compact
 
 

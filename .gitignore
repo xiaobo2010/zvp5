@@ -2,3 +2,18 @@ adb2-wallet.7z
 # git worktree 工作目录（预览/并行开发用）
 worktrees/
 .slim/deepwork/
+
+# 凭证与密钥：工作树里确有这些文件（aes_key.txt、rsa_private_key.pem 等），
+# 别让一次 `git add -A` 把它们带进来。
+.env
+.env.*
+!.env.example
+!.env.*.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+aes_key.txt
+credentials/

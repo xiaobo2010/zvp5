@@ -26,6 +26,8 @@ from db.models import users as users_tbl
 from db.oracle.session import session_scope
 from db.repos.oracle.activities import _activity_doc
 from db.repos.oracle.search import like_pattern
+from db.repos.oracle.stats import _delete_group_indicators_stmt
+from db.repos.oracle.users import _detach_class_stmt
 
 Row = dict[str, Any]
 
@@ -131,6 +133,11 @@ def _set_description_stmt(oid: str, value: str):
 
 def _delete_stmt(oid: str):
     return delete(groups_tbl).where(groups_tbl.c.oid == oid)
+
+
+def _lock_group_stmt(oid: str):
+    """父行 ``FOR UPDATE``：级联删除的第一步，命中 0 行即「班级不存在」。"""
+    return _get_stmt(oid).with_for_update()
 
 
 def _members_page_stmt(group_oid: str, query: str, page: int, size: int):
@@ -425,6 +432,31 @@ class OracleGroupsRepo:
             await session.execute(stmt)
             if owns:
                 await session.commit()
+
+    async def delete_cascade(self, oid: str) -> Row | None:
+        """单事务删班：锁父行 → 清指标 → 解绑成员 → 删班。
+
+        顺序是锁序的一部分，不能重排：``SELECT ... FOR UPDATE`` 先把父行拿住，
+        之后才写子表，并发删同一个班只会排队，不会与「加人」构成反向锁序
+        （``ORA-00060``）。``groups`` 被 ``group_indicators`` 以无 ``ON DELETE``
+        的外键引用（``db/oracle/ddl/V009__statistics_rework.sql``），不先清指标
+        行就删班必 ``ORA-02292``；``users.class_oid`` 同理，先解绑再删。
+
+        整段一个事务、一次 ``commit``：中途失败时指标行与成员绑定一起回滚，
+        不会留下「班还在、人已解绑」的半删除。命中 0 行返回 ``None``（404 的
+        判定因此落在锁内，而不是锁外的一次读）。
+        """
+        target = normalize_oid(oid)
+        async with _session_for(self._session) as (session, owns):
+            locked = (await session.execute(_lock_group_stmt(target))).first()
+            if locked is None:
+                return None
+            await session.execute(_delete_group_indicators_stmt(target))
+            await session.execute(_detach_class_stmt(target))
+            await session.execute(_delete_stmt(target))
+            if owns:
+                await session.commit()
+        return _class_row(locked._mapping)
 
     async def members_page(
         self, group_oid: str, query: str, page: int, size: int

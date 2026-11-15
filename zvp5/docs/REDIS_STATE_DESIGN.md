@@ -16,7 +16,7 @@
 | Redis 重启 | **缓存保留**（RDB + AOF）；万一数据目录被清空，缓存与 TTL 状态归零、限额窗口归零、解锁门失效（安全方向由鉴权层兜底），全部可从 ADB 重建 |
 
 `REDIS_URI` 只支持 `redis://127.0.0.1:6379/0` 这种本机形态；生产 Redis **只监听
-127.0.0.1**，无密码。持久化配置见 `deployment/redis-zvms.conf`：RDB + AOF 同时开启
+127.0.0.1**，无密码。持久化配置见 `deployment/redis-zvp5.conf`：RDB + AOF 同时开启
 （`appendonly yes` / `appendfsync everysec` / `save 900 1` / `save 300 10`），
 重启后热缓存与 epoch 版本号都能恢复。
 
@@ -143,7 +143,7 @@ systemctl status redis-server
 ```
 
 生产机 `zvp-backend` 的 Redis 配置追加在 `/etc/redis/redis.conf` 末尾，片段见
-`deployment/redis-zvms.conf`：`bind 127.0.0.1 ::1`、`protected-mode yes`、
+`deployment/redis-zvp5.conf`：`bind 127.0.0.1 ::1`、`protected-mode yes`、
 `maxmemory 256mb`、`allkeys-lru`、`appendonly yes`、`appendfsync everysec`、
 `dir /var/lib/redis`、`save 900 1`、`save 300 10`。RDB + AOF 同时开，重启可恢复
 epoch 与热 key；不要再追加 `save ""`（那等于关掉 RDB）。

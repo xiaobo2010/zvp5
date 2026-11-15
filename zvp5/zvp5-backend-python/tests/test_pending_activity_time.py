@@ -106,6 +106,18 @@ class _MembersRepo:
             rows = [row for row in rows if row["activity"] in accepted]
         return rows
 
+    async def sum_modes_for_member(self, user_id):
+        # 双重有效口径：成员状态 + 活动状态都是 effective 才计入（审核中活动不计）。
+        totals = {"on-campus": 0.0, "off-campus": 0.0, "social-practice": 0.0}
+        for row in MEMBERS:
+            if row["member"] != user_id or row["status"] != "effective":
+                continue
+            activity = ACTIVITIES.get(row["activity"])
+            if activity is None or activity["status"] != "effective":
+                continue
+            totals[row["mode"]] += row["duration"]
+        return totals
+
 
 class _UsersRepo:
     async def get_by_oid(self, oid):
@@ -197,6 +209,7 @@ def status_state(monkeypatch):
         "sessions": [],
         "members": [{"member": MEMBER_A}, {"member": MEMBER_B}],
         "bulk_error": None,
+        "list_calls": [],
     }
 
     class _Activities:
@@ -205,11 +218,20 @@ def status_state(monkeypatch):
             activity["status"] = state["status"]
             return activity
 
-        async def update(self, oid, content):
-            state["status"] = content["status"]
+        async def cas_status(self, oid, expected, fields):
+            # 只有 CAS 命中才真的落库：测试里的期望状态总是当前状态。
+            if expected != state["status"]:
+                return False
+            state["status"] = fields["status"]
+            return True
 
     async def list_by_activity(oid, status=None):
+        state["list_calls"].append(oid)
         return list(state["members"])
+
+    async def count_distinct_members(oid):
+        # 人数闸门按 DISTINCT 成员算：同一人多条 mode 行只算一个。
+        return len({row["member"] for row in state["members"]})
 
     async def bulk(user_ids, date_start=None, date_end=None, allow_cache=True, session=None):
         state["bulk_calls"].append(
@@ -245,7 +267,10 @@ def status_state(monkeypatch):
     monkeypatch.setattr(
         activities_v2_router.backends,
         "get_members_repo",
-        lambda session=None: SimpleNamespace(list_by_activity=list_by_activity),
+        lambda session=None: SimpleNamespace(
+            list_by_activity=list_by_activity,
+            count_distinct_members=count_distinct_members,
+        ),
     )
     monkeypatch.setattr(
         activities_v2_router.backends, "get_time_repo", lambda session=None: _Times()
@@ -332,4 +357,43 @@ async def test_unchanged_status_schedules_no_refresh(status_state):
 
     assert failure.value.status_code == 400
     assert activities_v2_router._time_refresh_tasks == set()
+    assert status_state["bulk_calls"] == []
+
+
+@pytest.mark.asyncio
+async def test_refresh_guard_counts_people_not_rows(status_state):
+    """1 个人 3 条模式记录 = 1 人，不是 3 人；去重后只算一次。"""
+    status_state["members"] = [
+        {"member": MEMBER_A},
+        {"member": MEMBER_A},
+        {"member": MEMBER_A},
+        {"member": MEMBER_B},
+    ]
+
+    await activities_v2_router.modify_activity_status_v2(
+        ACT_EFFECTIVE,
+        activities_v2_router.PutActivityStatus(status="effective"),
+        user={"id": USER, "per": ["admin"]},
+        log=_Log(),
+    )
+    await _drain_refresh_tasks()
+
+    assert status_state["bulk_calls"][0]["ids"] == [MEMBER_A, MEMBER_B]
+    assert status_state["list_calls"] == [ACT_EFFECTIVE]
+
+
+@pytest.mark.asyncio
+async def test_empty_activity_never_lists_members(status_state):
+    """0 人直接返回：连成员行都不取（原先要先全表读一遍才判空）。"""
+    status_state["members"] = []
+
+    await activities_v2_router.modify_activity_status_v2(
+        ACT_EFFECTIVE,
+        activities_v2_router.PutActivityStatus(status="effective"),
+        user={"id": USER, "per": ["admin"]},
+        log=_Log(),
+    )
+    await _drain_refresh_tasks()
+
+    assert status_state["list_calls"] == []
     assert status_state["bulk_calls"] == []

@@ -13,12 +13,13 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 import re
 from collections.abc import Callable
 from contextlib import AbstractAsyncContextManager
 from datetime import datetime
 from urllib.parse import urlsplit
+
+from util.env import getenv
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -44,12 +45,12 @@ DEFAULT_CORS_ALLOWED_ORIGINS = (
 def cors_allowed_origins() -> list[str]:
     """Return local development origins plus deploy-configured origins.
 
-    ``ZVMS_CORS_ALLOWED_ORIGINS`` is a comma-separated list of exact browser
+    ``ZVP5_CORS_ALLOWED_ORIGINS`` is a comma-separated list of exact browser
     origins. Wildcards are rejected because credentialed CORS requires an
     explicit origin echo.
     """
 
-    configured = os.getenv("ZVMS_CORS_ALLOWED_ORIGINS", "")
+    configured = getenv("ZVP5_CORS_ALLOWED_ORIGINS", "")
     origins = list(DEFAULT_CORS_ALLOWED_ORIGINS)
     for raw_origin in configured.split(","):
         origin = raw_origin.strip().rstrip("/")
@@ -65,7 +66,7 @@ def cors_allowed_origins() -> list[str]:
             or parsed.fragment
         ):
             raise RuntimeError(
-                "ZVMS_CORS_ALLOWED_ORIGINS must contain comma-separated "
+                "ZVP5_CORS_ALLOWED_ORIGINS must contain comma-separated "
                 f"http(s) origins, got {raw_origin.strip()!r}"
             )
         if origin not in origins:

@@ -41,13 +41,15 @@ import time
 from contextlib import closing
 from typing import Callable
 
+from util.env import getenv
+
 _logger = logging.getLogger(__name__)
 
 # 后端根目录：本文件位于 db/ 下，向上两级即后端根。刻意不用 cwd ——
 # systemd 的 WorkingDirectory 可能变，相对路径会指向别处。
 _BACKEND_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-STATE_DB_PATH = os.environ.get("ZVMS_SYSTEM_DB") or os.path.join(
+STATE_DB_PATH = getenv("ZVP5_SYSTEM_DB") or os.path.join(
     _BACKEND_ROOT, "system_state.db"
 )
 
@@ -148,7 +150,7 @@ _heal_lock = threading.Lock()
 
 def _db_path() -> str:
     """每次读环境变量：测试用 monkeypatch.setenv 隔离，运行期改动即刻生效。"""
-    return os.environ.get("ZVMS_SYSTEM_DB") or STATE_DB_PATH
+    return getenv("ZVP5_SYSTEM_DB") or STATE_DB_PATH
 
 
 def _connect() -> sqlite3.Connection:

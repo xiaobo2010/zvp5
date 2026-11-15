@@ -21,7 +21,7 @@ from services import perf_sampler
 
 @pytest.fixture(autouse=True)
 def perf_db(monkeypatch, tmp_path):
-    monkeypatch.setenv("ZVMS_PERF_DB", str(tmp_path / "perf_samples.db"))
+    monkeypatch.setenv("ZVP5_PERF_DB", str(tmp_path / "perf_samples.db"))
     perf_sampler._initialized_paths.clear()
     perf_sampler.reset_rate_state()
     yield

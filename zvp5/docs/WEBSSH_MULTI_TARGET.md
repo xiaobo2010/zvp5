@@ -29,7 +29,7 @@
   "code": 200,
   "data": {
     "targets": [
-      { "id": "content", "label": "前端服务器", "display": "root@192.0.2.11" },
+      { "id": "content", "label": "前端服务器", "display": "root@<INTERNAL_HOST>" },
       { "id": "api", "label": "API 服务器", "display": "root@127.0.0.1" }
     ],
     "default": "content"
@@ -75,7 +75,7 @@
   {
     "id": "content",
     "label": "前端服务器",
-    "host": "192.0.2.11",
+    "host": "<INTERNAL_HOST>",
     "port": 22,
     "user": "root",
     "key_path": "/www/zvms4/backend/ssh_key.content",
@@ -168,8 +168,8 @@ location = /api/system/ssh/ws {
 
 ### 8.2 目标与密钥（网关侧 = zvp-backend）
 
-- 密钥：沿用 前端 既有的 `zvms4-webssh` ed25519（`/www/zvms4/backend/ssh_key`，
-  600 www-data）；公钥已存在于 前端 `root@` 的 authorized_keys，本次追加到
+- 密钥：沿用前端既有的 `zvms4-webssh` ed25519（`/www/zvms4/backend/ssh_key`，
+  600 www-data）；公钥已存在于前端 `root@` 的 authorized_keys，本次追加到
   zvp-backend `root@` 的 authorized_keys（备份 `/root/backup-20261103/authorized_keys`）。
 - known_hosts **按目标分开**：两台机器的 `127.0.0.1` host key 不同，混在一个文件会冲突。
   - `ssh_known_hosts.content` ← `ssh-keyscan <FRONTEND_IP>:22`
@@ -198,7 +198,7 @@ ZVMS_SSH_DEFAULT_TARGET=api
 | 4 | 前端 | 前端备份后 rsync `--delete` 新 dist，`chown -R www:www` | `frontend-dist.pre-sshmulti-20261103-1450`（22M） |
 
 Nginx **无需改动**：后端 `zvpapi` vhost 已把 `/api/` 与 `/api/system/ssh/ws` 代理到
-127.0.0.1:8018；前端 的 `/api/` 也已整体反代回后端。仓库模板里内容站的 SSH location
+127.0.0.1:8018；前端的 `/api/` 也已整体反代回后端。仓库模板里内容站的 SSH location
 保留作单机部署兼容。
 
 ### 8.4 验证记录（已复跑）
@@ -210,7 +210,7 @@ Nginx **无需改动**：后端 `zvpapi` vhost 已把 `/api/` 与 `/api/system/s
 | 路由存在性 | `GET /api/system/ssh/targets`（无 token） | `401 Could not validate credentials`（两个域名都是 401，不是 404） |
 | WS 升级 | `curl --http1.1` 带 Upgrade，无 ticket | `101 Switching Protocols` → 服务端主动关并回「ticket 无效或已过期」 |
 | 前端产物 | 首页 / 主 bundle | h2 200；bundle gzip 168183B；含 `preconnect`/`dns-prefetch`；`ServerSsh-*.js` 含目标选择文案 |
-| API | `https://zvp.../api/version` | 200，`v4.3.0-7` |
+| API | `https://zvp.../api/version` | 200，`v5.0.0` |
 | 服务日志 | `journalctl -u zvms4` 重启后 | 启动干净，无 `ssh targets` 告警 |
 
 ### 8.5 未做与待人工确认
@@ -219,7 +219,7 @@ Nginx **无需改动**：后端 `zvpapi` vhost 已把 `/api/` 与 `/api/system/s
   未在本次部署中执行，留作上线后第一次使用的验收项。
 - 新增连通性带来的权限面：网关密钥可用于 `root@` 两台机器，后端进程一旦被攻破即等同
   两机 root。密钥仅 600 www-data 可读，若需收窄应改为每目标一把 + sudo 白名单。
-- 前端 的 `/api/system/files/*` 现已随 `/api/` 整体反代到后端，文件管理操作的其实是后端
+- 前端的 `/api/system/files/*` 现已随 `/api/` 整体反代到后端，文件管理操作的其实是后端
   机器；这是 11-02 前端源站迁移时就存在的语义偏差，与本次改动无关，另行决策。
 
 ### 8.6 回滚

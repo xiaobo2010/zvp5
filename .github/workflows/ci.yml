@@ -5,9 +5,20 @@ on:
   push:
     branches:
       - main
+    # 纯文档提交不跑门禁：私有库按 job 时长计费，一次全量约 20 分钟。
+    # release 事件不受影响，发版照样走完整门禁。
+    paths-ignore:
+      - "**/*.md"
+      - "**/*.txt"
+      # 纯参考归档：不参与构建、不被导入，改它不该跑全部门禁。
+      - "reference/**"
   release:
     types:
       - published
+  # 依赖与扫描镜像的新 CVE 只在 push/PR/release 时才会被发现。每周定时重跑
+  # 门禁（deploy-production 的 if 已排除非 release 事件，定时运行不会部署）。
+  schedule:
+    - cron: "0 3 * * 1"
   workflow_dispatch:
 
 permissions:
@@ -31,8 +42,10 @@ jobs:
       run:
         working-directory: zvp5/zvp5-backend-python
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
@@ -63,11 +76,13 @@ jobs:
       VITE_API_BASE: https://ci.invalid/api
       VITE_API_RACE_BASE: https://race.ci.invalid/api
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v6
         with:
           version: ${{ env.PNPM_VERSION }}
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version-file: ${{ env.NODE_VERSION_FILE }}
           cache: pnpm
@@ -83,7 +98,7 @@ jobs:
       - name: Production build
         run: pnpm run build
       - name: Upload frontend build
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: frontend-dist
           path: zvp5/zvp5-frontend/dist
@@ -99,11 +114,13 @@ jobs:
       run:
         working-directory: zvp5/zvp5-frontend
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v6
         with:
           version: ${{ env.PNPM_VERSION }}
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version-file: ${{ env.NODE_VERSION_FILE }}
           cache: pnpm
@@ -112,7 +129,7 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Install Cypress binary
         run: pnpm exec cypress install
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: frontend-dist
           path: zvp5/zvp5-frontend/dist
@@ -124,13 +141,15 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - name: Install ShellCheck
         run: sudo apt-get update && sudo apt-get install -y shellcheck
       - name: ShellCheck deployment scripts
         run: >-
           shellcheck -x
-          zvp5/deployment/github-actions/zvms4-deploy
+          zvp5/deployment/github-actions/zvp5-deploy
           zvp5/deployment/github-actions/*.sh
       - name: Test deployment backup and rollback paths
         run: bash zvp5/deployment/github-actions/test-deploy-wrapper.sh
@@ -166,15 +185,17 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v6
         with:
           version: ${{ env.PNPM_VERSION }}
-      - uses: actions/setup-node@v4
+      # 该任务只跑 pnpm audit（不做 pnpm install），没有 pnpm store 可缓存；
+      # 开启 pnpm 缓存会让 setup-node 的 post 步骤因路径不存在而报错。
+      - uses: actions/setup-node@v7
         with:
           node-version-file: ${{ env.NODE_VERSION_FILE }}
-          cache: pnpm
-          cache-dependency-path: zvp5/zvp5-frontend/pnpm-lock.yaml
       - name: Audit frontend production dependencies
         working-directory: zvp5/zvp5-frontend
         run: pnpm audit --prod --audit-level high
@@ -206,6 +227,8 @@ jobs:
     env:
       VITE_API_BASE: ${{ vars.PROD_API_BASE }}
       VITE_API_RACE_BASE: ${{ vars.PROD_API_RACE_BASE }}
+      VITE_STATIC_BASE: ${{ vars.PROD_STATIC_BASE }}
+      VITE_PAGE_BASE: ${{ vars.PROD_FRONTEND_HEALTH_URL }}
       PROD_FRONTEND_HEALTH_URL: ${{ vars.PROD_FRONTEND_HEALTH_URL }}
       DEPLOYMENT_ID: ${{ github.run_id }}-${{ github.run_attempt }}
       # release tag 由人输入，禁止直接插值进 run: 脚本（命令注入）；只经 env 传给 shell。
@@ -217,7 +240,9 @@ jobs:
       FRONTEND_SSH_PORT: ${{ secrets.FRONTEND_SSH_PORT }}
       FRONTEND_SSH_USER: ${{ secrets.FRONTEND_SSH_USER }}
     steps:
-      - uses: actions/checkout@v4
+      # 这个 job 要 `git fetch origin main`（私有仓库），必须保留 checkout 注入的
+      # 只读 token；其余 job 一律不持久化凭证。
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -253,10 +278,10 @@ jobs:
             echo '::warning title=Database migration not applied::DDL files changed; apply them manually.'
           fi
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           version: ${{ env.PNPM_VERSION }}
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version-file: ${{ env.NODE_VERSION_FILE }}
           cache: pnpm
@@ -267,6 +292,8 @@ jobs:
           set -euo pipefail
           : "${VITE_API_BASE:?VITE_API_BASE is required}"
           : "${VITE_API_RACE_BASE:?VITE_API_RACE_BASE is required}"
+          : "${VITE_STATIC_BASE:?VITE_STATIC_BASE is required}"
+          : "${VITE_PAGE_BASE:?VITE_PAGE_BASE is required}"
           : "${PROD_FRONTEND_HEALTH_URL:?PROD_FRONTEND_HEALTH_URL is required}"
           node -e '
             const api = process.env.VITE_API_BASE || ""
@@ -283,6 +310,22 @@ jobs:
               race.protocol !== "https:" || !race.hostname || race.username || race.password ||
               race.search || race.hash || race.pathname.replace(/\/+$/, "") !== "/api"
             ) throw new Error("VITE_API_RACE_BASE must be an HTTPS URL ending in /api")
+            const staticBase = process.env.VITE_STATIC_BASE || ""
+            if (staticBase !== "/") {
+              const url = new URL(staticBase)
+              if (
+                url.protocol !== "https:" || !url.hostname || url.username || url.password ||
+                url.search || url.hash || !url.pathname.endsWith("/")
+              ) throw new Error("VITE_STATIC_BASE must be / or an HTTPS URL ending in /")
+            }
+            const pageBase = process.env.VITE_PAGE_BASE || ""
+            if (pageBase !== "/") {
+              const url = new URL(pageBase)
+              if (
+                url.protocol !== "https:" || !url.hostname || url.username || url.password ||
+                url.search || url.hash || !url.pathname.endsWith("/")
+              ) throw new Error("VITE_PAGE_BASE must be / or an HTTPS URL ending in /")
+            }
           '
           if [[ "$VITE_API_BASE" == "/api" ]]; then
             api_health_url="$(node -e 'process.stdout.write(new URL("/api/health", process.env.PROD_FRONTEND_HEALTH_URL).href)')"
@@ -290,6 +333,18 @@ jobs:
             api_health_url="$(node -e 'process.stdout.write(new URL(process.argv[1]).origin + "/api/health")' "$VITE_API_BASE")"
           fi
           race_health_url="$(node -e 'process.stdout.write(new URL(process.argv[1]).origin + "/api/health")' "$VITE_API_RACE_BASE")"
+          # 后续步骤（含失败回滚路径）必须拿到绝对 URL：PROD_API_BASE=/api 时
+          # "${VITE_API_BASE%/}/health" 只是相对路径，curl 会直接拒绝。
+          for health_url in "$api_health_url" "$race_health_url"; do
+            [[ "$health_url" =~ ^https://[^[:space:]]+$ ]] || {
+              echo "invalid health URL: ${health_url:-<empty>}" >&2
+              exit 1
+            }
+          done
+          {
+            echo "API_HEALTH_URL=$api_health_url"
+            echo "RACE_API_HEALTH_URL=$race_health_url"
+          } >> "$GITHUB_ENV"
           curl -fsS --retry 3 --retry-delay 2 \
             -A 'Mozilla/5.0 (compatible; ZVP5-Deploy/1.0)' "$api_health_url" >/dev/null
           curl -fsS --retry 3 --retry-delay 2 \
@@ -303,7 +358,7 @@ jobs:
           set -euo pipefail
           pnpm run build
           grep -R -F "$VITE_API_RACE_BASE" dist/assets >/dev/null
-          grep -F 'src="/assets/' dist/index.html >/dev/null
+          node .github/scripts/verify-static-base.cjs dist "$VITE_STATIC_BASE" "$VITE_PAGE_BASE"
           race_origin="$(node -e 'process.stdout.write(new URL(process.argv[1]).origin)' "$VITE_API_RACE_BASE")"
           grep -F "$race_origin" dist/index.html >/dev/null
 
@@ -420,18 +475,18 @@ jobs:
             if [[ $status -ne 0 ]]; then
               if [[ $frontend_attempted -eq 1 ]]; then
                 remote frontend "$FRONTEND_SSH_HOST" "$FRONTEND_SSH_PORT" "$FRONTEND_SSH_USER" \
-                  "sudo -n /usr/local/sbin/zvms4-deploy rollback frontend $GITHUB_SHA $DEPLOYMENT_ID" || rollback_failed=1
+                  "sudo -n /usr/local/sbin/zvp5-deploy rollback frontend $GITHUB_SHA $DEPLOYMENT_ID" || rollback_failed=1
               fi
               if [[ $backend_attempted -eq 1 ]]; then
                 remote backend "$BACKEND_SSH_HOST" "$BACKEND_SSH_PORT" "$BACKEND_SSH_USER" \
-                  "sudo -n /usr/local/sbin/zvms4-deploy rollback backend $GITHUB_SHA $DEPLOYMENT_ID" || rollback_failed=1
+                  "sudo -n /usr/local/sbin/zvp5-deploy rollback backend $GITHUB_SHA $DEPLOYMENT_ID" || rollback_failed=1
               fi
               if [[ $frontend_attempted -eq 1 ]]; then
                 check_url "$PROD_FRONTEND_HEALTH_URL" || rollback_failed=1
               fi
               if [[ $backend_attempted -eq 1 ]]; then
-                check_url "${VITE_API_BASE%/}/health" || rollback_failed=1
-                check_url "${VITE_API_RACE_BASE%/}/health" || rollback_failed=1
+                check_url "$API_HEALTH_URL" || rollback_failed=1
+                check_url "$RACE_API_HEALTH_URL" || rollback_failed=1
               fi
               {
                 echo '### Production deployment failed'
@@ -453,16 +508,16 @@ jobs:
 
           backend_attempted=1
           remote backend "$BACKEND_SSH_HOST" "$BACKEND_SSH_PORT" "$BACKEND_SSH_USER" \
-            "sudo -n /usr/local/sbin/zvms4-deploy deploy backend $GITHUB_SHA $DEPLOYMENT_ID"
-          check_url "${VITE_API_BASE%/}/health"
-          check_url "${VITE_API_RACE_BASE%/}/health"
+            "sudo -n /usr/local/sbin/zvp5-deploy deploy backend $GITHUB_SHA $DEPLOYMENT_ID"
+          check_url "$API_HEALTH_URL"
+          check_url "$RACE_API_HEALTH_URL"
 
           frontend_attempted=1
           remote frontend "$FRONTEND_SSH_HOST" "$FRONTEND_SSH_PORT" "$FRONTEND_SSH_USER" \
-            "sudo -n /usr/local/sbin/zvms4-deploy deploy frontend $GITHUB_SHA $DEPLOYMENT_ID"
+            "sudo -n /usr/local/sbin/zvp5-deploy deploy frontend $GITHUB_SHA $DEPLOYMENT_ID"
           check_url "$PROD_FRONTEND_HEALTH_URL"
-          check_url "${VITE_API_BASE%/}/health"
-          check_url "${VITE_API_RACE_BASE%/}/health"
+          check_url "$API_HEALTH_URL"
+          check_url "$RACE_API_HEALTH_URL"
 
           {
             echo '### Production deployment succeeded'

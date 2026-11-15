@@ -16,12 +16,13 @@ import base64
 import hashlib
 import hmac
 import io
-import os
 import time
 import warnings
 from dataclasses import dataclass
 from datetime import date, timedelta
 from pathlib import Path
+
+from util.env import getenv
 
 import anyio
 from PIL import Image, ImageOps, UnidentifiedImageError
@@ -52,8 +53,8 @@ IMAGE_CONCURRENCY_MAX = 8
 
 
 def image_concurrency() -> int:
-    """``ZVMS_IMAGE_CONCURRENCY``（1..8），非法或越界回落默认值。"""
-    raw = os.environ.get("ZVMS_IMAGE_CONCURRENCY")
+    """``ZVP5_IMAGE_CONCURRENCY``（1..8），非法或越界回落默认值。"""
+    raw = getenv("ZVP5_IMAGE_CONCURRENCY")
     try:
         value = int(str(raw))
     except (TypeError, ValueError):

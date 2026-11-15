@@ -9,9 +9,9 @@
 ```text
 zvp5-frontend/src/plugins/hedgedGet.ts
 zvp5-frontend/src/plugins/hedgedGet.spec.ts
-deployment/nginx/zvms-cors-map.conf
-deployment/nginx/zvms-api-preflight.conf
-deployment/nginx/zvms-api-gzip.conf
+deployment/nginx/zvp5-cors-map.conf
+deployment/nginx/zvp5-api-preflight.conf
+deployment/nginx/zvp5-api-gzip.conf
 ```
 
 前端必须使用双基址构建：
@@ -64,21 +64,21 @@ GET /attachments/{id}
 安装：
 
 ```bash
-install -m 0644 deployment/nginx/zvms-cors-map.conf \
-  /etc/nginx/conf.d/zvms-cors-map.conf
-install -m 0644 deployment/nginx/zvms-api-gzip.conf \
-  /etc/nginx/conf.d/zvms-api-gzip.conf
-install -m 0644 deployment/nginx/zvms-api-preflight.conf \
-  /etc/nginx/snippets/zvms-api-preflight.conf
+install -m 0644 deployment/nginx/zvp5-cors-map.conf \
+  /etc/nginx/conf.d/zvp5-cors-map.conf
+install -m 0644 deployment/nginx/zvp5-api-gzip.conf \
+  /etc/nginx/conf.d/zvp5-api-gzip.conf
+install -m 0644 deployment/nginx/zvp5-api-preflight.conf \
+  /etc/nginx/snippets/zvp5-api-preflight.conf
 ```
 
 在 `/etc/nginx/sites-available/zvpapi` 的 `location /api/ {` 内增加：
 
 ```nginx
-include /etc/nginx/snippets/zvms-api-preflight.conf;
+include /etc/nginx/snippets/zvp5-api-preflight.conf;
 ```
 
-前置条件：`/etc/nginx/nginx.conf` 的 http 上下文已有 `gzip on;`。`zvms-api-gzip.conf`
+前置条件：`/etc/nginx/nginx.conf` 的 http 上下文已有 `gzip on;`。`zvp5-api-gzip.conf`
 只补充 `gzip_types application/json` 等参数，不开启 SSE 或二进制压缩。
 
 ## 4. 前端 Nginx 要求
@@ -88,17 +88,17 @@ include /etc/nginx/snippets/zvms-api-preflight.conf;
 宝塔的前端 Nginx 根目录不是 `/etc/nginx`，实际路径如下：
 
 ```bash
-install -m 0644 deployment/nginx/zvms-cors-map.conf \
-  /www/server/panel/vhost/nginx/00-zvms-cors-map.conf
-install -m 0644 deployment/nginx/zvms-api-preflight.conf \
-  /www/server/nginx/conf/zvms-api-preflight.conf
+install -m 0644 deployment/nginx/zvp5-cors-map.conf \
+  /www/server/panel/vhost/nginx/00-zvp5-cors-map.conf
+install -m 0644 deployment/nginx/zvp5-api-preflight.conf \
+  /www/server/nginx/conf/zvp5-api-preflight.conf
 ```
 
 在 `/www/server/panel/vhost/nginx/zvp.xiaobopisces.top.conf` 的
 `location /api/ {` 内增加：
 
 ```nginx
-include /www/server/nginx/conf/zvms-api-preflight.conf;
+include /www/server/nginx/conf/zvp5-api-preflight.conf;
 ```
 
 前端已经启用动态 gzip，本次不重复安装 gzip 片段。
@@ -178,7 +178,7 @@ curl -sS -X OPTIONS \
 | 前端配置备份 | `/root/backup-20261107-preflight-001323` |
 | 前端备份 | `/www/zvms4/frontend-dist.bak-20261107-0015` |
 | 后端 gzip | `/api/changelog` 从 29,293 bytes 降至约 13,509 bytes，带 `Content-Encoding: gzip` |
-| 预检 | 生产域/canary × 前端/后端 四种组合均为 204，`Max-Age: 7200` |
+| 预检 | 生产域/canary × 前端/后端四种组合均为 204，`Max-Age: 7200` |
 | 未知 Origin | 返回 204，但无 `Access-Control-Allow-Origin` |
 | 前端产物 | `index-tOk_jfbe.js`，SHA256 `3EC890132D7D7004CD89763E8C16CCF060AA9879D5602F58328BD5AEAB574897` |
 | 前端文件 | 336 个文件，其中 160 个 `.gz` |

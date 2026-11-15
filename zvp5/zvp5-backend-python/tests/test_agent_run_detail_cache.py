@@ -343,3 +343,46 @@ async def test_append_event_on_uncached_run_is_a_noop() -> None:
     run_cache.reset()
     run_cache.append_event("nope", {"oid": "x", "round_no": 1})
     assert run_cache.get("nope") is None
+
+
+# ---------------------------------------------------------------------------
+# 读侧不复制：命中返回条目内引用；淘汰是 LRU 而非 FIFO
+# ---------------------------------------------------------------------------
+
+def test_cache_hit_returns_the_same_objects_not_copies() -> None:
+    """深拷贝一整条 payload 是命中路径最贵的一步，且没有任何用处。
+
+    快照是「只读引用」：``run_detail`` 只切片与序列化，从不原地改。
+    """
+    run_cache.reset()
+    run_cache.put(
+        RUN,
+        row=_run_row(RUN),
+        events=[_event_row("e1", round_no=1)],
+        proposals=[{"_id": "p1"}],
+    )
+
+    first = run_cache.get(RUN)
+    second = run_cache.get(RUN)
+
+    assert first is not None and second is not None
+    assert first["row"] is second["row"]
+    assert first["events"] is second["events"]
+    assert first["events"][0] is second["events"][0]
+    assert first["proposals"] is second["proposals"]
+
+
+def test_eviction_is_lru_not_fifo(monkeypatch) -> None:
+    """命中把 key 挪到队尾：最久**没用过**的才被淘汰，而不是最早写进来的。"""
+    run_cache.reset()
+    monkeypatch.setattr(run_cache, "MAX_ENTRIES", 2)
+
+    run_cache.put("A", row={"status": "running"}, events=[], proposals=[])
+    run_cache.put("B", row={"status": "running"}, events=[], proposals=[])
+    assert run_cache.get("A") is not None  # A 变成「刚用过」
+
+    run_cache.put("C", row={"status": "running"}, events=[], proposals=[])
+
+    assert run_cache.get("A") is not None
+    assert run_cache.get("B") is None
+    assert run_cache.get("C") is not None

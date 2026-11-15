@@ -550,7 +550,9 @@ def test_platform_key_is_charged(env, scope):
 
     assert response.status_code == 200
     # 120 token → 1 单位（与 chat 面同一把尺子）。
-    assert env.consume.calls == [((OPERATOR, "af", 1), {"roles": ["admin"]})]
+    assert env.consume.calls == [
+        ((OPERATOR, "af", 1), {"roles": ["admin"], "want_state": False})
+    ]
     assert env.audits[0]["key_scope"] == scope
 
 

@@ -377,13 +377,20 @@ async def list_messages(
         conversation_oid = _require_oid(
             oid, code=conversations.NOT_FOUND, message="conversation not found"
         )
-        await conversations.require_row(user=user, oid=conversation_oid)
+        # 归属 → 功能开关的顺序不能换：会话不存在时先 404，存在但关掉 AI 的才 403，
+        # 这个接口被前端每秒轮询，顺序一换就成了「探测别人会话是否存在」的探针。
+        conversation = await conversations.require_row(
+            user=user, oid=conversation_oid
+        )
         _require_agent_feature(user)
+        # 刚校验过的行直接交下去：list_messages 不必为了一个 message_count 再查
+        # 一次同一条会话（1 秒轮询的接口，重复查询就是重复 IO）。
         return await conversations.list_messages(
             user=user,
             oid=conversation_oid,
             after_seq=after_seq,
             limit=limit,
+            conversation=conversation,
         )
 
     return await _dispatch(action, user=user, scene=scene)

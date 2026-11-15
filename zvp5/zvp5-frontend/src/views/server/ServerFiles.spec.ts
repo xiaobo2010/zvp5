@@ -155,7 +155,7 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-it('renders only the two allowed roots and starts at /www/zvms4', async () => {
+it('renders only the allowed root and starts at /www/zvms4', async () => {
   const wrapper = mountPage()
   await flushPromises()
 
@@ -164,7 +164,7 @@ it('renders only the two allowed roots and starts at /www/zvms4', async () => {
 
   const quick = wrapper.find('.quick-menu').text()
   expect(quick).toContain('/www/zvms4')
-  expect(quick).toContain('/home')
+  expect(quick).not.toContain('/home')
   expect(quick).not.toContain('/etc')
   expect(quick).not.toContain('/var/log')
 
@@ -191,12 +191,12 @@ it('blocks a typed path outside the roots and keeps the current path', async () 
   wrapper.unmount()
 })
 
-it('does not treat /home2 as being inside /home', async () => {
+it('does not treat /www/zvms40 as being inside /www/zvms4', async () => {
   const wrapper = mountPage()
   await flushPromises()
 
   const input = wrapper.find('.el-input-stub')
-  await input.setValue('/home2/secret')
+  await input.setValue('/www/zvms40/secret')
   await input.trigger('keyup.enter')
   await flushPromises()
 
@@ -206,19 +206,19 @@ it('does not treat /home2 as being inside /home', async () => {
   wrapper.unmount()
 })
 
-it('follows a typed path under /home', async () => {
+it('follows a typed path under the allowed root', async () => {
   const wrapper = mountPage()
   await flushPromises()
 
   const input = wrapper.find('.el-input-stub')
-  await input.setValue('/home/logs/')
+  await input.setValue('/www/zvms4/logs/')
   await input.trigger('keyup.enter')
   await flushPromises()
 
   expect(elMessageSpy).not.toHaveBeenCalled()
   expect(listFiles).toHaveBeenCalledTimes(2)
-  expect(listFiles).toHaveBeenLastCalledWith('/home/logs', 0, 200)
-  expect((input.element as HTMLInputElement).value).toBe('/home/logs')
+  expect(listFiles).toHaveBeenLastCalledWith('/www/zvms4/logs', 0, 200)
+  expect((input.element as HTMLInputElement).value).toBe('/www/zvms4/logs')
 
   wrapper.unmount()
 })

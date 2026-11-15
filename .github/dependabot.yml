@@ -41,6 +41,11 @@ updates:
       time: "05:00"
       timezone: Asia/Shanghai
     groups:
+      # 只把小版本/补丁合成一个 PR；主版本单独开，避免一次跳 4 个大版本
+      # （2026-11 曾发生 checkout v4→v7、upload-artifact v4→v7 等 6 个一次合并）。
       github-actions:
         patterns:
           - "*"
+        update-types:
+          - minor
+          - patch

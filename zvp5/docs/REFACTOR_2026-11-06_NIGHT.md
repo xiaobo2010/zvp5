@@ -63,7 +63,7 @@ VITE_API_RACE_BASE=https://zvpapi.xiaobopisces.top/api npm run build
 
 ## 三、还没做（按性价比排序，留给后续）
 
-1. **应用层 gzip / orjson**：目前依赖 nginx 压缩（前端 已开，43 需按 `deployment/nginx/zvms-api-gzip.conf` 安装）。应用层 `GZipMiddleware` 对 SSE 需排除；orjson 要处理 `Decimal`，且需联网安装依赖。
+1. **应用层 gzip / orjson**：目前依赖 nginx 压缩（前端已开，后端需按 `deployment/nginx/zvp5-api-gzip.conf` 安装）。应用层 `GZipMiddleware` 对 SSE 需排除；orjson 要处理 `Decimal`，且需联网安装依赖。
 2. **`/api/system/*` 与运维面的 `SCAN` 失效**：`db/cache.py` 的 `flush_prefix` 仍会遍历 keyspace，建议改成 key 索引 SET + `UNLINK`。
 3. **前端 store 化剩余部分**：users / device / notifications 三个 store，替换组件内的重复拉取（groups 已完成）。
 4. **超大 SFC**：`VolunteerRegister.vue`(4693)、`ZAiChat.vue`(2888)、`ServerDatabase.vue`(2030) 需单独立项拆。

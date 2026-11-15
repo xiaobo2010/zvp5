@@ -62,7 +62,7 @@ def _iso(ts: float) -> str:
 @pytest.fixture
 def perf_db(monkeypatch, tmp_path):
     path = tmp_path / "perf_samples.db"
-    monkeypatch.setenv("ZVMS_PERF_DB", str(path))
+    monkeypatch.setenv("ZVP5_PERF_DB", str(path))
     perf_sampler._initialized_paths.clear()
     perf_sampler.reset_rate_state()
     return path

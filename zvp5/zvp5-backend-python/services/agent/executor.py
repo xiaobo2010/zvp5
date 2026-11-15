@@ -370,6 +370,7 @@ async def _write_event(
     status: str,
     user_oid: str,
     args_hash: str | None = None,
+    buffer: list[dict] | None = None,
 ) -> None:
     """工具事件落库（失败只 warning：事件写失败不该把一次可用的调用打挂）。
 
@@ -378,37 +379,55 @@ async def _write_event(
 
     落库成功后往轮询快照里追加同形状的一行：否则一秒内的事件要等快照过期才
     可见（用户会看到「工具跑完了但时间线还停上一轮」）。
+
+    ``buffer`` 非空 = 会话路径（有 ``on_round`` 的 run）：本轮的读/拒/失败事件
+    只放进内存，由轮收尾把它们与消息、会话累加写进**同一个事务**。ADB 上一次
+    commit 是 0.5~0.95s，事件写次数原来 = 轮数 × 每轮工具数，批量之后是每轮
+    一次。审计仍然是旁路：轮事务里那段插入带 savepoint（见
+    ``conversations.append_round``），事件写失败只 warning。
+
+    ``proposed`` 例外：那一行由 ``proposal.propose`` 立刻写（前端要拿 oid 轮询
+    提案状态），留着不进缓冲是为了让「缓冲 = 只含可延迟事件」这条不变式成立。
+    ``created_at`` 也在这里定格：事件时间戳必须是**工具完成时**，不是轮收尾的
+    刷盘时——否则一轮里 5 个工具的时间线会被压成同一个瞬间。
     """
     oid = uuid4().hex
     result = result_summary[:500]
-    try:
-        await backends.get_ai_agent_events_repo().insert(
-            oid=oid,
-            request_id=request_id,
-            round_no=round_no,
-            tool_name=tool_name if isinstance(tool_name, str) else None,
-            tool_kind=tool_kind,
-            args_hash=args_hash,
-            args_summary=args_summary,
-            result_summary=result,
-            status=status,
-            actor_oid=user_oid,
-        )
-    except Exception:  # noqa: BLE001 - 审计旁路
-        _logger.warning("ai agent event write failed", exc_info=True)
-        return
+    record = {
+        "oid": oid,
+        "request_id": request_id,
+        "round_no": round_no,
+        "tool_name": tool_name if isinstance(tool_name, str) else None,
+        "tool_kind": tool_kind,
+        "args_hash": args_hash,
+        "args_summary": args_summary,
+        "result_summary": result,
+        "status": status,
+        "actor_oid": user_oid,
+        "created_at": datetime.now(),
+    }
+    if buffer is not None and status != "proposed":
+        buffer.append(record)
+    else:
+        try:
+            await backends.get_ai_agent_events_repo().insert(**record)
+        except Exception:  # noqa: BLE001 - 审计旁路
+            _logger.warning("ai agent event write failed", exc_info=True)
+            return
     # 形状与 ``proposal.run_events`` 一致：缓存里存的是展示视图，不是库行。
     run_cache.append_event(
         request_id,
         {
             "oid": oid,
             "round_no": round_no,
-            "tool_name": tool_name if isinstance(tool_name, str) else None,
+            "tool_name": record["tool_name"],
             "tool_kind": tool_kind,
             "args_summary": args_summary,
             "result_summary": result,
             "status": status,
-            "created_at": datetime.now().isoformat(sep=" ", timespec="seconds"),
+            "created_at": record["created_at"].isoformat(
+                sep=" ", timespec="seconds"
+            ),
         },
     )
 
@@ -531,8 +550,13 @@ async def _run_tool(
     request_id: str,
     round_no: int,
     scene: str | None = None,
+    buffer: list[dict] | None = None,
 ) -> tuple[dict, dict | None, str, str]:
     """处理一个 ``tool_call``：``(tool 消息, 提案或 None, 事件状态, 事件摘要)``。
+
+    ``buffer`` 直接透传给 :func:`_write_event`：非空时本工具的事件先攒在内存里，
+    等轮收尾与消息一起落库（见那里的说明）。``None`` = 旧的无会话执行器路径，
+    逐条即时写。
 
     状态由这里显式给出而不是从消息内容反推：大结果会被截断（``MAX_TOOL_RESULT_CHARS``），
     截断后的文本不是合法 JSON，反推会把一次成功的读工具记成 ``failed``。
@@ -566,6 +590,7 @@ async def _run_tool(
             result_summary=note,
             status="denied",
             user_oid=user_oid,
+            buffer=buffer,
         )
         return (
             _tool_message(
@@ -592,6 +617,7 @@ async def _run_tool(
             result_summary=note,
             status="denied",
             user_oid=user_oid,
+            buffer=buffer,
         )
         return (
             _tool_message(call_id, {"error": "read_only_scene", "tool": tool.name}),
@@ -611,6 +637,7 @@ async def _run_tool(
             result_summary=note,
             status="denied",
             user_oid=user_oid,
+            buffer=buffer,
         )
         return (
             _tool_message(
@@ -638,6 +665,7 @@ async def _run_tool(
                 result_summary=note,
                 status="denied",
                 user_oid=user_oid,
+                buffer=buffer,
             )
             return (
                 _tool_message(
@@ -659,6 +687,7 @@ async def _run_tool(
                 result_summary=note,
                 status="denied",
                 user_oid=user_oid,
+                buffer=buffer,
             )
             return (
                 _tool_message(
@@ -682,6 +711,7 @@ async def _run_tool(
             result_summary=note,
             status="failed",
             user_oid=user_oid,
+            buffer=buffer,
         )
         return (
             _tool_message(
@@ -716,6 +746,7 @@ async def _run_tool(
                 result_summary=note,
                 status="failed",
                 user_oid=user_oid,
+                buffer=buffer,
             )
             return (
                 _tool_message(
@@ -769,6 +800,7 @@ async def _run_tool(
             result_summary=note,
             status="failed",
             user_oid=user_oid,
+            buffer=buffer,
         )
         return (
             _tool_message(
@@ -789,6 +821,7 @@ async def _run_tool(
             result_summary=note,
             status="failed",
             user_oid=user_oid,
+            buffer=buffer,
         )
         return (
             _tool_message(call_id, {"error": "tool_failed", "code": "internal_error"}),
@@ -807,6 +840,7 @@ async def _run_tool(
         result_summary=note,
         status="executed",
         user_oid=user_oid,
+        buffer=buffer,
     )
     # 直接执行的写工具要在 tool 消息里说清「已经落库了」：模型若以为是提案，
     # 下一轮会重复调用（封禁是幂等的，但解封/设备操作不一定）。
@@ -1102,12 +1136,17 @@ def _round_payload(
     tools: list[dict],
     tokens: dict,
     units: int,
+    events: list[dict] | None = None,
 ) -> dict:
     """一轮收尾交给 ``on_round`` 的载荷（executor 自己**不写库**）。
 
     只会出现本轮的 usage：落库侧要把它写到该轮的 assistant/tool 行上，累计值由
     会话行自己加——两处都算累计会重复。``reasoning`` 是上游这一轮的思考过程
     （``None`` = 上游没返回），只属于 assistant 那一行。
+
+    ``events`` 是本轮缓冲下来的工具事件（已带 ``created_at``）：交给落库侧与消息
+    写进同一个事务。它是**载荷**而不是回调的第二个参数——``on_round`` 的形状只有
+    一个 dict，加参数会让所有旧调用方在「已经扣过费之后」才 TypeError。
     """
     return {
         "round_no": round_no,
@@ -1126,6 +1165,7 @@ def _round_payload(
             "cache_write": tokens.get("cache_write_tokens"),
         },
         "units": units,
+        "events": list(events or ()),
     }
 
 
@@ -1174,6 +1214,7 @@ async def compact_history(
     force: bool = False,
     raise_quota: bool = False,
     thinking: str | None = None,
+    deadline: float | None = None,
 ) -> tuple[list[dict], dict]:
     """压缩一次上下文，返回 ``(重建后的对话, 结果)``。
 
@@ -1196,6 +1237,13 @@ async def compact_history(
 
     ``thinking`` 是**本次 run 的思考强度覆盖**：压缩轮也是一次真实上游调用，必须与
     常规轮用同一个档位，否则「这次 run 用 high」在压缩时变成上游默认。
+
+    ``deadline`` 是 run 的**绝对**截止时间（``time.monotonic()`` 秒），自动路径才
+    传。它只约束压缩那一次上游调用：已经过期就一次都不发，超时则走既有的降级
+    （重试 → 硬截断）。手动压缩没有 run 上下文，传 ``None`` 时行为与以前逐字相同。
+
+    注意它只是「别在已经超时的 run 上再花一次跨洋调用」，**不**声称能取消已经在
+    飞的上游请求：``wait_for`` 只是停止等它，上游那侧的账单该发生还是会先发生。
     """
     limit = agent_context.context_limit(model)
     before = _context_size(prompt_tokens, conversation)
@@ -1248,6 +1296,7 @@ async def compact_history(
                 snapshot=snapshot,
                 previous_summary=previous_summary,
                 thinking=thinking,
+                deadline=deadline,
             )
             break
         except Exception as exc:  # noqa: BLE001 - 压缩失败必须降级，不能打挂 run
@@ -1327,6 +1376,7 @@ async def _maybe_compact(
     on_summary,
     on_compaction=None,
     thinking: str | None = None,
+    deadline: float | None = None,
 ) -> tuple[list[dict], dict]:
     """自动路径的兜底外壳：全链路异常不外溢（§5.5-4），并限制单 run 压缩次数。
 
@@ -1354,6 +1404,7 @@ async def _maybe_compact(
             prompt_tokens=prompt_tokens,
             force=False,
             thinking=thinking,
+            deadline=deadline,
         )
     except Exception:  # noqa: BLE001 - 压缩是旁路，不能打挂 run
         _logger.warning("ai agent context compaction failed", exc_info=True)
@@ -1382,6 +1433,7 @@ async def _summarize_history(
     snapshot: str | None,
     previous_summary: str = "",
     thinking: str | None = None,
+    deadline: float | None = None,
 ) -> str:
     """摘要调用：计费照扣、审计 ``purpose='compact'``、``round_no=NULL``。
 
@@ -1393,6 +1445,10 @@ async def _summarize_history(
 
     ``thinking`` 与常规轮同一个档位：压缩轮也是真实上游调用，「按次覆盖」必须贯穿
     整个 run（审计里的 ``purpose='compact'`` 行记录的也是同一次覆盖后的模型）。
+
+    ``deadline`` 非空时只包住这一次 ``_call_upstream``：run 已经过期就一次都不发
+    （直接抛 ``TimeoutError`` 让上层走降级），否则超时按 ``min(剩余, ...)`` 掐断。
+    这是 wall-clock 上界，**不是**取消语义：已在飞的上游请求不会被追回。
     """
     items = list(older)
     if previous_summary:
@@ -1422,10 +1478,22 @@ async def _summarize_history(
             "max_tokens": max_tokens,
         }
         started = time.monotonic()
+        # 压缩是旁路，必须与常规轮共用同一个 run 截止时间：一次 run 的 wall-clock
+        # 上限是 ``AI_AGENT_RUN_TIMEOUT_SECONDS``，压缩不该在它之外再领一份预算。
+        # 已过期就连发都不发（省一次跨洋调用），抛给上层的既有重试/降级链路。
+        remaining: float | None = None
+        if deadline is not None:
+            remaining = deadline - started
+            if remaining <= 0:
+                raise TimeoutError("ai agent run deadline expired before compaction")
         try:
-            result, entry, cache_key = await _call_upstream(
-                payload, candidates, thinking=thinking
-            )
+            call = _call_upstream(payload, candidates, thinking=thinking)
+            if remaining is None:
+                result, entry, cache_key = await call
+            else:
+                result, entry, cache_key = await asyncio.wait_for(
+                    call, timeout=remaining
+                )
         except AgentError as exc:
             last_entry = getattr(exc, "entry", None) or (
                 candidates[0] if candidates else None
@@ -1455,7 +1523,9 @@ async def _summarize_history(
         )
         if _billable(entry):
             try:
-                await quota.consume(user_oid, "af", units, roles=roles)
+                await quota.consume(
+                    user_oid, "af", units, roles=roles, want_state=False
+                )
             except Exception as exc:  # noqa: BLE001 - 回写失败不能丢掉摘要
                 _logger.warning(
                     "ai agent compact quota write-back failed: %s",
@@ -1626,6 +1696,10 @@ async def run(
     last_prompt_tokens: int | None = None
     # 单 run 压缩次数：成功/降级/内部异常各算一次（上限见 MAX_COMPACTIONS_PER_RUN）。
     compactions = 0
+    # 有 ``on_round`` = 会话路径：工具事件攒进本轮缓冲，随轮收尾一个事务落库。
+    # 裸执行器（无 ``on_round``）没人负责落库，只能逐条即时写——审计不能因为
+    # 「少接了一根线」就整段消失。
+    buffering = on_round is not None
 
     # 0) 请求前预检：用会话行记录的 prompt 规模判一次水位。不做这一步的话，新 run
     #    的第一个请求会把「已经 90% 占用的全量历史」整段发上去，压完全白花一次
@@ -1644,11 +1718,16 @@ async def run(
             on_summary=on_summary,
             on_compaction=on_compaction,
             thinking=thinking,
+            deadline=deadline,
         )
         if preflight.get("compacted") or preflight.get("reason") == "error":
             compactions += 1
 
     for round_no in range(1, max_iterations + 1):
+        # 本轮缓冲：轮收尾交给 ``on_round``（与消息同事务）；每轮重新开一份，
+        # 上一轮已经交付过，绝不能把旧事件再写一遍。
+        pending_events: list[dict] = []
+        event_buffer = pending_events if buffering else None
         # 0) 取消 / 中断：轮边界判一次（工具循环里每次执行前再判）。
         if await _should_stop(should_stop):
             stop_reason = "cancelled"
@@ -1817,7 +1896,9 @@ async def run(
         if _billable(entry):
             # 后置扣减是 best-effort：回写失败不能丢掉已经生成的答案。
             try:
-                await quota.consume(user_oid, "af", units, roles=roles)
+                await quota.consume(
+                    user_oid, "af", units, roles=roles, want_state=False
+                )
             except Exception as exc:  # noqa: BLE001 - 回写失败不能丢掉答案
                 _logger.warning(
                     "ai agent quota write-back failed: %s", type(exc).__name__
@@ -1872,6 +1953,7 @@ async def run(
                     on_summary=on_summary,
                     on_compaction=on_compaction,
                     thinking=thinking,
+                    deadline=deadline,
                 )
                 if info.get("compacted") or info.get("reason") == "error":
                     compactions += 1
@@ -1927,6 +2009,7 @@ async def run(
                             request_id=run_id,
                             round_no=round_no,
                             scene=scene,
+                            buffer=event_buffer,
                         )
                         for _position, call in batch
                     ]
@@ -1977,6 +2060,7 @@ async def run(
                     ),
                     status="denied",
                     user_oid=user_oid,
+                    buffer=event_buffer,
                 )
                 events.append(
                     {
@@ -1997,6 +2081,7 @@ async def run(
                 request_id=run_id,
                 round_no=round_no,
                 scene=scene,
+                buffer=event_buffer,
             )
             _append_tool_outcome(
                 call,
@@ -2020,6 +2105,7 @@ async def run(
                 tools=handled_tools,
                 tokens=tokens,
                 units=units,
+                events=pending_events,
             ),
         )
 
@@ -2042,6 +2128,7 @@ async def run(
                 on_summary=on_summary,
                 on_compaction=on_compaction,
                 thinking=thinking,
+                deadline=deadline,
             )
             if info.get("compacted") or info.get("reason") == "error":
                 compactions += 1

@@ -5,7 +5,7 @@ root, deliberately decoupled from Oracle ADB: an ADB write costs ~0.5-0.95s per
 round trip, which would double the sampling budget, and the Oracle DDL in
 ``db/oracle/ddl/`` needs a human to apply it.  The layout mirrors
 :mod:`db.system_state` — WAL, short-lived connections, lazy ``CREATE TABLE IF NOT
-EXISTS`` — and accepts a ``ZVMS_PERF_DB`` override (``PERF_DB_PATH`` /
+EXISTS`` — and accepts a ``ZVP5_PERF_DB`` override (``PERF_DB_PATH`` /
 ``_db_path()``).
 
 Three tiers, all configurable by environment variable:
@@ -43,6 +43,7 @@ from typing import Any, Iterable, Mapping
 
 from services import db_monitor
 from services.api_metrics import api_metrics
+from util.env import getenv
 from services.host_metrics import collect_host_metrics
 from util.serialization import iso_epoch_utc
 
@@ -51,7 +52,7 @@ _logger = logging.getLogger(__name__)
 # 后端根目录：本文件位于 services/ 下，向上两级即后端根（同 db/system_state.py）。
 _BACKEND_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-PERF_DB_PATH = os.environ.get("ZVMS_PERF_DB") or os.path.join(
+PERF_DB_PATH = getenv("ZVP5_PERF_DB") or os.path.join(
     _BACKEND_ROOT, "perf_samples.db"
 )
 
@@ -133,7 +134,7 @@ def retention_days() -> int:
 
 
 def _db_path() -> str:
-    return os.environ.get("ZVMS_PERF_DB") or PERF_DB_PATH
+    return getenv("ZVP5_PERF_DB") or PERF_DB_PATH
 
 
 # --------------------------------------------------------------------------- #

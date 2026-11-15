@@ -451,3 +451,70 @@ def test_department_defaults_keep_ai_agent_on(env):
     assert client.post("/api/ai/conversations", json={"mode": "agent"}).status_code == 201
     assert client.get("/api/ai/runs?active=1").status_code == 200
     assert env.audit.rows == []
+
+
+# ---------------------------------------------------------------------------
+# A-M1：GET messages 不再把同一条会话读两遍
+# ---------------------------------------------------------------------------
+
+
+def _count_gets(monkeypatch, env) -> list[dict]:
+    """给会话仓储的 ``get`` 装一个计数器（归属闸就落在它上面）。"""
+    reads: list[dict] = []
+    original = env.conv.get
+
+    async def spy(oid, owner_oid):
+        reads.append({"oid": str(oid)})
+        return await original(oid, owner_oid)
+
+    monkeypatch.setattr(env.conv, "get", spy)
+    return reads
+
+
+def test_get_messages_reads_the_conversation_once(env, monkeypatch) -> None:
+    """路由先过归属闸，服务层复用那一行：同一条会话只读一次。
+
+    这个接口是前端 1 秒轮询的，重复读一次就是轮询 IO 翻倍（还多一次跨洋往返）。
+    """
+    env.conv.seed(AGENT_OID, mode="agent", message_count=1)
+    env.msgs.rows.append(
+        {
+            "_id": "m" * 32,
+            "conversation_oid": AGENT_OID,
+            "seq": 1,
+            "role": "user",
+            "content": "问题",
+            "created_at": None,
+        }
+    )
+    reads = _count_gets(monkeypatch, env)
+
+    response = _client(DEPT).get(f"/api/ai/conversations/{AGENT_OID}/messages")
+
+    assert response.status_code == 200, response.text
+    assert len(reads) == 1
+    body = response.json()["data"]
+    assert body["total"] == 1
+    assert [row["seq"] for row in body["messages"]] == [1]
+
+
+def test_get_messages_still_404s_before_reading_messages(env, monkeypatch) -> None:
+    """别人的会话：404 且不碰消息表（顺序 = 归属 → 开关 → 读消息）。"""
+    env.conv.seed(AGENT_OID, mode="agent", owner_oid=ADMIN_OID)
+
+    response = _client(DEPT).get(f"/api/ai/conversations/{AGENT_OID}/messages")
+
+    assert response.status_code == 404, response.text
+    assert env.msgs.list_calls == []
+
+
+def test_get_messages_is_still_gated_on_the_feature(env, monkeypatch) -> None:
+    """开关仍排在读消息之前：关掉 ``ai.agent`` → 403，一条消息都不读。"""
+    env.conv.seed(AGENT_OID, mode="agent", message_count=1)
+    _deny(monkeypatch, "department", "ai.agent")
+
+    response = _client(DEPT).get(f"/api/ai/conversations/{AGENT_OID}/messages")
+
+    assert response.status_code == 403, response.text
+    assert response.json()["error"]["code"] == "AI_FORBIDDEN"
+    assert env.msgs.list_calls == []

@@ -68,3 +68,43 @@ export function validateOptionalContentApiBase(value: string | undefined): strin
     ? validateAbsoluteApiBase(value, 'VITE_API_CONTENT_BASE')
     : undefined
 }
+
+function validateHttpsOrRootBase(value: string | undefined, envName: string): string {
+  const raw = (value || '').trim()
+  if (!raw || raw === '/') return '/'
+
+  let parsed: URL
+  try {
+    parsed = new URL(raw)
+  } catch {
+    throw new Error(`${envName} must be / or an absolute HTTPS URL`)
+  }
+
+  if (
+    parsed.protocol !== 'https:' ||
+    !parsed.hostname ||
+    parsed.username ||
+    parsed.password ||
+    parsed.search ||
+    parsed.hash
+  ) {
+    throw new Error(`${envName} must be / or an absolute HTTPS URL`)
+  }
+
+  return parsed.href.endsWith('/') ? parsed.href : `${parsed.href}/`
+}
+
+/**
+ * 静态资源基址。生产环境可指向独立的高带宽静态域；未配置时保持同源 `/`。
+ *
+ * Vite 会把该值同时用于 HTML、动态 import 和 public 资源。这里只接受根路径
+ * 或绝对 HTTPS 地址，避免把构建产物写成无法跨域加载的协议相对 URL。
+ */
+export function validateStaticBase(value: string | undefined): string {
+  return validateHttpsOrRootBase(value, 'VITE_STATIC_BASE')
+}
+
+/** 页面壳 Origin，用于跨域 Manifest 仍把 PWA scope/start_url 锚定在页面域。 */
+export function validatePageBase(value: string | undefined): string {
+  return validateHttpsOrRootBase(value, 'VITE_PAGE_BASE')
+}

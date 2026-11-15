@@ -226,7 +226,7 @@ async def test_catalog_orders_personal_then_shared_then_server(repo, monkeypatch
             _row(oid="b" * 24, scope="shared", owner_oid=SHARED_OWNER, name="team"),
         )
     }
-    monkeypatch.setenv("ZVMS_AI_FALLBACK_KEY", "server-side-key")
+    monkeypatch.setenv("ZVP5_AI_FALLBACK_KEY", "server-side-key")
     monkeypatch.setattr(
         settings,
         "AI_PROVIDERS",
@@ -234,7 +234,7 @@ async def test_catalog_orders_personal_then_shared_then_server(repo, monkeypatch
             "fallback": {
                 "kind": "openai_compat",
                 "base_url": "https://fallback.example.com/v1",
-                "api_key_env": "ZVMS_AI_FALLBACK_KEY",
+                "api_key_env": "ZVP5_AI_FALLBACK_KEY",
                 "models": ["fallback-model"],
             }
         },
@@ -261,7 +261,7 @@ async def test_catalog_shadows_same_name_personal_over_shared_and_server(repo, m
             _row(oid="c" * 24, scope="shared", owner_oid=SHARED_OWNER, name="team"),
         )
     }
-    monkeypatch.setenv("ZVMS_AI_TEAM_KEY", "server-side-key")
+    monkeypatch.setenv("ZVP5_AI_TEAM_KEY", "server-side-key")
     monkeypatch.setattr(
         settings,
         "AI_PROVIDERS",
@@ -269,7 +269,7 @@ async def test_catalog_shadows_same_name_personal_over_shared_and_server(repo, m
             "team": {
                 "kind": "openai_compat",
                 "base_url": "https://team.example.com/v1",
-                "api_key_env": "ZVMS_AI_TEAM_KEY",
+                "api_key_env": "ZVP5_AI_TEAM_KEY",
             }
         },
         raising=False,
@@ -367,7 +367,7 @@ async def test_resolve_api_key_decrypts_user_entries(repo):
 
 @pytest.mark.asyncio
 async def test_resolve_api_key_reads_env_for_server_scope(repo, monkeypatch):
-    monkeypatch.setenv("ZVMS_AI_FALLBACK_KEY", "server-side-key")
+    monkeypatch.setenv("ZVP5_AI_FALLBACK_KEY", "server-side-key")
     monkeypatch.setattr(
         settings,
         "AI_PROVIDERS",
@@ -375,7 +375,7 @@ async def test_resolve_api_key_reads_env_for_server_scope(repo, monkeypatch):
             "fallback": {
                 "kind": "openai_compat",
                 "base_url": "https://fallback.example.com/v1",
-                "api_key_env": "ZVMS_AI_FALLBACK_KEY",
+                "api_key_env": "ZVP5_AI_FALLBACK_KEY",
             }
         },
         raising=False,

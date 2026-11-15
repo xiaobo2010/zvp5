@@ -216,7 +216,7 @@ Content-Type: application/json
 - **类型**：按扩展名收敛到 `jpg` / `jpeg` / `png` / `webp`（大小写不敏感）；其它 → 400 `AI_UNSUPPORTED_MEDIA`。
 - **体积**：与附件 OCR 同一个上限（默认 20MB，`AI_OCR_MAX_IMAGE_BYTES` 可覆盖），超限 400 `AI_OCR_IMAGE_TOO_LARGE`。
 - **执行**：同步识别（不落 `file_ocr`、不产生附件配额），返回 `{"status":"ok","code":200,"data":{"text":"..."}}`。
-- **路径 jail**：越界 → 403 `FILES_ROOT_FORBIDDEN`（根目录只允许 `/www/zvms4` 与 `/home`，见 `docs/FILES_API_DESIGN.md` §13）；未命中路径也走同一套错误翻译。
+- **路径 jail**：越界 → 403 `FILES_ROOT_FORBIDDEN`（根目录只允许 `/www/zvms4`，见 `docs/FILES_API_DESIGN.md` §13）；未命中路径也走同一套错误翻译。
 - **计价与审计**：频控（`ocr`）+ 用户 `ocr` 月额度 + 站点额度 + 每次尝试的 `ai_call_logs`，与 §2.1/§2.3 同一套规则；成功另写一条 `APP_LOGS`（`type=ai_ocr_enqueue`）。
 
 | 状态 | `detail` | 触发 |
@@ -829,7 +829,7 @@ client = OpenAI(
 | `AI_SCENE_UNKNOWN` | 400 | 场景名不是 `terminal` / `file_edit` |
 | `AI_AGENT_UNLOCK_REQUIRED` | 422 | 普通 agent 会话未通过 30 分钟密码解锁（只读场景豁免） |
 | `READ_RATE_LIMITED` | 429 | 重查询读预算超限（日志 / prompt / 导出下载） |
-| `FILES_ROOT_FORBIDDEN` | 403 | 文件路径不在 `/www/zvms4`、`/home` 之内 |
+| `FILES_ROOT_FORBIDDEN` | 403 | 文件路径不在 `/www/zvms4` 之内 |
 | `AI_DISABLED` | 503 | 网关未启用 |
 | `AI_RATE_LIMITED` | 429 | 本地频控超限 |
 | `AI_QUOTA_EXCEEDED` / `insufficient_quota` | 429 | 用户月额度耗尽 |
@@ -993,7 +993,7 @@ CAS `proposed → executing → confirmed|failed`。
 
 运维工具权限镜像 REST：`per` 含 `admin` + 每次执行现查库（`ban_is_active` 与权限重算），
 不信任 token 快照。`db_query` 走只读 SQL 校验；`db_ddl` 先跑 DDL 校验（含
-`confirm=表名`）；文件路径仍过 `realpath` + 根目录 jail（`/www/zvms4`、`/home`）+ `/proc`/`/sys` + 敏感文件黑名单。
+`confirm=表名`）；文件路径仍过 `realpath` + 根目录 jail（`/www/zvms4`）+ `/proc`/`/sys` + 敏感文件黑名单。
 
 ### 14.4 成本闸
 

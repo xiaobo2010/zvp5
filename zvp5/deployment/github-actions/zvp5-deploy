@@ -1,0 +1,564 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+PATH="${ZVP5_DEPLOY_PATH:-/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin}"
+umask 027
+
+DEPLOY_ROOT="${ZVP5_DEPLOY_ROOT:-/www/zvp5}"
+INCOMING_ROOT="${ZVP5_DEPLOY_INCOMING:-/home/github-deploy/incoming}"
+BACKUP_ROOT="$DEPLOY_ROOT/backups/github-actions"
+STATE_ROOT="$DEPLOY_ROOT/.github-actions"
+VENV_ROOT="$STATE_ROOT/venvs"
+FRONTEND_DIR="$DEPLOY_ROOT/frontend-dist"
+BACKEND_DIR="$DEPLOY_ROOT/backend"
+# 服务名在改名期间自动判定：装好 zvp5.service 之前一律沿用 zvms4。
+if [[ -n "${ZVP5_DEPLOY_SERVICE:-}" ]]; then
+  SERVICE_NAME="$ZVP5_DEPLOY_SERVICE"
+elif systemctl cat zvp5.service >/dev/null 2>&1; then
+  SERVICE_NAME="zvp5"
+else
+  SERVICE_NAME="zvms4"
+fi
+SERVICE_USER="${ZVP5_SERVICE_USER:-www-data}"
+FRONTEND_OWNER="${ZVP5_FRONTEND_OWNER:-www:www}"
+SERVICE_URL="${ZVP5_DEPLOY_SERVICE_URL:-http://127.0.0.1:8018/api/health}"
+SYSTEMCTL="${ZVP5_SYSTEMCTL:-systemctl}"
+CURL_BIN="${ZVP5_CURL:-curl}"
+HEALTH_ATTEMPTS="${ZVP5_DEPLOY_HEALTH_ATTEMPTS:-12}"
+HEALTH_SLEEP="${ZVP5_DEPLOY_HEALTH_SLEEP:-5}"
+MAX_ARCHIVE_BYTES="${ZVP5_DEPLOY_MAX_ARCHIVE_BYTES:-268435456}"
+
+CHANGED_COMPONENT=""
+PREPARED_VENV=""
+# 失败时由 handle_error 清掉的解包目录。
+STAGING_DIR=""
+
+log() {
+  printf '[zvp5-deploy] %s\n' "$*"
+}
+
+die() {
+  log "ERROR: $*" >&2
+  exit 1
+}
+
+ensure_dir() {
+  local path="$1" mode="$2"
+  mkdir -p "$path"
+  if [[ "${ZVP5_SKIP_CHMOD:-0}" != "1" ]]; then
+    chmod "$mode" "$path"
+  fi
+}
+
+usage() {
+  cat >&2 <<'EOF'
+Usage: zvp5-deploy <deploy|rollback> <backend|frontend> <40-char-git-sha> <deployment-id>
+EOF
+  exit 64
+}
+
+validate_revision() {
+  [[ "$1" =~ ^[0-9a-f]{40}$ ]] || die "revision must be a lowercase 40-character Git SHA"
+}
+
+validate_component() {
+  [[ "$1" == "backend" || "$1" == "frontend" ]] || die "unknown component: $1"
+}
+
+validate_deployment_id() {
+  [[ "$1" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$ ]] || die "invalid deployment id"
+}
+
+state_path() {
+  printf '%s/%s\n' "$STATE_ROOT" "$1"
+}
+
+write_state() {
+  local path="$1" value="$2" temporary
+  temporary="${path}.tmp.$$"
+  printf '%s\n' "$value" > "$temporary"
+  mv -f "$temporary" "$path"
+}
+
+read_state() {
+  local path="$1"
+  if [[ -f "$path" ]]; then
+    cat "$path"
+  fi
+}
+
+current_marker() {
+  state_path "$1.current"
+}
+
+deployment_state() {
+  local component="$1" revision="$2" deployment_id="$3" suffix="$4"
+  state_path "$component-$revision-$deployment_id.$suffix"
+}
+
+is_current_revision() {
+  local component="$1" revision="$2"
+  [[ "$(read_state "$(current_marker "$component")")" == "$revision" ]]
+}
+
+write_current_revision() {
+  local component="$1" revision="$2"
+  if [[ -n "$revision" ]]; then
+    write_state "$(current_marker "$component")" "$revision"
+  else
+    rm -f "$(current_marker "$component")"
+  fi
+}
+
+is_rollback_complete() {
+  local marker
+  marker="$(deployment_state "$1" "$2" "$3" rolled-back)"
+  [[ -f "$marker" ]]
+}
+
+mark_rollback_complete() {
+  write_state "$(deployment_state "$1" "$2" "$3" rolled-back)" "yes"
+}
+
+is_deployment_noop() {
+  local marker
+  marker="$(deployment_state "$1" "$2" "$3" noop)"
+  [[ -f "$marker" ]]
+}
+
+mark_deployment_noop() {
+  write_state "$(deployment_state "$1" "$2" "$3" noop)" "yes"
+}
+
+set_owner() {
+  local path="$1"
+  if [[ "${ZVP5_SKIP_CHOWN:-0}" == "1" ]]; then
+    return 0
+  fi
+  [[ $EUID -eq 0 ]] || die "chown requires root"
+  local group
+  group="$(id -gn "$SERVICE_USER")"
+  chown -R "$SERVICE_USER:$group" "$path"
+}
+
+run_service_command() {
+  if [[ $EUID -eq 0 && "$SERVICE_USER" != "root" ]]; then
+    command -v runuser >/dev/null 2>&1 || die "runuser is required"
+    runuser -u "$SERVICE_USER" -- "$@"
+  else
+    "$@"
+  fi
+}
+
+restart_service() {
+  "$SYSTEMCTL" restart "$SERVICE_NAME"
+}
+
+health_check() {
+  local attempt
+  for ((attempt = 1; attempt <= HEALTH_ATTEMPTS; attempt++)); do
+    if "$CURL_BIN" -fsS -A 'Mozilla/5.0 (compatible; ZVP5-Deploy/1.0)' "$SERVICE_URL" >/dev/null; then
+      log "Health check passed (attempt $attempt)"
+      return 0
+    fi
+    if ((attempt < HEALTH_ATTEMPTS)); then
+      sleep "$HEALTH_SLEEP"
+    fi
+  done
+  log "Health check failed after $HEALTH_ATTEMPTS attempts: $SERVICE_URL" >&2
+  return 1
+}
+
+verify_archive() {
+  local archive="$1"
+  [[ -f "$archive" ]] || die "missing deployment archive: $archive"
+  [[ -f "$archive.sha256" ]] || die "missing checksum file: $archive.sha256"
+  local expected actual size
+  size="$(stat -c%s "$archive")"
+  (( size <= MAX_ARCHIVE_BYTES )) || die "deployment archive is too large: $size bytes"
+  expected="$(tr -d '[:space:]' < "$archive.sha256")"
+  [[ "$expected" =~ ^[0-9a-f]{64}$ ]] || die "invalid checksum file"
+  actual="$(sha256sum "$archive" | awk '{print $1}')"
+  [[ "$actual" == "$expected" ]] || die "checksum mismatch for $archive"
+}
+
+prune_backups() {
+  local component="$1"
+  find "$BACKUP_ROOT" -maxdepth 1 -type f -name "$component-*.tar.gz" \
+    -printf '%T@ %p\n' \
+    | sort -nr \
+    | tail -n +5 \
+    | cut -d' ' -f2- \
+    | xargs -r rm -f
+}
+
+prune_venvs() {
+  [[ -d "$VENV_ROOT" ]] || return 0
+  find "$VENV_ROOT" -mindepth 1 -maxdepth 1 -type d -name 'backend-*' \
+    -printf '%T@ %p\n' \
+    | sort -nr \
+    | tail -n +5 \
+    | cut -d' ' -f2- \
+    | xargs -r rm -rf
+}
+
+backend_excludes=(
+  --exclude='.venv'
+  --exclude='__pycache__'
+  --exclude='*.pyc'
+  --exclude='.pytest_cache'
+  --exclude='settings.py*'
+  --exclude='.env'
+  --exclude='.env.*'
+  --exclude='*.pem'
+  --exclude='*.sso'
+  --exclude='*.p12'
+  --exclude='aes_key*'
+  --exclude='ssh_key*'
+  --exclude='ssh_known_hosts*'
+  --exclude='known_hosts*'
+  --exclude='id_rsa*'
+  --exclude='id_ed25519*'
+  --exclude='.ssh'
+  --exclude='.oci'
+  --exclude='adb-wallet'
+  --exclude='wallet*'
+  --exclude='cwallet*'
+  --exclude='ewallet*'
+  --exclude='tnsnames*'
+  --exclude='system_state.db*'
+  --exclude='perf_samples.db*'
+  --exclude='*.db'
+  --exclude='*.db-*'
+  --exclude='export'
+  --exclude='data'
+  --exclude='uploads'
+  --exclude='instance'
+  --exclude='local_settings.py*'
+  --exclude='*.log'
+  --exclude='logs'
+)
+
+prepare_backend_venv() {
+  local revision="$1" deployment_id="$2" staging="$3"
+  local new_venv="$VENV_ROOT/backend-$revision-$deployment_id"
+  [[ -x "$BACKEND_DIR/.venv/bin/python" ]] || die "backend virtualenv python not found"
+
+  ensure_dir "$VENV_ROOT" 0751
+  rm -rf "$new_venv"
+  ensure_dir "$new_venv" 0755
+  set_owner "$new_venv"
+  PREPARED_VENV="$new_venv"
+  run_service_command "$BACKEND_DIR/.venv/bin/python" -m venv --clear "$new_venv"
+  run_service_command "$new_venv/bin/pip" install \
+    --disable-pip-version-check --no-input -r "$staging/requirements.txt"
+}
+
+activate_backend_venv() {
+  local revision="$1" deployment_id="$2"
+  local new_venv="$VENV_ROOT/backend-$revision-$deployment_id"
+  local record next previous_target
+  record="$(deployment_state backend "$revision" "$deployment_id" previous-venv)"
+  next="$STATE_ROOT/backend-$revision-$deployment_id.venv.next"
+  previous_target="$VENV_ROOT/backend-previous-$revision-$deployment_id"
+
+  [[ -x "$new_venv/bin/python" ]] || die "new backend virtualenv is incomplete"
+  rm -f "$next"
+  if [[ -L "$BACKEND_DIR/.venv" ]]; then
+    previous_target="$(readlink -f "$BACKEND_DIR/.venv")"
+    [[ -d "$previous_target" ]] || die "current backend virtualenv symlink is broken"
+    write_state "$record" "symlink|$previous_target"
+    rm -f "$BACKEND_DIR/.venv"
+    ln -s "$new_venv" "$next"
+    mv "$next" "$BACKEND_DIR/.venv"
+  elif [[ -d "$BACKEND_DIR/.venv" ]]; then
+    rm -rf "$previous_target"
+    write_state "$record" "directory|$previous_target"
+    mv "$BACKEND_DIR/.venv" "$previous_target"
+    # 新 venv 必须用符号链接接入：venv 里的 bin/* 脚本把解释器路径写死成
+    # 「创建时」的绝对路径，直接 mv 到 .venv 会让 shebang 指向已经不存在的
+    # 目录，systemd 启动报 203/EXEC "No such file or directory"。
+    ln -s "$new_venv" "$next"
+    mv "$next" "$BACKEND_DIR/.venv"
+  else
+    die "backend virtualenv is missing"
+  fi
+}
+
+restore_backend_venv() {
+  local revision="$1" deployment_id="$2"
+  local record failed kind target
+  record="$(deployment_state backend "$revision" "$deployment_id" previous-venv)"
+  failed="$STATE_ROOT/backend-$revision-$deployment_id.venv.failed"
+  [[ -f "$record" ]] || return 0
+
+  IFS='|' read -r kind target < "$record"
+  rm -rf "$failed"
+  if [[ -e "$BACKEND_DIR/.venv" || -L "$BACKEND_DIR/.venv" ]]; then
+    mv "$BACKEND_DIR/.venv" "$failed"
+  fi
+
+  case "$kind" in
+    symlink)
+      [[ -d "$target" ]] || die "previous backend virtualenv is missing: $target"
+      ln -s "$target" "$BACKEND_DIR/.venv"
+      ;;
+    directory)
+      [[ -d "$target" ]] || die "previous backend virtualenv is missing: $target"
+      mv "$target" "$BACKEND_DIR/.venv"
+      ;;
+    *)
+      die "invalid previous backend virtualenv record"
+      ;;
+  esac
+  rm -rf "$failed"
+}
+
+backup_backend() {
+  local revision="$1" deployment_id="$2"
+  local backup="$BACKUP_ROOT/backend-$revision-$deployment_id.tar.gz"
+  [[ -d "$BACKEND_DIR" ]] || die "backend directory not found: $BACKEND_DIR"
+  ensure_dir "$BACKUP_ROOT" 0750
+  tar -C "$BACKEND_DIR" "${backend_excludes[@]}" -czf "$backup" .
+  log "Backend backup: $backup"
+}
+
+backup_frontend() {
+  local revision="$1" deployment_id="$2"
+  local backup="$BACKUP_ROOT/frontend-$revision-$deployment_id.tar.gz"
+  [[ -d "$FRONTEND_DIR" ]] || die "frontend directory not found: $FRONTEND_DIR"
+  ensure_dir "$BACKUP_ROOT" 0750
+  tar -C "$DEPLOY_ROOT" -czf "$backup" frontend-dist
+  log "Frontend backup: $backup"
+}
+
+deploy_frontend() {
+  local revision="$1" deployment_id="$2"
+  local previous_revision
+  ensure_dir "$STATE_ROOT" 0751
+  if is_current_revision frontend "$revision"; then
+    mark_deployment_noop frontend "$revision" "$deployment_id"
+    log "Frontend already active at revision $revision; deployment is a no-op"
+    return 0
+  fi
+
+  local archive="$INCOMING_ROOT/frontend-$revision.tar.gz"
+  local staging="$STATE_ROOT/frontend-$revision-$deployment_id.new"
+  local previous="$STATE_ROOT/frontend-$revision-$deployment_id.previous"
+  local previous_revision_marker
+  previous_revision_marker="$(deployment_state frontend "$revision" "$deployment_id" previous-revision)"
+  local rollback_marker
+  rollback_marker="$(deployment_state frontend "$revision" "$deployment_id" rolled-back)"
+
+  verify_archive "$archive"
+  [[ -d "$FRONTEND_DIR" ]] || die "frontend directory not found: $FRONTEND_DIR"
+  previous_revision="$(read_state "$(current_marker frontend)")"
+  write_state "$previous_revision_marker" "$previous_revision"
+  rm -f "$rollback_marker"
+  backup_frontend "$revision" "$deployment_id"
+
+  rm -rf "$staging" "$previous"
+  ensure_dir "$staging" 0755
+  STAGING_DIR="$staging"
+  tar -xzf "$archive" -C "$staging" --no-same-owner --no-same-permissions
+  [[ -f "$staging/index.html" ]] || die "frontend archive does not contain index.html"
+  find "$staging" -type f \( \
+    -name '*.js' -o -name '*.css' -o -name '*.svg' -o \
+    -name '*.json' -o -name '*.html' -o -name '*.map' \
+  \) ! -name '*.gz' -exec gzip -9k {} +
+
+  CHANGED_COMPONENT=frontend
+  mv "$FRONTEND_DIR" "$previous"
+  STAGING_DIR="$staging"
+  mv "$staging" "$FRONTEND_DIR"
+  STAGING_DIR=""
+  if [[ "${ZVP5_SKIP_CHOWN:-0}" != "1" ]]; then
+    chown -R "$FRONTEND_OWNER" "$FRONTEND_DIR"
+  fi
+  rm -rf "$previous"
+  prune_backups frontend
+  CHANGED_COMPONENT=""
+  write_current_revision frontend "$revision"
+  rm -f "$archive" "$archive.sha256" || log "WARN: could not remove incoming artifact $archive"
+  log "Frontend activated at revision $revision"
+}
+
+deploy_backend() {
+  local revision="$1" deployment_id="$2"
+  local previous_revision
+  ensure_dir "$STATE_ROOT" 0751
+  if is_current_revision backend "$revision"; then
+    mark_deployment_noop backend "$revision" "$deployment_id"
+    log "Backend already active at revision $revision; deployment is a no-op"
+    return 0
+  fi
+
+  local archive="$INCOMING_ROOT/backend-$revision.tar.gz"
+  local staging="$STATE_ROOT/backend-$revision-$deployment_id.new"
+  local previous_revision_marker
+  previous_revision_marker="$(deployment_state backend "$revision" "$deployment_id" previous-revision)"
+  local rollback_marker
+  rollback_marker="$(deployment_state backend "$revision" "$deployment_id" rolled-back)"
+
+  verify_archive "$archive"
+  [[ -d "$BACKEND_DIR" ]] || die "backend directory not found: $BACKEND_DIR"
+  [[ -x "$BACKEND_DIR/.venv/bin/python" ]] || die "backend virtualenv not found"
+  previous_revision="$(read_state "$(current_marker backend)")"
+  write_state "$previous_revision_marker" "$previous_revision"
+  rm -f "$rollback_marker"
+  backup_backend "$revision" "$deployment_id"
+
+  rm -rf "$staging"
+  ensure_dir "$staging" 0755
+  STAGING_DIR="$staging"
+  tar -xzf "$archive" -C "$staging" --no-same-owner --no-same-permissions
+  # tar 按 umask 027 落成 root:root 0640，而下一步 pip 是以服务用户跑的，
+  # 读不到 requirements.txt。先交接属主，后面 rsync -a 会把属主带到部署目录。
+  set_owner "$staging"
+  prepare_backend_venv "$revision" "$deployment_id" "$staging"
+
+  CHANGED_COMPONENT=backend
+  rsync -a --delete "${backend_excludes[@]}" "$staging/" "$BACKEND_DIR/"
+  set_owner "$BACKEND_DIR"
+  activate_backend_venv "$revision" "$deployment_id"
+  restart_service
+  health_check
+  rm -rf "$staging"
+  STAGING_DIR=""
+  prune_backups backend
+  prune_venvs
+  CHANGED_COMPONENT=""
+  PREPARED_VENV=""
+  write_current_revision backend "$revision"
+  rm -f "$archive" "$archive.sha256" || log "WARN: could not remove incoming artifact $archive"
+  log "Backend activated at revision $revision"
+}
+
+rollback_frontend() {
+  local revision="$1" deployment_id="$2"
+  local backup="$BACKUP_ROOT/frontend-$revision-$deployment_id.tar.gz"
+  local restore_root="$STATE_ROOT/frontend-$revision-$deployment_id.restore"
+  local failed_dir="$STATE_ROOT/frontend-$revision-$deployment_id.failed"
+  local previous="$STATE_ROOT/frontend-$revision-$deployment_id.previous"
+  local previous_revision
+
+  ensure_dir "$STATE_ROOT" 0751
+  if is_rollback_complete frontend "$revision" "$deployment_id"; then
+    log "Frontend rollback for deployment $deployment_id is already complete"
+    return 0
+  fi
+  if is_deployment_noop frontend "$revision" "$deployment_id"; then
+    mark_rollback_complete frontend "$revision" "$deployment_id"
+    log "Frontend deployment was a no-op; nothing to roll back"
+    return 0
+  fi
+
+  [[ -f "$backup" ]] || die "frontend backup not found: $backup"
+  previous_revision="$(read_state "$(deployment_state frontend "$revision" "$deployment_id" previous-revision)")"
+
+  rm -rf "$restore_root" "$failed_dir"
+  ensure_dir "$restore_root" 0755
+  tar -xzf "$backup" -C "$restore_root" --no-same-owner --no-same-permissions
+  [[ -d "$restore_root/frontend-dist" ]] || die "invalid frontend backup"
+  [[ -d "$FRONTEND_DIR" ]] && mv "$FRONTEND_DIR" "$failed_dir"
+  mv "$restore_root/frontend-dist" "$FRONTEND_DIR"
+  if [[ "${ZVP5_SKIP_CHOWN:-0}" != "1" ]]; then
+    chown -R "$FRONTEND_OWNER" "$FRONTEND_DIR"
+  fi
+  rm -rf "$restore_root" "$failed_dir" "$previous"
+  write_current_revision frontend "$previous_revision"
+  mark_rollback_complete frontend "$revision" "$deployment_id"
+  log "Frontend rolled back from $backup"
+}
+
+rollback_backend() {
+  local revision="$1" deployment_id="$2"
+  local backup="$BACKUP_ROOT/backend-$revision-$deployment_id.tar.gz"
+  local restore_root="$STATE_ROOT/backend-$revision-$deployment_id.restore"
+  local previous_revision
+
+  ensure_dir "$STATE_ROOT" 0751
+  if is_rollback_complete backend "$revision" "$deployment_id"; then
+    log "Backend rollback for deployment $deployment_id is already complete"
+    return 0
+  fi
+  if is_deployment_noop backend "$revision" "$deployment_id"; then
+    mark_rollback_complete backend "$revision" "$deployment_id"
+    log "Backend deployment was a no-op; nothing to roll back"
+    return 0
+  fi
+
+  [[ -f "$backup" ]] || die "backend backup not found: $backup"
+  rm -rf "$restore_root"
+  ensure_dir "$restore_root" 0755
+  tar -xzf "$backup" -C "$restore_root" --no-same-owner --no-same-permissions
+  rsync -a --delete "${backend_excludes[@]}" "$restore_root/" "$BACKEND_DIR/"
+  set_owner "$BACKEND_DIR"
+  restore_backend_venv "$revision" "$deployment_id"
+  restart_service
+  if [[ "${ZVP5_SKIP_ROLLBACK_HEALTH:-0}" != "1" ]]; then
+    health_check
+  fi
+  rm -rf "$restore_root"
+  previous_revision="$(read_state "$(deployment_state backend "$revision" "$deployment_id" previous-revision)")"
+  write_current_revision backend "$previous_revision"
+  mark_rollback_complete backend "$revision" "$deployment_id"
+  log "Backend rolled back from $backup"
+}
+
+# Invoked indirectly by the EXIT trap below.  EXIT (not ERR) is deliberate:
+# ``die`` exits directly and must still trigger rollback after a partial change.
+# shellcheck disable=SC2317,SC2329
+handle_error() {
+  local status=$?
+  trap - EXIT
+  if [[ -n "${STAGING_DIR:-}" ]]; then
+    rm -rf "$STAGING_DIR" || true
+    STAGING_DIR=""
+  fi
+  if [[ -n "$CHANGED_COMPONENT" ]]; then
+    log "Deployment failed; rolling back $CHANGED_COMPONENT" >&2
+    if [[ "$CHANGED_COMPONENT" == "frontend" ]]; then
+      rollback_frontend "$REVISION" "$DEPLOYMENT_ID" || true
+    else
+      rollback_backend "$REVISION" "$DEPLOYMENT_ID" || true
+    fi
+  fi
+  if [[ -n "$PREPARED_VENV" ]]; then
+    rm -rf "$PREPARED_VENV" || true
+  fi
+  exit "$status"
+}
+
+[[ $# -eq 4 ]] || usage
+ACTION="$1"
+COMPONENT="$2"
+REVISION="$3"
+DEPLOYMENT_ID="$4"
+validate_revision "$REVISION"
+validate_component "$COMPONENT"
+validate_deployment_id "$DEPLOYMENT_ID"
+
+trap handle_error EXIT
+
+# 手工执行与 CI 重试可能并发（CI 侧只有 production-deploy 串行组，管不到 SSH 上的
+# 手工调用）。用 flock 把整段部署/回滚串起来，避免两个进程同时 mv 同一棵树。
+ensure_dir "$STATE_ROOT" 0751
+exec 9>"$STATE_ROOT/deploy.lock"
+flock -w "${ZVP5_DEPLOY_LOCK_TIMEOUT:-600}" 9 || die "another zvp5-deploy run holds the lock"
+
+case "$ACTION:$COMPONENT" in
+  deploy:frontend) deploy_frontend "$REVISION" "$DEPLOYMENT_ID" ;;
+  deploy:backend) deploy_backend "$REVISION" "$DEPLOYMENT_ID" ;;
+  rollback:frontend)
+    CHANGED_COMPONENT=""
+    rollback_frontend "$REVISION" "$DEPLOYMENT_ID"
+    ;;
+  rollback:backend)
+    CHANGED_COMPONENT=""
+    rollback_backend "$REVISION" "$DEPLOYMENT_ID"
+    ;;
+  *) usage ;;
+esac
+
+exit 0

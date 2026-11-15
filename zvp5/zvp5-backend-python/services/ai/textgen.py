@@ -379,7 +379,7 @@ async def suggest_ssh_command(
     )
     if billable:
         try:
-            await quota.consume(user_oid, "af", units, roles=roles)
+            await quota.consume(user_oid, "af", units, roles=roles, want_state=False)
         except Exception as exc:  # noqa: BLE001 - 回写失败不能丢掉已生成的答案
             logger.warning("ssh suggest quota write-back failed: %s", type(exc).__name__)
 

@@ -21,12 +21,12 @@
 
 from __future__ import annotations
 
-import os
 from contextlib import asynccontextmanager
 
 import error_handlers
 import legacy_redirects
 import meta_routes
+from util.env import getenv
 from app_setup import (  # noqa: F401 - 兼容导出：tests/ 与运维脚本按 main.<name> 取
     DEFAULT_CORS_ALLOWED_ORIGINS,
     MAINTENANCE_EXEMPT_PATHS,
@@ -187,11 +187,11 @@ if __name__ == "__main__":
     import uvicorn
 
     # 部署口径：生产由 systemd 以 ``uvicorn main:app --host 127.0.0.1 --port 8018``
-    # 拉起（nginx / docker 反代 127.0.0.1:8018，见 deployment/zvms4.nginx.conf 与
+    # 拉起（nginx / docker 反代 127.0.0.1:8018，见 deployment/zvp5.nginx.conf 与
     # docs/DEPLOY_*.md）。这里的默认值跟部署对齐，不再硬编码历史遗留的 8000；
-    # 本机裸跑要别的端口就 ``ZVMS_PORT=8000 python main.py``。
+    # 本机裸跑要别的端口就 ``ZVP5_PORT=8000 python main.py``。
     uvicorn.run(
         app=app,
         host="0.0.0.0",
-        port=int(os.getenv("ZVMS_PORT", "8018")),
+        port=int(getenv("ZVP5_PORT", "8018")),
     )

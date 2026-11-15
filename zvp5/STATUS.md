@@ -1,7 +1,7 @@
 # STATUS — 模块移植与安全审计（zvp → zvms4-modified）
 
-> **2026-10-24：原 `zvp-latest/` 与 `zvp5-gitlab/` 已删除。** 学海 API 原文件归档在
-> 仓库根 `reference/xuehai/zvp-latest/`；审核流/FAQ/资源/定向推送设计归档在
+> **2026-10-24：原 `zvp-latest/` 与 `zvp5-gitlab/` 已删除。** 学海 API 原文件曾归档在
+> 仓库根 `reference/xuehai/zvp-latest/`（2026-11-14 已移出仓库）；审核流/FAQ/资源/定向推送设计归档在
 > `reference/zvp5-gitlab/`。本文中的参考树路径均为删除前的历史记录，对账与处置
 > 结论见 `docs/REFERENCE_TREES_ALIGNMENT.md`。
 
@@ -405,7 +405,7 @@ xh_router 任意 URL 代理（:159 urlopen + :46 硬编码签名 KEY）、登录
 
 # Part 8 — 后端可用状态落地：运行时验证 + 运行缺口修复 + shield 加固移植（2026-10-11）
 
-> 任务：把 `zvms4-backend-python` 从「静态编译通过」做到**运行时可用**——后端能真实启动、连库、全 API 面闭环可用；可参考 zvp-latest 后端，但其后门/外站跳转/设备面红线不变；最后更新 README。
+> 任务：把 `zvms4-backend-python` 从「静态编译通过」做到**运行时可用**——后端能真实启动、连库、全 API 面闭环可用；可参考 zvp-latest 后端，但其设备采集/外站跳转/外呼等未审计面红线不变；最后更新 README。
 > 方式：fixer 泳道移植 shield 中间件（规格先行）∥ 编排者搭运行环境（venv/密钥/临时 MongoDB Docker）→ 端到端冒烟脚本三轮迭代 → 全部缺口修复 → 41/41 断言通过。本机 Python 3.14.4 + mongo:7 临时容器（127.0.0.1:27018，验证后已删）。
 
 ## 32. shield_middleware 移植（zvp-latest `main.py:55-119` 语义改写，非照抄）

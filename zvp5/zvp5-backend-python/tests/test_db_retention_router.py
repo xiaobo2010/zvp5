@@ -16,7 +16,7 @@ Pins the admin-facing contract of ``routers/db_system_router.py``:
   503 — 且不泄露内部细节（\"DSN\"/\"password\" 不出现）。
 
 Offline: the users / app-logs / tasks repositories are fakes and the session
-dependency yields ``None``; no engine is created. 维护态库用 ``ZVMS_SYSTEM_DB``
+dependency yields ``None``; no engine is created. 维护态库用 ``ZVP5_SYSTEM_DB``
 隔离到 ``tmp_path``（清理会进维护态）。
 
 Run from the repository root::
@@ -221,7 +221,7 @@ def _clean_job_state(monkeypatch):
 def _isolated_state_db(tmp_path, monkeypatch) -> Path:
     """清理会进维护态：状态库隔离到 tmp_path，别碰仓库根下的真实状态库。"""
     path = tmp_path / "system_state.db"
-    monkeypatch.setenv("ZVMS_SYSTEM_DB", str(path))
+    monkeypatch.setenv("ZVP5_SYSTEM_DB", str(path))
     system_state.invalidate_cache()
     yield path
     system_state.invalidate_cache()

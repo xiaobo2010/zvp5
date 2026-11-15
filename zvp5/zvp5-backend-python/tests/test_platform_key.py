@@ -16,7 +16,7 @@ from util import platform_key
 
 
 def _clear_env(monkeypatch) -> None:
-    monkeypatch.delenv("ZVMS_PLATFORM_KEY_FILE", raising=False)
+    monkeypatch.delenv("ZVP5_PLATFORM_KEY_FILE", raising=False)
     monkeypatch.delenv("CREDENTIALS_DIRECTORY", raising=False)
 
 
@@ -28,7 +28,7 @@ def test_explicit_path_beats_credential_directory(tmp_path, monkeypatch):
     explicit.write_text("explicit\n", encoding="utf-8")
 
     monkeypatch.setenv("CREDENTIALS_DIRECTORY", str(credential_dir))
-    monkeypatch.setenv("ZVMS_PLATFORM_KEY_FILE", str(explicit))
+    monkeypatch.setenv("ZVP5_PLATFORM_KEY_FILE", str(explicit))
 
     assert platform_key.resolve_path() == explicit
     assert platform_key.read_text() == "explicit\n"
@@ -40,6 +40,16 @@ def test_credential_directory_beats_legacy_file(tmp_path, monkeypatch):
     monkeypatch.setenv("CREDENTIALS_DIRECTORY", str(tmp_path))
 
     assert platform_key.read_text() == "from-systemd\n"
+
+
+def test_legacy_credential_id_is_no_longer_read(tmp_path, monkeypatch):
+    """回落层已删除：只认 zvp5_ai_key，旧 id 即使存在也当没挂凭据。"""
+    _clear_env(monkeypatch)
+    (tmp_path / "zvms_ai_key").write_text("legacy\n", encoding="utf-8")
+    monkeypatch.setenv("CREDENTIALS_DIRECTORY", str(tmp_path))
+
+    with pytest.raises(platform_key.KeyMaterialError):
+        platform_key.read_text()
 
 
 def test_missing_credential_file_does_not_fall_back(tmp_path, monkeypatch):
@@ -55,7 +65,7 @@ def test_raw_text_is_preserved(tmp_path, monkeypatch):
     """末尾换行必须保留：TOTP / 附件签名的派生输入是原始文本。"""
     path = tmp_path / "key"
     path.write_text("a" * 64 + "\n", encoding="utf-8")
-    monkeypatch.setenv("ZVMS_PLATFORM_KEY_FILE", str(path))
+    monkeypatch.setenv("ZVP5_PLATFORM_KEY_FILE", str(path))
 
     assert platform_key.read_text() == "a" * 64 + "\n"
 
@@ -63,7 +73,7 @@ def test_raw_text_is_preserved(tmp_path, monkeypatch):
 def test_empty_key_is_rejected(tmp_path, monkeypatch):
     path = tmp_path / "empty"
     path.write_text(" \n", encoding="utf-8")
-    monkeypatch.setenv("ZVMS_PLATFORM_KEY_FILE", str(path))
+    monkeypatch.setenv("ZVP5_PLATFORM_KEY_FILE", str(path))
 
     with pytest.raises(platform_key.KeyMaterialError):
         platform_key.read_text()

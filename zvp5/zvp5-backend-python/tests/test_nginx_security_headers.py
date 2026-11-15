@@ -15,30 +15,33 @@ SPEC.loader.exec_module(RENDERER)
 class RenderNginxSecurityHeadersTest(unittest.TestCase):
     def test_replaces_all_origin_placeholders(self) -> None:
         rendered = RENDERER.render(
-            "connect-src __ZVMS_API_ORIGIN__ __ZVMS_API_WS_ORIGIN__",
+            "connect-src __ZVP5_API_ORIGIN__ __ZVP5_API_WS_ORIGIN__ __ZVP5_STATIC_ORIGIN__",
             "https://api.example.test",
             "wss://api.example.test",
+            "https://static.example.test",
         )
 
         self.assertEqual(
             rendered,
-            "connect-src https://api.example.test wss://api.example.test",
+            "connect-src https://api.example.test wss://api.example.test https://static.example.test",
         )
 
     def test_rejects_wrong_scheme(self) -> None:
-        with self.assertRaisesRegex(ValueError, "ZVMS_API_ORIGIN"):
+        with self.assertRaisesRegex(ValueError, "ZVP5_API_ORIGIN"):
             RENDERER.render(
-                "connect-src __ZVMS_API_ORIGIN__ __ZVMS_API_WS_ORIGIN__",
+                "connect-src __ZVP5_API_ORIGIN__ __ZVP5_API_WS_ORIGIN__ __ZVP5_STATIC_ORIGIN__",
                 "http://api.example.test",
                 "wss://api.example.test",
+                "https://static.example.test",
             )
 
     def test_rejects_non_origin_values(self) -> None:
         with self.assertRaisesRegex(ValueError, "exact"):
             RENDERER.render(
-                "connect-src __ZVMS_API_ORIGIN__ __ZVMS_API_WS_ORIGIN__",
+                "connect-src __ZVP5_API_ORIGIN__ __ZVP5_API_WS_ORIGIN__ __ZVP5_STATIC_ORIGIN__",
                 "https://api.example.test/path",
                 "wss://api.example.test",
+                "https://static.example.test",
             )
 
 

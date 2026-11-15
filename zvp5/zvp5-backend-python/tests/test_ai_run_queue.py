@@ -27,6 +27,7 @@ import pytest
 import pytest_asyncio
 
 from db import backends
+from db.repos.oracle.users import UserGoneError
 from db.repos.protocols import ActiveRunConflict
 from services.agent import run_queue
 from services.agent.tool_impl import AgentError
@@ -638,6 +639,25 @@ async def test_submit_of_foreign_conversation_is_404(env) -> None:
         await run_queue.submit(user=ADMIN, conversation_oid="c" * 32, content="跑一下")
 
     assert caught.value.code == "AI_CONVERSATION_NOT_FOUND"
+
+
+@pytest.mark.asyncio
+async def test_submit_of_a_conversation_deleted_mid_flight_is_404(env, monkeypatch) -> None:
+    """会话在 require_row 之后、插入之前被删：仓储拒绝写入，路由回 404。"""
+
+    async def gone(**_kwargs):
+        raise UserGoneError("session row vanished")
+
+    monkeypatch.setattr(env.runs, "insert_queued", gone)
+
+    with pytest.raises(AgentError) as caught:
+        await run_queue.submit(user=ADMIN, conversation_oid=CONV, content="跑一下")
+
+    assert caught.value.code == "AI_CONVERSATION_NOT_FOUND"
+    assert caught.value.status_code == 404
+    # 仓储在事务里就停了：既没有 run 行，也没有那条孤儿用户消息。
+    assert env.runs.rows == {}
+    assert env.msg.rows == []
 
 
 # ---------------------------------------------------------------------------

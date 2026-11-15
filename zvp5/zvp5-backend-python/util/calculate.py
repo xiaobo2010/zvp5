@@ -251,25 +251,39 @@ async def calculate_user_time(
                 "social-practice": db_data["social_practice"],
             }
 
-    if activities is None:
-        activities = await backends.get_activities_repo().list_effective(
-            date_start, date_end
+    if activities is None and date_start is None and date_end is None:
+        # 默认口径（无日期窗、无预取活动）：一条按成员的聚合取三档之和。
+        # 原来要「拉全部有效活动 → 拉该人全部成员行 → Python 求和」共 4 条语句，
+        # 还得把整张活动表传到本进程；聚合的 WHERE 与逐行版逐字一致。
+        result = await backends.get_members_repo().sum_modes_for_member(user_id)
+        if result is None:
+            result = {"on-campus": 0.0, "off-campus": 0.0, "social-practice": 0.0}
+        else:
+            result = {
+                "on-campus": result["on-campus"],
+                "off-campus": result["off-campus"],
+                "social-practice": result["social-practice"],
+            }
+    else:
+        if activities is None:
+            activities = await backends.get_activities_repo().list_effective(
+                date_start, date_end
+            )
+        accepted_activities = [str(activity["_id"]) for activity in activities]
+
+        collections = await backends.get_members_repo().list_for_member(
+            user_id,
+            status="effective",
+            activity_oids=accepted_activities,
         )
-    accepted_activities = [str(activity["_id"]) for activity in activities]
 
-    collections = await backends.get_members_repo().list_for_member(
-        user_id,
-        status="effective",
-        activity_oids=accepted_activities,
-    )
-
-    result = defaultdict(float)
-    result["on-campus"] = 0
-    result["off-campus"] = 0
-    result["social-practice"] = 0
-    for m in collections:
-        result[m["mode"]] += m["duration"]
-    result = dict(result)
+        result = defaultdict(float)
+        result["on-campus"] = 0
+        result["off-campus"] = 0
+        result["social-practice"] = 0
+        for m in collections:
+            result[m["mode"]] += m["duration"]
+        result = dict(result)
     if attach_description:
         description = await generate_description(user_id)
         result["description"] = description

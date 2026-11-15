@@ -9,9 +9,10 @@
 * 输入必须是绝对路径；``os.path.realpath`` 先展开 ``..`` 与符号链接，**再**判定
   虚拟文件系统。顺序不能反：``/proc/self/../self/environ``、``/tmp/link -> /proc``
   这类只有在解析之后才看得出真实落点。
-* **根目录 jail**：只有 :data:`ALLOWED_ROOTS` 之下的路径可读写（站点根与家目录）。
-  判定同样在 ``realpath`` **之后**做，按路径段比较（``/home2`` 不会被 ``/home``
-  放行），于是 ``..`` 与符号链接都逃不出去。``/etc`` / ``/root`` / ``/usr`` 这些
+* **根目录 jail**：只有 :data:`ALLOWED_ROOTS` 之下的路径可读写（站点根；原 ``/home``
+  分支因生产 ProtectHome=true 从未生效，已删除，见 ALLOWED_ROOTS 注释）。
+  判定同样在 ``realpath`` **之后**做，按路径段比较（``/www/zvms40`` 不会被
+  ``/www/zvms4`` 放行），于是 ``..`` 与符号链接都逃不出去。``/etc`` / ``/root`` / ``/usr`` 这些
   以前「靠 OS 权限裁决」的路径现在直接 403。
 * ``/proc``、``/sys`` 两个**虚拟文件系统**单独保留一条拒绝面：``/proc/self/environ``
   之类会泄露后端进程的环境变量（含数据库口令），不属于「用户文件」。按「路径段」
@@ -40,9 +41,12 @@ from typing import Awaitable, BinaryIO, Callable
 # 其余路径（``/etc``、``/root``、``/usr``、``/dev``、``/var/lib/*`` …）由 OS 权限裁决。
 VIRTUAL_FS_PREFIXES: tuple[str, ...] = ("/proc", "/sys")
 
-# 「用户文件」只有两块：站点根与家目录。两者之外的路径一律 403——文件管理端点
+# 「用户文件」只有站点根一块。之外的路径一律 403——文件管理端点
 # 与 agent 的 fs_* 工具共用这里的判定，所以「谁能读全盘」这件事只在一处决定。
-ALLOWED_ROOTS: tuple[str, ...] = ("/www/zvms4", "/home")
+# （2026-11-14 安全对齐）生产 systemd 开了 ProtectHome=true，服务对 /home 本来就
+# 不可见；与其留一个「永不生效」的第二根，不如直接从白名单删掉：契约收敛到站
+# 点根，也少一条「将来放宽 ProtectHome 时 /home 自动变成可读目录」的路径。
+ALLOWED_ROOTS: tuple[str, ...] = ("/www/zvms4",)
 
 # 越界错误码：路由层与前端按它分支（中文一句话在 ``detail`` 里）。
 ROOT_FORBIDDEN_CODE = "FILES_ROOT_FORBIDDEN"
@@ -110,7 +114,7 @@ PROTECTED_BASENAME_PREFIXES: tuple[str, ...] = (
 # 扩展名兜底：``foo.key``、``anything.pem`` 没有可枚举的文件名，但从不在
 # 「用户文件」的范畴里。只收这两个扩展名——``.crt`` / ``.cer`` 常是公开证书，
 # 误挡的代价大于收益；而 ``.pem`` / ``.key`` 在 ALLOWED_ROOTS（``/www/zvms4``
-# 与 ``/home``）下几乎只可能是私钥或密钥对的一部分，浏览器下载它们没有任何
+# 下）几乎只可能是私钥或密钥对的一部分，浏览器下载它们没有任何
 # 正当用途，管理员确实要看就走 SSH。
 PROTECTED_SUFFIXES: tuple[str, ...] = (".pem", ".key")
 # ``.git`` 里有远端凭据与完整历史，``.ssh`` 里是私钥与 known_hosts：两者都是
@@ -238,7 +242,7 @@ def _is_virtual_fs(path: str) -> bool:
 def _is_under_allowed_root(path: str) -> bool:
     """``path`` 是否落在 :data:`ALLOWED_ROOTS` 之内（根自身算在内）。
 
-    比较用 ``root + os.sep`` 而不是裸前缀：``/home2`` 不能因为以 ``/home`` 开头
+    比较用 ``root + os.sep`` 而不是裸前缀：``/www/zvms40`` 不能因为以 ``/www/zvms4`` 开头
     就被放行。``path`` 必须是 ``realpath`` 的结果——软链与 ``..`` 已经在调用方
     展开，这里只看真实落点。
     """
@@ -303,7 +307,7 @@ def resolve_entry_path(raw: str) -> tuple[str, str]:
     if _is_virtual_fs(target):
         raise FileOpError(403, "虚拟文件系统不可访问")
     # jail 按「条目路径」与「真实目标」各判一次：父目录在根内、链接指向根外
-    # （``/home/u/link -> /etc/passwd``）时，删除/改名/stat 作用的是真实目标。
+    # （``/www/zvms4/u/link -> /etc/passwd``）时，删除/改名/stat 作用的是真实目标。
     # 只看父目录会放过它，只看目标会拦掉「根内的正常条目」（目标就是它自己）。
     _reject_outside_roots(entry)
     _reject_outside_roots(target)

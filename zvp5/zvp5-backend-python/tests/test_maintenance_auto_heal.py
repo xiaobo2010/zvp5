@@ -12,7 +12,7 @@
 3. 反例：清理仍在跑（探针 ``True``）**不**自愈。
 4. 探针未注册 / 探针抛异常 ⇒ 无法判定 ⇒ **保守地不自愈**。
 
-全部离线：状态库用 ``ZVMS_SYSTEM_DB`` 隔离到 ``tmp_path``，不连业务库、不发
+全部离线：状态库用 ``ZVP5_SYSTEM_DB`` 隔离到 ``tmp_path``，不连业务库、不发
 HTTP。跑法：``.venv/bin/python -m pytest tests/test_maintenance_auto_heal.py -q``
 """
 
@@ -38,7 +38,7 @@ ANNOUNCEMENT = "系统正在清理数据库历史数据，期间暂时无法访�
 def state_db(tmp_path, monkeypatch) -> Path:
     """隔离状态库 + 清缓存；结束后恢复原本注册的探针，避免跨用例串味。"""
     path = tmp_path / "system_state.db"
-    monkeypatch.setenv("ZVMS_SYSTEM_DB", str(path))
+    monkeypatch.setenv("ZVP5_SYSTEM_DB", str(path))
     original_probe = system_state._auto_source_probe
     system_state.invalidate_cache()
     yield path

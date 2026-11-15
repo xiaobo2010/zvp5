@@ -47,7 +47,7 @@ LOG_PATH = "/var/log/adb-sync.log"
 # 以 root 读 600 的 wallet1，又不能为了它去掉 NNP。路径单元把「触发」降级成
 # 「写一个 www-data 可写的文件」，提权动作由 systemd（root）完成，服务本身
 # 仍然没有任何提权能力。
-TRIGGER_FILE_ENV = "ZVMS_ADB_SYNC_TRIGGER_FILE"
+TRIGGER_FILE_ENV = "ZVP5_ADB_SYNC_TRIGGER_FILE"
 DEFAULT_TRIGGER_FILE = "/www/zvms4/backend/data/adb-sync.request"
 #: 只有该单元存在时才走文件触发；否则保留下面的 sudo 兼容路径（本地/旧部署）。
 TRIGGER_PATH_UNIT = "/etc/systemd/system/adb-sync-trigger.path"

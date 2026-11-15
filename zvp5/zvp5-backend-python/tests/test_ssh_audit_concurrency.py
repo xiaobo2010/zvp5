@@ -2,7 +2,7 @@
 
 一次粘贴 N 行会派生 N 个审计写任务。这里钉住：
 
-* ``ZVMS_SSH_AUDIT_CONCURRENCY``（默认 8）可配，非法值回落默认；
+* ``ZVP5_SSH_AUDIT_CONCURRENCY``（默认 8）可配，非法值回落默认；
 * 并发写入数不超过信号量上限；
 * 超出上限的命令排队而非丢弃（全部落库，只是顺序化了）。
 """
@@ -19,15 +19,15 @@ OPERATOR = "000000000000000000000001"
 
 
 def test_audit_concurrency_is_configurable_and_defensive(monkeypatch):
-    monkeypatch.delenv("ZVMS_SSH_AUDIT_CONCURRENCY", raising=False)
+    monkeypatch.delenv("ZVP5_SSH_AUDIT_CONCURRENCY", raising=False)
     assert system_ssh_router.audit_concurrency() == 8
     assert system_ssh_router.AUDIT_CONCURRENCY_DEFAULT == 8
 
-    monkeypatch.setenv("ZVMS_SSH_AUDIT_CONCURRENCY", "3")
+    monkeypatch.setenv("ZVP5_SSH_AUDIT_CONCURRENCY", "3")
     assert system_ssh_router.audit_concurrency() == 3
 
     for invalid in ("0", "-2", "abc", ""):
-        monkeypatch.setenv("ZVMS_SSH_AUDIT_CONCURRENCY", invalid)
+        monkeypatch.setenv("ZVP5_SSH_AUDIT_CONCURRENCY", invalid)
         assert (
             system_ssh_router.audit_concurrency()
             == system_ssh_router.AUDIT_CONCURRENCY_DEFAULT

@@ -11,6 +11,7 @@
 换成内存桩，避免测试触达 Oracle。
 """
 
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
 
 import pytest
@@ -81,8 +82,14 @@ class ActivitiesRepo:
     def __init__(self, activity):
         self.activity = activity
         self.deleted: list[str] = []
+        self.locked: list[str] = []
 
     async def get(self, oid):
+        return self.activity if str(oid) == ACTIVITY else None
+
+    async def get_for_update(self, oid):
+        # 删除路径必须走行锁：先锁活动（父）再动成员行（子），与 v3 同序。
+        self.locked.append(str(oid))
         return self.activity if str(oid) == ACTIVITY else None
 
     async def delete(self, oid):
@@ -106,6 +113,18 @@ class MembersRepo:
             "duration": 2.0,
         }
 
+    async def list_by_activity(self, activity_oid, status=None):
+        return [
+            {
+                "_id": MEMBER,
+                "member": OTHER,
+                "activity": ACTIVITY,
+                "status": "effective",
+                "mode": "on-campus",
+                "duration": 2.0,
+            }
+        ]
+
     async def remove(self, oid):
         self.removed.append(str(oid))
 
@@ -127,13 +146,44 @@ def env(monkeypatch):
     activities = ActivitiesRepo(activity_doc(CREATOR))
     members = MembersRepo()
     logs = AppLogsRepo()
+    refreshed: list[tuple[str, str | None]] = []
 
     monkeypatch.setattr(backends, "get_users_repo", lambda *a, **k: UsersRepo())
     monkeypatch.setattr(backends, "get_activities_repo", lambda *a, **k: activities)
     monkeypatch.setattr(backends, "get_members_repo", lambda *a, **k: members)
     monkeypatch.setattr(backends, "get_applogs_repo", lambda *a, **k: logs)
 
-    return SimpleNamespace(activities=activities, members=members, logs=logs)
+    # 删除活动在提交后按「删除前抓到的成员」重算：单测里不连 Oracle，只记录。
+    async def refresh(member_ids, activity_id=None):
+        refreshed.append((list(member_ids), activity_id))
+
+    @asynccontextmanager
+    async def scope():
+        yield SimpleNamespace(begin=lambda: _begin())
+
+    @asynccontextmanager
+    async def _begin():
+        yield None
+
+    monkeypatch.setattr(activities_v2_router, "session_scope", scope)
+    monkeypatch.setattr(activities_v2_router, "_refresh_user_time_for_members", refresh)
+
+    # 删成员会立刻按该成员本人重算缓存：单测只记录，不触达 Oracle。
+    time_refresh_calls: list[str] = []
+
+    async def calculate(oid, allow_cache=True):
+        time_refresh_calls.append((str(oid), allow_cache))
+        return {}
+
+    monkeypatch.setattr(activities_v2_router, "calculate_user_time", calculate)
+
+    return SimpleNamespace(
+        activities=activities,
+        members=members,
+        logs=logs,
+        refreshed=refreshed,
+        time_refresh_calls=time_refresh_calls,
+    )
 
 
 @pytest.fixture
@@ -162,6 +212,10 @@ def test_temporary_token_passes_authentication(client, env):
     assert env.activities.deleted == [ACTIVITY]
     assert env.members.removed_for_activity == [ACTIVITY]
     assert env.logs.rows
+    # 先锁活动（父）再删成员（子）：锁序与 v3 批量登记一致，避免 ORA-00060。
+    assert env.activities.locked == [ACTIVITY]
+    # 提交后按删除前抓到的成员重算——行已经没了，按活动反查只会得到空集。
+    assert env.refreshed == [([OTHER], ACTIVITY)]
 
 
 def test_long_lived_token_is_rejected(client, env):
@@ -219,6 +273,8 @@ def test_member_delete_accepts_temporary_token_for_admin(client, env):
     assert response.json() == {"detail": "Activity member deleted successfully"}
     assert env.members.removed == [MEMBER]
     assert env.logs.rows
+    # 被删掉的那个人要单独重算：按活动重算只会覆盖剩下的人，他的缓存会一直错。
+    assert env.time_refresh_calls == [(OTHER, False)]
 
 
 def test_member_delete_rejects_long_lived_token(client, env):

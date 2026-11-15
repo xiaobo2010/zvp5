@@ -7,7 +7,6 @@ from services import settings_runtime
 from util.object_id import get_current_user
 from util.permission.features import has_feature
 from util.read_throttle import read_budget
-from util.user import get_user_display_names
 
 router = APIRouter()
 
@@ -44,6 +43,12 @@ async def read_logs(
     默认隐藏 ``login_fail``：不传 ``type`` 时按 :data:`HIDDEN_LOG_TYPES` 做
     黑名单（该类是风控计数数据源，量大且对管理员无事可做）；显式
     ``type=login_fail`` 仍然按白名单查询，账号排查入口保留。
+
+    显示名直接取仓储 ``LEFT JOIN users`` 带回的 ``user_name``
+    （``db/repos/oracle/app_logs.py``），本函数**不再**二次批量查 ``users``：
+    每请求少一次 ADB 往返。回落只在 Python 里做——``user_name`` 有值用它，
+    ``app_user`` 非空但 join 未命中 → 「未知用户」，``app_user`` 为空 →
+    「未登录」。
     """
     if "admin" not in (user.get("per") or []) and not has_feature(user, "logs.read"):
         raise HTTPException(status_code=403, detail="Permission denied")
@@ -71,14 +76,12 @@ async def read_logs(
         exclude_types=exclude_types,
     )
 
-    names = await get_user_display_names(
-        [log["user"] for log in logs if log.get("user")]
-    )
-
+    # 显示名来自仓储 LIST 语句的 ``LEFT JOIN users``，这里只做 Python 回落：
+    # 再查一次 ``users`` 只是白付一次 ADB 往返（空串/已删号仍按原口径回落）。
     for log in logs:
         log["_id"] = str(log["_id"])
         if log.get("user"):
-            log["user_name"] = names.get(log.get("user"), "未知用户")
+            log["user_name"] = log.get("user_name") or "未知用户"
         else:
             log["user_name"] = "未登录"
 

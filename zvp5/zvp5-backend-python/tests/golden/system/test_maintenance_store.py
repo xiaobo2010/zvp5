@@ -1,6 +1,6 @@
 """``db.system_state`` 的离线单测：不连数据库、不发 HTTP。
 
-用 ``tmp_path`` + ``ZVMS_SYSTEM_DB`` 环境变量把状态库隔离到临时目录，每个
+用 ``tmp_path`` + ``ZVP5_SYSTEM_DB`` 环境变量把状态库隔离到临时目录，每个
 用例前后 ``invalidate_cache()``，避免进程内 TTL 缓存跨用例串味。
 
 从仓库根运行（``.venv/bin/python -m pytest tests/golden/system -q``）；下方
@@ -38,7 +38,7 @@ DEFAULT_STATE = {
 @pytest.fixture()
 def state_db(tmp_path, monkeypatch) -> Path:
     path = tmp_path / "system_state.db"
-    monkeypatch.setenv("ZVMS_SYSTEM_DB", str(path))
+    monkeypatch.setenv("ZVP5_SYSTEM_DB", str(path))
     system_state.invalidate_cache()
     yield path
     system_state.invalidate_cache()

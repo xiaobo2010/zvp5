@@ -87,11 +87,16 @@ class _MembersRepo:
                 return dict(row)
         return None
 
-    async def update_fields(self, oid, fields):
-        self.state["updates"].append((oid, dict(fields)))
+    async def cas_status(self, oid, expected, status):
+        self.state["cas_calls"].append((oid, expected, status))
+        if self.state.get("cas_conflict"):
+            return False
         for row in self.state["rows"]:
             if row["_id"] == oid:
-                row.update(fields)
+                self.state["updates"].append((oid, {"status": status}))
+                row["status"] = status
+                return True
+        return False
 
     async def list_for_member(self, user_id, status=None, activity_oids=None):
         rows = [dict(row) for row in self.state["rows"] if row["member"] == user_id]
@@ -101,6 +106,18 @@ class _MembersRepo:
             accepted = set(activity_oids)
             rows = [row for row in rows if row["activity"] in accepted]
         return rows
+
+    async def sum_modes_for_member(self, user_id):
+        # 双重有效口径：成员状态与活动状态都得是 effective（审核中活动不计）。
+        totals = {"on-campus": 0.0, "off-campus": 0.0, "social-practice": 0.0}
+        for row in self.state["rows"]:
+            if row["member"] != user_id or row["status"] != "effective":
+                continue
+            activity = self.state["activities"].get(row["activity"])
+            if activity is None or activity["status"] != "effective":
+                continue
+            totals[row["mode"]] += row["duration"]
+        return totals
 
 
 class _UsersRepo:
@@ -149,6 +166,8 @@ def state(monkeypatch):
             MEMBER_OID: {"_id": MEMBER_OID, "name": "张三", "id": "20241726"},
         },
         "updates": [],
+        "cas_calls": [],
+        "cas_conflict": False,
         "cache": {},
         "cache_writes": [],
         "log": _Log(),
@@ -266,6 +285,7 @@ async def test_refused_review_drops_the_hours_from_the_cached_time(state):
 
     assert result == {"id": SESSION_ID, "status": "refused"}
     assert state["updates"] == [(SESSION_ID, {"status": "refused"})]
+    assert state["cas_calls"] == [(SESSION_ID, "effective", "refused")]
     # 重算走 allow_cache=False：从有效成员重新聚合，结果回填缓存。
     assert state["cache_writes"] == [(MEMBER_OID, 0.0, 0.0, 0.0)]
     after = await calc.calculate_user_time(MEMBER_OID, allow_cache=True)
@@ -291,3 +311,24 @@ async def test_pending_review_also_drops_the_hours(state):
     after = await calc.calculate_user_time(MEMBER_OID, allow_cache=True)
     assert after == {"on-campus": 0.0, "off-campus": 0.0, "social-practice": 0.0}
     assert state["rows"][0]["status"] == "pending"
+
+
+@pytest.mark.asyncio
+async def test_concurrent_status_change_is_409_and_skips_side_effects(state):
+    """CAS 落空（别人先改了状态）⇒ 409，不重算、不写审计。"""
+    state["cas_conflict"] = True
+    state["cache"][MEMBER_OID] = {
+        "on_campus_raw": 2.0,
+        "off_campus_raw": 0.0,
+        "social_practice": 0.0,
+    }
+
+    with pytest.raises(HTTPException) as failure:
+        await _call(state, status="refused")
+
+    assert failure.value.status_code == 409
+    assert failure.value.detail == "成员状态已被其他操作修改，请刷新后重试"
+    assert state["updates"] == []
+    assert state["cache_writes"] == []
+    assert state["log"].inserts == 0
+    assert state["cache"][MEMBER_OID]["on_campus_raw"] == 2.0

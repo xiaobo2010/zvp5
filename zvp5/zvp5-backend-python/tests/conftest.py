@@ -2,13 +2,13 @@
 
 为什么必须这么做：``tasks.retention.purge_expired_records()`` / ``purge_now()``
 现在会让服务器**进入维护态**，也就是写 ``db/system_state.py`` 的
-``system_state.db``（后端根目录）。用例若不隔离 ``ZVMS_SYSTEM_DB``，测试就会在
+``system_state.db``（后端根目录）。用例若不隔离 ``ZVP5_SYSTEM_DB``，测试就会在
 仓库目录里生成 ``system_state.db``：既污染工作区，又可能被 rsync 部署同步到
 生产、**覆盖线上维护状态**。
 
 作用域与覆盖方式：function 级 ``autouse``。按 pytest 规则，同作用域下 autouse
 fixture 先于用例自己的 fixture 实例化，所以这里给的是**默认值**：用例（或模块内
-fixture）之后 ``monkeypatch.setenv("ZVMS_SYSTEM_DB", ...)`` 会覆盖它，monkeypatch
+fixture）之后 ``monkeypatch.setenv("ZVP5_SYSTEM_DB", ...)`` 会覆盖它，monkeypatch
 按写入顺序回滚，两者互不干扰 —— 需要跨用例共享同一个状态库的用例照旧自建。
 
 顺带把仓库根放进 ``sys.path``，这样即使从别处调用 pytest（不走 ``python -m``）、
@@ -67,7 +67,7 @@ def quiet_ai_governance(monkeypatch):
 def _isolated_state_db(tmp_path_factory, monkeypatch) -> Path:
     """每个用例拿到自己的临时状态库；想覆盖就在用例里再 setenv 一次。"""
     path = tmp_path_factory.mktemp("system_state") / "system_state.db"
-    monkeypatch.setenv("ZVMS_SYSTEM_DB", str(path))
+    monkeypatch.setenv("ZVP5_SYSTEM_DB", str(path))
     # 缓存按库路径区分，正常不会串味；这里再显式失效一次，保证「换库即重读」。
     system_state.invalidate_cache()
     return path
@@ -77,9 +77,9 @@ def _isolated_state_db(tmp_path_factory, monkeypatch) -> Path:
 def _files_jail_allows_tmp(monkeypatch) -> None:
     """文件根目录 jail 的测试豁免：用例都在 pytest 的 tmp 目录里造文件。
 
-    生产白名单仍是 ``services.file_ops.ALLOWED_ROOTS``（站点根 + 家目录）；这里只
+    生产白名单仍是 ``services.file_ops.ALLOWED_ROOTS``（站点根）；这里只
     把系统临时目录并进来，否则所有 ``tmp_path`` 用例都会撞 403
-    ``FILES_ROOT_FORBIDDEN``。jail 的边界用例（/etc、/root、/home2、软链逃逸）
+    ``FILES_ROOT_FORBIDDEN``。jail 的边界用例（/etc、/root、/www/zvms40、软链逃逸）
     不受影响：它们断言的是白名单**之外**的路径。
     """
     import tempfile

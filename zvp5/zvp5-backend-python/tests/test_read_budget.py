@@ -45,15 +45,11 @@ def api(monkeypatch):
     async def list_page(**_kwargs):
         return [], 0
 
-    async def get_names(_oids):
-        return {}
-
     monkeypatch.setattr(
         backends,
         "get_applogs_repo",
         lambda *a, **k: SimpleNamespace(list_page=list_page),
     )
-    monkeypatch.setattr(logs_router, "get_user_display_names", get_names)
 
     app = FastAPI()
     app.include_router(logs_router.router, prefix="/api/logs")

@@ -151,3 +151,93 @@ async def test_no_matching_run_skips_the_update(monkeypatch) -> None:
     assert invalidated == 0
     assert not [stmt for stmt in session.statements if getattr(stmt, "is_update", False)]
     assert session.commits == 0
+
+
+# ---------------------------------------------------------------------------
+# A-M9：单语句下推（仓储有新接口时优先走它）
+# ---------------------------------------------------------------------------
+
+class _PushdownEvents(_Events):
+    """真仓储的新接口：一条 UPDATE 覆盖该会话全部待确认提案。"""
+
+    def __init__(self, *, rowcount: int = 4) -> None:
+        super().__init__(rows=[])
+        self.rowcount = rowcount
+        self.calls: list[tuple] = []
+
+    async def fail_proposed_for_conversation(self, conversation_oid, *, result_summary=None):
+        self.calls.append((str(conversation_oid), result_summary))
+        return self.rowcount
+
+    async def list_by_actor(self, *args, **kwargs):  # pragma: no cover - 必须不被调用
+        raise AssertionError("pushdown path must not scan a page by actor")
+
+    async def update_status(self, *_args, **_kwargs):  # pragma: no cover
+        raise AssertionError("pushdown path must not update proposals one by one")
+
+
+@pytest.mark.asyncio
+async def test_pushdown_is_used_when_the_repo_exposes_it(monkeypatch) -> None:
+    """有下推接口时：不扫 500 行、不逐条 CAS，只消费一条 UPDATE 的 rowcount。"""
+    events = _PushdownEvents(rowcount=7)
+    session = _install(monkeypatch, runs={}, events=events)
+
+    invalidated = await conversations._invalidate_proposals(OWNER, CONVERSATION)
+
+    assert invalidated == 7
+    assert events.calls == [(CONVERSATION, conversations.DELETED_PROPOSAL_SUMMARY)]
+    # 服务层自己一条语句都没发（连 run 归属查询都不需要）。
+    assert session.statements == []
+
+
+@pytest.mark.asyncio
+async def test_pushdown_is_skipped_without_a_shared_session(monkeypatch) -> None:
+    """内存替身（无 ``_session``）即使有同名方法也不该走 SQL 下推。"""
+
+    class _MemoryEvents:
+        def __init__(self) -> None:
+            self.scanned = False
+
+        async def list_by_actor(self, actor_oid, *, status=None, limit=20):
+            self.scanned = True
+            return []
+
+        async def fail_proposed_for_conversation(self, *_args, **_kwargs):  # pragma: no cover
+            raise AssertionError("memory repo has no shared session to push down into")
+
+    events = _MemoryEvents()
+    monkeypatch.setattr(conversations, "_events", lambda: events)
+    monkeypatch.setattr(conversations, "_runs", lambda: _Runs())
+
+    invalidated = await conversations._invalidate_proposals(OWNER, CONVERSATION)
+
+    assert invalidated == 0
+    assert events.scanned is True
+
+
+@pytest.mark.asyncio
+async def test_row_by_row_fallback_still_works(monkeypatch) -> None:
+    """既没有下推也没有共享 session：逐条路径保持可用（内存实现的老路）。"""
+    updated: list[tuple] = []
+
+    class _PlainEvents:
+        async def list_by_actor(self, actor_oid, *, status=None, limit=20):
+            return [_proposal("e" * 32, "r" * 24)]
+
+        async def update_status(self, oid, status, *, from_status="proposed", result_summary=None):
+            updated.append((oid, status, from_status, result_summary))
+            return True
+
+    class _PlainRuns:
+        async def get(self, request_id, owner_oid):
+            return {"conversation_oid": CONVERSATION}
+
+    monkeypatch.setattr(conversations, "_events", lambda: _PlainEvents())
+    monkeypatch.setattr(conversations, "_runs", lambda: _PlainRuns())
+
+    invalidated = await conversations._invalidate_proposals(OWNER, CONVERSATION)
+
+    assert invalidated == 1
+    assert updated == [
+        ("e" * 32, "failed", "proposed", conversations.DELETED_PROPOSAL_SUMMARY)
+    ]

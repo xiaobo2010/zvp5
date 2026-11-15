@@ -14,7 +14,7 @@ import type { Plugin } from 'vite'
  * 未定义，legacy 兜底加载器跟着抢跑，**全站白屏**。
  *
  * 所以在 closeBundle 阶段（rolldown-vite 在 writeBundle 时尚未把 index.html
- * 落盘）直接搬移：内联脚本变成同源外置文件后 `script-src 'self'` 即可，产物里
+ * 落盘）直接搬移：内联脚本变成外置文件后可由 `script-src` 按资源域放行，产物里
  * 不允许再出现任何内联脚本（出现即构建失败）。搬移不改变执行语义：
  *   * `type="module"` 的内联与外置同为 in-order module script，按文档顺序执行；
  *   * `nomodule` 的经典脚本外置后加载/拦截行为不变；
@@ -26,9 +26,13 @@ import type { Plugin } from 'vite'
  * 重复运行时无内联脚本体，直接跳过。
  */
 export function externalizeInlineScripts(): Plugin {
+  let assetBase = '/assets/'
   return {
     name: 'zvms-externalize-inline-scripts',
     apply: 'build',
+    configResolved(config) {
+      assetBase = `${config.base.replace(/\/+$/, '')}/assets/`
+    },
     async closeBundle() {
       const outDir = path.resolve(process.cwd(), 'dist')
       const htmlPath = path.join(outDir, 'index.html')
@@ -52,7 +56,7 @@ export function externalizeInlineScripts(): Plugin {
           seen.add(filename)
           pending.push({ filename, body })
         }
-        return `<script${attrsRaw} src="/assets/${filename}"></script>`
+        return `<script${attrsRaw} src="${assetBase}${filename}"></script>`
       })
 
       // 先落盘外置脚本，再改写 index.html：中途失败时产物里不会出现

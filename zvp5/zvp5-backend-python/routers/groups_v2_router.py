@@ -177,6 +177,9 @@ async def get_group_activities_v2(
 async def read_group_time(
     group_id: str,
     query: str = Query("", description="Search query for user name or ID"),
+    search: str = Query(
+        "", description="Alias of query (legacy frontend parameter)"
+    ),
     page: int = Query(1, ge=1, description="Page number for pagination"),
     perpage: int = Query(5, ge=1, le=100, description="Number of items per page"),
     allow_cache: bool = Query(True, description="Allow cached data"),
@@ -192,6 +195,9 @@ async def read_group_time(
         "off-campus": "off_campus_raw",
         "social-practice": "social_practice",
     }
+    # 前端历史版本传 ``search``，后端签名是 ``query``：两个名字都收，``query``
+    # 优先，避免班级时长搜索被静默忽略（q 为空时再用 search）。
+    query = query or search
     class_oid = validate_object_id(group_id)
     user_times, count = await backends.get_time_repo().list_by_class(
         str(class_oid),

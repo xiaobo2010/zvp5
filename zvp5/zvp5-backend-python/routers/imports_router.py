@@ -144,4 +144,11 @@ async def upload_activity_excel(
     # 事务内的写走的是「调用方自带 session」的仓储实例，缓存代理按设计整体旁路，
     # 因此失效必须在这里补：新建活动/成员会让活动详情与有效活动全集变旧。
     await cache.bump_epoch("activities")
+
+    # 导入的成员全部是 effective，缓存里的 user_time 立刻就是错的；排一次按
+    # 活动的后台重算（v2 的实现带人数闸门与批量 upsert），别等 01:00 全量。
+    from routers.activities_v2_router import _schedule_user_time_refresh
+
+    _schedule_user_time_refresh(str(activity_id))
+
     return {"status": "ok", "code": 201}

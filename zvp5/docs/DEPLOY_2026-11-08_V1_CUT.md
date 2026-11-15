@@ -23,7 +23,7 @@
 
 ## 二、前端构建
 
-- **生产**（main，前端 与后端同树）：`VITE_API_BASE=https://zvp.xiaobopisces.top/api`
+- **生产**（main，前端与后端同树）：`VITE_API_BASE=https://zvp.xiaobopisces.top/api`
   + `VITE_API_RACE_BASE=https://zvpapi.xiaobopisces.top/api`（不设
   `VITE_API_CONTENT_BASE`，生产行为不变）。产物 `index-zr2uobXX.js`；
   modulepreload 仅 rolldown-runtime / element-plus / vue-vendor，**monaco
@@ -37,7 +37,7 @@
 | 检查 | 结果 |
 | --- | --- |
 | 后端直连 `/api/health` `/api/version` `/api/changelog` | 200 |
-| `/api/v1/activities`（前端 链 + 竞速域 + canary Origin） | 401（路由存在，鉴权拦截） |
+| `/api/v1/activities`（前端链 + 竞速域 + canary Origin） | 401（路由存在，鉴权拦截） |
 | `/api/v3/activities` | 404（干净切换坐实） |
 | `/api/v2/mcp/activities` | 401（别名按 ADR 保留） |
 | `POST /api/users/auth` 伪凭证 | 422 规范校验 JSON |
@@ -45,7 +45,7 @@
 | canary 首页 / `sw.js` | 200 `index-ClEv9F7n.js`；`sw.js` 回落 `index.html`（0 workbox） |
 | canary Origin 预检 `/api/v1/activities` | 204 + 回显 Origin |
 | gzip_static（前端） | css 199KB → 26.4KB，`content-encoding: gzip` |
-| 前端 访问日志 tail-5000 | **0 × 5xx**；4xx 分布符合预期（401/404/418 盾牌与探测） |
+| 前端访问日志 tail-5000 | **0 × 5xx**；4xx 分布符合预期（401/404/418 盾牌与探测） |
 | 后端 `zvpapi` SPA root（备用路径对等） | 同 hash `index-zr2uobXX.js` |
 | 服务 | active，内存 165M（旧进程峰值 456M） |
 

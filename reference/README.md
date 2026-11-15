@@ -4,15 +4,15 @@
 
 | 目录 | 来源 | 内容 | 安全级别 |
 | --- | --- | --- | --- |
-| `xuehai/zvp-latest/` | `zvp-latest`（已删除） | 学海 API、平台登录、设备识别、请求头与日志采集的原始文件 | **危险，含后门/外联能力，禁止运行** |
+| ~~`xuehai/zvp-latest/`~~ | `zvp-latest`（已删除） | 学海 API、平台登录、设备识别、请求头与日志采集的原始文件 | **2026-11-14 已移出仓库**（含第三方签名密钥，不适合公开）；本机保留在 `~/zvp5-private-reference/xuehai/` |
 | `zvp5-gitlab/` | `zvp5-gitlab`（已删除） | 独立审核流、FAQ/资源、定向 WebSocket 推送的模型与骨架 | 未完成设计稿，代码本身不可运行 |
 
 删除原参考树前已完成能力对账，见
-`zvms4-modified-main/docs/REFERENCE_TREES_ALIGNMENT.md`。
+`zvp5/docs/REFERENCE_TREES_ALIGNMENT.md`。
 
 ## 使用约束
 
 1. 不得把这些文件复制回 `zvms4-modified-main` 的业务代码；
 2. 不得为归档代码添加依赖、构建脚本或测试入口；
-3. 学海目录中的 URL、签名密钥、设备绑定和外呼逻辑均属明确拒绝面；
+3. 学海目录中的 URL、签名密钥、设备绑定和外呼逻辑均属明确拒绝面（该目录已移出仓库）；
 4. `zvp5-gitlab` 目录保留的是设计参考，不是可直接采用的生产实现。

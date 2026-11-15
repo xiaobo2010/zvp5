@@ -2,10 +2,10 @@
 
 > 核对日期：2026-10-24
 > 开发主线：`zvp5/`
-> 参考树：`zvp-latest/`（含后门的 beta 快照）、`zvp5-gitlab/`（未完成的第二套后端）
+> 参考树：`zvp-latest/`（未经审计的 beta 快照）、`zvp5-gitlab/`（未完成的第二套后端）
 >
 > 本文记录能力对账与留档结果。**2026-10-24 已按确认执行删除**：
-> 学海相关文件归档至 `reference/xuehai/`，审核流/FAQ/资源/定向推送归档至
+> 学海相关文件归档至 `reference/xuehai/`（2026-11-14 已移出仓库，见 `REDACTION_POLICY.md`），审核流/FAQ/资源/定向推送归档至
 > `reference/zvp5-gitlab/`；`UserProfile` 与 `ManageRoles` 页面已接入主线。
 
 ## 1. 结论

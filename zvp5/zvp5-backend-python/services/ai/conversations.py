@@ -21,12 +21,12 @@ from __future__ import annotations
 import base64
 import binascii
 import json
+import logging
 import re
 from datetime import datetime, timedelta
 from typing import Any, Awaitable, Callable, Mapping, Sequence
 from uuid import uuid4
 
-import settings
 from sqlalchemy import select as sa_select
 from sqlalchemy import update as sa_update
 
@@ -34,10 +34,13 @@ from db import backends
 from db.models import ai_agent_events as ai_agent_events_tbl
 from db.models import ai_runs as ai_runs_tbl
 from db.oracle.session import session_scope
-from services import db_content, settings_runtime
+from services import db_content
+from services.agent import context as agent_context
 from services.agent.tool_impl import AgentError
 from services.ai import prompt_audit
 from util.serialization import iso_str
+
+_logger = logging.getLogger(__name__)
 
 # 会话类型与状态：与表上的 CHECK 逐字一致（写错只会在 Oracle 上变成 ORA-02290，
 # 而那时事务已经开了一半）。``chat`` 已下线，只为存量数据保留常量：老会话不能
@@ -123,7 +126,11 @@ _TOKEN_SPLIT_RE = re.compile(r"(\s+)")
 
 # 上下文上限的兜底：``AI_DEFAULT_CONTEXT_LIMIT`` 缺省 200000（见 §5.3）。压缩
 # 阈值仍是 0.75，所以约 150K 时触发一次摘要，不会等窗口真填满才动。
-CONTEXT_LIMIT_DEFAULT = 200_000
+#
+# 名字保留是为了 ``__all__`` 与既有调用方（视图 / 测试），**取值只有一处**：
+# 真正的口径在 ``services.agent.context.DEFAULT_CONTEXT_LIMIT``，这里只是同一
+# 个数字的别名，不参与任何判断（:func:`context_limit` 已整体委派过去）。
+CONTEXT_LIMIT_DEFAULT = agent_context.DEFAULT_CONTEXT_LIMIT
 
 Row = dict[str, Any]
 
@@ -262,41 +269,19 @@ def title_from(content: object) -> str:
 def context_limit(model: object) -> int:
     """该模型的上下文上限（§5.3 的 ``limit``，视图里的分母）。
 
-    顺序与 :func:`services.agent.context.context_limit` 完全一致：**模型级**
-    上下文（凭据里的 ``context``）→ ``AI_MODEL_CONTEXT_LIMITS`` → 默认值。同一个
-    窗口在两处算出不同分母，水位就会自相矛盾。
+    **只有一份实现**：``services.agent.context.context_limit``（纯函数）。以前这里
+    抄了一份，抄丢了 ``AI_MODEL_CONTEXT_LIMITS`` 的 ``"*"`` 通配规则——于是视图上
+    的分母与压缩的真实水位能给出两个不同的数字（前端进度条永远到不了 100%，
+    或者反过来早早就红）。
 
-    默认值可以被运行期设置 ``ai.context_limit_default`` 覆盖（在线改完即时生效）。
-    配置坏了就回落 200000——分母是展示用的，不能因为一个笔误让会话页 500。
+    顺序由那边决定：**模型级**上下文（凭据里的 ``context``）→ 配置表（精确键，
+    其次 ``"*"``）→ 默认值；默认值可被运行期设置 ``ai.context_limit_default``
+    覆盖。配置坏了回落到 200000——分母是展示用的，不能因为一个笔误让会话页 500。
     """
-    from . import credentials as ai_credentials
-
-    if isinstance(model, str):
-        exact = ai_credentials.model_context(model)
-        if exact:
-            return exact
-
-    limits = getattr(settings, "AI_MODEL_CONTEXT_LIMITS", None)
-
-    if isinstance(limits, Mapping) and isinstance(model, str):
-        # 会话里存的可能是合格 ID（``provider/model``）：窗口是上游模型的属性，
-        # 运维配的是裸名，所以先按原值查，再按去掉 provider 前缀的名字查一次。
-        for key in (model, model.partition("/")[2]):
-            value = limits.get(key) if key else None
-            try:
-                parsed = int(value)  # type: ignore[arg-type]
-            except (TypeError, ValueError):
-                parsed = 0
-            if parsed > 0:
-                return parsed
-    override = settings_runtime.get_override("ai.context_limit_default")
-    if isinstance(override, int) and not isinstance(override, bool) and override > 0:
-        return override
-    try:
-        fallback = int(getattr(settings, "AI_DEFAULT_CONTEXT_LIMIT", CONTEXT_LIMIT_DEFAULT))
-    except (TypeError, ValueError):
-        fallback = CONTEXT_LIMIT_DEFAULT
-    return fallback if fallback > 0 else CONTEXT_LIMIT_DEFAULT
+    # 导入在模块顶部：``services.agent`` 这个包本来就因为 ``tool_impl.AgentError``
+    # 被本模块拉起，多引一个纯函数模块不增加依赖面。
+    # 非字符串（老的坏行 / 测试替身）按「没有模型信息」处理：与旧实现的判据一致。
+    return agent_context.context_limit(model if isinstance(model, str) else None)
 
 
 # ---------------------------------------------------------------------------
@@ -704,22 +689,37 @@ async def _invalidate_proposals(owner_oid: str, conversation_oid: str) -> int:
     （``routers/ai_agent_router.py`` 的确认路径）。删掉会话却不作废提案，等于留着
     一个「用户以为已经删掉」的写操作，30 分钟内还能被执行。
 
-    仓储层没有「按会话批量作废」的接口（``db/`` 属于本批另一条车道），所以这里
-    按 actor 的待确认提案一次读出，再把「这些 request_id 属于哪个会话」收成一条
-    ``IN`` 查询、命中提案收成一条带 ``status='proposed'`` 条件（CAS）的 ``UPDATE``。
-    逐条 ``runs.get`` + ``events.update_status`` 在提案多时就是 2N 次跨洋往返。
+    优先级（能力探测，与 ``hasattr(..., "_session")`` 一样的思路）：
 
-    非 SQL 装配（内存替身/其它实现）没有可共享的会话，回落到公共 API 的逐条
-    路径：行为一致，只是多几次往返。
+    1. **单语句下推**：仓储有 ``fail_proposed_for_conversation`` 时，一条
+       ``UPDATE ... WHERE status='proposed' AND request_id IN (该会话的 run)``
+       覆盖全集。这是唯一不依赖扫描窗口的路径——按 actor 取一页的旧实现在第
+       501 条待确认提案之后就开始漏；
+    2. **集合式（服务层拼 SQL）**：仓储共享 session 但没有下推接口时，沿用
+       「一条 IN 查 run + 一条 CAS UPDATE」；
+    3. **逐条**：内存替身/其它实现没有可共享的会话，走公共 API。
+
+    第 1 条命中时连 ``list_by_actor`` 都不必发——「先取一页再看清了多少」正是要
+    去掉的那次扫描。
     """
     events = _events()
     runs = _runs()
+    sessioned = hasattr(runs, "_session") and hasattr(events, "_session")
+    if sessioned and hasattr(events, "fail_proposed_for_conversation"):
+        return int(
+            await events.fail_proposed_for_conversation(
+                str(conversation_oid),
+                result_summary=DELETED_PROPOSAL_SUMMARY,
+            )
+            or 0
+        )
+
     rows = await events.list_by_actor(
         str(owner_oid), status="proposed", limit=PROPOSAL_SCAN_LIMIT
     )
     if not rows:
         return 0
-    if hasattr(runs, "_session") and hasattr(events, "_session"):
+    if sessioned:
         return await _invalidate_proposals_batch(
             owner_oid, conversation_oid, rows
         )
@@ -827,19 +827,27 @@ async def list_messages(
     oid: str,
     after_seq: int = 0,
     limit: int = MESSAGE_LIMIT_DEFAULT,
+    conversation: Mapping[str, Any] | None = None,
 ) -> dict:
     """``seq > after_seq`` 的增量（刷新与轮询同一条路径）。
 
     ``has_more`` 是「这一页可能还有下一批」：取满一页就置真，让客户端再拉一次；
     判少一条也比漏一条便宜。``total`` 读冗余列（不为一个数字扫 CLOB 表）。
+
+    ``conversation`` 是调用方**已经校验过归属**的会话行（路由层先做功能开关再
+    进来，顺序不能换）。给它就省掉这里的第二次 ``require_row``——同一条会话在一
+    个 GET 里读两遍只是多一次索引查询，但这个接口是 1 秒轮询的，翻倍就是翻倍。
+    ``None`` 时保持原来的「自己过归属闸」，老调用方（任务 / scheduler）不用改。
     """
-    conversation = await require_row(user=user, oid=oid)
+    row = conversation if conversation is not None else await require_row(
+        user=user, oid=oid
+    )
     size = max(1, min(int(limit or MESSAGE_LIMIT_DEFAULT), MESSAGE_LIMIT_MAX))
     views = await messages_since(str(oid), max(0, int(after_seq or 0)), limit=size)
     return {
         "messages": views,
         "has_more": len(views) >= size,
-        "total": _int(conversation.get("message_count")),
+        "total": _int(row.get("message_count")),
     }
 
 
@@ -895,17 +903,47 @@ async def append_round(
     rows: Sequence[Mapping[str, Any]],
     *,
     usage: Mapping[str, int | None] | None = None,
+    events: Sequence[Mapping[str, Any]] | None = None,
 ) -> list[dict]:
     """一轮的 assistant + 全部 tool 消息落库，**同一事务**累加会话用量。
 
-    原子性由 ``append_batch`` 保证（锁会话行 → 连续分配 seq → 逐行插入 → 更新会话
+    原子性由 ``append_batch`` 保证（锁会话行 → 连续分配 seq → 整批插入 → 更新会话
     行）。这里只做角色校验：``user`` 消息必须由 run 创建时写（§4.5 幂等边界），
     从这条路径进来只能是 assistant/tool，否则「重跑 queued」就会重复用户消息。
+
+    ``events`` 是本轮缓冲下来的工具事件（``executor`` 在工具完成时攒的，带
+    ``created_at``）：与消息写进**同一个事务**。ADB 一次 commit 0.5~0.95s，原来
+    每个事件一次提交，一轮两三个工具就把 run 的时延拖成秒级；而事件与消息本来
+    没有「谁先可见」的业务要求，合并没有任何语义代价。
+
+    事件是**旁路**：它的插入包在嵌套 savepoint 里，失败只 warning（回滚到
+    savepoint，消息与会话累加照旧提交）。反过来（事件写失败把整轮消息回滚）就是
+    让审计的可用性决定业务数据的可用性。
     """
     for row in rows:
         if str(row.get("role")) not in ("assistant", "tool"):
             raise ValueError(f"append_round only accepts assistant/tool, got {row.get('role')!r}")
-    return await _messages().append_batch(str(conversation_oid), rows, usage=usage)
+    if not events:
+        # 没有事件（纯回答轮）：保持原来的单仓储调用，别为一条空列表多开一层 session。
+        return await _messages().append_batch(
+            str(conversation_oid), rows, usage=usage
+        )
+
+    # 两个仓储共用**一个** session：消息批次自己不再提交（注入 session 的约定），
+    # 由这里一次性提交——「owned session 只在边缘提交一次」。
+    async with session_scope() as session:
+        inserted = await backends.get_ai_messages_repo(session).append_batch(
+            str(conversation_oid), rows, usage=usage
+        )
+        try:
+            async with session.begin_nested():
+                await backends.get_ai_agent_events_repo(session).insert_many(
+                    [dict(event) for event in events]
+                )
+        except Exception:  # noqa: BLE001 - 审计旁路，回滚 savepoint 后继续提交消息
+            _logger.warning("ai agent round events write failed", exc_info=True)
+        await session.commit()
+    return inserted
 
 
 __all__ = [

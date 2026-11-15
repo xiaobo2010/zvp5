@@ -14,7 +14,7 @@
 |---|---|
 | 迁移策略 | 分层渐进：保留 MongoDB 可用，新增独立 SQL 数据访问层，按模块纵切迁移，逐模块切换 |
 | Schema 范围 | **只承载 `zvms_new` 结构**；遗留库 `zvms` 逐步 phase out |
-| 目标实例 | `zvp5adb`（生产）与 `zvp5adb2`（测试），结构平行，仅连接串/wallet 不同 |
+| 目标实例 | `<ADB_PROD>`（生产）与 `<ADB_TEST>`（测试），结构平行，仅连接串/wallet 不同 |
 | 技术栈 | SQLAlchemy 2.0 async + python-oracledb（thin mode） |
 | 本轮边界 | 只写代码与 Schema，**不连实库、不执行 ETL** |
 | 首个纵切 | 用户 + 认证（users / auth） |
@@ -45,12 +45,12 @@
 
 ## 3. ADB 环境
 
-- 实例：`zvp5adb`、`zvp5adb2`（OCI，`adb.ap-chuncheon-1.oraclecloud.com:1522`）。
-- Wallet：`~/.oci/adb-wallet-zvp5`、`~/.oci/adb-wallet-zvp5adb2`。
-- 管理员凭证：`~/.config/opencode/credentials/adb-zvp5-admin`（不入库、不入代码）。
+- 实例：`<ADB_PROD>`、`<ADB_TEST>`（OCI，`<ADB_ENDPOINT>`）。
+- Wallet：生产与测试各一份本地 wallet 目录（`<ADB_WALLET_PROD>` / `<ADB_WALLET_TEST>`）。
+- 管理员凭证：`<CREDENTIAL_FILE>`（不入库、不入代码）。
 - 驱动：`oracledb` 已装入后端 venv（thin mode）。
 - **连通性（已解，2026-10-13）**：本机 DNS 走 fake-ip 代理（`198.18.0.110`），本机直连实库不可用；改由 `zvp-frontend`（正常 DNS/TLS）实测打通。根因：thin 模式**必须同时传 `config_dir` 与 `wallet_location`** 才加载 mTLS 客户端证书，仅传 `config_dir` 报 `ORA-12506`；`db/oracle/engine.py` 本就是两者都传。
-- Wallet 口令口径：prod wallet（`adb-wallet-zvp5`）用 `~/.config/opencode/credentials/adb-zvp5-admin`；test wallet（`adb-wallet-zvp5adb2`）用 `~/.oci/adb-zvp5adb2-admin.pass`。`~/.oci/adb-zvp5-admin` 为**同名但非匹配**文件，勿用。
+- Wallet 口令口径：两套 wallet 各用独立口令文件，文件名相近，取用前先核对目录，别串。
 
 ## 4. 执行计划（分阶段）
 
@@ -92,7 +92,7 @@
   3. `activities/activity_members/time/stats/logs` 域未迁移（后续 slice）。
   4. `groups_v2_router.get_groups_v2` 以「count→全量取」规避 `list_classes` 分页（行为等价，可后续优化）。
 - **flag 状态**：仍为关闭（`ORACLE_MODULES=[]`），未对 ADB 执行任何 DDL/连接。
-- **flag-on 实库验证**：待 ADB 连通性解决后，对 `zvp5adb2` 执行 `V001` 并跑 `ORACLE_MODULES=["users","groups"]` 的等价 smoke。
+- **flag-on 实库验证**：待 ADB 连通性解决后，对 `<ADB_TEST>` 执行 `V001` 并跑 `ORACLE_MODULES=["users","groups"]` 的等价 smoke。
 
 ## 6.2 仓储层进度（activities / members）
 
@@ -216,7 +216,7 @@
 
 > 分支 `zvms4-adb-migration` · 生产 `zvp-frontend` 已切至 ADB · 首次实库端到端验证。
 
-### 实库落地（`zvp5adb2` 测试 → `zvp5adb` 生产）
+### 实库落地（`<ADB_TEST>` 测试 → `<ADB_PROD>` 生产）
 
 - 两实例均以 `config_dir`+`wallet_location` 连通（见 §3）。
 - DDL 落库：`V001`（**前向 FK 致单遍失败，幂等重跑第 2 遍收敛 20/20、0 error**）→ `V002`（users.banned 增量）→ `V003`（activities 文本列改可空增量）。测试库与生产库均达 13 业务表 + `KEEPALIVE_HEARTBEAT`。
@@ -296,12 +296,12 @@
 - **仍留 Mongo 的路径**（见 §6.4/§6.5 待决项）：v1 内嵌 `members`、v2 raw 写入、mcp `types/summary`、`GroupsRepo.list_non_permission`（缺 `TYPE` 列）、`tasks`/`imports`/`notifications`（无表）。
 - **notification API（暂废弃，待重构）**：`/api/users/{oid}/notification`（`routers/users_router.py`）与 `notifications` 集合前端零调用（仅 UI 库 `ElNotification`，非该 API）、集合计数 0 → 随 Mongo 退役移除端点；**后续按新设计重构该 API**，不复刻旧 Mongo 形状。
 - **Mongo 退役决策（2026-10-13）**：彻底移除 Mongo 依赖（含遗留 `zvms` 库；实测该库已不存在，双库合并为死路径）。新增表 `APP_LOGS`/`EXPORT_TASKS`/`IMPORTS`，`GROUPS` 补 `TYPE`+`PERMISSIONS`（承载 3 个权限组）。设备 `logs`（7968 行、本仓零引用）保留 ADB 空表不迁。死代码（`conversion/*`、`tasks/categorize.py`、`misc/` 一次性脚本）删除。v1 `activities_router` 废弃（前端未调用、内嵌 `members` 全库为 0）。
-  **执行方式（2026-10-13 追加定调）**：**完全去除** Mongo 兼容与代码，**不保留过渡适配器与开关**——不保留 `db/repos/mongo/*`、`db/backends.py` 的 Mongo 分支、`database.py`/motor/`MONGODB_URI`，所有 router/util/task 直连 Oracle 仓储。顺序：先补全 Oracle 仓储与接线 → 把剩余数据（`app_logs`/`tasks`/`imports`/权限组）ETL 同步进 `zvp5adb` → prod 验证 → 最后物理删除 Mongo 代码/依赖并停用 Mongo 容器（ETL 工具届时一并移除或归档）。
+  **执行方式（2026-10-13 追加定调）**：**完全去除** Mongo 兼容与代码，**不保留过渡适配器与开关**——不保留 `db/repos/mongo/*`、`db/backends.py` 的 Mongo 分支、`database.py`/motor/`MONGODB_URI`，所有 router/util/task 直连 Oracle 仓储。顺序：先补全 Oracle 仓储与接线 → 把剩余数据（`app_logs`/`tasks`/`imports`/权限组）ETL 同步进 `<ADB_PROD>` → prod 验证 → 最后物理删除 Mongo 代码/依赖并停用 Mongo 容器（ETL 工具届时一并移除或归档）。
 - **已修生产缺陷（2026-10-13）**：`routers/activities_v2_router.py` 创建活动 / 添加成员原为 raw Mongo 写入，与已切 Oracle 的读路径不一致 → 报 `404 Activity not found`；已改为 `backends.get_activities_repo().create(...)` + `get_members_repo().add(...)`，并移除该文件未使用的 `database.db` 导入。
 
 ## 6.8 义工数据补录（2026-10-14）
 
-> 生产反馈「迁移后少了很多义工」。只读对账 `zvms4-mongo`（`zvms_new`）↔ `zvp5adb`（生产）后定位并补齐。
+> 生产反馈「迁移后少了很多义工」。只读对账 `zvms4-mongo`（`zvms_new`）↔ `<ADB_PROD>`（生产）后定位并补齐。
 
 ### 缺口
 
@@ -331,11 +331,11 @@
 
 - **DDL `V006__relax_activity_user_fks.sql`**（幂等）：DROP `fk_activities_creator_oid`、`fk_activities_appointee_oid`、`fk_activity_members_member_oid`；**保留** `fk_activity_members_activity_oid`（被引用活动均已补录，完整性保留）。
 - **`db/models.py` / `V001`** 同步移除上述 3 个 FK（`python -m db.ddl_check` → `OK 16 tables, 9 indexes - no drift`）。
-- **补录脚本**：幂等 `MERGE … WHEN NOT MATCHED`（只增不改），先在 `zvp5adb2` 演练再上 `zvp5adb`。脚本路径 `/root/backfill_missing_volunteers.py`（服务器），副本 `/tmp/opencode/backfill_missing_volunteers.py`。
+- **补录脚本**：幂等 `MERGE … WHEN NOT MATCHED`（只增不改），先在 `<ADB_TEST>` 演练再上 `<ADB_PROD>`。脚本路径 `/root/backfill_missing_volunteers.py`（服务器），副本 `/tmp/opencode/backfill_missing_volunteers.py`。
 
 ### 验证证据
 
-- `zvp5adb2`：activities 354→395、members 11542→13254；`zvp5adb`：354→395、11575→13287。
+- `<ADB_TEST>`：activities 354→395、members 11542→13254；`<ADB_PROD>`：354→395、11575→13287。
 - FK 现状：`ACTIVITIES`/`ACTIVITY_MEMBERS` 仅剩 `FK_ACTIVITY_MEMBERS_ACTIVITY_OID`。
 - 抽样：`校合唱队.updated_at = 2026-10-11 11:33:50`（Int64 已转）；`布置考场`（悬空 creator）oid 原样保留、description 已置空；`TestDB` 不存在；周金开颜名下 2 条成员已补回。
 - 走真实读路径 `OracleActivitiesRepo.list_page` → `total = 395`；线上 `/api/health`、`/api/version`（v4.2.2-2）200，日志无新错误。

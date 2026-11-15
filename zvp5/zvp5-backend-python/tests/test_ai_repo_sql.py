@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
+import pytest
 from sqlalchemy.dialects import oracle
 
 from db.repos.oracle import ai_call_logs as ai_call_logs_repo
@@ -76,6 +77,37 @@ def test_consume_binds_the_amount_into_both_sides() -> None:
     sql = _consume(amount=3)
     assert "SET used=(ai_quota.used + 3)" in sql
     assert "AND ai_quota.used + 3 <= ai_quota.limit_count" in sql
+
+
+@pytest.mark.asyncio
+async def test_consume_without_state_sends_no_read_back_select() -> None:
+    """``want_state=False``：成功分支只有那一条 UPDATE，没有回读。
+
+    回读是纯粹的展示值（``used`` / ``limit``），每轮对话都付一次跨洋往返；对
+    「扣完就不用」的调用方是白花的钱。
+    """
+
+    class _Session:
+        def __init__(self) -> None:
+            self.statements: list[str] = []
+
+        async def execute(self, stmt):
+            self.statements.append(_sql(stmt))
+
+            class _Result:
+                rowcount = 1
+
+            return _Result()
+
+    session = _Session()
+    result = await ai_quota_repo._consume_in_session(  # noqa: SLF001
+        session, USER_OID, PERIOD, "af", 1, 10, TS, want_state=False
+    )
+
+    assert result == (True, 0, 0)
+    assert len(session.statements) == 1
+    assert session.statements[0].startswith("UPDATE ai_quota SET ")
+    assert "SELECT" not in session.statements[0].upper()
 
 
 def test_set_limit_never_resets_used() -> None:

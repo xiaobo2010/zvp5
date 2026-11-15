@@ -83,7 +83,7 @@ def chat_env(monkeypatch, quiet_ai_governance):
         env.peek_calls.append((user_oid, kind, amount))
         return True, 1, 100
 
-    async def consume(user_oid, kind, units, roles=None):
+    async def consume(user_oid, kind, units, roles=None, *, want_state=True):
         env.consume_calls.append((user_oid, kind, units))
 
     async def audit_record(**kwargs):

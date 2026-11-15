@@ -33,6 +33,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from db.models import ai_conversations as ai_conversations_tbl
 from db.models import ai_messages as ai_messages_tbl
 from db.oracle.session import session_scope
+from db.repos.oracle.users import UserGoneError
 
 Row = dict[str, Any]
 
@@ -432,26 +433,41 @@ def _message_fields(item: Mapping[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in item.items() if key not in _OWNED_MESSAGE_KEYS}
 
 
-def _insert_message_stmt(*, seq: int, created_at: datetime, **fields: Any):    return insert(ai_messages_tbl).values(
-        oid=fields["oid"],
-        conversation_oid=fields["conversation_oid"],
-        seq=seq,
-        role=fields["role"],
-        content=fields.get("content"),
+def _insert_message_values(
+    *, seq: int, created_at: datetime, **fields: Any
+) -> dict[str, Any]:
+    """一行消息的完整取值（单条 ``insert`` 与批量 ``executemany`` 共用）。
+
+    抽出来是为了让「批量插入」不另抄一份列清单：列名漏一个在 Oracle 上就是静默
+    NULL，而 NULL 的 ``tool_call_id`` 会让整段工具历史在回放时对不上配对。
+    """
+    return {
+        "oid": fields["oid"],
+        "conversation_oid": fields["conversation_oid"],
+        "seq": seq,
+        "role": fields["role"],
+        "content": fields.get("content"),
         # 思考过程：只对 assistant 行有值；tool/user 行留 NULL。
-        reasoning=fields.get("reasoning"),
-        tool_calls=fields.get("tool_calls"),
-        tool_call_id=fields.get("tool_call_id"),
-        tool_name=fields.get("tool_name"),
-        round_no=fields.get("round_no"),
-        finish_reason=fields.get("finish_reason"),
-        request_id=fields.get("request_id"),
-        prompt_tokens=fields.get("prompt_tokens"),
-        completion_tokens=fields.get("completion_tokens"),
-        total_tokens=fields.get("total_tokens"),
-        cache_read_tokens=fields.get("cache_read_tokens"),
-        cache_write_tokens=fields.get("cache_write_tokens"),
-        created_at=created_at,
+        "reasoning": fields.get("reasoning"),
+        "tool_calls": fields.get("tool_calls"),
+        "tool_call_id": fields.get("tool_call_id"),
+        "tool_name": fields.get("tool_name"),
+        "round_no": fields.get("round_no"),
+        "finish_reason": fields.get("finish_reason"),
+        "request_id": fields.get("request_id"),
+        "prompt_tokens": fields.get("prompt_tokens"),
+        "completion_tokens": fields.get("completion_tokens"),
+        "total_tokens": fields.get("total_tokens"),
+        "cache_read_tokens": fields.get("cache_read_tokens"),
+        "cache_write_tokens": fields.get("cache_write_tokens"),
+        "created_at": created_at,
+    }
+
+
+def _insert_message_stmt(*, seq: int, created_at: datetime, **fields: Any):
+    """单条消息 INSERT（run 侧与预分配 seq 的调用方仍在用）。"""
+    return insert(ai_messages_tbl).values(
+        **_insert_message_values(seq=seq, created_at=created_at, **fields)
     )
 
 
@@ -536,8 +552,15 @@ def _message_row(mapping: Any) -> Row:
 
 
 async def _allocate_seq(session: AsyncSession, conversation_oid: str) -> int:
-    """锁会话行后取下一个 ``seq``（1 起）。"""
-    await session.execute(_lock_conversation_stmt(conversation_oid))
+    """锁会话行后取下一个 ``seq``（1 起）。
+
+    锁命中的必须是**存在的**会话行：0 行说明会话在「读完归属/状态」与「写消息」
+    之间被删掉了。此时直接抛 not-found，而不是照常分配 seq——否则消息与 run 会
+    落成谁也读不到的孤儿行（会话页永远查不到它们）。
+    """
+    locked = await session.execute(_lock_conversation_stmt(conversation_oid))
+    if locked.first() is None:
+        raise UserGoneError(f"会话行不存在: {conversation_oid}")
     current = (await session.execute(_max_seq_stmt(conversation_oid))).scalar()
     return int(current or 0) + 1
 
@@ -776,16 +799,21 @@ class OracleAIMessagesRepo:
             return []
         now = _now()
         inserted: list[Row] = []
+        values: list[dict[str, Any]] = []
         async with _session_for(self._session) as (session, owns):
             base = await _allocate_seq(session, str(conversation_oid))
             for offset, item in enumerate(rows):
                 seq = base + offset
-                await session.execute(
-                    _insert_message_stmt(
+                fields = _message_fields(item)
+                # 一行为一个取值字典：整批交给一次数组绑定 INSERT（executemany）。
+                # 原来是逐行 ``session.execute``，5 条消息 = 5 次跨洋往返——而它们
+                # 本来就在同一个事务里，逐条发没有任何额外保证。
+                values.append(
+                    _insert_message_values(
                         seq=seq,
                         created_at=now,
                         conversation_oid=str(conversation_oid),
-                        **_message_fields(item),
+                        **fields,
                     )
                 )
                 inserted.append(
@@ -810,6 +838,9 @@ class OracleAIMessagesRepo:
                         "created_at": now,
                     }
                 )
+            await session.execute(insert(ai_messages_tbl), values)
+            # 会话侧累加仍在同一个事务里（评审 P1-4）：消息与计数必须一起可见，
+            # 否则「消息多了但 message_count 没动」会让分页与删除回执撒谎。
             await session.execute(
                 _bump_conversation_stmt(
                     str(conversation_oid),

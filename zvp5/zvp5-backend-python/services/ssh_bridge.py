@@ -28,6 +28,7 @@ from typing import Any, Awaitable, Callable
 import asyncssh
 
 import settings
+from util.env import getenv
 
 logger = logging.getLogger(__name__)
 
@@ -93,7 +94,7 @@ def _resolve(env_name: str, field_name: str, default: str) -> str:
     """env → settings → 默认值。
 
     settings.py 里可能压根没有这些字段（生产上目前就没有），所以只能用
-    ``getattr`` + 默认值；字段名带不带 ``ZVMS_`` 前缀两种写法都认，避免部署时
+    ``getattr`` + 默认值；字段名带不带 ``ZVP5_`` 前缀两种写法都认，避免部署时
     因为命名差异静默连到错误目标。
     """
     value = os.environ.get(env_name)
@@ -107,7 +108,7 @@ def _resolve(env_name: str, field_name: str, default: str) -> str:
 
 
 def _default_port() -> int:
-    raw_port = _resolve("ZVMS_SSH_PORT", "SSH_PORT", str(DEFAULT_PORT))
+    raw_port = _resolve("ZVP5_SSH_PORT", "SSH_PORT", str(DEFAULT_PORT))
     try:
         return int(raw_port)
     except (TypeError, ValueError):
@@ -164,12 +165,12 @@ def _build_target(item: object, index: int) -> SshTarget | None:
         port=port,
         # 缺省沿用老部署的 env/settings/默认值：只配 host 也能直接可用。
         user=_item_text(item, "user")
-        or _resolve("ZVMS_SSH_USER", "SSH_USER", DEFAULT_USER),
+        or _resolve("ZVP5_SSH_USER", "SSH_USER", DEFAULT_USER),
         key_path=_item_text(item, "key_path")
-        or _resolve("ZVMS_SSH_KEY_PATH", "SSH_KEY_PATH", DEFAULT_KEY_PATH),
+        or _resolve("ZVP5_SSH_KEY_PATH", "SSH_KEY_PATH", DEFAULT_KEY_PATH),
         known_hosts=_item_text(item, "known_hosts")
         or _resolve(
-            "ZVMS_SSH_KNOWN_HOSTS", "SSH_KNOWN_HOSTS", DEFAULT_KNOWN_HOSTS
+            "ZVP5_SSH_KNOWN_HOSTS", "SSH_KNOWN_HOSTS", DEFAULT_KNOWN_HOSTS
         ),
     )
 
@@ -180,8 +181,8 @@ def _target_items() -> list | None:
     ``None`` 表示「完全没配置」，交给 :func:`load_targets` 走单目标退化。
     """
 
-    raw: object = os.environ.get("ZVMS_SSH_TARGETS")
-    source = "ZVMS_SSH_TARGETS"
+    raw: object = getenv("ZVP5_SSH_TARGETS")
+    source = "ZVP5_SSH_TARGETS"
     if not raw:
         raw = getattr(settings, "SSH_TARGETS", None)
         source = "settings.SSH_TARGETS"
@@ -205,16 +206,16 @@ def _target_items() -> list | None:
 
 
 def _legacy_target() -> SshTarget:
-    """老部署的单目标：参数仍走 ``ZVMS_SSH_*``/默认值，零改动可用。"""
+    """老部署的单目标：参数仍走 ``ZVP5_SSH_*``/默认值，零改动可用。"""
     return SshTarget(
         id=LEGACY_TARGET_ID,
         label=LEGACY_TARGET_LABEL,
-        host=_resolve("ZVMS_SSH_HOST", "SSH_HOST", DEFAULT_HOST),
+        host=_resolve("ZVP5_SSH_HOST", "SSH_HOST", DEFAULT_HOST),
         port=_default_port(),
-        user=_resolve("ZVMS_SSH_USER", "SSH_USER", DEFAULT_USER),
-        key_path=_resolve("ZVMS_SSH_KEY_PATH", "SSH_KEY_PATH", DEFAULT_KEY_PATH),
+        user=_resolve("ZVP5_SSH_USER", "SSH_USER", DEFAULT_USER),
+        key_path=_resolve("ZVP5_SSH_KEY_PATH", "SSH_KEY_PATH", DEFAULT_KEY_PATH),
         known_hosts=_resolve(
-            "ZVMS_SSH_KNOWN_HOSTS", "SSH_KNOWN_HOSTS", DEFAULT_KNOWN_HOSTS
+            "ZVP5_SSH_KNOWN_HOSTS", "SSH_KNOWN_HOSTS", DEFAULT_KNOWN_HOSTS
         ),
     )
 
@@ -223,7 +224,7 @@ def load_targets() -> list[SshTarget]:
     """解析全部可用目标。**保证非空**：没有有效配置时退化为单目标。
 
     坏配置的语义是「丢弃坏项、留下好项」，全坏/空则退化为老的单目标——这样
-    升级时漏配 ``ZVMS_SSH_TARGETS`` 不会让 Web SSH 直接不可用，而写错的一项
+    升级时漏配 ``ZVP5_SSH_TARGETS`` 不会让 Web SSH 直接不可用，而写错的一项
     也不会把别的目标一起带下线。
     """
     items = _target_items()
@@ -260,7 +261,7 @@ def get_target(target_id: str | None) -> SshTarget | None:
 def _default_target_id() -> str:
     """默认目标 id：配置的默认值（若仍存在）→ 否则第一个。"""
     configured = _resolve(
-        "ZVMS_SSH_DEFAULT_TARGET", "SSH_DEFAULT_TARGET", ""
+        "ZVP5_SSH_DEFAULT_TARGET", "SSH_DEFAULT_TARGET", ""
     ).strip()
     targets = load_targets()
     if configured:

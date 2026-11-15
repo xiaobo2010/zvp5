@@ -8,9 +8,14 @@
 没有 ``--workers``），缓存只对当前进程可见。也正因如此边界很窄：
 
 * 过期是惰性的（读的时候判），不另起定时器；
-* 最多 64 条，超出按最旧淘汰——轮询只关心「眼前这几个 run」，没有长期留存价值；
+* 最多 64 条，按 **LRU** 淘汰（命中即刷新位置）——轮询只关心「眼前这几个 run」，
+  没有长期留存价值；
 * 只缓存**展示层**已经组装好的东西（run 视图的原始行、事件视图、提案视图），
   不缓存 SQL 里的 CLOB。
+
+读侧返回的是**条目内的只读引用**（不再逐条深拷贝）：命中一拍的代价从「O(事件数)
+的 dict()」降到一次查表。契约是「调用方不得原地修改」——``run_detail`` 只做切片
+与序列化，正是按这个契约写的。
 
 这个模块刻意不 import ``run_queue``（run_queue 依赖它，反向依赖会成环），只依赖
 stdlib。
@@ -19,6 +24,7 @@ stdlib。
 from __future__ import annotations
 
 import time
+from collections import OrderedDict
 from typing import Any, Iterable, Mapping
 
 #: 活跃 run 的快照寿命：比前端轮询间隔（2s）短，跨拍一定回源。
@@ -30,7 +36,8 @@ TERMINAL_TTL = 30.0
 #: 进程内条目上限。轮询窗口里同时关注的 run 只有个位数，64 是给并发留的余量。
 MAX_ENTRIES = 64
 
-_entries: dict[str, dict] = {}
+#: 顺序 = LRU 顺序：队首最旧（下一个淘汰），队尾最新（刚写入或刚命中）。
+_entries: OrderedDict[str, dict] = OrderedDict()
 _hits = 0
 _misses = 0
 _evictions = 0
@@ -49,7 +56,7 @@ def put(
     proposals: Iterable[Mapping[str, Any]],
     ttl: float = DEFAULT_TTL,
 ) -> None:
-    """写入（或覆盖）一次 run 的快照；覆盖时把它挪到最新位置。"""
+    """写入（或覆盖）一次 run 的快照；覆盖时把它挪到最新位置（LRU 队尾）。"""
     key = str(run_id)
     entry = {
         "row": dict(row),
@@ -57,17 +64,22 @@ def put(
         "proposals": [dict(item) for item in proposals],
         "expires_at": _now() + max(0.0, float(ttl)),
     }
-    # 先删再插：dict 的插入顺序就是淘汰顺序，覆盖不该保留旧年龄。
+    # 先删再插：写入 / 覆盖都算「刚刚用过」，不该保留旧年龄（也就不会先被淘汰）。
     _entries.pop(key, None)
     _entries[key] = entry
     global _evictions
     while len(_entries) > MAX_ENTRIES:
-        _entries.pop(next(iter(_entries)))
+        _entries.popitem(last=False)
         _evictions += 1
 
 
 def get(run_id: str) -> dict | None:
-    """取快照的副本；过期或不存在返回 ``None``（过期项顺手删掉）。"""
+    """取快照；过期或不存在返回 ``None``（过期项顺手删掉）。
+
+    命中会把这个 key 挪到 LRU 队尾（「刚被用过」）。返回的是**条目内的只读引用**，
+    **调用方不得原地修改** ``row`` / ``events`` / ``proposals``：那会污染后续所有
+    命中者。需要改写就自己拷一份。
+    """
     global _hits, _misses
     key = str(run_id)
     entry = _entries.get(key)
@@ -79,10 +91,11 @@ def get(run_id: str) -> dict | None:
         _misses += 1
         return None
     _hits += 1
+    _entries.move_to_end(key)
     return {
-        "row": dict(entry["row"]),
-        "events": [dict(event) for event in entry["events"]],
-        "proposals": [dict(item) for item in entry["proposals"]],
+        "row": entry["row"],
+        "events": entry["events"],
+        "proposals": entry["proposals"],
     }
 
 

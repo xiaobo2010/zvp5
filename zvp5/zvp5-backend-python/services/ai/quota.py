@@ -209,13 +209,21 @@ async def consume(
     amount: int,
     *,
     roles: list[str] | None = None,
+    want_state: bool = True,
 ) -> tuple[bool, int, int]:
+    """原子扣减一次额度，返回 ``(allowed, used, limit)``。
+
+    ``want_state=False`` 给**不看 used/limit** 的调用方（执行器/文本生成的记账
+    路径）：仓储跳过成功后的回读，省一次跨洋 ``SELECT``。此时 used/limit 恒为 0，
+    调用方不得使用——需要展示剩余额度（如 OCR 的 429 回包）就保持默认 ``True``。
+    """
     allowed, used, limit = await backends.get_ai_quota_repo().consume(
         user_oid,
         period_now(),
         kind,
         int(amount),
         default_limit_for(roles, kind),
+        want_state=want_state,
     )
     return bool(allowed), int(used), int(limit)
 

@@ -58,6 +58,16 @@ class ActivitiesRepo(Protocol):
         """Apply a partial ``$set`` of ``fields`` to the activity."""
         ...
 
+    async def cas_status(self, oid: str, expected: str, fields: Row) -> bool:
+        """Apply ``fields`` only while the activity's status is still ``expected``.
+
+        Compare-and-set counterpart of :meth:`update` for review transitions:
+        returns ``False`` when the row no longer carries ``expected`` (another
+        transaction won the race), so the caller can answer 409 instead of
+        silently overwriting a concurrent review.
+        """
+        ...
+
     async def delete(self, oid: str) -> None:
         """Delete an activity. Callers are responsible for its members."""
         ...
@@ -175,8 +185,39 @@ class MembersRepo(Protocol):
         """Delete a membership row by its ``_id``."""
         ...
 
+    async def update_durations_many(
+        self, entries: list[tuple[str, float]], *, delta: bool = True
+    ) -> None:
+        """Bulk-update existing memberships' durations (``entries`` = ``(oid, hours)``).
+
+        One array-bound ``executemany`` batch per call instead of one update per
+        row. ``delta=True`` adds in SQL (``duration_hours + :delta``) so
+        concurrent increments cannot lose an update; ``delta=False`` sets the
+        given value (the overwrite semantics of the add-member endpoint).
+        """
+        ...
+
+    async def sum_modes_for_member(self, member_oid: str) -> Row | None:
+        """Return one member's per-mode totals, or ``None`` when there are none.
+
+        Same double-effective predicate as the user-time rebuild (only
+        ``activities.status = 'effective'`` memberships whose own status is
+        ``effective``), so ``util/calculate.calculate_user_time`` can read the
+        three buckets in a single row instead of summing rows in Python.
+        """
+        ...
+
     async def set_status(self, oid: str, status: str) -> None:
         """Set a membership's approval status."""
+        ...
+
+    async def cas_status(self, oid: str, expected: str, status: str) -> bool:
+        """Set the status only while it still equals ``expected``; return success.
+
+        Compare-and-set counterpart of :meth:`set_status` for review
+        transitions: ``False`` means a concurrent review already moved the row,
+        so the caller must not recalculate times or write an audit entry.
+        """
         ...
 
     async def set_mode(self, oid: str, mode: str) -> None:
@@ -247,7 +288,7 @@ class MembersRepo(Protocol):
         sort: str,
         asc: bool,
         page: int,
-        size: int,
+        size: int | None,
     ) -> tuple[list[Row], int]:
         """Return ``(rows, total)`` for one page of a user's activity memberships.
 
@@ -257,6 +298,10 @@ class MembersRepo(Protocol):
         counting towards ``total``. ``search`` is an optional keyword predicate
         on the activity's ``name``/``description``; ``sort``/``asc`` order the
         rows. Lifts ``routers/users_v2_router.py::get_user_activities_v2``.
+
+        ``size=None`` means "the whole list in one statement" (no OFFSET/FETCH);
+        the legacy ``page=-1`` sentinel of ``routers/users_router.py`` maps onto
+        it. ``page`` is only used when ``size`` is given.
         """
         ...
 
@@ -267,6 +312,14 @@ class MembersRepo(Protocol):
         member_oids: list[str] | None = None,
     ) -> int:
         """Count an activity's memberships, optionally by status/member set."""
+        ...
+
+    async def count_distinct_members(self, activity_oid: str) -> int:
+        """Count the **people** in an activity (one user, several modes = one).
+
+        The immediate time-refresh guard needs a population size, not a row
+        count: a single user may hold one row per counting mode.
+        """
         ...
 
     async def remove_for_activity(self, activity_oid: str) -> None:

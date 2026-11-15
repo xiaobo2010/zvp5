@@ -19,6 +19,7 @@ import ZAuthAlert from '@/components/system/ZAuthAlert.vue'
 import ZLoginBackdrop from '@/components/system/ZLoginBackdrop.vue'
 import ZLoginReveal from '@/components/system/ZLoginReveal.vue'
 import dayjs from 'dayjs'
+import { staticAssetUrl } from '@/utils/staticAssets'
 import type { User, UserProfile } from '@/../types'
 
 const header = useHeaderStore()
@@ -610,7 +611,7 @@ watch(user, async () => {
       </div>
       <div class="yg-login-v2__brand-inner">
         <span class="yg-login-v2__logo">
-          <img src="/pwa-192x192.png" alt="" />
+          <img :src="staticAssetUrl('pwa-192x192.png')" alt="" />
         </span>
         <p class="yg-login-v2__eyebrow">镇海中学 · 义工管理</p>
         <h1 class="yg-login-v2__headline">把时间，<br />留给有意义的事。</h1>
@@ -638,7 +639,7 @@ watch(user, async () => {
         <section class="yg-login__card" aria-labelledby="yg-login-title">
           <div class="yg-login__brand">
             <span class="yg-login__logo">
-              <img src="/favicon.ico" alt="" />
+              <img :src="staticAssetUrl('favicon.ico')" alt="" />
             </span>
             <span class="yg-login__brand-name">义工平台</span>
           </div>

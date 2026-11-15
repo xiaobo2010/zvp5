@@ -552,7 +552,7 @@ export const zhCN = {
     parent: '上一级',
     totalEntries: '共 {count} 条',
     absolutePathOnly: '仅接受绝对路径',
-    rootForbidden: '仅允许访问 /www/zvms4 与 /home 两个根目录',
+    rootForbidden: '仅允许访问 /www/zvms4 根目录',
     mkdirScene: '新建目录',
     mkdirPromptTitle: '新建目录',
     renameScene: '重命名（输入新路径名）',
@@ -581,7 +581,7 @@ export const zhCN = {
     deleteDone: '已删除',
     deleteFailed: '删除失败',
     chmodDone: '权限已修改',
-    protectedNote: '只开放 /www/zvms4 与 /home 两个根目录，其余路径一律拒绝',
+    protectedNote: '只开放 /www/zvms4 根目录，其余路径一律拒绝',
     preview: {
       title: '文件预览',
       loading: '正在读取预览…',

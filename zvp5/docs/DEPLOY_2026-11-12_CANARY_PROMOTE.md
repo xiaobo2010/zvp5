@@ -8,7 +8,7 @@ canary 预览站同步重发。
 
 | # | 遗留 | 处理 |
 |---|---|---|
-| 1 | `/manifest.webmanifest`、`/site.webmanifest` 返回 `application/octet-stream`（浏览器拒绝解析，PWA 安装/图标/主题色失效） | 后端 `zvp` vhost、前端 备用 `zvp` vhost 各加 `location = /{manifest,site}.webmanifest`（`types { application/manifest+json webmanifest; }` + `default_type`）；线上复验两者均返回 `application/manifest+json`。仓库 `deployment/zvms4.nginx.conf` 同步落规则防回归 |
+| 1 | `/manifest.webmanifest`、`/site.webmanifest` 返回 `application/octet-stream`（浏览器拒绝解析，PWA 安装/图标/主题色失效） | 后端 `zvp` vhost、前端备用 `zvp` vhost 各加 `location = /{manifest,site}.webmanifest`（`types { application/manifest+json webmanifest; }` + `default_type`）；线上复验两者均返回 `application/manifest+json`。仓库 `deployment/zvp5.nginx.conf` 同步落规则防回归 |
 | 2 | 首屏 i18n 全量（17 个字典 ~208KB 源码） | ai/manage/server/activity 四个大字典按路由懒加载（详见下） |
 | 3 | main 上两笔部署文档未 push | 已推送（`4c394ec..9b4e00d`） |
 | 4 | 生产前后端落后于仓库最新代码 | 本次全量发布（前端双端 + 后端） |
@@ -63,7 +63,7 @@ SW precache 94 条 2157 KB（排除了 AIHome/ManageHome/VolunteerRegister/ZMark
    （生产不设 content base 时按页面源推导，结果同为 zvp/api；此处显式设置，
    与 canary Worker 共用同一份产物）。
 4. 预压缩 `gzip -9k`（230 个文本资产全部配 `.gz`，nginx `gzip_static on`）。
-5. 顺序：**前端 资产先上 → 验证入口可取 → 后端壳后上**（后端 `index.html` 由
+5. 顺序：**前端资产先上 → 验证入口可取 → 后端壳后上**（后端 `index.html` 由
    `sub_filter` 把 `/assets/` 改写到 zvpapi；顺序颠倒会出现新壳指旧资产）。
 6. 后端：`git archive` → `rsync --delete`（排除 `.venv/ data/ export/ settings.py
    *.pem aes_key.txt ssh_key* ssh_known_hosts* configure_runtime.py logs/ *.log

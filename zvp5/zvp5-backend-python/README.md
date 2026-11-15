@@ -1,4 +1,4 @@
-# ZVMS4 Backend — ZVP Modified
+# ZVP5 Backend
 
 当前后端使用 FastAPI、Pydantic、SQLAlchemy 2.0 async 和 python-oracledb thin mode。
 Oracle Autonomous Database（ADB）是唯一运行时数据库；旧文档中的 MongoDB 集合名仅作为迁移背景。
@@ -53,7 +53,7 @@ known_hosts 内容。交互式终端仍保留双人 TOTP、一次性 ticket（12
 
 ```python
 SSH_TARGETS = [
-    {"id": "frontend", "label": "前端服务器", "host": "192.0.2.5"},
+    {"id": "frontend", "label": "前端服务器", "host": "<INTERNAL_HOST>"},
     {"id": "api", "label": "API 服务器", "host": "127.0.0.1",
      "port": 22, "user": "root", "key_path": "/www/zvms4/backend/ssh_key"},
 ]
@@ -92,6 +92,6 @@ AI 产品统一称 **ZVAgent**（`/api/ai/*`；「AI 网关」是模块名）。
 - **响应头与门禁**：`main.py:SECURITY_RESPONSE_HEADERS` 统一加 nosniff / DENY / Referrer-Policy / HSTS / CSP；shield 418 采集命中原因、referer、origin、XFF、UA；socket.io 只认 `Authorization` 头与 auth 载荷。
 - **引擎**：会话模型建时锁定，思考强度 `low/medium/high` 按上游翻译（`openai_compat → reasoning_effort`、智谱 `thinking`）；模型上下文窗口支持 `MODELS_JSON` 的 `{"id","context"}` 形态并 best-effort 探测上游 `/models`。
 - **只读场景**：`routers/ai_scenes_router.py` 提供 `POST /api/ai/scenes/{scene}/runs`（`terminal` / `file_edit`），工具裁到只读集、参考内容脱敏后不落消息表、场景会话 14 天保留；`ban_history` 为新增只读工具。
-- **文件 jail**：`services/file_ops.py:ALLOWED_ROOTS` 只放行 `/www/zvms4` 与 `/home`（realpath 后按路径段比较），HTTP 文件管理端点与 agent `fs_*` 共用；越界 403 `FILES_ROOT_FORBIDDEN`。
+- **文件 jail**：`services/file_ops.py:ALLOWED_ROOTS` 只放行 `/www/zvms4`（realpath 后按路径段比较）；`/home` 分支因生产 systemd `ProtectHome=true` 从未生效，2026-11-14 对齐时删除。HTTP 文件管理端点与 agent `fs_*` 共用；越界 403 `FILES_ROOT_FORBIDDEN`。
 
 迁移与保留期见 `docs/database-status.md`；API 契约见仓库根 `docs/AI_GATEWAY_API.md`。

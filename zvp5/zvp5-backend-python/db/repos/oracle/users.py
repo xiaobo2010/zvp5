@@ -56,6 +56,7 @@ from db.models import user_time as user_time_tbl
 from db.models import users as users_tbl
 from db.oracle.session import session_scope
 from db.repos.oracle.search import like_pattern, like_prefix_pattern
+from db.repos.pagination import capped_size
 
 Row = dict[str, Any]
 
@@ -139,6 +140,7 @@ def _user_page_stmt(query: str, role: str, page: int, size: int):
     conds = _user_filter(query, role)
     if conds:
         stmt = stmt.where(*conds)
+    size = capped_size(size, where="users.list_page")
     return (
         stmt.order_by(users_tbl.c.business_id.asc(), users_tbl.c.oid.asc())
         .offset((page - 1) * size)
@@ -646,8 +648,19 @@ def _list_by_class_stmt(class_oid: str):
 
 
 def _search_filter(query: str, logged_in: bool):
+    """``GET /api/users`` 的谓词；空关键字 = 无谓词。
+
+    ``query`` 去空白后为空时，登录态返回空列表：列表页就是「整页用户」，
+    不应该为它拼三条 ``REGEXP_LIKE``（其中 ``past`` 那条还要逐行
+    ``JSON_SERIALIZE``），否则一次普通翻页等于 ``USERS`` 全表扫描 + CLOB
+    序列化。匿名分支保留「按学号精确匹配」的形状：空串匹配不到任何学号，
+    不把未登录的可见范围放大成全表。
+    """
+    query = query.strip()
     if not logged_in:
         return [users_tbl.c.business_id == query]
+    if not query:
+        return []
     pattern = like_pattern(query)
     return [
         or_(

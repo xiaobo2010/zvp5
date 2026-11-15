@@ -9,8 +9,15 @@ import sys
 from pathlib import Path
 from urllib.parse import urlsplit
 
-API_PLACEHOLDER = "__ZVMS_API_ORIGIN__"
-WS_PLACEHOLDER = "__ZVMS_API_WS_ORIGIN__"
+# 本文件按 `python config/render_nginx_security_headers.py` 独立运行，
+# 后端根不在 sys.path 上，先补再导入共用读取器。
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from util.env import getenv  # noqa: E402
+
+API_PLACEHOLDER = "__ZVP5_API_ORIGIN__"
+WS_PLACEHOLDER = "__ZVP5_API_WS_ORIGIN__"
+STATIC_PLACEHOLDER = "__ZVP5_STATIC_ORIGIN__"
 
 
 def _origin(value: str, *, schemes: set[str], variable: str) -> str:
@@ -30,11 +37,19 @@ def _origin(value: str, *, schemes: set[str], variable: str) -> str:
     return origin
 
 
-def render(template: str, api_origin: str, ws_origin: str) -> str:
-    api = _origin(api_origin, schemes={"https"}, variable="ZVMS_API_ORIGIN")
-    ws = _origin(ws_origin, schemes={"wss"}, variable="ZVMS_API_WS_ORIGIN")
-    rendered = template.replace(API_PLACEHOLDER, api).replace(WS_PLACEHOLDER, ws)
-    if API_PLACEHOLDER in rendered or WS_PLACEHOLDER in rendered:
+def render(template: str, api_origin: str, ws_origin: str, static_origin: str) -> str:
+    api = _origin(api_origin, schemes={"https"}, variable="ZVP5_API_ORIGIN")
+    ws = _origin(ws_origin, schemes={"wss"}, variable="ZVP5_API_WS_ORIGIN")
+    static = _origin(static_origin, schemes={"https"}, variable="ZVP5_STATIC_ORIGIN")
+    rendered = (
+        template.replace(API_PLACEHOLDER, api)
+        .replace(WS_PLACEHOLDER, ws)
+        .replace(STATIC_PLACEHOLDER, static)
+    )
+    if any(
+        placeholder in rendered
+        for placeholder in (API_PLACEHOLDER, WS_PLACEHOLDER, STATIC_PLACEHOLDER)
+    ):
         raise ValueError("template still contains unresolved origin placeholders")
     return rendered
 
@@ -51,8 +66,9 @@ def main() -> int:
 
     rendered = render(
         args.template.read_text(encoding="utf-8"),
-        os.environ.get("ZVMS_API_ORIGIN", ""),
-        os.environ.get("ZVMS_API_WS_ORIGIN", ""),
+        getenv("ZVP5_API_ORIGIN", ""),
+        getenv("ZVP5_API_WS_ORIGIN", ""),
+        getenv("ZVP5_STATIC_ORIGIN", ""),
     )
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)

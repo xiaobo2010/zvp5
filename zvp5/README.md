@@ -6,7 +6,7 @@
 > `docs/ADB_SCHEMA_SPEC.md` 为准。
 >
 > **2026-10-24 参考树收敛**：`zvp-latest/` 与 `zvp5-gitlab/` 已删除；学海 API
-> 原始文件归档在仓库根 `reference/xuehai/`，审核流/FAQ/资源/定向推送设计归档在
+> 原始文件曾归档在仓库根 `reference/xuehai/`（2026-11-14 已移出仓库），审核流/FAQ/资源/定向推送设计归档在
 > `reference/zvp5-gitlab/`。`UserProfile` 与 `ManageRoles` 页面已接入主线。对账
 > 与处置记录见 `docs/REFERENCE_TREES_ALIGNMENT.md`。
 
@@ -20,7 +20,7 @@
 > **改动方向七（2026-10-12 起）：双库断裂面系统性收敛——群组与用户读取全面双库合并（权限组列表与成员、用户搜索去重、roles 合并、班级选择器修复），PWA SW 即时接管修复旧客户端首页 404，见 `STATUS.md` Part 10。**
 > **改动方向八（2026-10-14 起，10-15 修）：设备追踪——`APP_LOGS` 记录请求设备的学海 ID（前端 `Xuehai-Id` 头 → `xuehai_id` 列），`GET /api/logs` 新增 `xuehai_id` 过滤 + `ix_app_logs_xuehai_id` 索引；前端取 ID 支持**双客户端**（学海浏览器 `xhBrowserJava` 桥 + 资料中心 App UA `userId/`，修复此前只读桥导致资料中心一条都采不到）；设计见 `docs/DEVICE_TRACKING_DESIGN.md`。**
 > **改动方向九（2026-10-28 起）：ZVAgent 会话整合 + 安全收敛——内容审核 fail-closed 与立即封号、管理写操作密码再认证、登录/重查询频控、文件根目录 jail、只读场景（终端 / 文件编辑）与 OCR 路径桥；AI 能力统一命名 **ZVAgent**。**
-> 其余前端 UI 与后端业务逻辑仍以上游 zvms4 为基准，不采用 zvp 的代码（zvp 代码经检查存在漏洞与后门，仅提取其数据结构；义工管理与用户管理移植面经扫描确认无外链 / 外呼 / 越权代码，范围外危险代码一律未引入，上游自带的设备采集 / 外呼代码已在用户管理面上清除）。**学海 ID 设备采集为 2026-10-13 起另行设计并落地的独立能力**（仅将请求头写入 `APP_LOGS.XUEHAI_ID`，不恢复 zvp 的设备会话 / 登录绑定 / 外呼面），见 `docs/DEVICE_TRACKING_DESIGN.md`。
+> 其余前端 UI 与后端业务逻辑仍以上游 zvms4 为基准，不采用 zvp 的代码（zvp 代码含设备标识采集、任意 URL 代签与外部跳转等未审计能力，仅提取其数据结构；义工管理与用户管理移植面经扫描确认无外链 / 外呼 / 越权代码，范围外危险代码一律未引入，上游自带的设备采集 / 外呼代码已在用户管理面上清除）。**学海 ID 设备采集为 2026-10-13 起另行设计并落地的独立能力**（仅将请求头写入 `APP_LOGS.XUEHAI_ID`，不恢复 zvp 的设备会话 / 登录绑定 / 外呼面），见 `docs/DEVICE_TRACKING_DESIGN.md`。
 >
 > **文件位置变更（2026-10-12）**：本目录原 `DB_ALIGNMENT.md`（数据库对齐 Ground Truth）已并入**仓库根 `README.md` §三**，本目录不再有该文件。下文出现的 `DB_ALIGNMENT.md` / `DB_ALIGNMENT §N` 一律对应**根 README §三 / §三.N**。
 
@@ -58,7 +58,7 @@ zvp5/
 | 双库读取收敛 + PWA 接管 | **现役 zvp 语义 + 数据真相驱动**（2026-10-12） | 权限组列表与成员、用户搜索去重与 roles 合并、班级选择器全面双库兼容；workbox skipWaiting/clientsClaim 让旧 PWA 客户端一次访问自动升级，见 `STATUS.md` Part 10 |
 | 后端数据库层 | 向**现役 zvp** 对齐 | 改动见 §4 |
 
-**zvp（现役平台）贡献「数据在库里长什么样」**：包名、集合名、字段名 / 类型。除经安全审计放行的义工管理移植面外，它的代码（含后门）一律不引入。
+**zvp（现役平台）贡献「数据在库里长什么样」**：包名、集合名、字段名 / 类型。除经安全审计放行的义工管理移植面外，它的业务代码一律不引入。
 
 ## 3. 现役数据库结构（权威依据）
 
@@ -143,7 +143,7 @@ uvicorn main:app --host 0.0.0.0 --port 8000
 - **后端已通过真实运行时验证（2026-10-11）**：本地 MongoDB 容器 + uvicorn 启动 + 41 项端到端断言全过（登录/弱密码强制改密/用户班级增改/义工活动与成员/TOTP/重置初始密码/日志过滤与 11 类 type/导出任务与 xlsx 下载/越权 403/shield 418 门禁），详见 `STATUS.md` Part 8。修复的运行缺口：requirements 依赖清理与 openpyxl 补齐、settings.example 缺字段（LANGUAGE/CHINESE_FONT）、RSA 1024→2048、SIGTERM 双路关停竞态。
 - **shield 门禁的部署注意**：非浏览器客户端（监控探针等）会被 418 拦截，探活请带浏览器式 UA 或走 TCP 层；被拦请求写 `security_alert` 日志（admin 可在日志页审计）。
 - **退出行为**：MongoDB 不可达时服务退出会阻塞至 serverSelectionTimeout（默认 30s）后才放弃——正常部署（mongo 在线）为瞬时操作。
-- **版本发布规范（2026-10-11 定；2026-10-15 v4.2.2-6 修订；2026-10-26 v4.3.0-6 并入通知）**：每次发版，**前后端版本号同步更新**——版本号唯一事实源为生产库 changelog 最新条目：后端 `/api/version` 与 `/api/` root 响应均从库读（`main.py` 不持有版本串，库不可读时返回中性值）；前端 `/about` 页读 `/api/version`。发版手工项：前端 `package.json` 版本号 + 生产库新增 changelog 条目。CHANGELOG 已并入通知体系：管理员在「管理 → 通知」页的「版本更新」卡片新增/修改条目后，后端自动以 SYSTEM 名义向用户下发版本公告通知（`services/changelog_notifications.py`；历史条目回填后保持停用，仅管理员可见）。原 `/changelog` 页面与入口已移除。当前版本 **v4.3.0-7**。
+- **版本发布规范（2026-10-11 定；2026-10-15 v4.2.2-6 修订；2026-10-26 v4.3.0-6 并入通知）**：每次发版，**前后端版本号同步更新**——版本号唯一事实源为生产库 changelog 最新条目：后端 `/api/version` 与 `/api/` root 响应均从库读（`main.py` 不持有版本串，库不可读时返回中性值）；前端 `/about` 页读 `/api/version`。发版手工项：前端 `package.json` 版本号 + 生产库新增 changelog 条目。CHANGELOG 已并入通知体系：管理员在「管理 → 通知」页的「版本更新」卡片新增/修改条目后，后端自动以 SYSTEM 名义向用户下发版本公告通知（`services/changelog_notifications.py`；历史条目回填后保持停用，仅管理员可见）。原 `/changelog` 页面与入口已移除。当前版本 **v5.0.0**。**2026-11-15 起版本号进入 zvp5 序列**：后端转为 ZVP5 主线，版本基线从 zvms4 的 4.x 切到 5.0.0，此后按 5.x 递增。
 - **用户线上报告 4 个 bug（2026-10-11 存档，已修复部署）**：用户身份栏空白 / 用户详情"班级不存在" / 日志未登录请求显示"无此用户" / 删除义工后应跳转 `/activities`——根因分析与修复方向见 `STATUS.md` Part 9 §38，四 bug 已随 v4.2.0-3 于 2026-10-12 部署上线（§45）。
 - **前端体验批次（2026-10-12，v4.2.1-1）**：changelog/about 免登录可见并新增返回按钮；PWA 版本自动接管强化（SW 轮询 10h→30min + controllerchange 自动 reload）；IndexedDB 本地缓存层（取证确认 zvp-latest 无手写 IDB 代码，系自建——零依赖零网络，网络失败/网关错误时回读缓存兜底）；身份徽标升级为与群组管理页同源的彩色 logo（管理员红色）；生产 404 三类残留定案消除。详见 `STATUS.md` Part 11 §46。
 - **通知 API 暂废弃、待重构（2026-10-13，随 Mongo 退役）**：`/api/users/{oid}/notification`（`routers/users_router.py`）与 `zvms_new.notifications` 集合——前端零调用（仅 UI 库 `ElNotification` 弹窗，非该 API）、集合计数为 0。随 MongoDB 退役一并移除端点与集合；**后续以新设计重构该通知 API**，不复刻旧 Mongo 的形状。记录于 `docs/ADB_MIGRATION.md` §7 与项目记忆。
@@ -169,7 +169,7 @@ uvicorn main:app --host 0.0.0.0 --port 8000
 - **引擎与模型**：run 详情支持 `since_msg_seq` 增量消息；会话模型建时锁定（PATCH → 409 `AI_CONVERSATION_MODEL_LOCKED`）；会话级思考强度 `low/medium/high`；模型上下文窗口支持 `{"id","context"}` 形态并在保存时 best-effort 探测上游 `/models`，`/v1/models` 每项带 `context`（可 null）。
 - **ZVAgent 工具**：新增只读 `ban_history`（封禁流水、按规则历史档位、30 天违规批次、规则 penalties 梯度、绑定设备计数，学海 ID 打码）。
 - **数据库**：V045–V048（`app_logs` 两列、`ai_conversations.thinking` / `scene`、`ai_prompt_audit` 四列、索引与死表 `logs` 下线、保留窗口与 `created_at` 默认值）。细节见 `zvp5-backend-python/docs/database-status.md`。
-- **文件与场景**：系统文件与 agent `fs_*` 共同受根目录 jail（`/www/zvms4`、`/home`，越界 403 `FILES_ROOT_FORBIDDEN`），前端快捷目录同步收敛；`POST /api/ai/ocr/file` 支持按站点路径同步识别预览图片；`POST /api/ai/scenes/{scene}/runs` 提供只读场景（`terminal` / `file_edit`）。
+- **文件与场景**：系统文件与 agent `fs_*` 共同受根目录 jail（仅 `/www/zvms4`；`/home` 分支因生产 `ProtectHome=true` 未生效已删除，越界 403 `FILES_ROOT_FORBIDDEN`），前端快捷目录同步收敛；`POST /api/ai/ocr/file` 支持按站点路径同步识别预览图片；`POST /api/ai/scenes/{scene}/runs` 提供只读场景（`terminal` / `file_edit`）。
 - **前端**：会话运行中逐轮见回复、模型只读展示、思考强度三档、归档会话视图与恢复、平台管理添加班级（`POST /api/v1/groups`）、日志卡片 IP/UA 与事件 label 对齐、文件预览 OCR / 编辑器「AI 分析」/ 终端「智能分析」。
 
 契约细节：`docs/AI_GATEWAY_API.md`、`docs/AI_CONVERSATION_DESIGN.md`、`docs/AI_AGENT_OPS_DESIGN.md`、`docs/FILES_API_DESIGN.md`。

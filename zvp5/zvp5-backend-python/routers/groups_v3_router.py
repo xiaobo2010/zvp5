@@ -4,9 +4,10 @@ from pydantic import BaseModel, Field
 from db import backends
 from db.oracle.session import session_scope
 from typings.log import inject_log
-from util.object_id import get_current_user
+from util.object_id import compulsory_temporary_token, get_current_user
 from util.user import get_user_display_name
 from util.oid import validate_object_id
+from util.validation import validate_group_name
 
 router = APIRouter()
 
@@ -109,6 +110,10 @@ async def create_group_v3(
     if "admin" not in per:
         raise HTTPException(status_code=403, detail="权限不足")
 
+    validated, reason = validate_group_name(payload.name)
+    if not validated:
+        raise HTTPException(status_code=400, detail=reason)
+
     new_id = await backends.get_groups_repo().create(payload.name)
 
     log.with_text(
@@ -131,6 +136,10 @@ async def rename_group_v3(
     if "admin" not in per:
         raise HTTPException(status_code=403, detail="权限不足")
 
+    validated, reason = validate_group_name(payload.name)
+    if not validated:
+        raise HTTPException(status_code=400, detail=reason)
+
     oid = validate_object_id(group_id)
     repo = backends.get_groups_repo()
 
@@ -152,7 +161,7 @@ async def rename_group_v3(
 @router.delete("/{group_id}", status_code=204)
 async def delete_group_v3(
     group_id: str,
-    user=Depends(get_current_user),
+    user=Depends(compulsory_temporary_token),
     log=Depends(inject_log),
 ):
     per = user.get("per") or []
@@ -160,17 +169,12 @@ async def delete_group_v3(
         raise HTTPException(status_code=403, detail="权限不足")
 
     oid = validate_object_id(group_id)
-    repo = backends.get_groups_repo()
-
-    target = await repo.get(str(oid))
-    if target is None:
+    deleted = await backends.get_groups_repo().delete_cascade(str(oid))
+    if deleted is None:
         raise HTTPException(status_code=404, detail="班级不存在")
 
-    await backends.get_users_repo().detach_class(str(oid))
-    await repo.delete(str(oid))
-
     log.with_text(
-        f"管理员 {await get_user_display_name(user['id'])} 删除了班级 {target['name']}",
+        f"管理员 {await get_user_display_name(user['id'])} 删除了班级 {deleted['name']}",
         type="group_delete",
     )
     await log.insert_log()

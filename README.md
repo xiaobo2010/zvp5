@@ -24,14 +24,14 @@
 | 目录 | 角色 | 说明 |
 |---|---|---|
 | `zvp5/` | **开发主线（我们开发的版本）** | 基于 **zvms4 正式版**（上游 `zvms/zvms4-backend-python` + `zvms/zvms4-frontend`）修改。数据库层向现役 zvp 的 MongoDB Atlas 真实结构对齐，并**逐模块从 zvp-latest 迁移功能与数据结构**（义工管理、用户管理 / 登录、日志、鉴权），每个移植面均经安全审计。见 §二。 |
-| `reference/` | **参考归档（只读）** | 原 `zvp-latest` 与 `zvp5-gitlab` 已于 2026-10-24 删除；学海 API 整份留档于 `reference/xuehai/`，独立审核流/FAQ/资源/定向 WebSocket 设计留档于 `reference/zvp5-gitlab/`。**不得参与构建或导入主线。** |
+| `reference/` | **参考归档（只读）** | 原 `zvp-latest` 与 `zvp5-gitlab` 已于 2026-10-24 删除；学海 API 曾留档于 `reference/xuehai/`（**2026-11-14 已移出仓库**，见 `docs/REDACTION_POLICY.md`），独立审核流/FAQ/资源/定向 WebSocket 设计留档于 `reference/zvp5-gitlab/`。**不得参与构建或导入主线。** |
 
 > 两套参考树与主线的逐端点 / 逐页面 / 功能面对账，以及删除结果，见
 > `zvp5/docs/REFERENCE_TREES_ALIGNMENT.md`（2026-10-24）。
 
 ### 安全声明（重要）
 
-- 原 `zvp-latest` 代码**存在后门与漏洞**；原树已删除，仅把学海 API 等拒绝面原样归档在 `reference/xuehai/`。归档**不得运行、不得导入主线**。
+- `zvp-latest` 是第三方平台的旧快照，其中包含设备标识采集、任意 URL 代签与外部跳转等**未经审计**的能力；原树已删除，学海 API 相关文件曾原样归档在 `reference/xuehai/`，**2026-11-14 已移出本仓库**（含第三方签名密钥，不适合公开）。归档**不得运行、不得导入主线**。
 - 已迁移模块的审计结论与拒绝面（设备采集、用户绑定、外链跳转、学海代理、设备会话等）见 §四。
 - 本仓库**不声称任何模块「已审计安全」**；既有审计均为**静态验证**，上线前需在有 Atlas 连接的环境跑一次运行时冒烟。
 
@@ -65,7 +65,7 @@
 > **改动方向五（2026-10-10 起）：登录与身份验证 API 移植（TOTP 动态码按用户派生 / 重置为初始密码 v3 / 登出与改密语义修复），登录/鉴权路径零外呼，见 `STATUS.md` Part 4。**
 > **改动方向六（2026-10-11 起，2026-10-12 主干合并带入）：后端可用状态落地——shield 请求加固中间件按 zvp 语义改写移植（剥离设备会话/学海面），运行缺口修复（依赖缺失 / example 配置字段缺失 / RSA 1024 / 关停竞态），并完成真实运行时端到端验证（41/41 断言），见 `STATUS.md` Part 8。**
 > **改动方向七（2026-10-12 起，2026-10-12 主干合并带入）：双库断裂面系统性收敛——群组与用户读取全面双库合并（权限组列表与成员、用户搜索去重、roles 合并、班级选择器修复），PWA SW 即时接管修复旧客户端首页 404，见 `STATUS.md` Part 10。**
-> 其余前端 UI 与后端业务逻辑仍以上游 zvms4 为基准，不采用 zvp 的代码（zvp 代码经检查存在漏洞与后门，仅提取其数据结构；义工管理与用户管理移植面经扫描确认无外链 / 外呼 / 越权代码，范围外危险代码一律未引入，上游自带的设备采集 / 外呼代码已在用户管理面上清除）。
+> 其余前端 UI 与后端业务逻辑仍以上游 zvms4 为基准，不采用 zvp 的代码（zvp 代码含设备标识采集、任意 URL 代签与外部跳转等未审计能力，仅提取其数据结构；义工管理与用户管理移植面经扫描确认无外链 / 外呼 / 越权代码，范围外危险代码一律未引入，上游自带的设备采集 / 外呼代码已在用户管理面上清除）。
 
 ---
 
@@ -97,7 +97,7 @@ zvp5/（仓库目录名；2026-11 更名后统一口径）
 | 登录与身份验证 | **现役 zvp**（2026-10-10 移植） | TOTP 动态码登录（按用户派生，RFC6238 本地自实现）+ 重置为初始密码 v3 端点 + 登出/改密语义修复；设备绑定 / 会话指纹 / 外呼投递 / recovery 问答拒绝移植，见 `STATUS.md` Part 4 |
 | 后端数据库层 | 向**现役 zvp** 对齐 | 改动见 §4 |
 
-**zvp（现役平台）贡献「数据在库里长什么样」**：包名、集合名、字段名 / 类型。除经安全审计放行的义工管理移植面外，它的代码（含后门）一律不引入。
+**zvp（现役平台）贡献「数据在库里长什么样」**：包名、集合名、字段名 / 类型。除经安全审计放行的义工管理移植面外，它的业务代码一律不引入。
 
 ### 3. 现役数据库结构（权威依据）
 
@@ -338,14 +338,16 @@ uvicorn main:app --host 0.0.0.0 --port 8000
 | `frontend/src/utils/constants.ts:2,4` | 外部图标 URL | 不移植 |
 | `backend/routers/xh_router.py`、`routers/v1/platform.py` | 学海代理 / 平台登录体系 | 不在义工管理范围，未触碰 |
 
-**部署结构（最终口径）**：浏览器、页面、静态资源和主 API 的正式 Origin 统一为
-`https://zvp.xiaobopisces.top`。生产构建使用同源 `VITE_API_BASE=/api`，因此主业务请求
-不产生 CORS preflight；备用 API 域名不是页面 Origin。完成部署后需
-人工把 `zvp.xiaobopisces.top` 的 DNS 解析切到目标 API 主机。
+**部署结构（2026-11-12 起）**：页面壳与同源 `/api` 继续由
+`https://zvp.xiaobopisces.top` 提供；JS、CSS、字体、图片、PWA Manifest 及 Workbox
+预缓存由高带宽静态域 `https://zvpapi.xiaobopisces.top` 提供。浏览器规范要求
+Service Worker 注册文件必须同源，因此只有 `/sw.js` 仍从页面域加载。
 
 ```text
 VITE_API_BASE=/api
-VITE_API_RACE_BASE=https://<backup-api-domain>/api   # 可选竞速/回退
+VITE_API_RACE_BASE=https://zvpapi.xiaobopisces.top/api
+VITE_STATIC_BASE=https://zvpapi.xiaobopisces.top/
+VITE_PAGE_BASE=https://zvp.xiaobopisces.top/
 ZVMS_CORS_ALLOWED_ORIGINS=https://zvp.xiaobopisces.top
 ```
 
@@ -1098,96 +1100,12 @@ XH：`/xh/api`（`api/xh.js`）
 
 ## 八、学海（XueHai / 云作业）API 调用调查报告
 
-> **2026-10-24：原两棵参考树已删除。** 下文 `zvp-latest/...` 路径对应归档
-> `reference/xuehai/zvp-latest/...`；`zvp5-gitlab/...` 仅保留学海登录相关历史结论。
+> **2026-11-15：本节已移出仓库。** 内容含第三方平台的接口域名、签名算法、
+> 设备身份字段与登录校验逻辑，属逆向分析记录；为避免公开仓库传播该材料，
+> 全文已归档到仓库外的本地存档，此处只保留结论。
 >
-> 调查对象：本仓库各代码线对**学海生态 API**的调用。结论一句话：**真正发起学海 API 调用的是原 `zvp-latest`（参考 zvp 线）与原 `zvp5-gitlab`（学海登录体系）；`zvp5`（移植主线）已红线剥离，零调用**。
-
-### 0. 学海生态域名
-
-| 域名 | 角色 | 出现位置 |
-|---|---|---|
-| `admin.yunzuoye.net` | 学海管理后台 API（`/Other/TransferInterface2`） | `zvp-latest/frontend/src/api/xh.js:12` |
-| `ztp.yunzuoye.cloud` | 学海平台 API（`/api/v1/pub/platform/users/{id}/profile`） | `zvp-latest/frontend/src/api/xh.js:31` |
-| `oss.yunzuoye.net` | 学海静态资源（应用图标） | `zvp-latest/frontend/src/utils/constants.ts:2,4` |
-| `cloud-resource.yunzuoye.net` | 学海前端打包资源（`js/app.js`，`@/utils/axios.ts`） | `zvp-latest/backend/routers/xh_router.py:69`（签名算法出处注释） |
-
-### 1. 调用总览
-
-| # | 调用方 | 形态 | 目标 | 签名 | 用途 |
-|---|---|---|---|---|---|
-| 1 | `zvp-latest` 后端 `POST /xh/api` | 通用签名代理（任意 URL） | 由前端传入 | `V1` / `encrytred` / `disabled` | 代前端向学海发起带签名的 HTTP |
-| 2 | `zvp-latest` 前端 `transfer()` | `POST /../xh/api`（经 1） | `https://admin.yunzuoye.net/Other/TransferInterface2` | `disabled`（不签名） | 学海数据接口透传 |
-| 3 | `zvp-latest` 前端 `getXHProfile()` | 经 1+2 | `http://ztp.yunzuoye.cloud/api/v1/pub/platform/users/{userId}/profile` | `disabled` | 取学海用户资料（`username`） |
-| 4 | `zvp5-gitlab` 后端 | 登录请求类型 | 学海平板/数据中心设备 | `xhid` / `xhid_md5` | 以学海设备身份登录 ZVMS |
-
-### 2. 后端签名代理 —— `zvp-latest/backend/routers/xh_router.py`
-
-- **挂载**：`main.py:141` `app.include_router(xh_router.app, prefix="/xh")` → 对外端点 **`POST /xh/api`**（`xh_router.py:128`）。
-- **请求体**（Pydantic 判别联合，`xh_router.py:102-126`）：`method`、`url`（任意）、`headers`、`body`、`token`、`options{sign_version,response_is_json,response_encoding}`。
-- **签名算法 `sign_request`（:51-94）**，三档：
-  - **`V1`**（默认，:63-67）：`sign = md5(method + url + t + KEY + body + "Authorization: " + token)`，其中 `t = 当前毫秒`；结果以 `?sign=<sign>&t=<t>`（已有 `?` 则 `&`）附加到 URL。
-  - **`encrytred`**（:68-92）：`appCode='WEB002001'`、`appKey=md5('XH'+appCode)`、`timestamp=t`；GET 时把原 query 并入待签名对象；`raw = ''.join(f'{k}={obj[k]}&' for k in sorted(obj))`；`sign = md5(md5(raw + body))`；并写入请求头 `timestamp/sign/X-B3-SpanId/X-B3-TraceId/loginSign(空)/token`。
-  - **`disabled`**（:61-62）：原样 URL，不签名。
-- **硬编码密钥**（:46）：`KEY = 'eptim]q34imt5b]-q04i5q=fdkfjfsadlkjfasdfrt573df4pltoy]-pn965498d'`，注释标明 *dumped from `xhcore.so`*。
-- **出站与 TLS**（:96-98, :152-159）：用 `urllib.request.urlopen(req, timeout=10, context=ssl_ctx)`；`ssl_ctx.check_hostname=False`、`verify_mode=CERT_NONE`，即**关闭证书校验**。
-- **签名例外**（:147）：`body` 序列化后 `≥ 1 MiB` 时**不参与签名**（`None`）。
-- **响应**（:168-173）：原样回传 `{actual_url, status, headers, body}`；`response_encoding='raw'` 时以字节返回。
-- **错误映射**（:174-197）：JSON 解析失败 502、DNS 失败 502、超时 504、连接拒绝/重置 502、编码不存在 400、其它 500。
-- **旧实现注释**（:199-201）：`/xhapi.html` 的 `GET /index.html` 已注释掉。
-
-### 3. 前端 —— `zvp-latest/frontend/src/api/xh.js`
-
-- `transfer(options)`（:5-26）：固定 `POST /../xh/api`，代理到 `https://admin.yunzuoye.net/Other/TransferInterface2`，`options.sign_version='disabled'`，把调用参数包进 `body` 的 `header` 字段。
-- `getXHProfile(userId = getXuehaiId())`（:28-43）：经 `transfer` 请求 `http://ztp.yunzuoye.cloud/api/v1/pub/platform/users/{userId}/profile`；失败用 `ElMessage` 报错并抛异常。
-- **唯一消费点**：`stores/user.ts:68` —— `username = verifiedName ?? window.webView?.getUserName?.() ?? (await import('@/api')).xh.getXHProfile(getXuehaiId()).username`；`stores/user.ts:8` 的静态导入已注释。
-
-### 4. 设备桥接与 UA 判定
-
-- `frontend/src/plugins/ua.ts`：
-  - `getXuehaiId(): number` = `window.xhBrowserJava?.getUserId?.() || 0`（:7-9）；
-  - `pad()` = `!!getXuehaiId()`（:11）；
-  - `isXuehaiDCenter(requireFeature)` 依赖 UA 含 `userId/`、`deviceId/` 与 `window.webView.getUserName`（:13）。
-- 后端 UA 门禁放行设备端：`zvp-latest/backend/main.py:82` 允许 UA 含 `com.xh`；:98 识别 `X-Requested-With ∈ {com.xh.browser, com.xh.datacenter}`。
-- 学海设备请求头 `Xuehai-Id` 被采集进日志：`zvp-latest/backend/util/log.py:36`（`optional_int(header(req,'Xuehai-Id'))`）、`util/logify.py:26-30`。
-- 前端常量含学海资源 URL：`utils/constants.ts:2,4`（`oss.yunzuoye.net`）。
-
-### 5. `zvp5-gitlab` 的学海登录体系
-
-- 请求类型（`schemas.py:20-32`）：
-  - `XuehaiBrowserLoginRequest`：`login_type='xhbrowser'`、`device_identifier`、`xhid:int`；
-  - `XuehaiDataCenterLoginRequest`：`login_type='xhdatacenter'`、`device_identifier`、`xhid`、`xhid_md5`、`name`、`class_name`。
-- 校验（`routers/v1/platform.py:72-99`）：`device_identifier` 必须等于 `x_device_id` 且设备已注册（redis 或 `Device` 表）；按 `xhid` 查 `User`；数据中心登录额外校验 `md5(xhid).hexdigest()==xhid_md5` 与 `user.name==name`（否则 `DO_NOT_STEAL_ACCOUNT`）。
-
-### 6. `zvp5`（移植主线）的处置 —— 不调用
-
-移植主线**有意不引入**学海调用面，历史记录见其 `STATUS.md` / `README.md`：
-
-- 未移植：`xh_router.py` 整文件、`frontend/src/api/xh.js`、`routers/v1/platform.py` 学海登录、`util/logify.py`、`util/blocking.py`、`util/logs.py`。
-- 剥离的设备面：`src/plugins/axios.ts` 的 Clarity/Xuehai/Device 三请求头与 `_clck`；`src/plugins/ua.ts` 的 `getXuehaiId()`/`xhBrowserJava` 桥接；`main.py` 的 `zvp_session` 设备会话 cookie；登录日志的三设备字段。
-- 终局审计：后端全树对 `requests|httpx|aiohttp|urlopen|urllib` **零命中**（无任何出站 HTTP 能力点）；前端对 `xuehai|clarity|_clck|deviceId|xhBrowserJava|yunzuoye|window.open|urlopen` 仅剩历史日志展示/文案层残留。
-- 文字/数据残留：`frontend/README.md`、`SECURITY.md`、`TECH_REPORT.md` 提及 XueHai 平板；ADB 线 `db/models.py` 的 `LOGS` 表保留 `XUEHAI_ID NUMBER(18)` 列（仅镜像 `zvms_new.logs` 历史设备 schema，代码零引用）。
-
-### 7. 风险清单（学海调用面）
-
-1. **硬编码签名密钥**：`KEY` 源自逆向 `xhcore.so`，随源码分发即泄露；任何持有者可为学海请求伪造签名。
-2. **TLS 证书校验关闭**：`CERT_NONE` + `check_hostname=False`，中间人可篡改/窃听。
-3. **开放 URL 签名代理（SSRF）**：`/xh/api` 接受任意 `url`，服务端代为发起请求且回传完整响应头，可被用于探测内网/绕过网络边界。
-4. **设备身份与账号绑定**：`xhid`/`device_identifier` 直接映射到 `User`，设备指纹泄露面大。
-5. **明文信道**：`getXHProfile` 使用 `http://ztp.yunzuoye.cloud`。
-6. **≥1MiB body 免签名**：大请求体绕过签名校验。
-
-### 8. 证据索引
-
-- 后端代理与签名：`zvp-latest/backend/routers/xh_router.py:46,51-94,96-98,128-197`
-- 挂载：`zvp-latest/backend/main.py:141`（UA 放行 :82,98）
-- 前端调用：`zvp-latest/frontend/src/api/xh.js:5-43`；消费点 `stores/user.ts:68`
-- 设备桥接：`zvp-latest/frontend/src/plugins/ua.ts:7-13`；常量 `utils/constants.ts:2,4`
-- 日志采集：`zvp-latest/backend/util/log.py:36`、`util/logify.py:26-30`
-- 学海登录：`zvp5-gitlab/schemas.py:20-32`、`routers/v1/platform.py:72-99`
-- 主线剥离记录：`zvp5/STATUS.md`（§红线剥离 / 终局 grep）、`zvms4-adb-migration:zvp5/docs/ADB_SCHEMA_SPEC.md`（LOGS.XUEHAI_ID）
-
----
+> **结论**：真正发起学海 API 调用的是原 `zvp-latest`（参考线）与原
+> `zvp5-gitlab`（学海登录体系）；`zvp5`（移植主线）已红线剥离，**零调用**。
 
 ## 九、ZVAgent 与安全收敛（2026-10-29）
 
@@ -1211,3 +1129,9 @@ AI 能力统一以 **ZVAgent** 对外（代码与文档中的「智能体 / AI �
 - 推送到 `main` 只运行 CI，不部署。发布非预发布 GitHub Release 后，只有全部检查通过且 release commit 属于 `main` 才自动发布前端与后端；DDL 不自动执行，健康检查失败会按相反顺序回滚。首次启用前需按
   `zvp5/deployment/github-actions/README.md` 创建 `production` Environment、配置 Secrets 并在两台服务器安装受限部署账号。
 - Dependabot 每周分组更新 pip、pnpm 与 GitHub Actions；分支保护暂时保持观察模式，不把检查设为 required。
+
+---
+
+## 十一、许可
+
+本仓库采用 **MIT 许可证**（见 `LICENSE`），来源与第三方署名见 `NOTICE`。
