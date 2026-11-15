@@ -386,6 +386,13 @@
 }
 
 
+/* 面板（表格 / 日志 / 长文）比卡片实一档：
+   玻璃是给「看风景的容器」用的，不是给「读字的地方」用的。 */
+.yg2-panel,
+.yg2-xcard {
+  background: var(--yg2-lens-panel-fill);
+}
+
 /* 卡片变体统一收口到同一套材质。
    card.css 里的 --glass / --liquid / --holo / --spotlight 各自写死了 #fff 15% 之类，
    在浅色里勉强能用，到深色就成了「亮蓝玻璃 + 灰字」。这里让它们共用 --yg2-lens-matte-*，

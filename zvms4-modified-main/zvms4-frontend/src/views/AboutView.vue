@@ -26,7 +26,7 @@ header.setHeader(t('nav.about'))
   <div class="yg2-page about-page">
     <GlassBackButton class="about-back" @click="router.back()" />
 
-    <div class="about-card">
+    <div class="about-card yg2-glass-surface">
       <ElResult icon="info" title="镇海中学义工平台" :sub-title="version">
         <template #icon>
             <img :src="`/favicon.png?v=${version}`" alt="logo" style="width: 128px; height: 128px; border-radius: .75rem;"/>
@@ -57,12 +57,10 @@ header.setHeader(t('nav.about'))
 
 
 
+/* 材质来自 .yg2-glass-surface（v2/glass.css），这里只保留尺寸 */
 .about-card {
   padding: 24px;
-  background: var(--yg2-surface);
-  border: 1px solid var(--yg2-line);
   border-radius: var(--yg2-r-26);
-  box-shadow: var(--yg2-shadow-ambient);
 }
 
 .about-card :deep(.el-result__title) {
