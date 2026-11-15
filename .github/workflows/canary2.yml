@@ -1,6 +1,6 @@
 name: Canary2 preview (frontend → Worker)
 
-# canary2 = 独立预览通道，托管 feat/yg-next-api 分支（wzxundesigned 的 yg 新分支）前端。
+# canary2 = 独立预览通道，托管 v5-canary2 分支（wzxundesigned 的 yg 新分支）前端。
 # 与 main 分支的 canary.yml 同构：前端门禁 → 构建 → 发 Worker → 冒烟。
 # 差异点（该分支是旧目录结构 zvms4-modified-main/）：
 #   - 只有 VITE_API_BASE 一个基址变量，没有 RACE/CONTENT/STATIC/PAGE。
@@ -12,7 +12,7 @@ name: Canary2 preview (frontend → Worker)
 on:
   push:
     branches:
-      - feat/yg-next-api
+      - v5-canary2
     paths:
       - "zvms4-modified-main/zvms4-frontend/**"
       - "preview-worker-canary2/**"
@@ -39,7 +39,7 @@ jobs:
       run:
         working-directory: zvms4-modified-main/zvms4-frontend
     # token 在 canary environment 里；该 environment 的分支策略已放行
-    # feat/yg-next-api 与 v5-canary。
+    # v5-canary2 与 v5-canary。
     environment: canary
     env:
       WRANGLER_VERSION: "4.158.0"
@@ -48,7 +48,9 @@ jobs:
       PROBE_UA: Mozilla/5.0 (compatible; ZVP5-Deploy/1.0)
       CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
       # 预览站跨域直连正式 API：CORS 白名单里必须已有 canary2 域。
-      VITE_API_BASE: ${{ vars.CANARY2_API_BASE || 'https://zvp.xiaobopisces.top/api' }}
+      # 走 zvp 站点的 /canary2-api/ 通道：nginx 在那里把旧 API 面的 /api/v2/*、/api/v3/*
+      # 改写成生产后端的新 API 面 /api/v1/*，其余路径原样透传。
+      VITE_API_BASE: ${{ vars.CANARY2_API_BASE || 'https://zvp.xiaobopisces.top/canary2-api/api' }}
     steps:
       - uses: actions/checkout@v7
         with:
