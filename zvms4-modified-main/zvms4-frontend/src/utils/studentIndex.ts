@@ -503,7 +503,7 @@ function describeError(error: unknown): string {
 
 /**
  * 班级 id → 班级名。班级名只用于展示，拿不到就留空，不影响学号/姓名的匹配，
- * 因此这里吞掉异常（普通学生角色无权读 /v2/groups）。
+ * 因此这里吞掉异常（普通学生角色无权读 /v1/groups）。
  */
 async function fetchClassNames(): Promise<Map<string, string>> {
   const names = new Map<string, string>()

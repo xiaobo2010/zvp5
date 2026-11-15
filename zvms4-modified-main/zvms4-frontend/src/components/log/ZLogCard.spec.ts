@@ -39,7 +39,7 @@ vi.mock('@/plugins/dayjs', () => ({
 function logFixture(overrides: Partial<Log> = {}): Log {
   return {
     _id: 'log-1',
-    url: '/api/v3/ban/rules',
+    url: '/api/v1/ban/rules',
     user: '',
     data: '',
     timestamp: 1761024000,

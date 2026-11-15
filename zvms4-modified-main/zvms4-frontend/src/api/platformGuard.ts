@@ -42,7 +42,7 @@ export async function reportSignals(signals: PlatformSignal[]): Promise<boolean>
   }
   try {
     const response = await axios.post<Response<PlatformViolationResult>>(
-      `${baseURL}/v3/ban/violations`,
+      `${baseURL}/v1/ban/violations`,
       { signals },
       { headers, withCredentials: true, timeout: 8000 }
     )
