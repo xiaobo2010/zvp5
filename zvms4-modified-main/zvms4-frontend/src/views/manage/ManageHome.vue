@@ -14,13 +14,14 @@ import ZNotificationAdmin from '@/components/manage/ZNotificationAdmin.vue'
 import ManageRoles from '@/views/manage/ManageRoles.vue'
 import ZRolePolicies from '@/components/manage/ZRolePolicies.vue'
 import ZSystemSettings from '@/components/manage/ZSystemSettings.vue'
+import ZAttachmentAudit from '@/components/manage/ZAttachmentAudit.vue'
 
 interface SegmentedTab {
   label: string
   value: string
 }
 
-const VALID_CURRENT = ['groups', 'users', 'roles', 'role-policies', 'settings', 'ban', 'logs', 'notifications']
+const VALID_CURRENT = ['groups', 'users', 'roles', 'role-policies', 'settings', 'attachments', 'ban', 'logs', 'notifications']
 
 const route = useRoute()
 const router = useRouter()
@@ -83,6 +84,10 @@ if (isAdmin) {
     value: 'settings'
   }
   tabs.value[tabs.value.length] = {
+    label: 'Attachments',
+    value: 'attachments'
+  }
+  tabs.value[tabs.value.length] = {
     label: 'Notifications',
     value: 'notifications'
   }
@@ -141,6 +146,7 @@ watch(
       <ManageRoles v-else-if="current === 'roles'" />
       <ZRolePolicies v-else-if="current === 'role-policies'" />
       <ZSystemSettings v-else-if="current === 'settings'" />
+      <ZAttachmentAudit v-else-if="current === 'attachments'" />
       <ZLogList v-else-if="current === 'logs'" id="" user="" />
       <ZBanRules v-else-if="current === 'ban'" />
       <ZNotificationAdmin v-else-if="current === 'notifications'" />
