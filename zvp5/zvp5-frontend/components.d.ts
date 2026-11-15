@@ -32,6 +32,8 @@ declare module 'vue' {
     ElTable: typeof import('element-plus/es/components/table/index.mjs')['ElTable']
     ElTableColumn: typeof import('element-plus/es/components/table/index.mjs')['ElTableColumn']
     ElTag: typeof import('element-plus/es/components/tag/index.mjs')['ElTag']
+    HomeOverview: typeof import('./src/components/home/HomeOverview.vue')['default']
+    HomeProgressArtwork: typeof import('./src/components/home/HomeProgressArtwork.vue')['default']
     RouterLink: typeof import('vue-router')['RouterLink']
     RouterView: typeof import('vue-router')['RouterView']
     UserHomeWorklist: typeof import('./src/components/user/UserHomeWorklist.vue')['default']

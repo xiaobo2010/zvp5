@@ -13,6 +13,7 @@
     "design:sync": "node scripts/sync-design-css.mjs",
     "predev": "pnpm run design:sync",
     "dev": "vite --port 5173",
+    "dev:home": "node scripts/sync-design-css.mjs && vite --config vite.home-preview.config.ts --port 5173 --strictPort --open /home-preview.html",
     "prebuild": "pnpm run design:sync",
     "build": "run-p type-check \"build-only {@}\" --",
     "preview": "vite preview --port 4173",

@@ -451,12 +451,11 @@ watch([width, height], ([w, h]) => {
   verticalMode.value = w < h * 1.2
 })
 
-// Phi 主题：整个应用（普通用户端 + 后台三个管理区）统一挂 .yg-phi 类
+// 首页作品使用基础设计令牌；其余普通用户端与管理区保留 Phi 主题。
 const isPhiRoute = computed(() => {
   const path = route.path
   return (
-    path === '/user' ||
-    path.startsWith('/user/') ||
+    (path.startsWith('/user/') && path !== '/user/') ||
     path.startsWith('/activities') ||
     path.startsWith('/activity/') ||
     path === '/me' ||

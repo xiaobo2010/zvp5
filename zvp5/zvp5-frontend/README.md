@@ -33,6 +33,10 @@ pnpm build
 `pnpm-workspace.yaml` 默认未安装 Cypress 浏览器二进制；需要运行
 `pnpm exec cypress install` 后再执行 `pnpm test:e2e`。
 
+## 首页图片揭示预览
+
+运行 pnpm dev:home 可打开无需后端的独立预览，支持切换账号、时长和主题。完整说明见 [首页试跑说明](docs/home-pixel-reveal.md)。
+
 ## ZVAgent 相关界面（2026-10-29）
 
 AI 侧统一以 **ZVAgent** 呈现，本轮新增/调整：
