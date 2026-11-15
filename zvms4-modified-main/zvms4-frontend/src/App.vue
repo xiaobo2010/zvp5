@@ -18,7 +18,6 @@ import {
   ElWatermark
 } from 'element-plus'
 import { RouterView } from 'vue-router'
-import Skeleton from '@/ui/ux/Skeleton.vue'
 import { useUserStore } from '@/stores/user'
 import { useTheme } from '@/utils/theme'
 import lensNormal from '@/assets/lens/lens-normal.png'
@@ -464,22 +463,9 @@ watch(offlineReady, () => {
   localStorage.setItem('cached', 'true')
 })
 
-// 启动占位：localStorage 里的 isLogin 立刻为真，但完整用户信息要等
-// refreshUser() 回来。这段时间如果直接挂 RouterView，页面会拿空 user 渲染，
-// 看起来就是"一张白纸 + 侧栏"。用一个短暂的骨架挡住，也顺手避免首页空态闪一下。
-const booting = ref(false)
-
 onMounted(async () => {
   // 维护模式的跳转统一交给 router 全局守卫(见 src/router/maintenanceGuard.ts),
   // 这里只负责登录态刷新;维护页自身不再发起注定 503 的业务请求。
-  const needBoot = userStore.isLogin && route.path !== '/maintenance'
-  if (needBoot) {
-    booting.value = true
-    // 兜底：任何情况下 4s 后都必须放行，别让网络卡住整页
-    window.setTimeout(() => {
-      booting.value = false
-    }, 4000)
-  }
   try {
     if (userStore.isLogin && route.path !== '/maintenance') {
       await userStore.refreshUser().catch(() => {})
@@ -487,8 +473,6 @@ onMounted(async () => {
     }
   } catch {
     // 刷新失败时静默,不阻塞正常启动
-  } finally {
-    booting.value = false
   }
 })
 let disposeAmbient: (() => void) | null = null
@@ -659,36 +643,7 @@ onBeforeUnmount(() => {
               </template>
             </AppTopbar>
             <main class="yg2-app__content">
-              <div v-if="booting" class="yg2-boot" role="status" aria-busy="true">
-                <div class="yg2-boot__head">
-                  <Skeleton width="124px" height="12px" />
-                  <Skeleton width="248px" height="32px" radius="10px" />
-                </div>
-                <div class="yg2-boot__grid">
-                  <div class="yg2-boot__col">
-                    <div class="yg2-boot__card">
-                      <Skeleton width="88px" height="14px" />
-                      <Skeleton width="92%" height="12px" />
-                      <Skeleton width="84%" height="12px" />
-                      <Skeleton width="56%" height="12px" />
-                    </div>
-                    <div class="yg2-boot__card">
-                      <Skeleton width="76px" height="14px" />
-                      <Skeleton width="88%" height="12px" />
-                      <Skeleton width="64%" height="12px" />
-                    </div>
-                  </div>
-                  <div class="yg2-boot__card yg2-boot__card--tall">
-                    <Skeleton width="88px" height="14px" />
-                    <Skeleton width="46%" height="34px" radius="12px" />
-                    <Skeleton width="96%" height="12px" />
-                    <Skeleton width="82%" height="12px" />
-                    <Skeleton width="90%" height="12px" />
-                    <Skeleton width="54%" height="12px" />
-                  </div>
-                </div>
-              </div>
-              <RouterView v-else class="yg-view" />
+              <RouterView class="yg-view" />
             </main>
           </div>
           <nav
@@ -1001,67 +956,6 @@ onBeforeUnmount(() => {
 
 @media (prefers-reduced-motion: reduce) {
   .banned-shield {
-    animation: none;
-  }
-}
-
-/* ── 启动骨架 ───────────────────────────────────────────────
-   形状对齐常见页面：页头两行 + 左侧两张卡 + 右侧一张大卡。
-   材质与 .yg2-card 同档（matte），这样骨架消失时不会有"换了个底"的跳动。 */
-.yg2-boot {
-  display: flex;
-  flex-direction: column;
-  gap: var(--yg2-sp-6);
-  width: 100%;
-  max-width: var(--yg2-content-max);
-  margin: 0 auto;
-  padding: var(--yg2-sp-8) var(--yg2-gutter) var(--yg2-sp-12);
-}
-
-.yg2-boot__head {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.yg2-boot__grid {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr);
-  gap: var(--yg2-sp-5);
-  align-items: start;
-}
-
-.yg2-boot__col {
-  display: flex;
-  flex-direction: column;
-  gap: var(--yg2-sp-5);
-}
-
-.yg2-boot__card {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  padding: var(--yg2-card-p);
-  border-radius: var(--yg2-r-26);
-  background: var(--yg2-lens-matte-fill);
-  box-shadow:
-    inset 0 1px 0 var(--yg2-lens-matte-bloom),
-    inset 0 0 0 1px var(--yg2-lens-matte-sheath),
-    var(--yg2-lens-matte-cast);
-}
-
-@media (max-width: 900px) {
-  .yg2-boot__grid {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .yg2-boot {
-    padding: var(--yg2-sp-6) var(--yg2-sp-4) calc(112px + env(safe-area-inset-bottom));
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .yg2-boot :deep(.yg2-skeleton::after) {
     animation: none;
   }
 }
