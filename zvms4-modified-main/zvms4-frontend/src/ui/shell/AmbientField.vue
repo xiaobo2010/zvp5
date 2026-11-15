@@ -22,6 +22,8 @@ withDefaults(defineProps<{ tone?: string }>(), { tone: 'activities' })
  * 鼠标环境光：rAF + 线性插值写到 CSS 变量，避免事件里直接改样式触发重排。
  * 触屏设备或 reduced-motion 时完全不启动。
  */
+let mouseOwnsLight = false
+
 export function installAmbientCursor() {
   if (window.matchMedia('(pointer: coarse)').matches) return () => {}
   if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return () => {}
@@ -33,6 +35,8 @@ export function installAmbientCursor() {
   let running = true
 
   const onMove = (event: PointerEvent) => {
+    // 有鼠标在动就由鼠标接管，重力感应让位（混合设备：平板接键盘/触控板）
+    mouseOwnsLight = true
     targetX = event.clientX
     targetY = event.clientY
   }
@@ -74,7 +78,6 @@ export function installAmbientCursor() {
  * iOS 13+ 需要用户手势里申请权限，所以第一下点按才真正启动。
  */
 export function installAmbientTilt() {
-  if (!window.matchMedia('(pointer: coarse)').matches) return () => {}
   if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return () => {}
   if (typeof window.DeviceOrientationEvent === 'undefined') return () => {}
 
@@ -109,6 +112,11 @@ export function installAmbientTilt() {
 
   const tick = () => {
     if (!running) return
+    if (mouseOwnsLight) {
+      // 鼠标接管后不再写变量，但它松手前我们也不算「在跑」
+      raf = requestAnimationFrame(tick)
+      return
+    }
     // 3 秒没有新读数就慢慢回正，避免用户把手机放平后光斑卡在角落
     if (Date.now() - lastOrientation > 3000) {
       targetX += (50 - targetX) * 0.02
