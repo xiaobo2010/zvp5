@@ -644,3 +644,24 @@
   height: 20px;
 }
 
+
+/* ── Liquid Glass 顶栏：canvas 铺满顶栏，内容压在它上面 ───────────────── */
+.yg2-topbar__glass {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+}
+.yg2-topbar > *:not(.yg2-topbar__glass) {
+  position: relative;
+  z-index: 1;
+}
+.yg2-topbar:has(.yg2-glass:not(.is-fallback)) {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  background: transparent;
+}
+.yg2-topbar:has(.yg2-glass:not(.is-fallback)) .yg2-lens-clip,
+.yg2-topbar:has(.yg2-glass:not(.is-fallback))::before {
+  opacity: 0;
+}
