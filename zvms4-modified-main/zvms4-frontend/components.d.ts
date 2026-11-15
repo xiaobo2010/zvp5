@@ -115,6 +115,7 @@ declare module 'vue' {
     ZUserModification: typeof import('./src/components/group/ZUserModification.vue')['default']
     ZUserPosition: typeof import('./src/components/tags/ZUserPosition.vue')['default']
     'ZUserPosition 2': typeof import('./src/components/tags/ZUserPosition 2.vue')['default']
+    ZUserQuota: typeof import('./src/components/manage/ZUserQuota.vue')['default']
     ZUserTimeBars: typeof import('./src/components/activity/ZUserTimeBars.vue')['default']
     ZUserTimeJudge: typeof import('./src/components/activity/ZUserTimeJudge.vue')['default']
     ZUserTimeRings: typeof import('./src/components/activity/ZUserTimeRings.vue')['default']

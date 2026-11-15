@@ -153,6 +153,7 @@ export const zhCN = {
     'role-policies': '角色策略',
     settings: '系统设置',
     attachments: '附件审核',
+    'user-quota': '用户配额',
       import: '导入',
       notifications: '通知',
       ban: '封禁',
