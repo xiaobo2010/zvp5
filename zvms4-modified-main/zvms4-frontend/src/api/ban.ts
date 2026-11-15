@@ -70,7 +70,7 @@ export interface BanRecord {
 }
 
 export async function getRules() {
-  const result = (await axios('/v3/ban/rules')).data as Response<BanRule[]>
+  const result = (await axios('/v1/ban/rules')).data as Response<BanRule[]>
   if (result.status === 'error') {
     throw result
   }
@@ -78,7 +78,7 @@ export async function getRules() {
 }
 
 export async function getTriggers() {
-  const result = (await axios('/v3/ban/triggers')).data as Response<BanTrigger[]>
+  const result = (await axios('/v1/ban/triggers')).data as Response<BanTrigger[]>
   if (result.status === 'error') {
     throw result
   }
@@ -89,7 +89,7 @@ export async function createRule(payload: BanRuleCreate) {
   const result = (
     await axios({
       method: 'post',
-      url: '/v3/ban/rules',
+      url: '/v1/ban/rules',
       data: payload
     })
   ).data as Response<BanRule>
@@ -103,7 +103,7 @@ export async function deleteRule(code: string) {
   const result = (
     await axios({
       method: 'delete',
-      url: `/v3/ban/rules/${code}`
+      url: `/v1/ban/rules/${code}`
     })
   ).data as Response<null>
   if (result.status === 'error') {
@@ -114,7 +114,7 @@ export async function deleteRule(code: string) {
 
 export async function getViolations(page: number = 1, perpage: number = 20, query: string = '') {
   const result = (
-    await axios('/v3/ban/violations', {
+    await axios('/v1/ban/violations', {
       params: {
         page,
         perpage,
@@ -141,7 +141,7 @@ export async function updateRule(code: string, payload: BanRuleUpdate) {
   const result = (
     await axios({
       method: 'put',
-      url: `/v3/ban/rules/${code}`,
+      url: `/v1/ban/rules/${code}`,
       data: payload
     })
   ).data as Response<BanRule>
@@ -153,7 +153,7 @@ export async function updateRule(code: string, payload: BanRuleUpdate) {
 
 export async function getRecords(page: number = 1, perpage: number = 20, query: string = '') {
   const result = (
-    await axios('/v3/ban/records', {
+    await axios('/v1/ban/records', {
       params: {
         page,
         perpage,
@@ -190,7 +190,7 @@ export interface BannedUser {
 
 export async function getBannedUsers(page: number = 1, perpage: number = 20, query: string = '') {
   const result = (
-    await axios('/v3/ban/users', {
+    await axios('/v1/ban/users', {
       params: {
         page,
         perpage,

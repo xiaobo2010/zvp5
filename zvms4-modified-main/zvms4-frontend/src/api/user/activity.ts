@@ -12,7 +12,7 @@ async function getUserActivities(
   ascending: boolean = false
 ) {
   return (
-    await axios(`/v2/users/${id}/activities`, {
+    await axios(`/v1/users/${id}/activities`, {
       method: 'get',
       params: {
         page,

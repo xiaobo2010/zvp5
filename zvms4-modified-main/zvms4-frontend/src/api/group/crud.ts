@@ -71,7 +71,7 @@ export async function deleteGroup(uid: string, gid: string) {
   const token = await temporaryToken(uid)
   const response = await axios({
     method: 'delete',
-    url: `/v3/groups/${gid}`,
+    url: `/v1/groups/${gid}`,
     headers: {
       Authorization: `Bearer ${token}`
     }
@@ -91,7 +91,7 @@ export async function getGroupsV2(
     ? Math.min(100, Math.max(1, Math.trunc(size)))
     : 10
   const response = (
-    await axios('/v2/groups', {
+    await axios('/v1/groups', {
       params: { page: safePage, size: safeSize, query }
     })
   ).data as { data: Group[]; total: number }
@@ -105,7 +105,7 @@ export async function createGroupV3(name: string) {
   const response = (
     await axios({
       method: 'post',
-      url: '/v3/groups',
+      url: '/v1/groups',
       data: { name }
     })
   ).data as { id: string }
@@ -123,7 +123,7 @@ export async function createGroupV3(name: string) {
 export async function renameGroupV3(gid: string, name: string) {
   const response = await axios({
     method: 'put',
-    url: `/v3/groups/${gid}/name`,
+    url: `/v1/groups/${gid}/name`,
     data: { name }
   })
   return response?.status === 204
@@ -132,7 +132,7 @@ export async function renameGroupV3(gid: string, name: string) {
 export async function addGroupUserV3(gid: string, uid: string) {
   const response = await axios({
     method: 'post',
-    url: `/v3/groups/${gid}/users/${uid}`
+    url: `/v1/groups/${gid}/users/${uid}`
   })
   return response?.status === 204
 }
@@ -140,7 +140,7 @@ export async function addGroupUserV3(gid: string, uid: string) {
 export async function removeGroupUserV3(gid: string, uid: string) {
   const response = await axios({
     method: 'delete',
-    url: `/v3/groups/${gid}/users/${uid}`
+    url: `/v1/groups/${gid}/users/${uid}`
   })
   return response?.status === 204
 }

@@ -9,7 +9,7 @@ export async function modify(
   mode: ActivityMember['mode']
 ) {
   await axios({
-    url: `/v2/activities/${aid}/members/${user.toString()}/record`,
+    url: `/v1/activities/${aid}/members/${user.toString()}/record`,
     method: 'put',
     data: { duration, mode }
   })

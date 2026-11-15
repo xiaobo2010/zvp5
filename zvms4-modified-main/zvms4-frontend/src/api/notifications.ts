@@ -59,7 +59,7 @@ function unwrap<T>(payload: Response<T>): T {
 export async function listActive(signal?: AbortSignal): Promise<NotificationListData> {
   const response = await axios({
     method: 'get',
-    url: '/v3/notifications',
+    url: '/v1/notifications',
     signal
   })
   return unwrap(response.data as Response<NotificationListData>)
@@ -69,7 +69,7 @@ export async function listActive(signal?: AbortSignal): Promise<NotificationList
 export async function listAll(): Promise<NotificationListData> {
   const response = await axios({
     method: 'get',
-    url: '/v3/notifications/admin'
+    url: '/v1/notifications/admin'
   })
   return unwrap(response.data as Response<NotificationListData>)
 }
@@ -80,7 +80,7 @@ export async function createNotification(
 ): Promise<NotificationMutationData> {
   const response = await axios({
     method: 'post',
-    url: '/v3/notifications',
+    url: '/v1/notifications',
     data: input
   })
   return unwrap(response.data as Response<NotificationMutationData>)
@@ -93,7 +93,7 @@ export async function updateNotification(
 ): Promise<NotificationMutationData> {
   const response = await axios({
     method: 'put',
-    url: `/v3/notifications/${id}`,
+    url: `/v1/notifications/${id}`,
     data: input
   })
   return unwrap(response.data as Response<NotificationMutationData>)
@@ -103,7 +103,7 @@ export async function updateNotification(
 export async function deleteNotification(id: string): Promise<void> {
   await axios({
     method: 'delete',
-    url: `/v3/notifications/${id}`
+    url: `/v1/notifications/${id}`
   })
 }
 
@@ -149,7 +149,7 @@ export function httpStatusOf(error: unknown): number | null {
 export async function listVersions(id: string): Promise<NotificationVersionsData> {
   const response = await axios({
     method: 'get',
-    url: `/v3/notifications/${id}/versions`
+    url: `/v1/notifications/${id}/versions`
   })
   return unwrap(response.data as Response<NotificationVersionsData>)
 }
@@ -161,7 +161,7 @@ export async function rollbackNotification(
 ): Promise<NotificationRollbackData> {
   const response = await axios({
     method: 'post',
-    url: `/v3/notifications/${id}/rollback`,
+    url: `/v1/notifications/${id}/rollback`,
     data: { version }
   })
   return unwrap(response.data as Response<NotificationRollbackData>)

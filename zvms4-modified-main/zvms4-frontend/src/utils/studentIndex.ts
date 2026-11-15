@@ -511,7 +511,7 @@ async function fetchClassNames(): Promise<Map<string, string>> {
     for (let page = 1; page <= MAX_GROUP_PAGES; page += 1) {
       const response = await axios({
         method: 'get',
-        url: '/v2/groups',
+        url: '/v1/groups',
         params: { page, size: GROUP_PAGE_SIZE }
       })
       const payload = response?.data
@@ -566,7 +566,7 @@ async function fetchStudents(
   for (let page = 1; page <= MAX_USER_PAGES; page += 1) {
     const response = await axios({
       method: 'get',
-      url: '/v2/users',
+      url: '/v1/users',
       params: { page, size: USER_PAGE_SIZE, query: '' },
       timeout: 30000
     })

@@ -11,7 +11,7 @@ async function getClassActivities(
   asc: boolean = false
 ) {
   return (
-    await axios(`/v2/groups/${classid}/activities`, {
+    await axios(`/v1/groups/${classid}/activities`, {
       params: {
         page,
         perpage,
@@ -37,14 +37,15 @@ async function getAllActivities(
   sortField: string = '_id',
   ascending: boolean = false
 ) {
+  // v5 起 /api/v1/activities 的列表由 v3 实现接管（旧 v2 列表装饰器已摘除），
+  // 分页与筛选参数名相应改为 size/query/type。
   return (
-    await axios('/v2/activities', {
+    await axios('/v1/activities', {
       params: {
-        mode: 'campus',
-        activity_type: filter.type,
+        type: filter.type === 'all' ? '' : filter.type,
         page,
-        perpage,
-        search,
+        size: perpage,
+        query: search,
         sort: sortField,
         asc: ascending
       }
@@ -57,7 +58,7 @@ async function getAllActivities(
 
 async function getActivity(id: string) {
   // id: ObjectId
-  return (await axios(`/v2/activities/${id}`)).data as {
+  return (await axios(`/v1/activities/${id}`)).data as {
     activity: Activity
     members_count: number
   }
@@ -71,7 +72,7 @@ async function getAllActivitiesV3(
   status: string = ''
 ) {
   return (
-    await axios('/v3/activities', {
+    await axios('/v1/activities', {
       method: 'GET',
       params: {
         page,
