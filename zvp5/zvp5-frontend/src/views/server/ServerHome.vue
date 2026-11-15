@@ -163,7 +163,7 @@ function prefetchTab(value: string): void {
     <!-- 蜂窝底纹：与封禁页同一套仪器感底纹，管理台用主题强调色，压在内容之下 -->
     <ZHexGrid
       :size="64"
-      color="var(--yg-text-primary)"
+      color="var(--phi-breathe, #1de9b6)"
       :opacity="0.07"
       drift
       sweep

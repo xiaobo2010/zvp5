@@ -75,15 +75,25 @@ const railSide = computed(() => (seed.value % 2 === 0 ? 'left' : 'right'))
         </pattern>
       </defs>
 
-      <!-- 硬阴影是一块实心错位，不用模糊投影。 -->
-      <polygon class="z-pilot-plate__offset" points="9,6 65,6 73,14 73,74 17,74 9,66" />
-      <polygon class="z-pilot-plate__plate" points="5,2 58,2 70,14 70,70 14,70 2,58" />
-      <polygon class="z-pilot-plate__scan" points="5,2 58,2 70,14 70,70 14,70 2,58" :fill="`url(#${uid}-scan)`" />
+      <!-- 导航上的 xs 是纯正圆盘：阴影交给 CSS drop-shadow，hover 时整体抬升。 -->
+      <g v-if="size === 'xs'">
+        <circle class="z-pilot-plate__plate" cx="36" cy="36" r="31" />
+        <circle class="z-pilot-plate__scan" cx="36" cy="36" r="31" :fill="`url(#${uid}-scan)`" />
+        <path class="z-pilot-plate__round-tick" d="M60.2 50.5A28 28 0 0 1 50.5 60.2" />
+      </g>
+      <g v-else>
+        <!-- 硬阴影是一块实心错位，不用模糊投影。 -->
+        <polygon class="z-pilot-plate__offset" points="9,6 65,6 73,14 73,74 17,74 9,66" />
+        <polygon class="z-pilot-plate__plate" points="5,2 58,2 70,14 70,70 14,70 2,58" />
+        <polygon
+          class="z-pilot-plate__scan"
+          points="5,2 58,2 70,14 70,70 14,70 2,58"
+          :fill="`url(#${uid}-scan)`"
+        />
 
-      <polyline class="z-pilot-plate__inset" points="12,8 52,8 64,20 64,62 52,64 20,64 8,52 8,12" />
-      <path class="z-pilot-plate__tick" d="M62 56h7v2.4H64.6V66" />
+        <polyline class="z-pilot-plate__inset" points="12,8 52,8 64,20 64,62 52,64 20,64 8,52 8,12" />
+        <path class="z-pilot-plate__tick" d="M62 56h7v2.4H64.6V66" />
 
-      <g v-if="size !== 'xs'">
         <path v-if="railSide === 'left'" class="z-pilot-plate__rail" d="M12 22h7M12 27h4" />
         <path v-else class="z-pilot-plate__rail" d="M60 48h-7M60 43h-4" />
         <g class="z-pilot-plate__bars">
@@ -128,6 +138,14 @@ const railSide = computed(() => (seed.value % 2 === 0 ? 'left' : 'right'))
 .z-pilot-plate--xs {
   width: 30px;
   height: 30px;
+  border-radius: 50%;
+  transition: transform 170ms ease;
+}
+
+.z-pilot-plate--xs .z-pilot-plate__mark {
+  /* 阴影只跟圆盘走，别把首字也拓一层硬影。 */
+  filter: drop-shadow(2px 2px 0 var(--plate-shadow));
+  transition: filter 170ms ease;
 }
 
 .z-pilot-plate--lg {
@@ -194,6 +212,14 @@ const railSide = computed(() => (seed.value % 2 === 0 ? 'left' : 'right'))
 
 .z-pilot-plate--xs .z-pilot-plate__tick {
   stroke-width: 2.8;
+}
+
+/* xs 圆盘右下的品红短弧，替代切角铭牌的外角刻度。 */
+.z-pilot-plate__round-tick {
+  fill: none;
+  stroke: var(--plate-pink);
+  stroke-width: 2.8;
+  stroke-linecap: butt;
 }
 
 .z-pilot-plate__bars rect {
@@ -298,5 +324,20 @@ html[data-theme='light'] .z-pilot-plate {
 :global(html[data-theme='light'] .yg-glass-nav__account:focus-visible .z-pilot-plate) {
   --plate-face: var(--yg-color-primary, #007a70);
   --plate-ink: #ffffff;
+  /* 浅色主题的基础规则带 html[data-theme] 前缀，阴影也要在这里抬回深色。 */
+  --plate-shadow: #050608;
+}
+
+/* 圆盘单独做抬升：阴影跟着位移方向拉长，切角铭牌保持原来的平面感。 */
+:global(.yg-glass-nav__account:hover .z-pilot-plate--xs),
+:global(.yg-glass-nav__account:focus-visible .z-pilot-plate--xs) {
+  /* 暗色主题里 #050608 会和页面底一样，圆盘 hover 就丢了投影；用主色压暗保持可见。 */
+  --plate-shadow: color-mix(in srgb, var(--yg-color-primary, #0b9f93) 42%, #050608);
+  transform: translate(-1px, -1px);
+}
+
+:global(.yg-glass-nav__account:hover .z-pilot-plate--xs .z-pilot-plate__mark),
+:global(.yg-glass-nav__account:focus-visible .z-pilot-plate--xs .z-pilot-plate__mark) {
+  filter: drop-shadow(3px 3px 0 var(--plate-shadow));
 }
 </style>

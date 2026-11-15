@@ -634,7 +634,7 @@ onUnmounted(() => {
               <div v-if="showPageHex" class="yg-page-hex" aria-hidden="true">
                 <ZHexGrid
                   :size="64"
-                  color="var(--yg-text-primary)"
+                  color="var(--phi-breathe, #1de9b6)"
                   :opacity="0.07"
                   drift
                   sweep

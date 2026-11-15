@@ -71,6 +71,9 @@
   --yg-focus-ring-color: #49f4e2;
 
   --phi-cyan: #49f4e2;
+  --phi-breathe: #1de9b6;
+  --phi-breathe-strong: rgba(29, 233, 182, 0.09);
+  --phi-breathe-soft: rgba(29, 233, 182, 0.065);
   --phi-pink: #ff4e9b;
   --phi-display: Bebas, 'Impact', sans-serif;
   --phi-hud: Rajdhani, 'Arial Narrow', sans-serif;
@@ -91,8 +94,8 @@
   transform: rotateX(67deg);
   transform-origin: 50% 0;
   background-image:
-    linear-gradient(rgba(73, 244, 226, 0.09) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(73, 244, 226, 0.065) 1px, transparent 1px);
+    linear-gradient(var(--phi-breathe-strong) 1px, transparent 1px),
+    linear-gradient(90deg, var(--phi-breathe-soft) 1px, transparent 1px);
   background-size: 54px 42px;
   /* 两层 mask：第一层保留上下边缘渐隐，第二层是一条缓慢下移的亮带。
      亮带收窄并提高对比，两层 intersect 后网格先变强、离开后回落。 */
@@ -1033,6 +1036,9 @@ html[data-theme='light'] .yg-phi {
   --phi-accent-ink: #007a70;
   --phi-accent-soft: rgba(11, 159, 147, 0.13);
   --phi-accent-glow: rgba(11, 159, 147, 0.34);
+  --phi-breathe: #008b73;
+  --phi-breathe-strong: rgba(0, 139, 115, 0.06);
+  --phi-breathe-soft: rgba(0, 139, 115, 0.045);
   --phi-line: rgba(5, 6, 8, 0.16);
   --phi-line-strong: rgba(5, 6, 8, 0.24);
   --phi-sunken: #f7f9fa;
@@ -1086,8 +1092,8 @@ html[data-theme='light'] .yg-phi {
 
 html[data-theme='light'] .yg-phi::before {
   background-image:
-    linear-gradient(rgba(5, 6, 8, 0.055) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(11, 159, 147, 0.055) 1px, transparent 1px);
+    linear-gradient(var(--phi-breathe-strong) 1px, transparent 1px),
+    linear-gradient(90deg, var(--phi-breathe-soft) 1px, transparent 1px);
 }
 
 html[data-theme='light'] .yg-phi::after {
