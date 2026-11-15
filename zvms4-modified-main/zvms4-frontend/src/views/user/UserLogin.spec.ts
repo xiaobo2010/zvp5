@@ -123,7 +123,9 @@ async function submitLogin() {
   const inputs = wrapper.findAll('input')
   await inputs[0].setValue('20240001')
   await inputs[1].setValue('Pa55word!')
-  await wrapper.find('button').trigger('click')
+  // 登录按钮是 form 里的 submit 按钮，jsdom 不会模拟「点按钮 ⇒ 表单提交」的隐式行为，
+  // 这里直接派发 submit 事件，等价于用户按回车或点按钮。
+  await wrapper.find('form').trigger('submit')
   await flushPromises()
   return wrapper
 }

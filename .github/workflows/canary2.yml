@@ -68,19 +68,12 @@ jobs:
       - name: Unit tests
         # 单测必须在"无预览基址"的环境里跑：axios 断言文件类请求由 origin 推导，
         # job 级 VITE_API_BASE 会把它污染成 zvp 域。
-        # 门禁只告警：该分支有存量失败（10 个用例，多为 jsdom 缺 matchMedia），
-        # 硬失败会让预览永远发不出去。存量清干净后改回硬门禁。
-        continue-on-error: true
         env:
           VITE_API_BASE: https://ci.invalid/api
         run: pnpm exec vitest run --reporter=dot
       - name: Lint
-        # 同样只告警：分支存量 22 个 eslint error（组件名多词规则等）。
-        continue-on-error: true
         run: pnpm run lint
       - name: Type check
-        # 同样只告警：分支存量 3 个 TS 错误（缺 ./merge 模块、TableInstance 类型）。
-        continue-on-error: true
         run: pnpm exec vue-tsc --noEmit -p tsconfig.vitest.json --composite false
       - name: Build preview bundle
         shell: bash

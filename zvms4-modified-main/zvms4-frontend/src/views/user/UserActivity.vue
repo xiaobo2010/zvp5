@@ -51,6 +51,9 @@ const segmentItems = computed(() =>
   }))
 )
 
+/** 列表只接受这三种视角；模板里不做联合类型断言，避免 `|` 被当成旧式 filter 语法。 */
+const activityRole = computed(() => tab.value as 'campus' | 'class' | 'mine')
+
 function moveTo(type: string) {
   tab.value = type
   router.replace(`/activities/${type}`)
@@ -76,6 +79,6 @@ function moveTo(type: string) {
       </div>
     </header>
 
-    <ZActivityList embed :role="tab as 'campus' | 'class' | 'mine'" :key="tab" />
+    <ZActivityList embed :role="activityRole" :key="tab" />
   </div>
 </template>

@@ -56,6 +56,11 @@ const { id, selectable, modelValue, selectorCallback } = toRefs(props)
 
 const tableRef = ref<TableInstance>()
 
+// 同 ZGroupList：模板里 ref 会被解包，必须用函数 ref 写回。
+function setTableRef(el: unknown) {
+  tableRef.value = (el as TableInstance | null) ?? undefined
+}
+
 /** 分页行 + 卡片下边距 + 页面底部留白 */
 const BOTTOM_ROOM = 96
 
@@ -180,7 +185,7 @@ function handleSelectionChange(val: string[]) {
         <ElSwitch v-model="pwdm" />
       </ElFormItem>
       <ElTable
-        :ref="tableRef"
+        :ref="setTableRef"
         :data="users"
         stripe
         row-key="_id"

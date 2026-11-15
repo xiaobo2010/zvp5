@@ -1,3 +1,5 @@
+<!-- eslint-disable vue/multi-word-component-names -->
+<!-- Skeleton 是 src/ui/ux 设计基础件（骨架屏）的对外名字，单词名就是它的 API。 -->
 <script setup lang="ts">
 /** 骨架屏占位块：内容未到时先铺灰色块，配合扫光动画。 */
 withDefaults(

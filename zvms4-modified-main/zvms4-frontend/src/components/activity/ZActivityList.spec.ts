@@ -97,10 +97,10 @@ describe('ZActivityList', () => {
     const wrapper = mountList()
     await flushPromises()
 
-    const rows = wrapper.findAll('.el-table__row')
+    const rows = wrapper.findAll('.yg2-ticket')
     expect(rows).toHaveLength(2)
-    expect(rows[0].find('.mine-status').text()).toContain('审核中')
-    expect(rows[1].find('.mine-status').text()).toContain('有效')
+    expect(rows[0].find('.yg2-ticket__meta').text()).toContain('审核中')
+    expect(rows[1].find('.yg2-ticket__meta').text()).toContain('有效')
 
     await unmount(wrapper)
   })
@@ -111,7 +111,7 @@ describe('ZActivityList', () => {
     const wrapper = mountList()
     await flushPromises()
 
-    const status = wrapper.find('.mine-status')
+    const status = wrapper.find('.yg2-ticket__meta')
     expect(status.text()).toContain('审核中')
     expect(status.text()).not.toContain('有效')
 

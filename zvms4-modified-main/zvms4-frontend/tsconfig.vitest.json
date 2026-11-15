@@ -1,6 +1,6 @@
 {
   "extends": "./tsconfig.app.json",
-  "exclude": [],
+  "exclude": ["src/**/* 2.ts", "src/**/* 2.vue"],
   "compilerOptions": {
     "composite": true,
     "lib": [],

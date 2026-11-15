@@ -1,3 +1,5 @@
+<!-- eslint-disable vue/multi-word-component-names -->
+<!-- Segmented 是 src/ui/ux 设计基础件（分段控件）的对外名字，单词名就是它的 API。 -->
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
