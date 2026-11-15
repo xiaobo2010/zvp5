@@ -126,3 +126,20 @@ DNS `record_id` 在 3 个提交里，同批处理。
 | 许可 | 新增 `NOTICE`：MIT 覆盖范围、上游 `zvms/zvms4-*` 署名、不再分发内容的说明；README 补「十一、许可」 |
 | `.gitignore` | 根补 `.env*` / `*.pem` / `*.key` / `*.p12` / `aes_key.txt` / `credentials/`；前端补 `.env` 规则（此前完全没有） |
 | 用户裁定不处理 | `reference/xuehai/` 在历史中的第三方签名材料按决定保留；公有域名（`*.xiaobopisces.top`、`albwxy.fun`）不清，CI 里仍是功能默认值 |
+
+## 七、正式转 public 与闸门（2026-11-15 已执行）
+
+| 项 | 结果 |
+| --- | --- |
+| 可见性 | `private` → `public` |
+| ruleset `main` | deletion / non_fast_forward / required_linear_history / require PR + 1 approval / 5 项 required checks；bypass 只给 `xiaobo2010`（always） |
+| ruleset `v5-canary` | deletion / non_fast_forward（保留直推，canary 预览部署需要） |
+| `production` environment | branch policy `main` + required reviewers = `xiaobo2010` |
+| `canary` environment | branch policy `v5-canary` |
+| 密钥扫描 | secret scanning 与 push protection 开启；Dependabot security updates 与 vulnerability alerts 开启 |
+| 协作者 | `Chenjunyu2010` 降权：个人仓库不支持 triage 角色（API 静默 no-op 且不报错），改为移出协作者——公开库下等同只读；其余 3 个 write 保留 |
+| 历史 Actions 运行 | 重写前（2026-11-15T03:30Z 之前）的 run 全部删除，避免旧部署日志随公开可见 |
+| 新增 `Docs guard` | 改 `*.md` / `*.txt` 时跑一条几十秒的任务，拦截写回内网地址 / OCI 区域 / 权威 NS / 后端公网 IP；**不进 required**（只在文档改动时触发，设成 required 会让代码 PR 永远 pending） |
+
+> 注：`ci.yml` 的 `paths-ignore` 只挂在 `push` 触发器上；`pull_request` 没有路径过滤，
+> 因此文档 PR 照样跑完整五项 required checks，不存在「文档 PR 卡在 pending」的问题。
