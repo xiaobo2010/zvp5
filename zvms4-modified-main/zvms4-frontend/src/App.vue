@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { installAmbientCursor } from '@/ui/shell/AmbientField.vue'
 import {
   ArrowDown,
   User,
@@ -29,7 +30,7 @@ import AppTopbar from '@/ui/shell/AppTopbar.vue'
 import { useHeaderStore } from './stores/header'
 import { useWindowSize, useOnline } from '@vueuse/core'
 import { useI18n } from 'vue-i18n'
-import { computed, watch, ref, onMounted, onUnmounted, h, reactive } from 'vue'
+import { computed, watch, ref, onMounted, onUnmounted, onBeforeUnmount, h, reactive } from 'vue'
 import type { WatermarkFontType } from 'element-plus'
 import { zhCn } from 'element-plus/es/locale/index.mjs'
 import ZNotificationReminder from '@/components/notification/ZNotificationReminder.vue'
@@ -473,6 +474,13 @@ onMounted(async () => {
   } catch {
     // 刷新失败时静默,不阻塞正常启动
   }
+})
+let disposeAmbient: (() => void) | null = null
+onMounted(() => {
+  disposeAmbient = installAmbientCursor()
+})
+onBeforeUnmount(() => {
+  disposeAmbient?.()
 })
 </script>
 

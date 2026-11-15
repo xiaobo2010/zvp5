@@ -527,3 +527,56 @@ body,
     transition: none;
   }
 }
+
+/* ── Living Interface：环境光场升级为动态光源 ─────────────────────────── */
+.yg2-ambient {
+  background:
+    radial-gradient(46% 42% at var(--yg2-mx, 22%) var(--yg2-my, 18%), var(--yg2-ambient-1), transparent 72%),
+    radial-gradient(40% 38% at calc(100% - var(--yg2-mx, 22%)) 24%, var(--yg2-ambient-2), transparent 74%),
+    radial-gradient(50% 46% at 58% calc(100% - var(--yg2-my, 18%)), var(--yg2-ambient-3), transparent 72%);
+  transition: background 1200ms linear;
+  will-change: background;
+}
+/* 三团光斑各自不同速度，避免同频 */
+.yg2-ambient .yg2-ambient__blob:nth-child(1) { animation-duration: 34s; }
+.yg2-ambient .yg2-ambient__blob:nth-child(2) { animation-duration: 46s; }
+.yg2-ambient .yg2-ambient__blob:nth-child(3) { animation-duration: 58s; }
+
+/* 鼠标跟随的环境光：只改 CSS 变量，由 AmbientField 用 rAF 插值写入 */
+.yg2-ambient__cursor {
+  position: absolute;
+  width: 52vmax;
+  height: 52vmax;
+  left: 0;
+  top: 0;
+  border-radius: 50%;
+  background: radial-gradient(circle, var(--yg2-ambient-cursor, rgba(120,170,245,.28)), transparent 68%);
+  transform: translate3d(calc(var(--yg2-cx, 50vw) - 26vmax), calc(var(--yg2-cy, 40vh) - 26vmax), 0);
+  transition: transform 900ms cubic-bezier(.22,.61,.36,1);
+  pointer-events: none;
+  opacity: .9;
+}
+@media (pointer: coarse), (prefers-reduced-motion: reduce) {
+  .yg2-ambient__cursor { display: none; }
+  .yg2-ambient { transition: none; }
+}
+
+/* ── 首屏进入动画：环境 → 导航 → 标题 → 主面板 → 次级内容 ───────────── */
+@keyframes yg2-rise {
+  from { opacity: 0; transform: translate3d(0, 14px, 0); }
+  to { opacity: 1; transform: none; }
+}
+.yg2-enter { animation: yg2-rise 560ms cubic-bezier(.22,.61,.36,1) both; }
+.yg2-enter--2 { animation-delay: 90ms; }
+.yg2-enter--3 { animation-delay: 160ms; }
+.yg2-enter--4 { animation-delay: 240ms; }
+@media (prefers-reduced-motion: reduce) {
+  .yg2-enter, .yg2-enter--2, .yg2-enter--3, .yg2-enter--4 { animation: none; }
+}
+
+/* 首页主面板错峰进入（只影响首屏，不参与交互布局） */
+.yg2-page > .yg2-enter-seq:nth-child(1) { animation-delay: 60ms; }
+.yg2-page > .yg2-enter-seq:nth-child(2) { animation-delay: 150ms; }
+.yg2-page > .yg2-enter-seq:nth-child(3) { animation-delay: 230ms; }
+.yg2-enter-seq { animation: yg2-rise 560ms cubic-bezier(.22,.61,.36,1) both; }
+@media (prefers-reduced-motion: reduce) { .yg2-enter-seq { animation: none; } }

@@ -27,7 +27,7 @@ const props = withDefaults(
     radius: 24,
     tint: 0.06,
     shape: 'rounded',
-    capture: '',
+    capture: '.yg2-ambient',
     preset: 'nav',
     refreshOnScroll: true,
     tone: 'activities',
@@ -148,6 +148,19 @@ function proceduralBackdrop(): string {
 }
 
 const captureMode = ref<'h2c' | 'procedural' | 'none'>('none')
+const hovered = ref(false)
+
+/** 悬停只加强边缘高光与环境光，不改 edge/base，避免折射剧烈跳动 */
+function applyHover(on: boolean) {
+  const base = params(isDark())
+  ;(window as any).glassControls = {
+    ...(window as any).glassControls,
+    ...base,
+    rimIntensity: base.rimIntensity * (on ? 1.35 : 1),
+    tintOpacity: base.tintOpacity + (on ? 0.03 : 0),
+  }
+  instance?.render?.()
+}
 
 async function buildBackdrop() {
   const target = props.capture ? document.querySelector(props.capture) : null
@@ -221,8 +234,16 @@ function scheduleRefresh() {
   scrollTimer = window.setTimeout(() => void refresh(), 220)
 }
 
+function bindHover() {
+  const target = host.value?.parentElement
+  if (!target) return
+  target.addEventListener('pointerenter', () => { hovered.value = true; applyHover(true) })
+  target.addEventListener('pointerleave', () => { hovered.value = false; applyHover(false) })
+}
+
 onMounted(() => {
   mount()
+  bindHover()
   if (props.refreshOnScroll) window.addEventListener('scroll', scheduleRefresh, { passive: true })
   window.addEventListener('resize', scheduleRefresh)
   media = window.matchMedia('(prefers-color-scheme: dark)')
