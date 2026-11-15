@@ -19,3 +19,7 @@ apple-ios-27-ui-kit_assets_*/
 * 2.py
 * 2.vue
 * 2.ts
+# 后端按班级导出的运行数据（不是代码）
+zvms4-modified-main/zvms4-backend-python/export/
+# Finder 复制副本兜底：任何以「 2」结尾的文件名
+* 2
