@@ -19,8 +19,10 @@ export interface GlassOptions {
   radius?: number
   /** 高斯模糊：σ = blur / 2（CSS px） */
   blur?: number
-  /** 乳白不透明度，0..1 */
+  /** 材质填充不透明度，0..1（浅色主题配白，深色主题配深灰） */
   tint?: number
+  /** 材质填充色，0..1 的 RGB；默认白色 */
+  fill?: [number, number, number]
   /** 边缘最大折射偏移（CSS px） */
   refract?: number
   /** 折射衰减宽度（CSS px） */
@@ -46,7 +48,8 @@ export interface SourceMeta {
   width?: number
 }
 
-interface ResolvedOptions extends Required<Omit<GlassOptions, 'preserve' | 'live'>> {
+interface ResolvedOptions extends Required<Omit<GlassOptions, 'preserve' | 'live' | 'fill'>> {
+  fill: [number, number, number]
   live: boolean
   preserve: boolean
 }
@@ -69,6 +72,7 @@ uniform int   u_shape;       // 0 rounded, 1 circle, 2 pill
 uniform float u_radius;
 uniform float u_blur;
 uniform float u_tint;
+uniform vec3  u_fill;
 uniform float u_refract;
 uniform float u_edgeWidth;
 uniform float u_spec;
@@ -144,12 +148,11 @@ void main() {
   }
   col /= wsum;
 
-  // 鲜艳度 + 乳白 tint（顶部更白，模拟顶部受光）
+  // 鲜艳度 + 材质填充（顶部更实，模拟顶部受光）
   float luma = dot(col, vec3(0.299, 0.587, 0.114));
   col = mix(vec3(luma), col, 1.25);
   float top = 1.0 - fragDown.y / max(u_cssSize.y, 1.0);
-  col = mix(col, vec3(1.0), u_tint * (0.75 + 0.25 * top));
-  col += vec3(0.045) * smoothstep(0.0, 0.55, top);
+  col = mix(col, u_fill, u_tint * (0.72 + 0.28 * smoothstep(0.0, 0.65, top)));
 
   // 迎光弧：贴边柔化带 × 法线与光向的夹角
   float rimBand = 1.0 - smoothstep(0.0, 1.0 + u_edgeWidth * 0.55, d);
@@ -178,6 +181,7 @@ const UNIFORMS = [
   'u_radius',
   'u_blur',
   'u_tint',
+  'u_fill',
   'u_refract',
   'u_edgeWidth',
   'u_spec',
@@ -226,6 +230,7 @@ export class LiquidGlass {
       radius: options.radius ?? 24,
       blur: options.blur ?? 12,
       tint: options.tint ?? 0.14,
+      fill: options.fill ?? [1, 1, 1],
       refract: options.refract ?? 12,
       edgeWidth: options.edgeWidth ?? 16,
       spec: options.spec ?? 0.55,
@@ -385,6 +390,7 @@ export class LiquidGlass {
     gl.uniform1f(u.u_radius, o.radius)
     gl.uniform1f(u.u_blur, o.blur)
     gl.uniform1f(u.u_tint, o.tint)
+    gl.uniform3f(u.u_fill, o.fill[0], o.fill[1], o.fill[2])
     gl.uniform1f(u.u_refract, o.refract)
     gl.uniform1f(u.u_edgeWidth, o.edgeWidth)
     gl.uniform1f(u.u_spec, o.spec)

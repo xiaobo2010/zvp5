@@ -7,7 +7,7 @@ defineEmits<{ openDrawer: [] }>()
 
 <template>
   <header class="yg2-topbar">
-    <LiquidGlass class="yg2-topbar__glass" :radius="0" :tint="0.04" capture=".yg2-app" />
+    <LiquidGlass class="yg2-topbar__glass" :radius="0" capture=".yg2-app" />
     <div class="yg2-lens-clip is-under-glass" aria-hidden="true">
       <span class="yg2-lens-clip__blob yg2-lens-clip__blob--2" />
       <span class="yg2-lens-clip__blob yg2-lens-clip__blob--3" />

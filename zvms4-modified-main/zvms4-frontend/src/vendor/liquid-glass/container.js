@@ -1,6 +1,6 @@
 // vendored from dashersw/liquid-glass-js (MIT). ESM 包装：html2canvas 改为外部注入，
 // 避免库自己从 CDN 拉取；同时导出 Container 供 Vue 组件复用。
-import html2canvas from 'html2canvas'
+import html2canvas from 'html2canvas-pro'
 
 class Container {
   static instances = []
@@ -235,8 +235,22 @@ class Container {
   initWebGL() {
     if (!Container.pageSnapshot || !this.gl) return
 
+    // pageSnapshot 可能是 canvas，也可能已经是 dataURL 字符串：
+    // 旧调用方（LiquidGlass.vue 曾直接把 toDataURL() 的结果塞进来）会在
+    // 这里抛 TypeError 并被上层 catch 掉，导致 WebGL 分支永远不生效。
+    const snapshot = Container.pageSnapshot
+    if (typeof snapshot === 'string') {
+      const img = new Image()
+      img.onload = () => {
+        this.setupShader(img)
+        this.webglInitialized = true
+      }
+      img.src = snapshot
+      return
+    }
+
     const img = new Image()
-    img.src = Container.pageSnapshot.toDataURL()
+    img.src = snapshot.toDataURL()
     img.onload = () => {
       this.setupShader(img)
       this.webglInitialized = true

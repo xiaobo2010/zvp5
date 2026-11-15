@@ -40,7 +40,7 @@ function onClick(event: MouseEvent) {
       preset="button"
       :radius="props.size / 2"
       :tint="0.10"
-      capture=".yg2-ambient"
+      capture=".yg2-app"
     />
     <ArrowLeft class="yg2-back__icon" :size="18" :stroke-width="2" aria-hidden="true" />
   </button>

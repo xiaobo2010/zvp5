@@ -1,31 +1,41 @@
 <script setup lang="ts">
 /**
- * Liquid Glass 包装层。
+ * Liquid Glass 组件 —— 基于 `./glass.ts`（干净重写引擎，见 .liquid-glass-lab/NOTES.md）。
  *
- * 库的着色器按「整个视口的页面快照」采样，所以这里给它一个可控的采样源：
- * 1) 优先用 html2canvas 抓真实背景层（结构最真，能看到背景里的光斑/内容被折射）；
- * 2) 抓取失败（我们的 CSS 用了 color-mix，html2canvas 解析不了）时，
- *    退到程序化背景：按当前主题把底色 + 三团环境光 + 细颗粒噪点画进 2D canvas，
- *    保证折射有结构可折，而不是变成一块灰板。
+ * 采样源由 `./backdrop.ts` 提供：优先 html2canvas 抓真实背景层，抓不到
+ * （我们的 CSS 用了 color-mix，html2canvas 解析不了）就退到程序化背景，
+ * 保证折射有结构可折，而不是变成一块灰板。
  *
- * 主题切换 / 尺寸变化 / 页面滚动都会重抓并重建 WebGL 纹理（库本身只抓一次）。
+ * 三档语义（按用户要求分级，卡片不参与）：
+ * - nav：轻折射、中模糊、材质填充接近原来的 --yg2-glass-chrome-fill
+ * - button：明显边缘高光 + 轻微折射，中心几乎不扭曲
+ * - dialog：更强空间层次（模糊更足）+ 中等折射
+ *
+ * 与旧实现的差别：
+ * 1) 不再走 `Container.pageSnapshot = dataUrl` 那条会 TypeError 的路径（顶栏此前一直是
+ *    CSS 兜底，WebGL 分支从未生效）；
+ * 2) 背景快照不再 `toDataURL()` 绕 PNG，多个实例共享同一次抓取；
+ * 3) 鼠标悬停只改 spec/tint，不重抓背景；
+ * 4) 滚动监听用 capture，能收到内层滚动容器（.yg2-app__content）的事件。
  */
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { Container } from '@/vendor/liquid-glass/container.js'
+import { LiquidGlass } from './glass'
+import { getBackdrop, invalidateBackdrop } from './backdrop'
 
 const props = withDefaults(
   defineProps<{
     radius?: number
+    /** 材质填充不透明度；不给就用 preset 的默认值 */
     tint?: number
     shape?: 'rounded' | 'circle' | 'pill'
     capture?: string
     preset?: 'nav' | 'button' | 'dialog'
     refreshOnScroll?: boolean
+    /** @deprecated 环境光色调由 AmbientField 决定，这里仅为兼容旧调用保留 */
     tone?: string
   }>(),
   {
     radius: 24,
-    tint: 0.06,
     shape: 'rounded',
     capture: '.yg2-ambient',
     preset: 'nav',
@@ -34,263 +44,201 @@ const props = withDefaults(
   },
 )
 
-const host = ref<HTMLDivElement | null>(null)
-const fallback = ref(false)
-const hasWebGL = ref(false)
-let instance: any = null
-let scrollTimer = 0
-let resizeObserver: ResizeObserver | null = null
-let media: MediaQueryList | null = null
+interface PresetParams {
+  refract: number
+  edgeWidth: number
+  blur: number
+  spec: number
+  tint: number
+}
 
-/**
- * 三档参数（按用户要求分级，卡片不参与）：
- * - nav：轻折射、中模糊，只给一层薄边缘光
- * - button：明显边缘高光 + 轻微折射，中心几乎不扭曲
- * - dialog：更强空间层次（模糊/内压更足）+ 中等折射
- */
-const PRESETS = {
+const PRESETS: Record<'nav' | 'button' | 'dialog', Record<'light' | 'dark', PresetParams>> = {
   nav: {
-    light: { edge: 0.012, rim: 0.05, base: 0.0, edgeD: 0.2, rimD: 0.9, baseD: 0.12, corner: 0.018, ripple: 0.0, blur: 7 },
-    dark: { edge: 0.014, rim: 0.06, base: 0.0, edgeD: 0.19, rimD: 1.0, baseD: 0.12, corner: 0.02, ripple: 0.0, blur: 8 },
+    light: { refract: 9, edgeWidth: 16, blur: 18, spec: 0.5, tint: 0.5 },
+    dark: { refract: 10, edgeWidth: 16, blur: 20, spec: 0.55, tint: 0.62 },
   },
   button: {
-    light: { edge: 0.02, rim: 0.11, base: 0.0, edgeD: 0.14, rimD: 0.7, baseD: 0.1, corner: 0.03, ripple: 0.0, blur: 5 },
-    dark: { edge: 0.024, rim: 0.13, base: 0.0, edgeD: 0.13, rimD: 0.75, baseD: 0.1, corner: 0.034, ripple: 0.0, blur: 6 },
+    light: { refract: 16, edgeWidth: 11, blur: 12, spec: 0.75, tint: 0.06 },
+    dark: { refract: 17, edgeWidth: 11, blur: 13, spec: 0.8, tint: 0.1 },
   },
   dialog: {
-    light: { edge: 0.02, rim: 0.07, base: 0.006, edgeD: 0.16, rimD: 0.85, baseD: 0.15, corner: 0.026, ripple: 0.0, blur: 10 },
-    dark: { edge: 0.024, rim: 0.085, base: 0.008, edgeD: 0.15, rimD: 0.9, baseD: 0.16, corner: 0.03, ripple: 0.0, blur: 12 },
+    light: { refract: 15, edgeWidth: 18, blur: 20, spec: 0.55, tint: 0.28 },
+    dark: { refract: 16, edgeWidth: 18, blur: 22, spec: 0.6, tint: 0.34 },
   },
-} as const
-
-function params(dark: boolean) {
-  const tier = PRESETS[props.preset][dark ? 'dark' : 'light']
-  return {
-    edgeIntensity: tier.edge,
-    rimIntensity: tier.rim,
-    baseIntensity: tier.base,
-    edgeDistance: tier.edgeD,
-    rimDistance: tier.rimD,
-    baseDistance: tier.baseD,
-    cornerBoost: tier.corner,
-    rippleEffect: tier.ripple,
-    blurRadius: tier.blur,
-    tintOpacity: props.tint,
-  }
 }
 
-function isDark() {
-  return document.documentElement.classList.contains('dark')
-}
+/** 材质填充色与 --yg2-glass-chrome-fill 对齐：浅色是白，深色是 #1e212a */
+const FILL_LIGHT: [number, number, number] = [1, 1, 1]
+const FILL_DARK: [number, number, number] = [0.118, 0.129, 0.165]
 
-/** 程序化背景：与外壳同一套环境光，但补上细颗粒，让折射有东西可折 */
-function proceduralBackdrop(): string {
-  const w = window.innerWidth
-  const h = window.innerHeight
-  const c = document.createElement('canvas')
-  c.width = w
-  c.height = h
-  const ctx = c.getContext('2d')!
-  const dark = isDark()
-
-  const base = ctx.createLinearGradient(0, 0, w, h)
-  if (dark) {
-    base.addColorStop(0, '#15171c')
-    base.addColorStop(0.5, '#1b1d22')
-    base.addColorStop(1, '#101216')
-  } else {
-    base.addColorStop(0, '#eef3fb')
-    base.addColorStop(0.52, '#f7f4ee')
-    base.addColorStop(1, '#eef1f7')
-  }
-  ctx.fillStyle = base
-  ctx.fillRect(0, 0, w, h)
-
-  const blobs: Array<[number, number, number, string]> = dark
-    ? [
-        [0.18 * w, 0.24 * h, 0.42 * Math.max(w, h), 'rgba(38, 74, 122, .55)'],
-        [0.82 * w, 0.3 * h, 0.4 * Math.max(w, h), 'rgba(96, 66, 34, .45)'],
-        [0.55 * w, 0.9 * h, 0.46 * Math.max(w, h), 'rgba(58, 52, 96, .5)'],
-      ]
-    : [
-        [0.16 * w, 0.2 * h, 0.44 * Math.max(w, h), 'rgba(120, 170, 245, .5)'],
-        [0.84 * w, 0.28 * h, 0.42 * Math.max(w, h), 'rgba(255, 190, 130, .42)'],
-        [0.58 * w, 0.9 * h, 0.48 * Math.max(w, h), 'rgba(170, 140, 240, .3)'],
-      ]
-  for (const [x, y, r, color] of blobs) {
-    const g = ctx.createRadialGradient(x, y, 0, x, y, r)
-    g.addColorStop(0, color)
-    g.addColorStop(1, 'rgba(0,0,0,0)')
-    ctx.fillStyle = g
-    ctx.fillRect(0, 0, w, h)
-  }
-
-  // 细颗粒：给折射一点高频结构，纯渐变折出来会像塑料
-  const grain = ctx.createImageData(w, h)
-  const d = grain.data
-  const amount = dark ? 10 : 7
-  for (let i = 0; i < d.length; i += 4) {
-    const n = (Math.random() - 0.5) * amount
-    d[i] = 128 + n
-    d[i + 1] = 128 + n
-    d[i + 2] = 128 + n
-    d[i + 3] = 16
-  }
-  const grainCanvas = document.createElement('canvas')
-  grainCanvas.width = w
-  grainCanvas.height = h
-  grainCanvas.getContext('2d')!.putImageData(grain, 0, 0)
-  ctx.globalAlpha = 0.5
-  ctx.drawImage(grainCanvas, 0, 0)
-  ctx.globalAlpha = 1
-
-  return c.toDataURL('image/png')
-}
-
+const host = ref<HTMLDivElement | null>(null)
+/** 先按 CSS 兜底显示，第一次成功出图后才摘掉 —— 避免加载瞬间顶栏「透明一下」 */
+const fallback = ref(true)
 const captureMode = ref<'h2c' | 'procedural' | 'none'>('none')
 const hovered = ref(false)
 
-/** 悬停只加强边缘高光与环境光，不改 edge/base，避免折射剧烈跳动 */
-function applyHover(on: boolean) {
-  const base = params(isDark())
-  ;(window as any).glassControls = {
-    ...(window as any).glassControls,
+let engine: LiquidGlass | null = null
+let refreshToken = 0
+let scrollTimer = 0
+let resizeObserver: ResizeObserver | null = null
+let themeObserver: MutationObserver | null = null
+let media: MediaQueryList | null = null
+
+function isDark(): boolean {
+  return document.documentElement.classList.contains('dark')
+}
+
+function params() {
+  const dark = isDark()
+  const tier = PRESETS[props.preset][dark ? 'dark' : 'light']
+  return {
+    shape: props.shape,
+    radius: props.radius,
+    refract: tier.refract,
+    edgeWidth: tier.edgeWidth,
+    blur: tier.blur,
+    spec: tier.spec,
+    tint: props.tint ?? tier.tint,
+    fill: dark ? FILL_DARK : FILL_LIGHT,
+  }
+}
+
+/** 悬停只加强边缘高光与填充，不改折射，避免边缘跳动 */
+function applyOptions() {
+  if (!engine) return
+  const base = params()
+  engine.update({
     ...base,
-    rimIntensity: base.rimIntensity * (on ? 1.35 : 1),
-    tintOpacity: base.tintOpacity + (on ? 0.03 : 0),
-  }
-  instance?.render?.()
+    spec: base.spec * (hovered.value ? 1.35 : 1),
+    tint: base.tint + (hovered.value ? 0.04 : 0),
+  })
 }
 
-async function buildBackdrop() {
-  const target = props.capture ? document.querySelector(props.capture) : null
-  if (target) {
-    try {
-      const canvas = await (await import('html2canvas')).default(target as HTMLElement, {
-        scale: 1,
-        useCORS: true,
-        allowTaint: true,
-        backgroundColor: null,
-        ignoreElements: (node: Element) =>
-          node.classList?.contains('glass-container') ||
-          node.classList?.contains('glass-button') ||
-          node.classList?.contains('yg2-glass-layer'),
-      })
-      captureMode.value = 'h2c'
-      return canvas.toDataURL('image/png')
-    } catch {
-      /* 落到程序化背景 */
-    }
-  }
-  captureMode.value = 'procedural'
-  return proceduralBackdrop()
-}
-
-async function refresh() {
+async function refresh(force = false) {
+  const instance = engine
   if (!instance) return
+  const token = ++refreshToken
   try {
-    const dataUrl = await buildBackdrop()
-    ;(Container as any).pageSnapshot = dataUrl
-    instance.initWebGL?.()
+    const backdrop = await getBackdrop(props.capture, force)
+    // 有更新的请求在跑，丢弃这一次（避免旧的快照盖掉新的）
+    if (token !== refreshToken || !engine) return
+    captureMode.value = backdrop.mode
+    engine.setSource(backdrop.canvas, { origin: backdrop.origin, width: backdrop.width })
+    applyOptions()
+    engine.render()
+    fallback.value = false
   } catch {
     fallback.value = true
   }
-}
-
-function applyParams() {
-  ;(window as any).glassControls = { ...(window as any).glassControls, ...params(isDark()) }
 }
 
 function mount() {
-  if (!host.value) return
-  applyParams()
+  const el = host.value
+  if (!el) return
   try {
-    instance = new Container({ borderRadius: props.radius, type: props.shape, tintOpacity: props.tint })
+    engine = new LiquidGlass(el, params())
   } catch {
     fallback.value = true
+    engine = null
     return
   }
-
-  const canvas = instance.canvas as HTMLCanvasElement | null
-  hasWebGL.value = !!canvas && !!instance.gl_refs?.gl
-  if (!hasWebGL.value) {
-    fallback.value = true
-    instance = null
-    return
-  }
-
-  // 库自建 wrapper 会带 padding/flex，这里只留 canvas，塞进宿主
-  canvas!.className = 'yg2-glass-layer'
-  canvas!.style.cssText =
-    'position:absolute;inset:0;width:100%;height:100%;z-index:0;pointer-events:none;border-radius:inherit;box-shadow:none'
-  instance.element = host.value
-  host.value.appendChild(canvas!)
-  instance.updateSizeFromDOM?.()
   void refresh()
 }
 
-function scheduleRefresh() {
+function onScroll() {
+  if (!props.refreshOnScroll) return
   window.clearTimeout(scrollTimer)
-  scrollTimer = window.setTimeout(() => void refresh(), 220)
+  scrollTimer = window.setTimeout(() => {
+    invalidateBackdrop(props.capture)
+    void refresh(true)
+  }, 240)
+}
+
+function onResize() {
+  window.clearTimeout(scrollTimer)
+  scrollTimer = window.setTimeout(() => {
+    invalidateBackdrop(props.capture)
+    void refresh(true)
+  }, 240)
+}
+
+function onThemeChange() {
+  applyOptions()
+  invalidateBackdrop()
+  void refresh(true)
 }
 
 function bindHover() {
   const target = host.value?.parentElement
   if (!target) return
-  target.addEventListener('pointerenter', () => { hovered.value = true; applyHover(true) })
-  target.addEventListener('pointerleave', () => { hovered.value = false; applyHover(false) })
+  target.addEventListener('pointerenter', onEnter)
+  target.addEventListener('pointerleave', onLeave)
+}
+
+function onEnter() {
+  hovered.value = true
+  applyOptions()
+  engine?.render()
+}
+
+function onLeave() {
+  hovered.value = false
+  applyOptions()
+  engine?.render()
 }
 
 onMounted(() => {
   mount()
   bindHover()
-  if (props.refreshOnScroll) window.addEventListener('scroll', scheduleRefresh, { passive: true })
-  window.addEventListener('resize', scheduleRefresh)
+  // capture 才能收到内层滚动容器（.yg2-app__content）的 scroll
+  document.addEventListener('scroll', onScroll, { capture: true, passive: true })
+  window.addEventListener('resize', onResize)
   media = window.matchMedia('(prefers-color-scheme: dark)')
   media.addEventListener('change', onThemeChange)
-  new MutationObserver(onThemeChange).observe(document.documentElement, {
+  themeObserver = new MutationObserver(onThemeChange)
+  themeObserver.observe(document.documentElement, {
     attributes: true,
     attributeFilter: ['class', 'data-theme'],
   })
   if (host.value) {
     resizeObserver = new ResizeObserver(() => {
-      instance?.updateSizeFromDOM?.()
-      scheduleRefresh()
+      engine?.resize()
+      engine?.render()
     })
     resizeObserver.observe(host.value)
   }
 })
 
-function onThemeChange() {
-  if (!instance) return
-  applyParams()
-  scheduleRefresh()
-}
-
-watch(() => props.tint, () => {
-  applyParams()
-  void refresh()
-})
+watch(
+  () => [props.tint, props.shape, props.radius, props.preset],
+  () => {
+    applyOptions()
+    engine?.render()
+  },
+)
 
 onBeforeUnmount(() => {
   window.clearTimeout(scrollTimer)
-  window.removeEventListener('scroll', scheduleRefresh)
-  window.removeEventListener('resize', scheduleRefresh)
+  document.removeEventListener('scroll', onScroll, { capture: true })
+  window.removeEventListener('resize', onResize)
   media?.removeEventListener('change', onThemeChange)
+  themeObserver?.disconnect()
   resizeObserver?.disconnect()
-  try {
-    const index = (Container as any).instances?.indexOf(instance)
-    if (index >= 0) (Container as any).instances.splice(index, 1)
-    instance?.gl_refs?.gl?.getExtension('WEBGL_lose_context')?.loseContext()
-  } catch {
-    /* ignore */
-  }
-  instance = null
+  const target = host.value?.parentElement
+  target?.removeEventListener('pointerenter', onEnter)
+  target?.removeEventListener('pointerleave', onLeave)
+  engine?.destroy()
+  engine = null
 })
 </script>
 
 <template>
-  <div ref="host" class="yg2-glass" :class="{ 'is-fallback': fallback }" :data-capture="captureMode">
+  <div
+    ref="host"
+    class="yg2-glass"
+    :class="{ 'is-fallback': fallback }"
+    :data-capture="captureMode"
+  >
     <slot />
   </div>
 </template>
