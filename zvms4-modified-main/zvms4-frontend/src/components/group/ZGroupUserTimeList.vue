@@ -14,6 +14,7 @@ import {
 import { nextTick, ref, toRefs, watch, type Ref } from 'vue'
 import type { TableInstance } from 'element-plus'
 import api from '@/api'
+import SkeletonTable from '@/ui/ux/SkeletonTable.vue'
 import { useI18n } from 'vue-i18n'
 import { useUserStore } from '@/stores/user'
 import type { Group, ActivityTimeRecord } from '@/../types'
@@ -175,7 +176,7 @@ async function onSortChange(data: {
       userStore.groups.includes(id)
     "
   >
-    <ElCard shadow="never" v-loading="loading" class="time-list-card">
+    <ElCard shadow="never" class="time-list-card">
       <div style="text-align: right" class="my-2">
         <ElFormItem :label="t('manage.groupDetails.timeList.diff')" style="text-align: right">
           <ElSwitch v-model="diff" aria-label="仅显示时长不符的成员" />
@@ -186,6 +187,7 @@ async function onSortChange(data: {
           <ElButton type="primary" text bg @click="refresh">重试</ElButton>
         </template>
       </ElResult>
+      <SkeletonTable v-else-if="loading" :rows="8" />
       <ElTable
         v-else
         ref="tableRef"

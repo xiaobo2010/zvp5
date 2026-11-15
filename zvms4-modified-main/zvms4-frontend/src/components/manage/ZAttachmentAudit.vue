@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElIcon, ElMessage } from 'element-plus'
+import { Refresh } from '@element-plus/icons-vue'
 import {
   decideAttachment,
   getAttachmentAudit,
@@ -154,7 +155,15 @@ onMounted(load)
           placeholder="用途过滤，如 volunteer_order"
           @change="((page = 1), load())"
         />
-        <button class="yg2-btn yg2-btn--quiet" type="button" @click="load">刷新</button>
+        <button
+          class="yg2-icon-btn"
+          type="button"
+          title="刷新列表"
+          aria-label="刷新列表"
+          @click="load"
+        >
+          <ElIcon><Refresh /></ElIcon>
+        </button>
       </div>
     </header>
 

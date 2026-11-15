@@ -10,6 +10,7 @@ import api from '@/api'
 import { ZActivityDetails } from '.'
 import { displayStatus } from '@/utils/activityStatus'
 import GlassBackButton from '@/ui/glass/GlassBackButton.vue'
+import Skeleton from '@/ui/ux/Skeleton.vue'
 
 const user = useUserStore()
 const router = useRouter()
@@ -67,7 +68,10 @@ onMounted(() => {
 </script>
 
 <template>
-  <div v-if="activity" v-loading="loading" class="yg2-page yg2-detail">
+  <div v-if="loading && !activity" class="yg2-page yg2-detail">
+    <Skeleton :lines="8" height="16px" />
+  </div>
+  <div v-else-if="activity" class="yg2-page yg2-detail">
     <GlassBackButton class="yg2-detail__back" @click="router.back()" />
 
     <header class="yg2-detail__hero">

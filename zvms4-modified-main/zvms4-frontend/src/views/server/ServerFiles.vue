@@ -16,6 +16,7 @@ import {
 import ZSystemAuthDialog from '@/components/system/ZSystemAuthDialog.vue'
 import ZPagination from '@/components/utils/ZPagination.vue'
 import ZFilePreview from '@/components/server/ZFilePreview.vue'
+import SkeletonTable from '@/ui/ux/SkeletonTable.vue'
 import {
   Refresh,
   FolderAdd,
@@ -446,8 +447,9 @@ void load()
           </div>
 
           <div class="min-h-0 flex-1">
+            <SkeletonTable v-if="loading" :rows="8" />
             <ElTable
-              v-loading="loading"
+              v-else
               :data="entries"
               row-key="name"
               stripe

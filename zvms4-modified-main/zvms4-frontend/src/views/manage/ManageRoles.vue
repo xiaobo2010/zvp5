@@ -23,6 +23,7 @@ import type { User, UserPosition } from '@/../types'
 import { useUserStore } from '@/stores/user'
 import ZPagination from '@/components/utils/ZPagination.vue'
 import ZUserGroup from '@/components/tags/ZUserGroup.vue'
+import SkeletonTable from '@/ui/ux/SkeletonTable.vue'
 
 const { t } = useI18n()
 const userStore = useUserStore()
@@ -177,8 +178,9 @@ onMounted(() => {
         </ElButton>
       </div>
 
+      <SkeletonTable v-if="loading" :rows="6" />
       <ElTable
-        v-loading="loading"
+        v-else
         :data="users"
         stripe
         row-key="_id"
@@ -241,6 +243,7 @@ onMounted(() => {
       </ElTable>
 
       <ZPagination
+        v-if="!loading"
         v-model:current-page="page"
         v-model:page-size="pageSize"
         :total="total"
@@ -260,7 +263,7 @@ onMounted(() => {
       :show-close="!saving"
       width="min(520px, 92vw)"
     >
-      <ElForm v-loading="saving">
+      <ElForm>
         <ElFormItem :label="t('manage.roleManagement.columns.roles')">
           <ElCheckboxGroup v-model="checkedRoles" class="roles-checkboxes">
             <ElCheckbox v-for="role in editableRoles" :key="role" :value="role">

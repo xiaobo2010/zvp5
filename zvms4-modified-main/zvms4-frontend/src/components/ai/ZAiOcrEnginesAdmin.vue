@@ -30,6 +30,7 @@ import {
   updateOcrEngine
 } from '@/api/ai'
 import type { AiOcrEngineKind, AiOcrEngineRecord } from '@/../types/ai'
+import SkeletonTable from '@/ui/ux/SkeletonTable.vue'
 
 const { t } = useI18n()
 
@@ -320,7 +321,7 @@ onMounted(() => {
 
 <template>
   <div class="flex flex-col gap-4">
-    <section class="yg-card" v-loading="loading">
+    <section class="yg-card">
       <header class="yg-card__header">
         <div class="flex flex-col gap-1 min-w-0">
           <h2 class="yg-card__title">{{ t('ai.engines.title') }}</h2>
@@ -339,7 +340,8 @@ onMounted(() => {
       </header>
 
       <div class="yg-card__body">
-        <ElTable :data="rows" row-key="oid" stripe>
+        <SkeletonTable v-if="loading" :rows="6" />
+        <ElTable v-else :data="rows" row-key="oid" stripe>
           <ElTableColumn prop="name" :label="t('ai.engines.name')" min-width="140" show-overflow-tooltip />
           <ElTableColumn :label="t('ai.engines.kind')" width="120" align="center">
             <template #default="{ row }">

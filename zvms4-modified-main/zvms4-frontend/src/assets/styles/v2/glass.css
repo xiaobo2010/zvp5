@@ -257,7 +257,10 @@
 /* 分段控件与移动端底栏：同层材质，滑块做成「抬起的小玻璃」 */
 .yg2-seg {
   background: var(--yg2-lens-control-fill);
+  -webkit-backdrop-filter: blur(var(--yg2-lens-control-blur)) saturate(var(--yg2-lens-sat));
+  backdrop-filter: blur(var(--yg2-lens-control-blur)) saturate(var(--yg2-lens-sat));
   box-shadow:
+    inset 0 1px 0 var(--yg2-lens-control-bloom-strong),
     inset 0 1px 2px var(--yg2-lens-input-shade),
     inset 0 0 0 1px var(--yg2-lens-control-sheath);
 }
@@ -285,6 +288,20 @@
    6. 浮层（L4）
    ========================================================================== */
 
+/* 抽屉是「大面板」，不是「小浮层」：
+   全屏表单如果只有 85% 不透明度，背后的页面会从空白处透上来，像没加载完。
+   实测（添加成员抽屉，fullscreen）后改成面板档 + 较轻的模糊。 */
+.el-drawer {
+  border: 0;
+  background: var(--yg2-lens-panel-fill);
+  -webkit-backdrop-filter: blur(20px) saturate(var(--yg2-lens-sat));
+  backdrop-filter: blur(20px) saturate(var(--yg2-lens-sat));
+  box-shadow:
+    inset 1px 0 0 var(--yg2-lens-overlay-bloom),
+    inset 0 0 0 1px var(--yg2-lens-overlay-sheath),
+    var(--yg2-lens-overlay-cast);
+}
+
 .el-popper.is-light,
 .el-dropdown__popper,
 .el-select__popper,
@@ -292,8 +309,7 @@
 .el-dialog,
 .el-message-box,
 .el-message,
-.el-notification,
-.el-drawer {
+.el-notification {
   border: 0;
   background: var(--yg2-lens-overlay-fill);
   -webkit-backdrop-filter: blur(var(--yg2-lens-overlay-blur)) saturate(var(--yg2-lens-sat));
@@ -423,6 +439,34 @@
   opacity: 0.3;
 }
 
+
+/* 分页当前页：不要一个高饱和实心圆，改成「玻璃底 + 品牌色字」，
+   和侧栏当前项同一套语言（选中态 = 浮起来的一层，不是涂上去的一块色）。 */
+.el-pagination .el-pager li.is-active,
+.el-pagination.is-background .el-pager li.is-active,
+.el-pagination .el-pager li.is-active:hover {
+  background: color-mix(in srgb, var(--yg2-accent) 18%, transparent);
+  color: var(--yg2-accent);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.4),
+    inset 0 0 0 1px color-mix(in srgb, var(--yg2-accent) 28%, transparent);
+}
+
+[data-theme='dark'] .el-pagination .el-pager li.is-active,
+[data-theme='dark'] .el-pagination.is-background .el-pager li.is-active,
+[data-theme='dark'] .el-pagination .el-pager li.is-active:hover {
+  background: color-mix(in srgb, var(--yg2-accent) 26%, transparent);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.14),
+    inset 0 0 0 1px color-mix(in srgb, var(--yg2-accent) 42%, transparent);
+}
+
+/* 分页器与下拉触发器：跟随控件玻璃档 */
+.el-pagination .el-pager li,
+.el-pagination button {
+  border-radius: 10px;
+}
+
 /* ==========================================================================
    7.5 页面级容器 + 可复用工具类
    ========================================================================== */
@@ -443,16 +487,21 @@
 }
 
 /* 工具类：任何容器加上它就是一层面板玻璃，厚度由 --chrome / --quiet 调 */
+/* 默认档 = 卡片档。
+   页面级容器（/about 的大卡、任何"看起来像卡片"的独立面板）用默认档即可与
+   .yg2-card 完全同色；要更强用 --chrome，要更弱用 --quiet。
+   早先这里单独用了 --yg2-lens-glass-*（更白、投影更大），导致 /about 的卡比
+   同页卡片明显偏白偏亮 —— 这就是"颜色不匹配"的来源。 */
 .yg2-glass-surface {
   position: relative;
   isolation: isolate;
-  background: var(--yg2-lens-glass-fill);
-  -webkit-backdrop-filter: blur(var(--yg2-lens-glass-blur)) saturate(var(--yg2-lens-sat));
-  backdrop-filter: blur(var(--yg2-lens-glass-blur)) saturate(var(--yg2-lens-sat));
+  background: var(--yg2-lens-matte-fill);
+  -webkit-backdrop-filter: blur(var(--yg2-lens-matte-blur)) saturate(var(--yg2-lens-sat));
+  backdrop-filter: blur(var(--yg2-lens-matte-blur)) saturate(var(--yg2-lens-sat));
   box-shadow:
     inset 0 1px 0 var(--yg2-lens-matte-bloom),
     inset 0 0 0 1px var(--yg2-lens-matte-sheath),
-    var(--yg2-lens-glass-cast);
+    var(--yg2-lens-matte-cast);
 }
 
 .yg2-glass-surface--chrome {

@@ -1,6 +1,7 @@
 <script lang="ts" setup>
 import { ElCard, ElButton, ElSkeleton, ElSkeletonItem, ElDialog, ElDrawer } from 'element-plus'
 import { toRefs, ref, watch } from 'vue'
+import Skeleton from '@/ui/ux/Skeleton.vue'
 import type { Component as VueComponent } from 'vue'
 const props = withDefaults(
   defineProps<{
@@ -140,13 +141,10 @@ function startOpen() {
     </ElDrawer>
   </Teleport>
   <div v-if="mode === 'card'">
-    <ElCard
-      v-if="mode === 'card'"
-      shadow="never"
-      v-loading="loading"
-      :class="[wFull ? 'w-full' : '']"
-    >
-      <slot name="default" />
+    <ElCard shadow="never" :class="[wFull ? 'w-full' : '']">
+      <!-- 加载中不给遮罩，给骨架：遮罩会把已经渲染出来的内容压暗一层 -->
+      <Skeleton v-if="loading" :lines="4" height="16px" />
+      <slot v-else name="default" />
     </ElCard>
   </div>
 </template>

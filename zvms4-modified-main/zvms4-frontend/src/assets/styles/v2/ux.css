@@ -7,7 +7,7 @@
 .yg2-skeleton {
   position: relative;
   overflow: hidden;
-  background: var(--yg2-surface-sunken);
+  background: var(--yg2-skeleton-base);
   border-radius: var(--yg2-r-8);
 }
 
@@ -19,7 +19,7 @@
   background: linear-gradient(
     90deg,
     transparent 0%,
-    color-mix(in srgb, var(--yg2-surface) 70%, transparent) 50%,
+    var(--yg2-skeleton-sheen) 50%,
     transparent 100%
   );
   animation: yg2-skeleton-sweep 1.25s var(--yg2-ease-out) infinite;

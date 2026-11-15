@@ -6,6 +6,7 @@ import { ElImageViewer, ElMessage, ElMessageBox } from 'element-plus'
 import { CopyDocument, Download, EditPen, Refresh } from '@element-plus/icons-vue'
 import { previewFile, downloadFile, editFile, type FilePreviewData } from '@/api/system/files.ts'
 import ZMarkdown from '@/components/markdown/ZMarkdown.vue'
+import Skeleton from '@/ui/ux/Skeleton.vue'
 
 const SMALL_TEXT_LIMIT = 200 * 1024
 const MAX_ROWS = 5000
@@ -367,8 +368,9 @@ async function saveEdit() {
       {{ readonlyReason }}
     </div>
 
-    <div v-loading="loading" :element-loading-text="t('server.files.preview.loading')" class="preview-body">
-      <template v-if="!loading">
+    <div class="preview-body">
+      <Skeleton v-if="loading" :lines="10" />
+      <template v-else>
         <div v-if="editing" class="editor">
           <div class="editor-toolbar">
             <span class="yg-text-xs yg-text-tertiary">{{ t('server.files.preview.editEncodingLabel') }}</span>

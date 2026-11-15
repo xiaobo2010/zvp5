@@ -34,6 +34,7 @@ import ZGroupUserList from '@/components/group/ZGroupUserList.vue'
 import ZSelectClass from '@/components/form/ZSelectClass.vue'
 import { pad } from '@/plugins/ua'
 import { users } from '@/api/group/reads'
+import SkeletonTable from '@/ui/ux/SkeletonTable.vue'
 
 const user = useUserStore()
 const { t } = useI18n()
@@ -377,8 +378,10 @@ watch(search, refreshMembers)
           {{ t('activity.member.inline.count', { count: size }) }}
         </span>
       </div>
-      <div v-if="show" v-loading="pageLoading">
+      <div v-if="show">
+        <SkeletonTable v-if="pageLoading" :rows="6" />
         <ElTable
+          v-else
           :data="members"
           stripe
           :height="mode === 'inline' ? undefined : max"
@@ -422,7 +425,7 @@ watch(search, refreshMembers)
                 size="small"
                 :icon="Plus"
                 round
-                v-loading="batchWindowLoading"
+                :loading="batchWindowLoading"
                 type="success"
                 :title="
                   t('activity.member.dialog.actions.title', {

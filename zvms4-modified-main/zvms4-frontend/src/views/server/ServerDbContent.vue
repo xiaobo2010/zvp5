@@ -23,6 +23,7 @@ import {
   type ColumnDef
 } from '@/api/system/dbContent.ts'
 import ZSystemAuthDialog from '@/components/system/ZSystemAuthDialog.vue'
+import SkeletonTable from '@/ui/ux/SkeletonTable.vue'
 import { Plus } from '@element-plus/icons-vue'
 
 const { t } = useI18n()
@@ -484,8 +485,9 @@ void loadSchema()
         class="mb-2"
       />
       <div class="min-h-0 flex-1">
+        <SkeletonTable v-if="schemaLoading" :rows="8" :header="false" />
         <ElTable
-          v-loading="schemaLoading"
+          v-else
           :data="filteredSchema"
           size="small"
           height="100%"
@@ -514,9 +516,9 @@ void loadSchema()
         <template #header>
           <span class="text-[14px] font-semibold text-[var(--yg-text-primary)]">{{ t('server.dbContent.columnsTitle') }}</span>
         </template>
-        <div v-if="columnsData" class="min-h-0 flex-1">
+        <SkeletonTable v-if="columnsLoading" :rows="6" />
+        <div v-else-if="columnsData" class="min-h-0 flex-1">
           <ElTable
-            v-loading="columnsLoading"
             :data="columnsData.columns"
             size="small"
             height="100%"
@@ -555,7 +557,7 @@ void loadSchema()
           </ElTable>
         </div>
         <div v-else class="flex flex-1 items-center justify-center">
-          <ElEmpty :image-size="60" :description="columnsLoading ? t('server.database.loading') : t('server.dbContent.selTableHint')" />
+          <ElEmpty :image-size="60" :description="t('server.dbContent.selTableHint')" />
         </div>
       </ElCard>
 
@@ -704,9 +706,9 @@ void loadSchema()
           class="mb-2"
         />
 
-        <div v-if="rowsData" class="min-h-0 flex-1">
+        <SkeletonTable v-if="rowsLoading" :rows="8" />
+        <div v-else-if="rowsData" class="min-h-0 flex-1">
           <ElTable
-            v-loading="rowsLoading"
             :data="rowsData.rows"
             height="100%"
             class="w-full"

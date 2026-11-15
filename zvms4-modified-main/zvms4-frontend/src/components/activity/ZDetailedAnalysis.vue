@@ -20,6 +20,7 @@ import type { Activity, ActivityMember } from '@/../types/v2'
 import type { UserActivityTimeSums } from '@/../types'
 import { ZActivityDuration, ZActivityStatus } from '@/components'
 import { displayStatus } from '@/utils/activityStatus'
+import SkeletonTable from '@/ui/ux/SkeletonTable.vue'
 
 type UserActivityMine = {
   _id: string
@@ -108,7 +109,7 @@ const pendingCount = computed(
 </script>
 
 <template>
-  <ElCard shadow="never" v-loading="loading">
+  <ElCard shadow="never">
     <ElRow class="py-2" align="middle">
       <ElCol :span="16" :xs="24">
         <ElSegmented v-model="activeMode" :options="modes" aria-label="义工类型切换">
@@ -122,17 +123,16 @@ const pendingCount = computed(
           共 <span class="summary-number">{{ totalCount }}</span> 项 · 累计
           <span class="summary-number">{{ totalDuration.toFixed(1) }}</span> 小时
         </span>
-        <ElButton
-          type="success"
+        <button
+          class="yg2-icon-btn"
+          type="button"
           :disabled="loading"
-          :icon="Refresh"
-          text
-          bg
-          circle
           title="刷新明细"
           aria-label="刷新明细"
           @click="fetchRecords"
-        />
+        >
+          <ElIcon><Refresh /></ElIcon>
+        </button>
       </ElCol>
     </ElRow>
     <div v-if="pendingCount > 0" class="pending-note">
@@ -144,8 +144,9 @@ const pendingCount = computed(
       icon="error"
       :title="error"
     />
+    <SkeletonTable v-else-if="loading" :rows="6" />
     <ElTable
-      v-else-if="hasRecords || loading"
+      v-else-if="hasRecords"
       :data="filtered"
       stripe
     >

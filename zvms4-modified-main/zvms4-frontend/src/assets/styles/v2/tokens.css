@@ -168,8 +168,9 @@
   /* 密集内容面板（表格/日志/长文）：比卡片更实，可读性优先 */
   --yg2-lens-panel-fill: linear-gradient(180deg, rgba(255, 255, 255, 0.97), rgba(249, 251, 254, 0.93));
 
-  /* 密集内容面板（表格/日志/长文）：比卡片更实，可读性优先 */
-  --yg2-lens-panel-fill: linear-gradient(180deg, rgba(38, 41, 50, 0.94), rgba(28, 30, 37, 0.9));
+  /* 骨架屏：底色 + 扫光高光。深色下必须用半透明白，否则和面板底几乎同色 */
+  --yg2-skeleton-base: #e8ebf1;
+  --yg2-skeleton-sheen: rgba(255, 255, 255, 0.9);
 
   /* L1 轻玻璃 */
   --yg2-lens-quiet-fill: linear-gradient(180deg, rgba(255, 255, 255, 0.86), rgba(255, 255, 255, 0.66));
@@ -232,11 +233,16 @@
   --yg2-lens-overlay-cast: 0 2px 6px rgba(15, 23, 42, 0.06), 0 32px 72px -32px rgba(15, 23, 42, 0.36);
 
   /* 遮罩 */
-  --yg2-lens-scrim: rgba(15, 23, 42, 0.22);
-  --yg2-lens-scrim-blur: 2px;
+  --yg2-lens-scrim: rgba(15, 23, 42, 0.34);
+  --yg2-lens-scrim-blur: 4px;
 }
 
 [data-theme="dark"] {
+  /* 密集内容面板（表格/日志/长文）：比卡片更实，可读性优先 */
+  --yg2-lens-panel-fill: linear-gradient(180deg, rgba(38, 41, 50, 0.94), rgba(28, 30, 37, 0.9));
+
+  --yg2-skeleton-base: rgba(255, 255, 255, 0.07);
+  --yg2-skeleton-sheen: rgba(255, 255, 255, 0.16);
   color-scheme: dark;
 
   --yg2-bg: #0e1015;
@@ -358,7 +364,7 @@
   --yg2-lens-control-blur: 22px;
   --yg2-lens-control-bloom: rgba(255, 255, 255, 0.12);
   --yg2-lens-control-bloom-strong: rgba(255, 255, 255, 0.18);
-  --yg2-lens-control-sheath: rgba(255, 255, 255, 0.1);
+  --yg2-lens-control-sheath: rgba(255, 255, 255, 0.14);
   --yg2-lens-control-sheath-hover: rgba(255, 255, 255, 0.16);
   --yg2-lens-control-cast: 0 1px 2px rgba(0, 0, 0, 0.42), 0 8px 20px -12px rgba(0, 0, 0, 0.7);
   --yg2-lens-control-cast-hover: 0 2px 4px rgba(0, 0, 0, 0.5), 0 12px 28px -14px rgba(0, 0, 0, 0.78);
@@ -368,8 +374,8 @@
   --yg2-lens-input-fill: rgba(16, 18, 24, 0.55);
   --yg2-lens-input-fill-focus: rgba(14, 16, 21, 0.72);
   --yg2-lens-input-shade: rgba(0, 0, 0, 0.35);
-  --yg2-lens-input-sheath: rgba(255, 255, 255, 0.1);
-  --yg2-lens-input-sheath-hover: rgba(255, 255, 255, 0.16);
+  --yg2-lens-input-sheath: rgba(255, 255, 255, 0.16);
+  --yg2-lens-input-sheath-hover: rgba(255, 255, 255, 0.24);
 
   --yg2-lens-overlay-fill: linear-gradient(180deg, rgba(43, 46, 55, 0.94), rgba(30, 32, 40, 0.9));
   --yg2-lens-overlay-blur: 38px;
@@ -377,6 +383,6 @@
   --yg2-lens-overlay-sheath: rgba(255, 255, 255, 0.12);
   --yg2-lens-overlay-cast: 0 2px 6px rgba(0, 0, 0, 0.5), 0 32px 72px -32px rgba(0, 0, 0, 0.85);
 
-  --yg2-lens-scrim: rgba(4, 6, 10, 0.48);
+  --yg2-lens-scrim: rgba(4, 6, 10, 0.58);
   --yg2-lens-scrim-blur: 3px;
 }

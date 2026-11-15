@@ -5,6 +5,7 @@ import { ElButton, ElIcon, ElProgress } from 'element-plus'
 import { Refresh } from '@element-plus/icons-vue'
 import { myQuota } from '@/api/ai'
 import type { AiQuotaEntry } from '@/../types/ai'
+import Skeleton from '@/ui/ux/Skeleton.vue'
 
 const { t } = useI18n()
 
@@ -49,7 +50,7 @@ onMounted(() => {
 
 <template>
   <div class="flex flex-col gap-4">
-    <section class="yg-card" v-loading="loading">
+    <section class="yg-card">
       <header class="yg-card__header">
         <div class="flex flex-col gap-1 min-w-0">
           <h2 class="yg-card__title">{{ t('ai.quota.title') }}</h2>
@@ -64,41 +65,44 @@ onMounted(() => {
       </header>
 
       <div class="yg-card__body">
-        <div class="grid gap-4 sm:grid-cols-2">
-          <div class="yg-tile p-4">
-            <div class="flex items-baseline justify-between gap-2">
-              <span class="yg-statistic__title">{{ t('ai.quota.ocrTitle') }}</span>
-              <span class="yg-text-xs yg-text-tertiary">{{ t('ai.quota.ocrUnit') }}</span>
+        <Skeleton v-if="loading" :lines="4" />
+        <template v-else>
+          <div class="grid gap-4 sm:grid-cols-2">
+            <div class="yg-tile p-4">
+              <div class="flex items-baseline justify-between gap-2">
+                <span class="yg-statistic__title">{{ t('ai.quota.ocrTitle') }}</span>
+                <span class="yg-text-xs yg-text-tertiary">{{ t('ai.quota.ocrUnit') }}</span>
+              </div>
+              <p class="yg-statistic__value">
+                {{ ocr?.used ?? 0 }}
+                <span class="yg-statistic__suffix">/ {{ ocr?.limit ?? 0 }}</span>
+              </p>
+              <ElProgress :percentage="ocrPercent" :stroke-width="6" class="mt-2" />
+              <p class="yg-text-xs yg-text-tertiary mt-2 tabular-nums">
+                {{ t('ai.common.period') }}：{{ ocr?.period ?? '—' }}
+              </p>
             </div>
-            <p class="yg-statistic__value">
-              {{ ocr?.used ?? 0 }}
-              <span class="yg-statistic__suffix">/ {{ ocr?.limit ?? 0 }}</span>
-            </p>
-            <ElProgress :percentage="ocrPercent" :stroke-width="6" class="mt-2" />
-            <p class="yg-text-xs yg-text-tertiary mt-2 tabular-nums">
-              {{ t('ai.common.period') }}：{{ ocr?.period ?? '—' }}
-            </p>
+
+            <div class="yg-tile p-4">
+              <div class="flex items-baseline justify-between gap-2">
+                <span class="yg-statistic__title">{{ t('ai.quota.chatTitle') }}</span>
+                <span class="yg-text-xs yg-text-tertiary">{{ t('ai.quota.chatUnit') }}</span>
+              </div>
+              <p class="yg-statistic__value">
+                {{ chat?.used ?? 0 }}
+                <span class="yg-statistic__suffix">/ {{ chat?.limit ?? 0 }}</span>
+              </p>
+              <ElProgress :percentage="chatPercent" :stroke-width="6" class="mt-2" />
+              <p class="yg-text-xs yg-text-tertiary mt-2 tabular-nums">
+                {{ t('ai.common.period') }}：{{ chat?.period ?? '—' }}
+              </p>
+            </div>
           </div>
 
-          <div class="yg-tile p-4">
-            <div class="flex items-baseline justify-between gap-2">
-              <span class="yg-statistic__title">{{ t('ai.quota.chatTitle') }}</span>
-              <span class="yg-text-xs yg-text-tertiary">{{ t('ai.quota.chatUnit') }}</span>
-            </div>
-            <p class="yg-statistic__value">
-              {{ chat?.used ?? 0 }}
-              <span class="yg-statistic__suffix">/ {{ chat?.limit ?? 0 }}</span>
-            </p>
-            <ElProgress :percentage="chatPercent" :stroke-width="6" class="mt-2" />
-            <p class="yg-text-xs yg-text-tertiary mt-2 tabular-nums">
-              {{ t('ai.common.period') }}：{{ chat?.period ?? '—' }}
-            </p>
-          </div>
-        </div>
-
-        <p v-if="failed" class="yg-text-xs yg-text-danger mt-3">
-          {{ t('ai.quota.loadFailed') }}
-        </p>
+          <p v-if="failed" class="yg-text-xs yg-text-danger mt-3">
+            {{ t('ai.quota.loadFailed') }}
+          </p>
+        </template>
       </div>
     </section>
 

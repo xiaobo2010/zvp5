@@ -26,6 +26,7 @@ import {
 } from '@/api/ai'
 import type { AiModelItem } from '@/../types/ai'
 import { buildChatRequest, turnsToMessages, type ChatTurn } from './chatSession'
+import Skeleton from '@/ui/ux/Skeleton.vue'
 
 const { t } = useI18n()
 const { height } = useWindowSize()
@@ -233,7 +234,7 @@ onUnmounted(() => {
 
 <template>
   <div class="flex flex-col gap-4">
-    <ElCard shadow="never" v-loading="modelsLoading">
+    <ElCard shadow="never">
       <template #header>
         <div class="flex flex-wrap items-center justify-between gap-3">
           <div class="flex flex-col gap-1">
@@ -258,7 +259,10 @@ onUnmounted(() => {
         </div>
       </template>
 
-      <div class="flex flex-wrap items-center gap-3">
+      <div v-if="modelsLoading" class="flex">
+        <Skeleton height="36px" />
+      </div>
+      <div v-else class="flex flex-wrap items-center gap-3">
         <span class="yg-text-xs yg-text-tertiary">{{ t('ai.chat.model') }}</span>
         <ElSelect
           v-model="model"

@@ -24,6 +24,7 @@ import {
   userQuota
 } from '@/api/ai'
 import type { AiQuotaEntry, AiQuotaKind, AiQuotaSnapshot } from '@/../types/ai'
+import Skeleton from '@/ui/ux/Skeleton.vue'
 
 const { t } = useI18n()
 
@@ -148,13 +149,14 @@ async function resetUsage(kind: AiQuotaKind) {
       </div>
     </section>
 
-    <section class="yg-card" v-loading="loading">
+    <section class="yg-card">
       <header class="yg-card__header">
         <h2 class="yg-statistic__title">{{ t('ai.quotaAdmin.title') }}</h2>
       </header>
 
       <div class="yg-card__body">
-        <div v-if="!userOid" class="py-8 text-center yg-text-sm yg-text-tertiary">
+        <Skeleton v-if="loading" :lines="4" />
+        <div v-else-if="!userOid" class="py-8 text-center yg-text-sm yg-text-tertiary">
           {{ t('ai.quotaAdmin.noUser') }}
         </div>
         <p v-else-if="failed" class="py-8 text-center yg-text-sm yg-text-danger">

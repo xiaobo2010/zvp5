@@ -39,6 +39,7 @@ import {
   statisticsFileName,
   type StatisticsCsvLabels
 } from '@/utils/activityStatistics'
+import SkeletonTable from '@/ui/ux/SkeletonTable.vue'
 import type {
   ActivityStatistics,
   ActivityStatisticsClassGroup,
@@ -566,8 +567,9 @@ watch(
     :icon="UilStatistics"
   >
     <template #default>
-      <div v-loading="loading" class="min-h-40">
-        <div class="stats-body">
+      <div class="min-h-40">
+        <SkeletonTable v-if="loading" :rows="6" />
+        <div v-else class="stats-body">
           <div class="mb-3 flex items-center justify-end gap-2">
             <ElButton
               class="px-2"
@@ -581,18 +583,16 @@ watch(
               :aria-label="t('activity.statistics.export')"
               @click="exportCsv"
             />
-            <ElButton
-              class="px-2"
-              type="success"
-              :icon="Refresh"
+            <button
+              class="yg2-icon-btn"
+              type="button"
               :disabled="loading"
-              text
-              bg
-              circle
               :title="t('activity.statistics.refresh')"
               :aria-label="t('activity.statistics.refresh')"
               @click="reload"
-            />
+            >
+              <ElIcon><Refresh /></ElIcon>
+            </button>
           </div>
           <ElResult
             v-if="error && !loading"

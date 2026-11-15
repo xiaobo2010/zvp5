@@ -34,6 +34,7 @@ import {
   type BanViolation
 } from '@/api/ban'
 import ZPagination from '@/components/utils/ZPagination.vue'
+import SkeletonTable from '@/ui/ux/SkeletonTable.vue'
 
 const { t } = useI18n()
 
@@ -573,7 +574,7 @@ function formatReason(user: BannedUser): string | null {
 
 <template>
   <div class="flex flex-col gap-4">
-    <ElCard shadow="never" v-loading="rulesLoading">
+    <ElCard shadow="never">
       <template #header>
         <div class="flex items-center justify-between gap-2">
           <span>{{ t('manage.banRules.rulesTitle') }}</span>
@@ -587,7 +588,8 @@ function formatReason(user: BannedUser): string | null {
           </div>
         </div>
       </template>
-      <ElTable :data="rules" row-key="code">
+      <SkeletonTable v-if="rulesLoading" :rows="5" />
+      <ElTable v-else :data="rules" row-key="code">
         <ElTableColumn
           prop="name"
           :label="t('manage.banRules.rule.columns.name')"
@@ -676,7 +678,7 @@ function formatReason(user: BannedUser): string | null {
       </p>
     </ElCard>
 
-    <ElCard shadow="never" v-loading="violationsLoading">
+    <ElCard shadow="never">
       <template #header>
         <div class="flex items-center justify-between gap-2">
           <span>{{ t('manage.banRules.violations.title') }}</span>
@@ -695,7 +697,8 @@ function formatReason(user: BannedUser): string | null {
           </div>
         </div>
       </template>
-      <ElTable :data="violations" row-key="_id" stripe>
+      <SkeletonTable v-if="violationsLoading" :rows="6" />
+      <ElTable v-else :data="violations" row-key="_id" stripe>
         <ElTableColumn
           prop="user_name"
           :label="t('manage.banRules.violations.columns.name')"
@@ -758,13 +761,14 @@ function formatReason(user: BannedUser): string | null {
         </template>
       </ElTable>
       <ZPagination
+        v-if="!violationsLoading"
         v-model:current-page="violationsPage"
         v-model:page-size="violationsPerpage"
         :total="violationsTotal"
       />
     </ElCard>
 
-    <ElCard shadow="never" v-loading="usersLoading">
+    <ElCard shadow="never">
       <template #header>
         <div class="flex items-center justify-between gap-2">
           <span>{{ t('manage.banRules.usersTitle') }}</span>
@@ -783,7 +787,8 @@ function formatReason(user: BannedUser): string | null {
           </div>
         </div>
       </template>
-      <ElTable :data="users" row-key="oid" stripe>
+      <SkeletonTable v-if="usersLoading" :rows="6" />
+      <ElTable v-else :data="users" row-key="oid" stripe>
         <ElTableColumn
           prop="name"
           :label="t('manage.banRules.users.columns.name')"
@@ -840,6 +845,7 @@ function formatReason(user: BannedUser): string | null {
         </template>
       </ElTable>
       <ZPagination
+        v-if="!usersLoading"
         v-model:current-page="usersPage"
         v-model:page-size="usersPerpage"
         :total="usersTotal"

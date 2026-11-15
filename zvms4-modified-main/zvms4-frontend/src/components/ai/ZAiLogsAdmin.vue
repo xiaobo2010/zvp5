@@ -18,6 +18,7 @@ import ZSelectPerson from '@/components/form/ZSelectPerson.vue'
 import ZPagination from '@/components/utils/ZPagination.vue'
 import { aiErrorCodeOf, aiErrorCopy, listAiLogs, toEpochSeconds } from '@/api/ai'
 import type { AiLogCapability, AiLogKeyScope, AiLogRecord, AiLogStatus } from '@/../types/ai'
+import SkeletonTable from '@/ui/ux/SkeletonTable.vue'
 
 const { t } = useI18n()
 
@@ -269,9 +270,10 @@ onMounted(() => {
       </div>
     </section>
 
-    <section class="yg-card" v-loading="loading">
+    <section class="yg-card">
       <div class="yg-card__body">
-        <ElTable :data="rows" row-key="oid" stripe>
+        <SkeletonTable v-if="loading" :rows="8" />
+        <ElTable v-else :data="rows" row-key="oid" stripe>
           <ElTableColumn prop="created_at" :label="t('ai.logs.columns.createdAt')" min-width="160">
             <template #default="{ row }">
               <span class="tabular-nums yg-text-xs">{{ formatTime(row.created_at) }}</span>
@@ -411,6 +413,7 @@ onMounted(() => {
         </ElTable>
 
         <ZPagination
+          v-if="!loading"
           v-model:current-page="page"
           v-model:page-size="perpage"
           :total="total"
