@@ -113,7 +113,7 @@
     "vite-plugin-vue-devtools": "7.7.7",
     "vitepress": "1.6.3",
     "vitest": "^3.2.6",
-    "vue-i18n": "^11.2.8",
+    "vue-i18n": "^11.4.14",
     "vue-tsc": "^3.0.1"
   },
   "config": {
