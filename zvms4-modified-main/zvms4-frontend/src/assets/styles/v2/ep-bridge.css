@@ -588,3 +588,33 @@ html[data-theme='dark'] {
   margin: 0;
   border-radius: 999px;
 }
+
+/* ── 账号菜单弹出动画 ─────────────────────────────────────────────────────
+ * EP 默认走 el-fade-in-linear；一旦这组过渡类没进产物（按需引入/被覆盖），
+ * 弹层就会「瞬间出现」。这里给账号菜单挂一套自有过渡名 yg-pop，
+ * 不依赖 EP 的过渡类是否存在。
+ */
+.yg-pop-enter-active,
+.yg-pop-leave-active {
+  transition:
+    opacity 150ms var(--yg2-ease-out),
+    transform 150ms var(--yg2-ease-out);
+  will-change: opacity, transform;
+}
+.yg-pop-enter-from,
+.yg-pop-leave-to {
+  opacity: 0;
+  transform: translate3d(0, -6px, 0) scale(0.98);
+}
+.yg-user-menu {
+  transition:
+    opacity 150ms var(--yg2-ease-out),
+    transform 150ms var(--yg2-ease-out);
+}
+@media (prefers-reduced-motion: reduce) {
+  .yg-pop-enter-active,
+  .yg-pop-leave-active,
+  .yg-user-menu {
+    transition: none;
+  }
+}

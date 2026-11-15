@@ -612,6 +612,7 @@ onBeforeUnmount(() => {
                   placement="bottom-end"
                   :popper-options="{ modifiers: [{ name: 'offset', options: { offset: [0, 10] } }] }"
                   popper-class="yg-user-menu"
+                  transition="yg-pop"
                 >
                   <template #reference>
                     <button
