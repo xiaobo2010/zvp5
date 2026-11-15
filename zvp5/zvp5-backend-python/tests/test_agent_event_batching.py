@@ -388,8 +388,15 @@ async def test_proposal_rows_stay_out_of_the_buffer_in_a_real_write_round(
 
 
 @pytest.mark.asyncio
-async def test_run_cache_still_sees_the_event_immediately(monkeypatch, repos) -> None:
-    """轮询快照即时追加：缓冲只改落库时机，不改「亚秒内可见」。"""
+async def test_run_cache_does_not_expose_uncommitted_buffered_events(
+    monkeypatch, repos
+) -> None:
+    """缓冲事件在事务提交前不能进轮询快照。
+
+    旧实现 ``_write_event`` 在把事件放进轮缓冲的同时就追加了快照，于是前端可能先
+    看到一行「已执行」，随后事务失败、事件消失。现在只有 ``_on_round`` 在
+    ``append_round`` 成功之后才追加。
+    """
     _two_tool_run(monkeypatch)
     run_cache.put("run-1", row={"status": "running"}, events=[], proposals=[])
     monkeypatch.setattr(executor, "uuid4", lambda: type("U", (), {"hex": "run-1"})())
@@ -405,6 +412,20 @@ async def test_run_cache_still_sees_the_event_immediately(monkeypatch, repos) ->
 
     cached = run_cache.get("run-1")
     assert cached is not None
+    # 缓冲阶段：快照仍然干净。
+    assert cached["events"] == []
+    assert len(rounds[0]["events"]) == 2
+
+    # 模拟事务提交后的那一拍（run_queue._on_round 做的事）。
+    for event in rounds[0]["events"]:
+        run_cache.append_event(
+            "run-1",
+            {
+                key: event.get(key)
+                for key in run_cache.EVENT_KEYS
+            },
+        )
+    cached = run_cache.get("run-1")
     assert [item["tool_name"] for item in cached["events"]] == [
         "search_activities",
         "search_activities",
@@ -570,8 +591,12 @@ async def test_on_round_hands_buffered_events_to_append_round(monkeypatch) -> No
 
     seen: list[dict] = []
 
-    async def fake_append(conversation_oid, rows, *, usage=None, events=None):
+    async def fake_append(
+        conversation_oid, rows, *, usage=None, events=None, committed_events=None
+    ):
         seen.append({"rows": rows, "events": events})
+        if committed_events is not None:
+            committed_events.extend(events or [])
         return rows
 
     async def still_running(_run_id, _owner):
@@ -614,7 +639,9 @@ async def test_on_round_without_an_events_key_still_works(monkeypatch) -> None:
 
     seen: list = []
 
-    async def fake_append(conversation_oid, rows, *, usage=None, events=None):
+    async def fake_append(
+        conversation_oid, rows, *, usage=None, events=None, committed_events=None
+    ):
         seen.append(events)
         return rows
 

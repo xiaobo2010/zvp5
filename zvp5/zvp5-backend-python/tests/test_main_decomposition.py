@@ -19,7 +19,7 @@ from __future__ import annotations
 import main
 from tests.route_utils import iter_leaf_routes
 
-PRE_SPLIT_ROUTE_COUNT = 257
+PRE_SPLIT_ROUTE_COUNT = 258
 ROUTER_COUNT = 35
 
 

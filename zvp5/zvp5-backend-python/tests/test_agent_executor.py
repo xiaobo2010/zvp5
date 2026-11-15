@@ -1867,3 +1867,274 @@ async def test_select_model_reads_the_catalog_once_per_run(monkeypatch, env) -> 
     await _run(model=MODEL)
 
     assert calls == [USER]
+
+
+# ---------------------------------------------------------------------------
+# 流式上游：文本增量 / 工具参数分片 / 非法 JSON / 取消后不执行
+# ---------------------------------------------------------------------------
+
+
+def _stream_chunk(
+    *, content: str | None = None, tool_calls: list[dict] | None = None,
+    finish_reason: str | None = None, usage: dict | None = None,
+) -> dict:
+    delta: dict = {}
+    if content is not None:
+        delta["content"] = content
+    if tool_calls is not None:
+        delta["tool_calls"] = tool_calls
+    chunk: dict = {
+        "choices": [{"index": 0, "delta": delta, "finish_reason": finish_reason}]
+    }
+    if usage is not None:
+        chunk["usage"] = usage
+    return chunk
+
+
+class StreamedUpstream:
+    """按调用顺序回放若干「chunk 列表」的流式上游。"""
+
+    def __init__(self, streams: list[list[dict]]) -> None:
+        self.streams = list(streams)
+        self.calls = 0
+
+    def __call__(self, payload, entry, api_key):
+        self.calls += 1
+        if not self.streams:
+            raise AssertionError("stream called more times than scripted")
+        chunks = self.streams.pop(0)
+
+        async def _gen():
+            for chunk in chunks:
+                yield chunk
+
+        return _gen()
+
+
+@pytest.mark.asyncio
+async def test_streaming_text_reports_cumulative_deltas(monkeypatch, env) -> None:
+    """流式文本：回调收到累计值，最终 content 与聚合结果一致。"""
+    upstream = StreamedUpstream(
+        [[_stream_chunk(content="你"), _stream_chunk(content="好")]]
+    )
+    monkeypatch.setattr(providers, "chat_completion_stream_json", upstream)
+
+    async def _blocking(*_args, **_kwargs):
+        raise AssertionError("stream-savvy upstream must not fall back to blocking")
+
+    monkeypatch.setattr(providers, "chat_completion", _blocking)
+
+    deltas: list[tuple[int, str]] = []
+    result = await _run(model=MODEL, on_delta=lambda r, text: deltas.append((r, text)))
+
+    assert result["content"] == "你好"
+    assert deltas == [(1, "你"), (1, "你好")]
+    assert upstream.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_streaming_tool_call_fragments_are_assembled_before_execution(
+    monkeypatch, env
+) -> None:
+    """工具参数被拆成多片：聚合完整且 JSON 合法后才执行。"""
+    audit, events, _quota, activities, _capture = env
+    upstream = StreamedUpstream(
+        [
+            [
+                _stream_chunk(
+                    tool_calls=[
+                        {
+                            "index": 0,
+                            "id": "call_1",
+                            "type": "function",
+                            "function": {"name": "search_activities", "arguments": '{"query":'},
+                        }
+                    ]
+                ),
+                _stream_chunk(
+                    tool_calls=[
+                        {
+                            "index": 0,
+                            "function": {"arguments": ' "图书馆"}'},
+                        }
+                    ],
+                    finish_reason="tool_calls",
+                ),
+            ],
+            [_stream_chunk(content="查到了")],
+        ]
+    )
+    monkeypatch.setattr(providers, "chat_completion_stream_json", upstream)
+
+    result = await _run(model=MODEL, on_delta=lambda _r, _text: None)
+
+    assert result["content"] == "查到了"
+    assert len(activities.calls) == 1
+    assert activities.calls[0]["search"] == "图书馆"
+
+
+@pytest.mark.asyncio
+async def test_streaming_invalid_tool_json_never_executes_a_tool(monkeypatch, env) -> None:
+    """参数不是合法 JSON：整轮报错，工具一次都不执行。"""
+    audit, events, _quota, activities, _capture = env
+    upstream = StreamedUpstream(
+        [
+            [
+                _stream_chunk(
+                    tool_calls=[
+                        {
+                            "index": 0,
+                            "id": "call_1",
+                            "type": "function",
+                            "function": {
+                                "name": "search_activities",
+                                "arguments": '{"query": "图书',
+                            },
+                        }
+                    ]
+                )
+            ]
+        ]
+    )
+    monkeypatch.setattr(providers, "chat_completion_stream_json", upstream)
+
+    with pytest.raises(AgentError) as caught:
+        await _run(model=MODEL, on_delta=lambda _r, _text: None)
+
+    assert caught.value.code == "AI_UPSTREAM_ERROR"
+    assert activities.calls == []
+
+
+@pytest.mark.asyncio
+async def test_streaming_cancel_before_tools_executes_nothing(monkeypatch, env) -> None:
+    """取消后即使上游已经给出完整工具调用，也不再执行。"""
+    audit, events, _quota, activities, _capture = env
+    upstream = StreamedUpstream(
+        [
+            [
+                _stream_chunk(
+                    tool_calls=[
+                        {
+                            "index": 0,
+                            "id": "call_1",
+                            "type": "function",
+                            "function": {
+                                "name": "search_activities",
+                                "arguments": '{"query": "图书馆"}',
+                            },
+                        }
+                    ],
+                    finish_reason="tool_calls",
+                )
+            ]
+        ]
+    )
+    monkeypatch.setattr(providers, "chat_completion_stream_json", upstream)
+
+    async def _stop() -> bool:
+        return True
+
+    result = await _run(
+        model=MODEL,
+        on_delta=lambda _r, _text: None,
+        should_stop=_stop,
+    )
+
+    assert result["stop_reason"] == "cancelled"
+    assert activities.calls == []
+
+
+@pytest.mark.asyncio
+async def test_cancelled_partial_round_keeps_only_executed_tools_and_replays(
+    monkeypatch, env
+) -> None:
+    """取消发生在第 2 个工具之前：只落已执行的调用，回放不会整轮丢失。"""
+    from services.agent import run_queue
+
+    audit, events, _quota, activities, _capture = env
+    _two = ScriptedUpstream(
+        [
+            _completion(
+                "",
+                tool_calls=[
+                    _tool_call("search_activities", {"query": "a"}, "call_1"),
+                    _tool_call("not_a_real_tool", {"query": "b"}, "call_2"),
+                ],
+            )
+        ]
+    )
+    monkeypatch.setattr(providers, "chat_completion", _two)
+
+    checks = {"n": 0}
+
+    async def _stop() -> bool:
+        checks["n"] += 1
+        # 1: 轮边界；2: call_1 之前；3: call_2 之前 → 只执行第一个。
+        return checks["n"] >= 3
+
+    rounds: list[dict] = []
+    result = await _run(
+        model=MODEL,
+        on_round=rounds.append,
+        should_stop=_stop,
+    )
+
+    assert result["stop_reason"] == "cancelled"
+    # 只执行了 call_1。
+    assert len(activities.calls) == 1
+    payload = rounds[-1]
+    assert [call["id"] for call in payload["assistant"]["tool_calls"]] == ["call_1"]
+    assert [tool["tool_call_id"] for tool in payload["tools"]] == ["call_1"]
+    assert len(payload["events"]) == 1
+
+    rows = run_queue._round_rows(
+        "run-cancel",
+        payload["round_no"],
+        assistant=payload["assistant"],
+        tools=payload["tools"],
+        tokens={},
+    )
+    replayed = run_queue._replay(rows)
+    assert [item["role"] for item in replayed] == ["assistant", "tool"]
+    assert replayed[0]["tool_calls"][0]["id"] == "call_1"
+    assert replayed[1]["tool_call_id"] == "call_1"
+
+
+@pytest.mark.asyncio
+async def test_streaming_switches_candidate_only_before_first_text(monkeypatch) -> None:
+    """已经吐过文本之后不再换候选：避免 A/B 两段回答拼在一起。"""
+    from services.ai.routing import RouteError
+
+    second_calls: list[int] = []
+
+    def _upstream(_payload, entry, _key):
+        if entry["name"] == "lab":
+            async def _first():
+                yield _stream_chunk(content="A")
+
+                raise RouteError("AI_UPSTREAM_ERROR", "boom", 502)
+
+            return _first()
+
+        second_calls.append(1)
+
+        async def _second():
+            yield _stream_chunk(content="B")
+
+        return _second()
+
+    monkeypatch.setattr(providers, "chat_completion_stream_json", _upstream)
+    candidates = [_entry(), {**_entry(), "name": "lab-2", "key": "shared:lab-2"}]
+    deltas: list[str] = []
+
+    with pytest.raises(AgentError) as caught:
+        await executor._call_upstream_stream(
+            {"model": MODEL, "messages": []},
+            candidates,
+            on_delta=lambda _round, text: deltas.append(text),
+            round_no=1,
+        )
+
+    assert caught.value.code == "AI_UPSTREAM_ERROR"
+    assert deltas == ["A"]
+    assert second_calls == []

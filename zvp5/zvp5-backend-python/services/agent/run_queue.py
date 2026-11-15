@@ -34,7 +34,7 @@ from db import backends
 from db.repos.oracle.users import UserGoneError
 from db.repos.protocols import ActiveRunConflict
 from services import violation_guard
-from services.agent import executor, proposal as proposal_service, run_cache
+from services.agent import executor, live, proposal as proposal_service, run_cache
 from services.agent.tools import WRITE
 from services.agent.tool_impl import AgentError
 from services.ai import (
@@ -72,8 +72,9 @@ HISTORY_PAGE = 100
 RECENT_LIMIT_DEFAULT = 5
 RECENT_LIMIT_MAX = 10
 
-# 工具结果落库长度与模型看到的同长（executor 侧已按 8000 截断，这里再兜一次）。
-MAX_TOOL_CONTENT_CHARS = 8000
+# 工具结果落库长度与模型看到的同长（executor 用 head+tail 截断，错误结果放宽到
+# 16000；这里用同一个上限再做一次 head+tail，避免普通 ``_clip`` 把尾巴/标记切掉）。
+MAX_TOOL_CONTENT_CHARS = executor.MAX_TOOL_ERROR_CHARS
 # ``ai_runs.error_message`` 是 VARCHAR2(500)，超了是 ORA-12899。
 MAX_ERROR_MESSAGE_CHARS = 500
 
@@ -574,6 +575,7 @@ async def cancel(*, user: Mapping[str, Any], run_id: str) -> dict:
 
     # 状态刚变过：下一次轮询必须回源，否则前端会再看到 1 秒「仍在跑」。
     run_cache.invalidate(str(run_id))
+    live.publish_resync(str(run_id))
     latest = await _runs().get(str(run_id), owner_oid) or row
     return {"status": str(latest.get("status"))}
 
@@ -883,6 +885,26 @@ async def _execute(run: Mapping[str, Any], semaphore: asyncio.Semaphore) -> None
             return
         messages, summary = await _executor_messages(conversation)
         scene = conversations.scene_of(conversation)
+
+        def _on_delta(round_no: int, text: str) -> None:
+            if not text or not live.has_subscribers(run_id):
+                return
+            live.publish(
+                run_id,
+                {
+                    "type": "assistant",
+                    "round_no": round_no,
+                    # 客户端用 ``run_id:round_no`` 归并同一个回答的累计文本。
+                    "stream_key": f"{run_id}:{round_no}",
+                    "content": text,
+                },
+            )
+
+        def _on_tool(frame: dict) -> None:
+            if not live.has_subscribers(run_id):
+                return
+            live.publish(run_id, frame)
+
         result = await executor.run(
             user=user,
             messages=messages,
@@ -905,6 +927,8 @@ async def _execute(run: Mapping[str, Any], semaphore: asyncio.Semaphore) -> None
             # 场景决定工具声明的裁剪与 system 追加句；参考内容只在本次 run 内有效。
             scene=scene,
             reference=reference,
+            on_delta=_on_delta,
+            on_tool=_on_tool,
         )
         status, stop_reason = _outcome(result, state)
         # 执行期被封：终态与错误码以封禁为准（``_outcome`` 只会说「cancelled」，
@@ -1056,21 +1080,29 @@ async def _finish(
     else:
         # 终态刚落：快照里还是 running，留着会让前端继续画「执行中」。
         run_cache.invalidate(str(run_id))
+        # SSE 订阅者需要一次最终快照 + terminal 收尾；没有订阅者时这是 no-op。
+        live.publish_resync(str(run_id))
+        live.cleanup(str(run_id), drop_seq=True)
     return bool(written)
 
 
-async def _still_running(run_id: str, owner_oid: str) -> bool:
+async def _still_running(run_id: str, owner_oid: str) -> Mapping[str, Any] | None:
     """写任何东西之前的最后一道校验：run 还必须是 ``running``。
 
     与 ``finish`` 的 CAS 配对使用（评审 P0-2）：watchdog 把行判成 ``interrupted``
     之后，这一轮的执行结果必须被丢弃，而不是写在终态行上面。
+
+    返回整行而不是 bool：调用方（``_on_round``）紧接着还要判取消标志，把这一行
+    存进 ``state['run_check']`` 就能省掉下一轮边界的同一次读取。
     """
     try:
         row = await _runs().get(run_id, owner_oid)
     except Exception:  # noqa: BLE001 - 读不到就当作还能写：一次查询抖动不该丢一轮
         _logger.warning("ai run %s status check failed", run_id)
-        return True
-    return row is not None and str(row.get("status")) == "running"
+        return {"status": "running"}  # 保守：当作还能写
+    if row is None or str(row.get("status")) != "running":
+        return None
+    return row
 
 
 # ---------------------------------------------------------------------------
@@ -1164,10 +1196,11 @@ def _on_round(run_id: str, conversation_oid: str, owner_oid: str, state: dict):
             return
         # 一轮结束 = 下一轮该重新读一次 run 状态（取消检查的可见性边界）。
         state.pop("run_check", None)
-        if state.get("cancelled") or state.get("interrupted"):
-            # 终态行上不再写消息（评审 P0-2）。
-            return
-        if not await _still_running(run_id, owner_oid):
+        # 用户取消（cancel_requested）不是「终态行」：此刻行仍是 running，已执行
+        # 的工具与事件必须照常落库。真正的终态（watchdog 判 interrupted）由下面
+        # 的 ``_still_running`` 挡住——那条路径不允许往终态行上补消息。
+        running = await _still_running(run_id, owner_oid)
+        if running is None:
             state["interrupted"] = True
             return
 
@@ -1178,26 +1211,39 @@ def _on_round(run_id: str, conversation_oid: str, owner_oid: str, state: dict):
             tools=payload["tools"],
             tokens=payload["tokens"],
         )
-        if not rows:
+        events = payload["events"]
+        if not rows and not events:
             return
         # 一个 ``append_batch`` = 一个事务：锁会话行、连续分配 seq、插入本体、
         # 累加会话 token/context/count。半条工具链在回放时会被上游 400。
         # 本轮的工具事件搭同一趟车（executor 在工具完成时攒好，带各自的时间戳）：
         # 它们原来是每条一次提交，ADB 上单次 commit 0.5~0.95s，一轮 2~3 个工具
         # 就能把 run 拖慢好几秒，而这些事件并没有「必须先于消息可见」的语义。
-        await conversations.append_round(
+        committed_events: list[dict] = []
+        inserted = await conversations.append_round(
             conversation_oid,
             rows,
             usage=_usage_block(payload["tokens"]),
-            events=payload["events"],
+            events=events,
+            committed_events=committed_events,
         )
 
-        state["rounds"] = max(int(state.get("rounds") or 0), round_no)
-        _accumulate(state.setdefault("usage", {}), payload["tokens"])
-        if not payload["assistant"].get("tool_calls"):
-            # 最后一轮没有工具调用 = 这次 run 的最终回答（§2.3 的
-            # ``result_message_oid``）。
-            state["result_message_oid"] = rows[0]["oid"]
+        # 只有 savepoint 真正提交成功的事件才进轮询快照：事件写失败时消息照常
+        # 落库，但快照里不能出现一行「已持久化」的幽灵审计。
+        for event in committed_events:
+            run_cache.append_event(run_id, _cache_event(event))
+        if rows:
+            state["rounds"] = max(int(state.get("rounds") or 0), round_no)
+            _accumulate(state.setdefault("usage", {}), payload["tokens"])
+            if not payload["assistant"].get("tool_calls"):
+                # 最后一轮没有工具调用 = 这次 run 的最终回答（§2.3 的
+                # ``result_message_oid``）。
+                state["result_message_oid"] = inserted[0]["oid"] if inserted else None
+        # 本轮已持久化：清掉该轮的 ephemeral 状态，再让订阅者拉新快照。
+        live.clear_round(run_id, round_no)
+        live.publish_resync(run_id)
+        # 不复用这一行给下一轮边界：``_should_stop`` 必须重新读一次，才能看到
+        # 提交期间到达的 cancel_requested（取消可见性优先于省一次查询）。
 
     return on_round
 
@@ -1417,6 +1463,25 @@ def _tools_of(
     return tools
 
 
+def _cache_event(event: Mapping[str, Any]) -> dict:
+    """落库事件行 → ``run_cache.EVENT_KEYS`` 形状（``created_at`` 转展示串）。"""
+    created = event.get("created_at")
+    if isinstance(created, datetime):
+        created_text = created.isoformat(sep=" ", timespec="seconds")
+    else:
+        created_text = created
+    return {
+        "oid": event.get("oid"),
+        "round_no": event.get("round_no"),
+        "tool_name": event.get("tool_name"),
+        "tool_kind": event.get("tool_kind"),
+        "args_summary": event.get("args_summary"),
+        "result_summary": event.get("result_summary"),
+        "status": event.get("status"),
+        "created_at": created_text,
+    }
+
+
 def _round_rows(
     run_id: str,
     round_no: int,
@@ -1473,7 +1538,9 @@ def _round_rows(
                 "role": "tool",
                 # tool 行的身份三件套直接来自 payload：executor 侧已经有工具名，
                 # 再反查一次 tool_calls 只会引入"名字对不上"的可能。
-                "content": _clip(item.get("content"), MAX_TOOL_CONTENT_CHARS) or "",
+                "content": executor._truncate(  # noqa: SLF001 - 同包同一份截断实现
+                    str(item.get("content") or ""), MAX_TOOL_CONTENT_CHARS
+                ),
                 "tool_call_id": str(item.get("tool_call_id") or "") or None,
                 "tool_name": str(item.get("tool_name") or "") or None,
                 "round_no": round_no,

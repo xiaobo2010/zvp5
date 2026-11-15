@@ -516,3 +516,83 @@ GET /api/ai/runs/{run_id}?after_round=2&since_msg_seq=17
 - **失效点**：`cancel()` 成功后、`_finish()` 的 CAS 成功后 `invalidate`（取消与终态下一拍立刻可见）；执行器 `_write_event` 落库成功后 `run_cache.append_event` 追加一条同形状事件（工具跑完与时间线同拍可见）；`run_queue.reset()`（测试清场）清空全部。
 - **前提是单 worker**：缓存只在当前进程可见，与 `run_queue` 的泵/在飞表同一假设（`config/supervisor.conf` 不带 `--workers`）。将来多 worker 需要外部缓存或直接关掉它——不能靠「反正是同一份数据」蒙混。
 - **前端节奏**：活跃 run 2s 一轮（提交后前 3 拍 750ms 抢首帧），页面隐藏 5s；连续轮询超过 60s 仍未终态按 `min(interval*2, 5s)` 退避，收到终态立即停。增量协议（`after_round` / `since_msg_seq`）不受节奏影响。
+
+## 13. 实时事件流（SSE）与工具结果压缩（2026-11-15）
+
+轮询 `GET /runs/{id}` **原样保留**；新增 `GET /api/ai/runs/{run_id}/events`
+（`text/event-stream`，浏览器用 `fetch` + `Authorization` 读取，不依赖
+`EventSource`）。两者数据源相同：snapshot 来自 `run_detail`，live 增量只存在于
+进程内 hub。
+
+### 13.1 事件契约
+
+所有 `data:` 都是 JSON，带 `type` / `seq` / `run_id`。`seq` 在**单个 run 内**
+单调递增（允许空洞，不允许回退）；客户端按 `seq` 去重。
+
+| `type` | 时机 | 关键字段 | 存储 |
+|---|---|---|---|
+| `snapshot` | 首帧、轮提交、resync、终态前 | `data` = 与 `GET /runs/{id}` 同形的 `{run,events,proposals}`；`live` = 当前 ephemeral 状态 | DB（经 `run_cache`）+ 内存 live |
+| `assistant` | 上游文本增量 | `round_no`、`stream_key=run_id:round_no`、`content` = **累计文本**（非裸 delta） | ephemeral |
+| `tool` | 工具开始/结束 | `round_no`、`tool_call_id`、`tool_name`、`tool_kind`、`status`（`pending|success|error`）、`args_summary`、`result_summary` | ephemeral |
+| `resync` | 提示客户端重拉快照 | 无 | ephemeral |
+| `terminal` | 终态 | `status`、`stop_reason`、`error_code` | 由 DB 行推导 |
+
+顺序保证：连接首帧**总是**完整 `snapshot`（带当前 `live`）；轮提交/状态变化先发
+`resync`，路由层读到终态后发**最终 snapshot → terminal → `data: [DONE]`**。
+空闲每 15s 发 `: ping` 注释帧（不占 `seq`、不触发客户端渲染）。
+
+`assistant` 用累计文本而不是 delta：客户端在任意一帧断线重连，都能直接重建当前
+回答，不依赖脆弱的事件回放。`snapshot` 是 DB 事实，`live` 是 ephemeral；后者
+**不写缓存、不落库**，终态/`run_detail` 读侧不受影响。
+
+### 13.2 单 worker、背压与降级
+
+`services/agent/live.py` 是进程内 pub/sub。发布方（executor 回调）永不 `await`：
+
+- 每个订阅者一个有界队列（64 帧）；`assistant` 同 `stream_key` 原地替换为最新
+  累计值，队列不随 token 数增长；
+- 满了先丢最旧 ephemeral；丢了 `tool` 帧就置 `resync_pending`，下一次读取先发
+  `resync`，客户端据此重拉 snapshot；
+- 断连即取消订阅；没有订阅者时 executor 连帧都不构造。
+
+多 worker 部署下内存 hub 无法跨进程广播：`live.multi_worker()`（读
+`AI_RUN_EVENTS_MULTI_WORKER` / `WEB_CONCURRENCY` 等）为真时端点直接 **503
+`AI_RUN_EVENTS_UNSUPPORTED`**，前端降级回轮询，不提供「假流」。鉴权、功能开关、
+`owner_oid` 归属校验与 `GET /runs/{id}` 完全一致，且全部发生在首字节之前。
+
+### 13.3 executor 真流式与工具参数完整性
+
+会话路径的上游调用使用 `stream=True`（`providers.chat_completion_stream_json`）：
+文本增量实时推给 hub；`tool_calls` 的 `id` / `name` / `arguments` 按 `index` 聚合，
+**只有 JSON 校验通过后才执行工具**。参数没拼完整（非法 JSON）→ 整轮
+`AI_UPSTREAM_ERROR`，一个工具都不执行。
+
+候选切换规则：首段文本之前失败可换 provider；一旦向客户端发过累计文本，
+**不再换候选、不重试**，避免「A 说一半、B 从头说」。超时/取消沿用原终态语义
+（`timeout` / `cancelled`），新增字段只做兼容增补。
+
+### 13.4 取消/中断时的消息配对（正确性修复）
+
+`assistant.tool_calls` 与 `tool` 消息必须一一配对，否则 `run_queue._replay` 会
+丢弃整轮。取消发生在工具循环中时：
+
+- 已执行的工具结果与事件照常落库（`_on_round` 不再因 `cancelled` 提前返回；
+  `cancel_requested` 期间 run 行仍是 `running`）；
+- 未执行的 `tool_call` **从 assistant 行裁掉**，不伪造结果；回放保留已完成的
+  工作；
+- watchdog 判定的 `interrupted` 仍不往终态行补消息（由 `_still_running` 挡住）。
+
+预算闸在工具执行前截断时同样不写 `tool_calls`（没有任何结果可配对）。
+
+### 13.5 工具结果 token 压缩（确定性、可测量）
+
+- **长结果 head+tail**：超过 8000 字符时保留头 60% / 尾 40%，中间标记
+  `original_chars` + `sha256`；错误载荷上限放宽到 16000，避免裁掉纠错线索。
+- **同 run 重复只读调用**：同工具 + 同参数 + digest 相同 → 正文压成
+  `{"_ref": "<digest>", "repeat_of": "<call_id>", ...}`。写入工具/提案出现时清空
+  登记表，禁止跨写操作复用可能过期的数据。
+- **历史回放有界**：最新 2 轮工具链保持原文，更早的 tool 正文按 1200 字符
+  head+tail 收紧；只在 `_wire`（送上游前）发生，不改落库内容。
+
+这些压缩都以**字符数**衡量（确定性下界），不声称线上 token 百分比；具体收益见
+`tests/test_agent_token_compaction.py`。
