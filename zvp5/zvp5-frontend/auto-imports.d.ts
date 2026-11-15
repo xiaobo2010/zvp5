@@ -7,5 +7,9 @@
 export {}
 declare global {
   const ElFormItem: typeof import('element-plus/es')['ElFormItem']
+  const ElInput: typeof import('element-plus/es')['ElInput']
+  const ElInputNumber: typeof import('element-plus/es')['ElInputNumber']
   const ElNotification: (typeof import('element-plus/es'))['ElNotification']
+  const ElOption: typeof import('element-plus/es')['ElOption']
+  const ElSelect: typeof import('element-plus/es')['ElSelect']
 }

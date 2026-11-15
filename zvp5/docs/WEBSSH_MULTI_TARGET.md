@@ -210,7 +210,7 @@ Nginx **无需改动**：后端 `zvpapi` vhost 已把 `/api/` 与 `/api/system/s
 | 路由存在性 | `GET /api/system/ssh/targets`（无 token） | `401 Could not validate credentials`（两个域名都是 401，不是 404） |
 | WS 升级 | `curl --http1.1` 带 Upgrade，无 ticket | `101 Switching Protocols` → 服务端主动关并回「ticket 无效或已过期」 |
 | 前端产物 | 首页 / 主 bundle | h2 200；bundle gzip 168183B；含 `preconnect`/`dns-prefetch`；`ServerSsh-*.js` 含目标选择文案 |
-| API | `https://zvp.../api/version` | 200，`v4.3.0-7` |
+| API | `https://zvp.../api/version` | 200，`v5.0.0` |
 | 服务日志 | `journalctl -u zvms4` 重启后 | 启动干净，无 `ssh targets` 告警 |
 
 ### 8.5 未做与待人工确认

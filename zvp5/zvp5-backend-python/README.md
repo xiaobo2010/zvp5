@@ -1,4 +1,4 @@
-# ZVMS4 Backend — ZVP Modified
+# ZVP5 Backend
 
 当前后端使用 FastAPI、Pydantic、SQLAlchemy 2.0 async 和 python-oracledb thin mode。
 Oracle Autonomous Database（ADB）是唯一运行时数据库；旧文档中的 MongoDB 集合名仅作为迁移背景。
