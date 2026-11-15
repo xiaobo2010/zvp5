@@ -15,6 +15,7 @@ import ZAiSessions from '@/components/ai/ZAiSessions.vue'
 import ZAiQuotaRequests from '@/components/ai/ZAiQuotaRequests.vue'
 import ZAiPrompts from '@/components/ai/ZAiPrompts.vue'
 import ZAiSchedule from '@/components/ai/ZAiSchedule.vue'
+import GlassBackButton from '@/ui/glass/GlassBackButton.vue'
 
 interface SegmentedTab {
   label: string
@@ -105,9 +106,7 @@ watch(
 
 <template>
   <div class="yg2-page ai-page">
-    <button class="ai-back" type="button" @click="router.back()">
-      <span aria-hidden="true">‹</span> 返回
-    </button>
+    <GlassBackButton class="ai-back" @click="router.back()" />
 
     <header class="yg2-page-header">
       <div>
@@ -144,27 +143,7 @@ watch(
   min-height: calc(100dvh - var(--yg2-topbar-h) - 96px);
 }
 
-.ai-back {
-  align-self: flex-start;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  height: 32px;
-  padding: 0 12px 0 8px;
-  border: 0;
-  border-radius: var(--yg2-r-pill);
-  background: transparent;
-  color: var(--yg2-text-secondary);
-  font: inherit;
-  font-size: 14px;
-  font-weight: 500;
-  cursor: pointer;
-}
 
-.ai-back:hover {
-  background: var(--yg2-surface-sunken);
-  color: var(--yg2-text);
-}
 
 .ai-tabs-scroll {
   align-self: stretch;
@@ -192,5 +171,9 @@ watch(
   flex: 1 1 auto;
   display: flex;
   flex-direction: column;
+}
+
+.ai-back {
+  align-self: flex-start;
 }
 </style>

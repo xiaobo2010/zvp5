@@ -6,6 +6,7 @@ import { useI18n } from 'vue-i18n'
 import router from '@/router'
 import api from '@/api'
 import { ref, onMounted } from 'vue'
+import GlassBackButton from '@/ui/glass/GlassBackButton.vue'
 
 const { t } = useI18n()
 const header = useHeaderStore()
@@ -23,9 +24,7 @@ header.setHeader(t('nav.about'))
 
 <template>
   <div class="yg2-page about-page">
-    <button class="about-back" type="button" @click="router.back()">
-      <span aria-hidden="true">‹</span> 返回
-    </button>
+    <GlassBackButton class="about-back" @click="router.back()" />
 
     <div class="about-card">
       <ElResult icon="info" title="镇海中学义工平台" :sub-title="version">
@@ -56,27 +55,7 @@ header.setHeader(t('nav.about'))
   margin: 0 auto;
 }
 
-.about-back {
-  align-self: flex-start;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  height: 32px;
-  padding: 0 12px 0 8px;
-  border: 0;
-  border-radius: var(--yg2-r-pill);
-  background: transparent;
-  color: var(--yg2-text-secondary);
-  font: inherit;
-  font-size: 14px;
-  font-weight: 500;
-  cursor: pointer;
-}
 
-.about-back:hover {
-  background: var(--yg2-surface-sunken);
-  color: var(--yg2-text);
-}
 
 .about-card {
   padding: 24px;
@@ -99,5 +78,9 @@ header.setHeader(t('nav.about'))
 
 .about-card :deep(.el-result__subtitle p) {
   color: var(--yg2-text-tertiary);
+}
+
+.about-back {
+  align-self: flex-start;
 }
 </style>

@@ -13,6 +13,7 @@ import { useI18n } from 'vue-i18n'
 import Segmented from '@/ui/ux/Segmented.vue'
 import ZUserModification from '@/components/group/ZUserModification.vue'
 import ZGroupTimeStatistics from '@/components/group/ZGroupTimeStatistics.vue'
+import GlassBackButton from '@/ui/glass/GlassBackButton.vue'
 
 interface SegmentedTab {
   label: string
@@ -131,9 +132,7 @@ watch(tab, () => {
 
 <template>
   <div v-if="id" class="yg2-page group-page">
-    <button class="group-back" type="button" @click="router.back()">
-      <span aria-hidden="true">‹</span> 返回
-    </button>
+    <GlassBackButton class="group-back" @click="router.back()" />
 
     <header class="yg2-page-header">
       <div>
@@ -167,6 +166,10 @@ watch(tab, () => {
 .page-container :deep(.el-page-header__content) {
   font-weight: 600;
 }
+
+.group-back {
+  align-self: flex-start;
+}
 </style>
 
 <style scoped>
@@ -176,27 +179,7 @@ watch(tab, () => {
   gap: 16px;
 }
 
-.group-back {
-  align-self: flex-start;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  height: 32px;
-  padding: 0 12px 0 8px;
-  border: 0;
-  border-radius: var(--yg2-r-pill);
-  background: transparent;
-  color: var(--yg2-text-secondary);
-  font: inherit;
-  font-size: 14px;
-  font-weight: 500;
-  cursor: pointer;
-}
 
-.group-back:hover {
-  background: var(--yg2-surface-sunken);
-  color: var(--yg2-text);
-}
 
 .group-tabs {
   align-self: flex-start;

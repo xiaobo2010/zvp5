@@ -9,6 +9,7 @@ import dayjs from '@/plugins/dayjs'
 import api from '@/api'
 import { ZActivityDetails } from '.'
 import { displayStatus } from '@/utils/activityStatus'
+import GlassBackButton from '@/ui/glass/GlassBackButton.vue'
 
 const user = useUserStore()
 const router = useRouter()
@@ -67,9 +68,7 @@ onMounted(() => {
 
 <template>
   <div v-if="activity" v-loading="loading" class="yg2-page yg2-detail">
-    <button class="yg2-detail__back" type="button" @click="router.back()">
-      <span aria-hidden="true">‹</span> 返回
-    </button>
+    <GlassBackButton class="yg2-detail__back" @click="router.back()" />
 
     <header class="yg2-detail__hero">
       <div class="yg2-detail__date">
@@ -136,34 +135,8 @@ onMounted(() => {
 </template>
 
 <style scoped>
-.yg2-detail__back {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  height: 32px;
-  margin-bottom: var(--yg2-sp-4);
-  padding: 0 12px 0 8px;
-  border: 0;
-  border-radius: var(--yg2-r-pill);
-  background: transparent;
-  color: var(--yg2-text-secondary);
-  font-family: inherit;
-  font-size: 14px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: background var(--yg2-dur-1) var(--yg2-ease-out),
-    color var(--yg2-dur-1) var(--yg2-ease-out);
-}
 
-.yg2-detail__back:hover {
-  background: var(--yg2-surface-sunken);
-  color: var(--yg2-text);
-}
 
-.yg2-detail__back:focus-visible {
-  outline: 3px solid var(--yg2-focus);
-  outline-offset: 2px;
-}
 
 /* 抬头：票根日期 + 标题 + 状态 */
 .yg2-detail__hero {
@@ -292,5 +265,9 @@ onMounted(() => {
   .yg2-detail__day {
     font-size: 28px;
   }
+}
+
+.yg2-detail__back {
+  align-self: flex-start;
 }
 </style>

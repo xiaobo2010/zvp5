@@ -16,6 +16,7 @@ import ZRolePolicies from '@/components/manage/ZRolePolicies.vue'
 import ZSystemSettings from '@/components/manage/ZSystemSettings.vue'
 import ZAttachmentAudit from '@/components/manage/ZAttachmentAudit.vue'
 import ZUserQuota from '@/components/manage/ZUserQuota.vue'
+import GlassBackButton from '@/ui/glass/GlassBackButton.vue'
 
 interface SegmentedTab {
   label: string
@@ -128,9 +129,7 @@ watch(
 
 <template>
   <div class="yg2-page manage-page">
-    <button class="manage-back" type="button" @click="router.back()">
-      <span aria-hidden="true">‹</span> 返回
-    </button>
+    <GlassBackButton class="manage-back" @click="router.back()" />
 
     <header class="yg2-page-header">
       <div>
@@ -167,27 +166,7 @@ watch(
   gap: 16px;
 }
 
-.manage-back {
-  align-self: flex-start;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  height: 32px;
-  padding: 0 12px 0 8px;
-  border: 0;
-  border-radius: var(--yg2-r-pill);
-  background: transparent;
-  color: var(--yg2-text-secondary);
-  font: inherit;
-  font-size: 14px;
-  font-weight: 500;
-  cursor: pointer;
-}
 
-.manage-back:hover {
-  background: var(--yg2-surface-sunken);
-  color: var(--yg2-text);
-}
 
 .manage-tabs {
   align-self: flex-start;
@@ -198,5 +177,9 @@ watch(
 
 .manage-tabs::-webkit-scrollbar {
   display: none;
+}
+
+.manage-back {
+  align-self: flex-start;
 }
 </style>

@@ -13,6 +13,7 @@ import dayjs from '@/plugins/dayjs'
 import ZUserModification from '@/components/group/ZUserModification.vue'
 import { Info, Log, ViewList } from '@icon-park/vue-next'
 import ZLogList from '@/components/log/ZLogList.vue'
+import GlassBackButton from '@/ui/glass/GlassBackButton.vue'
 
 /**
  * 封禁元数据由 `GET /v3/users/{id}` 附带返回;共享的 User 类型还没声明这几个字段,
@@ -201,9 +202,7 @@ watch(
 
 <template>
   <div v-if="id" class="yg2-page user-page">
-    <button class="user-back" type="button" @click="router.back()">
-      <span aria-hidden="true">‹</span> 返回
-    </button>
+    <GlassBackButton class="user-back" @click="router.back()" />
 
     <header class="yg2-page-header user-header">
       <div class="user-id">
@@ -313,27 +312,7 @@ watch(
   gap: 16px;
 }
 
-.user-back {
-  align-self: flex-start;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  height: 32px;
-  padding: 0 12px 0 8px;
-  border: 0;
-  border-radius: var(--yg2-r-pill);
-  background: transparent;
-  color: var(--yg2-text-secondary);
-  font: inherit;
-  font-size: 14px;
-  font-weight: 500;
-  cursor: pointer;
-}
 
-.user-back:hover {
-  background: var(--yg2-surface-sunken);
-  color: var(--yg2-text);
-}
 
 .user-id {
   display: flex;
@@ -360,6 +339,10 @@ watch(
 }
 
 .user-tabs {
+  align-self: flex-start;
+}
+
+.user-back {
   align-self: flex-start;
 }
 </style>

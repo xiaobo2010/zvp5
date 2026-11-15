@@ -14,6 +14,7 @@ import { modifyPasswordDialogs } from '@/views/user'
 import { listActive, type NotificationRecord } from '@/api/notifications'
 import ZMarkdown from '@/components/markdown/ZMarkdown.vue'
 import dayjs from '@/plugins/dayjs'
+import GlassBackButton from '@/ui/glass/GlassBackButton.vue'
 
 const user = useUserStore()
 const groupsStore = useGroupsStore()
@@ -127,9 +128,7 @@ onMounted(async () => {
 
 <template>
   <div class="yg2-page profile-page">
-    <button class="profile-back" type="button" @click="router.back()">
-      <span aria-hidden="true">‹</span> 返回
-    </button>
+    <GlassBackButton class="profile-back" @click="router.back()" />
 
     <header class="yg2-page-header">
       <div>
@@ -616,27 +615,7 @@ onMounted(async () => {
   padding: 8px;
 }
 
-.profile-back {
-  align-self: flex-start;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  height: 32px;
-  padding: 0 12px 0 8px;
-  border: 0;
-  border-radius: var(--yg2-r-pill);
-  background: transparent;
-  color: var(--yg2-text-secondary);
-  font: inherit;
-  font-size: 14px;
-  font-weight: 500;
-  cursor: pointer;
-}
 
-.profile-back:hover {
-  background: var(--yg2-surface-sunken);
-  color: var(--yg2-text);
-}
 
 .profile-hero-card {
   padding: 24px;
@@ -834,5 +813,9 @@ onMounted(async () => {
   border: 0;
   box-shadow: none;
   background: transparent;
+}
+
+.profile-back {
+  align-self: flex-start;
 }
 </style>

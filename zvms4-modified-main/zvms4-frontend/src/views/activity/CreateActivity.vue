@@ -9,6 +9,7 @@ import { ArrowLeft } from '@element-plus/icons-vue'
 import classifications from '@/components/tags/classifications'
 import { permissions } from '@/components/activity'
 import { useUserStore } from '@/stores/user'
+import GlassBackButton from '@/ui/glass/GlassBackButton.vue'
 
 const { t } = useI18n()
 const user = useUserStore()
@@ -80,10 +81,7 @@ const visibleTabs = computed(() => tabs.filter((x) => visibility[x.value]))
 
 <template>
   <div class="yg2-page create-page">
-    <button type="button" class="create-back" @click="router.back()">
-      <ElIcon><ArrowLeft /></ElIcon>
-      返回
-    </button>
+    <GlassBackButton class="create-back" @click="router.back()" />
 
     <header class="yg2-page-header">
       <div>
@@ -114,27 +112,13 @@ const visibleTabs = computed(() => tabs.filter((x) => visibility[x.value]))
   gap: 16px;
 }
 
-.create-back {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  align-self: flex-start;
-  padding: 6px 10px 6px 6px;
-  border: 0;
-  border-radius: var(--yg2-r-8);
-  background: transparent;
-  color: var(--yg2-text-secondary);
-  font-size: 13px;
-  cursor: pointer;
-  transition: background var(--yg2-dur-1) var(--yg2-ease-out);
-}
 
-.create-back:hover {
-  background: var(--yg2-surface-sunken);
-  color: var(--yg2-text);
-}
 
 .create-tabs {
+  align-self: flex-start;
+}
+
+.create-back {
   align-self: flex-start;
 }
 </style>

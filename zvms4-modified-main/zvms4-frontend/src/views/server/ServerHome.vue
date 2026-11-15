@@ -4,6 +4,7 @@ import { useUserStore } from '@/stores/user.ts'
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Segmented from '@/ui/ux/Segmented.vue'
+import GlassBackButton from '@/ui/glass/GlassBackButton.vue'
 
 
 interface SegmentedTab {
@@ -82,9 +83,7 @@ watch(current, () => {
 
 <template>
   <div class="yg2-page server-page">
-    <button class="server-back" type="button" @click="router.back()">
-      <span aria-hidden="true">‹</span> 返回
-    </button>
+    <GlassBackButton class="server-back" @click="router.back()" />
 
     <header class="yg2-page-header">
       <div>
@@ -111,27 +110,7 @@ watch(current, () => {
   gap: 16px;
 }
 
-.server-back {
-  align-self: flex-start;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  height: 32px;
-  padding: 0 12px 0 8px;
-  border: 0;
-  border-radius: var(--yg2-r-pill);
-  background: transparent;
-  color: var(--yg2-text-secondary);
-  font: inherit;
-  font-size: 14px;
-  font-weight: 500;
-  cursor: pointer;
-}
 
-.server-back:hover {
-  background: var(--yg2-surface-sunken);
-  color: var(--yg2-text);
-}
 
 .server-tabs {
   align-self: flex-start;
@@ -142,5 +121,9 @@ watch(current, () => {
 
 .server-tabs::-webkit-scrollbar {
   display: none;
+}
+
+.server-back {
+  align-self: flex-start;
 }
 </style>
