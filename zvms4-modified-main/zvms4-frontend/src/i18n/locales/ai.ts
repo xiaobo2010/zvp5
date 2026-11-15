@@ -6,6 +6,7 @@ export const zhCN = {
     sessions: '会话',
     quota: '我的额度',
     'quota-requests': '额度申请',
+    prompts: '提示词审阅',
     keys: 'Key 管理',
     engines: 'OCR 引擎',
     'quota-admin': '额度管理',

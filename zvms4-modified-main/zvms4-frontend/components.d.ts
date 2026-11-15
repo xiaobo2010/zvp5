@@ -64,6 +64,7 @@ declare module 'vue' {
     ZAiKeysAdmin: typeof import('./src/components/ai/ZAiKeysAdmin.vue')['default']
     ZAiLogsAdmin: typeof import('./src/components/ai/ZAiLogsAdmin.vue')['default']
     ZAiOcrEnginesAdmin: typeof import('./src/components/ai/ZAiOcrEnginesAdmin.vue')['default']
+    ZAiPrompts: typeof import('./src/components/ai/ZAiPrompts.vue')['default']
     ZAiQuotaAdmin: typeof import('./src/components/ai/ZAiQuotaAdmin.vue')['default']
     ZAiQuotaPanel: typeof import('./src/components/ai/ZAiQuotaPanel.vue')['default']
     ZAiQuotaRequests: typeof import('./src/components/ai/ZAiQuotaRequests.vue')['default']

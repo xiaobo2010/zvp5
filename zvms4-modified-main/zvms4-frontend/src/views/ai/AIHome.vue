@@ -13,13 +13,14 @@ import ZAiHealthPanel from '@/components/ai/ZAiHealthPanel.vue'
 import ZAiLogsAdmin from '@/components/ai/ZAiLogsAdmin.vue'
 import ZAiSessions from '@/components/ai/ZAiSessions.vue'
 import ZAiQuotaRequests from '@/components/ai/ZAiQuotaRequests.vue'
+import ZAiPrompts from '@/components/ai/ZAiPrompts.vue'
 
 interface SegmentedTab {
   label: string
   value: string
 }
 
-const VALID_CURRENT = ['chat', 'sessions', 'quota', 'quota-requests', 'keys', 'engines', 'quota-admin', 'health', 'logs']
+const VALID_CURRENT = ['chat', 'sessions', 'quota', 'quota-requests', 'prompts', 'keys', 'engines', 'quota-admin', 'health', 'logs']
 const ADMIN_ONLY = ['keys', 'engines', 'quota-admin', 'health', 'logs']
 
 const route = useRoute()
@@ -75,6 +76,7 @@ const tabs = ref<SegmentedTab[]>([
 ])
 
 if (isAdmin) {
+  tabs.value.push({ label: 'prompts', value: 'prompts' })
   tabs.value.push({ label: 'keys', value: 'keys' })
   tabs.value.push({ label: 'engines', value: 'engines' })
   tabs.value.push({ label: 'quota-admin', value: 'quota-admin' })
@@ -121,6 +123,7 @@ watch(
       <ZAiSessions v-else-if="current === 'sessions'" />
       <ZAiQuotaPanel v-else-if="current === 'quota'" />
       <ZAiQuotaRequests v-else-if="current === 'quota-requests'" />
+      <ZAiPrompts v-else-if="current === 'prompts'" />
       <ZAiKeysAdmin v-else-if="current === 'keys'" />
       <ZAiOcrEnginesAdmin v-else-if="current === 'engines'" />
       <ZAiQuotaAdmin v-else-if="current === 'quota-admin'" />
