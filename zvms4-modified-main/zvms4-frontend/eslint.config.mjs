@@ -17,6 +17,10 @@ export default defineConfigWithVueTs(
       '**/dist/**',
       '**/coverage/**',
       '**/node_modules/**',
+      '**/.vite/**',
+      // 作者本机 macOS Finder 生成的「副本」文件（文件名带 " 2"），
+      // 与同名原文件重复且代码里没有引用，不参与 lint。
+      '**/* 2.*',
       '**/*.d.ts'
     ]
   },

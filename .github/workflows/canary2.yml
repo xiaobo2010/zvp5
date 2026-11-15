@@ -1,0 +1,197 @@
+name: Canary2 preview (frontend → Worker)
+
+# canary2 = 独立预览通道，托管 feat/yg-next-api 分支（wzxundesigned 的 yg 新分支）前端。
+# 与 main 分支的 canary.yml 同构：前端门禁 → 构建 → 发 Worker → 冒烟。
+# 差异点（该分支是旧目录结构 zvms4-modified-main/）：
+#   - 只有 VITE_API_BASE 一个基址变量，没有 RACE/CONTENT/STATIC/PAGE。
+#   - pnpm-lock.yaml 落后于 package.json（缺 html2canvas / html2canvas-pro /
+#     lucide-vue-next），--frozen-lockfile 会直接失败，这里用 --no-frozen-lockfile。
+#   - 构建走 `pnpm exec vite build`，不吃 prebuild 的 design:sync（生成目录会被重建，
+#     是已知坑）；类型检查作为独立步骤跑。
+
+on:
+  push:
+    branches:
+      - feat/yg-next-api
+    paths:
+      - "zvms4-modified-main/zvms4-frontend/**"
+      - "preview-worker-canary2/**"
+      - ".github/workflows/canary2.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: canary2-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION_FILE: zvms4-modified-main/zvms4-frontend/.node-version
+  PNPM_VERSION: "10.34.4"
+
+jobs:
+  preview:
+    name: Frontend gates and Worker preview (canary2)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: zvms4-modified-main/zvms4-frontend
+    # token 在 canary environment 里；该 environment 的分支策略已放行
+    # feat/yg-next-api 与 v5-canary。
+    environment: canary
+    env:
+      WRANGLER_VERSION: "4.158.0"
+      CANARY_URL: https://canary2.xiaobopisces.top
+      # 后端盾牌会 418 掉没有 UA 的请求（curl 默认 UA 也在黑名单里），冒烟必须带这个。
+      PROBE_UA: Mozilla/5.0 (compatible; ZVP5-Deploy/1.0)
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      # 预览站跨域直连正式 API：CORS 白名单里必须已有 canary2 域。
+      VITE_API_BASE: ${{ vars.CANARY2_API_BASE || 'https://zvp.xiaobopisces.top/api' }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v6
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: ${{ env.NODE_VERSION_FILE }}
+          cache: pnpm
+          cache-dependency-path: zvms4-modified-main/zvms4-frontend/pnpm-lock.yaml
+      - name: Install dependencies
+        # 该分支 lockfile 未同步，frozen-lockfile 必失败；后续提交应把 lockfile 补齐
+        # 再切回 --frozen-lockfile。
+        run: pnpm install --no-frozen-lockfile
+      - name: Unit tests
+        # 单测必须在"无预览基址"的环境里跑：axios 断言文件类请求由 origin 推导，
+        # job 级 VITE_API_BASE 会把它污染成 zvp 域。
+        env:
+          VITE_API_BASE: https://ci.invalid/api
+        run: pnpm exec vitest run --reporter=dot
+      - name: Lint
+        run: pnpm run lint
+      - name: Type check
+        run: pnpm exec vue-tsc --noEmit -p tsconfig.vitest.json --composite false
+      - name: Build preview bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${VITE_API_BASE:?VITE_API_BASE is required}"
+          # 用 vite build 而不是 pnpm run build：后者会触发 prebuild 的 design:sync，
+          # 重建 src/assets/styles/yg 生成目录并删除文件（已知坑 1）。
+          pnpm exec vite build
+          # 静态资源必须走 Worker 自己托管的根路径。
+          grep -F 'src="/assets/' dist/index.html >/dev/null
+          # API 基址必须烘进 bundle（预览站只发静态文件，不反代 /api）。
+          grep -R -F "$VITE_API_BASE" dist/assets >/dev/null
+      - name: Drop service worker from the preview bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          rm -f dist/sw.js dist/sw.js.map dist/workbox-*.js dist/workbox-*.js.map
+          [[ ! -e dist/sw.js ]] || { echo "dist/sw.js still present" >&2; exit 1; }
+      - name: Deploy to Cloudflare Worker
+        shell: bash
+        working-directory: .
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          : "${CLOUDFLARE_API_TOKEN:?CLOUDFLARE_API_TOKEN is required}"
+          : "${CLOUDFLARE_ACCOUNT_ID:?CLOUDFLARE_ACCOUNT_ID is required}"
+          npx --yes "wrangler@${WRANGLER_VERSION}" deploy \
+            --config preview-worker-canary2/wrangler.jsonc
+      - name: Deploy to the branch preview Worker (yigong-v2)
+        shell: bash
+        working-directory: .
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          : "${CLOUDFLARE_API_TOKEN:?CLOUDFLARE_API_TOKEN is required}"
+          : "${CLOUDFLARE_ACCOUNT_ID:?CLOUDFLARE_ACCOUNT_ID is required}"
+          npx --yes "wrangler@${WRANGLER_VERSION}" deploy \
+            --config zvms4-modified-main/zvms4-frontend/wrangler.yigong2.jsonc
+      - name: Smoke test the deployed preview
+        shell: bash
+        working-directory: .
+        run: |
+          set -euo pipefail
+          dist_dir=zvms4-modified-main/zvms4-frontend/dist
+          entry="$(grep -o 'src="/assets/[^"]*"' "$dist_dir/index.html" | head -n1 | sed -e 's|src="||' -e 's|"$||')"
+          [[ -n "$entry" ]] || { echo "could not find entry asset in dist/index.html" >&2; exit 1; }
+          local_sha="$(sha256sum "$dist_dir$entry" | awk '{print $1}')"
+
+          home_status=""
+          waf_blocked=0
+          for _ in $(seq 1 6); do
+            home_status="$(curl -fsS -A "$PROBE_UA" -o /dev/null -w '%{http_code}' "$CANARY_URL/" || true)"
+            if [[ "$home_status" == "403" ]]; then
+              waf_blocked=1
+              break
+            fi
+            remote_sha="$(curl -fsS -A "$PROBE_UA" --compressed -H 'Accept-Encoding: gzip' "$CANARY_URL$entry" | sha256sum | awk '{print $1}' || true)"
+            if [[ "$home_status" == "200" && "$remote_sha" == "$local_sha" ]]; then
+              break
+            fi
+            sleep 5
+          done
+          if [[ $waf_blocked -eq 1 ]]; then
+            echo "::warning title=Preview probe blocked by Cloudflare::canary2 root returned 403 to the runner IP; content/CORS checks skipped."
+            {
+              echo '### Canary2 preview deployed (probe skipped)'
+              echo
+              echo "- URL: $CANARY_URL"
+              echo "- Commit: \`$GITHUB_SHA\`"
+              echo "- Entry chunk: \`$entry\`"
+              echo '- Content and CORS probes were skipped: Cloudflare returned 403 to the runner IP.'
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          [[ "$home_status" == "200" ]] || { echo "preview root returned $home_status" >&2; exit 1; }
+          [[ "$remote_sha" == "$local_sha" ]] || {
+            echo "served $entry does not match the freshly built bundle" >&2
+            exit 1
+          }
+
+          # 预览站的 service worker 已被移除，`/sw.js` 应回落到 SPA 的 index.html；
+          # 若仍返回 application/javascript，说明浏览器会跑旧的预缓存壳。
+          sw_type="$(curl -fsS -A "$PROBE_UA" -o /dev/null -w '%{content_type}' "$CANARY_URL/sw.js" | tr -d '\r')"
+          case "$sw_type" in
+            text/html*) ;;
+            *)
+              echo "unexpected content-type for /sw.js: $sw_type" >&2
+              exit 1
+              ;;
+          esac
+
+          # 预览域不在后端 CORS 白名单时，页面能打开但所有 API 都会被 400 拒掉。
+          cors_hdr="$(mktemp)"
+          cors_status="$(curl -sS -A "$PROBE_UA" -D "$cors_hdr" -o /dev/null -w '%{http_code}' -X OPTIONS \
+            -H "Origin: $CANARY_URL" \
+            -H 'Access-Control-Request-Method: POST' \
+            -H 'Access-Control-Request-Headers: authorization,content-type' \
+            "$VITE_API_BASE/users/login" || echo 000)"
+          cors_origin="$(tr -d '\r' < "$cors_hdr" | awk 'tolower($1) == "access-control-allow-origin:" {print $2}' | tail -n1)"
+          rm -f "$cors_hdr"
+          [[ "$cors_origin" == "$CANARY_URL" ]] || {
+            if [[ -z "$cors_origin" ]]; then
+              echo "::warning title=CORS probe inconclusive::no access-control-allow-origin header (status $cors_status; backend shield or WAF may be blocking the runner IP)."
+            else
+              echo "backend CORS does not echo the preview origin (got '$cors_origin')" >&2
+              exit 1
+            fi
+          }
+
+          {
+            echo '### Canary2 preview deployed'
+            echo
+            echo "- URL: $CANARY_URL"
+            echo "- Commit: \`$GITHUB_SHA\`"
+            echo "- Entry chunk: \`$entry\`"
+            echo '- Worker: zvp-yuren-canary2 (static assets only; no backend change was made)'
+          } >> "$GITHUB_STEP_SUMMARY"

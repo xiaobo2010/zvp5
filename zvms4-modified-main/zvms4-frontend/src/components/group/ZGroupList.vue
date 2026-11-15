@@ -27,6 +27,12 @@ const userStore = useUserStore()
 
 const tableRef = ref<TableInstance>()
 
+// 模板里 `:ref` 收到的是已解包的值，直接绑 ref 对象会被当成 VNodeRef 值传下去；
+// 用函数 ref 承接，再写回 tableRef。
+function setTableRef(el: unknown) {
+  tableRef.value = (el as TableInstance | null) ?? undefined
+}
+
 /** 分页行 + 卡片下边距 + 页面底部留白 */
 const BOTTOM_ROOM = 96
 
@@ -108,7 +114,7 @@ async function remove(id: string) {
     </div>
     <ElCard shadow="never">
       <SkeletonTable v-if="loading" :rows="6" />
-      <ElTable v-else :ref="tableRef" :data="groups" :max-height="tableHeight">
+      <ElTable v-else :ref="setTableRef" :data="groups" :max-height="tableHeight">
         <ElTableColumn prop="name" :label="t('manage.groupList.columns.name')" min-width="200" />
         <ElTableColumn
           prop="permission"

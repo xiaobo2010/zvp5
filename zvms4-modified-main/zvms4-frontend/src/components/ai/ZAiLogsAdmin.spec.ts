@@ -231,38 +231,6 @@ vi.mock('element-plus', async () => {
     }
   })
 
-  const ElPagination = defineComponent({
-    name: 'ElPagination',
-    props: {
-      currentPage: { type: Number, default: 1 },
-      pageSize: { type: Number, default: 10 },
-      total: { type: Number, default: 0 }
-    },
-    emits: ['current-change', 'size-change'],
-    setup(props, { emit }) {
-      return () =>
-        h(
-          'div',
-          {
-            class: 'el-pagination-stub',
-            'data-total': String(props.total),
-            'data-page': String(props.currentPage),
-            'data-size': String(props.pageSize)
-          },
-          [
-            h(
-              'button',
-              {
-                class: 'el-pagination-stub__next',
-                onClick: () => emit('current-change', (props.currentPage ?? 1) + 1)
-              },
-              'next'
-            )
-          ]
-        )
-    }
-  })
-
   return {
     ElCard: { name: 'ElCard', template: '<section><slot name="header" /><slot /></section>' },
     ElTable,
@@ -274,7 +242,6 @@ vi.mock('element-plus', async () => {
     ElIcon,
     ElEmpty,
     ElTag,
-    ElPagination,
     ElLoadingDirective: { name: 'loading', mounted() {}, updated() {} },
     ElMessage: Object.assign(vi.fn(), {
       error: elMessageErrorSpy,
@@ -360,8 +327,11 @@ describe('调用日志页', () => {
     const wrapper = mountPage()
     await flushPromises()
 
-    const pagination = wrapper.find('.el-pagination-stub')
-    expect(pagination.attributes('data-total')).toBe('42')
+    const pagination = wrapper.find('.yg-pg')
+    expect(pagination.exists()).toBe(true)
+    // 42 条 / 每页 20 条 ⇒ 3 页
+    expect(pagination.find('.yg-pg__total').text()).toContain('42')
+    expect(pagination.find('.yg-pg__status').text()).toContain('3')
 
     wrapper.unmount()
   })
@@ -380,7 +350,7 @@ describe('调用日志页', () => {
     const wrapper = mountPage()
     await flushPromises()
 
-    await wrapper.find('.el-pagination-stub__next').trigger('click')
+    await wrapper.find('[aria-label="下一页"]').trigger('click')
     await flushPromises()
 
     expect(lastQuery()).toMatchObject({ page: 2, perpage: 20 })
@@ -392,7 +362,7 @@ describe('调用日志页', () => {
     const wrapper = mountPage()
     await flushPromises()
 
-    await wrapper.find('.el-pagination-stub__next').trigger('click')
+    await wrapper.find('[aria-label="下一页"]').trigger('click')
     await flushPromises()
     expect(lastQuery()).toMatchObject({ page: 2 })
 
