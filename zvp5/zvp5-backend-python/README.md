@@ -53,7 +53,7 @@ known_hosts 内容。交互式终端仍保留双人 TOTP、一次性 ticket（12
 
 ```python
 SSH_TARGETS = [
-    {"id": "frontend", "label": "前端服务器", "host": "192.0.2.5"},
+    {"id": "frontend", "label": "前端服务器", "host": "<INTERNAL_HOST>"},
     {"id": "api", "label": "API 服务器", "host": "127.0.0.1",
      "port": 22, "user": "root", "key_path": "/www/zvms4/backend/ssh_key"},
 ]

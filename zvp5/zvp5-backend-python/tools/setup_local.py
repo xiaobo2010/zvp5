@@ -7,8 +7,8 @@ attempted. Generated secrets and settings are ignored by Git.
 库里所有 AI 凭据（``AI_CREDENTIALS.api_key_cipher`` / ``AI_OCR_ENGINES.secret_cipher``）
 都是用 ``aes_key.txt`` 解开的，换一把 key 等于让既有密文全部变成
 ``AI_CREDENTIAL_UNREADABLE``；RSA 私钥则决定已签发 token 与 TOTP 派生。生产机缺
-密钥时应从备份/上一台机器迁移，绝不能让本脚本「顺手生成一把新的」——2026-10-30
-的事故就是这么发生的（见 ``docs/ISSUE_2026-11-03_AI_CREDENTIAL_UNREADABLE.md``）。
+密钥时应从备份/上一台机器迁移，绝不能让本脚本「顺手生成一把新的」——换 key
+等于让既有密文全部失效，且不可逆。
 """
 
 from __future__ import annotations

@@ -108,6 +108,6 @@ curl -sI https://zvpapi.xiaobopisces.top | grep -i '^date'
 ## 6. 验证副作用（如实记录）
 
 复现实验对生产账号 oid `68c3****`（已脱敏）产生了 3 条 `login_fail` 审计行，并使
-`38.175.*.*` 对该账号的登录限速生效数分钟（后续请求 429）。`login_failure_burst`
+`<BACKEND_IP>` 对该账号的登录限速生效数分钟（后续请求 429）。`login_failure_burst`
 默认 `mode=alert`、阈值 10/h（`services/risk_monitor.py:66-77`），3 条不会触发封禁；
 账号本身与其它出口 IP 的登录不受影响。

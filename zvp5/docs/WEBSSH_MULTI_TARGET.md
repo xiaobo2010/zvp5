@@ -29,7 +29,7 @@
   "code": 200,
   "data": {
     "targets": [
-      { "id": "content", "label": "前端服务器", "display": "root@192.0.2.11" },
+      { "id": "content", "label": "前端服务器", "display": "root@<INTERNAL_HOST>" },
       { "id": "api", "label": "API 服务器", "display": "root@127.0.0.1" }
     ],
     "default": "content"
@@ -75,7 +75,7 @@
   {
     "id": "content",
     "label": "前端服务器",
-    "host": "192.0.2.11",
+    "host": "<INTERNAL_HOST>",
     "port": 22,
     "user": "root",
     "key_path": "/www/zvms4/backend/ssh_key.content",

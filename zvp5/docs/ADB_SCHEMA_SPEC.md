@@ -124,7 +124,7 @@ DATA 形如 `{"by_origin":{<origin>:{"on-campus":h,"off-campus":h,"social-practi
 
 - **方式**：手写版本化 SQL（`db/oracle/ddl/V001__initial_schema.sql`）+ `db/models.py`（SQLAlchemy Core `Table` 镜像）+ `db/ddl_check.py`（离线漂移校验）。**本轮不引入 Alembic**。
 - `ddl_check.py`：对每个表 `CreateTable(t).compile(dialect=OracleDialect())`，与 `V001` 归一化后字符串比对（忽略大小写/空白/`CHAR` 语义差异），不一致即失败。**无 DB I/O**。
-- 应用方式（写入 `db/oracle/ddl/README.md`）：先用 SQLcl 在 `zvp5adb2` 应用并验证，再上 `zvp5adb`；每个对象用 `EXECUTE IMMEDIATE` + `-955` 容错实现幂等。
+- 应用方式（写入 `db/oracle/ddl/README.md`）：先用 SQLcl 在 `<ADB_TEST>` 应用并验证，再上 `<ADB_PROD>`；每个对象用 `EXECUTE IMMEDIATE` + `-955` 容错实现幂等。
 
 ## 5. 数据访问层布局与开关
 

@@ -12,7 +12,7 @@ Environment=PYTHONUNBUFFERED=1
 Environment=TNS_ADMIN=/www/zvp5/adb-wallet-zvp5adb2
 # AES 主密钥不走部署树：systemd 在启动时把它复制到 $CREDENTIALS_DIRECTORY，
 # 服务停即消失。源文件放 /etc/zvp5/ai-key（root:root 0600），由运维迁移，
-# 不参与 rsync。见 docs/ISSUE_2026-11-03_AI_CREDENTIAL_UNREADABLE.md。
+# 不参与 rsync。
 # 凭据 id 从 zvms_ai_key 改成 zvp5_ai_key。两条同时注入：线上旧代码只认 zvms_ai_key，
 # 新代码（util/platform_key.py）认 zvp5_ai_key 并回落旧 id，所以换名不用等代码先上线。
 # 新代码部署并验证后，删掉 zvms_ai_key 那一行即可收口。

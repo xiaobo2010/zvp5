@@ -41,7 +41,7 @@
 
 ## 3. 验证记录(可复跑)
 
-- 解析:`ns1.example.com`(权威)与 zvp-backend 本地解析均返回 <BACKEND_IP>。
+- 解析:`<CF_NAMESERVER>`(权威)与 zvp-backend 本地解析均返回 <BACKEND_IP>。
 - DNS 翻转前 `--resolve` 预检(钉后端 IP):zvpapi 根 200(SPA + CSP/HSTS 头);SNI=zvp 打后端 200 且证书链完整校验通过;`/api/` 418(UA 盾牌对非浏览器 UA 的预期行为,见 §6);`/socket.io/` 路由通;`/api/system/ssh/ws` 握手 101。
 - CORS 预检:`Origin: https://zvp.xiaobopisces.top` → 200 + `access-control-allow-origin/headers`(authorization, content-type, xuehai-id)齐备;恶意 Origin → 400 且无 ACAO。
 - 翻转后家庭端到端(Clash DNS 缓存过期后自动恢复):`https://zvp.xiaobopisces.top/` 200 → bundle gzip wire 167,848B;`https://zvpapi.xiaobopisces.top/` 200(SPA)。

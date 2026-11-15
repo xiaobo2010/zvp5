@@ -124,16 +124,16 @@ account. Fresh instances get both tables and the `id=1, version=0` seed from
 
 ## Applying V001
 
-Targets, in order (spec §4): **`zvp5adb2` first, verify, then `zvp5adb`.**
+Targets, in order (spec §4): **`<ADB_TEST>` first, verify, then `<ADB_PROD>`.**
 
 Run the whole file as the schema owner with SQLcl (`sql`) or SQLcl/sqlplus:
 
 ```bash
 # SQLcl (recommended)
-sql admin@zvp5adb2 @V001__initial_schema.sql
+sql admin@<ADB_TEST> @V001__initial_schema.sql
 
 # or sqlplus
-sqlplus admin/<password>@zvp5adb2 @V001__initial_schema.sql
+sqlplus admin/<password>@<ADB_TEST> @V001__initial_schema.sql
 ```
 
 Each statement is wrapped in a PL/SQL `EXECUTE IMMEDIATE` block, so run the file
@@ -181,7 +181,7 @@ SELECT table_name, column_name FROM user_tab_columns
 WHERE  data_type = 'CLOB' ORDER BY table_name, column_name;
 ```
 
-Then repeat on `zvp5adb`.
+Then repeat on `<ADB_PROD>`.
 
 ## Idempotency
 

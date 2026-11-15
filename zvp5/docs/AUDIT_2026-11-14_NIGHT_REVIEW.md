@@ -82,8 +82,8 @@
 | A-L6 `on_round` 无护栏 | 需幂等重试/恢复协议，不是加 try/except；吞异常会把「已扣费无消息」变成静默数据丢失 |
 | A-L2/L3/L5 run_cache 冷拷贝等 | 无今夜级可独立验证收益，保留下一轮 |
 | B-M1 批量加成员 MERGE/executemany | 会改变 dedupe/overwrite/唯一冲突语义，需 Oracle 集成测试 |
-| B-M2 单成员重算改单条聚合查询 | 属 repo 查询形状重构，需在 zvp5adb2 先验执行计划 |
-| B-M3/M4/M5 组合索引与查询形状 | 索引需 DDL 纪律：先 zvp5adb2 应用验证再上 zvp5adb，今夜不跑 DDL |
+| B-M2 单成员重算改单条聚合查询 | 属 repo 查询形状重构，需在 <ADB_TEST> 先验执行计划 |
+| B-M3/M4/M5 组合索引与查询形状 | 索引需 DDL 纪律：先 <ADB_TEST> 应用验证再上 <ADB_PROD>，今夜不跑 DDL |
 | B-L6 附件孤儿（entity_type='activity'） | 涉及 original/thumb/OCR/file_events BLOB 生命周期与存量回填，需级联设计 |
 | B-L8 大 OFFSET/page-size | 涉及 API 与前端分页契约，另做 keyset/上限设计 |
 | 监控 ASH 查询 | 设计核算内成本；要降先抬 `PERF_ORACLE_INTERVAL_SECONDS`（120→300 即腰斩） |
@@ -112,7 +112,7 @@ v2/v3 未挂装饰器的 handler（`get_activities_v2` / `get_activity_members_v
    需先做计费安全论证 + 异常恢复协议。
 2. **两枚组合索引**：`activity_members(activity_oid, member_status)` 与
    `(member_oid, member_status, activity_oid)`（时长聚合与按人/按活动页的
-   主谓词），走 DDL 纪律先上 zvp5adb2 验证。
+   主谓词），走 DDL 纪律先上 <ADB_TEST> 验证。
 3. **A-M7/A-M8 会话删除原子化 + conversation 锁契约统一**：一次性把
    delete/submit 的锁点收敛成同一把锁。
 4. 若要降监控占空比：`PERF_ORACLE_INTERVAL_SECONDS` 120→300，零代码风险。
@@ -176,7 +176,7 @@ v2/v3 未挂装饰器的 handler（`get_activities_v2` / `get_activity_members_v
 
 | # | 事项 | 卡点 |
 |---|---|---|
-| B-M3/M4/M5 | `activity_members(activity_oid, member_status)`、`(member_oid, member_status, activity_oid)` 组合索引 | DDL 纪律：先 zvp5adb2 `EXPLAIN` 验证再上；A 选择性差，可能需改 covering `(activity_oid, member_status, duration_hours)` |
+| B-M3/M4/M5 | `activity_members(activity_oid, member_status)`、`(member_oid, member_status, activity_oid)` 组合索引 | DDL 纪律：先 <ADB_TEST> `EXPLAIN` 验证再上；A 选择性差，可能需改 covering `(activity_oid, member_status, duration_hours)` |
 | A-M3(b) | 额度 peek 收敛到每 run 首次（3→1 SQL）| 额度刚好耗尽时最多多花一轮上游费用（有界），需拍板 |
 | A-M4 | run_detail 增量下推 | 需先冻结「缓存必须全量 + proposals 与窗口解耦」契约 |
 | A-L6 | on_round 幂等重试 | 需确定性 oids + 具名终态 + 扣费顺序结论 |
