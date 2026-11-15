@@ -68,6 +68,7 @@ declare module 'vue' {
     ZAiQuotaAdmin: typeof import('./src/components/ai/ZAiQuotaAdmin.vue')['default']
     ZAiQuotaPanel: typeof import('./src/components/ai/ZAiQuotaPanel.vue')['default']
     ZAiQuotaRequests: typeof import('./src/components/ai/ZAiQuotaRequests.vue')['default']
+    ZAiSchedule: typeof import('./src/components/ai/ZAiSchedule.vue')['default']
     ZAiSessions: typeof import('./src/components/ai/ZAiSessions.vue')['default']
     ZAttachmentAudit: typeof import('./src/components/manage/ZAttachmentAudit.vue')['default']
     ZAttachmentUpload: typeof import('./src/components/attachment/ZAttachmentUpload.vue')['default']
