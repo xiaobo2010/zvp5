@@ -13,10 +13,12 @@ on:
   push:
     branches:
       - v5-canary2
-    paths:
-      - "zvms4-modified-main/zvms4-frontend/**"
-      - "preview-worker-canary2/**"
-      - ".github/workflows/canary2.yml"
+    # 改代码就重新部署：只忽略纯文档，不用目录白名单。
+    # 白名单在改名/产物挪位/分支结构与预期不一致时会静默漏部署
+    # （2026-11-15 canary 因只认 zvp5/zvp5-frontend/** 而三周没更新）。
+    paths-ignore:
+      - "**/*.md"
+      - "**/*.txt"
   workflow_dispatch:
 
 permissions:
