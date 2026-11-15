@@ -1,3 +1,21 @@
 adb2-wallet.7z
 # 设计自查截图（本地生成，不入库）
 .design-preview/
+
+# ---------------------------------------------------------------------------
+# 本地素材与凭据：不属于这个仓库，nv 留在磁盘上但不入库
+# ---------------------------------------------------------------------------
+# Oracle ADB 钱包（ewallet.p12 / cwallet.sso / adb-info.json）—— 数据库凭据
+adb2-wallet/
+# 设计资源暂存（SFSymbols 约 28MB / 3200+ 文件，iOS UI kit 素材，指针素材）
+SFSymbols/
+Pointers/
+apple-ios-27-ui-kit_assets_*/
+# macOS 缓存与「复制副本」残留（Finder 生成的 ` 2` 后缀文件）
+.DS_Store
+**/.DS_Store
+* 2.md
+* 2.sql
+* 2.py
+* 2.vue
+* 2.ts
