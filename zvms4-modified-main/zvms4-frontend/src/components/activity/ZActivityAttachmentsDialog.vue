@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import { ElButton, ElResult } from 'element-plus'
+import { ElButton, ElResult, ElIcon } from 'element-plus'
 import { computed, ref, watch } from 'vue'
 import { useWindowSize } from '@vueuse/core'
 import { Refresh, Tickets } from '@element-plus/icons-vue'
@@ -10,6 +10,7 @@ import * as attachmentApi from '@/api/attachment'
 import type { AttachmentListItem } from '@/../types'
 import { useUserStore } from '@/stores/user'
 import { getXuehaiId } from '@/plugins/ua'
+import Skeleton from '@/ui/ux/Skeleton.vue'
 
 // 管理单个活动的义工单附件：列出、上传、删除。
 // 权限与 ZActivityStatsDialog 的入口不同：仅 manager（admin/department）
@@ -97,20 +98,19 @@ watch(open, () => {
     :icon="Tickets"
   >
     <template #default>
-      <div v-loading="loading">
-        <div style="text-align: center">
-          <ElButton
-            class="px-2"
-            type="success"
-            :icon="Refresh"
+      <div>
+        <Skeleton v-if="loading" :lines="4" height="14px" />
+        <div v-else style="text-align: center">
+          <button
+            class="yg2-icon-btn"
+            type="button"
             :disabled="loading"
-            text
-            bg
-            circle
             :title="t('activity.form.actions.refresh')"
             :aria-label="t('activity.form.actions.refresh')"
             @click="reload"
-          />
+          >
+            <ElIcon><Refresh /></ElIcon>
+          </button>
         </div>
         <ElResult v-if="gateBlocked" icon="warning" :title="gateText" />
         <ElResult v-else-if="error && !loading" icon="error" :title="error" />

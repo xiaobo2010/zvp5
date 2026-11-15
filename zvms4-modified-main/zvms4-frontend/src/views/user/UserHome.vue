@@ -7,6 +7,9 @@ import { useUserStore } from '@/stores/user'
 import ZUserGroup from '@/components/tags/ZUserGroup.vue'
 import ZUserPosition from '@/components/tags/ZUserPosition.vue'
 import ZUserTimeRings from '@/components/activity/ZUserTimeRings.vue'
+import Skeleton from '@/ui/ux/Skeleton.vue'
+import { ElIcon } from 'element-plus'
+import { Refresh } from '@element-plus/icons-vue'
 
 const header = useHeaderStore()
 const user = useUserStore()
@@ -20,6 +23,8 @@ if (!user.isLogin) {
 header.setHeader(t('nav.home'))
 
 const loading = ref(false)
+/** 义工时间面板实例：刷新要连它一起刷，否则只有个人信息会变 */
+const timeRings = ref<InstanceType<typeof ZUserTimeRings> | null>(null)
 
 const greeting = computed(() => {
   const hour = new Date().getHours()
@@ -45,16 +50,24 @@ const time = reactive({
   offCampus: user.time.offCampus
 })
 
-async function refreshUser() {
+/**
+ * 刷新整页数据。
+ * 之前只调了 user.refreshUser()，义工时间环自己维护一份数据，所以点了刷新只有
+ * 个人信息面板变、时间环不动。现在两个请求并发，面板各自显示骨架屏。
+ */
+async function refreshAll() {
   if (loading.value) {
     return
   }
   loading.value = true
-  await user.refreshUser()
-  time.socialPractice = user.time.socialPractice
-  time.onCampus = user.time.onCampus
-  time.offCampus = user.time.offCampus
-  loading.value = false
+  try {
+    await Promise.all([user.refreshUser(), timeRings.value?.refresh()])
+    time.socialPractice = user.time.socialPractice
+    time.onCampus = user.time.onCampus
+    time.offCampus = user.time.offCampus
+  } finally {
+    loading.value = false
+  }
 }
 
 watch(
@@ -76,12 +89,15 @@ watch(
       </div>
       <div class="yg2-page-header__actions">
         <button
-          class="yg2-btn yg2-btn--secondary yg2-btn--sm"
+          class="yg2-icon-btn"
+          :class="{ 'is-pressed': loading }"
           type="button"
           :disabled="loading"
-          @click="refreshUser"
+          title="刷新全部面板"
+          aria-label="刷新全部面板"
+          @click="refreshAll"
         >
-          {{ loading ? '刷新中…' : '刷新' }}
+          <ElIcon><Refresh /></ElIcon>
         </button>
         <button
           v-if="isSecretary"
@@ -95,9 +111,10 @@ watch(
     </header>
 
     <div class="yg2-home">
-      <section class="yg2-card yg2-home__card yg2-home__card--profile yg2-float yg2-lift yg2-parallax" :class="{ 'is-loading': loading }">
+      <section class="yg2-card yg2-home__card yg2-home__card--profile yg2-float yg2-lift yg2-parallax">
         <h2 class="yg2-card__title">{{ t('home.panels.information.title') }}</h2>
-        <dl class="yg2-kv">
+        <Skeleton v-if="loading" :lines="3" height="16px" />
+        <dl v-else class="yg2-kv">
           <dt>{{ t('home.labels.name') }}</dt>
           <dd>{{ user.name }}</dd>
 
@@ -149,7 +166,7 @@ watch(
         class="yg2-card yg2-home__card yg2-home__card--time"
         :class="{ 'is-blurred': user.shouldResetPassword }"
       >
-        <ZUserTimeRings :user="user._id" />
+        <ZUserTimeRings ref="timeRings" :user="user._id" />
       </section>
     </div>
   </div>
@@ -180,10 +197,6 @@ watch(
 
 .yg2-home__card {
   padding: 24px;
-}
-
-.yg2-home__card.is-loading {
-  opacity: 0.55;
 }
 
 .yg2-home__tags {

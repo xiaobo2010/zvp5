@@ -38,7 +38,7 @@ describe('notifications API contract', () => {
     await expect(listActive(signal)).resolves.toEqual({ version: 7, notifications: [notice] })
     expect(request).toHaveBeenCalledWith({
       method: 'get',
-      url: '/v3/notifications',
+      url: '/v1/notifications',
       signal
     })
   })
@@ -51,7 +51,7 @@ describe('notifications API contract', () => {
     await listAll()
     expect(request).toHaveBeenCalledWith({
       method: 'get',
-      url: '/v3/notifications/admin'
+      url: '/v1/notifications/admin'
     })
   })
 
@@ -69,7 +69,7 @@ describe('notifications API contract', () => {
     ).resolves.toEqual({ notification: notice, version: 8 })
     expect(request).toHaveBeenCalledWith({
       method: 'post',
-      url: '/v3/notifications',
+      url: '/v1/notifications',
       data: { title: notice.title, content: notice.content }
     })
   })
@@ -87,14 +87,14 @@ describe('notifications API contract', () => {
     await updateNotification(notice.id, { active: false })
     expect(request).toHaveBeenNthCalledWith(1, {
       method: 'put',
-      url: `/v3/notifications/${notice.id}`,
+      url: `/v1/notifications/${notice.id}`,
       data: { active: false }
     })
 
     await deleteNotification(notice.id)
     expect(request).toHaveBeenNthCalledWith(2, {
       method: 'delete',
-      url: `/v3/notifications/${notice.id}`
+      url: `/v1/notifications/${notice.id}`
     })
   })
 

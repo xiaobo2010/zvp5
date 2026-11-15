@@ -12,6 +12,7 @@ import {
 import { Refresh } from '@element-plus/icons-vue'
 import { getHealth } from '@/api/ai'
 import type { AiHealthData } from '@/../types/ai'
+import Skeleton from '@/ui/ux/Skeleton.vue'
 
 const { t } = useI18n()
 
@@ -42,7 +43,7 @@ onMounted(() => {
 
 <template>
   <div class="flex flex-col gap-4">
-    <section class="yg-card" v-loading="loading">
+    <section class="yg-card">
       <header class="yg-card__header">
         <div class="flex flex-col gap-1 min-w-0">
           <h2 class="yg-card__title">{{ t('ai.health.title') }}</h2>
@@ -57,7 +58,8 @@ onMounted(() => {
       </header>
 
       <div class="yg-card__body">
-        <div v-if="failed" class="py-6 text-center yg-text-sm yg-text-danger">
+        <Skeleton v-if="loading" :lines="4" />
+        <div v-else-if="failed" class="py-6 text-center yg-text-sm yg-text-danger">
           {{ t('ai.health.loadFailed') }}
         </div>
 

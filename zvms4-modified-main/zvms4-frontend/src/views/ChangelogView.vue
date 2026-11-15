@@ -23,6 +23,7 @@ import api from '@/api'
 import { changelog, type ChangelogEntry as StaticChangelogEntry } from '@/data/changelog'
 import type { ChangelogEntry } from '@/api/changelog'
 import { ZMarkdown, ZMarkdownEditor } from '@/components/markdown'
+import Skeleton from '@/ui/ux/Skeleton.vue'
 
 const { t } = useI18n()
 const router = useRouter()
@@ -156,8 +157,9 @@ header.setHeader(t('nav.changelog'))
         </ElButton>
       </template>
     </ElPageHeader>
-    <ElCard shadow="never" v-loading="loading">
-      <ElTimeline>
+    <ElCard shadow="never">
+      <Skeleton v-if="loading" :lines="8" />
+      <ElTimeline v-else>
         <ElTimelineItem
           v-for="entry in entries"
           :key="hasId(entry) ? entry.id : entry.version"

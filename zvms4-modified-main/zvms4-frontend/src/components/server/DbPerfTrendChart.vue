@@ -15,6 +15,7 @@ import { useI18n } from 'vue-i18n'
 import { ElEmpty } from 'element-plus'
 import dayjs from '@/plugins/dayjs'
 import { useChartTheme } from '@/utils/chartTheme'
+import Skeleton from '@/ui/ux/Skeleton.vue'
 
 ChartJS.register(Tooltip, Legend, LineElement, PointElement, LinearScale, CategoryScale)
 
@@ -174,13 +175,18 @@ const options = computed<ChartOptions<'line'>>(() => ({
 </script>
 
 <template>
-  <div v-loading="loading" class="relative h-64 w-full">
-    <Line v-if="!isEmpty" role="img" :aria-label="t('server.database.trendTitle')" :data="chartData" :options="options" />
-    <div v-else class="grid h-full place-items-center">
-      <ElEmpty
-        :description="emptyText || t('server.database.trendEmpty')"
-        :image-size="88"
-      />
+  <div class="relative h-64 w-full">
+    <div v-if="loading" class="flex h-full w-full">
+      <Skeleton height="100%" />
     </div>
+    <template v-else>
+      <Line v-if="!isEmpty" role="img" :aria-label="t('server.database.trendTitle')" :data="chartData" :options="options" />
+      <div v-else class="grid h-full place-items-center">
+        <ElEmpty
+          :description="emptyText || t('server.database.trendEmpty')"
+          :image-size="88"
+        />
+      </div>
+    </template>
   </div>
 </template>

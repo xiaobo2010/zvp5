@@ -16,7 +16,7 @@ import ZLogList from '@/components/log/ZLogList.vue'
 import GlassBackButton from '@/ui/glass/GlassBackButton.vue'
 
 /**
- * 封禁元数据由 `GET /v3/users/{id}` 附带返回;共享的 User 类型还没声明这几个字段,
+ * 封禁元数据由 `GET /v1/users/{id}` 附带返回;共享的 User 类型还没声明这几个字段,
  * 这里就地扩展,避免为一个页面改动全局类型(改动面越小越好)。
  */
 interface UserWithBan extends User {

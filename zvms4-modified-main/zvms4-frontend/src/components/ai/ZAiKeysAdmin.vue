@@ -24,6 +24,7 @@ import { Delete, Edit, Plus, Refresh } from '@element-plus/icons-vue'
 import type { FormInstance, FormRules } from 'element-plus'
 import { AiRequestError, aiErrorCodeOf, aiErrorCopy, createKey, deleteKey, listKeys, updateKey } from '@/api/ai'
 import type { AiKeyRecord, AiKeyScope, AiKeyUpdateInput } from '@/../types/ai'
+import SkeletonTable from '@/ui/ux/SkeletonTable.vue'
 
 const { t } = useI18n()
 
@@ -408,7 +409,7 @@ onMounted(() => {
 
 <template>
   <div class="flex flex-col gap-4">
-    <ElCard shadow="never" v-loading="loading">
+    <ElCard shadow="never">
       <template #header>
         <div class="flex flex-wrap items-center justify-between gap-3">
           <div class="flex flex-col gap-1">
@@ -430,7 +431,8 @@ onMounted(() => {
         </div>
       </template>
 
-      <ElTable :data="rows" row-key="oid" stripe>
+      <SkeletonTable v-if="loading" :rows="6" />
+      <ElTable v-else :data="rows" row-key="oid" stripe>
         <ElTableColumn :label="t('ai.keys.scope')" width="90" align="center">
           <template #default="{ row }">
             <ElTag :type="row.scope === 'shared' ? 'primary' : 'info'" size="small">

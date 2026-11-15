@@ -8,6 +8,7 @@ import type { Group } from '@/../types'
 import { useWindowSize } from '@vueuse/core'
 import { useUserStore } from '@/stores/user.ts'
 import ZUserPosition from '../tags/ZUserPosition.vue'
+import SkeletonTable from '@/ui/ux/SkeletonTable.vue'
 import { Search } from '@element-plus/icons-vue'
 import { useI18n } from 'vue-i18n'
 
@@ -111,8 +112,9 @@ async function remove(id: string) {
         />
       </span>
     </div>
-    <ElCard shadow="never" v-loading="loading">
-      <ElTable :ref="setTableRef" :data="groups" :max-height="tableHeight">
+    <ElCard shadow="never">
+      <SkeletonTable v-if="loading" :rows="6" />
+      <ElTable v-else :ref="setTableRef" :data="groups" :max-height="tableHeight">
         <ElTableColumn prop="name" :label="t('manage.groupList.columns.name')" min-width="200" />
         <ElTableColumn
           prop="permission"
@@ -141,6 +143,7 @@ async function remove(id: string) {
         </ElTableColumn>
       </ElTable>
       <ZPagination
+        v-if="!loading"
         class="py-2"
         v-model:currentPage="page"
         v-model:pageSize="perpage"

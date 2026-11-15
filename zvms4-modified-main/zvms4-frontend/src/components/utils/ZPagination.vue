@@ -219,8 +219,9 @@ function onPointerMove(event: PointerEvent) {
   }
 
   const count = Math.max(1, visiblePages.value.length)
-  // 1:1 跟手：手指移动一个格子宽度就换一页，不做整数吸附
-  const raw = startIndex - dx / Math.max(1, slotPx.value)
+  // 1:1 跟手：手指左滑滑块就跟着往左，移动一个格子宽度换一页，不做整数吸附。
+  // 用 +dx 而不是 -dx：滑块要跟手同向移动，反向会变成「往左滑、页码往右走」。
+  const raw = startIndex + dx / Math.max(1, slotPx.value)
   dragIndex = Math.min(count - 1, Math.max(0, raw))
   paintThumb(dragIndex)
 

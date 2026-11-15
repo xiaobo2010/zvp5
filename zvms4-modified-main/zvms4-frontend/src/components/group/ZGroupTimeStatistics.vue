@@ -93,7 +93,7 @@ const roster = ref<GroupComplianceMemberRosters>({})
 const loading = ref(false)
 const error = ref('')
 
-// `/v2/groups/{id}/statistics/compliance` requires secretary of the class and
+// `/v1/groups/{id}/statistics/compliance` requires secretary of the class and
 // above. Pre-judge only for UX; the backend remains the source of truth.
 const canView = computed(
   () =>
@@ -365,7 +365,7 @@ function memberChipLabel(member: StatisticsMemberRef) {
 </script>
 
 <template>
-  <div class="statistics-panel mx-4" v-loading="loading">
+  <div class="statistics-panel mx-4">
     <div class="mb-2 text-center">
       <ElSegmented
         v-model="barChart"
@@ -375,6 +375,11 @@ function memberChipLabel(member: StatisticsMemberRef) {
         ]"
         :aria-label="t('manage.groupDetails.statistics.chartSwitch')"
       />
+    </div>
+    <div v-if="loading" class="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+      <span class="yg2-skeleton" style="height: 300px; border-radius: 16px" />
+      <span class="yg2-skeleton" style="height: 300px; border-radius: 16px" />
+      <span class="yg2-skeleton" style="height: 300px; border-radius: 16px" />
     </div>
     <ElResult v-if="error && !loading" icon="error" :title="error" />
     <Transition name="chart-fade" mode="out-in">

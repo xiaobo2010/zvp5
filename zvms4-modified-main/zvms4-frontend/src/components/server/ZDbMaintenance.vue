@@ -13,6 +13,7 @@ import {
   type DbSuggestion
 } from '@/api/next/system/dbMaintenance'
 import { errorMessage } from '@/utils/errorMessage'
+import Skeleton from '@/ui/ux/Skeleton.vue'
 
 /**
  * 数据库维护中心：体检 → 看建议 → 生成计划（只出 SQL）→ 执行 → 看进度。
@@ -157,7 +158,10 @@ onBeforeUnmount(() => {
 
     <p v-if="errorText" class="dbm__error">{{ errorText }}</p>
 
-    <div class="dbm__cards">
+    <div v-if="loading" class="dbm__cards">
+      <Skeleton v-for="i in 4" :key="i" height="72px" radius="var(--yg2-r-12)" />
+    </div>
+    <div v-else class="dbm__cards">
       <div class="dbm__card">
         <span class="dbm__card-label">表数量</span>
         <strong class="dbm__card-value">{{ overview?.table_count ?? '—' }}</strong>

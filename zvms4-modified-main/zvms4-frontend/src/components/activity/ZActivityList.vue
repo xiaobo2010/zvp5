@@ -322,10 +322,15 @@ function typeLabel(type: string) {
   width: 100%;
   min-height: 112px;
   padding-right: 16px;
-  border: 1px solid var(--yg2-line);
+  border: 0;
   border-radius: var(--yg2-r-20);
-  background: var(--yg2-surface);
-  box-shadow: var(--yg2-shadow-ambient);
+  /* 列表项不做玻璃（一屏十几块会打穿 GPU），但材质语言要和卡片一致：
+     顶光 + 发丝内边 + 分层投影，实色面板档。 */
+  background: var(--yg2-lens-panel-fill);
+  box-shadow:
+    inset 0 1px 0 var(--yg2-lens-matte-bloom),
+    inset 0 0 0 1px var(--yg2-lens-matte-hairline),
+    var(--yg2-lens-matte-cast);
   color: inherit;
   text-align: left;
   cursor: pointer;
@@ -336,8 +341,11 @@ function typeLabel(type: string) {
 
 .yg2-ticket:hover {
   transform: translateY(-2px);
-  border-color: var(--yg2-line-strong);
-  box-shadow: var(--yg2-shadow-raised);
+  box-shadow:
+    inset 0 1px 0 var(--yg2-lens-matte-bloom),
+    inset 0 0 0 1px color-mix(in srgb, var(--yg2-accent) 26%, transparent),
+    0 2px 4px rgba(15, 23, 42, 0.06),
+    0 18px 40px -20px rgba(15, 23, 42, 0.26);
 }
 
 .yg2-ticket:focus-visible {

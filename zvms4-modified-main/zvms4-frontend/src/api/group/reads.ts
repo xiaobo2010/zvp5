@@ -1,5 +1,5 @@
 import axios from '@/plugins/axios'
-import type { User, GroupUsersPage, ActivityTimePage } from '@/../types'
+import type { User, ActivityTimePage } from '@/../types'
 
 export async function users(
   gid: string,
@@ -8,20 +8,9 @@ export async function users(
   search: string = '',
   pwdm: boolean = false
 ) {
-  const response = (
-    await axios(`/v2/groups/${gid}/users`, {
-      params: {
-        page,
-        perpage,
-        search,
-        pwdm
-      }
-    })
-  ).data as GroupUsersPage
-  return {
-    users: response.members,
-    size: response.total
-  }
+  // v5 起 /api/v1/groups/{id}/users 只有 v3 实现（v2 的 GET 装饰器已摘除），
+  // 参数名是 size/query，响应是 { data, total }。
+  return users_v3(gid, page, perpage, search, pwdm)
 }
 
 export async function users_v3(
@@ -32,7 +21,7 @@ export async function users_v3(
   pwdm: boolean = false
 ) {
   const response = (
-    await axios(`/v3/groups/${gid}/users`, {
+    await axios(`/v1/groups/${gid}/users`, {
       params: {
         page,
         size,
@@ -61,7 +50,7 @@ export async function time(
   asc: boolean = true
 ) {
   const response = (
-    await axios(`/v2/groups/${gid}/time`, {
+    await axios(`/v1/groups/${gid}/time`, {
       params: {
         page,
         perpage,
@@ -80,5 +69,5 @@ export async function time(
 }
 
 export async function statisticsCompliance(groupId: string) {
-  return (await axios(`/v2/groups/${groupId}/statistics/compliance`)).data
+  return (await axios(`/v1/groups/${groupId}/statistics/compliance`)).data
 }

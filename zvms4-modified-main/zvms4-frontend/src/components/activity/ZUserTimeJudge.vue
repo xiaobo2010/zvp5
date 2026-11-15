@@ -8,8 +8,7 @@ import {
   ElResult,
   ElTooltip,
   ElSkeleton,
-  ElDialog
-} from 'element-plus'
+  ElDialog, ElIcon } from 'element-plus'
 import { useUserStore } from '@/stores/user'
 import { useI18n } from 'vue-i18n'
 import { ZActivityMemberTimeJudge, ZDetailedAnalysis } from '..'
@@ -61,7 +60,7 @@ base.onCampus = onCampus.value
 base.offCampus = offCampus.value
 base.socialPractice = socialPractice.value
 
-// `/v2/users/{id}/time` is readable by the user itself, or by a secretary and
+// `/v1/users/{id}/time` is readable by the user itself, or by a secretary and
 // above. Pre-judge only for UX; the backend remains the source of truth.
 const canRead = computed(
   () =>
@@ -147,16 +146,16 @@ const reportPage = ref(false)
           </ElTooltip>
           <ElDivider v-if="user === userStore._id" direction="vertical" />
           <ElTooltip content="刷新时长" placement="top">
-            <ElButton
-              type="success"
+            <button
+              class="yg2-icon-btn"
+              type="button"
               :disabled="loading"
-              :icon="Refresh"
-              text
-              bg
-              circle
+              title="刷新时长"
               aria-label="刷新时长"
               @click="getTime"
-            />
+            >
+              <ElIcon><Refresh /></ElIcon>
+            </button>
           </ElTooltip>
         </ElCol>
       </ElRow>

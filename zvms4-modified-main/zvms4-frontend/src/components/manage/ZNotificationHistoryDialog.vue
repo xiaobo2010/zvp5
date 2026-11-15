@@ -4,6 +4,7 @@ import { useI18n } from 'vue-i18n'
 import { ElButton, ElCheckbox, ElDialog, ElEmpty, ElMessage, ElMessageBox, ElTag } from 'element-plus'
 import dayjs from '@/plugins/dayjs'
 import { ZMarkdown } from '@/components/markdown'
+import Skeleton from '@/ui/ux/Skeleton.vue'
 import { diffLines, diffViewRows, hasChanges, type DiffViewRow } from '@/utils/textDiff'
 import {
   httpStatusOf,
@@ -217,7 +218,7 @@ watch(
     append-to-body
     @update:model-value="emit('update:visible', $event)"
   >
-    <div v-loading="loading" class="history-body">
+    <div class="history-body">
       <ElEmpty
         v-if="!loading && failed"
         :description="failDescription"
@@ -233,6 +234,12 @@ watch(
         :description="t('manage.notifications.history.empty')"
         :image-size="90"
       />
+
+      <div v-else-if="loading" class="history-skeleton">
+        <Skeleton :lines="3" height="18px" />
+        <Skeleton height="140px" radius="12px" />
+        <Skeleton :lines="4" height="14px" />
+      </div>
 
       <div v-else class="history-layout">
         <aside class="history-list">
@@ -349,6 +356,12 @@ watch(
 <style scoped>
 .history-body {
   min-height: 320px;
+}
+
+.history-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
 }
 
 .history-layout {

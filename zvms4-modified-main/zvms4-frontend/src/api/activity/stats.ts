@@ -3,7 +3,7 @@ import type { ActivityStatistics } from '@/../types'
 
 async function getActivityAnalysis(aid: string): Promise<ActivityStatistics> {
   const response = await axios({
-    url: `/v2/statistics/activities/${aid}/analysis`,
+    url: `/v1/statistics/activities/${aid}/analysis`,
     method: 'get'
   })
 

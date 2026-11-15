@@ -21,7 +21,7 @@ export const time = {
     asc: boolean = true
   ) {
     const result = (
-      await axios(`/v2/times`, {
+      await axios(`/v1/times`, {
         params: {
           search,
           page,

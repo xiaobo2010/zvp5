@@ -176,7 +176,7 @@ function handleSelectionChange(val: string[]) {
       selectable
     "
   >
-    <ElCard shadow="never" v-loading="loading">
+    <ElCard shadow="never">
       <ElFormItem
         v-if="id && !selectable"
         :label="t('manage.groupDetails.userList.checkPasswordPrompt')"
@@ -184,7 +184,9 @@ function handleSelectionChange(val: string[]) {
       >
         <ElSwitch v-model="pwdm" />
       </ElFormItem>
+      <SkeletonTable v-if="loading" :rows="8" />
       <ElTable
+        v-else
         :ref="setTableRef"
         :data="users"
         stripe

@@ -8,7 +8,6 @@ export {}
 /* prettier-ignore */
 declare module 'vue' {
   export interface GlobalComponents {
-    2: typeof import('./src/components/form/ZVerticalNav 2.vue')['default']
     DbPerfTrendChart: typeof import('./src/components/server/DbPerfTrendChart.vue')['default']
     ElAlert: typeof import('element-plus/es')['ElAlert']
     ElBreadcrumb: typeof import('element-plus/es')['ElBreadcrumb']
@@ -122,8 +121,5 @@ declare module 'vue' {
     ZUserTimeRings: typeof import('./src/components/activity/ZUserTimeRings.vue')['default']
     ZVerticalNav: typeof import('./src/components/form/ZVerticalNav.vue')['default']
     'ZVerticalNav 2': typeof import('./src/components/form/ZVerticalNav 2.vue')['default']
-  }
-  export interface GlobalDirectives {
-    vLoading: typeof import('element-plus/es')['ElLoadingDirective']
   }
 }

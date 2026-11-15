@@ -21,6 +21,7 @@ import type { FormInstance, FormItemRule, FormRules } from 'element-plus'
 import dayjs from '@/plugins/dayjs'
 import { ZMarkdownEditor } from '@/components/markdown'
 import ZNotificationHistoryDialog from './ZNotificationHistoryDialog.vue'
+import SkeletonTable from '@/ui/ux/SkeletonTable.vue'
 import {
   createNotification,
   deleteNotification,
@@ -326,7 +327,7 @@ onMounted(() => {
 
 <template>
   <div class="flex flex-col gap-4">
-    <ElCard shadow="never" v-loading="loading">
+    <ElCard shadow="never">
       <template #header>
         <div class="flex flex-wrap items-center justify-between gap-3">
           <div class="flex flex-col gap-1">
@@ -346,7 +347,8 @@ onMounted(() => {
         </div>
       </template>
 
-      <ElTable :data="rows" row-key="id" stripe>
+      <SkeletonTable v-if="loading" :rows="6" />
+      <ElTable v-else :data="rows" row-key="id" stripe>
         <ElTableColumn
           prop="title"
           :label="t('manage.notifications.columns.title')"

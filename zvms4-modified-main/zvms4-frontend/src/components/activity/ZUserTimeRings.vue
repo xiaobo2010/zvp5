@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ElIcon, ElSwitch, ElSkeleton } from 'element-plus'
+import { ElIcon, ElSwitch } from 'element-plus'
 import { Refresh, InfoFilled } from '@element-plus/icons-vue'
 import { useUserTime, TIME_STANDARD, type TimeKey } from '@/composables/useUserTime'
 import ZDetailedAnalysis from '@/components/activity/ZDetailedAnalysis.vue'
 import { useUserStore } from '@/stores/user'
+import Skeleton from '@/ui/ux/Skeleton.vue'
 import { useCountUp } from '@/ui/ux/useCountUp'
 
 /**
@@ -114,6 +115,9 @@ const detailOpen = ref(false)
 const formulaOpen = ref(false)
 
 /** ZDetailedAnalysis 需要 m 到 kebab-case 的汇总口径 */
+/** 供父组件调用（首页顶部「刷新」要连时间环一起刷） */
+defineExpose({ refresh })
+
 const sumsForAnalysis = computed(() => ({
   'on-campus': shown.value['on-campus'],
   'off-campus': shown.value['off-campus'],
@@ -134,7 +138,15 @@ const sumsForAnalysis = computed(() => ({
     </header>
 
     <p v-if="error" class="tr__error">{{ error }}</p>
-    <ElSkeleton v-else-if="loading" :rows="4" animated />
+    <div v-else-if="loading" class="tr__skeleton" aria-hidden="true">
+      <div class="tr__skeleton-ring">
+        <span class="yg2-skeleton tr__skeleton-donut" />
+        <div class="tr__skeleton-legend">
+          <Skeleton v-for="n in 3" :key="n" width="72%" height="14px" />
+        </div>
+      </div>
+      <Skeleton :lines="2" height="13px" />
+    </div>
 
     <template v-else>
       <div class="tr__body">
@@ -568,6 +580,32 @@ const sumsForAnalysis = computed(() => ({
 
 .tr-modal .tr-modal__card--wide :deep(.el-segmented) {
   display: none;
+}
+
+.tr__skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.tr__skeleton-ring {
+  display: flex;
+  align-items: center;
+  gap: 28px;
+}
+
+.tr__skeleton-donut {
+  flex: none;
+  width: 148px;
+  height: 148px;
+  border-radius: 50%;
+}
+
+.tr__skeleton-legend {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 14px;
 }
 
 .tr-modal .tr-modal__card--wide .tr__detail-head {

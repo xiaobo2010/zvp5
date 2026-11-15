@@ -3,7 +3,8 @@ import { toRefs } from 'vue'
 import api from '@/api'
 import { ref } from 'vue'
 import type { Activity, ActivityMember } from '@/../types/v2'
-import { ElResult, ElSkeleton } from 'element-plus'
+import { ElResult } from 'element-plus'
+import Skeleton from '@/ui/ux/Skeleton.vue'
 import { ZActivityDetails } from '.'
 import { useI18n } from 'vue-i18n'
 
@@ -67,7 +68,7 @@ const refresh = () => emits('refresh')
 </script>
 
 <template>
-  <div v-if="!loading" v-loading="loading">
+  <div v-if="!loading">
     <Transition
       v-if="!loading && !error && activity?._id"
       enter-active-class="animate__animated animate__fadeIn"
@@ -91,5 +92,7 @@ const refresh = () => emits('refresh')
       title="出现错误"
     />
   </div>
-  <ElSkeleton v-else v-model="loading" :rows="4" animated :throttle="500" />
+  <div v-else class="yg2-card" style="padding: 24px">
+    <Skeleton :lines="5" height="16px" />
+  </div>
 </template>
