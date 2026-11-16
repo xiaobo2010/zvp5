@@ -1,14 +1,13 @@
 name: Canary preview (frontend → Worker)
 
-# canary 通道刻意保持"一条腿"：
-#   - 只跑前端门禁 + 构建 + 发布，不跑后端 pytest、Cypress、gitleaks、trivy。
-#     那些在 main 的 ci.yml 里跑；canary 只产出静态预览，后端拒绝在 main 门禁解决。
-#   - 单 job：装依赖 → vitest/lint/type-check → 用 canary 参数构建 → 断言 → 发布 → 冒烟。
-#     合并成一个 job 是为了避免"门禁构建一次、部署再构建一次"的重复计费。
+# canary 通道：全量门禁 + 前端构建 + Worker 预览发布。
+#   - 2026-11-16 起仓库转为 public，Actions 分钟数免费，canary 不再"只跑一条腿"：
+#     后端 pytest/Ruff、Cypress E2E、workflow/secret 扫描、依赖漏洞扫描全部跑，
+#     任何一项红都不发布预览。
+#   - 发布仍是单 job（装依赖 → vitest/lint/type-check → 用 canary 参数构建 → 断言
+#     → 发布 → 冒烟），门禁 job 与它并行，preview 只等结果。
 #   - 任何非文档改动都会触发（见下方 paths-ignore）：宁可多跑一次，也不要
 #     因为目录白名单过期而静默不部署。
-#
-# 计费参考（公开库标准 runner 不计费）：本文件约 7~9 分钟/次推送；main 的全量门禁约 20 分钟。
 #
 # 必需：canary environment 里的 secret CLOUDFLARE_API_TOKEN 与变量
 # CLOUDFLARE_ACCOUNT_ID（该 environment 只允许本分支访问）。账号 ID 不写在仓库里，
@@ -36,12 +35,151 @@ concurrency:
   cancel-in-progress: true
 
 env:
+  PYTHON_VERSION: "3.13"
   NODE_VERSION_FILE: zvp5/zvp5-frontend/.node-version
   PNPM_VERSION: "10.34.5"
 
 jobs:
+  backend:
+    name: Backend quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: zvp5/zvp5-backend-python
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: zvp5/zvp5-backend-python/requirements.txt
+      - name: Install backend dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt ruff==0.17.4
+      - name: Generate local test keys
+        run: python tools/setup_local.py
+      - name: Ruff dead-code and undefined-name checks
+        run: |
+          python -m ruff check --select F821 .
+          python -m ruff check --select F401 main.py app_setup.py routers services util db typings tasks tools
+      - name: Run backend tests
+        # 与 main 的 ci.yml 同一套：SQLite 替身 + conftest 隔离，不连真实库。
+        run: python -m pytest -q
+      - name: Compile backend
+        run: python -m compileall -q routers services util db typings tasks
+
+  frontend-e2e:
+    name: Frontend Cypress E2E
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: zvp5/zvp5-frontend
+    env:
+      VITE_API_BASE: https://ci.invalid/api
+      VITE_API_RACE_BASE: https://race.ci.invalid/api
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v6
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: ${{ env.NODE_VERSION_FILE }}
+          cache: pnpm
+          cache-dependency-path: zvp5/zvp5-frontend/pnpm-lock.yaml
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Install Cypress binary
+        run: pnpm exec cypress install
+      - name: Build bundle for E2E
+        run: pnpm run build
+      - name: Run Cypress
+        run: pnpm run test:e2e
+
+  workflow-security:
+    name: Workflow and secret checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Install ShellCheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+      - name: ShellCheck deployment scripts
+        run: >-
+          shellcheck -x
+          zvp5/deployment/github-actions/zvp5-deploy
+          zvp5/deployment/github-actions/*.sh
+      - name: Test deployment backup and rollback paths
+        run: bash zvp5/deployment/github-actions/test-deploy-wrapper.sh
+      - name: Lint GitHub Actions workflows
+        run: docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:1.7.7
+      - name: Scan working tree for secrets
+        run: >-
+          docker run --rm -v "$PWD:/repo"
+          ghcr.io/gitleaks/gitleaks:v8.28.0
+          detect --source=/repo --no-git --config=/repo/.gitleaks.toml
+          --redact --verbose --exit-code=1
+      - name: Scan test fixtures for high-confidence credential formats
+        run: >-
+          docker run --rm -v "$PWD:/repo"
+          ghcr.io/gitleaks/gitleaks:v8.28.0
+          detect --source=/repo --no-git --config=/repo/.gitleaks-high-confidence.toml
+          --enable-rule=private-key --enable-rule=aws-access-token
+          --enable-rule=github-app-token --enable-rule=github-fine-grained-pat
+          --enable-rule=github-oauth --enable-rule=github-pat
+          --enable-rule=github-refresh-token --enable-rule=gitlab-pat
+          --enable-rule=gitlab-oauth-app-secret
+          --enable-rule=gitlab-runner-authentication-token
+          --enable-rule=npm-access-token --enable-rule=pypi-upload-token
+          --enable-rule=slack-app-token --enable-rule=slack-bot-token
+          --enable-rule=slack-webhook-url --enable-rule=stripe-access-token
+          --enable-rule=openai-api-key --enable-rule=anthropic-api-key
+          --enable-rule=gcp-api-key --enable-rule=azure-ad-client-secret
+          --enable-rule=cloudflare-api-key --enable-rule=cloudflare-global-api-key
+          --redact --verbose --exit-code=1
+
+  dependency-security:
+    name: Dependency vulnerability checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v6
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      # 该任务只跑 pnpm audit（不做 pnpm install），没有 pnpm store 可缓存；
+      # 开启 pnpm 缓存会让 setup-node 的 post 步骤因路径不存在而报错。
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: ${{ env.NODE_VERSION_FILE }}
+      - name: Audit frontend production dependencies
+        working-directory: zvp5/zvp5-frontend
+        run: pnpm audit --prod --audit-level high
+      - name: Scan repository dependencies for high and critical findings
+        run: >-
+          docker run --rm -v "$PWD:/src" -w /src
+          aquasec/trivy:0.76.2 fs
+          --scanners vuln --severity HIGH,CRITICAL
+          --exit-code 1 --no-progress .
+
   preview:
     name: Frontend gates and Worker preview
+    needs:
+      - backend
+      - frontend-e2e
+      - workflow-security
+      - dependency-security
     runs-on: ubuntu-latest
     timeout-minutes: 20
     defaults:
