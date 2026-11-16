@@ -232,7 +232,7 @@ const railSide = computed(() => (seed.value % 2 === 0 ? 'left' : 'right'))
 }
 
 .z-pilot-plate--xs .z-pilot-plate__initial {
-  margin-top: -1px;
+  margin-top: 2px;
   font-family: var(--phi-hud, Rajdhani, 'Arial Narrow', sans-serif);
   font-size: 15px;
   font-weight: 700;
@@ -265,8 +265,7 @@ const railSide = computed(() => (seed.value % 2 === 0 ? 'left' : 'right'))
 }
 
 .z-pilot-plate--xs .z-pilot-plate__ghost {
-  opacity: 0.5;
-  transform: translate(0.7px, -0.4px);
+  display: none;
 }
 
 .z-pilot-plate__serial {

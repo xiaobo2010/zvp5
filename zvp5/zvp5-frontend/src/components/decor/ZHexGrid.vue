@@ -248,13 +248,13 @@ onBeforeUnmount(() => {
   -webkit-mask-repeat: no-repeat;
   mask-repeat: no-repeat;
   will-change: transform, mask-position;
-  animation: z-hex-sweep 14s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  animation: z-hex-sweep 10s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 }
 
 .z-hex-grid--drift.z-hex-grid--sweep .z-hex-grid__layer {
   animation:
     z-hex-drift 96s linear infinite,
-    z-hex-sweep 14s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+    z-hex-sweep 10s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 }
 
 .z-hex-grid--flicker .z-hex-grid__svg {

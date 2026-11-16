@@ -635,7 +635,7 @@ onUnmounted(() => {
                 <ZHexGrid
                   :size="64"
                   color="var(--phi-breathe, #1de9b6)"
-                  :opacity="0.1"
+                  :opacity="0.12"
                   drift
                   sweep
                 />
@@ -709,26 +709,26 @@ onUnmounted(() => {
       var(--phi-breathe-glow-soft, rgba(29, 233, 182, 0.14)) 38%,
       transparent 74%
     );
-  opacity: 0.32;
+  opacity: 0.38;
   transform-origin: 50% 18%;
   will-change: opacity, transform;
-  animation: yg-breathe-glow 14s ease-in-out infinite;
+  animation: yg-breathe-glow 10s ease-in-out infinite;
 }
 
 @keyframes yg-breathe-glow {
   0%,
   100% {
-    opacity: 0.3;
+    opacity: 0.38;
     transform: translate3d(0, 1.5%, 0) scale(0.98);
   }
 
   45% {
-    opacity: 0.74;
-    transform: translate3d(0, -1%, 0) scale(1.04);
+    opacity: 0.9;
+    transform: translate3d(0, -1%, 0) scale(1.05);
   }
 
   70% {
-    opacity: 0.54;
+    opacity: 0.66;
     transform: translate3d(0, 0, 0) scale(1.01);
   }
 }
@@ -736,7 +736,7 @@ onUnmounted(() => {
 @media (prefers-reduced-motion: reduce) {
   .yg-breathe-glow {
     animation: none;
-    opacity: 0.55;
+    opacity: 0.62;
   }
 }
 
