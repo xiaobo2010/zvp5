@@ -635,11 +635,13 @@ onUnmounted(() => {
                 <ZHexGrid
                   :size="64"
                   color="var(--phi-breathe, #1de9b6)"
-                  :opacity="0.07"
+                  :opacity="0.1"
                   drift
                   sweep
                 />
               </div>
+              <!-- 蓝绿呼吸光：与蜂窝分层，靠大范围径向渐变把颜色抬起来。 -->
+              <div v-if="isPhiRoute" class="yg-breathe-glow" aria-hidden="true"></div>
               <!-- 速度线挂在滚动内容里，随页面上下滚动；不再 fixed 浮在视口上。 -->
               <div v-if="isPhiRoute" class="yg-phi-velocity" aria-hidden="true"></div>
               <div v-if="isPhiRoute" class="yg-phi-velocity" aria-hidden="true"></div>
@@ -682,6 +684,66 @@ onUnmounted(() => {
   overflow: hidden;
   pointer-events: none;
   contain: layout paint style;
+}
+
+/* 背景呼吸光：不依赖蜂窝线本身的低透明度，用蓝绿径向光做一轮真正的明暗起伏。 */
+.yg-breathe-glow {
+  position: fixed;
+  inset: -8%;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(
+      ellipse 70% 48% at 50% 16%,
+      var(--phi-breathe-glow, rgba(29, 233, 182, 0.24)),
+      transparent 68%
+    ),
+    radial-gradient(
+      ellipse 52% 42% at 84% 78%,
+      var(--phi-breathe-glow-soft, rgba(29, 233, 182, 0.14)),
+      transparent 72%
+    ),
+    linear-gradient(
+      180deg,
+      transparent 0%,
+      var(--phi-breathe-glow-soft, rgba(29, 233, 182, 0.14)) 38%,
+      transparent 74%
+    );
+  opacity: 0.32;
+  transform-origin: 50% 18%;
+  will-change: opacity, transform;
+  animation: yg-breathe-glow 14s ease-in-out infinite;
+}
+
+@keyframes yg-breathe-glow {
+  0%,
+  100% {
+    opacity: 0.3;
+    transform: translate3d(0, 1.5%, 0) scale(0.98);
+  }
+
+  45% {
+    opacity: 0.74;
+    transform: translate3d(0, -1%, 0) scale(1.04);
+  }
+
+  70% {
+    opacity: 0.54;
+    transform: translate3d(0, 0, 0) scale(1.01);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .yg-breathe-glow {
+    animation: none;
+    opacity: 0.55;
+  }
+}
+
+@media print {
+  .yg-breathe-glow {
+    display: none;
+  }
 }
 
 .disconnected {

@@ -79,7 +79,6 @@ const railSide = computed(() => (seed.value % 2 === 0 ? 'left' : 'right'))
       <g v-if="size === 'xs'">
         <circle class="z-pilot-plate__plate" cx="36" cy="36" r="31" />
         <circle class="z-pilot-plate__scan" cx="36" cy="36" r="31" :fill="`url(#${uid}-scan)`" />
-        <path class="z-pilot-plate__round-tick" d="M60.2 50.5A28 28 0 0 1 50.5 60.2" />
       </g>
       <g v-else>
         <!-- 硬阴影是一块实心错位，不用模糊投影。 -->
@@ -212,14 +211,6 @@ const railSide = computed(() => (seed.value % 2 === 0 ? 'left' : 'right'))
 
 .z-pilot-plate--xs .z-pilot-plate__tick {
   stroke-width: 2.8;
-}
-
-/* xs 圆盘右下的品红短弧，替代切角铭牌的外角刻度。 */
-.z-pilot-plate__round-tick {
-  fill: none;
-  stroke: var(--plate-pink);
-  stroke-width: 2.8;
-  stroke-linecap: butt;
 }
 
 .z-pilot-plate__bars rect {

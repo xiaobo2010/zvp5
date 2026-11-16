@@ -68,6 +68,8 @@
   --phi-breathe: #1de9b6;
   --phi-breathe-strong: rgba(29, 233, 182, 0.09);
   --phi-breathe-soft: rgba(29, 233, 182, 0.065);
+  --phi-breathe-glow: color-mix(in srgb, var(--phi-breathe) 24%, transparent);
+  --phi-breathe-glow-soft: color-mix(in srgb, var(--phi-breathe) 14%, transparent);
   --phi-pink: #ff4e9b;
   --phi-display: Bebas, 'Impact', sans-serif;
   --phi-hud: Rajdhani, 'Arial Narrow', sans-serif;
@@ -1033,6 +1035,8 @@ html[data-theme='light'] .yg-phi {
   --phi-breathe: #008b73;
   --phi-breathe-strong: rgba(0, 139, 115, 0.06);
   --phi-breathe-soft: rgba(0, 139, 115, 0.045);
+  --phi-breathe-glow: color-mix(in srgb, var(--phi-breathe) 14%, transparent);
+  --phi-breathe-glow-soft: color-mix(in srgb, var(--phi-breathe) 8%, transparent);
   --phi-line: rgba(5, 6, 8, 0.16);
   --phi-line-strong: rgba(5, 6, 8, 0.24);
   --phi-sunken: #f7f9fa;

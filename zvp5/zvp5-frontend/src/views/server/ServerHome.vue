@@ -164,7 +164,7 @@ function prefetchTab(value: string): void {
     <ZHexGrid
       :size="64"
       color="var(--phi-breathe, #1de9b6)"
-      :opacity="0.07"
+      :opacity="0.1"
       drift
       sweep
       :z-index="-1"
