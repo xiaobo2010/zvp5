@@ -5,8 +5,9 @@
 * **读工具直接执行**，但每次都过 ``guard=ops_auth.ensure_system_admin`` 现查库
   ——token 里的 ``per`` 只是快照，撤权与封禁必须立刻生效；
 * **写工具只出提案**：``prepare`` 只读、只产人读草案与结构化预览，``impl`` 在
-  另一位管理员确认（6 位动态码）之后才被调用；``dual_auth_action`` 一填，
-  ``proposal`` 就强制要求 ``prepare`` + ``guard`` 同时在位；
+  用户确认之后才被调用。本模块**不声明** ``dual_auth_action``：双人动态码只留给
+  系统级写工具（文件 / 数据库 / SSH / 脚本 / 备份 / 维护 / 调度），治理类写入
+  （公告、额度、key、附件清理）只要求操作者本人确认 + 执行前现查库 ``guard``；
 * 结果一律过 ``_cap``：模型看到的是「被截断了」，而不是半句 JSON。
 
 本模块额外的铁律 —— 都是「别把治理工具做成泄露面」：
@@ -51,7 +52,7 @@ from util.serialization import iso_space_seconds
 from util.user import get_user_display_name
 
 from . import ops_auth
-from .ops_tools import WRITE_AUTH_ACTION, _admin_only, _cap, _draft
+from .ops_tools import _admin_only, _cap, _draft
 from .tool_impl import AgentError
 from .tools import READ, WRITE, ToolDef, _register
 
@@ -1201,7 +1202,7 @@ _register(
         name="ai_api_key_revoke",
         description=(
             "软吊销一把平台 API key（enabled=0 + 清空校验缓存，行保留供审计）。"
-            "写操作：先生成提案，另一位管理员确认后执行。"
+            "写操作：先生成提案，确认后执行。"
         ),
         kind=WRITE,
         params=_params(
@@ -1219,7 +1220,6 @@ _register(
         impl=_impl_ai_api_key_revoke,
         prepare=_prepare_ai_api_key_revoke,
         guard=ops_auth.ensure_system_admin,
-        dual_auth_action=WRITE_AUTH_ACTION,
     )
 )
 
@@ -1228,7 +1228,7 @@ _register(
         name="ai_quota_set",
         description=(
             "设置某用户统一 AF 池（af）的月度额度上限，不清已用量。"
-            "写操作：先生成提案，另一位管理员确认后执行。"
+            "写操作：先生成提案，确认后执行。"
         ),
         kind=WRITE,
         params=_params(
@@ -1252,7 +1252,6 @@ _register(
         impl=_impl_ai_quota_set,
         prepare=_prepare_ai_quota_set,
         guard=ops_auth.ensure_system_admin,
-        dual_auth_action=WRITE_AUTH_ACTION,
     )
 )
 
@@ -1261,7 +1260,7 @@ _register(
         name="attachment_gc_run",
         description=(
             "执行 OCR 上传图清理（硬删过期原图及其缩略图/OCR/事件行，"
-            "按批提交、批数封顶）。写操作：先生成提案，另一位管理员确认后执行。"
+            "按批提交、批数封顶）。写操作：先生成提案，确认后执行。"
         ),
         kind=WRITE,
         params=_params(
@@ -1289,7 +1288,6 @@ _register(
         impl=_impl_attachment_gc_run,
         prepare=_prepare_attachment_gc_run,
         guard=ops_auth.ensure_system_admin,
-        dual_auth_action=WRITE_AUTH_ACTION,
     )
 )
 
@@ -1299,7 +1297,7 @@ _register(
         description=(
             "发布站内公告（全局公告板，标题标注受众）。target 限定 user 或 role，"
             f"目标最多 {NOTIFY_RECIPIENTS_MAX} 人，all 一律拒绝。"
-            "写操作：先生成提案，另一位管理员确认后执行。"
+            "写操作：先生成提案，确认后执行。"
         ),
         kind=WRITE,
         params=_params(
@@ -1333,7 +1331,6 @@ _register(
         impl=_impl_notify_send,
         prepare=_prepare_notify_send,
         guard=ops_auth.ensure_system_admin,
-        dual_auth_action=WRITE_AUTH_ACTION,
     )
 )
 
