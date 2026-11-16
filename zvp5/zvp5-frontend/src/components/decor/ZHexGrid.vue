@@ -205,7 +205,12 @@ onBeforeUnmount(() => {
             :width="tileWidth"
             :height="tileHeight"
           >
-            <path :d="pathData" fill="none" stroke="currentColor" :stroke-width="stroke" />
+            <path
+              :d="pathData"
+              fill="none"
+              stroke="currentColor"
+              :stroke-width="stroke * 1.4"
+            />
           </pattern>
         </defs>
         <rect width="100%" height="100%" :fill="`url(#${glowPatternId})`" />
@@ -243,45 +248,47 @@ onBeforeUnmount(() => {
 .z-hex-grid__glow-layer {
   position: absolute;
   inset: -80px;
-  opacity: 0.9;
+  opacity: 1;
   pointer-events: none;
   filter:
-    drop-shadow(0 0 3px var(--phi-breathe, currentColor))
-    drop-shadow(0 0 9px var(--phi-breathe, currentColor));
+    drop-shadow(0 0 4px var(--phi-breathe, currentColor))
+    drop-shadow(0 0 12px var(--phi-breathe, currentColor));
   -webkit-mask-image: linear-gradient(
     to bottom,
     transparent 0%,
-    transparent 38%,
-    rgba(0, 0, 0, 0.18) 44%,
+    transparent 47%,
+    rgba(0, 0, 0, 0.28) 48.5%,
     #000 50%,
-    rgba(0, 0, 0, 0.18) 56%,
-    transparent 62%,
+    rgba(0, 0, 0, 0.28) 51.5%,
+    transparent 53%,
     transparent 100%
   );
   mask-image: linear-gradient(
     to bottom,
     transparent 0%,
-    transparent 38%,
-    rgba(0, 0, 0, 0.18) 44%,
+    transparent 47%,
+    rgba(0, 0, 0, 0.28) 48.5%,
     #000 50%,
-    rgba(0, 0, 0, 0.18) 56%,
-    transparent 62%,
+    rgba(0, 0, 0, 0.28) 51.5%,
+    transparent 53%,
     transparent 100%
   );
-  -webkit-mask-size: 100% 100%;
-  mask-size: 100% 100%;
+  /* mask 高度必须是容器的两倍：mask-position 的百分比是按「容器−mask」差值算的，
+     100% 尺寸时任何百分比都不产生位移，扫光会看起来静止。 */
+  -webkit-mask-size: 100% 200%;
+  mask-size: 100% 200%;
   -webkit-mask-repeat: no-repeat;
   mask-repeat: no-repeat;
-  -webkit-mask-position: 50% -50%;
-  mask-position: 50% -50%;
+  -webkit-mask-position: 50% 100%;
+  mask-position: 50% 100%;
   will-change: transform, mask-position;
-  animation: z-hex-glow-sweep 10s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  animation: z-hex-glow-sweep 8s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 }
 
 .z-hex-grid--drift .z-hex-grid__glow-layer {
   animation:
     z-hex-drift 96s linear infinite,
-    z-hex-glow-sweep 10s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+    z-hex-glow-sweep 8s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 }
 
 .z-hex-grid--flicker .z-hex-grid__svg {
@@ -291,12 +298,12 @@ onBeforeUnmount(() => {
 
 @keyframes z-hex-glow-sweep {
   0% {
-    -webkit-mask-position: 50% -50%;
-    mask-position: 50% -50%;
+    -webkit-mask-position: 50% 100%;
+    mask-position: 50% 100%;
   }
   100% {
-    -webkit-mask-position: 50% 50%;
-    mask-position: 50% 50%;
+    -webkit-mask-position: 50% 0%;
+    mask-position: 50% 0%;
   }
 }
 

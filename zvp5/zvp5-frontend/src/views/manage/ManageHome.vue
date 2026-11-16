@@ -223,7 +223,7 @@ watch([current, compactTabs], () => {
     <ZHexGrid
       :size="64"
       color="var(--phi-breathe, #1de9b6)"
-      :opacity="0.12"
+      :opacity="0.07"
       drift
       sweep
       :z-index="-1"
