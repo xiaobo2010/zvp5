@@ -4,8 +4,6 @@ import { useUserStore } from '@/stores/user.ts'
 import { computed, nextTick, ref, watch, type Component } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useWindowSize } from '@vueuse/core'
-import { ElPageHeader } from 'element-plus/es/components/page-header/index.mjs'
-import { ElSegmented } from 'element-plus/es/components/segmented/index.mjs'
 import { ElIcon } from 'element-plus/es/components/icon/index.mjs'
 import {
   AlarmClock,
@@ -30,7 +28,7 @@ import ZAiLogsAdmin from '@/components/ai/ZAiLogsAdmin.vue'
 import ZAiPromptAudit from '@/components/ai/ZAiPromptAudit.vue'
 import ZAiScheduledTasks from '@/components/ai/ZAiScheduledTasks.vue'
 
-interface SegmentedTab {
+interface GatewayTab {
   label: string
   value: string
   icon: Component
@@ -79,7 +77,7 @@ const current = ref(
   curPage && VALID_CURRENT.includes(curPage) && isVisible(curPage) ? curPage : 'chat'
 )
 
-const tabs = ref<SegmentedTab[]>([
+const tabs = ref<GatewayTab[]>([
   {
     label: 'chat',
     value: 'chat',
@@ -123,8 +121,7 @@ watch(
   }
 )
 
-/* 与服务器/平台管理同一套页头：竖屏或窄屏用紧凑页头 + 胶囊导航，
-   ≥1024 横屏用 ElPageHeader 右侧分段控件。*/
+/* 竖屏或窄屏用紧凑页头 + 胶囊导航；≥1024 横屏用扁平页头 + 下划线分区导航。 */
 const { width, height } = useWindowSize()
 const verticalMode = computed(() => width.value < height.value * 1.2)
 const compactTabs = computed(() => verticalMode.value || width.value < 1024)
@@ -161,7 +158,7 @@ watch(
     class="yg-ai-home"
     :class="[
       compactTabs ? 'px-4 py-3' : 'px-6 py-4',
-      { 'yg-ai-home--chat': current === 'chat' }
+      { 'yg-ai-home--chat': current === 'chat', 'is-compact': compactTabs }
     ]"
   >
     <!-- 竖屏/窄屏：紧凑页头 + 胶囊导航，与服务器/平台管理同一套外壳 -->
@@ -204,24 +201,49 @@ watch(
       </nav>
     </template>
 
-    <!-- 桌面：页头标题 + 右侧分段控件 -->
-    <ElPageHeader v-else :icon="ArrowLeft" @back="() => router.back()" class="yg-ai-home__header">
-      <template #content>
-        {{ t('ai.tabs.' + current) }}
-      </template>
-      <template #extra>
-        <ElSegmented v-model="current" :options="tabs">
-          <template #default="props">
-            <div class="ai-tabs__seg-item">
-              <ElIcon :size="18" class="ai-tabs__seg-icon">
-                <Component :is="(props.item as SegmentedTab).icon" />
-              </ElIcon>
-              <span>{{ t('ai.tabs.' + (props.item as SegmentedTab).value) }}</span>
-            </div>
-          </template>
-        </ElSegmented>
-      </template>
-    </ElPageHeader>
+    <!-- 桌面：扁平页头 + 底部主色下划线的分区导航 -->
+    <template v-else>
+      <header class="yg-ai-home__header ai-gateway-head">
+        <div class="ai-gateway-head__intro">
+          <button
+            type="button"
+            class="yg-icon-btn yg-icon-btn--ghost ai-gateway-head__back"
+            :aria-label="t('ai.tabs.back')"
+            @click="router.back()"
+          >
+            <ElIcon :size="20">
+              <ArrowLeft />
+            </ElIcon>
+          </button>
+          <div class="ai-gateway-head__titles">
+            <h1 class="ai-gateway-head__title">{{ t('ai.title') }}</h1>
+            <p class="ai-gateway-head__subtitle">{{ t('ai.subtitle') }}</p>
+          </div>
+        </div>
+      </header>
+
+      <nav
+        class="ai-gateway-tabs"
+        role="tablist"
+        :aria-label="t('ai.tabs.tabsLabel')"
+      >
+        <button
+          v-for="tab in tabs"
+          :key="tab.value"
+          type="button"
+          role="tab"
+          class="ai-gateway-tab"
+          :class="{ 'is-active': tab.value === current }"
+          :aria-selected="tab.value === current"
+          @click="current = tab.value"
+        >
+          <ElIcon :size="17">
+            <Component :is="tab.icon" />
+          </ElIcon>
+          <span>{{ t('ai.tabs.' + tab.value) }}</span>
+        </button>
+      </nav>
+    </template>
 
     <div class="yg-ai-home__panel">
       <ZAiChat v-if="current === 'chat'" />
@@ -291,24 +313,117 @@ watch(
   }
 }
 
-/* 桌面分段控件：分区多时横向滚动，不挤压页头标题 */
-.yg-ai-home__header :deep(.el-page-header__extra) {
-  max-width: 80%;
+/* 桌面页头：标题 + 副标题，左侧返回；导航单独一行，视觉更轻 */
+.ai-gateway-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--yg-space-4);
+  min-width: 0;
+}
+
+.ai-gateway-head__intro {
+  display: flex;
+  align-items: center;
+  gap: var(--yg-space-3);
+  min-width: 0;
+}
+
+.ai-gateway-head__back {
+  flex: 0 0 auto;
+}
+
+.ai-gateway-head__titles {
+  min-width: 0;
+}
+
+.ai-gateway-head__title {
+  margin: 0;
+  font-size: var(--yg-font-size-xl);
+  font-weight: var(--yg-font-weight-semibold);
+  line-height: var(--yg-line-height-tight);
+  color: var(--yg-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ai-gateway-head__subtitle {
+  margin: var(--yg-space-1) 0 0;
+  font-size: var(--yg-font-size-sm);
+  line-height: var(--yg-line-height-snug);
+  color: var(--yg-text-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 桌面分区导航：扁平下划线，不抢内容区的视觉重量 */
+.ai-gateway-tabs {
+  display: flex;
+  align-items: stretch;
+  gap: var(--yg-space-1);
+  margin-bottom: var(--yg-space-4);
   overflow-x: auto;
+  overscroll-behavior-x: contain;
   scrollbar-width: none;
+  border-bottom: 1px solid var(--yg-border-subtle);
 }
 
-.yg-ai-home__header :deep(.el-page-header__extra)::-webkit-scrollbar {
+.ai-gateway-tabs::-webkit-scrollbar {
   display: none;
 }
 
-/* 分段控件自身不再出现滚动条：横向滚动交给外层 extra */
-.yg-ai-home__header :deep(.el-segmented) {
-  scrollbar-width: none;
+.ai-gateway-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--yg-space-2);
+  flex: 0 0 auto;
+  min-height: var(--yg-control-height-lg);
+  padding: 0 var(--yg-space-4);
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--yg-text-tertiary);
+  font-family: inherit;
+  font-size: var(--yg-font-size-md);
+  font-weight: var(--yg-font-weight-medium);
+  line-height: var(--yg-line-height-snug);
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    color var(--yg-dur-fast) var(--yg-ease-out),
+    background-color var(--yg-dur-fast) var(--yg-ease-out),
+    border-color var(--yg-dur-fast) var(--yg-ease-out);
 }
 
-.yg-ai-home__header :deep(.el-segmented)::-webkit-scrollbar {
-  display: none;
+.ai-gateway-tab:hover {
+  color: var(--yg-text-primary);
+  background-color: var(--yg-bg-hover);
+}
+
+.ai-gateway-tab:active {
+  background-color: var(--yg-bg-active);
+}
+
+.ai-gateway-tab:focus-visible {
+  outline: none;
+  box-shadow: var(--yg-focus-ring);
+}
+
+.ai-gateway-tab.is-active {
+  color: var(--yg-color-primary-strong);
+  border-bottom-color: var(--yg-color-primary);
+}
+
+/* 桌面多了一行分区导航：对话页高度把这一行扣掉，避免外层多出滚动条 */
+.yg-ai-home--chat:not(.is-compact) {
+  height: calc(
+    100vh - var(--yg-ai-viewport-inset) - var(--yg-control-height-lg) - var(--yg-space-4)
+  );
+  height: calc(
+    100dvh - var(--yg-ai-viewport-inset) - var(--yg-control-height-lg) - var(--yg-space-4)
+  );
 }
 
 /* 紧凑页头：返回按钮与标题同行（与服务器/平台管理一致） */
@@ -396,19 +511,6 @@ watch(
   background-color: var(--yg-color-primary-soft);
   box-shadow: var(--yg-shadow-sm);
   font-weight: var(--yg-font-weight-medium);
-}
-
-/* 桌面分段控件里的单项：图标在上、文字在下 */
-.ai-tabs__seg-item {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: var(--yg-space-2);
-  padding: var(--yg-space-1) var(--yg-space-2);
-}
-
-.ai-tabs__seg-icon {
-  margin-top: var(--yg-space-2);
 }
 
 .yg-ai-home__panel {

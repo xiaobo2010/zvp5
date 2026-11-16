@@ -1,6 +1,7 @@
 export * from './errors'
 export * from './http'
 export * from './stream'
+export * from './runEvents'
 export * from './keys'
 export * from './engines'
 export * from './quota'
