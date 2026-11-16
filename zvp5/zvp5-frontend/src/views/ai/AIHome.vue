@@ -302,15 +302,14 @@ watch(
  * 页头与页签是固定件：不参与纵向压缩。
  *
  * 页签容器是横向滚动容器（overflow-x: auto），在 flex 里它的自动最小尺寸是 0，
- * 视口一矮就会被压成半截甚至整条消失——这里锁死它们的高度。
- * 只作用于横屏：竖屏与桌面保持原有观感。
+ * 对话页一旦拿到长内容（长消息、代码块），就会把页签压成半截甚至整条消失，
+ * 表现为「顶部选项卡不见了、点不到」。这里对所有方向锁死它们的高度，
+ * 压缩全部让给对话面板（它自己 overflow: hidden）。
  */
-@media (orientation: landscape) and (max-height: 820px) {
-  .yg-ai-home__header,
-  .ai-head,
-  .ai-tabs {
-    flex: none;
-  }
+.yg-ai-home__header,
+.ai-head,
+.ai-tabs {
+  flex: none;
 }
 
 /* 桌面页头：标题 + 副标题，左侧返回；导航单独一行，视觉更轻 */
