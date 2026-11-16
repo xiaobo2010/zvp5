@@ -36,6 +36,7 @@ const props = withDefaults(
 )
 
 const patternId = `z-hex-${useId().replace(/[^a-zA-Z0-9_-]/g, '')}`
+const glowPatternId = `${patternId}-glow`
 
 const radius = computed(() => props.size)
 /** 六边形对边距 = √3·r，也是相邻列的水平间距 */
@@ -149,7 +150,6 @@ const pathData = computed(() => {
 
 const rootStyle = computed(() => ({
   color: props.color,
-  opacity: props.opacity,
   zIndex: props.zIndex
 }))
 
@@ -181,7 +181,7 @@ onBeforeUnmount(() => {
     aria-hidden="true"
     :style="rootStyle"
   >
-    <div class="z-hex-grid__layer">
+    <div class="z-hex-grid__layer" :style="{ opacity }">
       <svg class="z-hex-grid__svg" xmlns="http://www.w3.org/2000/svg">
         <defs>
           <pattern
@@ -194,6 +194,21 @@ onBeforeUnmount(() => {
           </pattern>
         </defs>
         <rect width="100%" height="100%" :fill="`url(#${patternId})`" />
+      </svg>
+    </div>
+    <div v-if="sweep" class="z-hex-grid__glow-layer">
+      <svg class="z-hex-grid__svg" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <pattern
+            :id="glowPatternId"
+            patternUnits="userSpaceOnUse"
+            :width="tileWidth"
+            :height="tileHeight"
+          >
+            <path :d="pathData" fill="none" stroke="currentColor" :stroke-width="stroke" />
+          </pattern>
+        </defs>
+        <rect width="100%" height="100%" :fill="`url(#${glowPatternId})`" />
       </svg>
     </div>
   </div>
@@ -224,37 +239,49 @@ onBeforeUnmount(() => {
   animation: z-hex-drift 96s linear infinite;
 }
 
-/* 自上而下的亮度扫过：mask 保留一层基础亮度，亮带经过时抬到 100%，
-   离开后回落。亮带收窄并提高对比，暗/浅主题都表现为图案先变强再变弱。 */
-.z-hex-grid--sweep .z-hex-grid__layer {
+/* 导航/页面背景的呼吸光只画在六边形边上：glow 层是一条窄亮带，自上而下扫过。 */
+.z-hex-grid__glow-layer {
+  position: absolute;
+  inset: -80px;
+  opacity: 0.9;
+  pointer-events: none;
+  filter:
+    drop-shadow(0 0 3px var(--phi-breathe, currentColor))
+    drop-shadow(0 0 9px var(--phi-breathe, currentColor));
   -webkit-mask-image: linear-gradient(
     to bottom,
-    rgba(0, 0, 0, 0.45) 0%,
-    rgba(0, 0, 0, 0.45) 40%,
+    transparent 0%,
+    transparent 38%,
+    rgba(0, 0, 0, 0.18) 44%,
     #000 50%,
-    rgba(0, 0, 0, 0.45) 60%,
-    rgba(0, 0, 0, 0.45) 100%
+    rgba(0, 0, 0, 0.18) 56%,
+    transparent 62%,
+    transparent 100%
   );
   mask-image: linear-gradient(
     to bottom,
-    rgba(0, 0, 0, 0.45) 0%,
-    rgba(0, 0, 0, 0.45) 40%,
+    transparent 0%,
+    transparent 38%,
+    rgba(0, 0, 0, 0.18) 44%,
     #000 50%,
-    rgba(0, 0, 0, 0.45) 60%,
-    rgba(0, 0, 0, 0.45) 100%
+    rgba(0, 0, 0, 0.18) 56%,
+    transparent 62%,
+    transparent 100%
   );
-  -webkit-mask-size: 100% 280%;
-  mask-size: 100% 280%;
+  -webkit-mask-size: 100% 100%;
+  mask-size: 100% 100%;
   -webkit-mask-repeat: no-repeat;
   mask-repeat: no-repeat;
+  -webkit-mask-position: 50% -50%;
+  mask-position: 50% -50%;
   will-change: transform, mask-position;
-  animation: z-hex-sweep 10s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  animation: z-hex-glow-sweep 10s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 }
 
-.z-hex-grid--drift.z-hex-grid--sweep .z-hex-grid__layer {
+.z-hex-grid--drift .z-hex-grid__glow-layer {
   animation:
     z-hex-drift 96s linear infinite,
-    z-hex-sweep 10s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+    z-hex-glow-sweep 10s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 }
 
 .z-hex-grid--flicker .z-hex-grid__svg {
@@ -262,15 +289,14 @@ onBeforeUnmount(() => {
   animation: z-hex-flicker 7s ease-in-out infinite;
 }
 
-/* 89% / 11% 是 280% 高 mask 中亮带中心从画面上方移到下方的两个位置。 */
-@keyframes z-hex-sweep {
+@keyframes z-hex-glow-sweep {
   0% {
-    -webkit-mask-position: 50% 89%;
-    mask-position: 50% 89%;
+    -webkit-mask-position: 50% -50%;
+    mask-position: 50% -50%;
   }
   100% {
-    -webkit-mask-position: 50% 11%;
-    mask-position: 50% 11%;
+    -webkit-mask-position: 50% 50%;
+    mask-position: 50% 50%;
   }
 }
 
@@ -295,19 +321,20 @@ onBeforeUnmount(() => {
 
 /* 页面不可见时冻结合成层 */
 .z-hex-grid.is-paused .z-hex-grid__layer,
+.z-hex-grid.is-paused .z-hex-grid__glow-layer,
 .z-hex-grid.is-paused .z-hex-grid__svg {
   animation-play-state: paused;
 }
 
 @media (prefers-reduced-motion: reduce) {
   .z-hex-grid__layer,
+  .z-hex-grid__glow-layer,
   .z-hex-grid__svg {
     animation: none !important;
   }
 
-  .z-hex-grid--sweep .z-hex-grid__layer {
-    -webkit-mask-image: none;
-    mask-image: none;
+  .z-hex-grid__glow-layer {
+    display: none;
   }
 }
 
