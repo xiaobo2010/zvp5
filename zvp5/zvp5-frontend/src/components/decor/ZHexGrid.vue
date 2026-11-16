@@ -36,7 +36,6 @@ const props = withDefaults(
 )
 
 const patternId = `z-hex-${useId().replace(/[^a-zA-Z0-9_-]/g, '')}`
-const glowPatternId = `${patternId}-glow`
 
 const radius = computed(() => props.size)
 /** 六边形对边距 = √3·r，也是相邻列的水平间距 */
@@ -153,6 +152,32 @@ const rootStyle = computed(() => ({
   zIndex: props.zIndex
 }))
 
+/**
+ * 静态六边形 mask：整层只栅格化一次，扫光用子元素 transform 移动渐变带。
+ * 不再对全屏 SVG 做 drop-shadow / mask-position 动画，避免每帧重绘。
+ */
+const glowMaskStyle = computed(() => {
+  const width = tileWidth.value
+  const height = tileHeight.value
+  const svg =
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" ` +
+    `viewBox="0 0 ${width} ${height}">` +
+    `<path d="${pathData.value}" fill="none" stroke="#fff" stroke-opacity=".22" stroke-width="5"/>` +
+    `<path d="${pathData.value}" fill="none" stroke="#fff" stroke-width="1.4"/>` +
+    `</svg>`
+  const image = `url("data:image/svg+xml,${encodeURIComponent(svg)}")`
+  return {
+    maskImage: image,
+    WebkitMaskImage: image,
+    maskSize: `${width}px ${height}px`,
+    WebkitMaskSize: `${width}px ${height}px`,
+    maskRepeat: 'repeat',
+    WebkitMaskRepeat: 'repeat',
+    maskPosition: '0 0',
+    WebkitMaskPosition: '0 0'
+  }
+})
+
 const isPaused = ref(false)
 
 function syncVisibility(): void {
@@ -196,25 +221,8 @@ onBeforeUnmount(() => {
         <rect width="100%" height="100%" :fill="`url(#${patternId})`" />
       </svg>
     </div>
-    <div v-if="sweep" class="z-hex-grid__glow-layer">
-      <svg class="z-hex-grid__svg" xmlns="http://www.w3.org/2000/svg">
-        <defs>
-          <pattern
-            :id="glowPatternId"
-            patternUnits="userSpaceOnUse"
-            :width="tileWidth"
-            :height="tileHeight"
-          >
-            <path
-              :d="pathData"
-              fill="none"
-              stroke="currentColor"
-              :stroke-width="stroke * 1.4"
-            />
-          </pattern>
-        </defs>
-        <rect width="100%" height="100%" :fill="`url(#${glowPatternId})`" />
-      </svg>
+    <div v-if="sweep" class="z-hex-grid__glow-layer" :style="glowMaskStyle">
+      <div class="z-hex-grid__glow-band"></div>
     </div>
   </div>
 </template>
@@ -244,51 +252,35 @@ onBeforeUnmount(() => {
   animation: z-hex-drift 96s linear infinite;
 }
 
-/* 导航/页面背景的呼吸光只画在六边形边上：glow 层是一条窄亮带，自上而下扫过。 */
+/* 六边形边扫光：mask 是静态 HTML 层，子元素只做 transform，避免每帧重绘全屏 SVG。 */
 .z-hex-grid__glow-layer {
   position: absolute;
   inset: -80px;
-  opacity: 1;
+  overflow: hidden;
   pointer-events: none;
-  filter:
-    drop-shadow(0 0 4px var(--phi-breathe, currentColor))
-    drop-shadow(0 0 12px var(--phi-breathe, currentColor));
-  -webkit-mask-image: linear-gradient(
+  will-change: transform;
+}
+
+.z-hex-grid__glow-band {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
     to bottom,
     transparent 0%,
-    transparent 47%,
-    rgba(0, 0, 0, 0.28) 48.5%,
-    #000 50%,
-    rgba(0, 0, 0, 0.28) 51.5%,
-    transparent 53%,
+    transparent 38%,
+    color-mix(in srgb, var(--phi-breathe, #1de9b6) 26%, transparent) 45%,
+    var(--phi-breathe, #1de9b6) 50%,
+    color-mix(in srgb, var(--phi-breathe, #1de9b6) 26%, transparent) 55%,
+    transparent 62%,
     transparent 100%
   );
-  mask-image: linear-gradient(
-    to bottom,
-    transparent 0%,
-    transparent 47%,
-    rgba(0, 0, 0, 0.28) 48.5%,
-    #000 50%,
-    rgba(0, 0, 0, 0.28) 51.5%,
-    transparent 53%,
-    transparent 100%
-  );
-  /* mask 高度必须是容器的两倍：mask-position 的百分比是按「容器−mask」差值算的，
-     100% 尺寸时任何百分比都不产生位移，扫光会看起来静止。 */
-  -webkit-mask-size: 100% 200%;
-  mask-size: 100% 200%;
-  -webkit-mask-repeat: no-repeat;
-  mask-repeat: no-repeat;
-  -webkit-mask-position: 50% 100%;
-  mask-position: 50% 100%;
-  will-change: transform, mask-position;
+  transform: translate3d(0, -50%, 0);
+  will-change: transform;
   animation: z-hex-glow-sweep 8s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 }
 
 .z-hex-grid--drift .z-hex-grid__glow-layer {
-  animation:
-    z-hex-drift 96s linear infinite,
-    z-hex-glow-sweep 8s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  animation: z-hex-drift 96s linear infinite;
 }
 
 .z-hex-grid--flicker .z-hex-grid__svg {
@@ -298,12 +290,10 @@ onBeforeUnmount(() => {
 
 @keyframes z-hex-glow-sweep {
   0% {
-    -webkit-mask-position: 50% 100%;
-    mask-position: 50% 100%;
+    transform: translate3d(0, -50%, 0);
   }
   100% {
-    -webkit-mask-position: 50% 0%;
-    mask-position: 50% 0%;
+    transform: translate3d(0, 50%, 0);
   }
 }
 
@@ -329,6 +319,7 @@ onBeforeUnmount(() => {
 /* 页面不可见时冻结合成层 */
 .z-hex-grid.is-paused .z-hex-grid__layer,
 .z-hex-grid.is-paused .z-hex-grid__glow-layer,
+.z-hex-grid.is-paused .z-hex-grid__glow-band,
 .z-hex-grid.is-paused .z-hex-grid__svg {
   animation-play-state: paused;
 }
