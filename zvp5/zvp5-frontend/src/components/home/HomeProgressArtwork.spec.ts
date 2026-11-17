@@ -99,30 +99,6 @@ function countChannelValue(pixels: Uint8ClampedArray, channel: number, value: nu
   return count
 }
 
-function mediaQuery(options: { legacy?: boolean } = {}) {
-  const add = vi.fn()
-  const remove = vi.fn()
-  const addEventListener = vi.fn()
-  const removeEventListener = vi.fn()
-  const query = {
-    matches: false,
-    media: '(prefers-color-scheme: dark)',
-    onchange: null,
-    addListener: add,
-    removeListener: remove,
-    addEventListener: options.legacy ? undefined : addEventListener,
-    removeEventListener: options.legacy ? undefined : removeEventListener,
-    dispatchEvent: vi.fn()
-  }
-  return {
-    query: query as unknown as MediaQueryList,
-    add,
-    remove,
-    addEventListener,
-    removeEventListener
-  }
-}
-
 describe('HomeProgressArtwork', () => {
   let contextSpy: ReturnType<typeof vi.spyOn>
   let canvasState: ReturnType<typeof createCanvasContext>
@@ -134,10 +110,6 @@ describe('HomeProgressArtwork', () => {
     contextSpy = vi
       .spyOn(HTMLCanvasElement.prototype, 'getContext')
       .mockReturnValue(canvasState.context as unknown as CanvasRenderingContext2D)
-    vi.stubGlobal(
-      'matchMedia',
-      vi.fn(() => mediaQuery().query)
-    )
   })
 
   afterEach(() => {
@@ -224,7 +196,7 @@ describe('HomeProgressArtwork', () => {
     wrapper.unmount()
   })
 
-  it('同源重试不重新分配作品，且仅路径种子变化时保留已加载图片', async () => {
+  it('同源重试不重新分配作品，且种子或进度变化时复用原图像素', async () => {
     const wrapper = mount(HomeProgressArtwork, {
       props: { assignment, categories: completeCategories }
     })
@@ -239,26 +211,40 @@ describe('HomeProgressArtwork', () => {
     FakeImage.instances[1]!.load()
     await wrapper.vm.$nextTick()
     const drawsAfterLoad = canvasState.drawImage.mock.calls.length
+    const readsAfterLoad = canvasState.getImageData.mock.calls.length
+    const putsAfterLoad = canvasState.putImageData.mock.calls.length
     await wrapper.setProps({ assignment: { ...assignment, seed: 43 } })
     await wrapper.vm.$nextTick()
     expect(FakeImage.instances).toHaveLength(2)
-    expect(canvasState.drawImage.mock.calls.length).toBeGreaterThan(drawsAfterLoad)
+    expect(canvasState.drawImage.mock.calls.length).toBe(drawsAfterLoad)
+    expect(canvasState.getImageData.mock.calls.length).toBe(readsAfterLoad)
+    expect(canvasState.putImageData.mock.calls.length).toBeGreaterThan(putsAfterLoad)
+
+    await wrapper.setProps({
+      categories: [category('on', 0.4), category('off', 0.6), category('social', 0.8)]
+    })
+    await wrapper.vm.$nextTick()
+    expect(canvasState.drawImage.mock.calls.length).toBe(drawsAfterLoad)
+    expect(canvasState.getImageData.mock.calls.length).toBe(readsAfterLoad)
     wrapper.unmount()
   })
 
-  it('旧 MediaQueryList 使用 addListener/removeListener 并正确清理', () => {
-    const legacy = mediaQuery({ legacy: true })
-    vi.stubGlobal(
-      'matchMedia',
-      vi.fn(() => legacy.query)
-    )
+  it('主题或根节点属性变化不再触发无效重绘', async () => {
     const wrapper = mount(HomeProgressArtwork, {
       props: { assignment, categories: completeCategories }
     })
+    FakeImage.instances[0]!.load()
+    await wrapper.vm.$nextTick()
+    const putsAfterLoad = canvasState.putImageData.mock.calls.length
 
-    expect(legacy.add).toHaveBeenCalledTimes(1)
-    expect(legacy.addEventListener).not.toHaveBeenCalled()
+    document.documentElement.dataset.theme = 'dark'
+    document.documentElement.classList.add('test-theme')
+    await wrapper.vm.$nextTick()
+    await Promise.resolve()
+
+    expect(canvasState.putImageData.mock.calls.length).toBe(putsAfterLoad)
+    delete document.documentElement.dataset.theme
+    document.documentElement.classList.remove('test-theme')
     wrapper.unmount()
-    expect(legacy.remove).toHaveBeenCalledTimes(1)
   })
 })

@@ -98,20 +98,16 @@ export function assignHomeArtwork(userKey: string): HomeArtworkAssignment | null
   return { artwork, seed: hash('home-path-v1:' + key + ':' + artwork.id) }
 }
 
-export function buildRevealRects(
+function buildRevealOrder(
   width: number,
   height: number,
-  ratio: number,
   seed: number,
-  tileSize = 16
+  tileSize: number
 ): RevealRect[] {
-  if (![width, height, ratio, tileSize].every(Number.isFinite)) return []
   width = Math.floor(width)
   height = Math.floor(height)
   if (width < 1 || height < 1 || width > 4096 || height > 4096 || tileSize < 1) return []
   tileSize = Math.floor(tileSize)
-  let remaining = Math.floor(Math.max(0, Math.min(1, ratio)) * width * height)
-  if (!remaining) return []
   const tiles: RevealRect[] = []
   for (let y = 0; y < height; y += tileSize) {
     for (let x = 0; x < width; x += tileSize) {
@@ -135,6 +131,23 @@ export function buildRevealRects(
     const j = Math.floor(random() * (i + 1))
     ;[tiles[i], tiles[j]] = [tiles[j], tiles[i]]
   }
+  return tiles
+}
+
+export function buildRevealRects(
+  width: number,
+  height: number,
+  ratio: number,
+  seed: number,
+  tileSize = 16
+): RevealRect[] {
+  if (![width, height, ratio, tileSize].every(Number.isFinite)) return []
+  width = Math.floor(width)
+  height = Math.floor(height)
+  if (width < 1 || height < 1 || width > 4096 || height > 4096 || tileSize < 1) return []
+  let remaining = Math.floor(Math.max(0, Math.min(1, ratio)) * width * height)
+  if (!remaining) return []
+  const tiles = buildRevealOrder(width, height, seed, tileSize)
   const visible: RevealRect[] = []
   for (const tile of tiles) {
     const area = tile.width * tile.height
@@ -153,44 +166,75 @@ export function buildRevealRects(
   return visible
 }
 
+function writeRevealChannel(
+  source: Uint8ClampedArray | Uint8Array,
+  pixels: Uint8ClampedArray,
+  width: number,
+  tile: RevealRect,
+  channel: 0 | 1 | 2,
+  count: number
+) {
+  let remaining = count
+  let row = 0
+  while (remaining > 0) {
+    const columns = Math.min(remaining, tile.width)
+    let offset = ((tile.y + row) * width + tile.x) * 4
+    for (let x = 0; x < columns; x++, offset += 4) {
+      const alpha = source[offset + 3]! / 255
+      const value = source[offset + channel]!
+      pixels[offset + channel] = alpha === 1 ? value : Math.round(value * alpha + 255 * (1 - alpha))
+    }
+    remaining -= columns
+    row++
+  }
+}
+
 // 全图从白色开始：每类义工只写回原图中对应颜色通道的数值，未完成的像素保持白色。
 export function composeChannelReveal(
   source: Uint8ClampedArray | Uint8Array,
   width: number,
   height: number,
   categories: ReadonlyArray<Pick<HomeCategory, 'key' | 'ratio'>>,
-  seed: number
+  seed: number,
+  output?: Uint8ClampedArray
 ): Uint8ClampedArray {
   width = Math.floor(width)
   height = Math.floor(height)
+  const byteLength = width * height * 4
   if (
     ![width, height, seed].every(Number.isFinite) ||
     width < 1 ||
     height < 1 ||
     width > 4096 ||
     height > 4096 ||
-    source.length < width * height * 4
+    source.length < byteLength
   )
     return new Uint8ClampedArray()
 
-  const pixels = new Uint8ClampedArray(width * height * 4)
+  const pixels = output?.length === byteLength ? output : new Uint8ClampedArray(byteLength)
   pixels.fill(255)
 
+  const pixelsPerChannel = width * height
+  const channels: Array<{ channel: 0 | 1 | 2; remaining: number }> = []
   for (const category of categories) {
     const channel = HOME_CATEGORY_CHANNEL[category.key]
     if (channel === undefined || !Number.isFinite(category.ratio) || category.ratio <= 0) continue
-    const rects = buildRevealRects(width, height, category.ratio, seed)
-    for (const rect of rects) {
-      for (let y = rect.y; y < rect.y + rect.height; y++) {
-        for (let x = rect.x; x < rect.x + rect.width; x++) {
-          const offset = (y * width + x) * 4
-          const alpha = source[offset + 3]! / 255
-          pixels[offset + channel] = Math.round(
-            source[offset + channel]! * alpha + 255 * (1 - alpha)
-          )
-        }
-      }
+    const remaining = Math.floor(Math.min(1, category.ratio) * pixelsPerChannel)
+    if (remaining > 0) channels.push({ channel, remaining })
+  }
+  if (!channels.length) return pixels
+
+  let pendingChannels = channels.length
+  for (const tile of buildRevealOrder(width, height, seed, 16)) {
+    const area = tile.width * tile.height
+    for (const entry of channels) {
+      if (!entry.remaining) continue
+      const count = Math.min(entry.remaining, area)
+      writeRevealChannel(source, pixels, width, tile, entry.channel, count)
+      entry.remaining -= count
+      if (!entry.remaining) pendingChannels--
     }
+    if (!pendingChannels) break
   }
 
   return pixels

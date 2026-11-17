@@ -4,6 +4,7 @@ import {
   buildRevealRects,
   calculateHomeProgress,
   composeChannelReveal,
+  HOME_CATEGORY_CHANNEL,
   type RevealRect
 } from './homeArtwork'
 
@@ -276,6 +277,33 @@ describe('composeChannelReveal', () => {
     return count
   }
 
+  function composeWithRects(
+    source: Uint8ClampedArray,
+    width: number,
+    height: number,
+    categories: Array<{ key: 'on' | 'off' | 'social'; ratio: number }>,
+    seed: number
+  ): Uint8ClampedArray {
+    const pixels = new Uint8ClampedArray(width * height * 4)
+    pixels.fill(255)
+    for (const category of categories) {
+      const channel = HOME_CATEGORY_CHANNEL[category.key]
+      if (!Number.isFinite(category.ratio) || category.ratio <= 0) continue
+      for (const rect of buildRevealRects(width, height, category.ratio, seed)) {
+        for (let y = rect.y; y < rect.y + rect.height; y++) {
+          for (let x = rect.x; x < rect.x + rect.width; x++) {
+            const offset = (y * width + x) * 4
+            const alpha = source[offset + 3]! / 255
+            pixels[offset + channel] = Math.round(
+              source[offset + channel]! * alpha + 255 * (1 - alpha)
+            )
+          }
+        }
+      }
+    }
+    return pixels
+  }
+
   it('starts from white and lights the floored percentage of total pixels per channel', () => {
     const width = 7
     const height = 5
@@ -330,6 +358,27 @@ describe('composeChannelReveal', () => {
     )
 
     expect(reordered).toEqual(first)
+  })
+
+  it('matches the previous rectangle composition pixel for pixel', () => {
+    const width = 37
+    const height = 29
+    const source = new Uint8ClampedArray(width * height * 4)
+    for (let i = 0; i < source.length; i += 4) {
+      source[i] = (i * 13) % 256
+      source[i + 1] = (i * 29 + 7) % 256
+      source[i + 2] = (i * 47 + 11) % 256
+      source[i + 3] = i % 9 === 0 ? 128 : 255
+    }
+    const categories = [
+      { key: 'social' as const, ratio: 0.91 },
+      { key: 'on' as const, ratio: 0.13 },
+      { key: 'off' as const, ratio: 0.57 }
+    ]
+
+    expect(composeChannelReveal(source, width, height, categories, 987654321)).toEqual(
+      composeWithRects(source, width, height, categories, 987654321)
+    )
   })
 
   it('uses one shared path so equal progress stacks all channels on the same pixels', () => {

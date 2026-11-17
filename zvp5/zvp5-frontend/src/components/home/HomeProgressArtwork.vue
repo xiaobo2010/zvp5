@@ -26,9 +26,9 @@ let imageSource = ''
 let pending: HTMLImageElement | null = null
 let version = 0
 let mounted = false
-let observer: MutationObserver | undefined
-let media: MediaQueryList | undefined
-let mediaUsesLegacyListener = false
+let sourcePixels: Uint8ClampedArray | null = null
+let sourcePixelsKey = ''
+let outputImage: ImageData | null = null
 
 const artworkRatio = computed(() => {
   const art = props.assignment?.artwork
@@ -86,8 +86,11 @@ function draw() {
   if (!target || !ctx) return
 
   const { width, height } = dimensions.value
-  target.width = width
-  target.height = height
+  const resized = target.width !== width || target.height !== height
+  if (resized) {
+    target.width = width
+    target.height = height
+  }
   const sourceImage = image
   const activeCategories = orderedCategories.value.filter((category): category is HomeCategory =>
     Boolean(category && Number.isFinite(category.ratio) && category.ratio > 0)
@@ -97,28 +100,47 @@ function draw() {
     return
   }
 
-  // 先把原图读入内存，再逐通道写回白色底图；未点亮的通道保持 255。
-  ctx.drawImage(sourceImage, 0, 0, width, height)
-  let sourcePixels: Uint8ClampedArray
-  try {
-    sourcePixels = ctx.getImageData(0, 0, width, height).data
-  } catch {
+  // 原图渲染结果与输出缓冲都按图片和尺寸复用；只有进度变化时才重新合成。
+  const key = `${imageSource}\0${width}x${height}`
+  if (!sourcePixels || sourcePixelsKey !== key) {
+    if (!resized) {
+      target.width = width
+      target.height = height
+    }
+    ctx.drawImage(sourceImage, 0, 0, width, height)
+    try {
+      sourcePixels = ctx.getImageData(0, 0, width, height).data
+      sourcePixelsKey = key
+    } catch {
+      sourcePixels = null
+      sourcePixelsKey = ''
+      fillWhite(ctx, width, height)
+      return
+    }
+  }
+  const pixels = sourcePixels
+  if (!pixels) {
     fillWhite(ctx, width, height)
     return
   }
+  let output = outputImage
+  if (!output || output.width !== width || output.height !== height) {
+    output = ctx.createImageData(width, height)
+    outputImage = output
+  }
   const composed = composeChannelReveal(
-    sourcePixels,
+    pixels,
     width,
     height,
     activeCategories,
-    props.assignment.seed
+    props.assignment.seed,
+    output.data
   )
   if (!composed.length) {
     fillWhite(ctx, width, height)
     return
   }
-  const output = ctx.createImageData(width, height)
-  output.data.set(composed)
+  if (composed !== output.data) output.data.set(composed)
   ctx.putImageData(output, 0, 0)
 }
 
@@ -132,6 +154,8 @@ function releasePending() {
 function clearImage() {
   image = null
   imageSource = ''
+  sourcePixels = null
+  sourcePixelsKey = ''
 }
 
 function loadImage(options: { preserve?: boolean } = {}) {
@@ -181,10 +205,6 @@ function retryImage() {
   loadImage({ preserve: true })
 }
 
-function handleMediaChange() {
-  draw()
-}
-
 watch(
   () => [props.assignment?.artwork.id, props.assignment?.artwork.src],
   () => loadImage(),
@@ -195,27 +215,14 @@ watch(() => [props.assignment?.seed, props.categories], draw, { deep: true, flus
 onMounted(() => {
   mounted = true
   loadImage()
-  observer = new MutationObserver(draw)
-  observer.observe(document.documentElement, {
-    attributes: true,
-    attributeFilter: ['data-theme', 'class']
-  })
-  media = window.matchMedia?.('(prefers-color-scheme: dark)')
-  if (media && typeof media.addEventListener === 'function') {
-    media.addEventListener('change', handleMediaChange)
-  } else if (media && typeof media.addListener === 'function') {
-    mediaUsesLegacyListener = true
-    media.addListener(handleMediaChange)
-  }
 })
 
 onBeforeUnmount(() => {
   mounted = false
   version++
   releasePending()
-  observer?.disconnect()
-  if (mediaUsesLegacyListener) media?.removeListener(handleMediaChange)
-  else media?.removeEventListener?.('change', handleMediaChange)
+  sourcePixels = null
+  outputImage = null
 })
 </script>
 
