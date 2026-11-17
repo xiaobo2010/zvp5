@@ -1238,7 +1238,18 @@ def _on_round(run_id: str, conversation_oid: str, owner_oid: str, state: dict):
             if not payload["assistant"].get("tool_calls"):
                 # 最后一轮没有工具调用 = 这次 run 的最终回答（§2.3 的
                 # ``result_message_oid``）。
-                state["result_message_oid"] = inserted[0]["oid"] if inserted else None
+                #
+                # 落库侧回传的是**读模型**行：主键叫 ``_id``（见
+                # ``db/repos/protocols/ai_runs.py`` 的 AI_MESSAGES 行形状），
+                # 而写入口的 rows 用的是 ``oid``。两边都认，是为了让「只是拼错键」
+                # 不再把一次已经生成完、消息也落好库的 run 判成失败——那正是
+                # 生产上「答案渲染正常、收尾却报 AI_AGENT_INTERNAL_ERROR」的原因。
+                final_row = inserted[0] if inserted else None
+                state["result_message_oid"] = (
+                    (final_row.get("_id") or final_row.get("oid"))
+                    if final_row is not None
+                    else None
+                )
         # 本轮已持久化：清掉该轮的 ephemeral 状态，再让订阅者拉新快照。
         live.clear_round(run_id, round_no)
         live.publish_resync(run_id)

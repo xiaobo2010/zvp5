@@ -377,13 +377,7 @@ watch(
   border-bottom: 1px solid var(--yg-border-subtle);
 }
 
-/* 平板上紧凑药丸也换行：否则 10 个分区只能横向滚动，管理员审计入口看起来像消失了 */
-@media (min-width: 600px) {
-  .ai-tabs {
-    flex-wrap: wrap;
-    overflow-x: visible;
-  }
-}
+/* 换行规则已并入上面的 .ai-tabs 基础样式（对所有宽度生效）。 */
 
 .ai-gateway-tab {
   display: inline-flex;
@@ -451,26 +445,29 @@ watch(
   white-space: nowrap;
 }
 
-/* 胶囊导航：横向可滚动，当前项自动滚入可视区 */
+/* 胶囊导航：换行铺开，任何宽度下都不许把入口裁掉半截。
+   之前 <600px 仍是横向滚动，手机/平板上「定时任务」这类长标签只能看到
+   前半截（滚动条又被隐藏，看起来就是「显示不完整」）。
+   这里沿用 7bd02c3d 在 ≥600px 用过的做法，直接对所有宽度生效；
+   窄屏同时收紧胶囊内边距与字号，10 个入口落在 3 行内，不给对话区多抢高度。 */
 .ai-tabs {
   display: flex;
   align-items: center;
-  gap: var(--yg-space-2);
+  flex-wrap: wrap;
+  gap: var(--yg-space-1);
+  row-gap: var(--yg-space-1);
   margin-bottom: var(--yg-space-4);
   padding: var(--yg-space-1);
-  overflow-x: auto;
-  overscroll-behavior-x: contain;
-  scrollbar-width: none;
-  -webkit-overflow-scrolling: touch;
   border: none;
   border-radius: var(--yg-radius-pill);
   -webkit-backdrop-filter: blur(var(--yg-glass-blur-sm)) saturate(180%);
   backdrop-filter: blur(var(--yg-glass-blur-sm)) saturate(180%);
 }
 
-.ai-tabs::-webkit-scrollbar {
-  display: none;
-}
+/* 手机宽度：收紧胶囊，让 10 个分区尽量落在 3~4 行内，
+   不给对话区多抢高度（窄屏最稀缺的就是纵向像素）。
+   ⚠️ 必须放在 `.ai-tabs__pill` 基础规则**之后**：同特异性下后写的胜出，
+   放在前面会被基础尺寸（min-height / 字号 / 内边距）覆盖掉。 */
 
 .ai-tabs__pill {
   display: inline-flex;
@@ -513,6 +510,25 @@ watch(
   background-color: var(--yg-color-primary-soft);
   box-shadow: var(--yg-shadow-sm);
   font-weight: var(--yg-font-weight-medium);
+}
+
+/* 手机宽度：收紧胶囊，让 10 个分区尽量落在 3~4 行内，
+   不给对话区多抢高度（窄屏最稀缺的就是纵向像素）。
+   放在这里是为了盖过上面 `.ai-tabs__pill` 的基础尺寸（同特异性、后写胜出）。 */
+@media (max-width: 599px) {
+  .ai-tabs {
+    gap: 4px;
+    row-gap: 4px;
+    padding: 4px;
+    border-radius: var(--yg-radius-lg);
+  }
+
+  .ai-tabs__pill {
+    gap: 4px;
+    min-height: 36px;
+    padding: 0 10px;
+    font-size: var(--yg-font-size-xs);
+  }
 }
 
 .yg-ai-home__panel {
