@@ -65,7 +65,7 @@ function mountOverview(extra: Record<string, unknown> = {}) {
 }
 
 describe('HomeOverview', () => {
-  it('固定按物理左中右排列进度，并把同一顺序传给作品', () => {
+  it('固定按红绿蓝排列进度，并把同一顺序传给作品', () => {
     const wrapper = mountOverview()
     const columns = wrapper.findAll('.yg-home-overview__category')
 
@@ -74,9 +74,9 @@ describe('HomeOverview', () => {
       'off',
       'social'
     ])
-    expect(columns[0]?.text()).toContain('左 · 校内义工')
-    expect(columns[1]?.text()).toContain('中 · 校外义工')
-    expect(columns[2]?.text()).toContain('右 · 社会实践')
+    expect(columns[0]?.text()).toContain('红 · 校内义工')
+    expect(columns[1]?.text()).toContain('绿 · 校外义工')
+    expect(columns[2]?.text()).toContain('蓝 · 社会实践')
     expect(wrapper.get('.art-stub').attributes('data-categories')).toBe('on,off,social')
     wrapper.unmount()
   })

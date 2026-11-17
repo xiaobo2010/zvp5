@@ -3,6 +3,7 @@ import {
   assignHomeArtwork,
   buildRevealRects,
   calculateHomeProgress,
+  composeChannelReveal,
   type RevealRect
 } from './homeArtwork'
 
@@ -254,5 +255,163 @@ describe('buildRevealRects', () => {
 
     const full = rasterize(buildRevealRects(6, 5, 2, 1, 4), 6, 5)
     expect(countCovered(full)).toEqual({ area: 30, overlaps: 0 })
+  })
+})
+
+describe('composeChannelReveal', () => {
+  function sourcePixels(width: number, height: number): Uint8ClampedArray {
+    const pixels = new Uint8ClampedArray(width * height * 4)
+    for (let i = 0; i < pixels.length; i += 4) {
+      pixels[i] = 10
+      pixels[i + 1] = 20
+      pixels[i + 2] = 30
+      pixels[i + 3] = 255
+    }
+    return pixels
+  }
+
+  function countChannel(pixels: Uint8ClampedArray, channel: number, value: number): number {
+    let count = 0
+    for (let i = channel; i < pixels.length; i += 4) if (pixels[i] === value) count++
+    return count
+  }
+
+  it('starts from white and lights the floored percentage of total pixels per channel', () => {
+    const width = 7
+    const height = 5
+    const total = width * height
+    const pixels = composeChannelReveal(
+      sourcePixels(width, height),
+      width,
+      height,
+      [
+        { key: 'on', ratio: 0.5 },
+        { key: 'off', ratio: 0.25 },
+        { key: 'social', ratio: 0.8 }
+      ],
+      42
+    )
+
+    expect(pixels).toHaveLength(total * 4)
+    expect(countChannel(pixels, 0, 10)).toBe(Math.floor(0.5 * total))
+    expect(countChannel(pixels, 1, 20)).toBe(Math.floor(0.25 * total))
+    expect(countChannel(pixels, 2, 30)).toBe(Math.floor(0.8 * total))
+    expect(countChannel(pixels, 0, 255)).toBe(total - Math.floor(0.5 * total))
+    expect(countChannel(pixels, 1, 255)).toBe(total - Math.floor(0.25 * total))
+    expect(countChannel(pixels, 2, 255)).toBe(total - Math.floor(0.8 * total))
+    for (let i = 3; i < pixels.length; i += 4) expect(pixels[i]).toBe(255)
+  })
+
+  it('maps categories by key and is independent of input order', () => {
+    const width = 19
+    const height = 13
+    const source = sourcePixels(width, height)
+    const first = composeChannelReveal(
+      source,
+      width,
+      height,
+      [
+        { key: 'social', ratio: 0.2 },
+        { key: 'on', ratio: 0.55 },
+        { key: 'off', ratio: 0.7 }
+      ],
+      7
+    )
+    const reordered = composeChannelReveal(
+      source,
+      width,
+      height,
+      [
+        { key: 'on', ratio: 0.55 },
+        { key: 'off', ratio: 0.7 },
+        { key: 'social', ratio: 0.2 }
+      ],
+      7
+    )
+
+    expect(reordered).toEqual(first)
+  })
+
+  it('uses one shared path so equal progress stacks all channels on the same pixels', () => {
+    const width = 17
+    const height = 11
+    const pixels = composeChannelReveal(
+      sourcePixels(width, height),
+      width,
+      height,
+      [
+        { key: 'on', ratio: 0.5 },
+        { key: 'off', ratio: 0.5 },
+        { key: 'social', ratio: 0.5 }
+      ],
+      123
+    )
+    let fullColor = 0
+    let white = 0
+
+    for (let i = 0; i < pixels.length; i += 4) {
+      if (pixels[i] === 10) {
+        fullColor++
+        expect(pixels[i + 1]).toBe(20)
+        expect(pixels[i + 2]).toBe(30)
+      } else {
+        white++
+        expect(pixels[i]).toBe(255)
+        expect(pixels[i + 1]).toBe(255)
+        expect(pixels[i + 2]).toBe(255)
+      }
+    }
+    expect(fullColor).toBe(Math.floor(0.5 * width * height))
+    expect(fullColor + white).toBe(width * height)
+  })
+
+  it('restores every source channel at 100% and clamps ratios above one', () => {
+    const width = 9
+    const height = 8
+    const source = sourcePixels(width, height)
+    const pixels = composeChannelReveal(
+      source,
+      width,
+      height,
+      [
+        { key: 'on', ratio: 2 },
+        { key: 'off', ratio: 1 },
+        { key: 'social', ratio: 1 }
+      ],
+      1
+    )
+
+    for (let i = 0; i < pixels.length; i += 4) {
+      expect(pixels[i]).toBe(10)
+      expect(pixels[i + 1]).toBe(20)
+      expect(pixels[i + 2]).toBe(30)
+      expect(pixels[i + 3]).toBe(255)
+    }
+  })
+
+  it('keeps white when progress is zero or invalid, and rejects invalid inputs', () => {
+    const width = 6
+    const height = 4
+    const source = sourcePixels(width, height)
+    const zero = composeChannelReveal(
+      source,
+      width,
+      height,
+      [
+        { key: 'on', ratio: 0 },
+        { key: 'off', ratio: -1 },
+        { key: 'social', ratio: Number.NaN }
+      ],
+      3
+    )
+
+    expect([...new Set(zero)]).toEqual([255])
+    expect(composeChannelReveal(source, 0, height, [], 1)).toEqual(new Uint8ClampedArray())
+    expect(composeChannelReveal(source, width, height, [], Number.NaN)).toEqual(
+      new Uint8ClampedArray()
+    )
+    expect(composeChannelReveal(new Uint8ClampedArray(4), width, height, [], 1)).toEqual(
+      new Uint8ClampedArray()
+    )
   })
 })

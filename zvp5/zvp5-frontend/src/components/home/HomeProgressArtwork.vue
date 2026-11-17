@@ -1,8 +1,9 @@
 <script setup lang="ts">
-// 固定逻辑画布保证窗口变化不会重新分配已揭示像素；物理左、中、右依次对应三类义工。
+// 固定逻辑画布保证窗口变化不会重新分配已点亮像素；三类义工依次控制作品的红、绿、蓝通道。
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
-  buildRevealRects,
+  composeChannelReveal,
+  HOME_CATEGORY_CHANNEL_LABELS,
   type HomeArtworkAssignment,
   type HomeCategory
 } from '@/utils/homeArtwork'
@@ -16,7 +17,6 @@ const CANVAS_MAX_WIDTH = 960
 const CANVAS_MAX_HEIGHT = 1280
 const FALLBACK_RATIO = 123 / 238
 const CATEGORY_KEYS: HomeCategory['key'][] = ['on', 'off', 'social']
-const POSITION_LABELS = ['左', '中', '右']
 
 const canvas = ref<HTMLCanvasElement | null>(null)
 const imageError = ref(false)
@@ -67,13 +67,18 @@ const label = computed(() => {
   if (!props.assignment) return '义工时长作品等待账号数据'
   if (!props.categories.length) return '义工时长作品等待时长数据，暂未显示进度'
   const regions = orderedCategories.value.map((category, index) => {
-    if (!category || !Number.isFinite(category.ratio))
-      return `${POSITION_LABELS[index]}侧区域等待时长数据`
+    const channel = HOME_CATEGORY_CHANNEL_LABELS[CATEGORY_KEYS[index]!]
+    if (!category || !Number.isFinite(category.ratio)) return `${channel}通道等待时长数据`
     const value = Number((Math.max(0, Math.min(1, category.ratio)) * 100).toFixed(2))
-    return `${POSITION_LABELS[index]}侧${category.label}揭示${value.toLocaleString('zh-CN')}%`
+    return `${category.label}${channel}通道点亮全图${value.toLocaleString('zh-CN')}%像素`
   })
   return `义工时长作品；${regions.join('；')}`
 })
+
+function fillWhite(ctx: CanvasRenderingContext2D, width: number, height: number) {
+  ctx.fillStyle = '#fff'
+  ctx.fillRect(0, 0, width, height)
+}
 
 function draw() {
   const target = canvas.value
@@ -83,34 +88,38 @@ function draw() {
   const { width, height } = dimensions.value
   target.width = width
   target.height = height
-  const surface = getComputedStyle(target).getPropertyValue('--yg-bg-surface-sunken').trim()
-  if (surface) ctx.fillStyle = surface
-  ctx.fillRect(0, 0, width, height)
   const sourceImage = image
-  if (!sourceImage || !props.assignment) return
+  const activeCategories = orderedCategories.value.filter((category): category is HomeCategory =>
+    Boolean(category && Number.isFinite(category.ratio) && category.ratio > 0)
+  )
+  if (!sourceImage || !props.assignment || !activeCategories.length) {
+    fillWhite(ctx, width, height)
+    return
+  }
 
-  // 每次只把已揭示像素裁入画布；隐藏区域保持实色，原图不会作为底图泄漏。
-  orderedCategories.value.forEach((category, index) => {
-    if (!category || !Number.isFinite(category.ratio) || category.ratio <= 0) return
-    const left = Math.floor((index * width) / 3)
-    const right = Math.floor(((index + 1) * width) / 3)
-    const stripWidth = right - left
-    if (stripWidth < 1) return
-    const rects = buildRevealRects(
-      stripWidth,
-      height,
-      category.ratio,
-      props.assignment!.seed ^ Math.imul(index + 1, 0x9e3779b9)
-    )
-    if (!rects.length) return
-
-    ctx.save()
-    ctx.beginPath()
-    for (const rect of rects) ctx.rect(left + rect.x, rect.y, rect.width, rect.height)
-    ctx.clip()
-    ctx.drawImage(sourceImage, 0, 0, width, height)
-    ctx.restore()
-  })
+  // 先把原图读入内存，再逐通道写回白色底图；未点亮的通道保持 255。
+  ctx.drawImage(sourceImage, 0, 0, width, height)
+  let sourcePixels: Uint8ClampedArray
+  try {
+    sourcePixels = ctx.getImageData(0, 0, width, height).data
+  } catch {
+    fillWhite(ctx, width, height)
+    return
+  }
+  const composed = composeChannelReveal(
+    sourcePixels,
+    width,
+    height,
+    activeCategories,
+    props.assignment.seed
+  )
+  if (!composed.length) {
+    fillWhite(ctx, width, height)
+    return
+  }
+  const output = ctx.createImageData(width, height)
+  output.data.set(composed)
+  ctx.putImageData(output, 0, 0)
 }
 
 function releasePending() {

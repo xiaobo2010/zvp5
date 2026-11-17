@@ -59,26 +59,44 @@ class FakeImage {
 }
 
 function createCanvasContext() {
-  let currentRects: Array<{ x: number; y: number; width: number; height: number }> = []
-  const clipGroups: Array<Array<{ x: number; y: number; width: number; height: number }>> = []
   const drawImage = vi.fn()
   const fillRect = vi.fn()
+  const putImageData = vi.fn()
+  const getImageData = vi.fn((_x: number, _y: number, width: number, height: number) => {
+    const data = new Uint8ClampedArray(width * height * 4)
+    for (let i = 0; i < data.length; i += 4) {
+      data[i] = 10
+      data[i + 1] = 20
+      data[i + 2] = 30
+      data[i + 3] = 255
+    }
+    return { data, width, height, colorSpace: 'srgb' } as ImageData
+  })
+  const createImageData = vi.fn((width: number, height: number) => ({
+    data: new Uint8ClampedArray(width * height * 4),
+    width,
+    height,
+    colorSpace: 'srgb'
+  }))
   const context = {
     fillStyle: '',
     fillRect,
-    save: vi.fn(),
-    beginPath: vi.fn(),
-    rect: vi.fn((x: number, y: number, width: number, height: number) => {
-      currentRects.push({ x, y, width, height })
-    }),
-    clip: vi.fn(() => {
-      clipGroups.push(currentRects)
-      currentRects = []
-    }),
     drawImage,
-    restore: vi.fn()
+    getImageData,
+    createImageData,
+    putImageData
   }
-  return { context, clipGroups, drawImage, fillRect }
+  return { context, drawImage, fillRect, getImageData, putImageData }
+}
+
+function revealedPixels(context: ReturnType<typeof createCanvasContext>) {
+  return context.putImageData.mock.lastCall?.[0].data as Uint8ClampedArray | undefined
+}
+
+function countChannelValue(pixels: Uint8ClampedArray, channel: number, value: number): number {
+  let count = 0
+  for (let i = channel; i < pixels.length; i += 4) if (pixels[i] === value) count++
+  return count
 }
 
 function mediaQuery(options: { legacy?: boolean } = {}) {
@@ -127,7 +145,7 @@ describe('HomeProgressArtwork', () => {
     vi.unstubAllGlobals()
   })
 
-  it('按物理左中右裁切，三类顺序打乱后仍映射到各自条带', async () => {
+  it('按全图像素比例点亮对应 RGB 通道，顺序打乱也按类别映射', async () => {
     const wrapper = mount(HomeProgressArtwork, {
       props: {
         assignment,
@@ -137,21 +155,31 @@ describe('HomeProgressArtwork', () => {
     FakeImage.instances[0]!.load()
     await wrapper.vm.$nextTick()
 
-    expect(canvasState.drawImage).toHaveBeenCalledTimes(3)
-    expect(canvasState.clipGroups).toHaveLength(3)
-    const bounds = [
-      [0, 41],
-      [41, 82],
-      [82, 123]
-    ]
-    canvasState.clipGroups.forEach((rects, index) => {
-      const [left, right] = bounds[index]!
-      const visibleArea = rects.reduce((sum, rect) => sum + rect.width * rect.height, 0)
-      expect(rects.length).toBeGreaterThan(0)
-      expect(rects.every((rect) => rect.x >= left && rect.x + rect.width <= right)).toBe(true)
-      expect(visibleArea).toBe(Math.floor(completeCategories[index]!.ratio * (right - left) * 238))
+    const totalPixels = 123 * 238
+    const pixels = revealedPixels(canvasState)
+    expect(canvasState.drawImage).toHaveBeenCalledTimes(1)
+    expect(pixels).toHaveLength(totalPixels * 4)
+    expect(countChannelValue(pixels!, 0, 10)).toBe(Math.floor(0.25 * totalPixels))
+    expect(countChannelValue(pixels!, 1, 20)).toBe(Math.floor(0.5 * totalPixels))
+    expect(countChannelValue(pixels!, 2, 30)).toBe(totalPixels)
+    for (let i = 3; i < pixels!.length; i += 4) expect(pixels![i]).toBe(255)
+    wrapper.unmount()
+  })
+
+  it('百分比只决定点亮像素数，达到 100% 时恢复原图全部通道', async () => {
+    const wrapper = mount(HomeProgressArtwork, {
+      props: {
+        assignment,
+        categories: [category('on', 1), category('off', 1), category('social', 1)]
+      }
     })
-    expect(canvasState.fillRect).toHaveBeenCalledWith(0, 0, 123, 238)
+    FakeImage.instances[0]!.load()
+    await wrapper.vm.$nextTick()
+
+    const pixels = revealedPixels(canvasState)!
+    expect(countChannelValue(pixels, 0, 10)).toBe(123 * 238)
+    expect(countChannelValue(pixels, 1, 20)).toBe(123 * 238)
+    expect(countChannelValue(pixels, 2, 30)).toBe(123 * 238)
     wrapper.unmount()
   })
 
@@ -168,8 +196,8 @@ describe('HomeProgressArtwork', () => {
     FakeImage.instances[0]!.load()
     await wrapper.vm.$nextTick()
     expect(wrapper.text()).toContain('从第一次参与开始')
-    expect(wrapper.get('canvas').attributes('aria-label')).toContain('揭示0%')
-    expect(canvasState.drawImage).not.toHaveBeenCalled()
+    expect(wrapper.get('canvas').attributes('aria-label')).toContain('点亮全图0%像素')
+    expect(canvasState.putImageData).not.toHaveBeenCalled()
     wrapper.unmount()
   })
 
@@ -187,11 +215,11 @@ describe('HomeProgressArtwork', () => {
 
     first.load()
     await wrapper.vm.$nextTick()
-    expect(canvasState.drawImage).not.toHaveBeenCalled()
+    expect(canvasState.putImageData).not.toHaveBeenCalled()
 
     second.load()
     await wrapper.vm.$nextTick()
-    expect(canvasState.drawImage).toHaveBeenCalledTimes(3)
+    expect(canvasState.drawImage).toHaveBeenCalledTimes(1)
     expect(canvasState.drawImage.mock.calls.every((call) => call[0] === second)).toBe(true)
     wrapper.unmount()
   })

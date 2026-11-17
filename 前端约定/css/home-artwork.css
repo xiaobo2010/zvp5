@@ -14,7 +14,7 @@
 .yg-home-overview__profile { flex-shrink: 0; max-width: 35%; overflow-wrap: anywhere; white-space: normal; }
 .yg-home-overview__identity { display: flex; flex-wrap: wrap; align-items: center; gap: var(--yg-space-2); color: var(--yg-text-secondary); font-size: var(--yg-font-size-xs); margin-bottom: var(--yg-space-4); }
 
-/* 图像和三栏共用同一边界；高度收缩时，物理条带与数字列仍保持一一对应。 */
+/* 图像和三栏共用同一边界；数字列与作品的红、绿、蓝通道一一对应。 */
 .yg-home-overview__art-stack {
   width: min(100%, calc(var(--yg-home-artwork-height) * var(--yg-home-artwork-ratio)));
   margin-inline: auto;

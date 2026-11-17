@@ -1,7 +1,12 @@
 <script setup lang="ts">
 // 首页展示层；正式首页与无后端预览共用同一组组件。
 import { computed } from 'vue'
-import { assignHomeArtwork, type HomeCategory, type HomeProgress } from '@/utils/homeArtwork'
+import {
+  assignHomeArtwork,
+  HOME_CATEGORY_CHANNEL_LABELS,
+  type HomeCategory,
+  type HomeProgress
+} from '@/utils/homeArtwork'
 import HomeProgressArtwork from './HomeProgressArtwork.vue'
 
 const props = defineProps<{
@@ -15,12 +20,11 @@ const props = defineProps<{
 defineEmits<{ refresh: []; details: []; profile: []; activities: [] }>()
 
 const CATEGORY_KEYS: HomeCategory['key'][] = ['on', 'off', 'social']
-const POSITION_LABELS = ['左', '中', '右']
 const FALLBACK_RATIO = 123 / 238
 
 interface ProgressSlot {
   key: HomeCategory['key']
-  position: string
+  channel: string
   category: HomeCategory | null
 }
 
@@ -29,9 +33,9 @@ const progressSlots = computed<ProgressSlot[]>(() => {
   const categoriesByKey = new Map(
     (props.progress?.categories ?? []).map((category) => [category.key, category])
   )
-  return CATEGORY_KEYS.map((key, index) => ({
+  return CATEGORY_KEYS.map((key) => ({
     key,
-    position: POSITION_LABELS[index]!,
+    channel: HOME_CATEGORY_CHANNEL_LABELS[key],
     category: categoriesByKey.get(key) ?? null
   }))
 })
@@ -92,7 +96,7 @@ const gapText = (category: HomeCategory) => {
       <div
         v-if="progress"
         class="yg-home-overview__progress"
-        aria-label="义工完成进度，三栏从左到右对应作品左侧、中部与右侧"
+        aria-label="义工完成进度，三类分别控制作品红、绿、蓝通道的点亮像素比例"
       >
         <div
           v-for="slot in progressSlots"
@@ -102,7 +106,7 @@ const gapText = (category: HomeCategory) => {
         >
           <template v-if="slot.category">
             <p class="yg-home-overview__category-label">
-              <span>{{ slot.position }} · </span>{{ slot.category.label }}
+              <span>{{ slot.channel }} · </span>{{ slot.category.label }}
             </p>
             <p class="yg-home-overview__percent yg-text-num">
               {{ format(slot.category.percent) }}<small>%</small>
@@ -126,7 +130,7 @@ const gapText = (category: HomeCategory) => {
           </template>
           <template v-else>
             <p class="yg-home-overview__category-label">
-              <span>{{ slot.position }} · </span>暂未取得
+              <span>{{ slot.channel }} · </span>暂未取得
             </p>
             <p class="yg-home-overview__percent yg-text-num">—</p>
             <p class="yg-home-overview__hours">该项时长未知</p>
@@ -134,7 +138,7 @@ const gapText = (category: HomeCategory) => {
         </div>
       </div>
       <p v-else class="yg-home-overview__note">
-        取得时长后，校内、校外与社会实践将分别点亮作品的左、中、右部分。
+        取得时长后，校内、校外与社会实践将分别点亮作品的红、绿、蓝通道。
       </p>
     </div>
 
@@ -169,7 +173,7 @@ const gapText = (category: HomeCategory) => {
       {{
         progress?.hasBonus
           ? '进度含互补折算：校内超出 25 小时的部分按 1/3 计入校外，校外超出 15 小时的部分按 1/2 计入校内，四舍五入取整。累计时长不含折算。'
-          : '每项完成多少，就揭示对应区域多少像素。作品与你的账号固定相伴。'
+          : '每项完成多少，就为全图对应颜色通道点亮多少像素。作品与你的账号固定相伴。'
       }}
     </p>
     <slot name="footer" />

@@ -33,6 +33,17 @@ export interface RevealRect {
   height: number
 }
 
+export const HOME_CATEGORY_CHANNEL: Record<HomeCategory['key'], 0 | 1 | 2> = {
+  on: 0,
+  off: 1,
+  social: 2
+}
+export const HOME_CATEGORY_CHANNEL_LABELS: Record<HomeCategory['key'], string> = {
+  on: '红',
+  off: '绿',
+  social: '蓝'
+}
+
 const validHours = (value: number) => (Number.isFinite(value) ? Math.max(0, value) : 0)
 const round = (value: number) => Math.round(value * 100) / 100
 
@@ -140,4 +151,47 @@ export function buildRevealRects(
     if (!remaining) break
   }
   return visible
+}
+
+// 全图从白色开始：每类义工只写回原图中对应颜色通道的数值，未完成的像素保持白色。
+export function composeChannelReveal(
+  source: Uint8ClampedArray | Uint8Array,
+  width: number,
+  height: number,
+  categories: ReadonlyArray<Pick<HomeCategory, 'key' | 'ratio'>>,
+  seed: number
+): Uint8ClampedArray {
+  width = Math.floor(width)
+  height = Math.floor(height)
+  if (
+    ![width, height, seed].every(Number.isFinite) ||
+    width < 1 ||
+    height < 1 ||
+    width > 4096 ||
+    height > 4096 ||
+    source.length < width * height * 4
+  )
+    return new Uint8ClampedArray()
+
+  const pixels = new Uint8ClampedArray(width * height * 4)
+  pixels.fill(255)
+
+  for (const category of categories) {
+    const channel = HOME_CATEGORY_CHANNEL[category.key]
+    if (channel === undefined || !Number.isFinite(category.ratio) || category.ratio <= 0) continue
+    const rects = buildRevealRects(width, height, category.ratio, seed)
+    for (const rect of rects) {
+      for (let y = rect.y; y < rect.y + rect.height; y++) {
+        for (let x = rect.x; x < rect.x + rect.width; x++) {
+          const offset = (y * width + x) * 4
+          const alpha = source[offset + 3]! / 255
+          pixels[offset + channel] = Math.round(
+            source[offset + channel]! * alpha + 255 * (1 - alpha)
+          )
+        }
+      }
+    }
+  }
+
+  return pixels
 }
