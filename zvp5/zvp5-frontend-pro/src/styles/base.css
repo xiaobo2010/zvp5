@@ -32,7 +32,7 @@ body {
   overflow-x: hidden;
 }
 
-/* Ambient light — single source from top-left */
+/* Ambient light — subtle single source for app surface */
 body::before {
   content: '';
   position: fixed;
@@ -42,7 +42,7 @@ body::before {
   height: 100%;
   background: radial-gradient(
     ellipse 1400px 900px at 50% 0%,
-    rgb(0 113 227 / 0.12),
+    rgb(0 113 227 / 0.06),
     transparent 70%
   );
   pointer-events: none;

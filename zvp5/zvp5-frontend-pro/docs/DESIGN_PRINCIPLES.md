@@ -1,52 +1,68 @@
 # ZVMS Pro 设计原则
 
-本文档定义了 ZVMS Pro 的视觉语言与技术规范，确保产品体验的一致性与品质。
+本文档定义了 ZVMS Pro 应用界面的视觉语言与技术规范，确保产品体验的一致性与品质。
 
 ## 核心理念
 
-ZVMS Pro 的设计灵感源自 Apple.com 的产品发布页面：**克制、清晰、深度**。我们追求「少即是多」的高端极简主义，通过精准的排版、光影与材质营造专业而温暖的氛围。
+ZVMS Pro 的设计灵感源自 Apple 的账户与产品界面——Apple ID、iCloud、Wallet、Health：**克制、清晰、有用**。这不是营销页面，而是志愿者每天使用的工作台。我们追求一目了然的实用性，通过精准的排版、适度的材质与真实的光影营造专业而温暖的日常体验。
 
 ### 设计支柱
 
-- **产品优先**：内容与功能是主角，设计为其服务而非喧宾夺主
-- **编辑式排版**：大标题、慷慨留白、清晰层级
-- **真实的光**：每个场景有统一的光源方向，材质有可信的深度
-- **克制的动效**：有意义的互动反馈，避免炫技式动画
+- **一目了然**：关键信息在第一屏可见，用户无需滚动就能理解状态
+- **一个焦点对象**：每个页面有一个主要视觉锚点，其余元素退居辅助
+- **克制的材质**：玻璃只用于导航与焦点元素，大量使用白色卡片与发丝线分隔
+- **真实的光**：一个光源方向，柔和的氛围光晕，可信的阴影深度
+- **安静的运动**：有意义的互动反馈，避免炫技式动画
 
 ## 视觉原则
 
-### 光影系统 (Light System)
+### 画布与层级 (Canvas & Hierarchy)
 
-所有页面共享**一个光源方向**：从左上方照射。这创造了视觉连贯性与空间深度。
-
-**规则**：
-- 每个页面/区域只有一个主要光源
-- 使用 `radial-gradient` 在页面顶部或左上创建柔和的环境光晕
-- 玻璃材质的高光边缘 (edge highlight) 应与光源方向一致
-- 阴影方向应反映光源位置
+ZVMS Pro 使用 Apple 式的浅灰画布 + 白色表面的层级系统：
 
 ```css
-/* 环境光晕 — 固定在页面顶部 */
+--color-bg-canvas: #f5f5f7;    /* 应用画布 */
+--color-bg-elevated: #ffffff;  /* 卡片、面板 */
+--color-bg-sunken: #fafafa;    /* 内嵌区域、次要表面 */
+```
+
+**规则**：
+- 页面底色是 `#f5f5f7`，营造柔和的背景
+- 卡片、stats、bento grid 使用纯白 `#ffffff` 表面
+- 白色表面使用极细的发丝线边框：`rgb(0 0 0 / 0.06-0.08)`
+- 阴影非常克制：静态卡片几乎不可见，hover 时才轻微抬升
+
+### 光影系统 (Light System)
+
+所有页面共享**一个微妙的光源**：从上方照射，营造柔和的氛围而非戏剧性效果。
+
+```css
+/* 环境光晕 — 非常克制，仅在顶部创建轻微的氛围 */
 body::before {
   background: radial-gradient(
     ellipse 1400px 900px at 50% 0%,
-    rgb(0 113 227 / 0.12),
+    rgb(0 113 227 / 0.06),
     transparent 70%
   );
 }
 ```
 
+**规则**：
+- 光源非常微妙，不应引人注意
+- 玻璃材质的高光边缘应与光源方向一致
+- 阴影方向应反映光源位置（顶部光源 = 向下的阴影）
+
 ### 玻璃材质 (Liquid Glass)
 
-ZVMS Pro 的标志性材质。玻璃需要**克制使用**：导航栏、一个主要的 hero 卡片、少量浮动控件。
+玻璃材质是 ZVMS Pro 的标志，但必须**极度克制使用**：仅导航栏与一个焦点元素（下一场活动 pass）。
 
 **配方**：
 ```css
 .glass-surface {
-  background: var(--glass-bg); /* color-mix(in srgb, #f5f5f7 72%, transparent) */
+  background: var(--glass-bg); /* color-mix(in srgb, #f5f5f7 75%, transparent) */
   backdrop-filter: var(--glass-blur); /* blur(20px) saturate(180%) */
-  border: 1px solid var(--color-border-subtle); /* rgb(0 0 0 / 0.08) */
-  border-radius: var(--radius-xl); /* 24px */
+  border: 1px solid var(--glass-border); /* rgb(255 255 255 / 0.5) */
+  border-radius: var(--radius-xl); /* 28px */
   box-shadow: var(--glass-shadow);
   position: relative;
 }
@@ -55,53 +71,50 @@ ZVMS Pro 的标志性材质。玻璃需要**克制使用**：导航栏、一个�
 .glass-surface::before {
   content: '';
   position: absolute;
-  top: 0;
-  left: 5%;
-  right: 5%;
-  height: 1px;
+  inset: -1px;
   background: linear-gradient(
-    90deg,
-    transparent,
-    var(--glass-border), /* rgb(255 255 255 / 0.6) */
-    transparent
+    135deg,
+    rgba(255, 255, 255, 0.6) 0%,
+    rgba(255, 255, 255, 0) 50%
   );
+  border-radius: var(--radius-xl);
   pointer-events: none;
+  opacity: 0.8;
 }
 ```
 
+**允许使用场景**：
+- ✅ 全局导航栏（sticky glass nav）
+- ✅ 首屏焦点元素（下一场活动 pass）
+- ✅ 浮动的操作按钮或控件（如需要）
+
 **禁止事项**：
+- ❌ 不要在 bento grid 的每个卡片都用玻璃
 - ❌ 不要嵌套半透明表面（玻璃套玻璃）
 - ❌ 不要在玻璃内使用半透明背景的子元素
-- ❌ 不要在深色内容上使用浅色玻璃
-
-**推荐用法**：
-- ✅ 固定导航栏（sticky glass nav）
-- ✅ Hero 区域的一个主要展示卡片
-- ✅ 浮动的操作按钮或控件
-- ✅ 模态对话框（未实现，但适用）
 
 ### 形状与圆角 (Shape & Radius)
 
-Apple 式的克制圆角——足够柔和但不过度。
+Apple 式的适度圆角——柔和但不过度圆润。
 
 ```css
 --radius-xs: 6px;   /* 小标签、徽章 */
 --radius-sm: 10px;  /* 按钮、输入框 */
---radius-md: 14px;  /* 卡片、对话框 */
---radius-lg: 18px;  /* 大卡片、面板 */
---radius-xl: 24px;  /* 玻璃表面、主要展示区域 */
---radius-pill: 999px; /* 胶囊按钮、标签 */
+--radius-md: 14px;  /* 中等卡片、对话框 */
+--radius-lg: 22px;  /* 标准卡片 */
+--radius-xl: 28px;  /* 玻璃表面、焦点区域 */
+--radius-pill: 999px; /* 胶囊按钮、状态标签 */
 ```
 
 **规则**：
-- 相关元素使用相同的圆角大小
+- bento grid 卡片使用 `--radius-lg` (22px)
+- 焦点 pass 使用 `--radius-xl` (28px)
+- 不要把每个按钮都做成 pill 形状——只有状态标签和特殊 CTA
 - 卡片内的小元素使用比卡片本身更小的圆角
-- 主要操作按钮使用 `--radius-md` 或 `--radius-pill`
-- 不要混用太多不同的圆角尺寸
 
 ## 色彩系统 (Color System)
 
-ZVMS Pro 使用**高度克制的调色板**：品牌蓝作为稀缺的强调色，大量的白、灰、近黑构建层级。
+ZVMS Pro 使用**高度克制的调色板**：一个品牌蓝作为稀缺的强调色，大量的灰阶构建层级。
 
 ### 主色调
 
@@ -118,27 +131,29 @@ ZVMS Pro 使用**高度克制的调色板**：品牌蓝作为稀缺的强调色�
 --color-text-inverse: #f5f5f7;    /* 深色背景上的文字 */
 
 /* 背景层级 */
---color-bg-canvas: #ffffff;    /* 页面底色 */
---color-bg-elevated: #f5f5f7;  /* 卡片、面板 */
---color-bg-sunken: #fbfbfd;    /* 内嵌区域 */
+--color-bg-canvas: #f5f5f7;    /* 应用画布 */
+--color-bg-elevated: #ffffff;  /* 卡片、面板 */
+--color-bg-sunken: #fafafa;    /* 内嵌区域 */
 
 /* 边框 */
+--color-border-hairline: rgb(0 0 0 / 0.06); /* 极细发丝线 */
 --color-border-subtle: rgb(0 0 0 / 0.08);   /* 轻微分隔 */
 --color-border-moderate: rgb(0 0 0 / 0.12); /* 明显分隔 */
 ```
 
 ### 使用规则
 
-- **品牌蓝的使用场景**：主要 CTA、重要状态标签、数据可视化、icon accent、focus outline
-- **禁止**：不要大面积使用品牌色作为背景；不要在一屏内出现超过 3 个蓝色主要元素
+- **品牌蓝的使用场景**：主要 CTA、"已报名"等重要状态、focus outline、用户头像背景
+- **禁止**：不要大面积使用品牌色；不要在一屏内出现超过 3 个蓝色主要元素
+- **发丝线边框**：白色卡片在 `#f5f5f7` 画布上使用 `--color-border-hairline` (0.06 opacity)
 - **语义色**：如需成功/错误/警告状态，使用 iOS 系统色调：
-  - 成功：`rgb(52 199 89)` 或 `rgb(48 176 80)`
+  - 成功/招募中：`rgb(52 199 89)` 或 `#34c759`
   - 警告：`rgb(255 159 10)`
   - 错误：`rgb(255 69 58)`
 
 ## 字体排印 (Typography)
 
-使用系统字体栈以获得最佳性能与本地化体验。
+使用系统字体栈以获得最佳性能与本地化体验。中文优先显示 PingFang SC。
 
 ### 字体栈
 
@@ -150,11 +165,11 @@ ZVMS Pro 使用**高度克制的调色板**：品牌蓝作为稀缺的强调色�
 ### 字阶系统 (Type Scale)
 
 ```css
---font-size-hero: clamp(56px, 7vw, 96px);      /* 首屏大标题 */
---font-size-title-1: clamp(40px, 5vw, 64px);   /* 区块主标题 */
---font-size-title-2: clamp(32px, 4vw, 48px);   /* 次级标题 */
---font-size-title-3: clamp(24px, 3vw, 36px);   /* 卡片标题 */
---font-size-headline: 21px;                     /* 强调正文 */
+--font-size-greeting: clamp(56px, 6vw, 72px);  /* 首屏问候 */
+--font-size-stats: clamp(40px, 4vw, 56px);     /* 统计数据数值 */
+--font-size-title-3: clamp(24px, 3vw, 36px);   /* 焦点 pass 标题 */
+--font-size-headline: 21px;                     /* bento 卡片标题 */
+--font-size-body-large: 19px;                   /* 日期显示 */
 --font-size-body: 17px;                         /* 标准正文 */
 --font-size-callout: 15px;                      /* 辅助信息 */
 --font-size-caption: 13px;                      /* 标签、元数据 */
@@ -163,22 +178,21 @@ ZVMS Pro 使用**高度克制的调色板**：品牌蓝作为稀缺的强调色�
 ### 行高与字距
 
 ```css
---line-height-tight: 1.05;   /* 超大标题 */
+--line-height-tight: 1.05;   /* 大标题（问候语、统计数值） */
 --line-height-snug: 1.2;     /* 标题 */
 --line-height-normal: 1.5;   /* 正文 */
---line-height-relaxed: 1.6;  /* 长文本 */
 
---letter-spacing-tight: -0.05em;   /* 大标题紧缩 */
---letter-spacing-normal: -0.01em;  /* 默认 */
---letter-spacing-wide: 0.08em;     /* 小写标签、eyebrow */
+--letter-spacing-tight: -0.02em;  /* 大标题紧缩 */
+--letter-spacing-normal: -0.01em; /* 默认 */
 ```
 
 ### 使用规则
 
-- **Hero 标题**：使用 `--font-size-hero` + `--line-height-tight` + `--letter-spacing-tight`，字重 700
-- **正文最大宽度**：限制在 `60-70ch`（中文）或 `40-50ch`（英文）以保证可读性
-- **中英混排**：中文段落用 `--line-height-relaxed` (1.6)，纯英文用 `--line-height-normal` (1.5)
-- **小写标签** (eyebrow text)：使用 `--font-size-caption` + `text-transform: uppercase` + `--letter-spacing-wide`
+- **问候语**：使用 `--font-size-greeting` + `--line-height-tight` + 字重 600
+- **统计数值**：使用 `--font-size-stats` + `--line-height-tight` + 字重 600，配合极小的标签文本
+- **卡片标题**：使用 `--font-size-headline` (21px) + 字重 600
+- **正文最大宽度**：中文段落限制在 `60-70ch` 以保证可读性
+- **中文排版**：避免单字孤行 (orphan)，使用 `text-wrap: balance` 辅助
 
 ## 间距系统 (Spacing)
 
@@ -201,14 +215,11 @@ ZVMS Pro 使用**高度克制的调色板**：品牌蓝作为稀缺的强调色�
 
 ### 使用规则
 
-- **组件内部间距**：`--space-4` 至 `--space-6` (16-32px)
-- **卡片 padding**：`--space-6` 至 `--space-8` (32-64px)
-- **区块垂直间距**：`--space-10` 至 `--space-12` (96-160px)，响应式调整：
-  ```css
-  padding: clamp(80px, 12vw, 160px) var(--content-padding);
-  ```
-- **内容最大宽度**：`--content-max-width: 1200px`
-- **水平内边距**：`--content-padding: clamp(20px, 5vw, 80px)`
+- **页面内边距**：`clamp(20px, 4vw, 40px)`
+- **区块垂直间距**：`--space-8` 至 `--space-10` (64-96px)
+- **卡片 padding**：`--space-5` 至 `--space-6` (24-32px)
+- **bento grid gap**：`--space-5` (24px)
+- **内容最大宽度**：`1440px`
 
 ### 响应式断点
 
@@ -217,39 +228,39 @@ ZVMS Pro 使用**高度克制的调色板**：品牌蓝作为稀缺的强调色�
 /* 默认: 320px - 767px */
 
 @media (min-width: 768px) {
-  /* 平板与小桌面 */
+  /* 平板：bento grid 2 列 */
 }
 
 @media (min-width: 1024px) {
-  /* 桌面 */
+  /* 桌面：bento grid 12 列布局 */
 }
 
-@media (min-width: 1440px) {
-  /* 大屏 — 可选的视觉优化 */
+@media (min-width: 1280px) {
+  /* 大屏：焦点 pass 增加内边距 */
 }
 ```
 
 ## 阴影系统 (Shadows)
 
-软阴影营造深度，避免生硬的边缘。
+极度克制的阴影——Apple 式的"几乎看不见"。
 
 ```css
---shadow-sm: 0 1px 2px rgb(0 0 0 / 0.04), 0 1px 4px rgb(0 0 0 / 0.04);
---shadow-md: 0 2px 8px rgb(0 0 0 / 0.04), 0 4px 16px rgb(0 0 0 / 0.06);
---shadow-lg: 0 8px 24px rgb(0 0 0 / 0.08), 0 2px 4px rgb(0 0 0 / 0.04);
---shadow-xl: 0 16px 48px rgb(0 0 0 / 0.12), 0 4px 8px rgb(0 0 0 / 0.06);
---glass-shadow: 0 4px 24px rgb(0 0 0 / 0.08), 0 1px 2px rgb(0 0 0 / 0.04);
+--shadow-sm: 0 1px 1px rgb(0 0 0 / 0.04);
+--shadow-md: 0 2px 4px rgb(0 0 0 / 0.04), 0 1px 2px rgb(0 0 0 / 0.02);
+--shadow-lg: 0 4px 12px rgb(0 0 0 / 0.06), 0 1px 3px rgb(0 0 0 / 0.04);
+--shadow-xl: 0 8px 24px rgb(0 0 0 / 0.08), 0 2px 6px rgb(0 0 0 / 0.04);
+--glass-shadow: 0 4px 20px rgb(0 0 0 / 0.06), 0 1px 2px rgb(0 0 0 / 0.03);
 ```
 
 **使用建议**：
-- 静态卡片：`--shadow-sm` 或 `--shadow-md`
-- Hover 抬升效果：从 `--shadow-md` 过渡到 `--shadow-lg`
+- 静态 bento 卡片：几乎无阴影，依靠发丝线边框分隔
+- Hover 抬升效果：从无阴影过渡到 `--shadow-md`
 - 玻璃表面：`--glass-shadow`
-- 模态/浮动面板：`--shadow-xl`
+- 焦点 pass 上的 CTA hover：`0 4px 12px rgb(0 113 227 / 0.2)`（品牌色光晕）
 
 ## 动效系统 (Motion)
 
-ZVMS Pro 的动效追求「Q弹」(springy) 的手感——快速响应但有自然的回弹，避免线性或过于机械的动画。
+ZVMS Pro 的动效追求「Q弹」(springy) 的手感——快速响应但有自然的回弹。
 
 ### 缓动函数 (Easing)
 
@@ -265,51 +276,48 @@ ZVMS Pro 的动效追求「Q弹」(springy) 的手感——快速响应但有自
 ```css
 --duration-fast: 200ms;    /* 小元素、即时反馈 */
 --duration-base: 350ms;    /* 标准过渡 */
---duration-slow: 500ms;    /* 大区块、页面转场 */
+--duration-slow: 500ms;    /* 大区块、页面入场 */
 ```
 
 ### 使用规则
 
-- **只动画 transform 和 opacity**：避免触发 layout 或 paint 的属性 (width, height, margin, padding, top, left 等)
+- **只动画 transform 和 opacity**：避免触发 layout 或 paint 的属性
 - **按压反馈**：
   ```css
   .button:hover {
-    transform: translateY(-2px);
-    transition: all var(--duration-base) var(--ease-spring);
+    transform: translateY(-1px);
+    transition: all var(--duration-fast) var(--ease-spring);
   }
   .button:active {
-    transform: translateY(0) scale(0.98);
+    transform: scale(0.98);
   }
   ```
-- **悬停抬升**：卡片 hover 时使用 `translateY(-4px)` + 阴影增强
-- **淡入序列**：元素分组错开 50-100ms 出现
+- **卡片悬停**：轻微抬升 `translateY(-2px)` + 阴影增强
+- **入场序列**：元素分组错开 100ms 出现
   ```css
-  .item {
-    opacity: 0;
-    transform: translateY(20px);
-    transition: all var(--duration-slow) var(--ease-smooth);
-    transition-delay: calc(var(--item-index) * 0.1s);
-  }
-  .item.visible {
-    opacity: 1;
-    transform: translateY(0);
-  }
+  .greeting { transition-delay: 0ms; }
+  .pass { transition-delay: 100ms; }
+  .stats { transition-delay: 200ms; }
+  .bento { transition-delay: 300ms; }
   ```
 
 ### 滚动触发动画
 
-使用 `IntersectionObserver` 触发元素的 `.visible` 类，避免重复计算或使用重型库。
+使用 `IntersectionObserver` 触发元素的 `.visible` 类：
 
 ```typescript
 const observer = new IntersectionObserver(
   (entries) => {
     entries.forEach((entry) => {
       if (entry.isIntersecting) {
-        entry.target.classList.add('visible')
+        const id = entry.target.getAttribute('data-section')
+        if (id) {
+          sectionsVisible.value[id] = true
+        }
       }
     })
   },
-  { threshold: 0.1, rootMargin: '-80px' }
+  { threshold: 0.1, rootMargin: '-60px' }
 )
 ```
 
@@ -328,6 +336,171 @@ const observer = new IntersectionObserver(
 }
 ```
 
+## 组件规范
+
+### 导航栏 (Navigation)
+
+签到应用导航：slim 56px 高度，玻璃材质，产品 chrome 而非营销 header。
+
+```css
+.site-nav {
+  position: sticky;
+  top: 0;
+  height: 56px;
+  background: var(--glass-bg);
+  backdrop-filter: var(--glass-blur);
+  border-bottom: 1px solid var(--glass-border);
+  box-shadow: var(--glass-shadow);
+}
+```
+
+**组成**：
+- 左侧：ZVMS wordmark
+- 中左：首页、活动、时长、组织
+- 右侧：搜索 icon、通知 icon、头像菜单
+
+### 问候区 (Greeting)
+
+用户登录后看到的第一个元素：时间问候 + 姓名 + 日期 + 上下文。
+
+```css
+.greeting__title {
+  font-size: var(--font-size-greeting); /* 56-72px */
+  font-weight: 600;
+  line-height: var(--line-height-tight);
+  letter-spacing: -0.02em;
+}
+
+.greeting__date {
+  font-size: var(--font-size-body-large); /* 19px */
+  color: var(--color-text-secondary);
+}
+
+.greeting__context {
+  font-size: var(--font-size-body);
+  color: var(--color-text-tertiary);
+}
+```
+
+### 焦点 Pass (Focal Activity)
+
+玻璃材质的"票券"式表面，展示下一场志愿活动：
+
+```css
+.pass__inner {
+  background: var(--glass-bg);
+  backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-xl); /* 28px */
+  padding: var(--space-6);
+  box-shadow: var(--glass-shadow);
+  position: relative;
+}
+
+/* 光晕效果 */
+.pass__inner::before {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  background: linear-gradient(135deg,
+    rgba(255, 255, 255, 0.6) 0%,
+    rgba(255, 255, 255, 0) 50%
+  );
+  border-radius: var(--radius-xl);
+  pointer-events: none;
+  opacity: 0.8;
+}
+```
+
+### 统计行 (Stats Row)
+
+4 个并排的统计指标，大数值 + 小标签：
+
+```css
+.stat {
+  background: var(--color-bg-elevated); /* 白色 */
+  border: 1px solid var(--color-border-hairline);
+  border-radius: var(--radius-lg); /* 22px */
+  padding: var(--space-5);
+  text-align: center;
+}
+
+.stat__value {
+  font-size: var(--font-size-stats); /* 40-56px */
+  font-weight: 600;
+  line-height: var(--line-height-tight);
+  letter-spacing: -0.02em;
+}
+
+.stat__label {
+  font-size: var(--font-size-callout);
+  color: var(--color-text-tertiary);
+}
+```
+
+### Bento Grid
+
+响应式网格布局：12 列桌面、2 列平板、1 列手机。
+
+```css
+.bento {
+  display: grid;
+  grid-template-columns: 1fr; /* 移动端 */
+  gap: var(--space-5);
+}
+
+@media (min-width: 768px) {
+  .bento {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (min-width: 1024px) {
+  .bento {
+    grid-template-columns: repeat(12, 1fr);
+  }
+
+  .bento-card--hours { grid-column: span 6; }
+  .bento-card--pending { grid-column: span 6; }
+  .bento-card--activities { grid-column: span 5; }
+  .bento-card--cert { grid-column: span 4; }
+  .bento-card--actions { grid-column: span 3; }
+}
+```
+
+**Bento 卡片**：
+```css
+.bento-card {
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border-hairline);
+  border-radius: var(--radius-lg);
+  padding: var(--space-5);
+  transition: all var(--duration-fast) var(--ease-smooth);
+}
+
+.bento-card:hover {
+  box-shadow: var(--shadow-md);
+}
+```
+
+### 图标 (Icons)
+
+手写的内联 SVG，1.5–1.8px 描边，线条风格：
+
+```html
+<!-- 搜索 icon -->
+<svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+  <circle cx="9" cy="9" r="6" stroke="currentColor" stroke-width="1.5"/>
+  <path d="M13.5 13.5L17 17" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+</svg>
+```
+
+**规则**：
+- 统一使用 `currentColor` 继承文本颜色
+- `aria-hidden="true"` 对辅助技术隐藏装饰性图标
+- 描边宽度 1.5–1.8px
+- 不要使用 icon 字体或 npm 包
+
 ## 性能预算 (Performance Budget)
 
 ZVMS Pro 不使用任何第三方动画库、icon 库或重型资产。
@@ -337,7 +510,7 @@ ZVMS Pro 不使用任何第三方动画库、icon 库或重型资产。
 - ❌ **禁止**：GSAP, Framer Motion, Anime.js 等动画库
 - ❌ **禁止**：Font Awesome, Material Icons 等 icon 字体或包
 - ❌ **禁止**：网络字体 (使用系统字体栈)
-- ❌ **禁止**：大尺寸光栅图片 (JPEG/PNG 产品截图)
+- ❌ **禁止**：大尺寸光栅图片
 - ✅ **允许**：手写的内联 SVG icon (< 2KB)
 - ✅ **允许**：CSS 渐变、`backdrop-filter`、`clip-path` 等 CSS 特性
 - ✅ **允许**：轻量级的 Vue transition 组件
@@ -346,15 +519,7 @@ ZVMS Pro 不使用任何第三方动画库、icon 库或重型资产。
 
 - **首次内容绘制 (FCP)**：< 1.5s (3G 网络)
 - **最大内容绘制 (LCP)**：< 2.5s
-- **累积布局偏移 (CLS)**：< 0.1
 - **帧率**：保持 60fps，中端设备无卡顿
-
-### 优化手段
-
-- 使用 CSS `will-change` 提示浏览器优化（谨慎使用）
-- 避免在滚动时触发 reflow/repaint
-- 使用 `transform` 和 `opacity` 触发 GPU 加速
-- 懒加载非首屏内容
 
 ## 无障碍 (Accessibility)
 
@@ -363,15 +528,13 @@ ZVMS Pro 遵循 WCAG 2.1 AA 标准。
 ### 必要规范
 
 1. **语义化 HTML**：
-   - 每页一个 `<h1>`
+   - 每页一个 `<h1>`（问候语）
    - 逻辑的标题层级 (h1 → h2 → h3)
    - 使用 `<nav>`, `<main>`, `<section>`, `<article>`, `<footer>` 等地标
-   - 表单元素关联 `<label>`
 
 2. **键盘可访问**：
    - 所有交互元素可通过 Tab 键访问
    - 使用 `:focus-visible` 提供清晰的焦点样式
-   - 模态对话框支持 Escape 关闭
    - 移动菜单支持 Escape 关闭
 
 3. **对比度**：
@@ -383,7 +546,7 @@ ZVMS Pro 遵循 WCAG 2.1 AA 标准。
    ```html
    <nav aria-label="主导航">
    <button aria-expanded="false" aria-controls="menu-id">
-   <div role="status" aria-live="polite">
+   <svg aria-hidden="true">
    ```
 
 5. **触摸目标**：
@@ -404,114 +567,24 @@ ZVMS Pro 遵循 WCAG 2.1 AA 标准。
 }
 ```
 
-## 组件规范
-
-### 按钮 (Buttons)
-
-**主要按钮** (Primary CTA)：
-```css
-.button-primary {
-  padding: var(--space-4) var(--space-7);
-  background: var(--color-brand);
-  color: white;
-  font-size: var(--font-size-body);
-  font-weight: 600;
-  border-radius: var(--radius-md);
-  box-shadow: 0 4px 16px rgb(0 113 227 / 0.3);
-  transition: all var(--duration-base) var(--ease-spring);
-}
-
-.button-primary:hover {
-  background: var(--color-brand-hover);
-  transform: translateY(-2px);
-  box-shadow: 0 8px 24px rgb(0 113 227 / 0.4);
-}
-
-.button-primary:active {
-  transform: translateY(0) scale(0.98);
-}
-```
-
-**次要按钮** (Secondary)：
-```css
-.button-secondary {
-  padding: var(--space-4) var(--space-7);
-  background: var(--color-bg-elevated);
-  color: var(--color-text-primary);
-  border: 1px solid var(--color-border-moderate);
-  border-radius: var(--radius-md);
-  font-size: var(--font-size-body);
-  font-weight: 600;
-  transition: all var(--duration-base) var(--ease-spring);
-}
-
-.button-secondary:hover {
-  background: white;
-  transform: translateY(-2px);
-  box-shadow: var(--shadow-md);
-}
-```
-
-### 卡片 (Cards)
-
-**标准卡片**：
-```css
-.card {
-  padding: var(--space-7);
-  background: white;
-  border: 1px solid var(--color-border-subtle);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-sm);
-  transition: all var(--duration-base) var(--ease-spring);
-}
-
-.card:hover {
-  transform: translateY(-4px);
-  box-shadow: var(--shadow-lg);
-}
-```
-
-**玻璃卡片**：
-```css
-.card-glass {
-  padding: var(--space-7);
-  background: var(--glass-bg);
-  backdrop-filter: var(--glass-blur);
-  border: 1px solid var(--color-border-subtle);
-  border-radius: var(--radius-xl);
-  box-shadow: var(--glass-shadow);
-  position: relative;
-}
-
-.card-glass::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 5%;
-  right: 5%;
-  height: 1px;
-  background: linear-gradient(90deg, transparent, var(--glass-border), transparent);
-}
-```
-
 ## Do / Don't 示例
 
 ### ✅ Do
 
-- **大胆使用留白**：区块间距至少 80px，桌面端 120-160px
-- **一屏一个焦点**：每个视口只有一个主要视觉元素
-- **真实的材质感**：玻璃有高光、阴影、折射，卡片有抬升
-- **克制的品牌色**：蓝色只用于 CTA 与关键信息
-- **简洁的文案**：标题 10-20 字，正文段落 60-80 字
-- **对称与平衡**：左右布局交替出现，保持视觉平衡
+- **一个焦点对象**：焦点 pass 是视觉锚点，其余元素安静地支持
+- **克制的玻璃**：只有导航与焦点 pass 使用玻璃，不是每个卡片
+- **发丝线分隔**：白色卡片在浅灰画布上使用极细边框 (0.06-0.08 alpha)
+- **大数值显示**：统计指标用 40-56px 大数值 + 13px 小标签
+- **真实的材质感**：玻璃有高光、阴影、折射
+- **实用优先**：信息密度足够让用户一眼理解状态
 
 ### ❌ Don't
 
-- **不要紧凑布局**：避免把多个模块挤在一屏
-- **不要彩虹渐变**：紫/粉/青渐变不符合 ZVMS 气质
-- **不要嵌套玻璃**：半透明材质不能叠加
+- **不要到处使用玻璃**：bento 卡片不需要玻璃材质，用白色即可
+- **不要粗重的阴影**：静态卡片几乎无阴影，依靠发丝线分隔
+- **不要彩色 icon 方块**：不要在每个卡片放圆角彩色 icon 背景
+- **不要把所有按钮做成 pill**：只有状态标签用 pill 形状
 - **不要滥用动画**：不要让所有元素都动，不要无限循环
-- **不要混乱的圆角**：一个组件内使用统一的圆角尺寸
 - **不要低对比度**：文本对比度必须通过 WCAG AA
 
 ## 实现清单
@@ -523,16 +596,18 @@ ZVMS Pro 遵循 WCAG 2.1 AA 标准。
 - [ ] 交互元素有 `:focus-visible` 样式
 - [ ] 文本对比度满足 WCAG AA (4.5:1)
 - [ ] 按钮尺寸 >= 44px (移动端)
-- [ ] 玻璃材质有顶部高光边缘
+- [ ] 玻璃材质只用于导航与焦点元素
+- [ ] 白色卡片使用发丝线边框 (`--color-border-hairline`)
 - [ ] 动画使用 `transform`/`opacity`，避免 layout 属性
 - [ ] 支持 `prefers-reduced-motion`
 - [ ] 响应式测试：390px, 768px, 1024px, 1440px
 - [ ] 没有水平滚动条
+- [ ] 中文标题没有单字孤行 (orphan)
 - [ ] 使用语义化的 HTML5 地标元素
 - [ ] 使用系统字体，没有引入外部字体或 icon 库
 - [ ] 性能：没有大图片、重型库、无限动画循环
 
 ---
 
-**设计原则版本**：v1.0
+**设计原则版本**：v2.0 (App Surface)
 **最后更新**：2026-11-17

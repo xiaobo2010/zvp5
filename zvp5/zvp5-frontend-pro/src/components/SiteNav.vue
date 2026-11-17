@@ -2,11 +2,10 @@
 import { ref, onMounted, onUnmounted } from 'vue'
 
 const links = [
-  { label: '首页', href: '#top' },
-  { label: '志愿活动', href: '#activities' },
-  { label: '志愿时长', href: '#impact' },
-  { label: '组织', href: '#organizations' },
-  { label: '关于', href: '#about' }
+  { label: '首页', href: '#home' },
+  { label: '活动', href: '#activities' },
+  { label: '时长', href: '#hours' },
+  { label: '组织', href: '#home-footer' }
 ]
 
 const mobileMenuOpen = ref(false)
@@ -37,8 +36,7 @@ onUnmounted(() => {
 <template>
   <header class="site-nav">
     <div class="site-nav__inner">
-      <a class="site-nav__brand" href="#top" aria-label="ZVMS 首页">
-        <span class="site-nav__mark" aria-hidden="true">Z</span>
+      <a class="site-nav__brand" href="#home" aria-label="ZVMS 首页">
         <span class="site-nav__wordmark">ZVMS</span>
       </a>
 
@@ -54,7 +52,24 @@ onUnmounted(() => {
         </a>
       </nav>
 
-      <a class="site-nav__cta" href="#start">开始使用</a>
+      <!-- Right controls -->
+      <div class="site-nav__controls">
+        <button class="site-nav__icon-btn" aria-label="搜索">
+          <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+            <circle cx="9" cy="9" r="6" stroke="currentColor" stroke-width="1.5"/>
+            <path d="M13.5 13.5L17 17" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+          </svg>
+        </button>
+        <button class="site-nav__icon-btn" aria-label="通知">
+          <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+            <path d="M6 8C6 5.79086 7.79086 4 10 4C12.2091 4 14 5.79086 14 8V11.382C14 11.7607 14.214 12.107 14.5528 12.2764L15.5 12.75V14H4.5V12.75L5.44721 12.2764C5.78598 12.107 6 11.7607 6 11.382V8Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+            <path d="M8.5 14V14.5C8.5 15.3284 9.17157 16 10 16C10.8284 16 11.5 15.3284 11.5 14.5V14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+          </svg>
+        </button>
+        <button class="site-nav__avatar" aria-label="账户菜单">
+          <span class="site-nav__avatar-text">知</span>
+        </button>
+      </div>
 
       <!-- Mobile menu toggle -->
       <button
@@ -86,9 +101,16 @@ onUnmounted(() => {
         >
           {{ link.label }}
         </a>
-        <a href="#start" class="site-nav__mobile-cta" @click="closeMobileMenu">
-          开始使用
-        </a>
+        <div class="site-nav__mobile-divider" />
+        <button class="site-nav__mobile-link" @click="closeMobileMenu">
+          搜索
+        </button>
+        <button class="site-nav__mobile-link" @click="closeMobileMenu">
+          通知
+        </button>
+        <button class="site-nav__mobile-link" @click="closeMobileMenu">
+          账户设置
+        </button>
       </nav>
     </Transition>
   </header>
@@ -98,170 +120,172 @@ onUnmounted(() => {
 .site-nav {
   position: sticky;
   top: 0;
-  z-index: 100;
-  width: 100%;
+  z-index: 1000;
+  background: var(--glass-bg);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border-bottom: 1px solid var(--glass-border);
+  box-shadow: var(--glass-shadow);
 }
 
 .site-nav__inner {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 0 clamp(20px, 4vw, 40px);
+  height: 56px;
   display: flex;
   align-items: center;
-  gap: var(--space-5);
-  padding: var(--space-4) var(--content-padding);
-  background: var(--glass-bg);
-  backdrop-filter: var(--glass-blur);
-  border-bottom: 1px solid var(--color-border-subtle);
-  box-shadow: var(--glass-shadow);
-  /* Edge highlight for glass depth */
-  position: relative;
-}
-
-.site-nav__inner::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 1px;
-  background: linear-gradient(
-    90deg,
-    transparent,
-    var(--glass-border) 20%,
-    var(--glass-border) 80%,
-    transparent
-  );
-  pointer-events: none;
+  gap: var(--space-6);
 }
 
 .site-nav__brand {
   display: flex;
   align-items: center;
   gap: var(--space-2);
+  text-decoration: none;
   color: var(--color-text-primary);
   font-weight: 600;
   font-size: var(--font-size-body);
-  transition: transform var(--duration-fast) var(--ease-smooth);
+  letter-spacing: -0.01em;
+  transition: opacity var(--duration-fast) var(--ease-smooth);
 }
 
 .site-nav__brand:hover {
-  transform: scale(1.02);
+  opacity: 0.7;
 }
 
-.site-nav__brand:active {
-  transform: scale(0.98);
-}
-
-.site-nav__mark {
-  display: grid;
-  place-items: center;
-  width: 32px;
-  height: 32px;
-  border-radius: var(--radius-sm);
-  background: var(--color-brand);
-  color: white;
-  font-size: var(--font-size-callout);
-  font-weight: 700;
-  box-shadow: 0 2px 8px rgb(0 113 227 / 0.3);
-  transition: all var(--duration-base) var(--ease-spring);
-}
-
-.site-nav__brand:hover .site-nav__mark {
-  background: var(--color-brand-hover);
-  transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgb(0 113 227 / 0.4);
-}
-
-.site-nav__brand:active .site-nav__mark {
-  transform: translateY(0) scale(0.96);
+.site-nav__brand:focus-visible {
+  outline: 2px solid var(--color-brand);
+  outline-offset: 4px;
+  border-radius: var(--radius-xs);
 }
 
 .site-nav__wordmark {
-  font-size: var(--font-size-body);
-  letter-spacing: var(--letter-spacing-normal);
+  font-weight: 600;
 }
 
 .site-nav__links {
   display: none;
-  gap: var(--space-6);
-  margin-left: auto;
+  gap: var(--space-2);
+  margin-left: var(--space-4);
 }
 
 .site-nav__link {
-  position: relative;
+  padding: var(--space-2) var(--space-3);
   color: var(--color-text-secondary);
+  text-decoration: none;
   font-size: var(--font-size-callout);
-  font-weight: 500;
-  transition: color var(--duration-fast) var(--ease-smooth);
-}
-
-.site-nav__link::after {
-  content: '';
-  position: absolute;
-  bottom: -4px;
-  left: 0;
-  width: 0;
-  height: 2px;
-  background: var(--color-brand);
-  border-radius: var(--radius-pill);
-  transition: width var(--duration-base) var(--ease-spring);
+  font-weight: 400;
+  border-radius: var(--radius-sm);
+  transition: all var(--duration-fast) var(--ease-smooth);
 }
 
 .site-nav__link:hover {
   color: var(--color-text-primary);
+  background: rgb(0 0 0 / 0.04);
 }
 
-.site-nav__link:hover::after {
-  width: 100%;
+.site-nav__link:focus-visible {
+  outline: 2px solid var(--color-brand);
+  outline-offset: 2px;
 }
 
-.site-nav__cta {
+.site-nav__controls {
   display: none;
-  padding: var(--space-2) var(--space-5);
-  border-radius: var(--radius-pill);
+  align-items: center;
+  gap: var(--space-2);
+  margin-left: auto;
+}
+
+.site-nav__icon-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: all var(--duration-fast) var(--ease-smooth);
+}
+
+.site-nav__icon-btn:hover {
+  color: var(--color-text-primary);
+  background: rgb(0 0 0 / 0.04);
+}
+
+.site-nav__icon-btn:active {
+  transform: scale(0.95);
+}
+
+.site-nav__icon-btn:focus-visible {
+  outline: 2px solid var(--color-brand);
+  outline-offset: 2px;
+}
+
+.site-nav__avatar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
   background: var(--color-brand);
+  border: none;
+  border-radius: 50%;
   color: white;
-  font-size: var(--font-size-callout);
+  font-size: 13px;
   font-weight: 500;
-  box-shadow: 0 2px 8px rgb(0 113 227 / 0.3);
-  transition: all var(--duration-base) var(--ease-spring);
+  cursor: pointer;
+  transition: all var(--duration-fast) var(--ease-spring);
 }
 
-.site-nav__cta:hover {
-  background: var(--color-brand-hover);
-  transform: translateY(-1px);
-  box-shadow: 0 4px 16px rgb(0 113 227 / 0.4);
+.site-nav__avatar:hover {
+  transform: scale(1.05);
 }
 
-.site-nav__cta:active {
-  transform: translateY(0) scale(0.98);
+.site-nav__avatar:active {
+  transform: scale(0.95);
 }
 
-/* Mobile toggle */
+.site-nav__avatar:focus-visible {
+  outline: 2px solid var(--color-brand);
+  outline-offset: 3px;
+}
+
+.site-nav__avatar-text {
+  margin-top: 1px;
+}
+
 .site-nav__toggle {
   display: flex;
   flex-direction: column;
   justify-content: center;
-  align-items: center;
   gap: 5px;
   width: 44px;
   height: 44px;
   margin-left: auto;
+  padding: 0;
+  background: transparent;
+  border: none;
   cursor: pointer;
-  transition: transform var(--duration-fast) var(--ease-smooth);
 }
 
-.site-nav__toggle:hover {
-  transform: scale(1.05);
-}
-
-.site-nav__toggle:active {
-  transform: scale(0.95);
+.site-nav__toggle:focus-visible {
+  outline: 2px solid var(--color-brand);
+  outline-offset: 2px;
+  border-radius: var(--radius-xs);
 }
 
 .site-nav__toggle-line {
   width: 20px;
   height: 2px;
+  margin: 0 auto;
   background: var(--color-text-primary);
-  border-radius: var(--radius-pill);
+  border-radius: 2px;
   transition: all var(--duration-base) var(--ease-spring);
 }
 
@@ -273,99 +297,80 @@ onUnmounted(() => {
   transform: translateY(-7px) rotate(-45deg);
 }
 
-/* Mobile menu */
 .site-nav__mobile {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  padding: var(--space-4) clamp(20px, 4vw, 40px);
+  background: var(--glass-bg);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border-bottom: 1px solid var(--glass-border);
+  box-shadow: var(--shadow-lg);
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
-  padding: var(--space-5) var(--content-padding);
-  background: var(--glass-bg);
-  backdrop-filter: var(--glass-blur);
-  border-bottom: 1px solid var(--color-border-subtle);
-  box-shadow: var(--shadow-lg);
 }
 
 .site-nav__mobile-link {
-  padding: var(--space-4);
+  padding: var(--space-3) var(--space-4);
   color: var(--color-text-primary);
+  text-decoration: none;
   font-size: var(--font-size-body);
-  font-weight: 500;
-  border-radius: var(--radius-sm);
-  transition: all var(--duration-fast) var(--ease-smooth);
+  font-weight: 400;
+  border-radius: var(--radius-md);
+  background: transparent;
+  border: none;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--duration-fast) var(--ease-smooth);
+  min-height: 44px;
+  display: flex;
+  align-items: center;
 }
 
 .site-nav__mobile-link:hover {
   background: rgb(0 0 0 / 0.04);
-  transform: translateX(4px);
 }
 
-.site-nav__mobile-link:active {
-  transform: translateX(2px) scale(0.98);
+.site-nav__mobile-link:focus-visible {
+  outline: 2px solid var(--color-brand);
+  outline-offset: 2px;
 }
 
-.site-nav__mobile-cta {
-  margin-top: var(--space-3);
-  padding: var(--space-4);
-  border-radius: var(--radius-md);
-  background: var(--color-brand);
-  color: white;
-  font-size: var(--font-size-body);
-  font-weight: 600;
-  text-align: center;
-  box-shadow: 0 2px 8px rgb(0 113 227 / 0.3);
-  transition: all var(--duration-base) var(--ease-spring);
+.site-nav__mobile-divider {
+  height: 1px;
+  background: var(--color-border-hairline);
+  margin: var(--space-2) 0;
 }
 
-.site-nav__mobile-cta:hover {
-  background: var(--color-brand-hover);
-  transform: translateY(-2px);
-  box-shadow: 0 4px 16px rgb(0 113 227 / 0.4);
-}
-
-.site-nav__mobile-cta:active {
-  transform: translateY(0) scale(0.98);
-}
-
-/* Mobile menu transitions */
 .mobile-menu-enter-active,
 .mobile-menu-leave-active {
   transition: all var(--duration-base) var(--ease-smooth);
-  transform-origin: top;
 }
 
-.mobile-menu-enter-from,
+.mobile-menu-enter-from {
+  opacity: 0;
+  transform: translateY(-12px);
+}
+
 .mobile-menu-leave-to {
   opacity: 0;
   transform: translateY(-8px);
 }
 
-/* Desktop breakpoint */
 @media (min-width: 768px) {
   .site-nav__links {
     display: flex;
   }
 
-  .site-nav__cta {
-    display: block;
+  .site-nav__controls {
+    display: flex;
   }
 
   .site-nav__toggle {
     display: none;
-  }
-
-  .site-nav__mobile {
-    display: none;
-  }
-}
-
-/* Large screen refinements */
-@media (min-width: 1024px) {
-  .site-nav__links {
-    gap: var(--space-7);
-  }
-
-  .site-nav__link {
-    font-size: var(--font-size-body);
   }
 }
 </style>
