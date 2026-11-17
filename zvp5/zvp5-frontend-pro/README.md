@@ -4,9 +4,8 @@ Standalone design-led prototype for the next ZVMS frontend. This pass covers the
 navigation, homepage, and design principles only.
 
 ```bash
-# local prototype (reuses the sibling frontend's installed dependencies)
-ln -s ../zvp5-frontend/node_modules node_modules   # once, local only
-pnpm dev                                            # http://localhost:5273
+pnpm install        # 独立装依赖（锁文件已提交，CI 用 --frozen-lockfile）
+pnpm dev            # http://localhost:5273
 pnpm build
 ```
 
