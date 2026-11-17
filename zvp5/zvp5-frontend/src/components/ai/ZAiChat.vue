@@ -2199,12 +2199,12 @@ onUnmounted(() => {
   flex: 1 1 auto;
 }
 
-/* 桌面侧栏：固定宽度，跟主区等高 */
+/* 桌面侧栏：固定宽度，跟主区等高；大屏按视口略微加宽，别让会话名挤成一条 */
 .ai-chat__sidebar {
   display: flex;
   flex-direction: column;
   flex: none;
-  width: 260px;
+  width: clamp(260px, 18vw, 340px);
   /* 高度跟着对话列走，不再按视口猜一个数 */
   max-height: 100%;
   min-height: 0;
@@ -2279,7 +2279,7 @@ onUnmounted(() => {
 }
 
 .ai-chat__bubble {
-  max-width: min(680px, 88%);
+  max-width: min(820px, 86%);
   padding: 8px 10px;
   border-radius: 6px;
   border: 1px solid var(--yg-border-default);
@@ -2913,10 +2913,10 @@ onUnmounted(() => {
   }
 }
 
-/* 中等宽度（1024–1280）：侧栏收窄，把宽度让给消息区 */
+/* 中等宽度（1024–1280）：侧栏收窄但仍要放得下「会话 / 已归档 / 新建会话」 */
 @media (min-width: 1024px) and (max-width: 1280px) {
   .ai-chat__sidebar {
-    width: 220px;
+    width: 250px;
   }
 }
 

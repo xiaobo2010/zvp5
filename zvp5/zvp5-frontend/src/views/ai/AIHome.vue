@@ -53,10 +53,14 @@ const router = useRouter()
 const userStore = useUserStore()
 const { t } = useI18n()
 
-const isAdmin = userStore.position.includes('admin')
-const canUseAi = isAdmin || userStore.position.includes('department')
+// 角色可能比页面晚一拍就绪（持久化恢复 / 登录后补权限）：用 computed 让管理员
+// 分区跟着权限出现，而不是在 setup 时拍一张快照就再也不更新。
+const isAdmin = computed(() => userStore.position.includes('admin'))
+const canUseAi = computed(
+  () => isAdmin.value || userStore.position.includes('department')
+)
 
-if (!canUseAi) {
+if (!canUseAi.value) {
   router.replace('/not-found')
 }
 
@@ -64,9 +68,9 @@ const curPage = route.params.action?.toString()
 
 function isVisible(value: string): boolean {
   if (ADMIN_ONLY.includes(value)) {
-    return isAdmin
+    return isAdmin.value
   }
-  return canUseAi
+  return canUseAi.value
 }
 
 if (curPage && (!VALID_CURRENT.includes(curPage) || !isVisible(curPage))) {
@@ -77,33 +81,25 @@ const current = ref(
   curPage && VALID_CURRENT.includes(curPage) && isVisible(curPage) ? curPage : 'chat'
 )
 
-const tabs = ref<GatewayTab[]>([
-  {
-    label: 'chat',
-    value: 'chat',
-    icon: Cpu
-  },
-  {
-    label: 'quota',
-    value: 'quota',
-    icon: Coin
-  },
-  {
-    label: 'scheduled',
-    value: 'scheduled',
-    icon: AlarmClock
-  }
-])
+const BASE_TABS: GatewayTab[] = [
+  { label: 'chat', value: 'chat', icon: Cpu },
+  { label: 'quota', value: 'quota', icon: Coin },
+  { label: 'scheduled', value: 'scheduled', icon: AlarmClock }
+]
 
-if (isAdmin) {
-  tabs.value.push({ label: 'keys', value: 'keys', icon: Key })
-  tabs.value.push({ label: 'engines', value: 'engines', icon: Cpu })
-  tabs.value.push({ label: 'models', value: 'models', icon: Box })
-  tabs.value.push({ label: 'quota-admin', value: 'quota-admin', icon: DataLine })
-  tabs.value.push({ label: 'health', value: 'health', icon: Odometer })
-  tabs.value.push({ label: 'logs', value: 'logs', icon: Tickets })
-  tabs.value.push({ label: 'monitor', value: 'monitor', icon: Monitor })
-}
+const ADMIN_TABS: GatewayTab[] = [
+  { label: 'keys', value: 'keys', icon: Key },
+  { label: 'engines', value: 'engines', icon: Cpu },
+  { label: 'models', value: 'models', icon: Box },
+  { label: 'quota-admin', value: 'quota-admin', icon: DataLine },
+  { label: 'health', value: 'health', icon: Odometer },
+  { label: 'logs', value: 'logs', icon: Tickets },
+  { label: 'monitor', value: 'monitor', icon: Monitor }
+]
+
+const tabs = computed<GatewayTab[]>(() =>
+  isAdmin.value ? [...BASE_TABS, ...ADMIN_TABS] : BASE_TABS
+)
 
 watch(current, () => {
   router.replace('/ai/' + current.value)
@@ -272,6 +268,19 @@ watch(
       max(var(--yg-space-6), var(--yg-content-bottom-inset, 0px))
   );
 
+  /* 大屏不要把所有东西按 14px 铺在 2K/4K 屏上：AI 页局部放大字号、控件与间距，
+     小屏仍受 clamp 下限保护，不会把移动端撑爆。 */
+  --yg-font-size-xs: clamp(12px, 0.25vw + 8px, 15px);
+  --yg-font-size-sm: clamp(13px, 0.3vw + 8px, 16px);
+  --yg-font-size-md: clamp(14px, 0.4vw + 8px, 18px);
+  --yg-font-size-lg: clamp(16px, 0.5vw + 8px, 21px);
+  --yg-font-size-xl: clamp(18px, 0.6vw + 8px, 24px);
+  --yg-space-3: clamp(12px, 0.3vw + 8px, 16px);
+  --yg-space-4: clamp(16px, 0.6vw + 8px, 26px);
+  --yg-space-5: clamp(20px, 0.8vw + 10px, 32px);
+  --yg-control-height-md: clamp(36px, 0.8vw + 22px, 44px);
+  --yg-control-height-lg: clamp(44px, 0.9vw + 30px, 52px);
+
   display: flex;
   flex-direction: column;
   gap: var(--yg-space-4);
@@ -301,14 +310,14 @@ watch(
 /*
  * 页头与页签是固定件：不参与纵向压缩。
  *
- * 页签容器是横向滚动容器（overflow-x: auto），在 flex 里它的自动最小尺寸是 0，
- * 对话页一旦拿到长内容（长消息、代码块），就会把页签压成半截甚至整条消失，
- * 表现为「顶部选项卡不见了、点不到」。这里对所有方向锁死它们的高度，
- * 压缩全部让给对话面板（它自己 overflow: hidden）。
+ * 页签容器在 flex 里自动最小尺寸是 0；对话页一旦拿到长内容（长消息、代码块），
+ * 就会把页签压成半截甚至整条消失，表现为「顶部选项卡不见了、点不到」。
+ * 这里对所有方向锁死页头与页签的高度，压缩全部让给对话面板（它自己 overflow: hidden）。
  */
 .yg-ai-home__header,
 .ai-head,
-.ai-tabs {
+.ai-tabs,
+.ai-gateway-tabs {
   flex: none;
 }
 
@@ -360,17 +369,20 @@ watch(
 /* 桌面分区导航：扁平下划线，不抢内容区的视觉重量 */
 .ai-gateway-tabs {
   display: flex;
+  flex-wrap: wrap;
   align-items: stretch;
   gap: var(--yg-space-1);
+  row-gap: var(--yg-space-1);
   margin-bottom: var(--yg-space-4);
-  overflow-x: auto;
-  overscroll-behavior-x: contain;
-  scrollbar-width: none;
   border-bottom: 1px solid var(--yg-border-subtle);
 }
 
-.ai-gateway-tabs::-webkit-scrollbar {
-  display: none;
+/* 平板上紧凑药丸也换行：否则 10 个分区只能横向滚动，管理员审计入口看起来像消失了 */
+@media (min-width: 600px) {
+  .ai-tabs {
+    flex-wrap: wrap;
+    overflow-x: visible;
+  }
 }
 
 .ai-gateway-tab {
@@ -415,15 +427,6 @@ watch(
   border-bottom-color: var(--yg-color-primary);
 }
 
-/* 桌面多了一行分区导航：对话页高度把这一行扣掉，避免外层多出滚动条 */
-.yg-ai-home--chat:not(.is-compact) {
-  height: calc(
-    100vh - var(--yg-ai-viewport-inset) - var(--yg-control-height-lg) - var(--yg-space-4)
-  );
-  height: calc(
-    100dvh - var(--yg-ai-viewport-inset) - var(--yg-control-height-lg) - var(--yg-space-4)
-  );
-}
 
 /* 紧凑页头：返回按钮与标题同行（与服务器/平台管理一致） */
 .ai-head {
