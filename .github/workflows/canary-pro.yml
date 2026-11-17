@@ -1,0 +1,293 @@
+name: Canary Pro preview (frontend-pro → Worker)
+
+# canary-pro 通道：全量门禁 + zvp5-frontend-pro 构建 + Worker 预览发布。
+#
+# 与 canary 的唯一区别是「被部署的产物来源」：canary 发 zvp5-frontend，
+# 本通道发 zvp5-frontend-pro（独立的设计原型前端，自带 package.json/lock。
+# 门禁 job 与 canary 完全同构。
+#   - 2026-11-16 起仓库转为 public，Actions 分钟数免费，canary 不再"只跑一条腿"：
+#     后端 pytest/Ruff、Cypress E2E、workflow/secret 扫描、依赖漏洞扫描全部跑，
+#     任何一项红都不发布预览。
+#   - 发布仍是单 job（装依赖 → vitest/lint/type-check → 用 canary 参数构建 → 断言
+#     → 发布 → 冒烟），门禁 job 与它并行，preview 只等结果。
+#   - 任何非文档改动都会触发（见下方 paths-ignore）：宁可多跑一次，也不要
+#     因为目录白名单过期而静默不部署。
+#
+# 必需：canary environment 里的 secret CLOUDFLARE_API_TOKEN 与变量
+# CLOUDFLARE_ACCOUNT_ID（该 environment 只允许本分支访问）。账号 ID 不写在仓库里，
+# 缺失时 Deploy 步骤会以 "CLOUDFLARE_ACCOUNT_ID is required" 直接失败。
+# 可选环境 Variables：CANARY_API_BASE、CANARY_API_RACE_BASE、CANARY_API_CONTENT_BASE。
+
+on:
+  push:
+    branches:
+      - v5-canary-pro
+    # 改代码就重新部署：只忽略纯文档，不用前端目录白名单。
+    # 白名单在目录改名、产物挪位、或分支结构与 main 不一致时会**静默漏掉**
+    # 部署——2026-11-15 canary 因为只认 zvp5/zvp5-frontend/** 而三周没更新，
+    # 看起来像「CI 自动部署没生效」。
+    paths-ignore:
+      - "**/*.md"
+      - "**/*.txt"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: canary-pro-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.13"
+  NODE_VERSION_FILE: zvp5/zvp5-frontend/.node-version
+  PNPM_VERSION: "10.34.5"
+
+jobs:
+  backend:
+    name: Backend quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: zvp5/zvp5-backend-python
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: zvp5/zvp5-backend-python/requirements.txt
+      - name: Install backend dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt ruff==0.17.4
+      - name: Generate local test keys
+        run: python tools/setup_local.py
+      - name: Ruff dead-code and undefined-name checks
+        run: |
+          python -m ruff check --select F821 .
+          python -m ruff check --select F401 main.py app_setup.py routers services util db typings tasks tools
+      - name: Run backend tests
+        # 与 main 的 ci.yml 同一套：SQLite 替身 + conftest 隔离，不连真实库。
+        run: python -m pytest -q
+      - name: Compile backend
+        run: python -m compileall -q routers services util db typings tasks
+
+  frontend-e2e:
+    name: Frontend Cypress E2E
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: zvp5/zvp5-frontend
+    env:
+      VITE_API_BASE: https://ci.invalid/api
+      VITE_API_RACE_BASE: https://race.ci.invalid/api
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v6
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: ${{ env.NODE_VERSION_FILE }}
+          cache: pnpm
+          cache-dependency-path: zvp5/zvp5-frontend/pnpm-lock.yaml
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Install Cypress binary
+        run: pnpm exec cypress install
+      - name: Build bundle for E2E
+        run: pnpm run build
+      - name: Run Cypress
+        run: pnpm run test:e2e
+
+  workflow-security:
+    name: Workflow and secret checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Install ShellCheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+      - name: ShellCheck deployment scripts
+        run: >-
+          shellcheck -x
+          zvp5/deployment/github-actions/zvp5-deploy
+          zvp5/deployment/github-actions/*.sh
+      - name: Test deployment backup and rollback paths
+        run: bash zvp5/deployment/github-actions/test-deploy-wrapper.sh
+      - name: Lint GitHub Actions workflows
+        run: docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:1.7.7
+      - name: Scan working tree for secrets
+        run: >-
+          docker run --rm -v "$PWD:/repo"
+          ghcr.io/gitleaks/gitleaks:v8.28.0
+          detect --source=/repo --no-git --config=/repo/.gitleaks.toml
+          --redact --verbose --exit-code=1
+      - name: Scan test fixtures for high-confidence credential formats
+        run: >-
+          docker run --rm -v "$PWD:/repo"
+          ghcr.io/gitleaks/gitleaks:v8.28.0
+          detect --source=/repo --no-git --config=/repo/.gitleaks-high-confidence.toml
+          --enable-rule=private-key --enable-rule=aws-access-token
+          --enable-rule=github-app-token --enable-rule=github-fine-grained-pat
+          --enable-rule=github-oauth --enable-rule=github-pat
+          --enable-rule=github-refresh-token --enable-rule=gitlab-pat
+          --enable-rule=gitlab-oauth-app-secret
+          --enable-rule=gitlab-runner-authentication-token
+          --enable-rule=npm-access-token --enable-rule=pypi-upload-token
+          --enable-rule=slack-app-token --enable-rule=slack-bot-token
+          --enable-rule=slack-webhook-url --enable-rule=stripe-access-token
+          --enable-rule=openai-api-key --enable-rule=anthropic-api-key
+          --enable-rule=gcp-api-key --enable-rule=azure-ad-client-secret
+          --enable-rule=cloudflare-api-key --enable-rule=cloudflare-global-api-key
+          --redact --verbose --exit-code=1
+
+  dependency-security:
+    name: Dependency vulnerability checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v6
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      # 该任务只跑 pnpm audit（不做 pnpm install），没有 pnpm store 可缓存；
+      # 开启 pnpm 缓存会让 setup-node 的 post 步骤因路径不存在而报错。
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: ${{ env.NODE_VERSION_FILE }}
+      - name: Audit frontend production dependencies
+        working-directory: zvp5/zvp5-frontend
+        run: pnpm audit --prod --audit-level high
+      - name: Audit frontend-pro production dependencies
+        working-directory: zvp5/zvp5-frontend-pro
+        run: pnpm audit --prod --audit-level high
+      - name: Scan repository dependencies for high and critical findings
+        run: >-
+          docker run --rm -v "$PWD:/src" -w /src
+          aquasec/trivy:0.76.2 fs
+          --scanners vuln --severity HIGH,CRITICAL
+          --exit-code 1 --no-progress .
+
+  preview:
+    name: Frontend Pro gates and Worker preview
+    needs:
+      - backend
+      - frontend-e2e
+      - workflow-security
+      - dependency-security
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: zvp5/zvp5-frontend-pro
+    # token 存在 canary environment 里，该 environment 只接受 canary 系列分支
+    # （v5-canary / v5-canary2 / v5-canary-pro）的 job，且**每次部署都要仓库所有者
+    # 手动批准**。分支策略只约束分支名，挡不住本分支内的内容改动，只有人工放行能挡。
+    environment: canary
+    env:
+      WRANGLER_VERSION: "4.162.0"
+      CANARY_URL: https://canary-pro.xiaobopisces.top
+      # 后端盾牌会 418 掉没有 UA 的请求（curl 默认 UA 也在黑名单里），冒烟必须带这个。
+      PROBE_UA: Mozilla/5.0 (compatible; ZVP5-Deploy/1.0)
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v6
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v7
+        with:
+          # frontend-pro 没有自己的 .node-version，沿用主前端的版本保持一致。
+          node-version-file: ${{ env.NODE_VERSION_FILE }}
+          cache: pnpm
+          cache-dependency-path: zvp5/zvp5-frontend-pro/pnpm-lock.yaml
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Build preview bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          # build = vue-tsc --noEmit && vite build，类型检查与产物在同一步完成。
+          pnpm run build
+          [[ -f dist/index.html ]] || { echo "dist/index.html missing" >&2; exit 1; }
+          grep -F 'src="/assets/' dist/index.html >/dev/null
+          # 入口 chunk 必须真的产出了，避免只留下一个空壳 index.html。
+          entry="$(grep -o 'src="/assets/[^"]*"' dist/index.html | head -n1 | sed -e 's|src="||' -e 's|"$||')"
+          [[ -f "dist$entry" ]] || { echo "entry chunk $entry missing" >&2; exit 1; }
+      - name: Deploy to Cloudflare Worker
+        shell: bash
+        working-directory: .
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          : "${CLOUDFLARE_API_TOKEN:?CLOUDFLARE_API_TOKEN is required}"
+          : "${CLOUDFLARE_ACCOUNT_ID:?CLOUDFLARE_ACCOUNT_ID is required}"
+          npx --yes "wrangler@${WRANGLER_VERSION}" deploy \
+            --config zvp5/deployment/preview-worker-canary-pro/wrangler.jsonc
+      - name: Smoke test the deployed preview
+        shell: bash
+        working-directory: .
+        run: |
+          set -euo pipefail
+          dist_dir=zvp5/zvp5-frontend-pro/dist
+          entry="$(grep -o 'src="/assets/[^"]*"' "$dist_dir/index.html" | head -n1 | sed -e 's|src="||' -e 's|"$||')"
+          [[ -n "$entry" ]] || { echo "could not find entry asset in dist/index.html" >&2; exit 1; }
+          local_sha="$(sha256sum "$dist_dir$entry" | awk '{print $1}')"
+
+          home_status=""
+          waf_blocked=0
+          for _ in $(seq 1 6); do
+            home_status="$(curl -fsS -A "$PROBE_UA" -o /dev/null -w '%{http_code}' "$CANARY_URL/" || true)"
+            if [[ "$home_status" == "403" ]]; then
+              waf_blocked=1
+              break
+            fi
+            remote_sha="$(curl -fsS -A "$PROBE_UA" --compressed -H 'Accept-Encoding: gzip' "$CANARY_URL$entry" | sha256sum | awk '{print $1}' || true)"
+            if [[ "$home_status" == "200" && "$remote_sha" == "$local_sha" ]]; then
+              break
+            fi
+            sleep 5
+          done
+          if [[ $waf_blocked -eq 1 ]]; then
+            # Cloudflare 的托管规则会拦 GitHub Actions 出口 IP（同一地址用本机 curl
+            # 是 200）。这是边缘策略不是部署问题，降级成警告，不做硬失败。
+            echo "::warning title=Preview probe blocked by Cloudflare::canary-pro root returned 403 to the runner IP; content check skipped."
+            {
+              echo '### Canary Pro preview deployed (probe skipped)'
+              echo
+              echo "- URL: $CANARY_URL"
+              echo "- Commit: \`$GITHUB_SHA\`"
+              echo "- Entry chunk: \`$entry\`"
+              echo '- Content probe was skipped: Cloudflare returned 403 to the runner IP.'
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          [[ "$home_status" == "200" ]] || { echo "preview root returned $home_status" >&2; exit 1; }
+          [[ "$remote_sha" == "$local_sha" ]] || {
+            echo "served $entry does not match the freshly built bundle" >&2
+            exit 1
+          }
+
+          {
+            echo '### Canary Pro preview deployed'
+            echo
+            echo "- URL: $CANARY_URL"
+            echo "- Commit: \`$GITHUB_SHA\`"
+            echo "- Entry chunk: \`$entry\`"
+            echo '- Worker: zvp-yuren-canary-pro (zvp5-frontend-pro static assets)'
+          } >> "$GITHUB_STEP_SUMMARY"
