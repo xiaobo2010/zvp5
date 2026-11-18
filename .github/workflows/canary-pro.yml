@@ -192,10 +192,15 @@ jobs:
     defaults:
       run:
         working-directory: zvp5/zvp5-frontend-pro
-    # token 存在 canary environment 里，该 environment 只接受 canary 系列分支
-    # （v5-canary / v5-canary2 / v5-canary-pro）的 job，且**每次部署都要仓库所有者
-    # 手动批准**。分支策略只约束分支名，挡不住本分支内的内容改动，只有人工放行能挡。
-    environment: canary
+    # token 存在 canary-pro* environment 里，两个 environment 都只接受 v5-canary-pro
+    # 分支的 job：
+    #   - canary-pro      = 带 required_reviewers，部署前必须仓库所有者手动放行；
+    #   - canary-pro-auto = 不放行闸，只给 allowlist 里那个账号自己推的提交用。
+    # 选择依据是 **github.actor（推送者身份）**，不是提交里的 author 字段：author 是
+    # 提交内容的一部分，任何人都能写别人的邮箱；actor 由 GitHub 认证，骗不了。
+    # 因此在「谁推的」这一层判定，别人（含所有者自己）推的改动仍然要人工放行。
+    environment:
+      name: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/v5-canary-pro' && github.actor == 'neiworldfirst1314-cell') && 'canary-pro-auto' || 'canary-pro' }}
     env:
       WRANGLER_VERSION: "4.162.0"
       CANARY_URL: https://canary-pro.xiaobopisces.top
