@@ -2,7 +2,6 @@
 import { computed, nextTick, onMounted, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ElButton } from 'element-plus/es/components/button/index.mjs'
-import { ElCard } from 'element-plus/es/components/card/index.mjs'
 import { ElDatePicker } from 'element-plus/es/components/date-picker/index.mjs'
 import { ElDialog } from 'element-plus/es/components/dialog/index.mjs'
 import { ElEmpty } from 'element-plus/es/components/empty/index.mjs'
@@ -12,8 +11,6 @@ import { ElIcon } from 'element-plus/es/components/icon/index.mjs'
 import { ElInput } from 'element-plus/es/components/input/index.mjs'
 import { ElMessage } from 'element-plus/es/components/message/index.mjs'
 import { ElMessageBox } from 'element-plus/es/components/message-box/index.mjs'
-import { ElOption } from 'element-plus/es/components/select/index.mjs'
-import { ElSelect } from 'element-plus/es/components/select/index.mjs'
 import { ElSwitch } from 'element-plus/es/components/switch/index.mjs'
 import { ElTable } from 'element-plus/es/components/table/index.mjs'
 import { ElTableColumn } from 'element-plus/es/components/table/index.mjs'
@@ -559,29 +556,26 @@ onMounted(() => {
 
 <template>
   <div class="flex flex-col gap-4">
-    <ElCard shadow="never" v-loading="loading">
-      <template #header>
-        <div class="flex flex-wrap items-center justify-between gap-3">
-          <div class="flex flex-col gap-1">
-            <span>{{ t('ai.keys.title') }}</span>
-            <span class="text-xs font-normal" style="color: var(--yg-text-tertiary)">
-              {{ t('ai.keys.subtitle') }}
-            </span>
-          </div>
-          <div class="flex flex-wrap items-center gap-2">
-            <ElButton @click="load">
-              <ElIcon class="mr-1"><Refresh /></ElIcon>
-              {{ t('ai.common.refresh') }}
-            </ElButton>
-            <ElButton type="primary" @click="openCreate">
-              <ElIcon class="mr-1"><Plus /></ElIcon>
-              {{ t('ai.keys.create') }}
-            </ElButton>
-          </div>
+    <section class="yg-card" v-loading="loading">
+      <header class="yg-card__header">
+        <div class="flex flex-col gap-1 min-w-0">
+          <h2 class="yg-card__title">{{ t('ai.keys.title') }}</h2>
+          <p class="yg-text-xs yg-text-tertiary">{{ t('ai.keys.subtitle') }}</p>
         </div>
-      </template>
+        <div class="yg-card__extra flex flex-wrap items-center gap-2">
+          <ElButton @click="load">
+            <ElIcon class="mr-1"><Refresh /></ElIcon>
+            {{ t('ai.common.refresh') }}
+          </ElButton>
+          <ElButton type="primary" @click="openCreate">
+            <ElIcon class="mr-1"><Plus /></ElIcon>
+            {{ t('ai.keys.create') }}
+          </ElButton>
+        </div>
+      </header>
 
-      <ElTable :data="rows" row-key="oid" stripe>
+      <div class="yg-card__body">
+        <ElTable :data="rows" row-key="oid" stripe>
         <ElTableColumn :label="t('ai.keys.scope')" width="120" align="center">
           <template #default="{ row }">
             <div class="ai-keys__scope">
@@ -700,7 +694,8 @@ onMounted(() => {
           />
         </template>
       </ElTable>
-    </ElCard>
+      </div>
+    </section>
 
     <ElDialog
       v-model="dialogVisible"
@@ -729,10 +724,33 @@ onMounted(() => {
             :label="t('ai.keys.scope')"
             prop="scope"
           >
-            <ElSelect v-model="form.scope" class="w-full">
-              <ElOption :label="t('ai.keys.scopeShared')" value="shared" />
-              <ElOption :label="t('ai.keys.scopePersonal')" value="personal" />
-            </ElSelect>
+            <!-- 类型是二选一：单选卡片把两种口径的差别摆在明面上，不必先展开下拉 -->
+            <div class="ai-scope-cards" role="radiogroup" :aria-label="t('ai.keys.scope')">
+              <button
+                type="button"
+                role="radio"
+                class="ai-scope-card"
+                :class="{ 'is-active': form.scope === 'shared' }"
+                :aria-checked="form.scope === 'shared'"
+                data-value="shared"
+                @click="form.scope = 'shared'"
+              >
+                <span class="ai-scope-card__title">{{ t('ai.keys.scopeShared') }}</span>
+                <span class="ai-scope-card__hint">{{ t('ai.keys.scopeSharedHint') }}</span>
+              </button>
+              <button
+                type="button"
+                role="radio"
+                class="ai-scope-card"
+                :class="{ 'is-active': form.scope === 'personal' }"
+                :aria-checked="form.scope === 'personal'"
+                data-value="personal"
+                @click="form.scope = 'personal'"
+              >
+                <span class="ai-scope-card__title">{{ t('ai.keys.scopePersonal') }}</span>
+                <span class="ai-scope-card__hint">{{ t('ai.keys.scopePersonalHint') }}</span>
+              </button>
+            </div>
           </ElFormItem>
           <ElFormItem :label="t('ai.keys.name')" prop="name">
             <ElInput v-model="form.name" :placeholder="t('ai.keys.namePlaceholder')" />
@@ -891,5 +909,69 @@ onMounted(() => {
   font-family: var(--yg-font-mono);
   font-size: var(--yg-font-size-xs);
   overflow-wrap: anywhere;
+}
+
+/* 类型单选卡片：弹层在 body 下、不吃页面级皮肤，这里自带直角描边版式 */
+.ai-scope-cards {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--yg-space-2);
+  width: 100%;
+}
+
+.ai-scope-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--yg-space-1);
+  flex: 1 1 180px;
+  min-height: 64px;
+  padding: var(--yg-space-3);
+  border: 1px solid var(--yg-border-default);
+  border-radius: var(--yg-radius-md);
+  background: var(--yg-bg-surface);
+  color: var(--yg-text-secondary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color var(--yg-dur-fast) var(--yg-ease-out),
+    background-color var(--yg-dur-fast) var(--yg-ease-out),
+    box-shadow var(--yg-dur-fast) var(--yg-ease-out);
+}
+
+.ai-scope-card__title {
+  color: var(--yg-text-primary);
+  font-size: var(--yg-font-size-md);
+  font-weight: var(--yg-font-weight-medium);
+}
+
+.ai-scope-card__hint {
+  font-size: var(--yg-font-size-xs);
+  line-height: var(--yg-line-height-normal);
+  color: var(--yg-text-tertiary);
+}
+
+.ai-scope-card:hover {
+  border-color: var(--yg-border-strong);
+  background: var(--yg-bg-surface-sunken);
+}
+
+.ai-scope-card:active {
+  background: var(--yg-bg-surface-sunken);
+}
+
+.ai-scope-card:focus-visible {
+  outline: none;
+  box-shadow: var(--yg-focus-ring);
+}
+
+.ai-scope-card.is-active {
+  border-color: var(--yg-color-primary);
+  background: var(--yg-color-primary-soft);
+  box-shadow: inset 0 0 0 1px var(--yg-color-primary);
+}
+
+.ai-scope-card.is-active .ai-scope-card__title {
+  color: var(--yg-text-link);
 }
 </style>

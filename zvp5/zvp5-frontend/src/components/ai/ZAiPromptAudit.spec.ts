@@ -395,13 +395,14 @@ function lastQuery() {
   return calls[calls.length - 1]![0]
 }
 
-/** 天数是第二个 ElSelect（第一个是场景）。 */
-function daysSelect(wrapper: VueWrapper) {
-  return wrapper.findAll('.el-select-stub')[1]!
+/** 天数芯片组（替代旧下拉）：按 data-value 定位单枚芯片。 */
+function daysChip(wrapper: VueWrapper, value: string) {
+  return wrapper.find(`[aria-label="ai.prompts.days"] .ai-chips__item[data-value="${value}"]`)!
 }
 
-function purposeSelect(wrapper: VueWrapper) {
-  return wrapper.findAll('.el-select-stub')[0]!
+/** 场景芯片组（替代旧下拉）：按 data-value 定位单枚芯片。 */
+function purposeChip(wrapper: VueWrapper, value: string) {
+  return wrapper.find(`[aria-label="ai.prompts.purpose"] .ai-chips__item[data-value="${value}"]`)!
 }
 
 function buttonByText(wrapper: VueWrapper, text: string) {
@@ -482,7 +483,7 @@ describe('Prompt 审阅页', () => {
     const wrapper = mountPage()
     await flushPromises()
 
-    await purposeSelect(wrapper).setValue('ocr')
+    await purposeChip(wrapper, 'ocr').trigger('click')
     await flushPromises()
 
     expect(lastQuery()).toMatchObject({ purpose: 'ocr' })
@@ -521,12 +522,12 @@ describe('Prompt 审阅页', () => {
     const wrapper = mountPage()
     await flushPromises()
 
-    expect(daysSelect(wrapper).attributes('disabled')).toBeUndefined()
+    expect(daysChip(wrapper, '30').attributes('disabled')).toBeUndefined()
 
     await wrapper.find('.el-date-picker-stub').setValue('range')
     await flushPromises()
 
-    expect(daysSelect(wrapper).attributes('disabled')).toBeDefined()
+    expect(daysChip(wrapper, '30').attributes('disabled')).toBeDefined()
     const tooltip = wrapper.find('.el-tooltip-stub')
     expect(tooltip.attributes('data-content')).toBe('ai.prompts.daysDisabled')
     expect(tooltip.attributes('data-disabled')).toBe('false')
@@ -538,10 +539,10 @@ describe('Prompt 审阅页', () => {
     const wrapper = mountPage()
     await flushPromises()
 
-    await daysSelect(wrapper).setValue('30')
+    await daysChip(wrapper, '30').trigger('click')
     await flushPromises()
 
-    expect(lastQuery()).toMatchObject({ page: 1, days: '30' })
+    expect(lastQuery()).toMatchObject({ page: 1, days: 30 })
 
     wrapper.unmount()
   })

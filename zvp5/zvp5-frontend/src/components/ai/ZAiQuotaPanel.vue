@@ -22,9 +22,7 @@ import { ElIcon } from 'element-plus/es/components/icon/index.mjs'
 import { ElInput } from 'element-plus/es/components/input/index.mjs'
 import { ElInputNumber } from 'element-plus/es/components/input-number/index.mjs'
 import { ElMessage } from 'element-plus/es/components/message/index.mjs'
-import { ElOption } from 'element-plus/es/components/select/index.mjs'
 import { ElProgress } from 'element-plus/es/components/progress/index.mjs'
-import { ElSelect } from 'element-plus/es/components/select/index.mjs'
 import { ElTable } from 'element-plus/es/components/table/index.mjs'
 import { ElTableColumn } from 'element-plus/es/components/table/index.mjs'
 import { ElTag } from 'element-plus/es/components/tag/index.mjs'
@@ -41,6 +39,7 @@ import {
   type AiQuotaRequest,
   type AiQuotaSubmitInput
 } from '@/api/ai'
+import { useUserStore } from '@/stores/user'
 import { formatDateTime } from '@/utils/dateTime'
 import { resolveErrorMessage } from '@/utils/errorMessage'
 import type { AiQuotaRequestKind, AiQuotaUsage } from '@/../types/ai'
@@ -70,6 +69,44 @@ const requestKind = ref<AiQuotaRequestKind>('chat')
 const requestReason = ref('')
 const requestLimit = ref<number | null>(null)
 const submitting = ref(false)
+
+/* ---------------------------------------------------------------------------
+   AF 口径说明的折叠记忆（纯 UI 偏好，按账号隔离，不进任何请求）
+   --------------------------------------------------------------------------- */
+
+const AF_HELP_PREF_PREFIX = 'zvms.ai.afHelp'
+
+/** 按账号取偏好 key；读不到账号（无 Pinia 上下文等）退回匿名档。 */
+function afHelpPrefKey(): string {
+  let uid = 'anon'
+  try {
+    uid = String(useUserStore()._id || 'anon')
+  } catch {
+    /* 隔离环境没有 Pinia：偏好退回匿名档，功能不受影响 */
+  }
+  return `${AF_HELP_PREF_PREFIX}.${uid}`
+}
+
+/** 默认展开：首次进入能看到完整口径；'0' 是用户主动收起过的标记。 */
+function readAfHelpPreference(): boolean {
+  try {
+    return localStorage.getItem(afHelpPrefKey()) !== '0'
+  } catch {
+    return true
+  }
+}
+
+const afHelpOpen = ref(readAfHelpPreference())
+
+/** 切换并记忆；隐私模式写不进 localStorage 也照常切换本次会话。 */
+function toggleAfHelp(): void {
+  afHelpOpen.value = !afHelpOpen.value
+  try {
+    localStorage.setItem(afHelpPrefKey(), afHelpOpen.value ? '1' : '0')
+  } catch {
+    /* 写不进去不影响本次切换 */
+  }
+}
 
 function percent(entry: AiQuotaEntryView | null): number {
   if (!entry || entry.limit <= 0) {
@@ -436,15 +473,44 @@ onMounted(() => {
 
     <section class="yg-card">
       <header class="yg-card__header">
-        <h2 class="yg-statistic__title">{{ t('ai.quota.ruleTitle') }}</h2>
+        <!-- 标题行即折叠开关：整行可点，键盘 Enter/Space 原生可达 -->
+        <h2 class="ai-quota-af__heading">
+          <button
+            type="button"
+            class="ai-quota-af__toggle"
+            :aria-expanded="afHelpOpen"
+            aria-controls="ai-quota-af-body"
+            @click="toggleAfHelp"
+          >
+            <span class="ai-quota-af__toggle-title">{{ t('ai.quota.ruleTitle') }}</span>
+            <span class="ai-quota-af__toggle-state">
+              {{ afHelpOpen ? t('ai.quota.afCollapse') : t('ai.quota.afExpand') }}
+              <span class="ai-quota-af__chevron" aria-hidden="true"></span>
+            </span>
+          </button>
+        </h2>
       </header>
-      <div class="yg-card__body">
-        <ul class="yg-text-sm yg-text-secondary flex flex-col gap-1">
-          <li>{{ t('ai.quota.ruleUnified') }}</li>
-          <li>{{ t('ai.quota.ruleOcr') }}</li>
-          <li>{{ t('ai.quota.rulePersonal') }}</li>
-          <li>{{ t('ai.quota.ruleShared') }}</li>
-        </ul>
+      <div
+        id="ai-quota-af-body"
+        class="ai-quota-af__body"
+        :class="{ 'is-open': afHelpOpen }"
+      >
+        <div class="ai-quota-af__inner">
+          <div class="yg-card__body">
+            <!-- AF 口径说明：术语首次出现给全称；主说明置顶、细则分行，窄屏自然折行 -->
+            <div class="ai-quota-af">
+              <p class="ai-quota-af__lead">{{ t('ai.quota.afMeaning') }}</p>
+              <ul class="ai-quota-af__list">
+                <li>{{ t('ai.quota.afChat') }}</li>
+                <li>{{ t('ai.quota.ruleOcr') }}</li>
+                <li>{{ t('ai.quota.rulePersonal') }}</li>
+                <li>{{ t('ai.quota.ruleShared') }}</li>
+                <li>{{ t('ai.quota.ruleUnified') }}</li>
+                <li>{{ t('ai.quota.afMonthly') }}</li>
+              </ul>
+            </div>
+          </div>
+        </div>
       </div>
     </section>
 
@@ -459,10 +525,37 @@ onMounted(() => {
     >
       <ElForm label-position="top">
         <ElFormItem :label="t('ai.quota.request.kind')">
-          <ElSelect v-model="requestKind" class="w-full" :disabled="submitting">
-            <ElOption :label="t('ai.quota.chatTitle')" value="chat" />
-            <ElOption :label="t('ai.quota.ocrTitle')" value="ocr" />
-          </ElSelect>
+          <!-- 消耗类型二选一：芯片一次点击即选中，不再先展开下拉 -->
+          <div
+            class="ai-chips ai-chips--dialog"
+            role="radiogroup"
+            :aria-label="t('ai.quota.request.kind')"
+          >
+            <button
+              type="button"
+              role="radio"
+              class="ai-chips__item"
+              :class="{ 'is-active': requestKind === 'chat' }"
+              :aria-checked="requestKind === 'chat'"
+              data-value="chat"
+              :disabled="submitting"
+              @click="requestKind = 'chat'"
+            >
+              {{ t('ai.quota.chatTitle') }}
+            </button>
+            <button
+              type="button"
+              role="radio"
+              class="ai-chips__item"
+              :class="{ 'is-active': requestKind === 'ocr' }"
+              :aria-checked="requestKind === 'ocr'"
+              data-value="ocr"
+              :disabled="submitting"
+              @click="requestKind = 'ocr'"
+            >
+              {{ t('ai.quota.ocrTitle') }}
+            </button>
+          </div>
           <p class="yg-text-xs yg-text-tertiary mt-1">
             {{ t('ai.quota.request.kindHint') }}
           </p>
@@ -504,3 +597,184 @@ onMounted(() => {
     </ElDialog>
   </div>
 </template>
+
+<style scoped>
+/* 折叠开关：标题行整体可点，展开/收起文案与小三角随状态走 */
+.ai-quota-af__heading {
+  margin: 0;
+  min-width: 0;
+}
+
+.ai-quota-af__toggle {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--yg-space-2);
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  color: var(--yg-text-primary);
+  text-align: left;
+  cursor: pointer;
+}
+
+.ai-quota-af__toggle-title {
+  font-size: var(--yg-font-size-sm);
+  font-weight: var(--yg-font-weight-medium);
+  color: var(--yg-text-primary);
+}
+
+.ai-quota-af__toggle-state {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--yg-space-1);
+  font-size: var(--yg-font-size-xs);
+  color: var(--yg-text-tertiary);
+  white-space: nowrap;
+}
+
+.ai-quota-af__toggle:hover .ai-quota-af__toggle-state {
+  color: var(--yg-text-secondary);
+}
+
+.ai-quota-af__toggle:focus-visible {
+  outline: none;
+  box-shadow: var(--yg-focus-ring);
+}
+
+.ai-quota-af__chevron {
+  width: 0;
+  height: 0;
+  border-top: 4px solid currentColor;
+  border-right: 4px solid transparent;
+  border-left: 4px solid transparent;
+  transform: rotate(-90deg);
+  transition: transform var(--yg-dur-base) var(--yg-ease-out);
+}
+
+.ai-quota-af__toggle[aria-expanded='true'] .ai-quota-af__chevron {
+  transform: rotate(0deg);
+}
+
+/* 折叠动画：grid 0fr→1fr 插值高度 + 透明度，收起不留空白 */
+.ai-quota-af__body {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transition:
+    grid-template-rows 200ms var(--yg-ease-out),
+    opacity 200ms var(--yg-ease-out);
+}
+
+.ai-quota-af__body.is-open {
+  grid-template-rows: 1fr;
+  opacity: 1;
+}
+
+.ai-quota-af__inner {
+  overflow: hidden;
+  min-height: 0;
+}
+
+/* AF 计费口径：主说明置顶、细则分行；斜切短线沿用页面的 HUD 记号 */
+.ai-quota-af__lead {
+  margin: 0 0 var(--yg-space-3);
+  color: var(--yg-text-primary);
+  font-size: var(--yg-font-size-md);
+  line-height: var(--yg-line-height-normal);
+  overflow-wrap: anywhere;
+}
+
+.ai-quota-af__list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--yg-space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ai-quota-af__list li {
+  position: relative;
+  padding-left: var(--yg-space-4);
+  color: var(--yg-text-secondary);
+  font-size: var(--yg-font-size-sm);
+  line-height: var(--yg-line-height-normal);
+  overflow-wrap: anywhere;
+}
+
+.ai-quota-af__list li::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0.62em;
+  width: 12px;
+  height: 2px;
+  background: var(--phx-accent, var(--yg-color-primary));
+  transform: skewX(-40deg);
+}
+
+/* 折叠与三角动画在减少动效下瞬切 */
+@media (prefers-reduced-motion: reduce) {
+  .ai-quota-af__body,
+  .ai-quota-af__chevron {
+    transition: none;
+  }
+}
+
+/* 消耗类型芯片：弹层挂在 body 下、不吃页面级皮肤，这里自带一份直角描边版式 */
+.ai-chips--dialog {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--yg-space-1);
+  width: 100%;
+}
+
+.ai-chips--dialog .ai-chips__item {
+  min-height: calc(var(--yg-control-height-sm) + var(--yg-space-1));
+  padding: 0 var(--yg-space-3);
+  border: 1px solid var(--yg-border-default);
+  border-radius: var(--yg-radius-sm);
+  background: var(--yg-bg-surface);
+  color: var(--yg-text-secondary);
+  font: inherit;
+  font-size: var(--yg-font-size-sm);
+  cursor: pointer;
+  transition:
+    color var(--yg-dur-fast) var(--yg-ease-out),
+    border-color var(--yg-dur-fast) var(--yg-ease-out),
+    background-color var(--yg-dur-fast) var(--yg-ease-out);
+}
+
+.ai-chips--dialog .ai-chips__item:hover {
+  color: var(--yg-text-primary);
+  border-color: var(--yg-border-strong);
+}
+
+.ai-chips--dialog .ai-chips__item:active {
+  background: var(--yg-bg-surface-sunken);
+}
+
+.ai-chips--dialog .ai-chips__item:focus-visible {
+  outline: none;
+  box-shadow: var(--yg-focus-ring);
+}
+
+.ai-chips--dialog .ai-chips__item.is-active {
+  color: var(--yg-text-link);
+  border-color: var(--yg-color-primary);
+  background: var(--yg-color-primary-soft);
+  box-shadow: inset 0 0 0 1px var(--yg-color-primary);
+  font-weight: var(--yg-font-weight-medium);
+}
+
+.ai-chips--dialog .ai-chips__item:disabled {
+  color: var(--yg-text-disabled);
+  border-color: var(--yg-border-default);
+  background: var(--yg-bg-surface-sunken);
+  cursor: not-allowed;
+}
+</style>

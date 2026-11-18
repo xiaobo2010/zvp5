@@ -16,11 +16,13 @@ import { Menu, Promotion, VideoPause, WarningFilled } from '@element-plus/icons-
 import { useWindowSize } from '@vueuse/core'
 import {
   AiRequestError,
+  ackAgentRisk,
   aiErrorCopy,
   aiErrorSection,
   confirmProposal,
   fetchPendingProposals,
   fetchRunDetail,
+  getAgentRiskAck,
   listModels,
   rejectProposal,
   unlockAgent
@@ -498,6 +500,15 @@ function riskAcked(): boolean {
   }
 }
 
+/** 写本地快速缓存：写不进去也要让本次会话生效，不能让隐私模式把对话卡死。 */
+function markRiskAckedLocally() {
+  try {
+    localStorage.setItem(riskAckKey(), '1')
+  } catch {
+    /* 隐私模式写不进去：内存态照常放行本次，下次再查服务端 */
+  }
+}
+
 const riskVisible = ref(false)
 /** 风险框的结论先暂存，等 @closed 再结算；null 表示当前没有待结算的结论。 */
 let riskVerdict: boolean | null = null
@@ -544,18 +555,31 @@ function cancelRisk() {
 }
 
 function ackRisk() {
-  try {
-    localStorage.setItem(riskAckKey(), '1')
-  } catch {
-    /* 写不进去也要放行：不能让隐私模式把对话卡死 */
-  }
+  // 先写本地缓存并放行：确认是跟账号走的，本机不该再被同一道门拦一次。
+  markRiskAckedLocally()
   closeRisk(true)
+  // 后台落库到服务端：失败静默——本设备已有缓存，换设备进入时 GET 会补上，
+  // 不重复打扰本设备。
+  void ackAgentRisk().catch(() => {})
 }
 
-/** 智能体门禁：本账号已确认直接放行；未确认就弹框，取消返回 false。 */
+/**
+ * 智能体门禁：本地缓存命中直接放行（首屏零请求）；未命中以服务端为准
+ * （确认跟账号走，换设备同样生效）；服务端未确认或查询失败一律弹框兜底，
+ * 网络错误不外抛、不卡死门禁。
+ */
 async function passRiskGate(): Promise<boolean> {
   if (riskAcked()) {
     return true
+  }
+  try {
+    const status = await getAgentRiskAck()
+    if (status.acked) {
+      markRiskAckedLocally()
+      return true
+    }
+  } catch {
+    /* 查询失败按未确认处理：弹原有风险框，不把错误暴露成页面报错 */
   }
   return await openRisk()
 }
@@ -2258,7 +2282,7 @@ onUnmounted(() => {
   overflow-y: auto;
   overscroll-behavior: contain;
   border: 1px solid var(--yg-border-default);
-  border-radius: 6px;
+  border-radius: var(--yg-radius-sm);
   padding: 12px;
   background: var(--yg-bg-surface-sunken);
 }
@@ -2281,14 +2305,15 @@ onUnmounted(() => {
 .ai-chat__bubble {
   max-width: min(820px, 86%);
   padding: 8px 10px;
-  border-radius: 6px;
+  border-radius: var(--yg-radius-sm);
   border: 1px solid var(--yg-border-default);
   background: var(--yg-bg-surface);
 }
 
 .ai-chat__bubble.user {
-  background: var(--yg-color-primary);
-  border-color: var(--yg-color-primary);
+  /* 实底承白字走 strong 系列：浅色 5.93:1、深色同档，正文气泡达标（准则 2.1） */
+  background: var(--yg-color-primary-strong);
+  border-color: var(--yg-color-primary-strong);
   color: var(--yg-color-on-primary);
 }
 

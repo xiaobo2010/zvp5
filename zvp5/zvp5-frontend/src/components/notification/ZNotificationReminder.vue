@@ -10,6 +10,10 @@
  *
  * 队列：服务端返回的未读通知逐条展示，右上角给出「第 N / M 条」。
  * 「已读」写穿服务端（乐观更新 + 失败回滚），「不再显示」只落本地。
+ *
+ * 退场与计数只是展示层状态：收起 / 消化掉最后一条时，面板先播完反向动画
+ * 再从 DOM 摘除；N / M 记的是本次会话实际展示过几条、最多见过几条。
+ * 两者都不触碰队列取数、已读写穿与本地落库的语义。
  */
 import {
   computed,
@@ -43,6 +47,8 @@ const ZMarkdown = defineAsyncComponent(() => import('@/components/markdown/ZMark
 const INITIAL_DELAY_MS = 10_000
 /** 两次主动检查之间的最小间隔：路由切换 / 可见性变化都走这个节流。 */
 const MIN_CHECK_INTERVAL_MS = 60_000
+/** 退场动画 300ms 播完后留 40ms 余量再摘 DOM，避免尾帧被掐掉。 */
+const LEAVE_MS = 340
 
 const { t } = useI18n()
 const route = useRoute()
@@ -75,6 +81,45 @@ const readError = ref(false)
 /** 用户主动收起横幅：本次会话内不再自动弹出（下次检查仍然会重新评估）。 */
 const dismissed = ref(false)
 
+/** 「第 N / M 条」：纯展示计数。会话从横幅出现开始，到完全隐藏为止。 */
+const shownCount = ref(0)
+const sessionTotal = ref(0)
+
+/**
+ * 退场快照：收起 / 队列清空时 current 已经变 null，但面板还要播完反向动画，
+ * 这段时间渲染的是 leavingNotice 的只读快照（不可交互）。
+ */
+const leaving = ref(false)
+const leavingNotice = ref<NotificationRecord | null>(null)
+let leaveTimer: ReturnType<typeof setTimeout> | null = null
+
+/** 面板实际渲染的那条通知：正常取队列头部，退场期沿用最后一条的快照。 */
+const view = computed<NotificationRecord | null>(() =>
+  current.value ?? (leaving.value ? leavingNotice.value : null)
+)
+
+function beginLeave(notice: NotificationRecord) {
+  leavingNotice.value = notice
+  leaving.value = true
+  if (leaveTimer) {
+    clearTimeout(leaveTimer)
+  }
+  leaveTimer = setTimeout(() => {
+    leaveTimer = null
+    leaving.value = false
+    leavingNotice.value = null
+  }, LEAVE_MS)
+}
+
+function clearLeave() {
+  if (leaveTimer) {
+    clearTimeout(leaveTimer)
+    leaveTimer = null
+  }
+  leaving.value = false
+  leavingNotice.value = null
+}
+
 let generation = 0
 let inFlight = false
 let lastCheckedAt = 0
@@ -88,6 +133,9 @@ function resetForAccount() {
   advancing.value = false
   lastCheckedAt = 0
   readyAt = 0
+  shownCount.value = 0
+  sessionTotal.value = 0
+  clearLeave()
   if (initialTimer) {
     clearTimeout(initialTimer)
     initialTimer = null
@@ -163,6 +211,23 @@ function dismiss() {
 const panelRef = ref<HTMLElement | null>(null)
 let heightObserver: ResizeObserver | null = null
 
+/**
+ * 面板随 v-if 挂载/摘除，高度观察也要跟着面板走：
+ * 出现时挂上（markdown 是异步组件，正文晚到也能跟上高度），隐藏时拆掉。
+ */
+function attachHeightObserver() {
+  if (heightObserver || typeof ResizeObserver === 'undefined' || !panelRef.value) {
+    return
+  }
+  heightObserver = new ResizeObserver(() => syncBannerOffset())
+  heightObserver.observe(panelRef.value)
+}
+
+function detachHeightObserver() {
+  heightObserver?.disconnect()
+  heightObserver = null
+}
+
 function openInbox() {
   void router.push('/notifications')
 }
@@ -194,6 +259,26 @@ watch(
   }
 )
 
+// 队列推进只做展示层的两件事：计数 + 退场快照。写穿与落库逻辑一字未动。
+watch(current, (notice, prev) => {
+  if (notice) {
+    clearLeave()
+    if (!prev) {
+      shownCount.value = 1
+      sessionTotal.value = total.value
+    } else if (notice.id !== prev.id) {
+      shownCount.value += 1
+      sessionTotal.value = Math.max(sessionTotal.value, total.value)
+    } else {
+      sessionTotal.value = Math.max(sessionTotal.value, total.value)
+    }
+    return
+  }
+  if (prev) {
+    beginLeave(prev)
+  }
+})
+
 function onVisibilityChange() {
   if (document.visibilityState === 'visible') {
     void checkNotifications()
@@ -211,16 +296,13 @@ function onKeydown(event: KeyboardEvent) {
 onMounted(() => {
   document.addEventListener('visibilitychange', onVisibilityChange)
   document.addEventListener('keydown', onKeydown)
-  if (typeof ResizeObserver !== 'undefined' && panelRef.value) {
-    heightObserver = new ResizeObserver(() => syncBannerOffset())
-    heightObserver.observe(panelRef.value)
-  }
 })
 
 /**
  * 横幅出现时把内容区往下推一条横幅的高度：
  * 顶部消息框不该长期压住页面标题（页头、切角面板都会被盖住半截）。
- * 高度用 ResizeObserver 量，正文变长时也能跟上。
+ * 让位跟着「看得见的那块面板」走：退场动画期间内容保持让位，
+ * 面板真正摘除后才平滑收回，避免正文在动画半途就顶上来。
  */
 function syncBannerOffset() {
   const height = panelRef.value?.offsetHeight ?? 0
@@ -230,17 +312,21 @@ function syncBannerOffset() {
   )
 }
 
-watch(current, (notice) => {
+watch(view, (notice) => {
   if (!notice) {
+    detachHeightObserver()
     document.documentElement.style.setProperty('--zn-banner-offset', '0px')
     return
   }
-  void nextTick(syncBannerOffset)
+  void nextTick(() => {
+    attachHeightObserver()
+    syncBannerOffset()
+  })
 })
 
 onBeforeUnmount(() => {
-  heightObserver?.disconnect()
-  heightObserver = null
+  clearLeave()
+  detachHeightObserver()
   document.documentElement.style.setProperty('--zn-banner-offset', '0px')
   document.removeEventListener('visibilitychange', onVisibilityChange)
   document.removeEventListener('keydown', onKeydown)
@@ -250,16 +336,20 @@ onBeforeUnmount(() => {
 
 <template>
   <div
-    v-if="current"
+    v-if="view"
     class="zn-banner"
     role="region"
     :aria-label="t('notificationCenter.bannerTitle')"
   >
-    <div ref="panelRef" class="zn-banner__panel">
-      <div class="zn-banner__head">
+    <section
+      ref="panelRef"
+      class="zn-banner__panel"
+      :class="{ 'is-leaving': leaving }"
+    >
+      <header class="zn-banner__head">
         <span class="zn-banner__tag">{{ t('notificationCenter.bannerTag') }}</span>
         <span class="zn-banner__count">{{
-          t('notificationCenter.progress', { current: 1, total })
+          t('notificationCenter.progress', { current: shownCount, total: sessionTotal })
         }}</span>
         <button
           type="button"
@@ -269,18 +359,22 @@ onBeforeUnmount(() => {
         >
           ×
         </button>
-      </div>
+      </header>
 
-      <div class="zn-banner__body">
-        <h2 class="zn-banner__title">{{ current.title }}</h2>
-        <p class="zn-banner__meta">
-          {{ t('notificationCenter.from', { name: current.author_name || '—' }) }}
-          <span class="zn-banner__dot" aria-hidden="true">·</span>
-          {{ formatDateTime(current.created_at) }}
-        </p>
-        <div class="zn-banner__content">
-          <ZMarkdown :source="current.content" />
-        </div>
+      <div class="zn-banner__swap">
+        <Transition name="zn-swap">
+          <article :key="view.id" class="zn-banner__sheet">
+            <h2 class="zn-banner__title">{{ view.title }}</h2>
+            <p class="zn-banner__meta">
+              {{ t('notificationCenter.from', { name: view.author_name || '—' }) }}
+              <span class="zn-banner__dot" aria-hidden="true">·</span>
+              {{ formatDateTime(view.created_at) }}
+            </p>
+            <div class="zn-banner__content">
+              <ZMarkdown :source="view.content" />
+            </div>
+          </article>
+        </Transition>
       </div>
 
       <p v-if="readError" class="zn-banner__error" role="alert">
@@ -290,7 +384,7 @@ onBeforeUnmount(() => {
         </button>
       </p>
 
-      <div class="zn-banner__actions">
+      <footer class="zn-banner__actions">
         <button type="button" class="zn-banner__link" @click="openInbox">
           {{ t('notificationCenter.viewAll') }}
         </button>
@@ -310,16 +404,18 @@ onBeforeUnmount(() => {
         >
           {{ t('notificationCenter.read') }}
         </button>
-      </div>
-    </div>
+      </footer>
+    </section>
   </div>
 </template>
 
 <style scoped>
 /* ==========================================================================
    Phi 棱角系统 · 顶部通知横幅
-   - 直角 + 右上斜切，细线描边，强调色只用在标签与主操作上
-   - 面板底色不透明：横幅压着页面内容，透底会读不清
+   - 与 user-v2 通知收件页同一套切角面板 + HUD 标签语言
+   - 层次：--yg-shadow-lg 柔和双层投影 + 1px 切角描边 + 实色面板（不透底）
+   - 动效：入场 / 退场 transform+opacity，300ms 苹果曲线；
+     队列切换（第 N → N+1 条）带方向位移，收起反向播放
    - 深浅两套主题都靠 --yg-* 令牌自适应，不写死颜色
    ========================================================================== */
 .zn-banner {
@@ -327,8 +423,11 @@ onBeforeUnmount(() => {
   --zn-ink: var(--yg-text-primary);
   --zn-muted: var(--yg-text-tertiary);
   --zn-surface: var(--yg-bg-surface-raised);
-  --zn-line: var(--yg-border-default);
+  --zn-sunken: var(--yg-bg-surface-sunken);
   --zn-hud: var(--phi-hud, Rajdhani, 'Arial Narrow', sans-serif);
+  --zn-ease: cubic-bezier(0.19, 1, 0.22, 1);
+  --zn-cut: 18px; /* 面板右上大切角 */
+  --zn-cut-s: 8px; /* 左下小切角 + 迷你控件切角 */
 
   position: fixed;
   inset-block-start: 0;
@@ -336,103 +435,183 @@ onBeforeUnmount(() => {
   z-index: var(--yg-z-sticky);
   display: flex;
   justify-content: center;
-  padding: var(--yg-space-3) var(--yg-space-3) 0;
+  /* 刘海 / 灵动岛 / 手势条：安全区先让位，再叠加常规留白。 */
+  padding:
+    calc(env(safe-area-inset-top, 0px) + var(--yg-space-3))
+    calc(env(safe-area-inset-right, 0px) + var(--yg-space-3))
+    0
+    calc(env(safe-area-inset-left, 0px) + var(--yg-space-3));
   /* 横幅之外的区域照常可点：它不是遮罩，不该拦住页面操作。 */
   pointer-events: none;
 }
 
+/* 面板本体保持完整矩形：柔和双层阴影走语义令牌，切角轮廓交给
+   ::before（描边）/ ::after（实色面）两层绘制，box-shadow 不会被裁掉。 */
 .zn-banner__panel {
   pointer-events: auto;
+  position: relative;
+  isolation: isolate;
   display: flex;
   flex-direction: column;
   gap: var(--yg-space-3);
   width: min(680px, 100%);
   max-height: min(72vh, 620px);
-  padding: var(--yg-space-4) var(--yg-space-5) var(--yg-space-4);
+  padding: var(--yg-space-4) var(--yg-space-5);
   overflow: hidden;
   color: var(--zn-ink);
-  background-color: var(--zn-surface);
-  border: 1px solid var(--zn-line);
-  /* 斜切轮廓会裁掉 box-shadow，投影改用 drop-shadow 跟着轮廓走。 */
-  clip-path: polygon(
-    0 0,
-    calc(100% - 20px) 0,
-    100% 20px,
-    100% 100%,
-    20px 100%,
-    0 calc(100% - 20px)
-  );
-  filter: drop-shadow(0 10px 24px rgba(5, 6, 8, 0.28));
-  animation: zn-banner-in 260ms cubic-bezier(0.19, 1, 0.22, 1) both;
+  box-shadow: var(--yg-shadow-lg);
+  animation: zn-panel-in var(--yg-dur-slow) var(--zn-ease) both;
 }
 
-/* 顶部一条强调色刻线：横幅从页面顶端「压」出来的视觉锚点。 */
+/* 收起 / 消化掉最后一条：反向播放入场动画，播完由脚本摘除 DOM。 */
+.zn-banner__panel.is-leaving {
+  pointer-events: none;
+  animation: zn-panel-out var(--yg-dur-slow) var(--zn-ease) both;
+}
+
+/* 1px 切角描边层：右上切角沿线一段强调色斜边。 */
 .zn-banner__panel::before {
   content: '';
   position: absolute;
-  inset-block-start: 0;
-  inset-inline-start: 0;
-  width: 96px;
-  height: 2px;
-  background: var(--zn-accent);
-  transform: skewX(-40deg);
-  transform-origin: left;
+  inset: 0;
+  z-index: -1;
+  background:
+    linear-gradient(
+      225deg,
+      var(--zn-accent) 0 calc(var(--zn-cut) * 0.9),
+      transparent calc(var(--zn-cut) * 0.9 + 1px)
+    ),
+    color-mix(in srgb, var(--zn-ink) 16%, transparent);
+  clip-path: polygon(
+    0 0,
+    calc(100% - var(--zn-cut)) 0,
+    100% var(--zn-cut),
+    100% 100%,
+    var(--zn-cut-s) 100%,
+    0 calc(100% - var(--zn-cut-s))
+  );
 }
 
+/* 实色面板：不透明底 + 顶部强调刻线 + 左缘强调渐隐线。 */
+.zn-banner__panel::after {
+  content: '';
+  position: absolute;
+  inset: 1px;
+  z-index: -1;
+  background:
+    linear-gradient(90deg, var(--zn-accent), transparent) left top / 96px 2px no-repeat,
+    linear-gradient(180deg, var(--zn-accent), transparent 72%) left top / 2px 100%
+      no-repeat,
+    linear-gradient(
+      120deg,
+      color-mix(in srgb, var(--zn-accent) 5%, var(--zn-surface)),
+      var(--zn-surface) 52%
+    );
+  clip-path: polygon(
+    0 0,
+    calc(100% - var(--zn-cut)) 0,
+    100% var(--zn-cut),
+    100% 100%,
+    var(--zn-cut-s) 100%,
+    0 calc(100% - var(--zn-cut-s))
+  );
+}
+
+/* ---------- 头部：标签 + 第 N / M 条 + 收起 ---------- */
 .zn-banner__head {
   display: flex;
   align-items: center;
   gap: var(--yg-space-3);
-  padding-inline-start: var(--yg-space-1);
+  animation: zn-rise var(--yg-dur-slow) 40ms var(--zn-ease) both;
 }
 
 .zn-banner__tag {
+  flex: 0 0 auto;
   padding: 2px 8px 1px;
   color: var(--zn-accent);
   background: color-mix(in srgb, var(--zn-accent) 14%, transparent);
   font-family: var(--zn-hud), var(--yg-font-sans);
-  font-size: 12px;
-  font-weight: 700;
+  font-size: var(--yg-font-size-xs);
+  font-weight: var(--yg-font-weight-bold);
   letter-spacing: 0.16em;
   text-transform: uppercase;
   clip-path: polygon(0 0, calc(100% - 5px) 0, 100% 5px, 100% 100%, 0 100%);
 }
 
 .zn-banner__count {
+  flex: 0 0 auto;
+  padding: 2px 8px 1px;
   color: var(--zn-muted);
+  background: var(--zn-sunken);
   font-family: var(--zn-hud), var(--yg-font-sans);
-  font-size: 13px;
-  font-weight: 500;
+  font-size: var(--yg-font-size-xs);
+  font-weight: var(--yg-font-weight-bold);
   letter-spacing: 0.06em;
   font-variant-numeric: tabular-nums;
+  clip-path: polygon(0 0, 100% 0, 100% calc(100% - 5px), calc(100% - 5px) 100%, 0 100%);
 }
 
 .zn-banner__close {
+  display: grid;
+  place-items: center;
   margin-inline-start: auto;
-  width: 28px;
-  height: 28px;
+  min-width: var(--yg-control-height-md);
+  min-height: var(--yg-control-height-md);
   padding: 0;
-  border: 0;
+  border: 1px solid transparent;
   background: transparent;
   color: var(--zn-muted);
-  font-size: 20px;
+  font-size: var(--yg-font-size-2xl);
   line-height: 1;
   cursor: pointer;
-  transition: color 160ms cubic-bezier(0.19, 1, 0.22, 1);
+  transition:
+    color var(--yg-dur-fast) var(--zn-ease),
+    background-color var(--yg-dur-fast) var(--zn-ease),
+    border-color var(--yg-dur-fast) var(--zn-ease);
 }
 
 .zn-banner__close:hover {
   color: var(--zn-ink);
+  background: var(--yg-bg-hover);
+  border-color: var(--yg-border-default);
 }
 
-.zn-banner__close:focus-visible {
-  outline: 2px solid var(--zn-accent);
-  outline-offset: 2px;
-}
-
-.zn-banner__body {
+/* ---------- 正文区：可滚动，队列切换带方向位移 ---------- */
+.zn-banner__swap {
+  position: relative;
   min-height: 0;
   overflow-y: auto;
+  animation: zn-rise var(--yg-dur-slow) 80ms var(--zn-ease) both;
+}
+
+.zn-banner__sheet {
+  min-height: 0;
+}
+
+/* 上一条向左淡出，下一条自右侧滑入：切条不是硬切。 */
+.zn-swap-enter-active {
+  transition:
+    opacity var(--yg-dur-slow) var(--zn-ease),
+    transform var(--yg-dur-slow) var(--zn-ease);
+}
+
+.zn-swap-leave-active {
+  position: absolute;
+  inset-block: 0 auto;
+  inset-inline: 0;
+  transition:
+    opacity var(--yg-dur-base) var(--zn-ease),
+    transform var(--yg-dur-base) var(--zn-ease);
+}
+
+.zn-swap-enter-from {
+  opacity: 0;
+  transform: translateX(var(--yg-space-5));
+}
+
+.zn-swap-leave-to {
+  opacity: 0;
+  transform: translateX(calc(var(--yg-space-5) * -1));
 }
 
 .zn-banner__title {
@@ -452,7 +631,8 @@ onBeforeUnmount(() => {
   margin: var(--yg-space-1) 0 0;
   color: var(--zn-muted);
   font-family: var(--zn-hud), var(--yg-font-sans);
-  font-size: 13px;
+  font-size: var(--yg-font-size-sm);
+  font-weight: var(--yg-font-weight-medium);
   font-variant-numeric: tabular-nums;
 }
 
@@ -472,6 +652,7 @@ onBeforeUnmount(() => {
   margin-bottom: 0;
 }
 
+/* ---------- 已读写失败：软危险底 + 重试入口 ---------- */
 .zn-banner__error {
   display: flex;
   align-items: center;
@@ -481,7 +662,8 @@ onBeforeUnmount(() => {
   color: var(--yg-text-danger);
   background: var(--yg-color-danger-soft);
   font-size: var(--yg-font-size-sm);
-  clip-path: polygon(0 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 0 100%);
+  clip-path: polygon(0 0, calc(100% - var(--zn-cut-s)) 0, 100% var(--zn-cut-s), 100% 100%, 0 100%);
+  animation: zn-rise var(--yg-dur-base) var(--zn-ease) both;
 }
 
 .zn-banner__retry {
@@ -495,6 +677,7 @@ onBeforeUnmount(() => {
   cursor: pointer;
 }
 
+/* ---------- 操作区：查看全部弱化为文字链，已阅是唯一实色主操作 ---------- */
 .zn-banner__actions {
   display: flex;
   flex-wrap: wrap;
@@ -502,40 +685,55 @@ onBeforeUnmount(() => {
   gap: var(--yg-space-2);
   padding-top: var(--yg-space-1);
   border-top: 1px solid var(--yg-border-subtle);
+  animation: zn-rise var(--yg-dur-slow) 120ms var(--zn-ease) both;
 }
 
 .zn-banner__link {
+  display: inline-flex;
+  align-items: center;
   margin-inline-end: auto;
-  padding: 0;
+  min-height: var(--yg-control-height-md);
+  padding: 0 var(--yg-space-1);
   border: 0;
   background: transparent;
   color: var(--zn-accent);
+  font: inherit;
   font-size: var(--yg-font-size-sm);
   cursor: pointer;
+  transition: color var(--yg-dur-fast) var(--zn-ease);
 }
 
 .zn-banner__link:hover {
   text-decoration: underline;
+  text-underline-offset: 0.24em;
 }
 
 .zn-banner__btn {
-  min-height: 36px;
+  min-height: var(--yg-control-height-md);
   padding: 0 var(--yg-space-4);
-  border: 1px solid var(--zn-line);
+  border: 1px solid color-mix(in srgb, var(--zn-ink) 14%, transparent);
   background: transparent;
   color: var(--zn-ink);
-  font-family: inherit;
+  font-family: var(--zn-hud), var(--yg-font-sans);
   font-size: var(--yg-font-size-sm);
   font-weight: var(--yg-font-weight-medium);
+  letter-spacing: 0.04em;
   cursor: pointer;
+  clip-path: polygon(0 0, calc(100% - var(--zn-cut-s)) 0, 100% var(--zn-cut-s), 100% 100%, 0 100%);
   transition:
-    border-color 160ms cubic-bezier(0.19, 1, 0.22, 1),
-    background-color 160ms cubic-bezier(0.19, 1, 0.22, 1);
+    color var(--yg-dur-fast) var(--zn-ease),
+    border-color var(--yg-dur-fast) var(--zn-ease),
+    background-color var(--yg-dur-fast) var(--zn-ease),
+    transform var(--yg-dur-fast) var(--zn-ease);
 }
 
 .zn-banner__btn:hover:not(:disabled) {
-  border-color: var(--yg-border-strong);
-  background: var(--yg-bg-hover);
+  border-color: var(--zn-accent);
+  background: color-mix(in srgb, var(--zn-accent) 8%, transparent);
+}
+
+.zn-banner__btn:active:not(:disabled) {
+  transform: scale(0.97);
 }
 
 .zn-banner__btn:disabled {
@@ -551,9 +749,10 @@ onBeforeUnmount(() => {
 }
 
 .zn-banner__btn--primary:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--zn-accent) 84%, #000);
+  background: var(--yg-color-primary-strong-hover);
 }
 
+.zn-banner__close:focus-visible,
 .zn-banner__btn:focus-visible,
 .zn-banner__link:focus-visible,
 .zn-banner__retry:focus-visible {
@@ -561,33 +760,64 @@ onBeforeUnmount(() => {
   outline-offset: 2px;
 }
 
-@keyframes zn-banner-in {
+/* ---------- 动效 ---------- */
+@keyframes zn-panel-in {
   from {
     opacity: 0;
-    clip-path: polygon(0 0, 0 0, 0 0, 0 0, 0 0, 0 0);
+    transform: translateY(calc(var(--yg-space-3) * -1));
   }
+
   to {
     opacity: 1;
-    clip-path: polygon(
-      0 0,
-      calc(100% - 20px) 0,
-      100% 20px,
-      100% 100%,
-      20px 100%,
-      0 calc(100% - 20px)
-    );
+    transform: none;
   }
 }
 
-/* 减少动态：只保留静态呈现，不做入场位移动画。 */
+@keyframes zn-panel-out {
+  from {
+    opacity: 1;
+    transform: none;
+  }
+
+  to {
+    opacity: 0;
+    transform: translateY(calc(var(--yg-space-3) * -1));
+  }
+}
+
+@keyframes zn-rise {
+  from {
+    opacity: 0;
+    transform: translateY(var(--yg-space-2));
+  }
+
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* 减少动态：动画全部关闭（不是缩短），只保留静态呈现。 */
 @media (prefers-reduced-motion: reduce) {
-  .zn-banner__panel {
+  .zn-banner__panel,
+  .zn-banner__panel.is-leaving,
+  .zn-banner__head,
+  .zn-banner__swap,
+  .zn-banner__actions,
+  .zn-banner__error {
     animation: none;
   }
 
+  .zn-swap-enter-active,
+  .zn-swap-leave-active,
   .zn-banner__close,
-  .zn-banner__btn {
+  .zn-banner__btn,
+  .zn-banner__link {
     transition: none;
+  }
+
+  .zn-banner__btn:active:not(:disabled) {
+    transform: none;
   }
 }
 
@@ -608,21 +838,29 @@ onBeforeUnmount(() => {
   }
 }
 
+/* ---------- 窄屏：不溢出 + 触控目标 ≥ 40px ---------- */
 @media (max-width: 599px) {
   .zn-banner {
-    padding: var(--yg-space-2) var(--yg-space-2) 0;
+    padding:
+      calc(env(safe-area-inset-top, 0px) + var(--yg-space-2))
+      calc(env(safe-area-inset-right, 0px) + var(--yg-space-2))
+      0
+      calc(env(safe-area-inset-left, 0px) + var(--yg-space-2));
   }
 
   .zn-banner__panel {
+    --zn-cut: 14px;
     padding: var(--yg-space-3) var(--yg-space-4);
   }
 
-  .zn-banner__actions {
-    gap: var(--yg-space-2);
+  .zn-banner__close {
+    min-width: var(--yg-control-height-lg);
+    min-height: var(--yg-control-height-lg);
   }
 
   .zn-banner__link {
     width: 100%;
+    min-height: var(--yg-control-height-lg);
     margin-inline-end: 0;
     text-align: start;
   }
@@ -630,6 +868,7 @@ onBeforeUnmount(() => {
   .zn-banner__btn {
     flex: 1 1 0;
     min-width: 0;
+    min-height: var(--yg-control-height-lg);
   }
 }
 </style>

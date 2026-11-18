@@ -1355,3 +1355,26 @@ def test_v051_is_idempotent() -> None:
     # 备份段只吞 -955（重跑时保留第一次的原始快照）。
     backup_block = text[text.index("CREATE TABLE ai_quota_bak_v051") - 200 :]
     assert "IF SQLCODE != -955 THEN RAISE; END IF;" in backup_block[:600]
+
+
+# ---------------------------------------------------------------------------
+# V054：AI_AGENT_ACKS（首次使用安全警示已确认）
+# ---------------------------------------------------------------------------
+
+
+def test_v054_ai_agent_acks_matches_models_and_v001() -> None:
+    """V054 只建这一张表，形状必须与 models / V001 完全一致。
+
+    ``ddl_check`` 只比 models ↔ V001，V054 是存量实例的补丁：它一漂，
+    存量与新实例就会长出两种表形状。
+    """
+    ack = _parsed(_migration("V054__ai_agent_acks.sql"))
+    modeled = ddl_check.parse_models()
+    v001 = ddl_check.parse_v001()
+
+    expected = modeled["tables"]["ai_agent_acks"]
+    assert ack["tables"] == {"ai_agent_acks": expected}
+    assert v001["tables"]["ai_agent_acks"] == expected
+    # 一次确认一行：主键只有 user_oid，且没有 OID / 外键（同 notification_reads）。
+    assert expected["pk"] == ("user_oid",)
+    assert expected["fk"] == set()

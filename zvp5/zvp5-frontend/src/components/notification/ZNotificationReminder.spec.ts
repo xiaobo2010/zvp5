@@ -256,6 +256,8 @@ describe('ZNotificationReminder 顶部消息框', () => {
     await flushPromises()
 
     expect(markRead).toHaveBeenCalledWith('notice-1')
+    // 横幅先播完退场动画（300ms + 余量）才从 DOM 摘除。
+    await vi.advanceTimersByTimeAsync(400)
     expect(wrapper.find('.zn-banner').exists()).toBe(false)
 
     wrapper.unmount()
@@ -297,6 +299,7 @@ describe('ZNotificationReminder 顶部消息框', () => {
     await flushPromises()
 
     expect(markRead).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(400)
     expect(wrapper.find('.zn-banner').exists()).toBe(false)
 
     wrapper.unmount()
@@ -331,6 +334,7 @@ describe('ZNotificationReminder 顶部消息框', () => {
 
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
     await flushPromises()
+    await vi.advanceTimersByTimeAsync(400)
     expect(wrapper.find('.zn-banner').exists()).toBe(false)
     // 收起不等于已读：服务端没有收到任何写穿请求。
     expect(markRead).not.toHaveBeenCalled()

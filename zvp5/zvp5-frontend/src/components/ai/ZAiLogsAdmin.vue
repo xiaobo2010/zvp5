@@ -7,8 +7,6 @@ import { ElEmpty } from 'element-plus/es/components/empty/index.mjs'
 import { ElIcon } from 'element-plus/es/components/icon/index.mjs'
 import { ElInput } from 'element-plus/es/components/input/index.mjs'
 import { ElMessage } from 'element-plus/es/components/message/index.mjs'
-import { ElOption } from 'element-plus/es/components/select/index.mjs'
-import { ElSelect } from 'element-plus/es/components/select/index.mjs'
 import { ElTable } from 'element-plus/es/components/table/index.mjs'
 import { ElTableColumn } from 'element-plus/es/components/table/index.mjs'
 import { ElTag } from 'element-plus/es/components/tag/index.mjs'
@@ -342,9 +340,10 @@ onMounted(() => {
       </header>
 
       <div class="yg-card__body">
-        <div class="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
-          <div class="flex flex-col gap-1">
-            <span class="yg-text-xs yg-text-tertiary">{{ t('ai.logs.user') }}</span>
+        <!-- 一行可换行的工具条：筛选芯片一次点击即生效，当前值始终可见 -->
+        <div class="ai-logs-toolbar">
+          <div class="ai-logs-toolbar__field ai-logs-toolbar__field--person">
+            <span class="ai-logs-toolbar__label">{{ t('ai.logs.user') }}</span>
             <ZSelectPerson
               :model-value="filters.userOid"
               :filter-start="6"
@@ -354,80 +353,132 @@ onMounted(() => {
               @update:model-value="onUserChange"
             />
           </div>
-          <div class="flex flex-col gap-1">
-            <span class="yg-text-xs yg-text-tertiary">{{ t('ai.logs.capability') }}</span>
-            <ElSelect v-model="filters.capability" class="w-full">
-              <ElOption :label="t('ai.logs.capabilityAll')" value="" />
-              <ElOption
+          <div class="ai-logs-toolbar__field">
+            <span class="ai-logs-toolbar__label">{{ t('ai.logs.capability') }}</span>
+            <div class="ai-chips" role="group" :aria-label="t('ai.logs.capability')">
+              <button
+                type="button"
+                class="ai-chips__item"
+                :class="{ 'is-active': filters.capability === '' }"
+                data-value=""
+                @click="filters.capability = ''"
+              >
+                {{ t('ai.logs.capabilityAll') }}
+              </button>
+              <button
                 v-for="item in CAPABILITY_OPTIONS"
                 :key="item"
-                :label="capabilityLabel(item)"
-                :value="item"
-              />
-            </ElSelect>
+                type="button"
+                class="ai-chips__item"
+                :class="{ 'is-active': filters.capability === item }"
+                :data-value="item"
+                @click="filters.capability = item"
+              >
+                {{ capabilityLabel(item) }}
+              </button>
+            </div>
           </div>
-          <div class="flex flex-col gap-1">
-            <span class="yg-text-xs yg-text-tertiary">{{ t('ai.logs.status') }}</span>
-            <ElSelect v-model="filters.status" class="w-full">
-              <ElOption :label="t('ai.logs.statusAll')" value="" />
-              <ElOption
+          <div class="ai-logs-toolbar__field">
+            <span class="ai-logs-toolbar__label">{{ t('ai.logs.status') }}</span>
+            <div class="ai-chips" role="group" :aria-label="t('ai.logs.status')">
+              <button
+                type="button"
+                class="ai-chips__item"
+                :class="{ 'is-active': filters.status === '' }"
+                data-value=""
+                @click="filters.status = ''"
+              >
+                {{ t('ai.logs.statusAll') }}
+              </button>
+              <button
                 v-for="item in STATUS_OPTIONS"
                 :key="item"
-                :label="statusLabel(item)"
-                :value="item"
-              />
-            </ElSelect>
+                type="button"
+                class="ai-chips__item"
+                :class="{ 'is-active': filters.status === item }"
+                :data-value="item"
+                @click="filters.status = item"
+              >
+                {{ statusLabel(item) }}
+              </button>
+            </div>
           </div>
-          <div class="flex flex-col gap-1">
-            <span class="yg-text-xs yg-text-tertiary">{{ t('ai.logs.keyScope') }}</span>
-            <ElSelect v-model="filters.keyScope" class="w-full">
-              <ElOption :label="t('ai.logs.keyScopeAll')" value="" />
-              <ElOption
+          <div class="ai-logs-toolbar__field">
+            <span class="ai-logs-toolbar__label">{{ t('ai.logs.keyScope') }}</span>
+            <div class="ai-chips" role="group" :aria-label="t('ai.logs.keyScope')">
+              <button
+                type="button"
+                class="ai-chips__item"
+                :class="{ 'is-active': filters.keyScope === '' }"
+                data-value=""
+                @click="filters.keyScope = ''"
+              >
+                {{ t('ai.logs.keyScopeAll') }}
+              </button>
+              <button
                 v-for="item in KEY_SCOPE_OPTIONS"
                 :key="item"
-                :label="keyScopeLabel(item)"
-                :value="item"
-              />
-            </ElSelect>
+                type="button"
+                class="ai-chips__item"
+                :class="{ 'is-active': filters.keyScope === item }"
+                :data-value="item"
+                @click="filters.keyScope = item"
+              >
+                {{ keyScopeLabel(item) }}
+              </button>
+            </div>
           </div>
-          <div class="flex flex-col gap-1">
-            <span class="yg-text-xs yg-text-tertiary">{{ t('ai.logs.purpose') }}</span>
-            <ElSelect v-model="filters.purpose" class="w-full">
-              <ElOption :label="t('ai.logs.purposeAll')" value="" />
-              <ElOption
+          <div class="ai-logs-toolbar__field">
+            <span class="ai-logs-toolbar__label">{{ t('ai.logs.purpose') }}</span>
+            <div class="ai-chips" role="group" :aria-label="t('ai.logs.purpose')">
+              <button
+                type="button"
+                class="ai-chips__item"
+                :class="{ 'is-active': filters.purpose === '' }"
+                data-value=""
+                @click="filters.purpose = ''"
+              >
+                {{ t('ai.logs.purposeAll') }}
+              </button>
+              <button
                 v-for="item in PURPOSE_OPTIONS"
                 :key="item"
-                :label="item"
-                :value="item"
-              />
-            </ElSelect>
+                type="button"
+                class="ai-chips__item"
+                :class="{ 'is-active': filters.purpose === item }"
+                :data-value="item"
+                @click="filters.purpose = item"
+              >
+                {{ item }}
+              </button>
+            </div>
           </div>
-          <div class="flex flex-col gap-1">
-            <span class="yg-text-xs yg-text-tertiary">{{ t('ai.logs.provider') }}</span>
+          <div class="ai-logs-toolbar__field ai-logs-toolbar__field--grow">
+            <span class="ai-logs-toolbar__label">{{ t('ai.logs.provider') }}</span>
             <ElInput
               v-model="filters.provider"
               clearable
               :placeholder="t('ai.logs.providerPlaceholder')"
             />
           </div>
-          <div class="flex flex-col gap-1">
-            <span class="yg-text-xs yg-text-tertiary">{{ t('ai.logs.model') }}</span>
+          <div class="ai-logs-toolbar__field ai-logs-toolbar__field--grow">
+            <span class="ai-logs-toolbar__label">{{ t('ai.logs.model') }}</span>
             <ElInput
               v-model="filters.model"
               clearable
               :placeholder="t('ai.logs.modelPlaceholder')"
             />
           </div>
-          <div class="flex flex-col gap-1">
-            <span class="yg-text-xs yg-text-tertiary">{{ t('ai.logs.requestId') }}</span>
+          <div class="ai-logs-toolbar__field ai-logs-toolbar__field--grow">
+            <span class="ai-logs-toolbar__label">{{ t('ai.logs.requestId') }}</span>
             <ElInput
               v-model="filters.requestId"
               clearable
               :placeholder="t('ai.logs.requestIdPlaceholder')"
             />
           </div>
-          <div class="flex flex-col gap-1">
-            <span class="yg-text-xs yg-text-tertiary">{{ t('ai.logs.timeRange') }}</span>
+          <div class="ai-logs-toolbar__field ai-logs-toolbar__field--grow">
+            <span class="ai-logs-toolbar__label">{{ t('ai.logs.timeRange') }}</span>
             <ElDatePicker
               v-model="filters.range"
               type="datetimerange"
@@ -450,14 +501,19 @@ onMounted(() => {
         </div>
         <div class="yg-card__extra flex items-center gap-2">
           <span class="yg-text-xs yg-text-tertiary">{{ t('ai.logs.stats.days') }}</span>
-          <ElSelect v-model="statsDays" class="ai-log-stats__days">
-            <ElOption
+          <div class="ai-chips ai-log-stats__days" role="group" :aria-label="t('ai.logs.stats.days')">
+            <button
               v-for="item in STATS_DAYS_OPTIONS"
               :key="item"
-              :label="`${item} ${t('ai.logs.stats.daysUnit')}`"
-              :value="item"
-            />
-          </ElSelect>
+              type="button"
+              class="ai-chips__item"
+              :class="{ 'is-active': statsDays === item }"
+              :data-value="item"
+              @click="statsDays = item"
+            >
+              {{ item }} {{ t('ai.logs.stats.daysUnit') }}
+            </button>
+          </div>
         </div>
       </header>
 
@@ -856,6 +912,42 @@ onMounted(() => {
   flex: none;
 }
 
+/* 筛选工具条：一行起步、放不下就换行；标签贴控件左侧，密度优先。
+   芯片（ai-chips）的皮肤由 AIHome 的 phi 面板皮肤统一提供。 */
+.ai-logs-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--yg-space-2) var(--yg-space-3);
+}
+
+.ai-logs-toolbar__field {
+  display: flex;
+  align-items: center;
+  gap: var(--yg-space-2);
+  min-width: 0;
+}
+
+.ai-logs-toolbar__field--person {
+  flex: 1 1 220px;
+}
+
+.ai-logs-toolbar__field--grow {
+  flex: 1 1 200px;
+}
+
+.ai-logs-toolbar__label {
+  flex: none;
+  color: var(--yg-text-tertiary);
+  font-size: var(--yg-font-size-xs);
+  white-space: nowrap;
+}
+
+/* 统计窗口芯片：跟在标题右侧，不占整行 */
+.ai-log-stats__days {
+  flex: none;
+}
+
 /* 繁忙态用描边橙，与超时的实心橙区分开：tag 的配色走同名 CSS 变量，这里只改变量。 */
 .ai-log-status--busy.el-tag {
   --el-tag-bg-color: var(--yg-bg-surface);
@@ -878,10 +970,6 @@ onMounted(() => {
   font-size: var(--yg-font-size-2xl);
   font-weight: 600;
   line-height: 1.2;
-}
-
-.ai-log-stats__days {
-  width: 110px;
 }
 
 /* 概览表格：轻分隔线 + 首列左对齐，数字列右对齐（可比较）。 */

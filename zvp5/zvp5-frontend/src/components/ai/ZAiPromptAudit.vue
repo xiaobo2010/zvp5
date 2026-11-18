@@ -19,8 +19,6 @@ import { ElEmpty } from 'element-plus/es/components/empty/index.mjs'
 import { ElIcon } from 'element-plus/es/components/icon/index.mjs'
 import { ElInput } from 'element-plus/es/components/input/index.mjs'
 import { ElMessage } from 'element-plus/es/components/message/index.mjs'
-import { ElOption } from 'element-plus/es/components/select/index.mjs'
-import { ElSelect } from 'element-plus/es/components/select/index.mjs'
 import { ElTable } from 'element-plus/es/components/table/index.mjs'
 import { ElTableColumn } from 'element-plus/es/components/table/index.mjs'
 import { ElTag } from 'element-plus/es/components/tag/index.mjs'
@@ -64,6 +62,9 @@ const filters = reactive({
   range: undefined as [Date, Date] | undefined
 })
 
+/** 「自定义场景」输入的展开态：纯 UI 局部状态，不影响请求与过滤签名。 */
+const purposeCustomOpen = ref(false)
+
 /** 自定义范围是否生效：决定「最近 N 天」是否禁用，以及请求里传不传 days。 */
 const hasRange = computed(() => Boolean(filters.range?.[0] && filters.range?.[1]))
 
@@ -93,6 +94,7 @@ function resetFilters() {
   filters.keyword = ''
   filters.days = AI_PROMPT_DAYS_DEFAULT
   filters.range = undefined
+  purposeCustomOpen.value = false
 }
 
 /** 时间范围不合法是用户手选出来的，单独给一句能指导动作的提示。 */
@@ -297,9 +299,9 @@ onMounted(() => {
       </header>
 
       <div class="yg-card__body">
-        <div class="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
-          <div class="flex flex-col gap-1">
-            <span class="yg-text-xs yg-text-tertiary">{{ t('ai.prompts.user') }}</span>
+        <div class="ai-filterbar">
+          <div class="ai-filterbar__field ai-filterbar__field--grow">
+            <span class="ai-filterbar__label">{{ t('ai.prompts.user') }}</span>
             <ZSelectPerson
               :model-value="filters.userOid"
               :filter-start="6"
@@ -309,28 +311,56 @@ onMounted(() => {
               @update:model-value="onUserChange"
             />
           </div>
-          <div class="flex flex-col gap-1">
-            <span class="yg-text-xs yg-text-tertiary">{{ t('ai.prompts.purpose') }}</span>
-            <!-- allow-create：后端没有 purpose 枚举接口，候选只是常见值 -->
-            <ElSelect
-              v-model="filters.purpose"
-              class="w-full"
-              filterable
-              allow-create
-              default-first-option
-              clearable
-            >
-              <ElOption :label="t('ai.prompts.purposeAll')" value="" />
-              <ElOption
-                v-for="item in PURPOSE_OPTIONS"
-                :key="item"
-                :label="item"
-                :value="item"
+          <div class="ai-filterbar__field ai-filterbar__field--wrap">
+            <span class="ai-filterbar__label">{{ t('ai.prompts.purpose') }}</span>
+            <div class="ai-filterbar__stack">
+              <!-- 场景是开放集合：已知值一键点选；新场景走「自定义」输入，语义同旧 allow-create -->
+              <div class="ai-chips" role="group" :aria-label="t('ai.prompts.purpose')">
+                <button
+                  type="button"
+                  class="ai-chips__item"
+                  :class="{ 'is-active': filters.purpose === '' }"
+                  data-value=""
+                  @click="filters.purpose = ''; purposeCustomOpen = false"
+                >
+                  {{ t('ai.prompts.purposeAll') }}
+                </button>
+                <button
+                  v-for="item in PURPOSE_OPTIONS"
+                  :key="item"
+                  type="button"
+                  class="ai-chips__item"
+                  :class="{ 'is-active': filters.purpose === item }"
+                  :data-value="item"
+                  @click="filters.purpose = item; purposeCustomOpen = false"
+                >
+                  {{ item }}
+                </button>
+                <button
+                  type="button"
+                  class="ai-chips__item"
+                  :class="{
+                    'is-active':
+                      purposeCustomOpen ||
+                      (filters.purpose !== '' && !PURPOSE_OPTIONS.includes(filters.purpose))
+                  }"
+                  data-value="__custom__"
+                  @click="purposeCustomOpen = true"
+                >
+                  {{ t('ai.prompts.purposeCustom') }}
+                </button>
+              </div>
+              <ElInput
+                v-if="purposeCustomOpen"
+                v-model="filters.purpose"
+                class="ai-prompt-audit__custom-input"
+                clearable
+                :placeholder="t('ai.prompts.purposePlaceholder')"
               />
-            </ElSelect>
+            </div>
           </div>
-          <div class="flex flex-col gap-1">
-            <span class="yg-text-xs yg-text-tertiary">{{ t('ai.prompts.timeRange') }}</span>
+          <div class="ai-filterbar__field ai-filterbar__field--grow">
+            <span class="ai-filterbar__label">{{ t('ai.prompts.timeRange') }}</span>
             <ElDatePicker
               v-model="filters.range"
               type="datetimerange"
@@ -340,8 +370,8 @@ onMounted(() => {
               :end-placeholder="t('ai.prompts.timeRangeEnd')"
             />
           </div>
-          <div class="flex flex-col gap-1">
-            <span class="yg-text-xs yg-text-tertiary">{{ t('ai.prompts.days') }}</span>
+          <div class="ai-filterbar__field">
+            <span class="ai-filterbar__label">{{ t('ai.prompts.days') }}</span>
             <!-- 自定义范围优先：禁掉天数并解释为什么不能改 -->
             <ElTooltip
               :disabled="!hasRange"
@@ -349,19 +379,25 @@ onMounted(() => {
               placement="top"
             >
               <div class="ai-prompt-audit__days-wrap">
-                <ElSelect v-model="filters.days" class="w-full" :disabled="hasRange">
-                  <ElOption
+                <div class="ai-chips" role="group" :aria-label="t('ai.prompts.days')">
+                  <button
                     v-for="item in AI_PROMPT_DAYS_OPTIONS"
                     :key="item"
-                    :label="`${item} ${t('ai.prompts.daysUnit')}`"
-                    :value="item"
-                  />
-                </ElSelect>
+                    type="button"
+                    class="ai-chips__item"
+                    :class="{ 'is-active': filters.days === item }"
+                    :data-value="item"
+                    :disabled="hasRange"
+                    @click="filters.days = item"
+                  >
+                    {{ item }} {{ t('ai.prompts.daysUnit') }}
+                  </button>
+                </div>
               </div>
             </ElTooltip>
           </div>
-          <div class="flex flex-col gap-1">
-            <span class="yg-text-xs yg-text-tertiary">{{ t('ai.prompts.keyword') }}</span>
+          <div class="ai-filterbar__field ai-filterbar__field--grow">
+            <span class="ai-filterbar__label">{{ t('ai.prompts.keyword') }}</span>
             <ElInput
               v-model="filters.keyword"
               clearable
@@ -544,9 +580,54 @@ onMounted(() => {
 </template>
 
 <style scoped>
-/* tooltip 需要包一层：禁用的 ElSelect 自身不派发鼠标事件 */
+/* 筛选工具条：一行起步、放不下就换行；标签贴控件左侧，与调用日志页同一节奏 */
+.ai-filterbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--yg-space-2) var(--yg-space-3);
+}
+
+.ai-filterbar__field {
+  display: flex;
+  align-items: center;
+  gap: var(--yg-space-2);
+  min-width: 0;
+}
+
+.ai-filterbar__field--grow {
+  flex: 1 1 200px;
+}
+
+/* 场景字段：芯片多、可能带「自定义」输入，标签顶排、内容纵向叠 */
+.ai-filterbar__field--wrap {
+  flex: 1 1 100%;
+  align-items: flex-start;
+}
+
+.ai-filterbar__stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--yg-space-2);
+  min-width: 0;
+  flex: 1 1 0;
+}
+
+.ai-filterbar__label {
+  flex: none;
+  color: var(--yg-text-tertiary);
+  font-size: var(--yg-font-size-xs);
+  white-space: nowrap;
+}
+
+/* tooltip 需要包一层：整组天数芯片共享一个禁用态说明 */
 .ai-prompt-audit__days-wrap {
   width: 100%;
+}
+
+/* 「自定义场景」输入：贴在芯片行下方，宽度不超过芯片组的视觉宽度 */
+.ai-prompt-audit__custom-input {
+  max-width: 320px;
 }
 
 /* 元数据：左列标签、右列取值；长 oid 与角色快照允许换行，不撑破抽屉。 */

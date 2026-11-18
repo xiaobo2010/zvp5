@@ -23,6 +23,41 @@ const PROPOSAL_LIST_LIMIT_MAX = 50
 const PROPOSAL_LIST_LIMIT_DEFAULT = 20
 
 /**
+ * 风险警示确认状态（跟账号走）。
+ *
+ * `acked_at` 是服务端落库时间（ISO8601）；`acked` 只有严格为 true 才算确认，
+ * 其余形状一律按未确认处理，避免后端回包漂移把门禁意外打开。
+ */
+export interface AiAgentRiskAck {
+  acked: boolean
+  acked_at: string | null
+}
+
+/** 读本人对「智能体首次使用风险警示」的确认状态。 */
+export async function getAgentRiskAck(): Promise<AiAgentRiskAck> {
+  return readAck(await aiFetchJson<unknown>('/ai/agent/ack'))
+}
+
+/**
+ * 确认风险警示（幂等）：服务端只会刷新同一行，重复调用没有副作用。
+ * 前端用它做后台落库；失败静默，由下一次 GET 补写。
+ */
+export async function ackAgentRisk(): Promise<AiAgentRiskAck> {
+  return readAck(await aiFetchJson<unknown>('/ai/agent/ack', { method: 'POST' }))
+}
+
+function readAck(body: unknown): AiAgentRiskAck {
+  if (!body || typeof body !== 'object') {
+    return { acked: false, acked_at: null }
+  }
+  const record = body as Record<string, unknown>
+  return {
+    acked: record.acked === true,
+    acked_at: typeof record.acked_at === 'string' ? record.acked_at : null
+  }
+}
+
+/**
  * 确认并执行一条写操作提案（服务端二次校验权限、状态、时效与参数哈希）。
  *
  * `totpCode` 只在提案 `requires_dual_auth` 时必填：运维写工具（文件 / 数据库 / SSH）

@@ -2287,3 +2287,25 @@ EXCEPTION
     IF SQLCODE NOT IN (-955, -1408) THEN RAISE; END IF;
 END;
 /
+
+-- ----------------------------------------------------------------------------
+-- AI_AGENT_ACKS  ← new (「AI Agent 首次使用安全警示已确认」; V054)
+--   一个账号一行；空表 = 未确认。确认是账号级知情，跟着账号走而不是设备
+--   localStorage：换设备/清缓存不该重弹。重复确认不刷新 ACKED_AT —— 它记录的
+--   是「首次确认时间」，被重复点击覆盖就失去意义。
+--   没有 OID 列（没有独立身份），也不建外键（用户可能被硬删，这行是用户数据
+--   不是审计材料，同 NOTIFICATION_READS）。
+--   也由 V054__ai_agent_acks.sql 在存量实例上创建。
+-- ----------------------------------------------------------------------------
+BEGIN
+  EXECUTE IMMEDIATE '
+CREATE TABLE ai_agent_acks (
+  user_oid VARCHAR2(24 CHAR) NOT NULL,
+  acked_at TIMESTAMP DEFAULT SYSTIMESTAMP NOT NULL,
+  PRIMARY KEY (user_oid)
+)';
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE != -955 THEN RAISE; END IF;
+END;
+/

@@ -1,6 +1,7 @@
 """agent（智能体）HTTP 层（``/api/ai/agent``）。
 
-三个端点：确认提案、驳回提案、本人的提案列表。错误体与
+若干端点：确认提案、驳回提案、本人的提案列表，以及「首次使用安全警示已确认」
+（``/ack``，V054）的读写。错误体与
 ``/v1/chat/completions`` 同形（``{"error": {"message", "type", "code"}}``）+
 ``X-AI-Request-Id`` 头，因为调用方是同一个前端 AI 封装，多一套形状只会多一处要
 翻译的地方。
@@ -23,6 +24,7 @@ from __future__ import annotations
 
 import logging
 import re
+from datetime import datetime
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -231,6 +233,91 @@ async def unlock(payload: UnlockRequest | None = None, user=Depends(get_current_
     return JSONResponse(
         status_code=200,
         content={"unlocked_until": unlocked_until.isoformat()},
+        headers={"X-AI-Request-Id": request_id},
+    )
+
+
+@router.get("/ack")
+async def get_agent_ack(user=Depends(get_current_user)):
+    """本人的「首次使用安全警示已确认」状态（``AI_AGENT_ACKS``, V054）。"""
+    request_id = uuid4().hex
+
+    if not _has_ai_access(user):
+        return await _forbidden(user, request_id=request_id)
+
+    denied = _feature_denied(user, "ai.agent", request_id=request_id)
+    if denied is not None:
+        return denied
+
+    try:
+        acked_at = await backends.get_ai_agent_acks_repo().get(
+            str(user.get("id") or "")
+        )
+    except Exception:  # noqa: BLE001 - 兜底：协议体必须是 OpenAI 形状
+        _logger.exception("ai agent ack lookup failed")
+        await _audit(
+            user,
+            request_id=request_id,
+            status="error",
+            code="AI_AGENT_INTERNAL_ERROR",
+            http_status=500,
+        )
+        return _error(
+            500,
+            "AI_AGENT_INTERNAL_ERROR",
+            "acknowledgement lookup failed unexpectedly",
+            request_id=request_id,
+        )
+
+    return JSONResponse(
+        status_code=200,
+        content={
+            "acked": acked_at is not None,
+            "acked_at": acked_at.isoformat() if acked_at is not None else None,
+        },
+        headers={"X-AI-Request-Id": request_id},
+    )
+
+
+@router.post("/ack")
+async def ack_agent_warning(user=Depends(get_current_user)):
+    """确认已阅读首次使用安全警示。
+
+    幂等：首次写库，重复调用不覆盖原 ``acked_at``，返回库里已有的值。并发的
+    两次点击由仓储层的 ``MERGE`` + 主键保证只有一行、两边都拿到同一个时间。
+    """
+    request_id = uuid4().hex
+
+    if not _has_ai_access(user):
+        return await _forbidden(user, request_id=request_id)
+
+    denied = _feature_denied(user, "ai.agent", request_id=request_id)
+    if denied is not None:
+        return denied
+
+    try:
+        acked_at = await backends.get_ai_agent_acks_repo().ack(
+            str(user.get("id") or ""), datetime.now()
+        )
+    except Exception:  # noqa: BLE001 - 兜底：协议体必须是 OpenAI 形状
+        _logger.exception("ai agent ack write failed")
+        await _audit(
+            user,
+            request_id=request_id,
+            status="error",
+            code="AI_AGENT_INTERNAL_ERROR",
+            http_status=500,
+        )
+        return _error(
+            500,
+            "AI_AGENT_INTERNAL_ERROR",
+            "acknowledgement failed unexpectedly",
+            request_id=request_id,
+        )
+
+    return JSONResponse(
+        status_code=200,
+        content={"acked": True, "acked_at": acked_at.isoformat()},
         headers={"X-AI-Request-Id": request_id},
     )
 

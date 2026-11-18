@@ -11,8 +11,6 @@ import { ElInput } from 'element-plus/es/components/input/index.mjs'
 import { ElInputNumber } from 'element-plus/es/components/input-number/index.mjs'
 import { ElMessage } from 'element-plus/es/components/message/index.mjs'
 import { ElMessageBox } from 'element-plus/es/components/message-box/index.mjs'
-import { ElOption } from 'element-plus/es/components/select/index.mjs'
-import { ElSelect } from 'element-plus/es/components/select/index.mjs'
 import { ElSwitch } from 'element-plus/es/components/switch/index.mjs'
 import { ElTable } from 'element-plus/es/components/table/index.mjs'
 import { ElTableColumn } from 'element-plus/es/components/table/index.mjs'
@@ -430,14 +428,23 @@ onMounted(() => {
             </p>
           </ElFormItem>
           <ElFormItem :label="t('ai.engines.kind')" prop="kind">
-            <ElSelect v-model="form.kind" class="w-full" :disabled="mode === 'edit'">
-              <ElOption
+            <!-- 类型芯片：五家服务商一键点选；编辑态整组禁用并说明原因 -->
+            <div class="ai-chips ai-chips--dialog" role="radiogroup" :aria-label="t('ai.engines.kind')">
+              <button
                 v-for="kind in KIND_OPTIONS"
                 :key="kind"
-                :label="kindLabel(kind)"
-                :value="kind"
-              />
-            </ElSelect>
+                type="button"
+                role="radio"
+                class="ai-chips__item"
+                :class="{ 'is-active': form.kind === kind }"
+                :aria-checked="form.kind === kind"
+                :data-value="kind"
+                :disabled="mode === 'edit'"
+                @click="form.kind = kind"
+              >
+                {{ kindLabel(kind) }}
+              </button>
+            </div>
             <p v-if="mode === 'edit'" class="yg-text-xs yg-text-tertiary mt-1">
               {{ t('ai.engines.kindLocked') }}
             </p>
@@ -515,5 +522,58 @@ onMounted(() => {
 <style scoped>
 .ai-engine-form :deep(.el-form-item:last-child) {
   margin-bottom: 0;
+}
+
+/* 引擎类型芯片：弹层挂在 body 下、不吃页面级皮肤，这里自带一份直角描边版式 */
+.ai-chips--dialog {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--yg-space-1);
+  width: 100%;
+}
+
+.ai-chips--dialog .ai-chips__item {
+  min-height: calc(var(--yg-control-height-sm) + var(--yg-space-1));
+  padding: 0 var(--yg-space-3);
+  border: 1px solid var(--yg-border-default);
+  border-radius: var(--yg-radius-sm);
+  background: var(--yg-bg-surface);
+  color: var(--yg-text-secondary);
+  font: inherit;
+  font-size: var(--yg-font-size-sm);
+  cursor: pointer;
+  transition:
+    color var(--yg-dur-fast) var(--yg-ease-out),
+    border-color var(--yg-dur-fast) var(--yg-ease-out),
+    background-color var(--yg-dur-fast) var(--yg-ease-out);
+}
+
+.ai-chips--dialog .ai-chips__item:hover {
+  color: var(--yg-text-primary);
+  border-color: var(--yg-border-strong);
+}
+
+.ai-chips--dialog .ai-chips__item:active {
+  background: var(--yg-bg-surface-sunken);
+}
+
+.ai-chips--dialog .ai-chips__item:focus-visible {
+  outline: none;
+  box-shadow: var(--yg-focus-ring);
+}
+
+.ai-chips--dialog .ai-chips__item.is-active {
+  color: var(--yg-text-link);
+  border-color: var(--yg-color-primary);
+  background: var(--yg-color-primary-soft);
+  box-shadow: inset 0 0 0 1px var(--yg-color-primary);
+  font-weight: var(--yg-font-weight-medium);
+}
+
+.ai-chips--dialog .ai-chips__item:disabled {
+  color: var(--yg-text-disabled);
+  border-color: var(--yg-border-default);
+  background: var(--yg-bg-surface-sunken);
+  cursor: not-allowed;
 }
 </style>

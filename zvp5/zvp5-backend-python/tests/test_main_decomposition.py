@@ -10,9 +10,9 @@
 * 中间件栈顺序（418 / 503 / CORS / 耗时统计的组合行为全靠它）；
 * ``main`` 上的兼容名字（运维脚本与既有测试按 ``main.<name>`` 取实例/打桩）。
 
-拆分前的路由 dump 是 260 条（含 V053 站内通知已读与 Agent 实时事件路由）；新增路由
-时把这里的数字一起改（并跑一次 ``tests/test_api_metrics.py`` 之类的路由相关
-用例）。
+拆分前的路由 dump 是 262 条（含 V053 站内通知已读、Agent 实时事件路由与 V054
+Agent 警示已确认的 GET/POST）；新增路由时把这里的数字一起改（并跑一次
+``tests/test_api_metrics.py`` 之类的路由相关用例）。
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ from __future__ import annotations
 import main
 from tests.route_utils import iter_leaf_routes
 
-PRE_SPLIT_ROUTE_COUNT = 260
+PRE_SPLIT_ROUTE_COUNT = 262
 ROUTER_COUNT = 35
 
 

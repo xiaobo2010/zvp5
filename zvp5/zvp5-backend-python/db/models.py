@@ -1975,6 +1975,29 @@ Index("ix_ai_models_provider", ai_models.c.provider)
 
 
 # ---------------------------------------------------------------------------
+# AI_AGENT_ACKS ← new (AI Agent 首次使用安全警示已确认; V054)
+#   一个账号一行，空表 = 未确认。确认是账号级知情（Agent 会代执行写操作），
+#   跟着账号走而不放设备 localStorage：换设备/清缓存不该重弹。
+#   ``acked_at`` 记录**首次**确认时间：重复确认走 MERGE 的 WHEN NOT MATCHED
+#   分支，不覆盖已有值。
+#   无 OID 列（没有独立身份），不建外键（用户可能被硬删除，这行是用户数据、
+#   不是审计材料，与 NOTIFICATION_READS 同口径）。
+# ---------------------------------------------------------------------------
+
+ai_agent_acks = Table(
+    "ai_agent_acks",
+    metadata,
+    Column("user_oid", VARCHAR2(24), primary_key=True),
+    Column(
+        "acked_at",
+        oracle.TIMESTAMP,
+        nullable=False,
+        server_default=text("SYSTIMESTAMP"),
+    ),
+)
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 

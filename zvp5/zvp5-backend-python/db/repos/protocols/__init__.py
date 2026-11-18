@@ -31,6 +31,7 @@ from typing import Any, Mapping, Protocol, Sequence  # noqa: F401
 from datetime import datetime  # noqa: F401
 
 from .activities import ActivitiesRepo, MembersRepo
+from .ai_agent_acks import AIAgentAcksRepo
 from .ai_calls import AIAgentEventsRepo, AICallLogsRepo, AIPromptAuditRepo
 from .ai_credentials import (
     AIApiKeysRepo,
@@ -66,6 +67,7 @@ from .time_stats import StatsCacheRepo, TimeRepo
 from .users import RolePoliciesRepo, UserWarningsRepo, UsersRepo
 
 __all__ = [
+    "AIAgentAcksRepo",
     "AIAgentEventsRepo",
     "AIApiKeysRepo",
     "AICallLogsRepo",

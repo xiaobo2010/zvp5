@@ -5,6 +5,7 @@ import ZAiChat from './ZAiChat.vue'
 import { useUserStore } from '@/stores/user'
 import { POLL_FAST_INTERVAL_MS, POLL_INTERVAL_MS } from '@/stores/aiConversations'
 import {
+  ackAgentRisk,
   cancelRun,
   compactConversation,
   confirmProposal,
@@ -13,6 +14,7 @@ import {
   fetchActiveRuns,
   fetchPendingProposals,
   fetchRunDetail,
+  getAgentRiskAck,
   getConversation,
   listConversations,
   listMessages,
@@ -43,6 +45,8 @@ vi.mock('@/api/ai', async (importOriginal) => {
     confirmProposal: vi.fn(),
     rejectProposal: vi.fn(),
     fetchRunDetail: vi.fn(),
+    getAgentRiskAck: vi.fn(),
+    ackAgentRisk: vi.fn(),
     getConversation: vi.fn(),
     listConversations: vi.fn(),
     listMessages: vi.fn(),
@@ -444,6 +448,8 @@ beforeEach(() => {
   vi.mocked(confirmProposal).mockReset()
   vi.mocked(rejectProposal).mockReset()
   vi.mocked(fetchRunDetail).mockReset()
+  vi.mocked(getAgentRiskAck).mockReset()
+  vi.mocked(ackAgentRisk).mockReset()
   vi.mocked(getConversation).mockReset()
   vi.mocked(listConversations).mockReset()
   vi.mocked(listMessages).mockReset()
@@ -479,6 +485,10 @@ beforeEach(() => {
   vi.mocked(listMessages).mockResolvedValue({ messages: [], has_more: false, total: 0 })
   vi.mocked(fetchActiveRuns).mockResolvedValue([])
   vi.mocked(fetchPendingProposals).mockResolvedValue({ proposals: [] })
+  // 风险确认默认「服务端未确认」：本地缓存命中的用例不会发请求，
+  // 清了缓存的用例则按未确认弹框——需要服务端已确认的用例自行覆盖。
+  vi.mocked(getAgentRiskAck).mockResolvedValue({ acked: false, acked_at: null })
+  vi.mocked(ackAgentRisk).mockResolvedValue({ acked: true, acked_at: '2026-11-18T08:00:00Z' })
   vi.mocked(getConversation).mockResolvedValue(conversation())
   vi.mocked(createConversation).mockResolvedValue(conversation({ oid: 'new1' }))
   vi.mocked(updateConversation).mockResolvedValue(conversation())
@@ -1358,6 +1368,8 @@ describe('首次使用风险警示', () => {
 
     expect(localStorage.getItem(RISK_KEY)).toBe('1')
     expect(wrapper.find('.ai-agent__risk-dialog').exists()).toBe(false)
+    // 确认落库到服务端（幂等 POST）：换设备进入时 GET 能找回这次确认
+    expect(ackAgentRisk).toHaveBeenCalled()
     // 门禁放行后接回最近会话
     expect(listMessages).toHaveBeenCalledWith('agent1', expect.objectContaining({ afterSeq: 0 }))
     wrapper.unmount()
@@ -1398,6 +1410,38 @@ describe('首次使用风险警示', () => {
 
     expect(wrapper.find('.ai-agent__risk-dialog').exists()).toBe(false)
     expect(listMessages).toHaveBeenCalledWith('agent1', expect.objectContaining({ afterSeq: 0 }))
+
+    wrapper.unmount()
+  })
+
+  it('本地缓存未命中但服务端已确认：不弹框，写回缓存并放行', async () => {
+    localStorage.clear()
+    vi.mocked(getAgentRiskAck).mockResolvedValue({
+      acked: true,
+      acked_at: '2026-11-18T08:00:00Z'
+    })
+    const wrapper = mountPage()
+    await settle()
+
+    // 缓存未命中走了一次服务端查询
+    expect(getAgentRiskAck).toHaveBeenCalledTimes(1)
+    expect(wrapper.find('.ai-agent__risk-dialog').exists()).toBe(false)
+    // 服务端确认写回本地缓存：本机下次零请求放行
+    expect(localStorage.getItem(RISK_KEY)).toBe('1')
+    expect(listMessages).toHaveBeenCalledWith('agent1', expect.objectContaining({ afterSeq: 0 }))
+
+    wrapper.unmount()
+  })
+
+  it('服务端查询失败：按未确认处理，弹框兜底、不抛页面错误', async () => {
+    localStorage.clear()
+    vi.mocked(getAgentRiskAck).mockRejectedValue(new Error('network down'))
+    const wrapper = mountPage()
+    await settle()
+
+    expect(wrapper.find('.ai-agent__risk-dialog').exists()).toBe(true)
+    expect(createConversation).not.toHaveBeenCalled()
+    expect(elMessageErrorSpy).not.toHaveBeenCalled()
 
     wrapper.unmount()
   })
