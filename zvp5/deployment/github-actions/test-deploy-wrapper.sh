@@ -77,6 +77,9 @@ cp -a "$source_dir"/. "$target_dir"/
 EOF
 cat > "$TEST_ROOT/bin/chown" <<'EOF'
 #!/usr/bin/env bash
+if [[ -n "${ZVP5_TEST_CHOWN_LOG:-}" ]]; then
+  printf '%s\n' "$*" >> "$ZVP5_TEST_CHOWN_LOG"
+fi
 exit 0
 EOF
 chmod +x "$TEST_ROOT/bin/systemctl" "$TEST_ROOT/bin/curl" "$TEST_ROOT/bin/rsync" "$TEST_ROOT/bin/chown"
@@ -85,6 +88,7 @@ export ZVP5_CURL="$TEST_ROOT/bin/curl"
 export PATH="$TEST_ROOT/bin:$PATH"
 export ZVP5_DEPLOY_PATH="$PATH"
 export ZVP5_TEST_RSYNC_LOG="$TEST_ROOT/rsync.args"
+export ZVP5_TEST_CHOWN_LOG="$TEST_ROOT/chown.args"
 
 REV_A=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 REV_B=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
@@ -264,5 +268,23 @@ wait "$lock_pid" 2>/dev/null || true
 assert_file 'setuid-frontend' "$ZVP5_DEPLOY_ROOT/frontend-dist/index.html"
 bash "$WRAPPER" deploy frontend "$REV_G" "$ID_G"
 assert_file 'locked-frontend' "$ZVP5_DEPLOY_ROOT/frontend-dist/index.html"
+
+# ---- 前端属主回归：默认必须沿用 frontend-dist 现有属主 ----
+# 两台机器一边是 www-data（后端机）一边是 www（前端机），写死任何一方都会让另一台
+# 的 chown 失败；回滚跟着失败会把目录留成 root 属主，nginx 读不到 → 站点 403。
+REV_OWNER=dddddddddddddddddddddddddddddddddddddddd
+REV_OWNER2=eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+ID_OWNER=run-owner-1
+ID_OWNER2=run-owner-2
+printf '<html>owner-check</html>\n' > "$TEST_ROOT/source/frontend/index.html"
+archive frontend "$REV_OWNER" "$TEST_ROOT/source/frontend"
+owner_before="$(stat -c '%U:%G' "$ZVP5_DEPLOY_ROOT/frontend-dist")"
+ZVP5_SKIP_CHOWN=0 bash "$WRAPPER" deploy frontend "$REV_OWNER" "$ID_OWNER"
+grep -Fx -- "-R $owner_before $ZVP5_DEPLOY_ROOT/frontend-dist" "$ZVP5_TEST_CHOWN_LOG" >/dev/null
+# 显式指定时以显式值为准（部署包装器 / 运维手工覆盖的口子）。
+printf '<html>owner-override</html>\n' > "$TEST_ROOT/source/frontend/index.html"
+archive frontend "$REV_OWNER2" "$TEST_ROOT/source/frontend"
+ZVP5_SKIP_CHOWN=0 ZVP5_FRONTEND_OWNER="explicit:group" bash "$WRAPPER" deploy frontend "$REV_OWNER2" "$ID_OWNER2"
+grep -Fx -- "-R explicit:group $ZVP5_DEPLOY_ROOT/frontend-dist" "$ZVP5_TEST_CHOWN_LOG" >/dev/null
 
 echo "Deployment wrapper tests passed"
