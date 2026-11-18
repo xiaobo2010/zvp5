@@ -1,111 +1,92 @@
-# ZVMS Pro — Authenticated Home Design Brief
+# ZVMS Pro — Signed-in Home (authoritative brief)
 
-This folder is a clean, standalone frontend prototype for the next ZVMS web experience.
-The existing `zvp5-frontend` and the backend are frozen for this phase.
+This folder is the standalone next frontend. The existing `zvp5-frontend` and backend are frozen.
+This pass is a **complete rewrite of the signed-in home**, not a marketing page and not the current
+next-activity dashboard.
 
-## Target
+## Functional scope (must match the canary home)
 
-Design the **screen a signed-in volunteer sees immediately after login** — not a marketing
-landing page. It is the product home: a calm, premium daily overview that helps someone decide
-what to do next.
-
-Only this pass is in scope:
-
-1. The signed-in global navigation.
-2. The signed-in home dashboard.
-3. The design-principles document, updated for an app surface rather than a landing page.
-
-Everything else (auth, activity detail, AI gateway, admin pages) is out of scope.
+1. **Signed-in navigation**
+   - ZVMS wordmark; 首页 / 活动 / 时长 / 组织.
+   - Search, notifications, avatar/account.
+   - Sticky, slim, and **liquid glass**. Every nav icon button is also glass.
+2. **Personal information**
+   - Avatar, name, student number, groups/roles, edit-profile action.
+   - Reads like an account/identity surface, not a profile form.
+3. **Three volunteer-hour categories**
+   - 校内时长 (`on-campus`), 校外时长 (`off-campus`), 社会实践 (`social-practice`).
+   - Show actual value, standard target, progress, and any complementary conversion.
+   - Canary standards: 校内 25h, 校外 15h, 社会实践 18h.
+   - Conversion rules: off-campus > 15h contributes `round((off - 15) / 2)` to on-campus;
+     on-campus > 25h contributes `round((on - 25) / 3)` to off-campus. Total is the raw sum.
+   - Include a total-record figure and a “明细 / 刷新” action.
+4. **Work list / record list**
+   - Canary home shows a review/work list. Implement it without a table: a clean glass list of
+     pending activities with name, creator/organization, date, and status.
+   - Include a compact recent-records list (activity, date, duration, confirmed/pending) using the
+     same list language. No `<table>`.
+   - If a role filter is useful, use a glass segmented control; do not invent a new admin console.
 
 ## Visual direction
 
-- Foundation: Apple’s account/product surfaces — Apple ID, iCloud, Wallet, Health, and the
-  restraint of apple.com. Not a generic SaaS dashboard.
-- Light theme only. Canvas `#f5f5f7`-ish, white surfaces, near-black type, one sky-blue accent.
-- Product-first composition: one clear focal object (the next activity), then quiet supporting
-  detail. Large editorial type; precise alignment; generous but purposeful whitespace.
-- Liquid glass only where it has a job: the global nav, one hero “pass” surface, small floating
-  controls. Each glass surface needs a real light source, an edge highlight, and a soft shadow.
-  Never nest translucent surfaces.
-- One believable light source per scene. Soft bloom, low-frequency gradients, subtle grain only
-  if it helps. No purple gradients, neon, decorative blobs, or repeated glow.
-- Apple-like restraint: 22–30px card radii, hairline borders, barely-there shadows. Do not turn
-  every button into a pill, and do not use colored rounded-square icons everywhere.
-- Typography: system SF-like stack, large 56–72px greeting, 17–19px body, 600 weight for most
-  headings, tight tracking only on very large text. Let whitespace create hierarchy.
-- Icons: hand-authored inline SVG line icons, 1.5–1.8px strokes. No icon package.
+- Existing light Apple-like direction is acceptable, but the composition must now be a real app
+  home: identity → hours → work list, with one clear reading order.
+- Canvas `#f5f5f7`, white/opaque surfaces for quiet content, one sky-blue accent.
+- **Liquid glass** is mandatory for:
+  - the sticky navigation;
+  - every button/icon button;
+  - the three-hour panel and the list panels (or a convincing frosted fallback if glass would
+    hurt legibility/performance).
+- Glass recipe for light surfaces:
+  - translucent white gradient tint, not a gray slab;
+  - `backdrop-filter: blur(14px) saturate(180%) brightness(1.04)`;
+  - 1px white specular border, inset top highlight, soft outer shadow;
+  - a single diagonal sheen; no rainbow gradients;
+  - fallback via `@supports` and a solid translucent surface.
+- Keep glass restrained: do not blur every row. Lists use a glass panel with transparent rows and
+  hairline separators; buttons get their own specular edge.
+- Apple-like geometry: 20–28px panel radii, 12–16px inner rows, hairline borders, no heavy shadows.
+- Typography: system stack; 56–72px greeting; 17–19px body; 600 headings; tight tracking only on
+  large text. Chinese headings must not split a word or leave an orphan character.
+- Inline SVG line icons only. No icon package, images, web fonts, or animation libraries.
 
-## Navigation (signed in)
+## Layout
 
-- Slim 52–60px sticky glass bar, content aligned to the same grid as the page.
-- Left: ZVMS wordmark.
-- Center/left links: 首页, 活动, 时长, 组织.
-- Right: search, notifications, avatar/menu. No “开始使用” marketing CTA.
-- Desktop hover/focus states are quiet. Mobile: accessible compact menu; no horizontal overflow.
-- The active item is clear but not loud. The nav should read as a product chrome, not a website
-  header.
-
-## Home content
-
-Use realistic Chinese content and static prototype data. Suggested composition:
-
-1. Greeting block: “下午好，知远。” plus a quiet date and one line of context (“这周你有 2 场志愿安排”).
-2. Focal “next activity” pass: liquid-glass/ticket-like surface, activity title, date/time,
-   location, role, status, and one primary action. This is the visual anchor.
-3. A compact stats row: 累计时长, 本月新增, 已完成活动, 待确认记录. Large numerals, tiny labels.
-4. Bento-style supporting grid:
-   - My hours / recent trend (CSS-only chart, no library)
-   - To-do or pending confirmations
-   - Recommended activities (2 cards max)
-   - Organization update or certificate shortcut
-   - Quick actions: 找活动, 记录时长, 我的证书, 联系组织
-5. A quiet footer or end-of-page utility row. No marketing CTA section.
-
-The page should feel useful at a glance: the next commitment, current standing, and one obvious
-next action.
+- Desktop (≥1024): 1180–1220px max width; nav aligned to the same grid.
+  - Header: greeting/date.
+  - Identity row: personal card (7 cols) + total-hours summary (5 cols), or identity integrated
+    into the header with total-hours as the anchor.
+  - Time panel: one glass surface, three columns/cells with standards and progress.
+  - Work list: 7/5 split, pending activities + recent records; both glass panels.
+- Tablet: two columns where useful; time cells 1+2 or 3 across if they fit.
+- Mobile: single column; identity first, then hours, then lists; nav usable; no horizontal overflow.
 
 ## Motion
 
-- Controlled “q弹” feel: spring-eased press and card hover, one staggered entrance on first load.
-- Non-linear easing; transform/opacity only; no animated layout properties.
-- No infinite loops. Respect `prefers-reduced-motion`.
-- Performance: plain CSS and tiny Vue state, no animation library, no heavy raster assets.
-
-## Responsive
-
-- Verify 1440, 1024, 768, and 390 CSS px.
-- Desktop: 12-column bento with a strong focal card. Tablet: 2 columns. Mobile: single column,
-  nav remains usable, focal card appears before secondary analytics.
-- No horizontal overflow; Chinese headings must never leave an orphan character or split a word
-  at a line break.
-- Touch targets >= 44px where practical.
+- One staggered entrance, spring press/hover; transform/opacity only.
+- Buttons: scale 0.98 on press, 1.01 on hover; sheen moves on hover only.
+- `prefers-reduced-motion`: no transforms/animations; keep the final state.
+- Performance: blur 8–18px; no animated `backdrop-filter`; no glass on every scrolling row.
 
 ## Accessibility
 
-- Semantic landmarks, one `h1`, logical heading order.
-- Visible `:focus-visible`; contrast for body and glass surfaces.
-- Mobile menu keyboard operable, `aria-expanded` correct, Escape closes.
-- Decorative light effects hidden from assistive technology.
+- Semantic landmarks; one `h1`; buttons vs links correct.
+- Visible focus; contrast checked on the actual glass background.
+- Mobile menu: keyboard operable, Escape closes, `aria-expanded` correct.
+- Progress bars have accessible labels/values.
 
 ## Technical constraints
 
-- Vue 3 + TypeScript + plain CSS. No new dependencies, images, web fonts, or icon libraries.
-- Keep the prototype self-contained in `zvp5/zvp5-frontend-pro`.
-- Replace `src/components/SiteNav.vue`, `src/views/HomeView.vue`, and the relevant tokens/styles.
-- `src/App.vue` and the router scaffold stay working; only the home route is needed.
-- Do not edit anything outside this folder. Do not commit.
-- No full test suites; one lightweight Vite preview/type-check is enough.
-
-## Deliverables
-
-- `src/components/SiteNav.vue` — signed-in navigation.
-- `src/views/HomeView.vue` — signed-in home dashboard, local components as needed.
-- `src/styles/tokens.css` / `src/styles/base.css` — app-surface tokens and canvas.
-- `docs/DESIGN_PRINCIPLES.md` — Chinese design guidelines with English technical terms.
-- Optional: `src/components/home/*.vue`.
+- Vue 3 + TypeScript + plain CSS; no new dependencies.
+- Keep the app self-contained in `zvp5/zvp5-frontend-pro`; `src/App.vue` and router stay working.
+- Static prototype data is fine, but the labels/values must be coherent and use the canary rules.
+- Do not edit outside this folder; do not commit.
+- Verify with one lightweight Vite preview; `vue-tsc` must pass.
 
 ## Definition of done
 
-- A signed-in volunteer can understand their next activity, hours, and pending items at a glance.
-- Apple-like restraint and material quality are visible at 1440 and 1024, not just at mobile.
-- No marketing hero/CTA remnants, no placeholder copy, no broken controls, no console errors.
+- A signed-in user can see who they are, all three hour categories with standards/progress, and the
+  work/record lists without a table.
+- Nav and every button read as liquid glass on a light page.
+- No marketing remnants, no next-activity sales card, no dead controls.
+- 1440 / 1024 / 768 / 390: no horizontal overflow; Chinese headings intact.

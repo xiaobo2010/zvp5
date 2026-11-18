@@ -4,13 +4,13 @@
 
 ## 核心理念
 
-ZVMS Pro 的设计灵感源自 Apple 的账户与产品界面——Apple ID、iCloud、Wallet、Health：**克制、清晰、有用**。这不是营销页面，而是志愿者每天使用的工作台。我们追求一目了然的实用性，通过精准的排版、适度的材质与真实的光影营造专业而温暖的日常体验。
+ZVMS Pro 的设计灵感源自 Apple 的账户与产品界面——Apple ID、iCloud、Wallet、Health：**克制、清晰、有用**。这不是营销页面，而是志愿者每天使用的工作台。我们追求一目了然的实用性，通过精准的排版、液态玻璃材质与真实的光影营造专业而温暖的日常体验。
 
 ### 设计支柱
 
 - **一目了然**：关键信息在第一屏可见，用户无需滚动就能理解状态
-- **一个焦点对象**：每个页面有一个主要视觉锚点，其余元素退居辅助
-- **克制的材质**：玻璃只用于导航与焦点元素，大量使用白色卡片与发丝线分隔
+- **身份优先**：用户首先看到自己是谁，然后是时长与待办
+- **克制的材质**：液态玻璃只用于导航、按钮、时长面板与工作列表；身份卡片用纯白
 - **真实的光**：一个光源方向，柔和的氛围光晕，可信的阴影深度
 - **安静的运动**：有意义的互动反馈，避免炫技式动画
 
@@ -28,8 +28,9 @@ ZVMS Pro 使用 Apple 式的浅灰画布 + 白色表面的层级系统：
 
 **规则**：
 - 页面底色是 `#f5f5f7`，营造柔和的背景
-- 卡片、stats、bento grid 使用纯白 `#ffffff` 表面
-- 白色表面使用极细的发丝线边框：`rgb(0 0 0 / 0.06-0.08)`
+- 身份卡片、总时长锚点使用纯白 `#ffffff` 表面
+- 液态玻璃面板（导航、时长、工作列表）使用半透明渐变
+- 白色表面使用极细的发丝线边框：`rgb(0 0 0 / 0.06)`
 - 阴影非常克制：静态卡片几乎不可见，hover 时才轻微抬升
 
 ### 光影系统 (Light System)
@@ -52,46 +53,139 @@ body::before {
 - 玻璃材质的高光边缘应与光源方向一致
 - 阴影方向应反映光源位置（顶部光源 = 向下的阴影）
 
-### 玻璃材质 (Liquid Glass)
+### 液态玻璃材质 (Liquid Glass)
 
-玻璃材质是 ZVMS Pro 的标志，但必须**极度克制使用**：仅导航栏与一个焦点元素（下一场活动 pass）。
+液态玻璃是 ZVMS Pro 的标志材质，用于导航、按钮、时长面板与工作列表。这是基于研究的权威配方。
 
-**配方**：
+**完整配方**：
 ```css
-.glass-surface {
-  background: var(--glass-bg); /* color-mix(in srgb, #f5f5f7 75%, transparent) */
-  backdrop-filter: var(--glass-blur); /* blur(20px) saturate(180%) */
-  border: 1px solid var(--glass-border); /* rgb(255 255 255 / 0.5) */
-  border-radius: var(--radius-xl); /* 28px */
-  box-shadow: var(--glass-shadow);
+.glass-panel {
   position: relative;
-}
-
-/* 顶部高光边缘 — 模拟光线折射 */
-.glass-surface::before {
-  content: '';
-  position: absolute;
-  inset: -1px;
   background: linear-gradient(
     135deg,
-    rgba(255, 255, 255, 0.6) 0%,
+    rgba(255, 255, 255, 0.5) 0%,
+    rgba(207, 234, 255, 0.38) 54%,
+    rgba(255, 255, 255, 0.24) 100%
+  );
+  /* 先写 -webkit- 再写标准属性：构建器会把重复声明折叠，顺序反了会只剩前缀版本 */
+  -webkit-backdrop-filter: blur(18px) saturate(190%) brightness(1.05);
+  backdrop-filter: blur(18px) saturate(190%) brightness(1.05);
+  border: 1px solid rgba(255, 255, 255, 0.78); /* 高光边缘 */
+  border-radius: var(--radius-xl); /* 28px */
+  box-shadow:
+    0 20px 50px rgba(28, 68, 120, 0.09),
+    0 2px 6px rgba(28, 68, 120, 0.04),
+    inset 0 1px 0 rgba(255, 255, 255, 0.94),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.32);
+  isolation: isolate;
+}
+
+/* 顶部高光 — 模拟光线折射 */
+.glass-panel::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 50%;
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.8) 0%,
     rgba(255, 255, 255, 0) 50%
   );
-  border-radius: var(--radius-xl);
+  border-radius: var(--radius-xl) var(--radius-xl) 0 0;
   pointer-events: none;
-  opacity: 0.8;
+  opacity: 0.4;
+}
+
+/* 降级支持 */
+@supports not (backdrop-filter: blur(14px)) {
+  .glass-panel {
+    background: rgba(255, 255, 255, 0.85);
+  }
+}
+```
+
+**玻璃按钮**（带移动光泽）：
+```css
+.glass-button {
+  position: relative;
+  background: linear-gradient(
+    135deg,
+    rgba(0, 113, 227, 0.12) 0%,
+    rgba(0, 113, 227, 0.08) 100%
+  );
+  -webkit-backdrop-filter: blur(8px) saturate(180%);
+  backdrop-filter: blur(8px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.82);
+  border-radius: var(--radius-md);
+  color: var(--color-brand);
+  overflow: hidden;
+  isolation: isolate;
+}
+
+/* 顶部高光 */
+.glass-button::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.8) 0%,
+    rgba(255, 255, 255, 0) 50%
+  );
+  pointer-events: none;
+  opacity: 0.3;
+}
+
+/* 对角光泽 — 仅在 hover 时移动 */
+.glass-button::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0) 0%,
+    rgba(255, 255, 255, 0.3) 50%,
+    rgba(255, 255, 255, 0) 100%
+  );
+  opacity: 0;
+  transform: translateX(-100%);
+  transition: all 350ms cubic-bezier(0.4, 0, 0.2, 1);
+  pointer-events: none;
+}
+
+.glass-button:hover {
+  transform: scale(1.01);
+}
+
+.glass-button:hover::after {
+  opacity: 1;
+  transform: translateX(100%);
+}
+
+.glass-button:active {
+  transform: scale(0.98);
 }
 ```
 
 **允许使用场景**：
 - ✅ 全局导航栏（sticky glass nav）
-- ✅ 首屏焦点元素（下一场活动 pass）
-- ✅ 浮动的操作按钮或控件（如需要）
+- ✅ 导航栏图标按钮（搜索、通知、头像）
+- ✅ 志愿时长面板（三类时长的容器）
+- ✅ 工作列表面板（待审核活动、最近记录）
+- ✅ 所有操作按钮（编辑资料、明细、刷新）
 
 **禁止事项**：
-- ❌ 不要在 bento grid 的每个卡片都用玻璃
+- ❌ 不要在身份卡片或总时长锚点用玻璃（用纯白）
 - ❌ 不要嵌套半透明表面（玻璃套玻璃）
-- ❌ 不要在玻璃内使用半透明背景的子元素
+- ❌ 不要在玻璃内的列表行再用玻璃（用透明背景 + 发丝线分隔）
+
+**性能注意**：
+- `backdrop-filter` 模糊限制在 8–18px
+- 不要动画 `backdrop-filter` 属性
+- 使用 `isolation: isolate` 防止嵌套混合问题
+- 为不支持 `backdrop-filter` 的浏览器提供降级
 
 ### 形状与圆角 (Shape & Radius)
 
@@ -99,18 +193,18 @@ Apple 式的适度圆角——柔和但不过度圆润。
 
 ```css
 --radius-xs: 6px;   /* 小标签、徽章 */
---radius-sm: 10px;  /* 按钮、输入框 */
---radius-md: 14px;  /* 中等卡片、对话框 */
---radius-lg: 22px;  /* 标准卡片 */
---radius-xl: 28px;  /* 玻璃表面、焦点区域 */
+--radius-sm: 10px;  /* 导航按钮、小图标按钮 */
+--radius-md: 14px;  /* 标准按钮、输入框 */
+--radius-lg: 22px;  /* 身份卡片、白色表面 */
+--radius-xl: 28px;  /* 玻璃面板、时长面板 */
 --radius-pill: 999px; /* 胶囊按钮、状态标签 */
 ```
 
 **规则**：
-- bento grid 卡片使用 `--radius-lg` (22px)
-- 焦点 pass 使用 `--radius-xl` (28px)
-- 不要把每个按钮都做成 pill 形状——只有状态标签和特殊 CTA
-- 卡片内的小元素使用比卡片本身更小的圆角
+- 身份卡片、总时长使用 `--radius-lg` (22px)
+- 玻璃面板使用 `--radius-xl` (28px)
+- 图标按钮使用 `--radius-sm` (10px)
+- 状态标签使用 `--radius-pill`
 
 ## 色彩系统 (Color System)
 
@@ -143,13 +237,14 @@ ZVMS Pro 使用**高度克制的调色板**：一个品牌蓝作为稀缺的强�
 
 ### 使用规则
 
-- **品牌蓝的使用场景**：主要 CTA、"已报名"等重要状态、focus outline、用户头像背景
-- **禁止**：不要大面积使用品牌色；不要在一屏内出现超过 3 个蓝色主要元素
+- **品牌蓝的使用场景**：玻璃按钮、进度条、用户头像背景、focus outline、已确认状态
+- **禁止**：不要大面积使用品牌色；不要在一屏内出现超过 3-4 个蓝色主要元素
 - **发丝线边框**：白色卡片在 `#f5f5f7` 画布上使用 `--color-border-hairline` (0.06 opacity)
-- **语义色**：如需成功/错误/警告状态，使用 iOS 系统色调：
-  - 成功/招募中：`rgb(52 199 89)` 或 `#34c759`
-  - 警告：`rgb(255 159 10)`
-  - 错误：`rgb(255 69 58)`
+- **语义色**：
+  - 成功/已确认：`#34c759` (rgba(52, 199, 89))
+  - 待确认/进行中：`#0071e3` (品牌蓝)
+  - 警告/待审核：`#ff9f0a` (rgba(255, 159, 10))
+  - 错误：`#ff453a` (rgba(255, 69, 58))
 
 ## 字体排印 (Typography)
 
@@ -167,8 +262,8 @@ ZVMS Pro 使用**高度克制的调色板**：一个品牌蓝作为稀缺的强�
 ```css
 --font-size-greeting: clamp(56px, 6vw, 72px);  /* 首屏问候 */
 --font-size-stats: clamp(40px, 4vw, 56px);     /* 统计数据数值 */
---font-size-title-3: clamp(24px, 3vw, 36px);   /* 焦点 pass 标题 */
---font-size-headline: 21px;                     /* bento 卡片标题 */
+--font-size-title-3: clamp(24px, 3vw, 36px);   /* 身份姓名 */
+--font-size-headline: 21px;                     /* 面板标题 */
 --font-size-body-large: 19px;                   /* 日期显示 */
 --font-size-body: 17px;                         /* 标准正文 */
 --font-size-callout: 15px;                      /* 辅助信息 */
@@ -181,6 +276,7 @@ ZVMS Pro 使用**高度克制的调色板**：一个品牌蓝作为稀缺的强�
 --line-height-tight: 1.05;   /* 大标题（问候语、统计数值） */
 --line-height-snug: 1.2;     /* 标题 */
 --line-height-normal: 1.5;   /* 正文 */
+--line-height-relaxed: 1.6;  /* 说明文本 */
 
 --letter-spacing-tight: -0.02em;  /* 大标题紧缩 */
 --letter-spacing-normal: -0.01em; /* 默认 */
@@ -189,8 +285,8 @@ ZVMS Pro 使用**高度克制的调色板**：一个品牌蓝作为稀缺的强�
 ### 使用规则
 
 - **问候语**：使用 `--font-size-greeting` + `--line-height-tight` + 字重 600
-- **统计数值**：使用 `--font-size-stats` + `--line-height-tight` + 字重 600，配合极小的标签文本
-- **卡片标题**：使用 `--font-size-headline` (21px) + 字重 600
+- **统计数值**：使用 `--font-size-stats` + `--line-height-tight` + 字重 600
+- **面板标题**：使用 `--font-size-headline` (21px) + 字重 600
 - **正文最大宽度**：中文段落限制在 `60-70ch` 以保证可读性
 - **中文排版**：避免单字孤行 (orphan)，使用 `text-wrap: balance` 辅助
 
@@ -216,10 +312,10 @@ ZVMS Pro 使用**高度克制的调色板**：一个品牌蓝作为稀缺的强�
 ### 使用规则
 
 - **页面内边距**：`clamp(20px, 4vw, 40px)`
-- **区块垂直间距**：`--space-8` 至 `--space-10` (64-96px)
-- **卡片 padding**：`--space-5` 至 `--space-6` (24-32px)
-- **bento grid gap**：`--space-5` (24px)
-- **内容最大宽度**：`1440px`
+- **区块垂直间距**：`--space-7` 至 `--space-10` (48-96px)
+- **卡片 padding**：`--space-6` (32px)
+- **玻璃面板 padding**：`--space-6` (32px)
+- **内容最大宽度**：`1200px`
 
 ### 响应式断点
 
@@ -228,15 +324,11 @@ ZVMS Pro 使用**高度克制的调色板**：一个品牌蓝作为稀缺的强�
 /* 默认: 320px - 767px */
 
 @media (min-width: 768px) {
-  /* 平板：bento grid 2 列 */
+  /* 平板：身份行 7/5 分栏，时长 2 列，工作列表 2 列 */
 }
 
 @media (min-width: 1024px) {
-  /* 桌面：bento grid 12 列布局 */
-}
-
-@media (min-width: 1280px) {
-  /* 大屏：焦点 pass 增加内边距 */
+  /* 桌面：身份行 7/5，时长 3 列，工作列表 7/5 */
 }
 ```
 
@@ -249,14 +341,14 @@ ZVMS Pro 使用**高度克制的调色板**：一个品牌蓝作为稀缺的强�
 --shadow-md: 0 2px 4px rgb(0 0 0 / 0.04), 0 1px 2px rgb(0 0 0 / 0.02);
 --shadow-lg: 0 4px 12px rgb(0 0 0 / 0.06), 0 1px 3px rgb(0 0 0 / 0.04);
 --shadow-xl: 0 8px 24px rgb(0 0 0 / 0.08), 0 2px 6px rgb(0 0 0 / 0.04);
---glass-shadow: 0 4px 20px rgb(0 0 0 / 0.06), 0 1px 2px rgb(0 0 0 / 0.03);
+--glass-shadow: 0 20px 50px rgba(28, 68, 120, 0.09), 0 2px 6px rgba(28, 68, 120, 0.04), inset 0 1px 0 rgba(255, 255, 255, 0.94), inset 0 -1px 0 rgba(255, 255, 255, 0.32);
 ```
 
 **使用建议**：
-- 静态 bento 卡片：几乎无阴影，依靠发丝线边框分隔
+- 静态白色卡片：几乎无阴影，依靠发丝线边框分隔
 - Hover 抬升效果：从无阴影过渡到 `--shadow-md`
 - 玻璃表面：`--glass-shadow`
-- 焦点 pass 上的 CTA hover：`0 4px 12px rgb(0 113 227 / 0.2)`（品牌色光晕）
+- 玻璃按钮 hover：`0 4px 12px rgba(0, 113, 227, 0.15)`（品牌色光晕）
 
 ## 动效系统 (Motion)
 
@@ -285,41 +377,21 @@ ZVMS Pro 的动效追求「Q弹」(springy) 的手感——快速响应但有自
 - **按压反馈**：
   ```css
   .button:hover {
-    transform: translateY(-1px);
+    transform: scale(1.01);
     transition: all var(--duration-fast) var(--ease-spring);
   }
   .button:active {
     transform: scale(0.98);
   }
   ```
-- **卡片悬停**：轻微抬升 `translateY(-2px)` + 阴影增强
+- **玻璃光泽移动**：仅在 hover 时 `translateX(-100%)` → `translateX(100%)`
 - **入场序列**：元素分组错开 100ms 出现
   ```css
   .greeting { transition-delay: 0ms; }
-  .pass { transition-delay: 100ms; }
-  .stats { transition-delay: 200ms; }
-  .bento { transition-delay: 300ms; }
+  .identity-row { transition-delay: 100ms; }
+  .hours-panel { transition-delay: 200ms; }
+  .work-lists { transition-delay: 300ms; }
   ```
-
-### 滚动触发动画
-
-使用 `IntersectionObserver` 触发元素的 `.visible` 类：
-
-```typescript
-const observer = new IntersectionObserver(
-  (entries) => {
-    entries.forEach((entry) => {
-      if (entry.isIntersecting) {
-        const id = entry.target.getAttribute('data-section')
-        if (id) {
-          sectionsVisible.value[id] = true
-        }
-      }
-    })
-  },
-  { threshold: 0.1, rootMargin: '-60px' }
-)
-```
 
 ### 无障碍动效
 
@@ -333,6 +405,10 @@ const observer = new IntersectionObserver(
     --duration-base: 10ms;
     --duration-slow: 10ms;
   }
+
+  .glass-button::after {
+    display: none; /* 禁用移动光泽 */
+  }
 }
 ```
 
@@ -340,7 +416,7 @@ const observer = new IntersectionObserver(
 
 ### 导航栏 (Navigation)
 
-签到应用导航：slim 56px 高度，玻璃材质，产品 chrome 而非营销 header。
+签入应用导航：slim 56px 高度，液态玻璃材质，产品 chrome 而非营销 header。
 
 ```css
 .site-nav {
@@ -348,6 +424,7 @@ const observer = new IntersectionObserver(
   top: 0;
   height: 56px;
   background: var(--glass-bg);
+  -webkit-backdrop-filter: var(--glass-blur);
   backdrop-filter: var(--glass-blur);
   border-bottom: 1px solid var(--glass-border);
   box-shadow: var(--glass-shadow);
@@ -357,11 +434,11 @@ const observer = new IntersectionObserver(
 **组成**：
 - 左侧：ZVMS wordmark
 - 中左：首页、活动、时长、组织
-- 右侧：搜索 icon、通知 icon、头像菜单
+- 右侧：搜索 icon、通知 icon、头像菜单（都是玻璃按钮）
 
 ### 问候区 (Greeting)
 
-用户登录后看到的第一个元素：时间问候 + 姓名 + 日期 + 上下文。
+用户登录后看到的第一个元素：时间问候 + 姓名 + 日期。
 
 ```css
 .greeting__title {
@@ -375,117 +452,106 @@ const observer = new IntersectionObserver(
   font-size: var(--font-size-body-large); /* 19px */
   color: var(--color-text-secondary);
 }
-
-.greeting__context {
-  font-size: var(--font-size-body);
-  color: var(--color-text-tertiary);
-}
 ```
 
-### 焦点 Pass (Focal Activity)
+### 身份卡片 (Identity Card)
 
-玻璃材质的"票券"式表面，展示下一场志愿活动：
-
-```css
-.pass__inner {
-  background: var(--glass-bg);
-  backdrop-filter: var(--glass-blur);
-  border: 1px solid var(--glass-border);
-  border-radius: var(--radius-xl); /* 28px */
-  padding: var(--space-6);
-  box-shadow: var(--glass-shadow);
-  position: relative;
-}
-
-/* 光晕效果 */
-.pass__inner::before {
-  content: '';
-  position: absolute;
-  inset: -1px;
-  background: linear-gradient(135deg,
-    rgba(255, 255, 255, 0.6) 0%,
-    rgba(255, 255, 255, 0) 50%
-  );
-  border-radius: var(--radius-xl);
-  pointer-events: none;
-  opacity: 0.8;
-}
-```
-
-### 统计行 (Stats Row)
-
-4 个并排的统计指标，大数值 + 小标签：
+Apple ID 风格的账户表面：头像、姓名、学号、组织、角色、编辑资料。
 
 ```css
-.stat {
-  background: var(--color-bg-elevated); /* 白色 */
+.identity-card {
+  background: var(--color-bg-elevated); /* 纯白 */
   border: 1px solid var(--color-border-hairline);
   border-radius: var(--radius-lg); /* 22px */
-  padding: var(--space-5);
+  padding: var(--space-6);
+}
+```
+
+**组成**：
+- 64px 圆形头像（品牌蓝背景 + 姓氏）
+- 姓名（title-3 大小）+ 学号（callout 大小）
+- 组织 + 角色（带图标）
+- 编辑资料按钮（玻璃按钮）
+
+### 总时长锚点 (Total Hours Anchor)
+
+大数值显示累计记录总和，作为视觉锚点。
+
+```css
+.total-hours {
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border-hairline);
+  border-radius: var(--radius-lg);
+  padding: var(--space-6);
   text-align: center;
 }
 
-.stat__value {
+.total-hours__value {
   font-size: var(--font-size-stats); /* 40-56px */
   font-weight: 600;
   line-height: var(--line-height-tight);
   letter-spacing: -0.02em;
 }
-
-.stat__label {
-  font-size: var(--font-size-callout);
-  color: var(--color-text-tertiary);
-}
 ```
 
-### Bento Grid
+### 志愿时长面板 (Hours Panel)
 
-响应式网格布局：12 列桌面、2 列平板、1 列手机。
+液态玻璃容器，展示三类时长及折算规则。
 
 ```css
-.bento {
-  display: grid;
-  grid-template-columns: 1fr; /* 移动端 */
-  gap: var(--space-5);
-}
-
-@media (min-width: 768px) {
-  .bento {
-    grid-template-columns: repeat(2, 1fr);
-  }
-}
-
-@media (min-width: 1024px) {
-  .bento {
-    grid-template-columns: repeat(12, 1fr);
-  }
-
-  .bento-card--hours { grid-column: span 6; }
-  .bento-card--pending { grid-column: span 6; }
-  .bento-card--activities { grid-column: span 5; }
-  .bento-card--cert { grid-column: span 4; }
-  .bento-card--actions { grid-column: span 3; }
+.hours-panel {
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-xl); /* 28px */
+  box-shadow: var(--glass-shadow);
+  padding: var(--space-6);
 }
 ```
 
-**Bento 卡片**：
+**组成**：
+- 标题 + 明细/刷新按钮（玻璃按钮）
+- 三个时长类别（校内、校外、社会实践）：
+  - 实际值（大数值 40-48px）
+  - 标准要求
+  - 折算后值（带 +bonus 标记）
+  - 进度百分比标签（绿色 >100%，橙色 <100%）
+  - 进度条
+- 折算规则说明（caption 大小）
+
+**折算逻辑**：
+- 校外 > 15h：每 2h 折算 1h 校内，`round((off - 15) / 2)`
+- 校内 > 25h：每 3h 折算 1h 校外，`round((on - 25) / 3)`
+
+### 工作列表 (Work Lists)
+
+液态玻璃容器，展示待审核活动和最近记录。
+
 ```css
-.bento-card {
-  background: var(--color-bg-elevated);
-  border: 1px solid var(--color-border-hairline);
-  border-radius: var(--radius-lg);
-  padding: var(--space-5);
-  transition: all var(--duration-fast) var(--ease-smooth);
-}
-
-.bento-card:hover {
-  box-shadow: var(--shadow-md);
+.work-list {
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--glass-shadow);
+  padding: var(--space-6);
 }
 ```
+
+**组成**：
+- 标题（headline 大小）
+- 列表行（透明背景 + 发丝线分隔符）：
+  - 活动名称（body 大小，font-weight 500）
+  - 元数据（组织/日期/时长）
+  - 状态标签（pill 形状，语义色）
+
+**不使用 `<table>`**：用发丝线分隔的行（`border-bottom`），最后一行无边框。
 
 ### 图标 (Icons)
 
-手写的内联 SVG，1.5–1.8px 描边，线条风格：
+手写的内联 SVG，1.5px 描边，线条风格：
 
 ```html
 <!-- 搜索 icon -->
@@ -498,7 +564,7 @@ const observer = new IntersectionObserver(
 **规则**：
 - 统一使用 `currentColor` 继承文本颜色
 - `aria-hidden="true"` 对辅助技术隐藏装饰性图标
-- 描边宽度 1.5–1.8px
+- 描边宽度 1.5px
 - 不要使用 icon 字体或 npm 包
 
 ## 性能预算 (Performance Budget)
@@ -530,7 +596,7 @@ ZVMS Pro 遵循 WCAG 2.1 AA 标准。
 1. **语义化 HTML**：
    - 每页一个 `<h1>`（问候语）
    - 逻辑的标题层级 (h1 → h2 → h3)
-   - 使用 `<nav>`, `<main>`, `<section>`, `<article>`, `<footer>` 等地标
+   - 使用 `<nav>`, `<main>`, `<section>`, `<article>` 等地标
 
 2. **键盘可访问**：
    - 所有交互元素可通过 Tab 键访问
@@ -567,36 +633,78 @@ ZVMS Pro 遵循 WCAG 2.1 AA 标准。
 }
 ```
 
+## 布局规范
+
+### 签入首页 (Signed-in Home)
+
+阅读顺序：**身份 → 时长 → 工作**。
+
+```
+┌─ 问候语 + 日期 ────────────────────────────┐
+│ 下午好，知远。                               │
+│ 2026年11月18日 星期三                        │
+└─────────────────────────────────────────┘
+
+┌─ 身份卡片 (7 cols) ──────┬─ 总时长 (5 cols) ┐
+│ 头像 + 姓名 + 学号         │   累计记录          │
+│ 组织 + 角色               │   54.5h           │
+│ [编辑资料]                │   包含三类时长       │
+└─────────────────────────┴──────────────────┘
+
+┌─ 志愿时长（玻璃面板，full width）─────────────┐
+│ 志愿时长                    [明细] [刷新]      │
+│ ┌─校内─┐ ┌─校外─┐ ┌─社会实践─┐            │
+│ │28.0h │ │17.0h │ │  9.5h  │             │
+│ │116% │ │120% │ │  53%   │             │
+│ └─────┘ └─────┘ └────────┘              │
+│ 折算规则说明...                             │
+└─────────────────────────────────────────┘
+
+┌─ 待审核活动 (7 cols) ────┬─ 最近记录 (5 cols) ┐
+│ 待审核活动                │ 最近记录            │
+│ • 社区环保宣传 [待审核]    │ • 市图书馆 [待确认]  │
+│ • 敬老院陪伴 [待审核]      │ • 校园整理 [已确认]  │
+│ • 校园开放日 [待审核]      │ • 社区家教 [已确认]  │
+└─────────────────────────┴──────────────────┘
+```
+
+**响应式**：
+- 移动端：单列，身份 → 总时长 → 时长面板（单列）→ 工作列表（单列）
+- 平板：身份/总时长 7/5，时长 2 列，工作列表 2 列
+- 桌面：身份/总时长 7/5，时长 3 列，工作列表 7/5
+
 ## Do / Don't 示例
 
 ### ✅ Do
 
-- **一个焦点对象**：焦点 pass 是视觉锚点，其余元素安静地支持
-- **克制的玻璃**：只有导航与焦点 pass 使用玻璃，不是每个卡片
-- **发丝线分隔**：白色卡片在浅灰画布上使用极细边框 (0.06-0.08 alpha)
-- **大数值显示**：统计指标用 40-56px 大数值 + 13px 小标签
-- **真实的材质感**：玻璃有高光、阴影、折射
+- **液态玻璃权威配方**：使用文档中的完整配方（渐变背景、blur、高光、光泽）
+- **身份优先**：用户首先看到自己是谁
+- **克制的玻璃**：导航、按钮、时长面板、工作列表；身份卡片用纯白
+- **发丝线分隔**：列表行用透明背景 + 发丝线，不嵌套玻璃
+- **大数值显示**：总时长 40-56px，时长类别 40-48px
+- **真实的材质感**：玻璃有高光、阴影、光泽移动
 - **实用优先**：信息密度足够让用户一眼理解状态
 
 ### ❌ Don't
 
-- **不要到处使用玻璃**：bento 卡片不需要玻璃材质，用白色即可
+- **不要在身份卡片用玻璃**：用纯白 + 发丝线
+- **不要嵌套玻璃**：列表行不再套玻璃，用透明背景
+- **不要过度玻璃**：不是每个元素都用玻璃材质
 - **不要粗重的阴影**：静态卡片几乎无阴影，依靠发丝线分隔
-- **不要彩色 icon 方块**：不要在每个卡片放圆角彩色 icon 背景
-- **不要把所有按钮做成 pill**：只有状态标签用 pill 形状
-- **不要滥用动画**：不要让所有元素都动，不要无限循环
-- **不要低对比度**：文本对比度必须通过 WCAG AA
+- **不要滥用动画**：光泽只在 hover 时移动一次，不无限循环
+- **不要低对比度**：玻璃上的文本对比度必须通过 WCAG AA
 
 ## 实现清单
 
 开发新页面时的自查：
 
-- [ ] 使用 `tokens.css` 中的设计变量
+- [ ] 使用 `tokens.css` 中的液态玻璃变量
+- [ ] 玻璃面板包含 `::before` 高光和 `::after` 光泽
+- [ ] 按钮有 hover scale(1.01) 和 active scale(0.98)
 - [ ] 页面有一个 `<h1>` 且标题层级正确
 - [ ] 交互元素有 `:focus-visible` 样式
 - [ ] 文本对比度满足 WCAG AA (4.5:1)
 - [ ] 按钮尺寸 >= 44px (移动端)
-- [ ] 玻璃材质只用于导航与焦点元素
 - [ ] 白色卡片使用发丝线边框 (`--color-border-hairline`)
 - [ ] 动画使用 `transform`/`opacity`，避免 layout 属性
 - [ ] 支持 `prefers-reduced-motion`
@@ -606,8 +714,9 @@ ZVMS Pro 遵循 WCAG 2.1 AA 标准。
 - [ ] 使用语义化的 HTML5 地标元素
 - [ ] 使用系统字体，没有引入外部字体或 icon 库
 - [ ] 性能：没有大图片、重型库、无限动画循环
+- [ ] 为 `backdrop-filter` 提供 `@supports` 降级
 
 ---
 
-**设计原则版本**：v2.0 (App Surface)
-**最后更新**：2026-11-17
+**设计原则版本**：v3.0 (Signed-in Home with Liquid Glass)
+**最后更新**：2026-11-18

@@ -25,7 +25,11 @@ body {
   min-width: 320px;
   min-height: 100vh;
   margin: 0;
-  background: var(--color-bg-canvas);
+  background:
+    radial-gradient(1100px 620px at 10% -8%, rgb(0 113 227 / 0.16), transparent 62%),
+    radial-gradient(900px 640px at 96% 28%, rgb(120 205 255 / 0.13), transparent 68%),
+    radial-gradient(900px 600px at 40% 110%, rgb(255 213 160 / 0.09), transparent 70%),
+    var(--color-bg-canvas);
   color: var(--color-text-primary);
   font-size: var(--font-size-body);
   line-height: var(--line-height-normal);
@@ -33,20 +37,27 @@ body {
 }
 
 /* Ambient light — subtle single source for app surface */
-body::before {
+body::before,
+body::after {
   content: '';
   position: fixed;
-  top: -40%;
-  left: -20%;
-  width: 120%;
-  height: 100%;
-  background: radial-gradient(
-    ellipse 1400px 900px at 50% 0%,
-    rgb(0 113 227 / 0.06),
-    transparent 70%
-  );
   pointer-events: none;
   z-index: -1;
+}
+
+body::before {
+  inset: -20% -10% auto;
+  height: 70%;
+  background:
+    radial-gradient(ellipse 900px 420px at 18% 8%, rgb(255 255 255 / 0.72), transparent 66%),
+    radial-gradient(ellipse 720px 320px at 78% 0%, rgb(0 113 227 / 0.08), transparent 72%);
+}
+
+body::after {
+  inset: 0;
+  background:
+    radial-gradient(ellipse 900px 620px at 12% 62%, rgb(0 113 227 / 0.09), transparent 70%),
+    radial-gradient(ellipse 760px 520px at 94% 82%, rgb(255 201 144 / 0.08), transparent 72%);
 }
 
 h1,

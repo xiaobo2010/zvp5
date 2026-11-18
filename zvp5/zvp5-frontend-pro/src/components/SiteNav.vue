@@ -5,7 +5,7 @@ const links = [
   { label: '首页', href: '#home' },
   { label: '活动', href: '#activities' },
   { label: '时长', href: '#hours' },
-  { label: '组织', href: '#home-footer' }
+  { label: '组织', href: '#profile' }
 ]
 
 const mobileMenuOpen = ref(false)
@@ -47,6 +47,8 @@ onUnmounted(() => {
           :key="link.label"
           :href="link.href"
           class="site-nav__link"
+          :class="{ 'is-active': link.href === '#home' }"
+          :aria-current="link.href === '#home' ? 'page' : undefined"
         >
           {{ link.label }}
         </a>
@@ -122,14 +124,14 @@ onUnmounted(() => {
   top: 0;
   z-index: 1000;
   background: var(--glass-bg);
-  backdrop-filter: var(--glass-blur);
   -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
   border-bottom: 1px solid var(--glass-border);
   box-shadow: var(--glass-shadow);
 }
 
 .site-nav__inner {
-  max-width: 1180px;
+  max-width: 1200px;
   margin: 0 auto;
   padding: 0 clamp(20px, 4vw, 40px);
   height: 56px;
@@ -182,7 +184,7 @@ onUnmounted(() => {
 
 .site-nav__link:hover {
   color: var(--color-text-primary);
-  background: rgb(0 0 0 / 0.04);
+  background: rgba(0, 0, 0, 0.04);
 }
 
 .site-nav__link:focus-visible {
@@ -197,24 +199,65 @@ onUnmounted(() => {
   margin-left: auto;
 }
 
+/* Glass Icon Button */
 .site-nav__icon-btn {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
   width: 36px;
   height: 36px;
   padding: 0;
-  background: transparent;
-  border: none;
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.35) 0%,
+    rgba(255, 255, 255, 0.15) 100%
+  );
+  -webkit-backdrop-filter: blur(8px) saturate(180%);
+  backdrop-filter: blur(8px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.6);
   border-radius: var(--radius-sm);
   color: var(--color-text-secondary);
   cursor: pointer;
-  transition: all var(--duration-fast) var(--ease-smooth);
+  transition: all var(--duration-fast) var(--ease-spring);
+  overflow: hidden;
+  isolation: isolate;
+}
+
+.site-nav__icon-btn::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 50%;
+  background: var(--glass-highlight);
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  pointer-events: none;
+  opacity: 0.3;
+}
+
+.site-nav__icon-btn::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: var(--glass-sheen);
+  border-radius: var(--radius-sm);
+  opacity: 0;
+  transform: translateX(-100%);
+  transition: all var(--duration-base) var(--ease-smooth);
+  pointer-events: none;
 }
 
 .site-nav__icon-btn:hover {
   color: var(--color-text-primary);
-  background: rgb(0 0 0 / 0.04);
+  transform: scale(1.05);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+.site-nav__icon-btn:hover::after {
+  opacity: 1;
+  transform: translateX(100%);
 }
 
 .site-nav__icon-btn:active {
@@ -226,25 +269,54 @@ onUnmounted(() => {
   outline-offset: 2px;
 }
 
+.site-nav__icon-btn svg {
+  position: relative;
+  z-index: 1;
+}
+
+/* Avatar Button (also glass) */
 .site-nav__avatar {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
   width: 32px;
   height: 32px;
   padding: 0;
-  background: var(--color-brand);
-  border: none;
+  background: linear-gradient(
+    135deg,
+    rgba(0, 113, 227, 0.9) 0%,
+    rgba(0, 113, 227, 0.75) 100%
+  );
+  -webkit-backdrop-filter: blur(8px) saturate(180%);
+  backdrop-filter: blur(8px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.6);
   border-radius: 50%;
   color: white;
   font-size: 13px;
   font-weight: 500;
   cursor: pointer;
   transition: all var(--duration-fast) var(--ease-spring);
+  overflow: hidden;
+  isolation: isolate;
+}
+
+.site-nav__avatar::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(
+    circle at 30% 30%,
+    rgba(255, 255, 255, 0.3) 0%,
+    transparent 60%
+  );
+  border-radius: 50%;
+  pointer-events: none;
 }
 
 .site-nav__avatar:hover {
-  transform: scale(1.05);
+  transform: scale(1.08);
+  box-shadow: 0 4px 12px rgba(0, 113, 227, 0.3);
 }
 
 .site-nav__avatar:active {
@@ -258,19 +330,26 @@ onUnmounted(() => {
 
 .site-nav__avatar-text {
   margin-top: 1px;
+  position: relative;
+  z-index: 1;
 }
 
 .site-nav__toggle {
   display: flex;
   flex-direction: column;
   justify-content: center;
+  align-items: center;
   gap: 5px;
-  width: 44px;
-  height: 44px;
+  width: 40px;
+  height: 40px;
   margin-left: auto;
   padding: 0;
-  background: transparent;
-  border: none;
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--glass-border);
+  border-radius: 50%;
+  box-shadow: var(--glass-shadow);
   cursor: pointer;
 }
 
@@ -303,9 +382,10 @@ onUnmounted(() => {
   left: 0;
   right: 0;
   padding: var(--space-4) clamp(20px, 4vw, 40px);
-  background: var(--glass-bg);
-  backdrop-filter: var(--glass-blur);
-  -webkit-backdrop-filter: var(--glass-blur);
+  /* The overlay sits directly on page copy: keep the frost, but raise opacity so text stays legible. */
+  background: #f8fbff;
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  backdrop-filter: blur(24px) saturate(180%);
   border-bottom: 1px solid var(--glass-border);
   box-shadow: var(--shadow-lg);
   display: flex;
@@ -331,7 +411,7 @@ onUnmounted(() => {
 }
 
 .site-nav__mobile-link:hover {
-  background: rgb(0 0 0 / 0.04);
+  background: rgba(0, 0, 0, 0.04);
 }
 
 .site-nav__mobile-link:focus-visible {
@@ -370,6 +450,14 @@ onUnmounted(() => {
   }
 
   .site-nav__toggle {
+    display: none;
+  }
+}
+
+/* Reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  .site-nav__icon-btn::after,
+  .site-nav__avatar::before {
     display: none;
   }
 }
