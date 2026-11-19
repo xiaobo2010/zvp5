@@ -11,6 +11,90 @@ const sectionsVisible = ref<Record<string, boolean>>({
 let observer: IntersectionObserver | null = null
 let greetingTimeout: ReturnType<typeof setTimeout> | null = null
 
+// Hours refresh animation state
+const hoursRefreshing = ref(false)
+let refreshAnimation: Animation | null = null
+let refreshIconAnimation: Animation | null = null
+
+function reduceMotion() {
+  return window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
+}
+
+async function handleHoursRefresh() {
+  if (hoursRefreshing.value || reduceMotion()) return
+  hoursRefreshing.value = true
+
+  const refreshBtn = document.querySelector('.hours-refresh-btn')
+  const refreshIcon = refreshBtn?.querySelector('svg')
+  const hoursGrid = document.querySelector('.hours-grid')
+  const categoryCards = hoursGrid?.querySelectorAll('.hour-category')
+
+  // Spin the refresh icon with spring bounce
+  if (refreshIcon) {
+    refreshIconAnimation?.cancel()
+    refreshIconAnimation = refreshIcon.animate(
+      [
+        { transform: 'rotate(0deg) scale(1)' },
+        { transform: 'rotate(180deg) scale(1.15)', offset: 0.5 },
+        { transform: 'rotate(360deg) scale(1)' }
+      ],
+      {
+        duration: 600,
+        easing: 'cubic-bezier(0.34, 1.56, 0.64, 1)',
+        fill: 'forwards'
+      }
+    )
+  }
+
+  // Give the total a softer single bounce so the whole display responds.
+  const totalValue = document.querySelector('.total-hours__value')
+  totalValue?.animate(
+    [
+      { transform: 'scale(1)' },
+      { transform: 'scale(1.08)', offset: 0.42 },
+      { transform: 'scale(0.98)', offset: 0.7 },
+      { transform: 'scale(1)' }
+    ],
+    {
+      duration: 620,
+      easing: 'cubic-bezier(0.34, 1.56, 0.64, 1)',
+      fill: 'forwards'
+    }
+  )
+
+  // Animate each category card with stagger and spring bounce
+  if (categoryCards) {
+    categoryCards.forEach((card, index) => {
+      const actualValue = card.querySelector('.hour-category__actual')
+      if (actualValue) {
+        setTimeout(() => {
+          const anim = actualValue.animate(
+            [
+              { transform: 'scale(1)' },
+              { transform: 'scale(1.18)', offset: 0.4 },
+              { transform: 'scale(0.95)', offset: 0.65 },
+              { transform: 'scale(1.05)', offset: 0.82 },
+              { transform: 'scale(1)' }
+            ],
+            {
+              duration: 680,
+              easing: 'cubic-bezier(0.34, 1.56, 0.64, 1)',
+              fill: 'forwards'
+            }
+          )
+          if (index === 0) {
+            refreshAnimation = anim
+          }
+        }, index * 80)
+      }
+    })
+  }
+
+  // Wait for animations to complete
+  await new Promise(resolve => setTimeout(resolve, 800))
+  hoursRefreshing.value = false
+}
+
 onMounted(() => {
   greetingTimeout = setTimeout(() => {
     greetingVisible.value = true
@@ -44,6 +128,10 @@ onUnmounted(() => {
     clearTimeout(greetingTimeout)
     greetingTimeout = null
   }
+  refreshAnimation?.cancel()
+  refreshAnimation = null
+  refreshIconAnimation?.cancel()
+  refreshIconAnimation = null
 })
 </script>
 
@@ -113,7 +201,11 @@ onUnmounted(() => {
         <h2 class="hours-panel__title">义工时长</h2>
         <div class="hours-panel__actions">
           <button class="glass-button glass-button--compact">明细</button>
-          <button class="glass-button glass-button--compact">
+          <button
+            class="glass-button glass-button--compact hours-refresh-btn"
+            @click="handleHoursRefresh"
+            :disabled="hoursRefreshing"
+          >
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
               <path d="M14 8C14 11.3137 11.3137 14 8 14C4.68629 14 2 11.3137 2 8C2 4.68629 4.68629 2 8 2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
               <path d="M14 2V6H10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
@@ -325,12 +417,54 @@ onUnmounted(() => {
   transform: translateY(0);
 }
 
-/* Identity Card */
+/* Identity Card - Frosted Glass */
 .identity-card {
-  background: var(--color-bg-elevated);
-  border: 1px solid var(--color-border-hairline);
+  position: relative;
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--glass-border);
   border-radius: var(--radius-lg);
   padding: var(--space-6);
+  box-shadow: var(--glass-shadow);
+  isolation: isolate;
+  overflow: hidden;
+}
+
+.identity-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 50%;
+  background: var(--glass-highlight);
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  pointer-events: none;
+  opacity: 0.55;
+  z-index: 0;
+}
+
+.identity-card::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(
+    115deg,
+    rgba(255, 255, 255, 0) 18%,
+    rgba(255, 255, 255, 0.38) 38%,
+    rgba(255, 255, 255, 0.04) 50%,
+    rgba(255, 255, 255, 0) 64%
+  );
+  pointer-events: none;
+  opacity: 0.55;
+  z-index: 0;
+}
+
+.identity-card > * {
+  position: relative;
+  z-index: 1;
 }
 
 .identity-card__header {
@@ -401,16 +535,58 @@ onUnmounted(() => {
   min-width: 120px;
 }
 
-/* Total Hours */
+/* Total Hours - Frosted Glass */
 .total-hours {
-  background: var(--color-bg-elevated);
-  border: 1px solid var(--color-border-hairline);
+  position: relative;
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--glass-border);
   border-radius: var(--radius-lg);
   padding: var(--space-6);
   text-align: center;
   display: flex;
   flex-direction: column;
   justify-content: center;
+  box-shadow: var(--glass-shadow);
+  isolation: isolate;
+  overflow: hidden;
+}
+
+.total-hours::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 50%;
+  background: var(--glass-highlight);
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  pointer-events: none;
+  opacity: 0.55;
+  z-index: 0;
+}
+
+.total-hours::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(
+    115deg,
+    rgba(255, 255, 255, 0) 18%,
+    rgba(255, 255, 255, 0.38) 38%,
+    rgba(255, 255, 255, 0.04) 50%,
+    rgba(255, 255, 255, 0) 64%
+  );
+  pointer-events: none;
+  opacity: 0.55;
+  z-index: 0;
+}
+
+.total-hours > * {
+  position: relative;
+  z-index: 1;
 }
 
 .total-hours__label {
@@ -623,10 +799,43 @@ onUnmounted(() => {
 }
 
 .hour-category {
+  position: relative;
   padding: var(--space-5);
-  background: rgba(255, 255, 255, 0.3);
-  border: 1px solid rgba(255, 255, 255, 0.5);
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.45) 0%,
+    rgba(255, 255, 255, 0.28) 100%
+  );
+  -webkit-backdrop-filter: blur(12px) saturate(160%);
+  backdrop-filter: blur(12px) saturate(160%);
+  border: 1px solid rgba(255, 255, 255, 0.65);
   border-radius: var(--radius-lg);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.8),
+    0 2px 8px rgba(18, 48, 82, 0.05);
+  isolation: isolate;
+  overflow: hidden;
+}
+
+.hour-category::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 40%;
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.7) 0%,
+    rgba(255, 255, 255, 0) 100%
+  );
+  pointer-events: none;
+  z-index: 0;
+}
+
+.hour-category > * {
+  position: relative;
+  z-index: 1;
 }
 
 .hour-category__header {

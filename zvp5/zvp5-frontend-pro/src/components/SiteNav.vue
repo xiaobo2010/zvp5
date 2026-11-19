@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 
 const links = [
   { label: '首页', href: '#home' },
@@ -9,6 +9,109 @@ const links = [
 ]
 
 const mobileMenuOpen = ref(false)
+const activeHref = ref('#home')
+
+// Spring indicator state
+const linksRef = ref<HTMLElement>()
+const indicatorRef = ref<HTMLElement>()
+const indicator = ref({ x: 0, w: 0, visible: false })
+
+const SPRING = 'cubic-bezier(0.34, 1.56, 0.64, 1)'
+const SPRING_MS = 460
+
+function reduceMotion() {
+  return window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
+}
+
+function renderedTranslateX(el: HTMLElement) {
+  const raw = getComputedStyle(el).transform
+  if (!raw || raw === 'none') return 0
+  const matrix = new DOMMatrixReadOnly(raw)
+  return matrix.m41
+}
+
+let indicatorAnimation: Animation | null = null
+
+function playIndicator(from: number, target: number, width: number) {
+  const pill = indicatorRef.value
+  if (!pill || reduceMotion()) return
+  indicatorAnimation?.cancel()
+  indicatorAnimation = pill.animate(
+    [
+      { transform: `translateX(${from}px)`, width: `${width}px` },
+      { transform: `translateX(${target}px)` }
+    ],
+    {
+      duration: SPRING_MS,
+      easing: SPRING,
+      fill: 'forwards'
+    }
+  )
+}
+
+function updateIndicator(animate = true) {
+  const root = linksRef.value
+  const pill = indicatorRef.value
+  if (!root || !pill) return
+
+  const active = root.querySelector<HTMLElement>('.site-nav__link.is-active')
+  if (!active) {
+    indicator.value = { ...indicator.value, visible: false }
+    return
+  }
+
+  const target = active.offsetLeft
+  if (!animate || reduceMotion()) {
+    indicatorAnimation?.cancel()
+    indicatorAnimation = null
+    indicator.value = { x: target, w: active.offsetWidth, visible: true }
+    return
+  }
+
+  const from = renderedTranslateX(pill)
+  const size = indicator.value.w
+  indicator.value = { x: target, w: active.offsetWidth, visible: true }
+  pill.style.transform = `translateX(${target}px)`
+
+  if (Math.abs(from - target) < 0.5) return
+  playIndicator(from, target, size)
+}
+
+function previewIndicator(index: number) {
+  const root = linksRef.value
+  const pill = indicatorRef.value
+  const link = root?.querySelectorAll<HTMLElement>('.site-nav__link')?.[index]
+  if (!pill || !link) return
+  playIndicator(renderedTranslateX(pill), link.offsetLeft, indicator.value.w)
+}
+
+function pulseIcon(event: MouseEvent) {
+  if (reduceMotion()) return
+  const target = event.currentTarget as HTMLElement
+  target.animate(
+    [
+      { transform: 'scale(1)' },
+      { transform: 'scale(1.08)' },
+      { transform: 'scale(1)' }
+    ],
+    { duration: 400, easing: 'cubic-bezier(0.22, 1.6, 0.36, 1)' }
+  )
+}
+
+function handleNavClick(href: string, event: MouseEvent, index: number) {
+  pulseIcon(event)
+  const root = linksRef.value
+  if (root) {
+    previewIndicator(index)
+  }
+  activeHref.value = href
+}
+
+const indicatorStyle = computed(() => ({
+  width: indicator.value.w + 'px',
+  opacity: indicator.value.visible ? 1 : 0,
+  transform: `translateX(${indicator.value.x}px)`
+}))
 
 function toggleMobileMenu() {
   mobileMenuOpen.value = !mobileMenuOpen.value
@@ -24,13 +127,24 @@ function handleEscape(e: KeyboardEvent) {
   }
 }
 
+function onResize() {
+  updateIndicator(true)
+}
+
 onMounted(() => {
   document.addEventListener('keydown', handleEscape)
+  window.addEventListener('resize', onResize)
+  nextTick(() => updateIndicator(false))
 })
 
 onUnmounted(() => {
   document.removeEventListener('keydown', handleEscape)
+  window.removeEventListener('resize', onResize)
+  indicatorAnimation?.cancel()
+  indicatorAnimation = null
 })
+
+watch(activeHref, () => updateIndicator(true))
 </script>
 
 <template>
@@ -40,15 +154,17 @@ onUnmounted(() => {
         <span class="site-nav__wordmark">ZVMS</span>
       </a>
 
-      <!-- Desktop navigation -->
-      <nav class="site-nav__links" aria-label="主导航">
+      <!-- Desktop navigation with liquid glass indicator -->
+      <nav ref="linksRef" class="site-nav__links" aria-label="主导航">
+        <span ref="indicatorRef" class="site-nav__indicator" :style="indicatorStyle" aria-hidden="true" />
         <a
-          v-for="link in links"
+          v-for="(link, index) in links"
           :key="link.label"
           :href="link.href"
           class="site-nav__link"
-          :class="{ 'is-active': link.href === '#home' }"
-          :aria-current="link.href === '#home' ? 'page' : undefined"
+          :class="{ 'is-active': link.href === activeHref }"
+          :aria-current="link.href === activeHref ? 'page' : undefined"
+          @click="handleNavClick(link.href, $event, index)"
         >
           {{ link.label }}
         </a>
@@ -166,25 +282,72 @@ onUnmounted(() => {
   font-weight: 600;
 }
 
+/* Liquid glass navigation with spring indicator */
 .site-nav__links {
+  position: relative;
   display: none;
-  gap: var(--space-2);
+  gap: 2px;
   margin-left: var(--space-4);
+  padding: 4px;
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.42) 0%,
+    rgba(255, 255, 255, 0.25) 100%
+  );
+  -webkit-backdrop-filter: blur(12px) saturate(170%);
+  backdrop-filter: blur(12px) saturate(170%);
+  border: 1px solid rgba(255, 255, 255, 0.68);
+  border-radius: var(--radius-pill);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.75),
+    0 2px 12px rgba(18, 48, 82, 0.08);
+}
+
+.site-nav__indicator {
+  position: absolute;
+  left: 4px;
+  top: 4px;
+  height: calc(100% - 8px);
+  border-radius: var(--radius-pill);
+  background: linear-gradient(
+    135deg,
+    rgba(0, 113, 227, 0.15) 0%,
+    rgba(0, 113, 227, 0.08) 100%
+  );
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.55),
+    0 2px 8px rgba(14, 165, 233, 0.25);
+  pointer-events: none;
+  transition: opacity 0.2s ease-out;
 }
 
 .site-nav__link {
-  padding: var(--space-2) var(--space-3);
+  position: relative;
+  z-index: 1;
+  padding: var(--space-2) var(--space-4);
   color: var(--color-text-secondary);
   text-decoration: none;
   font-size: var(--font-size-callout);
-  font-weight: 400;
-  border-radius: var(--radius-sm);
-  transition: all var(--duration-fast) var(--ease-smooth);
+  font-weight: 500;
+  border-radius: var(--radius-pill);
+  transition:
+    color var(--duration-fast) var(--ease-smooth),
+    transform var(--duration-fast) var(--ease-spring);
+  min-height: 36px;
+  display: flex;
+  align-items: center;
 }
 
 .site-nav__link:hover {
   color: var(--color-text-primary);
-  background: rgba(0, 0, 0, 0.04);
+}
+
+.site-nav__link:active {
+  transform: scale(0.94);
+}
+
+.site-nav__link.is-active {
+  color: var(--color-brand);
 }
 
 .site-nav__link:focus-visible {
@@ -199,7 +362,7 @@ onUnmounted(() => {
   margin-left: auto;
 }
 
-/* Glass Icon Button */
+/* Liquid glass icon buttons with specular highlight and inset edge */
 .site-nav__icon-btn {
   position: relative;
   display: flex;
@@ -210,18 +373,22 @@ onUnmounted(() => {
   padding: 0;
   background: linear-gradient(
     135deg,
-    rgba(255, 255, 255, 0.35) 0%,
-    rgba(255, 255, 255, 0.15) 100%
+    rgba(255, 255, 255, 0.48) 0%,
+    rgba(255, 255, 255, 0.28) 100%
   );
-  -webkit-backdrop-filter: blur(8px) saturate(180%);
-  backdrop-filter: blur(8px) saturate(180%);
-  border: 1px solid rgba(255, 255, 255, 0.6);
+  -webkit-backdrop-filter: blur(10px) saturate(170%);
+  backdrop-filter: blur(10px) saturate(170%);
+  border: 1px solid rgba(255, 255, 255, 0.72);
   border-radius: var(--radius-sm);
   color: var(--color-text-secondary);
   cursor: pointer;
   transition: all var(--duration-fast) var(--ease-spring);
   overflow: hidden;
   isolation: isolate;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.85),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.08),
+    0 2px 6px rgba(18, 48, 82, 0.06);
 }
 
 .site-nav__icon-btn::before {
@@ -231,17 +398,27 @@ onUnmounted(() => {
   left: 0;
   right: 0;
   height: 50%;
-  background: var(--glass-highlight);
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.75) 0%,
+    rgba(255, 255, 255, 0) 100%
+  );
   border-radius: var(--radius-sm) var(--radius-sm) 0 0;
   pointer-events: none;
-  opacity: 0.3;
+  opacity: 0.5;
 }
 
 .site-nav__icon-btn::after {
   content: '';
   position: absolute;
   inset: 0;
-  background: var(--glass-sheen);
+  background: linear-gradient(
+    115deg,
+    rgba(255, 255, 255, 0) 22%,
+    rgba(255, 255, 255, 0.65) 46%,
+    rgba(255, 255, 255, 0.08) 56%,
+    rgba(255, 255, 255, 0) 72%
+  );
   border-radius: var(--radius-sm);
   opacity: 0;
   transform: translateX(-100%);
@@ -252,7 +429,10 @@ onUnmounted(() => {
 .site-nav__icon-btn:hover {
   color: var(--color-text-primary);
   transform: scale(1.05);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.92),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.1),
+    0 4px 12px rgba(18, 48, 82, 0.1);
 }
 
 .site-nav__icon-btn:hover::after {
@@ -261,7 +441,7 @@ onUnmounted(() => {
 }
 
 .site-nav__icon-btn:active {
-  transform: scale(0.95);
+  transform: scale(0.92);
 }
 
 .site-nav__icon-btn:focus-visible {
@@ -274,7 +454,7 @@ onUnmounted(() => {
   z-index: 1;
 }
 
-/* Avatar Button (also glass) */
+/* Avatar button with liquid glass treatment */
 .site-nav__avatar {
   position: relative;
   display: flex;
@@ -285,12 +465,12 @@ onUnmounted(() => {
   padding: 0;
   background: linear-gradient(
     135deg,
-    rgba(0, 113, 227, 0.9) 0%,
-    rgba(0, 113, 227, 0.75) 100%
+    rgba(0, 113, 227, 0.92) 0%,
+    rgba(0, 113, 227, 0.78) 100%
   );
-  -webkit-backdrop-filter: blur(8px) saturate(180%);
-  backdrop-filter: blur(8px) saturate(180%);
-  border: 1px solid rgba(255, 255, 255, 0.6);
+  -webkit-backdrop-filter: blur(10px) saturate(170%);
+  backdrop-filter: blur(10px) saturate(170%);
+  border: 1px solid rgba(255, 255, 255, 0.72);
   border-radius: 50%;
   color: white;
   font-size: 13px;
@@ -299,6 +479,9 @@ onUnmounted(() => {
   transition: all var(--duration-fast) var(--ease-spring);
   overflow: hidden;
   isolation: isolate;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.45),
+    0 2px 8px rgba(0, 113, 227, 0.2);
 }
 
 .site-nav__avatar::before {
@@ -307,7 +490,7 @@ onUnmounted(() => {
   inset: 0;
   background: radial-gradient(
     circle at 30% 30%,
-    rgba(255, 255, 255, 0.3) 0%,
+    rgba(255, 255, 255, 0.5) 0%,
     transparent 60%
   );
   border-radius: 50%;
@@ -316,11 +499,13 @@ onUnmounted(() => {
 
 .site-nav__avatar:hover {
   transform: scale(1.08);
-  box-shadow: 0 4px 12px rgba(0, 113, 227, 0.3);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.55),
+    0 4px 14px rgba(0, 113, 227, 0.35);
 }
 
 .site-nav__avatar:active {
-  transform: scale(0.95);
+  transform: scale(0.94);
 }
 
 .site-nav__avatar:focus-visible {
@@ -351,6 +536,15 @@ onUnmounted(() => {
   border-radius: 50%;
   box-shadow: var(--glass-shadow);
   cursor: pointer;
+  transition: transform var(--duration-fast) var(--ease-spring);
+}
+
+.site-nav__toggle:hover {
+  transform: scale(1.05);
+}
+
+.site-nav__toggle:active {
+  transform: scale(0.95);
 }
 
 .site-nav__toggle:focus-visible {
@@ -376,18 +570,24 @@ onUnmounted(() => {
   transform: translateY(-7px) rotate(-45deg);
 }
 
+/* Mobile menu with frosted glass */
 .site-nav__mobile {
   position: absolute;
   top: 100%;
   left: 0;
   right: 0;
   padding: var(--space-4) clamp(20px, 4vw, 40px);
-  /* The overlay sits directly on page copy: keep the frost, but raise opacity so text stays legible. */
-  background: #f8fbff;
+  background: linear-gradient(
+    135deg,
+    rgba(248, 251, 255, 0.95) 0%,
+    rgba(245, 248, 252, 0.92) 100%
+  );
   -webkit-backdrop-filter: blur(24px) saturate(180%);
   backdrop-filter: blur(24px) saturate(180%);
   border-bottom: 1px solid var(--glass-border);
-  box-shadow: var(--shadow-lg);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.65),
+    0 8px 24px rgba(18, 48, 82, 0.12);
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
@@ -404,14 +604,20 @@ onUnmounted(() => {
   border: none;
   text-align: left;
   cursor: pointer;
-  transition: background var(--duration-fast) var(--ease-smooth);
+  transition:
+    background var(--duration-fast) var(--ease-smooth),
+    transform var(--duration-fast) var(--ease-spring);
   min-height: 44px;
   display: flex;
   align-items: center;
 }
 
 .site-nav__mobile-link:hover {
-  background: rgba(0, 0, 0, 0.04);
+  background: rgba(0, 113, 227, 0.08);
+}
+
+.site-nav__mobile-link:active {
+  transform: scale(0.98);
 }
 
 .site-nav__mobile-link:focus-visible {
@@ -459,6 +665,18 @@ onUnmounted(() => {
   .site-nav__icon-btn::after,
   .site-nav__avatar::before {
     display: none;
+  }
+
+  .site-nav__indicator {
+    transition: opacity 0.01ms, width 0.01ms, transform 0.01ms;
+  }
+
+  .site-nav__link:active,
+  .site-nav__icon-btn:active,
+  .site-nav__avatar:active,
+  .site-nav__toggle:active,
+  .site-nav__mobile-link:active {
+    transform: none;
   }
 }
 </style>
