@@ -149,7 +149,7 @@ async function filter(query: string) {
   const seq = ++querySeq
   load.value = true
   try {
-    const result = await api.user.read(keyword, 1, departmentOnly.value ? 20 : 5)
+    const result = await api.user.read_v2(1, departmentOnly.value ? 20 : 5, keyword)
     if (seq !== querySeq) {
       return
     }

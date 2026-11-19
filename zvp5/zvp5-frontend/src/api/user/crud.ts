@@ -1,4 +1,3 @@
-import { temporaryToken } from '@/plugins/short-token'
 import type { User, Response } from '@/../types'
 import { ElNotification } from 'element-plus/es/components/notification/index.mjs'
 import axios from '@/plugins/axios.ts'
@@ -6,7 +5,7 @@ import { translateKey } from '@/utils/errorMessage'
 
 async function getUser(id: string, overrideAxios: boolean = true) {
   const result = (
-    await axios(`/users/${id}`, overrideAxios ? { timeout: 24000 } : undefined)
+    await axios(`/v1/users/${id}`, overrideAxios ? { timeout: 24000 } : undefined)
   ).data as Response<User>
   if (result.status === 'error') {
     throw result
@@ -14,70 +13,12 @@ async function getUser(id: string, overrideAxios: boolean = true) {
   return result?.data as User
 }
 
-async function getUsers(id: string = '', page: number = 1, perpage: number = 5) {
-  const result = (
-    await axios(`/users`, {
-      params: {
-        query: id,
-        page,
-        perpage
-      }
-    })
-  ).data as Response<User[]> & {
-    metadata: {
-      size: number
-    }
-  }
-  if (result.status === 'error') {
-    ElNotification({
-      title: translateKey('common.fetchFailed', { code: result.code }),
-      message: result.message,
-      type: 'error'
-    })
-    return
-  }
-  return {
-    users: result.data,
-    size: result.metadata.size
-  }
-}
-
-async function putUser(
-  user: string,
-  target: string,
-  name: string,
-  id: string,
-  group: string[],
-  create: boolean
-) {
-  const token = await temporaryToken(user)
-  const result = (
-    await axios({
-      method: create ? 'post' : 'put',
-      url: create ? '/users' : `/users/${target}`,
-      data: { name, group, id, sex: 'unknown', past: [] },
-      headers: {
-        Authorization: 'Bearer ' + token
-      }
-    })
-  ).data as Response<null>
-  if (result.status === 'error') {
-    ElNotification({
-      title: translateKey('common.userUpdateFailed', { code: result.code }),
-      message: result.message,
-      type: 'error'
-    })
-    return false
-  }
-  return true
-}
-
 export const past = {
   async insert(user: string, past: string) {
     const result = (
       await axios({
         method: 'post',
-        url: `/users/${user}/past`,
+        url: `/v1/users/${user}/past`,
         data: { past }
       })
     ).data as Response<null>
@@ -95,7 +36,7 @@ export const past = {
     const result = (
       await axios({
         method: 'delete',
-        url: `/users/${user}/past/${idx}`
+        url: `/v1/users/${user}/past/${idx}`
       })
     ).data as Response<null>
     if (result.status === 'error') {
@@ -202,4 +143,4 @@ async function createUserV3(
   return { id: result.id, initial_password: result.initial_password ?? '' }
 }
 
-export { getUser as readOne, getUsers as read, putUser as update, getUserV3 as readOne_v3, getUsersV2 as read_v2, putUserRoles as updateRoles, putUserStudentId as updateStudentId, deleteUserV3 as deleteUser, putUserBanned as updateBanned, createUserV3 as create_v3 }
+export { getUser as readOne, getUserV3 as readOne_v3, getUsersV2 as read_v2, putUserRoles as updateRoles, putUserStudentId as updateStudentId, deleteUserV3 as deleteUser, putUserBanned as updateBanned, createUserV3 as create_v3 }

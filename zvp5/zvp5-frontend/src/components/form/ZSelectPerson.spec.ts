@@ -7,7 +7,7 @@ import api from '@/api'
 vi.mock('@/api', () => ({
   default: {
     user: {
-      read: vi.fn(),
+      read_v2: vi.fn(),
       readOne: vi.fn()
     },
     group: {
@@ -23,7 +23,7 @@ vi.mock('vue-i18n', () => ({
   })
 }))
 
-const read = vi.mocked(api.user.read)
+const read = vi.mocked(api.user.read_v2)
 const readOne = vi.mocked(api.user.readOne)
 const readOneGroup = vi.mocked(api.group.readOne)
 
@@ -87,12 +87,12 @@ describe('ZSelectPerson', () => {
     await wrapper.find('input').setValue('张三')
     await waitForFilter()
 
-    expect(read).toHaveBeenCalledWith('张三', 1, 5)
+    expect(read).toHaveBeenCalledWith(1, 5, '张三')
     expect(optionTexts()).toEqual(['张三20210001, 高一 1 班'])
   })
 
   it('选中一人后仍能按新关键词改选', async () => {
-    read.mockImplementation(async (query?: string) =>
+    read.mockImplementation(async (_page?: number, _size?: number, query?: string) =>
       query === '张三'
         ? { users: [makeUser(20210001, '张三', 'u1')], size: 1 }
         : { users: [makeUser(20210002, '李四', 'u2')], size: 1 }
@@ -111,7 +111,7 @@ describe('ZSelectPerson', () => {
     await wrapper.find('input').setValue('李四')
     await waitForFilter()
 
-    expect(read).toHaveBeenLastCalledWith('李四', 1, 5)
+    expect(read).toHaveBeenLastCalledWith(1, 5, '李四')
     expect(optionTexts()).toEqual(['李四20210002, 高一 1 班'])
   })
 
@@ -156,7 +156,7 @@ describe('ZSelectPerson', () => {
   })
 
   it('关键词清空时不发请求，只展示当前已选项', async () => {
-    read.mockImplementation(async (query?: string) =>
+    read.mockImplementation(async (_page?: number, _size?: number, query?: string) =>
       query
         ? { users: [makeUser(20210001, '张三', 'u1')], size: 1 }
         : { users: [], size: 0 }

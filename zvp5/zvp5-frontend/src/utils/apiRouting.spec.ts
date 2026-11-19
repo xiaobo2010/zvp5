@@ -24,7 +24,7 @@ describe('API host routing', () => {
     '/system/ssh/targets',
     '/system/ssh/suggest',
     '/system/db/metrics/host',
-    '/users/auth'
+    '/v1/users/auth'
   ])('keeps database or API endpoint %s on the API host', (path) => {
     expect(usesContentHost(path)).toBe(false)
   })

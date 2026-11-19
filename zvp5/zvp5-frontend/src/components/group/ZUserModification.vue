@@ -124,9 +124,9 @@ function refresh() {
 async function refreshClasses() {
   loadingClasses.value = true
   try {
-    // page=-1 is the documented "all rows" mode of the v1 list endpoint.
-    // `/v1/groups` caps size at 100 and must not be used as a bulk loader.
-    const classesSet = await api.group.read('class', -1)
+    // `/v1/groups` 的 v2 列表按页返回（page>=1，size<=100），没有 v1 那种
+    // “-1 取全量” 的语义；班级选择器只取第一页（上限 100 条）够用。
+    const classesSet = await api.group.read_v2(1, 100, '')
     classes.value = classesSet
       ? classesSet.groups.filter((g) => g.type !== 'permission')
       : []

@@ -205,7 +205,7 @@ it('preserves error rejection for unauthorized responses', async () => {
     const response: AxiosResponse = { data: { detail: 'expired' }, status: 401, statusText: 'Unauthorized', headers: {}, config }
     throw new AxiosError('expired', 'ERR_BAD_REQUEST', config, undefined, response)
   }
-  await expect(client.get('/users/me')).rejects.toThrow('expired')
+  await expect(client.get('/v1/users/me')).rejects.toThrow('expired')
 })
 
 // --- 非 blob 的 JSON 错误体:既有行为不得回归 ---------------------------------
@@ -309,7 +309,7 @@ it.each(deviceDetailCodes)('keeps a structured %s 403 silent and still rejects',
   client.defaults.adapter = failingAdapter(403, {
     detail: { code, message: '人话提示', challenge: 'ch-1' }
   })
-  const error = await client.post('/users/auth', {}).catch((e) => e)
+  const error = await client.post('/v1/users/auth', {}).catch((e) => e)
   expect(error).toBeInstanceOf(AxiosError)
   expect(error.response?.status).toBe(403)
   expect(elMessageMock).not.toHaveBeenCalled()
@@ -317,7 +317,7 @@ it.each(deviceDetailCodes)('keeps a structured %s 403 silent and still rejects',
 
 it('still toasts a string-detail 403 (unchanged behavior)', async () => {
   client.defaults.adapter = failingAdapter(403, { detail: 'WRONG_PASSWORD' })
-  await client.post('/users/auth', {}).catch((e) => e)
+  await client.post('/v1/users/auth', {}).catch((e) => e)
   expect(shownMessages()).toEqual(['WRONG_PASSWORD'])
 })
 
@@ -325,7 +325,7 @@ it('still toasts a string-detail 403 (unchanged behavior)', async () => {
 it('suppresses the generic toast when the caller marked the request', async () => {
   client.defaults.adapter = failingAdapter(403, { detail: '用户名或密码错误' })
   const error = await client
-    .post('/users/auth', {}, { suppressErrorToast: true })
+    .post('/v1/users/auth', {}, { suppressErrorToast: true })
     .catch((e) => e)
   expect(error).toBeInstanceOf(AxiosError)
   expect(error.response?.status).toBe(403)
@@ -347,7 +347,7 @@ it('aborts in-flight AI runs when a 403 USER_BANNED lands', async () => {
 
 it('does not touch AI runs for an ordinary 403', async () => {
   client.defaults.adapter = failingAdapter(403, { detail: 'WRONG_PASSWORD' })
-  await client.post('/users/auth', {}).catch((e) => e)
+  await client.post('/v1/users/auth', {}).catch((e) => e)
   expect(abortAllAiRunsMock).not.toHaveBeenCalled()
 })
 

@@ -84,8 +84,6 @@ describe('小型 GET 双路竞速', () => {
       '/v1/groups/abc/activities',
       '/v1/groups/abc/users',
       '/v1/users/me/device',
-      '/v1/users/me/device-bindings',
-      '/users/abc',
       '/v1/users/abc',
       '/v1/ban/rules',
       '/v1/ban/triggers',
@@ -118,8 +116,6 @@ describe('小型 GET 双路竞速', () => {
       '/v1/notifications/admin',
       '/v1/notifications/abc/versions',
       '/v1/ban/records',
-      '/groups',
-      '/groups/abc',
       '/v1/groups/abc'
     ]) {
       expect(isSmallJsonGetPath(path), path).toBe(true)

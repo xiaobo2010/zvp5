@@ -29,7 +29,7 @@ export function prefetchLoginHome(router: Router): void {
 
   const groups = useGroupsStore()
   const tasks: Array<Promise<unknown>> = user.groups.map((group) => groups.fetchGroup(group))
-  // 时长接口按 OID 读；老数据只有数字 id 时不要拼出 /users//time。
+  // 时长接口按 OID 读；老数据只有数字 id 时不要拼出 /v1/users//time。
   if (user._id) {
     tasks.unshift(user.getUserActivityTime())
   }

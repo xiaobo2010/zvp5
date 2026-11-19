@@ -1,7 +1,7 @@
 /**
  * 封禁响应头解析(公共工具)。
  *
- * 为什么单独抽出来:后端 `POST /api/users/auth` 被拒时用 403 + `detail: USER_BANNED`
+ * 为什么单独抽出来:后端 `POST /api/v1/users/auth` 被拒时用 403 + `detail: USER_BANNED`
  * 表达封禁,具体原因/期限放在 `X-Ban-Reason`(URL 编码,可能含中文)与
  * `X-Ban-Until`(到期 epoch 秒,空串=永久)里。axios 拦截器与登录页都要读这两条头,
  * 各写一份容易漂移,所以统一收口在这里。
