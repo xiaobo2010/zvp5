@@ -101,10 +101,9 @@ DEFAULTS: dict[str, dict[str, Any]] = {
         "features": {
             key: key not in ADMIN_ONLY_FEATURE_KEYS for key in FEATURE_KEYS
         },
-        # af 取改造前 ``chat`` 的口径：OCR 现在也吃这个池子，原 ``ocr: 100``
-        # 的独立额度已无处可加（合并后按 AF 折算：1 次 OCR = 100 AF，
-        # 1 AF = 1k token 基准对话成本）。
-        "quotas": {"af": 200_000, "schedule": 1},
+        # af 按 OCR 等效口径折算：1 次 OCR = 100 AF（AI_OCR_AF_COST），
+        # 学生会每人每月等效 100 次识别 = 10_000 AF；对话吃同一池子。
+        "quotas": {"af": 10_000, "schedule": 1},
     },
     "secretary": {
         "features": {

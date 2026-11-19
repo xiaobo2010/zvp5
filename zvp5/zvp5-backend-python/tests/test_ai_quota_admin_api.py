@@ -342,7 +342,9 @@ def test_site_level_quota_does_not_leak_into_the_user_view(api) -> None:
 
     # 管理端的用户视图只有用户级那一条：站点额度不是「这个人的额度」。
     assert set(data) == {"af"}
-    assert data["af"]["limit"] == DEFAULT_QUOTA["af"]
+    # 目标用户是 department：limit 走角色默认（等效每月 100 次 OCR），
+    # 而不是无角色用户的 AI_DEFAULT_AF_MONTHLY_UNITS。
+    assert data["af"]["limit"] == 10_000
 
 
 def test_admin_can_reset_site_level_used(api) -> None:

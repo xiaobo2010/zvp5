@@ -45,7 +45,7 @@ AI_RATE_LIMIT_WINDOW_SECONDS = 60
 # AI_DEFAULT_AF_MONTHLY_UNITS。个人 key 不占额度。
 AI_ROLE_QUOTA = {
     "admin": {"af": 1000000},
-    "department": {"af": 200000},
+    "department": {"af": 10000},
 }
 # AI 调用日志保留天数（tasks/retention.py 读取，缺省 90）。
 AI_CALL_LOGS_RETENTION_DAYS = 90

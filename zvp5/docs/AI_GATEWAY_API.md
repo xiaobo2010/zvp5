@@ -326,7 +326,7 @@ Content-Type: application/json
 
 | 口径 | kind | 归属 | 默认上限 |
 |---|---|---|---|
-| 用户额度 | `ocr` / `chat` | 每个 `user_oid` | `config.AI_DEFAULT_OCR_MONTHLY_UNITS=100`、`AI_DEFAULT_CHAT_MONTHLY_UNITS=200000`；角色覆盖 `AI_ROLE_QUOTA`（admin 500/1,000,000，department 100/200,000） |
+| 用户额度 | `af`（OCR 与对话共用，1 次 OCR = 100 AF） | 每个 `user_oid` | `AI_DEFAULT_AF_MONTHLY_UNITS=200000`；角色覆盖 `AI_ROLE_QUOTA`（admin 1,000,000，department 10,000 ≈ 每月 100 次 OCR） |
 | 站点额度 | `ocr_<engine_kind>` | `SHARED_OWNER_OID` | `settings.AI_SITE_QUOTA[kind]` → `settings.AI_DEFAULT_SITE_OCR_MONTHLY_UNITS` → **1000** |
 
 站点额度**不会**回落到用户默认的 100——那个数字是单人免费额度，站点额度是平台垫付总量，差一个数量级。
