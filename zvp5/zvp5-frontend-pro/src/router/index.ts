@@ -9,6 +9,16 @@ const router = createRouter({
       component: () => import('@/views/HomeView.vue')
     },
     {
+      path: '/me',
+      name: 'profile',
+      component: () => import('@/views/ProfileView.vue')
+    },
+    {
+      path: '/volunteers',
+      name: 'volunteers',
+      component: () => import('@/views/VolunteerListView.vue')
+    },
+    {
       path: '/:pathMatch(.*)*',
       redirect: '/'
     }

@@ -1,15 +1,18 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
+import { useRouter, useRoute } from 'vue-router'
+
+const router = useRouter()
+const route = useRoute()
 
 const links = [
-  { label: '首页', href: '#home' },
-  { label: '活动', href: '#activities' },
-  { label: '时长', href: '#hours' },
-  { label: '组织', href: '#profile' }
+  { label: '首页', path: '/' },
+  { label: '义工列表', path: '/volunteers' },
+  { label: '个人主页', path: '/me' }
 ]
 
 const mobileMenuOpen = ref(false)
-const activeHref = ref('#home')
+const activePath = computed(() => route.path)
 
 // Spring indicator state
 const linksRef = ref<HTMLElement>()
@@ -38,8 +41,8 @@ function playIndicator(from: number, target: number, width: number) {
   indicatorAnimation?.cancel()
   indicatorAnimation = pill.animate(
     [
-      { transform: `translateX(${from}px)`, width: `${width}px` },
-      { transform: `translateX(${target}px)` }
+      { transform: `translateX(${from}px) translateY(-50%)`, width: `${width}px` },
+      { transform: `translateX(${target}px) translateY(-50%)` }
     ],
     {
       duration: SPRING_MS,
@@ -71,7 +74,7 @@ function updateIndicator(animate = true) {
   const from = renderedTranslateX(pill)
   const size = indicator.value.w
   indicator.value = { x: target, w: active.offsetWidth, visible: true }
-  pill.style.transform = `translateX(${target}px)`
+  pill.style.transform = `translateX(${target}px) translateY(-50%)`
 
   if (Math.abs(from - target) < 0.5) return
   playIndicator(from, target, size)
@@ -98,19 +101,20 @@ function pulseIcon(event: MouseEvent) {
   )
 }
 
-function handleNavClick(href: string, event: MouseEvent, index: number) {
+function handleNavClick(path: string, event: MouseEvent, index: number) {
+  event.preventDefault()
   pulseIcon(event)
   const root = linksRef.value
   if (root) {
     previewIndicator(index)
   }
-  activeHref.value = href
+  router.push(path)
 }
 
 const indicatorStyle = computed(() => ({
   width: indicator.value.w + 'px',
   opacity: indicator.value.visible ? 1 : 0,
-  transform: `translateX(${indicator.value.x}px)`
+  transform: `translateX(${indicator.value.x}px) translateY(-50%)`
 }))
 
 function toggleMobileMenu() {
@@ -144,30 +148,30 @@ onUnmounted(() => {
   indicatorAnimation = null
 })
 
-watch(activeHref, () => updateIndicator(true))
+watch(activePath, () => updateIndicator(true))
 </script>
 
 <template>
   <header class="site-nav">
     <div class="site-nav__inner">
-      <a class="site-nav__brand" href="#home" aria-label="ZVMS 首页">
+      <router-link class="site-nav__brand" to="/" aria-label="ZVMS 首页">
         <span class="site-nav__wordmark">ZVMS</span>
-      </a>
+      </router-link>
 
       <!-- Desktop navigation with liquid glass indicator -->
       <nav ref="linksRef" class="site-nav__links" aria-label="主导航">
         <span ref="indicatorRef" class="site-nav__indicator" :style="indicatorStyle" aria-hidden="true" />
-        <a
+        <router-link
           v-for="(link, index) in links"
           :key="link.label"
-          :href="link.href"
+          :to="link.path"
           class="site-nav__link"
-          :class="{ 'is-active': link.href === activeHref }"
-          :aria-current="link.href === activeHref ? 'page' : undefined"
-          @click="handleNavClick(link.href, $event, index)"
+          :class="{ 'is-active': link.path === activePath }"
+          :aria-current="link.path === activePath ? 'page' : undefined"
+          @click="handleNavClick(link.path, $event, index)"
         >
           {{ link.label }}
-        </a>
+        </router-link>
       </nav>
 
       <!-- Right controls -->
@@ -210,15 +214,15 @@ watch(activeHref, () => updateIndicator(true))
         class="site-nav__mobile"
         aria-label="移动导航"
       >
-        <a
+        <router-link
           v-for="link in links"
           :key="link.label"
-          :href="link.href"
+          :to="link.path"
           class="site-nav__mobile-link"
           @click="closeMobileMenu"
         >
           {{ link.label }}
-        </a>
+        </router-link>
         <div class="site-nav__mobile-divider" />
         <button class="site-nav__mobile-link" @click="closeMobileMenu">
           搜索
@@ -286,6 +290,7 @@ watch(activeHref, () => updateIndicator(true))
 .site-nav__links {
   position: relative;
   display: none;
+  align-items: center;
   gap: 2px;
   margin-left: var(--space-4);
   padding: 4px;
@@ -299,14 +304,15 @@ watch(activeHref, () => updateIndicator(true))
   border: 1px solid rgba(255, 255, 255, 0.68);
   border-radius: var(--radius-pill);
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.75),
-    0 2px 12px rgba(18, 48, 82, 0.08);
+    inset 0 0.5px 0 rgba(255, 255, 255, 0.75),
+    0 0 14px rgba(18, 48, 82, 0.08);
 }
 
 .site-nav__indicator {
   position: absolute;
   left: 4px;
-  top: 4px;
+  top: 50%;
+  transform: translateY(-50%);
   height: calc(100% - 8px);
   border-radius: var(--radius-pill);
   background: linear-gradient(
@@ -315,8 +321,8 @@ watch(activeHref, () => updateIndicator(true))
     rgba(0, 113, 227, 0.08) 100%
   );
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.55),
-    0 2px 8px rgba(14, 165, 233, 0.25);
+    inset 0 0.5px 0 rgba(255, 255, 255, 0.55),
+    0 0 10px rgba(14, 165, 233, 0.25);
   pointer-events: none;
   transition: opacity 0.2s ease-out;
 }
@@ -346,7 +352,8 @@ watch(activeHref, () => updateIndicator(true))
   transform: scale(0.94);
 }
 
-.site-nav__link.is-active {
+.site-nav__link.is-active,
+.site-nav__link.router-link-active {
   color: var(--color-brand);
 }
 
@@ -386,26 +393,22 @@ watch(activeHref, () => updateIndicator(true))
   overflow: hidden;
   isolation: isolate;
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.85),
-    inset 0 -1px 0 rgba(0, 0, 0, 0.08),
-    0 2px 6px rgba(18, 48, 82, 0.06);
+    inset 0 0.5px 0 rgba(255, 255, 255, 0.85),
+    inset 0 -0.5px 0 rgba(0, 0, 0, 0.08),
+    0 0 8px rgba(18, 48, 82, 0.06);
 }
 
 .site-nav__icon-btn::before {
   content: '';
   position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 50%;
-  background: linear-gradient(
-    180deg,
-    rgba(255, 255, 255, 0.75) 0%,
-    rgba(255, 255, 255, 0) 100%
+  inset: 0;
+  background: radial-gradient(
+    circle at 50% 40%,
+    rgba(255, 255, 255, 0.35) 0%,
+    transparent 70%
   );
-  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  border-radius: var(--radius-sm);
   pointer-events: none;
-  opacity: 0.5;
 }
 
 .site-nav__icon-btn::after {
@@ -430,9 +433,9 @@ watch(activeHref, () => updateIndicator(true))
   color: var(--color-text-primary);
   transform: scale(1.05);
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.92),
-    inset 0 -1px 0 rgba(0, 0, 0, 0.1),
-    0 4px 12px rgba(18, 48, 82, 0.1);
+    inset 0 0.5px 0 rgba(255, 255, 255, 0.92),
+    inset 0 -0.5px 0 rgba(0, 0, 0, 0.1),
+    0 0 14px rgba(18, 48, 82, 0.1);
 }
 
 .site-nav__icon-btn:hover::after {
@@ -480,8 +483,8 @@ watch(activeHref, () => updateIndicator(true))
   overflow: hidden;
   isolation: isolate;
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.45),
-    0 2px 8px rgba(0, 113, 227, 0.2);
+    inset 0 0.5px 0 rgba(255, 255, 255, 0.45),
+    0 0 10px rgba(0, 113, 227, 0.2);
 }
 
 .site-nav__avatar::before {
@@ -489,9 +492,9 @@ watch(activeHref, () => updateIndicator(true))
   position: absolute;
   inset: 0;
   background: radial-gradient(
-    circle at 30% 30%,
-    rgba(255, 255, 255, 0.5) 0%,
-    transparent 60%
+    circle at 50% 35%,
+    rgba(255, 255, 255, 0.4) 0%,
+    transparent 65%
   );
   border-radius: 50%;
   pointer-events: none;
@@ -500,8 +503,8 @@ watch(activeHref, () => updateIndicator(true))
 .site-nav__avatar:hover {
   transform: scale(1.08);
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.55),
-    0 4px 14px rgba(0, 113, 227, 0.35);
+    inset 0 0.5px 0 rgba(255, 255, 255, 0.55),
+    0 0 16px rgba(0, 113, 227, 0.35);
 }
 
 .site-nav__avatar:active {
@@ -534,7 +537,10 @@ watch(activeHref, () => updateIndicator(true))
   backdrop-filter: var(--glass-blur);
   border: 1px solid var(--glass-border);
   border-radius: 50%;
-  box-shadow: var(--glass-shadow);
+  box-shadow:
+    inset 0 0.5px 0 rgba(255, 255, 255, 0.78),
+    inset 0 -0.5px 0 rgba(0, 0, 0, 0.06),
+    0 0 12px rgba(18, 48, 82, 0.1);
   cursor: pointer;
   transition: transform var(--duration-fast) var(--ease-spring);
 }
@@ -579,8 +585,8 @@ watch(activeHref, () => updateIndicator(true))
   padding: var(--space-4) clamp(20px, 4vw, 40px);
   background: linear-gradient(
     135deg,
-    rgba(248, 251, 255, 0.95) 0%,
-    rgba(245, 248, 252, 0.92) 100%
+    rgba(248, 251, 255, 0.82) 0%,
+    rgba(245, 248, 252, 0.7) 100%
   );
   -webkit-backdrop-filter: blur(24px) saturate(180%);
   backdrop-filter: blur(24px) saturate(180%);
@@ -598,14 +604,22 @@ watch(activeHref, () => updateIndicator(true))
   color: var(--color-text-primary);
   text-decoration: none;
   font-size: var(--font-size-body);
-  font-weight: 400;
+  font-weight: 500;
   border-radius: var(--radius-md);
-  background: transparent;
-  border: none;
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.42) 0%,
+    rgba(255, 255, 255, 0.22) 100%
+  );
+  -webkit-backdrop-filter: blur(10px) saturate(160%);
+  backdrop-filter: blur(10px) saturate(160%);
+  border: 1px solid rgba(255, 255, 255, 0.58);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.72);
   text-align: left;
   cursor: pointer;
   transition:
     background var(--duration-fast) var(--ease-smooth),
+    border-color var(--duration-fast) var(--ease-smooth),
     transform var(--duration-fast) var(--ease-spring);
   min-height: 44px;
   display: flex;
@@ -613,7 +627,12 @@ watch(activeHref, () => updateIndicator(true))
 }
 
 .site-nav__mobile-link:hover {
-  background: rgba(0, 113, 227, 0.08);
+  background: linear-gradient(
+    135deg,
+    rgba(0, 113, 227, 0.12) 0%,
+    rgba(255, 255, 255, 0.24) 100%
+  );
+  border-color: rgba(255, 255, 255, 0.72);
 }
 
 .site-nav__mobile-link:active {
