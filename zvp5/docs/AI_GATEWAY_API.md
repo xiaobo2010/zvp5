@@ -968,26 +968,30 @@ client = OpenAI(
 参数哈希（`ARGS_HASH` 覆盖 `ARGS_PAYLOAD`）→ 现查库权限（`guard`）→ 双人码 →
 CAS `proposed → executing → confirmed|failed`。
 
-- 运维写工具（`fs_*` / `db_*` / `ssh_exec`）的 `dual_auth_action="agent_write"`，必须由
+- **系统级写工具**（`fs_*` / `db_*` / `ssh_exec` / `script_run` / `backup_run` /
+  `maintenance_mode` / `scheduler_control`）的 `dual_auth_action="agent_write"`，必须由
   **另一位管理员**提供 6 位动态码；缺码 `422 AI_AGENT_TOTP_REQUIRED`，码错 `403`，
   已被使用 `409`，失败超限 `429`。
 - **30 分钟授权缓存**：同一 operator + 同一 action 首次验码成功后，窗口内
   （`DUAL_AUTH_CACHE_TTL_SECONDS`，默认 1800，`0` = 关闭）确认**不必再输码**；
   响应与 `GET /proposals` 每个条目都带 `dual_auth_cached`。命中缓存仍写一条
   `system_dual_auth` 审计并标 `cached=true`。换人或换 action 不继承。
-- 活动域两条写工具（`update_member_duration` / `set_member_status`）保持无 TOTP，
-  行为不变。
+- **业务写入无 TOTP**：活动域两条写工具（`update_member_duration` / `set_member_status`）
+  与平台治理四条写工具（`notify_send` / `ai_quota_set` / `ai_api_key_revoke` /
+  `attachment_gc_run`）只建提案，操作者本人确认即执行；执行前仍走 `guard`
+  现查库（`per=admin` + 未封禁 + 权限重算），审计照旧。
 
-### 14.3 工具集（封闭白名单，37 个）
+### 14.3 工具集（封闭白名单，57 个，`platform_help` 未列入下表）
 
-| 域 | 读（自动执行） | 写（提案 + TOTP） |
+| 域 | 读（自动执行） | 写（提案；系统级另需 TOTP） |
 |---|---|---|
 | 活动 | `search_activities` `list_activities` `get_activity` `activity_statistics` `list_activity_members` `user_volunteer_time` `user_activities` `list_groups` | `update_member_duration` `set_member_status` |
 | 文件 | `fs_list` `fs_stat` `fs_read` | `fs_write` `fs_mkdir` `fs_rename` `fs_delete` `fs_chmod` |
 | 数据库 | `db_schema` `db_columns` `db_rows` `db_query` | `db_insert` `db_update` `db_delete` `db_ddl` |
 | SSH | — | `ssh_exec`（固定目标 `root@127.0.0.1:22`，一次 `exec`，输出 8KB 截断） |
+| 脚本 | `script_catalog` | `script_run`（白名单脚本，参数结构化传入，不拼 shell） |
 | 平台读 | `platform_logs` `db_diagnostics` `backup_status` `scheduler_status` `device_ban_list` `user_lookup` `ban_history` `settings_snapshot` `scheduler_jobs` `ai_call_logs` `agent_queue_status` `server_time` `ai_gateway_status` `ai_prompt_audit_list` `attachment_stats` `attachment_gc_preview` `volunteer_audit` | — |
-| 平台写 | — | `user_ban` `user_unban` `device_unban`（`direct`，可逆且目标不得为管理员）；`notify_send` `maintenance_mode` `scheduler_control` `backup_run` `ai_api_key_revoke` `ai_quota_set` `attachment_gc_run` 走提案 |
+| 平台写 | — | `user_ban` `user_unban` `device_unban`（`direct`，可逆且目标不得为管理员）；`notify_send` `maintenance_mode` `scheduler_control` `backup_run` `ai_api_key_revoke` `ai_quota_set` `attachment_gc_run` 走提案（其中 `maintenance_mode` / `scheduler_control` / `backup_run` 属系统级，确认要 TOTP；`notify_send` / `ai_api_key_revoke` / `ai_quota_set` / `attachment_gc_run` 只需本人确认） |
 
 `ban_history` 是本轮新增的只读工具：按 `user_oid` 或 `business_id` 返回封禁流水（最近 ≤20 条）、按 `rule_code` 的历史档位与最近时间、最近 30 天违规批次、启用规则的 `penalties` 梯度、绑定设备的封禁计数（学海 ID 打码）。它的 `note` 字段说明「`tiers.count + 1` 档即本次应执行档位，超出数组按最后一档」，让模型解释处罚时不需要自己猜梯度。
 

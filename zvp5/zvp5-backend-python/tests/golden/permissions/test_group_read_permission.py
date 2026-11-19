@@ -123,7 +123,7 @@ async def test_student_may_not_read_a_permission_group_even_when_opted_in(groups
 
 @pytest.mark.asyncio
 async def test_student_is_still_rejected_without_the_opt_in(groups) -> None:
-    # Pins the four list endpoints in groups_v2_router: they call without
+    # Pins the four list endpoints in groups_router: they call without
     # allow_class, so a plain student must keep getting 403 there.
     exception = await _forbidden(_student(), CLASS_OID, allow_class=False)
     assert not isinstance(exception, InvalidOid)

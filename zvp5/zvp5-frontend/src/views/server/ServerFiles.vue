@@ -22,6 +22,7 @@ import ZSystemAuthDialog from '@/components/system/ZSystemAuthDialog.vue'
 import ZPagination from '@/components/utils/ZPagination.vue'
 import { resolveErrorMessage } from '@/utils/errorMessage'
 import ZFilePreview from '@/components/server/ZFilePreview.vue'
+import ZHexUnit from './components/ZHexUnit.vue'
 import {
   Refresh,
   FolderAdd,
@@ -59,6 +60,12 @@ const total = ref(0)
 const page = ref(1)
 const pageSize = ref(DEFAULT_PAGE_SIZE)
 const loading = ref(false)
+// 目录读取的请求序号：只有最后一次请求的结果才允许落到页面上，
+// 慢的旧响应晚回来时直接丢弃（快速切换目录时最容易触发）。
+let loadSeq = 0
+// 写操作（新建 / 上传 / 改名 / 改权限 / 删除）在飞时锁住入口：
+// 授权框与接口往返期间按钮仍可点会重复提交，也容易让用户以为没生效。
+const busy = ref(false)
 
 const authRef = ref<InstanceType<typeof ZSystemAuthDialog>>()
 
@@ -110,15 +117,20 @@ function typeLabel(entry: FileEntry): string {
 
 async function load() {
   loading.value = true
+  // 请求序号:慢的旧响应晚回来时不能覆盖新目录的内容
+  // （连点面包屑 / 快速切换目录时最容易触发）。
+  const seq = ++loadSeq
   try {
     const offset = (page.value - 1) * pageSize.value
     const res = await listFiles(currentPath.value, offset, pageSize.value)
+    if (seq !== loadSeq) return
     const data = res.data?.data
     currentPath.value = data.path
     pathInput.value = data.path
     entries.value = data.entries
     total.value = data.total
   } catch (error) {
+    if (seq !== loadSeq) return
     entries.value = []
     total.value = 0
     // 列表失败不等于动态码错：走统一解析，取不到 detail 时回落到「目录读取失败」
@@ -129,7 +141,9 @@ async function load() {
       plain: true
     })
   } finally {
-    loading.value = false
+    if (seq === loadSeq) {
+      loading.value = false
+    }
   }
 }
 
@@ -239,6 +253,7 @@ async function openAuth(scene: string): Promise<string | null> {
 }
 
 async function doMkdir() {
+  if (busy.value) return
   let name: string
   try {
     const result = await ElMessageBox.prompt(t('server.files.mkdirNamePrompt'), t('server.files.mkdirPromptTitle'), {
@@ -252,6 +267,7 @@ async function doMkdir() {
   const target = entryPath(name)
   const code = await openAuth(t('server.files.authSceneMkdir', { path: target }))
   if (!code) return
+  busy.value = true
   try {
     await makeDir(target, code)
     authRef.value?.succeed()
@@ -259,6 +275,8 @@ async function doMkdir() {
     await load()
   } catch (error) {
     authRef.value?.fail(resolveErrorMessage(error, 'server.auth.failed'))
+  } finally {
+    busy.value = false
   }
 }
 
@@ -275,10 +293,12 @@ function pickUploadFile() {
 }
 
 async function onUpload(file: File) {
+  if (busy.value) return
   const code = await openAuth(
     t('server.files.authSceneUpload', { name: file.name, path: currentPath.value })
   )
   if (!code) return
+  busy.value = true
   try {
     await uploadFile(currentPath.value, file, code, false)
     authRef.value?.succeed()
@@ -312,10 +332,13 @@ async function onUpload(file: File) {
     } catch (retryError) {
       authRef.value?.fail(resolveErrorMessage(retryError, 'server.auth.failed'))
     }
+  } finally {
+    busy.value = false
   }
 }
 
 async function doRename(entry: FileEntry) {
+  if (busy.value) return
   let newName: string
   try {
     const result = await ElMessageBox.prompt(t('server.files.renamePromptHint'), t('server.files.renamePromptTitle'), {
@@ -332,6 +355,7 @@ async function doRename(entry: FileEntry) {
   const to = entryPath(newName)
   const code = await openAuth(t('server.files.authSceneRename', { from, to }))
   if (!code) return
+  busy.value = true
   try {
     await renamePath(from, to, code)
     authRef.value?.succeed()
@@ -339,12 +363,16 @@ async function doRename(entry: FileEntry) {
     await load()
   } catch (error) {
     authRef.value?.fail(resolveErrorMessage(error, 'server.auth.failed'))
+  } finally {
+    busy.value = false
   }
 }
 
 // 删除不再走双人授权:二次确认(防误删)保留,审批改为后端审计留痕。
 async function doDelete(entry: FileEntry, recursive: boolean) {
+  if (busy.value && !recursive) return
   const path = entryPath(entry.name)
+  busy.value = true
   try {
     await deleteEntry(path, recursive)
     ElMessage.success(t('server.files.deleteDone'))
@@ -360,10 +388,13 @@ async function doDelete(entry: FileEntry, recursive: boolean) {
       } catch {
         return
       }
+      busy.value = false
       await doDelete(entry, true)
       return
     }
     ElMessage.error(resolveErrorMessage(error, 'server.files.deleteFailed'))
+  } finally {
+    busy.value = false
   }
 }
 
@@ -376,6 +407,7 @@ function onDeleteClick(entry: FileEntry) {
 }
 
 async function doChmod(entry: FileEntry) {
+  if (busy.value) return
   let modeText: string
   try {
     const result = await ElMessageBox.prompt(t('server.files.chmodModeHint'), t('server.files.chmodPromptTitle'), {
@@ -394,6 +426,7 @@ async function doChmod(entry: FileEntry) {
     t('server.files.authSceneChmod', { path, mode: fmtMode(mode) })
   )
   if (!code) return
+  busy.value = true
   try {
     await chmodEntry(path, mode, code)
     authRef.value?.succeed()
@@ -401,6 +434,8 @@ async function doChmod(entry: FileEntry) {
     await load()
   } catch (error) {
     authRef.value?.fail(resolveErrorMessage(error, 'server.auth.failed'))
+  } finally {
+    busy.value = false
   }
 }
 
@@ -432,18 +467,34 @@ void load()
 </script>
 
 <template>
-  <div class="files-page flex flex-col gap-4 pb-2">
+  <div class="files-page phi-srv-page">
+    <!-- 状态条:当前目录条目数是本页最要紧的读数 -->
+    <div class="phi-srv-strip">
+      <ZHexUnit
+        :label="t('server.files.unitLabel')"
+        :value="total"
+        size="lg"
+        :hint="t('server.files.unitEntries', { count: total })"
+      />
+      <div class="phi-srv-strip__cell">
+        <div class="phi-srv-unit__body">
+          <span class="phi-srv-unit__label">{{ t('server.files.unitPath') }}</span>
+          <span class="phi-srv-unit__hint phi-srv-unit__hint--muted font-mono">{{
+            currentPath
+          }}</span>
+        </div>
+      </div>
+    </div>
+
     <div class="files-layout">
       <!-- 左:快捷目录 -->
       <ElCard class="quick-card w-64 shrink-0" body-class="quick-body">
-        <span class="quick-card__title yg-text-xs yg-text-tertiary mb-2 block">{{
+        <span class="quick-card__title phi-srv-subtitle mb-2 block">{{
           t('server.files.quickDirs')
         }}</span>
         <!-- 竖屏:256px 竖排菜单会把表格挤没,改成横向可滚动的胶囊行 -->
         <div v-if="isPortrait" class="quick-chips">
-          <span class="quick-chips__label yg-text-xs yg-text-tertiary">{{
-            t('server.files.quickDirs')
-          }}</span>
+          <span class="quick-chips__label phi-srv-subtitle">{{ t('server.files.quickDirs') }}</span>
           <button
             v-for="dir in QUICK_DIRS"
             :key="dir"
@@ -480,14 +531,23 @@ void load()
               :prefix-icon="Location"
               @keyup.enter="jumpPath"
             />
-            <ElButton type="primary" plain :icon="Refresh" @click="load">
+            <ElButton
+              type="primary"
+              plain
+              :icon="Refresh"
+              :loading="loading"
+              :disabled="loading"
+              @click="load"
+            >
               {{ t('server.files.refresh') }}
             </ElButton>
-            <ElButton :icon="FolderAdd" @click="doMkdir">{{ t('server.files.mkdir') }}</ElButton>
-            <ElButton :icon="Upload" @click="pickUploadFile">{{ t('server.files.upload') }}</ElButton>
-            <span class="files-toolbar__hint yg-text-xs yg-text-tertiary">{{
-              t('server.files.uploadLimit')
-            }}</span>
+            <ElButton :icon="FolderAdd" :disabled="busy" @click="doMkdir">
+              {{ t('server.files.mkdir') }}
+            </ElButton>
+            <ElButton :icon="Upload" :disabled="busy" @click="pickUploadFile">
+              {{ t('server.files.upload') }}
+            </ElButton>
+            <span class="files-toolbar__hint phi-srv-dim">{{ t('server.files.uploadLimit') }}</span>
           </div>
         </ElCard>
 
@@ -504,7 +564,9 @@ void load()
                 {{ crumb.name }}
               </ElBreadcrumbItem>
             </ElBreadcrumb>
-            <span class="yg-text-xs yg-text-tertiary tabular-nums">{{ t('server.files.totalEntries', { count: total }) }}</span>
+            <span class="phi-srv-subtitle tabular-nums">{{
+              t('server.files.totalEntries', { count: total })
+            }}</span>
           </div>
 
           <!-- 加载遮罩只包住表格内容:宿主是一个只装表格的独立盒子,
@@ -590,14 +652,29 @@ void load()
                       bg
                       size="small"
                       :icon="Download"
+                      :disabled="busy"
                       @click="doDownload(row as FileEntry)"
                     >
                       {{ t('server.files.download') }}
                     </ElButton>
-                    <ElButton text bg size="small" :icon="EditPen" @click="doRename(row as FileEntry)">
+                    <ElButton
+                      text
+                      bg
+                      size="small"
+                      :icon="EditPen"
+                      :disabled="busy"
+                      @click="doRename(row as FileEntry)"
+                    >
                       {{ t('server.files.rename') }}
                     </ElButton>
-                    <ElButton text bg size="small" :icon="Key" @click="doChmod(row as FileEntry)">
+                    <ElButton
+                      text
+                      bg
+                      size="small"
+                      :icon="Key"
+                      :disabled="busy"
+                      @click="doChmod(row as FileEntry)"
+                    >
                       {{ t('server.files.chmod') }}
                     </ElButton>
                     <ElButton
@@ -606,6 +683,7 @@ void load()
                       size="small"
                       type="danger"
                       :icon="Delete"
+                      :disabled="busy"
                       @click="onDeleteClick(row as FileEntry)"
                     >
                       {{ t('server.files.delete') }}
@@ -618,6 +696,7 @@ void load()
                       class="act-btn"
                       circle
                       :icon="Download"
+                      :disabled="busy"
                       :aria-label="t('server.files.download')"
                       :title="t('server.files.download')"
                       @click="doDownload(row as FileEntry)"
@@ -627,6 +706,7 @@ void load()
                         class="act-btn"
                         circle
                         :icon="MoreFilled"
+                        :disabled="busy"
                         :aria-label="t('server.files.colActions')"
                         :title="t('server.files.colActions')"
                       />
@@ -688,15 +768,16 @@ void load()
   min-height: 0;
 }
 
-/* 横屏沿用既有高度算法,桌面观感不变 */
+/* 横屏沿用既有高度算法,桌面观感不变。
+   顶部新增了状态条（六边形徽章约 86px + 上下留白 + 间距），
+   扣减量相应加大，否则表格区会顶出视口。 */
 .files-layout {
   display: flex;
   align-items: stretch;
   gap: var(--yg-space-4);
-  height: calc(100vh - 300px);
+  height: calc(100vh - 430px);
   min-height: 480px;
 }
-
 .files-main {
   display: flex;
   flex-direction: column;

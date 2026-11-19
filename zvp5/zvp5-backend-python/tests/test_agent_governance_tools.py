@@ -3,7 +3,8 @@
 离线：没有数据库、没有上游。仓储与旁路（审计、`run_query`）全部换成替身，
 验的是**工具层自己负责的那部分**：
 
-* 注册表（5 读 + 4 写）与「写工具三件套」（impl + prepare + dual_auth_action）；
+* 注册表（5 读 + 4 写）与「写工具三件套」（impl + prepare + guard），
+  治理写入**不要求**双人动态码；
 * 读工具现查权限（``guard``），且从不声明 ``prepare`` / 双人码；
 * ``prepare`` 只读：GC 预览/清理草案只做聚合计数，绝不调用删除；
 * 密钥材料不出现在任何返回里（连 ``key_hint`` 也不给）；
@@ -16,7 +17,6 @@ from __future__ import annotations
 import contextlib
 import json
 from datetime import datetime, timedelta
-from types import SimpleNamespace
 
 import pytest
 
@@ -234,13 +234,15 @@ def test_read_tools_are_guarded_but_never_proposed() -> None:
         assert tool.permission is ops_tools._admin_only, name
 
 
-def test_write_tools_are_previewed_proposals_with_dual_auth() -> None:
+def test_write_tools_are_previewed_proposals_without_dual_auth() -> None:
+    """治理写入只要本人确认：提案仍带预览与现查库，但不再要另一位管理员的动态码。"""
     for name in EXPECTED_WRITE:
         tool = _tool(name)
         assert tool.impl is not None, name
         assert tool.prepare is not None, name
         assert tool.guard is ops_auth.ensure_system_admin, name
-        assert tool.dual_auth_action == ops_tools.WRITE_AUTH_ACTION, name
+        assert tool.dual_auth_action is None, name
+        assert tool.direct is False, name
 
 
 def test_params_are_well_formed_json_schema() -> None:

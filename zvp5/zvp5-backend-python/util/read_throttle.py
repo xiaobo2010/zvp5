@@ -56,25 +56,6 @@ async def check(user_oid: str) -> None:
     _local_check(key)
 
 
-async def check_anonymous(client_ip: str) -> None:
-    """匿名请求按 IP 记账，阈值与登录用户同档（:data:`LIMIT`）。
-
-    匿名调用没有 ``oid`` 可作键，若不计账，「未登录 + 精确学号」就是一条无限
-    速的姓名探测通道。键名另起前缀，不和某个用户的读预算混算。
-    """
-    key = str(client_ip).strip()
-    if not key:
-        return
-    if state.redis_configured():
-        result = await state.window_hit(f"read-ip:{key}", LIMIT, WINDOW_SECONDS)
-        if result is not None:
-            allowed, retry_after = result
-            if not allowed:
-                raise ReadRateLimited(retry_after)
-            return
-    _local_check(f"ip:{key}")
-
-
 def _local_check(user_oid: str) -> None:
     """Redis 未配置/不可用时的进程内滑动窗口（改造前的实现，语义不变）。"""
     key = str(user_oid).strip()
@@ -126,7 +107,6 @@ __all__ = [
     "WINDOW_SECONDS",
     "ReadRateLimited",
     "check",
-    "check_anonymous",
     "read_budget",
     "reset_state",
 ]

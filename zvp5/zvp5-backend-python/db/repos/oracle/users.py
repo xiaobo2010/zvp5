@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 from contextlib import asynccontextmanager
 from datetime import date, datetime
 from decimal import Decimal
@@ -56,6 +55,7 @@ from db.models import user_device_bindings as user_device_bindings_tbl
 from db.models import user_time as user_time_tbl
 from db.models import users as users_tbl
 from db.oracle.session import session_scope
+from db.repos.oracle.search import like_pattern, like_prefix_pattern
 from db.repos.pagination import capped_size
 
 Row = dict[str, Any]
@@ -93,19 +93,19 @@ def _user_filter(
     """Replicate the Mongo match stages shared by list/members/count queries.
 
     * ``role`` → array membership (JSON_EXISTS).
-    * non-empty ``query`` → case-insensitive ``contains`` on ``name``/``id``,
-      with the keyword ``re.escape``d exactly like the current pipelines.
+    * non-empty ``query`` → case-insensitive **literal** ``contains`` on
+      ``name``/``id`` (``LOWER(col) LIKE '%kw%' ESCAPE '\'``, wildcards escaped).
     * ``group_oid`` → ``class_id`` equality.
     """
     conds: list[Any] = []
     if role:
         conds.append(text(_ROLE_EXISTS).bindparams(role_value=role))
     if query:
-        pattern = re.escape(query)
+        pattern = like_pattern(query)
         conds.append(
             or_(
-                func.regexp_like(users_tbl.c.name, pattern, "i"),
-                func.regexp_like(users_tbl.c.business_id, pattern, "i"),
+                func.lower(users_tbl.c.name).like(pattern, escape="\\"),
+                func.lower(users_tbl.c.business_id).like(pattern, escape="\\"),
             )
         )
     if group_oid is not None:
@@ -171,8 +171,8 @@ def _banned_filter(
 ) -> list[Any]:
     """「当前封禁」的谓词：闸门列 + 未到期 + 可选的姓名/学号包含匹配。
 
-    复用 :func:`_user_filter` 的 ``query`` 语义（``re.escape`` + REGEXP_LIKE
-    ``'i'``），只额外钉住 ``banned = 1``——两条列表的搜索行为必须一致，管理员
+    复用 :func:`_user_filter` 的 ``query`` 语义（转义后的 ``LIKE`` 字面量
+    包含匹配），只额外钉住 ``banned = 1``——两条列表的搜索行为必须一致，管理员
     才会觉得是同一个框。
 
     ``banned = 1`` 本身**不等于**「此刻还在封」：到期封禁没有后台任务把闸门
@@ -596,11 +596,11 @@ def _get_many_by_oids_stmt(oids: list[str]):
 
 
 # Mongo ``{"past": {"$elemMatch": {"$regex": q, "$options": "i"}}}``: a
-# case-insensitive regex over the ``past`` JSON array. Oracle 19c's SQL/JSON
+# case-insensitive substring over the ``past`` JSON array. Oracle 19c's SQL/JSON
 # path does not support the ``like_regex ... flag "i"`` clause (21c+), so the
-# array is serialised and matched with ``REGEXP_LIKE`` instead — same
-# unescaped-regex, case-insensitive semantics.
-_PAST_MATCH = "regexp_like(json_serialize(users.past), :past_value, 'i')"
+# array is serialised and matched with ``LIKE`` instead — same literal,
+# case-insensitive substring semantics.
+_PAST_MATCH = "LOWER(JSON_SERIALIZE(users.past)) LIKE :past_value ESCAPE '\\'"
 
 
 def _all_users_stmt():
@@ -623,9 +623,18 @@ def _list_admin_oids_stmt():
 
 
 def _list_by_id_prefix_stmt(prefix: str):
+    """学号前缀匹配（原 ``{"id": {"$regex": "^<prefix>"}}``）。
+
+    ``LIKE 'prefix%'`` 与 ``^prefix`` 锚定检查等价，但走普通索引前缀范围扫描；
+    ``prefix`` 里的 ``%``/``_``/``\\`` 按字面量转义，不再当正则元字符。
+    """
     return (
         select(*_user_columns())
-        .where(func.regexp_like(users_tbl.c.business_id, "^" + prefix))
+        .where(
+            func.lower(users_tbl.c.business_id).like(
+                like_prefix_pattern(prefix), escape="\\"
+            )
+        )
         .order_by(users_tbl.c.oid.asc())
     )
 
@@ -652,11 +661,11 @@ def _search_filter(query: str, logged_in: bool):
         return [users_tbl.c.business_id == query]
     if not query:
         return []
-    pattern = re.escape(query)
+    pattern = like_pattern(query)
     return [
         or_(
-            func.regexp_like(users_tbl.c.name, pattern, "i"),
-            func.regexp_like(users_tbl.c.business_id, pattern, "i"),
+            func.lower(users_tbl.c.name).like(pattern, escape="\\"),
+            func.lower(users_tbl.c.business_id).like(pattern, escape="\\"),
             text(_PAST_MATCH).bindparams(past_value=pattern),
         )
     ]
@@ -710,13 +719,15 @@ def _search_count_stmt(query: str, logged_in: bool):
     return stmt
 
 
-def _list_by_name_or_id_stmt(pattern: str):
+def _list_by_name_or_id_stmt(keyword: str):
+    """姓名/学号的**字面量**包含匹配（空关键词 = 不过滤）。"""
     stmt = select(*_user_columns())
-    if pattern:
+    if keyword:
+        pattern = like_pattern(keyword)
         stmt = stmt.where(
             or_(
-                func.regexp_like(users_tbl.c.name, pattern, "i"),
-                func.regexp_like(users_tbl.c.business_id, pattern, "i"),
+                func.lower(users_tbl.c.name).like(pattern, escape="\\"),
+                func.lower(users_tbl.c.business_id).like(pattern, escape="\\"),
             )
         )
     return stmt.order_by(users_tbl.c.oid.asc())
@@ -1235,7 +1246,7 @@ class OracleUsersRepo:
         """改学号（登录名）并轮换 ``session_id``（旧 token 立即失效）。
 
         唯一冲突由 ``uq_users_business_id`` 抛出 ``IntegrityError``，调用方
-        （``users_v3_router``）转 409——这里不做「先查再写」的软判定，那是端点
+        （``users_router``）转 409——这里不做「先查再写」的软判定，那是端点
         层的友好提示，约束才是最终裁决者。
         """
         stmt = _set_business_id_stmt(normalize_oid(oid), business_id)

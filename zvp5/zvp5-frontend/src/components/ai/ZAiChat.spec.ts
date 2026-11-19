@@ -5,6 +5,7 @@ import ZAiChat from './ZAiChat.vue'
 import { useUserStore } from '@/stores/user'
 import { POLL_FAST_INTERVAL_MS, POLL_INTERVAL_MS } from '@/stores/aiConversations'
 import {
+  ackAgentRisk,
   cancelRun,
   compactConversation,
   confirmProposal,
@@ -13,15 +14,18 @@ import {
   fetchActiveRuns,
   fetchPendingProposals,
   fetchRunDetail,
+  getAgentRiskAck,
   getConversation,
   listConversations,
   listMessages,
   listModels,
   rejectProposal,
+  streamRunEvents,
   submitRun,
   updateConversation
 } from '@/api/ai'
 import type { AiAgentProposal, AiConversation, AiRun } from '@/../types/ai'
+import type { AiRunEventStreamResult } from '@/api/ai'
 import { AiRequestError } from '@/api/ai'
 
 /**
@@ -41,6 +45,8 @@ vi.mock('@/api/ai', async (importOriginal) => {
     confirmProposal: vi.fn(),
     rejectProposal: vi.fn(),
     fetchRunDetail: vi.fn(),
+    getAgentRiskAck: vi.fn(),
+    ackAgentRisk: vi.fn(),
     getConversation: vi.fn(),
     listConversations: vi.fn(),
     listMessages: vi.fn(),
@@ -48,6 +54,7 @@ vi.mock('@/api/ai', async (importOriginal) => {
     updateConversation: vi.fn(),
     deleteConversation: vi.fn(),
     submitRun: vi.fn(),
+    streamRunEvents: vi.fn(),
     cancelRun: vi.fn(),
     fetchActiveRuns: vi.fn(),
     compactConversation: vi.fn()
@@ -433,11 +440,16 @@ beforeEach(() => {
   // 要验证弹窗的用例自己在挂载前把它清掉。
   localStorage.clear()
   localStorage.setItem(RISK_KEY, '1')
+  // 默认开启流式；既有用例大多在断言轮询节奏，这里统一按「关闭」跑，
+  // 专属流式用例会在挂载前自己改回 '1'。
+  localStorage.setItem('zvms.ai.streaming.u1', '0')
   vi.mocked(listModels).mockReset()
   vi.mocked(fetchPendingProposals).mockReset()
   vi.mocked(confirmProposal).mockReset()
   vi.mocked(rejectProposal).mockReset()
   vi.mocked(fetchRunDetail).mockReset()
+  vi.mocked(getAgentRiskAck).mockReset()
+  vi.mocked(ackAgentRisk).mockReset()
   vi.mocked(getConversation).mockReset()
   vi.mocked(listConversations).mockReset()
   vi.mocked(listMessages).mockReset()
@@ -445,6 +457,7 @@ beforeEach(() => {
   vi.mocked(updateConversation).mockReset()
   vi.mocked(deleteConversation).mockReset()
   vi.mocked(submitRun).mockReset()
+  vi.mocked(streamRunEvents).mockReset()
   vi.mocked(cancelRun).mockReset()
   vi.mocked(fetchActiveRuns).mockReset()
   vi.mocked(compactConversation).mockReset()
@@ -472,6 +485,10 @@ beforeEach(() => {
   vi.mocked(listMessages).mockResolvedValue({ messages: [], has_more: false, total: 0 })
   vi.mocked(fetchActiveRuns).mockResolvedValue([])
   vi.mocked(fetchPendingProposals).mockResolvedValue({ proposals: [] })
+  // 风险确认默认「服务端未确认」：本地缓存命中的用例不会发请求，
+  // 清了缓存的用例则按未确认弹框——需要服务端已确认的用例自行覆盖。
+  vi.mocked(getAgentRiskAck).mockResolvedValue({ acked: false, acked_at: null })
+  vi.mocked(ackAgentRisk).mockResolvedValue({ acked: true, acked_at: '2026-11-18T08:00:00Z' })
   vi.mocked(getConversation).mockResolvedValue(conversation())
   vi.mocked(createConversation).mockResolvedValue(conversation({ oid: 'new1' }))
   vi.mocked(updateConversation).mockResolvedValue(conversation())
@@ -1035,6 +1052,38 @@ describe('智能体模式', () => {
 
     wrapper.unmount()
   })
+
+  it('打开流式输出：提交走 SSE，累计文本实时显示在落库前', async () => {
+    localStorage.setItem('zvms.ai.streaming.u1', '1')
+    let finishStream: (value: AiRunEventStreamResult) => void = () => {}
+    vi.mocked(streamRunEvents).mockImplementation(async (_runId, handlers) => {
+      handlers?.onAssistant?.({
+        type: 'assistant',
+        seq: 1,
+        run_id: 'run1',
+        round_no: 1,
+        stream_key: 'run1:1',
+        content: '流式回答'
+      })
+      return await new Promise((resolve) => {
+        finishStream = resolve
+      })
+    })
+
+    const wrapper = mountPage()
+    await settle()
+    await sendText(wrapper, '查一下图书馆')
+
+    expect(vi.mocked(submitRun).mock.calls[0]![2]).toMatchObject({ streaming: true })
+    const live = wrapper.find('.ai-chat__streaming')
+    expect(live.exists()).toBe(true)
+    expect(live.text()).toContain('流式回答')
+    expect(wrapper.find('.ai-chat__pending-reply').exists()).toBe(false)
+
+    finishStream({ completed: true, error: null, requestId: null })
+    await settle()
+    wrapper.unmount()
+  })
 })
 
 describe('接回在跑的任务', () => {
@@ -1319,6 +1368,8 @@ describe('首次使用风险警示', () => {
 
     expect(localStorage.getItem(RISK_KEY)).toBe('1')
     expect(wrapper.find('.ai-agent__risk-dialog').exists()).toBe(false)
+    // 确认落库到服务端（幂等 POST）：换设备进入时 GET 能找回这次确认
+    expect(ackAgentRisk).toHaveBeenCalled()
     // 门禁放行后接回最近会话
     expect(listMessages).toHaveBeenCalledWith('agent1', expect.objectContaining({ afterSeq: 0 }))
     wrapper.unmount()
@@ -1359,6 +1410,38 @@ describe('首次使用风险警示', () => {
 
     expect(wrapper.find('.ai-agent__risk-dialog').exists()).toBe(false)
     expect(listMessages).toHaveBeenCalledWith('agent1', expect.objectContaining({ afterSeq: 0 }))
+
+    wrapper.unmount()
+  })
+
+  it('本地缓存未命中但服务端已确认：不弹框，写回缓存并放行', async () => {
+    localStorage.clear()
+    vi.mocked(getAgentRiskAck).mockResolvedValue({
+      acked: true,
+      acked_at: '2026-11-18T08:00:00Z'
+    })
+    const wrapper = mountPage()
+    await settle()
+
+    // 缓存未命中走了一次服务端查询
+    expect(getAgentRiskAck).toHaveBeenCalledTimes(1)
+    expect(wrapper.find('.ai-agent__risk-dialog').exists()).toBe(false)
+    // 服务端确认写回本地缓存：本机下次零请求放行
+    expect(localStorage.getItem(RISK_KEY)).toBe('1')
+    expect(listMessages).toHaveBeenCalledWith('agent1', expect.objectContaining({ afterSeq: 0 }))
+
+    wrapper.unmount()
+  })
+
+  it('服务端查询失败：按未确认处理，弹框兜底、不抛页面错误', async () => {
+    localStorage.clear()
+    vi.mocked(getAgentRiskAck).mockRejectedValue(new Error('network down'))
+    const wrapper = mountPage()
+    await settle()
+
+    expect(wrapper.find('.ai-agent__risk-dialog').exists()).toBe(true)
+    expect(createConversation).not.toHaveBeenCalled()
+    expect(elMessageErrorSpy).not.toHaveBeenCalled()
 
     wrapper.unmount()
   })
@@ -1700,7 +1783,8 @@ describe('无限制开关已移除', () => {
     await settle()
 
     expect(wrapper.find('.ai-chat__unrestricted').exists()).toBe(false)
-    expect(wrapper.find('.el-switch-stub').exists()).toBe(false)
+    // 流式输出是普通偏好，不是「无限制模式」：开关只允许出现在设置行的流式分组里
+    expect(wrapper.find('.ai-chat__stream .el-switch-stub').exists()).toBe(true)
     expect(wrapper.text()).not.toContain('ai.agent.unrestricted.label')
 
     wrapper.unmount()

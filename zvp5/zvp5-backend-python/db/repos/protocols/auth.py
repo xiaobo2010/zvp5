@@ -21,10 +21,6 @@ class BindingsRepo(Protocol):
     ``auto``/``admin`` and ``status`` is ``active``/``revoked``.
     """
 
-    async def list_for_user(self, user_oid: str) -> list[Row]:
-        """Return every binding of a user, **including** ``revoked`` rows."""
-        ...
-
     async def get_active_for_user(self, user_oid: str) -> list[Row]:
         """Return only the user's ``active`` bindings."""
         ...
@@ -38,11 +34,6 @@ class BindingsRepo(Protocol):
         ``active`` and ``updated_at`` refreshed — no new row is inserted, so the
         ``(user_oid, xuehai_id)`` uniqueness holds.
         """
-        ...
-
-    async def revoke(self, user_oid: str, xuehai_id: str) -> None:
-        """Mark the ``(user, xuehai)`` binding ``revoked`` (no-op if absent)."""
-        ...
 
 
 class TempPasswordsRepo(Protocol):

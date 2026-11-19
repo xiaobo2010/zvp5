@@ -12,6 +12,6 @@ export const zhCN = {
     enter: '进入平台'
   },
   notMaintaining: '当前未处于维护状态',
-  // 维护期间登录被拒（v4.2.4-2 R4）：后端 /api/users/auth 对非管理员返回 503。
+  // 维护期间登录被拒（v4.2.4-2 R4）：后端 /api/v1/users/auth 对非管理员返回 503。
   loginBlocked: '系统维护中，仅管理员可登录'
 }

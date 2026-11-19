@@ -287,4 +287,28 @@ describe('ZBanScreen', () => {
 
     wrapper.unmount()
   })
+
+  it('预热模式不可见、不锁滚动、不抢焦点、不计时消散', async () => {
+    vi.useFakeTimers()
+    const probe = document.createElement('input')
+    document.body.appendChild(probe)
+    probe.focus()
+
+    const wrapper = mountBan({ prewarm: true })
+
+    const root = query('.z-ban')
+    expect(root?.classList.contains('is-prewarm')).toBe(true)
+    expect(root?.getAttribute('aria-hidden')).toBe('true')
+    expect(root?.hasAttribute('inert')).toBe(true)
+    expect(root?.getAttribute('aria-modal')).toBeNull()
+    expect(document.body.style.overflow).toBe('')
+    expect(document.activeElement).toBe(probe)
+
+    // 预热实例不播消散，父组件靠卸载收回
+    vi.advanceTimersByTime(30000)
+    await wrapper.vm.$nextTick()
+    expect(query('.z-ban')?.classList.contains('is-dismissing')).toBe(false)
+
+    wrapper.unmount()
+  })
 })

@@ -324,7 +324,7 @@ def test_ocr_happy_path_charges_exactly_once(files_repo, ocr_deps, audit_repo):
 
     assert response.status_code == 202
     assert response.json()["data"]["status"] == "pending"
-    assert ocr_deps["consume"].calls == [(ADMIN, "af", 1)]
+    assert ocr_deps["consume"].calls == [(ADMIN, "af", ai_config.AI_OCR_AF_COST)]
     assert files_repo.statuses == [(ATTACHMENT, "pending")]
     assert ocr_deps["background"] == [ATTACHMENT]
     # 引擎凭证是站点级的（ai_ocr_engines 全站生效）：审计必须显式记 server。
@@ -690,7 +690,7 @@ def test_ocr_allows_admin(files_repo, ocr_deps, audit_repo):
     )
 
     assert response.status_code in (200, 202)
-    assert ocr_deps["consume"].calls == [(ADMIN, "af", 1)]
+    assert ocr_deps["consume"].calls == [(ADMIN, "af", ai_config.AI_OCR_AF_COST)]
 
 
 def test_ocr_allows_department(files_repo, ocr_deps, audit_repo):
@@ -702,7 +702,7 @@ def test_ocr_allows_department(files_repo, ocr_deps, audit_repo):
     )
 
     assert response.status_code in (200, 202)
-    assert ocr_deps["consume"].calls == [(USER, "af", 1)]
+    assert ocr_deps["consume"].calls == [(USER, "af", ai_config.AI_OCR_AF_COST)]
 
 
 def test_ocr_denies_student_in_zvp_error_shape(files_repo, ocr_deps, audit_repo):

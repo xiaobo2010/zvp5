@@ -27,12 +27,11 @@ from __future__ import annotations
 
 import json
 
-import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from db import backends
-from routers import activity_statistics_router, groups_v2_router
+from routers import activity_statistics_router, groups_router
 from util.object_id import get_current_user
 
 # ── A：/v2/groups/{id}/statistics/compliance ─────────────────────────────────
@@ -144,7 +143,7 @@ def _compliance_client(monkeypatch, rows: list[dict]):
     monkeypatch.setattr(backends, "get_groups_repo", lambda s=None: _ExplodingRepo("groups"))
 
     app = FastAPI()
-    app.include_router(groups_v2_router.router, prefix=GROUPS_PREFIX)
+    app.include_router(groups_router.router, prefix=GROUPS_PREFIX)
     app.dependency_overrides[get_current_user] = lambda: {
         "id": SECRETARY_OID,
         "per": ["secretary"],

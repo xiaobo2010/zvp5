@@ -8,7 +8,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from db import backends
-from routers import groups_router, groups_v3_router
+from routers import groups_router
 from util.object_id import get_current_user
 from util.user import public_user
 
@@ -62,15 +62,15 @@ def client(monkeypatch):
             members_page=members_page,
         ),
     )
-    monkeypatch.setattr(groups_v3_router, "session_scope", _fake_session_scope)
+    monkeypatch.setattr(groups_router, "session_scope", _fake_session_scope)
     app = FastAPI()
     app.include_router(groups_router.router, prefix="/api/groups")
-    app.include_router(groups_v3_router.router, prefix="/api/v1/groups")
+    app.include_router(groups_router.router, prefix="/api/v1/groups")
     app.dependency_overrides[get_current_user] = lambda: state["user"]
     return TestClient(app), state
 
 
-@pytest.mark.parametrize("path", [f"/api/groups/{GROUP}/user", f"/api/v1/groups/{GROUP}/users"])
+@pytest.mark.parametrize("path", [f"/api/v1/groups/{GROUP}/users"])
 def test_class_members_do_not_expose_credentials_or_unknown_internal_fields(client, path):
     http, _ = client
     response = http.get(path)

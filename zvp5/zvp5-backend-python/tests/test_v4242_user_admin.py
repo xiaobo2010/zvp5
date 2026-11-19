@@ -47,7 +47,7 @@ from db.repos.oracle.users import (
     _set_roles_stmt,
     OracleUsersRepo,
 )
-from routers import users_v3_router
+from routers import users_router
 from tasks import user_trash_gc
 from typings.log import inject_log
 from util.cert import jwt_encode
@@ -141,10 +141,10 @@ def env(monkeypatch):
 
     log = StubLog()
     monkeypatch.setattr(backends, "get_users_repo", lambda session=None: repo)
-    monkeypatch.setattr(users_v3_router, "get_user_display_name", display_name)
+    monkeypatch.setattr(users_router, "get_user_display_name", display_name)
 
     app = FastAPI()
-    app.include_router(users_v3_router.router, prefix="/api/v1/users")
+    app.include_router(users_router.router, prefix="/api/v1/users")
     app.dependency_overrides[get_current_user] = lambda: {"id": SELF, "per": ["admin"]}
     app.dependency_overrides[inject_log] = lambda: log
 

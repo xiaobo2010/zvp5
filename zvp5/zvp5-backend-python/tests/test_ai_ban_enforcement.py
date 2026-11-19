@@ -33,7 +33,7 @@ from db import backends
 from routers import ai_router
 from services.agent import run_queue
 from services.agent.tool_impl import AgentError
-from services.ai import ban_state, credentials, providers, quota, rate_limit, routing
+from services.ai import ban_state, credentials, quota, rate_limit, routing
 from services.ai import safety_guard
 from typings.log import inject_log
 from util.object_id import get_current_user

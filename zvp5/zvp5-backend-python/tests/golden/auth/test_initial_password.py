@@ -12,10 +12,10 @@
    - ``DELETE /api/v1/users/{oid}/password`` 的**重置**仍返回随机一次性密码，
      **绝不**回归学号。
 
-全离线：真跑 ``routers.users_v3_router``（真 ``validate_number`` / 真 bcrypt），
+全离线：真跑 ``routers.users_router``（真 ``validate_number`` / 真 bcrypt），
 只把 users repo 换成内存假实现、``inject_log`` 换成桩。不连数据库、不发网络。
 
-导入 ``util.cert`` / ``routers.users_v3_router`` 会在 import 时读取仓库根的
+导入 ``util.cert`` / ``routers.users_router`` 会在 import 时读取仓库根的
 ``aes_key.txt`` / ``rsa_*.pem``，所以 pytest 必须从仓库根运行（验收命令即如此），
 与 ``tests/golden/auth`` 既有引导风格一致。
 """
@@ -31,7 +31,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from db import backends
-from routers import users_v3_router
+from routers import users_router
 from typings.log import inject_log
 from util.cert import check_password, generate_initial_password, pwd_strength
 from util.object_id import compulsory_temporary_token, get_current_user
@@ -121,10 +121,10 @@ def client(monkeypatch):
         set_password_guarded=set_password_guarded,
     )
     monkeypatch.setattr(backends, "get_users_repo", lambda *a, **k: repo)
-    monkeypatch.setattr(users_v3_router, "get_user_display_name", display_name)
+    monkeypatch.setattr(users_router, "get_user_display_name", display_name)
 
     app = FastAPI()
-    app.include_router(users_v3_router.router, prefix=PREFIX)
+    app.include_router(users_router.router, prefix=PREFIX)
     app.dependency_overrides[get_current_user] = lambda: {"id": ADMIN, "per": ["admin"]}
     app.dependency_overrides[compulsory_temporary_token] = lambda: {
         "id": ADMIN,

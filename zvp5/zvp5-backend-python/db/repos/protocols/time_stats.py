@@ -110,8 +110,8 @@ class TimeRepo(Protocol):
 
         Same row shape and ``total`` semantics as :meth:`list_by_search`, with
         the user filter pinned to ``class_oid`` and an optional case-insensitive
-        ``query`` regex over ``name``/``id``. Lifts
-        ``routers/groups_v2_router.py::read_users``.
+        literal ``query`` ``contains`` over ``name``/``id``. Lifts
+        ``routers/groups_router.py::read_group_time``.
         """
         ...
 

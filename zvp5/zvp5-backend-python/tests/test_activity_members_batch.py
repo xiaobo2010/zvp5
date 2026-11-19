@@ -29,8 +29,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
 from db import backends
-from routers import activities_v2_router
-from routers import activities_v3_router as activities
+from routers import activities_router as activities
 from util.object_id import get_current_user
 
 PREFIX = "/api/v1/activities"
@@ -350,7 +349,7 @@ def _bulk(monkeypatch, *, existing, users, atype="hybrid", status="effective"):
     # v3 在提交后调 v2 的后台重算（延迟 import，所以补丁打在 v2 模块上有效）。
     # 这里只记录调度，不让 fire-and-forget 任务真的去读假仓库。
     monkeypatch.setattr(
-        activities_v2_router, "_schedule_user_time_refresh", state["scheduled"].append
+        activities, "_schedule_user_time_refresh", state["scheduled"].append
     )
     return state
 
@@ -472,9 +471,9 @@ async def test_bulk_import_normalizes_mixed_case_oids_without_duplicate_rows(
 ) -> None:
     """同一成员以不同大小写出现 ⇒ 归一化后合并成一个三元组、只写一次。
 
-    归一化发生在 handler ``routers/activities_v3_router.py:182``
+    归一化发生在 handler ``routers/activities_router.py:876``
     （``str(validate_object_id(member.member))``，util.oid 走 ``normalize_oid`` 转小写），
-    先于 ``additions`` 聚合（:183）。因此小写/大写两条 payload 落到同一 key，
+    先于 ``additions`` 聚合（:877）。因此小写/大写两条 payload 落到同一 key，
     ``duration`` 相加而非各插一行。
     """
     state = _bulk(
@@ -505,9 +504,9 @@ async def test_bulk_import_normalizes_mixed_case_oids_without_duplicate_rows(
 async def test_bulk_import_reports_the_first_error_in_payload_order(monkeypatch) -> None:
     """混合 payload：payload 顺序中第一个出错成员的错误先抛。
 
-    逐成员判定顺序从 ``routers/activities_v3_router.py:197-201`` 推出：
-    ``for oid, mode in additions`` 按 payload 插入顺序迭代（:180-183），
-    成员内先查类型（:198-199「义工类型不匹配」）后查存在（:200-201「成员不存在」）。
+    逐成员判定顺序从 ``routers/activities_router.py:898-902`` 推出：
+    ``for oid, mode in additions`` 按 payload 插入顺序迭代（:876-880），
+    成员内先查类型（:899-900「义工类型不匹配」）后查存在（:901-902「成员不存在」）。
     """
     # (a) 未知用户在前、类型不匹配在后 ⇒ 未知用户先被判定 → 「成员不存在」。
     state = _bulk(
@@ -564,7 +563,7 @@ async def test_bulk_import_reports_the_first_error_in_payload_order(monkeypatch)
 async def test_bulk_import_without_overwrite_still_accumulates(monkeypatch) -> None:
     """默认（``overwrite`` 缺省）语义不变：既有三元组继续累加。
 
-    路由签名 ``routers/activities_v3_router.py`` 里 ``overwrite`` 是
+    路由签名 ``routers/activities_router.py`` 里 ``overwrite`` 是
     ``Query(False)``，因此老调用方（不传该参数）拿到的是原行为。
     """
     existing = {(MEMBER_OIDS[0], "on-campus"): 3.0}

@@ -10,10 +10,17 @@ import {
   getConversation as getConversationApi,
   listConversations,
   listMessages,
+  streamRunEvents,
   submitRun as submitRunApi,
   updateConversation
 } from '@/api/ai'
-import type { AiConversationCompactResult } from '@/api/ai'
+import { AiRequestError } from '@/api/ai'
+import type {
+  AiConversationCompactResult,
+  AiRunLiveAssistant,
+  AiRunLiveState,
+  AiRunLiveTool
+} from '@/api/ai'
 import { abortAllAiRuns, registerAiAbort } from '@/api/ai/activeRuns'
 import type {
   AiConversation,
@@ -23,6 +30,8 @@ import type {
   AiMessagePage,
   AiRun,
   AiRunDetail,
+  AiRunStatus,
+  AiRunStopReason,
   AiThinkingLevel
 } from '@/../types/ai'
 
@@ -132,6 +141,28 @@ export const useAiConversationsStore = defineStore('aiConversations', () => {
   const polling = ref(false)
   /** 最近一次提交 run 的失败原因（AiRequestError 或其它）；成功提交/切换会话时清空。 */
   const runError = ref<unknown>(null)
+
+  /* --------------------------------------------------------------------- */
+  /* 实时事件流（SSE）                                                      */
+  /* --------------------------------------------------------------------- */
+
+  /** 用户偏好：是否优先用 SSE 跟进 run。默认 false，由页面按本地设置打开。 */
+  const preferStreaming = ref(false)
+  /** 当前是否有 SSE 连接。 */
+  const streaming = ref(false)
+  /** 当前轮的上游累计文本（ephemeral，不落库）。 */
+  const liveAssistantText = ref('')
+  /** 累计文本所属轮次。 */
+  const liveAssistantRound = ref(0)
+  /** 当前 run 的 ephemeral 工具帧（按 tool_call_id 合并）。 */
+  const liveTools = ref<AiRunLiveTool[]>([])
+  /** 当前部署不支持 SSE（多 worker 503），已自动回退轮询。 */
+  const streamFallback = ref(false)
+  /** 流内错误码；网络级失败会走 runError / 轮询兜底。 */
+  const streamError = ref<string | null>(null)
+
+  let streamController: AbortController | null = null
+  let streamRunId = ''
 
   let pollTimer: ReturnType<typeof setTimeout> | null = null
   let pollingRunId = ''
@@ -377,7 +408,8 @@ export const useAiConversationsStore = defineStore('aiConversations', () => {
     if (currentOid.value === conversationOid && loadedOid === conversationOid) {
       return
     }
-    // 换会话时先停掉上一个的轮询：run 的进度只属于它自己的会话。
+    // 换会话时先停掉上一个的连接：run 的进度只属于它自己的会话。
+    stopStreaming()
     stopPolling()
     currentOid.value = conversationOid
     current.value = conversations.value.find((item) => item.oid === conversationOid) ?? null
@@ -509,6 +541,185 @@ export const useAiConversationsStore = defineStore('aiConversations', () => {
     runProposals.value = []
     runAfterRound.value = 0
     runError.value = null
+    liveAssistantText.value = ''
+    liveAssistantRound.value = 0
+    liveTools.value = []
+    streamError.value = null
+  }
+
+  /** 页面自己决定要不要优先走 SSE；不改已有连接（切换只影响下一次 run）。 */
+  function setPreferStreaming(value: boolean): void {
+    preferStreaming.value = Boolean(value)
+    if (!preferStreaming.value) {
+      // 关掉流式后「当前部署不支持」的提示就不再适用，别让旧提示挂着。
+      streamFallback.value = false
+    }
+  }
+
+  /** 用服务端 snapshot 里的 ephemeral 状态覆盖本地视图。 */
+  function applyLiveState(live: Partial<AiRunLiveState> | null | undefined): void {
+    if (!live) {
+      return
+    }
+    const assistant = Array.isArray(live.assistant) ? live.assistant : []
+    let latest: AiRunLiveAssistant | null = null
+    for (const item of assistant) {
+      if (!latest || item.seq >= latest.seq) {
+        latest = item
+      }
+    }
+    liveAssistantText.value = latest?.content ?? ''
+    liveAssistantRound.value = latest?.round_no ?? 0
+    liveTools.value = Array.isArray(live.tools) ? [...live.tools] : []
+  }
+
+  function applyAssistantFrame(roundNo: number, content: string): void {
+    if (!content) {
+      return
+    }
+    liveAssistantRound.value = roundNo
+    liveAssistantText.value = content
+  }
+
+  function applyToolFrame(frame: AiRunLiveTool): void {
+    const index = liveTools.value.findIndex((item) =>
+      frame.tool_call_id
+        ? item.tool_call_id === frame.tool_call_id
+        : item.round_no === frame.round_no && item.tool_name === frame.tool_name
+    )
+    if (index >= 0) {
+      const next = [...liveTools.value]
+      next[index] = { ...next[index]!, ...frame }
+      liveTools.value = next
+      return
+    }
+    liveTools.value = [...liveTools.value, frame].slice(-24)
+  }
+
+  /**
+   * 停掉 SSE。
+   *
+   * `clearLive=false` 留给「刚收到终态」的路径：最终消息还在补拉，先把连接收掉，
+   * 但不要把最后一帧文本闪掉；消息落库后由 reset/下一次 run 清。
+   */
+  function stopStreaming(clearLive = true): void {
+    streamController?.abort()
+    streamController = null
+    streamRunId = ''
+    streaming.value = false
+    if (clearLive) {
+      liveAssistantText.value = ''
+      liveAssistantRound.value = 0
+      liveTools.value = []
+    }
+  }
+
+  function isAbortError(error: unknown): boolean {
+    return error instanceof DOMException
+      ? error.name === 'AbortError'
+      : Boolean((error as { name?: string } | null)?.name === 'AbortError')
+  }
+
+  /** SSE 不可用时静默回退轮询：用户仍能看到进度，只是退化为 2 秒一拍。 */
+  function fallbackToPolling(runId: string): void {
+    stopStreaming()
+    if (activeRun.value?.oid === runId && !isTerminalRun(activeRun.value.status)) {
+      startPolling(runId)
+      void refreshMessages()
+    }
+  }
+
+  /**
+   * 开一条 run 事件流。
+   *
+   * 与轮询二选一：连接建立前先把轮询停掉，避免同一轮同时打两条链路。
+   * 首帧 snapshot 会补齐 run 状态、事件、提案；assistant 帧只更新 ephemeral
+   * 文本，等轮提交后的 snapshot 再以落库消息为准。
+   */
+  function startStreaming(runId: string): void {
+    stopStreaming()
+    stopPolling()
+    streamRunId = runId
+    streamController = new AbortController()
+    streaming.value = true
+    streamFallback.value = false
+    streamError.value = null
+    const controller = streamController
+
+    void (async () => {
+      try {
+        const result = await streamRunEvents(
+          runId,
+          {
+            onSnapshot: (frame) => {
+              if (streamRunId !== runId) {
+                return
+              }
+              applyRunDetail(frame.data)
+              if (frame.live) {
+                applyLiveState(frame.live)
+              }
+              // snapshot 可能带新一轮的落库消息：增量补拉，避免与流内 ephemeral 文本重复。
+              void refreshMessages()
+            },
+            onAssistant: (frame) => {
+              if (streamRunId !== runId) {
+                return
+              }
+              applyAssistantFrame(frame.round_no, frame.content)
+            },
+            onTool: (frame) => {
+              if (streamRunId !== runId) {
+                return
+              }
+              applyToolFrame(frame)
+            },
+            onTerminal: (frame) => {
+              if (streamRunId !== runId || !activeRun.value) {
+                return
+              }
+              activeRun.value = {
+                ...activeRun.value,
+                status: frame.status as AiRunStatus,
+                stop_reason: frame.stop_reason as AiRunStopReason | null,
+                error_code: frame.error_code
+              }
+            },
+            onError: (frame) => {
+              streamError.value = frame.code
+            }
+          },
+          { signal: controller.signal }
+        )
+
+        if (streamRunId !== runId) {
+          return
+        }
+        if (result.completed && !result.error) {
+          stopStreaming(false)
+          // 终态后 assistant 消息已落库：补一次增量做兜底，再收掉 ephemeral 文本。
+          await refreshMessages()
+          liveAssistantText.value = ''
+          liveAssistantRound.value = 0
+          liveTools.value = []
+          return
+        }
+        fallbackToPolling(runId)
+      } catch (error) {
+        if (streamRunId !== runId) {
+          return
+        }
+        if (isAbortError(error) || controller.signal.aborted) {
+          return
+        }
+        if (error instanceof AiRequestError && error.code === 'AI_RUN_EVENTS_UNSUPPORTED') {
+          streamFallback.value = true
+        } else if (error instanceof AiRequestError) {
+          streamError.value = error.code
+        }
+        fallbackToPolling(runId)
+      }
+    })()
   }
 
   /**
@@ -518,17 +729,18 @@ export const useAiConversationsStore = defineStore('aiConversations', () => {
    * **不动** 已落库的消息——那些是服务端的既成事实，重进页面还要看。
    */
   function abortAllRuns(reason = 'aborted'): void {
-    // 先停轮询再复位：避免下一拍 tick 把刚清掉的 activeRun 又填回来。
+    // 先停连接再复位：避免下一拍/下一帧把刚清掉的 activeRun 又填回来。
+    stopStreaming()
     stopPolling()
     resetRun()
     abortAllAiRuns(reason)
   }
 
-  /** 提交一次后台执行；拿到受理结果后立刻开始轮询。 */
+  /** 提交一次后台执行；拿到受理结果后按偏好开 SSE 或轮询。 */
   async function submitRun(
     conversationOid: string,
     content: string,
-    options: { clientMsgId?: string } = {}
+    options: { clientMsgId?: string; streaming?: boolean } = {}
   ): Promise<void> {
     try {
       const result = await submitRunApi(conversationOid, content, options)
@@ -551,10 +763,15 @@ export const useAiConversationsStore = defineStore('aiConversations', () => {
         started_at: null,
         finished_at: null
       }
-      startPolling(result.run_id)
+      if (options.streaming ?? preferStreaming.value) {
+        startStreaming(result.run_id)
+      } else {
+        startPolling(result.run_id)
+      }
     } catch (error) {
-      // 失败必须收敛：留着上一轮的 activeRun 与轮询，界面会一直显示「后台执行中」，
+      // 失败必须收敛：留着上一轮的 activeRun 与连接，界面会一直显示「后台执行中」，
       // 而且没有任何一条路径会再去停它。错误本身交给调用方呈现（原样抛出）。
+      stopStreaming()
       stopPolling()
       resetRun()
       runError.value = error
@@ -583,8 +800,8 @@ export const useAiConversationsStore = defineStore('aiConversations', () => {
     }
   }
 
-  /** 接管一次进行中的 run：切到它的会话并开始轮询。 */
-  async function adoptRun(run: AiRun): Promise<void> {
+  /** 接管一次进行中的 run：切到它的会话并按偏好开 SSE 或轮询。 */
+  async function adoptRun(run: AiRun, options: { streaming?: boolean } = {}): Promise<void> {
     if (run.conversation_oid) {
       // 会话可能不在当前列表里（归档过、或列表只拉了一页）：补一次详情。
       if (!conversations.value.some((item) => item.oid === run.conversation_oid)) {
@@ -598,7 +815,11 @@ export const useAiConversationsStore = defineStore('aiConversations', () => {
     }
     resetRun()
     activeRun.value = run
-    startPolling(run.oid)
+    if (options.streaming ?? preferStreaming.value) {
+      startStreaming(run.oid)
+    } else {
+      startPolling(run.oid)
+    }
   }
 
   /** 拉一次 run 详情，把增量并进来（含运行中刚落的会话消息）。 */
@@ -629,8 +850,9 @@ export const useAiConversationsStore = defineStore('aiConversations', () => {
     runAfterRound.value = Math.max(runAfterRound.value, detail.run.rounds)
   }
 
-  /** 开始轮询一次 run（终态即停）。 */
+  /** 开始轮询一次 run（终态即停）。SSE 与轮询二选一。 */
   function startPolling(runId: string): void {
+    stopStreaming()
     stopPolling()
     pollingRunId = runId
     polling.value = true
@@ -716,6 +938,7 @@ export const useAiConversationsStore = defineStore('aiConversations', () => {
 
   /** 清空当前会话的全部状态（切换会话、退出页面时用）。 */
   function clearCurrent(): void {
+    stopStreaming()
     stopPolling()
     currentOid.value = ''
     current.value = null
@@ -749,6 +972,14 @@ export const useAiConversationsStore = defineStore('aiConversations', () => {
     activeRuns,
     polling,
     runError,
+    // 实时事件流
+    preferStreaming,
+    streaming,
+    liveAssistantText,
+    liveAssistantRound,
+    liveTools,
+    streamFallback,
+    streamError,
     // 派生
     orderedMessages,
     contextRatio,
@@ -777,6 +1008,9 @@ export const useAiConversationsStore = defineStore('aiConversations', () => {
     loadActiveRuns,
     adoptRun,
     refreshRun,
+    setPreferStreaming,
+    startStreaming,
+    stopStreaming,
     startPolling,
     stopPolling,
     clearCurrent

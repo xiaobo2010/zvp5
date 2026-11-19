@@ -11,10 +11,10 @@ The two list queries reproduce the original ``zvms_new.activity_members``
 pipelines:
 
 * ``list_for_activity`` — the ``activities_v3`` aggregation: filter by
-  ``ACTIVITY_OID``, optionally keep only members whose user name matches the
-  ``query`` (``REGEXP_LIKE`` with the keyword ``re.escape``d, LEFT JOIN to
-  ``USERS`` exactly like the ``$lookup`` + ``member_obj != null`` match), ordered
-  by ``OID``.
+  ``ACTIVITY_OID``, optionally keep only members whose user name/学号 contains
+  the ``query`` (``LOWER(col) LIKE`` with the keyword's wildcards escaped, LEFT
+  JOIN to ``USERS`` exactly like the ``$lookup`` + ``member_obj != null``
+  match), ordered by ``OID``.
 * ``list_for_user`` — the ``users_v2`` per-user pipeline: filter by
   ``MEMBER_OID`` (+ optional ``MEMBER_STATUS``), JOIN to ``ACTIVITIES`` to
   mirror the non-preserving ``$unwind``, ordered by ``OID``.
@@ -32,7 +32,6 @@ opens a connection at import time.
 
 from __future__ import annotations
 
-import re
 from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator
 
@@ -56,6 +55,7 @@ from db.models import activity_members as members_tbl
 from db.models import users as users_tbl
 from db.oracle.session import session_scope
 from db.repos.oracle.activities import _activity_doc
+from db.repos.oracle.search import like_pattern
 from db.repos.oracle.times import _effective_member_agg
 
 Row = dict[str, Any]
@@ -155,28 +155,29 @@ def _joined_activity_row(mapping: Any) -> Row | None:
     )
 
 
-def _user_activity_search_filter(pattern: str) -> Any:
+def _user_activity_search_filter(keyword: str) -> Any:
     """The keyword predicate of the per-user activity page.
 
     Mirrors the current handler: an activity matches on ``name``/``description``
-    (case-insensitive), and when **no** activity in the table matches the whole
-    filter degenerates to "no filter" — the empty activity-id list is treated as
-    "do not filter" downstream. The ``NOT EXISTS`` probe is uncorrelated, so
-    Oracle evaluates it once.
+    (case-insensitive substring, wildcards escaped), and when **no** activity in
+    the table matches the whole filter degenerates to "no filter" — the empty
+    activity-id list is treated as "do not filter" downstream. The ``NOT EXISTS``
+    probe is uncorrelated, so Oracle evaluates it once.
     """
+    pattern = like_pattern(keyword)
     probe = aliased(activities_tbl)
     return or_(
         or_(
-            func.regexp_like(activities_tbl.c.name, pattern, "i"),
-            func.regexp_like(activities_tbl.c.description, pattern, "i"),
+            func.lower(activities_tbl.c.name).like(pattern, escape="\\"),
+            func.lower(activities_tbl.c.description).like(pattern, escape="\\"),
         ),
         ~exists(
             select(1)
             .select_from(probe)
             .where(
                 or_(
-                    func.regexp_like(probe.c.name, pattern, "i"),
-                    func.regexp_like(probe.c.description, pattern, "i"),
+                    func.lower(probe.c.name).like(pattern, escape="\\"),
+                    func.lower(probe.c.description).like(pattern, escape="\\"),
                 )
             )
         ),
@@ -273,10 +274,11 @@ def _list_for_activity_stmt(
         .where(members_tbl.c.activity_oid == activity_oid)
     )
     if query:
+        pattern = like_pattern(query)
         stmt = stmt.where(
             or_(
-                func.regexp_like(users_tbl.c.name, re.escape(query), "i"),
-                func.regexp_like(users_tbl.c.business_id, re.escape(query), "i"),
+                func.lower(users_tbl.c.name).like(pattern, escape="\\"),
+                func.lower(users_tbl.c.business_id).like(pattern, escape="\\"),
             )
         )
     return (
@@ -294,10 +296,11 @@ def _list_for_activity_count_stmt(activity_oid: str, query: str):
         )
     ).where(members_tbl.c.activity_oid == activity_oid)
     if query:
+        pattern = like_pattern(query)
         stmt = stmt.where(
             or_(
-                func.regexp_like(users_tbl.c.name, re.escape(query), "i"),
-                func.regexp_like(users_tbl.c.business_id, re.escape(query), "i"),
+                func.lower(users_tbl.c.name).like(pattern, escape="\\"),
+                func.lower(users_tbl.c.business_id).like(pattern, escape="\\"),
             )
         )
     return stmt
@@ -928,4 +931,4 @@ class OracleMembersRepo:
         return [_member_row(row._mapping) for row in rows], int(total)
 
 
-__all__ = ["OracleMembersRepo", "escape_oracle_regex"]
+__all__ = ["OracleMembersRepo"]

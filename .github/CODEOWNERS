@@ -1,0 +1,13 @@
+# 谁能改「能让代码跑起来的那部分」。
+#
+# 背景：仓库是 public，Actions 里跑着 Cloudflare token（canary environment）
+# 与生产 SSH key（production environment）。改 workflow / 部署脚本 = 有机会把
+# 这些凭证带出去，所以这两块必须由仓库所有者 review。
+#
+# 注意：direct push 到 v5-canary 时 CODEOWNERS 不生效（GitHub 只在 PR 上校验），
+# 那一层由 canary environment 的 required reviewer 兜住 —— 见 canary.yml 注释。
+
+/.github/                              @xiaobo2010
+/.gitleaks.toml                        @xiaobo2010
+/.gitleaks-high-confidence.toml        @xiaobo2010
+/zvp5/deployment/                      @xiaobo2010

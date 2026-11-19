@@ -6,9 +6,10 @@
    ONLY``），排序键是 ``business_id, oid``（``oid`` 兜底保证分页不漏行/不重复）；
 2. 一页数据只发**一条**语句，总数由窗口函数带回；只有越界空页才补一条 COUNT；
 3. ``groups.list_classes`` 同一范式，且 ``size``/``page`` 被夹到合法区间；
-4. ``GET /api/users`` 把 ``page``/``perpage`` 翻成 ``limit``/``offset``，
-   ``page=-1`` 仍不分页但有 1000 的硬上限；
-5. ``GET /api/groups`` 只调一次 ``list_classes``（原来先 COUNT 再整表拉回）。
+4. ``GET /api/v1/users`` 把 ``page``/``size`` 原样交给 ``users.list_page``，
+   页号为 0/-1 时按 ``Query(ge=1)`` 直接 422（合并前的「page=-1 全量」
+  哨兵随未版本化实现一起删除）；
+5. ``GET /api/v1/groups`` 只调一次 ``list_classes``（原来先 COUNT 再整表拉回）。
 
 离线机制：假 session 按语句自带的 limit/offset 对一个内存行表切片（模拟
 Oracle 的 OFFSET/FETCH 语义），并回放窗口计数；不建连接、不连 ADB。
@@ -37,7 +38,7 @@ from db.repos.oracle.users import (
 )
 from db.repos.pagination import LIST_PAGE_SIZE_MAX
 from routers import groups_router, users_router
-from util.object_id import get_current_user, optional_current_user
+from util.object_id import get_current_user
 
 ADMIN = "000000000000000000000001"
 
@@ -235,24 +236,22 @@ async def test_list_classes_clamps_page_and_size() -> None:
 # ---------------------------------------------------------------------------
 
 
-class _FakeUsersRepo:
+class _FakeUsersListRepo:
     def __init__(self, rows: list[dict], total: int) -> None:
         self.rows = rows
         self.total = total
-        self.calls: list[dict] = []
+        self.calls: list[tuple] = []
 
-    async def search(self, query, logged_in, limit=None, offset=0):
-        self.calls.append(
-            {"query": query, "logged_in": logged_in, "limit": limit, "offset": offset}
-        )
-        window = self.rows if limit is None else self.rows[offset : offset + limit]
-        return [dict(row) for row in window], self.total
+    async def list_page(self, query: str, role: str, page: int, size: int):
+        self.calls.append((query, role, page, size))
+        start = (page - 1) * size
+        return [dict(row) for row in self.rows[start : start + size]], self.total
 
 
 def _users_client() -> TestClient:
     app = FastAPI()
-    app.include_router(users_router.router, prefix="/api/users")
-    app.dependency_overrides[optional_current_user] = lambda: {
+    app.include_router(users_router.router, prefix="/api/v1/users")
+    app.dependency_overrides[get_current_user] = lambda: {
         "id": ADMIN,
         "per": ["admin"],
     }
@@ -263,45 +262,35 @@ def _patch_users_repo(monkeypatch, repo) -> None:
     monkeypatch.setattr(backends, "get_users_repo", lambda *a, **k: repo)
 
 
-def test_read_users_translates_page_into_limit_and_offset(monkeypatch) -> None:
+def test_user_list_forwards_page_and_size_to_sql(monkeypatch) -> None:
     rows = [
         {"_id": f"{index:024x}", "name": f"学生{index}", "id": f"2026{index:04d}",
          "class_id": None}
         for index in range(30)
     ]
-    repo = _FakeUsersRepo(rows, 97)
+    repo = _FakeUsersListRepo(rows, 97)
     _patch_users_repo(monkeypatch, repo)
 
     response = _users_client().get(
-        "/api/users", params={"page": 3, "perpage": 5}
+        "/api/v1/users", params={"page": 3, "size": 5}
     )
 
     assert response.status_code == 200
     body = response.json()
-    assert repo.calls == [
-        {"query": "", "logged_in": True, "limit": 5, "offset": 10}
-    ]
-    assert body["metadata"]["size"] == 97  # 总数来自 SQL，不是本页长度
+    assert repo.calls == [("", "", 3, 5)]
+    assert body["total"] == 97  # 总数来自 SQL，不是本页长度
     assert len(body["data"]) == 5
     assert body["data"][0]["_id"] == f"{10:024x}"
 
 
-def test_read_users_unpaged_branch_is_capped(monkeypatch) -> None:
-    repo = _FakeUsersRepo([], 4200)
+def test_user_list_rejects_non_positive_page(monkeypatch) -> None:
+    repo = _FakeUsersListRepo([], 0)
     _patch_users_repo(monkeypatch, repo)
 
-    response = _users_client().get("/api/users", params={"page": -1})
+    response = _users_client().get("/api/v1/users", params={"page": -1})
 
-    assert response.status_code == 200
-    assert repo.calls == [
-        {
-            "query": "",
-            "logged_in": True,
-            "limit": users_router._USER_LIST_CAP,
-            "offset": 0,
-        }
-    ]
-    assert users_router._USER_LIST_CAP == 1000
+    assert response.status_code == 422
+    assert repo.calls == []
 
 
 # ---------------------------------------------------------------------------
@@ -364,14 +353,14 @@ def test_get_groups_still_slices_the_merged_list(monkeypatch) -> None:
     monkeypatch.setattr(backends, "get_groups_repo", lambda *a, **k: repo)
 
     response = _groups_client().get(
-        "/api/groups", params={"type": "all", "page": 2, "perpage": 2}
+        "/api/groups", params={"page": 2, "size": 2}
     )
 
     assert response.status_code == 200
     body = response.json()
-    # 合并后按 name 排序：志工部 < 高一(1)班 < 高一(2)班 < 高二(1)班
-    assert [row["name"] for row in body["data"]] == ["高一(2)班", "高二(1)班"]
-    assert body["metadata"]["size"] == 4
+    # 合并顺序：班级页（3 条，仓储顺序）在前，权限组（1 条，按 name）在后。
+    assert [row["name"] for row in body["data"]] == ["高二(1)班", "志工部"]
+    assert body["total"] == 4
 
 
 # ---------------------------------------------------------------------------
@@ -473,40 +462,42 @@ def _rows_for(oids: list[str]) -> list[dict]:
 
 
 @pytest.mark.asyncio
-async def test_read_user_activity_pages_in_sql(monkeypatch) -> None:
+async def test_user_activities_pages_in_sql(monkeypatch) -> None:
     repo = _patch_user_activities(monkeypatch, _rows_for([f"{i:024x}" for i in range(6)]))
 
-    body = await users_router.read_user_activity(
-        _USER_OID, user=_ADMIN, page=2, perpage=2, query=""
+    body = await users_router.get_user_activities_v2(
+        _USER_OID, user=_ADMIN, page=2, perpage=2, search="", sort="_id", asc=False
     )
 
     # 分页参数原样下推（_id 倒序，与老路径的 Python 排序同一把尺子）。
     assert repo.calls == [(_USER_OID, "", "_id", False, 2, 2)]
     # 第二页就是 SQL 给的窗口，响应不再二次切片。
-    assert [row["_id"] for row in body["data"]] == [f"{2:024x}", f"{3:024x}"]
-    assert body["metadata"]["size"] == 6
+    assert [row["_id"] for row in body["activities"]] == [f"{2:024x}", f"{3:024x}"]
+    assert body["total"] == 6
+    assert body["page"] == 2
+    assert body["perpage"] == 2
 
 
 @pytest.mark.asyncio
-async def test_read_user_activity_keeps_the_page_minus_one_full_list(monkeypatch) -> None:
-    """``page=-1`` 是「一次全量」哨兵：同一查询、不分页（``size=None``）。"""
+async def test_user_activities_total_comes_from_the_repo(monkeypatch) -> None:
+    """``total`` 是 SQL 窗口计数，不是本页长度。"""
     rows = _rows_for([f"{i:024x}" for i in range(6)])
     repo = _patch_user_activities(monkeypatch, rows)
 
-    body = await users_router.read_user_activity(
-        _USER_OID, user=_ADMIN, page=-1, perpage=2, query=""
+    body = await users_router.get_user_activities_v2(
+        _USER_OID, user=_ADMIN, page=1, perpage=10, search="", sort="_id", asc=False
     )
 
-    assert repo.calls == [(_USER_OID, "", "_id", False, -1, None)]
-    assert len(body["data"]) == 6
-    assert body["metadata"]["size"] == 6
+    assert repo.calls == [(_USER_OID, "", "_id", False, 1, 10)]
+    assert len(body["activities"]) == 6
+    assert body["total"] == 6
 
 
 @pytest.mark.asyncio
-async def test_read_user_activity_merges_modes_and_skips_missing_activities(
+async def test_user_activities_embed_mine_and_skip_missing_activities(
     monkeypatch,
 ) -> None:
-    """同一活动的多条成员行合成一条；活动已删除的行不进响应。"""
+    """每条成员行嵌一个 ``mine``；活动已删除（``activity is None``）的行不进响应。"""
     first = f"{1:024x}"
     second = f"{2:024x}"
     rows = [
@@ -517,32 +508,28 @@ async def test_read_user_activity_merges_modes_and_skips_missing_activities(
     ]
     _patch_user_activities(monkeypatch, rows)
 
-    body = await users_router.read_user_activity(
-        _USER_OID, user=_ADMIN, page=1, perpage=10, query=""
+    body = await users_router.get_user_activities_v2(
+        _USER_OID, user=_ADMIN, page=1, perpage=10, search="", sort="_id", asc=False
     )
 
-    assert [row["_id"] for row in body["data"]] == [first, second]
-    assert [member["mode"] for member in body["data"][0]["members"]] == [
+    assert [row["_id"] for row in body["activities"]] == [first, first, second]
+    assert [row["mine"]["mode"] for row in body["activities"]] == [
         "on-campus",
         "off-campus",
+        "on-campus",
     ]
-    assert body["data"][1]["members"] == [
-        {
-            "_id": _USER_OID,
-            "status": "effective",
-            "duration": 1.5,
-            "mode": "on-campus",
-        }
-    ]
+    # 成员行的内部关联键不外泄，``_id`` 统一成字符串。
+    assert all("activity" not in row["mine"] for row in body["activities"])
+    assert all(isinstance(row["mine"]["_id"], str) for row in body["activities"])
 
 
 @pytest.mark.asyncio
-async def test_read_user_activity_pushes_the_keyword_filter_into_sql(monkeypatch) -> None:
+async def test_user_activities_pushes_the_keyword_filter_into_sql(monkeypatch) -> None:
     """名字关键字是 SQL 谓词（同一个孪生体），不再在 Python 里 re.search。"""
     repo = _patch_user_activities(monkeypatch, [])
 
-    await users_router.read_user_activity(
-        _USER_OID, user=_ADMIN, page=1, perpage=10, query="支教"
+    await users_router.get_user_activities_v2(
+        _USER_OID, user=_ADMIN, page=1, perpage=10, search="支教", sort="_id", asc=False
     )
 
     assert repo.calls == [(_USER_OID, "支教", "_id", False, 1, 10)]

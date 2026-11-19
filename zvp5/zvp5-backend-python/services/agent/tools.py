@@ -43,6 +43,7 @@ VOLUNTEER_TOOL_NAMES = frozenset(
         "list_activities",
         "get_activity",
         "activity_statistics",
+        "activity_types_summary",
         "list_activity_members",
         "user_volunteer_time",
         "user_activities",
@@ -54,7 +55,7 @@ VOLUNTEER_TOOL_NAMES = frozenset(
 
 PLATFORM_HELP_TOOL = "platform_help"
 
-# 非管理员看到的 = 义工管理 10 个 + 平台帮助。帮助文档对所有 AI 可用角色开放。
+# 非管理员看到的 = 义工管理 11 个 + 平台帮助。帮助文档对所有 AI 可用角色开放。
 DEPARTMENT_TOOL_NAMES = VOLUNTEER_TOOL_NAMES | {PLATFORM_HELP_TOOL}
 
 # 允许「直接执行」（不建提案、不过 TOTP）的写工具名单。**模块级常量**而不是
@@ -307,6 +308,25 @@ _register(
             {"admin", "department", "secretary"} & set(user.get("per") or [])
         ),
         impl=_impl_activity_statistics,
+    )
+)
+
+
+async def _impl_activity_types_summary(user: dict) -> dict:
+    return await tool_impl.activity_types_summary()
+
+
+_register(
+    ToolDef(
+        name="activity_types_summary",
+        description="按活动类型聚合的条数与状态分布（只读汇总，不含成员明细）。",
+        kind=READ,
+        params=_schema({}, ()),
+        # 与 activity_statistics 同档：团支书及以上才能看统计。
+        permission=lambda user: bool(
+            {"admin", "department", "secretary"} & set(user.get("per") or [])
+        ),
+        impl=_impl_activity_types_summary,
     )
 )
 

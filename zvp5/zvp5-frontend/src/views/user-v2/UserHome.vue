@@ -8,6 +8,7 @@ import { useRouter } from 'vue-router'
 import ZUserGroup from '@/components/tags/ZUserGroup.vue'
 import ZUserPosition from '@/components/tags/ZUserPosition.vue'
 import UserHomeWorklist from '@/components/user/UserHomeWorklist.vue'
+import ZUserAvatar from '@/components/user/ZUserAvatar.vue'
 import UserTimePanel from './UserTimePanel.vue'
 
 const header = useHeaderStore()
@@ -26,7 +27,6 @@ const greeting = ref(nowTime < 12 ? 'morning' : nowTime < 18 ? 'afternoon' : 'ev
 const weekdays = ['星期日', '星期一', '星期二', '星期三', '星期四', '星期五', '星期六']
 const dateText = `${dayjs().format('M月D日')} ${weekdays[dayjs().day()]}`
 const stamp = dayjs().format('YYYY.MM.DD')
-const initial = computed(() => (user.name || '?').slice(0, 1))
 const totalHours = computed(() => {
   const time = user.time
   return (Number(time.onCampus || 0) + Number(time.offCampus || 0) + Number(time.socialPractice || 0))
@@ -67,7 +67,7 @@ watch(
 
     <section class="yg-card yg-phi-identity" aria-labelledby="home-identity-title">
       <div class="yg-card__body yg-home-identity">
-        <span class="yg-home-avatar" aria-hidden="true">{{ initial }}</span>
+        <ZUserAvatar size="md" :name="user.name" :code="user.id" />
         <div class="yg-home-identity__body">
           <h2 id="home-identity-title" class="yg-home-identity__name">
             {{ user.name }}

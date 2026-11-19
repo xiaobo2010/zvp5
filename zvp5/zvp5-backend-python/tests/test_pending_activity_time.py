@@ -22,7 +22,7 @@ import pytest
 from fastapi import HTTPException
 
 from db import backends
-from routers import activities_v2_router
+from routers import activities_router
 from util import calculate as calc
 from util import statement
 
@@ -175,7 +175,7 @@ async def test_statement_detail_matches_double_effective_total(statement_state):
 
 
 async def _drain_refresh_tasks():
-    tasks = list(activities_v2_router._time_refresh_tasks)
+    tasks = list(activities_router._time_refresh_tasks)
     if tasks:
         await asyncio.gather(*tasks, return_exceptions=True)
 
@@ -262,10 +262,10 @@ def status_state(monkeypatch):
         return "用户"
 
     monkeypatch.setattr(
-        activities_v2_router.backends, "get_activities_repo", lambda session=None: _Activities()
+        activities_router.backends, "get_activities_repo", lambda session=None: _Activities()
     )
     monkeypatch.setattr(
-        activities_v2_router.backends,
+        activities_router.backends,
         "get_members_repo",
         lambda session=None: SimpleNamespace(
             list_by_activity=list_by_activity,
@@ -273,20 +273,20 @@ def status_state(monkeypatch):
         ),
     )
     monkeypatch.setattr(
-        activities_v2_router.backends, "get_time_repo", lambda session=None: _Times()
+        activities_router.backends, "get_time_repo", lambda session=None: _Times()
     )
-    monkeypatch.setattr(activities_v2_router, "session_scope", scope)
-    monkeypatch.setattr(activities_v2_router, "calculate_user_time_bulk", bulk)
-    monkeypatch.setattr(activities_v2_router, "get_user_display_name", display_name)
-    activities_v2_router._time_refresh_tasks.clear()
+    monkeypatch.setattr(activities_router, "session_scope", scope)
+    monkeypatch.setattr(activities_router, "calculate_user_time_bulk", bulk)
+    monkeypatch.setattr(activities_router, "get_user_display_name", display_name)
+    activities_router._time_refresh_tasks.clear()
     return state
 
 
 @pytest.mark.asyncio
 async def test_status_change_refreshes_member_time_cache(status_state):
-    response = await activities_v2_router.modify_activity_status_v2(
+    response = await activities_router.modify_activity_status_v2(
         ACT_EFFECTIVE,
-        activities_v2_router.PutActivityStatus(status="effective"),
+        activities_router.PutActivityStatus(status="effective"),
         user={"id": USER, "per": ["admin"]},
         log=_Log(),
     )
@@ -309,9 +309,9 @@ async def test_status_change_refreshes_member_time_cache(status_state):
 async def test_refresh_failure_does_not_affect_the_response(status_state, caplog):
     status_state["bulk_error"] = RuntimeError("advisory lock timeout")
 
-    response = await activities_v2_router.modify_activity_status_v2(
+    response = await activities_router.modify_activity_status_v2(
         ACT_EFFECTIVE,
-        activities_v2_router.PutActivityStatus(status="effective"),
+        activities_router.PutActivityStatus(status="effective"),
         user={"id": USER, "per": ["admin"]},
         log=_Log(),
     )
@@ -326,12 +326,12 @@ async def test_refresh_failure_does_not_affect_the_response(status_state, caplog
 
 @pytest.mark.asyncio
 async def test_large_activity_defers_refresh_to_the_daily_rebuild(status_state, caplog):
-    caplog.set_level(logging.INFO, logger="routers.activities_v2_router")
+    caplog.set_level(logging.INFO, logger="routers.activities_router")
     status_state["members"] = [{"member": f"{index:024x}"} for index in range(1, 502)]
 
-    await activities_v2_router.modify_activity_status_v2(
+    await activities_router.modify_activity_status_v2(
         ACT_EFFECTIVE,
-        activities_v2_router.PutActivityStatus(status="effective"),
+        activities_router.PutActivityStatus(status="effective"),
         user={"id": USER, "per": ["admin"]},
         log=_Log(),
     )
@@ -348,15 +348,15 @@ async def test_large_activity_defers_refresh_to_the_daily_rebuild(status_state, 
 @pytest.mark.asyncio
 async def test_unchanged_status_schedules_no_refresh(status_state):
     with pytest.raises(HTTPException) as failure:
-        await activities_v2_router.modify_activity_status_v2(
+        await activities_router.modify_activity_status_v2(
             ACT_EFFECTIVE,
-            activities_v2_router.PutActivityStatus(status="pending"),
+            activities_router.PutActivityStatus(status="pending"),
             user={"id": USER, "per": ["admin"]},
             log=_Log(),
         )
 
     assert failure.value.status_code == 400
-    assert activities_v2_router._time_refresh_tasks == set()
+    assert activities_router._time_refresh_tasks == set()
     assert status_state["bulk_calls"] == []
 
 
@@ -370,9 +370,9 @@ async def test_refresh_guard_counts_people_not_rows(status_state):
         {"member": MEMBER_B},
     ]
 
-    await activities_v2_router.modify_activity_status_v2(
+    await activities_router.modify_activity_status_v2(
         ACT_EFFECTIVE,
-        activities_v2_router.PutActivityStatus(status="effective"),
+        activities_router.PutActivityStatus(status="effective"),
         user={"id": USER, "per": ["admin"]},
         log=_Log(),
     )
@@ -387,9 +387,9 @@ async def test_empty_activity_never_lists_members(status_state):
     """0 人直接返回：连成员行都不取（原先要先全表读一遍才判空）。"""
     status_state["members"] = []
 
-    await activities_v2_router.modify_activity_status_v2(
+    await activities_router.modify_activity_status_v2(
         ACT_EFFECTIVE,
-        activities_v2_router.PutActivityStatus(status="effective"),
+        activities_router.PutActivityStatus(status="effective"),
         user={"id": USER, "per": ["admin"]},
         log=_Log(),
     )

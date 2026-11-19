@@ -65,6 +65,9 @@
   --yg-focus-ring-color: #49f4e2;
 
   --phi-cyan: #49f4e2;
+  --phi-breathe: #1de9b6;
+  --phi-breathe-strong: rgba(29, 233, 182, 0.12);
+  --phi-breathe-soft: rgba(29, 233, 182, 0.085);
   --phi-pink: #ff4e9b;
   --phi-display: Bebas, 'Impact', sans-serif;
   --phi-hud: Rajdhani, 'Arial Narrow', sans-serif;
@@ -85,12 +88,43 @@
   transform: rotateX(67deg);
   transform-origin: 50% 0;
   background-image:
-    linear-gradient(rgba(73, 244, 226, 0.09) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(73, 244, 226, 0.065) 1px, transparent 1px);
+    linear-gradient(var(--phi-breathe-strong) 1px, transparent 1px),
+    linear-gradient(90deg, var(--phi-breathe-soft) 1px, transparent 1px);
   background-size: 54px 42px;
-  mask-image: linear-gradient(to bottom, transparent, #000 15%, #000 75%, transparent);
+  /* 两层 mask：第一层保留上下边缘渐隐，第二层是一条缓慢下移的亮带。
+     亮带收窄并提高对比，两层 intersect 后网格先变强、离开后回落。 */
+  -webkit-mask-image:
+    linear-gradient(to bottom, transparent, #000 15%, #000 75%, transparent),
+    linear-gradient(
+      to bottom,
+      rgba(0, 0, 0, 0.45) 0%,
+      rgba(0, 0, 0, 0.45) 40%,
+      #000 50%,
+      rgba(0, 0, 0, 0.45) 60%,
+      rgba(0, 0, 0, 0.45) 100%
+    );
+  mask-image:
+    linear-gradient(to bottom, transparent, #000 15%, #000 75%, transparent),
+    linear-gradient(
+      to bottom,
+      rgba(0, 0, 0, 0.45) 0%,
+      rgba(0, 0, 0, 0.45) 40%,
+      #000 50%,
+      rgba(0, 0, 0, 0.45) 60%,
+      rgba(0, 0, 0, 0.45) 100%
+    );
+  -webkit-mask-size: 100% 100%, 100% 300%;
+  mask-size: 100% 100%, 100% 300%;
+  -webkit-mask-position: 0 0, 50% 85%;
+  mask-position: 0 0, 50% 85%;
+  -webkit-mask-repeat: no-repeat, no-repeat;
+  mask-repeat: no-repeat, no-repeat;
+  -webkit-mask-composite: source-in;
+  mask-composite: intersect;
   pointer-events: none;
-  animation: phi-grid-float 18s cubic-bezier(0.19, 1, 0.22, 1) infinite;
+  animation:
+    phi-grid-float 18s cubic-bezier(0.19, 1, 0.22, 1) infinite,
+    phi-grid-sweep 10s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 }
 
 @keyframes phi-grid-float {
@@ -100,6 +134,18 @@
   }
   50% {
     transform: rotateX(67deg) translateY(15px);
+  }
+}
+
+/* 300% 高 mask 中，亮带中心从画面上方移到下方的两个位置。 */
+@keyframes phi-grid-sweep {
+  0% {
+    -webkit-mask-position: 0 0, 50% 85%;
+    mask-position: 0 0, 50% 85%;
+  }
+  100% {
+    -webkit-mask-position: 0 0, 50% 15%;
+    mask-position: 0 0, 50% 15%;
   }
 }
 
@@ -660,6 +706,20 @@ html.dark .yg-phi .yg-glass-nav--v2.yg-glass-nav--portrait::after {
   .yg-phi::before {
     animation: none;
     transform: rotateX(67deg);
+    -webkit-mask-image: linear-gradient(
+      to bottom,
+      transparent,
+      #000 15%,
+      #000 75%,
+      transparent
+    );
+    mask-image: linear-gradient(to bottom, transparent, #000 15%, #000 75%, transparent);
+    -webkit-mask-size: 100% 100%;
+    mask-size: 100% 100%;
+    -webkit-mask-position: 0 0;
+    mask-position: 0 0;
+    -webkit-mask-composite: source-over;
+    mask-composite: add;
   }
 
   .yg-phi-velocity,
@@ -970,6 +1030,9 @@ html[data-theme='light'] .yg-phi {
   --phi-accent-ink: #007a70;
   --phi-accent-soft: rgba(11, 159, 147, 0.13);
   --phi-accent-glow: rgba(11, 159, 147, 0.34);
+  --phi-breathe: #008b73;
+  --phi-breathe-strong: rgba(0, 139, 115, 0.075);
+  --phi-breathe-soft: rgba(0, 139, 115, 0.055);
   --phi-line: rgba(5, 6, 8, 0.16);
   --phi-line-strong: rgba(5, 6, 8, 0.24);
   --phi-sunken: #f7f9fa;
@@ -1023,8 +1086,8 @@ html[data-theme='light'] .yg-phi {
 
 html[data-theme='light'] .yg-phi::before {
   background-image:
-    linear-gradient(rgba(5, 6, 8, 0.055) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(11, 159, 147, 0.055) 1px, transparent 1px);
+    linear-gradient(var(--phi-breathe-strong) 1px, transparent 1px),
+    linear-gradient(90deg, var(--phi-breathe-soft) 1px, transparent 1px);
 }
 
 html[data-theme='light'] .yg-phi::after {
@@ -1122,12 +1185,6 @@ html[data-theme='light'] .yg-phi .yg-phi-title {
   background: linear-gradient(120deg, var(--phi-panel-hi), var(--phi-panel) 58%);
 }
 
-.yg-phi .yg-home-avatar {
-  border-radius: 0;
-  clip-path: polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 0 100%);
-  box-shadow: 3px 3px 0 var(--phi-shadow);
-}
-
 .yg-phi .yg-home-identity__name {
   color: var(--phi-ink);
 }
@@ -1145,21 +1202,122 @@ html[data-theme='light'] .yg-phi .yg-phi-title {
 
 /* 登录：品牌大 watermark + 直角面板；覆盖 SFC 的圆角/浅色品牌底 */
 .yg-phi .yg-login-v2 .yg-login-v2__brand {
+  position: relative;
   background:
     linear-gradient(var(--phi-scan) 1px, transparent 1px) 0 0 / 100% 4px,
-    linear-gradient(135deg, var(--phi-panel-hi), var(--phi-panel));
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--phi-panel-hi) 88%, transparent),
+      color-mix(in srgb, var(--phi-panel) 82%, transparent)
+    );
   border-right-color: var(--phi-frame);
   border-radius: 0;
+  overflow: hidden;
 }
 
+/* 品牌区：NERV tactical plate 装饰边框 */
+.yg-phi .yg-login-v2 .yg-login-v2__brand::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: linear-gradient(
+    90deg,
+    var(--phi-accent) 0%,
+    var(--phi-accent) 30%,
+    transparent 30%,
+    transparent 35%,
+    var(--phi-pink) 35%,
+    var(--phi-pink) 65%,
+    transparent 65%
+  );
+  opacity: 0.6;
+  z-index: 3;
+}
+
+/* 品牌区：hazard stripe 装饰（NERV 风格） */
+.yg-phi .yg-login-v2 .yg-login-v2__brand::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 8px;
+  background: repeating-linear-gradient(
+    -45deg,
+    rgba(255, 78, 155, 0.12) 0px,
+    rgba(255, 78, 155, 0.12) 10px,
+    transparent 10px,
+    transparent 20px
+  );
+  z-index: 3;
+}
+
+/* 认证卡：precision instrument 风格，多层边框 + 扫描线 + 锐利切角 */
 .yg-phi .yg-login-v2 .yg-login__card {
+  position: relative;
   border-radius: 0;
-  border-color: var(--phi-frame);
-  background: linear-gradient(135deg, var(--phi-panel-hi), var(--phi-panel));
+  border: 2px solid var(--phi-frame);
+  background:
+    linear-gradient(135deg, var(--phi-panel-hi), var(--phi-panel));
   box-shadow:
+    inset 0 1px 0 rgba(73, 244, 226, 0.1),
+    inset 0 -1px 0 rgba(255, 78, 155, 0.08),
     7px 7px 0 var(--phi-shadow),
-    0 24px 80px rgba(0, 0, 0, 0.24);
-  clip-path: polygon(0 0, calc(100% - 18px) 0, 100% 18px, 100% 100%, 0 100%);
+    0 24px 80px rgba(0, 0, 0, 0.28);
+  clip-path: polygon(0 0, calc(100% - 20px) 0, 100% 20px, 100% 100%, 0 100%);
+}
+
+/* 认证卡：内部扫描线纹理（微妙，不影响可读性） */
+.yg-phi .yg-login-v2 .yg-login__card::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent 0px,
+    rgba(73, 244, 226, 0.015) 1px,
+    transparent 2px,
+    transparent 4px
+  );
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* 认证卡：cyan/magenta 分离边缘（Cyberpunk 风格） */
+.yg-phi .yg-login-v2 .yg-login__card::after {
+  content: '';
+  position: absolute;
+  top: -1px;
+  left: -1px;
+  right: -1px;
+  bottom: -1px;
+  background: linear-gradient(
+    135deg,
+    rgba(73, 244, 226, 0.2) 0%,
+    transparent 20%,
+    transparent 80%,
+    rgba(255, 78, 155, 0.15) 100%
+  );
+  clip-path: polygon(0 0, calc(100% - 20px) 0, 100% 20px, 100% 100%, 0 100%);
+  pointer-events: none;
+  z-index: 1;
+  opacity: 0.4;
+}
+
+/* 确保表单内容在装饰层之上 */
+.yg-phi .yg-login-v2 .yg-login__card > * {
+  position: relative;
+  z-index: 2;
+}
+
+/* 角落支架装饰（NERV instrument corners） */
+.yg-phi .yg-login-v2 .yg-login__card-shell .yg-phi-login-tag {
+  /* tag 是卡片的兄弟节点，脱离卡片的 clip-path 裁切范围，才能跨坐在顶边上 */
+  z-index: 3;
+  animation: phi-login-tag-in 460ms cubic-bezier(0.16, 1, 0.3, 1) 90ms both;
 }
 
 .yg-phi .yg-login-v2 .yg-login__title,
@@ -1173,6 +1331,7 @@ html[data-theme='light'] .yg-phi .yg-phi-title {
   color: var(--phi-ink-3);
 }
 
+/* 超大 ZVMS watermark：Phigros 风格，带微妙发光 */
 .yg-phi .yg-phi-login-mark {
   position: absolute;
   z-index: 0;
@@ -1183,8 +1342,10 @@ html[data-theme='light'] .yg-phi .yg-phi-title {
   letter-spacing: -0.03em;
   pointer-events: none;
   user-select: none;
+  text-shadow: 0 0 40px rgba(73, 244, 226, 0.08);
 }
 
+/* HUD rail：NERV 风格 monospaced 标签 */
 .yg-phi .yg-phi-login-rail {
   position: absolute;
   z-index: 2;
@@ -1196,22 +1357,114 @@ html[data-theme='light'] .yg-phi .yg-phi-title {
   color: var(--phi-ink-3);
   font: 500 10px var(--phi-hud);
   letter-spacing: 0.14em;
+  text-transform: uppercase;
 }
 
+.yg-phi .yg-phi-login-rail span {
+  position: relative;
+  padding-left: 12px;
+}
+
+/* rail label 前缀点（tactical HUD） */
+.yg-phi .yg-phi-login-rail span::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  width: 6px;
+  height: 6px;
+  background: var(--phi-accent);
+  transform: translateY(-50%) rotate(45deg);
+  box-shadow: 0 0 8px rgba(73, 244, 226, 0.4);
+}
+
+/* AUTH tag：跨坐在卡片顶边上的锐利切角标签 + 霓虹发光
+   - 定位挂在卡片外壳上：卡片自身是 clip-path 容器，标头留在卡片里会被裁掉
+   - 切角改到右上，与卡片本体的右上切角同向呼应 */
 .yg-phi .yg-phi-login-tag {
   position: absolute;
-  top: 0;
-  right: 0;
+  top: -12px;
+  right: 28px;
   padding: 4px 9px 3px;
   background: var(--phi-accent);
   color: #041311;
   font: 700 10px var(--phi-hud);
   letter-spacing: 0.14em;
-  clip-path: polygon(8px 0, 100% 0, 100% 100%, 0 100%);
+  clip-path: polygon(0 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 0 100%);
+  box-shadow:
+    0 0 12px rgba(73, 244, 226, 0.3),
+    inset 0 1px 0 rgba(255, 255, 255, 0.4);
 }
 
 html[data-theme='light'] .yg-phi .yg-phi-login-tag {
   color: #fff;
+}
+
+/* 登录页：light theme 变体（冷白/ink/teal，blueprint风格） */
+html[data-theme='light'] .yg-phi .yg-login-v2__brand {
+  background:
+    linear-gradient(var(--phi-scan) 1px, transparent 1px) 0 0 / 100% 4px,
+    linear-gradient(135deg, rgba(250, 253, 254, 0.9), rgba(238, 246, 248, 0.82));
+}
+
+html[data-theme='light'] .yg-phi .yg-login-v2__brand::before {
+  background: linear-gradient(
+    90deg,
+    var(--phi-accent) 0%,
+    var(--phi-accent) 30%,
+    transparent 30%,
+    transparent 35%,
+    #d63384 35%,
+    #d63384 65%,
+    transparent 65%
+  );
+  opacity: 0.5;
+}
+
+html[data-theme='light'] .yg-phi .yg-login-v2__brand::after {
+  background: repeating-linear-gradient(
+    -45deg,
+    rgba(214, 51, 132, 0.08) 0px,
+    rgba(214, 51, 132, 0.08) 10px,
+    transparent 10px,
+    transparent 20px
+  );
+}
+
+html[data-theme='light'] .yg-phi .yg-login-v2 .yg-login__card {
+  border-color: rgba(5, 6, 8, 0.28);
+  background: linear-gradient(135deg, #ffffff, #f7fbfc);
+  box-shadow:
+    inset 0 1px 0 rgba(11, 159, 147, 0.1),
+    inset 0 -1px 0 rgba(214, 51, 132, 0.08),
+    8px 8px 0 rgba(5, 6, 8, 0.12),
+    0 24px 60px rgba(5, 6, 8, 0.16);
+}
+
+html[data-theme='light'] .yg-phi .yg-login-v2 .yg-login__card::after {
+  background: linear-gradient(
+    135deg,
+    rgba(11, 159, 147, 0.12) 0%,
+    transparent 20%,
+    transparent 80%,
+    rgba(214, 51, 132, 0.1) 100%
+  );
+  opacity: 0.6;
+}
+
+html[data-theme='light'] .yg-phi .yg-phi-login-mark {
+  text-shadow: 0 0 30px rgba(11, 159, 147, 0.06);
+}
+
+html[data-theme='light'] .yg-phi .yg-phi-login-rail span::before {
+  background: var(--phi-accent);
+  box-shadow: 0 0 6px rgba(11, 159, 147, 0.3);
+}
+
+html[data-theme='light'] .yg-phi .yg-phi-login-tag {
+  box-shadow:
+    0 0 10px rgba(11, 159, 147, 0.2),
+    inset 0 1px 0 rgba(255, 255, 255, 0.6);
 }
 
 /* 概览瓦片：沿用硬边语言，切角与卡片同族，圆角全部抹平 */
@@ -1804,6 +2057,42 @@ html[data-theme='light'] .yg-phi .yg-topbar {
   from {
     opacity: 0;
     transform: translate3d(0, 24px, 0) skewX(-4deg);
+  }
+}
+
+/* 登录页专用：品牌内容区与认证卡的入场编排（<= 600ms） */
+.yg-phi .yg-login-v2__brand-inner {
+  animation: phi-login-brand-in 480ms cubic-bezier(0.16, 1, 0.3, 1) 60ms both;
+}
+
+.yg-phi .yg-login-v2 .yg-login__card {
+  animation: phi-login-card-in 520ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.yg-phi .yg-phi-login-rail {
+  animation: phi-final-rail 480ms cubic-bezier(0.16, 1, 0.3, 1) 80ms both;
+}
+
+@keyframes phi-login-brand-in {
+  from {
+    opacity: 0;
+    transform: translate3d(-20px, 0, 0);
+  }
+}
+
+@keyframes phi-login-card-in {
+  from {
+    opacity: 0;
+    transform: translate3d(20px, 0, 0);
+    clip-path: polygon(0 0, 0 0, 0 20px, 0 100%, 0 100%);
+  }
+}
+
+/* AUTH tag 独立入场：卡片本体有 clip-path 动画，标头在外壳里，需自己跟上节奏 */
+@keyframes phi-login-tag-in {
+  from {
+    opacity: 0;
+    transform: translate3d(14px, 0, 0);
   }
 }
 

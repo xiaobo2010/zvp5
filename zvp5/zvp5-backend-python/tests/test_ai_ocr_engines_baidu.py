@@ -52,10 +52,12 @@ def _run(coro):
 
 @pytest.fixture(autouse=True)
 def _clean_token_cache():
-    """token 缓存是进程级的共享状态，用例之间必须清干净。"""
+    """token 缓存与复用的 ``AsyncClient`` 都是进程级状态，用例之间必须清干净。"""
     ocr_engines._clear_baidu_tokens()
+    ocr_engines._reset_http_client()
     yield
     ocr_engines._clear_baidu_tokens()
+    ocr_engines._reset_http_client()
 
 
 def _install(

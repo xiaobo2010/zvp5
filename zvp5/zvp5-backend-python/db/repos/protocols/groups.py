@@ -71,12 +71,12 @@ class GroupsRepo(Protocol):
         Rows are the canonical activity documents (same shape as
         :meth:`ActivitiesRepo.get`): every activity that at least one member of
         ``group_oid``'s class belongs to. ``search`` is a case-insensitive
-        regex over ``name``/``description`` (empty = no filter), ``sort``/
-        ``asc`` order the rows (unknown/empty ``sort`` falls back to
+        literal ``contains`` over ``name``/``description`` (empty = no filter),
+        ``sort``/``asc`` order the rows (unknown/empty ``sort`` falls back to
         ``_id`` descending). ``total`` counts the matching activities, i.e.
         every distinct activity of the class, not ``memberships``.
 
-        Lifts ``routers/groups_v2_router.py::get_group_activities_v2``.
+        Lifts ``routers/groups_router.py::get_group_activities_v2``.
         """
         ...
 
@@ -106,12 +106,13 @@ class GroupsRepo(Protocol):
 
         Rows use the shape ``{"_id": <hex str>, "name": str,
         "type": "permission", "permissions": list[str]}``. ``query`` is applied
-        as a case-insensitive *contains* on ``name`` (``re.escape``d, empty = no
-        filter); ``permissions`` restricts to groups whose ``permissions`` array
-        intersects the given values (empty/``None`` = no filter).
+        as a case-insensitive *contains* on ``name`` (LIKE wildcards escaped,
+        empty = no filter); ``permissions`` restricts to groups whose
+        ``permissions`` array intersects the given values (empty/``None`` = no
+        filter).
 
         Lifts ``routers/users_router.py`` (``permissions $in`` lookup) and
-        ``routers/groups_v2_router.py`` (name ``$regex`` lookup).
+        ``routers/groups_router.py`` (name ``$regex`` lookup).
         """
         ...
 
@@ -120,7 +121,7 @@ class GroupsRepo(Protocol):
 
         Same ``{_id, name, type: "permission", permissions, description}`` shape
         as :meth:`list_permission_groups`. Lifts
-        ``routers/groups_v3_router.py``'s
+        ``routers/groups_router.py``'s
         ``find_one({"_id": ..., "type": "permission"})``.
         """
         ...

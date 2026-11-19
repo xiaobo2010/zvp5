@@ -5,9 +5,10 @@ SQLAlchemy 2.0 async Core over the ``USER_DEVICE_BINDINGS`` table (学海 ID 身
 ``OID``).
 
 Observe-only: nothing in this module blocks a login. A binding is never deleted;
-``revoke`` flips ``status`` to ``revoked`` while the row (and its provenance)
-survives, and :meth:`OracleBindingsRepo.upsert` reactivates such a row in place
-rather than inserting a duplicate ``(user_oid, xuehai_id)``.
+rows flipped to ``revoked`` keep their provenance, and
+:meth:`OracleBindingsRepo.upsert` reactivates such a row in place rather than
+inserting a duplicate ``(user_oid, xuehai_id)``. 管理端的绑定列表/改绑/解绑端点
+已于 2026-11-19 删除（前端零调用），仓储侧只保留登录链路用到的读取与 upsert。
 
 Session ownership mirrors :mod:`db.repos.oracle.users`: with no injected session
 each method opens its own through :func:`db.oracle.session.session_scope`, and
@@ -67,14 +68,6 @@ def _columns() -> tuple[Any, ...]:
     )
 
 
-def _list_for_user_stmt(user_oid: str):
-    return (
-        select(*_columns())
-        .where(bindings_tbl.c.user_oid == user_oid)
-        .order_by(bindings_tbl.c.created_at.asc(), bindings_tbl.c.oid.asc())
-    )
-
-
 def _get_active_for_user_stmt(user_oid: str):
     return (
         select(*_columns())
@@ -121,17 +114,6 @@ def _reactivate_stmt(user_oid: str, xuehai_id: str):
     )
 
 
-def _revoke_stmt(user_oid: str, xuehai_id: str):
-    return (
-        update(bindings_tbl)
-        .where(
-            bindings_tbl.c.user_oid == user_oid,
-            bindings_tbl.c.xuehai_id == xuehai_id,
-        )
-        .values(status="revoked", updated_at=_now())
-    )
-
-
 def _binding_row(mapping: Any) -> Row:
     return {
         "_id": mapping["oid"],
@@ -151,12 +133,6 @@ class OracleBindingsRepo:
 
     def __init__(self, session: AsyncSession | None = None) -> None:
         self._session = session
-
-    async def list_for_user(self, user_oid: str) -> list[Row]:
-        stmt = _list_for_user_stmt(normalize_oid(user_oid))
-        async with _session_for(self._session) as (session, _owns):
-            rows = (await session.execute(stmt)).all()
-        return [_binding_row(row._mapping) for row in rows]
 
     async def get_active_for_user(self, user_oid: str) -> list[Row]:
         stmt = _get_active_for_user_stmt(normalize_oid(user_oid))
@@ -178,13 +154,6 @@ class OracleBindingsRepo:
                 )
             else:
                 await session.execute(_reactivate_stmt(user, xuehai_id))
-            if owns:
-                await session.commit()
-
-    async def revoke(self, user_oid: str, xuehai_id: str) -> None:
-        stmt = _revoke_stmt(normalize_oid(user_oid), xuehai_id)
-        async with _session_for(self._session) as (session, owns):
-            await session.execute(stmt)
             if owns:
                 await session.commit()
 

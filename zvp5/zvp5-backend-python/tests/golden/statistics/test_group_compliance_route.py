@@ -1,4 +1,4 @@
-"""Route-level tests for ``routers.groups_v2_router.stat_group_compliance``.
+"""Route-level tests for ``routers.groups_router.stat_group_compliance``.
 
 Fully offline: the repositories are fake spies injected with
 ``monkeypatch.setattr(db.backends, ...)`` (the router reaches the factories
@@ -8,7 +8,7 @@ user comes from ``app.dependency_overrides[get_current_user]``.
 Why a throwaway ``FastAPI()`` instead of ``main.app``: importing ``main`` pulls
 in APScheduler, socket.io and the ``tasks.compute_time`` graph. The prefix below
 is copied from ``main.py``'s
-``include_router(groups_v2_router.router, prefix="/api/v1/groups")`` so the
+``include_router(groups_router.router, prefix="/api/v1/groups")`` so the
 tested URL is the production one.
 
 Two properties are pinned beyond the response contract:
@@ -31,7 +31,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from db import backends
-from routers import groups_v2_router
+from routers import groups_router
 from util.object_id import get_current_user
 
 PREFIX = "/api/v1/groups"
@@ -93,7 +93,7 @@ class _ForbiddenRepo:
 
 def _client(user: dict) -> TestClient:
     app = FastAPI()
-    app.include_router(groups_v2_router.router, prefix=PREFIX)
+    app.include_router(groups_router.router, prefix=PREFIX)
     app.dependency_overrides[get_current_user] = lambda: user
     return TestClient(app)
 

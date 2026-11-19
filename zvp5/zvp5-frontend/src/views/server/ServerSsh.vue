@@ -20,6 +20,7 @@ import type { AiThinkingLevel } from '@/../types/ai'
 import ZAiModelThinkingPicker from '@/components/ai/ZAiModelThinkingPicker.vue'
 import ZSystemAuthDialog from '@/components/system/ZSystemAuthDialog.vue'
 import ZSceneRunDialog from '@/components/server/ZSceneRunDialog.vue'
+import ZHexUnit from './components/ZHexUnit.vue'
 import { resolveErrorMessage } from '@/utils/errorMessage'
 import { useUserStore } from '@/stores/user.ts'
 import {
@@ -74,10 +75,30 @@ const statusText = computed(() => {
   return t('server.ssh.statusClosed')
 })
 
-const statusTagType = computed<'success' | 'info' | 'danger'>(() => {
-  if (status.value === 'connected') return 'success'
+// —— MAGI 状态单元：会话状态是本页唯一要紧的状态,置顶并放大 ——
+// 徽章值走短码（仪表盘读数），说明文字走中文状态。
+const sessionTone = computed<'ok' | 'danger' | 'accent' | 'idle'>(() => {
+  if (status.value === 'connected') return 'ok'
   if (status.value === 'closed') return 'danger'
-  return 'info'
+  if (status.value === 'connecting') return 'accent'
+  return 'idle'
+})
+
+const sessionValue = computed(() => {
+  if (status.value === 'connected') return 'ONLINE'
+  if (status.value === 'connecting') return 'SYNC'
+  if (status.value === 'closed') return 'DOWN'
+  return 'IDLE'
+})
+
+const sessionHint = computed(() => statusText.value)
+
+/** 终端卡片头部的连接态徽章语气,跟六边形单元同一套配色。 */
+const statusTagClass = computed(() => {
+  if (status.value === 'connected') return 'phi-srv-tag--ok'
+  if (status.value === 'closed') return 'phi-srv-tag--danger'
+  if (status.value === 'connecting') return 'phi-srv-tag--warn'
+  return 'phi-srv-tag--muted'
 })
 
 const mainButtonType = computed<'primary' | 'warning' | undefined>(() => {
@@ -531,6 +552,8 @@ function startTerminal(voirTicket: string) {
 }
 
 function disconnect() {
+  // 未连接时没有可断的会话,重复点击不应再动一次状态机
+  if (status.value !== 'connected') return
   cancelConnectTimeout()
   if (ws) {
     ws.close(1000)
@@ -539,6 +562,9 @@ function disconnect() {
 }
 
 async function openTerminal() {
+  // 连接中 / 授权码待确认时忽略二次点击：
+  // 双击会同时开出两个授权框、拿到两张票据,后建立的会话会把前一个顶掉。
+  if (status.value === 'connecting' || authPending.value) return
   banner.value = ''
   const targetId = selectedTarget.value
   const target = targets.value.find((item) => item.id === targetId)
@@ -821,12 +847,40 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="ssh-page flex flex-col gap-4 pb-2">
+  <div class="ssh-page phi-srv-page">
+    <!-- 状态单元:会话状态是这一页唯一要紧的状态,置顶放大 -->
+    <div class="phi-srv-strip" :class="{ 'phi-srv-strip--danger': status === 'closed' }">
+      <ZHexUnit
+        :label="t('server.ssh.unitLabel')"
+        :value="sessionValue"
+        :tone="sessionTone"
+        size="lg"
+        :hint="sessionHint"
+      />
+      <div class="phi-srv-strip__cell">
+        <div class="phi-srv-unit__body">
+          <span class="phi-srv-unit__label">{{ t('server.ssh.unitTargetNow') }}</span>
+          <span class="phi-srv-unit__hint phi-srv-unit__hint--muted font-mono">{{
+            targetDisplay
+          }}</span>
+        </div>
+      </div>
+      <div class="phi-srv-strip__cell">
+        <div class="phi-srv-unit__body">
+          <span class="phi-srv-unit__label">{{ t('server.ssh.unitLimit') }}</span>
+          <span class="phi-srv-unit__hint phi-srv-unit__hint--muted">{{
+            t('server.ssh.limitNote')
+          }}</span>
+        </div>
+      </div>
+    </div>
+
     <!-- 终端卡片:header 放状态 + 目标 + 字号 + 动作,body 放终端 -->
     <ElCard shadow="never" class="ssh-card">
       <template #header>
         <div class="flex flex-wrap items-center gap-x-4 gap-y-2">
-          <ElTag :type="statusTagType" effect="light" size="large">{{ statusText }}</ElTag>
+          <span class="phi-srv-tag" :class="statusTagClass">{{ statusText }}</span>
+          <span class="phi-srv-tag phi-srv-tag--muted">{{ t('server.ssh.tagTerminal') }}</span>
           <span class="flex items-center gap-1.5 font-mono text-sm">
             <ElIcon :size="18"><Connection /></ElIcon>
             {{ targetDisplay }}
@@ -860,7 +914,7 @@ onBeforeUnmount(() => {
               size="large"
               :type="mainButtonType"
               :icon="mainButtonIcon"
-              :disabled="status === 'connecting' || (!selectedTarget && status !== 'connected')"
+              :disabled="status === 'connecting' || authPending || (!selectedTarget && status !== 'connected')"
               @click="status === 'connected' ? disconnect() : openTerminal()"
             >
               {{ mainButtonText }}
@@ -897,9 +951,11 @@ onBeforeUnmount(() => {
 
         <!-- 终端区:connecting 骨架 / 空态说明 / 终端本体 -->
         <div class="terminal-stage relative">
+          <!-- 连接中:终端框顶部跑一条 HUD 加载条,状态一眼可见 -->
+          <div v-if="status === 'connecting'" class="phi-srv-loading"></div>
           <div
             ref="containerRef"
-            class="terminal-box bg-[var(--yg-bg-page)] p-2"
+            class="terminal-box p-2"
           >
             <!-- 连接中骨架 -->
             <ElSkeleton v-if="status === 'connecting'" :rows="4" animated />
@@ -912,7 +968,7 @@ onBeforeUnmount(() => {
               <p class="max-w-md text-sm leading-6 opacity-75">
                 {{ t('server.ssh.emptyDesc') }}
               </p>
-              <p class="max-w-md text-xs leading-5 text-red-600 dark:text-red-400">
+              <p class="max-w-md text-xs leading-5 ssh-danger">
                 {{ t('server.ssh.riskHint') }}
               </p>
               <ElButton
@@ -920,7 +976,7 @@ onBeforeUnmount(() => {
                 type="primary"
                 :icon="Connection"
                 class="mt-2"
-                :disabled="!selectedTarget || targetsLoading"
+                :disabled="!selectedTarget || targetsLoading || authPending"
                 @click="openTerminal"
               >
                 {{ t('server.ssh.startButton') }}
@@ -942,7 +998,6 @@ onBeforeUnmount(() => {
         </div>
       </div>
     </ElCard>
-    <p class="shrink-0 text-xs opacity-60">{{ t('server.ssh.limitNote') }}</p>
     <ZSystemAuthDialog ref="authRef" />
 
     <!-- 管理员首次使用警告:确认后记入 localStorage,之后不再出现 -->
@@ -1140,6 +1195,11 @@ input {
   color: var(--yg-text-tertiary);
 }
 
+/* 危险提示(root 权限):用主题的强调色,与状态条同一套危险色 */
+.ssh-danger {
+  color: var(--phi-srv-danger);
+}
+
 /* ---------- 终端卡片:高度跟着实际可用空间走 ----------
    竖屏时底部是悬浮药丸导航,外壳(App.vue)已经把路由视图的底距让出来,
    终端只要填满剩下的高度,底边就一定在药丸上方,不再靠 100vh - 固定 rem 估算。 */
@@ -1175,10 +1235,28 @@ input {
   min-height: 0;
 }
 
-/* 横屏沿用既有高度算法,桌面观感不变 */
+/* 横屏沿用既有高度算法,桌面观感不变。
+   顶部多了一条 MAGI 状态条(六边形徽章 + 读数格),扣减量相应加大。 */
 .terminal-box {
-  height: calc(100vh - 20rem);
+  height: calc(100vh - 26rem);
   min-height: 360px;
+}
+
+/* 终端框:切角 + 硬阴影,与服务器台其余面板同一套语言。
+   只动容器的视觉,xterm 本体与滚动逻辑一律不碰。
+   裁剪区向右下各多留 5px:clip-path 会裁掉自身阴影,把阴影带包进裁剪区才留得住。 */
+.terminal-box {
+  border: 1px solid var(--phi-frame);
+  background: var(--yg-bg-page);
+  clip-path: polygon(
+    0 0,
+    calc(100% - 14px) 0,
+    100% 14px,
+    calc(100% + 5px) calc(14px + 5px),
+    calc(100% + 5px) calc(100% + 5px),
+    0 calc(100% + 5px)
+  );
+  box-shadow: 4px 4px 0 var(--phi-shadow);
 }
 
 /* 竖屏:高度由 flex 分配,不再用 100vh 减固定 rem 猜高度 */

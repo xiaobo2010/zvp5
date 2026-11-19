@@ -23,7 +23,7 @@ from fastapi import HTTPException
 from fastapi.responses import JSONResponse
 
 from db import backends
-from routers import activities_v2_router
+from routers import activities_router
 
 ADMIN_OID = "000000000000000000000001"
 PLAIN_OID = "000000000000000000000002"
@@ -113,15 +113,15 @@ def state(monkeypatch):
     )
     # 后台时长重算与闸门无关，别在事件循环里留 fire-and-forget 任务。
     monkeypatch.setattr(
-        activities_v2_router, "_schedule_user_time_refresh", lambda activity_id: None
+        activities_router, "_schedule_user_time_refresh", lambda activity_id: None
     )
     return state
 
 
 async def _call(state, *, status="refused", user=ADMIN):
-    return await activities_v2_router.modify_activity_status_v2(
+    return await activities_router.modify_activity_status_v2(
         ACTIVITY_ID,
-        activities_v2_router.PutActivityStatus(status=status),
+        activities_router.PutActivityStatus(status=status),
         user=user,
         log=state["log"],
     )

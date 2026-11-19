@@ -1,8 +1,9 @@
 # 站内通知 API（`/api/v1/notifications`）
 
-本文是前端接入的唯一契约。后端实现只负责「谁发的、什么时候发的、内容是什么、
-全局/单条版本号是多少」；**已阅 / 不再显示都是客户端本地状态**，服务端不保存
-每个用户的阅读记录，也不因本地操作推进任何版本号。
+本文是前端接入的唯一契约。后端负责「谁发的、什么时候发的、内容是什么、
+全局/单条版本号是多少」，以及**每个账号读到哪一版**（V053 起跟着帐号走，不再
+只存在 localStorage）。「不再显示 / suppress」仍然是**设备级**偏好，留在客户端，
+服务端不保存。
 
 ## 1. 数据与版本语义
 
@@ -17,7 +18,8 @@
 | 管理员成功编辑通知（标题/内容/`active` 任一变化） | +1 |
 | 管理员成功删除通知 | +1 |
 | 通知不存在（404） | 不变 |
-| 用户点击「已阅」/「不再显示」 | 不变（服务端无请求） |
+| 用户标记某条通知已读（`POST /{oid}/read`） | 不变 |
+| 用户点击「不再显示」 | 不变（服务端无请求） |
 
 因此客户端只需保存上次看到的全局版本：服务端 `version` 更大时拉一次完整列表；
 相等时可继续用本地缓存。
@@ -30,7 +32,7 @@
 - 每次成功编辑标题、内容或 `active`（包括停用/重新启用）`version += 1`；
 - 单条通知的版本变化**不会**影响其他通知的版本。
 
-客户端用它与本地的「已阅标记」比较：`notice.version > localReadVersion[notice.id]`
+客户端用它与服务端的「已读版本」比较：`notice.version > read[notice.id]`
 表示这条通知在该用户上次阅读后又改过，可以再次提示为未读。
 
 ### 1.3 不可变发布人
@@ -60,6 +62,34 @@ active else "0"))` 的 64 位小写 hex。`active` 参与哈希，因为停用/�
 
 快照表不建外键：通知被硬删后历史仍可用。删除与回滚不复用通知行已有的版本号，
 总是取「该通知历史最大版本 + 1」，因此 `(notification_oid, version)` 始终唯一。
+
+### 1.6 已读状态（服务端，跟着帐号走）
+
+`NOTIFICATION_READS` 每行一个 `(user_oid, notification_oid)`，存的是**读到的
+版本号**而不是 bool：
+
+| 列 | 类型 | 说明 |
+| -- | ---- | ---- |
+| `user_oid` | `VARCHAR2(24)` | 用户 oid；与 `notification_oid` 组成主键 |
+| `notification_oid` | `VARCHAR2(24)` | 通知 oid |
+| `version` | `NUMBER(19)` | 标记时该通知的 `version` |
+| `read_at` | `TIMESTAMP` | 最后一次标记时间（重复标记会刷新） |
+
+判定口径（客户端执行，服务端只提供数据）：
+
+```ts
+const isRead = (read[notice.id] ?? 0) >= notice.version;
+```
+
+- 存版本号而不是「已读/未读」：管理员编辑通知后 `version += 1`，旧值自动小于
+  新版本，**不需要**给每个用户写一遍就自动重新变未读；
+- `POST /{oid}/read` 由服务端读通知的**当前** `version` 落库，客户端不传版本；
+- 重复标记是幂等 upsert（同一 user + 通知只有一行），只更新 `version` /
+  `read_at`；
+- 通知被硬删除时，其已读行在**同一事务**里清理（表上没有外键，故没有级联）；
+- 已读行不参与 `GET /notifications` 的缓存：那份缓存的是对所有用户都相同的
+  「列表 + 全局版本」，per-user 数据掺进去既不能共享，也会把缓存放大成
+  「用户数 × 通知数」。
 
 ## 2. 通用响应外壳
 
@@ -110,6 +140,7 @@ Authorization: Bearer <access_token>
         "content_hash": "9f2c…（64 位 hex）",
         "author_id": "000000000000000000000001",
         "author_name": "张老师",
+        "source_ref": null,
         "created_at": "2026-10-21T09:30:00",
         "updated_at": "2026-10-21T10:15:00",
         "active": true
@@ -128,10 +159,69 @@ Authorization: Bearer <access_token>
 | `notifications[].version` | int | **单条**修订号，单调递增 |
 | `notifications[].content_hash` | string | 当前内容的 sha256（64 位小写 hex），见 §1.4 |
 | `notifications[].author_id` | string | 发布人用户 oid，不可变 |
-| `notifications[].author_name` | string | 发布当时显示名，不可变 |
+| `notifications[].author_name` | string | 发布当时显示名，不可变；自动版本公告为 `SYSTEM` |
+| `notifications[].source_ref` | string \| null | 非空表示由来源对象自动同步生成（当前只有 CHANGELOG 版本公告）。用户端列表在 SQL 层就排除这些行，恒为 `null`；管理端会返回它们，前端据此把人写的公告与版本自动公告分开（管理页只列人写的） |
 | `notifications[].created_at` | string | 发送时间，`YYYY-MM-DDTHH:MM:SS`（naive） |
 | `notifications[].updated_at` | string | 最后一次编辑/停用时间 |
 | `notifications[].active` | bool | 用户端当前恒为 `true`；管理端可能为 `false` |
+
+> **响应结构不变**：`GET /api/v1/notifications` 的 `data` 里**不会**出现任何
+> per-user 字段。已读状态走下面的独立端点。
+
+### 3.1 读取当前账号的已读状态
+
+```
+GET /api/v1/notifications/read
+Authorization: Bearer <access_token>
+```
+
+任何已登录用户可调用，返回**该用户全部**已读行（不按通知是否还存在过滤；
+多出来的键客户端自己忽略）。
+
+```json
+{
+  "status": "ok",
+  "code": 200,
+  "data": {
+    "read": {
+      "0d00000000000000000000aa": 3,
+      "0d00000000000000000000bb": 1
+    }
+  }
+}
+```
+
+| 字段 | 类型 | 说明 |
+| ---- | ---- | ---- |
+| `read` | object | 键 = 通知 oid，值 = 该用户读到的版本号；没有已读记录时是 `{}` |
+
+### 3.2 标记某条通知已读
+
+```
+POST /api/v1/notifications/{oid}/read
+Authorization: Bearer <access_token>
+```
+
+任何已登录用户可调用（不需要 `admin`），无请求体。服务端读取该通知的**当前**
+`version` 落库：
+
+```json
+{
+  "status": "ok",
+  "code": 200,
+  "data": {
+    "oid": "0d00000000000000000000aa",
+    "version": 3
+  }
+}
+```
+
+- 幂等：重复调用不会报错、不会产生多行，只把 `version` / `read_at` 刷新为
+  最新；用户连点两次与点一次等价；
+- 版本以**服务端当前值**为准，客户端不能补写更大的版本号；
+- 不推进全局 `version`，也不推进单条 `version`；
+- 通知不存在 → `404 {"detail":"通知不存在"}`；oid 不是 24 位十六进制 →
+  `400 {"detail":"Invalid Object ID"}`。
 
 ## 4. 管理端
 
@@ -311,14 +401,14 @@ Content-Type: application/json
 | 400 | oid 不是 24 位十六进制 | `Invalid Object ID` |
 | 404 | 该通知没有这个版本 | `版本不存在` |
 
-## 5. 客户端本地状态算法（推荐）
+## 5. 客户端状态算法（推荐）
 
-服务端不提供「标记已读」接口，以下状态只存本设备/本账号：
+已读状态在服务端（§1.6），「不再显示」仍是本设备偏好：
 
 ```ts
-type LocalState = {
+type ClientState = {
   lastGlobalVersion: number;
-  // 已阅：记录阅读时的单条 version
+  // 已读：服务端 /read 返回的映射（内存态，不落 localStorage 也够用）
   read: Record<string, number>;
   // 不再显示：按 id 永久压制（不因编辑后 version 变大而重新出现）
   suppressed: Record<string, true>;
@@ -328,8 +418,7 @@ type LocalState = {
 打开应用时：
 
 1. `GET /api/v1/notifications`，拿到 `server.version` 和当前有效通知列表。
-2. 删除本地 `read` / `suppressed` 中已不在列表里的 id（可选；`suppressed`
-   建议保留，防止通知停用后再启用时重新出现）。
+2. `GET /api/v1/notifications/read`，拿到该账号的 `read` 映射（跨设备一致）。
 3. 对每条通知：
    - 若 `suppressed[notice.id]` 存在 → **永不展示**，跳过；
    - 否则若 `notice.version > (read[notice.id] ?? 0)` → 视为未读，展示；
@@ -339,26 +428,33 @@ type LocalState = {
 用户点击 **「已阅」**：
 
 ```ts
-read[notice.id] = notice.version;
-// 不调用服务端，不改 lastGlobalVersion
+await fetch(`/api/v1/notifications/${notice.id}/read`, { method: "POST" });
+read[notice.id] = notice.version; // 用响应里的 data.version 更稳
+// 不改变 lastGlobalVersion
 ```
 
 用户点击 **「不再显示」**：
 
 ```ts
-suppressed[notice.id] = true; // 或记录当前 notice.version 作为压制标记
+suppressed[notice.id] = true; // 落 localStorage
 // 不调用服务端；该 id 以后无论 version 如何变化都不再展示
 ```
 
+> `不再显示` 不进服务端：同一账号在手机上压制、在平板上可能仍想看，它是设备级
+> 偏好，不是账号事实。
+
 > 重要：`不再显示` 必须按 `id` 判断，而不是只比较 `version`。管理员编辑通知会
 > 让 `notice.version` 变大；若只用「version > 压制时的 version」判断，被压制的
-> 通知会重新出现，违反「该设备/账号永不再显示」的语义。
+> 通知会重新出现，违反「该设备永不再显示」的语义。
 
 ### 5.1 竞态说明
 
 服务端读取列表时先读全局版本、再读通知行。若管理员恰好在两次读取之间创建通知，
 响应可能返回「旧版本 + 包含新通知」；客户端会处理到新通知并写入旧版本，下次
 打开时版本变大再刷新一次，**不会漏通知**。反过来（新版本 + 缺通知）不会发生。
+
+标记已读与管理员编辑并发时，落库的可能是编辑前的版本号；客户端下次 `GET /read`
+会读回该值，`notice.version > read[oid]` 成立即再次提示未读。不会静默吞掉通知。
 
 ## 6. 数据库与迁移
 
@@ -368,15 +464,33 @@ suppressed[notice.id] = true; // 或记录当前 notice.version 作为压制标�
   - `NOTIFICATION_STATE`：单行 `ID = 1`、`VERSION`、`UPDATED_AT`；
   - `NOTIFICATION_VERSIONS`：`OID`、`NOTIFICATION_OID`、`VERSION`、`TITLE`、
     `CONTENT`、`ACTIVE`、`OP`、`SOURCE_VERSION`、`CONTENT_HASH`、`AUTHOR_OID`、
-    `AUTHOR_NAME`、`CREATED_AT`（append-only 内容快照）。
+    `AUTHOR_NAME`、`CREATED_AT`（append-only 内容快照）；
+  - `NOTIFICATION_READS`（V053）：`USER_OID`、`NOTIFICATION_OID`、`VERSION`、
+    `READ_AT`；主键 `(USER_OID, NOTIFICATION_OID)`，无外键、无 `OID` 列。
 - 索引：`ix_notifications_active_created (ACTIVE, CREATED_AT)`、
   `ix_notification_versions_doc (NOTIFICATION_OID, VERSION)`；唯一约束
-  `uq_notification_versions (NOTIFICATION_OID, VERSION)`。
+  `uq_notification_versions (NOTIFICATION_OID, VERSION)`。`NOTIFICATION_READS`
+  不额外建索引：主键索引的 `USER_OID` 前缀服务 `GET /read`，按通知清理可用
+  skip scan。
 - 存量实例：`db/oracle/ddl/V015__add_notifications.sql`、
-  `db/oracle/ddl/V017__add_notification_versions.sql`（均幂等）。
+  `db/oracle/ddl/V017__add_notification_versions.sql`、
+  `db/oracle/ddl/V053__notification_reads.sql`（均幂等）。
 - 全新实例：`V001__initial_schema.sql` 已包含同样对象和 `id=1` 种子。
 - `db/models.py` 已镜像；修改 DDL/模型后运行：
 
 ```bash
 .venv/bin/python -m db.ddl_check
 ```
+
+### 6.1 发布顺序（重要）
+
+新接口读写 `NOTIFICATION_READS`，表不存在时是 `ORA-00942` → `500`。所以
+**先上表、再发后端**：
+
+```bash
+.venv/bin/python misc/apply_ddl.py --dry-run v053   # 只解析，不连库
+.venv/bin/python misc/apply_ddl.py v053             # 发版窗口内手工执行
+```
+
+DDL 不会在应用启动时自动执行。已读状态是新增能力，表缺失期间旧接口行为不变
+（前端降级为本地记录即可）。

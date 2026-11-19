@@ -22,9 +22,7 @@ from fastapi.testclient import TestClient
 import settings  # noqa: F401  (导入顺序与其它 AI 用例一致)
 from db import backends
 from routers import ai_router
-from services import violation_guard
-from services.ai import config as ai_config
-from services.ai import credentials, providers, quota, scheduled_runner as runner
+from services.ai import scheduled_runner as runner
 from services.ai import safety_guard
 from typings.log import inject_log
 from util.object_id import get_current_user

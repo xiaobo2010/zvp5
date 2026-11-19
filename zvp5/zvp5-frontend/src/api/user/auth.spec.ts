@@ -39,7 +39,7 @@ describe('authentication response contract', () => {
     request.mockResolvedValueOnce({ data: login })
     expect(await useTempPasswordAuth('challenge-token', '12345678')).toEqual(login)
     expect(localStorage.getItem('token')).toBe('temp-session')
-    expect(request).toHaveBeenCalledWith('/users/auth/device', {
+    expect(request).toHaveBeenCalledWith('/v1/users/auth/device', {
       method: 'POST',
       data: { challenge: 'challenge-token', temp_password: '12345678' }
     })

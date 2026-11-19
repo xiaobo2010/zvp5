@@ -146,8 +146,8 @@ async def upload_activity_excel(
     await cache.bump_epoch("activities")
 
     # 导入的成员全部是 effective，缓存里的 user_time 立刻就是错的；排一次按
-    # 活动的后台重算（v2 的实现带人数闸门与批量 upsert），别等 01:00 全量。
-    from routers.activities_v2_router import _schedule_user_time_refresh
+    # 活动的后台重算（实现带人数闸门与批量 upsert），别等 01:00 全量。
+    from routers.activities_router import _schedule_user_time_refresh
 
     _schedule_user_time_refresh(str(activity_id))
 

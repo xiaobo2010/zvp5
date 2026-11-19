@@ -5,6 +5,7 @@ Kept together because a changelog entry is what generates a notification:
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Protocol
 
 from .common import Row
@@ -91,6 +92,16 @@ class NotificationsRepo(Protocol):
     ``content_hash`` is the sha256 of the content fields, so two revisions are
     equivalent exactly when their hashes match. Snapshots carry no FK: the
     history must outlive the notice it describes.
+
+    Per-user read state (``NOTIFICATION_READS``, V053): one row per
+    ``(user_oid, notification_oid)`` holding the notification ``version`` the
+    user has acknowledged. A notice is read when
+    ``read[oid] >= notification.version``; an edit bumps the notice version and
+    therefore turns every older read row back into "unread" **without** having
+    to fan out writes. "Suppressed / 不再显示" is a device-level preference and
+    deliberately stays client-side. These rows carry no FK (users and notices
+    are both hard-deleted; the rows are user data, not audit material) but the
+    notification hard delete removes them in the same transaction.
     """
 
     async def get_state(self) -> Row:
@@ -225,5 +236,34 @@ class NotificationsRepo(Protocol):
         revision, so client-side per-id markers stay meaningful. Either way a
         ``rollback`` snapshot with ``source_version = target_version`` is
         appended and the global version bumps in the same transaction.
+        """
+        ...
+
+    async def list_read(self, user_oid: str) -> dict[str, int]:
+        """Return ``{notification_oid: version}`` for every read row of a user.
+
+        The map is the user's whole read state, unfiltered by whether the notice
+        still exists: the client compares it against the list it just fetched.
+        This is per-user data and therefore never part of the shared list cache
+        (``list_active``'s ``(rows, version)`` pair).
+        """
+        ...
+
+    async def mark_read(
+        self, user_oid: str, notification_oid: str, now: datetime
+    ) -> tuple[str, int] | None:
+        """Acknowledge a notice up to its **current** revision for one user.
+
+        Returns ``(notification_oid, version)`` where ``version`` is read from
+        ``NOTIFICATIONS`` inside the same transaction — the client never supplies
+        it, so a rewritten notice cannot be marked read with a forged version.
+        A missing notice returns ``None`` (the router raises 404 ``通知不存在``),
+        matching :meth:`update` / :meth:`delete`.
+
+        Idempotent: repeated marks are a single-row upsert keyed by
+        ``(user_oid, notification_oid)``; only ``version`` / ``read_at`` change,
+        no extra rows are ever created. This write does not bump the global
+        version nor invalidate the list cache, because it changes neither the
+        notice list nor any version a client compares.
         """
         ...

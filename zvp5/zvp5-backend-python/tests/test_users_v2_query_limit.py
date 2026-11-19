@@ -12,7 +12,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from db import backends
-from routers import users_v2_router
+from routers import users_router
 from util.object_id import get_current_user
 
 ADMIN = "000000000000000000000001"
@@ -32,7 +32,7 @@ def _client(monkeypatch) -> tuple[TestClient, list]:
         lambda *a, **k: SimpleNamespace(list_page=list_page),
     )
     app = FastAPI()
-    app.include_router(users_v2_router.router, prefix=PATH)
+    app.include_router(users_router.router, prefix=PATH)
     app.dependency_overrides[get_current_user] = lambda: {
         "id": ADMIN,
         "per": ["admin"],

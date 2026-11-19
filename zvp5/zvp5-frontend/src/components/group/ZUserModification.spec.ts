@@ -19,7 +19,6 @@ const { apiMock, messageMock, notificationMock } = vi.hoisted(() => ({
       updateRoles: vi.fn()
     },
     group: {
-      read: vi.fn(),
       read_v2: vi.fn(),
       readOne: vi.fn(),
       addGroupUserV3: vi.fn(),
@@ -210,7 +209,7 @@ beforeEach(() => {
   for (const fn of Object.values(apiMock.group)) {
     fn.mockReset()
   }
-  apiMock.group.read.mockResolvedValue({ groups: [] })
+  apiMock.group.read_v2.mockResolvedValue({ groups: [], size: 0 })
   apiMock.user.updateStudentId.mockResolvedValue(true)
   apiMock.user.updateRoles.mockResolvedValue(true)
 })

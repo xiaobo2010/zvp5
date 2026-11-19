@@ -4,8 +4,7 @@ from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
 from db import backends
-from routers import attachments_router, groups_v2_router, users_router, users_v2_router
-from routers import users_v3_router
+from routers import attachments_router, groups_router, users_router
 from typings.log import inject_log
 from util.object_id import get_current_user
 
@@ -33,13 +32,13 @@ async def test_missing_grade_statistics_are_a_client_error(monkeypatch):
         async def list_group_indicators(self):
             return [{"group": GROUP, "percentiles": {"on-campus": []}}]
 
-    monkeypatch.setattr(users_v2_router, "validate_read_user_permission", allow)
+    monkeypatch.setattr(users_router, "validate_read_user_permission", allow)
     monkeypatch.setattr(backends, "get_users_repo", lambda: UsersRepo())
     monkeypatch.setattr(backends, "get_groups_repo", lambda: GroupsRepo())
     monkeypatch.setattr(backends, "get_stats_repo", lambda: StatsRepo())
 
     with pytest.raises(HTTPException) as failure:
-        await users_v2_router.get_user_time_statistics_v2(
+        await users_router.get_user_time_statistics_v2(
             USER, user={"id": USER, "per": []}
         )
     assert failure.value.status_code == 400
@@ -78,8 +77,8 @@ async def test_initial_password_response_is_not_cacheable(monkeypatch):
 
     monkeypatch.setattr(backends, "get_users_repo", lambda: UsersRepo())
     response = Response()
-    generated = await users_v3_router.create_user_v3(
-        users_v3_router.NewUserRequest(
+    generated = await users_router.create_user_v3(
+        users_router.NewUserRequest(
             id="20240101", name="测试", roles=["student"]
         ),
         response=response,
@@ -93,7 +92,7 @@ async def test_initial_password_response_is_not_cacheable(monkeypatch):
 @pytest.mark.parametrize(
     ("router", "prefix", "path"),
     [
-        (groups_v2_router.router, "/v2/groups", f"/v2/groups?page=0&size=10"),
+        (groups_router.router, "/v2/groups", f"/v2/groups?page=0&size=10"),
         (
             attachments_router.router,
             "/attachments",

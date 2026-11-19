@@ -19,7 +19,7 @@ from fastapi import HTTPException
 from sqlalchemy.exc import IntegrityError
 
 from db import backends
-from routers import activities_v2_router
+from routers import activities_router
 from util import calculate as calc
 
 ADMIN_OID = "000000000000000000000001"
@@ -198,10 +198,10 @@ async def _call(
     mode="on-campus",
     user=ADMIN,
 ):
-    return await activities_v2_router.update_user_duration_v2(
+    return await activities_router.update_user_duration_v2(
         activity_id,
         document_id,
-        activities_v2_router.UpdateUserRecord(duration=duration, mode=mode),
+        activities_router.UpdateUserRecord(duration=duration, mode=mode),
         user=user,
         log=state["log"],
     )
@@ -318,7 +318,7 @@ async def test_cache_refresh_failure_keeps_the_response(state, monkeypatch):
     async def boom(*args, **kwargs):
         raise RuntimeError("cache backend down")
 
-    monkeypatch.setattr(activities_v2_router, "calculate_user_time", boom)
+    monkeypatch.setattr(activities_router, "calculate_user_time", boom)
 
     response = await _call(state, duration=4.0)
 

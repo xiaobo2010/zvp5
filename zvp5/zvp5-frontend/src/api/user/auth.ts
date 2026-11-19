@@ -40,7 +40,7 @@ export async function resetPassword(
   const credential = await encryptData(publicKey, payload)
   const hex = byteArrayToHex(new Uint8Array(credential))
   const result = (
-    await axios(`/users/${user}/password`, {
+    await axios(`/v1/users/${user}/password`, {
       method: 'PUT',
       data: {
         credential: hex
@@ -107,7 +107,7 @@ async function UserLogin(
   const publicKey = await importPublicKey(await getRSAPublicCert())
   const credential = await encryptData(publicKey, payload)
   const hex = byteArrayToHex(new Uint8Array(credential))
-  const result = (await axios<LoginResult>('/users/auth', {
+  const result = (await axios<LoginResult>('/v1/users/auth', {
     method: 'POST',
     data: {
       id: user.toString(),
@@ -137,7 +137,7 @@ export async function logout(): Promise<void> {
     return
   }
   try {
-    await fetch(`${baseURL}/users/auth/logout`, {
+    await fetch(`${baseURL}/v1/users/auth/logout`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}` },
       signal: AbortSignal.timeout(3000)
@@ -158,7 +158,7 @@ export async function useTempPasswordAuth(
   challenge: string,
   tempPassword: string
 ): Promise<LoginResult> {
-  const result = (await axios<LoginResult>('/users/auth/device', {
+  const result = (await axios<LoginResult>('/v1/users/auth/device', {
     method: 'POST',
     data: {
       challenge: challenge,

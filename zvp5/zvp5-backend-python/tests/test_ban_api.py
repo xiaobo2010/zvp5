@@ -1292,11 +1292,11 @@ def users_api(monkeypatch):
         async def insert_log(self):
             return None
 
-    from routers import users_v3_router
+    from routers import users_router
     from typings.log import inject_log
 
     app = FastAPI()
-    app.include_router(users_v3_router.router, prefix=USERS_PREFIX)
+    app.include_router(users_router.router, prefix=USERS_PREFIX)
     app.dependency_overrides[get_current_user] = lambda: {"id": ACTOR, "per": ["admin"]}
     app.dependency_overrides[inject_log] = lambda: StubLog()
     return TestClient(app), state

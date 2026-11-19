@@ -138,6 +138,7 @@ class FakeMessagesRepo:
         inserted = []
         for offset, item in enumerate(rows):
             row = dict(item)
+            row["_id"] = row.pop("oid")
             row["seq"] = base + offset + 1
             row["conversation_oid"] = conversation_oid
             row["created_at"] = _now()

@@ -2,6 +2,7 @@ export const zhCN = {
   home: '首页',
   profile: '我的',
   activity: '义工列表',
+  notifications: '站内通知',
   manage: '平台管理',
   server: '服务器管理',
   ai: 'AI 网关',

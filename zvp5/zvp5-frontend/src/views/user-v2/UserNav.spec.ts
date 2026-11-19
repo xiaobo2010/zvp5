@@ -139,6 +139,42 @@ beforeEach(() => {
   vi.mocked(modifyPasswordDialogs).mockClear()
 })
 
+describe('UserNav 站内通知入口', () => {
+  it('普通用户能看到站内通知入口', async () => {
+    const wrapper = await mountNav()
+
+    const items = wrapper.findAll('.yg-glass-nav__item')
+    const labels = items.map((item) => item.attributes('aria-label'))
+    expect(labels).toContain('nav.notifications')
+
+    wrapper.unmount()
+  })
+
+  it('管理员看不到站内通知入口（他们有通知管理页，避免冲突）', async () => {
+    storeState.position = ['admin']
+    const wrapper = await mountNav()
+
+    const labels = wrapper.findAll('.yg-glass-nav__item').map((item) => item.attributes('aria-label'))
+    expect(labels).not.toContain('nav.notifications')
+
+    wrapper.unmount()
+  })
+
+  it('点击站内通知入口跳转到收件箱', async () => {
+    const wrapper = await mountNav()
+
+    const target = wrapper
+      .findAll('.yg-glass-nav__item')
+      .find((item) => item.attributes('aria-label') === 'nav.notifications')
+    expect(target).toBeTruthy()
+    await target!.trigger('click')
+
+    expect(pushSpy).toHaveBeenCalledWith('/notifications')
+
+    wrapper.unmount()
+  })
+})
+
 describe('UserNav 账号菜单', () => {
   it('导航末尾提供账号入口，带无障碍标签与头像首字', async () => {
     const wrapper = await mountNav()
@@ -147,7 +183,8 @@ describe('UserNav 账号菜单', () => {
     expect(account.exists()).toBe(true)
     expect(account.attributes('aria-label')).toBe('nav.accountMenu')
     expect(account.attributes('aria-haspopup')).toBe('menu')
-    expect(wrapper.find('.yg-glass-nav__avatar').text()).toBe('张')
+    expect(wrapper.find('.z-pilot-plate').attributes('aria-hidden')).toBe('true')
+    expect(wrapper.find('.z-pilot-plate__type').text()).toBe('张')
 
     wrapper.unmount()
   })

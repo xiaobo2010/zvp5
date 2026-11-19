@@ -15,7 +15,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from db import backends
-from routers import activities_v3_router
+from routers import activities_router
 from util.object_id import get_current_user
 
 READER = {"id": "000000000000000000000002", "per": ["admin"]}
@@ -64,7 +64,7 @@ def client(monkeypatch):
     repo = _ActivitiesRepo()
     monkeypatch.setattr(backends, "get_activities_repo", lambda session=None: repo)
     app = FastAPI()
-    app.include_router(activities_v3_router.router, prefix="/api/v1/activities")
+    app.include_router(activities_router.router, prefix="/api/v1/activities")
     app.dependency_overrides[get_current_user] = lambda: READER
     return TestClient(app), repo
 

@@ -1,13 +1,15 @@
 <script setup lang="ts">
 import { RouterView, useRoute, useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user.ts'
-import { computed, nextTick, ref, watch, type Component } from 'vue'
+import { computed, nextTick, onMounted, ref, watch, type Component } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useWindowSize } from '@vueuse/core'
 import { ElPageHeader } from 'element-plus/es/components/page-header/index.mjs'
 import { ElSegmented } from 'element-plus/es/components/segmented/index.mjs'
 import { ElIcon } from 'element-plus/es/components/icon/index.mjs'
 import { ArrowLeft, Setting, DataLine, Key, Connection, Folder, Grid } from '@element-plus/icons-vue'
+import ZHexGrid from '@/components/decor/ZHexGrid.vue'
+import { prefetchRoute, prefetchRoutesWhenIdle } from '@/utils/routePrefetch'
 
 interface SegmentedTab {
   label: string
@@ -137,13 +139,36 @@ watch(
   },
   { immediate: true }
 )
+
+/* ---------- 响应速度：分区 chunk 预取 ----------
+   六个分区各自是懒加载 chunk，点下去才开始下载，等待期间页面是空的。
+   空闲时把六个 chunk 先拉下来（预取失败静默吞掉，不影响导航），
+   指针悬停时再即时预取一次——tap 到 click 的百毫秒足够命中本地缓存。 */
+const tabPaths = tabs.map((tab) => pathOfTab(tab.value))
+
+onMounted(() => {
+  prefetchRoutesWhenIdle(router, tabPaths)
+})
+
+function prefetchTab(value: string): void {
+  prefetchRoute(router, pathOfTab(value))
+}
 </script>
 
 <template>
   <div
-    class="server-shell"
+    class="server-shell phi-srv"
     :class="[compactTabs ? 'px-4 py-3' : 'px-6 py-4', { 'server-shell--fill': isFill }]"
   >
+    <!-- 蜂窝底纹：与封禁页同一套仪器感底纹，管理台用主题强调色，压在内容之下 -->
+    <ZHexGrid
+      :size="64"
+      color="var(--phi-breathe, #1de9b6)"
+      :opacity="0.07"
+      drift
+      sweep
+      :z-index="-1"
+    />
     <!-- 紧凑布局：页头（返回 + 标题）与胶囊导航分两行 -->
     <template v-if="compactTabs">
       <header class="server-head">
@@ -177,6 +202,7 @@ watch(
           :class="{ 'is-active': tab.value === current }"
           :aria-selected="tab.value === current"
           @click="current = tab.value"
+          @pointerenter="prefetchTab(tab.value)"
         >
           <ElIcon :size="18">
             <Component :is="tab.icon" />
@@ -205,6 +231,14 @@ watch(
       </template>
     </ElPageHeader>
 
+    <!-- HUD 读数条：把「现在在哪个分区」用仪表盘的方式标出来 -->
+    <div class="phi-srv-rail server-rail">
+      <span class="phi-srv-rail__item">{{ t('server.hud.rail') }}</span>
+      <span class="phi-srv-rail__item phi-srv-rail__item--muted">
+        {{ t(('server.tabs.' + current) as string) }}
+      </span>
+    </div>
+
     <div class="server-body">
       <RouterView />
     </div>
@@ -214,6 +248,9 @@ watch(
 <style scoped>
 /* ---------- 服务器页外壳 ---------- */
 .server-shell {
+  position: relative;
+  /* 建立层叠上下文：蜂窝底纹 z-index:-1 落在页面底色之上、内容之下 */
+  isolation: isolate;
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -352,6 +389,11 @@ watch(
   margin-top: var(--yg-space-2);
 }
 
+/* HUD 读数条：紧贴页头下方，给出仪表盘读数的存在感 */
+.server-rail {
+  margin-bottom: var(--yg-space-3);
+}
+
 .server-body {
   display: flex;
   flex-direction: column;
@@ -359,3 +401,4 @@ watch(
   min-height: 0;
 }
 </style>
+

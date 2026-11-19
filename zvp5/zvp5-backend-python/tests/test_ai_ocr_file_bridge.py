@@ -177,7 +177,7 @@ def test_a_valid_image_returns_the_recognized_text(
     }
     assert StubAdapter.calls[0]["mime"] == "image/png"
     # 计费口径与附件入口完全相同：用户额度一次、站点额度一次。
-    assert quotas["consume"].calls == [(ADMIN, "af", 1)]
+    assert quotas["consume"].calls == [(ADMIN, "af", ai_config.AI_OCR_AF_COST)]
     assert quotas["site"].calls == [("tencent", 1)]
     assert [(row["units"], row["status"]) for row in audit_repo.rows] == [
         (1, "success"),

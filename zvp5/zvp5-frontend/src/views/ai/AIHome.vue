@@ -4,8 +4,6 @@ import { useUserStore } from '@/stores/user.ts'
 import { computed, nextTick, ref, watch, type Component } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useWindowSize } from '@vueuse/core'
-import { ElPageHeader } from 'element-plus/es/components/page-header/index.mjs'
-import { ElSegmented } from 'element-plus/es/components/segmented/index.mjs'
 import { ElIcon } from 'element-plus/es/components/icon/index.mjs'
 import {
   AlarmClock,
@@ -30,7 +28,7 @@ import ZAiLogsAdmin from '@/components/ai/ZAiLogsAdmin.vue'
 import ZAiPromptAudit from '@/components/ai/ZAiPromptAudit.vue'
 import ZAiScheduledTasks from '@/components/ai/ZAiScheduledTasks.vue'
 
-interface SegmentedTab {
+interface GatewayTab {
   label: string
   value: string
   icon: Component
@@ -55,10 +53,14 @@ const router = useRouter()
 const userStore = useUserStore()
 const { t } = useI18n()
 
-const isAdmin = userStore.position.includes('admin')
-const canUseAi = isAdmin || userStore.position.includes('department')
+// 角色可能比页面晚一拍就绪（持久化恢复 / 登录后补权限）：用 computed 让管理员
+// 分区跟着权限出现，而不是在 setup 时拍一张快照就再也不更新。
+const isAdmin = computed(() => userStore.position.includes('admin'))
+const canUseAi = computed(
+  () => isAdmin.value || userStore.position.includes('department')
+)
 
-if (!canUseAi) {
+if (!canUseAi.value) {
   router.replace('/not-found')
 }
 
@@ -66,9 +68,9 @@ const curPage = route.params.action?.toString()
 
 function isVisible(value: string): boolean {
   if (ADMIN_ONLY.includes(value)) {
-    return isAdmin
+    return isAdmin.value
   }
-  return canUseAi
+  return canUseAi.value
 }
 
 if (curPage && (!VALID_CURRENT.includes(curPage) || !isVisible(curPage))) {
@@ -79,33 +81,25 @@ const current = ref(
   curPage && VALID_CURRENT.includes(curPage) && isVisible(curPage) ? curPage : 'chat'
 )
 
-const tabs = ref<SegmentedTab[]>([
-  {
-    label: 'chat',
-    value: 'chat',
-    icon: Cpu
-  },
-  {
-    label: 'quota',
-    value: 'quota',
-    icon: Coin
-  },
-  {
-    label: 'scheduled',
-    value: 'scheduled',
-    icon: AlarmClock
-  }
-])
+const BASE_TABS: GatewayTab[] = [
+  { label: 'chat', value: 'chat', icon: Cpu },
+  { label: 'quota', value: 'quota', icon: Coin },
+  { label: 'scheduled', value: 'scheduled', icon: AlarmClock }
+]
 
-if (isAdmin) {
-  tabs.value.push({ label: 'keys', value: 'keys', icon: Key })
-  tabs.value.push({ label: 'engines', value: 'engines', icon: Cpu })
-  tabs.value.push({ label: 'models', value: 'models', icon: Box })
-  tabs.value.push({ label: 'quota-admin', value: 'quota-admin', icon: DataLine })
-  tabs.value.push({ label: 'health', value: 'health', icon: Odometer })
-  tabs.value.push({ label: 'logs', value: 'logs', icon: Tickets })
-  tabs.value.push({ label: 'monitor', value: 'monitor', icon: Monitor })
-}
+const ADMIN_TABS: GatewayTab[] = [
+  { label: 'keys', value: 'keys', icon: Key },
+  { label: 'engines', value: 'engines', icon: Cpu },
+  { label: 'models', value: 'models', icon: Box },
+  { label: 'quota-admin', value: 'quota-admin', icon: DataLine },
+  { label: 'health', value: 'health', icon: Odometer },
+  { label: 'logs', value: 'logs', icon: Tickets },
+  { label: 'monitor', value: 'monitor', icon: Monitor }
+]
+
+const tabs = computed<GatewayTab[]>(() =>
+  isAdmin.value ? [...BASE_TABS, ...ADMIN_TABS] : BASE_TABS
+)
 
 watch(current, () => {
   router.replace('/ai/' + current.value)
@@ -123,8 +117,7 @@ watch(
   }
 )
 
-/* 与服务器/平台管理同一套页头：竖屏或窄屏用紧凑页头 + 胶囊导航，
-   ≥1024 横屏用 ElPageHeader 右侧分段控件。*/
+/* 竖屏或窄屏用紧凑页头 + 胶囊导航；≥1024 横屏用扁平页头 + 下划线分区导航。 */
 const { width, height } = useWindowSize()
 const verticalMode = computed(() => width.value < height.value * 1.2)
 const compactTabs = computed(() => verticalMode.value || width.value < 1024)
@@ -161,7 +154,7 @@ watch(
     class="yg-ai-home"
     :class="[
       compactTabs ? 'px-4 py-3' : 'px-6 py-4',
-      { 'yg-ai-home--chat': current === 'chat' }
+      { 'yg-ai-home--chat': current === 'chat', 'is-compact': compactTabs }
     ]"
   >
     <!-- 竖屏/窄屏：紧凑页头 + 胶囊导航，与服务器/平台管理同一套外壳 -->
@@ -204,24 +197,49 @@ watch(
       </nav>
     </template>
 
-    <!-- 桌面：页头标题 + 右侧分段控件 -->
-    <ElPageHeader v-else :icon="ArrowLeft" @back="() => router.back()" class="yg-ai-home__header">
-      <template #content>
-        {{ t('ai.tabs.' + current) }}
-      </template>
-      <template #extra>
-        <ElSegmented v-model="current" :options="tabs">
-          <template #default="props">
-            <div class="ai-tabs__seg-item">
-              <ElIcon :size="18" class="ai-tabs__seg-icon">
-                <Component :is="(props.item as SegmentedTab).icon" />
-              </ElIcon>
-              <span>{{ t('ai.tabs.' + (props.item as SegmentedTab).value) }}</span>
-            </div>
-          </template>
-        </ElSegmented>
-      </template>
-    </ElPageHeader>
+    <!-- 桌面：扁平页头 + 底部主色下划线的分区导航 -->
+    <template v-else>
+      <header class="yg-ai-home__header ai-gateway-head">
+        <div class="ai-gateway-head__intro">
+          <button
+            type="button"
+            class="yg-icon-btn yg-icon-btn--ghost ai-gateway-head__back"
+            :aria-label="t('ai.tabs.back')"
+            @click="router.back()"
+          >
+            <ElIcon :size="20">
+              <ArrowLeft />
+            </ElIcon>
+          </button>
+          <div class="ai-gateway-head__titles">
+            <h1 class="ai-gateway-head__title">{{ t('ai.title') }}</h1>
+            <p class="ai-gateway-head__subtitle">{{ t('ai.subtitle') }}</p>
+          </div>
+        </div>
+      </header>
+
+      <nav
+        class="ai-gateway-tabs"
+        role="tablist"
+        :aria-label="t('ai.tabs.tabsLabel')"
+      >
+        <button
+          v-for="tab in tabs"
+          :key="tab.value"
+          type="button"
+          role="tab"
+          class="ai-gateway-tab"
+          :class="{ 'is-active': tab.value === current }"
+          :aria-selected="tab.value === current"
+          @click="current = tab.value"
+        >
+          <ElIcon :size="17">
+            <Component :is="tab.icon" />
+          </ElIcon>
+          <span>{{ t('ai.tabs.' + tab.value) }}</span>
+        </button>
+      </nav>
+    </template>
 
     <div class="yg-ai-home__panel">
       <ZAiChat v-if="current === 'chat'" />
@@ -249,6 +267,19 @@ watch(
     var(--yg-header-height) + env(safe-area-inset-top, 0px) + var(--yg-space-6) +
       max(var(--yg-space-6), var(--yg-content-bottom-inset, 0px))
   );
+
+  /* 大屏不要把所有东西按 14px 铺在 2K/4K 屏上：AI 页局部放大字号、控件与间距，
+     小屏仍受 clamp 下限保护，不会把移动端撑爆。 */
+  --yg-font-size-xs: clamp(12px, 0.25vw + 8px, 15px);
+  --yg-font-size-sm: clamp(13px, 0.3vw + 8px, 16px);
+  --yg-font-size-md: clamp(14px, 0.4vw + 8px, 18px);
+  --yg-font-size-lg: clamp(16px, 0.5vw + 8px, 21px);
+  --yg-font-size-xl: clamp(18px, 0.6vw + 8px, 24px);
+  --yg-space-3: clamp(12px, 0.3vw + 8px, 16px);
+  --yg-space-4: clamp(16px, 0.6vw + 8px, 26px);
+  --yg-space-5: clamp(20px, 0.8vw + 10px, 32px);
+  --yg-control-height-md: clamp(36px, 0.8vw + 22px, 44px);
+  --yg-control-height-lg: clamp(44px, 0.9vw + 30px, 52px);
 
   display: flex;
   flex-direction: column;
@@ -279,37 +310,117 @@ watch(
 /*
  * 页头与页签是固定件：不参与纵向压缩。
  *
- * 页签容器是横向滚动容器（overflow-x: auto），在 flex 里它的自动最小尺寸是 0，
- * 视口一矮就会被压成半截甚至整条消失——这里锁死它们的高度。
- * 只作用于横屏：竖屏与桌面保持原有观感。
+ * 页签容器在 flex 里自动最小尺寸是 0；对话页一旦拿到长内容（长消息、代码块），
+ * 就会把页签压成半截甚至整条消失，表现为「顶部选项卡不见了、点不到」。
+ * 这里对所有方向锁死页头与页签的高度，压缩全部让给对话面板（它自己 overflow: hidden）。
  */
-@media (orientation: landscape) and (max-height: 820px) {
-  .yg-ai-home__header,
-  .ai-head,
-  .ai-tabs {
-    flex: none;
-  }
+.yg-ai-home__header,
+.ai-head,
+.ai-tabs,
+.ai-gateway-tabs {
+  flex: none;
 }
 
-/* 桌面分段控件：分区多时横向滚动，不挤压页头标题 */
-.yg-ai-home__header :deep(.el-page-header__extra) {
-  max-width: 80%;
-  overflow-x: auto;
-  scrollbar-width: none;
+/* 桌面页头：标题 + 副标题，左侧返回；导航单独一行，视觉更轻 */
+.ai-gateway-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--yg-space-4);
+  min-width: 0;
 }
 
-.yg-ai-home__header :deep(.el-page-header__extra)::-webkit-scrollbar {
-  display: none;
+.ai-gateway-head__intro {
+  display: flex;
+  align-items: center;
+  gap: var(--yg-space-3);
+  min-width: 0;
 }
 
-/* 分段控件自身不再出现滚动条：横向滚动交给外层 extra */
-.yg-ai-home__header :deep(.el-segmented) {
-  scrollbar-width: none;
+.ai-gateway-head__back {
+  flex: 0 0 auto;
 }
 
-.yg-ai-home__header :deep(.el-segmented)::-webkit-scrollbar {
-  display: none;
+.ai-gateway-head__titles {
+  min-width: 0;
 }
+
+.ai-gateway-head__title {
+  margin: 0;
+  font-size: var(--yg-font-size-xl);
+  font-weight: var(--yg-font-weight-semibold);
+  line-height: var(--yg-line-height-tight);
+  color: var(--yg-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ai-gateway-head__subtitle {
+  margin: var(--yg-space-1) 0 0;
+  font-size: var(--yg-font-size-sm);
+  line-height: var(--yg-line-height-snug);
+  color: var(--yg-text-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 桌面分区导航：扁平下划线，不抢内容区的视觉重量 */
+.ai-gateway-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  gap: var(--yg-space-1);
+  row-gap: var(--yg-space-1);
+  margin-bottom: var(--yg-space-4);
+  border-bottom: 1px solid var(--yg-border-subtle);
+}
+
+/* 换行规则已并入上面的 .ai-tabs 基础样式（对所有宽度生效）。 */
+
+.ai-gateway-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--yg-space-2);
+  flex: 0 0 auto;
+  min-height: var(--yg-control-height-lg);
+  padding: 0 var(--yg-space-4);
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--yg-text-tertiary);
+  font-family: inherit;
+  font-size: var(--yg-font-size-md);
+  font-weight: var(--yg-font-weight-medium);
+  line-height: var(--yg-line-height-snug);
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    color var(--yg-dur-fast) var(--yg-ease-out),
+    background-color var(--yg-dur-fast) var(--yg-ease-out),
+    border-color var(--yg-dur-fast) var(--yg-ease-out);
+}
+
+.ai-gateway-tab:hover {
+  color: var(--yg-text-primary);
+  background-color: var(--yg-bg-hover);
+}
+
+.ai-gateway-tab:active {
+  background-color: var(--yg-bg-active);
+}
+
+.ai-gateway-tab:focus-visible {
+  outline: none;
+  box-shadow: var(--yg-focus-ring);
+}
+
+.ai-gateway-tab.is-active {
+  color: var(--yg-color-primary-strong);
+  border-bottom-color: var(--yg-color-primary);
+}
+
 
 /* 紧凑页头：返回按钮与标题同行（与服务器/平台管理一致） */
 .ai-head {
@@ -334,26 +445,29 @@ watch(
   white-space: nowrap;
 }
 
-/* 胶囊导航：横向可滚动，当前项自动滚入可视区 */
+/* 胶囊导航：换行铺开，任何宽度下都不许把入口裁掉半截。
+   之前 <600px 仍是横向滚动，手机/平板上「定时任务」这类长标签只能看到
+   前半截（滚动条又被隐藏，看起来就是「显示不完整」）。
+   这里沿用 7bd02c3d 在 ≥600px 用过的做法，直接对所有宽度生效；
+   窄屏同时收紧胶囊内边距与字号，10 个入口落在 3 行内，不给对话区多抢高度。 */
 .ai-tabs {
   display: flex;
   align-items: center;
-  gap: var(--yg-space-2);
+  flex-wrap: wrap;
+  gap: var(--yg-space-1);
+  row-gap: var(--yg-space-1);
   margin-bottom: var(--yg-space-4);
   padding: var(--yg-space-1);
-  overflow-x: auto;
-  overscroll-behavior-x: contain;
-  scrollbar-width: none;
-  -webkit-overflow-scrolling: touch;
   border: none;
   border-radius: var(--yg-radius-pill);
   -webkit-backdrop-filter: blur(var(--yg-glass-blur-sm)) saturate(180%);
   backdrop-filter: blur(var(--yg-glass-blur-sm)) saturate(180%);
 }
 
-.ai-tabs::-webkit-scrollbar {
-  display: none;
-}
+/* 手机宽度：收紧胶囊，让 10 个分区尽量落在 3~4 行内，
+   不给对话区多抢高度（窄屏最稀缺的就是纵向像素）。
+   ⚠️ 必须放在 `.ai-tabs__pill` 基础规则**之后**：同特异性下后写的胜出，
+   放在前面会被基础尺寸（min-height / 字号 / 内边距）覆盖掉。 */
 
 .ai-tabs__pill {
   display: inline-flex;
@@ -398,17 +512,23 @@ watch(
   font-weight: var(--yg-font-weight-medium);
 }
 
-/* 桌面分段控件里的单项：图标在上、文字在下 */
-.ai-tabs__seg-item {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: var(--yg-space-2);
-  padding: var(--yg-space-1) var(--yg-space-2);
-}
+/* 手机宽度：收紧胶囊，让 10 个分区尽量落在 3~4 行内，
+   不给对话区多抢高度（窄屏最稀缺的就是纵向像素）。
+   放在这里是为了盖过上面 `.ai-tabs__pill` 的基础尺寸（同特异性、后写胜出）。 */
+@media (max-width: 599px) {
+  .ai-tabs {
+    gap: 4px;
+    row-gap: 4px;
+    padding: 4px;
+    border-radius: var(--yg-radius-lg);
+  }
 
-.ai-tabs__seg-icon {
-  margin-top: var(--yg-space-2);
+  .ai-tabs__pill {
+    gap: 4px;
+    min-height: 36px;
+    padding: 0 10px;
+    font-size: var(--yg-font-size-xs);
+  }
 }
 
 .yg-ai-home__panel {

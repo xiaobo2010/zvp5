@@ -197,8 +197,10 @@ function parseUnlockDeadline(value: string): number | null {
 /**
  * 运维写工具：确认时要另一位管理员的 6 位动态码。
  *
- * 活动域那两条写工具不在其中（它们 requires_dual_auth 恒为 false，
- * 不改变既有行为）。
+ * 其余写工具不在其中，`requires_dual_auth` 由服务端下发：
+ * 活动域两条（update_member_duration / set_member_status）与平台治理四条
+ * （notify_send / ai_quota_set / ai_api_key_revoke / attachment_gc_run）
+ * 都只需本人确认。
  */
 const OPS_WRITE_TOOLS = new Set([
   'fs_write',

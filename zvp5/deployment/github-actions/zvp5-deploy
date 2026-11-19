@@ -20,7 +20,17 @@ else
   SERVICE_NAME="zvms4"
 fi
 SERVICE_USER="${ZVP5_SERVICE_USER:-www-data}"
-FRONTEND_OWNER="${ZVP5_FRONTEND_OWNER:-www:www}"
+# frontend-dist 的属主两台机器并不一致（后端机 Ubuntu 是 www-data，前端机是 www）。
+# 写死任何一方都会在另一台 chown 失败；更糟的是失败后走回滚，回滚同样 chown 失败，
+# 把目录留成 root:root 0750，nginx 读不到 → 站点 403（2026-11-18 生产踩过）。
+# 默认沿用现有目录的属主，只有目录还不存在时才退回 www:www。
+if [[ -n "${ZVP5_FRONTEND_OWNER:-}" ]]; then
+  FRONTEND_OWNER="$ZVP5_FRONTEND_OWNER"
+elif [[ -d "$FRONTEND_DIR" ]]; then
+  FRONTEND_OWNER="$(stat -c '%U:%G' "$FRONTEND_DIR")"
+else
+  FRONTEND_OWNER="www:www"
+fi
 SERVICE_URL="${ZVP5_DEPLOY_SERVICE_URL:-http://127.0.0.1:8018/api/health}"
 SYSTEMCTL="${ZVP5_SYSTEMCTL:-systemctl}"
 CURL_BIN="${ZVP5_CURL:-curl}"

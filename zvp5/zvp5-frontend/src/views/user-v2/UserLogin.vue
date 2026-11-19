@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch, h, reactive, nextTick } from 'vue'
+import { ref, watch, h, reactive, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import { ElButton } from 'element-plus/es/components/button/index.mjs'
 import { ElInput } from 'element-plus/es/components/input/index.mjs'
 import { ElMessageBox } from 'element-plus/es/components/message-box/index.mjs'
@@ -16,6 +16,8 @@ import { resetMaintenanceGuardCache } from '@/router/maintenanceGuard'
 import { formatBanUntil, readBanInfo } from '@/utils/ban'
 import ZBanScreen from '@/components/system/ZBanScreen.vue'
 import ZAuthAlert from '@/components/system/ZAuthAlert.vue'
+import ZLoginBackdrop from '@/components/system/ZLoginBackdrop.vue'
+import ZLoginReveal from '@/components/system/ZLoginReveal.vue'
 import dayjs from 'dayjs'
 import { staticAssetUrl } from '@/utils/staticAssets'
 import type { User, UserProfile } from '@/../types'
@@ -130,6 +132,77 @@ function showBanScreen(payload: Omit<BanScreenState, 'visible'>) {
 function closeBanScreen() {
   banScreen.visible = false
 }
+
+// 封禁屏预热：封禁信息只能从登录 403 的响应头拿到，首帧要在低端平板上一次性
+// 完成样式解析/字体度量/合成层创建，冷启动会掉帧。空闲时先挂一个不可见实例
+// （ZBanScreen 的 prewarm 模式）把这一笔成本提前付掉，真正封禁时直接显示。
+const banWarm = ref(false)
+let warmTimer: ReturnType<typeof setTimeout> | null = null
+
+// 登录揭示动画预热：登录成功后的 2.8s 幕布在低端平板上第一次挂载时，
+// 蜂窝底纹/字体阴影/合成层的样式解析会掉帧。登录页空闲时先挂一个 prewarm
+// 实例，把这一笔成本提前付掉；真正揭示时直接复用同一套样式与合成路径。
+const revealWarm = ref(false)
+let revealWarmTimer: ReturnType<typeof setTimeout> | null = null
+let warmAlive = true
+
+function warmBanScreen() {
+  if (!warmAlive || banScreen.visible) {
+    return
+  }
+  // 静态化用户（reduced-motion）没有入场动画，预热无收益。
+  if (window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches === true) {
+    return
+  }
+  banWarm.value = true
+  warmTimer = setTimeout(() => {
+    warmTimer = null
+    banWarm.value = false
+  }, 1600)
+}
+
+function warmLoginReveal() {
+  if (!warmAlive || revealWarm.value) {
+    return
+  }
+  if (window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches === true) {
+    return
+  }
+  revealWarm.value = true
+  revealWarmTimer = setTimeout(() => {
+    revealWarmTimer = null
+    revealWarm.value = false
+  }, 1600)
+}
+
+onMounted(() => {
+  if (typeof window.requestIdleCallback === 'function') {
+    window.requestIdleCallback(
+      () => {
+        warmBanScreen()
+        warmLoginReveal()
+      },
+      { timeout: 2500 }
+    )
+  } else {
+    setTimeout(() => {
+      warmBanScreen()
+      warmLoginReveal()
+    }, 900)
+  }
+})
+
+onBeforeUnmount(() => {
+  warmAlive = false
+  if (warmTimer !== null) {
+    clearTimeout(warmTimer)
+    warmTimer = null
+  }
+  if (revealWarmTimer !== null) {
+    clearTimeout(revealWarmTimer)
+    revealWarmTimer = null
+  }
+})
 
 // 登录失败对话框：密码错误走红色（danger），设备闸拦截走琥珀色（warning）。
 // 与封禁屏分开——封禁是终态不可重试，这几种都还能改输入再来一次。
@@ -528,6 +601,8 @@ watch(user, async () => {
 
 <template>
   <div class="yg-login-v2">
+    <ZLoginBackdrop />
+
     <aside class="yg-login-v2__brand" aria-label="平台介绍">
       <span class="yg-phi-login-mark" aria-hidden="true">ZVMS</span>
       <div class="yg-phi-login-rail" aria-hidden="true">
@@ -550,96 +625,105 @@ watch(user, async () => {
     </aside>
 
     <main class="yg-login-v2__main">
-      <section class="yg-login__card" aria-labelledby="yg-login-title">
+      <div class="yg-login-v2__rail" aria-hidden="true">
+        <span>SYS // AUTH</span>
+        <span>SECURE // NODE 01</span>
+      </div>
+      <span class="yg-login-v2__ghost" aria-hidden="true">01</span>
+
+      <!-- 外层壳：把 AUTH 标头挪出卡片的 clip-path 裁切范围，才能跨坐在顶边上 -->
+      <div class="yg-login__card-shell">
         <span class="yg-phi-login-tag" aria-hidden="true">
           {{ mode === 'normal' ? 'AUTH // 01' : 'AUTH // 02' }}
         </span>
-        <div class="yg-login__brand">
-          <span class="yg-login__logo">
-            <img :src="staticAssetUrl('favicon.ico')" alt="" />
-          </span>
-          <span class="yg-login__brand-name">义工平台</span>
-        </div>
+        <section class="yg-login__card" aria-labelledby="yg-login-title">
+          <div class="yg-login__brand">
+            <span class="yg-login__logo">
+              <img :src="staticAssetUrl('favicon.ico')" alt="" />
+            </span>
+            <span class="yg-login__brand-name">义工平台</span>
+          </div>
 
-        <h1 id="yg-login-title" class="yg-login__title">{{ t('nav.login.pageTitle') }}</h1>
-        <p class="yg-login__subtitle">{{ t('nav.login.motto') }}</p>
+          <h1 id="yg-login-title" class="yg-login__title">{{ t('nav.login.pageTitle') }}</h1>
+          <p class="yg-login__subtitle">{{ t('nav.login.motto') }}</p>
 
-        <ElForm
-          v-if="mode === 'normal'"
-          ref="loginfield"
-          label-position="top"
-          class="yg-login__form"
-        >
-          <ElFormItem :label="t('nav.login.form.account')" prop="id">
+          <ElForm
+            v-if="mode === 'normal'"
+            ref="loginfield"
+            label-position="top"
+            class="yg-login__form"
+          >
+            <ElFormItem :label="t('nav.login.form.account')" prop="id">
+              <ElInput
+                v-model.number="user"
+                :minlength="8"
+                :maxlength="8"
+                clearable
+                type="number"
+                class="yg-login__input w-full"
+              />
+            </ElFormItem>
+            <ElFormItem :label="t('nav.login.form.password')" prop="password">
+              <ElInput
+                ref="passwordInput"
+                type="password"
+                v-model="password"
+                clearable
+                show-password
+                class="yg-login__input w-full"
+                @keyup.enter="login"
+              />
+            </ElFormItem>
+          </ElForm>
+
+          <div v-else class="yg-login__temp">
+            <p class="yg-login__temp-title">{{ t('nav.login.device.tempTitle') }}</p>
+            <p class="yg-login__temp-hint">{{ t('nav.login.device.tempHint') }}</p>
             <ElInput
-              v-model.number="user"
-              :minlength="8"
+              v-model="tempPassword"
               :maxlength="8"
-              clearable
-              type="number"
-              class="yg-login__input w-full"
+              inputmode="numeric"
+              autocomplete="one-time-code"
+              :placeholder="t('nav.login.device.tempPlaceholder')"
+              class="yg-login__input yg-login__temp-input w-full"
+              @keyup.enter="submitTempPassword"
             />
-          </ElFormItem>
-          <ElFormItem :label="t('nav.login.form.password')" prop="password">
-            <ElInput
-              ref="passwordInput"
-              type="password"
-              v-model="password"
-              clearable
-              show-password
-              class="yg-login__input w-full"
-              @keyup.enter="login"
-            />
-          </ElFormItem>
-        </ElForm>
+            <p class="yg-login__temp-note">{{ t('nav.login.device.tempNote') }}</p>
+            <p v-if="tempError" class="yg-login__error" role="alert">{{ tempError }}</p>
+          </div>
 
-        <div v-else class="yg-login__temp">
-          <p class="yg-login__temp-title">{{ t('nav.login.device.tempTitle') }}</p>
-          <p class="yg-login__temp-hint">{{ t('nav.login.device.tempHint') }}</p>
-          <ElInput
-            v-model="tempPassword"
-            :maxlength="8"
-            inputmode="numeric"
-            autocomplete="one-time-code"
-            :placeholder="t('nav.login.device.tempPlaceholder')"
-            class="yg-login__input yg-login__temp-input w-full"
-            @keyup.enter="submitTempPassword"
-          />
-          <p class="yg-login__temp-note">{{ t('nav.login.device.tempNote') }}</p>
-          <p v-if="tempError" class="yg-login__error" role="alert">{{ tempError }}</p>
-        </div>
-
-        <div class="yg-login__actions">
-          <template v-if="mode === 'normal'">
-            <ElButton
-              type="primary"
-              size="large"
-              class="w-full"
-              @click="login"
-              :icon="ArrowRight"
-              :disabled="password === '' || String(user).length !== 8"
-              :loading="loading"
-            >
-              {{ t('nav.login.actions.login') }}
-            </ElButton>
-          </template>
-          <template v-else>
-            <ElButton
-              type="primary"
-              size="large"
-              class="w-full"
-              @click="submitTempPassword"
-              :disabled="tempPassword.length !== 8"
-              :loading="tempSubmitting"
-            >
-              {{ t('nav.login.device.tempSubmit') }}
-            </ElButton>
-            <ElButton size="large" text class="w-full yg-login__back" @click="backToNormal">
-              {{ t('nav.login.device.tempBack') }}
-            </ElButton>
-          </template>
-        </div>
-      </section>
+          <div class="yg-login__actions">
+            <template v-if="mode === 'normal'">
+              <ElButton
+                type="primary"
+                size="large"
+                class="w-full"
+                @click="login"
+                :icon="ArrowRight"
+                :disabled="password === '' || String(user).length !== 8"
+                :loading="loading"
+              >
+                {{ t('nav.login.actions.login') }}
+              </ElButton>
+            </template>
+            <template v-else>
+              <ElButton
+                type="primary"
+                size="large"
+                class="w-full"
+                @click="submitTempPassword"
+                :disabled="tempPassword.length !== 8"
+                :loading="tempSubmitting"
+              >
+                {{ t('nav.login.device.tempSubmit') }}
+              </ElButton>
+              <ElButton size="large" text class="w-full yg-login__back" @click="backToNormal">
+                {{ t('nav.login.device.tempBack') }}
+              </ElButton>
+            </template>
+          </div>
+        </section>
+      </div>
     </main>
 
     <ZAuthAlert
@@ -653,6 +737,21 @@ watch(user, async () => {
       @ack="onAuthAlertAck"
       @action="onAuthAlertAction"
     />
+
+    <!-- 预热实例：不可见，只为把封禁屏首帧的样式/合成成本提前付掉 -->
+    <ZBanScreen
+      v-if="banWarm && !banScreen.visible"
+      prewarm
+      variant="account"
+      :title="t('nav.banned.title')"
+      :reason="t('nav.banned.reasonFallback')"
+      :until="t('nav.banned.permanent')"
+      :appeal="t('nav.banned.appeal')"
+      :lock-scroll="false"
+    />
+
+    <!-- 登录揭示预热：只跑样式/蜂窝/合成，不启动时间线，也不读屏 -->
+    <ZLoginReveal v-if="revealWarm && !banScreen.visible" prewarm name="" role="" :active="false" />
 
     <ZBanScreen
       v-if="banScreen.visible"
@@ -673,6 +772,14 @@ watch(user, async () => {
   justify-content: center;
   min-height: 100%;
   padding: var(--yg-space-6) 0;
+}
+
+/* 登录卡外壳：只负责把 AUTH 标头放到卡片 clip-path 裁切范围之外，
+   标头自身的定位与切角由 phi-theme.css 接管 */
+.yg-login__card-shell {
+  position: relative;
+  width: 100%;
+  max-width: 400px;
 }
 
 /* 登录卡：Phi 方角；切角、硬阴影、明暗配色由 phi-theme.css 接管 */
@@ -795,14 +902,19 @@ watch(user, async () => {
 
 /* ---- v2 登录页：品牌区 + 表单区（桌面分栏，移动单列） ---- */
 .yg-login-v2 {
+  position: relative;
   display: grid;
   grid-template-columns: minmax(0, 0.92fr) minmax(0, 1.08fr);
+  height: 100%;
   min-height: 100%;
+  isolation: isolate;
   /* 透出 .yg-phi 的网格/扫描线底 */
   background: transparent;
 }
 
 .yg-login-v2__brand {
+  position: relative;
+  z-index: 1;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -881,14 +993,64 @@ watch(user, async () => {
 }
 
 .yg-login-v2__main {
+  position: relative;
+  z-index: 1;
+  isolation: isolate;
   display: flex;
   align-items: center;
   justify-content: center;
+  min-height: 100%;
   padding: var(--yg-space-6);
 }
 
 .yg-login-v2__main .yg-login__card {
+  position: relative;
+  z-index: 2;
   max-width: 400px;
+}
+
+/* 右侧 HUD 读数：移动端品牌区隐藏后，这层仍保留终端感 */
+.yg-login-v2__rail {
+  position: absolute;
+  z-index: 1;
+  top: var(--yg-space-5);
+  right: var(--yg-space-6);
+  left: var(--yg-space-6);
+  display: flex;
+  justify-content: space-between;
+  color: var(--yg-text-tertiary);
+  font: 500 10px var(--phi-hud, ui-monospace, monospace);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  pointer-events: none;
+}
+
+.yg-login-v2__rail span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.yg-login-v2__rail span::before {
+  content: '';
+  width: 5px;
+  height: 5px;
+  background: var(--yg-color-primary);
+  transform: rotate(45deg);
+  box-shadow: 0 0 7px var(--yg-color-primary);
+}
+
+/* 卡片后面的超大编号：Phigros 式的几何锚点，不参与命中 */
+.yg-login-v2__ghost {
+  position: absolute;
+  z-index: 0;
+  right: 3%;
+  bottom: -2%;
+  color: color-mix(in srgb, var(--phi-ink) 5%, transparent);
+  font: 400 clamp(150px, 23vw, 330px) / 0.72 var(--phi-display, Impact, sans-serif);
+  letter-spacing: -0.06em;
+  pointer-events: none;
+  user-select: none;
 }
 
 @media (max-width: 959px) {
@@ -901,8 +1063,22 @@ watch(user, async () => {
   }
 
   .yg-login-v2__main {
+    height: 100%;
     min-height: 100%;
-    padding: var(--yg-space-5) var(--yg-space-4);
+    padding: var(--yg-space-8) var(--yg-space-4);
+  }
+
+  .yg-login-v2__rail {
+    top: var(--yg-space-4);
+    right: var(--yg-space-4);
+    left: var(--yg-space-4);
+  }
+
+  .yg-login-v2__ghost {
+    right: -6%;
+    bottom: 1%;
+    font-size: clamp(150px, 46vw, 240px);
+    opacity: 0.7;
   }
 }
 

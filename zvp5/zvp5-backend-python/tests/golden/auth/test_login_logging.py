@@ -41,7 +41,6 @@ Run with pytest::
 
 from __future__ import annotations
 
-from types import SimpleNamespace
 
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient

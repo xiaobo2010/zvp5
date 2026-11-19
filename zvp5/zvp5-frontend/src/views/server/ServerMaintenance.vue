@@ -3,12 +3,10 @@ import { useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user.ts'
 import { ref, reactive, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ElCard } from 'element-plus/es/components/card/index.mjs'
 import { ElForm } from 'element-plus/es/components/form/index.mjs'
 import { ElFormItem } from 'element-plus/es/components/form/index.mjs'
 import { ElInput } from 'element-plus/es/components/input/index.mjs'
 import { ElButton } from 'element-plus/es/components/button/index.mjs'
-import { ElAlert } from 'element-plus/es/components/alert/index.mjs'
 import { ElMessage } from 'element-plus/es/components/message/index.mjs'
 import { ElMessageBox } from 'element-plus/es/components/message-box/index.mjs'
 import type { FormInstance, FormRules } from 'element-plus'
@@ -20,6 +18,7 @@ import {
   disableMaintenance,
   type MaintenanceStatus
 } from '@/api/system/maintenance.ts'
+import ZHexUnit from './components/ZHexUnit.vue'
 
 const router = useRouter()
 const userStore = useUserStore()
@@ -51,6 +50,29 @@ const sinceText = computed(() => {
   return dayjs(since * 1000).format('YYYY-MM-DD HH:mm:ss')
 })
 
+/** 维护已开启 = 全平台停机,这是本页最要紧的状态,徽章放大并转危险色。 */
+const maintenanceOn = computed(() => maintenanceStatus.value?.enabled === true)
+
+const statusTone = computed<'danger' | 'ok' | 'idle'>(() => {
+  if (statusLoading.value) return 'idle'
+  if (!maintenanceStatus.value) return 'idle'
+  return maintenanceOn.value ? 'danger' : 'ok'
+})
+
+const statusValue = computed(() => {
+  if (statusLoading.value) return '···'
+  if (!maintenanceStatus.value) return '—'
+  return maintenanceOn.value ? 'ON' : 'OFF'
+})
+
+const statusHint = computed(() => {
+  if (statusLoading.value) return t('server.hud.loading')
+  if (!maintenanceStatus.value) return t(M + 'statusFailed')
+  return maintenanceOn.value
+    ? t(M + 'unitSince', { time: sinceText.value })
+    : t(M + 'unitIdle')
+})
+
 async function refreshStatus() {
   statusLoading.value = true
   try {
@@ -64,6 +86,8 @@ async function refreshStatus() {
 }
 
 async function onEnable() {
+  // 请求在飞时直接忽略二次点击:表单校验会先跑,慢网下双击会开两次确认框。
+  if (submitting.value) return
   const valid = await maintenanceFormRef.value?.validate().catch(() => false)
   if (!valid) return
   try {
@@ -89,6 +113,7 @@ async function onEnable() {
 }
 
 async function onDisable() {
+  if (submitting.value) return
   try {
     await ElMessageBox.confirm(t(M + 'disableConfirm'), t(M + 'title'), { type: 'warning' })
   } catch {
@@ -120,77 +145,109 @@ if (isAdmin) {
 
 <template>
   <!-- 系统维护模式:仅 admin 可见 -->
-  <ElCard v-if="isAdmin" shadow="never">
-    <template #header>
-      <span class="font-medium">{{ t(M + 'title') }}</span>
-    </template>
-    <template v-if="maintenanceStatus">
-      <div class="flex flex-col gap-3">
-        <span class="text-base">
-          {{
-            maintenanceStatus.enabled
-              ? t(M + 'statusMaintaining', { time: sinceText })
-              : t(M + 'statusNormal')
-          }}
-        </span>
-        <ElAlert
-          v-if="maintenanceStatus.enabled && maintenanceStatus.announcement"
-          type="warning"
-          show-icon
-          :closable="false"
-          :title="maintenanceStatus.announcement"
-          class="whitespace-pre-line"
-        />
-      </div>
-      <ElForm
-        ref="maintenanceFormRef"
-        :model="form"
-        :rules="rules"
-        label-position="top"
-        class="mt-4"
-      >
-        <ElFormItem :prop="'reason'" :label="t(M + 'reasonLabel')">
-          <ElInput
-            v-model="form.reason"
-            type="textarea"
-            :rows="2"
-            maxlength="200"
-            show-word-limit
-            :placeholder="t(M + 'reasonHint')"
-          />
-        </ElFormItem>
-        <ElFormItem :prop="'announcement'" :label="t(M + 'announcementLabel')">
-          <ElInput
-            v-model="form.announcement"
-            type="textarea"
-            :rows="3"
-            maxlength="300"
-            show-word-limit
-            :placeholder="t(M + 'announcementHint')"
-          />
-        </ElFormItem>
-        <ElFormItem>
-          <ElButton
-            v-if="!maintenanceStatus.enabled"
-            type="primary"
-            :loading="submitting"
-            @click="onEnable"
-          >
-            {{ t(M + 'enable') }}
-          </ElButton>
-          <ElButton v-else type="danger" plain :loading="submitting" @click="onDisable">
-            {{ t(M + 'disable') }}
-          </ElButton>
-        </ElFormItem>
-      </ElForm>
-    </template>
-    <div v-else class="flex items-center gap-3">
-      <span class="text-sm text-gray-500 dark:text-gray-400">
-        {{ t(M + 'statusFailed') }}
-      </span>
-      <ElButton text bg :loading="statusLoading" @click="refreshStatus">
-        {{ t('maintenance.recheck') }}
-      </ElButton>
+  <div v-if="isAdmin" class="phi-srv-page">
+    <!-- 状态单元:维护开关是本页唯一要紧的状态,置顶放大 -->
+    <div class="phi-srv-strip" :class="{ 'phi-srv-strip--danger': maintenanceOn }">
+      <ZHexUnit
+        :label="t(M + 'unitLabel')"
+        :value="statusValue"
+        :tone="statusTone"
+        size="lg"
+        :hint="statusHint"
+      />
     </div>
-  </ElCard>
+
+    <!-- 维护已开启:公告顶到最前,一眼看到对外说了什么 -->
+    <div v-if="maintenanceOn && maintenanceStatus?.announcement" class="phi-srv-alert">
+      <span class="phi-srv-tag phi-srv-tag--danger">SYS // NOTICE</span>
+      <div class="phi-srv-alert__body">
+        <p class="whitespace-pre-line">{{ maintenanceStatus.announcement }}</p>
+      </div>
+    </div>
+
+    <!-- 操作区 -->
+    <section class="yg-card">
+      <header class="yg-card__header">
+        <h2 class="yg-card__title">{{ t(M + 'opTitle') }}</h2>
+        <span class="phi-srv-tag">{{ t(M + 'unitLabel') }}</span>
+      </header>
+      <div class="yg-card__body maintenance-body">
+        <p class="phi-srv-dim">{{ t(M + 'opNote') }}</p>
+
+        <template v-if="maintenanceStatus">
+          <ElForm
+            ref="maintenanceFormRef"
+            :model="form"
+            :rules="rules"
+            label-position="top"
+            class="mt-4"
+          >
+            <ElFormItem :prop="'reason'" :label="t(M + 'reasonLabel')">
+              <ElInput
+                v-model="form.reason"
+                type="textarea"
+                :rows="2"
+                maxlength="200"
+                show-word-limit
+                :placeholder="t(M + 'reasonHint')"
+              />
+            </ElFormItem>
+            <ElFormItem :prop="'announcement'" :label="t(M + 'announcementLabel')">
+              <ElInput
+                v-model="form.announcement"
+                type="textarea"
+                :rows="3"
+                maxlength="300"
+                show-word-limit
+                :placeholder="t(M + 'announcementHint')"
+              />
+            </ElFormItem>
+            <ElFormItem>
+              <ElButton
+                v-if="!maintenanceOn"
+                type="primary"
+                :loading="submitting"
+                :disabled="submitting"
+                @click="onEnable"
+              >
+                {{ t(M + 'enable') }}
+              </ElButton>
+              <ElButton
+                v-else
+                type="danger"
+                plain
+                :loading="submitting"
+                :disabled="submitting"
+                @click="onDisable"
+              >
+                {{ t(M + 'disable') }}
+              </ElButton>
+            </ElFormItem>
+          </ElForm>
+        </template>
+
+        <!-- 首次加载:骨架屏占位,避免「点了没反应」 -->
+        <div v-else-if="statusLoading" class="phi-srv-skel mt-4">
+          <div class="phi-srv-skel__line phi-srv-skel__line--tall"></div>
+          <div class="phi-srv-skel__line"></div>
+          <div class="phi-srv-skel__line phi-srv-skel__line--short"></div>
+        </div>
+
+        <div v-else class="mt-4 flex flex-wrap items-center gap-3">
+          <span class="phi-srv-dim">{{ t(M + 'statusFailed') }}</span>
+          <ElButton text bg :loading="statusLoading" @click="refreshStatus">
+            {{ t('maintenance.recheck') }}
+          </ElButton>
+        </div>
+      </div>
+    </section>
+  </div>
 </template>
+
+<style scoped>
+.maintenance-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--yg-space-2);
+}
+</style>

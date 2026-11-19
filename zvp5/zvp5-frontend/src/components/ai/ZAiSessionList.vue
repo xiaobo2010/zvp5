@@ -378,11 +378,18 @@ function relativeTime(value: string | null | undefined): string {
 
 .ai-sessions__head {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: var(--yg-space-2);
+  row-gap: var(--yg-space-2);
   /* 切换器高度固定：切换只移动滑块，不参与内容撑高 */
   min-height: 29px;
+}
+
+/* 侧栏收窄时「新建会话」换到下一行，不压到切换器上造成穿模 */
+.ai-sessions__switch {
+  min-width: 0;
 }
 
 /* 会话/归档切换器：和大分段控件同一套切角、渐变与回弹位移 */

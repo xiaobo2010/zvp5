@@ -10,16 +10,19 @@ import { ElIcon } from 'element-plus/es/components/icon/index.mjs'
 import { ElInput } from 'element-plus/es/components/input/index.mjs'
 import { ElMessage } from 'element-plus/es/components/message/index.mjs'
 import { ElMessageBox } from 'element-plus/es/components/message-box/index.mjs'
+import { ElSwitch } from 'element-plus/es/components/switch/index.mjs'
 import { ElTag } from 'element-plus/es/components/tag/index.mjs'
 import { Menu, Promotion, VideoPause, WarningFilled } from '@element-plus/icons-vue'
 import { useWindowSize } from '@vueuse/core'
 import {
   AiRequestError,
+  ackAgentRisk,
   aiErrorCopy,
   aiErrorSection,
   confirmProposal,
   fetchPendingProposals,
   fetchRunDetail,
+  getAgentRiskAck,
   listModels,
   rejectProposal,
   unlockAgent
@@ -132,6 +135,34 @@ const isShortViewport = computed(() => height.value < SHORT_VIEWPORT_HEIGHT)
 const settingsExpanded = ref(false)
 const settingsFolded = computed(() => isShortViewport.value && !settingsExpanded.value)
 
+/**
+ * 流式输出偏好。
+ *
+ * 默认开启：逐字显示是更自然的等待反馈；多 worker 部署下 SSE 会 503，store
+ * 自动回退轮询并在设置卡里给一句提示，不把开关强行拨回去。用户按账号记住选择。
+ */
+const STREAM_PREF_KEY = 'zvms.ai.streaming'
+
+function readStreamingPreference(): boolean {
+  try {
+    const raw = localStorage.getItem(`${STREAM_PREF_KEY}.${userStore._id || 'anon'}`)
+    return raw === null ? true : raw === '1'
+  } catch {
+    return true
+  }
+}
+
+const streamingEnabled = ref(readStreamingPreference())
+
+watch(streamingEnabled, (value) => {
+  try {
+    localStorage.setItem(`${STREAM_PREF_KEY}.${userStore._id || 'anon'}`, value ? '1' : '0')
+  } catch {
+    /* 隐私模式写不进去也要让本次会话生效 */
+  }
+  store.setPreferStreaming(value)
+})
+
 /** 收起态摘要里的思考强度：跟随会话当前值。 */
 const thinkingLabel = computed(() => {
   const value = store.current?.thinking ?? thinkingChoice.value ?? ''
@@ -238,11 +269,11 @@ const canSend = computed(
 /**
  * 本轮还没有正文：先占一个位置。
  *
- * ZVAgent 不走流式，正文要等轮询回来才有。没有这块占位，消息区在思考期间
- * 是空的——用户只看到「后台执行中」，不知道模型到底动没动。
+ * 流式开着时正文由 liveAssistantText 接管；关闭或尚未收到首帧时，消息区在
+ * 思考期间是空的——用户只看到「后台执行中」，不知道模型到底动没动。
  */
 const pendingReplyVisible = computed(() => {
-  if (!runActive.value) {
+  if (!runActive.value || store.liveAssistantText.trim()) {
     return false
   }
   const list = store.orderedMessages
@@ -258,8 +289,22 @@ const pendingReplyVisible = computed(() => {
     .some((message) => message.role === 'assistant' && message.content.trim().length > 0)
 })
 
+/** 流式增量已经有正文：直接渲染，不再显示「正在思考」占位。 */
+const liveAssistantVisible = computed(() => Boolean(store.liveAssistantText.trim()))
+
+/** 最近一个还在跑的工具：占位文案里点名，用户知道它卡在哪一步。 */
+const liveToolLabel = computed(() => {
+  const pending = [...store.liveTools]
+    .reverse()
+    .find((item) => item.status === 'pending' && item.tool_name)
+  return pending?.tool_name ? t(toolLabelKey(pending.tool_name)) : ''
+})
+
 /** 占位文案：还没跑完一轮就说「正在思考」，跑过了就带上轮次。 */
 const pendingReplyText = computed(() => {
+  if (liveToolLabel.value) {
+    return t('ai.chat.runningTool', { tool: liveToolLabel.value })
+  }
   const rounds = store.activeRun?.rounds ?? 0
   return rounds > 0
     ? t('ai.chat.thinkingPlaceholderRounds', { rounds })
@@ -455,6 +500,15 @@ function riskAcked(): boolean {
   }
 }
 
+/** 写本地快速缓存：写不进去也要让本次会话生效，不能让隐私模式把对话卡死。 */
+function markRiskAckedLocally() {
+  try {
+    localStorage.setItem(riskAckKey(), '1')
+  } catch {
+    /* 隐私模式写不进去：内存态照常放行本次，下次再查服务端 */
+  }
+}
+
 const riskVisible = ref(false)
 /** 风险框的结论先暂存，等 @closed 再结算；null 表示当前没有待结算的结论。 */
 let riskVerdict: boolean | null = null
@@ -501,18 +555,31 @@ function cancelRisk() {
 }
 
 function ackRisk() {
-  try {
-    localStorage.setItem(riskAckKey(), '1')
-  } catch {
-    /* 写不进去也要放行：不能让隐私模式把对话卡死 */
-  }
+  // 先写本地缓存并放行：确认是跟账号走的，本机不该再被同一道门拦一次。
+  markRiskAckedLocally()
   closeRisk(true)
+  // 后台落库到服务端：失败静默——本设备已有缓存，换设备进入时 GET 会补上，
+  // 不重复打扰本设备。
+  void ackAgentRisk().catch(() => {})
 }
 
-/** 智能体门禁：本账号已确认直接放行；未确认就弹框，取消返回 false。 */
+/**
+ * 智能体门禁：本地缓存命中直接放行（首屏零请求）；未命中以服务端为准
+ * （确认跟账号走，换设备同样生效）；服务端未确认或查询失败一律弹框兜底，
+ * 网络错误不外抛、不卡死门禁。
+ */
 async function passRiskGate(): Promise<boolean> {
   if (riskAcked()) {
     return true
+  }
+  try {
+    const status = await getAgentRiskAck()
+    if (status.acked) {
+      markRiskAckedLocally()
+      return true
+    }
+  } catch {
+    /* 查询失败按未确认处理：弹原有风险框，不把错误暴露成页面报错 */
   }
   return await openRisk()
 }
@@ -1322,7 +1389,8 @@ async function sendAgentTurn(conversation: AiConversation, text: string, msgId: 
   try {
     await withUnlockRetry(() =>
       store.submitRun(conversation.oid, text, {
-        clientMsgId: msgId
+        clientMsgId: msgId,
+        streaming: streamingEnabled.value
       })
     )
     // 提交成功：这条已经落库，下一条消息用新键。
@@ -1434,6 +1502,8 @@ onMounted(async () => {
   // 首次进入智能体：先把风险提示摆出来，确认前不建会话、不切换、不提交。
   void passRiskGate()
   void loadModels()
+  // 偏好要在接管活跃 run 之前落到 store：首次进入就按用户设置决定链路。
+  store.setPreferStreaming(streamingEnabled.value)
   // 解锁窗口可能还在（同一次访问里切过页面）：先让倒计时接上。
   syncUnlockTimer()
   observeContent()
@@ -1444,7 +1514,7 @@ onMounted(async () => {
   // 先问一次有没有在跑的任务：有就接管进度，不另起一轮。
   const active = runs.find((item) => item.status === 'queued' || item.status === 'running')
   if (active) {
-    await store.adoptRun(active)
+    await store.adoptRun(active, { streaming: streamingEnabled.value })
     return
   }
   // 接着上一次那个会话：列表按更新时间倒序，第一个就是最近聊的。
@@ -1470,6 +1540,7 @@ onUnmounted(() => {
   }
   resizeObserver?.disconnect()
   resizeObserver = null
+  store.stopStreaming()
   store.stopPolling()
 })
 </script>
@@ -1542,7 +1613,7 @@ onUnmounted(() => {
               </span>
             </div>
             <div class="flex flex-wrap items-center gap-2">
-              <ElButton v-if="isNarrow" text @click="drawerOpen = true">
+              <ElButton v-if="isNarrow" text class="yg-btn yg-btn--text yg-btn--sm" @click="drawerOpen = true">
                 <ElIcon class="mr-1"><Menu /></ElIcon>
                 {{ t('ai.chat.sessions.openDrawer') }}
               </ElButton>
@@ -1551,6 +1622,7 @@ onUnmounted(() => {
                 v-if="isShortViewport"
                 text
                 size="small"
+                class="yg-btn yg-btn--text yg-btn--sm"
                 :aria-expanded="!settingsFolded"
                 @click="settingsExpanded = !settingsExpanded"
               >
@@ -1565,6 +1637,8 @@ onUnmounted(() => {
           <span>{{ t('ai.chat.model') }}：{{ currentModel || '—' }}</span>
           <span class="ai-chat__settings-dot" aria-hidden="true">·</span>
           <span>{{ t('ai.chat.thinking') }}：{{ thinkingLabel }}</span>
+          <span class="ai-chat__settings-dot" aria-hidden="true">·</span>
+          <span>{{ t('ai.chat.streaming') }}：{{ streamingEnabled ? t('ai.chat.streamingOn') : t('ai.chat.streamingOff') }}</span>
         </p>
 
         <!-- 摊开态：模型、思考强度、上下文水位挤在一条横线上 -->
@@ -1592,11 +1666,41 @@ onUnmounted(() => {
                     modelLocked ? t('ai.chat.modelLockedShort') : t('ai.chat.modelChangeableShort')
                   }}
                 </span>
-                <ElButton text size="small" :loading="modelsLoading" @click="loadModels">
+                <ElButton text size="small" class="yg-btn yg-btn--text yg-btn--sm" :loading="modelsLoading" @click="loadModels">
                   {{ t('ai.common.refresh') }}
                 </ElButton>
               </template>
             </ZAiModelThinkingPicker>
+
+            <!-- 流式输出：开着时逐字显示，关闭时按轮次刷新；运行中不允许切换 -->
+            <span class="ai-chat__settings-sep" aria-hidden="true" />
+            <div class="ai-chat__stream">
+              <span class="ai-chat__settings-label">{{ t('ai.chat.streaming') }}</span>
+              <ElSwitch
+                v-model="streamingEnabled"
+                size="small"
+                :disabled="runActive"
+                :aria-label="t('ai.chat.streaming')"
+              />
+              <span
+                class="ai-chat__settings-hint"
+                :title="
+                  runActive
+                    ? t('ai.chat.streamingBusyHint')
+                    : streamingEnabled
+                      ? t('ai.chat.streamingOnHint')
+                      : t('ai.chat.streamingOffHint')
+                "
+              >
+                {{
+                  runActive
+                    ? t('ai.chat.streamingBusyHint')
+                    : streamingEnabled
+                      ? t('ai.chat.streamingOnHint')
+                      : t('ai.chat.streamingOffHint')
+                }}
+              </span>
+            </div>
 
             <!-- 分隔：把「选什么」和「用得怎么样」分开 -->
             <span class="ai-chat__settings-sep" aria-hidden="true" />
@@ -1638,6 +1742,7 @@ onUnmounted(() => {
               <ElButton
                 text
                 size="small"
+                class="yg-btn yg-btn--text yg-btn--sm"
                 :loading="compacting"
                 :disabled="!store.current || compacting"
                 @click="compactContext"
@@ -1650,6 +1755,9 @@ onUnmounted(() => {
               </ElButton>
             </div>
           </div>
+          <p v-if="store.streamFallback" class="ai-chat__stream-fallback" role="status">
+            {{ t('ai.chat.streamFallback') }}
+          </p>
         </div>
       </ElCard>
 
@@ -1856,6 +1964,17 @@ onUnmounted(() => {
               </div>
             </div>
 
+            <!-- 流式增量：累计文本直接渲染，轮提交后由落库消息接管 -->
+            <div v-if="liveAssistantVisible" class="ai-chat__row assistant">
+              <div class="ai-chat__who yg-text-xs yg-text-tertiary">
+                {{ t('ai.chat.assistant') }}
+              </div>
+              <div class="ai-chat__bubble assistant ai-chat__streaming">
+                <ZMarkdown :source="store.liveAssistantText" class="ai-chat__markdown" />
+                <span class="ai-chat__streaming-dot" aria-hidden="true" />
+              </div>
+            </div>
+
             <!-- 占位：这一轮还没出正文，先占个位置，别让消息区空着 -->
             <div v-if="pendingReplyVisible" class="ai-chat__row assistant">
               <div class="ai-chat__who yg-text-xs yg-text-tertiary">{{ t('ai.chat.assistant') }}</div>
@@ -2018,12 +2137,13 @@ onUnmounted(() => {
               </span>
             </div>
             <div class="flex items-center gap-2">
-              <ElButton v-if="runActive" type="danger" plain @click="cancelRun">
+              <ElButton v-if="runActive" type="danger" class="yg-btn yg-btn--danger" @click="cancelRun">
                 <ElIcon class="mr-1"><VideoPause /></ElIcon>
                 {{ t('ai.chat.stop') }}
               </ElButton>
               <ElButton
                 type="primary"
+                class="yg-btn yg-btn--primary"
                 :disabled="!canSend || input.trim().length === 0"
                 :loading="sending"
                 @click="send"
@@ -2103,12 +2223,12 @@ onUnmounted(() => {
   flex: 1 1 auto;
 }
 
-/* 桌面侧栏：固定宽度，跟主区等高 */
+/* 桌面侧栏：固定宽度，跟主区等高；大屏按视口略微加宽，别让会话名挤成一条 */
 .ai-chat__sidebar {
   display: flex;
   flex-direction: column;
   flex: none;
-  width: 260px;
+  width: clamp(260px, 18vw, 340px);
   /* 高度跟着对话列走，不再按视口猜一个数 */
   max-height: 100%;
   min-height: 0;
@@ -2162,7 +2282,7 @@ onUnmounted(() => {
   overflow-y: auto;
   overscroll-behavior: contain;
   border: 1px solid var(--yg-border-default);
-  border-radius: 6px;
+  border-radius: var(--yg-radius-sm);
   padding: 12px;
   background: var(--yg-bg-surface-sunken);
 }
@@ -2183,16 +2303,17 @@ onUnmounted(() => {
 }
 
 .ai-chat__bubble {
-  max-width: min(680px, 88%);
+  max-width: min(820px, 86%);
   padding: 8px 10px;
-  border-radius: 6px;
+  border-radius: var(--yg-radius-sm);
   border: 1px solid var(--yg-border-default);
   background: var(--yg-bg-surface);
 }
 
 .ai-chat__bubble.user {
-  background: var(--yg-color-primary);
-  border-color: var(--yg-color-primary);
+  /* 实底承白字走 strong 系列：浅色 5.93:1、深色同档，正文气泡达标（准则 2.1） */
+  background: var(--yg-color-primary-strong);
+  border-color: var(--yg-color-primary-strong);
   color: var(--yg-color-on-primary);
 }
 
@@ -2291,6 +2412,53 @@ onUnmounted(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* 流式开关：与模型/思考同一行，开关本身不抢视觉重心 */
+.ai-chat__settings-label {
+  font-size: var(--yg-font-size-xs);
+  color: var(--yg-text-tertiary);
+  white-space: nowrap;
+}
+
+.ai-chat__stream {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--yg-space-2);
+}
+
+.ai-chat__stream-fallback {
+  margin: var(--yg-space-2) 0 0;
+  font-size: var(--yg-font-size-xs);
+  color: var(--yg-text-tertiary);
+}
+
+/* 流式气泡：正文照常走 Markdown，末尾只加一个轻量光标，不改变气泡尺寸 */
+.ai-chat__streaming {
+  position: relative;
+}
+
+.ai-chat__streaming-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-left: 2px;
+  vertical-align: 0.12em;
+  border-radius: 50%;
+  background: var(--yg-color-primary);
+  animation: ai-stream-blink 1s steps(2, start) infinite;
+}
+
+@keyframes ai-stream-blink {
+  0%,
+  45% {
+    opacity: 1;
+  }
+  50%,
+  100% {
+    opacity: 0.2;
+  }
 }
 
 /* 短视口收起态：一行摘要，替代摊开的模型 / 思考 / 水位三行 */
@@ -2770,10 +2938,10 @@ onUnmounted(() => {
   }
 }
 
-/* 中等宽度（1024–1280）：侧栏收窄，把宽度让给消息区 */
+/* 中等宽度（1024–1280）：侧栏收窄但仍要放得下「会话 / 已归档 / 新建会话」 */
 @media (min-width: 1024px) and (max-width: 1280px) {
   .ai-chat__sidebar {
-    width: 220px;
+    width: 250px;
   }
 }
 
@@ -2882,6 +3050,11 @@ onUnmounted(() => {
 
   .ai-chat__composer.is-shaking {
     animation: none;
+  }
+
+  .ai-chat__streaming-dot {
+    animation: none;
+    opacity: 1;
   }
 
   .ai-agent__event-row {

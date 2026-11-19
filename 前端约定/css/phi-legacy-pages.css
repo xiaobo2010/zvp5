@@ -290,7 +290,7 @@ html[data-theme='light'] .yg-phi.yg-phi.yg-phi {
   inset: 0 auto 0 0;
   z-index: 3;
   width: 2px;
-  background: linear-gradient(var(--legacy-accent), transparent 72%);
+  background: var(--legacy-accent);
   pointer-events: none;
 }
 

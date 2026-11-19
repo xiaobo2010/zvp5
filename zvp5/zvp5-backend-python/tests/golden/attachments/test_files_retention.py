@@ -34,7 +34,6 @@ import pytest
 
 import config
 from db import backends
-from tasks import files_retention
 from tasks.files_retention import (
     DEFAULT_RETENTION_DAYS,
     purge_expired_attachments,

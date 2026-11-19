@@ -2,7 +2,7 @@
 
 契约：令牌来自 ``POST /api/users/auth``（``purpose='verify'``）的 5 分钟短令牌，
 放在请求 body 的 ``verification_token``（``DELETE`` 也走 body）。缺失/无效统一
-403，与 ``users_v3_router`` / ``attachments_router`` 的既有行为一致。
+403，与 ``users_router`` / ``attachments_router`` 的既有行为一致。
 
 本文件用真实令牌（``util.cert.jwt_encode`` 现签）+ 内存用户仓储，端点是线上
 router 本体，业务层仓储/服务全部打桩——验证的是闸门位置，不是业务语义。

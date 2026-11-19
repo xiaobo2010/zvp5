@@ -3,13 +3,12 @@ import { useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user.ts'
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ElCard } from 'element-plus/es/components/card/index.mjs'
 import { ElButton } from 'element-plus/es/components/button/index.mjs'
-import { ElProgress } from 'element-plus/es/components/progress/index.mjs'
 import { Refresh, View, Hide } from '@element-plus/icons-vue'
 import { isAxiosError } from 'axios'
 import { getMyTotp } from '@/api/system/totp.ts'
 import { errorDetailOf, resolveErrorMessage } from '@/utils/errorMessage'
+import ZHexUnit from './components/ZHexUnit.vue'
 
 const router = useRouter()
 const userStore = useUserStore()
@@ -51,20 +50,38 @@ const expired = computed(() => {
   return ms !== null && ms <= 0
 })
 
-// 进度条用连续剩余毫秒归一(而非取整后的整数秒),配合 200ms 定时器才真的平滑递减;
-// 配色与「剩余 N 秒」文本仍用整数秒(见 countdownColor / remainsText)
+// 倒计时用连续剩余毫秒归一(而非取整后的整数秒),配合 200ms 定时器才真的平滑递减;
+// 配色与「剩余 N 秒」文本仍用整数秒(见 countdownTone / remainsText)
 const remainingPct = computed(() => {
   const ms = remainingMs.value
   if (ms === null || ms <= 0) return 0
   return Math.min(100, (ms / (OTP_STEP_SECONDS * 1000)) * 100)
 })
 
-// 临近过期转暖色:≤10 秒红,≤24 秒橙(约 17%/40% 窗口,与旧 30 秒窗口阈值等比换算)
-function countdownColor(seconds: number): string {
-  if (seconds <= 10) return '#f56c6c'
-  if (seconds <= 24) return '#e6a23c'
-  return '#409eff'
-}
+/** 徽章语气跟着倒计时走:剩余越少越刺眼,过期直接转危险色。 */
+const countdownTone = computed<'accent' | 'warn' | 'danger' | 'idle'>(() => {
+  if (loading.value) return 'idle'
+  if (!otp.value) return 'idle'
+  if (expired.value) return 'danger'
+  if (remaining.value <= 10) return 'danger'
+  if (remaining.value <= 24) return 'warn'
+  return 'accent'
+})
+
+const countdownValue = computed(() => {
+  if (loading.value) return '···'
+  if (!otp.value) return '—'
+  if (expired.value) return 'EXP'
+  return String(remaining.value)
+})
+
+/** 徽章说明只讲状态,秒数由徽章读数承担,避免同一个数字出现两次。 */
+const countdownHint = computed(() => {
+  if (loading.value) return t('server.hud.loading')
+  if (!otp.value) return t(M + 'loadFailed')
+  if (expired.value) return t(M + 'unitExpired')
+  return t(M + 'unitValid')
+})
 
 const displayCode = computed(() => {
   return showCode.value && otp.value && !expired.value ? otp.value : '••••••'
@@ -110,7 +127,7 @@ function autoRefreshOnce() {
 function startTimer() {
   stopTimer()
   tick()
-  // 200ms 粒度驱动 now,进度条平滑递减;仅作本地倒计时,不发起请求、不写审计日志
+  // 200ms 粒度驱动 now,六边形里的倒计时扇形才平滑收缩;仅作本地倒计时,不发起请求、不写审计日志
   timer = setInterval(tick, 200)
 }
 
@@ -162,72 +179,105 @@ onUnmounted(() => {
 
 <template>
   <!-- 登录动态码:仅 admin 可见(域守卫),接口本身也只允许本人 -->
-  <ElCard v-if="otp" shadow="never">
-    <template #header>
-      <div class="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
-        <span class="font-medium">{{ t(M + 'title') }}</span>
-        <ElButton text bg :icon="Refresh" :loading="loading" @click="refresh">
+  <div class="phi-srv-page">
+    <section v-if="otp" class="yg-card">
+      <header class="yg-card__header">
+        <h2 class="yg-card__title">{{ t(M + 'codeTitle') }}</h2>
+        <ElButton text bg :icon="Refresh" :loading="loading" :disabled="loading" @click="refresh">
           {{ t(M + 'refresh') }}
         </ElButton>
-      </div>
-    </template>
-    <div class="flex flex-col gap-4">
-      <div class="flex flex-wrap items-center gap-x-4 gap-y-3">
-        <span class="font-mono text-4xl tracking-[0.35em] dark:text-gray-100">
-          {{ displayCode }}
-        </span>
-        <ElButton text bg :icon="showCode ? Hide : View" :disabled="expired" @click="showCode = !showCode">
-          {{ showCode ? t(M + 'hide') : t(M + 'show') }}
-        </ElButton>
-        <span
-          v-if="expired"
-          class="text-sm text-orange-600 dark:text-orange-400"
-        >
-          {{ t(M + 'expired') }}
-        </span>
-      </div>
-      <div class="flex w-full max-w-sm flex-col gap-1">
-        <ElProgress
-          :percentage="remainingPct"
-          :color="countdownColor(remaining)"
-          :show-text="false"
-        />
-        <span class="text-sm text-gray-500 dark:text-gray-400">
-          {{ remainsText }} · {{ t(M + 'refreshInterval') }}
-        </span>
-        <span v-if="loadError" class="text-sm text-red-600 dark:text-red-400">
+      </header>
+      <div class="yg-card__body totp-body">
+        <!-- 动态码与它的剩余时间并排：六边形本身就是倒计时指示器 -->
+        <div class="totp-stage">
+          <div class="totp-code">
+            <span class="phi-srv-code">{{ displayCode }}</span>
+            <ElButton
+              text
+              bg
+              :icon="showCode ? Hide : View"
+              :disabled="expired || loading"
+              @click="showCode = !showCode"
+            >
+              {{ showCode ? t(M + 'hide') : t(M + 'show') }}
+            </ElButton>
+          </div>
+          <div class="totp-countdown">
+            <ZHexUnit
+              :label="t(M + 'unitLabel')"
+              :value="countdownValue"
+              :tone="countdownTone"
+              :progress="remainingPct"
+              size="lg"
+              :hint="countdownHint"
+            />
+            <span class="phi-srv-dim">
+              {{ expired ? remainsText : t(M + 'refreshInterval') }}
+            </span>
+          </div>
+        </div>
+        <span v-if="loadError" class="phi-srv-dim" style="color: var(--yg-text-danger)">
           {{ loadError }}
         </span>
+        <ul class="phi-srv-notes">
+          <li>{{ t(M + 'noteSelfOnly') }}</li>
+          <li>{{ t(M + 'noteUsage') }}</li>
+          <li>{{ t(M + 'noteLog') }}</li>
+        </ul>
       </div>
-      <ul class="flex list-disc flex-col gap-1 pl-5 text-sm text-gray-600 dark:text-gray-300">
-        <li>{{ t(M + 'noteSelfOnly') }}</li>
-        <li>{{ t(M + 'noteUsage') }}</li>
-        <li>{{ t(M + 'noteLog') }}</li>
-      </ul>
-    </div>
-  </ElCard>
+    </section>
 
-  <!-- 首次加载 / 读取失败 -->
-  <ElCard v-else shadow="never">
-    <template #header>
-      <span class="font-medium">{{ t(M + 'title') }}</span>
-    </template>
-    <div class="flex min-h-24 flex-wrap items-center gap-3">
-      <template v-if="loadError && !loading">
-        <span class="text-sm text-gray-500 dark:text-gray-400">{{ loadError }}</span>
-        <ElButton text bg :icon="Refresh" @click="refresh">
-          {{ t('maintenance.recheck') }}
-        </ElButton>
-      </template>
-      <span v-else class="text-sm text-gray-500 dark:text-gray-400">{{ t(M + 'loading') }}</span>
-    </div>
-  </ElCard>
+    <!-- 首次加载 / 读取失败 -->
+    <section v-else class="yg-card">
+      <header class="yg-card__header">
+        <h2 class="yg-card__title">{{ t(M + 'title') }}</h2>
+      </header>
+      <div class="yg-card__body">
+        <template v-if="loadError && !loading">
+          <div class="flex flex-wrap items-center gap-3">
+            <span class="phi-srv-dim">{{ loadError }}</span>
+            <ElButton text bg :icon="Refresh" @click="refresh">
+              {{ t('maintenance.recheck') }}
+            </ElButton>
+          </div>
+        </template>
+        <!-- 骨架屏占位:读取期间不再是一句干巴巴的「加载中…」 -->
+        <div v-else-if="loading" class="phi-srv-skel">
+          <div class="phi-srv-skel__line phi-srv-skel__line--tall"></div>
+          <div class="phi-srv-skel__line"></div>
+          <div class="phi-srv-skel__line phi-srv-skel__line--short"></div>
+        </div>
+        <span v-else class="phi-srv-dim">{{ t(M + 'loading') }}</span>
+      </div>
+    </section>
+  </div>
 </template>
 
 <style scoped>
-/* EP 进度条 theme 写死 `transition: width 0.6s ease`，而倒计时每 200ms tick 一次，
-   过渡永远重启、条一直追不上真实剩余时间。本页把时长压到 200ms 与 tick 对齐。 */
-:deep(.el-progress-bar__inner) {
-  transition-duration: 200ms;
+.totp-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--yg-space-4);
+}
+
+/* 动态码与倒计时单元并排：窄屏时自然折行 */
+.totp-stage {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--yg-space-4) var(--yg-space-6);
+}
+
+.totp-code {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--yg-space-3);
+}
+
+.totp-countdown {
+  display: flex;
+  flex-direction: column;
+  gap: var(--yg-space-1);
 }
 </style>

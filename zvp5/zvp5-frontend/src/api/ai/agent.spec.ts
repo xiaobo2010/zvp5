@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
+  ackAgentRisk,
   confirmProposal,
   fetchPendingProposals,
+  getAgentRiskAck,
   rejectProposal,
   unlockAgent
 } from './agent'
@@ -198,5 +200,51 @@ describe('待确认提案列表', () => {
     const result = await fetchPendingProposals()
 
     expect(result.proposals).toEqual([])
+  })
+})
+
+describe('风险警示确认（跟账号走）', () => {
+  it('GET 走 /ai/agent/ack，形状原样归一', async () => {
+    stubFetch(jsonResponse({ acked: true, acked_at: '2026-11-18T08:00:00Z' }))
+
+    const result = await getAgentRiskAck()
+
+    const [url, init] = vi.mocked(fetch).mock.calls[0]!
+    expect(String(url)).toContain('/ai/agent/ack')
+    expect(init?.method).toBeUndefined()
+    expect(result).toEqual({ acked: true, acked_at: '2026-11-18T08:00:00Z' })
+  })
+
+  it('POST 确认：路径一致、幂等只看回包', async () => {
+    stubFetch(jsonResponse({ acked: true, acked_at: '2026-11-18T08:01:00Z' }))
+
+    const result = await ackAgentRisk()
+
+    const [url, init] = vi.mocked(fetch).mock.calls[0]!
+    expect(String(url)).toContain('/ai/agent/ack')
+    expect(init?.method).toBe('POST')
+    expect(result).toEqual({ acked: true, acked_at: '2026-11-18T08:01:00Z' })
+  })
+
+  it('acked 只认严格 true；acked_at 只认字符串', async () => {
+    stubFetch(jsonResponse({ acked: 'yes', acked_at: 123 }))
+
+    const result = await getAgentRiskAck()
+
+    expect(result).toEqual({ acked: false, acked_at: null })
+  })
+
+  it('形状不认识时按未确认处理，不抛错', async () => {
+    stubFetch(jsonResponse(null))
+
+    const result = await getAgentRiskAck()
+
+    expect(result).toEqual({ acked: false, acked_at: null })
+  })
+
+  it('非 2xx 归一成 AiRequestError', async () => {
+    stubFetch(jsonResponse({ error: { message: 'forbidden' } }, { status: 403 }))
+
+    await expect(getAgentRiskAck()).rejects.toThrow(AiRequestError)
   })
 })

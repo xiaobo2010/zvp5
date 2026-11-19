@@ -12,7 +12,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from db import backends
-from routers import users_v3_router
+from routers import users_router
 from typings.log import inject_log
 from util.object_id import get_current_user
 
@@ -100,10 +100,10 @@ def client(monkeypatch):
         "get_device_bans_repo",
         lambda *a, **k: SimpleNamespace(delete=device_delete),
     )
-    monkeypatch.setattr(users_v3_router, "get_user_display_name", display_name)
+    monkeypatch.setattr(users_router, "get_user_display_name", display_name)
 
     app = FastAPI()
-    app.include_router(users_v3_router.router, prefix="/api/v1/users")
+    app.include_router(users_router.router, prefix="/api/v1/users")
     app.dependency_overrides[get_current_user] = lambda: {"id": SELF, "per": ["admin"]}
     app.dependency_overrides[inject_log] = lambda: StubLog(state["logs"])
     return TestClient(app), state

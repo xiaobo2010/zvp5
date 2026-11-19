@@ -89,9 +89,9 @@ class ActivitiesRepo(Protocol):
         """Return ``(rows, total)`` for activities restricted to ``oids``.
 
         Lifts ``util/calculate.py::get_activities_related_to_user``: ``_id IN
-        oids`` plus a ``contains`` on ``name`` (the raw ``query`` used verbatim
-        as a Mongo ``$regex``; an empty ``query`` adds no filter), ordered by
-        ``_id`` desc. ``page == -1`` means "no pagination".
+        oids`` plus a case-insensitive **literal** ``contains`` on ``name``
+        (``%``/``_``/``\\`` escaped; an empty ``query`` adds no filter), ordered
+        by ``_id`` desc. ``page == -1`` means "no pagination".
         """
         ...
 
@@ -107,13 +107,13 @@ class ActivitiesRepo(Protocol):
     ) -> tuple[list[Row], int]:
         """Return ``(docs, total)`` of **raw** activity documents.
 
-        Flavour of the v2/mcp/data-fix list endpoints that return the Mongo
+        Flavour of the v2/agent/data-fix list endpoints that return the Mongo
         document shape verbatim (not the canonical projection): ``_id`` is a
         lowercase hex string, extra document fields survive, and ``sort`` may
         name any field (``None`` = natural order, ``page`` ``None`` = no
-        pagination). ``search`` is applied as a case-insensitive ``contains``
-        on ``name`` **verbatim** (callers ``re.escape`` it themselves; empty =
-        no name filter); ``atypes`` is an OR-list; ``status`` equality.
+        pagination). ``search`` is applied as a case-insensitive **literal**
+        ``contains`` on ``name`` (LIKE wildcards escaped by the repo; empty = no
+        name filter); ``atypes`` is an OR-list; ``status`` equality.
         """
         ...
 
@@ -123,9 +123,9 @@ class ActivitiesRepo(Protocol):
         Each row is ``{"type": <activity type>, "count": <total int>,
         "status_breakdown": {<status>: <count int>}}``. When several docs share
         a type, their counts are summed and their statuses merged; one row per
-        distinct type. Lifts ``routers/mcp_router.mcp_get_activity_types_summary``
-        (the upstream ``$group``+``$project`` aggregation, which the Mongo driver
-        rejects).
+        distinct type. Lifts the ``activity_types_summary`` read now served by the
+        agent tool (the upstream ``$group``+``$project`` aggregation, which the
+        Mongo driver rejects).
         """
         ...
 
@@ -243,7 +243,7 @@ class MembersRepo(Protocol):
     ) -> list[Row]:
         """Return every membership of an activity (no join, no pagination).
 
-        Lifts ``activity_statistics_router`` / ``mcp_router``'s
+        Lifts ``activity_statistics_router``'s
         ``find({"activity": ...})`` reads; callers use ``duration`` for stats.
         ``status`` optionally keeps only memberships in that approval state
         (``None`` = every state, the original behaviour).
@@ -297,7 +297,7 @@ class MembersRepo(Protocol):
         whose activity is gone is reported with ``activity=None`` while still
         counting towards ``total``. ``search`` is an optional keyword predicate
         on the activity's ``name``/``description``; ``sort``/``asc`` order the
-        rows. Lifts ``routers/users_v2_router.py::get_user_activities_v2``.
+        rows. Lifts ``routers/users_router.py::get_user_activities_v2``.
 
         ``size=None`` means "the whole list in one statement" (no OFFSET/FETCH);
         the legacy ``page=-1`` sentinel of ``routers/users_router.py`` maps onto
@@ -350,7 +350,7 @@ class MembersRepo(Protocol):
     ) -> tuple[list[Row], int]:
         """Return ``(docs, total)`` of **raw** membership documents.
 
-        Flavour of ``activities_v2_router.get_activity_members_v2`` that
+        Flavour of ``services.agent.tool_impl.list_activity_members`` that
         returns the Mongo document shape verbatim (``_id`` hex string):
         ``activity`` equality plus an optional ``member IN`` set (``None`` =
         no member filter, ``[]`` = match nothing), arbitrary ``sort`` field and

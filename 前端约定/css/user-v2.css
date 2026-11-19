@@ -288,19 +288,6 @@ html[data-theme='light'] .yg-glass-nav--v2.yg-glass-nav--portrait {
   gap: var(--yg-space-4);
 }
 
-.yg-home-avatar {
-  display: grid;
-  place-items: center;
-  width: 56px;
-  height: 56px;
-  flex: 0 0 auto;
-  border-radius: var(--yg-radius-pill);
-  background: var(--yg-color-primary-soft);
-  color: var(--yg-color-primary);
-  font-size: var(--yg-font-size-xl);
-  font-weight: var(--yg-font-weight-semibold);
-}
-
 .yg-home-identity__body {
   min-width: 0;
   flex: 1;

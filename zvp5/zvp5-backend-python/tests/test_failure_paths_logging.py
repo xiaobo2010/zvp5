@@ -18,7 +18,6 @@ import asyncio
 import logging
 from types import SimpleNamespace
 
-import pytest
 
 from routers import system_ssh_router
 from util import dual_auth

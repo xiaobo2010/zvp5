@@ -607,7 +607,7 @@ xh_router 任意 URL 代理（:159 urlopen + :46 硬编码签名 KEY）、登录
 > 本批为一次完整发布：本地六提交 → GitHub 推送 → 生产部署 → 历史日志清理。版本 **v4.2.3-3**。
 
 - **统计重做（P0 口径根因）**：`routers/activity_statistics_router.py` 新增 `GET /api/v2/statistics/activities/{id}/analysis`，一次取回描述统计 + 分箱 + 参与模式 + 班级分组；计算抽为 `util/activity_statistics.py` 纯函数（`pick_bin_width` / `build_bins` / `describe_durations` / `group_durations` / `build_analysis_payload` / `to_mcp_statistics`）。
-  - **口径统一**：统计此前读 `list_by_activity` 不带 status，把 pending/refused 成员一起算进图表；而仓库其它时长统计只算 effective（`db/repos/oracle/times.py`、`util/calculate.py`）。`list_by_activity` 新增可选 `status`，四处消费面（`/description`、`/layers`、`/analysis`、MCP）统一为 effective-only。旧两端点保留为回退路径，响应形状逐字未变。
+  - **口径统一**：统计此前读 `list_by_activity` 不带 status，把 pending/refused 成员一起算进图表；而仓库其它时长统计只算 effective（`db/repos/oracle/times.py`、`util/calculate.py`）。`list_by_activity` 新增可选 `status`，四处消费面（`/description`、`/layers`、`/analysis`、MCP）统一为 effective-only。旧两端点保留为回退路径，响应形状逐字未变。（2026-11-19 追注：`/description` 与 `/layers` 已随死端点清理删除，前端只用 `/analysis`；本条「保留为回退路径」的表述自此作废。）
   - **两个真实缺陷**：`build_bins` 索引只封顶不封底 → 负时长被 Python 负索引记进**末桶**（实测 `[-0.5,1.0,2.0]` 的 −0.5 落 `[2.0,2.5)`）；`n = floor(max/width)+1` 无上界 → v2 路径 `duration` 是裸 float，脏数据 1e9 直接请求十亿个桶。改为双向钳位 + `MAX_BINS=1000`（宽度倍增，首个放宽点 = 1000.0h，远超真实义工时长）。
   - **图表选型**：时长是连续量，「每个唯一时长值一个扇区」的环形图在真实数据上退化为若干 1 人扇区 → 改分箱柱状图（<=10h 用 0.5h 桶）；参与模式（3 个离散类别）保留环形图；班级用横向柱（总时长 top-12 + 其他合并）。概览撤下众数（连续量上恒等于最小值）与方差，改有效参与人数/总时长/均值/中位数/极值/25%/75% 分位并补单位。
   - **前端**：统计入口加 `canViewStats` 角色门（此前非团支书点开只吃 403）；修空态（旧接口 in-band 404 让 `hasData` 恒真 → 永远显示 9 个空白卡片）；缓存加 5 分钟 TTL + 上限 20；新增 CSV 导出；`ActivityStatisticsDescription` 由索引签名收紧为显式 11 键（正是 `description.p25` / `25_percentile` 键名漂移的根因）；删掉零调用方的旧 wrapper。

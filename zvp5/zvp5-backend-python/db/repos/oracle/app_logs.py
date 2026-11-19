@@ -29,6 +29,7 @@ from db.ids import new_oid
 from db.models import app_logs as app_logs_tbl
 from db.models import users as users_tbl
 from db.oracle.session import session_scope
+from db.repos.oracle.search import like_pattern
 from db.repos.pagination import page_args, page_bounds
 
 Row = dict[str, Any]
@@ -148,31 +149,16 @@ def _insert_stmt(
 PAGE_SIZE_MAX = 100
 
 
-def _like_pattern(query: str) -> str:
-    """``%query%`` with LIKE wildcards escaped (lower-cased for ``LOWER(col)``).
-
-    ``REGEXP_LIKE`` is gone from this module: it compiled a regex per row and made
-    every search a full-table scan even on ``url``. ``LIKE`` is a plain string
-    comparison — no regex engine, no backtracking — and ``%``/``_``/``\\`` in the
-    admin's keyword are escaped so they stay literals (the old ``re.escape``
-    behaviour).
-    """
-    escaped = (
-        query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-    )
-    return f"%{escaped.lower()}%"
-
-
 def _search_conds(query: str) -> Any:
     """关键字匹配 ``url`` 或 ``data``（大小写不敏感）。
 
     默认搜索必须仍然能命中 url 与 data 里的关键字，所以两支都保留；成本控制
     交给 ``LIKE``（普通字符串比较，不是每行编译正则）和调用方的可索引谓词。
     ``data`` 在 ``db/models.py`` 里是 ``VARCHAR2(2000 CHAR)``（写入按 2000 字节
-    切块，见 :func:`_chunks_utf8`），不是 CLOB/LOB 定位符——这里不会触发
-    ``REGEXP_LIKE`` 那套全表正则，也无需 ``DBMS_LOB``。
+    切块，见 :func:`_chunks_utf8`），不是 CLOB/LOB 定位符——这里不会退化成
+    正则全表扫描，也无需 ``DBMS_LOB``。
     """
-    pattern = _like_pattern(query)
+    pattern = like_pattern(query)
     return or_(
         func.lower(app_logs_tbl.c.url).like(pattern, escape="\\"),
         func.lower(app_logs_tbl.c.data).like(pattern, escape="\\"),
@@ -447,7 +433,7 @@ def _count_by_user_ltype_stmt(
     if contains:
         conds.append(
             func.lower(app_logs_tbl.c.data).like(
-                _like_pattern(contains), escape="\\"
+                like_pattern(contains), escape="\\"
             )
         )
     return select(func.count()).select_from(app_logs_tbl).where(*conds)

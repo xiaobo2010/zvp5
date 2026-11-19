@@ -130,7 +130,26 @@ class _MembersRepo:
 
     async def list_by_activity(self, activity_id: str, status: str | None = None):
         self.calls.append((activity_id, status))
-        return [{"duration": duration} for duration in self.durations]
+        return [
+            {"member": f"u{index}", "mode": "on-campus", "duration": duration}
+            for index, duration in enumerate(self.durations)
+        ]
+
+
+class _NoopUsersRepo:
+    async def get_many_by_oids(self, oids):
+        return {}
+
+
+class _NoopGroupsRepo:
+    async def list_all(self):
+        return []
+
+
+def _patch_analysis_repos(monkeypatch, repo) -> None:
+    monkeypatch.setattr(backends, "get_members_repo", lambda *a, **k: repo)
+    monkeypatch.setattr(backends, "get_users_repo", lambda *a, **k: _NoopUsersRepo())
+    monkeypatch.setattr(backends, "get_groups_repo", lambda *a, **k: _NoopGroupsRepo())
 
 
 @pytest.mark.parametrize("user", [USER_DEPT, USER_SECRETARY], ids=["department", "secretary"])
@@ -143,7 +162,7 @@ def test_activity_stats_off_blocks_readers_and_skips_the_repository(user, monkey
         activity_statistics_router.router,
         "/api/v1/statistics/activities",
         user,
-    ).get("/api/v1/statistics/activities/act1/description")
+    ).get("/api/v1/statistics/activities/act1/analysis")
 
     assert response.status_code == 403, response.text
     assert response.json()["detail"] == FEATURE_DENIED
@@ -152,17 +171,17 @@ def test_activity_stats_off_blocks_readers_and_skips_the_repository(user, monkey
 
 def test_activity_stats_on_keeps_secretary_default(monkeypatch):
     repo = _MembersRepo([10.0, 20.0])
-    monkeypatch.setattr(backends, "get_members_repo", lambda *a, **k: repo)
+    _patch_analysis_repos(monkeypatch, repo)
 
     response = _app(
         activity_statistics_router.router,
         "/api/v1/statistics/activities",
         USER_SECRETARY,
-    ).get("/api/v1/statistics/activities/act1/description")
+    ).get("/api/v1/statistics/activities/act1/analysis")
 
     assert response.status_code == 200, response.text
     body = response.json()
-    assert body["mean"] == 15.0 and body["total"] == 2
+    assert body["description"]["mean"] == 15.0 and body["total"] == 2
     assert repo.calls == [("act1", "effective")]
 
 

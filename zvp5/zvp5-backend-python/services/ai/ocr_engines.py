@@ -36,6 +36,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import json
@@ -249,6 +250,16 @@ def _require(secret: Mapping[str, Any], field: str, engine: str) -> str:
 # 手写 HTTP（百度 / Groq 共用）
 # ---------------------------------------------------------------------------
 
+# 连接池上限：OCR 是低频后台任务，几条长连接足够；真正的收益是 keep-alive，
+# 每次 OCR 都不再重付一次跨境 TCP + TLS 握手。
+HTTP_MAX_CONNECTIONS = 16
+HTTP_MAX_KEEPALIVE_CONNECTIONS = 8
+
+#: 进程内复用的 client（见 :func:`_shared_http_client`）及其创建时的事件循环。
+_http_client: Any | None = None
+_http_client_loop: Any | None = None
+
+
 def _async_http_client(timeout: float) -> Any:
     """建一个 ``httpx.AsyncClient``；httpx 缺失时给可照装的提示。
 
@@ -260,7 +271,63 @@ def _async_http_client(timeout: float) -> Any:
         import httpx
     except ImportError as exc:  # pragma: no cover - 依赖已装在 .venv
         raise OcrEngineError("httpx is unavailable: pip install httpx") from exc
-    return httpx.AsyncClient(timeout=timeout)
+    return httpx.AsyncClient(
+        timeout=timeout,
+        limits=httpx.Limits(
+            max_connections=HTTP_MAX_CONNECTIONS,
+            max_keepalive_connections=HTTP_MAX_KEEPALIVE_CONNECTIONS,
+        ),
+    )
+
+
+def _shared_http_client() -> Any:
+    """复用的 client：第一次调用时建，之后一直用（同 :mod:`services.ai.providers`）。
+
+    每次识别都 ``async with AsyncClient(...)`` 会让百度/Groq 每页重付一次
+    TCP + TLS（跨境时那一两百毫秒就是纯浪费）。client 只在进程级建一次，
+    单次请求的超时仍由调用方 ``post(..., timeout=...)`` 逐次指定。
+
+    绑定的局限与 ``providers`` 一致：``httpx.AsyncClient`` 属于创建它的事件循环。
+    生产是一个进程一个循环；万一被换到别的循环里调用（脚本、用例的
+    ``asyncio.run``），这里检测到循环变了就重建，而不是拿旧 client 去炸。
+    生命周期由 :func:`aclose` 收尾（``scheduler.shutdown_event`` 调用）。
+    """
+    global _http_client, _http_client_loop
+    client = _http_client
+    closed = client is None or getattr(client, "is_closed", False)
+    if not closed and _http_client_loop is not None:
+        try:
+            closed = asyncio.get_running_loop() is not _http_client_loop
+        except RuntimeError:  # pragma: no cover - 没有运行中的循环
+            closed = True
+    if closed:
+        client = _async_http_client(DEFAULT_TIMEOUT)
+        _http_client = client
+        try:
+            _http_client_loop = asyncio.get_running_loop()
+        except RuntimeError:  # pragma: no cover
+            _http_client_loop = None
+    return client
+
+
+async def aclose() -> None:
+    """关闭复用的 client（应用退出时调用；可重复调用）。"""
+    global _http_client, _http_client_loop
+    client, _http_client = _http_client, None
+    _http_client_loop = None
+    if client is not None and not getattr(client, "is_closed", False):
+        await client.aclose()
+
+
+def _reset_http_client() -> None:
+    """丢掉缓存的 client，不 close——用例隔离专用。
+
+    用例通常各自 ``asyncio.run`` 一个新事件循环，跨循环 close 旧 client 反而会
+    炸；这里只断引用，MockTransport 没有真实的 socket 需要收尾。
+    """
+    global _http_client, _http_client_loop
+    _http_client = None
+    _http_client_loop = None
 
 
 def _truncate(value: Any, limit: int = 200) -> str:
@@ -587,15 +654,15 @@ async def _baidu_access_token(
         return cached
 
     url = f"{endpoint.rstrip('/')}/oauth/2.0/token"
-    async with _async_http_client(timeout) as client:
-        response = await client.post(
-            url,
-            params={
-                "grant_type": "client_credentials",
-                "client_id": api_key,
-                "client_secret": secret_key,
-            },
-        )
+    response = await _shared_http_client().post(
+        url,
+        params={
+            "grant_type": "client_credentials",
+            "client_id": api_key,
+            "client_secret": secret_key,
+        },
+        timeout=timeout,
+    )
 
     status = getattr(response, "status_code", 0)
     if not 200 <= status < 300:
@@ -663,16 +730,16 @@ class BaiduOcrEngine:
             "paragraph": False,
         }
         url = f"{endpoint.rstrip('/')}/rest/2.0/ocr/v1/{ocr_api}"
-        async with _async_http_client(timeout) as client:
-            # 百度 v1 OCR 接口文档指定的 Content-Type 是
-            # application/x-www-form-urlencoded（不是 JSON body）；发 JSON 时
-            # 真机可能回 error_code 216202（参数错误），所以按官方口径发表单。
-            response = await client.post(
-                url,
-                params={"access_token": token},
-                data=body,
-                headers={"Content-Type": "application/x-www-form-urlencoded"},
-            )
+        # 百度 v1 OCR 接口文档指定的 Content-Type 是
+        # application/x-www-form-urlencoded（不是 JSON body）；发 JSON 时
+        # 真机可能回 error_code 216202（参数错误），所以按官方口径发表单。
+        response = await _shared_http_client().post(
+            url,
+            params={"access_token": token},
+            data=body,
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            timeout=timeout,
+        )
 
         data = _ok_json(response, self.kind)
         error_code = data.get("error_code")
@@ -976,10 +1043,12 @@ class GroqOcrEngine:
         # 让人误以为「已锁定确定性」的假象。不传 logprobs：直接 400。
 
         headers = {"Authorization": f"Bearer {api_key}"}
-        async with _async_http_client(timeout) as client:
-            response = await client.post(
-                f"{base_url}/chat/completions", json=body, headers=headers
-            )
+        response = await _shared_http_client().post(
+            f"{base_url}/chat/completions",
+            json=body,
+            headers=headers,
+            timeout=timeout,
+        )
 
         # 429 单独成一类：限流不是「这页读不出来」，退避重试就能过。免费层
         # OTPM=1000 意味着密集页一分钟只能发一次，这个分支在生产里会常态触发。
@@ -1121,10 +1190,13 @@ class ZhipuOcrEngine:
         headers = {"Authorization": f"Bearer {api_key}"}
         response = None
         for attempt in range(1, attempts + 1):
-            async with _async_http_client(timeout) as client:
-                response = await client.post(
-                    f"{base_url}/chat/completions", json=body, headers=headers
-                )
+            # 重试共用同一个 client：限流重试不该每次都重开一条 TLS 连接。
+            response = await _shared_http_client().post(
+                f"{base_url}/chat/completions",
+                json=body,
+                headers=headers,
+                timeout=timeout,
+            )
             if getattr(response, "status_code", 0) != 429:
                 break
 

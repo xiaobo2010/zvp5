@@ -162,6 +162,7 @@ def test_delete_snapshots_before_removing_with_a_free_revision() -> None:
             _Result((2,)),                # max snapshot version
             _Result(None, rowcount=1),    # snapshot insert
             _Result(None, rowcount=1),    # DELETE
+            _Result(None, rowcount=1),    # DELETE 该通知的已读行（V053）
             _Result(None, rowcount=1),    # state bump
             _Result(_Row({"version": 9, "updated_at": NOW})),
         ]

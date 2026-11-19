@@ -17,6 +17,7 @@ import ZAttachmentAudit from '@/components/manage/ZAttachmentAudit.vue'
 import ZNotificationAdmin from '@/components/manage/ZNotificationAdmin.vue'
 import ZSystemSettings from '@/components/manage/ZSystemSettings.vue'
 import ManageRoles from '@/views/manage/ManageRoles.vue'
+import ZHexGrid from '@/components/decor/ZHexGrid.vue'
 
 interface SegmentedTab {
   label: string
@@ -217,7 +218,16 @@ watch([current, compactTabs], () => {
 </script>
 
 <template>
-  <div :class="compactTabs ? 'px-4 py-3' : 'px-6 py-4'">
+  <div class="manage-shell" :class="compactTabs ? 'px-4 py-3' : 'px-6 py-4'">
+    <!-- 蜂窝底纹：与封禁页同一套仪器感底纹，管理台用主题强调色，压在内容之下 -->
+    <ZHexGrid
+      :size="64"
+      color="var(--phi-breathe, #1de9b6)"
+      :opacity="0.07"
+      drift
+      sweep
+      :z-index="-1"
+    />
     <!-- 竖屏/窄屏：紧凑页头（图标优先），返回与标题同行 -->
     <header v-if="compactTabs" class="manage-head">
       <button
@@ -294,6 +304,12 @@ watch([current, compactTabs], () => {
 </template>
 
 <style scoped>
+.manage-shell {
+  position: relative;
+  /* 建立层叠上下文：蜂窝底纹 z-index:-1 落在页面底色之上、内容之下 */
+  isolation: isolate;
+}
+
 /* 紧凑页头：返回按钮与标题同行，克制、图标优先 */
 .manage-head {
   display: flex;
