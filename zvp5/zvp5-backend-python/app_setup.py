@@ -104,11 +104,15 @@ AI_OPENAI_PREFIX = "/api/ai/v1/"
 
 # 维护模式放行清单：登录、证书、版本、健康检查、首页，以及整个 /api/system
 # 前缀（管理员必须能在维护期间关掉维护模式）。
+# 注意：users 路由本轮已迁到 ``/api/v1/users``（见 main.ROUTERS），旧前缀串
+# 保留是为了兼容外部仍在打旧路径的重定向/探活，两个前缀必须同时放行。
 MAINTENANCE_EXEMPT_PATHS = {
     "/api",
     "/api/",
     "/api/users/auth",
     "/api/users/auth/logout",
+    "/api/v1/users/auth",
+    "/api/v1/users/auth/logout",
     "/api/cert",
     "/api/version",
     "/api/health",

@@ -287,7 +287,7 @@ async def list_groups(
 ) -> list[dict]:
     """班级（+ 权限组）列表。
 
-    ``include_permission=False`` 时只回班级：与 ``GET /api/groups`` 对无特权
+    ``include_permission=False`` 时只回班级：与 ``GET /api/v1/groups`` 对无特权
     调用方的降级行为一致——不报 403，只是不给权限组清单。由调用方按角色决定。
     """
     repo = backends.get_groups_repo()

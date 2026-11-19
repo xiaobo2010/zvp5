@@ -118,7 +118,7 @@ def _always(user: dict) -> bool:
 
 
 def _privileged(user: dict) -> bool:
-    """admin / department：与 ``GET /api/groups`` 的 ``privileged`` 同一条件。"""
+    """admin / department：与 ``GET /api/v1/groups`` 的 ``privileged`` 同一条件。"""
     per = set(user.get("per") or [])
     return bool({"admin", "department"} & per)
 

@@ -781,7 +781,7 @@ async def get_activity_members_v3(
     validate_object_id(activity_id)
 
     # 成员行内嵌用户摘要（形状同 v1 read_user），一页行只批量取一次用户，
-    # 避免前端每张成员卡再回打 GET /api/users/{id}。
+    # 避免前端每张成员卡再回打 GET /api/v1/users/{id}。
     async with session_scope() as session:
         rows, total = await backends.get_members_repo(session).list_for_activity(
             activity_id, query, page, size

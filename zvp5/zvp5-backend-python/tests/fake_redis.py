@@ -75,11 +75,6 @@ class FakeRedis:
         self.kv[key] = str(value)
         return value
 
-    async def pexpire(self, key: str, ms: int):
-        self._check()
-        self.ttl[key] = ms
-        return True
-
     async def zremrangebyscore(self, key: str, low, high):
         self._check()
         self.calls["zremrangebyscore"] += 1
