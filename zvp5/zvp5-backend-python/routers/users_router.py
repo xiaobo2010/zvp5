@@ -14,6 +14,7 @@
 """
 
 import asyncio
+import hashlib
 import inspect
 import logging
 from datetime import datetime, timedelta
@@ -56,6 +57,7 @@ from util.cert import (
     prefetched_user,
     used_otp_credential,
     validate_by_cert,
+    verify_password_async,
 )
 from util.group import get_user_permissions, is_in_a_same_class
 from util.object_id import (
@@ -439,10 +441,17 @@ async def _guard_primary_device(
 
 
 class AuthUser(BaseModel):
-    id: str
+    id: str = Field(min_length=1, max_length=64)
     mode: Literal["long", "short"] = "long"
     credential: str
     purpose: str = "login"
+
+
+#: 未知账号 403 前过一次 dummy bcrypt：让「学号不存在」与「密码错误」两条路径
+#: 的耗时形状一致（都跑一次 cost-12 校验），抹掉靠响应时间探测学号是否存在的
+#: 侧信道。摘要是为了让输入定长——bcrypt 只取前 72 字节，且不把用户真实口令
+#: 交给这副假哈希。
+_DUMMY_PASSWORD_HASH = "$2b$12$QfdGkBRAT.hByMX7HxahxOj00B7IDqDe276oszgN.G5Tow3E0iALC"
 
 
 @router.post("/auth")
@@ -483,6 +492,12 @@ async def auth_user(auth: AuthUser, request: Request, response: Response):
             else:
                 # Indistinguishable from a wrong password: same status and, below,
                 # the same body, so a probe cannot tell whether the 学号 exists.
+                # 上面密码错误路径跑了一次 bcrypt，这里也跑一次等价的 dummy 校验，
+                # 让两条 403 的耗时形状一致（时序探测无差别）。
+                await verify_password_async(
+                    hashlib.sha256(credential.encode("utf-8")).hexdigest(),
+                    _DUMMY_PASSWORD_HASH,
+                )
                 raise HTTPException(
                     status_code=403,
                     detail="用户名或密码错误",
@@ -548,8 +563,9 @@ async def auth_user(auth: AuthUser, request: Request, response: Response):
         log_name = user_doc["name"] if user_doc else await get_user_name(id)
 
         # v4.2.4-2 R4（设计 §3.2）：维护期间只放行 admin —— 非 admin 一律拒绝下发
-        # token。拒绝必须落在端点内：``/api/users/auth`` 是中间件的维护豁免路径
-        # （main.py:136-144），否则管理员无法登录关掉维护。
+        # token。拒绝必须落在端点内：``/api/v1/users/auth``（与旧 ``/api/users/auth``
+        # 串一起）在中间件的维护豁免清单里（app_setup.py 的
+        # MAINTENANCE_EXEMPT_PATHS），否则管理员无法登录关掉维护。
         # 角色取刚落库读到的这一份 user_doc，不额外查库；读不到文档按「非 admin」
         # 处理（fail-closed，宁拒不放）。
         if is_enabled_fresh() and "admin" not in ((user_doc or {}).get("roles") or []):
