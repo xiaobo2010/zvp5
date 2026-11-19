@@ -258,6 +258,45 @@ export async function fetchVersion(): Promise<string> {
   return value?.version ?? ''
 }
 
+export async function fetchHealth(): Promise<string> {
+  const value = await request<string>('/health')
+  return typeof value === 'string' ? value : 'OK'
+}
+
+export interface CreateActivityInput {
+  name: string
+  description: string
+  type: 'on-campus' | 'off-campus' | 'social-practice' | 'hybrid'
+}
+
+export async function createActivity(input: CreateActivityInput): Promise<string> {
+  const result = await request<{ id?: string }>('/v1/activities', {
+    method: 'POST',
+    body: JSON.stringify(input)
+  })
+  if (!result?.id) throw new CanaryApiError('活动创建成功但未返回 ID。', 500)
+  return result.id
+}
+
+export interface CanaryAiHealth {
+  enabled: boolean
+  max_concurrency: number
+  worker_count: number
+  rate_limit_per_minute: Record<string, number>
+  models: string[]
+  providers?: unknown
+  credentials?: {
+    personal?: number
+    shared?: number
+    server?: number
+    shared_entries?: Array<{ name?: string; base_url?: string; models?: string[]; enabled?: boolean }>
+  }
+}
+
+export async function fetchAiHealth(): Promise<CanaryAiHealth> {
+  return request<CanaryAiHealth>('/ai/health')
+}
+
 export async function fetchTime(): Promise<CanaryTime> {
   const id = currentUserId()
   if (!id) throw new CanaryApiError('请先登录 canary 账号。', 401)

@@ -3,6 +3,7 @@ import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { CanaryApiError, fetchNotices, isLoggedIn } from '@/api/canary'
 import type { CanaryNotice } from '@/api/canary'
+import { renderMarkdown } from '@/utils/markdown'
 
 const router = useRouter()
 
@@ -195,7 +196,7 @@ onMounted(() => {
         </button>
         <Transition name="notice-expand">
           <div v-if="expandedId === notice.id" class="notice-body">
-            <p class="notice-content">{{ notice.content }}</p>
+            <div class="notice-content" v-html="renderMarkdown(notice.content)"></div>
           </div>
         </Transition>
       </article>
@@ -570,7 +571,85 @@ onMounted(() => {
   color: var(--color-text-secondary);
   line-height: var(--line-height-relaxed);
   margin: 0;
-  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.notice-content :deep(p) {
+  margin: 0 0 var(--space-3);
+}
+
+.notice-content :deep(p:last-child) {
+  margin-bottom: 0;
+}
+
+.notice-content :deep(h1),
+.notice-content :deep(h2),
+.notice-content :deep(h3),
+.notice-content :deep(h4) {
+  color: var(--color-text-primary);
+  margin: var(--space-4) 0 var(--space-2);
+  line-height: var(--line-height-snug);
+}
+
+.notice-content :deep(h1) { font-size: var(--font-size-headline); }
+.notice-content :deep(h2) { font-size: var(--font-size-body-large); }
+.notice-content :deep(h3),
+.notice-content :deep(h4) { font-size: var(--font-size-body); }
+
+.notice-content :deep(ul),
+.notice-content :deep(ol) {
+  margin: 0 0 var(--space-3);
+  padding-left: 1.4em;
+}
+
+.notice-content :deep(li) {
+  margin: 0.2em 0;
+}
+
+.notice-content :deep(blockquote) {
+  margin: var(--space-3) 0;
+  padding: var(--space-3) var(--space-4);
+  background: rgba(255, 255, 255, 0.34);
+  border-left: 2px solid var(--color-brand);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  color: var(--color-text-secondary);
+}
+
+.notice-content :deep(code) {
+  padding: 2px 5px;
+  background: rgba(0, 0, 0, 0.06);
+  border-radius: 5px;
+  font-size: 0.92em;
+}
+
+.notice-content :deep(pre) {
+  margin: var(--space-3) 0;
+  padding: var(--space-4);
+  overflow-x: auto;
+  background: rgba(18, 32, 48, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  border-radius: var(--radius-md);
+}
+
+.notice-content :deep(pre code) {
+  padding: 0;
+  background: transparent;
+}
+
+.notice-content :deep(a) {
+  color: var(--color-brand);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.notice-content :deep(hr) {
+  margin: var(--space-4) 0;
+  border: 0;
+  border-top: 1px solid var(--color-border-subtle);
+}
+
+.notice-content :deep(strong) {
+  color: var(--color-text-primary);
 }
 
 .notice-expand-enter-active,

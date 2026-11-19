@@ -47,6 +47,7 @@ const searchWord = ref('')
 const appliedSearch = ref('')
 const activePage = ref(1)
 const loading = ref(true)
+const listLoading = ref(false)
 const activities = ref<Activity[]>([])
 const totalActivities = ref(0)
 const selectedActivity = ref<Activity | null>(null)
@@ -127,6 +128,7 @@ async function loadActivities() {
   if (needsClass.value) {
     requestSeq += 1
     loading.value = false
+    listLoading.value = false
     error.value = ''
     activities.value = []
     totalActivities.value = 0
@@ -135,7 +137,9 @@ async function loadActivities() {
   }
 
   const seq = ++requestSeq
-  loading.value = true
+  const hasExisting = activities.value.length > 0
+  if (!hasExisting) loading.value = true
+  listLoading.value = true
   error.value = ''
   try {
     const result = await fetchActivities(
@@ -168,7 +172,10 @@ async function loadActivities() {
       error.value = readableError(reason, '活动加载失败，请稍后重试。')
     }
   } finally {
-    if (seq === requestSeq) loading.value = false
+    if (seq === requestSeq) {
+      loading.value = false
+      listLoading.value = false
+    }
   }
 }
 
@@ -206,7 +213,7 @@ function handleSearchBlur(event: FocusEvent) {
 }
 
 function handleRefresh() {
-  if (loading.value) return
+  if (loading.value || listLoading.value) return
   void bootstrap()
 }
 
@@ -307,7 +314,7 @@ onMounted(() => {
         <button
           class="liquid-btn liquid-btn--secondary liquid-btn--sm"
           type="button"
-          :disabled="loading"
+          :disabled="loading || listLoading"
           @click="handleRefresh"
         >
           刷新
@@ -411,7 +418,7 @@ onMounted(() => {
     </div>
 
     <div
-      v-else-if="loading"
+      v-else-if="loading && !activities.length"
       class="activities-skeleton"
       role="status"
       aria-live="polite"
@@ -438,7 +445,12 @@ onMounted(() => {
       </p>
     </div>
 
-    <div v-else class="activities-list">
+    <div
+      v-else
+      class="activities-list"
+      :class="{ 'is-refreshing': listLoading }"
+      :aria-busy="listLoading"
+    >
       <button
         v-for="(activity, index) in activities"
         :key="activity.id"
@@ -881,6 +893,15 @@ onMounted(() => {
 .activities-list {
   display: grid;
   gap: var(--space-4);
+  transition:
+    opacity var(--duration-fast) var(--ease-smooth),
+    filter var(--duration-fast) var(--ease-smooth);
+}
+
+.activities-list.is-refreshing {
+  opacity: 0.55;
+  filter: saturate(0.8);
+  pointer-events: none;
 }
 
 .activity-card {

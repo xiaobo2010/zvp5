@@ -28,6 +28,30 @@ const router = createRouter({
       meta: { title: '登录' }
     },
     {
+      path: '/volunteers/create',
+      name: 'volunteer-create',
+      component: () => import('@/views/AddVolunteerView.vue'),
+      meta: { title: '添加义工' }
+    },
+    {
+      path: '/server',
+      name: 'server',
+      component: () => import('@/views/ServerView.vue'),
+      meta: { title: '服务器管理' }
+    },
+    {
+      path: '/manage',
+      name: 'manage',
+      component: () => import('@/views/ManageView.vue'),
+      meta: { title: '平台管理' }
+    },
+    {
+      path: '/ai',
+      name: 'ai-gateway',
+      component: () => import('@/views/AiGatewayView.vue'),
+      meta: { title: 'AI 网关' }
+    },
+    {
       path: '/notifications',
       name: 'notifications',
       component: () => import('@/views/NotificationsView.vue'),

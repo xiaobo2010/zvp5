@@ -14,6 +14,14 @@ const drawerItems = [
   { label: '关于', path: '/about' }
 ]
 
+// Admin menu items
+const adminItems = [
+  { label: '添加义工', path: '/volunteers/create' },
+  { label: '服务器管理', path: '/server' },
+  { label: '平台管理', path: '/manage' },
+  { label: 'AI 网关', path: '/ai' }
+]
+
 const drawerOpen = ref(false)
 const activePath = computed(() => route.path)
 
@@ -241,7 +249,7 @@ watch(drawerOpen, (isOpen) => {
         :class="{ 'is-active': primaryLink.path === activePath }"
         :aria-current="primaryLink.path === activePath ? 'page' : undefined"
       >
-        {{ primaryLink.label }}
+        <span class="site-nav__drawer-link-text">{{ primaryLink.label }}</span>
       </router-link>
 
       <router-link
@@ -252,7 +260,7 @@ watch(drawerOpen, (isOpen) => {
         :class="{ 'is-active': item.path === activePath }"
         :aria-current="item.path === activePath ? 'page' : undefined"
       >
-        {{ item.label }}
+        <span class="site-nav__drawer-link-text">{{ item.label }}</span>
       </router-link>
     </nav>
 
@@ -264,7 +272,23 @@ watch(drawerOpen, (isOpen) => {
         :class="{ 'is-active': activePath === '/notifications' }"
         to="/notifications"
       >
-        通知
+        <span class="site-nav__drawer-link-text">通知</span>
+      </router-link>
+    </div>
+
+    <div class="site-nav__drawer-divider" />
+
+    <div class="site-nav__drawer-section">
+      <div class="site-nav__drawer-section-title">管理</div>
+      <router-link
+        v-for="item in adminItems"
+        :key="item.path"
+        :to="item.path"
+        class="site-nav__drawer-link"
+        :class="{ 'is-active': item.path === activePath }"
+        :aria-current="item.path === activePath ? 'page' : undefined"
+      >
+        <span class="site-nav__drawer-link-text">{{ item.label }}</span>
       </router-link>
     </div>
   </div>
@@ -533,6 +557,11 @@ watch(drawerOpen, (isOpen) => {
   cursor: pointer;
 }
 
+.site-nav__drawer-link-text {
+  position: relative;
+  z-index: 1;
+}
+
 .site-nav__drawer-link::before,
 .site-nav__drawer-action::before {
   content: '';
@@ -564,6 +593,22 @@ watch(drawerOpen, (isOpen) => {
   transform: translateX(4px);
 }
 
+.site-nav__drawer-link.is-active,
+.site-nav__drawer-action.is-active {
+  animation: drawer-active-in var(--duration-base) var(--ease-spring);
+}
+
+@keyframes drawer-active-in {
+  from {
+    opacity: 0.55;
+    transform: translateX(-5px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+}
+
 .site-nav__drawer-link.is-active {
   background: linear-gradient(
     135deg,
@@ -577,6 +622,23 @@ watch(drawerOpen, (isOpen) => {
     inset 0 1px 0 rgba(255, 255, 255, 0.98),
     inset 0 -1px 0 rgba(0, 0, 0, 0.05),
     0 4px 14px rgba(0, 113, 227, 0.12);
+}
+
+.site-nav__drawer-link.is-active::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 60%;
+  background: var(--color-brand);
+  border-radius: 0 var(--radius-xs) var(--radius-xs) 0;
+  opacity: 1;
+  transition:
+    height var(--duration-base) var(--ease-spring),
+    opacity var(--duration-base) var(--ease-smooth);
+  z-index: 2;
 }
 
 .site-nav__drawer-link:focus-visible {
@@ -595,6 +657,15 @@ watch(drawerOpen, (isOpen) => {
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
+}
+
+.site-nav__drawer-section-title {
+  padding: var(--space-2) var(--space-4);
+  font-size: var(--font-size-caption);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: var(--letter-spacing-wide);
+  color: var(--color-text-tertiary);
 }
 
 .site-nav__drawer-action {
@@ -627,6 +698,7 @@ watch(drawerOpen, (isOpen) => {
   min-height: 44px;
   display: flex;
   align-items: center;
+  text-decoration: none;
 }
 
 .site-nav__drawer-action:hover {
@@ -649,6 +721,23 @@ watch(drawerOpen, (isOpen) => {
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.98),
     0 4px 14px rgba(0, 113, 227, 0.12);
+}
+
+.site-nav__drawer-action.is-active::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 60%;
+  background: var(--color-brand);
+  border-radius: 0 var(--radius-xs) var(--radius-xs) 0;
+  opacity: 1;
+  transition:
+    height var(--duration-base) var(--ease-spring),
+    opacity var(--duration-base) var(--ease-smooth);
+  z-index: 2;
 }
 
 .site-nav__drawer-action:active {
@@ -690,6 +779,11 @@ watch(drawerOpen, (isOpen) => {
   .site-nav__drawer-link::before,
   .site-nav__drawer-action::before {
     display: none;
+  }
+
+  .site-nav__drawer-link.is-active,
+  .site-nav__drawer-action.is-active {
+    animation: none;
   }
 
   .site-nav__handle:hover,
